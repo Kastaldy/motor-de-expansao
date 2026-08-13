@@ -127,7 +127,13 @@ _COLUNAS_PROIBIDAS_RESSALVADAS: frozenset[str] = frozenset(
 # Componente de cada sinal. `s2` aponta para `v2`, que NÃO existe no Plano B (D3): enquanto `s2`
 # estiver em `SINAIS_INATIVOS` ele nunca fica disponível, e o BLK-MA-08 reativa o sinal
 # acrescentando a coluna e removendo a entrada daquela tupla.
-_COLUNA_POR_SINAL: dict[str, str] = {"s1": "v1", "s2": "v2", "s3": "v3", "s4": "v4"}
+_COLUNA_POR_SINAL: dict[str, str] = {
+    "s1": "v1",
+    "s2": "v2",
+    "s3": "v3",
+    "s4": "v4",
+    "s6": "v6",
+}
 
 # `v1` é CATEGÓRICO (emenda G1 ao §8.1, ratificada em 2026-07-29): mapa literal, NUNCA
 # normalização por posição no universo. O domínio de entrada `{1, 2}` é travado pelo contrato do
@@ -186,6 +192,37 @@ def _juntar_presenca(universo: pd.DataFrame, presenca: pd.DataFrame) -> pd.DataF
     return df
 
 
+def _juntar_pressao(df: pd.DataFrame, pressao: pd.DataFrame | None) -> pd.DataFrame:
+    """Left join `many_to_one` da pressão (hex) no universo (academia). `None` -> coluna NULA.
+
+    Nulo, jamais `0`: na régua do §8.1 `v6 = 0` afirma "ninguém espremendo", a leitura mais
+    otimista possível. "Não recebi o insumo" tem de ser distinguível de "medi e não há" — é a mesma
+    regra que vale para o `v1` no miss do join do sinal 1.
+    """
+    out = df.copy()
+    if pressao is None or pressao.empty:
+        out["pressao_competitiva_no_hex"] = pd.Series(
+            float("nan"), index=out.index, dtype="float64"
+        )
+        return out
+
+    if "hex_id_res7" not in pressao.columns or "pressao_competitiva_no_hex" not in pressao.columns:
+        raise ValueError(
+            "frame de pressao fora do contrato: exige `hex_id_res7` e "
+            "`pressao_competitiva_no_hex`"
+        )
+    if bool(pressao["hex_id_res7"].duplicated().any()):
+        raise ValueError("frame de pressao com `hex_id_res7` duplicado: o join seria ambiguo")
+
+    projecao = pressao[["hex_id_res7", "pressao_competitiva_no_hex"]].copy()
+    projecao["hex_id_res7"] = projecao["hex_id_res7"].astype("string")
+    out = out.merge(projecao, on="hex_id_res7", how="left", validate="many_to_one")
+    out["pressao_competitiva_no_hex"] = pd.to_numeric(
+        out["pressao_competitiva_no_hex"], errors="coerce"
+    ).astype("float64")
+    return out
+
+
 def _regra_de_disponibilidade(df: pd.DataFrame) -> dict[str, pd.Series]:
     """Regra do §8.4 por linha, ANTES de olhar o componente.
 
@@ -207,6 +244,17 @@ def _regra_de_disponibilidade(df: pd.DataFrame) -> dict[str, pd.Series]:
         "s2": pd.Series(False, index=indice),
         "s3": ~df["flag_serie_imatura"].astype(bool),
         "s4": df["flag_staleness_interpretavel"].astype(bool),
+        # `s6` disponível SE E SOMENTE SE o insumo de pressão foi fornecido na chamada — o mesmo
+        # princípio do `s1` (casou no join). NÃO é "sempre disponível", e a diferença é estrutural:
+        # um S6 sempre presente extinguiria o regime `n_sinais_disponiveis == 0` e tornaria
+        # INALCANÇÁVEL a invariante "ausência nunca é zero", que é o guardrail mais antigo desta
+        # camada. Aqui, quem não passa pressão obtém exatamente o score de antes — os pesos
+        # efetivos do Plano B inclusive, porque `renormalizar_pesos` divide pelos PRESENTES.
+        "s6": (
+            df["pressao_competitiva_no_hex"].notna()
+            if "pressao_competitiva_no_hex" in df.columns
+            else pd.Series(False, index=indice)
+        ),
     }
     for sinal in SINAIS_INATIVOS:
         regras[sinal] = pd.Series(False, index=indice)
@@ -236,9 +284,21 @@ def _derivar_componentes(df: pd.DataFrame) -> pd.DataFrame:
     v4_bruto = (out["semanas_sem_mudanca"].astype("float64") / float(STALE_SEMANAS)).clip(
         lower=0.0, upper=1.0
     )
+    # `v6` já vem em [0,1) do `pressao_competitiva`; aqui é só leitura, não normalização — a régua
+    # é ABSOLUTA como a do `v4` (G-D3), nunca percentil do lote.
+    v6_bruto = (
+        out["pressao_competitiva_no_hex"].astype("float64") / 100.0
+        if "pressao_competitiva_no_hex" in out.columns
+        else pd.Series(float("nan"), index=out.index, dtype="float64")
+    )
 
     regras = _regra_de_disponibilidade(out)
-    for sinal, bruto in (("s1", v1_bruto), ("s3", v3_bruto), ("s4", v4_bruto)):
+    for sinal, bruto in (
+        ("s1", v1_bruto),
+        ("s3", v3_bruto),
+        ("s4", v4_bruto),
+        ("s6", v6_bruto),
+    ):
         out[_COLUNA_POR_SINAL[sinal]] = bruto.where(regras[sinal] & bruto.notna())
     return out
 
@@ -386,6 +446,14 @@ def _assert_schema_score(df: pd.DataFrame) -> None:
         raise ValueError(f"`v3` fora do dominio categorico {sorted(dominio_v3)}: {fora_v3}")
     if bool(((v4 < 0.0) | (v4 > 1.0)).any()):
         raise ValueError("`v4` fora do dominio [0, 1]")
+    v6 = df["v6"].astype("float64")
+    if bool(((v6 < 0.0) | (v6 >= 1.0)).any()):
+        raise ValueError("`v6` fora do dominio [0, 1)")
+    if bool((v6.isna() != df["pressao_competitiva_no_hex"].isna()).any()):
+        raise ValueError(
+            "biconditional do S6 violado: `v6` nulo deve equivaler a "
+            "`pressao_competitiva_no_hex` nulo"
+        )
     if bool(((score < 0.0) | (score > 100.0)).any()):
         raise ValueError("`score_vulnerabilidade` fora do dominio [0, 100]")
 
@@ -409,9 +477,9 @@ def _assert_schema_score(df: pd.DataFrame) -> None:
         raise ValueError("`n_sinais_disponiveis` incoerente com `sinais_disponiveis`")
 
     tem: dict[str, pd.Series] = {
-        sinal: texto.map(lambda v, s=sinal: s in v.split(",")) for sinal in ("s1", "s3", "s4")
+        sinal: texto.map(lambda v, s=sinal: s in v.split(",")) for sinal in ("s1", "s3", "s4", "s6")
     }
-    for sinal in ("s1", "s3", "s4"):
+    for sinal in ("s1", "s3", "s4", "s6"):
         coluna = _COLUNA_POR_SINAL[sinal]
         if bool((tem[sinal] != df[coluna].notna()).any()):
             raise ValueError(
@@ -468,12 +536,24 @@ def calcular_score_vulnerabilidade(
     *,
     churn: pd.DataFrame | None = None,
     presenca: pd.DataFrame | None = None,
+    pressao: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Insumos de S1/S3/S4 -> frame `score_vulnerabilidade_v2` (22 colunas), 1 linha por academia.
+    """Insumos -> frame `score_vulnerabilidade_v3` (24 colunas), 1 linha por academia.
 
     Informe `base_dir` (conveniência: deriva os DOIS frames da MESMA série, numa só chamada) **ou**
     o par (`churn`, `presenca`) já pronto. Com o par injetado a função é **pura** — é assim que os
     testes rodam sem I/O — e o chamador passa a ser o dono da consistência entre os dois frames.
+
+    `pressao` (BLK-MA-12) é **OPCIONAL e ortogonal** aos outros dois, e vale para os dois modos: é
+    o frame de `pressao_competitiva.calcular_pressao_por_hex`, com uma linha por `hex_id_res7`.
+    Ele não sai da `base_dir` de propósito — a pressão vem do parquet de PONTOS de concorrentes,
+    que não vive junto dos snapshots.
+
+    **Omitir `pressao` devolve exatamente o score de antes**, bit a bit: o `s6` fica indisponível,
+    `renormalizar_pesos` normaliza só pelos presentes e os pesos efetivos do Plano B seguem
+    `0,20 / 0,4667 / 0,3333`. Isso é o que permite o S6 existir sem repesar S1..S4 e sem extinguir
+    o regime `n_sinais_disponiveis == 0` — a invariante "ausência nunca é zero" continua alcançável
+    e continua travada.
 
     Algoritmo, em passos:
 
@@ -482,8 +562,9 @@ def calcular_score_vulnerabilidade(
     | 1 | validar os insumos pelos contratos de origem | frame malformado não vira score errado |
     | 2 | **filtrar o universo de M&A** (TP/WH x independente) | sem isto uma CADEIA vira alvo |
     | 3 | join `many_to_one` do sinal 1 (hex) no universo (academia) | S1 é por hex, S3/S4 por academia |
-    | 4 | componentes `v1`/`v3`/`v4`, mascarados por disponibilidade | §8.1 |
-    | 5 | renormalizar os pesos-alvo do D4 e somar | §8.3/§8.4, genérico |
+    | 3b | join `many_to_one` da pressão (hex), se fornecida | S6 é por hex, como o S1 |
+    | 4 | componentes `v1`/`v3`/`v4`/`v6`, mascarados por disponibilidade | §8.1 |
+    | 5 | renormalizar os pesos-alvo e somar | §8.3/§8.4, genérico |
     | 6 | flags de qualidade e schema de saída | §8.4/§8.5 |
 
     `score_vulnerabilidade = 100 · Σ(wi · vi)` sobre os sinais DISPONÍVEIS, com os pesos-alvo
@@ -520,6 +601,7 @@ def calcular_score_vulnerabilidade(
         return vazio
 
     df = _juntar_presenca(universo, presenca)
+    df = _juntar_pressao(df, pressao)
     df = _derivar_componentes(df)
     out = _compor_score(df)
     _assert_schema_score(out)

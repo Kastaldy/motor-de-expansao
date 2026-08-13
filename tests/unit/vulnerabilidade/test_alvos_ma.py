@@ -35,7 +35,15 @@ from motor_expansao.vulnerabilidade.alvos_ma import (
 )
 from motor_expansao.vulnerabilidade.score import calcular_score_vulnerabilidade
 
-from .test_score import HEX_A, HEX_B, _churn, _linha_churn, _linha_presenca, _presenca
+from .test_score import (
+    HEX_A,
+    HEX_B,
+    _churn,
+    _linha_churn,
+    _linha_presenca,
+    _presenca,
+    _tokens,
+)
 
 # Vizinhança REAL (não inventada): o anel k=1 de cada centro.
 HEX_Q = HEX_A
@@ -82,11 +90,17 @@ def _carteira() -> pd.DataFrame:
     return pd.DataFrame(linhas)
 
 
-def _score_de(linhas_churn: list[dict[str, object]], hexes_com_s1: list[str]) -> pd.DataFrame:
+def _score_de(
+    linhas_churn: list[dict[str, object]],
+    hexes_com_s1: list[str],
+    *,
+    pressao: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Score real, calculado pelo módulo do MA-04 a partir de frames injetados."""
     return calcular_score_vulnerabilidade(
         churn=_churn(linhas_churn),
         presenca=_presenca([_linha_presenca(h) for h in hexes_com_s1]),
+        pressao=pressao,
     )
 
 
@@ -505,72 +519,59 @@ def test_carteira_sem_coluna_opcional_nao_quebra_o_astype() -> None:
 # --------------------------------------------------------------------------- #
 # Sinal 6 propagado como fato sem peso (BLK-MA-12)
 # --------------------------------------------------------------------------- #
-def test_ausencia_de_calculo_nao_vira_pressao_zero() -> None:
-    """O erro mais caro do sinal 6: na régua do §8.1, `0` é a leitura mais OTIMISTA.
+def _pressao_em(hexes: list[str], perto_de: str) -> pd.DataFrame:
+    """Frame de pressão com UM concorrente colado no centroide de `perto_de`."""
+    from motor_expansao.vulnerabilidade.pressao_competitiva import calcular_pressao_por_hex
 
-    "Não calculei a pressão" virando "não há pressão" rebaixaria o alvo por falta de dado — num
-    funil de aquisição, exatamente ao contrário do que se quer.
+    lat, lng = h3.cell_to_latlng(perto_de)
+    conc = pd.DataFrame(
+        [{"rede": "smart_fit", "lat": lat + 0.004, "lng": lng, "status_registro": "valido"}]
+    )
+    return calcular_pressao_por_hex(hexes, conc)
+
+
+def test_sem_pressao_no_score_as_colunas_do_s6_chegam_nulas() -> None:
+    """"Não calculei" tem de continuar distinguível de "medi e não há".
+
+    Na régua do §8.1 o `0` é a leitura mais OTIMISTA ("ninguém espremendo"); confundir ausência de
+    cálculo com ausência de concorrência rebaixaria o alvo por falta de dado.
     """
     out = academias_com_hotness(_score_padrao(), _carteira())
+    assert out["v6"].isna().all()
     assert out["pressao_competitiva_no_hex"].isna().all()
-    assert out["v6_no_hex"].isna().all()
 
 
-def test_pressao_propagada_por_hex_quando_fornecida() -> None:
-    from motor_expansao.vulnerabilidade.pressao_competitiva import calcular_pressao_por_hex
-
-    conc = pd.DataFrame(
+def test_s6_do_score_e_propagado_ate_o_entregavel() -> None:
+    """Esta camada não recalcula a pressão — ela carrega o que o score já computou."""
+    score = _score_de(
         [
-            {
-                "rede": "smart_fit",
-                "lat": h3.cell_to_latlng(HEX_Q)[0] + 0.004,
-                "lng": h3.cell_to_latlng(HEX_Q)[1],
-                "status_registro": "valido",
-            }
-        ]
+            _linha_churn("k_q", hex_id=HEX_Q, n_semanas_serie=13, interpretavel=True),
+            _linha_churn("k_frio", hex_id=HEX_FRIO, n_semanas_serie=13, interpretavel=True),
+        ],
+        [HEX_Q, HEX_FRIO],
+        pressao=_pressao_em([HEX_Q, HEX_FRIO], HEX_Q),
     )
-    pressao = calcular_pressao_por_hex([HEX_Q, HEX_VIZ, HEX_FRIO], conc)
-    out = academias_com_hotness(_score_padrao(), _carteira(), pressao=pressao)
-
-    q = _linha_por_chave(out, "k_q")
-    assert float(q["v6_no_hex"]) > 0.0, "o hex com concorrente perto tem pressao"
-    fora = _linha_por_chave(out, "k_fora")
-    assert pd.isna(fora["v6_no_hex"]), "hex sem par no frame de pressao fica NULO, nao zero"
+    out = academias_com_hotness(score, _carteira())
+    assert float(_linha_por_chave(out, "k_q")["v6"]) > 0.0
+    assert float(_linha_por_chave(out, "k_frio")["v6"]) == 0.0, "medido e zero, nao nulo"
 
 
-def test_pressao_nao_altera_a_ordenacao() -> None:
-    """Fato SEM PESO: entra na saída, não entra em nenhum critério de ordem."""
-    from motor_expansao.vulnerabilidade.pressao_competitiva import calcular_pressao_por_hex
+def test_pressao_ALTERA_o_score_agora_que_o_s6_tem_peso() -> None:
+    """A inversão do BLK-MA-12: o S6 deixou de ser fato e virou componente.
 
-    base = agregar_alvos_por_hex(academias_com_hotness(_score_padrao(), _carteira()))
-    conc = pd.DataFrame(
-        [
-            {
-                "rede": "smart_fit",
-                "lat": h3.cell_to_latlng(HEX_FRIO)[0],
-                "lng": h3.cell_to_latlng(HEX_FRIO)[1],
-                "status_registro": "valido",
-            }
-        ]
-    )
-    pressao = calcular_pressao_por_hex([HEX_Q, HEX_VIZ, HEX_FRIO, HEX_FORA], conc)
-    com = agregar_alvos_por_hex(
-        academias_com_hotness(_score_padrao(), _carteira(), pressao=pressao)
-    )
-    pd.testing.assert_series_equal(base["hex_id_res7"], com["hex_id_res7"], check_names=False)
+    Enquanto era fato sem peso, havia um teste afirmando exatamente o contrário disto. A mudança
+    de arquitetura tinha de virar mudança de teste — senão o antigo passaria a proteger um
+    comportamento que ninguém mais quer.
+    """
+    linhas = [_linha_churn("k_q", hex_id=HEX_Q, n_semanas_serie=13, interpretavel=True)]
+    sem = _score_de(linhas, [HEX_Q])
+    com = _score_de(linhas, [HEX_Q], pressao=_pressao_em([HEX_Q], HEX_Q))
 
-
-def test_frame_de_pressao_com_hex_duplicado_levanta() -> None:
-    duplicado = pd.DataFrame(
-        {
-            "hex_id_res7": pd.Series([HEX_Q, HEX_Q], dtype="string"),
-            "pressao_competitiva_no_hex": [10.0, 20.0],
-            "v6_no_hex": [0.1, 0.2],
-            "n_concorrentes_no_raio": [1, 2],
-        }
-    )
-    with pytest.raises(AssertionError, match="duplicado"):
-        academias_com_hotness(_score_padrao(), _carteira(), pressao=duplicado)
+    s_sem = float(sem.iloc[0]["score_vulnerabilidade"])
+    s_com = float(com.iloc[0]["score_vulnerabilidade"])
+    assert s_sem != s_com, "com peso, a pressao TEM de mover o score"
+    assert _tokens(com.iloc[0]) == ["s1", "s3", "s4", "s6"]
+    assert _tokens(sem.iloc[0]) == ["s1", "s3", "s4"]
 
 
 # --------------------------------------------------------------------------- #

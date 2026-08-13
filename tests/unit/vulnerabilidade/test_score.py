@@ -260,12 +260,131 @@ def serie_universo_misturado() -> list[pd.DataFrame]:
 # --------------------------------------------------------------------------- #
 # CA-1 — pesos-alvo do D4 e renormalização GENÉRICA
 # --------------------------------------------------------------------------- #
-def test_pesos_alvo_sao_os_quatro_do_d4_e_somam_um() -> None:
-    """Congelados no gate de 2026-07-23: este bloco lê os pesos, nunca os altera."""
-    assert c.PESOS_ALVO_SINAIS == {"s1": 0.15, "s2": 0.25, "s3": 0.35, "s4": 0.25}
-    assert abs(sum(c.PESOS_ALVO_SINAIS.values()) - 1.0) < 1e-9
-    assert tuple(c.PESOS_ALVO_SINAIS) == c.SINAIS_ORDEM
+def test_pesos_do_d4_seguem_congelados_e_somam_um() -> None:
+    """O gate de 2026-07-23 continua valendo: o S6 entrou POR CIMA, sem repesar S1..S4.
+
+    Este é o teste que impede a entrada de um sinal novo de virar repesagem por tabela. Se alguém
+    adotar o conjunto ilustrativo de 6 sinais do §8.3 (que muda `s1` de 0,15 para 0,12), ele
+    quebra — e tem de quebrar, porque isso é reabrir o gate.
+    """
+    assert c.PESOS_ALVO_D4 == {"s1": 0.15, "s2": 0.25, "s3": 0.35, "s4": 0.25}
+    assert abs(sum(c.PESOS_ALVO_D4.values()) - 1.0) < 1e-9
+    for sinal, peso in c.PESOS_ALVO_D4.items():
+        assert c.PESOS_ALVO_SINAIS[sinal] == peso, f"o S6 nao pode ter mexido em `{sinal}`"
     assert c.SINAIS_INATIVOS == ("s2",)
+
+
+def test_soma_alvo_maior_que_um_e_inocua_por_construcao() -> None:
+    """Com o S6, `PESOS_ALVO_SINAIS` soma 1,10 — e isso não altera peso efetivo algum.
+
+    `renormalizar_pesos` divide pela soma dos PRESENTES, nunca pelo total do dicionário. A soma do
+    dicionário é, portanto, um número sem consumidor: o que vale é sempre a razão dentro do regime.
+    """
+    assert abs(sum(c.PESOS_ALVO_SINAIS.values()) - 1.10) < 1e-9
+    assert tuple(c.PESOS_ALVO_SINAIS) == c.SINAIS_ORDEM
+    for subconjunto in (["s1"], ["s1", "s3"], ["s1", "s3", "s4"], ["s3", "s4"]):
+        assert abs(sum(c.renormalizar_pesos(subconjunto).values()) - 1.0) < 1e-9
+
+
+def _pressao(pares: list[tuple[str, float]]) -> pd.DataFrame:
+    """Frame mínimo de pressão: `hex_id_res7` + `pressao_competitiva_no_hex` em [0, 100)."""
+    return pd.DataFrame(
+        {
+            "hex_id_res7": pd.Series([h for h, _ in pares], dtype="string"),
+            "pressao_competitiva_no_hex": pd.Series([p for _, p in pares], dtype="float64"),
+        }
+    )
+
+
+# --------------------------------------------------------------------------- #
+# BLK-MA-12 — o S6 como COMPONENTE (não mais fato sem peso)
+# --------------------------------------------------------------------------- #
+def test_s6_entra_no_regime_quando_o_insumo_vem(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
+    churn, presenca = _insumos(serie_madura_s3_s4)
+    out = calcular_score_vulnerabilidade(
+        churn=churn, presenca=presenca, pressao=_pressao([(HEX_A, 60.0), (HEX_B, 0.0)])
+    )
+    linha = _linha_de(out, "k_tp")
+    assert "s6" in _tokens(linha)
+    assert float(linha["v6"]) == pytest.approx(0.60)
+    assert int(linha["n_sinais_disponiveis"]) == 4
+
+
+def test_v6_e_razao_absoluta_nao_percentil_do_lote() -> None:
+    """G-D3 aplicado ao S6: o valor de uma linha não pode depender de quem mais está no lote.
+
+    Percentil por universo tornaria o score não-monotônico — acrescentar uma academia muito
+    pressionada baixaria o `v6` de todas as outras. É o mesmo defeito que tirou o `v4` do percentil.
+    """
+    linhas = [
+        _linha_churn("k_a", hex_id=HEX_A, n_semanas_serie=13, interpretavel=True),
+        _linha_churn("k_b", hex_id=HEX_B, n_semanas_serie=13, interpretavel=True),
+    ]
+    pressao = _pressao([(HEX_A, 40.0), (HEX_B, 90.0)])
+    dupla = calcular_score_vulnerabilidade(
+        churn=_churn(linhas), presenca=_presenca([_linha_presenca(HEX_A), _linha_presenca(HEX_B)]),
+        pressao=pressao,
+    )
+    sozinha = calcular_score_vulnerabilidade(
+        churn=_churn(linhas[:1]), presenca=_presenca([_linha_presenca(HEX_A)]), pressao=pressao
+    )
+    assert float(_linha_de(dupla, "k_a")["v6"]) == float(_linha_de(sozinha, "k_a")["v6"])
+    assert float(_linha_de(dupla, "k_a")["score_vulnerabilidade"]) == pytest.approx(
+        float(_linha_de(sozinha, "k_a")["score_vulnerabilidade"])
+    )
+
+
+def test_pressao_zero_e_medicao_e_entra_no_score() -> None:
+    """`0` medido NÃO é ausência: o sinal está disponível e contribui com `v6 = 0`."""
+    churn = _churn([_linha_churn("k", hex_id=HEX_A, n_semanas_serie=13, interpretavel=True)])
+    out = calcular_score_vulnerabilidade(
+        churn=churn, presenca=_presenca([_linha_presenca()]), pressao=_pressao([(HEX_A, 0.0)])
+    )
+    linha = out.iloc[0]
+    assert "s6" in _tokens(linha)
+    assert float(linha["v6"]) == 0.0
+    assert not pd.isna(linha["score_vulnerabilidade"])
+
+
+def test_hex_sem_par_na_pressao_fica_com_s6_fora() -> None:
+    """Miss no join = sinal indisponível, exatamente como no `s1`. Nunca imputa zero."""
+    churn = _churn([_linha_churn("k", hex_id=HEX_B, n_semanas_serie=13, interpretavel=True)])
+    out = calcular_score_vulnerabilidade(
+        churn=churn,
+        presenca=_presenca([_linha_presenca(HEX_B)]),
+        pressao=_pressao([(HEX_A, 80.0)]),
+    )
+    linha = out.iloc[0]
+    assert "s6" not in _tokens(linha)
+    assert pd.isna(linha["v6"])
+
+
+def test_zero_sinais_continua_alcancavel_com_o_s6_no_contrato() -> None:
+    """A invariante mais antiga da camada NÃO pode virar inalcançável.
+
+    Um S6 "sempre disponível" extinguiria o regime `n_sinais_disponiveis == 0` e, com ele, a trava
+    "ausência nunca é zero" — que passaria a nunca disparar. Condicionar o S6 ao insumo é o que
+    mantém o regime alcançável.
+    """
+    churn = _churn(
+        [_linha_churn("k", hex_id=HEX_B, status="novo", n_semanas_serie=3, imatura=True)]
+    )
+    out = calcular_score_vulnerabilidade(
+        churn=churn, presenca=_presenca([_linha_presenca()]), pressao=_pressao([(HEX_A, 50.0)])
+    )
+    linha = out.iloc[0]
+    assert int(linha["n_sinais_disponiveis"]) == 0
+    assert pd.isna(linha["score_vulnerabilidade"]), "ausencia nunca e' zero"
+
+
+def test_frame_de_pressao_com_hex_duplicado_levanta() -> None:
+    churn = _churn([_linha_churn("k", n_semanas_serie=13, interpretavel=True)])
+    with pytest.raises(ValueError, match="duplicado"):
+        calcular_score_vulnerabilidade(
+            churn=churn,
+            presenca=_presenca([_linha_presenca()]),
+            pressao=_pressao([(HEX_A, 10.0), (HEX_A, 20.0)]),
+        )
 
 
 def test_renormalizar_pesos_reescala_para_somar_um() -> None:
@@ -280,15 +399,35 @@ def test_renormalizar_pesos_reescala_para_somar_um() -> None:
 
 
 def test_pesos_efetivos_do_plano_b_sao_calculados_nao_digitados() -> None:
-    """Os `~0,20 / ~0,467 / ~0,333` são CONSEQUÊNCIA de o S2 estar inativo, nunca constante."""
-    ativos = [s for s in c.SINAIS_ORDEM if s not in c.SINAIS_INATIVOS]
-    pesos = c.renormalizar_pesos(ativos)
-    soma_alvo = sum(c.PESOS_ALVO_SINAIS[s] for s in ativos)
-    for sinal in ativos:
+    """Os `~0,20 / ~0,467 / ~0,333` são CONSEQUÊNCIA da renormalização, nunca constante.
+
+    O Plano B é o REGIME `{s1, s3, s4}` — a linha sem insumo de pressão, que é o caso geral. Não é
+    mais "todos os sinais não-inativos": com o S6 passou a existir a categoria **ativo mas
+    condicional** (existe no contrato, disponível só quando o insumo vem). É por isso que o regime
+    é enumerado aqui em vez de derivado de `SINAIS_INATIVOS`.
+    """
+    plano_b = ["s1", "s3", "s4"]
+    pesos = c.renormalizar_pesos(plano_b)
+    soma_alvo = sum(c.PESOS_ALVO_SINAIS[s] for s in plano_b)
+    for sinal in plano_b:
         assert pesos[sinal] == pytest.approx(c.PESOS_ALVO_SINAIS[sinal] / soma_alvo)
     assert pesos["s1"] == pytest.approx(0.2, abs=1e-3)
     assert pesos["s3"] == pytest.approx(0.4667, abs=1e-3)
     assert pesos["s4"] == pytest.approx(0.3333, abs=1e-3)
+
+
+def test_s6_nao_desloca_os_pesos_de_quem_nao_tem_pressao() -> None:
+    """A garantia central do desenho: sem insumo de pressão, o score é bit a bit o de antes.
+
+    Se o S6 fosse "sempre disponível", os pesos efetivos de S1/S3/S4 cairiam para
+    `0,176 / 0,412 / 0,294` e TODA linha mudaria de valor — inclusive as que não têm pressão
+    medida. Este teste é o que impede essa regressão.
+    """
+    for regime in (["s1"], ["s1", "s3"], ["s1", "s3", "s4"], ["s3", "s4"], ["s3"]):
+        sem_s6 = c.renormalizar_pesos(regime)
+        esperado = {s: c.PESOS_ALVO_D4[s] / sum(c.PESOS_ALVO_D4[x] for x in regime) for s in regime}
+        for sinal in regime:
+            assert sem_s6[sinal] == pytest.approx(esperado[sinal]), (regime, sinal)
 
 
 def test_renormalizar_pesos_vazio_devolve_dict_vazio() -> None:
@@ -872,16 +1011,18 @@ def test_docstring_registra_por_que_as_colunas_ressalvadas_ficam_fora() -> None:
 # --------------------------------------------------------------------------- #
 # CA-11 — contrato de 20 colunas e `_assert_schema_score`
 # --------------------------------------------------------------------------- #
-def test_schema_22_colunas_em_ordem_e_dtypes(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
+def test_schema_24_colunas_em_ordem_e_dtypes(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
     churn, presenca = _insumos(serie_madura_s3_s4)
     out = calcular_score_vulnerabilidade(churn=churn, presenca=presenca)
     assert list(out.columns) == list(c.CONTRATO_COLUNAS_SCORE.keys())
-    # 20 -> 22 no BLK-MA-09 / DEC-026. Os dois novos sao FATOS, nao componentes: nao ha `v2`,
-    # e `n_sinais_disponiveis` continua limitado a 3.
-    assert len(list(out.columns)) == 22
+    # 20 -> 22 no BLK-MA-09 / DEC-026 (dois FATOS de rating); 22 -> 24 no BLK-MA-12 (`v6` e a
+    # pressao que o audita). Sem insumo de pressao, `v6` sai NULO e `n_sinais_disponiveis`
+    # continua limitado a 3 — a chamada acima nao passa `pressao=`.
+    assert len(list(out.columns)) == 24
     assert "v2" not in out.columns
     assert out["nota_wellhub"].dtype == "Float64"
     assert out["qtd_avaliacoes_wellhub"].dtype == "Int64"
+    assert out["v6"].isna().all(), "sem insumo de pressao, o S6 nao existe na linha"
     assert int(out["n_sinais_disponiveis"].max()) <= 3
     assert (out["versao_contrato"] == c.VERSAO_CONTRATO_SCORE).all()
     # `Int64` NULÁVEL, não `int64`: a linha sem par no sinal 1 precisa carregar nulo.

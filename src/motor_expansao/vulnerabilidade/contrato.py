@@ -39,7 +39,7 @@ from datetime import date
 VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v3"
 VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
-VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v2"
+VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v3"
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
 H3_RES_CONTRATO = 7
@@ -301,12 +301,33 @@ CONTRATO_COLUNAS_PRESENCA_AGREGADOR: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # ORDEM CANÔNICA do `sinais_disponiveis` (molde de domínio-tupla: `STATUS_CHURN_VALIDOS`).
 # A string é montada iterando ESTA tupla, nunca um `set` nem as chaves de um dict.
-SINAIS_ORDEM: tuple[str, ...] = ("s1", "s2", "s3", "s4")
+SINAIS_ORDEM: tuple[str, ...] = ("s1", "s2", "s3", "s4", "s6")
 
-# Pesos-alvo do D4 (gate de produto de 2026-07-23). CONGELADOS: somam 1,00 e só mudam com novo
-# gate. Os pesos EFETIVOS do Plano B (~0,20 / ~0,467 / ~0,333) são CONSEQUÊNCIA de S2 estar
-# inativo e são calculados por `renormalizar_pesos` — jamais digitados em lugar algum.
-PESOS_ALVO_SINAIS: dict[str, float] = {"s1": 0.15, "s2": 0.25, "s3": 0.35, "s4": 0.25}
+# Pesos-alvo. S1..S4 são os do D4 (gate de produto de 2026-07-23) e seguem **CONGELADOS e
+# INTOCADOS** — este bloco os lê, nunca os altera. S6 entra POR CIMA (BLK-MA-12), e a soma-alvo
+# passa de 1,00 para 1,10.
+#
+# **A soma deixar de ser 1,00 é inócua, e isso é uma propriedade de `renormalizar_pesos`, não uma
+# licença:** ela divide pela soma dos sinais PRESENTES, nunca pelo total do dicionário. Logo o peso
+# efetivo de qualquer regime que não contenha `s6` é **exatamente o mesmo de antes** — o Plano B
+# segue `0,20 / 0,4667 / 0,3333`, travado por teste. Foi essa a razão de acrescentar S6 em vez de
+# adotar o conjunto ilustrativo de 6 sinais do §8.3 (`S1=0,12 · S3=0,28 · S4=0,20 · S6=0,10`):
+# aquele conjunto REPESA S1..S4, o que exigiria reabrir o gate de 2026-07-23 e deslocaria o ranking
+# de todas as linhas, inclusive as que não têm pressão medida.
+#
+# `s6` NÃO está em `SINAIS_INATIVOS`: diferente do `s2` (que não tem dado nenhum), o S6 é
+# calculável hoje. O que decide a disponibilidade dele é a presença do INSUMO na chamada — ver
+# `_regra_de_disponibilidade` em `score.py`.
+PESOS_ALVO_SINAIS: dict[str, float] = {
+    "s1": 0.15,
+    "s2": 0.25,
+    "s3": 0.35,
+    "s4": 0.25,
+    "s6": 0.10,
+}
+
+# Pesos do D4 isolados, para o teste provar que o S6 não os tocou.
+PESOS_ALVO_D4: dict[str, float] = {"s1": 0.15, "s2": 0.25, "s3": 0.35, "s4": 0.25}
 
 # S2 (rating in-app) é `n/d` PERMANENTE no Plano B (contrato §7 / D3) até o BLK-MA-08 ajustar o
 # coletor. Reativar o sinal 2 é remover UMA entrada desta tupla — a fórmula do score não muda.
@@ -342,8 +363,12 @@ CONTRATO_COLUNAS_SCORE: dict[str, str] = {
     "v1": "float64",  # componente do S1; {0.0, 0.5} ou nulo
     "v3": "float64",  # componente do S3; {0.0, 0.7, 1.0} ou nulo
     "v4": "float64",  # componente do S4; [0, 1] ou nulo
+    "v6": "float64",  # componente do S6; [0, 1) ou nulo se o insumo nao veio (BLK-MA-12)
+    "pressao_competitiva_no_hex": "Float64",  # auditoria do v6; nulo sse `v6` nulo
     "sinais_disponiveis": "string",  # subconjunto de SINAIS_ORDEM, unido por `,`
-    "n_sinais_disponiveis": "int64",  # 0..3; NAO vai a 4 - o S2 nao tem peso (DEC-026)
+    # 0..4: o S2 nunca conta (DEC-026), mas o S6 conta QUANDO o insumo de pressao e' fornecido
+    # (BLK-MA-12). Sem o insumo, o dominio volta a 0..3 e nada muda em relacao ao v2.
+    "n_sinais_disponiveis": "int64",
     "score_vulnerabilidade": "float64",  # [0, 100]; nulo sse nenhum sinal disponível
     "score_vulnerabilidade_ordenavel": "float64",  # nulo enquanto `flag_score_provisorio` (G-D1)
     "flag_serie_imatura": "bool",  # propagada do churn
@@ -438,11 +463,11 @@ CONTRATO_COLUNAS_ACADEMIAS_MA: dict[str, str] = {
     "hex_quente": "bool",  # o hex da academia satisfaz a conjunção do D5
     "hex_quente_vizinho": "bool",  # algum vizinho `grid_disk(k=1)` e' quente
     "proximo_de_hex_quente": "bool",  # a disjuncao do §9: o proprio OU um vizinho
-    # SINAL 6 (BLK-MA-12) — FATO SEM PESO, fora de `Σ(wi · vi)`. Molde do G-D2 / DEC-026.
-    # Nulo quando o frame de pressão não foi fornecido: ausência de cálculo, não pressão zero.
+    # SINAL 6 (BLK-MA-12) — PROPAGADO do score, onde ele é componente com peso desde que o insumo
+    # de pressão seja fornecido. Esta camada não recalcula nada: só carrega para o entregável.
+    # Nulo quando o score foi calculado sem `pressao=` — ausência de cálculo, não pressão zero.
     "pressao_competitiva_no_hex": "Float64",
-    "v6_no_hex": "Float64",
-    "n_concorrentes_no_raio": "Int64",
+    "v6": "float64",
     "uf": "string",
     "sam_fitness_potencial": "float64",
     "score_oportunidade_residual": "float64",
