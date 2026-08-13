@@ -129,12 +129,15 @@ export function leituraDeAglomeracao(
   const borda = pontos.filter((p) => p.dist >= raioKm - corteKm).length
   const total = pontos.length
 
-  /* A concordância acompanha `perto` — o número de que a frase fala —, e NÃO `total`.
-     Este par estava errado e passou pelos testes: o substantivo concordava com `total`
-     ("1 dos 2 concorrenteS") e o verbo do último ramo era fixo no singular ("Só 2 dos 5
-     ESTÁ"). Frase gerada por regra vai direto para a tela; erro de concordância aqui lê
-     como defeito do produto. */
-  const substantivo = perto === 1 ? 'concorrente' : 'concorrentes'
+  /* Numa partitiva "N dos M …" os dois lados concordam com coisas DIFERENTES: o
+     substantivo é do CONJUNTO (`total`) e o verbo é do subconjunto (`perto`). "1 dos 2
+     concorrentes ESTÁ" — plural no substantivo, singular no verbo.
+
+     Errei isto duas vezes. Primeiro amarrando os dois a `total`; depois "corrigindo" os
+     dois para `perto`, o que manteve o substantivo igualmente errado (o galho singular só
+     dispara quando `perto===1` no ramo de maioria, e ali `total` é forçosamente 2 — ou
+     seja, nunca podia estar certo). Frase gerada por regra vai direto para a tela. */
+  const substantivo = total === 1 ? 'concorrente' : 'concorrentes'
   const verbo = perto === 1 ? 'está' : 'estão'
 
   let frase: string

@@ -464,11 +464,16 @@ export default function HexMap({
           // TETO na cor, e não no clique. O `cenario` cresce além de 5 de propósito — o
           // painel troca para o modo SOMA e ali somar 8 hexágonos é legítimo. Mas a
           // paleta tem 5 cores e `corDeIdentidade` cicla: o 6º hexágono sairia com a cor
-          // idêntica à do 1º, que é exatamente o que a paleta existe para impedir. Acima
-          // do teto o contorno volta ao turquesa neutro de seleção, que não afirma
-          // identidade nenhuma.
+          // idêntica à do 1º, que é exatamente o que a paleta existe para impedir.
+          //
+          // Acima do teto vai um CINZA neutro. Não o turquesa `--ac`: ele é o mesmo
+          // `CRESC_ALTA_HEX` que preenche os hexágonos "Em alta" no passo 4, então usá-lo
+          // aqui faria o contorno de "está no cenário" colidir com um significado que a
+          // camada já dá àquela matiz — no passo 4, um hex do cenário que também fosse
+          // "Em alta" ficaria com contorno e preenchimento da mesma cor. Cinza não afirma
+          // nada, e a largura de 42 m (getLineWidth) já marca a seleção.
           const i = cenarioLista.indexOf(d.id)
-          return i < CORES_IDENTIDADE.length ? corDeIdentidadeRgb(i) : [53, 201, 214, 255]
+          return i < CORES_IDENTIDADE.length ? corDeIdentidadeRgb(i) : [154, 167, 181, 255]
         },
         getLineWidth: (d) => (d.id === selecionado ? 55 : cenarioSet.has(d.id) ? 42 : 6),
         lineWidthUnits: 'meters',

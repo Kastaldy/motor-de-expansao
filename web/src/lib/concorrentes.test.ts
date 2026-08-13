@@ -40,12 +40,15 @@ describe('leituraDeAglomeracao', () => {
     )
   })
 
-  /* Os dois casos abaixo passavam despercebidos: a concordância seguia `total` no
-     substantivo e o verbo do ramo "minoria" era fixo no singular. Os testes de cima
-     acertavam por coincidência (perto=2/total=3 e perto=1/total=4). */
-  it('UM perto entre dois nao sai "1 dos 2 concorrentes estao"', () => {
+  /* Os dois casos abaixo passavam despercebidos: os testes de cima acertavam por
+     coincidência (perto=2/total=3 e perto=1/total=4). O primeiro é o único par em que o
+     verbo cai no singular dentro do ramo de maioria — e é onde a partitiva separa as duas
+     concordâncias: SUBSTANTIVO no plural (são 2 concorrentes) e VERBO no singular (só 1
+     está perto). A primeira versão deste teste congelou "1 dos 2 concorrente está", ou
+     seja, travou o próprio defeito que o título dizia caçar. */
+  it('partitiva: substantivo do conjunto no plural, verbo do subconjunto no singular', () => {
     expect(leituraDeAglomeracao(regua(0.2, 0.9), 1)?.frase).toBe(
-      '1 dos 2 concorrente está a menos de 333 m: o peso da disputa é perto do imóvel.',
+      '1 dos 2 concorrentes está a menos de 333 m: o peso da disputa é perto do imóvel.',
     )
   })
 
