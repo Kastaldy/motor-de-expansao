@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
+import { ESPERA_VOO_MS, comporCanvas, esperaDeCaptura } from '../lib/captura-mapa'
 import { CORES_IDENTIDADE, corDeIdentidadeRgb } from '../lib/comparacao'
 import { alunos, brl, num } from '../lib/format'
 import {
@@ -222,6 +223,13 @@ export interface HexMapProps {
    * depois de arrastar o mapa e' um gesto legitimo, e comparar so' o id nao dispararia.
    */
   voarPara?: { hexId: string; n: number } | null
+  /**
+   * Pedido de CAPTURA: voa até cada hexágono da lista, na ordem, e devolve uma imagem por
+   * enquadramento. O `n` que só cresce segue a mesma razão do `voarPara`.
+   */
+  pedidoCaptura?: { hexIds: string[]; n: number } | null
+  /** As imagens, na ordem pedida. Entrada vazia = aquele hexágono não estava carregado. */
+  onCapturas?: (imagens: string[]) => void
   searchPin: SearchPin | null
   /**
    * Camera preservada de uma visita anterior ao mapa (ida e volta pela Viabilidade).
@@ -260,6 +268,8 @@ export default function HexMap({
   cenario,
   onSelecionar,
   voarPara = null,
+  pedidoCaptura = null,
+  onCapturas,
   searchPin,
   raio1km = false,
   cobertura1k,
@@ -383,6 +393,61 @@ export default function HexMap({
       transitionInterpolator: FLY,
     }))
   }, [voarPara, hexes])
+
+  /* CAPTURA do mapa, um enquadramento por hexágono (pedido do Juan, 2026-08-13).
+     Mesmo idioma do `voarPara`: contador que só cresce, para dar para pedir a mesma
+     sequência duas vezes.
+
+     O `preserveDrawingBuffer` entra SÓ AQUI. Ele é obrigatório para `toDataURL` não
+     devolver imagem em branco — o navegador descarta o buffer depois de pintar —, mas
+     custa desempenho em TODO frame, e o mapa é arrastado o tempo todo. Ligá-lo de forma
+     permanente cobraria de quem só navega, para servir a um print que acontece uma vez.
+     Trocar o flag exige recriar o contexto WebGL, e é o que a `key` do DeckGL faz. */
+  const [capturando, setCapturando] = useState(false)
+  const capturaAnterior = useRef(pedidoCaptura?.n ?? 0)
+  useEffect(() => {
+    if (!pedidoCaptura || pedidoCaptura.n === capturaAnterior.current) return
+    capturaAnterior.current = pedidoCaptura.n
+    let cancelado = false
+    const pausa = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+    void (async () => {
+      setCapturando(true)
+      // Espera o remount COM o buffer preservado antes do primeiro voo; sem isto a
+      // primeira imagem sairia branca e as outras quatro certas, que é o pior dos mundos
+      // (parece defeito do hexágono, não da captura).
+      await pausa(500)
+
+      const imagens: string[] = []
+      for (const hexId of pedidoCaptura.hexIds) {
+        if (cancelado) return
+        const alvo = hexes.find((h) => h.id === hexId)
+        if (!alvo) {
+          imagens.push('')
+          continue
+        }
+        setView((v) => ({
+          ...v,
+          longitude: alvo.lng,
+          latitude: alvo.lat,
+          zoom: 13.2,
+          transitionDuration: ESPERA_VOO_MS,
+          transitionInterpolator: FLY,
+        }))
+        await pausa(esperaDeCaptura())
+        if (cancelado) return
+        const canvases = Array.from(caixaRef.current?.querySelectorAll('canvas') ?? [])
+        imagens.push(comporCanvas(canvases, document.createElement('canvas')) ?? '')
+      }
+
+      setCapturando(false)
+      if (!cancelado) onCapturas?.(imagens)
+    })()
+
+    return () => {
+      cancelado = true
+    }
+  }, [pedidoCaptura, hexes, onCapturas])
 
   // Cor da camada ativa: veste o "score forte" do tooltip e a borda do rotulo de
   // rank. Os dois dizem "isto e' da camada N" — antes diziam em turquesa, a mesma
@@ -763,6 +828,11 @@ export default function HexMap({
           'radial-gradient(120% 90% at 46% 42%, var(--bg-lift) 0%, var(--bg-base) 76%)',
       }}
     >
+      {/* O DeckGL NÃO precisa de flag: no deck.gl v9 o `preserveDrawingBuffer` já é `true`
+          por padrão (está escrito nos próprios tipos), então o canvas das camadas sempre
+          foi capturável. Quem descarta o buffer é o BASEMAP — o MapLibre v5 usa
+          `preserveDrawingBuffer: false` por padrão. Só ele é recriado na captura, o que
+          torna o custo bem menor do que trocar o contexto dos dois. */}
       <DeckGL
         viewState={view}
         onViewStateChange={(e) => setView(e.viewState as ViewState)}
@@ -771,7 +841,16 @@ export default function HexMap({
         style={{ position: 'absolute', top: '0', left: '0', width: '100%', height: '100%' }}
         getCursor={({ isHovering }) => (isHovering ? 'pointer' : 'grab')}
       >
-        <Map mapStyle={BASEMAP_STYLE} attributionControl={{ compact: true }} reuseMaps />
+        {/* A `key` muda com `capturando` porque atributo de contexto WebGL não se troca num
+            contexto já criado — só recriando. E `reuseMaps` sai de cena junto: reaproveitar
+            a instância devolveria o canvas antigo, sem o buffer, e a imagem sairia branca. */}
+        <Map
+          key={capturando ? 'captura' : 'normal'}
+          mapStyle={BASEMAP_STYLE}
+          attributionControl={{ compact: true }}
+          reuseMaps={!capturando}
+          canvasContextAttributes={{ preserveDrawingBuffer: capturando }}
+        />
 
       </DeckGL>
 
