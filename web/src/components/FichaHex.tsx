@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 import type { CrescimentoMunicipio } from '../lib/oportunidades'
-import { alunos, brl, num, pct } from '../lib/format'
+import { alunos, brl, num, pctVar } from '../lib/format'
 import type { Hex } from '../lib/types'
 import { FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from '../lib/faixas'
 import { BarraMercado, FilaApoio, MedidorScore, NumeroApoio } from './LeiturasVisuais'
@@ -136,9 +136,13 @@ export default function FichaHex({
           motivo, nunca desaparece em silêncio. */}
       {(hex.cres_hex_classe || hex.cres_hex_taxa != null || cres) && (
         <Bloco titulo="Como a região vem indo" nota={hex.mun ? `obra nova aqui · emprego em ${hex.mun}` : undefined}>
+          {/* Sinal EXPLICITO nas duas taxas deste bloco (`pctVar`). São VARIAÇÃO, não
+              participação: sem o `+`, "8,8%" não diz se a cidade cresceu ou se aquilo é
+              um patamar — e o bloco inteiro existe para responder "como a região vem
+              indo". O negativo já vinha; o positivo é que era mudo. */}
           <Kpi
             label="Obra nova (2016→2023)"
-            valor={hex.cres_hex_taxa == null ? '—' : pct(hex.cres_hex_taxa)}
+            valor={pctVar(hex.cres_hex_taxa)}
             sub={hex.cres_hex_classe ?? undefined}
           />
           {/* O CAGED só é publicado com a mediana da UF ao lado: sem referência estadual
@@ -146,11 +150,11 @@ export default function FichaHex({
               Aqui isso vira "—" com o motivo por extenso, em vez de um número solto. */}
           <Kpi
             label="Emprego formal (município)"
-            valor={cres?.emp == null || cres?.uf_mediana == null ? '—' : pct(cres.emp)}
+            valor={cres?.emp == null || cres?.uf_mediana == null ? '—' : pctVar(cres.emp)}
             sub={
               cres?.uf_mediana == null
                 ? 'sem mediana da UF para comparar'
-                : `mediana da UF: ${pct(cres.uf_mediana)}`
+                : `mediana da UF: ${pctVar(cres.uf_mediana)}`
             }
           />
         </Bloco>

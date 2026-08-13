@@ -57,6 +57,27 @@ export function pctFrac(v: number | null | undefined, casas = 1): string {
 }
 
 /**
+ * Percentual de VARIACAO, com o sinal sempre explicito: `+8,8%`, `-3,1%`, `0,0%`.
+ *
+ * Existe porque `pct` serve a duas familias que se leem diferente. Numa PARTICIPACAO
+ * (margem, share, conversao, mix) o valor e' um pedaco de um todo e o `+` viraria ruido —
+ * "margem +18%" nao quer dizer nada. Numa VARIACAO (crescimento de emprego, obra nova,
+ * desvio contra a media da rede) o sinal E' a informacao: sem ele, "8,8%" fica ambiguo,
+ * porque o leitor nao sabe se a cidade CRESCEU 8,8% ou se aquilo e' um patamar.
+ *
+ * O negativo ja' vinha do `Intl`; o que faltava era tornar o positivo VISIVEL. Zero nao
+ * recebe sinal — `+0,0%` afirmaria um crescimento que nao houve.
+ *
+ * Estava improvisado em dois lugares (`exec/FichaUnidade` e `exec/PainelRede`) com o mesmo
+ * `v > 0 ? '+' : ''` colado a mao. Virou funcao para o terceiro caso nao repetir a conta
+ * nem divergir na casa decimal.
+ */
+export function pctVar(v: number | null | undefined, casas = 1): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return TEXTO_SEM_DADO
+  return `${v > 0 ? '+' : ''}${pct(v, casas)}`
+}
+
+/**
  * Rotulo de um mes da linha do tempo do motor (M-4..M+60). Mes negativo e
  * pre-abertura (obra); a partir de 1 e operacao. Nao existe mes 0.
  */
