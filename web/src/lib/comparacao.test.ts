@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DIMENSOES,
   MAX_DIMENSOES_NA_FRASE,
+  blocosPorParametro,
   compararComFrase,
   compararHexes,
 } from './comparacao'
@@ -23,6 +24,96 @@ function hex(over: Partial<Hex> = {}): Hex {
     ...over,
   } as Hex
 }
+
+describe('blocosPorParametro', () => {
+  const bloco = (blocos: ReturnType<typeof blocosPorParametro<Hex>>, chave: string) =>
+    blocos.find((b) => b.dimensao.chave === chave)!
+
+  it('poe TODOS os itens dentro de cada parametro, na ordem da lista', () => {
+    const b = blocosPorParametro(DIMENSOES, [
+      hex({ oferta: 1000 }),
+      hex({ oferta: 5000 }),
+      hex({ oferta: 3000 }),
+    ])
+    expect(bloco(b, 'oferta').valores.map((v) => v.valor)).toEqual([1000, 5000, 3000])
+    expect(bloco(b, 'oferta').valores.map((v) => v.indice)).toEqual([0, 1, 2])
+  })
+
+  it('destaca melhor e pior do parametro, sem ordenar a lista', () => {
+    const b = bloco(
+      blocosPorParametro(DIMENSOES, [
+        hex({ oferta: 1000 }),
+        hex({ oferta: 5000 }),
+        hex({ oferta: 3000 }),
+      ]),
+      'oferta',
+    )
+    expect(b.melhores).toEqual([1])
+    expect(b.piores).toEqual([0])
+  })
+
+  it('inverte o lado vencedor onde MENOS e melhor (concorrentes)', () => {
+    const b = bloco(
+      blocosPorParametro(DIMENSOES, [hex({ conc: 9 }), hex({ conc: 1 }), hex({ conc: 5 })]),
+      'conc',
+    )
+    expect(b.melhores).toEqual([1])
+    expect(b.piores).toEqual([0])
+  })
+
+  it('empate mantem TODOS os empatados, sem desempatar pela ordem da lista', () => {
+    const b = bloco(
+      blocosPorParametro(DIMENSOES, [
+        hex({ oferta: 5000 }),
+        hex({ oferta: 5000 }),
+        hex({ oferta: 1000 }),
+      ]),
+      'oferta',
+    )
+    expect(b.melhores).toEqual([0, 1])
+    expect(b.piores).toEqual([2])
+  })
+
+  it('todos iguais nao tem melhor nem pior — seria pintar a tela inteira de destaque', () => {
+    const b = bloco(
+      blocosPorParametro(DIMENSOES, [hex({ oferta: 5000 }), hex({ oferta: 5000 })]),
+      'oferta',
+    )
+    expect(b.melhores).toEqual([])
+    expect(b.piores).toEqual([])
+    expect(b.relevante).toBe(false)
+  })
+
+  it('diferenca abaixo do limiar destaca, mas nao vira relevante', () => {
+    // 1 concorrente contra 2 e +100%, e nao significa quase nada.
+    const b = bloco(blocosPorParametro(DIMENSOES, [hex({ conc: 1 }), hex({ conc: 2 })]), 'conc')
+    expect(b.melhores).toEqual([0])
+    expect(b.relevante).toBe(false)
+  })
+
+  it('ausente entra como null e nao compete pelo destaque', () => {
+    const b = bloco(
+      blocosPorParametro(DIMENSOES, [
+        hex({ oferta: null }),
+        hex({ oferta: 5000 }),
+        hex({ oferta: 1000 }),
+      ]),
+      'oferta',
+    )
+    expect(b.valores[0].valor).toBeNull()
+    expect(b.melhores).toEqual([1])
+    expect(b.piores).toEqual([2])
+  })
+
+  it('com menos de dois valores comparaveis nao ha o que destacar', () => {
+    const b = bloco(
+      blocosPorParametro(DIMENSOES, [hex({ oferta: 5000 }), hex({ oferta: null })]),
+      'oferta',
+    )
+    expect(b.melhores).toEqual([])
+    expect(b.relevante).toBe(false)
+  })
+})
 
 describe('DIMENSOES', () => {
   it('segue a ordem de prioridade combinada', () => {

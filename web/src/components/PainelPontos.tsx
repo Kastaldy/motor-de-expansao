@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react'
 
+import BlocosComparacao from './BlocosComparacao'
 import CampoPonto from './CampoPonto'
-import Select from './Select'
 import TabelaComparacao from './TabelaComparacao'
 import { Botao, Glass } from './primitives'
 import type { EntradaClassificada } from '../lib/entrada-ponto'
+import { type BlocoParametro, blocosPorParametro } from '../lib/comparacao'
 import {
+  DIMENSOES_PONTO,
   MAX_PONTOS,
   compararPontos,
   corDoPonto,
@@ -45,25 +47,25 @@ export default function PainelPontos({
   carregando: boolean
   erro: string | null
 }) {
-  const [a, setA] = useState(0)
-  const [b, setB] = useState(1)
   /** O campo de colar aberto aqui dentro, ao lado do botão que o pediu. */
   const [adicionando, setAdicionando] = useState(false)
+  /** O botão de relatório existe; o PDF ainda não. Ver a nota que ele abre. */
+  const [pedidoRelatorio, setPedidoRelatorio] = useState(false)
 
   /* Rotulos da LISTA, nao de cada ponto isolado: dois enderecos da mesma cidade sem
      bairro resolvido tinham o mesmo nome, e as abas, os seletores e as duas colunas da
      tabela ficavam indistinguiveis. */
   const rotulos = useMemo(() => rotulosDosPontos(fichas), [fichas])
 
-  // Com 3+ pontos o operador escolhe o par; com 2 nao ha o que escolher.
-  const iA = Math.min(a, fichas.length - 1)
-  const iB = Math.min(b, fichas.length - 1)
+  const blocos = useMemo(
+    () => blocosPorParametro(DIMENSOES_PONTO, fichas),
+    [fichas],
+  ) as BlocoParametro<unknown>[]
+
+  // A prosa comparativa só com DOIS pontos — ver a nota no JSX.
   const comparacao = useMemo(
-    () =>
-      fichas.length >= 2 && iA !== iB
-        ? compararPontos(fichas[iA], fichas[iB], rotulos[iA], rotulos[iB])
-        : null,
-    [fichas, iA, iB, rotulos],
+    () => (fichas.length === 2 ? compararPontos(fichas[0], fichas[1], rotulos[0], rotulos[1]) : null),
+    [fichas, rotulos],
   )
 
   return (
@@ -183,42 +185,51 @@ export default function PainelPontos({
             </span>
           </div>
 
-          {/* Seletores só com 3+: com dois pontos não há par a escolher. */}
-          {fichas.length > 2 && (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <Select
-                label="Primeiro ponto"
-                value={String(iA)}
-                onChange={(v) => setA(Number(v))}
-                maxWidth={170}
-                options={rotulos.map((r, i) => ({ value: String(i), label: r }))}
-              />
-              <Select
-                label="Segundo ponto"
-                value={String(iB)}
-                onChange={(v) => setB(Number(v))}
-                maxWidth={170}
-                options={rotulos.map((r, i) => ({ value: String(i), label: r }))}
+          {/* BLOCO POR PARÂMETRO, com TODOS os pontos dentro (pedido do Juan,
+              2026-08-13). Substitui o par A x B como leitura principal: com 5 pontos são
+              10 pares, e "qual tem mais residual?" virava varredura. Aqui cada parâmetro
+              responde sozinho, e o seletor de par deixa de ser necessário — foi ele que
+              segurava o teto em 4 pontos. */}
+          <BlocosComparacao
+            blocos={blocos}
+            rotulos={rotulos}
+            cor={corDoPonto}
+            onRelatorio={() => setPedidoRelatorio(true)}
+          />
+
+          {/* O veredito em prosa vive na tabela A x B, e ela só faz sentido com DOIS
+              pontos: com três ou mais, "X é o melhor" precisaria de um critério que some
+              parâmetros — score novo, que exige DEC. Então some em vez de mentir. */}
+          {fichas.length === 2 && comparacao && (
+            <div style={{ paddingTop: 4 }}>
+              <TabelaComparacao
+                comparacao={comparacao}
+                rotuloA={rotulos[0]}
+                rotuloB={rotulos[1]}
+                corA={corDoPonto(0)}
+                corB={corDoPonto(1)}
               />
             </div>
           )}
 
-          {comparacao ? (
-            <TabelaComparacao
-              comparacao={comparacao}
-              rotuloA={rotulos[iA]}
-              rotuloB={rotulos[iB]}
-              corA={corDoPonto(iA)}
-              corB={corDoPonto(iB)}
-            />
-          ) : (
-            <p style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
-              Escolha dois pontos diferentes para comparar.
+          {pedidoRelatorio && (
+            <p
+              style={{
+                margin: 0,
+                padding: '9px 11px',
+                borderRadius: 'var(--r-md)',
+                border: '1px dashed var(--ac-a25)',
+                font: '400 11.5px/1.5 var(--f-ui)',
+                color: 'var(--tx-narrative)',
+              }}
+            >
+              O relatório em PDF desta comparação ainda não é gerado — o botão está aqui
+              para o fluxo ficar de pé enquanto o formato é definido.
             </p>
           )}
 
           <p style={{ font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
-            Cada leitura sai do raio de {num((fichas[iA]?.raio_km ?? 1) * 1000)} m em torno do
+            Cada leitura sai do raio de {num((fichas[0]?.raio_km ?? 1) * 1000)} m em torno do
             ponto — a mesma régua do Relatório Pontual.
           </p>
         </Glass>

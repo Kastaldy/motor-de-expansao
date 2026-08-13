@@ -1037,7 +1037,14 @@ export default function MapScreen({
         recuoInferior={96}
       >
         {hexSelecionado && (
-          <FichaHex hex={hexSelecionado} cres={cresMunDoHex} />
+          <FichaHex
+            hex={hexSelecionado}
+            cres={cresMunDoHex}
+            /* `comparar` já põe na lista E liga o modo cenário — sem isso o hexágono
+               entraria marcado e o painel de comparação ficaria escondido. */
+            onComparar={() => comparar(hexSelecionado.id)}
+            emComparacao={cenario.includes(hexSelecionado.id)}
+          />
         )}
       </JanelaFicha>
 

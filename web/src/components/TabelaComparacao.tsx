@@ -1,4 +1,4 @@
-import { num } from '../lib/format'
+import { valorComUnidade } from '../lib/format'
 import type { Comparacao } from '../lib/comparacao'
 
 /**
@@ -53,8 +53,8 @@ export default function TabelaComparacao<T>({
             <Linha
               key={d.dimensao.chave}
               rotulo={d.dimensao.rotulo}
-              a={formatar(d.a, d.dimensao.unidade)}
-              b={formatar(d.b, d.dimensao.unidade)}
+              a={valorComUnidade(d.a, d.dimensao.unidade)}
+              b={valorComUnidade(d.b, d.dimensao.unidade)}
               ganhaA={!indisponivel && d.relevante && d.vencedor === 'a'}
               ganhaB={!indisponivel && d.relevante && d.vencedor === 'b'}
               // Diferenca abaixo do limiar aparece, mas apagada: o numero continua
@@ -216,12 +216,6 @@ function fracao(valor: number | null, outro: number | null): number | null {
   return Math.abs(valor) / teto
 }
 
-/** `null` vira o travessão de `num`, nunca "R$ —" nem "0". */
-function formatar(v: number | null, unidade: string): string {
-  if (v == null) return num(v)
-  if (unidade === 'R$') return `R$ ${num(v)}`
-  if (unidade === '%') return `${num(v, 1)}%`
-  // Pontos percentuais podem ser negativos e o sinal e' a informacao.
-  if (unidade === 'p.p.') return `${v > 0 ? '+' : ''}${num(v, 1)} p.p.`
-  return num(v)
-}
+/* `formatar` virou `valorComUnidade` em `lib/format`: os blocos por parametro escrevem os
+   MESMOS numeros, e duplicar a funcao faria as duas telas divergirem na primeira mudanca
+   de casa decimal. */

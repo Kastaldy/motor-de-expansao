@@ -27,10 +27,16 @@ import { Chip, Eyebrow, Kpi } from './primitives'
 export default function FichaHex({
   hex,
   cres,
+  onComparar,
+  emComparacao = false,
 }: {
   hex: Hex
   /** Crescimento do MUNICÍPIO do hexágono (`MapaResposta.cres_mun`), quando houver. */
   cres?: CrescimentoMunicipio | null
+  /** Põe ESTE hexágono na comparação e liga o modo cenário. Ausente = o botão não aparece. */
+  onComparar?: () => void
+  /** Já está na lista de comparação — o botão vira "tirar". */
+  emComparacao?: boolean
 }) {
   return (
     <div style={{ display: 'grid', gap: 16 }}>
@@ -66,6 +72,32 @@ export default function FichaHex({
           >
             Abrir o centro no Google Maps ↗
           </a>
+          {/* COMPARAR A PARTIR DAQUI (pedido do Juan, 2026-08-13). A comparação já
+              existia, mas só se alcançava entrando no modo cenário ANTES de escolher — ou
+              seja, quem já estava lendo uma ficha tinha de sair dela e recomeçar. O botão
+              põe este hexágono na lista e liga o modo; o próximo clique no mapa entra como
+              o segundo, e a comparação aparece sozinha. */}
+          {onComparar && (
+            <button
+              type="button"
+              onClick={onComparar}
+              title={
+                emComparacao
+                  ? 'Tira este hexágono da comparação'
+                  : 'Põe este hexágono na comparação — clique em outro no mapa para comparar os dois'
+              }
+              style={{
+                padding: '4px 9px',
+                borderRadius: 999,
+                border: `1px solid ${emComparacao ? 'var(--ac)' : 'var(--line-soft)'}`,
+                background: emComparacao ? 'var(--ac-a15)' : 'var(--surf-raised)',
+                color: emComparacao ? 'var(--ac-text)' : 'var(--tx-soft)',
+                font: '600 11px/1 var(--f-ui)',
+              }}
+            >
+              {emComparacao ? '− Tirar da comparação' : '+ Comparar com outro'}
+            </button>
+          )}
         </div>
       </div>
 

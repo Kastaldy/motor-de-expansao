@@ -163,6 +163,83 @@ export function compararHexes(a: Hex, b: Hex): Delta<Hex>[] {
   return comparar(DIMENSOES, a, b)
 }
 
+/** O valor de UM item dentro do bloco de um parametro. */
+export interface ValorNoBloco {
+  /** Indice na lista recebida — e' por ele que a tela acha a cor e o rotulo do item. */
+  indice: number
+  valor: number | null
+}
+
+/** Um parametro, com TODOS os itens dentro dele. */
+export interface BlocoParametro<T = Hex> {
+  dimensao: Dimensao<T>
+  valores: ValorNoBloco[]
+  /** Indices que ganham este parametro. Empate mantem todos os empatados. */
+  melhores: number[]
+  /** Indices que perdem. Vazio quando so' ha' um valor comparavel. */
+  piores: number[]
+  /** Passou dos dois limiares entre o melhor e o pior? */
+  relevante: boolean
+}
+
+/**
+ * Vira a comparacao de lado: um BLOCO POR PARAMETRO, com todos os itens dentro.
+ *
+ * POR QUE EXISTE (pedido do Juan, 2026-08-13). A tabela A x B obriga a escolher um par
+ * antes de comparar — com 5 pontos na tela sao 10 pares, e a pergunta "qual e' o melhor em
+ * residual?" exige percorrer todos. Por parametro, a resposta esta' num bloco so'.
+ *
+ * DESTACA MELHOR E PIOR, E NAO RANQUEIA A LISTA (decisao do Juan). Uma ordenacao geral
+ * exigiria somar os parametros num numero unico — isso e' SCORE NOVO, e peso entre camadas
+ * do M1 so' muda por DEC. Aqui cada parametro diz quem ganha NELE, e a leitura de conjunto
+ * fica com quem decide, que e' onde ela deve ficar.
+ *
+ * EMPATE MANTEM TODOS. Com dois pontos de residual identico, eleger um "melhor" pela ordem
+ * da lista seria inventar desempate que o dado nao tem.
+ *
+ * `relevante` usa os MESMOS dois limiares de `comparar`, medidos entre o melhor e o pior:
+ * diferenca que nao passa deles continua visivel (auditoria) mas nao vira destaque — 1
+ * concorrente contra 2 e' +100% e nao significa quase nada.
+ */
+export function blocosPorParametro<T>(
+  dims: readonly Dimensao<T>[],
+  itens: readonly T[],
+): BlocoParametro<T>[] {
+  return dims.map((dim) => {
+    const valores: ValorNoBloco[] = itens.map((x, indice) => ({ indice, valor: dim.ler(x) }))
+    const comDado = valores.filter((v): v is { indice: number; valor: number } => v.valor != null)
+
+    if (comDado.length < 2) {
+      return { dimensao: dim, valores, melhores: [], piores: [], relevante: false }
+    }
+
+    const nums = comDado.map((v) => v.valor)
+    const maior = Math.max(...nums)
+    const menor = Math.min(...nums)
+    const vMelhor = dim.maiorEhMelhor ? maior : menor
+    const vPior = dim.maiorEhMelhor ? menor : maior
+
+    const diferenca = maior - menor
+    const escala = Math.max(Math.abs(maior), Math.abs(menor))
+    const desvioRelativo = escala === 0 ? 0 : diferenca / escala
+    const relevante = desvioRelativo >= dim.limiarRelativo && diferenca >= dim.limiarAbsoluto
+
+    // Todos iguais: nao ha' melhor nem pior, so' um patamar comum. Marcar todo mundo de
+    // vencedor pintaria a tela inteira de destaque e nao diria nada.
+    if (vMelhor === vPior) {
+      return { dimensao: dim, valores, melhores: [], piores: [], relevante: false }
+    }
+
+    return {
+      dimensao: dim,
+      valores,
+      melhores: comDado.filter((v) => v.valor === vMelhor).map((v) => v.indice),
+      piores: comDado.filter((v) => v.valor === vPior).map((v) => v.indice),
+      relevante,
+    }
+  })
+}
+
 /** Quantas dimensoes cabem numa frase antes de ela virar tabela em prosa. */
 export const MAX_DIMENSOES_NA_FRASE = 3
 

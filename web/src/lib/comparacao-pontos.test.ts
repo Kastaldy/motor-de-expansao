@@ -235,7 +235,17 @@ describe('compararPontos', () => {
 })
 
 describe('MAX_PONTOS', () => {
-  it('teto de 4 — a tabela e de duas colunas', () => {
-    expect(MAX_PONTOS).toBe(4)
+  it('teto de 5 desde 2026-08-13 (pedido do Juan)', () => {
+    // Eram 4 porque a comparacao era a tabela de DUAS colunas e o operador escolhia
+    // pares. Com os blocos por parametro todos os pontos entram no mesmo bloco, a escolha
+    // de par sumiu, e com ela o motivo do teto antigo.
+    expect(MAX_PONTOS).toBe(5)
+  })
+
+  it('nao passa do tamanho da paleta de identidade', () => {
+    // A sexta cor repetiria e duas abas ficariam iguais. Este invariante NAO existia: a
+    // paleta ja' dizia no comentario "cinco porque MAX_PONTOS e' 5" enquanto a constante
+    // valia 4, e nada travava a divergencia.
+    expect(MAX_PONTOS).toBeLessThanOrEqual(CORES_PONTO.length)
   })
 })

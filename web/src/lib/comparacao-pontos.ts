@@ -193,8 +193,16 @@ export function compararPontos(
 /**
  * Teto de pontos na comparacao.
  *
- * Quatro porque a tabela e' de DUAS colunas: acima disso o operador escolhe pares num
- * seletor que ja e' mais trabalho do que colar de novo. E cada ponto custa uma leitura
- * de particao de municipio no servidor.
+ * CINCO desde 2026-08-13 (pedido do Juan). Eram quatro porque a comparacao era a tabela
+ * de DUAS colunas: acima disso o operador escolhia pares num seletor que ja' dava mais
+ * trabalho do que colar de novo. Com os BLOCOS POR PARAMETRO todos os pontos entram no
+ * mesmo bloco e a escolha de par deixa de existir, entao o teto que a tabela impunha caiu.
+ *
+ * Cinco, e nao mais: e' o tamanho da paleta de identidade (`CORES_PONTO`), escolhida para
+ * as cores se distinguirem entre si no fundo escuro — a sexta cor repetiria e duas abas
+ * ficariam iguais. O comentario de la' ja' dizia "cinco porque MAX_PONTOS e' 5"; era o
+ * codigo que estava atrasado em relacao ao proprio desenho.
+ *
+ * Cada ponto ainda custa uma leitura de particao de municipio no servidor.
  */
-export const MAX_PONTOS = 4
+export const MAX_PONTOS = 5

@@ -78,6 +78,24 @@ export function pctVar(v: number | null | undefined, casas = 1): string {
 }
 
 /**
+ * O valor de uma `Dimensao` na unidade dela.
+ *
+ * Vive aqui porque a comparacao passou a ter DOIS desenhos — a tabela A x B e os blocos
+ * por parametro — e os dois precisam escrever o mesmo numero do mesmo jeito. Com a funcao
+ * duplicada, a primeira mudanca de casa decimal faria as duas telas discordarem sobre o
+ * mesmo dado.
+ *
+ * `p.p.` sai assinado: ponto percentual e' VARIACAO, e ali o sinal e' a informacao.
+ */
+export function valorComUnidade(v: number | null, unidade: string): string {
+  if (v == null) return num(v)
+  if (unidade === 'R$') return `R$ ${num(v)}`
+  if (unidade === '%') return `${num(v, 1)}%`
+  if (unidade === 'p.p.') return `${pctVar(v, 1).replace('%', '')} p.p.`
+  return num(v)
+}
+
+/**
  * Rotulo de um mes da linha do tempo do motor (M-4..M+60). Mes negativo e
  * pre-abertura (obra); a partir de 1 e operacao. Nao existe mes 0.
  */
