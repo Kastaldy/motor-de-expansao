@@ -1701,6 +1701,113 @@ definido antes de qualquer código; validação com fixtures sintéticas; READ-O
 
 ---
 
+### BLK-MA-13 — Inclusão VISUAL do score de vulnerabilidade no piloto web
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — põe um score na superfície que o comitê usa para decidir, e o número que existe HOJE não significa o que o rótulo diria (ver "o risco que decide o bloco"). Materializa artefato novo servido pelo piloto e mexe em `web/` (`_DENY_GOVERNANÇA`). **Exige DEC própria** antes do Builder. READ-ONLY sobre o M1. |
+| **Prioridade** | **Pedido de Vinicius (2026-08-13).** Não é caminho crítico do epic: o BLK-MA-06 (cron) continua sendo o que destrava o valor real, porque é ele que faz S3/S4 amadurecerem. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE — DEC própria]` → Builder → QA. |
+| **Status** | **Pendente — escrito em 2026-08-13.** Reconhecimento técnico já feito (front + dado); nenhuma linha de código escrita. |
+| **Depende de** | BLK-MA-12 (S6 no score, concluído 2026-08-13, DEC-027) + BLK-MA-05 (contrato hex-level `CONTRATO_COLUNAS_ALVOS_MA`, concluído 2026-08-13). **Para valer de verdade:** BLK-MA-06 + ~2 meses de série. |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca `web/`, materializa artefato servido em produção, e a saída é decisão comercial. |
+
+**O RISCO QUE DECIDE O BLOCO — ler antes de qualquer estimativa.**
+
+Medido em 2026-08-13 sobre as 19.329 academias independentes reais: no regime que existe hoje
+(`{s1, s6}`), `v1 ≡ 0,5` para **100%** do universo — só o WellHub existe em disco, logo
+`n_agregadores = 1` sempre. O score vira, literalmente:
+
+```
+score = 100 · (0,60 · 0,5 + 0,40 · v6) = 30 + 40 · v6
+```
+
+**O piso `30` é constante e a única coisa que varia é o `v6`.** Portanto **o que um ranking de
+vulnerabilidade ordenaria hoje é pressão competitiva, e nada mais**. Publicar isso rotulado como
+"alvos de M&A" é vender S6 com o rótulo de S3 — e S3 (churn: a academia sumiu do agregador) é o
+sinal de maior peso justamente porque é o proxy real de fechamento/venda.
+
+Isso **não** é argumento para não fazer o bloco; é a razão de o rótulo e a legenda serem entregáveis
+tão duros quanto o código. Duas saídas honestas, e o gate escolhe:
+
+1. **Rotular pelo que é** — a camada se chama *pressão competitiva* enquanto S3/S4 estiverem
+   imaturos, e passa a se chamar *vulnerabilidade* quando a série amadurecer. Zero ambiguidade,
+   custo zero de credibilidade.
+2. **Rotular como vulnerabilidade com selo de provisório** — exige que o selo apareça em TODA
+   superfície onde o número aparecer (mapa, legenda, tooltip, PDF), e a experiência do repo é que
+   selo compete com número e perde.
+
+**O G-D1, e a emenda que Vinicius já aprovou (2026-08-13).**
+`flag_score_provisorio = (~s3) & (~s4)` **não olha o S6**: medido, `score_vulnerabilidade_ordenavel`
+sai **NULA em 19.329 de 19.329 linhas**, e o `_assert_schema_score` exige que seja assim. Um
+`sort_values` devolve `NaN` em tudo — o G-D1 virou o tipo da saída exatamente para impedir ranking
+sobre score provisório. **Decisão tomada:** emendar para `(~s3) & (~s4) & (~s6)`, com a
+justificativa de que o G-D1 mirava o ramp-up só-S1 de DOIS valores e o S6 entrega 2.706. A emenda
+entra na DEC-027 (arquivo próprio) e **não** dispensa a decisão de rótulo acima — ela libera a
+ordenação, não conserta o significado.
+
+**O que o contrato realmente diz (o §10 NÃO é a barreira que parecia).**
+§10, literal: *"Sem overlay de dashboard no MVP **(opcional/futuro)**"* — é **exclusão de escopo**,
+mesmo vocabulário que o contrato usa para o BLK-MA-07 (*"opcional/futuro, gate + DEC próprios"*), não
+proibição de invariante. Construir o overlay é decisão de produto nova.
+**§11 SIM tem proibição dura**, e ela vale integralmente aqui: *"**NUNCA** texto/autor de review nem
+coordenada GPS bruta — a geometria deriva do `hex_id`"*. Consequência concreta: o overlay consome
+**apenas** o artefato hex-level agregado. A variante NOMEADA é permitida só no artefato gitignored —
+e **`gitignored` não é o mesmo que "fora do alcance do piloto"**, já que o backend serve
+`DATA_DIR/outputs` e `DATA_DIR/staging` montados `:ro`. Servir o nomeado por ali colocaria
+nome/endereço de estabelecimento atrás da superfície web, o que o §11 não autoriza.
+
+**O que EXISTE de dado, medido (não estimado).**
+
+| | sem pressão | com pressão |
+|---|---|---|
+| `sinais_disponiveis` | `"s1"` (100%) | `"s1,s6"` (100%) |
+| `score_vulnerabilidade` | **50,0 constante** (1 valor) | **30,0–68,0**, média 41,9 (**2.706** valores) |
+| `score_vulnerabilidade_ordenavel` | NULA (0 de 19.329) | NULA (0 de 19.329) |
+
+Cobertura do S6 no universo de academias: **2.716 de 6.753 hexes (40,2%)** com pressão > 0 — muito
+melhor que os 5,5% da carteira, porque hex de academia independente é urbano e denso. **Este é o
+número que torna o bloco viável;** o 5,5% do docstring do `pressao_competitiva` é de outro universo.
+
+**Reconhecimento do front já feito (2026-08-13) — poupa uma rodada de descoberta.**
+
+- **NÃO existe seletor de camada nem registro central de métricas.** O que troca a métrica no mapa é
+  o **número do passo do funil** (`passo.n`, 1..5), replicado à mão em **~9 lugares** (3 no Python,
+  6 no TS). Não há dropdown "colorir por X".
+- **Custo:** métrica dentro de camada existente = **3 arquivos**; camada nova (passo 6) = **~9
+  arquivos + 2 testes de contrato**.
+- **A régua de 10 faixas já existe e é espelhada byte a byte** entre
+  `dashboard/constants.py:396-407` (`RESIDUAL_SCORE_BANDS`) e `web/src/lib/colors.ts:24-35`
+  (`SCORE_BANDS_HEX`), travada por `tests/contracts/test_faixas_mapa_espelho.py`. Colorir por score
+  de vulnerabilidade **reusa** isso — não inventar escala nova.
+- Pontos-chave: `web/src/components/HexMap.tsx` (`scoreDoPasso`, `fillDoHex`, e o
+  `updateTriggers` **obrigatório** — sem ele trocar de métrica não repinta),
+  `web/src/components/StepperBar.tsx`, `web/src/lib/colors.ts`, `web/src/lib/faixas.ts`,
+  `web/src/components/ScoreLegend.tsx`, `web/server/app.py`.
+
+**O artefato a materializar.** Parquet **hex-level** em `data/outputs/`, no schema
+`CONTRATO_COLUNAS_ALVOS_MA` (já travado por teste). Precedentes de camada paralela servida pelo
+piloto: `crescimento_hex.parquet` e `hexagonos_mercado_mapeado.parquet` (`web/server/app.py:96,245`).
+**Ressalva herdada:** a linha do contrato é `(hex, REGIME)`, não `(hex)` — emenda BLK-MA-05 ao §10.
+Hoje é inofensivo (há um regime só), mas um overlay que pinte "um hex = uma cor" **precisa colapsar
+regimes**, e no dia em que o S3 amadurecer esse colapso mistura réguas em silêncio. O colapso tem de
+ser explícito e testado, não implícito num `groupby`.
+
+**Fora de escopo.** Qualquer artefato/score/peso/ranking do M1 (READ-ONLY, DEC-001); reabrir os pesos
+do D4 ou a DEC-027; a variante NOMEADA (por academia, com identidade) em qualquer superfície web
+(§11); propagar a camada de mercado (bloco próprio); o cron (**BLK-MA-06**); o CSV comercial do D6.
+
+**Critério de aceite.** DEC própria aprovada, decidindo **o rótulo da camada** (pressão competitiva
+vs vulnerabilidade-com-selo) antes de qualquer código; emenda do `flag_score_provisorio` implementada
+com teste que prove que o `ordenavel` deixa de ser universalmente nulo; artefato hex-level
+materializado no schema travado, **sem nenhuma coluna de `COLUNAS_PII_PROIBIDAS`**, provado relendo
+do disco; colapso de regimes explícito e testado; reuso da régua de 10 faixas com o teste de espelho
+verde; legenda que declare o regime e a cobertura (não pintar "sem dado" e "sem pressão" com a mesma
+cor); suíte completa sem regressão (medir a baseline **no momento**); `ruff` limpo; `loop_guard` sem
+`CRÍTICO`.
+
+---
+
 ### BLK-MAPA-CHIP-01 — A etiqueta do ranking volta a discriminar (leitura em unidades)
 
 | Campo | Valor |
