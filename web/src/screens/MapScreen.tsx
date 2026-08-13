@@ -1061,7 +1061,14 @@ export default function MapScreen({
         recuoInferior={96}
       >
         {hexesComparacao ? (
-          <PainelComparacao hexes={hexesComparacao} onLimpar={() => setCenario([])} />
+          <PainelComparacao
+            hexes={hexesComparacao}
+            onLimpar={() => setCenario([])}
+            /* `selecionarDaLista` já é o caminho de "clicou na lista, leve-me lá": ele
+               seleciona e pede o voo. Clicar no mapa continua sem voo, porque lá o
+               hexágono já está sob o cursor. */
+            onIrPara={selecionarDaLista}
+          />
         ) : (
           <div>
             <div style={{ font: '700 12px/1 var(--f-ui)', color: 'var(--tx-max)' }}>

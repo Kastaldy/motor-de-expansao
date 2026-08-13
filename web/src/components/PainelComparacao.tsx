@@ -25,9 +25,12 @@ import type { Hex } from '../lib/types'
 export default function PainelComparacao({
   hexes,
   onLimpar,
+  onIrPara,
 }: {
   hexes: Hex[]
   onLimpar: () => void
+  /** Leva o mapa até o hexágono. Recebe o id, que é o que o mapa conhece. */
+  onIrPara?: (hexId: string) => void
 }) {
   const [pedidoRelatorio, setPedidoRelatorio] = useState(false)
   const rotulos = hexes.map((h, i) => h.mun ?? `Hexágono ${i + 1}`)
@@ -56,6 +59,7 @@ export default function PainelComparacao({
         blocos={blocos}
         rotulos={rotulos}
         cor={corDeIdentidade}
+        onIrPara={onIrPara ? (i) => onIrPara(hexes[i].id) : undefined}
         onRelatorio={() => setPedidoRelatorio(true)}
       />
 

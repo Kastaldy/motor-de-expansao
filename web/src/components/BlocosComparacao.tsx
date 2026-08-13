@@ -20,6 +20,7 @@ export default function BlocosComparacao({
   rotulos,
   cor,
   onRelatorio,
+  onIrPara,
   rotuloRelatorio = 'Gerar relatório da comparação',
 }: {
   blocos: readonly BlocoParametro<unknown>[]
@@ -29,6 +30,14 @@ export default function BlocosComparacao({
   cor?: (i: number) => string
   /** Ausente = o botão não aparece. */
   onRelatorio?: () => void
+  /**
+   * Leva o mapa até o item `i`. Ausente = o nome fica texto morto.
+   *
+   * Com 5 áreas comparadas, o nome sozinho não diz ONDE elas estão — e um hexágono pode
+   * cair em qualquer canto do município. Clicar no nome é o gesto óbvio para achá-lo, e o
+   * voo já existia no mapa; só não havia por onde pedi-lo daqui.
+   */
+  onIrPara?: (indice: number) => void
   rotuloRelatorio?: string
 }) {
   return (
@@ -99,8 +108,28 @@ export default function BlocosComparacao({
                       gap: 9,
                     }}
                   >
+                    {/* O nome vira BOTÃO quando há para onde levar: clicar leva o mapa
+                        até a área. Sem `onIrPara` continua sendo texto — um botão que não
+                        faz nada é pior que rótulo. */}
                     <span
-                      title={rotulos[v.indice]}
+                      role={onIrPara ? 'button' : undefined}
+                      tabIndex={onIrPara ? 0 : undefined}
+                      onClick={onIrPara ? () => onIrPara(v.indice) : undefined}
+                      onKeyDown={
+                        onIrPara
+                          ? (e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault()
+                                onIrPara(v.indice)
+                              }
+                            }
+                          : undefined
+                      }
+                      title={
+                        onIrPara
+                          ? `${rotulos[v.indice]} - clique para ver no mapa`
+                          : rotulos[v.indice]
+                      }
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -108,6 +137,10 @@ export default function BlocosComparacao({
                         font: `${melhor ? 700 : 500} 10.5px/1.3 var(--f-ui)`,
                         color: melhor ? 'var(--tx-max)' : 'var(--tx-muted)',
                         overflow: 'hidden',
+                        cursor: onIrPara ? 'pointer' : undefined,
+                        textDecoration: onIrPara ? 'underline' : undefined,
+                        textDecorationColor: onIrPara ? 'var(--line-soft)' : undefined,
+                        textUnderlineOffset: onIrPara ? 3 : undefined,
                       }}
                     >
                       {cor && (
