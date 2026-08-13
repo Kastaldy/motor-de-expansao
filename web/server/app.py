@@ -417,6 +417,19 @@ def _derivar(df: pd.DataFrame) -> pd.DataFrame:
         else 0
     )
 
+    # Contagem DENTRO do hexagono (ver `_contagem_no_hexagono`). Nao substitui as duas
+    # colunas acima — elas seguem alimentando o mapa, o funil e o ranking, que leem o
+    # modelo de 2 km de proposito. Estas sao o que a FICHA promete: ponto por celula.
+    # `Int64` (nullable) e nao `int64`: base de pontos ausente precisa chegar como NA ate'
+    # o serializador, senao vira zero — que afirmaria "nao ha unidade aqui".
+    n_conc_hex, n_ultra_hex = _contagem_no_hexagono()
+    chave = out["hex_id"].astype(str)
+    for coluna, contagem in (("n_conc_no_hex", n_conc_hex), ("n_ultra_no_hex", n_ultra_hex)):
+        if contagem is None:
+            out[coluna] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        else:
+            out[coluna] = chave.map(contagem).fillna(0).astype("Int64")
+
     # Populacao de leitura, com a mesma precedencia do dashboard.
     for origem in ("populacao_corte_hex", "pop_total_setor_2022", "pop_total"):
         if origem in out.columns:
@@ -485,6 +498,18 @@ def _num(v: Any, casas: int = 0) -> float | None:
     if math.isnan(f) or math.isinf(f):
         return None
     return round(f, casas) if casas else round(f)
+
+
+def _int(v: Any) -> int | None:
+    """Contagem JSON-safe. None/NaN/pd.NA viram None — NUNCA 0.
+
+    Existe separado de `_num` por dois motivos. (1) Numa CONTAGEM, zero e ausencia sao
+    afirmacoes diferentes: `0` diz "nao ha unidade aqui", `None` diz "nao sei" — e a
+    ficha do hexagono declara essa regra no proprio cabecalho. (2) `_num` devolve float,
+    o que faria uma contagem sair como `3.0` no JSON.
+    """
+    f = _num(v)
+    return None if f is None else int(f)
 
 
 # O artefato guarda o identificador sem acento (regra do projeto); a tela mostra
@@ -801,6 +826,48 @@ def _ultra_pontos_mapa() -> pd.DataFrame:
     df = pd.concat(partes, ignore_index=True) if len(partes) > 1 else partes[0]
     df = df.dropna(subset=["lat", "lng"]).drop_duplicates(subset=["lat", "lng"])
     return df[cols].reset_index(drop=True)
+
+
+@functools.lru_cache(maxsize=1)
+def _contagem_no_hexagono() -> tuple[pd.Series | None, pd.Series | None]:
+    """Quantas unidades MAPEADAS caem DENTRO de cada hexagono (H3 res-7).
+
+    POR QUE EXISTE. A ficha do hexagono promete "unidades mapeadas dentro do hexagono",
+    mas mostrava outra coisa: `n_concorrentes_est` e' `oferta_consumida_mercado_estimada
+    / 2.500` — capacidade do modelo de 2 km ponderado por distancia, nao contagem. Uma
+    concorrente a 1,8 km do centroide entrava ali sem estar dentro do hexagono. O mesmo
+    defeito de redacao ja tinha sido corrigido no texto do funil (ver "RAIO, NAO
+    HEXAGONO" em `_texto_passo3`); a ficha ficou para tras. Aqui a contagem passa a ser
+    o que o rotulo diz.
+
+    CONTA OS MESMOS PONTOS QUE O MAPA DESENHA, de proposito: reusa `_carregar_concorrentes`
+    (que ja filtra `flag_coord_valida`) e `_ultra_pontos_mapa` (curada + cadastro). Contar
+    de outra fonte faria a ficha dizer um numero e os pins mostrarem outro na mesma tela.
+
+    As concorrentes ja trazem `hex_id_res7` no parquet — e' a MESMA chave por onde
+    `_montar_pins` seleciona os pins. Os pontos Ultra chegam so' com lat/lng (a curada nao
+    tem a coluna), entao a celula e' derivada com o mesmo `h3` res-7 do M1.
+
+    Devolve `None` (e nao uma serie vazia) quando a base de pontos nao esta montada: o
+    chamador precisa distinguir "nao ha unidade neste hexagono" de "nao sei".
+    """
+    conc = _carregar_concorrentes()
+    n_conc: pd.Series | None = None
+    if len(conc) and "hex_id_res7" in conc.columns:
+        n_conc = conc.groupby(conc["hex_id_res7"].astype(str)).size()
+
+    ultra = _ultra_pontos_mapa()
+    n_ultra: pd.Series | None = None
+    if len(ultra):
+        import h3
+
+        celulas = [
+            h3.latlng_to_cell(float(la), float(ln), 7)
+            for la, ln in zip(ultra["lat"], ultra["lng"], strict=True)
+        ]
+        n_ultra = pd.Series(celulas, name="hex_id_res7").value_counts()
+
+    return n_conc, n_ultra
 
 
 def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
@@ -1842,6 +1909,11 @@ def _hex_dict(r: pd.Series, fator_dom: float | None) -> dict[str, Any]:
         "faixa": _faixa_label(r.get("faixa_oportunidade")),
         "conc": int(r.get("n_concorrentes_est") or 0),
         "ultra": int(r.get("n_ultra") or 0),
+        # CONTAGEM de unidades mapeadas DENTRO do hexagono — o que a ficha promete no
+        # rotulo. Distinto de `conc`/`ultra` acima, que sao o modelo de 2 km e a camada
+        # de performance. `None` (nao 0) quando a base de pontos nao esta montada.
+        "conc_hex": _int(r.get("n_conc_no_hex")),
+        "ultra_hex": _int(r.get("n_ultra_no_hex")),
         # PROTOTIPO da chave de raio. `conc1k` = quantas concorrentes ALCANCAM este hex
         # pelo disco de 1 km (e o que colore o mapa no modo novo); `oferta1k` = o residual
         # sob esse modelo. Ausentes quando o parquet de concorrentes nao esta montado —

@@ -83,10 +83,25 @@ export default function FichaHex({
         </FilaApoio>
       </Bloco>
 
+      {/* CONTAGEM, e do HEXAGONO. Até 2026-08-13 este bloco lia `hex.conc`/`hex.ultra`,
+          que não são nenhuma das duas coisas: `conc` é `oferta_consumida_mercado_estimada
+          / 2.500` — capacidade do modelo de 2 km ponderado por distância —, então uma
+          concorrente a 1,8 km do centroide entrava aqui sem estar dentro do hexágono, e
+          `ultra` vem da camada de performance. O rótulo prometia "unidades mapeadas
+          dentro do hexágono" e entregava outra medida. O mesmo defeito de redação já
+          tinha sido corrigido no texto do funil ("RAIO, NÃO HEXÁGONO", em `app.py`).
+          Agora vem de `conc_hex`/`ultra_hex`, contagem de ponto por célula H3 res-7 sobre
+          os MESMOS pontos que viram pin no mapa — ficha e mapa não podem discordar. */}
       <Bloco titulo="Quem já disputa o aluno" nota="unidades mapeadas dentro do hexágono">
         <FilaApoio>
-          <NumeroApoio rotulo="Concorrentes" valor={num(hex.conc)} />
-          <NumeroApoio rotulo="Unidades Ultra" valor={num(hex.ultra)} />
+          <NumeroApoio
+            rotulo="Concorrentes"
+            valor={hex.conc_hex == null ? '—' : num(hex.conc_hex)}
+          />
+          <NumeroApoio
+            rotulo="Unidades Ultra"
+            valor={hex.ultra_hex == null ? '—' : num(hex.ultra_hex)}
+          />
         </FilaApoio>
       </Bloco>
 
