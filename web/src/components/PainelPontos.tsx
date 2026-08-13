@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 
 import BlocosComparacao from './BlocosComparacao'
 import CampoPonto from './CampoPonto'
-import TabelaComparacao from './TabelaComparacao'
 import { Botao, Glass } from './primitives'
 import type { EntradaClassificada } from '../lib/entrada-ponto'
 import { type BlocoParametro, blocosPorParametro } from '../lib/comparacao'
@@ -197,19 +196,27 @@ export default function PainelPontos({
             onRelatorio={() => setPedidoRelatorio(true)}
           />
 
-          {/* O veredito em prosa vive na tabela A x B, e ela só faz sentido com DOIS
-              pontos: com três ou mais, "X é o melhor" precisaria de um critério que some
-              parâmetros — score novo, que exige DEC. Então some em vez de mentir. */}
+          {/* SÓ A FRASE, e não a tabela A x B inteira. Ela ficou aqui por uma versão e o
+              resultado foi a janela repetir os MESMOS seis parâmetros duas vezes, uma nos
+              blocos e outra na tabela ("ainda está péssima para visualização", Juan,
+              2026-08-13). O que a tabela acrescentava era o veredito em prosa; os números
+              já estão nos blocos, com barra e destaque.
+
+              E o veredito só existe com DOIS pontos: com três ou mais, "X é o melhor"
+              precisaria de um critério que some parâmetros — score novo, que exige DEC.
+              Some em vez de mentir. */}
           {fichas.length === 2 && comparacao && (
-            <div style={{ paddingTop: 4 }}>
-              <TabelaComparacao
-                comparacao={comparacao}
-                rotuloA={rotulos[0]}
-                rotuloB={rotulos[1]}
-                corA={corDoPonto(0)}
-                corB={corDoPonto(1)}
-              />
-            </div>
+            <p
+              style={{
+                margin: 0,
+                paddingTop: 10,
+                borderTop: '1px solid var(--line-soft)',
+                font: '400 11.5px/1.55 var(--f-ui)',
+                color: 'var(--tx-narrative)',
+              }}
+            >
+              {comparacao.frase}
+            </p>
           )}
 
           {pedidoRelatorio && (

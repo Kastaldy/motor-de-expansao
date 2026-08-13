@@ -50,16 +50,17 @@ export default function BlocosComparacao({
         // a barra sumiria justamente na linha que importa.
         const teto = comDado.length ? Math.max(...comDado.map((v) => Math.abs(v.valor!))) : 0
 
+        // SEM caixa por parâmetro. Com seis blocos, borda + fundo em cada um dobra o peso
+        // visual da janela e some a hierarquia — o que separa é o espaço e um fio fino,
+        // não uma moldura repetida seis vezes.
         return (
           <section
             key={b.dimensao.chave}
             style={{
-              padding: '11px 12px',
-              borderRadius: 'var(--r-md)',
-              border: '1px solid var(--line-soft)',
-              background: 'var(--surf-raised)',
+              paddingBottom: 12,
+              borderBottom: '1px solid var(--line-soft)',
               display: 'grid',
-              gap: 8,
+              gap: 7,
             }}
           >
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
@@ -170,7 +171,9 @@ export default function BlocosComparacao({
                       <span
                         className="num"
                         style={{
-                          font: `${melhor ? 700 : 500} 11px/1.3 var(--f-num)`,
+                          /* O NÚMERO é o que se compara; ele cresce em vez de ficar do
+                             tamanho do rótulo. Era 11px e disputava atenção com tudo. */
+                          font: `${melhor ? 700 : 500} 13px/1.2 var(--f-num)`,
                           color: melhor
                             ? 'var(--tx-max)'
                             : b.relevante
