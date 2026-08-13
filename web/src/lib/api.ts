@@ -3,6 +3,7 @@
 import type {
   ExecutivaPayload,
   FaixaAlunos,
+  MePayload,
   MetodologiaPayload,
   MunicipioItem,
   Cobertura1k,
@@ -183,6 +184,10 @@ export function baixar(blob: Blob, filename: string): void {
 
 export const api = {
   health: () => pedir<{ status: string; data_ok: boolean }>('/api/health', {}, 10_000),
+
+  /** Quem sou eu + que abas posso usar (controle temporário de acesso). A SPA
+   *  esconde o que está fora da lista; o bloqueio real é do backend (middleware). */
+  me: () => pedir<MePayload>('/api/me', {}, 10_000),
 
   ufs: () => pedir<{ ufs: string[] }>('/api/ufs'),
 

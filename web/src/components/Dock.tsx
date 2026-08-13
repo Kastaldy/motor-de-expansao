@@ -1,4 +1,5 @@
 import type { Tela } from '../App'
+import { telaLiberada, type Aba, type TelaControlada } from '../lib/acesso'
 
 /* Dock vertical fixo. No piloto so as duas telas do escopo estao ativas; as
    demais aparecem desabilitadas para o operador entender que o mapa e a
@@ -51,10 +52,19 @@ const ITENS: { id: string; tela: Tela | null; titulo: string }[] = [
 export default function Dock({
   tela,
   onTela,
+  abas = null,
 }: {
   tela: Tela
   onTela: (t: Tela) => void
+  /** Abas permitidas ao usuário (controle temporário). `null` = sem controle. */
+  abas?: Set<Aba> | null
 }) {
+  // Ícone de tela vetada SOME em vez de aparecer desabilitado: os desabilitados do
+  // Dock já significam "fora do piloto", e um terceiro estado ("existe mas não para
+  // você") só gastaria a paciência de quem não pode clicar de qualquer jeito.
+  const itens = ITENS.filter(
+    (it) => it.tela === null || telaLiberada(it.tela as TelaControlada, abas),
+  )
   return (
     <nav
       aria-label="Navegação principal"
@@ -107,7 +117,7 @@ export default function Dock({
         />
       </button>
 
-      {ITENS.map((it) => {
+      {itens.map((it) => {
         const ativo = it.tela !== null && it.tela === tela
         const disponivel = it.tela !== null
         return (
