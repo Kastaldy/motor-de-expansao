@@ -18,7 +18,7 @@ import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
-import { DIMENSOES } from '../lib/comparacao'
+import { DIMENSOES, rotulosUnicos } from '../lib/comparacao'
 import type { Cobertura1k, Hex, MunicipioItem, MunicipioPayload } from '../lib/types'
 
 /** Filtro global "melhores hexes": faixas M1 permitidas por nível. */
@@ -420,8 +420,10 @@ export default function MapScreen({
     registrarCaptura?.(capturar)
   }, [registrarCaptura, capturar])
 
+  /* Os MESMOS rótulos do painel, e desambiguados: cinco hexágonos da mesma cidade davam
+     cinco itens "São Paulo" no PDF, indistinguíveis entre si. */
   const rotulosComparacao = useCallback(
-    (hs: Hex[]) => hs.map((h, i) => h.mun ?? `Hexágono ${i + 1}`),
+    (hs: Hex[]) => rotulosUnicos(hs.map((h, i) => h.mun ?? `Hexágono ${i + 1}`)),
     [],
   )
 
@@ -434,7 +436,17 @@ export default function MapScreen({
         const imagens = await capturar(hs.map((h) => h.id))
         const rotulos = rotulosComparacao(hs)
         const ranking = ranquear(DIMENSOES, hs, rotulos)
-        const cidade = hs[0]?.mun ? `${hs[0].mun} - ` : ''
+        /* O subtítulo nomeia a cidade só quando TODAS são da mesma. Na visão de UF o mapa
+           serve 15.000 hexágonos de 163 municípios (medido em SP), então o cenário pode
+           misturar cidades — e usar o município do primeiro fazia a capa afirmar
+           "São Paulo" para um conjunto que tinha só um hexágono de lá. */
+        const cidades = [...new Set(hs.map((h) => h.mun).filter(Boolean))] as string[]
+        const cidade =
+          cidades.length === 1
+            ? `${cidades[0]} - `
+            : cidades.length > 1
+              ? `${cidades.length} municípios - `
+              : ''
         const resposta = await fetch('/api/relatorio/comparacao', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

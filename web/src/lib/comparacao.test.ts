@@ -9,6 +9,7 @@ import {
   compararHexes,
   corDeIdentidade,
   corDeIdentidadeRgb,
+  rotulosUnicos,
 } from './comparacao'
 import type { Hex } from './types'
 
@@ -27,6 +28,43 @@ function hex(over: Partial<Hex> = {}): Hex {
     ...over,
   } as Hex
 }
+
+describe('rotulosUnicos', () => {
+  it('numera os EMPATADOS — cinco hexágonos da mesma cidade eram cinco "São Paulo"', () => {
+    expect(rotulosUnicos(['São Paulo', 'São Paulo', 'São Paulo'])).toEqual([
+      '1 · São Paulo',
+      '2 · São Paulo',
+      '3 · São Paulo',
+    ])
+  })
+
+  it('não numera quem já se distingue', () => {
+    expect(rotulosUnicos(['Osasco', 'Santo André'])).toEqual(['Osasco', 'Santo André'])
+  })
+
+  it('numera SÓ quem empata, preservando o nome de quem é único', () => {
+    expect(rotulosUnicos(['São Paulo', 'Osasco', 'São Paulo'])).toEqual([
+      '1 · São Paulo',
+      'Osasco',
+      '3 · São Paulo',
+    ])
+  })
+
+  it('o número é a POSIÇÃO na lista — é o que casa com a cor e com o mapa', () => {
+    // A cor de identidade sai do índice; se o rótulo numerasse pela ordem do empate, o
+    // "2 · São Paulo" poderia ser o terceiro item, com a cor do terceiro.
+    expect(rotulosUnicos(['A', 'São Paulo', 'São Paulo'])[2]).toBe('3 · São Paulo')
+  })
+
+  it('o resultado nunca tem duas entradas iguais', () => {
+    const r = rotulosUnicos(['X', 'X', 'X', 'X', 'X'])
+    expect(new Set(r).size).toBe(r.length)
+  })
+
+  it('lista vazia sobrevive', () => {
+    expect(rotulosUnicos([])).toEqual([])
+  })
+})
 
 describe('corDeIdentidade', () => {
   it('a versao RGB e a MESMA cor do painel, so que no formato do deck.gl', () => {

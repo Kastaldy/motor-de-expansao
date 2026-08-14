@@ -216,6 +216,25 @@ export function corDeIdentidadeRgb(i: number, alfa = 255): [number, number, numb
   ]
 }
 
+/**
+ * Desambigua rotulos REPETIDOS, numerando so' quem empata.
+ *
+ * POR QUE E' GENERICO. A comparacao de PONTOS ja' resolvia isto (`rotulosDosPontos`), mas
+ * a de HEXAGONOS nunca resolveu: o rotulo dela e' o nome do municipio, e comparar cinco
+ * hexagonos de Sao Paulo produzia cinco itens chamados "Sao Paulo" — na tela, na tabela e
+ * no PDF (relato do Juan, 2026-08-14, ao perguntar se cinco funcionaria). Com nomes iguais
+ * a leitura inteira desmonta: a frase do veredito vira "Sao Paulo e' o melhor, Sao Paulo e'
+ * o pior", e nenhuma barra pode ser ligada ao seu hexagono.
+ *
+ * O numero e' a POSICAO na lista, e nao a ordem do empate: e' assim que o rotulo casa com a
+ * aba, com a cor de identidade e com o contorno no mapa.
+ */
+export function rotulosUnicos(nomes: readonly string[]): string[] {
+  const vezes = new Map<string, number>()
+  for (const n of nomes) vezes.set(n, (vezes.get(n) ?? 0) + 1)
+  return nomes.map((n, i) => ((vezes.get(n) ?? 0) > 1 ? `${i + 1} · ${n}` : n))
+}
+
 /** O valor de UM item dentro do bloco de um parametro. */
 export interface ValorNoBloco {
   /** Indice na lista recebida — e' por ele que a tela acha a cor e o rotulo do item. */
