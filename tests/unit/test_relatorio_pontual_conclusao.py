@@ -291,19 +291,41 @@ def test_e5_constante_de_total_bate_com_a_funcao_real():
     assert len(tudo_zerado) == _CONCLUSAO_METAS_AVALIADAS
 
 
-def test_e5_nao_vale_no_modo_completo():
-    """Escopo fechado por Juan (2026-08-12): o E5 e' do PDF do bot, e so dele.
+def test_e5_vale_nos_dois_modos():
+    """A leitura da PRACA e' a mesma nos dois PDFs (emenda da DEC-030, 2026-08-14).
 
-    O relatorio do piloto web sai EXATAMENTE como antes deste bloco -- as metas seguem
-    rebaixando para "com ressalvas" e quem reprova sao os gates de imovel e retorno.
-    Divergencia conhecida e aceita: o MESMO ponto pode sair reprovado no bot e com
-    ressalvas no web.
+    O E5 nasceu preso ao so-estudo (escopo de Juan, 2026-08-12) e a divergencia era
+    declarada e aceita -- o MESMO ponto saia "Reprovado" no bot e "Aprovado com ressalvas"
+    no piloto. Isso deixou de ser aceitavel quando o selo demografico ganhou vida propria:
+    a praca virou um carimbo VISIVEL, e ele nao pode depender de por qual porta o relatorio
+    saiu. O corte (4 de 6) nao foi remedido nem alterado; so o escopo mudou.
+
+    Este teste e' o inverso exato do `test_e5_nao_vale_no_modo_completo` que existia aqui.
     """
     comum = dict(result=_result_com_n_metas_vermelhas(4))
-    assert _parecer_estudo(**comum).demografico.status == CONCLUSAO_REPROVADO
+    estudo = _parecer_estudo(**comum)
     completo = _parecer(**comum)
-    assert completo.demografico.status == CONCLUSAO_RESSALVAS
-    assert completo.eliminatorios == ()
+    assert estudo.demografico.status == CONCLUSAO_REPROVADO
+    assert completo.demografico.status == CONCLUSAO_REPROVADO
+    # E o eliminatorio e' o MESMO texto nos dois -- nao ha regua paralela.
+    assert estudo.demografico.eliminatorios == completo.demografico.eliminatorios
+    # O eixo financeiro segue intacto: o E5 nao contamina o outro selo.
+    assert _fin(completo).status == CONCLUSAO_APROVADO
+
+
+def test_regua_demografica_e_identica_nos_dois_modos():
+    """Varre os cortes 0..6 e exige o MESMO parecer da praca no bot e no piloto.
+
+    Um teste por caso deixaria a porta aberta para a divergencia voltar numa borda; aqui
+    qualquer assimetria de regua entre os modos cai, inclusive a que existia ate hoje.
+    """
+    for n in range(5):
+        comum = dict(result=_result_com_n_metas_vermelhas(n))
+        estudo = _parecer_estudo(**comum).demografico
+        completo = _parecer(**comum).demografico
+        assert estudo.status == completo.status, f"{n} metas: {estudo.status} x {completo.status}"
+        assert estudo.eliminatorios == completo.eliminatorios
+        assert estudo.ressalvas == completo.ressalvas
 
 
 def test_e5_nao_desloca_o_golden_do_recife():
@@ -666,6 +688,55 @@ def test_nota_do_modo_so_estudo_declara_o_que_nao_foi_avaliado():
     assert "r\xe9guas do ESTUDO".encode("latin-1") in pdf_bytes
     # A nota declara o corte do E5 -- e' o unico jeito de reprovar neste modo.
     assert b"4 das 6 metas falham ao mesmo tempo" in pdf_bytes
+
+
+def test_nota_do_modo_completo_declara_o_gate_da_praca():
+    """Com o E5 valendo no piloto (emenda da DEC-030), a nota tem de dizer a regra.
+
+    Reprovar a praca sem que a pagina explique por que seria pior que a divergencia que a
+    emenda foi corrigir: o leitor veria um selo vermelho sem regua declarada.
+    """
+    from motor_expansao.dashboard.censo_report import (
+        _CONCLUSAO_METAS_AVALIADAS,
+        _CONCLUSAO_METAS_ELIMINATORIO_MIN,
+    )
+
+    esperado = (
+        f"{_CONCLUSAO_METAS_ELIMINATORIO_MIN} das {_CONCLUSAO_METAS_AVALIADAS} metas "
+        "falham ao mesmo tempo"
+    ).encode("latin-1")
+    assert esperado in _pdf_completo()
+
+
+@pytest.mark.parametrize("so_estudo", [False, True])
+def test_nota_metodologica_cabe_acima_do_rodape(so_estudo):
+    """A nota cresce a cada regra nova e a pagina e' FIXA: sem guarda, ela some por baixo.
+
+    Ja esta em 3 linhas nas duas variantes, com 7 pt de folga. `auto_page_break` esta OFF,
+    entao a quarta linha nao vazaria para a pagina seguinte -- ela sairia por cima do
+    rodape, ou fora do papel, em silencio.
+    """
+    from motor_expansao.dashboard.censo_report import (
+        _CONCLUSAO_MARGEM_X,
+        _CONCLUSAO_NOTA,
+        _CONCLUSAO_NOTA_ESTUDO,
+        _CONCLUSAO_NOTA_Y,
+        _PAGE_H,
+        _PAGE_W,
+        _ascii,
+        _UltraPDF,
+    )
+
+    rodape_y = _PAGE_H - 22  # `_draw_footer` desenha a partir daqui
+    pdf = _UltraPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", "", 8)
+    texto = _CONCLUSAO_NOTA_ESTUDO if so_estudo else _CONCLUSAO_NOTA
+    linhas = pdf.multi_cell(
+        _PAGE_W - 2 * _CONCLUSAO_MARGEM_X, 11, _ascii(texto), dry_run=True, output="LINES"
+    )
+    fim = _CONCLUSAO_NOTA_Y + len(linhas) * 11
+    assert fim <= rodape_y, f"a nota termina em {fim} e o rodape comeca em {rodape_y}"
 
 
 def test_com_viabilidade_a_pagina_entra_antes_do_credito():

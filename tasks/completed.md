@@ -12380,6 +12380,19 @@ teste que não trava o que promete e documentação que afirma mais do que o có
 
 Fica a lição, que vale além deste bloco: **suíte verde não é evidência de cobertura.**
 
+**Emenda 1 (mesmo dia): o gate E5 passa a valer nos DOIS modos.** Decidido por Vinicius ao revisar
+três relatórios de amostra, em que um ponto de periferia de Caruaru falhava **5 das 6** metas e ainda
+assim saía `com ressalvas` na praça — porque o E5 estava preso ao modo só-estudo (escopo de Juan,
+12/08). O que mudou não foi o corte, e sim o que a divergência significa: enquanto o parecer era um
+veredito único ela ficava diluída; com o selo demográfico próprio, o mesmo endereço passa a exibir um
+carimbo de **cor diferente** em dois documentos, e a leitura da praça não pode depender de por qual
+porta o relatório saiu. Custo medido **antes** de decidir: golden do Recife com no máximo 1 meta
+contra corte 4 → **nenhum dos 5 muda**; dos 3 relatórios, só Caruaru (`com ressalvas` → `reprovado`).
+O corte de 4, medido em 40 pontos de SP, não foi remedido nem alterado. `test_e5_nao_vale_no_modo_completo`
+virou `test_e5_vale_nos_dois_modos`; entrou `test_regua_demografica_e_identica_nos_dois_modos`
+(varre os cortes 0..4). A nota do modo completo passou a declarar o gate — e ganhou guarda contra
+colisão com o rodapé, já que foi a 3 linhas com 7 pt de folga.
+
 Arquivos alterados: `src/motor_expansao/dashboard/censo_report.py`,
 `tests/unit/test_relatorio_pontual_conclusao.py`, `docs/relatorio_pontual_censitario.md`,
 `docs/decisions/DEC-030.md`, `CLAUDE.md`, `tasks/completed.md`.

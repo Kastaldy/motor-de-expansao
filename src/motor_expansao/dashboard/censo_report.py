@@ -1561,11 +1561,11 @@ _CONCLUSAO_CAMPOS_ESSENCIAIS = (
 # MESMA amostra, que puxa para cidade pequena (as metas sao ABSOLUTAS e calibradas para o
 # raio de 1,0 km urbano). Numeros no gate; mexer aqui pede remedir.
 #
-# Vale SO no modo so-estudo (escopo fechado por Juan em 2026-08-12). Consequencia conhecida
-# e ACEITA: um ponto com 4+ metas vermelhas e financeiro bom sai "Reprovado" no PDF do bot e
-# "Aprovado com ressalvas" no do piloto web. Quem levar os dois documentos para a mesma
-# conversa precisa saber disso. Estender ao modo completo e' UMA condicao (`somente_estudo`
-# no gate) -- e passaria a mexer no relatorio calibrado por Vinicius, que nao foi pedido.
+# Vale nos DOIS modos desde a emenda da DEC-030 (Vinicius, 2026-08-14). Nasceu preso ao
+# so-estudo, e a divergencia declarada entao -- mesmo ponto "Reprovado" no bot e "Aprovado
+# com ressalvas" no piloto -- deixou de ser aceitavel quando o selo demografico ganhou vida
+# propria: a leitura da PRACA passou a ser um carimbo visivel, e ela nao pode depender de
+# por qual porta o relatorio saiu. O corte NAO foi remedido nem alterado; so o escopo mudou.
 _CONCLUSAO_METAS_ELIMINATORIO_MIN = 4
 # Total avaliado por `_conclusao_metas_vermelhas` (pop, renda pc, domicilios, renda
 # domiciliar, SAM, Residual). So compoe o TEXTO ("4 das 6"); travado em teste contra a
@@ -1596,12 +1596,15 @@ _CONCLUSAO_NOTA = (
     # "e pé-direito" saiu junto com o gate (Vinicius, 2026-08-07): a nota descreve a
     # REGUA aplicada, e citar um criterio que nao decide mais nada seria mentir sobre ela.
     "Parecer automático das réguas da Ultra, em dois eixos independentes. DEMOGRÁFICO: "
-    f"metas censitárias do raio de {_RAIO_LABEL} e leitura de mercado do hexágono. "
-    "FINANCEIRO: envelope do imóvel (metragem), aluguel-teto e critérios de retorno do "
-    "cenário simulado. Cada eixo tem selo próprio e NÃO há veredito único: um item "
-    "eliminatório reprova o eixo sozinho; os demais rebaixam aquele eixo para 'Aprovado "
-    "com ressalvas'. Dado ausente nunca reprova, apenas deixa o item sem avaliar. "
-    "READ-ONLY sobre o M1."
+    f"metas censitárias do raio de {_RAIO_LABEL} e leitura de mercado do hexágono, com "
+    # O gate E5 passou a valer aqui (emenda da DEC-030): sem esta frase o parecer
+    # reprovaria a praca sem que a pagina dissesse por qual regra.
+    f"reprovação quando {_CONCLUSAO_METAS_ELIMINATORIO_MIN} das "
+    f"{_CONCLUSAO_METAS_AVALIADAS} metas falham ao mesmo tempo. FINANCEIRO: envelope do "
+    "imóvel (metragem), aluguel-teto e critérios de retorno do cenário simulado. Cada eixo "
+    "tem selo próprio e NÃO há veredito único: um item eliminatório reprova o eixo sozinho; "
+    "os demais rebaixam aquele eixo para 'Aprovado com ressalvas'. Dado ausente nunca "
+    "reprova, apenas deixa o item sem avaliar. READ-ONLY sobre o M1."
 )
 # Variantes do modo SO-ESTUDO (BLK-CONC-ESTUDO). Reusar as strings acima seria AFIRMAR que
 # o envelope do imovel e os criterios de retorno foram avaliados -- exatamente os que este
@@ -2148,16 +2151,20 @@ def _avaliar_conclusao(
         )
 
     # --- E5: metas censitarias falhando EM BLOCO (BLK-CONC-ESTUDO) ---
-    # SO no modo so-estudo (escopo fechado por Juan em 2026-08-12: a mudanca e' do PDF do
-    # bot, e so dele). No modo completo a regua fica EXATAMENTE como estava -- as metas
-    # seguem rebaixando para "com ressalvas" e quem reprova sao os gates de imovel e
-    # retorno --, entao o relatorio do piloto web sai identico ao de antes deste bloco.
+    # Vale nos DOIS modos desde a emenda da DEC-030 (Vinicius, 2026-08-14). Nasceu preso ao
+    # so-estudo (escopo fechado por Juan em 2026-08-12: "a mudanca e' do PDF do bot, e so
+    # dele"), e a divergencia que isso criava era conhecida e aceita -- mas ficava DILUIDA
+    # num veredito unico. Com o selo demografico proprio ela virou um carimbo de cor
+    # diferente entre dois documentos do MESMO ponto, e a separacao existe justamente para
+    # a leitura da praca ser a mesma em qualquer lugar. Custo medido antes de estender:
+    # nenhum dos 5 pontos do golden do Recife falha mais de 1 meta, contra corte 4 -- a
+    # calibracao de Vinicius nao se move (travado por `test_e5_nao_desloca_o_golden_do_recife`).
     #
     # Conta sobre a lista CRUA, nao sobre a exibida: a linha do Residual e' suprimida logo
     # abaixo quando o mercado consumido ja a disse com mais contexto, e descontar isso do
     # gate faria o mesmo ponto reprovar ou nao conforme uma decisao de TEXTO.
     metas_vermelhas = _conclusao_metas_vermelhas(result, residual)
-    if somente_estudo and len(metas_vermelhas) >= _CONCLUSAO_METAS_ELIMINATORIO_MIN:
+    if len(metas_vermelhas) >= _CONCLUSAO_METAS_ELIMINATORIO_MIN:
         eliminatorios.append(
             f"{len(metas_vermelhas)} das {_CONCLUSAO_METAS_AVALIADAS} metas censitárias do raio "
             "não atingidas ao mesmo tempo: a praça não sustenta a operação."
