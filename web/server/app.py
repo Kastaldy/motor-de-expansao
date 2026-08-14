@@ -3170,7 +3170,11 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         "score_max_raio": _num(res.get("score_setor_max"), 1),
         # SETOR A SETOR: min / mediana / max do que o raio contem.
         "distribuicao": {
-            "renda_per_capita": _dist("renda_per_capita_setor_2022_calibrada"),
+            # A MESMA grandeza de `setor_do_ponto.renda_per_capita` e de
+            # `renda_per_capita_media_raio`: domiciliar per capita. Lia a coluna
+            # CALIBRADA ate aqui, deixando tres campos irmaos deste payload em duas
+            # escalas — ~24% de diferenca, o sintoma que esta correcao existe para curar.
+            "renda_per_capita": _dist("renda_per_capita_domiciliar_setor"),
             "score": _dist("score_setor_2022_calibrado", 1),
             "populacao": _dist("pop_total_setor_2022"),
             "densidade_hab_km2": _dist("densidade_pop_setor_hab_km2"),

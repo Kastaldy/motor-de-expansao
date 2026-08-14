@@ -112,6 +112,11 @@ def _empty_setores_frame() -> pd.DataFrame:
             "pop_total_setor_2022",
             "pop_estimada_intersecao",
             "renda_per_capita_setor_2022_calibrada",
+            # Per capita DOMICILIAR por setor — a MESMA grandeza dos agregados do raio e
+            # do setor do ponto. Sem ela no frame, o consumidor so tem a CALIBRADA para
+            # montar min/mediana/max, e a distribuicao sai numa escala diferente da dos
+            # campos irmaos do mesmo payload.
+            "renda_per_capita_domiciliar_setor",
             "densidade_pop_setor_hab_km2",
             "score_setor_2022_calibrado",
             "flag_renda_disponivel",
@@ -422,6 +427,12 @@ def analisar_ponto_censitario_setores(
     fator_composicao = uplift_renda_domiciliar(uf_ponto, municipio_ponto)
     # Renda domiciliar do raio: ponderada por DOMICILIOS (fallback pop/area quando ausentes).
     renda_domiciliar_weight = dom_weights.where(dom_weights.gt(0), renda_weight)
+
+    # Injetada ANTES do corte de `display_cols`: `renda_per_capita_domiciliar` foi calculada
+    # acima e e o que os dois agregados ja usam. Deixar de expo-la aqui foi o que manteve
+    # `detalhe.distribuicao.renda_per_capita` (web/server/app.py) na escala antiga,
+    # ~24% distante dos dois campos irmaos do MESMO payload.
+    intersectados["renda_per_capita_domiciliar_setor"] = renda_per_capita_domiciliar
 
     display_cols = _available_columns(_empty_setores_frame().columns, intersectados)
     result["setores_intersectados"] = intersectados[display_cols].copy()

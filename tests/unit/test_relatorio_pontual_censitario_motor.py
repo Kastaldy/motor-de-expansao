@@ -636,3 +636,63 @@ def test_setor_do_ponto_e_raio_na_MESMA_escala(monkeypatch):
     assert result["renda_domiciliar_total_raio"] == pytest.approx(
         result["renda_per_capita_setor_ponto"] * moradores, rel=1e-6
     )
+
+
+def test_os_tres_campos_de_renda_per_capita_do_payload_na_MESMA_escala(monkeypatch):
+    """Os TRES campos irmaos de renda per capita tem de sair na mesma grandeza.
+
+    O Relatorio Pontual expoe renda per capita em tres lugares do MESMO payload
+    (`web/server/app.py`):
+
+      1. `renda_per_capita_media_raio`        -> agregado ponderado do raio
+      2. `setor_do_ponto.renda_per_capita`    -> o setor que contem o ponto
+      3. `detalhe.distribuicao.renda_per_capita` -> min/mediana/max, via `_dist` sobre a
+         coluna de `setores_intersectados`
+
+    A correcao de 2026-08-13 pegou os dois primeiros e deixou o terceiro lendo a coluna
+    CALIBRADA — ~24% de diferenca dentro do mesmo documento. Foi achado pela revisao
+    automatica do PR #237, nao pela suite: nenhum teste olhava a coluna que alimenta o (3).
+
+    Com UM setor cobrindo o raio inteiro, os tres tem de coincidir: a media ponderada de um
+    setor so' e' aquele setor, e min = mediana = max. Qualquer divergencia aqui e' de ESCALA.
+    """
+    from motor_expansao.dashboard import censo_point
+
+    k, resp, moradores, uplift = 2.0, 3000.0, 3.0, 1.6
+    monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
+    monkeypatch.setattr(censo_point, "FATOR_TEMPORAL_RENDA", 1.0)
+
+    rec = _sector_record(
+        "355030801000001",
+        box(-_RAIO_M * 2, -_RAIO_M * 2, _RAIO_M * 2, _RAIO_M * 2),
+        pop=900.0,
+        domicilios=300.0,
+    )
+    rec["renda_responsavel_media_setor_2022"] = resp
+    rec["avg_moradores_domicilio_setor_2022"] = moradores
+    rec["renda_per_capita_setor_2022"] = resp / moradores
+    rec["renda_per_capita_setor_2022_calibrada"] = resp / moradores * k
+
+    result = analisar_ponto_censitario_setores(LAT_C, LNG_C, pd.DataFrame([rec]))
+
+    esperado = resp * uplift / moradores  # V06004 x uplift / moradores, SEM o k
+    setores = result["setores_intersectados"]
+
+    # (3) a coluna que alimenta a distribuicao existe e esta na escala certa
+    assert "renda_per_capita_domiciliar_setor" in setores.columns, (
+        "sem esta coluna o consumidor cai na CALIBRADA para montar a distribuicao"
+    )
+    assert float(setores["renda_per_capita_domiciliar_setor"].iloc[0]) == pytest.approx(
+        esperado, rel=1e-6
+    )
+    # (1) e (2) coincidem com ela
+    assert result["renda_per_capita_media_raio"] == pytest.approx(esperado, rel=1e-6)
+    assert result["renda_per_capita_setor_ponto"] == pytest.approx(esperado, rel=1e-6)
+    # E a CALIBRADA continua no frame, crua, para quem precisar dela — mas em OUTRA coluna,
+    # com valor diferente. E' o que prova que os tres nao estao lendo a coluna velha.
+    assert float(setores["renda_per_capita_setor_2022_calibrada"].iloc[0]) == pytest.approx(
+        resp / moradores * k, rel=1e-6
+    )
+    assert float(setores["renda_per_capita_setor_2022_calibrada"].iloc[0]) != pytest.approx(
+        esperado, rel=1e-6
+    )
