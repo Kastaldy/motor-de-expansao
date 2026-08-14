@@ -771,10 +771,89 @@ def test_selo_carimba_o_status_nos_bytes_do_pdf(viab_extra, esperado):
     A nota metodologica cita "Aprovado com ressalvas" em caixa MISTA, entao casar por
     "Aprovado" daria falso positivo em qualquer um dos tres estados. Os tres cenarios aqui
     variam o eixo FINANCEIRO -- a praca segue limpa nos tres, entao "APROVADO" estaria nos
-    bytes de qualquer jeito pelo selo demografico. Quem prova a independencia dos dois e'
-    `test_os_dois_selos_carimbam_eixos_independentes`, com as linhas de apoio.
+    bytes de qualquer jeito pelo selo demografico. Quem prende o rotulo AO EIXO e'
+    `test_rotulo_principal_de_cada_eixo`, renderizando o selo isolado.
     """
     assert esperado in _pdf_completo(viab=viab_extra)
+
+
+def _bytes_do_selo(eixo: str, status: str) -> bytes:
+    """Renderiza UM selo isolado, fora do documento.
+
+    Necessario porque no PDF inteiro os dois selos compartilham o rotulo principal
+    (APROVADO/COM RESSALVAS/REPROVADO e' o STATUS, igual nos dois eixos) e a nota
+    metodologica repete varias dessas palavras: assertar sobre o documento nao consegue
+    dizer QUAL selo escreveu o que. Mesma tecnica de `_bytes_da_faixa_de_aluguel`.
+    """
+    from motor_expansao.dashboard.censo_report import _conclusao_selo, _UltraPDF
+
+    pdf = _UltraPDF()
+    pdf.add_page()
+    _conclusao_selo(pdf, eixo, status, 100.0, 100.0, 210.0, 176.0)
+    return bytes(pdf.output())
+
+
+# GOLDEN DE EXIBICAO dos 6 selos: (eixo, status) -> (legenda, rotulo, apoio).
+# Os textos estao LITERAIS aqui de proposito, e nao lidos de `_CONCLUSAO_SELO_TEXTOS`.
+# Ler do dicionario faria o teste mudar de expectativa junto com o codigo -- ele passaria
+# verde com o rotulo trocado, que e' exatamente o defeito que ele existe para pegar.
+_SELOS_ESPERADOS = [
+    (CONCLUSAO_EIXO_DEMOGRAFICO, CONCLUSAO_APROVADO, "DEMOGRÁFICO", "APROVADO", "PRAÇA SUSTENTA"),
+    (CONCLUSAO_EIXO_DEMOGRAFICO, CONCLUSAO_RESSALVAS, "DEMOGRÁFICO", "COM RESSALVAS", "PRAÇA COM RISCO"),
+    (CONCLUSAO_EIXO_DEMOGRAFICO, CONCLUSAO_REPROVADO, "DEMOGRÁFICO", "REPROVADO", "PRAÇA NÃO SUSTENTA"),
+    (CONCLUSAO_EIXO_FINANCEIRO, CONCLUSAO_APROVADO, "FINANCEIRO", "APROVADO", "PARA COMITÊ"),
+    (CONCLUSAO_EIXO_FINANCEIRO, CONCLUSAO_RESSALVAS, "FINANCEIRO", "COM RESSALVAS", "REQUER REVISÃO"),
+    (CONCLUSAO_EIXO_FINANCEIRO, CONCLUSAO_REPROVADO, "FINANCEIRO", "REPROVADO", "FORA DA RÉGUA"),
+]
+
+
+@pytest.mark.parametrize(
+    "eixo,status,legenda,principal,apoio",
+    _SELOS_ESPERADOS,
+    ids=[f"{eixo}-{status}" for eixo, status, *_ in _SELOS_ESPERADOS],
+)
+def test_rotulo_principal_de_cada_eixo(eixo, status, legenda, principal, apoio):
+    """Os 6 pares (eixo, status) carimbam legenda, rotulo e apoio corretos.
+
+    Cobre o buraco que a revisao adversarial achou: no PDF inteiro, o caso
+    (financeiro, aprovado) nao podia falhar -- "APROVADO" ja vinha do selo demografico --,
+    entao trocar o rotulo principal do selo financeiro por outra palavra deixava a suite
+    verde. Aqui cada selo e' renderizado SOZINHO e comparado com o golden literal acima.
+    """
+    saida = _bytes_do_selo(eixo, status)
+    assert legenda.encode("latin-1") in saida
+    assert principal.encode("latin-1") in saida
+    assert apoio.encode("latin-1") in saida
+    # E NAO carimba a legenda nem o apoio do OUTRO eixo.
+    for outro_eixo, outro_status, outra_legenda, _p, outro_apoio in _SELOS_ESPERADOS:
+        if outro_eixo == eixo:
+            continue
+        assert outra_legenda.encode("latin-1") not in saida
+        if outro_status == status:
+            assert outro_apoio.encode("latin-1") not in saida
+
+
+def test_golden_dos_selos_bate_com_a_camada_de_label():
+    """O golden literal acima e o dicionario do modulo nao podem divergir em silencio.
+
+    Sao duas fontes de propósito (ver o comentario de `_SELOS_ESPERADOS`); este teste e' a
+    ponte que obriga uma mudanca de texto a passar pelos dois lugares.
+    """
+    from motor_expansao.dashboard.censo_report import (
+        _CONCLUSAO_SELO_LEGENDAS,
+        _CONCLUSAO_SELO_TEXTOS,
+    )
+
+    esperado = {
+        (eixo, status): (legenda, principal, apoio)
+        for eixo, status, legenda, principal, apoio in _SELOS_ESPERADOS
+    }
+    obtido = {
+        (eixo, status): (_CONCLUSAO_SELO_LEGENDAS[eixo], principal, apoio)
+        for eixo, por_status in _CONCLUSAO_SELO_TEXTOS.items()
+        for status, (principal, apoio) in por_status.items()
+    }
+    assert obtido == esperado
 
 
 # Linhas de apoio: unicas por (eixo, estado), ao contrario do rotulo principal, que se
@@ -807,10 +886,16 @@ def test_selo_demografico_reage_a_praca_sem_mexer_no_financeiro():
 
 
 def test_legendas_identificam_os_dois_selos_no_pdf():
-    """Sem legenda, os dois carimbos sao indistinguiveis em forma."""
+    """Sem legenda, os dois carimbos sao indistinguiveis em forma.
+
+    Assere CONTAGEM, nao presenca: a nota metodologica da mesma pagina ja escreve
+    "DEMOGRÁFICO:" e "FINANCEIRO:" em CAIXA ALTA, entao um assert de presenca passava
+    verde com as duas legendas APAGADAS -- provado por mutacao na revisao adversarial.
+    Duas ocorrencias de cada = 1 do selo + 1 da nota; apagar a legenda derruba para 1.
+    """
     pdf_bytes = _pdf_completo()
-    assert "DEMOGR\xc1FICO".encode("latin-1") in pdf_bytes
-    assert b"FINANCEIRO" in pdf_bytes
+    assert pdf_bytes.count("DEMOGR\xc1FICO".encode("latin-1")) == 2
+    assert pdf_bytes.count(b"FINANCEIRO") == 2
 
 
 # "(" e ")" sao delimitadores de string no PDF: dentro do literal eles saem ESCAPADOS com
@@ -964,8 +1049,100 @@ def test_truncagem_reparte_o_espaco_entre_os_blocos():
     assert len(desenhar) < len(elementos), "o cenario precisa truncar, senao nao testa nada"
     assert 0 in desenhar, "o titulo do 1o bloco tem de entrar"
     assert 6 in desenhar, "o titulo do 2o bloco tem de entrar"
-    # E o que cada bloco mostra sao os PRIMEIROS itens dele (eliminatorios na frente).
-    assert set(desenhar) & set(range(6)) == set(range(len(set(desenhar) & set(range(6)))))
+    # Cada bloco mostra um PREFIXO seu -- os DOIS, nao so o primeiro. Checar so o bloco 1
+    # deixava passar `desenhar = (0,1,6,9)`, em que o bloco financeiro pula do 1o para o 4o
+    # item e o leitor recebe uma ressalva no lugar do apontamento mais grave.
+    bloco1 = sorted(i for i in desenhar if i < 6)
+    bloco2 = sorted(i - 6 for i in desenhar if i >= 6)
+    assert bloco1 == list(range(len(bloco1)))
+    assert bloco2 == list(range(len(bloco2)))
+    # E a truncagem e' EQUILIBRADA: nenhum bloco leva tudo enquanto o outro fica sem.
+    assert bloco1 and bloco2
+
+
+def test_altura_do_elemento_inclui_o_titulo_que_o_render_desenha():
+    """AMARRA plano x render: a altura orcada tem de ser a que o render de fato avanca.
+
+    `_ConclusaoElemento.altura` soma `altura_titulo + altura_card`, e `_conclusao_page`
+    avanca `titulo_offset + TITULO_H + TITULO_GAP` por conta propria antes do card. Eram
+    duas contas independentes, sem nada as ligando: devolver so `altura_card` deixava a
+    suite inteira VERDE e o plano passava a orcar 62 pt a menos que o desenho, empurrando
+    cards para fora da area util -- e, com auto_page_break OFF, para fora da pagina em
+    silencio. Este teste refaz a aritmetica do render e exige o mesmo numero.
+    """
+    from motor_expansao.dashboard.censo_report import (
+        _CONCLUSAO_OBS_TITULO_GAP,
+        _CONCLUSAO_OBS_TITULO_H,
+        _conclusao_blocos,
+        _conclusao_elementos,
+        _UltraPDF,
+    )
+
+    pdf = _UltraPDF()
+    pdf.add_page()
+    parecer = _parecer(
+        result={"pop_total_raio": 4_000, "renda_per_capita_media_raio": 900.0},
+        residual={"oferta_efetiva_disponivel": 0},
+        info={"metragem_m2": 900},
+        viab={"flag_fora_envelope": True, "payback_meses": 44.0},
+    )
+    elementos = _conclusao_elementos(pdf, _conclusao_blocos(parecer), 652.0)
+    assert len(elementos) >= 4  # os dois blocos com VARIOS apontamentos, senao nao testa nada
+
+    for elemento in elementos:
+        # A aritmetica do render, reproduzida: o que ele avanca antes e depois do card.
+        avanco_render = elemento.altura_card
+        if elemento.titulo:
+            avanco_render += (
+                elemento.titulo_offset + _CONCLUSAO_OBS_TITULO_H + _CONCLUSAO_OBS_TITULO_GAP
+            )
+        assert elemento.altura == pytest.approx(avanco_render), (
+            f"plano orca {elemento.altura} e o render avanca {avanco_render}"
+        )
+    # E o titulo REALMENTE pesa: quem abre bloco e' mais alto que o proprio card.
+    abrem = [e for e in elementos if e.titulo]
+    assert len(abrem) == 2
+    assert all(e.altura > e.altura_card for e in abrem)
+
+
+def test_elementos_marcam_o_titulo_no_primeiro_de_cada_bloco():
+    """`_conclusao_elementos` decide QUEM carrega o titulo e quanto respiro ele ganha.
+
+    Sem este teste, `titulo_offset=0.0` apagava na pratica o `_CONCLUSAO_BLOCO_GAP` (14 pt,
+    introduzido nesta decisao para o titulo do bloco financeiro nao colar no ultimo card do
+    demografico) com a suite inteira VERDE -- a constante ficava sem consumidor efetivo.
+    """
+    from motor_expansao.dashboard.censo_report import (
+        _CONCLUSAO_BLOCO_GAP,
+        _CONCLUSAO_BLOCO_TITULOS,
+        _conclusao_blocos,
+        _conclusao_elementos,
+        _UltraPDF,
+    )
+
+    pdf = _UltraPDF()
+    pdf.add_page()
+    parecer = _parecer(
+        info={"metragem_m2": 900}, residual={"oferta_efetiva_disponivel": 0}
+    )
+    blocos = _conclusao_blocos(parecer)
+    elementos = _conclusao_elementos(pdf, blocos, 652.0)
+
+    titulados = [(i, e) for i, e in enumerate(elementos) if e.titulo]
+    assert len(titulados) == 2, "um titulo por bloco, no PRIMEIRO elemento dele"
+    (i_demo, demo), (i_fin, fin) = titulados
+    assert i_demo == 0  # o 1o bloco abre no 1o elemento
+    assert i_fin == len(blocos[0][1])  # o 2o abre logo apos o ultimo item do 1o
+    assert demo.titulo == _CONCLUSAO_BLOCO_TITULOS[CONCLUSAO_EIXO_DEMOGRAFICO]
+    assert fin.titulo == _CONCLUSAO_BLOCO_TITULOS[CONCLUSAO_EIXO_FINANCEIRO]
+    # O respiro extra e' SO do 2o bloco: o 1o ja nasce abaixo dos cards de aluguel, que
+    # trazem o seu proprio gap.
+    assert demo.titulo_offset == 0.0
+    assert fin.titulo_offset == _CONCLUSAO_BLOCO_GAP
+    assert _CONCLUSAO_BLOCO_GAP > 0
+    # Todo elemento que NAO abre bloco nao carrega titulo nem respiro.
+    assert all(not e.titulo and e.titulo_offset == 0.0 for i, e in enumerate(elementos)
+               if i not in {i_demo, i_fin})
 
 
 def test_plano_sem_truncamento_desenha_tudo_na_ordem():
@@ -1068,22 +1245,52 @@ def test_os_dois_selos_cabem_na_area_util():
     assert _CONCLUSAO_AREA_BASE <= _CONCLUSAO_NOTA_Y
 
 
-def test_geometria_interna_do_selo_reproduz_o_desenho_de_referencia():
-    """As fracoes substituiram absolutos (48 / 22 / 14 / 9,5) calibrados para altura 196.
+def test_geometria_interna_do_selo():
+    """Trava as OITO fracoes do selo, separando as duas naturezas que elas tem.
 
-    Na altura de referencia elas tem de devolver EXATAMENTE aqueles numeros -- senao a
-    parametrizacao teria mudado a estetica de 2026-08-07 de carona, sem ninguem pedir.
+    TAMANHOS: substituiram absolutos (48 / 22 / 14, mais os corpos 17 / 9,5) calibrados
+    para a altura 196, e na altura de referencia tem de devolver EXATAMENTE aqueles
+    numeros -- senao a parametrizacao teria mudado o tamanho de carona.
+
+    POSICOES: NAO reproduzem 2026-08-07, e nem poderiam -- o selo ganhou a legenda no topo
+    e o conjunto desceu para abrir espaco (0,30 -> 0,335 / 0,55 -> 0,60 / 0,74 -> 0,78).
+    Ficavam sem trava nenhuma: mudar as quatro para valores arbitrarios deixava a suite
+    verde, apesar de a docstring anterior prometer o contrario. Sao valores DECIDIDOS na
+    DEC-030; mexer neles e' decisao visual, e este assert obriga a passar por aqui.
     """
     from motor_expansao.dashboard.censo_report import (
         _CONCLUSAO_SELO_H_REF,
+        _CONCLUSAO_SELO_LEGENDA_Y,
+        _CONCLUSAO_SELO_PRINCIPAL_CORPO,
         _CONCLUSAO_SELO_PRINCIPAL_H,
+        _CONCLUSAO_SELO_PRINCIPAL_Y,
+        _CONCLUSAO_SELO_SECUNDARIO_CORPO,
         _CONCLUSAO_SELO_SECUNDARIO_H,
+        _CONCLUSAO_SELO_SECUNDARIO_Y,
         _CONCLUSAO_SELO_SIMBOLO_TAM,
+        _CONCLUSAO_SELO_SIMBOLO_Y,
     )
 
+    # (a) TAMANHOS: iguais aos absolutos de 2026-08-07 na altura de referencia.
     assert _CONCLUSAO_SELO_SIMBOLO_TAM * _CONCLUSAO_SELO_H_REF == pytest.approx(48.0, abs=0.1)
     assert _CONCLUSAO_SELO_PRINCIPAL_H * _CONCLUSAO_SELO_H_REF == pytest.approx(22.0, abs=0.1)
     assert _CONCLUSAO_SELO_SECUNDARIO_H * _CONCLUSAO_SELO_H_REF == pytest.approx(14.0, abs=0.1)
+    assert _CONCLUSAO_SELO_PRINCIPAL_CORPO == pytest.approx(17.0)
+    assert _CONCLUSAO_SELO_SECUNDARIO_CORPO == pytest.approx(9.5)
+
+    # (b) POSICOES: os valores da DEC-030, na ordem em que o selo os empilha.
+    assert _CONCLUSAO_SELO_LEGENDA_Y == pytest.approx(0.070)
+    assert _CONCLUSAO_SELO_SIMBOLO_Y == pytest.approx(0.335)
+    assert _CONCLUSAO_SELO_PRINCIPAL_Y == pytest.approx(0.60)
+    assert _CONCLUSAO_SELO_SECUNDARIO_Y == pytest.approx(0.78)
+    assert (
+        _CONCLUSAO_SELO_LEGENDA_Y
+        < _CONCLUSAO_SELO_SIMBOLO_Y
+        < _CONCLUSAO_SELO_PRINCIPAL_Y
+        < _CONCLUSAO_SELO_SECUNDARIO_Y
+    )
+    # E o ultimo elemento termina DENTRO do selo, com margem.
+    assert _CONCLUSAO_SELO_SECUNDARIO_Y + _CONCLUSAO_SELO_SECUNDARIO_H < 1.0
 
 
 # --------------------------------------------------------------------------- #
@@ -1239,18 +1446,41 @@ def test_conclusao_mais_dura_que_a_tela_sempre_diz_o_porque():
     assert divergencias > 0  # a matriz precisa exercitar o caso, senao o teste e' vazio
 
 
+# Termos que so podem sair de um eixo. Sao trechos LITERAIS dos apontamentos (ver
+# `_conclusao_eixo_financeiro` e o corpo de `_avaliar_conclusao`), e nao rotulos de UI:
+# se um deles aparecer no eixo errado, houve contaminacao entre os eixos.
+_SO_DO_FINANCEIRO = ("Metragem", "Aluguel pedido", "Retorno fora da régua", "Margem operacional",
+                     "Prazo de retorno", "Cenário fora da régua", "envelope da base de calibração")
+_SO_DO_DEMOGRAFICO = ("zona morta", "Meta não atingida", "Mercado já consumido",
+                      "Metas censitárias não avaliadas", "metas censitárias do raio")
+
+
 def test_eixo_demografico_nao_herda_o_veredito_do_cenario():
     """A outra metade da DEC-030: a praca nao pode ser condenada pelo financeiro.
 
     Na matriz existem cenarios com `flag_viavel=False` e praca impecavel (`_RESULT_OK` +
     residual folgado, sem zona morta). Antes, o status unico os carimbava REPROVADO e a
-    leitura da praca sumia junto. Se alguem reunificar os eixos, este teste cai.
+    leitura da praca sumia junto.
+
+    Assere DISJUNCAO, nao existencia. O `> 0` que estava aqui so pegava a reunificacao
+    TOTAL: concatenar apenas os ELIMINATORIOS do financeiro no eixo demografico -- que ja e'
+    o colapso que a DEC-030 desfez, com o selo da praca sendo reprovado por metragem --
+    deixava 144 dos 384 cenarios ainda aprovados, e o teste passava. Varrer os 4.096
+    cenarios exigindo que nenhum apontamento cruze o eixo fecha isso por construcao.
     """
-    aprovados_apesar_de_inviavel = sum(
-        1
-        for viavel, parecer, _dados, _info in _matriz_cenarios()
-        if not viavel and parecer.demografico.status == CONCLUSAO_APROVADO
-    )
+    aprovados_apesar_de_inviavel = 0
+    for viavel, parecer, _dados, _info in _matriz_cenarios():
+        demografico = parecer.demografico.eliminatorios + parecer.demografico.ressalvas
+        financeiro = _fin(parecer).eliminatorios + _fin(parecer).ressalvas
+        for linha in demografico:
+            for termo in _SO_DO_FINANCEIRO:
+                assert termo not in linha, f"apontamento financeiro no eixo da praça: {linha!r}"
+        for linha in financeiro:
+            for termo in _SO_DO_DEMOGRAFICO:
+                assert termo not in linha, f"apontamento da praça no eixo financeiro: {linha!r}"
+        if not viavel and parecer.demografico.status == CONCLUSAO_APROVADO:
+            aprovados_apesar_de_inviavel += 1
+    # E o caso central continua existindo na matriz, senao a varredura seria vazia.
     assert aprovados_apesar_de_inviavel > 0
 
 

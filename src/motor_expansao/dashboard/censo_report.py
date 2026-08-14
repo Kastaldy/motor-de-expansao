@@ -1742,10 +1742,33 @@ _CONCLUSAO_SELO_GAP = 20.0
 # um card arredondado em vez do mesmo carimbo em outro tamanho.
 _CONCLUSAO_SELO_RAIO = 13.0
 # Geometria INTERNA do selo, em fracao da altura (DEC-030). Antes eram absolutos (48 pt de
-# simbolo, celulas de 22/14, corpo 17/9,5) calibrados para a altura unica de 196; num selo
-# de 176 o simbolo de 48 termina a 4,8 pt do rotulo e o conjunto fica colado. As fracoes
-# abaixo REPRODUZEM o desenho de 2026-08-07 quando `altura = 196` -- 48/196 = 0,245,
-# 22/196 = 0,112, 14/196 = 0,0714 -- entao a mudanca e' de parametrizacao, nao de estetica.
+# simbolo, celulas de 22/14, corpo 17/9,5), calibrados para a altura unica de 196.
+#
+# Duas coisas mudaram aqui, e elas sao de naturezas DIFERENTES -- o comentario original
+# afirmava que as duas eram inocuas e a revisao adversarial mostrou que so a primeira e':
+#
+#   (a) TAMANHOS viraram fracao e REPRODUZEM o desenho de 2026-08-07 em `altura = 196`:
+#       48/196 = 0,245, 22/196 = 0,112, 14/196 = 0,0714. Isso e' parametrizacao pura --
+#       sem ela, o simbolo de 48 pt fixo num selo de 176 fica desproporcional em relacao
+#       aos rotulos, que encolheram junto com a altura.
+#
+#   (b) POSICOES foram REANCORADAS, e isso MUDA o desenho mesmo em 196: o simbolo desce
+#       0,30 -> 0,335, o rotulo 0,55 -> 0,60, o apoio 0,74 -> 0,78 (em 196: 6,9 / 9,8 /
+#       7,8 pt mais baixos). Nao foi de carona: a LEGENDA e' um elemento novo no topo, que
+#       o desenho de 2026-08-07 nao tinha. Com as posicoes antigas em 176, o simbolo comeca
+#       em 28,8 pt e a legenda (celula de 12) ocuparia 12,3..24,3 -- 4,5 pt de respiro, ela
+#       colada no simbolo. Descendo o conjunto, o respiro vai a 13,1 pt e a area morta no
+#       pe cai de 33,2 para 26,2 pt. Ou seja: o reancoramento EQUILIBRA o selo de tres
+#       niveis para um de quatro; ele nao pode "reproduzir exatamente" um desenho que tinha
+#       um elemento a menos.
+#
+# (Para o registro, porque a justificativa anterior citava um numero errado: com a
+# geometria antiga em 176 o simbolo NAO termina a ~5 pt do rotulo. O gap real seria de
+# 18,85 pt no pior caso -- o "!" do estado intermediario, que e' o simbolo que mais desce
+# -- e 28,16 pt no check. O problema era a legenda, nunca a colisao simbolo/rotulo.)
+#
+# As oito fracoes estao travadas em `test_geometria_interna_do_selo` -- as de TAMANHO
+# contra os absolutos de 2026-08-07, as de POSICAO contra os valores desta decisao.
 _CONCLUSAO_SELO_LEGENDA_Y = 0.070
 # A legenda e' a UNICA parte do selo que nao escala: 9 pt ja e' a menor tipografia da
 # pagina, e encolhe-la junto com a altura a tornaria ilegivel antes de qualquer outra coisa.
@@ -2228,8 +2251,10 @@ def _conclusao_selo(
     A LEGENDA no topo (DEC-030) e' o unico acrescimo a essa anatomia: com dois carimbos na
     mesma coluna, sem ela o leitor ve dois selos identicos em forma e nao sabe qual eixo
     cada um julga. Tudo abaixo dela escala com `altura`, para o mesmo desenho servir ao
-    selo de 176 pt (dois eixos) e ao de qualquer outra altura sem ficar colado -- as
-    fracoes reproduzem o desenho de 2026-08-07 quando `altura` = `_CONCLUSAO_SELO_H_REF`.
+    selo de 176 pt (dois eixos) e ao de qualquer outra altura. As fracoes de TAMANHO
+    reproduzem o desenho de 2026-08-07 em `_CONCLUSAO_SELO_H_REF`; as de POSICAO nao, e nem
+    poderiam -- elas foram reancoradas justamente para abrir o topo para a legenda. Ver o
+    bloco de constantes para os numeros e a razao.
     """
     rgb = _CONCLUSAO_SELO_RGB[status]
     principal, secundario = _CONCLUSAO_SELO_TEXTOS[eixo][status]

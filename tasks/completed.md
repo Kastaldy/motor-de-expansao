@@ -12358,12 +12358,34 @@ selo virou fração da altura, reproduzindo o desenho de 2026-08-07 na altura de
 por ninguém**: `test_relatorio_acentuacao_regressao` gera os PDFs sem a página de Conclusão, e o
 teste de latin-1 da página só percorria eliminatórios/ressalvas.
 
+**Revisão adversarial da própria entrega, no mesmo dia.** Três dimensões (régua/partição,
+render/geometria, força dos testes), com cada achado submetido a um verificador instruído a
+**refutá-lo**: 9 achados, **8 confirmados** — e nenhum produzia PDF errado. Todos da mesma família:
+teste que não trava o que promete e documentação que afirma mais do que o código faz.
+
+- **Uma afirmação era falsa.** O comentário dizia que as frações de geometria "reproduzem exatamente
+  o desenho de 2026-08-07" em 196. As de TAMANHO reproduzem; as de POSIÇÃO não — foram reancoradas
+  (0,30→0,335; 0,55→0,60; 0,74→0,78) para abrir o topo para a legenda, e o desenho em 196 difere em
+  6,9/9,8/7,8 pt. A justificativa numérica ("símbolo termina a menos de 5 pt do rótulo") também
+  estava errada: o gap real seria 18,85 pt no pior caso. Corrigidas no código e no §7 — o
+  reancoramento é legítimo, faltava declará-lo.
+- **Cinco testes não travavam o que prometiam:** legendas (tautológico — as palavras também saem da
+  nota metodológica), altura do título no orçamento de layout, `_conclusao_elementos` (o
+  `_CONCLUSAO_BLOCO_GAP` podia ir a zero), rótulo principal do selo financeiro e o invariante de
+  não-contaminação entre eixos (um `> 0` que sobrevivia a reunificação PARCIAL).
+- **Correção provada por MUTAÇÃO** (patch em runtime, repo intocado): cada teste corrigido tem de
+  derrubar a quebra que existe para pegar. Uma das correções falhou na 1ª tentativa **pelo mesmo
+  defeito que corrigia** — lia o rótulo esperado do dicionário que a mutação alterava —; virou golden
+  literal, com um 2º teste ligando golden e camada de label.
+
+Fica a lição, que vale além deste bloco: **suíte verde não é evidência de cobertura.**
+
 Arquivos alterados: `src/motor_expansao/dashboard/censo_report.py`,
 `tests/unit/test_relatorio_pontual_conclusao.py`, `docs/relatorio_pontual_censitario.md`,
 `docs/decisions/DEC-030.md`, `CLAUDE.md`, `tasks/completed.md`.
-Validações: **116 casos** em `test_relatorio_pontual_conclusao.py` (era 98) + 245 nos arquivos
-vizinhos de relatório/acentuação/guard; `ruff check` limpo; `mypy` limpo. Nenhum assert de estrutura
-(`/Count`) mudou — a página segue UMA.
+Validações: **125 casos** em `test_relatorio_pontual_conclusao.py` (era 98) + 233 nos arquivos
+vizinhos de relatório/acentuação/imóvel/PDF base; 7/7 mutações detectadas; `ruff check` limpo;
+`mypy` limpo. Nenhum assert de estrutura (`/Count`) mudou — a página segue UMA.
 Fora de escopo: a tela de Viabilidade do piloto web (segue com o carimbo binário de `flag_viavel`,
 que é outro juízo), as metas absolutas dos Big Numbers (decisão de Felipe, DEC-021) e qualquer
 artefato do M1.
