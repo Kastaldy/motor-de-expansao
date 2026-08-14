@@ -9,11 +9,14 @@ O mapa `usuario -> [abas]` vive num JSON EDITAVEL EM PRODUCAO, no volume `:rw` d
 cadastro (DEC-023) — trocar o acesso de alguem nao exige rebuild nem deploy, so'
 editar o arquivo (relido a cada mudanca de mtime).
 
-Regras de degradacao (fail-open DE PROPOSITO):
-  - SEM arquivo (dev local, mount ausente)  -> todas as abas para todos.
-  - Arquivo ilegivel / JSON invalido        -> todas as abas para todos + warning.
-    Um typo no JSON nao pode trancar o piloto inteiro para o time; o preco e' que o
-    typo tambem devolve acesso cheio — por isso o passo de deploy VALIDA o JSON.
+Regras de degradacao (BLK-SEC-05 — fail-CLOSED nas abas sensiveis em PRODUCAO):
+  - Controle indisponivel (SEM arquivo, JSON invalido, mount sumiu):
+      * em PRODUCAO  -> NEGA as abas SENSIVEIS (`ABAS_SENSIVEIS`: financeiro da rede +
+        PII de franqueado + a rota de ESCRITA); mantem as nao-sensiveis (`mapa`,
+        `oportunidades`) para nao trancar 100% o piloto por um typo. + log de ERRO.
+      * em DEV/local -> fail-OPEN historico (todas as abas), para nao atrapalhar o dev.
+    O que e' "producao": `_fail_closed_ativo()` (env `MOTOR_CADASTRO_DIR` setado pelo
+    compose, ou override explicito `MOTOR_ACESSO_FAIL_CLOSED`).
   - Arquivo ok e usuario fora do mapa       -> entrada "*" se existir; senao NENHUMA.
 
 READ-ONLY sobre o M1: este modulo so' le um JSON de configuracao; nao toca dado.
@@ -34,6 +37,12 @@ _REPO_ROOT = _HERE.parents[2]
 # Valores brutos de aba — identificadores SEM acento (regra do CLAUDE.md §2). A SPA
 # usa exatamente estes nomes em `web/src/lib/acesso.ts`; mudou aqui, muda la' junto.
 ABAS_VALIDAS = frozenset({"executiva", "mapa", "oportunidades", "viabilidade"})
+
+# Abas com dado SENSIVEL (financeiro da rede, PII de franqueado/consultor, ESCRITA) —
+# negadas no fail-CLOSED quando o controle cai em producao (BLK-SEC-05). `executiva`
+# cobre `/api/rede/` (carteira + PUT cadastro) e `/api/executiva/`; `viabilidade` cobre
+# `/api/simulador/` e `/api/faixa-alunos`. `mapa`/`oportunidades` (analitico) seguem.
+ABAS_SENSIVEIS = frozenset({"executiva", "viabilidade"})
 
 # Que abas LIBERAM cada rota (basta ter UMA delas). Casamento por PREFIXO do path.
 # Rota sem regra = livre para qualquer usuario autenticado (health, catalogos, /api/me);
@@ -137,11 +146,43 @@ def normalizar_usuario(valor: object) -> str | None:
     return None
 
 
+def _fail_closed_ativo() -> bool:
+    """Em falha de controle, NEGAR abas sensiveis (producao) ou fail-open (dev)?
+
+    Override explicito: `MOTOR_ACESSO_FAIL_CLOSED` ('1'/'true' liga, '0'/'false' desliga).
+    Sem override: liga quando `MOTOR_CADASTRO_DIR` esta setado — o volume :rw do cadastro
+    so' existe em producao (compose); em dev local a var nao esta setada -> fail-open.
+    """
+    override = os.environ.get("MOTOR_ACESSO_FAIL_CLOSED")
+    if override is not None:
+        return override.strip().lower() in ("1", "true", "sim", "yes")
+    return bool(os.environ.get("MOTOR_CADASTRO_DIR"))
+
+
+# Throttle do log de fail-closed: loga UMA vez por episodio (senao seria 1 erro por
+# request enquanto o controle estiver caido). Resetado quando o controle volta.
+_fail_closed_logado = False
+
+
 def abas_do_usuario(usuario: str | None) -> frozenset[str]:
     """Abas que este usuario pode usar, segundo o JSON vigente."""
+    global _fail_closed_logado
     mapa = _ler_mapa()
     if mapa is None:
-        return ABAS_VALIDAS
+        # Controle indisponivel (arquivo ausente/ilegivel/mount sumiu).
+        if _fail_closed_ativo():
+            # Fail-CLOSED em producao (BLK-SEC-05): nega as abas SENSIVEIS; mantem as
+            # nao-sensiveis para nao trancar 100% o piloto por um typo no JSON.
+            if not _fail_closed_logado:
+                _LOG.error(
+                    "acesso_abas.json indisponivel em PRODUCAO — fail-closed: abas "
+                    "sensiveis (%s) NEGADAS ate o controle voltar.",
+                    ", ".join(sorted(ABAS_SENSIVEIS)),
+                )
+                _fail_closed_logado = True
+            return ABAS_VALIDAS - ABAS_SENSIVEIS
+        return ABAS_VALIDAS  # dev/local: fail-open historico
+    _fail_closed_logado = False  # controle voltou -> permite logar de novo no proximo episodio
     if usuario is not None and usuario in mapa:
         return mapa[usuario]
     return mapa.get("*", frozenset())

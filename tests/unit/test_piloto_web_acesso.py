@@ -196,3 +196,70 @@ def test_me_com_usuario_lista_as_abas_do_mapa(escrever_mapa) -> None:
     payload = pilot_app.me(remote_user="rodrigo_oliveira")
     assert payload["usuario"] == "rodrigo_oliveira"
     assert payload["abas"] == ["mapa", "oportunidades", "viabilidade"]
+
+
+# --- fail-CLOSED em producao (BLK-SEC-05) ------------------------------------
+# Quando o controle CAI (arquivo ausente/typo/mount sumiu), producao NEGA as abas
+# sensiveis (financeiro/PII/escrita); dev preserva o fail-open historico.
+_NAO_EXISTE = str(Path("Z:/nao/existe/acesso_abas.json"))
+_NAO_SENSIVEIS = acesso.ABAS_VALIDAS - acesso.ABAS_SENSIVEIS
+
+
+def _forcar_prod(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MOTOR_ACESSO_FAIL_CLOSED", "1")
+    acesso._cache = None
+    acesso._fail_closed_logado = False
+
+
+def test_prod_sem_arquivo_nega_abas_sensiveis(monkeypatch: pytest.MonkeyPatch) -> None:
+    _forcar_prod(monkeypatch)
+    monkeypatch.setenv("MOTOR_ACESSO_ABAS_PATH", _NAO_EXISTE)
+    abas = acesso.abas_do_usuario("qualquer")
+    assert abas == _NAO_SENSIVEIS
+    assert "executiva" not in abas and "viabilidade" not in abas
+    assert "mapa" in abas  # nao-sensivel segue liberada
+
+
+def test_prod_json_invalido_nega_abas_sensiveis(escrever_mapa, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MOTOR_ACESSO_FAIL_CLOSED", "1")
+    acesso._fail_closed_logado = False
+    escrever_mapa("{ isto nao e json valido")
+    assert acesso.abas_do_usuario("x") == _NAO_SENSIVEIS
+
+
+def test_prod_bloqueia_rota_sensivel_e_permite_analitica(monkeypatch: pytest.MonkeyPatch) -> None:
+    _forcar_prod(monkeypatch)
+    monkeypatch.setenv("MOTOR_ACESSO_ABAS_PATH", _NAO_EXISTE)
+    # Sensivel (financeiro da rede + escrita + simulador) -> BLOQUEADO.
+    assert acesso.motivo_bloqueio("/api/rede/carteira", "alguem") is not None
+    assert acesso.motivo_bloqueio("/api/executiva/SP", "alguem") is not None
+    assert acesso.motivo_bloqueio("/api/simulador/xlsx", "alguem") is not None
+    # Analitico (mapa/oportunidades) -> LIBERADO.
+    assert acesso.motivo_bloqueio("/api/ponto", "alguem") is None
+    assert acesso.motivo_bloqueio("/api/estados", "alguem") is None
+
+
+def test_cadastro_dir_ativa_fail_closed_sem_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Sem override, MOTOR_CADASTRO_DIR setado (sinal de prod pelo compose) ativa o fail-closed.
+    monkeypatch.delenv("MOTOR_ACESSO_FAIL_CLOSED", raising=False)
+    monkeypatch.setenv("MOTOR_CADASTRO_DIR", str(Path("Z:/prod/cadastro")))
+    monkeypatch.setenv("MOTOR_ACESSO_ABAS_PATH", _NAO_EXISTE)
+    acesso._cache = None
+    acesso._fail_closed_logado = False
+    assert acesso.abas_do_usuario("x") == _NAO_SENSIVEIS
+
+
+def test_dev_sem_sinais_e_fail_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Carve-out do dev: sem FAIL_CLOSED e sem CADASTRO_DIR -> fail-open (todas as abas).
+    monkeypatch.delenv("MOTOR_ACESSO_FAIL_CLOSED", raising=False)
+    monkeypatch.delenv("MOTOR_CADASTRO_DIR", raising=False)
+    monkeypatch.setenv("MOTOR_ACESSO_ABAS_PATH", _NAO_EXISTE)
+    acesso._cache = None
+    assert acesso.abas_do_usuario("x") == acesso.ABAS_VALIDAS
+
+
+def test_prod_com_mapa_valido_respeita_o_mapa(escrever_mapa, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Fail-closed so vale quando o controle CAI; com mapa valido, respeita o mapa.
+    monkeypatch.setenv("MOTOR_ACESSO_FAIL_CLOSED", "1")
+    escrever_mapa({"ana": ["executiva"]})
+    assert acesso.abas_do_usuario("ana") == frozenset({"executiva"})
