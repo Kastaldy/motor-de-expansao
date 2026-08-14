@@ -483,27 +483,25 @@ def _slide_matriz(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | None) -
 # ===========================================================================
 
 
-def _encaixar(
-    png: bytes, x: float, y: float, largura: float, altura: float
-) -> tuple[float, float, float, float]:
-    """Retangulo da imagem DENTRO da moldura, preservando a proporcao dela e centralizando.
+def _proporcao(png: bytes | None) -> float:
+    """Altura / largura da captura. `0.75` quando nao da' para medir.
 
-    `pdf.image(w=, h=)` ESTICA para caber. A captura do mapa nao tem a proporcao da
-    moldura — depende do tamanho da janela do operador —, entao forcar os dois eixos
-    deformava o entorno: um bairro quadrado virava oval, e as distancias entre os pins
-    deixavam de ser lidas corretamente. Numa peca cujo assunto E' distancia, isso nao e'
-    detalhe estetico.
+    A MOLDURA se ajusta a IMAGEM, e nao o contrario. Antes a altura da celula era fixa e a
+    imagem entrava centralizada dentro dela: sobrava faixa cinza em cima e embaixo de cada
+    mapa, sem servir a nada, e o mapa saia menor do que a pagina permitia. Medindo a
+    proporcao aqui, a moldura fecha exatamente no mapa e ele cresce ~25% em altura.
     """
-    from PIL import Image
+    if not png:
+        return 0.75
+    try:
+        from PIL import Image
 
-    with Image.open(BytesIO(png)) as img:
-        pw, ph = img.width, img.height
-    if not (pw > 0 and ph > 0):
-        return x, y, largura, altura
-
-    escala = min(largura / pw, altura / ph)
-    cw, ch = pw * escala, ph * escala
-    return x + (largura - cw) / 2, y + (altura - ch) / 2, cw, ch
+        with Image.open(BytesIO(png)) as img:
+            if img.width > 0 and img.height > 0:
+                return img.height / img.width
+    except Exception:  # noqa: BLE001 - captura ilegivel cai na proporcao padrao
+        pass
+    return 0.75
 
 
 def _slide_mapas(
@@ -531,10 +529,13 @@ def _slide_mapas(
 
     vao = 14.0
     largura = (PAGINA_LARGURA - 72 - vao * (n - 1)) / n
-    # A moldura ocupa a altura util; a IMAGEM dentro dela preserva a proporcao propria
-    # (ver `_encaixar`). Fixar a altura pela largura esticava a captura, que nao tem 4:3.
+
+    # A altura sai da PROPORCAO REAL das capturas, e a mesma para todas: com alturas
+    # diferentes lado a lado, a linha de baixo viraria um serrote. Usa a maior proporcao do
+    # conjunto para nenhuma imagem precisar ser cortada, e o teto da pagina manda no fim.
     disponivel = 470.0 - 108.0
-    altura = min(disponivel, largura * 1.05)
+    proporcao = max((_proporcao(mapas[i] if i < len(mapas) else None) for i in range(n)), default=0.75)
+    altura = min(disponivel, largura * proporcao)
     topo = 108.0 + (disponivel - altura) / 2
 
     for i, item in enumerate(itens):
@@ -550,8 +551,20 @@ def _slide_mapas(
 
         if png:
             try:
-                cx, cy, cw, ch = _encaixar(png, x, topo, largura, altura)
-                pdf.image(BytesIO(png), x=cx, y=cy, w=cw, h=ch)
+                # A moldura JA' tem a proporcao da captura, entao a imagem preenche a
+                # celula inteira sem esticar e sem sobra. `pdf.image(w=, h=)` deformaria se
+                # as duas proporcoes divergissem — e deformar mapa, numa peca cujo assunto
+                # e' distancia, nao e' detalhe estetico.
+                escala = _proporcao(png)
+                ch = min(altura, largura * escala)
+                cw = ch / escala if escala > 0 else largura
+                pdf.image(
+                    BytesIO(png),
+                    x=x + (largura - cw) / 2,
+                    y=topo + (altura - ch) / 2,
+                    w=cw,
+                    h=ch,
+                )
             except Exception:  # noqa: BLE001 - captura corrompida nao derruba o deck
                 png = None
 
