@@ -12663,3 +12663,23 @@ para os pins. Front: **587** em 28 arquivos, `tsc --noEmit` limpo. `ruff` limpo.
 M1: nenhum peso, fórmula ou artefato oficial tocado (DEC-001, DEC-027 e DEC-029 intactas). O PR toca
 `web/` e `src/motor_expansao/vulnerabilidade/` — exige `aprovado-humano`. Deploy manual: o artefato
 nomeado precisa ser materializado na VPS para os pins aparecerem em produção.
+
+---
+
+## BLK-FIX-LTV-01 — Guarda de skip faltante em `test_run_readonly_m1_por_mtime` (só teste)
+
+Data: 2026-08-14
+Resumo: o guard cobria só os **artefatos M1** — que EXISTEM na estação local —, então o skip não
+disparava, o teste seguia e o `run()` estourava `FileNotFoundError` no próprio insumo da camada LTV
+(`data/staging/unidade_territorio_retencao.parquet`). Faltava a segunda metade da mesma pergunta.
+Agora o teste **pula** quando o dataset de entrada não existe; o assert de mtime (READ-ONLY M1)
+permanece intacto, como o critério de aceite exigia.
+
+**Por que valeu quitar um bloco de prioridade Baixa.** Ele era o **único vermelho** da suíte local
+(1 failed em 2.955), e um vermelho crônico é pior que nenhum teste: ele treina quem roda a suíte a
+ignorar a cor. Foi achado justamente assim — a falha apareceu na rodada de validação do BLK-MA-16 e
+teve de ser investigada para se provar não-regressão.
+
+Arquivos alterados: `tests/unit/test_score_retencao_territorial.py` (só teste; zero produção)
+Validações: 12 passam, 1 skipped no arquivo; `ruff` limpo
+Decisões relacionadas: nenhuma (Baixa, `loop-safe`, READ-ONLY sobre o M1)

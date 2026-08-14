@@ -1895,32 +1895,7 @@ declarado no relatório.
 
 ---
 
-### BLK-FIX-LTV-01 — Guarda de skip faltante em `test_run_readonly_m1_por_mtime` (só teste)
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Baixa** — só arquivo de teste; zero código de produção, READ-ONLY sobre o M1. |
-| **Prioridade** | Baixa — a falha é local-only e **não** afeta o portão da `main`. |
-| **Esteira** | Block Orchestrator → Builder. |
-| **Status** | Pendente. |
-| **Depende de** | — |
-| **Autonomia** | **loop-safe** — READ-ONLY M1, só teste, sem VPS/deploy/segredos/PII, consome `data/staging`. |
-
-**Problema (achado pelo QA do BLK-RELPON-13, 2026-07-24).**
-`tests/unit/test_score_retencao_territorial.py::test_run_readonly_m1_por_mtime` guarda com `pytest.skip`
-os **artefatos M1** ausentes (linhas 260-261), mas **não guarda a própria ENTRADA** que `run()` carrega
-logo depois (linha 263): `data/staging/unidade_territorio_retencao.parquet`. Numa máquina de dev onde
-alguns dos artefatos M1 existem mas esse dataset **não** existe, o skip não dispara e o teste morre com
-`FileNotFoundError` em vez de pular. Em CI limpo `data/staging/` é gitignored → nenhum artefato M1 → o
-teste pula; por isso o portão da `main` **não** é afetado (falha é local-only, reproduzida em 2026-07-24).
-
-**Correção.** Estender a guarda para cobrir também o dataset de entrada: se
-`data/staging/unidade_territorio_retencao.parquet` não existir, `pytest.skip` com a mesma mensagem de
-"ambiente sem os parquets". **Não** alterar a semântica do teste — o assert de mtime (READ-ONLY M1)
-permanece exatamente como está.
-
-**Critério de aceite.** Em máquina sem o parquet de entrada o teste **pula** (não falha); em máquina com o
-parquet ele roda e mantém o assert de mtime; `pytest -q` deixa de reportar esse `FAILED`.
+- BLK-FIX-LTV-01 (concluído 2026-08-14) — ver tasks/completed.md
 
 ---
 
