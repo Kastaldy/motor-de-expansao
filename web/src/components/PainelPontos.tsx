@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 
 import BlocosComparacao from './BlocosComparacao'
 import CampoPonto from './CampoPonto'
@@ -12,6 +12,7 @@ import {
   corDoPonto,
   rotulosDosPontos,
 } from '../lib/comparacao-pontos'
+import { ranquear } from '../lib/ranking-comparacao'
 import { alunos, num } from '../lib/format'
 import type { PontoPayload } from '../lib/types'
 
@@ -48,8 +49,8 @@ export default function PainelPontos({
 }) {
   /** O campo de colar aberto aqui dentro, ao lado do botão que o pediu. */
   const [adicionando, setAdicionando] = useState(false)
-  /** O botão de relatório existe; o PDF ainda não. Ver a nota que ele abre. */
-  const [pedidoRelatorio, setPedidoRelatorio] = useState(false)
+  const [gerandoRelatorio, setGerandoRelatorio] = useState(false)
+  const [erroRelatorio, setErroRelatorio] = useState<string | null>(null)
 
   /* Rotulos da LISTA, nao de cada ponto isolado: dois enderecos da mesma cidade sem
      bairro resolvido tinham o mesmo nome, e as abas, os seletores e as duas colunas da
@@ -60,6 +61,55 @@ export default function PainelPontos({
     () => blocosPorParametro(DIMENSOES_PONTO, fichas),
     [fichas],
   ) as BlocoParametro<unknown>[]
+
+  /* O deck em PDF dos pontos. Diferente do de hexágonos, aqui NÃO há captura de mapa: o
+     mapa desta tela é por ponto, e o operador já o vê ao abrir cada aba. O que o PDF
+     acrescenta é a comparação lado a lado.
+
+     Cada item leva os CRITÉRIOS avaliados junto: liderar parâmetros e passar no estudo são
+     perguntas diferentes, e um ponto pode ganhar a comparação e ainda assim reprovar num
+     piso do produto. Viabilidade fica de fora de propósito — é entrada do operador sobre um
+     imóvel concreto (DEC-009), e a comparação não a tem. */
+  const gerarRelatorio = useCallback(async () => {
+    if (fichas.length < 2 || gerandoRelatorio) return
+    setGerandoRelatorio(true)
+    setErroRelatorio(null)
+    try {
+      const ranking = ranquear(DIMENSOES_PONTO, fichas, rotulos)
+      const itens = ranking.itens.map((it) => ({
+        ...it,
+        criterios: (fichas[it.indice]?.criterios ?? []).map((c) => ({
+          rotulo: c.rotulo,
+          passa: c.passa,
+        })),
+      }))
+      const cidade = fichas[0]?.local?.municipio ? `${fichas[0].local.municipio} - ` : ''
+      const resposta = await fetch('/api/relatorio/comparacao', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...ranking,
+          itens,
+          titulo: 'Comparação de pontos',
+          subtitulo: `${cidade}${fichas.length} pontos`,
+          dePontos: true,
+        }),
+      })
+      if (!resposta.ok) throw new Error(`HTTP ${resposta.status}`)
+      const blob = await resposta.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'comparacao-pontos.pdf'
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (erro) {
+      setErroRelatorio('Não foi possível gerar o PDF. Tente de novo.')
+      console.error('[deck] falhou ao gerar o PDF da comparação de pontos', erro)
+    } finally {
+      setGerandoRelatorio(false)
+    }
+  }, [fichas, rotulos, gerandoRelatorio])
 
   // A prosa comparativa só com DOIS pontos — ver a nota no JSX.
   const comparacao = useMemo(
@@ -193,7 +243,10 @@ export default function PainelPontos({
             blocos={blocos}
             rotulos={rotulos}
             cor={corDoPonto}
-            onRelatorio={() => setPedidoRelatorio(true)}
+            onRelatorio={gerarRelatorio}
+            rotuloRelatorio={
+              gerandoRelatorio ? 'Gerando o PDF...' : 'Gerar relatório em PDF'
+            }
           />
 
           {/* SÓ A FRASE, e não a tabela A x B inteira. Ela ficou aqui por uma versão e o
@@ -219,19 +272,20 @@ export default function PainelPontos({
             </p>
           )}
 
-          {pedidoRelatorio && (
+          {erroRelatorio && (
+            /* A falha é DITA, não engolida: um botão que não responde faz o operador
+               clicar de novo e achar que a tela travou. */
             <p
               style={{
                 margin: 0,
                 padding: '9px 11px',
                 borderRadius: 'var(--r-md)',
-                border: '1px dashed var(--ac-a25)',
+                border: '1px solid var(--neg)',
                 font: '400 11.5px/1.5 var(--f-ui)',
-                color: 'var(--tx-narrative)',
+                color: 'var(--tx-soft)',
               }}
             >
-              O relatório em PDF desta comparação ainda não é gerado — o botão está aqui
-              para o fluxo ficar de pé enquanto o formato é definido.
+              {erroRelatorio}
             </p>
           )}
 

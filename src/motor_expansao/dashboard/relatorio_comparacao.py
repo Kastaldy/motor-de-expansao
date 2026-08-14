@@ -702,10 +702,38 @@ def _slide_recomendacao(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | N
             if d.get("melhor") and str(d.get("chave")) in decisivas
         ]
         if nomes:
+            # TETO de 3 nomes. Quem lidera em tudo produzia uma linha que corria ate' a
+            # borda da pagina — `cell` nao quebra nem avisa, o texto so' some pela margem.
+            visiveis = nomes[:3]
+            texto_nomes = ", ".join(visiveis)
+            if len(nomes) > len(visiveis):
+                texto_nomes += f" e mais {len(nomes) - len(visiveis)}"
             pdf.set_font("Helvetica", "", 9)
             pdf.set_text_color(*ULTRA_TURQUESA)
-            pdf.set_xy(470, centro - 6)
-            pdf.cell(PAGINA_LARGURA - 72 - 470 + 30, 13, ascii_seguro(", ".join(nomes)))
+            pdf.set_xy(470, centro - 14)
+            pdf.cell(PAGINA_LARGURA - 36 - 470, 13, ascii_seguro(texto_nomes))
+
+        # O ESTUDO, quando o item traz criterios avaliados (analise pontual). Liderar
+        # parametros e PASSAR nos criterios sao perguntas diferentes: um ponto pode ganhar
+        # a comparacao e mesmo assim reprovar num piso do produto, e o deck nao pode deixar
+        # isso implicito. Nao entra viabilidade — ela e' por imovel, com metragem e aluguel
+        # digitados (DEC-009), e a comparacao nao os tem.
+        reprovados = [
+            str(c.get("rotulo") or "")
+            for c in item.get("criterios") or []
+            if c.get("passa") is False
+        ]
+        avaliados = [c for c in item.get("criterios") or [] if c.get("passa") is not None]
+        if avaliados:
+            pdf.set_font("Helvetica", "", 8.5)
+            if reprovados:
+                pdf.set_text_color(180, 60, 60)
+                texto = f"reprova em: {', '.join(reprovados)}"
+            else:
+                pdf.set_text_color(60, 130, 90)
+                texto = f"passa nos {len(avaliados)} critérios avaliados"
+            pdf.set_xy(470, centro + 2)
+            pdf.cell(PAGINA_LARGURA - 72 - 470 + 30, 12, ascii_seguro(texto))
 
         y += altura + 8
 
@@ -718,9 +746,12 @@ def _slide_recomendacao(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | N
         pdf.set_xy(48, y + 16)
         pdf.multi_cell(PAGINA_LARGURA - 96, 15, ascii_seguro(frase), max_line_height=15)
 
+    # "área" vira "ponto" no deck de pontos: o rodapé é a linha que explica a régua, e
+    # explicá-la com a palavra errada é a forma mais fácil de perder a confiança do leitor.
+    sujeito = "cada ponto" if dados.get("dePontos") else "cada área"
     rodape(
         pdf,
-        "O rank CONTA em quantos parâmetros cada área lidera; ele não soma os parâmetros numa "
+        f"O rank CONTA em quantos parâmetros {sujeito} lidera; ele não soma os parâmetros numa "
         "nota única. Empate no topo não é desempatado - quando ele ocorre, não há 1o lugar.",
     )
 
@@ -742,13 +773,28 @@ def _slide_encerramento(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | N
     pdf.set_xy(_CAPA_X, 300)
     pdf.cell(_CAPA_LARGURA, 26, ascii_seguro("O que este material decide"))
 
+    # O fechamento muda com o tipo de comparação: num deck de PONTOS, dizer "a área tem
+    # 5 km2, use a análise de ponto" seria absurdo — é justamente ela que gerou o deck.
+    de_pontos = bool(dados.get("dePontos"))
     linhas = (
-        "Decide qual das áreas leva vantagem em cada",
-        "parâmetro, e quantos parâmetros cada uma lidera.",
-        "",
-        "NÃO decide viabilidade: metragem e aluguel são",
-        "entrada sobre um imóvel concreto, e a área aqui",
-        "tem cerca de 5 km2. Para isso, análise de ponto.",
+        (
+            "Decide qual dos pontos leva vantagem em cada",
+            "parâmetro do entorno, e o que cada um reprova",
+            "nos critérios do estudo.",
+            "",
+            "NÃO decide viabilidade: metragem e aluguel são",
+            "entrada do operador sobre um imóvel concreto",
+            "(DEC-009), e ela roda por ponto, não na comparação.",
+        )
+        if de_pontos
+        else (
+            "Decide qual das áreas leva vantagem em cada",
+            "parâmetro, e quantos parâmetros cada uma lidera.",
+            "",
+            "NÃO decide viabilidade: metragem e aluguel são",
+            "entrada sobre um imóvel concreto, e a área aqui",
+            "tem cerca de 5 km2. Para isso, análise de ponto.",
+        )
     )
     pdf.set_font("Helvetica", "", 11)
     y = 334.0
