@@ -238,7 +238,7 @@ _UF_RE = re.compile(r"^[A-Za-z]{2}$")
 
 def _uf_partition(uf: str) -> Path:
     if not _UF_RE.match(str(uf or "")):
-        raise HTTPException(400, "UF invalida (esperado a sigla de 2 letras).")
+        raise HTTPException(400, "UF inválida (esperado a sigla de 2 letras).")
     return ENRICHED_DIR / f"uf={uf.upper()}"
 
 
@@ -247,11 +247,11 @@ def carregar_uf(uf: str) -> pd.DataFrame:
     """Le a particao de uma UF do artefato enriquecido. READ-ONLY."""
     part = _uf_partition(uf)
     if not part.exists():
-        raise HTTPException(404, f"Particao da UF {uf.upper()} nao encontrada.")
+        raise HTTPException(404, f"Partição da UF {uf.upper()} não encontrada.")
 
     arquivos = sorted(part.glob("*.parquet"))
     if not arquivos:
-        raise HTTPException(404, f"Particao da UF {uf.upper()} sem dados.")
+        raise HTTPException(404, f"Partição da UF {uf.upper()} sem dados.")
 
     import pyarrow.parquet as pq
 
@@ -411,7 +411,7 @@ def carregar_uf_completo(uf: str) -> pd.DataFrame:
     """
     part = _uf_partition(uf)
     if not part.exists():
-        raise HTTPException(404, f"Particao da UF {uf.upper()} nao encontrada.")
+        raise HTTPException(404, f"Partição da UF {uf.upper()} não encontrada.")
     return pd.read_parquet(part)
 
 
@@ -2745,7 +2745,7 @@ def _ranking_estados() -> list[dict[str, Any]]:
     import pyarrow.dataset as ds
 
     if not ENRICHED_DIR.exists():
-        raise HTTPException(500, "Base de dados nao encontrada.")
+        raise HTTPException(500, "Base de dados não encontrada.")
 
     dset = ds.dataset(str(ENRICHED_DIR), partitioning="hive")
     disp = set(dset.schema.names)
