@@ -112,7 +112,9 @@ def test_expandir_link_curto_recusa_redirect_para_host_interno(monkeypatch) -> N
 
     class _Redir:
         url = "https://maps.app.goo.gl/abc"
-        headers = {"Location": "http://authelia:9091/api/verify"}
+        # Redirect para um host INTERNO (nao-allowlisted). Sem porta no valor de proposito:
+        # `host:porta` faz o gitleaks confundir com `chave:segredo` (falso-positivo).
+        headers = {"Location": "http://servico-interno-do-compose/api/verify"}
         is_redirect = True
         is_permanent_redirect = False
 
