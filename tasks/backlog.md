@@ -1468,131 +1468,7 @@ produção e exige DEC + gate humano.
 
 ---
 
-### BLK-MA-05 — Lista priorizada de alvos de M&A: cruzamento com o hexágono quente + entregável
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (materializa **dois artefatos novos** e faz join sobre a camada de mercado, mas **READ-ONLY** sobre ela e sobre o M1: não recalcula `score_priorizacao`, `hex_score_estrutural`, pesos, carteira, plano nem artefato oficial, e não escreve de volta em carteira/mercado. Não cria ingestão, não toca VPS, não apaga disco, não persiste PII nova no MVP hex-level. **Sobe para Alta** se a variante NOMEADA (uma linha por academia, com identidade) for materializada — aí persiste identidade e o artefato nasce `gitignored` por D1-B/D7.) |
-| **Prioridade** | **É o entregável final do epic** — a razão de existirem MA-01..04. Tudo antes dele produz insumo; ele é o único que sai do repositório e vai para a mesa do comercial. |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | **Pendente — escrito em 2026-08-12.** Até esta data o bloco **não existia como bloco estruturado**, embora fosse citado **35 vezes** nos três artefatos permanentes (medido: 4 em `tasks/backlog.md`, 19 em `tasks/completed.md`, 12 em `docs/vulnerabilidade_ma_contrato.md`) — sempre como destino ("o entregável comercial é o BLK-MA-05", "fora de escopo → BLK-MA-05"), nunca como bloco. Mesmo furo que o fechamento do BLK-MA-02 já registrara na época para o BLK-MA-04. |
-| **Depende de** | **Para IMPLEMENTAR:** BLK-MA-04 (score, concluído 2026-07-30) + BLK-MA-03-FU1 e BLK-MA-04-FU1 (concluídos 2026-08-12) — os dois FU1 eram pré-requisito declarado e **já saíram do caminho**. **Para EXECUTAR contra dado real:** BLK-MA-06 aplicado na VPS + ~2 meses de série. Ver "A implementação NÃO espera a série" abaixo. |
-| **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012), e a saída é decisão comercial. NÃO marcar loop-safe. |
-
-**O que entrega (D5 + D6, já ratificados no gate de 2026-07-23 — não reabrir).**
-
-1. **Hexágono quente para M&A**, com a INVERSÃO do §2 (comprar quer demanda **ALTA** + residual
-   **BAIXO**, o oposto de `abrir_agora`): `sam_fitness_potencial` no **top quartil do universo**
-   **AND** `score_oportunidade_residual < 25`.
-2. **Adjacência k=1**: a academia é "próxima de hex quente" se o seu `hex_id_res7` **ou** qualquer
-   vizinho de `h3.grid_disk(hex, 1)` for quente (~2-3 km, sem geometria pesada).
-3. **Join READ-ONLY** do hotness na lista de academias, `validate="many_to_one"`, com asserts de
-   invariância (`len` inalterado; `score_priorizacao` e os 4 ranks idênticos por `.equals` antes/
-   depois). Molde: a função **`enriquecer_dataframe_com_residual`** em
-   `pipelines/enriquecer_outputs_residual_mercado.py` — ancorada por NOME de propósito.
-   **O ponteiro `:68-82` do §9 do contrato está 3 linhas curto, e nasceu assim:** o `base.merge(`
-   abre na **65** e o `on="hex_id"` está na **67**, então `68-82` começa em `how="left"` e deixa de
-   fora justamente as linhas que definem a chave do join. O intervalo fiel é **65-82** (asserts em
-   71 cardinalidade, 75 `score_priorizacao`, 79 os 4 ranks, 82 colunas residuais). Não é apodrecimento
-   — o arquivo tem um único commit desde 2026-05-30, anterior ao contrato. Mais uma razão para citar
-   a função pelo nome (ver o m1 do BLK-MA-03-FU1, que trocou 3 endereços em 2 semanas).
-4. **Dois artefatos** (D6): `data/staging/vulnerabilidade_ma_academias.parquet` (camada scored) e
-   `data/outputs/alvos_ma_priorizados.csv` (`sep=";"`, `encoding="utf-8-sig"`, hex-level no MVP,
-   **sem identidade**). Cabeçalho canônico no §10 do contrato.
-
-**O QUE EU MEDI (2026-08-12, sobre `data/outputs/carteira_expansao_acionavel.parquet`).** O bloco
-nasce dimensionado, não no escuro:
-
-| grandeza | medido |
-|---|---|
-| universo da carteira | **4.899** hexes |
-| top quartil de `sam_fitness_potencial` (`>= 7,5`) | **1.225** |
-| `score_oportunidade_residual < 25` | **4.510** |
-| **hex quente** (as duas condições) | **836** — 17,1% do universo |
-| hex quente **+ vizinhança k=1** (união) | **3.660** (fator **4,4x**) |
-| destes, dentro da carteira | 1.066 |
-
-**A CONJUNÇÃO DO D5 NÃO É DECORATIVA — e o denominador ingênuo faz parecer que é.** O corte
-`score_oportunidade_residual < 25` deixa passar **4.510 dos 4.899 hexes (92%)** do universo, o que
-sugere um filtro inerte. **É ilusão de denominador**: o corte só age *depois* do top quartil de SAM,
-e ali ele morde muito:
-
-| leitura | medido |
-|---|---|
-| removidos pelo `< 25`, sobre o **universo** | 389 / 4.899 = **7,9%** ← o número que engana |
-| removidos pelo `< 25`, sobre o **top quartil** | 389 / 1.225 = **31,8%** ← o número que vale |
-| taxa de `residual < 25` **dentro** do top quartil | 68,2% |
-| taxa de `residual < 25` **fora** do top quartil | **100,0%** |
-| `corr(sam_fitness_potencial, score_oportunidade_residual)` | **+0,79** |
-
-**100% das remoções ocorrem dentro do top quartil** — não há uma única linha com `residual >= 25`
-fora dele (o SAM mínimo dessas 389 é 664,6, contra um `q75` de 7,53). Ou seja: a metade "saturado"
-existe **exclusivamente** para depurar o conjunto que a outra metade seleciona, e sem ela o gate
-entregaria 1.225 hexes — **46,5% a mais**.
-
-O mecanismo: `residual` ALTO significa oportunidade residual **disponível** (menos saturado), e ele
-cresce junto com o SAM (`+0,79`). Hex de SAM alto é onde **sobra** demanda não atendida — por isso é
-justamente lá que o filtro de saturação descarta. As duas condições do D5 são fortemente
-correlacionadas **na direção que torna a conjunção não-trivial**: o gate faz trabalho real.
-
-Consequência para quem for mexer no limiar: medir o efeito **sobre o top quartil**, nunca sobre o
-universo — a razão entre as duas leituras é de **4x**. Reapertar o `< 25` continua sendo **mudança de
-produto** (gate/DEC, não bugfix), mas o número que instrui essa decisão é o `31,8%`, não o `7,9%`.
-
-**Concentração geográfica medida:** os 836 hexes quentes são majoritariamente do Nordeste — PB
-(148), PE (125), CE (113), MA (82), PI (81), AL (57), SE (51), PA (41). Coerente com a tese
-(demanda alta + oferta já instalada), mas o comercial deve saber disso **antes** de receber a lista,
-para não ler o recorte como viés de coleta.
-
-**A implementação NÃO espera a série — a execução sim.** Todo o pacote `vulnerabilidade/` é testado
-com **fixtures 100% sintéticas** e frames injetados, e `calcular_score_vulnerabilidade` aceita
-`churn=`/`presenca=` diretamente. Logo este bloco pode ser **escrito, testado e mergeado agora**,
-com a série em zero semanas. O que a série destrava é rodar contra dado real e entregar a lista ao
-comercial. **Não usar "a série está vazia" como razão para adiar o bloco.**
-
-**Obrigações herdadas que este bloco TEM de honrar (cada uma já é decisão fechada).**
-
-- **§8.5 / emenda BLK-MA-04-FU1 — obrigação DURA:** segmentar por `n_sinais_disponiveis` **antes**
-  de ordenar. `score_vulnerabilidade_ordenavel` resolve "score de dois valores", **não** resolve
-  "regimes de tamanhos diferentes na mesma coluna": uma linha `{s3}` sai com `100,0` e lidera uma
-  `{s1,s3,s4}` completa. Ordenar o frame inteiro sem segmentar mistura as réguas **em silêncio** —
-  não devolve `NaN`, não levanta, e o erro só aparece na shortlist. Travado por
-  `test_ordenavel_nao_separa_regimes_de_tamanho_diferente`.
-- **DEC-026 — obrigação transferida por escrito:** `nota_wellhub`/`qtd_avaliacoes_wellhub` são
-  **fatos sem peso**. O entregável **deve documentar** qualquer corte que faça sobre nota ou
-  contagem. E as duas colunas **andam juntas**: 38,4% das 34.035 independentes com nota têm < 30
-  avaliações, e das 158 abaixo de nota 4,0 a mediana é **10,5** avaliações. Nota sem contagem ao
-  lado põe no topo da shortlist academias cujo sinal são três avaliações.
-- **Ressalva do BLK-MA-03-FU1:** `n_academias_independentes_totalpass`/`_wellhub` são **TETO**, não
-  número exato (super-contam sob rotação de chave, que é acidente de coleta e não caso raro). Se o
-  entregável exibir "densidade do alvo", cruzar com `flag_troca_chave_na_serie`.
-- **D7 / DEC-012:** MVP hex-level **sem identidade**; a variante nomeada, se existir, nasce
-  `gitignored`. CSV do projeto em `sep=";"` + `utf-8-sig` (§2 do CLAUDE.md).
-
-**Detalhes de integração já medidos (poupam uma rodada de descoberta).**
-- A carteira vive em **`data/outputs/`**, não em `data/staging/` — o §9 do contrato não fixa o
-  caminho.
-- A chave de join é **`hex_id`** na carteira e **`hex_id_res7`** na academia: nomes diferentes,
-  mesmo conteúdo. As 5 colunas que o §9 exige (`score_oportunidade_residual`,
-  `oferta_efetiva_disponivel`, `sam_fitness_potencial`, `tese_entrada`, `score_priorizacao`) **estão
-  todas presentes**, junto de `uf`, num frame de 62 colunas.
-
-**Fora de escopo.** Qualquer artefato/score/peso/ranking do M1 (READ-ONLY, DEC-001); reabrir a
-fórmula, os pesos do D4 ou as decisões G-D1/G-D2/G-D3 (ratificadas 2026-07-30); reabrir o D5/D6
-(gate de 2026-07-23) — se o limiar de saturação mudar, é **DEC nova**; overlay no dashboard/piloto
-web (§10: "sem overlay no MVP"); reputação externa (BLK-MA-07); o cron (BLK-MA-06); escrever de
-volta em carteira, mercado ou plano.
-
-**Critério de aceite.** Hex quente implementado como a conjunção do D5 com adjacência k=1; join
-`many_to_one` com os asserts de invariância do molde, provados por teste que **falharia** se o join
-alterasse `len`, `score_priorizacao` ou qualquer um dos 4 ranks; segmentação por
-`n_sinais_disponiveis` antes de qualquer ordenação, com teste; os dois artefatos do D6 materializados
-no formato canônico (CSV `sep=";"` + `utf-8-sig`); qualquer decisão sobre o limiar `< 25` medida
-**sobre o top quartil**, nunca sobre o universo (a razão entre as duas leituras é 4x — ver a tabela
-acima), e alterá-lo exige gate/DEC; corte sobre nota/contagem documentado por escrito
-(DEC-026); fixtures 100% sintéticas, zero PII; suíte completa sem regressão (medir a baseline **no
-momento** — a de 2026-08-12 era **2925** coletados, e envelhece a cada ciclo); `ruff` limpo;
-`loop_guard` sem `CRITICO`.
+- BLK-MA-05 (concluído 2026-08-13) — ver tasks/completed.md
 
 ---
 
@@ -1639,6 +1515,17 @@ segundo maior peso, e silencioso. O recorte de cada partição fica em `fontes_l
 **Fora de escopo.** Qualquer artefato/score/peso do M1; o cron **mensal** dos agregadores (bloco
 próprio, e quando existir chama o MESMO script com `--fontes totalpass wellhub`); o entregável
 comercial (**BLK-MA-05**); a reputação externa (**BLK-MA-07**).
+
+> **[nota BLK-MA-13, 2026-08-14] O comando do entregável mudou, e o overlay do piloto depende dele.**
+> `python -m motor_expansao.vulnerabilidade.alvos_ma --base-dir <snapshots>` agora calcula o **sinal
+> 6** por padrão (lê `data/staging/concorrentes_mapeados.parquet`; `--sem-pressao` volta ao
+> comportamento antigo, bit a bit) e materializa um **terceiro artefato**,
+> `data/outputs/alvos_ma_hex.parquet` (`--saida-hex`), que é o que o piloto web serve no overlay de
+> pressão competitiva (DEC-028). Consequência prática para a aplicação na VPS: **rodar o snapshot
+> não basta para o overlay aparecer em produção** — alguém precisa rodar o entregável depois, e o
+> parquet tem de estar no bind mount de `data/outputs`. Sem ele a pílula simplesmente não aparece
+> (degradação silenciosa deliberada, molde do `crescimento_hex`); com ele, o `/api/health` passa a
+> reportar `pressao_ma_hex`.
 
 **`MIN_SEMANAS` — RESOLVIDO em 2026-08-11 (Vinicius): fica em 8. NÃO reabrir sem dado novo.**
 Cumpre a obrigação que o D2 do contrato delegou a este bloco. A revisão foi feita com a cadência
@@ -1701,110 +1588,8 @@ definido antes de qualquer código; validação com fixtures sintéticas; READ-O
 
 ---
 
-### BLK-MA-13 — Inclusão VISUAL do score de vulnerabilidade no piloto web
+- BLK-MA-13 (concluído 2026-08-14) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** — põe um score na superfície que o comitê usa para decidir, e o número que existe HOJE não significa o que o rótulo diria (ver "o risco que decide o bloco"). Materializa artefato novo servido pelo piloto e mexe em `web/` (`_DENY_GOVERNANÇA`). **Exige DEC própria** antes do Builder. READ-ONLY sobre o M1. |
-| **Prioridade** | **Pedido de Vinicius (2026-08-13).** Não é caminho crítico do epic: o BLK-MA-06 (cron) continua sendo o que destrava o valor real, porque é ele que faz S3/S4 amadurecerem. |
-| **Esteira** | Block Orchestrator → Planner → `[GATE — DEC própria]` → Builder → QA. |
-| **Status** | **Pendente — escrito em 2026-08-13.** Reconhecimento técnico já feito (front + dado); nenhuma linha de código escrita. |
-| **Depende de** | BLK-MA-12 (S6 no score, concluído 2026-08-13, DEC-027) + BLK-MA-05 (contrato hex-level `CONTRATO_COLUNAS_ALVOS_MA`, concluído 2026-08-13). **Para valer de verdade:** BLK-MA-06 + ~2 meses de série. |
-| **Autonomia** | **manual (NÃO loop-safe)** — toca `web/`, materializa artefato servido em produção, e a saída é decisão comercial. |
-
-**O RISCO QUE DECIDE O BLOCO — ler antes de qualquer estimativa.**
-
-Medido em 2026-08-13 sobre as 19.329 academias independentes reais: no regime que existe hoje
-(`{s1, s6}`), `v1 ≡ 0,5` para **100%** do universo — só o WellHub existe em disco, logo
-`n_agregadores = 1` sempre. O score vira, literalmente:
-
-```
-score = 100 · (0,60 · 0,5 + 0,40 · v6) = 30 + 40 · v6
-```
-
-**O piso `30` é constante e a única coisa que varia é o `v6`.** Portanto **o que um ranking de
-vulnerabilidade ordenaria hoje é pressão competitiva, e nada mais**. Publicar isso rotulado como
-"alvos de M&A" é vender S6 com o rótulo de S3 — e S3 (churn: a academia sumiu do agregador) é o
-sinal de maior peso justamente porque é o proxy real de fechamento/venda.
-
-Isso **não** é argumento para não fazer o bloco; é a razão de o rótulo e a legenda serem entregáveis
-tão duros quanto o código. Duas saídas honestas, e o gate escolhe:
-
-1. **Rotular pelo que é** — a camada se chama *pressão competitiva* enquanto S3/S4 estiverem
-   imaturos, e passa a se chamar *vulnerabilidade* quando a série amadurecer. Zero ambiguidade,
-   custo zero de credibilidade.
-2. **Rotular como vulnerabilidade com selo de provisório** — exige que o selo apareça em TODA
-   superfície onde o número aparecer (mapa, legenda, tooltip, PDF), e a experiência do repo é que
-   selo compete com número e perde.
-
-**O G-D1, e a emenda que Vinicius já aprovou (2026-08-13).**
-`flag_score_provisorio = (~s3) & (~s4)` **não olha o S6**: medido, `score_vulnerabilidade_ordenavel`
-sai **NULA em 19.329 de 19.329 linhas**, e o `_assert_schema_score` exige que seja assim. Um
-`sort_values` devolve `NaN` em tudo — o G-D1 virou o tipo da saída exatamente para impedir ranking
-sobre score provisório. **Decisão tomada:** emendar para `(~s3) & (~s4) & (~s6)`, com a
-justificativa de que o G-D1 mirava o ramp-up só-S1 de DOIS valores e o S6 entrega 2.706. A emenda
-entra na DEC-027 (arquivo próprio) e **não** dispensa a decisão de rótulo acima — ela libera a
-ordenação, não conserta o significado.
-
-**O que o contrato realmente diz (o §10 NÃO é a barreira que parecia).**
-§10, literal: *"Sem overlay de dashboard no MVP **(opcional/futuro)**"* — é **exclusão de escopo**,
-mesmo vocabulário que o contrato usa para o BLK-MA-07 (*"opcional/futuro, gate + DEC próprios"*), não
-proibição de invariante. Construir o overlay é decisão de produto nova.
-**§11 SIM tem proibição dura**, e ela vale integralmente aqui: *"**NUNCA** texto/autor de review nem
-coordenada GPS bruta — a geometria deriva do `hex_id`"*. Consequência concreta: o overlay consome
-**apenas** o artefato hex-level agregado. A variante NOMEADA é permitida só no artefato gitignored —
-e **`gitignored` não é o mesmo que "fora do alcance do piloto"**, já que o backend serve
-`DATA_DIR/outputs` e `DATA_DIR/staging` montados `:ro`. Servir o nomeado por ali colocaria
-nome/endereço de estabelecimento atrás da superfície web, o que o §11 não autoriza.
-
-**O que EXISTE de dado, medido (não estimado).**
-
-| | sem pressão | com pressão |
-|---|---|---|
-| `sinais_disponiveis` | `"s1"` (100%) | `"s1,s6"` (100%) |
-| `score_vulnerabilidade` | **50,0 constante** (1 valor) | **30,0–68,0**, média 41,9 (**2.706** valores) |
-| `score_vulnerabilidade_ordenavel` | NULA (0 de 19.329) | NULA (0 de 19.329) |
-
-Cobertura do S6 no universo de academias: **2.716 de 6.753 hexes (40,2%)** com pressão > 0 — muito
-melhor que os 5,5% da carteira, porque hex de academia independente é urbano e denso. **Este é o
-número que torna o bloco viável;** o 5,5% do docstring do `pressao_competitiva` é de outro universo.
-
-**Reconhecimento do front já feito (2026-08-13) — poupa uma rodada de descoberta.**
-
-- **NÃO existe seletor de camada nem registro central de métricas.** O que troca a métrica no mapa é
-  o **número do passo do funil** (`passo.n`, 1..5), replicado à mão em **~9 lugares** (3 no Python,
-  6 no TS). Não há dropdown "colorir por X".
-- **Custo:** métrica dentro de camada existente = **3 arquivos**; camada nova (passo 6) = **~9
-  arquivos + 2 testes de contrato**.
-- **A régua de 10 faixas já existe e é espelhada byte a byte** entre
-  `dashboard/constants.py:396-407` (`RESIDUAL_SCORE_BANDS`) e `web/src/lib/colors.ts:24-35`
-  (`SCORE_BANDS_HEX`), travada por `tests/contracts/test_faixas_mapa_espelho.py`. Colorir por score
-  de vulnerabilidade **reusa** isso — não inventar escala nova.
-- Pontos-chave: `web/src/components/HexMap.tsx` (`scoreDoPasso`, `fillDoHex`, e o
-  `updateTriggers` **obrigatório** — sem ele trocar de métrica não repinta),
-  `web/src/components/StepperBar.tsx`, `web/src/lib/colors.ts`, `web/src/lib/faixas.ts`,
-  `web/src/components/ScoreLegend.tsx`, `web/server/app.py`.
-
-**O artefato a materializar.** Parquet **hex-level** em `data/outputs/`, no schema
-`CONTRATO_COLUNAS_ALVOS_MA` (já travado por teste). Precedentes de camada paralela servida pelo
-piloto: `crescimento_hex.parquet` e `hexagonos_mercado_mapeado.parquet` (`web/server/app.py:96,245`).
-**Ressalva herdada:** a linha do contrato é `(hex, REGIME)`, não `(hex)` — emenda BLK-MA-05 ao §10.
-Hoje é inofensivo (há um regime só), mas um overlay que pinte "um hex = uma cor" **precisa colapsar
-regimes**, e no dia em que o S3 amadurecer esse colapso mistura réguas em silêncio. O colapso tem de
-ser explícito e testado, não implícito num `groupby`.
-
-**Fora de escopo.** Qualquer artefato/score/peso/ranking do M1 (READ-ONLY, DEC-001); reabrir os pesos
-do D4 ou a DEC-027; a variante NOMEADA (por academia, com identidade) em qualquer superfície web
-(§11); propagar a camada de mercado (bloco próprio); o cron (**BLK-MA-06**); o CSV comercial do D6.
-
-**Critério de aceite.** DEC própria aprovada, decidindo **o rótulo da camada** (pressão competitiva
-vs vulnerabilidade-com-selo) antes de qualquer código; emenda do `flag_score_provisorio` implementada
-com teste que prove que o `ordenavel` deixa de ser universalmente nulo; artefato hex-level
-materializado no schema travado, **sem nenhuma coluna de `COLUNAS_PII_PROIBIDAS`**, provado relendo
-do disco; colapso de regimes explícito e testado; reuso da régua de 10 faixas com o teste de espelho
-verde; legenda que declare o regime e a cobertura (não pintar "sem dado" e "sem pressão" com a mesma
-cor); suíte completa sem regressão (medir a baseline **no momento**); `ruff` limpo; `loop_guard` sem
-`CRÍTICO`.
 
 ---
 

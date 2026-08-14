@@ -12371,3 +12371,122 @@ comercial continua bloqueado pelo MA-06 + ~2 meses de acúmulo.
 **Governança do PR.** Criticidade Média armaria auto-merge, mas o PR toca `tasks/backlog.md` (do
 commit do BLK-MA-12) e `src/motor_expansao/vulnerabilidade/`, então o guard exige `aprovado-humano`
 de qualquer forma. Deploy segue manual e não se aplica (nada vai a produção).
+
+---
+
+## Fechamento de ciclo — BLK-MA-12 (2026-08-13, registrado 2026-08-14)
+
+**Dívida de bookkeeping quitada aqui, não trabalho novo.** O BLK-MA-12 foi implementado e a
+DEC-027 foi escrita em 2026-08-13, mas o bloco **nunca existiu como bloco estruturado** no
+`tasks/backlog.md` e nunca ganhou fechamento — o MESMO furo que o fechamento do BLK-MA-02 já
+registrara para o BLK-MA-04 e que o BLK-MA-05 registrou para si próprio. Registrado agora, junto do
+BLK-MA-13, porque é dele que o MA-13 depende.
+
+**Entregue.** `src/motor_expansao/vulnerabilidade/pressao_competitiva.py` (sinal 6: concorrência
+efetiva ponderada por distância, kernel triangular até 2 km, réplica da fórmula de
+`pressao_concorrencial_score_2km` com o kernel como parâmetro em vez de premissa embutida) e a
+promoção do S6 a **componente do score** em `score.py` (`_juntar_pressao`,
+`_regra_de_disponibilidade`, `_derivar_componentes`). O contrato de score vai de 22 para **24
+colunas**, com bump `score_vulnerabilidade_v2` -> `v3`.
+
+**A decisão que sustenta o bloco (DEC-027): o S6 é ATIVO mas CONDICIONAL.** Disponível se e somente
+se o insumo de pressão vier na chamada, no mesmo molde do `s1` (casou no join). Medido com um
+harness antes de implementar: um S6 **sempre** disponível quebra 17 testes, e quatro deles não são
+asserts a atualizar — são invariantes de produto que deixam de existir (o regime
+`n_sinais_disponiveis == 0` se extingue e a trava "ausência nunca é zero" fica INALCANÇÁVEL, isto
+é, vira cobertura fantasma que nunca fica vermelha). Com a condicionalidade, omitir `pressao=`
+devolve o score anterior **bit a bit**, pesos efetivos inclusive.
+
+**O ganho, medido sobre dado real:** 19.329 academias independentes (WellHub, 6.753 hexes). O score
+sai de **1 valor distinto** (50,0 para todas — artefato do `v1` constante) para **2.706**, na faixa
+`30,0-68,0`. O score de vulnerabilidade passou a ordenar.
+
+**Ressalvas que viajaram para o BLK-MA-13, e não foram inventadas por ele:** (a) `w6 = 0,10` vale
+**40% do score efetivo hoje**, porque S3/S4 estão renormalizados para fora — descontinuidade na
+composição do score no meio da vida dele, declarada na DEC-027; (b) cobertura de **5,5%** na
+carteira (2.716 de 6.753, ou 40,2%, no universo de academias — hex de independente é urbano e
+denso); (c) onde falta coleta a pressão sai `0`, a leitura mais otimista da régua.
+
+**Governança.** DEC-027 (Alta) aprovada por Vinicius em 2026-08-13. READ-ONLY sobre o M1: nenhum
+peso, fórmula ou artefato oficial tocado; DEC-001 intacta.
+
+---
+
+## Fechamento de ciclo — BLK-MA-13 (2026-08-14)
+
+**Entregue: a camada de M&A ficou VISÍVEL no piloto web — como pressão competitiva, não como
+vulnerabilidade.** Overlay liga/desliga sobre o mapa, com legenda própria que declara o regime de
+sinais e a cobertura, tooltip com os fatos do hexágono, e um terceiro artefato hex-level
+(`data/outputs/alvos_ma_hex.parquet`) servido pelo backend.
+
+**O gate era o RÓTULO, e a decisão foi de Vinicius (DEC-028).** Medido antes de escrever código: no
+regime que existe hoje (`{s1, s6}`), `v1 ≡ 0,5` para **100%** do universo — só o WellHub existe em
+disco, logo `n_agregadores = 1` sempre. O score colapsa em `score = 30 + 40·v6`: **o piso é
+constante e a única coisa que varia é a pressão**. Publicar isso rotulado como "alvos de M&A" seria
+vender S6 com o rótulo de S3 — e S3 (churn: a academia sumiu do agregador) é o sinal de maior peso
+justamente por ser o proxy real de fechamento. Escolhida a opção 1 do bloco: **rotular pelo que é**.
+A opção 2 (vulnerabilidade com selo de provisório) foi rejeitada porque o selo teria de aparecer em
+TODA superfície onde o número aparece, e selo compete com número e perde.
+
+**A forma NÃO é um passo 6 do funil, e isso mudou o custo do bloco.** O reconhecimento do backlog
+estimava "métrica em camada existente = 3 arquivos; camada nova (passo 6) = ~9 arquivos + 2 testes
+de contrato". Nenhuma das duas foi adotada: virou **overlay**, por três razões, em ordem de peso —
+(a) o §10 do contrato usa literalmente a palavra *overlay* (*"sem overlay de dashboard no MVP
+(opcional/futuro)"*), que é exclusão de escopo e não proibição de invariante; (b) o funil narra
+ABRIR e cada passo filtra o anterior, enquanto M&A é a **inversão do §2** — um passo 6 depois de
+"Para onde crescer" faria o CTA `Próxima camada →` levar da síntese para o oposto dela; (c) um passo
+6 quebraria `test_metodologia_espelha_o_funil::test_payload_tem_as_5_camadas_completas` e os três
+asserts `[p["n"] for p in ...] == [1,2,3,4,5]`, e consertá-los seria reescrever a régua do funil
+para acomodar uma camada que não filtra ninguém. O molde adotado é o da chave `raio1km`, que já
+existe e já foi aceito.
+
+**A emenda ao G-D1, que era pré-requisito silencioso.** `flag_score_provisorio` passou de
+`(~s3) & (~s4)` para `(~s3) & (~s4) & (~s6)`. Sem ela, `score_vulnerabilidade_ordenavel` saía
+**NULA em 19.329 de 19.329 linhas** e um `sort_values` devolvia `NaN` em tudo — o G-D1 mirava o
+ramp-up só-S1 de DOIS valores, e o S6 entrega 2.706. Travado por
+`test_pressao_tira_o_rampup_do_regime_provisorio` (falha se a emenda for revertida) e por
+`test_sem_o_s6_a_serie_imatura_continua_provisoria` (prova que ela é cirúrgica). A emenda foi
+escrita na DEC-028, e não na DEC-027 como o bloco previa: aquela DEC já estava fechada.
+
+**O colapso de regimes é função nomeada, não um `groupby`.** `colapsar_regimes_por_hex` é
+**SELEÇÃO, nunca agregação**: vence o regime de maior `n_sinais_disponiveis`, desempatado por
+cobertura (`n_independentes_vulneraveis`) e depois pela composição canônica. A linha que sobrevive é
+uma linha real; nenhum número é recomputado. Hoje há um regime só e o colapso é a identidade — nasce
+agora, testado, porque no dia em que o S3 amadurecer a escolha passa a existir e um `groupby`
+implícito a faria em silêncio, misturando as réguas que a emenda BLK-MA-04-FU1 separou.
+
+**Três cores, três estados** (critério de aceite do bloco): medido (rampa invertida), "no universo
+mas sem pressão medida" (cinza azulado) e "fora do universo" (cinza neutro). Colapsá-los faria o
+mapa afirmar ausência de concorrência onde existe ausência de dado — o risco 2 da DEC-027.
+
+**A rampa é lida AO CONTRÁRIO, e o complemento não é maquiagem.** A convenção do mapa inteiro é
+"vermelho = apertado, verde = folgado"; pressão alta é território apertado. O mapa pinta
+`scoreBandToColor(100 - pressao)`, e `100 - pressao` é o `gap` da própria fórmula do sinal 6
+(`gap = 1/(1+oferta)`, `pressao = 100·(1-gap)`). `FAIXAS_MAPA_PRESSAO_MA` reusa a paleta de
+`FAIXAS_MAPA_DEMANDA` em ordem inversa — travado por teste, junto do espelho Python<->TS.
+
+**O que NÃO viaja para a tela, por decisão:** o `score_vulnerabilidade`. Sendo `30 + 40·v6` no
+regime vigente, ele é uma transformação afim da própria pressão; servir os dois mostraria o mesmo
+fato com dois rótulos e duas escalas, convidando o operador a lê-los como grandezas independentes.
+Volta quando S3/S4 amadurecerem, com o rótulo que a DEC daquele momento decidir.
+
+**Medições (dado real, não fixture).** Snapshot do WellHub materializado localmente: 22.173 linhas,
+semana `2026-33`. Pipeline completo: **19.329** academias, **6.753** hexes, **1** regime (`s1,s6`),
+0 linhas descartadas no colapso, pressão em `[0, 95,04]` com **40,2%** dos hexes acima de zero.
+`score_vulnerabilidade_ordenavel` deixou de ser nula: **19.329 de 19.329** preenchidas (era 0).
+Payload real de São Paulo: 199 hexes com linha, 181 com pressão > 0.
+
+**Suíte.** Pacote `vulnerabilidade`: **378** passam (era 364; +14). Contratos: **282** passam.
+Front: **580** passam em 27 arquivos (`vitest`), `tsc --noEmit` limpo e `vite build` verde. `ruff`
+limpo.
+
+**O que este bloco NÃO destrava.** Continua valendo o risco 1 da DEC-028: com `{s1, s6}` o número é
+honesto, mas quase estático — quem faz S3/S4 amadurecerem é o **BLK-MA-06**, que segue aguardando
+aplicação humana na VPS. Até lá, o overlay mostra pressão competitiva, que é exatamente o que ele
+diz mostrar.
+
+**Governança.** DEC-028 (Alta) aprovada por Vinicius em 2026-08-14. O PR toca `web/` e
+`src/motor_expansao/vulnerabilidade/` (`_DENY_GOVERNANÇA` do `loop_guard`), então exige
+`aprovado-humano`. READ-ONLY sobre o M1: `score_priorizacao`, `hex_score_estrutural`, pesos,
+carteira, plano e artefatos oficiais intocados; DEC-001 intacta. Deploy segue manual e por digest —
+o overlay só aparece em produção depois de o artefato ser materializado lá.

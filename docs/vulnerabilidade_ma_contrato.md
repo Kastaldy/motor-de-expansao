@@ -559,6 +559,27 @@ componentes `vi` por sinal (para auditoria) e das flags de qualidade.
 > ordenar. Ordenar o frame inteiro por `score_vulnerabilidade_ordenavel` sem segmentar mistura as
 > réguas em silêncio — não devolve `NaN`, não levanta, e o erro só aparece na shortlist.
 
+> ### [emenda BLK-MA-13 / DEC-028, 2026-08-14] O S6 entra na conjunção do `flag_score_provisorio`
+>
+> `flag_score_provisorio` passa de `(~s3) & (~s4)` para **`(~s3) & (~s4) & (~s6)`**.
+>
+> **O que forçou a emenda, medido sobre 19.329 academias reais:** com o insumo de pressão presente,
+> a flag antiga ficava ligada em **todas** as linhas e `score_vulnerabilidade_ordenavel` saía **NULA
+> em 19.329 de 19.329** — um `sort_values` devolvia `NaN` em tudo. O G-D1 mirava o ramp-up **só-S1
+> de DOIS valores** (`{0, 50}`, porque o `v1` é categórico); o S6 é contínuo e entrega **2.706**
+> valores distintos na faixa `[30, 68]`. O objeto que o guardrail protegia deixou de existir naquele
+> regime, e mantê-lo ligado tornava a coluna ordenável inútil por construção.
+>
+> **O que a emenda NÃO faz:** dizer que o score passou a medir vulnerabilidade. Com `{s1, s6}` e só
+> o WellHub em disco, `v1 ≡ 0,5` para 100% do universo e o score é literalmente `30 + 40·v6` — o
+> piso é constante e o que varia é a pressão competitiva. A emenda libera a **ordenação**; a
+> honestidade do **rótulo** é obrigação da superfície, e a DEC-028 proíbe a palavra
+> "vulnerabilidade" em qualquer tela do piloto enquanto S3/S4 estiverem imaturos.
+>
+> Travado por `test_score.py::test_pressao_tira_o_rampup_do_regime_provisorio` (falha se a emenda
+> for revertida) e `::test_sem_o_s6_a_serie_imatura_continua_provisoria` (prova que ela é cirúrgica:
+> quem não recebe pressão continua exatamente como antes).
+
 ---
 
 ## 9. D5 — Hexágono quente + cruzamento de M&A
@@ -599,6 +620,29 @@ componentes `vi` por sinal (para auditoria) e das flags de qualidade.
 
 - **Sem overlay de dashboard no MVP** (opcional/futuro). Se por-academia (nomeado), o artefato é
   **gitignored** (fonte real fora do versionamento, DEC-012).
+
+> ### [emenda BLK-MA-13 / DEC-028, 2026-08-14] O overlay saiu de "futuro" e existe — como PRESSÃO
+>
+> A linha acima é **exclusão de escopo**, não proibição de invariante (mesmo vocabulário que o §7
+> usa para o BLK-MA-07: *"opcional/futuro, gate + DEC próprios"*). O gate ocorreu; o overlay existe.
+>
+> **Terceiro artefato:** `data/outputs/alvos_ma_hex.parquet` — o MESMO `CONTRATO_COLUNAS_ALVOS_MA`,
+> colapsado para **uma linha por hexágono**, que é o único grão que um mapa consegue pintar. O
+> colapso é `colapsar_regimes_por_hex` e é **SELEÇÃO, nunca agregação**: vence o regime de maior
+> `n_sinais_disponiveis`, desempatado por cobertura e depois pela composição canônica. Hoje há um
+> regime só e ele é a identidade — nasce agora, nomeado e testado, porque no dia em que o S3
+> amadurecer a escolha passa a existir e um `groupby` implícito a faria em silêncio, misturando as
+> réguas que a emenda BLK-MA-04-FU1 separou.
+>
+> **O rótulo é `pressão competitiva`, não `vulnerabilidade`** (decisão 1 da DEC-028), e vale para
+> mapa, legenda, tooltip, pílula e chaves do payload. Razão medida: no regime `{s1, s6}` o score é
+> `30 + 40·v6`. O `score_vulnerabilidade` **não é servido** ao piloto — sendo uma transformação afim
+> da própria pressão, mostrá-lo ao lado dela seria o mesmo fato com dois rótulos e duas escalas.
+>
+> **O §11 segue vinculante e não foi afrouxado:** o overlay consome APENAS o artefato hex-level
+> agregado. Nenhuma variante NOMEADA é servida — e `gitignored` não basta como proteção, porque o
+> backend monta `DATA_DIR/outputs` e `DATA_DIR/staging` `:ro`. Travado por
+> `tests/unit/test_piloto_web_pressao_ma.py::test_payload_nao_carrega_identidade_de_academia`.
 
 > ### [emenda BLK-MA-05, 2026-08-13] O cabeçalho acima era EXEMPLO; agora há contrato de coluna
 >

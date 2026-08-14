@@ -38,3 +38,4 @@ Emendas entram no próprio arquivo da DEC, não no índice.
 - [DEC-025](DEC-025.md) — Critério de universo do coletor WellHub (vocabulário "V2") + taxonomia fora do hash de staleness, com bump para `snapshots_concorrentes_v2` (BLK-MA-11); emenda a parte 3 da DEC-013
 - [DEC-026](DEC-026.md) — Gate do BLK-MA-09: rating como coluna-fato **sem peso** (molde do G-D2); o `v2` não é reativado e D-A/D-C ficam sem objeto (BLK-MA-09)
 - [DEC-027](DEC-027.md) — Sinal 6 (pressão competitiva) entra no score com peso `0,10`, **condicionado ao insumo**; pesos do D4 seguem congelados e a soma-alvo vai a 1,10 (BLK-MA-12)
+- [DEC-028](DEC-028.md) — A camada de M&A entra no piloto como **overlay de pressão competitiva** (não vulnerabilidade); emenda o §10 (overlay sai de "futuro") e o G-D1 (`flag_score_provisorio` passa a olhar o S6) — BLK-MA-13
