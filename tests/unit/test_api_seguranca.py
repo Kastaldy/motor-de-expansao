@@ -18,6 +18,16 @@ from motor_expansao.api import geo
 from motor_expansao.api.maps_geocoder import host_de_maps_permitido, url_maps_segura
 
 
+@pytest.fixture(autouse=True)
+def _limpa_rate_state():
+    """Isola o estado global do rate-limit entre testes."""
+    from motor_expansao.api import main
+
+    main._rate_state.clear()
+    yield
+    main._rate_state.clear()
+
+
 # ── SSRF: allowlist de host ─────────────────────────────────────────────────
 @pytest.mark.parametrize(
     "host",
@@ -196,6 +206,42 @@ def test_producao_aceita_segredos_fortes() -> None:
         bot_senha="uma-senha-forte-123",
     )
     _garantir_producao_sem_defaults(s)  # nao levanta
+
+
+# ── Rate-limit da API publica (BLK-SEC-05) ──────────────────────────────────
+def test_rate_limit_ok_respeita_o_teto(monkeypatch) -> None:
+    from motor_expansao.api import main
+
+    monkeypatch.setattr(main, "_RATE_LIMIT_MAX", 3)
+    assert main._rate_limit_ok("tok-x") is True   # 1
+    assert main._rate_limit_ok("tok-x") is True   # 2
+    assert main._rate_limit_ok("tok-x") is True   # 3
+    assert main._rate_limit_ok("tok-x") is False  # 4 -> estourou
+    assert main._rate_limit_ok("tok-y") is True   # chave diferente tem janela propria
+
+
+def test_rate_limit_middleware_429_e_health_livre(monkeypatch) -> None:
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    from motor_expansao.api import main
+    from motor_expansao.api.main import create_app
+
+    monkeypatch.setattr(main, "_RATE_LIMIT_MAX", 2)
+    client = TestClient(create_app())
+
+    # /health NUNCA e limitado.
+    for _ in range(5):
+        assert client.get("/health").status_code == 200
+
+    # Rota nao-livre: a 3a requisicao (max=2) recebe 429. O middleware roda antes do
+    # routing, entao uma rota inexistente tambem conta (o alvo e a TAXA, nao a rota).
+    main._rate_state.clear()
+    assert client.get("/qualquer-rota").status_code != 429  # 1
+    assert client.get("/qualquer-rota").status_code != 429  # 2
+    resp = client.get("/qualquer-rota")                      # 3 -> estourou
+    assert resp.status_code == 429
+    assert resp.json()["codigo"] == "rate_limited"
 
 
 def test_dev_ignora_segredos_default() -> None:
