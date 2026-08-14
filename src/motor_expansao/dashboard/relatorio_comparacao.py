@@ -455,7 +455,9 @@ def _slide_matriz(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | None) -
             pdf.set_text_color(*BRANCO)
             pdf.set_font("Helvetica", "B", 10)
             pdf.set_xy(x + 1, y + meio - 12)
-            pdf.cell(celula_largura - 2, 12, ascii_seguro(f"{int(posicao)}o"), align="C")
+            # ORDINAL de verdade (º), nao a letra "o": "1o" se le como "um-ó" e nao como
+            # primeiro lugar. O º e' latin-1 (0xBA), entao o core font do fpdf2 o escreve.
+            pdf.cell(celula_largura - 2, 12, ascii_seguro(f"{int(posicao)}º"), align="C")
             pdf.set_font("Helvetica", "", 7.5)
             pdf.set_xy(x + 1, y + meio + 1)
             pdf.cell(
@@ -693,7 +695,7 @@ def _slide_recomendacao(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | N
         pdf.set_text_color(*CINZA_TEXTO)
         pdf.set_font("Helvetica", "B", 15)
         pdf.set_xy(52, centro - 15)
-        pdf.cell(40, 18, f"{posicao}o")
+        pdf.cell(40, 18, ascii_seguro(f"{posicao}º"))
         pdf.set_font("Helvetica", "B" if destaque else "", 13)
         pdf.set_xy(92, centro - 14)
         pdf.cell(360, 17, ascii_seguro(str(item.get("rotulo") or "")))
@@ -765,7 +767,7 @@ def _slide_recomendacao(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | N
     rodape(
         pdf,
         f"O rank CONTA em quantos parâmetros {sujeito} lidera; ele não soma os parâmetros numa "
-        "nota única. Empate no topo não é desempatado - quando ele ocorre, não há 1o lugar.",
+        "nota única. Empate no topo não é desempatado - quando ele ocorre, não há 1º lugar.",
     )
 
 
@@ -852,7 +854,10 @@ def gerar_pdf_comparacao(
     # seria uma pagina de molduras vazias — pior que nao existir.
     if mapas and any(mapas):
         _slide_mapas(pdf, dados, arte["conteudo"], mapas)
-    _slide_tabela(pdf, dados, arte["conteudo"])
+    # A TABELA SAIU (pedido do Juan, 2026-08-14): ela repetia os MESMOS numeros que o
+    # slide de graficos ja' mostra em barra e que a matriz ja' imprime sob a posicao. Tres
+    # slides para os mesmos cinco valores cansa o leitor sem acrescentar leitura. O
+    # `_slide_tabela` fica no modulo, sem chamador, so' se voltar a fazer falta.
     _slide_recomendacao(pdf, dados, arte["conteudo"])
     _slide_encerramento(pdf, dados, arte["capa"], quando)
 
