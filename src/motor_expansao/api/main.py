@@ -44,9 +44,38 @@ def _garantir_log_handler() -> None:
     _log.propagate = False
 
 
+# Segredos default do settings.py — inertes em dev/teste, PROIBIDOS em producao.
+_DEFAULTS_INSEGUROS = frozenset({"dev-token", "dev-local", "trocar-esta-senha", "changeme"})
+
+
+def _garantir_producao_sem_defaults(settings) -> None:  # type: ignore[no-untyped-def]
+    """Fail-closed (BLK-SEC-05): em producao, recusa subir com token/senha default.
+
+    A API GeoEspacial e internet-facing (api.ultra-expansao.tech, so Bearer); um
+    default esquecido no .env daria acesso total. Fora de producao (environment !=
+    'production') os defaults seguem valendo — nao atrapalha dev nem testes.
+    """
+    if settings.environment != "production":
+        return
+    suspeitos = []
+    if any(token in _DEFAULTS_INSEGUROS for token in settings.tokens):
+        suspeitos.append("API_TOKENS")
+    if settings.api_call_token in _DEFAULTS_INSEGUROS:
+        suspeitos.append("API_API_CALL_TOKEN")
+    if settings.bot_senha in _DEFAULTS_INSEGUROS:
+        suspeitos.append("API_BOT_SENHA")
+    if suspeitos:
+        raise RuntimeError(
+            "API em producao com segredo(s) default inseguro(s): "
+            + ", ".join(suspeitos)
+            + ". Defina valores fortes no .env (ver .env.example)."
+        )
+
+
 def create_app() -> FastAPI:
     """Factory do app — facilita testes e overrides de settings."""
     settings = get_settings()
+    _garantir_producao_sem_defaults(settings)
     _garantir_log_handler()
 
     app = FastAPI(
@@ -61,10 +90,16 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.environment != "production" else None,
     )
 
+    # allow_credentials=False (BLK-SEC-05): a auth desta API e por Bearer token, nao por
+    # cookie de sessao. Com credentials=True + allow_origins=["*"], o Starlette REFLETE
+    # qualquer Origin com Access-Control-Allow-Credentials: true (misconfig classica).
+    # Como nao ha cookie a proteger, desligar credentials mantem o CORS seguro (com "*"
+    # o navegador recebe Allow-Origin: * e NAO reflete origem) sem afetar consumidores
+    # server-to-server (bot, parceiro), que nem passam por CORS.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )

@@ -13,10 +13,11 @@ Dependencias: selenium, webdriver-manager, Google Chrome instalado.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 import urllib.request
-from urllib.parse import quote, unquote, urlencode
+from urllib.parse import quote, unquote, urlencode, urlsplit
 
 # Padroes de coordenada nas variantes de URL do Maps. ORDEM importa: !2d/!3d/!4d
 # sao o PINO RESOLVIDO do place; @lat,lng e so o centro da camera (impreciso).
@@ -32,6 +33,54 @@ CEP_RE = re.compile(r"\b(\d{5})-?(\d{3})\b")
 # A/B/D/E/...). Codigo CURTO: 4 ou 6 chars antes do "+"; codigo COMPLETO: 8 antes. 2-3
 # depois do "+". Ex.: "6M7J+GQ" (curto), "589R6M7J+GQ" (completo). Case-insensitive.
 PLUS_CODE_RE = re.compile(r"\b([2-9CFGHJMPQRVWX]{2,8}\+[2-9CFGHJMPQRVWX]{2,3})\b", re.IGNORECASE)
+
+
+# ── Guardrail SSRF (BLK-SEC-05) ─────────────────────────────────────────────
+# `expandir_link_curto` (geo.py) e `resolve_short_link` seguem um link do usuario com
+# uma requisicao HTTP no servidor. Sem trava, um usuario poderia fazer o container
+# bater na REDE INTERNA do Docker (api:8077, authelia:9091, tileserver) ou em IP de
+# metadata da nuvem. Por isso so aceitamos http(s) para um dominio/encurtador do
+# proprio Google Maps (ou um IP publico); qualquer outro host e recusado ANTES do GET.
+MAPS_HOST_ALLOWLIST: tuple[str, ...] = (
+    "google.com",
+    "google.com.br",
+    "goo.gl",
+    "maps.app.goo.gl",
+    "g.co",
+)
+
+
+def host_de_maps_permitido(host: str) -> bool:
+    """True se `host` e um dominio/encurtador do Google Maps, ou um IP PUBLICO.
+
+    Recusa host interno/desconhecido e IP-literal privado/loopback/link-local
+    (127.0.0.1, 10.x, 169.254.169.254, ::1, etc.) — o vetor de SSRF real.
+    """
+    h = (host or "").strip().lower().rstrip(".")
+    if not h:
+        return False
+    try:
+        ip = ipaddress.ip_address(h)
+    except ValueError:
+        # Nao e IP-literal: casa pelo sufixo de dominio permitido.
+        return any(h == d or h.endswith("." + d) for d in MAPS_HOST_ALLOWLIST)
+    # IP-literal: so publico global (bloqueia interno/metadata).
+    return ip.is_global and not ip.is_multicast
+
+
+def url_maps_segura(url: str) -> bool:
+    """Guardrail SSRF: so http(s) para um host da allowlist do Maps (ou IP publico).
+
+    Recusa `file://`/esquemas exoticos, host interno da rede Docker e IP privado.
+    Usado antes de QUALQUER requisicao a um link fornecido pelo usuario.
+    """
+    try:
+        parts = urlsplit(str(url or ""))
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https"):
+        return False
+    return host_de_maps_permitido(parts.hostname or "")
 
 
 def normalize_cep(cep: str) -> str:
@@ -297,6 +346,10 @@ def resolve_short_link(url: str, *, timeout: float = 6.0) -> str | None:
     normalized = " ".join(str(url or "").split())
     if not normalized:
         return None
+    # Guardrail SSRF (BLK-SEC-05): so seguimos links de dominio/encurtador do Maps.
+    # Um host interno (api:8077, 169.254.169.254, file://) e recusado ANTES do GET.
+    if not url_maps_segura(normalized):
+        return None
     try:
         req = urllib.request.Request(
             normalized,
@@ -306,11 +359,14 @@ def resolve_short_link(url: str, *, timeout: float = 6.0) -> str | None:
                 "Accept-Language": "pt-BR",
             },
         )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - URL do usuario (link Maps)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - URL validada por url_maps_segura
             final_url = resp.geturl() or getattr(resp, "url", None)
     except Exception:
         return None
     final_url = str(final_url or "").strip()
+    # O redirect pode, em tese, apontar para fora do Maps -> so devolvemos destino seguro.
+    if final_url and not url_maps_segura(final_url):
+        return None
     return final_url or None
 
 
