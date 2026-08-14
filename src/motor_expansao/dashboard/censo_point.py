@@ -11,9 +11,13 @@ from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform
 
+# `constants` importado como MODULO de proposito: `FATOR_TEMPORAL_RENDA`/`DATA_REFERENCIA_RENDA`
+# sao recalculados quando o piloto reaponta os paths de staging para caminhos absolutos
+# (`_init_renda_domiciliar_paths` em web/server/app.py). Importar o NOME congelaria aqui o
+# valor do import — no container do piloto (CWD=web/server) isso era o fallback 1.0, e toda
+# renda do /ponto saia em valores nominais de julho/2022, mesmo com o artefato montado.
+from motor_expansao.dashboard import constants as _constants
 from motor_expansao.dashboard.constants import (
-    DATA_REFERENCIA_RENDA,
-    FATOR_TEMPORAL_RENDA,
     uplift_composicao_por_setor,
     uplift_extrapolado,
     uplift_renda_domiciliar,
@@ -244,8 +248,8 @@ def analisar_ponto_censitario_setores(
         # essa flag existia no artefato e morria na carga — 20,3% dos setores do pais chegavam
         # ao relatorio sem ressalva nenhuma. Campo ADITIVO: nao muda nenhum numero de renda.
         "fracao_uplift_extrapolado_raio": None,
-        "fator_temporal_renda": FATOR_TEMPORAL_RENDA,
-        "data_referencia_renda": DATA_REFERENCIA_RENDA,
+        "fator_temporal_renda": _constants.FATOR_TEMPORAL_RENDA,
+        "data_referencia_renda": _constants.DATA_REFERENCIA_RENDA,
         "densidade_pop_raio_hab_km2": None,
         # BLK-RELPON-06 (D1): densidade sobre area de espaco VALIDO (exclui agua/vazio) --
         # ver docstring abaixo. Difere de `densidade_pop_raio_hab_km2` (divide por pi*raio^2
@@ -401,7 +405,7 @@ def analisar_ponto_censitario_setores(
         index=intersectados.index,
         dtype="float64",
     )
-    renda_domiciliar_total = renda_domiciliar * fator_composicao_setor * FATOR_TEMPORAL_RENDA
+    renda_domiciliar_total = renda_domiciliar * fator_composicao_setor * _constants.FATOR_TEMPORAL_RENDA
     # Renda PER CAPITA exibida = renda do domicilio dividida pelos moradores dele. E o mesmo
     # conceito que o IBGE publica (SIDRA t.10295 v.13431, "rendimento nominal medio mensal
     # domiciliar per capita") e que o M1 carrega em `renda_per_capita` — por isso e ele que se
@@ -570,7 +574,9 @@ def analisar_ponto_censitario_setores(
         uplift_efetivo = fator_composicao
     result["uf_renda_uplift"] = uf_ponto
     result["cod_municipio_renda_uplift"] = municipio_ponto
-    result["fator_uplift_renda_domiciliar"] = round(uplift_efetivo * FATOR_TEMPORAL_RENDA, 4)
+    result["fator_uplift_renda_domiciliar"] = round(
+        uplift_efetivo * _constants.FATOR_TEMPORAL_RENDA, 4
+    )
     result["fator_uplift_composicao"] = round(uplift_efetivo, 4)
     result["fator_uplift_composicao_municipio"] = round(fator_composicao, 4)
 

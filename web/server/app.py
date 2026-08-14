@@ -27,6 +27,7 @@ import functools
 import hashlib
 import inspect
 import json
+import logging
 import math
 import os
 import re
@@ -598,7 +599,18 @@ def _init_renda_domiciliar_paths() -> float:
     _const._uplift_uf_cache = None
     _const._moradores_cache = None
     _const._moradores_uf_cache = None
-    fator, _ref = _const._carregar_fator_temporal()
+    # As caches SETORIAIS tambem: sem estas duas linhas, uma carga que rodasse antes do
+    # re-point (ex.: /api/ponto como 1a requisicao) congelava um mapa VAZIO para sempre —
+    # o uplift por setor degradava para o municipal em todo /ponto, sem log.
+    _const._uplift_setor_cache = None
+    _const._uplift_setor_extrapolado_cache = None
+    fator, ref = _const._carregar_fator_temporal()
+    # O binding de modulo congela no import (CWD=web/server -> path relativo nao resolve ->
+    # fallback 1.0). Reatribuir aqui e' o que faz `constants.FATOR_TEMPORAL_RENDA` valer o
+    # artefato real para quem le via modulo (censo_point/censo_map depois da correcao de
+    # 2026-08-14; antes eles importavam o NOME e ficavam com o 1.0 congelado).
+    _const.FATOR_TEMPORAL_RENDA = fator
+    _const.DATA_REFERENCIA_RENDA = ref
     return fator
 
 
@@ -631,26 +643,54 @@ def _fator_domiciliar(uf: str | None, cod_municipio: str | None) -> float | None
         return None
 
 
-_K_CALIBRACAO_FALLBACK = 1.2334632197  # k nacional do artefato de 2026-08-12
+_LOG_RENDA = logging.getLogger("piloto.renda")
+
+# k do STAGING HEX (censo2022_setores_calibrado.parquet, safra 2026-05) — NAO confundir com o
+# k do artefato GEO setorial (1,2335 na safra 2026-08-12): sao calibracoes independentes.
+_K_CALIBRACAO_FALLBACK = 1.0239
+_CENSO_HEX_STAGING_PARQUET = "censo2022_setores_calibrado.parquet"
+_RE_K_CARIMBO = re.compile(r"k=([0-9]+(?:\.[0-9]+)?)")
 
 
 @functools.lru_cache(maxsize=1)
 def _k_calibracao_renda() -> float:
-    """O `k` com que o artefato geo foi calibrado, lido do manifesto DELE.
+    """O `k` com que a coluna calibrada DO HEX foi gerada, lido do carimbo do staging hex.
 
-    O enriquecido nao carrega a renda bruta (`enrich_dashboard_data` so leva a calibrada), entao
-    aqui o unico caminho e desfazer o `k`. Ele esta gravado em precisao total no `_metadata.json`
-    do artefato geo, que o piloto ja monta como `CENSO_GEO_DIR`.
+    `renda_per_capita_setor_2022_calibrada` do enriquecido nasce do STAGING HEX
+    (`censo2022_setores_calibrado.parquet`), nao do artefato geo setorial — e cada um carrega
+    seu proprio k (staging 1,0239; geo 1,2335 na safra de 2026-08-12). Ate 2026-08-14 este
+    helper lia o `_metadata.json` do GEO: desfazia um k que a coluna nunca teve, a base saia
+    0,83x a correta e a renda do tooltip ~17% abaixo do IBGE. A fonte certa e o carimbo
+    `metodo_calibracao_renda` ("multiplicativo_global_k=X") gravado no proprio staging hex.
 
-    Guarda de plausibilidade [1,0; 2,0] e fallback para a constante conhecida. NUNCA cair em 1,0:
-    isso reintroduziria a dupla contagem em silencio se o manifesto sumisse.
+    Guarda de plausibilidade [0,5; 3,0] e fallback para a constante da safra conhecida, sempre
+    com log — NUNCA cair em 1,0 em silencio: reintroduziria a dupla contagem sem pista.
     """
     try:
-        bruto = json.loads((CENSO_GEO_DIR / "_metadata.json").read_text(encoding="utf-8"))
-        k = float(bruto["k_global"])
-    except Exception:  # noqa: BLE001 — manifesto ausente/antigo/ilegivel: usa a constante
+        serie = pd.read_parquet(
+            STAGING_DIR / _CENSO_HEX_STAGING_PARQUET, columns=["metodo_calibracao_renda"]
+        )["metodo_calibracao_renda"].dropna()
+        carimbo = str(serie.mode().iloc[0])
+        k = float(_RE_K_CARIMBO.search(carimbo).group(1))  # type: ignore[union-attr]
+    except Exception as exc:  # noqa: BLE001 — staging ausente/carimbo ilegivel: constante conhecida
+        _LOG_RENDA.warning(
+            "k de calibracao do hex: carimbo ilegivel em %s (%s); usando fallback %s",
+            _CENSO_HEX_STAGING_PARQUET, exc, _K_CALIBRACAO_FALLBACK,
+        )
         return _K_CALIBRACAO_FALLBACK
-    return k if 1.0 <= k <= 2.0 else _K_CALIBRACAO_FALLBACK
+    if not 0.5 <= k <= 3.0:
+        _LOG_RENDA.warning(
+            "k de calibracao do hex fora da faixa plausivel (%s); usando fallback %s",
+            k, _K_CALIBRACAO_FALLBACK,
+        )
+        return _K_CALIBRACAO_FALLBACK
+    if serie.nunique() > 1:
+        _LOG_RENDA.warning(
+            "staging hex com %d carimbos de calibracao distintos; usando o modal %r",
+            serie.nunique(), carimbo,
+        )
+    _LOG_RENDA.info("k de calibracao do hex = %s (carimbo %r)", k, carimbo)
+    return k
 
 
 def _base_renda_domiciliar(r: pd.Series, uf: str | None, cod: str | None) -> float | None:
@@ -698,15 +738,21 @@ def _renda_domiciliar_hex(r: pd.Series, fator: float | None) -> float | None:
     return _num(base * fator)
 
 
-def _renda_per_capita_hex(r: pd.Series, fator: float | None) -> float | None:
+def _renda_per_capita_hex(
+    r: pd.Series, fator: float | None, dom: float | None = None
+) -> float | None:
     """Renda DOMICILIAR per capita do hex — o mesmo conceito que o Relatorio Pontual exibe.
 
     = renda do domicilio / moradores. Como `fator` ja e `moradores x uplift x temporal`, basta
     dividir o domiciliar pelos moradores municipais. Ate 2026-08-13 o tooltip exibia a coluna
     calibrada crua (V06004/moradores x k), que ficava ~20% abaixo da referencia do IBGE e nao
     batia com o numero do Relatorio Pontual para a mesma coordenada.
+
+    `dom` pre-calculado evita refazer a cadeia inteira: `_hex_dict` roda por hex em cargas de
+    dezenas de milhares por UF, e as duas chamadas irmas dobravam o custo do endpoint.
     """
-    dom = _renda_domiciliar_hex(r, fator)
+    if dom is None:
+        dom = _renda_domiciliar_hex(r, fator)
     if dom is None:
         return None
     from motor_expansao.dashboard.constants import moradores_por_domicilio
@@ -757,6 +803,20 @@ ULTRA_MAPEADAS_PARQUET = STAGING_DIR / "unidades_ultra_mapeadas.parquet"
 COMPETITORS_LOGO_DIR = Path(
     os.environ.get("MOTOR_COMPETITORS_LOGO_DIR", str(_REPO_ROOT / "concorrentes"))
 )
+
+
+@app.on_event("startup")
+def _init_renda_paths_no_boot() -> None:
+    """Reaponta os artefatos de renda para caminhos ABSOLUTOS antes da 1a requisicao.
+
+    Sem isto a classe de bug e' de ordem: se a primeira requisicao do processo fosse
+    /api/ponto (bot, deep-link), o motor censitario carregaria uplift/fator temporal
+    pelos paths RELATIVOS do motor (CWD=web/server -> nao resolvem) e cachearia o
+    resultado vazio. Gracioso por construcao: staging ausente so' ativa os fallbacks."""
+    try:
+        _fator_temporal_renda()
+    except Exception:  # noqa: BLE001 — startup nunca derruba o servico por artefato de renda
+        _LOG_RENDA.warning("re-point dos artefatos de renda falhou no boot", exc_info=True)
 
 
 @app.on_event("startup")
@@ -1932,6 +1992,7 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
 
 def _hex_dict(r: pd.Series, fator_dom: float | None) -> dict[str, Any]:
     """Serializa um hex para o mapa (compartilhado entre as rotas UF e município)."""
+    renda_dom = _renda_domiciliar_hex(r, fator_dom)
     return {
         "id": r["hex_id"],
         "lat": _num(r["lat"], 6),
@@ -1946,8 +2007,8 @@ def _hex_dict(r: pd.Series, fator_dom: float | None) -> dict[str, Any]:
         # `renda` e a renda DOMICILIAR per capita (conceito do IBGE), a mesma grandeza que o
         # Relatorio Pontual exibe — antes era a coluna calibrada crua, e as duas superficies
         # mostravam numeros diferentes para a mesma coordenada.
-        "renda": _renda_per_capita_hex(r, fator_dom),
-        "renda_dom": _renda_domiciliar_hex(r, fator_dom),
+        "renda": _renda_per_capita_hex(r, fator_dom, dom=renda_dom),
+        "renda_dom": renda_dom,
         "faixa": _faixa_label(r.get("faixa_oportunidade")),
         "conc": int(r.get("n_concorrentes_est") or 0),
         "ultra": int(r.get("n_ultra") or 0),
@@ -3168,6 +3229,12 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         "densidade_valida_hab_km2": _num(res.get("densidade_pop_raio_valida_hab_km2")),
         "score_medio_raio": _num(res.get("score_setor_medio"), 1),
         "score_max_raio": _num(res.get("score_setor_max"), 1),
+        # Ressalva de leitura cautelosa: fracao (0-1, por peso de domicilios) do raio cuja
+        # renda depende de uplift EXTRAPOLADO para fora do envelope de calibracao. O motor
+        # ja calculava (`fracao_uplift_extrapolado_raio`); sem esta linha o numero morria no
+        # result e a ressalva prometida aos 20,3% de setores extrapolados nao chegava a
+        # superficie nenhuma.
+        "fracao_uplift_extrapolado": _num(res.get("fracao_uplift_extrapolado_raio"), 4),
         # SETOR A SETOR: min / mediana / max do que o raio contem.
         "distribuicao": {
             # A MESMA grandeza de `setor_do_ponto.renda_per_capita` e de
@@ -3213,7 +3280,12 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         "populacao": _num(res.get("pop_total_raio")),
         "domicilios": _num(res.get("domicilios_total_raio")),
         "renda_per_capita": _num(res.get("renda_per_capita_media_raio")),
-        "renda_media_domiciliar": _num(res.get("renda_media_domiciliar_raio")),
+        # ESCALA FINAL (uplift setorial + fator temporal), a mesma do PDF e a que fecha
+        # `renda_media_domiciliar = renda_per_capita x moradores`. Ate 2026-08-14 servia
+        # `renda_media_domiciliar_raio` (V06004 crua, PRE-uplift): ~19% abaixo da verdade,
+        # incoerente com o campo irmao da MESMA tela e mais duro no criterio estrutural
+        # de RENDA_MIN — pontos legitimos reprovavam por artefato de escala.
+        "renda_media_domiciliar": _num(res.get("renda_domiciliar_total_raio")),
         # A densidade VÁLIDA divide pela área de setor realmente intersectada, e não
         # por pi*r^2: num ponto com rio/mar no raio, a fixa subestima de propósito.
         "densidade_hab_km2": _num(res.get("densidade_pop_raio_valida_hab_km2")),

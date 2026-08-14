@@ -50,9 +50,14 @@ FATOR_TEMPORAL = 1.25  # sintetico, dentro da faixa plausivel [1.0, 2.0] do arte
 
 # 2026-08-13: a coluna calibrada carrega o `k` da calibragem, e a renda domiciliar tem de
 # DESFAZE-LO antes de aplicar `moradores x uplift x temporal` — senao o k vira um fator extra
-# sobre um uplift que ja converte a escala (+23,35% medido em producao). Os testes abaixo
-# pinavam a formula defeituosa; agora dividem pelo k, lido do mesmo lugar que a producao le.
-K = pilot._k_calibracao_renda()
+# sobre um uplift que ja converte a escala (+23,35% medido em producao).
+#
+# 2026-08-14: o k passou a ser lido do CARIMBO do staging hex (`metodo_calibracao_renda` em
+# censo2022_setores_calibrado.parquet) — a fonte de onde a coluna calibrada de fato veio; o
+# manifesto do artefato GEO tem OUTRO k e desfazia a escala errada. `K` aqui e' a constante
+# SINTETICA que o fixture grava no carimbo — pinada de proposito (nada de derivar do codigo:
+# um teste que le o esperado da propria funcao testada nao pega regressao nenhuma).
+K = 1.1
 
 # Fatores municipais resultantes (moradores x uplift x FATOR_TEMPORAL):
 #   3550308: 3.2 x 1.5 x 1.25 = 6.0   | 3509502: 2.5 x 1.2 x 1.25 = 3.75
@@ -75,16 +80,35 @@ def _apontar_staging(monkeypatch: pytest.MonkeyPatch, staging: Path) -> None:
         "UPLIFT_COMPOSICAO_PATH",
         "UPLIFT_COMPOSICAO_SETOR_PATH",
         "FATOR_TEMPORAL_RENDA_PATH",
+        # Desde 2026-08-14 o init tambem REATRIBUI o fator/data no modulo (o binding
+        # congelava em 1.0 no container) — registrar aqui para o monkeypatch restaurar.
+        "FATOR_TEMPORAL_RENDA",
+        "DATA_REFERENCIA_RENDA",
     ):
         monkeypatch.setattr(_const, attr, getattr(_const, attr))
-    for cache in ("_uplift_cache", "_uplift_uf_cache", "_moradores_cache", "_moradores_uf_cache"):
+    for cache in (
+        "_uplift_cache",
+        "_uplift_uf_cache",
+        "_moradores_cache",
+        "_moradores_uf_cache",
+        "_uplift_setor_cache",
+        "_uplift_setor_extrapolado_cache",
+    ):
         monkeypatch.setattr(_const, cache, None)
     pilot._fator_temporal_renda.cache_clear()
+    pilot._k_calibracao_renda.cache_clear()
+
+
+def _escrever_carimbo_k(staging: Path, carimbo: str) -> None:
+    """Grava o staging hex sintetico com o carimbo de calibracao (fonte do k do piloto)."""
+    pd.DataFrame({"metodo_calibracao_renda": [carimbo]}).to_parquet(
+        staging / pilot._CENSO_HEX_STAGING_PARQUET
+    )
 
 
 @pytest.fixture
 def staging_sintetico(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Staging com a tabela municipal sintetica + fator temporal 1.25."""
+    """Staging com a tabela municipal sintetica + fator temporal 1.25 + carimbo k=1.1."""
     staging = tmp_path / "staging"
     staging.mkdir()
     _TABELA_MUNICIPIOS.to_parquet(staging / "uplift_renda_domiciliar_municipio.parquet")
@@ -92,9 +116,11 @@ def staging_sintetico(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         json.dumps({"fator_temporal_renda": FATOR_TEMPORAL, "competencia_atual_fim": "202606"}),
         encoding="utf-8",
     )
+    _escrever_carimbo_k(staging, f"multiplicativo_global_k={K}")
     _apontar_staging(monkeypatch, staging)
     yield staging
     pilot._fator_temporal_renda.cache_clear()
+    pilot._k_calibracao_renda.cache_clear()
 
 
 @pytest.fixture
@@ -105,6 +131,7 @@ def staging_vazio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _apontar_staging(monkeypatch, staging)
     yield staging
     pilot._fator_temporal_renda.cache_clear()
+    pilot._k_calibracao_renda.cache_clear()
 
 
 def _frame() -> pd.DataFrame:
@@ -255,7 +282,8 @@ def test_sem_artefatos_cai_no_nacional_com_fator_temporal_1(staging_vazio: Path)
     esperado = _const.MORADORES_DOMICILIO_NACIONAL * _const.UPLIFT_COMPOSICAO_NACIONAL
     assert pilot._fator_domiciliar("SP", "3550308") == approx(esperado)
     r = _serie_renda_dom(_frame())
-    assert r.loc[0] == round(1500.0 / K * esperado)
+    # Sem o staging hex, o k cai na CONSTANTE de fallback (nao no K sintetico do carimbo).
+    assert r.loc[0] == round(1500.0 / pilot._K_CALIBRACAO_FALLBACK * esperado)
 
 
 def test_ancoragem_no_ibge_o_teste_que_teria_pego_o_defeito(staging_sintetico: Path) -> None:
@@ -344,32 +372,73 @@ def test_payload_do_hex_serve_a_per_capita_domiciliar(staging_sintetico: Path) -
     assert payload["renda_dom"] == approx(payload["renda"] * 3.2, rel=1e-3)
 
 
-def test_k_da_calibracao_tem_guarda_de_plausibilidade(
+def test_k_da_calibracao_le_o_carimbo_do_staging_hex(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """O k vem do manifesto do artefato; valor ausente ou implausivel cai na constante.
+    """O k vem do carimbo `metodo_calibracao_renda` do STAGING HEX — a fonte de onde a
+    coluna calibrada de fato nasce. O manifesto do artefato GEO tem OUTRO k (calibracao
+    independente) e nao pode ser usado aqui: desfazia a escala errada (~17% no tooltip).
 
-    NUNCA pode cair em 1,0: isso reintroduziria a dupla contagem em silencio.
+    Carimbo ausente/ilegivel ou k implausivel cai na constante conhecida — NUNCA em 1,0
+    em silencio (reintroduziria a dupla contagem sem pista).
     """
-    geo = tmp_path / "setores_censitarios_2022_geo"
-    geo.mkdir(parents=True)
-    monkeypatch.setattr(pilot, "CENSO_GEO_DIR", geo)
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    monkeypatch.setattr(pilot, "STAGING_DIR", staging)
 
-    for conteudo, esperado in (
-        ('{"k_global": 1.4321}', 1.4321),
-        ('{"k_global": 1.0}', 1.0),                       # na fronteira, ainda plausivel
-        ('{"k_global": 0.4}', pilot._K_CALIBRACAO_FALLBACK),   # fora da faixa
-        ('{"k_global": 9.9}', pilot._K_CALIBRACAO_FALLBACK),
-        ('{"sem_k": true}', pilot._K_CALIBRACAO_FALLBACK),     # manifesto antigo
-        ("{ nao e json", pilot._K_CALIBRACAO_FALLBACK),
+    for carimbo, esperado in (
+        ("multiplicativo_global_k=1.4321", 1.4321),
+        ("multiplicativo_global_k=0.5", 0.5),                      # fronteira, plausivel
+        ("multiplicativo_global_k=0.4", pilot._K_CALIBRACAO_FALLBACK),  # fora da faixa
+        ("multiplicativo_global_k=9.9", pilot._K_CALIBRACAO_FALLBACK),
+        ("sem_k_no_texto", pilot._K_CALIBRACAO_FALLBACK),          # carimbo sem k=
     ):
-        (geo / "_metadata.json").write_text(conteudo, encoding="utf-8")
+        _escrever_carimbo_k(staging, carimbo)
         pilot._k_calibracao_renda.cache_clear()
         assert pilot._k_calibracao_renda() == approx(esperado)
 
-    (geo / "_metadata.json").unlink()
+    # Parquet sem a coluna do carimbo -> fallback.
+    pd.DataFrame({"outra_coluna": [1.0]}).to_parquet(staging / pilot._CENSO_HEX_STAGING_PARQUET)
     pilot._k_calibracao_renda.cache_clear()
     assert pilot._k_calibracao_renda() == approx(pilot._K_CALIBRACAO_FALLBACK)
+
+    # Arquivo ausente -> fallback.
+    (staging / pilot._CENSO_HEX_STAGING_PARQUET).unlink()
+    pilot._k_calibracao_renda.cache_clear()
+    assert pilot._k_calibracao_renda() == approx(pilot._K_CALIBRACAO_FALLBACK)
+    pilot._k_calibracao_renda.cache_clear()
+
+
+def test_k_do_carimbo_manda_na_formula_do_hex(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Trava de FONTE: trocar o carimbo do staging muda a renda do hex na mesma proporcao.
+
+    E' o teste que pega a regressao de voltar a ler o k do manifesto do GEO (ou de qualquer
+    outra fonte fixa): com o carimbo sintetico em 2.0, a base tem de sair EXATAMENTE
+    calibrada/2.0 — nenhuma constante do codigo reproduz isso por coincidencia.
+    """
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    _TABELA_MUNICIPIOS.to_parquet(staging / "uplift_renda_domiciliar_municipio.parquet")
+    (staging / "fator_temporal_renda.json").write_text(
+        json.dumps({"fator_temporal_renda": FATOR_TEMPORAL, "competencia_atual_fim": "202606"}),
+        encoding="utf-8",
+    )
+    _escrever_carimbo_k(staging, "multiplicativo_global_k=2.0")
+    _apontar_staging(monkeypatch, staging)
+
+    df = pd.DataFrame(
+        {
+            "hex_id": ["a"],
+            "uf": ["SP"],
+            "cod_municipio": ["3550308"],
+            "renda_per_capita_setor_2022_calibrada": [1500.0],
+        }
+    )
+    r = _serie_renda_dom(df)
+    assert r.loc[0] == round(1500.0 / 2.0 * 6.0)  # base = calibrada / k_do_carimbo
+    pilot._fator_temporal_renda.cache_clear()
     pilot._k_calibracao_renda.cache_clear()
 
 

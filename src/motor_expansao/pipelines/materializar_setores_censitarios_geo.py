@@ -826,23 +826,8 @@ def materializar_base_geo(
             f"runbook de subida faz na VPS. Se a intencao e' mesmo reescrever este destino, "
             f"passe `sobrescrever=True` (CLI: `--sobrescrever`)."
         )
-    # Limpeza POR UF, nao do destino inteiro: apagamos so as UFs que ESTA execucao vai
-    # reescrever, para que municipio que sumiu do insumo nao sobreviva como orfao dentro
-    # delas. UF fora de `ufs` nao e' tocada — nao foi pedido reescreve-la. Com filtro de
-    # municipio NAO limpamos: ali a intencao e' escrever um subconjunto DENTRO da UF, e
-    # apagar levaria junto justamente os municipios que o chamador queria manter.
     limpar_ufs = sobrescrever and not municipios_set and max_municipios_por_uf is None
-    if existentes and limpar_ufs:
-        removidas = [output_root / f"uf={uf}" for uf in ufs if (output_root / f"uf={uf}").is_dir()]
-        for particao in removidas:
-            shutil.rmtree(particao)
-        if removidas:
-            print(
-                f"[base-geo] destino limpo: {len(removidas)} particao(oes) `uf=*` removidas "
-                f"antes da escrita",
-                flush=True,
-            )
-    elif existentes:
+    if existentes and not limpar_ufs:
         print(
             "[base-geo] AVISO: filtro de municipio sobre destino ocupado. As particoes nao "
             "tocadas por esta execucao mantem a safra anterior, com o `k` anterior. NAO use "
@@ -869,6 +854,43 @@ def materializar_base_geo(
         # Precisao total no log e no manifesto: o carimbo em `metodo_renda_setor_2022` arredonda
         # para 4 casas, e quem auditar pelo artefato precisa do valor exato para reproduzir.
         print(f"[base-geo] k GLOBAL (nacional, unico para as 27 UFs) = {k_global!r}", flush=True)
+
+    # Limpeza POR UF, nao do destino inteiro: apagamos so as UFs que ESTA execucao vai
+    # reescrever, para que municipio que sumiu do insumo nao sobreviva como orfao dentro
+    # delas. UF fora de `ufs` nao e' tocada — nao foi pedido reescreve-la. Com filtro de
+    # municipio NAO limpamos: ali a intencao e' escrever um subconjunto DENTRO da UF, e
+    # apagar levaria junto justamente os municipios que o chamador queria manter.
+    #
+    # A limpeza roda so' AQUI, depois de malha/basico/renda carregados e do k calculado:
+    # ate 2026-08-14 ela rodava antes desses carregamentos, e um insumo defeituoso apagava
+    # ~1,17 GB de particoes para em seguida estourar a excecao — destino esvaziado com o
+    # `_metadata.json` ANTIGO intacto, declarando um k sem arquivo nenhum. Pelo mesmo
+    # motivo o manifesto antigo cai junto com as particoes: sem ele o destino incompleto
+    # fica honesto ("sem manifesto"), em vez de mentir a safra anterior.
+    if existentes and limpar_ufs:
+        removidas = [output_root / f"uf={uf}" for uf in ufs if (output_root / f"uf={uf}").is_dir()]
+        for particao in removidas:
+            shutil.rmtree(particao)
+        manifesto_antigo = output_root / "_metadata.json"
+        if manifesto_antigo.exists():
+            manifesto_antigo.unlink()
+        if removidas:
+            print(
+                f"[base-geo] destino limpo: {len(removidas)} particao(oes) `uf=*` removidas "
+                f"antes da escrita (com o `_metadata.json` da safra anterior)",
+                flush=True,
+            )
+        restantes = sorted(
+            p.name for p in output_root.glob("uf=*") if p.is_dir() and p.name[3:] not in set(ufs)
+        )
+        if restantes:
+            print(
+                f"[base-geo] AVISO: subconjunto de UFs sobre destino ocupado — "
+                f"{len(restantes)} particao(oes) fora desta execucao mantem a safra "
+                f"anterior ({', '.join(restantes)}). NAO use este diretorio como artefato "
+                f"de subida sem materializar as 27 UFs.",
+                flush=True,
+            )
 
     summaries: list[UFSummary] = []
     for uf in ufs:

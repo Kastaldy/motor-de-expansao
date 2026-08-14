@@ -6,6 +6,7 @@ from pyproj import Transformer
 from shapely.geometry import box
 from shapely.ops import transform
 
+from motor_expansao.dashboard import constants as _const
 from motor_expansao.dashboard.censo_point import (
     CRS_ORIGEM_CENSO,
     METODO_RELATORIO_PONTUAL_CENSITARIO,
@@ -14,7 +15,6 @@ from motor_expansao.dashboard.censo_point import (
     agregar_perfil_bairro_distrito,
     analisar_ponto_censitario_setores,
 )
-from motor_expansao.dashboard.constants import FATOR_TEMPORAL_RENDA
 
 LAT_C = -23.55
 LNG_C = -46.63
@@ -116,7 +116,7 @@ def test_motor_censitario_setor_totalmente_dentro_do_raio():
     # setor levada a escala do domicilio pelo uplift e atualizada pelo fator temporal. Expressa
     # em termos do que o proprio motor devolve, para nao fixar no teste o valor de um insumo.
     assert result["renda_per_capita_media_raio"] == pytest.approx(
-        1800 * result["fator_uplift_composicao"] * FATOR_TEMPORAL_RENDA, rel=1e-3
+        1800 * result["fator_uplift_composicao"] * _const.FATOR_TEMPORAL_RENDA, rel=1e-3
     )
     # A invariante que o relatorio precisa fechar: domiciliar = per capita x moradores.
     assert result["renda_domiciliar_total_raio"] == pytest.approx(
@@ -277,7 +277,7 @@ def test_lookup_setor_do_ponto_dentro_da_malha(monkeypatch):
 
     uplift = 1.6
     monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
-    monkeypatch.setattr(censo_point, "FATOR_TEMPORAL_RENDA", 1.0)
+    monkeypatch.setattr(censo_point._constants, "FATOR_TEMPORAL_RENDA", 1.0)
 
     result = analisar_ponto_censitario_setores(LAT_C, LNG_C, df)
 
@@ -526,7 +526,7 @@ def test_renda_domiciliar_nao_leva_o_k_da_calibragem(monkeypatch):
 
     k, resp, moradores, uplift = 2.0, 3000.0, 3.0, 1.6
     monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
-    monkeypatch.setattr(censo_point, "FATOR_TEMPORAL_RENDA", 1.0)
+    monkeypatch.setattr(censo_point._constants, "FATOR_TEMPORAL_RENDA", 1.0)
 
     result = analisar_ponto_censitario_setores(
         LAT_C, LNG_C, pd.DataFrame([_setor_com_renda_completa(k, resp, moradores)])
@@ -554,7 +554,7 @@ def test_renda_per_capita_exibida_e_a_domiciliar_per_capita(monkeypatch):
 
     k, resp, moradores, uplift = 2.0, 3000.0, 3.0, 1.6
     monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
-    monkeypatch.setattr(censo_point, "FATOR_TEMPORAL_RENDA", 1.0)
+    monkeypatch.setattr(censo_point._constants, "FATOR_TEMPORAL_RENDA", 1.0)
 
     result = analisar_ponto_censitario_setores(
         LAT_C, LNG_C, pd.DataFrame([_setor_com_renda_completa(k, resp, moradores)])
@@ -575,7 +575,7 @@ def test_renda_domiciliar_cai_na_per_capita_BRUTA_quando_falta_a_v06004(monkeypa
 
     k, resp, moradores, uplift = 2.0, 3000.0, 3.0, 1.6
     monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
-    monkeypatch.setattr(censo_point, "FATOR_TEMPORAL_RENDA", 1.0)
+    monkeypatch.setattr(censo_point._constants, "FATOR_TEMPORAL_RENDA", 1.0)
 
     rec = _setor_com_renda_completa(k, resp, moradores)
     del rec["renda_responsavel_media_setor_2022"]  # so sobra a per capita (bruta e calibrada)
@@ -602,7 +602,7 @@ def test_setor_do_ponto_e_raio_na_MESMA_escala(monkeypatch):
 
     k, resp, moradores, uplift = 2.0, 3000.0, 3.0, 1.6
     monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
-    monkeypatch.setattr(censo_point, "FATOR_TEMPORAL_RENDA", 1.0)
+    monkeypatch.setattr(censo_point._constants, "FATOR_TEMPORAL_RENDA", 1.0)
 
     # Setor unico, grande o bastante para conter o ponto E cobrir todo o raio.
     rec = _setor_com_renda_completa(k, resp, moradores)
@@ -660,7 +660,7 @@ def test_os_tres_campos_de_renda_per_capita_do_payload_na_MESMA_escala(monkeypat
 
     k, resp, moradores, uplift = 2.0, 3000.0, 3.0, 1.6
     monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
-    monkeypatch.setattr(censo_point, "FATOR_TEMPORAL_RENDA", 1.0)
+    monkeypatch.setattr(censo_point._constants, "FATOR_TEMPORAL_RENDA", 1.0)
 
     rec = _sector_record(
         "355030801000001",

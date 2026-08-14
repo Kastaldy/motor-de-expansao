@@ -14,6 +14,10 @@ from pyproj import Transformer
 from shapely.geometry import MultiPolygon, Point, Polygon, box
 from shapely.geometry.base import BaseGeometry
 
+# `constants` tambem como MODULO: `FATOR_TEMPORAL_RENDA` e' recalculado quando o piloto
+# reaponta os paths de staging (ver nota equivalente em censo_point.py) — importar o NOME
+# congelaria aqui o fallback 1.0 do import feito com CWD errado.
+from motor_expansao.dashboard import constants as _constants
 from motor_expansao.dashboard.censo_point import (
     CRS_ORIGEM_CENSO,
     RAIO_CENSITARIO_DEFAULT_KM,
@@ -27,7 +31,6 @@ from motor_expansao.dashboard.censo_point import (
 from motor_expansao.dashboard.competitors import _render_square_logo_tile
 from motor_expansao.dashboard.constants import (
     DENSIDADE_POP_BANDS,
-    FATOR_TEMPORAL_RENDA,
     OFERTA_DISPONIVEL_ALUNOS_BANDS,
     RENDA_MEDIA_DOMICILIAR_BANDS,
     RENDA_PER_CAPITA_BANDS,
@@ -1685,7 +1688,9 @@ def render_mapas_censitarios_combinados(
             str(uf_val) if pd.notna(uf_val) else None,
             str(mun_val) if pd.notna(mun_val) else None,
         )
-        renda_domiciliar_total = renda_domiciliar * uplift_setor * float(FATOR_TEMPORAL_RENDA)
+        renda_domiciliar_total = (
+            renda_domiciliar * uplift_setor * float(_constants.FATOR_TEMPORAL_RENDA)
+        )
         renda_domiciliar_vals.append(float(renda_domiciliar_total))
         # A camada "Renda per capita" sai da MESMA conta, dividida pelos moradores — igual ao
         # `renda_per_capita_domiciliar` de `censo_point.py`. Ate aqui ela era a coluna CALIBRADA

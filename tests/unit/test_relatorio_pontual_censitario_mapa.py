@@ -531,7 +531,7 @@ def test_valor_raio_nao_e_nd_quando_setor_nao_cobre_o_ponto_mas_intersecta_raio(
     uplift, fator = 1.6, 1.25
     for modulo in (censo_map, censo_point):
         monkeypatch.setattr(modulo, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
-        monkeypatch.setattr(modulo, "FATOR_TEMPORAL_RENDA", fator)
+        monkeypatch.setattr(modulo._constants, "FATOR_TEMPORAL_RENDA", fator)
 
     censo_map.render_mapas_censitarios_combinados(
         LAT_C, LNG_C, setores, width=800, height=600, basemap=False
@@ -1755,7 +1755,7 @@ def test_camada_renda_per_capita_ignora_a_coluna_calibrada(monkeypatch):
     uplift, fator, moradores = 1.6, 1.25, 3.0
     for modulo in (censo_map, censo_point):
         monkeypatch.setattr(modulo, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
-        monkeypatch.setattr(modulo, "FATOR_TEMPORAL_RENDA", fator)
+        monkeypatch.setattr(modulo._constants, "FATOR_TEMPORAL_RENDA", fator)
 
     # Espia `source_values` — a Serie que ALIMENTA a cor. Assertar sobre ela, e nao sobre pixel,
     # e o que da poder ao teste: o histograma do PNG inclui legenda e rotulo, que mudam por
