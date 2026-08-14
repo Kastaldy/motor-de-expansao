@@ -20,7 +20,12 @@ import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
 import { Aviso, Botao, Chip, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { api, ApiError } from '../lib/api'
-import { MAX_PONTOS, indiceDoMesmoPonto, rotulosDosPontos } from '../lib/comparacao-pontos'
+import {
+  MAX_PONTOS,
+  chaveDaCoordenada,
+  indiceDoMesmoPonto,
+  rotulosDosPontos,
+} from '../lib/comparacao-pontos'
 import { linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
 import { num } from '../lib/format'
 import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
@@ -152,10 +157,24 @@ export default function PontoScreen({
           setJanela(true)
           return
         }
+        /* TETO CHEIO: recusa e DIZ, em vez de engolir o ponto. O `slice(0, MAX_PONTOS)`
+           que estava aqui mantinha os cinco PRIMEIROS e descartava justamente o novo, e
+           ainda abria a aba do quinto antigo — o operador colava um endereço, esperava a
+           leitura e recebia um ponto velho, sem nenhum aviso. Foi a outra metade do
+           "depois de algumas vezes ele buga" (Juan, 2026-08-14). A regra já estava
+           escrita na tela ("Máximo de N pontos - remova um para colar outro"); o que
+           faltava era o código honrá-la. A checagem vem ANTES da chamada: não faz sentido
+           gastar uma leitura de servidor para descartar o resultado. */
+        if (fichas.length >= MAX_PONTOS) {
+          setErro(
+            `Máximo de ${MAX_PONTOS} pontos na comparação. Remova um para analisar outro.`,
+          )
+          return
+        }
         const nova = await api.ponto(lat, lng)
         // O ponto novo entra no fim e vira o aberto: quem acabou de pedir quer ver ele.
         setFichas((atuais) => {
-          const proximas = [...atuais, nova].slice(0, MAX_PONTOS)
+          const proximas = [...atuais, nova]
           setAberto(proximas.length - 1)
           return proximas
         })
@@ -191,10 +210,21 @@ export default function PontoScreen({
    * o mapa continuava parado no ultimo ponto colado, entao nao dava para ver QUAL area
    * cada coluna da comparacao descreve (relato do Juan, 2026-08-12).
    *
-   * A chave e' o `hex_id` da ficha aberta, nao o indice: remover um ponto do meio muda o
-   * indice de todos os seguintes sem mudar o ponto que esta' aberto, e re-localizar ali
-   * seria um voo sem motivo. Trocar de aba entre pontos da MESMA cidade nao recarrega
-   * territorio nenhum — `uf`/`municipio` continuam iguais e so' o pin muda.
+   * A chave e' a COORDENADA da ficha aberta — nao o indice, e NAO o `hex_id`.
+   *
+   * Nao o indice: remover um ponto do meio muda o indice de todos os seguintes sem mudar o
+   * ponto aberto, e re-localizar ali seria um voo sem motivo.
+   *
+   * NAO O HEX_ID, e isso era um DEFEITO (relato do Juan em 2026-08-14: "ao mudar algumas
+   * vezes as coordenadas ele buga, seja a camera, janela, ou nao busca a coordenada"). Um
+   * hexagono res-7 tem ~5 km2, entao dois enderecos a MAIS DE 1 KM um do outro cabem no
+   * mesmo. Medido contra a API: -23.61369,-46.84487 e -23.60569,-46.83687 (1,2 km, ambos
+   * em Cotia) devolvem `hex_id` 87a81006bffffff nos DOIS. Com a guarda por hexagono o
+   * segundo endereco entrava na lista e trocava a janela, mas o mapa e o pin ficavam no
+   * primeiro — janela e mapa descrevendo pontos diferentes, sem erro nenhum na tela.
+   *
+   * Trocar de aba entre pontos da MESMA cidade nao recarrega territorio nenhum:
+   * `uf`/`municipio` continuam iguais e so' o pin muda.
    */
   const ultimoLocalizado = useRef<string | null>(null)
   useEffect(() => {
@@ -202,8 +232,9 @@ export default function PontoScreen({
       ultimoLocalizado.current = null
       return
     }
-    if (ultimoLocalizado.current === ficha.hex_id) return
-    ultimoLocalizado.current = ficha.hex_id
+    const chave = chaveDaCoordenada(ficha.lat, ficha.lng)
+    if (ultimoLocalizado.current === chave) return
+    ultimoLocalizado.current = chave
     onLocalizar(ficha.local.uf ?? '', ficha.local.municipio ?? '', {
       lat: ficha.lat,
       lng: ficha.lng,

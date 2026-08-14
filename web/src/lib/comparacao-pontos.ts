@@ -101,12 +101,25 @@ export const CASAS_COORD = 5
  * normal — quem nao viu a tela reagir tenta de novo —, entao a tela e' que precisa
  * absorver a repeticao, em vez de transformar cada Enter num item novo.
  */
+/**
+ * A identidade de um ponto: a coordenada arredondada em `CASAS_COORD`.
+ *
+ * Publicada porque DOIS lugares precisam da mesma nocao de "e' o mesmo ponto": esta
+ * funcao, que evita duplicar a ficha, e a tela, que decide se leva o mapa ate' ele. A
+ * tela usava o `hex_id` para isso e errava — um hexagono res-7 tem ~5 km2, entao dois
+ * enderecos a mais de 1 km um do outro cabem no mesmo, e o mapa ficava parado no primeiro
+ * enquanto a janela ja' mostrava o segundo (relato do Juan, 2026-08-14).
+ */
+export function chaveDaCoordenada(lat: number, lng: number): string {
+  return `${lat.toFixed(CASAS_COORD)},${lng.toFixed(CASAS_COORD)}`
+}
+
 export function indiceDoMesmoPonto(
   pontos: readonly PontoPayload[],
   lat: number,
   lng: number,
 ): number {
-  const chave = (a: number, b: number) => `${a.toFixed(CASAS_COORD)},${b.toFixed(CASAS_COORD)}`
+  const chave = (a: number, b: number) => chaveDaCoordenada(a, b)
   const alvo = chave(lat, lng)
   return pontos.findIndex((p) => chave(p.lat, p.lng) === alvo)
 }

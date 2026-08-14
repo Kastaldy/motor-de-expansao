@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   CORES_PONTO,
+  chaveDaCoordenada,
   DIMENSOES_PONTO,
   MAX_PONTOS,
   corDoPonto,
@@ -231,6 +232,35 @@ describe('compararPontos', () => {
     )
     expect(c.frase).toContain('Bela Vista')
     expect(c.frase).toContain('Taboão')
+  })
+})
+
+describe('chaveDaCoordenada', () => {
+  /* O defeito de 2026-08-14: a tela guardava "onde o mapa já está" pelo `hex_id`, e um
+     hexágono res-7 tem ~5 km2. Medido contra a API, estes dois endereços de Cotia distam
+     1,2 km e caem no MESMO hexágono (87a81006bffffff) — com a guarda por hexágono, o
+     segundo entrava na lista e trocava a janela, mas o mapa ficava no primeiro. */
+  const A = { lat: -23.61369, lng: -46.84487 }
+  const B = { lat: -23.60569, lng: -46.83687 }
+
+  it('separa dois endereços que dividem o mesmo hexágono', () => {
+    expect(chaveDaCoordenada(A.lat, A.lng)).not.toBe(chaveDaCoordenada(B.lat, B.lng))
+  })
+
+  it('a MESMA coordenada continua sendo o mesmo ponto', () => {
+    expect(chaveDaCoordenada(A.lat, A.lng)).toBe(chaveDaCoordenada(A.lat, A.lng))
+  })
+
+  it('absorve ruído abaixo de ~1 m, que é a razão de existir o arredondamento', () => {
+    // O mesmo endereço volta do servidor com o último dígito diferente conforme o caminho
+    // (colado, link curto, geocodificado). 30 cm é o mesmo imóvel num raio de 1.000 m.
+    expect(chaveDaCoordenada(-23.613690_4, -46.844870_2)).toBe(chaveDaCoordenada(A.lat, A.lng))
+  })
+
+  it('é a MESMA noção que `indiceDoMesmoPonto` usa — uma regra, não duas', () => {
+    const ponto = (lat: number, lng: number) => ({ lat, lng }) as never
+    expect(indiceDoMesmoPonto([ponto(A.lat, A.lng)], B.lat, B.lng)).toBe(-1)
+    expect(indiceDoMesmoPonto([ponto(A.lat, A.lng)], A.lat, A.lng)).toBe(0)
   })
 })
 
