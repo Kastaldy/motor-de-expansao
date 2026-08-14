@@ -1450,31 +1450,52 @@ def _viabilidade_page(
 
 
 # ---------------------------------------------------------------------------
-# Pagina de CONCLUSAO: parecer tri-estado do ponto + observacoes.
+# Pagina de CONCLUSAO: DOIS pareceres tri-estado do ponto + observacoes.
 #
-# Ate aqui o relatorio nao tinha veredito UNICO por ponto. O que existia era:
+# Ate aqui o relatorio nao tinha veredito por ponto. O que existia era:
 #   * o semaforo por METRICA dos 8 Big Numbers (`_cor_por_meta`, BLK-RELPON-08);
 #   * o veredito BINARIO de viabilidade financeira (`dre.flag_viavel`);
 #   * o parecer tri-estado de `rede_diagnostico`, mas apontado para unidade MADURA.
-# Esta pagina compoe os tres num status por ponto CANDIDATO, com a mesma gramatica
-# de `rede_diagnostico` ("1 grave OU N medios"): um gate ELIMINATORIO reprova
-# sozinho; os demais apontamentos apenas rebaixam para "Aprovado com ressalvas".
+# A pagina nasceu (2026-08-06) compondo os tres num status UNICO por ponto candidato.
+# Desde a DEC-030 (pedido de Vinicius, 2026-08-14) esse status unico NAO existe mais:
+# a pagina carimba DOIS selos independentes, um por EIXO, e nada os agrega.
 #
-# REGUA (aprovada por Vinicius, 2026-08-06):
-#   Eliminatorios -> Reprovado
-#     E1  margem abaixo da regua E payback acima da regua (falha nos DOIS lados)
-#     E2  aluguel pedido acima da 3a faixa de aluguel-teto (excecao)
-#     E3  metragem < AREA_MIN_M2  (pe-direito SAIU da regua: Vinicius, 2026-08-07)
-#     E4  cenario em zona morta (`flag_zona_morta`)
-#   Ressalvas -> Aprovado com ressalvas
-#     R1  falha em UM dos dois criterios de retorno
-#     R2  aluguel pedido acima da 2a faixa (teto) e dentro da excecao
-#     R3  metragem fora de AREA_IDEAL_MIN_M2..AREA_IDEAL_MAX_M2 (mas >= o minimo)
-#     R4  meta de Big Number nao atingida
-#     R5  metragem fora do envelope da base de calibracao (`flag_fora_envelope`)
-#     R6  campo essencial do imovel nao informado (o gate ficou sem avaliar)
-#     R7  mercado ja consumido pela oferta instalada
-#   Nenhum dos dois -> Aprovado.
+# Por que separar: os dois eixos respondem perguntas diferentes e falham por motivos
+# que nao se compensam. Uma praca que nao sustenta a operacao nao vira aceitavel
+# porque o imovel e' barato, e um imovel fora do envelope nao vira aceitavel porque a
+# praca e' boa. O status unico ESCONDIA esse conflito: colapsava os dois no pior dos
+# lados e o leitor tinha de reconstruir, pela lista de observacoes, de onde veio a
+# reprovacao. Com dois selos o conflito fica VISIVEL -- verde de um lado, vermelho do
+# outro, na mesma pagina -- e a decisao de o que fazer com ele volta para quem le.
+#
+# A gramatica de cada eixo continua sendo a de `rede_diagnostico` ("1 grave OU N
+# medios"): um gate ELIMINATORIO reprova o EIXO sozinho; os demais apontamentos apenas
+# rebaixam aquele eixo para "Aprovado com ressalvas".
+#
+# REGUA (cortes aprovados por Vinicius em 2026-08-06; particao em eixos na DEC-030):
+#   EIXO DEMOGRAFICO -- a praca (o que os Big Numbers medem). Sempre avaliado.
+#     E4  cenario em zona morta (`flag_zona_morta`)                    -> Reprovado
+#     E5  N metas censitarias vermelhas ao mesmo tempo (so-estudo)     -> Reprovado
+#     R4  meta de Big Number nao atingida                              -> Ressalvas
+#     R7  mercado ja consumido pela oferta instalada                   -> Ressalvas
+#     --  nenhum setor censitario no raio (censo indisponivel)         -> Ressalvas
+#   EIXO FINANCEIRO -- o imovel e o retorno (Informacoes do Imovel + Viabilidade).
+#     E1  margem abaixo da regua E payback acima da regua (os DOIS)    -> Reprovado
+#     E2  aluguel pedido acima da 3a faixa de aluguel-teto (excecao)   -> Reprovado
+#     E3  metragem < AREA_MIN_M2  (pe-direito SAIU: Vinicius, 2026-08-07)  -> Reprovado
+#     R1  falha em UM dos dois criterios de retorno                    -> Ressalvas
+#     R2  aluguel acima da 2a faixa (teto) e dentro da excecao         -> Ressalvas
+#     R3  metragem fora de AREA_IDEAL_MIN_M2..AREA_IDEAL_MAX_M2        -> Ressalvas
+#     R5  metragem fora do envelope da base de calibracao              -> Ressalvas
+#     R6  campo essencial do imovel nao informado                      -> Ressalvas
+#   Eixo sem nenhum dos dois -> Aprovado.
+#
+# E4 (zona morta) mora no eixo DEMOGRAFICO embora chegue pelo payload de viabilidade:
+# o flag e' levantado por `pop<5000` / `renda<1600` na captacao (ver
+# `_CONCLUSAO_MOTIVO_ZONA_MORTA`), que e' juizo sobre a PRACA, nao sobre o imovel nem
+# sobre o retorno. Por isso ele sobrevive no modo so-estudo, onde o eixo financeiro
+# inteiro nao existe. Consequencia declarada e aceita: o gate le `dados_viab`, entao um
+# ponto sem payload de viabilidade nunca dispara E4 -- ausencia de dado, nao aprovacao.
 #
 # "Mercado consumido" nasceu ELIMINATORIO na proposta e virou RESSALVA por decisao
 # de Vinicius (2026-08-06): saturacao e' leitura de disputa, nao sentenca -- um ponto
@@ -1506,6 +1527,12 @@ _CONCLUSAO_PAGE_TITLE = "Conclusão"
 CONCLUSAO_APROVADO = "aprovado"
 CONCLUSAO_RESSALVAS = "com_ressalvas"
 CONCLUSAO_REPROVADO = "reprovado"
+
+# Eixos do parecer (DEC-030). Tambem identificadores BRUTOS, sem acento: sao chave de
+# dicionario de texto/cor e comparados em teste. A acentuacao vive em
+# `_CONCLUSAO_SELO_LEGENDAS`, camada de exibicao.
+CONCLUSAO_EIXO_DEMOGRAFICO = "demografico"
+CONCLUSAO_EIXO_FINANCEIRO = "financeiro"
 
 _CONCLUSAO_CORES = {
     CONCLUSAO_APROVADO: _CARD_VERDE_RGB,
@@ -1553,18 +1580,28 @@ _CONCLUSAO_MOTIVO_ZONA_MORTA = {
     "catchment_indisponivel": "captação indisponível",
 }
 
-_CONCLUSAO_APROVADO_TEXTO = (
-    "Nenhuma restrição encontrada: o ponto atende ao envelope do imóvel, às metas "
-    "censitárias do raio e aos critérios de retorno da Ultra."
+# Texto de confirmacao por EIXO (DEC-030): cada selo tem o seu, porque cada um afirma
+# ter avaliado coisas diferentes. O texto unico anterior citava envelope do imovel E metas
+# censitarias E criterios de retorno na mesma frase -- sob dois selos ele seria falso nos
+# dois lados, afirmando de cada eixo o que so o outro olhou.
+_CONCLUSAO_APROVADO_TEXTO_DEMOGRAFICO = (
+    "Nenhuma restrição encontrada na praça: o ponto atende às metas censitárias do raio "
+    "e à leitura de mercado do hexágono."
+)
+_CONCLUSAO_APROVADO_TEXTO_FINANCEIRO = (
+    "Nenhuma restrição encontrada no imóvel nem no retorno: o ponto atende ao envelope "
+    "do imóvel e aos critérios de retorno da Ultra."
 )
 _CONCLUSAO_NOTA = (
     # "e pé-direito" saiu junto com o gate (Vinicius, 2026-08-07): a nota descreve a
     # REGUA aplicada, e citar um criterio que nao decide mais nada seria mentir sobre ela.
-    "Parecer automático das réguas da Ultra: envelope do imóvel (metragem), "
-    f"metas censitárias do raio de {_RAIO_LABEL}, leitura de mercado do hexágono e critérios "
-    "de retorno do cenário simulado. Um item eliminatório reprova sozinho; os demais rebaixam "
-    "para 'Aprovado com ressalvas'. Dado ausente nunca reprova, apenas deixa o item sem "
-    "avaliar. READ-ONLY sobre o M1."
+    "Parecer automático das réguas da Ultra, em dois eixos independentes. DEMOGRÁFICO: "
+    f"metas censitárias do raio de {_RAIO_LABEL} e leitura de mercado do hexágono. "
+    "FINANCEIRO: envelope do imóvel (metragem), aluguel-teto e critérios de retorno do "
+    "cenário simulado. Cada eixo tem selo próprio e NÃO há veredito único: um item "
+    "eliminatório reprova o eixo sozinho; os demais rebaixam aquele eixo para 'Aprovado "
+    "com ressalvas'. Dado ausente nunca reprova, apenas deixa o item sem avaliar. "
+    "READ-ONLY sobre o M1."
 )
 # Variantes do modo SO-ESTUDO (BLK-CONC-ESTUDO). Reusar as strings acima seria AFIRMAR que
 # o envelope do imovel e os criterios de retorno foram avaliados -- exatamente os que este
@@ -1579,7 +1616,7 @@ _CONCLUSAO_NOTA_ESTUDO = (
     # Travessao (U+2014) NAO existe em latin-1 e sairia como "?" silencioso no PDF (fonte
     # core do fpdf2) -- regra de acentuacao do CLAUDE.md, travada pelo teste de regressao.
     "aluguel) nem o retorno do cenário - esses critérios exigem a análise financeira e "
-    "ficam fora deste parecer. Reprova quando "
+    "ficam fora deste parecer, que por isso traz só o selo demográfico. Reprova quando "
     f"{_CONCLUSAO_METAS_ELIMINATORIO_MIN} das {_CONCLUSAO_METAS_AVALIADAS} metas falham ao "
     "mesmo tempo; as demais observações rebaixam para 'Aprovado com ressalvas'. Dado "
     "ausente nunca reprova, apenas deixa o item sem avaliar. READ-ONLY sobre o M1."
@@ -1610,6 +1647,18 @@ _CONCLUSAO_OBS_ACENTO_H = 4.0
 _CONCLUSAO_OBS_TITULO_H = 16.0
 _CONCLUSAO_OBS_TITULO_GAP = 8.0
 _CONCLUSAO_ALUGUEL_OBS_GAP = 22.0
+# Respiro EXTRA antes do titulo do 2o bloco de observacoes (DEC-030). Com so o
+# `_CONCLUSAO_OBS_GAP` (6) o titulo do bloco financeiro colava no ultimo card do
+# demografico e os dois blocos liam como uma lista so. 14 pt fica entre as duas reguas que
+# a pagina ja usa: 6 entre cards irmaos e 22 entre blocos de natureza diferente.
+_CONCLUSAO_BLOCO_GAP = 14.0
+# Titulo de cada bloco de observacoes. Amarram os cards ao selo que os gerou: sem eles o
+# leitor ve dois carimbos e uma lista unica, sem saber qual apontamento pesou em qual.
+# Camada de EXIBICAO -- acentuada, como manda a regra; a chave e' o eixo bruto.
+_CONCLUSAO_BLOCO_TITULOS = {
+    CONCLUSAO_EIXO_DEMOGRAFICO: "Praça (demográfico)",
+    CONCLUSAO_EIXO_FINANCEIRO: "Imóvel e retorno (financeiro)",
+}
 # Altura reservada para a linha "(+N apontamento(s) nao exibido(s))". Sem reservar, o
 # loop enchia a coluna ate o limite e o aviso saia POR CIMA do ultimo card.
 _CONCLUSAO_OBS_AVISO_H = 16.0
@@ -1632,34 +1681,86 @@ _CONCLUSAO_SELO_RGB = {
     "com_ressalvas": (198, 146, 44),
     "reprovado": (198, 57, 57),
 }
-# (rotulo principal, linha de apoio). Espelha o par "APROVADO / PARA COMITÊ" da tela.
+# (rotulo principal, linha de apoio) POR EIXO (DEC-030). O rotulo principal e' o mesmo nos
+# dois -- e o status, e status nao muda de nome conforme o eixo. Quem diferencia e' a linha
+# de apoio, que diz a CONSEQUENCIA daquele eixo: o financeiro conserva os textos de
+# 2026-08-07, que espelham "APROVADO / PARA COMITÊ" da tela (`ViabilityCharts.Veredito`);
+# o demografico estreia os seus, que falam da praca e nao prometem rito nenhum.
 _CONCLUSAO_SELO_TEXTOS = {
-    "aprovado": ("APROVADO", "PARA COMITÊ"),
-    "com_ressalvas": ("COM RESSALVAS", "REQUER REVISÃO"),
-    "reprovado": ("REPROVADO", "FORA DA RÉGUA"),
+    CONCLUSAO_EIXO_DEMOGRAFICO: {
+        "aprovado": ("APROVADO", "PRAÇA SUSTENTA"),
+        "com_ressalvas": ("COM RESSALVAS", "PRAÇA COM RISCO"),
+        "reprovado": ("REPROVADO", "PRAÇA NÃO SUSTENTA"),
+    },
+    CONCLUSAO_EIXO_FINANCEIRO: {
+        "aprovado": ("APROVADO", "PARA COMITÊ"),
+        "com_ressalvas": ("COM RESSALVAS", "REQUER REVISÃO"),
+        "reprovado": ("REPROVADO", "FORA DA RÉGUA"),
+    },
 }
-# No modo SO-ESTUDO o selo verde sai como "APROVADO" seco (Juan, 2026-08-12): esse parecer
-# nao viu imovel nem retorno, entao prometer encaminhamento a comite seria prometer um rito
-# que ele nao tem base para disparar. O modo COMPLETO segue com "PARA COMITÊ", espelhando a
-# tela de Viabilidade -- o escopo pedido foi o PDF do bot, e so ele.
-_CONCLUSAO_SELO_APOIO_OCULTO_NO_ESTUDO = frozenset({CONCLUSAO_APROVADO})
+# Legenda no topo do selo: sem ela os dois carimbos sao indistinguiveis. Camada de
+# EXIBICAO (acentuada); a chave e' o eixo bruto.
+_CONCLUSAO_SELO_LEGENDAS = {
+    CONCLUSAO_EIXO_DEMOGRAFICO: "DEMOGRÁFICO",
+    CONCLUSAO_EIXO_FINANCEIRO: "FINANCEIRO",
+}
+# O pedido de Juan (2026-08-12) de esconder "PARA COMITÊ" no modo so-estudo virou
+# ESTRUTURAL na DEC-030 e por isso deixou de existir como excecao: o rito de comite
+# pertence ao eixo FINANCEIRO, e o so-estudo nao desenha esse selo. O parecer do bot nao
+# tem mais como prometer um rito que nao tem base para disparar -- por construcao, nao por
+# um `frozenset` de excecao. `test_selo_aprovado_so_estudo_sem_mencao_a_comite` segue
+# guardando o invariante.
 
 # Geometria de 2 COLUNAS (reestruturacao pedida por Vinicius, 2026-08-07): cards de
-# aluguel + observacoes a ESQUERDA, selo sozinho a DIREITA. A largura da coluna esquerda
+# aluguel + observacoes a ESQUERDA, selos a DIREITA. A largura da coluna esquerda
 # sai por subtracao para a soma fechar sempre na pagina, mesmo se a do selo mudar.
 _CONCLUSAO_MARGEM_X = 36.0
-_CONCLUSAO_COL_DIR_W = 240.0
+# 240 -> 210 na DEC-030: o que a coluna direita perde em largura, a esquerda ganha (622 ->
+# 652), e ela e' que precisa -- passou a comportar DOIS titulos de bloco alem dos cards.
+_CONCLUSAO_COL_DIR_W = 210.0
 _CONCLUSAO_COL_GAP = 26.0
 _CONCLUSAO_COL_DIR_X = _PAGE_W - _CONCLUSAO_MARGEM_X - _CONCLUSAO_COL_DIR_W
 _CONCLUSAO_COL_ESQ_W = _CONCLUSAO_COL_DIR_X - _CONCLUSAO_MARGEM_X - _CONCLUSAO_COL_GAP
-# 240 x 196 ~ 1,2:1 -- quase quadrado, como o carimbo da tela. Nao e' 1:1 exato porque o
-# rotulo mais longo ("COM RESSALVAS") precisa da largura para nao encolher demais.
-_CONCLUSAO_SELO_H = 196.0
+# 210 x 176 ~ 1,19:1 -- quase quadrado, como o carimbo da tela (era 240 x 196 ~ 1,22:1 com
+# um selo so). Nao e' 1:1 exato porque o rotulo mais longo ("COM RESSALVAS") precisa da
+# largura para nao encolher demais.
+#
+# A altura caiu de 196 para 176 porque agora sao DOIS: a area util da coluna e' de apenas
+# `_CONCLUSAO_AREA_BASE - _CONCLUSAO_AREA_TOPO` = 400 pt, e `2 x 196 + gap` estoura isso
+# em 8 a 16 pt. Como `auto_page_break` esta OFF, o excedente NAO vazaria para a pagina
+# seguinte: sairia por baixo do rodape, em silencio (mesma armadilha que
+# `_CONCLUSAO_OBS_LIMITE_Y` documenta para as observacoes). `2 x 176 + 20` = 372 deixa
+# 28 pt de folga -- 14 de cada lado, o suficiente para os selos nao encostarem na banda de
+# titulo nem na nota metodologica. Travado por `test_os_dois_selos_cabem_na_area_util`.
+_CONCLUSAO_SELO_H = 176.0
+_CONCLUSAO_SELO_GAP = 20.0
 # Cantos arredondados do selo (pedido de Vinicius, 2026-08-07). Fica um pouco menor que
 # `_CLASSICO_CORNER_RADIUS` (16) porque a borda aqui tem 2 pt e o mesmo raio da banda
 # clássica deixaria o traco visivelmente achatado nas quinas. Os CARDS seguem retos, como
 # todos os outros do relatorio -- o arredondamento marca o selo como elemento a parte.
+# ABSOLUTO de proposito: raio e borda nao escalam com a altura, senao o selo menor pareceria
+# um card arredondado em vez do mesmo carimbo em outro tamanho.
 _CONCLUSAO_SELO_RAIO = 13.0
+# Geometria INTERNA do selo, em fracao da altura (DEC-030). Antes eram absolutos (48 pt de
+# simbolo, celulas de 22/14, corpo 17/9,5) calibrados para a altura unica de 196; num selo
+# de 176 o simbolo de 48 termina a 4,8 pt do rotulo e o conjunto fica colado. As fracoes
+# abaixo REPRODUZEM o desenho de 2026-08-07 quando `altura = 196` -- 48/196 = 0,245,
+# 22/196 = 0,112, 14/196 = 0,0714 -- entao a mudanca e' de parametrizacao, nao de estetica.
+_CONCLUSAO_SELO_LEGENDA_Y = 0.070
+# A legenda e' a UNICA parte do selo que nao escala: 9 pt ja e' a menor tipografia da
+# pagina, e encolhe-la junto com a altura a tornaria ilegivel antes de qualquer outra coisa.
+_CONCLUSAO_SELO_LEGENDA_CORPO = 9.0
+_CONCLUSAO_SELO_LEGENDA_H = 12.0
+_CONCLUSAO_SELO_SIMBOLO_TAM = 0.245
+_CONCLUSAO_SELO_SIMBOLO_Y = 0.335
+_CONCLUSAO_SELO_PRINCIPAL_Y = 0.60
+_CONCLUSAO_SELO_PRINCIPAL_H = 0.112
+_CONCLUSAO_SELO_SECUNDARIO_Y = 0.78
+_CONCLUSAO_SELO_SECUNDARIO_H = 0.0714
+# Corpos de texto na altura de referencia; escalam por `altura / _CONCLUSAO_SELO_H_REF`.
+_CONCLUSAO_SELO_H_REF = 196.0
+_CONCLUSAO_SELO_PRINCIPAL_CORPO = 17.0
+_CONCLUSAO_SELO_SECUNDARIO_CORPO = 9.5
 # Os dois cards de aluguel vivem na coluna ESQUERDA, lado a lado, acima das observacoes
 # (pedido de Vinicius, 2026-08-07). O gap e' HORIZONTAL desde entao.
 _CONCLUSAO_ALUGUEL_H = 72.0
@@ -1667,12 +1768,59 @@ _CONCLUSAO_ALUGUEL_GAP = 12.0
 
 
 @dataclass(frozen=True)
-class _ConclusaoPonto:
-    """Parecer do ponto: status bruto + observacoes ja redigidas, na ordem de leitura."""
+class _ConclusaoEixo:
+    """Parecer de UM eixo: status bruto + observacoes ja redigidas, na ordem de leitura."""
 
     status: str
     eliminatorios: tuple[str, ...]
     ressalvas: tuple[str, ...]
+
+
+def _conclusao_eixo(eliminatorios: list[str], ressalvas: list[str]) -> _ConclusaoEixo:
+    """Fecha um eixo aplicando a gramatica "1 grave OU N medios" -- so aqui, uma vez."""
+    if eliminatorios:
+        status = CONCLUSAO_REPROVADO
+    elif ressalvas:
+        status = CONCLUSAO_RESSALVAS
+    else:
+        status = CONCLUSAO_APROVADO
+    return _ConclusaoEixo(
+        status=status, eliminatorios=tuple(eliminatorios), ressalvas=tuple(ressalvas)
+    )
+
+
+@dataclass(frozen=True)
+class _ConclusaoPonto:
+    """Parecer do ponto: DOIS eixos independentes, sem status agregado (DEC-030).
+
+    Nao existe `status` do ponto de proposito. Um agregado (pior-dos-dois) sobreviveria
+    aqui sem nenhum consumidor de render -- a pagina carimba um selo por eixo -- e seria
+    lido como "o veredito", que e' exatamente a leitura que a DEC-030 aboliu. Quem precisa
+    de um juizo unico tem de dizer, no ponto de uso, qual eixo esta perguntando.
+
+    `financeiro` e' `None` no modo so-estudo: o eixo nao foi reprovado nem aprovado, ele
+    nao existe naquele parecer (ver `_avaliar_conclusao`). `None` e' o unico valor que diz
+    isso; um `_ConclusaoEixo` vazio sairia "Aprovado" e afirmaria o que ninguem avaliou.
+    """
+
+    demografico: _ConclusaoEixo
+    financeiro: _ConclusaoEixo | None
+
+    @property
+    def eliminatorios(self) -> tuple[str, ...]:
+        """Todos os eliminatorios, demografico antes de financeiro (ordem de leitura).
+
+        Conveniencia de LEITURA sobre a lista de observacoes, que sempre foi uma coisa so
+        e continua sendo -- a DEC-030 partiu o VEREDITO, nao os apontamentos. A pagina
+        renderiza por bloco (`_conclusao_blocos`), nao por estas propriedades.
+        """
+        fin = self.financeiro.eliminatorios if self.financeiro else ()
+        return self.demografico.eliminatorios + fin
+
+    @property
+    def ressalvas(self) -> tuple[str, ...]:
+        fin = self.financeiro.ressalvas if self.financeiro else ()
+        return self.demografico.ressalvas + fin
 
 
 def _conclusao_valor(value: Any) -> float | None:
@@ -1820,15 +1968,19 @@ def _conclusao_retorno(dados: Mapping[str, Any]) -> tuple[bool, bool, bool]:
     return margem < margem_min, (payback is None or payback > payback_max), True
 
 
-def _conclusao_regras_imovel(
+def _conclusao_eixo_financeiro(
     info: Mapping[str, Any], dados_viab: Mapping[str, Any]
-) -> tuple[list[str], list[str]]:
-    """(eliminatorios, ressalvas) dos gates que dependem do IMOVEL e do cenario financeiro.
+) -> _ConclusaoEixo:
+    """Eixo FINANCEIRO: os gates que dependem do IMOVEL e do cenario de retorno.
 
-    Extraidos de `_avaliar_conclusao` sem alterar uma linha da logica: sao exatamente os
-    criterios que o modo SO-ESTUDO (BLK-CONC-ESTUDO) desliga, porque nenhum deles tem
-    insumo no caminho API/bot -- que nunca envia `viabilidade` nem `info_imovel`. Manter os
-    itens nesta ordem preserva a ordem de leitura do parecer completo.
+    Sao exatamente os criterios que o modo SO-ESTUDO (BLK-CONC-ESTUDO) desliga, porque
+    nenhum deles tem insumo no caminho API/bot -- que nunca envia `viabilidade` nem
+    `info_imovel`. Desde a DEC-030 essa mesma fronteira e' a do SELO financeiro: o modo
+    so-estudo deixou de ser "meia regua" e passou a ser "um selo dos dois".
+
+    A ZONA MORTA saiu daqui para o eixo demografico (DEC-030): o flag chega pelo payload de
+    viabilidade, mas o que ele afirma -- `pop<5000` / `renda<1600` na captacao -- e' juizo
+    sobre a praca. Manter os itens nesta ordem preserva a ordem de leitura de 2026-08-07.
     """
     eliminatorios: list[str] = []
     ressalvas: list[str] = []
@@ -1846,16 +1998,6 @@ def _conclusao_regras_imovel(
         ressalvas.append("Prazo de retorno do investimento acima do limite da régua da Ultra.")
     elif dados_viab.get("flag_viavel") is False:
         ressalvas.append("Cenário fora da régua de viabilidade da Ultra.")
-
-    # --- Zona morta (E4) ---
-    if _conclusao_flag(dados_viab.get("flag_zona_morta")):
-        bruto = str(dados_viab.get("motivo_zona_morta") or "").strip()
-        motivo = _conclusao_motivo_zona_morta(bruto)
-        eliminatorios.append(
-            f"Ponto em zona morta para a operação ({motivo})."
-            if motivo
-            else "Ponto em zona morta para a operação."
-        )
 
     # --- Envelope fisico do imovel (E3 / R3) ---
     # Primeira aplicacao real de AREA_MIN_M2/AREA_IDEAL_*: eram canonicos declarados em
@@ -1897,7 +2039,18 @@ def _conclusao_regras_imovel(
             "Metragem fora do envelope da base de calibração: projeção com incerteza maior."
         )
 
-    return eliminatorios, ressalvas
+    # --- Campos essenciais nao informados (R6) ---
+    # Fecham a lista, como sempre fecharam. Ate a DEC-030 moravam em `_avaliar_conclusao`
+    # justamente para nao subir na ordem de leitura; agora que o eixo financeiro e' um
+    # bloco proprio, o fim do bloco E o mesmo lugar -- e o `if not somente_estudo` que os
+    # protegia virou desnecessario: neste modo a funcao inteira nao roda.
+    for chave, rotulo in _CONCLUSAO_CAMPOS_ESSENCIAIS:
+        if _conclusao_valor(info.get(chave)) is None:
+            ressalvas.append(
+                f"{rotulo} não informado: o critério correspondente não pôde ser avaliado."
+            )
+
+    return _conclusao_eixo(eliminatorios, ressalvas)
 
 
 def _avaliar_conclusao(
@@ -1913,14 +2066,14 @@ def _avaliar_conclusao(
     `dados_viab` e o dict ja achatado por `_viab_normalizado` -- a conclusao LE os mesmos
     numeros que a pagina de Viabilidade imprime, nunca recalcula nenhum deles.
 
-    `somente_estudo=True` (BLK-CONC-ESTUDO) avalia SO a base do estudo: metas censitarias
-    do raio, leitura de mercado do hexagono e a ressalva de censo indisponivel. Os gates de
-    imovel e retorno (`_conclusao_regras_imovel`) ficam de fora INTEIROS -- nao "sem dado",
-    e sim fora da regua --, porque no caminho API/bot eles nunca tiveram insumo e sairiam
-    todos como "nao informado", enchendo o parecer de ressalvas que nao dizem nada sobre o
-    ponto. O que RESTA e' a praca: metas censitarias, mercado do hexagono e a ressalva de
-    censo indisponivel -- mais o gate E5, que reprova quando as metas falham EM BLOCO e e'
-    o unico eliminatorio alcancavel neste modo (ver `_CONCLUSAO_METAS_ELIMINATORIO_MIN`).
+    `somente_estudo=True` (BLK-CONC-ESTUDO) avalia SO a base do estudo: o eixo DEMOGRAFICO.
+    O eixo financeiro (`_conclusao_eixo_financeiro`) fica de fora INTEIRO -- nao "sem
+    dado", e sim fora da regua --, porque no caminho API/bot ele nunca teve insumo e sairia
+    todo como "nao informado", enchendo o parecer de ressalvas que nao dizem nada sobre o
+    ponto. Desde a DEC-030 isso tem consequencia VISUAL direta: `financeiro is None` e a
+    pagina desenha um selo so. O que RESTA e' a praca: metas censitarias, mercado do
+    hexagono, zona morta e a ressalva de censo indisponivel -- mais o gate E5, que reprova
+    quando as metas falham EM BLOCO (ver `_CONCLUSAO_METAS_ELIMINATORIO_MIN`).
     """
     result = result or {}
     residual = residual or {}
@@ -1928,10 +2081,19 @@ def _avaliar_conclusao(
     eliminatorios: list[str] = []
     ressalvas: list[str] = []
 
-    if not somente_estudo:
-        elim_imovel, ress_imovel = _conclusao_regras_imovel(info, dados_viab)
-        eliminatorios.extend(elim_imovel)
-        ressalvas.extend(ress_imovel)
+    # --- Zona morta (E4) ---
+    # Primeiro item do eixo demografico: e' o unico gate da praca que REPROVA fora do
+    # so-estudo, entao encabecar a lista o poe no topo da coluna de observacoes. Le
+    # `dados_viab` porque e' de la que o motor manda o flag -- ver o cabecalho da secao
+    # sobre por que isso nao o torna financeiro.
+    if _conclusao_flag(dados_viab.get("flag_zona_morta")):
+        bruto = str(dados_viab.get("motivo_zona_morta") or "").strip()
+        motivo = _conclusao_motivo_zona_morta(bruto)
+        eliminatorios.append(
+            f"Ponto em zona morta para a operação ({motivo})."
+            if motivo
+            else "Ponto em zona morta para a operação."
+        )
 
     # --- Censo indisponivel para o ponto ---
     # As 4 metricas censitarias ausentes AO MESMO TEMPO significam que nenhum setor caiu
@@ -1984,24 +2146,9 @@ def _avaliar_conclusao(
             continue
         ressalvas.append(f"Meta não atingida em {rotulo}: {valor_txt} para meta de {meta_txt}.")
 
-    # --- Campos essenciais nao informados (R6) ---
-    # Fica FORA de `_conclusao_regras_imovel` de proposito: la o bloco subiria na ordem de
-    # leitura do parecer completo, e estes itens sempre fecharam a lista. So o `if` e' novo.
-    if not somente_estudo:
-        for chave, rotulo in _CONCLUSAO_CAMPOS_ESSENCIAIS:
-            if _conclusao_valor(info.get(chave)) is None:
-                ressalvas.append(
-                    f"{rotulo} não informado: o critério correspondente não pôde ser avaliado."
-                )
-
-    if eliminatorios:
-        status = CONCLUSAO_REPROVADO
-    elif ressalvas:
-        status = CONCLUSAO_RESSALVAS
-    else:
-        status = CONCLUSAO_APROVADO
     return _ConclusaoPonto(
-        status=status, eliminatorios=tuple(eliminatorios), ressalvas=tuple(ressalvas)
+        demografico=_conclusao_eixo(eliminatorios, ressalvas),
+        financeiro=None if somente_estudo else _conclusao_eixo_financeiro(info, dados_viab),
     )
 
 
@@ -2063,26 +2210,30 @@ def _conclusao_simbolo(
 
 def _conclusao_selo(
     pdf: _UltraPDF,
+    eixo: str,
     status: str,
     x: float,
     y: float,
     largura: float,
     altura: float,
-    *,
-    somente_estudo: bool = False,
 ) -> None:
-    """Selo do parecer: quadrado com simbolo em cima, rotulo embaixo, cor pelo estado.
+    """Selo de UM eixo: legenda em cima, simbolo no meio, rotulo embaixo, cor pelo estado.
 
     Mesma anatomia do carimbo de veredito da tela de Viabilidade (`Veredito`, escolha de
     Felipe em 2026-07-31: "bater o olho e ja ter o veredito"), portada para o PDF e
     estendida de 2 para 3 estados. Fundo no pastel que o resto do relatorio ja usa
     (`_CARD_*_RGB`); borda de 2 pt e simbolo/texto na cor SOLIDA correspondente, que
     existe so aqui -- os pasteis nao teriam contraste como traco.
+
+    A LEGENDA no topo (DEC-030) e' o unico acrescimo a essa anatomia: com dois carimbos na
+    mesma coluna, sem ela o leitor ve dois selos identicos em forma e nao sabe qual eixo
+    cada um julga. Tudo abaixo dela escala com `altura`, para o mesmo desenho servir ao
+    selo de 176 pt (dois eixos) e ao de qualquer outra altura sem ficar colado -- as
+    fracoes reproduzem o desenho de 2026-08-07 quando `altura` = `_CONCLUSAO_SELO_H_REF`.
     """
     rgb = _CONCLUSAO_SELO_RGB[status]
-    principal, secundario = _CONCLUSAO_SELO_TEXTOS[status]
-    if somente_estudo and status in _CONCLUSAO_SELO_APOIO_OCULTO_NO_ESTUDO:
-        secundario = ""
+    principal, secundario = _CONCLUSAO_SELO_TEXTOS[eixo][status]
+    escala = altura / _CONCLUSAO_SELO_H_REF
     prev_lw = pdf.line_width
 
     pdf.set_fill_color(*_CONCLUSAO_CORES[status])
@@ -2098,22 +2249,29 @@ def _conclusao_selo(
     )
     pdf.set_line_width(prev_lw)
 
-    _conclusao_simbolo(pdf, status, x + largura / 2, y + altura * 0.30, 48.0, rgb)
     pdf.set_text_color(*rgb)
+    pdf.set_font("Helvetica", "B", _CONCLUSAO_SELO_LEGENDA_CORPO)
+    pdf.set_xy(x, y + altura * _CONCLUSAO_SELO_LEGENDA_Y)
+    pdf.cell(largura, _CONCLUSAO_SELO_LEGENDA_H, _ascii(_CONCLUSAO_SELO_LEGENDAS[eixo]), align="C")
+
+    _conclusao_simbolo(
+        pdf,
+        status,
+        x + largura / 2,
+        y + altura * _CONCLUSAO_SELO_SIMBOLO_Y,
+        altura * _CONCLUSAO_SELO_SIMBOLO_TAM,
+        rgb,
+    )
     # O rotulo principal encolhe se preciso: "COM RESSALVAS" e' bem mais largo que
     # "APROVADO" e nao pode vazar a borda do selo.
-    #
-    # Sem linha de apoio (so-estudo + "aprovado"), o rotulo DESCE de 0.55 para 0.62: o
-    # bloco de texto que ocupava 0.55..0.74 vira uma linha so, e mante-la no topo antigo
-    # deixaria o selo verde visivelmente desequilibrado ao lado dos outros dois. O 0.62
-    # poe o centro da linha unica onde ficava o centro do bloco de duas.
-    pdf.set_xy(x, y + altura * (0.55 if secundario else 0.62))
-    _ajustar_fonte_para_largura(pdf, _ascii(principal), largura - 16, tamanho=17.0)
-    pdf.cell(largura, 22, _ascii(principal), align="C")
-    if secundario:
-        pdf.set_font("Helvetica", "B", 9.5)
-        pdf.set_xy(x, y + altura * 0.74)
-        pdf.cell(largura, 14, _ascii(secundario), align="C")
+    pdf.set_xy(x, y + altura * _CONCLUSAO_SELO_PRINCIPAL_Y)
+    _ajustar_fonte_para_largura(
+        pdf, _ascii(principal), largura - 16, tamanho=_CONCLUSAO_SELO_PRINCIPAL_CORPO * escala
+    )
+    pdf.cell(largura, altura * _CONCLUSAO_SELO_PRINCIPAL_H, _ascii(principal), align="C")
+    pdf.set_font("Helvetica", "B", _CONCLUSAO_SELO_SECUNDARIO_CORPO * escala)
+    pdf.set_xy(x, y + altura * _CONCLUSAO_SELO_SECUNDARIO_Y)
+    pdf.cell(largura, altura * _CONCLUSAO_SELO_SECUNDARIO_H, _ascii(secundario), align="C")
 
 
 def _conclusao_cards_aluguel(
@@ -2170,19 +2328,41 @@ def _conclusao_cards_aluguel(
         pdf.cell(card_w - 28, 22, valor_txt)
 
 
-def _conclusao_itens(
-    parecer: _ConclusaoPonto, *, somente_estudo: bool = False
-) -> tuple[tuple[str, str], ...]:
-    """(texto, severidade) na ordem de leitura: o que reprovou antes do que so ressalva.
+def _conclusao_itens(eixo: _ConclusaoEixo, confirmacao: str) -> tuple[tuple[str, str], ...]:
+    """(texto, severidade) de UM eixo, na ordem de leitura: eliminatorios antes de ressalvas.
 
-    Sem nenhum apontamento sobra o card de confirmacao, e e' ELE que precisa saber do modo:
-    o texto padrao cita envelope do imovel e criterios de retorno, que o modo so-estudo
-    nunca avaliou.
+    Sem nenhum apontamento sobra o card de confirmacao, e ele e' do CHAMADOR: cada eixo
+    afirma ter avaliado coisas diferentes, e um texto unico mentiria dos dois lados.
     """
-    itens = [(texto, "eliminatorio") for texto in parecer.eliminatorios]
-    itens += [(texto, "ressalva") for texto in parecer.ressalvas]
-    aprovado = _CONCLUSAO_APROVADO_TEXTO_ESTUDO if somente_estudo else _CONCLUSAO_APROVADO_TEXTO
-    return tuple(itens) or ((aprovado, "confirmacao"),)
+    itens = [(texto, "eliminatorio") for texto in eixo.eliminatorios]
+    itens += [(texto, "ressalva") for texto in eixo.ressalvas]
+    return tuple(itens) or ((confirmacao, "confirmacao"),)
+
+
+def _conclusao_blocos(
+    parecer: _ConclusaoPonto, *, somente_estudo: bool = False
+) -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
+    """(eixo, itens) na ordem de leitura da coluna: praca antes de imovel e retorno.
+
+    A ordem espelha a dos SELOS na coluna direita -- demografico em cima -- para que a
+    coluna esquerda seja lida de par com eles. No modo so-estudo sai um bloco so, porque
+    o eixo financeiro nao existe naquele parecer (`financeiro is None`).
+    """
+    demografico = (
+        _CONCLUSAO_APROVADO_TEXTO_ESTUDO if somente_estudo
+        else _CONCLUSAO_APROVADO_TEXTO_DEMOGRAFICO
+    )
+    blocos = [
+        (CONCLUSAO_EIXO_DEMOGRAFICO, _conclusao_itens(parecer.demografico, demografico))
+    ]
+    if parecer.financeiro is not None:
+        blocos.append(
+            (
+                CONCLUSAO_EIXO_FINANCEIRO,
+                _conclusao_itens(parecer.financeiro, _CONCLUSAO_APROVADO_TEXTO_FINANCEIRO),
+            )
+        )
+    return tuple(blocos)
 
 
 def _conclusao_altura_obs(pdf: _UltraPDF, texto: str, largura: float) -> float:
@@ -2208,15 +2388,64 @@ def _conclusao_altura_obs(pdf: _UltraPDF, texto: str, largura: float) -> float:
     )
 
 
-def _conclusao_bloco_observacoes(
-    pdf: _UltraPDF, itens: tuple[tuple[str, str], ...], largura: float
-) -> tuple[tuple[float, ...], float]:
-    """(altura de cada card, altura do bloco inteiro incluindo titulo e gaps)."""
+@dataclass(frozen=True)
+class _ConclusaoElemento:
+    """Um card de observacao mais o titulo de bloco que porventura o abre.
+
+    Modelar o titulo como PARTE do primeiro card do bloco (DEC-030) e' o que mantem
+    `_conclusao_quantos_cabem` / `_conclusao_plano_observacoes` intactas: elas seguem vendo
+    uma sequencia de alturas com gap uniforme, sem saber que ha dois blocos. O efeito
+    colateral e' desejavel -- titulo e primeiro card cabem juntos ou nenhum dos dois cabe,
+    entao nunca sobra um titulo orfao no pe da coluna anunciando um bloco vazio.
+    """
+
+    texto: str
+    severidade: str
+    titulo: str
+    titulo_offset: float
+    altura_card: float
+
+    @property
+    def altura_titulo(self) -> float:
+        if not self.titulo:
+            return 0.0
+        return self.titulo_offset + _CONCLUSAO_OBS_TITULO_H + _CONCLUSAO_OBS_TITULO_GAP
+
+    @property
+    def altura(self) -> float:
+        return self.altura_titulo + self.altura_card
+
+
+def _conclusao_elementos(
+    pdf: _UltraPDF,
+    blocos: tuple[tuple[str, tuple[tuple[str, str], ...]], ...],
+    largura: float,
+) -> tuple[_ConclusaoElemento, ...]:
+    """Achata os blocos numa sequencia de elementos com altura ja medida."""
     pdf.set_font("Helvetica", "", 10)
-    alturas = tuple(_conclusao_altura_obs(pdf, texto, largura) for texto, _sev in itens)
-    total = _CONCLUSAO_OBS_TITULO_H + _CONCLUSAO_OBS_TITULO_GAP
-    total += sum(alturas) + _CONCLUSAO_OBS_GAP * max(0, len(alturas) - 1)
-    return alturas, total
+    elementos: list[_ConclusaoElemento] = []
+    for indice, (eixo, itens) in enumerate(blocos):
+        for posicao, (texto, severidade) in enumerate(itens):
+            abre_bloco = posicao == 0
+            elementos.append(
+                _ConclusaoElemento(
+                    texto=texto,
+                    severidade=severidade,
+                    titulo=_CONCLUSAO_BLOCO_TITULOS[eixo] if abre_bloco else "",
+                    # O 1o bloco nasce logo abaixo dos cards de aluguel, que ja trazem o
+                    # seu proprio respiro (`_CONCLUSAO_ALUGUEL_OBS_GAP`).
+                    titulo_offset=_CONCLUSAO_BLOCO_GAP if abre_bloco and indice else 0.0,
+                    altura_card=_conclusao_altura_obs(pdf, texto, largura),
+                )
+            )
+    return tuple(elementos)
+
+
+def _conclusao_altura_bloco(elementos: tuple[_ConclusaoElemento, ...]) -> float:
+    """Altura do conteudo inteiro de observacoes: titulos, cards e gaps entre eles."""
+    return sum(elemento.altura for elemento in elementos) + _CONCLUSAO_OBS_GAP * max(
+        0, len(elementos) - 1
+    )
 
 
 def _conclusao_quantos_cabem(alturas: tuple[float, ...], y: float, limite: float) -> int:
@@ -2251,6 +2480,59 @@ def _conclusao_plano_observacoes(alturas: tuple[float, ...], y: float) -> tuple[
     return cabem, y + sum(alturas[:cabem]) + _CONCLUSAO_OBS_GAP * cabem
 
 
+def _conclusao_plano_elementos(
+    elementos: tuple[_ConclusaoElemento, ...], y: float
+) -> tuple[tuple[int, ...], float]:
+    """(indices a desenhar, y do aviso) repartindo o espaco ENTRE os blocos, por rodadas.
+
+    DEFEITO QUE ISTO CORRIGE (visto na revisao visual da DEC-030): preenchendo a coluna na
+    ordem, um ponto ruim em tudo enchia-a inteira com o bloco demografico e o bloco
+    financeiro nao entrava -- nem o titulo. O selo financeiro ficava carimbado REPROVADO ao
+    lado de uma coluna que nao trazia UMA linha sobre o financeiro. E' exatamente o
+    "reprova, mas nunca em silencio" que a pagina promete desde 2026-08-06, quebrado pela
+    unica via que a lista unica nao tinha: a truncagem.
+
+    Por rodadas, cada bloco entra com o seu primeiro elemento antes de qualquer bloco pegar
+    o segundo -- e como o primeiro elemento de um bloco e' o que carrega o titulo, e como a
+    ordem dentro do bloco poe os eliminatorios na frente, o que cada selo tem de mais grave
+    aparece antes de qualquer ressalva do outro. Um bloco que nao caiba mais e' pulado sem
+    travar os demais (`continue`), entao um bloco de cards altos nao bloqueia um bloco de
+    card curto que ainda caberia.
+
+    Funcao PURA: recebe alturas ja medidas, nao toca no PDF.
+    """
+    alturas = tuple(elemento.altura for elemento in elementos)
+    cabem, y_aviso = _conclusao_plano_observacoes(alturas, y)
+    if cabem >= len(elementos):
+        return tuple(range(len(elementos))), y_aviso
+
+    # Trunca: a partir daqui o aviso e' certo, entao o limite ja desconta a linha dele --
+    # mesma reserva (e mesma razao) de `_conclusao_plano_observacoes`.
+    limite = _CONCLUSAO_AREA_BASE - _CONCLUSAO_OBS_AVISO_H - _CONCLUSAO_OBS_GAP
+    filas: list[list[int]] = []
+    for indice, elemento in enumerate(elementos):
+        if elemento.titulo or not filas:
+            filas.append([])
+        filas[-1].append(indice)
+
+    escolhidos: list[int] = []
+    fim = y
+    coube_alguma = True
+    while coube_alguma:
+        coube_alguma = False
+        for fila in filas:
+            if not fila:
+                continue
+            candidato = fila[0]
+            proximo = fim + alturas[candidato] + (_CONCLUSAO_OBS_GAP if escolhidos else 0.0)
+            if proximo > limite:
+                continue
+            fim = proximo
+            escolhidos.append(fila.pop(0))
+            coube_alguma = True
+    return tuple(sorted(escolhidos)), fim + _CONCLUSAO_OBS_GAP
+
+
 def _conclusao_card_observacao(
     pdf: _UltraPDF, texto: str, severidade: str, x: float, y: float, largura: float, altura: float
 ) -> None:
@@ -2282,19 +2564,22 @@ def _conclusao_page(
     secondary: tuple[int, int, int] = ULTRA_MAGENTA,
     somente_estudo: bool = False,
 ) -> None:
-    """Pagina de parecer do ponto, em 2 COLUNAS: conteudo a esquerda, selo a direita.
+    """Pagina de parecer do ponto, em 2 COLUNAS: conteudo a esquerda, selos a direita.
 
-    Estrutura pedida por Vinicius (2026-08-07). A direita fica SO o selo, que segue a
+    Estrutura pedida por Vinicius (2026-08-07), com DOIS selos desde a DEC-030. A direita
+    ficam so eles, empilhados -- demografico em cima, financeiro embaixo --, cada um com a
     anatomia do carimbo de veredito da tela de Viabilidade (quadrado de cantos
     arredondados, simbolo em cima, rotulo embaixo, cor pelo estado). A esquerda ficam os
-    dois cards de aluguel e, abaixo deles, as observacoes -- cada uma em CARD proprio,
-    com o mesmo peso visual dos cards de valor. As duas colunas sao centralizadas
-    VERTICALMENTE na area de conteudo, cada uma no seu proprio eixo. READ-ONLY sobre o M1.
+    dois cards de aluguel e, abaixo deles, as observacoes agrupadas nos MESMOS dois blocos
+    e na mesma ordem -- cada apontamento em CARD proprio, com o peso visual dos cards de
+    valor. As duas colunas sao centralizadas VERTICALMENTE na area de conteudo, cada uma no
+    seu proprio eixo. READ-ONLY sobre o M1.
 
     `somente_estudo=True` (BLK-CONC-ESTUDO) e' o modo do caminho API/bot: `viabilidade`
     pode vir `None`, os dois cards de aluguel SOMEM (sao numeros financeiros, e sem payload
-    imprimiriam "n/d" duas vezes) e a coluna esquerda fica so com as observacoes, que
-    sobem para ocupar o espaco. A nota metodologica troca junto -- ver `_CONCLUSAO_NOTA_ESTUDO`.
+    imprimiriam "n/d" duas vezes), o selo FINANCEIRO nao e' desenhado -- o eixo nao existe
+    naquele parecer -- e o demografico volta a ocupar a coluna sozinho, centrado. A nota
+    metodologica troca junto -- ver `_CONCLUSAO_NOTA_ESTUDO`.
     """
     dados = _viab_normalizado(viabilidade) if viabilidade else {}
     parecer = _avaliar_conclusao(
@@ -2309,24 +2594,31 @@ def _conclusao_page(
     largura_esq = _CONCLUSAO_COL_ESQ_W
     area_h = _CONCLUSAO_AREA_BASE - _CONCLUSAO_AREA_TOPO
 
-    # --- Coluna DIREITA: so o selo, centrado na vertical ---
-    _conclusao_selo(
-        pdf,
-        parecer.status,
-        _CONCLUSAO_COL_DIR_X,
-        _CONCLUSAO_AREA_TOPO + (area_h - _CONCLUSAO_SELO_H) / 2,
-        _CONCLUSAO_COL_DIR_W,
-        _CONCLUSAO_SELO_H,
-        somente_estudo=somente_estudo,
-    )
+    # --- Coluna DIREITA: os selos dos eixos avaliados, centrados na vertical ---
+    selos: list[tuple[str, str]] = [(CONCLUSAO_EIXO_DEMOGRAFICO, parecer.demografico.status)]
+    if parecer.financeiro is not None:
+        selos.append((CONCLUSAO_EIXO_FINANCEIRO, parecer.financeiro.status))
+    bloco_selos_h = len(selos) * _CONCLUSAO_SELO_H + _CONCLUSAO_SELO_GAP * (len(selos) - 1)
+    y_selo = _CONCLUSAO_AREA_TOPO + max(0.0, (area_h - bloco_selos_h) / 2)
+    for eixo, status in selos:
+        _conclusao_selo(
+            pdf,
+            eixo,
+            status,
+            _CONCLUSAO_COL_DIR_X,
+            y_selo,
+            _CONCLUSAO_COL_DIR_W,
+            _CONCLUSAO_SELO_H,
+        )
+        y_selo += _CONCLUSAO_SELO_H + _CONCLUSAO_SELO_GAP
 
     # --- Coluna ESQUERDA: cards de aluguel + cards de observacao, centrados na vertical ---
-    itens = _conclusao_itens(parecer, somente_estudo=somente_estudo)
-    alturas, bloco_obs_h = _conclusao_bloco_observacoes(pdf, itens, largura_esq)
+    blocos = _conclusao_blocos(parecer, somente_estudo=somente_estudo)
+    elementos = _conclusao_elementos(pdf, blocos, largura_esq)
     # No modo so-estudo os cards de aluguel nao existem -- e a altura deles NAO pode entrar
     # na conta, senao o bloco de observacoes nasce 94 pt abaixo do centro da area.
     altura_aluguel = 0.0 if somente_estudo else _CONCLUSAO_ALUGUEL_H + _CONCLUSAO_ALUGUEL_OBS_GAP
-    conteudo_h = altura_aluguel + bloco_obs_h
+    conteudo_h = altura_aluguel + _conclusao_altura_bloco(elementos)
     # `max(0, ...)`: conteudo mais alto que a area comeca no TOPO em vez de subir acima da
     # banda de titulo -- e a guarda de altura mais abaixo corta o excedente com aviso.
     y = _CONCLUSAO_AREA_TOPO + max(0.0, (area_h - conteudo_h) / 2)
@@ -2335,17 +2627,21 @@ def _conclusao_page(
         _conclusao_cards_aluguel(pdf, dados, info_imovel, margem, y, largura_esq, secondary)
     y += altura_aluguel
 
-    pdf.set_text_color(45, 45, 45)
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.set_xy(margem, y)
-    pdf.cell(largura_esq, _CONCLUSAO_OBS_TITULO_H, _ascii("Observações"))
-    y += _CONCLUSAO_OBS_TITULO_H + _CONCLUSAO_OBS_TITULO_GAP
-
-    cabem, y_aviso = _conclusao_plano_observacoes(alturas, y)
-    for (texto, severidade), altura in list(zip(itens, alturas, strict=True))[:cabem]:
-        _conclusao_card_observacao(pdf, texto, severidade, margem, y, largura_esq, altura)
-        y += altura + _CONCLUSAO_OBS_GAP
-    restantes = len(itens) - cabem
+    desenhar, y_aviso = _conclusao_plano_elementos(elementos, y)
+    for indice in desenhar:
+        elemento = elementos[indice]
+        if elemento.titulo:
+            y += elemento.titulo_offset
+            pdf.set_text_color(45, 45, 45)
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.set_xy(margem, y)
+            pdf.cell(largura_esq, _CONCLUSAO_OBS_TITULO_H, _ascii(elemento.titulo))
+            y += _CONCLUSAO_OBS_TITULO_H + _CONCLUSAO_OBS_TITULO_GAP
+        _conclusao_card_observacao(
+            pdf, elemento.texto, elemento.severidade, margem, y, largura_esq, elemento.altura_card
+        )
+        y += elemento.altura_card + _CONCLUSAO_OBS_GAP
+    restantes = len(elementos) - len(desenhar)
     if restantes > 0:
         # Truncar em SILENCIO faria a pagina parecer completa quando nao esta.
         pdf.set_text_color(*_CINZA_TEXTO)
@@ -2358,7 +2654,7 @@ def _conclusao_page(
         )
 
     # A nota metodologica volta a ocupar a largura TOTAL: ela fala da pagina inteira, nao
-    # da coluna de observacoes, e presa aos 604 pt da esquerda passaria de 2 para 4 linhas.
+    # da coluna de observacoes, e presa aos 652 pt da esquerda ganharia varias linhas.
     pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 8)
     pdf.set_xy(margem, _CONCLUSAO_NOTA_Y)
