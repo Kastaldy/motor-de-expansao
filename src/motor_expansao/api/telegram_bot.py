@@ -104,10 +104,19 @@ def _bloqueado_msg(segundos: int) -> str:
     return f"🔒 Muitas tentativas. Aguarde ~{minutos} min antes de tentar a senha de novo."
 
 
-def _chat_ref(chat_id: object) -> str:
+def _chat_ref(chat_id: object, chave: str = "") -> str:
     """Referencia OPACA e estavel do chat para log (LGPD): correlaciona linhas sem
-    expor o chat_id real do Telegram (identificador de pessoa)."""
-    return "#" + hashlib.sha256(str(chat_id).encode("utf-8")).hexdigest()[:8]
+    expor o chat_id do Telegram (identificador de pessoa).
+
+    Usa HMAC-SHA256 com o TOKEN DO BOT como chave: sem o token nao da para reverter.
+    Um `sha256` NU seria trivial de forcar, porque o chat_id e um inteiro de espaco
+    pequeno e conhecido. Sem chave (dev/teste), cai no sha256 nu."""
+    msg = str(chat_id).encode("utf-8")
+    if chave:
+        dig = hmac.new(chave.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+    else:
+        dig = hashlib.sha256(msg).hexdigest()
+    return "#" + dig[:8]
 
 _PEDIR_LOGIN = (
     "✅ Senha correta!\n\n"
@@ -378,7 +387,7 @@ def processar(
             return [_msg(f"⚠️ {err}\n\nDigite outro nome ou toque em *⬅️ Voltar*.", _KB_VOLTAR)]
         s["etapa"] = None
         # Rastreio sem PII (BLK-SEC-05): chat opaco (hash), sem o nome do solicitante.
-        print(f"[ESTUDO-MUNI] chat={_chat_ref(chat_id)} uf={uf} municipio={t}")
+        print(f"[ESTUDO-MUNI] chat={_chat_ref(chat_id, settings.telegram_token)} uf={uf} municipio={t}")
         return [
             _msg(f"📄 *Relatorio Municipal* — {t.strip()} - {uf}\n_Solicitado por {s.get('login', '?')}_"),
             {"pdf": pdf, "filename": f"relatorio_municipal_{uf.lower()}.pdf"},
@@ -400,7 +409,7 @@ def processar(
         return [_msg(f"⚠️ {_erro_api(payload, settings)}", _KB_MENU)]
     # Rastreio sem PII (BLK-SEC-05): chat opaco (hash), sem nome do solicitante nem
     # o endereco resolvido; a coordenada (alvo do estudo) e' dado de negocio.
-    print(f"[ESTUDO] chat={_chat_ref(chat_id)} coord={lat},{lng}")
+    print(f"[ESTUDO] chat={_chat_ref(chat_id, settings.telegram_token)} coord={lat},{lng}")
     return [
         _msg(f"📄 Relatorio de *{nome}*\n_Solicitado por {s.get('login', '?')}_"),
         {"pdf": pdf},

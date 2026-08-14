@@ -70,11 +70,21 @@ def test_senha_errada_de_mesmo_tamanho_nao_autoriza() -> None:
 
 # ── referencia opaca de chat ────────────────────────────────────────────────
 def test_chat_ref_e_opaca_e_estavel() -> None:
-    ref = bot._chat_ref(987654321)
+    ref = bot._chat_ref(987654321, "token-do-bot")
     assert ref.startswith("#") and len(ref) == 9
     assert "987654321" not in ref
-    assert ref == bot._chat_ref(987654321)  # deterministico
-    assert ref != bot._chat_ref(987654322)  # sensivel ao id
+    assert ref == bot._chat_ref(987654321, "token-do-bot")  # deterministico c/ a mesma chave
+    assert ref != bot._chat_ref(987654322, "token-do-bot")  # sensivel ao id
+
+
+def test_chat_ref_hmac_depende_da_chave_e_nao_e_sha256_nu() -> None:
+    import hashlib
+
+    # Chaves diferentes -> refs diferentes (nao reversivel sem o token do bot).
+    assert bot._chat_ref(987654321, "chave-A") != bot._chat_ref(987654321, "chave-B")
+    # E difere do sha256 NU (prova que a chave entra no digest, fechando o brute-force).
+    nu = "#" + hashlib.sha256(b"987654321").hexdigest()[:8]
+    assert bot._chat_ref(987654321, "token-do-bot") != nu
 
 
 # ── log sem PII ─────────────────────────────────────────────────────────────
