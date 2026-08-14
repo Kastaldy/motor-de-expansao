@@ -27,7 +27,6 @@ from motor_expansao.dashboard.constants import (
     FAIXA_ORDEM,
     FAIXAS_MAPA_DEMANDA,
     FAIXAS_MAPA_POTENCIAL,
-    FAIXAS_MAPA_PRESSAO_MA,
     faixa_do_score,
 )
 
@@ -57,9 +56,6 @@ def _faixas_do_ts(nome_const: str) -> list[tuple[int, int, str, str]]:
     [
         (FAIXAS_MAPA_POTENCIAL, "FAIXAS_POTENCIAL"),
         (FAIXAS_MAPA_DEMANDA, "FAIXAS_DEMANDA"),
-        # Overlay de pressao competitiva (BLK-MA-13 / DEC-028). Nao e' camada do funil, mas o
-        # espelho vale igual: a legenda e' desenhada pelo TS e a regua canonica e' o Python.
-        (FAIXAS_MAPA_PRESSAO_MA, "FAIXAS_PRESSAO_MA"),
     ],
 )
 def test_ts_espelha_o_python(const_py, const_ts):
@@ -72,39 +68,7 @@ def test_ts_espelha_o_python(const_py, const_ts):
     )
 
 
-def test_pressao_reusa_a_paleta_da_demanda_ao_contrario():
-    """A rampa e' a MESMA — lida de tras para frente. Nao existe paleta nova aqui.
-
-    A convencao cromatica do mapa e' "vermelho = apertado, verde = folgado", e ela vale nas quatro
-    camadas do funil. Pressao alta e' territorio apertado, entao a faixa `80-100` de pressao tem de
-    sair na cor da faixa `0-20` de demanda ("Saturado"). Se alguem trocar uma cor de um lado so',
-    a mesma condicao passa a ter duas cores na mesma tela — o defeito de 2026-08-03.
-    """
-    cores_pressao = [cor for _de, _ate, _nome, cor, _tom in FAIXAS_MAPA_PRESSAO_MA]
-    cores_demanda = [cor for _de, _ate, _nome, cor, _tom in FAIXAS_MAPA_DEMANDA]
-    assert cores_pressao == list(reversed(cores_demanda))
-
-
-def test_pressao_nao_usa_o_vocabulario_de_vulnerabilidade():
-    """DEC-028: nenhuma superficie do piloto rotula esta camada de "vulnerabilidade".
-
-    No regime vigente (`s1,s6`) o score e' `30 + 40*v6` — pressao competitiva reescalada. Rotula-lo
-    de vulnerabilidade seria vender o sinal 6 com o rotulo do sinal 3 (churn), que e' o unico proxy
-    real de fechamento e ainda nao amadureceu. Guard sobre a legenda E sobre o TS que a desenha.
-    """
-    proibidos = ("vulnerab", "alvo de m&a", "aquisi")
-    nomes = " ".join(n for _de, _ate, n, _cor, _tom in FAIXAS_MAPA_PRESSAO_MA).lower()
-    assert not any(p in nomes for p in proibidos)
-
-    fonte = _FAIXAS_TS.read_text(encoding="utf-8")
-    inicio = fonte.index("export const FAIXAS_PRESSAO_MA")
-    bloco = fonte[inicio : fonte.index("]", inicio)].lower()
-    assert "vulnerab" not in bloco
-
-
-@pytest.mark.parametrize(
-    "faixas", [FAIXAS_MAPA_POTENCIAL, FAIXAS_MAPA_DEMANDA, FAIXAS_MAPA_PRESSAO_MA]
-)
+@pytest.mark.parametrize("faixas", [FAIXAS_MAPA_POTENCIAL, FAIXAS_MAPA_DEMANDA])
 def test_faixas_cobrem_0_a_100_sem_lacuna_nem_sobreposicao(faixas):
     assert faixas[0][0] == 0
     assert faixas[-1][1] == 100

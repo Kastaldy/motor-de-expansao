@@ -8,17 +8,13 @@ import { Map } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 import { alunos, brl, num } from '../lib/format'
-import { rotuloDoRegime } from '../lib/pressao-ma'
 import {
   DISCARDED_FILL,
   faixaM1ToColor,
   HEX_FILL_ALPHA,
   NAN_SCORE_FILL,
   POP_MIN_ACIONAVEL,
-  PRESSAO_FORA_DO_UNIVERSO_FILL,
-  PRESSAO_SEM_MEDICAO_FILL,
   camadaCor,
-  pressaoMaToColor,
   scoreBandToColor,
   crescClasseToColor,
   type RGBA,
@@ -117,28 +113,6 @@ const ALPHA_COBERTURA = HEX_FILL_ALPHA
  *  em quase preto — que e' a leitura desejada ("quanto mais concorrente, mais escuro").
  *  Alto demais e a primeira sombra ja mataria a cor da faixa embaixo. */
 const ALPHA_SOMBRA = 34
-
-/* --- Overlay de PRESSAO COMPETITIVA sobre as independentes (BLK-MA-13 / DEC-028) ---
-
-   Camada PARALELA ao funil, nao um passo dele: o funil narra ABRIR e cada passo filtra o
-   anterior; esta camada e' a INVERSAO do §2 (comprar quer demanda alta + residual BAIXO) e
-   nao filtra ninguem. Por isso e' um liga/desliga, no molde da chave de raio.
-
-   TRES ESTADOS, TRES CORES — e a distincao e' obrigatoria (criterio de aceite do bloco):
-     1. medido           -> rampa invertida (`pressaoMaToColor`): vermelho = apertado
-     2. no universo, sem pressao medida  -> cinza azulado (`PRESSAO_SEM_MEDICAO_FILL`)
-     3. fora do universo (sem academia independente) -> cinza neutro, mais apagado
-   Pintar 2 e 3 como "pressao zero" afirmaria "ninguem espremendo aqui" onde o que existe e'
-   ausencia de dado — exatamente o risco 2 da DEC-027.
-
-   O CORTE DE <5k HAB NAO SE APLICA AQUI, e isso e' deliberado: aquele corte e' operacional
-   para ABRIR unidade. Comprar uma academia que ja opera num hexagono pequeno continua sendo
-   uma operacao legitima, e esconde-la em cinza apagaria justamente o alvo mais barato. */
-function fillDoOverlayMa(h: Hex): RGBA {
-  const cor = pressaoMaToColor(h.ma_press ?? null)
-  if (cor) return cor
-  return h.ma_n != null ? [...PRESSAO_SEM_MEDICAO_FILL] : [...PRESSAO_FORA_DO_UNIVERSO_FILL]
-}
 
 /** Precedencia do dashboard: pop<5k vence, senao NaN, senao faixa de score.
  *  Hexes fora do passo atual entram esmaecidos (holofote no funil).
@@ -252,11 +226,6 @@ export interface HexMapProps {
    */
   /** PROTOTIPO: quando true, os passos 2 e 3 mostram a cobertura do raio de 1 km. */
   raio1km?: boolean
-  /** Overlay de pressão competitiva sobre as independentes (DEC-028). Quando ligado, ele
-   *  SUBSTITUI a cor da camada do funil em todos os hexágonos — inclusive o holofote, que é
-   *  critério de outra régua e traria 90% do mapa esmaecido por um filtro que não é deste
-   *  overlay. O stepper continua na tela; o que muda é só o que a cor está medindo. */
-  pressaoMa?: boolean
   /** PROTOTIPO: area coberta pelo raio, ja recortada dentro dos hexagonos. */
   cobertura1k?: Cobertura1k | null
   cameraInicial?: ViewState | null
@@ -288,7 +257,6 @@ export default function HexMap({
   voarPara = null,
   searchPin,
   raio1km = false,
-  pressaoMa = false,
   cobertura1k,
   cameraInicial,
   onCamera,
@@ -470,10 +438,6 @@ export default function HexMap({
         filled: true,
         stroked: true,
         getFillColor: (d) => {
-          // O overlay vem ANTES de tudo: quando ligado, ele e' a regua que o mapa mede, e
-          // sobrepor a ele o recorte de cobertura misturaria duas leituras de concorrencia
-          // (uma por raio de 1 km, outra ponderada ate 2 km) na mesma superficie.
-          if (pressaoMa) return fillDoOverlayMa(d)
           const comRaio = raio1km && PASSOS_DA_PRESSAO.has(passo.n)
           // Transparente onde a cobertura ja pinta o hexagono inteiro (ver `hexesCobertos`).
           if (comRaio && hexesCobertos.has(d.id)) return [0, 0, 0, 0]
@@ -502,9 +466,7 @@ export default function HexMap({
           )
         },
         updateTriggers: {
-          // `pressaoMa` PRECISA estar aqui: sem ele o deck.gl guarda a cor calculada e virar a
-          // chave nao repinta nada — o mesmo defeito que a chave de raio ja teve.
-          getFillColor: [passo.n, raio1km, pressaoMa, hexesCobertos],
+          getFillColor: [passo.n, raio1km, hexesCobertos],
           getLineColor: [selecionado, cenarioKey],
           getLineWidth: [selecionado, cenarioKey],
         },
@@ -758,7 +720,6 @@ export default function HexMap({
     // nunca chegava a existir — o mapa ficava identico e parecia que a camada nao
     // funcionava. Foi exatamente o sintoma relatado ("o hexagono so aparece de uma cor").
     raio1km,
-    pressaoMa,
     cobertura1k,
     hexesCobertos,
     hexPorId,
@@ -880,57 +841,6 @@ export default function HexMap({
                 valor={`${alunos(hover.h.oferta1k)} alunos`}
                 forte
               />
-            </>
-          )}
-
-          {/* Overlay de pressão competitiva (DEC-028). Só com a chave ligada: fora dela, o
-              mapa está medindo outra coisa e estes números não explicam a cor.
-
-              NENHUMA linha aqui diz "vulnerabilidade", "alvo" ou "aquisição" — no regime
-              vigente o score é `30 + 40·v6`, isto é, a própria pressão reescalada, e vendê-lo
-              com o rótulo do sinal de churn seria afirmar um risco de fechamento que ninguém
-              mediu ainda. Quando o BLK-MA-06 fizer S3/S4 amadurecerem, o rótulo muda por DEC. */}
-          {pressaoMa && (
-            <>
-              <Divisoria />
-              {hover.h.ma_press != null ? (
-                <Linha
-                  rotulo="Pressão competitiva"
-                  valor={`${num(hover.h.ma_press, 1)} / 100`}
-                  forte
-                  cor={cor.fg}
-                />
-              ) : (
-                <Linha
-                  rotulo="Pressão competitiva"
-                  valor={hover.h.ma_n != null ? 'sem medição' : 'fora do universo'}
-                />
-              )}
-              {hover.h.ma_n != null && (
-                <Linha rotulo="Academias independentes" valor={num(hover.h.ma_n)} />
-              )}
-              {hover.h.ma_quente != null && (
-                <Linha
-                  rotulo="Demanda alta + saturado"
-                  valor={hover.h.ma_quente ? 'sim' : hover.h.ma_perto ? 'vizinho' : 'não'}
-                />
-              )}
-              {/* Nota e contagem SEMPRE juntas (DEC-026): 38,4% das independentes com nota
-                  têm menos de 30 avaliações, e nota sem contagem ao lado põe no topo da
-                  leitura academias cujo sinal são três avaliações. */}
-              {hover.h.ma_nota != null && (
-                <Linha
-                  rotulo="Nota WellHub (mediana)"
-                  valor={`${num(hover.h.ma_nota, 1)} · ${num(hover.h.ma_com_nota)} com nota`}
-                />
-              )}
-              {/* Rótulo de EXIBIÇÃO, não o valor bruto: `s1,s6` é enum do pipeline e não
-                  informa nada a quem lê a tela — e esta linha existe justamente para dizer
-                  sob qual régua o número foi composto (réguas de regimes diferentes não são
-                  comparáveis entre si — emenda BLK-MA-04-FU1). */}
-              {hover.h.ma_regime && (
-                <Linha rotulo="Sinais medidos" valor={rotuloDoRegime(hover.h.ma_regime)} />
-              )}
             </>
           )}
 

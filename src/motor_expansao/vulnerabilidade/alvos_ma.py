@@ -10,14 +10,11 @@ quer o OPOSTO — demanda ALTA + residual BAIXO, mercado **saturado**, onde já 
 cabe adquirir quem já opera. Por isso o hex quente **não** reusa `tese_entrada == "abrir_agora"`:
 ele é `sam_fitness_potencial` no top quartil **AND** `score_oportunidade_residual < 25`.
 
-GRÃO DA SAÍDA, e por que são três:
+GRÃO DA SAÍDA, e por que são dois:
   - `vulnerabilidade_ma_academias.parquet` — uma linha por ACADEMIA (`(fonte, chave_snapshot)`),
     que é o grão do score, com o hotness do hex propagado por join.
   - `alvos_ma_priorizados.csv` — uma linha por **(HEX, REGIME DE SINAIS)**, hex-level e sem
-    identidade (D1 Opção A / DEC-012). É o entregável comercial.
-  - `alvos_ma_hex.parquet` — o MESMO contrato colapsado para **uma linha por hex**, que é o único
-    grão que um overlay de mapa consegue pintar (BLK-MA-13 / DEC-028). O colapso é `SELEÇÃO` de
-    regime, explícita e testada, nunca uma média — ver `colapsar_regimes_por_hex`.
+    identidade (D1 Opção A / DEC-012).
 
 O REGIME NA CHAVE DO CSV NÃO É ZELO EXCESSIVO — é a emenda `BLK-MA-04-FU1` aplicada à AGREGAÇÃO.
 Linhas de regimes diferentes não estão na mesma régua: um `{s3}` com `sumiu_recente` sai com
@@ -81,13 +78,6 @@ ROOT = Path(__file__).resolve().parents[3]
 CARTEIRA_PATH_DEFAULT = ROOT / "data" / "outputs" / "carteira_expansao_acionavel.parquet"
 ACADEMIAS_PATH_DEFAULT = ROOT / "data" / "staging" / "vulnerabilidade_ma_academias.parquet"
 ALVOS_CSV_DEFAULT = ROOT / "data" / "outputs" / "alvos_ma_priorizados.csv"
-# Terceiro artefato (BLK-MA-13 / DEC-028): a MESMA lista curada, colapsada para uma linha por
-# hexágono, que é o grão que um overlay de mapa consegue pintar. Fica em `data/outputs/` ao lado
-# dos precedentes de camada paralela servidos pelo piloto (`crescimento_hex.parquet`,
-# `hexagonos_mercado_mapeado.parquet`). O NOME mantém o vocabulário técnico do epic de propósito:
-# identificador não é texto de usuário, e a DEC-028 rege o que a TELA escreve, não o slug do
-# arquivo — na tela, nada disto se chama "alvo" nem "vulnerabilidade".
-ALVOS_HEX_PATH_DEFAULT = ROOT / "data" / "outputs" / "alvos_ma_hex.parquet"
 
 # A chave de join tem nome diferente dos dois lados: `hex_id` na carteira, `hex_id_res7` na
 # academia. Mesmo conteúdo, e a diferença é herdada — renomear qualquer um dos dois seria mudança
@@ -412,73 +402,6 @@ def agregar_alvos_por_hex(academias: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def colapsar_regimes_por_hex(alvos: pd.DataFrame) -> pd.DataFrame:
-    """Lista curada `(hex, regime)` -> **uma linha por hex**, no MESMO contrato. Função pura.
-
-    Existe porque um overlay de mapa pinta *um hexágono = uma cor*, e a linha do entregável é
-    `(hex, REGIME)` — emenda BLK-MA-05 ao §10. Sem um colapso explícito, quem desenhasse o mapa
-    faria um `groupby(hex).mean()` implícito, que é exatamente a mistura de réguas que o
-    `BLK-MA-04-FU1` proibiu: um `{s3}` com `sumiu_recente` sai com `100,0` e um `{s1,s3,s4}` medido
-    pelos três sinais sai com menos, e a média entre eles não pertence a régua nenhuma.
-
-    **O colapso é SELEÇÃO, nunca agregação.** A linha que sobrevive é uma linha real de um regime
-    real; nenhum número é recomputado. Precedência, em ordem:
-
-    | # | critério | por quê |
-    |---|---|---|
-    | 1 | maior `n_sinais_disponiveis` | a régua mais medida ganha — é a que o FU1 manda ordenar primeiro |
-    | 2 | maior `n_independentes_vulneraveis` | no empate de régua, vence o regime que representa mais academias daquele hex |
-    | 3 | `sinais_disponiveis` em ordem crescente | desempate FINAL, puramente determinístico (não é mérito) |
-
-    Hoje há **um regime só** e o colapso é a identidade — e é justamente por isso que ele nasce
-    agora, nomeado e testado: no dia em que o S3 amadurecer, o hex passa a ter duas linhas e a
-    escolha vira silenciosa se não estiver escrita. O total de linhas descartadas viaja na
-    auditoria de `materializar_alvos_ma`, nunca é engolido.
-    """
-    _assert_schema_alvos(alvos)
-    if alvos.empty:
-        vazio = _frame_vazio(CONTRATO_COLUNAS_ALVOS_MA)
-        _assert_schema_alvos_hex(vazio)
-        return vazio
-
-    escolhido = (
-        alvos.sort_values(
-            [
-                _COL_HEX_ACADEMIA,
-                "n_sinais_disponiveis",
-                "n_independentes_vulneraveis",
-                "sinais_disponiveis",
-            ],
-            ascending=[True, False, False, True],
-            kind="mergesort",
-        )
-        .drop_duplicates(subset=[_COL_HEX_ACADEMIA], keep="first")
-        .reset_index(drop=True)
-    )
-
-    out = _projetar(escolhido, CONTRATO_COLUNAS_ALVOS_MA)
-    # Mesma ordenação do entregável, para as duas listas serem lidas na mesma sequência.
-    out = out.sort_values(
-        ["n_sinais_disponiveis", "score_vulnerabilidade_medio", _COL_HEX_ACADEMIA],
-        ascending=[False, False, True],
-        kind="mergesort",
-    ).reset_index(drop=True)
-    _assert_schema_alvos_hex(out)
-    return out
-
-
-def _assert_schema_alvos_hex(df: pd.DataFrame) -> None:
-    """O contrato da lista curada MAIS a unicidade do hexágono (o que o colapso promete)."""
-    _assert_schema_alvos(df)
-    if df.empty:
-        return
-    if bool(df[_COL_HEX_ACADEMIA].duplicated().any()):
-        raise AssertionError(
-            "colapso falhou: `hex_id_res7` duplicado na camada hex-level — um overlay pintaria "
-            "o mesmo hexagono com duas cores"
-        )
-
-
 def _assert_schema_alvos(df: pd.DataFrame) -> None:
     """Falha alto se a lista curada não é exatamente o contrato, e se ela carregar identidade."""
     esperado = list(CONTRATO_COLUNAS_ALVOS_MA.keys())
@@ -514,18 +437,12 @@ def materializar_alvos_ma(
     carteira_path: Path | None = None,
     academias_path: Path = ACADEMIAS_PATH_DEFAULT,
     alvos_csv_path: Path = ALVOS_CSV_DEFAULT,
-    alvos_hex_path: Path | None = None,
     dry_run: bool = False,
 ) -> dict[str, object]:
-    """Compõe as camadas e grava os artefatos do D6. Devolve auditoria só com escalares.
+    """Compõe as duas camadas e grava os dois artefatos do D6. Devolve auditoria só com escalares.
 
     Com `score`/`carteira` injetados a função é **pura até a escrita** — é assim que os testes
     rodam sem tocar em `data/`. Com `carteira_path`, lê a carteira do disco (nunca a reescreve).
-
-    `alvos_hex_path` (BLK-MA-13 / DEC-028) é **opcional e sem default de disco**: só grava a camada
-    colapsada quando o chamador pede um caminho. O default `None` não é timidez — um default
-    apontando para `data/outputs/` faria todo teste que já passa os outros dois caminhos por
-    `tmp_path` gravar em silêncio no diretório de produção.
     """
     if score is None:
         raise ValueError(_MSG_FONTE)
@@ -536,7 +453,6 @@ def materializar_alvos_ma(
 
     academias = academias_com_hotness(score, carteira)
     alvos = agregar_alvos_por_hex(academias)
-    alvos_hex = colapsar_regimes_por_hex(alvos)
 
     auditoria: dict[str, object] = {
         "academias": int(len(academias)),
@@ -548,10 +464,6 @@ def materializar_alvos_ma(
         )
         if not academias.empty
         else 0,
-        # Quantas linhas o colapso DESCARTOU. Com um regime só é 0; quando o S3 amadurecer, este
-        # número passa a ser a medida de quanta escolha o overlay está fazendo por baixo.
-        "linhas_descartadas_no_colapso": int(len(alvos) - len(alvos_hex)),
-        "hexes_no_overlay": int(len(alvos_hex)),
         "dry_run": bool(dry_run),
     }
     if dry_run:
@@ -563,10 +475,6 @@ def materializar_alvos_ma(
     alvos_csv_path.parent.mkdir(parents=True, exist_ok=True)
     alvos.to_csv(alvos_csv_path, index=False, sep=";", encoding="utf-8-sig")
     _logger.info("camada scored: %s | lista curada: %s", academias_path, alvos_csv_path)
-    if alvos_hex_path is not None:
-        alvos_hex_path.parent.mkdir(parents=True, exist_ok=True)
-        alvos_hex.to_parquet(alvos_hex_path, index=False)
-        _logger.info("camada hex-level (overlay do piloto): %s", alvos_hex_path)
     return auditoria
 
 
@@ -595,27 +503,6 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument("--saida-academias", type=Path, default=ACADEMIAS_PATH_DEFAULT)
     p.add_argument("--saida-csv", type=Path, default=ALVOS_CSV_DEFAULT)
     p.add_argument(
-        "--saida-hex",
-        type=Path,
-        default=ALVOS_HEX_PATH_DEFAULT,
-        help="camada colapsada por hexagono, servida pelo piloto web (BLK-MA-13)",
-    )
-    p.add_argument(
-        "--concorrentes",
-        type=Path,
-        default=None,
-        help=(
-            "pontos de concorrentes para o SINAL 6 (pressao competitiva). Sem este argumento o "
-            "score sai SEM o s6 — que ate o BLK-MA-13 era o comportamento unico desta CLI e "
-            "deixava o overlay sem nada para pintar. Default: o parquet padrao, quando existir."
-        ),
-    )
-    p.add_argument(
-        "--sem-pressao",
-        action="store_true",
-        help="ignora o insumo de pressao e devolve o score anterior bit a bit (DEC-027)",
-    )
-    p.add_argument(
         "--dry-run",
         action="store_true",
         help="compõe tudo e reporta a auditoria, sem gravar arquivo algum",
@@ -623,34 +510,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def _pressao_dos_hexes(
-    presenca: pd.DataFrame, caminho: Path | None
-) -> tuple[pd.DataFrame | None, str]:
-    """Frame de pressão para os hexes do universo de M&A, ou `(None, motivo)`.
-
-    Os hexes saem do **sinal 1**, e não de um segundo filtro de universo: `extrair_presenca_agregador`
-    já devolve exatamente uma linha por hexágono do universo de M&A (mesmo `_filtrar_universo_sinal_1`
-    que o score aplica). Reconstituir o universo aqui criaria o segundo lugar de onde ele poderia
-    divergir — o modo de falha do achado A3.
-    """
-    from .pressao_competitiva import (
-        CONCORRENTES_PATH_DEFAULT,
-        calcular_pressao_por_hex,
-        ler_concorrentes,
-    )
-
-    alvo = caminho or CONCORRENTES_PATH_DEFAULT
-    if not alvo.exists():
-        return None, f"insumo de pressao ausente ({alvo}); score sem o s6"
-    pontos = ler_concorrentes(alvo)
-    pressao = calcular_pressao_por_hex(presenca["hex_id_res7"].tolist(), pontos)
-    return pressao, f"pressao calculada sobre {len(pressao)} hexe(s)"
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     """Entrada do `python -m`. Devolve 0 em sucesso — código de saída importa para o cron."""
-    from .churn_staleness import extrair_churn_staleness
-    from .presenca_agregador import extrair_presenca_agregador
     from .score import calcular_score_vulnerabilidade
 
     args = _parse_args(argv)
@@ -658,29 +519,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.base_dir is None:
         raise SystemExit("informe `--base-dir` com a raiz das particoes do snapshot")
 
-    # Os DOIS extratores na mesma chamada e na mesma `base_dir` — é o que garante que os frames
-    # venham da MESMA série. Aqui eles são derivados explicitamente (em vez de pelo atalho
-    # `calcular_score_vulnerabilidade(base_dir)`) porque a pressão precisa da lista de hexes do
-    # sinal 1, e lê-los duas vezes custaria a leitura inteira da série.
-    churn = extrair_churn_staleness(args.base_dir)
-    presenca = extrair_presenca_agregador(args.base_dir)
-
-    if args.sem_pressao:
-        pressao, motivo = None, "`--sem-pressao`: score sem o s6, por pedido explicito"
-    else:
-        pressao, motivo = _pressao_dos_hexes(presenca, args.concorrentes)
-    _logger.info("sinal 6: %s", motivo)
-
-    score = calcular_score_vulnerabilidade(churn=churn, presenca=presenca, pressao=pressao)
+    score = calcular_score_vulnerabilidade(args.base_dir)
     auditoria = materializar_alvos_ma(
         score,
         carteira_path=args.carteira,
         academias_path=args.saida_academias,
         alvos_csv_path=args.saida_csv,
-        alvos_hex_path=args.saida_hex,
         dry_run=args.dry_run,
     )
-    auditoria["sinal_6"] = motivo
     print(auditoria)
     return 0
 
@@ -688,11 +534,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 __all__ = [
     "ACADEMIAS_PATH_DEFAULT",
     "ALVOS_CSV_DEFAULT",
-    "ALVOS_HEX_PATH_DEFAULT",
     "CARTEIRA_PATH_DEFAULT",
     "academias_com_hotness",
     "agregar_alvos_por_hex",
-    "colapsar_regimes_por_hex",
     "main",
     "marcar_hex_quente",
     "materializar_alvos_ma",

@@ -1756,7 +1756,7 @@ regressão (medir a baseline **no momento**); `ruff` limpo; `loop_guard` sem `CR
 
 ---
 
-- BLK-MA-13 (concluído 2026-08-14) — ver tasks/completed.md
+- BLK-MA-13 (concluído 2026-08-14, **overlay REVERTIDO no mesmo dia** por redundância com a camada 3 do funil; a emenda do G-D1 permanece — ver DEC-028 e tasks/completed.md)
 
 
 ---

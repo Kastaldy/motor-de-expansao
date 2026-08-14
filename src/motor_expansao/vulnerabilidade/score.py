@@ -35,12 +35,10 @@ tem os dois agregadores". É uma afirmação de solidez que ninguém mediu. Por 
 a proibição de ordenar carteira por um score de dois valores vira o TIPO da saída, não uma frase
 num handoff arquivado.
 
-EMENDA DA DEC-028 (BLK-MA-13): `flag_score_provisorio` passou a ser `(~s3) & (~s4) & (~s6)`. Com o
-insumo de pressão, o score deixa de ter dois valores (mede-se 2.706 distintos em `[30, 68]`) e
-volta a ser ordenável — mas o que ele ordena, nesse regime, é PRESSÃO COMPETITIVA (`30 + 40·v6`,
-porque `v1 ≡ 0,5` enquanto só um agregador existe em disco). A emenda libera o `sort`; quem carrega
-a honestidade do rótulo é a superfície, e a DEC-028 proíbe a palavra "vulnerabilidade" no piloto
-enquanto S3/S4 estiverem imaturos.
+EMENDA DA DEC-028: `flag_score_provisorio` é `(~s3) & (~s4) & (~s6)`. Com o insumo de pressão, o
+score deixa de ter dois valores e volta a ser ordenável — mas o que ele ordena, nesse regime, é
+PRESSÃO COMPETITIVA (`30 + 40·v6`, porque `v1 ≡ 0,5` enquanto só um agregador existe em disco). A
+emenda libera o `sort`; a honestidade do rótulo é obrigação de quem exibe.
 
 AUSÊNCIA NUNCA É ZERO: linha sem sinal algum (`n_sinais_disponiveis == 0`) recebe score **NULO**.
 `0` é uma afirmação; nulo é ausência de evidência.
@@ -364,14 +362,12 @@ def _compor_score(df: pd.DataFrame) -> pd.DataFrame:
     # Escrita como a CONJUNÇÃO do §8.4, fiel ao texto, embora a parte S3/S4 seja redutível a
     # "S3 indisponível" por `STALE_SEMANAS > MIN_SEMANAS`. A redução é testada, não assumida.
     #
-    # `& (~s6)` é a EMENDA DA DEC-028 (BLK-MA-13), e ela tem um motivo medido: sem o S6 na
-    # conjunção, `score_vulnerabilidade_ordenavel` saía **NULA em 19.329 de 19.329** academias
-    # reais, e um `sort_values` devolvia `NaN` em tudo. O G-D1 virou o TIPO da saída para impedir
-    # ranking sobre o ramp-up **só-S1 de DOIS valores** (`{0, 50}`); o S6 entrega **2.706** valores
-    # distintos na faixa `[30, 68]`, então o objeto que o G-D1 protegia deixou de existir naquele
-    # regime. A emenda libera a ORDENAÇÃO e **não** conserta o SIGNIFICADO: com `{s1, s6}` o score
-    # é `30 + 40·v6`, isto é, pressão competitiva — e é por isso que a DEC-028 proíbe o rótulo
-    # "vulnerabilidade" em qualquer superfície do piloto enquanto S3/S4 estiverem imaturos.
+    # `& (~s6)` é a EMENDA DA DEC-028, e ela tem um motivo medido: sem o S6 na conjunção,
+    # `score_vulnerabilidade_ordenavel` saía **NULA em 19.329 de 19.329** academias reais, e um
+    # `sort_values` devolvia `NaN` em tudo. O G-D1 virou o TIPO da saída para impedir ranking sobre
+    # o ramp-up **só-S1 de DOIS valores** (`{0, 50}`); o S6 é contínuo, então o objeto que o G-D1
+    # protegia deixa de existir assim que a pressão entra. A emenda libera a ORDENAÇÃO e **não**
+    # conserta o SIGNIFICADO — quem carrega a honestidade do rótulo é a superfície.
     provisorio = (~disponivel["s3"]) & (~disponivel["s4"]) & (~disponivel["s6"])
 
     out["n_sinais_disponiveis"] = n_sinais

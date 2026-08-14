@@ -80,30 +80,6 @@ export const FAIXAS_DEMANDA: FaixaNomeada[] = [
   { de: 80, ate: 100, nome: 'Livre', cor: '#0A8226' },
 ]
 
-/* OVERLAY de pressao competitiva sobre as academias independentes (BLK-MA-13 / DEC-028).
-
-   NAO e' uma camada do funil: e' um liga/desliga sobre o mapa, e por isso nao aparece em
-   `faixasDoPasso`. O eixo e' `pressao_competitiva_no_hex` (0-100): quanta concorrencia
-   EFETIVA — ponderada por distancia, kernel triangular ate 2 km — cerca o hexagono.
-
-   AS CORES SAO AS DE `FAIXAS_DEMANDA` EM ORDEM INVERSA, de proposito. A convencao do mapa
-   inteiro e' "vermelho = apertado, verde = folgado"; pressao alta e' territorio apertado.
-   Por isso o mapa pinta com `scoreBandToColor(100 - pressao)` — e esse complemento nao e'
-   invencao de exibicao: e' o `gap` da propria formula do sinal 6 (`gap = 1/(1+oferta)`,
-   `pressao = 100*(1-gap)`), logo `100 - pressao === 100*gap`.
-
-   O QUE NAO ESTA AQUI: a palavra "vulnerabilidade". No regime vigente (`s1,s6`) o score de
-   vulnerabilidade e' `30 + 40*v6` — uma transformacao afim da pressao —, entao o que este
-   overlay ordena e' pressao competitiva e nada mais. Rotula-lo de outra coisa seria vender
-   o sinal 6 com o rotulo do sinal 3 (DEC-028). */
-export const FAIXAS_PRESSAO_MA: FaixaNomeada[] = [
-  { de: 0, ate: 20, nome: 'Sem pressão', cor: '#0A8226' },
-  { de: 20, ate: 40, nome: 'Leve', cor: '#50C33C' },
-  { de: 40, ate: 60, nome: 'Moderada', cor: '#EEC828' },
-  { de: 60, ate: 80, nome: 'Alta', cor: '#DC6914' },
-  { de: 80, ate: 100, nome: 'Sufocante', cor: '#B92323' },
-]
-
 /** Alunos equivalentes de um score residual (a ancora dos 2.500). */
 export const CAPACIDADE_UNIDADE_ALUNOS = 2500
 
@@ -141,18 +117,6 @@ export function bandasDaFaixa(f: FaixaNomeada): string[] {
   const cores: string[] = []
   for (let i = primeira; i <= ultima; i += 1) cores.push(bandSolid(i))
   return cores
-}
-
-/**
- * Bandas de uma faixa de PRESSAO — a rampa lida ao contrario.
- *
- * Reusa `bandasDaFaixa` sobre a faixa ESPELHADA (`[100-ate, 100-de]`) em vez de repetir a
- * aritmetica: o mapa pinta `scoreBandToColor(100 - pressao)`, entao a legenda tem de mostrar
- * exatamente as bandas daquele complemento. Escrever a conta duas vezes seria criar dois
- * lugares para a legenda deslizar da cor que o mapa de fato pinta.
- */
-export function bandasDaFaixaPressao(f: FaixaNomeada): string[] {
-  return bandasDaFaixa({ ...f, de: 100 - f.ate, ate: 100 - f.de })
 }
 
 /**

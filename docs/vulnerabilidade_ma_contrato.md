@@ -621,28 +621,26 @@ componentes `vi` por sinal (para auditoria) e das flags de qualidade.
 - **Sem overlay de dashboard no MVP** (opcional/futuro). Se por-academia (nomeado), o artefato é
   **gitignored** (fonte real fora do versionamento, DEC-012).
 
-> ### [emenda BLK-MA-13 / DEC-028, 2026-08-14] O overlay saiu de "futuro" e existe — como PRESSÃO
+> ### [emenda BLK-MA-13 / DEC-028, 2026-08-14] O overlay foi construído e REVERTIDO no mesmo dia
 >
 > A linha acima é **exclusão de escopo**, não proibição de invariante (mesmo vocabulário que o §7
-> usa para o BLK-MA-07: *"opcional/futuro, gate + DEC próprios"*). O gate ocorreu; o overlay existe.
+> usa para o BLK-MA-07). O gate ocorreu, o overlay foi construído — e foi **revertido por decisão
+> de Vinicius**, no mesmo dia, por **redundância**: a camada 3 do funil do piloto ("Pressão
+> concorrencial") já responde a mesma pergunta sobre o território. Medido: o S6 e o
+> `pressao_concorrencial_score_2km` de mercado dão **Pearson 1,0000** contra o mesmo insumo (a
+> divergência de 0,9356 é só defasagem — 104 redes contra 28).
 >
-> **Terceiro artefato:** `data/outputs/alvos_ma_hex.parquet` — o MESMO `CONTRATO_COLUNAS_ALVOS_MA`,
-> colapsado para **uma linha por hexágono**, que é o único grão que um mapa consegue pintar. O
-> colapso é `colapsar_regimes_por_hex` e é **SELEÇÃO, nunca agregação**: vence o regime de maior
-> `n_sinais_disponiveis`, desempatado por cobertura e depois pela composição canônica. Hoje há um
-> regime só e ele é a identidade — nasce agora, nomeado e testado, porque no dia em que o S3
-> amadurecer a escolha passa a existir e um `groupby` implícito a faria em silêncio, misturando as
-> réguas que a emenda BLK-MA-04-FU1 separou.
+> **Portanto o §10 volta a valer como escrito: sem overlay.** Junto saíram o terceiro artefato
+> (`alvos_ma_hex.parquet`) e o colapso de regimes, que só existiam para servi-lo.
 >
-> **O rótulo é `pressão competitiva`, não `vulnerabilidade`** (decisão 1 da DEC-028), e vale para
-> mapa, legenda, tooltip, pílula e chaves do payload. Razão medida: no regime `{s1, s6}` o score é
-> `30 + 40·v6`. O `score_vulnerabilidade` **não é servido** ao piloto — sendo uma transformação afim
-> da própria pressão, mostrá-lo ao lado dela seria o mesmo fato com dois rótulos e duas escalas.
+> **O que a reversão NÃO desfez, e continua vigente:** a emenda do G-D1 (decisão 4 da DEC-028, ver
+> §8.5), porque ela é sobre o score, não sobre a tela.
 >
-> **O §11 segue vinculante e não foi afrouxado:** o overlay consome APENAS o artefato hex-level
-> agregado. Nenhuma variante NOMEADA é servida — e `gitignored` não basta como proteção, porque o
-> backend monta `DATA_DIR/outputs` e `DATA_DIR/staging` `:ro`. Travado por
-> `tests/unit/test_piloto_web_pressao_ma.py::test_payload_nao_carrega_identidade_de_academia`.
+> **O que fica registrado para o sucessor.** A decisão de rótulo (DEC-028, decisões 1 e 2) não
+> perdeu validade — perdeu objeto. Quando o **BLK-MA-15** puser o score na tela por academia, ela
+> volta a valer inteira: enquanto S3/S4 estiverem imaturos, o número é pressão competitiva e não
+> pode ser rotulado de vulnerabilidade. E o §11 segue vinculante: aquele bloco serve identidade de
+> estabelecimento pela primeira vez, e por isso emenda a própria DEC-028.
 
 > ### [emenda BLK-MA-05, 2026-08-13] O cabeçalho acima era EXEMPLO; agora há contrato de coluna
 >

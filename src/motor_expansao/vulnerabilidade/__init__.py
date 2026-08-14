@@ -30,16 +30,9 @@ Fronteira dos módulos: `snapshots.py` transforma o CSV cru de UMA execução em
 bruto do sinal 1 (presença em TotalPass/WellHub). Os extratores **param** no insumo; `score.py`
 (BLK-MA-04) compõe `v1`/`v3`/`v4` e o `score_vulnerabilidade` a partir deles, sem I/O, e é onde o
 universo de M&A é fechado. `alvos_ma.py` (BLK-MA-05) fecha a cadeia: cruza esse score com o
-hexágono quente da carteira (join READ-ONLY, `many_to_one`) e materializa os artefatos do D6 —
-a camada scored por academia, a lista curada por (hex, regime) e, desde o BLK-MA-13/DEC-028, a
-mesma lista COLAPSADA para uma linha por hex, que é o grão que o overlay do piloto web consegue
-pintar. É o único módulo do pacote que escreve fora de `data/staging/snapshots_concorrentes/`, e o
-único cuja saída sai do repositório.
-
-`pressao_competitiva.py` (BLK-MA-12) é ortogonal aos três acima: não lê a série de snapshots, e sim
-o parquet de PONTOS de concorrentes, devolvendo por hex a concorrência efetiva ponderada por
-distância — o insumo do `s6`, que a DEC-027 tornou componente do score **condicionado à presença
-desse insumo na chamada**.
+hexágono quente da carteira (join READ-ONLY, `many_to_one`) e materializa os dois artefatos do D6 —
+a camada scored por academia e a lista curada por (hex, regime). É o único módulo do pacote que
+escreve fora de `data/staging/snapshots_concorrentes/`, e o único cuja saída sai do repositório.
 
 Contrato canônico do epic: `docs/vulnerabilidade_ma_contrato.md`.
 """
@@ -47,10 +40,8 @@ Contrato canônico do epic: `docs/vulnerabilidade_ma_contrato.md`.
 from __future__ import annotations
 
 from .alvos_ma import (
-    ALVOS_HEX_PATH_DEFAULT,
     academias_com_hotness,
     agregar_alvos_por_hex,
-    colapsar_regimes_por_hex,
     marcar_hex_quente,
     materializar_alvos_ma,
 )
@@ -151,9 +142,7 @@ __all__ = [
     "marcar_hex_quente",
     "academias_com_hotness",
     "agregar_alvos_por_hex",
-    "colapsar_regimes_por_hex",
     "materializar_alvos_ma",
-    "ALVOS_HEX_PATH_DEFAULT",
     "CONTRATO_COLUNAS_ACADEMIAS_MA",
     "CONTRATO_COLUNAS_ALVOS_MA",
     "VERSAO_CONTRATO_ALVOS_MA",

@@ -86,35 +86,6 @@ export function bandSolid(i: number): string {
 }
 
 /* ---------------------------------------------------------------------------
-   Overlay de PRESSAO COMPETITIVA sobre as academias independentes
-   (BLK-MA-13 / DEC-028)
-
-   Reusa a rampa de 10 faixas — nao inventa escala —, mas LIDA AO CONTRARIO: a
-   convencao do mapa e' "vermelho = apertado, verde = folgado", e pressao alta e'
-   territorio apertado. O complemento nao e' maquiagem: `100 - pressao` e' o `gap`
-   da propria formula do sinal 6 (`gap = 1/(1+oferta)`, `pressao = 100*(1-gap)`).
-
-   Devolve `null` quando NAO HA MEDICAO, em vez de uma cor de fundo: quem chama
-   precisa pintar "sem medicao" diferente de "medi e nao ha pressao" — sao dois
-   estados distintos e a legenda declara os dois. Pinta-los igual afirmaria
-   ausencia de concorrencia onde o que existe e' ausencia de dado.
-   --------------------------------------------------------------------------- */
-
-/** Hex COM academia independente mapeada, mas sem pressão medida (score sem o insumo). */
-export const PRESSAO_SEM_MEDICAO_FILL: RGBA = [110, 116, 140, CUT_ALPHA]
-/** Hex FORA do universo do overlay: nenhuma academia independente mapeada nele. */
-export const PRESSAO_FORA_DO_UNIVERSO_FILL: RGBA = [120, 120, 140, 55]
-
-export function pressaoMaToColor(
-  pressao: number | null | undefined,
-  alpha = HEX_FILL_ALPHA,
-): RGBA | null {
-  if (pressao === null || pressao === undefined || Number.isNaN(pressao)) return null
-  const p = Math.max(0, Math.min(100, pressao))
-  return scoreBandToColor(100 - p, alpha)
-}
-
-/* ---------------------------------------------------------------------------
    Faixa de oportunidade do M1 (BLK-MAPA-FAIXAS-01)
 
    Porte de `constants.FAIXA_COLORS_POR_LABEL`. A camada 5 do funil ("Para onde

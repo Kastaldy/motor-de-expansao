@@ -88,10 +88,6 @@ def _point_app_at(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
     # alcanca, e sem isto o teste le o parquet real da maquina de quem roda.
     monkeypatch.setattr(pilot, "CRESCIMENTO_PATH", staging / "crescimento_municipal.parquet")
     monkeypatch.setattr(pilot, "CRESCIMENTO_HEX_PATH", staging / "crescimento_hex.parquet")
-    # Mesma armadilha: calculada no import. Sem esta linha, a suite leria o
-    # `alvos_ma_hex.parquet` REAL de quem roda — e o overlay de pressao apareceria (ou nao)
-    # conforme a maquina, que e' o oposto de um teste.
-    monkeypatch.setattr(pilot, "ALVOS_MA_HEX_PATH", outputs / "alvos_ma_hex.parquet")
     monkeypatch.setattr(pilot, "GEOCODE_CACHE_DIR", data_dir / "cache" / "geocode")
     _clear_caches()
 

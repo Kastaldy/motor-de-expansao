@@ -95,16 +95,6 @@ CRESCIMENTO_PATH = STAGING_DIR / "crescimento_municipal.parquet"
 # que colore o mapa no passo 4: quem decide olha taxa de crescimento, nao emprego
 # formal do municipio (que segue no painel, onde ele faz sentido).
 CRESCIMENTO_HEX_PATH = STAGING_DIR / "crescimento_hex.parquet"
-# OVERLAY de pressao competitiva sobre as academias independentes (BLK-MA-13 / DEC-028).
-# Camada PARALELA e OPCIONAL, no mesmo molde de `crescimento_hex`: sem o arquivo, a pilula nem
-# aparece e nenhuma tela quebra. Produzido por
-# `python -m motor_expansao.vulnerabilidade.alvos_ma --base-dir <snapshots>`.
-#
-# O QUE ESTA CAMADA NAO E': ela NAO se chama "vulnerabilidade" em superficie nenhuma, e o motivo
-# esta medido na DEC-028 — no regime que existe hoje (`s1,s6`) o `v1` e' constante `0,5` para 100%
-# do universo, entao `score = 30 + 40*v6` e o que um ranking ordenaria e' PRESSAO COMPETITIVA, nao
-# risco de fechamento. O rotulo muda quando o BLK-MA-06 fizer S3/S4 amadurecerem, com DEC propria.
-ALVOS_MA_HEX_PATH = OUTPUTS_DIR / "alvos_ma_hex.parquet"
 
 # O que o piloto realmente consome do artefato municipal. Lido de forma defensiva:
 # coluna ausente some do subset em vez de derrubar a rota.
@@ -392,131 +382,6 @@ def carregar_crescimento() -> pd.DataFrame | None:
     df = pd.read_parquet(CRESCIMENTO_PATH, columns=cols)
     df["cod6"] = df["cod6"].astype(str).str.zfill(6)
     return df
-
-
-# O que o overlay de pressao consome do artefato hex-level. Projecao explicita, no molde de
-# `_COLS_CRESCIMENTO`: o parquet tem 17 colunas e a tela le 8.
-#
-# `score_vulnerabilidade_medio`/`_max` ficam DE FORA de proposito, e nao por economia. No regime
-# vigente o score e' `30 + 40*v6` — uma transformacao AFIM da propria pressao —, entao exibir os
-# dois lado a lado mostraria o MESMO fato duas vezes, com dois rotulos e duas escalas, convidando
-# o operador a le-los como grandezas diferentes. Enquanto o regime for `s1,s6`, a pressao e' a
-# unica leitura honesta; quando S3/S4 amadurecerem, o score volta a dizer algo que a pressao nao
-# diz e entra aqui com o rotulo que a DEC daquele momento decidir (DEC-028).
-_COLS_PRESSAO_MA = [
-    "hex_id_res7",
-    "sinais_disponiveis",
-    "n_independentes_vulneraveis",
-    "hex_quente",
-    "proximo_de_hex_quente",
-    "n_com_nota_wellhub",
-    "nota_wellhub_mediana",
-    "pressao_competitiva_no_hex",
-]
-
-
-def _inteiro_ou_nulo(v: Any) -> int | None:
-    """Inteiro JSON-safe; ausência continua ausência.
-
-    Difere do `int(x or 0)` que seria natural aqui: aquele transforma "não veio a coluna" em `0`,
-    e `0` é uma AFIRMAÇÃO ("nenhuma academia independente neste hex"), não uma ausência. O front
-    distingue os dois casos para escolher a cor, então a distinção tem de sobreviver ao payload.
-    """
-    if v is None or (isinstance(v, float) and v != v) or v is pd.NA:
-        return None
-    try:
-        return int(v)
-    except (TypeError, ValueError):
-        return None
-
-
-def _bool_ou_nulo(v: Any) -> bool | None:
-    """`True`/`False`/`None` — nunca `bool(None) == False`. Mesma razão do helper acima."""
-    if v is None or (isinstance(v, float) and v != v) or v is pd.NA:
-        return None
-    return bool(v)
-
-
-@functools.lru_cache(maxsize=1)
-def carregar_pressao_ma() -> pd.DataFrame | None:
-    """Camada hex-level de pressao competitiva sobre as independentes. READ-ONLY e OPCIONAL.
-
-    Ausente = a pilula do overlay nem aparece (molde de `carregar_crescimento_hex`). O arquivo so
-    existe onde a serie de snapshots foi materializada; em maquina sem ela, o piloto abre igual ao
-    de hoje.
-    """
-    if not ALVOS_MA_HEX_PATH.exists():
-        return None
-    import pyarrow.parquet as pq
-
-    disponiveis = set(pq.read_schema(ALVOS_MA_HEX_PATH).names)
-    cols = [c for c in _COLS_PRESSAO_MA if c in disponiveis]
-    if "hex_id_res7" not in cols or "pressao_competitiva_no_hex" not in cols:
-        return None
-    df = pd.read_parquet(ALVOS_MA_HEX_PATH, columns=cols)
-    df["hex_id_res7"] = df["hex_id_res7"].astype(str)
-    # O colapso do BLK-MA-13 promete uma linha por hexagono. Se um artefato antigo/regerado a mais
-    # trouxer duas, o `.map` abaixo pegaria uma delas em silencio e o mapa pintaria uma cor
-    # arbitraria — melhor devolver nada e nao mostrar a camada.
-    if bool(df["hex_id_res7"].duplicated().any()):
-        return None
-    return df
-
-
-def _anexar_pressao_ma(hexes: list[dict[str, Any]]) -> dict[str, Any]:
-    """Preenche os campos `ma_*` de cada hex do recorte e devolve o bloco de metadados.
-
-    Muta `hexes` no lugar de propósito: os dicionários já foram montados por `_hex_dict`, e passar
-    o índice para dentro dele obrigaria as duas rotas a carregar o artefato antes de serializar.
-
-    A COBERTURA E O REGIME SAO PARTE DO CONTRATO DE TELA, nao enfeite: a legenda tem de dizer
-    quantos hexagonos do recorte tem medicao e sob qual regime de sinais o numero foi composto.
-    Pintar 40% do universo sem declarar isso e' o mesmo defeito que a DEC-027 registrou como risco
-    2 — onde falta coleta a pressao sai `0`, que e' a leitura mais otimista possivel.
-    """
-    base = carregar_pressao_ma()
-    if base is None or base.empty or not hexes:
-        return {"disponivel": False, "motivo": "camada de pressao nao materializada"}
-
-    # `to_dict("index")` de uma vez, em vez de `.loc` por hexágono dentro do laço: a rota de UF
-    # serve até 15.000 hexes, e cada `.loc` materializa uma `Series` nova — o custo por acesso é
-    # ordens de grandeza maior que o de um `dict.get`. Aqui a conversão é O(n) uma vez só.
-    por_hex: dict[str, dict[str, Any]] = base.set_index("hex_id_res7").to_dict("index")
-
-    n_com_linha = 0
-    n_com_pressao = 0
-    regimes: dict[str, int] = {}
-    for h in hexes:
-        linha = por_hex.get(str(h["id"]))
-        if linha is None:
-            continue
-        n_com_linha += 1
-        pressao = _num(linha.get("pressao_competitiva_no_hex"), 1)
-        h["ma_press"] = pressao
-        h["ma_n"] = _inteiro_ou_nulo(linha.get("n_independentes_vulneraveis"))
-        # `_bool_ou_nulo`, e não `bool(...)`: `bool(None)` é `False`, o que AFIRMARIA "este hex não
-        # é quente" sobre um artefato que simplesmente não trouxe a coluna. Ausência de dado tem de
-        # chegar ao front como ausência — é a mesma regra do `0` que não pode virar `None`.
-        h["ma_quente"] = _bool_ou_nulo(linha.get("hex_quente"))
-        h["ma_perto"] = _bool_ou_nulo(linha.get("proximo_de_hex_quente"))
-        h["ma_com_nota"] = _inteiro_ou_nulo(linha.get("n_com_nota_wellhub"))
-        h["ma_nota"] = _num(linha.get("nota_wellhub_mediana"), 1)
-        regime = _texto(linha.get("sinais_disponiveis"))
-        h["ma_regime"] = regime
-        if regime:
-            regimes[regime] = regimes.get(regime, 0) + 1
-        if pressao is not None and pressao > 0:
-            n_com_pressao += 1
-
-    return {
-        "disponivel": n_com_linha > 0,
-        "motivo": None if n_com_linha else "nenhuma academia independente mapeada neste recorte",
-        "n_hexes": n_com_linha,
-        "n_com_pressao": n_com_pressao,
-        # Ordenado pelo que cobre mais hexes: a legenda declara o regime DOMINANTE, e o tooltip
-        # declara o do hexagono sob o cursor. Com S3/S4 imaturos ha um regime so'.
-        "regimes": [r for r, _n in sorted(regimes.items(), key=lambda kv: (-kv[1], kv[0]))],
-    }
 
 
 @functools.lru_cache(maxsize=2)
@@ -2157,11 +2022,6 @@ def _artefatos_observados() -> list[tuple[str, Path, str]]:
             CRESCIMENTO_HEX_PATH,
             "passo 4: cor do mapa por hexágono (satélite 2016-2023)",
         ),
-        (
-            "pressao_ma_hex",
-            ALVOS_MA_HEX_PATH,
-            "overlay: pressão competitiva sobre as academias independentes",
-        ),
     ]
 
 
@@ -3390,7 +3250,6 @@ def uf_view(uf: str, limite: int = 15000) -> dict[str, Any]:
             fatores[cod] = _fator_domiciliar(uf.upper(), cod)
 
     hexes = [_hex_dict(r, fatores.get(str(r.get("cod_municipio")))) for _, r in vis.iterrows()]
-    pressao_ma = _anexar_pressao_ma(hexes)
     for p in passos:
         p["hexes"] = p["hexes"][:400]
 
@@ -3408,11 +3267,6 @@ def uf_view(uf: str, limite: int = 15000) -> dict[str, Any]:
         "crescimento_estado": montar_crescimento_estado(df),
         "hexes": hexes,
         "cres_mun": _bloco_municipal(vis),
-        # FORA de `passos`, como o `crescimento_estado` acima e pela mesma razao estrutural: nao e'
-        # uma camada do funil. O funil narra ABRIR e cada passo filtra o anterior; esta camada e' a
-        # INVERSAO do §2 (comprar quer demanda alta + residual BAIXO) e nao filtra ninguem. Vira um
-        # overlay liga/desliga, no molde da chave de raio (DEC-028).
-        "pressao_ma": pressao_ma,
         "pins": _pins_ultra_bbox(df),
     }
 
@@ -3452,7 +3306,6 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
     fator_dom = _fator_domiciliar(uf.upper(), cod)
 
     hexes = [_hex_dict(r, fator_dom) for _, r in vis.iterrows()]
-    pressao_ma = _anexar_pressao_ma(hexes)
 
     for p in passos:
         p["hexes"] = p["hexes"][:400]
@@ -3468,8 +3321,6 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
         "passos": passos,
         "hexes": hexes,
         "cres_mun": _bloco_municipal(vis),
-        # Overlay de pressao competitiva (DEC-028) — fora de `passos`; ver a nota em `uf_view`.
-        "pressao_ma": pressao_ma,
         "pins": _montar_pins(sel),
     }
 

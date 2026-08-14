@@ -12414,6 +12414,15 @@ peso, fórmula ou artefato oficial tocado; DEC-001 intacta.
 
 ## Fechamento de ciclo — BLK-MA-13 (2026-08-14)
 
+> **[REVERTIDO no mesmo dia — leia antes do resto]** Vinicius viu a camada no piloto e mandou
+> tirá-la, por **redundância**: a camada 3 do funil ("Pressão concorrencial") já responde à
+> mesma pergunta sobre o território — o próprio módulo do S6 mede Pearson **1,0000** contra o
+> mesmo insumo da coluna de mercado. Saiu a superfície inteira mais o que só a servia (o
+> `alvos_ma_hex.parquet` e o `colapsar_regimes_por_hex`). **Permanece** a emenda do G-D1
+> (decisão 4 da DEC-028), que é sobre o score e é pré-requisito do BLK-MA-14. O texto abaixo
+> fica como registro do que foi construído e por quê — inclusive a decisão de rótulo, que não
+> perdeu validade, só objeto: ela volta a valer no BLK-MA-15.
+
 **Entregue: a camada de M&A ficou VISÍVEL no piloto web — como pressão competitiva, não como
 vulnerabilidade.** Overlay liga/desliga sobre o mapa, com legenda própria que declara o regime de
 sinais e a cobertura, tooltip com os fatos do hexágono, e um terceiro artefato hex-level

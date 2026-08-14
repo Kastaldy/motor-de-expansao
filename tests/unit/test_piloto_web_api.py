@@ -36,7 +36,6 @@ def _apontar(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
     monkeypatch.setattr(pilot_app, "ENRICHED_DIR", outputs / "hexagonos_dashboard_enriquecido")
     monkeypatch.setattr(pilot_app, "CRESCIMENTO_PATH", staging / "crescimento_municipal.parquet")
     monkeypatch.setattr(pilot_app, "CRESCIMENTO_HEX_PATH", staging / "crescimento_hex.parquet")
-    monkeypatch.setattr(pilot_app, "ALVOS_MA_HEX_PATH", outputs / "alvos_ma_hex.parquet")
 
 
 def test_health_ok() -> None:
@@ -58,15 +57,7 @@ def test_health_reporta_os_artefatos_que_a_tela_depende() -> None:
     assert {"status", "data_dir", "data_ok"} <= set(h)
 
     artefatos = h["artefatos"]
-    assert set(artefatos) == {
-        "enriquecido",
-        "crescimento_municipal",
-        "crescimento_hex",
-        # Overlay de pressao competitiva (BLK-MA-13 / DEC-028): mesma classe dos dois de
-        # crescimento — nao vem do git nem da imagem, so' pelo bind mount, e sem ele a camada
-        # some EM SILENCIO. Se um artefato desses nao estiver no health, ninguem descobre.
-        "pressao_ma_hex",
-    }
+    assert set(artefatos) == {"enriquecido", "crescimento_municipal", "crescimento_hex"}
     for nome, a in artefatos.items():
         assert isinstance(a["ok"], bool), nome
         # `para_que` e' o que transforma "faltou um arquivo" em "o passo 4 vai sair
@@ -98,7 +89,6 @@ def test_health_nao_estoura_com_data_dir_inexistente(monkeypatch) -> None:
         "crescimento_hex",
         "crescimento_municipal",
         "enriquecido",
-        "pressao_ma_hex",
     ]
     # Os caminhos reportados tem de sair do data_dir REPONTADO. Se a lista de artefatos
     # for montada no import, ela congela os `Path` originais e o health passa a falar do
@@ -129,7 +119,7 @@ def test_health_sobrevive_a_stat_que_levanta(monkeypatch) -> None:
         def __str__(self) -> str:
             return self._rotulo
 
-    for glob in ("ENRICHED_DIR", "CRESCIMENTO_PATH", "CRESCIMENTO_HEX_PATH", "ALVOS_MA_HEX_PATH"):
+    for glob in ("ENRICHED_DIR", "CRESCIMENTO_PATH", "CRESCIMENTO_HEX_PATH"):
         monkeypatch.setattr(pilot_app, glob, _CaminhoQueCai(f"/app/data/{glob}"))
 
     h = pilot_app.health()

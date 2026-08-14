@@ -764,7 +764,7 @@ def test_rampup_coluna_ordenavel_e_toda_nula(serie_rampup: list[pd.DataFrame]) -
 
 
 # --------------------------------------------------------------------------- #
-# Emenda do G-D1 pela DEC-028 (BLK-MA-13): o S6 entra na conjunção do provisório
+# Emenda do G-D1 pela DEC-028: o S6 entra na conjunção do provisório
 # --------------------------------------------------------------------------- #
 def _pressao_forte(hexes: list[str]) -> pd.DataFrame:
     """Pressão positiva em todos os hexes, e DIFERENTE em cada um.
@@ -796,9 +796,6 @@ def test_pressao_tira_o_rampup_do_regime_provisorio(serie_rampup: list[pd.DataFr
     `score_vulnerabilidade_ordenavel` universalmente NULA — que foi o estado medido sobre as
     19.329 academias reais: um `sort_values` devolvia `NaN` em tudo. Este teste FALHA se a emenda
     for revertida, e é a única prova executável dela.
-
-    O que a emenda **não** faz: dizer que o score passou a medir vulnerabilidade. Nesse regime ele
-    é `30 + 40·v6` — pressão competitiva —, e é a DEC-028 que proíbe o rótulo na tela.
     """
     churn, presenca = _insumos(serie_rampup)
     hexes = presenca["hex_id_res7"].astype(str).tolist()
