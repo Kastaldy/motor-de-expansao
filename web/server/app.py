@@ -352,9 +352,15 @@ def _derivar(df: pd.DataFrame) -> pd.DataFrame:
     for origem in ("renda_per_capita_setor_2022_calibrada", "renda_per_capita"):
         if origem in out.columns:
             out["renda_leitura"] = pd.to_numeric(out[origem], errors="coerce")
+            # A ORIGEM importa: as duas colunas estao em escalas diferentes, e sem saber de qual
+            # delas o valor veio nao da para desfazer a escala na hora de montar a renda
+            # domiciliar (ver `_base_renda_domiciliar`). A precedencia e por COLUNA, entao a
+            # origem e a mesma para o frame inteiro.
+            out["renda_origem"] = origem
             break
     else:
         out["renda_leitura"] = float("nan")
+        out["renda_origem"] = None
 
     return out
 
@@ -510,8 +516,58 @@ def _fator_domiciliar(uf: str | None, cod_municipio: str | None) -> float | None
         return None
 
 
+_K_CALIBRACAO_FALLBACK = 1.2334632197  # k nacional do artefato de 2026-08-12
+
+
+@functools.lru_cache(maxsize=1)
+def _k_calibracao_renda() -> float:
+    """O `k` com que o artefato geo foi calibrado, lido do manifesto DELE.
+
+    O enriquecido nao carrega a renda bruta (`enrich_dashboard_data` so leva a calibrada), entao
+    aqui o unico caminho e desfazer o `k`. Ele esta gravado em precisao total no `_metadata.json`
+    do artefato geo, que o piloto ja monta como `CENSO_GEO_DIR`.
+
+    Guarda de plausibilidade [1,0; 2,0] e fallback para a constante conhecida. NUNCA cair em 1,0:
+    isso reintroduziria a dupla contagem em silencio se o manifesto sumisse.
+    """
+    try:
+        bruto = json.loads((CENSO_GEO_DIR / "_metadata.json").read_text(encoding="utf-8"))
+        k = float(bruto["k_global"])
+    except Exception:  # noqa: BLE001 — manifesto ausente/antigo/ilegivel: usa a constante
+        return _K_CALIBRACAO_FALLBACK
+    return k if 1.0 <= k <= 2.0 else _K_CALIBRACAO_FALLBACK
+
+
+def _base_renda_domiciliar(r: pd.Series, uf: str | None, cod: str | None) -> float | None:
+    """Base da renda domiciliar do hex, na escala da renda do RESPONSAVEL per capita.
+
+    `_fator_domiciliar` multiplica por `moradores x uplift x fator_temporal`; para o resultado
+    ser a renda do domicilio, a base tem de ser V06004/moradores — nem mais, nem menos. As duas
+    colunas de origem estao em escalas diferentes e precisam de tratamento distinto:
+
+      - `renda_per_capita_setor_2022_calibrada` = V06004/moradores x k  -> dividir pelo k.
+        Ate 2026-08-13 usava-se ela crua, e o k sobrava: +23,35% na renda exibida.
+      - `renda_per_capita` (SIDRA t.10295 v.13431) JA e renda domiciliar per capita -> dividir
+        pelo uplift do municipio, senao o `_fator_domiciliar` aplica o uplift uma segunda vez.
+        Esse ramo estava +54,4% errado, e COM dispersao (o uplift varia de 1,42 a 1,86 entre
+        municipios), entao distorcia tambem a comparacao entre cidades.
+    """
+    valor = r.get("renda_leitura", float("nan"))
+    if valor is None or pd.isna(valor):
+        return None
+    origem = r.get("renda_origem")
+    if origem == "renda_per_capita_setor_2022_calibrada":
+        return float(valor) / _k_calibracao_renda()
+    if origem == "renda_per_capita":
+        from motor_expansao.dashboard.constants import uplift_renda_domiciliar
+
+        uplift = uplift_renda_domiciliar(uf, cod)
+        return float(valor) / uplift if uplift else None
+    return float(valor)
+
+
 def _renda_domiciliar_hex(r: pd.Series, fator: float | None) -> float | None:
-    """Renda media domiciliar do hex = renda per capita x fator municipal.
+    """Renda media domiciliar do hex = base (escala V06004 per capita) x fator municipal.
 
     NaN (tooltip em branco) quando falta renda OU cod_municipio — fiel ao contrato
     do Streamlit, que nao exibe estimativa de nivel UF para hex sem municipio.
@@ -521,7 +577,28 @@ def _renda_domiciliar_hex(r: pd.Series, fator: float | None) -> float | None:
     cod = r.get("cod_municipio")
     if cod is None or pd.isna(cod):
         return None
-    return _num(r.get("renda_leitura", float("nan")) * fator)
+    base = _base_renda_domiciliar(r, r.get("uf"), str(cod))
+    if base is None:
+        return None
+    return _num(base * fator)
+
+
+def _renda_per_capita_hex(r: pd.Series, fator: float | None) -> float | None:
+    """Renda DOMICILIAR per capita do hex — o mesmo conceito que o Relatorio Pontual exibe.
+
+    = renda do domicilio / moradores. Como `fator` ja e `moradores x uplift x temporal`, basta
+    dividir o domiciliar pelos moradores municipais. Ate 2026-08-13 o tooltip exibia a coluna
+    calibrada crua (V06004/moradores x k), que ficava ~20% abaixo da referencia do IBGE e nao
+    batia com o numero do Relatorio Pontual para a mesma coordenada.
+    """
+    dom = _renda_domiciliar_hex(r, fator)
+    if dom is None:
+        return None
+    from motor_expansao.dashboard.constants import moradores_por_domicilio
+
+    cod = r.get("cod_municipio")
+    moradores = moradores_por_domicilio(r.get("uf"), None if cod is None or pd.isna(cod) else str(cod))
+    return _num(dom / moradores) if moradores else None
 
 
 @functools.lru_cache(maxsize=1)
@@ -1751,7 +1828,10 @@ def _hex_dict(r: pd.Series, fator_dom: float | None) -> dict[str, Any]:
         "oferta": _num(r.get("oferta_efetiva_disponivel")),
         "sam": _num(r.get("sam_fitness_potencial")),
         "pop": _num(r.get("pop_leitura")),
-        "renda": _num(r.get("renda_leitura")),
+        # `renda` e a renda DOMICILIAR per capita (conceito do IBGE), a mesma grandeza que o
+        # Relatorio Pontual exibe — antes era a coluna calibrada crua, e as duas superficies
+        # mostravam numeros diferentes para a mesma coordenada.
+        "renda": _renda_per_capita_hex(r, fator_dom),
         "renda_dom": _renda_domiciliar_hex(r, fator_dom),
         "faixa": _faixa_label(r.get("faixa_oportunidade")),
         "conc": int(r.get("n_concorrentes_est") or 0),
