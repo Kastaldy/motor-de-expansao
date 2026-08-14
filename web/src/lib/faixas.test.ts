@@ -3,16 +3,22 @@ import {
   FAIXA_M1_HEX,
   FAIXA_M1_ORDEM,
   faixaM1ToColor,
+  HEX_FILL_ALPHA,
   NA_FILL,
+  PRESSAO_FORA_DO_UNIVERSO_FILL,
+  PRESSAO_SEM_MEDICAO_FILL,
+  pressaoMaToColor,
   SCORE_BANDS_HEX,
   scoreBandToColor,
 } from './colors'
 import {
   alunosDaFaixa,
   bandasDaFaixa,
+  bandasDaFaixaPressao,
   CAPACIDADE_UNIDADE_ALUNOS,
   FAIXAS_DEMANDA,
   FAIXAS_POTENCIAL,
+  FAIXAS_PRESSAO_MA,
   faixasDoPasso,
   fundoDoSwatch,
   tituloDaLegenda,
@@ -194,5 +200,86 @@ describe('cores da faixa M1', () => {
     const [r, g, b, a] = faixaM1ToColor('Prioridade máxima', 115)
     expect([r, g, b]).toEqual([0x14, 0xc8, 0x50])
     expect(a).toBe(115)
+  })
+})
+
+/* Overlay de PRESSAO COMPETITIVA sobre as independentes (BLK-MA-13 / DEC-028).
+
+   O que estes testes protegem: a INVERSAO da rampa (que e' o unico ponto do mapa onde ela
+   e' lida ao contrario) e a distincao entre os tres estados da cor. Colapsar "sem medicao"
+   em "sem pressao" faria o mapa afirmar ausencia de concorrencia onde ha ausencia de dado. */
+describe('overlay de pressão competitiva', () => {
+  it('pressão ALTA sai na cor de score BAIXO: vermelho = território apertado', () => {
+    // 85 de pressao -> banda de 15 na rampa -> #B92323 (a mesma cor do "Saturado" da demanda).
+    expect(pressaoMaToColor(85)).toEqual([0xb9, 0x23, 0x23, HEX_FILL_ALPHA])
+  })
+
+  it('pressão ZERO sai no verde do topo da rampa — é medição, não ausência', () => {
+    expect(pressaoMaToColor(0)).toEqual([0x0a, 0x82, 0x26, HEX_FILL_ALPHA])
+  })
+
+  it('devolve null sem medição, para o chamador escolher a cor de ausência', () => {
+    expect(pressaoMaToColor(null)).toBeNull()
+    expect(pressaoMaToColor(undefined)).toBeNull()
+    expect(pressaoMaToColor(NaN)).toBeNull()
+  })
+
+  it('clampa fora de [0,100] em vez de estourar o índice da rampa', () => {
+    expect(pressaoMaToColor(-5)).toEqual(pressaoMaToColor(0))
+    expect(pressaoMaToColor(140)).toEqual(pressaoMaToColor(100))
+  })
+
+  it('os três estados de ausência têm cores DIFERENTES entre si e do verde de pressão 0', () => {
+    const semPressao = pressaoMaToColor(0)!
+    expect(PRESSAO_SEM_MEDICAO_FILL).not.toEqual(PRESSAO_FORA_DO_UNIVERSO_FILL)
+    expect(PRESSAO_SEM_MEDICAO_FILL).not.toEqual(semPressao)
+    expect(PRESSAO_FORA_DO_UNIVERSO_FILL).not.toEqual(semPressao)
+  })
+
+  it('é monotônica: mais pressão desce na rampa, nunca sobe', () => {
+    /* Compara o ÍNDICE na rampa, não o canal verde. A paleta não é um gradiente de G: o
+       verde-escuro do topo (#0A8226) tem G=130 e o verde-claro do meio (#50C33C) tem G=195,
+       então medir "verdor" pelo canal daria falso alarme na primeira comparação. */
+    const indice = (p: number) => {
+      const [r, g, b] = pressaoMaToColor(p)!
+      const hex = `#${[r, g, b].map((c) => c.toString(16).padStart(2, '0')).join('')}`
+      return SCORE_BANDS_HEX.findIndex((h) => h.toLowerCase() === hex)
+    }
+    const indices = [0, 25, 50, 75, 100].map(indice)
+    expect(indices).not.toContain(-1)
+    for (let i = 1; i < indices.length; i++) {
+      expect(indices[i]).toBeLessThan(indices[i - 1])
+    }
+  })
+
+  it('a legenda mostra as bandas que o mapa de fato pinta (rampa espelhada)', () => {
+    // "Sem pressão" (0-20) -> complemento 80-100 -> as duas bandas verdes do topo.
+    expect(bandasDaFaixaPressao(FAIXAS_PRESSAO_MA[0])).toEqual([
+      SCORE_BANDS_HEX[8],
+      SCORE_BANDS_HEX[9],
+    ])
+    // "Sufocante" (80-100) -> complemento 0-20 -> os dois vermelhos do fundo.
+    expect(bandasDaFaixaPressao(FAIXAS_PRESSAO_MA[4])).toEqual([
+      SCORE_BANDS_HEX[0],
+      SCORE_BANDS_HEX[1],
+    ])
+  })
+
+  it('a cor declarada de cada faixa é uma das bandas que ela cobre', () => {
+    for (const f of FAIXAS_PRESSAO_MA) {
+      expect(bandasDaFaixaPressao(f)).toContain(f.cor)
+    }
+  })
+
+  it('a paleta é a da demanda ao contrário — não há paleta nova', () => {
+    expect(FAIXAS_PRESSAO_MA.map((f) => f.cor)).toEqual(
+      [...FAIXAS_DEMANDA].reverse().map((f) => f.cor),
+    )
+  })
+
+  it('não entra em `faixasDoPasso`: o overlay não é camada do funil', () => {
+    for (const n of [1, 2, 3, 4, 5, 6]) {
+      expect(faixasDoPasso(n)).not.toBe(FAIXAS_PRESSAO_MA)
+    }
   })
 })

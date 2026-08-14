@@ -379,6 +379,27 @@ FAIXAS_MAPA_DEMANDA: list[tuple[int, int, str, str, str]] = [
 # Espelha SCORE_RESIDUAL_CAPACIDADE_REFERENCIA de `pipelines/calcular_colunas_mercado`.
 CAPACIDADE_UNIDADE_ALUNOS = 2500
 
+# OVERLAY de pressao competitiva sobre as academias independentes (BLK-MA-13 / DEC-028).
+# `pressao_competitiva_no_hex` in [0, 100): quanta concorrencia EFETIVA (ponderada por
+# distancia, kernel triangular ate 2 km) cerca o hexagono.
+#
+# AS CORES SAO AS DE `FAIXAS_MAPA_DEMANDA` EM ORDEM INVERSA, e isso e' o ponto, nao um
+# descuido: a convencao cromatica do mapa e' "vermelho = apertado, verde = folgado", e ela
+# vale nas quatro camadas que ja existem. Pressao ALTA e' territorio apertado -> vermelho.
+# Manter a rampa crua (alto = verde) faria o mesmo verde significar "cabe abrir" numa camada
+# e "esta tomado" na de baixo, com o operador alternando entre as duas na mesma tela.
+#
+# CONSEQUENCIA para quem for pintar: a cor sai de `score_band_to_color(100 - pressao)`. O
+# complemento NAO e' invencao de exibicao — e' o `gap` da propria formula do sinal 6
+# (`gap = 1/(1+oferta)`, `pressao = 100*(1-gap)`), ou seja, `100 - pressao == 100*gap`.
+FAIXAS_MAPA_PRESSAO_MA: list[tuple[int, int, str, str, str]] = [
+    (0, 20, "Sem pressão", "#0A8226", "blue"),
+    (20, 40, "Leve", "#50C33C", "green"),
+    (40, 60, "Moderada", "#EEC828", "gray"),
+    (60, 80, "Alta", "#DC6914", "amber"),
+    (80, 100, "Sufocante", "#B92323", "red"),
+]
+
 
 def faixa_do_score(
     score: float | None, faixas: list[tuple[int, int, str, str, str]]

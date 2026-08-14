@@ -18,7 +18,13 @@ import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
 import { MAX_COMPARADOS } from '../lib/ranking-comparacao'
-import type { Cobertura1k, Hex, MunicipioItem, MunicipioPayload } from '../lib/types'
+import type {
+  Cobertura1k,
+  Hex,
+  MunicipioItem,
+  MunicipioPayload,
+  PressaoMaMeta,
+} from '../lib/types'
 
 /** Filtro global "melhores hexes": faixas M1 permitidas por nível. */
 const FAIXA_FILTROS: Record<string, Set<string>> = {
@@ -132,6 +138,22 @@ export default function MapScreen({
   // hoje e nenhum numero muda sem alguem clicar. Nao entra no EstadoMapa de proposito —
   // e experimento, nao preferencia a preservar entre telas.
   const [raio1km, setRaio1km] = useState(false)
+
+  /* Overlay de pressao competitiva sobre as independentes (BLK-MA-13 / DEC-028).
+     Comeca DESLIGADO pela mesma razao da chave de raio: o piloto abre identico ao de hoje.
+     Fora do `EstadoMapa` de proposito — e' uma leitura paralela, nao a camada em que o
+     operador estava. Os dados ja vem no payload do mapa (nao ha fetch proprio): sao 6 campos
+     curtos, e so' nos hexagonos que tem academia independente mapeada. */
+  const [pressaoMa, setPressaoMa] = useState(false)
+  const metaPressao = dados?.pressao_ma ?? null
+  const temPressaoMa = metaPressao?.disponivel === true
+
+  /* A chave morre com o recorte que a justificava. Sem isto, sair de um municipio COM camada
+     para um SEM deixaria a chave ligada e o mapa inteiro cinza — o operador leria "nao ha
+     concorrencia em lugar nenhum" onde o que houve foi ausencia de artefato. */
+  useEffect(() => {
+    if (!temPressaoMa) setPressaoMa(false)
+  }, [temPressaoMa])
 
   /* Geometria do raio: buscada SOB DEMANDA, so' quando a chave liga. Fora do payload do
      mapa de proposito — custa ~2,4 s e ~3,9 MB na UF de SP, e quem nunca liga a chave nao
@@ -557,6 +579,7 @@ export default function MapScreen({
           selecionado={modoCenario ? null : selecionado}
           cenario={cenario}
           raio1km={raio1km}
+          pressaoMa={pressaoMa}
           cobertura1k={cobertura}
           /* A foto CONGELA na montagem, e trocar de UF/municipio zera `cameraRef` mas
              nao tem como zerar `foto.camera`. Sem este portao: SP/Sao Paulo -> volta da
@@ -920,16 +943,32 @@ export default function MapScreen({
               </div>
             )}
 
-            <ScoreLegend passoN={passo.n} />
+            <ScoreLegend passoN={passo.n} pressao={pressaoMa ? metaPressao : null} />
 
             {/* PROTOTIPO — chave do raio de atuacao das concorrentes. So aparece nos
                 passos que falam de oferta e disputa, e so quando o backend serviu os
-                campos do modelo novo. */}
-            {comparativoRaio && (passo.n === 2 || passo.n === 3) && (
+                campos do modelo novo. Sai de cena com o overlay ligado: as duas chaves
+                medem concorrencia por reguas diferentes (1 km por area x ponderada ate
+                2 km) e ligar as duas juntas empilharia leituras incomparaveis. */}
+            {comparativoRaio && !pressaoMa && (passo.n === 2 || passo.n === 3) && (
               <PilulaRaio
                 ligado={raio1km}
                 carregando={carregandoRaio}
                 onToggle={() => setRaio1km((v) => !v)}
+              />
+            )}
+
+            {/* Overlay de pressao competitiva (DEC-028). Vale em QUALQUER passo: a pergunta
+                "quem ja opera aqui esta espremido?" nao pertence a camada nenhuma do funil —
+                e' a inversao dele. Ligar tambem desliga a chave de raio, pelo motivo acima. */}
+            {temPressaoMa && (
+              <PilulaPressaoMa
+                ligado={pressaoMa}
+                meta={metaPressao}
+                onToggle={() => {
+                  setPressaoMa((v) => !v)
+                  setRaio1km(false)
+                }}
               />
             )}
           </div>
@@ -1406,6 +1445,65 @@ function PilulaRaio({
         : ligado
           ? 'Raio 1 km por concorrente'
           : 'Ver raio de 1 km das concorrentes'}
+    </button>
+  )
+}
+
+/* Chave do overlay de PRESSAO COMPETITIVA sobre as academias independentes
+   (BLK-MA-13 / DEC-028).
+
+   O texto do botao e do `title` e' entregavel tanto quanto o codigo: ele e' o unico lugar
+   onde o operador aprende que a cor mudou de pergunta. Por isso ele diz de QUEM e' a pressao
+   ("as independentes") e nao so' "pressao" — o passo 3 do funil ja se chama "Pressao
+   concorrencial" e mede o oposto: a concorrencia que disputaria uma abertura NOSSA. */
+function PilulaPressaoMa({
+  ligado,
+  meta,
+  onToggle,
+}: {
+  ligado: boolean
+  meta: PressaoMaMeta | null
+  onToggle: () => void
+}) {
+  const n = meta?.n_hexes ?? 0
+  return (
+    <button
+      onClick={onToggle}
+      title={
+        ligado
+          ? 'A cor mostra quanta concorrência cerca as academias independentes de cada ' +
+            'hexágono (ponderada por distância, até 2 km). Vermelho = território apertado.'
+          : `Ver quanta concorrência cerca as academias independentes (${n} hexágonos mapeados)`
+      }
+      style={{
+        // Mesmo motivo do `PilulaRaio`: o container da legenda tem `pointerEvents: 'none'`,
+        // e sem devolver 'auto' aqui o clique atravessa o botao e vai para o mapa.
+        pointerEvents: 'auto',
+        marginTop: 8,
+        width: '100%',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        fontSize: 11,
+        fontWeight: 600,
+        padding: '7px 11px',
+        borderRadius: 9,
+        border: `1px solid ${ligado ? 'rgba(232,102,60,.5)' : 'rgba(255,255,255,.14)'}`,
+        background: '#000',
+        color: ligado ? '#f2a488' : '#9aa7b5',
+      }}
+    >
+      <span
+        style={{
+          width: 9,
+          height: 9,
+          borderRadius: '50%',
+          background: ligado ? '#e8663c' : '#5a6472',
+          flexShrink: 0,
+        }}
+      />
+      {ligado ? 'Pressão sobre as independentes' : 'Ver pressão sobre as independentes'}
     </button>
   )
 }

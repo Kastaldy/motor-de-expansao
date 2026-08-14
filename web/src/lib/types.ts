@@ -57,6 +57,31 @@ export interface Hex {
   mun: string | null
   /** taxa de crescimento da área construída DESTE hexágono, 2016→2023, em % */
   cres_hex_taxa: number | null
+  /* --- Overlay de PRESSÃO COMPETITIVA sobre as independentes (BLK-MA-13 / DEC-028) ---
+     Camada PARALELA, fora do funil: liga/desliga, no molde da chave de raio. Todos os campos
+     são `undefined` quando o backend não tem o artefato montado — é isso que faz a pílula nem
+     aparecer, em vez de mostrar zeros que afirmariam "não há concorrência aqui".
+
+     NÃO existe um campo de "score de vulnerabilidade" aqui, e a ausência é decisão: no regime
+     vigente (`s1,s6`) aquele score é `30 + 40·v6`, uma transformação afim de `ma_press`. Servir
+     os dois mostraria o mesmo fato com dois rótulos e duas escalas (DEC-028). */
+  /** `pressao_competitiva_no_hex` ∈ [0, 100): concorrência efetiva, ponderada por distância
+   *  (kernel triangular até 2 km). `null` = hex no universo, mas sem pressão medida. */
+  ma_press?: number | null
+  /** Academias independentes mapeadas NESTE hexágono (universo de M&A). */
+  ma_n?: number | null
+  /** O hex satisfaz a conjunção do D5: demanda alta (top quartil de SAM) E mercado saturado. */
+  ma_quente?: boolean | null
+  /** O próprio hex ou um vizinho `grid_disk(k=1)` é quente. */
+  ma_perto?: boolean | null
+  /** Quantas das independentes do hex têm nota no WellHub. Anda SEMPRE junto de `ma_nota`:
+   *  nota sem contagem ao lado põe no topo academias cujo sinal são três avaliações (DEC-026). */
+  ma_com_nota?: number | null
+  /** Nota mediana do WellHub entre as que têm nota. FATO sem peso — não ordena nada. */
+  ma_nota?: number | null
+  /** Regime de sinais deste hexágono (ex.: `"s1,s6"`). Declarado no tooltip porque réguas de
+   *  regimes diferentes não são comparáveis entre si (emenda BLK-MA-04-FU1). */
+  ma_regime?: string | null
   /** "Em alta" | "Estável" | "Sem obra nova" — é o que colore o mapa no passo 4.
    *  RÓTULO de exibição, já acentuado pela API (`_ROTULO_CLASSE` em app.py); o
    *  identificador no parquet é ASCII. `crescClasseToColor` em lib/colors.ts compara
@@ -251,7 +276,29 @@ export interface MunicipioPayload {
   hexes: Hex[]
   /** Passo 4, uma entrada por cidade. Esparso: cidade sem leitura não aparece. */
   cres_mun: Record<string, CrescimentoMunicipal>
+  /** Metadados do overlay de pressão competitiva. Ausente em payload antigo. */
+  pressao_ma?: PressaoMaMeta
   pins: Pins
+}
+
+/**
+ * Metadados do overlay de pressão competitiva (BLK-MA-13 / DEC-028).
+ *
+ * A COBERTURA E O REGIME NÃO SÃO ENFEITE: só 40,2% dos hexágonos com academia independente
+ * têm pressão > 0, e onde falta coleta a pressão sai `0` — a leitura mais otimista possível da
+ * régua (risco 2 da DEC-027). Uma legenda que não declare isso deixa o operador ler "verde" como
+ * "medi e não há concorrência" em território onde ninguém mediu.
+ */
+export interface PressaoMaMeta {
+  /** false = artefato não montado (a pílula não aparece) ou recorte sem academia independente. */
+  disponivel: boolean
+  motivo?: string | null
+  /** Hexágonos do recorte que têm linha na camada. */
+  n_hexes?: number
+  /** Destes, quantos têm pressão > 0. O par com `n_hexes` é a cobertura. */
+  n_com_pressao?: number
+  /** Regimes de sinais presentes, do que cobre mais hexes para o que cobre menos. */
+  regimes?: string[]
 }
 
 export interface MunicipioItem {

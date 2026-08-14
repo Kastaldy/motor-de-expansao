@@ -763,6 +763,97 @@ def test_rampup_coluna_ordenavel_e_toda_nula(serie_rampup: list[pd.DataFrame]) -
     assert bool(ordenado["score_vulnerabilidade_ordenavel"].isna().all())
 
 
+# --------------------------------------------------------------------------- #
+# Emenda do G-D1 pela DEC-028 (BLK-MA-13): o S6 entra na conjunção do provisório
+# --------------------------------------------------------------------------- #
+def _pressao_forte(hexes: list[str]) -> pd.DataFrame:
+    """Pressão positiva em todos os hexes, e DIFERENTE em cada um.
+
+    A distância varia por índice de propósito: com todos os concorrentes à mesma distância, o `v6`
+    sairia constante e o teste provaria só que a flag mudou — não que o score voltou a discriminar,
+    que é a razão de a emenda existir.
+    """
+    from motor_expansao.vulnerabilidade.pressao_competitiva import calcular_pressao_por_hex
+
+    pontos = []
+    for i, h in enumerate(hexes):
+        lat, lng = h3.cell_to_latlng(h)
+        pontos.append(
+            {
+                "rede": "smart_fit",
+                "lat": lat + 0.002 * (i + 1),
+                "lng": lng,
+                "status_registro": "valido",
+            }
+        )
+    return calcular_pressao_por_hex(hexes, pd.DataFrame(pontos))
+
+
+def test_pressao_tira_o_rampup_do_regime_provisorio(serie_rampup: list[pd.DataFrame]) -> None:
+    """A EMENDA DA DEC-028, medida onde ela muda o resultado.
+
+    Sem `& (~s6)` na conjunção, este frame sai com `flag_score_provisorio` em TODAS as linhas e
+    `score_vulnerabilidade_ordenavel` universalmente NULA — que foi o estado medido sobre as
+    19.329 academias reais: um `sort_values` devolvia `NaN` em tudo. Este teste FALHA se a emenda
+    for revertida, e é a única prova executável dela.
+
+    O que a emenda **não** faz: dizer que o score passou a medir vulnerabilidade. Nesse regime ele
+    é `30 + 40·v6` — pressão competitiva —, e é a DEC-028 que proíbe o rótulo na tela.
+    """
+    churn, presenca = _insumos(serie_rampup)
+    hexes = presenca["hex_id_res7"].astype(str).tolist()
+
+    sem = calcular_score_vulnerabilidade(churn=churn, presenca=presenca)
+    com = calcular_score_vulnerabilidade(
+        churn=churn, presenca=presenca, pressao=_pressao_forte(hexes)
+    )
+
+    # O estado ANTES: nada ordenável, exatamente como o G-D1 original queria.
+    assert bool(sem["flag_score_provisorio"].all())
+    assert bool(sem["score_vulnerabilidade_ordenavel"].isna().all())
+
+    # E DEPOIS de o insumo chegar: a régua deixa de ter dois valores e volta a ordenar.
+    assert not bool(com["flag_score_provisorio"].any())
+    assert not bool(com["score_vulnerabilidade_ordenavel"].isna().any())
+    # A ordenação só faz sentido se houver o que ordenar. Sem o S6 a régua é CATEGÓRICA: o `v1`
+    # só assume `{0.0, 0.5}`, então o score só pode ser `{0, 50}` — dois valores, por mais linhas
+    # que a série tenha, e era esse domínio que o G-D1 se recusava a ordenar. Com o S6 ela passa a
+    # ser contínua. (Contar `nunique` não serviria aqui: esta fixture tem 3 linhas em 2 hexes, e
+    # a pressão é do HEX — as duas linhas do mesmo hexágono empatam por construção.)
+    assert set(float(v) for v in sem["score_vulnerabilidade"]) <= {0.0, 50.0}
+    assert not set(float(v) for v in com["score_vulnerabilidade"]) & {0.0, 50.0}
+    assert com["v6"].nunique() > 1, "a pressao precisa discriminar entre hexes"
+    for _, linha in com.iterrows():
+        assert "s6" in _tokens(linha)
+
+
+def test_sem_o_s6_a_serie_imatura_continua_provisoria() -> None:
+    """A emenda é CIRÚRGICA: quem não recebe pressão continua exatamente como antes.
+
+    Sem este par, a emenda poderia ter sido escrita como "nunca provisório" e ninguém veria.
+    """
+    churn = _churn([_linha_churn("k", hex_id=HEX_A, imatura=True, n_semanas_serie=3)])
+    out = calcular_score_vulnerabilidade(churn=churn, presenca=_presenca([_linha_presenca(HEX_A)]))
+    linha = _linha_de(out, "k")
+    assert bool(linha["flag_score_provisorio"]) is True
+    assert pd.isna(linha["score_vulnerabilidade_ordenavel"])
+
+
+def test_assert_schema_rejeita_provisorio_que_ignora_o_s6() -> None:
+    """O guard de saída também foi emendado — e um frame forjado prova que ele morde."""
+    churn = _churn([_linha_churn("k", hex_id=HEX_A, imatura=True, n_semanas_serie=3)])
+    out = calcular_score_vulnerabilidade(
+        churn=churn,
+        presenca=_presenca([_linha_presenca(HEX_A)]),
+        pressao=_pressao_forte([HEX_A]),
+    )
+    assert bool(out.iloc[0]["flag_score_provisorio"]) is False
+    ruim = out.copy()
+    ruim.loc[ruim.index[0], "flag_score_provisorio"] = True
+    with pytest.raises(ValueError, match="flag_score_provisorio"):
+        _assert_schema_score(ruim)
+
+
 def test_score_zero_no_rampup_nao_significa_nao_vulneravel(
     serie_rampup: list[pd.DataFrame],
 ) -> None:

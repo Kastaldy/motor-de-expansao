@@ -575,6 +575,159 @@ def test_pressao_ALTERA_o_score_agora_que_o_s6_tem_peso() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Colapso de regimes para o overlay hex-level (BLK-MA-13 / DEC-028)
+# --------------------------------------------------------------------------- #
+def _alvos_com_dois_regimes() -> pd.DataFrame:
+    """Lista curada com DOIS regimes no MESMO hex — o caso que o colapso existe para resolver."""
+    score = _score_de(
+        [
+            _linha_churn(
+                "k_completa", hex_id=HEX_Q, status="estavel", n_semanas_serie=13, interpretavel=True
+            ),
+            _linha_churn("k_so_s3", hex_id=HEX_Q, status="sumiu_recente", n_semanas_serie=9),
+        ],
+        [HEX_Q],
+    )
+    score.loc[score["chave_snapshot"] == "k_so_s3", ["v1", "n_agregadores_no_hex"]] = pd.NA
+    score.loc[score["chave_snapshot"] == "k_so_s3", "fontes_presentes_no_hex"] = pd.NA
+    score.loc[score["chave_snapshot"] == "k_so_s3", "sinais_disponiveis"] = "s3"
+    score.loc[score["chave_snapshot"] == "k_so_s3", "n_sinais_disponiveis"] = 1
+    return agregar_alvos_por_hex(academias_com_hotness(score, _carteira()))
+
+
+def test_colapso_devolve_uma_linha_por_hex() -> None:
+    """A promessa do overlay: um hexágono, uma cor. Sem isto o mapa pintaria duas."""
+    alvos = _alvos_com_dois_regimes()
+    assert len(alvos[alvos["hex_id_res7"] == HEX_Q]) == 2, "a fixture precisa dos dois regimes"
+
+    hexes = m.colapsar_regimes_por_hex(alvos)
+    assert not hexes["hex_id_res7"].duplicated().any()
+    assert len(hexes) == alvos["hex_id_res7"].nunique()
+
+
+def test_colapso_escolhe_o_regime_mais_medido_e_NAO_faz_media() -> None:
+    """A régua mais medida vence, e o número que sobra é de UMA linha real.
+
+    É a diferença entre selecionar e agregar: um `{s3}` com `sumiu_recente` sai com `100,0` e um
+    `{s1,s3,s4}` medido pelos três sai com menos. A média entre os dois não pertence a régua
+    nenhuma — e é exatamente o que um `groupby(hex).mean()` implícito produziria.
+    """
+    alvos = _alvos_com_dois_regimes()
+    do_hex = alvos[alvos["hex_id_res7"] == HEX_Q]
+    completo = do_hex[do_hex["sinais_disponiveis"] == "s1,s3,s4"].iloc[0]
+    parcial = do_hex[do_hex["sinais_disponiveis"] == "s3"].iloc[0]
+    media_proibida = (
+        float(completo["score_vulnerabilidade_medio"]) + float(parcial["score_vulnerabilidade_medio"])
+    ) / 2.0
+
+    linha = m.colapsar_regimes_por_hex(alvos)
+    linha = linha[linha["hex_id_res7"] == HEX_Q].iloc[0]
+
+    assert linha["sinais_disponiveis"] == "s1,s3,s4", "venceu o regime com MENOS sinais"
+    assert float(linha["score_vulnerabilidade_medio"]) == pytest.approx(
+        float(completo["score_vulnerabilidade_medio"])
+    )
+    assert float(linha["score_vulnerabilidade_medio"]) != pytest.approx(media_proibida)
+
+
+def test_colapso_desempata_por_cobertura_quando_o_contador_empata() -> None:
+    """`{s1,s3}` e `{s3,s4}` têm ambos `n = 2`: vence o que representa MAIS academias do hex.
+
+    Segmentar pelo CONTADOR não basta — os dois regimes têm renormalizações diferentes —, então o
+    desempate precisa de um critério próprio, e "cobre mais academias daquele hexágono" é o único
+    que diz algo sobre o território em vez de sobre a ordem de leitura do parquet.
+    """
+    alvos = _alvos_com_dois_regimes().copy()
+    assert len(alvos) == 2, "a fixture precisa dos dois regimes no mesmo hex"
+    alvos["sinais_disponiveis"] = ["s1,s3", "s3,s4"]
+    alvos["n_sinais_disponiveis"] = 2
+    alvos["n_independentes_vulneraveis"] = [3, 9]
+
+    colapsado = m.colapsar_regimes_por_hex(alvos)
+    assert len(colapsado) == 1
+    linha = colapsado.iloc[0]
+    assert int(linha["n_independentes_vulneraveis"]) == 9
+    assert linha["sinais_disponiveis"] == "s3,s4"
+
+
+def test_colapso_e_a_identidade_no_regime_unico() -> None:
+    """Hoje há um regime só — o colapso não pode inventar diferença onde não existe."""
+    alvos = agregar_alvos_por_hex(academias_com_hotness(_score_padrao(), _carteira()))
+    assert alvos["sinais_disponiveis"].nunique() == 1
+    hexes = m.colapsar_regimes_por_hex(alvos)
+    assert hexes.reset_index(drop=True).equals(alvos.reset_index(drop=True))
+
+
+def test_colapso_de_frame_vazio_sai_bem_formado() -> None:
+    vazio = m.colapsar_regimes_por_hex(m._frame_vazio(c.CONTRATO_COLUNAS_ALVOS_MA))
+    assert list(vazio.columns) == list(c.CONTRATO_COLUNAS_ALVOS_MA)
+    assert vazio.empty
+
+
+def test_colapso_falharia_se_deixasse_hex_duplicado(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ANTI-VACUIDADE: sem isto, a promessa de unicidade poderia passar por acidente.
+
+    Neutraliza o `drop_duplicates` e exige que o guard de saída DERRUBE — se ele não derrubasse,
+    um artefato com dois regimes por hex chegaria ao piloto e o `.map` do backend escolheria uma
+    linha arbitrária, pintando uma cor que ninguém decidiu.
+    """
+    alvos = _alvos_com_dois_regimes()
+    monkeypatch.setattr(
+        pd.DataFrame, "drop_duplicates", lambda self, *a, **k: self, raising=True
+    )
+    with pytest.raises(AssertionError, match="hex_id_res7. duplicado"):
+        m.colapsar_regimes_por_hex(alvos)
+
+
+def test_materializa_a_camada_hex_e_ela_sobrevive_a_releitura(tmp_path: Path) -> None:
+    """O artefato do overlay, provado RELENDO do disco — como o CSV do D6 já era."""
+    caminho = tmp_path / "alvos_ma_hex.parquet"
+    auditoria = materializar_alvos_ma(
+        _score_padrao(),
+        _carteira(),
+        academias_path=tmp_path / "ac.parquet",
+        alvos_csv_path=tmp_path / "alvos.csv",
+        alvos_hex_path=caminho,
+    )
+    lido = pd.read_parquet(caminho)
+    assert list(lido.columns) == list(c.CONTRATO_COLUNAS_ALVOS_MA)
+    assert not lido["hex_id_res7"].duplicated().any()
+    assert int(auditoria["hexes_no_overlay"]) == len(lido)
+    assert int(auditoria["linhas_descartadas_no_colapso"]) == 0
+
+
+def test_camada_hex_nao_carrega_identidade_nem_pii(tmp_path: Path) -> None:
+    """§11 / DEC-012 no artefato que o PILOTO serve — é o que cruza a fronteira web.
+
+    A exceção da `uf` é a mesma de `test_saida_nao_tem_coluna_de_pii`, e é do contrato: aqui ela é
+    a sigla agregada do hexágono, não o campo do feed cru.
+    """
+    caminho = tmp_path / "hex.parquet"
+    materializar_alvos_ma(
+        _score_padrao(),
+        _carteira(),
+        academias_path=tmp_path / "ac.parquet",
+        alvos_csv_path=tmp_path / "alvos.csv",
+        alvos_hex_path=caminho,
+    )
+    lido = pd.read_parquet(caminho)
+    assert not (set(lido.columns) & c.COLUNAS_PII_PROIBIDAS) - {"uf"}
+    assert not set(lido.columns) & {"chave_snapshot", "fonte", "rede", "slug"}
+
+
+def test_materializar_sem_caminho_hex_nao_grava_o_terceiro(tmp_path: Path) -> None:
+    """O default `None` protege os testes que só passam os dois caminhos antigos."""
+    materializar_alvos_ma(
+        _score_padrao(),
+        _carteira(),
+        academias_path=tmp_path / "ac.parquet",
+        alvos_csv_path=tmp_path / "alvos.csv",
+    )
+    assert not (tmp_path / "alvos_ma_hex.parquet").exists()
+    assert not list(tmp_path.glob("*hex*.parquet"))
+
+
+# --------------------------------------------------------------------------- #
 # Guardrails de pacote
 # --------------------------------------------------------------------------- #
 def test_modulo_nao_importa_demanda_revelada() -> None:
@@ -588,11 +741,27 @@ def test_cli_analisa_os_argumentos() -> None:
     args = m._parse_args(["--base-dir", "x", "--dry-run"])
     assert args.dry_run is True
     assert args.carteira == m.CARTEIRA_PATH_DEFAULT
+    # O terceiro artefato tem default de CLI (ao contrário do parâmetro da função).
+    assert args.saida_hex == m.ALVOS_HEX_PATH_DEFAULT
+    assert args.sem_pressao is False
+
+
+def test_cli_aceita_desligar_a_pressao() -> None:
+    """`--sem-pressao` devolve o score anterior bit a bit (DEC-027) — precisa existir."""
+    assert m._parse_args(["--base-dir", "x", "--sem-pressao"]).sem_pressao is True
+
+
+def test_pressao_dos_hexes_degrada_sem_o_insumo(tmp_path: Path) -> None:
+    """Insumo ausente NÃO derruba a materialização: o score sai sem o s6, e diz isso."""
+    presenca = _presenca([_linha_presenca(HEX_Q)])
+    pressao, motivo = m._pressao_dos_hexes(presenca, tmp_path / "nao_existe.parquet")
+    assert pressao is None
+    assert "ausente" in motivo
 
 
 def test_caminhos_de_saida_nao_casam_o_deny_critico_do_loop_guard() -> None:
     """`carteira_expansao*`/`plano_expansao*`/`hexagonos_mercado*` são CRÍTICO no `loop_guard`."""
-    for caminho in (m.ACADEMIAS_PATH_DEFAULT, m.ALVOS_CSV_DEFAULT):
+    for caminho in (m.ACADEMIAS_PATH_DEFAULT, m.ALVOS_CSV_DEFAULT, m.ALVOS_HEX_PATH_DEFAULT):
         nome = caminho.name
         for proibido in ("carteira_expansao", "plano_expansao", "hexagonos_mercado"):
             assert not nome.startswith(proibido), nome
