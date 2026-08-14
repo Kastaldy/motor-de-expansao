@@ -1588,6 +1588,141 @@ definido antes de qualquer código; validação com fixtures sintéticas; READ-O
 
 ---
 
+### BLK-MA-16 — A oferta do S6 passa a enxergar as independentes, com metade do peso de uma unidade de rede
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — muda o insumo de um componente COM PESO do score (`v6`, `w6 = 0,10`), redefine o que a coluna `pressao_competitiva` significa e quebra a comparabilidade com a camada de mercado. **Exige DEC própria** antes do Builder. READ-ONLY sobre o M1 (não toca `score_priorizacao`, pesos, carteira nem artefato oficial). |
+| **Prioridade** | Média-alta — o defeito que ele corrige é o **falso zero**, e ele é grande: em SP, **29,2%** das independentes marcam pressão `0` hoje. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE — DEC própria]` → Builder → QA. |
+| **Status** | Pendente — **criado em 2026-08-14 a pedido de Vinicius**. |
+| **Depende de** | BLK-MA-14 (concluído 2026-08-14) — a rota B abriu `coordenadas_por_chave`, que é de onde as independentes entram como pontos sem persistir coordenada. |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera a régua de um sinal com peso e exige gate de medição. |
+
+**O defeito, medido.** O insumo do S6 é `concorrentes_mapeados.parquet`: **4.499 pontos válidos em
+104 redes, e nenhuma independente** — ele nasce dos coletores `unidades_*.csv`, que são feeds de
+CADEIA. Logo a pressão competitiva de hoje responde "quanta CADEIA cerca este ponto", não "quanta
+concorrência". Uma independente espremida entre oito independentes marca **pressão zero** e aparece
+como território livre — que é exatamente o falso negativo que o BLK-MA-14 acabou de corrigir no
+*grão* e que continua de pé no *universo de oferta*.
+
+**O que muda, medido em SP (2026-08-14, 7.106 independentes com coordenada, 2.233 pontos de rede no
+recorte).** Independentes entrando como oferta com peso `0,5` contra `1,0` de uma unidade de rede:
+
+| Métrica | Hoje (só cadeias) | Com independentes a 0,5 |
+|---|---|---|
+| Pressão média | 39,23 | **65,29** (+26,05) |
+| Mediana | 43,60 | 72,94 |
+| **Zeros** | **2.078 (29,2%)** | **275 (3,9%)** |
+| Acima de 90 | 116 | 417 (5,9%) |
+| Score composto médio (regime `s1,s6`) | 45,69 | 56,11 |
+
+Spearman entre as duas réguas: **0,8876** (Pearson 0,8003). O ranking **reordena de verdade sem
+inverter** — 88,7% das academias mudam de faixa de 10 pontos, e 172 dos 200 mais pressionados
+seguem no top-200 da régua nova. **Custo computacional é irrelevante**: 19.329 origens contra 23.828
+pontos projetam **0,41 min** (hoje 0,05 min).
+
+**O RISCO, que é o motivo do gate: o topo comprime.** A amplitude entre os 200 mais pressionados cai
+de **7,74 para 4,19 pontos** — e é no topo que a decisão de M&A acontece. A causa é a **saturação**
+`pressao = 100 · (1 − 1/(1 + oferta))`, não o peso: com mais oferta, todo mundo encosta no teto.
+**Baixar o `0,5` alivia e não resolve.** A alavanca real seria mexer na saturação ou normalizar por
+posição — e a saturação é justamente o que torna o número comparável com
+`pressao_concorrencial_score_2km` da camada de mercado, que foi a razão de ela ser copiada. Trocar a
+régua para caber o insumo novo é decisão de gate, não de implementação.
+
+**Armadilhas que o Planner precisa fechar antes do Builder.**
+1. **Auto-pressão.** A academia medida está no próprio conjunto de pontos. Sem excluí-la, ela recebe
+   `peso(d = 0) × 0,5 = 0,5` de oferta **de si mesma** — `sat(0,5) = 33,3` pontos de pressão em quem
+   não tem mais ninguém por perto. Excluir por `(fonte, chave_snapshot)`, **nunca por distância**:
+   duas academias no mesmo endereço existem e não são a mesma linha.
+2. **Dupla contagem entre fontes — hoje LATENTE.** A mesma academia em TotalPass e WellHub são duas
+   chaves por construção (§8.1, emenda BLK-MA-03). O snapshot atual só tem WellHub, então o defeito
+   ainda não aparece; **na primeira coleta com as duas fontes ele dobra a oferta** de toda academia
+   listada nas duas. Dedup **espacial** antes de somar, não por chave.
+3. **Não estender para as unidades de rede do agregador.** 58,5% delas já estão em
+   `concorrentes_mapeados` (medido no BLK-MA-17) e seriam contadas duas vezes. Este bloco adiciona
+   **só** `rede == independente`.
+4. **Viés de cobertura, a declarar em vez de esconder.** As independentes visíveis são as que
+   aderiram a um agregador. Uma independente fora de qualquer app segue invisível como oferta: o
+   bloco **reduz** o falso zero, não o elimina, e transfere parte da régua de pressão para a
+   cobertura comercial do WellHub. Consequência direta: o número **deixa de ser comparável** com
+   `pressao_concorrencial_score_2km`, e a comparabilidade era um dos quatro motivos declarados do
+   módulo.
+5. **Carimbo de universo, no molde do `pressao_grao` (BLK-MA-14).** Duas rodadas com universos de
+   oferta diferentes não estão na mesma régua, e sem carimbo isso é invisível. Sugestão:
+   `universo_oferta ∈ {cadeias, cadeias_e_independentes}`, com bump `pressao_competitiva_v1` → `v2` e
+   `score_vulnerabilidade_v4` → `v5`.
+6. **Anti-PII intacto.** A coordenada da independente entra pelo caminho já aberto no BLK-MA-14
+   (`coordenadas_por_chave`, em memória) e morre na função — `_assert_schema_pressao_academia` já é
+   a trava. Nada novo é persistido.
+
+**Fora de escopo.** Qualquer artefato/peso/score do M1; repesar S1..S4 (congelados desde o gate de
+2026-07-23); mexer na saturação ou no kernel (só o UNIVERSO de oferta muda); as unidades de rede
+(**BLK-MA-17**); recalcular `pressao_concorrencial_score_2km` na camada de mercado.
+
+**Critério de aceite.** DEC própria aprovada com o número da compressão do topo na mesa; auto-pressão
+e dedup entre fontes travados por teste; carimbo de universo na saída e bump de contrato; a régua
+antiga continua calculável (o bloco acrescenta um universo, não substitui o outro); READ-ONLY sobre
+o M1; suíte verde.
+
+---
+
+### BLK-MA-17 — Unidades de REDE presentes nos agregadores ganham o diagnóstico visível
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — altera o UNIVERSO declarado da camada (§3/D1 do contrato: "TotalPass/WellHub × independente"), que hoje é travado por assert na entrada **e** na saída do score. **Exige DEC própria.** READ-ONLY sobre o M1. |
+| **Prioridade** | Média — é ganho de leitura no mapa, não de decisão de M&A (comprar rede não é o caso de uso do epic). |
+| **Esteira** | Block Orchestrator → Planner → `[GATE — DEC própria]` → Builder → QA. |
+| **Status** | Pendente — **criado em 2026-08-14 a pedido de Vinicius**. |
+| **Depende de** | BLK-MA-15 (concluído 2026-08-14, molde do pin nomeado). **Ordem recomendada: depois do BLK-MA-16**, senão a tela estreia exibindo uma pressão que muda de régua no bloco seguinte. |
+| **Autonomia** | **manual (NÃO loop-safe)** — muda o universo da camada. |
+
+**O universo existe e é descartado hoje.** O snapshot da semana `2026-33` tem **22.173 linhas: 19.329
+independentes (o universo do score) e 2.844 de REDE**, em 83 redes distintas — unidades de cadeia que
+estão no WellHub e que `_filtrar_universo_sinal_1` corta antes do score. Incluí-las cresceria o
+universo em **14,7%**.
+
+**A objeção que decide o desenho do bloco: S1 e S3 medem OUTRA COISA numa rede.** A negociação com o
+agregador é **centralizada**: "estar em 1 app em vez de 2" é política comercial da rede, não
+exposição daquela unidade. E o modo de falha do S3 é pior, porque é correlacionado — a concentração
+medida é **top 5 = 48,4% das unidades, máximo 440 numa rede só**. Quando a Panobianco sair do
+WellHub, **440 unidades viram `sumiu_recente` no mesmo dia** e o S3 — o maior peso do Plano B,
+`≈ 0,467` — dispara para todas simultaneamente, sem que uma única unidade tenha se fragilizado. O
+score leria um evento de negociação como 440 alvos.
+
+**Recomendação de desenho (a validar na DEC): fato sim, score composto não.** Propagar para as
+unidades de rede o **S6** (pressão, que é geográfica e não sabe se a academia é de rede) e os
+**fatos sem peso** — `nota_wellhub`, `qtd_avaliacoes_wellhub`, `status_churn` —, e **não** emitir
+`score_vulnerabilidade` para elas enquanto não houver régua própria. É o molde já usado duas vezes
+neste epic (G-D2 no `status_churn`, DEC-026 no rating): **o fato entra antes do peso**. Também
+preserva a leitura do §2 — a lista de alvos continua sendo de independentes.
+
+**Onde o código resiste, e por que isso é bom.** O universo é fechado num lugar só:
+`_filtrar_universo_sinal_1`, importado por `score.py` de propósito para não haver duas definições.
+Mas ele é **compartilhado com o sinal 1** — afrouxá-lo lá faria `n_academias_independentes_totalpass`
+e `..._wellhub` passarem a contar redes **com o nome dizendo o contrário**. O caminho é um universo
+próprio para a camada de exibição, não relaxar o filtro comum.
+
+**Pins: o join espacial NÃO resolve — medido.** Casando cada unidade de rede do agregador com um pin
+do funil da MESMA rede a menos de 150 m, só **1.665 de 2.844 casam (58,5%)**. Outras **1.167 não
+casam apesar de a rede existir no funil**, e há redes inteiras com casamento zero: `performance`
+(0/88), `one` (0/29), `contorno_do_corpo` (1/61), `power_fit` (5/76), `selfit` (69/202). Não é erro
+de distância — os dois feeds cobrem conjuntos diferentes da mesma rede. Logo o caminho é **pin
+próprio a partir da coordenada do feed** (molde BLK-MA-15), com **regra de precedência explícita**
+para os 58,5% que virariam dois pins no mesmo lugar.
+
+**Fora de escopo.** Qualquer artefato/peso/score do M1; entrar como oferta no S6 (**BLK-MA-16**);
+incluir unidades de rede na lista comercial de alvos (**BLK-MA-05**); régua de score própria para
+rede (bloco futuro, se a DEC concluir que faz falta).
+
+**Critério de aceite.** DEC própria decidindo o que é propagado (fatos e/ou score) e a precedência de
+pin; o filtro do sinal 1 e as colunas `n_academias_independentes_*` **intactos**; a lista de alvos de
+M&A segue só com independentes, travado por teste; anti-PII no molde do BLK-MA-15 (artefato nomeado
+nasce gitignored); READ-ONLY sobre o M1; suíte verde.
+
+---
+
 - BLK-MA-14 (concluído 2026-08-14) — ver tasks/completed.md
 
 
