@@ -190,3 +190,115 @@ def test_nao_usa_dependencia_pesada() -> None:
     for n in nomes_importados(m):
         for pesada in ("geopandas", "shapely", "sklearn", "scipy", "pyproj"):
             assert pesada not in n, n
+
+
+# --------------------------------------------------------------------------- #
+# BLK-MA-14 / DEC-029 — o grão ACADEMIA
+# --------------------------------------------------------------------------- #
+def _academias(offsets_m: list[float]) -> pd.DataFrame:
+    """Academias a `offsets_m` ao NORTE do centroide de HEX — todas DENTRO do mesmo hexágono.
+
+    As colunas são declaradas mesmo na lista vazia: um `DataFrame([])` sai SEM coluna nenhuma, o
+    que não é o frame vazio que o pipeline produz (`coordenadas_por_chave` devolve o schema
+    completo). Testar o caso degenerado com um frame que a produção nunca gera testaria outra
+    coisa.
+    """
+    return pd.DataFrame(
+        [
+            {
+                "fonte": "wellhub",
+                "chave_snapshot": f"k{i}",
+                "lat": LAT + m_ / _GRAU_LAT_M,
+                "lng": LNG,
+            }
+            for i, m_ in enumerate(offsets_m)
+        ],
+        columns=["fonte", "chave_snapshot", "lat", "lng"],
+    )
+
+
+def test_pressao_varia_ENTRE_academias_do_mesmo_hexagono() -> None:
+    """A razão de existir do BLK-MA-14, e o teste que FALHARIA com o grão antigo.
+
+    Duas academias no MESMO hexágono, uma colada no concorrente e outra longe dele. No grão hex as
+    duas recebiam o valor do centroide e empatavam por construção (medido no dado real: `0 de
+    6.753` hexes com qualquer variação interna). Aqui elas têm de divergir.
+    """
+    conc = _concorrentes([0.0])  # concorrente no centroide
+    ac = _academias([0.0, 1800.0])  # uma colada nele, outra a 1,8 km
+
+    out = m.calcular_pressao_por_academia(ac, conc)
+    assert len(out) == 2
+    perto = float(out.loc[out["chave_snapshot"] == "k0", "pressao_competitiva"].iloc[0])
+    longe = float(out.loc[out["chave_snapshot"] == "k1", "pressao_competitiva"].iloc[0])
+    assert perto > longe, "a academia colada no concorrente tem de sofrer mais pressao"
+    assert out["pressao_competitiva"].nunique() == 2
+
+    # E o grão hex, no MESMO insumo, dá um valor só — que é exatamente o que se está corrigindo.
+    por_hex = calcular_pressao_por_hex([HEX], conc)
+    assert len(por_hex) == 1
+
+
+def test_os_dois_graos_usam_a_MESMA_formula() -> None:
+    """Academia no CENTROIDE do hex tem de bater com o grão hex, dígito a dígito.
+
+    É o teste que impede as duas fórmulas de divergirem: elas compartilham `_oferta_por_origem` e
+    `_saturar`, e se alguém alterar o kernel num caminho só, os números deixam de ser comparáveis
+    — sem nenhum erro visível, porque cada um continuaria internamente coerente.
+    """
+    conc = _concorrentes([700.0, 1500.0])
+    no_centroide = m.calcular_pressao_por_academia(_academias([0.0]), conc)
+    por_hex = calcular_pressao_por_hex([HEX], conc)
+    assert float(no_centroide.iloc[0]["pressao_competitiva"]) == pytest.approx(
+        float(por_hex.iloc[0]["pressao_competitiva_no_hex"])
+    )
+    assert float(no_centroide.iloc[0]["v6"]) == pytest.approx(
+        float(por_hex.iloc[0]["v6_no_hex"])
+    )
+
+
+def test_saida_por_academia_NAO_carrega_coordenada() -> None:
+    """O ponto todo da rota B: a coordenada ENTRA no cálculo e não sai dele.
+
+    Sem este teste, "a camada não persiste coordenada" volta a ser prosa — e é justamente a frase
+    que, mal interpretada, manteve o sinal um bloco inteiro no grão errado.
+    """
+    out = m.calcular_pressao_por_academia(_academias([0.0, 500.0]), _concorrentes([300.0]))
+    assert list(out.columns) == list(c.CONTRATO_COLUNAS_PRESSAO_ACADEMIA)
+    for proibida in ("lat", "lng", "latitude", "longitude", "nome"):
+        assert proibida not in out.columns
+
+
+def test_academia_sem_coordenada_sai_do_calculo_em_vez_de_virar_zero() -> None:
+    """`0` afirmaria "ninguém espremendo" — a leitura mais otimista da régua (§8.1)."""
+    ac = _academias([0.0])
+    ac.loc[len(ac)] = {"fonte": "wellhub", "chave_snapshot": "sem_coord", "lat": None, "lng": None}
+    out = m.calcular_pressao_por_academia(ac, _concorrentes([300.0]))
+    assert set(out["chave_snapshot"]) == {"k0"}, "a linha sem coordenada nao pode receber pressao"
+
+
+def test_chave_duplicada_levanta_em_vez_de_escolher_uma() -> None:
+    """`(fonte, chave_snapshot)` é a chave primária do score: duplicata aqui envenenaria o join."""
+    ac = pd.concat([_academias([0.0]), _academias([500.0])], ignore_index=True)
+    with pytest.raises(ValueError, match="duplicado"):
+        m.calcular_pressao_por_academia(ac, _concorrentes([300.0]))
+
+
+def test_frame_de_academias_sem_coluna_obrigatoria_levanta() -> None:
+    with pytest.raises(ValueError, match="obrigatoria"):
+        m.calcular_pressao_por_academia(
+            _academias([0.0]).drop(columns=["chave_snapshot"]), _concorrentes([300.0])
+        )
+
+
+def test_academias_vazio_devolve_frame_bem_formado() -> None:
+    out = m.calcular_pressao_por_academia(_academias([]), _concorrentes([300.0]))
+    assert list(out.columns) == list(c.CONTRATO_COLUNAS_PRESSAO_ACADEMIA)
+    assert out.empty
+
+
+def test_nao_muta_o_frame_de_academias() -> None:
+    ac = _academias([0.0, 900.0])
+    antes = ac.copy()
+    m.calcular_pressao_por_academia(ac, _concorrentes([300.0]))
+    pd.testing.assert_frame_equal(ac, antes)

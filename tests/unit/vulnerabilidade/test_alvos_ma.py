@@ -520,7 +520,13 @@ def test_carteira_sem_coluna_opcional_nao_quebra_o_astype() -> None:
 # Sinal 6 propagado como fato sem peso (BLK-MA-12)
 # --------------------------------------------------------------------------- #
 def _pressao_em(hexes: list[str], perto_de: str) -> pd.DataFrame:
-    """Frame de pressão com UM concorrente colado no centroide de `perto_de`."""
+    """Frame de pressão POR HEX com UM concorrente colado no centroide de `perto_de`.
+
+    Continua no grão HEX de propósito: este arquivo testa a PROPAGAÇÃO até o entregável, e o grão
+    hex é o caso em que todas as academias do hexágono recebem o mesmo valor — o que torna os
+    asserts de propagação legíveis. O grão academia tem testes próprios em `test_score.py` e
+    `test_pressao_competitiva.py`.
+    """
     from motor_expansao.vulnerabilidade.pressao_competitiva import calcular_pressao_por_hex
 
     lat, lng = h3.cell_to_latlng(perto_de)
@@ -538,7 +544,8 @@ def test_sem_pressao_no_score_as_colunas_do_s6_chegam_nulas() -> None:
     """
     out = academias_com_hotness(_score_padrao(), _carteira())
     assert out["v6"].isna().all()
-    assert out["pressao_competitiva_no_hex"].isna().all()
+    assert out["pressao_competitiva"].isna().all()
+    assert out["pressao_grao"].isna().all()
 
 
 def test_s6_do_score_e_propagado_ate_o_entregavel() -> None:
@@ -596,3 +603,51 @@ def test_caminhos_de_saida_nao_casam_o_deny_critico_do_loop_guard() -> None:
         nome = caminho.name
         for proibido in ("carteira_expansao", "plano_expansao", "hexagonos_mercado"):
             assert not nome.startswith(proibido), nome
+
+
+# --------------------------------------------------------------------------- #
+# BLK-MA-14 / DEC-029 — a agregação do entregável deixou de ser `first`
+# --------------------------------------------------------------------------- #
+def _score_com_pressao_por_academia(pressoes: dict[str, float]) -> pd.DataFrame:
+    """Score real com pressão POR ACADEMIA injetada, todas no MESMO hexágono."""
+    from .test_score import _pressao_academia
+
+    linhas = [
+        _linha_churn(chave, hex_id=HEX_Q, n_semanas_serie=13, interpretavel=True)
+        for chave in pressoes
+    ]
+    return calcular_score_vulnerabilidade(
+        churn=_churn(linhas),
+        presenca=_presenca([_linha_presenca(HEX_Q)]),
+        pressao=_pressao_academia(pressoes),
+    )
+
+
+def test_agregacao_usa_media_e_maximo_nunca_o_first() -> None:
+    """Com pressão por academia a variância DENTRO do hex passa a existir — e `first` mentiria.
+
+    Enquanto a pressão vinha do centroide ela era constante no grupo e `first` era honesto. Agora
+    duas academias do mesmo hexágono podem ter 90 e 10: `first` devolveria uma delas como se
+    representasse o hexágono. O par média+máximo é o mínimo — a média descreve o hex, o máximo
+    revela a unidade muito espremida que uma média baixa esconderia.
+    """
+    score = _score_com_pressao_por_academia({"k_alta": 90.0, "k_baixa": 10.0})
+    alvos = agregar_alvos_por_hex(academias_com_hotness(score, _carteira()))
+    linha = alvos[alvos["hex_id_res7"] == HEX_Q].iloc[0]
+
+    assert float(linha["pressao_competitiva_media"]) == pytest.approx(50.0)
+    assert float(linha["pressao_competitiva_max"]) == pytest.approx(90.0)
+    assert float(linha["v6_medio"]) == pytest.approx(0.50)
+    # A prova de que NÃO é `first`: com `first` a média sairia igual ao primeiro valor visto.
+    assert float(linha["pressao_competitiva_media"]) != pytest.approx(90.0)
+    assert float(linha["pressao_competitiva_media"]) != pytest.approx(10.0)
+
+
+def test_maximo_revela_a_academia_espremida_que_a_media_esconde() -> None:
+    """O caso que justifica carregar as DUAS colunas em vez de só a média."""
+    score = _score_com_pressao_por_academia(
+        {"k1": 5.0, "k2": 5.0, "k3": 5.0, "k_espremida": 95.0}
+    )
+    linha = agregar_alvos_por_hex(academias_com_hotness(score, _carteira())).iloc[0]
+    assert float(linha["pressao_competitiva_media"]) < 30.0, "a media dilui o caso extremo"
+    assert float(linha["pressao_competitiva_max"]) == pytest.approx(95.0)

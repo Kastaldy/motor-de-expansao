@@ -12499,3 +12499,92 @@ diz mostrar.
 `aprovado-humano`. READ-ONLY sobre o M1: `score_priorizacao`, `hex_score_estrutural`, pesos,
 carteira, plano e artefatos oficiais intocados; DEC-001 intacta. Deploy segue manual e por digest —
 o overlay só aparece em produção depois de o artefato ser materializado lá.
+
+---
+
+## Fechamento de ciclo — BLK-MA-14 (2026-08-14)
+
+**Entregue: o sinal 6 passou a ser medido da coordenada da ACADEMIA, não do centroide do
+hexágono.** O bloco nasceu de uma objeção de Vinicius no fechamento do BLK-MA-13 — *"o S6 não
+deveria criar uma variabilidade de pressão entre as academias, visto que deveria medir a distância
+de concorrentes a partir da mesma?"* — e ela estava certa.
+
+**O erro que o bloco corrige, e por que não era bugfix.** O §8.1 chama o sinal de "independente
+**espremida**", que é propriedade da academia, mas o definia como `pressao_concorrencial_score_2km
+/ 100`, coluna **hex-level** da camada de mercado. O BLK-MA-12 implementou fielmente — e herdou o
+grão. Corrigir exigia emendar o contrato, não pedir desculpas no código: daí a DEC-029.
+
+**O tamanho do erro, medido ANTES de implementar** (5.823 independentes de SP contra 4.499 pontos
+de concorrentes): erro absoluto médio **7,82** pontos, p90 **22,15**, **máximo 65,97**; amplitude de
+**14,89** pontos apagada dentro do mesmo hexágono; **1.922 de 5.823 (33,0%)** mudariam de faixa. O
+caso que refuta a defesa "mas a correlação é 0,92": o hexágono `87a812a15ffffff` mede pressão
+**1,2** e a academia dentro dele, **67,2** — espremida, aparecendo como território livre. É o falso
+negativo que o sinal existe para não produzir.
+
+**ROTA B, escolhida por Vinicius: zero bump de série.** A coordenada é lida do feed cru
+(`coordenadas_por_chave`), usada para medir e **descartada dentro da função**; o que sai é
+`(fonte, chave_snapshot, pressão)`. A rota A — persistir no snapshot — custaria bump em cascata de
+TRÊS contratos (`snapshots_v3`->`v4`, `churn_v2`->`v3`, `score_v3`->`v4`), cada um uma
+descontinuidade, para guardar histórico de uma grandeza que ninguém pediu em série: a pressão é
+leitura do entorno no momento da análise, sobre um insumo que já é sempre o atual.
+
+A rota B só existe porque `derivar_chave` é **determinística** e, no default, **não lê semanas
+anteriores** — o mesmo feed produz a mesma chave, então ela casa com a do snapshot persistido sem
+re-chavear nada.
+
+**O achado que a destravou, e que estava escondido num docstring.** O `pressao_competitiva` afirmava
+que "calcular por unidade exigiria a coordenada da academia, que esta camada deliberadamente não
+persiste". A frase confunde **CALCULAR** com **PERSISTIR**: a coordenada existe no feed cru e passa
+pelas mãos do materializador antes de `montar_snapshot` matar a PII. Ela fechou uma porta que estava
+aberta, e o sinal ficou um bloco inteiro no grão errado por causa disso. O docstring foi corrigido
+COM o registro do erro — apagá-lo faria o próximo leitor repetir o raciocínio.
+
+**O resultado, medido no dado real depois de implementar:**
+
+| leitura | antes (grão hex) | depois (grão academia) |
+|---|---|---|
+| hexes com pressão variando entre suas academias | **0** de 6.753 | **2.437** |
+| amplitude média dentro do hexágono | 0,00 | **13,42** pontos |
+| amplitude máxima | 0,00 | **83,10** |
+| valores distintos de `score_vulnerabilidade` | 2.706 | **11.956** (4,4x) |
+| o hex de 26 academias que empatava | 1 valor (`67,85`) | **25 valores** (`47,0`–`84,7`) |
+
+`score_vulnerabilidade_ordenavel` segue preenchido em 19.329 de 19.329 (emenda do G-D1, DEC-028).
+
+**Os DOIS grãos coexistem, e a saída diz qual foi usado.** `calcular_pressao_por_hex` continua
+existindo — é a grandeza comparável com o `pressao_concorrencial_score_2km` e a única que faz
+sentido pintar num mapa. O contrato do score ganhou `pressao_grao` (`academia` | `hex`), preenchido
+exatamente onde há pressão, porque **linhas de grãos diferentes não estão na mesma régua**. A
+fórmula é compartilhada (`_oferta_por_origem` + `_saturar`), travada por
+`test_os_dois_graos_usam_a_MESMA_formula`: academia no centroide bate com o grão hex dígito a
+dígito. Sem isso, alterar o kernel num caminho só faria os dois deixarem de ser comparáveis, cada um
+internamente coerente e nenhum erro visível.
+
+**A agregação do entregável deixou de ser `first`, e o comentário foi reescrito junto.** Enquanto a
+pressão era constante no grupo, `first` era honesto — o código dizia "agregar fingiria variância que
+não existe". Com variância real, ele devolveria a linha que o `groupby` viu primeiro como se
+representasse o hexágono. Virou **média + máximo**: a média descreve o hex, o máximo revela a
+unidade muito espremida que uma média baixa esconde — e é essa unidade que o entregável procura.
+Travado por `test_maximo_revela_a_academia_espremida_que_a_media_esconde`.
+
+**Anti-PII mais forte, não mais fraco.** A proibição saiu do docstring e virou guard executável:
+`_assert_schema_pressao_academia` barra qualquer coordenada na saída, e
+`test_saida_por_academia_NAO_carrega_coordenada` prova. O §11 e a DEC-012 seguem intactos: nenhum
+artefato novo persiste coordenada.
+
+**Contrato.** `score_vulnerabilidade_v3` -> **`v4`**, 24 -> **25 colunas** (entrou `pressao_grao`;
+`pressao_competitiva_no_hex` virou `pressao_competitiva` no score, porque cravar um grão no nome
+faria o contrato mentir metade das vezes). O entregável hex-level troca
+`pressao_competitiva_no_hex`/`v6_no_hex` por `pressao_competitiva_media`/`_max`/`v6_medio`.
+
+**Medições da suíte.** Pacote `vulnerabilidade`: **382** passam (era 367; +15). Contratos: 264.
+`ruff` limpo. Pipeline real: 19.329 academias, 22.173 unidades com pressão calculada, 6.753 hexes.
+
+**O que este bloco destrava.** O **BLK-MA-15** (as independentes como pins, com o score no tooltip)
+tinha dependência DURA daqui: sem o grão de unidade, o tooltip mostraria o mesmo número para todas
+as academias do hexágono — 26 delas com `67,85` no exemplo de SP. Agora mostra 25 valores distintos.
+
+**Governança.** DEC-029 (Alta) aprovada por Vinicius em 2026-08-14, com a rota escolhida
+explicitamente. READ-ONLY sobre o M1: `score_priorizacao`, `hex_score_estrutural`, pesos, carteira,
+plano e artefatos oficiais intocados; DEC-001 e DEC-027 intactas (o `w6 = 0,10` não mudou — mudou de
+onde o `v6` é medido, não quanto ele pesa).

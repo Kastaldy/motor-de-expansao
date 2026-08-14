@@ -385,10 +385,17 @@ def agregar_alvos_por_hex(academias: pd.DataFrame) -> pd.DataFrame:
         flag_serie_imatura=("flag_serie_imatura", "any"),
         n_com_nota_wellhub=("_tem_nota", "sum"),
         nota_wellhub_mediana=("nota_wellhub", "median"),
-        # `first` e não média: a pressão é constante por hex (vem do join `many_to_one`), então
-        # agregá-la seria fingir variância que não existe dentro do grupo.
-        pressao_competitiva_no_hex=("pressao_competitiva_no_hex", "first"),
-        v6_no_hex=("v6", "first"),
+        # MÉDIA e MÁXIMO, não `first` — e a troca é obrigatória desde o BLK-MA-14, não estética.
+        # Enquanto a pressão vinha do centroide do hexágono ela era CONSTANTE dentro do grupo, e
+        # `first` era a leitura honesta ("agregar fingiria variância que não existe"). Com o grão
+        # ACADEMIA a variância passa a existir — amplitude média medida de 14,89 pontos dentro do
+        # mesmo hex, máxima de 73,82 —, e `first` devolveria a linha que o `groupby` viu primeiro
+        # como se representasse o hexágono inteiro. O par média+máximo é o mínimo honesto: a média
+        # descreve o hex, o máximo diz se há UMA academia muito espremida escondida numa média
+        # baixa, que é justamente o alvo que o entregável procura.
+        pressao_competitiva_media=("pressao_competitiva", "mean"),
+        pressao_competitiva_max=("pressao_competitiva", "max"),
+        v6_medio=("v6", "mean"),
     ).reset_index()
     out["versao_contrato"] = VERSAO_CONTRATO_ALVOS_MA
 
@@ -503,11 +510,50 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument("--saida-academias", type=Path, default=ACADEMIAS_PATH_DEFAULT)
     p.add_argument("--saida-csv", type=Path, default=ALVOS_CSV_DEFAULT)
     p.add_argument(
+        "--concorrentes",
+        type=Path,
+        default=None,
+        help=(
+            "pontos de concorrentes para o SINAL 6 (pressao competitiva POR ACADEMIA). "
+            "Default: o parquet padrao, quando existir."
+        ),
+    )
+    p.add_argument(
+        "--sem-pressao",
+        action="store_true",
+        help="ignora o insumo de pressao e devolve o score sem o s6 (DEC-027)",
+    )
+    p.add_argument(
         "--dry-run",
         action="store_true",
         help="compõe tudo e reporta a auditoria, sem gravar arquivo algum",
     )
     return p.parse_args(argv)
+
+
+def _pressao_por_academia(caminho: Path | None) -> tuple[pd.DataFrame | None, str]:
+    """Pressão POR ACADEMIA a partir do feed cru, ou `(None, motivo)`. Nunca derruba o lote.
+
+    A coordenada é lida do feed, usada para medir distância e **descartada dentro da função** — o
+    que sai é `(fonte, chave_snapshot, pressao)`. É a rota B da DEC-029: sem persistir coordenada,
+    logo sem bump de série.
+    """
+    from .pressao_competitiva import (
+        CONCORRENTES_PATH_DEFAULT,
+        calcular_pressao_por_academia,
+        ler_concorrentes,
+    )
+    from .snapshots import coordenadas_por_chave
+
+    alvo = caminho or CONCORRENTES_PATH_DEFAULT
+    if not alvo.exists():
+        return None, f"insumo de pressao ausente ({alvo}); score sem o s6"
+    academias = coordenadas_por_chave()
+    if academias.empty:
+        return None, "feed cru vazio ou ausente; score sem o s6"
+    pontos = ler_concorrentes(alvo)
+    pressao = calcular_pressao_por_academia(academias, pontos)
+    return pressao, f"pressao POR ACADEMIA calculada sobre {len(pressao)} unidade(s)"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -519,7 +565,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.base_dir is None:
         raise SystemExit("informe `--base-dir` com a raiz das particoes do snapshot")
 
-    score = calcular_score_vulnerabilidade(args.base_dir)
+    if args.sem_pressao:
+        pressao, motivo = None, "`--sem-pressao`: score sem o s6, por pedido explicito"
+    else:
+        pressao, motivo = _pressao_por_academia(args.concorrentes)
+    _logger.info("sinal 6: %s", motivo)
+
+    score = calcular_score_vulnerabilidade(args.base_dir, pressao=pressao)
     auditoria = materializar_alvos_ma(
         score,
         carteira_path=args.carteira,
@@ -527,6 +579,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         alvos_csv_path=args.saida_csv,
         dry_run=args.dry_run,
     )
+    auditoria["sinal_6"] = motivo
     print(auditoria)
     return 0
 

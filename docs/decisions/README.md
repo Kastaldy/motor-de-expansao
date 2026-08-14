@@ -39,3 +39,4 @@ Emendas entram no próprio arquivo da DEC, não no índice.
 - [DEC-026](DEC-026.md) — Gate do BLK-MA-09: rating como coluna-fato **sem peso** (molde do G-D2); o `v2` não é reativado e D-A/D-C ficam sem objeto (BLK-MA-09)
 - [DEC-027](DEC-027.md) — Sinal 6 (pressão competitiva) entra no score com peso `0,10`, **condicionado ao insumo**; pesos do D4 seguem congelados e a soma-alvo vai a 1,10 (BLK-MA-12)
 - [DEC-028](DEC-028.md) — A camada de M&A entra no piloto como **overlay de pressão competitiva** (não vulnerabilidade); emenda o §10 (overlay sai de "futuro") e o G-D1 (`flag_score_provisorio` passa a olhar o S6) — BLK-MA-13
+- [DEC-029](DEC-029.md) — O sinal 6 passa a ser medido **por academia** (rota B, sem bump de série); emenda o §8.1, agregação do entregável deixa de ser `first` e o score vai a `v4` — BLK-MA-14

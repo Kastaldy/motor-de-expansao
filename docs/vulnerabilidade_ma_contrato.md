@@ -379,6 +379,31 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 - `v6` (opcional) — pressão competitiva: `pressao_concorrencial_score_2km / 100` (independente
   espremida); coluna já materializada em `hexagonos_mercado_mapeado.parquet`.
 
+> ### [emenda BLK-MA-14 / DEC-029, 2026-08-14] O `v6` é medido POR ACADEMIA, não do centroide
+>
+> A definição acima é **hex-level**, e o BLK-MA-12 a implementou fielmente — medindo a distância dos
+> concorrentes até o **centroide do hexágono**. O resultado: todas as academias do mesmo hex
+> empatavam por construção (`0 de 6.753` hexes com qualquer variação interna). Mas o sinal se chama
+> "independente **espremida**", e "espremida" é propriedade da ACADEMIA.
+>
+> **O erro, medido sobre 5.823 independentes de SP:** erro absoluto médio **7,82** pontos, p90
+> **22,15**, **máximo 65,97**; amplitude de **14,89** pontos apagada dentro do mesmo hexágono;
+> **33%** das academias mudariam de faixa. Pearson 0,92 — e a correlação alta não absolve, porque
+> quem vira alvo é o caso individual: o hexágono `87a812a15ffffff` mede **1,2** e a academia dentro
+> dele, **67,2**.
+>
+> **O `v6` passa a sair de `calcular_pressao_por_academia`**, que mede da coordenada da unidade com
+> a MESMA fórmula (kernel e saturação compartilhados, travados por teste). O grão de território
+> continua existindo em `calcular_pressao_por_hex` — é a grandeza comparável com a camada de
+> mercado e a única que faz sentido pintar num mapa —, e a saída do score carimba qual dos dois
+> produziu o número (`pressao_grao`), porque **linhas de grãos diferentes não estão na mesma régua**.
+>
+> **Sem bump de série (rota B da DEC-029):** a coordenada é lida do feed cru, usada para medir e
+> descartada na função. Rejeitada a rota que persistiria no snapshot e custaria três bumps em
+> cascata. O anti-PII (§11) fica mais forte, não mais fraco: a proibição vira guard executável
+> (`_assert_schema_pressao_academia`) em vez da frase de docstring que confundia CALCULAR com
+> PERSISTIR — e que manteve o sinal um bloco inteiro no grão errado.
+
 ### 8.2 Normalização
 
 **Percentil por universo** (robusto a outliers) para os sinais contínuos (rating, staleness,

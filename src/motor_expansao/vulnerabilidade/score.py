@@ -74,6 +74,9 @@ from .contrato import (
     FONTES_AGREGADORES,
     H3_RES_CONTRATO,
     PESOS_ALVO_SINAIS,
+    PRESSAO_GRAO_ACADEMIA,
+    PRESSAO_GRAO_HEX,
+    PRESSAO_GRAOS,
     SINAIS_INATIVOS,
     SINAIS_ORDEM,
     STALE_SEMANAS,
@@ -198,7 +201,19 @@ def _juntar_presenca(universo: pd.DataFrame, presenca: pd.DataFrame) -> pd.DataF
 
 
 def _juntar_pressao(df: pd.DataFrame, pressao: pd.DataFrame | None) -> pd.DataFrame:
-    """Left join `many_to_one` da pressão (hex) no universo (academia). `None` -> coluna NULA.
+    """Left join da pressão no universo, nos DOIS grãos possíveis. `None` -> colunas NULAS.
+
+    O grão é decidido pelo FORMATO do frame, não por um parâmetro — quem produziu o insumo já sabe
+    o que mediu, e um parâmetro criaria a chance de declarar um grão e passar o outro:
+
+    | frame tem | grão | join |
+    |---|---|---|
+    | `fonte` + `chave_snapshot` | `academia` (BLK-MA-14, o default do pipeline) | `1:1` pela chave primária |
+    | `hex_id_res7` | `hex` (o grão antigo, do centroide) | `many_to_one` |
+
+    O carimbo `pressao_grao` viaja até a saída porque **duas linhas com grãos diferentes não estão
+    na mesma régua** — a pressão de academia varia dentro do hexágono (amplitude média medida:
+    14,89 pontos) e a de hex, não. Sem o carimbo, um consumidor compararia as duas sem saber.
 
     Nulo, jamais `0`: na régua do §8.1 `v6 = 0` afirma "ninguém espremendo", a leitura mais
     otimista possível. "Não recebi o insumo" tem de ser distinguível de "medi e não há" — é a mesma
@@ -206,25 +221,55 @@ def _juntar_pressao(df: pd.DataFrame, pressao: pd.DataFrame | None) -> pd.DataFr
     """
     out = df.copy()
     if pressao is None or pressao.empty:
-        out["pressao_competitiva_no_hex"] = pd.Series(
-            float("nan"), index=out.index, dtype="float64"
-        )
+        out["pressao_competitiva"] = pd.Series(float("nan"), index=out.index, dtype="float64")
+        out["pressao_grao"] = pd.Series(pd.NA, index=out.index, dtype="string")
         return out
 
-    if "hex_id_res7" not in pressao.columns or "pressao_competitiva_no_hex" not in pressao.columns:
+    por_academia = {"fonte", "chave_snapshot"} <= set(pressao.columns)
+    por_hex = "hex_id_res7" in pressao.columns
+    if not (por_academia or por_hex):
         raise ValueError(
-            "frame de pressao fora do contrato: exige `hex_id_res7` e "
-            "`pressao_competitiva_no_hex`"
+            "frame de pressao fora do contrato: exige `(fonte, chave_snapshot)` (grao academia) "
+            "ou `hex_id_res7` (grao hex)"
         )
-    if bool(pressao["hex_id_res7"].duplicated().any()):
-        raise ValueError("frame de pressao com `hex_id_res7` duplicado: o join seria ambiguo")
 
-    projecao = pressao[["hex_id_res7", "pressao_competitiva_no_hex"]].copy()
-    projecao["hex_id_res7"] = projecao["hex_id_res7"].astype("string")
-    out = out.merge(projecao, on="hex_id_res7", how="left", validate="many_to_one")
-    out["pressao_competitiva_no_hex"] = pd.to_numeric(
-        out["pressao_competitiva_no_hex"], errors="coerce"
+    if por_academia:
+        chaves = ["fonte", "chave_snapshot"]
+        # Cada grão carrega o NOME de coluna do seu próprio contrato: `pressao_competitiva` no de
+        # academia, `pressao_competitiva_no_hex` no de hex (que mantém o sufixo porque é a
+        # grandeza comparável com o `pressao_concorrencial_score_2km` da camada de mercado).
+        # Uniformizar aqui, na leitura, é mais barato que renomear um contrato já publicado.
+        coluna = "pressao_competitiva"
+        if bool(pressao.duplicated(subset=chaves).any()):
+            raise ValueError("frame de pressao com `(fonte, chave_snapshot)` duplicado")
+        grao = PRESSAO_GRAO_ACADEMIA
+    else:
+        chaves = ["hex_id_res7"]
+        coluna = "pressao_competitiva_no_hex"
+        if bool(pressao["hex_id_res7"].duplicated().any()):
+            raise ValueError("frame de pressao com `hex_id_res7` duplicado: o join seria ambiguo")
+        grao = PRESSAO_GRAO_HEX
+    if coluna not in pressao.columns:
+        raise ValueError(f"frame de pressao (grao {grao}) sem a coluna `{coluna}`")
+
+    # `many_to_one` nos dois casos: o universo de M&A é um SUBCONJUNTO do insumo (o filtro de
+    # cadeia já rodou), então sobram linhas de pressão sem par à esquerda — esperado. O que não
+    # pode haver é duplicata à direita, e os guards acima já barraram.
+    projecao = pressao[[*chaves, coluna]].copy().rename(columns={coluna: "pressao_competitiva"})
+    for chave in chaves:
+        projecao[chave] = projecao[chave].astype("string")
+        out[chave] = out[chave].astype("string")
+    out = out.merge(projecao, on=chaves, how="left", validate="many_to_one")
+    out["pressao_competitiva"] = pd.to_numeric(
+        out["pressao_competitiva"], errors="coerce"
     ).astype("float64")
+    # O carimbo acompanha o VALOR: linha sem par no join fica sem pressão E sem grão. Carimbar o
+    # grão numa linha sem medição afirmaria uma procedência que não existe.
+    out["pressao_grao"] = (
+        pd.Series(grao, index=out.index, dtype="string")
+        .where(out["pressao_competitiva"].notna())
+        .astype("string")
+    )
     return out
 
 
@@ -256,8 +301,8 @@ def _regra_de_disponibilidade(df: pd.DataFrame) -> dict[str, pd.Series]:
         # camada. Aqui, quem não passa pressão obtém exatamente o score de antes — os pesos
         # efetivos do Plano B inclusive, porque `renormalizar_pesos` divide pelos PRESENTES.
         "s6": (
-            df["pressao_competitiva_no_hex"].notna()
-            if "pressao_competitiva_no_hex" in df.columns
+            df["pressao_competitiva"].notna()
+            if "pressao_competitiva" in df.columns
             else pd.Series(False, index=indice)
         ),
     }
@@ -292,8 +337,8 @@ def _derivar_componentes(df: pd.DataFrame) -> pd.DataFrame:
     # `v6` já vem em [0,1) do `pressao_competitiva`; aqui é só leitura, não normalização — a régua
     # é ABSOLUTA como a do `v4` (G-D3), nunca percentil do lote.
     v6_bruto = (
-        out["pressao_competitiva_no_hex"].astype("float64") / 100.0
-        if "pressao_competitiva_no_hex" in out.columns
+        out["pressao_competitiva"].astype("float64") / 100.0
+        if "pressao_competitiva" in out.columns
         else pd.Series(float("nan"), index=out.index, dtype="float64")
     )
 
@@ -461,11 +506,20 @@ def _assert_schema_score(df: pd.DataFrame) -> None:
     v6 = df["v6"].astype("float64")
     if bool(((v6 < 0.0) | (v6 >= 1.0)).any()):
         raise ValueError("`v6` fora do dominio [0, 1)")
-    if bool((v6.isna() != df["pressao_competitiva_no_hex"].isna()).any()):
+    if bool((v6.isna() != df["pressao_competitiva"].isna()).any()):
         raise ValueError(
-            "biconditional do S6 violado: `v6` nulo deve equivaler a "
-            "`pressao_competitiva_no_hex` nulo"
+            "biconditional do S6 violado: `v6` nulo deve equivaler a `pressao_competitiva` nulo"
         )
+    # O carimbo de GRAO acompanha o valor: presente exatamente onde ha pressao. Um grao sem
+    # pressao afirmaria procedencia inexistente; pressao sem grao esconderia a regua usada, e e'
+    # justamente a regua que nao pode ser comparada entre linhas (BLK-MA-14).
+    if bool((df["pressao_grao"].isna() != df["pressao_competitiva"].isna()).any()):
+        raise ValueError(
+            "`pressao_grao` deve estar preenchido exatamente onde `pressao_competitiva` esta"
+        )
+    graos = sorted(set(df["pressao_grao"].dropna().astype(str)) - set(PRESSAO_GRAOS))
+    if graos:
+        raise ValueError(f"`pressao_grao` fora do dominio {list(PRESSAO_GRAOS)}: {graos}")
     if bool(((score < 0.0) | (score > 100.0)).any()):
         raise ValueError("`score_vulnerabilidade` fora do dominio [0, 100]")
 

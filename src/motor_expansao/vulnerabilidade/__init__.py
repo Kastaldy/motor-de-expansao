@@ -55,6 +55,7 @@ from .contrato import (
     CONTRATO_COLUNAS_CHURN,
     CONTRATO_COLUNAS_PRESENCA_AGREGADOR,
     CONTRATO_COLUNAS_PRESSAO,
+    CONTRATO_COLUNAS_PRESSAO_ACADEMIA,
     CONTRATO_COLUNAS_SCORE,
     CONTRATO_COLUNAS_SNAPSHOT,
     FONTES_AGREGADORES,
@@ -80,6 +81,7 @@ from .contrato import (
 )
 from .presenca_agregador import extrair_presenca_agregador
 from .pressao_competitiva import (
+    calcular_pressao_por_academia,
     calcular_pressao_por_hex,
     ler_concorrentes,
     peso_por_distancia,
@@ -89,6 +91,7 @@ from .snapshots import (
     SNAPSHOTS_DIR_DEFAULT,
     avaliar_estabilidade_slug,
     calcular_hash_campos_raspados,
+    coordenadas_por_chave,
     derivar_chave,
     escrever_particao_semana,
     ler_feeds,
@@ -129,11 +132,14 @@ __all__ = [
     "SINAIS_INATIVOS",
     "V3_POR_STATUS_CHURN",
     "renormalizar_pesos",
-    # Sinal 6 - pressao competitiva com decaimento (fato sem peso)
-    "calcular_pressao_por_hex",
+    # Sinal 6 - pressao competitiva com decaimento por distancia
+    "calcular_pressao_por_academia",  # grao ACADEMIA (o do `v6` desde a DEC-029)
+    "calcular_pressao_por_hex",  # grao TERRITORIO (comparavel com a camada de mercado)
+    "coordenadas_por_chave",
     "peso_por_distancia",
     "ler_concorrentes",
     "CONTRATO_COLUNAS_PRESSAO",
+    "CONTRATO_COLUNAS_PRESSAO_ACADEMIA",
     "VERSAO_CONTRATO_PRESSAO",
     "PRESSAO_RAIO_M",
     "PRESSAO_KERNEL_DEFAULT",

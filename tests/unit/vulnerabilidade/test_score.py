@@ -1099,18 +1099,20 @@ def test_docstring_registra_por_que_as_colunas_ressalvadas_ficam_fora() -> None:
 # --------------------------------------------------------------------------- #
 # CA-11 — contrato de 20 colunas e `_assert_schema_score`
 # --------------------------------------------------------------------------- #
-def test_schema_24_colunas_em_ordem_e_dtypes(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
+def test_schema_25_colunas_em_ordem_e_dtypes(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
     churn, presenca = _insumos(serie_madura_s3_s4)
     out = calcular_score_vulnerabilidade(churn=churn, presenca=presenca)
     assert list(out.columns) == list(c.CONTRATO_COLUNAS_SCORE.keys())
     # 20 -> 22 no BLK-MA-09 / DEC-026 (dois FATOS de rating); 22 -> 24 no BLK-MA-12 (`v6` e a
-    # pressao que o audita). Sem insumo de pressao, `v6` sai NULO e `n_sinais_disponiveis`
+    # pressao que o audita); 24 -> 25 no BLK-MA-14 / DEC-029 (`pressao_grao`, o carimbo de qual
+    # regua produziu o numero). Sem insumo de pressao, `v6` sai NULO e `n_sinais_disponiveis`
     # continua limitado a 3 — a chamada acima nao passa `pressao=`.
-    assert len(list(out.columns)) == 24
+    assert len(list(out.columns)) == 25
     assert "v2" not in out.columns
     assert out["nota_wellhub"].dtype == "Float64"
     assert out["qtd_avaliacoes_wellhub"].dtype == "Int64"
     assert out["v6"].isna().all(), "sem insumo de pressao, o S6 nao existe na linha"
+    assert out["pressao_grao"].isna().all(), "sem pressao nao ha grao a carimbar"
     assert int(out["n_sinais_disponiveis"].max()) <= 3
     assert (out["versao_contrato"] == c.VERSAO_CONTRATO_SCORE).all()
     # `Int64` NULÁVEL, não `int64`: a linha sem par no sinal 1 precisa carregar nulo.
@@ -1456,3 +1458,106 @@ def test_rating_nao_altera_o_score(serie_madura_s3_s4: list[pd.DataFrame]) -> No
     pd.testing.assert_series_equal(
         a["sinais_disponiveis"], b["sinais_disponiveis"], check_names=False
     )
+
+
+# --------------------------------------------------------------------------- #
+# BLK-MA-14 / DEC-029 — o `v6` passa a aceitar os DOIS grãos, com carimbo
+# --------------------------------------------------------------------------- #
+def _pressao_academia(chaves_e_pressao: dict[str, float]) -> pd.DataFrame:
+    """Frame de pressão POR ACADEMIA, forjado no contrato — sem passar pelo cálculo geodésico."""
+    linhas = [
+        {
+            "fonte": "totalpass",
+            "chave_snapshot": chave,
+            "pressao_competitiva": p,
+            "v6": p / 100.0,
+            "oferta_ponderada": 1.0,
+            "n_concorrentes_no_raio": 1,
+            "dist_concorrente_mais_proximo_m": 500.0,
+            "kernel_pressao": c.PRESSAO_KERNEL_DEFAULT,
+            "raio_pressao_m": c.PRESSAO_RAIO_M,
+            "versao_contrato": c.VERSAO_CONTRATO_PRESSAO,
+        }
+        for chave, p in chaves_e_pressao.items()
+    ]
+    df = pd.DataFrame(linhas, columns=list(c.CONTRATO_COLUNAS_PRESSAO_ACADEMIA.keys()))
+    for coluna, dtype in c.CONTRATO_COLUNAS_PRESSAO_ACADEMIA.items():
+        df[coluna] = df[coluna].astype(dtype)
+    return df
+
+
+def test_pressao_por_academia_nao_empata_dentro_do_hexagono() -> None:
+    """O ganho do bloco, medido na saída do SCORE: duas academias do mesmo hex divergem.
+
+    Com o grão hex isto era impossível por construção — o join `many_to_one` dava a mesma linha de
+    pressão às duas. Este teste falha se alguém devolver o `v6` ao grão de território.
+    """
+    churn = _churn(
+        [
+            _linha_churn("k_a", hex_id=HEX_A, n_semanas_serie=13, interpretavel=True),
+            _linha_churn("k_b", hex_id=HEX_A, n_semanas_serie=13, interpretavel=True),
+        ]
+    )
+    out = calcular_score_vulnerabilidade(
+        churn=churn,
+        presenca=_presenca([_linha_presenca(HEX_A)]),
+        pressao=_pressao_academia({"k_a": 90.0, "k_b": 10.0}),
+    )
+    assert out["hex_id_res7"].nunique() == 1, "as duas academias vivem no MESMO hexagono"
+    assert float(_linha_de(out, "k_a")["v6"]) == pytest.approx(0.90)
+    assert float(_linha_de(out, "k_b")["v6"]) == pytest.approx(0.10)
+    assert out["score_vulnerabilidade"].nunique() == 2
+
+
+def test_grao_e_carimbado_na_saida_e_so_onde_ha_pressao() -> None:
+    """`pressao_grao` diz de qual régua o número veio — sem isso as duas seriam comparadas às cegas."""
+    churn = _churn(
+        [
+            _linha_churn("k_com", hex_id=HEX_A, n_semanas_serie=13, interpretavel=True),
+            _linha_churn("k_sem", hex_id=HEX_A, n_semanas_serie=13, interpretavel=True),
+        ]
+    )
+    out = calcular_score_vulnerabilidade(
+        churn=churn,
+        presenca=_presenca([_linha_presenca(HEX_A)]),
+        pressao=_pressao_academia({"k_com": 42.0}),  # `k_sem` fica sem par no join
+    )
+    assert str(_linha_de(out, "k_com")["pressao_grao"]) == c.PRESSAO_GRAO_ACADEMIA
+    assert pd.isna(_linha_de(out, "k_sem")["pressao_grao"]), "sem pressao nao ha grao a carimbar"
+    assert pd.isna(_linha_de(out, "k_sem")["v6"])
+
+
+def test_grao_hex_continua_aceito_e_carimbado_como_hex() -> None:
+    """O grão antigo não foi removido: ele é a grandeza comparável com a camada de mercado."""
+    from motor_expansao.vulnerabilidade.pressao_competitiva import calcular_pressao_por_hex
+
+    lat, lng = h3.cell_to_latlng(HEX_A)
+    conc = pd.DataFrame([{"rede": "smart_fit", "lat": lat, "lng": lng, "status_registro": "valido"}])
+    out = calcular_score_vulnerabilidade(
+        churn=_churn([_linha_churn("k", hex_id=HEX_A, n_semanas_serie=13, interpretavel=True)]),
+        presenca=_presenca([_linha_presenca(HEX_A)]),
+        pressao=calcular_pressao_por_hex([HEX_A], conc),
+    )
+    assert str(out.iloc[0]["pressao_grao"]) == c.PRESSAO_GRAO_HEX
+    assert float(out.iloc[0]["v6"]) > 0.0
+
+
+def test_frame_de_pressao_sem_chave_reconhecivel_levanta() -> None:
+    ruim = pd.DataFrame([{"algo": 1, "pressao_competitiva": 10.0}])
+    with pytest.raises(ValueError, match="grao academia"):
+        calcular_score_vulnerabilidade(
+            churn=_churn([_linha_churn("k", hex_id=HEX_A)]),
+            presenca=_presenca([_linha_presenca(HEX_A)]),
+            pressao=ruim,
+        )
+
+
+def test_pressao_por_academia_duplicada_levanta() -> None:
+    """Duplicata envenenaria o join da chave primária do score."""
+    dupla = pd.concat([_pressao_academia({"k": 10.0}), _pressao_academia({"k": 20.0})])
+    with pytest.raises(ValueError, match="duplicado"):
+        calcular_score_vulnerabilidade(
+            churn=_churn([_linha_churn("k", hex_id=HEX_A)]),
+            presenca=_presenca([_linha_presenca(HEX_A)]),
+            pressao=dupla,
+        )

@@ -39,7 +39,7 @@ from datetime import date
 VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v3"
 VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
-VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v3"
+VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v4"
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
 H3_RES_CONTRATO = 7
@@ -364,7 +364,14 @@ CONTRATO_COLUNAS_SCORE: dict[str, str] = {
     "v3": "float64",  # componente do S3; {0.0, 0.7, 1.0} ou nulo
     "v4": "float64",  # componente do S4; [0, 1] ou nulo
     "v6": "float64",  # componente do S6; [0, 1) ou nulo se o insumo nao veio (BLK-MA-12)
-    "pressao_competitiva_no_hex": "Float64",  # auditoria do v6; nulo sse `v6` nulo
+    # AUDITORIA do v6; nulo sse `v6` nulo. O nome perdeu o sufixo `_no_hex` no BLK-MA-14: a
+    # pressao passou a ter DOIS graos possiveis, e cravar um deles no nome da coluna faria o
+    # contrato mentir metade das vezes. Quem diz de onde o numero veio e' `pressao_grao`.
+    "pressao_competitiva": "Float64",
+    # Carimbo do GRAO: `academia` (medido da coordenada da unidade) ou `hex` (do centroide).
+    # Nulo exatamente quando `pressao_competitiva` e' nula. Viaja ate' o consumidor de proposito —
+    # duas linhas com graos diferentes NAO estao na mesma regua, e sem o carimbo isso e' invisivel.
+    "pressao_grao": "string",
     "sinais_disponiveis": "string",  # subconjunto de SINAIS_ORDEM, unido por `,`
     # 0..4: o S2 nunca conta (DEC-026), mas o S6 conta QUANDO o insumo de pressao e' fornecido
     # (BLK-MA-12). Sem o insumo, o dominio volta a 0..3 e nada muda em relacao ao v2.
@@ -400,9 +407,44 @@ PRESSAO_KERNEL_DEFAULT = "linear"
 PRESSAO_BETA_POTENCIA = 1.5
 PRESSAO_DIST_MIN_M = 50.0  # piso anti-divisão-por-zero do kernel de potência
 
+# GRÃOS possíveis da pressão (BLK-MA-14). `academia` é o default do pipeline desde então; `hex`
+# continua calculável e é o que a camada de mercado usa, mas NÃO é mais o grão do componente `v6`.
+PRESSAO_GRAO_ACADEMIA = "academia"
+PRESSAO_GRAO_HEX = "hex"
+PRESSAO_GRAOS: tuple[str, ...] = (PRESSAO_GRAO_ACADEMIA, PRESSAO_GRAO_HEX)
+
+# Frame de pressão POR ACADEMIA: 10 colunas, nesta ORDEM. É o insumo do `v6` desde o BLK-MA-14.
+#
+# POR QUE A CHAVE É `(fonte, chave_snapshot)` E NÃO SÓ A CHAVE: é o mesmo par que o score usa como
+# chave primária. `chave_snapshot` sozinha não é única — ela é derivada por fonte, e a mesma
+# academia listada em TotalPass e WellHub são duas linhas por construção (§8.1, emenda BLK-MA-03).
+#
+# **NÃO HÁ COORDENADA AQUI, e essa ausência é o contrato.** A latitude/longitude da academia entra
+# no CÁLCULO (é dela que a distância é medida) e morre na função: o que sai é o agregado. A
+# distinção entre CALCULAR e PERSISTIR é o que torna o grão de academia compatível com o §11 —
+# antes do BLK-MA-14 o docstring do módulo confundia as duas e dava a mudança como impossível.
+CONTRATO_COLUNAS_PRESSAO_ACADEMIA: dict[str, str] = {
+    "fonte": "string",
+    "chave_snapshot": "string",
+    "pressao_competitiva": "float64",  # [0, 100); mesma régua e mesma fórmula do grão hex
+    "v6": "float64",  # pressao/100 — o componente do §8.1
+    "oferta_ponderada": "float64",  # soma dos pesos; auditoria do decaimento
+    "n_concorrentes_no_raio": "int64",  # contagem CRUA, para comparar com a ponderada
+    "dist_concorrente_mais_proximo_m": "float64",
+    "kernel_pressao": "string",  # carimbo: qual decaimento produziu o número
+    "raio_pressao_m": "float64",
+    "versao_contrato": "string",
+}
+
 # Frame de pressão por hex: 9 colunas, nesta ORDEM. O sufixo `_no_hex` das colunas 2-4 é
 # deliberado, no molde do `presenca_agregador`: a pressão é grandeza do TERRITÓRIO, e todas as
 # academias do mesmo hex herdam o mesmo valor pelo join.
+#
+# **ESTE FRAME DEIXOU DE SER O INSUMO DO `v6` no BLK-MA-14** — ele mede o território, e o §8.1
+# passou a exigir a unidade. Continua vivo e calculável: é a grandeza comparável com o
+# `pressao_concorrencial_score_2km` da camada de mercado, e é a única que faz sentido pintar num
+# mapa (uma cor cobre o hexágono inteiro). Quem o injetar em `calcular_score_vulnerabilidade`
+# recebe o score no grão antigo, com `pressao_grao = "hex"` carimbado na saída.
 CONTRATO_COLUNAS_PRESSAO: dict[str, str] = {
     "hex_id_res7": "string",
     "pressao_competitiva_no_hex": "float64",  # [0, 100); mesma régua do mercado
@@ -466,7 +508,8 @@ CONTRATO_COLUNAS_ACADEMIAS_MA: dict[str, str] = {
     # SINAL 6 (BLK-MA-12) — PROPAGADO do score, onde ele é componente com peso desde que o insumo
     # de pressão seja fornecido. Esta camada não recalcula nada: só carrega para o entregável.
     # Nulo quando o score foi calculado sem `pressao=` — ausência de cálculo, não pressão zero.
-    "pressao_competitiva_no_hex": "Float64",
+    "pressao_competitiva": "Float64",
+    "pressao_grao": "string",
     "v6": "float64",
     "uf": "string",
     "sam_fitness_potencial": "float64",
@@ -499,8 +542,13 @@ CONTRATO_COLUNAS_ALVOS_MA: dict[str, str] = {
     "flag_serie_imatura": "bool",
     "n_com_nota_wellhub": "int64",  # FATO sem peso (DEC-026): a nota anda com a contagem
     "nota_wellhub_mediana": "Float64",
-    "pressao_competitiva_no_hex": "Float64",  # FATO sem peso (BLK-MA-12); nulo se nao calculado
-    "v6_no_hex": "Float64",
+    # AGREGADOS do grao ACADEMIA (BLK-MA-14): a media e o maximo da pressao entre as academias
+    # do hex. Deixou de ser `first`, e a mudanca e' obrigatoria, nao estetica — com pressao por
+    # unidade a variancia DENTRO do hex passa a existir (amplitude media medida: 14,9 pontos), e
+    # `first` devolveria a linha que o `groupby` viu primeiro como se fosse o hex inteiro.
+    "pressao_competitiva_media": "Float64",
+    "pressao_competitiva_max": "Float64",
+    "v6_medio": "Float64",
     "versao_contrato": "string",
 }
 
@@ -815,6 +863,10 @@ __all__ = [
     "PRESSAO_DIST_MIN_M",
     "KERNEIS_PRESSAO",
     "CONTRATO_COLUNAS_PRESSAO",
+    "CONTRATO_COLUNAS_PRESSAO_ACADEMIA",
+    "PRESSAO_GRAOS",
+    "PRESSAO_GRAO_ACADEMIA",
+    "PRESSAO_GRAO_HEX",
     "VERSAO_CONTRATO_ALVOS_MA",
     "QUANTIL_SAM_QUENTE",
     "LIMIAR_RESIDUAL_SATURADO",

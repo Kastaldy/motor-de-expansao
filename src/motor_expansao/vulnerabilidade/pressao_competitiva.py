@@ -52,13 +52,30 @@ revelada — 3,7x de diferença), e o score de vulnerabilidade **não tem desfec
 calibrar (§8: é heurística auditável, não modelo preditivo). Herdar um β sem alvo seria arbitrar
 com aparência de calibração.
 
-GRÃO — a ressalva que acompanha o sinal: a pressão é propriedade do **HEX**, não da academia. Todas
-as academias do mesmo hex recebem o mesmo `v6`. Diferente do `v1` (onde a emenda BLK-MA-03 registrou
-esse viés como desconfortável), aqui a grandeza **é** intrínseca ao território — como a hotness do
-§9/D5 —, então propagar por hex é fiel ao que se mede. Calcular por unidade exigiria a coordenada da
-academia, que esta camada deliberadamente **não persiste** (anti-PII, §11/DEC-012); do centroide do
-hex, o resultado seria idêntico para todas as academias do hex de qualquer forma. O sufixo `_no_hex`
-carrega a ressalva até o consumidor.
+GRÃO — **corrigido no BLK-MA-14 (DEC-029); o texto anterior estava errado e vale registrar por quê.**
+Ele dizia que a pressão é propriedade do HEX e que "calcular por unidade exigiria a coordenada da
+academia, que esta camada deliberadamente não persiste". A segunda metade confundia **CALCULAR** com
+**PERSISTIR**: a coordenada existe no feed cru e passa pelas mãos do materializador antes de a
+projeção das 12 colunas descartá-la — dá para medir a distância a partir dela e devolver só o
+agregado, sem que ela toque disco. A frase fechou uma porta que estava aberta, e o sinal ficou um
+bloco inteiro no grão errado por causa dela.
+
+O erro não era teórico. Medido em 2026-08-14 sobre 5.823 independentes de SP: erro absoluto médio
+**7,82** pontos entre os dois grãos, p90 **22,15**, **máximo 65,97**; amplitude média de **14,89**
+pontos DENTRO do mesmo hexágono, apagada por construção; **33%** das academias mudariam de faixa. O
+caso que decide: o hexágono `87a812a15ffffff` mede pressão **1,2** e a academia dentro dele, **67,2**
+— espremida, aparecendo como território livre.
+
+Hoje os DOIS grãos existem e não são intercambiáveis:
+
+  - `calcular_pressao_por_academia` — mede da coordenada da UNIDADE. É o insumo do `v6` desde o
+    BLK-MA-14, porque "independente espremida" (§8.1) é propriedade da academia.
+  - `calcular_pressao_por_hex` — mede do centroide do TERRITÓRIO. É a grandeza comparável com o
+    `pressao_concorrencial_score_2km` da camada de mercado, e a única que faz sentido pintar num
+    mapa. Continua disponível, com `pressao_grao = "hex"` carimbado na saída do score.
+
+O anti-PII segue intacto e agora é EXECUTÁVEL nos dois caminhos: a coordenada entra no cálculo e
+`_assert_schema_pressao_academia` barra qualquer tentativa de fazê-la sair.
 
 GUARDRAILS: READ-ONLY sobre o M1 e sobre a camada de mercado (lê pontos, nunca reescreve); anti-PII
 (entra coordenada de ESTABELECIMENTO COMERCIAL já versionada em `data/staging`, sai só agregado por
@@ -78,6 +95,7 @@ import pandas as pd
 
 from .contrato import (
     CONTRATO_COLUNAS_PRESSAO,
+    CONTRATO_COLUNAS_PRESSAO_ACADEMIA,
     KERNEIS_PRESSAO,
     PRESSAO_BETA_POTENCIA,
     PRESSAO_DIST_MIN_M,
@@ -164,6 +182,164 @@ def _centroides(hexes: Iterable[str]) -> tuple[list[str], np.ndarray, np.ndarray
     return validos, np.asarray(lats, dtype="float64"), np.asarray(lngs, dtype="float64")
 
 
+def _pontos_validos(concorrentes: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Coordenadas finitas dos concorrentes com `status_registro == "valido"` (quando existir)."""
+    pontos = concorrentes
+    if "status_registro" in pontos.columns:
+        pontos = pontos[pontos["status_registro"].astype(str) == "valido"]
+    lat = pd.to_numeric(pontos["lat"], errors="coerce").to_numpy(dtype="float64")
+    lng = pd.to_numeric(pontos["lng"], errors="coerce").to_numpy(dtype="float64")
+    finito = np.isfinite(lat) & np.isfinite(lng)
+    return lat[finito], lng[finito]
+
+
+def _oferta_por_origem(
+    lat_o: np.ndarray,
+    lng_o: np.ndarray,
+    lat_c: np.ndarray,
+    lng_c: np.ndarray,
+    *,
+    kernel: str,
+    raio_m: float,
+    beta: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Núcleo comum aos dois grãos: para cada ORIGEM, a oferta ponderada dos concorrentes.
+
+    A origem é o centroide do hexágono (`calcular_pressao_por_hex`) ou a coordenada da academia
+    (`calcular_pressao_por_academia`) — a matemática é a MESMA, e é por isso que ela mora aqui em
+    vez de duplicada nas duas. Se o kernel mudasse só num dos caminhos, os dois grãos deixariam de
+    ser comparáveis sem ninguém notar.
+
+    Laço por origem, não produto cartesiano completo: 19.329 academias x 4.499 pontos numa matriz
+    cheia passaria de 600 MB.
+    """
+    oferta = np.zeros(len(lat_o), dtype="float64")
+    n_no_raio = np.zeros(len(lat_o), dtype="int64")
+    dist_min = np.full(len(lat_o), np.nan, dtype="float64")
+    if not lat_c.size:
+        return oferta, n_no_raio, dist_min
+
+    for i in range(len(lat_o)):
+        d = _haversine_m(
+            np.full(lat_c.shape, lat_o[i]), np.full(lng_c.shape, lng_o[i]), lat_c, lng_c
+        )
+        peso = peso_por_distancia(d, kernel=kernel, raio_m=raio_m, beta=beta)
+        oferta[i] = float(peso.sum())
+        n_no_raio[i] = int((d <= float(raio_m)).sum())
+        if d.size:
+            dist_min[i] = float(d.min())
+    return oferta, n_no_raio, dist_min
+
+
+def _saturar(oferta: np.ndarray) -> np.ndarray:
+    """`oferta -> pressao ∈ [0, 100)`. A saturação do contrato de mercado, num lugar só."""
+    return 100.0 * (1.0 - 1.0 / (1.0 + oferta))
+
+
+def calcular_pressao_por_academia(
+    academias: pd.DataFrame,
+    concorrentes: pd.DataFrame,
+    *,
+    kernel: str = PRESSAO_KERNEL_DEFAULT,
+    raio_m: float = PRESSAO_RAIO_M,
+    beta: float = PRESSAO_BETA_POTENCIA,
+) -> pd.DataFrame:
+    """Academias com coordenada + pontos de concorrentes -> pressão POR UNIDADE. Função **pura**.
+
+    `academias` precisa de `fonte`, `chave_snapshot`, `lat` e `lng`. **A coordenada entra e não
+    sai**: ela é lida para medir a distância e o frame devolvido tem só o agregado
+    (`CONTRATO_COLUNAS_PRESSAO_ACADEMIA`), travado pelo `_assert_schema_pressao_academia`.
+
+    POR QUE ESTE GRÃO EXISTE (BLK-MA-14, objeção de Vinicius em 2026-08-14). O §8.1 dizia
+    "independente espremida", que é propriedade da ACADEMIA, mas media a distância a partir do
+    **centroide do hexágono** — e todas as academias do mesmo hex empatavam por construção (medido:
+    `0 de 6.753` hexes com qualquer variação interna). O erro não é acadêmico: sobre 5.823
+    independentes de SP, o erro absoluto médio é **7,82** pontos, o p90 **22,15** e o **máximo
+    65,97**; 33% das academias mudariam de faixa. O pior caso medido é a refutação da defesa "mas a
+    correlação é 0,92": o hexágono `87a812a15ffffff` marca pressão **1,2** e a academia dentro dele
+    tem **67,2** — uma unidade espremida aparecendo como território livre, que é exatamente o falso
+    negativo que o sinal existe para não produzir.
+
+    A fórmula é a MESMA do grão hex (`_oferta_por_origem` + `_saturar`); o que muda é a ORIGEM da
+    medição. Isso é deliberado: os dois números continuam na mesma régua e comparáveis.
+    """
+    if kernel not in KERNEIS_PRESSAO:
+        raise ValueError(f"kernel fora de {sorted(KERNEIS_PRESSAO)}: {kernel!r}")
+    faltando = [c for c in ("fonte", "chave_snapshot", "lat", "lng") if c not in academias.columns]
+    if faltando:
+        raise ValueError(f"frame de academias sem coluna(s) obrigatoria(s): {faltando}")
+
+    base = academias.copy()
+    base["lat"] = pd.to_numeric(base["lat"], errors="coerce")
+    base["lng"] = pd.to_numeric(base["lng"], errors="coerce")
+    # Coordenada ausente/inválida é DESCARTADA com aviso, nunca imputada: sem origem não há
+    # distância, e um `0` ali afirmaria "ninguém espremendo" — a leitura mais otimista da régua.
+    invalidas = int((~np.isfinite(base["lat"]) | ~np.isfinite(base["lng"])).sum())
+    if invalidas:
+        _logger.warning("academia sem coordenada valida, fora do calculo de pressao: %d", invalidas)
+    base = base[np.isfinite(base["lat"]) & np.isfinite(base["lng"])]
+    if base.empty:
+        return pd.DataFrame(
+            {c: pd.Series(dtype=d) for c, d in CONTRATO_COLUNAS_PRESSAO_ACADEMIA.items()}
+        )
+    if bool(base.duplicated(subset=["fonte", "chave_snapshot"]).any()):
+        raise ValueError("frame de academias com `(fonte, chave_snapshot)` duplicado")
+
+    lat_c, lng_c = _pontos_validos(concorrentes)
+    oferta, n_no_raio, dist_min = _oferta_por_origem(
+        base["lat"].to_numpy(dtype="float64"),
+        base["lng"].to_numpy(dtype="float64"),
+        lat_c,
+        lng_c,
+        kernel=kernel,
+        raio_m=raio_m,
+        beta=beta,
+    )
+    pressao = _saturar(oferta)
+
+    out = pd.DataFrame(
+        {
+            "fonte": base["fonte"].astype("string").to_numpy(),
+            "chave_snapshot": base["chave_snapshot"].astype("string").to_numpy(),
+            "pressao_competitiva": pd.Series(pressao, dtype="float64"),
+            "v6": pd.Series(pressao / 100.0, dtype="float64"),
+            "oferta_ponderada": pd.Series(oferta, dtype="float64"),
+            "n_concorrentes_no_raio": pd.Series(n_no_raio, dtype="int64"),
+            "dist_concorrente_mais_proximo_m": pd.Series(dist_min, dtype="float64"),
+            "kernel_pressao": pd.Series([str(kernel)] * len(base), dtype="string"),
+            "raio_pressao_m": pd.Series([float(raio_m)] * len(base), dtype="float64"),
+            "versao_contrato": pd.Series([VERSAO_CONTRATO_PRESSAO] * len(base), dtype="string"),
+        }
+    )
+    for coluna, dtype in CONTRATO_COLUNAS_PRESSAO_ACADEMIA.items():
+        out[coluna] = out[coluna].astype(dtype)
+    _assert_schema_pressao_academia(out)
+    return out
+
+
+def _assert_schema_pressao_academia(df: pd.DataFrame) -> None:
+    """Contrato do grão academia + a trava anti-PII, que aqui é o ponto todo.
+
+    A coordenada ENTRA nesta função e não pode sair dela. Este guard é o que transforma essa frase
+    em código — sem ele, "a camada não persiste coordenada" voltaria a ser prosa.
+    """
+    esperado = list(CONTRATO_COLUNAS_PRESSAO_ACADEMIA.keys())
+    if list(df.columns) != esperado:
+        raise AssertionError(f"frame de pressao por academia fora do contrato: {list(df.columns)}")
+    vazando = sorted(set(df.columns) & _COLUNAS_PROIBIDAS_SAIDA)
+    if vazando:
+        raise AssertionError(f"coordenada/identidade na saida da pressao (anti-PII): {vazando}")
+    if df.empty:
+        return
+    if bool(df.duplicated(subset=["fonte", "chave_snapshot"]).any()):
+        raise AssertionError("`(fonte, chave_snapshot)` duplicado no frame de pressao")
+    v6 = pd.to_numeric(df["v6"], errors="coerce")
+    if bool(((v6 < 0.0) | (v6 >= 1.0)).any()):
+        raise AssertionError("`v6` fora de [0, 1)")
+    if bool((pd.to_numeric(df["oferta_ponderada"], errors="coerce") < 0.0).any()):
+        raise AssertionError("`oferta_ponderada` negativa")
+
+
 def calcular_pressao_por_hex(
     hexes: Iterable[str],
     concorrentes: pd.DataFrame,
@@ -193,34 +369,13 @@ def calcular_pressao_por_hex(
             {col: pd.Series(dtype=dtype) for col, dtype in CONTRATO_COLUNAS_PRESSAO.items()}
         )
 
-    pontos = concorrentes
-    if "status_registro" in pontos.columns:
-        pontos = pontos[pontos["status_registro"].astype(str) == "valido"]
-    lat_c = pd.to_numeric(pontos["lat"], errors="coerce").to_numpy(dtype="float64")
-    lng_c = pd.to_numeric(pontos["lng"], errors="coerce").to_numpy(dtype="float64")
-    finito = np.isfinite(lat_c) & np.isfinite(lng_c)
-    lat_c, lng_c = lat_c[finito], lng_c[finito]
-
-    oferta = np.zeros(len(validos), dtype="float64")
-    n_no_raio = np.zeros(len(validos), dtype="int64")
-    dist_min = np.full(len(validos), np.nan, dtype="float64")
-
-    if lat_c.size:
-        # Laço por HEX (não produto cartesiano completo de uma vez): 4.899 x 3.179 caberia, mas o
-        # universo real de academias é ~50k hexes e a matriz cheia passaria de 1 GB.
-        for i in range(len(validos)):
-            d = _haversine_m(
-                np.full(lat_c.shape, lat_h[i]), np.full(lng_c.shape, lng_h[i]), lat_c, lng_c
-            )
-            peso = peso_por_distancia(d, kernel=kernel, raio_m=raio_m, beta=beta)
-            oferta[i] = float(peso.sum())
-            dentro = d <= float(raio_m)
-            n_no_raio[i] = int(dentro.sum())
-            if d.size:
-                dist_min[i] = float(d.min())
-
-    gap = 1.0 / (1.0 + oferta)
-    pressao = 100.0 * (1.0 - gap)
+    lat_c, lng_c = _pontos_validos(concorrentes)
+    # MESMO núcleo do grão academia: se as duas fórmulas divergirem, os dois números deixam de ser
+    # comparáveis e ninguém percebe — o kernel e a saturação vivem num lugar só de propósito.
+    oferta, n_no_raio, dist_min = _oferta_por_origem(
+        lat_h, lng_h, lat_c, lng_c, kernel=kernel, raio_m=raio_m, beta=beta
+    )
+    pressao = _saturar(oferta)
 
     out = pd.DataFrame(
         {
@@ -286,6 +441,7 @@ def ler_concorrentes(caminho: Path = CONCORRENTES_PATH_DEFAULT) -> pd.DataFrame:
 
 __all__ = [
     "CONCORRENTES_PATH_DEFAULT",
+    "calcular_pressao_por_academia",
     "calcular_pressao_por_hex",
     "ler_concorrentes",
     "peso_por_distancia",
