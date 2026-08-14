@@ -221,6 +221,30 @@ KPIs derivados do `result` de `analisar_ponto_censitario_setores` (READ-ONLY):
 - **`403` sem_permissao = RESERVADO:** previsto para escopos por consumidor, mas **nao emitido no MVP**
   (todo token valido tem acesso). O slug fica documentado para evolucao futura; hoje `auth.py` nunca o levanta.
 
+### 8.1 Endurecimento de seguranca (BLK-SEC-05)
+
+Como esta API e **internet-facing** (`api.ultra-expansao.tech`, so Bearer, sem Authelia na frente),
+tres travas foram adicionadas. **Nenhuma muda o contrato para consumidores server-to-server** (bot,
+parceiro) — sao defensivas:
+
+- **CORS sem credentials** (`main.py`): `allow_credentials=False`. Com Bearer (nao cookie), desligar
+  credentials evita o Starlette REFLETIR qualquer `Origin` com `Allow-Credentials: true`. Consumidores
+  server-to-server nao passam por CORS; so afeta um eventual chamador de navegador (que precisaria da
+  origem em `API_CORS_ORIGINS`).
+- **Guardrail SSRF em links do Maps** (`geo.expandir_link_curto`, `maps_geocoder.resolve_short_link`):
+  so seguimos redirect de link cujo host esta na **allowlist de DOMINIOS do Google Maps**
+  (`maps.app.goo.gl`, `goo.gl`, `g.co`, `*.google.com*`) — **qualquer IP-literal (privado OU
+  publico) e recusado** (link do Maps e sempre por dominio) —, revalidando **cada salto** de
+  redirect (loop manual, `allow_redirects=False`; sem isso o cliente HTTP seguiria um redirect
+  intermediario para host interno ANTES da checagem). **Impacto de dev/usuario:**
+  encurtador NAO-Google deixa de ser resolvido (cai no geocoding por endereco). O bot ja anuncia apenas
+  "link do Google Maps", entao o impacto pratico e minimo. Bloqueia o container de bater na rede interna
+  do Docker (`api:8077`, `authelia:9091`, tileserver) ou em IP de metadata.
+- **Fail-closed contra segredos default em producao** (`main._garantir_producao_sem_defaults`): se
+  `API_ENVIRONMENT=production` e algum de `API_TOKENS`/`API_API_CALL_TOKEN`/`API_BOT_SENHA` ainda for o
+  default do `settings.py` (`dev-token`/`trocar-esta-senha`...), a API **recusa subir**. Em dev/teste os
+  defaults seguem valendo.
+
 ## 9. Erros — modelo padrao
 
 Corpo de erro padrao (`ErrorResponse`): `{ "detail": "<mensagem>", "codigo": "<slug>" }`.
