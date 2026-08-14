@@ -28,6 +28,26 @@ services:
     image: ${API_IMAGE:?defina API_IMAGE com o digest imutavel ghcr.io/kastaldy/motor-de-expansao/motor-expansao-api@sha256:<digest> — ver docs/deploy_api_bot.md}
     container_name: motor_expansao_api
     restart: unless-stopped
+    # Teto anti-DoS (BLK-SEC-05): a API e internet-facing (api.ultra-expansao.tech, so
+    # Bearer) e gera PDF pesado SINCRONO. Sem teto, um flood/retry esgotava a RAM da VPS
+    # e derrubava o piloto junto. Com o limite, o container e OOM-killed e reinicia,
+    # sem levar o host. `--limit-concurrency` faz o excedente receber 503 em vez de
+    # enfileirar sem limite no unico worker.
+    # 6g = ~2x o uso REAL medido no VPS (3.0 GiB em regime: cacheia a base de mercado
+    # ~1,9 GB para o Relatorio Municipal). Da folga p/ o pico de um PDF sem OOM em uso
+    # legitimo, e ainda barra um flood de tomar os 15 GiB do host. NAO baixar sem medir.
+    mem_limit: 6g
+    memswap_limit: 6g
+    pids_limit: 512
+    command:
+      - uvicorn
+      - motor_expansao.api.main:app
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8077"
+      - "--limit-concurrency"
+      - "40"
     expose:
       - "8077"
     environment:
@@ -74,6 +94,10 @@ services:
       - app_net
     security_opt:
       - no-new-privileges:true
+    # cap_drop ALL (BLK-SEC-05): uvicorn non-root na :8077 (porta alta) nao precisa de
+    # capability nenhuma; dropar todas reduz a superficie se o processo for comprometido.
+    cap_drop:
+      - ALL
 
   # ── Bot Telegram (long-polling; consome a API por HTTP interno) ─────────────
   # Mesma imagem da API (inclui Google Chrome p/ o geocoder Selenium). Fala com o
@@ -172,6 +196,10 @@ services:
       - app_net
     security_opt:
       - no-new-privileges:true
+    # cap_drop ALL (BLK-SEC-05): uvicorn non-root na :8899 (porta alta), sem necessidade
+    # de capability. (Caddy/Authelia ficam de fora por ora — Caddy precisa bindar 80/443.)
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8899/api/health"]
       interval: 30s
@@ -211,9 +239,11 @@ services:
     volumes:
       - ./authelia:/config
     environment:
-      AUTHELIA_JWT_SECRET: ${AUTHELIA_JWT_SECRET}
-      AUTHELIA_SESSION_SECRET: ${AUTHELIA_SESSION_SECRET}
-      AUTHELIA_STORAGE_ENCRYPTION_KEY: ${AUTHELIA_STORAGE_ENCRYPTION_KEY}
+      # Fail-closed (BLK-SEC-05): sem o segredo no .env o compose ABORTA, em vez de
+      # subir o Authelia com segredo VAZIO (sessao/JWT forjaveis). Igual aos API_*.
+      AUTHELIA_JWT_SECRET: ${AUTHELIA_JWT_SECRET:?defina AUTHELIA_JWT_SECRET no .env (openssl rand -hex 32)}
+      AUTHELIA_SESSION_SECRET: ${AUTHELIA_SESSION_SECRET:?defina AUTHELIA_SESSION_SECRET no .env (openssl rand -hex 32)}
+      AUTHELIA_STORAGE_ENCRYPTION_KEY: ${AUTHELIA_STORAGE_ENCRYPTION_KEY:?defina AUTHELIA_STORAGE_ENCRYPTION_KEY no .env (openssl rand -hex 32)}
     networks:
       - app_net
     security_opt:
