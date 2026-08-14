@@ -232,8 +232,11 @@ parceiro) — sao defensivas:
   server-to-server nao passam por CORS; so afeta um eventual chamador de navegador (que precisaria da
   origem em `API_CORS_ORIGINS`).
 - **Guardrail SSRF em links do Maps** (`geo.expandir_link_curto`, `maps_geocoder.resolve_short_link`):
-  so seguimos redirect de link cujo host esta na **allowlist do Google Maps** (`maps.app.goo.gl`,
-  `goo.gl`, `g.co`, `*.google.com*`) ou um IP publico, validando **cada salto**. **Impacto de dev/usuario:**
+  so seguimos redirect de link cujo host esta na **allowlist de DOMINIOS do Google Maps**
+  (`maps.app.goo.gl`, `goo.gl`, `g.co`, `*.google.com*`) — **qualquer IP-literal (privado OU
+  publico) e recusado** (link do Maps e sempre por dominio) —, revalidando **cada salto** de
+  redirect (loop manual, `allow_redirects=False`; sem isso o cliente HTTP seguiria um redirect
+  intermediario para host interno ANTES da checagem). **Impacto de dev/usuario:**
   encurtador NAO-Google deixa de ser resolvido (cai no geocoding por endereco). O bot ja anuncia apenas
   "link do Google Maps", entao o impacto pratico e minimo. Bloqueia o container de bater na rede interna
   do Docker (`api:8077`, `authelia:9091`, tileserver) ou em IP de metadata.

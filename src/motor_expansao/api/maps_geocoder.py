@@ -19,6 +19,8 @@ import re
 import urllib.request
 from urllib.parse import quote, unquote, urlencode, urlsplit
 
+import requests
+
 # Padroes de coordenada nas variantes de URL do Maps. ORDEM importa: !2d/!3d/!4d
 # sao o PINO RESOLVIDO do place; @lat,lng e so o centro da camera (impreciso).
 EMBED_PIN = re.compile(r"!2d(-?\d+(?:\.\d+)?)!3d(-?\d+(?:\.\d+)?)")      # !2d=lng !3d=lat
@@ -53,26 +55,28 @@ MAPS_HOST_ALLOWLIST: tuple[str, ...] = (
 def host_de_maps_permitido(host: str) -> bool:
     """True se `host` e um dominio/encurtador do Google Maps, ou um IP PUBLICO.
 
-    Recusa host interno/desconhecido e IP-literal privado/loopback/link-local
-    (127.0.0.1, 10.x, 169.254.169.254, ::1, etc.) — o vetor de SSRF real.
+    So aceita DOMINIOS da allowlist. Recusa host interno/desconhecido E qualquer
+    IP-literal (privado ou publico): um link do Maps e sempre por dominio (goo.gl,
+    google.com); aceitar IP-literal so ampliaria a superficie SSRF de saida.
     """
     h = (host or "").strip().lower().rstrip(".")
     if not h:
         return False
     try:
-        ip = ipaddress.ip_address(h)
+        ipaddress.ip_address(h)
     except ValueError:
         # Nao e IP-literal: casa pelo sufixo de dominio permitido.
         return any(h == d or h.endswith("." + d) for d in MAPS_HOST_ALLOWLIST)
-    # IP-literal: so publico global (bloqueia interno/metadata).
-    return ip.is_global and not ip.is_multicast
+    # E um IP-literal -> nao e dominio do Maps -> recusa (interno OU publico).
+    return False
 
 
 def url_maps_segura(url: str) -> bool:
-    """Guardrail SSRF: so http(s) para um host da allowlist do Maps (ou IP publico).
+    """Guardrail SSRF: so http(s) para um DOMINIO da allowlist do Maps.
 
-    Recusa `file://`/esquemas exoticos, host interno da rede Docker e IP privado.
-    Usado antes de QUALQUER requisicao a um link fornecido pelo usuario.
+    Recusa `file://`/esquemas exoticos, host interno da rede Docker e QUALQUER
+    IP-literal. Usado antes de CADA requisicao a um link fornecido pelo usuario
+    (inclusive a cada salto de redirect).
     """
     try:
         parts = urlsplit(str(url or ""))
@@ -330,44 +334,47 @@ def resolve_short_link(url: str, *, timeout: float = 6.0) -> str | None:
 
     BLK-UI-09 / DEC-010 (emenda 2026-06-19, Opcao B): links curtos do Google Maps
     (`maps.app.goo.gl`, `goo.gl/maps`) NAO trazem a coordenada na propria string. Este
-    helper faz UMA requisicao HTTP PURA (`urllib.request`, sem Selenium/navegador) so
-    para seguir o(s) redirect(s) e ler a URL final (`resp.geturl()`), que costuma trazer
-    o pino `!3d/!4d` ou `@lat,lng` — o chamador extrai a coordenada com `extract_any_coord`.
+    helper segue o(s) redirect(s) e devolve a URL final, que costuma trazer o pino
+    `!3d/!4d` ou `@lat,lng` — o chamador extrai a coordenada com `extract_any_coord`.
 
-    GUARDRAIL (DEC-010): I/O de rede isolado nesta camada `api` (o import no dashboard e
-    lazy; a rede so ocorre quando ESTA funcao e chamada, no sub-caminho de link curto da
-    busca). `try/except` amplo + timeout curto: qualquer falha/ausencia de rede retorna
-    `None` (o chamador cai no fallback gracioso). Enviamos um User-Agent identificavel
-    (mesmo de `resolve_endereco_http`); a URL curta e enviada ao Google SO para seguir o
-    redirect — nada e persistido (nota anti-PII da DEC-010).
+    GUARDRAIL SSRF (BLK-SEC-05 + DEC-010): valida a URL de ENTRADA e CADA salto de
+    redirect (`allow_redirects=False` + loop manual), igual a `geo.expandir_link_curto`.
+    Sem isso, o cliente HTTP seguiria um redirect intermediario para host INTERNO
+    (api:8077, authelia:9091) ANTES de qualquer checagem — o SSRF que este bloco fecha.
+    I/O de rede isolado nesta camada `api`; `try/except` amplo + timeout curto: qualquer
+    falha/ausencia de rede -> `None` (fallback gracioso). Nada e persistido (anti-PII, DEC-010).
 
-    Retorna a URL longa final (str) ou `None` se faltar rede/falhar/timeout/URL vazia.
+    Retorna a URL longa final (str) ou `None` se faltar rede/falhar/timeout/URL insegura.
     """
     normalized = " ".join(str(url or "").split())
     if not normalized:
         return None
-    # Guardrail SSRF (BLK-SEC-05): so seguimos links de dominio/encurtador do Maps.
-    # Um host interno (api:8077, 169.254.169.254, file://) e recusado ANTES do GET.
     if not url_maps_segura(normalized):
         return None
+    headers = {
+        "User-Agent": _GEOCODE_USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "pt-BR",
+    }
+    atual = normalized
     try:
-        req = urllib.request.Request(
-            normalized,
-            headers={
-                "User-Agent": _GEOCODE_USER_AGENT,
-                "Accept": "text/html,application/xhtml+xml",
-                "Accept-Language": "pt-BR",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - URL validada por url_maps_segura
-            final_url = resp.geturl() or getattr(resp, "url", None)
-    except Exception:
+        for _ in range(6):  # teto de saltos de redirect
+            resp = requests.get(atual, allow_redirects=False, timeout=timeout, headers=headers)
+            if resp.is_redirect or resp.is_permanent_redirect:
+                destino = resp.headers.get("Location")
+                if not destino:
+                    return None
+                destino = requests.compat.urljoin(atual, destino)
+                # Revalida CADA salto: redirect para host nao-allowlisted -> aborta.
+                if not url_maps_segura(destino):
+                    return None
+                atual = destino
+                continue
+            final_url = str(resp.url or atual or "").strip()
+            return final_url if final_url and url_maps_segura(final_url) else None
+        return None  # excesso de redirects
+    except requests.RequestException:
         return None
-    final_url = str(final_url or "").strip()
-    # O redirect pode, em tese, apontar para fora do Maps -> so devolvemos destino seguro.
-    if final_url and not url_maps_segura(final_url):
-        return None
-    return final_url or None
 
 
 class MapsGeocoder:

@@ -47,6 +47,8 @@ def test_host_maps_permitido_aceita_dominios_do_google(host: str) -> None:
         "10.0.0.5",
         "169.254.169.254",  # metadata da nuvem
         "::1",
+        "8.8.8.8",  # IP publico tb e recusado: link do Maps e por dominio, nunca IP
+        "1.1.1.1",
         "evil.com",
         "google.com.evil.com",  # sufixo falso
         "notgoogle.com",
@@ -65,6 +67,7 @@ def test_host_maps_permitido_recusa_interno_e_desconhecido(host: str) -> None:
         ("https://www.google.com/maps/place/x", True),
         ("http://169.254.169.254/latest/meta-data", False),
         ("http://api:8077/api/health", False),
+        ("http://8.8.8.8/x", False),  # IP publico: recusado (Maps e por dominio)
         ("file:///etc/passwd", False),
         ("ftp://google.com/x", False),
         ("https://evil.com/redir", False),
@@ -128,12 +131,13 @@ def test_resolve_short_link_recusa_url_insegura_sem_rede(monkeypatch) -> None:
     from motor_expansao.api import maps_geocoder
 
     def _boom(*a, **k):
-        raise AssertionError("urlopen NAO deveria ser chamado para URL insegura")
+        raise AssertionError("requests.get NAO deveria ser chamado para URL insegura")
 
-    monkeypatch.setattr(maps_geocoder.urllib.request, "urlopen", _boom)
+    monkeypatch.setattr(maps_geocoder.requests, "get", _boom)
     assert maps_geocoder.resolve_short_link("http://169.254.169.254/") is None
     assert maps_geocoder.resolve_short_link("http://api:8077/") is None
     assert maps_geocoder.resolve_short_link("file:///etc/passwd") is None
+    assert maps_geocoder.resolve_short_link("http://8.8.8.8/x") is None  # IP publico tb recusado
 
 
 # ── CORS: sem allow_credentials (nao reflete origem) ────────────────────────
