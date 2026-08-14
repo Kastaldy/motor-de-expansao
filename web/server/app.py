@@ -51,6 +51,13 @@ from starlette.concurrency import run_in_threadpool
 _PDF_CONCORRENCIA_MAX = 3
 _PDF_SEMAFORO = asyncio.Semaphore(_PDF_CONCORRENCIA_MAX)
 
+# Teto anti-DoS de memoria nos uploads de foto do Relatorio Pontual (BLK-SEC-05): o
+# PDF usa no maximo 2 fotos, entao lemos poucas e limitamos o tamanho de cada uma —
+# sem isso, N pedidos com arquivos grandes inflavam a RAM do unico worker ANTES do
+# semaforo. So bytes ate o teto sao mantidos em memoria.
+_FOTOS_MAX = 3
+_FOTO_MAX_BYTES = 8 * 1024 * 1024  # 8 MB por foto
+
 # --- Localizacao do repo e dos dados ---------------------------------------
 # O backend do piloto vive em <repo>/web/server; o codigo do motor em <repo>/src.
 _HERE = Path(__file__).resolve()
@@ -222,7 +229,16 @@ _COLS_DESEJADAS = [
 ]
 
 
+# Guardrail path-traversal (BLK-SEC-05): `uf` compoe o caminho da particao
+# (`uf=XX`). Um valor de CORPO como `x/../../etc` (que escapa da restricao de rota)
+# poderia ler diretorios arbitrarios. Toda UF real tem 2 letras; validamos no
+# SINK (chokepoint de `carregar_uf`/`carregar_uf_completo` e das rotas /api/uf|municipio|cobertura).
+_UF_RE = re.compile(r"^[A-Za-z]{2}$")
+
+
 def _uf_partition(uf: str) -> Path:
+    if not _UF_RE.match(str(uf or "")):
+        raise HTTPException(400, "UF inválida (esperado a sigla de 2 letras).")
     return ENRICHED_DIR / f"uf={uf.upper()}"
 
 
@@ -231,11 +247,11 @@ def carregar_uf(uf: str) -> pd.DataFrame:
     """Le a particao de uma UF do artefato enriquecido. READ-ONLY."""
     part = _uf_partition(uf)
     if not part.exists():
-        raise HTTPException(404, f"Particao da UF {uf} nao encontrada em {part}")
+        raise HTTPException(404, f"Partição da UF {uf.upper()} não encontrada.")
 
     arquivos = sorted(part.glob("*.parquet"))
     if not arquivos:
-        raise HTTPException(404, f"Nenhum parquet em {part}")
+        raise HTTPException(404, f"Partição da UF {uf.upper()} sem dados.")
 
     import pyarrow.parquet as pq
 
@@ -395,7 +411,7 @@ def carregar_uf_completo(uf: str) -> pd.DataFrame:
     """
     part = _uf_partition(uf)
     if not part.exists():
-        raise HTTPException(404, f"Particao da UF {uf} nao encontrada em {part}")
+        raise HTTPException(404, f"Partição da UF {uf.upper()} não encontrada.")
     return pd.read_parquet(part)
 
 
@@ -2729,7 +2745,7 @@ def _ranking_estados() -> list[dict[str, Any]]:
     import pyarrow.dataset as ds
 
     if not ENRICHED_DIR.exists():
-        raise HTTPException(500, f"Base nao encontrada em {ENRICHED_DIR}.")
+        raise HTTPException(500, "Base de dados não encontrada.")
 
     dset = ds.dataset(str(ENRICHED_DIR), partitioning="hive")
     disp = set(dset.schema.names)
@@ -6039,9 +6055,11 @@ def executiva(uf: str, mes: str | None = None) -> dict[str, Any]:
 
 
 class RelatorioMunicipalIn(BaseModel):
-    uf: str
-    municipio: str
-    solicitante: str | None = None
+    # `uf` compoe caminho de particao/IBGE -> validacao anti-traversal na fronteira
+    # (BLK-SEC-05). So a sigla de 2 letras; qualquer outra coisa -> 422 limpo.
+    uf: str = Field(pattern=r"^[A-Za-z]{2}$")
+    municipio: str = Field(min_length=1, max_length=120)
+    solicitante: str | None = Field(default=None, max_length=200)
 
 
 @app.post("/api/relatorio/municipal")
@@ -6260,11 +6278,13 @@ async def relatorio_pontual(
     Esta funcao so faz a parte ASSINCRONA (ler os uploads) e delega o resto ao
     threadpool — ver `_gerar_relatorio_pontual_pdf`.
     """
-    # Unico I/O assincrono da rota: o corpo multipart.
+    # Unico I/O assincrono da rota: o corpo multipart. Teto de arquivos e de bytes por
+    # foto (BLK-SEC-05): lemos no maximo `_FOTOS_MAX` e, de cada, `_FOTO_MAX_BYTES`+1 —
+    # se estourar o teto, a foto e descartada (evita inflar a RAM do worker).
     fotos_bytes: list[bytes] = []
-    for f in fotos or []:
-        conteudo = await f.read()
-        if conteudo:
+    for f in (fotos or [])[:_FOTOS_MAX]:
+        conteudo = await f.read(_FOTO_MAX_BYTES + 1)
+        if conteudo and len(conteudo) <= _FOTO_MAX_BYTES:
             fotos_bytes.append(conteudo)
 
     # O resto do trabalho e 100% SINCRONO e pesado (10-30 s). Rodando direto dentro do
