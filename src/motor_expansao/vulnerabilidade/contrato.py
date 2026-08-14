@@ -39,7 +39,7 @@ from datetime import date
 VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v3"
 VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
-VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v4"
+VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v5"
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
 H3_RES_CONTRATO = 7
@@ -343,7 +343,7 @@ V3_POR_STATUS_CHURN: dict[str, float | None] = {
     "sumiu_recente": 1.0,
 }
 
-# Score de vulnerabilidade (D4): 22 colunas, nesta ORDEM. Uma linha por ACADEMIA, isto é, por
+# Score de vulnerabilidade (D4): 26 colunas, nesta ORDEM. Uma linha por ACADEMIA, isto é, por
 # `(fonte, chave_snapshot)` do universo de M&A (TotalPass/WellHub x independente).
 #
 # `v2` está AUSENTE DE PROPÓSITO (S2 é `n/d` permanente, D3 — BLK-MA-08); `hex_quente`,
@@ -372,6 +372,11 @@ CONTRATO_COLUNAS_SCORE: dict[str, str] = {
     # Nulo exatamente quando `pressao_competitiva` e' nula. Viaja ate' o consumidor de proposito —
     # duas linhas com graos diferentes NAO estao na mesma regua, e sem o carimbo isso e' invisivel.
     "pressao_grao": "string",
+    # Carimbo do UNIVERSO DE OFERTA (BLK-MA-16): `cadeias` ou `cadeias_e_independentes`. Mesma
+    # regra de nulidade e mesma razao de existir do `pressao_grao`, para o OUTRO eixo — a mesma
+    # academia mede 39 num universo e 65 no outro (medido em SP), e sem o carimbo as duas
+    # respostas parecem a mesma grandeza.
+    "universo_oferta": "string",
     "sinais_disponiveis": "string",  # subconjunto de SINAIS_ORDEM, unido por `,`
     # 0..4: o S2 nunca conta (DEC-026), mas o S6 conta QUANDO o insumo de pressao e' fornecido
     # (BLK-MA-12). Sem o insumo, o dominio volta a 0..3 e nada muda em relacao ao v2.
@@ -391,7 +396,7 @@ CONTRATO_COLUNAS_SCORE: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Sinal 6 — pressão competitiva com decaimento por distância (BLK-MA-12)
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v1"
+VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v2"
 
 # Raio de TRUNCAMENTO, não de alcance: quem define o alcance efetivo é a forma do kernel. 2.000 m
 # é o mesmo do `pressao_concorrencial_score_2km` da camada de mercado — manter o número igual é o
@@ -413,7 +418,57 @@ PRESSAO_GRAO_ACADEMIA = "academia"
 PRESSAO_GRAO_HEX = "hex"
 PRESSAO_GRAOS: tuple[str, ...] = (PRESSAO_GRAO_ACADEMIA, PRESSAO_GRAO_HEX)
 
-# Frame de pressão POR ACADEMIA: 10 colunas, nesta ORDEM. É o insumo do `v6` desde o BLK-MA-14.
+# --------------------------------------------------------------------------- #
+# UNIVERSO DE OFERTA do sinal 6 (BLK-MA-16)
+# --------------------------------------------------------------------------- #
+# O `pressao_grao` responde "de ONDE se mediu"; estas constantes respondem "QUEM conta como
+# concorrência". São eixos independentes, e por isso dois carimbos e não um: o grão errado dá um
+# número preciso do lugar errado, o universo errado dá um número honesto de um mundo menor.
+#
+# `cadeias` é o universo HISTÓRICO (BLK-MA-12 a BLK-MA-15) e segue sendo o default. Não é escolha
+# de desenho: é o que `concorrentes_mapeados.parquet` contém — 4.499 pontos em 104 redes e **zero
+# independentes**, porque ele nasce dos coletores `unidades_*.csv`, que são feeds de CADEIA. A
+# consequência foi medida em SP (2026-08-14): **29,2% das independentes marcam pressão `0`**, e a
+# leitura de "território livre" ali é artefato do insumo, não do território. Uma independente
+# espremida entre oito independentes tem zero cadeia por perto e muita concorrência.
+UNIVERSO_OFERTA_CADEIAS = "cadeias"
+UNIVERSO_OFERTA_COM_INDEPENDENTES = "cadeias_e_independentes"
+UNIVERSOS_OFERTA: tuple[str, ...] = (UNIVERSO_OFERTA_CADEIAS, UNIVERSO_OFERTA_COM_INDEPENDENTES)
+
+# Peso de uma unidade na oferta, por tipo. `0,5` para a independente é **decisão de produto de
+# Vinicius (2026-08-14)**, não estimativa: uma independente pressiona metade do que pressiona uma
+# unidade de rede. Ele age no NUMERADOR da oferta, antes da saturação.
+#
+# **O que este número NÃO controla:** a compressão do topo. Medida em SP, a amplitude entre os 200
+# mais pressionados cai de 7,74 para 4,19 pontos quando as independentes entram — e a causa é a
+# saturação `1 - 1/(1 + oferta)`, que empurra todo mundo ao teto quando a oferta cresce. Baixar
+# este peso alivia e não resolve; quem resolveria é trocar a saturação, que é justamente o que
+# torna o número comparável com `pressao_concorrencial_score_2km`. Registrado aqui para quem for
+# mexer no `0,5` esperando corrigir aquilo.
+PESO_OFERTA_CADEIA = 1.0
+PESO_OFERTA_INDEPENDENTE = 0.5
+
+# DEDUP entre fontes: a mesma academia listada em TotalPass e WellHub são DUAS chaves por
+# construção (§8.1, emenda BLK-MA-03) e contariam duas vezes na oferta.
+#
+# **NÃO CALIBRADO CONTRA DADO REAL, e isso é declarado de propósito:** em 2026-08-14 o feed do
+# TotalPass não existe nesta estação (`concorrentes/totalpass/csvs` vazio) e o snapshot tem só
+# WellHub, então não há par TP x WH para medir. O critério abaixo é ARBITRADO e travado por
+# fixtures; recalibrar na primeira coleta com as duas fontes é trabalho do BLK-MA-06.
+#
+# Por que distância pura, sem casar nome: o custo de errar é ASSIMÉTRICO. Não deduplicar dobra a
+# oferta de toda academia listada nas duas fontes — erro sistemático, em massa, invisível.
+# Deduplicar um par que na verdade eram dois vizinhos distintos subtrai `0,5` de oferta de um
+# ponto — erro local e pequeno. E casar por nome erraria para o outro lado: a MESMA academia sai
+# como "Academia X" num feed e "X Fitness" no outro.
+DEDUP_INDEPENDENTES_M = 50.0
+
+# Resolução H3 do bucket espacial da dedup (aresta ~24 m). Serve só para não comparar todos os
+# pares (19.329² = 373 M): o candidato é buscado na própria célula + `grid_disk(k=1)`, e a
+# distância real decide. É detalhe de PERFORMANCE, não de contrato — mudá-la não muda resultado.
+DEDUP_H3_RES = 11
+
+# Frame de pressão POR ACADEMIA: 13 colunas, nesta ORDEM. É o insumo do `v6` desde o BLK-MA-14.
 #
 # POR QUE A CHAVE É `(fonte, chave_snapshot)` E NÃO SÓ A CHAVE: é o mesmo par que o score usa como
 # chave primária. `chave_snapshot` sozinha não é única — ela é derivada por fonte, e a mesma
@@ -428,15 +483,21 @@ CONTRATO_COLUNAS_PRESSAO_ACADEMIA: dict[str, str] = {
     "chave_snapshot": "string",
     "pressao_competitiva": "float64",  # [0, 100); mesma régua e mesma fórmula do grão hex
     "v6": "float64",  # pressao/100 — o componente do §8.1
-    "oferta_ponderada": "float64",  # soma dos pesos; auditoria do decaimento
+    "oferta_ponderada": "float64",  # soma dos pesos, TOTAL; auditoria do decaimento
     "n_concorrentes_no_raio": "int64",  # contagem CRUA, para comparar com a ponderada
     "dist_concorrente_mais_proximo_m": "float64",
+    # DECOMPOSIÇÃO da oferta por tipo (BLK-MA-16). Zeradas no universo `cadeias`, onde não há
+    # independente para contar. Elas respondem a pergunta que o total esconde e que muda a tese de
+    # M&A: uma independente cercada de independentes é alvo diferente de uma cercada de Smart Fits.
+    "oferta_independentes": "float64",  # parte de `oferta_ponderada` vinda de independente
+    "n_independentes_no_raio": "int64",  # contagem CRUA das independentes (subconjunto da acima)
     "kernel_pressao": "string",  # carimbo: qual decaimento produziu o número
     "raio_pressao_m": "float64",
+    "universo_oferta": "string",  # carimbo: QUEM contou como concorrência (UNIVERSOS_OFERTA)
     "versao_contrato": "string",
 }
 
-# Frame de pressão por hex: 9 colunas, nesta ORDEM. O sufixo `_no_hex` das colunas 2-4 é
+# Frame de pressão por hex: 12 colunas, nesta ORDEM. O sufixo `_no_hex` das colunas 2-4 é
 # deliberado, no molde do `presenca_agregador`: a pressão é grandeza do TERRITÓRIO, e todas as
 # academias do mesmo hex herdam o mesmo valor pelo join.
 #
@@ -449,18 +510,24 @@ CONTRATO_COLUNAS_PRESSAO: dict[str, str] = {
     "hex_id_res7": "string",
     "pressao_competitiva_no_hex": "float64",  # [0, 100); mesma régua do mercado
     "v6_no_hex": "float64",  # pressao/100 — o componente do §8.1
-    "oferta_ponderada_no_hex": "float64",  # soma dos pesos; auditoria do decaimento
+    "oferta_ponderada_no_hex": "float64",  # soma dos pesos, TOTAL; auditoria do decaimento
     "n_concorrentes_no_raio": "int64",  # contagem CRUA, para comparar com a ponderada
     "dist_concorrente_mais_proximo_m": "float64",
+    # Decomposição por tipo (BLK-MA-16), simétrica à do grão academia. A simetria é deliberada:
+    # os dois grãos compartilham `_oferta_por_origem`, e um schema que divergisse tornaria a
+    # comparação entre eles — que é a razão de o grão hex continuar vivo — silenciosamente falsa.
+    "oferta_independentes_no_hex": "float64",
+    "n_independentes_no_raio": "int64",
     "kernel_pressao": "string",  # carimbo: qual decaimento produziu o número
     "raio_pressao_m": "float64",
+    "universo_oferta": "string",  # carimbo: QUEM contou como concorrência (UNIVERSOS_OFERTA)
     "versao_contrato": "string",
 }
 
 # --------------------------------------------------------------------------- #
 # Lista priorizada de alvos de M&A (D5/D6) — BLK-MA-05
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v1"
+VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v2"
 
 # Gate D5 (ratificado em 2026-07-23; reabrir exige DEC). A INVERSÃO do §2 mora aqui: comprar quer
 # demanda ALTA + residual BAIXO, o OPOSTO de `abrir_agora`.
@@ -486,7 +553,7 @@ COLUNAS_M1_INVARIANTES: tuple[str, ...] = (
     "rank_carteira_uf",
 )
 
-# Camada scored (D6), grão ACADEMIA: as 22 do score + hotness + as invariantes do M1, propagadas
+# Camada scored (D6), grão ACADEMIA: as do score + hotness + as invariantes do M1, propagadas
 # para auditoria. `hex_quente` é o nome que o §10 usa e que `score.py` reserva em
 # `_COLUNAS_PROIBIDAS_MA05` — é aqui, e só aqui, que ele passa a existir.
 CONTRATO_COLUNAS_ACADEMIAS_MA: dict[str, str] = {
@@ -510,6 +577,7 @@ CONTRATO_COLUNAS_ACADEMIAS_MA: dict[str, str] = {
     # Nulo quando o score foi calculado sem `pressao=` — ausência de cálculo, não pressão zero.
     "pressao_competitiva": "Float64",
     "pressao_grao": "string",
+    "universo_oferta": "string",  # carimbo do BLK-MA-16, propagado junto com o grao
     "v6": "float64",
     "uf": "string",
     "sam_fitness_potencial": "float64",
@@ -555,7 +623,7 @@ CONTRATO_COLUNAS_ALVOS_MA: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Variante NOMEADA (D1-B) — BLK-MA-15
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v1"
+VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v2"
 
 # O UNICO contrato desta camada que carrega IDENTIDADE e COORDENADA, autorizado pela emenda de
 # 2026-08-14 a DEC-028 (decidida por Vinicius). Grao: uma linha por academia.
@@ -580,6 +648,7 @@ CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
     "v6": "float64",
     "pressao_competitiva": "Float64",
     "pressao_grao": "string",  # `academia` desde a DEC-029
+    "universo_oferta": "string",  # `cadeias` ate' o BLK-MA-16 ser ligado
     "sinais_disponiveis": "string",
     "n_sinais_disponiveis": "int64",
     "score_vulnerabilidade": "float64",
@@ -903,6 +972,13 @@ __all__ = [
     "PRESSAO_GRAOS",
     "PRESSAO_GRAO_ACADEMIA",
     "PRESSAO_GRAO_HEX",
+    "UNIVERSOS_OFERTA",
+    "UNIVERSO_OFERTA_CADEIAS",
+    "UNIVERSO_OFERTA_COM_INDEPENDENTES",
+    "PESO_OFERTA_CADEIA",
+    "PESO_OFERTA_INDEPENDENTE",
+    "DEDUP_INDEPENDENTES_M",
+    "DEDUP_H3_RES",
     "VERSAO_CONTRATO_ALVOS_MA",
     "QUANTIL_SAM_QUENTE",
     "LIMIAR_RESIDUAL_SATURADO",

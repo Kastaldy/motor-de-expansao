@@ -523,7 +523,7 @@ def coordenadas_por_chave(
     *,
     fontes: Sequence[str] | None = None,
 ) -> pd.DataFrame:
-    """Feed cru -> `(fonte, chave_snapshot, nome, lat, lng)`, **em memória, sem tocar disco**.
+    """Feed cru -> `(fonte, chave_snapshot, nome, lat, lng, rede)`, **em memória, sem tocar disco**.
 
     É a ponte que o BLK-MA-14 (DEC-029, rota B) abriu para o `v6` por academia: a pressão precisa da
     coordenada da unidade, e ela existe AQUI, antes de `montar_snapshot` projetar as 12 colunas e
@@ -553,6 +553,7 @@ def coordenadas_por_chave(
                 "nome": pd.Series(dtype="string"),
                 "lat": pd.Series(dtype="float64"),
                 "lng": pd.Series(dtype="float64"),
+                "rede": pd.Series(dtype="string"),
             }
         )
     limpo, _auditoria = limpar_ruido(bruto)
@@ -567,6 +568,12 @@ def coordenadas_por_chave(
             "nome": com_chave["nome"].astype("string"),
             "lat": pd.to_numeric(com_chave["latitude"], errors="coerce").astype("float64"),
             "lng": pd.to_numeric(com_chave["longitude"], errors="coerce").astype("float64"),
+            # A REDE viaja desde o BLK-MA-16, e não é PII: é a mesma categoria que o snapshot já
+            # persiste em coluna própria. Ela existe aqui para o chamador separar independente de
+            # cadeia SEM uma segunda leitura do feed — duas leituras custariam o dobro e abririam
+            # a chance de os dois lados verem feeds diferentes (a mesma razão que fez o `main` do
+            # `alvos_ma` ler o feed uma vez só).
+            "rede": com_chave["rede"].astype("string"),
         }
     )
     # MESMO colapso de `montar_snapshot`: `(fonte, chave_snapshot)` é a chave primária do score, e

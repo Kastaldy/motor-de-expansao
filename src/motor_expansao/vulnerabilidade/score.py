@@ -81,6 +81,7 @@ from .contrato import (
     SINAIS_ORDEM,
     STALE_SEMANAS,
     STATUS_CHURN_VALIDOS,
+    UNIVERSOS_OFERTA,
     V3_POR_STATUS_CHURN,
     VERSAO_CONTRATO_SCORE,
     renormalizar_pesos,
@@ -223,6 +224,7 @@ def _juntar_pressao(df: pd.DataFrame, pressao: pd.DataFrame | None) -> pd.DataFr
     if pressao is None or pressao.empty:
         out["pressao_competitiva"] = pd.Series(float("nan"), index=out.index, dtype="float64")
         out["pressao_grao"] = pd.Series(pd.NA, index=out.index, dtype="string")
+        out["universo_oferta"] = pd.Series(pd.NA, index=out.index, dtype="string")
         return out
 
     por_academia = {"fonte", "chave_snapshot"} <= set(pressao.columns)
@@ -251,11 +253,23 @@ def _juntar_pressao(df: pd.DataFrame, pressao: pd.DataFrame | None) -> pd.DataFr
         grao = PRESSAO_GRAO_HEX
     if coluna not in pressao.columns:
         raise ValueError(f"frame de pressao (grao {grao}) sem a coluna `{coluna}`")
+    # O UNIVERSO DE OFERTA vem do frame, nunca é inferido aqui (BLK-MA-16). Assumir `cadeias` no
+    # silêncio seria o pior default possível: é o universo que produz o número MENOR, e a linha
+    # sairia carimbada como algo que ninguém declarou. Quem calculou a pressão sabe quem contou.
+    if "universo_oferta" not in pressao.columns:
+        raise ValueError(
+            "frame de pressao sem a coluna `universo_oferta` (BLK-MA-16): o score nao infere o "
+            "universo, porque a mesma academia mede valores diferentes em cada um"
+        )
 
     # `many_to_one` nos dois casos: o universo de M&A é um SUBCONJUNTO do insumo (o filtro de
     # cadeia já rodou), então sobram linhas de pressão sem par à esquerda — esperado. O que não
     # pode haver é duplicata à direita, e os guards acima já barraram.
-    projecao = pressao[[*chaves, coluna]].copy().rename(columns={coluna: "pressao_competitiva"})
+    projecao = (
+        pressao[[*chaves, coluna, "universo_oferta"]]
+        .copy()
+        .rename(columns={coluna: "pressao_competitiva"})
+    )
     for chave in chaves:
         projecao[chave] = projecao[chave].astype("string")
         out[chave] = out[chave].astype("string")
@@ -264,12 +278,16 @@ def _juntar_pressao(df: pd.DataFrame, pressao: pd.DataFrame | None) -> pd.DataFr
         out["pressao_competitiva"], errors="coerce"
     ).astype("float64")
     # O carimbo acompanha o VALOR: linha sem par no join fica sem pressão E sem grão. Carimbar o
-    # grão numa linha sem medição afirmaria uma procedência que não existe.
+    # grão numa linha sem medição afirmaria uma procedência que não existe. Vale igual para o
+    # universo, pelo mesmo motivo — os dois carimbos são nulos exatamente onde a pressão é nula.
     out["pressao_grao"] = (
         pd.Series(grao, index=out.index, dtype="string")
         .where(out["pressao_competitiva"].notna())
         .astype("string")
     )
+    out["universo_oferta"] = (
+        out["universo_oferta"].astype("string").where(out["pressao_competitiva"].notna())
+    ).astype("string")
     return out
 
 
@@ -520,6 +538,16 @@ def _assert_schema_score(df: pd.DataFrame) -> None:
     graos = sorted(set(df["pressao_grao"].dropna().astype(str)) - set(PRESSAO_GRAOS))
     if graos:
         raise ValueError(f"`pressao_grao` fora do dominio {list(PRESSAO_GRAOS)}: {graos}")
+    # Mesma trava para o OUTRO eixo do carimbo (BLK-MA-16). Os dois andam juntos com o valor: um
+    # universo sem pressao afirma procedencia inexistente, e pressao sem universo esconde QUEM
+    # contou como concorrencia — e o mesmo ponto mede 39 ou 65 conforme a resposta.
+    if bool((df["universo_oferta"].isna() != df["pressao_competitiva"].isna()).any()):
+        raise ValueError(
+            "`universo_oferta` deve estar preenchido exatamente onde `pressao_competitiva` esta"
+        )
+    universos = sorted(set(df["universo_oferta"].dropna().astype(str)) - set(UNIVERSOS_OFERTA))
+    if universos:
+        raise ValueError(f"`universo_oferta` fora do dominio {list(UNIVERSOS_OFERTA)}: {universos}")
     if bool(((score < 0.0) | (score > 100.0)).any()):
         raise ValueError("`score_vulnerabilidade` fora do dominio [0, 100]")
 

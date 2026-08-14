@@ -88,6 +88,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from pathlib import Path
+from typing import NamedTuple
 
 import h3
 import numpy as np
@@ -96,11 +97,18 @@ import pandas as pd
 from .contrato import (
     CONTRATO_COLUNAS_PRESSAO,
     CONTRATO_COLUNAS_PRESSAO_ACADEMIA,
+    DEDUP_H3_RES,
+    DEDUP_INDEPENDENTES_M,
     KERNEIS_PRESSAO,
+    PESO_OFERTA_CADEIA,
+    PESO_OFERTA_INDEPENDENTE,
     PRESSAO_BETA_POTENCIA,
     PRESSAO_DIST_MIN_M,
     PRESSAO_KERNEL_DEFAULT,
     PRESSAO_RAIO_M,
+    UNIVERSO_OFERTA_CADEIAS,
+    UNIVERSO_OFERTA_COM_INDEPENDENTES,
+    UNIVERSOS_OFERTA,
     VERSAO_CONTRATO_PRESSAO,
 )
 
@@ -193,6 +201,16 @@ def _pontos_validos(concorrentes: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]
     return lat[finito], lng[finito]
 
 
+class _OfertaPorOrigem(NamedTuple):
+    """O que `_oferta_por_origem` devolve, decomposto por tipo de ponto (BLK-MA-16)."""
+
+    oferta_total: np.ndarray
+    oferta_independentes: np.ndarray
+    n_no_raio: np.ndarray
+    n_independentes_no_raio: np.ndarray
+    dist_min: np.ndarray
+
+
 def _oferta_por_origem(
     lat_o: np.ndarray,
     lng_o: np.ndarray,
@@ -202,7 +220,11 @@ def _oferta_por_origem(
     kernel: str,
     raio_m: float,
     beta: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    lat_i: np.ndarray | None = None,
+    lng_i: np.ndarray | None = None,
+    peso_independente: float = PESO_OFERTA_INDEPENDENTE,
+    auto_pos: np.ndarray | None = None,
+) -> _OfertaPorOrigem:
     """Núcleo comum aos dois grãos: para cada ORIGEM, a oferta ponderada dos concorrentes.
 
     A origem é o centroide do hexágono (`calcular_pressao_por_hex`) ou a coordenada da academia
@@ -210,25 +232,75 @@ def _oferta_por_origem(
     vez de duplicada nas duas. Se o kernel mudasse só num dos caminhos, os dois grãos deixariam de
     ser comparáveis sem ninguém notar.
 
-    Laço por origem, não produto cartesiano completo: 19.329 academias x 4.499 pontos numa matriz
-    cheia passaria de 600 MB.
-    """
-    oferta = np.zeros(len(lat_o), dtype="float64")
-    n_no_raio = np.zeros(len(lat_o), dtype="int64")
-    dist_min = np.full(len(lat_o), np.nan, dtype="float64")
-    if not lat_c.size:
-        return oferta, n_no_raio, dist_min
+    DOIS CONJUNTOS DE PONTOS, DOIS PESOS (BLK-MA-16). As cadeias entram com `PESO_OFERTA_CADEIA`;
+    as independentes (`lat_i`/`lng_i`, opcionais) com `peso_independente` — `0,5` por decisão de
+    produto. O peso multiplica o do decaimento, ou seja, age no NUMERADOR da oferta, antes da
+    saturação. Sem `lat_i`, o comportamento é byte a byte o de antes do bloco.
 
-    for i in range(len(lat_o)):
-        d = _haversine_m(
-            np.full(lat_c.shape, lat_o[i]), np.full(lng_c.shape, lng_o[i]), lat_c, lng_c
-        )
-        peso = peso_por_distancia(d, kernel=kernel, raio_m=raio_m, beta=beta)
-        oferta[i] = float(peso.sum())
-        n_no_raio[i] = int((d <= float(raio_m)).sum())
-        if d.size:
-            dist_min[i] = float(d.min())
-    return oferta, n_no_raio, dist_min
+    `auto_pos[i]` é a posição da ORIGEM `i` dentro do conjunto de independentes, ou `-1`. Existe
+    porque no grão academia a origem **é um dos pontos**: sem zerar essa parcela, cada academia
+    receberia `peso(d = 0) x 0,5 = 0,5` de oferta de si mesma — `sat(0,5) = 33,3` pontos de pressão
+    fantasma em quem não tem mais ninguém por perto, justamente nos casos que o sinal existe para
+    distinguir. A exclusão é POR POSIÇÃO (derivada da chave), nunca por distância zero: duas
+    academias no mesmo endereço existem, e são duas linhas.
+
+    Laço por origem, não produto cartesiano completo: 19.329 academias x 23.828 pontos numa matriz
+    cheia passaria de 3 GB.
+    """
+    n_origens = len(lat_o)
+    oferta = np.zeros(n_origens, dtype="float64")
+    oferta_ind = np.zeros(n_origens, dtype="float64")
+    n_no_raio = np.zeros(n_origens, dtype="int64")
+    n_ind_no_raio = np.zeros(n_origens, dtype="int64")
+    dist_min = np.full(n_origens, np.nan, dtype="float64")
+
+    tem_indep = lat_i is not None and lng_i is not None and len(lat_i) > 0
+    if not lat_c.size and not tem_indep:
+        return _OfertaPorOrigem(oferta, oferta_ind, n_no_raio, n_ind_no_raio, dist_min)
+
+    for i in range(n_origens):
+        distancias: list[np.ndarray] = []
+        if lat_c.size:
+            d_c = _haversine_m(
+                np.full(lat_c.shape, lat_o[i]), np.full(lng_c.shape, lng_o[i]), lat_c, lng_c
+            )
+            peso_c = peso_por_distancia(d_c, kernel=kernel, raio_m=raio_m, beta=beta)
+            oferta[i] += float((peso_c * PESO_OFERTA_CADEIA).sum())
+            n_no_raio[i] += int((d_c <= float(raio_m)).sum())
+            distancias.append(d_c)
+
+        if tem_indep:
+            d_i = _haversine_m(
+                np.full(lat_i.shape, lat_o[i]),  # type: ignore[union-attr]
+                np.full(lng_i.shape, lng_o[i]),  # type: ignore[union-attr]
+                lat_i,  # type: ignore[arg-type]
+                lng_i,  # type: ignore[arg-type]
+            )
+            peso_i = peso_por_distancia(d_i, kernel=kernel, raio_m=raio_m, beta=beta)
+            dentro_i = d_i <= float(raio_m)
+            proprio = int(auto_pos[i]) if auto_pos is not None else -1
+            if proprio >= 0:
+                # Zera a parcela E a distância da própria academia, para ela não contaminar nem a
+                # oferta nem o `dist_concorrente_mais_proximo_m` (que sairia sempre `0,0`).
+                peso_i = peso_i.copy()
+                peso_i[proprio] = 0.0
+                dentro_i = dentro_i.copy()
+                dentro_i[proprio] = False
+                d_i = d_i.copy()
+                d_i[proprio] = np.inf
+            parcela = float((peso_i * float(peso_independente)).sum())
+            oferta[i] += parcela
+            oferta_ind[i] = parcela
+            n_ind_no_raio[i] = int(dentro_i.sum())
+            n_no_raio[i] += n_ind_no_raio[i]
+            distancias.append(d_i)
+
+        # `default` em vez de `if distancias`: com a auto-exclusão a única distância pode ter
+        # virado `inf` (a própria academia), e um gerador vazio faria `min()` levantar. `NaN`
+        # aqui significa "não havia de quem medir" — que é o mesmo que a função já devolvia.
+        menor = min((float(d.min()) for d in distancias if d.size), default=float("inf"))
+        dist_min[i] = menor if np.isfinite(menor) else np.nan
+    return _OfertaPorOrigem(oferta, oferta_ind, n_no_raio, n_ind_no_raio, dist_min)
 
 
 def _saturar(oferta: np.ndarray) -> np.ndarray:
@@ -236,10 +308,101 @@ def _saturar(oferta: np.ndarray) -> np.ndarray:
     return 100.0 * (1.0 - 1.0 / (1.0 + oferta))
 
 
+def dedup_independentes(
+    independentes: pd.DataFrame, *, distancia_m: float = DEDUP_INDEPENDENTES_M
+) -> tuple[pd.DataFrame, dict[tuple[str, str], int]]:
+    """Colapsa a MESMA academia listada em fontes diferentes. Devolve `(pontos, posicao_por_chave)`.
+
+    O DEFEITO QUE ELA FECHA, e por que ele é invisível hoje. A chave de churn embute a `fonte`
+    (§8.1, emenda BLK-MA-03), então a mesma academia em TotalPass e WellHub é **sempre duas
+    linhas**. Somando as duas como oferta, toda academia listada nos dois apps pressiona em dobro —
+    erro sistemático, em massa, e silencioso. Em 2026-08-14 o snapshot só tem WellHub, então **este
+    código não muda nenhum número hoje**: ele existe para o defeito não entrar junto com a primeira
+    coleta que trouxer as duas fontes.
+
+    O CRITÉRIO É ARBITRADO, não medido — não há par TP x WH nesta estação para calibrar (ver
+    `DEDUP_INDEPENDENTES_M`). Distância pura, e só entre fontes DIFERENTES: duas linhas da MESMA
+    fonte a 40 m são duas academias (a chave já é única por fonte), enquanto duas linhas de fontes
+    distintas a 40 m são, muito provavelmente, uma só vista duas vezes.
+
+    O sobrevivente é o **primeiro em ordem `(fonte, chave_snapshot)`** — determinismo por
+    construção, para a mesma entrada dar o mesmo artefato em qualquer máquina.
+
+    O segundo elemento do retorno mapeia **toda** chave de entrada (inclusive as colapsadas) para a
+    posição do seu representante no frame devolvido. É ele que permite ao chamador excluir a
+    própria academia da própria oferta mesmo quando ela foi a linha absorvida.
+    """
+    colunas = ["fonte", "chave_snapshot", "lat", "lng"]
+    faltando = [c for c in colunas if c not in independentes.columns]
+    if faltando:
+        raise ValueError(f"frame de independentes sem coluna(s) obrigatoria(s): {faltando}")
+
+    base = independentes[colunas].copy()
+    base["lat"] = pd.to_numeric(base["lat"], errors="coerce")
+    base["lng"] = pd.to_numeric(base["lng"], errors="coerce")
+    base = base[np.isfinite(base["lat"]) & np.isfinite(base["lng"])]
+    base = base.sort_values(["fonte", "chave_snapshot"], kind="stable").reset_index(drop=True)
+    if base.empty:
+        return base, {}
+
+    fontes = base["fonte"].astype(str).to_numpy()
+    chaves = base["chave_snapshot"].astype(str).to_numpy()
+    lat = base["lat"].to_numpy(dtype="float64")
+    lng = base["lng"].to_numpy(dtype="float64")
+    celulas = [
+        h3.latlng_to_cell(float(la), float(ln), DEDUP_H3_RES)
+        for la, ln in zip(lat, lng, strict=True)
+    ]
+
+    # Bucket espacial: sem ele a comparação seria de todos contra todos (19.329^2 = 373 M pares).
+    ocupantes: dict[str, list[int]] = {}
+    mantidos: list[int] = []
+    pos_de: dict[int, int] = {}
+    posicao_por_chave: dict[tuple[str, str], int] = {}
+    colapsadas = 0
+
+    for i in range(len(base)):
+        representante: int | None = None
+        for vizinha in h3.grid_disk(celulas[i], 1):
+            for j in ocupantes.get(vizinha, ()):
+                if fontes[j] == fontes[i]:
+                    continue
+                d = float(
+                    _haversine_m(
+                        np.array([lat[i]]), np.array([lng[i]]), np.array([lat[j]]), np.array([lng[j]])
+                    )[0]
+                )
+                if d <= float(distancia_m):
+                    representante = j
+                    break
+            if representante is not None:
+                break
+
+        if representante is None:
+            pos_de[i] = len(mantidos)
+            mantidos.append(i)
+            ocupantes.setdefault(celulas[i], []).append(i)
+        else:
+            pos_de[i] = pos_de[representante]
+            colapsadas += 1
+        posicao_por_chave[(fontes[i], chaves[i])] = pos_de[i]
+
+    if colapsadas:
+        _logger.info(
+            "dedup de independentes entre fontes: %d linha(s) colapsada(s) de %d (raio %.0f m)",
+            colapsadas,
+            len(base),
+            float(distancia_m),
+        )
+    return base.iloc[mantidos].reset_index(drop=True), posicao_por_chave
+
+
 def calcular_pressao_por_academia(
     academias: pd.DataFrame,
     concorrentes: pd.DataFrame,
     *,
+    independentes: pd.DataFrame | None = None,
+    peso_independente: float = PESO_OFERTA_INDEPENDENTE,
     kernel: str = PRESSAO_KERNEL_DEFAULT,
     raio_m: float = PRESSAO_RAIO_M,
     beta: float = PRESSAO_BETA_POTENCIA,
@@ -262,9 +425,25 @@ def calcular_pressao_por_academia(
 
     A fórmula é a MESMA do grão hex (`_oferta_por_origem` + `_saturar`); o que muda é a ORIGEM da
     medição. Isso é deliberado: os dois números continuam na mesma régua e comparáveis.
+
+    UNIVERSO DE OFERTA (BLK-MA-16). Sem `independentes`, só as cadeias contam e o resultado é o
+    histórico — `universo_oferta = "cadeias"`. Com `independentes`, elas entram com metade do peso
+    de uma unidade de rede e o carimbo vira `"cadeias_e_independentes"`. **É condicional ao insumo,
+    no molde da DEC-027**: nenhuma rodada muda de régua sem o chamador fornecer o frame.
+
+    O que a inclusão corrige, medido em SP (2026-08-14, 7.106 independentes): a fração com pressão
+    **`0` cai de 29,2% para 3,9%**. Aquele zero não era território livre — era o insumo, que só
+    enxerga cadeia, respondendo a pergunta errada. O que ela custa: a saturação comprime o topo
+    (amplitude entre os 200 mais pressionados de 7,74 para 4,19 pontos), e é por isso que a virada
+    do default é decisão de gate e não desta função.
     """
     if kernel not in KERNEIS_PRESSAO:
         raise ValueError(f"kernel fora de {sorted(KERNEIS_PRESSAO)}: {kernel!r}")
+    if not 0.0 <= float(peso_independente) <= float(PESO_OFERTA_CADEIA):
+        raise ValueError(
+            f"`peso_independente` fora de [0, {PESO_OFERTA_CADEIA}]: {peso_independente!r} — uma "
+            "independente nao pode pressionar MAIS que uma unidade de rede"
+        )
     faltando = [c for c in ("fonte", "chave_snapshot", "lat", "lng") if c not in academias.columns]
     if faltando:
         raise ValueError(f"frame de academias sem coluna(s) obrigatoria(s): {faltando}")
@@ -286,7 +465,30 @@ def calcular_pressao_por_academia(
         raise ValueError("frame de academias com `(fonte, chave_snapshot)` duplicado")
 
     lat_c, lng_c = _pontos_validos(concorrentes)
-    oferta, n_no_raio, dist_min = _oferta_por_origem(
+
+    lat_i: np.ndarray | None = None
+    lng_i: np.ndarray | None = None
+    auto_pos: np.ndarray | None = None
+    universo = UNIVERSO_OFERTA_CADEIAS
+    if independentes is not None:
+        universo = UNIVERSO_OFERTA_COM_INDEPENDENTES
+        pontos_i, posicao_por_chave = dedup_independentes(independentes)
+        lat_i = pontos_i["lat"].to_numpy(dtype="float64")
+        lng_i = pontos_i["lng"].to_numpy(dtype="float64")
+        # A auto-exclusão é resolvida pela CHAVE, e pelo mapa da dedup em vez do índice cru: se a
+        # própria academia foi a linha absorvida no colapso, quem representa ela na oferta é a
+        # sobrevivente do grupo — e é essa parcela que precisa ser zerada, não a que sumiu.
+        auto_pos = np.array(
+            [
+                posicao_por_chave.get((str(f), str(k)), -1)
+                for f, k in zip(
+                    base["fonte"].astype(str), base["chave_snapshot"].astype(str), strict=True
+                )
+            ],
+            dtype="int64",
+        )
+
+    resultado = _oferta_por_origem(
         base["lat"].to_numpy(dtype="float64"),
         base["lng"].to_numpy(dtype="float64"),
         lat_c,
@@ -294,8 +496,12 @@ def calcular_pressao_por_academia(
         kernel=kernel,
         raio_m=raio_m,
         beta=beta,
+        lat_i=lat_i,
+        lng_i=lng_i,
+        peso_independente=peso_independente,
+        auto_pos=auto_pos,
     )
-    pressao = _saturar(oferta)
+    pressao = _saturar(resultado.oferta_total)
 
     out = pd.DataFrame(
         {
@@ -303,11 +509,16 @@ def calcular_pressao_por_academia(
             "chave_snapshot": base["chave_snapshot"].astype("string").to_numpy(),
             "pressao_competitiva": pd.Series(pressao, dtype="float64"),
             "v6": pd.Series(pressao / 100.0, dtype="float64"),
-            "oferta_ponderada": pd.Series(oferta, dtype="float64"),
-            "n_concorrentes_no_raio": pd.Series(n_no_raio, dtype="int64"),
-            "dist_concorrente_mais_proximo_m": pd.Series(dist_min, dtype="float64"),
+            "oferta_ponderada": pd.Series(resultado.oferta_total, dtype="float64"),
+            "n_concorrentes_no_raio": pd.Series(resultado.n_no_raio, dtype="int64"),
+            "dist_concorrente_mais_proximo_m": pd.Series(resultado.dist_min, dtype="float64"),
+            "oferta_independentes": pd.Series(resultado.oferta_independentes, dtype="float64"),
+            "n_independentes_no_raio": pd.Series(
+                resultado.n_independentes_no_raio, dtype="int64"
+            ),
             "kernel_pressao": pd.Series([str(kernel)] * len(base), dtype="string"),
             "raio_pressao_m": pd.Series([float(raio_m)] * len(base), dtype="float64"),
+            "universo_oferta": pd.Series([universo] * len(base), dtype="string"),
             "versao_contrato": pd.Series([VERSAO_CONTRATO_PRESSAO] * len(base), dtype="string"),
         }
     )
@@ -338,12 +549,59 @@ def _assert_schema_pressao_academia(df: pd.DataFrame) -> None:
         raise AssertionError("`v6` fora de [0, 1)")
     if bool((pd.to_numeric(df["oferta_ponderada"], errors="coerce") < 0.0).any()):
         raise AssertionError("`oferta_ponderada` negativa")
+    _assert_universo_e_decomposicao(
+        df, coluna_oferta="oferta_ponderada", coluna_parte="oferta_independentes"
+    )
+
+
+def _assert_universo_e_decomposicao(
+    df: pd.DataFrame, *, coluna_oferta: str, coluna_parte: str
+) -> None:
+    """Invariantes do BLK-MA-16, comuns aos dois grãos.
+
+    A parte não pode exceder o todo nem ser negativa, e **no universo `cadeias` ela tem de ser
+    exatamente zero**: um resíduo ali significaria que independentes entraram numa rodada que se
+    declara sem elas — o carimbo estaria mentindo, que é o defeito exato que ele existe para não
+    deixar acontecer.
+    """
+    universo = set(df["universo_oferta"].astype(str).unique())
+    fora = sorted(universo - set(UNIVERSOS_OFERTA))
+    if fora:
+        raise AssertionError(f"`universo_oferta` fora de {list(UNIVERSOS_OFERTA)}: {fora}")
+
+    parte = pd.to_numeric(df[coluna_parte], errors="coerce")
+    total = pd.to_numeric(df[coluna_oferta], errors="coerce")
+    if bool((parte < 0.0).any()):
+        raise AssertionError(f"`{coluna_parte}` negativa")
+    # Tolerância de ponto flutuante: a parte é somada dentro do total, então a diferença legítima
+    # é zero e qualquer folga aqui é só ruído de acumulação.
+    if bool((parte > total + 1e-9).any()):
+        raise AssertionError(f"`{coluna_parte}` maior que `{coluna_oferta}`")
+    if bool((df["n_independentes_no_raio"].astype("int64") < 0).any()):
+        raise AssertionError("`n_independentes_no_raio` negativo")
+    if bool((df["n_independentes_no_raio"].astype("int64") > df["n_concorrentes_no_raio"]).any()):
+        raise AssertionError("`n_independentes_no_raio` maior que `n_concorrentes_no_raio`")
+
+    so_cadeias = df["universo_oferta"].astype(str) == UNIVERSO_OFERTA_CADEIAS
+    if bool(so_cadeias.any()):
+        if bool((parte[so_cadeias] != 0.0).any()):
+            raise AssertionError(
+                f"`{coluna_parte}` diferente de zero com `universo_oferta = "
+                f"{UNIVERSO_OFERTA_CADEIAS}` — o carimbo estaria mentindo"
+            )
+        if bool((df.loc[so_cadeias, "n_independentes_no_raio"].astype("int64") != 0).any()):
+            raise AssertionError(
+                f"`n_independentes_no_raio` diferente de zero com `universo_oferta = "
+                f"{UNIVERSO_OFERTA_CADEIAS}`"
+            )
 
 
 def calcular_pressao_por_hex(
     hexes: Iterable[str],
     concorrentes: pd.DataFrame,
     *,
+    independentes: pd.DataFrame | None = None,
+    peso_independente: float = PESO_OFERTA_INDEPENDENTE,
     kernel: str = PRESSAO_KERNEL_DEFAULT,
     raio_m: float = PRESSAO_RAIO_M,
     beta: float = PRESSAO_BETA_POTENCIA,
@@ -370,23 +628,51 @@ def calcular_pressao_por_hex(
         )
 
     lat_c, lng_c = _pontos_validos(concorrentes)
+
+    lat_i: np.ndarray | None = None
+    lng_i: np.ndarray | None = None
+    universo = UNIVERSO_OFERTA_CADEIAS
+    if independentes is not None:
+        universo = UNIVERSO_OFERTA_COM_INDEPENDENTES
+        pontos_i, _posicoes = dedup_independentes(independentes)
+        lat_i = pontos_i["lat"].to_numpy(dtype="float64")
+        lng_i = pontos_i["lng"].to_numpy(dtype="float64")
+    # Sem `auto_pos`: a origem aqui é o CENTROIDE do território, não uma academia — não há "si
+    # mesma" para excluir. É a única diferença de tratamento entre os dois grãos.
+
     # MESMO núcleo do grão academia: se as duas fórmulas divergirem, os dois números deixam de ser
     # comparáveis e ninguém percebe — o kernel e a saturação vivem num lugar só de propósito.
-    oferta, n_no_raio, dist_min = _oferta_por_origem(
-        lat_h, lng_h, lat_c, lng_c, kernel=kernel, raio_m=raio_m, beta=beta
+    resultado = _oferta_por_origem(
+        lat_h,
+        lng_h,
+        lat_c,
+        lng_c,
+        kernel=kernel,
+        raio_m=raio_m,
+        beta=beta,
+        lat_i=lat_i,
+        lng_i=lng_i,
+        peso_independente=peso_independente,
     )
-    pressao = _saturar(oferta)
+    pressao = _saturar(resultado.oferta_total)
 
     out = pd.DataFrame(
         {
             "hex_id_res7": pd.Series(validos, dtype="string"),
             "pressao_competitiva_no_hex": pd.Series(pressao, dtype="float64"),
             "v6_no_hex": pd.Series(pressao / 100.0, dtype="float64"),
-            "oferta_ponderada_no_hex": pd.Series(oferta, dtype="float64"),
-            "n_concorrentes_no_raio": pd.Series(n_no_raio, dtype="int64"),
-            "dist_concorrente_mais_proximo_m": pd.Series(dist_min, dtype="float64"),
+            "oferta_ponderada_no_hex": pd.Series(resultado.oferta_total, dtype="float64"),
+            "n_concorrentes_no_raio": pd.Series(resultado.n_no_raio, dtype="int64"),
+            "dist_concorrente_mais_proximo_m": pd.Series(resultado.dist_min, dtype="float64"),
+            "oferta_independentes_no_hex": pd.Series(
+                resultado.oferta_independentes, dtype="float64"
+            ),
+            "n_independentes_no_raio": pd.Series(
+                resultado.n_independentes_no_raio, dtype="int64"
+            ),
             "kernel_pressao": pd.Series([str(kernel)] * len(validos), dtype="string"),
             "raio_pressao_m": pd.Series([float(raio_m)] * len(validos), dtype="float64"),
+            "universo_oferta": pd.Series([universo] * len(validos), dtype="string"),
             "versao_contrato": pd.Series([VERSAO_CONTRATO_PRESSAO] * len(validos), dtype="string"),
         }
     )
@@ -413,6 +699,9 @@ def _assert_schema_pressao(df: pd.DataFrame) -> None:
         raise AssertionError("`oferta_ponderada_no_hex` negativa")
     if bool((pd.to_numeric(df["n_concorrentes_no_raio"], errors="coerce") < 0).any()):
         raise AssertionError("`n_concorrentes_no_raio` negativo")
+    _assert_universo_e_decomposicao(
+        df, coluna_oferta="oferta_ponderada_no_hex", coluna_parte="oferta_independentes_no_hex"
+    )
 
 
 def ler_concorrentes(caminho: Path = CONCORRENTES_PATH_DEFAULT) -> pd.DataFrame:
@@ -443,6 +732,7 @@ __all__ = [
     "CONCORRENTES_PATH_DEFAULT",
     "calcular_pressao_por_academia",
     "calcular_pressao_por_hex",
+    "dedup_independentes",
     "ler_concorrentes",
     "peso_por_distancia",
 ]

@@ -61,6 +61,7 @@ _DO_SCORE: tuple[str, ...] = (
     "v6",
     "pressao_competitiva",
     "pressao_grao",
+    "universo_oferta",
     "sinais_disponiveis",
     "n_sinais_disponiveis",
     "score_vulnerabilidade",

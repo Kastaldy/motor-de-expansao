@@ -287,11 +287,18 @@ def test_soma_alvo_maior_que_um_e_inocua_por_construcao() -> None:
 
 
 def _pressao(pares: list[tuple[str, float]]) -> pd.DataFrame:
-    """Frame mínimo de pressão: `hex_id_res7` + `pressao_competitiva_no_hex` em [0, 100)."""
+    """Frame mínimo de pressão: `hex_id_res7` + `pressao_competitiva_no_hex` em [0, 100).
+
+    `universo_oferta` entra no mínimo desde o BLK-MA-16: o score se recusa a inferir QUEM contou
+    como concorrência, e o frame mínimo é justamente onde essa omissão passaria despercebida.
+    """
     return pd.DataFrame(
         {
             "hex_id_res7": pd.Series([h for h, _ in pares], dtype="string"),
             "pressao_competitiva_no_hex": pd.Series([p for _, p in pares], dtype="float64"),
+            "universo_oferta": pd.Series(
+                [c.UNIVERSO_OFERTA_CADEIAS] * len(pares), dtype="string"
+            ),
         }
     )
 
@@ -1099,20 +1106,22 @@ def test_docstring_registra_por_que_as_colunas_ressalvadas_ficam_fora() -> None:
 # --------------------------------------------------------------------------- #
 # CA-11 — contrato de 20 colunas e `_assert_schema_score`
 # --------------------------------------------------------------------------- #
-def test_schema_25_colunas_em_ordem_e_dtypes(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
+def test_schema_26_colunas_em_ordem_e_dtypes(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
     churn, presenca = _insumos(serie_madura_s3_s4)
     out = calcular_score_vulnerabilidade(churn=churn, presenca=presenca)
     assert list(out.columns) == list(c.CONTRATO_COLUNAS_SCORE.keys())
     # 20 -> 22 no BLK-MA-09 / DEC-026 (dois FATOS de rating); 22 -> 24 no BLK-MA-12 (`v6` e a
     # pressao que o audita); 24 -> 25 no BLK-MA-14 / DEC-029 (`pressao_grao`, o carimbo de qual
-    # regua produziu o numero). Sem insumo de pressao, `v6` sai NULO e `n_sinais_disponiveis`
-    # continua limitado a 3 — a chamada acima nao passa `pressao=`.
-    assert len(list(out.columns)) == 25
+    # regua produziu o numero); 25 -> 26 no BLK-MA-16 (`universo_oferta`, o carimbo do OUTRO eixo
+    # — QUEM contou como concorrencia). Sem insumo de pressao, `v6` sai NULO e
+    # `n_sinais_disponiveis` continua limitado a 3 — a chamada acima nao passa `pressao=`.
+    assert len(list(out.columns)) == 26
     assert "v2" not in out.columns
     assert out["nota_wellhub"].dtype == "Float64"
     assert out["qtd_avaliacoes_wellhub"].dtype == "Int64"
     assert out["v6"].isna().all(), "sem insumo de pressao, o S6 nao existe na linha"
     assert out["pressao_grao"].isna().all(), "sem pressao nao ha grao a carimbar"
+    assert out["universo_oferta"].isna().all(), "sem pressao nao ha universo a carimbar"
     assert int(out["n_sinais_disponiveis"].max()) <= 3
     assert (out["versao_contrato"] == c.VERSAO_CONTRATO_SCORE).all()
     # `Int64` NULÁVEL, não `int64`: a linha sem par no sinal 1 precisa carregar nulo.
@@ -1474,8 +1483,11 @@ def _pressao_academia(chaves_e_pressao: dict[str, float]) -> pd.DataFrame:
             "oferta_ponderada": 1.0,
             "n_concorrentes_no_raio": 1,
             "dist_concorrente_mais_proximo_m": 500.0,
+            "oferta_independentes": 0.0,
+            "n_independentes_no_raio": 0,
             "kernel_pressao": c.PRESSAO_KERNEL_DEFAULT,
             "raio_pressao_m": c.PRESSAO_RAIO_M,
+            "universo_oferta": c.UNIVERSO_OFERTA_CADEIAS,
             "versao_contrato": c.VERSAO_CONTRATO_PRESSAO,
         }
         for chave, p in chaves_e_pressao.items()

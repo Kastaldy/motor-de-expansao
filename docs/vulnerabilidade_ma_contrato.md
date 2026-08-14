@@ -404,6 +404,37 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 > (`_assert_schema_pressao_academia`) em vez da frase de docstring que confundia CALCULAR com
 > PERSISTIR — e que manteve o sinal um bloco inteiro no grão errado.
 
+> ### [emenda BLK-MA-16 / DEC-030, 2026-08-14] O `v6` conta INDEPENDENTES, não só cadeias
+>
+> A DEC-029 corrigiu **de onde** se mede; esta corrige **quem conta como concorrência**. São eixos
+> independentes, e o segundo estava errado desde o BLK-MA-12 sem que ninguém olhasse:
+> `concorrentes_mapeados.parquet` tem **4.499 pontos, 104 redes e ZERO independentes** — ele nasce
+> dos coletores `unidades_*.csv`, que são feeds de CADEIA. A pressão respondia *"quanta CADEIA cerca
+> este ponto"*, e uma independente espremida entre oito independentes marcava **zero**.
+>
+> **Medido nacionalmente (19.329 independentes):** a fração com pressão `0` cai de **37,8% para
+> 5,5%**, e **6.238 academias (32,3% do universo) tinham `0` e passam a ter sinal vindo só de
+> independentes**. Em torno da academia mediana há **7 independentes** num raio de 2 km (p90 = 21,
+> máximo 52) que a régua antiga não via. Spearman entre as réguas: 0,8287.
+>
+> **As independentes pesam `0,5`** contra `1,0` de uma unidade de rede (decisão de produto de
+> Vinicius). O peso age no numerador da oferta; kernel, raio e saturação não mudam.
+>
+> **O carimbo `universo_oferta` (`cadeias` | `cadeias_e_independentes`) passa a ser obrigatório** no
+> frame de pressão, e o score **se recusa a inferi-lo** — assumir `cadeias` no silêncio erraria na
+> direção otimista, que é a mesma do falso zero que a emenda corrige.
+>
+> **O que a emenda NÃO faz: perder ordenação.** `Spearman(pressão, oferta_ponderada) = 1,000000` —
+> a saturação é estritamente crescente e não embaralha nada. O que ela faz é **achatar a leitura e
+> deslocar limiares absolutos**: no top-500 a pressão varia 4,36 pontos enquanto a oferta varia
+> 2,4x, e "acima de 90" passa de 255 para 1.055 academias. Quem precisar discriminar no topo usa
+> `oferta_ponderada`, que é linear na concorrência e já viaja na saída.
+>
+> **Limite declarado:** só se enxerga independente que aderiu a um agregador. Os 5,5% de zeros
+> restantes são, em parte, cobertura do WellHub — não território livre. E a comparabilidade com
+> `pressao_concorrencial_score_2km` (28 redes de cadeia) **acaba** neste universo; ela sobrevive no
+> universo `cadeias`, que continua calculável.
+
 ### 8.2 Normalização
 
 **Percentil por universo** (robusto a outliers) para os sinais contínuos (rating, staleness,

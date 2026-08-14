@@ -524,6 +524,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="ignora o insumo de pressao e devolve o score sem o s6 (DEC-027)",
     )
     p.add_argument(
+        "--oferta-com-independentes",
+        action="store_true",
+        help=(
+            "as independentes tambem contam como concorrencia no s6, com metade do peso de uma "
+            "unidade de rede (BLK-MA-16). DESLIGADO por default: muda o numero de quase toda "
+            "linha e a virada do default e' decisao de gate"
+        ),
+    )
+    p.add_argument(
         "--saida-nomeadas",
         type=Path,
         default=None,
@@ -542,14 +551,23 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def _pressao_por_academia(
-    caminho: Path | None, academias: pd.DataFrame | None = None
+    caminho: Path | None,
+    academias: pd.DataFrame | None = None,
+    *,
+    com_independentes: bool = False,
 ) -> tuple[pd.DataFrame | None, str]:
     """Pressão POR ACADEMIA a partir do feed cru, ou `(None, motivo)`. Nunca derruba o lote.
 
     A coordenada é lida do feed, usada para medir distância e **descartada dentro da função** — o
     que sai é `(fonte, chave_snapshot, pressao)`. É a rota B da DEC-029: sem persistir coordenada,
     logo sem bump de série.
+
+    `com_independentes` liga o universo de oferta do BLK-MA-16: as independentes do MESMO feed
+    entram como concorrência, com metade do peso de uma unidade de rede. **Desligado por default**,
+    porque virar o universo padrão é decisão de gate — o número muda para quase todo mundo (em SP,
+    a fração com pressão zero cai de 29,2% para 3,9%).
     """
+    from .contrato import CATEGORIA_INDEPENDENTE
     from .pressao_competitiva import (
         CONCORRENTES_PATH_DEFAULT,
         calcular_pressao_por_academia,
@@ -565,8 +583,17 @@ def _pressao_por_academia(
     if academias.empty:
         return None, "feed cru vazio ou ausente; score sem o s6"
     pontos = ler_concorrentes(alvo)
-    pressao = calcular_pressao_por_academia(academias, pontos)
-    return pressao, f"pressao POR ACADEMIA calculada sobre {len(pressao)} unidade(s)"
+
+    independentes = None
+    sufixo = "universo `cadeias`"
+    if com_independentes:
+        if "rede" not in academias.columns:
+            return None, "feed sem a coluna `rede`; nao da' para separar independente de cadeia"
+        independentes = academias[academias["rede"].astype(str) == CATEGORIA_INDEPENDENTE]
+        sufixo = f"universo `cadeias_e_independentes` (+{len(independentes)} independente(s))"
+
+    pressao = calcular_pressao_por_academia(academias, pontos, independentes=independentes)
+    return pressao, f"pressao POR ACADEMIA sobre {len(pressao)} unidade(s), {sufixo}"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -587,7 +614,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.sem_pressao:
         pressao, motivo = None, "`--sem-pressao`: score sem o s6, por pedido explicito"
     else:
-        pressao, motivo = _pressao_por_academia(args.concorrentes, coordenadas)
+        pressao, motivo = _pressao_por_academia(
+            args.concorrentes, coordenadas, com_independentes=args.oferta_com_independentes
+        )
     _logger.info("sinal 6: %s", motivo)
 
     score = calcular_score_vulnerabilidade(args.base_dir, pressao=pressao)
