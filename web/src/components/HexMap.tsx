@@ -8,6 +8,7 @@ import { Map } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 import { alunos, brl, num } from '../lib/format'
+import { sinaisDoRegime } from '../lib/sinais'
 import {
   DISCARDED_FILL,
   faixaM1ToColor,
@@ -998,8 +999,38 @@ export default function HexMap({
               valor={`${num(indepHover.d.nota, 1)} · ${num(indepHover.d.n_aval)} aval.`}
             />
           )}
+          {/* SINAIS MEDIDOS, por extenso. A linha mostrava o valor bruto (`s1,s6`), que e' enum
+              do pipeline e nao diz nada a quem nao leu o contrato — e essa linha existe
+              justamente para dizer SOB QUAL REGUA o numero foi composto, porque reguas de
+              regimes diferentes nao se comparam entre si (emenda BLK-MA-04-FU1).
+
+              Cada frase vem da coluna "direcao" do §8.1 e MANTEM a direcao, que e' o que
+              permite ler o numero. Nenhuma delas afirma fragilidade da academia: descrevem o que
+              foi medido, nao o veredito (DEC-028). */}
           {indepHover.d.regime && (
-            <Linha rotulo="Sinais medidos" valor={indepHover.d.regime} />
+            <>
+              <div
+                style={{
+                  font: '400 9.5px/1 var(--f-ui)',
+                  color: 'var(--tx-label)',
+                  marginTop: 8,
+                  textTransform: 'uppercase',
+                  letterSpacing: '.05em',
+                }}
+              >
+                O que foi medido
+              </div>
+              {sinaisDoRegime(indepHover.d.regime).map((s) => (
+                <div key={s.rotulo} style={{ marginTop: 4, maxWidth: 236 }}>
+                  <div style={{ font: '600 10.5px/1.2 var(--f-ui)', color: 'var(--tx-soft)' }}>
+                    {s.rotulo}
+                  </div>
+                  <div style={{ font: '400 9px/1.3 var(--f-ui)', color: 'var(--tx-label)' }}>
+                    {s.explica}
+                  </div>
+                </div>
+              ))}
+            </>
           )}
           {/* DECLARA A REDUNDÂNCIA em vez de escondê-la. No regime `s1,s6` o composto é
               `30 + 40·v6` — o s1 vale 30 pontos FIXOS porque só um agregador existe em disco —,
