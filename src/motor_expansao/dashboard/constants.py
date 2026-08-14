@@ -558,27 +558,43 @@ def moradores_por_domicilio(uf: str | None, cod_municipio: str | None = None) ->
 
 
 _uplift_setor_cache: dict[str, float] | None = None
+_uplift_setor_extrapolado_cache: set[str] | None = None
 
 
 def _carregar_uplift_setor() -> dict[str, float]:
-    """Le a tabela de uplift por SETOR. Dict vazio se o artefato nao existir (cai no municipio)."""
-    global _uplift_setor_cache
+    """Le a tabela de uplift por SETOR. Dict vazio se o artefato nao existir (cai no municipio).
+
+    Le tambem `flag_extrapolacao`, que o pipeline grava com o comentario "leitura cautelosa":
+    marca o setor cuja composicao familiar cai FORA do envelope visto na calibracao municipal.
+    Ate 2026-08-13 esta funcao lia so duas colunas e a flag morria na carga — 94.908 setores
+    (20,3% deles, 15,4% dos domicilios do pais) chegavam ao relatorio sem nenhuma ressalva.
+    """
+    global _uplift_setor_cache, _uplift_setor_extrapolado_cache
     if _uplift_setor_cache is None:
         mapa: dict[str, float] = {}
+        extrapolados: set[str] = set()
         if UPLIFT_COMPOSICAO_SETOR_PATH.exists():
             import pandas as pd
 
-            df = pd.read_parquet(
-                UPLIFT_COMPOSICAO_SETOR_PATH, columns=["cod_setor", "uplift_composicao_setor"]
-            )
+            colunas = ["cod_setor", "uplift_composicao_setor"]
+            try:
+                df = pd.read_parquet(
+                    UPLIFT_COMPOSICAO_SETOR_PATH, columns=[*colunas, "flag_extrapolacao"]
+                )
+            except (KeyError, ValueError):  # artefato antigo, sem a flag
+                df = pd.read_parquet(UPLIFT_COMPOSICAO_SETOR_PATH, columns=colunas)
+            cods = df["cod_setor"].astype(str)
             mapa = dict(
                 zip(
-                    df["cod_setor"].astype(str),
+                    cods,
                     pd.to_numeric(df["uplift_composicao_setor"], errors="coerce"),
                     strict=False,
                 )
             )
+            if "flag_extrapolacao" in df.columns:
+                extrapolados = set(cods[df["flag_extrapolacao"].fillna(False).astype(bool)])
         _uplift_setor_cache = mapa
+        _uplift_setor_extrapolado_cache = extrapolados
     return _uplift_setor_cache
 
 
@@ -591,6 +607,18 @@ def uplift_composicao_por_setor(
         if valor is not None and valor == valor:
             return float(valor)
     return uplift_renda_domiciliar(uf, cod_municipio)
+
+
+def uplift_extrapolado(cod_setor: object) -> bool:
+    """O uplift deste setor foi EXTRAPOLADO para fora da faixa de calibracao do municipio?
+
+    True pede leitura cautelosa da renda do setor: a composicao familiar dele esta fora do
+    envelope em que o modelo foi ajustado, entao o intervalo de predicao e maior que o tipico.
+    """
+    if cod_setor is None or cod_setor != cod_setor:  # descarta NaN
+        return False
+    _carregar_uplift_setor()  # popula os dois caches juntos
+    return str(cod_setor).strip() in (_uplift_setor_extrapolado_cache or set())
 
 
 # Faixas absolutas de RENDA MEDIA DOMICILIAR (R$/domicilio/mes), com uplift + fator temporal.

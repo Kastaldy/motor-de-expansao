@@ -173,6 +173,10 @@ KPIs derivados do `result` de `analisar_ponto_censitario_setores` (READ-ONLY):
   "metodo": "setor_censitario_intersecao_area_1km",
   "n_setores": 12,
   "pop_total_raio": 18432.0,
+  // MUDANCA DE ESCALA em 2026-08-14 (PR #237, fim da dupla contagem do k): per capita
+  // passou a ser DOMICILIAR per capita (sobe ~50% p/ o mesmo ponto); os dois campos
+  // domiciliares perderam o k da base (caem /1,2335). Tipos/nomes intactos — quem
+  // aplica limiar sobre estes campos precisa recalibrar. Exemplos ABAIXO na escala antiga.
   "renda_per_capita_media_raio": 5210.0,
   // renda domiciliar (pos-contrato, PRs #124/#126/#129): os dois campos de renda sao
   // R$/mes POR DOMICILIO, NAO soma do raio ("total" = renda do domicilio inteiro,
@@ -181,6 +185,8 @@ KPIs derivados do `result` de `analisar_ponto_censitario_setores` (READ-ONLY):
   "renda_domiciliar_total_raio": 25740.0,
   "domicilios_total_raio": 6084.0,
   "metodo_renda_domiciliar_raio": "ponderada_domicilios_estimados",
+  // ADITIVO 2026-08-14: fracao (0-1) do raio com uplift EXTRAPOLADO (leitura cautelosa)
+  "fracao_uplift_extrapolado_raio": 0.2031,
   "densidade_pop_raio_hab_km2": 5870.0,
   "score_setor_medio": 64.2,
   "score_setor_max": 91.0,

@@ -96,6 +96,11 @@ CSV_SETOR_COLUMNS = [
     "pop_total_setor_2022",
     "pop_estimada_intersecao",
     "renda_per_capita_setor_2022_calibrada",
+    # Escala FINAL exibida (V06004 x uplift setorial x fator temporal / moradores) — a mesma
+    # do PDF e do payload. Sem ela o CSV so trazia a CALIBRADA (~35-40% abaixo da distribuicao
+    # que o PDF do MESMO relatorio mostra), sem nenhuma coluna para reconciliar. A calibrada
+    # continua no CSV: e' o insumo do score, nao a renda de leitura.
+    "renda_per_capita_domiciliar_setor",
     "densidade_pop_setor_hab_km2",
     "score_setor_2022_calibrado",
     "flag_renda_disponivel",
