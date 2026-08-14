@@ -18,7 +18,13 @@ import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
 import { MAX_COMPARADOS } from '../lib/ranking-comparacao'
-import type { Cobertura1k, Hex, MunicipioItem, MunicipioPayload } from '../lib/types'
+import type {
+  Cobertura1k,
+  Hex,
+  Independentes,
+  MunicipioItem,
+  MunicipioPayload,
+} from '../lib/types'
 
 /** Filtro global "melhores hexes": faixas M1 permitidas por nível. */
 const FAIXA_FILTROS: Record<string, Set<string>> = {
@@ -132,6 +138,19 @@ export default function MapScreen({
   // hoje e nenhum numero muda sem alguem clicar. Nao entra no EstadoMapa de proposito —
   // e experimento, nao preferencia a preservar entre telas.
   const [raio1km, setRaio1km] = useState(false)
+
+  /* Pins das academias INDEPENDENTES com score (BLK-MA-15). Comeca DESLIGADO pela mesma razao da
+     chave de raio: o piloto abre identico ao de hoje. Sao ate ~1,3 mil pontos numa capital, e
+     desenha-los sem pedido roubaria a leitura dos hexagonos por baixo. */
+  const [verIndependentes, setVerIndependentes] = useState(false)
+  const independentes = dados?.independentes ?? null
+  const temIndependentes = independentes?.disponivel === true && independentes.itens.length > 0
+
+  /* A chave morre com o recorte que a justificava: sair de um municipio COM camada para um SEM
+     deixaria a pilula ligada sem nada para desenhar. */
+  useEffect(() => {
+    if (!temIndependentes) setVerIndependentes(false)
+  }, [temIndependentes])
 
   /* Geometria do raio: buscada SOB DEMANDA, so' quando a chave liga. Fora do payload do
      mapa de proposito — custa ~2,4 s e ~3,9 MB na UF de SP, e quem nunca liga a chave nao
@@ -557,6 +576,7 @@ export default function MapScreen({
           selecionado={modoCenario ? null : selecionado}
           cenario={cenario}
           raio1km={raio1km}
+          independentes={verIndependentes ? independentes?.itens : undefined}
           cobertura1k={cobertura}
           /* A foto CONGELA na montagem, e trocar de UF/municipio zera `cameraRef` mas
              nao tem como zerar `foto.camera`. Sem este portao: SP/Sao Paulo -> volta da
@@ -921,6 +941,17 @@ export default function MapScreen({
             )}
 
             <ScoreLegend passoN={passo.n} />
+
+            {/* Academias INDEPENDENTES com score (BLK-MA-15). Vale em QUALQUER passo: a
+                pergunta "quem ja opera aqui e esta espremido?" e' a INVERSAO do funil (comprar,
+                nao abrir), entao nao pertence a camada nenhuma dele. */}
+            {temIndependentes && (
+              <PilulaIndependentes
+                ligado={verIndependentes}
+                meta={independentes}
+                onToggle={() => setVerIndependentes((v) => !v)}
+              />
+            )}
 
             {/* PROTOTIPO — chave do raio de atuacao das concorrentes. So aparece nos
                 passos que falam de oferta e disputa, e so quando o backend serviu os
@@ -1406,6 +1437,69 @@ function PilulaRaio({
         : ligado
           ? 'Raio 1 km por concorrente'
           : 'Ver raio de 1 km das concorrentes'}
+    </button>
+  )
+}
+
+
+/* Chave dos pins das academias INDEPENDENTES (BLK-MA-15).
+
+   O texto diz de QUEM e' o pin, e nao so' "academias": o mapa ja tem bandeiras de CADEIA, e os
+   dois universos sao opostos — a cadeia e' quem disputa o mercado, a independente e' quem se
+   compra. Confundi-los na tela seria pior que nao mostrar nenhum.
+
+   O TETO E' DECLARADO quando morde: corte silencioso num municipio grande mentiria sobre a
+   densidade, que e' o defeito que o teto de pins de concorrente ja registrou. */
+function PilulaIndependentes({
+  ligado,
+  meta,
+  onToggle,
+}: {
+  ligado: boolean
+  meta: Independentes | null
+  onToggle: () => void
+}) {
+  const n = meta?.itens.length ?? 0
+  const total = meta?.total ?? 0
+  return (
+    <button
+      onClick={onToggle}
+      title={
+        ligado
+          ? 'Cada ponto e uma academia independente. Passe o mouse para ver o score, a pressao ' +
+            'competitiva medida da coordenada dela e a nota do WellHub.'
+          : `Ver as ${total} academias independentes deste recorte, com score`
+      }
+      style={{
+        // Mesmo motivo do `PilulaRaio`: o container da legenda tem `pointerEvents: 'none'`.
+        pointerEvents: 'auto',
+        marginTop: 8,
+        width: '100%',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        fontSize: 11,
+        fontWeight: 600,
+        padding: '7px 11px',
+        borderRadius: 9,
+        border: `1px solid ${ligado ? 'rgba(232,102,60,.5)' : 'rgba(255,255,255,.14)'}`,
+        background: '#000',
+        color: ligado ? '#f2a488' : '#9aa7b5',
+      }}
+    >
+      <span
+        style={{
+          width: 9,
+          height: 9,
+          borderRadius: '50%',
+          background: ligado ? '#e8663c' : '#5a6472',
+          flexShrink: 0,
+        }}
+      />
+      {ligado
+        ? `${n} independentes${meta?.truncado ? ` de ${total} (teto)` : ''}`
+        : 'Ver academias independentes'}
     </button>
   )
 }

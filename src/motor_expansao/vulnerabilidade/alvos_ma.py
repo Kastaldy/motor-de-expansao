@@ -524,6 +524,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="ignora o insumo de pressao e devolve o score sem o s6 (DEC-027)",
     )
     p.add_argument(
+        "--saida-nomeadas",
+        type=Path,
+        default=None,
+        help=(
+            "artefato NOMEADO (D1-B): score + identidade + coordenada, para os pins do piloto "
+            "(BLK-MA-15). Sem este argumento, nada nomeado e' gravado. So' aceita caminho sob "
+            "`data/staging/` — o artefato nasce gitignored."
+        ),
+    )
+    p.add_argument(
         "--dry-run",
         action="store_true",
         help="compõe tudo e reporta a auditoria, sem gravar arquivo algum",
@@ -531,7 +541,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def _pressao_por_academia(caminho: Path | None) -> tuple[pd.DataFrame | None, str]:
+def _pressao_por_academia(
+    caminho: Path | None, academias: pd.DataFrame | None = None
+) -> tuple[pd.DataFrame | None, str]:
     """Pressão POR ACADEMIA a partir do feed cru, ou `(None, motivo)`. Nunca derruba o lote.
 
     A coordenada é lida do feed, usada para medir distância e **descartada dentro da função** — o
@@ -548,7 +560,8 @@ def _pressao_por_academia(caminho: Path | None) -> tuple[pd.DataFrame | None, st
     alvo = caminho or CONCORRENTES_PATH_DEFAULT
     if not alvo.exists():
         return None, f"insumo de pressao ausente ({alvo}); score sem o s6"
-    academias = coordenadas_por_chave()
+    if academias is None:
+        academias = coordenadas_por_chave()
     if academias.empty:
         return None, "feed cru vazio ou ausente; score sem o s6"
     pontos = ler_concorrentes(alvo)
@@ -565,10 +578,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.base_dir is None:
         raise SystemExit("informe `--base-dir` com a raiz das particoes do snapshot")
 
+    from .snapshots import coordenadas_por_chave
+
+    # UMA leitura do feed cru serve aos dois consumidores (pressao e artefato nomeado). Ler duas
+    # vezes custaria o dobro e abriria a chance de os dois verem feeds diferentes.
+    coordenadas = coordenadas_por_chave()
+
     if args.sem_pressao:
         pressao, motivo = None, "`--sem-pressao`: score sem o s6, por pedido explicito"
     else:
-        pressao, motivo = _pressao_por_academia(args.concorrentes)
+        pressao, motivo = _pressao_por_academia(args.concorrentes, coordenadas)
     _logger.info("sinal 6: %s", motivo)
 
     score = calcular_score_vulnerabilidade(args.base_dir, pressao=pressao)
@@ -580,6 +599,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         dry_run=args.dry_run,
     )
     auditoria["sinal_6"] = motivo
+
+    # Artefato NOMEADO (BLK-MA-15): so' quando pedido explicitamente. Default `None` porque ele
+    # carrega identidade — materializa-lo tem de ser um ato, nunca um efeito colateral.
+    if args.saida_nomeadas is not None:
+        from .alvos_nomeados import materializar_alvos_nomeados
+
+        auditoria["nomeadas"] = materializar_alvos_nomeados(
+            score, coordenadas, saida=args.saida_nomeadas, dry_run=args.dry_run
+        )
     print(auditoria)
     return 0
 

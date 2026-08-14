@@ -26,6 +26,7 @@ import type {
   Passo,
   PecaCobertura,
   Pin,
+  PinIndependente,
   Pins,
 } from '../lib/types'
 
@@ -226,6 +227,10 @@ export interface HexMapProps {
    */
   /** PROTOTIPO: quando true, os passos 2 e 3 mostram a cobertura do raio de 1 km. */
   raio1km?: boolean
+  /** Academias INDEPENDENTES com score (BLK-MA-15). Lista propria, nunca misturada aos
+   *  concorrentes: um universo e' quem disputa, o outro e' quem se compra. Vazia = camada
+   *  desligada ou artefato ausente, e o mapa fica exatamente como antes. */
+  independentes?: PinIndependente[]
   /** PROTOTIPO: area coberta pelo raio, ja recortada dentro dos hexagonos. */
   cobertura1k?: Cobertura1k | null
   cameraInicial?: ViewState | null
@@ -257,6 +262,7 @@ export default function HexMap({
   voarPara = null,
   searchPin,
   raio1km = false,
+  independentes,
   cobertura1k,
   cameraInicial,
   onCamera,
@@ -282,6 +288,13 @@ export default function HexMap({
   const [pinHover, setPinHover] = useState<{
     titulo: string
     sub: string
+    x: number
+    y: number
+  } | null>(null)
+  // Balao PROPRIO para a independente: ele carrega numeros com rotulo, e nao o par
+  // titulo/subtitulo do pin de concorrente.
+  const [indepHover, setIndepHover] = useState<{
+    d: PinIndependente
     x: number
     y: number
   } | null>(null)
@@ -582,6 +595,40 @@ export default function HexMap({
           ]
         : []),
 
+      /* INDEPENDENTES (BLK-MA-15): circulo, nao bandeira. Elas nao tem marca — sao academias
+         de bairro —, entao nao ha logo a exibir, e um icone generico competiria visualmente com
+         as bandeiras das cadeias sem acrescentar informacao.
+
+         COR UNICA, de proposito. A tentacao e' colorir por score, mas isso exigiria uma regua
+         nova sobre a rampa de 10 faixas que ja colore os hexagonos por baixo — duas escalas de
+         cor na mesma tela, medindo coisas diferentes, e' o defeito que o repo ja registrou como
+         "dois idiomas". O numero vive no tooltip, onde tem rotulo e contexto. Desenhadas ANTES
+         dos concorrentes e da Ultra: onde houver sobreposicao, quem manda na leitura e' a rede
+         instalada. */
+      ...(independentes?.length
+        ? [
+            new ScatterplotLayer<PinIndependente>({
+              id: 'independentes-pins',
+              data: independentes,
+              getPosition: (d) => [d.lng ?? 0, d.lat ?? 0],
+              getRadius: 5,
+              radiusUnits: 'pixels',
+              radiusMinPixels: 3,
+              radiusMaxPixels: 8,
+              getFillColor: [232, 102, 60, 205],
+              stroked: true,
+              getLineColor: [16, 20, 28, 210],
+              lineWidthUnits: 'pixels',
+              getLineWidth: 1,
+              pickable: true,
+              onHover: (info) => {
+                const d = info.object as PinIndependente | undefined
+                setIndepHover(d ? { d, x: info.x, y: info.y } : null)
+              },
+            }) as unknown as ScatterplotLayer<Hex>,
+          ]
+        : []),
+
       // Concorrentes: bandeira QUADRADA com a logo da rede (fallback cor+sigla),
       // enxuta (pedido do Felipe). Ultra vem por cima, um pouco maior.
       new IconLayer<Pin>({
@@ -720,6 +767,7 @@ export default function HexMap({
     // nunca chegava a existir — o mapa ficava identico e parecia que a camada nao
     // funcionava. Foi exatamente o sintoma relatado ("o hexagono so aparece de uma cor").
     raio1km,
+    independentes,
     cobertura1k,
     hexesCobertos,
     hexPorId,
@@ -731,6 +779,7 @@ export default function HexMap({
       onMouseLeave={() => {
         setHover(null)
         setPinHover(null)
+        setIndepHover(null)
       }}
       style={{
         position: 'absolute',
@@ -872,7 +921,77 @@ export default function HexMap({
         </div>
       )}
 
-      {pinHover && !hover && (
+      {/* Balao da INDEPENDENTE (BLK-MA-15). Vence o do concorrente e o do hexagono quando o
+          cursor esta sobre um pin dela: e' o objeto mais especifico sob o mouse.
+
+          O QUE ELE DIZ, e por que cada linha esta aqui:
+            - o SCORE, com o selo de provisorio quando `flag_score_provisorio` — sem o selo, um
+              numero que o G-D1 se recusa a ordenar pareceria um ranking;
+            - a PRESSAO, medida da coordenada DESTA academia (grao unidade, DEC-029) — antes do
+              BLK-MA-14 todas as academias do hexagono mostrariam o mesmo valor aqui;
+            - nota e contagem SEMPRE juntas (DEC-026);
+            - o REGIME, porque reguas de regimes diferentes nao se comparam entre si. */}
+      {indepHover && (
+        <div
+          role="tooltip"
+          style={{
+            position: 'absolute',
+            ...ancora(indepHover.x, indepHover.y, 190, 230),
+            pointerEvents: 'none',
+            background: 'var(--surf-panel)',
+            border: '1px solid var(--line-mid)',
+            borderRadius: 'var(--r-md)',
+            padding: '9px 11px',
+            backdropFilter: 'blur(16px)',
+            boxShadow: '0 10px 30px -8px rgba(0,0,0,.7)',
+            zIndex: 31,
+            minWidth: 210,
+          }}
+        >
+          <div style={{ font: '600 12.5px/1.25 var(--f-ui)', color: 'var(--tx-max)' }}>
+            {indepHover.d.nome || 'Academia independente'}
+          </div>
+          <div style={{ font: '400 9.5px/1 var(--f-ui)', color: 'var(--tx-label)', marginTop: 3 }}>
+            Academia independente
+          </div>
+
+          <Divisoria />
+          {indepHover.d.score !== null && (
+            <Linha
+              rotulo={indepHover.d.provisorio ? 'Score (provisório)' : 'Score'}
+              valor={`${num(indepHover.d.score, 1)} / 100`}
+              forte
+              cor={cor.fg}
+            />
+          )}
+          {indepHover.d.pressao !== null && (
+            <Linha rotulo="Pressão competitiva" valor={`${num(indepHover.d.pressao, 1)} / 100`} />
+          )}
+          {indepHover.d.nota !== null && (
+            <Linha
+              rotulo="Nota WellHub"
+              valor={`${num(indepHover.d.nota, 1)} · ${num(indepHover.d.n_aval)} aval.`}
+            />
+          )}
+          {indepHover.d.regime && (
+            <Linha rotulo="Sinais medidos" valor={indepHover.d.regime} />
+          )}
+          {indepHover.d.provisorio && (
+            <div
+              style={{
+                font: '400 9.5px/1.35 var(--f-ui)',
+                color: 'var(--tx-label)',
+                marginTop: 7,
+                maxWidth: 220,
+              }}
+            >
+              Série ainda imatura: o número não ordena um ranking.
+            </div>
+          )}
+        </div>
+      )}
+
+      {pinHover && !hover && !indepHover && (
         <div
           role="tooltip"
           style={{

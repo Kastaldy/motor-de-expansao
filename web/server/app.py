@@ -95,6 +95,18 @@ CRESCIMENTO_PATH = STAGING_DIR / "crescimento_municipal.parquet"
 # que colore o mapa no passo 4: quem decide olha taxa de crescimento, nao emprego
 # formal do municipio (que segue no painel, onde ele faz sentido).
 CRESCIMENTO_HEX_PATH = STAGING_DIR / "crescimento_hex.parquet"
+# Academias INDEPENDENTES com identidade + score de vulnerabilidade (BLK-MA-15). Camada PARALELA e
+# OPCIONAL: sem o arquivo, os pins simplesmente nao aparecem.
+#
+# POR QUE ELE E' SEPARADO DOS PINS DE CONCORRENTE, e nao mais uma rede na mesma lista: sao
+# universos com semanticas OPOSTAS. Os 4.499 pins de concorrente sao CADEIAS (Smart Fit, Skyfit...)
+# — quem disputa o mercado com a Ultra. Estes sao independentes — quem se COMPRA. A intersecao
+# entre os dois e' VAZIA por construcao (medido 2026-08-14), porque o universo de M&A exclui
+# cadeias: sem esse filtro a Smart Fit entraria na lista de alvos de aquisicao.
+#
+# Vive em `data/staging/` (gitignored) porque carrega IDENTIDADE — autorizada pela emenda de
+# 2026-08-14 a DEC-028, que reverteu a proibicao da variante NOMEADA no piloto.
+NOMEADAS_PATH = STAGING_DIR / "vulnerabilidade_ma_nomeadas.parquet"
 
 # O que o piloto realmente consome do artefato municipal. Lido de forma defensiva:
 # coluna ausente some do subset em vez de derrubar a rota.
@@ -382,6 +394,100 @@ def carregar_crescimento() -> pd.DataFrame | None:
     df = pd.read_parquet(CRESCIMENTO_PATH, columns=cols)
     df["cod6"] = df["cod6"].astype(str).str.zfill(6)
     return df
+
+
+# O que o pin consome do artefato nomeado. `chave_snapshot` NAO entra: e' rastreabilidade
+# interna e nao tem uso na tela.
+_COLS_NOMEADAS = [
+    "nome",
+    "lat",
+    "lng",
+    "hex_id_res7",
+    "score_vulnerabilidade",
+    "score_vulnerabilidade_ordenavel",
+    "pressao_competitiva",
+    "pressao_grao",
+    "nota_wellhub",
+    "qtd_avaliacoes_wellhub",
+    "sinais_disponiveis",
+    "flag_score_provisorio",
+]
+
+
+@functools.lru_cache(maxsize=1)
+def carregar_independentes() -> pd.DataFrame | None:
+    """Academias independentes com identidade e score. READ-ONLY e OPCIONAL.
+
+    Ausente = os pins nao aparecem (molde de `carregar_crescimento_hex`). O arquivo so' existe onde
+    alguem materializou a variante NOMEADA com `--saida-nomeadas`; em maquina sem ela, o piloto
+    abre exatamente como antes.
+    """
+    if not NOMEADAS_PATH.exists():
+        return None
+    import pyarrow.parquet as pq
+
+    disponiveis = set(pq.read_schema(NOMEADAS_PATH).names)
+    cols = [c for c in _COLS_NOMEADAS if c in disponiveis]
+    if "lat" not in cols or "hex_id_res7" not in cols:
+        return None
+    df = pd.read_parquet(NOMEADAS_PATH, columns=cols)
+    df["hex_id_res7"] = df["hex_id_res7"].astype(str)
+    # Sem coordenada nao ha pin. A academia continua existindo no artefato (ela tem score); o que
+    # nao existe e' o desenho.
+    return df[df["lat"].notna() & df["lng"].notna()]
+
+
+def _pins_independentes(sel: pd.DataFrame) -> dict[str, Any]:
+    """Pins das independentes do recorte + a auditoria do que ficou de fora.
+
+    `truncado` NAO e' enfeite: o teto corta por `head()`, e corte silencioso num municipio grande
+    mentiria sobre a densidade — o mesmo defeito que o teto de pins de concorrente ja registrou.
+    """
+    base = carregar_independentes()
+    if base is None or base.empty:
+        return {"itens": [], "disponivel": False, "total": 0, "truncado": False}
+
+    hexes = set(sel["hex_id"].astype(str))
+    no_recorte = base[base["hex_id_res7"].isin(hexes)]
+    total = int(len(no_recorte))
+    recorte = no_recorte.head(COMPETITOR_PIN_LIMIT)
+
+    itens = [
+        {
+            "lat": _num(t.lat, 6),
+            "lng": _num(t.lng, 6),
+            "nome": _clean(getattr(t, "nome", "")),
+            # `score` e' o do §8.4 — sempre preenchido quando ha >= 1 sinal. `ordenavel` e' nulo no
+            # regime provisorio (G-D1), e a tela precisa dos DOIS: um diz o numero, o outro diz se
+            # ele pode ordenar.
+            "score": _num(getattr(t, "score_vulnerabilidade", None), 1),
+            "ordenavel": _num(getattr(t, "score_vulnerabilidade_ordenavel", None), 1),
+            "pressao": _num(getattr(t, "pressao_competitiva", None), 1),
+            # Nota e contagem SEMPRE juntas (DEC-026): nota sem contagem ao lado poe no topo
+            # academias cujo sinal sao tres avaliacoes.
+            "nota": _num(getattr(t, "nota_wellhub", None), 1),
+            "n_aval": _inteiro_ou_nulo(getattr(t, "qtd_avaliacoes_wellhub", None)),
+            "regime": _texto(getattr(t, "sinais_disponiveis", None)),
+            "provisorio": bool(getattr(t, "flag_score_provisorio", False)),
+        }
+        for t in recorte.itertuples(index=False)
+    ]
+    return {
+        "itens": itens,
+        "disponivel": True,
+        "total": total,
+        "truncado": total > len(itens),
+    }
+
+
+def _inteiro_ou_nulo(v: Any) -> int | None:
+    """Inteiro JSON-safe; ausencia continua ausencia (nunca `0`, que seria uma afirmacao)."""
+    if v is None or (isinstance(v, float) and v != v) or v is pd.NA:
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
 
 @functools.lru_cache(maxsize=2)
@@ -2022,6 +2128,11 @@ def _artefatos_observados() -> list[tuple[str, Path, str]]:
             CRESCIMENTO_HEX_PATH,
             "passo 4: cor do mapa por hexágono (satélite 2016-2023)",
         ),
+        (
+            "independentes_nomeadas",
+            NOMEADAS_PATH,
+            "pins das academias independentes com score (BLK-MA-15)",
+        ),
     ]
 
 
@@ -3322,6 +3433,9 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
         "hexes": hexes,
         "cres_mun": _bloco_municipal(vis),
         "pins": _montar_pins(sel),
+        # Lista PROPRIA, nunca misturada a `pins.concorrentes`: cadeia e independente sao universos
+        # de semantica oposta (quem disputa x quem se compra), e a intersecao entre eles e' vazia.
+        "independentes": _pins_independentes(sel),
     }
 
 

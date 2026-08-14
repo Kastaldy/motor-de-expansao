@@ -1593,68 +1593,12 @@ definido antes de qualquer código; validação com fixtures sintéticas; READ-O
 
 ---
 
-### BLK-MA-15 — As independentes viram pins no mapa, com o score no tooltip da unidade
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** — serve **IDENTIDADE de estabelecimento** na superfície web pela primeira vez nesta camada (um pin em coordenada exata É identidade), o que **emenda a DEC-028** e ativa a variante NOMEADA D1-B, hoje deferida. **Exige DEC** antes do Builder. READ-ONLY sobre o M1. |
-| **Prioridade** | **Pedido de Vinicius (2026-08-14):** "que o score de vulnerabilidade apareça junto à franquia/unidade quando o mouse passa por cima". |
-| **Esteira** | Block Orchestrator → Planner → `[GATE — emenda à DEC-028]` → Builder → QA. |
-| **Status** | **Pendente — escrito em 2026-08-14.** Reconhecimento do front e do dado já feito. |
-| **Depende de** | **BLK-MA-14 (DURO).** Sem o S6 por academia, o tooltip de cada unidade mostra o MESMO número para todas as academias do hexágono. |
-| **Autonomia** | **manual (NÃO loop-safe)** — toca `web/`, serve identidade e a saída é decisão comercial. |
-
-**O OBSTÁCULO QUE REDEFINE O PEDIDO, medido em 2026-08-14: os pins de hoje e o universo do score são
-conjuntos DISJUNTOS.**
-
-| | conteúdo |
-|---|---|
-| pins de concorrente no mapa | **4.499** pontos, **104 redes de CADEIA** (Smart Fit 1.000, Skyfit 482, Panobianco 472...) |
-| universo do score | **19.329** academias, **100% `rede == independente`** |
-| interseção | **VAZIA** |
-
-Não é lacuna de dado — é o guardrail central do epic. O universo é fechado em
-`_filtrar_universo_sinal_1` justamente para impedir "o erro mais caro deste epic: pontuar uma CADEIA
-como alvo de aquisição"; sem ele a Smart Fit entraria na lista. **Logo o pedido literal (score no
-tooltip do pin que já existe) é impossível por construção: aqueles pins são exatamente as academias
-que não têm score e nunca terão.** O que o bloco faz é o inverso: **desenhar as independentes**, que
-hoje não aparecem no mapa.
-
-**O QUE ISSO CUSTA EM GOVERNANÇA, e é o gate.** A DEC-028 (aprovada 2026-08-14) diz em letra:
-*"Nenhuma variante NOMEADA é servida pelo piloto — e `gitignored` não é o mesmo que fora do alcance
-do piloto"*. Um pin em coordenada exata identifica o estabelecimento mesmo sem o nome no balão:
-esconder o rótulo não resolve, porque o mapa mostra o endereço. Então o bloco **emenda a DEC-028**,
-e a emenda tem de dizer o que passa a ser servido (coordenada + score + nome?) e o que segue vedado
-(§11: nunca texto/autor de review; a nota continua fato sem peso, DEC-026).
-
-**Reconhecimento do front e do dado (poupa uma rodada).**
-- O feed do WellHub tem tudo que o pin precisa: `nome`, `latitude`, `longitude`,
-  `endereco_formatado`, `cep`, `nota_wellhub`, `qtd_avaliacoes_wellhub`.
-- **Volume é tratável:** 5.823 independentes em SP inteiro; **São Paulo capital 1.266**, Campinas
-  216. O teto de pins já existe (`COMPETITOR_PIN_LIMIT = 6000`, `web/server/app.py:787`) e o mapa já
-  desenha até isso — mas o corte por `head()` é **silencioso**, e num município grande ele mentiria
-  sobre a densidade. Declarar o truncamento faz parte do bloco.
-- Pontos-chave do front: `_montar_pins` (`app.py`) monta `{concorrentes, ultra, icones}`;
-  `HexMap.tsx` desenha o `IconLayer` `conc-pins` e o balão `pinHover` (hoje só `titulo` + `sub`).
-  Uma **terceira lista** (`independentes`) é mais limpa que sobrecarregar `concorrentes`: são
-  universos com semânticas opostas — um é quem disputa, o outro é quem se compra.
-- O `pinHover` atual tem duas linhas; o tooltip do bloco precisa das mesmas obrigações do overlay:
-  nota **sempre** ao lado da contagem de avaliações (DEC-026) e o regime declarado.
-
-**Fora de escopo.** Qualquer artefato/score/peso/ranking do M1; reabrir os pesos ou a DEC-027;
-mudar o grão do S6 (**BLK-MA-14** — este bloco CONSOME o resultado dele); o CSV comercial do D6; a
-reputação externa (**BLK-MA-07**).
-
-**Critério de aceite.** Emenda à DEC-028 aprovada, declarando exatamente o que passa a ser servido,
-antes de qualquer código; pins das independentes numa lista PRÓPRIA, nunca misturada à de
-concorrentes; tooltip com score por academia (que só existe depois do BLK-MA-14), nota **com** a
-contagem ao lado e o regime declarado; truncamento por teto **declarado na tela**, nunca silencioso;
-nenhum campo do §11 (texto/autor de review) no payload, provado por teste; suíte completa sem
-regressão (medir a baseline **no momento**); `ruff` limpo; `loop_guard` sem `CRÍTICO`.
+- BLK-MA-15 (concluído 2026-08-14) — ver tasks/completed.md
 
 ---
 
 - BLK-MA-13 (concluído 2026-08-14, **overlay REVERTIDO no mesmo dia** por redundância com a camada 3 do funil; a emenda do G-D1 permanece — ver DEC-028 e tasks/completed.md)
+
 
 
 ---

@@ -12588,3 +12588,78 @@ as academias do hexágono — 26 delas com `67,85` no exemplo de SP. Agora mostr
 explicitamente. READ-ONLY sobre o M1: `score_priorizacao`, `hex_score_estrutural`, pesos, carteira,
 plano e artefatos oficiais intocados; DEC-001 e DEC-027 intactas (o `w6 = 0,10` não mudou — mudou de
 onde o `v6` é medido, não quanto ele pesa).
+
+---
+
+## Fechamento de ciclo — BLK-MA-15 (2026-08-14)
+
+**Entregue: as academias independentes viraram pins no mapa, com nome e score no tooltip.** É o
+pedido de Vinicius — *"que o score de vulnerabilidade apareça junto à franquia/unidade quando o
+mouse passa por cima"* — depois de o reconhecimento mostrar que o pedido LITERAL era impossível.
+
+**O obstáculo que redefiniu o bloco, medido antes de qualquer código.** Os pins que já existiam no
+mapa são **4.499 pontos de 104 redes de CADEIA** (Smart Fit 1.000, Skyfit 482, Panobianco 472…) e o
+universo do score é **100% `rede == independente`** — **interseção VAZIA**. Não é lacuna de dado: é
+o guardrail central do epic, que impede pontuar uma cadeia como alvo de aquisição (sem ele a Smart
+Fit entraria na lista). Logo os pins existentes eram exatamente as academias que nunca terão score.
+O bloco faz o inverso: desenha as **independentes**, que não apareciam no mapa.
+
+**A autorização, e as duas alternativas recusadas** (emenda 2 à DEC-028, decidida por Vinicius):
+
+- **Recusada — "sem o nome".** Esconder o nome não protegeria nada: um pin em coordenada exata
+  sobre um mapa com ruas já identifica o estabelecimento. Entregaria a MESMA exposição com menos
+  utilidade.
+- **Recusada — restringir por usuário via `acesso.py`.** O módulo é **fail-OPEN por desenho** (sem
+  o arquivo, ou com um typo no JSON, todos veem tudo — ele diz isso em letra, para não trancar o
+  piloto). Usá-lo para proteger dado sensível seria proteção ilusória.
+- **Escolhida — identidade assumida.** O piloto está inteiro atrás do Authelia: isto é alcance
+  interno, não publicação. E o que entra é identidade de ESTABELECIMENTO COMERCIAL, o mesmo tipo de
+  dado que os pins de concorrente já servem desde sempre.
+
+**O que continua vedado, e o §11 não foi afrouxado:** texto ou autor de review (nunca coletados) e
+qualquer dado de PESSOA. Travado por `test_payload_nao_carrega_dado_de_pessoa` e pelo
+`_assert_schema_nomeados`, que checa os campos vedados **antes** da ordem das colunas — com a ordem
+primeiro, um campo de pessoa sairia rotulado como "coluna fora do contrato" e o motivo real se
+perderia na mensagem.
+
+**O artefato nasce gitignored, e isso virou código.** `data/staging/vulnerabilidade_ma_nomeadas.parquet`
+(o `.gitignore` corta `data/staging/*` inteiro). `_assert_destino_gitignored` **levanta** se alguém
+apontar para `data/outputs/`, que é apenas PARCIALMENTE versionado: um caminho errado ali poria
+19.329 estabelecimentos no histórico do git, onde `git rm` depois não os apaga.
+
+**Duas listas, nunca uma.** `pins.concorrentes` (cadeias) e `independentes` (alvos) viajam separadas
+no payload e são desenhadas por camadas distintas. Juntá-las daria a uma Smart Fit a aparência de
+alvo de aquisição — o erro mais caro do epic, agora barrado também na superfície. Travado por
+`test_pins_de_independente_NAO_se_misturam_aos_de_concorrente`.
+
+**Cor única no pin, de propósito.** A tentação era colorir por score, mas isso exigiria uma régua
+nova sobre a rampa de 10 faixas que já colore os hexágonos por baixo — duas escalas de cor na mesma
+tela, medindo coisas diferentes, que é o defeito que a DEC-020 chamou de "dois idiomas". O número
+vive no tooltip, com rótulo e contexto.
+
+**O tooltip diz o que precisa, e nada além:** score (com **selo de provisório** quando
+`flag_score_provisorio` — sem ele, um número que o G-D1 se recusa a ordenar pareceria ranking),
+pressão medida da coordenada DAQUELA academia (grão unidade, DEC-029), nota **com a contagem ao
+lado** (DEC-026) e o regime de sinais declarado.
+
+**Truncamento declarado.** O teto (`COMPETITOR_PIN_LIMIT = 6000`) corta por `head()`, e a pílula
+exibe "N de M (teto)" quando morde. Corte silencioso mentiria sobre a densidade — defeito que o
+teto de pins de concorrente já registrou.
+
+**Medições (dado real).** Artefato nomeado: **19.329** academias, **todas** com coordenada, nenhum
+campo vedado. Payload de São Paulo: **1.270** independentes servidas (sem truncar) ao lado de **632**
+pins de cadeia. Top por score: `BS Studio 02` (68,0 / pressão 95,0 / nota 5,0 com 22 avaliações),
+`D-Gym` (68,0 / 95,0 / 4,8 com 2.561), `You Club` (68,0 / 95,0 / 5,0 com 15) — e a nota ao lado da
+contagem é o que impede ler os três como equivalentes.
+
+**Dependência satisfeita:** o BLK-MA-14 entrou primeiro, e sem ele o tooltip mostraria o mesmo
+número para todas as academias do hexágono (26 delas com `67,85` no exemplo de SP). Com o grão de
+unidade, são 25 valores distintos.
+
+**Suíte.** Pacote `vulnerabilidade`: **393** passam (+11 do módulo nomeado). Piloto: 9 testes novos
+para os pins. Front: **587** em 28 arquivos, `tsc --noEmit` limpo. `ruff` limpo.
+
+**Governança.** Emenda 2 à DEC-028 (Alta), decidida por Vinicius em 2026-08-14. READ-ONLY sobre o
+M1: nenhum peso, fórmula ou artefato oficial tocado (DEC-001, DEC-027 e DEC-029 intactas). O PR toca
+`web/` e `src/motor_expansao/vulnerabilidade/` — exige `aprovado-humano`. Deploy manual: o artefato
+nomeado precisa ser materializado na VPS para os pins aparecerem em produção.

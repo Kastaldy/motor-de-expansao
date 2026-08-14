@@ -523,7 +523,7 @@ def coordenadas_por_chave(
     *,
     fontes: Sequence[str] | None = None,
 ) -> pd.DataFrame:
-    """Feed cru -> `(fonte, chave_snapshot, lat, lng)`, **em memória e sem tocar disco de saída**.
+    """Feed cru -> `(fonte, chave_snapshot, nome, lat, lng)`, **em memória, sem tocar disco**.
 
     É a ponte que o BLK-MA-14 (DEC-029, rota B) abriu para o `v6` por academia: a pressão precisa da
     coordenada da unidade, e ela existe AQUI, antes de `montar_snapshot` projetar as 12 colunas e
@@ -550,6 +550,7 @@ def coordenadas_por_chave(
             {
                 "fonte": pd.Series(dtype="string"),
                 "chave_snapshot": pd.Series(dtype="string"),
+                "nome": pd.Series(dtype="string"),
                 "lat": pd.Series(dtype="float64"),
                 "lng": pd.Series(dtype="float64"),
             }
@@ -560,6 +561,10 @@ def coordenadas_por_chave(
         {
             "fonte": com_chave["fonte"].astype("string"),
             "chave_snapshot": com_chave["chave_snapshot"].astype("string"),
+            # O NOME viaja desde o BLK-MA-15: e' o que o pin do mapa exibe. Continua sem tocar
+            # disco por esta funcao — quem persiste identidade e' o `alvos_nomeados`, e so' sob
+            # `data/staging/` (gitignored), com guard proprio.
+            "nome": com_chave["nome"].astype("string"),
             "lat": pd.to_numeric(com_chave["latitude"], errors="coerce").astype("float64"),
             "lng": pd.to_numeric(com_chave["longitude"], errors="coerce").astype("float64"),
         }

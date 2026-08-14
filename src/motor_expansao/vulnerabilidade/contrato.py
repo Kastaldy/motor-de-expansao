@@ -552,6 +552,42 @@ CONTRATO_COLUNAS_ALVOS_MA: dict[str, str] = {
     "versao_contrato": "string",
 }
 
+# --------------------------------------------------------------------------- #
+# Variante NOMEADA (D1-B) — BLK-MA-15
+# --------------------------------------------------------------------------- #
+VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v1"
+
+# O UNICO contrato desta camada que carrega IDENTIDADE e COORDENADA, autorizado pela emenda de
+# 2026-08-14 a DEC-028 (decidida por Vinicius). Grao: uma linha por academia.
+#
+# O ARTEFATO NASCE GITIGNORED (`data/staging/`), como o D1 exige desde o inicio — e
+# `_assert_destino_gitignored` transforma isso em codigo, porque `data/outputs/` e' apenas
+# PARCIALMENTE versionado e um caminho errado ali poria 19 mil estabelecimentos no historico do
+# git, onde um `git rm` depois nao os apaga.
+#
+# `lat`/`lng` sao NULAVEIS de proposito: academia com score e sem coordenada ENTRA no artefato, so'
+# nao e' desenhavel. Descarta-la esconderia um alvo por acidente de coleta.
+CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
+    "fonte": "string",
+    "chave_snapshot": "string",
+    "nome": "string",  # IDENTIDADE — o ponto do artefato (emenda DEC-028)
+    "lat": "Float64",  # nulavel: sem coordenada a academia existe, so' nao tem pin
+    "lng": "Float64",
+    "hex_id_res7": "string",
+    "status_churn": "string",
+    "nota_wellhub": "Float64",  # FATO sem peso (DEC-026); anda SEMPRE com a contagem ao lado
+    "qtd_avaliacoes_wellhub": "Int64",
+    "v6": "float64",
+    "pressao_competitiva": "Float64",
+    "pressao_grao": "string",  # `academia` desde a DEC-029
+    "sinais_disponiveis": "string",
+    "n_sinais_disponiveis": "int64",
+    "score_vulnerabilidade": "float64",
+    "score_vulnerabilidade_ordenavel": "float64",
+    "flag_score_provisorio": "bool",
+    "versao_contrato": "string",
+}
+
 # Colunas PROIBIDAS nos artefatos desta camada (rede de segurança do teste anti-PII: a limpeza é
 # por construção, projetando só as 10 colunas do contrato).
 COLUNAS_PII_PROIBIDAS: frozenset[str] = frozenset(
@@ -875,6 +911,8 @@ __all__ = [
     "COLUNAS_M1_INVARIANTES",
     "CONTRATO_COLUNAS_ACADEMIAS_MA",
     "CONTRATO_COLUNAS_ALVOS_MA",
+    "CONTRATO_COLUNAS_ALVOS_NOMEADOS",
+    "VERSAO_CONTRATO_ALVOS_NOMEADOS",
     "COLUNAS_PII_PROIBIDAS",
     "normalizar_texto",
     "normalizar_lista",

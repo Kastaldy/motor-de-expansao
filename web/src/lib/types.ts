@@ -244,6 +244,42 @@ export interface Pins {
   icones: Record<string, string>
 }
 
+/**
+ * Academia INDEPENDENTE com identidade e score (BLK-MA-15).
+ *
+ * Lista própria, nunca misturada a `Pins.concorrentes`: são universos de semântica OPOSTA — o
+ * concorrente é quem disputa o mercado com a Ultra; a independente é quem se COMPRA. A interseção
+ * entre os dois é vazia por construção, porque o universo de M&A exclui cadeias (sem esse filtro a
+ * Smart Fit entraria na lista de alvos).
+ */
+export interface PinIndependente {
+  lat: number | null
+  lng: number | null
+  nome: string
+  /** `score_vulnerabilidade` — preenchido sempre que há ≥ 1 sinal. */
+  score: number | null
+  /** `score_vulnerabilidade_ordenavel` — NULO no regime provisório (G-D1). O par com `score`
+   *  existe porque um diz o número e o outro diz se ele pode ordenar. */
+  ordenavel: number | null
+  /** Pressão competitiva medida da coordenada DESTA academia (grão unidade, DEC-029). */
+  pressao: number | null
+  /** Nota do WellHub. Anda SEMPRE com `n_aval` ao lado (DEC-026). */
+  nota: number | null
+  n_aval: number | null
+  /** Regime de sinais (ex.: `"s1,s6"`) — réguas de regimes diferentes não se comparam. */
+  regime: string | null
+  provisorio: boolean
+}
+
+export interface Independentes {
+  itens: PinIndependente[]
+  disponivel: boolean
+  /** Quantas existem no recorte, ANTES do teto. */
+  total: number
+  /** true = o teto cortou. Declarado porque corte silencioso mente sobre a densidade. */
+  truncado: boolean
+}
+
 export interface MunicipioPayload {
   /** "uf" = visão de estado inteiro (recomenda municípios); "municipio" = drill-down. */
   nivel: 'uf' | 'municipio'
@@ -260,6 +296,8 @@ export interface MunicipioPayload {
   /** Passo 4, uma entrada por cidade. Esparso: cidade sem leitura não aparece. */
   cres_mun: Record<string, CrescimentoMunicipal>
   pins: Pins
+  /** Academias independentes com score (BLK-MA-15). Ausente em payload antigo. */
+  independentes?: Independentes
 }
 
 export interface MunicipioItem {
