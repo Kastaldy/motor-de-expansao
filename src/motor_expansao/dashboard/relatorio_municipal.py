@@ -82,6 +82,7 @@ METODO_RELATORIO_MUNICIPAL = "agregacao_municipal_h3_res7"
 PDF_SECTION_HEADERS = (
     "Potencial de Entrada de Novas Unidades",
     "Visão Geral do Município",
+    "Bairros Oficiais",
     "Resumo da Região",
     "Score Censitário",
     "Residual Fitness",
@@ -142,6 +143,42 @@ _RESUMO_LEGENDA = (
     ("Aprovado (dado próprio)", _COR_APROVADO_PROPRIO),
     ("Aprovado (fallback municipal)", _COR_APROVADO_MUNICIPAL),
 )
+
+# Slide "Bairros oficiais" (BLK-RELMUN-06): LIMITE TERRITORIAL real de cada bairro, obtido
+# dissolvendo os setores censitarios (IBGE 2022, `geometry_wkb`) pela MESMA cascata de
+# localidade ja usada em `_carregar_bairros_por_hex`. Camada de DISPLAY: geometria de bairro
+# NAO entra em score, carteira, plano nem em qualquer artefato do M1.
+#
+# A paleta espelha o material de referencia do time de Expansao (estudo GeoFusion): contorno de
+# bairro em VERMELHO sobre basemap claro, divisa do MUNICIPIO em preto, miolo quase transparente
+# (o arruamento do basemap tem de continuar legivel por baixo - e o que da a nocao de onde o
+# bairro fica). Sem preenchimento opaco de proposito.
+_BAIRRO_CONTORNO = (226, 0, 26)
+_BAIRRO_CONTORNO_RGBA = (*_BAIRRO_CONTORNO, 235)
+_BAIRRO_FILL_RGBA = (255, 255, 255, 26)
+_BAIRRO_DESTAQUE_FILL_RGBA = (*_COR_APROVADO_PROPRIO, 70)
+_MUNICIPIO_CONTORNO_RGBA = (17, 17, 17, 235)
+_BAIRRO_ROTULO_INK = (31, 41, 55)
+_BAIRRO_ROTULO_PLACA_RGBA = (255, 255, 255, 210)
+# A area SEM bairro na base ("<municipio> (demais setores)") sai em CINZA, nunca no vermelho de
+# bairro: em municipio com cobertura ruim ela e a cidade inteira, e pinta-la como divisa faria o
+# mapa afirmar um limite que o IBGE nao da. Cinza = "aqui nao ha bairro mapeado".
+_SOBRA_CONTORNO_RGBA = (120, 128, 140, 190)
+_SOBRA_FILL_RGBA = (120, 128, 140, 30)
+
+# Abaixo desta fracao de setores COM localidade, a pagina para de vender a contagem de bairros
+# como se fosse o municipio mapeado e passa a avisar que a malha vem incompleta. Palmas/TO e o
+# caso-limite que motivou o corte: 2 distritos rurais mapeados e 717 de 733 setores sem nada --
+# um "2 bairros" seco daria a entender que a cidade tem dois bairros.
+_BAIRRO_COBERTURA_MIN = 0.5
+
+# Simplificacao das divisas antes do desenho, em GRAUS (a particao geo vem em EPSG:4674).
+# 3e-5 graus ~ 3 m: imperceptivel no PNG de 1000 px e corta ~90% dos vertices, que e o que
+# mantem a pagina leve em municipio grande (Sao Paulo tem 27.301 setores).
+_BAIRRO_SIMPLIFY_GRAUS = 3e-5
+# Area minima (fracao da maior parte do bairro) para uma ilha entrar no desenho: descarta
+# slivers de topologia do dissolve sem apagar bairro descontinuo de verdade.
+_BAIRRO_PARTE_MIN_FRAC = 0.02
 
 # Atribuicao do rodape. UMA constante para os dois modos (fallback Voyager e self-host), porque
 # nos dois o CARTO e' de fato consumido.
@@ -372,6 +409,29 @@ def _zonas_do_municipio(
 
 
 
+def _localidade_do_setor(row: pd.Series) -> str | None:
+    """Cascata bairro -> subdistrito -> distrito; ignora niveis grossos == nome do municipio.
+
+    Extraida de dentro de `_carregar_bairros_por_hex` (comportamento IDENTICO) para virar a
+    UNICA definicao de "localidade do setor" do modulo: a Pagina de Bairros por Zona (rotulo
+    por hex) e a de Bairros oficiais (limite territorial) tem de concordar sobre o que e um
+    bairro, senao o mapa desenha uma divisao e a lista ao lado nomeia outra.
+    """
+    muni = row.get("nome_municipio")
+    muni_norm = str(muni).strip().casefold() if muni is not None and not pd.isna(muni) else ""
+    for col in ("nome_bairro", "nome_subdistrito", "nome_distrito"):
+        val = row.get(col)
+        if val is None or pd.isna(val):
+            continue
+        nome = str(val).strip()
+        if not nome or nome.casefold() == "nan":
+            continue
+        if col != "nome_bairro" and muni_norm and nome.casefold() == muni_norm:
+            continue
+        return nome
+    return None
+
+
 def _carregar_bairros_por_hex(
     uf: str | None,
     cod_municipio: str | None,
@@ -415,26 +475,10 @@ def _carregar_bairros_por_hex(
 
     import h3
 
-    def _localidade(row: pd.Series) -> str | None:
-        """Cascata bairro -> subdistrito -> distrito; ignora niveis grossos == nome do municipio."""
-        muni = row.get("nome_municipio")
-        muni_norm = str(muni).strip().casefold() if muni is not None and not pd.isna(muni) else ""
-        for col in ("nome_bairro", "nome_subdistrito", "nome_distrito"):
-            val = row.get(col)
-            if val is None or pd.isna(val):
-                continue
-            nome = str(val).strip()
-            if not nome or nome.casefold() == "nan":
-                continue
-            if col != "nome_bairro" and muni_norm and nome.casefold() == muni_norm:
-                continue
-            return nome
-        return None
-
     # Para cada hex, soma a populacao por localidade; a mais populosa vence (dominante).
     pop_por_hex_bairro: dict[str, dict[str, float]] = {}
     for _, row in setores.iterrows():
-        nome = _localidade(row)
+        nome = _localidade_do_setor(row)
         if not nome:
             continue
         minx = _safe_float(row.get("bbox_minx"))
@@ -462,6 +506,194 @@ def _carregar_bairros_por_hex(
         nome_dom = max(sorted(bucket), key=lambda n: bucket[n])
         bairros_por_hex[hid] = nome_dom
     return bairros_por_hex
+
+
+def _partes_desenhaveis(geom: Any) -> list[Any]:
+    """Poligonos de `geom` que valem desenho, do maior para o menor, sem slivers do dissolve.
+
+    Uniao de setores vizinhos costuma deixar farpas de area ~0 nas bordas compartilhadas; elas
+    nao mudam o desenho e so pesam. Mantem partes com area >= `_BAIRRO_PARTE_MIN_FRAC` da maior
+    (bairro descontinuo de verdade sobrevive; farpa some).
+
+    So devolve POLIGONO: `unary_union` de setores que se tocam apenas por borda pode render uma
+    GeometryCollection com LineString/Point dentro, e quem consome aqui le `.exterior` -- sem este
+    filtro a pagina inteira morreria num AttributeError por causa de uma farpa de topologia.
+    """
+    if geom is None or geom.is_empty:
+        return []
+    partes = list(geom.geoms) if hasattr(geom, "geoms") else [geom]
+    partes = [
+        p for p in partes
+        if p is not None and not p.is_empty and p.geom_type == "Polygon" and p.area > 0
+    ]
+    if not partes:
+        return []
+    partes.sort(key=lambda p: p.area, reverse=True)
+    corte = partes[0].area * _BAIRRO_PARTE_MIN_FRAC
+    return [p for p in partes if p.area >= corte]
+
+
+def carregar_bairros_geo(
+    uf: str | None,
+    cod_municipio: str | None,
+    censo_geo_dir: Path | str | None,
+) -> dict[str, Any]:
+    """Limite territorial de cada bairro do municipio, em EPSG:3857, pronto para desenho.
+
+    Dissolve os setores censitarios da particao geo (IBGE 2022, `geometry_wkb` em EPSG:4674)
+    pela cascata de `_localidade_do_setor`. Setor SEM localidade nenhuma entra num agregado
+    "<municipio> (demais setores)" -- o mesmo tratamento do material de referencia do time de
+    Expansao, que nomeia assim a area rural/nao-loteada que sobra fora dos bairros.
+
+    Devolve, por bairro: nome, aneis do contorno projetados em 3857, ponto de rotulo, populacao,
+    area e renda per capita (media ponderada por populacao). READ-ONLY e OFFLINE.
+
+    Fallback gracioso em QUALQUER falha (sem particao, schema antigo, shapely ausente, geometria
+    corrompida) -> `{"bairros": [], ...}`; a pagina cai no aviso e o relatorio sai inteiro.
+    """
+    vazio: dict[str, Any] = {
+        "bairros": [], "contorno": [], "n_bairros": 0, "n_setores": 0, "sem_localidade": 0,
+        "cobertura": 0.0,
+    }
+    if censo_geo_dir is None or not uf or not cod_municipio:
+        return vazio
+    try:
+        from shapely import wkb as shapely_wkb
+        from shapely.ops import unary_union
+
+        from motor_expansao.pipelines.materializar_setores_censitarios_geo import (
+            ler_particao_setores,
+        )
+    except Exception:
+        return vazio
+
+    medidas = [
+        "geometry_wkb",
+        "pop_total_setor_2022",
+        "area_setor_km2_ibge",
+        "renda_per_capita_setor_2022_calibrada",
+    ]
+    try:
+        setores = ler_particao_setores(
+            root=Path(censo_geo_dir), uf=str(uf), cod_municipio=str(cod_municipio),
+            columns=["nome_bairro", "nome_subdistrito", "nome_distrito", "nome_municipio", *medidas],
+        )
+    except Exception:
+        # Schema antigo (sem a cascata): so `nome_bairro` ja permite desenhar.
+        try:
+            setores = ler_particao_setores(
+                root=Path(censo_geo_dir), uf=str(uf), cod_municipio=str(cod_municipio),
+                columns=["nome_bairro", *medidas],
+            )
+        except Exception:
+            return vazio
+    if setores is None or setores.empty or "geometry_wkb" not in setores.columns:
+        return vazio
+
+    nome_muni = ""
+    if "nome_municipio" in setores.columns:
+        nomes = setores["nome_municipio"].dropna()
+        if not nomes.empty:
+            nome_muni = str(nomes.iloc[0]).strip()
+    rotulo_sobra = f"{nome_muni} (demais setores)" if nome_muni else "Demais setores"
+
+    # Agrupa geometria + medidas por localidade numa passada.
+    grupos: dict[str, dict[str, Any]] = {}
+    sem_localidade = 0
+    for _, row in setores.iterrows():
+        bruto = row.get("geometry_wkb")
+        if bruto is None:
+            continue
+        try:
+            geom = shapely_wkb.loads(bytes(bruto))
+        except Exception:
+            continue
+        if geom is None or geom.is_empty:
+            continue
+        nome = _localidade_do_setor(row)
+        if not nome:
+            sem_localidade += 1
+            nome = rotulo_sobra
+        pop = _safe_float(row.get("pop_total_setor_2022"))
+        pop = 0.0 if math.isnan(pop) or pop < 0 else pop
+        area = _safe_float(row.get("area_setor_km2_ibge"))
+        area = 0.0 if math.isnan(area) or area < 0 else area
+        renda = _safe_float(row.get("renda_per_capita_setor_2022_calibrada"))
+
+        alvo = grupos.setdefault(
+            nome, {"geoms": [], "pop": 0.0, "area": 0.0, "renda_num": 0.0, "renda_peso": 0.0}
+        )
+        alvo["geoms"].append(geom)
+        alvo["pop"] += pop
+        alvo["area"] += area
+        if not math.isnan(renda) and pop > 0:
+            alvo["renda_num"] += renda * pop
+            alvo["renda_peso"] += pop
+
+    bairros: list[dict[str, Any]] = []
+    dissolvidos: list[Any] = []
+    for nome, dados in grupos.items():
+        try:
+            unido = unary_union(dados["geoms"])
+            if _BAIRRO_SIMPLIFY_GRAUS > 0:
+                unido = unido.simplify(_BAIRRO_SIMPLIFY_GRAUS, preserve_topology=True)
+        except Exception:
+            continue
+        dissolvidos.append(unido)
+        partes = _partes_desenhaveis(unido)
+        if not partes:
+            continue
+        # So o anel EXTERNO de cada parte: o PIL desenha poligono sem furo, e ilha interna de
+        # bairro e rara o bastante para nao justificar composicao por mascara aqui.
+        aneis = [
+            [_lonlat_to_mercator(float(lon), float(lat)) for lon, lat in p.exterior.coords]
+            for p in partes
+        ]
+        try:
+            ponto = partes[0].representative_point()
+            rotulo_xy = _lonlat_to_mercator(float(ponto.x), float(ponto.y))
+        except Exception:
+            continue
+        peso = dados["renda_peso"]
+        area = dados["area"]
+        bairros.append(
+            {
+                "nome": nome,
+                "aneis": aneis,
+                "rotulo_xy": rotulo_xy,
+                "pop": dados["pop"],
+                "area_km2": area,
+                "densidade": (dados["pop"] / area) if area > 0 else float("nan"),
+                "renda_pc": (dados["renda_num"] / peso) if peso > 0 else float("nan"),
+                "sobra": nome == rotulo_sobra,
+            }
+        )
+
+    # Divisa do MUNICIPIO = uniao dos proprios setores desenhados (nao a malha IBGE): assim o
+    # contorno preto fecha exatamente sobre os bairros vermelhos, sem fresta de reprojecao.
+    contorno: list[list[tuple[float, float]]] = []
+    try:
+        borda = unary_union(dissolvidos)
+        contorno = [
+            [_lonlat_to_mercator(float(lon), float(lat)) for lon, lat in p.exterior.coords]
+            for p in _partes_desenhaveis(borda)
+        ]
+    except Exception:
+        contorno = []
+
+    bairros.sort(key=lambda b: (-float(b["pop"]), str(b["nome"])))
+    n_setores = int(len(setores))
+    return {
+        "bairros": bairros,
+        "contorno": contorno,
+        # A sobra "(demais setores)" e area, nao bairro: nao entra na contagem exibida.
+        "n_bairros": sum(1 for b in bairros if not b["sobra"]),
+        "n_setores": n_setores,
+        "sem_localidade": sem_localidade,
+        # Fracao de setores COM bairro/distrito: e o que diz se a contagem acima representa o
+        # municipio ou so um pedaco dele. Quem exibe tem de olhar isto antes do numero.
+        "cobertura": ((n_setores - sem_localidade) / n_setores) if n_setores else 0.0,
+    }
 
 
 def _bairros_por_zona(
@@ -782,6 +1014,7 @@ def agregar_municipio(
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
     bairros_por_hex: dict[str, str] | None = None,
+    bairros_geo: dict[str, Any] | None = None,
     df_pre_filtrado: pd.DataFrame | None = None,
     poligono_municipio: Any | None = None,
 ) -> dict[str, Any]:
@@ -794,6 +1027,11 @@ def agregar_municipio(
     IBGE `NM_BAIRRO` da particao geo, via `_carregar_bairros_por_hex`). `None` (default) =
     comportamento IDENTICO ao anterior (Pagina 6 simplificada por zona geometrica). Quando dado,
     popula `result["bairros_por_zona"]` com os bairros REAIS agrupados pelas 3 zonas geometricas.
+
+    `bairros_geo` (BLK-RELMUN-06): saida de `carregar_bairros_geo` (limite territorial de cada
+    bairro em EPSG:3857). OPCIONAL: `None` (default) mantem o comportamento anterior e a pagina
+    "Bairros Oficiais" sai com o aviso de bairro nao mapeado. So trafega ate o render; nenhuma
+    metrica do relatorio deriva dela.
 
     `df_pre_filtrado` (Fix 2 BLK-PERF-01a): DataFrame ja filtrado para o municipio (evita
     full-scan de 1,5 M hexes). Quando fornecido, substitui a filtragem interna por `_municipio_mask`.
@@ -895,6 +1133,7 @@ def agregar_municipio(
         "n_zonas_geo": len(zonas_geo.get("zonas", [])),
         "bairros_por_zona": bairros_por_zona,
         "n_bairros_total": sum(int(z.get("n_bairros", 0)) for z in bairros_por_zona),
+        "bairros_geo": bairros_geo or {},
         "n_ultra": n_ultra,
         "n_concorrentes": n_concorrentes,
         "concorrentes_por_rede": concorrentes_por_rede,
@@ -1413,6 +1652,189 @@ def _render_mapa_municipio(
     return out.getvalue()
 
 
+def _render_mapa_bairros(
+    bairros_geo: dict[str, Any],
+    *,
+    titulo: str = "Bairros oficiais",
+    destaque: set[str] | None = None,
+    width: int = 1000,
+    height: int = 704,
+    basemap: bool = False,
+) -> bytes:
+    """PNG do LIMITE TERRITORIAL dos bairros (BLK-RELMUN-06), no formato do material de Expansao.
+
+    Desenha a divisa de cada bairro em vermelho sobre o basemap claro, a divisa do municipio em
+    preto e o nome do bairro sobre uma placa branca translucida. `destaque` (nomes) pinta um
+    subconjunto em verde -- e o que separa o slide "Bairros oficiais" (destaque vazio) do
+    "Melhores bairros" (destaque = os selecionados) sem duplicar renderizador.
+
+    Mesma camera, mesma projecao e mesmo `map_box` de `_render_mapa_municipio`, de proposito: as
+    duas paginas tem de parecer o mesmo mapa. `basemap=False` (default de CI/teste) cai no canvas
+    claro offline. READ-ONLY sobre o M1: geometria de bairro e display, nao entra em score.
+    """
+    image = Image.new("RGB", (width, height), (255, 255, 255))
+    draw = ImageDraw.Draw(image, "RGBA")
+    _draw_text(draw, (24, 18), titulo, font=_font(20))
+
+    map_box = (20, 60, width - 20, height - 40)
+    left, top, right, bottom = map_box
+
+    bairros = list(bairros_geo.get("bairros") or [])
+    contorno = list(bairros_geo.get("contorno") or [])
+    aneis_todos = [anel for b in bairros for anel in b["aneis"]]
+    if not aneis_todos:
+        draw.rounded_rectangle(map_box, radius=6, fill=(245, 245, 245), outline=(120, 120, 120))
+        _draw_text(
+            draw, (left + 16, (top + bottom) // 2),
+            "Bairros não mapeados na base IBGE 2022 para este município.", font=_font(13),
+        )
+        out = BytesIO()
+        image.save(out, format="PNG", optimize=True)
+        return out.getvalue()
+
+    minx = min(x for anel in aneis_todos for x, _ in anel)
+    maxx = max(x for anel in aneis_todos for x, _ in anel)
+    miny = min(y for anel in aneis_todos for _, y in anel)
+    maxy = max(y for anel in aneis_todos for _, y in anel)
+    pad_x = (maxx - minx) * 0.06 + 1.0
+    pad_y = (maxy - miny) * 0.06 + 1.0
+    minx, maxx = minx - pad_x, maxx + pad_x
+    miny, maxy = miny - pad_y, maxy + pad_y
+
+    span_x = max(maxx - minx, 1.0)
+    span_y = max(maxy - miny, 1.0)
+    inner_w = right - left - 16
+    inner_h = bottom - top - 16
+    # Overscan do eixo curto ANTES de buscar tiles (mesma razao de `_render_mapa_municipio`:
+    # sem isso sobra faixa cinza de letterbox dentro do quadro).
+    target_aspect = inner_w / inner_h if inner_h > 0 else 1.0
+    if span_x / span_y < target_aspect:
+        novo = span_y * target_aspect
+        cx = (minx + maxx) / 2.0
+        minx, maxx = cx - novo / 2.0, cx + novo / 2.0
+        span_x = novo
+    else:
+        novo = span_x / target_aspect
+        cy = (miny + maxy) / 2.0
+        miny, maxy = cy - novo / 2.0, cy + novo / 2.0
+        span_y = novo
+    scale = min(inner_w / span_x, inner_h / span_y)
+    offset_x = left + 8 + (inner_w - span_x * scale) / 2
+    offset_y = top + 8 + (inner_h - span_y * scale) / 2
+
+    def project(x: float, y: float) -> tuple[float, float]:
+        return offset_x + (x - minx) * scale, offset_y + (maxy - y) * scale
+
+    drew_basemap = False
+    if basemap:
+        tiles = _fetch_basemap_municipio((minx, miny, maxx, maxy), width)
+        if tiles is not None:
+            try:
+                img_array, extent = tiles
+                bm = Image.fromarray(np.asarray(img_array)).convert("RGB")
+                ex_minx, ex_maxx, ex_miny, ex_maxy = extent
+                tx0, ty0 = project(ex_minx, ex_maxy)
+                tx1, ty1 = project(ex_maxx, ex_miny)
+                bm = bm.resize(
+                    (max(1, int(round(tx1 - tx0))), max(1, int(round(ty1 - ty0)))),
+                    Image.Resampling.LANCZOS,
+                )
+                canvas = Image.new("RGB", (width, height), (245, 245, 245))
+                canvas.paste(bm, (int(round(tx0)), int(round(ty0))))
+                image.paste(canvas.crop((left, top, right, bottom)), (left, top))
+                draw.rounded_rectangle(map_box, radius=6, outline=(120, 120, 120))
+                drew_basemap = True
+            except Exception:
+                drew_basemap = False
+    if not drew_basemap:
+        draw.rounded_rectangle(map_box, radius=6, fill=(245, 245, 245), outline=(120, 120, 120))
+
+    clip = Image.new("L", (width, height), 0)
+    ImageDraw.Draw(clip).rounded_rectangle(map_box, radius=6, fill=255)
+
+    def _compor_no_map_box(camada: Image.Image) -> None:
+        masked = Image.composite(
+            camada, Image.new("RGBA", (width, height), (0, 0, 0, 0)),
+            ImageChops.multiply(camada.split()[3], clip),
+        )
+        image.paste(masked, (0, 0), masked)
+
+    def _pixels(anel: list[tuple[float, float]]) -> list[tuple[int, int]]:
+        return [(int(round(px)), int(round(py))) for px, py in (project(x, y) for x, y in anel)]
+
+    # Divisas numa overlay: hex/bairro fora do quadro nao pode invadir titulo nem rodape.
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    odraw = ImageDraw.Draw(overlay, "RGBA")
+    alvos = {str(n) for n in (destaque or set())}
+    # Desenha a SOBRA primeiro: ela costuma envolver os bairros, e por baixo nao come a divisa.
+    for bairro in sorted(bairros, key=lambda b: not b.get("sobra")):
+        sobra = bool(bairro.get("sobra"))
+        realce = str(bairro["nome"]) in alvos
+        if sobra:
+            fill, traco, espessura = _SOBRA_FILL_RGBA, _SOBRA_CONTORNO_RGBA, 2
+        else:
+            fill = _BAIRRO_DESTAQUE_FILL_RGBA if realce else _BAIRRO_FILL_RGBA
+            traco, espessura = _BAIRRO_CONTORNO_RGBA, 2
+        for anel in bairro["aneis"]:
+            pixels = _pixels(anel)
+            if len(pixels) < 3:
+                continue
+            odraw.polygon(pixels, fill=fill)
+            # Contorno em `line` (nao `polygon(outline=)`) porque so `line` aceita espessura.
+            odraw.line([*pixels, pixels[0]], fill=traco, width=espessura, joint="curve")
+    for anel in contorno:
+        pixels = _pixels(anel)
+        if len(pixels) < 3:
+            continue
+        odraw.line([*pixels, pixels[0]], fill=_MUNICIPIO_CONTORNO_RGBA, width=3, joint="curve")
+    _compor_no_map_box(overlay)
+
+    # Rotulos por ultimo, do bairro mais populoso para o menos: quando duas placas colidem, a
+    # que fica e a do bairro que mais pesa na decisao. Sem isso o mapa vira uma pilha ilegivel
+    # de nomes no miolo urbano, que e exatamente onde a leitura importa.
+    rotulos = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    rdraw = ImageDraw.Draw(rotulos, "RGBA")
+    fonte = _font(12)
+    ocupadas: list[tuple[int, int, int, int]] = []
+    for bairro in bairros:
+        if bairro.get("sobra"):
+            continue
+        px, py = project(*bairro["rotulo_xy"])
+        if not (left <= px <= right and top <= py <= bottom):
+            continue
+        texto = str(bairro["nome"])
+        tw = _text_width(rdraw, texto, fonte)
+        caixa = (int(px) - tw // 2 - 4, int(py) - 9, int(px) + tw // 2 + 4, int(py) + 9)
+        if any(
+            caixa[0] < o[2] and o[0] < caixa[2] and caixa[1] < o[3] and o[1] < caixa[3]
+            for o in ocupadas
+        ):
+            continue
+        ocupadas.append(caixa)
+        rdraw.rounded_rectangle(caixa, radius=3, fill=_BAIRRO_ROTULO_PLACA_RGBA)
+        _draw_text(rdraw, (caixa[0] + 4, caixa[1] + 1), texto, font=fonte, fill=_BAIRRO_ROTULO_INK)
+    _compor_no_map_box(rotulos)
+
+    n_desenhados = len(ocupadas)
+    n_total = sum(1 for b in bairros if not b.get("sobra"))
+    fonte_txt = "Setores censitários IBGE 2022 dissolvidos por bairro"
+    if any(b.get("sobra") for b in bairros):
+        fonte_txt += " - área cinza: sem bairro na base"
+    if n_desenhados < n_total:
+        # Nunca omitir em silencio: o leitor precisa saber que ha bairro sem nome no quadro.
+        fonte_txt += f" - {n_desenhados} de {n_total} nomes couberam no quadro"
+    rodape = (
+        f"{fonte_txt} - EPSG:3857 - {_atribuicao_tiles()}"
+        if drew_basemap
+        else f"{fonte_txt} - fundo de ruas offline"
+    )
+    _draw_text(draw, (24, height - 28), rodape, font=_font(11), fill=(71, 85, 105))
+
+    out = BytesIO()
+    image.save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
 def _draw_pins(
     draw: ImageDraw.ImageDraw,
     image: Image.Image,
@@ -1532,6 +1954,16 @@ def render_mapas_municipio(
         width=width,
         height=height,
         focus_bounds=None,
+    )
+
+    # Camada "bairros" (BLK-RELMUN-06): divisa territorial real, municipio INTEIRO. Nao usa
+    # `focus_bounds` (que enquadra hexes relevantes) de proposito -- o slide serve para situar o
+    # municipio todo, inclusive a parte rural que fica fora do recorte de oportunidade.
+    mapas["bairros"] = _render_mapa_bairros(
+        municipio_result.get("bairros_geo") or {},
+        basemap=basemap,
+        width=width,
+        height=height,
     )
     return mapas
 
@@ -2186,6 +2618,90 @@ def _dominio_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 
+def _bairros_mapa_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
+                       assets: dict[str, bytes | None], *,
+                       primary: tuple[int, int, int] = ULTRA_TURQUESA,
+                       secondary: tuple[int, int, int] = ULTRA_MAGENTA) -> None:
+    """Pagina "Bairros Oficiais" (BLK-RELMUN-06): divisa territorial real + os mais populosos.
+
+    Da ao leitor a mesma ancora geografica do material de referencia do time de Expansao: ANTES
+    de discutir hexagono, mostrar em que bairro cada coisa cai. Fallback gracioso: municipio sem
+    bairro na base IBGE -> mapa com o aviso e painel de contagem zerada, sem excecao.
+    """
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, f"Bairros Oficiais - {_local_label(result)}", rgb=primary)
+    _draw_framed_map(pdf, mapa, max_w=540.0, max_h=380.0, x_anchor=34.0, y_anchor=100.0,
+                     border_rgb=primary)
+
+    geo = result.get("bairros_geo") or {}
+    bairros = [b for b in (geo.get("bairros") or []) if not b.get("sobra")]
+    n_bairros = int(geo.get("n_bairros", len(bairros)) or 0)
+    cobertura = float(geo.get("cobertura", 1.0) or 0.0)
+    # Cobertura ruim = a contagem NAO representa o municipio (ex.: Palmas/TO, 2 distritos rurais
+    # para 733 setores). O numero continua exibido, mas com a ressalva colada nele.
+    parcial = bool(bairros) and cobertura < _BAIRRO_COBERTURA_MIN
+
+    px = 610.0
+    pw = _PAGE_W - px - 36.0
+    head_h = 100.0
+    topo = bairros[:5]
+    panel_h = 36.0 + max(len(topo), 1) * 26.0 + 12.0
+    py0 = _centered_y(head_h + 12.0 + panel_h)
+
+    _rounded_panel(pdf, px, py0, pw, head_h, border_rgb=secondary)
+    pdf.set_text_color(*secondary)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_xy(px + 14, py0 + 12)
+    pdf.cell(pw - 28, 14, _ascii("BAIRROS IDENTIFICADOS"))
+    pdf.set_font("Helvetica", "B", 40)
+    pdf.set_xy(px + 14, py0 + 32)
+    pdf.cell(pw - 28, 44, _ascii(_format_number(n_bairros, 0)))
+    pdf.set_text_color(45, 45, 45)
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_xy(px + 14, py0 + 80)
+    if parcial:
+        pdf.set_text_color(*ULTRA_LARANJA)
+        pdf.cell(
+            pw - 28, 14,
+            _ascii(f"cobrem só {cobertura * 100:.0f}% dos setores do município"),
+        )
+    else:
+        pdf.cell(pw - 28, 14, _ascii("bairros com limite territorial mapeado"))
+
+    linhas = (
+        [(str(b["nome"]), _format_number(b["pop"], 0)) for b in topo]
+        if topo
+        else [("Sem bairro mapeado", TEXTO_SEM_DADO)]
+    )
+    _info_panel(
+        pdf, px, py0 + head_h + 12, pw, "MAIS POPULOSOS (hab.)",
+        linhas, accent=ULTRA_LARANJA, border_rgb=_ciclo_cor(2),
+    )
+
+    if parcial:
+        nota = (
+            f"A base IBGE 2022 só nomeia bairro/distrito em {cobertura * 100:.0f}% dos setores "
+            "deste município - a área cinza do mapa não tem divisa oficial. Para desenhar o "
+            "restante seria preciso a malha de bairros da prefeitura. Camada de display, não "
+            "altera o M1."
+        )
+    elif bairros:
+        nota = (
+            "Limite de cada bairro = setores censitários do IBGE 2022 dissolvidos por bairro "
+            "(sem bairro, usa subdistrito/distrito). Cobertura heterogênea entre municípios. "
+            "População do Censo 2022; camada de display, não altera o M1."
+        )
+    else:
+        nota = (
+            "Este município não tem bairro nem distrito mapeado na base IBGE 2022 - o limite "
+            "territorial exigiria a malha de bairros da prefeitura. As páginas seguintes usam "
+            "as zonas geométricas por distância ao centroide."
+        )
+    _draw_note(pdf, 34.0, 490.0, 540.0, nota)
+    _draw_footer(pdf, versao=result.get("versao_contrato"))
+
+
 def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None], *,
                   primary: tuple[int, int, int] = ULTRA_TURQUESA) -> None:
     """Pagina 6 — Bairros por Zona (BLK-RELMUN-02 / resolve D9).
@@ -2416,12 +2932,12 @@ def gerar_pdf_relatorio_municipal(
     solicitante: str | None = None,
     versao: str | None = None,
 ) -> bytes:
-    """Gera o PDF do Relatorio Municipal (9 paginas, 16:9, fpdf2, offline-safe).
+    """Gera o PDF do Relatorio Municipal (10 paginas, 16:9, fpdf2, offline-safe).
 
-    `mapas` = dict `{"resumo","score","residual","dominio"}` (camadas PNG); ausente -> paginas
-    com "Mapa indisponivel". `ultra_dir` aponta os assets de branding (fallback gracioso para
-    cor solida). `solicitante` carimba a marca d'agua em todas as 9 paginas (anti-PII). `versao`
-    sobrescreve o carimbo de versao do rodape. READ-ONLY sobre o M1.
+    `mapas` = dict `{"cobertura","bairros","resumo","score","residual","dominio"}` (camadas PNG);
+    ausente -> paginas com "Mapa indisponivel". `ultra_dir` aponta os assets de branding (fallback
+    gracioso para cor solida). `solicitante` carimba a marca d'agua em todas as paginas
+    (anti-PII). `versao` sobrescreve o carimbo de versao do rodape. READ-ONLY sobre o M1.
     """
     assets = _load_branding_assets(ultra_dir)
     mapas = mapas or {}
@@ -2434,20 +2950,24 @@ def gerar_pdf_relatorio_municipal(
     p3, s3 = _tema_bicolor(3)
     p4, s4 = _tema_bicolor(4)
     p5, s5 = _tema_bicolor(5)
-    p6, _ = _tema_bicolor(6)
+    p6, s6 = _tema_bicolor(6)
     p7, _ = _tema_bicolor(7)
     p8, _ = _tema_bicolor(8)
+    p9, _ = _tema_bicolor(9)
 
     pdf = _UltraPDF()
     _cover_page(pdf, municipio_result, assets)
     _cobertura_page(pdf, municipio_result, mapas.get("cobertura"), assets, primary=p1, secondary=s1)
-    _resumo_page(pdf, municipio_result, mapas.get("resumo"), assets, primary=p2, secondary=s2)
-    _score_page(pdf, municipio_result, mapas.get("score"), assets, primary=p3, secondary=s3)
-    _residual_page(pdf, municipio_result, mapas.get("residual"), assets, primary=p4, secondary=s4)
-    _dominio_page(pdf, municipio_result, mapas.get("dominio"), assets, primary=p5, secondary=s5)
-    _bairros_page(pdf, municipio_result, assets, primary=p6)
-    _sintese_page(pdf, municipio_result, assets, primary=p7)
-    _espaco_academias_page(pdf, municipio_result, assets, primary=p8)
+    # "Bairros Oficiais" entra LOGO APOS a visao geral, na mesma posicao do material de
+    # referencia: o leitor ancora o territorio em nomes que conhece antes de ver hexagono.
+    _bairros_mapa_page(pdf, municipio_result, mapas.get("bairros"), assets, primary=p2, secondary=s2)
+    _resumo_page(pdf, municipio_result, mapas.get("resumo"), assets, primary=p3, secondary=s3)
+    _score_page(pdf, municipio_result, mapas.get("score"), assets, primary=p4, secondary=s4)
+    _residual_page(pdf, municipio_result, mapas.get("residual"), assets, primary=p5, secondary=s5)
+    _dominio_page(pdf, municipio_result, mapas.get("dominio"), assets, primary=p6, secondary=s6)
+    _bairros_page(pdf, municipio_result, assets, primary=p7)
+    _sintese_page(pdf, municipio_result, assets, primary=p8)
+    _espaco_academias_page(pdf, municipio_result, assets, primary=p9)
 
     wm_text = _watermark_text(solicitante)
     for page_number in range(1, pdf.pages_count + 1):

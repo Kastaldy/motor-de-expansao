@@ -590,9 +590,9 @@ def gerar_pdf_municipio(
     *,
     solicitante: str | None = None,
 ) -> bytes:
-    """Gera o PDF de 9 paginas do Relatorio Municipal (BLK-RELMUN). READ-ONLY.
+    """Gera o PDF de 10 paginas do Relatorio Municipal (BLK-RELMUN). READ-ONLY.
 
-    Resolve o municipio (aceita nome sem acento), agrega os hexes, renderiza os 5
+    Resolve o municipio (aceita nome sem acento), agrega os hexes, renderiza os 6
     mapas (basemap online com fallback offline) e monta o PDF pelo gerador do
     dashboard. Levanta 404 se o municipio nao existe/nao tem hexes na UF.
     """
@@ -601,6 +601,7 @@ def gerar_pdf_municipio(
     from motor_expansao.dashboard.relatorio_municipal import (
         _carregar_bairros_por_hex,
         agregar_municipio,
+        carregar_bairros_geo,
         carregar_poligono_municipio,
         gerar_payloads_download_relatorio_municipal,
         render_mapas_municipio,
@@ -627,12 +628,21 @@ def gerar_pdf_municipio(
     # Bairros reais (best-effort): usa cod_municipio da propria linha + particao geo.
     cod: str | None = None
     bairros: dict | None = None
+    bairros_geo: dict | None = None
     try:
         cod = _normalizar_cod(df_muni.iloc[0].get("cod_municipio"))
         if cod:
             bairros = _carregar_bairros_por_hex(uf, cod, settings.censo_geo_dir)
     except Exception:
         bairros = None
+    # BLK-RELMUN-06: limite territorial dos bairros (mesma particao geo, segunda leitura).
+    # Em try/except PROPRIO: uma falha aqui so tira o slide "Bairros Oficiais", nao pode
+    # levar junto o rotulo por hex da pagina "Bairros por Zona", que ja funcionava.
+    try:
+        if cod:
+            bairros_geo = carregar_bairros_geo(uf, cod, settings.censo_geo_dir)
+    except Exception:
+        bairros_geo = None
 
     # BLK-RELMUN-05: divisa REAL do municipio (malha IBGE, ja montada neste container) para
     # recortar os pins. `None` -> recorte por hexes res-7; o relatorio sai igual, so menos exato.
@@ -641,7 +651,7 @@ def gerar_pdf_municipio(
     result = agregar_municipio(
         df, nome_municipio=nome_exato, uf=uf, dominio_df=dominio_df,
         competitors_df=comp_df, ultra_df=ultra_df, bairros_por_hex=bairros,
-        df_pre_filtrado=df_muni, poligono_municipio=poligono,
+        bairros_geo=bairros_geo, df_pre_filtrado=df_muni, poligono_municipio=poligono,
     )
     if result.get("n_hex_total", 0) == 0:
         raise APIError(404, f"Municipio '{nome_exato}' ({uf}) sem hexagonos", "municipio_sem_dados")
