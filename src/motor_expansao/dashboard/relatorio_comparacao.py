@@ -678,11 +678,26 @@ def _slide_recomendacao(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | N
         key=lambda par: (-int(par[1].get("vitorias") or 0), int(par[1].get("derrotas") or 0)),
     )
 
+    # POSICAO COM EMPATE COMPARTILHADO (1, 1, 3, 4), e nao a ordem da lista. O rodape deste
+    # slide afirma que empate no topo NAO e' desempatado; imprimir "1º" e "2º" para duas
+    # areas que lideram o mesmo numero de parametros faria o desenho contradizer o texto —
+    # e a ordem entre elas sairia de um criterio (menos derrotas) que ninguem aprovou como
+    # desempate. Medido num deck real de 4 cidades: Sao Paulo e Carapicuiba lideravam 2
+    # parametros cada e apareciam como 1º e 2º.
+    posicoes: list[int] = []
+    for i, (_, item) in enumerate(ordenados):
+        v = int(item.get("vitorias") or 0)
+        if i and v == int(ordenados[i - 1][1].get("vitorias") or 0):
+            posicoes.append(posicoes[-1])
+        else:
+            posicoes.append(i + 1)
+
     y = 96.0
     # Reserva o rodape da frase (54 pt) e distribui o resto entre os itens, para o slide
     # nao terminar com metade da pagina em branco.
     altura = _altura_que_preenche(414.0 - y, len(ordenados), minimo=46.0, maximo=84.0, respiro=8.0)
-    for posicao, (indice_original, item) in enumerate(ordenados, start=1):
+    for ordem, (indice_original, item) in enumerate(ordenados):
+        posicao = posicoes[ordem]
         destaque = posicao == 1 and melhor is not None
         pdf.set_fill_color(*(CINZA_CLARO if destaque else (250, 250, 250)))
         pdf.rect(36, y, PAGINA_LARGURA - 72, altura, style="F")
