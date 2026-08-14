@@ -17,8 +17,11 @@ import { MODOS, type ModoDefinicao, type ModoInicio } from '../lib/inicio'
  */
 export default function InicioScreen({
   onEscolher,
+  modos = MODOS,
 }: {
   onEscolher: (modo: ModoInicio) => void
+  /** Cards visíveis para este usuário (controle temporário de acesso). */
+  modos?: readonly ModoDefinicao[]
 }) {
   return (
     <div
@@ -89,9 +92,26 @@ export default function InicioScreen({
             alignItems: 'stretch',
           }}
         >
-          {MODOS.map((modo) => (
+          {modos.map((modo) => (
             <CardModo key={modo.id} modo={modo} onEscolher={onEscolher} />
           ))}
+          {modos.length === 0 && (
+            /* Usuário sem nenhum modo de análise (ex.: acesso só à Visão Executiva).
+               Ele normalmente nem pousa aqui — telaInicial() o leva direto —, mas a
+               logo sempre traz de volta ao Início, e a tela não pode ficar muda. */
+            <p
+              style={{
+                gridColumn: '1 / -1',
+                textAlign: 'center',
+                font: '400 14px/1.6 var(--f-ui)',
+                color: 'var(--tx-narrative)',
+                margin: '8px 0 0',
+              }}
+            >
+              Seu usuário não tem acesso aos modos de análise — use o menu à esquerda
+              para abrir as áreas liberadas para você.
+            </p>
+          )}
         </div>
 
         <p

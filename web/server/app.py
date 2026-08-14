@@ -37,9 +37,9 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from fastapi import FastAPI, Header, HTTPException, UploadFile
+from fastapi import FastAPI, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
@@ -63,6 +63,7 @@ if str(_SRC) not in sys.path:
 # lazy como o resto do modulo, porque e' consumido por helpers de modulo e nao so' dentro
 # de rotas; sao 4 modulos que dependem apenas de pandas (ja carregado). O gerador de
 # export (`rede_export`) segue lazy, dentro das rotas: ele puxa fpdf2 e openpyxl.
+import acesso  # noqa: E402  (controle TEMPORARIO de acesso por aba, por Remote-User)
 import cobertura_1km  # noqa: E402  (PROTOTIPO — area coberta pelo raio, para desenhar)
 import pressao_1km  # noqa: E402  (PROTOTIPO — chave de raio 2 km / 1 km por area)
 
@@ -179,6 +180,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Controle TEMPORARIO de acesso por aba (2026-08-13): o Authelia autentica; aqui cada
+# rota e' liberada pela aba que a consome, segundo o `Remote-User` que o Caddy repassa.
+# Regras, mapa `usuario -> [abas]` e degradacao (fail-open sem o JSON) em `acesso.py`.
+# A SPA esconde as abas via /api/me; este middleware e' quem barra de verdade.
+@app.middleware("http")
+async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ignore[no-untyped-def]
+    detalhe = acesso.motivo_bloqueio(request.url.path, request.headers.get("Remote-User"))
+    if detalhe is not None:
+        return JSONResponse({"detail": detalhe}, status_code=403)
+    return await call_next(request)
 
 
 # ============================================================================
@@ -2188,6 +2201,20 @@ def health() -> dict[str, Any]:
 @app.get("/api/ufs")
 def ufs() -> dict[str, Any]:
     return {"ufs": listar_ufs()}
+
+
+@app.get("/api/me")
+def me(
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Quem sou eu + que abas posso usar (controle temporario, ver `acesso.py`).
+
+    A SPA chama uma vez na abertura e esconde as abas fora da lista; quem chamar a
+    API por fora ve o mesmo contrato. O bloqueio de verdade e' do middleware — esta
+    rota so' informa.
+    """
+    usuario = acesso.normalizar_usuario(remote_user)
+    return {"usuario": usuario, "abas": sorted(acesso.abas_do_usuario(usuario))}
 
 
 # ============================================================================
