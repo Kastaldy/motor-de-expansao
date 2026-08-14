@@ -521,6 +521,17 @@ def test_valor_raio_nao_e_nd_quando_setor_nao_cobre_o_ponto_mas_intersecta_raio(
         return original(titulo=titulo, **kwargs)
 
     monkeypatch.setattr(censo_map, "_render_camada", _spy)
+    # 2026-08-13: fixa os dois fatores da cadeia da renda. Sem isto o teste depende de o artefato
+    # `data/staging/uplift_composicao_setor.parquet` existir no disco E de nenhum teste anterior
+    # ter repontado `constants.UPLIFT_*_PATH` para um tmp_path (os testes do hex fazem isso). O
+    # cod_setor deste fixture existe no artefato real, entao o valor mudava conforme a ORDEM da
+    # suite -- o teste passava isolado e falhava em conjunto, ou vice-versa.
+    from motor_expansao.dashboard import censo_point
+
+    uplift, fator = 1.6, 1.25
+    for modulo in (censo_map, censo_point):
+        monkeypatch.setattr(modulo, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
+        monkeypatch.setattr(modulo, "FATOR_TEMPORAL_RENDA", fator)
 
     censo_map.render_mapas_censitarios_combinados(
         LAT_C, LNG_C, setores, width=800, height=600, basemap=False
@@ -529,7 +540,12 @@ def test_valor_raio_nao_e_nd_quando_setor_nao_cobre_o_ponto_mas_intersecta_raio(
     assert TEXTO_SEM_DADO not in capturado["Densidade populacional"]["valor_ponto"]
     assert TEXTO_SEM_DADO not in capturado["Renda per capita"]["valor_ponto"]
     assert TEXTO_SEM_DADO not in capturado["Score censitario"]["valor_ponto"]
-    assert capturado["Renda per capita"]["valor_ponto"] == "Renda no raio: R$ 2.000"
+    # A renda per capita exibida e a DOMICILIAR per capita (conceito do IBGE): a renda bruta do
+    # setor levada ao domicilio pelo uplift e atualizada pelo fator temporal.
+    # 2.000 x 1,6 x 1,25 = 4.000. Antes de 2026-08-13 exibia-se a coluna calibrada (com o k),
+    # que ficava 19,62% abaixo da referencia do SIDRA.
+    esperado = round(2000 * uplift * fator)
+    assert capturado["Renda per capita"]["valor_ponto"] == f"Renda no raio: R$ {esperado:,}".replace(",", ".")
     assert capturado["Score censitario"]["valor_ponto"] == "Score no raio: 60"
     # Camada Concorrentes: titulo interno agora "" (removido; pedido Felipe 2026-07-23) e
     # nunca recebe `valor_ponto` (fica no default None de `_render_camada`).
@@ -1717,3 +1733,67 @@ def test_fetch_labels_devolve_none_quando_nenhum_tile_entra(monkeypatch, tmp_pat
 def test_labels_timeout_por_tile_limita_o_pior_caso():
     """Teto por tile explícito: 8 s. Documenta o pior caso do mosaico contra CDN em blackhole."""
     assert censo_map._LABELS_TIMEOUT_S <= 8
+
+
+def test_camada_renda_per_capita_ignora_a_coluna_calibrada(monkeypatch):
+    """A coluna CALIBRADA nao pode mais influenciar nenhuma cor do mapa de renda per capita.
+
+    Ate 2026-08-13 a camada "Renda per capita" era colorida por
+    `renda_per_capita_setor_2022_calibrada` (V06004/moradores x k), enquanto o `valor_ponto`
+    impresso na MESMA camada — e o Big Number da MESMA pagina — ja vinham da cadeia corrigida
+    (domiciliar per capita). O mapa saia com legenda numa escala e cor noutra. E as faixas
+    (`RENDA_PER_CAPITA_BANDS`) sao cortes ABSOLUTOS, entao a cor errada nao e' aproximada: o
+    setor cai numa faixa que nao e a dele.
+
+    O teste renderiza duas vezes variando SO a coluna calibrada, num salto grande o bastante
+    para trocar de faixa (2.000 -> 12.000). Se ela ainda pesar em alguma cor, os dois PNGs
+    diferem. Comparacao por histograma de cores, nao por bytes: o PNG carrega metadados que
+    poderiam diferir por motivo alheio ao pixel.
+    """
+    from motor_expansao.dashboard import censo_point
+
+    uplift, fator, moradores = 1.6, 1.25, 3.0
+    for modulo in (censo_map, censo_point):
+        monkeypatch.setattr(modulo, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
+        monkeypatch.setattr(modulo, "FATOR_TEMPORAL_RENDA", fator)
+
+    # Espia `source_values` — a Serie que ALIMENTA a cor. Assertar sobre ela, e nao sobre pixel,
+    # e o que da poder ao teste: o histograma do PNG inclui legenda e rotulo, que mudam por
+    # motivos alheios ao choropleth e mascaram a regressao.
+    original = censo_map._render_camada
+    capturado: dict[str, pd.Series] = {}
+
+    def _spy(*, titulo, **kwargs):
+        capturado[titulo] = kwargs["source_values"]
+        return original(titulo=titulo, **kwargs)
+
+    monkeypatch.setattr(censo_map, "_render_camada", _spy)
+
+    setores = pd.DataFrame(
+        [
+            _sector_record("355030801000001", box(-700, -700, 0, 700), pop=800, renda=2000.0),
+            _sector_record("355030801000002", box(0, -700, 700, 700), pop=1400, renda=2000.0),
+        ]
+    )
+    # A calibrada recebe um valor ABSURDO e distante: se ela ainda pesar na camada, aparece.
+    setores["renda_per_capita_setor_2022_calibrada"] = 12_000.0
+    # E a per capita BRUTA recebe outro valor distinto, para que trocar a camada por ela
+    # tambem seja detectado (sem esta coluna a troca daria NaN e passaria despercebida).
+    setores["renda_per_capita_setor_2022"] = 9_000.0
+
+    censo_map.render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=400, height=300, basemap=False
+    )
+
+    # V06004 = renda x moradores = 6.000. Domiciliar = 6.000 x 1,6 x 1,25 = 12.000.
+    # Per capita = 12.000 / 3 = 4.000. Nem 12.000 (calibrada) nem 9.000 (bruta).
+    esperado_dom = 2000.0 * moradores * uplift * fator
+    esperado_pc = esperado_dom / moradores
+    assert capturado["Renda per capita"].dropna().tolist() == pytest.approx([esperado_pc] * 2)
+    assert capturado["Renda media domiciliar"].dropna().tolist() == pytest.approx(
+        [esperado_dom] * 2
+    )
+    # A identidade que o relatorio precisa fechar, agora tambem no choropleth.
+    assert capturado["Renda media domiciliar"].tolist() == pytest.approx(
+        (capturado["Renda per capita"] * moradores).tolist()
+    )

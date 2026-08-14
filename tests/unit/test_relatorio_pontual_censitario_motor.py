@@ -14,6 +14,7 @@ from motor_expansao.dashboard.censo_point import (
     agregar_perfil_bairro_distrito,
     analisar_ponto_censitario_setores,
 )
+from motor_expansao.dashboard.constants import FATOR_TEMPORAL_RENDA
 
 LAT_C = -23.55
 LNG_C = -46.63
@@ -54,7 +55,15 @@ def _sector_record(
     nome_bairro: str | None = None,
     nome_distrito: str | None = None,
     domicilios: float | None = None,
+    moradores: float = 3.0,
 ) -> dict[str, object]:
+    """`renda` e a renda per capita BRUTA do setor (V06004/moradores).
+
+    Desde 2026-08-13 o fixture tambem emite as duas colunas cruas que a cadeia da renda usa de
+    fato — `avg_moradores_domicilio_setor_2022` e `renda_responsavel_media_setor_2022` —, no
+    mesmo padrao do fixture de `test_relatorio_pontual_censitario_mapa.py`. Sem elas o motor
+    devolvia `None` na renda, e o teste media a ausencia de coluna achando que media a renda.
+    """
     geom_wgs = _to_wgs_geometry(local_geom)
     minx, miny, maxx, maxy = geom_wgs.bounds
     return {
@@ -69,7 +78,10 @@ def _sector_record(
         "bbox_maxx": maxx,
         "bbox_maxy": maxy,
         "pop_total_setor_2022": pop,
+        "renda_per_capita_setor_2022": renda,
         "renda_per_capita_setor_2022_calibrada": renda,
+        "avg_moradores_domicilio_setor_2022": moradores,
+        "renda_responsavel_media_setor_2022": renda * moradores,
         "densidade_pop_setor_hab_km2": pop / (local_geom.area / 1_000_000.0),
         "score_setor_2022_calibrado": score,
         "flag_renda_disponivel": True,
@@ -100,7 +112,16 @@ def test_motor_censitario_setor_totalmente_dentro_do_raio():
     )
     assert result["n_setores"] == 1
     assert result["pop_total_raio"] == pytest.approx(500)
-    assert result["renda_per_capita_media_raio"] == pytest.approx(1800)
+    # A renda per capita exibida e a DOMICILIAR per capita (conceito do IBGE): a renda bruta do
+    # setor levada a escala do domicilio pelo uplift e atualizada pelo fator temporal. Expressa
+    # em termos do que o proprio motor devolve, para nao fixar no teste o valor de um insumo.
+    assert result["renda_per_capita_media_raio"] == pytest.approx(
+        1800 * result["fator_uplift_composicao"] * FATOR_TEMPORAL_RENDA, rel=1e-3
+    )
+    # A invariante que o relatorio precisa fechar: domiciliar = per capita x moradores.
+    assert result["renda_domiciliar_total_raio"] == pytest.approx(
+        result["renda_per_capita_media_raio"] * 3.0, rel=1e-3
+    )
     assert result["score_setor_medio"] == pytest.approx(82)
     setores = result["setores_intersectados"]
     assert setores.loc[0, "peso_area_setor"] == pytest.approx(1.0)
@@ -233,7 +254,7 @@ def test_motor_censitario_nao_muta_dataframe_de_entrada():
 # ── BLK-RELPON-05: lookup do setor que CONTEM o ponto ────────────────────────────
 
 
-def test_lookup_setor_do_ponto_dentro_da_malha():
+def test_lookup_setor_do_ponto_dentro_da_malha(monkeypatch):
     # Setor A cobre o ponto (0,0 no CRS metrico local) por completo. Setor B fica fora do
     # ambito de A (nao compartilha fronteira com o ponto) mas ainda DENTRO do raio, com
     # renda/score bem diferentes -- serve para provar que o valor do ponto NAO e reciclagem
@@ -249,17 +270,31 @@ def test_lookup_setor_do_ponto_dentro_da_malha():
             _sector_record("355030801000011", setor_b, pop=1400, renda=4200, score=95),
         ]
     )
+    # Fatores FIXOS: desde a correcao de 2026-08-13 este campo e renda DOMICILIAR per capita
+    # (V06004 x uplift x temporal / moradores), entao ele passou a depender do uplift. Sem
+    # monkeypatch o esperado viraria funcao do artefato presente na maquina.
+    from motor_expansao.dashboard import censo_point
+
+    uplift = 1.6
+    monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
+    monkeypatch.setattr(censo_point, "FATOR_TEMPORAL_RENDA", 1.0)
 
     result = analisar_ponto_censitario_setores(LAT_C, LNG_C, df)
 
     assert result["flag_setor_ponto_encontrado"] is True
     assert result["cod_setor_ponto"] == "355030801000010"
-    assert result["renda_per_capita_setor_ponto"] == pytest.approx(1900)
+    # `renda` do fixture e a per capita BRUTA; V06004 = renda x moradores. Logo a domiciliar per
+    # capita volta a ser `renda x uplift` (os moradores se cancelam) = 1900 x 1,6.
+    assert result["renda_per_capita_setor_ponto"] == pytest.approx(1900 * uplift)
     assert result["score_setor_2022_calibrado_ponto"] == pytest.approx(55)
     assert result["densidade_pop_setor_ponto"] == pytest.approx(
         round(800 / (setor_a.area / 1_000_000.0), 2)
     )
     # Difere do agregado ponderado do raio (A+B combinados) -- prova que nao e reciclagem.
+    # ATENCAO ao que esta assercao prova HOJE: entre 2026-08-13 e a correcao do setor do ponto
+    # ela passava de graca, porque os dois lados estavam em ESCALAS diferentes (o ponto na
+    # calibrada, o raio na domiciliar per capita) e qualquer par de numeros seria diferente. Com
+    # os dois na mesma escala ela volta a medir o que promete: agregacao, nao descasamento.
     assert result["renda_per_capita_setor_ponto"] != result["renda_per_capita_media_raio"]
     assert result["score_setor_2022_calibrado_ponto"] != result["score_setor_medio"]
 
@@ -457,3 +492,147 @@ def test_agregar_perfil_bairro_nd_quando_setores_df_vazio():
 
     assert perfil["flag_perfil_disponivel"] is False
     assert perfil["populacao_total"] is None
+
+
+# ── Dupla contagem do k na renda domiciliar ───────────────────────────────────────────────────
+# Regressao de 2026-08-13. `uplift_composicao` e DEFINIDO como
+#     uplift = (renda domiciliar per capita do SIDRA x moradores) / V06004 BRUTA
+# (pipelines/derivar_uplift_renda_domiciliar.py), ou seja ele JA converte a renda do responsavel
+# para a escala domiciliar do IBGE. A renda domiciliar era montada de `calibrada x moradores`;
+# como a calibrada e `V06004/moradores x k`, os moradores se cancelavam e sobrava `V06004 x k` —
+# o k virava fator EXTRA sobre uma conversao ja feita. Medido em 5.551 municipios: a renda
+# domiciliar exibida era 1,2335x a do IBGE, com dispersao ZERO (p05 = p95), isto e +23,35%.
+# NAO havia teste nenhum sobre o NIVEL da renda domiciliar — foi por isso que sobreviveu. Este e.
+
+
+def _setor_com_renda_completa(k: float, resp: float, moradores: float) -> dict[str, object]:
+    """Setor com as duas pontas da renda: a V06004 bruta e a calibrada por um `k` visivel."""
+    rec = _sector_record(
+        "355030801000001", box(-100, -100, 100, 100), pop=900.0, domicilios=300.0
+    )
+    rec["renda_responsavel_media_setor_2022"] = resp
+    rec["avg_moradores_domicilio_setor_2022"] = moradores
+    rec["renda_per_capita_setor_2022"] = resp / moradores
+    rec["renda_per_capita_setor_2022_calibrada"] = resp / moradores * k
+    return rec
+
+
+def test_renda_domiciliar_nao_leva_o_k_da_calibragem(monkeypatch):
+    """O k NAO pode aparecer na renda domiciliar — o uplift ja fez essa conversao.
+
+    O fixture usa k = 2,0, grande e obvio: se ele vazar, o numero DOBRA.
+    """
+    from motor_expansao.dashboard import censo_point
+
+    k, resp, moradores, uplift = 2.0, 3000.0, 3.0, 1.6
+    monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
+    monkeypatch.setattr(censo_point, "FATOR_TEMPORAL_RENDA", 1.0)
+
+    result = analisar_ponto_censitario_setores(
+        LAT_C, LNG_C, pd.DataFrame([_setor_com_renda_completa(k, resp, moradores)])
+    )
+
+    # Base da renda domiciliar = V06004 BRUTA (o caminho antigo daria resp x k = 6.000).
+    assert result["renda_media_domiciliar_raio"] == pytest.approx(resp, abs=0.01)
+    # Com uplift: resp x 1,6 = 4.800 (o caminho antigo daria 9.600).
+    assert result["renda_domiciliar_total_raio"] == pytest.approx(resp * uplift, abs=0.01)
+    assert result["renda_domiciliar_total_raio"] != pytest.approx(resp * k * uplift, abs=0.01)
+
+
+def test_renda_per_capita_exibida_e_a_domiciliar_per_capita(monkeypatch):
+    """A per capita exibida e a renda do DOMICILIO dividida pelos moradores dele.
+
+    Este teste substitui um anterior (de 2026-08-13 pela manha) que travava a per capita na
+    coluna CALIBRADA. Aquela premissa caiu quando se mediu o numero: com o k, a per capita
+    exibida ficava 19,62% ABAIXO da referencia do IBGE, e so REMOVER o k a levaria a -34,84% —
+    porque o k (1,2335) e uma versao parcial do uplift (1,632), nao um fator independente. O
+    conceito certo, e o unico que casa com o SIDRA, e a renda domiciliar per capita.
+
+    O k segue intocado onde ele tem funcao: `renda_pct_nacional_calibrado` -> score.
+    """
+    from motor_expansao.dashboard import censo_point
+
+    k, resp, moradores, uplift = 2.0, 3000.0, 3.0, 1.6
+    monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
+    monkeypatch.setattr(censo_point, "FATOR_TEMPORAL_RENDA", 1.0)
+
+    result = analisar_ponto_censitario_setores(
+        LAT_C, LNG_C, pd.DataFrame([_setor_com_renda_completa(k, resp, moradores)])
+    )
+
+    # resp x uplift / moradores = 3000 x 1,6 / 3 = 1.600. Sem o k em lugar nenhum.
+    assert result["renda_per_capita_media_raio"] == pytest.approx(resp * uplift / moradores, abs=0.01)
+    assert result["renda_per_capita_media_raio"] != pytest.approx(resp / moradores * k, abs=0.01)
+    # E as duas rendas do relatorio fecham entre si.
+    assert result["renda_domiciliar_total_raio"] == pytest.approx(
+        result["renda_per_capita_media_raio"] * moradores, abs=0.01
+    )
+
+
+def test_renda_domiciliar_cai_na_per_capita_BRUTA_quando_falta_a_v06004(monkeypatch):
+    """O fallback tambem nao pode reintroduzir o k pela porta dos fundos."""
+    from motor_expansao.dashboard import censo_point
+
+    k, resp, moradores, uplift = 2.0, 3000.0, 3.0, 1.6
+    monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
+    monkeypatch.setattr(censo_point, "FATOR_TEMPORAL_RENDA", 1.0)
+
+    rec = _setor_com_renda_completa(k, resp, moradores)
+    del rec["renda_responsavel_media_setor_2022"]  # so sobra a per capita (bruta e calibrada)
+
+    result = analisar_ponto_censitario_setores(LAT_C, LNG_C, pd.DataFrame([rec]))
+
+    assert result["renda_domiciliar_total_raio"] == pytest.approx(resp * uplift, abs=0.01)
+
+
+def test_setor_do_ponto_e_raio_na_MESMA_escala(monkeypatch):
+    """Com UM setor cobrindo o raio inteiro, o valor do ponto e o do raio tem de ser IGUAIS.
+
+    E a trava do descasamento introduzido em 2026-08-13 e corrigido em seguida: naquele estado
+    `renda_per_capita_media_raio` ja era renda domiciliar per capita, mas
+    `renda_per_capita_setor_ponto` ainda saia da coluna CALIBRADA. Os dois campos viajam no MESMO
+    payload (`setor_do_ponto.renda_per_capita` contra `renda_per_capita_media_raio` em
+    `web/server/app.py`), entao o produto exibia duas "renda per capita" em escalas distintas.
+
+    Um unico setor e o cenario que torna a comparacao exata: a media ponderada do raio sobre um
+    setor so E aquele setor, entao qualquer diferenca aqui e diferenca de ESCALA — nao de
+    agregacao. Voltar a ler a calibrada faz este teste falhar com `k` visivel: 2,0 no fixture.
+    """
+    from motor_expansao.dashboard import censo_point
+
+    k, resp, moradores, uplift = 2.0, 3000.0, 3.0, 1.6
+    monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
+    monkeypatch.setattr(censo_point, "FATOR_TEMPORAL_RENDA", 1.0)
+
+    # Setor unico, grande o bastante para conter o ponto E cobrir todo o raio.
+    rec = _setor_com_renda_completa(k, resp, moradores)
+    rec["area_setor_m2"] = float(box(-_RAIO_M * 2, -_RAIO_M * 2, _RAIO_M * 2, _RAIO_M * 2).area)
+    rec.update(
+        _sector_record(
+            "355030801000001",
+            box(-_RAIO_M * 2, -_RAIO_M * 2, _RAIO_M * 2, _RAIO_M * 2),
+            pop=900.0,
+            domicilios=300.0,
+        )
+    )
+    rec["renda_responsavel_media_setor_2022"] = resp
+    rec["avg_moradores_domicilio_setor_2022"] = moradores
+    rec["renda_per_capita_setor_2022"] = resp / moradores
+    rec["renda_per_capita_setor_2022_calibrada"] = resp / moradores * k
+
+    result = analisar_ponto_censitario_setores(LAT_C, LNG_C, pd.DataFrame([rec]))
+
+    assert result["flag_setor_ponto_encontrado"] is True
+    # Mesma escala: um setor so, logo ponto == raio.
+    assert result["renda_per_capita_setor_ponto"] == pytest.approx(
+        result["renda_per_capita_media_raio"], rel=1e-9
+    )
+    # E o valor e a domiciliar per capita = V06004 x uplift / moradores, SEM o k.
+    esperado = resp * uplift / moradores
+    assert result["renda_per_capita_setor_ponto"] == pytest.approx(esperado, rel=1e-6)
+    # Prova que o k nao entrou: com a calibrada o numero seria o dobro.
+    assert result["renda_per_capita_setor_ponto"] != pytest.approx(esperado * k, rel=1e-6)
+    # E a identidade do relatorio fecha tambem no setor do ponto.
+    assert result["renda_domiciliar_total_raio"] == pytest.approx(
+        result["renda_per_capita_setor_ponto"] * moradores, rel=1e-6
+    )
