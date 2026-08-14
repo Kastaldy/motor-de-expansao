@@ -52,6 +52,7 @@ import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
  * seria lido como defeito. Nenhum texto de estado vazio e' inventado aqui.
  */
 export default function PontoScreen({
+  onCapturarMapas,
   onAnalisarPonto,
   onLocalizar,
   mapaPronto,
@@ -91,6 +92,8 @@ export default function PontoScreen({
   onLimparPin: () => void
   /** Volta ao menu de modos — só o hero de entrada usa, como o Explorar faz. */
   onInicio: () => void
+  /** Captura do mapa, publicada pelo App. Ausente = o PDF sai sem mapas. */
+  onCapturarMapas?: (hexIds: string[]) => Promise<string[]>
 }) {
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -419,6 +422,7 @@ export default function PontoScreen({
         {ficha && (
           <div style={{ display: 'grid', gap: 16 }}>
             <PainelPontos
+            onCapturarMapas={onCapturarMapas}
               fichas={fichas}
               aberto={aberto}
               onAbrir={setAberto}

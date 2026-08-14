@@ -81,9 +81,18 @@ export interface MapScreenProps {
   janelaDoHex?: boolean
   /** Sem UF escolhida, não desenha o hero — quem o publica é a camada de cima. */
   semLanding?: boolean
+  /**
+   * Publica a função de CAPTURA do mapa para quem está fora deste componente.
+   *
+   * O modo de ponto é irmão na árvore e usa o MESMO mapa (`App.tsx`), então ele precisa
+   * pedir capturas sem ter o mapa em mãos. Mesmo motivo pelo qual o `pinFixo` mora no App:
+   * quem consome o mapa é o mapa, e o App só reparte o canal.
+   */
+  registrarCaptura?: (capturar: (hexIds: string[]) => Promise<string[]>) => void
 }
 
 export default function MapScreen({
+  registrarCaptura,
   ufs,
   uf,
   onUf,
@@ -384,28 +393,45 @@ export default function MapScreen({
   const [pedidoCaptura, setPedidoCaptura] = useState<{ hexIds: string[]; n: number } | null>(null)
   const [gerandoDeck, setGerandoDeck] = useState(false)
 
+  /* A captura vira uma PROMESSA, e nao um par pedido/callback espalhado pela tela. Duas
+     razoes: o fluxo do deck fica linear (`await capturar(...)` e segue), e o modo de PONTO
+     — que e' irmao deste componente na arvore e usa o MESMO mapa — precisa pedir capturas
+     tambem. Publicar a funcao por `registrarCaptura` e' o mesmo caminho que o `pinFixo` do
+     App ja' usa: quem consome o mapa e' o mapa, entao o canal mora aqui e o App so' o
+     reparte. */
+  const resolveCaptura = useRef<((imagens: string[]) => void) | null>(null)
+
+  const capturar = useCallback(
+    (hexIds: string[]) =>
+      new Promise<string[]>((resolve) => {
+        resolveCaptura.current = resolve
+        setPedidoCaptura((p) => ({ hexIds, n: (p?.n ?? 0) + 1 }))
+      }),
+    [],
+  )
+
+  const aoCapturarMapas = useCallback((imagens: string[]) => {
+    const resolver = resolveCaptura.current
+    resolveCaptura.current = null
+    resolver?.(imagens)
+  }, [])
+
+  useEffect(() => {
+    registrarCaptura?.(capturar)
+  }, [registrarCaptura, capturar])
+
   const rotulosComparacao = useCallback(
     (hs: Hex[]) => hs.map((h, i) => h.mun ?? `Hexágono ${i + 1}`),
     [],
   )
 
-  const pedirDeck = useCallback(() => {
-    if (!hexesComparacao?.length || gerandoDeck) return
-    setGerandoDeck(true)
-    setPedidoCaptura((p) => ({
-      hexIds: hexesComparacao.map((h) => h.id),
-      n: (p?.n ?? 0) + 1,
-    }))
-  }, [hexesComparacao, gerandoDeck])
-
-  const aoCapturarMapas = useCallback(
-    async (imagens: string[]) => {
+  const pedirDeck = useCallback(
+    async () => {
       const hs = hexesComparacao
-      if (!hs?.length) {
-        setGerandoDeck(false)
-        return
-      }
+      if (!hs?.length || gerandoDeck) return
+      setGerandoDeck(true)
       try {
+        const imagens = await capturar(hs.map((h) => h.id))
         const rotulos = rotulosComparacao(hs)
         const ranking = ranquear(DIMENSOES, hs, rotulos)
         const cidade = hs[0]?.mun ? `${hs[0].mun} - ` : ''
@@ -435,7 +461,7 @@ export default function MapScreen({
         setGerandoDeck(false)
       }
     },
-    [hexesComparacao, rotulosComparacao],
+    [hexesComparacao, rotulosComparacao, capturar, gerandoDeck],
   )
 
   /**

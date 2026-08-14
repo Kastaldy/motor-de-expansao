@@ -35,6 +35,7 @@ export default function PainelPontos({
   onLimpar,
   carregando,
   erro,
+  onCapturarMapas,
 }: {
   fichas: PontoPayload[]
   aberto: number
@@ -46,6 +47,12 @@ export default function PainelPontos({
   onLimpar: () => void
   carregando: boolean
   erro: string | null
+  /**
+   * Captura do mapa, publicada pelo App. O modo de ponto usa o MESMO mapa do Explorar, e
+   * cada ficha traz o `hex_id` do hexágono em que o endereço caiu — é por ele que o mapa
+   * enquadra. Ausente = o PDF sai sem mapas, declarando a ausência.
+   */
+  onCapturarMapas?: (hexIds: string[]) => Promise<string[]>
 }) {
   /** O campo de colar aberto aqui dentro, ao lado do botão que o pediu. */
   const [adicionando, setAdicionando] = useState(false)
@@ -83,6 +90,12 @@ export default function PainelPontos({
           passa: c.passa,
         })),
       }))
+      /* Um enquadramento por ENDEREÇO, pelo hexágono em que ele caiu. O mapa se mexe
+         sozinho durante isso — o botão avisa. Falha na captura não impede o PDF: o slide
+         declara a ausência em vez de sumir. */
+      const imagens = onCapturarMapas
+        ? await onCapturarMapas(fichas.map((f) => String(f.hex_id ?? '')))
+        : []
       const cidade = fichas[0]?.local?.municipio ? `${fichas[0].local.municipio} - ` : ''
       const resposta = await fetch('/api/relatorio/comparacao', {
         method: 'POST',
@@ -93,6 +106,7 @@ export default function PainelPontos({
           titulo: 'Comparação de pontos',
           subtitulo: `${cidade}${fichas.length} pontos`,
           dePontos: true,
+          imagens,
         }),
       })
       if (!resposta.ok) throw new Error(`HTTP ${resposta.status}`)
@@ -109,7 +123,7 @@ export default function PainelPontos({
     } finally {
       setGerandoRelatorio(false)
     }
-  }, [fichas, rotulos, gerandoRelatorio])
+  }, [fichas, rotulos, gerandoRelatorio, onCapturarMapas])
 
   // A prosa comparativa só com DOIS pontos — ver a nota no JSX.
   const comparacao = useMemo(
@@ -245,7 +259,9 @@ export default function PainelPontos({
             cor={corDoPonto}
             onRelatorio={gerarRelatorio}
             rotuloRelatorio={
-              gerandoRelatorio ? 'Gerando o PDF...' : 'Gerar relatório em PDF'
+              gerandoRelatorio
+                ? 'Gerando o PDF - o mapa está sendo capturado...'
+                : 'Gerar relatório em PDF'
             }
           />
 

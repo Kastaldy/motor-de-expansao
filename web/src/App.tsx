@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import Dock from './components/Dock'
 import type { SearchPin } from './components/HexMap'
@@ -90,6 +90,24 @@ export default function App() {
 
   /** Tira a marca do endereço do mapa (a limpeza do modo de ponto). */
   const limparPinPonto = useCallback(() => setPinPonto(null), [])
+
+  /* CANAL DE CAPTURA do mapa, repartido entre as duas telas.
+     Mora aqui pelo mesmo motivo do `pinPonto` acima: quem tem o mapa é o `MapScreen`, e o
+     `PontoScreen` — que é irmão dele na árvore e usa o MESMO mapa — precisa pedir capturas
+     para montar o PDF dele. O App não captura nada; só guarda a função que o mapa publica
+     e a entrega a quem precisa.
+
+     `ref` e não `state`: trocar a função não deve redesenhar tela nenhuma. */
+  const capturaDoMapa = useRef<((hexIds: string[]) => Promise<string[]>) | null>(null)
+  const registrarCaptura = useCallback((fn: (hexIds: string[]) => Promise<string[]>) => {
+    capturaDoMapa.current = fn
+  }, [])
+  const capturarMapas = useCallback(
+    // Sem mapa montado devolve lista vazia em vez de pendurar a promessa: o gerador do PDF
+    // já sabe desenhar a moldura declarando "mapa não capturado".
+    (hexIds: string[]) => capturaDoMapa.current?.(hexIds) ?? Promise.resolve([]),
+    [],
+  )
 
   // Foto do Mapa Territorial (ver lib/mapa-estado): vive AQUI porque o App nao desmonta
   // ao trocar de tela — e' o que devolve o mapa como estava na volta da Viabilidade.
@@ -244,6 +262,7 @@ export default function App() {
              e as duas telas divergiam. */
           <>
             <MapScreen
+              registrarCaptura={registrarCaptura}
               ufs={ufs}
               uf={uf}
               onUf={aoTrocarUf}
@@ -269,6 +288,7 @@ export default function App() {
               semLanding
             />
             <PontoScreen
+              onCapturarMapas={capturarMapas}
               onAnalisarPonto={irParaViabilidade}
               onLocalizar={localizarPonto}
               mapaPronto={dados != null}
