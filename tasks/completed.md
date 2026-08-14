@@ -12683,3 +12683,52 @@ teve de ser investigada para se provar não-regressão.
 Arquivos alterados: `tests/unit/test_score_retencao_territorial.py` (só teste; zero produção)
 Validações: 12 passam, 1 skipped no arquivo; `ruff` limpo
 Decisões relacionadas: nenhuma (Baixa, `loop-safe`, READ-ONLY sobre o M1)
+
+---
+
+## BLK-MA-16 — As independentes entram na oferta do sinal 6, com metade do peso de uma rede
+
+Data: 2026-08-14
+Resumo: `concorrentes_mapeados.parquet` tem 4.499 pontos, 104 redes e **zero independentes** — ele
+nasce dos coletores `unidades_*.csv`, que são feeds de CADEIA. A pressão competitiva não respondia
+"quanta concorrência cerca esta academia", e sim "quanta CADEIA cerca". Uma independente espremida
+entre oito independentes marcava **zero**. Não era bug: era o universo do insumo.
+
+**Medido nacionalmente (19.329 independentes):** pressão média 32,03 -> **61,41**; pressão zero
+**37,8% -> 5,5%**; score médio (regime real `s1,s6`) 42,81 -> 54,57; custo 0,39 -> 1,72 min. O número
+que decide: **6.238 academias (32,3% do universo) tinham `0` e passam a ter sinal vindo só de
+independentes** — em torno da academia mediana há 7 independentes num raio de 2 km (p90 21, máx 52)
+que a régua antiga não via.
+
+**O risco não era o que parecia.** A objeção natural ("a saturação comprime o topo") foi medida:
+`Spearman(pressão, oferta_ponderada) = 1,000000` — a saturação é estritamente crescente e **não
+embaralha o ranking**. O que ela faz é achatar a leitura (no top-500 a pressão varia 4,36 pontos
+enquanto a oferta varia 2,4x) e deslocar limiares absolutos ("acima de 90" passa de 255 para 1.055).
+Quem precisar discriminar no topo usa `oferta_ponderada`. Esta correção derrubou uma afirmação que o
+próprio bloco trazia antes de o número existir.
+
+**Três armadilhas fechadas.** (1) AUTO-PRESSÃO: a academia está no próprio conjunto de pontos e
+somaria `peso(d=0) x 0,5` de si mesma — 33,3 pontos fantasma, com o erro MAIOR justamente em quem não
+tem ninguém por perto; exclusão por CHAVE, verificada por mutação. (2) DEDUP entre fontes: hoje
+colapsa 0 de 19.329 (só há WellHub), e existe para o defeito não entrar em massa junto com a primeira
+coleta com as duas fontes; critério arbitrado (50 m) e declarado como tal. (3) CARIMBO
+`universo_oferta`: o score **se recusa a inferir**, porque assumir `cadeias` no silêncio erraria na
+direção otimista.
+
+**Aprovação e virada (DEC-030, opção A).** O default do pipeline é `cadeias_e_independentes`; a régua
+histórica segue acessível por `--oferta-so-cadeias` — ela é a única comparável com o
+`pressao_concorrencial_score_2km`. Artefatos regenerados: `vulnerabilidade_ma_academias.parquet`
+(26 colunas, `alvos_ma_v2`), `vulnerabilidade_ma_nomeadas.parquet` (19.329 academias, todas com
+coordenada, `alvos_ma_nomeados_v2`) e `alvos_ma_priorizados.csv`. A janela era esta: o piloto em
+produção ainda não tinha o artefato nomeado, então os pins nascem na régua definitiva em vez de
+mudarem debaixo de quem já tinha olhado.
+
+Arquivos alterados: `src/motor_expansao/vulnerabilidade/{contrato,pressao_competitiva,score,snapshots,alvos_ma,alvos_nomeados}.py`,
+`tests/unit/vulnerabilidade/{test_universo_oferta_s6,test_score}.py`, `docs/decisions/DEC-030.md`,
+`docs/vulnerabilidade_ma_contrato.md` (§8.1), `CLAUDE.md` §8
+Validações: 16 testes novos em `test_universo_oferta_s6.py`; 2.955 na suíte completa; `ruff` limpo;
+`loop_guard` sem CRITICO; fim-a-fim pela CLI nos dois universos
+Decisões relacionadas: **DEC-030** (Alta, aprovada por Vinicius em 2026-08-14, opção A). DEC-001,
+DEC-027 e DEC-029 intactas; anti-PII (DEC-012/§11) preservado — a coordenada entra no cálculo e morre
+na função. Bumps: `pressao_competitiva_v2`, `score_vulnerabilidade_v5`, `alvos_ma_v2`,
+`alvos_ma_nomeados_v2`

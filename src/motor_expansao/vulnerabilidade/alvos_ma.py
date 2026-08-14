@@ -524,12 +524,13 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="ignora o insumo de pressao e devolve o score sem o s6 (DEC-027)",
     )
     p.add_argument(
-        "--oferta-com-independentes",
+        "--oferta-so-cadeias",
         action="store_true",
         help=(
-            "as independentes tambem contam como concorrencia no s6, com metade do peso de uma "
-            "unidade de rede (BLK-MA-16). DESLIGADO por default: muda o numero de quase toda "
-            "linha e a virada do default e' decisao de gate"
+            "volta ao universo de oferta HISTORICO: so' cadeias contam como concorrencia no s6. "
+            "Desde a DEC-030 o default e' `cadeias_e_independentes` — esta flag existe para "
+            "reproduzir numero antigo e para comparar com `pressao_concorrencial_score_2km` da "
+            "camada de mercado, que conta so' cadeia"
         ),
     )
     p.add_argument(
@@ -554,7 +555,7 @@ def _pressao_por_academia(
     caminho: Path | None,
     academias: pd.DataFrame | None = None,
     *,
-    com_independentes: bool = False,
+    com_independentes: bool = True,
 ) -> tuple[pd.DataFrame | None, str]:
     """Pressão POR ACADEMIA a partir do feed cru, ou `(None, motivo)`. Nunca derruba o lote.
 
@@ -562,10 +563,17 @@ def _pressao_por_academia(
     que sai é `(fonte, chave_snapshot, pressao)`. É a rota B da DEC-029: sem persistir coordenada,
     logo sem bump de série.
 
-    `com_independentes` liga o universo de oferta do BLK-MA-16: as independentes do MESMO feed
-    entram como concorrência, com metade do peso de uma unidade de rede. **Desligado por default**,
-    porque virar o universo padrão é decisão de gate — o número muda para quase todo mundo (em SP,
-    a fração com pressão zero cai de 29,2% para 3,9%).
+    `com_independentes` é o universo de oferta do BLK-MA-16: as independentes do MESMO feed contam
+    como concorrência, com metade do peso de uma unidade de rede. **LIGADO por default desde a
+    DEC-030** (aprovada por Vinicius em 2026-08-14).
+
+    Por que o default virou: com só cadeias, **37,8% do universo marcava pressão `0`** — e 32,3%
+    (6.238 academias) tinham sinal invisível vindo apenas de independentes. Aquele zero não era
+    território livre, era o insumo (`concorrentes_mapeados.parquet`, 104 redes e **nenhuma**
+    independente) respondendo a pergunta errada.
+
+    `False` reproduz o número histórico e é o universo comparável com o
+    `pressao_concorrencial_score_2km` da camada de mercado, que conta só cadeia.
     """
     from .contrato import CATEGORIA_INDEPENDENTE
     from .pressao_competitiva import (
@@ -615,7 +623,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         pressao, motivo = None, "`--sem-pressao`: score sem o s6, por pedido explicito"
     else:
         pressao, motivo = _pressao_por_academia(
-            args.concorrentes, coordenadas, com_independentes=args.oferta_com_independentes
+            args.concorrentes, coordenadas, com_independentes=not args.oferta_so_cadeias
         )
     _logger.info("sinal 6: %s", motivo)
 

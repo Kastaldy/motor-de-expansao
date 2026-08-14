@@ -1588,100 +1588,7 @@ definido antes de qualquer código; validação com fixtures sintéticas; READ-O
 
 ---
 
-### BLK-MA-16 — A oferta do S6 passa a enxergar as independentes, com metade do peso de uma unidade de rede
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** — muda o insumo de um componente COM PESO do score (`v6`, `w6 = 0,10`), redefine o que a coluna `pressao_competitiva` significa e quebra a comparabilidade com a camada de mercado. **Exige DEC própria** antes do Builder. READ-ONLY sobre o M1 (não toca `score_priorizacao`, pesos, carteira nem artefato oficial). |
-| **Prioridade** | Média-alta — o defeito que ele corrige é o **falso zero**, e ele é grande: em SP, **29,2%** das independentes marcam pressão `0` hoje. |
-| **Esteira** | Block Orchestrator → Planner → Builder → `[GATE — DEC-030]` → virada do default. |
-| **Status** | **CÓDIGO PRONTO, DESLIGADO POR DEFAULT — aguardando a [DEC-030](../docs/decisions/DEC-030.md)** (2026-08-14). O universo novo é condicional ao insumo (molde da DEC-027): sem `--oferta-com-independentes`, a aritmética é byte a byte a de antes, travado por teste. O gate decide se o default vira. |
-| **Depende de** | BLK-MA-14 (concluído 2026-08-14) — a rota B abriu `coordenadas_por_chave`, que é de onde as independentes entram como pontos sem persistir coordenada. |
-| **Autonomia** | **manual (NÃO loop-safe)** — altera a régua de um sinal com peso e exige gate de medição. |
-
-**O defeito, medido.** O insumo do S6 é `concorrentes_mapeados.parquet`: **4.499 pontos válidos em
-104 redes, e nenhuma independente** — ele nasce dos coletores `unidades_*.csv`, que são feeds de
-CADEIA. Logo a pressão competitiva de hoje responde "quanta CADEIA cerca este ponto", não "quanta
-concorrência". Uma independente espremida entre oito independentes marca **pressão zero** e aparece
-como território livre — que é exatamente o falso negativo que o BLK-MA-14 acabou de corrigir no
-*grão* e que continua de pé no *universo de oferta*.
-
-**O que muda, medido NACIONALMENTE com o código real (2026-08-14, 19.329 independentes, 4.499 pontos
-de cadeia).** Independentes entrando como oferta com peso `0,5` contra `1,0` de uma unidade de rede:
-
-| Métrica | Hoje (só cadeias) | Com independentes a 0,5 |
-|---|---|---|
-| Pressão média | 32,03 | **61,41** (+29,38) |
-| Mediana | 31,09 | 68,62 |
-| **Zeros** | **7.306 (37,8%)** | **1.068 (5,5%)** |
-| Score composto médio (regime `s1,s6`) | 42,81 | 54,57 |
-
-**O número que resume o bloco: 6.238 academias (32,3% do universo) tinham pressão `0` e passam a ter
-sinal vindo só de independentes.** Em torno da academia mediana há **7 independentes** num raio de
-2 km (p90 = 21, máximo 52), e a régua antiga não via nenhuma. Spearman entre as duas réguas: 0,8287.
-Custo: **1,72 min** contra 0,39 min — irrelevante. A simulação prévia em SP deu o mesmo sinal
-(29,2% → 3,9% de zeros).
-
-**O RISCO — e ele NÃO é perda de ordenação, que era como este bloco descrevia antes de o número
-existir.** Medido: `Spearman(pressão, oferta_ponderada) = 1,000000`. A saturação
-`100 · (1 − 1/(1 + oferta))` é **estritamente crescente**, então ela não embaralha nada. O que ela
-faz é **achatar a leitura e deslocar todo limiar absoluto**:
-
-- no top-500 da régua nova, a pressão varia **4,36 pontos** enquanto a oferta subjacente varia
-  **2,4x** (11,7 a 27,6) — dois alvos muito diferentes aparecem como `94,1` e `96,5`;
-- **"acima de 75" passa de 2.773 para 9.114 academias; "acima de 90", de 255 para 1.055.** Qualquer
-  regra de corte por número absoluto muda de tamanho sem que nada tenha mudado no mundo.
-
-Daí a saída de desenho a decidir no gate: para **discriminar no topo**, usar `oferta_ponderada` (que
-já viaja na saída como auditoria e é linear na concorrência); a pressão saturada segue para leitura
-e para a comparabilidade com `pressao_concorrencial_score_2km`. Baixar o `0,5` não resolve isso —
-ele age no numerador da oferta, e a compressão vem da saturação.
-
-**Armadilhas que o Planner precisa fechar antes do Builder.**
-1. **Auto-pressão.** A academia medida está no próprio conjunto de pontos. Sem excluí-la, ela recebe
-   `peso(d = 0) × 0,5 = 0,5` de oferta **de si mesma** — `sat(0,5) = 33,3` pontos de pressão em quem
-   não tem mais ninguém por perto. Excluir por `(fonte, chave_snapshot)`, **nunca por distância**:
-   duas academias no mesmo endereço existem e não são a mesma linha.
-2. **Dupla contagem entre fontes — hoje LATENTE.** A mesma academia em TotalPass e WellHub são duas
-   chaves por construção (§8.1, emenda BLK-MA-03). O snapshot atual só tem WellHub, então o defeito
-   ainda não aparece; **na primeira coleta com as duas fontes ele dobra a oferta** de toda academia
-   listada nas duas. Dedup **espacial** antes de somar, não por chave.
-3. **Não estender para as unidades de rede do agregador.** 58,5% delas já estão em
-   `concorrentes_mapeados` (medido no BLK-MA-17) e seriam contadas duas vezes. Este bloco adiciona
-   **só** `rede == independente`.
-4. **Viés de cobertura, a declarar em vez de esconder.** As independentes visíveis são as que
-   aderiram a um agregador. Uma independente fora de qualquer app segue invisível como oferta: o
-   bloco **reduz** o falso zero, não o elimina, e transfere parte da régua de pressão para a
-   cobertura comercial do WellHub. Consequência direta: o número **deixa de ser comparável** com
-   `pressao_concorrencial_score_2km`, e a comparabilidade era um dos quatro motivos declarados do
-   módulo.
-5. **Carimbo de universo, no molde do `pressao_grao` (BLK-MA-14).** Duas rodadas com universos de
-   oferta diferentes não estão na mesma régua, e sem carimbo isso é invisível. Sugestão:
-   `universo_oferta ∈ {cadeias, cadeias_e_independentes}`, com bump `pressao_competitiva_v1` → `v2` e
-   `score_vulnerabilidade_v4` → `v5`.
-6. **Anti-PII intacto.** A coordenada da independente entra pelo caminho já aberto no BLK-MA-14
-   (`coordenadas_por_chave`, em memória) e morre na função — `_assert_schema_pressao_academia` já é
-   a trava. Nada novo é persistido.
-
-**Fora de escopo.** Qualquer artefato/peso/score do M1; repesar S1..S4 (congelados desde o gate de
-2026-07-23); mexer na saturação ou no kernel (só o UNIVERSO de oferta muda); as unidades de rede
-(**BLK-MA-17**); recalcular `pressao_concorrencial_score_2km` na camada de mercado.
-
-**Critério de aceite.** DEC própria aprovada com o número da compressão do topo na mesa; auto-pressão
-e dedup entre fontes travados por teste; carimbo de universo na saída e bump de contrato; a régua
-antiga continua calculável (o bloco acrescenta um universo, não substitui o outro); READ-ONLY sobre
-o M1; suíte verde.
-
-**O que já está feito (2026-08-14).** Tudo, menos a virada do default — que é o gate:
-`PESO_OFERTA_INDEPENDENTE = 0,5`, carimbo `universo_oferta` (score vai a 26 colunas), decomposição
-`oferta_independentes`/`n_independentes_no_raio`, auto-exclusão por chave, `dedup_independentes` e
-`--oferta-com-independentes` na CLI; bumps `pressao_v1`->`v2`, `score_v4`->`v5`, `alvos_ma_v1`->`v2`,
-`nomeados_v1`->`v2`; 14 testes em `test_universo_oferta_s6.py`, verificados por mutação (desligar a
-auto-exclusão faz a academia isolada marcar exatamente os 33,33 previstos).
-
-**Um achado colateral, para quem for ligar.** A explicação do sinal 6 na tela já diz *"concorrência
-num raio de 2 km"* — o que é verdade no universo NOVO e **enganoso no atual**, onde só cadeia conta.
-Ligar o default não obriga a mexer no texto: torna o texto verdadeiro.
+- BLK-MA-16 (concluído 2026-08-14, DEC-030 opção A: o universo novo é o default) — ver tasks/completed.md
 
 ---
 
@@ -1693,7 +1600,7 @@ Ligar o default não obriga a mexer no texto: torna o texto verdadeiro.
 | **Prioridade** | Média — é ganho de leitura no mapa, não de decisão de M&A (comprar rede não é o caso de uso do epic). |
 | **Esteira** | Block Orchestrator → Planner → `[GATE — DEC própria]` → Builder → QA. |
 | **Status** | Pendente — **criado em 2026-08-14 a pedido de Vinicius**. |
-| **Depende de** | BLK-MA-15 (concluído 2026-08-14, molde do pin nomeado). **Ordem recomendada: depois do BLK-MA-16**, senão a tela estreia exibindo uma pressão que muda de régua no bloco seguinte. |
+| **Depende de** | BLK-MA-15 (concluído 2026-08-14, molde do pin nomeado) e **BLK-MA-16 (concluído 2026-08-14)** — a ordem era para a tela não estrear exibindo uma pressão que mudasse de régua em seguida. **Dependência satisfeita:** a régua já é `cadeias_e_independentes` (DEC-030). |
 | **Autonomia** | **manual (NÃO loop-safe)** — muda o universo da camada. |
 
 **O universo existe e é descartado hoje.** O snapshot da semana `2026-33` tem **22.173 linhas: 19.329

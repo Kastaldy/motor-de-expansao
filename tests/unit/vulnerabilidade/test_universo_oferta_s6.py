@@ -299,6 +299,35 @@ def test_grao_hex_aceita_o_mesmo_universo_e_nao_tem_auto_exclusao() -> None:
 # --------------------------------------------------------------------------- #
 # 6. O score não infere o universo
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# 7. O default do PIPELINE, virado pela DEC-030
+# --------------------------------------------------------------------------- #
+def test_o_default_do_pipeline_e_o_universo_com_independentes() -> None:
+    """A DEC-030 virou o default; sem esta trava, reverter seria mudo.
+
+    O ponto de decisão NÃO é a função pura (`calcular_pressao_por_academia` exige o frame
+    explicitamente, e assim deve continuar — ela não adivinha). É o wrapper da CLI, que decide se
+    filtra e passa as independentes. Este teste ancora a decisão onde ela mora.
+    """
+    import inspect
+
+    from motor_expansao.vulnerabilidade.alvos_ma import _pressao_por_academia
+
+    padrao = inspect.signature(_pressao_por_academia).parameters["com_independentes"].default
+    assert padrao is True, (
+        "o default do pipeline voltou a `cadeias` — se a reversao for intencional, ela precisa de "
+        "emenda a DEC-030, porque 37,8% do universo volta a marcar pressao zero"
+    )
+
+
+def test_a_flag_da_cli_permite_reproduzir_o_numero_historico() -> None:
+    """A régua antiga não pode sumir: ela é a comparável com a camada de mercado (só cadeia)."""
+    from motor_expansao.vulnerabilidade.alvos_ma import _parse_args
+
+    assert _parse_args(["--base-dir", "x"]).oferta_so_cadeias is False
+    assert _parse_args(["--base-dir", "x", "--oferta-so-cadeias"]).oferta_so_cadeias is True
+
+
 def test_score_recusa_frame_de_pressao_sem_o_carimbo() -> None:
     """Assumir `cadeias` no silêncio carimbaria a linha com algo que ninguém declarou.
 

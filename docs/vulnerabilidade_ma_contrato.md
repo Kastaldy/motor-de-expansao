@@ -420,6 +420,10 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 > **As independentes pesam `0,5`** contra `1,0` de uma unidade de rede (decisão de produto de
 > Vinicius). O peso age no numerador da oferta; kernel, raio e saturação não mudam.
 >
+> **`cadeias_e_independentes` é o universo VIGENTE do pipeline** (opção A da DEC-030, aprovada em
+> 2026-08-14). A régua histórica continua alcançável por `--oferta-so-cadeias`, e precisa continuar:
+> ela é a única comparável com o `pressao_concorrencial_score_2km` da camada de mercado.
+>
 > **O carimbo `universo_oferta` (`cadeias` | `cadeias_e_independentes`) passa a ser obrigatório** no
 > frame de pressão, e o score **se recusa a inferi-lo** — assumir `cadeias` no silêncio erraria na
 > direção otimista, que é a mesma do falso zero que a emenda corrige.
