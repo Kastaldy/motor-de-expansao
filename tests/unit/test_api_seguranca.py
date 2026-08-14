@@ -169,18 +169,20 @@ def test_producao_recusa_token_default() -> None:
         _garantir_producao_sem_defaults(s)
 
 
-def test_producao_recusa_bot_senha_default() -> None:
+def test_producao_ignora_bot_senha_e_api_call_token_default() -> None:
+    """O servico `api` NAO recebe api_call_token/bot_senha (sao do bot) -> ficam no
+    default de forma inofensiva. Com API_TOKENS forte, a API NAO deve abortar o boot
+    (regressao que derrubou o deploy: o guard checava esses dois por engano)."""
     from motor_expansao.api.main import _garantir_producao_sem_defaults
     from motor_expansao.api.settings import Settings
 
     s = Settings(
         environment="production",
         tokens={"tok-forte-abc": "bot"},
-        api_call_token="tok-forte-abc",
-        bot_senha="trocar-esta-senha",
+        api_call_token="dev-token",      # default do BOT — irrelevante para a API
+        bot_senha="trocar-esta-senha",   # default do BOT — irrelevante para a API
     )
-    with pytest.raises(RuntimeError):
-        _garantir_producao_sem_defaults(s)
+    _garantir_producao_sem_defaults(s)  # nao levanta: so `tokens` importa
 
 
 def test_producao_aceita_segredos_fortes() -> None:

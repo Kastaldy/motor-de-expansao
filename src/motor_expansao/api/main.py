@@ -49,26 +49,24 @@ _DEFAULTS_INSEGUROS = frozenset({"dev-token", "dev-local", "trocar-esta-senha", 
 
 
 def _garantir_producao_sem_defaults(settings) -> None:  # type: ignore[no-untyped-def]
-    """Fail-closed (BLK-SEC-05): em producao, recusa subir com token/senha default.
+    """Fail-closed (BLK-SEC-05): em producao, recusa subir com TOKEN de auth default.
 
     A API GeoEspacial e internet-facing (api.ultra-expansao.tech, so Bearer); um
-    default esquecido no .env daria acesso total. Fora de producao (environment !=
-    'production') os defaults seguem valendo — nao atrapalha dev nem testes.
+    `API_TOKENS` default (ex.: 'dev-token') daria acesso total. Fora de producao
+    (environment != 'production') os defaults seguem valendo — nao atrapalha dev/teste.
+
+    So checa `tokens` (o que a API usa para AUTENTICAR consumidores). `api_call_token`
+    (token que o BOT usa p/ chamar a API) e `bot_senha` (senha do BOT) sao config do
+    servico `telegram-bot`; o compose NAO os passa ao servico `api`, entao no processo
+    da API ficam no default de forma INOFENSIVA (a API nao os usa) — inclui-los aqui
+    fazia a API abortar o boot em producao por falso-positivo.
     """
     if settings.environment != "production":
         return
-    suspeitos = []
     if any(token in _DEFAULTS_INSEGUROS for token in settings.tokens):
-        suspeitos.append("API_TOKENS")
-    if settings.api_call_token in _DEFAULTS_INSEGUROS:
-        suspeitos.append("API_API_CALL_TOKEN")
-    if settings.bot_senha in _DEFAULTS_INSEGUROS:
-        suspeitos.append("API_BOT_SENHA")
-    if suspeitos:
         raise RuntimeError(
-            "API em producao com segredo(s) default inseguro(s): "
-            + ", ".join(suspeitos)
-            + ". Defina valores fortes no .env (ver .env.example)."
+            "API em producao com token default inseguro em API_TOKENS (ex.: 'dev-token'). "
+            "Defina tokens fortes no .env (ver .env.example)."
         )
 
 
