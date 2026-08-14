@@ -956,17 +956,42 @@ export default function HexMap({
           </div>
 
           <Divisoria />
+          {/* A DIREÇÃO VAI ESCRITA NOS DOIS NÚMEROS, e não é redundância de texto.
+
+              No resto do piloto todo score segue a convenção "alto = melhor oportunidade de
+              ABRIR" (M1, censitário, residual). Este mede o oposto: quanto MAIOR, mais cercada
+              está a academia — o que é ruim para ela e bom para quem compra. Um número de 0 a 100
+              sem eixo declarado, numa tela onde os vizinhos usam a convenção inversa, é lido ao
+              contrário; foi exatamente o que aconteceu na revisão de 2026-08-14.
+
+              O rótulo do composto NÃO diz "vulnerabilidade" (DEC-028, decisão 1): enquanto S3/S4
+              estiverem imaturos, afirmar fragilidade da academia é vender o sinal 6 com o rótulo
+              do 3. "Score composto" descreve o que ele é — a soma ponderada dos sinais
+              disponíveis — sem afirmar o que ainda não se mediu. */}
           {indepHover.d.score !== null && (
             <Linha
-              rotulo={indepHover.d.provisorio ? 'Score (provisório)' : 'Score'}
-              valor={`${num(indepHover.d.score, 1)} / 100`}
+              rotulo={indepHover.d.provisorio ? 'Score composto (provisório)' : 'Score composto'}
+              valor={`${num(indepHover.d.score, 1)} / 100 ↑`}
               forte
               cor={cor.fg}
             />
           )}
           {indepHover.d.pressao !== null && (
-            <Linha rotulo="Pressão competitiva" valor={`${num(indepHover.d.pressao, 1)} / 100`} />
+            <Linha
+              rotulo="Pressão competitiva"
+              valor={`${num(indepHover.d.pressao, 1)} / 100 ↑`}
+            />
           )}
+          <div
+            style={{
+              font: '400 9px/1.35 var(--f-ui)',
+              color: 'var(--tx-label)',
+              marginTop: 5,
+              maxWidth: 230,
+            }}
+          >
+            ↑ maior = mais cercada por concorrentes
+          </div>
           {indepHover.d.nota !== null && (
             <Linha
               rotulo="Nota WellHub"
@@ -975,6 +1000,24 @@ export default function HexMap({
           )}
           {indepHover.d.regime && (
             <Linha rotulo="Sinais medidos" valor={indepHover.d.regime} />
+          )}
+          {/* DECLARA A REDUNDÂNCIA em vez de escondê-la. No regime `s1,s6` o composto é
+              `30 + 40·v6` — o s1 vale 30 pontos FIXOS porque só um agregador existe em disco —,
+              então os dois números têm correlação 1,0 e dizem a mesma coisa. Deixar isso implícito
+              faria o operador procurar significado numa diferença que não existe. O composto passa
+              a informar de verdade quando o churn (s3) amadurecer. */}
+          {indepHover.d.regime === 's1,s6' && (
+            <div
+              style={{
+                font: '400 9px/1.35 var(--f-ui)',
+                color: 'var(--tx-label)',
+                marginTop: 6,
+                maxWidth: 230,
+              }}
+            >
+              Hoje o composto acompanha a pressão: o outro sinal medido (presença em agregador) é
+              igual para todas.
+            </div>
           )}
           {indepHover.d.provisorio && (
             <div
