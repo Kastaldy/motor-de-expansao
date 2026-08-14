@@ -1588,6 +1588,174 @@ definido antes de qualquer código; validação com fixtures sintéticas; READ-O
 
 ---
 
+### BLK-MA-14 — Sinal 6 por ACADEMIA: pressão medida da coordenada da unidade, não do centroide do hex
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — muda o **GRÃO** de um componente ATIVO do score (`w6 = 0,10`, DEC-027), o que desloca `score_vulnerabilidade` e `score_vulnerabilidade_ordenavel` de toda linha com pressão medida. **Exige DEC própria** antes do Builder. READ-ONLY sobre o M1. |
+| **Prioridade** | **Alta, e é pré-requisito do BLK-MA-15.** Sem esta correção, qualquer superfície que exiba o score POR ACADEMIA mostra empates em massa — as 26 independentes de um mesmo hexágono de SP saem hoje com o mesmo `67,85`. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE — DEC própria]` → Builder → QA. |
+| **Status** | **Pendente — escrito em 2026-08-14**, a partir de uma objeção de Vinicius no fechamento do BLK-MA-13. Reconhecimento e medições feitos; nenhuma linha de código escrita. |
+| **Depende de** | BLK-MA-12 (S6 como componente, concluído 2026-08-13, DEC-027). **Não** depende do BLK-MA-06 nem da série: a pressão não vem da série de snapshots. |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera componente do score e consome feed com PII na origem (DEC-012). |
+
+**A OBJEÇÃO QUE CRIOU O BLOCO, e ela está certa.** O S6 diz medir "independente espremida", que é
+propriedade da ACADEMIA; mas ele mede a distância dos concorrentes até o **centroide do hexágono**.
+Consequência: todas as academias do mesmo hex recebem o mesmo `v6` e **empatam por construção** —
+medido, `0 de 6.753` hexes têm pressão variando entre suas academias, desvio intra-hex máximo `0,0`.
+
+**A implementação é FIEL AO CONTRATO — o problema é o contrato.** O §8.1 define
+`v6 = pressao_concorrencial_score_2km / 100`, coluna **hex-level** de
+`hexagonos_mercado_mapeado.parquet`. O BLK-MA-12 reproduziu a fórmula com kernel explícito e herdou
+o grão. Logo isto **não é bugfix**: é emenda ao §8.1, e por isso tem gate.
+
+**O QUE EU MEDI (2026-08-14, WellHub SP: 5.823 independentes com coordenada, 1.741 hexes, contra os
+4.499 pontos de concorrentes).** Comparação entre a pressão do centroide (implementada) e a da
+coordenada real de cada academia:
+
+| leitura | medido |
+|---|---|
+| erro absoluto **médio** | **7,82** pontos (escala 0-100) |
+| erro **mediano** | 3,96 |
+| erro **p90** | **22,15** |
+| erro **máximo** | **65,97** |
+| Pearson / Spearman | 0,9216 / 0,9269 |
+| amplitude intra-hex **apagada** (média) | **14,89** pontos |
+| amplitude intra-hex p90 / máxima | 37,77 / **73,82** |
+| academias que **mudariam de faixa** da legenda | **1.922 de 5.823 — 33,0%** |
+
+**A correlação alta NÃO absolve, e é o erro de leitura a evitar aqui.** `0,92` descreve o agregado;
+quem vira alvo de aquisição é o caso individual. O pior caso medido é a refutação: o hexágono
+`87a812a15ffffff` tem pressão **1,2** e a academia dentro dele tem **67,2** — uma unidade espremida
+por concorrentes aparece como se estivesse em território livre. É exatamente o falso negativo que o
+sinal existe para não produzir.
+
+**DUAS ROTAS, e a diferença de custo é grande. Recomendada: a B.**
+
+- **Rota A — persistir no snapshot.** Calcular dentro do materializador e gravar como coluna nova.
+  Custo: bump em **cascata de três contratos** — `snapshots_concorrentes_v3` -> `v4` (schema muda),
+  `churn_staleness_v2` -> `v3` (propagar como fato da ÚLTIMA observação, molde da nota do WellHub) e
+  `score_vulnerabilidade_v3` -> `v4`. Cada bump é descontinuidade de série. **Só se justifica se a
+  pressão precisar ser HISTÓRICA** (saber quanta pressão a academia sofria há 8 semanas).
+- **Rota B — calcular no momento de compor o score.** Um módulo lê o feed cru, deriva a MESMA
+  `chave_snapshot` (`derivar_chave` é determinística e, no default `taxa_slug_persistente=None`,
+  **não lê semanas anteriores**), calcula a pressão com a coordenada **em memória** e devolve
+  `(chave_snapshot, pressao)`. A coordenada morre ali. Custo: **zero bump de série** — muda
+  `_juntar_pressao` (aceitar frame chaveado por academia, além de por hex) e o contrato do score.
+
+  É o mesmo padrão que a pressão JÁ tem: ela nunca saiu da `base_dir`, vem do parquet de pontos no
+  instante do cálculo. E a pressão não é fato histórico da academia — é leitura do entorno no
+  momento da análise, sobre um insumo que já é sempre o atual. A rota A pagaria três
+  descontinuidades para guardar série de uma grandeza que ninguém pediu em série.
+
+**O ANTI-PII NÃO É OBSTÁCULO, e a frase que sugeria isso estava incompleta.** O docstring do
+`pressao_competitiva` diz que "calcular por unidade exigiria a coordenada da academia, que esta
+camada deliberadamente não persiste". É verdade sobre **PERSISTIR** e falso sobre **CALCULAR**: a
+coordenada existe no feed cru e passa pelas mãos do materializador antes de a projeção das 12
+colunas descartá-la. Na rota B ela nem chega a tocar disco. Corrigir esse docstring faz parte do
+bloco — ele fechou uma porta que estava aberta.
+
+**DECISÃO DE PRODUTO QUE O BLOCO TEM DE TOMAR: as duas grandezas passam a coexistir.**
+
+| grandeza | grão | para quê |
+|---|---|---|
+| `pressao_competitiva_no_hex` | território | pinta o overlay do mapa (uma cor cobre o hexágono inteiro — é o grão certo ali) |
+| `pressao_competitiva_academia` | unidade | entra em `Σ(wi·vi)`, ordena o `score_vulnerabilidade_ordenavel` e o entregável comercial |
+
+O bloco **não substitui** uma pela outra: separa as duas. O overlay do BLK-MA-13 fica como está.
+
+**EFEITO COLATERAL A NÃO TROCAR EM SILÊNCIO.** `agregar_alvos_por_hex` agrega a pressão com `first`,
+sob o comentário *"a pressão é constante por hex, então agregá-la seria fingir variância que não
+existe dentro do grupo"*. Com pressão por academia a variância **passa a existir**, e ali vira média
+ou mediana — agregação legítima, mas que precisa ser escrita, decidida e testada. Trocar o `first`
+por `mean` sem tocar no comentário deixaria o código dizendo o oposto do que faz.
+
+**Detalhes já medidos (poupam uma rodada).**
+- **Não há auto-pressão a descontar:** os 4.499 pontos são de **104 redes de CADEIA** (Smart Fit,
+  Skyfit, Panobianco...); as independentes **não estão** no parquet de concorrentes. A academia não
+  se mede contra si mesma.
+- **Custo computacional:** ~3x o atual (19.329 academias x 4.499 pontos = ~87M distâncias, contra
+  ~30M hoje). Na casa de minutos, com o mesmo laço vetorizado por origem.
+- A `chave_snapshot` derivada do feed cru bate com a do snapshot persistido enquanto o feed for o
+  da última coleta — a mesma premissa que o parquet de pontos já carrega.
+
+**Fora de escopo.** Qualquer artefato/score/peso/ranking do M1 (READ-ONLY, DEC-001); reabrir o peso
+`w6 = 0,10` ou os pesos do D4 (DEC-027 e gate de 2026-07-23); a cor do overlay do mapa, que segue
+pelo território; exibir identidade de academia em qualquer superfície (**BLK-MA-15**); o cron
+(**BLK-MA-06**).
+
+**Critério de aceite.** DEC própria aprovada, escolhendo a rota (A ou B) e emendando o §8.1 antes de
+qualquer código; `v6` passa a variar dentro do hexágono, provado por teste que **falharia** com o
+grão antigo (desvio intra-hex > 0 num hex com 2+ academias a distâncias diferentes); as duas
+grandezas coexistem com nomes distintos e nenhuma superfície troca uma pela outra; a agregação do
+entregável hex-level deixa de ser `first` **e o comentário é reescrito junto**; o docstring do
+`pressao_competitiva` corrigido quanto a "calcular x persistir"; nenhuma coordenada cruza a fronteira
+de saída, provado relendo do disco; fixtures 100% sintéticas; suíte completa sem regressão (medir a
+baseline **no momento**); `ruff` limpo; `loop_guard` sem `CRÍTICO`.
+
+---
+
+### BLK-MA-15 — As independentes viram pins no mapa, com o score no tooltip da unidade
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — serve **IDENTIDADE de estabelecimento** na superfície web pela primeira vez nesta camada (um pin em coordenada exata É identidade), o que **emenda a DEC-028** e ativa a variante NOMEADA D1-B, hoje deferida. **Exige DEC** antes do Builder. READ-ONLY sobre o M1. |
+| **Prioridade** | **Pedido de Vinicius (2026-08-14):** "que o score de vulnerabilidade apareça junto à franquia/unidade quando o mouse passa por cima". |
+| **Esteira** | Block Orchestrator → Planner → `[GATE — emenda à DEC-028]` → Builder → QA. |
+| **Status** | **Pendente — escrito em 2026-08-14.** Reconhecimento do front e do dado já feito. |
+| **Depende de** | **BLK-MA-14 (DURO).** Sem o S6 por academia, o tooltip de cada unidade mostra o MESMO número para todas as academias do hexágono. |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca `web/`, serve identidade e a saída é decisão comercial. |
+
+**O OBSTÁCULO QUE REDEFINE O PEDIDO, medido em 2026-08-14: os pins de hoje e o universo do score são
+conjuntos DISJUNTOS.**
+
+| | conteúdo |
+|---|---|
+| pins de concorrente no mapa | **4.499** pontos, **104 redes de CADEIA** (Smart Fit 1.000, Skyfit 482, Panobianco 472...) |
+| universo do score | **19.329** academias, **100% `rede == independente`** |
+| interseção | **VAZIA** |
+
+Não é lacuna de dado — é o guardrail central do epic. O universo é fechado em
+`_filtrar_universo_sinal_1` justamente para impedir "o erro mais caro deste epic: pontuar uma CADEIA
+como alvo de aquisição"; sem ele a Smart Fit entraria na lista. **Logo o pedido literal (score no
+tooltip do pin que já existe) é impossível por construção: aqueles pins são exatamente as academias
+que não têm score e nunca terão.** O que o bloco faz é o inverso: **desenhar as independentes**, que
+hoje não aparecem no mapa.
+
+**O QUE ISSO CUSTA EM GOVERNANÇA, e é o gate.** A DEC-028 (aprovada 2026-08-14) diz em letra:
+*"Nenhuma variante NOMEADA é servida pelo piloto — e `gitignored` não é o mesmo que fora do alcance
+do piloto"*. Um pin em coordenada exata identifica o estabelecimento mesmo sem o nome no balão:
+esconder o rótulo não resolve, porque o mapa mostra o endereço. Então o bloco **emenda a DEC-028**,
+e a emenda tem de dizer o que passa a ser servido (coordenada + score + nome?) e o que segue vedado
+(§11: nunca texto/autor de review; a nota continua fato sem peso, DEC-026).
+
+**Reconhecimento do front e do dado (poupa uma rodada).**
+- O feed do WellHub tem tudo que o pin precisa: `nome`, `latitude`, `longitude`,
+  `endereco_formatado`, `cep`, `nota_wellhub`, `qtd_avaliacoes_wellhub`.
+- **Volume é tratável:** 5.823 independentes em SP inteiro; **São Paulo capital 1.266**, Campinas
+  216. O teto de pins já existe (`COMPETITOR_PIN_LIMIT = 6000`, `web/server/app.py:787`) e o mapa já
+  desenha até isso — mas o corte por `head()` é **silencioso**, e num município grande ele mentiria
+  sobre a densidade. Declarar o truncamento faz parte do bloco.
+- Pontos-chave do front: `_montar_pins` (`app.py`) monta `{concorrentes, ultra, icones}`;
+  `HexMap.tsx` desenha o `IconLayer` `conc-pins` e o balão `pinHover` (hoje só `titulo` + `sub`).
+  Uma **terceira lista** (`independentes`) é mais limpa que sobrecarregar `concorrentes`: são
+  universos com semânticas opostas — um é quem disputa, o outro é quem se compra.
+- O `pinHover` atual tem duas linhas; o tooltip do bloco precisa das mesmas obrigações do overlay:
+  nota **sempre** ao lado da contagem de avaliações (DEC-026) e o regime declarado.
+
+**Fora de escopo.** Qualquer artefato/score/peso/ranking do M1; reabrir os pesos ou a DEC-027;
+mudar o grão do S6 (**BLK-MA-14** — este bloco CONSOME o resultado dele); o CSV comercial do D6; a
+reputação externa (**BLK-MA-07**).
+
+**Critério de aceite.** Emenda à DEC-028 aprovada, declarando exatamente o que passa a ser servido,
+antes de qualquer código; pins das independentes numa lista PRÓPRIA, nunca misturada à de
+concorrentes; tooltip com score por academia (que só existe depois do BLK-MA-14), nota **com** a
+contagem ao lado e o regime declarado; truncamento por teto **declarado na tela**, nunca silencioso;
+nenhum campo do §11 (texto/autor de review) no payload, provado por teste; suíte completa sem
+regressão (medir a baseline **no momento**); `ruff` limpo; `loop_guard` sem `CRÍTICO`.
+
+---
+
 - BLK-MA-13 (concluído 2026-08-14) — ver tasks/completed.md
 
 
