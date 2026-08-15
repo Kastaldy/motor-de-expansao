@@ -1608,6 +1608,30 @@ independentes (o universo do score) e 2.844 de REDE**, em 83 redes distintas —
 estão no WellHub e que `_filtrar_universo_sinal_1` corta antes do score. Incluí-las cresceria o
 universo em **14,7%**.
 
+> ### [medido em 2026-08-15, depois da DEC-030] O bloco ganhou uma SEGUNDA metade, e ela é a mais forte
+>
+> A justificativa original era de LEITURA ("ver o diagnóstico também nas redes"). A medição do
+> BLK-MA-16 expôs outra coisa, mais grave: **1.134 dessas unidades (39,9%) não têm nenhum ponto de
+> cadeia a menos de 150 m em `concorrentes_mapeados`** — o insumo de oferta do S6. São academias de
+> rede REAIS, listadas no WellHub, que **hoje não pressionam ninguém** no cálculo.
+>
+> É o **mesmo defeito que a DEC-030 corrigiu, do outro lado**: lá as independentes não contavam como
+> oferta; aqui parte das cadeias também não conta, e pela mesma razão — cobertura do insumo, não
+> desenho da fórmula. Enquanto isso valer, a pressão de quem está perto dessas 1.134 está subestimada,
+> e o falso zero que a DEC-030 reduziu de 37,8% para 5,5% ainda tem um resíduo com causa conhecida.
+>
+> **Consequência para o escopo:** o bloco deixa de ser só exibição. Ele passa a ter duas metades
+> separáveis, e a segunda **não depende da DEC** que trava a primeira:
+>
+>   1. **Exibir** o diagnóstico nas unidades de rede — muda o universo declarado, exige DEC própria.
+>   2. **Contá-las como oferta** — não muda universo nenhum: elas já são concorrência por definição, e
+>      a única pergunta é de DEDUP contra os 58,5% que já estão no `concorrentes_mapeados`, para não
+>      contar a mesma unidade duas vezes. A primitiva existe (`dedup_independentes`), mas hoje ela só
+>      colapsa entre FONTES distintas — casar feed-de-rede com parquet-de-cadeia é caso novo.
+>
+> Se o gate da metade 1 demorar, **a metade 2 pode ir sozinha** e corrige um número que já está na
+> tela hoje.
+
 **A objeção que decide o desenho do bloco: S1 e S3 medem OUTRA COISA numa rede.** A negociação com o
 agregador é **centralizada**: "estar em 1 app em vez de 2" é política comercial da rede, não
 exposição daquela unidade. E o modo de falha do S3 é pior, porque é correlacionado — a concentração
@@ -1637,14 +1661,21 @@ de distância — os dois feeds cobrem conjuntos diferentes da mesma rede. Logo 
 próprio a partir da coordenada do feed** (molde BLK-MA-15), com **regra de precedência explícita**
 para os 58,5% que virariam dois pins no mesmo lugar.
 
-**Fora de escopo.** Qualquer artefato/peso/score do M1; entrar como oferta no S6 (**BLK-MA-16**);
-incluir unidades de rede na lista comercial de alvos (**BLK-MA-05**); régua de score própria para
-rede (bloco futuro, se a DEC concluir que faz falta).
+**O pin já tem molde novo (BLK-MA-18).** Se a metade 1 for adiante, ela herda a auditoria da pressão
+no tooltip (`n_conc` / `n_indep` / `oferta` / `dist_m`) — sem isso, uma unidade de rede exibiria um
+número saturado tão inverificável quanto o que a revisão de 2026-08-15 apontou. Contrato do artefato
+nomeado hoje: `alvos_ma_nomeados_v3`, 23 colunas.
 
-**Critério de aceite.** DEC própria decidindo o que é propagado (fatos e/ou score) e a precedência de
-pin; o filtro do sinal 1 e as colunas `n_academias_independentes_*` **intactos**; a lista de alvos de
-M&A segue só com independentes, travado por teste; anti-PII no molde do BLK-MA-15 (artefato nomeado
-nasce gitignored); READ-ONLY sobre o M1; suíte verde.
+**Fora de escopo.** Qualquer artefato/peso/score do M1; a entrada das INDEPENDENTES como oferta
+(**BLK-MA-16**, concluído); incluir unidades de rede na lista comercial de alvos (**BLK-MA-05**);
+régua de score própria para rede (bloco futuro, se a DEC concluir que faz falta).
+
+**Critério de aceite.** Da metade 1: DEC própria decidindo o que é propagado (fatos e/ou score) e a
+precedência de pin; o filtro do sinal 1 e as colunas `n_academias_independentes_*` **intactos**; a
+lista de alvos de M&A segue só com independentes, travado por teste; anti-PII no molde do BLK-MA-15
+(artefato nomeado nasce gitignored). Da metade 2: dedup entre o feed de rede e
+`concorrentes_mapeados` travada por teste (a mesma unidade nunca conta duas vezes), com o efeito
+medido antes e depois sobre a distribuição de pressão. Em ambas: READ-ONLY sobre o M1; suíte verde.
 
 ---
 
