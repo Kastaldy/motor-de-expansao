@@ -84,7 +84,14 @@ def _coords(chaves: list[str]) -> pd.DataFrame:
     )
 
 
-def _pressao(chaves: list[str], *, n: int = 3, n_ind: int = 3, oferta: float = 0.678) -> pd.DataFrame:
+def _pressao(
+    chaves: list[str],
+    *,
+    n: int = 3,
+    n_ind: int = 3,
+    n_feed: int = 0,
+    oferta: float = 0.678,
+) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "fonte": ["wellhub"] * len(chaves),
@@ -96,6 +103,8 @@ def _pressao(chaves: list[str], *, n: int = 3, n_ind: int = 3, oferta: float = 0
             "dist_concorrente_mais_proximo_m": [1051.0] * len(chaves),
             "oferta_independentes": [oferta] * len(chaves),
             "n_independentes_no_raio": [n_ind] * len(chaves),
+            "oferta_cadeias_do_feed": [0.0] * len(chaves),
+            "n_cadeias_do_feed_no_raio": [n_feed] * len(chaves),
             "kernel_pressao": [c.PRESSAO_KERNEL_DEFAULT] * len(chaves),
             "raio_pressao_m": [c.PRESSAO_RAIO_M] * len(chaves),
             "universo_oferta": [c.UNIVERSO_OFERTA_COM_INDEPENDENTES] * len(chaves),
@@ -126,6 +135,7 @@ def test_sem_o_frame_de_pressao_a_auditoria_e_NULA_nunca_zero() -> None:
     for coluna in (
         "n_concorrentes_no_raio",
         "n_independentes_no_raio",
+        "n_cadeias_do_feed_no_raio",
         "oferta_ponderada",
         "dist_concorrente_mais_proximo_m",
     ):
@@ -169,12 +179,33 @@ def test_frame_de_pressao_incompleto_levanta_em_vez_de_silenciar() -> None:
         montar_alvos_nomeados(_score(chaves), _coords(chaves), incompleto)
 
 
-def test_o_contrato_declara_as_quatro_colunas() -> None:
+def test_o_contrato_declara_as_colunas_de_auditoria() -> None:
+    """Quatro no BLK-MA-18; a quinta entrou no BLK-MA-17 (DEC-034), com o bump que ela exige."""
     for coluna in (
         "n_concorrentes_no_raio",
         "n_independentes_no_raio",
+        "n_cadeias_do_feed_no_raio",
         "oferta_ponderada",
         "dist_concorrente_mais_proximo_m",
     ):
         assert coluna in c.CONTRATO_COLUNAS_ALVOS_NOMEADOS
-    assert c.VERSAO_CONTRATO_ALVOS_NOMEADOS == "alvos_ma_nomeados_v3"
+    assert c.VERSAO_CONTRATO_ALVOS_NOMEADOS == "alvos_ma_nomeados_v4"
+
+
+def test_a_lacuna_de_pin_e_DECLARADA_na_linha_que_a_tela_le() -> None:
+    """A razão de `n_cadeias_do_feed_no_raio` existir (BLK-MA-17 / DEC-034).
+
+    A auditoria do BLK-MA-18 promete conferência visual — "conta os pins e o número fecha". As
+    unidades de REDE vindas do agregador entram em `n_concorrentes_no_raio` e **não têm pin
+    desenhado** (a superfície é a metade 1, fora deste ciclo). Sem esta coluna, a contagem
+    simplesmente não fecharia no mapa e a explicação não estaria em lugar nenhum.
+    """
+    chaves = ["a"]
+    out = montar_alvos_nomeados(
+        _score(chaves), _coords(chaves), _pressao(chaves, n=5, n_ind=3, n_feed=2)
+    )
+    linha = out.iloc[0]
+    assert int(linha["n_concorrentes_no_raio"]) == 5
+    assert int(linha["n_cadeias_do_feed_no_raio"]) == 2, (
+        "a coluna tem de declarar quantos dos `n_conc` nao estao desenhados no mapa"
+    )

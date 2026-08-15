@@ -100,12 +100,13 @@ def montar_alvos_nomeados(
     universo de M&A exclui de propósito); uma academia com score e sem coordenada entra **sem pin** —
     ela existe, só não é desenhável, e sumir com ela esconderia um alvo por acidente de coleta.
 
-    `pressao` (BLK-MA-18) traz a AUDITORIA do sinal 6 — contagem, oferta efetiva e distância do mais
-    próximo. Ela vem daqui, e não do score, de propósito: o score carrega o `v6` e a pressão porque
-    são o COMPONENTE; a contagem é material de LEITURA, e enfiá-la no contrato do score custaria um
-    bump em cascata (score -> academias -> lista curada) para servir um consumidor só, a tela.
+    `pressao` (BLK-MA-18) traz a AUDITORIA do sinal 6 — contagens, oferta efetiva e distância do
+    mais próximo. Ela vem daqui, e não do score, de propósito: o score carrega o `v6` e a pressão
+    porque são o COMPONENTE; a contagem é material de LEITURA, e enfiá-la no contrato do score
+    custaria um bump em cascata (score -> academias -> lista curada) para servir um consumidor só, a
+    tela.
 
-    Sem o frame, as quatro colunas saem nulas — o artefato continua válido, só sem a auditoria. É a
+    Sem o frame, as cinco colunas saem nulas — o artefato continua válido, só sem a auditoria. É a
     mesma regra do `v6` sem insumo: **ausência é nula, nunca zero**, porque `0 concorrentes` é uma
     afirmação forte e "não medi" não é.
     """
@@ -155,6 +156,12 @@ def montar_alvos_nomeados(
 _AUDITORIA_PRESSAO: tuple[str, ...] = (
     "n_concorrentes_no_raio",
     "n_independentes_no_raio",
+    # `[BLK-MA-17 / DEC-034]` A quinta coluna existe para DECLARAR uma lacuna, não para somar nada:
+    # o tooltip promete "confere olhando o proprio mapa", e as unidades de REDE vindas do agregador
+    # entram na contagem sem ter pin desenhado. Sem esta coluna o operador contaria os pins, o
+    # numero nao fecharia, e a explicacao nao estaria em lugar nenhum. Surfacea-la na tela e' a
+    # metade 1 do BLK-MA-17, que NAO entra neste ciclo — aqui ela so' viaja no artefato.
+    "n_cadeias_do_feed_no_raio",
     "oferta_ponderada",
     "dist_concorrente_mais_proximo_m",
 )

@@ -300,23 +300,27 @@ def test_grao_hex_aceita_o_mesmo_universo_e_nao_tem_auto_exclusao() -> None:
 # 6. O score não infere o universo
 # --------------------------------------------------------------------------- #
 # --------------------------------------------------------------------------- #
-# 7. O default do PIPELINE, virado pela DEC-030
+# 7. O default do PIPELINE, virado pela DEC-033
 # --------------------------------------------------------------------------- #
 def test_o_default_do_pipeline_e_o_universo_com_independentes() -> None:
-    """A DEC-030 virou o default; sem esta trava, reverter seria mudo.
+    """A DEC-033 virou o default; sem esta trava, reverter seria mudo.
 
     O ponto de decisão NÃO é a função pura (`calcular_pressao_por_academia` exige o frame
     explicitamente, e assim deve continuar — ela não adivinha). É o wrapper da CLI, que decide se
     filtra e passa as independentes. Este teste ancora a decisão onde ela mora.
+
+    O parâmetro se chamava `com_independentes` até o BLK-MA-17 (DEC-034), quando a mesma chave
+    passou a ligar TAMBÉM as unidades de rede do feed e o nome antigo passou a mentir.
     """
     import inspect
 
     from motor_expansao.vulnerabilidade.alvos_ma import _pressao_por_academia
 
-    padrao = inspect.signature(_pressao_por_academia).parameters["com_independentes"].default
+    padrao = inspect.signature(_pressao_por_academia).parameters["com_oferta_do_feed"].default
     assert padrao is True, (
         "o default do pipeline voltou a `cadeias` — se a reversao for intencional, ela precisa de "
-        "emenda a DEC-030, porque 37,8% do universo volta a marcar pressao zero"
+        "emenda as DEC-033/DEC-034, porque 37,8% do universo volta a marcar pressao zero e as "
+        "2.844 unidades de rede do agregador voltam a nao pressionar ninguem"
     )
 
 

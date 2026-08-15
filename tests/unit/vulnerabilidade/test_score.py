@@ -1485,6 +1485,10 @@ def _pressao_academia(chaves_e_pressao: dict[str, float]) -> pd.DataFrame:
             "dist_concorrente_mais_proximo_m": 500.0,
             "oferta_independentes": 0.0,
             "n_independentes_no_raio": 0,
+            # Decomposição por PROCEDÊNCIA (BLK-MA-17): zerada aqui porque este frame é forjado no
+            # universo `cadeias`, e o assert do contrato exige exatamente isso.
+            "oferta_cadeias_do_feed": 0.0,
+            "n_cadeias_do_feed_no_raio": 0,
             "kernel_pressao": c.PRESSAO_KERNEL_DEFAULT,
             "raio_pressao_m": c.PRESSAO_RAIO_M,
             "universo_oferta": c.UNIVERSO_OFERTA_CADEIAS,

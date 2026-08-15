@@ -527,10 +527,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--oferta-so-cadeias",
         action="store_true",
         help=(
-            "volta ao universo de oferta HISTORICO: so' cadeias contam como concorrencia no s6. "
-            "Desde a DEC-030 o default e' `cadeias_e_independentes` — esta flag existe para "
-            "reproduzir numero antigo e para comparar com `pressao_concorrencial_score_2km` da "
-            "camada de mercado, que conta so' cadeia"
+            "volta ao universo de oferta HISTORICO: so' o insumo MAPEADO de cadeias "
+            "(`concorrentes_mapeados.parquet`) conta como concorrencia no s6. Desligadas juntas as "
+            "duas metades do universo ampliado: as independentes do feed (DEC-033) e as unidades "
+            "de rede do feed (DEC-034). Esta flag existe para reproduzir numero antigo e para "
+            "comparar com `pressao_concorrencial_score_2km` da camada de mercado, que conta so' "
+            "cadeia mapeada"
         ),
     )
     p.add_argument(
@@ -555,7 +557,7 @@ def _pressao_por_academia(
     caminho: Path | None,
     academias: pd.DataFrame | None = None,
     *,
-    com_independentes: bool = True,
+    com_oferta_do_feed: bool = True,
 ) -> tuple[pd.DataFrame | None, str]:
     """Pressão POR ACADEMIA a partir do feed cru, ou `(None, motivo)`. Nunca derruba o lote.
 
@@ -563,17 +565,22 @@ def _pressao_por_academia(
     que sai é `(fonte, chave_snapshot, pressao)`. É a rota B da DEC-029: sem persistir coordenada,
     logo sem bump de série.
 
-    `com_independentes` é o universo de oferta do BLK-MA-16: as independentes do MESMO feed contam
-    como concorrência, com metade do peso de uma unidade de rede. **LIGADO por default desde a
-    DEC-030** (aprovada por Vinicius em 2026-08-14).
+    `com_oferta_do_feed` liga o universo de oferta ampliado, e ele tem DUAS metades que andam
+    juntas — o parâmetro se chamava `com_independentes` até o BLK-MA-17, e o nome passou a mentir:
 
-    Por que o default virou: com só cadeias, **37,8% do universo marcava pressão `0`** — e 32,3%
-    (6.238 academias) tinham sinal invisível vindo apenas de independentes. Aquele zero não era
-    território livre, era o insumo (`concorrentes_mapeados.parquet`, 104 redes e **nenhuma**
-    independente) respondendo a pergunta errada.
+      1. **`[BLK-MA-16 / DEC-033]`** as INDEPENDENTES do mesmo feed contam como concorrência, com
+         metade do peso de uma unidade de rede. Com só cadeias, **37,8% do universo marcava pressão
+         `0`** — e 32,3% (6.238 academias) tinham sinal invisível vindo apenas de independentes.
+      2. **`[BLK-MA-17 / DEC-034]`** as unidades de REDE do mesmo feed entram na oferta com peso
+         `1,0`, deduplicadas contra `concorrentes_mapeados.parquet`. São **2.844** unidades em 83
+         redes, das quais **1.171** sobrevivem à dedup e entram na oferta — academias reais que
+         não pressionavam ninguém.
 
-    `False` reproduz o número histórico e é o universo comparável com o
-    `pressao_concorrencial_score_2km` da camada de mercado, que conta só cadeia.
+    As duas metades corrigem o MESMO defeito em lados opostos do universo: cobertura do insumo, não
+    desenho da fórmula. Por isso ligam e desligam juntas, por uma flag só.
+
+    `False` reproduz o número HISTÓRICO (`--oferta-so-cadeias`) e é o universo comparável com o
+    `pressao_concorrencial_score_2km` da camada de mercado, que conta só cadeia mapeada.
     """
     from .contrato import CATEGORIA_INDEPENDENTE
     from .pressao_competitiva import (
@@ -593,14 +600,22 @@ def _pressao_por_academia(
     pontos = ler_concorrentes(alvo)
 
     independentes = None
+    cadeias_do_feed = None
     sufixo = "universo `cadeias`"
-    if com_independentes:
+    if com_oferta_do_feed:
         if "rede" not in academias.columns:
             return None, "feed sem a coluna `rede`; nao da' para separar independente de cadeia"
-        independentes = academias[academias["rede"].astype(str) == CATEGORIA_INDEPENDENTE]
-        sufixo = f"universo `cadeias_e_independentes` (+{len(independentes)} independente(s))"
+        e_independente = academias["rede"].astype(str) == CATEGORIA_INDEPENDENTE
+        independentes = academias[e_independente]
+        cadeias_do_feed = academias[~e_independente]
+        sufixo = (
+            f"universo `cadeias_e_independentes` (+{len(independentes)} independente(s), "
+            f"+{len(cadeias_do_feed)} unidade(s) de rede)"
+        )
 
-    pressao = calcular_pressao_por_academia(academias, pontos, independentes=independentes)
+    pressao = calcular_pressao_por_academia(
+        academias, pontos, independentes=independentes, cadeias_do_feed=cadeias_do_feed
+    )
     return pressao, f"pressao POR ACADEMIA sobre {len(pressao)} unidade(s), {sufixo}"
 
 
@@ -623,7 +638,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         pressao, motivo = None, "`--sem-pressao`: score sem o s6, por pedido explicito"
     else:
         pressao, motivo = _pressao_por_academia(
-            args.concorrentes, coordenadas, com_independentes=not args.oferta_so_cadeias
+            args.concorrentes, coordenadas, com_oferta_do_feed=not args.oferta_so_cadeias
         )
     _logger.info("sinal 6: %s", motivo)
 

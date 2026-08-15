@@ -39,7 +39,7 @@ from datetime import date
 VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v3"
 VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
-VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v5"
+VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v6"
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
 H3_RES_CONTRATO = 7
@@ -396,7 +396,7 @@ CONTRATO_COLUNAS_SCORE: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Sinal 6 — pressão competitiva com decaimento por distância (BLK-MA-12)
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v2"
+VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v3"
 
 # Raio de TRUNCAMENTO, não de alcance: quem define o alcance efetivo é a forma do kernel. 2.000 m
 # é o mesmo do `pressao_concorrencial_score_2km` da camada de mercado — manter o número igual é o
@@ -431,6 +431,19 @@ PRESSAO_GRAOS: tuple[str, ...] = (PRESSAO_GRAO_ACADEMIA, PRESSAO_GRAO_HEX)
 # consequência foi medida em SP (2026-08-14): **29,2% das independentes marcam pressão `0`**, e a
 # leitura de "território livre" ali é artefato do insumo, não do território. Uma independente
 # espremida entre oito independentes tem zero cadeia por perto e muita concorrência.
+#
+# ASSIMETRIA DECLARADA `[emenda BLK-MA-17 / DEC-034]`: o enum classifica a CATEGORIA que conta
+# (cadeia / independente), **não a procedência** dos pontos. Desde o BLK-MA-17 o bloco de cadeias
+# soma dois insumos — `concorrentes_mapeados.parquet` (feed de rede, o histórico) **e** as unidades
+# de REDE que o agregador lista e que `_filtrar_universo_sinal_1` corta antes do score. A categoria
+# não mudou, então o rótulo não muda; o que mudou foi a COBERTURA dela, e quem distingue as duas
+# rodadas é a VERSÃO (`pressao_competitiva_v2` -> `v3`), não um terceiro valor aqui.
+#
+# Por que não um terceiro valor: ele tocaria todos os asserts, a CLI e a leitura de todo parquet já
+# gravado, para exprimir uma distinção que a versão já carrega. Quem precisar do detalhe tem as duas
+# colunas de decomposição (`oferta_cadeias_do_feed`, `n_cadeias_do_feed_no_raio`), que dizem
+# exatamente quanto da oferta veio do agregador — o mesmo molde do G-D2: fato auditável ao lado do
+# número, antes de qualquer uso com peso.
 UNIVERSO_OFERTA_CADEIAS = "cadeias"
 UNIVERSO_OFERTA_COM_INDEPENDENTES = "cadeias_e_independentes"
 UNIVERSOS_OFERTA: tuple[str, ...] = (UNIVERSO_OFERTA_CADEIAS, UNIVERSO_OFERTA_COM_INDEPENDENTES)
@@ -463,12 +476,59 @@ PESO_OFERTA_INDEPENDENTE = 0.5
 # como "Academia X" num feed e "X Fitness" no outro.
 DEDUP_INDEPENDENTES_M = 50.0
 
-# Resolução H3 do bucket espacial da dedup (aresta ~24 m). Serve só para não comparar todos os
-# pares (19.329² = 373 M): o candidato é buscado na própria célula + `grid_disk(k=1)`, e a
-# distância real decide. É detalhe de PERFORMANCE, não de contrato — mudá-la não muda resultado.
+# Resolução H3 do bucket espacial da dedup (aresta ~29 m). Serve só para não comparar todos os
+# pares (19.329² = 373 M): o candidato é buscado na própria célula + um `grid_disk` de raio
+# DERIVADO do limiar, e a distância real decide. É detalhe de PERFORMANCE, não de contrato —
+# mudá-la não muda resultado, e é isso que o teste de equivalência contra a varredura completa
+# prova.
 DEDUP_H3_RES = 11
 
-# Frame de pressão POR ACADEMIA: 13 colunas, nesta ORDEM. É o insumo do `v6` desde o BLK-MA-14.
+# Anéis EXTRAS de folga sobre o `k` calculado. O `k` mínimo é derivado da aresta média da
+# resolução, e as células do H3 não são hexágonos regulares idênticos: a folga cobre a variação
+# real de tamanho sem depender de um literal. Custa vizinhos a mais na busca (barato) e evita o
+# modo de falha mais perigoso da dedup — deixar de deduplicar **em silêncio**, sem levantar nada.
+DEDUP_K_MARGEM_ANEIS = 1
+
+# --------------------------------------------------------------------------- #
+# DEDUP entre o feed do AGREGADOR e o parquet de cadeias `[BLK-MA-17 / DEC-034]`
+# --------------------------------------------------------------------------- #
+# As unidades de REDE que o WellHub lista (2.844 na semana `2026-33`, em 83 redes) são concorrência
+# REAL e hoje não pressionam ninguém: elas saem do universo do score por `_filtrar_universo_sinal_1`
+# e nunca foram insumo de oferta. Parte delas já está desenhada em `concorrentes_mapeados.parquet`
+# pelo feed do próprio site da rede — contá-las de novo dobraria a oferta daquele ponto. Daí a
+# dedup, e daí ela ter critério e limiar PRÓPRIOS.
+#
+# **Por que não reusar `DEDUP_INDEPENDENTES_M = 50`:** aquele limiar foi arbitrado para o par
+# TotalPass x WellHub, que compartilham a mesma geocodificação. Aqui o par é "site da rede" x "app
+# do WellHub" — duas geocodificações independentes do mesmo endereço, com desvio maior.
+#
+# **O CRITÉRIO é conjunção-disjunção, e não distância pura, porque o custo de errar é assimétrico
+# NOS DOIS SENTIDOS.** Unidades de rede que ENTRAM na oferta, por critério (medido em 2026-08-15
+# sobre o feed real, 2.844 unidades contra 4.366 pontos válidos):
+#
+# | limiar | dedup por distância PURA | dedup por (rede, d) | **ADOTADO** (rede OU piso 50 m) |
+# |---|---|---|---|
+# | 30 m | 1.629 entram | 1.637 | 1.418 |
+# | 50 m | 1.418 | 1.433 | 1.418 |
+# | 100 m | 1.239 | 1.268 | 1.257 |
+# | **150 m** | **1.134** | **1.179** | **1.171** |
+# | 200 m | 1.046 | 1.121 | 1.113 |
+# | 300 m | 834 | 946 | 938 |
+#
+#   - **Casar a `rede` salva 37 concorrentes REAIS** que a distância pura apagaria: unidades cujo
+#     único vizinho a menos de 150 m é pin de OUTRA rede. Apagar concorrente real é a direção exata
+#     do falso zero que a DEC-033 existe para matar. (São 45 as que têm só pin de outra rede por
+#     perto; 8 delas estão a menos de 50 m e o piso colapsa de qualquer forma -> líquido de 37.)
+#   - **O PISO de 50 m recupera 8 casos** de "mesmo endereço com slug de rede divergente" — o menor
+#     deles a **0,0 m**, inequivocamente o mesmo estabelecimento. Sem ele, contariam em dobro.
+#
+# O critério final — `(rede igual E d <= 150 m) OU (d <= 50 m)` — é estritamente mais conservador
+# que qualquer das duas variantes isoladas: a escolha NÃO é cosmética, e a coluna do meio da tabela
+# (a variante SEM o piso) é a que o handoff do Planner citou como `1.179`.
+DEDUP_CADEIA_FEED_M = 150.0
+DEDUP_CADEIA_FEED_PISO_M = 50.0
+
+# Frame de pressão POR ACADEMIA: 15 colunas, nesta ORDEM. É o insumo do `v6` desde o BLK-MA-14.
 #
 # POR QUE A CHAVE É `(fonte, chave_snapshot)` E NÃO SÓ A CHAVE: é o mesmo par que o score usa como
 # chave primária. `chave_snapshot` sozinha não é única — ela é derivada por fonte, e a mesma
@@ -491,13 +551,19 @@ CONTRATO_COLUNAS_PRESSAO_ACADEMIA: dict[str, str] = {
     # M&A: uma independente cercada de independentes é alvo diferente de uma cercada de Smart Fits.
     "oferta_independentes": "float64",  # parte de `oferta_ponderada` vinda de independente
     "n_independentes_no_raio": "int64",  # contagem CRUA das independentes (subconjunto da acima)
+    # DECOMPOSIÇÃO por PROCEDÊNCIA `[BLK-MA-17 / DEC-034]`, simétrica à de cima. Elas contam a parte
+    # da oferta de CADEIA que veio do agregador em vez do `concorrentes_mapeados.parquet` — a parte
+    # que, até este bloco, não existia no cálculo. É o que torna o carimbo `universo_oferta`
+    # auditável apesar de o rótulo dele não mencionar procedência (ver o comentário do enum).
+    "oferta_cadeias_do_feed": "float64",  # parte de `oferta_ponderada` vinda de rede do agregador
+    "n_cadeias_do_feed_no_raio": "int64",  # contagem CRUA delas (subconjunto de `n_concorrentes`)
     "kernel_pressao": "string",  # carimbo: qual decaimento produziu o número
     "raio_pressao_m": "float64",
     "universo_oferta": "string",  # carimbo: QUEM contou como concorrência (UNIVERSOS_OFERTA)
     "versao_contrato": "string",
 }
 
-# Frame de pressão por hex: 12 colunas, nesta ORDEM. O sufixo `_no_hex` das colunas 2-4 é
+# Frame de pressão por hex: 14 colunas, nesta ORDEM. O sufixo `_no_hex` das colunas 2-4 é
 # deliberado, no molde do `presenca_agregador`: a pressão é grandeza do TERRITÓRIO, e todas as
 # academias do mesmo hex herdam o mesmo valor pelo join.
 #
@@ -518,6 +584,11 @@ CONTRATO_COLUNAS_PRESSAO: dict[str, str] = {
     # comparação entre eles — que é a razão de o grão hex continuar vivo — silenciosamente falsa.
     "oferta_independentes_no_hex": "float64",
     "n_independentes_no_raio": "int64",
+    # Procedência da oferta de CADEIA `[BLK-MA-17 / DEC-034]`, simétrica à do grão academia — pela
+    # mesma razão de sempre: os dois grãos compartilham `_oferta_por_origem`, e um schema divergente
+    # tornaria silenciosamente falsa a comparação entre eles.
+    "oferta_cadeias_do_feed_no_hex": "float64",
+    "n_cadeias_do_feed_no_raio": "int64",
     "kernel_pressao": "string",  # carimbo: qual decaimento produziu o número
     "raio_pressao_m": "float64",
     "universo_oferta": "string",  # carimbo: QUEM contou como concorrência (UNIVERSOS_OFERTA)
@@ -527,7 +598,7 @@ CONTRATO_COLUNAS_PRESSAO: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Lista priorizada de alvos de M&A (D5/D6) — BLK-MA-05
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v2"
+VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v3"
 
 # Gate D5 (ratificado em 2026-07-23; reabrir exige DEC). A INVERSÃO do §2 mora aqui: comprar quer
 # demanda ALTA + residual BAIXO, o OPOSTO de `abrir_agora`.
@@ -623,7 +694,7 @@ CONTRATO_COLUNAS_ALVOS_MA: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Variante NOMEADA (D1-B) — BLK-MA-15
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v3"
+VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v4"
 
 # O UNICO contrato desta camada que carrega IDENTIDADE e COORDENADA, autorizado pela emenda de
 # 2026-08-14 a DEC-028 (decidida por Vinicius). Grao: uma linha por academia.
@@ -648,7 +719,7 @@ CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
     "v6": "float64",
     "pressao_competitiva": "Float64",
     "pressao_grao": "string",  # `academia` desde a DEC-029
-    "universo_oferta": "string",  # `cadeias_e_independentes` desde a DEC-030
+    "universo_oferta": "string",  # `cadeias_e_independentes` desde a DEC-033
     # AUDITORIA DA PRESSAO NA TELA (BLK-MA-18). Elas nao entram em conta nenhuma: existem porque a
     # pressao SOZINHA nao e' legivel. A saturacao `100(1-1/(1+o))` gasta METADE da escala numa
     # unica unidade equivalente, entao `40,4` significa "0,68 concorrentes efetivos" e nao "40% de
@@ -656,6 +727,13 @@ CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
     # Com a contagem ao lado, o operador confere no mapa: conta os pins e o numero fecha.
     "n_concorrentes_no_raio": "Int64",  # contagem CRUA no raio (nulavel: sem pressao, sem contagem)
     "n_independentes_no_raio": "Int64",  # quantos daqueles sao independentes (o resto e' cadeia)
+    # `[BLK-MA-17 / DEC-034]` Quantos dos `n_concorrentes_no_raio` sao unidades de REDE vindas do
+    # agregador. Ela existe porque o tooltip promete conferencia visual ("conta os pins e o numero
+    # fecha") e essas unidades **nao tem pin desenhado** no piloto: o mapa so' desenha os pins de
+    # cadeia do funil e as independentes nomeadas. A coluna DECLARA o tamanho da lacuna em vez de
+    # deixar a contagem nao bater sem explicacao. `Int64` (nulavel), como as duas contagens acima —
+    # ausencia de medicao e' nula, nunca zero.
+    "n_cadeias_do_feed_no_raio": "Int64",
     "oferta_ponderada": "Float64",  # concorrentes EFETIVOS (ja' com o decaimento)
     "dist_concorrente_mais_proximo_m": "Float64",  # responde "quao perto", que a soma esconde
     "sinais_disponiveis": "string",
@@ -988,6 +1066,9 @@ __all__ = [
     "PESO_OFERTA_INDEPENDENTE",
     "DEDUP_INDEPENDENTES_M",
     "DEDUP_H3_RES",
+    "DEDUP_K_MARGEM_ANEIS",
+    "DEDUP_CADEIA_FEED_M",
+    "DEDUP_CADEIA_FEED_PISO_M",
     "VERSAO_CONTRATO_ALVOS_MA",
     "QUANTIL_SAM_QUENTE",
     "LIMIAR_RESIDUAL_SATURADO",
