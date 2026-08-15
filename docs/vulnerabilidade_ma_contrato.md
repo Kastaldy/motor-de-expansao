@@ -404,7 +404,7 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 > (`_assert_schema_pressao_academia`) em vez da frase de docstring que confundia CALCULAR com
 > PERSISTIR — e que manteve o sinal um bloco inteiro no grão errado.
 
-> ### [emenda BLK-MA-16 / DEC-030, 2026-08-14] O `v6` conta INDEPENDENTES, não só cadeias
+> ### [emenda BLK-MA-16 / DEC-033, 2026-08-14] O `v6` conta INDEPENDENTES, não só cadeias
 >
 > A DEC-029 corrigiu **de onde** se mede; esta corrige **quem conta como concorrência**. São eixos
 > independentes, e o segundo estava errado desde o BLK-MA-12 sem que ninguém olhasse:
@@ -420,7 +420,7 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 > **As independentes pesam `0,5`** contra `1,0` de uma unidade de rede (decisão de produto de
 > Vinicius). O peso age no numerador da oferta; kernel, raio e saturação não mudam.
 >
-> **`cadeias_e_independentes` é o universo VIGENTE do pipeline** (opção A da DEC-030, aprovada em
+> **`cadeias_e_independentes` é o universo VIGENTE do pipeline** (opção A da DEC-033, aprovada em
 > 2026-08-14). A régua histórica continua alcançável por `--oferta-so-cadeias`, e precisa continuar:
 > ela é a única comparável com o `pressao_concorrencial_score_2km` da camada de mercado.
 >
@@ -438,6 +438,64 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 > restantes são, em parte, cobertura do WellHub — não território livre. E a comparabilidade com
 > `pressao_concorrencial_score_2km` (28 redes de cadeia) **acaba** neste universo; ela sobrevive no
 > universo `cadeias`, que continua calculável.
+
+> ### [emenda BLK-MA-17 / DEC-034, 2026-08-15] O `v6` conta as unidades de REDE do agregador
+>
+> A emenda anterior corrigiu **metade** do universo de oferta. As **unidades de REDE que o próprio
+> agregador lista** — 2.844 na semana `2026-33`, em 83 redes — também não contavam, e pela mesma
+> razão: `_filtrar_universo_sinal_1` as corta do universo do SCORE (corretamente: elas não são alvo
+> de M&A), e ninguém as havia colocado do lado da OFERTA, que é outro conjunto.
+>
+> **1.171 delas (41,2%) não têm equivalente em `concorrentes_mapeados.parquet`** — academias de
+> cadeia reais, listadas no WellHub, que não pressionavam ninguém no cálculo; as outras 1.673
+> colapsam contra um ponto já mapeado. Não é bug de fórmula: é cobertura do insumo, exatamente como
+> na emenda anterior.
+>
+> **Elas entram no bloco de CADEIAS, com `PESO_OFERTA_CADEIA = 1,0`** — são unidades de rede, e o
+> `0,5` é da independente por decisão de produto. Kernel, raio e saturação não mudam.
+>
+> **A dedup é PRÓPRIA, e o critério não é distância pura:** colapsa se `(rede igual E d <= 150 m)`
+> **OU** `(d <= 50 m)`. Os dois ramos existem porque o custo de errar é assimétrico nos dois
+> sentidos, e ambos foram medidos: casar a `rede` salva **37 unidades REAIS** que a distância pura
+> apagaria — só têm pin de OUTRA rede por perto (são 45 no total; 8 delas o piso colapsa de qualquer
+> forma). E sem o piso, **8** endereços iguais com slug de rede divergente — o menor a `0,0 m` —
+> contariam em dobro. O limiar de 150 m é próprio (`DEDUP_CADEIA_FEED_M`) e **não**
+> reusa os 50 m de `DEDUP_INDEPENDENTES_M`, arbitrados para TotalPass x WellHub (mesma
+> geocodificação); aqui o par é "site da rede" x "app do agregador".
+>
+> **Auto-exclusão nos DOIS casos.** A sobrevivente da dedup e a colapsada — esta última recebia
+> oferta do próprio pin do funil que a absorveu. Sem as duas, `peso(d≈0) × 1,0` daria
+> `sat(1,0) = 50,0` pontos de pressão fantasma, o **dobro** do erro que a emenda anterior fechou, e
+> maior justamente em quem não tem mais ninguém por perto.
+>
+> **QUEBRA DE COMPARABILIDADE COM A SÉRIE `v5`, anunciada.** Diferente da emenda anterior — onde
+> `Spearman(pressão, oferta) = 1,000000` permitiu dizer "não embaralha o ranking" —, **aqui a ordem
+> muda**. Medido nacionalmente sobre 19.329 academias e o entregável de 6.753 linhas: ver o corpo
+> da DEC-034. Números-chave: pressão muda de valor em **7.237 (37,4%)** academias, o Spearman do
+> score contra a régua anterior é **0,9911994**, e **12 das 100 primeiras linhas** de
+> `alvos_ma_priorizados.csv` trocam. Três réguas VISÍVEIS no pin se movem: `pressao` (**7.237**),
+> `n_concorrentes_no_raio` (**7.218**, delta máx `+9`) e `dist_concorrente_mais_proximo_m`
+> (**773**). Por isso **quatro
+> bumps**, não dois: `pressao_competitiva_v2 -> v3`, `score_vulnerabilidade_v5 -> v6`,
+> `alvos_ma_v2 -> v3` e `alvos_ma_nomeados_v3 -> v4` — o frame de pressão não chega a disco, e são
+> os outros três que carimbam artefatos cujo VALOR mudou.
+>
+> **O carimbo `universo_oferta` continua com dois valores, e a assimetria é declarada.** Ele
+> classifica a CATEGORIA que conta (cadeia / independente), não a procedência do ponto; a categoria
+> não mudou, a COBERTURA dela sim. Quem distingue as rodadas é a versão. Para auditar a
+> procedência, as duas colunas novas: `oferta_cadeias_do_feed` e `n_cadeias_do_feed_no_raio` (grão
+> academia; `oferta_cadeias_do_feed_no_hex` no grão hex). Contratos de pressão passam a **15** e
+> **14** colunas.
+>
+> **Limitação declarada, e é por isso que a contagem viaja até o pin.** As unidades de rede que
+> entram na oferta **não têm pin desenhado** no piloto — o mapa desenha os pins de cadeia do funil e
+> as independentes nomeadas. A auditoria do BLK-MA-18 promete "confere olhando o próprio mapa", e
+> sem declaração a conta não fecharia. Daí `n_cadeias_do_feed_no_raio` entrar no artefato NOMEADO
+> (24 colunas): ela **declara o tamanho da lacuna**. Surfaceá-la na tela, com pin próprio para as
+> sobreviventes, é a metade 1 do BLK-MA-17 — **fora deste ciclo**.
+>
+> **O que a emenda NÃO faz: acabar com o falso zero.** Ele cai de 5,53% para 5,31% apenas. O bloco
+> corrige **magnitude** (37,4% do universo) e **ordem** (top-100 do CSV troca 12), não cobertura.
 
 ### 8.2 Normalização
 
