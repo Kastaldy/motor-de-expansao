@@ -1588,7 +1588,7 @@ definido antes de qualquer código; validação com fixtures sintéticas; READ-O
 
 ---
 
-- BLK-MA-16 (concluído 2026-08-14, DEC-030 opção A: o universo novo é o default) — ver tasks/completed.md
+- BLK-MA-16 (concluído 2026-08-14, DEC-033 opção A: o universo novo é o default) — ver tasks/completed.md
 
 ---
 
@@ -1599,8 +1599,8 @@ definido antes de qualquer código; validação com fixtures sintéticas; READ-O
 | **Criticidade** | **Alta** — altera o UNIVERSO declarado da camada (§3/D1 do contrato: "TotalPass/WellHub × independente"), que hoje é travado por assert na entrada **e** na saída do score. **Exige DEC própria.** READ-ONLY sobre o M1. |
 | **Prioridade** | Média — é ganho de leitura no mapa, não de decisão de M&A (comprar rede não é o caso de uso do epic). |
 | **Esteira** | Block Orchestrator → Planner → `[GATE — DEC própria]` → Builder → QA. |
-| **Status** | Pendente — **criado em 2026-08-14 a pedido de Vinicius**. |
-| **Depende de** | BLK-MA-15 (concluído 2026-08-14, molde do pin nomeado) e **BLK-MA-16 (concluído 2026-08-14)** — a ordem era para a tela não estrear exibindo uma pressão que mudasse de régua em seguida. **Dependência satisfeita:** a régua já é `cadeias_e_independentes` (DEC-030). |
+| **Status** | **Metade 2 EXECUTADA em 2026-08-15** (DEC-034, aprovada no gate G1..G5 por Vinicius) — as unidades de rede do agregador entram na oferta do S6. **Metade 1 (exibição) segue PENDENTE**, e continua exigindo DEC própria. Criado em 2026-08-14 a pedido de Vinicius. |
+| **Depende de** | BLK-MA-15 (concluído 2026-08-14, molde do pin nomeado) e **BLK-MA-16 (concluído 2026-08-14)** — a ordem era para a tela não estrear exibindo uma pressão que mudasse de régua em seguida. **Dependência satisfeita:** a régua já é `cadeias_e_independentes` (DEC-033). |
 | **Autonomia** | **manual (NÃO loop-safe)** — muda o universo da camada. |
 
 **O universo existe e é descartado hoje.** O snapshot da semana `2026-33` tem **22.173 linhas: 19.329
@@ -1608,17 +1608,17 @@ independentes (o universo do score) e 2.844 de REDE**, em 83 redes distintas —
 estão no WellHub e que `_filtrar_universo_sinal_1` corta antes do score. Incluí-las cresceria o
 universo em **14,7%**.
 
-> ### [medido em 2026-08-15, depois da DEC-030] O bloco ganhou uma SEGUNDA metade, e ela é a mais forte
+> ### [medido em 2026-08-15, depois da DEC-033] O bloco ganhou uma SEGUNDA metade, e ela é a mais forte
 >
 > A justificativa original era de LEITURA ("ver o diagnóstico também nas redes"). A medição do
 > BLK-MA-16 expôs outra coisa, mais grave: **1.134 dessas unidades (39,9%) não têm nenhum ponto de
 > cadeia a menos de 150 m em `concorrentes_mapeados`** — o insumo de oferta do S6. São academias de
 > rede REAIS, listadas no WellHub, que **hoje não pressionam ninguém** no cálculo.
 >
-> É o **mesmo defeito que a DEC-030 corrigiu, do outro lado**: lá as independentes não contavam como
+> É o **mesmo defeito que a DEC-033 corrigiu, do outro lado**: lá as independentes não contavam como
 > oferta; aqui parte das cadeias também não conta, e pela mesma razão — cobertura do insumo, não
 > desenho da fórmula. Enquanto isso valer, a pressão de quem está perto dessas 1.134 está subestimada,
-> e o falso zero que a DEC-030 reduziu de 37,8% para 5,5% ainda tem um resíduo com causa conhecida.
+> e o falso zero que a DEC-033 reduziu de 37,8% para 5,5% ainda tem um resíduo com causa conhecida.
 >
 > **Consequência para o escopo:** o bloco deixa de ser só exibição. Ele passa a ter duas metades
 > separáveis, e a segunda **não depende da DEC** que trava a primeira:
@@ -1631,6 +1631,28 @@ universo em **14,7%**.
 >
 > Se o gate da metade 1 demorar, **a metade 2 pode ir sozinha** e corrige um número que já está na
 > tela hoje.
+
+> ### [executado em 2026-08-15 — DEC-034] A metade 2 foi entregue; os números do quadro acima mudaram
+>
+> O gate (G1) ratificou **só a metade 2**: as 2.844 unidades de rede entram na **oferta** do S6, com
+> peso `1,0`, deduplicadas contra `concorrentes_mapeados.parquet` por
+> `(rede igual E d <= 150 m) OU (d <= 50 m)`. **Corrigindo o quadro acima:** o `1.134` citado é da
+> variante de **distância pura** (que apagaria 45 concorrentes reais) e o `1.179` do handoff do
+> Planner é da variante `(rede, d)` **sem o piso**. Pelo critério de fato adotado, **entram 1.171** e
+> **colapsam 1.673** — as duas metades foram medidas por varredura completa, e o `1.171` é o número
+> a citar daqui em diante.
+>
+> Efeito medido (nacional, 19.329 independentes): pressão média `61,415 -> 62,775`, **7.237 (37,4%)**
+> mudam de valor, `Spearman 0,9911994` no score, **2.096 de 6.753** linhas do entregável alteradas e
+> **12 das 100 primeiras linhas** do `alvos_ma_priorizados.csv` trocam. Quatro bumps de série. O
+> falso zero cai só de 5,53% para 5,31%: o bloco corrige **magnitude e ordem**, não cobertura.
+>
+> **O que continua PENDENTE (metade 1, e a DEC dela):** exibir o diagnóstico nas unidades de rede —
+> universo de exibição próprio, artefato nomeado próprio, terceira lista de pins e precedência de
+> pin. A precedência sai **de graça** da dedup já implementada: as **1.171** sobreviventes são
+> exatamente as que **não têm pin desenhado**; as **1.673** colapsadas já têm o pin do funil. E a
+> lacuna de auditoria do BLK-MA-18 já está DECLARADA no artefato nomeado, pela coluna
+> `n_cadeias_do_feed_no_raio` (24 colunas, `alvos_ma_nomeados_v4`) — falta surfaceá-la na tela.
 
 **A objeção que decide o desenho do bloco: S1 e S3 medem OUTRA COISA numa rede.** A negociação com o
 agregador é **centralizada**: "estar em 1 app em vez de 2" é política comercial da rede, não
@@ -1662,9 +1684,9 @@ próprio a partir da coordenada do feed** (molde BLK-MA-15), com **regra de prec
 para os 58,5% que virariam dois pins no mesmo lugar.
 
 **O pin já tem molde novo (BLK-MA-18).** Se a metade 1 for adiante, ela herda a auditoria da pressão
-no tooltip (`n_conc` / `n_indep` / `oferta` / `dist_m`) — sem isso, uma unidade de rede exibiria um
-número saturado tão inverificável quanto o que a revisão de 2026-08-15 apontou. Contrato do artefato
-nomeado hoje: `alvos_ma_nomeados_v3`, 23 colunas.
+no tooltip (`n_conc` / `n_indep` / `n_cadeias_feed` / `oferta` / `dist_m`) — sem isso, uma unidade de
+rede exibiria um número saturado tão inverificável quanto o que a revisão de 2026-08-15 apontou.
+Contrato do artefato nomeado **desde a DEC-034**: `alvos_ma_nomeados_v4`, **24 colunas**.
 
 **Fora de escopo.** Qualquer artefato/peso/score do M1; a entrada das INDEPENDENTES como oferta
 (**BLK-MA-16**, concluído); incluir unidades de rede na lista comercial de alvos (**BLK-MA-05**);
@@ -1676,6 +1698,87 @@ lista de alvos de M&A segue só com independentes, travado por teste; anti-PII n
 (artefato nomeado nasce gitignored). Da metade 2: dedup entre o feed de rede e
 `concorrentes_mapeados` travada por teste (a mesma unidade nunca conta duas vezes), com o efeito
 medido antes e depois sobre a distribuição de pressão. Em ambas: READ-ONLY sobre o M1; suíte verde.
+
+---
+
+### BLK-MA-17-FU1 — `dedup_independentes` sub-cobre o bucket H3: o `k` é cravado em 1, e 50 m exigem 4
+
+| | |
+|---|---|
+| **Criticidade** | **Média** — corrige uma dedup que hoje tem efeito **provadamente nulo** (`0 de 19.329` colapsos, porque só há WellHub), mas que passa a errar **em massa** na primeira coleta com TotalPass. READ-ONLY sobre o M1. |
+| **Prioridade** | Alta dentro da epic — tem de estar corrigido **ANTES** de o BLK-MA-06 ligar a segunda fonte, senão o defeito estreia junto com o dado. |
+| **Esteira** | Builder → QA (sem gate: não muda universo, não muda decisão; muda um detalhe de PERFORMANCE que hoje é detalhe de RESULTADO). |
+| **Status** | Pendente — **achado do QA do BLK-MA-17 (2026-08-15)**, confirmando o DES-5 declarado pelo Builder. |
+| **Depende de** | BLK-MA-17 (metade 2) — é ele que introduz `_k_do_bucket`, a função que expõe e resolve o defeito. |
+| **Autonomia** | **manual (NÃO loop-safe)** |
+
+**O defeito, medido.** `pressao_competitiva.py:469` busca o candidato da dedup em
+`h3.grid_disk(celulas[i], 1)` — `k` **cravado** — com `DEDUP_INDEPENDENTES_M = 50,0` m. A fórmula que
+o BLK-MA-17 introduziu no mesmo arquivo dá `_k_do_bucket(50) = 4`: na `DEDUP_H3_RES = 11` a aresta
+média é **28,66 m**, e o anel `k = 1` não garante cobertura nenhuma para 50 m. O comentário do
+`contrato.py` dizia "aresta ~24 m" — a medição real é **28,66 m**, e o BLK-MA-17 já corrigiu esse
+comentário.
+
+**Por que não levanta hoje, e por que isso é o perigoso.** A função só colapsa entre `fonte`
+DIFERENTES, e o snapshot `2026-33` só tem WellHub: medi **`0 de 19.329`** colapsos. O modo de falha
+de uma dedup sub-coberta é **indistinguível** do caso correto — ela devolve "nenhum colapso", que é
+exatamente o que uma dedup correta devolve quando não há duplicata. Ninguém percebe até alguém
+comparar contra varredura completa.
+
+**O custo quando o TotalPass entrar.** A duplicata que não colapsa vira duas linhas na oferta; a
+gêmea a ~0 m soma `peso(0) x PESO_OFERTA_INDEPENDENTE` -> `sat(0,5)` = até **+33,3 pontos** de
+pressão fantasma na academia — o mesmo fantasma que a DEC-033 criou a dedup para matar. Para calibrar
+a ordem de grandeza: no lado das cadeias, onde o dado JÁ existe, o `k` errado deixaria **193 de 2.844
+unidades (6,8%)** de deduplicar (medido pelo QA: 1.364 sobreviventes com `k=1` contra 1.171 com o `k`
+derivado).
+
+**Escopo.** (1) Trocar `h3.grid_disk(celulas[i], 1)` por `h3.grid_disk(celulas[i], _k_do_bucket(distancia_m))`.
+(2) **Medir o efeito** numa fixture de duas fontes e registrar (é mudança de COMPORTAMENTO da função,
+ainda que hoje sobre conjunto vazio). (3) Teste de **equivalência contra varredura completa**, no
+molde exato do `test_14b` do BLK-MA-17 — que é a única forma de provar que o bucket não mudou
+resultado. (4) Nota de emenda na DEC-033, que é a dona daquela dedup. (5) Considerar, no mesmo passo,
+a guarda de `(fonte, chave_snapshot)` duplicado nas DUAS funções de dedup (achado leve do mesmo QA:
+com chave repetida o `dict` guarda só a última posição, e a auto-exclusão da outra linha aponta para
+o índice errado).
+
+**Fora de escopo.** Recalibrar o limiar de 50 m (isso é BLK-MA-06, com par verdade-terreno); mexer em
+`dedup_cadeias_do_feed` (já usa `k` derivado); qualquer artefato/peso/score do M1.
+
+**Alternativa considerada e recusada:** absorver como sub-item do BLK-MA-06. Recusada porque o
+BLK-MA-06 é o bloco que **liga a segunda fonte** — se a correção viajar junto, o defeito e o dado que
+o ativa estreiam no mesmo PR, e não haverá régua "antes" para medir.
+
+---
+
+### BLK-ORQ-28 — Duas validações obrigatórias da esteira são impossíveis de cumprir
+
+| | |
+|---|---|
+| **Criticidade** | **Baixa** — texto de prompt da orquestração; não toca código de produto, score, artefato nem M1. |
+| **Prioridade** | Alta dentro da orquestração — enquanto valer, TODO ciclo fecha com duas validações obrigatórias falhando por motivo alheio ao trabalho, e o QA precisa declarar a divergência à mão. |
+| **Esteira** | Builder → QA. **Altera a orquestração** (`prompts/*.md`) → o Passo 6.c dispara **dry-run autônomo**. |
+| **Status** | Pendente — **achado do QA do BLK-MA-17 (2026-08-15)**, medido nos dois casos. |
+| **Depende de** | nada. |
+| **Autonomia** | **manual (NÃO loop-safe)** — mexe na própria esteira. |
+
+**Defeito 1 — o smoke obrigatório testa um módulo que não existe mais.** `prompts/builder.md:46` e
+`:49` exigem `python -c "import streamlit_app"` como "rede de segurança mínima de todo ciclo". O
+módulo foi **removido pelo commit `30378a0`** (DEC-022, aposentadoria do Streamlit pelo piloto web) —
+o `import` levanta `ModuleNotFoundError` desde então, e o comando está obrigatório há 12 dias. O
+equivalente vivo é importar o pacote e `web/server/app.py`.
+
+**Defeito 2 — a suíte paralela obrigatória é inexecutável nesta estação.** `prompts/qa_analyzer.md:25`
+exige `python -m pytest -n auto` como gate único do ciclo, e `prompts/planner.md:74` o replica. O
+xdist 3.8.0 falha aqui com `WinError 50` (o `CLAUDE.md` registrava `WinError 6` — o número está
+desatualizado). Todo QA recente roda serial e declara a divergência à mão.
+
+**Escopo.** Trocar o smoke morto pelo equivalente vivo em `prompts/builder.md` (L45/L46/L49); em
+`prompts/qa_analyzer.md` (L25) e `prompts/planner.md` (L74), manter `-n auto` como preferência **com
+fallback serial declarado**, em vez de exigência absoluta. Corrigir o `WinError 6` -> `WinError 50` no
+`CLAUDE.md`. **Não** ampliar para outras revisões de prompt.
+
+**Critério de aceite.** Os comandos citados nos 3 prompts executam de fato nesta estação; o dry-run
+autônomo do Passo 6.c passa; nenhuma mudança de comportamento da esteira além do texto das validações.
 
 ---
 

@@ -12715,7 +12715,7 @@ coleta com as duas fontes; critério arbitrado (50 m) e declarado como tal. (3) 
 `universo_oferta`: o score **se recusa a inferir**, porque assumir `cadeias` no silêncio erraria na
 direção otimista.
 
-**Aprovação e virada (DEC-030, opção A).** O default do pipeline é `cadeias_e_independentes`; a régua
+**Aprovação e virada (DEC-033, opção A).** O default do pipeline é `cadeias_e_independentes`; a régua
 histórica segue acessível por `--oferta-so-cadeias` — ela é a única comparável com o
 `pressao_concorrencial_score_2km`. Artefatos regenerados: `vulnerabilidade_ma_academias.parquet`
 (26 colunas, `alvos_ma_v2`), `vulnerabilidade_ma_nomeadas.parquet` (19.329 academias, todas com
@@ -12724,11 +12724,11 @@ produção ainda não tinha o artefato nomeado, então os pins nascem na régua 
 mudarem debaixo de quem já tinha olhado.
 
 Arquivos alterados: `src/motor_expansao/vulnerabilidade/{contrato,pressao_competitiva,score,snapshots,alvos_ma,alvos_nomeados}.py`,
-`tests/unit/vulnerabilidade/{test_universo_oferta_s6,test_score}.py`, `docs/decisions/DEC-030.md`,
+`tests/unit/vulnerabilidade/{test_universo_oferta_s6,test_score}.py`, `docs/decisions/DEC-033.md`,
 `docs/vulnerabilidade_ma_contrato.md` (§8.1), `CLAUDE.md` §8
 Validações: 16 testes novos em `test_universo_oferta_s6.py`; 2.955 na suíte completa; `ruff` limpo;
 `loop_guard` sem CRITICO; fim-a-fim pela CLI nos dois universos
-Decisões relacionadas: **DEC-030** (Alta, aprovada por Vinicius em 2026-08-14, opção A). DEC-001,
+Decisões relacionadas: **DEC-033** (Alta, aprovada por Vinicius em 2026-08-14, opção A; renumerada de DEC-030 em 2026-08-15, BLK-MA-17/G3). DEC-001,
 DEC-027 e DEC-029 intactas; anti-PII (DEC-012/§11) preservado — a coordenada entra no cálculo e morre
 na função. Bumps: `pressao_competitiva_v2`, `score_vulnerabilidade_v5`, `alvos_ma_v2`,
 `alvos_ma_nomeados_v2`
@@ -12779,5 +12779,82 @@ Arquivos alterados: `src/motor_expansao/vulnerabilidade/{contrato,alvos_nomeados
 `web/server/app.py`, `web/src/components/HexMap.tsx`, `web/src/lib/{types,format}.ts`
 Validações: 6 testes novos em `test_auditoria_pressao_no_pin.py`, 2 no piloto, 3 no `format.test.ts`;
 688 no recorte camada + piloto + contratos; front 601 com `tsc` limpo; `ruff` limpo
-Decisões relacionadas: **nenhuma DEC** — não toca régua, peso, fórmula nem universo (DEC-030
+Decisões relacionadas: **nenhuma DEC** — não toca régua, peso, fórmula nem universo (DEC-033
 intacta). Bump `alvos_ma_nomeados_v2` -> `v3` (só o artefato de exibição). READ-ONLY sobre o M1
+
+---
+
+## Fechamento de ciclo — BLK-MA-17-M2 (2026-08-15, metade 2 — o bloco-pai segue ABERTO)
+
+**Atenção ao ID.** Este heading usa `BLK-MA-17-M2` de propósito: o bloco `### BLK-MA-17` **não está
+concluído** — só a metade 2 foi entregue, e a metade 1 (exibição do diagnóstico nas unidades de rede,
+com DEC própria) segue **pendente dentro do mesmo heading**, no `tasks/backlog.md`. Um heading com o
+token exato marcaria o bloco inteiro como concluído (`housekeeping_move_block.py --is-done`), que é
+falso. Por isso o helper **não foi rodado** neste fechamento — ver a nota de housekeeping ao final.
+
+**O que o bloco corrige.** As **2.844 unidades de REDE** que o WellHub lista eram cortadas do cálculo
+antes de virarem oferta — e **1.171 delas não têm equivalente nenhum** em `concorrentes_mapeados`.
+Eram academias de cadeia reais, listadas, abertas, que **não pressionavam ninguém**. É o mesmo defeito
+que a DEC-033 corrigiu do outro lado (lá as independentes não contavam como oferta), e pela mesma
+razão: cobertura do insumo, não desenho da fórmula.
+
+**Como entram.** Terceira lista de pontos no bloco de CADEIAS da oferta do S6, com peso `1,0`,
+deduplicada contra o insumo mapeado por `(rede igual E d <= 150 m) OU (d <= 50 m)`
+(`dedup_cadeias_do_feed`, função NOVA — a `dedup_independentes` fica intacta, porque tem custo
+assimétrico oposto). Casar a rede **salva 37 concorrentes reais** que a distância pura apagaria; o
+piso de 50 m recupera 8 endereços iguais com slug divergente, o menor deles a `0,0` m. Das 2.844,
+**1.171 sobrevivem** e 1.673 colapsam.
+
+**O erro silencioso que quase passou.** O bucket H3 da dedup usava `grid_disk(k=1)`, que na
+`DEDUP_H3_RES = 11` (aresta real medida: **28,66 m**, não os ~24 m que o comentário afirmava) cobre
+~50 m — **não** os 150 m do limiar. Uma dedup sub-coberta **não levanta erro**: ela devolve "nenhum
+colapso", que é exatamente o que uma dedup correta devolve quando não há duplicata. O `k` passou a ser
+**derivado** do limiar (`_k_do_bucket`, `k=6` para 150 m) e a trava é um teste de **equivalência
+contra varredura completa** (`test_14b`) — o QA mutou o `k` para 1 e confirmou que o teste falha, e
+que nesse `k` **193 unidades (6,8%) deixariam de deduplicar em silêncio**.
+
+**Auto-pressão fechada nos DOIS casos.** A unidade sobrevivente somaria `peso(d=0) x 1,0` de si mesma;
+a **colapsada** continuaria recebendo ~`1,0` do próprio pin do funil. Sem as duas exclusões, medimos
+exatamente **+50,0 pontos** de pressão fantasma.
+
+**A ordem MUDA — e isso foi ao gate.** `Spearman 0,9911994` no score contra a régua anterior;
+**7.237 de 19.329 (37,4%)** academias mudam de valor; no entregável, **2.096 de 6.753** linhas se
+movem (`Spearman 0,9865793`) e **12 das 100 primeiras linhas** do `alvos_ma_priorizados.csv` trocam —
+uma em cada dez da shortlist que vai à mesa do comercial. Três réguas VISÍVEIS no pin se movem:
+`pressao` (7.237), `n_conc` (7.218, máx +9) e `dist_m` (773). O falso zero cai só de 5,53% para 5,31%:
+o bloco corrige **magnitude e ordem**, não cobertura — quem vender como "acaba com o falso zero"
+estará errado.
+
+**Renumeração de DEC (G3).** `DEC-030` local (BLK-MA-16) virou **`DEC-033`** por `git mv`, com as 21
+citações em 9 arquivos atualizadas; a DEC deste bloco é a **`DEC-034`**. Motivo: `origin/main` já
+tinha `DEC-030` ("dois selos na Conclusão"), `DEC-031` e `DEC-032` com outro conteúdo — a colisão
+bloqueava o merge da pilha e ninguém a tinha registrado.
+
+Arquivos alterados: `src/motor_expansao/vulnerabilidade/{contrato,pressao_competitiva,alvos_ma,alvos_nomeados}.py`,
+`tests/unit/vulnerabilidade/{test_oferta_cadeias_do_feed (novo),test_universo_oferta_s6,test_score,test_auditoria_pressao_no_pin}.py`,
+`docs/decisions/{DEC-033 (renomeada de DEC-030),DEC-034 (nova)}.md`, `docs/decisions/README.md`,
+`docs/vulnerabilidade_ma_contrato.md`, `CLAUDE.md` §8, `tasks/backlog.md`, `tasks/completed.md`
+Validações (re-executadas pelo QA, saída real): suíte COMPLETA serial **3178 passed, 28 skipped, 0
+falhas** (42m22s); recorte camada+piloto **448 passed**; `test_parametros_canonicos` **4 passed**;
+`ruff check src tests` limpo; `--collect-only` **3206** (baseline 3184 **+22**); `loop_guard --stdin`
+**6 violações, todas `governanca`, ZERO `CRITICO`**; `git diff --name-status` contra a base sem
+nenhum caminho do M1
+Decisões relacionadas: **DEC-034** (Alta, aprovada por Vinicius no gate G1..G5 em 2026-08-15) —
+emenda a **DEC-033**, que foi renumerada neste mesmo ciclo. Quatro bumps: `pressao_v2` -> `v3`,
+`score_v5` -> `v6`, `alvos_ma_v2` -> `v3`, `nomeados_v3` -> `v4`. Contratos: pressão academia 13 ->
+15, pressão hex 12 -> 14, nomeado 23 -> 24; score 26, `alvos_ma` 18 e `academias_ma` 26 inalterados.
+READ-ONLY sobre o M1; `_filtrar_universo_sinal_1` intacto e `n_academias_independentes_*` inalteradas
+
+**Veredito do QA: APROVADO COM RESSALVAS** — 0 críticos, 3 médios, 3 leves. Um médio virou o bloco
+`BLK-MA-17-FU1` (a `dedup_independentes` tem a MESMA sub-cobertura de bucket: `k=1` para 50 m, quando
+o correto é 4 — efeito **provadamente nulo hoje** (`0 de 19.329` colapsos, só há WellHub) e **ativo em
+massa na primeira coleta com TotalPass**). Os outros dois são de PROCESSO, não do código: o smoke
+`import streamlit_app`, obrigatório em 3 prompts da esteira, está **morto desde o commit `30378a0`**
+(DEC-022, aposentadoria do Streamlit), e o `pytest -n auto` que o `qa_analyzer.md` exige é
+**inexecutável nesta estação** (xdist 3.8.0, `WinError 50`).
+
+**Housekeeping (6.0) — deliberadamente NÃO executado.** Modo MERGE-HUMANO, mas o helper recorta o
+bloco INTEIRO até o próximo heading: rodá-lo apagaria do backlog a metade 1, que ainda não foi feita.
+Escolhida a saída (b) do QA — **não mover**, mantendo o `### BLK-MA-17` aberto com o Status atualizado
+("Metade 2 EXECUTADA em 2026-08-15 / Metade 1 segue PENDENTE") e uma nota de execução com os números
+corrigidos. O stub e o move acontecem quando a metade 1 fechar.
