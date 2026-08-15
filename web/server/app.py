@@ -411,6 +411,14 @@ _COLS_NOMEADAS = [
     "qtd_avaliacoes_wellhub",
     "sinais_disponiveis",
     "flag_score_provisorio",
+    # AUDITORIA da pressao (BLK-MA-18). Sem ela o numero da pressao nao e' conferivel: a saturacao
+    # gasta METADE da escala numa unica unidade equivalente, entao `40,4` significa "0,68
+    # concorrentes efetivos", e nao "40% de pressao". Com a contagem ao lado, o operador confere
+    # olhando o proprio mapa.
+    "n_concorrentes_no_raio",
+    "n_independentes_no_raio",
+    "oferta_ponderada",
+    "dist_concorrente_mais_proximo_m",
 ]
 
 
@@ -469,6 +477,12 @@ def _pins_independentes(sel: pd.DataFrame) -> dict[str, Any]:
             "n_aval": _inteiro_ou_nulo(getattr(t, "qtd_avaliacoes_wellhub", None)),
             "regime": _texto(getattr(t, "sinais_disponiveis", None)),
             "provisorio": bool(getattr(t, "flag_score_provisorio", False)),
+            # A CONTA por tras da pressao. `n_conc` e' o que da' para contar no mapa; `oferta` e' o
+            # mesmo conjunto depois do decaimento — a diferenca entre os dois E' a distancia.
+            "n_conc": _inteiro_ou_nulo(getattr(t, "n_concorrentes_no_raio", None)),
+            "n_indep": _inteiro_ou_nulo(getattr(t, "n_independentes_no_raio", None)),
+            "oferta": _num(getattr(t, "oferta_ponderada", None), 2),
+            "dist_m": _num(getattr(t, "dist_concorrente_mais_proximo_m", None), 0),
         }
         for t in recorte.itertuples(index=False)
     ]

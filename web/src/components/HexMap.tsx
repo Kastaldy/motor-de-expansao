@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
-import { alunos, brl, num } from '../lib/format'
+import { alunos, brl, distanciaCurta, num } from '../lib/format'
 import { sinaisDoRegime } from '../lib/sinais'
 import {
   DISCARDED_FILL,
@@ -982,6 +982,44 @@ export default function HexMap({
               rotulo="Pressão competitiva"
               valor={`${num(indepHover.d.pressao, 1)} / 100 ↑`}
             />
+          )}
+          {/* A CONTA POR TRÁS DO NÚMERO (BLK-MA-18). Revisão de Vinicius: 40 pontos pareciam muito
+              para uma vizinhança quase vazia — e a desconfiança estava certa. A saturação gasta
+              METADE da escala numa única unidade equivalente, então `40,4` é `0,68 concorrentes
+              efetivos`, não "40% de pressão". A régua não muda; o que muda é ela deixar de ser
+              inverificável: o operador conta os pins no mapa e o número fecha. */}
+          {indepHover.d.n_conc !== null && (
+            <div
+              style={{
+                font: '400 9px/1.35 var(--f-ui)',
+                color: 'var(--tx-label)',
+                marginTop: 3,
+                maxWidth: 236,
+              }}
+            >
+              {indepHover.d.n_conc === 0
+                ? 'nenhum concorrente num raio de 2 km'
+                : `${num(indepHover.d.n_conc)} num raio de 2 km` +
+                  (indepHover.d.n_indep !== null
+                    ? ` (${num(indepHover.d.n_indep)} independente${indepHover.d.n_indep === 1 ? '' : 's'})`
+                    : '')}
+              {indepHover.d.oferta !== null && indepHover.d.n_conc > 0 && (
+                <>
+                  {' · '}
+                  <strong style={{ fontWeight: 600 }}>
+                    {num(indepHover.d.oferta, 2)} equivalente
+                    {indepHover.d.oferta === 1 ? '' : 's'}
+                  </strong>{' '}
+                  depois da distância
+                </>
+              )}
+              {indepHover.d.dist_m !== null && indepHover.d.n_conc > 0 && (
+                <>
+                  <br />
+                  mais próximo a {distanciaCurta(indepHover.d.dist_m)}
+                </>
+              )}
+            </div>
           )}
           <div
             style={{

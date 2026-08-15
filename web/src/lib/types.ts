@@ -269,6 +269,22 @@ export interface PinIndependente {
   /** Regime de sinais (ex.: `"s1,s6"`) — réguas de regimes diferentes não se comparam. */
   regime: string | null
   provisorio: boolean
+  /**
+   * A CONTA por trás de `pressao` (BLK-MA-18). Sem ela o número não é conferível: a saturação
+   * `100·(1 − 1/(1+oferta))` gasta METADE da escala numa única unidade equivalente, então `40,4`
+   * significa **0,68 concorrentes efetivos** — e não "40% de pressão", que é a leitura que um
+   * número de 0 a 100 num pin convida a fazer.
+   *
+   * `n_conc` é o que dá para contar no mapa; `oferta` é o mesmo conjunto DEPOIS do decaimento. A
+   * diferença entre os dois é, literalmente, a distância.
+   */
+  n_conc: number | null
+  /** Quantos dos `n_conc` são independentes — o resto é cadeia. Muda a tese de M&A. */
+  n_indep: number | null
+  /** Concorrentes EFETIVOS (soma dos pesos por distância). */
+  oferta: number | null
+  /** Distância até o concorrente mais próximo, em metros. Responde o que a soma esconde. */
+  dist_m: number | null
 }
 
 export interface Independentes {

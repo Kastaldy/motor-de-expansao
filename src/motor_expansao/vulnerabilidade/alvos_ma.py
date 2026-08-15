@@ -643,7 +643,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .alvos_nomeados import materializar_alvos_nomeados
 
         auditoria["nomeadas"] = materializar_alvos_nomeados(
-            score, coordenadas, saida=args.saida_nomeadas, dry_run=args.dry_run
+            score,
+            coordenadas,
+            # A auditoria do S6 (contagem, oferta efetiva, distancia) vem do MESMO frame que
+            # produziu o `v6` — nao de um recalculo. Recalcular abriria a chance de a tela mostrar
+            # uma contagem que nao corresponde ao numero exibido ao lado dela.
+            pressao=pressao,
+            saida=args.saida_nomeadas,
+            dry_run=args.dry_run,
         )
     print(auditoria)
     return 0

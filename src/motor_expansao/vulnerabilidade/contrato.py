@@ -623,7 +623,7 @@ CONTRATO_COLUNAS_ALVOS_MA: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Variante NOMEADA (D1-B) — BLK-MA-15
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v2"
+VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v3"
 
 # O UNICO contrato desta camada que carrega IDENTIDADE e COORDENADA, autorizado pela emenda de
 # 2026-08-14 a DEC-028 (decidida por Vinicius). Grao: uma linha por academia.
@@ -648,7 +648,16 @@ CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
     "v6": "float64",
     "pressao_competitiva": "Float64",
     "pressao_grao": "string",  # `academia` desde a DEC-029
-    "universo_oferta": "string",  # `cadeias` ate' o BLK-MA-16 ser ligado
+    "universo_oferta": "string",  # `cadeias_e_independentes` desde a DEC-030
+    # AUDITORIA DA PRESSAO NA TELA (BLK-MA-18). Elas nao entram em conta nenhuma: existem porque a
+    # pressao SOZINHA nao e' legivel. A saturacao `100(1-1/(1+o))` gasta METADE da escala numa
+    # unica unidade equivalente, entao `40,4` significa "0,68 concorrentes efetivos" e nao "40% de
+    # pressao" — leitura que um numero de 0 a 100 num pin praticamente convida a fazer.
+    # Com a contagem ao lado, o operador confere no mapa: conta os pins e o numero fecha.
+    "n_concorrentes_no_raio": "Int64",  # contagem CRUA no raio (nulavel: sem pressao, sem contagem)
+    "n_independentes_no_raio": "Int64",  # quantos daqueles sao independentes (o resto e' cadeia)
+    "oferta_ponderada": "Float64",  # concorrentes EFETIVOS (ja' com o decaimento)
+    "dist_concorrente_mais_proximo_m": "Float64",  # responde "quao perto", que a soma esconde
     "sinais_disponiveis": "string",
     "n_sinais_disponiveis": "int64",
     "score_vulnerabilidade": "float64",

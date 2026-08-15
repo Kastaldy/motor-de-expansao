@@ -85,7 +85,11 @@ def _assert_destino_gitignored(caminho: Path) -> None:
         )
 
 
-def montar_alvos_nomeados(score: pd.DataFrame, coordenadas: pd.DataFrame) -> pd.DataFrame:
+def montar_alvos_nomeados(
+    score: pd.DataFrame,
+    coordenadas: pd.DataFrame,
+    pressao: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Score (opaco) + coordenadas do feed -> uma linha por academia, COM identidade. Função pura.
 
     `coordenadas` é a saída de `snapshots.coordenadas_por_chave` acrescida de `nome` — o mesmo
@@ -95,6 +99,15 @@ def montar_alvos_nomeados(score: pd.DataFrame, coordenadas: pd.DataFrame) -> pd.
     lado que sobrevive. Uma academia no feed que não está no score não entra (pode ser cadeia, que o
     universo de M&A exclui de propósito); uma academia com score e sem coordenada entra **sem pin** —
     ela existe, só não é desenhável, e sumir com ela esconderia um alvo por acidente de coleta.
+
+    `pressao` (BLK-MA-18) traz a AUDITORIA do sinal 6 — contagem, oferta efetiva e distância do mais
+    próximo. Ela vem daqui, e não do score, de propósito: o score carrega o `v6` e a pressão porque
+    são o COMPONENTE; a contagem é material de LEITURA, e enfiá-la no contrato do score custaria um
+    bump em cascata (score -> academias -> lista curada) para servir um consumidor só, a tela.
+
+    Sem o frame, as quatro colunas saem nulas — o artefato continua válido, só sem a auditoria. É a
+    mesma regra do `v6` sem insumo: **ausência é nula, nunca zero**, porque `0 concorrentes` é uma
+    afirmação forte e "não medi" não é.
     """
     faltando = [c for c in _DO_SCORE if c not in score.columns]
     if faltando:
@@ -123,6 +136,7 @@ def montar_alvos_nomeados(score: pd.DataFrame, coordenadas: pd.DataFrame) -> pd.
     out = base.merge(
         coord[[*chaves, "nome", "lat", "lng"]], on=chaves, how="left", validate="one_to_one"
     )
+    out = _juntar_auditoria_da_pressao(out, pressao, chaves)
     sem_pin = int(out["lat"].isna().sum())
     if sem_pin:
         # AVISO, não descarte: a academia tem score e o operador precisa saber que ela existe,
@@ -135,6 +149,49 @@ def montar_alvos_nomeados(score: pd.DataFrame, coordenadas: pd.DataFrame) -> pd.
         out[coluna] = out[coluna].astype(dtype)
     out = out.sort_values(["fonte", "chave_snapshot"], kind="mergesort").reset_index(drop=True)
     _assert_schema_nomeados(out)
+    return out
+
+
+_AUDITORIA_PRESSAO: tuple[str, ...] = (
+    "n_concorrentes_no_raio",
+    "n_independentes_no_raio",
+    "oferta_ponderada",
+    "dist_concorrente_mais_proximo_m",
+)
+
+
+def _juntar_auditoria_da_pressao(
+    df: pd.DataFrame, pressao: pd.DataFrame | None, chaves: list[str]
+) -> pd.DataFrame:
+    """Left join da auditoria do S6. Sem o frame (ou sem as colunas), elas saem NULAS.
+
+    O join é `many_to_one` porque o universo de M&A é um subconjunto do insumo de pressão — o frame
+    cobre também as cadeias, que o score já filtrou fora.
+
+    **Só carrega a auditoria onde há pressão medida.** Uma linha sem `pressao_competitiva` que
+    exibisse `0 concorrentes no raio` estaria afirmando território livre com base em nada; a coluna
+    nula diz "não medi", que é a verdade.
+    """
+    out = df.copy()
+    if pressao is None or pressao.empty:
+        for coluna in _AUDITORIA_PRESSAO:
+            out[coluna] = pd.Series(pd.NA, index=out.index, dtype="Float64")
+        return out
+
+    faltando = [c for c in (*chaves, *_AUDITORIA_PRESSAO) if c not in pressao.columns]
+    if faltando:
+        raise AssertionError(f"frame de pressao sem coluna(s) de auditoria: {faltando}")
+    if bool(pressao.duplicated(subset=chaves).any()):
+        raise AssertionError("frame de pressao com `(fonte, chave_snapshot)` duplicado")
+
+    projecao = pressao[[*chaves, *_AUDITORIA_PRESSAO]].copy()
+    for c in chaves:
+        projecao[c] = projecao[c].astype("string")
+    out = out.merge(projecao, on=chaves, how="left", validate="many_to_one")
+    if "pressao_competitiva" in out.columns:
+        sem_pressao = out["pressao_competitiva"].isna()
+        for coluna in _AUDITORIA_PRESSAO:
+            out.loc[sem_pressao, coluna] = pd.NA
     return out
 
 
@@ -175,16 +232,21 @@ def materializar_alvos_nomeados(
     score: pd.DataFrame,
     coordenadas: pd.DataFrame,
     *,
+    pressao: pd.DataFrame | None = None,
     saida: Path = NOMEADOS_PATH_DEFAULT,
     dry_run: bool = False,
 ) -> dict[str, object]:
     """Monta e grava o artefato nomeado. Devolve auditoria só com escalares."""
-    nomeados = montar_alvos_nomeados(score, coordenadas)
+    nomeados = montar_alvos_nomeados(score, coordenadas, pressao)
     com_pin = int(nomeados["lat"].notna().sum()) if not nomeados.empty else 0
+    com_auditoria = (
+        int(nomeados["n_concorrentes_no_raio"].notna().sum()) if not nomeados.empty else 0
+    )
     auditoria: dict[str, object] = {
         "academias_nomeadas": int(len(nomeados)),
         "com_coordenada": com_pin,
         "sem_coordenada": int(len(nomeados)) - com_pin,
+        "com_auditoria_de_pressao": com_auditoria,
         "dry_run": bool(dry_run),
     }
     if dry_run:

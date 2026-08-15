@@ -52,7 +52,13 @@ def _nomeadas() -> pd.DataFrame:
             "score_vulnerabilidade": 54.0,
             "score_vulnerabilidade_ordenavel": 54.0,
             "flag_score_provisorio": False,
-            "versao_contrato": "alvos_ma_nomeados_v1",
+            # AUDITORIA da pressao (BLK-MA-18): 4 concorrentes que valem 1,5 EFETIVOS. A distancia
+            # entre os dois numeros e' o ponto — sem ela, `60,0` nao e' conferivel no mapa.
+            "n_concorrentes_no_raio": 4,
+            "n_independentes_no_raio": 3,
+            "oferta_ponderada": 1.5,
+            "dist_concorrente_mais_proximo_m": 640.0,
+            "versao_contrato": "alvos_ma_nomeados_v3",
         }
         for i, (nome, hexid) in enumerate(
             [("Academia Alfa", HEX_SP[0]), ("Academia Beta", HEX_SP[0]), ("Gama Fit", HEX_SP[1])]
@@ -63,6 +69,10 @@ def _nomeadas() -> pd.DataFrame:
         ("nota_wellhub", "Float64"),
         ("qtd_avaliacoes_wellhub", "Int64"),
         ("pressao_competitiva", "Float64"),
+        ("n_concorrentes_no_raio", "Int64"),
+        ("n_independentes_no_raio", "Int64"),
+        ("oferta_ponderada", "Float64"),
+        ("dist_concorrente_mais_proximo_m", "Float64"),
     ):
         df[col] = df[col].astype(dtype)
     return df
@@ -159,3 +169,43 @@ def test_truncamento_e_declarado(com_independentes: Path, monkeypatch) -> None:
 
 def test_health_observa_o_artefato_nomeado(com_independentes: Path) -> None:
     assert pilot.health()["artefatos"]["independentes_nomeadas"]["ok"] is True
+
+
+# --------------------------------------------------------------------------- #
+# BLK-MA-18 — a conta por trás da pressão
+# --------------------------------------------------------------------------- #
+def test_o_pin_carrega_a_conta_por_tras_da_pressao(com_independentes: Path) -> None:
+    """Sem isto, `60,0` é um número que o operador não tem como conferir.
+
+    A saturação gasta metade da escala numa única unidade equivalente, então o valor exibido não é
+    "60% de pressão" — é `1,5 concorrentes efetivos`. A contagem crua ao lado permite bater com o
+    que se vê no mapa; a distância explica a diferença entre as duas.
+    """
+    pin = next(p for p in _muni()["independentes"]["itens"] if p["nome"] == "Academia Alfa")
+    assert pin["n_conc"] == 4
+    assert pin["n_indep"] == 3
+    assert pin["oferta"] == 1.5
+    assert pin["dist_m"] == 640.0
+
+
+def test_sem_auditoria_no_artefato_o_pin_nao_inventa_zero(com_independentes: Path) -> None:
+    """Artefato antigo (sem as colunas) degrada para nulo — nunca para `0 concorrentes`.
+
+    `0` afirmaria território livre; a ausência diz que ninguém mediu. É a mesma regra do `v6`.
+    """
+    df = _nomeadas().drop(
+        columns=[
+            "n_concorrentes_no_raio",
+            "n_independentes_no_raio",
+            "oferta_ponderada",
+            "dist_concorrente_mais_proximo_m",
+        ]
+    )
+    df.to_parquet(com_independentes / "staging" / "vulnerabilidade_ma_nomeadas.parquet", index=False)
+    pilot.carregar_independentes.cache_clear()
+    pin = _muni()["independentes"]["itens"][0]
+    assert pin["n_conc"] is None
+    assert pin["oferta"] is None
+    assert pin["dist_m"] is None
+    # O resto do pin continua servido: a auditoria e' opcional, o score nao.
+    assert pin["score"] == 54.0

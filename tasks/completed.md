@@ -12732,3 +12732,52 @@ Decisões relacionadas: **DEC-030** (Alta, aprovada por Vinicius em 2026-08-14, 
 DEC-027 e DEC-029 intactas; anti-PII (DEC-012/§11) preservado — a coordenada entra no cálculo e morre
 na função. Bumps: `pressao_competitiva_v2`, `score_vulnerabilidade_v5`, `alvos_ma_v2`,
 `alvos_ma_nomeados_v2`
+
+---
+
+## BLK-MA-18 — A conta por trás da pressão chega ao pin
+
+Data: 2026-08-15
+Resumo: revisão de Vinicius sobre um caso concreto — a `Academia Gold Fit-`, num canto isolado da
+zona sul de São Paulo, marcava **40,4** de pressão, o que pareceu muito para a vizinhança visível.
+
+**A desconfiança estava calibrada, e o diagnóstico saiu do dado.** A saturação
+`100·(1 − 1/(1 + oferta))` — herdada da camada de mercado, fórmula **idêntica** à de
+`enriquecimento_espacial_hexagonos.py` — gasta **metade da escala numa única unidade equivalente**:
+
+| oferta efetiva | pressão | no mundo |
+|---|---|---|
+| 0,25 | 20,0 | 1 academia a 1,5 km |
+| **0,68** | **40,4** | **o caso: 3 independentes a ~1,1 km** |
+| 1,00 | 50,0 | 1 unidade de rede colada na porta |
+| 9,00 | 90,0 | 9 coladas |
+
+Logo `40,4` significa **0,68 concorrentes efetivos**, não "40% de pressão" — que é a leitura que um
+número de 0 a 100 num pin praticamente convida a fazer. O defeito é de LEITURA, não de cálculo.
+
+**A régua NÃO mudou.** Trocar a saturação quebraria a comparabilidade com
+`pressao_concorrencial_score_2km`, que é a razão de ela ter sido copiada — isso exigiria DEC própria.
+O que mudou é o número deixar de ser inverificável: a auditoria que já era calculada (e morria no
+frame de pressão) passa a viajar até o pin. O operador conta os pins no mapa e o número fecha.
+
+**Quatro colunas novas no artefato nomeado** (`n_concorrentes_no_raio`, `n_independentes_no_raio`,
+`oferta_ponderada`, `dist_concorrente_mais_proximo_m`), servidas no payload como
+`n_conc`/`n_indep`/`oferta`/`dist_m`. Elas vêm de `montar_alvos_nomeados`, **não do score**: o score
+carrega o `v6` porque ele é o COMPONENTE; a contagem é material de leitura, e enfiá-la no contrato do
+score custaria um bump em cascata (score -> academias -> lista curada) para servir um consumidor só.
+
+**Ausência é NULA, nunca zero** — `0 concorrentes no raio` afirmaria território livre; artefato sem
+as colunas degrada para nulo, e linha sem `pressao_competitiva` não carrega contagem (a auditoria de
+um número que não existe convidaria a ler a pressão como zero).
+
+O que o tooltip passa a mostrar, medido no dado real de São Paulo:
+
+    Aquiles Academia    9,2 |  2 no raio ( 2 indep) |  0,10 equivalentes | mais próximo a 1,74 km
+    D-Gym              96,5 | 90 no raio (43 indep) | 27,61 equivalentes | mais próximo a  183 m
+
+Arquivos alterados: `src/motor_expansao/vulnerabilidade/{contrato,alvos_nomeados,alvos_ma}.py`,
+`web/server/app.py`, `web/src/components/HexMap.tsx`, `web/src/lib/{types,format}.ts`
+Validações: 6 testes novos em `test_auditoria_pressao_no_pin.py`, 2 no piloto, 3 no `format.test.ts`;
+688 no recorte camada + piloto + contratos; front 601 com `tsc` limpo; `ruff` limpo
+Decisões relacionadas: **nenhuma DEC** — não toca régua, peso, fórmula nem universo (DEC-030
+intacta). Bump `alvos_ma_nomeados_v2` -> `v3` (só o artefato de exibição). READ-ONLY sobre o M1

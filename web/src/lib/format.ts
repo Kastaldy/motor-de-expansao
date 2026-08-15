@@ -15,6 +15,19 @@ export function num(v: number | null | undefined, casas = 0): string {
 }
 
 /**
+ * Distancia em metros -> texto curto, com a unidade que o leitor usaria.
+ *
+ * Abaixo de 1 km em metros arredondados (`850 m`); daí para cima em quilometros com 2 casas
+ * (`1,05 km`). O corte e' de LEITURA, nao de precisao: "1.047 m" obriga a converter de cabeca
+ * para saber se e' perto, e a pergunta que esta distancia responde e' exatamente essa.
+ */
+export function distanciaCurta(v: number | null | undefined): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return TEXTO_SEM_DADO
+  if (v < 1000) return `${nf(0).format(Math.round(v))} m`
+  return `${nf(2).format(v / 1000)} km`
+}
+
+/**
  * Reais. `compacto` usa mil/mi para caber em card estreito; `casas` serve para
  * valores em que o centavo importa (ticket: R$ 88,20 e nao R$ 88).
  */
