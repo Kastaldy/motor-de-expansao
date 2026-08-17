@@ -137,6 +137,13 @@ services:
       # valendo sem excecao nenhuma. Sem o volume, a aba sobe igual, so sem as dimensoes
       # de cadastro (leitura degrada, escrita devolve 503).
       MOTOR_CADASTRO_DIR: "/app/cadastro"
+      # DEC-027 — trilha de acesso do piloto (quem fez o que): JSONL diario com
+      # usuario (Remote-User do Authelia), IP real (X-Forwarded-For), rota+query,
+      # status e latencia; retencao de 90 dias podada pelo proprio backend.
+      # Mora FORA do MOTOR_DATA_DIR pelo mesmo motivo do cadastro (DEC-023):
+      # nenhum artefato do M1 sob mount de escrita. Sem o volume, o app sobe
+      # igual e a trilha degrada em silencio (1 aviso no stderr).
+      MOTOR_ACESSO_LOG_DIR: "/app/logs/acesso"
       # BLK-SAT-01: chave do ArcGIS Location Platform p/ a vista aerea (satelite) do
       # Relatorio Pontual. Sem a var -> render devolve None -> pagina omitida (PDF sai igual).
       API_ARCGIS_API_KEY: ${API_ARCGIS_API_KEY:-}
@@ -166,8 +173,10 @@ services:
       - /opt/motor-expansao/data/ibge:/app/data/ibge:ro          # malha municipal
       - /opt/motor-expansao/data/ultra:/app/data/ultra:ro        # branding do PDF
       - /opt/motor-expansao/concorrentes:/app/concorrentes:ro    # logos de pins (logo_<rede>.png)
-      # UNICO mount de ESCRITA do piloto (DEC-023). Fora de /app/data de proposito.
+      # Mounts de ESCRITA do piloto — os UNICOS, ambos fora de /app/data de proposito:
+      # cadastro (DEC-023) e trilha de acesso (DEC-027). Host: `chown 1000:1000` (appuser).
       - /opt/motor-expansao/cadastro:/app/cadastro:rw            # cadastro operacional (consultor etc.)
+      - /opt/motor-expansao/logs/acesso:/app/logs/acesso:rw      # trilha de acesso (quem fez o que)
     networks:
       - app_net
     security_opt:
@@ -196,6 +205,9 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+      # Access log do host piloto (DEC-027): a diretiva `log` do Caddyfile escreve
+      # aqui (IP real, user-agent, latencia), com rotacao propria do Caddy.
+      - /opt/motor-expansao/logs/caddy:/var/log/caddy
     networks:
       - app_net
     security_opt:

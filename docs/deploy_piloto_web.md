@@ -80,7 +80,7 @@ scp -i ~/.ssh/id_ultra_mcp <arquivo> root@2.25.137.241:/opt/motor-expansao/data/
 
 ---
 
-## 2.1 Cadastro operacional (o ÚNICO volume `:rw`) — DEC-023
+## 2.1 Cadastro operacional (volume `:rw`) — DEC-023
 
 A Visão Executiva 2.0 lê as dimensões que a API Growth não tem (consultor, master
 franquia, franqueado, cidade, Gold, LTV, modalidades) de um **cadastro próprio**, e a
@@ -89,6 +89,14 @@ piloto.
 
 Ela mora **fora** do `MOTOR_DATA_DIR` de propósito: assim nenhum artefato do M1 fica sob
 um mount de escrita e o guardrail READ-ONLY do backend continua valendo sem exceção.
+
+> **DEC-027 (2026-08-17):** o cadastro deixou de ser o único `:rw` — o `web` ganhou um
+> **segundo** mount de escrita, `/opt/motor-expansao/logs/acesso:/app/logs/acesso:rw`
+> (trilha de acesso), também fora do `MOTOR_DATA_DIR`. A lista exata dos DOIS é travada
+> por `test_compose_monta_somente_cadastro_e_trilha_como_volumes_de_escrita`. Preparo do
+> host e contrato: `docs/trilha_acesso_piloto.md` (em resumo:
+> `install -d -m 0700 -o 1000 -g 1000 /opt/motor-expansao/logs/acesso` — sem isso a
+> trilha degrada em silêncio, o app sobe igual).
 
 ```bash
 # 1) criar o diretório no host (uma vez) E DAR O DONO CERTO.
@@ -108,9 +116,11 @@ Gerar a semeadura localmente:
 python scripts/semear_cadastro_unidades.py     --planilha "ANALISE DIARIA DASHBOARD.xlsx"     --growth data/staging/growth_api_historico.parquet     --saida data/cadastro
 ```
 
-O compose já monta `/opt/motor-expansao/cadastro:/app/cadastro:rw` e passa
-`MOTOR_CADASTRO_DIR=/app/cadastro`. **Sem o diretório o piloto sobe igual** — a aba
-degrada: os filtros de consultor ficam vazios e o `PUT` devolve 503 com mensagem clara.
+O compose já monta `/opt/motor-expansao/cadastro:/app/cadastro:rw` (e, desde a DEC-027,
+`/opt/motor-expansao/logs/acesso:/app/logs/acesso:rw` com
+`MOTOR_ACESSO_LOG_DIR=/app/logs/acesso`) e passa `MOTOR_CADASTRO_DIR=/app/cadastro`.
+**Sem o diretório o piloto sobe igual** — a aba degrada: os filtros de consultor ficam
+vazios e o `PUT` devolve 503 com mensagem clara.
 
 Dois arquivos vivem ali: `cadastro_unidades.json` (estado, gravado de forma atômica por
 `os.replace`) e `cadastro_log.jsonl` (auditoria append-only: quem, quando, campo, de →
