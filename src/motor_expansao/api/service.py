@@ -476,13 +476,36 @@ def _norm(texto: object) -> str:
 
 
 def _normalizar_cod(valor: object) -> str | None:
-    """cod_municipio pode vir como float/int/str; devolve string de digitos ou None."""
+    """cod_municipio pode vir como float/int/str; devolve string de digitos ou None.
+
+    NaN precisa virar None EXPLICITAMENTE: `str(float("nan"))` e' `"nan"`, uma string
+    verdadeira que passa no `if cod:` do chamador e vai procurar a particao
+    `cod_municipio=nan/` -- que nunca existe. O sintoma seria o relatorio sair mudo,
+    sem bairro nenhum, como se o municipio nao tivesse.
+    """
     if valor is None:
+        return None
+    if isinstance(valor, float) and valor != valor:  # NaN
         return None
     s = str(valor).strip()
     if s.endswith(".0"):
         s = s[:-2]
-    return s or None
+    if not s or s.casefold() in {"nan", "none", "<na>"}:
+        return None
+    return s
+
+
+def _primeiro_cod_municipio(df_muni: object) -> object:
+    """1o `cod_municipio` nao-nulo do slice do municipio (None se a coluna faltar/for toda nula).
+
+    O slice tem uma linha por hexagono e todas do MESMO municipio, entao qualquer valor
+    preenchido serve -- o que nao serve e' assumir que a primeira linha tem um.
+    """
+    coluna = getattr(df_muni, "get", lambda _k: None)("cod_municipio")
+    if coluna is None:
+        return None
+    validos = coluna.dropna()
+    return validos.iloc[0] if not validos.empty else None
 
 
 @lru_cache(maxsize=8)
@@ -630,7 +653,10 @@ def gerar_pdf_municipio(
     bairros: dict | None = None
     bairros_geo: dict | None = None
     try:
-        cod = _normalizar_cod(df_muni.iloc[0].get("cod_municipio"))
+        # Primeiro valor NAO-NULO, nao `iloc[0]`: a coluna vem do censo trace e fica vazia nos
+        # hexes sem setor casado (no Rio, 51 das 240 linhas). Se a 1a linha do slice calhasse de
+        # ser uma dessas, TODA a camada de bairro sumia do relatorio -- e sem erro nenhum.
+        cod = _normalizar_cod(_primeiro_cod_municipio(df_muni))
         if cod:
             bairros = _carregar_bairros_por_hex(uf, cod, settings.censo_geo_dir)
     except Exception:
