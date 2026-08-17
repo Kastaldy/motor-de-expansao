@@ -12309,6 +12309,100 @@ entregável comercial (BLK-MA-05); o cron (BLK-MA-06).
 ou explicitamente recusados com justificativa; suíte completa sem regressão (baseline do BLK-MA-04:
 **2311 coletados**); `ruff` limpo; `loop_guard` sem `CRITICO`.
 
+---
+
+## Fechamento de ciclo — BLK-CONC-DUPLO (2026-08-14)
+
+**VEREDITO: CONCLUÍDO.** A página de Conclusão do Relatório Pontual passou a carimbar **dois selos
+independentes** — DEMOGRÁFICO (a praça) e FINANCEIRO (o imóvel e o retorno) — e **deixou de emitir
+veredito único**. Pedido de Vinicius; decisão registrada na **DEC-030**. Registra-se aqui também, de
+passagem, que a página nunca teve bloco em `tasks/`: até este ciclo seu histórico canônico eram o §7
+de `docs/relatorio_pontual_censitario.md` e as mensagens de commit (o BLK-CONC-ESTUDO, de Juan em
+2026-08-12, também nunca foi registrado).
+
+**Por que.** A página nasceu em 2026-08-06 justamente para dar um veredito ÚNICO ao ponto. Essa
+premissa caiu: os dois eixos falham por motivos que não se compensam — uma praça que não sustenta a
+operação não fica aceitável porque o imóvel é barato, e vice-versa —, e o status único colapsava os
+dois no pior lado, deixando o leitor reconstruir pela lista de observações de onde vinha a
+reprovação. O golden dos 5 pontos do Recife é a prova: decomposto, ele é na prática um golden do eixo
+FINANCEIRO (`1/2/2`, a calibração de Vinicius, intacta), enquanto o demográfico sai `4/1/0`. A
+leitura da praça, limpa em 4 dos 5, nunca aparecia no carimbo.
+
+**Nenhum corte foi reaberto.** Limiares, bordas inclusivas e textos dos apontamentos são os de
+2026-08-06/07. O que mudou é a quem cada gate responde.
+
+**Decisões de desenho (todas na DEC-030).** (i) `_ConclusaoPonto` perde o campo `status` — não há
+agregado, e `test_parecer_nao_expoe_status_agregado` impede que volte; o levantamento provou que o
+status **nunca saiu do PDF** (nenhum endpoint, response model, payload de bot ou componente do piloto
+o lia). (ii) Zona morta (E4) é DEMOGRÁFICA — dispara por `pop<5000`/`renda<1600` na captação; passa a
+valer no só-estudo, sem efeito no bot de produção, que chama a página com `viabilidade=None`.
+(iii) Só-estudo desenha um selo (`financeiro is None`), e com isso a exceção de Juan (2026-08-12)
+vira estrutural e sai do código: o rito de comitê pertence ao eixo que aquele modo não desenha.
+(iv) Linha de apoio por eixo (`PRAÇA SUSTENTA`… no demográfico; `PARA COMITÊ`… no financeiro,
+inalterados) mais legenda no topo de cada selo. (v) Observações agrupadas nos mesmos dois blocos, na
+mesma ordem dos selos.
+
+**Defeito encontrado na revisão visual e corrigido no mesmo ciclo.** Com a coluna preenchida na
+ordem, um ponto ruim em tudo (10 apontamentos para ~6 vagas) a enchia com o bloco demográfico e o
+financeiro **não entrava — nem o título**: selo REPROVADO sem uma linha que o explicasse, quebrando o
+"reprova, mas nunca em silêncio" pela única via que a lista única não tinha. A seleção passou a ser
+**por rodadas** entre blocos (`_conclusao_plano_elementos`), então o mais grave de cada selo aparece
+antes de qualquer ressalva do outro.
+
+**Geometria.** Dois selos de 196 pt não cabiam nos 400 pt da área útil, e com `auto_page_break` OFF o
+excedente sairia **por baixo do rodapé, em silêncio**. Selo 240x196 -> **210x176**, gap 20 (bloco
+372, folga 28); a coluna esquerda ganha os 30 pt por derivação (622 -> 652). A geometria interna do
+selo virou fração da altura, reproduzindo o desenho de 2026-08-07 na altura de referência.
+
+**Buraco de cobertura fechado de passagem.** Os rótulos do selo **não eram auditados contra latin-1
+por ninguém**: `test_relatorio_acentuacao_regressao` gera os PDFs sem a página de Conclusão, e o
+teste de latin-1 da página só percorria eliminatórios/ressalvas.
+
+**Revisão adversarial da própria entrega, no mesmo dia.** Três dimensões (régua/partição,
+render/geometria, força dos testes), com cada achado submetido a um verificador instruído a
+**refutá-lo**: 9 achados, **8 confirmados** — e nenhum produzia PDF errado. Todos da mesma família:
+teste que não trava o que promete e documentação que afirma mais do que o código faz.
+
+- **Uma afirmação era falsa.** O comentário dizia que as frações de geometria "reproduzem exatamente
+  o desenho de 2026-08-07" em 196. As de TAMANHO reproduzem; as de POSIÇÃO não — foram reancoradas
+  (0,30→0,335; 0,55→0,60; 0,74→0,78) para abrir o topo para a legenda, e o desenho em 196 difere em
+  6,9/9,8/7,8 pt. A justificativa numérica ("símbolo termina a menos de 5 pt do rótulo") também
+  estava errada: o gap real seria 18,85 pt no pior caso. Corrigidas no código e no §7 — o
+  reancoramento é legítimo, faltava declará-lo.
+- **Cinco testes não travavam o que prometiam:** legendas (tautológico — as palavras também saem da
+  nota metodológica), altura do título no orçamento de layout, `_conclusao_elementos` (o
+  `_CONCLUSAO_BLOCO_GAP` podia ir a zero), rótulo principal do selo financeiro e o invariante de
+  não-contaminação entre eixos (um `> 0` que sobrevivia a reunificação PARCIAL).
+- **Correção provada por MUTAÇÃO** (patch em runtime, repo intocado): cada teste corrigido tem de
+  derrubar a quebra que existe para pegar. Uma das correções falhou na 1ª tentativa **pelo mesmo
+  defeito que corrigia** — lia o rótulo esperado do dicionário que a mutação alterava —; virou golden
+  literal, com um 2º teste ligando golden e camada de label.
+
+Fica a lição, que vale além deste bloco: **suíte verde não é evidência de cobertura.**
+
+**Emenda 1 (mesmo dia): o gate E5 passa a valer nos DOIS modos.** Decidido por Vinicius ao revisar
+três relatórios de amostra, em que um ponto de periferia de Caruaru falhava **5 das 6** metas e ainda
+assim saía `com ressalvas` na praça — porque o E5 estava preso ao modo só-estudo (escopo de Juan,
+12/08). O que mudou não foi o corte, e sim o que a divergência significa: enquanto o parecer era um
+veredito único ela ficava diluída; com o selo demográfico próprio, o mesmo endereço passa a exibir um
+carimbo de **cor diferente** em dois documentos, e a leitura da praça não pode depender de por qual
+porta o relatório saiu. Custo medido **antes** de decidir: golden do Recife com no máximo 1 meta
+contra corte 4 → **nenhum dos 5 muda**; dos 3 relatórios, só Caruaru (`com ressalvas` → `reprovado`).
+O corte de 4, medido em 40 pontos de SP, não foi remedido nem alterado. `test_e5_nao_vale_no_modo_completo`
+virou `test_e5_vale_nos_dois_modos`; entrou `test_regua_demografica_e_identica_nos_dois_modos`
+(varre os cortes 0..4). A nota do modo completo passou a declarar o gate — e ganhou guarda contra
+colisão com o rodapé, já que foi a 3 linhas com 7 pt de folga.
+
+Arquivos alterados: `src/motor_expansao/dashboard/censo_report.py`,
+`tests/unit/test_relatorio_pontual_conclusao.py`, `docs/relatorio_pontual_censitario.md`,
+`docs/decisions/DEC-030.md`, `CLAUDE.md`, `tasks/completed.md`.
+Validações: **125 casos** em `test_relatorio_pontual_conclusao.py` (era 98) + 233 nos arquivos
+vizinhos de relatório/acentuação/imóvel/PDF base; 7/7 mutações detectadas; `ruff check` limpo;
+`mypy` limpo. Nenhum assert de estrutura (`/Count`) mudou — a página segue UMA.
+Fora de escopo: a tela de Viabilidade do piloto web (segue com o carimbo binário de `flag_viavel`,
+que é outro juízo), as metas absolutas dos Big Numbers (decisão de Felipe, DEC-021) e qualquer
+artefato do M1.
+
 
 
 ## Fechamento de ciclo — Trilha de acesso do piloto / DEC-027 (2026-08-17, ad-hoc)

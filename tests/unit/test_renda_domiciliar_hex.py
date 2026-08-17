@@ -8,8 +8,9 @@ backend do piloto: `_derivar` (precedencia da renda de leitura), `_fator_domicil
 
 READ-ONLY sobre o M1 e HERMETICO: os artefatos de staging (tabela municipal de
 uplift/moradores + fator temporal) sao SINTETICOS em tmp_path — nenhum `data/` em
-disco. Invariantes preservados do teste antigo: formula (renda_pc x moradores_muni x
-uplift_muni x fator_temporal), fallback calibrada -> renda_per_capita (por COLUNA no
+disco. Formula (corrigida em 2026-08-13): BASE x moradores_muni x uplift_muni x fator_temporal,
+onde BASE desfaz a escala da coluna de origem (calibrada / k; renda_per_capita / uplift).
+Demais invariantes preservados: fallback calibrada -> renda_per_capita (por COLUNA no
 piloto; ver nota no teste), cod_municipio ausente/NaN -> vazio (sem estimativa de
 nivel UF) e cascata municipio -> mediana UF -> nacional dos fatores. No piloto o
 "NaN" do tooltip e servido como None (payload JSON-safe via `_num`).
@@ -47,6 +48,17 @@ import app as pilot  # noqa: E402  (backend do piloto; web/server no sys.path ac
 
 FATOR_TEMPORAL = 1.25  # sintetico, dentro da faixa plausivel [1.0, 2.0] do artefato
 
+# 2026-08-13: a coluna calibrada carrega o `k` da calibragem, e a renda domiciliar tem de
+# DESFAZE-LO antes de aplicar `moradores x uplift x temporal` — senao o k vira um fator extra
+# sobre um uplift que ja converte a escala (+23,35% medido em producao).
+#
+# 2026-08-14: o k passou a ser lido do CARIMBO do staging hex (`metodo_calibracao_renda` em
+# censo2022_setores_calibrado.parquet) — a fonte de onde a coluna calibrada de fato veio; o
+# manifesto do artefato GEO tem OUTRO k e desfazia a escala errada. `K` aqui e' a constante
+# SINTETICA que o fixture grava no carimbo — pinada de proposito (nada de derivar do codigo:
+# um teste que le o esperado da propria funcao testada nao pega regressao nenhuma).
+K = 1.1
+
 # Fatores municipais resultantes (moradores x uplift x FATOR_TEMPORAL):
 #   3550308: 3.2 x 1.5 x 1.25 = 6.0   | 3509502: 2.5 x 1.2 x 1.25 = 3.75
 #   3304557: 2.0 x 1.8 x 1.25 = 4.5
@@ -68,16 +80,35 @@ def _apontar_staging(monkeypatch: pytest.MonkeyPatch, staging: Path) -> None:
         "UPLIFT_COMPOSICAO_PATH",
         "UPLIFT_COMPOSICAO_SETOR_PATH",
         "FATOR_TEMPORAL_RENDA_PATH",
+        # Desde 2026-08-14 o init tambem REATRIBUI o fator/data no modulo (o binding
+        # congelava em 1.0 no container) — registrar aqui para o monkeypatch restaurar.
+        "FATOR_TEMPORAL_RENDA",
+        "DATA_REFERENCIA_RENDA",
     ):
         monkeypatch.setattr(_const, attr, getattr(_const, attr))
-    for cache in ("_uplift_cache", "_uplift_uf_cache", "_moradores_cache", "_moradores_uf_cache"):
+    for cache in (
+        "_uplift_cache",
+        "_uplift_uf_cache",
+        "_moradores_cache",
+        "_moradores_uf_cache",
+        "_uplift_setor_cache",
+        "_uplift_setor_extrapolado_cache",
+    ):
         monkeypatch.setattr(_const, cache, None)
     pilot._fator_temporal_renda.cache_clear()
+    pilot._k_calibracao_renda.cache_clear()
+
+
+def _escrever_carimbo_k(staging: Path, carimbo: str) -> None:
+    """Grava o staging hex sintetico com o carimbo de calibracao (fonte do k do piloto)."""
+    pd.DataFrame({"metodo_calibracao_renda": [carimbo]}).to_parquet(
+        staging / pilot._CENSO_HEX_STAGING_PARQUET
+    )
 
 
 @pytest.fixture
 def staging_sintetico(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Staging com a tabela municipal sintetica + fator temporal 1.25."""
+    """Staging com a tabela municipal sintetica + fator temporal 1.25 + carimbo k=1.1."""
     staging = tmp_path / "staging"
     staging.mkdir()
     _TABELA_MUNICIPIOS.to_parquet(staging / "uplift_renda_domiciliar_municipio.parquet")
@@ -85,9 +116,11 @@ def staging_sintetico(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         json.dumps({"fator_temporal_renda": FATOR_TEMPORAL, "competencia_atual_fim": "202606"}),
         encoding="utf-8",
     )
+    _escrever_carimbo_k(staging, f"multiplicativo_global_k={K}")
     _apontar_staging(monkeypatch, staging)
     yield staging
     pilot._fator_temporal_renda.cache_clear()
+    pilot._k_calibracao_renda.cache_clear()
 
 
 @pytest.fixture
@@ -98,6 +131,7 @@ def staging_vazio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _apontar_staging(monkeypatch, staging)
     yield staging
     pilot._fator_temporal_renda.cache_clear()
+    pilot._k_calibracao_renda.cache_clear()
 
 
 def _frame() -> pd.DataFrame:
@@ -135,8 +169,8 @@ def test_formula_usa_moradores_e_uplift_municipais(staging_sintetico: Path) -> N
     assert pilot._fator_domiciliar("SP", "3550308") == approx(6.0)
     assert pilot._fator_domiciliar("SP", "3509502") == approx(3.75)
     r = _serie_renda_dom(_frame())
-    assert r.loc[0] == 9000  # 1500 x 6.0 (renda calibrada x fator municipal)
-    assert r.loc[1] == 7500  # 2000 x 3.75
+    assert r.loc[0] == round(1500 / K * 6.0)   # base sem o k, x fator municipal
+    assert r.loc[1] == round(2000 / K * 3.75)
 
 
 def test_varia_por_municipio(staging_sintetico: Path) -> None:
@@ -152,8 +186,8 @@ def test_varia_por_municipio(staging_sintetico: Path) -> None:
         }
     )
     r = _serie_renda_dom(df)
-    assert r.loc[0] == 6000  # 1000 x 6.0
-    assert r.loc[1] == 3750  # 1000 x 3.75
+    assert r.loc[0] == round(1000 / K * 6.0)
+    assert r.loc[1] == round(1000 / K * 3.75)
     assert r.loc[0] != r.loc[1]
 
 
@@ -167,8 +201,11 @@ def test_fallback_para_renda_per_capita_quando_coluna_calibrada_ausente(
 ) -> None:
     df = _frame().drop(columns=["renda_per_capita_setor_2022_calibrada"])
     r = _serie_renda_dom(df)
-    assert r.loc[0] == 8400  # 1400 x 6.0
-    assert r.loc[2] == 7650  # 1700 x 4.5 (RJ/3304557)
+    # Ramo de FALLBACK: `renda_per_capita` (SIDRA) JA e renda domiciliar per capita, entao a
+    # base divide pelo UPLIFT do municipio — nao pelo k. Sem isso o uplift entrava DUAS vezes
+    # (+54,4% medido, e com dispersao, porque o uplift varia entre municipios).
+    assert r.loc[0] == round(1400 / 1.5 * 6.0)   # SP/3550308, uplift 1.5
+    assert r.loc[2] == round(1700 / 1.8 * 4.5)   # RJ/3304557, uplift 1.8
 
 
 def test_calibrada_nan_por_linha_vira_none_sem_fallback_por_linha(
@@ -213,7 +250,7 @@ def test_cod_municipio_nan_por_linha_retorna_none(staging_sintetico: Path) -> No
         }
     )
     r = _serie_renda_dom(df)
-    assert r.loc[0] == 9000  # municipio resolvido
+    assert r.loc[0] == round(1500 / K * 6.0)  # municipio resolvido
     assert r.loc[1] is None  # cod_municipio NaN -> tooltip vazio (nao fallback UF)
     # O guardrail vive na PROPRIA funcao: nem um fator valido destrava a linha sem cod.
     linha_sem_cod = pilot._derivar(df).loc[1]
@@ -245,7 +282,164 @@ def test_sem_artefatos_cai_no_nacional_com_fator_temporal_1(staging_vazio: Path)
     esperado = _const.MORADORES_DOMICILIO_NACIONAL * _const.UPLIFT_COMPOSICAO_NACIONAL
     assert pilot._fator_domiciliar("SP", "3550308") == approx(esperado)
     r = _serie_renda_dom(_frame())
-    assert r.loc[0] == round(1500.0 * esperado)
+    # Sem o staging hex, o k cai na CONSTANTE de fallback (nao no K sintetico do carimbo).
+    assert r.loc[0] == round(1500.0 / pilot._K_CALIBRACAO_FALLBACK * esperado)
+
+
+def test_ancoragem_no_ibge_o_teste_que_teria_pego_o_defeito(staging_sintetico: Path) -> None:
+    """As duas travas de ESCALA que faltavam. Nenhum teste antigo amarrava o hex a uma
+    referencia externa nem a superficie do ponto — por isso o defeito viveu.
+
+    (a) Ramo de fallback: `renda_per_capita` do SIDRA JA e renda domiciliar per capita. Logo
+        `renda_per_capita x moradores x fator_temporal` E a renda do domicilio, e o uplift NAO
+        pode aparecer. Se aparecer, o numero sai inflado pelo proprio uplift.
+    (b) Ramo calibrado: a renda domiciliar nao pode carregar o `k`.
+    """
+    moradores, uplift = 3.2, 1.5  # SP/3550308 na tabela sintetica
+    df = pd.DataFrame(
+        {
+            "hex_id": ["a"],
+            "uf": ["SP"],
+            "cod_municipio": ["3550308"],
+            "renda_per_capita": [1400.0],  # SIDRA: renda DOMICILIAR per capita
+        }
+    )
+    esperado = 1400.0 * moradores * FATOR_TEMPORAL  # sem uplift nenhum
+    assert _serie_renda_dom(df).loc[0] == round(esperado)
+
+    df_cal = pd.DataFrame(
+        {
+            "hex_id": ["a"],
+            "uf": ["SP"],
+            "cod_municipio": ["3550308"],
+            "renda_per_capita_setor_2022_calibrada": [1500.0],
+        }
+    )
+    v06004_per_capita = 1500.0 / K
+    assert _serie_renda_dom(df_cal).loc[0] == round(
+        v06004_per_capita * moradores * uplift * FATOR_TEMPORAL
+    )
+
+
+def test_renda_per_capita_do_hex_e_a_domiciliar_per_capita(staging_sintetico: Path) -> None:
+    """O tooltip do hex e o Relatorio Pontual passam a falar a mesma grandeza.
+
+    Antes o hex exibia a coluna calibrada crua (V06004/moradores x k) enquanto o ponto exibia a
+    renda domiciliar per capita — dois numeros para a mesma coordenada.
+    """
+    df = pd.DataFrame(
+        {
+            "hex_id": ["a"],
+            "uf": ["SP"],
+            "cod_municipio": ["3550308"],
+            "renda_per_capita_setor_2022_calibrada": [1500.0],
+        }
+    )
+    linha = pilot._derivar(df).loc[0]
+    fator = pilot._fator_domiciliar("SP", "3550308")
+    dom = pilot._renda_domiciliar_hex(linha, fator)
+    pc = pilot._renda_per_capita_hex(linha, fator)
+
+    # A invariante: domiciliar = per capita x moradores do municipio (3.2).
+    assert pc == approx(dom / 3.2, rel=1e-3)
+    # E nao e mais a coluna calibrada crua.
+    assert pc != approx(1500.0, rel=1e-3)
+
+
+def test_payload_do_hex_serve_a_per_capita_domiciliar(staging_sintetico: Path) -> None:
+    """Trava do PAYLOAD: nao basta a funcao certa existir, `_hex_dict` tem de chama-la.
+
+    Medido por mutacao: sem este teste, trocar o campo `renda` de volta para `renda_leitura`
+    (a coluna calibrada crua) passa por TODOS os outros testes deste arquivo.
+    """
+    df = pd.DataFrame(
+        {
+            "hex_id": ["a"],
+            "lat": [-23.55],
+            "lng": [-46.63],
+            "uf": ["SP"],
+            "cod_municipio": ["3550308"],
+            "renda_per_capita_setor_2022_calibrada": [1500.0],
+        }
+    )
+    linha = pilot._derivar(df).loc[0]
+    fator = pilot._fator_domiciliar("SP", "3550308")
+    payload = pilot._hex_dict(linha, fator)
+
+    assert payload["renda"] == approx(pilot._renda_per_capita_hex(linha, fator))
+    assert payload["renda"] != approx(1500.0, rel=1e-3)  # nao e a calibrada crua
+    # A invariante do tooltip: domiciliar = per capita x moradores do municipio (3.2).
+    assert payload["renda_dom"] == approx(payload["renda"] * 3.2, rel=1e-3)
+
+
+def test_k_da_calibracao_le_o_carimbo_do_staging_hex(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O k vem do carimbo `metodo_calibracao_renda` do STAGING HEX — a fonte de onde a
+    coluna calibrada de fato nasce. O manifesto do artefato GEO tem OUTRO k (calibracao
+    independente) e nao pode ser usado aqui: desfazia a escala errada (~17% no tooltip).
+
+    Carimbo ausente/ilegivel ou k implausivel cai na constante conhecida — NUNCA em 1,0
+    em silencio (reintroduziria a dupla contagem sem pista).
+    """
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    monkeypatch.setattr(pilot, "STAGING_DIR", staging)
+
+    for carimbo, esperado in (
+        ("multiplicativo_global_k=1.4321", 1.4321),
+        ("multiplicativo_global_k=0.5", 0.5),                      # fronteira, plausivel
+        ("multiplicativo_global_k=0.4", pilot._K_CALIBRACAO_FALLBACK),  # fora da faixa
+        ("multiplicativo_global_k=9.9", pilot._K_CALIBRACAO_FALLBACK),
+        ("sem_k_no_texto", pilot._K_CALIBRACAO_FALLBACK),          # carimbo sem k=
+    ):
+        _escrever_carimbo_k(staging, carimbo)
+        pilot._k_calibracao_renda.cache_clear()
+        assert pilot._k_calibracao_renda() == approx(esperado)
+
+    # Parquet sem a coluna do carimbo -> fallback.
+    pd.DataFrame({"outra_coluna": [1.0]}).to_parquet(staging / pilot._CENSO_HEX_STAGING_PARQUET)
+    pilot._k_calibracao_renda.cache_clear()
+    assert pilot._k_calibracao_renda() == approx(pilot._K_CALIBRACAO_FALLBACK)
+
+    # Arquivo ausente -> fallback.
+    (staging / pilot._CENSO_HEX_STAGING_PARQUET).unlink()
+    pilot._k_calibracao_renda.cache_clear()
+    assert pilot._k_calibracao_renda() == approx(pilot._K_CALIBRACAO_FALLBACK)
+    pilot._k_calibracao_renda.cache_clear()
+
+
+def test_k_do_carimbo_manda_na_formula_do_hex(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Trava de FONTE: trocar o carimbo do staging muda a renda do hex na mesma proporcao.
+
+    E' o teste que pega a regressao de voltar a ler o k do manifesto do GEO (ou de qualquer
+    outra fonte fixa): com o carimbo sintetico em 2.0, a base tem de sair EXATAMENTE
+    calibrada/2.0 — nenhuma constante do codigo reproduz isso por coincidencia.
+    """
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    _TABELA_MUNICIPIOS.to_parquet(staging / "uplift_renda_domiciliar_municipio.parquet")
+    (staging / "fator_temporal_renda.json").write_text(
+        json.dumps({"fator_temporal_renda": FATOR_TEMPORAL, "competencia_atual_fim": "202606"}),
+        encoding="utf-8",
+    )
+    _escrever_carimbo_k(staging, "multiplicativo_global_k=2.0")
+    _apontar_staging(monkeypatch, staging)
+
+    df = pd.DataFrame(
+        {
+            "hex_id": ["a"],
+            "uf": ["SP"],
+            "cod_municipio": ["3550308"],
+            "renda_per_capita_setor_2022_calibrada": [1500.0],
+        }
+    )
+    r = _serie_renda_dom(df)
+    assert r.loc[0] == round(1500.0 / 2.0 * 6.0)  # base = calibrada / k_do_carimbo
+    pilot._fator_temporal_renda.cache_clear()
+    pilot._k_calibracao_renda.cache_clear()
 
 
 def test_preserva_indice_nao_sequencial(staging_sintetico: Path) -> None:
@@ -256,4 +450,4 @@ def test_preserva_indice_nao_sequencial(staging_sintetico: Path) -> None:
     r = _serie_renda_dom(df)
     assert list(r.index) == [10, 20, 30]
     # A linha do rotulo 10 casa com o SEU municipio — sem mistura posicional.
-    assert r.loc[10] == 9000
+    assert r.loc[10] == round(1500 / K * 6.0)

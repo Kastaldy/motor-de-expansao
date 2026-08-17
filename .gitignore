@@ -20,6 +20,11 @@ data/staging/*
 data/snapshots/
 data/ultra/
 data/osm_cache/
+# Backups/limpezas locais de producao — dados reais da rede Ultra, NUNCA versionar
+# (BLK-SEC-05: estes diretorios estavam untracked e nao-ignorados, a um `git add` de
+# entrar no repo; o gitleaks nem inspeciona conteudo parquet).
+data/_backup*/
+data/_pre_regen/
 # Cadastro operacional (consultor, franqueado, master franquia): dado real de negocio,
 # semeado da planilha do time de campo. E o default de MOTOR_CADASTRO_DIR, entao aparece
 # aqui em qualquer maquina que rode o piloto local — em producao ele vive num volume :rw.

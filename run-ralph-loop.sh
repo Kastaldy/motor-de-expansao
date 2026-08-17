@@ -17,8 +17,11 @@ MAX_ITERS="${MAX_ITERS:-10}"
 BASE_REF="$(git rev-parse HEAD)"   # ponto de partida para o guard de M1/VPS
 
 # --- Rede de seguranca 1: nenhuma credencial sensivel no container -----------------------------
-if env | grep -Eiq 'VPS_|SSH_PRIVATE_KEY|CLICKUP_WRITE|DEPLOY_KEY|GROWTH_API_|_TOKEN_PROD'; then
-  echo "ABORT: credencial sensivel detectada no container (VPS/Growth API/ClickUp/deploy)."
+# BLK-SEC-05: alem de VPS/deploy, tambem barra segredos de CI (GH_TOKEN/AUTO_MERGE_PAT)
+# e de producao da API/Authelia (o loop e credential-free; so CLAUDE_CODE_OAUTH_TOKEN).
+# Nomes ESPECIFICOS de proposito: um `API_` cru pegaria config benigna (API_ENVIRONMENT).
+if env | grep -Eiq 'VPS_|SSH_PRIVATE_KEY|CLICKUP_WRITE|DEPLOY_KEY|GROWTH_API_|_TOKEN_PROD|GH_TOKEN|GITHUB_TOKEN|AUTO_MERGE_PAT|AUTHELIA_|API_TELEGRAM_TOKEN|API_BOT_SENHA|API_TOKENS|API_API_CALL_TOKEN'; then
+  echo "ABORT: credencial sensivel detectada no container (VPS/Growth API/ClickUp/deploy/CI/API prod)."
   echo "       O loop e credential-free: remova-a do ambiente antes de rodar."
   exit 1
 fi

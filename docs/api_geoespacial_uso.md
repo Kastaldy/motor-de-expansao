@@ -151,11 +151,12 @@ JSON é o padrão. PDF é ativado por qualquer das 3 formas abaixo (em ordem de 
 | `metodo` | `string` | `"setor_censitario_intersecao_area_1km"` |
 | `n_setores` | `int` | Setores IBGE 2022 cruzados |
 | `pop_total_raio` | `float \| null` | População total no raio |
-| `renda_per_capita_media_raio` | `float \| null` | Renda per capita média ponderada |
-| `renda_media_domiciliar_raio` | `float \| null` | Renda domiciliar **PRÉ-uplift** (R$/mês por domicílio), ponderada por domicílios — menor que a exibida no PDF |
-| `renda_domiciliar_total_raio` | `float \| null` | Renda **por domicílio** (R$/mês) com uplift setorial + fator temporal — NÃO é massa/somatório; é o valor exibido no PDF |
+| `renda_per_capita_media_raio` | `float \| null` | Renda **domiciliar per capita** média ponderada (conceito IBGE/SIDRA). ⚠️ **Escala mudou em 2026-08-14**: antes saía da coluna calibrada (~19% abaixo do IBGE); agora = renda domiciliar ÷ moradores — o valor SOBE ~50% para o mesmo ponto |
+| `renda_media_domiciliar_raio` | `float \| null` | Renda domiciliar **PRÉ-uplift** (R$/mês por domicílio, V06004 **bruta** desde 2026-08-14 — antes carregava o `k` da calibração, ~23% maior), ponderada por domicílios — menor que a exibida no PDF |
+| `renda_domiciliar_total_raio` | `float \| null` | Renda **por domicílio** (R$/mês) com uplift setorial + fator temporal — NÃO é massa/somatório; é o valor exibido no PDF. ⚠️ Escala corrigida em 2026-08-14 (fim da dupla contagem do `k`: cai ÷1,2335 para o mesmo ponto) |
 | `domicilios_total_raio` | `float \| null` | Domicílios estimados no raio |
 | `metodo_renda_domiciliar_raio` | `string \| null` | `"ponderada_domicilios_estimados"`, `"ponderada_populacao_ou_area"` ou `"ausente"` |
+| `fracao_uplift_extrapolado_raio` | `float \| null` | **ADITIVO 2026-08-14**: fração (0–1, por peso de domicílios) do raio cuja renda depende de uplift **extrapolado** para fora do envelope de calibração — pede leitura cautelosa |
 | `densidade_pop_raio_hab_km2` | `float \| null` | Densidade populacional (hab/km²) |
 | `score_setor_medio` | `float \| null` | Score censitário médio ponderado |
 | `score_setor_max` | `float \| null` | Score censitário máximo no raio |
