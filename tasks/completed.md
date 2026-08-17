@@ -12404,3 +12404,38 @@ que é outro juízo), as metas absolutas dos Big Numbers (decisão de Felipe, DE
 artefato do M1.
 
 
+
+## Fechamento de ciclo — Trilha de acesso do piloto / DEC-027 (2026-08-17, ad-hoc)
+
+Feature ad-hoc (fora do backlog), pedida por Felipe em 2026-08-17: "construirmos o rastro de logs
+do motor e guardar isso de maneira segura; o maximo que puder ser registrado sem inflar". Origem:
+diagnostico da mesma data — o Caddy injetava `Remote-User` em toda requisicao do piloto e ninguem
+gravava; Authelia em `warn` nao registrava login com sucesso; retencao era acidente da rotacao do
+Docker. Bot Telegram e API GeoEspacial FORA do escopo por decisao explicita.
+
+Entrega (DEC-027): middleware `_trilha_acesso` no backend do piloto grava 1 linha JSONL por
+requisicao relevante (usuario, IP real via XFF, rota+query, status, duracao_ms, agente, bytes) em
+volume `:rw` proprio (`/opt/motor-expansao/logs/acesso`, segundo mount de escrita — emenda a
+DEC-023, anotada inline), com filtro de ruido (assets + /api/health) e retencao de 90 dias podada
+pelo proprio backend (dir 0700, arquivos 0600). Preparados (aplicacao manual na VPS): access log
+do Caddy no host piloto (JSON, rolagem 20MiBx10, 90d) e Authelia `level: info`.
+
+QA: revisao adversarial por workflow (34 agentes: 4 lentes -> 15 achados -> 2 ceticos por achado ->
+9 confirmados, 6 refutados). Os 9 corrigidos no proprio ciclo — destaque: teste que trava o
+REGISTRO do middleware no app (falso-verde reproduzido por mutacao), fronteira exata dos 90d e gate
+da poda testados, drift do runbook `deploy_piloto_web.md` ("UNICO volume :rw") corrigido, limite de
+confianca dos headers declarado no contrato. Suite completa: 3007 passed, 1 failed PRE-EXISTENTE e
+ambiental (`test_sem_escrita_em_disco` do dimensionamento: openpyxl usa %TEMP% no Windows; verde no
+CI Linux). `ruff` limpo. `test_claude_md_size` verde.
+
+Arquivos: `src/motor_expansao/dashboard/acesso_log.py`, `web/server/app.py`,
+`tests/unit/test_acesso_log.py` (29 testes), `tests/conftest.py`, `tests/unit/test_piloto_web_rede.py`
+(contrato do compose: 2 mounts `:rw` exatos), `docker-compose.prod.yml`, `.gitignore`,
+`docs/trilha_acesso_piloto.md` (contrato canonico), `docs/deploy_piloto_web.md`,
+`docs/infra_producao.md`, `docs/README.md`, `docs/decisions/DEC-027.md`, `docs/decisions/DEC-023.md`
+(emenda inline), `docs/decisions/README.md`, `CLAUDE.md` (linha-indice DEC-027). Locais/gitignored
+(referencia para o servidor): `Caddyfile` (diretiva `log`) e `authelia/configuration.yml` (`info`).
+
+Merge = passo humano (PR ad-hoc que toca compose: `criticidade:alta` + `aprovado-humano` de humano
+distinto do autor + `critica-aprovada` de dono pelo guard). Deploy manual por digest + 5 passos de
+habilitacao na VPS em `docs/trilha_acesso_piloto.md`. Housekeeping: helper e no-op (EXIT_AD_HOC).

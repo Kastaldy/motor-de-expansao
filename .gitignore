@@ -29,6 +29,9 @@ data/_pre_regen/
 # semeado da planilha do time de campo. E o default de MOTOR_CADASTRO_DIR, entao aparece
 # aqui em qualquer maquina que rode o piloto local — em producao ele vive num volume :rw.
 data/cadastro/
+# Trilha de acesso do piloto (DEC-027): default de MOTOR_ACESSO_LOG_DIR em dev;
+# em producao vive num volume :rw proprio.
+data/acesso_log/
 data/models/*.pkl
 data/models/*.joblib
 concorrentes/

@@ -63,3 +63,15 @@ def _freeze_fpdf_clock(monkeypatch):
     if hasattr(_output_mod, "datetime"):
         monkeypatch.setattr(_output_mod, "datetime", _FrozenDateTime)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _isolar_trilha_acesso(monkeypatch, tmp_path):
+    """Aponta a trilha de acesso do piloto (DEC-027) para um tmp por teste.
+
+    O middleware do piloto grava uma linha JSONL por requisicao de TestClient; sem
+    isto, qualquer teste que use TestClient escreveria em `<repo>/data/acesso_log`
+    da maquina de quem roda. A resolucao do diretorio e' lazy (le a env var a cada
+    chamada), entao o patch vale independentemente da ordem de import dos modulos.
+    """
+    monkeypatch.setenv("MOTOR_ACESSO_LOG_DIR", str(tmp_path / "acesso_log"))

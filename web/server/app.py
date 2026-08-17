@@ -32,6 +32,7 @@ import math
 import os
 import re
 import sys
+import time
 import unicodedata
 from collections.abc import Callable, Collection
 from pathlib import Path
@@ -76,6 +77,7 @@ import cobertura_1km  # noqa: E402  (PROTOTIPO — area coberta pelo raio, para 
 import pressao_1km  # noqa: E402  (PROTOTIPO — chave de raio 2 km / 1 km por area)
 
 from motor_expansao.dashboard import (  # noqa: E402
+    acesso_log,
     rede_cadastro,
     rede_coorte,
     rede_diagnostico,
@@ -190,6 +192,63 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
     if detalhe is not None:
         return JSONResponse({"detail": detalhe}, status_code=403)
     return await call_next(request)
+
+
+# --- Trilha de acesso (DEC-027) ---------------------------------------------
+# DEFINIDA DEPOIS do controle por aba de proposito: o decorator adiciona o
+# middleware mais recente por FORA da pilha, entao a trilha envolve o controle e
+# registra tambem os 403 de acesso negado — tentativa barrada e' evento de
+# auditoria, nao ruido.
+# O Caddy, atras do Authelia, injeta `Remote-User`/`Remote-Email` em TODA
+# requisicao do piloto; ate a DEC-027 so o PUT do cadastro lia esses headers.
+# Este middleware registra quem fez o que (usuario, IP real via X-Forwarded-For,
+# rota+query, status, latencia) em JSONL num diretorio PROPRIO, fora do
+# MOTOR_DATA_DIR — mesmo desenho do cadastro (DEC-023), para o guardrail
+# READ-ONLY do M1 seguir valendo sem excecao. A escrita em si vive no modulo
+# `acesso_log`; o app.py continua sem escritor de FS (e' o que o guardrail AST
+# da suite prova).
+
+
+def _registrar_acesso(request: Request, *, status: int, inicio: float, tamanho: str | None) -> None:
+    """Monta e grava a linha da trilha. Rastro, nao transacao: falha morre aqui."""
+    try:
+        caminho = request.url.path
+        if not acesso_log.relevante(caminho):
+            return
+        xff = request.headers.get("x-forwarded-for")
+        cliente = request.client.host if request.client else None
+        evento = acesso_log.montar_evento(
+            usuario=request.headers.get("remote-user") or request.headers.get("remote-email"),
+            ip=(xff.split(",")[0] if xff else cliente),
+            metodo=request.method,
+            rota=caminho,
+            query=request.url.query,
+            status=status,
+            duracao_ms=round((time.perf_counter() - inicio) * 1000),
+            agente=request.headers.get("user-agent"),
+            tamanho=tamanho,
+        )
+        acesso_log.registrar(evento)
+    except Exception:  # noqa: BLE001 — a trilha nunca pode derrubar a requisicao
+        pass
+
+
+@app.middleware("http")
+async def _trilha_acesso(request: Request, call_next: Callable[..., Any]) -> Any:
+    inicio = time.perf_counter()
+    try:
+        resposta = await call_next(request)
+    except Exception:
+        # Erro nao tratado vira 500 la fora; a trilha registra antes de propagar.
+        _registrar_acesso(request, status=500, inicio=inicio, tamanho=None)
+        raise
+    _registrar_acesso(
+        request,
+        status=resposta.status_code,
+        inicio=inicio,
+        tamanho=resposta.headers.get("content-length"),
+    )
+    return resposta
 
 
 # ============================================================================
