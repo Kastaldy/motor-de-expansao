@@ -537,9 +537,18 @@ def dedup_cadeias_do_feed(
     endereços iguais com slug de rede divergente que só o piso recupera.
 
     **NÃO reusa `dedup_independentes`**, e isso é desenho, não duplicação: aquela exige
-    `fonte`/`chave_snapshot` nos DOIS lados (o parquet de cadeias não tem nenhum dos dois), só
-    colapsa entre fontes DIFERENTES e usa distância pura. São regras diferentes, com custos
-    assimétricos opostos — juntá-las numa função parametrizada esconderia isso.
+    `fonte`/`chave_snapshot` nos DOIS lados (o parquet de cadeias não tem nenhum dos dois) e usa
+    distância pura. São regras diferentes, com custos assimétricos opostos — juntá-las numa função
+    parametrizada esconderia isso.
+
+    **DUAS PASSAGENS, desde o BLK-MA-17-FU1/FU2.** Primeiro contra os pontos mapeados; se não
+    colapsar, contra os SOBREVIVENTES do próprio feed, e aí só entre `fonte` DIFERENTES. A segunda
+    existe porque a mesma unidade listada por TotalPass e WellHub viraria duas linhas de oferta: as
+    gêmeas se pressionariam (até `49,96` pontos onde não há concorrente nenhum) e, pior, toda
+    academia num raio de 2 km contaria dois concorrentes onde há um — a auto-exclusão só zera a
+    posição do próprio observador. Colapsar dentro da MESMA fonte está proibido e foi medido: dos 5
+    pares de cadeias a `<= 50 m`, os cinco são `wellhub x wellhub` e três são redes distintas
+    dividindo prédio.
 
     O REPRESENTANTE é o ponto QUALIFICADO MAIS PRÓXIMO (desempate pelo menor índice), e o
     sobrevivente entra na ordem estável `(fonte, chave_snapshot)`: as duas escolhas existem para o
@@ -602,12 +611,18 @@ def dedup_cadeias_do_feed(
 
     mantidos: list[int] = []
     posicao_por_chave: dict[tuple[str, str], int] = {}
+    # Bucket dos SOBREVIVENTES do proprio feed (BLK-MA-17-FU2). Cresce durante o laco: a mesma
+    # unidade listada por DOIS agregadores so' e' comparavel depois que a primeira sobreviveu.
+    ocupantes_feed: dict[str, list[int]] = {}
+    posicao_do_sobrevivente: dict[int, int] = {}
     colapsadas = 0
+    colapsadas_entre_fontes = 0
 
     for i in range(len(base)):
         celula = h3.latlng_to_cell(float(lat[i]), float(lng[i]), DEDUP_H3_RES)
+        anel = h3.grid_disk(celula, k)
         candidatos: list[int] = []
-        for vizinha in h3.grid_disk(celula, k):
+        for vizinha in anel:
             candidatos.extend(ocupantes.get(vizinha, ()))
         representante: int | None = None
         melhor = float("inf")
@@ -624,19 +639,59 @@ def dedup_cadeias_do_feed(
                 melhor = d
                 representante = j
 
-        if representante is None:
-            posicao_por_chave[(fontes[i], chaves[i])] = offset + len(mantidos)
-            mantidos.append(i)
-        else:
+        if representante is not None:
             posicao_por_chave[(fontes[i], chaves[i])] = representante
             colapsadas += 1
+            continue
 
-    if colapsadas:
+        # SEGUNDA PASSAGEM (BLK-MA-17-FU2): contra os sobreviventes do proprio feed, e so' entre
+        # `fonte` DIFERENTES -- o mesmo recorte que `dedup_independentes` usa, e pela mesma razao.
+        # Sem ela, a mesma unidade de rede listada por TotalPass e WellHub vira DUAS linhas de
+        # oferta: as gemeas se pressionam (`sat(1,0)` -> ate' 49,96 pts onde nao ha' concorrente
+        # nenhum) e, pior, todo mundo num raio de 2 km passa a contar dois concorrentes onde ha' um,
+        # porque a auto-exclusao so' zera a posicao do proprio observador.
+        #
+        # Colapsar dentro da MESMA fonte esta' PROIBIDO, e foi medido: dos 5 pares de cadeias do
+        # feed a <= 50 m, os cinco sao `wellhub x wellhub` e TRES sao redes distintas dividindo
+        # predio (skyfit x panobianco a 2,9 m; selfit x power_fit a 22,5 m; force_one x world_gym a
+        # 39,9 m). A guarda de fonte os pula por construcao.
+        gemea: int | None = None
+        melhor_gemea = float("inf")
+        for vizinha in anel:
+            for j in ocupantes_feed.get(vizinha, ()):
+                if fontes[j] == fontes[i]:
+                    continue
+                d = float(
+                    _haversine_m(
+                        np.array([lat[i]]), np.array([lng[i]]), np.array([lat[j]]), np.array([lng[j]])
+                    )[0]
+                )
+                mesma_rede = bool(redes[i]) and redes[i] == redes[j]
+                if not ((mesma_rede and d <= float(distancia_m)) or d <= float(piso_m)):
+                    continue
+                if d < melhor_gemea or (d == melhor_gemea and gemea is not None and j < gemea):
+                    melhor_gemea = d
+                    gemea = j
+
+        if gemea is not None:
+            posicao_por_chave[(fontes[i], chaves[i])] = posicao_do_sobrevivente[gemea]
+            colapsadas_entre_fontes += 1
+            continue
+
+        posicao = offset + len(mantidos)
+        posicao_por_chave[(fontes[i], chaves[i])] = posicao
+        posicao_do_sobrevivente[i] = posicao
+        mantidos.append(i)
+        ocupantes_feed.setdefault(celula, []).append(i)
+
+    if colapsadas or colapsadas_entre_fontes:
         _logger.info(
-            "dedup de cadeias do feed contra o insumo mapeado: %d de %d colapsada(s) "
+            "dedup de cadeias do feed: %d de %d colapsada(s) contra o insumo mapeado e %d "
+            "contra outra fonte do proprio feed "
             "(mesma rede a %.0f m ou qualquer rede a %.0f m; grid_disk k=%d)",
             colapsadas,
             len(base),
+            colapsadas_entre_fontes,
             float(distancia_m),
             float(piso_m),
             k,
