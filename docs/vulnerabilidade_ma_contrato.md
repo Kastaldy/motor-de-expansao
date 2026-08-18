@@ -468,6 +468,24 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 > `sat(1,0) = 50,0` pontos de pressão fantasma, o **dobro** do erro que a emenda anterior fechou, e
 > maior justamente em quem não tem mais ninguém por perto.
 >
+> **[BLK-MA-17-FU2, 2026-08-18] A dedup também compara o feed CONTRA SI MESMO, entre `fonte`
+> DIFERENTES.** Como descrita acima, ela casava cada unidade do feed só contra o insumo mapeado —
+> nunca feed x feed, ao contrário da `dedup_independentes`. Com o TotalPass ligado, a mesma unidade
+> nos dois agregadores viraria duas linhas de oferta: `49,96` pontos de pressão fantasma nas gêmeas
+> e, pior, `n_concorrentes_no_raio` `+1` para **todo mundo** num raio de 2 km, porque a auto-exclusão
+> só zera a posição do próprio observador. A segunda passagem roda **depois** da primeira (o pin do
+> funil tem precedência) e **só entre fontes distintas**: colapsar dentro da MESMA fonte apagaria
+> concorrente real — dos 5 pares de cadeias do feed a `<= 50 m`, os cinco são `wellhub x wellhub` e
+> **três são redes diferentes dividindo prédio**. Efeito sobre o dado de hoje: **exatamente nulo**
+> (fonte única), medido `1.171 / 1.673 / 0`. **Sem bump de série** — nenhum schema muda e nenhum
+> número gravado muda.
+>
+> **[BLK-MA-17-FU1, mesmo dia] O `k` do bucket da `dedup_independentes` deixou de ser `1` cravado.**
+> Na `DEDUP_H3_RES = 11`, aresta média medida **28,66 m**, o anel `k = 1` não cobria os 50 m do
+> próprio limiar (43 pares a `<= 50 m` caem fora dele). Passou a sair de `_k_do_bucket`, como já era
+> aqui. Também exatamente nulo hoje (`0 de 19.329` colapsos, fonte única) — e é justamente esse o
+> risco: uma dedup sub-coberta devolve "nenhum colapso", indistinguível do caso correto.
+>
 > **QUEBRA DE COMPARABILIDADE COM A SÉRIE `v5`, anunciada.** Diferente da emenda anterior — onde
 > `Spearman(pressão, oferta) = 1,000000` permitiu dizer "não embaralha o ranking" —, **aqui a ordem
 > muda**. Medido nacionalmente sobre 19.329 academias e o entregável de 6.753 linhas: ver o corpo
