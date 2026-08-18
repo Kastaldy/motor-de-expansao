@@ -122,8 +122,15 @@ services:
       # por endereco usa Selenium/Chrome (primario) + Nominatim (fallback).
       API_GOOGLE_MAPS_API_KEY: ${API_GOOGLE_MAPS_API_KEY:-}
       API_BOT_SESSOES_PATH: "/data/bot_sessoes.json"
+      # Relatorio de acessos (2026-08-18, trilha DEC-027): /acessos no bot, SO para
+      # o chat de ops/alertas (mesmo id que o healthcheck usa). O envio automatico
+      # 3/3h e' do cron do host (scripts/cron/run_relatorio_acessos.sh), nao do bot.
+      API_ACESSO_LOG_DIR: "/app/logs/acesso"
+      API_ACESSOS_ADMIN_CHAT_ID: ${MONITOR_TELEGRAM_CHAT_ID:-}
     volumes:
       - bot_data:/data
+      # Trilha de acesso do piloto (DEC-027) em LEITURA — alimenta o /acessos.
+      - /opt/motor-expansao/logs/acesso:/app/logs/acesso:ro
     networks:
       - app_net
     security_opt:
