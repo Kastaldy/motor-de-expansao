@@ -28,6 +28,7 @@ import type {
   PecaCobertura,
   Pin,
   PinIndependente,
+  PinRede,
   Pins,
 } from '../lib/types'
 
@@ -232,6 +233,11 @@ export interface HexMapProps {
    *  concorrentes: um universo e' quem disputa, o outro e' quem se compra. Vazia = camada
    *  desligada ou artefato ausente, e o mapa fica exatamente como antes. */
   independentes?: PinIndependente[]
+  /** Unidades de REDE do agregador SEM equivalente no funil (BLK-MA-17 metade 1 / DEC-035).
+   *  Terceira lista, nunca misturada as outras duas: cadeia mapeada pelo site da rede, cadeia
+   *  listada so' pelo agregador e independente sao universos distintos, e juntar as duas primeiras
+   *  esconderia a lacuna que a DEC-034 mediu -- 1.171 unidades que pressionam sem serem desenhadas. */
+  redes?: PinRede[]
   /** PROTOTIPO: area coberta pelo raio, ja recortada dentro dos hexagonos. */
   cobertura1k?: Cobertura1k | null
   cameraInicial?: ViewState | null
@@ -264,6 +270,7 @@ export default function HexMap({
   searchPin,
   raio1km = false,
   independentes,
+  redes,
   cobertura1k,
   cameraInicial,
   onCamera,
@@ -296,6 +303,11 @@ export default function HexMap({
   // titulo/subtitulo do pin de concorrente.
   const [indepHover, setIndepHover] = useState<{
     d: PinIndependente
+    x: number
+    y: number
+  } | null>(null)
+  const [redeHover, setRedeHover] = useState<{
+    d: PinRede
     x: number
     y: number
   } | null>(null)
@@ -630,6 +642,35 @@ export default function HexMap({
           ]
         : []),
 
+      /* Unidades de REDE do agregador (BLK-MA-17 metade 1 / DEC-035). Cor CHAPADA e distinta da
+         laranja das independentes -- e' categoria, nao escala: as duas dizem "que tipo de ponto e'
+         este", nunca "quanto vale". O numero continua vivendo no tooltip, com rotulo e eixo.
+         Desenhadas junto das independentes e ANTES dos concorrentes: onde houver sobreposicao,
+         quem manda na leitura e' a rede instalada com pin do funil. */
+      ...(redes?.length
+        ? [
+            new ScatterplotLayer<PinRede>({
+              id: 'redes-pins',
+              data: redes,
+              getPosition: (d) => [d.lng ?? 0, d.lat ?? 0],
+              getRadius: 5,
+              radiusUnits: 'pixels',
+              radiusMinPixels: 3,
+              radiusMaxPixels: 8,
+              getFillColor: [86, 148, 196, 205],
+              stroked: true,
+              getLineColor: [16, 20, 28, 210],
+              lineWidthUnits: 'pixels',
+              getLineWidth: 1,
+              pickable: true,
+              onHover: (info) => {
+                const d = info.object as PinRede | undefined
+                setRedeHover(d ? { d, x: info.x, y: info.y } : null)
+              },
+            }) as unknown as ScatterplotLayer<Hex>,
+          ]
+        : []),
+
       // Concorrentes: bandeira QUADRADA com a logo da rede (fallback cor+sigla),
       // enxuta (pedido do Felipe). Ultra vem por cima, um pouco maior.
       new IconLayer<Pin>({
@@ -769,6 +810,7 @@ export default function HexMap({
     // funcionava. Foi exatamente o sintoma relatado ("o hexagono so aparece de uma cor").
     raio1km,
     independentes,
+    redes,
     cobertura1k,
     hexesCobertos,
     hexPorId,
@@ -932,6 +974,121 @@ export default function HexMap({
               BLK-MA-14 todas as academias do hexagono mostrariam o mesmo valor aqui;
             - nota e contagem SEMPRE juntas (DEC-026);
             - o REGIME, porque reguas de regimes diferentes nao se comparam entre si. */}
+      {/* Tooltip da unidade de REDE (BLK-MA-17 metade 1 / DEC-035).
+
+          Repare no que NAO esta aqui: score composto. A DEC-035 decidiu que unidade de rede recebe
+          FATO e PRESSAO, nunca score -- S1 mede politica comercial (a negociacao com o agregador e'
+          centralizada, "estar em 1 app em vez de 2" e' decisao da rede) e S3 e' CORRELACIONADO:
+          top 5 = 48,4% das unidades, maximo 440 numa rede. Quando a Panobianco sair do WellHub,
+          440 unidades viram `sumiu_recente` no mesmo dia, e um score composto leria um evento de
+          negociacao como 440 alvos. O S6 passa porque e' geografico e nao sabe se a academia e' de
+          rede. */}
+      {redeHover && (
+        <div
+          role="tooltip"
+          style={{
+            position: 'absolute',
+            ...ancora(redeHover.x, redeHover.y, 190, 210),
+            pointerEvents: 'none',
+            background: 'var(--surf-panel)',
+            border: '1px solid var(--line-mid)',
+            borderRadius: 'var(--r-md)',
+            padding: '9px 11px',
+            backdropFilter: 'blur(16px)',
+            boxShadow: '0 10px 30px -8px rgba(0,0,0,.7)',
+            zIndex: 31,
+            minWidth: 210,
+          }}
+        >
+          <div style={{ font: '600 12.5px/1.25 var(--f-ui)', color: 'var(--tx-max)' }}>
+            {redeHover.d.nome || 'Unidade de rede'}
+          </div>
+          <div style={{ font: '400 9.5px/1 var(--f-ui)', color: 'var(--tx-label)', marginTop: 3 }}>
+            Unidade de rede listada pelo agregador
+          </div>
+
+          <Divisoria />
+          {redeHover.d.pressao !== null && (
+            <Linha
+              rotulo="Pressão competitiva"
+              valor={`${num(redeHover.d.pressao, 1)} / 100 ↑`}
+              forte
+            />
+          )}
+          {/* A MESMA conta do pin de independente, e pela mesma razao: a saturacao gasta metade da
+              escala numa unica unidade equivalente, entao o numero sozinho nao e' conferivel. */}
+          {redeHover.d.n_conc !== null && (
+            <div
+              style={{
+                font: '400 9px/1.35 var(--f-ui)',
+                color: 'var(--tx-label)',
+                marginTop: 3,
+                maxWidth: 236,
+              }}
+            >
+              {redeHover.d.n_conc === 0
+                ? 'nenhum concorrente num raio de 2 km'
+                : `${num(redeHover.d.n_conc)} num raio de 2 km` +
+                  (redeHover.d.n_indep !== null
+                    ? ` (${num(redeHover.d.n_indep)} independente${redeHover.d.n_indep === 1 ? '' : 's'})`
+                    : '')}
+              {redeHover.d.n_cadeias_feed !== null &&
+                redeHover.d.n_cadeias_feed > 0 &&
+                `, ${num(redeHover.d.n_cadeias_feed)} de rede via agregador`}
+              {redeHover.d.oferta !== null && redeHover.d.n_conc > 0 && (
+                <>
+                  {' · '}
+                  <strong style={{ fontWeight: 600 }}>
+                    {num(redeHover.d.oferta, 2)} equivalente
+                    {redeHover.d.oferta === 1 ? '' : 's'}
+                  </strong>{' '}
+                  depois da distância
+                </>
+              )}
+              {redeHover.d.dist_m !== null && redeHover.d.n_conc > 0 && (
+                <>
+                  <br />
+                  mais próximo a {distanciaCurta(redeHover.d.dist_m)}
+                </>
+              )}
+            </div>
+          )}
+          <div
+            style={{
+              font: '400 9px/1.35 var(--f-ui)',
+              color: 'var(--tx-label)',
+              marginTop: 5,
+              maxWidth: 230,
+            }}
+          >
+            ↑ maior = mais cercada por concorrentes
+          </div>
+          {redeHover.d.nota !== null && (
+            <Linha
+              rotulo="Nota no WellHub"
+              valor={`${num(redeHover.d.nota, 1)}${
+                redeHover.d.n_aval !== null ? ` (${num(redeHover.d.n_aval)} avaliações)` : ''
+              }`}
+            />
+          )}
+          {redeHover.d.churn && <Linha rotulo="Presença na série" valor={redeHover.d.churn} />}
+          {redeHover.d.rede && <Linha rotulo="Rede" valor={redeHover.d.rede} />}
+          {/* A ausencia de score e' DECLARADA, nao silenciosa: um espaco vazio onde o pin vizinho
+              mostra um numero seria lido como "faltou dado". */}
+          <div
+            style={{
+              font: '400 9px/1.35 var(--f-ui)',
+              color: 'var(--tx-label)',
+              marginTop: 6,
+              maxWidth: 230,
+            }}
+          >
+            Sem score composto: numa rede, os sinais de presença e churn medem negociação da
+            marca, não fragilidade desta unidade.
+          </div>
+        </div>
+      )}
+
       {indepHover && (
         <div
           role="tooltip"
@@ -1003,6 +1160,13 @@ export default function HexMap({
                   (indepHover.d.n_indep !== null
                     ? ` (${num(indepHover.d.n_indep)} independente${indepHover.d.n_indep === 1 ? '' : 's'})`
                     : '')}
+              {/* A TERCEIRA PARCELA (DEC-035). Sem ela a conta simplesmente nao fechava: as
+                  unidades de rede vindas do agregador entram em `n_conc` e, quando colapsam contra
+                  um pin do funil, nao ganham pin proprio. Medido: 37,3% das linhas tem esta parcela
+                  maior que zero. Declarar quantas sao e' o que devolve a conferibilidade. */}
+              {indepHover.d.n_cadeias_feed !== null &&
+                indepHover.d.n_cadeias_feed > 0 &&
+                `, ${num(indepHover.d.n_cadeias_feed)} de rede via agregador`}
               {indepHover.d.oferta !== null && indepHover.d.n_conc > 0 && (
                 <>
                   {' · '}

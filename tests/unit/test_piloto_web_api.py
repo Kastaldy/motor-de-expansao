@@ -39,6 +39,7 @@ def _apontar(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
     monkeypatch.setattr(
         pilot_app, "NOMEADAS_PATH", staging / "vulnerabilidade_ma_nomeadas.parquet"
     )
+    monkeypatch.setattr(pilot_app, "REDES_PATH", staging / "vulnerabilidade_ma_redes.parquet")
 
 
 def test_health_ok() -> None:
@@ -67,6 +68,10 @@ def test_health_reporta_os_artefatos_que_a_tela_depende() -> None:
         # Pins das independentes (BLK-MA-15): mesma classe dos de crescimento — nao vem do git nem
         # da imagem, so' pelo bind mount, e sem ele a camada some EM SILENCIO.
         "independentes_nomeadas",
+        # Pins das unidades de REDE do agregador (BLK-MA-17 metade 1 / DEC-035). Mesma classe, e
+        # com um agravante proprio: sem este artefato as 1.171 unidades que a DEC-034 poe na
+        # oferta continuam contando na pressao sem aparecer no mapa.
+        "redes_nomeadas",
     }
     for nome, a in artefatos.items():
         assert isinstance(a["ok"], bool), nome
@@ -100,6 +105,7 @@ def test_health_nao_estoura_com_data_dir_inexistente(monkeypatch) -> None:
         "crescimento_municipal",
         "enriquecido",
         "independentes_nomeadas",
+        "redes_nomeadas",
     ]
     # Os caminhos reportados tem de sair do data_dir REPONTADO. Se a lista de artefatos
     # for montada no import, ela congela os `Path` originais e o health passa a falar do
@@ -130,7 +136,13 @@ def test_health_sobrevive_a_stat_que_levanta(monkeypatch) -> None:
         def __str__(self) -> str:
             return self._rotulo
 
-    for glob in ("ENRICHED_DIR", "CRESCIMENTO_PATH", "CRESCIMENTO_HEX_PATH", "NOMEADAS_PATH"):
+    for glob in (
+        "ENRICHED_DIR",
+        "CRESCIMENTO_PATH",
+        "CRESCIMENTO_HEX_PATH",
+        "NOMEADAS_PATH",
+        "REDES_PATH",
+    ):
         monkeypatch.setattr(pilot_app, glob, _CaminhoQueCai(f"/app/data/{glob}"))
 
     h = pilot_app.health()

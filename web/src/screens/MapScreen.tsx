@@ -22,6 +22,7 @@ import type {
   Cobertura1k,
   Hex,
   Independentes,
+  Redes,
   MunicipioItem,
   MunicipioPayload,
 } from '../lib/types'
@@ -145,12 +146,22 @@ export default function MapScreen({
   const [verIndependentes, setVerIndependentes] = useState(false)
   const independentes = dados?.independentes ?? null
   const temIndependentes = independentes?.disponivel === true && independentes.itens.length > 0
+  // Unidades de REDE do agregador sem equivalente no funil (BLK-MA-17 metade 1 / DEC-035).
+  // Chave PROPRIA, e nao um item da mesma pilula: sao universos distintos, e juntar os toggles
+  // faria o operador ligar "independentes" e receber cadeia junto.
+  const [verRedes, setVerRedes] = useState(false)
+  const redes = dados?.redes ?? null
+  const temRedes = redes?.disponivel === true && redes.itens.length > 0
 
   /* A chave morre com o recorte que a justificava: sair de um municipio COM camada para um SEM
      deixaria a pilula ligada sem nada para desenhar. */
   useEffect(() => {
     if (!temIndependentes) setVerIndependentes(false)
   }, [temIndependentes])
+
+  useEffect(() => {
+    if (!temRedes) setVerRedes(false)
+  }, [temRedes])
 
   /* Geometria do raio: buscada SOB DEMANDA, so' quando a chave liga. Fora do payload do
      mapa de proposito — custa ~2,4 s e ~3,9 MB na UF de SP, e quem nunca liga a chave nao
@@ -577,6 +588,7 @@ export default function MapScreen({
           cenario={cenario}
           raio1km={raio1km}
           independentes={verIndependentes ? independentes?.itens : undefined}
+          redes={verRedes ? redes?.itens : undefined}
           cobertura1k={cobertura}
           /* A foto CONGELA na montagem, e trocar de UF/municipio zera `cameraRef` mas
              nao tem como zerar `foto.camera`. Sem este portao: SP/Sao Paulo -> volta da
@@ -950,6 +962,17 @@ export default function MapScreen({
                 ligado={verIndependentes}
                 meta={independentes}
                 onToggle={() => setVerIndependentes((v) => !v)}
+              />
+            )}
+
+            {/* Unidades de REDE listadas pelo agregador que NAO tem pin no funil (DEC-035). Vale
+                em qualquer passo, pela mesma razao das independentes: a pergunta "quem ja opera
+                aqui" nao pertence a camada nenhuma do funil de abertura. */}
+            {temRedes && (
+              <PilulaRedes
+                ligado={verRedes}
+                meta={redes}
+                onToggle={() => setVerRedes((v) => !v)}
               />
             )}
 
@@ -1450,6 +1473,70 @@ function PilulaRaio({
 
    O TETO E' DECLARADO quando morde: corte silencioso num municipio grande mentiria sobre a
    densidade, que e' o defeito que o teto de pins de concorrente ja registrou. */
+/* Pilula das unidades de REDE do agregador (BLK-MA-17 metade 1 / DEC-035).
+
+   Chave separada da de independentes de proposito. O texto diz de QUEM e' o pin porque a tela ja
+   tem TRES universos de ponto: a bandeira quadrada da cadeia mapeada pelo site da rede, este ponto
+   (cadeia que so' o agregador lista, e que por isso nao tinha pin) e a independente. Juntar os dois
+   ultimos num toggle so' faria quem liga "independentes" receber cadeia junto.
+
+   O TETO E' DECLARADO quando morde, mesma razao da pilula irma. */
+function PilulaRedes({
+  ligado,
+  meta,
+  onToggle,
+}: {
+  ligado: boolean
+  meta: Redes | null
+  onToggle: () => void
+}) {
+  const n = meta?.itens.length ?? 0
+  const total = meta?.total ?? 0
+  return (
+    <button
+      onClick={onToggle}
+      title={
+        ligado
+          ? 'Cada ponto e uma unidade de rede que o agregador lista e que NAO tem bandeira no ' +
+            'mapa. Passe o mouse para ver a pressao competitiva e os fatos. Elas nao tem score ' +
+            'composto: numa rede, presenca e churn medem negociacao da marca, nao fragilidade ' +
+            'da unidade.'
+          : `Ver as ${total} unidades de rede deste recorte que nao tem bandeira no mapa`
+      }
+      style={{
+        pointerEvents: 'auto',
+        marginTop: 8,
+        width: '100%',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        fontSize: 11,
+        fontWeight: 600,
+        padding: '7px 11px',
+        borderRadius: 9,
+        border: `1px solid ${ligado ? 'rgba(86,148,196,.5)' : 'rgba(255,255,255,.14)'}`,
+        background: '#000',
+        color: ligado ? '#8fbcdd' : '#9aa7b5',
+      }}
+    >
+      <span
+        style={{
+          width: 9,
+          height: 9,
+          borderRadius: '50%',
+          background: ligado ? '#5694c4' : '#5a6472',
+          flexShrink: 0,
+        }}
+      />
+      {ligado
+        ? `${n} unidades de rede${meta?.truncado ? ` de ${total} (teto)` : ''}`
+        : 'Ver unidades de rede sem bandeira'}
+    </button>
+  )
+}
+
+
 function PilulaIndependentes({
   ligado,
   meta,

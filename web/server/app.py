@@ -115,6 +115,8 @@ CRESCIMENTO_HEX_PATH = STAGING_DIR / "crescimento_hex.parquet"
 # Vive em `data/staging/` (gitignored) porque carrega IDENTIDADE — autorizada pela emenda de
 # 2026-08-14 a DEC-028, que reverteu a proibicao da variante NOMEADA no piloto.
 NOMEADAS_PATH = STAGING_DIR / "vulnerabilidade_ma_nomeadas.parquet"
+# `[BLK-MA-17 metade 1 / DEC-035]` Unidades de REDE do agregador: pressao + fatos, SEM score.
+REDES_PATH = STAGING_DIR / "vulnerabilidade_ma_redes.parquet"
 
 # O que o piloto realmente consome do artefato municipal. Lido de forma defensiva:
 # coluna ausente some do subset em vez de derrubar a rota.
@@ -434,6 +436,10 @@ _COLS_NOMEADAS = [
     # olhando o proprio mapa.
     "n_concorrentes_no_raio",
     "n_independentes_no_raio",
+    # `[BLK-MA-17 metade 1 / DEC-035]` A terceira parcela da conta. Ela existia no artefato desde a
+    # DEC-034 e NAO chegava a' tela: sem ela `n_conc` nao fecha com `n_indep` + pins de cadeia, e a
+    # explicacao nao esta em lugar nenhum. Medido: 7.218 de 19.329 linhas (37,3%) tem valor > 0.
+    "n_cadeias_do_feed_no_raio",
     "oferta_ponderada",
     "dist_concorrente_mais_proximo_m",
 ]
@@ -462,6 +468,32 @@ def carregar_independentes() -> pd.DataFrame | None:
     return df[df["lat"].notna() & df["lng"].notna()]
 
 
+# `[BLK-MA-17 metade 1 / DEC-035]` Margem do recorte de pins, em metros.
+#
+# O PORQUE: a auditoria do pin promete "conta os pins no mapa e o numero fecha", e ela JA' NAO
+# FECHAVA antes desta epic -- 16,4% de quebra medida em SP (4.862 de 5.819 nomeadas). A causa e'
+# estrutural: as camadas de pin filtram por `hex_id_res7 ∈ sel`, ou seja pelo MUNICIPIO, enquanto o
+# raio de 2 km da pressao atravessa divisa municipal livremente. Quem esta' do outro lado da divisa
+# CONTA na pressao e NAO era desenhado.
+#
+# A margem e' o proprio raio da pressao: qualquer ponto que possa entrar na conta de alguem do
+# recorte tem de ser desenhavel. Maior que isso so' adicionaria pins que nao entram em conta nenhuma.
+PIN_MARGEM_M = 2000.0
+_GRAU_LAT_M = 111_320.0
+
+
+def _bbox_com_margem(sel: pd.DataFrame, metros: float = PIN_MARGEM_M) -> tuple[float, float, float, float]:
+    """Bbox do recorte expandido por `metros`. Devolve `(lat_min, lat_max, lng_min, lng_max)`."""
+    lat_min, lat_max = float(sel["lat"].min()), float(sel["lat"].max())
+    lng_min, lng_max = float(sel["lng"].min()), float(sel["lng"].max())
+    d_lat = metros / _GRAU_LAT_M
+    # O grau de longitude encurta com a latitude; usa-se a borda MAIS DISTANTE do equador, que da'
+    # a margem maior — errar para mais desenha um pin a' toa, errar para menos reabre o defeito.
+    cos_lat = math.cos(math.radians(max(abs(lat_min), abs(lat_max))))
+    d_lng = metros / (_GRAU_LAT_M * max(cos_lat, 0.01))
+    return lat_min - d_lat, lat_max + d_lat, lng_min - d_lng, lng_max + d_lng
+
+
 def _pins_independentes(sel: pd.DataFrame) -> dict[str, Any]:
     """Pins das independentes do recorte + a auditoria do que ficou de fora.
 
@@ -473,7 +505,11 @@ def _pins_independentes(sel: pd.DataFrame) -> dict[str, Any]:
         return {"itens": [], "disponivel": False, "total": 0, "truncado": False}
 
     hexes = set(sel["hex_id"].astype(str))
-    no_recorte = base[base["hex_id_res7"].isin(hexes)]
+    # Recorte = hexes do municipio UNIAO o que cai na margem do raio (ver `PIN_MARGEM_M`): sem a
+    # segunda parte, quem esta' do outro lado da divisa conta na pressao e nao aparece no mapa.
+    lat_min, lat_max, lng_min, lng_max = _bbox_com_margem(sel)
+    na_margem = base["lat"].between(lat_min, lat_max) & base["lng"].between(lng_min, lng_max)
+    no_recorte = base[base["hex_id_res7"].isin(hexes) | na_margem]
     total = int(len(no_recorte))
     recorte = no_recorte.head(COMPETITOR_PIN_LIMIT)
 
@@ -498,6 +534,104 @@ def _pins_independentes(sel: pd.DataFrame) -> dict[str, Any]:
             # mesmo conjunto depois do decaimento — a diferenca entre os dois E' a distancia.
             "n_conc": _inteiro_ou_nulo(getattr(t, "n_concorrentes_no_raio", None)),
             "n_indep": _inteiro_ou_nulo(getattr(t, "n_independentes_no_raio", None)),
+            "n_cadeias_feed": _inteiro_ou_nulo(getattr(t, "n_cadeias_do_feed_no_raio", None)),
+            "oferta": _num(getattr(t, "oferta_ponderada", None), 2),
+            "dist_m": _num(getattr(t, "dist_concorrente_mais_proximo_m", None), 0),
+        }
+        for t in recorte.itertuples(index=False)
+    ]
+    return {
+        "itens": itens,
+        "disponivel": True,
+        "total": total,
+        "truncado": total > len(itens),
+    }
+
+
+# O que o pin de REDE consome. Note o que NAO esta aqui: `score_vulnerabilidade` e
+# `score_vulnerabilidade_ordenavel`. A DEC-035 decidiu que unidade de rede recebe FATO e PRESSAO,
+# nunca score composto -- S1 mede politica comercial (a negociacao com o agregador e' centralizada)
+# e S3 e' correlacionado (top 5 = 48,4% das unidades, max 440 numa rede).
+_COLS_REDES = [
+    "nome",
+    "rede",
+    "lat",
+    "lng",
+    "hex_id_res7",
+    "pressao_competitiva",
+    "pressao_grao",
+    "nota_wellhub",
+    "qtd_avaliacoes_wellhub",
+    "status_churn",
+    "n_concorrentes_no_raio",
+    "n_independentes_no_raio",
+    "n_cadeias_do_feed_no_raio",
+    "oferta_ponderada",
+    "dist_concorrente_mais_proximo_m",
+    "tem_pin_proprio",
+]
+
+
+@functools.lru_cache(maxsize=1)
+def carregar_redes() -> pd.DataFrame | None:
+    """Unidades de REDE do agregador com identidade e pressao. READ-ONLY e OPCIONAL.
+
+    Mesmo regime do `carregar_independentes`: ausente = os pins nao aparecem, e o piloto abre
+    exatamente como antes. So' existe onde alguem materializou com `--saida-redes`.
+
+    **Filtra por `tem_pin_proprio`**, e isso e' a preferencia de pin da DEC-035, nao um filtro de
+    conveniencia: as unidades com `False` COLAPSARAM contra um ponto de `concorrentes_mapeados` na
+    dedup da DEC-034, ou seja ja' tem pin desenhado no funil naquele endereco. Desenha-las de novo
+    criaria dois pins no mesmo lugar e faria a contagem do tooltip parar de fechar -- o defeito que
+    esta metade veio corrigir.
+    """
+    if not REDES_PATH.exists():
+        return None
+    import pyarrow.parquet as pq
+
+    disponiveis = set(pq.read_schema(REDES_PATH).names)
+    cols = [c for c in _COLS_REDES if c in disponiveis]
+    if "lat" not in cols or "hex_id_res7" not in cols or "tem_pin_proprio" not in cols:
+        return None
+    df = pd.read_parquet(REDES_PATH, columns=cols)
+    df["hex_id_res7"] = df["hex_id_res7"].astype(str)
+    df = df[df["lat"].notna() & df["lng"].notna()]
+    return df[df["tem_pin_proprio"].fillna(False).astype(bool)]
+
+
+def _pins_redes(sel: pd.DataFrame) -> dict[str, Any]:
+    """Pins das unidades de REDE do agregador que nao tem equivalente no funil.
+
+    Lista PROPRIA, separada de `pins.concorrentes` e de `independentes`: sao tres universos com
+    semantica distinta -- cadeia mapeada pelo site da rede, cadeia listada so' pelo agregador, e
+    independente. Misturar as duas primeiras esconderia justamente a lacuna que a DEC-034 mediu.
+    """
+    base = carregar_redes()
+    if base is None or base.empty:
+        return {"itens": [], "disponivel": False, "total": 0, "truncado": False}
+
+    hexes = set(sel["hex_id"].astype(str))
+    lat_min, lat_max, lng_min, lng_max = _bbox_com_margem(sel)
+    na_margem = base["lat"].between(lat_min, lat_max) & base["lng"].between(lng_min, lng_max)
+    no_recorte = base[base["hex_id_res7"].isin(hexes) | na_margem]
+    total = int(len(no_recorte))
+    recorte = no_recorte.head(COMPETITOR_PIN_LIMIT)
+
+    itens = [
+        {
+            "lat": _num(t.lat, 6),
+            "lng": _num(t.lng, 6),
+            "nome": _clean(getattr(t, "nome", "")),
+            "rede": _texto(getattr(t, "rede", None)),
+            # SEM `score` e SEM `ordenavel`, de proposito (DEC-035). O que esta unidade exibe e' a
+            # pressao -- que e' geografica e nao sabe se a academia e' de rede -- e os fatos.
+            "pressao": _num(getattr(t, "pressao_competitiva", None), 1),
+            "nota": _num(getattr(t, "nota_wellhub", None), 1),
+            "n_aval": _inteiro_ou_nulo(getattr(t, "qtd_avaliacoes_wellhub", None)),
+            "churn": _texto(getattr(t, "status_churn", None)),
+            "n_conc": _inteiro_ou_nulo(getattr(t, "n_concorrentes_no_raio", None)),
+            "n_indep": _inteiro_ou_nulo(getattr(t, "n_independentes_no_raio", None)),
+            "n_cadeias_feed": _inteiro_ou_nulo(getattr(t, "n_cadeias_do_feed_no_raio", None)),
             "oferta": _num(getattr(t, "oferta_ponderada", None), 2),
             "dist_m": _num(getattr(t, "dist_concorrente_mais_proximo_m", None), 0),
         }
@@ -1099,7 +1233,14 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
 
     conc = _carregar_concorrentes()
     if len(conc):
-        no_muni = conc[conc["hex_id_res7"].astype(str).isin(hex_ids)]
+        # Hexes do municipio UNIAO a margem do raio (`PIN_MARGEM_M`): o raio de 2 km da pressao
+        # cruza divisa municipal, e antes desta uniao o concorrente do outro lado contava sem ser
+        # desenhado — uma das tres causas da auditoria do pin nao fechar (DEC-035).
+        m_lat_min, m_lat_max, m_lng_min, m_lng_max = _bbox_com_margem(sel)
+        na_margem = conc["lat"].between(m_lat_min, m_lat_max) & conc["lng"].between(
+            m_lng_min, m_lng_max
+        )
+        no_muni = conc[conc["hex_id_res7"].astype(str).isin(hex_ids) | na_margem]
         if no_muni.empty:  # base antiga sem hex casavel -> cai no bbox
             no_muni = conc[conc["lat"].between(lat_min, lat_max) & conc["lng"].between(lng_min, lng_max)]
         conc = no_muni.head(COMPETITOR_PIN_LIMIT)
@@ -2303,6 +2444,11 @@ def _artefatos_observados() -> list[tuple[str, Path, str]]:
             "independentes_nomeadas",
             NOMEADAS_PATH,
             "pins das academias independentes com score (BLK-MA-15)",
+        ),
+        (
+            "redes_nomeadas",
+            REDES_PATH,
+            "pins das unidades de rede do agregador, com pressao e sem score (BLK-MA-17/DEC-035)",
         ),
     ]
 
@@ -3622,6 +3768,10 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
         # Lista PROPRIA, nunca misturada a `pins.concorrentes`: cadeia e independente sao universos
         # de semantica oposta (quem disputa x quem se compra), e a intersecao entre eles e' vazia.
         "independentes": _pins_independentes(sel),
+        # Terceira lista, pela mesma razao que a segunda existe: cadeia listada so' pelo
+        # agregador nao e' o mesmo universo que cadeia mapeada pelo site da rede, e juntar
+        # as duas esconderia a lacuna que a DEC-034 mediu (1.171 unidades sem pin).
+        "redes": _pins_redes(sel),
     }
 
 

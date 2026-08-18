@@ -117,9 +117,44 @@ def test_o_pin_carrega_os_numeros_da_academia(com_independentes: Path) -> None:
     assert pin["provisorio"] is False
 
 
-def test_academia_de_outro_municipio_nao_entra(com_independentes: Path) -> None:
-    """O recorte é por hexágono do município, como o dos concorrentes."""
-    assert _muni("Campinas")["independentes"]["total"] == 0
+def test_academia_LONGE_de_outro_municipio_nao_entra(com_independentes: Path) -> None:
+    """O recorte é por hexágono do município MAIS a margem do raio da pressão (DEC-035).
+
+    **Este teste mudou de enunciado no BLK-MA-17 metade 1.** Antes ele afirmava "o recorte é por
+    hexágono do município" e usava Campinas — mas na fixture sintética São Paulo e Campinas ficam a
+    **~1,5 km** um do outro (`0.01` grau), enquanto os municípios reais estão a ~90 km. Ou seja, a
+    fixture não distinguia "outro município" de "fora do alcance", e o teste passava por acidente de
+    geometria sintética.
+
+    A regra correta é a da DEC-035: entra quem está no município **ou** dentro de `PIN_MARGEM_M` do
+    recorte, porque o raio de 2 km da pressão atravessa divisa municipal e quem está do outro lado
+    CONTA na conta do tooltip. Fora dessa margem, continua fora — que é o que este teste prova.
+    """
+    longe = _nomeadas()
+    longe["lat"] = -22.0  # ~170 km ao norte: fora de qualquer margem
+    # E o hex TAMBEM sai do municipio: o recorte e' `hex ∈ sel` **OU** margem, entao mover so' a
+    # coordenada deixaria o ramo do hex casando e o teste provaria o contrario do que diz.
+    longe["hex_id_res7"] = "87a9900000000ffff"
+    longe.to_parquet(
+        com_independentes / "staging" / "vulnerabilidade_ma_nomeadas.parquet", index=False
+    )
+    pilot.carregar_independentes.cache_clear()
+
+    assert _muni("Sao Paulo")["independentes"]["total"] == 0
+
+
+def test_academia_do_municipio_VIZINHO_dentro_do_raio_ENTRA(com_independentes: Path) -> None:
+    """A correção da DEC-035, e a razão de ela existir.
+
+    A auditoria do pin promete "conta os pins no mapa e o número fecha". Antes desta metade, quem
+    estava do outro lado da divisa entrava em `n_concorrentes_no_raio` e **não era desenhado** —
+    medido em SP: a conta já não fechava em 16,4% dos casos, por esta causa e mais duas.
+
+    Na fixture, as academias vivem nos hexes de São Paulo e Campinas está a ~1,5 km: dentro da
+    margem. Antes, `total` era `0` aqui; agora elas aparecem no recorte de Campinas, que é
+    exatamente o comportamento que faz a conta fechar.
+    """
+    assert _muni("Campinas")["independentes"]["total"] > 0
 
 
 def test_academia_sem_coordenada_nao_vira_pin(com_independentes: Path) -> None:
