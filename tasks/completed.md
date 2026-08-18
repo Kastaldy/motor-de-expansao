@@ -13255,3 +13255,256 @@ herdaria **já não fecha**: 16,4% de quebra ANTES da metade 2, ~50% depois, por
 pin contra raio de 2 km. `BLK-MA-06` — código na `main` desde 2026-08-11, o que falta é a **aplicação
 manual na VPS**, comando a comando, e é o caminho crítico (~2 meses de relógio até S3/S4 maturarem).
 `BLK-MA-07` (Google Places) — fonte externa paga, DEC própria, não bloqueia nada.
+
+---
+
+### BLK-MA-17 — Unidades de REDE presentes nos agregadores ganham o diagnóstico visível
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — altera o UNIVERSO declarado da camada (§3/D1 do contrato: "TotalPass/WellHub × independente"), que hoje é travado por assert na entrada **e** na saída do score. **Exige DEC própria.** READ-ONLY sobre o M1. |
+| **Prioridade** | Média — é ganho de leitura no mapa, não de decisão de M&A (comprar rede não é o caso de uso do epic). |
+| **Esteira** | Block Orchestrator → Planner → `[GATE — DEC própria]` → Builder → QA. |
+| **Status** | **CONCLUÍDO — as duas metades.** Metade 2 em 2026-08-15 (DEC-034): as unidades de rede entram na **oferta** do S6. Metade 1 em **2026-08-18** (DEC-035, aprovada no gate por Vinicius): elas ganham **pin e diagnóstico visível**, com **fato e sem score**. Criado em 2026-08-14 a pedido de Vinicius. |
+| **Depende de** | BLK-MA-15 (concluído 2026-08-14, molde do pin nomeado) e **BLK-MA-16 (concluído 2026-08-14)** — a ordem era para a tela não estrear exibindo uma pressão que mudasse de régua em seguida. **Dependência satisfeita:** a régua já é `cadeias_e_independentes` (DEC-033). |
+| **Autonomia** | **manual (NÃO loop-safe)** — muda o universo da camada. |
+
+**O universo existe e é descartado hoje.** O snapshot da semana `2026-33` tem **22.173 linhas: 19.329
+independentes (o universo do score) e 2.844 de REDE**, em 83 redes distintas — unidades de cadeia que
+estão no WellHub e que `_filtrar_universo_sinal_1` corta antes do score. Incluí-las cresceria o
+universo em **14,7%**.
+
+> ### [medido em 2026-08-15, depois da DEC-033] O bloco ganhou uma SEGUNDA metade, e ela é a mais forte
+>
+> A justificativa original era de LEITURA ("ver o diagnóstico também nas redes"). A medição do
+> BLK-MA-16 expôs outra coisa, mais grave: **1.134 dessas unidades (39,9%) não têm nenhum ponto de
+> cadeia a menos de 150 m em `concorrentes_mapeados`** — o insumo de oferta do S6. São academias de
+> rede REAIS, listadas no WellHub, que **hoje não pressionam ninguém** no cálculo.
+>
+> É o **mesmo defeito que a DEC-033 corrigiu, do outro lado**: lá as independentes não contavam como
+> oferta; aqui parte das cadeias também não conta, e pela mesma razão — cobertura do insumo, não
+> desenho da fórmula. Enquanto isso valer, a pressão de quem está perto dessas 1.134 está subestimada,
+> e o falso zero que a DEC-033 reduziu de 37,8% para 5,5% ainda tem um resíduo com causa conhecida.
+>
+> **Consequência para o escopo:** o bloco deixa de ser só exibição. Ele passa a ter duas metades
+> separáveis, e a segunda **não depende da DEC** que trava a primeira:
+>
+>   1. **Exibir** o diagnóstico nas unidades de rede — muda o universo declarado, exige DEC própria.
+>   2. **Contá-las como oferta** — não muda universo nenhum: elas já são concorrência por definição, e
+>      a única pergunta é de DEDUP contra os 58,5% que já estão no `concorrentes_mapeados`, para não
+>      contar a mesma unidade duas vezes. A primitiva existe (`dedup_independentes`), mas hoje ela só
+>      colapsa entre FONTES distintas — casar feed-de-rede com parquet-de-cadeia é caso novo.
+>
+> Se o gate da metade 1 demorar, **a metade 2 pode ir sozinha** e corrige um número que já está na
+> tela hoje.
+
+> ### [executado em 2026-08-15 — DEC-034] A metade 2 foi entregue; os números do quadro acima mudaram
+>
+> O gate (G1) ratificou **só a metade 2**: as 2.844 unidades de rede entram na **oferta** do S6, com
+> peso `1,0`, deduplicadas contra `concorrentes_mapeados.parquet` por
+> `(rede igual E d <= 150 m) OU (d <= 50 m)`. **Corrigindo o quadro acima:** o `1.134` citado é da
+> variante de **distância pura** (que apagaria 45 concorrentes reais) e o `1.179` do handoff do
+> Planner é da variante `(rede, d)` **sem o piso**. Pelo critério de fato adotado, **entram 1.171** e
+> **colapsam 1.673** — as duas metades foram medidas por varredura completa, e o `1.171` é o número
+> a citar daqui em diante.
+>
+> Efeito medido (nacional, 19.329 independentes): pressão média `61,415 -> 62,775`, **7.237 (37,4%)**
+> mudam de valor, `Spearman 0,9911994` no score, **2.096 de 6.753** linhas do entregável alteradas e
+> **12 das 100 primeiras linhas** do `alvos_ma_priorizados.csv` trocam. Quatro bumps de série. O
+> falso zero cai só de 5,53% para 5,31%: o bloco corrige **magnitude e ordem**, não cobertura.
+>
+> **O que continua PENDENTE (metade 1, e a DEC dela):** exibir o diagnóstico nas unidades de rede —
+> universo de exibição próprio, artefato nomeado próprio, terceira lista de pins e precedência de
+> pin. A precedência sai **de graça** da dedup já implementada: as **1.171** sobreviventes são
+> exatamente as que **não têm pin desenhado**; as **1.673** colapsadas já têm o pin do funil. E a
+> lacuna de auditoria do BLK-MA-18 já está DECLARADA no artefato nomeado, pela coluna
+> `n_cadeias_do_feed_no_raio` (24 colunas, `alvos_ma_nomeados_v4`) — falta surfaceá-la na tela.
+
+**A objeção que decide o desenho do bloco: S1 e S3 medem OUTRA COISA numa rede.** A negociação com o
+agregador é **centralizada**: "estar em 1 app em vez de 2" é política comercial da rede, não
+exposição daquela unidade. E o modo de falha do S3 é pior, porque é correlacionado — a concentração
+medida é **top 5 = 48,4% das unidades, máximo 440 numa rede só**. Quando a Panobianco sair do
+WellHub, **440 unidades viram `sumiu_recente` no mesmo dia** e o S3 — o maior peso do Plano B,
+`≈ 0,467` — dispara para todas simultaneamente, sem que uma única unidade tenha se fragilizado. O
+score leria um evento de negociação como 440 alvos.
+
+**Recomendação de desenho (a validar na DEC): fato sim, score composto não.** Propagar para as
+unidades de rede o **S6** (pressão, que é geográfica e não sabe se a academia é de rede) e os
+**fatos sem peso** — `nota_wellhub`, `qtd_avaliacoes_wellhub`, `status_churn` —, e **não** emitir
+`score_vulnerabilidade` para elas enquanto não houver régua própria. É o molde já usado duas vezes
+neste epic (G-D2 no `status_churn`, DEC-026 no rating): **o fato entra antes do peso**. Também
+preserva a leitura do §2 — a lista de alvos continua sendo de independentes.
+
+**Onde o código resiste, e por que isso é bom.** O universo é fechado num lugar só:
+`_filtrar_universo_sinal_1`, importado por `score.py` de propósito para não haver duas definições.
+Mas ele é **compartilhado com o sinal 1** — afrouxá-lo lá faria `n_academias_independentes_totalpass`
+e `..._wellhub` passarem a contar redes **com o nome dizendo o contrário**. O caminho é um universo
+próprio para a camada de exibição, não relaxar o filtro comum.
+
+**Pins: o join espacial NÃO resolve — medido.** Casando cada unidade de rede do agregador com um pin
+do funil da MESMA rede a menos de 150 m, só **1.665 de 2.844 casam (58,5%)**. Outras **1.167 não
+casam apesar de a rede existir no funil**, e há redes inteiras com casamento zero: `performance`
+(0/88), `one` (0/29), `contorno_do_corpo` (1/61), `power_fit` (5/76), `selfit` (69/202). Não é erro
+de distância — os dois feeds cobrem conjuntos diferentes da mesma rede. Logo o caminho é **pin
+próprio a partir da coordenada do feed** (molde BLK-MA-15), com **regra de precedência explícita**
+para os 58,5% que virariam dois pins no mesmo lugar.
+
+**O pin já tem molde novo (BLK-MA-18).** Se a metade 1 for adiante, ela herda a auditoria da pressão
+no tooltip (`n_conc` / `n_indep` / `n_cadeias_feed` / `oferta` / `dist_m`) — sem isso, uma unidade de
+rede exibiria um número saturado tão inverificável quanto o que a revisão de 2026-08-15 apontou.
+Contrato do artefato nomeado **desde a DEC-034**: `alvos_ma_nomeados_v4`, **24 colunas**.
+> ### [medido na revisão adversarial de 2026-08-17] A conferência visual que a metade 1 herdaria JÁ não fecha
+>
+> A promessa que o BLK-MA-18 escreveu no próprio componente — *"o operador conta os pins no mapa e o
+> número fecha"* — foi testada contra o dado real e **já falhava em 16,4% dos casos ANTES da metade
+> 2**: em SP fechava em **4.862 de 5.819** nomeadas, e **471** das 957 quebras tinham
+> `n_cadeias_do_feed_no_raio = 0`, isto é, quebravam por motivo alheio a este epic. Depois da metade
+> 2 fecha em **2.897 de 5.819 (49,8%)**.
+>
+> **A causa não é a metade 2 — é estrutural.** As duas camadas de pin filtram por
+> `hex_id_res7 ∈ sel` (`_montar_pins`, `_pins_independentes`), ou seja, pelo **município**, enquanto
+> o raio de 2 km atravessa divisa municipal livremente. Somem-se duas réguas de validade diferentes
+> sobre o mesmo parquet (`flag_coord_valida`, 4.459 pontos, no carregador; `status_registro ==
+> "valido"`, 4.366, na pressão) e a `dedup_independentes`, que colapsa entre fontes mas desenha o pin
+> da linha nomeada.
+>
+> **Consequência para o escopo desta metade:** surfacear `n_cadeias_do_feed_no_raio` no tooltip é
+> **necessário mas não suficiente** — sozinho, explica só uma parte da diferença. Herdar a auditoria
+> do BLK-MA-18 sem endereçar o recorte municipal entrega uma conta que continua não fechando em
+> metade dos casos. São **três** pontos de edição — `_COLS_NOMEADAS` (`web/server/app.py:401`), o
+> payload de `_pins_independentes` (`:463-486`) e o template do tooltip (`HexMap.tsx:999-1005`) —,
+> todos em `web/`, a zona em que `origin/main` andou.
+
+
+**Fora de escopo.** Qualquer artefato/peso/score do M1; a entrada das INDEPENDENTES como oferta
+(**BLK-MA-16**, concluído); incluir unidades de rede na lista comercial de alvos (**BLK-MA-05**);
+régua de score própria para rede (bloco futuro, se a DEC concluir que faz falta).
+
+**Critério de aceite.** Da metade 1: DEC própria decidindo o que é propagado (fatos e/ou score) e a
+precedência de pin; o filtro do sinal 1 e as colunas `n_academias_independentes_*` **intactos**; a
+lista de alvos de M&A segue só com independentes, travado por teste; anti-PII no molde do BLK-MA-15
+(artefato nomeado nasce gitignored). Da metade 2: dedup entre o feed de rede e
+`concorrentes_mapeados` travada por teste (a mesma unidade nunca conta duas vezes), com o efeito
+medido antes e depois sobre a distribuição de pressão. Em ambas: READ-ONLY sobre o M1; suíte verde.
+
+---
+
+
+---
+
+
+---
+
+
+## Fechamento de ciclo — BLK-MA-17 metade 1 (2026-08-18): o bloco fecha INTEIRO, as duas metades
+
+**O bloco `### BLK-MA-17` está concluído.** A metade 2 (contá-las como oferta) fechou em 2026-08-15
+pela DEC-034; a metade 1 (exibi-las) fecha hoje pela **DEC-035**, aprovada no gate por Vinicius. O
+`--is-done` passa a dizer DONE para o bloco-pai e para os três FU.
+
+### A decisão: FATO SIM, SCORE NÃO
+
+As unidades de rede recebem o **S6** (`pressao_competitiva` e a auditoria dela) e os **fatos sem
+peso** — `status_churn`, `nota_wellhub`, `qtd_avaliacoes_wellhub`. **Não** recebem
+`score_vulnerabilidade`, e a ausência é a decisão, não um esquecimento:
+
+  - **S1 mede política comercial, não fragilidade** — a negociação com o agregador é CENTRALIZADA;
+  - **S3 é correlacionado, e é o pior dos dois** — top 5 = 48,4% das unidades, máximo **440** numa
+    rede só. A Panobianco saindo do WellHub viraria **440 `sumiu_recente` no mesmo dia**, e o
+    composto leria um evento de negociação como 440 alvos.
+
+O **S6 não tem esse defeito**: é geográfico e não sabe se a academia é de rede. Molde do G-D2 e da
+DEC-026 — o fato entra antes do peso. A trava é dupla: um guard no artefato (qualquer coluna
+`score_*`/`v6` levanta) e um teste no payload do pin.
+
+### O achado que encolheu o bloco pela metade
+
+**A pressão dessas 2.844 unidades JÁ era calculada — e depois descartada.** O cálculo roda sobre o
+feed inteiro (22.173 linhas, incluindo as de rede) e é o **join do SCORE** que as filtra, não o
+cálculo. Medido: pressão média **72,154** nas redes (contra ~62,8 das independentes, o que faz
+sentido — rede fica onde é denso) e só **1,72%** de zeros. O módulo novo não recalcula nada:
+materializa o que era jogado fora.
+
+### A precedência de pin saiu de graça
+
+As **1.171** sobreviventes da dedup da DEC-034 são, POR CONSTRUÇÃO, exatamente as unidades sem ponto
+equivalente em `concorrentes_mapeados` — logo as únicas sem pin desenhado no funil. As **1.673**
+colapsadas já têm o pin de lá. Não houve regra nova a inventar: `tem_pin_proprio` é a dedup, e a
+materialização real bateu `1.171 / 1.673`, os mesmos números da DEC-034.
+
+### A causa REAL da auditoria do pin não fechar — e ela é anterior a este epic
+
+A revisão adversarial de 2026-08-17 mediu que a promessa que o BLK-MA-18 escreveu no componente —
+*"o operador conta os pins no mapa e o número fecha"* — **já falhava em 16,4% dos casos ANTES da
+metade 2**: em SP, fechava em 4.862 de 5.819, e **471** das 957 quebras tinham
+`n_cadeias_do_feed_no_raio = 0`, ou seja, quebravam por motivo alheio a este epic.
+
+São **três causas**, e as três foram endereçadas:
+  1. **Recorte municipal** — as camadas de pin filtravam por `hex_id_res7 ∈ sel` (município)
+     enquanto o raio de 2 km da pressão atravessa divisa livremente. O recorte passou a ser
+     `hex ∈ sel` **UNIÃO** a margem de `PIN_MARGEM_M = 2000` — o próprio raio da pressão, porque
+     todo ponto que possa entrar na conta de alguém tem de ser desenhável.
+  2. **A terceira parcela não chegava à tela** — `n_cadeias_do_feed_no_raio` existia no artefato
+     desde a DEC-034 e não estava em `_COLS_NOMEADAS`, nem no payload, nem no tooltip. Medido:
+     **7.218 de 19.329** linhas (37,3%) têm valor > 0.
+  3. **As unidades sem pin** — que é o que a terceira lista de pins resolve.
+
+### O teste que mudou de enunciado, e por quê
+
+`test_academia_de_outro_municipio_nao_entra` **passava por acidente de fixture**. Na fixture
+sintética, São Paulo e Campinas ficam a **~1,5 km** um do outro (`0.01` grau), enquanto os
+municípios reais estão a ~90 km: ela não distinguia "outro município" de "fora do alcance". Virou
+dois testes — um com a academia a ~170 km (**e com o `hex_id_res7` também fora**, senão o ramo do
+hex casaria e o teste provaria o contrário do que afirma) e outro provando que o vizinho DENTRO do
+raio agora entra, que é a correção.
+
+Arquivos alterados: `src/motor_expansao/vulnerabilidade/{redes_nomeadas (novo),contrato,alvos_ma}.py`,
+`web/server/app.py`, `web/src/lib/types.ts`, `web/src/components/HexMap.tsx`,
+`web/src/screens/MapScreen.tsx`, `tests/unit/{test_piloto_web_redes (novo),test_piloto_web_api,
+test_piloto_web_endpoints,test_piloto_web_independentes}.py`,
+`tests/unit/vulnerabilidade/test_redes_nomeadas.py` (novo), `docs/decisions/DEC-035.md` (nova),
+`docs/decisions/README.md`, `docs/vulnerabilidade_ma_contrato.md`, `CLAUDE.md` §8,
+`tasks/{backlog,completed}.md`
+Validações (saída real): suíte COMPLETA **3374 passed, 33 skipped, 0 falhas** — `contracts` 262+5,
+`integration` 202+1, `unit/{demanda_revelada,dimensionamento,vulnerabilidade}` 985+7 e os 96
+arquivos soltos de `unit/` em dois grupos (764 e 1161+20). `3374 + 33 = 3407` bate EXATAMENTE com o
+`--collect-only` global (**3407**, baseline 3382, **+25** = 16 + 8 testes novos e 1 que virou dois),
+o que prova que a soma dos blocos cobriu a suíte inteira, sem recorte esquecido. Recorte
+piloto+camada **558 passed**; `ruff check src tests web` limpo; `tsc --noEmit` limpo;
+`npm run build` OK (13,07s);
+`loop_guard --stdin` só `GOVERNANCA`, **zero CRITICO**; materialização real do artefato
+(2.844 linhas, 20 colunas, 83 redes, 1.171 com pin próprio)
+Decisões relacionadas: **DEC-035** (Alta, aprovada por Vinicius em 2026-08-18 no gate). Emenda ao
+§3/D1 do contrato: os dois universos passam a ser **explícitos e disjuntos** — o do SCORE
+(`_filtrar_universo_sinal_1`, intacto) e o de EXIBIÇÃO de redes
+(`filtrar_universo_exibicao_redes`). Contrato novo `redes_ma_nomeadas_v1`, 20 colunas.
+**Nenhum bump de série existente**: nada do que já era gravado mudou de schema ou de valor.
+
+**O merge com a `main` entrou neste ciclo.** A pilha nunca tinha rodado contra a `main` atual — 16
+commits (BLK-SEC-05, renda/k nacional, dois selos) que tocam `web/server/app.py`. Conflito único no
+`CLAUDE.md` §8, resolvido pela **união em ordem** (001-034), não "pegando um lado": a main terminava
+em `026, 030, 031, 032` e a pilha em `026, 027, 028, 029, 033, 034`. E uma correção que **nenhum
+conflito forçaria**: `docs/decisions/README.md` auto-mergeia em silêncio para o lado local e saltava
+de 029 para 033 — a `main` criou os arquivos `DEC-030/031/032` mas nunca os inseriu naquele índice,
+então as três não estavam em índice NENHUM. Suíte pós-merge: **3349 passed, 33 skipped, 0 falhas**.
+
+**Housekeeping — o helper engoliu os stubs DE NOVO, e agora está medido.** Mover o `### BLK-MA-17`
+recorta até o próximo heading (`### BLK-ORQ-28`), e os três stubs de FU vivem no meio: foram parar
+dentro do `completed.md`, como já havia acontecido no fechamento dos próprios FU horas antes. Não há
+ordem de execução que evite — **é preciso salvar os stubs antes e restaurá-los depois**. O helper
+também trouxe **144 linhas CRLF** do backlog para o `completed.md`, que é LF (o `merge=union` dele
+depende de EOL consistente); normalizadas. Conferido ao final: 4 stubs no backlog, 0 engolidos,
+`--is-done` DONE para o bloco-pai e os três FU.
+
+**A suíte completa teve de rodar em BLOCOS, e isso vale registrar.** Duas tentativas em background
+(`pytest -q` inteiro) foram MORTAS por volta de 10-14%, poucos minutos após o lançamento, sem
+nenhuma falha até ali — enquanto duas rodadas anteriores no mesmo dia tinham completado normalmente
+(639 s e 850 s). Em vez de insistir, a suíte foi partida em cinco blocos executados em primeiro
+plano. A soma (`3374 + 33 = 3407`) bate dígito a dígito com o `--collect-only` global, que é o que
+transforma "rodei em pedaços" em "rodei tudo" — sem essa conferência, um diretório esquecido
+passaria por suíte verde.
+
+**O que sobra na epic BLK-MA.** `BLK-MA-06` — código na `main` desde 2026-08-11; o que falta é a
+**aplicação manual na VPS**, comando a comando, e é o caminho crítico (~2 meses de relógio até S3/S4
+maturarem). As duas dedups (FU1/FU2) eram pré-requisito dele e estão fechadas. `BLK-MA-07` (Google
+Places) — fonte externa paga, DEC própria, não bloqueia nada.

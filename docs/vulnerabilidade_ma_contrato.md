@@ -114,6 +114,34 @@ tem demanda e interesse de presença). É um funil comercial, não uma decisão 
   22.174 das 45.527 linhas, 48,7%, com 99,5% de recall sobre a base de maio). Registrado aqui porque
   o §3 descrevia o universo como se o único corte fosse rede-vs-independente — não é, e o corte de
   cima é o que mais mexe no N.
+- **`[emenda BLK-MA-17 metade 1 / DEC-035, 2026-08-18]` Há DOIS universos, e só um deles é o do
+  score.** Até aqui o §3 falava de um universo só — "TotalPass/WellHub × independente" —, e a camada
+  de exibição herdava esse recorte por não ter outro. Agora eles são explícitos e **disjuntos**:
+  - **universo do SCORE** (`_filtrar_universo_sinal_1`, intacto): agregadores × `independente`. É
+    quem entra no `score_vulnerabilidade`, na lista de alvos de M&A e nas colunas
+    `n_academias_independentes_*`. **Nada nesta emenda o toca**, e afrouxá-lo faria aquelas colunas
+    contarem redes com o nome dizendo o contrário.
+  - **universo de EXIBIÇÃO de redes** (`filtrar_universo_exibicao_redes`): agregadores ×
+    `rede != independente`. São as **2.844** unidades de cadeia que o WellHub lista, que entram na
+    **oferta** do S6 desde a DEC-034 e não apareciam em tela nenhuma.
+
+  O que a segunda recebe é **fato e pressão, nunca score**: `pressao_competitiva` (o S6 é
+  geográfico e não sabe se a academia é de rede) mais `status_churn`, `nota_wellhub` e
+  `qtd_avaliacoes_wellhub`. **Não** recebe `score_vulnerabilidade`, porque S1 mede política
+  comercial (a negociação com o agregador é centralizada) e S3 é **correlacionado** — top 5 = 48,4%
+  das unidades, máximo 440 numa rede só: a Panobianco saindo do WellHub viraria 440
+  `sumiu_recente` no mesmo dia, e o composto leria um evento de negociação como 440 alvos. Molde do
+  G-D2 e da DEC-026: o fato entra antes do peso.
+
+  Artefato próprio, `redes_ma_nomeadas_v1` (20 colunas, gitignored, opt-in por `--saida-redes`), com
+  guard que levanta se qualquer coluna `score_*`/`v6` aparecer nele. **A pressão dessas unidades já
+  era calculada e descartada** — o cálculo roda sobre o feed inteiro (22.173 linhas) e é o join do
+  score que as filtra —, então esta metade não recalcula nada: materializa o que era jogado fora.
+
+  **Precedência de pin, herdada de graça da dedup da DEC-034:** as **1.171** sobreviventes são, por
+  construção, as sem ponto equivalente em `concorrentes_mapeados`, logo as únicas sem pin no funil;
+  as **1.673** colapsadas já têm o pin de lá, e desenhar outro faria a contagem do tooltip parar de
+  fechar.
 
 ---
 
