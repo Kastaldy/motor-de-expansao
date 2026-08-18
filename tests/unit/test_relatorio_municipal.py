@@ -1626,3 +1626,44 @@ def test_info_panel_trunca_rotulo_largo_sem_invadir_o_valor():
     assert _encurtar(pdf, "Centro", largura) == "Centro"
     # Largura degenerada nao estoura.
     assert _encurtar(pdf, longo, 0.0) == "..."
+
+
+def _bairros_geo_so_sobra() -> dict:
+    """Municipio SEM nenhuma localidade no IBGE: a lista tem SO a sobra (caso Apodi/RN)."""
+    sobra = _bairro_quadrado("Apodi (demais setores)", -4_300_000.0, -600_000.0, 8000.0,
+                             pop=34_000.0, sobra=True)
+    sobra["score"] = 20.3
+    return {
+        "bairros": [sobra],
+        "contorno": [sobra["aneis"][0]],
+        "n_bairros": 0,
+        "n_setores": 60,
+        "sem_localidade": 60,
+        "cobertura": 0.0,
+    }
+
+
+def test_so_sobra_nao_conta_como_bairro():
+    """Lista com SO a sobra nao pode ligar o modo por bairro."""
+    from motor_expansao.dashboard.relatorio_municipal import tem_bairro_real
+
+    assert tem_bairro_real(_bairros_geo_sample()) is True
+    assert tem_bairro_real(_bairros_geo_so_sobra()) is False
+    assert tem_bairro_real({"bairros": []}) is False
+    assert tem_bairro_real(None) is False
+
+
+def test_municipio_so_com_sobra_mantem_mapas_por_hexagono():
+    """Regressao (Apodi/RN): com so a sobra, o Score sairia como UM poligono do municipio
+    inteiro e o rodape afirmaria agregacao por bairro que nao existe. Tem de cair no hexagono."""
+    df = _sample_df()
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP",
+                            bairros_geo=_bairros_geo_so_sobra())
+    mapas = render_mapas_municipio(df, res, basemap=False)
+    pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
+
+    # O mapa por bairro do slide 3 continua existindo (mostra o contorno + o aviso)...
+    assert "Bairros Oficiais".encode("latin-1") in pdf_bytes
+    # ...mas o Score NAO pode afirmar agregacao por bairro.
+    assert "setores agregados por bairro".encode("latin-1") not in pdf_bytes
+    assert "Agregação H3 resolução 7".encode("latin-1") in pdf_bytes

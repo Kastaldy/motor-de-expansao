@@ -514,6 +514,18 @@ def _carregar_bairros_por_hex(
     return bairros_por_hex
 
 
+def tem_bairro_real(bairros_geo: dict[str, Any] | None) -> bool:
+    """Ha ao menos UM bairro de verdade (fora a sobra "<municipio> (demais setores)")?
+
+    E' o guard que decide se as camadas saem por bairro. NAO basta a lista ser nao-vazia:
+    municipio sem nenhuma localidade no IBGE (Apodi/RN) produz uma lista com SO a sobra, e
+    desenhar "por bairro" nesse caso pinta um poligono unico do municipio inteiro -- pior que
+    o mapa de hexagono que substituiu (perde toda a variacao intramunicipal) e ainda faz o
+    rodape afirmar uma agregacao por bairro que nao existe.
+    """
+    return any(not b.get("sobra") for b in ((bairros_geo or {}).get("bairros") or []))
+
+
 def _partes_desenhaveis(geom: Any) -> list[Any]:
     """Poligonos de `geom` que valem desenho, do maior para o menor, sem slivers do dissolve.
 
@@ -2322,7 +2334,7 @@ def render_mapas_municipio(
     # apos a alternativa conservadora ter sido apresentada e reconsiderada.
     #
     # Fallback: municipio sem bairro na base mantem os choropleths de hexagono de antes.
-    if bairros_geo.get("bairros"):
+    if tem_bairro_real(bairros_geo):
         aplicar_metricas_hex_nos_bairros(
             bairros_geo, df_muni, hex_zona_geo=municipio_result.get("hex_zona_geo") or {}
         )
@@ -2858,7 +2870,7 @@ def _score_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     # FU1: nota curta explicando as faixas do score (D5). BLK-RELMUN-09: quando o mapa sai por
     # BAIRRO, a nota e o rodape tem de dizer isso -- as demais paginas seguem em hexagono, e o
     # leitor precisa saber em que unidade esta olhando em cada uma.
-    por_bairro = bool((result.get("bairros_geo") or {}).get("bairros"))
+    por_bairro = tem_bairro_real(result.get("bairros_geo"))
     unidade = "por bairro (IBGE 2022)" if por_bairro else "H3 res 7 (IBGE 2022)"
     _draw_note(
         pdf, px, py0 + panel_h + 10, pw,
