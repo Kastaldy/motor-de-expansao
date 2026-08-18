@@ -209,6 +209,31 @@ export interface Pin {
   rede?: string
   label?: string
   nome: string
+  /**
+   * `true` quando esta unidade veio do feed de um agregador (WellHub/TotalPass) e por isso temos
+   * DADOS EXTRAS sobre ela — pressão medida da coordenada dela, nota, presença na série.
+   *
+   * Ela é uma bandeira igual a todas as outras, e isso é deliberado: uma academia de rede é uma
+   * academia de rede, e dar-lhe outra forma obrigaria o operador a ligar uma chave para ver
+   * concorrência que sempre existiu. O que muda é um **halo** em volta do quadrado, e o bloco
+   * extra que o tooltip abre.
+   *
+   * **Não há `score` aqui, e a ausência é a decisão (DEC-035):** numa rede, presença em agregador
+   * e churn medem negociação da MARCA, não fragilidade desta unidade.
+   */
+  diag?: boolean
+  /** Pressão competitiva medida da coordenada desta unidade. Só quando `diag`. */
+  pressao?: number | null
+  nota?: number | null
+  n_aval?: number | null
+  /** Estado de presença na série semanal — fato sem peso. */
+  churn?: string | null
+  /** A conta por trás da pressão, igual à do pin de independente. */
+  n_conc?: number | null
+  n_indep?: number | null
+  n_cadeias_feed?: number | null
+  oferta?: number | null
+  dist_m?: number | null
 }
 
 /** Pins do município + ícones quadrados por rede (data URI SVG). */
@@ -295,51 +320,6 @@ export interface PinIndependente {
   n_cadeias_feed: number | null
 }
 
-/**
- * Unidade de REDE listada pelo agregador, sem equivalente em `concorrentes_mapeados`
- * (BLK-MA-17 metade 1 / DEC-035).
- *
- * É a TERCEIRA lista de pontos, e as três são universos distintos: `Pins.concorrentes` é cadeia
- * mapeada pelo site da rede, esta é cadeia listada só pelo agregador, e `PinIndependente` é quem se
- * compra. Juntar as duas primeiras esconderia justamente a lacuna que a DEC-034 mediu — 1.171
- * unidades reais que pressionam e não eram desenhadas.
- *
- * **Não tem `score` nem `ordenavel`, e isso é a decisão, não um esquecimento.** S1 mede política
- * comercial (a negociação com o agregador é centralizada) e S3 é correlacionado: top 5 = 48,4% das
- * unidades, máximo 440 numa rede. A Panobianco saindo do WellHub viraria 440 `sumiu_recente` no
- * mesmo dia, e o score leria um evento de negociação como 440 alvos. O S6 passa porque é
- * geográfico e não sabe se a academia é de rede.
- */
-export interface PinRede {
-  lat: number | null
-  lng: number | null
-  nome: string
-  /** Slug da rede (`bluefit`, `selfit`…). Nunca `independente`. */
-  rede: string | null
-  /** Pressão competitiva medida da coordenada DESTA unidade (grão academia, DEC-029). */
-  pressao: number | null
-  /** Nota do WellHub. Anda SEMPRE com `n_aval` ao lado (DEC-026). */
-  nota: number | null
-  n_aval: number | null
-  /** Estado de churn na série — FATO sem peso. */
-  churn: string | null
-  /** A mesma auditoria do pin de independente: as três parcelas, a oferta e a distância. */
-  n_conc: number | null
-  n_indep: number | null
-  n_cadeias_feed: number | null
-  oferta: number | null
-  dist_m: number | null
-}
-
-export interface Redes {
-  itens: PinRede[]
-  disponivel: boolean
-  /** Quantas existem no recorte, ANTES do teto. */
-  total: number
-  /** true = o teto cortou. Mesmo motivo do bloco de independentes. */
-  truncado: boolean
-}
-
 export interface Independentes {
   itens: PinIndependente[]
   disponivel: boolean
@@ -367,9 +347,6 @@ export interface MunicipioPayload {
   pins: Pins
   /** Academias independentes com score (BLK-MA-15). Ausente em payload antigo. */
   independentes?: Independentes
-  /** Unidades de REDE do agregador sem equivalente no funil (BLK-MA-17 metade 1 / DEC-035).
-   *  Ausente em payload antigo — a camada some e o mapa fica como antes. */
-  redes?: Redes
 }
 
 export interface MunicipioItem {

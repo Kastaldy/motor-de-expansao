@@ -1,21 +1,26 @@
-"""Pins das unidades de REDE do agregador no piloto (BLK-MA-17 metade 1 / DEC-035).
+"""Unidades de REDE do agregador no mapa (BLK-MA-17 metade 1, revisado em 2026-08-18).
+
+**O que mudou, e por quê.** Na primeira versão estas unidades eram uma camada própria: ponto
+circular azul, lista separada no payload e uma chave de liga/desliga. Não é o que elas são — uma
+academia de rede é uma academia de rede, e dar-lhes outra forma obrigava o operador a ligar um
+toggle para enxergar concorrência que sempre esteve lá.
+
+Agora elas são **bandeira quadrada com a logo da rede, como todas as outras**, e entram na mesma
+lista `pins.concorrentes`. O que as distingue não é a natureza, é o **dado extra** que temos sobre
+elas — e isso vira um **halo** em volta do quadrado, mais um bloco no tooltip.
 
 O que esta suíte protege:
 
-  * **A decisão da DEC-035: fato sim, score não.** O payload destas unidades não pode ter `score`
-    nem `ordenavel`. S1 mede política comercial (a negociação com o agregador é centralizada) e S3
-    é correlacionado — top 5 = 48,4% das unidades, máx 440 numa rede: a Panobianco saindo do WellHub
-    viraria 440 `sumiu_recente` no mesmo dia. Se o score vazar para cá, a tela passa a afirmar sobre
-    redes o que esses sinais não sabem.
-  * **A precedência de pin.** Só as unidades sem equivalente em `concorrentes_mapeados`
-    (`tem_pin_proprio`) são desenhadas. As outras já têm o pin do funil no mesmo endereço, e um
-    segundo pin ali faria a contagem do tooltip parar de fechar — o defeito que esta metade veio
-    corrigir.
-  * **A separação dos três universos.** `pins.concorrentes` (cadeia mapeada pelo site da rede),
-    `redes` (cadeia listada só pelo agregador) e `independentes` são listas próprias. Juntar as duas
-    primeiras esconderia justamente a lacuna que a DEC-034 mediu: 1.171 unidades sem pin.
-  * **A degradação silenciosa.** Sem o artefato, `redes.disponivel` é `False` e o piloto abre como
-    antes — o CI não tem esse parquet.
+  * **Elas são constantes, não opcionais.** Não existe chave, e a lista separada sumiu do payload.
+  * **A bandeira é a da rede.** As 83 redes do feed têm logo cadastrado (medido: 100%), então
+    nenhuma cai no quadrado de sigla — e a borda de 7 px continua sendo a cor da marca.
+  * **O halo é uma variante de ícone, não uma cor de dado.** Chave `<rede>__diag` no dicionário de
+    ícones, e o front cai no ícone normal se ela faltar.
+  * **`diag` não traz score.** A decisão da DEC-035 vale igual: numa rede, presença e churn medem
+    negociação da marca.
+  * **A precedência continua valendo.** Só entra quem não tem equivalente em
+    `concorrentes_mapeados` — desenhar as colapsadas daria duas bandeiras no mesmo lugar, que
+    agora é erro VISÍVEL.
 """
 
 from __future__ import annotations
@@ -39,7 +44,7 @@ def _muni(nome: str = "Sao Paulo") -> dict:
 
 
 def _redes() -> pd.DataFrame:
-    """Três unidades de rede: duas com pin próprio, uma já coberta pelo funil."""
+    """Três unidades: duas com pin próprio, uma já coberta por bandeira do funil."""
     linhas = [
         {
             "fonte": "wellhub",
@@ -97,92 +102,126 @@ def com_redes(synth_data: Path) -> Path:  # noqa: F811
     return synth_data
 
 
-# --------------------------------------------------------------------------- #
-# Degradação                                                                   #
-# --------------------------------------------------------------------------- #
-def test_sem_artefato_a_camada_nao_esta_disponivel(synth_data: Path) -> None:  # noqa: F811
-    pilot.carregar_redes.cache_clear()
-    bloco = _muni()["redes"]
-    assert bloco["disponivel"] is False
-    assert bloco["itens"] == []
-
-
-def test_com_artefato_os_pins_chegam(com_redes: Path) -> None:
-    bloco = _muni()["redes"]
-    assert bloco["disponivel"] is True
-    assert len(bloco["itens"]) > 0
+def _com_diag(dados: dict) -> list[dict]:
+    return [p for p in dados["pins"]["concorrentes"] if p.get("diag")]
 
 
 # --------------------------------------------------------------------------- #
-# A decisão da DEC-035: fato sim, score não                                    #
+# Constante, não opcional                                                      #
 # --------------------------------------------------------------------------- #
-def test_o_payload_do_pin_de_rede_NAO_tem_score(com_redes: Path) -> None:
-    """A trava da decisão, no ponto em que ela chega ao usuário."""
-    itens = _muni()["redes"]["itens"]
-    assert itens
-    for item in itens:
-        assert "score" not in item, "score vazou para o pin de REDE (DEC-035)"
-        assert "ordenavel" not in item
-        assert "provisorio" not in item
-
-
-def test_o_pin_de_rede_exibe_pressao_e_os_fatos(com_redes: Path) -> None:
-    """O que a DEC-035 autoriza: S6 (geográfico) + os três fatos sem peso."""
-    item = _muni()["redes"]["itens"][0]
-    assert item["pressao"] == pytest.approx(72.0)
-    assert item["nota"] == pytest.approx(4.2)
-    assert item["n_aval"] == 88
-    assert item["churn"] == "estavel"
-    assert item["rede"]
-    assert item["nome"]
-
-
-def test_a_auditoria_da_pressao_chega_completa_no_pin_de_rede(com_redes: Path) -> None:
-    """As três parcelas + oferta + distância. Sem elas o número não é conferível."""
-    item = _muni()["redes"]["itens"][0]
-    assert item["n_conc"] == 9
-    assert item["n_indep"] == 7
-    assert item["n_cadeias_feed"] == 1
-    assert item["oferta"] == pytest.approx(2.6)
-    assert item["dist_m"] == pytest.approx(310.0)
-
-
-# --------------------------------------------------------------------------- #
-# Precedência de pin — herdada da dedup da DEC-034                             #
-# --------------------------------------------------------------------------- #
-def test_so_as_unidades_SEM_equivalente_no_funil_viram_pin(com_redes: Path) -> None:
-    """`tem_pin_proprio=False` já tem o pin do funil: desenhar de novo daria dois no mesmo lugar."""
-    bloco = _muni()["redes"]
-    nomes = {i["nome"] for i in bloco["itens"]}
-    assert nomes == {"Bluefit Centro", "Selfit Norte"}
-    assert "Smart Fit Colada" not in nomes, (
-        "unidade COLAPSADA na dedup foi desenhada — o tooltip volta a nao fechar"
-    )
-    assert bloco["total"] == 2
-
-
-# --------------------------------------------------------------------------- #
-# Os três universos são listas próprias                                        #
-# --------------------------------------------------------------------------- #
-def test_redes_e_uma_lista_separada_de_concorrentes_e_independentes(com_redes: Path) -> None:
-    """Juntá-las esconderia a lacuna que a DEC-034 mediu (1.171 unidades sem pin)."""
+def test_nao_existe_mais_lista_separada_nem_chave(com_redes: Path) -> None:
+    """A camada própria saiu do payload: concorrência instalada não é liga/desliga."""
     dados = _muni()
-    assert "redes" in dados
-    assert "independentes" in dados
+    assert "redes" not in dados, "a lista separada deveria ter sumido do payload"
+    assert _com_diag(dados), "as unidades do agregador tem de estar em pins.concorrentes"
+
+
+def test_a_unidade_do_agregador_e_uma_BANDEIRA_como_as_outras(com_redes: Path) -> None:
+    """Mesma lista e mesmo contrato de item — o que muda é a flag e o que ela agrega.
+
+    As cinco chaves testadas são o contrato do pin de concorrente: é por elas que o `IconLayer`
+    posiciona (`lat`/`lng`), escolhe a logo (`rede`) e monta o balão (`label`/`nome`). Se a unidade
+    do agregador perdesse qualquer uma, ela deixaria de ser desenhável como bandeira — que é o
+    ponto todo desta revisão.
+    """
+    diag = _com_diag(_muni())
+    assert diag
+    for chave in ("lat", "lng", "rede", "label", "nome"):
+        assert chave in diag[0], f"a bandeira do agregador perdeu `{chave}`"
+    assert diag[0]["rede"], "sem `rede` nao ha logo para desenhar"
+    assert diag[0]["label"], "o balao mostra o `label`, nao o slug"
+
+
+def test_sem_o_artefato_o_mapa_fica_como_antes(synth_data: Path) -> None:  # noqa: F811
+    """Degradação: o CI não tem esse parquet, e o piloto tem de abrir igual."""
+    pilot.carregar_redes.cache_clear()
+    dados = _muni()
+    assert _com_diag(dados) == []
     assert "concorrentes" in dados["pins"]
 
-    nomes_rede = {i["nome"] for i in dados["redes"]["itens"]}
-    nomes_conc = {i.get("nome") for i in dados["pins"]["concorrentes"]}
-    assert nomes_rede & nomes_conc == set(), "a mesma unidade apareceu nas duas listas"
+
+# --------------------------------------------------------------------------- #
+# O halo                                                                        #
+# --------------------------------------------------------------------------- #
+def test_o_icone_com_halo_e_servido_para_as_redes_que_tem_diagnostico(com_redes: Path) -> None:
+    """Chave `<rede>__diag` no dicionário, e SÓ para quem tem unidade com diagnóstico."""
+    dados = _muni()
+    icones = dados["pins"]["icones"]
+    redes_diag = {p["rede"] for p in _com_diag(dados)}
+    assert redes_diag, "premissa: ha unidade com diagnostico no recorte"
+    for r in redes_diag:
+        assert f"{r}{pilot.SUFIXO_ICONE_DIAG}" in icones, f"falta o icone com halo de {r}"
+
+
+def test_o_halo_nao_e_servido_para_rede_sem_diagnostico(com_redes: Path) -> None:
+    """Gerar as 107 variantes sempre dobraria o atlas de textura sem ninguém usar."""
+    dados = _muni()
+    redes_diag = {p["rede"] for p in _com_diag(dados)}
+    com_halo = {k.removesuffix(pilot.SUFIXO_ICONE_DIAG) for k in dados["pins"]["icones"] if k.endswith(pilot.SUFIXO_ICONE_DIAG)}
+    assert com_halo == redes_diag
+
+
+def test_o_icone_com_halo_preserva_a_cor_da_rede(com_redes: Path) -> None:
+    """A borda de 7 px é a identidade da marca — o halo é um anel EXTERNO, não a substitui."""
+    import base64 as b64
+    import urllib.parse
+
+    from motor_expansao.dashboard.competitors import COMPETITOR_BRANDS
+
+    normal = pilot._icone_rede("bluefit")
+    com_halo = pilot._icone_rede("bluefit", halo=True)
+    assert normal != com_halo
+
+    def _svg(uri: str) -> str:
+        dados = uri.split(",", 1)[1]
+        return (
+            b64.b64decode(dados).decode("utf-8")
+            if ";base64" in uri
+            else urllib.parse.unquote(dados)
+        )
+
+    svg = _svg(com_halo)
+    assert str(COMPETITOR_BRANDS["bluefit"]["bg"]) in svg, "a cor da rede sumiu do icone com halo"
+    assert pilot.HALO_DIAGNOSTICO in svg, "o halo nao foi desenhado"
+    assert 'viewBox="0 0 160 160"' in svg, "o viewBox tem de crescer para caber o anel externo"
 
 
 # --------------------------------------------------------------------------- #
-# A coluna que faltava no pin de INDEPENDENTE (BLK-MA-18 -> DEC-035)           #
+# O dado extra, e o que ele NÃO traz                                           #
 # --------------------------------------------------------------------------- #
-def test_o_pin_de_independente_ganhou_a_terceira_parcela_da_conta() -> None:
-    """`n_cadeias_feed` existia no artefato desde a DEC-034 e não chegava à tela.
+def test_a_bandeira_com_diag_carrega_pressao_e_fatos(com_redes: Path) -> None:
+    p = _com_diag(_muni())[0]
+    assert p["pressao"] == pytest.approx(72.0)
+    assert p["nota"] == pytest.approx(4.2)
+    assert p["n_aval"] == 88
+    assert p["churn"] == "estavel"
+    assert p["n_conc"] == 9
+    assert p["n_indep"] == 7
+    assert p["n_cadeias_feed"] == 1
+    assert p["oferta"] == pytest.approx(2.6)
+    assert p["dist_m"] == pytest.approx(310.0)
 
-    Sem ela, `n_conc` não fecha com `n_indep` + pins de cadeia e a explicação não está em lugar
-    nenhum — medido: 7.218 de 19.329 linhas (37,3%) têm a parcela maior que zero.
+
+def test_a_bandeira_com_diag_NAO_carrega_score(com_redes: Path) -> None:
+    """A trava da DEC-035, no ponto em que o dado chega ao usuário."""
+    for p in _com_diag(_muni()):
+        assert "score" not in p, "score vazou para a bandeira do agregador (DEC-035)"
+        assert "ordenavel" not in p
+
+
+# --------------------------------------------------------------------------- #
+# Precedência — agora um erro VISÍVEL                                          #
+# --------------------------------------------------------------------------- #
+def test_unidade_colapsada_na_dedup_NAO_vira_segunda_bandeira(com_redes: Path) -> None:
+    """`tem_pin_proprio=False` já tem bandeira do funil naquele endereço.
+
+    Antes isto era um detalhe interno; desde que estas unidades usam a MESMA forma dos demais
+    concorrentes, desenhá-las de novo põe duas bandeiras da mesma rede coladas no mapa.
     """
+    nomes = {p["nome"] for p in _com_diag(_muni())}
+    assert nomes == {"Bluefit Centro", "Selfit Norte"}
+    assert "Smart Fit Colada" not in nomes
+
+
+def test_o_pin_de_independente_continua_com_a_terceira_parcela() -> None:
     assert "n_cadeias_do_feed_no_raio" in pilot._COLS_NOMEADAS

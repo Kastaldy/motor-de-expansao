@@ -581,9 +581,12 @@ def carregar_redes() -> pd.DataFrame | None:
 
     **Filtra por `tem_pin_proprio`**, e isso e' a preferencia de pin da DEC-035, nao um filtro de
     conveniencia: as unidades com `False` COLAPSARAM contra um ponto de `concorrentes_mapeados` na
-    dedup da DEC-034, ou seja ja' tem pin desenhado no funil naquele endereco. Desenha-las de novo
-    criaria dois pins no mesmo lugar e faria a contagem do tooltip parar de fechar -- o defeito que
-    esta metade veio corrigir.
+    dedup da DEC-034/FU4, ou seja ja' tem bandeira desenhada naquele endereco. Desenha-las de novo
+    criaria duas bandeiras no mesmo lugar -- que, desde que estas unidades passaram a usar a MESMA
+    forma dos demais concorrentes, deixou de ser um detalhe interno e virou erro visivel no mapa.
+
+    Quem consome e' `_montar_pins`: elas entram na lista `pins.concorrentes`, com `diag: True`.
+    Nao ha camada separada nem chave de liga/desliga -- concorrencia instalada nao e' opcional.
     """
     if not REDES_PATH.exists():
         return None
@@ -597,52 +600,6 @@ def carregar_redes() -> pd.DataFrame | None:
     df["hex_id_res7"] = df["hex_id_res7"].astype(str)
     df = df[df["lat"].notna() & df["lng"].notna()]
     return df[df["tem_pin_proprio"].fillna(False).astype(bool)]
-
-
-def _pins_redes(sel: pd.DataFrame) -> dict[str, Any]:
-    """Pins das unidades de REDE do agregador que nao tem equivalente no funil.
-
-    Lista PROPRIA, separada de `pins.concorrentes` e de `independentes`: sao tres universos com
-    semantica distinta -- cadeia mapeada pelo site da rede, cadeia listada so' pelo agregador, e
-    independente. Misturar as duas primeiras esconderia justamente a lacuna que a DEC-034 mediu.
-    """
-    base = carregar_redes()
-    if base is None or base.empty:
-        return {"itens": [], "disponivel": False, "total": 0, "truncado": False}
-
-    hexes = set(sel["hex_id"].astype(str))
-    lat_min, lat_max, lng_min, lng_max = _bbox_com_margem(sel)
-    na_margem = base["lat"].between(lat_min, lat_max) & base["lng"].between(lng_min, lng_max)
-    no_recorte = base[base["hex_id_res7"].isin(hexes) | na_margem]
-    total = int(len(no_recorte))
-    recorte = no_recorte.head(COMPETITOR_PIN_LIMIT)
-
-    itens = [
-        {
-            "lat": _num(t.lat, 6),
-            "lng": _num(t.lng, 6),
-            "nome": _clean(getattr(t, "nome", "")),
-            "rede": _texto(getattr(t, "rede", None)),
-            # SEM `score` e SEM `ordenavel`, de proposito (DEC-035). O que esta unidade exibe e' a
-            # pressao -- que e' geografica e nao sabe se a academia e' de rede -- e os fatos.
-            "pressao": _num(getattr(t, "pressao_competitiva", None), 1),
-            "nota": _num(getattr(t, "nota_wellhub", None), 1),
-            "n_aval": _inteiro_ou_nulo(getattr(t, "qtd_avaliacoes_wellhub", None)),
-            "churn": _texto(getattr(t, "status_churn", None)),
-            "n_conc": _inteiro_ou_nulo(getattr(t, "n_concorrentes_no_raio", None)),
-            "n_indep": _inteiro_ou_nulo(getattr(t, "n_independentes_no_raio", None)),
-            "n_cadeias_feed": _inteiro_ou_nulo(getattr(t, "n_cadeias_do_feed_no_raio", None)),
-            "oferta": _num(getattr(t, "oferta_ponderada", None), 2),
-            "dist_m": _num(getattr(t, "dist_concorrente_mais_proximo_m", None), 0),
-        }
-        for t in recorte.itertuples(index=False)
-    ]
-    return {
-        "itens": itens,
-        "disponivel": True,
-        "total": total,
-        "truncado": total > len(itens),
-    }
 
 
 def _inteiro_ou_nulo(v: Any) -> int | None:
@@ -1104,30 +1061,74 @@ def _svg_data_uri(svg: str) -> str:
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
 
 
-def _quadrado_logo(logo_path: Path | None, bg: str) -> str | None:
-    """Quadrado branco arredondado com a logo PNG encaixada. None se o PNG faltar."""
+# `[BLK-MA-17 metade 1]` Cor do HALO que marca "esta unidade tem diagnostico".
+#
+# NAO pode ser a borda do quadrado: aquela ja' carrega a cor da REDE (7 px de stroke), e sobrescreve-la
+# apagaria a identidade da marca. NAO pode ser ciano (`--ac: #35c9d6`): e' a Ultra e o contorno de
+# selecao. NAO pode ser amarelo/verde/vermelho: sao a escala de score dos hexagonos. Sobra um claro
+# neutro -- e o RESPIRO escuro entre ele e a borda da rede e' o que impede a leitura de "borda dupla".
+HALO_DIAGNOSTICO = "#E8EEF5"
+
+# Sufixo da chave do icone com halo no dicionario `pins.icones`. O front resolve
+# `iconObjs[rede + SUFIXO]` quando o pin tem `diag`, e cai no icone normal se faltar.
+SUFIXO_ICONE_DIAG = "__diag"
+
+
+def _quadrado_logo(logo_path: Path | None, bg: str, *, halo: bool = False) -> str | None:
+    """Quadrado branco arredondado com a logo PNG encaixada. None se o PNG faltar.
+
+    `halo=True` desenha um anel externo separado por um respiro transparente (que sobre o mapa
+    escuro aparece escuro). O viewBox cresce de 128 para 160 e o quadrado e' deslocado para o
+    centro, entao o icone com halo precisa de `getSize` proporcionalmente maior para o QUADRADO
+    sair do mesmo tamanho -- 38 contra 30, que e' o que o `HexMap` faz.
+    """
     if logo_path is None or not logo_path.exists():
         return None
     try:
         png = base64.b64encode(logo_path.read_bytes()).decode("ascii")
     except Exception:  # noqa: BLE001
         return None
+    if not halo:
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+            'width="128" height="128" viewBox="0 0 128 128">'
+            f'<rect x="4" y="4" width="120" height="120" rx="26" fill="#FFFFFF" stroke="{bg}" stroke-width="7"/>'
+            f'<image href="data:image/png;base64,{png}" x="18" y="18" width="92" height="92" '
+            'preserveAspectRatio="xMidYMid meet"/></svg>'
+        )
+        return _svg_data_uri(svg)
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
-        'width="128" height="128" viewBox="0 0 128 128">'
-        f'<rect x="4" y="4" width="120" height="120" rx="26" fill="#FFFFFF" stroke="{bg}" stroke-width="7"/>'
-        f'<image href="data:image/png;base64,{png}" x="18" y="18" width="92" height="92" '
+        'width="160" height="160" viewBox="0 0 160 160">'
+        # anel externo: o destaque. `fill=none` deixa o respiro transparente.
+        f'<rect x="7" y="7" width="146" height="146" rx="36" fill="none" '
+        f'stroke="{HALO_DIAGNOSTICO}" stroke-width="7" stroke-opacity="0.92"/>'
+        # o quadrado da rede, identico ao normal, deslocado 16 px para o centro
+        f'<rect x="20" y="20" width="120" height="120" rx="26" fill="#FFFFFF" stroke="{bg}" stroke-width="7"/>'
+        f'<image href="data:image/png;base64,{png}" x="34" y="34" width="92" height="92" '
         'preserveAspectRatio="xMidYMid meet"/></svg>'
     )
     return _svg_data_uri(svg)
 
 
-def _quadrado_sigla(short: str, bg: str, fg: str) -> str:
+def _quadrado_sigla(short: str, bg: str, fg: str, *, halo: bool = False) -> str:
+    """Fallback quando a rede nao tem PNG. Hoje as 107 tem, mas o caminho continua vivo."""
+    sigla = _clean(short)[:3] or "C"
+    if not halo:
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">'
+            f'<rect x="4" y="4" width="120" height="120" rx="26" fill="{bg}" stroke="#FFFFFF" stroke-width="7"/>'
+            f'<text x="64" y="83" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" '
+            f'font-size="46" font-weight="800" fill="{fg}">{sigla}</text></svg>'
+        )
+        return _svg_data_uri(svg)
     svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">'
-        f'<rect x="4" y="4" width="120" height="120" rx="26" fill="{bg}" stroke="#FFFFFF" stroke-width="7"/>'
-        f'<text x="64" y="83" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" '
-        f'font-size="46" font-weight="800" fill="{fg}">{_clean(short)[:3] or "C"}</text></svg>'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">'
+        f'<rect x="7" y="7" width="146" height="146" rx="36" fill="none" '
+        f'stroke="{HALO_DIAGNOSTICO}" stroke-width="7" stroke-opacity="0.92"/>'
+        f'<rect x="20" y="20" width="120" height="120" rx="26" fill="{bg}" stroke="#FFFFFF" stroke-width="7"/>'
+        f'<text x="80" y="99" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" '
+        f'font-size="46" font-weight="800" fill="{fg}">{sigla}</text></svg>'
     )
     return _svg_data_uri(svg)
 
@@ -1136,8 +1137,8 @@ def _quadrado_sigla(short: str, bg: str, fg: str) -> str:
 # COMPETITOR_LOGO_FILES, entao `_quadrado_logo(None, ...)` curto-circuitava sem custo. Agora as 107
 # tem `logo_<slug>.png`, e cada MISS custa Path.exists() + read_bytes() + base64 do PNG. Com 107
 # redes possiveis contra 64 entradas o LRU entrava em thrash entre municipios.
-@functools.lru_cache(maxsize=128)
-def _icone_rede(rede: str) -> str:
+@functools.lru_cache(maxsize=256)
+def _icone_rede(rede: str, halo: bool = False) -> str:
     from motor_expansao.dashboard.competitors import (
         COMPETITOR_BRANDS,
         COMPETITOR_LOGO_FILES,
@@ -1148,8 +1149,8 @@ def _icone_rede(rede: str) -> str:
     )
     logo_file = COMPETITOR_LOGO_FILES.get(rede)
     logo_path = COMPETITORS_LOGO_DIR / logo_file if logo_file else None
-    return _quadrado_logo(logo_path, str(brand["bg"])) or _quadrado_sigla(
-        str(brand["short"]), str(brand["bg"]), str(brand["fg"])
+    return _quadrado_logo(logo_path, str(brand["bg"]), halo=halo) or _quadrado_sigla(
+        str(brand["short"]), str(brand["bg"]), str(brand["fg"]), halo=halo
     )
 
 
@@ -1249,8 +1250,56 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
     if len(ultra):
         ultra = ultra[ultra["lat"].between(lat_min, lat_max) & ultra["lng"].between(lng_min, lng_max)]
 
+    # ---- unidades de REDE do agregador entram na MESMA lista de bandeiras ----
+    # `[BLK-MA-17 metade 1, revisado 2026-08-18]` Elas nao sao mais uma camada ativavel a parte:
+    # uma academia de rede e' uma academia de rede, e desenhar as do agregador com outra FORMA
+    # obrigava o operador a ligar uma chave para ver concorrencia que sempre existiu. O que as
+    # distingue nao e' a natureza, e' o DADO EXTRA que temos sobre elas (pressao, nota, churn) --
+    # e isso vira um HALO, nao uma segunda geometria.
+    diag = carregar_redes()
+    linhas_diag: list[dict[str, Any]] = []
+    if diag is not None and len(diag):
+        d_lat_min, d_lat_max, d_lng_min, d_lng_max = _bbox_com_margem(sel)
+        no_recorte = diag[
+            diag["hex_id_res7"].isin(hex_ids)
+            | (
+                diag["lat"].between(d_lat_min, d_lat_max)
+                & diag["lng"].between(d_lng_min, d_lng_max)
+            )
+        ].head(COMPETITOR_PIN_LIMIT)
+        linhas_diag = [
+            {
+                "lat": _num(t.lat, 6),
+                "lng": _num(t.lng, 6),
+                "rede": _texto(getattr(t, "rede", None)) or "",
+                "label": str(
+                    COMPETITOR_BRANDS.get(str(getattr(t, "rede", "")), {}).get(
+                        "label", getattr(t, "rede", "")
+                    )
+                ),
+                "nome": _clean(getattr(t, "nome", "")),
+                # A flag que acende o halo E abre o bloco extra do tooltip.
+                "diag": True,
+                # SEM `score` (DEC-035): numa rede, presenca e churn medem negociacao da marca.
+                "pressao": _num(getattr(t, "pressao_competitiva", None), 1),
+                "nota": _num(getattr(t, "nota_wellhub", None), 1),
+                "n_aval": _inteiro_ou_nulo(getattr(t, "qtd_avaliacoes_wellhub", None)),
+                "churn": _texto(getattr(t, "status_churn", None)),
+                "n_conc": _inteiro_ou_nulo(getattr(t, "n_concorrentes_no_raio", None)),
+                "n_indep": _inteiro_ou_nulo(getattr(t, "n_independentes_no_raio", None)),
+                "n_cadeias_feed": _inteiro_ou_nulo(getattr(t, "n_cadeias_do_feed_no_raio", None)),
+                "oferta": _num(getattr(t, "oferta_ponderada", None), 2),
+                "dist_m": _num(getattr(t, "dist_concorrente_mais_proximo_m", None), 0),
+            }
+            for t in no_recorte.itertuples(index=False)
+        ]
+
     redes = sorted(conc["rede"].dropna().astype(str).unique()) if len(conc) else []
     icones = {r: _icone_rede(r) for r in redes}
+    # Variante COM halo, so' para as redes que de fato tem unidade com diagnostico no recorte —
+    # gerar as 107 sempre dobraria o atlas de textura sem ninguem usar.
+    for r in sorted({str(x["rede"]) for x in linhas_diag if x["rede"]}):
+        icones[f"{r}{SUFIXO_ICONE_DIAG}"] = _icone_rede(r, halo=True)
     if len(ultra):
         icones["__ultra__"] = _icone_ultra()
 
@@ -1268,7 +1317,8 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
             }
             for t in conc.itertuples(index=False)
         ]
-        if len(conc)
+        + linhas_diag
+        if (len(conc) or linhas_diag)
         else [],
         "ultra": [
             {"lat": _num(t.lat, 6), "lng": _num(t.lng, 6), "nome": _clean(t.nome)}
@@ -3768,10 +3818,6 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
         # Lista PROPRIA, nunca misturada a `pins.concorrentes`: cadeia e independente sao universos
         # de semantica oposta (quem disputa x quem se compra), e a intersecao entre eles e' vazia.
         "independentes": _pins_independentes(sel),
-        # Terceira lista, pela mesma razao que a segunda existe: cadeia listada so' pelo
-        # agregador nao e' o mesmo universo que cadeia mapeada pelo site da rede, e juntar
-        # as duas esconderia a lacuna que a DEC-034 mediu (1.171 unidades sem pin).
-        "redes": _pins_redes(sel),
     }
 
 
