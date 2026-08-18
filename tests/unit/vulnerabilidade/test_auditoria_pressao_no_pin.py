@@ -189,7 +189,7 @@ def test_o_contrato_declara_as_colunas_de_auditoria() -> None:
         "dist_concorrente_mais_proximo_m",
     ):
         assert coluna in c.CONTRATO_COLUNAS_ALVOS_NOMEADOS
-    assert c.VERSAO_CONTRATO_ALVOS_NOMEADOS == "alvos_ma_nomeados_v4"
+    assert c.VERSAO_CONTRATO_ALVOS_NOMEADOS == "alvos_ma_nomeados_v5"
 
 
 def test_a_lacuna_de_pin_e_DECLARADA_na_linha_que_a_tela_le() -> None:

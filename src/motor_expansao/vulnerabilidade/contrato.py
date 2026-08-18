@@ -39,7 +39,7 @@ from datetime import date
 VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v3"
 VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
-VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v6"
+VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v7"
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
 H3_RES_CONTRATO = 7
@@ -396,7 +396,7 @@ CONTRATO_COLUNAS_SCORE: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Sinal 6 — pressão competitiva com decaimento por distância (BLK-MA-12)
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v3"
+VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v4"
 
 # Raio de TRUNCAMENTO, não de alcance: quem define o alcance efetivo é a forma do kernel. 2.000 m
 # é o mesmo do `pressao_concorrencial_score_2km` da camada de mercado — manter o número igual é o
@@ -598,7 +598,7 @@ CONTRATO_COLUNAS_PRESSAO: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Lista priorizada de alvos de M&A (D5/D6) — BLK-MA-05
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v3"
+VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v4"
 
 # Gate D5 (ratificado em 2026-07-23; reabrir exige DEC). A INVERSÃO do §2 mora aqui: comprar quer
 # demanda ALTA + residual BAIXO, o OPOSTO de `abrir_agora`.
@@ -694,7 +694,7 @@ CONTRATO_COLUNAS_ALVOS_MA: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Variante NOMEADA (D1-B) — BLK-MA-15
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v4"
+VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v5"
 
 # O UNICO contrato desta camada que carrega IDENTIDADE e COORDENADA, autorizado pela emenda de
 # 2026-08-14 a DEC-028 (decidida por Vinicius). Grao: uma linha por academia.
@@ -758,7 +758,7 @@ CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
 # no mesmo dia e o score leria um evento de negociacao como 440 alvos. O S6 nao tem esse defeito: e'
 # geografico e nao sabe se a academia e' de rede. Molde do G-D2 e da DEC-026 — o fato entra antes do
 # peso.
-VERSAO_CONTRATO_REDES_NOMEADAS = "redes_ma_nomeadas_v1"
+VERSAO_CONTRATO_REDES_NOMEADAS = "redes_ma_nomeadas_v2"
 
 CONTRATO_COLUNAS_REDES_NOMEADAS: dict[str, str] = {
     "fonte": "string",
@@ -791,6 +791,14 @@ CONTRATO_COLUNAS_REDES_NOMEADAS: dict[str, str] = {
     "tem_pin_proprio": "boolean",
     "versao_contrato": "string",
 }
+
+# `[BLK-MA-17-FU4 / emenda DEC-034]` Resolucao do bucket da passagem por NOME.
+#
+# A dedup por distancia usa `DEDUP_H3_RES = 11` (aresta 28,66 m), que e' certa para limiares de
+# dezenas de metros. Para os 1.200 m do casamento por nome ela custaria `grid_disk(k=31)` -- 2.977
+# celulas por ponto. Na resolucao 8 (aresta 531 m) o mesmo alcance sai com `k=4`, 61 celulas: 49x
+# menos varredura para a MESMA cobertura.
+DEDUP_NOME_H3_RES = 8
 
 # Colunas PROIBIDAS nos artefatos desta camada (rede de segurança do teste anti-PII: a limpeza é
 # por construção, projetando só as 10 colunas do contrato).
@@ -1114,6 +1122,7 @@ __all__ = [
     "PESO_OFERTA_INDEPENDENTE",
     "DEDUP_INDEPENDENTES_M",
     "DEDUP_H3_RES",
+    "DEDUP_NOME_H3_RES",
     "DEDUP_K_MARGEM_ANEIS",
     "DEDUP_CADEIA_FEED_M",
     "DEDUP_CADEIA_FEED_PISO_M",

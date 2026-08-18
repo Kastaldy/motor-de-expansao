@@ -61,7 +61,7 @@ def _redes() -> pd.DataFrame:
             "oferta_ponderada": 2.6,
             "dist_concorrente_mais_proximo_m": 310.0,
             "tem_pin_proprio": pin,
-            "versao_contrato": "redes_ma_nomeadas_v1",
+            "versao_contrato": "redes_ma_nomeadas_v2",
         }
         for i, (nome, rede, pin) in enumerate(
             [

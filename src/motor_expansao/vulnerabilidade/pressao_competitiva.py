@@ -103,6 +103,7 @@ from .contrato import (
     DEDUP_H3_RES,
     DEDUP_INDEPENDENTES_M,
     DEDUP_K_MARGEM_ANEIS,
+    DEDUP_NOME_H3_RES,
     KERNEIS_PRESSAO,
     PESO_OFERTA_CADEIA,
     PESO_OFERTA_INDEPENDENTE,
@@ -115,6 +116,7 @@ from .contrato import (
     UNIVERSOS_OFERTA,
     VERSAO_CONTRATO_PRESSAO,
 )
+from .identidade import DIST_MAX_MESMO_NOME_M, mesma_unidade
 
 _logger = logging.getLogger(__name__)
 
@@ -218,12 +220,22 @@ def _pontos_validos_frame(concorrentes: pd.DataFrame) -> pd.DataFrame:
         rede = pontos["rede"].astype("string").to_numpy()
     else:
         rede = np.full(len(lat), pd.NA, dtype="object")
+    # `nome` (BLK-MA-17-FU4): a dedup por distancia pura deixava passar 407 duplicatas entre 150 m
+    # e 1 km -- a mesma academia geocodificada diferente pelas duas fontes. Quem as separa de uma
+    # academia irma de verdade e' o NOME, e para compara-lo ele precisa chegar ate' aqui.
+    if "nome_unidade" in pontos.columns:
+        nome = pontos["nome_unidade"].astype("string").to_numpy()
+    elif "nome" in pontos.columns:
+        nome = pontos["nome"].astype("string").to_numpy()
+    else:
+        nome = np.full(len(lat), pd.NA, dtype="object")
     finito = np.isfinite(lat) & np.isfinite(lng)
     return pd.DataFrame(
         {
             "lat": pd.Series(lat[finito], dtype="float64"),
             "lng": pd.Series(lng[finito], dtype="float64"),
             "rede": pd.Series(rede[finito], dtype="string"),
+            "nome": pd.Series(nome[finito], dtype="string"),
         }
     )
 
@@ -563,6 +575,10 @@ def dedup_cadeias_do_feed(
     (`sat(1,0) = 50` pontos) seria maior justamente em quem não tem mais ninguém por perto.
     """
     colunas = ["fonte", "chave_snapshot", "lat", "lng", "rede"]
+    # `nome` e' OPCIONAL: sem ele a passagem por nome simplesmente nao roda, e a funcao se comporta
+    # como antes do BLK-MA-17-FU4. Nenhum chamador antigo quebra.
+    if "nome" in cadeias_feed.columns:
+        colunas = [*colunas, "nome"]
     faltando = [c for c in colunas if c not in cadeias_feed.columns]
     if faltando:
         raise ValueError(f"frame de cadeias do feed sem coluna(s) obrigatoria(s): {faltando}")
@@ -603,9 +619,33 @@ def dedup_cadeias_do_feed(
         celula = h3.latlng_to_cell(float(lat_m[j]), float(lng_m[j]), DEDUP_H3_RES)
         ocupantes.setdefault(celula, []).append(j)
 
+    # ---- passagem por NOME (BLK-MA-17-FU4): bucket PROPRIO, numa resolucao grossa ----
+    # Os 1.200 m do casamento por nome custariam `grid_disk(k=31)` na `DEDUP_H3_RES = 11` (2.977
+    # celulas por ponto). Na `DEDUP_NOME_H3_RES = 8` (aresta 531 m) o mesmo alcance sai com k=4,
+    # 61 celulas -- 49x menos varredura para a mesma cobertura.
+    nome_m = (
+        pontos_mapeados["nome"].astype("string").fillna("").astype(str).to_numpy()
+        if "nome" in pontos_mapeados.columns
+        else np.full(offset, "", dtype=object)
+    )
+    usa_nome = "nome" in base.columns and bool((nome_m != "").any())
+    k_nome = _k_do_bucket(DIST_MAX_MESMO_NOME_M, resolucao=DEDUP_NOME_H3_RES)
+    ocupantes_nome: dict[str, list[int]] = {}
+    if usa_nome:
+        for j in range(offset):
+            if not (np.isfinite(lat_m[j]) and np.isfinite(lng_m[j])):
+                continue
+            cel = h3.latlng_to_cell(float(lat_m[j]), float(lng_m[j]), DEDUP_NOME_H3_RES)
+            ocupantes_nome.setdefault(cel, []).append(j)
+
     fontes = base["fonte"].astype(str).to_numpy()
     chaves = base["chave_snapshot"].astype(str).to_numpy()
     redes = base["rede"].astype("string").fillna("").astype(str).to_numpy()
+    nomes = (
+        base["nome"].astype("string").fillna("").astype(str).to_numpy()
+        if usa_nome
+        else np.full(len(base), "", dtype=object)
+    )
     lat = base["lat"].to_numpy(dtype="float64")
     lng = base["lng"].to_numpy(dtype="float64")
 
@@ -617,6 +657,7 @@ def dedup_cadeias_do_feed(
     posicao_do_sobrevivente: dict[int, int] = {}
     colapsadas = 0
     colapsadas_entre_fontes = 0
+    colapsadas_por_nome = 0
 
     for i in range(len(base)):
         celula = h3.latlng_to_cell(float(lat[i]), float(lng[i]), DEDUP_H3_RES)
@@ -643,6 +684,37 @@ def dedup_cadeias_do_feed(
             posicao_por_chave[(fontes[i], chaves[i])] = representante
             colapsadas += 1
             continue
+
+        # PASSAGEM POR NOME (BLK-MA-17-FU4). A distancia pura deixava passar 407 duplicatas entre
+        # 150 m e 1 km: as duas fontes geocodificam o MESMO endereco com desvio muito maior que o
+        # limiar (`Bodytech Uberlandia - NV Boulevard` contra nome identico a 299 m;
+        # `SKYFIT ACADEMIA - BACABAL` contra `Bacabal (MA)` a 940 m). Subir o limiar de distancia
+        # apagaria academia real; quem separa os dois casos e' o nome -- ver `identidade.py`.
+        if usa_nome and nomes[i]:
+            cel_n = h3.latlng_to_cell(float(lat[i]), float(lng[i]), DEDUP_NOME_H3_RES)
+            melhor_n = float("inf")
+            rep_nome: int | None = None
+            for viz in h3.grid_disk(cel_n, k_nome):
+                for j in ocupantes_nome.get(viz, ()):
+                    if redes[i] != rede_m[j] or not nome_m[j]:
+                        continue
+                    d = float(
+                        _haversine_m(
+                            np.array([lat[i]]),
+                            np.array([lng[i]]),
+                            np.array([lat_m[j]]),
+                            np.array([lng_m[j]]),
+                        )[0]
+                    )
+                    if d > DIST_MAX_MESMO_NOME_M or d >= melhor_n:
+                        continue
+                    if mesma_unidade(nomes[i], nome_m[j], redes[i]):
+                        melhor_n = d
+                        rep_nome = j
+            if rep_nome is not None:
+                posicao_por_chave[(fontes[i], chaves[i])] = rep_nome
+                colapsadas_por_nome += 1
+                continue
 
         # SEGUNDA PASSAGEM (BLK-MA-17-FU2): contra os sobreviventes do proprio feed, e so' entre
         # `fonte` DIFERENTES -- o mesmo recorte que `dedup_independentes` usa, e pela mesma razao.
@@ -684,13 +756,15 @@ def dedup_cadeias_do_feed(
         mantidos.append(i)
         ocupantes_feed.setdefault(celula, []).append(i)
 
-    if colapsadas or colapsadas_entre_fontes:
+    if colapsadas or colapsadas_entre_fontes or colapsadas_por_nome:
         _logger.info(
-            "dedup de cadeias do feed: %d de %d colapsada(s) contra o insumo mapeado e %d "
-            "contra outra fonte do proprio feed "
+            "dedup de cadeias do feed: %d de %d colapsada(s) por DISTANCIA contra o insumo "
+            "mapeado, %d por NOME (ate' %.0f m) e %d contra outra fonte do proprio feed "
             "(mesma rede a %.0f m ou qualquer rede a %.0f m; grid_disk k=%d)",
             colapsadas,
             len(base),
+            colapsadas_por_nome,
+            float(DIST_MAX_MESMO_NOME_M),
             colapsadas_entre_fontes,
             float(distancia_m),
             float(piso_m),
