@@ -2608,6 +2608,29 @@ def _draw_note(pdf: _UltraPDF, x: float, y: float, w: float, text: str) -> None:
     pdf.multi_cell(w, 11, _ascii(text))
 
 
+def _encurtar(pdf: _UltraPDF, texto: str, largura: float) -> str:
+    """Trunca `texto` com reticencias ate caber em `largura` pt na fonte ATUAL do `pdf`.
+
+    Mede com `get_string_width` em vez de contar caracteres: "MMM" e "iii" tem a mesma
+    contagem e larguras muito diferentes, e um corte por contagem erra nos dois sentidos
+    (trunca cedo demais ou deixa transbordar).
+    """
+    texto = _ascii(texto)
+    reticencias = "..."
+    if largura <= 0:
+        # Largura degenerada: devolver o texto inteiro seria o oposto do pedido.
+        return reticencias
+    if pdf.get_string_width(texto) <= largura:
+        return texto
+    disponivel = largura - pdf.get_string_width(reticencias)
+    if disponivel <= 0:
+        return reticencias
+    corte = texto
+    while corte and pdf.get_string_width(corte) > disponivel:
+        corte = corte[:-1]
+    return (corte.rstrip() + reticencias) if corte else reticencias
+
+
 def _info_panel(pdf: _UltraPDF, x: float, y: float, w: float, titulo: str,
                 linhas: list[tuple[str, str]], *, accent: tuple[int, int, int] = ULTRA_TURQUESA,
                 border_rgb: tuple[int, int, int] | None = None) -> float:
@@ -2624,10 +2647,14 @@ def _info_panel(pdf: _UltraPDF, x: float, y: float, w: float, titulo: str,
     pdf.cell(w - 28, 16, _ascii(titulo))
     pdf.set_font("Helvetica", "", 12)
     yy = y + 42
+    rotulo_w = (w - 28) * 0.62
     for rotulo, valor in linhas:
         pdf.set_text_color(45, 45, 45)
         pdf.set_xy(x + 14, yy)
-        pdf.cell((w - 28) * 0.62, 16, _ascii(rotulo))
+        # `cell` NAO corta texto largo demais: ele transborda por cima da coluna do valor.
+        # Visto em Goiania/GO, onde a localidade do IBGE e' uma U.T.P. de nome longo
+        # ("U.T.P. Parque das Laranjeiras e Jardim da Luz") e o numero saiu grudado nela.
+        pdf.cell(rotulo_w, 16, _ascii(_encurtar(pdf, rotulo, rotulo_w - 6)))
         pdf.set_text_color(40, 40, 40)
         pdf.set_font("Helvetica", "B", 12)
         pdf.set_xy(x + 14 + (w - 28) * 0.62, yy)

@@ -1600,3 +1600,29 @@ def test_formatador_municipal_usa_texto_sem_dado_por_extenso():
     assert _format_number(float("nan")) == TEXTO_SEM_DADO
     assert TEXTO_SEM_DADO == "Não disponível"
     assert _format_number(1234.0) == "1.234"
+
+
+def test_info_panel_trunca_rotulo_largo_sem_invadir_o_valor():
+    """Nome longo de localidade nao pode transbordar por cima da coluna do numero.
+
+    Regressao real: Goiania/GO usa U.T.P. como localidade do IBGE e
+    "U.T.P. Parque das Laranjeiras e Jardim da Luz" saiu grudado no 50.318.
+    """
+    from motor_expansao.dashboard.relatorio_municipal import _encurtar, _UltraPDF
+
+    pdf = _UltraPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", "", 12)
+
+    largura = 150.0
+    longo = "U.T.P. Parque das Laranjeiras e Jardim da Luz"
+    curto = _encurtar(pdf, longo, largura)
+
+    assert curto != longo, "o nome longo tinha de ser truncado"
+    assert curto.endswith("...")
+    assert pdf.get_string_width(curto) <= largura
+
+    # Texto que ja cabe passa intacto (sem reticencias gratuitas).
+    assert _encurtar(pdf, "Centro", largura) == "Centro"
+    # Largura degenerada nao estoura.
+    assert _encurtar(pdf, longo, 0.0) == "..."

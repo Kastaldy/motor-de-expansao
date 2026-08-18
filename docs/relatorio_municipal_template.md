@@ -49,6 +49,15 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
   8 (`carregar_bairros_geo`). Não depende de dado externo nem de rede.
 - Bloco **"BAIRROS IDENTIFICADOS"** (contagem) + painel **"MAIS POPULOSOS (hab.)"** com os 5
   maiores por população do Censo 2022.
+- **Cobertura medida (2026-08-18, varredura dos 5.571 municípios com a cascata REAL do
+  código — `nome_bairro` → `nome_subdistrito` → `nome_distrito`):** desenham bairro
+  **196 dos 319 municípios de 100 mil+ habitantes (61,4%)**, que somam **79,0% da população**
+  desse recorte. No país todo, 955 municípios (17,1%) e 55,7% da população.
+  Critério: ≥2 áreas distintas E ≥50% dos setores com localidade — abaixo disso o mapa não
+  divide nada útil. **Não contar só `nome_bairro`:** Goiânia/GO tem 0% de `nome_bairro` mas 64
+  U.T.P.s em `nome_subdistrito`, e uma medição que pule o nível do meio a classifica como "sem
+  dado" por engano (erro cometido e corrigido em 2026-08-18). Maiores que NÃO desenham:
+  Campinas (31% de cobertura), São Luís, Sorocaba, Aparecida de Goiânia, Ananindeua.
 - **Cobertura é heterogênea** (ver D9): abaixo de 50% dos setores com bairro/distrito, a página
   troca o subtítulo pela cobertura real e explica que o restante exigiria a malha da prefeitura —
   o número nunca sai sozinho dando a entender que o município inteiro está mapeado.
