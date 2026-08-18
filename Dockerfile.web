@@ -42,7 +42,7 @@ RUN apt-get update \
 # (COPY . . respeita o .dockerignore: nao traz data/, tests/, web/node_modules, web/dist.)
 COPY . .
 RUN python -m pip install --upgrade pip \
-    && python -m pip install ".[basemap,api_mvp]" -c constraints.txt
+    && python -m pip install ".[basemap,api_mvp,simulador_cache]" -c constraints.txt
 
 # dist/ vem do estagio Node (o COPY . . nao o traz, por causa do .dockerignore)
 COPY --from=frontend /web/dist ./web/dist
