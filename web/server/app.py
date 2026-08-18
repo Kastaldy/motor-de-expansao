@@ -27,6 +27,7 @@ import functools
 import hashlib
 import inspect
 import json
+import logging
 import math
 import os
 import re
@@ -50,6 +51,13 @@ from starlette.concurrency import run_in_threadpool
 # a memoria. 3 deixa folga para o event loop e para os demais apps do host.
 _PDF_CONCORRENCIA_MAX = 3
 _PDF_SEMAFORO = asyncio.Semaphore(_PDF_CONCORRENCIA_MAX)
+
+# Teto anti-DoS de memoria nos uploads de foto do Relatorio Pontual (BLK-SEC-05): o
+# PDF usa no maximo 2 fotos, entao lemos poucas e limitamos o tamanho de cada uma —
+# sem isso, N pedidos com arquivos grandes inflavam a RAM do unico worker ANTES do
+# semaforo. So bytes ate o teto sao mantidos em memoria.
+_FOTOS_MAX = 3
+_FOTO_MAX_BYTES = 8 * 1024 * 1024  # 8 MB por foto
 
 # --- Localizacao do repo e dos dados ---------------------------------------
 # O backend do piloto vive em <repo>/web/server; o codigo do motor em <repo>/src.
@@ -234,7 +242,16 @@ _COLS_DESEJADAS = [
 ]
 
 
+# Guardrail path-traversal (BLK-SEC-05): `uf` compoe o caminho da particao
+# (`uf=XX`). Um valor de CORPO como `x/../../etc` (que escapa da restricao de rota)
+# poderia ler diretorios arbitrarios. Toda UF real tem 2 letras; validamos no
+# SINK (chokepoint de `carregar_uf`/`carregar_uf_completo` e das rotas /api/uf|municipio|cobertura).
+_UF_RE = re.compile(r"^[A-Za-z]{2}$")
+
+
 def _uf_partition(uf: str) -> Path:
+    if not _UF_RE.match(str(uf or "")):
+        raise HTTPException(400, "UF inválida (esperado a sigla de 2 letras).")
     return ENRICHED_DIR / f"uf={uf.upper()}"
 
 
@@ -243,11 +260,11 @@ def carregar_uf(uf: str) -> pd.DataFrame:
     """Le a particao de uma UF do artefato enriquecido. READ-ONLY."""
     part = _uf_partition(uf)
     if not part.exists():
-        raise HTTPException(404, f"Particao da UF {uf} nao encontrada em {part}")
+        raise HTTPException(404, f"Partição da UF {uf.upper()} não encontrada.")
 
     arquivos = sorted(part.glob("*.parquet"))
     if not arquivos:
-        raise HTTPException(404, f"Nenhum parquet em {part}")
+        raise HTTPException(404, f"Partição da UF {uf.upper()} sem dados.")
 
     import pyarrow.parquet as pq
 
@@ -515,7 +532,7 @@ def carregar_uf_completo(uf: str) -> pd.DataFrame:
     """
     part = _uf_partition(uf)
     if not part.exists():
-        raise HTTPException(404, f"Particao da UF {uf} nao encontrada em {part}")
+        raise HTTPException(404, f"Partição da UF {uf.upper()} não encontrada.")
     return pd.read_parquet(part)
 
 
@@ -561,9 +578,15 @@ def _derivar(df: pd.DataFrame) -> pd.DataFrame:
     for origem in ("renda_per_capita_setor_2022_calibrada", "renda_per_capita"):
         if origem in out.columns:
             out["renda_leitura"] = pd.to_numeric(out[origem], errors="coerce")
+            # A ORIGEM importa: as duas colunas estao em escalas diferentes, e sem saber de qual
+            # delas o valor veio nao da para desfazer a escala na hora de montar a renda
+            # domiciliar (ver `_base_renda_domiciliar`). A precedencia e por COLUNA, entao a
+            # origem e a mesma para o frame inteiro.
+            out["renda_origem"] = origem
             break
     else:
         out["renda_leitura"] = float("nan")
+        out["renda_origem"] = None
 
     # PROTOTIPO (chave de raio): anexa o modelo de 1 km por AREA ao lado do de 2 km, sem
     # tocar nenhuma coluna existente. Degrada em silencio se o parquet de concorrentes
@@ -696,7 +719,18 @@ def _init_renda_domiciliar_paths() -> float:
     _const._uplift_uf_cache = None
     _const._moradores_cache = None
     _const._moradores_uf_cache = None
-    fator, _ref = _const._carregar_fator_temporal()
+    # As caches SETORIAIS tambem: sem estas duas linhas, uma carga que rodasse antes do
+    # re-point (ex.: /api/ponto como 1a requisicao) congelava um mapa VAZIO para sempre —
+    # o uplift por setor degradava para o municipal em todo /ponto, sem log.
+    _const._uplift_setor_cache = None
+    _const._uplift_setor_extrapolado_cache = None
+    fator, ref = _const._carregar_fator_temporal()
+    # O binding de modulo congela no import (CWD=web/server -> path relativo nao resolve ->
+    # fallback 1.0). Reatribuir aqui e' o que faz `constants.FATOR_TEMPORAL_RENDA` valer o
+    # artefato real para quem le via modulo (censo_point/censo_map depois da correcao de
+    # 2026-08-14; antes eles importavam o NOME e ficavam com o 1.0 congelado).
+    _const.FATOR_TEMPORAL_RENDA = fator
+    _const.DATA_REFERENCIA_RENDA = ref
     return fator
 
 
@@ -729,8 +763,86 @@ def _fator_domiciliar(uf: str | None, cod_municipio: str | None) -> float | None
         return None
 
 
+_LOG_RENDA = logging.getLogger("piloto.renda")
+
+# k do STAGING HEX (censo2022_setores_calibrado.parquet, safra 2026-05) — NAO confundir com o
+# k do artefato GEO setorial (1,2335 na safra 2026-08-12): sao calibracoes independentes.
+_K_CALIBRACAO_FALLBACK = 1.0239
+_CENSO_HEX_STAGING_PARQUET = "censo2022_setores_calibrado.parquet"
+_RE_K_CARIMBO = re.compile(r"k=([0-9]+(?:\.[0-9]+)?)")
+
+
+@functools.lru_cache(maxsize=1)
+def _k_calibracao_renda() -> float:
+    """O `k` com que a coluna calibrada DO HEX foi gerada, lido do carimbo do staging hex.
+
+    `renda_per_capita_setor_2022_calibrada` do enriquecido nasce do STAGING HEX
+    (`censo2022_setores_calibrado.parquet`), nao do artefato geo setorial — e cada um carrega
+    seu proprio k (staging 1,0239; geo 1,2335 na safra de 2026-08-12). Ate 2026-08-14 este
+    helper lia o `_metadata.json` do GEO: desfazia um k que a coluna nunca teve, a base saia
+    0,83x a correta e a renda do tooltip ~17% abaixo do IBGE. A fonte certa e o carimbo
+    `metodo_calibracao_renda` ("multiplicativo_global_k=X") gravado no proprio staging hex.
+
+    Guarda de plausibilidade [0,5; 3,0] e fallback para a constante da safra conhecida, sempre
+    com log — NUNCA cair em 1,0 em silencio: reintroduziria a dupla contagem sem pista.
+    """
+    try:
+        serie = pd.read_parquet(
+            STAGING_DIR / _CENSO_HEX_STAGING_PARQUET, columns=["metodo_calibracao_renda"]
+        )["metodo_calibracao_renda"].dropna()
+        carimbo = str(serie.mode().iloc[0])
+        k = float(_RE_K_CARIMBO.search(carimbo).group(1))  # type: ignore[union-attr]
+    except Exception as exc:  # noqa: BLE001 — staging ausente/carimbo ilegivel: constante conhecida
+        _LOG_RENDA.warning(
+            "k de calibracao do hex: carimbo ilegivel em %s (%s); usando fallback %s",
+            _CENSO_HEX_STAGING_PARQUET, exc, _K_CALIBRACAO_FALLBACK,
+        )
+        return _K_CALIBRACAO_FALLBACK
+    if not 0.5 <= k <= 3.0:
+        _LOG_RENDA.warning(
+            "k de calibracao do hex fora da faixa plausivel (%s); usando fallback %s",
+            k, _K_CALIBRACAO_FALLBACK,
+        )
+        return _K_CALIBRACAO_FALLBACK
+    if serie.nunique() > 1:
+        _LOG_RENDA.warning(
+            "staging hex com %d carimbos de calibracao distintos; usando o modal %r",
+            serie.nunique(), carimbo,
+        )
+    _LOG_RENDA.info("k de calibracao do hex = %s (carimbo %r)", k, carimbo)
+    return k
+
+
+def _base_renda_domiciliar(r: pd.Series, uf: str | None, cod: str | None) -> float | None:
+    """Base da renda domiciliar do hex, na escala da renda do RESPONSAVEL per capita.
+
+    `_fator_domiciliar` multiplica por `moradores x uplift x fator_temporal`; para o resultado
+    ser a renda do domicilio, a base tem de ser V06004/moradores — nem mais, nem menos. As duas
+    colunas de origem estao em escalas diferentes e precisam de tratamento distinto:
+
+      - `renda_per_capita_setor_2022_calibrada` = V06004/moradores x k  -> dividir pelo k.
+        Ate 2026-08-13 usava-se ela crua, e o k sobrava: +23,35% na renda exibida.
+      - `renda_per_capita` (SIDRA t.10295 v.13431) JA e renda domiciliar per capita -> dividir
+        pelo uplift do municipio, senao o `_fator_domiciliar` aplica o uplift uma segunda vez.
+        Esse ramo estava +54,4% errado, e COM dispersao (o uplift varia de 1,42 a 1,86 entre
+        municipios), entao distorcia tambem a comparacao entre cidades.
+    """
+    valor = r.get("renda_leitura", float("nan"))
+    if valor is None or pd.isna(valor):
+        return None
+    origem = r.get("renda_origem")
+    if origem == "renda_per_capita_setor_2022_calibrada":
+        return float(valor) / _k_calibracao_renda()
+    if origem == "renda_per_capita":
+        from motor_expansao.dashboard.constants import uplift_renda_domiciliar
+
+        uplift = uplift_renda_domiciliar(uf, cod)
+        return float(valor) / uplift if uplift else None
+    return float(valor)
+
+
 def _renda_domiciliar_hex(r: pd.Series, fator: float | None) -> float | None:
-    """Renda media domiciliar do hex = renda per capita x fator municipal.
+    """Renda media domiciliar do hex = base (escala V06004 per capita) x fator municipal.
 
     NaN (tooltip em branco) quando falta renda OU cod_municipio — fiel ao contrato
     do Streamlit, que nao exibe estimativa de nivel UF para hex sem municipio.
@@ -740,7 +852,34 @@ def _renda_domiciliar_hex(r: pd.Series, fator: float | None) -> float | None:
     cod = r.get("cod_municipio")
     if cod is None or pd.isna(cod):
         return None
-    return _num(r.get("renda_leitura", float("nan")) * fator)
+    base = _base_renda_domiciliar(r, r.get("uf"), str(cod))
+    if base is None:
+        return None
+    return _num(base * fator)
+
+
+def _renda_per_capita_hex(
+    r: pd.Series, fator: float | None, dom: float | None = None
+) -> float | None:
+    """Renda DOMICILIAR per capita do hex — o mesmo conceito que o Relatorio Pontual exibe.
+
+    = renda do domicilio / moradores. Como `fator` ja e `moradores x uplift x temporal`, basta
+    dividir o domiciliar pelos moradores municipais. Ate 2026-08-13 o tooltip exibia a coluna
+    calibrada crua (V06004/moradores x k), que ficava ~20% abaixo da referencia do IBGE e nao
+    batia com o numero do Relatorio Pontual para a mesma coordenada.
+
+    `dom` pre-calculado evita refazer a cadeia inteira: `_hex_dict` roda por hex em cargas de
+    dezenas de milhares por UF, e as duas chamadas irmas dobravam o custo do endpoint.
+    """
+    if dom is None:
+        dom = _renda_domiciliar_hex(r, fator)
+    if dom is None:
+        return None
+    from motor_expansao.dashboard.constants import moradores_por_domicilio
+
+    cod = r.get("cod_municipio")
+    moradores = moradores_por_domicilio(r.get("uf"), None if cod is None or pd.isna(cod) else str(cod))
+    return _num(dom / moradores) if moradores else None
 
 
 @functools.lru_cache(maxsize=1)
@@ -784,6 +923,20 @@ ULTRA_MAPEADAS_PARQUET = STAGING_DIR / "unidades_ultra_mapeadas.parquet"
 COMPETITORS_LOGO_DIR = Path(
     os.environ.get("MOTOR_COMPETITORS_LOGO_DIR", str(_REPO_ROOT / "concorrentes"))
 )
+
+
+@app.on_event("startup")
+def _init_renda_paths_no_boot() -> None:
+    """Reaponta os artefatos de renda para caminhos ABSOLUTOS antes da 1a requisicao.
+
+    Sem isto a classe de bug e' de ordem: se a primeira requisicao do processo fosse
+    /api/ponto (bot, deep-link), o motor censitario carregaria uplift/fator temporal
+    pelos paths RELATIVOS do motor (CWD=web/server -> nao resolvem) e cachearia o
+    resultado vazio. Gracioso por construcao: staging ausente so' ativa os fallbacks."""
+    try:
+        _fator_temporal_renda()
+    except Exception:  # noqa: BLE001 — startup nunca derruba o servico por artefato de renda
+        _LOG_RENDA.warning("re-point dos artefatos de renda falhou no boot", exc_info=True)
 
 
 @app.on_event("startup")
@@ -1959,6 +2112,7 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
 
 def _hex_dict(r: pd.Series, fator_dom: float | None) -> dict[str, Any]:
     """Serializa um hex para o mapa (compartilhado entre as rotas UF e município)."""
+    renda_dom = _renda_domiciliar_hex(r, fator_dom)
     return {
         "id": r["hex_id"],
         "lat": _num(r["lat"], 6),
@@ -1970,8 +2124,11 @@ def _hex_dict(r: pd.Series, fator_dom: float | None) -> dict[str, Any]:
         "oferta": _num(r.get("oferta_efetiva_disponivel")),
         "sam": _num(r.get("sam_fitness_potencial")),
         "pop": _num(r.get("pop_leitura")),
-        "renda": _num(r.get("renda_leitura")),
-        "renda_dom": _renda_domiciliar_hex(r, fator_dom),
+        # `renda` e a renda DOMICILIAR per capita (conceito do IBGE), a mesma grandeza que o
+        # Relatorio Pontual exibe — antes era a coluna calibrada crua, e as duas superficies
+        # mostravam numeros diferentes para a mesma coordenada.
+        "renda": _renda_per_capita_hex(r, fator_dom, dom=renda_dom),
+        "renda_dom": renda_dom,
         "faixa": _faixa_label(r.get("faixa_oportunidade")),
         "conc": int(r.get("n_concorrentes_est") or 0),
         "ultra": int(r.get("n_ultra") or 0),
@@ -2854,7 +3011,7 @@ def _ranking_estados() -> list[dict[str, Any]]:
     import pyarrow.dataset as ds
 
     if not ENRICHED_DIR.exists():
-        raise HTTPException(500, f"Base nao encontrada em {ENRICHED_DIR}.")
+        raise HTTPException(500, "Base de dados não encontrada.")
 
     dset = ds.dataset(str(ENRICHED_DIR), partitioning="hive")
     disp = set(dset.schema.names)
@@ -3197,9 +3354,19 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         "densidade_valida_hab_km2": _num(res.get("densidade_pop_raio_valida_hab_km2")),
         "score_medio_raio": _num(res.get("score_setor_medio"), 1),
         "score_max_raio": _num(res.get("score_setor_max"), 1),
+        # Ressalva de leitura cautelosa: fracao (0-1, por peso de domicilios) do raio cuja
+        # renda depende de uplift EXTRAPOLADO para fora do envelope de calibracao. O motor
+        # ja calculava (`fracao_uplift_extrapolado_raio`); sem esta linha o numero morria no
+        # result e a ressalva prometida aos 20,3% de setores extrapolados nao chegava a
+        # superficie nenhuma.
+        "fracao_uplift_extrapolado": _num(res.get("fracao_uplift_extrapolado_raio"), 4),
         # SETOR A SETOR: min / mediana / max do que o raio contem.
         "distribuicao": {
-            "renda_per_capita": _dist("renda_per_capita_setor_2022_calibrada"),
+            # A MESMA grandeza de `setor_do_ponto.renda_per_capita` e de
+            # `renda_per_capita_media_raio`: domiciliar per capita. Lia a coluna
+            # CALIBRADA ate aqui, deixando tres campos irmaos deste payload em duas
+            # escalas — ~24% de diferenca, o sintoma que esta correcao existe para curar.
+            "renda_per_capita": _dist("renda_per_capita_domiciliar_setor"),
             "score": _dist("score_setor_2022_calibrado", 1),
             "populacao": _dist("pop_total_setor_2022"),
             "densidade_hab_km2": _dist("densidade_pop_setor_hab_km2"),
@@ -3238,7 +3405,12 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         "populacao": _num(res.get("pop_total_raio")),
         "domicilios": _num(res.get("domicilios_total_raio")),
         "renda_per_capita": _num(res.get("renda_per_capita_media_raio")),
-        "renda_media_domiciliar": _num(res.get("renda_media_domiciliar_raio")),
+        # ESCALA FINAL (uplift setorial + fator temporal), a mesma do PDF e a que fecha
+        # `renda_media_domiciliar = renda_per_capita x moradores`. Ate 2026-08-14 servia
+        # `renda_media_domiciliar_raio` (V06004 crua, PRE-uplift): ~19% abaixo da verdade,
+        # incoerente com o campo irmao da MESMA tela e mais duro no criterio estrutural
+        # de RENDA_MIN — pontos legitimos reprovavam por artefato de escala.
+        "renda_media_domiciliar": _num(res.get("renda_domiciliar_total_raio")),
         # A densidade VÁLIDA divide pela área de setor realmente intersectada, e não
         # por pi*r^2: num ponto com rio/mar no raio, a fixa subestima de propósito.
         "densidade_hab_km2": _num(res.get("densidade_pop_raio_valida_hab_km2")),
@@ -6167,9 +6339,11 @@ def executiva(uf: str, mes: str | None = None) -> dict[str, Any]:
 
 
 class RelatorioMunicipalIn(BaseModel):
-    uf: str
-    municipio: str
-    solicitante: str | None = None
+    # `uf` compoe caminho de particao/IBGE -> validacao anti-traversal na fronteira
+    # (BLK-SEC-05). So a sigla de 2 letras; qualquer outra coisa -> 422 limpo.
+    uf: str = Field(pattern=r"^[A-Za-z]{2}$")
+    municipio: str = Field(min_length=1, max_length=120)
+    solicitante: str | None = Field(default=None, max_length=200)
 
 
 @app.post("/api/relatorio/municipal")
@@ -6388,11 +6562,13 @@ async def relatorio_pontual(
     Esta funcao so faz a parte ASSINCRONA (ler os uploads) e delega o resto ao
     threadpool — ver `_gerar_relatorio_pontual_pdf`.
     """
-    # Unico I/O assincrono da rota: o corpo multipart.
+    # Unico I/O assincrono da rota: o corpo multipart. Teto de arquivos e de bytes por
+    # foto (BLK-SEC-05): lemos no maximo `_FOTOS_MAX` e, de cada, `_FOTO_MAX_BYTES`+1 —
+    # se estourar o teto, a foto e descartada (evita inflar a RAM do worker).
     fotos_bytes: list[bytes] = []
-    for f in fotos or []:
-        conteudo = await f.read()
-        if conteudo:
+    for f in (fotos or [])[:_FOTOS_MAX]:
+        conteudo = await f.read(_FOTO_MAX_BYTES + 1)
+        if conteudo and len(conteudo) <= _FOTO_MAX_BYTES:
             fotos_bytes.append(conteudo)
 
     # O resto do trabalho e 100% SINCRONO e pesado (10-30 s). Rodando direto dentro do

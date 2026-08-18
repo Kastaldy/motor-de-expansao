@@ -348,3 +348,33 @@ def test_rotulo_do_metodo_acompanha_o_raio() -> None:
     assert METODO_RELATORIO_PONTUAL_CENSITARIO == "setor_censitario_intersecao_area_1km"
     assert "1p5km" not in METODO_RELATORIO_PONTUAL_CENSITARIO
     assert RAIO_CENSITARIO_DEFAULT_KM == 1.0
+
+
+def test_distribuicao_de_renda_le_a_coluna_corrigida() -> None:
+    """`detalhe.distribuicao.renda_per_capita` tem de sair da coluna DOMICILIAR per capita.
+
+    Contrato sobre o fonte, no mesmo molde de `test_backend_e_read_only`: montar o payload
+    inteiro num teste exigiria a malha IBGE real em disco (`ponto()` falha antes de chegar no
+    analisador), e o `_dist` e' uma closure dentro do endpoint — nao da' para chama-lo isolado.
+
+    O payload de `/ponto` expoe renda per capita em TRES campos irmaos: o agregado do raio,
+    o setor do ponto e esta distribuicao min/mediana/max. A correcao de escala de 2026-08-13
+    pegou os dois primeiros e deixou este lendo `renda_per_capita_setor_2022_calibrada` — a
+    coluna com o `k` —, o que punha ~24% de diferenca dentro do MESMO documento. Achado pela
+    revisao automatica do PR #237, nao pela suite: nenhum teste olhava a coluna que o alimenta.
+
+    A escala do VALOR esta travada em
+    `test_os_tres_campos_de_renda_per_capita_do_payload_na_MESMA_escala`
+    (tests/unit/test_relatorio_pontual_censitario_motor.py); aqui trava-se a LIGACAO.
+    """
+    src = (_SERVER / "app.py").read_text(encoding="utf-8")
+
+    assert '"renda_per_capita": _dist("renda_per_capita_domiciliar_setor")' in src, (
+        "a distribuicao de renda do payload precisa ler `renda_per_capita_domiciliar_setor`"
+    )
+    # Nenhuma distribuicao pode sair da coluna calibrada. Note que a calibrada CONTINUA valida
+    # em `_base_renda_domiciliar`, que a converte dividindo pelo `k` — por isso o alvo aqui e'
+    # o `_dist(...)`, e nao a mera presenca do nome da coluna no arquivo.
+    assert '_dist("renda_per_capita_setor_2022_calibrada")' not in src, (
+        "distribuicao saindo da coluna calibrada reintroduz o `k` na renda exibida"
+    )

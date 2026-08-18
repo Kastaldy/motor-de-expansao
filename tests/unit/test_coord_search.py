@@ -339,35 +339,34 @@ def test_extract_any_coord_link_curto_nao_resolve_offline():
     assert extract_any_coord("https://maps.app.goo.gl/abc123") == (None, None)
 
 
-# ── resolve_short_link (BLK-UI-09 / DEC-010 emenda Opção B) — urllib MOCKADO ───
+# ── resolve_short_link (BLK-UI-09 / DEC-010 emenda Opção B) — requests MOCKADO ───
+# BLK-SEC-05: passou a seguir redirects MANUALMENTE (allow_redirects=False), validando
+# cada salto contra a allowlist do Maps — por isso os mocks agora sao de `requests.get`.
 
 
-class _FakeRedirectResp:
-    """Stub de resposta urllib que expõe geturl() (URL final após redirects)."""
+class _FakeReqResp:
+    """Stub de resposta requests: expõe url, headers e is_redirect."""
 
-    def __init__(self, final_url: str):
-        self._final_url = final_url
+    def __init__(self, url: str, *, redirect: bool = False, location: str | None = None):
+        self.url = url
+        self._redirect = redirect
+        self.headers = {"Location": location} if location else {}
 
-    def __enter__(self):
-        return self
+    @property
+    def is_redirect(self) -> bool:
+        return self._redirect
 
-    def __exit__(self, *exc):
+    @property
+    def is_permanent_redirect(self) -> bool:
         return False
-
-    def geturl(self):
-        return self._final_url
 
 
 def test_resolve_short_link_segue_redirect_para_url_longa(monkeypatch):
-    """Sucesso: geturl() (mock) devolve URL longa com !3d/!4d -> string retornada."""
+    """Sucesso: a resposta final (mock) traz a URL longa com !3d/!4d -> string retornada."""
     from motor_expansao.api import maps_geocoder
 
     longa = "https://www.google.com/maps/place/x/@-23.5613,-46.6565,17z/data=...!3d-23.5613!4d-46.6565"
-    monkeypatch.setattr(
-        maps_geocoder.urllib.request,
-        "urlopen",
-        lambda *a, **k: _FakeRedirectResp(longa),
-    )
+    monkeypatch.setattr(maps_geocoder.requests, "get", lambda *a, **k: _FakeReqResp(longa))
     out = maps_geocoder.resolve_short_link("https://maps.app.goo.gl/abc123", timeout=1.0)
     assert out == longa
     # E a URL longa resolvida deve render coordenada do Brasil ao passar por extract_any_coord.
@@ -380,10 +379,30 @@ def test_resolve_short_link_falha_de_rede_retorna_none(monkeypatch):
     from motor_expansao.api import maps_geocoder
 
     def _boom(*a, **k):
-        raise TimeoutError("sem rede")
+        raise maps_geocoder.requests.RequestException("sem rede")
 
-    monkeypatch.setattr(maps_geocoder.urllib.request, "urlopen", _boom)
+    monkeypatch.setattr(maps_geocoder.requests, "get", _boom)
     assert maps_geocoder.resolve_short_link("https://maps.app.goo.gl/abc", timeout=0.1) is None
+
+
+def test_resolve_short_link_recusa_redirect_intermediario_para_host_interno(monkeypatch):
+    """Um 302 do link (allowlisted) apontando para host INTERNO e recusado ANTES do 2o GET.
+
+    Cobre o achado do revisor (BLK-SEC-05): o cliente NAO pode seguir o redirect
+    intermediario para a rede interna antes de validar.
+    """
+    from motor_expansao.api import maps_geocoder
+
+    chamadas: list[str] = []
+
+    def _get(u, *a, **k):
+        chamadas.append(u)
+        # 1o GET (goo.gl) -> 302 para host interno; o 2o GET (ao interno) NAO deve ocorrer.
+        return _FakeReqResp("https://goo.gl/x", redirect=True, location="http://api:8077/segredo")
+
+    monkeypatch.setattr(maps_geocoder.requests, "get", _get)
+    assert maps_geocoder.resolve_short_link("https://goo.gl/x") is None
+    assert chamadas == ["https://goo.gl/x"]  # so o 1o GET; o host interno nunca foi requisitado
 
 
 def test_resolve_short_link_vazio_retorna_none():
