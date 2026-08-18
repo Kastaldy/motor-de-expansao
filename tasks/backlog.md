@@ -1687,6 +1687,28 @@ para os 58,5% que virariam dois pins no mesmo lugar.
 no tooltip (`n_conc` / `n_indep` / `n_cadeias_feed` / `oferta` / `dist_m`) — sem isso, uma unidade de
 rede exibiria um número saturado tão inverificável quanto o que a revisão de 2026-08-15 apontou.
 Contrato do artefato nomeado **desde a DEC-034**: `alvos_ma_nomeados_v4`, **24 colunas**.
+> ### [medido na revisão adversarial de 2026-08-17] A conferência visual que a metade 1 herdaria JÁ não fecha
+>
+> A promessa que o BLK-MA-18 escreveu no próprio componente — *"o operador conta os pins no mapa e o
+> número fecha"* — foi testada contra o dado real e **já falhava em 16,4% dos casos ANTES da metade
+> 2**: em SP fechava em **4.862 de 5.819** nomeadas, e **471** das 957 quebras tinham
+> `n_cadeias_do_feed_no_raio = 0`, isto é, quebravam por motivo alheio a este epic. Depois da metade
+> 2 fecha em **2.897 de 5.819 (49,8%)**.
+>
+> **A causa não é a metade 2 — é estrutural.** As duas camadas de pin filtram por
+> `hex_id_res7 ∈ sel` (`_montar_pins`, `_pins_independentes`), ou seja, pelo **município**, enquanto
+> o raio de 2 km atravessa divisa municipal livremente. Somem-se duas réguas de validade diferentes
+> sobre o mesmo parquet (`flag_coord_valida`, 4.459 pontos, no carregador; `status_registro ==
+> "valido"`, 4.366, na pressão) e a `dedup_independentes`, que colapsa entre fontes mas desenha o pin
+> da linha nomeada.
+>
+> **Consequência para o escopo desta metade:** surfacear `n_cadeias_do_feed_no_raio` no tooltip é
+> **necessário mas não suficiente** — sozinho, explica só uma parte da diferença. Herdar a auditoria
+> do BLK-MA-18 sem endereçar o recorte municipal entrega uma conta que continua não fechando em
+> metade dos casos. São **três** pontos de edição — `_COLS_NOMEADAS` (`web/server/app.py:401`), o
+> payload de `_pins_independentes` (`:463-486`) e o template do tooltip (`HexMap.tsx:999-1005`) —,
+> todos em `web/`, a zona em que `origin/main` andou.
+
 
 **Fora de escopo.** Qualquer artefato/peso/score do M1; a entrada das INDEPENDENTES como oferta
 (**BLK-MA-16**, concluído); incluir unidades de rede na lista comercial de alvos (**BLK-MA-05**);
@@ -1742,11 +1764,144 @@ com chave repetida o `dict` guarda só a última posição, e a auto-exclusão d
 o índice errado).
 
 **Fora de escopo.** Recalibrar o limiar de 50 m (isso é BLK-MA-06, com par verdade-terreno); mexer em
-`dedup_cadeias_do_feed` (já usa `k` derivado); qualquer artefato/peso/score do M1.
+`dedup_cadeias_do_feed` (já usa `k` derivado — o defeito DELA é outro, entre fontes,
+e é o **BLK-MA-17-FU2**); qualquer artefato/peso/score do M1.
 
 **Alternativa considerada e recusada:** absorver como sub-item do BLK-MA-06. Recusada porque o
 BLK-MA-06 é o bloco que **liga a segunda fonte** — se a correção viajar junto, o defeito e o dado que
 o ativa estreiam no mesmo PR, e não haverá régua "antes" para medir.
+
+---
+
+### BLK-MA-17-FU2 — `dedup_cadeias_do_feed` não compara o feed entre FONTES: a mesma unidade de rede em dois agregadores vira duas ofertas
+
+| | |
+|---|---|
+| **Criticidade** | **Média** — corrige uma dedup cujo efeito hoje é **provadamente nulo** (o snapshot `2026-33` é 100% WellHub), mas que passa a errar na primeira coleta com TotalPass. READ-ONLY sobre o M1. |
+| **Prioridade** | Alta dentro da epic — **irmão do BLK-MA-17-FU1, mesmo gatilho e mesma janela**: tem de estar corrigido **ANTES** de o BLK-MA-06 ser aplicado na VPS, senão o defeito estreia junto com a segunda fonte. |
+| **Esteira** | Builder → QA (sem gate: não muda universo, não muda decisão; corrige uma duplicidade de oferta). |
+| **Status** | Pendente — **achado da revisão adversarial de 2026-08-17**, o único de severidade média que sobreviveu à refutação (10 achados brutos, 4 sobreviventes). **Não é coberto pelo FU1:** aquele bloco declara `dedup_cadeias_do_feed` explicitamente **fora de escopo**. |
+| **Depende de** | BLK-MA-17 (metade 2) — é ele que introduz `dedup_cadeias_do_feed`. |
+| **Autonomia** | **manual (NÃO loop-safe)** |
+
+**O defeito, medido.** `dedup_cadeias_do_feed` (`pressao_competitiva.py:503-626`) popula o bucket
+`ocupantes` **só** com os pontos mapeados (laço `for j in range(offset)`, linhas 573-577) e **nunca**
+insere o sobrevivente do feed nesse dicionário (609-611). Não existe passagem feed × feed. A função
+irmã faz o oposto: `dedup_independentes` (414-500) insere o sobrevivente em `ocupantes` (487) e
+colapsa linhas de `fonte` diferentes. A camada ficou **assimétrica** — o lado das independentes está
+protegido contra a duplicata TotalPass × WellHub e o lado das cadeias, não.
+
+**O cenário, reproduzido.** Mesma unidade de rede listada pelos dois agregadores a 3 m, e a mais de
+150 m de qualquer pin mapeado (o recorte das **1.171** sobreviventes de hoje). Saída medida contra
+uma cópia isolada de `src/` no blob de HEAD: as **duas** linhas com
+`pressao_competitiva = 49,962514`, `oferta_ponderada = 0,998502`, `n_concorrentes_no_raio = 1`,
+`dist_concorrente_mais_proximo_m = 2,996633` — território sem concorrente nenhum lido como metade da
+escala. O **mesmo par** marcado como independente: `dedup_independentes` colapsa e as duas saem com
+`pressao = 0,0`.
+
+**O dano não se limita à gêmea.** As duas linhas viram **dois pontos independentes** no array
+`lat_c`/`lng_c` concatenado, e a auto-exclusão (`auto_pos_cadeia`) zera apenas a posição do próprio
+observador. Logo **qualquer academia dentro dos 2 km enxerga dois concorrentes onde há um**:
+`n_concorrentes_no_raio` sai `+1` e a oferta daquele endereço entra em dobro. As três réguas
+VISÍVEIS no pin que a DEC-034 lista (`pressao`, `n_conc`, `dist_m`) se movem para terceiros, não só
+para o par.
+
+**O gatilho não exige mudar uma linha de código.** `alvos_ma._pressao_por_academia` (602-618) chama
+`coordenadas_por_chave()` **sem** `fontes`, e essa função lê os três diretórios por default
+(`snapshots.py:519-522`); o único dedup que ela aplica é
+`drop_duplicates(subset=["fonte","chave_snapshot"])` (581), que **por construção** não colapsa entre
+fontes. O recorte `--fontes unidades` do cron vale para `run_snapshot_concorrentes.sh`
+(`docs/infra_producao.md:256-264`), **não** para o `alvos_ma`. Basta um CSV aparecer em
+`concorrentes/totalpass/csvs`. E `_preparar_parte` (`snapshots.py:154`) atribui `rede` de cadeia
+também para o TotalPass, então a gêmea cai mesmo em `cadeias_do_feed`.
+
+**Por que hoje é zero, e por que isso é o perigoso.** Medido: `coordenadas_por_chave()` devolve
+`22.173` linhas, `{'wellhub': 22173}` — fonte única; `concorrentes/totalpass` não existe no disco.
+Como no FU1, o modo de falha de uma dedup que não roda é **indistinguível** do caso correto.
+
+**Escopo.** (1) Fazer `dedup_cadeias_do_feed` comparar o feed contra si mesmo **apenas entre `fonte`
+DIFERENTES**, no molde exato da guarda que `dedup_independentes` já usa
+(`pressao_competitiva.py:470-471`: `if fontes[j] == fontes[i]: continue`). (2) Manter a auto-exclusão
+correta para a chave colapsada nesse caminho novo. (3) Fixture com **duas** fontes — nenhum dos 21
+testes do BLK-MA-17 monta uma. (4) Teste de equivalência contra varredura completa, molde do
+`test_14b`. (5) Nota de emenda na **DEC-034**, dona desta dedup.
+
+**A restrição que decide o desenho: dedup dentro da MESMA fonte está PROIBIDA, e foi medida.** Entre
+as cadeias do feed há **5 pares a ≤ 50 m**, e os cinco são `wellhub × wellhub`. Só **dois** são o
+mesmo estabelecimento; os outros **três são redes DIFERENTES dividindo prédio** — `skyfit` ×
+`panobianco` (2,9 m), `selfit` × `power_fit` (22,5 m), `force_one` × `world_gym` (39,9 m). Colapsar
+por distância dentro da mesma fonte apagaria concorrente real, que é o custo assimétrico que a
+DEC-034 já mediu do outro lado. **A guarda entre-fontes resolve isso de graça:** como os 5 pares são
+da mesma fonte, ela os pula por construção, e o efeito sobre o dado de hoje continua exatamente
+`0`. O mesmo vale do lado das independentes, onde o fenômeno é 108x maior (543 pares a ≤ 50 m) e
+igualmente não tratado, por decisão registrada (docstring 427-429; `contrato.py:472-476`).
+
+**Fora de escopo.** Dedup dentro da mesma fonte (medida e recusada acima); recalibrar os limiares de
+150 m / 50 m (isso é BLK-MA-06, com par verdade-terreno); `dedup_independentes` (é o **BLK-MA-17-FU1**);
+qualquer artefato/peso/score do M1.
+
+**Critério de aceite.** A duplicata entre fontes nunca conta duas vezes, travada por teste; o efeito
+sobre o dado de hoje permanece **exatamente nulo**, medido antes e depois (fonte única); os 5 pares
+de mesma fonte continuam **os 5 na oferta**; equivalência contra varredura completa; READ-ONLY sobre
+o M1; suíte verde.
+
+---
+
+### BLK-MA-17-FU3 — O caminho de PRODUÇÃO da pressão não é exercitado: `_pressao_por_academia` nunca é chamada em teste
+
+| | |
+|---|---|
+| **Criticidade** | **Média** — não há defeito hoje (o código entregue está correto e foi verificado *em execução*, não só por leitura). O que falta é a rede que impede a **próxima** edição de errar em silêncio. READ-ONLY sobre o M1. |
+| **Prioridade** | **Alta dentro da epic, e antes dos irmãos** — o **FU1** e o **FU2** vão editar exatamente esse caminho. Sem cobertura, as duas correções entram às cegas. |
+| **Esteira** | Builder → QA (sem gate: só acrescenta teste, não muda comportamento). |
+| **Status** | Pendente — **achado da revisão adversarial de 2026-08-17**: 2 dos 4 sobreviventes, rebaixados a leve individualmente, mas com a **mesma causa raiz**, que é o que os torna um bloco só. |
+| **Depende de** | BLK-MA-17 (metade 2). |
+| **Autonomia** | **manual (NÃO loop-safe)** |
+
+**O buraco.** `grep -rn "_pressao_por_academia" tests/` devolve duas ocorrências úteis
+(`test_oferta_cadeias_do_feed.py:300-303` e `test_universo_oferta_s6.py:317-319`) e as duas só fazem
+`inspect.signature(...).parameters`. **A função nunca é chamada.** `alvos_ma.main` não aparece em
+teste nenhum, e nada em `tests/contracts/` ou `tests/integration/` toca o módulo. Os dois testes que
+o BLK-MA-17 declara como trava do gate DEC-033/DEC-034 inspecionam a assinatura, não o comportamento.
+
+**Mutante 1 — a partição independente/cadeia pode ser INVERTIDA.** Trocar as duas linhas da partição
+em `alvos_ma.py:605-614` faz toda independente pesar `1,0` e toda unidade de rede `0,5` — o oposto
+exato da DEC-033/DEC-034. Medido: **448 passed, 0 failed**. No insumo real a pressão média das 19.329
+vai de **62,775 para 71,371**, **18.270 linhas (94,5%)** mudam de valor, delta médio 9,24 pts,
+p90 16,45, máximo 49,76, `Spearman` do `v6` = 0,98652. O artefato invertido **não carrega nenhum
+tell**: `universo_oferta` sai idêntico nos dois casos, e `calcular_pressao_por_academia` nunca valida
+o CONTEÚDO dos frames — só colunas, kernel e faixa de peso.
+
+**Mutante 2 — a ordem do concat.** `posicao_por_chave` (`pressao_competitiva.py:610`) só é válida se
+o chamador concatenar exatamente `[pontos_mapeados ; sobreviventes]`, e essa concatenação é feita à
+mão em `:725`. Invertê-la devolve `pressao = 50,0000`, `oferta = 1,000000`, `dist = 0,0`: a academia
+passa a **se auto-pressionar com os exatos 50 pontos** que o bloco diz ter fechado, e o concorrente
+real a 1,5 km é apagado. Medido: **437 passed** no diretório da camada.
+
+**Por que os testes de hoje não pegam.** Os dois de auto-exclusão degeneram o caso: `test_5` roda com
+`_sem_cadeias()` (`offset = 0`) e `test_6` com o feed inteiro colapsado (zero sobreviventes) — em
+nenhum dos dois existe **simultaneamente** ponto mapeado E sobrevivente, que é o único arranjo em que
+o `offset` importa. E `test_14b`, a trava de equivalência, filtra explicitamente o outro ramo
+(`obtidos = {... if pos < offset}`), de modo que a linha 610 nunca é comparada com nada. Confirmado
+por mutação: `offset -> 0` derruba **só** o `test_14b`, ou seja, o `offset` é amarrado apenas pelo
+filtro de fronteira, nunca pelo acoplamento de ORDEM.
+
+**O conserto é barato — e é isso que agrava o gap.** Um teste que chama `_pressao_por_academia` com 3
+academias sintéticas e um parquet temporário de 1 concorrente (~30 linhas, sem dado real, segundos)
+já separa os dois pesos: a 500 m a independente contribui `oferta_independentes = 0,374906` e a
+unidade de rede `oferta_cadeias_do_feed = 0,749811` — exatamente 2x, a assinatura da partição. Um
+único assert sobre essas duas colunas mata o mutante 1.
+
+**Escopo.** (1) Teste que EXECUTA `_pressao_por_academia` com fixture sintética, travando a
+assinatura 2x da partição. (2) Teste do arranjo de produção — ponto mapeado **e** sobrevivente **e** o
+sobrevivente sendo a academia observada —, que hoje não existe em lugar nenhum. (3) Cobrir a flag
+`--oferta-so-cadeias` desligando de fato o universo ampliado (hoje só a assinatura é inspecionada).
+
+**Fora de escopo.** Mudar o comportamento de qualquer função — este bloco **só acrescenta teste**;
+qualquer artefato/peso/score do M1.
+
+**Critério de aceite.** Os dois mutantes acima passam a **falhar**; nenhuma mudança de comportamento
+medível nos artefatos; suíte verde.
 
 ---
 
