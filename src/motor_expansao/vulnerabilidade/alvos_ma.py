@@ -546,6 +546,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--saida-redes",
+        type=Path,
+        default=None,
+        help=(
+            "artefato NOMEADO das unidades de REDE do agregador (BLK-MA-17 metade 1, DEC-035): "
+            "pressao + fatos sem peso + identidade, SEM score. Mesmo regime do `--saida-nomeadas` "
+            "-- sem este argumento nada e' gravado, e so' aceita caminho sob `data/staging/`."
+        ),
+    )
+    p.add_argument(
         "--dry-run",
         action="store_true",
         help="compõe tudo e reporta a auditoria, sem gravar arquivo algum",
@@ -642,7 +652,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     _logger.info("sinal 6: %s", motivo)
 
-    score = calcular_score_vulnerabilidade(args.base_dir, pressao=pressao)
+    # Quando o artefato de REDES e' pedido, o churn e' lido AQUI e passado ao score, em vez de o
+    # score le-lo internamente: o mesmo frame serve aos dois consumidores. Ler duas vezes custaria o
+    # dobro e abriria a chance de o artefato de redes ver uma serie diferente da que gerou o score.
+    churn_lido = None
+    if args.saida_redes is not None:
+        from .churn_staleness import extrair_churn_staleness
+        from .presenca_agregador import extrair_presenca_agregador
+
+        churn_lido = extrair_churn_staleness(Path(args.base_dir))
+        score = calcular_score_vulnerabilidade(
+            churn=churn_lido,
+            presenca=extrair_presenca_agregador(Path(args.base_dir)),
+            pressao=pressao,
+        )
+    else:
+        score = calcular_score_vulnerabilidade(args.base_dir, pressao=pressao)
     auditoria = materializar_alvos_ma(
         score,
         carteira_path=args.carteira,
@@ -665,6 +690,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             # uma contagem que nao corresponde ao numero exibido ao lado dela.
             pressao=pressao,
             saida=args.saida_nomeadas,
+            dry_run=args.dry_run,
+        )
+
+    # Artefato de REDES (BLK-MA-17 metade 1 / DEC-035): mesmo regime de opt-in, pela mesma razao --
+    # ele carrega identidade de estabelecimento.
+    if args.saida_redes is not None:
+        from .contrato import CATEGORIA_INDEPENDENTE
+        from .pressao_competitiva import (
+            CONCORRENTES_PATH_DEFAULT,
+            _pontos_validos_frame,
+            ler_concorrentes,
+        )
+        from .redes_nomeadas import chaves_com_pin_proprio, materializar_redes_nomeadas
+
+        assert churn_lido is not None  # garantido pelo ramo acima
+        # A PRECEDENCIA de pin sai da mesma dedup da DEC-034: sobrevivente = sem pin no funil.
+        alvo_conc = args.concorrentes or CONCORRENTES_PATH_DEFAULT
+        com_pin: set[tuple[str, str]] = set()
+        if alvo_conc.exists():
+            cadeias = coordenadas[coordenadas["rede"].astype(str) != CATEGORIA_INDEPENDENTE]
+            com_pin = chaves_com_pin_proprio(
+                cadeias, _pontos_validos_frame(ler_concorrentes(alvo_conc))
+            )
+        auditoria["redes"] = materializar_redes_nomeadas(
+            churn_lido,
+            coordenadas,
+            pressao=pressao,
+            com_pin_proprio=com_pin,
+            saida=args.saida_redes,
             dry_run=args.dry_run,
         )
     print(auditoria)

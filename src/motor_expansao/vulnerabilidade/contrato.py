@@ -744,6 +744,54 @@ CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
     "versao_contrato": "string",
 }
 
+# `[BLK-MA-17 metade 1 / DEC-035]` Artefato NOMEADO das unidades de REDE do agregador.
+#
+# Ele existe porque as 2.844 unidades de rede que o WellHub lista entram na OFERTA do sinal 6 desde
+# a DEC-034 e nao aparecem em lugar nenhum da tela — `_filtrar_universo_sinal_1` as corta antes do
+# score, e a camada de exibicao herdou esse corte sem ter a mesma razao para te-lo: o que nao serve
+# para rede e' a REGUA DE SCORE, nao a leitura.
+#
+# **FATO SIM, SCORE NAO.** Nao ha `score_vulnerabilidade` nem `score_vulnerabilidade_ordenavel`
+# aqui, e a ausencia e' a decisao, nao um esquecimento: S1 e S3 medem outra coisa numa rede. A
+# negociacao com o agregador e' CENTRALIZADA, e o S3 e' correlacionado — top 5 = 48,4% das unidades,
+# maximo 440 numa rede so'. Quando a Panobianco sair do WellHub, 440 unidades viram `sumiu_recente`
+# no mesmo dia e o score leria um evento de negociacao como 440 alvos. O S6 nao tem esse defeito: e'
+# geografico e nao sabe se a academia e' de rede. Molde do G-D2 e da DEC-026 — o fato entra antes do
+# peso.
+VERSAO_CONTRATO_REDES_NOMEADAS = "redes_ma_nomeadas_v1"
+
+CONTRATO_COLUNAS_REDES_NOMEADAS: dict[str, str] = {
+    "fonte": "string",
+    "chave_snapshot": "string",
+    "nome": "string",  # IDENTIDADE — mesmo regime do nomeado de independentes (emenda DEC-028)
+    "rede": "string",  # o que distingue este artefato do outro; nunca `independente`
+    "lat": "Float64",
+    "lng": "Float64",
+    "hex_id_res7": "string",
+    # FATOS SEM PESO, os mesmos tres que a DEC-035 autoriza propagar.
+    "status_churn": "string",
+    "nota_wellhub": "Float64",
+    "qtd_avaliacoes_wellhub": "Int64",
+    # O SINAL 6 e a auditoria dele. `v6` fica DE FORA de proposito: ele e' o componente normalizado
+    # que alimenta um score que este artefato nao emite, e sozinho seria `pressao/100` — redundante
+    # e sugerindo um composto que nao existe aqui.
+    "pressao_competitiva": "Float64",
+    "pressao_grao": "string",
+    "universo_oferta": "string",
+    "n_concorrentes_no_raio": "Int64",
+    "n_independentes_no_raio": "Int64",
+    "n_cadeias_do_feed_no_raio": "Int64",
+    "oferta_ponderada": "Float64",
+    "dist_concorrente_mais_proximo_m": "Float64",
+    # PRECEDENCIA DE PIN, herdada de graca da dedup da DEC-034 e por isso nao e' regra nova: as
+    # sobreviventes sao, POR CONSTRUCAO, exatamente as unidades sem ponto equivalente em
+    # `concorrentes_mapeados` — logo as unicas sem pin ja' desenhado no funil. `True` = desenhar pin
+    # proprio; `False` = o pin do funil ja' cobre aquele endereco, e desenhar outro criaria dois
+    # pins no mesmo lugar.
+    "tem_pin_proprio": "boolean",
+    "versao_contrato": "string",
+}
+
 # Colunas PROIBIDAS nos artefatos desta camada (rede de segurança do teste anti-PII: a limpeza é
 # por construção, projetando só as 10 colunas do contrato).
 COLUNAS_PII_PROIBIDAS: frozenset[str] = frozenset(
@@ -1079,6 +1127,8 @@ __all__ = [
     "CONTRATO_COLUNAS_ALVOS_MA",
     "CONTRATO_COLUNAS_ALVOS_NOMEADOS",
     "VERSAO_CONTRATO_ALVOS_NOMEADOS",
+    "CONTRATO_COLUNAS_REDES_NOMEADAS",
+    "VERSAO_CONTRATO_REDES_NOMEADAS",
     "COLUNAS_PII_PROIBIDAS",
     "normalizar_texto",
     "normalizar_lista",
