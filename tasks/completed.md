@@ -12439,3 +12439,28 @@ Arquivos: `src/motor_expansao/dashboard/acesso_log.py`, `web/server/app.py`,
 Merge = passo humano (PR ad-hoc que toca compose: `criticidade:alta` + `aprovado-humano` de humano
 distinto do autor + `critica-aprovada` de dono pelo guard). Deploy manual por digest + 5 passos de
 habilitacao na VPS em `docs/trilha_acesso_piloto.md`. Housekeeping: helper e no-op (EXIT_AD_HOC).
+
+## Fechamento de ciclo — Fix simulador XLSX com valores em cache (2026-08-18, ad-hoc)
+
+Bug de producao reportado por Felipe: a planilha do simulador (POST /api/simulador/xlsx) abria "sem
+informacoes" em DRE/Fluxo/Resumo mesmo com as premissas preenchidas. Diagnostico por evidencia: o
+arquivo gerado estava INTEGRO (8 abas, ~4.600 formulas, fullCalcOnLoad) — mas openpyxl grava formula
+SEM valor calculado, e visualizador sem recalculo (Excel em Modo de Exibicao Protegida, previews,
+LibreOffice default) mostra as abas 100% formula em branco; so a Premissas (valores literais)
+aparecia. A trilha de acesso (DEC-027) foi decisiva para descartar as outras hipoteses (403 do
+controle por aba so sem Remote-User; nenhum export real do usuario chegou ao backend).
+
+Fix: etapa `_com_valores_em_cache` no gerador — recalcula o arquivo com a lib `formulas` (a MESMA que
+o nivel 2 de test_simulador_xlsx.py ja usa para provar as formulas contra o motor) e injeta cada
+resultado como `<v>` no XML, sem tocar em mais nada (o proprio Excel salva assim). Formulas seguem
+vivas. Kill-switch `MOTOR_SIMULADOR_XLSX_SEM_CACHE`; falha degrada para o arquivo original (download
+nunca quebra); `_LOCK_RECALCULO` serializa o recalculo (race do primeiro import do schedula
+reproduzido 3/3 na revisao + teto de 1 recalculo simultaneo, ~8s/300MB cada). Extra novo
+`simulador_cache` no pyproject instalado pelo Dockerfile.web; constraints ja pinava tudo.
+
+QA: revisao adversarial por workflow (27 agentes: 3 lentes -> achados -> 2 ceticos por achado ->
+7 confirmados, 5 refutados) — todos os 7 corrigidos ou cobertos (lock unico resolve 3; tmp_path antes
+do write; drift de comentarios; kill-switch tambem no import do conftest p/ fixtures de modulo; nota
+de merge). Suites: 3192 passed na completa (1 falha pre-existente ambiental do Windows) + 105 nas
+afetadas apos os consertos, incluindo teste de regressao de concorrencia. Merge admin + deploy
+autorizados por Felipe ("totalmente autonomo").
