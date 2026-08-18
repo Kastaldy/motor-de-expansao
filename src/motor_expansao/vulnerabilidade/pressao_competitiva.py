@@ -439,6 +439,11 @@ def dedup_independentes(
     faltando = [c for c in colunas if c not in independentes.columns]
     if faltando:
         raise ValueError(f"frame de independentes sem coluna(s) obrigatoria(s): {faltando}")
+    # Chave repetida sobrescreveria a entrada de `posicao_por_chave`, e a auto-exclusão da
+    # linha perdida passaria a apontar para o índice de OUTRA academia — exclusão silenciosa do
+    # ponto errado. O molde é o mesmo de `calcular_pressao_por_academia` (BLK-MA-17-FU1).
+    if bool(independentes.duplicated(subset=["fonte", "chave_snapshot"]).any()):
+        raise ValueError("frame de independentes com `(fonte, chave_snapshot)` duplicado")
 
     base = independentes[colunas].copy()
     base["lat"] = pd.to_numeric(base["lat"], errors="coerce")
@@ -458,6 +463,12 @@ def dedup_independentes(
     ]
 
     # Bucket espacial: sem ele a comparação seria de todos contra todos (19.329^2 = 373 M pares).
+    # O `k` sai do limiar, nunca de um literal (BLK-MA-17-FU1). Até 2026-08-18 ele era `1`
+    # cravado: na `DEDUP_H3_RES = 11`, cuja aresta média medida é 28,66 m, o anel `k = 1`
+    # **não cobre** os 50 m do limiar. Uma dedup sub-coberta não levanta erro — ela devolve
+    # "nenhum colapso", que é exatamente o que uma dedup correta devolve quando não há
+    # duplicata, e o defeito só aparece contra varredura completa (`test_equivalencia`).
+    k = _k_do_bucket(distancia_m)
     ocupantes: dict[str, list[int]] = {}
     mantidos: list[int] = []
     pos_de: dict[int, int] = {}
@@ -466,7 +477,7 @@ def dedup_independentes(
 
     for i in range(len(base)):
         representante: int | None = None
-        for vizinha in h3.grid_disk(celulas[i], 1):
+        for vizinha in h3.grid_disk(celulas[i], k):
             for j in ocupantes.get(vizinha, ()):
                 if fontes[j] == fontes[i]:
                     continue
@@ -492,10 +503,12 @@ def dedup_independentes(
 
     if colapsadas:
         _logger.info(
-            "dedup de independentes entre fontes: %d linha(s) colapsada(s) de %d (raio %.0f m)",
+            "dedup de independentes entre fontes: %d linha(s) colapsada(s) de %d "
+            "(raio %.0f m; grid_disk k=%d)",
             colapsadas,
             len(base),
             float(distancia_m),
+            k,
         )
     return base.iloc[mantidos].reset_index(drop=True), posicao_por_chave
 
@@ -544,6 +557,11 @@ def dedup_cadeias_do_feed(
     faltando = [c for c in colunas if c not in cadeias_feed.columns]
     if faltando:
         raise ValueError(f"frame de cadeias do feed sem coluna(s) obrigatoria(s): {faltando}")
+    # Chave repetida sobrescreveria a entrada de `posicao_por_chave`, e a auto-exclusão da
+    # linha perdida passaria a apontar para o índice de OUTRA academia — exclusão silenciosa do
+    # ponto errado. O molde é o mesmo de `calcular_pressao_por_academia` (BLK-MA-17-FU1).
+    if bool(cadeias_feed.duplicated(subset=["fonte", "chave_snapshot"]).any()):
+        raise ValueError("frame de cadeias do feed com `(fonte, chave_snapshot)` duplicado")
     faltando_mapa = [c for c in ("lat", "lng") if c not in pontos_mapeados.columns]
     if faltando_mapa:
         raise ValueError(f"frame de pontos mapeados sem coluna(s): {faltando_mapa}")
