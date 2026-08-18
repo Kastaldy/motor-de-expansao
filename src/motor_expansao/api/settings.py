@@ -74,6 +74,24 @@ class Settings(BaseSettings):
     # Onde persistir as sessoes do bot (quem ja esta logado), para que um restart
     # do bot NAO deslogue todo mundo. Default no repo; override via env.
     bot_sessoes_path: Path = _REPO_ROOT / "bot_sessoes.json"
+    # --- Relatorio de acessos do piloto (2026-08-18, trilha DEC-027) ---
+    # Diretorio da trilha de acesso, montado :ro no container do bot (compose).
+    # None = comando /acessos indisponivel. Env: API_ACESSO_LOG_DIR=/app/logs/acesso
+    acesso_log_dir: Path | None = None
+    # Chat AUTORIZADO a puxar o /acessos (o grupo de ops/alertas — mesmo id do
+    # MONITOR_TELEGRAM_CHAT_ID; o compose repassa). O relatorio lista atividade do
+    # time, entao NAO e' liberado pela senha compartilhada do bot: so este chat.
+    # Vazio = comando desligado. Env: API_ACESSOS_ADMIN_CHAT_ID=...
+    acessos_admin_chat_id: str = ""
+
+    @field_validator("acesso_log_dir", mode="before")
+    @classmethod
+    def _acesso_log_dir_vazio_e_none(cls, value: object) -> object:
+        # Env vazia ("API_ACESSO_LOG_DIR=") viraria Path(".") — truthy, e o guard
+        # "None = indisponivel" do bot nunca dispararia (revisao de 2026-08-18).
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("tokens", mode="before")
     @classmethod

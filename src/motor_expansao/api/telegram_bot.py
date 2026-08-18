@@ -291,6 +291,27 @@ def _msg(texto: str, keyboard: list | None = None) -> dict:
     return {"text": texto, "keyboard": keyboard}
 
 
+def _acao_relatorio_acessos(chat_id: int, settings: Settings) -> list[dict]:
+    """`/acessos`: agregado de uso do piloto (quem, janela, abas) — chat de ops apenas.
+
+    Restrições deliberadas: (1) só o chat cujo id está em `acessos_admin_chat_id`
+    recebe o relatório — para os demais a resposta é neutra e sem dado; (2) o
+    conteúdo é o AGREGADO da trilha (DEC-027), nunca rota/detalhe do que cada um fez.
+    """
+    admin = (settings.acessos_admin_chat_id or "").strip()
+    if not admin or str(chat_id) != admin:
+        return [_msg("Esse comando é restrito ao chat de operações.")]
+    if not settings.acesso_log_dir:
+        return [_msg("Relatório indisponível: trilha de acesso não configurada neste ambiente.")]
+    from motor_expansao.api import relatorio_acessos  # noqa: PLC0415 — só nesta rota
+
+    try:
+        return [_msg(relatorio_acessos.gerar_relatorio(settings.acesso_log_dir))]
+    except Exception as erro:  # noqa: BLE001 — relatorio nunca derruba o loop do bot
+        print(f"[bot] falha ao gerar o relatorio de acessos: {erro}", flush=True)
+        return [_msg("Não consegui gerar o relatório agora. Tente de novo em instantes.")]
+
+
 def processar(
     chat_id: int,
     texto: str,
@@ -310,6 +331,14 @@ def processar(
     s = _sessao(chat_id)
     t = (texto or "").strip()
     low = t.lower()
+
+    # 0. /acessos — relatorio agregado de uso do piloto (trilha DEC-027), SO no chat
+    # de ops/alertas (id em `acessos_admin_chat_id`). Vem ANTES do gate de senha de
+    # proposito: o id do chat e' autorizacao mais forte que a senha compartilhada, e
+    # o grupo de ops nao passa pelo fluxo de login individual. `startswith` cobre a
+    # forma de grupo `/acessos@NomeDoBot`.
+    if low.startswith("/acessos") or low == "acessos":
+        return _acao_relatorio_acessos(chat_id, settings)
 
     # 1. Acesso por senha (saudacao na 1a interacao).
     if not s.get("autorizado"):

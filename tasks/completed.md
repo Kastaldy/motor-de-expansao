@@ -12464,3 +12464,23 @@ do write; drift de comentarios; kill-switch tambem no import do conftest p/ fixt
 de merge). Suites: 3192 passed na completa (1 falha pre-existente ambiental do Windows) + 105 nas
 afetadas apos os consertos, incluindo teste de regressao de concorrencia. Merge admin + deploy
 autorizados por Felipe ("totalmente autonomo").
+
+## Fechamento de ciclo — Relatorio de acessos no Telegram (/acessos + cron 3/3h) (2026-08-18, ad-hoc)
+
+Pedido de Felipe: o agregado "quem logou e quais abas" (sem detalhe de rota) puxavel pelo Telegram
+sob demanda e enviado a cada 3h no canal de alertas. Entrega: modulo
+`motor_expansao/api/relatorio_acessos.py` (gerador unico: agregacao da trilha DEC-027 por DIA BRT,
+texto puro sem Markdown, CLI --enviar/--pular-vazio), comando `/acessos` no bot RESTRITO ao chat de
+ops (id == API_ACESSOS_ADMIN_CHAT_ID = MONITOR_TELEGRAM_CHAT_ID; antes do gate de senha, id de chat
+e' autorizacao mais forte que a senha compartilhada), mount `:ro` da trilha no container do bot
+(compose) e cron `7 */3 * * *` na VPS (`scripts/cron/run_relatorio_acessos.sh`, molde do
+run_growth_daily: container efemero da imagem da api, credenciais por env herdada — nunca argv).
+
+QA: revisao adversarial por workflow (39 agentes: 3 lentes -> 2 ceticos por achado -> 14
+confirmados, 4 refutados) — TODOS corrigidos no ciclo. Destaques: token do bot vazava no log do cron
+via traceback do requests (URL do HTTPError) -> erro controlado sem URL + teste; relatorio rotulava
+dia BRT lendo so o arquivo do dia UTC (entre 21h e 0h BRT negaria o dia inteiro) -> agregacao por
+dia BRT lendo os 2 arquivos UTC + teste de virada; nome de usuario cru quebrava o parse_mode
+Markdown -> texto puro + chunking <=4096; env vazia furava o guard do bot -> validator. Suite
+completa: 3206 passed (1 falha pre-existente ambiental do Windows). Merge admin + deploy api/bot +
+instalacao do cron autorizados por Felipe ("faca tudo sozinho").
