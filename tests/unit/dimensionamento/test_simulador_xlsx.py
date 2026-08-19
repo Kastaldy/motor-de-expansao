@@ -13,8 +13,10 @@ DOIS NIVEIS DE TESTE, de proposito:
    pega formula que compila e devolve o numero errado — a rodada anterior achou 4
    defeitos exatamente assim. Os testes de recalculo avaliam as 4.293 formulas do
    arquivo e comparam DRE e fluxo nos 64 meses, mais as duas colunas da Afericao,
-   contra `simular()`. Instalar com `python -m pip install formulas` (nao e
-   dependencia do projeto; no CI estes testes ficam SKIPPED).
+   contra `simular()`. `formulas` esta no extra [dev] do pyproject — o CI instala
+   [dev] e RODA estes testes (o comentario antigo "no CI ficam SKIPPED" era de
+   antes de 2026-07-25; desde 2026-08-18 a lib tambem vai na imagem do web, pelo
+   extra `simulador_cache`, para os valores em cache do arquivo).
 
 Cobertura especifica das duas mudancas de produto de 2026-07-24 (folha FIXA desde o
 mes 1 e taxa de franquia PARCELADA 4x): as duas sao INVISIVEIS no mes de steady, por

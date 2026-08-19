@@ -8,6 +8,7 @@ import MapScreen from './screens/MapScreen'
 import OportunidadesScreen from './screens/OportunidadesScreen'
 import PontoScreen from './screens/PontoScreen'
 import ViabilityScreen from './screens/ViabilityScreen'
+import { abasDoPayload, modosLiberados, telaInicial, telaLiberada, type Aba } from './lib/acesso'
 import { api, ApiError } from './lib/api'
 import type { AlvoCaptura } from './lib/captura-mapa'
 import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
@@ -39,6 +40,35 @@ export default function App() {
   // O app abre no MENU, nao no mapa: a primeira pergunta e' "qual analise?", nao
   // "qual estado?". A escolha de UF continua existindo, como passo 2 do modo de regiao.
   const [tela, setTela] = useState<Tela>('inicio')
+
+  /**
+   * Abas que o usuário logado pode usar (controle temporário, /api/me).
+   * `null` = ainda não sabemos (ou o backend não tem a rota) -> tudo liberado,
+   * espelhando o fail-open do backend — que é quem barra de verdade, rota a rota.
+   */
+  const [abas, setAbas] = useState<Set<Aba> | null>(null)
+  useEffect(() => {
+    api
+      .me()
+      .then((r) => {
+        const s = abasDoPayload(r)
+        setAbas(s)
+        // Se o usuário abriu numa tela que não pode ver (estado antigo, deep state),
+        // leva para o lugar certo em vez de deixar a tela vazia atrás de 403s.
+        if (s) setTela((t) => (telaLiberada(t, s) ? t : telaInicial(s)))
+      })
+      .catch(() => {
+        /* sem /api/me -> segue sem controle; o backend continua barrando o que deve */
+      })
+  }, [])
+
+  /** Toda troca de tela vinda de navegação passa por aqui: tela vetada é ignorada. */
+  const navegar = useCallback(
+    (t: Tela) => {
+      if (telaLiberada(t, abas)) setTela(t)
+    },
+    [abas],
+  )
 
   const [ufs, setUfs] = useState<string[]>([])
   // Começa SEM estado: o app abre na porta de entrada (escolha de UF).
@@ -212,11 +242,12 @@ export default function App() {
 
   const irParaViabilidade = useCallback(
     (p: PontoEscolhido) => {
+      if (!telaLiberada('viabilidade', abas)) return
       setPonto(p)
       setOrigemViab(tela === 'ponto' ? 'ponto' : 'mapa')
       setTela('viabilidade')
     },
-    [tela],
+    [tela, abas],
   )
 
   /** Um card do menu foi escolhido: guarda a intenção e abre a tela que a atende hoje. */
@@ -224,6 +255,9 @@ export default function App() {
     (modo: ModoInicio) => {
       const def = modoPorId(modo)
       if (!def) return
+      // Card de modo vetado nem aparece no Início, mas a checagem fica aqui também:
+      // a intenção pode chegar por outro caminho (estado guardado, clique programático).
+      if (!telaLiberada(def.destino, abas)) return
       // Só faz sentido guardar a intenção enquanto ela ainda não pôde ser aplicada.
       // Com UF já escolhida, aplicamos na hora — o operador que volta ao menu e pede a
       // fila não deveria ter de trocar de estado para ela aparecer.
@@ -242,7 +276,7 @@ export default function App() {
       }
       setTela(def.destino)
     },
-    [uf, municipio],
+    [uf, municipio, abas],
   )
 
   const voltarAoInicio = useCallback(() => setTela('inicio'), [])
@@ -256,11 +290,11 @@ export default function App() {
         overflow: 'hidden',
       }}
     >
-      <Dock tela={tela} onTela={setTela} />
+      <Dock tela={tela} onTela={navegar} abas={abas} />
 
       <main style={{ flex: 1, position: 'relative', minWidth: 0 }}>
         {tela === 'inicio' ? (
-          <InicioScreen onEscolher={escolherModo} />
+          <InicioScreen onEscolher={escolherModo} modos={modosLiberados(abas)} />
         ) : tela === 'ponto' ? (
           /* O modo de ponto É o Explorar, com a janela da ficha por cima (pedido do Juan,
              2026-08-11). O `MapScreen` vem inteiro e com as MESMAS props do modo `mapa` —
@@ -318,7 +352,7 @@ export default function App() {
             onInicio={voltarAoInicio}
             onVerNoMapa={(m) => {
               setMunicipio(m)
-              setTela('mapa')
+              navegar('mapa')
             }}
           />
         ) : tela === 'mapa' ? (

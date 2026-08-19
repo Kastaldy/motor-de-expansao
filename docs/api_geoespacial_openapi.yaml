@@ -197,17 +197,22 @@ components:
           example: 18432.0
         renda_per_capita_media_raio:
           type: [number, "null"]
+          description: >
+            Renda DOMICILIAR per capita media do raio (conceito IBGE/SIDRA t.10295 v.13431).
+            MUDANCA DE ESCALA em 2026-08-14: ate entao saia da coluna calibrada
+            (V06004/moradores x k, ~19% abaixo do IBGE); agora = renda domiciliar (com uplift
+            setorial + fator temporal) / moradores. Para o mesmo ponto o valor SOBE ~50%.
           example: 5210.0
         renda_media_domiciliar_raio:
           type: [number, "null"]
           description: >
-            Renda domiciliar PRE-uplift (R$/mes por domicilio): renda per capita calibrada x
-            moradores por domicilio, calculada POR SETOR (fallback para a coluna
-            renda_responsavel_media_setor_2022) e so entao agregada ao raio por media ponderada
-            por domicilios estimados -- no codigo equivale a renda do RESPONSAVEL (V06004).
-            NAO e a soma da renda do raio, nem renda_per_capita_media_raio x moradores. O valor
-            que o PDF/dashboard exibem para o MESMO ponto e renda_domiciliar_total_raio (com
-            uplift + fator temporal), sensivelmente MAIOR que este.
+            Renda domiciliar PRE-uplift (R$/mes por domicilio): a renda do RESPONSAVEL
+            (V06004) BRUTA por setor (fallback: per capita bruta x moradores), agregada ao
+            raio por media ponderada por domicilios estimados. MUDANCA DE ESCALA em
+            2026-08-14: ate entao a base era a coluna CALIBRADA e o valor carregava o k
+            (~23% maior). NAO e a soma da renda do raio, nem renda_per_capita_media_raio x
+            moradores. O valor que o PDF/dashboard exibem para o MESMO ponto e
+            renda_domiciliar_total_raio (com uplift + fator temporal), sensivelmente MAIOR.
           example: 15790.0
         renda_domiciliar_total_raio:
           type: [number, "null"]
@@ -215,10 +220,18 @@ components:
             Renda POR DOMICILIO (R$/mes) com o uplift de composicao SETORIAL e o fator
             temporal aplicados ("total" = renda do domicilio inteiro, nao so do responsavel).
             Tambem NAO e a soma da renda do raio; e a faixa exibida no choropleth
-            renda_domiciliar do PDF. O example abaixo assume fator temporal 1,0 (fallback sem
-            data/staging/fator_temporal_renda.json); em producao o fator temporal (~1,17)
-            tambem multiplica.
+            renda_domiciliar do PDF. MUDANCA DE ESCALA em 2026-08-14 (fim da dupla contagem
+            do k na base: para o mesmo ponto o valor cai /1,2335). O example abaixo assume
+            fator temporal 1,0 (fallback sem data/staging/fator_temporal_renda.json); em
+            producao o fator temporal (~1,17) tambem multiplica.
           example: 25740.0
+        fracao_uplift_extrapolado_raio:
+          type: [number, "null"]
+          description: >
+            ADITIVO 2026-08-14. Fracao (0-1, ponderada por domicilios) do raio cuja renda
+            depende de uplift de composicao EXTRAPOLADO para fora do envelope de calibracao
+            do municipio -- pede leitura cautelosa dos numeros de renda.
+          example: 0.2031
         domicilios_total_raio:
           type: [number, "null"]
           description: Domicilios particulares ocupados estimados no raio (soma ponderada por area).

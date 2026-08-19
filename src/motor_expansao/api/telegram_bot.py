@@ -15,8 +15,11 @@ Rodar (com a API no ar):
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import socket
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -89,6 +92,31 @@ _SAUDACAO = (
 )
 
 _SENHA_INCORRETA = "🔒 Senha incorreta. Tente novamente — envie a *senha* de acesso."
+
+# Anti-brute-force da senha compartilhada do bot (BLK-SEC-05): apos N erros seguidos,
+# o chat fica bloqueado por um tempo. Estado vive na sessao (persiste em disco).
+_SENHA_MAX_TENTATIVAS = 5
+_SENHA_LOCKOUT_SEGUNDOS = 300  # 5 minutos
+
+
+def _bloqueado_msg(segundos: int) -> str:
+    minutos = max(1, round(segundos / 60))
+    return f"🔒 Muitas tentativas. Aguarde ~{minutos} min antes de tentar a senha de novo."
+
+
+def _chat_ref(chat_id: object, chave: str = "") -> str:
+    """Referencia OPACA e estavel do chat para log (LGPD): correlaciona linhas sem
+    expor o chat_id do Telegram (identificador de pessoa).
+
+    Usa HMAC-SHA256 com o TOKEN DO BOT como chave: sem o token nao da para reverter.
+    Um `sha256` NU seria trivial de forcar, porque o chat_id e um inteiro de espaco
+    pequeno e conhecido. Sem chave (dev/teste), cai no sha256 nu."""
+    msg = str(chat_id).encode("utf-8")
+    if chave:
+        dig = hmac.new(chave.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+    else:
+        dig = hashlib.sha256(msg).hexdigest()
+    return "#" + dig[:8]
 
 _PEDIR_LOGIN = (
     "✅ Senha correta!\n\n"
@@ -263,6 +291,27 @@ def _msg(texto: str, keyboard: list | None = None) -> dict:
     return {"text": texto, "keyboard": keyboard}
 
 
+def _acao_relatorio_acessos(chat_id: int, settings: Settings) -> list[dict]:
+    """`/acessos`: agregado de uso do piloto (quem, janela, abas) — chat de ops apenas.
+
+    Restrições deliberadas: (1) só o chat cujo id está em `acessos_admin_chat_id`
+    recebe o relatório — para os demais a resposta é neutra e sem dado; (2) o
+    conteúdo é o AGREGADO da trilha (DEC-027), nunca rota/detalhe do que cada um fez.
+    """
+    admin = (settings.acessos_admin_chat_id or "").strip()
+    if not admin or str(chat_id) != admin:
+        return [_msg("Esse comando é restrito ao chat de operações.")]
+    if not settings.acesso_log_dir:
+        return [_msg("Relatório indisponível: trilha de acesso não configurada neste ambiente.")]
+    from motor_expansao.api import relatorio_acessos  # noqa: PLC0415 — só nesta rota
+
+    try:
+        return [_msg(relatorio_acessos.gerar_relatorio(settings.acesso_log_dir))]
+    except Exception as erro:  # noqa: BLE001 — relatorio nunca derruba o loop do bot
+        print(f"[bot] falha ao gerar o relatorio de acessos: {erro}", flush=True)
+        return [_msg("Não consegui gerar o relatório agora. Tente de novo em instantes.")]
+
+
 def processar(
     chat_id: int,
     texto: str,
@@ -283,15 +332,37 @@ def processar(
     t = (texto or "").strip()
     low = t.lower()
 
+    # 0. /acessos — relatorio agregado de uso do piloto (trilha DEC-027), SO no chat
+    # de ops/alertas (id em `acessos_admin_chat_id`). Vem ANTES do gate de senha de
+    # proposito: o id do chat e' autorizacao mais forte que a senha compartilhada, e
+    # o grupo de ops nao passa pelo fluxo de login individual. `startswith` cobre a
+    # forma de grupo `/acessos@NomeDoBot`.
+    if low.startswith("/acessos") or low == "acessos":
+        return _acao_relatorio_acessos(chat_id, settings)
+
     # 1. Acesso por senha (saudacao na 1a interacao).
     if not s.get("autorizado"):
-        if t == settings.bot_senha:
+        # Lockout anti-brute-force (BLK-SEC-05): chat bloqueado -> nem tenta comparar.
+        agora = time.time()
+        if s.get("bloqueado_ate", 0) > agora:
+            return [_msg(_bloqueado_msg(int(s["bloqueado_ate"] - agora)))]
+        # Comparacao em tempo constante (nao vaza tamanho/prefixo da senha por timing).
+        if hmac.compare_digest(t, settings.bot_senha):
             s["autorizado"] = True
             s["etapa"] = "login"
+            s["tentativas"] = 0
+            s.pop("bloqueado_ate", None)
             return [_msg(_PEDIR_LOGIN)]
+        # 1a interacao: so sauda (nao conta como tentativa de senha).
         if not s.get("saudou"):
             s["saudou"] = True
             return [_msg(_SAUDACAO)]
+        # Senha errada (ja saudou): conta e, no teto, bloqueia o chat.
+        s["tentativas"] = int(s.get("tentativas", 0)) + 1
+        if s["tentativas"] >= _SENHA_MAX_TENTATIVAS:
+            s["bloqueado_ate"] = agora + _SENHA_LOCKOUT_SEGUNDOS
+            s["tentativas"] = 0
+            return [_msg(_bloqueado_msg(_SENHA_LOCKOUT_SEGUNDOS))]
         return [_msg(_SENHA_INCORRETA)]
 
     # 2. Login (nome/identificador) — uma vez, logo apos a senha.
@@ -344,7 +415,8 @@ def processar(
         if pdf is None:
             return [_msg(f"⚠️ {err}\n\nDigite outro nome ou toque em *⬅️ Voltar*.", _KB_VOLTAR)]
         s["etapa"] = None
-        print(f"[ESTUDO-MUNI] login={s.get('login', '?')} chat={chat_id} uf={uf} municipio={t}")
+        # Rastreio sem PII (BLK-SEC-05): chat opaco (hash), sem o nome do solicitante.
+        print(f"[ESTUDO-MUNI] chat={_chat_ref(chat_id, settings.telegram_token)} uf={uf} municipio={t}")
         return [
             _msg(f"📄 *Relatorio Municipal* — {t.strip()} - {uf}\n_Solicitado por {s.get('login', '?')}_"),
             {"pdf": pdf, "filename": f"relatorio_municipal_{uf.lower()}.pdf"},
@@ -364,8 +436,9 @@ def processar(
     pdf = consultar_pdf(payload, settings)
     if pdf is None:
         return [_msg(f"⚠️ {_erro_api(payload, settings)}", _KB_MENU)]
-    # Rastreio: quem pediu o estudo (login) + onde.
-    print(f"[ESTUDO] login={s.get('login', '?')} chat={chat_id} coord={lat},{lng} local={nome}")
+    # Rastreio sem PII (BLK-SEC-05): chat opaco (hash), sem nome do solicitante nem
+    # o endereco resolvido; a coordenada (alvo do estudo) e' dado de negocio.
+    print(f"[ESTUDO] chat={_chat_ref(chat_id, settings.telegram_token)} coord={lat},{lng}")
     return [
         _msg(f"📄 Relatorio de *{nome}*\n_Solicitado por {s.get('login', '?')}_"),
         {"pdf": pdf},
