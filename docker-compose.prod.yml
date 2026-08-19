@@ -175,6 +175,12 @@ services:
       # nenhum artefato do M1 sob mount de escrita. Sem o volume, o app sobe
       # igual e a trilha degrada em silencio (1 aviso no stderr).
       MOTOR_ACESSO_LOG_DIR: "/app/logs/acesso"
+      # Emenda DEC-027 (2026-08-19) — aba Acessos do piloto: allowlist de usuarios
+      # (Remote-User do Authelia, separados por virgula) que podem ver o painel de
+      # analytics da trilha. FORA do acesso_abas.json de proposito (sem curinga,
+      # sem fail-open). Vazia/ausente = painel DESLIGADO para todos (404).
+      # O valor vive no .env da VPS (ex.: MOTOR_ACESSOS_ADMIN_USUARIOS=felipe).
+      MOTOR_ACESSOS_ADMIN_USUARIOS: ${MOTOR_ACESSOS_ADMIN_USUARIOS:-}
       # BLK-SAT-01: chave do ArcGIS Location Platform p/ a vista aerea (satelite) do
       # Relatorio Pontual. Sem a var -> render devolve None -> pagina omitida (PDF sai igual).
       API_ARCGIS_API_KEY: ${API_ARCGIS_API_KEY:-}

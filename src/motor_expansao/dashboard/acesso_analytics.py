@@ -1,0 +1,438 @@
+"""Analytics da aba Acessos do piloto — agregações da trilha + rollup sem dado pessoal.
+
+Camada de LEITURA da trilha de acesso (DEC-027, emenda de 2026-08-19) que alimenta a
+aba `Acessos` do piloto — restrita por allowlist de usuário (env
+`MOTOR_ACESSOS_ADMIN_USUARIOS`; o guard vive em `web/server/acesso.py`).
+
+O que este módulo entrega (e o corte deliberado do que NÃO entrega):
+  - agregados (série diária, heatmap hora×dia, distribuição por aba, saúde);
+  - por usuário: janelas de atividade, abas e contagem de ações por FEATURE
+    ("rodou simulador 4x") — nunca a query/conteúdo (o endereço pesquisado, os
+    parâmetros da simulação). O detalhe fino continua só na trilha bruta.
+
+ROLLUP DIÁRIO SEM DADO PESSOAL (`uso-diario.json`, no mesmo diretório da trilha):
+a trilha se poda em 90 dias (DEC-027); para tendência longa, cada dia BRT FECHADO é
+consolidado UMA vez em `{dia: {acoes, usuarios, por_aba}}` — contagens apenas, sem
+nome, sem IP, sem rota — e nunca recalculado (fica estável mesmo depois da poda).
+A consolidação roda no startup do app e a cada abertura da aba; o nome do arquivo
+NÃO casa com o padrão de poda `acesso-*.jsonl` de propósito.
+
+Consistência com o relatório do Telegram: o filtro de evento (`evento_valido`) e o
+mapa rota->aba são IMPORTADOS de `motor_expansao.api.relatorio_acessos` — os acessos
+do próprio painel (`/api/acessos/*`) ficam fora das métricas NOS DOIS, pelo mesmo
+código (auditados na trilha, invisíveis nas contagens).
+
+READ-ONLY sobre o M1: lê a trilha e escreve APENAS o rollup, no diretório próprio da
+trilha (fora do MOTOR_DATA_DIR). O app.py continua sem escritor de FS (guardrail AST).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import threading
+from collections import Counter
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+
+from motor_expansao.api.relatorio_acessos import (
+    _FUSO_BRT,
+    LABEL_ABA,
+    _aba_da_rota,
+    _quando_brt,
+    evento_valido,
+)
+from motor_expansao.dashboard.acesso_log import (
+    PREFIXO_ARQUIVO,
+    SUFIXO_ARQUIVO,
+    acesso_log_dir,
+)
+
+ROLLUP_ARQUIVO = "uso-diario.json"
+ROLLUP_VERSAO = 1
+
+#: Janela padrão e teto das agregações detalhadas (a trilha só guarda 90 dias).
+JANELA_DIAS_DEFAULT = 30
+JANELA_DIAS_MAX = 90
+
+#: Rota -> rótulo de FEATURE exibido na ficha do usuário ("o quê", sem o conteúdo).
+#: Prefixos mais específicos primeiro (`/api/rede/unidade/` antes de `/api/rede/`).
+#: Método só quando distingue leitura de escrita (PUT do cadastro).
+FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
+    ("PUT", "/api/rede/cadastro/", "Editou cadastro de unidade"),
+    (None, "/api/rede/unidade/", "Abriu ficha de unidade"),
+    (None, "/api/rede/carteira", "Consultou carteira da rede"),
+    (None, "/api/rede/", "Visão executiva da rede"),
+    (None, "/api/executiva/", "Visão executiva da rede"),
+    (None, "/api/relatorio/pontual", "Gerou relatório pontual"),
+    (None, "/api/relatorio/municipal", "Gerou relatório municipal"),
+    (None, "/api/simulador/", "Exportou simulador (XLSX)"),
+    (None, "/api/viabilidade", "Rodou simulação de viabilidade"),
+    (None, "/api/faixa-alunos", "Consultou faixa de alunos"),
+    (None, "/api/geocode", "Buscou endereço"),
+    (None, "/api/resolver-ponto", "Buscou endereço"),
+    (None, "/api/ponto", "Analisou ponto no mapa"),
+    (None, "/api/cobertura/", "Ligou camada de cobertura"),
+    (None, "/api/uf/", "Navegou pelo mapa"),
+    (None, "/api/municipio/", "Explorou município"),
+    (None, "/api/municipios/", "Explorou município"),
+    (None, "/api/estados", "Ranking de estados"),
+    (None, "/api/metodologia", "Leu a metodologia"),
+)
+_FEATURE_OUTRAS = "Outras ações"
+
+_LOCK_ROLLUP = threading.Lock()
+
+
+# ---------------------------------------------------------------------------
+# Leitura e normalização de eventos da trilha
+# ---------------------------------------------------------------------------
+
+
+def _arquivo_do_dia_utc(diretorio: Path, dia: date) -> Path:
+    return diretorio / f"{PREFIXO_ARQUIVO}{dia.isoformat()}{SUFIXO_ARQUIVO}"
+
+
+def _dias_utc_para_janela_brt(primeiro_brt: date, ultimo_brt: date) -> list[date]:
+    """Dias UTC cujos arquivos podem conter eventos da janela BRT [primeiro..ultimo].
+
+    O dia BRT D vive nos arquivos UTC D e D+1 (BRT = UTC-3); a união da janela é
+    [primeiro .. ultimo+1] em dias UTC.
+    """
+    n = (ultimo_brt - primeiro_brt).days + 2
+    return [primeiro_brt + timedelta(days=i) for i in range(n)]
+
+
+def _eventos_da_janela(
+    diretorio: Path, primeiro_brt: date, ultimo_brt: date
+) -> list[dict[str, object]]:
+    """Eventos válidos da janela BRT, cada um com `momento` (datetime BRT) e `aba`.
+
+    Linha ilegível é ignorada (a trilha é rastro, não transação). O filtro de
+    validade (`evento_valido`) é o MESMO do relatório do Telegram.
+    """
+    eventos: list[dict[str, object]] = []
+    for dia_utc in _dias_utc_para_janela_brt(primeiro_brt, ultimo_brt):
+        arquivo = _arquivo_do_dia_utc(diretorio, dia_utc)
+        try:
+            linhas = arquivo.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for bruta in linhas:
+            try:
+                r = json.loads(bruta)
+            except (ValueError, TypeError):
+                continue
+            if not evento_valido(r):
+                continue
+            momento = _quando_brt(r.get("quando"))
+            if momento is None or not (primeiro_brt <= momento.date() <= ultimo_brt):
+                continue
+            r["momento"] = momento
+            r["aba"] = _aba_da_rota(str(r.get("rota", "")))
+            eventos.append(r)
+    return eventos
+
+
+def _feature_do_evento(r: dict[str, object]) -> str:
+    metodo = str(r.get("metodo") or "").upper()
+    rota = str(r.get("rota") or "")
+    for metodo_regra, prefixo, rotulo in FEATURES_ROTULOS:
+        if metodo_regra is not None and metodo != metodo_regra:
+            continue
+        if rota.startswith(prefixo):
+            return rotulo
+    return _FEATURE_OUTRAS
+
+
+def _hhmm(momento: object) -> str | None:
+    return momento.strftime("%H:%M") if isinstance(momento, datetime) else None
+
+
+# ---------------------------------------------------------------------------
+# Rollup diário sem dado pessoal (tendência além dos 90 dias da trilha)
+# ---------------------------------------------------------------------------
+
+
+def caminho_rollup(diretorio: Path | None = None) -> Path:
+    return (diretorio or acesso_log_dir()) / ROLLUP_ARQUIVO
+
+
+def _ler_rollup(diretorio: Path) -> dict[str, dict[str, object]]:
+    try:
+        bruto = json.loads(caminho_rollup(diretorio).read_text(encoding="utf-8"))
+        dias = bruto.get("dias")
+        return dias if isinstance(dias, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _gravar_rollup(diretorio: Path, dias: dict[str, dict[str, object]]) -> None:
+    """Escrita atômica (tmp + replace), modo 0600 — mesmo tratamento da trilha."""
+    destino = caminho_rollup(diretorio)
+    conteudo = json.dumps(
+        {"_versao": ROLLUP_VERSAO, "dias": dict(sorted(dias.items()))},
+        ensure_ascii=False,
+        indent=1,
+    )
+    tmp = destino.with_name(destino.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(conteudo + "\n")
+    os.replace(tmp, destino)
+
+
+def _dia_de_rollup(eventos: list[dict[str, object]]) -> dict[str, object]:
+    por_aba = Counter(str(r["aba"]) for r in eventos if r.get("aba"))
+    return {
+        "acoes": len(eventos),
+        "usuarios": len({str(r.get("usuario") or "desconhecido") for r in eventos}),
+        "por_aba": dict(sorted(por_aba.items())),
+    }
+
+
+def consolidar_rollup(diretorio: Path | None = None, agora_utc: datetime | None = None) -> int:
+    """Consolida no rollup todo dia BRT FECHADO presente na trilha e ainda ausente.
+
+    Idempotente e write-once por dia: dia já consolidado nunca é recalculado — o
+    número histórico fica estável mesmo depois de a trilha ser podada. Devolve
+    quantos dias novos entraram.
+    """
+    base = diretorio or acesso_log_dir()
+    hoje_brt = ((agora_utc or datetime.now(UTC)) + _FUSO_BRT).date()
+
+    candidatos: set[date] = set()
+    try:
+        arquivos = list(base.glob(f"{PREFIXO_ARQUIVO}*{SUFIXO_ARQUIVO}"))
+    except OSError:
+        return 0
+    for arquivo in arquivos:
+        try:
+            dia_utc = date.fromisoformat(
+                arquivo.name[len(PREFIXO_ARQUIVO) : -len(SUFIXO_ARQUIVO)]
+            )
+        except ValueError:
+            continue
+        # O arquivo UTC do dia d carrega os dias BRT d-1 (21h-24h) e d (0h-21h).
+        candidatos.update({dia_utc - timedelta(days=1), dia_utc})
+
+    with _LOCK_ROLLUP:
+        dias = _ler_rollup(base)
+        novos = 0
+        for dia in sorted(candidatos):
+            if dia >= hoje_brt or dia.isoformat() in dias:
+                continue  # dia aberto (ainda muda) ou já consolidado (write-once)
+            eventos = _eventos_da_janela(base, dia, dia)
+            dias[dia.isoformat()] = _dia_de_rollup(eventos)
+            novos += 1
+        if novos:
+            _gravar_rollup(base, dias)
+    return novos
+
+
+def consolidar_rollup_seguro(diretorio: Path | None = None) -> int:
+    """Como `consolidar_rollup`, mas nunca levanta (uso no startup e na rota)."""
+    try:
+        return consolidar_rollup(diretorio)
+    except Exception:  # noqa: BLE001 — analytics é rastro, não pode derrubar o app
+        return 0
+
+
+# ---------------------------------------------------------------------------
+# Payloads da aba
+# ---------------------------------------------------------------------------
+
+
+def _label(aba: object) -> str:
+    return LABEL_ABA.get(str(aba), str(aba))
+
+
+def _p95(valores: list[int]) -> int | None:
+    if not valores:
+        return None
+    ordenados = sorted(valores)
+    return ordenados[int(0.95 * (len(ordenados) - 1))]
+
+
+def _saude(eventos: list[dict[str, object]]) -> dict[str, object]:
+    total = len(eventos)
+    e4 = sum(1 for r in eventos if isinstance(r.get("status"), int) and 400 <= r["status"] < 500)
+    e5 = sum(1 for r in eventos if isinstance(r.get("status"), int) and r["status"] >= 500)
+    por_rota: dict[str, list[int]] = {}
+    for r in eventos:
+        if isinstance(r.get("duracao_ms"), int):
+            por_rota.setdefault(str(r.get("rota") or "?"), []).append(int(r["duracao_ms"]))
+    lentas = [
+        {"rota": rota, "n": len(ds), "p95_ms": _p95(ds)}
+        for rota, ds in por_rota.items()
+        if len(ds) >= 5
+    ]
+    lentas.sort(key=lambda x: -(x["p95_ms"] or 0))
+    return {
+        "total": total,
+        "erros_4xx": e4,
+        "erros_5xx": e5,
+        "taxa_erro_pct": round(100.0 * (e4 + e5) / total, 1) if total else 0.0,
+        "lentas": lentas[:5],
+    }
+
+
+def _linhas_usuarios(eventos: list[dict[str, object]]) -> list[dict[str, object]]:
+    por_usuario: dict[str, list[dict[str, object]]] = {}
+    for r in eventos:
+        por_usuario.setdefault(str(r.get("usuario") or "desconhecido"), []).append(r)
+    linhas = []
+    for nome, evs in por_usuario.items():
+        momentos = [r["momento"] for r in evs if isinstance(r.get("momento"), datetime)]
+        ultimo = max(momentos) if momentos else None
+        linhas.append(
+            {
+                "nome": nome,
+                "ultimo_dia": ultimo.date().isoformat() if ultimo else None,
+                "ultimo_hora": _hhmm(ultimo),
+                "dias_ativos": len({m.date() for m in momentos}),
+                "acoes": len(evs),
+                "abas": sorted({_label(r["aba"]) for r in evs if r.get("aba")}),
+                "ips": len({str(r.get("ip")) for r in evs if r.get("ip")}),
+            }
+        )
+    linhas.sort(key=lambda x: (-(x["acoes"] or 0), x["nome"]))
+    return linhas
+
+
+def resumo(
+    diretorio: Path | None = None,
+    dias: int = JANELA_DIAS_DEFAULT,
+    agora_utc: datetime | None = None,
+) -> dict[str, object]:
+    """Payload completo da aba: big numbers, série, heatmap, abas, usuários, saúde."""
+    base = diretorio or acesso_log_dir()
+    dias = max(1, min(int(dias), JANELA_DIAS_MAX))
+    agora_brt = (agora_utc or datetime.now(UTC)) + _FUSO_BRT
+    hoje = agora_brt.date()
+    primeiro = hoje - timedelta(days=dias - 1)
+
+    consolidar_rollup_seguro(base)
+    eventos = _eventos_da_janela(base, primeiro, hoje)
+    de_hoje = [r for r in eventos if r["momento"].date() == hoje]
+
+    # Série longa: dias fechados vêm do rollup (sobrevivem à poda); hoje entra ao
+    # vivo. Dias sem arquivo (container parado = nenhum acesso servível) entram
+    # como zero para o gráfico não pular datas.
+    rollup = _ler_rollup(base)
+    serie: list[dict[str, object]] = []
+    if rollup:
+        cursor = date.fromisoformat(min(rollup))
+        while cursor < hoje:
+            info = rollup.get(cursor.isoformat(), {})
+            serie.append(
+                {
+                    "dia": cursor.isoformat(),
+                    "acoes": info.get("acoes", 0),
+                    "usuarios": info.get("usuarios", 0),
+                }
+            )
+            cursor += timedelta(days=1)
+    serie.append(
+        {
+            "dia": hoje.isoformat(),
+            "acoes": len(de_hoje),
+            "usuarios": len({str(r.get("usuario") or "desconhecido") for r in de_hoje}),
+        }
+    )
+
+    heatmap = [[0] * 24 for _ in range(7)]  # [dia da semana 0=segunda][hora BRT]
+    for r in eventos:
+        m = r["momento"]
+        heatmap[m.weekday()][m.hour] += 1
+
+    contagem_abas = Counter(str(r["aba"]) for r in eventos if r.get("aba"))
+    usuarios_por_aba: dict[str, set[str]] = {}
+    for r in eventos:
+        if r.get("aba"):
+            usuarios_por_aba.setdefault(str(r["aba"]), set()).add(
+                str(r.get("usuario") or "desconhecido")
+            )
+    por_aba = [
+        {"aba": _label(aba), "acoes": n, "usuarios": len(usuarios_por_aba.get(aba, ()))}
+        for aba, n in contagem_abas.most_common()
+    ]
+
+    ultimo = max(
+        (r for r in de_hoje), key=lambda r: r["momento"], default=None
+    )
+    aba_top_hoje = Counter(str(r["aba"]) for r in de_hoje if r.get("aba")).most_common(1)
+
+    return {
+        "gerado_em": agora_brt.strftime("%d/%m %H:%M"),
+        "janela_dias": dias,
+        "hoje": {
+            "usuarios": len({str(r.get("usuario") or "desconhecido") for r in de_hoje}),
+            "acoes": len(de_hoje),
+            "aba_top": _label(aba_top_hoje[0][0]) if aba_top_hoje else None,
+            "ultimo": (
+                {"usuario": str(ultimo.get("usuario") or "desconhecido"), "hora": _hhmm(ultimo["momento"])}
+                if ultimo
+                else None
+            ),
+        },
+        "serie": serie,
+        "heatmap": heatmap,
+        "por_aba": por_aba,
+        "usuarios": _linhas_usuarios(eventos),
+        "saude": _saude(eventos),
+    }
+
+
+def ficha_usuario(
+    nome: str,
+    diretorio: Path | None = None,
+    dias: int = JANELA_DIAS_DEFAULT,
+    agora_utc: datetime | None = None,
+) -> dict[str, object] | None:
+    """Drill-down de UM usuário: janelas por dia + contagem por feature.
+
+    Nunca expõe query/conteúdo — só o rótulo da feature. `None` = sem atividade
+    na janela (a rota devolve 404).
+    """
+    base = diretorio or acesso_log_dir()
+    dias = max(1, min(int(dias), JANELA_DIAS_MAX))
+    hoje = ((agora_utc or datetime.now(UTC)) + _FUSO_BRT).date()
+    primeiro = hoje - timedelta(days=dias - 1)
+
+    eventos = [
+        r
+        for r in _eventos_da_janela(base, primeiro, hoje)
+        if str(r.get("usuario") or "desconhecido") == nome
+    ]
+    if not eventos:
+        return None
+
+    por_dia: dict[str, list[datetime]] = {}
+    for r in eventos:
+        por_dia.setdefault(r["momento"].date().isoformat(), []).append(r["momento"])
+    linhas_dias = [
+        {
+            "dia": d,
+            "ini": min(ms).strftime("%H:%M"),
+            "fim": max(ms).strftime("%H:%M"),
+            "acoes": len(ms),
+        }
+        for d, ms in sorted(por_dia.items(), reverse=True)
+    ]
+
+    features = Counter(_feature_do_evento(r) for r in eventos)
+    momentos = [r["momento"] for r in eventos]
+    ultimo = max(momentos)
+    return {
+        "nome": nome,
+        "janela_dias": dias,
+        "acoes": len(eventos),
+        "dias_ativos": len(por_dia),
+        "ultimo_dia": ultimo.date().isoformat(),
+        "ultimo_hora": _hhmm(ultimo),
+        "abas": sorted({_label(r["aba"]) for r in eventos if r.get("aba")}),
+        "ips": len({str(r.get("ip")) for r in eventos if r.get("ip")}),
+        "dias": linhas_dias,
+        "features": [{"feature": f, "n": n} for f, n in features.most_common()],
+    }

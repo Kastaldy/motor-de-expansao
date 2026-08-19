@@ -136,7 +136,13 @@ def test_toda_rota_do_app_tem_regra_ou_e_livre_declarada() -> None:
     rotas_api = {r.path for r in pilot_app.app.routes if getattr(r, "path", "").startswith("/api/")}
     assert rotas_api, "o app deveria registrar rotas /api/*"
     sem_decisao = {
-        p for p in rotas_api if acesso.abas_necessarias(p) is None and p not in acesso.ROTAS_LIVRES
+        p
+        for p in rotas_api
+        if acesso.abas_necessarias(p) is None
+        and p not in acesso.ROTAS_LIVRES
+        # Painel de acessos (emenda DEC-027): controle PROPRIO, mais forte que o
+        # de abas — allowlist de env checada no middleware (bloqueio_acessos).
+        and not p.startswith(acesso.PREFIXO_ROTAS_ACESSOS)
     }
     assert not sem_decisao, (
         f"rotas sem regra de acesso nem declaracao de rota livre: {sorted(sem_decisao)} "
@@ -263,3 +269,101 @@ def test_prod_com_mapa_valido_respeita_o_mapa(escrever_mapa, monkeypatch: pytest
     monkeypatch.setenv("MOTOR_ACESSO_FAIL_CLOSED", "1")
     escrever_mapa({"ana": ["executiva"]})
     assert acesso.abas_do_usuario("ana") == frozenset({"executiva"})
+
+
+# --- Aba Acessos (emenda DEC-027): guard por allowlist de env -------------------
+# Controle PROPRIO, mais forte que o de abas: sem curinga "*", sem fail-open, 404
+# (nao 403) para quem nao pode — a existencia do painel nao e' anunciada.
+
+
+def _com_allowlist(monkeypatch: pytest.MonkeyPatch, valor: str | None) -> None:
+    if valor is None:
+        monkeypatch.delenv(acesso.ENV_ADMIN_ACESSOS, raising=False)
+    else:
+        monkeypatch.setenv(acesso.ENV_ADMIN_ACESSOS, valor)
+
+
+def test_sem_env_o_painel_esta_desligado_para_todos(monkeypatch: pytest.MonkeyPatch) -> None:
+    _com_allowlist(monkeypatch, None)
+    assert acesso.bloqueio_acessos("/api/acessos/resumo", "felipe") is True
+    _com_allowlist(monkeypatch, "   ")
+    assert acesso.bloqueio_acessos("/api/acessos/resumo", "felipe") is True
+
+
+def test_allowlist_libera_so_quem_esta_nela(monkeypatch: pytest.MonkeyPatch) -> None:
+    _com_allowlist(monkeypatch, "felipe, vinicius")
+    assert acesso.bloqueio_acessos("/api/acessos/resumo", "felipe") is False
+    assert acesso.bloqueio_acessos("/api/acessos/resumo", "vinicius") is False
+    assert acesso.bloqueio_acessos("/api/acessos/resumo", "ana") is True
+    assert acesso.bloqueio_acessos("/api/acessos/resumo", None) is True
+    assert acesso.bloqueio_acessos("/api/acessos/resumo", "  ") is True
+
+
+def test_comparacao_e_case_insensitive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Authelia normaliza usuario minusculo; a env nao pode falhar por caixa."""
+    _com_allowlist(monkeypatch, "Felipe")
+    assert acesso.bloqueio_acessos("/api/acessos/resumo", "felipe") is False
+    assert acesso.pode_ver_acessos("FELIPE") is True
+
+
+def test_rota_fora_do_painel_nunca_e_bloqueada_por_este_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _com_allowlist(monkeypatch, None)
+    assert acesso.bloqueio_acessos("/api/ponto", "ana") is False
+    assert acesso.bloqueio_acessos("/api/me", None) is False
+
+
+def test_aba_acessos_nao_pode_vir_do_json_de_abas(escrever_mapa) -> None:
+    """`acessos` fora de ABAS_VALIDAS: concedida no JSON (ate' pelo curinga), e'
+    descartada como qualquer valor desconhecido — permissao fantasma impossivel."""
+    assert acesso.ABA_ACESSOS not in acesso.ABAS_VALIDAS
+    escrever_mapa({"ana": ["mapa", "acessos"], "*": ["acessos"]})
+    assert acesso.abas_do_usuario("ana") == frozenset({"mapa"})
+    assert acesso.abas_do_usuario("novato") == frozenset()
+
+
+def test_me_lista_acessos_so_para_a_allowlist(
+    escrever_mapa, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    escrever_mapa({"felipe": ["mapa"], "ana": ["mapa"]})
+    _com_allowlist(monkeypatch, "felipe")
+    assert pilot_app.me(remote_user="felipe")["abas"] == ["acessos", "mapa"]
+    assert pilot_app.me(remote_user="ana")["abas"] == ["mapa"]
+
+
+def test_rotas_do_painel_devolvem_404_para_quem_nao_pode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import HTTPException
+
+    _com_allowlist(monkeypatch, "felipe")
+    for chamada in (
+        lambda u: pilot_app.acessos_resumo(remote_user=u),
+        lambda u: pilot_app.acessos_usuario("alguem", remote_user=u),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            chamada("ana")
+        assert exc.value.status_code == 404
+        with pytest.raises(HTTPException) as exc:
+            chamada(None)
+        assert exc.value.status_code == 404
+
+
+def test_resumo_responde_para_quem_esta_na_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _com_allowlist(monkeypatch, "felipe")
+    payload = pilot_app.acessos_resumo(remote_user="felipe")
+    assert "serie" in payload and "usuarios" in payload and "saude" in payload
+
+
+def test_ficha_inexistente_devolve_404_mesmo_para_admin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import HTTPException
+
+    _com_allowlist(monkeypatch, "felipe")
+    with pytest.raises(HTTPException) as exc:
+        pilot_app.acessos_usuario("ninguem_com_esse_nome", remote_user="felipe")
+    assert exc.value.status_code == 404

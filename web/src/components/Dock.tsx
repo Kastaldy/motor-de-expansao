@@ -28,6 +28,12 @@ const ICONES: Record<string, React.JSX.Element> = {
       <path d="M15 6h6v6" />
     </>
   ),
+  /* Pulso de atividade — o painel de acessos (restrito; some para quem não pode). */
+  acessos: (
+    <>
+      <path d="M22 12h-3.5l-3 8-7-16-3 8H2" />
+    </>
+  ),
 }
 
 /**
@@ -47,6 +53,9 @@ const ITENS: { id: string; tela: Tela | null; titulo: string }[] = [
   { id: 'dom', tela: null, titulo: 'Expansão de domínio (fora do piloto)' },
   { id: 'cart', tela: null, titulo: 'Carteira e plano (fora do piloto)' },
   { id: 'viab', tela: 'viabilidade', titulo: 'Viabilidade do ponto' },
+  /* Aba restrita (emenda DEC-027): telaLiberada e deny-by-default — para quem não
+     está na allowlist o ícone simplesmente não existe, como toda tela vetada. */
+  { id: 'acessos', tela: 'acessos', titulo: 'Acessos e uso do piloto' },
 ]
 
 export default function Dock({
