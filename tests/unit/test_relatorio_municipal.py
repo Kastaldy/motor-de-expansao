@@ -27,6 +27,7 @@ from motor_expansao.dashboard.relatorio_municipal import (
     _PIN_LOGO_PX,
     CAPACIDADE_UNIDADE,
     PDF_SECTION_HEADERS,
+    TEXTO_SEM_DADO,
     ULTRA_MAGENTA,
     _fit_contain,
     _hex_destacado_mask,
@@ -1806,3 +1807,82 @@ def test_pagina_nucleo_urbano_no_pdf():
     assert "Núcleo Urbano".encode("latin-1") in pdf_bytes
     assert b"RECORTE URBANO" in pdf_bytes
     assert "MAIS DENSOS".encode("latin-1") in pdf_bytes
+
+
+def test_tabela_usa_renda_domiciliar_quando_disponivel():
+    """Coluna de renda passa a ser DOMICILIAR (Juan, 2026-08-19): é o número com que se
+    conversa sobre praça. Per capita só sobra como fallback."""
+    from motor_expansao.dashboard.relatorio_municipal import _tabela_hexes
+
+    df = _sample_df()
+    df["renda_per_capita_setor_2022_calibrada"] = 900.0  # per capita, NÃO deve aparecer
+    mapa = {str(h): 4500.0 + i * 100 for i, h in enumerate(df["hex_id"])}
+
+    tab = _tabela_hexes(df, renda_domiciliar_por_hex=mapa)
+    assert tab["fonte_renda"] == "domiciliar"
+    assert all(linha["renda"] >= 4500.0 for linha in tab["linhas"])
+
+    # Sem o mapa, cai na per capita e DIZ que caiu (o rodapé muda junto).
+    tab_sem = _tabela_hexes(df)
+    assert tab_sem["fonte_renda"] == "censo"
+    assert all(linha["renda"] == 900.0 for linha in tab_sem["linhas"])
+
+
+def test_renda_domiciliar_por_hex_fallback_sem_particao():
+    from motor_expansao.dashboard.relatorio_municipal import carregar_renda_domiciliar_por_hex
+
+    assert carregar_renda_domiciliar_por_hex(None, None, None) == {}
+    assert carregar_renda_domiciliar_por_hex("MT", "5107958", None) == {}
+
+
+def test_renda_domiciliar_aplica_uplift_e_pondera_por_domicilios(monkeypatch):
+    """Fórmula canônica: V06004 x uplift x fator temporal, ponderada por DOMICÍLIOS.
+
+    Trava a armadilha já paga em 2026-08-13: usar a per capita CALIBRADA x moradores
+    devolveria `V06004 x k` e o k viraria fator extra sobre o uplift (+23,35% de excesso).
+    A calibrada aqui é propositalmente ABSURDA -- se ela vazar para a conta, o teste quebra.
+    """
+    from motor_expansao.dashboard import relatorio_municipal as rm
+
+    setores = pd.DataFrame(
+        {
+            "cod_setor": ["A", "B"],
+            "renda_responsavel_media_setor_2022": [2000.0, 4000.0],
+            "renda_per_capita_setor_2022": [500.0, 1000.0],
+            "renda_per_capita_setor_2022_calibrada": [99_999.0, 99_999.0],
+            "avg_moradores_domicilio_setor_2022": [4.0, 4.0],
+            # Pesos MUITO distintos: média simples daria 3000; ponderada dá ~2100.
+            "domicilios_particulares_ocupados_setor_2022": [900.0, 100.0],
+            # bbox no mesmo ponto -> ambos caem no MESMO hexágono.
+            "bbox_minx": [-56.10, -56.10], "bbox_miny": [-12.10, -12.10],
+            "bbox_maxx": [-56.09, -56.09], "bbox_maxy": [-12.09, -12.09],
+        }
+    )
+    monkeypatch.setattr(
+        "motor_expansao.pipelines.materializar_setores_censitarios_geo.ler_particao_setores",
+        lambda **_k: setores,
+    )
+    monkeypatch.setattr(
+        "motor_expansao.dashboard.constants.uplift_composicao_por_setor",
+        lambda *_a, **_k: 1.5,
+    )
+    monkeypatch.setattr("motor_expansao.dashboard.constants.FATOR_TEMPORAL_RENDA", 2.0)
+
+    mapa = rm.carregar_renda_domiciliar_por_hex("MT", "5107958", "qualquer/caminho")
+    assert len(mapa) == 1, mapa
+    valor = next(iter(mapa.values()))
+
+    # (2000*900 + 4000*100) / 1000 = 2200 de V06004 ponderada; x1.5 x2.0 = 6600.
+    assert valor == pytest.approx(6600.0), valor
+    # Média SIMPLES daria 3000*3 = 9000: a ponderação por domicílios está de fato valendo.
+    assert valor != pytest.approx(9000.0)
+
+
+def test_valor_ausente_nao_vira_reais_de_texto():
+    """"R$ Não disponível" lê como se o valor fosse a string (visto na tabela de Sinop/MT)."""
+    from motor_expansao.dashboard.relatorio_municipal import _reais
+
+    assert _reais(5210.0) == "R$ 5.210"
+    assert _reais(None) == TEXTO_SEM_DADO
+    assert _reais(float("nan")) == TEXTO_SEM_DADO
+    assert not _reais(None).startswith("R$")

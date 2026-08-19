@@ -631,6 +631,7 @@ def gerar_pdf_municipio(
         agregar_municipio,
         carregar_bairros_geo,
         carregar_poligono_municipio,
+        carregar_renda_domiciliar_por_hex,
         gerar_payloads_download_relatorio_municipal,
         render_mapas_municipio,
     )
@@ -674,6 +675,15 @@ def gerar_pdf_municipio(
             bairros_geo = carregar_bairros_geo(uf, cod, settings.censo_geo_dir)
     except Exception:
         bairros_geo = None
+    # Renda DOMICILIAR por hexagono para a tabela de comparacao: vale nas DUAS unidades
+    # (a tabela e' sempre por hexagono), entao fica fora do guard de `unidade` acima.
+    # try/except proprio: falha aqui so tira a coluna de renda, nao o resto do relatorio.
+    renda_dom: dict | None = None
+    try:
+        if cod:
+            renda_dom = carregar_renda_domiciliar_por_hex(uf, cod, settings.censo_geo_dir)
+    except Exception:
+        renda_dom = None
 
     # BLK-RELMUN-05: divisa REAL do municipio (malha IBGE, ja montada neste container) para
     # recortar os pins. `None` -> recorte por hexes res-7; o relatorio sai igual, so menos exato.
@@ -682,7 +692,8 @@ def gerar_pdf_municipio(
     result = agregar_municipio(
         df, nome_municipio=nome_exato, uf=uf, dominio_df=dominio_df,
         competitors_df=comp_df, ultra_df=ultra_df, bairros_por_hex=bairros,
-        bairros_geo=bairros_geo, df_pre_filtrado=df_muni, poligono_municipio=poligono,
+        bairros_geo=bairros_geo, renda_domiciliar_por_hex=renda_dom,
+        df_pre_filtrado=df_muni, poligono_municipio=poligono,
     )
     if result.get("n_hex_total", 0) == 0:
         raise APIError(404, f"Municipio '{nome_exato}' ({uf}) sem hexagonos", "municipio_sem_dados")
