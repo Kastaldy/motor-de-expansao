@@ -53,6 +53,12 @@ ABAS_SENSIVEIS = frozenset({"executiva", "viabilidade"})
 # `/api/viabilidade` aceita mapa OU viabilidade porque o BlocoViabilidadePonto (modo de
 # ponto) chama a mesma rota que a tela de Viabilidade. `/api/relatorio/pontual` idem:
 # e' disparado pela tela de Viabilidade, alcancavel a partir do mapa.
+#
+# `/api/relatorio/comparacao` fica so' em "mapa", e NAO em "viabilidade": o deck compara
+# contexto de entorno e nao carrega DRE, payback nem teto de aluguel — por DEC-009 a
+# viabilidade e' premissa digitada sobre um imovel concreto, e a comparacao nao a tem.
+# Quem dispara sao as duas telas cobertas por "mapa" (comparacao de hexagonos no Explorar
+# e comparacao de pontos no modo de imovel).
 REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/rede/", frozenset({"executiva"})),
     ("/api/executiva/", frozenset({"executiva"})),
@@ -60,6 +66,7 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/resolver-ponto", frozenset({"mapa"})),
     ("/api/ponto", frozenset({"mapa"})),
     ("/api/cobertura/", frozenset({"mapa"})),
+    ("/api/relatorio/comparacao", frozenset({"mapa"})),
     ("/api/relatorio/municipal", frozenset({"mapa"})),
     ("/api/relatorio/pontual", frozenset({"mapa", "viabilidade"})),
     ("/api/viabilidade", frozenset({"mapa", "viabilidade"})),
