@@ -34,8 +34,9 @@ _URL_RE = re.compile(r"https?://\S+")
 _PLACE_RE = re.compile(r"/maps/place/([^/]+)")
 # Forma alternativa de place SEM coordenada: `?q=<endereco>&ftid=0x...` (o Maps do Android
 # devolve esta quando o link e' compartilhado pelo botao "Copiar link" de um pino salvo).
-# Aceita tambem `query=`/`destination=`, que aparecem em links de navegacao.
-_Q_ENDERECO_RE = re.compile(r"[?&](?:q|query|destination)=([^&]+)")
+# Aceita tambem `query=`/`destination=` (Google) e `address=`/`daddr=` (Apple Maps do
+# iPhone), que aparecem em links de navegacao e de place sem coordenada.
+_Q_ENDERECO_RE = re.compile(r"[?&](?:q|query|destination|address|daddr)=([^&]+)")
 # Par "lat,lng" ja e' tratado por `coord.parse_maps_url`; aqui so interessa TEXTO de endereco.
 _COORD_PURA_RE = re.compile(r"^-?\d+\.\d+\s*,\s*-?\d+\.\d+$")
 

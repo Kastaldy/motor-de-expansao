@@ -20,10 +20,17 @@ class CoordenadaInvalidaError(ValueError):
 
 # Ordem de tentativa: !3dLAT!4dLNG (pino exato do place) tem prioridade sobre
 # @lat,lng (centro do viewport), depois query params e "lat,lng" cru.
+# Os query params cobrem Google Maps E Apple Maps (iPhone): o app nativo de Mapas do
+# iOS compartilha com `ll=`, `coordinate=` ou `daddr=`, nunca com `@lat,lng`.
 _PADROES = (
     re.compile(r"!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)"),
     re.compile(r"@(-?\d+\.\d+),(-?\d+\.\d+)"),
-    re.compile(r"[?&](?:q|query|ll|sll|center|destination)=(-?\d+\.\d+),\s*(-?\d+\.\d+)"),
+    # `ll`/`sll` (Apple e Google), `coordinate` (Apple Maps place), `daddr`/`saddr`
+    # (rota do Apple Maps -- destino/origem), `q`/`query`/`center`/`destination` (Google).
+    re.compile(
+        r"[?&](?:q|query|ll|sll|center|destination|coordinate|daddr|saddr)="
+        r"(-?\d+\.\d+),\s*(-?\d+\.\d+)"
+    ),
     re.compile(r"^\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*$"),
 )
 
