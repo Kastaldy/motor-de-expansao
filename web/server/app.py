@@ -243,6 +243,20 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
 # da suite prova).
 
 
+def _ip_real_do_xff(xff: str | None, fallback: str | None) -> str | None:
+    """IP real do cliente atras do Caddy, para a trilha de acesso (DEC-027).
+
+    O Caddy ANEXA o peer real ao FIM do X-Forwarded-For, entao o ULTIMO token e' o
+    cliente verdadeiro; os tokens a' esquerda podem ser FORJADOS pelo proprio cliente.
+    Pentest 2026-08-19: antes usava-se `[0]` (o mais a' esquerda), exatamente o que o
+    atacante controla — `X-Forwarded-For: 8.8.8.8` fazia a acao dele constar de um IP
+    arbitrario na aba Acessos. Ha um unico hop (Caddy), entao `[-1]` e' o IP real.
+    """
+    if xff:
+        return xff.split(",")[-1].strip() or fallback
+    return fallback
+
+
 def _registrar_acesso(request: Request, *, status: int, inicio: float, tamanho: str | None) -> None:
     """Monta e grava a linha da trilha. Rastro, nao transacao: falha morre aqui."""
     try:
@@ -253,7 +267,7 @@ def _registrar_acesso(request: Request, *, status: int, inicio: float, tamanho: 
         cliente = request.client.host if request.client else None
         evento = acesso_log.montar_evento(
             usuario=request.headers.get("remote-user") or request.headers.get("remote-email"),
-            ip=(xff.split(",")[0] if xff else cliente),
+            ip=_ip_real_do_xff(xff, cliente),
             metodo=request.method,
             rota=caminho,
             query=request.url.query,

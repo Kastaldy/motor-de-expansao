@@ -91,3 +91,17 @@ def test_rotas_pesadas_passam_pelo_semaforo() -> None:
     # E ambas realmente entram no semaforo antes de delegar ao threadpool.
     assert "_PDF_SEMAFORO" in inspect.getsource(pilot_app.relatorio_municipal)
     assert "_PDF_SEMAFORO" in inspect.getsource(pilot_app.simulador_xlsx)
+
+
+# ── IP real na trilha DEC-027: ultimo hop do XFF, nao o forjavel [0] ─────────
+def test_ip_real_pega_ultimo_hop_do_xff() -> None:
+    """O Caddy anexa o peer real ao FIM do X-Forwarded-For; os tokens a' esquerda sao
+    controlados pelo cliente. A trilha (pentest 2026-08-19) deve pegar o ULTIMO."""
+    # Cliente forja 8.8.8.8; o Caddy anexa o IP real -> pegamos o real.
+    assert pilot_app._ip_real_do_xff("8.8.8.8, 203.0.113.7", "10.0.0.1") == "203.0.113.7"
+    # Sem XFF: cai no IP do socket.
+    assert pilot_app._ip_real_do_xff(None, "203.0.113.7") == "203.0.113.7"
+    # XFF de um hop so'.
+    assert pilot_app._ip_real_do_xff("203.0.113.7", None) == "203.0.113.7"
+    # XFF vazio/em branco -> fallback do socket, nunca string vazia.
+    assert pilot_app._ip_real_do_xff("   ", "10.0.0.1") == "10.0.0.1"
