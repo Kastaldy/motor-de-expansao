@@ -1224,3 +1224,90 @@ export interface EstadosPayload {
   }
   estados: EstadoRanking[]
 }
+
+/* ------------------------------------------------------------------------- *
+ * Aba Acessos — analytics da trilha (emenda DEC-027; GET /api/acessos/*)    *
+ * Restrita por allowlist de env no backend; a SPA só a mostra se /api/me    *
+ * devolver a aba `acessos`.                                                 *
+ * ------------------------------------------------------------------------- */
+
+export interface AcessosSerieDia {
+  dia: string
+  acoes: number
+  usuarios: number
+}
+
+export interface AcessosPorAba {
+  /** Rótulo de exibição (acentuado) — o backend já aplica a camada de LABEL. */
+  aba: string
+  acoes: number
+  usuarios: number
+}
+
+export interface AcessosUsuarioLinha {
+  nome: string
+  ultimo_dia: string | null
+  ultimo_hora: string | null
+  dias_ativos: number
+  acoes: number
+  abas: string[]
+  /** Nº de IPs DISTINTOS na janela — sinal de anomalia, nunca o IP em si. */
+  ips: number
+}
+
+export interface AcessosRotaLenta {
+  rota: string
+  n: number
+  p95_ms: number | null
+}
+
+export interface AcessosSaude {
+  total: number
+  erros_4xx: number
+  erros_5xx: number
+  taxa_erro_pct: number
+  lentas: AcessosRotaLenta[]
+}
+
+export interface AcessosResumo {
+  gerado_em: string
+  janela_dias: number
+  hoje: {
+    usuarios: number
+    acoes: number
+    aba_top: string | null
+    ultimo: { usuario: string; hora: string | null } | null
+  }
+  serie: AcessosSerieDia[]
+  /** 7 linhas (0 = segunda) × 24 horas BRT. */
+  heatmap: number[][]
+  por_aba: AcessosPorAba[]
+  usuarios: AcessosUsuarioLinha[]
+  saude: AcessosSaude
+}
+
+export interface AcessosFichaDia {
+  dia: string
+  ini: string
+  fim: string
+  acoes: number
+}
+
+export interface AcessosFeature {
+  /** Rótulo humano ("Rodou simulação de viabilidade") — nunca a rota/conteúdo. */
+  feature: string
+  n: number
+}
+
+export interface AcessosFicha {
+  nome: string
+  janela_dias: number
+  acoes: number
+  dias_ativos: number
+  ultimo_dia: string
+  ultimo_hora: string | null
+  abas: string[]
+  ips: number
+  dias: AcessosFichaDia[]
+  features: AcessosFeature[]
+}

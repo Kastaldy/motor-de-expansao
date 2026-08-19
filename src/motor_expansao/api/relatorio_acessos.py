@@ -71,6 +71,13 @@ LABEL_ABA = {
 #: Fuso de exibição/agrupamento. Fixo UTC-3 (ver docstring do módulo).
 _FUSO_BRT = timedelta(hours=-3)
 
+#: Rotas AUDITADAS na trilha mas INVISÍVEIS nas métricas de uso (prefixos): o
+#: painel de acessos (aba restrita, emenda DEC-027 de 2026-08-19) observaria a si
+#: mesmo — o admin abrindo o painel inflaria as próprias contagens e viraria ruído
+#: no relatório de 3/3h. O painel usa este MESMO filtro (`evento_valido`), então
+#: Telegram e aba nunca divergem.
+ROTAS_FORA_DA_METRICA: tuple[str, ...] = ("/api/acessos",)
+
 _PREFIXO_TRILHA = "acesso-"
 _SUFIXO_TRILHA = ".jsonl"
 
@@ -94,12 +101,26 @@ def _quando_brt(bruto: object) -> datetime | None:
         return None
 
 
+def evento_valido(r: object) -> bool:
+    """Se a linha da trilha conta como USO: objeto JSON, não-diagnóstico, não-painel.
+
+    Filtro ÚNICO das duas superfícies de métrica (relatório do Telegram e aba
+    Acessos do piloto): descarta linha que não seja objeto, requisição de
+    diagnóstico interno (user-agent `curl`) e as rotas do próprio painel
+    (`ROTAS_FORA_DA_METRICA` — auditadas na trilha, fora das contagens).
+    """
+    if not isinstance(r, dict) or "curl" in str(r.get("agente", "")):
+        return False
+    return not str(r.get("rota", "")).startswith(ROTAS_FORA_DA_METRICA)
+
+
 def agregar_acessos(linhas: Iterable[str], dia_brt: date | None = None) -> dict[str, dict]:
     """`{usuario: {"ini", "fim" (HH:MM BRT), "acoes", "abas" (set)}}`.
 
     Com `dia_brt`, só entram linhas daquele dia LOCAL. Linha ilegível ou que não
     seja um objeto JSON é ignorada (a trilha é rastro, não transação), assim como
-    as requisições de diagnóstico interno (user-agent `curl`).
+    as requisições de diagnóstico interno (user-agent `curl`) e as do painel de
+    acessos (`evento_valido`).
     """
     usuarios: dict[str, dict] = {}
     for bruta in linhas:
@@ -107,7 +128,7 @@ def agregar_acessos(linhas: Iterable[str], dia_brt: date | None = None) -> dict[
             r = json.loads(bruta)
         except (ValueError, TypeError):
             continue
-        if not isinstance(r, dict) or "curl" in str(r.get("agente", "")):
+        if not evento_valido(r):
             continue
         momento = _quando_brt(r.get("quando"))
         if dia_brt is not None and (momento is None or momento.date() != dia_brt):

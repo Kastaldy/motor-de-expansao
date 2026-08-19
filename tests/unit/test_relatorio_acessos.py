@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -104,39 +104,32 @@ def test_agrupamento_cobre_as_regras_de_acesso() -> None:
 _AGORA = datetime(2026, 8, 18, 15, 0, tzinfo=UTC)  # 12:00 BRT
 
 
-def _trilha(tmp_path: Path, linhas: list[str], momento: datetime = _AGORA) -> Path:
-    dia_brt = (momento + relatorio_acessos._FUSO_BRT).date()
+class _RelogioFixo(datetime):
+    """`datetime` com `now()` congelado em `_AGORA`.
+
+    Os caminhos do CLI (`main`) e do bot não aceitam `agora_utc` injetado — eles
+    leem o relógio REAL. Os testes desses caminhos escreviam trilha datada de
+    2026-08-18 e passaram naquele dia por coincidência: no dia seguinte, o
+    relatório de "hoje" não achava evento nenhum (defeito de data-fragilidade
+    encontrado em 2026-08-19). Subclasse, e não stub, para `fromisoformat` e
+    `isinstance` continuarem valendo no módulo.
+    """
+
+    @classmethod
+    def now(cls, tz=None):  # noqa: ANN001, ANN206
+        return _AGORA
+
+
+@pytest.fixture()
+def relogio_congelado(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(relatorio_acessos, "datetime", _RelogioFixo)
+
+
+def _trilha(tmp_path: Path, linhas: list[str]) -> Path:
+    dia_brt = (_AGORA + relatorio_acessos._FUSO_BRT).date()
     arquivo = relatorio_acessos.arquivos_do_dia_brt(tmp_path, dia_brt)[0]
     arquivo.write_text("\n".join(linhas) + "\n", encoding="utf-8")
     return tmp_path
-
-
-def _agora_real() -> datetime:
-    """O instante que o CLI e o bot VAO ver, porque eles leem o relogio de verdade.
-
-    `_AGORA` e' fixo (18/08) e serve aos testes que INJETAM o momento em
-    `gerar_relatorio`. Quem nao injeta — o `main()` do cron e o `/acessos` do bot — chama
-    `datetime.now(UTC)`, entao a trilha precisa cair no dia BRT corrente, senao o
-    relatorio responde "Nenhum acesso registrado hoje ainda". Enquanto o dia real foi
-    18/08 os dois coincidiram e o teste passou; na virada do dia ele quebrou sozinho, sem
-    ninguem tocar no codigo (medido em 19/08).
-    """
-    return datetime.now(UTC)
-
-
-def _linha_de_hoje(usuario: str, rota: str) -> str:
-    """Linha da trilha DENTRO do dia BRT corrente, e nunca no futuro.
-
-    Ancorada no inicio do dia BRT mais uma hora, com teto no instante atual menos um
-    minuto. As duas bordas importam: sem o piso, rodar a suite logo depois da meia-noite
-    BRT jogaria a linha no dia anterior; sem o teto, rodar na primeira hora do dia poria
-    a linha depois do "ate' HH:MM" que o cabecalho anuncia.
-    """
-    agora = _agora_real()
-    dia_brt = (agora + relatorio_acessos._FUSO_BRT).date()
-    inicio = datetime.combine(dia_brt, time(0), tzinfo=UTC) - relatorio_acessos._FUSO_BRT
-    quando = min(inicio + timedelta(hours=1), agora - timedelta(minutes=1))
-    return _linha(usuario, rota, quando.isoformat())
 
 
 def test_relatorio_formata_em_brt_com_labels(tmp_path: Path) -> None:
@@ -211,9 +204,10 @@ def test_enviar_telegram_nao_vaza_token_e_particiona(monkeypatch: pytest.MonkeyP
     assert "400" in str(erro.value)
 
 
-def test_cli_imprime_sem_enviar(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-    # O CLI le o relogio real — a trilha vai para o dia BRT corrente (ver `_linha_de_hoje`).
-    _trilha(tmp_path, [_linha_de_hoje("ana", "/api/ponto")], _agora_real())
+def test_cli_imprime_sem_enviar(
+    tmp_path: Path, capsys: pytest.CaptureFixture, relogio_congelado: None
+) -> None:
+    _trilha(tmp_path, [_linha("ana", "/api/ponto", "2026-08-18T12:00:00+00:00")])
     codigo = relatorio_acessos.main(["--dir", str(tmp_path)])
     saida = capsys.readouterr().out
     assert codigo == 0
@@ -273,15 +267,15 @@ def _texto(acoes: list[dict]) -> str:
     return " || ".join(a.get("text", "") for a in acoes)
 
 
-def test_acessos_no_chat_de_ops_sem_senha(tmp_path: Path) -> None:
+def test_acessos_no_chat_de_ops_sem_senha(tmp_path: Path, relogio_congelado: None) -> None:
     """O chat de ops puxa o relatório DIRETO — sem passar pela senha do bot."""
-    _trilha(tmp_path, [_linha_de_hoje("ana", "/api/ponto")], _agora_real())
+    _trilha(tmp_path, [_linha("ana", "/api/ponto", "2026-08-18T12:00:00+00:00")])
     saida = _texto(bot.processar(777, "/acessos", _settings(tmp_path)))
     assert "ana" in saida and "Acessos do piloto" in saida
 
 
-def test_acessos_cobre_forma_de_grupo(tmp_path: Path) -> None:
-    _trilha(tmp_path, [_linha_de_hoje("ana", "/api/ponto")], _agora_real())
+def test_acessos_cobre_forma_de_grupo(tmp_path: Path, relogio_congelado: None) -> None:
+    _trilha(tmp_path, [_linha("ana", "/api/ponto", "2026-08-18T12:00:00+00:00")])
     saida = _texto(bot.processar(777, "/acessos@MotorBot", _settings(tmp_path)))
     assert "ana" in saida
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import Dock from './components/Dock'
 import type { SearchPin } from './components/HexMap'
+import AcessosScreen from './screens/AcessosScreen'
 import ExecutiveScreen from './screens/ExecutiveScreen'
 import InicioScreen from './screens/InicioScreen'
 import MapScreen from './screens/MapScreen'
@@ -15,7 +16,14 @@ import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
 import type { Hex, MunicipioItem, MunicipioPayload } from './lib/types'
 
-export type Tela = 'inicio' | 'ponto' | 'oportunidades' | 'mapa' | 'viabilidade' | 'executiva'
+export type Tela =
+  | 'inicio'
+  | 'ponto'
+  | 'oportunidades'
+  | 'mapa'
+  | 'viabilidade'
+  | 'executiva'
+  | 'acessos'
 
 /** O ponto que viaja do mapa para a Viabilidade — a costura entre as duas telas. */
 export interface PontoEscolhido {
@@ -378,6 +386,10 @@ export default function App() {
           // `/api/uf/{uf}` no Mapa toda vez que se trocava o estado aqui — leitura que
           // pode passar de 15 s.
           <ExecutiveScreen onInicio={voltarAoInicio} />
+        ) : tela === 'acessos' ? (
+          // Painel restrito (emenda DEC-027). Autônomo como a Executiva: não herda
+          // UF/município — a trilha é da rede inteira, não de um recorte do mapa.
+          <AcessosScreen onInicio={voltarAoInicio} />
         ) : (
           <ViabilityScreen
             ponto={ponto}
