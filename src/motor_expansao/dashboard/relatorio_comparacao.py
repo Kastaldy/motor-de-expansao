@@ -83,8 +83,22 @@ _MESES = (
 
 
 def cor_do_item(i: int) -> tuple[int, int, int]:
-    """Cor de identidade da posicao `i`, ciclando como a tela faz."""
+    """Cor de identidade do item `i`, ciclando como a tela faz."""
     return CORES_ITEM[i % len(CORES_ITEM)]
+
+
+def indice_do_item(item: Mapping[str, Any], padrao: int) -> int:
+    """Posicao do item na ORDEM EM QUE O OPERADOR O COLOU, nao no rank.
+
+    E' essa a identidade dele: a cor que a tela pintou no painel e no contorno do mapa
+    sai daqui, e a captura do canvas chega ao servidor nesta mesma ordem. Numerar por
+    rank fazia o deck trocar a cor de uma area entre a tela e o PDF, e — pior — pendurar
+    a captura de uma area sob o nome de outra assim que o ranking reordenava, que e'
+    justamente o trabalho dele (medido em 18/08: o mapa da Bela Vista saiu rotulado
+    "Tatuape"). `padrao` cobre payload velho, sem o campo.
+    """
+    valor = item.get("indice")
+    return int(valor) if isinstance(valor, int) else padrao
 
 
 def _milhar(v: float) -> str:
@@ -203,7 +217,7 @@ def _slide_capa(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | None, qua
     # Piso rigido: a lista para antes da faixa de logos, custe o que custar.
     cabem = max(int((_CAPA_RODAPE_LOGOS_TOP - 6 - y) / passo), 0)
     for i, item in enumerate(itens[:cabem]):
-        pdf.set_fill_color(*cor_do_item(i))
+        pdf.set_fill_color(*cor_do_item(indice_do_item(item, i)))
         pdf.rect(_CAPA_X, y + 3, 8, 8, style="F")
         pdf.set_text_color(*BRANCO)
         pdf.set_font("Helvetica", "", 10.5)
@@ -240,7 +254,7 @@ def _slide_graficos(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | None)
     pdf.set_font("Helvetica", "", 9)
     for i, item in enumerate(itens):
         rotulo = ascii_seguro(str(item.get("rotulo") or f"Área {i + 1}"))
-        pdf.set_fill_color(*cor_do_item(i))
+        pdf.set_fill_color(*cor_do_item(indice_do_item(item, i)))
         pdf.rect(lx, 71, 8, 8, style="F")
         pdf.set_text_color(90, 90, 90)
         pdf.set_xy(lx + 12, 68)
@@ -335,7 +349,8 @@ def _mini_grafico(
         pdf.set_fill_color(*CINZA_CLARO)
         pdf.rect(barra_x, linha_y + 2, barra_largura, 9, style="F")
         if valor is not None and teto > 0:
-            cor = cor_do_item(i) if decisiva else (170, 170, 170)
+            # Mesma identidade da legenda deste slide: cor pela ordem de colagem.
+            cor = cor_do_item(indice_do_item(itens[i], i)) if decisiva else (170, 170, 170)
             pdf.set_fill_color(*cor)
             pdf.rect(barra_x, linha_y + 2, barra_largura * abs(float(valor)) / teto, 9, style="F")
         pdf.set_text_color(*CINZA_TEXTO)
@@ -422,7 +437,7 @@ def _slide_matriz(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | None) -
 
     for i, item in enumerate(itens):
         y = topo + i * celula_altura
-        pdf.set_fill_color(*cor_do_item(i))
+        pdf.set_fill_color(*cor_do_item(indice_do_item(item, i)))
         pdf.rect(36, y + celula_altura / 2 - 5, 9, 9, style="F")
         pdf.set_text_color(*CINZA_TEXTO)
         pdf.set_font("Helvetica", "B", 9)
@@ -536,15 +551,24 @@ def _slide_mapas(
     # diferentes lado a lado, a linha de baixo viraria um serrote. Usa a maior proporcao do
     # conjunto para nenhuma imagem precisar ser cortada, e o teto da pagina manda no fim.
     disponivel = 470.0 - 108.0
-    proporcao = max((_proporcao(mapas[i] if i < len(mapas) else None) for i in range(n)), default=0.75)
+
+    # A CAPTURA CHEGA NA ORDEM DE COLAGEM e `itens` chega RANQUEADO — parear pelas duas
+    # posicoes punha o mapa de uma area sob o nome de outra assim que o ranking reordenava
+    # (medido em 18/08: o hexagono da Bela Vista rotulado "Tatuape"). O par certo e' pelo
+    # `indice` que o front manda dentro de cada item.
+    def _mapa_de(item: Mapping[str, Any], padrao: int) -> bytes | None:
+        k = indice_do_item(item, padrao)
+        return mapas[k] if 0 <= k < len(mapas) else None
+
+    proporcao = max((_proporcao(_mapa_de(item, i)) for i, item in enumerate(itens)), default=0.75)
     altura = min(disponivel, largura * proporcao)
     topo = 108.0 + (disponivel - altura) / 2
 
     for i, item in enumerate(itens):
         x = 36 + i * (largura + vao)
-        png = mapas[i] if i < len(mapas) else None
+        png = _mapa_de(item, i)
 
-        pdf.set_fill_color(*cor_do_item(i))
+        pdf.set_fill_color(*cor_do_item(indice_do_item(item, i)))
         pdf.rect(x, topo - 22, 9, 9, style="F")
         pdf.set_text_color(*CINZA_TEXTO)
         pdf.set_font("Helvetica", "B", 9.5)
@@ -667,30 +691,42 @@ def _slide_recomendacao(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | N
     faixa_de_titulo(pdf, "Recomendação", "quem lidera, e em quê")
 
     itens = list(dados.get("itens") or [])[:MAX_ITENS]
-    decisivas = list(dados.get("dimensoesDecisivas") or [])
+    # DENOMINADOR = o conjunto FIXO de parametros comparados, lido do proprio item (todos
+    # trazem as mesmas dimensoes, na mesma ordem). Era o numero de parametros que
+    # separaram, e por isso mudava com o tamanho da lista: a mesma area saia "1 de 2" com
+    # dois hexagonos e "1 de 3" com tres, sem que nada nela tivesse mudado.
+    #
+    # A soma das fracoes pode nao fechar o total, e e' a leitura certa: o que sobra sao os
+    # parametros em que ninguem lidera. O rodape do slide diz isso.
+    disputados = len(itens[0].get("porDimensao") or []) if itens else 0
     melhor = dados.get("melhor")
 
-    # RANK POR CONTAGEM DE VITORIAS, nao por nota somada. Ordenar por uma nota unica seria
-    # peso entre camadas do M1 (exige DEC); contar em quantos parametros cada area lidera
-    # e' leitura direta, e e' a mesma que a tela mostra.
-    ordenados = sorted(
-        enumerate(itens),
-        key=lambda par: (-int(par[1].get("vitorias") or 0), int(par[1].get("derrotas") or 0)),
-    )
-
-    # POSICAO COM EMPATE COMPARTILHADO (1, 1, 3, 4), e nao a ordem da lista. O rodape deste
-    # slide afirma que empate no topo NAO e' desempatado; imprimir "1º" e "2º" para duas
-    # areas que lideram o mesmo numero de parametros faria o desenho contradizer o texto —
-    # e a ordem entre elas sairia de um criterio (menos derrotas) que ninguem aprovou como
-    # desempate. Medido num deck real de 4 cidades: Sao Paulo e Carapicuiba lideravam 2
-    # parametros cada e apareciam como 1º e 2º.
-    posicoes: list[int] = []
-    for i, (_, item) in enumerate(ordenados):
-        v = int(item.get("vitorias") or 0)
-        if i and v == int(ordenados[i - 1][1].get("vitorias") or 0):
-            posicoes.append(posicoes[-1])
-        else:
-            posicoes.append(i + 1)
+    # A ORDEM E A POSICAO CHEGAM PRONTAS. `itens` ja' vem ranqueado pelo `ranquear` do
+    # front, e cada item traz a sua `posicao` com o empate ja' resolvido la'. O servidor
+    # nao recalcula: esta funcao teve a propria copia da conta e as duas divergiram DUAS
+    # vezes — imprimindo dois 1o enquanto a frase apontava um vencedor, e depois o inverso.
+    # Uma fonte da verdade para "quem vence", e ela e' o TypeScript (ver o cabecalho deste
+    # modulo). Aqui so' se desenha o numero que veio.
+    ordenados = list(enumerate(itens))
+    if all(isinstance(it.get("posicao"), int) for it in itens):
+        posicoes = [int(it["posicao"]) for it in itens]
+    else:
+        # LEGADO: payload de um front anterior a `posicao`. Reproduz a conta por vitorias,
+        # que era a regra daquela versao, para um deck antigo nao sair sem colocacao.
+        ordenados = sorted(
+            ordenados,
+            key=lambda par: (
+                -int(par[1].get("vitorias") or 0),
+                int(par[1].get("derrotas") or 0),
+            ),
+        )
+        posicoes = []
+        for i, (_, item) in enumerate(ordenados):
+            anterior = ordenados[i - 1][1] if i else None
+            mesmo = anterior is not None and int(item.get("vitorias") or 0) == int(
+                anterior.get("vitorias") or 0
+            )
+            posicoes.append(posicoes[-1] if mesmo else i + 1)
 
     y = 96.0
     # Reserva o rodape da frase (54 pt) e distribui o resto entre os itens, para o slide
@@ -701,7 +737,7 @@ def _slide_recomendacao(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | N
         destaque = posicao == 1 and melhor is not None
         pdf.set_fill_color(*(CINZA_CLARO if destaque else (250, 250, 250)))
         pdf.rect(36, y, PAGINA_LARGURA - 72, altura, style="F")
-        pdf.set_fill_color(*cor_do_item(indice_original))
+        pdf.set_fill_color(*cor_do_item(indice_do_item(item, indice_original)))
         pdf.rect(36, y, 5, altura, style="F")
 
         # Bloco vertical CENTRADO na faixa: com a altura variável, ancorar no topo deixaria
@@ -711,6 +747,17 @@ def _slide_recomendacao(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | N
         pdf.set_font("Helvetica", "B", 15)
         pdf.set_xy(52, centro - 15)
         pdf.cell(40, 18, ascii_seguro(f"{posicao}º"))
+
+        # DIZ o empate, em vez de deixar dois "1º" iguais a serem deduzidos. O leitor do
+        # deck nao e' quem montou a comparacao: sem a palavra, a repeticao do numero se le
+        # como erro de geracao — e a pagina toda existe para nao ser lida como erro.
+        if posicoes.count(posicao) > 1:
+            pdf.set_font("Helvetica", "", 7.5)
+            pdf.set_text_color(140, 140, 140)
+            pdf.set_xy(52, centro + 3)
+            pdf.cell(40, 10, "empate")
+            pdf.set_text_color(*CINZA_TEXTO)
+
         pdf.set_font("Helvetica", "B" if destaque else "", 13)
         pdf.set_xy(92, centro - 14)
         pdf.cell(360, 17, ascii_seguro(str(item.get("rotulo") or "")))
@@ -722,14 +769,14 @@ def _slide_recomendacao(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | N
         pdf.cell(
             360,
             13,
-            ascii_seguro(f"lidera em {vitorias} de {len(decisivas)} parâmetros que separaram"),
+            ascii_seguro(f"lidera em {vitorias} de {disputados} parâmetros"),
         )
 
         # QUAIS parametros, e nao so' quantos: "lidera em 3" nao diz se sao os que importam.
         nomes = [
             str(d.get("rotulo") or "")
             for d in item.get("porDimensao") or []
-            if d.get("melhor") and str(d.get("chave")) in decisivas
+            if d.get("melhor")
         ]
         if nomes:
             # TETO de 3 nomes. Quem lidera em tudo produzia uma linha que corria ate' a
@@ -755,15 +802,33 @@ def _slide_recomendacao(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | N
         ]
         avaliados = [c for c in item.get("criterios") or [] if c.get("passa") is not None]
         if avaliados:
+            # AS DUAS LEITURAS, na mesma fracao: "lidera em X de N" e' RELATIVA ao conjunto
+            # comparado; "passa em Y de M" e' ABSOLUTA, contra a regua do estudo. Um ponto
+            # pode liderar a comparacao e reprovar num piso do produto — a decisao e' de
+            # quem le, e para decidir ele precisa das duas (Juan, 2026-08-19).
+            cumpridos = len(avaliados) - len(reprovados)
             pdf.set_font("Helvetica", "", 8.5)
-            if reprovados:
-                pdf.set_text_color(180, 60, 60)
-                texto = f"reprova em: {', '.join(reprovados)}"
-            else:
-                pdf.set_text_color(60, 130, 90)
-                texto = f"passa nos {len(avaliados)} critérios avaliados"
+            pdf.set_text_color(*((180, 60, 60) if reprovados else (60, 130, 90)))
             pdf.set_xy(470, centro + 2)
-            pdf.cell(PAGINA_LARGURA - 72 - 470 + 30, 12, ascii_seguro(texto))
+            pdf.cell(
+                160,
+                12,
+                ascii_seguro(f"passa em {cumpridos} de {len(avaliados)} critérios"),
+            )
+            # QUAIS reprovaram, ao lado: a contagem diz quanto, e o nome diz o que — sem o
+            # nome, "3 de 5" nao ajuda a decidir se o que faltou era negociavel.
+            if reprovados:
+                pdf.set_font("Helvetica", "", 8)
+                pdf.set_text_color(150, 90, 90)
+                pdf.set_xy(470 + 120, centro + 2)
+                falhas = ", ".join(reprovados[:2])
+                if len(reprovados) > 2:
+                    falhas += f" e mais {len(reprovados) - 2}"
+                pdf.cell(
+                    PAGINA_LARGURA - 36 - 470 - 120,
+                    12,
+                    ascii_seguro(f"- reprova em: {falhas}"),
+                )
 
         y += altura + 8
 
@@ -782,7 +847,8 @@ def _slide_recomendacao(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | N
     rodape(
         pdf,
         f"O rank CONTA em quantos parâmetros {sujeito} lidera; ele não soma os parâmetros numa "
-        "nota única. Empate no topo não é desempatado - quando ele ocorre, não há 1º lugar.",
+        "nota única. Parâmetro em que as áreas ficaram perto demais não elege ninguém - por "
+        "isso as contagens podem não fechar o total. Empate divide a mesma posição.",
     )
 
 
