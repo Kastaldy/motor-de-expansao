@@ -1711,3 +1711,30 @@ def test_limiar_de_representatividade_e_o_mesmo_do_aviso():
     base = _bairros_geo_sample()
     assert bairro_representa_o_municipio({**base, "cobertura": _BAIRRO_COBERTURA_MIN}) is True
     assert bairro_representa_o_municipio({**base, "cobertura": _BAIRRO_COBERTURA_MIN - 0.01}) is False
+
+
+def test_sobra_e_visivel_no_mapa():
+    """A área sem bairro tem de LER como cinza declarado, não como branco/vazio.
+
+    Regressão (Tangará da Serra/MT, reportada por Juan): com alpha 30 a sobra sumia no
+    basemap claro e o mapa parecia ter um buraco -- mas ela é um estado avaliado, não
+    ausência de render.
+    """
+    from motor_expansao.dashboard.relatorio_municipal import (
+        _SOBRA_FILL_RGBA,
+        _render_mapa_bairros,
+    )
+
+    assert _SOBRA_FILL_RGBA[3] >= 60, "alpha baixo demais: a sobra vira invisível"
+
+    geo = _bairros_geo_sample(com_sobra=True)
+    for b in geo["bairros"]:
+        b["score"] = 85.0
+    png = _render_mapa_bairros(geo, metrica="score", basemap=False)
+    arr = np.asarray(Image.open(BytesIO(png)).convert("RGB")).astype(int)
+
+    # Cinza da sobra tem de aparecer numa area relevante: canais proximos entre si
+    # (r~g~b) e claramente mais escuro que o canvas 245 do fallback offline.
+    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    cinza = (abs(r - g) < 14) & (abs(g - b) < 14) & (r > 180) & (r < 240)
+    assert cinza.sum() > 3_000, f"sobra pouco visivel (pixels cinza: {cinza.sum()})"

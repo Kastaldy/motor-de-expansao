@@ -165,7 +165,13 @@ _BAIRRO_ROTULO_PLACA_RGBA = (255, 255, 255, 210)
 # bairro: em municipio com cobertura ruim ela e a cidade inteira, e pinta-la como divisa faria o
 # mapa afirmar um limite que o IBGE nao da. Cinza = "aqui nao ha bairro mapeado".
 _SOBRA_CONTORNO_RGBA = (120, 128, 140, 190)
-_SOBRA_FILL_RGBA = (120, 128, 140, 30)
+# Alpha 90, nao 30. Com 30 (12% de opacidade) a sobra sumia no basemap claro e o mapa lia como
+# se ali NAO HOUVESSE NADA -- Juan viu isso em Tangara da Serra/MT (2026-08-19) e reportou como
+# "uma area em branco". A sobra e' um ESTADO declarado ("sem bairro na base", dito no rodape),
+# nao ausencia de render: precisa ser visivel para o leitor saber que aquilo foi avaliado.
+# Mesmo raciocinio do BLK-FIX-06-C, que subiu `_DISCARDED_FILL` de 70 para 150 pelo mesmo
+# sintoma. 90 e' o teto util aqui: em 130 o cinza passa a competir com as faixas de score.
+_SOBRA_FILL_RGBA = (120, 128, 140, 90)
 
 # Tabela de comparacao das regioes (BLK-RELMUN-07): quantas linhas cabem numa pagina 16:9 sem
 # encolher a fonte a ponto de nao se ler em projecao. O material de referencia do time usa 15
