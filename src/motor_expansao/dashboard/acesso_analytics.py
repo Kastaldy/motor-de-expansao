@@ -35,6 +35,7 @@ import threading
 from collections import Counter
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from motor_expansao.api.relatorio_acessos import (
     _FUSO_BRT,
@@ -107,7 +108,7 @@ def _dias_utc_para_janela_brt(primeiro_brt: date, ultimo_brt: date) -> list[date
 
 def _eventos_da_janela(
     diretorio: Path, primeiro_brt: date, ultimo_brt: date
-) -> tuple[list[dict[str, object]], bool]:
+) -> tuple[list[dict[str, Any]], bool]:
     """Eventos válidos da janela BRT (com `momento` BRT e `aba`) + flag de confiança.
 
     Linha ilegível é ignorada (a trilha é rastro, não transação). O filtro de
@@ -117,7 +118,7 @@ def _eventos_da_janela(
     congelar uma subcontagem (defeito da revisão adversarial de 2026-08-19).
     Arquivo simplesmente ausente é normal (dia sem tráfego) e não derruba a flag.
     """
-    eventos: list[dict[str, object]] = []
+    eventos: list[dict[str, Any]] = []
     confiavel = True
     for dia_utc in _dias_utc_para_janela_brt(primeiro_brt, ultimo_brt):
         arquivo = _arquivo_do_dia_utc(diretorio, dia_utc)
@@ -144,7 +145,7 @@ def _eventos_da_janela(
     return eventos, confiavel
 
 
-def _feature_do_evento(r: dict[str, object]) -> str:
+def _feature_do_evento(r: dict[str, Any]) -> str:
     metodo = str(r.get("metodo") or "").upper()
     rota = str(r.get("rota") or "")
     for metodo_regra, prefixo, rotulo in FEATURES_ROTULOS:
@@ -172,7 +173,7 @@ def caminho_rollup(diretorio: Path | None = None) -> Path:
 _avisou_rollup_corrompido = False
 
 
-def _carregar_rollup(diretorio: Path) -> tuple[str, dict[str, dict[str, object]]]:
+def _carregar_rollup(diretorio: Path) -> tuple[str, dict[str, dict[str, Any]]]:
     """`('ok'|'ausente'|'ilegivel'|'corrompido', dias)`.
 
     A distinção importa (revisão adversarial de 2026-08-19): tratar QUALQUER falha
@@ -196,10 +197,10 @@ def _carregar_rollup(diretorio: Path) -> tuple[str, dict[str, dict[str, object]]
     return "ok", dias
 
 
-def _entradas_validas(dias: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
+def _entradas_validas(dias: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Só entradas com chave-data ISO e valor dict — entrada estranha (edição manual)
     não pode derrubar a série com 500; na regravação ela é PRESERVADA (só se soma)."""
-    validas: dict[str, dict[str, object]] = {}
+    validas: dict[str, dict[str, Any]] = {}
     for chave, info in dias.items():
         if not isinstance(info, dict):
             continue
@@ -230,7 +231,7 @@ def _quarentenar_rollup(diretorio: Path) -> None:
         _avisou_rollup_corrompido = True
 
 
-def _gravar_rollup(diretorio: Path, dias: dict[str, dict[str, object]]) -> None:
+def _gravar_rollup(diretorio: Path, dias: dict[str, dict[str, Any]]) -> None:
     """Escrita atômica (tmp + replace), modo 0600 — mesmo tratamento da trilha."""
     destino = caminho_rollup(diretorio)
     conteudo = json.dumps(
@@ -245,7 +246,7 @@ def _gravar_rollup(diretorio: Path, dias: dict[str, dict[str, object]]) -> None:
     os.replace(tmp, destino)
 
 
-def _dia_de_rollup(eventos: list[dict[str, object]]) -> dict[str, object]:
+def _dia_de_rollup(eventos: list[dict[str, Any]]) -> dict[str, Any]:
     por_aba = Counter(str(r["aba"]) for r in eventos if r.get("aba"))
     return {
         "acoes": len(eventos),
@@ -336,7 +337,7 @@ def _p95(valores: list[int]) -> int | None:
     return ordenados[int(0.95 * (len(ordenados) - 1))]
 
 
-def _saude(eventos: list[dict[str, object]]) -> dict[str, object]:
+def _saude(eventos: list[dict[str, Any]]) -> dict[str, Any]:
     total = len(eventos)
     e4 = sum(1 for r in eventos if isinstance(r.get("status"), int) and 400 <= r["status"] < 500)
     e5 = sum(1 for r in eventos if isinstance(r.get("status"), int) and r["status"] >= 500)
@@ -344,7 +345,7 @@ def _saude(eventos: list[dict[str, object]]) -> dict[str, object]:
     for r in eventos:
         if isinstance(r.get("duracao_ms"), int):
             por_rota.setdefault(str(r.get("rota") or "?"), []).append(int(r["duracao_ms"]))
-    lentas = [
+    lentas: list[dict[str, Any]] = [
         {"rota": rota, "n": len(ds), "p95_ms": _p95(ds)}
         for rota, ds in por_rota.items()
         if len(ds) >= 5
@@ -359,11 +360,11 @@ def _saude(eventos: list[dict[str, object]]) -> dict[str, object]:
     }
 
 
-def _linhas_usuarios(eventos: list[dict[str, object]]) -> list[dict[str, object]]:
-    por_usuario: dict[str, list[dict[str, object]]] = {}
+def _linhas_usuarios(eventos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    por_usuario: dict[str, list[dict[str, Any]]] = {}
     for r in eventos:
         por_usuario.setdefault(str(r.get("usuario") or "desconhecido"), []).append(r)
-    linhas = []
+    linhas: list[dict[str, Any]] = []
     for nome, evs in por_usuario.items():
         momentos = [r["momento"] for r in evs if isinstance(r.get("momento"), datetime)]
         ultimo = max(momentos) if momentos else None
@@ -386,7 +387,7 @@ def resumo(
     diretorio: Path | None = None,
     dias: int = JANELA_DIAS_DEFAULT,
     agora_utc: datetime | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Payload completo da aba: big numbers, série, heatmap, abas, usuários, saúde."""
     base = diretorio or acesso_log_dir()
     dias = max(1, min(int(dias), JANELA_DIAS_MAX))
@@ -401,7 +402,7 @@ def resumo(
     # Contagens AO VIVO por dia BRT da janela: alimentam o "hoje" da série e o
     # fallback dos dias fechados que o rollup não tem (ex.: escrita indisponível) —
     # sem isso a série mostraria zero para um dia com atividade visível logo abaixo.
-    vivos: dict[str, dict[str, object]] = {}
+    vivos: dict[str, dict[str, Any]] = {}
     for r in eventos:
         d = r["momento"].date().isoformat()
         v = vivos.setdefault(d, {"acoes": 0, "usuarios": set()})
@@ -414,7 +415,7 @@ def resumo(
     # manual) é ignorada aqui — nunca um 500 (revisão adversarial de 2026-08-19).
     rollup = _entradas_validas(_carregar_rollup(base)[1])
     inicios = [date.fromisoformat(d) for d in (*rollup, *vivos)]
-    serie: list[dict[str, object]] = []
+    serie: list[dict[str, Any]] = []
     if inicios:
         cursor = min(inicios)
         while cursor < hoje:
@@ -487,7 +488,7 @@ def ficha_usuario(
     diretorio: Path | None = None,
     dias: int = JANELA_DIAS_DEFAULT,
     agora_utc: datetime | None = None,
-) -> dict[str, object] | None:
+) -> dict[str, Any] | None:
     """Drill-down de UM usuário: janelas por dia + contagem por feature.
 
     Nunca expõe query/conteúdo — só o rótulo da feature. `None` = sem atividade
