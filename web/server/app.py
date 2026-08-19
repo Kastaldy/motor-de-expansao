@@ -77,6 +77,7 @@ import cobertura_1km  # noqa: E402  (PROTOTIPO — area coberta pelo raio, para 
 import pressao_1km  # noqa: E402  (PROTOTIPO — chave de raio 2 km / 1 km por area)
 
 from motor_expansao.dashboard import (  # noqa: E402
+    acesso_analytics,
     acesso_log,
     rede_cadastro,
     rede_coorte,
@@ -202,7 +203,14 @@ app.add_middleware(
 # A SPA esconde as abas via /api/me; este middleware e' quem barra de verdade.
 @app.middleware("http")
 async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ignore[no-untyped-def]
-    detalhe = acesso.motivo_bloqueio(request.url.path, request.headers.get("Remote-User"))
+    remote_user = request.headers.get("Remote-User")
+    # Painel de acessos (emenda DEC-027): controle PROPRIO por allowlist de env,
+    # fora do mecanismo de abas — e 404 (nao 403), a existencia nao e' anunciada.
+    # No middleware, e nao so' na rota, para que TODA rota /api/acessos/* futura
+    # ja nasca guardada (impossivel esquecer a dependencia).
+    if acesso.bloqueio_acessos(request.url.path, remote_user):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    detalhe = acesso.motivo_bloqueio(request.url.path, remote_user)
     if detalhe is not None:
         return JSONResponse({"detail": detalhe}, status_code=403)
     return await call_next(request)
@@ -2612,7 +2620,60 @@ def me(
     rota so' informa.
     """
     usuario = acesso.normalizar_usuario(remote_user)
-    return {"usuario": usuario, "abas": sorted(acesso.abas_do_usuario(usuario))}
+    abas = set(acesso.abas_do_usuario(usuario))
+    # A aba Acessos NUNCA vem do JSON de abas: so' da allowlist de env (emenda
+    # DEC-027). Entra aqui apenas para a SPA saber que pode mostrar o icone.
+    if acesso.pode_ver_acessos(usuario):
+        abas.add(acesso.ABA_ACESSOS)
+    return {"usuario": usuario, "abas": sorted(abas)}
+
+
+# ============================================================================
+# Aba Acessos — analytics da trilha (emenda DEC-027; allowlist em `acesso.py`)
+# ============================================================================
+# A agregacao e o ROLLUP (unica escrita, no diretorio proprio da trilha) vivem em
+# `motor_expansao/dashboard/acesso_analytics.py` — o app.py segue sem escritor de
+# FS (guardrail AST). O 404 do middleware e' a barreira; o check aqui e' cinto e
+# suspensorio para chamada direta das funcoes (padrao da suite, sem TestClient).
+
+
+@app.on_event("startup")
+def _consolidar_rollup_de_uso() -> None:
+    # Consolida dias BRT fechados no rollup sem dado pessoal ANTES que a poda de
+    # 90 dias da trilha os alcance; nunca levanta (analytics e' rastro).
+    acesso_analytics.consolidar_rollup_seguro()
+
+
+def _exigir_admin_acessos(remote_user: str | None) -> None:
+    if not acesso.pode_ver_acessos(remote_user):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
+# `include_in_schema=False` nas duas rotas: sem ele, /openapi.json e /docs (livres
+# para qualquer autenticado) listavam os paths e as descricoes do painel — anulando
+# o 404 "existencia nao anunciada" (revisao adversarial de 2026-08-19).
+@app.get("/api/acessos/resumo", include_in_schema=False)
+def acessos_resumo(
+    dias: int = acesso_analytics.JANELA_DIAS_DEFAULT,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Payload completo da aba: big numbers, série, heatmap, abas, usuários, saúde."""
+    _exigir_admin_acessos(remote_user)
+    return acesso_analytics.resumo(dias=dias)
+
+
+@app.get("/api/acessos/usuario/{nome}", include_in_schema=False)
+def acessos_usuario(
+    nome: str,
+    dias: int = acesso_analytics.JANELA_DIAS_DEFAULT,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Ficha de um usuário: janelas por dia + features (nunca query/conteúdo)."""
+    _exigir_admin_acessos(remote_user)
+    ficha = acesso_analytics.ficha_usuario(nome, dias=dias)
+    if ficha is None:
+        raise HTTPException(status_code=404, detail="Sem atividade deste usuário na janela.")
+    return ficha
 
 
 # ============================================================================

@@ -92,5 +92,10 @@ def _isolar_trilha_acesso(monkeypatch, tmp_path):
     isto, qualquer teste que use TestClient escreveria em `<repo>/data/acesso_log`
     da maquina de quem roda. A resolucao do diretorio e' lazy (le a env var a cada
     chamada), entao o patch vale independentemente da ordem de import dos modulos.
+
+    A allowlist da aba Acessos (emenda DEC-027) e' LIMPA pelo mesmo motivo: se a
+    maquina de quem roda tiver `MOTOR_ACESSOS_ADMIN_USUARIOS` no ambiente, os
+    testes de guard (deny-by-default) mudariam de resultado.
     """
     monkeypatch.setenv("MOTOR_ACESSO_LOG_DIR", str(tmp_path / "acesso_log"))
+    monkeypatch.delenv("MOTOR_ACESSOS_ADMIN_USUARIOS", raising=False)

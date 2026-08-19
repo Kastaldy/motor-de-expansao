@@ -13689,3 +13689,37 @@ dia BRT lendo os 2 arquivos UTC + teste de virada; nome de usuario cru quebrava 
 Markdown -> texto puro + chunking <=4096; env vazia furava o guard do bot -> validator. Suite
 completa: 3206 passed (1 falha pre-existente ambiental do Windows). Merge admin + deploy api/bot +
 instalacao do cron autorizados por Felipe ("faca tudo sozinho").
+
+## Fechamento de ciclo — Aba Acessos do piloto (painel restrito + rollup sem dado pessoal) (2026-08-19, ad-hoc)
+
+Pedido de Felipe: transformar o relatorio de acessos numa aba do piloto com acesso limitado, para
+analisar volume/uso e ver quem esta acessando — com as 4 escolhas dele registradas na emenda da
+DEC-027: detalhe ate' o nivel de FEATURE (nunca query/conteudo), IP so como contagem de distintos,
+rollup diario sem dado pessoal para tendencia alem dos 90 dias, e card de saude (erro + p95).
+
+Entrega: backend `motor_expansao/dashboard/acesso_analytics.py` (agregacoes por dia BRT + rollup
+`uso-diario.json` write-once por dia fechado, atomico, sem nome/IP/rota, consolidado no startup e a
+cada abertura da aba) + rotas `/api/acessos/*` guardadas NO MIDDLEWARE por allowlist de env
+`MOTOR_ACESSOS_ADMIN_USUARIOS` (404 para quem esta fora; `acessos` fora de ABAS_VALIDAS — o
+acesso_abas.json nao concede nem por curinga; fail-open do front tambem nao) + tela
+`web/src/screens/AcessosScreen.tsx` (big numbers, serie do rollup, heatmap hora×dia BRT, uso por
+aba, tabela de usuarios -> ficha por feature, saude; SVG/CSS a mao, zero dependencia npm nova).
+O painel e' auditado na trilha mas EXCLUIDO das metricas na aba E no relatorio 3/3h do Telegram,
+pelo MESMO filtro (`evento_valido`/`ROTAS_FORA_DA_METRICA` em relatorio_acessos.py). Consertados no
+caminho 3 testes data-frageis do ciclo anterior (CLI/bot liam o relogio real; passaram em 2026-08-18
+por coincidencia — relogio congelado por monkeypatch). Docs: emenda na DEC-027 + secao nova em
+`docs/trilha_acesso_piloto.md` + `deploy_piloto_web.md` + linha do §8 (CLAUDE.md) marcada emendada.
+READ-ONLY sobre o M1; guardrail AST do app.py intacto (writer do rollup no modulo).
+
+QA do ciclo: revisao adversarial por workflow (25 agentes: 7 lentes -> 1 cetico com REPRODUCAO por
+achado) — 18 defeitos confirmados (7 media, 11 baixa; 0 critico/alto), TODOS corrigidos no proprio
+ciclo. Destaques: as rotas do painel vazavam existencia+descricao no /openapi.json para qualquer
+autenticado (include_in_schema=False + teste anti-regressao); rollup com conteudo invalido era
+REESCRITO destruindo o historico alem dos 90d (agora: quarentena .corrompido com bytes preservados,
+IO transitorio so adia a rodada, dia so consolida com o proprio arquivo legivel); dia da trilha
+podia ser podado antes de consolidado (hook de virada de dia em acesso_log, ANTES da poda); guard do
+middleware e startup do rollup nao eram exercitados por teste (falso-verde) -> testes de registro,
+comportamento e OpenAPI; serie cai para contagem viva quando o rollup nao grava; teto de 180 barras
+no grafico; aria-pressed e feedback de refetch na tela. Suites: 3242 passed na completa (1 falha
+pre-existente ambiental do Windows) + 114 na bateria de acesso + 589 vitest + build da SPA. Merge
+admin + deploy autorizados por Felipe ("faca o trabalho completo, do PR -> Merge Admin -> Deploy").

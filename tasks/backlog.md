@@ -1733,7 +1733,7 @@ testes do piloto.
 | **Criticidade** | **Média** — não é defeito de produto, é a `main` VERMELHA. Enquanto valer, todo PR aberto herda 3 falhas alheias e o gate de CI deixa de distinguir "meu trabalho quebrou" de "a base já estava quebrada". READ-ONLY sobre o M1. |
 | **Prioridade** | **Alta** — cada dia que passa é mais um PR nascendo vermelho. |
 | **Esteira** | Builder → QA (sem gate: corrige teste, não comportamento). |
-| **Status** | Pendente — medido em 2026-08-19, na preparação do PR da pilha BLK-MA. |
+| **Status** | **RESOLVIDO NA `main` por terceiros** (PR #242, `91a3368`, 2026-08-19) — enquanto este bloco era escrito. A correção deles CONGELA o relógio (`now()` fixo em `_AGORA`), que é mais canônico que a âncora relativa que eu havia proposto; adotada a deles no merge. Fica registrado porque o diagnóstico tem valor: o modo de falha "teste que passa só no dia em que foi escrito" não é intermitência, é determinístico, e deixou a `main` vermelha por um dia inteiro. |
 | **Depende de** | nada. |
 | **Autonomia** | **manual (NÃO loop-safe)** |
 

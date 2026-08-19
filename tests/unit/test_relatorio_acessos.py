@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -104,30 +104,31 @@ def test_agrupamento_cobre_as_regras_de_acesso() -> None:
 _AGORA = datetime(2026, 8, 18, 15, 0, tzinfo=UTC)  # 12:00 BRT
 
 
+class _RelogioFixo(datetime):
+    """`datetime` com `now()` congelado em `_AGORA`.
+
+    Os caminhos do CLI (`main`) e do bot não aceitam `agora_utc` injetado — eles
+    leem o relógio REAL. Os testes desses caminhos escreviam trilha datada de
+    2026-08-18 e passaram naquele dia por coincidência: no dia seguinte, o
+    relatório de "hoje" não achava evento nenhum (defeito de data-fragilidade
+    encontrado em 2026-08-19). Subclasse, e não stub, para `fromisoformat` e
+    `isinstance` continuarem valendo no módulo.
+    """
+
+    @classmethod
+    def now(cls, tz=None):  # noqa: ANN001, ANN206
+        return _AGORA
+
+
+@pytest.fixture()
+def relogio_congelado(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(relatorio_acessos, "datetime", _RelogioFixo)
+
+
 def _trilha(tmp_path: Path, linhas: list[str]) -> Path:
     dia_brt = (_AGORA + relatorio_acessos._FUSO_BRT).date()
     arquivo = relatorio_acessos.arquivos_do_dia_brt(tmp_path, dia_brt)[0]
     arquivo.write_text("\n".join(linhas) + "\n", encoding="utf-8")
-    return tmp_path
-
-
-def _trilha_agora(tmp_path: Path, usuario: str = "ana", rota: str = "/api/ponto") -> Path:
-    """Trilha ancorada no relógio REAL, para quem não aceita `agora_utc`.
-
-    A CLI (`main`) e o bot (`/acessos`) resolvem o dia com `datetime.now(UTC)` lá dentro — não
-    há por onde injetar. Um `_trilha` cravado em `_AGORA` (18/08) grava no arquivo daquele dia
-    e o leitor procura no de HOJE: o relatório sai vazio e o assert cai.
-
-    Isso não era hipótese — os três testes que usam este helper passavam **só em 2026-08-18** e
-    falharam em todos os dias seguintes, deixando a `main` vermelha (`BLK-FIX-ACESSOS-01`).
-
-    A margem de 2 h para trás cobre a borda: rodando entre 00:00 e 02:00 BRT, "agora" cru
-    cairia no arquivo UTC do dia seguinte enquanto o dia BRT ainda é o anterior.
-    """
-    agora = datetime.now(UTC) - timedelta(hours=2)
-    dia_brt = (agora + relatorio_acessos._FUSO_BRT).date()
-    arquivo = relatorio_acessos.arquivos_do_dia_brt(tmp_path, dia_brt)[0]
-    arquivo.write_text(_linha(usuario, rota, agora.isoformat()) + chr(10), encoding="utf-8")
     return tmp_path
 
 
@@ -203,8 +204,10 @@ def test_enviar_telegram_nao_vaza_token_e_particiona(monkeypatch: pytest.MonkeyP
     assert "400" in str(erro.value)
 
 
-def test_cli_imprime_sem_enviar(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-    _trilha_agora(tmp_path)
+def test_cli_imprime_sem_enviar(
+    tmp_path: Path, capsys: pytest.CaptureFixture, relogio_congelado: None
+) -> None:
+    _trilha(tmp_path, [_linha("ana", "/api/ponto", "2026-08-18T12:00:00+00:00")])
     codigo = relatorio_acessos.main(["--dir", str(tmp_path)])
     saida = capsys.readouterr().out
     assert codigo == 0
@@ -264,15 +267,15 @@ def _texto(acoes: list[dict]) -> str:
     return " || ".join(a.get("text", "") for a in acoes)
 
 
-def test_acessos_no_chat_de_ops_sem_senha(tmp_path: Path) -> None:
+def test_acessos_no_chat_de_ops_sem_senha(tmp_path: Path, relogio_congelado: None) -> None:
     """O chat de ops puxa o relatório DIRETO — sem passar pela senha do bot."""
-    _trilha_agora(tmp_path)
+    _trilha(tmp_path, [_linha("ana", "/api/ponto", "2026-08-18T12:00:00+00:00")])
     saida = _texto(bot.processar(777, "/acessos", _settings(tmp_path)))
     assert "ana" in saida and "Acessos do piloto" in saida
 
 
-def test_acessos_cobre_forma_de_grupo(tmp_path: Path) -> None:
-    _trilha_agora(tmp_path)
+def test_acessos_cobre_forma_de_grupo(tmp_path: Path, relogio_congelado: None) -> None:
+    _trilha(tmp_path, [_linha("ana", "/api/ponto", "2026-08-18T12:00:00+00:00")])
     saida = _texto(bot.processar(777, "/acessos@MotorBot", _settings(tmp_path)))
     assert "ana" in saida
 

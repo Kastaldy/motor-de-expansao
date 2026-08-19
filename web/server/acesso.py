@@ -78,6 +78,40 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
 #   /api/me          — e' a rota que DIZ a SPA o que esconder
 ROTAS_LIVRES = frozenset({"/api/health", "/api/ufs", "/api/metodologia", "/api/me"})
 
+# --- Aba Acessos (emenda DEC-027, 2026-08-19): controle PROPRIO, mais forte ------
+# O painel de acessos expoe atividade do TIME (dado pessoal), entao NAO entra no
+# mecanismo de abas do JSON: nada de curinga "*", nada de fail-open — a rota so'
+# existe para quem estiver na allowlist da env `MOTOR_ACESSOS_ADMIN_USUARIOS`
+# (comparada com o Remote-User do Authelia, case-insensitive). Sem a env setada, o
+# painel esta DESLIGADO para todo mundo, em dev e em producao. Quem nao pode ve
+# 404 (nao 403): a existencia do painel nao e' anunciada.
+# `ABA_ACESSOS` fica FORA de `ABAS_VALIDAS` de proposito: o parser do JSON descarta
+# o valor se alguem tentar concede-lo por la (permissao fantasma impossivel).
+ABA_ACESSOS = "acessos"
+PREFIXO_ROTAS_ACESSOS = "/api/acessos/"
+ENV_ADMIN_ACESSOS = "MOTOR_ACESSOS_ADMIN_USUARIOS"
+
+
+def usuarios_admin_acessos() -> frozenset[str]:
+    """Allowlist da env (separada por virgula), normalizada para comparacao."""
+    bruto = os.environ.get(ENV_ADMIN_ACESSOS, "")
+    return frozenset(u.strip().casefold() for u in bruto.split(",") if u.strip())
+
+
+def pode_ver_acessos(usuario: object) -> bool:
+    """Se este Remote-User pode usar o painel de acessos (deny-by-default)."""
+    nome = normalizar_usuario(usuario)
+    if nome is None:
+        return False
+    return nome.casefold() in usuarios_admin_acessos()
+
+
+def bloqueio_acessos(path: str, usuario: object) -> bool:
+    """`True` = rota do painel para quem nao pode: o middleware devolve 404."""
+    if not path.startswith(PREFIXO_ROTAS_ACESSOS):
+        return False
+    return not pode_ver_acessos(usuario)
+
 
 def caminho_do_mapa() -> Path:
     """Onde mora o JSON `usuario -> [abas]`.
