@@ -18,7 +18,8 @@ import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
-import { DIMENSOES, rotulosUnicos } from '../lib/comparacao'
+import type { AlvoCaptura } from '../lib/captura-mapa'
+import { DIMENSOES, rotuloDoHex, rotulosDosHexes } from '../lib/comparacao'
 import type { Cobertura1k, Hex, MunicipioItem, MunicipioPayload } from '../lib/types'
 
 /** Filtro global "melhores hexes": faixas M1 permitidas por nível. */
@@ -88,7 +89,7 @@ export interface MapScreenProps {
    * pedir capturas sem ter o mapa em mãos. Mesmo motivo pelo qual o `pinFixo` mora no App:
    * quem consome o mapa é o mapa, e o App só reparte o canal.
    */
-  registrarCaptura?: (capturar: (hexIds: string[]) => Promise<string[]>) => void
+  registrarCaptura?: (capturar: (alvos: AlvoCaptura[]) => Promise<string[]>) => void
 }
 
 export default function MapScreen({
@@ -390,7 +391,10 @@ export default function MapScreen({
      A ORDEM importa: primeiro as capturas, depois o POST. O ranking e' calculado AQUI, no
      mesmo `ranquear` que a tela usa, e viaja pronto — o servidor so' desenha, para nao
      existir uma segunda regra de "quem vence" que possa divergir da tela. */
-  const [pedidoCaptura, setPedidoCaptura] = useState<{ hexIds: string[]; n: number } | null>(null)
+  const [pedidoCaptura, setPedidoCaptura] = useState<{
+    alvos: AlvoCaptura[]
+    n: number
+  } | null>(null)
   const [gerandoDeck, setGerandoDeck] = useState(false)
 
   /* A captura vira uma PROMESSA, e nao um par pedido/callback espalhado pela tela. Duas
@@ -402,10 +406,10 @@ export default function MapScreen({
   const resolveCaptura = useRef<((imagens: string[]) => void) | null>(null)
 
   const capturar = useCallback(
-    (hexIds: string[]) =>
+    (alvos: AlvoCaptura[]) =>
       new Promise<string[]>((resolve) => {
         resolveCaptura.current = resolve
-        setPedidoCaptura((p) => ({ hexIds, n: (p?.n ?? 0) + 1 }))
+        setPedidoCaptura((p) => ({ alvos, n: (p?.n ?? 0) + 1 }))
       }),
     [],
   )
@@ -421,11 +425,9 @@ export default function MapScreen({
   }, [registrarCaptura, capturar])
 
   /* Os MESMOS rótulos do painel, e desambiguados: cinco hexágonos da mesma cidade davam
-     cinco itens "São Paulo" no PDF, indistinguíveis entre si. */
-  const rotulosComparacao = useCallback(
-    (hs: Hex[]) => rotulosUnicos(hs.map((h, i) => h.mun ?? `Hexágono ${i + 1}`)),
-    [],
-  )
+     cinco itens "São Paulo" no PDF, indistinguíveis entre si. A regra vive no `lib/` —
+     duas cópias divergiriam no primeiro ajuste, e uma delas é o que vai para o PDF. */
+  const rotulosComparacao = useCallback((hs: Hex[]) => rotulosDosHexes(hs), [])
 
   const pedirDeck = useCallback(
     async () => {
@@ -433,7 +435,9 @@ export default function MapScreen({
       if (!hs?.length || gerandoDeck) return
       setGerandoDeck(true)
       try {
-        const imagens = await capturar(hs.map((h) => h.id))
+        // Sem coordenada: a comparacao de hexagonos nao tem imovel para marcar — o
+        // assunto de cada foto e' a celula inteira.
+        const imagens = await capturar(hs.map((h) => ({ hexId: h.id })))
         const rotulos = rotulosComparacao(hs)
         const ranking = ranquear(DIMENSOES, hs, rotulos)
         /* O subtítulo nomeia a cidade só quando TODAS são da mesma. Na visão de UF o mapa
@@ -1126,14 +1130,25 @@ export default function MapScreen({
           coisas diferentes sobre a mesma seleção competiriam entre si. */}
       <JanelaFicha
         aberta={janelaDoHex && hexSelecionado != null && !modoCenario}
-        titulo={hexSelecionado?.mun ?? 'Hexágono'}
+        /* BAIRRO, o MESMO nome que o painel da direita usa na lista. O titulo saia como
+           o municipio, entao clicar em "Aracaré" no ranking abria uma ficha chamada
+           "Itaquaquecetuba" — e o item de baixo abria outra com o mesmo nome (Juan,
+           2026-08-19). Duas fichas com o titulo da cidade nao dizem qual area e' qual. */
+        titulo={hexSelecionado ? rotuloDoHex(hexSelecionado) : 'Hexágono'}
         /* O id do hexágono NÃO entra abreviado aqui. H3 é hierárquico: vizinhos dividem o
            prefixo, então `87a8c0ce…` é o mesmo texto para hexágonos diferentes — piorava
            exatamente o que se quer resolver, que é saber qual é qual. A coordenada
            distingue de imediato; o id inteiro fica no corpo da ficha. */
         subtitulo={
           hexSelecionado
-            ? [dados?.uf, coord(hexSelecionado.lat, hexSelecionado.lng)]
+            ? [
+                // O MUNICIPIO entra aqui quando o titulo virou bairro — senao "Aracaré"
+                // sozinho nao diz em que cidade fica. Quando o titulo JA' e' o municipio
+                // (visao de UF, ou hexagono fora da malha de bairros), nao se repete.
+                hexSelecionado.bairro ? hexSelecionado.mun : null,
+                dados?.uf,
+                coord(hexSelecionado.lat, hexSelecionado.lng),
+              ]
                 .filter(Boolean)
                 .join(' · ')
             : undefined

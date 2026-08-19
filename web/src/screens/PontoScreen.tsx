@@ -26,6 +26,7 @@ import {
   indiceDoMesmoPonto,
   rotulosDosPontos,
 } from '../lib/comparacao-pontos'
+import type { AlvoCaptura } from '../lib/captura-mapa'
 import { linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
 import { num } from '../lib/format'
 import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
@@ -98,7 +99,7 @@ export default function PontoScreen({
   /** Volta ao menu de modos — só o hero de entrada usa, como o Explorar faz. */
   onInicio: () => void
   /** Captura do mapa, publicada pelo App. Ausente = o PDF sai sem mapas. */
-  onCapturarMapas?: (hexIds: string[]) => Promise<string[]>
+  onCapturarMapas?: (alvos: AlvoCaptura[]) => Promise<string[]>
 }) {
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -116,11 +117,15 @@ export default function PontoScreen({
   /**
    * A caixa de colar so' aparece quando pedida — depois do 1o ponto ela some.
    *
-   * Nasce FECHADA se o mapa ja' estava montado ao entrar no modo (quem explorou uma
-   * regiao e depois trocou para "analisar um ponto"): nesse caso a busca do cabecalho ja'
-   * esta' na tela e abrir a caixa seria duplica-la de saida.
+   * Nasce ABERTA, sempre. Ela nascia fechada quando o mapa ja' estava montado, para nao
+   * duplicar a busca do cabecalho de quem "explorou uma regiao e depois trocou para
+   * analisar um ponto" — mas esse caminho nao existe mais: o Dock deixou de oferecer os
+   * modos (2026-08-12) e a UNICA porta para ca' e' o card do Inicio. Hoje "entrar com o
+   * mapa montado" so' significa uma coisa: o territorio ficou carregado no `App` de uma
+   * analise anterior. Nesse caso a tela abria direto no mapa, sem lugar nenhum para colar
+   * o endereco que o proprio card acabou de prometer (Juan, 2026-08-18).
    */
-  const [colando, setColando] = useState(() => !mapaPronto)
+  const [colando, setColando] = useState(true)
   /**
    * A janela da ficha.
    *
@@ -276,16 +281,23 @@ export default function PontoScreen({
   }
 
   /**
-   * A caixa e a busca do cabecalho NUNCA convivem.
+   * A caixa aparece exatamente quando NAO HA' PONTO na tela.
    *
-   * Regra dura, e nao "quase nunca": duas caixas pedindo endereco na mesma tela sao
-   * redundantes ainda que uma delas tenha sido aberta a pedido (foi o defeito que sobrou
-   * da primeira tentativa — o "+ Adicionar mais um ponto" reabria a caixa por cima da
-   * busca). Com o mapa montado a entrada e' a lupa do cabecalho, ponto final; sem mapa a
-   * caixa e' a unica entrada que existe, porque a tela vazia do Explorar so' oferece o
-   * seletor de estado.
+   * `colando` so' vira `true` em tres momentos, e os tres sao esse mesmo estado: ao
+   * montar, ao limpar tudo, e ao remover o ultimo ponto. Com ponto na tela quem
+   * acrescenta o 2o..5o e' o `CampoPonto` de dentro do `PainelPontos`, que nao mexe neste
+   * estado — entao a caixa NAO volta a conviver com a busca do cabecalho, que era o
+   * defeito da primeira versao ("+ Adicionar mais um ponto" reabria a caixa por cima da
+   * lupa).
+   *
+   * O `!mapaPronto` que guardava isto SAIU. Ele existia para o operador que explorava uma
+   * regiao e trocava de modo com o mapa montado — caminho que nao existe mais desde que o
+   * Dock deixou de oferecer os modos (2026-08-12). O que sobrou dele foi impedir a caixa
+   * de aparecer para quem volta ao Inicio e pede "analisar um ponto" de novo: o
+   * territorio da analise anterior continua carregado no `App`, `mapaPronto` e' `true`, e
+   * a tela abria direto no mapa sem lugar nenhum para colar o endereco (Juan, 2026-08-18).
    */
-  const mostrandoCaixa = !mapaPronto && (colando || fichas.length === 0)
+  const mostrandoCaixa = colando || fichas.length === 0
 
   /* SEM MAPA AINDA: a tela é o HERO do modo — o mesmo desenho do "Explorar uma região",
      com o texto desta análise e a caixa de colar no lugar do seletor de estado (pedido do

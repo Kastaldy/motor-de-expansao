@@ -2,13 +2,20 @@ import { FlyToInterpolator, type Layer } from '@deck.gl/core'
 import { H3HexagonLayer } from '@deck.gl/geo-layers'
 import { IconLayer, PolygonLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
-import { cellToLatLng } from 'h3-js'
+import { cellToBoundary, cellToLatLng } from 'h3-js'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
-import { ESPERA_VOO_MS, comporCanvas, esperaDeCaptura } from '../lib/captura-mapa'
-import { CORES_IDENTIDADE, corDeIdentidadeRgb } from '../lib/comparacao'
+import {
+  type AlvoCaptura,
+  ESPERA_VOO_MS,
+  comporCanvas,
+  esperaDeCaptura,
+  larguraDoAnel,
+  zoomQueEnquadra,
+} from '../lib/captura-mapa'
+import { CORES_IDENTIDADE, corDeIdentidadeRgb, rotuloDoHex } from '../lib/comparacao'
 import { alunos, brl, num } from '../lib/format'
 import {
   DISCARDED_FILL,
@@ -227,7 +234,7 @@ export interface HexMapProps {
    * Pedido de CAPTURA: voa até cada hexágono da lista, na ordem, e devolve uma imagem por
    * enquadramento. O `n` que só cresce segue a mesma razão do `voarPara`.
    */
-  pedidoCaptura?: { hexIds: string[]; n: number } | null
+  pedidoCaptura?: { alvos: AlvoCaptura[]; n: number } | null
   /** As imagens, na ordem pedida. Entrada vazia = aquele hexágono não estava carregado. */
   onCapturas?: (imagens: string[]) => void
   searchPin: SearchPin | null
@@ -404,6 +411,16 @@ export default function HexMap({
      permanente cobraria de quem só navega, para servir a um print que acontece uma vez.
      Trocar o flag exige recriar o contexto WebGL, e é o que a `key` do DeckGL faz. */
   const [capturando, setCapturando] = useState(false)
+  /**
+   * O pin do quadro que esta' sendo capturado AGORA.
+   *
+   * Substitui o `searchPin` durante a captura, e nao se soma a ele: o `searchPin` e' um
+   * so' — o do ponto aberto na janela — entao capturar tres enderecos em sequencia punha
+   * a MESMA marca nas tres fotos, e nas duas primeiras ela apontava um imovel que nao era
+   * o assunto daquela coluna. Fora do modo de imovel fica `null`, e ai a captura sai sem
+   * pin nenhum: um pin de busca antigo no meio do deck se le como "o ponto e' aqui".
+   */
+  const [marcaCaptura, setMarcaCaptura] = useState<SearchPin | null>(null)
   const capturaAnterior = useRef(pedidoCaptura?.n ?? 0)
   useEffect(() => {
     if (!pedidoCaptura || pedidoCaptura.n === capturaAnterior.current) return
@@ -419,33 +436,56 @@ export default function HexMap({
       await pausa(500)
 
       const imagens: string[] = []
-      for (const hexId of pedidoCaptura.hexIds) {
+      for (const pedido of pedidoCaptura.alvos) {
         if (cancelado) return
-        const alvo = hexes.find((h) => h.id === hexId)
+        const alvo = hexes.find((h) => h.id === pedido.hexId)
         if (!alvo) {
           imagens.push('')
           continue
         }
+
+        /* ZOOM DERIVADO DO HEXAGONO, e nao os 13,2 fixos de antes. Em zoom fixo o
+           enquadramento dependia do tamanho da janela: numa tela larga a celula res-7
+           saia como um miolo de ~10% da foto e o resto era territorio que ninguem esta'
+           comparando ("a print do hexagono que ele esta', nao do mapa todo" — Juan,
+           2026-08-19). O recorte quadrado do `comporCanvas` fecha o resto. */
+        const caixa = caixaRef.current?.getBoundingClientRect()
+        const zoom = zoomQueEnquadra(
+          larguraDoAnel(cellToBoundary(pedido.hexId) as [number, number][]),
+          alvo.lat,
+          caixa?.width || 1200,
+          caixa?.height || 800,
+        )
+        // A marca do imovel entra ANTES do voo, para estar pintada quando o quadro parar.
+        setMarcaCaptura(
+          pedido.lat != null && pedido.lng != null
+            ? { lat: pedido.lat, lng: pedido.lng, hexId: pedido.hexId }
+            : null,
+        )
         setView((v) => ({
           ...v,
           longitude: alvo.lng,
           latitude: alvo.lat,
-          zoom: 13.2,
+          zoom,
           transitionDuration: ESPERA_VOO_MS,
           transitionInterpolator: FLY,
         }))
         await pausa(esperaDeCaptura())
         if (cancelado) return
         const canvases = Array.from(caixaRef.current?.querySelectorAll('canvas') ?? [])
-        imagens.push(comporCanvas(canvases, document.createElement('canvas')) ?? '')
+        imagens.push(
+          comporCanvas(canvases, document.createElement('canvas'), { recortar: true }) ?? '',
+        )
       }
 
+      setMarcaCaptura(null)
       setCapturando(false)
       if (!cancelado) onCapturas?.(imagens)
     })()
 
     return () => {
       cancelado = true
+      setMarcaCaptura(null)
     }
   }, [pedidoCaptura, hexes, onCapturas])
 
@@ -504,6 +544,11 @@ export default function HexMap({
     for (const p of cobertura1k?.pecas ?? []) s.add(p.hex)
     return s
   }, [cobertura1k])
+
+  /* Qual pin o mapa desenha. Durante a captura manda o do quadro (`marcaCaptura`), que
+     e' `null` fora do modo de imovel — e ai a foto sai sem pin, em vez de carregar a marca
+     de uma busca antiga para dentro do PDF. */
+  const pinNoMapa = capturando ? marcaCaptura : searchPin
 
   const camadas = useMemo(() => {
     const base: Layer[] = [
@@ -717,11 +762,11 @@ export default function HexMap({
     // Buscar um endereco e' uma forma de SELECIONAR, entao vale a mesma cor do hex
     // selecionado e do item ativo do painel; o turquesa ficou exclusivo do cenario
     // multi-hex, que era a unica marcacao turquesa deliberada do mapa.
-    if (searchPin) {
+    if (pinNoMapa) {
       base.push(
         new H3HexagonLayer<{ id: string }>({
           id: 'search-hex',
-          data: [{ id: searchPin.hexId }],
+          data: [{ id: pinNoMapa.hexId }],
           getHexagon: (d) => d.id,
           extruded: false,
           filled: true,
@@ -736,7 +781,7 @@ export default function HexMap({
       base.push(
         new ScatterplotLayer<SearchPin>({
           id: 'search-pin-ring',
-          data: [searchPin],
+          data: [pinNoMapa],
           getPosition: (d) => [d.lng, d.lat],
           getRadius: 11,
           radiusUnits: 'pixels',
@@ -747,7 +792,7 @@ export default function HexMap({
       base.push(
         new ScatterplotLayer<SearchPin>({
           id: 'search-pin-core',
-          data: [searchPin],
+          data: [pinNoMapa],
           getPosition: (d) => [d.lng, d.lat],
           getRadius: 6,
           radiusUnits: 'pixels',
@@ -800,7 +845,7 @@ export default function HexMap({
     cenarioSet,
     cenarioKey,
     onSelecionar,
-    searchPin,
+    pinNoMapa,
     pins,
     iconObjs,
     rotulosRank,
@@ -871,9 +916,19 @@ export default function HexMap({
             minWidth: 196,
           }}
         >
-          {/* Cabecalho: Municipio / UF, com o hex id como legenda (como o Streamlit) */}
+          {/* Cabecalho: o BAIRRO deste hexagono, com municipio/UF logo abaixo.
+              Era Municipio / UF — a MESMA linha para todos os hexagonos da cidade, entao
+              percorrer o mapa de Itaquaquecetuba mostrava "Itaquaquecetuba / SP" quinze
+              vezes e o unico distintivo era o id H3, que ninguem le. O nome do bairro e' o
+              que o painel da direita ja' usa; o tooltip passa a falar a mesma lingua. */}
           <div style={{ font: '600 12.5px/1.25 var(--f-ui)', color: 'var(--tx-max)' }}>
-            {municipio ? `${municipio}${uf ? ` / ${uf}` : ''}` : hover.h.id}
+            {rotuloDoHex(hover.h)}
+          </div>
+          <div
+            style={{ font: '500 10px/1.25 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 2 }}
+          >
+            {/* Sem repetir: quando o titulo ja' e' o municipio, sobra so' a UF. */}
+            {[hover.h.bairro ? municipio || hover.h.mun : null, uf].filter(Boolean).join(' / ')}
           </div>
           <div
             className="num"

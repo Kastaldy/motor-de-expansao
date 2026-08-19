@@ -3,6 +3,7 @@ import { useCallback, useMemo, useState } from 'react'
 import BlocosComparacao from './BlocosComparacao'
 import CampoPonto from './CampoPonto'
 import { Botao, Glass } from './primitives'
+import type { AlvoCaptura } from '../lib/captura-mapa'
 import type { EntradaClassificada } from '../lib/entrada-ponto'
 import { type BlocoParametro, blocosPorParametro } from '../lib/comparacao'
 import {
@@ -10,6 +11,8 @@ import {
   MAX_PONTOS,
   compararPontos,
   corDoPonto,
+  passaNoEstudo,
+  resumoDoEstudo,
   rotulosDosPontos,
 } from '../lib/comparacao-pontos'
 import { ranquear } from '../lib/ranking-comparacao'
@@ -50,9 +53,11 @@ export default function PainelPontos({
   /**
    * Captura do mapa, publicada pelo App. O modo de ponto usa o MESMO mapa do Explorar, e
    * cada ficha traz o `hex_id` do hexágono em que o endereço caiu — é por ele que o mapa
-   * enquadra. Ausente = o PDF sai sem mapas, declarando a ausência.
+   * enquadra. A COORDENADA vai junto: o hexágono tem ~5 km² e comporta mais de um imóvel,
+   * então sem ela a foto não diz qual endereço é o assunto daquela coluna.
+   * Ausente = o PDF sai sem mapas, declarando a ausência.
    */
-  onCapturarMapas?: (hexIds: string[]) => Promise<string[]>
+  onCapturarMapas?: (alvos: AlvoCaptura[]) => Promise<string[]>
 }) {
   /** O campo de colar aberto aqui dentro, ao lado do botão que o pediu. */
   const [adicionando, setAdicionando] = useState(false)
@@ -69,9 +74,9 @@ export default function PainelPontos({
     [fichas],
   ) as BlocoParametro<unknown>[]
 
-  /* O deck em PDF dos pontos. Diferente do de hexágonos, aqui NÃO há captura de mapa: o
-     mapa desta tela é por ponto, e o operador já o vê ao abrir cada aba. O que o PDF
-     acrescenta é a comparação lado a lado.
+  /* O deck em PDF dos pontos. HÁ captura de mapa, sim — um enquadramento por endereço,
+     no hexágono em que ele caiu e com o imóvel marcado. (Esta nota dizia o contrário: ela
+     é anterior ao commit que trouxe o mapa para o deck de pontos e ficou para trás.)
 
      Cada item leva os CRITÉRIOS avaliados junto: liderar parâmetros e passar no estudo são
      perguntas diferentes, e um ponto pode ganhar a comparação e ainda assim reprovar num
@@ -82,7 +87,7 @@ export default function PainelPontos({
     setGerandoRelatorio(true)
     setErroRelatorio(null)
     try {
-      const ranking = ranquear(DIMENSOES_PONTO, fichas, rotulos)
+      const ranking = ranquear(DIMENSOES_PONTO, fichas, rotulos, { aprovado: passaNoEstudo })
       const itens = ranking.itens.map((it) => ({
         ...it,
         criterios: (fichas[it.indice]?.criterios ?? []).map((c) => ({
@@ -94,7 +99,9 @@ export default function PainelPontos({
          sozinho durante isso — o botão avisa. Falha na captura não impede o PDF: o slide
          declara a ausência em vez de sumir. */
       const imagens = onCapturarMapas
-        ? await onCapturarMapas(fichas.map((f) => String(f.hex_id ?? '')))
+        ? await onCapturarMapas(
+            fichas.map((f) => ({ hexId: String(f.hex_id ?? ''), lat: f.lat, lng: f.lng })),
+          )
         : []
       const cidade = fichas[0]?.local?.municipio ? `${fichas[0].local.municipio} - ` : ''
       const resposta = await fetch('/api/relatorio/comparacao', {
@@ -246,6 +253,50 @@ export default function PainelPontos({
             <span style={{ font: '400 11px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>
               contexto do entorno — a viabilidade fica por ponto, abaixo
             </span>
+          </div>
+
+          {/* A LEITURA ABSOLUTA, ao lado da relativa. Os blocos abaixo dizem quem ganha de
+              quem em cada parâmetro; esta linha diz quantos pisos do produto cada ponto
+              cumpre — número que não muda quando se troca o concorrente da comparação.
+              As duas juntas evitam a leitura de que "o melhor da lista" já serve (pedido
+              do Juan, 2026-08-19). */}
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+            {fichas.map((f, i) => {
+              const r = resumoDoEstudo(f)
+              if (!r) return null
+              const completo = r.cumpridos === r.avaliados
+              return (
+                <span
+                  key={`estudo-${i}`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  <span
+                    aria-hidden
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 2,
+                      background: corDoPonto(i),
+                    }}
+                  />
+                  <span style={{ font: '400 11px/1.3 var(--f-ui)', color: 'var(--tx-sub)' }}>
+                    {rotulos[i]}
+                  </span>
+                  <span
+                    className="num"
+                    style={{
+                      font: '700 11px/1.3 var(--f-num)',
+                      color: completo ? 'var(--ac-text)' : 'var(--neg)',
+                    }}
+                  >
+                    {r.cumpridos}/{r.avaliados}
+                  </span>
+                  <span style={{ font: '400 10.5px/1.3 var(--f-ui)', color: 'var(--tx-muted)' }}>
+                    critérios
+                  </span>
+                </span>
+              )
+            })}
           </div>
 
           {/* BLOCO POR PARÂMETRO, com TODOS os pontos dentro (pedido do Juan,

@@ -9,6 +9,7 @@ import OportunidadesScreen from './screens/OportunidadesScreen'
 import PontoScreen from './screens/PontoScreen'
 import ViabilityScreen from './screens/ViabilityScreen'
 import { api, ApiError } from './lib/api'
+import type { AlvoCaptura } from './lib/captura-mapa'
 import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
 import type { Hex, MunicipioItem, MunicipioPayload } from './lib/types'
@@ -98,14 +99,14 @@ export default function App() {
      e a entrega a quem precisa.
 
      `ref` e não `state`: trocar a função não deve redesenhar tela nenhuma. */
-  const capturaDoMapa = useRef<((hexIds: string[]) => Promise<string[]>) | null>(null)
-  const registrarCaptura = useCallback((fn: (hexIds: string[]) => Promise<string[]>) => {
+  const capturaDoMapa = useRef<((alvos: AlvoCaptura[]) => Promise<string[]>) | null>(null)
+  const registrarCaptura = useCallback((fn: (alvos: AlvoCaptura[]) => Promise<string[]>) => {
     capturaDoMapa.current = fn
   }, [])
   const capturarMapas = useCallback(
     // Sem mapa montado devolve lista vazia em vez de pendurar a promessa: o gerador do PDF
     // já sabe desenhar a moldura declarando "mapa não capturado".
-    (hexIds: string[]) => capturaDoMapa.current?.(hexIds) ?? Promise.resolve([]),
+    (alvos: AlvoCaptura[]) => capturaDoMapa.current?.(alvos) ?? Promise.resolve([]),
     [],
   )
 
@@ -226,6 +227,12 @@ export default function App() {
       // Só faz sentido guardar a intenção enquanto ela ainda não pôde ser aplicada.
       // Com UF já escolhida, aplicamos na hora — o operador que volta ao menu e pede a
       // fila não deveria ter de trocar de estado para ela aparecer.
+      /* PEDIR "analisar um ponto" RECOMECA a analise de ponto. O `PontoScreen` desmonta
+         ao sair do modo e volta sem ficha nenhuma, mas o pin do endereco anterior mora
+         AQUI e sobrevivia — o mapa reabria com a marca de um endereco que nao tem mais
+         ficha para explica-la (Juan, 2026-08-18). O territorio (uf/municipio/dados) fica:
+         ele custa uma carga de servidor e continua sendo um mapa util. */
+      if (modo === 'ponto') setPinPonto(null)
       const passo = passoAlvoDoModo(modo)
       if (passo !== null && uf) {
         setEstadoMapa({ ...ESTADO_MAPA_VAZIO, uf, municipio, passoN: passo })
