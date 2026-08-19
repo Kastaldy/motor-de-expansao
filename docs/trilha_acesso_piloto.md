@@ -112,6 +112,44 @@ O merge + deploy da imagem `web` ativa a camada 1 **somente depois** destes pass
    navegar no piloto logado e `tail /opt/motor-expansao/logs/acesso/acesso-$(date -u
    +%F).jsonl` deve mostrar linhas com o seu usuário.
 
+## Aba Acessos — painel restrito sobre a trilha (emenda DEC-027, 2026-08-19)
+
+A trilha ganhou um consumidor visual: a aba `Acessos` do piloto
+(`web/src/screens/AcessosScreen.tsx` + rotas `/api/acessos/*` servidas por
+`src/motor_expansao/dashboard/acesso_analytics.py`). Contrato:
+
+- **Autorização própria, mais forte que a das abas**: allowlist na env
+  `MOTOR_ACESSOS_ADMIN_USUARIOS` (usuários Authelia separados por vírgula,
+  case-insensitive), checada no middleware contra o `Remote-User`. FORA do
+  `acesso_abas.json`: sem curinga, sem fail-open; `acessos` está fora de
+  `ABAS_VALIDAS`, então concedê-la pelo JSON é permissão fantasma impossível.
+  Quem está fora vê **404** (existência não anunciada). Env vazia/ausente =
+  painel desligado para todos, em dev e em produção.
+- **O que mostra**: agregados (série diária, heatmap hora×dia BRT, uso por aba,
+  saúde 4xx/5xx + p95) e, por usuário, janelas de atividade + contagem por
+  FEATURE ("rodou simulador 4x") + nº de IPs distintos. **O que nunca mostra**:
+  query/conteúdo (endereço pesquisado, parâmetros) e o IP em si — isso segue só
+  na trilha bruta.
+- **Rollup `uso-diario.json`** (mesmo diretório da trilha): consolidação
+  write-once por dia BRT fechado com `{acoes, usuarios, por_aba}` — contagens,
+  sem nome/IP/rota — e SEM poda: é o que dá tendência além dos 90 dias. Roda no
+  startup do `web`, a cada abertura da aba **e na virada de dia da trilha**
+  (hook em `acesso_log.registrar`, ANTES da poda — app meses de pé sem abertura
+  da aba não perde dia). O nome não casa com o padrão `acesso-*.jsonl` da poda
+  de propósito. Dia consolidado nunca é recalculado (o histórico fica estável
+  mesmo depois de a trilha ser podada); um dia só consolida quando o SEU arquivo
+  UTC existe e está legível (nunca congela subcontagem). Rollup com conteúdo
+  inválido vai para quarentena (`uso-diario.json.corrompido`, bytes preservados)
+  e NUNCA é sobrescrito às cegas; falha de IO transitória só adia a rodada.
+- **Auto-observação fora das métricas**: `/api/acessos/*` entra na trilha
+  (auditoria de quem olhou o painel) mas é excluído das contagens na aba E no
+  relatório 3/3h do Telegram, pelo mesmo filtro (`evento_valido` +
+  `ROTAS_FORA_DA_METRICA` em `relatorio_acessos.py`).
+- Habilitação: adicionar `MOTOR_ACESSOS_ADMIN_USUARIOS=<usuario>` ao `.env` da
+  VPS (o compose repassa ao serviço `web`) e recriar o `web`. Testes:
+  `tests/unit/test_acesso_analytics.py` + seção "Aba Acessos" de
+  `tests/unit/test_piloto_web_acesso.py`.
+
 ## O que continua fora (dívidas conhecidas)
 
 - **Bot Telegram e API GeoEspacial**: log próprio anônimo/efêmero; sessões do bot sem

@@ -40,10 +40,22 @@ describe('abasDoPayload', () => {
 })
 
 describe('telaLiberada', () => {
-  it('sem controle (null) tudo passa', () => {
+  it('sem controle (null) as telas de trabalho passam', () => {
     for (const tela of ['inicio', 'ponto', 'mapa', 'oportunidades', 'executiva', 'viabilidade'] as const) {
       expect(telaLiberada(tela, null)).toBe(true)
     }
+  })
+
+  it('a aba acessos e deny-by-default: fail-open NAO a concede (emenda DEC-027)', () => {
+    // /api/me fora do ar libera o trabalho, nunca o painel de atividade do time.
+    expect(telaLiberada('acessos', null)).toBe(false)
+    expect(telaLiberada('acessos', setDe('mapa', 'executiva', 'viabilidade'))).toBe(false)
+    expect(telaLiberada('acessos', setDe('acessos'))).toBe(true)
+  })
+
+  it('o /api/me pode conceder acessos (vem da allowlist, nao do JSON de abas)', () => {
+    const s = abasDoPayload({ usuario: 'felipe', abas: ['mapa', 'acessos'] })
+    expect((s as Set<Aba>).has('acessos')).toBe(true)
   })
 
   it('o inicio esta sempre alcancavel — a porta, nao uma aba', () => {

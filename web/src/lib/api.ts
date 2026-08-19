@@ -1,6 +1,8 @@
 /** Cliente do backend do piloto. Tudo passa pelo proxy /api do Vite. */
 
 import type {
+  AcessosFicha,
+  AcessosResumo,
   ExecutivaPayload,
   FaixaAlunos,
   MePayload,
@@ -194,6 +196,21 @@ export const api = {
   /** Manual do funil: o que cada camada mede e com que régua corta. Estático —
    *  não depende de UF nem de município, então a tela busca uma vez e guarda. */
   metodologia: () => pedir<MetodologiaPayload>('/api/metodologia', {}, 15_000),
+
+  /* ---- Aba Acessos (emenda DEC-027; restrita por allowlist no backend) ---- */
+
+  /** Painel de uso do piloto: agregados da trilha + série longa do rollup.
+   *  Para quem está fora da allowlist o backend devolve 404 — a rota "não existe". */
+  acessosResumo: (dias = 30) =>
+    pedir<AcessosResumo>(`/api/acessos/resumo?dias=${dias}`, {}, 30_000),
+
+  /** Ficha de um usuário: janelas por dia + contagem por feature (sem conteúdo). */
+  acessosUsuario: (nome: string, dias = 30) =>
+    pedir<AcessosFicha>(
+      `/api/acessos/usuario/${encodeURIComponent(nome)}?dias=${dias}`,
+      {},
+      30_000,
+    ),
 
   /**
    * Ranking NACIONAL por estado. Lê as 27 partições com projeção de 4 colunas

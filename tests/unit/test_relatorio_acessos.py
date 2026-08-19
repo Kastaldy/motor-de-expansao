@@ -104,6 +104,27 @@ def test_agrupamento_cobre_as_regras_de_acesso() -> None:
 _AGORA = datetime(2026, 8, 18, 15, 0, tzinfo=UTC)  # 12:00 BRT
 
 
+class _RelogioFixo(datetime):
+    """`datetime` com `now()` congelado em `_AGORA`.
+
+    Os caminhos do CLI (`main`) e do bot não aceitam `agora_utc` injetado — eles
+    leem o relógio REAL. Os testes desses caminhos escreviam trilha datada de
+    2026-08-18 e passaram naquele dia por coincidência: no dia seguinte, o
+    relatório de "hoje" não achava evento nenhum (defeito de data-fragilidade
+    encontrado em 2026-08-19). Subclasse, e não stub, para `fromisoformat` e
+    `isinstance` continuarem valendo no módulo.
+    """
+
+    @classmethod
+    def now(cls, tz=None):  # noqa: ANN001, ANN206
+        return _AGORA
+
+
+@pytest.fixture()
+def relogio_congelado(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(relatorio_acessos, "datetime", _RelogioFixo)
+
+
 def _trilha(tmp_path: Path, linhas: list[str]) -> Path:
     dia_brt = (_AGORA + relatorio_acessos._FUSO_BRT).date()
     arquivo = relatorio_acessos.arquivos_do_dia_brt(tmp_path, dia_brt)[0]
@@ -183,7 +204,9 @@ def test_enviar_telegram_nao_vaza_token_e_particiona(monkeypatch: pytest.MonkeyP
     assert "400" in str(erro.value)
 
 
-def test_cli_imprime_sem_enviar(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+def test_cli_imprime_sem_enviar(
+    tmp_path: Path, capsys: pytest.CaptureFixture, relogio_congelado: None
+) -> None:
     _trilha(tmp_path, [_linha("ana", "/api/ponto", "2026-08-18T12:00:00+00:00")])
     codigo = relatorio_acessos.main(["--dir", str(tmp_path)])
     saida = capsys.readouterr().out
@@ -244,14 +267,14 @@ def _texto(acoes: list[dict]) -> str:
     return " || ".join(a.get("text", "") for a in acoes)
 
 
-def test_acessos_no_chat_de_ops_sem_senha(tmp_path: Path) -> None:
+def test_acessos_no_chat_de_ops_sem_senha(tmp_path: Path, relogio_congelado: None) -> None:
     """O chat de ops puxa o relatório DIRETO — sem passar pela senha do bot."""
     _trilha(tmp_path, [_linha("ana", "/api/ponto", "2026-08-18T12:00:00+00:00")])
     saida = _texto(bot.processar(777, "/acessos", _settings(tmp_path)))
     assert "ana" in saida and "Acessos do piloto" in saida
 
 
-def test_acessos_cobre_forma_de_grupo(tmp_path: Path) -> None:
+def test_acessos_cobre_forma_de_grupo(tmp_path: Path, relogio_congelado: None) -> None:
     _trilha(tmp_path, [_linha("ana", "/api/ponto", "2026-08-18T12:00:00+00:00")])
     saida = _texto(bot.processar(777, "/acessos@MotorBot", _settings(tmp_path)))
     assert "ana" in saida

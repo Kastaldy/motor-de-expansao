@@ -18,15 +18,25 @@
 
 import { MODOS, type ModoDefinicao } from './inicio'
 
-/** Valores brutos de aba — devem bater 1:1 com ABAS_VALIDAS do backend. */
-export type Aba = 'mapa' | 'oportunidades' | 'executiva' | 'viabilidade'
+/** Valores brutos de aba — devem bater 1:1 com o que o /api/me pode devolver
+ *  (ABAS_VALIDAS do backend + a aba `acessos`, que vem da allowlist de env). */
+export type Aba = 'mapa' | 'oportunidades' | 'executiva' | 'viabilidade' | 'acessos'
 
 export const TODAS_AS_ABAS: readonly Aba[] = Object.freeze([
   'mapa',
   'oportunidades',
   'executiva',
   'viabilidade',
+  'acessos',
 ])
+
+/**
+ * Abas que o fail-open NÃO concede (emenda DEC-027): a aba `acessos` expõe
+ * atividade do time e só existe para quem o /api/me listar EXPLICITAMENTE —
+ * um /api/me fora do ar não pode fazê-la aparecer para todo mundo. O backend
+ * barra de verdade (404); aqui é só o espelho visual do deny-by-default.
+ */
+const ABAS_SEM_FAIL_OPEN: ReadonlySet<Aba> = new Set(['acessos'])
 
 /** Telas do App que o controle conhece (subconjunto local do `Tela` do App.tsx). */
 export type TelaControlada =
@@ -36,6 +46,7 @@ export type TelaControlada =
   | 'mapa'
   | 'viabilidade'
   | 'executiva'
+  | 'acessos'
 
 /** Que aba libera cada tela. O modo de ponto é o Explorar com a ficha por cima
  *  (pedido do Juan, 2026-08-11), então ele pertence à aba `mapa`. */
@@ -45,6 +56,7 @@ const ABA_DA_TELA: Record<Exclude<TelaControlada, 'inicio'>, Aba> = {
   oportunidades: 'oportunidades',
   executiva: 'executiva',
   viabilidade: 'viabilidade',
+  acessos: 'acessos',
 }
 
 /**
@@ -63,7 +75,9 @@ export function abasDoPayload(payload: unknown): Set<Aba> | null {
 
 /** O Início é sempre alcançável — é a porta, não uma aba. */
 export function telaLiberada(tela: TelaControlada, abas: Set<Aba> | null): boolean {
-  if (abas === null || tela === 'inicio') return true
+  if (tela === 'inicio') return true
+  // Fail-open (sem /api/me) libera as abas de trabalho, NUNCA as deny-by-default.
+  if (abas === null) return !ABAS_SEM_FAIL_OPEN.has(ABA_DA_TELA[tela])
   return abas.has(ABA_DA_TELA[tela])
 }
 
