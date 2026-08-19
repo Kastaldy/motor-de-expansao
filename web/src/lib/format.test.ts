@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { alunos, brl, coord, num, pct, pctFrac, pctVar, rotuloMes } from './format'
+import { alunos, brl, coord, distanciaCurta, num, pct, pctFrac, pctVar, rotuloMes } from './format'
 import { TEXTO_SEM_DADO } from './constants'
 
 describe('num', () => {
@@ -113,5 +113,27 @@ describe('alunos', () => {
   })
   it('null -> sem-dado', () => {
     expect(alunos(null)).toBe(TEXTO_SEM_DADO)
+  })
+})
+
+describe('distanciaCurta — a unidade que o leitor usaria', () => {
+  it('abaixo de 1 km sai em metros arredondados', () => {
+    expect(distanciaCurta(0)).toBe('0 m')
+    expect(distanciaCurta(847.4)).toBe('847 m')
+    expect(distanciaCurta(999)).toBe('999 m')
+  })
+
+  it('de 1 km em diante sai em km com 2 casas', () => {
+    expect(distanciaCurta(1000)).toBe('1,00 km')
+    expect(distanciaCurta(1051)).toBe('1,05 km')
+    expect(distanciaCurta(2000)).toBe('2,00 km')
+  })
+
+  it('ausencia continua ausencia, nunca "0 m"', () => {
+    // `0 m` afirmaria "colado na porta" — a leitura mais alarmante possivel para um dado que
+    // simplesmente nao foi medido.
+    expect(distanciaCurta(null)).toBe(TEXTO_SEM_DADO)
+    expect(distanciaCurta(undefined)).toBe(TEXTO_SEM_DADO)
+    expect(distanciaCurta(Number.NaN)).toBe(TEXTO_SEM_DADO)
   })
 })

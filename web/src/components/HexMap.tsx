@@ -16,7 +16,8 @@ import {
   zoomQueEnquadra,
 } from '../lib/captura-mapa'
 import { CORES_IDENTIDADE, corDeIdentidadeRgb, rotuloDoHex } from '../lib/comparacao'
-import { alunos, brl, num } from '../lib/format'
+import { alunos, brl, distanciaCurta, num } from '../lib/format'
+import { sinaisDoRegime } from '../lib/sinais'
 import {
   DISCARDED_FILL,
   faixaM1ToColor,
@@ -35,6 +36,7 @@ import type {
   Passo,
   PecaCobertura,
   Pin,
+  PinIndependente,
   Pins,
 } from '../lib/types'
 
@@ -246,11 +248,34 @@ export interface HexMapProps {
    */
   /** PROTOTIPO: quando true, os passos 2 e 3 mostram a cobertura do raio de 1 km. */
   raio1km?: boolean
+  /** Academias INDEPENDENTES com score (BLK-MA-15). Lista propria, nunca misturada aos
+   *  concorrentes: um universo e' quem disputa, o outro e' quem se compra. Vazia = camada
+   *  desligada ou artefato ausente, e o mapa fica exatamente como antes. */
+  independentes?: PinIndependente[]
   /** PROTOTIPO: area coberta pelo raio, ja recortada dentro dos hexagonos. */
   cobertura1k?: Cobertura1k | null
   cameraInicial?: ViewState | null
   /** Reporta a camera ao pai a cada mudanca, para sobreviver ao unmount da tela. */
   onCamera?: (v: ViewState) => void
+}
+
+/**
+ * Rótulo de EXIBIÇÃO do `status_churn`. Regra permanente do `CLAUDE.md` §2: valor bruto de enum
+ * nunca vai à tela — para exibir acentuado usa-se uma camada de LABEL, sem tocar o valor bruto.
+ *
+ * Dois dos quatro estados são impróprios como texto: `estavel` (sem acento) e `sumiu_recente` (com
+ * underscore). Hoje o defeito está DORMENTE porque as unidades do agregador estão todas em `novo`,
+ * que por acidente é uma palavra portuguesa válida — assim que a série do GymScraping acumular
+ * semanas, o operador leria literalmente "Presença na série: sumiu_recente".
+ *
+ * As chaves são exatamente `STATUS_CHURN_VALIDOS` (`contrato.py:70`). O fallback devolve o valor
+ * cru de propósito: um quinto estado futuro aparece feio, mas aparece — melhor que sumir da tela.
+ */
+const ROTULO_CHURN: Record<string, string> = {
+  novo: 'Série curta demais para julgar',
+  estavel: 'Estável',
+  piscando: 'Intermitente',
+  sumiu_recente: 'Sumiu recentemente',
 }
 
 export interface ViewState {
@@ -279,6 +304,7 @@ export default function HexMap({
   onCapturas,
   searchPin,
   raio1km = false,
+  independentes,
   cobertura1k,
   cameraInicial,
   onCamera,
@@ -304,10 +330,19 @@ export default function HexMap({
   const [pinHover, setPinHover] = useState<{
     titulo: string
     sub: string
+    // O Pin INTEIRO, e nao so' titulo/sub: quando ele vem de um agregador (`diag`), o balao abre
+    // um bloco com a pressao medida e a conta por tras dela.
+    d?: Pin
     x: number
     y: number
   } | null>(null)
-
+  // Balao PROPRIO para a independente: ele carrega numeros com rotulo, e nao o par
+  // titulo/subtitulo do pin de concorrente.
+  const [indepHover, setIndepHover] = useState<{
+    d: PinIndependente
+    x: number
+    y: number
+  } | null>(null)
   // Ícones deck.gl memoizados por rede (identidade estável evita re-pack do atlas).
   const iconObjs = useMemo(() => {
     const m: Record<string, IconeDeck> = {}
@@ -716,25 +751,75 @@ export default function HexMap({
           ]
         : []),
 
+      /* INDEPENDENTES (BLK-MA-15): circulo, nao bandeira. Elas nao tem marca — sao academias
+         de bairro —, entao nao ha logo a exibir, e um icone generico competiria visualmente com
+         as bandeiras das cadeias sem acrescentar informacao.
+
+         COR UNICA, de proposito. A tentacao e' colorir por score, mas isso exigiria uma regua
+         nova sobre a rampa de 10 faixas que ja colore os hexagonos por baixo — duas escalas de
+         cor na mesma tela, medindo coisas diferentes, e' o defeito que o repo ja registrou como
+         "dois idiomas". O numero vive no tooltip, onde tem rotulo e contexto. Desenhadas ANTES
+         dos concorrentes e da Ultra: onde houver sobreposicao, quem manda na leitura e' a rede
+         instalada. */
+      ...(independentes?.length
+        ? [
+            new ScatterplotLayer<PinIndependente>({
+              id: 'independentes-pins',
+              data: independentes,
+              getPosition: (d) => [d.lng ?? 0, d.lat ?? 0],
+              getRadius: 5,
+              radiusUnits: 'pixels',
+              radiusMinPixels: 3,
+              radiusMaxPixels: 8,
+              getFillColor: [232, 102, 60, 205],
+              stroked: true,
+              getLineColor: [16, 20, 28, 210],
+              lineWidthUnits: 'pixels',
+              getLineWidth: 1,
+              pickable: true,
+              onHover: (info) => {
+                const d = info.object as PinIndependente | undefined
+                setIndepHover(d ? { d, x: info.x, y: info.y } : null)
+              },
+            }) as unknown as ScatterplotLayer<Hex>,
+          ]
+        : []),
+
       // Concorrentes: bandeira QUADRADA com a logo da rede (fallback cor+sigla),
       // enxuta (pedido do Felipe). Ultra vem por cima, um pouco maior.
       new IconLayer<Pin>({
         id: 'conc-pins',
         data: pins?.concorrentes ?? [],
         getPosition: (d) => [d.lng, d.lat],
-        getIcon: (d) => iconObjs[d.rede ?? ''] ?? iconObjs.__ultra__,
+        // Unidade com diagnostico usa a variante com HALO. O fallback para o icone normal importa:
+        // se o backend nao mandou a variante, o pin aparece igual aos outros em vez de sumir.
+        getIcon: (d) =>
+          (d.diag ? iconObjs[`${d.rede ?? ''}__diag`] : undefined) ??
+          iconObjs[d.rede ?? ''] ??
+          iconObjs.__ultra__,
         // A logo estava pequena demais para ser lida no mapa. A textura do atlas tem 128px
         // (PNG de origem 320x320), entao ha folga ate ~64px CSS sem upscaling — subir para
         // 30 (cap 34) so gasta resolucao que ja existia.
-        getSize: 30,
+        // 38 contra 30 porque o SVG com halo tem viewBox 160 e nao 128: a razao 38/160 devolve o
+        // QUADRADO no mesmo tamanho do pin sem halo (30/128). Sem isso o halo encolheria a marca.
+        getSize: (d) => (d.diag ? 38 : 30),
         sizeUnits: 'pixels',
         sizeMinPixels: 10,
-        sizeMaxPixels: 34,
+        sizeMaxPixels: 43,
+        updateTriggers: { getIcon: [iconObjs], getSize: [] },
         pickable: true,
         onHover: (info) => {
           const p = info.object as Pin | undefined
           setPinHover(
-            p ? { titulo: p.label ?? p.rede ?? 'Concorrente', sub: p.nome, x: info.x, y: info.y } : null,
+            p
+              ? {
+                  titulo: p.label ?? p.rede ?? 'Concorrente',
+                  sub: p.nome,
+                  d: p,
+                  x: info.x,
+                  y: info.y,
+                }
+              : null,
           )
         },
       }),
@@ -854,6 +939,7 @@ export default function HexMap({
     // nunca chegava a existir — o mapa ficava identico e parecia que a camada nao
     // funcionava. Foi exatamente o sintoma relatado ("o hexagono so aparece de uma cor").
     raio1km,
+    independentes,
     cobertura1k,
     hexesCobertos,
     hexPorId,
@@ -865,6 +951,7 @@ export default function HexMap({
       onMouseLeave={() => {
         setHover(null)
         setPinHover(null)
+        setIndepHover(null)
       }}
       style={{
         position: 'absolute',
@@ -1030,7 +1117,195 @@ export default function HexMap({
         </div>
       )}
 
-      {pinHover && !hover && (
+      {/* Balao da INDEPENDENTE (BLK-MA-15). Vence o do concorrente e o do hexagono quando o
+          cursor esta sobre um pin dela: e' o objeto mais especifico sob o mouse.
+
+          O QUE ELE DIZ, e por que cada linha esta aqui:
+            - o SCORE, com o selo de provisorio quando `flag_score_provisorio` — sem o selo, um
+              numero que o G-D1 se recusa a ordenar pareceria um ranking;
+            - a PRESSAO, medida da coordenada DESTA academia (grao unidade, DEC-029) — antes do
+              BLK-MA-14 todas as academias do hexagono mostrariam o mesmo valor aqui;
+            - nota e contagem SEMPRE juntas (DEC-026);
+            - o REGIME, porque reguas de regimes diferentes nao se comparam entre si. */}
+      {indepHover && (
+        <div
+          role="tooltip"
+          style={{
+            position: 'absolute',
+            ...ancora(indepHover.x, indepHover.y, 190, 230),
+            pointerEvents: 'none',
+            background: 'var(--surf-panel)',
+            border: '1px solid var(--line-mid)',
+            borderRadius: 'var(--r-md)',
+            padding: '9px 11px',
+            backdropFilter: 'blur(16px)',
+            boxShadow: '0 10px 30px -8px rgba(0,0,0,.7)',
+            zIndex: 31,
+            minWidth: 210,
+          }}
+        >
+          <div style={{ font: '600 12.5px/1.25 var(--f-ui)', color: 'var(--tx-max)' }}>
+            {indepHover.d.nome || 'Academia independente'}
+          </div>
+          <div style={{ font: '400 9.5px/1 var(--f-ui)', color: 'var(--tx-label)', marginTop: 3 }}>
+            Academia independente
+          </div>
+
+          <Divisoria />
+          {/* A DIREÇÃO VAI ESCRITA NOS DOIS NÚMEROS, e não é redundância de texto.
+
+              No resto do piloto todo score segue a convenção "alto = melhor oportunidade de
+              ABRIR" (M1, censitário, residual). Este mede o oposto: quanto MAIOR, mais cercada
+              está a academia — o que é ruim para ela e bom para quem compra. Um número de 0 a 100
+              sem eixo declarado, numa tela onde os vizinhos usam a convenção inversa, é lido ao
+              contrário; foi exatamente o que aconteceu na revisão de 2026-08-14.
+
+              O rótulo do composto NÃO diz "vulnerabilidade" (DEC-028, decisão 1): enquanto S3/S4
+              estiverem imaturos, afirmar fragilidade da academia é vender o sinal 6 com o rótulo
+              do 3. "Score composto" descreve o que ele é — a soma ponderada dos sinais
+              disponíveis — sem afirmar o que ainda não se mediu. */}
+          {indepHover.d.score !== null && (
+            <Linha
+              rotulo={indepHover.d.provisorio ? 'Score composto (provisório)' : 'Score composto'}
+              valor={`${num(indepHover.d.score, 1)} / 100 ↑`}
+              forte
+              cor={cor.fg}
+            />
+          )}
+          {indepHover.d.pressao !== null && (
+            <Linha
+              rotulo="Pressão competitiva"
+              valor={`${num(indepHover.d.pressao, 1)} / 100 ↑`}
+            />
+          )}
+          {/* A CONTA POR TRÁS DO NÚMERO (BLK-MA-18). Revisão de Vinicius: 40 pontos pareciam muito
+              para uma vizinhança quase vazia — e a desconfiança estava certa. A saturação gasta
+              METADE da escala numa única unidade equivalente, então `40,4` é `0,68 concorrentes
+              efetivos`, não "40% de pressão". A régua não muda; o que muda é ela deixar de ser
+              inverificável: o operador conta os pins no mapa e o número fecha. */}
+          {indepHover.d.n_conc !== null && (
+            <div
+              style={{
+                font: '400 9px/1.35 var(--f-ui)',
+                color: 'var(--tx-label)',
+                marginTop: 3,
+                maxWidth: 236,
+              }}
+            >
+              {indepHover.d.n_conc === 0
+                ? 'nenhum concorrente num raio de 2 km'
+                : `${num(indepHover.d.n_conc)} num raio de 2 km` +
+                  (indepHover.d.n_indep !== null
+                    ? ` (${num(indepHover.d.n_indep)} independente${indepHover.d.n_indep === 1 ? '' : 's'})`
+                    : '')}
+              {/* A TERCEIRA PARCELA (DEC-035). Sem ela a conta simplesmente nao fechava: as
+                  unidades de rede vindas do agregador entram em `n_conc` e, quando colapsam contra
+                  um pin do funil, nao ganham pin proprio. Medido: 28,2% das linhas tem esta parcela
+                  maior que zero. Declarar quantas sao e' o que devolve a conferibilidade. */}
+              {indepHover.d.n_cadeias_feed !== null &&
+                indepHover.d.n_cadeias_feed > 0 &&
+                `, ${num(indepHover.d.n_cadeias_feed)} de rede via agregador`}
+              {indepHover.d.oferta !== null && indepHover.d.n_conc > 0 && (
+                <>
+                  {' · '}
+                  <strong style={{ fontWeight: 600 }}>
+                    {num(indepHover.d.oferta, 2)} equivalente
+                    {indepHover.d.oferta === 1 ? '' : 's'}
+                  </strong>{' '}
+                  depois da distância
+                </>
+              )}
+              {indepHover.d.dist_m !== null && indepHover.d.n_conc > 0 && (
+                <>
+                  <br />
+                  mais próximo a {distanciaCurta(indepHover.d.dist_m)}
+                </>
+              )}
+            </div>
+          )}
+          <div
+            style={{
+              font: '400 9px/1.35 var(--f-ui)',
+              color: 'var(--tx-label)',
+              marginTop: 5,
+              maxWidth: 230,
+            }}
+          >
+            ↑ maior = mais cercada por concorrentes
+          </div>
+          {indepHover.d.nota !== null && (
+            <Linha
+              rotulo="Nota WellHub"
+              valor={`${num(indepHover.d.nota, 1)} · ${num(indepHover.d.n_aval)} aval.`}
+            />
+          )}
+          {/* SINAIS MEDIDOS, por extenso. A linha mostrava o valor bruto (`s1,s6`), que e' enum
+              do pipeline e nao diz nada a quem nao leu o contrato — e essa linha existe
+              justamente para dizer SOB QUAL REGUA o numero foi composto, porque reguas de
+              regimes diferentes nao se comparam entre si (emenda BLK-MA-04-FU1).
+
+              Cada frase vem da coluna "direcao" do §8.1 e MANTEM a direcao, que e' o que
+              permite ler o numero. Nenhuma delas afirma fragilidade da academia: descrevem o que
+              foi medido, nao o veredito (DEC-028). */}
+          {indepHover.d.regime && (
+            <>
+              <div
+                style={{
+                  font: '400 9.5px/1 var(--f-ui)',
+                  color: 'var(--tx-label)',
+                  marginTop: 8,
+                  textTransform: 'uppercase',
+                  letterSpacing: '.05em',
+                }}
+              >
+                O que foi medido
+              </div>
+              {sinaisDoRegime(indepHover.d.regime).map((s) => (
+                <div key={s.rotulo} style={{ marginTop: 4, maxWidth: 236 }}>
+                  <div style={{ font: '600 10.5px/1.2 var(--f-ui)', color: 'var(--tx-soft)' }}>
+                    {s.rotulo}
+                  </div>
+                  <div style={{ font: '400 9px/1.3 var(--f-ui)', color: 'var(--tx-label)' }}>
+                    {s.explica}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+          {/* DECLARA A REDUNDÂNCIA em vez de escondê-la. No regime `s1,s6` o composto é
+              `30 + 40·v6` — o s1 vale 30 pontos FIXOS porque só um agregador existe em disco —,
+              então os dois números têm correlação 1,0 e dizem a mesma coisa. Deixar isso implícito
+              faria o operador procurar significado numa diferença que não existe. O composto passa
+              a informar de verdade quando o churn (s3) amadurecer. */}
+          {indepHover.d.regime === 's1,s6' && (
+            <div
+              style={{
+                font: '400 9px/1.35 var(--f-ui)',
+                color: 'var(--tx-label)',
+                marginTop: 6,
+                maxWidth: 230,
+              }}
+            >
+              Hoje o composto acompanha a pressão: o outro sinal medido (presença em agregador) é
+              igual para todas.
+            </div>
+          )}
+          {indepHover.d.provisorio && (
+            <div
+              style={{
+                font: '400 9.5px/1.35 var(--f-ui)',
+                color: 'var(--tx-label)',
+                marginTop: 7,
+                maxWidth: 220,
+              }}
+            >
+              Série ainda imatura: o número não ordena um ranking.
+            </div>
+          )}
+        </div>
+      )}
+
+      {pinHover && !hover && !indepHover && (
         <div
           role="tooltip"
           style={{
@@ -1060,6 +1335,85 @@ export default function HexMap({
             >
               {pinHover.sub}
             </div>
+          )}
+
+          {/* O QUE O HALO PROMETE. A bandeira com halo diz "temos dado extra sobre esta unidade";
+              se o balao nao entregasse, o halo seria enfeite. Aqui vem a pressao medida da
+              coordenada DELA e a conta por tras do numero.
+
+              Repare no que NAO aparece: score composto. Numa rede, presenca em agregador e churn
+              medem negociacao da MARCA, nao fragilidade desta unidade -- o S3 e' correlacionado
+              (top 5 = 48,4% das unidades, max 440 numa rede), entao a Panobianco saindo do WellHub
+              viraria 440 alvos no mesmo dia. O S6 passa porque e' geografico. (DEC-035) */}
+          {pinHover.d?.diag && (
+            <>
+              <Divisoria />
+              {pinHover.d.pressao != null && (
+                <Linha
+                  rotulo="Pressão competitiva"
+                  valor={`${num(pinHover.d.pressao, 1)} / 100 ↑`}
+                  forte
+                />
+              )}
+              {pinHover.d.n_conc != null && (
+                <div
+                  style={{
+                    font: '400 9px/1.35 var(--f-ui)',
+                    color: 'var(--tx-label)',
+                    marginTop: 3,
+                    maxWidth: 224,
+                  }}
+                >
+                  {pinHover.d.n_conc === 0
+                    ? 'nenhum concorrente num raio de 2 km'
+                    : `${num(pinHover.d.n_conc)} num raio de 2 km` +
+                      (pinHover.d.n_indep != null
+                        ? ` (${num(pinHover.d.n_indep)} independente${pinHover.d.n_indep === 1 ? '' : 's'})`
+                        : '')}
+                  {pinHover.d.oferta != null && pinHover.d.n_conc > 0 && (
+                    <>
+                      {' · '}
+                      <strong style={{ fontWeight: 600 }}>
+                        {num(pinHover.d.oferta, 2)} equivalente
+                        {pinHover.d.oferta === 1 ? '' : 's'}
+                      </strong>{' '}
+                      depois da distância
+                    </>
+                  )}
+                  {pinHover.d.dist_m != null && pinHover.d.n_conc > 0 && (
+                    <>
+                      <br />
+                      mais próximo a {distanciaCurta(pinHover.d.dist_m)}
+                    </>
+                  )}
+                </div>
+              )}
+              {pinHover.d.nota != null && (
+                <Linha
+                  rotulo="Nota no WellHub"
+                  valor={`${num(pinHover.d.nota, 1)}${
+                    pinHover.d.n_aval != null ? ` (${num(pinHover.d.n_aval)} avaliações)` : ''
+                  }`}
+                />
+              )}
+              {pinHover.d.churn && (
+                <Linha
+                  rotulo="Presença na série"
+                  valor={ROTULO_CHURN[pinHover.d.churn] ?? pinHover.d.churn}
+                />
+              )}
+              <div
+                style={{
+                  font: '400 9px/1.35 var(--f-ui)',
+                  color: 'var(--tx-label)',
+                  marginTop: 6,
+                  maxWidth: 224,
+                }}
+              >
+                Listada num agregador — daí o dado extra. Sem score composto: numa rede, presença e
+                churn medem negociação da marca, não fragilidade desta unidade.
+              </div>
+            </>
           )}
         </div>
       )}

@@ -29,41 +29,69 @@ Fronteira dos módulos: `snapshots.py` transforma o CSV cru de UMA execução em
 (sinais 3 e 4); `presenca_agregador.py` lê a mesma série e devolve, por `hex_id_res7`, o insumo
 bruto do sinal 1 (presença em TotalPass/WellHub). Os extratores **param** no insumo; `score.py`
 (BLK-MA-04) compõe `v1`/`v3`/`v4` e o `score_vulnerabilidade` a partir deles, sem I/O, e é onde o
-universo de M&A é fechado. Materializar artefato e cruzar com hexágono quente são do BLK-MA-05.
+universo de M&A é fechado. `alvos_ma.py` (BLK-MA-05) fecha a cadeia: cruza esse score com o
+hexágono quente da carteira (join READ-ONLY, `many_to_one`) e materializa os dois artefatos do D6 —
+a camada scored por academia e a lista curada por (hex, regime). É o único módulo do pacote que
+escreve fora de `data/staging/snapshots_concorrentes/`, e o único cuja saída sai do repositório.
 
 Contrato canônico do epic: `docs/vulnerabilidade_ma_contrato.md`.
 """
 
 from __future__ import annotations
 
+from .alvos_ma import (
+    academias_com_hotness,
+    agregar_alvos_por_hex,
+    marcar_hex_quente,
+    materializar_alvos_ma,
+)
 from .churn_staleness import extrair_churn_staleness
 from .contrato import (
+    ADJACENCIA_HEX_QUENTE_K,
     CATEGORIA_INDEPENDENTE,
     COLUNAS_PII_PROIBIDAS,
+    CONTRATO_COLUNAS_ACADEMIAS_MA,
+    CONTRATO_COLUNAS_ALVOS_MA,
     CONTRATO_COLUNAS_CHURN,
     CONTRATO_COLUNAS_PRESENCA_AGREGADOR,
+    CONTRATO_COLUNAS_PRESSAO,
+    CONTRATO_COLUNAS_PRESSAO_ACADEMIA,
     CONTRATO_COLUNAS_SCORE,
     CONTRATO_COLUNAS_SNAPSHOT,
     FONTES_AGREGADORES,
+    KERNEIS_PRESSAO,
+    LIMIAR_RESIDUAL_SATURADO,
     MIN_SEMANAS,
     PESOS_ALVO_SINAIS,
+    PRESSAO_KERNEL_DEFAULT,
+    PRESSAO_RAIO_M,
+    QUANTIL_SAM_QUENTE,
     RETENCAO_SEMANAS,
     SINAIS_INATIVOS,
     SINAIS_ORDEM,
     STALE_SEMANAS,
     V3_POR_STATUS_CHURN,
+    VERSAO_CONTRATO_ALVOS_MA,
     VERSAO_CONTRATO_CHURN,
     VERSAO_CONTRATO_PRESENCA_AGREGADOR,
+    VERSAO_CONTRATO_PRESSAO,
     VERSAO_CONTRATO_SCORE,
     VERSAO_CONTRATO_SNAPSHOT,
     renormalizar_pesos,
 )
 from .presenca_agregador import extrair_presenca_agregador
+from .pressao_competitiva import (
+    calcular_pressao_por_academia,
+    calcular_pressao_por_hex,
+    ler_concorrentes,
+    peso_por_distancia,
+)
 from .score import calcular_score_vulnerabilidade
 from .snapshots import (
     SNAPSHOTS_DIR_DEFAULT,
     avaliar_estabilidade_slug,
     calcular_hash_campos_raspados,
+    coordenadas_por_chave,
     derivar_chave,
     escrever_particao_semana,
     ler_feeds,
@@ -104,6 +132,29 @@ __all__ = [
     "SINAIS_INATIVOS",
     "V3_POR_STATUS_CHURN",
     "renormalizar_pesos",
+    # Sinal 6 - pressao competitiva com decaimento por distancia
+    "calcular_pressao_por_academia",  # grao ACADEMIA (o do `v6` desde a DEC-029)
+    "calcular_pressao_por_hex",  # grao TERRITORIO (comparavel com a camada de mercado)
+    "coordenadas_por_chave",
+    "peso_por_distancia",
+    "ler_concorrentes",
+    "CONTRATO_COLUNAS_PRESSAO",
+    "CONTRATO_COLUNAS_PRESSAO_ACADEMIA",
+    "VERSAO_CONTRATO_PRESSAO",
+    "PRESSAO_RAIO_M",
+    "PRESSAO_KERNEL_DEFAULT",
+    "KERNEIS_PRESSAO",
+    # Lista priorizada de M&A (D5/D6)
+    "marcar_hex_quente",
+    "academias_com_hotness",
+    "agregar_alvos_por_hex",
+    "materializar_alvos_ma",
+    "CONTRATO_COLUNAS_ACADEMIAS_MA",
+    "CONTRATO_COLUNAS_ALVOS_MA",
+    "VERSAO_CONTRATO_ALVOS_MA",
+    "QUANTIL_SAM_QUENTE",
+    "LIMIAR_RESIDUAL_SATURADO",
+    "ADJACENCIA_HEX_QUENTE_K",
     # Contrato
     "CONTRATO_COLUNAS_SNAPSHOT",
     "CONTRATO_COLUNAS_CHURN",

@@ -88,6 +88,10 @@ def _point_app_at(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
     # alcanca, e sem isto o teste le o parquet real da maquina de quem roda.
     monkeypatch.setattr(pilot, "CRESCIMENTO_PATH", staging / "crescimento_municipal.parquet")
     monkeypatch.setattr(pilot, "CRESCIMENTO_HEX_PATH", staging / "crescimento_hex.parquet")
+    # Calculada no import, como as de cima. Sem esta linha a suite leria o artefato NOMEADO real
+    # de quem roda, e os pins apareceriam (ou nao) conforme a maquina.
+    monkeypatch.setattr(pilot, "NOMEADAS_PATH", staging / "vulnerabilidade_ma_nomeadas.parquet")
+    monkeypatch.setattr(pilot, "REDES_PATH", staging / "vulnerabilidade_ma_redes.parquet")
     monkeypatch.setattr(pilot, "GEOCODE_CACHE_DIR", data_dir / "cache" / "geocode")
     _clear_caches()
 

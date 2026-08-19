@@ -35,6 +35,11 @@ tem os dois agregadores". É uma afirmação de solidez que ninguém mediu. Por 
 a proibição de ordenar carteira por um score de dois valores vira o TIPO da saída, não uma frase
 num handoff arquivado.
 
+EMENDA DA DEC-028: `flag_score_provisorio` é `(~s3) & (~s4) & (~s6)`. Com o insumo de pressão, o
+score deixa de ter dois valores e volta a ser ordenável — mas o que ele ordena, nesse regime, é
+PRESSÃO COMPETITIVA (`30 + 40·v6`, porque `v1 ≡ 0,5` enquanto só um agregador existe em disco). A
+emenda libera o `sort`; a honestidade do rótulo é obrigação de quem exibe.
+
 AUSÊNCIA NUNCA É ZERO: linha sem sinal algum (`n_sinais_disponiveis == 0`) recebe score **NULO**.
 `0` é uma afirmação; nulo é ausência de evidência.
 
@@ -69,10 +74,14 @@ from .contrato import (
     FONTES_AGREGADORES,
     H3_RES_CONTRATO,
     PESOS_ALVO_SINAIS,
+    PRESSAO_GRAO_ACADEMIA,
+    PRESSAO_GRAO_HEX,
+    PRESSAO_GRAOS,
     SINAIS_INATIVOS,
     SINAIS_ORDEM,
     STALE_SEMANAS,
     STATUS_CHURN_VALIDOS,
+    UNIVERSOS_OFERTA,
     V3_POR_STATUS_CHURN,
     VERSAO_CONTRATO_SCORE,
     renormalizar_pesos,
@@ -127,7 +136,13 @@ _COLUNAS_PROIBIDAS_RESSALVADAS: frozenset[str] = frozenset(
 # Componente de cada sinal. `s2` aponta para `v2`, que NÃO existe no Plano B (D3): enquanto `s2`
 # estiver em `SINAIS_INATIVOS` ele nunca fica disponível, e o BLK-MA-08 reativa o sinal
 # acrescentando a coluna e removendo a entrada daquela tupla.
-_COLUNA_POR_SINAL: dict[str, str] = {"s1": "v1", "s2": "v2", "s3": "v3", "s4": "v4"}
+_COLUNA_POR_SINAL: dict[str, str] = {
+    "s1": "v1",
+    "s2": "v2",
+    "s3": "v3",
+    "s4": "v4",
+    "s6": "v6",
+}
 
 # `v1` é CATEGÓRICO (emenda G1 ao §8.1, ratificada em 2026-07-29): mapa literal, NUNCA
 # normalização por posição no universo. O domínio de entrada `{1, 2}` é travado pelo contrato do
@@ -186,6 +201,96 @@ def _juntar_presenca(universo: pd.DataFrame, presenca: pd.DataFrame) -> pd.DataF
     return df
 
 
+def _juntar_pressao(df: pd.DataFrame, pressao: pd.DataFrame | None) -> pd.DataFrame:
+    """Left join da pressão no universo, nos DOIS grãos possíveis. `None` -> colunas NULAS.
+
+    O grão é decidido pelo FORMATO do frame, não por um parâmetro — quem produziu o insumo já sabe
+    o que mediu, e um parâmetro criaria a chance de declarar um grão e passar o outro:
+
+    | frame tem | grão | join |
+    |---|---|---|
+    | `fonte` + `chave_snapshot` | `academia` (BLK-MA-14, o default do pipeline) | `1:1` pela chave primária |
+    | `hex_id_res7` | `hex` (o grão antigo, do centroide) | `many_to_one` |
+
+    O carimbo `pressao_grao` viaja até a saída porque **duas linhas com grãos diferentes não estão
+    na mesma régua** — a pressão de academia varia dentro do hexágono (amplitude média medida:
+    14,89 pontos) e a de hex, não. Sem o carimbo, um consumidor compararia as duas sem saber.
+
+    Nulo, jamais `0`: na régua do §8.1 `v6 = 0` afirma "ninguém espremendo", a leitura mais
+    otimista possível. "Não recebi o insumo" tem de ser distinguível de "medi e não há" — é a mesma
+    regra que vale para o `v1` no miss do join do sinal 1.
+    """
+    out = df.copy()
+    if pressao is None or pressao.empty:
+        out["pressao_competitiva"] = pd.Series(float("nan"), index=out.index, dtype="float64")
+        out["pressao_grao"] = pd.Series(pd.NA, index=out.index, dtype="string")
+        out["universo_oferta"] = pd.Series(pd.NA, index=out.index, dtype="string")
+        return out
+
+    por_academia = {"fonte", "chave_snapshot"} <= set(pressao.columns)
+    por_hex = "hex_id_res7" in pressao.columns
+    if not (por_academia or por_hex):
+        raise ValueError(
+            "frame de pressao fora do contrato: exige `(fonte, chave_snapshot)` (grao academia) "
+            "ou `hex_id_res7` (grao hex)"
+        )
+
+    if por_academia:
+        chaves = ["fonte", "chave_snapshot"]
+        # Cada grão carrega o NOME de coluna do seu próprio contrato: `pressao_competitiva` no de
+        # academia, `pressao_competitiva_no_hex` no de hex (que mantém o sufixo porque é a
+        # grandeza comparável com o `pressao_concorrencial_score_2km` da camada de mercado).
+        # Uniformizar aqui, na leitura, é mais barato que renomear um contrato já publicado.
+        coluna = "pressao_competitiva"
+        if bool(pressao.duplicated(subset=chaves).any()):
+            raise ValueError("frame de pressao com `(fonte, chave_snapshot)` duplicado")
+        grao = PRESSAO_GRAO_ACADEMIA
+    else:
+        chaves = ["hex_id_res7"]
+        coluna = "pressao_competitiva_no_hex"
+        if bool(pressao["hex_id_res7"].duplicated().any()):
+            raise ValueError("frame de pressao com `hex_id_res7` duplicado: o join seria ambiguo")
+        grao = PRESSAO_GRAO_HEX
+    if coluna not in pressao.columns:
+        raise ValueError(f"frame de pressao (grao {grao}) sem a coluna `{coluna}`")
+    # O UNIVERSO DE OFERTA vem do frame, nunca é inferido aqui (BLK-MA-16). Assumir `cadeias` no
+    # silêncio seria o pior default possível: é o universo que produz o número MENOR, e a linha
+    # sairia carimbada como algo que ninguém declarou. Quem calculou a pressão sabe quem contou.
+    if "universo_oferta" not in pressao.columns:
+        raise ValueError(
+            "frame de pressao sem a coluna `universo_oferta` (BLK-MA-16): o score nao infere o "
+            "universo, porque a mesma academia mede valores diferentes em cada um"
+        )
+
+    # `many_to_one` nos dois casos: o universo de M&A é um SUBCONJUNTO do insumo (o filtro de
+    # cadeia já rodou), então sobram linhas de pressão sem par à esquerda — esperado. O que não
+    # pode haver é duplicata à direita, e os guards acima já barraram.
+    projecao = (
+        pressao[[*chaves, coluna, "universo_oferta"]]
+        .copy()
+        .rename(columns={coluna: "pressao_competitiva"})
+    )
+    for chave in chaves:
+        projecao[chave] = projecao[chave].astype("string")
+        out[chave] = out[chave].astype("string")
+    out = out.merge(projecao, on=chaves, how="left", validate="many_to_one")
+    out["pressao_competitiva"] = pd.to_numeric(
+        out["pressao_competitiva"], errors="coerce"
+    ).astype("float64")
+    # O carimbo acompanha o VALOR: linha sem par no join fica sem pressão E sem grão. Carimbar o
+    # grão numa linha sem medição afirmaria uma procedência que não existe. Vale igual para o
+    # universo, pelo mesmo motivo — os dois carimbos são nulos exatamente onde a pressão é nula.
+    out["pressao_grao"] = (
+        pd.Series(grao, index=out.index, dtype="string")
+        .where(out["pressao_competitiva"].notna())
+        .astype("string")
+    )
+    out["universo_oferta"] = (
+        out["universo_oferta"].astype("string").where(out["pressao_competitiva"].notna())
+    ).astype("string")
+    return out
+
+
 def _regra_de_disponibilidade(df: pd.DataFrame) -> dict[str, pd.Series]:
     """Regra do §8.4 por linha, ANTES de olhar o componente.
 
@@ -207,6 +312,17 @@ def _regra_de_disponibilidade(df: pd.DataFrame) -> dict[str, pd.Series]:
         "s2": pd.Series(False, index=indice),
         "s3": ~df["flag_serie_imatura"].astype(bool),
         "s4": df["flag_staleness_interpretavel"].astype(bool),
+        # `s6` disponível SE E SOMENTE SE o insumo de pressão foi fornecido na chamada — o mesmo
+        # princípio do `s1` (casou no join). NÃO é "sempre disponível", e a diferença é estrutural:
+        # um S6 sempre presente extinguiria o regime `n_sinais_disponiveis == 0` e tornaria
+        # INALCANÇÁVEL a invariante "ausência nunca é zero", que é o guardrail mais antigo desta
+        # camada. Aqui, quem não passa pressão obtém exatamente o score de antes — os pesos
+        # efetivos do Plano B inclusive, porque `renormalizar_pesos` divide pelos PRESENTES.
+        "s6": (
+            df["pressao_competitiva"].notna()
+            if "pressao_competitiva" in df.columns
+            else pd.Series(False, index=indice)
+        ),
     }
     for sinal in SINAIS_INATIVOS:
         regras[sinal] = pd.Series(False, index=indice)
@@ -236,9 +352,21 @@ def _derivar_componentes(df: pd.DataFrame) -> pd.DataFrame:
     v4_bruto = (out["semanas_sem_mudanca"].astype("float64") / float(STALE_SEMANAS)).clip(
         lower=0.0, upper=1.0
     )
+    # `v6` já vem em [0,1) do `pressao_competitiva`; aqui é só leitura, não normalização — a régua
+    # é ABSOLUTA como a do `v4` (G-D3), nunca percentil do lote.
+    v6_bruto = (
+        out["pressao_competitiva"].astype("float64") / 100.0
+        if "pressao_competitiva" in out.columns
+        else pd.Series(float("nan"), index=out.index, dtype="float64")
+    )
 
     regras = _regra_de_disponibilidade(out)
-    for sinal, bruto in (("s1", v1_bruto), ("s3", v3_bruto), ("s4", v4_bruto)):
+    for sinal, bruto in (
+        ("s1", v1_bruto),
+        ("s3", v3_bruto),
+        ("s4", v4_bruto),
+        ("s6", v6_bruto),
+    ):
         out[_COLUNA_POR_SINAL[sinal]] = bruto.where(regras[sinal] & bruto.notna())
     return out
 
@@ -294,9 +422,16 @@ def _compor_score(df: pd.DataFrame) -> pd.DataFrame:
             parcial = parcial + peso * bloco[_COLUNA_POR_SINAL[sinal]].astype("float64")
         score.loc[bloco.index] = (100.0 * parcial).clip(lower=0.0, upper=100.0)
 
-    # Escrita como a CONJUNÇÃO do §8.4, fiel ao texto, embora seja redutível a "S3 indisponível"
-    # por `STALE_SEMANAS > MIN_SEMANAS`. A redução é testada, não assumida.
-    provisorio = (~disponivel["s3"]) & (~disponivel["s4"])
+    # Escrita como a CONJUNÇÃO do §8.4, fiel ao texto, embora a parte S3/S4 seja redutível a
+    # "S3 indisponível" por `STALE_SEMANAS > MIN_SEMANAS`. A redução é testada, não assumida.
+    #
+    # `& (~s6)` é a EMENDA DA DEC-028, e ela tem um motivo medido: sem o S6 na conjunção,
+    # `score_vulnerabilidade_ordenavel` saía **NULA em 19.329 de 19.329** academias reais, e um
+    # `sort_values` devolvia `NaN` em tudo. O G-D1 virou o TIPO da saída para impedir ranking sobre
+    # o ramp-up **só-S1 de DOIS valores** (`{0, 50}`); o S6 é contínuo, então o objeto que o G-D1
+    # protegia deixa de existir assim que a pressão entra. A emenda libera a ORDENAÇÃO e **não**
+    # conserta o SIGNIFICADO — quem carrega a honestidade do rótulo é a superfície.
+    provisorio = (~disponivel["s3"]) & (~disponivel["s4"]) & (~disponivel["s6"])
 
     out["n_sinais_disponiveis"] = n_sinais
     out["score_vulnerabilidade"] = score
@@ -386,6 +521,33 @@ def _assert_schema_score(df: pd.DataFrame) -> None:
         raise ValueError(f"`v3` fora do dominio categorico {sorted(dominio_v3)}: {fora_v3}")
     if bool(((v4 < 0.0) | (v4 > 1.0)).any()):
         raise ValueError("`v4` fora do dominio [0, 1]")
+    v6 = df["v6"].astype("float64")
+    if bool(((v6 < 0.0) | (v6 >= 1.0)).any()):
+        raise ValueError("`v6` fora do dominio [0, 1)")
+    if bool((v6.isna() != df["pressao_competitiva"].isna()).any()):
+        raise ValueError(
+            "biconditional do S6 violado: `v6` nulo deve equivaler a `pressao_competitiva` nulo"
+        )
+    # O carimbo de GRAO acompanha o valor: presente exatamente onde ha pressao. Um grao sem
+    # pressao afirmaria procedencia inexistente; pressao sem grao esconderia a regua usada, e e'
+    # justamente a regua que nao pode ser comparada entre linhas (BLK-MA-14).
+    if bool((df["pressao_grao"].isna() != df["pressao_competitiva"].isna()).any()):
+        raise ValueError(
+            "`pressao_grao` deve estar preenchido exatamente onde `pressao_competitiva` esta"
+        )
+    graos = sorted(set(df["pressao_grao"].dropna().astype(str)) - set(PRESSAO_GRAOS))
+    if graos:
+        raise ValueError(f"`pressao_grao` fora do dominio {list(PRESSAO_GRAOS)}: {graos}")
+    # Mesma trava para o OUTRO eixo do carimbo (BLK-MA-16). Os dois andam juntos com o valor: um
+    # universo sem pressao afirma procedencia inexistente, e pressao sem universo esconde QUEM
+    # contou como concorrencia — e o mesmo ponto mede 39 ou 65 conforme a resposta.
+    if bool((df["universo_oferta"].isna() != df["pressao_competitiva"].isna()).any()):
+        raise ValueError(
+            "`universo_oferta` deve estar preenchido exatamente onde `pressao_competitiva` esta"
+        )
+    universos = sorted(set(df["universo_oferta"].dropna().astype(str)) - set(UNIVERSOS_OFERTA))
+    if universos:
+        raise ValueError(f"`universo_oferta` fora do dominio {list(UNIVERSOS_OFERTA)}: {universos}")
     if bool(((score < 0.0) | (score > 100.0)).any()):
         raise ValueError("`score_vulnerabilidade` fora do dominio [0, 100]")
 
@@ -409,9 +571,9 @@ def _assert_schema_score(df: pd.DataFrame) -> None:
         raise ValueError("`n_sinais_disponiveis` incoerente com `sinais_disponiveis`")
 
     tem: dict[str, pd.Series] = {
-        sinal: texto.map(lambda v, s=sinal: s in v.split(",")) for sinal in ("s1", "s3", "s4")
+        sinal: texto.map(lambda v, s=sinal: s in v.split(",")) for sinal in ("s1", "s3", "s4", "s6")
     }
-    for sinal in ("s1", "s3", "s4"):
+    for sinal in ("s1", "s3", "s4", "s6"):
         coluna = _COLUNA_POR_SINAL[sinal]
         if bool((tem[sinal] != df[coluna].notna()).any()):
             raise ValueError(
@@ -441,9 +603,10 @@ def _assert_schema_score(df: pd.DataFrame) -> None:
         )
 
     provisorio = df["flag_score_provisorio"].astype(bool)
-    if bool((provisorio != ((~tem["s3"]) & (~tem["s4"]))).any()):
+    # A conjunção inclui o `s6` desde a DEC-028 — ver o comentário longo em `_compor_score`.
+    if bool((provisorio != ((~tem["s3"]) & (~tem["s4"]) & (~tem["s6"]))).any()):
         raise ValueError(
-            "`flag_score_provisorio` incoerente com `sinais_disponiveis` (S3 e S4 fora)"
+            "`flag_score_provisorio` incoerente com `sinais_disponiveis` (S3, S4 e S6 fora)"
         )
     ordenavel = df["score_vulnerabilidade_ordenavel"].astype("float64")
     nulo_esperado = provisorio | score.isna()
@@ -468,12 +631,24 @@ def calcular_score_vulnerabilidade(
     *,
     churn: pd.DataFrame | None = None,
     presenca: pd.DataFrame | None = None,
+    pressao: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Insumos de S1/S3/S4 -> frame `score_vulnerabilidade_v2` (22 colunas), 1 linha por academia.
+    """Insumos -> frame `score_vulnerabilidade_v3` (24 colunas), 1 linha por academia.
 
     Informe `base_dir` (conveniência: deriva os DOIS frames da MESMA série, numa só chamada) **ou**
     o par (`churn`, `presenca`) já pronto. Com o par injetado a função é **pura** — é assim que os
     testes rodam sem I/O — e o chamador passa a ser o dono da consistência entre os dois frames.
+
+    `pressao` (BLK-MA-12) é **OPCIONAL e ortogonal** aos outros dois, e vale para os dois modos: é
+    o frame de `pressao_competitiva.calcular_pressao_por_hex`, com uma linha por `hex_id_res7`.
+    Ele não sai da `base_dir` de propósito — a pressão vem do parquet de PONTOS de concorrentes,
+    que não vive junto dos snapshots.
+
+    **Omitir `pressao` devolve exatamente o score de antes**, bit a bit: o `s6` fica indisponível,
+    `renormalizar_pesos` normaliza só pelos presentes e os pesos efetivos do Plano B seguem
+    `0,20 / 0,4667 / 0,3333`. Isso é o que permite o S6 existir sem repesar S1..S4 e sem extinguir
+    o regime `n_sinais_disponiveis == 0` — a invariante "ausência nunca é zero" continua alcançável
+    e continua travada.
 
     Algoritmo, em passos:
 
@@ -482,8 +657,9 @@ def calcular_score_vulnerabilidade(
     | 1 | validar os insumos pelos contratos de origem | frame malformado não vira score errado |
     | 2 | **filtrar o universo de M&A** (TP/WH x independente) | sem isto uma CADEIA vira alvo |
     | 3 | join `many_to_one` do sinal 1 (hex) no universo (academia) | S1 é por hex, S3/S4 por academia |
-    | 4 | componentes `v1`/`v3`/`v4`, mascarados por disponibilidade | §8.1 |
-    | 5 | renormalizar os pesos-alvo do D4 e somar | §8.3/§8.4, genérico |
+    | 3b | join `many_to_one` da pressão (hex), se fornecida | S6 é por hex, como o S1 |
+    | 4 | componentes `v1`/`v3`/`v4`/`v6`, mascarados por disponibilidade | §8.1 |
+    | 5 | renormalizar os pesos-alvo e somar | §8.3/§8.4, genérico |
     | 6 | flags de qualidade e schema de saída | §8.4/§8.5 |
 
     `score_vulnerabilidade = 100 · Σ(wi · vi)` sobre os sinais DISPONÍVEIS, com os pesos-alvo
@@ -520,6 +696,7 @@ def calcular_score_vulnerabilidade(
         return vazio
 
     df = _juntar_presenca(universo, presenca)
+    df = _juntar_pressao(df, pressao)
     df = _derivar_componentes(df)
     out = _compor_score(df)
     _assert_schema_score(out)
