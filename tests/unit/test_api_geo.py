@@ -86,3 +86,36 @@ def test_query_e_destination_tambem_sao_aceitos():
     for param in ("query", "destination"):
         url = f"https://www.google.com/maps?{param}=Rua+XV+de+Novembro,+100+-+Curitiba+-+PR"
         assert extrair_endereco_de_place_url(url) == "Rua XV de Novembro, 100 - Curitiba - PR"
+
+
+# --- Ultimo recurso: parametro DESCONHECIDO (BLK-FIX-MAPSQ) ---------------------------
+# Sem iPhone para gerar um link real (Juan, 2026-08-19), a lista de nomes de parametro e'
+# palpite. Estes testes cobrem o caminho que NAO depende do palpite.
+
+
+def test_endereco_em_parametro_desconhecido():
+    from motor_expansao.api.geo import extrair_endereco_de_place_url
+
+    url = "https://maps.novo.app/?local_completo=Av.+Santos+Dumont,+2915+-+Fortaleza+-+CE"
+    assert extrair_endereco_de_place_url(url) == "Av. Santos Dumont, 2915 - Fortaleza - CE"
+
+
+def test_identificadores_nao_viram_endereco():
+    """Geocodificar lixo daria um relatorio no LUGAR ERRADO -- pior que falhar com mensagem."""
+    from motor_expansao.api.geo import extrair_endereco_de_place_url
+
+    for url in (
+        "https://www.google.com/maps?ftid=0x7c7488830f41f11:0xf2e6d99ad01cba8e",
+        "https://www.google.com/maps?entry=gps&shh=CAE&lucs=,942",
+        "https://maps.apple.com/?ll=-3.7327,-38.4869",
+        "https://maps.apple.com/place?place-id=I1234567890",
+    ):
+        assert extrair_endereco_de_place_url(url) == "", url
+
+
+def test_entre_varios_candidatos_vence_o_mais_longo():
+    """Num link de place o endereco completo e' o campo mais extenso; os curtos sao rotulo."""
+    from motor_expansao.api.geo import extrair_endereco_de_place_url
+
+    url = "https://x.com/?nome=AYO+Gym&addr=Av.+Chanceler+Edson+Queiroz,+100+-+Fortaleza"
+    assert extrair_endereco_de_place_url(url).startswith("Av. Chanceler")

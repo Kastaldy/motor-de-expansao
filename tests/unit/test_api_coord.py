@@ -90,3 +90,34 @@ def test_pino_exato_tem_prioridade_sobre_viewport():
     url = ("https://www.google.com/maps/place/X/@-3.7000,-38.4000,17z/"
            "data=!3m1!4b1!4m5!3d-3.7673!4d-38.4867")
     assert parse_maps_url(url) == (-3.7673, -38.4867)
+
+
+def test_coordenada_em_parametro_desconhecido():
+    """Ultimo recurso: par lat,lng em parametro que nenhuma lista nossa preve."""
+    from motor_expansao.api.coord import parse_maps_url
+
+    assert parse_maps_url("https://maps.apple.com/?pin=-3.7361,-38.4975&x=1") == (-3.7361, -38.4975)
+    assert parse_maps_url("https://maps.novo.app/v2?geo_point=-23.5505,-46.6333") == (-23.5505, -46.6333)
+
+
+def test_fallback_generico_nao_rouba_precedencia_do_pino():
+    """O generico so roda quando TODOS os especificos falham -- o pino continua vencendo."""
+    from motor_expansao.api.coord import parse_maps_url
+
+    url = ("https://google.com/maps/place/X/@-3.70,-38.40,17z/"
+           "data=!3d-3.7673!4d-38.4867&pin=-1.0,-2.0")
+    assert parse_maps_url(url) == (-3.7673, -38.4867)
+
+
+def test_par_espurio_e_barrado_pelo_bounding_box():
+    """Rede de seguranca do generico: par que nao e' geografico cai fora do Brasil."""
+    import pytest
+
+    from motor_expansao.api.coord import (
+        CoordenadaInvalidaError,
+        parse_maps_url,
+        validar_brasil,
+    )
+
+    with pytest.raises(CoordenadaInvalidaError):
+        validar_brasil(*parse_maps_url("https://x.com/?versao=1.0,2.0"))

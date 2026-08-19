@@ -32,6 +32,18 @@ _PADROES = (
         r"(-?\d+\.\d+),\s*(-?\d+\.\d+)"
     ),
     re.compile(r"^\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*$"),
+    # ULTIMO RECURSO: QUALQUER parametro cujo valor seja um par "lat,lng".
+    #
+    # Existe para o parser nao depender de conhecermos o nome do parametro. A lista acima foi
+    # montada a partir dos formatos que sabemos existir (Google e Apple), mas um app novo -- ou
+    # uma versao futura do proprio Maps -- pode usar um nome que ninguem previu, e hoje esse
+    # caso e' perda TOTAL do link. Como este padrao so e' tentado depois de todos os
+    # especificos falharem, ele nunca rouba a precedencia do pino (`!3d!4d`) sobre o centro do
+    # viewport (`@lat,lng`): quando algum especifico casa, este nem chega a rodar.
+    #
+    # Risco contido por `validar_brasil`: um par espurio (ex.: uma versao "1.0,2.0") cai fora
+    # do bounding box e vira erro claro, nao um relatorio no lugar errado.
+    re.compile(r"[?&][A-Za-z_][\w.-]*=(-?\d+\.\d+),\s*(-?\d+\.\d+)(?:&|$)"),
 )
 
 

@@ -41,6 +41,36 @@ _Q_ENDERECO_RE = re.compile(r"[?&](?:q|query|destination|address|daddr)=([^&]+)"
 _COORD_PURA_RE = re.compile(r"^-?\d+\.\d+\s*,\s*-?\d+\.\d+$")
 
 
+# Parametros que NUNCA sao endereco: identificadores, controles de camera e de UI. Sem esta
+# lista o ultimo recurso abaixo devolveria coisas como "gps" (entry) ou "CAE" (shh) como se
+# fossem logradouro.
+_PARAMS_LIXO = frozenset({
+    "ftid", "place-id", "placeid", "auid", "cid", "pb", "data", "entry", "shh", "lucs",
+    "g_st", "gs_lcp", "hl", "gl", "ie", "oe", "output", "format", "source", "api", "t",
+    "z", "zoom", "spn", "span", "layer", "view", "mode", "dirflg", "mapmode", "map_action",
+    "basemap", "near", "sll", "ll", "coordinate", "center", "daddr", "saddr",
+})
+_PARAM_RE = re.compile(r"[?&]([A-Za-z_][\w.-]*)=([^&]+)")
+# ID hexadecimal do Google (0x...:0x...) disfarcado de texto.
+_ID_HEX_RE = re.compile(r"^0x[0-9a-f]+(:0x[0-9a-f]+)?$", re.I)
+
+
+def _limpar_valor(valor: str) -> str:
+    """Decodifica percent-encoding, troca `+` por espaco e normaliza espacos."""
+    return " ".join(unquote(str(valor or "")).replace("+", " ").split())
+
+
+def _parece_endereco(valor: str) -> bool:
+    """Heuristica conservadora: texto com letras, comprido o bastante e que nao seja ID/coord.
+
+    Prefere DEIXAR PASSAR pouco a arriscar geocodificar lixo: um valor errado aqui viraria um
+    relatorio no lugar errado, que e' pior que o link falhar com mensagem clara.
+    """
+    if len(valor) < 8 or _COORD_PURA_RE.match(valor) or _ID_HEX_RE.match(valor):
+        return False
+    return any(c.isalpha() for c in valor) and (" " in valor or "," in valor)
+
+
 def extrair_endereco_de_place_url(url: str) -> str:
     """Extrai o texto de endereco de uma URL `/maps/place/<NOME+ENDERECO>/...`.
 
@@ -64,11 +94,22 @@ def extrair_endereco_de_place_url(url: str) -> str:
     # morria em "Nao consegui localizar". O endereco vem completo, com CEP: geocodifica bem.
     m = _Q_ENDERECO_RE.search(texto)
     if m:
-        seg = unquote(m.group(1)).replace("+", " ")
-        seg = " ".join(seg.split())
-        if seg and not _COORD_PURA_RE.match(seg):
+        seg = _limpar_valor(m.group(1))
+        if _parece_endereco(seg):
             return seg
-    return ""
+
+    # ULTIMO RECURSO: qualquer OUTRO parametro cujo valor pareca endereco. Mesma razao do
+    # fallback generico de coordenada em `coord.py` -- a lista de nomes acima veio dos formatos
+    # que conhecemos, e um app novo pode usar um nome que ninguem previu. Pega o valor mais
+    # LONGO entre os candidatos: num link de place, o endereco completo e' quase sempre o campo
+    # mais extenso, enquanto os curtos sao rotulo/ID.
+    candidatos = [
+        limpo
+        for chave, bruto in _PARAM_RE.findall(texto)
+        if chave.casefold() not in _PARAMS_LIXO
+        and _parece_endereco(limpo := _limpar_valor(bruto))
+    ]
+    return max(candidatos, key=len) if candidatos else ""
 
 
 def expandir_link_curto(texto: str) -> str:
