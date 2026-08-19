@@ -62,3 +62,32 @@ def test_relatorio_municipal_in_recusa_municipio_absurdo() -> None:
 def test_limites_de_foto_sao_sensatos() -> None:
     assert pilot_app._FOTOS_MAX >= 2  # o PDF usa 2; sobra margem minima
     assert 0 < pilot_app._FOTO_MAX_BYTES <= 32 * 1024 * 1024
+
+
+# ── OpenAPI/docs desligados por padrao (pentest 2026-08-19) ──────────────────
+def test_openapi_e_docs_desligados_por_padrao() -> None:
+    """Sem MOTOR_PILOTO_DOCS=1 (o caso de producao), o piloto NAO expoe schema/UI:
+    um autenticado nao deve conseguir enumerar a superficie por /openapi.json|/docs|/redoc.
+    """
+    assert pilot_app.app.openapi_url is None
+    assert pilot_app.app.docs_url is None
+    assert pilot_app.app.redoc_url is None
+
+
+# ── Gate de concorrencia nas rotas de relatorio pesadas (pentest 2026-08-19) ──
+def test_rotas_pesadas_passam_pelo_semaforo() -> None:
+    """`/relatorio/municipal` e `/simulador/xlsx` devem serializar pelo `_PDF_SEMAFORO`
+    como /pontual e /comparacao ja' faziam — senao um flood satura o threadpool do
+    uvicorn e derruba ate' o /api/health.
+    """
+    import asyncio
+    import inspect
+
+    # As rotas viraram finas e assincronas; o corpo pesado do municipal virou helper sync.
+    assert asyncio.iscoroutinefunction(pilot_app.relatorio_municipal)
+    assert asyncio.iscoroutinefunction(pilot_app.simulador_xlsx)
+    assert not asyncio.iscoroutinefunction(pilot_app._gerar_relatorio_municipal_response)
+
+    # E ambas realmente entram no semaforo antes de delegar ao threadpool.
+    assert "_PDF_SEMAFORO" in inspect.getsource(pilot_app.relatorio_municipal)
+    assert "_PDF_SEMAFORO" in inspect.getsource(pilot_app.simulador_xlsx)

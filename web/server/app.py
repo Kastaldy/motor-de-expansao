@@ -186,7 +186,19 @@ FILA_MAX = 10  # tamanho maximo da fila do ultimo passo
 # `_etiqueta_crescimento`: no artefato vigente nenhuma UF chega perto, e o piso e defesa.
 _CRESC_PISO_MEDIANA = 1.0
 
-app = FastAPI(title="Piloto Web — Motor de Expansao", version="0.1.0")
+# OpenAPI/Swagger/ReDoc DESLIGADOS por padrao (pentest 2026-08-19): sem isso QUALQUER
+# usuario autenticado do piloto baixava /openapi.json|/docs|/redoc e enumerava toda a
+# superficie — inclusive a rota de ESCRITA `PUT /api/rede/cadastro/{id}` e o financeiro
+# `/api/rede/*`. Espelha o gate que a API Bearer ja fazia (api/main.py). Para inspecionar
+# em dev, exportar MOTOR_PILOTO_DOCS=1.
+_PILOTO_DOCS = os.environ.get("MOTOR_PILOTO_DOCS") == "1"
+app = FastAPI(
+    title="Piloto Web — Motor de Expansao",
+    version="0.1.0",
+    docs_url="/docs" if _PILOTO_DOCS else None,
+    redoc_url="/redoc" if _PILOTO_DOCS else None,
+    openapi_url="/openapi.json" if _PILOTO_DOCS else None,
+)
 # Em producao o SPA e a API sao servidos pela MESMA origem (mesmo container atras do
 # Caddy), entao CORS e irrelevante ali; estas origens sao so para o dev (Vite :5000).
 app.add_middleware(
@@ -6846,7 +6858,20 @@ class RelatorioMunicipalIn(BaseModel):
 
 
 @app.post("/api/relatorio/municipal")
-def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
+async def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
+    """Rota fina: gate de concorrencia `_PDF_SEMAFORO` + threadpool, igual a
+    /api/relatorio/pontual, /comparacao e /simulador/xlsx.
+
+    Antes (pentest 2026-08-19) esta rota era um `def` sincrono SEM o semaforo: varias
+    municipais concorrentes (cada ~45 s de CPU + fetch de tiles) saturavam o threadpool
+    do uvicorn e derrubavam ate' o /api/health. O corpo pesado agora vive no helper
+    sincrono `_gerar_relatorio_municipal_response`, chamado sob o teto de concorrencia.
+    """
+    async with _PDF_SEMAFORO:
+        return await run_in_threadpool(_gerar_relatorio_municipal_response, body)
+
+
+def _gerar_relatorio_municipal_response(body: RelatorioMunicipalIn) -> Response:
     """Relatorio Municipal (9 paginas). Acionado pelo 4o passo do mapa.
 
     Renderiza as 5 camadas de mapa (`render_mapas_municipio`) e AS PASSA ao gerador —
@@ -7340,8 +7365,13 @@ async def simulador_xlsx(body: ViabilidadeIn, rotulo: str | None = None) -> Resp
 
     GUARDRAILS: nada e escrito em disco (BytesIO dentro do gerador) e a demanda
     segue sendo PREMISSA do operador (DEC-009), nunca derivada de lat/lng.
+
+    Gate de concorrencia `_PDF_SEMAFORO` (pentest 2026-08-19): a montagem custa ~45 s de
+    CPU; sem o teto, N requisicoes concorrentes saturavam o threadpool do uvicorn e
+    derrubavam ate' o /api/health. Mesmo padrao de /api/relatorio/pontual e /comparacao.
     """
-    return await run_in_threadpool(_gerar_simulador_xlsx_response, body, rotulo)
+    async with _PDF_SEMAFORO:
+        return await run_in_threadpool(_gerar_simulador_xlsx_response, body, rotulo)
 
 
 def _gerar_simulador_xlsx_response(body: ViabilidadeIn, rotulo: str | None) -> Response:

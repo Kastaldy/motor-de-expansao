@@ -83,10 +83,39 @@ def test_host_maps_permitido_recusa_interno_e_desconhecido(host: str) -> None:
         ("https://evil.com/redir", False),
         ("", False),
         ("not-a-url", False),
+        # Bypass por DIVERGENCIA DE PARSER (pentest 2026-08-19): o `urlsplit` (validacao)
+        # ve `goo.gl` e liberava, mas `requests`/urllib3 conecta no host ANTES do
+        # backslash (`api:8077`, `169.254.169.254`). Todos devem ser recusados.
+        ("http://api:8077\\@goo.gl/", False),
+        ("http://169.254.169.254\\@goo.gl/", False),
+        ("https://goo.gl\\@api:8077/", False),
+        ("https://goo.gl /maps", False),  # espaco: separa os dois parsers
+        ("https://goo.gl\t/maps", False),  # tab: idem
     ],
 )
 def test_url_maps_segura(url: str, esperado: bool) -> None:
     assert url_maps_segura(url) is esperado
+
+
+def test_url_maps_segura_fecha_parser_differential() -> None:
+    """Regressao do pentest 2026-08-19: prova que o payload de backslash — que o
+    `urlsplit` lia como `goo.gl` mas o urllib3 discava em host interno — e' recusado.
+
+    O teste tambem DOCUMENTA a divergencia que sustentava o bypass, para que uma
+    futura mudanca no guardrail que a reintroduza quebre aqui de forma legivel.
+    """
+    from urllib.parse import urlsplit
+
+    from urllib3.util import parse_url
+
+    payload = "http://api:8077\\@goo.gl/"
+    # A divergencia REAL que o guardrail agora neutraliza:
+    assert (urlsplit(payload).hostname or "").lower() == "goo.gl"  # o que a validacao via
+    assert (parse_url(payload).host or "").lower() == "api"        # onde o requests discava
+    # E, apesar da divergencia, o guardrail recusa:
+    assert url_maps_segura(payload) is False
+    # O caminho legitimo continua liberado:
+    assert url_maps_segura("https://maps.app.goo.gl/abc123") is True
 
 
 # ── expandir_link_curto: SSRF bloqueada + caminho permitido ─────────────────
@@ -255,3 +284,40 @@ def test_dev_ignora_segredos_default() -> None:
         bot_senha="trocar-esta-senha",
     )
     _garantir_producao_sem_defaults(s)  # nao levanta em dev
+
+
+# ── OpenAPI/schema fechado em producao (pentest 2026-08-19) ─────────────────
+def test_api_openapi_e_docs_desligados_em_producao(monkeypatch) -> None:
+    """Em producao a API nao pode servir /openapi.json|/docs|/redoc: o probe de prod
+    achou /openapi.json=200 mesmo com /docs off (meia trava). Fecha o schema junto."""
+    from motor_expansao.api import main
+    from motor_expansao.api.settings import Settings
+
+    prod = Settings(
+        environment="production",
+        tokens={"tok-forte-abc": "bot"},
+        api_call_token="tok-forte-abc",
+        bot_senha="uma-senha-forte-123",
+    )
+    monkeypatch.setattr(main, "get_settings", lambda: prod)
+    app = main.create_app()
+    assert app.openapi_url is None
+    assert app.docs_url is None
+    assert app.redoc_url is None
+
+
+def test_api_openapi_ligado_fora_de_producao(monkeypatch) -> None:
+    """Fora de producao a docs interativa segue disponivel (conveniencia de dev)."""
+    from motor_expansao.api import main
+    from motor_expansao.api.settings import Settings
+
+    dev = Settings(
+        environment="development",
+        tokens={"tok-forte-abc": "bot"},
+        api_call_token="tok-forte-abc",
+        bot_senha="uma-senha-forte-123",
+    )
+    monkeypatch.setattr(main, "get_settings", lambda: dev)
+    app = main.create_app()
+    assert app.openapi_url == "/openapi.json"
+    assert app.docs_url == "/docs"
