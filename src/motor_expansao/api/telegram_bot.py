@@ -44,9 +44,11 @@ _BTN_PONTUAL = "Relatorio Pontual"
 # nativa do residual.
 _BTN_MUNICIPAL_HEX = "Municipal (hexagonos)"
 _BTN_MUNICIPAL_BAIRRO = "Municipal (bairros)"
-# Rotulo antigo: o teclado fica em CACHE no Telegram, entao quem ja usava o bot continua vendo
-# "Relatorio Municipal" ate abrir o menu de novo. Tratado como bairro (o default do produto).
-_BTN_MUNICIPAL = "Relatorio Municipal"
+# Rotulo antigo, mantido SO para reconhecer o toque: o teclado fica em CACHE no Telegram,
+# entao quem ja usava o bot continua vendo "Relatorio Municipal" ate abrir o menu de novo.
+# Ele NAO escolhe unidade -- responde explicando que a opcao virou duas e troca o teclado.
+# Mapear silenciosamente para bairro seria o mesmo chute que este ciclo veio eliminar.
+_BTN_MUNICIPAL_ANTIGO = "Relatorio Municipal"
 _KB_MENU = [[_BTN_PONTUAL], [_BTN_MUNICIPAL_HEX], [_BTN_MUNICIPAL_BAIRRO], ["Ajuda"]]
 _KB_VOLTAR = [["⬅️ Voltar"]]
 
@@ -73,7 +75,19 @@ _MENU = (
     "Toque em uma opcao abaixo. 👇"
 )
 
-_PEDIR_UF = "🗺️ *Relatorio Municipal* — primeiro, escolha o *estado (UF)*:"
+_MUNICIPAL_VIROU_DOIS = (
+    "ℹ️ O *Relatorio Municipal* agora tem duas leituras — escolha uma:\n\n"
+    "• *Municipal (hexagonos)* — mapas por hexagono (leitura de mercado)\n"
+    "• *Municipal (bairros)* — mapas por bairro (nomes que o time reconhece)\n\n"
+    "Toque em uma opcao abaixo. 👇"
+)
+
+
+def _pedir_uf(unidade: str) -> str:
+    """Prompt de UF dizendo QUAL relatorio esta sendo montado (o menu ja ficou para tras)."""
+    rotulo = "hexágonos" if unidade == "hexagono" else "bairros"
+    return f"🗺️ *Relatorio Municipal ({rotulo})* — escolha o *estado (UF)*:"
+
 
 
 def _pedir_municipio(uf: str) -> str:
@@ -326,19 +340,23 @@ def processar(
     if low in (_BTN_PONTUAL.lower(), "pontual", "relatorio", "relatório", "/relatorio"):
         s["etapa"] = None
         return [_msg(_PEDIR_LOCAL, _KB_MENU)]
-    if low in (_BTN_MUNICIPAL_BAIRRO.lower(), "bairros", "/bairros",
-               _BTN_MUNICIPAL.lower(), "municipal", "/municipal"):
+    if low in (_BTN_MUNICIPAL_BAIRRO.lower(), "bairros", "bairro", "/bairros"):
         s["etapa"] = "muni_uf"
         s["muni_unidade"] = "bairro"
-        return [_msg(_PEDIR_UF, _kb_ufs())]
-    if low in (_BTN_MUNICIPAL_HEX.lower(), "hexagonos", "hexágonos", "/hexagonos"):
+        return [_msg(_pedir_uf("bairro"), _kb_ufs())]
+    if low in (_BTN_MUNICIPAL_HEX.lower(), "hexagonos", "hexágonos", "/hexagonos",
+               "/municipal", "municipal"):
+        # `/municipal` cai no hexagono: e' o relatorio classico, o que esse comando sempre deu.
         s["etapa"] = "muni_uf"
         s["muni_unidade"] = "hexagono"
-        return [_msg(_PEDIR_UF, _kb_ufs())]
+        return [_msg(_pedir_uf("hexagono"), _kb_ufs())]
+    if low == _BTN_MUNICIPAL_ANTIGO.lower():
+        s["etapa"] = None
+        return [_msg(_MUNICIPAL_VIROU_DOIS, _KB_MENU)]
     # "Analisar" foi removido — trata um toque no botao fantasma (teclado antigo
     # em cache no Telegram) de forma limpa e ja troca o teclado para o atual.
     if low in ("analisar", "/analisar"):
-        return [_msg("Esse botao saiu. 🙂 Toque em *Relatorio Pontual* ou *Relatorio Municipal*.", _KB_MENU)]
+        return [_msg("Esse botao saiu. 🙂 Toque em *Relatorio Pontual*, *Municipal (hexagonos)* ou *Municipal (bairros)*.", _KB_MENU)]
 
     # 3. Fluxo do Relatorio Municipal: escolha da UF -> digitar o municipio.
     if s.get("etapa") == "muni_uf":
@@ -354,7 +372,7 @@ def processar(
     if s.get("etapa") == "muni_nome":
         if low in ("⬅️ voltar", "voltar", "cancelar"):
             s["etapa"] = "muni_uf"
-            return [_msg(_PEDIR_UF, _kb_ufs())]
+            return [_msg(_pedir_uf(s.get("muni_unidade", "bairro")), _kb_ufs())]
         uf = s.get("muni_uf", "")
         unidade = s.get("muni_unidade", "bairro")
         if notify is not None:
