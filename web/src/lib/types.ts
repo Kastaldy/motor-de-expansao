@@ -313,8 +313,9 @@ export interface PinIndependente {
   /**
    * Quantos dos `n_conc` são unidades de REDE vindas do agregador (DEC-034). Ela existe porque a
    * promessa da auditoria é "conta os pins no mapa e o número fecha", e parte dessas unidades
-   * **não tinha pin desenhado** até a metade 1 do BLK-MA-17. Medido: 7.218 de 19.329 linhas
-   * (37,3%) têm valor > 0 — sem esta parcela, a conta não fechava e a explicação não estava em
+   * **não tinha pin desenhado** até a metade 1 do BLK-MA-17. Medido: 5.451 de 19.329 linhas
+   * (28,2%) têm valor > 0 — eram 7.218 (37,3%) antes de o FU4 colapsar 320 duplicatas por nome.
+   * Sem esta parcela, a conta não fechava e a explicação não estava em
    * lugar nenhum da tela.
    */
   n_cadeias_feed: number | null

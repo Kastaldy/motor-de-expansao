@@ -166,3 +166,23 @@ def test_o_limiar_vem_do_contrato_e_nao_do_corpo() -> None:
     # `0,67` é o ponto de inflexão medido: com `0,50` o custo dobra (31 -> 64 academias reais
     # apagadas a 500 m) sem ganho equivalente.
     assert JACCARD_MIN_NOME == pytest.approx(0.67)
+
+
+def test_o_limiar_e_ESTRITAMENTE_maior_que_dois_tercos_de_proposito() -> None:
+    """A trava contra o "conserto" que parece óbvio e piora o resultado.
+
+    `0,67 > 2/3 = 0,6666...`, então `{a,b}` × `{a,b,c}` NÃO casa. Isso parece arredondamento
+    descuidado e foi auditado como tal em 2026-08-19. A medição mandou manter: baixar para `2/3`
+    ganha 27 duplicatas e **dobra** o custo (12 -> 27 academias reais apagadas), razão `1,8:1`
+    contra os `26,7:1` do critério como está.
+
+    A razão é estrutural, não numérica: o sufixo que distingue uma unidade da irmã é quase sempre
+    UM token (`OURO PRETO` × `OURO PRETO PRIME`, `AD3 - Tubarão - Humaitá` × `- Premium`), e é
+    exatamente esse caso que `2/3` passa a aceitar.
+    """
+    assert JACCARD_MIN_NOME > 2 / 3, "baixar para 2/3 dobra o custo — ver a tabela em identidade.py"
+
+    # O par de um token a mais fica logo ABAIXO do limiar, e isso é o comportamento correto.
+    a, b, rede = "OURO PRETO", "OURO PRETO PRIME", "pratique"
+    assert similaridade_nome(a, b, rede) == pytest.approx(2 / 3)
+    assert not mesma_unidade(a, b, rede), "unidade `PRIME` colapsou na irmã"

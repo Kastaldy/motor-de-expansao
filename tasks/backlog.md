@@ -1629,6 +1629,41 @@ construção e de propósito (`similaridade_nome` devolve `0` no caso vazio, que
 caso emblemático medido: `Evoque Academia Campo Grande` (feed) contra `'2939'` (mapeado), a 181 m.
 Sobram **~87** pares nessa condição, contra os 320 que o FU4 colapsou.
 
+> ### [ampliado em 2026-08-19 pela revisão adversarial pré-PR] O resíduo tem TRÊS causas, não uma
+>
+> O bloco nasceu descrevendo só a causa (a). A revisão mediu outras duas, e nenhuma é "insumo sem
+> nome" — o que muda o escopo, porque a saída (1) sozinha não resolve o bloco inteiro.
+>
+> **(a) Insumo sem nome — ~77 pares.** `'2939'` contra `Evoque Academia Campo Grande`. Discriminante
+> vazio ⇒ `similaridade_nome` devolve `0` por desenho. É a causa original do bloco.
+>
+> **(b) O limiar `0,67` é ESTRITAMENTE maior que `2/3` — 27 pares.** O par `{a,b}` × `{a,b,c}` (um
+> lado com um token a mais) dá `0,6667` e não casa: `SKYFIT ACADEMIA CAMPO BELO` ×
+> `Campo Belo - Campinas (SP)` a 162 m; `BlueFit 24h - Frei Caneca` × `Frei Caneca` a 223 m;
+> `PANOBIANCO EUTERPE - Nova Friburgo` × `NOVA FRIBURGO` a 177 m.
+>
+> **Isto foi auditado e a decisão medida foi MANTER.** Baixar para `2/3` ganha os 27 e **dobra o
+> custo** — de 12 para 27 academias reais apagadas (`1,8:1`, contra os `26,7:1` do critério atual).
+> Os falsos positivos novos são o padrão que o limiar existe para recusar: `OURO PRETO` ×
+> `OURO PRETO PRIME` a 142 m. Resolver estes 27 exige distinguir "token a mais é sufixo de unidade"
+> de "token a mais é complemento do topônimo" — o que o Jaccard, sozinho, não faz.
+>
+> **(c) Ordinal que é TOPÔNIMO, não número de unidade.** `ordinal_da_unidade` dispara em qualquer
+> romano de I a VI ou dígito de 2 a 9, em qualquer posição — inclusive quando o algarismo faz parte
+> do nome do lugar. Caso real medido: `Corpo e Saude - Guara QE 56` × `Corpo e Saude - Guara II QE 56`
+> a **259 m**, mesma rede, discriminante idêntico (Jaccard `1,00`), recusados porque `Guará II` é
+> **região administrativa do DF**, não a segunda unidade. Efeito medido num vizinho:
+> `Studio Silvia Campos` sobe de `60,394` para `68,674` pontos de pressão (**+8,28**).
+>
+> Agrava porque `len(t) > 2` descarta justamente o token que desempataria (`qe`, `56` — a quadra,
+> que é o endereço). Os dois filtros se somam no pior sentido: some a evidência e sobra a negação.
+>
+> **Consequência para o escopo:** as saídas (1) e (2) do bloco cobrem só a causa (a). As causas (b) e
+> (c) pedem outra coisa — distinguir o PAPEL do token (sufixo de unidade × parte do topônimo), o que
+> provavelmente exige uma lista de topônimos numerados conhecidos (Guará II, Riacho Fundo II, Ceilândia
+> II…) ou usar o endereço em vez do nome. Medir cada uma no molde ganho/custo do FU4 antes de
+> escolher.
+
 **Por que é de COLETOR, não de algoritmo.** `'2939'` não é um nome ruim de casar — é a ausência de
 nome. Nenhum matcher de string resolve, e afrouxar o critério para compensar reintroduziria
 exatamente os falsos positivos que a regra de ordinal eliminou (`Carpina` × `Carpina 2`).

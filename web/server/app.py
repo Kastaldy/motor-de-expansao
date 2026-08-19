@@ -497,7 +497,8 @@ _COLS_NOMEADAS = [
     "n_independentes_no_raio",
     # `[BLK-MA-17 metade 1 / DEC-035]` A terceira parcela da conta. Ela existia no artefato desde a
     # DEC-034 e NAO chegava a' tela: sem ela `n_conc` nao fecha com `n_indep` + pins de cadeia, e a
-    # explicacao nao esta em lugar nenhum. Medido: 7.218 de 19.329 linhas (37,3%) tem valor > 0.
+    # explicacao nao esta em lugar nenhum. Medido (regua do FU4): 5.451 de 19.329 linhas (28,2%)
+    # tem valor > 0 -- eram 7.218 (37,3%) antes de o FU4 colapsar 320 duplicatas por nome.
     "n_cadeias_do_feed_no_raio",
     "oferta_ponderada",
     "dist_concorrente_mais_proximo_m",

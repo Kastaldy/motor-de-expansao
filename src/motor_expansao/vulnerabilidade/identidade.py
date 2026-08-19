@@ -28,9 +28,10 @@ Jaccard alto ainda confundia **unidades numeradas** da mesma rede no mesmo bairr
 `Águas Claras II`, `Carpina` × `Carpina 2`, `CAMPO GRANDE` × `CAMPO GRANDE 2`. A causa era boba — o
 filtro de token curto descartava justamente o sufixo `2`/`II` que distingue.
 
-Aumentar o limiar de Jaccard **não** resolve (com `ii` incluído, `{aguas,claras}` ×
-`{aguas,claras,ii}` dá `0,67` e casaria mesmo assim). A regra certa é de **negação**: ordinais
-diferentes ⇒ unidades diferentes, por mais parecido que seja o resto.
+Mexer no limiar de Jaccard **não** resolve, e a razão é mais forte do que "casaria mesmo assim":
+`discriminante` já exclui os romanos, então no código real esse par tem Jaccard **exatamente
+`1,00`** — nenhum limiar o separa. A regra certa é de **negação**: ordinais diferentes ⇒ unidades
+diferentes, por mais parecido que seja o resto.
 
 Efeito medido dessa única regra, a `800 m`: o custo cai de **59 para 10** academias reais, com o
 ganho praticamente intacto (292 -> 285). A razão ganho/custo sai de `4,9:1` para `28,5:1`.
@@ -59,8 +60,25 @@ RUIDO_NOME: frozenset[str] = frozenset(
 
 _ROMANOS: dict[str, int] = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6}
 
-# Limiar de similaridade do discriminante. `0,67` é o ponto de inflexão medido: abaixo dele a
-# razão ganho/custo cai pela metade, acima dele não melhora mais (`1,00` dá o mesmo resultado).
+# Limiar de similaridade do discriminante.
+#
+# **`0,67` é ESTRITAMENTE MAIOR que `2/3 = 0,6666...`, e isso é deliberado.** A consequência é que o
+# par `{a,b}` × `{a,b,c}` — dois tokens em comum, um lado com um extra — NÃO casa. Parece um
+# descuido de arredondamento e foi auditado como tal em 2026-08-19; a medição mandou manter:
+#
+#   | limiar  | duplicatas a mais | academias REAIS apagadas |
+#   |---------|-------------------|--------------------------|
+#   | `0,67`  | (referência)      | **12** de 4.366 (0,27%)  |
+#   | `2/3`   | +27               | **27** de 4.366 (0,62%)  |
+#
+# Baixar para `2/3` DOBRA o custo para ganhar 27 — razão `1,8:1`, contra os `26,7:1` do critério
+# como está. E os falsos positivos novos são exatamente o padrão que este limiar existe para
+# recusar: `OURO PRETO` × `OURO PRETO PRIME` a 142 m, irmã do `AD3 - Tubarão - Humaitá` ×
+# `- Premium`. O sufixo que distingue uma unidade da outra é, quase sempre, UM token — que é
+# precisamente o que `2/3` passa a ignorar.
+#
+# Custo aceito: 27 duplicatas reais sobrevivem por este motivo (ex.: `SKYFIT ACADEMIA CAMPO BELO` ×
+# `Campo Belo - Campinas (SP)` a 162 m). Estão declaradas no `BLK-MA-17-FU5`.
 JACCARD_MIN_NOME = 0.67
 
 # Até onde a MESMA academia pode aparecer deslocada entre as duas fontes. Não é uma distância

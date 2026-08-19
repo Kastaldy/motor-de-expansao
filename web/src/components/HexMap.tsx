@@ -239,6 +239,25 @@ export interface HexMapProps {
   onCamera?: (v: ViewState) => void
 }
 
+/**
+ * Rótulo de EXIBIÇÃO do `status_churn`. Regra permanente do `CLAUDE.md` §2: valor bruto de enum
+ * nunca vai à tela — para exibir acentuado usa-se uma camada de LABEL, sem tocar o valor bruto.
+ *
+ * Dois dos quatro estados são impróprios como texto: `estavel` (sem acento) e `sumiu_recente` (com
+ * underscore). Hoje o defeito está DORMENTE porque as unidades do agregador estão todas em `novo`,
+ * que por acidente é uma palavra portuguesa válida — assim que a série do GymScraping acumular
+ * semanas, o operador leria literalmente "Presença na série: sumiu_recente".
+ *
+ * As chaves são exatamente `STATUS_CHURN_VALIDOS` (`contrato.py:70`). O fallback devolve o valor
+ * cru de propósito: um quinto estado futuro aparece feio, mas aparece — melhor que sumir da tela.
+ */
+const ROTULO_CHURN: Record<string, string> = {
+  novo: 'Série curta demais para julgar',
+  estavel: 'Estável',
+  piscando: 'Intermitente',
+  sumiu_recente: 'Sumiu recentemente',
+}
+
 export interface ViewState {
   longitude: number
   latitude: number
@@ -1023,7 +1042,7 @@ export default function HexMap({
                     : '')}
               {/* A TERCEIRA PARCELA (DEC-035). Sem ela a conta simplesmente nao fechava: as
                   unidades de rede vindas do agregador entram em `n_conc` e, quando colapsam contra
-                  um pin do funil, nao ganham pin proprio. Medido: 37,3% das linhas tem esta parcela
+                  um pin do funil, nao ganham pin proprio. Medido: 28,2% das linhas tem esta parcela
                   maior que zero. Declarar quantas sao e' o que devolve a conferibilidade. */}
               {indepHover.d.n_cadeias_feed !== null &&
                 indepHover.d.n_cadeias_feed > 0 &&
@@ -1219,7 +1238,12 @@ export default function HexMap({
                   }`}
                 />
               )}
-              {pinHover.d.churn && <Linha rotulo="Presença na série" valor={pinHover.d.churn} />}
+              {pinHover.d.churn && (
+                <Linha
+                  rotulo="Presença na série"
+                  valor={ROTULO_CHURN[pinHover.d.churn] ?? pinHover.d.churn}
+                />
+              )}
               <div
                 style={{
                   font: '400 9px/1.35 var(--f-ui)',
