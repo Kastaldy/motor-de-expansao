@@ -57,6 +57,18 @@ _LOCK = threading.Lock()
 _ultimo_dia_podado: date | None = None
 _avisou_falha = False
 
+#: Hooks chamados UMA vez por virada de dia, ANTES da poda — é o ponto onde o
+#: rollup da aba Acessos (emenda DEC-027) consolida um dia fechado antes que a
+#: retenção de 90 dias possa alcançá-lo. Registro externo (acesso_analytics) para
+#: não criar import circular; hook que falhar é engolido (a trilha é rastro).
+_hooks_virada_de_dia: list = []
+
+
+def registrar_hook_virada_de_dia(hook) -> None:
+    """Registra `hook(diretorio: Path)` para rodar na virada de dia, antes da poda."""
+    if hook not in _hooks_virada_de_dia:
+        _hooks_virada_de_dia.append(hook)
+
 
 def acesso_log_dir() -> Path:
     """Diretorio da trilha. `MOTOR_ACESSO_LOG_DIR` manda; default = `<repo>/data/acesso_log`."""
@@ -163,6 +175,11 @@ def registrar(evento: dict[str, object], base: Path | None = None) -> None:
             with _abrir_para_anexar(arquivo) as fh:
                 fh.write(linha + "\n")
             if _ultimo_dia_podado != agora.date():
+                for hook in list(_hooks_virada_de_dia):
+                    try:
+                        hook(diretorio)
+                    except Exception:  # noqa: BLE001 — hook não pode derrubar a trilha
+                        pass
                 _podar(diretorio, agora.date())
                 _ultimo_dia_podado = agora.date()
     except OSError as erro:

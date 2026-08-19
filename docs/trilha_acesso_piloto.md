@@ -133,9 +133,14 @@ A trilha ganhou um consumidor visual: a aba `Acessos` do piloto
 - **Rollup `uso-diario.json`** (mesmo diretório da trilha): consolidação
   write-once por dia BRT fechado com `{acoes, usuarios, por_aba}` — contagens,
   sem nome/IP/rota — e SEM poda: é o que dá tendência além dos 90 dias. Roda no
-  startup do `web` e a cada abertura da aba; o nome não casa com o padrão
-  `acesso-*.jsonl` da poda de propósito. Dia consolidado nunca é recalculado
-  (o histórico fica estável mesmo depois de a trilha ser podada).
+  startup do `web`, a cada abertura da aba **e na virada de dia da trilha**
+  (hook em `acesso_log.registrar`, ANTES da poda — app meses de pé sem abertura
+  da aba não perde dia). O nome não casa com o padrão `acesso-*.jsonl` da poda
+  de propósito. Dia consolidado nunca é recalculado (o histórico fica estável
+  mesmo depois de a trilha ser podada); um dia só consolida quando o SEU arquivo
+  UTC existe e está legível (nunca congela subcontagem). Rollup com conteúdo
+  inválido vai para quarentena (`uso-diario.json.corrompido`, bytes preservados)
+  e NUNCA é sobrescrito às cegas; falha de IO transitória só adia a rodada.
 - **Auto-observação fora das métricas**: `/api/acessos/*` entra na trilha
   (auditoria de quem olhou o painel) mas é excluído das contagens na aba E no
   relatório 3/3h do Telegram, pelo mesmo filtro (`evento_valido` +

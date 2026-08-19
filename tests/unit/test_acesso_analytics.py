@@ -65,9 +65,20 @@ def test_curl_de_diagnostico_fora_das_metricas(tmp_path: Path) -> None:
 
 
 def test_prefixo_do_painel_bate_com_o_filtro() -> None:
-    """Anti-drift: o prefixo real das rotas do painel está coberto pelo filtro."""
-    assert any("/api/acessos".startswith(p) or p == "/api/acessos" for p in rel.ROTAS_FORA_DA_METRICA)
-    assert not rel.evento_valido({"rota": "/api/acessos/resumo"})
+    """Anti-drift REAL: o prefixo do guard (acesso.py) deriva do filtro de métrica —
+    se um dos dois mudar sozinho, este teste aponta (não compara literal consigo)."""
+    import sys
+
+    server = Path(__file__).resolve().parents[2] / "web" / "server"
+    if str(server) not in sys.path:
+        sys.path.insert(0, str(server))
+    import acesso  # noqa: PLC0415
+
+    assert acesso.PREFIXO_ROTAS_ACESSOS.startswith(rel.ROTAS_FORA_DA_METRICA), (
+        "toda rota que o guard protege tem de estar fora das métricas"
+    )
+    assert not rel.evento_valido({"rota": acesso.PREFIXO_ROTAS_ACESSOS + "resumo"})
+    assert not rel.evento_valido({"rota": "/api/acessos/usuario/ana"})
     assert rel.evento_valido({"rota": "/api/ponto"})
 
 
@@ -139,11 +150,122 @@ def test_arquivo_do_rollup_escapa_da_poda_da_trilha(tmp_path: Path) -> None:
     assert not list(tmp_path.glob("acesso-*.jsonl"))
 
 
-def test_rollup_corrompido_degrada_para_vazio(tmp_path: Path) -> None:
-    aa.caminho_rollup(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+def test_rollup_corrompido_e_quarentenado_nunca_sobrescrito(tmp_path: Path) -> None:
+    """Conteúdo inválido NÃO vira '{}' silencioso (isso reescreveria o arquivo e
+    destruiria o histórico além dos 90 dias — defeito da revisão adversarial):
+    o arquivo vai para quarentena com os bytes preservados e a rodada não grava."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
     aa.caminho_rollup(tmp_path).write_text("{ nao e json", encoding="utf-8")
     _gravar(tmp_path, AGORA - timedelta(days=1))
-    assert aa.consolidar_rollup(tmp_path, agora_utc=AGORA) >= 1  # reconstrói sem levantar
+    assert aa.consolidar_rollup(tmp_path, agora_utc=AGORA) == 0  # rodada aborta
+    quarentena = tmp_path / (aa.ROLLUP_ARQUIVO + ".corrompido")
+    assert quarentena.read_text(encoding="utf-8") == "{ nao e json"
+    assert not aa.caminho_rollup(tmp_path).exists()
+    # A rodada SEGUINTE parte de 'ausente' e reconstrói o que a trilha ainda tem.
+    assert aa.consolidar_rollup(tmp_path, agora_utc=AGORA) >= 1
+    assert aa.caminho_rollup(tmp_path).exists()
+
+
+def test_rollup_ilegivel_por_io_nao_e_tocado(tmp_path: Path, monkeypatch) -> None:
+    """OSError de leitura com o arquivo VÁLIDO no disco (soluço de volume) não pode
+    quarentenar nem sobrescrever nada — só abortar e tentar na próxima."""
+    _gravar(tmp_path, AGORA - timedelta(days=2), usuario="ana")
+    aa.consolidar_rollup(tmp_path, agora_utc=AGORA)
+    conteudo_original = aa.caminho_rollup(tmp_path).read_text(encoding="utf-8")
+
+    original = Path.read_text
+
+    def _falha_no_rollup(self: Path, *args, **kwargs):
+        if self.name == aa.ROLLUP_ARQUIVO:
+            raise PermissionError("soluço de IO")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _falha_no_rollup)
+    _gravar(tmp_path, AGORA - timedelta(days=1), usuario="bia")
+    assert aa.consolidar_rollup(tmp_path, agora_utc=AGORA) == 0
+    monkeypatch.undo()
+    assert aa.caminho_rollup(tmp_path).read_text(encoding="utf-8") == conteudo_original
+    assert not (tmp_path / (aa.ROLLUP_ARQUIVO + ".corrompido")).exists()
+
+
+def test_entrada_estranha_no_rollup_nao_derruba_o_resumo_e_e_preservada(
+    tmp_path: Path,
+) -> None:
+    """JSON válido com entrada lixo (edição manual): a série ignora a entrada em vez
+    de explodir em date.fromisoformat, e a consolidação NÃO a apaga (só soma dias)."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    aa.caminho_rollup(tmp_path).write_text(
+        json.dumps({"_versao": 1, "dias": {"nota-do-felipe": "lembrete", "2026-08-17": {"acoes": 3, "usuarios": 1, "por_aba": {}}, "2026-08-18": "quebrado"}}),
+        encoding="utf-8",
+    )
+    _gravar(tmp_path, AGORA)
+    r = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)  # não pode levantar
+    assert any(d["dia"] == "2026-08-17" and d["acoes"] == 3 for d in r["serie"])
+    persistido = json.loads(aa.caminho_rollup(tmp_path).read_text(encoding="utf-8"))
+    assert persistido["dias"]["nota-do-felipe"] == "lembrete"  # preservada
+
+
+def test_trilha_ilegivel_nao_congela_subcontagem_no_write_once(tmp_path: Path) -> None:
+    """Arquivo da trilha EXISTENTE mas ilegível (aqui: um diretório com o nome do
+    jsonl) torna a janela não-confiável: o dia é PULADO e consolidado depois,
+    completo — nunca um número parcial congelado para sempre."""
+    _gravar(tmp_path, AGORA - timedelta(days=1), usuario="ana")  # evento real do dia 18
+    intruso = tmp_path / "acesso-2026-08-18.jsonl"
+    conteudo = intruso.read_text(encoding="utf-8")
+    intruso.unlink()
+    intruso.mkdir()  # read_text -> OSError (existe, mas não é legível como arquivo)
+    assert aa.consolidar_rollup(tmp_path, agora_utc=AGORA) == 0
+    intruso.rmdir()
+    intruso.write_text(conteudo, encoding="utf-8")
+    assert aa.consolidar_rollup(tmp_path, agora_utc=AGORA) == 1
+    dias = json.loads(aa.caminho_rollup(tmp_path).read_text(encoding="utf-8"))["dias"]
+    assert dias["2026-08-18"]["acoes"] == 1
+
+
+def test_dia_sem_arquivo_proprio_nao_e_consolidado_pelo_transbordo(tmp_path: Path) -> None:
+    """Só o arquivo do dia SEGUINTE presente (o próprio já podado, na borda da
+    retenção): consolidar o dia D só com as 3h de transbordo congelaria uma
+    subcontagem — D fica fora do rollup (a série o zera por gap-fill)."""
+    # Evento de 01:00 UTC do dia 18 = 22:00 BRT do dia 17; arquivo do dia 17 não existe.
+    _gravar(tmp_path, datetime(2026, 8, 18, 1, 0, tzinfo=UTC), usuario="ana")
+    aa.consolidar_rollup(tmp_path, agora_utc=AGORA)
+    dias = json.loads(aa.caminho_rollup(tmp_path).read_text(encoding="utf-8"))["dias"]
+    assert "2026-08-17" not in dias  # sem arquivo próprio, não congela parcial
+    assert "2026-08-18" in dias
+
+
+def test_resumo_propaga_o_relogio_injetado_para_a_consolidacao(tmp_path: Path) -> None:
+    """`resumo(agora_utc=passado)` não pode consolidar (write-once!) um dia que,
+    para o chamador, ainda está aberto."""
+    _gravar(tmp_path, AGORA, usuario="ana")  # dia 19: aberto segundo AGORA
+    aa.resumo(tmp_path, dias=7, agora_utc=AGORA)
+    if aa.caminho_rollup(tmp_path).exists():
+        dias = json.loads(aa.caminho_rollup(tmp_path).read_text(encoding="utf-8"))["dias"]
+        assert AGORA.date().isoformat() not in dias
+
+
+def test_serie_cai_para_contagem_viva_quando_o_rollup_nao_grava(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Volume sem escrita: a série não pode mostrar zero num dia fechado cuja
+    atividade está visível na própria janela — cai para a contagem ao vivo."""
+    monkeypatch.setattr(aa, "_gravar_rollup", lambda *a, **k: (_ for _ in ()).throw(OSError()))
+    _gravar(tmp_path, AGORA - timedelta(days=1), usuario="ana")
+    r = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)
+    ontem = next(d for d in r["serie"] if d["dia"] == "2026-08-18")
+    assert ontem["acoes"] == 1 and ontem["usuarios"] == 1
+
+
+def test_virada_de_dia_da_trilha_consolida_antes_da_poda(tmp_path: Path, monkeypatch) -> None:
+    """O hook registrado em acesso_log dispara a consolidação na MESMA cadência da
+    poda — app 90 dias de pé sem abertura da aba não perde dia (defeito da revisão)."""
+    monkeypatch.setattr(acesso_log, "_ultimo_dia_podado", None)
+    _gravar(tmp_path, AGORA - timedelta(days=1), usuario="ana")
+    acesso_log.registrar({"usuario": "ana", "rota": "/api/ponto"}, base=tmp_path)
+    assert aa.caminho_rollup(tmp_path).exists(), (
+        "a virada de dia do registrar() deveria ter consolidado o rollup via hook"
+    )
+    assert aa.consolidar_rollup_seguro in acesso_log._hooks_virada_de_dia
 
 
 def test_consolidar_seguro_nunca_levanta(monkeypatch) -> None:
@@ -167,7 +289,7 @@ def test_serie_preenche_dia_sem_arquivo_com_zero(tmp_path: Path) -> None:
 
 def test_resumo_agrupa_por_usuario_e_aba(tmp_path: Path) -> None:
     _gravar(tmp_path, AGORA, usuario="felipe", rota="/api/simulador/xlsx")
-    _gravar(tmp_path, AGORA, usuario="felipe", rota="/api/ponto")
+    _gravar(tmp_path, AGORA, usuario="felipe", rota="/api/ponto", query="lat=-8.1&lng=-34.9")
     _gravar(tmp_path, AGORA, usuario="ana", rota="/api/rede/carteira", ip="10.0.0.2")
     r = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)
     assert r["hoje"]["usuarios"] == 2
@@ -176,6 +298,10 @@ def test_resumo_agrupa_por_usuario_e_aba(tmp_path: Path) -> None:
     assert linhas["felipe"]["abas"] == ["Mapa", "Viabilidade"]
     assert linhas["ana"]["abas"] == ["Executiva"]
     assert linhas["ana"]["ips"] == 1
+    # Promessa (b) da emenda, no payload INTEIRO: IP bruto e query nunca saem.
+    bruto = json.dumps(r, ensure_ascii=False, default=str)
+    assert "10.0.0.1" not in bruto and "10.0.0.2" not in bruto
+    assert "lat=-8.1" not in bruto
 
 
 def test_janela_e_limitada_ao_teto_da_trilha(tmp_path: Path) -> None:
@@ -195,7 +321,9 @@ def test_ficha_traz_features_e_nunca_a_query(tmp_path: Path) -> None:
     assert ficha is not None
     features = {f["feature"] for f in ficha["features"]}
     assert features == {"Buscou endereço", "Gerou relatório pontual"}
-    assert "Sigilosa" not in json.dumps(ficha, ensure_ascii=False)
+    bruto = json.dumps(ficha, ensure_ascii=False, default=str)
+    assert "Sigilosa" not in bruto
+    assert "10.0.0.1" not in bruto  # IP bruto nunca sai — só a contagem `ips`
     assert ficha["dias"][0]["ini"] == "12:00" and ficha["dias"][0]["acoes"] == 2
 
 

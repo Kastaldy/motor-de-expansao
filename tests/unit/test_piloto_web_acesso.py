@@ -367,3 +367,120 @@ def test_ficha_inexistente_devolve_404_mesmo_para_admin(
     with pytest.raises(HTTPException) as exc:
         pilot_app.acessos_usuario("ninguem_com_esse_nome", remote_user="felipe")
     assert exc.value.status_code == 404
+
+
+# --- o APP de verdade aplica o guard (anti falso-verde, revisao 2026-08-19) ------
+# As funcoes puras acima poderiam existir sem ninguem chama-las; estes testes
+# travam o registro do middleware, o comportamento dele, o startup do rollup e o
+# vazamento de existencia via OpenAPI.
+
+import asyncio  # noqa: E402
+
+
+class _UrlFake:
+    def __init__(self, caminho: str):
+        self.path = caminho
+
+
+class _CabecalhosFake(dict):
+    def get(self, chave: str, default=None):  # type: ignore[override]
+        for k, v in self.items():
+            if k.lower() == str(chave).lower():
+                return v
+        return default
+
+
+class _RequisicaoFake:
+    def __init__(self, caminho: str, usuario: str | None = None):
+        self.url = _UrlFake(caminho)
+        self.headers = _CabecalhosFake(
+            {"Remote-User": usuario} if usuario is not None else {}
+        )
+
+
+def _rodar_controle(caminho: str, usuario: str | None):
+    chamado = {"handler": False}
+
+    async def _proximo(_req):
+        chamado["handler"] = True
+
+        class _R:
+            status_code = 200
+
+        return _R()
+
+    resposta = asyncio.run(
+        pilot_app._controle_de_acesso_por_aba(_RequisicaoFake(caminho, usuario), _proximo)
+    )
+    return resposta, chamado["handler"]
+
+
+def test_middleware_de_controle_esta_registrado_no_app() -> None:
+    dispatches = [
+        getattr(m, "kwargs", {}).get("dispatch") for m in pilot_app.app.user_middleware
+    ]
+    assert pilot_app._controle_de_acesso_por_aba in dispatches
+
+
+def test_middleware_devolve_404_do_painel_sem_chamar_o_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _com_allowlist(monkeypatch, "felipe")
+    resposta, handler_rodou = _rodar_controle("/api/acessos/resumo", "ana")
+    assert resposta.status_code == 404 and handler_rodou is False
+    resposta, handler_rodou = _rodar_controle("/api/acessos/resumo", None)
+    assert resposta.status_code == 404 and handler_rodou is False
+
+
+def test_middleware_deixa_o_admin_passar_ate_o_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _com_allowlist(monkeypatch, "felipe")
+    resposta, handler_rodou = _rodar_controle("/api/acessos/resumo", "felipe")
+    assert handler_rodou is True and resposta.status_code == 200
+
+
+def test_rota_futura_sob_o_prefixo_ja_nasce_guardada(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O guard vive no middleware por prefixo: rota nova /api/acessos/* nao depende
+    de ninguem lembrar da dependencia por rota."""
+    _com_allowlist(monkeypatch, "felipe")
+    resposta, handler_rodou = _rodar_controle("/api/acessos/rota-que-nem-existe", "ana")
+    assert resposta.status_code == 404 and handler_rodou is False
+
+
+def test_openapi_nao_anuncia_o_painel() -> None:
+    """/openapi.json e /docs sao livres para qualquer autenticado; os paths do
+    painel ficam FORA do schema (include_in_schema=False), senao o 404 'nao
+    anunciado' seria anulado pelos metadados (revisao adversarial 2026-08-19)."""
+    pilot_app.app.openapi_schema = None  # limpa cache de schema de outros testes
+    paths = pilot_app.app.openapi().get("paths", {})
+    vazados = [p for p in paths if p.startswith("/api/acessos")]
+    assert not vazados, f"rotas do painel anunciadas no OpenAPI: {vazados}"
+
+
+def test_startup_consolida_o_rollup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """O hook de startup existe, esta registrado e produz o rollup de verdade."""
+    assert pilot_app._consolidar_rollup_de_uso in pilot_app.app.router.on_startup
+    import json as _json
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+
+    from motor_expansao.dashboard import acesso_analytics as _aa
+
+    trilha = tmp_path / "trilha"
+    trilha.mkdir()
+    # D-2 e' um dia BRT ja fechado em qualquer fuso; o de hoje nao consolidaria.
+    dia = (_dt.now(_UTC).date() - _td(days=2)).isoformat()
+    (trilha / f"acesso-{dia}.jsonl").write_text(
+        _json.dumps({"quando": f"{dia}T12:00:00+00:00", "usuario": "ana", "rota": "/api/ponto"})
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MOTOR_ACESSO_LOG_DIR", str(trilha))
+    pilot_app._consolidar_rollup_de_uso()
+    assert _aa.caminho_rollup(trilha).exists()

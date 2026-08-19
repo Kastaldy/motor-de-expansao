@@ -119,6 +119,10 @@ python scripts/semear_cadastro_unidades.py     --planilha "ANALISE DIARIA DASHBO
 O compose já monta `/opt/motor-expansao/cadastro:/app/cadastro:rw` (e, desde a DEC-027,
 `/opt/motor-expansao/logs/acesso:/app/logs/acesso:rw` com
 `MOTOR_ACESSO_LOG_DIR=/app/logs/acesso`) e passa `MOTOR_CADASTRO_DIR=/app/cadastro`.
+Desde a emenda da DEC-027 (2026-08-19) o compose também repassa
+`MOTOR_ACESSOS_ADMIN_USUARIOS` (allowlist da aba Acessos; valor no `.env` da VPS,
+ex.: `MOTOR_ACESSOS_ADMIN_USUARIOS=felipe`) — ausente/vazia, a aba fica desligada
+para todos (404), sem afetar o resto do piloto.
 **Sem o diretório o piloto sobe igual** — a aba degrada: os filtros de consultor ficam
 vazios e o `PUT` devolve 503 com mensagem clara.
 

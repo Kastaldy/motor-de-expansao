@@ -41,8 +41,13 @@ function Secao({ titulo, children }: { titulo: string; children: React.ReactNode
   )
 }
 
+/** Teto de barras renderizadas: acima disso (minWidth 2px + gap) o gráfico
+ *  estouraria o card — a série do rollup cresce para sempre. */
+const MAX_BARRAS_SERIE = 180
+
 /** Barras diárias (ações/dia) com título por barra — divs, mesma técnica dos ExecCharts. */
-function BarrasSerie({ serie }: { serie: AcessosResumo['serie'] }) {
+function BarrasSerie({ serie: serieCompleta }: { serie: AcessosResumo['serie'] }) {
+  const serie = serieCompleta.slice(-MAX_BARRAS_SERIE)
   const max = Math.max(1, ...serie.map((d) => d.acoes))
   return (
     <div>
@@ -71,7 +76,11 @@ function BarrasSerie({ serie }: { serie: AcessosResumo['serie'] }) {
           color: 'var(--tx-muted)',
         }}
       >
-        <span>{diaCurto(serie[0]?.dia ?? null)}</span>
+        <span>
+          {serieCompleta.length > MAX_BARRAS_SERIE
+            ? `últimos ${MAX_BARRAS_SERIE} dias (série desde ${diaCurto(serieCompleta[0]?.dia ?? null)})`
+            : diaCurto(serie[0]?.dia ?? null)}
+        </span>
         <span>{diaCurto(serie[serie.length - 1]?.dia ?? null)}</span>
       </div>
     </div>
@@ -422,6 +431,7 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
               key={j}
               type="button"
               onClick={() => setDias(j)}
+              aria-pressed={dias === j}
               style={{
                 padding: '7px 11px',
                 borderRadius: 'var(--r-md)',
@@ -472,7 +482,19 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
           aberta ? (
             <FichaUsuarioAcessos nome={aberta} dias={dias} onVoltar={() => setAberta(null)} />
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 1180 }}>
+            // Refetch (troca de janela) com dado antigo na tela: esmaece e trava o
+            // clique em vez de piscar um spinner — feedback sem perder o contexto.
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+                maxWidth: 1180,
+                opacity: carregando ? 0.55 : 1,
+                pointerEvents: carregando ? 'none' : 'auto',
+                transition: 'opacity .15s ease',
+              }}
+            >
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 <Kpi label="Usuários hoje" valor={String(resumo.hoje.usuarios)} />
                 <Kpi label="Ações hoje" valor={String(resumo.hoje.acoes)} />

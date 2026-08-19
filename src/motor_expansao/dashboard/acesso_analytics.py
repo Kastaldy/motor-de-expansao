@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 from collections import Counter
 from datetime import UTC, date, datetime, timedelta
@@ -42,6 +43,7 @@ from motor_expansao.api.relatorio_acessos import (
     _quando_brt,
     evento_valido,
 )
+from motor_expansao.dashboard import acesso_log
 from motor_expansao.dashboard.acesso_log import (
     PREFIXO_ARQUIVO,
     SUFIXO_ARQUIVO,
@@ -105,18 +107,26 @@ def _dias_utc_para_janela_brt(primeiro_brt: date, ultimo_brt: date) -> list[date
 
 def _eventos_da_janela(
     diretorio: Path, primeiro_brt: date, ultimo_brt: date
-) -> list[dict[str, object]]:
-    """Eventos válidos da janela BRT, cada um com `momento` (datetime BRT) e `aba`.
+) -> tuple[list[dict[str, object]], bool]:
+    """Eventos válidos da janela BRT (com `momento` BRT e `aba`) + flag de confiança.
 
     Linha ilegível é ignorada (a trilha é rastro, não transação). O filtro de
-    validade (`evento_valido`) é o MESMO do relatório do Telegram.
+    validade (`evento_valido`) é o MESMO do relatório do Telegram. O segundo item
+    é `False` quando algum arquivo da janela EXISTE mas não pôde ser lido (IO/
+    permissão) — a janela está incompleta e a consolidação write-once não deve
+    congelar uma subcontagem (defeito da revisão adversarial de 2026-08-19).
+    Arquivo simplesmente ausente é normal (dia sem tráfego) e não derruba a flag.
     """
     eventos: list[dict[str, object]] = []
+    confiavel = True
     for dia_utc in _dias_utc_para_janela_brt(primeiro_brt, ultimo_brt):
         arquivo = _arquivo_do_dia_utc(diretorio, dia_utc)
         try:
             linhas = arquivo.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            continue
         except OSError:
+            confiavel = False
             continue
         for bruta in linhas:
             try:
@@ -131,7 +141,7 @@ def _eventos_da_janela(
             r["momento"] = momento
             r["aba"] = _aba_da_rota(str(r.get("rota", "")))
             eventos.append(r)
-    return eventos
+    return eventos, confiavel
 
 
 def _feature_do_evento(r: dict[str, object]) -> str:
@@ -158,13 +168,66 @@ def caminho_rollup(diretorio: Path | None = None) -> Path:
     return (diretorio or acesso_log_dir()) / ROLLUP_ARQUIVO
 
 
-def _ler_rollup(diretorio: Path) -> dict[str, dict[str, object]]:
+#: Um aviso por processo quando o rollup for quarentenado (mesmo padrão da trilha).
+_avisou_rollup_corrompido = False
+
+
+def _carregar_rollup(diretorio: Path) -> tuple[str, dict[str, dict[str, object]]]:
+    """`('ok'|'ausente'|'ilegivel'|'corrompido', dias)`.
+
+    A distinção importa (revisão adversarial de 2026-08-19): tratar QUALQUER falha
+    como "vazio" fazia a consolidação REESCREVER o arquivo só com os dias que ainda
+    sobrevivem na trilha de 90 dias — destruindo o histórico longo em silêncio.
+    `ilegivel` = OSError com o arquivo existindo (soluço de IO: não tocar, tentar
+    depois); `corrompido` = conteúdo inválido (quarentenar, nunca sobrescrever).
+    """
+    caminho = caminho_rollup(diretorio)
     try:
-        bruto = json.loads(caminho_rollup(diretorio).read_text(encoding="utf-8"))
-        dias = bruto.get("dias")
-        return dias if isinstance(dias, dict) else {}
-    except (OSError, ValueError):
-        return {}
+        bruto = json.loads(caminho.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return "ausente", {}
+    except OSError:
+        return "ilegivel", {}
+    except ValueError:
+        return "corrompido", {}
+    dias = bruto.get("dias") if isinstance(bruto, dict) else None
+    if not isinstance(dias, dict):
+        return "corrompido", {}
+    return "ok", dias
+
+
+def _entradas_validas(dias: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
+    """Só entradas com chave-data ISO e valor dict — entrada estranha (edição manual)
+    não pode derrubar a série com 500; na regravação ela é PRESERVADA (só se soma)."""
+    validas: dict[str, dict[str, object]] = {}
+    for chave, info in dias.items():
+        if not isinstance(info, dict):
+            continue
+        try:
+            date.fromisoformat(str(chave))
+        except (TypeError, ValueError):
+            continue
+        validas[str(chave)] = info
+    return validas
+
+
+def _quarentenar_rollup(diretorio: Path) -> None:
+    """Renomeia o rollup corrompido para `.corrompido` (bytes preservados para
+    recuperação manual) e avisa uma vez no stderr. A próxima consolidação parte de
+    'ausente' e reconstrói o que a trilha ainda tem — nada é sobrescrito às cegas."""
+    global _avisou_rollup_corrompido
+    destino = caminho_rollup(diretorio)
+    try:
+        os.replace(destino, destino.with_name(destino.name + ".corrompido"))
+    except OSError:
+        return  # não conseguiu nem quarentenar: não toca em nada, tenta depois
+    if not _avisou_rollup_corrompido:
+        print(
+            f"[acesso_analytics] rollup corrompido movido para {destino.name}.corrompido — "
+            "a série longa será reconstruída a partir da trilha vigente",
+            file=sys.stderr,
+        )
+        _avisou_rollup_corrompido = True
 
 
 def _gravar_rollup(diretorio: Path, dias: dict[str, dict[str, object]]) -> None:
@@ -201,6 +264,11 @@ def consolidar_rollup(diretorio: Path | None = None, agora_utc: datetime | None 
     base = diretorio or acesso_log_dir()
     hoje_brt = ((agora_utc or datetime.now(UTC)) + _FUSO_BRT).date()
 
+    # Um dia BRT só é candidato se o SEU arquivo UTC existir. O arquivo do dia
+    # seguinte (que carrega 21h-24h BRT) é lido junto quando presente; mas
+    # consolidar um dia só pelo transbordo do vizinho congelaria uma contagem
+    # parcial de 3h no write-once (ex.: o arquivo próprio já podado na borda da
+    # retenção) — defeito da revisão adversarial de 2026-08-19.
     candidatos: set[date] = set()
     try:
         arquivos = list(base.glob(f"{PREFIXO_ARQUIVO}*{SUFIXO_ARQUIVO}"))
@@ -208,21 +276,26 @@ def consolidar_rollup(diretorio: Path | None = None, agora_utc: datetime | None 
         return 0
     for arquivo in arquivos:
         try:
-            dia_utc = date.fromisoformat(
-                arquivo.name[len(PREFIXO_ARQUIVO) : -len(SUFIXO_ARQUIVO)]
+            candidatos.add(
+                date.fromisoformat(arquivo.name[len(PREFIXO_ARQUIVO) : -len(SUFIXO_ARQUIVO)])
             )
         except ValueError:
             continue
-        # O arquivo UTC do dia d carrega os dias BRT d-1 (21h-24h) e d (0h-21h).
-        candidatos.update({dia_utc - timedelta(days=1), dia_utc})
 
     with _LOCK_ROLLUP:
-        dias = _ler_rollup(base)
+        status, dias = _carregar_rollup(base)
+        if status == "ilegivel":
+            return 0  # soluço de IO com o arquivo lá: não sobrescrever histórico
+        if status == "corrompido":
+            _quarentenar_rollup(base)
+            return 0  # a próxima rodada parte de 'ausente' e reconstrói
         novos = 0
         for dia in sorted(candidatos):
             if dia >= hoje_brt or dia.isoformat() in dias:
                 continue  # dia aberto (ainda muda) ou já consolidado (write-once)
-            eventos = _eventos_da_janela(base, dia, dia)
+            eventos, confiavel = _eventos_da_janela(base, dia, dia)
+            if not confiavel:
+                continue  # arquivo existente mas ilegível: não congelar subcontagem
             dias[dia.isoformat()] = _dia_de_rollup(eventos)
             novos += 1
         if novos:
@@ -230,12 +303,21 @@ def consolidar_rollup(diretorio: Path | None = None, agora_utc: datetime | None 
     return novos
 
 
-def consolidar_rollup_seguro(diretorio: Path | None = None) -> int:
-    """Como `consolidar_rollup`, mas nunca levanta (uso no startup e na rota)."""
+def consolidar_rollup_seguro(
+    diretorio: Path | None = None, agora_utc: datetime | None = None
+) -> int:
+    """Como `consolidar_rollup`, mas nunca levanta (startup, rota e virada de dia)."""
     try:
-        return consolidar_rollup(diretorio)
+        return consolidar_rollup(diretorio, agora_utc=agora_utc)
     except Exception:  # noqa: BLE001 — analytics é rastro, não pode derrubar o app
         return 0
+
+
+# A poda da trilha (90 dias) roda na virada de dia dentro de `acesso_log.registrar`;
+# a consolidação PRECISA acontecer antes que ela alcance um dia ainda não rollupado
+# (app 90+ dias sem restart e sem abertura da aba perderia dias — revisão adversarial
+# de 2026-08-19). O hook amarra as duas cadências sem import circular.
+acesso_log.registrar_hook_virada_de_dia(consolidar_rollup_seguro)
 
 
 # ---------------------------------------------------------------------------
@@ -312,22 +394,38 @@ def resumo(
     hoje = agora_brt.date()
     primeiro = hoje - timedelta(days=dias - 1)
 
-    consolidar_rollup_seguro(base)
-    eventos = _eventos_da_janela(base, primeiro, hoje)
+    consolidar_rollup_seguro(base, agora_utc)
+    eventos, _confiavel = _eventos_da_janela(base, primeiro, hoje)
     de_hoje = [r for r in eventos if r["momento"].date() == hoje]
+
+    # Contagens AO VIVO por dia BRT da janela: alimentam o "hoje" da série e o
+    # fallback dos dias fechados que o rollup não tem (ex.: escrita indisponível) —
+    # sem isso a série mostraria zero para um dia com atividade visível logo abaixo.
+    vivos: dict[str, dict[str, object]] = {}
+    for r in eventos:
+        d = r["momento"].date().isoformat()
+        v = vivos.setdefault(d, {"acoes": 0, "usuarios": set()})
+        v["acoes"] += 1
+        v["usuarios"].add(str(r.get("usuario") or "desconhecido"))
 
     # Série longa: dias fechados vêm do rollup (sobrevivem à poda); hoje entra ao
     # vivo. Dias sem arquivo (container parado = nenhum acesso servível) entram
-    # como zero para o gráfico não pular datas.
-    rollup = _ler_rollup(base)
+    # como zero para o gráfico não pular datas. Entrada estranha no rollup (edição
+    # manual) é ignorada aqui — nunca um 500 (revisão adversarial de 2026-08-19).
+    rollup = _entradas_validas(_carregar_rollup(base)[1])
+    inicios = [date.fromisoformat(d) for d in (*rollup, *vivos)]
     serie: list[dict[str, object]] = []
-    if rollup:
-        cursor = date.fromisoformat(min(rollup))
+    if inicios:
+        cursor = min(inicios)
         while cursor < hoje:
-            info = rollup.get(cursor.isoformat(), {})
+            chave = cursor.isoformat()
+            info = rollup.get(chave)
+            if info is None and chave in vivos:
+                info = {"acoes": vivos[chave]["acoes"], "usuarios": len(vivos[chave]["usuarios"])}
+            info = info or {}
             serie.append(
                 {
-                    "dia": cursor.isoformat(),
+                    "dia": chave,
                     "acoes": info.get("acoes", 0),
                     "usuarios": info.get("usuarios", 0),
                 }
@@ -400,11 +498,8 @@ def ficha_usuario(
     hoje = ((agora_utc or datetime.now(UTC)) + _FUSO_BRT).date()
     primeiro = hoje - timedelta(days=dias - 1)
 
-    eventos = [
-        r
-        for r in _eventos_da_janela(base, primeiro, hoje)
-        if str(r.get("usuario") or "desconhecido") == nome
-    ]
+    da_janela, _confiavel = _eventos_da_janela(base, primeiro, hoje)
+    eventos = [r for r in da_janela if str(r.get("usuario") or "desconhecido") == nome]
     if not eventos:
         return None
 

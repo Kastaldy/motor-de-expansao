@@ -2327,7 +2327,10 @@ def _exigir_admin_acessos(remote_user: str | None) -> None:
         raise HTTPException(status_code=404, detail="Not Found")
 
 
-@app.get("/api/acessos/resumo")
+# `include_in_schema=False` nas duas rotas: sem ele, /openapi.json e /docs (livres
+# para qualquer autenticado) listavam os paths e as descricoes do painel — anulando
+# o 404 "existencia nao anunciada" (revisao adversarial de 2026-08-19).
+@app.get("/api/acessos/resumo", include_in_schema=False)
 def acessos_resumo(
     dias: int = acesso_analytics.JANELA_DIAS_DEFAULT,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
@@ -2337,7 +2340,7 @@ def acessos_resumo(
     return acesso_analytics.resumo(dias=dias)
 
 
-@app.get("/api/acessos/usuario/{nome}")
+@app.get("/api/acessos/usuario/{nome}", include_in_schema=False)
 def acessos_usuario(
     nome: str,
     dias: int = acesso_analytics.JANELA_DIAS_DEFAULT,
