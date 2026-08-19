@@ -1689,6 +1689,43 @@ READ-ONLY sobre o M1; suíte verde.
 
 ---
 
+### BLK-WEB-23 — O ícone com halo duplica o PNG no payload: ~1,4 MB de bytes repetidos por município
+
+| | |
+|---|---|
+| **Criticidade** | **Baixa** — não muda número nenhum; é peso de payload e memória de textura. READ-ONLY sobre o M1. |
+| **Prioridade** | Baixa. Vale antes de a camada crescer para mais UFs, não antes do merge. |
+| **Esteira** | Builder → QA (sem gate). |
+| **Status** | Pendente — **achado da revisão adversarial pré-PR (2026-08-19)**, medido. |
+| **Depende de** | BLK-MA-17 metade 1 (DEC-035 emenda 1) — é ela que cria a variante com halo. |
+| **Autonomia** | **manual (NÃO loop-safe)** |
+
+**O defeito, medido.** `_icone_rede(rede, halo=True)` gera um SVG NOVO que re-embute o **mesmo PNG
+em base64** do ícone sem halo. As duas variantes vão juntas no dicionário `pins.icones`, então cada
+rede com diagnóstico no recorte paga o logo duas vezes. Em São Paulo são **29 redes com halo**, o
+que dá **~1,44 MB** de base64 — quase todo ele byte a byte idêntico ao que já está no payload.
+
+**Por que não foi corrigido junto.** A duplicação é consequência de o ícone ser um data-URI
+autocontido, que é o que o `IconLayer` do deck.gl consome hoje. Resolver bem exige escolher entre:
+
+1. **Halo como CAMADA, não como ícone** — um `ScatterplotLayer` de círculos vazados desenhado
+   ATRÁS do `IconLayer`, alinhado por coordenada. Elimina a duplicação por completo e o halo passa a
+   ser um parâmetro visual, não uma textura. Custo: mais uma camada e o risco de desalinhamento em
+   zoom extremo.
+2. **`<use>` / símbolo SVG** — embutir o PNG uma vez e referenciá-lo. Falha se o deck.gl rasterizar
+   cada data-URI isoladamente, que é o comportamento provável; precisa ser medido antes.
+3. **Servir os logos como arquivo** em vez de data-URI, com cache HTTP. Muda o contrato de
+   `pins.icones` e afeta todos os pins, não só os com halo.
+
+**Fora de escopo.** Mudar o halo em si (a decisão visual é da DEC-035 emenda 1, aprovada); qualquer
+artefato/peso/score do M1.
+
+**Critério de aceite.** O payload de um município com halo deixa de carregar o mesmo PNG duas vezes,
+medido em bytes antes e depois; o halo continua visualmente idêntico ao aprovado; sem regressão nos
+testes do piloto.
+
+---
+
 ### BLK-ORQ-28 — Duas validações obrigatórias da esteira são impossíveis de cumprir
 
 | | |
