@@ -83,18 +83,39 @@ minima do socio"; "do negocio" no lugar de "desalavancado"; "cheque total" para 
 ponto do caixa e "aporte inicial" para obra+franquia. Ku/Ke/FCFF/FCFE ficam SO em
 docstring e comentario.
 
+VALORES EM CACHE (fix de 2026-08-18, pedido do Felipe): openpyxl grava a formula
+SEM o resultado calculado, entao qualquer visualizador que nao recalcula (Modo de
+Exibicao Protegida do Excel, painel de preview do Explorer/Outlook/Drive,
+LibreOffice com "recalcular: nunca") mostrava DRE/Fluxo/Resumo EM BRANCO — so a
+Premissas (valores literais) aparecia preenchida. A etapa `_com_valores_em_cache`
+recalcula as ~4.600 formulas do arquivo com a lib `formulas` (a MESMA que o nivel
+2 de `tests/unit/dimensionamento/test_simulador_xlsx.py` ja usa para provar as
+formulas contra o motor) e grava cada resultado como `<v>` junto da formula — que
+e o que o proprio Excel faz ao salvar. As formulas seguem vivas; `fullCalcOnLoad`
+continua ligado. Falha da etapa NUNCA derruba o download (a planilha sai como
+antes, so com formulas); kill-switch: env `MOTOR_SIMULADOR_XLSX_SEM_CACHE=1`
+(a suite liga por default para nao pagar ~9s por geracao).
+
 READ-ONLY sobre o M1: nao recalcula score_priorizacao, pesos nem artefatos
-(DEC-001/DEC-008/DEC-009). Sem I/O de disco: usa BytesIO exclusivamente.
+(DEC-001/DEC-008/DEC-009). Sem I/O de disco de ARTEFATO: o resultado e BytesIO;
+a unica excecao e um arquivo TEMPORARIO no temp do sistema (a lib `formulas` so
+le de caminho), removido no finally.
 Demanda NUNCA e derivada de lat/lng (DEC-009) — entra como parametro.
 """
 
 from __future__ import annotations
 
 import math
+import os
 import re
+import sys
+import tempfile
+import threading
+import zipfile
 from collections.abc import Mapping
 from io import BytesIO
 from typing import Any
+from xml.etree import ElementTree as ET
 
 import openpyxl
 from openpyxl.comments import Comment
@@ -2269,6 +2290,192 @@ _INVEST_KEYS = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Valores em cache (fix 2026-08-18): recalcula as formulas e grava o resultado
+# junto, para a planilha nao abrir "em branco" em visualizador sem recalculo.
+# ---------------------------------------------------------------------------
+
+_NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_NS_REL_DOC = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_NS_REL_PKG = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+#: Chave da solucao da lib `formulas`: `'[arquivo.xlsx]ABA'!B7` (aba em maiusculas).
+_RE_CHAVE_SOLUCAO = re.compile(r"^'\[[^\]]*\](.+)'!([A-Z]{1,3}[0-9]+)$")
+
+_ENV_SEM_CACHE = "MOTOR_SIMULADOR_XLSX_SEM_CACHE"
+
+#: Serializa o RECALCULO inteiro (nao so o import). Dois motivos, ambos medidos na
+#: revisao adversarial de 2026-08-18: (1) o primeiro `calculate()` pos-boot dispara
+#: imports lazy do `schedula` que NAO sao protegidos pelo import-lock do Python —
+#: duas threads concorrentes reproduziam `partially initialized module` 3/3 vezes,
+#: e a perdedora caia no fallback SEM cache (o proprio bug de producao, de volta);
+#: (2) cada recalculo custa ~8s de CPU e ~300 MB — sem teto, N downloads
+#: simultaneos escalariam N-para-N no threadpool da rota. Com o lock, o export
+#: concorrente ESPERA (~10s) em vez de falhar ou empilhar memoria.
+_LOCK_RECALCULO = threading.Lock()
+
+
+def _cache_desligado() -> bool:
+    return os.environ.get(_ENV_SEM_CACHE, "").strip().lower() in ("1", "true", "sim", "yes")
+
+
+def _escalar_da_solucao(bruto: Any) -> float | str | bool | None:
+    """Extrai o escalar de um item da solucao da lib `formulas`; None = nao injetar."""
+    valor = getattr(bruto, "value", bruto)
+    # A lib devolve arrays 1x1 (numpy, dtype=object); `.item()` desembrulha.
+    for _ in range(3):
+        if hasattr(valor, "item") and getattr(valor, "size", 1) == 1:
+            valor = valor.item()
+        elif isinstance(valor, (list, tuple)) and len(valor) == 1:
+            valor = valor[0]
+        else:
+            break
+    if isinstance(valor, bool):
+        return valor
+    if isinstance(valor, (int, float)):
+        v = float(valor)
+        return v if math.isfinite(v) else None  # NaN/inf nao entram (guardrail)
+    if isinstance(valor, str):
+        # Erros de formula ("#VALUE!", "#REF!"...) nao viram cache.
+        return None if valor.startswith("#") else valor
+    return None
+
+
+def _valores_por_aba(caminho: str) -> dict[str, dict[str, float | str | bool]]:
+    """Recalcula o arquivo inteiro e devolve `{aba: {ref_celula: valor}}`.
+
+    Import LAZY de proposito: a lib so e necessaria nesta etapa, e a ausencia dela
+    (imagem sem o extra `simulador_cache`) cai no fallback gracioso do chamador.
+    """
+    # A lib imprime barra de progresso (tqdm) no stderr a CADA export — ruido puro
+    # no log do container. `TQDM_DISABLE` e' a chave oficial do tqdm; `setdefault`
+    # respeita quem ja tiver configurado diferente no ambiente.
+    os.environ.setdefault("TQDM_DISABLE", "1")
+    import formulas  # noqa: PLC0415
+
+    solucao = formulas.ExcelModel().loads(caminho).finish().calculate()
+    abas_upper = {a.upper(): a for a in ABAS_ESPERADAS}
+    out: dict[str, dict[str, float | str | bool]] = {a: {} for a in ABAS_ESPERADAS}
+    for chave, bruto in solucao.items():
+        m = _RE_CHAVE_SOLUCAO.match(chave)
+        if not m:
+            continue
+        aba = abas_upper.get(m.group(1).upper())
+        if aba is None:
+            continue
+        escalar = _escalar_da_solucao(bruto)
+        if escalar is not None:
+            out[aba][m.group(2)] = escalar
+    return out
+
+
+def _sheets_por_arquivo(origem: zipfile.ZipFile) -> dict[str, str]:
+    """`{caminho no zip ('xl/worksheets/sheetN.xml') -> nome da aba}`."""
+    wb_xml = ET.fromstring(origem.read("xl/workbook.xml"))
+    rels_xml = ET.fromstring(origem.read("xl/_rels/workbook.xml.rels"))
+    alvo_por_rid = {
+        rel.get("Id"): rel.get("Target")
+        for rel in rels_xml.iter(f"{{{_NS_REL_PKG}}}Relationship")
+    }
+    out: dict[str, str] = {}
+    for sheet in wb_xml.iter(f"{{{_NS_MAIN}}}sheet"):
+        rid = sheet.get(f"{{{_NS_REL_DOC}}}id")
+        alvo = alvo_por_rid.get(rid or "")
+        if not alvo:
+            continue
+        # openpyxl grava o Target com barra inicial ("/xl/worksheets/sheet1.xml");
+        # outros escritores usam relativo ("worksheets/sheet1.xml"). Normalizar os dois.
+        alvo_norm = alvo.lstrip("/")
+        caminho = alvo_norm if alvo_norm.startswith("xl/") else f"xl/{alvo_norm}"
+        out[caminho] = sheet.get("name") or ""
+    return out
+
+
+def _injetar_na_folha(dados: bytes, mapa: dict[str, float | str | bool]) -> tuple[bytes, int]:
+    """Insere `<v>` nas celulas com `<f>` e sem valor. Nada mais e tocado."""
+    ET.register_namespace("", _NS_MAIN)
+    raiz = ET.fromstring(dados)
+    injetadas = 0
+    for celula in raiz.iter(f"{{{_NS_MAIN}}}c"):
+        if celula.find(f"{{{_NS_MAIN}}}f") is None:
+            continue
+        v = celula.find(f"{{{_NS_MAIN}}}v")
+        if v is not None and (v.text or "").strip():
+            continue  # ja tem valor em cache de verdade — nao sobrescrever
+        valor = mapa.get(celula.get("r") or "")
+        if valor is None:
+            continue
+        if v is None:
+            v = ET.SubElement(celula, f"{{{_NS_MAIN}}}v")
+        # (openpyxl grava um `<v/>` VAZIO junto de toda formula — preencher, nao pular)
+        if isinstance(valor, bool):
+            celula.set("t", "b")
+            v.text = "1" if valor else "0"
+        elif isinstance(valor, str):
+            celula.set("t", "str")
+            v.text = valor
+        else:
+            v.text = repr(valor)
+        injetadas += 1
+    return ET.tostring(raiz, encoding="UTF-8", xml_declaration=True), injetadas
+
+
+def _injetar_valores(conteudo: bytes, valores: dict[str, dict[str, Any]]) -> tuple[bytes, int]:
+    """Reescreve o zip trocando SO as folhas-alvo; todo o resto sai byte-identico."""
+    origem = zipfile.ZipFile(BytesIO(conteudo))
+    aba_por_arquivo = _sheets_por_arquivo(origem)
+    destino_buf = BytesIO()
+    injetadas = 0
+    with zipfile.ZipFile(destino_buf, "w", zipfile.ZIP_DEFLATED) as destino:
+        for item in origem.infolist():
+            dados = origem.read(item.filename)
+            mapa = valores.get(aba_por_arquivo.get(item.filename, ""))
+            if mapa:
+                dados, n = _injetar_na_folha(dados, mapa)
+                injetadas += n
+            destino.writestr(item, dados)
+    return destino_buf.getvalue(), injetadas
+
+
+def _com_valores_em_cache(conteudo: bytes) -> bytes:
+    """Devolve o arquivo com o resultado de cada formula gravado em cache.
+
+    Rastro da decisao: sem isto, visualizador que nao recalcula (Excel em Modo de
+    Exibicao Protegida, previews, LibreOffice default) mostra as abas de formula
+    em branco. QUALQUER falha aqui devolve o arquivo original — o download nunca
+    quebra por causa do cache.
+    """
+    if _cache_desligado():
+        return conteudo
+    tmp_path: str | None = None
+    try:
+        # A lib `formulas` so le de CAMINHO; o temp do sistema nao e artefato do M1.
+        # `tmp_path` atribuido ANTES do write: se o write falhar (ENOSPC), o finally
+        # ainda remove o arquivo orfao.
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(conteudo)
+        with _LOCK_RECALCULO:
+            valores = _valores_por_aba(tmp_path)
+        novo, injetadas = _injetar_valores(conteudo, valores)
+        if injetadas == 0:
+            raise RuntimeError("nenhuma celula recebeu valor em cache")
+        return novo
+    except Exception as erro:  # noqa: BLE001 — fallback deliberado: planilha valida sem cache
+        print(
+            f"[simulador_xlsx] valores em cache indisponiveis ({erro}); "
+            "a planilha sai so com formulas (abas podem abrir em branco em preview)",
+            file=sys.stderr,
+        )
+        return conteudo
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
 def gerar_simulador_xlsx(
     demanda_total: float,
     premissas: Premissas,
@@ -2383,7 +2590,7 @@ def gerar_simulador_xlsx(
 
     buf = BytesIO()
     wb.save(buf)
-    return buf.getvalue()
+    return _com_valores_em_cache(buf.getvalue())
 
 
 __all__ = ["ABAS_ESPERADAS", "gerar_simulador_xlsx"]

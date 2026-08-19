@@ -33,10 +33,11 @@ Emendas entram no próprio arquivo da DEC, não no índice.
 - [DEC-020](DEC-020.md) — Escopo do corte do Streamlit pelo piloto web (BLK-WEB-11); emendada pela DEC-022
 - [DEC-021](DEC-021.md) — Raio do Relatório Pontual Censitário passa de 1,5 km para 1,0 km; emenda a decisão-chave 5 da DEC-005
 - [DEC-022](DEC-022.md) — Substituição total do Streamlit pelo piloto web: corte imediato, `dashboard.` vira host só de `/tiles/` + 301
-- [DEC-023](DEC-023.md) — Visão Executiva 2.0: de mapa territorial a dashboard acionável da rede, com a primeira escrita do piloto; emenda a DEC-020 e a consequência (iii) da DEC-022
+- [DEC-023](DEC-023.md) — Visão Executiva 2.0: de mapa territorial a dashboard acionável da rede, com a primeira escrita do piloto; emenda a DEC-020 e a consequência (iii) da DEC-022; emendada pela DEC-027
 - [DEC-024](DEC-024.md) — Extensão do escopo de coleta do GymScraping: nota in-app do WellHub (`partnerRating`) como agregado numérico (BLK-MA-08); emenda as partes 2 e 3 da DEC-013
 - [DEC-025](DEC-025.md) — Critério de universo do coletor WellHub (vocabulário "V2") + taxonomia fora do hash de staleness, com bump para `snapshots_concorrentes_v2` (BLK-MA-11); emenda a parte 3 da DEC-013
 - [DEC-026](DEC-026.md) — Gate do BLK-MA-09: rating como coluna-fato **sem peso** (molde do G-D2); o `v2` não é reativado e D-A/D-C ficam sem objeto (BLK-MA-09)
+- [DEC-027](DEC-027.md) — Trilha de acesso do piloto web (quem fez o quê, retenção 90 dias): middleware com identidade Authelia + segundo volume `:rw` + Caddy access log + Authelia `info`; emenda o "único mount de escrita" da DEC-023
 - [DEC-028](DEC-028.md) — A camada de M&A entra no piloto como **overlay de pressão competitiva** (não vulnerabilidade); emenda o §10 (overlay sai de "futuro") e o G-D1 (`flag_score_provisorio` passa a olhar o S6) — BLK-MA-13
 - [DEC-029](DEC-029.md) — O sinal 6 passa a ser medido **por academia** (rota B, sem bump de série); emenda o §8.1, agregação do entregável deixa de ser `first` e o score vai a `v4` — BLK-MA-14
 - [DEC-030](DEC-030.md) — A Conclusão do Relatório Pontual carimba **dois selos** independentes (demográfico e financeiro) e deixa de emitir veredito único; emenda 1: o gate E5 passa a valer nos dois modos

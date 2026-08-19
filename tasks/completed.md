@@ -13610,3 +13610,82 @@ mudança visual expôs um defeito de dado que estava escondido havia dias.
 
 **Pendência aberta deste ciclo:** `BLK-MA-17-FU5` (resíduo de ~87 duplicatas com nome não
 informativo no insumo mapeado) — ver `tasks/backlog.md`.
+## Fechamento de ciclo — Trilha de acesso do piloto / DEC-027 (2026-08-17, ad-hoc)
+
+Feature ad-hoc (fora do backlog), pedida por Felipe em 2026-08-17: "construirmos o rastro de logs
+do motor e guardar isso de maneira segura; o maximo que puder ser registrado sem inflar". Origem:
+diagnostico da mesma data — o Caddy injetava `Remote-User` em toda requisicao do piloto e ninguem
+gravava; Authelia em `warn` nao registrava login com sucesso; retencao era acidente da rotacao do
+Docker. Bot Telegram e API GeoEspacial FORA do escopo por decisao explicita.
+
+Entrega (DEC-027): middleware `_trilha_acesso` no backend do piloto grava 1 linha JSONL por
+requisicao relevante (usuario, IP real via XFF, rota+query, status, duracao_ms, agente, bytes) em
+volume `:rw` proprio (`/opt/motor-expansao/logs/acesso`, segundo mount de escrita — emenda a
+DEC-023, anotada inline), com filtro de ruido (assets + /api/health) e retencao de 90 dias podada
+pelo proprio backend (dir 0700, arquivos 0600). Preparados (aplicacao manual na VPS): access log
+do Caddy no host piloto (JSON, rolagem 20MiBx10, 90d) e Authelia `level: info`.
+
+QA: revisao adversarial por workflow (34 agentes: 4 lentes -> 15 achados -> 2 ceticos por achado ->
+9 confirmados, 6 refutados). Os 9 corrigidos no proprio ciclo — destaque: teste que trava o
+REGISTRO do middleware no app (falso-verde reproduzido por mutacao), fronteira exata dos 90d e gate
+da poda testados, drift do runbook `deploy_piloto_web.md` ("UNICO volume :rw") corrigido, limite de
+confianca dos headers declarado no contrato. Suite completa: 3007 passed, 1 failed PRE-EXISTENTE e
+ambiental (`test_sem_escrita_em_disco` do dimensionamento: openpyxl usa %TEMP% no Windows; verde no
+CI Linux). `ruff` limpo. `test_claude_md_size` verde.
+
+Arquivos: `src/motor_expansao/dashboard/acesso_log.py`, `web/server/app.py`,
+`tests/unit/test_acesso_log.py` (29 testes), `tests/conftest.py`, `tests/unit/test_piloto_web_rede.py`
+(contrato do compose: 2 mounts `:rw` exatos), `docker-compose.prod.yml`, `.gitignore`,
+`docs/trilha_acesso_piloto.md` (contrato canonico), `docs/deploy_piloto_web.md`,
+`docs/infra_producao.md`, `docs/README.md`, `docs/decisions/DEC-027.md`, `docs/decisions/DEC-023.md`
+(emenda inline), `docs/decisions/README.md`, `CLAUDE.md` (linha-indice DEC-027). Locais/gitignored
+(referencia para o servidor): `Caddyfile` (diretiva `log`) e `authelia/configuration.yml` (`info`).
+
+Merge = passo humano (PR ad-hoc que toca compose: `criticidade:alta` + `aprovado-humano` de humano
+distinto do autor + `critica-aprovada` de dono pelo guard). Deploy manual por digest + 5 passos de
+habilitacao na VPS em `docs/trilha_acesso_piloto.md`. Housekeeping: helper e no-op (EXIT_AD_HOC).
+
+## Fechamento de ciclo — Fix simulador XLSX com valores em cache (2026-08-18, ad-hoc)
+
+Bug de producao reportado por Felipe: a planilha do simulador (POST /api/simulador/xlsx) abria "sem
+informacoes" em DRE/Fluxo/Resumo mesmo com as premissas preenchidas. Diagnostico por evidencia: o
+arquivo gerado estava INTEGRO (8 abas, ~4.600 formulas, fullCalcOnLoad) — mas openpyxl grava formula
+SEM valor calculado, e visualizador sem recalculo (Excel em Modo de Exibicao Protegida, previews,
+LibreOffice default) mostra as abas 100% formula em branco; so a Premissas (valores literais)
+aparecia. A trilha de acesso (DEC-027) foi decisiva para descartar as outras hipoteses (403 do
+controle por aba so sem Remote-User; nenhum export real do usuario chegou ao backend).
+
+Fix: etapa `_com_valores_em_cache` no gerador — recalcula o arquivo com a lib `formulas` (a MESMA que
+o nivel 2 de test_simulador_xlsx.py ja usa para provar as formulas contra o motor) e injeta cada
+resultado como `<v>` no XML, sem tocar em mais nada (o proprio Excel salva assim). Formulas seguem
+vivas. Kill-switch `MOTOR_SIMULADOR_XLSX_SEM_CACHE`; falha degrada para o arquivo original (download
+nunca quebra); `_LOCK_RECALCULO` serializa o recalculo (race do primeiro import do schedula
+reproduzido 3/3 na revisao + teto de 1 recalculo simultaneo, ~8s/300MB cada). Extra novo
+`simulador_cache` no pyproject instalado pelo Dockerfile.web; constraints ja pinava tudo.
+
+QA: revisao adversarial por workflow (27 agentes: 3 lentes -> achados -> 2 ceticos por achado ->
+7 confirmados, 5 refutados) — todos os 7 corrigidos ou cobertos (lock unico resolve 3; tmp_path antes
+do write; drift de comentarios; kill-switch tambem no import do conftest p/ fixtures de modulo; nota
+de merge). Suites: 3192 passed na completa (1 falha pre-existente ambiental do Windows) + 105 nas
+afetadas apos os consertos, incluindo teste de regressao de concorrencia. Merge admin + deploy
+autorizados por Felipe ("totalmente autonomo").
+
+## Fechamento de ciclo — Relatorio de acessos no Telegram (/acessos + cron 3/3h) (2026-08-18, ad-hoc)
+
+Pedido de Felipe: o agregado "quem logou e quais abas" (sem detalhe de rota) puxavel pelo Telegram
+sob demanda e enviado a cada 3h no canal de alertas. Entrega: modulo
+`motor_expansao/api/relatorio_acessos.py` (gerador unico: agregacao da trilha DEC-027 por DIA BRT,
+texto puro sem Markdown, CLI --enviar/--pular-vazio), comando `/acessos` no bot RESTRITO ao chat de
+ops (id == API_ACESSOS_ADMIN_CHAT_ID = MONITOR_TELEGRAM_CHAT_ID; antes do gate de senha, id de chat
+e' autorizacao mais forte que a senha compartilhada), mount `:ro` da trilha no container do bot
+(compose) e cron `7 */3 * * *` na VPS (`scripts/cron/run_relatorio_acessos.sh`, molde do
+run_growth_daily: container efemero da imagem da api, credenciais por env herdada — nunca argv).
+
+QA: revisao adversarial por workflow (39 agentes: 3 lentes -> 2 ceticos por achado -> 14
+confirmados, 4 refutados) — TODOS corrigidos no ciclo. Destaques: token do bot vazava no log do cron
+via traceback do requests (URL do HTTPError) -> erro controlado sem URL + teste; relatorio rotulava
+dia BRT lendo so o arquivo do dia UTC (entre 21h e 0h BRT negaria o dia inteiro) -> agregacao por
+dia BRT lendo os 2 arquivos UTC + teste de virada; nome de usuario cru quebrava o parse_mode
+Markdown -> texto puro + chunking <=4096; env vazia furava o guard do bot -> validator. Suite
+completa: 3206 passed (1 falha pre-existente ambiental do Windows). Merge admin + deploy api/bot +
+instalacao do cron autorizados por Felipe ("faca tudo sozinho").

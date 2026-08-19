@@ -450,6 +450,14 @@ df -h /
 du -sh /opt/motor-expansao/data/outputs/
 ```
 
+### Trilha de acesso do piloto (DEC-027)
+
+Quem fez o quê no piloto: JSONL diário com usuário (Authelia), IP real, rota, status e
+latência em `/opt/motor-expansao/logs/acesso/` (retenção 90 dias, podada pelo backend) +
+access log do Caddy em `/opt/motor-expansao/logs/caddy/` + Authelia em `level: info`
+(logins com sucesso e falha). Contrato, comandos de consulta e os passos manuais de
+habilitação na VPS: **`docs/trilha_acesso_piloto.md`**.
+
 ### Alertas automáticos (BLK-SEC-05)
 
 Monitoramento leve por cron + bot Telegram (reusa o bot de produção; alertas vão para o
