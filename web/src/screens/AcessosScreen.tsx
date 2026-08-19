@@ -14,6 +14,7 @@ import {
   Spinner,
 } from '../components/primitives'
 import { api, ApiError } from '../lib/api'
+import { normalizar } from '../lib/exec'
 import type {
   AcessosFicha,
   AcessosResumo,
@@ -710,6 +711,7 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const [aberta, setAberta] = useState<string | null>(null)
+  const [filtroUsuario, setFiltroUsuario] = useState('')
 
   useEffect(() => {
     let vivo = true
@@ -804,6 +806,13 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
       render: (u) => <span className="num">{u.ips}</span>,
     },
   ]
+
+  // Filtro local da tabela: o payload inteiro já está no cliente (mesma razão do
+  // `filtrarUnidades` da Executiva) — digitar não pode custar um round-trip.
+  const alvoFiltro = normalizar(filtroUsuario)
+  const usuariosFiltrados = resumo
+    ? resumo.usuarios.filter((u) => !alvoFiltro || normalizar(u.nome).includes(alvoFiltro))
+    : []
 
   return (
     <div
@@ -986,17 +995,30 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
                 span={12}
                 titulo={`Usuários — ${resumo.janela_dias} dias`}
                 acao={
-                  <span style={{ font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>
-                    clique numa linha para abrir a ficha
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 12 }}>
+                    <span style={{ font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>
+                      clique numa linha para abrir a ficha
+                    </span>
+                    <input
+                      value={filtroUsuario}
+                      onChange={(e) => setFiltroUsuario(e.target.value)}
+                      placeholder="Filtrar usuário…"
+                      aria-label="Filtrar usuário"
+                      style={{ width: 168 }}
+                    />
                   </span>
                 }
               >
                 <Tabela
                   colunas={colunas}
-                  dados={resumo.usuarios}
+                  dados={usuariosFiltrados}
                   chaveDe={(u) => u.nome}
                   onLinha={(u) => setAberta(u.nome)}
-                  vazio="Nenhum acesso registrado na janela."
+                  vazio={
+                    filtroUsuario.trim()
+                      ? `Nenhum usuário corresponde a "${filtroUsuario.trim()}".`
+                      : 'Nenhum acesso registrado na janela.'
+                  }
                 />
               </Card>
 
