@@ -38,7 +38,7 @@ _VIAB = {
     "flag_fora_envelope": False,
 }
 
-_TIT_NUM = "Viabilidade - N\xfameros".encode("latin-1")
+_TIT_NUM = "Proje\xe7\xe3o de Viabilidade - N\xfameros".encode("latin-1")
 _TIT_GRAF = "Viabilidade - Proje\xe7\xe3o financeira".encode("latin-1")
 
 

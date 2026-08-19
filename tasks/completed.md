@@ -13745,3 +13745,15 @@ path; linha de usuarios em escala min-max sobre eixo numerico (serie constante d
 -> base zero + escala propria; doc prometia 'rota nunca' mas o card de saude lista rotas agregadas
 -> claim escopado; tetos/virada-de-dia sem teste -> cobertos. Suites: 36 no modulo + 589 vitest +
 mypy/ruff limpos + build ok.
+
+## Fechamento de ciclo — Confidencialidade do Relatório Pontual + pop-up do piloto (2026-08-19)
+
+Ciclo ad-hoc pedido pelo Felipe (urgência de estudos/extração de relatórios), validado por PDF de amostra antes do merge.
+
+- **Marca d'água "ARQUIVO CONFIDENCIAL"** diagonal/translúcida em todas as páginas do PDF do Relatório Pontual (`_CONFIDENCIAL_*` + `_draw_confidencial` em `censo_report.py`; branca na capa, cinza nas demais), somada à marca de rastreabilidade existente.
+- **Página Realização**: fala técnica (READ-ONLY/score_priorizacao/carteira/plano) substituída pelo aviso de dados dinâmicos (`_AVISO_DADOS_DINAMICOS`). Mesmo jargão removido do rodapé do slide de viabilidade, das notas da Conclusão e da linha de fontes dos Big Numbers (o guardrail segue por código).
+- **Título renomeado**: `Viabilidade - Números` -> `Projeção de Viabilidade - Números` (`_VIAB_NUMEROS_TITLE`).
+- **Solicitante humanizado na exibição**: `_nome_exibicao` (`felipe_castaldi` -> `Felipe Castaldi`) aplicado na marca de rastreabilidade; login bruto não aparece no PDF (identificador intacto na trilha — regra do §2).
+- **Pop-up de confidencialidade no piloto** (`web/src/components/AvisoConfidencialidade.tsx` + fio no `App.tsx`): bloqueante, centrado, a cada entrada (estado local sem persistência), padrão visual do sistema (Glass/Eyebrow/Botao), só prossegue no "OK, estou ciente".
+- Testes: 4 novos em `test_relatorio_pontual_censitario_export.py` (marca em todas as páginas, humanização, login bruto ausente, jargão ausente com needles de palavra única); `_TIT_NUM` atualizado em `test_relatorio_pontual_viabilidade.py`. 202 testes dos arquivos de PDF verdes; vitest + build verdes.
+- Amostra validada pelo Felipe: `amostra-relatorio-pontual-confidencial.pdf` (Av. Paulista 1500, dados reais, 9 páginas).

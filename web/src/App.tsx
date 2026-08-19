@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import AvisoConfidencialidade from './components/AvisoConfidencialidade'
 import Dock from './components/Dock'
 import type { SearchPin } from './components/HexMap'
 import AcessosScreen from './screens/AcessosScreen'
@@ -48,6 +49,8 @@ export default function App() {
   // O app abre no MENU, nao no mapa: a primeira pergunta e' "qual analise?", nao
   // "qual estado?". A escolha de UF continua existindo, como passo 2 do modo de regiao.
   const [tela, setTela] = useState<Tela>('inicio')
+  // Ciencia do aviso de confidencialidade — nasce false a CADA carga do app.
+  const [cienteConfidencialidade, setCienteConfidencialidade] = useState(false)
 
   /**
    * Abas que o usuário logado pode usar (controle temporário, /api/me).
@@ -400,6 +403,14 @@ export default function App() {
           />
         )}
       </main>
+
+      {/* Pop-up de confidencialidade (2026-08-19): estado LOCAL de propósito — some no
+          OK e volta em toda nova entrada (recarga do app). Sem localStorage/sessionStorage:
+          a regra é "sempre que a pessoa entrar, clicar em OK". Último filho da raiz +
+          z-index alto: cobre Dock e telas até a confirmação. */}
+      {!cienteConfidencialidade && (
+        <AvisoConfidencialidade onConfirmar={() => setCienteConfidencialidade(true)} />
+      )}
     </div>
   )
 }
