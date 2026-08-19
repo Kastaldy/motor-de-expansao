@@ -206,11 +206,25 @@ def test_carteira_e_json_safe(rede: Path) -> None:
 
 
 def test_payload_da_carteira_cabe_no_orcamento(rede: Path) -> None:
-    """O cliente nao pagina: o payload inteiro tem de caber num carregamento."""
-    bruto = json.dumps(pilot.rede_carteira(), ensure_ascii=False).encode("utf-8")
-    por_unidade = len(bruto) / max(pilot.rede_carteira()["totais"]["no_recorte"], 1)
-    # ~2,3 KB/unidade x 102 unidades da rede real = ~235 KB (gzip: ~40 KB).
-    assert por_unidade < 3_000, f"{por_unidade:.0f} bytes por unidade e' pesado demais"
+    """O cliente nao pagina: o payload inteiro tem de caber num carregamento.
+
+    Mede a INCLINACAO (custo marginal por unidade) e a CONSTANTE separadamente, e nao o
+    total dividido pela contagem. O painel do panorama trouxe um bloco fixo -- series de
+    12 meses para 10 metricas, SSS mes a mes, faixas e coortes -- que nao cresce com a
+    rede; numa base sintetica de 5 unidades ele sozinho desloca a media em ~1 KB por
+    unidade e reprovaria um payload que na rede real esta folgado. Medido na base de
+    producao em 2026-08-10: 92 unidades, 235 KB no total, 21,7 KB de bloco fixo e 2,3 KB
+    marginais por unidade.
+    """
+    tudo = json.dumps(pilot.rede_carteira(), ensure_ascii=False).encode("utf-8")
+    # `busca` corta a carteira para UMA unidade sem mexer no bloco fixo.
+    uma = json.dumps(pilot.rede_carteira(busca="BOTAFOGO"), ensure_ascii=False).encode("utf-8")
+    no_recorte = pilot.rede_carteira()["totais"]["no_recorte"]
+
+    marginal = (len(tudo) - len(uma)) / max(no_recorte - 1, 1)
+    assert marginal < 3_000, f"{marginal:.0f} bytes por unidade e' pesado demais"
+    # O bloco fixo viaja em TODA requisicao, inclusive na de um consultor com 5 unidades.
+    assert len(uma) < 40_000, f"bloco fixo de {len(uma)} bytes"
 
 
 def test_filtros_nao_mudam_ranking_nem_media(rede: Path) -> None:
@@ -638,3 +652,449 @@ def test_percentil_de_metrica_invertida_diz_a_direcao(rede: Path) -> None:
     """"Churn - percentil 92" lê como elogio e é o oposto: 92% dos pares têm churn menor."""
     ficha = pilot.rede_unidade_pdf("botafogo-rj", mes="2026-07").body
     assert b"Churn (menor \xe9 melhor)" in ficha or b"menor \xe9 melhor" in ficha
+
+
+# ---------------------------------------------------------------------------
+# Panorama do recorte — SSS filtrado, series, funil, faixas e coortes
+# ---------------------------------------------------------------------------
+
+
+def _base_anual() -> pd.DataFrame:
+    """Base com os DOIS anos, que a `_base_sintetica` nao tem.
+
+    A base sintetica das outras suites vive so em 2026, entao o SSS nasce indisponivel
+    nela — e' por isso que o SSS ignorando o filtro passou meses sem teste. Aqui ha tres
+    unidades:
+
+    * ANTIGA A (MARISE)  - nos dois anos, 100k -> 150k  (+50%)
+    * ANTIGA B (JAILSON) - nos dois anos, 200k -> 180k  (-10%)
+    * NOVA C   (MARISE)  - so em 2026, inaugurada em 01/03/2026 (fora da base comparavel)
+
+    Logo a rede inteira cresce (150+180)/(100+200) = +10%, que nao e' nem o numero de
+    MARISE nem o de JAILSON. Com o filtro ignorado, os tres davam +10%.
+    """
+    perfis = [
+        ("ANTIGA A", "01/01/2020", 100_000.0, 150_000.0, 100.0, 50.0, (2025, 2026)),
+        ("ANTIGA B", "01/01/2020", 200_000.0, 180_000.0, 900.0, 90.0, (2025, 2026)),
+        ("NOVA C", "01/03/2026", 0.0, 90_000.0, 50.0, 25.0, (2026,)),
+    ]
+    linhas: list[dict[str, object]] = []
+    for nome, inauguracao, fat_2025, fat_2026, visitas, convertidos, anos in perfis:
+        for ano in anos:
+            # Agosto entra com TRES dias de propria: e' a competencia em curso, que prova
+            # que as faixas absolutas nao podem sair dela.
+            for numero_mes, dias in ((6, None), (7, None), (8, 3)):
+                faturamento = fat_2025 if ano == 2025 else fat_2026
+                linhas += mes_sintetico(
+                    nome,
+                    ano,
+                    numero_mes,
+                    uf="SP",
+                    master="ULTRA",
+                    inauguracao=inauguracao,
+                    dias=dias,
+                    cumulativas={
+                        "faturamento": faturamento,
+                        "faturamento_sem_agregador": faturamento,
+                        "cancelados": 30.0,
+                        "visitas": visitas,
+                        "convertidos": convertidos,
+                        "novos_alunos": 40.0,
+                        "vendas": 45.0,
+                    },
+                    snapshots={
+                        "pagantes": 1_000.0,
+                        "ativos_total": 1_200.0,
+                        "alunos_gympass": 100.0,
+                        "alunos_totalpass": 100.0,
+                        "NPS": 60.0,
+                        "em_cobranca": 50.0,
+                        "inadimplente": 40.0,
+                        "treino_ativo": 50.0,
+                    },
+                )
+    return pd.DataFrame(linhas)
+
+
+@pytest.fixture
+def rede_anual(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """App apontado para a base de dois anos, com consultor em todas as unidades."""
+    staging = tmp_path / "staging"
+    staging.mkdir(parents=True)
+    _base_anual().to_parquet(staging / "growth_api_historico.parquet")
+
+    cadastro_dir = tmp_path / "cadastro"
+    cadastro_dir.mkdir()
+    rede_cadastro.gravar_cadastro(
+        rede_cadastro.Cadastro(
+            versao=1,
+            atualizado_em="2026-08-04T00:00:00+00:00",
+            unidades={
+                "antiga-a-sp": {"consultor": "MARISE"},
+                "antiga-b-sp": {"consultor": "JAILSON"},
+                "nova-c-sp": {"consultor": "MARISE"},
+            },
+        ),
+        cadastro_dir,
+    )
+
+    monkeypatch.setattr(pilot, "STAGING_DIR", staging)
+    monkeypatch.setattr(pilot, "GROWTH_PARQUET", staging / "growth_api_historico.parquet")
+    monkeypatch.setattr(pilot, "ULTRA_PERF_PARQUET", staging / "nao_existe.parquet")
+    monkeypatch.setattr(pilot, "ULTRA_MAPEADAS_PARQUET", staging / "tambem_nao.parquet")
+    monkeypatch.setattr(pilot, "CADASTRO_DIR", cadastro_dir)
+    _limpar_caches()
+    yield tmp_path
+    _limpar_caches()
+
+
+def test_sss_segue_o_filtro_do_recorte(rede_anual: Path) -> None:
+    """O defeito: a carteira de um consultor exibia o SSS da rede inteira.
+
+    `_rede_sss` nascia dentro de `_rede_mes`, que tem cache por MES e nenhuma nocao de
+    filtro. Medido na base de producao em 2026-08-10, MARISE (24 unidades), GUILHERME (5)
+    e a rede (92) devolviam os TRES o mesmo `+6,2%` sobre `60 unidades`.
+    """
+    rede = pilot._rede_carteira_payload(mes="2026-07")
+    marise = pilot._rede_carteira_payload(mes="2026-07", consultor="MARISE")
+    jailson = pilot._rede_carteira_payload(mes="2026-07", consultor="JAILSON")
+
+    assert rede["sss"]["metricas"]["faturamento"]["var_pct"] == pytest.approx(10.0)
+    assert marise["sss"]["metricas"]["faturamento"]["var_pct"] == pytest.approx(50.0)
+    assert jailson["sss"]["metricas"]["faturamento"]["var_pct"] == pytest.approx(-10.0)
+
+    # A cesta comparavel de MARISE e' UMA unidade: a NOVA C nao existia ha um ano.
+    assert marise["sss"]["unidades"] == 1
+    assert marise["sss"]["unidades_recorte"] == 2
+    assert marise["sss"]["unidades_fora"] == 1
+    assert rede["sss"]["unidades"] == 2
+    assert rede["sss"]["unidades_fora"] == 1
+
+
+def test_sss_nunca_conta_mais_unidades_do_que_o_recorte(rede_anual: Path) -> None:
+    """Invariante barata que denuncia a volta do vazamento: comparavel <= recorte."""
+    for filtro in ({}, {"consultor": "MARISE"}, {"consultor": "JAILSON"}, {"uf": "SP"}):
+        payload = pilot._rede_carteira_payload(mes="2026-07", **filtro)
+        # Sem esta linha o teste passaria com o filtro DEVOLVENDO VAZIO (0 <= 0).
+        assert payload["totais"]["no_recorte"] > 0, filtro
+        assert payload["sss"]["unidades"] <= payload["totais"]["no_recorte"]
+        assert payload["sss"]["unidades_recorte"] == payload["totais"]["no_recorte"]
+
+
+def test_sss_serie_recalcula_a_base_mes_a_mes(rede_anual: Path) -> None:
+    """Cada ponto tem a SUA base comparavel; sem o ano anterior, o ponto fica vazio."""
+    payload = pilot._rede_carteira_payload(mes="2026-07")
+    serie = payload["sss"]["serie"]
+    assert serie["meses"] == payload["serie_meses"]
+
+    por_mes = dict(zip(serie["meses"], serie["var_pct"], strict=True))
+    tamanho = dict(zip(serie["meses"], serie["unidades"], strict=True))
+    # 2026-07 contra 2025-07: as duas antigas, +10%.
+    assert por_mes["2026-07"] == pytest.approx(10.0)
+    assert tamanho["2026-07"] == 2
+    # 2025-06 nao tem 2024-06 na base: buraco honesto, nao zero.
+    assert por_mes["2025-06"] is None
+    assert tamanho["2025-06"] == 0
+
+
+def test_series_do_painel_sao_a_mesma_conta_da_serie_da_rede(rede_anual: Path) -> None:
+    """`serie_rede` (que o CSV e o PDF leem) tem de ser LITERALMENTE series.faturamento."""
+    payload = pilot._rede_carteira_payload(mes="2026-07")
+    assert payload["series"]["faturamento"] == payload["serie_rede"]
+    for chave, valores in payload["series"].items():
+        assert len(valores) == len(payload["serie_meses"]), chave
+
+
+def test_series_de_taxa_sao_ponderadas_nunca_somadas(rede_anual: Path) -> None:
+    """Somar churn de N unidades nao significa nada; a media SIMPLES deforma por tamanho.
+
+    ANTIGA A converte 50% (50/100) e ANTIGA B converte 10% (90/900). A media simples da
+    30%; a ponderada por visitas da 14%, que e' a conversao real do recorte.
+    """
+    payload = pilot._rede_carteira_payload(mes="2026-07", consultor=None, uf="SP")
+    indice = payload["serie_meses"].index("2026-07")
+    conversao = payload["series"]["conversao_pct"][indice]
+    assert conversao == pytest.approx(15.71, abs=0.1)  # (50+90+25) / (100+900+50)
+
+    so_antigas = pilot._rede_carteira_payload(mes="2026-07", busca="ANTIGA")
+    indice = so_antigas["serie_meses"].index("2026-07")
+    assert so_antigas["series"]["conversao_pct"][indice] == pytest.approx(14.0, abs=0.1)
+
+
+def test_funil_do_recorte_soma_etapas_e_reusa_a_conversao_do_kpi(rede_anual: Path) -> None:
+    """Duas contas para o mesmo percentual e' como a mesma unidade ganha dois numeros."""
+    payload = pilot._rede_carteira_payload(mes="2026-07")
+    funil = payload["funil"]
+    assert funil["visitas"] == 1_050  # 100 + 900 + 50
+    assert funil["convertidos"] == 165  # 50 + 90 + 25
+    assert funil["conversao_pct"] == payload["kpis"]["conversao_pct"]["atual"]
+    # `vendas` (135) e' menor que `convertidos` (165): o funil fecha, nao ha aviso.
+    assert funil["aviso"] is None
+
+
+def test_faixas_saem_do_ultimo_mes_fechado_mesmo_com_a_competencia_em_curso(
+    rede_anual: Path,
+) -> None:
+    """As faixas sao limiares de MES INTEIRO.
+
+    Em 2026-08 a base tem tres dias; aplicar `Critico <150k` ao acumulado de tres dias
+    jogaria a rede inteira em Critico. E' a mesma razao pela qual o diagnostico nao roda
+    sobre mes aberto.
+    """
+    aberto = pilot._rede_carteira_payload(mes="2026-08")
+    assert aberto["mes_completo"] is False
+    assert aberto["faixas"]["competencia"] == "2026-07"
+
+    contagem = {f["chave"]: f["n"] for f in aberto["faixas"]["faixas"]}
+    assert contagem["critico"] == 1  # NOVA C, 90k
+    assert contagem["regular"] == 2  # ANTIGA A (150k) e ANTIGA B (180k)
+    assert sum(contagem.values()) == aberto["totais"]["no_recorte"]
+
+
+def test_faixas_e_coortes_fecham_com_o_total_do_recorte(rede_anual: Path) -> None:
+    """Barra que nao fecha com o total mente por omissao."""
+    for filtro in ({}, {"consultor": "MARISE"}):
+        payload = pilot._rede_carteira_payload(mes="2026-07", **filtro)
+        total = payload["totais"]["no_recorte"]
+        assert sum(f["n"] for f in payload["faixas"]["faixas"]) == total
+        assert sum(c["n"] for c in payload["coortes"]) == total
+
+
+def test_churn_do_mes_em_curso_comeca_zerado_e_escala(rede_anual: Path) -> None:
+    """O churn ACUMULA dentro do mes; nao e' uma janela movel de 30 dias.
+
+    Ate 2026-08-10 o mes em curso reconstruia uma janela de ~30 dias, entao no dia 1o o
+    churn ja nascia em ~5,7% arrastando a cauda do mes anterior -- e nao batia com a
+    contagem de cancelamentos ao lado (BERRINI aparecia com "7,8% (0)"). A definicao do
+    negocio e' `cancelados no mes / recorrentes no INICIO do mes`, a mesma do mes fechado.
+    """
+    aberto = pilot._rede_carteira_payload(mes="2026-08")
+    assert aberto["mes_completo"] is False
+
+    # 3 dias de agosto: 30 cancelados por unidade sobre 1.000 recorrentes com que o mes
+    # comecou (o fechamento de julho), e nao sobre a foto do mesmo dia-do-mes.
+    for unidade in aberto["unidades"]:
+        metricas = unidade["metricas"]
+        cancelados = metricas["cancelados"]["atual"]
+        churn = metricas["churn_pct"]["atual"]
+        assert cancelados == 30
+        assert churn == pytest.approx(3.0, abs=0.05), unidade["nome"]
+
+    # E o percentual do KPI fecha com a contagem do proprio KPI: sem isso, o numero entre
+    # parenteses na tela contradiz o percentual ao lado dele.
+    kpis = aberto["kpis"]
+    esperado = 100.0 * kpis["cancelados"]["atual"] / kpis["pagantes"]["atual"]
+    assert kpis["churn_pct"]["atual"] == pytest.approx(esperado, rel=0.02)
+
+
+def test_churn_de_mes_fechado_nao_mudou(rede_anual: Path) -> None:
+    """A mudanca do mes em curso nao pode mexer no mes fechado, que ja estava certo."""
+    fechado = pilot._rede_carteira_payload(mes="2026-07")
+    for unidade in fechado["unidades"]:
+        metricas = unidade["metricas"]
+        assert metricas["cancelados"]["atual"] == 30
+        # 30 cancelados sobre os 1.000 recorrentes do fechamento de junho.
+        assert metricas["churn_pct"]["atual"] == pytest.approx(3.0, abs=0.05), unidade["nome"]
+
+
+def test_faturamento_viaja_com_centavo(rede_anual: Path) -> None:
+    """Arredondar no servidor e' irreversivel: o centavo nao se recupera no cliente.
+
+    O time de campo confere o faturamento contra o extrato, entao `R$ 18.470` e
+    `R$ 18.470,37` sao a MESMA linha do payload e precisam ser numeros diferentes.
+    """
+    payload = pilot._rede_carteira_payload(mes="2026-07")
+    assert pilot._rede_casas("faturamento") == 2
+    assert pilot._rede_casas("receita_por_recorrente") == 2
+    assert pilot._rede_casas("ativos") == 0, "contagem de gente nao tem centavo"
+
+    unidade = payload["unidades"][0]
+    bruto = pilot._rede_mes("2026-07")["atual"].set_index("unidade_id")
+    esperado = float(bruto.loc[unidade["id"], "faturamento"])
+    assert unidade["metricas"]["faturamento"]["atual"] == pytest.approx(esperado, abs=0.005)
+
+
+def test_sss_por_unidade_soma_o_sss_do_recorte(rede_anual: Path) -> None:
+    """A lista unidade a unidade tem de fechar com o agregado; senao uma das duas mente."""
+    payload = pilot._rede_carteira_payload(mes="2026-07")
+    comparaveis = [u for u in payload["unidades"] if (u.get("sss") or {}).get("var_pct") is not None]
+    assert len(comparaveis) == payload["sss"]["unidades"]
+
+    soma_atual = sum(u["sss"]["faturamento"] for u in comparaveis)
+    soma_antes = sum(u["sss"]["ano_anterior"] for u in comparaveis)
+    assert soma_atual == pytest.approx(payload["sss"]["metricas"]["faturamento"]["atual"], abs=0.05)
+    assert soma_antes == pytest.approx(
+        payload["sss"]["metricas"]["faturamento"]["ano_anterior"], abs=0.05
+    )
+
+    # A unidade sem base comparavel continua na lista, com var_pct nulo em vez de sumir.
+    nova = next(u for u in payload["unidades"] if u["id"] == "nova-c-sp")
+    assert nova["sss"] is not None
+    assert nova["sss"]["var_pct"] is None
+
+
+def test_periodo_anterior_preserva_a_ancora(rede_anual: Path) -> None:
+    """Contra o que o "vs anterior" compara, nos tres casos.
+
+    O caso 2 e' o que custou caro: sem ele, o acumulado do mes em curso (1 a 03/08, que e'
+    o padrao da tela) comparava com 29 a 31/07 e o faturamento da rede abria a tela com
+    +190,3%. Nao e' crescimento -- a mensalidade e' cobrada no comeco do mes, entao os tres
+    primeiros dias valem varias vezes os tres ultimos.
+    """
+    inteiro = pilot._rede_carteira_payload(mes="2026-07")
+    assert inteiro["periodo"] == {
+        "inicio": "2026-07-01",
+        "fim": "2026-07-31",
+        "dias": 31,
+        "mes_inteiro": True,
+    }
+    assert inteiro["periodo_anterior"] == {"inicio": "2026-06-01", "fim": "2026-06-30"}
+
+    # Ancorado no dia 1o, mas sem fechar o mes: mesmo intervalo de dias do mes anterior.
+    mtd = pilot._rede_carteira_payload(mes="2026-08")
+    assert mtd["periodo"]["inicio"] == "2026-08-01"
+    assert mtd["periodo"]["mes_inteiro"] is False
+    assert mtd["periodo_anterior"] == {"inicio": "2026-07-01", "fim": "2026-07-03"}
+
+    # Janela solta: a imediatamente anterior, de mesmo tamanho.
+    solta = pilot._rede_carteira_payload(inicio="2026-07-15", fim="2026-07-24")
+    assert solta["periodo"]["dias"] == 10
+    assert solta["periodo_anterior"] == {"inicio": "2026-07-05", "fim": "2026-07-14"}
+
+
+def test_periodo_grampeia_no_que_a_base_cobre(rede_anual: Path) -> None:
+    """Arrastar o calendario para fora da base pede "desde o comeco", nao um erro."""
+    payload = pilot._rede_carteira_payload(inicio="1999-01-01", fim="2099-12-31")
+    limites = payload["limites"]
+    assert payload["periodo"]["inicio"] == limites["min"]
+    assert payload["periodo"]["fim"] == limites["max"]
+
+    with pytest.raises(HTTPException) as erro:
+        pilot._rede_carteira_payload(inicio="2026-07-31", fim="2026-07-01")
+    assert erro.value.status_code == 400
+
+
+def test_periodo_de_mes_inteiro_reproduz_a_competencia(rede_anual: Path) -> None:
+    """O calendario nao pode mudar numero nenhum de quem escolhe um mes fechado.
+
+    E' a invariante que protege o contrato v1 e os links antigos: `mes=2026-07` e
+    `inicio=2026-07-01&fim=2026-07-31` sao a MESMA pergunta.
+    """
+    por_competencia = pilot._rede_carteira_payload(mes="2026-07")
+    por_intervalo = pilot._rede_carteira_payload(inicio="2026-07-01", fim="2026-07-31")
+    assert por_competencia["kpis"] == por_intervalo["kpis"]
+    assert por_competencia["sss"] == por_intervalo["sss"]
+    assert por_competencia["funil"] == por_intervalo["funil"]
+    assert [u["metricas"] for u in por_competencia["unidades"]] == [
+        u["metricas"] for u in por_intervalo["unidades"]
+    ]
+
+
+def test_panorama_e_json_safe(rede_anual: Path) -> None:
+    """NaN/inf no payload quebram o `JSON.parse` do navegador com erro ilegivel."""
+    payload = pilot._rede_carteira_payload(mes="2026-07", consultor="MARISE")
+    texto = json.dumps(payload, allow_nan=False)
+    assert "NaN" not in texto
+    assert "Infinity" not in texto
+
+
+def test_notas_cabem_no_pdf(rede_anual: Path) -> None:
+    """Nota com tipografia fora de latin-1 chega ao franqueado como "?".
+
+    O core font do fpdf2 e' latin-1 e `pdf_base.ascii_seguro` troca o que nao couber por
+    "?" DE PROPOSITO, para o autor consertar o texto-fonte. So' que isso nao falha em lugar
+    nenhum: o PDF sai valido, com um "?" no meio da frase, e so' quem OLHA o arquivo
+    percebe. Aconteceu com um travessao numa nota de fonte do faturamento, e a suite
+    inteira passou verde. Este teste fecha o buraco.
+    """
+    fora_de_latin1: list[tuple[str, str]] = []
+    for janela in ({"mes": "2026-07"}, {"inicio": "2026-07-01", "fim": "2026-07-10"}):
+        payload = pilot._rede_carteira_payload(**janela)
+        for nota in payload["notas"]:
+            ruins = sorted({c for c in nota if c.encode("latin-1", "replace") == b"?" and c != "?"})
+            if ruins:
+                fora_de_latin1.append((str(ruins), nota))
+    assert not fora_de_latin1, f"tipografia que vira '?' no PDF: {fora_de_latin1}"
+
+
+def test_todas_as_frases_de_fonte_cabem_no_pdf() -> None:
+    """Mesma trava, direto no catalogo: as tres frases de origem do faturamento."""
+    for frase in pilot._NOTA_DO_PERIODO.values():
+        assert frase.encode("latin-1", "replace").decode("latin-1") == frase, frase
+
+
+# ---------------------------------------------------------------------------
+# Procedencia do faturamento: o que a tela e o PDF DIZEM sobre a fonte
+# ---------------------------------------------------------------------------
+
+
+def _com_financeiro(mp: pytest.MonkeyPatch, competencias: tuple[str, ...]) -> None:
+    """Planilha do Financeiro sintetica, cobrindo so' as competencias pedidas.
+
+    E' o que permite exercitar `financeiro`/`ux`/`misto` sem parquet real: a fixture da
+    rede nao tem planilha, entao sem isto todo teste veria so' o caminho `ux`.
+    """
+    linhas = [
+        {
+            "cod_unidade": "01", "unidade_planilha": nome, "unidade_ux": nome,
+            "tem_depara": True, "competencia": mes, "faturamento": 999_000.0,
+            "vendas_ux": 800_000.0, "gympass": 199_000.0, "totalpass": 0.0, "tem_saude": 0.0,
+        }
+        for nome in ("ANTIGA A", "ANTIGA B", "NOVA C")
+        for mes in competencias
+    ]
+    mp.setattr(pilot, "_rede_faturamento_financeiro", lambda: pd.DataFrame(linhas))
+    _limpar_caches()
+
+
+def test_fonte_do_faturamento_sem_planilha_e_toda_ux(rede_anual: Path) -> None:
+    """Sem planilha, a aba segue inteira na Growth — e o payload diz isso."""
+    payload = pilot._rede_carteira_payload(mes="2026-07")
+    fonte = payload["fonte_faturamento"]
+    assert fonte["periodo"] == "ux"
+    assert set(fonte["por_mes"].values()) == {"ux"}
+    assert fonte["unidades_sem_par"] == []
+    assert any("TEM SAÚDE é deduzido" in n for n in payload["notas"])
+
+
+def test_fonte_do_faturamento_com_planilha_no_mes_fechado(
+    rede_anual: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mes fechado coberto: periodo E serie saem `financeiro`, e a nota muda junto."""
+    COBERTOS = ("2026-06", "2026-07")
+    _com_financeiro(monkeypatch, COBERTOS)
+
+    payload = pilot._rede_carteira_payload(mes="2026-07")
+    fonte = payload["fonte_faturamento"]
+
+    assert fonte["periodo"] == "financeiro"
+    # Mes que a planilha NAO cobre continua na Growth, e o payload nao mente sobre isso.
+    fora = {m for m in fonte["por_mes"] if m not in COBERTOS}
+    assert fora, "a serie tem de ter mes fora da cobertura, senao o teste nao prova nada"
+    assert {fonte["por_mes"][m] for m in COBERTOS} == {"financeiro"}
+    assert {fonte["por_mes"][m] for m in fora} == {"ux"}
+    assert any("planilha do Financeiro" in n for n in payload["notas"])
+    assert any("mês(es) da série ainda sem cobertura" in n for n in payload["notas"])
+    assert not any("TEM SAÚDE é deduzido" in n for n in payload["notas"])
+
+
+def test_periodo_parcial_avisa_que_o_topo_e_da_growth(
+    rede_anual: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A planilha e' MENSAL: numa janela parcial o quarteto do topo nao pode se dizer dela."""
+    _com_financeiro(monkeypatch, ("2026-06", "2026-07"))
+
+    payload = pilot._rede_carteira_payload(inicio="2026-07-01", fim="2026-07-10")
+
+    assert payload["fonte_faturamento"]["periodo"] == "ux"
+    assert pilot._NOTA_DO_PERIODO["ux"] in payload["notas"]
+
+
+def test_origem_dominante_denuncia_recorte_misturado() -> None:
+    """Recorte em que as unidades discordam sai `misto`, nunca uma das duas pontas."""
+    assert pilot._origem_dominante(pd.DataFrame()) == "ux"
+    so_uma = pd.DataFrame({"origem_faturamento": ["financeiro", "financeiro"]})
+    assert pilot._origem_dominante(so_uma) == "financeiro"
+    discordam = pd.DataFrame({"origem_faturamento": ["financeiro", "ux"]})
+    assert pilot._origem_dominante(discordam) == "misto"
+

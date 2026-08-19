@@ -1,9 +1,11 @@
 import { latLngToCell } from 'h3-js'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import type { PontoEscolhido } from '../App'
 import BotaoInicio from '../components/BotaoInicio'
+import FichaHex from '../components/FichaHex'
 import HexMap, { type SearchPin, type ViewState } from '../components/HexMap'
+import JanelaFicha from '../components/JanelaFicha'
 import MethodologyPanel from '../components/MethodologyPanel'
 import NarrativePanel from '../components/NarrativePanel'
 import PainelComparacao from '../components/PainelComparacao'
@@ -16,7 +18,7 @@ import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
 import { MAX_COMPARADOS } from '../lib/ranking-comparacao'
-import type { Hex, MunicipioItem, MunicipioPayload } from '../lib/types'
+import type { Cobertura1k, Hex, MunicipioItem, MunicipioPayload } from '../lib/types'
 
 /** Filtro global "melhores hexes": faixas M1 permitidas por nível. */
 const FAIXA_FILTROS: Record<string, Set<string>> = {
@@ -47,6 +49,37 @@ export interface MapScreenProps {
   onEstado: (e: EstadoMapa) => void
   /** Volta ao menu de modos. Não limpa nada — ver `components/BotaoInicio`. */
   onInicio: () => void
+  /**
+   * Pin imposto DE FORA, que vence o da busca local.
+   *
+   * Existe para o modo de ponto: la' quem escolhe o territorio e' o endereco colado, nao
+   * a lupa desta tela. Um pin em state local nao serviria — o efeito que zera a tela ao
+   * trocar de UF/municipio (logo abaixo) limpa `pin`, e a troca de municipio e'
+   * exatamente o que acontece quando o operador cola um endereco. Vindo do pai, ele
+   * sobrevive a essa limpeza, que continua valendo para a busca manual.
+   */
+  pinFixo?: SearchPin | null
+  /**
+   * Avisa que a busca do cabecalho resolveu uma coordenada.
+   *
+   * E' o que deixa o modo de ponto usar ESTA busca como entrada, em vez de por uma
+   * segunda caixa de colar por cima da tela — duas caixas pedindo a mesma coisa, lado a
+   * lado, e' o defeito que o Juan apontou em 2026-08-11. Quem escuta decide o que fazer
+   * com a coordenada; aqui o comportamento nao muda (pin + hexagono selecionado).
+   */
+  onPontoBuscado?: (lat: number, lng: number) => void
+  /**
+   * Se esta tela publica a janela da FICHA DO HEXAGONO.
+   *
+   * `false` no modo de ponto: la' quem cola um endereco ja' recebe a janela DELE, e o
+   * endereco tambem seleciona o hexagono em que caiu — as duas janelas abriam juntas,
+   * uma por cima da outra, dizendo coisas diferentes sobre o mesmo lugar (relato do Juan,
+   * 2026-08-12). A selecao continua valendo: o contorno no mapa e o item do ranking
+   * seguem marcados, so' a segunda janela nao aparece.
+   */
+  janelaDoHex?: boolean
+  /** Sem UF escolhida, não desenha o hero — quem o publica é a camada de cima. */
+  semLanding?: boolean
 }
 
 export default function MapScreen({
@@ -63,6 +96,10 @@ export default function MapScreen({
   estadoInicial,
   onEstado,
   onInicio,
+  pinFixo = null,
+  onPontoBuscado,
+  janelaDoHex = true,
+  semLanding = false,
 }: MapScreenProps) {
   // A foto so' vale se tiver sido tirada NESTA uf/municipio — `fotoAplicavel` faz esse
   // portao (lib/mapa-estado). Sem ele, um pin de Sao Paulo reapareceria depois de um
@@ -90,6 +127,42 @@ export default function MapScreen({
   const [modoCenario, setModoCenario] = useState(foto.modoCenario)
   const [cenario, setCenario] = useState<string[]>(foto.cenario)
   const [copiado, setCopiado] = useState(false)
+
+  // PROTOTIPO da chave de raio. Comeca SEMPRE em 2 km: o piloto abre identico ao de
+  // hoje e nenhum numero muda sem alguem clicar. Nao entra no EstadoMapa de proposito —
+  // e experimento, nao preferencia a preservar entre telas.
+  const [raio1km, setRaio1km] = useState(false)
+
+  /* Geometria do raio: buscada SOB DEMANDA, so' quando a chave liga. Fora do payload do
+     mapa de proposito — custa ~2,4 s e ~3,9 MB na UF de SP, e quem nunca liga a chave nao
+     deve pagar isso. Trocar de UF/municipio zera a geometria (ela e' daquele recorte) e
+     dispara nova busca se a chave estiver ligada. */
+  const [cobertura, setCobertura] = useState<Cobertura1k | null>(null)
+  const [carregandoRaio, setCarregandoRaio] = useState(false)
+
+  useEffect(() => {
+    if (!raio1km || !uf) {
+      setCobertura(null)
+      return
+    }
+    let vivo = true
+    setCarregandoRaio(true)
+    api
+      .cobertura(uf, municipio || undefined)
+      .then((c) => {
+        if (vivo) setCobertura(c)
+      })
+      .catch(() => {
+        // Sem geometria o mapa apenas nao desenha a cobertura — nao derruba a tela.
+        if (vivo) setCobertura(null)
+      })
+      .finally(() => {
+        if (vivo) setCarregandoRaio(false)
+      })
+    return () => {
+      vivo = false
+    }
+  }, [raio1km, uf, municipio])
 
   // Camera do deck.gl em REF, nao em state, de proposito: o `onViewStateChange` do
   // deck dispara a cada quadro de um voo (centenas de vezes em 800 ms). Em state, cada
@@ -135,6 +208,25 @@ export default function MapScreen({
     setCenario([])
     cameraRef.current = null
   }, [uf, municipio])
+
+  /**
+   * O pin vindo de fora TAMBEM seleciona o hexagono dele.
+   *
+   * Sem isto o endereco colado no modo de ponto so' ganhava a marca e o voo da camera: o
+   * hexagono em que ele cai ficava sem o contorno de selecao, e o painel lateral seguia
+   * mostrando o item errado (ou nenhum). Selecionar e' o que amarra as tres leituras — o
+   * ponto no mapa, o hexagono em volta dele e a linha correspondente no ranking.
+   *
+   * DEPOIS do efeito que zera a tela ao trocar de UF/municipio, e nao antes: colar um
+   * endereco muda as duas coisas na mesma passagem, e aquele efeito poe `selecionado` em
+   * `null`. A ordem de declaracao e' a ordem de execucao — invertida, a limpeza apagaria
+   * a selecao que este acabou de fazer.
+   */
+  useEffect(() => {
+    if (!pinFixo) return
+    setSelecionado(pinFixo.hexId)
+  }, [pinFixo])
+
 
   // Espelho SEMPRE atual do estado, mantido num ref. Existe para o cleanup do efeito
   // abaixo poder ler valores frescos: um cleanup enxerga o closure do render em que foi
@@ -185,6 +277,12 @@ export default function MapScreen({
     [dados],
   )
 
+  /* O hexágono da janela da ficha. Sai do `porId` e não de uma cópia do payload: o mesmo
+     objeto que o mapa desenha é o que a janela lê, então não há como as duas leituras
+     divergirem depois de uma troca de município. */
+  const hexSelecionado = selecionado ? (porId.get(selecionado) ?? null) : null
+  const cresMunDoHex = hexSelecionado?.mun ? (dados?.cres_mun?.[hexSelecionado.mun] ?? null) : null
+
   // Municípios do dropdown: "Todos" (volta à UF) + lista alfabética.
   const opcoesMunicipio = useMemo(
     () => [
@@ -217,6 +315,24 @@ export default function MapScreen({
     return hs.length === cenario.length ? hs : null
   }, [cenario, porId])
 
+  /* Comparativo ao vivo dos dois modelos, somado no cliente a partir dos hexes que o
+     backend serviu para o recorte atual. O funil (numeros grandes e narrativa) continua
+     vindo do modelo de 2 km — trocar aquilo exige mexer no payload do servidor, e este
+     experimento existe para VER o efeito, nao para virar a chave. */
+  const comparativoRaio = useMemo(() => {
+    const hs = dados?.hexes ?? []
+    if (!hs.length || hs[0].conc1k == null) return null
+    let res2 = 0
+    let res1 = 0
+    let comConc = 0
+    for (const h of hs) {
+      res2 += h.oferta ?? 0
+      res1 += h.oferta1k ?? 0
+      if ((h.conc1k ?? 0) > 0) comConc += 1
+    }
+    return { res2, res1, comConc, total: hs.length }
+  }, [dados])
+
   // Agregação do cenário multi-hex (soma no cliente a partir dos hexes servidos).
   const resumoCenario = useMemo(() => {
     const hs = cenario.map((id) => porId.get(id)).filter(Boolean) as Hex[]
@@ -239,11 +355,47 @@ export default function MapScreen({
     })
   }
 
+  /**
+   * Clique num item da LISTA: seleciona e LEVA A CAMERA ate' o hexagono.
+   *
+   * Antes so' desenhava o contorno branco. Num municipio grande o item escolhido podia
+   * estar fora do enquadramento, entao a tela respondia ao clique num lugar que o
+   * operador nao estava vendo — parecia que nada acontecia (Juan, 2026-08-12). O contorno
+   * CONTINUA: chegar sem marca nenhuma deixaria a duvida de qual dos hexagonos e' o item.
+   *
+   * O clique no proprio mapa segue por `setSelecionado` direto, sem voo: la' o hexagono
+   * ja' esta' sob o cursor, e recentrar seria mexer no que o operador acabou de mirar.
+   */
+  const [voo, setVoo] = useState<{ hexId: string; n: number } | null>(null)
+  const selecionarDaLista = useCallback((hexId: string) => {
+    setSelecionado(hexId)
+    setPin(null)
+    setVoo((v) => ({ hexId, n: (v?.n ?? 0) + 1 }))
+  }, [])
+
+  /**
+   * Poe ou tira um hexagono da comparacao, direto da lista.
+   *
+   * LIGA o modo cenario junto: sem isso o painel de comparacao — que so' aparece com
+   * `modoCenario` — ficaria escondido, e o operador veria o item marcado sem nenhum
+   * resultado na tela. O teto de `MAX_COMPARADOS` e' respeitado aqui tambem, e nao so'
+   * no clique do mapa.
+   */
+  const comparar = useCallback((hexId: string) => {
+    setModoCenario(true)
+    setCenario((cs) => {
+      if (cs.includes(hexId)) return cs.filter((x) => x !== hexId)
+      if (cs.length >= MAX_COMPARADOS) return cs
+      return [...cs, hexId]
+    })
+  }, [])
+
   function aplicarPonto(lat: number, lng: number) {
     const hexId = latLngToCell(lat, lng, 7)
     setBuscaErro(null)
     setPin({ lat, lng, hexId })
     setSelecionado(hexId)
+    onPontoBuscado?.(lat, lng)
   }
 
   async function buscarCoordenada() {
@@ -343,7 +495,51 @@ export default function MapScreen({
   // Já NÃO é a porta de entrada do produto — essa é a `InicioScreen`. Aqui só se
   // pergunta o estado, e por isso o hero grande saiu daqui (ver `Landing`).
   if (!uf) {
-    return <Landing ufs={ufs} onUf={onUf} onInicio={onInicio} />
+    /* No modo de ponto quem manda na tela vazia é o `PontoScreen`, que publica o mesmo
+       hero com o texto DELE e a caixa de colar. Sem isto, os dois apareciam juntos:
+       "Escolha o estado" no fundo e a caixa de endereço por cima. */
+    if (semLanding) return null
+    return (
+      <Landing
+        marcador="Explorar uma região"
+        titulo="Escolha o estado"
+        explicacao="O mapa lê o território inteiro e monta a sequência de camadas — do potencial socioeconômico até os municípios com mais espaço para abrir."
+        onInicio={onInicio}
+      >
+        <div
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '14px 16px',
+            background: 'var(--surf-panel)',
+            border: '1px solid var(--ac-a30)',
+            borderRadius: 'var(--r-lg)',
+            backdropFilter: 'blur(16px)',
+            boxShadow: 'var(--ac-glow)',
+          }}
+        >
+          <span style={{ font: '600 13px/1 var(--f-ui)', color: 'var(--tx-soft)' }}>
+            Selecione um estado
+          </span>
+          {ufs.length ? (
+            <Select
+              label="Escolha um estado para começar"
+              value=""
+              onChange={onUf}
+              maxWidth={260}
+              buscavel
+              placeholder="Escolha…"
+              options={ufs.map((u) => ({ value: u, label: u }))}
+            />
+          ) : (
+            <span className="num" style={{ font: '500 12px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+              carregando estados…
+            </span>
+          )}
+        </div>
+      </Landing>
+    )
   }
 
   return (
@@ -360,6 +556,8 @@ export default function MapScreen({
           pins={dados.pins}
           selecionado={modoCenario ? null : selecionado}
           cenario={cenario}
+          raio1km={raio1km}
+          cobertura1k={cobertura}
           /* A foto CONGELA na montagem, e trocar de UF/municipio zera `cameraRef` mas
              nao tem como zerar `foto.camera`. Sem este portao: SP/Sao Paulo -> volta da
              Viabilidade (foto.camera = zoom 14 sobre SP) -> troca a UF -> a carga falha
@@ -382,7 +580,8 @@ export default function MapScreen({
               setSelecionado(h.id)
             }
           }}
-          searchPin={pin}
+          searchPin={pinFixo ?? pin}
+          voarPara={voo}
         />
       )}
 
@@ -713,58 +912,26 @@ export default function MapScreen({
                   {modoCenario ? '◆ Comparando hexes' : '◇ Comparar vários hexes'}
                 </button>
 
-                {modoCenario && hexesComparacao && (
-                  <PainelComparacao hexes={hexesComparacao} onLimpar={() => setCenario([])} />
-                )}
-
-                {modoCenario && !hexesComparacao && (
-                  <div
-                    style={{
-                      background: 'var(--surf-panel)',
-                      border: '1px solid var(--ac-a30)',
-                      borderRadius: 'var(--r-md)',
-                      padding: '11px 13px',
-                      backdropFilter: 'blur(16px)',
-                      minWidth: 232,
-                    }}
-                  >
-                    <div style={{ font: '700 12px/1 var(--f-ui)', color: 'var(--tx-max)' }}>
-                      Cenário multi-hex · {resumoCenario?.n ?? 0} hex
-                    </div>
-                    {resumoCenario ? (
-                      <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
-                        <LinhaC rotulo="Residual somado" valor={`${alunos(resumoCenario.residual)} alunos`} forte />
-                        <LinhaC rotulo="População" valor={num(resumoCenario.pop)} />
-                        <LinhaC rotulo="Score censo médio" valor={num(resumoCenario.scoreMedio, 1)} />
-                        <LinhaC rotulo="Concorrentes 2 km" valor={num(resumoCenario.conc)} />
-                      </div>
-                    ) : (
-                      <p style={{ margin: '8px 0 0', font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
-                        Clique nos hexágonos do mapa para somar residual, população e score.
-                        De <strong style={{ color: 'var(--tx-soft)' }}>dois a {MAX_COMPARADOS}</strong>{' '}
-                        selecionados, este painel compara e diz qual é o melhor.
-                      </p>
-                    )}
-                    {resumoCenario && (
-                      <div style={{ marginTop: 11, display: 'flex', gap: 8 }}>
-                        <button
-                          type="button"
-                          onClick={() => setCenario([])}
-                          style={botaoGhost}
-                        >
-                          Limpar
-                        </button>
-                        <button type="button" onClick={copiarCenario} style={botaoGhost}>
-                          {copiado ? 'Copiado ✓' : 'Copiar IDs'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
+                {/* O conteúdo da comparação saiu daqui e foi para uma JANELA (abaixo, no
+                    fim da árvore). Como caixa presa ao canto, ela crescia sobre o mapa sem
+                    o operador poder tirá-la do caminho — e é justamente o território que
+                    ele está comparando que ficava coberto. Este botão continua sendo o
+                    liga/desliga do modo. */}
               </div>
             )}
 
             <ScoreLegend passoN={passo.n} />
+
+            {/* PROTOTIPO — chave do raio de atuacao das concorrentes. So aparece nos
+                passos que falam de oferta e disputa, e so quando o backend serviu os
+                campos do modelo novo. */}
+            {comparativoRaio && (passo.n === 2 || passo.n === 3) && (
+              <PilulaRaio
+                ligado={raio1km}
+                carregando={carregandoRaio}
+                onToggle={() => setRaio1km((v) => !v)}
+              />
+            )}
           </div>
         )}
 
@@ -794,9 +961,12 @@ export default function MapScreen({
               nivel={dados.nivel}
               crescimentoEstado={dados.crescimento_estado}
               selecionado={selecionado}
-              onSelecionarHex={setSelecionado}
+              onSelecionarHex={selecionarDaLista}
               onAnalisar={analisar}
               onDrillMunicipio={onMunicipio}
+              onComparar={comparar}
+              comparados={cenario}
+              maxComparados={MAX_COMPARADOS}
             />
           ) : null}
         </div>
@@ -841,6 +1011,85 @@ export default function MapScreen({
 
       {/* Gaveta da metodologia. Ultima na arvore e com zIndex acima do header para
           cobrir o chrome do mapa; o mapa em si continua visivel a' esquerda. */}
+      {/* ---------------- Janela da FICHA DO HEXÁGONO ----------------
+          Mesma janela da análise de ponto (arrasta, redimensiona, recolhe), agora para o
+          hexágono escolhido. Antes o dado dele só existia em dois lugares efêmeros — o
+          tooltip, que some com o mouse, e a linha do ranking, que mostra UMA métrica (a da
+          camada ativa). Comparar dois bairros exigia trocar de camada quatro vezes.
+
+          Some no modo de comparação: ali quem manda é o conjunto, e duas janelas dizendo
+          coisas diferentes sobre a mesma seleção competiriam entre si. */}
+      <JanelaFicha
+        aberta={janelaDoHex && hexSelecionado != null && !modoCenario}
+        titulo={hexSelecionado?.mun ?? 'Hexágono'}
+        /* O id do hexágono NÃO entra abreviado aqui. H3 é hierárquico: vizinhos dividem o
+           prefixo, então `87a8c0ce…` é o mesmo texto para hexágonos diferentes — piorava
+           exatamente o que se quer resolver, que é saber qual é qual. A coordenada
+           distingue de imediato; o id inteiro fica no corpo da ficha. */
+        subtitulo={
+          hexSelecionado
+            ? [dados?.uf, coord(hexSelecionado.lat, hexSelecionado.lng)]
+                .filter(Boolean)
+                .join(' · ')
+            : undefined
+        }
+        onFechar={() => setSelecionado(null)}
+        recuoInferior={96}
+      >
+        {hexSelecionado && (
+          <FichaHex hex={hexSelecionado} cres={cresMunDoHex} />
+        )}
+      </JanelaFicha>
+
+      {/* ---------------- Janela da COMPARAÇÃO ----------------
+          À ESQUERDA de propósito: a ficha do hexágono nasce à direita, e duas janelas no
+          mesmo canto abririam uma sobre a outra. Arrastar continua livre para as duas. */}
+      <JanelaFicha
+        aberta={modoCenario}
+        titulo="Comparando hexágonos"
+        subtitulo={`${cenario.length} de ${MAX_COMPARADOS} selecionados`}
+        onFechar={() => {
+          setModoCenario(false)
+          setCenario([])
+        }}
+        recuoInferior={96}
+      >
+        {hexesComparacao ? (
+          <PainelComparacao hexes={hexesComparacao} onLimpar={() => setCenario([])} />
+        ) : (
+          <div>
+            <div style={{ font: '700 12px/1 var(--f-ui)', color: 'var(--tx-max)' }}>
+              Cenário multi-hex · {resumoCenario?.n ?? 0} hex
+            </div>
+            {resumoCenario ? (
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                <LinhaC rotulo="Residual somado" valor={`${alunos(resumoCenario.residual)} alunos`} forte />
+                <LinhaC rotulo="População" valor={num(resumoCenario.pop)} />
+                <LinhaC rotulo="Score censo médio" valor={num(resumoCenario.scoreMedio, 1)} />
+                <LinhaC rotulo="Concorrentes 2 km" valor={num(resumoCenario.conc)} />
+              </div>
+            ) : (
+              <p style={{ margin: '8px 0 0', font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
+                Clique nos hexágonos do mapa — ou no <strong style={{ color: 'var(--tx-soft)' }}>+</strong>{' '}
+                dos itens da lista — para somar residual, população e score. De{' '}
+                <strong style={{ color: 'var(--tx-soft)' }}>dois a {MAX_COMPARADOS}</strong>{' '}
+                selecionados, esta janela compara e diz qual é o melhor.
+              </p>
+            )}
+            {resumoCenario && (
+              <div style={{ marginTop: 11, display: 'flex', gap: 8 }}>
+                <button type="button" onClick={() => setCenario([])} style={botaoGhost}>
+                  Limpar
+                </button>
+                <button type="button" onClick={copiarCenario} style={botaoGhost}>
+                  {copiado ? 'Copiado ✓' : 'Copiar IDs'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </JanelaFicha>
+
       <MethodologyPanel
         aberto={metodologiaAberta}
         onFechar={() => setMetodologiaAberta(false)}
@@ -858,14 +1107,27 @@ export default function MapScreen({
    titulo encolheu de 44px para 26px. Manter os dois grandes deixava o operador diante de
    duas telas de abertura em sequencia, com o mesmo titulo. */
 
-function Landing({
-  ufs,
-  onUf,
+/**
+ * O HERO de entrada de um modo: marcador, titulo, explicacao e UM controle.
+ *
+ * Exportado porque o modo de ponto usa o MESMO desenho com o proprio texto e a caixa de
+ * colar no lugar do seletor de estado (pedido do Juan, 2026-08-12). Antes, entrar na
+ * analise de ponto sem endereco mostrava este hero falando de "Explorar uma regiao" com a
+ * caixa de colar flutuando por cima — dois assuntos disputando a mesma tela.
+ */
+export function Landing({
+  marcador,
+  titulo,
+  explicacao,
   onInicio,
+  children,
 }: {
-  ufs: string[]
-  onUf: (uf: string) => void
+  marcador: string
+  titulo: string
+  explicacao: ReactNode
   onInicio: () => void
+  /** O controle da tela: o seletor de estado, a caixa de colar, o que o modo pedir. */
+  children: ReactNode
 }) {
   return (
     <div
@@ -897,7 +1159,7 @@ function Landing({
           }}
         >
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--ac)' }} />
-          Explorar uma região
+          {marcador}
         </span>
 
         <h1
@@ -909,7 +1171,7 @@ function Landing({
             letterSpacing: '.005em',
           }}
         >
-          Escolha o estado
+          {titulo}
         </h1>
 
         <p
@@ -920,43 +1182,10 @@ function Landing({
             maxWidth: 460,
           }}
         >
-          O mapa lê o território inteiro e monta a sequência de camadas — do potencial
-          socioeconômico até os municípios com mais espaço para abrir.
+          {explicacao}
         </p>
 
-        <div
-          style={{
-            marginTop: 30,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 12,
-            padding: '14px 16px',
-            background: 'var(--surf-panel)',
-            border: '1px solid var(--ac-a30)',
-            borderRadius: 'var(--r-lg)',
-            backdropFilter: 'blur(16px)',
-            boxShadow: 'var(--ac-glow)',
-          }}
-        >
-          <span style={{ font: '600 13px/1 var(--f-ui)', color: 'var(--tx-soft)' }}>
-            Selecione um estado
-          </span>
-          {ufs.length ? (
-            <Select
-              label="Escolha um estado para começar"
-              value=""
-              onChange={onUf}
-              maxWidth={260}
-              buscavel
-              placeholder="Escolha…"
-              options={ufs.map((u) => ({ value: u, label: u }))}
-            />
-          ) : (
-            <span className="num" style={{ font: '500 12px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
-              carregando estados…
-            </span>
-          )}
-        </div>
+        <div style={{ marginTop: 30 }}>{children}</div>
 
         <p
           style={{
@@ -1113,5 +1342,70 @@ function PainelMensagem({ children }: { children: React.ReactNode }) {
     >
       {children}
     </aside>
+  )
+}
+
+/* --- PROTOTIPO: pilula do raio de atuacao das concorrentes ------------------
+   Substituiu um painel de texto que ficava embaixo das faixas: o Felipe pediu
+   leitura VISUAL, no mapa, nao um bloco de numeros na lateral. Aqui fica so o
+   liga/desliga; quem conta a historia sao os circulos de 1 km desenhados em volta
+   de cada concorrente e a cor dos hexagonos que eles alcancam.
+
+   Abre SEMPRE em 2 km — o piloto continua identico ao de hoje ate alguem clicar. */
+function PilulaRaio({
+  ligado,
+  carregando,
+  onToggle,
+}: {
+  ligado: boolean
+  carregando: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      title={
+        ligado
+          ? 'Mostrando o raio de 1 km de cada concorrente e os hexágonos que ela alcança'
+          : 'Modelo atual: peso linear até 2 km medido do centróide do hexágono'
+      }
+      style={{
+        // O container da legenda e' um overlay com `pointerEvents: 'none'` (para nao
+        // roubar o arraste do mapa). Sem devolver 'auto' AQUI, o clique atravessa o
+        // botao e vai para o mapa: a pilula aparece, mas nao liga nada. Era esse o
+        // motivo de "nenhuma mudanca" — a chave nunca chegava a ficar true.
+        pointerEvents: 'auto',
+        marginTop: 8,
+        width: '100%',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        fontSize: 11,
+        fontWeight: 600,
+        padding: '7px 11px',
+        borderRadius: 9,
+        border: `1px solid ${ligado ? 'rgba(53,201,214,.45)' : 'rgba(255,255,255,.14)'}`,
+        // Fundo PRETO (pedido do Felipe): o botao fica sobre o mapa, e um fundo
+        // translucido deixava a legenda das faixas atravessar o texto.
+        background: '#000',
+        color: ligado ? '#7de3ec' : '#9aa7b5',
+      }}
+    >
+      <span
+        style={{
+          width: 9,
+          height: 9,
+          borderRadius: '50%',
+          background: carregando ? '#f2c230' : ligado ? '#4fd3df' : '#5a6472',
+          flexShrink: 0,
+        }}
+      />
+      {carregando
+        ? 'Carregando raio…'
+        : ligado
+          ? 'Raio 1 km por concorrente'
+          : 'Ver raio de 1 km das concorrentes'}
+    </button>
   )
 }

@@ -27,7 +27,7 @@ GUARDRAILS (CLAUDE.md §1/§2/§5; DEC-012; DEC-013):
     raiz nem `pipelines/normalizar_concorrentes.py` (`_DENY_CRITICO` do loop_guard — molde de
     leitura apenas; a fórmula do `concorrente_id` foi REPLICADA em `contrato.py`).
   - Anti-PII (DEC-012 / contrato §11): `nome`/coordenadas/endereço/CEP existem **só em memória**;
-    o Parquet leva apenas as 10 colunas do contrato. A auditoria da limpeza carrega **só
+    o Parquet leva apenas as 12 colunas do contrato. A auditoria da limpeza carrega **só
     contagens**, jamais o texto ofensor. Testes com fixtures 100% sintéticas.
   - CSV do projeto: `sep=";"`, `encoding="utf-8-sig"`. Staging sempre em Parquet.
 
@@ -36,6 +36,7 @@ API h3 = v4 (`latlng_to_cell`).
 
 from __future__ import annotations
 
+import argparse
 import logging
 import re
 import shutil
@@ -53,11 +54,14 @@ from motor_expansao.demanda_revelada.classificacao_rede_menor import classificar
 from .contrato import (
     CHAVE_ORIGEM_VALIDAS,
     COLUNAS_PII_PROIBIDAS,
+    COLUNAS_SNAPSHOT_NULAVEIS,
     CONTRATO_COLUNAS_SNAPSHOT,
     FONTES_VALIDAS,
     H3_RES_CONTRATO,
     LIMIAR_SLUG_ESTAVEL,
     MOTIVOS_DESCARTE,
+    NOTA_WELLHUB_MAX,
+    NOTA_WELLHUB_MIN,
     RE_SEMANA,
     RE_UUID,
     RETENCAO_SEMANAS,
@@ -103,6 +107,11 @@ _COLUNAS_TRABALHO: tuple[str, ...] = (
     "endereco_formatado",
     "modalidades",
     "atividades",
+    # Rating do WellHub (BLK-MA-08). NAO e PII (DEC-024) e, ao contrario das duas de cima,
+    # SOBREVIVE a fronteira: vira coluna-fato do snapshot (DEC-026). Ausente no feed TotalPass
+    # e no `unidades` -> `montar_snapshot` preenche com NA.
+    "nota_wellhub",
+    "qtd_avaliacoes_wellhub",
     "data_coleta",
 )
 
@@ -154,22 +163,42 @@ def ler_feeds(
     dir_totalpass: Path = DIR_TOTALPASS_DEFAULT,
     dir_wellhub: Path = DIR_WELLHUB_DEFAULT,
     dir_unidades: Path = DIR_UNIDADES_DEFAULT,
+    *,
+    fontes: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Lê as 3 pastas de CSVs -> frame LONGO de trabalho (PII **só em memória**, nada persistido).
 
     `rede` = stem sem o prefixo `unidades_` para o feed de cadeias; `classificar_rede(nome)` para
     TotalPass/WellHub (espelha `concorrentes_densos.py:138`/`:153`). Colunas ausentes no arquivo
     entram como `""`. Diretório inexistente contribui 0 linhas e **nunca** levanta.
+
+    `fontes` restringe QUAIS feeds entram (default: todos). Existe por causa de um descasamento de
+    CADÊNCIA, não de gosto (BLK-MA-06): o cron semanal recoleta só o feed `unidades`; WellHub e
+    TotalPass dependem de um cron mensal que ainda **não existe**
+    (`docs/infra_producao.md`, "Pendentes"). Fotografar um feed que não foi recoletado produz
+    `hash_campos_raspados` idêntico semana após semana -> `semanas_sem_mudanca` cresce sozinho ->
+    o **S4 marcaria o universo inteiro de agregador como "parado"**, que é justamente o sinal de
+    vulnerabilidade. Passar `fontes` explicitamente deixa esse recorte auditável no log e na
+    auditoria, em vez de escondido num diretório apontado para lugar nenhum.
     """
+    ativas = FONTES_VALIDAS if fontes is None else frozenset(str(f) for f in fontes)
+    desconhecidas = sorted(ativas - FONTES_VALIDAS)
+    if desconhecidas:
+        raise ValueError(f"fonte fora do contrato: {desconhecidas}; aceitas: {sorted(FONTES_VALIDAS)}")
+    if not ativas:
+        raise ValueError("`fontes` vazio: nao ha o que ler")
     partes: list[pd.DataFrame] = []
-    for caminho in sorted(Path(dir_totalpass).glob("*.csv")):
-        partes.append(_preparar_parte(_ler_csv_bruto(caminho), "totalpass", None))
-    for caminho in sorted(Path(dir_wellhub).glob("*.csv")):
-        partes.append(_preparar_parte(_ler_csv_bruto(caminho), "wellhub", None))
-    for caminho in sorted(Path(dir_unidades).glob("*.csv")):
-        stem = caminho.stem
-        rede = stem[len(_PREFIXO_UNIDADES) :] if stem.startswith(_PREFIXO_UNIDADES) else stem
-        partes.append(_preparar_parte(_ler_csv_bruto(caminho), "unidades", rede))
+    if "totalpass" in ativas:
+        for caminho in sorted(Path(dir_totalpass).glob("*.csv")):
+            partes.append(_preparar_parte(_ler_csv_bruto(caminho), "totalpass", None))
+    if "wellhub" in ativas:
+        for caminho in sorted(Path(dir_wellhub).glob("*.csv")):
+            partes.append(_preparar_parte(_ler_csv_bruto(caminho), "wellhub", None))
+    if "unidades" in ativas:
+        for caminho in sorted(Path(dir_unidades).glob("*.csv")):
+            stem = caminho.stem
+            rede = stem[len(_PREFIXO_UNIDADES) :] if stem.startswith(_PREFIXO_UNIDADES) else stem
+            partes.append(_preparar_parte(_ler_csv_bruto(caminho), "unidades", rede))
 
     partes = [p for p in partes if not p.empty]
     if not partes:
@@ -258,9 +287,11 @@ def limpar_ruido(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
 def calcular_hash_campos_raspados(df: pd.DataFrame) -> pd.DataFrame:
     """Acrescenta `hash_campos_raspados` por linha, com o conjunto de campos da própria `fonte`.
 
-    `data_coleta` e `slug` **jamais** entram no hash (`CAMPOS_NUNCA_HASHEADOS`): com a data
-    dentro, `semanas_sem_mudanca` nunca sairia de 0 e a staleness morreria; com o slug dentro,
-    a rotação de UUID viraria falsa mudança de negócio.
+    `data_coleta`, `slug` e a taxonomia (`atividades`/`modalidades`) **jamais** entram no hash
+    (`CAMPOS_NUNCA_HASHEADOS`): com a data dentro, `semanas_sem_mudanca` nunca sairia de 0 e a
+    staleness morreria; com o slug dentro, a rotação de UUID viraria falsa mudança de negócio; com
+    a taxonomia dentro, uma renomeação de rótulo pela FONTE viraria "cadastro alterado" para o
+    universo inteiro (medido no WellHub em 2026-08-07: 99,1% — emenda BLK-MA-11 / DEC-025).
     """
     out = df.copy()
     valores = [
@@ -425,10 +456,74 @@ def avaliar_estabilidade_slug(snapshots: Sequence[pd.DataFrame]) -> dict[str, fl
 # --------------------------------------------------------------------------- #
 # 5. Montagem do snapshot (PURA) — aqui a PII morre
 # --------------------------------------------------------------------------- #
-def montar_snapshot(
-    df: pd.DataFrame, data_referencia: date
-) -> tuple[pd.DataFrame, dict[str, object]]:
-    """Projeta as **10 colunas do contrato**, coage dtypes, colapsa colisões e valida o schema.
+def _coagir_rating(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Coage as duas colunas-fato de rating. **NUNCA levanta** — devolve quantas ficaram ilegíveis.
+
+    Por que não pode levantar: `montar_snapshot` roda ANTES de `escrever_particao_semana`, e o
+    `run_weekly_90.sh` sobrescreve os CSVs a cada coleta. Uma exceção aqui não perde uma linha:
+    perde a **semana inteira**, para sempre, por causa de uma célula. Direção segura é degradar a
+    célula para "não lido" — que é um dos três estados do contrato — e **contar**, para que a
+    degradação apareça na auditoria em vez de virar silêncio.
+
+    Dois modos de falha, os dois medidos como reais:
+
+    1. **Contagem não-inteira.** `pd.to_numeric("1.262")` devolve `1.262` (float), e o
+       `.astype("Int64")` seguinte levanta `TypeError: cannot safely cast non-equivalent`. É a
+       forma que a contagem assume se o WellHub trocar o locale da UI para pt-BR — e contagem de
+       4 dígitos existe no universo (a DEC-024 cita "4,73 com 1.262"). Medido em 2026-08-10: o
+       consolidado atual traz as 45.527 contagens como inteiro puro, então isto é **latente**,
+       não ativo.
+    2. **Valor fora do domínio.** Nota fora de `[NOTA_WELLHUB_MIN, NOTA_WELLHUB_MAX]` ou contagem
+       negativa. `481` é `4.81` sem o separador decimal; `0.0` é o default de um parser que não
+       achou o campo. Antes estes valores só eram vistos pelo `_assert_schema_snapshot`, que
+       LEVANTA — mesma consequência do item 1, e pelo mesmo caminho.
+    3. **Par fora dos três estados.** A DEC-024 (D-3) define TRÊS: `4.81`/`105` (tem nota), `NA`/`0`
+       (sem avaliações) e `NA`/`NA` (parser quebrou). Qualquer outro par — `NA`/`105` (nota
+       ilegível com contagem boa), `4.81`/`0` (nota sem avaliação que a sustente), `4.81`/`NA` —
+       é normalizado para `NA`/`NA`, porque "não lido" é o que de fato aconteceu. Deixar passar
+       faria uma quebra de parser entrar no funil disfarçada de academia sem avaliação.
+
+    A ordem importa: o domínio primeiro, o par depois. É ela que faz `0.0`/`0` — extrator quebrado
+    sobre uma unidade sem avaliações — cair no estado CERTO (`NA`/`0`, "sem avaliações") em vez de
+    virar "não lido".
+    """
+    nota = pd.to_numeric(df["nota_wellhub"], errors="coerce")
+    qtd = pd.to_numeric(df["qtd_avaliacoes_wellhub"], errors="coerce")
+
+    # (1) Domínio, por coluna. Um valor impossível é um valor NÃO LIDO — não um motivo para abortar.
+    fora_dominio = nota.notna() & ((nota < NOTA_WELLHUB_MIN) | (nota > NOTA_WELLHUB_MAX))
+    nota = nota.where(~fora_dominio)
+
+    # `Int64` só aceita valor integral; não-integral vira "não lido" em vez de abortar a semana.
+    nao_inteiro = qtd.notna() & (qtd != qtd.round())
+    negativa = qtd.notna() & (qtd < 0)
+    qtd = qtd.where(~(nao_inteiro | negativa))
+
+    # (2) Par: os três estados da DEC-024 são os ÚNICOS válidos; todo o resto vira "não lido".
+    tem_nota = nota.notna() & qtd.notna() & (qtd > 0)
+    sem_avaliacoes = nota.isna() & qtd.notna() & (qtd == 0)
+    nao_lido = nota.isna() & qtd.isna()
+    par_invalido = ~(tem_nota | sem_avaliacoes | nao_lido)
+    nota = nota.where(~par_invalido)
+    qtd = qtd.where(~par_invalido)
+
+    out = df.copy()
+    out["nota_wellhub"] = nota.astype("Float64")
+    out["qtd_avaliacoes_wellhub"] = qtd.round().astype("Int64")
+    # Conta LINHAS degradadas, não ocorrências: uma nota `9.9` com contagem boa aciona o domínio e
+    # o par, e vale 1 — senão a auditoria inflaria e ninguém saberia quantas células se perderam.
+    degradadas = fora_dominio | nao_inteiro | negativa | par_invalido
+    return out, int(degradadas.sum())
+
+
+def montar_snapshot(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Projeta as **12 colunas do contrato**, coage dtypes, colapsa colisões e valida o schema.
+
+    **Não recebe `data_referencia`** (removido no BLK-MA-02-FU1, m2). O parâmetro existia, nunca era
+    lido, e sugeria exatamente a coisa errada: que o `snapshot_date` saísse dele. Não sai — ele é
+    derivado POR LINHA de `parse_data_coleta(data_coleta, fonte)`, e é isso que o torna medidor de
+    frescor ("o CSV é o da semana passada?"). Quem usa a data da execução é a `semana` da partição,
+    decidida em `materializar`.
 
     A PII morre neste passo (molde `_COLUNAS_DROP_FRONTEIRA`, `concorrentes_densos.py:73-86`):
     `nome`/coords/cidade/CEP/endereço/modalidades simplesmente não são projetados.
@@ -441,21 +536,32 @@ def montar_snapshot(
     entrada = int(len(df))
     out = df.copy()
     if out.empty:
-        vazio = pd.DataFrame(
-            {col: pd.Series(dtype="string") for col in CONTRATO_COLUNAS_SNAPSHOT}
-        )
+        vazio = _frame_snapshot_vazio(com_semana=False)
         _assert_schema_snapshot(vazio)
-        return vazio, {"linhas_entrada": 0, "linhas_snapshot": 0, "chaves_colapsadas": 0}
+        return vazio, {
+            "linhas_entrada": 0,
+            "linhas_snapshot": 0,
+            "chaves_colapsadas": 0,
+            "rating_ilegivel": 0,
+        }
 
     out["snapshot_date"] = [
         parse_data_coleta(valor, fonte=str(fonte)).isoformat()
         for valor, fonte in zip(out["data_coleta"], out["fonte"], strict=False)
     ]
     out["versao_contrato"] = VERSAO_CONTRATO_SNAPSHOT
+    # As colunas-fato de rating só existem no feed do WellHub; TotalPass e `unidades` chegam sem
+    # elas e ficam nulas por construção (DEC-026). Sem este preenchimento a projeção abaixo levanta
+    # `KeyError` para essas duas fontes.
+    for coluna in ("nota_wellhub", "qtd_avaliacoes_wellhub"):
+        if coluna not in out.columns:
+            out[coluna] = pd.NA
     out = out[list(CONTRATO_COLUNAS_SNAPSHOT.keys())]
 
     for coluna in CONTRATO_COLUNAS_SNAPSHOT:
-        out[coluna] = out[coluna].astype("string")
+        if CONTRATO_COLUNAS_SNAPSHOT[coluna] == "string":
+            out[coluna] = out[coluna].astype("string")
+    out, rating_ilegivel = _coagir_rating(out)
     out["slug"] = out["slug"].where(out["slug"].fillna("").str.len() > 0, pd.NA)
 
     out = out.sort_values(
@@ -472,11 +578,18 @@ def montar_snapshot(
         "linhas_entrada": entrada,
         "linhas_snapshot": int(len(out)),
         "chaves_colapsadas": int(colapsadas),
+        # Degradações de rating desta semana. Zero é o normal; qualquer número > 0 é sinal de que
+        # o formato do coletor mudou e vale investigar ANTES de a série herdar o buraco.
+        "rating_ilegivel": int(rating_ilegivel),
     }
 
 
 def _assert_schema_snapshot(df: pd.DataFrame) -> None:
-    """Falha alto se o frame não é exatamente o contrato `snapshots_concorrentes_v1`."""
+    """Falha alto se o frame não é exatamente o contrato `VERSAO_CONTRATO_SNAPSHOT`.
+
+    A versão vive na constante, não neste texto: cravá-la aqui já ficou stale uma vez, no bump
+    `v1` -> `v2` da emenda BLK-MA-11.
+    """
     esperado = list(CONTRATO_COLUNAS_SNAPSHOT.keys())
     pii = sorted(set(df.columns) & COLUNAS_PII_PROIBIDAS)
     if pii:
@@ -492,7 +605,7 @@ def _assert_schema_snapshot(df: pd.DataFrame) -> None:
     if df.empty:
         return
 
-    obrigatorias = [c for c in esperado if c != "slug"]
+    obrigatorias = [c for c in esperado if c not in COLUNAS_SNAPSHOT_NULAVEIS]
     for coluna in obrigatorias:
         serie = df[coluna]
         vazio = serie.isna() | (serie.astype(str).str.len() == 0)
@@ -522,6 +635,37 @@ def _assert_schema_snapshot(df: pd.DataFrame) -> None:
     if dup > 0:
         raise ValueError(f"chave (fonte, chave_snapshot) duplicada: {dup} linha(s)")
 
+    # Rating (DEC-026). O caminho público normaliza TODOS estes casos em `_coagir_rating` — nenhum
+    # deles pode chegar aqui vindo de `montar_snapshot`, e é de propósito: levantar sobre dado do
+    # coletor custaria a semana inteira (ver a docstring de `_coagir_rating`). Estas checagens são
+    # a rede para frames montados à MÃO — que é como metade dos testes desta camada constrói o
+    # insumo, e como um bloco futuro provavelmente vai construir também.
+    nota = df["nota_wellhub"]
+    qtd = df["qtd_avaliacoes_wellhub"]
+    fora = nota.dropna()
+    if len(fora) and (
+        bool((fora < NOTA_WELLHUB_MIN).any()) or bool((fora > NOTA_WELLHUB_MAX).any())
+    ):
+        raise ValueError(
+            f"nota_wellhub fora de [{NOTA_WELLHUB_MIN}, {NOTA_WELLHUB_MAX}]: "
+            f"amostra {sorted(set(fora))[:5]}"
+        )
+    negativas = qtd.dropna()
+    if len(negativas) and bool((negativas < 0).any()):
+        raise ValueError("qtd_avaliacoes_wellhub negativa")
+    # O PAR tem de ser um dos TRÊS estados da DEC-024 (D-3): "tem nota" (`4.81`/`105`), "sem
+    # avaliações" (`NA`/`0`) ou "não lido" (`NA`/`NA`). Os outros três pares possíveis — `NA`/`105`,
+    # `4.81`/`0` e `4.81`/`NA` — não existem no contrato. Deixá-los passar faria uma quebra de
+    # parser entrar no funil disfarçada de academia sem avaliação.
+    tem_nota = nota.notna() & qtd.notna() & (qtd > 0)
+    sem_avaliacoes = nota.isna() & qtd.notna() & (qtd == 0)
+    nao_lido = nota.isna() & qtd.isna()
+    incoerentes = int((~(tem_nota | sem_avaliacoes | nao_lido)).sum())
+    if incoerentes:
+        raise ValueError(
+            f"rating incoerente em {incoerentes} linha(s): estado fora dos tres da DEC-024"
+        )
+
 
 # --------------------------------------------------------------------------- #
 # 6. Escrita/leitura particionada (I/O) — pyarrow hive, molde fase1_bi_exports.py:588-608
@@ -535,9 +679,24 @@ def escrever_particao_semana(
     mesma semana apaga e regrava a partição inteira, então a idempotência vale mesmo quando a
     semana **encolhe**. O preço é que um frame PARCIAL apagaria o resto daquela semana — por isso a
     primeira coisa aqui é exigir **exatamente uma** semana ISO por chamada (CA-17/R7).
+
+    **EXCEÇÃO, e ela é deliberada (BLK-MA-02-FU1, m1):** frame **vazio** NÃO apaga a partição
+    existente e NÃO cria diretório — a função sai cedo, avisando em WARNING, e o caminho devolvido
+    **pode não existir**. A idempotência do parágrafo acima vale para "a semana encolheu", não para
+    "a semana sumiu". Motivo: zero linha quase sempre é **coleta que falhou**, não universo
+    realmente vazio; apagar aqui trocaria uma falha transitória por perda permanente de série, o
+    mesmo modo de falha que o `_coagir_rating` evita do lado do dado. Para zerar uma semana de
+    propósito, apague a partição à mão.
     """
     if not isinstance(semana, str) or not RE_SEMANA.match(semana):
         raise ValueError("escrever_particao_semana exige `semana` no formato ISO AAAA-SS")
+    if df.empty:
+        _logger.warning(
+            "frame vazio para semana=%s: nada gravado e particao existente PRESERVADA "
+            "(zero linha e' sintoma de coleta falha, nao de universo vazio)",
+            semana,
+        )
+        return Path(base_dir) / f"semana={semana}"
     frame = df.copy()
     if "semana" in frame.columns and not frame.empty:
         semanas_no_frame = {str(v) for v in frame["semana"]}
@@ -555,7 +714,11 @@ def escrever_particao_semana(
     # (armadilha comentada em `fase1_bi_exports.py:596-598`).
     frame["semana"] = str(semana)
     frame["semana"] = frame["semana"].astype(str)
-    tabela = pa.Table.from_pandas(frame, preserve_index=False)
+    # `schema=` explícito na ESCRITA pelo mesmo motivo que na leitura: garante que o arquivo nasça
+    # com os tipos do contrato em vez dos que o pandas inferir. Sem isso, uma partição em que
+    # `nota_wellhub` fosse toda nula sairia como `null` em vez de `double`, e a leitura seguinte
+    # teria de conciliar tipos incompatíveis entre semanas.
+    tabela = pa.Table.from_pandas(frame, preserve_index=False, schema=_schema_arrow_snapshot())
     ds.write_dataset(
         tabela,
         base_dir=str(base_dir),
@@ -567,18 +730,53 @@ def escrever_particao_semana(
     return base_dir / f"semana={semana}"
 
 
+# Tradução dtype do contrato -> tipo Arrow, e a volta. Uma tabela só, para que a ida e a volta
+# não possam divergir (o `types_mapper` do `to_pandas` é a inversa desta).
+_TIPO_ARROW_POR_DTYPE: dict[str, pa.DataType] = {
+    "string": pa.string(),
+    "Float64": pa.float64(),
+    "Int64": pa.int64(),
+}
+_TIPO_PANDAS_POR_ARROW: dict[pa.DataType, object] = {
+    pa.string(): pd.StringDtype(),
+    pa.float64(): pd.Float64Dtype(),
+    pa.int64(): pd.Int64Dtype(),
+}
+
+
+def _schema_arrow_snapshot() -> pa.Schema:
+    """Schema Arrow do contrato de snapshot + a coluna de partição `semana`."""
+    campos = [
+        (col, _TIPO_ARROW_POR_DTYPE[dtype]) for col, dtype in CONTRATO_COLUNAS_SNAPSHOT.items()
+    ]
+    return pa.schema([*campos, ("semana", pa.string())])
+
+
 def _frame_snapshot_vazio(com_semana: bool = True) -> pd.DataFrame:
-    colunas = list(CONTRATO_COLUNAS_SNAPSHOT.keys()) + (["semana"] if com_semana else [])
-    return pd.DataFrame({col: pd.Series(dtype="string") for col in colunas})
+    """Frame vazio COM os dtypes do contrato — `nota_wellhub`/`qtd_avaliacoes_wellhub` sao
+    numericos nulaveis, nao `string`, e um frame vazio mal tipado quebraria o `concat` da serie.
+    """
+    dados = {col: pd.Series(dtype=dt) for col, dt in CONTRATO_COLUNAS_SNAPSHOT.items()}
+    if com_semana:
+        dados["semana"] = pd.Series(dtype="string")
+    return pd.DataFrame(dados)
 
 
 def ler_snapshots(
     base_dir: Path = SNAPSHOTS_DIR_DEFAULT, *, semanas: Sequence[str] | None = None
 ) -> pd.DataFrame:
-    """Lê a série de partições -> 10 colunas do contrato + `semana` (string, vinda do caminho).
+    """Lê a série de partições -> 12 colunas do contrato + `semana` (string, vinda do caminho).
 
     O `partitioning` é explícito também na LEITURA para o pyarrow não inferir tipo e devolver
     `semana` como algo diferente de string. Base inexistente/vazia -> frame vazio bem-formado.
+
+    **O `schema=` explícito não é otimização — é correção `[BLK-MA-09 / DEC-026]`.** Sem ele o
+    pyarrow infere o schema do PRIMEIRO arquivo do dataset. Numa série com partições de contratos
+    diferentes (pré e pós-bump, que é exatamente o que um bump produz), se a primeira lida for uma
+    partição antiga, as colunas novas são **descartadas de todas as outras**; o laço de
+    preenchimento abaixo então as recria como `pd.NA`, e o resultado é uma coluna **nula para o
+    universo inteiro, sem erro e sem log** — inclusive para as linhas que tinham valor. Com o
+    schema declarado, o pyarrow preenche o que falta **por arquivo**, que é a semântica certa.
     """
     base = Path(base_dir)
     if not base.exists() or not any(_RE_DIR_SEMANA.match(p.name) for p in base.iterdir()):
@@ -586,10 +784,11 @@ def ler_snapshots(
     dataset = ds.dataset(
         str(base),
         format="parquet",
+        schema=_schema_arrow_snapshot(),
         partitioning=ds.partitioning(pa.schema([("semana", pa.string())]), flavor="hive"),
     )
     tabela = dataset.to_table()
-    df = tabela.to_pandas()
+    df = tabela.to_pandas(types_mapper=_TIPO_PANDAS_POR_ARROW.get)
     if semanas is not None:
         alvo = {str(s) for s in semanas}
         df = df[df["semana"].astype(str).isin(alvo)]
@@ -597,7 +796,10 @@ def ler_snapshots(
     for coluna in colunas:
         if coluna not in df.columns:
             df[coluna] = pd.NA
-    return df[colunas].reset_index(drop=True)
+    out = df[colunas].reset_index(drop=True)
+    for coluna, dtype in CONTRATO_COLUNAS_SNAPSHOT.items():
+        out[coluna] = out[coluna].astype(dtype)
+    return out
 
 
 def podar_snapshots(
@@ -650,6 +852,7 @@ def materializar(
     escrever: bool = True,
     taxa_slug_persistente: float | None = None,
     politica_chave: str = "auto",
+    fontes: Sequence[str] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     """CSV cru -> limpeza -> hash -> chave -> snapshot da semana (e, opcionalmente, a partição).
 
@@ -663,15 +866,23 @@ def materializar(
     referencia = data_referencia or date.today()
     semana = derivar_semana_iso(referencia)
 
-    bruto = ler_feeds(dir_totalpass, dir_wellhub, dir_unidades)
+    bruto = ler_feeds(dir_totalpass, dir_wellhub, dir_unidades, fontes=fontes)
     limpo, auditoria_limpeza = limpar_ruido(bruto)
     com_hash = calcular_hash_campos_raspados(limpo)
     com_chave = derivar_chave(
         com_hash, taxa_slug_persistente=taxa_slug_persistente, politica=politica_chave
     )
-    snapshot, auditoria_snapshot = montar_snapshot(com_chave, referencia)
+    snapshot, auditoria_snapshot = montar_snapshot(com_chave)
 
-    auditoria: dict[str, object] = {"semana": semana, **auditoria_limpeza, **auditoria_snapshot}
+    auditoria: dict[str, object] = {
+        "semana": semana,
+        # Quais feeds ESTA partição fotografou. Fica no snapshot porque a resposta muda com a
+        # cadência (BLK-MA-06): quem ler a série meses depois precisa saber que as semanas antigas
+        # só tinham `unidades`, sob pena de ler ausência de agregador como churn.
+        "fontes_lidas": sorted(FONTES_VALIDAS if fontes is None else {str(f) for f in fontes}),
+        **auditoria_limpeza,
+        **auditoria_snapshot,
+    }
     if escrever:
         destino = escrever_particao_semana(snapshot, base_dir, semana=semana)
         _logger.info("snapshot semanal escrito: %s (%d linhas)", destino, len(snapshot))
@@ -685,12 +896,18 @@ def executar(
     base_dir: Path = SNAPSHOTS_DIR_DEFAULT,
     data_referencia: date | None = None,
     retencao_semanas: int = RETENCAO_SEMANAS,
-) -> dict[str, object]:  # pragma: no cover - caminho de disco, nao chamado em teste
+    dry_run: bool = False,
+    fontes: Sequence[str] | None = None,
+) -> dict[str, object]:
     """Orquestrador de disco: materializa a semana corrente e aplica a retenção rolante.
 
     É o ponto que o BLK-MA-06 plugará no `run_weekly_90.sh` (decisão de produto do gate
     2026-07-29), **depois** do passo de coleta — o snapshot tem de ser tirado DENTRO da execução do
     runner porque os CSVs crus são sobrescritos a cada coleta. **Único** lugar que poda.
+
+    `dry_run=True` roda o caminho inteiro e **não toca disco**: nada é gravado e **nada é podado**.
+    Existe porque este é o unico ponto do pacote que APAGA arquivo, e um cron novo precisa poder ser
+    validado antes de rodar para valer (BLK-MA-02-FU1, m6).
     """
     _snapshot, auditoria = materializar(
         dir_totalpass,
@@ -698,12 +915,87 @@ def executar(
         dir_unidades,
         base_dir,
         data_referencia,
-        escrever=True,
+        escrever=not dry_run,
+        fontes=fontes,
     )
+    if dry_run:
+        # A poda e' irreversivel; em modo seco ela nem e' consultada, so' anunciada.
+        auditoria["dry_run"] = True
+        auditoria["semanas_removidas"] = 0
+        _logger.info("dry-run: nada gravado, nenhuma semana podada")
+        return auditoria
+    auditoria["dry_run"] = False
     removidas = podar_snapshots(base_dir, retencao_semanas)
     auditoria["semanas_removidas"] = len(removidas)
     _logger.info("retencao aplicada: %d semana(s) removida(s)", len(removidas))
     return auditoria
+
+
+def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """CLI do materializador. Sem ela, `python -m ...snapshots` gravava e PODAVA sem argumento."""
+    p = argparse.ArgumentParser(
+        prog="python -m motor_expansao.vulnerabilidade.snapshots",
+        description=(
+            "Materializa o snapshot semanal de concorrentes e aplica a retencao rolante. "
+            "E' o passo que o cron da VPS invoca (BLK-MA-06). READ-ONLY sobre o M1."
+        ),
+    )
+    p.add_argument("--dir-totalpass", type=Path, default=DIR_TOTALPASS_DEFAULT)
+    p.add_argument("--dir-wellhub", type=Path, default=DIR_WELLHUB_DEFAULT)
+    p.add_argument("--dir-unidades", type=Path, default=DIR_UNIDADES_DEFAULT)
+    p.add_argument(
+        "--base-dir",
+        type=Path,
+        default=SNAPSHOTS_DIR_DEFAULT,
+        help="raiz das particoes `semana=AAAA-SS` (grava E poda aqui)",
+    )
+    p.add_argument(
+        "--data-referencia",
+        type=date.fromisoformat,
+        default=None,
+        help="AAAA-MM-DD; default = hoje. Decide a particao `semana=` de destino.",
+    )
+    p.add_argument(
+        "--retencao-semanas",
+        type=int,
+        default=RETENCAO_SEMANAS,
+        help=f"semanas mantidas em disco (default {RETENCAO_SEMANAS})",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="roda tudo sem gravar e SEM PODAR; use antes de ligar o cron",
+    )
+    p.add_argument(
+        "--fontes",
+        nargs="+",
+        choices=sorted(FONTES_VALIDAS),
+        default=None,
+        help=(
+            "feeds a fotografar (default: todos). O cron SEMANAL deve passar `--fontes unidades`: "
+            "so' esse feed e' recoletado toda semana, e fotografar um feed estagnado faria o S4 "
+            "marcar o universo inteiro daquela fonte como parado (BLK-MA-06)"
+        ),
+    )
+    return p.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Entrada do `python -m`. Devolve 0 em sucesso — codigo de saida importa para o cron."""
+    args = _parse_args(argv)
+    logging.basicConfig(level=logging.INFO)
+    auditoria = executar(
+        dir_totalpass=args.dir_totalpass,
+        dir_wellhub=args.dir_wellhub,
+        dir_unidades=args.dir_unidades,
+        base_dir=args.base_dir,
+        data_referencia=args.data_referencia,
+        retencao_semanas=args.retencao_semanas,
+        dry_run=args.dry_run,
+        fontes=args.fontes,
+    )
+    print(auditoria)
+    return 0
 
 
 __all__ = [
@@ -722,9 +1014,9 @@ __all__ = [
     "podar_snapshots",
     "materializar",
     "executar",
+    "main",
 ]
 
 
 if __name__ == "__main__":  # pragma: no cover
-    logging.basicConfig(level=logging.INFO)
-    print(executar())
+    raise SystemExit(main())

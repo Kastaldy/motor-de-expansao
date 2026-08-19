@@ -39,6 +39,18 @@ export interface NarrativePanelProps {
   onAnalisar: (hexId: string) => void
   /** Visão de UF: clicar num item (município) filtra para ele (drill-down). */
   onDrillMunicipio?: (municipio: string) => void
+  /**
+   * Põe ou tira o hexágono da comparação. Ausente = a lista não oferece comparar.
+   *
+   * Existe porque comparar só era possível caçando os hexágonos NO MAPA, um a um: quem
+   * lê a lista ordenada já tem os candidatos na frente, e mandá-lo procurá-los no
+   * território para depois clicar era pedir o trabalho duas vezes.
+   */
+  onComparar?: (hexId: string) => void
+  /** Quem já está na comparação — o botão do item precisa saber se tira ou põe. */
+  comparados?: string[]
+  /** Teto da comparação. Cheio, o botão dos de fora fica desabilitado e diz por quê. */
+  maxComparados?: number
   hexes: Hex[]
   /** Total de passos do funil. Deriva do payload — não é literal, para o 6º passo
    *  não repetir a caçada por "de 4" que este bloco já teve de fazer. */
@@ -358,6 +370,9 @@ export default function NarrativePanel({
   onSelecionarHex,
   onAnalisar,
   onDrillMunicipio,
+  onComparar,
+  comparados,
+  maxComparados,
   totalPassos,
   cresMun,
   uf,
@@ -563,6 +578,13 @@ export default function NarrativePanel({
             const acionar = () =>
               it.municipio ? onDrillMunicipio?.(it.municipio) : onSelecionarHex(it.hex_id)
             const temDetalhe = Boolean(it.dims || it.series)
+            /* Comparar só faz sentido em item que É um hexágono: na visão de UF o item é
+               um município inteiro, e somar municípios é outra pergunta (a comparação de
+               cidades já tem tela própria). */
+            const comparavel = Boolean(onComparar) && !it.municipio
+            const naComparacao = (comparados ?? []).includes(it.hex_id)
+            const cheio =
+              maxComparados != null && (comparados ?? []).length >= maxComparados && !naComparacao
             return (
               <div
                 key={it.municipio ?? it.hex_id}
@@ -671,6 +693,46 @@ export default function NarrativePanel({
                     {it.label}
                   </span>
                 </span>
+
+                {/* Comparar. Fora do `role="button"` do item em termos de EVENTO (o
+                    `stopPropagation` impede que pôr na comparação também mova a câmera),
+                    mas dentro dele no layout — é do item que ele fala. */}
+                {comparavel && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onComparar?.(it.hex_id)
+                    }}
+                    disabled={cheio}
+                    title={
+                      cheio
+                        ? `A comparação já tem ${maxComparados} hexágonos. Tire um para pôr outro.`
+                        : naComparacao
+                          ? 'Tirar da comparação'
+                          : 'Pôr na comparação'
+                    }
+                    aria-pressed={naComparacao}
+                    style={{
+                      flexShrink: 0,
+                      width: 26,
+                      height: 26,
+                      display: 'grid',
+                      placeItems: 'center',
+                      borderRadius: 7,
+                      /* Turquesa quando DENTRO: é a mesma cor do contorno do cenário no
+                         mapa, então o item da lista e o hexágono dizem o mesmo. */
+                      border: `1px solid ${naComparacao ? 'var(--ac)' : 'var(--line-soft)'}`,
+                      background: naComparacao ? 'var(--ac)' : 'var(--surf-raised)',
+                      color: naComparacao ? 'var(--ac-on)' : 'var(--tx-soft)',
+                      font: '700 13px/1 var(--f-ui)',
+                      cursor: cheio ? 'not-allowed' : 'pointer',
+                      opacity: cheio ? 0.4 : 1,
+                    }}
+                  >
+                    {naComparacao ? '✓' : '+'}
+                  </button>
+                )}
               </div>
 
               {/* O detalhe e DESTE municipio, nao o da capital. */}

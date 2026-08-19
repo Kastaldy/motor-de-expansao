@@ -1,11 +1,11 @@
 """BLK-MA-02: testes do extrator de churn (sinal 3) e staleness (sinal 4).
 
-Todas as fixtures sao SINTETICAS e injetadas por `snapshots=[...]` -- zero I/O, salvo o
-round-trip explicito que grava e rele particoes em `tmp_path`.
+Todas as fixtures são SINTÉTICAS e injetadas por `snapshots=[...]` -- zero I/O, salvo o
+round-trip explicito que grava e rele partições em `tmp_path`.
 
-Os dois testes que mais importam sao os de GAP: se uma semana em que o feed nao rodou virasse
+Os dois testes que mais importam são os de GAP: se uma semana em que o feed não rodou virasse
 "desaparecimento", o sinal de maior peso do score (S3 ~= 0,467) encheria de falso churn. O escopo
-de observabilidade e o par `(fonte, rede)` -- e nao so a `fonte` -- porque o feed de cadeias e um
+de observabilidade e o par `(fonte, rede)` -- e não só a `fonte` -- porque o feed de cadeias e um
 arquivo por rede.
 """
 
@@ -37,6 +37,8 @@ def _linha(
     hash_: str = "h0",
     chave_origem: str = "hash_estavel",
     snapshot_date: str = "2026-01-05",
+    nota: float | None = None,
+    qtd: int | None = None,
 ) -> dict[str, object]:
     return {
         "snapshot_date": snapshot_date,
@@ -48,6 +50,10 @@ def _linha(
         "rede": rede,
         "fonte": fonte,
         "hash_campos_raspados": hash_,
+        # Colunas-fato do rating (DEC-026). Default `None` -> o estado "não lido", que e o
+        # correto para as fontes que não são WellHub.
+        "nota_wellhub": nota,
+        "qtd_avaliacoes_wellhub": qtd,
         "versao_contrato": c.VERSAO_CONTRATO_SNAPSHOT,
     }
 
@@ -89,7 +95,7 @@ def serie_10_semanas() -> list[pd.DataFrame]:
 
 @pytest.fixture
 def gap_de_fonte() -> list[pd.DataFrame]:
-    """4 semanas: a fonte `totalpass` nao foi observada na semana 3 (o coletor nao rodou)."""
+    """4 semanas: a fonte `totalpass` não foi observada na semana 3 (o coletor não rodou)."""
     snaps: list[pd.DataFrame] = []
     for i in range(1, 5):
         linhas = [_linha("k_un", fonte="unidades", rede="smart_fit")]
@@ -101,7 +107,7 @@ def gap_de_fonte() -> list[pd.DataFrame]:
 
 @pytest.fixture
 def gap_de_rede() -> list[pd.DataFrame]:
-    """4 semanas, tudo na fonte `unidades`: so o CSV da rede `selfit` faltou na semana 3."""
+    """4 semanas, tudo na fonte `unidades`: só o CSV da rede `selfit` faltou na semana 3."""
     snaps: list[pd.DataFrame] = []
     for i in range(1, 5):
         linhas = [_linha("k_sf", rede="smart_fit")]
@@ -189,10 +195,10 @@ def test_novo_equivale_a_presente_sem_sumico_com_serie_imatura(
 
 
 # --------------------------------------------------------------------------- #
-# CA-9 / CA-9b — gap de feed NAO vira churn
+# CA-9 / CA-9b — gap de feed NÃO vira churn
 # --------------------------------------------------------------------------- #
 def test_gap_de_fonte_nao_vira_churn(gap_de_fonte: list[pd.DataFrame]) -> None:
-    """A semana em que a fonte nao foi observada nao entra no eixo -> nao gera transicao."""
+    """A semana em que a fonte não foi observada não entra no eixo -> não gera transicao."""
     out = extrair_churn_staleness(snapshots=gap_de_fonte)
     tp = _linha_de(out, "k_tp")
     assert tp["status_churn"] != "sumiu_recente"
@@ -202,7 +208,7 @@ def test_gap_de_fonte_nao_vira_churn(gap_de_fonte: list[pd.DataFrame]) -> None:
 
 
 def test_gap_de_rede_dentro_da_fonte_nao_vira_churn(gap_de_rede: list[pd.DataFrame]) -> None:
-    """P2: o feed de cadeias e um CSV por REDE -- gap por `(fonte, rede)`, nao so por `fonte`."""
+    """P2: o feed de cadeias e um CSV por REDE -- gap por `(fonte, rede)`, não só por `fonte`."""
     out = extrair_churn_staleness(snapshots=gap_de_rede)
     selfit = _linha_de(out, "k_selfit")
     assert int(selfit["n_desaparecimentos"]) == 0, (
@@ -210,12 +216,12 @@ def test_gap_de_rede_dentro_da_fonte_nao_vira_churn(gap_de_rede: list[pd.DataFra
     )
     assert selfit["status_churn"] != "sumiu_recente"
     assert int(selfit["n_semanas_serie"]) == 3
-    # A rede que foi observada nas 4 semanas mantem a serie completa.
+    # A rede que foi observada nas 4 semanas mantém a série completa.
     assert int(_linha_de(out, "k_sf")["n_semanas_serie"]) == 4
 
 
 def test_fonte_ausente_na_ultima_semana_da_base_nao_e_sumiu_recente() -> None:
-    """`w_last` e a ultima semana observada DO ESCOPO, nunca a ultima semana da base."""
+    """`w_last` e a última semana observada DO ESCOPO, nunca a última semana da base."""
     snaps = [
         _snapshot(_semana(1), [_linha("k_tp", fonte="totalpass"), _linha("k_un")]),
         _snapshot(_semana(2), [_linha("k_tp", fonte="totalpass"), _linha("k_un")]),
@@ -244,7 +250,7 @@ def test_semanas_sem_mudanca_sem_alteracao(serie_10_semanas: list[pd.DataFrame])
 def test_semanas_sem_mudanca_conta_observacoes_nao_calendario(
     gap_de_fonte: list[pd.DataFrame],
 ) -> None:
-    """3 observacoes com hash fixo (semanas 1, 2 e 4) -> 2, nao 3."""
+    """3 observações com hash fixo (semanas 1, 2 e 4) -> 2, não 3."""
     out = extrair_churn_staleness(snapshots=gap_de_fonte)
     assert int(_linha_de(out, "k_tp")["semanas_sem_mudanca"]) == 2
 
@@ -260,7 +266,7 @@ def test_flags_maturidade_tres_regimes(regimes_maturidade: list[pd.DataFrame]) -
 
 
 def test_snapshot_date_ultimo_detecta_csv_estagnado() -> None:
-    """R10: coletor falho mantem o CSV antigo -> presenca normal, mas `snapshot_date` congelado."""
+    """R10: coletor falho mantém o CSV antigo -> presenca normal, mas `snapshot_date` congelado."""
     snaps = [
         _snapshot(_semana(i), [_linha("k", snapshot_date="2026-01-02")]) for i in range(1, 4)
     ]
@@ -271,7 +277,7 @@ def test_snapshot_date_ultimo_detecta_csv_estagnado() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# D7 — troca de politica de chave na serie
+# D7 — troca de politica de chave na série
 # --------------------------------------------------------------------------- #
 def test_flag_troca_chave_na_serie(troca_de_chave: list[pd.DataFrame]) -> None:
     """O extrator DETECTA e sinaliza; o reparo (se houver) e BLK-MA-04."""
@@ -331,7 +337,7 @@ def test_flag_troca_liga_quando_a_politica_muda_entre_semanas() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# CA-18 — o extrator NAO pontua
+# CA-18 — o extrator NÃO pontua
 # --------------------------------------------------------------------------- #
 def test_extrator_nao_produz_score(serie_10_semanas: list[pd.DataFrame]) -> None:
     out = extrair_churn_staleness(snapshots=serie_10_semanas)
@@ -354,10 +360,11 @@ def test_assert_schema_churn_falha_se_alguem_adiantar_o_score(
 # --------------------------------------------------------------------------- #
 # Contrato / bordas
 # --------------------------------------------------------------------------- #
-def test_schema_churn_17_colunas_em_ordem(serie_10_semanas: list[pd.DataFrame]) -> None:
+def test_schema_churn_19_colunas_em_ordem(serie_10_semanas: list[pd.DataFrame]) -> None:
     out = extrair_churn_staleness(snapshots=serie_10_semanas)
     assert list(out.columns) == list(c.CONTRATO_COLUNAS_CHURN.keys())
-    assert len(list(out.columns)) == 17
+    # 17 -> 19 no BLK-MA-09 / DEC-026: os dois fatos de rating, da ULTIMA observacao.
+    assert len(list(out.columns)) == 19
     assert (out["versao_contrato"] == c.VERSAO_CONTRATO_CHURN).all()
     assert set(out["status_churn"]) <= set(c.STATUS_CHURN_VALIDOS)
     assert out["n_semanas_serie"].dtype == "int64"
@@ -412,7 +419,7 @@ def test_mesma_academia_em_duas_fontes_sao_duas_linhas() -> None:
 def test_min_semanas_e_stale_semanas_sao_parametros_injetaveis(
     serie_10_semanas: list[pd.DataFrame],
 ) -> None:
-    """Os defaults vem do contrato (gate 2026-07-23) e NAO sao alterados por este bloco."""
+    """Os defaults vem do contrato (gate 2026-07-23) e NÃO são alterados por este bloco."""
     assert c.MIN_SEMANAS == 8
     assert c.STALE_SEMANAS == 12
     assert c.RETENCAO_SEMANAS == 26
@@ -422,7 +429,7 @@ def test_min_semanas_e_stale_semanas_sao_parametros_injetaveis(
 
 
 # --------------------------------------------------------------------------- #
-# Round-trip real: materializar -> particao no disco -> extrair
+# Round-trip real: materializar -> partição no disco -> extrair
 # --------------------------------------------------------------------------- #
 def test_roundtrip_materializar_e_extrair(tmp_path: Path) -> None:
     """Prova o hive read e que `semana` volta como string, ponta a ponta."""
@@ -452,3 +459,39 @@ def test_roundtrip_materializar_e_extrair(tmp_path: Path) -> None:
     assert len(out) == 2
     assert set(out["status_churn"]) == {"novo", "sumiu_recente"}
     assert (out["rede"] == "selfit").all()
+
+
+def test_rating_vem_da_ULTIMA_observacao_presente() -> None:
+    """A única decisão de design do rating neste módulo, e ela não tinha teste.
+
+    Sonda de mutação provou o buraco: trocar `última[...]` por `bloco.iloc[0][...]` (a PRIMEIRA
+    observação, o oposto exato do que o comentário promete) deixava a suíte inteira verde, porque
+    as fixtures repetem a mesma nota em todas as semanas.
+
+    "Última PRESENTE" e não "última da série": a academia some na semana 3 e volta na 4 com nota
+    nova. É o cenário real — no smoke do BLK-MA-08 uma unidade saiu de `4,81`/`105` para
+    `4,76`/`97` entre coletas.
+    """
+    notas = [3.0, 3.5, None, 4.9]  # semana 3: ausente
+    frames = []
+    for i, nota in enumerate(notas, start=1):
+        if nota is None:
+            # Semana observada para o escopo, mas SEM está chave -> ausência real, não gap.
+            frames.append(_snapshot(f"2026-0{i}", [_linha("outra", nota=1.0, qtd=1)]))
+            continue
+        frames.append(
+            _snapshot(
+                f"2026-0{i}",
+                [
+                    _linha("alvo", nota=nota, qtd=int(nota * 10)),
+                    _linha("outra", nota=1.0, qtd=1),
+                ],
+            )
+        )
+
+    out = extrair_churn_staleness(snapshots=frames)
+    alvo = out[out["chave_snapshot"] == "alvo"].iloc[0]
+
+    assert alvo["nota_wellhub"] == 4.9, "pegou uma observação que não é a última presente"
+    assert alvo["qtd_avaliacoes_wellhub"] == 49
+    assert alvo["semana_ultima_observacao"] == "2026-04"

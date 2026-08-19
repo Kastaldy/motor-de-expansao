@@ -1,6 +1,6 @@
 import { FlyToInterpolator, type Layer } from '@deck.gl/core'
 import { H3HexagonLayer } from '@deck.gl/geo-layers'
-import { IconLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
+import { IconLayer, PolygonLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
 import { cellToLatLng } from 'h3-js'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -19,7 +19,15 @@ import {
   crescClasseToColor,
   type RGBA,
 } from '../lib/colors'
-import type { CrescimentoMunicipal, Hex, Passo, Pin, Pins } from '../lib/types'
+import type {
+  Cobertura1k,
+  CrescimentoMunicipal,
+  Hex,
+  Passo,
+  PecaCobertura,
+  Pin,
+  Pins,
+} from '../lib/types'
 
 /** Objeto de ícone do deck.gl a partir de um data URI (bandeira quadrada). */
 interface IconeDeck {
@@ -56,9 +64,20 @@ export interface SearchPin {
   hexId: string
 }
 
-function scoreDoPasso(h: Hex, passoN: number): number | null {
+/** Capacidade de referencia do score residual no motor
+ *  (`SCORE_RESIDUAL_CAPACIDADE_REFERENCIA`): score = 100 * residual / 2500, clip 0-100. */
+const CAPACIDADE_REF = 2500
+
+function scoreDoPasso(h: Hex, passoN: number, raio1km = false): number | null {
   if (passoN === 1) return h.censo // score_setor_2022_calibrado
   if (passoN === 5) return h.m1 // score_priorizacao
+  /* Com o raio ligado, o score residual sai do MODELO NOVO. Sem isto o mapa misturava
+     duas reguas: os hexagonos que alguma concorrente alcanca apareciam recortados com o
+     score novo, e todos os outros continuavam com o score de 2 km — cores incongruentes
+     lado a lado, medindo coisas diferentes. */
+  if (raio1km && h.oferta1k != null) {
+    return Math.max(0, Math.min(100, (100 * h.oferta1k) / CAPACIDADE_REF))
+  }
   return h.res // score_oportunidade_residual
 }
 
@@ -77,9 +96,35 @@ const PASSO_POR_FAIXA_M1 = 5
  *  bordas azuis). Sem isso, as 10 aberturas do passo 5 sumiriam no meio do mapa. */
 const DIM_FORA_DO_PASSO = 0.5
 
+/* Onde a REGUA DO RESIDUAL vale: 2 (Demanda nao atendida) e 3 (Pressao concorrencial).
+   So' nestes passos o recorte livre/coberto pode ser pintado pelo score do modelo de 1 km
+   — nos demais o mapa mede outra coisa (1 = censo, 4 = crescimento, 5 = faixa do M1) e
+   duas reguas lado a lado dariam cores incongruentes, medindo grandezas diferentes. */
+const PASSOS_DA_PRESSAO = new Set([2, 3])
+
+/** Alpha das pecas de cobertura = o MESMO do hexagono normal (`HEX_FILL_ALPHA`).
+ *  Usar um alpha maior fazia o recorte parecer outra paleta, mais saturada que o resto
+ *  do mapa. A leitura tem de ser a de sempre: a cor sai da mesma regua de faixas, e o
+ *  que muda entre a parte livre e a coberta e' o SCORE, nao a intensidade da tinta. */
+const ALPHA_COBERTURA = HEX_FILL_ALPHA
+
+/** Alpha de UMA sombra de concorrente. Baixo de proposito: o efeito e' CUMULATIVO.
+ *  Com 34, uma concorrente escurece ~13%, duas ~25%, tres ~35%, e um aglomerado satura
+ *  em quase preto — que e' a leitura desejada ("quanto mais concorrente, mais escuro").
+ *  Alto demais e a primeira sombra ja mataria a cor da faixa embaixo. */
+const ALPHA_SOMBRA = 34
+
 /** Precedencia do dashboard: pop<5k vence, senao NaN, senao faixa de score.
- *  Hexes fora do passo atual entram esmaecidos (holofote no funil). */
-function fillDoHex(h: Hex, passoN: number, noPasso: boolean): RGBA {
+ *  Hexes fora do passo atual entram esmaecidos (holofote no funil).
+ *  Com `raio1km` ligado nos passos 2/3, a contagem de concorrentes vem ANTES de tudo. */
+function fillDoHex(h: Hex, passoN: number, noPasso: boolean, raio1km = false): RGBA {
+  /* O hexagono NAO muda de cor com a chave ligada — de proposito.
+     Pintar o hexagono inteiro (por contagem ou por alunos perdidos) afirmava que ele
+     todo esta sob a concorrente, quando o disco quase sempre cobre so' um PEDACO. Quem
+     mostra a cobertura agora e' a camada `cobertura-1km`, desenhada por cima com a
+     geometria real da intersecao. Assim o hexagono segue verde/livre por baixo e a
+     parte tomada aparece recortada — que e' a leitura do estudo de ponto: "meu imovel
+     cai no lado coberto ou no livre?". */
   // Passo 4 — taxa de crescimento DESTE hexagono. Categorico, fora da rampa de
   // score, e ANTES do corte de pop<5k: um hexagono com pouca gente pode ser
   // justamente onde a obra esta, e escondê-lo apagaria o sinal.
@@ -95,7 +140,7 @@ function fillDoHex(h: Hex, passoN: number, noPasso: boolean): RGBA {
   else if (passoN === PASSO_POR_FAIXA_M1) {
     base = h.faixa ? faixaM1ToColor(h.faixa, HEX_FILL_ALPHA) : [...NAN_SCORE_FILL]
   } else {
-    const score = scoreDoPasso(h, passoN)
+    const score = scoreDoPasso(h, passoN, raio1km)
     base = score === null ? [...NAN_SCORE_FILL] : scoreBandToColor(score, HEX_FILL_ALPHA)
   }
   if (noPasso) return base
@@ -162,6 +207,16 @@ export interface HexMapProps {
   /** Hexes do cenário multi-hex (contorno turquesa de seleção). */
   cenario?: string[]
   onSelecionar: (h: Hex) => void
+  /**
+   * Pedido de VOO ate' um hexagono, vindo de fora (o painel de ranking).
+   *
+   * Separado de `selecionado` de proposito: clicar um hexagono NO MAPA tambem seleciona,
+   * e ali voar seria recentrar o que o operador ja' tem sob o cursor. So' quem clica na
+   * lista precisa ser levado, porque o item pode estar em qualquer canto do municipio.
+   * O `n` que so' cresce permite pedir o MESMO hexagono duas vezes — voltar para ele
+   * depois de arrastar o mapa e' um gesto legitimo, e comparar so' o id nao dispararia.
+   */
+  voarPara?: { hexId: string; n: number } | null
   searchPin: SearchPin | null
   /**
    * Camera preservada de uma visita anterior ao mapa (ida e volta pela Viabilidade).
@@ -169,6 +224,10 @@ export interface HexMapProps {
    * municipio com zoom 9.6 — e o voo automatico ate o `searchPin` e' suprimido no
    * primeiro render, senao ele sobrescreveria justamente o enquadramento restaurado.
    */
+  /** PROTOTIPO: quando true, os passos 2 e 3 mostram a cobertura do raio de 1 km. */
+  raio1km?: boolean
+  /** PROTOTIPO: area coberta pelo raio, ja recortada dentro dos hexagonos. */
+  cobertura1k?: Cobertura1k | null
   cameraInicial?: ViewState | null
   /** Reporta a camera ao pai a cada mudanca, para sobreviver ao unmount da tela. */
   onCamera?: (v: ViewState) => void
@@ -195,7 +254,10 @@ export default function HexMap({
   selecionado,
   cenario,
   onSelecionar,
+  voarPara = null,
   searchPin,
+  raio1km = false,
+  cobertura1k,
   cameraInicial,
   onCamera,
 }: HexMapProps) {
@@ -295,6 +357,28 @@ export default function HexMap({
     }))
   }, [searchPin, cameraInicial])
 
+  /* Voa ate' o hexagono pedido pelo painel. A coordenada sai do proprio `hexes` (o `Hex`
+     ja' carrega lat/lng), entao nao ha' conversao de H3 aqui — e se o id nao estiver na
+     lista carregada, nao se voa para lugar nenhum em vez de voar para o centro do mundo.
+
+     `zoom: max(12, atual)` NUNCA AFASTA: quem ja' esta' com o mapa aproximado num bairro
+     e clica no proximo item da lista quer andar ate' ele, nao recomecar de longe. */
+  const vooAnterior = useRef(voarPara?.n ?? 0)
+  useEffect(() => {
+    if (!voarPara || voarPara.n === vooAnterior.current) return
+    vooAnterior.current = voarPara.n
+    const alvo = hexes.find((h) => h.id === voarPara.hexId)
+    if (!alvo) return
+    setView((v) => ({
+      ...v,
+      longitude: alvo.lng,
+      latitude: alvo.lat,
+      zoom: Math.max(12, v.zoom),
+      transitionDuration: 700,
+      transitionInterpolator: FLY,
+    }))
+  }, [voarPara, hexes])
+
   // Cor da camada ativa: veste o "score forte" do tooltip e a borda do rotulo de
   // rank. Os dois dizem "isto e' da camada N" — antes diziam em turquesa, a mesma
   // cor do cenario multi-hex e do pin de busca na MESMA superficie.
@@ -323,6 +407,27 @@ export default function HexMap({
     return out
   }, [passo.itens, passo.n])
 
+  /* Hexes que a camada de cobertura pinta por inteiro. As pecas `livre` + `coberto`
+     LADRILHAM o hexagono (somam 100% da area), entao o preenchimento do proprio hexagono
+     tem de sair — senao a mesma cor e' desenhada DUAS vezes no mesmo pixel, o alpha
+     soma e o hexagono aparece mais vivo que os vizinhos. Era isso o "triangulo amarelo
+     mais claro": nao era score errado (peca e hexagono estao na MESMA faixa), era
+     dupla pintura. */
+  /* Indice hex_id -> Hex para o hover da camada de cobertura devolver o hexagono certo.
+     Objeto simples, nao `new Map`: neste arquivo o identificador `Map` esta OCUPADO pelo
+     componente do react-map-gl (import no topo). */
+  const hexPorId = useMemo(() => {
+    const m: Record<string, Hex> = {}
+    for (const h of hexes) m[h.id] = h
+    return m
+  }, [hexes])
+
+  const hexesCobertos = useMemo(() => {
+    const s = new Set<string>()
+    for (const p of cobertura1k?.pecas ?? []) s.add(p.hex)
+    return s
+  }, [cobertura1k])
+
   const camadas = useMemo(() => {
     const base: Layer[] = [
       new H3HexagonLayer<Hex>({
@@ -332,7 +437,12 @@ export default function HexMap({
         extruded: false,
         filled: true,
         stroked: true,
-        getFillColor: (d) => fillDoHex(d, passo.n, destaque.has(d.id)),
+        getFillColor: (d) => {
+          const comRaio = raio1km && PASSOS_DA_PRESSAO.has(passo.n)
+          // Transparente onde a cobertura ja pinta o hexagono inteiro (ver `hexesCobertos`).
+          if (comRaio && hexesCobertos.has(d.id)) return [0, 0, 0, 0]
+          return fillDoHex(d, passo.n, destaque.has(d.id), comRaio)
+        },
         // Borda neutra e fina; hex SELECIONADO -> contorno claro; hexes do CENÁRIO
         // multi-hex -> contorno turquesa (seleção deliberada, não o funil).
         getLineColor: (d) =>
@@ -356,12 +466,121 @@ export default function HexMap({
           )
         },
         updateTriggers: {
-          getFillColor: [passo.n],
+          getFillColor: [passo.n, raio1km, hexesCobertos],
           getLineColor: [selecionado, cenarioKey],
           getLineWidth: [selecionado, cenarioKey],
         },
         transitions: { getFillColor: 260 },
       }),
+
+      /* PROTOTIPO — a AREA COBERTA pelo raio de 1 km, ja recortada DENTRO de cada
+         hexagono. E' a peca que faltava: pintar o hexagono inteiro de uma cor so'
+         escondia a direcao. Aqui da' para ver que o lado norte do hexagono esta sob o
+         disco de uma concorrente e o lado sul esta livre — que e' a leitura que o estudo
+         de ponto precisa ("meu imovel cai na parte coberta ou na livre?").
+         A parte NAO coberta nao e' pintada: fica com a cor da propria camada. */
+      ...(raio1km && PASSOS_DA_PRESSAO.has(passo.n) && cobertura1k?.pecas?.length
+        ? [
+            new PolygonLayer<PecaCobertura>({
+              id: 'cobertura-1km',
+              data: cobertura1k.pecas,
+              getPolygon: (d) => d.anel,
+              // OBRIGATORIO aqui. O padrao do deck.gl e' `positionFormat: 'XYZ'`
+              // (@deck.gl/core/dist/lib/layer.js:97) e os aneis vem como pares
+              // [lng, lat] — DOIS valores. Sem isto a normalizacao do poligono le os
+              // vertices de tres em tres, a geometria vira lixo e a camada nao desenha
+              // NADA, sem erro no console. O ScatterplotLayer nao sofre disso porque usa
+              // `getPosition` por objeto, sem normalizar anel — foi por isso que os
+              // circulos apareciam e o recorte nao.
+              positionFormat: 'XY',
+              filled: true,
+              /* Cada peca pinta pela MESMA regua de faixas do mapa, com o score DELA.
+                 E' isso que faz a parte livre "melhorar": ali nenhuma concorrente
+                 desconta residual, entao o score sobe e a faixa esquenta. A parte coberta
+                 cai — e cai MAIS quanto mais concorrente consome, o que da a intensidade
+                 da disputa sem empilhar geometria (a versao anterior desenhava uma peca
+                 por concorrente e 49 poligonos sobrepostos poluiam o mapa). */
+              getFillColor: (d) => scoreBandToColor(d.score, ALPHA_COBERTURA),
+              /* PICKABLE: sem isto o tooltip morria sobre qualquer hexagono coberto.
+                 O preenchimento do hexagono e' zerado onde a cobertura pinta (para nao
+                 pintar a mesma cor duas vezes), e o hover passava a nao encontrar
+                 geometria — o operador perdia a leitura do hexagono justamente onde ela
+                 mais importa. A peca devolve o hexagono a que pertence. */
+              onHover: (info) => {
+                const d = info.object as PecaCobertura | undefined
+                const h = d ? hexPorId[d.hex] : undefined
+                setHover(h ? { h, x: info.x, y: info.y } : null)
+              },
+              // SEM contorno proprio: a linha do alcance ja e' desenhada uma unica vez
+              // pela camada `conc-alcance-1km`. Contornar cada peca acrescentaria as
+              // ARESTAS DOS HEXAGONOS ao desenho e traria de volta a poluicao.
+              stroked: false,
+              updateTriggers: { getFillColor: [passo.n] },
+              pickable: true,
+              // O H3HexagonLayer desenha no MESMO plano (z=0). Com o teste de
+              // profundidade ligado as duas geometrias disputam o pixel e a cobertura
+              // pode sumir por tras do hexagono, dependendo da ordem de submissao ao
+              // WebGL. `depthCompare: 'always'` (nome do luma.gl v9; era `depthTest:
+              // false` ate o deck.gl v8) garante que ela pousa por cima, sempre.
+              parameters: { depthCompare: 'always' as const },
+            }),
+          ]
+        : []),
+
+      /* SOMBRA por concorrente: uma peca para CADA concorrente que toca o hexagono,
+         preta e translucida, SEM contorno. Empilhadas, o alpha se acumula e a area fica
+         mais escura quanto mais concorrentes a cobrem — a leitura de adensamento que a
+         peca unica (uniao) apaga por construcao.
+         Sem contorno de proposito: a poluicao anterior vinha das BORDAS se cruzando, nao
+         do empilhamento. Vem DEPOIS das pecas coloridas (escurece a cor da faixa) e ANTES
+         do contorno do alcance.
+
+         Desenha em TODOS os passos, e nao so' nos da regua do residual: a densidade de
+         concorrentes nao pertence a regua nenhuma — ela responde "quantas me alcancam
+         aqui?", que e' verdade em qualquer camada do funil. Quem depende da regua e' o
+         recorte COLORIDO acima, nao esta tinta escura (pedido do Felipe, 2026-08-12). */
+      ...(raio1km && cobertura1k?.sombras?.length
+        ? [
+            new PolygonLayer<number[][][]>({
+              id: 'cobertura-sombra-1km',
+              data: cobertura1k.sombras,
+              getPolygon: (d) => d,
+              positionFormat: 'XY',
+              filled: true,
+              stroked: false,
+              getFillColor: [4, 7, 12, ALPHA_SOMBRA],
+              pickable: false,
+              parameters: { depthCompare: 'always' as const },
+            }),
+          ]
+        : []),
+
+      /* CONTORNO do alcance: uma linha so', a fronteira da uniao dos discos.
+         Antes era um ScatterplotLayer com um circulo POR concorrente — num aglomerado as
+         bordas se cruzavam umas sobre as outras e o mapa virava um emaranhado de arcos.
+         A uniao nao tem linha interna: mostra ate onde a concorrencia alcanca, e nada
+         mais. Sem preenchimento: quem pinta a area sao as pecas livre/coberto.
+
+         Tambem em TODOS os passos: "ate onde a concorrencia chega" e' um fato geografico,
+         nao uma leitura de regua. Enquanto estava preso aos passos 2 e 3, ligar a chave em
+         qualquer outra camada nao desenhava nada e parecia defeito. */
+      ...(raio1km && cobertura1k?.contorno?.length
+        ? [
+            new PolygonLayer<number[][][]>({
+              id: 'conc-alcance-1km',
+              data: cobertura1k.contorno,
+              getPolygon: (d) => d,
+              positionFormat: 'XY',
+              filled: false,
+              stroked: true,
+              getLineColor: [255, 176, 120, 150],
+              lineWidthUnits: 'pixels',
+              getLineWidth: 1.1,
+              pickable: false,
+              parameters: { depthCompare: 'always' as const },
+            }),
+          ]
+        : []),
 
       // Concorrentes: bandeira QUADRADA com a logo da rede (fallback cor+sigla),
       // enxuta (pedido do Felipe). Ultra vem por cima, um pouco maior.
@@ -496,6 +715,14 @@ export default function HexMap({
     pins,
     iconObjs,
     rotulosRank,
+    // PRECISAM estar aqui: o corpo do memo LE as duas para decidir se monta a camada de
+    // cobertura. Sem elas, virar a chave nao reconstruia a lista de camadas e a cobertura
+    // nunca chegava a existir — o mapa ficava identico e parecia que a camada nao
+    // funcionava. Foi exatamente o sintoma relatado ("o hexagono so aparece de uma cor").
+    raio1km,
+    cobertura1k,
+    hexesCobertos,
+    hexPorId,
   ])
 
   return (
@@ -521,6 +748,7 @@ export default function HexMap({
         getCursor={({ isHovering }) => (isHovering ? 'pointer' : 'grab')}
       >
         <Map mapStyle={BASEMAP_STYLE} attributionControl={{ compact: true }} reuseMaps />
+
       </DeckGL>
 
       {hover && (
@@ -587,6 +815,34 @@ export default function HexMap({
           <Linha rotulo="Residual Fitness" valor={`${alunos(hover.h.oferta)} alunos`} />
           <Linha rotulo="Concorrentes 2 km" valor={num(hover.h.conc)} />
           {hover.h.ultra > 0 && <Linha rotulo="Unidade Ultra" valor={num(hover.h.ultra)} />}
+
+          {/* PROTOTIPO — o rateio, hexagono a hexagono. E aqui que o modelo fica
+              legivel: da' para ver que a concorrente da borda cobrou so' uma PARTE
+              deste hexagono, e que o resto foi para o vizinho. */}
+          {raio1km && hover.h.cons1k != null && (
+            <>
+              <Divisoria />
+              <Linha
+                rotulo="Perde p/ concorrentes (1 km)"
+                valor={`${alunos(hover.h.cons1k)} alunos`}
+                forte
+              />
+              <Linha
+                rotulo="No modelo atual (2 km)"
+                valor={`${alunos(hover.h.cons2k)} alunos`}
+              />
+              <Linha
+                rotulo="Equivale a"
+                valor={`${num((hover.h.cons1k ?? 0) / 2500, 2)} unidade(s)`}
+              />
+              <Linha rotulo="Concorrentes que alcançam" valor={num(hover.h.conc1k)} />
+              <Linha
+                rotulo="Residual recalculado"
+                valor={`${alunos(hover.h.oferta1k)} alunos`}
+                forte
+              />
+            </>
+          )}
 
           {/* Passo 4 — como a cidade esta indo. Valores MUNICIPAIS. */}
           {passo.n === 4 && hover.h.cres_hex_classe && (

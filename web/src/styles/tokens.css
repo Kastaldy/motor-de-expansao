@@ -23,6 +23,10 @@
   --surf-raised: rgba(255, 255, 255, 0.03);
   --surf-input: rgba(255, 255, 255, 0.04);
   --surf-pending: rgba(255, 255, 255, 0.06);
+  /* Superficie OPACA do seletor — o botao do `Select` e as `option` do select nativo.
+     Opaca, e nao um alfa como os de cima, porque a lista flutua sobre o conteudo e
+     precisa cobri-lo. Era o hex #101a26 repetido em `Select.tsx` e no `global.css`. */
+  --surf-select: #101a26;
 
   /* --- Hairlines ----------------------------------------------------------- */
   --line: rgba(255, 255, 255, 0.08);
@@ -153,6 +157,33 @@
   --l5-a24: rgba(238, 243, 248, 0.24);
   --l5-a60: rgba(238, 243, 248, 0.6);
 
+  /* --- Semaforo do diagnostico ---------------------------------------------
+     Estes quatro moravam como HEX em `lib/exec.ts` (COR_SEVERIDADE). Viraram token
+     porque o tema claro precisa de outros valores e a cor e' aplicada em DOM/SVG, onde
+     `var()` resolve sozinho pela cascata — sem prop de tema atravessando meia dezena de
+     componentes. O unico consumidor que ainda precisa do hex de verdade e' o deck.gl do
+     ExecMap (WebGL nao le CSS), e ele LE ESTES MESMOS tokens em tempo de execucao, para
+     nao existir uma segunda copia da paleta para divergir. */
+  --sev-alta: #ff5a6e;
+  --sev-media: #e0b25a;
+  --sev-ok: #3cc878;
+  --sev-sem-base: #7c8798;
+
+  /* --- Paleta de serie dos graficos -----------------------------------------
+     As cores que distinguem SERIES (etapa do funil, fatia da rosca, churn da ficha).
+     Nao confundir com --sev-*, que classifica GRAVIDADE, nem com --pos/--neg, que
+     dizem se um numero e' boa ou ma noticia. Eram hex soltos nos componentes. */
+  --gr-azul: #6fa4f7;
+  --gr-rosa: #d94a86;
+  --gr-verde: #5fd08c;
+  --gr-coral: #ff8a99;
+  /* Degrau NEUTRO da escala de faixa de faturamento ("Bom", entre o ambar do Regular e
+     o turquesa do Excelente). Neutro quer dizer discreto: e' o degrau que nao deve
+     chamar atencao. Tem token proprio porque um cinza de TEXTO nao serve — no escuro o
+     cinza claro e' discreto, no claro o mesmo papel exige um cinza medio, e --tx-soft,
+     que era o valor daqui, viraria quase preto e faria o "Bom" pesar mais que todos. */
+  --faixa-neutra: #cdd8e2;
+
   /* --- Semantica ----------------------------------------------------------- */
   --pos: #2ec86e;
   --pos-text: #4fe08a;
@@ -182,6 +213,130 @@
   /* --- Sombras ------------------------------------------------------------- */
   --sh-pin: 0 5px 12px rgba(0, 0, 0, 0.5);
   --sh-frame: 0 30px 70px -30px rgba(0, 0, 0, 0.6);
+  /* Balao que flutua sobre o conteudo (tooltip do mapa). No escuro a sombra e' quase
+     so' vedacao; no claro ela e' o que separa o balao do fundo, entao muda de valor. */
+  --sh-pop: 0 10px 30px -8px rgba(0, 0, 0, 0.7);
+  /* Menu suspenso (lista do `Select`). Mais funda que --sh-pop porque cobre conteudo
+     que continua legivel atras dela. */
+  --sh-menu: 0 14px 34px -10px rgba(0, 0, 0, 0.75);
+}
+
+/* ============================================================================
+   TEMA CLARO — escopado por [data-tema='claro'].
+
+   Nao e' o tema do produto: e' um atributo posto num CONTAINER (hoje, a raiz da
+   Visao Executiva). Como token de CSS herda, tudo que esta' dentro passa a ler
+   estes valores e o resto do app continua no escuro do `:root`, sem `!important`,
+   sem classe em cada componente e sem duplicar folha de estilo. Trocar de aba nao
+   deixa residuo: o atributo sai junto com o container.
+
+   Redefine SO' o que a Visao Executiva consome — as camadas --l1..--l5 sao chrome
+   do Mapa Territorial e nunca entram aqui. Quem levar um --l* para dentro da
+   Executiva tem de trazer o valor claro junto: no branco, --l5 (#eef3f8) some.
+
+   As cores nao foram "invertidas": as que carregam TEXTO tiveram de escurecer de
+   verdade. O turquesa #35c9d6 da' ~1,9:1 sobre branco (reprova como texto em
+   qualquer regua), e o mesmo vale para o verde, o ambar e o vermelho da semantica.
+   Escurecer preserva a MATIZ — a identidade continua turquesa — e devolve o
+   contraste. Onde a cor e' so' preenchimento (bolha, barra, fatia) a exigencia
+   cai para 3:1, e e' por isso que --gr-* nao precisou descer tanto quanto --ac-text.
+   ============================================================================ */
+[data-tema='claro'] {
+  /* --- Fundos -------------------------------------------------------------- */
+  /* Cinza levemente azulado, nao branco puro: os cards SAO brancos e precisam de um
+     fundo do qual se destacar, senao a borda de 1 px vira a unica separacao da tela. */
+  --bg-base: #eef2f6;
+  --bg-lift: #e3eaf1;
+  --bg-knob: #ffffff;
+
+  /* --- Superficies glass --------------------------------------------------- */
+  --surf-panel: rgba(255, 255, 255, 0.94);
+  --surf-card: rgba(255, 255, 255, 0.82);
+  --surf-sidebar: rgba(255, 255, 255, 0.88);
+  --surf-verdict: rgba(255, 255, 255, 0.86);
+  --surf-chrome: rgba(255, 255, 255, 0.9);
+  --surf-bar: rgba(255, 255, 255, 0.92);
+  /* Os tres "raised" invertem o SINAL do alfa: no escuro se ilumina com branco, no
+     claro se sombreia com tinta. Manter branco aqui deixaria o elemento invisivel. */
+  --surf-raised: rgba(13, 27, 42, 0.06);
+  --surf-input: rgba(13, 27, 42, 0.04);
+  --surf-pending: rgba(13, 27, 42, 0.08);
+  --surf-select: #ffffff;
+
+  /* --- Hairlines ----------------------------------------------------------- */
+  --line: rgba(13, 27, 42, 0.13);
+  --line-soft: rgba(13, 27, 42, 0.1);
+  --line-mid: rgba(13, 27, 42, 0.16);
+  --line-strong: rgba(13, 27, 42, 0.2);
+  --line-dashed: rgba(13, 27, 42, 0.26);
+
+  /* --- Texto (os mesmos 6 papeis, do mais forte ao mais apagado) ------------ */
+  --tx-max: #0b1219;
+  --tx-strong: #16202b;
+  --tx-soft: #29394a;
+  --tx-narrative: #45566a;
+  --tx-label: #52657a;
+  --tx-muted: #5d7085;
+  --tx-sub: #66798e;
+  --tx-off: #7d90a4;
+  --tx-rank: #93a3b5;
+
+  /* --- Acento turquesa ------------------------------------------------------
+     Mesma matiz (~186°) do #35c9d6, luminancia derrubada ate' o texto passar. O
+     --ac-on inverte: sobre o turquesa escuro, quem le' e' o branco. */
+  --ac: #0e8e9c;
+  --ac-text: #0a7180;
+  --ac-chip: #075c6b;
+  --ac-on: #ffffff;
+  --ac-a08: rgba(14, 142, 156, 0.08);
+  --ac-a10: rgba(14, 142, 156, 0.1);
+  --ac-a12: rgba(14, 142, 156, 0.12);
+  --ac-a14: rgba(14, 142, 156, 0.14);
+  --ac-a16: rgba(14, 142, 156, 0.16);
+  --ac-a22: rgba(14, 142, 156, 0.22);
+  --ac-a24: rgba(14, 142, 156, 0.24);
+  --ac-a25: rgba(14, 142, 156, 0.25);
+  --ac-a30: rgba(14, 142, 156, 0.3);
+  --ac-a60: rgba(14, 142, 156, 0.6);
+  --ac-glow: 0 6px 16px -6px rgba(14, 142, 156, 0.4);
+
+  /* --- Marca Ultra ---------------------------------------------------------- */
+  /* O #c8001e sobre branco ja' passa como elemento grafico; escurece um tom so' para
+     nao vibrar contra o cinza do fundo. Continua proibido como cor de rotulo. */
+  --ultra: #b30019;
+
+  /* --- Semantica ----------------------------------------------------------- */
+  --pos: #0f9d55;
+  --pos-text: #0b7f43;
+  --pos-pill: #0a6f3b;
+  --neg: #d32d4d;
+  --neg-bar: #b82440;
+  --warn: #a9770f;
+  --warn-text: #865d0a;
+  --info: #1d4ed8;
+
+  /* --- Semaforo ------------------------------------------------------------ */
+  /* O ambar e' o que mais desce: #e0b25a sobre branco da' ~1,9:1 e o chip "ATENCAO"
+     sumia. Verde e vermelho descem junto para os tres continuarem no mesmo degrau
+     de peso — semaforo em que uma luz grita mais que a outra deixa de ser semaforo. */
+  --sev-alta: #d32d4d;
+  --sev-media: #a9770f;
+  --sev-ok: #0f9d55;
+  --sev-sem-base: #64748b;
+
+  /* --- Paleta de serie ----------------------------------------------------- */
+  --gr-azul: #2f6bc9;
+  --gr-rosa: #c02a68;
+  --gr-verde: #0f9d55;
+  --gr-coral: #d1495e;
+  --faixa-neutra: #94a3b3;
+
+  /* --- Sombras ------------------------------------------------------------- */
+  /* Sombra no claro e' separacao, nao vedacao: preta demais suja o branco. */
+  --sh-pin: 0 5px 12px rgba(13, 27, 42, 0.18);
+  --sh-frame: 0 30px 70px -30px rgba(13, 27, 42, 0.3);
+  --sh-pop: 0 10px 26px -10px rgba(13, 27, 42, 0.35);
+  --sh-menu: 0 14px 30px -12px rgba(13, 27, 42, 0.4);
 }
 
 /* As rampas --ramp-indigo-* / --ramp-green-*, herdadas do prototipo standalone,

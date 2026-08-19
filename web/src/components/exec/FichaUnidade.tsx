@@ -47,7 +47,12 @@ const METRICAS_FICHA: { chave: string; rotulo: string; formato: 'brl' | 'int' | 
   { chave: 'conversao_pct', rotulo: 'Conversão de visitas', formato: 'pct', bomSubindo: true },
   { chave: 'nps', rotulo: 'NPS', formato: 'nota', bomSubindo: true },
   { chave: 'em_cobranca_pct', rotulo: 'Em cobrança', formato: 'pct', bomSubindo: false },
-  { chave: 'pct_agregador_alunos', rotulo: 'Dependência de agregador', formato: 'pct', bomSubindo: false },
+  // As duas dependências, e o rótulo diz qual é qual. Elas discordam muito: medido em
+  // 2026-07, a rede tem 37,1% dos ALUNOS vindos de agregador e só 22,9% da RECEITA —
+  // mediana de 14,8 p.p. por unidade, até 33,3 p.p. no pior caso. Ler só a de alunos faz a
+  // unidade parecer mais dependente do que o caixa dela mostra.
+  { chave: 'pct_agregador_alunos', rotulo: 'Dependência de agregador (alunos)', formato: 'pct', bomSubindo: false },
+  { chave: 'pct_agregador_receita', rotulo: 'Dependência de agregador (receita)', formato: 'pct', bomSubindo: false },
 ]
 
 /** Exibidas com aviso e SEM régua: o denominador ainda não foi confirmado com a Growth. */
@@ -298,7 +303,7 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
               meses={ficha.serie.meses}
               valores={ficha.serie.churn_pct}
               titulo="Churn (%)"
-              cor="#ff8a99"
+              cor="var(--gr-coral)"
               formato="pct"
             />
           </div>
@@ -316,7 +321,7 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
               {
                 rotulo: 'Agregadores',
                 valor: ficha.metricas.agregadores?.atual ?? 0,
-                cor: '#d94a86',
+                cor: 'var(--gr-rosa)',
               },
             ]}
             centroValor={pct(ficha.metricas.pct_agregador_alunos?.atual ?? null, 0)}
@@ -354,7 +359,7 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
             {ficha.reguas.nps?.limiar ?? 40} — meta não é alerta.
           </div>
           <div style={{ marginTop: 12 }}>
-            <LinhaPeriodo meses={ficha.serie.meses} valores={ficha.serie.nps} titulo="NPS por mês" cor="#6fa4f7" />
+            <LinhaPeriodo meses={ficha.serie.meses} valores={ficha.serie.nps} titulo="NPS por mês" cor="var(--gr-azul)" />
           </div>
         </Glass>
         <Glass style={{ flex: '1 1 280px', padding: '16px 18px', minWidth: 0 }}>
@@ -364,7 +369,7 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
             valores={ficha.serie_diaria.novos_alunos}
             altura={104}
             formato="int"
-            cor="#5fd08c"
+            cor="var(--gr-verde)"
           />
           <div style={{ marginTop: 8, font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
             Derivado da série cumulativa da API — é o bloco que hoje é colado à mão na planilha.

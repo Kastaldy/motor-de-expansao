@@ -334,7 +334,7 @@ def gerar_pdf_ponto(
     *,
     rotulo: str | None = None,
 ) -> bytes:
-    """Gera o PDF de 7 paginas do Relatorio Pontual Censitario (BLK-API-04).
+    """Gera o PDF de 8 paginas do Relatorio Pontual Censitario (BLK-API-04).
 
     Enriquecido (READ-ONLY): mapas com *ruas* (basemap online, DEC-004) + pins de
     concorrentes/Ultra, e Big Numbers de SAM/residual via `residual`. Fallback
@@ -444,14 +444,21 @@ def gerar_pdf_ponto(
     #   - `fotos`: upload de arquivo; o request da API e JSON e nao carrega binario.
     # Habilitar exigiria ESTENDER `AnalisarRequest` (campos do imovel + fotos em
     # base64/multipart) e propagar por `routes/analisar.py` -> `gerar_pdf_ponto`.
-    # Decisao: fora do escopo do BLK-RELPON-14; o PDF do bot segue com as 7 paginas
+    # Decisao: fora do escopo do BLK-RELPON-14; o PDF do bot segue com as 8 paginas
     # base + a vista aerea.
+    #
+    # BLK-CONC-ESTUDO: a pagina de CONCLUSAO passou a sair TAMBEM sem `viabilidade`, em
+    # modo so-estudo -- metas censitarias do raio e leitura de mercado do hexagono, SEM os
+    # gates de imovel e de retorno. Este e' o UNICO ponto do sistema que liga o flag: o
+    # piloto web chama a mesma funcao sem ele e segue com as 7 paginas de antes quando o
+    # operador nao preenche a Viabilidade (escopo fechado por Juan em 2026-08-12).
     return gerar_pdf_relatorio_pontual_classico(
         result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
         solicitante=consumidor, rotulo=rotulo, foto_satelite=foto_sat,
         # API/bot nao tem upload de fotos do imovel -> a vista aerea e a unica imagem
         # da pagina e usa a area de conteudo inteira (no dashboard fica no tamanho padrao).
         foto_satelite_grande=True,
+        conclusao_so_estudo=True,
     )
 
 

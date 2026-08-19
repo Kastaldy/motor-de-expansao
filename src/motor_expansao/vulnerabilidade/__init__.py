@@ -6,19 +6,23 @@ Pacote DISJUNTO (BLK-MA-02 / DEC-012): nunca importa **diretamente** de `pipelin
 `_DENY_CRITICO` do `loop_guard`: molde de leitura apenas — a fórmula do `concorrente_id` está
 REPLICADA em `contrato.py`, nunca importada.
 
-**Ressalva medida (BLK-MA-02-FU1, item 2 — em aberto).** A frase acima vale para imports
-DIRETOS, que é o que o `test_isolamento_imports` prova. Transitivamente, porém, `import
-motor_expansao.vulnerabilidade` hoje carrega `sklearn`, `scipy`, `shapely`, `requests` e módulos
-de `dashboard/`. Causa: `snapshots.py` importa `classificar_rede` de
-`demanda_revelada.classificacao_rede_menor`, e o `__init__.py` daquele pacote reexporta os **9**
-submódulos de forma eager — medido em 2026-08-05: qualquer um dos 9 puxa o conjunto inteiro, logo
-não há import "leve" a escolher. **Não é regressão de READ-ONLY** (nada do M1, `config.py` ou
-`normalizar_concorrentes` entra), mas é **bloqueante para o BLK-MA-06**: este é o módulo que a D6
-ratificou plugar no `run_weekly_90.sh`, e sem `sklearn`/`scipy` no host do coletor o passo do cron
-quebra já no import. A correção (tornar aquele `__init__` lazy, ou replicar o classificador) é
-mudança na camada `demanda_revelada` e está registrada no `BLK-MA-02-FU1`. O teste
-`test_pacote_nao_carrega_dependencia_pesada` mede isso por `sys.modules` e está marcado `xfail`
-até lá.
+**Isolamento TRANSITIVO, fechado no BLK-MA-02-FU1 item 2 (2026-08-10).** A frase acima vale para
+imports DIRETOS, que é o que o `test_isolamento_imports` prova por AST. A garantia transitiva é
+outra, e por um tempo não existia: `import motor_expansao.vulnerabilidade` carregava `sklearn`,
+`scipy`, `shapely`, `requests`, `pyproj` e 5 módulos de `dashboard/`, em ~18 s. Causa:
+`snapshots.py` importa `classificar_rede` de `demanda_revelada.classificacao_rede_menor` — módulo
+que só precisa de `re`/`unicodedata`/`pathlib` —, mas o `__init__.py` daquele pacote reexportava
+seus 9 submódulos de forma **eager**, e importar qualquer coisa do pacote executa o `__init__` do
+pai primeiro. Nunca foi regressão de READ-ONLY (nada do M1, `config.py` ou
+`normalizar_concorrentes` entrava); era **bloqueante para o BLK-MA-06**, porque este é o módulo que
+a D6 ratificou plugar no `run_weekly_90.sh` e sem `sklearn`/`scipy` no host do coletor o passo do
+cron quebraria já no import.
+
+Correção: o `__init__` de `demanda_revelada` passou a reexportar por `__getattr__` (PEP 562), sem
+mudar o contrato público. Resultado medido: **~3 s, zero deps pesadas, zero `dashboard/`**. Travado
+por `test_pacote_nao_carrega_dependencia_pesada`, que mede por `sys.modules` num subprocesso e
+**assere a procedência** do que mediu — sem isso ele resolveria o pacote pela instalação editável
+em vez deste checkout, que foi como o defeito se escondeu durante o desenvolvimento.
 
 Fronteira dos módulos: `snapshots.py` transforma o CSV cru de UMA execução em UMA partição
 `semana=AAAA-SS`; `churn_staleness.py` lê a série dessas partições e devolve o estado de churn

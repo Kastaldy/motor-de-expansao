@@ -25,24 +25,18 @@ export default function PainelComparacao({
   const ranking = ranquear(DIMENSOES, hexes, rotulos)
 
   return (
-    <div
-      style={{
-        background: 'var(--surf-panel)',
-        border: '1px solid var(--ac-a30)',
-        borderRadius: 'var(--r-md)',
-        padding: '11px 13px',
-        backdropFilter: 'blur(16px)',
-        minWidth: 300,
-        maxWidth: 420,
-      }}
-    >
-      <div style={{ font: '700 12px/1 var(--f-ui)', color: 'var(--tx-max)', marginBottom: 10 }}>
+    /* SEM caixa nem teto de largura: este painel vive DENTRO da janela flutuante, que já
+       tem fundo, borda e tamanho — e que o operador redimensiona. O `maxWidth: 420` que
+       estava aqui era a herança de quando ele ficava solto no canto do mapa, e fazia a
+       tabela parar de crescer quando a janela crescia (relato do Juan, 2026-08-12). */
+    <div style={{ display: 'grid', gap: 10, width: '100%' }}>
+      <div style={{ font: '700 12px/1 var(--f-ui)', color: 'var(--tx-max)' }}>
         Comparando {hexes.length} hexágonos
       </div>
 
       <TabelaRanking ranking={ranking} />
 
-      <div style={{ marginTop: 11, display: 'flex', gap: 8, alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <button
           type="button"
           onClick={onLimpar}

@@ -5,10 +5,15 @@ Fonte única de verdade do schema dos snapshots semanais
 churn/staleness derivado dele. **SEM I/O e SEM pandas** — só stdlib (BLK-MA-02 / DEC-012).
 
 Diferença consciente em relação ao molde `demanda_revelada/contrato.py` (só constantes): aqui as
-**primitivas de derivação também SÃO o contrato**. Alterar `normalizar_texto`, os campos da chave ou
-a resolução do hex **re-chaveia a série inteira** e produz churn artificial em massa — por isso elas
-ficam no mesmo arquivo que carrega `VERSAO_CONTRATO_SNAPSHOT`, e qualquer mudança **exige bump**
-dessa versão (o BLK-MA-04 deve tratar o bump como descontinuidade de série).
+**primitivas de derivação também SÃO o contrato**. Alterar `normalizar_texto`, os campos da chave,
+o conjunto de `CAMPOS_HASH_POR_FONTE` ou a resolução do hex **re-chaveia a série inteira** e produz
+churn artificial em massa — por isso elas ficam no mesmo arquivo que carrega
+`VERSAO_CONTRATO_SNAPSHOT`, e qualquer mudança **exige bump** dessa versão (o BLK-MA-04 deve tratar
+o bump como descontinuidade de série). Histórico de bumps do snapshot: `v1` (BLK-MA-02) -> `v2`
+(BLK-MA-11 / DEC-025, saída da taxonomia do hash) -> `v3` (BLK-MA-09 / DEC-026, entrada das duas
+colunas-fato de rating). **Os três foram feitos com a série ainda VAZIA, logo sem migração** — a
+janela grátis fecha na primeira coleta do cron mensal. O `v3` levou junto o bump de
+`VERSAO_CONTRATO_CHURN` e de `VERSAO_CONTRATO_SCORE`, porque os dois schemas também mudaram.
 
 GUARDRAILS (CLAUDE.md §1/§2/§5; contrato `docs/vulnerabilidade_ma_contrato.md` §11/§14):
   - READ-ONLY sobre o M1: nada aqui recalcula `score_priorizacao`, `hex_score_estrutural`, os pesos
@@ -31,10 +36,10 @@ from datetime import date
 # --------------------------------------------------------------------------- #
 # Carimbos de reprodutibilidade e parâmetros do contrato
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v1"
-VERSAO_CONTRATO_CHURN = "churn_staleness_v1"
+VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v3"
+VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
-VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v1"
+VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v2"
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
 H3_RES_CONTRATO = 7
@@ -157,7 +162,13 @@ _RE_RUIDO_TECNOLOGIA_TOTALPASS = [re.compile(p) for p in PADROES_RUIDO_TECNOLOGI
 # Impressão digital dos campos raspados (sinal 4 / staleness)
 # --------------------------------------------------------------------------- #
 # Conjunto FIXO por fonte. `data_coleta` NUNCA entra (senão `semanas_sem_mudanca` jamais sairia de
-# 0 e a staleness morreria); `slug` NUNCA entra (rotação de UUID no slug não é mudança de negócio).
+# 0 e a staleness morreria); `slug` NUNCA entra (rotação de UUID no slug não é mudança de negócio);
+# a TAXONOMIA de atividades (`atividades`/`modalidades`) NUNCA entra `[emenda BLK-MA-11, DEC-025]`
+# — ela é vocabulário da FONTE, não cadastro da academia. Medido em 2026-08-07: o WellHub renomeou
+# "Musculação" para "Treino de força"/"Fisiculturismo"/"Treino Híbrido" entre maio e agosto, e o
+# campo mudou em 12.314 dos 12.420 slugs comuns (**99,1%**) sem que uma única academia mudasse de
+# fato. Com a taxonomia dentro do hash, a renomeação seria lida como "cadastro atualizado agora"
+# para a base inteira e o sinal 4 morreria — o mesmo modo de falha que `data_coleta` já causava.
 CAMPOS_HASH_POR_FONTE: dict[str, tuple[str, ...]] = {
     "totalpass": (
         "nome",
@@ -167,7 +178,6 @@ CAMPOS_HASH_POR_FONTE: dict[str, tuple[str, ...]] = {
         "uf",
         "cep",
         "endereco_formatado",
-        "modalidades",
     ),
     "wellhub": (
         "nome",
@@ -177,18 +187,25 @@ CAMPOS_HASH_POR_FONTE: dict[str, tuple[str, ...]] = {
         "uf",
         "cep",
         "endereco_formatado",
-        "atividades",
     ),
     "unidades": ("nome_unidade", "latitude", "longitude"),
 }
-CAMPOS_NUNCA_HASHEADOS: frozenset[str] = frozenset({"data_coleta", "slug"})
+# Rede de segurança EXECUTÁVEL da regra acima: `test_campos_hash_por_fonte_exclui_os_proibidos`
+# falha se qualquer um destes voltar para uma tupla de `CAMPOS_HASH_POR_FONTE`.
+CAMPOS_NUNCA_HASHEADOS: frozenset[str] = frozenset(
+    {"data_coleta", "slug", "modalidades", "atividades"}
+)
+# Declaração de TIPO dos campos de lista (ordena + normaliza tokens antes de comparar). Hoje
+# nenhum campo hasheado é de lista — os dois saíram do hash pela emenda BLK-MA-11 —, então o ramo
+# correspondente em `hash_campos_raspados` é caminho RESERVADO, não código morto por descuido: ele
+# volta a valer se uma fonte futura hashear um campo multivalorado que NÃO seja taxonomia.
 CAMPOS_LISTA: frozenset[str] = frozenset({"modalidades", "atividades"})
 CAMPOS_NUMERICOS: frozenset[str] = frozenset({"latitude", "longitude"})
 
 # --------------------------------------------------------------------------- #
 # Schemas canônicos
 # --------------------------------------------------------------------------- #
-# Snapshot semanal: 10 colunas, nesta ORDEM. `semana` NÃO é coluna do arquivo — é chave de
+# Snapshot semanal: 12 colunas, nesta ORDEM. `semana` NÃO é coluna do arquivo — é chave de
 # partição hive (igual ao `uf` do enriquecido em `fase1_bi_exports.py`), materializada na leitura.
 CONTRATO_COLUNAS_SNAPSHOT: dict[str, str] = {
     "snapshot_date": "string",         # `data_coleta` POR LINHA (ISO) -> medidor de frescor
@@ -200,10 +217,34 @@ CONTRATO_COLUNAS_SNAPSHOT: dict[str, str] = {
     "rede": "string",                  # categoria de rede; metade do escopo de observabilidade
     "fonte": "string",                 # totalpass | wellhub | unidades (sinal 1 do contrato §4)
     "hash_campos_raspados": "string",  # impressão digital dos campos raspados (sinal 4)
+    # FATOS sem peso `[BLK-MA-09 / DEC-026]` — NÃO são componentes do score. Só o WellHub emite;
+    # no TotalPass são nulos por construção e para sempre (BLK-MA-10: a nota não existe no
+    # produto). Os TRÊS estados da DEC-024 sobrevivem no par: `4.81`/`105` = tem nota;
+    # `NA`/`0` = existe e não tem avaliação; `NA`/`NA` = o parser não leu (scraper quebrado).
+    # Ficam FORA de `CAMPOS_HASH_POR_FONTE` — a nota muda a cada avaliação e mataria o S4.
+    "nota_wellhub": "Float64",         # [NOTA_WELLHUB_MIN, NOTA_WELLHUB_MAX]; nulável
+    "qtd_avaliacoes_wellhub": "Int64", # >= 0; nulável
     "versao_contrato": "string",       # carimbo; mudança = descontinuidade de série
 }
 
-# Extrator de churn/staleness: 17 colunas, nesta ORDEM. `v3`/`v4`/`score_vulnerabilidade`/
+# Domínio da nota. O piso é `1.0`, NÃO `0.0`: a nota é média de avaliações de 1 a 5 estrelas, logo
+# `0.0` é aritmeticamente inalcançável — "sem avaliação" tem forma própria (`NA`/`0`). Medido na
+# DEC-026 sobre 34.035 independentes com nota: `min = 1,0`, `max = 5,0`.
+#
+# Por que o piso importa mais que o teto: `0.0` é o retorno NATURAL de um extrator quebrado (default
+# numérico de um parser que não achou o campo). Um piso em `0.0` aceitaria em silêncio justamente o
+# valor mais provável de um bug, e a nota falsa entraria na série como observação legítima. O teto
+# pega o modo simétrico — `481` é `4.81` sem o separador decimal.
+NOTA_WELLHUB_MIN: float = 1.0
+NOTA_WELLHUB_MAX: float = 5.0
+
+# Colunas do snapshot que PODEM ser nulas. `slug` porque o feed `unidades` não o emite; as duas de
+# rating porque só o WellHub as tem. O `_assert_schema_snapshot` exige não-nulo em todo o resto.
+COLUNAS_SNAPSHOT_NULAVEIS: frozenset[str] = frozenset(
+    {"slug", "nota_wellhub", "qtd_avaliacoes_wellhub"}
+)
+
+# Extrator de churn/staleness: 19 colunas, nesta ORDEM. `v3`/`v4`/`score_vulnerabilidade`/
 # `n_sinais_disponiveis`/`flag_score_provisorio` estão AUSENTES DE PROPÓSITO — são BLK-MA-04.
 CONTRATO_COLUNAS_CHURN: dict[str, str] = {
     "chave_snapshot": "string",
@@ -219,6 +260,8 @@ CONTRATO_COLUNAS_CHURN: dict[str, str] = {
     "semana_primeira_observacao": "string",
     "semana_ultima_observacao": "string",
     "snapshot_date_ultimo": "string",
+    "nota_wellhub": "Float64",          # FATO sem peso, da ULTIMA observacao (DEC-026)
+    "qtd_avaliacoes_wellhub": "Int64",  # FATO sem peso, da ULTIMA observacao (DEC-026)
     "flag_serie_imatura": "bool",
     "flag_staleness_interpretavel": "bool",
     "flag_troca_chave_na_serie": "bool",
@@ -239,8 +282,15 @@ CONTRATO_COLUNAS_PRESENCA_AGREGADOR: dict[str, str] = {
     "hex_id_res7": "string",                          # a chave (anti-PII, DEC-012) e o join
     "fontes_presentes_no_hex": "string",              # subconjunto de FONTES_AGREGADORES, `,`
     "n_agregadores_no_hex": "int64",                  # {1, 2} — nunca 0 (ver docstring do módulo)
-    "n_academias_independentes_totalpass": "int64",   # chaves distintas de TP no hex
-    "n_academias_independentes_wellhub": "int64",     # chaves distintas de WH no hex
+    # COLUNAS 4/5 — leia-as como TETO, nunca como número exato `[ressalva BLK-MA-03-FU1]`: elas
+    # contam CHAVES distintas, e a chave muda quando `chave_origem` é rebaixado de `slug` para
+    # `hash_estavel`, então a MESMA academia observada nos dois regimes sai como 2 (medido em
+    # 2026-08-12). Não é caso raro: em `derivar_chave` o rebaixamento POR LINHA (slug ausente ou
+    # duplicado no snapshot) é SEMPRE ativo e depende só da qualidade do feed.
+    # `n_agregadores_no_hex` — e portanto o `v1` — NÃO é afetado. Quem exibir estas duas como
+    # "densidade do alvo" deve cruzar com `flag_troca_chave_na_serie` do churn.
+    "n_academias_independentes_totalpass": "int64",   # chaves distintas de TP no hex (TETO)
+    "n_academias_independentes_wellhub": "int64",     # chaves distintas de WH no hex (TETO)
     "semana_ultima_observacao_totalpass": "string",   # relógio do PIPELINE (nulo sse contagem 0)
     "semana_ultima_observacao_wellhub": "string",     # idem, WellHub
     "snapshot_date_ultimo_totalpass": "string",       # relógio do COLETOR (nulo sse contagem 0)
@@ -274,7 +324,7 @@ V3_POR_STATUS_CHURN: dict[str, float | None] = {
     "sumiu_recente": 1.0,
 }
 
-# Score de vulnerabilidade (D4): 20 colunas, nesta ORDEM. Uma linha por ACADEMIA, isto é, por
+# Score de vulnerabilidade (D4): 22 colunas, nesta ORDEM. Uma linha por ACADEMIA, isto é, por
 # `(fonte, chave_snapshot)` do universo de M&A (TotalPass/WellHub x independente).
 #
 # `v2` está AUSENTE DE PROPÓSITO (S2 é `n/d` permanente, D3 — BLK-MA-08); `hex_quente`,
@@ -289,11 +339,13 @@ CONTRATO_COLUNAS_SCORE: dict[str, str] = {
     "rede": "string",                              # sempre `independente` (universo de M&A)
     "hex_id_res7": "string",                       # join com o sinal 1 e, no BLK-MA-05, hotness
     "status_churn": "string",                      # FATO propagado, sem peso (G-D2)
+    "nota_wellhub": "Float64",                     # FATO propagado, sem peso (DEC-026)
+    "qtd_avaliacoes_wellhub": "Int64",             # FATO propagado, sem peso (DEC-026)
     "v1": "float64",                               # componente do S1; {0.0, 0.5} ou nulo
     "v3": "float64",                               # componente do S3; {0.0, 0.7, 1.0} ou nulo
     "v4": "float64",                               # componente do S4; [0, 1] ou nulo
     "sinais_disponiveis": "string",                # subconjunto de SINAIS_ORDEM, unido por `,`
-    "n_sinais_disponiveis": "int64",               # 0..3 (4 quando o BLK-MA-08 ativar o S2)
+    "n_sinais_disponiveis": "int64",               # 0..3; NAO vai a 4 - o S2 nao tem peso (DEC-026)
     "score_vulnerabilidade": "float64",            # [0, 100]; nulo sse nenhum sinal disponível
     "score_vulnerabilidade_ordenavel": "float64",  # nulo enquanto `flag_score_provisorio` (G-D1)
     "flag_serie_imatura": "bool",                  # propagada do churn
@@ -469,11 +521,22 @@ def hash_campos_raspados(campos: Mapping[str, object], fonte: str) -> str:
 
     Payload = `"{fonte}|{campo}={valor_norm}|..."` na ordem de `CAMPOS_HASH_POR_FONTE[fonte]`.
     Campo ausente entra como `""`. `fonte` fora do contrato levanta `ValueError`.
+
+    `CAMPOS_NUNCA_HASHEADOS` e' imposto AQUI, em runtime (BLK-MA-02-FU1, m3). Antes era so' prosa:
+    injetar `data_coleta` em `CAMPOS_HASH_POR_FONTE` nao levantava nada, e o efeito seria mudo e
+    fatal — todo cadastro pareceria "alterado" a cada coleta, `semanas_sem_mudanca` nunca cresceria
+    e o S4 morreria. E' o mesmo modo de falha que motivou manter a nota fora do hash (DEC-026).
     """
     chave_fonte = str(fonte)
     campos_da_fonte = CAMPOS_HASH_POR_FONTE.get(chave_fonte)
     if campos_da_fonte is None:
         raise ValueError(f"fonte fora do contrato; aceitas: {sorted(CAMPOS_HASH_POR_FONTE)}")
+    proibidos = sorted(set(campos_da_fonte) & CAMPOS_NUNCA_HASHEADOS)
+    if proibidos:
+        raise ValueError(
+            f"campo(s) de `CAMPOS_NUNCA_HASHEADOS` em CAMPOS_HASH_POR_FONTE[{chave_fonte!r}]: "
+            f"{proibidos} — hashea-los mataria o S4 (staleness)"
+        )
     partes: list[str] = []
     for campo in campos_da_fonte:
         bruto = campos.get(campo, "")
@@ -544,6 +607,12 @@ def renormalizar_pesos(disponiveis: Sequence[str]) -> dict[str, float]:
     como `0` (zero é uma afirmação de solidez; ausência é ausência). Itera `SINAIS_ORDEM` para o
     dicionário sair determinístico, e duplicatas na entrada colapsam. Sinal fora de
     `SINAIS_ORDEM` levanta `ValueError`.
+
+    **Esta primitiva NÃO conhece `SINAIS_INATIVOS`** e aceita `"s2"` de bom grado, porque ele está
+    em `SINAIS_ORDEM` `[registro BLK-MA-04-FU1]`. Não é defeito: a função é sobre PESOS, e quem
+    decide disponibilidade é `_disponibilidade_efetiva` em `score.py`, que força `s2` a `False`
+    enquanto ele estiver naquela tupla. Registrado aqui para quem for reativar o sinal 2 não
+    procurar o gate no lugar errado.
     """
     pedidos = {str(s) for s in disponiveis}
     desconhecidos = sorted(pedidos - set(SINAIS_ORDEM))
@@ -584,6 +653,7 @@ __all__ = [
     "PADROES_RUIDO_TECNOLOGIA_TOTALPASS",
     "CAMPOS_HASH_POR_FONTE",
     "CAMPOS_NUNCA_HASHEADOS",
+    "COLUNAS_SNAPSHOT_NULAVEIS",
     "CAMPOS_LISTA",
     "CAMPOS_NUMERICOS",
     "CONTRATO_COLUNAS_SNAPSHOT",

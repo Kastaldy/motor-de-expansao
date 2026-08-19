@@ -1,21 +1,18 @@
 import { useState } from 'react'
 
 import { num } from '../lib/format'
-import type { PontoCensoDetalhe, PontoConcorrencia, PontoDistribuicao } from '../lib/types'
+import type { PontoCensoDetalhe, PontoConcorrencia } from '../lib/types'
 
 /**
  * "Detalhamento dos dados" — os numeros BRUTOS da area.
  *
- * A ficha mostra medias. Este bloco mostra o que esta POR TRAS delas: setor a setor,
- * o minimo, a mediana e o maximo do que o raio contem.
+ * SAIU DAQUI a estatistica descritiva (minimo, mediana e maximo por setor): "nao faz
+ * sentido o usuario ver isso" (Juan, 2026-08-12). Era leitura de analista — quem escolhe
+ * imovel quer o dado CONCRETO: em que setor o imovel caiu, quanto do raio o IBGE cobre e
+ * quem sao os concorrentes, com suas distancias. Amplitude entre setores interessa a quem
+ * audita o motor, nao a quem decide abertura.
  *
- * POR QUE ISSO IMPORTA. Medido na Av. Paulista: a renda per capita media do raio e'
- * R$ 5.838, mas os 331 setores com medicao vao de R$ 780 a R$ 25.272 — 32x de
- * amplitude dentro de 1 km. Duas esquinas do mesmo raio sao negocios diferentes, e a
- * media sozinha esconde exatamente isso.
- *
- * Nenhum numero e' derivado aqui: min, mediana e maximo vem calculados do
- * `/api/ponto`, sobre os setores que o motor intersectou.
+ * Nenhum numero e' derivado aqui: tudo vem calculado do `/api/ponto`.
  */
 export default function DetalheRegiao({
   detalhe,
@@ -26,7 +23,6 @@ export default function DetalheRegiao({
 }) {
   const [aberto, setAberto] = useState(false)
   const sp = detalhe.setor_do_ponto
-  const dist = detalhe.distribuicao
 
   return (
     <div
@@ -60,22 +56,6 @@ export default function DetalheRegiao({
 
       {aberto && (
         <div style={{ padding: '0 11px 12px', display: 'grid', gap: 16 }}>
-          {/* ---- Setor a setor: o que a média esconde ---- */}
-          <div style={{ display: 'grid', gap: 6 }}>
-            <Titulo>Setor a setor, dentro do raio</Titulo>
-            <p style={{ font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
-              O raio tem {num(detalhe.n_setores)} setores censitários. Estes são os
-              extremos e a mediana de cada leitura — a média da ficha fica no meio disso.
-            </p>
-            <div style={{ display: 'grid', gap: 3, marginTop: 4 }}>
-              <Cabecalho />
-              <LinhaDist rotulo="Renda per capita" d={dist.renda_per_capita} prefixo="R$ " />
-              <LinhaDist rotulo="Score socioeconômico" d={dist.score} casas={1} />
-              <LinhaDist rotulo="População do setor" d={dist.populacao} />
-              <LinhaDist rotulo="Densidade" d={dist.densidade_hab_km2} sufixo=" hab/km²" />
-            </div>
-          </div>
-
           {/* ---- O setor do ponto ---- */}
           <div style={{ display: 'grid', gap: 4 }}>
             <Titulo>O setor onde o imóvel está</Titulo>
@@ -157,93 +137,7 @@ function Titulo({ children }: { children: React.ReactNode }) {
   )
 }
 
-function Cabecalho() {
-  return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr repeat(3, minmax(58px, auto))',
-        gap: 10,
-        paddingBottom: 3,
-      }}
-    >
-      <span />
-      {['mínimo', 'mediana', 'máximo'].map((t) => (
-        <span
-          key={t}
-          style={{
-            font: '500 9.5px/1 var(--f-num)',
-            color: 'var(--tx-sub)',
-            textAlign: 'right',
-            textTransform: 'uppercase',
-            letterSpacing: '.05em',
-          }}
-        >
-          {t}
-        </span>
-      ))}
-    </div>
-  )
-}
 
-function LinhaDist({
-  rotulo,
-  d,
-  prefixo = '',
-  sufixo = '',
-  casas = 0,
-}: {
-  rotulo: string
-  d: PontoDistribuicao | null
-  prefixo?: string
-  sufixo?: string
-  casas?: number
-}) {
-  if (!d) {
-    return (
-      <div style={{ display: 'flex', gap: 10, padding: '4px 0' }}>
-        <span style={{ font: '400 11.5px/1.4 var(--f-ui)', color: 'var(--tx-off)' }}>
-          {rotulo}
-        </span>
-        <span style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-off)' }}>
-          sem medição nos setores
-        </span>
-      </div>
-    )
-  }
-  const fmt = (v: number | null) => (v == null ? num(v) : `${prefixo}${num(v, casas)}${sufixo}`)
-  return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr repeat(3, minmax(58px, auto))',
-        gap: 10,
-        padding: '4px 0',
-        borderBottom: '1px solid var(--line-soft)',
-      }}
-    >
-      <span style={{ font: '400 11.5px/1.4 var(--f-ui)', color: 'var(--tx-soft)' }}>
-        {rotulo}
-      </span>
-      {[d.min, d.p50, d.max].map((v, i) => (
-        <span
-          key={i}
-          className="num"
-          style={{
-            // A MEDIANA em destaque: e' o valor tipico do raio, e os extremos existem
-            // para dar a amplitude em volta dela.
-            font: `${i === 1 ? 700 : 500} 11.5px/1.4 var(--f-num)`,
-            color: i === 1 ? 'var(--tx-max)' : 'var(--tx-soft)',
-            textAlign: 'right',
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {fmt(v)}
-        </span>
-      ))}
-    </div>
-  )
-}
 
 function Linha({
   rotulo,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import Dock from './components/Dock'
+import type { SearchPin } from './components/HexMap'
 import ExecutiveScreen from './screens/ExecutiveScreen'
 import InicioScreen from './screens/InicioScreen'
 import MapScreen from './screens/MapScreen'
@@ -50,6 +51,45 @@ export default function App() {
   const [erro, setErro] = useState<string | null>(null)
 
   const [ponto, setPonto] = useState<PontoEscolhido | null>(null)
+
+  /**
+   * Pin do endereco colado no modo de ponto, entregue ao `MapScreen` por `pinFixo`.
+   *
+   * Mora AQUI e nao no `PontoScreen` porque quem o consome e' o mapa, que e' irmao dele
+   * na arvore — e porque o pin da busca interna do `MapScreen` e' apagado toda vez que a
+   * UF ou o municipio mudam, que e' exatamente o que colar um endereco provoca.
+   */
+  const [pinPonto, setPinPonto] = useState<SearchPin | null>(null)
+
+  /**
+   * O endereco colado escolheu o territorio: leva o mapa do fundo para la'.
+   *
+   * `setUf` + `setMunicipio` na mesma passagem — o React agrupa as duas, entao o efeito
+   * de carga roda UMA vez, com o par ja' completo. Chamar `aoTrocarUf` aqui seria errado:
+   * ele zera o municipio de proposito (trocar de estado recomeca na visao da UF), o que
+   * desfaria o drill-down que o endereco acabou de determinar.
+   */
+  const localizarPonto = useCallback((u: string, m: string, pin: SearchPin) => {
+    setUf(u)
+    setMunicipio(m)
+    setPinPonto(pin)
+  }, [])
+
+  /**
+   * A busca do cabecalho do mapa pediu a analise de uma coordenada (so' no modo de ponto).
+   *
+   * O `n` que so' cresce e' o que permite pedir a MESMA coordenada duas vezes: sem ele, o
+   * objeto teria o mesmo conteudo e o efeito que ouve do outro lado nao dispararia.
+   */
+  const [pedidoPonto, setPedidoPonto] = useState<{ lat: number; lng: number; n: number } | null>(
+    null,
+  )
+  const pedirPonto = useCallback((lat: number, lng: number) => {
+    setPedidoPonto((p) => ({ lat, lng, n: (p?.n ?? 0) + 1 }))
+  }, [])
+
+  /** Tira a marca do endereço do mapa (a limpeza do modo de ponto). */
+  const limparPinPonto = useCallback(() => setPinPonto(null), [])
 
   // Foto do Mapa Territorial (ver lib/mapa-estado): vive AQUI porque o App nao desmonta
   // ao trocar de tela — e' o que devolve o mapa como estava na volta da Viabilidade.
@@ -197,7 +237,46 @@ export default function App() {
         {tela === 'inicio' ? (
           <InicioScreen onEscolher={escolherModo} />
         ) : tela === 'ponto' ? (
-          <PontoScreen onInicio={voltarAoInicio} onAnalisarPonto={irParaViabilidade} />
+          /* O modo de ponto É o Explorar, com a janela da ficha por cima (pedido do Juan,
+             2026-08-11). O `MapScreen` vem inteiro e com as MESMAS props do modo `mapa` —
+             não uma versão reduzida —, e o `PontoScreen` entra depois na árvore, por isso
+             flutua sobre ele. Antes o modo de ponto trazia uma cópia parcial do Explorar
+             e as duas telas divergiam. */
+          <>
+            <MapScreen
+              ufs={ufs}
+              uf={uf}
+              onUf={aoTrocarUf}
+              municipios={municipios}
+              municipio={municipio}
+              onMunicipio={setMunicipio}
+              dados={dados}
+              carregando={carregando}
+              erro={erro}
+              onAnalisarPonto={irParaViabilidade}
+              estadoInicial={estadoMapa}
+              onEstado={setEstadoMapa}
+              onInicio={voltarAoInicio}
+              pinFixo={pinPonto}
+              /* A lupa do cabeçalho vira a entrada do modo de ponto: buscar um endereço
+                 ali produz a MESMA ficha que colá-lo. Sem isto havia duas caixas pedindo
+                 endereço na mesma tela, e a de cima só soltava um pin. */
+              onPontoBuscado={pedirPonto}
+              /* A ficha aqui é a do PONTO, publicada pelo `PontoScreen`. Sem isto o
+                 endereço abria duas janelas: a dele e a do hexágono em que ele caiu. */
+              janelaDoHex={false}
+              /* O hero da tela vazia é o do modo de ponto, publicado pelo `PontoScreen`. */
+              semLanding
+            />
+            <PontoScreen
+              onAnalisarPonto={irParaViabilidade}
+              onLocalizar={localizarPonto}
+              mapaPronto={dados != null}
+              pedido={pedidoPonto}
+              onLimparPin={limparPinPonto}
+              onInicio={voltarAoInicio}
+            />
+          </>
         ) : tela === 'oportunidades' ? (
           <OportunidadesScreen
             ufs={ufs}

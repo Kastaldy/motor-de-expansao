@@ -1,12 +1,12 @@
 """BLK-MA-02: testes offline do materializador de snapshots semanais.
 
-Fixtures 100% SINTETICAS em `tmp_path` (CSVs com `sep=";"` / `encoding="utf-8-sig"`, coordenadas
+Fixtures 100% SINTÉTICAS em `tmp_path` (CSVs com `sep=";"` / `encoding="utf-8-sig"`, coordenadas
 reais do Brasil, nomes inventados). NENHUM teste le a fonte real -- ela e gitignored, vive na VPS
 e carrega PII na origem (DEC-012).
 
 Cobre: isolamento de import (AST), contrato de 10 colunas + `_assert_schema`, anti-PII provado
-RELENDO o parquet do disco (inclusive nos bytes do arquivo), particao por semana ISO e
-idempotencia, limpeza de ruido com auditoria so de contagens, `hash_campos_raspados`, estabilidade
+RELENDO o parquet do disco (inclusive nos bytes do arquivo), partição por semana ISO e
+idempotência, limpeza de ruido com auditoria só de contagens, `hash_campos_raspados`, estabilidade
 do `slug` / rebaixamento de chave, e poda de retencao.
 """
 
@@ -17,6 +17,8 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from motor_expansao.vulnerabilidade import churn_staleness as mchurn
@@ -134,7 +136,7 @@ def dirs_com_ruido(tmp_path: Path) -> tuple[Path, Path, Path]:
                     "SAGAZ Sistemas",
                     "TSITECH Solucoes",
                     "DATAFITNESS - TTP",
-                    # 3 boas (a ultima junto a divisa de UF)
+                    # 3 boas (a última junto a divisa de UF)
                     "Academia Boa Centro",
                     "Academia Boa Norte",
                     "Academia Boa Divisa",
@@ -163,7 +165,7 @@ def dirs_com_ruido(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 
 # --------------------------------------------------------------------------- #
-# CA-1 — isolamento de imports (AST) sobre os 4 modulos do pacote
+# CA-1 — isolamento de imports (AST) sobre os 5 módulos do pacote + o próprio pacote
 # --------------------------------------------------------------------------- #
 def test_isolamento_imports() -> None:
     """Pacote DISJUNTO: nenhum import pode casar M1/dashboard/api/censo/config raiz.
@@ -196,43 +198,63 @@ def test_isolamento_imports() -> None:
                 assert not casa_proibicao(n, proibido), (modulo.__name__, n, proibido)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BLK-MA-02-FU1 item 2: vazamento TRANSITIVO de import, em aberto. "
-        "`snapshots.py` importa `classificar_rede` de `demanda_revelada`, cujo `__init__` "
-        "reexporta os 9 submodulos de forma eager e puxa sklearn/scipy/shapely/requests. "
-        "Bloqueante para o BLK-MA-06 (plug no cron). Quando a correcao entrar, este teste "
-        "PASSA e o `strict=True` avisa para remover a marca."
-    ),
-)
 def test_pacote_nao_carrega_dependencia_pesada() -> None:
-    """Isolamento por `sys.modules`, nao por AST — o AST so ve import DIRETO.
+    """Isolamento por `sys.modules`, não por AST — o AST só vê import DIRETO.
 
-    O `test_isolamento_imports` continua verde enquanto isto falha, e as duas coisas sao
-    verdadeiras ao mesmo tempo: o pacote nao escreve nenhum import proibido, mas o que ele
-    importa arrasta meio mundo junto. Um modulo destinado ao cron precisa das duas garantias.
+    O `test_isolamento_imports` fica verde mesmo quando isto falha, e as duas coisas são
+    verdadeiras ao mesmo tempo: o pacote não escreve nenhum import proibido, mas o que ele
+    importa pode arrastar meio mundo junto. Um módulo destinado ao cron precisa das duas
+    garantias — se `sklearn`/`scipy` não estiverem no host do coletor, o passo quebra no import.
+
+    Fechado pelo `BLK-MA-02-FU1` item 2: o `__init__` de `demanda_revelada` passou a reexportar
+    por `__getattr__` (PEP 562). Antes disto: ~18 s, com sklearn/scipy/shapely/requests/pyproj e
+    5 módulos de `dashboard/`. Depois: ~3 s e nenhum dos dois.
+
+    **O subprocesso precisa medir ESTE checkout.** Sem `PYTHONPATH` explícito ele resolveria
+    `motor_expansao` pela instalação editável — que aponta para o clone principal, não para o
+    worktree —, e o teste passaria a medir outra árvore em silêncio. Aconteceu de verdade durante
+    o desenvolvimento desta correção, daí a asserção de procedência abaixo.
     """
+    import os
     import subprocess
     import sys
     import textwrap
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[3] / "src"
+    assert (src / "motor_expansao").is_dir(), f"layout inesperado: {src}"
 
     codigo = textwrap.dedent(
         """
         import sys
-        import motor_expansao.vulnerabilidade  # noqa: F401
+        import motor_expansao.vulnerabilidade as alvo
         pesados = sorted(
             {m.split(".")[0] for m in sys.modules}
-            & {"sklearn", "scipy", "shapely", "requests", "matplotlib", "geopandas"}
+            & {"sklearn", "scipy", "shapely", "requests", "matplotlib", "geopandas", "pyproj"}
         )
         dash = [m for m in sys.modules if m.startswith("motor_expansao.dashboard")]
-        print(";".join(pesados) + "|" + str(len(dash)))
+        print(";".join(pesados) + "|" + str(len(dash)) + "|" + alvo.__file__)
         """
     )
+    # `stdin=DEVNULL` não e' decorativo: sob a captura do pytest no Windows, o stdin herdado não
+    # tem descritor real e o `subprocess` levanta `OSError: [WinError 6]` antes de rodar qualquer
+    # coisa. Enquanto este teste esteve marcado `xfail(strict=True)`, essa OSError contava como
+    # "falha esperada" — ou seja, o teste ERRAVA em vez de medir, e ninguem tinha como perceber.
+    env = {**os.environ, "PYTHONPATH": str(src)}
     saida = subprocess.run(
-        [sys.executable, "-c", codigo], capture_output=True, text=True, check=True
+        [sys.executable, "-c", codigo],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=env,
+        stdin=subprocess.DEVNULL,
     ).stdout.strip()
-    pesados, n_dashboard = saida.split("|")
+    pesados, n_dashboard, origem = saida.split("|")
+
+    assert Path(origem).is_relative_to(src), (
+        f"o subprocesso mediu OUTRA arvore ({origem}), nao este checkout ({src}) - "
+        "a medicao seria sobre codigo que nao esta sob teste"
+    )
     assert not pesados, f"dependencias pesadas carregadas: {pesados}"
     assert n_dashboard == "0", f"modulos de dashboard carregados: {n_dashboard}"
 
@@ -275,7 +297,7 @@ def test_checagem_de_import_pega_as_cinco_formas() -> None:
 # CA-12 — nenhum teste do pacote aponta para caminho de fonte real
 # --------------------------------------------------------------------------- #
 def test_sem_caminho_real_nos_testes() -> None:
-    """Os literais proibidos sao MONTADOS por concatenacao para nao se auto-acusarem."""
+    """Os literais proibidos são MONTADOS por concatenação para não se auto-acusarem."""
     proibidos = ["concorrentes" + "/", "data/" + "staging", "data/" + "outputs", "data/" + "raw"]
     for arquivo in sorted(Path(__file__).parent.glob("test_*.py")):
         tree = ast.parse(arquivo.read_text(encoding="utf-8"))
@@ -286,7 +308,7 @@ def test_sem_caminho_real_nos_testes() -> None:
 
 
 def test_defaults_iguais_aos_da_ingestao_existente() -> None:
-    """R6: os diretorios default NAO podem divergir dos ja usados pela ingestao densa."""
+    """R6: os diretórios default NÃO podem divergir dos já usados pela ingestão densa."""
     from motor_expansao.demanda_revelada import concorrentes_densos as densos
 
     assert m.DIR_TOTALPASS_DEFAULT == densos.DIR_TOTALPASS_DEFAULT
@@ -297,11 +319,14 @@ def test_defaults_iguais_aos_da_ingestao_existente() -> None:
 # --------------------------------------------------------------------------- #
 # CA-2 — contrato de 10 colunas + _assert_schema
 # --------------------------------------------------------------------------- #
-def test_schema_snapshot_10_colunas_em_ordem(dirs_sinteticos: tuple[Path, Path, Path]) -> None:
+def test_schema_snapshot_12_colunas_em_ordem(dirs_sinteticos: tuple[Path, Path, Path]) -> None:
     tp, wh, un = dirs_sinteticos
     snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
     assert list(snap.columns) == list(c.CONTRATO_COLUNAS_SNAPSHOT.keys())
-    assert len(list(snap.columns)) == 10
+    # 10 -> 12 no BLK-MA-09 / DEC-026: as duas colunas-fato de rating, sem peso.
+    assert len(list(snap.columns)) == 12
+    assert snap["nota_wellhub"].dtype == "Float64"
+    assert snap["qtd_avaliacoes_wellhub"].dtype == "Int64"
     assert len(snap) == 6
     assert set(snap["fonte"]) == {"totalpass", "wellhub", "unidades"}
     assert (snap["versao_contrato"] == c.VERSAO_CONTRATO_SNAPSHOT).all()
@@ -414,12 +439,12 @@ def test_parquet_sem_pii_relendo_do_disco(tmp_path: Path) -> None:
     assert list(relido.columns) == list(c.CONTRATO_COLUNAS_SNAPSHOT.keys())
     for coluna in relido.columns:
         assert not relido[coluna].astype(str).str.contains(marcador).any(), coluna
-    # O literal nao pode sobreviver nem em metadado/estatistica de coluna do proprio arquivo.
+    # O literal não pode sobreviver nem em metadado/estatística de coluna do próprio arquivo.
     assert marcador.encode() not in arquivos[0].read_bytes()
 
 
 # --------------------------------------------------------------------------- #
-# CA-4 / CA-17 — particao por semana ISO, idempotencia e escrita defensiva
+# CA-4 / CA-17 — partição por semana ISO, idempotência e escrita defensiva
 # --------------------------------------------------------------------------- #
 def test_particao_nomeada_por_semana_iso(
     dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
@@ -438,7 +463,7 @@ def test_particao_nomeada_por_semana_iso(
 def test_particao_usa_a_data_de_referencia_nao_o_data_coleta(
     dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
 ) -> None:
-    """P1: a semana sai da EXECUCAO. Um CSV velho (coletor falho) nao reescreve semana passada."""
+    """P1: a semana sai da EXECUÇÃO. Um CSV velho (coletor falho) não reescreve semana passada."""
     tp, wh, un = dirs_sinteticos  # data_coleta de 2026-07-25/26/27 (semana ISO 2026-30)
     base = tmp_path / "snapshots"
     ref_futura = date(2026, 8, 5)  # semana ISO 2026-32
@@ -465,7 +490,7 @@ def test_materializar_duas_vezes_mesma_semana_nao_duplica(
 def test_materializar_semana_menor_na_segunda_execucao(
     dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
 ) -> None:
-    """Prova do `delete_matching`: a 2a execucao SUBSTITUI a particao, nao soma a ela."""
+    """Prova do `delete_matching`: a 2a execução SUBSTITUI a partição, não soma a ela."""
     tp, wh, un = dirs_sinteticos
     base = tmp_path / "snapshots"
     m.materializar(tp, wh, un, base_dir=base, data_referencia=REF)
@@ -501,7 +526,7 @@ def test_ler_snapshots_base_inexistente_ou_vazia(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# CA-5 — limpeza de ruido com auditoria SO de contagens
+# CA-5 — limpeza de ruido com auditoria SÓ de contagens
 # --------------------------------------------------------------------------- #
 def test_limpar_ruido_conta_por_motivo(dirs_com_ruido: tuple[Path, Path, Path]) -> None:
     tp, wh, un = dirs_com_ruido
@@ -528,7 +553,7 @@ def test_limpar_ruido_preserva_linhas_boas(dirs_com_ruido: tuple[Path, Path, Pat
 
 
 def test_auditoria_so_tem_contagens(dirs_com_ruido: tuple[Path, Path, Path]) -> None:
-    """Anti-PII: a auditoria carrega SO inteiros, jamais o texto ofensor."""
+    """Anti-PII: a auditoria carrega SÓ inteiros, jamais o texto ofensor."""
     tp, wh, un = dirs_com_ruido
     _limpo, auditoria = m.limpar_ruido(m.ler_feeds(tp, wh, un))
 
@@ -567,14 +592,23 @@ def test_hash_ignora_data_coleta() -> None:
     )
 
 
-def test_hash_ignora_ordem_das_modalidades() -> None:
-    assert _hash(_frame_tp(modalidades="Musculacao, Natacao")) == _hash(
-        _frame_tp(modalidades="Natacao; Musculacao")
-    )
+def test_hash_ignora_a_taxonomia_inteira() -> None:
+    """Sucessor de `test_hash_ignora_ordem_das_modalidades` (emenda BLK-MA-11 / DEC-025).
+
+    A versão anterior só provava invariância à ORDEM dos tokens. Desde a emenda, a taxonomia saiu
+    do hash por completo: trocar os próprios rótulos também não pode mexer no hash. Motivo medido:
+    o WellHub renomeou "Musculação" para "Treino de força"/"Fisiculturismo" e o campo mudou em
+    99,1% das unidades sem que uma só academia mudasse - com a taxonomia dentro, o sinal 4 morreria
+    de uma vez para a base inteira.
+    """
+    base = _hash(_frame_tp(modalidades="Musculacao, Natacao"))
+    assert base == _hash(_frame_tp(modalidades="Natacao; Musculacao")), "ordem"
+    assert base == _hash(_frame_tp(modalidades="Treino de forca, Natacao")), "rotulo renomeado"
+    assert base == _hash(_frame_tp(modalidades="")), "taxonomia ausente"
 
 
 def test_hash_ignora_slug() -> None:
-    """Rotacao de UUID no slug NAO e mudanca de negocio."""
+    """Rotacao de UUID no slug NÃO e mudanca de negocio."""
     assert _hash(_frame_tp(slug="academia-alfa-b8491478-1111-2222-3333-444455556666")) == _hash(
         _frame_tp(slug="academia-alfa-99999999-aaaa-bbbb-cccc-dddddddddddd")
     )
@@ -587,7 +621,9 @@ def test_hash_ignora_slug() -> None:
         ("endereco_formatado", "Rua A, 999"),
         ("latitude", -23.6000),
         ("cep", "09000-000"),
-        ("modalidades", "Musculacao, Natacao, Crossfit"),
+        # `modalidades` saiu desta lista na emenda BLK-MA-11 / DEC-025: renomear taxonomia deixou
+        # de ser "mudança de cadastro". A invariância agora é asserida em
+        # `test_hash_ignora_a_taxonomia_inteira`.
     ],
 )
 def test_hash_muda_com_campo_real(campo: str, valor: object) -> None:
@@ -595,7 +631,7 @@ def test_hash_muda_com_campo_real(campo: str, valor: object) -> None:
 
 
 def test_hash_usa_o_conjunto_de_campos_da_propria_fonte() -> None:
-    """O feed `unidades` hasheia `nome_unidade` (nao `nome`) + coordenadas."""
+    """O feed `unidades` hasheia `nome_unidade` (não `nome`) + coordenadas."""
     base = _frame_tp(fonte="unidades", rede="selfit", nome="Selfit Norte",
                      nome_unidade="Selfit Norte", slug="")
     outro = base.copy()
@@ -682,7 +718,7 @@ def test_rebaixamento_global_so_com_taxa_injetada() -> None:
 
 
 def test_chave_origem_slug_duplicado_no_snapshot() -> None:
-    """Rebaixamento POR LINHA (so informacao local da semana): slug repetido nao serve de chave."""
+    """Rebaixamento POR LINHA (só informacao local da semana): slug repetido não serve de chave."""
     df = pd.concat(
         [_frame_tp(nome="Academia Alfa I"), _frame_tp(nome="Academia Alfa II", latitude=-23.9)],
         ignore_index=True,
@@ -774,7 +810,7 @@ def test_podar_valida_retencao_e_base_ausente(tmp_path: Path) -> None:
 def test_materializar_escrever_false_nao_poda(
     dirs_sinteticos: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A poda APAGA disco: `materializar` nao pode alcanca-la em hipotese alguma."""
+    """A poda APAGA disco: `materializar` não pode alcanca-la em hipotese alguma."""
 
     def _explode(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("materializar NUNCA pode chamar podar_snapshots")
@@ -809,7 +845,7 @@ def test_rede_tp_wh_vem_do_classificador(dirs_sinteticos: tuple[Path, Path, Path
     tp, wh, un = dirs_sinteticos
     df = m.ler_feeds(tp, wh, un)
     tpwh = df[df["fonte"] != "unidades"]
-    assert set(tpwh["rede"]) == {"independente"}  # nomes sinteticos nao casam cadeia alguma
+    assert set(tpwh["rede"]) == {"independente"}  # nomes sinteticos não casam cadeia alguma
 
 
 def test_ler_feeds_diretorio_ausente_nao_levanta(tmp_path: Path) -> None:
@@ -828,3 +864,488 @@ def test_materializar_sem_csv_frame_vazio_bem_formado(tmp_path: Path) -> None:
     assert list(snap.columns) == list(c.CONTRATO_COLUNAS_SNAPSHOT.keys())
     assert auditoria["linhas_lidas"] == 0
     assert auditoria["linhas_snapshot"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# BLK-MA-09 / DEC-026 — colunas-fato de rating, sem peso
+# --------------------------------------------------------------------------- #
+def test_ler_snapshots_sobrevive_a_esquema_misto(
+    dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    """O teste que justifica o `schema=` explícito em `ler_snapshots`.
+
+    Um bump de contrato produz, por definição, uma série com partições de esquemas diferentes.
+    Sem schema declarado o pyarrow infere o do PRIMEIRO arquivo: se a partição antiga for lida
+    primeiro, as colunas novas somem de TODAS as outras, e o laço de preenchimento as recria como
+    `pd.NA` — coluna nula para o universo inteiro, sem erro e sem log. Aqui a partição pré-bump é
+    a mais antiga E a primeira em ordem alfabética, que é a ordem em que o dataset varre.
+    """
+    base = tmp_path / "serie"
+    snap = _snapshot_valido(dirs_sinteticos)
+
+    # Semana 1: PRÉ-bump — grava sem as duas colunas novas, como faria o contrato v2.
+    pre = snap.drop(columns=["nota_wellhub", "qtd_avaliacoes_wellhub"]).copy()
+    pre["semana"] = "2026-01"
+    dir_pre = base / "semana=2026-01"
+    dir_pre.mkdir(parents=True)
+    pq.write_table(
+        pa.Table.from_pandas(pre.drop(columns=["semana"]), preserve_index=False),
+        str(dir_pre / "parte-0.parquet"),
+    )
+
+    # Semana 2: PÓS-bump, com nota preenchida.
+    pos = snap.copy()
+    pos.loc[:, "nota_wellhub"] = 4.25
+    pos.loc[:, "qtd_avaliacoes_wellhub"] = 88
+    m.escrever_particao_semana(pos, base, semana="2026-02")
+
+    lido = m.ler_snapshots(base)
+
+    assert set(lido["semana"]) == {"2026-01", "2026-02"}
+    antigo = lido[lido["semana"] == "2026-01"]
+    novo = lido[lido["semana"] == "2026-02"]
+    assert antigo["nota_wellhub"].isna().all(), "partição pré-bump deveria ficar nula"
+    # `notna()` ANTES da comparação, e não `(série == 4.25).all()`: numa série toda-NA o `.all()`
+    # de pandas ignora os nulos e devolve `True`, então a versão ingênua deste teste passaria
+    # exatamente no cenário que ele existe para pegar. Medido: sem o `schema=` em
+    # `ler_snapshots`, a coluna volta 100% nula e a asserção ingênua fica verde.
+    assert novo["nota_wellhub"].notna().all(), (
+        "a partição pós-bump perdeu a nota — o schema do primeiro arquivo venceu"
+    )
+    assert (novo["nota_wellhub"] == 4.25).all()
+    assert novo["qtd_avaliacoes_wellhub"].notna().all()
+    assert (novo["qtd_avaliacoes_wellhub"] == 88).all()
+
+
+def _dirs_com_rating(tmp_path: Path, notas: list[str], qtds: list[str]) -> tuple[Path, Path, Path]:
+    """3 pastas de CSV em que o feed WellHub CARREGA as colunas de rating, como no coletor real.
+
+    A fixture `dirs_sinteticos` não tem essas colunas — por isso os testes que se apoiavam nela
+    asseriam as 12 colunas com a nota 100% nula e passavam mesmo quando a ingestão era removida.
+    """
+    tp, wh, un = tmp_path / "tp", tmp_path / "wh", tmp_path / "un"
+    n = len(notas)
+    _escrever_csv(
+        wh / "unidades_wellhub_rj.csv",
+        pd.DataFrame(
+            {
+                "slug": [f"academia-{i}" for i in range(n)],
+                "nome": [f"Academia {i}" for i in range(n)],
+                "latitude": [-22.91 - i * 0.01 for i in range(n)],
+                "longitude": [-43.18 - i * 0.01 for i in range(n)],
+                "cidade": ["Rio de Janeiro"] * n,
+                "uf": ["RJ"] * n,
+                "cep": ["20000-000"] * n,
+                "endereco_formatado": [f"Rua {i}, 100" for i in range(n)],
+                "atividades": ["Musculacao"] * n,
+                "nota_wellhub": notas,
+                "qtd_avaliacoes_wellhub": qtds,
+                "data_coleta": ["2026-07-26"] * n,
+            }
+        ),
+    )
+    for d in (tp, un):
+        d.mkdir(parents=True, exist_ok=True)
+    return tp, wh, un
+
+
+def test_tres_estados_do_rating_sobrevivem_a_INGESTAO_do_csv(tmp_path: Path) -> None:
+    """Os três estados da DEC-024 pelo caminho REAL: CSV -> `materializar` -> snapshot.
+
+    A versão anterior deste teste montava os três estados à mão sobre um frame já materializado e
+    só chamava `_assert_schema_snapshot` — era tautológica. Sonda de mutação provou: apagar as duas
+    colunas de `_COLUNAS_TRABALHO` (o rating nunca é lido do CSV) deixava a suíte inteira verde.
+    """
+    tp, wh, un = _dirs_com_rating(tmp_path, ["4.81", "", ""], ["105", "0", ""])
+    snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+    snap = snap.sort_values("slug").reset_index(drop=True)
+
+    assert snap["nota_wellhub"].dtype == "Float64"
+    assert snap["qtd_avaliacoes_wellhub"].dtype == "Int64"
+    # tem nota
+    assert snap.loc[0, "nota_wellhub"] == 4.81
+    assert snap.loc[0, "qtd_avaliacoes_wellhub"] == 105
+    # sem avaliações: a contagem `0` é o que o distingue de "não lido"
+    assert pd.isna(snap.loc[1, "nota_wellhub"])
+    assert snap.loc[1, "qtd_avaliacoes_wellhub"] == 0
+    # não lido (parser quebrado)
+    assert pd.isna(snap.loc[2, "nota_wellhub"])
+    assert pd.isna(snap.loc[2, "qtd_avaliacoes_wellhub"])
+    assert auditoria["rating_ilegivel"] == 0
+
+
+def test_contagem_nao_inteira_nao_aborta_a_semana(tmp_path: Path) -> None:
+    """O crítico: uma célula ruim NÃO pode custar a semana inteira.
+
+    `pd.to_numeric("1.262")` devolve `1.262`, e um `.astype("Int64")` direto levanta
+    `TypeError: cannot safely cast non-equivalent`. Como `montar_snapshot` roda antes de gravar e o
+    `run_weekly_90.sh` sobrescreve os CSVs a cada coleta, a exceção não perderia uma linha — perderia
+    a semana, para sempre. `1.262` é como a UI pt-BR renderiza 1262, e contagem de 4 dígitos existe
+    no universo (a DEC-024 cita "4,73 com 1.262").
+    """
+    tp, wh, un = _dirs_com_rating(tmp_path, ["4.81", "4.70"], ["1.262", "88"])
+    snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+    snap = snap.sort_values("slug").reset_index(drop=True)
+
+    # A célula ilegível degrada para "não lido"; a linha sã ao lado é preservada.
+    assert pd.isna(snap.loc[0, "qtd_avaliacoes_wellhub"])
+    assert snap.loc[1, "qtd_avaliacoes_wellhub"] == 88
+    # E a degradação é VISÍVEL, não silenciosa.
+    assert auditoria["rating_ilegivel"] == 1
+
+
+def test_quarto_estado_vira_nao_lido_e_e_contado(tmp_path: Path) -> None:
+    """Nota ilegível com contagem legível não existe na DEC-024 — não pode virar "sem avaliações".
+
+    É o que uma troca de locale no `value` produziria (`4,81` não parseia, `105` parseia). Deixar
+    passar faria uma quebra de parser entrar no funil disfarçada de academia sem avaliação.
+    """
+    tp, wh, un = _dirs_com_rating(tmp_path, ["4,81"], ["105"])
+    snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+
+    assert pd.isna(snap.loc[0, "nota_wellhub"])
+    assert pd.isna(snap.loc[0, "qtd_avaliacoes_wellhub"]), "virou 'sem avaliacoes' em vez de 'nao lido'"
+    assert auditoria["rating_ilegivel"] == 1
+
+
+def test_assert_schema_rejeita_rating_fora_do_dominio(tmp_path: Path) -> None:
+    """Rede para frames montados à mão — que é como boa parte desta camada constrói insumo."""
+    tp, wh, un = _dirs_com_rating(tmp_path, ["4.81"], ["105"])
+    base, _ = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+
+    ruim = base.copy()
+    ruim.loc[0, "nota_wellhub"] = 42.0
+    with pytest.raises(ValueError, match=r"nota_wellhub fora de"):
+        m._assert_schema_snapshot(ruim)
+
+    # `0.0` é o retorno natural de um parser quebrado e o piso do domínio é `1.0`, não `0.0`.
+    ruim = base.copy()
+    ruim.loc[0, "nota_wellhub"] = 0.0
+    with pytest.raises(ValueError, match=r"nota_wellhub fora de"):
+        m._assert_schema_snapshot(ruim)
+
+    ruim = base.copy()
+    ruim.loc[0, "qtd_avaliacoes_wellhub"] = -7
+    with pytest.raises(ValueError, match="negativa"):
+        m._assert_schema_snapshot(ruim)
+
+    ruim = base.copy()
+    ruim.loc[0, "nota_wellhub"] = pd.NA  # nota ausente com qtd = 105 -> o quarto estado
+    with pytest.raises(ValueError, match="rating incoerente"):
+        m._assert_schema_snapshot(ruim)
+
+    # Nota presente com ZERO avaliações: não há avaliação que sustente a média.
+    ruim = base.copy()
+    ruim.loc[0, "qtd_avaliacoes_wellhub"] = 0
+    with pytest.raises(ValueError, match="rating incoerente"):
+        m._assert_schema_snapshot(ruim)
+
+    # Nota presente com contagem ausente: o terceiro par que a DEC-024 não prevê.
+    ruim = base.copy()
+    ruim.loc[0, "qtd_avaliacoes_wellhub"] = pd.NA
+    with pytest.raises(ValueError, match="rating incoerente"):
+        m._assert_schema_snapshot(ruim)
+
+
+@pytest.mark.parametrize("nota_ruim", ["9.9", "481", "-1.0", "0.0"])
+def test_nota_fora_do_dominio_nao_aborta_a_semana(tmp_path: Path, nota_ruim: str) -> None:
+    """A assimetria que o PR original deixou: `1.262` degradava, mas `9.9` LEVANTAVA.
+
+    As duas células chegam pelo mesmo caminho (CSV do coletor -> `montar_snapshot`, que roda ANTES
+    de gravar) e têm a mesma consequência: como o `run_weekly_90.sh` sobrescreve os CSVs crus a cada
+    coleta, a exceção não perde uma linha — perde a semana inteira, para sempre.
+
+    `481` é `4.81` sem o separador decimal; `0.0`, o default de um parser que não achou o campo.
+    """
+    tp, wh, un = _dirs_com_rating(tmp_path, [nota_ruim, "4.70"], ["105", "88"])
+    snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+    snap = snap.sort_values("slug").reset_index(drop=True)
+
+    assert pd.isna(snap.loc[0, "nota_wellhub"]), f"{nota_ruim} entrou na serie como nota legitima"
+    assert pd.isna(snap.loc[0, "qtd_avaliacoes_wellhub"]), "par sobrou fora dos tres estados"
+    # A linha sã ao lado sobrevive: a degradação é por célula, não por semana.
+    assert snap.loc[1, "nota_wellhub"] == 4.70
+    assert snap.loc[1, "qtd_avaliacoes_wellhub"] == 88
+    assert auditoria["rating_ilegivel"] == 1
+
+
+def test_contagem_negativa_nao_aborta_a_semana(tmp_path: Path) -> None:
+    """Mesma assimetria, na outra coluna: contagem negativa levantava em vez de degradar."""
+    tp, wh, un = _dirs_com_rating(tmp_path, ["4.81", "4.70"], ["-7", "88"])
+    snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+    snap = snap.sort_values("slug").reset_index(drop=True)
+
+    assert pd.isna(snap.loc[0, "qtd_avaliacoes_wellhub"])
+    assert snap.loc[1, "qtd_avaliacoes_wellhub"] == 88
+    assert auditoria["rating_ilegivel"] == 1
+
+
+def test_nota_zero_com_zero_avaliacoes_vira_SEM_AVALIACOES(tmp_path: Path) -> None:
+    """O caso que mais engana: `0.0`/`0` passava como "tem nota 0,0", que não é estado nenhum.
+
+    É o que um extrator quebrado produz sobre uma unidade que de fato não tem avaliação. O destino
+    correto é "sem avaliações" (`NA`/`0`) — e é a ORDEM das regras em `_coagir_rating` (domínio
+    antes do par) que o garante: a nota morre no domínio, e o par `NA`/`0` que sobra já é válido.
+    """
+    tp, wh, un = _dirs_com_rating(tmp_path, ["0.0"], ["0"])
+    snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+
+    assert pd.isna(snap.loc[0, "nota_wellhub"])
+    assert snap.loc[0, "qtd_avaliacoes_wellhub"] == 0, "virou 'nao lido' em vez de 'sem avaliacoes'"
+    assert auditoria["rating_ilegivel"] == 1
+
+
+def test_nota_com_zero_avaliacoes_vira_nao_lido(tmp_path: Path) -> None:
+    """Nota boa com contagem `0`: não existe média de zero avaliações — o par é impossível."""
+    tp, wh, un = _dirs_com_rating(tmp_path, ["4.81"], ["0"])
+    snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+
+    assert pd.isna(snap.loc[0, "nota_wellhub"])
+    assert pd.isna(snap.loc[0, "qtd_avaliacoes_wellhub"])
+    assert auditoria["rating_ilegivel"] == 1
+
+
+def test_bordas_do_dominio_da_nota_sao_aceitas(tmp_path: Path) -> None:
+    """`1.0` e `5.0` são notas REAIS (DEC-026: `min = 1,0`), não devem degradar."""
+    tp, wh, un = _dirs_com_rating(tmp_path, ["1.0", "5.0"], ["3", "9"])
+    snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+    snap = snap.sort_values("slug").reset_index(drop=True)
+
+    assert snap.loc[0, "nota_wellhub"] == 1.0
+    assert snap.loc[1, "nota_wellhub"] == 5.0
+    assert auditoria["rating_ilegivel"] == 0
+
+
+def test_uma_linha_degradada_conta_UMA_vez(tmp_path: Path) -> None:
+    """`9.9`/`105` aciona domínio E par. A auditoria conta LINHAS, senão inflaria o alarme."""
+    tp, wh, un = _dirs_com_rating(tmp_path, ["9.9"], ["105"])
+    _, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+
+    assert auditoria["rating_ilegivel"] == 1
+
+
+def test_montar_snapshot_vazio_respeita_os_dtypes_do_contrato(tmp_path: Path) -> None:
+    """O ramo vazio tipava as 12 colunas como `string`, contra o próprio contrato.
+
+    O gêmeo `_frame_snapshot_vazio` foi corrigido no mesmo diff e a docstring dele diz por quê
+    ("um frame vazio mal tipado quebraria o `concat` da série"); este ramo tinha ficado para trás.
+    """
+    vazio, auditoria = m.montar_snapshot(pd.DataFrame())
+    assert vazio["nota_wellhub"].dtype == "Float64"
+    assert vazio["qtd_avaliacoes_wellhub"].dtype == "Int64"
+    assert dict(vazio.dtypes.astype(str)) == dict(c.CONTRATO_COLUNAS_SNAPSHOT)
+    assert auditoria["rating_ilegivel"] == 0
+
+
+def test_nota_nao_entra_no_hash_e_o_s4_sobrevive() -> None:
+    """Guardrail inviolável da DEC-026: a nota oscila entre coletas e mataria a staleness.
+
+    Medido no smoke do BLK-MA-08: uma unidade saiu de `4,81`/`105` para `4,76`/`97` entre duas
+    coletas. Se isso entrasse no hash, `semanas_sem_mudanca` nunca sairia de 0 para nenhuma
+    academia avaliada — o sinal 4 morreria em silêncio para o universo inteiro.
+    """
+    assert "nota_wellhub" not in c.CAMPOS_HASH_POR_FONTE["wellhub"]
+    assert "qtd_avaliacoes_wellhub" not in c.CAMPOS_HASH_POR_FONTE["wellhub"]
+
+    base = _frame_tp(fonte="wellhub", slug="academia-x")
+    base["nota_wellhub"] = 4.81
+    base["qtd_avaliacoes_wellhub"] = 105
+    oscilou = base.copy()
+    oscilou["nota_wellhub"] = 4.76
+    oscilou["qtd_avaliacoes_wellhub"] = 97
+
+    assert _hash(base) == _hash(oscilou), "a nota mudou o hash: o S4 morreria na próxima coleta"
+
+
+def test_particao_toda_nula_nasce_com_o_tipo_do_contrato(
+    dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    """Trava a alegação do `schema=` na ESCRITA, que antes era código defensivo não exercitado.
+
+    Sem ele, uma semana em que ninguém tem nota gravaria `nota_wellhub` como tipo Arrow `null` (o
+    pandas não tem o que inferir), e a série passaria a misturar `null` com `double` entre semanas.
+    """
+    base = tmp_path / "serie"
+    snap = _snapshot_valido(dirs_sinteticos)  # a fixture não tem rating -> colunas 100% nulas
+    assert snap["nota_wellhub"].isna().all()
+
+    caminho = m.escrever_particao_semana(snap, base, semana="2026-31")
+    arquivo = next(caminho.glob("*.parquet"))
+    schema = pq.read_schema(arquivo)
+
+    assert schema.field("nota_wellhub").type == pa.float64()
+    assert schema.field("qtd_avaliacoes_wellhub").type == pa.int64()
+
+
+# --------------------------------------------------------------------------- #
+# BLK-MA-02-FU1 (menores m1, m2, m3, m6) — ressalvas do QA de 2026-07-29
+# --------------------------------------------------------------------------- #
+def test_m6_dry_run_nao_grava_e_nao_poda(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """m6: `--dry-run` roda o caminho inteiro sem tocar disco — nem grava, nem PODA.
+
+    Este é o único ponto do pacote que APAGA arquivo, e é o que vai ao cron da VPS (BLK-MA-06).
+    Antes desta correção, `python -m ...snapshots` chamava `executar()` sem argumento nenhum:
+    gravava na raiz de staging default e podava, sem `--base-dir` e sem modo seco.
+    """
+    tp, wh, un = tmp_path / "tp", tmp_path / "wh", tmp_path / "un"
+    for d in (tp, wh, un):
+        d.mkdir(parents=True, exist_ok=True)
+    base = tmp_path / "serie"
+    # Uma partição ANTIGA, muito além da retenção: seria podada numa execução de verdade.
+    antiga = base / "semana=2020-01"
+    antiga.mkdir(parents=True)
+    (antiga / "parte-0.parquet").write_bytes(b"nao e' parquet valido, e nao precisa ser")
+
+    podou: list[object] = []
+    monkeypatch.setattr(m, "podar_snapshots", lambda *a, **k: podou.append(a) or [])
+
+    auditoria = m.executar(tp, wh, un, base_dir=base, data_referencia=REF, dry_run=True)
+
+    assert auditoria["dry_run"] is True
+    assert auditoria["semanas_removidas"] == 0
+    assert not podou, "dry-run chamou a poda"
+    assert (antiga / "parte-0.parquet").exists(), "dry-run apagou particao existente"
+    assert not (base / f"semana={c.derivar_semana_iso(REF)}").exists(), "dry-run gravou particao"
+
+
+def test_m6_cli_analisa_os_argumentos_do_cron() -> None:
+    """m6: os flags que o cron precisa existem e chegam com o tipo certo."""
+    args = m._parse_args(
+        ["--base-dir", "/tmp/serie", "--data-referencia", "2026-07-29", "--dry-run"]
+    )
+    assert args.base_dir == Path("/tmp/serie")
+    assert args.data_referencia == date(2026, 7, 29)
+    assert args.dry_run is True
+    assert args.retencao_semanas == c.RETENCAO_SEMANAS
+
+    padrao = m._parse_args([])
+    assert padrao.dry_run is False, "dry-run nao pode ser o default: o cron precisa gravar"
+    assert padrao.data_referencia is None
+
+
+def test_m1_frame_vazio_preserva_a_particao_existente(
+    dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    """m1: zero linha é sintoma de COLETA FALHA, não de universo vazio — não pode apagar a série.
+
+    O docstring prometia idempotência "mesmo quando a semana encolhe"; para o encolhimento TOTAL
+    isso não valia, e o comportamento (seguro) não tinha teste que o travasse.
+    """
+    base = tmp_path / "serie"
+    cheio = _snapshot_valido(dirs_sinteticos)
+    caminho = m.escrever_particao_semana(cheio, base, semana="2026-31")
+    antes = sorted(p.name for p in caminho.glob("*.parquet"))
+    assert antes, "pre-condicao: a particao foi gravada"
+
+    vazio = cheio.iloc[0:0]
+    devolvido = m.escrever_particao_semana(vazio, base, semana="2026-31")
+
+    assert devolvido == caminho
+    assert sorted(p.name for p in caminho.glob("*.parquet")) == antes, (
+        "frame vazio apagou a particao — trocaria falha transitoria por perda permanente"
+    )
+
+
+def test_m1_frame_vazio_em_semana_inedita_nao_cria_diretorio(tmp_path: Path) -> None:
+    """m1: e o caminho devolvido pode NÃO existir — está no docstring, agora está travado."""
+    base = tmp_path / "serie"
+    vazio = m._frame_snapshot_vazio(com_semana=False)
+
+    devolvido = m.escrever_particao_semana(vazio, base, semana="2026-31")
+
+    assert devolvido == base / "semana=2026-31"
+    assert not devolvido.exists()
+
+
+def test_m3_campo_nunca_hasheado_levanta_em_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """m3: `CAMPOS_NUNCA_HASHEADOS` era só prosa — injetar `data_coleta` não levantava nada.
+
+    O efeito seria mudo e fatal: todo cadastro pareceria alterado a cada coleta,
+    `semanas_sem_mudanca` nunca cresceria e o S4 morreria.
+    """
+    proibido = sorted(c.CAMPOS_NUNCA_HASHEADOS)[0]
+    envenenado = dict(c.CAMPOS_HASH_POR_FONTE)
+    envenenado["wellhub"] = (*c.CAMPOS_HASH_POR_FONTE["wellhub"], proibido)
+    monkeypatch.setattr(c, "CAMPOS_HASH_POR_FONTE", envenenado)
+
+    with pytest.raises(ValueError, match="CAMPOS_NUNCA_HASHEADOS"):
+        c.hash_campos_raspados({"nome": "Academia X", proibido: "2026-08-11"}, "wellhub")
+
+
+def test_m3_contrato_vigente_passa_pela_guarda_nova() -> None:
+    """m3: a guarda não pode quebrar as fontes reais — nenhuma hasheia campo proibido hoje."""
+    for fonte in sorted(c.CAMPOS_HASH_POR_FONTE):
+        assert c.hash_campos_raspados({"nome": "Academia X"}, fonte)
+
+
+def test_m2_montar_snapshot_nao_recebe_mais_data_referencia() -> None:
+    """m2: o parâmetro era morto e sugeria que o `snapshot_date` saía dele. Não saía."""
+    import inspect
+
+    assert list(inspect.signature(m.montar_snapshot).parameters) == ["df"]
+
+
+# --------------------------------------------------------------------------- #
+# BLK-MA-06 — recorte de fontes por CADÊNCIA de coleta
+# --------------------------------------------------------------------------- #
+def test_fontes_restringe_o_feed_lido(dirs_sinteticos: tuple[Path, Path, Path]) -> None:
+    """O cron semanal fotografa só `unidades` — os agregadores não são recoletados toda semana.
+
+    Este é o núcleo do BLK-MA-06: fotografar um feed estagnado é PIOR que não fotografar, porque o
+    `hash_campos_raspados` sai idêntico toda semana e o S4 marcaria o universo inteiro daquela
+    fonte como "parado" — o próprio sinal de vulnerabilidade.
+    """
+    tp, wh, un = dirs_sinteticos
+
+    todas = m.ler_feeds(tp, wh, un)
+    assert set(todas["fonte"]) == {"totalpass", "wellhub", "unidades"}, "pre-condicao da fixture"
+
+    so_unidades = m.ler_feeds(tp, wh, un, fontes=["unidades"])
+    assert set(so_unidades["fonte"]) == {"unidades"}
+    assert len(so_unidades) < len(todas)
+
+    so_agregadores = m.ler_feeds(tp, wh, un, fontes=["totalpass", "wellhub"])
+    assert set(so_agregadores["fonte"]) == {"totalpass", "wellhub"}
+    # As duas metades reconstroem o todo: o recorte não perde nem duplica linha.
+    assert len(so_unidades) + len(so_agregadores) == len(todas)
+
+
+def test_fontes_invalida_levanta(dirs_sinteticos: tuple[Path, Path, Path]) -> None:
+    """Fonte fora do contrato não pode virar recorte silencioso de zero linha."""
+    tp, wh, un = dirs_sinteticos
+    with pytest.raises(ValueError, match="fonte fora do contrato"):
+        m.ler_feeds(tp, wh, un, fontes=["unidade"])  # singular: erro de digitação plausível
+    with pytest.raises(ValueError, match="nao ha o que ler"):
+        m.ler_feeds(tp, wh, un, fontes=[])
+
+
+def test_materializar_propaga_fontes_e_audita_o_recorte(
+    dirs_sinteticos: tuple[Path, Path, Path],
+) -> None:
+    """O recorte tem de ficar VISÍVEL na auditoria.
+
+    Quem ler a série meses depois precisa saber que as semanas antigas só tinham `unidades`, sob
+    pena de interpretar a ausência de agregador como churn.
+    """
+    tp, wh, un = dirs_sinteticos
+
+    snap, auditoria = m.materializar(
+        tp, wh, un, data_referencia=REF, escrever=False, fontes=["unidades"]
+    )
+
+    assert set(snap["fonte"]) == {"unidades"}
+    assert auditoria["fontes_lidas"] == ["unidades"]
+
+    _, auditoria_todas = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+    assert auditoria_todas["fontes_lidas"] == ["totalpass", "unidades", "wellhub"]
+
+
+def test_cli_aceita_fontes_do_cron_semanal() -> None:
+    """`--fontes unidades` é o que a linha do cron vai passar."""
+    args = m._parse_args(["--fontes", "unidades"])
+    assert args.fontes == ["unidades"]
+
+    assert m._parse_args([]).fontes is None, "default = todos os feeds"
+
+    with pytest.raises(SystemExit):
+        m._parse_args(["--fontes", "gympass"])  # nome antigo do WellHub: erro plausível

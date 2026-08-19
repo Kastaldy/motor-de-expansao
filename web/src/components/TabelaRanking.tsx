@@ -119,28 +119,84 @@ function Linha({
       >
         {rotulo}
       </span>
-      {celulas.map((c, i) => (
-        <span
-          key={i}
-          className="num"
-          style={{
-            font: `${c.melhor ? 700 : 500} 11.5px/1.6 var(--f-num)`,
-            color: c.melhor
-              ? 'var(--tx-max)'
-              : c.pior
-                ? 'var(--neg)'
-                : decisiva
-                  ? 'var(--tx-soft)'
-                  : 'var(--tx-off)',
-            textAlign: 'right',
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {formatar(c.valor, unidade)}
-        </span>
-      ))}
+      {celulas.map((c, i) => {
+        const fr = fracaoNaLinha(c.valor, celulas)
+        return (
+          <span key={i} style={{ display: 'grid', gap: 4, justifyItems: 'end', minWidth: 0 }}>
+            <span
+              className="num"
+              style={{
+                font: `${c.melhor ? 700 : 500} 11px/1.3 var(--f-num)`,
+                color: c.melhor
+                  ? 'var(--tx-max)'
+                  : c.pior
+                    ? 'var(--neg)'
+                    : decisiva
+                      ? 'var(--tx-soft)'
+                      : 'var(--tx-off)',
+                textAlign: 'right',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {formatar(c.valor, unidade)}
+            </span>
+            {/* MESMA linguagem da comparação de pontos: barra relativa ao maior da linha,
+                turquesa no melhor e vermelho no pior. A COR vem do veredito que o
+                ranqueador já calculou, não de um limiar inventado aqui — por isso ela
+                continua certa nas dimensões em que menos é melhor, onde a barra mais
+                comprida é a perdedora. */}
+            {fr != null && (
+              <span
+                aria-hidden
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  height: 7,
+                  borderRadius: 4,
+                  background: 'var(--line-soft)',
+                  overflow: 'hidden',
+                }}
+              >
+                <span
+                  style={{
+                    display: 'block',
+                    width: `${Math.round(fr * 100)}%`,
+                    height: '100%',
+                    borderRadius: 4,
+                    background: c.melhor
+                      ? 'var(--ac)'
+                      : c.pior
+                        ? 'var(--neg)'
+                        : decisiva
+                          ? 'var(--tx-rank)'
+                          : 'var(--line-mid)',
+                  }}
+                />
+              </span>
+            )}
+          </span>
+        )
+      })}
     </>
   )
+}
+
+/**
+ * Quanto esta célula ocupa em relação à MAIOR da linha.
+ *
+ * `null` quando o valor falta ou quando o maior da linha é zero: barras todas vazias não
+ * dizem nada, e uma barra cheia sobre zero afirmaria vantagem onde não há grandeza.
+ * Negativos entram pelo módulo — crescimento pode ser negativo, e a barra sumiria
+ * justamente na linha que importa.
+ */
+function fracaoNaLinha(
+  valor: number | null,
+  celulas: { valor: number | null }[],
+): number | null {
+  if (valor == null) return null
+  const teto = Math.max(...celulas.map((c) => Math.abs(c.valor ?? 0)))
+  if (!(teto > 0)) return null
+  return Math.abs(valor) / teto
 }
 
 function formatar(v: number | null, unidade: string): string {

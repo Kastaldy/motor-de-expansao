@@ -15,10 +15,19 @@ export default function TabelaComparacao<T>({
   comparacao,
   rotuloA,
   rotuloB,
+  corA,
+  corB,
 }: {
   comparacao: Comparacao<T>
   rotuloA: string
   rotuloB: string
+  /**
+   * Cor de IDENTIDADE de cada lado — a mesma da aba do ponto, para o operador ligar
+   * coluna e aba sem ler o rótulo. Não é veredito: quem ganha continua sendo dito pelo
+   * peso do número e pelo destaque do cabeçalho.
+   */
+  corA?: string
+  corB?: string
 }) {
   const { deltas, frase, vencedor } = comparacao
 
@@ -35,8 +44,8 @@ export default function TabelaComparacao<T>({
         }}
       >
         <span />
-        <Cabecalho texto={rotuloA} destaque={vencedor === 'a'} />
-        <Cabecalho texto={rotuloB} destaque={vencedor === 'b'} />
+        <Cabecalho texto={rotuloA} destaque={vencedor === 'a'} cor={corA} />
+        <Cabecalho texto={rotuloB} destaque={vencedor === 'b'} cor={corB} />
 
         {deltas.map((d) => {
           const indisponivel = d.a == null || d.b == null
@@ -51,6 +60,11 @@ export default function TabelaComparacao<T>({
               // Diferenca abaixo do limiar aparece, mas apagada: o numero continua
               // visivel para auditoria, sem virar argumento.
               apagada={!d.relevante}
+              fracaoA={fracao(d.a, d.b)}
+              fracaoB={fracao(d.b, d.a)}
+              corA={corA}
+              corB={corB}
+              maiorEhMelhor={d.dimensao.maiorEhMelhor}
             />
           )
         })}
@@ -71,13 +85,15 @@ export default function TabelaComparacao<T>({
   )
 }
 
-function Cabecalho({ texto, destaque }: { texto: string; destaque: boolean }) {
+function Cabecalho({ texto, destaque, cor }: { texto: string; destaque: boolean; cor?: string }) {
   return (
     <span
       title={texto}
       style={{
         font: `${destaque ? 700 : 500} 10.5px/1.2 var(--f-ui)`,
-        color: destaque ? 'var(--tx-max)' : 'var(--tx-muted)',
+        color: cor ?? (destaque ? 'var(--tx-max)' : 'var(--tx-muted)'),
+        borderBottom: cor ? `2px solid ${cor}` : undefined,
+        paddingBottom: cor ? 3 : undefined,
         textAlign: 'right',
         maxWidth: 96,
         overflow: 'hidden',
@@ -91,7 +107,7 @@ function Cabecalho({ texto, destaque }: { texto: string; destaque: boolean }) {
 }
 
 function Linha({
-  rotulo, a, b, ganhaA, ganhaB, apagada,
+  rotulo, a, b, ganhaA, ganhaB, apagada, fracaoA, fracaoB, maiorEhMelhor, corA, corB,
 }: {
   rotulo: string
   a: string
@@ -99,8 +115,14 @@ function Linha({
   ganhaA: boolean
   ganhaB: boolean
   apagada: boolean
+  /** Quanto o valor de cada lado ocupa em relação ao maior dos dois (0 a 1). */
+  fracaoA: number | null
+  fracaoB: number | null
+  maiorEhMelhor: boolean
+  corA?: string
+  corB?: string
 }) {
-  const cor = (ganha: boolean) =>
+  const corDoTexto = (ganha: boolean) =>
     ganha ? 'var(--tx-max)' : apagada ? 'var(--tx-off)' : 'var(--tx-soft)'
   return (
     <>
@@ -111,26 +133,83 @@ function Linha({
         }}
       >
         {rotulo}
+        {/* A DIREÇÃO precisa estar escrita. "Concorrentes: 4 contra 6" só se lê como bom
+            ou ruim sabendo que aqui menos é melhor — e a barra maior, nessa linha, é a
+            pior. Sem esta legenda o desenho mentiria para quem passa o olho. */}
+        {!maiorEhMelhor && (
+          <span style={{ font: '400 9.5px/1.6 var(--f-ui)', color: 'var(--tx-off)' }}>
+            {' '}
+            · menos é melhor
+          </span>
+        )}
       </span>
       {[
-        { v: a, ganha: ganhaA },
-        { v: b, ganha: ganhaB },
-      ].map(({ v, ganha }, i) => (
-        <span
-          key={i}
-          className="num"
-          style={{
-            font: `${ganha ? 700 : 500} 11.5px/1.6 var(--f-num)`,
-            color: cor(ganha),
-            textAlign: 'right',
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {v}
+        { v: a, ganha: ganhaA, fr: fracaoA, cor: corA },
+        { v: b, ganha: ganhaB, fr: fracaoB, cor: corB },
+      ].map(({ v, ganha, fr, cor }, i) => (
+        <span key={i} style={{ display: 'grid', gap: 4, justifyItems: 'end', minWidth: 72 }}>
+          <span
+            className="num"
+            style={{
+              /* Menor que a barra em peso visual: aqui também o desenho é que responde
+                 "qual é maior", e o número fica como evidência auditável. */
+              font: `${ganha ? 700 : 500} 11px/1.3 var(--f-num)`,
+              color: corDoTexto(ganha),
+              textAlign: 'right',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {v}
+          </span>
+          {/* A barra é RELATIVA ao outro lado, não a uma régua absoluta: comparar dois
+              pontos responde "qual é maior", e o produto não tem corte publicado de
+              "residual bom". Inventar um aqui seria afirmar régua que não existe. */}
+          {fr != null && (
+            <span
+              aria-hidden
+              style={{
+                display: 'block',
+                width: '100%',
+                height: 8,
+                borderRadius: 4,
+                background: 'var(--line-soft)',
+                overflow: 'hidden',
+              }}
+            >
+              <span
+                style={{
+                  display: 'block',
+                  width: `${Math.round(fr * 100)}%`,
+                  height: '100%',
+                  borderRadius: 4,
+                  /* A barra veste a cor do PONTO; quem perde entra esmaecido pela
+                     opacidade, não por outra cor — trocar a cor apagaria a identidade
+                     justamente na linha em que se quer comparar os dois. */
+                  background: cor ?? 'var(--ac)',
+                  opacity: apagada ? 0.35 : ganha ? 1 : 0.55,
+                }}
+              />
+            </span>
+          )}
         </span>
       ))}
     </>
   )
+}
+
+/**
+ * Quanto ESTE valor ocupa em relacao ao maior dos dois lados.
+ *
+ * `null` quando nao ha' o que comparar (um dos lados ausente) ou quando o maior e' zero —
+ * duas barras vazias nao dizem nada, e uma barra cheia sobre zero seria pior: afirmaria
+ * vantagem onde nao ha' grandeza. Negativos (crescimento pode ser negativo) entram pelo
+ * modulo, senao a barra sumiria justamente na linha que importa.
+ */
+function fracao(valor: number | null, outro: number | null): number | null {
+  if (valor == null || outro == null) return null
+  const teto = Math.max(Math.abs(valor), Math.abs(outro))
+  if (teto === 0) return null
+  return Math.abs(valor) / teto
 }
 
 /** `null` vira o travessão de `num`, nunca "R$ —" nem "0". */

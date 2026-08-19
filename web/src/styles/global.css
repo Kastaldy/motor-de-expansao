@@ -79,8 +79,38 @@ select {
 }
 
 select option {
-  background: #101a26;
+  background: var(--surf-select);
   color: var(--tx-strong);
+}
+
+/* --- Tema claro: o que NAO passa por token --------------------------------
+   Tres coisas escapam da cascata de `var()` e precisam de regra propria:
+   o chrome nativo do navegador (`color-scheme`, que pinta o popup do select e o
+   calendario do <input type="date">), a barra de rolagem, e o controle de
+   atribuicao do MapLibre, que vem com estilo proprio e foi tematizado no escuro
+   com `!important`. Tudo descendente de [data-tema='claro'], entao sai de cena
+   junto com a aba. */
+[data-tema='claro'] select,
+[data-tema='claro'] input {
+  color-scheme: light;
+}
+
+[data-tema='claro'] * {
+  scrollbar-color: rgba(13, 27, 42, 0.24) transparent;
+}
+
+[data-tema='claro'] *::-webkit-scrollbar-thumb {
+  background: rgba(13, 27, 42, 0.24);
+}
+
+[data-tema='claro'] .maplibregl-ctrl-attrib {
+  background: rgba(255, 255, 255, 0.78) !important;
+}
+
+/* O botao de atribuicao e' um icone escuro; no escuro ele e' invertido para
+   aparecer. No claro a inversao tem de sair, senao ele some no branco. */
+[data-tema='claro'] .maplibregl-ctrl-attrib-button {
+  filter: none;
 }
 
 /* Numeros SEMPRE em mono com figuras tabulares — leitura de coluna estavel. */

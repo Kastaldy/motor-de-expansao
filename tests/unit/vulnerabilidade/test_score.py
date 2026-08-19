@@ -127,7 +127,7 @@ def _linha_churn(
     imatura: bool = False,
     interpretavel: bool = False,
 ) -> dict[str, object]:
-    """Uma linha no contrato `churn_staleness_v1`, com os campos do score parametrizáveis."""
+    """Uma linha no contrato de churn vigente, com os campos do score parametrizáveis."""
     return {
         "chave_snapshot": chave,
         "fonte": fonte,
@@ -345,6 +345,86 @@ def test_regime_s1_s3_s4(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
     assert float(linha["score_vulnerabilidade_ordenavel"]) == pytest.approx(esperado)
 
 
+def test_regime_so_s3() -> None:
+    """Regime de UM sinal em que a coluna ordenável NASCE PREENCHIDA — e isso é escolha, não bug.
+
+    O `flag_score_provisorio` do §8.4 é a conjunção "S3 **e** S4 indisponíveis": com o S3 maduro
+    ela desliga, mesmo que ele seja o ÚNICO sinal da linha. O peso renormaliza para `1,00`, e um
+    `sumiu_recente` (`v3 = 1.0`) sai com `score = 100,0` e `score_vulnerabilidade_ordenavel = 100,0`
+    — no topo de qualquer ordenação, ao lado de linhas `{s1,s3,s4}` que estão em OUTRA régua.
+
+    É fiel ao §8.4 ratificado (S3 maduro é sinal maduro), mas significa que o guardrail criado pelo
+    G-D1 **não cobre** este regime. Inalcançável pelo caminho `base_dir` — `extrair_presenca_agregador`
+    e `extrair_churn_staleness` saem da MESMA série, então todo hex do churn tem par no sinal 1 —,
+    porém alcançável por frames injetados, que é justamente o modo que o BLK-MA-05 pode usar.
+
+    Daí a obrigação registrada no §8.5 do contrato: **segmentar por `n_sinais_disponiveis` antes de
+    ordenar.** Este teste existe para que o comportamento seja descoberto aqui, e não pelo MA-05.
+    """
+    # `HEX_B` não tem par no frame de presença (só `HEX_A`) -> `v1` ausente, S1 fora.
+    # Série madura (9 >= MIN_SEMANAS) -> S3 dentro. Staleness não interpretável -> S4 fora.
+    churn = _churn(
+        [
+            _linha_churn(
+                "k",
+                hex_id=HEX_B,
+                status="sumiu_recente",
+                n_semanas_serie=9,
+                imatura=False,
+                interpretavel=False,
+            )
+        ]
+    )
+    linha = _linha_de(
+        calcular_score_vulnerabilidade(churn=churn, presenca=_presenca([_linha_presenca()])), "k"
+    )
+
+    assert _tokens(linha) == ["s3"]
+    assert int(linha["n_sinais_disponiveis"]) == 1
+    assert c.renormalizar_pesos(["s3"]) == {"s3": 1.0}, "peso efetivo do sinal único"
+    assert float(linha["v3"]) == c.V3_POR_STATUS_CHURN["sumiu_recente"]
+    assert float(linha["score_vulnerabilidade"]) == pytest.approx(100.0)
+
+    # O ponto do teste: a flag desliga e a ordenável NÃO protege este regime de 1 sinal.
+    assert bool(linha["flag_score_provisorio"]) is False
+    assert not pd.isna(linha["score_vulnerabilidade_ordenavel"])
+    assert float(linha["score_vulnerabilidade_ordenavel"]) == pytest.approx(100.0)
+
+
+def test_ordenavel_nao_separa_regimes_de_tamanho_diferente() -> None:
+    """A consequência do teste acima, dita em números: as duas réguas se misturam num `sort`.
+
+    Uma linha `{s3}` com `sumiu_recente` (100,0) fica ACIMA de uma linha `{s1,s3,s4}` completa,
+    com os três sinais medidos. `score_vulnerabilidade_ordenavel` não distingue as duas — quem
+    ordena precisa de `n_sinais_disponiveis`, que existe na saída exatamente para isso (§8.5).
+    """
+    churn = _churn(
+        [
+            _linha_churn(
+                "k_so_s3", hex_id=HEX_B, status="sumiu_recente", n_semanas_serie=9
+            ),
+            _linha_churn(
+                "k_completa",
+                status="sumiu_recente",
+                semanas_sem_mudanca=6,
+                interpretavel=True,
+                n_semanas_serie=13,
+            ),
+        ]
+    )
+    out = calcular_score_vulnerabilidade(churn=churn, presenca=_presenca([_linha_presenca()]))
+
+    assert _tokens(_linha_de(out, "k_so_s3")) == ["s3"]
+    assert _tokens(_linha_de(out, "k_completa")) == ["s1", "s3", "s4"]
+
+    ordenado = out.sort_values("score_vulnerabilidade_ordenavel", ascending=False)
+    assert str(ordenado.iloc[0]["chave_snapshot"]) == "k_so_s3", "1 sinal lidera 3 sinais"
+    assert not bool(ordenado["score_vulnerabilidade_ordenavel"].isna().any()), (
+        "nenhuma das duas é filtrada pela ordenável: a segmentação tem de ser explícita"
+    )
+    assert set(int(v) for v in ordenado["n_sinais_disponiveis"]) == {1, 3}
+
+
 def test_s4_disponivel_implica_s3_disponivel() -> None:
     """Consequência de `STALE_SEMANAS > MIN_SEMANAS` — travada por teste, nunca por `assert`."""
     assert c.STALE_SEMANAS > c.MIN_SEMANAS
@@ -411,7 +491,13 @@ def test_nenhum_percentil_toca_v1_nem_v3() -> None:
 
 
 def test_modulo_nao_usa_funcao_de_percentil() -> None:
-    """Nenhuma normalização relativa ao universo no módulo — o G-D3 vira trava de fonte."""
+    """Nenhuma normalização relativa ao universo no módulo — o G-D3 vira trava de fonte.
+
+    **HEURÍSTICA por substring da fonte, defesa SECUNDÁRIA** `[precisão BLK-MA-04-FU1]`: não pega
+    `scipy.stats.rankdata`, `np.percentile` sob alias, nem qualquer forma que não contenha o texto
+    literal. A defesa PRIMÁRIA é `test_v4_nao_depende_do_universo`, que mede o comportamento em
+    vez de ler o código. Esta aqui é barata e pega o caso comum; não é prova.
+    """
     fonte = inspect.getsource(m)
     for proibido in ("rank" + "(", "quantile" + "(", "percen" + "tile"):
         assert proibido not in fonte, proibido
@@ -563,7 +649,12 @@ def test_zero_sinais_disponiveis_produz_score_nulo_nunca_zero() -> None:
     assert str(linha["sinais_disponiveis"]) == ""
     assert pd.isna(linha["score_vulnerabilidade"])
     assert pd.isna(linha["score_vulnerabilidade_ordenavel"])
-    assert float(linha["score_vulnerabilidade"] or 1.0) != 0.0
+    # A versão anterior desta linha era `float(score or 1.0) != 0.0` — asserção MORTA: `NaN` e
+    # `0.0` passavam os dois (`0.0 or 1.0` é `1.0`, e `NaN or 1.0` é `NaN`, que != 0.0). A forma
+    # abaixo é sobre o frame inteiro e falha de verdade se alguém imputar `0` para ausência.
+    assert not bool(
+        (out["n_sinais_disponiveis"].eq(0) & out["score_vulnerabilidade"].eq(0.0)).any()
+    )
 
 
 def test_v1_ausente_nao_e_imputado() -> None:
@@ -575,6 +666,66 @@ def test_v1_ausente_nao_e_imputado() -> None:
     assert pd.isna(linha["n_agregadores_no_hex"])
     assert pd.isna(linha["fontes_presentes_no_hex"])
     assert "s1" not in _tokens(linha)
+
+
+def test_presenca_bem_formada_porem_vazia_com_churn_cheio() -> None:
+    """Sinal 1 sem NENHUMA linha não zera o score: renormaliza o S1 para fora, como o `v1` ausente.
+
+    É o caso do lote em que o feed de agregador falhou por inteiro (ou do primeiro lote, antes de
+    haver hex algum). O frame de presença é VÁLIDO — só vazio —, e o `left join` deixa todas as
+    linhas sem par. A direção é a segura: o universo continua pontuando pelo que sobrou, em vez de
+    sumir ou receber `v1` imputado.
+    """
+    churn = _churn([_linha_churn("k", status="sumiu_recente", n_semanas_serie=9)])
+    presenca_vazia = pd.DataFrame(
+        {
+            col: pd.Series(dtype=dtype)
+            for col, dtype in c.CONTRATO_COLUNAS_PRESENCA_AGREGADOR.items()
+        }
+    )
+    assert presenca_vazia.empty
+
+    out = calcular_score_vulnerabilidade(churn=churn, presenca=presenca_vazia)
+    assert len(out) == 1, "a linha do churn NÃO pode ser descartada pelo join"
+    assert list(out.columns) == list(c.CONTRATO_COLUNAS_SCORE), "o contrato sai íntegro"
+
+    linha = _linha_de(out, "k")
+    assert pd.isna(linha["v1"])
+    assert pd.isna(linha["n_agregadores_no_hex"])
+    assert "s1" not in _tokens(linha)
+    assert not pd.isna(linha["score_vulnerabilidade"]), "o que sobrou ainda pontua"
+
+
+def test_churn_vazio_retorna_antes_de_validar_a_presenca() -> None:
+    """A ORDEM de validação dos insumos, travada: `churn` vazio -> retorno ANTES do schema da presença.
+
+    Medido em 2026-08-12: com `churn.empty`, uma presença malformada (coluna fora do contrato)
+    passa SEM ser validada, porque o retorno antecipado vem primeiro. A direção é segura — a saída
+    é vazia e ela própria validada —, mas era comportamento não declarado e sem teste; a
+    contraprova abaixo mostra que o mesmo frame ruim levanta assim que o churn tem linha.
+
+    Se um bloco futuro mover a validação da presença para antes do retorno antecipado, este teste
+    quebra e a mudança de ordem vira decisão explícita, não efeito colateral.
+    """
+    churn_vazio = pd.DataFrame(
+        {col: pd.Series(dtype=dtype) for col, dtype in c.CONTRATO_COLUNAS_CHURN.items()}
+    )
+    presenca_malformada = pd.DataFrame(
+        {
+            col: pd.Series(dtype=dtype)
+            for col, dtype in c.CONTRATO_COLUNAS_PRESENCA_AGREGADOR.items()
+        }
+    ).assign(coluna_intrusa=pd.Series(dtype="string"))
+
+    out = calcular_score_vulnerabilidade(churn=churn_vazio, presenca=presenca_malformada)
+    assert out.empty
+    assert list(out.columns) == list(c.CONTRATO_COLUNAS_SCORE), "a SAÍDA vazia é validada"
+
+    # Contraprova: a mesma presença malformada É rejeitada quando o churn não é vazio.
+    with pytest.raises(ValueError, match="fora do contrato"):
+        calcular_score_vulnerabilidade(
+            churn=_churn([_linha_churn("k")]), presenca=presenca_malformada
+        )
 
 
 def test_v1_ausente_renormaliza_s1_para_fora_e_score_ainda_sai() -> None:
@@ -721,11 +872,17 @@ def test_docstring_registra_por_que_as_colunas_ressalvadas_ficam_fora() -> None:
 # --------------------------------------------------------------------------- #
 # CA-11 — contrato de 20 colunas e `_assert_schema_score`
 # --------------------------------------------------------------------------- #
-def test_schema_20_colunas_em_ordem_e_dtypes(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
+def test_schema_22_colunas_em_ordem_e_dtypes(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
     churn, presenca = _insumos(serie_madura_s3_s4)
     out = calcular_score_vulnerabilidade(churn=churn, presenca=presenca)
     assert list(out.columns) == list(c.CONTRATO_COLUNAS_SCORE.keys())
-    assert len(list(out.columns)) == 20
+    # 20 -> 22 no BLK-MA-09 / DEC-026. Os dois novos sao FATOS, nao componentes: nao ha `v2`,
+    # e `n_sinais_disponiveis` continua limitado a 3.
+    assert len(list(out.columns)) == 22
+    assert "v2" not in out.columns
+    assert out["nota_wellhub"].dtype == "Float64"
+    assert out["qtd_avaliacoes_wellhub"].dtype == "Int64"
+    assert int(out["n_sinais_disponiveis"].max()) <= 3
     assert (out["versao_contrato"] == c.VERSAO_CONTRATO_SCORE).all()
     # `Int64` NULÁVEL, não `int64`: a linha sem par no sinal 1 precisa carregar nulo.
     assert out["n_agregadores_no_hex"].dtype == "Int64"
@@ -935,6 +1092,12 @@ def test_status_churn_e_fato_propagado_sem_peso() -> None:
 # CA-12 — pureza, zero I/O e independência de ordem
 # --------------------------------------------------------------------------- #
 def test_modulo_nao_escreve_em_disco() -> None:
+    """Mesma classe do teste de percentil: **heurística por substring**, defesa secundária.
+
+    Não pegaria `Path.write_text` nem um handle obtido por outro nome `[precisão BLK-MA-04-FU1]`.
+    Prova que o módulo não ESCREVE pelas formas usuais — não prova que ele é livre de I/O: pelo
+    modo `base_dir=` ele LÊ disco transitivamente, via extratores (ver docstring de `score.py`).
+    """
     fonte = inspect.getsource(m)
     for proibido in ("to_" + "parquet", "to_" + "csv", "op" + "en(", "mk" + "dir", "escrever_"):
         assert proibido not in fonte, proibido
@@ -1003,3 +1166,64 @@ def test_saida_sem_coluna_de_pii(serie_madura_s3_s4: list[pd.DataFrame]) -> None
     out = calcular_score_vulnerabilidade(churn=churn, presenca=presenca)
     assert not (set(out.columns) & c.COLUNAS_PII_PROIBIDAS)
     assert set(out.columns) == set(c.CONTRATO_COLUNAS_SCORE.keys())
+
+
+# --------------------------------------------------------------------------- #
+# BLK-MA-09 / DEC-026 — o rating é FATO, não sinal
+# --------------------------------------------------------------------------- #
+def test_rating_chega_ao_score_com_valor_e_sem_virar_sinal(
+    serie_madura_s3_s4: list[pd.DataFrame],
+) -> None:
+    """Prova de ponta a ponta: snapshot -> churn -> score, com o valor intacto e SEM peso.
+
+    O ponto do bloco inteiro. Se o rating aparecesse em `sinais_disponiveis`, ele entraria em
+    `Σ(wi · vi)` e o score mudaria — que é exatamente o que a DEC-026 recusou, porque
+    `score_com_s2 = 0,75 · score_sem_s2 + 25 · v2` penalizaria 99,97% das linhas com nota.
+    """
+    serie = [s.copy() for s in serie_madura_s3_s4]
+    for semana in serie:
+        wh = semana["fonte"] == "wellhub"
+        semana.loc[wh, "nota_wellhub"] = 4.25
+        semana.loc[wh, "qtd_avaliacoes_wellhub"] = 88
+
+    churn, presenca = _insumos(serie)
+    out = calcular_score_vulnerabilidade(churn=churn, presenca=presenca)
+    wh = out[out["fonte"] == "wellhub"]
+    assert not wh.empty, "fixture sem linha de wellhub — o teste não provaria nada"
+
+    # 1. O valor CHEGOU (e não apenas a coluna).
+    assert wh["nota_wellhub"].notna().all()
+    assert (wh["nota_wellhub"] == 4.25).all()
+    # `notna()` primeiro, pelo mesmo motivo da linha acima: `.all()` de serie toda-NA da True.
+    assert wh["qtd_avaliacoes_wellhub"].notna().all()
+    assert (wh["qtd_avaliacoes_wellhub"] == 88).all()
+
+    # 2. E NÃO virou sinal.
+    assert all("s2" not in str(s).split(",") for s in out["sinais_disponiveis"])
+    assert int(out["n_sinais_disponiveis"].max()) <= 3
+    assert c.SINAIS_INATIVOS == ("s2",)
+
+
+def test_rating_nao_altera_o_score(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
+    """O score tem de ser BIT A BIT o mesmo com e sem nota — é o que "sem peso" significa.
+
+    Sem esta trava, uma futura entrada acidental do rating em `Σ(wi · vi)` passaria despercebida:
+    as colunas continuariam lá, os schemas continuariam válidos, e só o ranking mudaria.
+    """
+    sem_nota = [s.copy() for s in serie_madura_s3_s4]
+    com_nota = [s.copy() for s in serie_madura_s3_s4]
+    for semana in com_nota:
+        wh = semana["fonte"] == "wellhub"
+        semana.loc[wh, "nota_wellhub"] = 1.0  # pior nota possível: máximo estrago se tivesse peso
+        semana.loc[wh, "qtd_avaliacoes_wellhub"] = 4200
+
+    churn_a, presenca_a = _insumos(sem_nota)
+    churn_b, presenca_b = _insumos(com_nota)
+    a = calcular_score_vulnerabilidade(churn=churn_a, presenca=presenca_a)
+    b = calcular_score_vulnerabilidade(churn=churn_b, presenca=presenca_b)
+    pd.testing.assert_series_equal(
+        a["score_vulnerabilidade"], b["score_vulnerabilidade"], check_names=False
+    )
+    pd.testing.assert_series_equal(
+        a["sinais_disponiveis"], b["sinais_disponiveis"], check_names=False
+    )
