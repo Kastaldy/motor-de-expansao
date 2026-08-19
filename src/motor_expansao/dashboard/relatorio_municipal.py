@@ -72,10 +72,15 @@ _PIN_LOGO_PX = 26
 _REDE_LOGO_RASTER_PX = 64
 
 # Carimbo de versao do contrato deste relatorio (D8 / espirito DEC-005 item 6).
-VERSAO_CONTRATO_MUNICIPAL = "BLK-RELMUN-01 | contrato v1 | score M1 INALTERADO"
+# Carimbo do rodape (DEC-005 decisao 6: versao no PDF para REPRODUTIBILIDADE). Sobe para v2
+# porque a estrutura mudou de verdade: 9 -> 12 paginas, unidade de leitura escolhivel
+# (bairro/hexagono) e renda da tabela virou domiciliar. Manter "v1" faria dois PDFs com o mesmo
+# carimbo e conteudos incomparaveis -- que e' exatamente o que o carimbo existe para evitar.
+VERSAO_CONTRATO_MUNICIPAL = "BLK-RELMUN | contrato v2 | score M1 INALTERADO"
 METODO_RELATORIO_MUNICIPAL = "agregacao_municipal_h3_res7"
 
-# Cabecalhos canonicos das 9 paginas. Renderizam em latin-1 (core font Helvetica do fpdf2),
+# Cabecalhos canonicos das 12 paginas do modo BAIRRO (10 no modo hexagono, 11 sem bairro
+# na base). Renderizam em latin-1 (core font Helvetica do fpdf2),
 # que cobre integralmente os acentos portugueses -- o que e PROIBIDO e tipografia fora de
 # latin-1 (travessao/bullet/seta/reticencias/aspas curvas/(c)), que vira "?" silenciosamente
 # via _ascii(..., errors="replace"). Cada string aparece nos bytes crus do PDF (compressao OFF).

@@ -29,6 +29,7 @@ from motor_expansao.dashboard.relatorio_municipal import (
     PDF_SECTION_HEADERS,
     TEXTO_SEM_DADO,
     ULTRA_MAGENTA,
+    VERSAO_CONTRATO_MUNICIPAL,
     _fit_contain,
     _hex_destacado_mask,
     _png_dimensions,
@@ -477,7 +478,11 @@ def test_pdf_municipal_12_paginas_e_secoes():
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
     # Carimbo de versao (D8) no rodape.
-    assert b"BLK-RELMUN-01" in pdf_bytes
+    # Carimbo de versao no rodape (DEC-005 decisao 6). Casa com a constante, nao com um
+    # literal: travar "BLK-RELMUN-01" fazia o teste reprovar um BUMP legitimo de contrato --
+    # e o bump e' justamente o que mantem dois PDFs de estruturas diferentes distinguiveis.
+    assert VERSAO_CONTRATO_MUNICIPAL.encode("latin-1") in pdf_bytes
+    assert b"contrato v2" in pdf_bytes
     # Atribuicao de tiles (DEC-011) no rodape.
     assert b"OpenStreetMap" in pdf_bytes
     assert b"CARTO" in pdf_bytes
