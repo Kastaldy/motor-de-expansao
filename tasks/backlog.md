@@ -1468,131 +1468,7 @@ produção e exige DEC + gate humano.
 
 ---
 
-### BLK-MA-05 — Lista priorizada de alvos de M&A: cruzamento com o hexágono quente + entregável
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (materializa **dois artefatos novos** e faz join sobre a camada de mercado, mas **READ-ONLY** sobre ela e sobre o M1: não recalcula `score_priorizacao`, `hex_score_estrutural`, pesos, carteira, plano nem artefato oficial, e não escreve de volta em carteira/mercado. Não cria ingestão, não toca VPS, não apaga disco, não persiste PII nova no MVP hex-level. **Sobe para Alta** se a variante NOMEADA (uma linha por academia, com identidade) for materializada — aí persiste identidade e o artefato nasce `gitignored` por D1-B/D7.) |
-| **Prioridade** | **É o entregável final do epic** — a razão de existirem MA-01..04. Tudo antes dele produz insumo; ele é o único que sai do repositório e vai para a mesa do comercial. |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | **Pendente — escrito em 2026-08-12.** Até esta data o bloco **não existia como bloco estruturado**, embora fosse citado **35 vezes** nos três artefatos permanentes (medido: 4 em `tasks/backlog.md`, 19 em `tasks/completed.md`, 12 em `docs/vulnerabilidade_ma_contrato.md`) — sempre como destino ("o entregável comercial é o BLK-MA-05", "fora de escopo → BLK-MA-05"), nunca como bloco. Mesmo furo que o fechamento do BLK-MA-02 já registrara na época para o BLK-MA-04. |
-| **Depende de** | **Para IMPLEMENTAR:** BLK-MA-04 (score, concluído 2026-07-30) + BLK-MA-03-FU1 e BLK-MA-04-FU1 (concluídos 2026-08-12) — os dois FU1 eram pré-requisito declarado e **já saíram do caminho**. **Para EXECUTAR contra dado real:** BLK-MA-06 aplicado na VPS + ~2 meses de série. Ver "A implementação NÃO espera a série" abaixo. |
-| **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012), e a saída é decisão comercial. NÃO marcar loop-safe. |
-
-**O que entrega (D5 + D6, já ratificados no gate de 2026-07-23 — não reabrir).**
-
-1. **Hexágono quente para M&A**, com a INVERSÃO do §2 (comprar quer demanda **ALTA** + residual
-   **BAIXO**, o oposto de `abrir_agora`): `sam_fitness_potencial` no **top quartil do universo**
-   **AND** `score_oportunidade_residual < 25`.
-2. **Adjacência k=1**: a academia é "próxima de hex quente" se o seu `hex_id_res7` **ou** qualquer
-   vizinho de `h3.grid_disk(hex, 1)` for quente (~2-3 km, sem geometria pesada).
-3. **Join READ-ONLY** do hotness na lista de academias, `validate="many_to_one"`, com asserts de
-   invariância (`len` inalterado; `score_priorizacao` e os 4 ranks idênticos por `.equals` antes/
-   depois). Molde: a função **`enriquecer_dataframe_com_residual`** em
-   `pipelines/enriquecer_outputs_residual_mercado.py` — ancorada por NOME de propósito.
-   **O ponteiro `:68-82` do §9 do contrato está 3 linhas curto, e nasceu assim:** o `base.merge(`
-   abre na **65** e o `on="hex_id"` está na **67**, então `68-82` começa em `how="left"` e deixa de
-   fora justamente as linhas que definem a chave do join. O intervalo fiel é **65-82** (asserts em
-   71 cardinalidade, 75 `score_priorizacao`, 79 os 4 ranks, 82 colunas residuais). Não é apodrecimento
-   — o arquivo tem um único commit desde 2026-05-30, anterior ao contrato. Mais uma razão para citar
-   a função pelo nome (ver o m1 do BLK-MA-03-FU1, que trocou 3 endereços em 2 semanas).
-4. **Dois artefatos** (D6): `data/staging/vulnerabilidade_ma_academias.parquet` (camada scored) e
-   `data/outputs/alvos_ma_priorizados.csv` (`sep=";"`, `encoding="utf-8-sig"`, hex-level no MVP,
-   **sem identidade**). Cabeçalho canônico no §10 do contrato.
-
-**O QUE EU MEDI (2026-08-12, sobre `data/outputs/carteira_expansao_acionavel.parquet`).** O bloco
-nasce dimensionado, não no escuro:
-
-| grandeza | medido |
-|---|---|
-| universo da carteira | **4.899** hexes |
-| top quartil de `sam_fitness_potencial` (`>= 7,5`) | **1.225** |
-| `score_oportunidade_residual < 25` | **4.510** |
-| **hex quente** (as duas condições) | **836** — 17,1% do universo |
-| hex quente **+ vizinhança k=1** (união) | **3.660** (fator **4,4x**) |
-| destes, dentro da carteira | 1.066 |
-
-**A CONJUNÇÃO DO D5 NÃO É DECORATIVA — e o denominador ingênuo faz parecer que é.** O corte
-`score_oportunidade_residual < 25` deixa passar **4.510 dos 4.899 hexes (92%)** do universo, o que
-sugere um filtro inerte. **É ilusão de denominador**: o corte só age *depois* do top quartil de SAM,
-e ali ele morde muito:
-
-| leitura | medido |
-|---|---|
-| removidos pelo `< 25`, sobre o **universo** | 389 / 4.899 = **7,9%** ← o número que engana |
-| removidos pelo `< 25`, sobre o **top quartil** | 389 / 1.225 = **31,8%** ← o número que vale |
-| taxa de `residual < 25` **dentro** do top quartil | 68,2% |
-| taxa de `residual < 25` **fora** do top quartil | **100,0%** |
-| `corr(sam_fitness_potencial, score_oportunidade_residual)` | **+0,79** |
-
-**100% das remoções ocorrem dentro do top quartil** — não há uma única linha com `residual >= 25`
-fora dele (o SAM mínimo dessas 389 é 664,6, contra um `q75` de 7,53). Ou seja: a metade "saturado"
-existe **exclusivamente** para depurar o conjunto que a outra metade seleciona, e sem ela o gate
-entregaria 1.225 hexes — **46,5% a mais**.
-
-O mecanismo: `residual` ALTO significa oportunidade residual **disponível** (menos saturado), e ele
-cresce junto com o SAM (`+0,79`). Hex de SAM alto é onde **sobra** demanda não atendida — por isso é
-justamente lá que o filtro de saturação descarta. As duas condições do D5 são fortemente
-correlacionadas **na direção que torna a conjunção não-trivial**: o gate faz trabalho real.
-
-Consequência para quem for mexer no limiar: medir o efeito **sobre o top quartil**, nunca sobre o
-universo — a razão entre as duas leituras é de **4x**. Reapertar o `< 25` continua sendo **mudança de
-produto** (gate/DEC, não bugfix), mas o número que instrui essa decisão é o `31,8%`, não o `7,9%`.
-
-**Concentração geográfica medida:** os 836 hexes quentes são majoritariamente do Nordeste — PB
-(148), PE (125), CE (113), MA (82), PI (81), AL (57), SE (51), PA (41). Coerente com a tese
-(demanda alta + oferta já instalada), mas o comercial deve saber disso **antes** de receber a lista,
-para não ler o recorte como viés de coleta.
-
-**A implementação NÃO espera a série — a execução sim.** Todo o pacote `vulnerabilidade/` é testado
-com **fixtures 100% sintéticas** e frames injetados, e `calcular_score_vulnerabilidade` aceita
-`churn=`/`presenca=` diretamente. Logo este bloco pode ser **escrito, testado e mergeado agora**,
-com a série em zero semanas. O que a série destrava é rodar contra dado real e entregar a lista ao
-comercial. **Não usar "a série está vazia" como razão para adiar o bloco.**
-
-**Obrigações herdadas que este bloco TEM de honrar (cada uma já é decisão fechada).**
-
-- **§8.5 / emenda BLK-MA-04-FU1 — obrigação DURA:** segmentar por `n_sinais_disponiveis` **antes**
-  de ordenar. `score_vulnerabilidade_ordenavel` resolve "score de dois valores", **não** resolve
-  "regimes de tamanhos diferentes na mesma coluna": uma linha `{s3}` sai com `100,0` e lidera uma
-  `{s1,s3,s4}` completa. Ordenar o frame inteiro sem segmentar mistura as réguas **em silêncio** —
-  não devolve `NaN`, não levanta, e o erro só aparece na shortlist. Travado por
-  `test_ordenavel_nao_separa_regimes_de_tamanho_diferente`.
-- **DEC-026 — obrigação transferida por escrito:** `nota_wellhub`/`qtd_avaliacoes_wellhub` são
-  **fatos sem peso**. O entregável **deve documentar** qualquer corte que faça sobre nota ou
-  contagem. E as duas colunas **andam juntas**: 38,4% das 34.035 independentes com nota têm < 30
-  avaliações, e das 158 abaixo de nota 4,0 a mediana é **10,5** avaliações. Nota sem contagem ao
-  lado põe no topo da shortlist academias cujo sinal são três avaliações.
-- **Ressalva do BLK-MA-03-FU1:** `n_academias_independentes_totalpass`/`_wellhub` são **TETO**, não
-  número exato (super-contam sob rotação de chave, que é acidente de coleta e não caso raro). Se o
-  entregável exibir "densidade do alvo", cruzar com `flag_troca_chave_na_serie`.
-- **D7 / DEC-012:** MVP hex-level **sem identidade**; a variante nomeada, se existir, nasce
-  `gitignored`. CSV do projeto em `sep=";"` + `utf-8-sig` (§2 do CLAUDE.md).
-
-**Detalhes de integração já medidos (poupam uma rodada de descoberta).**
-- A carteira vive em **`data/outputs/`**, não em `data/staging/` — o §9 do contrato não fixa o
-  caminho.
-- A chave de join é **`hex_id`** na carteira e **`hex_id_res7`** na academia: nomes diferentes,
-  mesmo conteúdo. As 5 colunas que o §9 exige (`score_oportunidade_residual`,
-  `oferta_efetiva_disponivel`, `sam_fitness_potencial`, `tese_entrada`, `score_priorizacao`) **estão
-  todas presentes**, junto de `uf`, num frame de 62 colunas.
-
-**Fora de escopo.** Qualquer artefato/score/peso/ranking do M1 (READ-ONLY, DEC-001); reabrir a
-fórmula, os pesos do D4 ou as decisões G-D1/G-D2/G-D3 (ratificadas 2026-07-30); reabrir o D5/D6
-(gate de 2026-07-23) — se o limiar de saturação mudar, é **DEC nova**; overlay no dashboard/piloto
-web (§10: "sem overlay no MVP"); reputação externa (BLK-MA-07); o cron (BLK-MA-06); escrever de
-volta em carteira, mercado ou plano.
-
-**Critério de aceite.** Hex quente implementado como a conjunção do D5 com adjacência k=1; join
-`many_to_one` com os asserts de invariância do molde, provados por teste que **falharia** se o join
-alterasse `len`, `score_priorizacao` ou qualquer um dos 4 ranks; segmentação por
-`n_sinais_disponiveis` antes de qualquer ordenação, com teste; os dois artefatos do D6 materializados
-no formato canônico (CSV `sep=";"` + `utf-8-sig`); qualquer decisão sobre o limiar `< 25` medida
-**sobre o top quartil**, nunca sobre o universo (a razão entre as duas leituras é 4x — ver a tabela
-acima), e alterá-lo exige gate/DEC; corte sobre nota/contagem documentado por escrito
-(DEC-026); fixtures 100% sintéticas, zero PII; suíte completa sem regressão (medir a baseline **no
-momento** — a de 2026-08-12 era **2925** coletados, e envelhece a cada ciclo); `ruff` limpo;
-`loop_guard` sem `CRITICO`.
+- BLK-MA-05 (concluído 2026-08-13) — ver tasks/completed.md
 
 ---
 
@@ -1639,6 +1515,17 @@ segundo maior peso, e silencioso. O recorte de cada partição fica em `fontes_l
 **Fora de escopo.** Qualquer artefato/score/peso do M1; o cron **mensal** dos agregadores (bloco
 próprio, e quando existir chama o MESMO script com `--fontes totalpass wellhub`); o entregável
 comercial (**BLK-MA-05**); a reputação externa (**BLK-MA-07**).
+
+> **[nota BLK-MA-13, 2026-08-14] O comando do entregável mudou, e o overlay do piloto depende dele.**
+> `python -m motor_expansao.vulnerabilidade.alvos_ma --base-dir <snapshots>` agora calcula o **sinal
+> 6** por padrão (lê `data/staging/concorrentes_mapeados.parquet`; `--sem-pressao` volta ao
+> comportamento antigo, bit a bit) e materializa um **terceiro artefato**,
+> `data/outputs/alvos_ma_hex.parquet` (`--saida-hex`), que é o que o piloto web serve no overlay de
+> pressão competitiva (DEC-028). Consequência prática para a aplicação na VPS: **rodar o snapshot
+> não basta para o overlay aparecer em produção** — alguém precisa rodar o entregável depois, e o
+> parquet tem de estar no bind mount de `data/outputs`. Sem ele a pílula simplesmente não aparece
+> (degradação silenciosa deliberada, molde do `crescimento_hex`); com ele, o `/api/health` passa a
+> reportar `pressao_ma_hex`.
 
 **`MIN_SEMANAS` — RESOLVIDO em 2026-08-11 (Vinicius): fica em 8. NÃO reabrir sem dado novo.**
 Cumpre a obrigação que o D2 do contrato delegou a este bloco. A revisão foi feita com a cadência
@@ -1698,6 +1585,231 @@ para reputação **externa**, que é este bloco.
 
 **Critério de aceite.** DEC própria aprovada (fonte, custo, ToS, limite anti-PII); contrato do sinal
 definido antes de qualquer código; validação com fixtures sintéticas; READ-ONLY sobre o M1.
+
+---
+
+- BLK-MA-16 (concluído 2026-08-14, DEC-033 opção A: o universo novo é o default) — ver tasks/completed.md
+
+---
+
+- BLK-MA-17 (concluído 2026-08-18) — ver tasks/completed.md
+
+---
+
+- BLK-MA-17-FU1 (concluído 2026-08-18) — ver tasks/completed.md
+
+---
+
+- BLK-MA-17-FU2 (concluído 2026-08-18) — ver tasks/completed.md
+
+---
+
+- BLK-MA-17-FU3 (concluído 2026-08-18) — ver tasks/completed.md
+
+
+
+
+
+---
+
+### BLK-MA-17-FU5 — O resíduo do dedup: ~87 duplicatas que o nome não casa porque o insumo não tem nome
+
+| | |
+|---|---|
+| **Criticidade** | **Baixa** — o FU4 já derrubou 320 das ~407 duplicatas. O que resta infla a pressão de um punhado de academias, não muda ordem (o `Spearman` do FU4 já foi `0,998`). READ-ONLY sobre o M1. |
+| **Prioridade** | Baixa — **não** bloqueia o BLK-MA-06. O gatilho do FU1/FU2/FU4 era a segunda fonte; este é qualidade de coletor, e piora devagar. |
+| **Esteira** | Builder → QA (sem gate: não muda universo nem critério, melhora a cobertura de um critério já aprovado). |
+| **Status** | Pendente — **resíduo declarado do BLK-MA-17-FU4 (2026-08-18)**. |
+| **Depende de** | BLK-MA-17-FU4 (concluído) — é ele que introduz `identidade.py`. |
+| **Autonomia** | **manual (NÃO loop-safe)** — mexe em dedup que alimenta o score. |
+
+**O defeito, medido.** O FU4 casa por `Jaccard >= 0,67` do discriminante geográfico. Onde o insumo
+mapeado **não tem nome informativo**, não há discriminante e o casamento nunca dispara — por
+construção e de propósito (`similaridade_nome` devolve `0` no caso vazio, que é o conservador). O
+caso emblemático medido: `Evoque Academia Campo Grande` (feed) contra `'2939'` (mapeado), a 181 m.
+Sobram **~87** pares nessa condição, contra os 320 que o FU4 colapsou.
+
+> ### [ampliado em 2026-08-19 pela revisão adversarial pré-PR] O resíduo tem TRÊS causas, não uma
+>
+> O bloco nasceu descrevendo só a causa (a). A revisão mediu outras duas, e nenhuma é "insumo sem
+> nome" — o que muda o escopo, porque a saída (1) sozinha não resolve o bloco inteiro.
+>
+> **(a) Insumo sem nome — ~77 pares.** `'2939'` contra `Evoque Academia Campo Grande`. Discriminante
+> vazio ⇒ `similaridade_nome` devolve `0` por desenho. É a causa original do bloco.
+>
+> **(b) O limiar `0,67` é ESTRITAMENTE maior que `2/3` — 27 pares.** O par `{a,b}` × `{a,b,c}` (um
+> lado com um token a mais) dá `0,6667` e não casa: `SKYFIT ACADEMIA CAMPO BELO` ×
+> `Campo Belo - Campinas (SP)` a 162 m; `BlueFit 24h - Frei Caneca` × `Frei Caneca` a 223 m;
+> `PANOBIANCO EUTERPE - Nova Friburgo` × `NOVA FRIBURGO` a 177 m.
+>
+> **Isto foi auditado e a decisão medida foi MANTER.** Baixar para `2/3` ganha os 27 e **dobra o
+> custo** — de 12 para 27 academias reais apagadas (`1,8:1`, contra os `26,7:1` do critério atual).
+> Os falsos positivos novos são o padrão que o limiar existe para recusar: `OURO PRETO` ×
+> `OURO PRETO PRIME` a 142 m. Resolver estes 27 exige distinguir "token a mais é sufixo de unidade"
+> de "token a mais é complemento do topônimo" — o que o Jaccard, sozinho, não faz.
+>
+> **(c) Ordinal que é TOPÔNIMO, não número de unidade.** `ordinal_da_unidade` dispara em qualquer
+> romano de I a VI ou dígito de 2 a 9, em qualquer posição — inclusive quando o algarismo faz parte
+> do nome do lugar. Caso real medido: `Corpo e Saude - Guara QE 56` × `Corpo e Saude - Guara II QE 56`
+> a **259 m**, mesma rede, discriminante idêntico (Jaccard `1,00`), recusados porque `Guará II` é
+> **região administrativa do DF**, não a segunda unidade. Efeito medido num vizinho:
+> `Studio Silvia Campos` sobe de `60,394` para `68,674` pontos de pressão (**+8,28**).
+>
+> Agrava porque `len(t) > 2` descarta justamente o token que desempataria (`qe`, `56` — a quadra,
+> que é o endereço). Os dois filtros se somam no pior sentido: some a evidência e sobra a negação.
+>
+> **Consequência para o escopo:** as saídas (1) e (2) do bloco cobrem só a causa (a). As causas (b) e
+> (c) pedem outra coisa — distinguir o PAPEL do token (sufixo de unidade × parte do topônimo), o que
+> provavelmente exige uma lista de topônimos numerados conhecidos (Guará II, Riacho Fundo II, Ceilândia
+> II…) ou usar o endereço em vez do nome. Medir cada uma no molde ganho/custo do FU4 antes de
+> escolher.
+
+**Por que é de COLETOR, não de algoritmo.** `'2939'` não é um nome ruim de casar — é a ausência de
+nome. Nenhum matcher de string resolve, e afrouxar o critério para compensar reintroduziria
+exatamente os falsos positivos que a regra de ordinal eliminou (`Carpina` × `Carpina 2`).
+
+**Escopo (a decidir no Planner, as três saídas não são exclusivas).**
+1. **Corrigir na origem** — descobrir quais coletores gravam `nome_unidade` numérico ou vazio em
+   `concorrentes_mapeados` e corrigir a extração. É o único caminho que resolve de vez, e beneficia
+   tudo que lê o insumo, não só a dedup.
+2. **Terceiro sinal de identidade** — quando não há nome dos dois lados, cair para uma âncora
+   diferente (CEP, logradouro, ou o `hex_id_res7` com limiar apertado). Exige medir ganho/custo no
+   mesmo molde do FU4: contra o insumo mapeado, onde duas linhas da mesma rede são distintas por
+   definição.
+3. **Declarar na tela** — se as duplicatas remanescentes ficarem, a auditoria do pin deveria dizê-lo,
+   como `n_cadeias_do_feed_no_raio` já declara a outra lacuna.
+
+**Fora de escopo.** Afrouxar `JACCARD_MIN_NOME` ou `DIST_MAX_MESMO_NOME_M` (a curva do FU4 já mostrou
+que o custo dispara); mexer em `dedup_independentes` (é o FU1, concluído); qualquer
+artefato/peso/score do M1.
+
+**Critério de aceite.** Medir quantos dos ~87 cada saída resolve, no molde ganho/custo do FU4; o
+efeito na pressão medido antes e depois; nenhum falso positivo novo entre unidades numeradas;
+READ-ONLY sobre o M1; suíte verde.
+
+---
+
+### BLK-WEB-23 — O ícone com halo duplica o PNG no payload: ~1,4 MB de bytes repetidos por município
+
+| | |
+|---|---|
+| **Criticidade** | **Baixa** — não muda número nenhum; é peso de payload e memória de textura. READ-ONLY sobre o M1. |
+| **Prioridade** | Baixa. Vale antes de a camada crescer para mais UFs, não antes do merge. |
+| **Esteira** | Builder → QA (sem gate). |
+| **Status** | Pendente — **achado da revisão adversarial pré-PR (2026-08-19)**, medido. |
+| **Depende de** | BLK-MA-17 metade 1 (DEC-035 emenda 1) — é ela que cria a variante com halo. |
+| **Autonomia** | **manual (NÃO loop-safe)** |
+
+**O defeito, medido.** `_icone_rede(rede, halo=True)` gera um SVG NOVO que re-embute o **mesmo PNG
+em base64** do ícone sem halo. As duas variantes vão juntas no dicionário `pins.icones`, então cada
+rede com diagnóstico no recorte paga o logo duas vezes. Em São Paulo são **29 redes com halo**, o
+que dá **~1,44 MB** de base64 — quase todo ele byte a byte idêntico ao que já está no payload.
+
+**Por que não foi corrigido junto.** A duplicação é consequência de o ícone ser um data-URI
+autocontido, que é o que o `IconLayer` do deck.gl consome hoje. Resolver bem exige escolher entre:
+
+1. **Halo como CAMADA, não como ícone** — um `ScatterplotLayer` de círculos vazados desenhado
+   ATRÁS do `IconLayer`, alinhado por coordenada. Elimina a duplicação por completo e o halo passa a
+   ser um parâmetro visual, não uma textura. Custo: mais uma camada e o risco de desalinhamento em
+   zoom extremo.
+2. **`<use>` / símbolo SVG** — embutir o PNG uma vez e referenciá-lo. Falha se o deck.gl rasterizar
+   cada data-URI isoladamente, que é o comportamento provável; precisa ser medido antes.
+3. **Servir os logos como arquivo** em vez de data-URI, com cache HTTP. Muda o contrato de
+   `pins.icones` e afeta todos os pins, não só os com halo.
+
+**Fora de escopo.** Mudar o halo em si (a decisão visual é da DEC-035 emenda 1, aprovada); qualquer
+artefato/peso/score do M1.
+
+**Critério de aceite.** O payload de um município com halo deixa de carregar o mesmo PNG duas vezes,
+medido em bytes antes e depois; o halo continua visualmente idêntico ao aprovado; sem regressão nos
+testes do piloto.
+
+---
+
+### BLK-FIX-ACESSOS-01 — Três testes do relatório de acessos passam só no dia em que foram escritos
+
+| | |
+|---|---|
+| **Criticidade** | **Média** — não é defeito de produto, é a `main` VERMELHA. Enquanto valer, todo PR aberto herda 3 falhas alheias e o gate de CI deixa de distinguir "meu trabalho quebrou" de "a base já estava quebrada". READ-ONLY sobre o M1. |
+| **Prioridade** | **Alta** — cada dia que passa é mais um PR nascendo vermelho. |
+| **Esteira** | Builder → QA (sem gate: corrige teste, não comportamento). |
+| **Status** | **RESOLVIDO NA `main` por terceiros** (PR #242, `91a3368`, 2026-08-19) — enquanto este bloco era escrito. A correção deles CONGELA o relógio (`now()` fixo em `_AGORA`), que é mais canônico que a âncora relativa que eu havia proposto; adotada a deles no merge. Fica registrado porque o diagnóstico tem valor: o modo de falha "teste que passa só no dia em que foi escrito" não é intermitência, é determinístico, e deixou a `main` vermelha por um dia inteiro. |
+| **Depende de** | nada. |
+| **Autonomia** | **manual (NÃO loop-safe)** |
+
+**O defeito, medido.** Em `origin/main` puro (commit `7b70117`, worktree limpo com
+`PYTHONPATH` próprio), `tests/unit/test_relatorio_acessos.py` falha em 3 de 18:
+
+- `test_cli_imprime_sem_enviar`
+- `test_acessos_no_chat_de_ops_sem_senha`
+- `test_acessos_cobre_forma_de_grupo`
+
+**A causa.** Os três montam a trilha com uma data CRAVADA —
+`_linha("ana", "/api/ponto", "2026-08-18T12:00:00+00:00")` — e o relatório filtra por **hoje**. Em
+18/08 passavam; de 19/08 em diante o acesso cai fora da janela e a saída vira
+`"Nenhum acesso registrado hoje ainda"`, enquanto o assert procura `"ana"`.
+
+**Não é intermitência nem ambiente.** É determinístico: passa exatamente um dia e falha em todos os
+outros. Um teste assim dá uma garantia falsa — ele não afirma que o relatório funciona, afirma que
+funcionava ontem.
+
+**Escopo.** Trocar a data cravada por uma âncora relativa ao "hoje" que o próprio relatório usa
+(`datetime.now(BRT)` na fixture, ou injetar o relógio). Injetar é preferível: torna o teste capaz de
+cobrir a **borda** — o acesso de ontem 23:59 e o de hoje 00:01 —, que é justamente o que a versão
+cravada nunca testou.
+
+**Fora de escopo.** Mudar o comportamento do relatório ou a janela de "hoje"; qualquer
+artefato/peso/score do M1.
+
+**Critério de aceite.** Os 3 testes passam em qualquer data (verificar com o relógio deslocado,
+não só "hoje"); a borda de virada do dia coberta; suíte verde.
+
+---
+
+### BLK-ORQ-28 — Duas validações obrigatórias da esteira são impossíveis de cumprir
+
+| | |
+|---|---|
+| **Criticidade** | **Baixa** — texto de prompt da orquestração; não toca código de produto, score, artefato nem M1. |
+| **Prioridade** | Alta dentro da orquestração — enquanto valer, TODO ciclo fecha com duas validações obrigatórias falhando por motivo alheio ao trabalho, e o QA precisa declarar a divergência à mão. |
+| **Esteira** | Builder → QA. **Altera a orquestração** (`prompts/*.md`) → o Passo 6.c dispara **dry-run autônomo**. |
+| **Status** | Pendente — **achado do QA do BLK-MA-17 (2026-08-15)**, medido nos dois casos. |
+| **Depende de** | nada. |
+| **Autonomia** | **manual (NÃO loop-safe)** — mexe na própria esteira. |
+
+**Defeito 1 — o smoke obrigatório testa um módulo que não existe mais.** `prompts/builder.md:46` e
+`:49` exigem `python -c "import streamlit_app"` como "rede de segurança mínima de todo ciclo". O
+módulo foi **removido pelo commit `30378a0`** (DEC-022, aposentadoria do Streamlit pelo piloto web) —
+o `import` levanta `ModuleNotFoundError` desde então, e o comando está obrigatório há 12 dias. O
+equivalente vivo é importar o pacote e `web/server/app.py`.
+
+**Defeito 2 — a suíte paralela obrigatória é inexecutável nesta estação.** `prompts/qa_analyzer.md:25`
+exige `python -m pytest -n auto` como gate único do ciclo, e `prompts/planner.md:74` o replica. O
+xdist 3.8.0 falha aqui com `WinError 50` (o `CLAUDE.md` registrava `WinError 6` — o número está
+desatualizado). Todo QA recente roda serial e declara a divergência à mão.
+
+**Escopo.** Trocar o smoke morto pelo equivalente vivo em `prompts/builder.md` (L45/L46/L49); em
+`prompts/qa_analyzer.md` (L25) e `prompts/planner.md` (L74), manter `-n auto` como preferência **com
+fallback serial declarado**, em vez de exigência absoluta. Corrigir o `WinError 6` -> `WinError 50` no
+`CLAUDE.md`. **Não** ampliar para outras revisões de prompt.
+
+**Critério de aceite.** Os comandos citados nos 3 prompts executam de fato nesta estação; o dry-run
+autônomo do Passo 6.c passa; nenhuma mudança de comportamento da esteira além do texto das validações.
+
+---
+
+- BLK-MA-14 (concluído 2026-08-14) — ver tasks/completed.md
+
+
+---
+
+- BLK-MA-15 (concluído 2026-08-14) — ver tasks/completed.md
+
+---
+
+- BLK-MA-13 (concluído 2026-08-14, **overlay REVERTIDO no mesmo dia** por redundância com a camada 3 do funil; a emenda do G-D1 permanece — ver DEC-028 e tasks/completed.md)
+
+
 
 ---
 
@@ -1840,32 +1952,7 @@ declarado no relatório.
 
 ---
 
-### BLK-FIX-LTV-01 — Guarda de skip faltante em `test_run_readonly_m1_por_mtime` (só teste)
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Baixa** — só arquivo de teste; zero código de produção, READ-ONLY sobre o M1. |
-| **Prioridade** | Baixa — a falha é local-only e **não** afeta o portão da `main`. |
-| **Esteira** | Block Orchestrator → Builder. |
-| **Status** | Pendente. |
-| **Depende de** | — |
-| **Autonomia** | **loop-safe** — READ-ONLY M1, só teste, sem VPS/deploy/segredos/PII, consome `data/staging`. |
-
-**Problema (achado pelo QA do BLK-RELPON-13, 2026-07-24).**
-`tests/unit/test_score_retencao_territorial.py::test_run_readonly_m1_por_mtime` guarda com `pytest.skip`
-os **artefatos M1** ausentes (linhas 260-261), mas **não guarda a própria ENTRADA** que `run()` carrega
-logo depois (linha 263): `data/staging/unidade_territorio_retencao.parquet`. Numa máquina de dev onde
-alguns dos artefatos M1 existem mas esse dataset **não** existe, o skip não dispara e o teste morre com
-`FileNotFoundError` em vez de pular. Em CI limpo `data/staging/` é gitignored → nenhum artefato M1 → o
-teste pula; por isso o portão da `main` **não** é afetado (falha é local-only, reproduzida em 2026-07-24).
-
-**Correção.** Estender a guarda para cobrir também o dataset de entrada: se
-`data/staging/unidade_territorio_retencao.parquet` não existir, `pytest.skip` com a mesma mensagem de
-"ambiente sem os parquets". **Não** alterar a semântica do teste — o assert de mtime (READ-ONLY M1)
-permanece exatamente como está.
-
-**Critério de aceite.** Em máquina sem o parquet de entrada o teste **pula** (não falha); em máquina com o
-parquet ele roda e mantém o assert de mtime; `pytest -q` deixa de reportar esse `FAILED`.
+- BLK-FIX-LTV-01 (concluído 2026-08-14) — ver tasks/completed.md
 
 ---
 

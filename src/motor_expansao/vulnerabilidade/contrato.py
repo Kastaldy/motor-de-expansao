@@ -39,7 +39,7 @@ from datetime import date
 VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v3"
 VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
-VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v2"
+VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v7"
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
 H3_RES_CONTRATO = 7
@@ -63,9 +63,7 @@ TOLERANCIA_BBOX_UF_GRAUS = 0.5
 COLUNA_PARTICAO = "semana"
 
 RE_SEMANA = re.compile(r"^\d{4}-\d{2}$")
-RE_UUID = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
-)
+RE_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
 
 FONTES_VALIDAS: frozenset[str] = frozenset({"totalpass", "wellhub", "unidades"})
 CHAVE_ORIGEM_VALIDAS: frozenset[str] = frozenset({"slug", "hash_estavel"})
@@ -208,23 +206,23 @@ CAMPOS_NUMERICOS: frozenset[str] = frozenset({"latitude", "longitude"})
 # Snapshot semanal: 12 colunas, nesta ORDEM. `semana` NÃO é coluna do arquivo — é chave de
 # partição hive (igual ao `uf` do enriquecido em `fase1_bi_exports.py`), materializada na leitura.
 CONTRATO_COLUNAS_SNAPSHOT: dict[str, str] = {
-    "snapshot_date": "string",         # `data_coleta` POR LINHA (ISO) -> medidor de frescor
-    "slug": "string",                  # ID nativo do provedor (nulável: `unidades` não emite)
-    "concorrente_id": "string",        # sha1 de produção replicado (rastreabilidade)
-    "chave_snapshot": "string",        # A CHAVE DE CHURN (sha1 hex 40)
-    "chave_origem": "string",          # slug | hash_estavel (rebaixamento auditável)
-    "hex_id_res7": "string",           # geometria anti-PII (DEC-012) e chave de join
-    "rede": "string",                  # categoria de rede; metade do escopo de observabilidade
-    "fonte": "string",                 # totalpass | wellhub | unidades (sinal 1 do contrato §4)
+    "snapshot_date": "string",  # `data_coleta` POR LINHA (ISO) -> medidor de frescor
+    "slug": "string",  # ID nativo do provedor (nulável: `unidades` não emite)
+    "concorrente_id": "string",  # sha1 de produção replicado (rastreabilidade)
+    "chave_snapshot": "string",  # A CHAVE DE CHURN (sha1 hex 40)
+    "chave_origem": "string",  # slug | hash_estavel (rebaixamento auditável)
+    "hex_id_res7": "string",  # geometria anti-PII (DEC-012) e chave de join
+    "rede": "string",  # categoria de rede; metade do escopo de observabilidade
+    "fonte": "string",  # totalpass | wellhub | unidades (sinal 1 do contrato §4)
     "hash_campos_raspados": "string",  # impressão digital dos campos raspados (sinal 4)
     # FATOS sem peso `[BLK-MA-09 / DEC-026]` — NÃO são componentes do score. Só o WellHub emite;
     # no TotalPass são nulos por construção e para sempre (BLK-MA-10: a nota não existe no
     # produto). Os TRÊS estados da DEC-024 sobrevivem no par: `4.81`/`105` = tem nota;
     # `NA`/`0` = existe e não tem avaliação; `NA`/`NA` = o parser não leu (scraper quebrado).
     # Ficam FORA de `CAMPOS_HASH_POR_FONTE` — a nota muda a cada avaliação e mataria o S4.
-    "nota_wellhub": "Float64",         # [NOTA_WELLHUB_MIN, NOTA_WELLHUB_MAX]; nulável
-    "qtd_avaliacoes_wellhub": "Int64", # >= 0; nulável
-    "versao_contrato": "string",       # carimbo; mudança = descontinuidade de série
+    "nota_wellhub": "Float64",  # [NOTA_WELLHUB_MIN, NOTA_WELLHUB_MAX]; nulável
+    "qtd_avaliacoes_wellhub": "Int64",  # >= 0; nulável
+    "versao_contrato": "string",  # carimbo; mudança = descontinuidade de série
 }
 
 # Domínio da nota. O piso é `1.0`, NÃO `0.0`: a nota é média de avaliações de 1 a 5 estrelas, logo
@@ -260,7 +258,7 @@ CONTRATO_COLUNAS_CHURN: dict[str, str] = {
     "semana_primeira_observacao": "string",
     "semana_ultima_observacao": "string",
     "snapshot_date_ultimo": "string",
-    "nota_wellhub": "Float64",          # FATO sem peso, da ULTIMA observacao (DEC-026)
+    "nota_wellhub": "Float64",  # FATO sem peso, da ULTIMA observacao (DEC-026)
     "qtd_avaliacoes_wellhub": "Int64",  # FATO sem peso, da ULTIMA observacao (DEC-026)
     "flag_serie_imatura": "bool",
     "flag_staleness_interpretavel": "bool",
@@ -279,9 +277,9 @@ CONTRATO_COLUNAS_CHURN: dict[str, str] = {
 # `_no_hex` das colunas 2 e 3 é deliberado: ele carrega essa ressalva até todo consumidor futuro,
 # depois do join `many_to_one` do BLK-MA-04.
 CONTRATO_COLUNAS_PRESENCA_AGREGADOR: dict[str, str] = {
-    "hex_id_res7": "string",                          # a chave (anti-PII, DEC-012) e o join
-    "fontes_presentes_no_hex": "string",              # subconjunto de FONTES_AGREGADORES, `,`
-    "n_agregadores_no_hex": "int64",                  # {1, 2} — nunca 0 (ver docstring do módulo)
+    "hex_id_res7": "string",  # a chave (anti-PII, DEC-012) e o join
+    "fontes_presentes_no_hex": "string",  # subconjunto de FONTES_AGREGADORES, `,`
+    "n_agregadores_no_hex": "int64",  # {1, 2} — nunca 0 (ver docstring do módulo)
     # COLUNAS 4/5 — leia-as como TETO, nunca como número exato `[ressalva BLK-MA-03-FU1]`: elas
     # contam CHAVES distintas, e a chave muda quando `chave_origem` é rebaixado de `slug` para
     # `hash_estavel`, então a MESMA academia observada nos dois regimes sai como 2 (medido em
@@ -289,13 +287,13 @@ CONTRATO_COLUNAS_PRESENCA_AGREGADOR: dict[str, str] = {
     # duplicado no snapshot) é SEMPRE ativo e depende só da qualidade do feed.
     # `n_agregadores_no_hex` — e portanto o `v1` — NÃO é afetado. Quem exibir estas duas como
     # "densidade do alvo" deve cruzar com `flag_troca_chave_na_serie` do churn.
-    "n_academias_independentes_totalpass": "int64",   # chaves distintas de TP no hex (TETO)
-    "n_academias_independentes_wellhub": "int64",     # chaves distintas de WH no hex (TETO)
-    "semana_ultima_observacao_totalpass": "string",   # relógio do PIPELINE (nulo sse contagem 0)
-    "semana_ultima_observacao_wellhub": "string",     # idem, WellHub
-    "snapshot_date_ultimo_totalpass": "string",       # relógio do COLETOR (nulo sse contagem 0)
-    "snapshot_date_ultimo_wellhub": "string",         # idem, WellHub
-    "versao_contrato": "string",                      # carimbo; mudança = descontinuidade de série
+    "n_academias_independentes_totalpass": "int64",  # chaves distintas de TP no hex (TETO)
+    "n_academias_independentes_wellhub": "int64",  # chaves distintas de WH no hex (TETO)
+    "semana_ultima_observacao_totalpass": "string",  # relógio do PIPELINE (nulo sse contagem 0)
+    "semana_ultima_observacao_wellhub": "string",  # idem, WellHub
+    "snapshot_date_ultimo_totalpass": "string",  # relógio do COLETOR (nulo sse contagem 0)
+    "snapshot_date_ultimo_wellhub": "string",  # idem, WellHub
+    "versao_contrato": "string",  # carimbo; mudança = descontinuidade de série
 }
 
 # --------------------------------------------------------------------------- #
@@ -303,12 +301,33 @@ CONTRATO_COLUNAS_PRESENCA_AGREGADOR: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # ORDEM CANÔNICA do `sinais_disponiveis` (molde de domínio-tupla: `STATUS_CHURN_VALIDOS`).
 # A string é montada iterando ESTA tupla, nunca um `set` nem as chaves de um dict.
-SINAIS_ORDEM: tuple[str, ...] = ("s1", "s2", "s3", "s4")
+SINAIS_ORDEM: tuple[str, ...] = ("s1", "s2", "s3", "s4", "s6")
 
-# Pesos-alvo do D4 (gate de produto de 2026-07-23). CONGELADOS: somam 1,00 e só mudam com novo
-# gate. Os pesos EFETIVOS do Plano B (~0,20 / ~0,467 / ~0,333) são CONSEQUÊNCIA de S2 estar
-# inativo e são calculados por `renormalizar_pesos` — jamais digitados em lugar algum.
-PESOS_ALVO_SINAIS: dict[str, float] = {"s1": 0.15, "s2": 0.25, "s3": 0.35, "s4": 0.25}
+# Pesos-alvo. S1..S4 são os do D4 (gate de produto de 2026-07-23) e seguem **CONGELADOS e
+# INTOCADOS** — este bloco os lê, nunca os altera. S6 entra POR CIMA (BLK-MA-12), e a soma-alvo
+# passa de 1,00 para 1,10.
+#
+# **A soma deixar de ser 1,00 é inócua, e isso é uma propriedade de `renormalizar_pesos`, não uma
+# licença:** ela divide pela soma dos sinais PRESENTES, nunca pelo total do dicionário. Logo o peso
+# efetivo de qualquer regime que não contenha `s6` é **exatamente o mesmo de antes** — o Plano B
+# segue `0,20 / 0,4667 / 0,3333`, travado por teste. Foi essa a razão de acrescentar S6 em vez de
+# adotar o conjunto ilustrativo de 6 sinais do §8.3 (`S1=0,12 · S3=0,28 · S4=0,20 · S6=0,10`):
+# aquele conjunto REPESA S1..S4, o que exigiria reabrir o gate de 2026-07-23 e deslocaria o ranking
+# de todas as linhas, inclusive as que não têm pressão medida.
+#
+# `s6` NÃO está em `SINAIS_INATIVOS`: diferente do `s2` (que não tem dado nenhum), o S6 é
+# calculável hoje. O que decide a disponibilidade dele é a presença do INSUMO na chamada — ver
+# `_regra_de_disponibilidade` em `score.py`.
+PESOS_ALVO_SINAIS: dict[str, float] = {
+    "s1": 0.15,
+    "s2": 0.25,
+    "s3": 0.35,
+    "s4": 0.25,
+    "s6": 0.10,
+}
+
+# Pesos do D4 isolados, para o teste provar que o S6 não os tocou.
+PESOS_ALVO_D4: dict[str, float] = {"s1": 0.15, "s2": 0.25, "s3": 0.35, "s4": 0.25}
 
 # S2 (rating in-app) é `n/d` PERMANENTE no Plano B (contrato §7 / D3) até o BLK-MA-08 ajustar o
 # coletor. Reativar o sinal 2 é remover UMA entrada desta tupla — a fórmula do score não muda.
@@ -324,7 +343,7 @@ V3_POR_STATUS_CHURN: dict[str, float | None] = {
     "sumiu_recente": 1.0,
 }
 
-# Score de vulnerabilidade (D4): 22 colunas, nesta ORDEM. Uma linha por ACADEMIA, isto é, por
+# Score de vulnerabilidade (D4): 26 colunas, nesta ORDEM. Uma linha por ACADEMIA, isto é, por
 # `(fonte, chave_snapshot)` do universo de M&A (TotalPass/WellHub x independente).
 #
 # `v2` está AUSENTE DE PROPÓSITO (S2 é `n/d` permanente, D3 — BLK-MA-08); `hex_quente`,
@@ -334,29 +353,452 @@ V3_POR_STATUS_CHURN: dict[str, float | None] = {
 # a linha cujo hex não casa no join com o sinal 1 fica com `v1` AUSENTE (renormalizado para
 # fora), e o `int64` nativo não carrega nulo — no miss o pandas promoveria a `float64` + `NaN`.
 CONTRATO_COLUNAS_SCORE: dict[str, str] = {
-    "chave_snapshot": "string",                    # a chave opaca (anti-PII); metade do grão
-    "fonte": "string",                             # totalpass | wellhub — NUNCA `unidades`
-    "rede": "string",                              # sempre `independente` (universo de M&A)
-    "hex_id_res7": "string",                       # join com o sinal 1 e, no BLK-MA-05, hotness
-    "status_churn": "string",                      # FATO propagado, sem peso (G-D2)
-    "nota_wellhub": "Float64",                     # FATO propagado, sem peso (DEC-026)
-    "qtd_avaliacoes_wellhub": "Int64",             # FATO propagado, sem peso (DEC-026)
-    "v1": "float64",                               # componente do S1; {0.0, 0.5} ou nulo
-    "v3": "float64",                               # componente do S3; {0.0, 0.7, 1.0} ou nulo
-    "v4": "float64",                               # componente do S4; [0, 1] ou nulo
-    "sinais_disponiveis": "string",                # subconjunto de SINAIS_ORDEM, unido por `,`
-    "n_sinais_disponiveis": "int64",               # 0..3; NAO vai a 4 - o S2 nao tem peso (DEC-026)
-    "score_vulnerabilidade": "float64",            # [0, 100]; nulo sse nenhum sinal disponível
+    "chave_snapshot": "string",  # a chave opaca (anti-PII); metade do grão
+    "fonte": "string",  # totalpass | wellhub — NUNCA `unidades`
+    "rede": "string",  # sempre `independente` (universo de M&A)
+    "hex_id_res7": "string",  # join com o sinal 1 e, no BLK-MA-05, hotness
+    "status_churn": "string",  # FATO propagado, sem peso (G-D2)
+    "nota_wellhub": "Float64",  # FATO propagado, sem peso (DEC-026)
+    "qtd_avaliacoes_wellhub": "Int64",  # FATO propagado, sem peso (DEC-026)
+    "v1": "float64",  # componente do S1; {0.0, 0.5} ou nulo
+    "v3": "float64",  # componente do S3; {0.0, 0.7, 1.0} ou nulo
+    "v4": "float64",  # componente do S4; [0, 1] ou nulo
+    "v6": "float64",  # componente do S6; [0, 1) ou nulo se o insumo nao veio (BLK-MA-12)
+    # AUDITORIA do v6; nulo sse `v6` nulo. O nome perdeu o sufixo `_no_hex` no BLK-MA-14: a
+    # pressao passou a ter DOIS graos possiveis, e cravar um deles no nome da coluna faria o
+    # contrato mentir metade das vezes. Quem diz de onde o numero veio e' `pressao_grao`.
+    "pressao_competitiva": "Float64",
+    # Carimbo do GRAO: `academia` (medido da coordenada da unidade) ou `hex` (do centroide).
+    # Nulo exatamente quando `pressao_competitiva` e' nula. Viaja ate' o consumidor de proposito —
+    # duas linhas com graos diferentes NAO estao na mesma regua, e sem o carimbo isso e' invisivel.
+    "pressao_grao": "string",
+    # Carimbo do UNIVERSO DE OFERTA (BLK-MA-16): `cadeias` ou `cadeias_e_independentes`. Mesma
+    # regra de nulidade e mesma razao de existir do `pressao_grao`, para o OUTRO eixo — a mesma
+    # academia mede 39 num universo e 65 no outro (medido em SP), e sem o carimbo as duas
+    # respostas parecem a mesma grandeza.
+    "universo_oferta": "string",
+    "sinais_disponiveis": "string",  # subconjunto de SINAIS_ORDEM, unido por `,`
+    # 0..4: o S2 nunca conta (DEC-026), mas o S6 conta QUANDO o insumo de pressao e' fornecido
+    # (BLK-MA-12). Sem o insumo, o dominio volta a 0..3 e nada muda em relacao ao v2.
+    "n_sinais_disponiveis": "int64",
+    "score_vulnerabilidade": "float64",  # [0, 100]; nulo sse nenhum sinal disponível
     "score_vulnerabilidade_ordenavel": "float64",  # nulo enquanto `flag_score_provisorio` (G-D1)
-    "flag_serie_imatura": "bool",                  # propagada do churn
-    "flag_staleness_interpretavel": "bool",        # propagada do churn; condiciona o S4
-    "flag_score_provisorio": "bool",               # S3 E S4 indisponíveis (contrato §8.4)
-    "n_agregadores_no_hex": "Int64",               # auditoria do v1; NULÁVEL (ver acima)
-    "fontes_presentes_no_hex": "string",           # auditoria do v1; nulo sse a de cima for nula
-    "semana_ultima_observacao": "string",          # relógio do PIPELINE (vem do churn)
-    "snapshot_date_ultimo": "string",              # relógio do COLETOR (vem do churn)
-    "versao_contrato": "string",                   # carimbo; mudança = descontinuidade de série
+    "flag_serie_imatura": "bool",  # propagada do churn
+    "flag_staleness_interpretavel": "bool",  # propagada do churn; condiciona o S4
+    "flag_score_provisorio": "bool",  # S3 E S4 indisponíveis (contrato §8.4)
+    "n_agregadores_no_hex": "Int64",  # auditoria do v1; NULÁVEL (ver acima)
+    "fontes_presentes_no_hex": "string",  # auditoria do v1; nulo sse a de cima for nula
+    "semana_ultima_observacao": "string",  # relógio do PIPELINE (vem do churn)
+    "snapshot_date_ultimo": "string",  # relógio do COLETOR (vem do churn)
+    "versao_contrato": "string",  # carimbo; mudança = descontinuidade de série
 }
+
+# --------------------------------------------------------------------------- #
+# Sinal 6 — pressão competitiva com decaimento por distância (BLK-MA-12)
+# --------------------------------------------------------------------------- #
+VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v4"
+
+# Raio de TRUNCAMENTO, não de alcance: quem define o alcance efetivo é a forma do kernel. 2.000 m
+# é o mesmo do `pressao_concorrencial_score_2km` da camada de mercado — manter o número igual é o
+# que torna os dois comparáveis.
+PRESSAO_RAIO_M = 2000.0
+
+# `linear` é o kernel do contrato de mercado (triangular, zero na borda). `potencia` é o molde do
+# Huff, disponível para sensibilidade mas NÃO default: o `beta` do Huff é re-calibrado a cada
+# rodada contra desfecho observado (1,845 no dimensionamento vs 0,5 na demanda revelada), e o score
+# de vulnerabilidade não tem desfecho contra o qual calibrar (§8: heurística, não modelo).
+KERNEIS_PRESSAO: tuple[str, ...] = ("linear", "potencia")
+PRESSAO_KERNEL_DEFAULT = "linear"
+PRESSAO_BETA_POTENCIA = 1.5
+PRESSAO_DIST_MIN_M = 50.0  # piso anti-divisão-por-zero do kernel de potência
+
+# GRÃOS possíveis da pressão (BLK-MA-14). `academia` é o default do pipeline desde então; `hex`
+# continua calculável e é o que a camada de mercado usa, mas NÃO é mais o grão do componente `v6`.
+PRESSAO_GRAO_ACADEMIA = "academia"
+PRESSAO_GRAO_HEX = "hex"
+PRESSAO_GRAOS: tuple[str, ...] = (PRESSAO_GRAO_ACADEMIA, PRESSAO_GRAO_HEX)
+
+# --------------------------------------------------------------------------- #
+# UNIVERSO DE OFERTA do sinal 6 (BLK-MA-16)
+# --------------------------------------------------------------------------- #
+# O `pressao_grao` responde "de ONDE se mediu"; estas constantes respondem "QUEM conta como
+# concorrência". São eixos independentes, e por isso dois carimbos e não um: o grão errado dá um
+# número preciso do lugar errado, o universo errado dá um número honesto de um mundo menor.
+#
+# `cadeias` é o universo HISTÓRICO (BLK-MA-12 a BLK-MA-15) e segue sendo o default. Não é escolha
+# de desenho: é o que `concorrentes_mapeados.parquet` contém — 4.499 pontos em 104 redes e **zero
+# independentes**, porque ele nasce dos coletores `unidades_*.csv`, que são feeds de CADEIA. A
+# consequência foi medida em SP (2026-08-14): **29,2% das independentes marcam pressão `0`**, e a
+# leitura de "território livre" ali é artefato do insumo, não do território. Uma independente
+# espremida entre oito independentes tem zero cadeia por perto e muita concorrência.
+#
+# ASSIMETRIA DECLARADA `[emenda BLK-MA-17 / DEC-034]`: o enum classifica a CATEGORIA que conta
+# (cadeia / independente), **não a procedência** dos pontos. Desde o BLK-MA-17 o bloco de cadeias
+# soma dois insumos — `concorrentes_mapeados.parquet` (feed de rede, o histórico) **e** as unidades
+# de REDE que o agregador lista e que `_filtrar_universo_sinal_1` corta antes do score. A categoria
+# não mudou, então o rótulo não muda; o que mudou foi a COBERTURA dela, e quem distingue as duas
+# rodadas é a VERSÃO (`pressao_competitiva_v2` -> `v3`), não um terceiro valor aqui.
+#
+# Por que não um terceiro valor: ele tocaria todos os asserts, a CLI e a leitura de todo parquet já
+# gravado, para exprimir uma distinção que a versão já carrega. Quem precisar do detalhe tem as duas
+# colunas de decomposição (`oferta_cadeias_do_feed`, `n_cadeias_do_feed_no_raio`), que dizem
+# exatamente quanto da oferta veio do agregador — o mesmo molde do G-D2: fato auditável ao lado do
+# número, antes de qualquer uso com peso.
+UNIVERSO_OFERTA_CADEIAS = "cadeias"
+UNIVERSO_OFERTA_COM_INDEPENDENTES = "cadeias_e_independentes"
+UNIVERSOS_OFERTA: tuple[str, ...] = (UNIVERSO_OFERTA_CADEIAS, UNIVERSO_OFERTA_COM_INDEPENDENTES)
+
+# Peso de uma unidade na oferta, por tipo. `0,5` para a independente é **decisão de produto de
+# Vinicius (2026-08-14)**, não estimativa: uma independente pressiona metade do que pressiona uma
+# unidade de rede. Ele age no NUMERADOR da oferta, antes da saturação.
+#
+# **O que este número NÃO controla:** a compressão do topo. Medida em SP, a amplitude entre os 200
+# mais pressionados cai de 7,74 para 4,19 pontos quando as independentes entram — e a causa é a
+# saturação `1 - 1/(1 + oferta)`, que empurra todo mundo ao teto quando a oferta cresce. Baixar
+# este peso alivia e não resolve; quem resolveria é trocar a saturação, que é justamente o que
+# torna o número comparável com `pressao_concorrencial_score_2km`. Registrado aqui para quem for
+# mexer no `0,5` esperando corrigir aquilo.
+PESO_OFERTA_CADEIA = 1.0
+PESO_OFERTA_INDEPENDENTE = 0.5
+
+# DEDUP entre fontes: a mesma academia listada em TotalPass e WellHub são DUAS chaves por
+# construção (§8.1, emenda BLK-MA-03) e contariam duas vezes na oferta.
+#
+# **NÃO CALIBRADO CONTRA DADO REAL, e isso é declarado de propósito:** em 2026-08-14 o feed do
+# TotalPass não existe nesta estação (`concorrentes/totalpass/csvs` vazio) e o snapshot tem só
+# WellHub, então não há par TP x WH para medir. O critério abaixo é ARBITRADO e travado por
+# fixtures; recalibrar na primeira coleta com as duas fontes é trabalho do BLK-MA-06.
+#
+# Por que distância pura, sem casar nome: o custo de errar é ASSIMÉTRICO. Não deduplicar dobra a
+# oferta de toda academia listada nas duas fontes — erro sistemático, em massa, invisível.
+# Deduplicar um par que na verdade eram dois vizinhos distintos subtrai `0,5` de oferta de um
+# ponto — erro local e pequeno. E casar por nome erraria para o outro lado: a MESMA academia sai
+# como "Academia X" num feed e "X Fitness" no outro.
+DEDUP_INDEPENDENTES_M = 50.0
+
+# Resolução H3 do bucket espacial da dedup (aresta ~29 m). Serve só para não comparar todos os
+# pares (19.329² = 373 M): o candidato é buscado na própria célula + um `grid_disk` de raio
+# DERIVADO do limiar, e a distância real decide. É detalhe de PERFORMANCE, não de contrato —
+# mudá-la não muda resultado, e é isso que o teste de equivalência contra a varredura completa
+# prova.
+DEDUP_H3_RES = 11
+
+# Anéis EXTRAS de folga sobre o `k` calculado. O `k` mínimo é derivado da aresta média da
+# resolução, e as células do H3 não são hexágonos regulares idênticos: a folga cobre a variação
+# real de tamanho sem depender de um literal. Custa vizinhos a mais na busca (barato) e evita o
+# modo de falha mais perigoso da dedup — deixar de deduplicar **em silêncio**, sem levantar nada.
+DEDUP_K_MARGEM_ANEIS = 1
+
+# --------------------------------------------------------------------------- #
+# DEDUP entre o feed do AGREGADOR e o parquet de cadeias `[BLK-MA-17 / DEC-034]`
+# --------------------------------------------------------------------------- #
+# As unidades de REDE que o WellHub lista (2.844 na semana `2026-33`, em 83 redes) são concorrência
+# REAL e hoje não pressionam ninguém: elas saem do universo do score por `_filtrar_universo_sinal_1`
+# e nunca foram insumo de oferta. Parte delas já está desenhada em `concorrentes_mapeados.parquet`
+# pelo feed do próprio site da rede — contá-las de novo dobraria a oferta daquele ponto. Daí a
+# dedup, e daí ela ter critério e limiar PRÓPRIOS.
+#
+# **Por que não reusar `DEDUP_INDEPENDENTES_M = 50`:** aquele limiar foi arbitrado para o par
+# TotalPass x WellHub, que compartilham a mesma geocodificação. Aqui o par é "site da rede" x "app
+# do WellHub" — duas geocodificações independentes do mesmo endereço, com desvio maior.
+#
+# **O CRITÉRIO é conjunção-disjunção, e não distância pura, porque o custo de errar é assimétrico
+# NOS DOIS SENTIDOS.** Unidades de rede que ENTRAM na oferta, por critério (medido em 2026-08-15
+# sobre o feed real, 2.844 unidades contra 4.366 pontos válidos):
+#
+# | limiar | dedup por distância PURA | dedup por (rede, d) | **ADOTADO** (rede OU piso 50 m) |
+# |---|---|---|---|
+# | 30 m | 1.629 entram | 1.637 | 1.418 |
+# | 50 m | 1.418 | 1.433 | 1.418 |
+# | 100 m | 1.239 | 1.268 | 1.257 |
+# | **150 m** | **1.134** | **1.179** | **1.171** |
+# | 200 m | 1.046 | 1.121 | 1.113 |
+# | 300 m | 834 | 946 | 938 |
+#
+#   - **Casar a `rede` salva 37 concorrentes REAIS** que a distância pura apagaria: unidades cujo
+#     único vizinho a menos de 150 m é pin de OUTRA rede. Apagar concorrente real é a direção exata
+#     do falso zero que a DEC-033 existe para matar. (São 45 as que têm só pin de outra rede por
+#     perto; 8 delas estão a menos de 50 m e o piso colapsa de qualquer forma -> líquido de 37.)
+#   - **O PISO de 50 m recupera 8 casos** de "mesmo endereço com slug de rede divergente" — o menor
+#     deles a **0,0 m**, inequivocamente o mesmo estabelecimento. Sem ele, contariam em dobro.
+#
+# O critério final — `(rede igual E d <= 150 m) OU (d <= 50 m)` — é estritamente mais conservador
+# que qualquer das duas variantes isoladas: a escolha NÃO é cosmética, e a coluna do meio da tabela
+# (a variante SEM o piso) é a que o handoff do Planner citou como `1.179`.
+DEDUP_CADEIA_FEED_M = 150.0
+DEDUP_CADEIA_FEED_PISO_M = 50.0
+
+# Frame de pressão POR ACADEMIA: 15 colunas, nesta ORDEM. É o insumo do `v6` desde o BLK-MA-14.
+#
+# POR QUE A CHAVE É `(fonte, chave_snapshot)` E NÃO SÓ A CHAVE: é o mesmo par que o score usa como
+# chave primária. `chave_snapshot` sozinha não é única — ela é derivada por fonte, e a mesma
+# academia listada em TotalPass e WellHub são duas linhas por construção (§8.1, emenda BLK-MA-03).
+#
+# **NÃO HÁ COORDENADA AQUI, e essa ausência é o contrato.** A latitude/longitude da academia entra
+# no CÁLCULO (é dela que a distância é medida) e morre na função: o que sai é o agregado. A
+# distinção entre CALCULAR e PERSISTIR é o que torna o grão de academia compatível com o §11 —
+# antes do BLK-MA-14 o docstring do módulo confundia as duas e dava a mudança como impossível.
+CONTRATO_COLUNAS_PRESSAO_ACADEMIA: dict[str, str] = {
+    "fonte": "string",
+    "chave_snapshot": "string",
+    "pressao_competitiva": "float64",  # [0, 100); mesma régua e mesma fórmula do grão hex
+    "v6": "float64",  # pressao/100 — o componente do §8.1
+    "oferta_ponderada": "float64",  # soma dos pesos, TOTAL; auditoria do decaimento
+    "n_concorrentes_no_raio": "int64",  # contagem CRUA, para comparar com a ponderada
+    "dist_concorrente_mais_proximo_m": "float64",
+    # DECOMPOSIÇÃO da oferta por tipo (BLK-MA-16). Zeradas no universo `cadeias`, onde não há
+    # independente para contar. Elas respondem a pergunta que o total esconde e que muda a tese de
+    # M&A: uma independente cercada de independentes é alvo diferente de uma cercada de Smart Fits.
+    "oferta_independentes": "float64",  # parte de `oferta_ponderada` vinda de independente
+    "n_independentes_no_raio": "int64",  # contagem CRUA das independentes (subconjunto da acima)
+    # DECOMPOSIÇÃO por PROCEDÊNCIA `[BLK-MA-17 / DEC-034]`, simétrica à de cima. Elas contam a parte
+    # da oferta de CADEIA que veio do agregador em vez do `concorrentes_mapeados.parquet` — a parte
+    # que, até este bloco, não existia no cálculo. É o que torna o carimbo `universo_oferta`
+    # auditável apesar de o rótulo dele não mencionar procedência (ver o comentário do enum).
+    "oferta_cadeias_do_feed": "float64",  # parte de `oferta_ponderada` vinda de rede do agregador
+    "n_cadeias_do_feed_no_raio": "int64",  # contagem CRUA delas (subconjunto de `n_concorrentes`)
+    "kernel_pressao": "string",  # carimbo: qual decaimento produziu o número
+    "raio_pressao_m": "float64",
+    "universo_oferta": "string",  # carimbo: QUEM contou como concorrência (UNIVERSOS_OFERTA)
+    "versao_contrato": "string",
+}
+
+# Frame de pressão por hex: 14 colunas, nesta ORDEM. O sufixo `_no_hex` das colunas 2-4 é
+# deliberado, no molde do `presenca_agregador`: a pressão é grandeza do TERRITÓRIO, e todas as
+# academias do mesmo hex herdam o mesmo valor pelo join.
+#
+# **ESTE FRAME DEIXOU DE SER O INSUMO DO `v6` no BLK-MA-14** — ele mede o território, e o §8.1
+# passou a exigir a unidade. Continua vivo e calculável: é a grandeza comparável com o
+# `pressao_concorrencial_score_2km` da camada de mercado, e é a única que faz sentido pintar num
+# mapa (uma cor cobre o hexágono inteiro). Quem o injetar em `calcular_score_vulnerabilidade`
+# recebe o score no grão antigo, com `pressao_grao = "hex"` carimbado na saída.
+CONTRATO_COLUNAS_PRESSAO: dict[str, str] = {
+    "hex_id_res7": "string",
+    "pressao_competitiva_no_hex": "float64",  # [0, 100); mesma régua do mercado
+    "v6_no_hex": "float64",  # pressao/100 — o componente do §8.1
+    "oferta_ponderada_no_hex": "float64",  # soma dos pesos, TOTAL; auditoria do decaimento
+    "n_concorrentes_no_raio": "int64",  # contagem CRUA, para comparar com a ponderada
+    "dist_concorrente_mais_proximo_m": "float64",
+    # Decomposição por tipo (BLK-MA-16), simétrica à do grão academia. A simetria é deliberada:
+    # os dois grãos compartilham `_oferta_por_origem`, e um schema que divergisse tornaria a
+    # comparação entre eles — que é a razão de o grão hex continuar vivo — silenciosamente falsa.
+    "oferta_independentes_no_hex": "float64",
+    "n_independentes_no_raio": "int64",
+    # Procedência da oferta de CADEIA `[BLK-MA-17 / DEC-034]`, simétrica à do grão academia — pela
+    # mesma razão de sempre: os dois grãos compartilham `_oferta_por_origem`, e um schema divergente
+    # tornaria silenciosamente falsa a comparação entre eles.
+    "oferta_cadeias_do_feed_no_hex": "float64",
+    "n_cadeias_do_feed_no_raio": "int64",
+    "kernel_pressao": "string",  # carimbo: qual decaimento produziu o número
+    "raio_pressao_m": "float64",
+    "universo_oferta": "string",  # carimbo: QUEM contou como concorrência (UNIVERSOS_OFERTA)
+    "versao_contrato": "string",
+}
+
+# --------------------------------------------------------------------------- #
+# Lista priorizada de alvos de M&A (D5/D6) — BLK-MA-05
+# --------------------------------------------------------------------------- #
+VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v4"
+
+# Gate D5 (ratificado em 2026-07-23; reabrir exige DEC). A INVERSÃO do §2 mora aqui: comprar quer
+# demanda ALTA + residual BAIXO, o OPOSTO de `abrir_agora`.
+QUANTIL_SAM_QUENTE = 0.75
+LIMIAR_RESIDUAL_SATURADO = 25.0
+ADJACENCIA_HEX_QUENTE_K = 1
+
+# Colunas do M1/mercado que a camada de M&A LÊ da carteira e nunca reescreve. As 5 primeiras são as
+# que o §9 manda verificar; as 5 últimas são as invariantes do molde
+# `enriquecer_dataframe_com_residual` — se o join mexer numa delas, o assert derruba.
+COLUNAS_HOTNESS_CARTEIRA: tuple[str, ...] = (
+    "uf",
+    "sam_fitness_potencial",
+    "score_oportunidade_residual",
+    "oferta_efetiva_disponivel",
+    "tese_entrada",
+)
+COLUNAS_M1_INVARIANTES: tuple[str, ...] = (
+    "score_priorizacao",
+    "rank_brasil",
+    "rank_uf",
+    "rank_carteira_brasil",
+    "rank_carteira_uf",
+)
+
+# Camada scored (D6), grão ACADEMIA: as do score + hotness + as invariantes do M1, propagadas
+# para auditoria. `hex_quente` é o nome que o §10 usa e que `score.py` reserva em
+# `_COLUNAS_PROIBIDAS_MA05` — é aqui, e só aqui, que ele passa a existir.
+CONTRATO_COLUNAS_ACADEMIAS_MA: dict[str, str] = {
+    "chave_snapshot": "string",
+    "fonte": "string",
+    "hex_id_res7": "string",
+    "status_churn": "string",
+    "nota_wellhub": "Float64",
+    "qtd_avaliacoes_wellhub": "Int64",
+    "sinais_disponiveis": "string",
+    "n_sinais_disponiveis": "int64",
+    "score_vulnerabilidade": "float64",
+    "score_vulnerabilidade_ordenavel": "float64",
+    "flag_serie_imatura": "bool",
+    "flag_score_provisorio": "bool",
+    "hex_quente": "bool",  # o hex da academia satisfaz a conjunção do D5
+    "hex_quente_vizinho": "bool",  # algum vizinho `grid_disk(k=1)` e' quente
+    "proximo_de_hex_quente": "bool",  # a disjuncao do §9: o proprio OU um vizinho
+    # SINAL 6 (BLK-MA-12) — PROPAGADO do score, onde ele é componente com peso desde que o insumo
+    # de pressão seja fornecido. Esta camada não recalcula nada: só carrega para o entregável.
+    # Nulo quando o score foi calculado sem `pressao=` — ausência de cálculo, não pressão zero.
+    "pressao_competitiva": "Float64",
+    "pressao_grao": "string",
+    "universo_oferta": "string",  # carimbo do BLK-MA-16, propagado junto com o grao
+    "v6": "float64",
+    "uf": "string",
+    "sam_fitness_potencial": "float64",
+    "score_oportunidade_residual": "float64",
+    "oferta_efetiva_disponivel": "float64",
+    "tese_entrada": "string",
+    "score_priorizacao": "float64",  # PROPAGADO do M1, nunca recalculado
+    "versao_contrato": "string",
+}
+
+# Lista curada (D6), grão (HEX x REGIME). O §10 traz um cabeçalho de EXEMPLO, não normativo; duas
+# diferenças deliberadas em relação a ele, ambas exigidas pela emenda BLK-MA-04-FU1:
+#   1. `sinais_disponiveis` entra ao lado de `n_sinais_disponiveis`. Segmentar só pelo CONTADOR
+#      ainda mistura réguas: `{s1,s3}` e `{s3,s4}` têm ambos `n = 2` e renormalizações diferentes.
+#      A composição é a chave estrita; o contador fica por legibilidade e ordenação.
+#   2. A linha é (hex, regime), não (hex). Uma média que atravessa regimes mistura réguas ANTES de
+#      qualquer `sort` — a obrigação do FU1 vale para a AGREGAÇÃO, não só para a ordenação.
+CONTRATO_COLUNAS_ALVOS_MA: dict[str, str] = {
+    "hex_id_res7": "string",
+    "uf": "string",
+    "sinais_disponiveis": "string",
+    "n_sinais_disponiveis": "int64",
+    "n_independentes_vulneraveis": "int64",
+    "score_vulnerabilidade_medio": "float64",
+    "score_vulnerabilidade_max": "float64",
+    "sam_fitness_potencial": "float64",
+    "score_oportunidade_residual": "float64",
+    "hex_quente": "bool",
+    "proximo_de_hex_quente": "bool",
+    "flag_serie_imatura": "bool",
+    "n_com_nota_wellhub": "int64",  # FATO sem peso (DEC-026): a nota anda com a contagem
+    "nota_wellhub_mediana": "Float64",
+    # AGREGADOS do grao ACADEMIA (BLK-MA-14): a media e o maximo da pressao entre as academias
+    # do hex. Deixou de ser `first`, e a mudanca e' obrigatoria, nao estetica — com pressao por
+    # unidade a variancia DENTRO do hex passa a existir (amplitude media medida: 14,9 pontos), e
+    # `first` devolveria a linha que o `groupby` viu primeiro como se fosse o hex inteiro.
+    "pressao_competitiva_media": "Float64",
+    "pressao_competitiva_max": "Float64",
+    "v6_medio": "Float64",
+    "versao_contrato": "string",
+}
+
+# --------------------------------------------------------------------------- #
+# Variante NOMEADA (D1-B) — BLK-MA-15
+# --------------------------------------------------------------------------- #
+VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v5"
+
+# O UNICO contrato desta camada que carrega IDENTIDADE e COORDENADA, autorizado pela emenda de
+# 2026-08-14 a DEC-028 (decidida por Vinicius). Grao: uma linha por academia.
+#
+# O ARTEFATO NASCE GITIGNORED (`data/staging/`), como o D1 exige desde o inicio — e
+# `_assert_destino_gitignored` transforma isso em codigo, porque `data/outputs/` e' apenas
+# PARCIALMENTE versionado e um caminho errado ali poria 19 mil estabelecimentos no historico do
+# git, onde um `git rm` depois nao os apaga.
+#
+# `lat`/`lng` sao NULAVEIS de proposito: academia com score e sem coordenada ENTRA no artefato, so'
+# nao e' desenhavel. Descarta-la esconderia um alvo por acidente de coleta.
+CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
+    "fonte": "string",
+    "chave_snapshot": "string",
+    "nome": "string",  # IDENTIDADE — o ponto do artefato (emenda DEC-028)
+    "lat": "Float64",  # nulavel: sem coordenada a academia existe, so' nao tem pin
+    "lng": "Float64",
+    "hex_id_res7": "string",
+    "status_churn": "string",
+    "nota_wellhub": "Float64",  # FATO sem peso (DEC-026); anda SEMPRE com a contagem ao lado
+    "qtd_avaliacoes_wellhub": "Int64",
+    "v6": "float64",
+    "pressao_competitiva": "Float64",
+    "pressao_grao": "string",  # `academia` desde a DEC-029
+    "universo_oferta": "string",  # `cadeias_e_independentes` desde a DEC-033
+    # AUDITORIA DA PRESSAO NA TELA (BLK-MA-18). Elas nao entram em conta nenhuma: existem porque a
+    # pressao SOZINHA nao e' legivel. A saturacao `100(1-1/(1+o))` gasta METADE da escala numa
+    # unica unidade equivalente, entao `40,4` significa "0,68 concorrentes efetivos" e nao "40% de
+    # pressao" — leitura que um numero de 0 a 100 num pin praticamente convida a fazer.
+    # Com a contagem ao lado, o operador confere no mapa: conta os pins e o numero fecha.
+    "n_concorrentes_no_raio": "Int64",  # contagem CRUA no raio (nulavel: sem pressao, sem contagem)
+    "n_independentes_no_raio": "Int64",  # quantos daqueles sao independentes (o resto e' cadeia)
+    # `[BLK-MA-17 / DEC-034]` Quantos dos `n_concorrentes_no_raio` sao unidades de REDE vindas do
+    # agregador. Ela existe porque o tooltip promete conferencia visual ("conta os pins e o numero
+    # fecha") e essas unidades **nao tem pin desenhado** no piloto: o mapa so' desenha os pins de
+    # cadeia do funil e as independentes nomeadas. A coluna DECLARA o tamanho da lacuna em vez de
+    # deixar a contagem nao bater sem explicacao. `Int64` (nulavel), como as duas contagens acima —
+    # ausencia de medicao e' nula, nunca zero.
+    "n_cadeias_do_feed_no_raio": "Int64",
+    "oferta_ponderada": "Float64",  # concorrentes EFETIVOS (ja' com o decaimento)
+    "dist_concorrente_mais_proximo_m": "Float64",  # responde "quao perto", que a soma esconde
+    "sinais_disponiveis": "string",
+    "n_sinais_disponiveis": "int64",
+    "score_vulnerabilidade": "float64",
+    "score_vulnerabilidade_ordenavel": "float64",
+    "flag_score_provisorio": "bool",
+    "versao_contrato": "string",
+}
+
+# `[BLK-MA-17 metade 1 / DEC-035]` Artefato NOMEADO das unidades de REDE do agregador.
+#
+# Ele existe porque as 2.844 unidades de rede que o WellHub lista entram na OFERTA do sinal 6 desde
+# a DEC-034 e nao aparecem em lugar nenhum da tela — `_filtrar_universo_sinal_1` as corta antes do
+# score, e a camada de exibicao herdou esse corte sem ter a mesma razao para te-lo: o que nao serve
+# para rede e' a REGUA DE SCORE, nao a leitura.
+#
+# **FATO SIM, SCORE NAO.** Nao ha `score_vulnerabilidade` nem `score_vulnerabilidade_ordenavel`
+# aqui, e a ausencia e' a decisao, nao um esquecimento: S1 e S3 medem outra coisa numa rede. A
+# negociacao com o agregador e' CENTRALIZADA, e o S3 e' correlacionado — top 5 = 48,4% das unidades,
+# maximo 440 numa rede so'. Quando a Panobianco sair do WellHub, 440 unidades viram `sumiu_recente`
+# no mesmo dia e o score leria um evento de negociacao como 440 alvos. O S6 nao tem esse defeito: e'
+# geografico e nao sabe se a academia e' de rede. Molde do G-D2 e da DEC-026 — o fato entra antes do
+# peso.
+VERSAO_CONTRATO_REDES_NOMEADAS = "redes_ma_nomeadas_v2"
+
+CONTRATO_COLUNAS_REDES_NOMEADAS: dict[str, str] = {
+    "fonte": "string",
+    "chave_snapshot": "string",
+    "nome": "string",  # IDENTIDADE — mesmo regime do nomeado de independentes (emenda DEC-028)
+    "rede": "string",  # o que distingue este artefato do outro; nunca `independente`
+    "lat": "Float64",
+    "lng": "Float64",
+    "hex_id_res7": "string",
+    # FATOS SEM PESO, os mesmos tres que a DEC-035 autoriza propagar.
+    "status_churn": "string",
+    "nota_wellhub": "Float64",
+    "qtd_avaliacoes_wellhub": "Int64",
+    # O SINAL 6 e a auditoria dele. `v6` fica DE FORA de proposito: ele e' o componente normalizado
+    # que alimenta um score que este artefato nao emite, e sozinho seria `pressao/100` — redundante
+    # e sugerindo um composto que nao existe aqui.
+    "pressao_competitiva": "Float64",
+    "pressao_grao": "string",
+    "universo_oferta": "string",
+    "n_concorrentes_no_raio": "Int64",
+    "n_independentes_no_raio": "Int64",
+    "n_cadeias_do_feed_no_raio": "Int64",
+    "oferta_ponderada": "Float64",
+    "dist_concorrente_mais_proximo_m": "Float64",
+    # PRECEDENCIA DE PIN, herdada de graca da dedup da DEC-034 e por isso nao e' regra nova: as
+    # sobreviventes sao, POR CONSTRUCAO, exatamente as unidades sem ponto equivalente em
+    # `concorrentes_mapeados` — logo as unicas sem pin ja' desenhado no funil. `True` = desenhar pin
+    # proprio; `False` = o pin do funil ja' cobre aquele endereco, e desenhar outro criaria dois
+    # pins no mesmo lugar.
+    "tem_pin_proprio": "boolean",
+    "versao_contrato": "string",
+}
+
+# `[BLK-MA-17-FU4 / emenda DEC-034]` Resolucao do bucket da passagem por NOME.
+#
+# A dedup por distancia usa `DEDUP_H3_RES = 11` (aresta 28,66 m), que e' certa para limiares de
+# dezenas de metros. Para os 1.200 m do casamento por nome ela custaria `grid_disk(k=31)` -- 2.977
+# celulas por ponto. Na resolucao 8 (aresta 531 m) o mesmo alcance sai com `k=4`, 61 celulas: 49x
+# menos varredura para a MESMA cobertura.
+DEDUP_NOME_H3_RES = 8
 
 # Colunas PROIBIDAS nos artefatos desta camada (rede de segurança do teste anti-PII: a limpeza é
 # por construção, projetando só as 10 colunas do contrato).
@@ -617,9 +1059,7 @@ def renormalizar_pesos(disponiveis: Sequence[str]) -> dict[str, float]:
     pedidos = {str(s) for s in disponiveis}
     desconhecidos = sorted(pedidos - set(SINAIS_ORDEM))
     if desconhecidos:
-        raise ValueError(
-            f"sinal fora de SINAIS_ORDEM {list(SINAIS_ORDEM)}: {desconhecidos}"
-        )
+        raise ValueError(f"sinal fora de SINAIS_ORDEM {list(SINAIS_ORDEM)}: {desconhecidos}")
     presentes = [s for s in SINAIS_ORDEM if s in pedidos]
     if not presentes:
         return {}
@@ -664,6 +1104,40 @@ __all__ = [
     "SINAIS_INATIVOS",
     "PESOS_ALVO_SINAIS",
     "V3_POR_STATUS_CHURN",
+    "VERSAO_CONTRATO_PRESSAO",
+    "PRESSAO_RAIO_M",
+    "PRESSAO_KERNEL_DEFAULT",
+    "PRESSAO_BETA_POTENCIA",
+    "PRESSAO_DIST_MIN_M",
+    "KERNEIS_PRESSAO",
+    "CONTRATO_COLUNAS_PRESSAO",
+    "CONTRATO_COLUNAS_PRESSAO_ACADEMIA",
+    "PRESSAO_GRAOS",
+    "PRESSAO_GRAO_ACADEMIA",
+    "PRESSAO_GRAO_HEX",
+    "UNIVERSOS_OFERTA",
+    "UNIVERSO_OFERTA_CADEIAS",
+    "UNIVERSO_OFERTA_COM_INDEPENDENTES",
+    "PESO_OFERTA_CADEIA",
+    "PESO_OFERTA_INDEPENDENTE",
+    "DEDUP_INDEPENDENTES_M",
+    "DEDUP_H3_RES",
+    "DEDUP_NOME_H3_RES",
+    "DEDUP_K_MARGEM_ANEIS",
+    "DEDUP_CADEIA_FEED_M",
+    "DEDUP_CADEIA_FEED_PISO_M",
+    "VERSAO_CONTRATO_ALVOS_MA",
+    "QUANTIL_SAM_QUENTE",
+    "LIMIAR_RESIDUAL_SATURADO",
+    "ADJACENCIA_HEX_QUENTE_K",
+    "COLUNAS_HOTNESS_CARTEIRA",
+    "COLUNAS_M1_INVARIANTES",
+    "CONTRATO_COLUNAS_ACADEMIAS_MA",
+    "CONTRATO_COLUNAS_ALVOS_MA",
+    "CONTRATO_COLUNAS_ALVOS_NOMEADOS",
+    "VERSAO_CONTRATO_ALVOS_NOMEADOS",
+    "CONTRATO_COLUNAS_REDES_NOMEADAS",
+    "VERSAO_CONTRATO_REDES_NOMEADAS",
     "COLUNAS_PII_PROIBIDAS",
     "normalizar_texto",
     "normalizar_lista",

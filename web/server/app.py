@@ -106,6 +106,20 @@ CRESCIMENTO_PATH = STAGING_DIR / "crescimento_municipal.parquet"
 # que colore o mapa no passo 4: quem decide olha taxa de crescimento, nao emprego
 # formal do municipio (que segue no painel, onde ele faz sentido).
 CRESCIMENTO_HEX_PATH = STAGING_DIR / "crescimento_hex.parquet"
+# Academias INDEPENDENTES com identidade + score de vulnerabilidade (BLK-MA-15). Camada PARALELA e
+# OPCIONAL: sem o arquivo, os pins simplesmente nao aparecem.
+#
+# POR QUE ELE E' SEPARADO DOS PINS DE CONCORRENTE, e nao mais uma rede na mesma lista: sao
+# universos com semanticas OPOSTAS. Os 4.499 pins de concorrente sao CADEIAS (Smart Fit, Skyfit...)
+# — quem disputa o mercado com a Ultra. Estes sao independentes — quem se COMPRA. A intersecao
+# entre os dois e' VAZIA por construcao (medido 2026-08-14), porque o universo de M&A exclui
+# cadeias: sem esse filtro a Smart Fit entraria na lista de alvos de aquisicao.
+#
+# Vive em `data/staging/` (gitignored) porque carrega IDENTIDADE — autorizada pela emenda de
+# 2026-08-14 a DEC-028, que reverteu a proibicao da variante NOMEADA no piloto.
+NOMEADAS_PATH = STAGING_DIR / "vulnerabilidade_ma_nomeadas.parquet"
+# `[BLK-MA-17 metade 1 / DEC-035]` Unidades de REDE do agregador: pressao + fatos, SEM score.
+REDES_PATH = STAGING_DIR / "vulnerabilidade_ma_redes.parquet"
 
 # O que o piloto realmente consome do artefato municipal. Lido de forma defensiva:
 # coluna ausente some do subset em vez de derrubar a rota.
@@ -466,6 +480,204 @@ def carregar_crescimento() -> pd.DataFrame | None:
     df = pd.read_parquet(CRESCIMENTO_PATH, columns=cols)
     df["cod6"] = df["cod6"].astype(str).str.zfill(6)
     return df
+
+
+# O que o pin consome do artefato nomeado. `chave_snapshot` NAO entra: e' rastreabilidade
+# interna e nao tem uso na tela.
+_COLS_NOMEADAS = [
+    "nome",
+    "lat",
+    "lng",
+    "hex_id_res7",
+    "score_vulnerabilidade",
+    "score_vulnerabilidade_ordenavel",
+    "pressao_competitiva",
+    "pressao_grao",
+    "nota_wellhub",
+    "qtd_avaliacoes_wellhub",
+    "sinais_disponiveis",
+    "flag_score_provisorio",
+    # AUDITORIA da pressao (BLK-MA-18). Sem ela o numero da pressao nao e' conferivel: a saturacao
+    # gasta METADE da escala numa unica unidade equivalente, entao `40,4` significa "0,68
+    # concorrentes efetivos", e nao "40% de pressao". Com a contagem ao lado, o operador confere
+    # olhando o proprio mapa.
+    "n_concorrentes_no_raio",
+    "n_independentes_no_raio",
+    # `[BLK-MA-17 metade 1 / DEC-035]` A terceira parcela da conta. Ela existia no artefato desde a
+    # DEC-034 e NAO chegava a' tela: sem ela `n_conc` nao fecha com `n_indep` + pins de cadeia, e a
+    # explicacao nao esta em lugar nenhum. Medido (regua do FU4): 5.451 de 19.329 linhas (28,2%)
+    # tem valor > 0 -- eram 7.218 (37,3%) antes de o FU4 colapsar 320 duplicatas por nome.
+    "n_cadeias_do_feed_no_raio",
+    "oferta_ponderada",
+    "dist_concorrente_mais_proximo_m",
+]
+
+
+@functools.lru_cache(maxsize=1)
+def carregar_independentes() -> pd.DataFrame | None:
+    """Academias independentes com identidade e score. READ-ONLY e OPCIONAL.
+
+    Ausente = os pins nao aparecem (molde de `carregar_crescimento_hex`). O arquivo so' existe onde
+    alguem materializou a variante NOMEADA com `--saida-nomeadas`; em maquina sem ela, o piloto
+    abre exatamente como antes.
+    """
+    if not NOMEADAS_PATH.exists():
+        return None
+    import pyarrow.parquet as pq
+
+    disponiveis = set(pq.read_schema(NOMEADAS_PATH).names)
+    cols = [c for c in _COLS_NOMEADAS if c in disponiveis]
+    if "lat" not in cols or "hex_id_res7" not in cols:
+        return None
+    df = pd.read_parquet(NOMEADAS_PATH, columns=cols)
+    df["hex_id_res7"] = df["hex_id_res7"].astype(str)
+    # Sem coordenada nao ha pin. A academia continua existindo no artefato (ela tem score); o que
+    # nao existe e' o desenho.
+    return df[df["lat"].notna() & df["lng"].notna()]
+
+
+# `[BLK-MA-17 metade 1 / DEC-035]` Margem do recorte de pins, em metros.
+#
+# O PORQUE: a auditoria do pin promete "conta os pins no mapa e o numero fecha", e ela JA' NAO
+# FECHAVA antes desta epic -- 16,4% de quebra medida em SP (4.862 de 5.819 nomeadas). A causa e'
+# estrutural: as camadas de pin filtram por `hex_id_res7 ∈ sel`, ou seja pelo MUNICIPIO, enquanto o
+# raio de 2 km da pressao atravessa divisa municipal livremente. Quem esta' do outro lado da divisa
+# CONTA na pressao e NAO era desenhado.
+#
+# A margem e' o proprio raio da pressao: qualquer ponto que possa entrar na conta de alguem do
+# recorte tem de ser desenhavel. Maior que isso so' adicionaria pins que nao entram em conta nenhuma.
+PIN_MARGEM_M = 2000.0
+_GRAU_LAT_M = 111_320.0
+
+
+def _bbox_com_margem(sel: pd.DataFrame, metros: float = PIN_MARGEM_M) -> tuple[float, float, float, float]:
+    """Bbox do recorte expandido por `metros`. Devolve `(lat_min, lat_max, lng_min, lng_max)`."""
+    lat_min, lat_max = float(sel["lat"].min()), float(sel["lat"].max())
+    lng_min, lng_max = float(sel["lng"].min()), float(sel["lng"].max())
+    d_lat = metros / _GRAU_LAT_M
+    # O grau de longitude encurta com a latitude; usa-se a borda MAIS DISTANTE do equador, que da'
+    # a margem maior — errar para mais desenha um pin a' toa, errar para menos reabre o defeito.
+    cos_lat = math.cos(math.radians(max(abs(lat_min), abs(lat_max))))
+    d_lng = metros / (_GRAU_LAT_M * max(cos_lat, 0.01))
+    return lat_min - d_lat, lat_max + d_lat, lng_min - d_lng, lng_max + d_lng
+
+
+def _pins_independentes(sel: pd.DataFrame) -> dict[str, Any]:
+    """Pins das independentes do recorte + a auditoria do que ficou de fora.
+
+    `truncado` NAO e' enfeite: o teto corta por `head()`, e corte silencioso num municipio grande
+    mentiria sobre a densidade — o mesmo defeito que o teto de pins de concorrente ja registrou.
+    """
+    base = carregar_independentes()
+    if base is None or base.empty:
+        return {"itens": [], "disponivel": False, "total": 0, "truncado": False}
+
+    hexes = set(sel["hex_id"].astype(str))
+    # Recorte = hexes do municipio UNIAO o que cai na margem do raio (ver `PIN_MARGEM_M`): sem a
+    # segunda parte, quem esta' do outro lado da divisa conta na pressao e nao aparece no mapa.
+    lat_min, lat_max, lng_min, lng_max = _bbox_com_margem(sel)
+    na_margem = base["lat"].between(lat_min, lat_max) & base["lng"].between(lng_min, lng_max)
+    no_recorte = base[base["hex_id_res7"].isin(hexes) | na_margem]
+    total = int(len(no_recorte))
+    recorte = no_recorte.head(COMPETITOR_PIN_LIMIT)
+
+    itens = [
+        {
+            "lat": _num(t.lat, 6),
+            "lng": _num(t.lng, 6),
+            "nome": _clean(getattr(t, "nome", "")),
+            # `score` e' o do §8.4 — sempre preenchido quando ha >= 1 sinal. `ordenavel` e' nulo no
+            # regime provisorio (G-D1), e a tela precisa dos DOIS: um diz o numero, o outro diz se
+            # ele pode ordenar.
+            "score": _num(getattr(t, "score_vulnerabilidade", None), 1),
+            "ordenavel": _num(getattr(t, "score_vulnerabilidade_ordenavel", None), 1),
+            "pressao": _num(getattr(t, "pressao_competitiva", None), 1),
+            # Nota e contagem SEMPRE juntas (DEC-026): nota sem contagem ao lado poe no topo
+            # academias cujo sinal sao tres avaliacoes.
+            "nota": _num(getattr(t, "nota_wellhub", None), 1),
+            "n_aval": _inteiro_ou_nulo(getattr(t, "qtd_avaliacoes_wellhub", None)),
+            "regime": _texto(getattr(t, "sinais_disponiveis", None)),
+            "provisorio": bool(getattr(t, "flag_score_provisorio", False)),
+            # A CONTA por tras da pressao. `n_conc` e' o que da' para contar no mapa; `oferta` e' o
+            # mesmo conjunto depois do decaimento — a diferenca entre os dois E' a distancia.
+            "n_conc": _inteiro_ou_nulo(getattr(t, "n_concorrentes_no_raio", None)),
+            "n_indep": _inteiro_ou_nulo(getattr(t, "n_independentes_no_raio", None)),
+            "n_cadeias_feed": _inteiro_ou_nulo(getattr(t, "n_cadeias_do_feed_no_raio", None)),
+            "oferta": _num(getattr(t, "oferta_ponderada", None), 2),
+            "dist_m": _num(getattr(t, "dist_concorrente_mais_proximo_m", None), 0),
+        }
+        for t in recorte.itertuples(index=False)
+    ]
+    return {
+        "itens": itens,
+        "disponivel": True,
+        "total": total,
+        "truncado": total > len(itens),
+    }
+
+
+# O que o pin de REDE consome. Note o que NAO esta aqui: `score_vulnerabilidade` e
+# `score_vulnerabilidade_ordenavel`. A DEC-035 decidiu que unidade de rede recebe FATO e PRESSAO,
+# nunca score composto -- S1 mede politica comercial (a negociacao com o agregador e' centralizada)
+# e S3 e' correlacionado (top 5 = 48,4% das unidades, max 440 numa rede).
+_COLS_REDES = [
+    "nome",
+    "rede",
+    "lat",
+    "lng",
+    "hex_id_res7",
+    "pressao_competitiva",
+    "pressao_grao",
+    "nota_wellhub",
+    "qtd_avaliacoes_wellhub",
+    "status_churn",
+    "n_concorrentes_no_raio",
+    "n_independentes_no_raio",
+    "n_cadeias_do_feed_no_raio",
+    "oferta_ponderada",
+    "dist_concorrente_mais_proximo_m",
+    "tem_pin_proprio",
+]
+
+
+@functools.lru_cache(maxsize=1)
+def carregar_redes() -> pd.DataFrame | None:
+    """Unidades de REDE do agregador com identidade e pressao. READ-ONLY e OPCIONAL.
+
+    Mesmo regime do `carregar_independentes`: ausente = os pins nao aparecem, e o piloto abre
+    exatamente como antes. So' existe onde alguem materializou com `--saida-redes`.
+
+    **Filtra por `tem_pin_proprio`**, e isso e' a preferencia de pin da DEC-035, nao um filtro de
+    conveniencia: as unidades com `False` COLAPSARAM contra um ponto de `concorrentes_mapeados` na
+    dedup da DEC-034/FU4, ou seja ja' tem bandeira desenhada naquele endereco. Desenha-las de novo
+    criaria duas bandeiras no mesmo lugar -- que, desde que estas unidades passaram a usar a MESMA
+    forma dos demais concorrentes, deixou de ser um detalhe interno e virou erro visivel no mapa.
+
+    Quem consome e' `_montar_pins`: elas entram na lista `pins.concorrentes`, com `diag: True`.
+    Nao ha camada separada nem chave de liga/desliga -- concorrencia instalada nao e' opcional.
+    """
+    if not REDES_PATH.exists():
+        return None
+    import pyarrow.parquet as pq
+
+    disponiveis = set(pq.read_schema(REDES_PATH).names)
+    cols = [c for c in _COLS_REDES if c in disponiveis]
+    if "lat" not in cols or "hex_id_res7" not in cols or "tem_pin_proprio" not in cols:
+        return None
+    df = pd.read_parquet(REDES_PATH, columns=cols)
+    df["hex_id_res7"] = df["hex_id_res7"].astype(str)
+    df = df[df["lat"].notna() & df["lng"].notna()]
+    return df[df["tem_pin_proprio"].fillna(False).astype(bool)]
+
+
+def _inteiro_ou_nulo(v: Any) -> int | None:
+    """Inteiro JSON-safe; ausencia continua ausencia (nunca `0`, que seria uma afirmacao)."""
+    if v is None or (isinstance(v, float) and v != v) or v is pd.NA:
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
 
 @functools.lru_cache(maxsize=2)
@@ -917,30 +1129,74 @@ def _svg_data_uri(svg: str) -> str:
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
 
 
-def _quadrado_logo(logo_path: Path | None, bg: str) -> str | None:
-    """Quadrado branco arredondado com a logo PNG encaixada. None se o PNG faltar."""
+# `[BLK-MA-17 metade 1]` Cor do HALO que marca "esta unidade tem diagnostico".
+#
+# NAO pode ser a borda do quadrado: aquela ja' carrega a cor da REDE (7 px de stroke), e sobrescreve-la
+# apagaria a identidade da marca. NAO pode ser ciano (`--ac: #35c9d6`): e' a Ultra e o contorno de
+# selecao. NAO pode ser amarelo/verde/vermelho: sao a escala de score dos hexagonos. Sobra um claro
+# neutro -- e o RESPIRO escuro entre ele e a borda da rede e' o que impede a leitura de "borda dupla".
+HALO_DIAGNOSTICO = "#E8EEF5"
+
+# Sufixo da chave do icone com halo no dicionario `pins.icones`. O front resolve
+# `iconObjs[rede + SUFIXO]` quando o pin tem `diag`, e cai no icone normal se faltar.
+SUFIXO_ICONE_DIAG = "__diag"
+
+
+def _quadrado_logo(logo_path: Path | None, bg: str, *, halo: bool = False) -> str | None:
+    """Quadrado branco arredondado com a logo PNG encaixada. None se o PNG faltar.
+
+    `halo=True` desenha um anel externo separado por um respiro transparente (que sobre o mapa
+    escuro aparece escuro). O viewBox cresce de 128 para 160 e o quadrado e' deslocado para o
+    centro, entao o icone com halo precisa de `getSize` proporcionalmente maior para o QUADRADO
+    sair do mesmo tamanho -- 38 contra 30, que e' o que o `HexMap` faz.
+    """
     if logo_path is None or not logo_path.exists():
         return None
     try:
         png = base64.b64encode(logo_path.read_bytes()).decode("ascii")
     except Exception:  # noqa: BLE001
         return None
+    if not halo:
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+            'width="128" height="128" viewBox="0 0 128 128">'
+            f'<rect x="4" y="4" width="120" height="120" rx="26" fill="#FFFFFF" stroke="{bg}" stroke-width="7"/>'
+            f'<image href="data:image/png;base64,{png}" x="18" y="18" width="92" height="92" '
+            'preserveAspectRatio="xMidYMid meet"/></svg>'
+        )
+        return _svg_data_uri(svg)
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
-        'width="128" height="128" viewBox="0 0 128 128">'
-        f'<rect x="4" y="4" width="120" height="120" rx="26" fill="#FFFFFF" stroke="{bg}" stroke-width="7"/>'
-        f'<image href="data:image/png;base64,{png}" x="18" y="18" width="92" height="92" '
+        'width="160" height="160" viewBox="0 0 160 160">'
+        # anel externo: o destaque. `fill=none` deixa o respiro transparente.
+        f'<rect x="7" y="7" width="146" height="146" rx="36" fill="none" '
+        f'stroke="{HALO_DIAGNOSTICO}" stroke-width="7" stroke-opacity="0.92"/>'
+        # o quadrado da rede, identico ao normal, deslocado 16 px para o centro
+        f'<rect x="20" y="20" width="120" height="120" rx="26" fill="#FFFFFF" stroke="{bg}" stroke-width="7"/>'
+        f'<image href="data:image/png;base64,{png}" x="34" y="34" width="92" height="92" '
         'preserveAspectRatio="xMidYMid meet"/></svg>'
     )
     return _svg_data_uri(svg)
 
 
-def _quadrado_sigla(short: str, bg: str, fg: str) -> str:
+def _quadrado_sigla(short: str, bg: str, fg: str, *, halo: bool = False) -> str:
+    """Fallback quando a rede nao tem PNG. Hoje as 107 tem, mas o caminho continua vivo."""
+    sigla = _clean(short)[:3] or "C"
+    if not halo:
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">'
+            f'<rect x="4" y="4" width="120" height="120" rx="26" fill="{bg}" stroke="#FFFFFF" stroke-width="7"/>'
+            f'<text x="64" y="83" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" '
+            f'font-size="46" font-weight="800" fill="{fg}">{sigla}</text></svg>'
+        )
+        return _svg_data_uri(svg)
     svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">'
-        f'<rect x="4" y="4" width="120" height="120" rx="26" fill="{bg}" stroke="#FFFFFF" stroke-width="7"/>'
-        f'<text x="64" y="83" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" '
-        f'font-size="46" font-weight="800" fill="{fg}">{_clean(short)[:3] or "C"}</text></svg>'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">'
+        f'<rect x="7" y="7" width="146" height="146" rx="36" fill="none" '
+        f'stroke="{HALO_DIAGNOSTICO}" stroke-width="7" stroke-opacity="0.92"/>'
+        f'<rect x="20" y="20" width="120" height="120" rx="26" fill="{bg}" stroke="#FFFFFF" stroke-width="7"/>'
+        f'<text x="80" y="99" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" '
+        f'font-size="46" font-weight="800" fill="{fg}">{sigla}</text></svg>'
     )
     return _svg_data_uri(svg)
 
@@ -949,8 +1205,8 @@ def _quadrado_sigla(short: str, bg: str, fg: str) -> str:
 # COMPETITOR_LOGO_FILES, entao `_quadrado_logo(None, ...)` curto-circuitava sem custo. Agora as 107
 # tem `logo_<slug>.png`, e cada MISS custa Path.exists() + read_bytes() + base64 do PNG. Com 107
 # redes possiveis contra 64 entradas o LRU entrava em thrash entre municipios.
-@functools.lru_cache(maxsize=128)
-def _icone_rede(rede: str) -> str:
+@functools.lru_cache(maxsize=256)
+def _icone_rede(rede: str, halo: bool = False) -> str:
     from motor_expansao.dashboard.competitors import (
         COMPETITOR_BRANDS,
         COMPETITOR_LOGO_FILES,
@@ -961,8 +1217,8 @@ def _icone_rede(rede: str) -> str:
     )
     logo_file = COMPETITOR_LOGO_FILES.get(rede)
     logo_path = COMPETITORS_LOGO_DIR / logo_file if logo_file else None
-    return _quadrado_logo(logo_path, str(brand["bg"])) or _quadrado_sigla(
-        str(brand["short"]), str(brand["bg"]), str(brand["fg"])
+    return _quadrado_logo(logo_path, str(brand["bg"]), halo=halo) or _quadrado_sigla(
+        str(brand["short"]), str(brand["bg"]), str(brand["fg"]), halo=halo
     )
 
 
@@ -1046,7 +1302,14 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
 
     conc = _carregar_concorrentes()
     if len(conc):
-        no_muni = conc[conc["hex_id_res7"].astype(str).isin(hex_ids)]
+        # Hexes do municipio UNIAO a margem do raio (`PIN_MARGEM_M`): o raio de 2 km da pressao
+        # cruza divisa municipal, e antes desta uniao o concorrente do outro lado contava sem ser
+        # desenhado — uma das tres causas da auditoria do pin nao fechar (DEC-035).
+        m_lat_min, m_lat_max, m_lng_min, m_lng_max = _bbox_com_margem(sel)
+        na_margem = conc["lat"].between(m_lat_min, m_lat_max) & conc["lng"].between(
+            m_lng_min, m_lng_max
+        )
+        no_muni = conc[conc["hex_id_res7"].astype(str).isin(hex_ids) | na_margem]
         if no_muni.empty:  # base antiga sem hex casavel -> cai no bbox
             no_muni = conc[conc["lat"].between(lat_min, lat_max) & conc["lng"].between(lng_min, lng_max)]
         conc = no_muni.head(COMPETITOR_PIN_LIMIT)
@@ -1055,8 +1318,56 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
     if len(ultra):
         ultra = ultra[ultra["lat"].between(lat_min, lat_max) & ultra["lng"].between(lng_min, lng_max)]
 
+    # ---- unidades de REDE do agregador entram na MESMA lista de bandeiras ----
+    # `[BLK-MA-17 metade 1, revisado 2026-08-18]` Elas nao sao mais uma camada ativavel a parte:
+    # uma academia de rede e' uma academia de rede, e desenhar as do agregador com outra FORMA
+    # obrigava o operador a ligar uma chave para ver concorrencia que sempre existiu. O que as
+    # distingue nao e' a natureza, e' o DADO EXTRA que temos sobre elas (pressao, nota, churn) --
+    # e isso vira um HALO, nao uma segunda geometria.
+    diag = carregar_redes()
+    linhas_diag: list[dict[str, Any]] = []
+    if diag is not None and len(diag):
+        d_lat_min, d_lat_max, d_lng_min, d_lng_max = _bbox_com_margem(sel)
+        no_recorte = diag[
+            diag["hex_id_res7"].isin(hex_ids)
+            | (
+                diag["lat"].between(d_lat_min, d_lat_max)
+                & diag["lng"].between(d_lng_min, d_lng_max)
+            )
+        ].head(COMPETITOR_PIN_LIMIT)
+        linhas_diag = [
+            {
+                "lat": _num(t.lat, 6),
+                "lng": _num(t.lng, 6),
+                "rede": _texto(getattr(t, "rede", None)) or "",
+                "label": str(
+                    COMPETITOR_BRANDS.get(str(getattr(t, "rede", "")), {}).get(
+                        "label", getattr(t, "rede", "")
+                    )
+                ),
+                "nome": _clean(getattr(t, "nome", "")),
+                # A flag que acende o halo E abre o bloco extra do tooltip.
+                "diag": True,
+                # SEM `score` (DEC-035): numa rede, presenca e churn medem negociacao da marca.
+                "pressao": _num(getattr(t, "pressao_competitiva", None), 1),
+                "nota": _num(getattr(t, "nota_wellhub", None), 1),
+                "n_aval": _inteiro_ou_nulo(getattr(t, "qtd_avaliacoes_wellhub", None)),
+                "churn": _texto(getattr(t, "status_churn", None)),
+                "n_conc": _inteiro_ou_nulo(getattr(t, "n_concorrentes_no_raio", None)),
+                "n_indep": _inteiro_ou_nulo(getattr(t, "n_independentes_no_raio", None)),
+                "n_cadeias_feed": _inteiro_ou_nulo(getattr(t, "n_cadeias_do_feed_no_raio", None)),
+                "oferta": _num(getattr(t, "oferta_ponderada", None), 2),
+                "dist_m": _num(getattr(t, "dist_concorrente_mais_proximo_m", None), 0),
+            }
+            for t in no_recorte.itertuples(index=False)
+        ]
+
     redes = sorted(conc["rede"].dropna().astype(str).unique()) if len(conc) else []
     icones = {r: _icone_rede(r) for r in redes}
+    # Variante COM halo, so' para as redes que de fato tem unidade com diagnostico no recorte —
+    # gerar as 107 sempre dobraria o atlas de textura sem ninguem usar.
+    for r in sorted({str(x["rede"]) for x in linhas_diag if x["rede"]}):
+        icones[f"{r}{SUFIXO_ICONE_DIAG}"] = _icone_rede(r, halo=True)
     if len(ultra):
         icones["__ultra__"] = _icone_ultra()
 
@@ -1074,7 +1385,8 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
             }
             for t in conc.itertuples(index=False)
         ]
-        if len(conc)
+        + linhas_diag
+        if (len(conc) or linhas_diag)
         else [],
         "ultra": [
             {"lat": _num(t.lat, 6), "lng": _num(t.lng, 6), "nome": _clean(t.nome)}
@@ -2245,6 +2557,16 @@ def _artefatos_observados() -> list[tuple[str, Path, str]]:
             "crescimento_hex",
             CRESCIMENTO_HEX_PATH,
             "passo 4: cor do mapa por hexágono (satélite 2016-2023)",
+        ),
+        (
+            "independentes_nomeadas",
+            NOMEADAS_PATH,
+            "pins das academias independentes com score (BLK-MA-15)",
+        ),
+        (
+            "redes_nomeadas",
+            REDES_PATH,
+            "pins das unidades de rede do agregador, com pressao e sem score (BLK-MA-17/DEC-035)",
         ),
     ]
 
@@ -3614,6 +3936,9 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
         "hexes": hexes,
         "cres_mun": _bloco_municipal(vis),
         "pins": _montar_pins(sel),
+        # Lista PROPRIA, nunca misturada a `pins.concorrentes`: cadeia e independente sao universos
+        # de semantica oposta (quem disputa x quem se compra), e a intersecao entre eles e' vazia.
+        "independentes": _pins_independentes(sel),
     }
 
 

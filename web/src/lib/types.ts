@@ -209,6 +209,31 @@ export interface Pin {
   rede?: string
   label?: string
   nome: string
+  /**
+   * `true` quando esta unidade veio do feed de um agregador (WellHub/TotalPass) e por isso temos
+   * DADOS EXTRAS sobre ela — pressão medida da coordenada dela, nota, presença na série.
+   *
+   * Ela é uma bandeira igual a todas as outras, e isso é deliberado: uma academia de rede é uma
+   * academia de rede, e dar-lhe outra forma obrigaria o operador a ligar uma chave para ver
+   * concorrência que sempre existiu. O que muda é um **halo** em volta do quadrado, e o bloco
+   * extra que o tooltip abre.
+   *
+   * **Não há `score` aqui, e a ausência é a decisão (DEC-035):** numa rede, presença em agregador
+   * e churn medem negociação da MARCA, não fragilidade desta unidade.
+   */
+  diag?: boolean
+  /** Pressão competitiva medida da coordenada desta unidade. Só quando `diag`. */
+  pressao?: number | null
+  nota?: number | null
+  n_aval?: number | null
+  /** Estado de presença na série semanal — fato sem peso. */
+  churn?: string | null
+  /** A conta por trás da pressão, igual à do pin de independente. */
+  n_conc?: number | null
+  n_indep?: number | null
+  n_cadeias_feed?: number | null
+  oferta?: number | null
+  dist_m?: number | null
 }
 
 /** Pins do município + ícones quadrados por rede (data URI SVG). */
@@ -244,6 +269,67 @@ export interface Pins {
   icones: Record<string, string>
 }
 
+/**
+ * Academia INDEPENDENTE com identidade e score (BLK-MA-15).
+ *
+ * Lista própria, nunca misturada a `Pins.concorrentes`: são universos de semântica OPOSTA — o
+ * concorrente é quem disputa o mercado com a Ultra; a independente é quem se COMPRA. A interseção
+ * entre os dois é vazia por construção, porque o universo de M&A exclui cadeias (sem esse filtro a
+ * Smart Fit entraria na lista de alvos).
+ */
+export interface PinIndependente {
+  lat: number | null
+  lng: number | null
+  nome: string
+  /** `score_vulnerabilidade` — preenchido sempre que há ≥ 1 sinal. */
+  score: number | null
+  /** `score_vulnerabilidade_ordenavel` — NULO no regime provisório (G-D1). O par com `score`
+   *  existe porque um diz o número e o outro diz se ele pode ordenar. */
+  ordenavel: number | null
+  /** Pressão competitiva medida da coordenada DESTA academia (grão unidade, DEC-029). */
+  pressao: number | null
+  /** Nota do WellHub. Anda SEMPRE com `n_aval` ao lado (DEC-026). */
+  nota: number | null
+  n_aval: number | null
+  /** Regime de sinais (ex.: `"s1,s6"`) — réguas de regimes diferentes não se comparam. */
+  regime: string | null
+  provisorio: boolean
+  /**
+   * A CONTA por trás de `pressao` (BLK-MA-18). Sem ela o número não é conferível: a saturação
+   * `100·(1 − 1/(1+oferta))` gasta METADE da escala numa única unidade equivalente, então `40,4`
+   * significa **0,68 concorrentes efetivos** — e não "40% de pressão", que é a leitura que um
+   * número de 0 a 100 num pin convida a fazer.
+   *
+   * `n_conc` é o que dá para contar no mapa; `oferta` é o mesmo conjunto DEPOIS do decaimento. A
+   * diferença entre os dois é, literalmente, a distância.
+   */
+  n_conc: number | null
+  /** Quantos dos `n_conc` são independentes — o resto é cadeia. Muda a tese de M&A. */
+  n_indep: number | null
+  /** Concorrentes EFETIVOS (soma dos pesos por distância). */
+  oferta: number | null
+  /** Distância até o concorrente mais próximo, em metros. Responde o que a soma esconde. */
+  dist_m: number | null
+  /**
+   * Quantos dos `n_conc` são unidades de REDE vindas do agregador (DEC-034). Ela existe porque a
+   * promessa da auditoria é "conta os pins no mapa e o número fecha", e parte dessas unidades
+   * **não tinha pin desenhado** até a metade 1 do BLK-MA-17. Medido: 5.451 de 19.329 linhas
+   * (28,2%) têm valor > 0 — eram 7.218 (37,3%) antes de o FU4 colapsar 320 duplicatas por nome.
+   * Sem esta parcela, a conta não fechava e a explicação não estava em
+   * lugar nenhum da tela.
+   */
+  n_cadeias_feed: number | null
+}
+
+export interface Independentes {
+  itens: PinIndependente[]
+  disponivel: boolean
+  /** Quantas existem no recorte, ANTES do teto. */
+  total: number
+  /** true = o teto cortou. Declarado porque corte silencioso mente sobre a densidade. */
+  truncado: boolean
+}
+
 export interface MunicipioPayload {
   /** "uf" = visão de estado inteiro (recomenda municípios); "municipio" = drill-down. */
   nivel: 'uf' | 'municipio'
@@ -260,6 +346,8 @@ export interface MunicipioPayload {
   /** Passo 4, uma entrada por cidade. Esparso: cidade sem leitura não aparece. */
   cres_mun: Record<string, CrescimentoMunicipal>
   pins: Pins
+  /** Academias independentes com score (BLK-MA-15). Ausente em payload antigo. */
+  independentes?: Independentes
 }
 
 export interface MunicipioItem {

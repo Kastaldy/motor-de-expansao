@@ -516,6 +516,73 @@ def _coagir_rating(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     return out, int(degradadas.sum())
 
 
+def coordenadas_por_chave(
+    dir_totalpass: Path = DIR_TOTALPASS_DEFAULT,
+    dir_wellhub: Path = DIR_WELLHUB_DEFAULT,
+    dir_unidades: Path = DIR_UNIDADES_DEFAULT,
+    *,
+    fontes: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    """Feed cru -> `(fonte, chave_snapshot, nome, lat, lng, rede)`, **em memória, sem tocar disco**.
+
+    É a ponte que o BLK-MA-14 (DEC-029, rota B) abriu para o `v6` por academia: a pressão precisa da
+    coordenada da unidade, e ela existe AQUI, antes de `montar_snapshot` projetar as 12 colunas e
+    matar a PII. Nada é gravado; quem chama passa o resultado direto para
+    `calcular_pressao_por_academia`, que devolve só o agregado.
+
+    **Por que isto NÃO fura o anti-PII (§11/DEC-012).** A regra é sobre o que a camada PERSISTE e
+    sobre o que cruza a fronteira de saída — não sobre o que ela lê. Este módulo já lia essas
+    coordenadas (é delas que sai o `hex_id_res7`); a função só as expõe ao chamador dentro do
+    processo. A trava de saída continua onde sempre esteve: no schema do frame de pressão.
+
+    **A chave bate com a do snapshot persistido** porque `derivar_chave` é determinística e, no
+    default (`taxa_slug_persistente=None`), **não lê semanas anteriores** — o mesmo feed produz a
+    mesma chave, hoje e na semana que vem. É essa propriedade que dispensa o bump de série que a
+    rota A exigiria.
+
+    Ressalva herdada: a leitura é do feed ATUAL, não da série. Uma academia que sumiu do CSV desde a
+    última coleta não aparece aqui e fica sem pressão — o que é correto (não há de onde medir) e é a
+    mesma premissa que o parquet de pontos de concorrentes já carrega.
+    """
+    bruto = ler_feeds(dir_totalpass, dir_wellhub, dir_unidades, fontes=fontes)
+    if bruto.empty:
+        return pd.DataFrame(
+            {
+                "fonte": pd.Series(dtype="string"),
+                "chave_snapshot": pd.Series(dtype="string"),
+                "nome": pd.Series(dtype="string"),
+                "lat": pd.Series(dtype="float64"),
+                "lng": pd.Series(dtype="float64"),
+                "rede": pd.Series(dtype="string"),
+            }
+        )
+    limpo, _auditoria = limpar_ruido(bruto)
+    com_chave = derivar_chave(limpo)
+    out = pd.DataFrame(
+        {
+            "fonte": com_chave["fonte"].astype("string"),
+            "chave_snapshot": com_chave["chave_snapshot"].astype("string"),
+            # O NOME viaja desde o BLK-MA-15: e' o que o pin do mapa exibe. Continua sem tocar
+            # disco por esta funcao — quem persiste identidade e' o `alvos_nomeados`, e so' sob
+            # `data/staging/` (gitignored), com guard proprio.
+            "nome": com_chave["nome"].astype("string"),
+            "lat": pd.to_numeric(com_chave["latitude"], errors="coerce").astype("float64"),
+            "lng": pd.to_numeric(com_chave["longitude"], errors="coerce").astype("float64"),
+            # A REDE viaja desde o BLK-MA-16, e não é PII: é a mesma categoria que o snapshot já
+            # persiste em coluna própria. Ela existe aqui para o chamador separar independente de
+            # cadeia SEM uma segunda leitura do feed — duas leituras custariam o dobro e abririam
+            # a chance de os dois lados verem feeds diferentes (a mesma razão que fez o `main` do
+            # `alvos_ma` ler o feed uma vez só).
+            "rede": com_chave["rede"].astype("string"),
+        }
+    )
+    # MESMO colapso de `montar_snapshot`: `(fonte, chave_snapshot)` é a chave primária do score, e
+    # duplicata aqui faria o join da pressão levantar. Colapsar mantém os dois lados coerentes.
+    return out.drop_duplicates(subset=["fonte", "chave_snapshot"], keep="first").reset_index(
+        drop=True
+    )
+
+
 def montar_snapshot(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
     """Projeta as **12 colunas do contrato**, coage dtypes, colapsa colisões e valida o schema.
 
