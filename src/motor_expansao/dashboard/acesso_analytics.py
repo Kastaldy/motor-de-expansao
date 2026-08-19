@@ -69,6 +69,7 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
     (None, "/api/executiva/", "Visão executiva da rede"),
     (None, "/api/relatorio/pontual", "Gerou relatório pontual"),
     (None, "/api/relatorio/municipal", "Gerou relatório municipal"),
+    (None, "/api/relatorio/comparacao", "Gerou deck de comparação"),
     (None, "/api/simulador/", "Exportou simulador (XLSX)"),
     (None, "/api/viabilidade", "Rodou simulação de viabilidade"),
     (None, "/api/faixa-alunos", "Consultou faixa de alunos"),
