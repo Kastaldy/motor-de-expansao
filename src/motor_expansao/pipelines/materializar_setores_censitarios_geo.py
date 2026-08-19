@@ -8,13 +8,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import time
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
 
 import geopandas as gpd
 import numpy as np
@@ -386,115 +384,7 @@ def _corrigir_geometria(geom: BaseGeometry | None) -> BaseGeometry | None:
     return fixed
 
 
-def calcular_k_global(
-    basico: pd.DataFrame,
-    renda: pd.DataFrame,
-    m1_reference: pd.DataFrame | None,
-) -> float | None:
-    """Fator de calibracao da renda setorial — UM para o Brasil inteiro.
-
-    Por que esta funcao existe
-    --------------------------
-    O `k` alinha a mediana da renda setorial (V06004/v0005) a mediana da `renda_per_capita`
-    do M1, para que o percentil nacional (`renda_pct_nacional_calibrado`) seja comparavel.
-    Ele SO faz sentido calculado sobre o Brasil inteiro.
-
-    Ate 2026-08-12 ele era calculado dentro de `_calcular_scores_setoriais`, que recebe UM
-    ESTADO por vez (o orquestrador roda `for uf in ufs`). Numerador nacional, denominador
-    estadual: cada UF era multiplicada pelo numero exato que a fazia aterrissar na mediana
-    nacional (R$ 935,72). Medido: AC 455,21 x 2,0556 = 935,73; TO 652,57 x 1,4339 = 935,72;
-    MA 366,88 x 2,5505 = 935,73; DF 1.176,07 x 0,7956 = 935,68. Isso APAGA a diferenca de
-    renda entre estados: as 27 medianas calibradas viravam o MESMO numero. O efeito aparece
-    no que e de fato consumido — no artefato antigo o score medio de Sao Luis (68,6) ficava
-    ACIMA do de Sao Paulo capital (55,7); com o k nacional a ordem se inverte para 43,7
-    contra 63,4. O metodo se chamava `multiplicativo_global` porque a intencao SEMPRE foi
-    nacional (o relatorio de calibracao de maio/2026 aprovou essa variante e rejeitou uma
-    "multiplicativo por UF" que era OUTRA coisa: numerador E denominador da mesma UF,
-    k ~ 1,55-1,68); o que quebrou foi a granularidade da chamada, nao a decisao.
-
-    O que o k unico preserva, e o que ele NAO preserva
-    -------------------------------------------------
-    Dado um k FIXO, a ordem dos setores por renda calibrada e preservada (multiplicador
-    constante). Mas a TROCA de k por UF para k global mexe em tudo que e derivado. Medido nos
-    449.531 setores COM score calibrado (de 468.099 no artefato): `renda_pct_nacional_calibrado`
-    muda em 96,4% deles e `score_setor_2022_calibrado` em 95,0% (|delta| medio 11,4 pontos,
-    Spearman 0,81 entre o score antigo e o novo, 65,0% trocam de faixa de 10 pontos). Motivo:
-    o percentil e monotono mas nao afim, e o score soma 0,60*renda_pct com 0,40*pop_pct_municipal,
-    que nao depende do k. Quem trocar o artefato precisa contar com isso a jusante.
-
-    Calculado aqui sobre o join NACIONAL basico x renda (as duas fontes ja vem inteiras, antes
-    do laco por UF). Retorna `None` quando nao ha referencia M1 UTILIZAVEL — ausente, sem a
-    coluna `renda_per_capita`, ou so NaN —, caso em que o chamador segue sem calibracao, de
-    proposito. Mas se ha M1 utilizavel e o que falha e o k em si, levanta `ValueError`:
-    devolver `None` ali reabriria em silencio o k por UF.
-    """
-    if m1_reference is None or "renda_per_capita" not in m1_reference.columns:
-        return None
-    ref = pd.to_numeric(m1_reference["renda_per_capita"], errors="coerce").dropna()
-    if ref.empty:
-        return None
-    ref_median = float(np.median(ref.to_numpy()))
-    if not np.isfinite(ref_median) or ref_median <= 0:
-        raise ValueError(
-            f"Numerador do k invalido: a mediana de `renda_per_capita` do M1 e {ref_median!r}. "
-            f"Confira o artefato de referencia ({DEFAULT_M1_REFERENCE_PATH}) e regenere o M1 "
-            "antes de rematerializar — sem numerador nao ha k nacional."
-        )
-
-    remedio = {
-        "basico": "`carregar_basico(..., chaves_ordenadas=_ler_chaves_ordenadas(shp_path))`",
-        "renda": "`carregar_renda(..., chave_sibling_path=RENDA_KEY_SIBLING_PATH)`",
-    }
-    for nome, frame in (("basico", basico), ("renda", renda)):
-        if "cod_setor" not in frame.columns:
-            raise ValueError(
-                f"`{nome}` sem a coluna `cod_setor`; o k nacional depende do join por chave. "
-                f"Carregue-o por {remedio[nome]}, que e quem recupera a chave desse insumo."
-            )
-
-    # drop_duplicates espelha `montar_base_setorial_uf`: sem ele, uma chave repetida viraria
-    # produto cartesiano no merge e reponderaria a mediana do denominador.
-    nacional = (
-        basico[["cod_setor", "avg_moradores_domicilio_setor_2022"]]
-        .drop_duplicates("cod_setor")
-        .merge(
-            renda[["cod_setor", "renda_responsavel_media_setor_2022"]].drop_duplicates(
-                "cod_setor"
-            ),
-            on="cod_setor",
-            how="inner",
-        )
-    )
-    moradores = pd.to_numeric(nacional["avg_moradores_domicilio_setor_2022"], errors="coerce")
-    responsavel = pd.to_numeric(nacional["renda_responsavel_media_setor_2022"], errors="coerce")
-    per_capita = (responsavel / moradores).where(moradores > 0)
-    setor_median = float(per_capita.dropna().median())
-    if not np.isfinite(setor_median) or setor_median <= 0:
-        raise ValueError(
-            f"Denominador do k invalido: a mediana da renda per capita setorial e "
-            f"{setor_median!r}. O join nacional basico x renda casou {len(nacional)} setores "
-            f"(basico={len(basico)}, renda={len(renda)}). Se o join veio VAZIO ou muito curto, "
-            "a causa provavel nao e valor de renda e sim a chave: os dois CSVs vem com "
-            "`CD_SETOR` corrompido e `cod_setor` e RECUPERADO (basico pela malha ordenada, "
-            "renda pelo agregado irmao de alfabetizacao). Confira a recuperacao da chave dos "
-            "dois lados antes de olhar os valores."
-        )
-    return float(ref_median / setor_median)
-
-
-def _calcular_scores_setoriais(
-    df: pd.DataFrame,
-    m1_reference: pd.DataFrame | None,
-    k_global: float | None,
-) -> pd.DataFrame:
-    """Calibra a renda e monta o score setorial.
-
-    `k_global` DEVE vir de `calcular_k_global`, que o calcula sobre o Brasil inteiro. Esta
-    funcao recebe UMA UF por vez, entao ela NAO tem como calcular o k sozinha: derivar o k
-    das linhas recebidas e exatamente o defeito que vigorou ate 2026-08-12 (ver
-    `calcular_k_global`). Por isso, quando ha referencia M1 e o `k_global` nao vem, o certo
-    e FALHAR — o fallback silencioso de antes reabria o k por UF sem nenhum aviso.
-    """
+def _calcular_scores_setoriais(df: pd.DataFrame, m1_reference: pd.DataFrame | None) -> pd.DataFrame:
     result = df.copy()
     valid_renda = result["renda_per_capita_setor_2022"].notna()
 
@@ -503,15 +393,9 @@ def _calcular_scores_setoriais(
     else:
         ref_renda = np.array([], dtype=float)
 
-    if len(ref_renda) > 0 and k_global is None:
-        raise ValueError(
-            "Ha referencia M1 mas `k_global` nao foi informado. O k e NACIONAL: calcule-o "
-            "uma unica vez com `calcular_k_global(basico, renda, m1_reference)` sobre o "
-            "Brasil inteiro e passe o valor. Calcula-lo aqui daria um k por UF, que apaga a "
-            "diferenca de renda entre estados."
-        )
-
     if len(ref_renda) > 0 and valid_renda.any():
+        setor_median = float(result.loc[valid_renda, "renda_per_capita_setor_2022"].median())
+        k_global = float(np.median(ref_renda) / setor_median) if setor_median > 0 else 1.0
         result["renda_per_capita_setor_2022_calibrada"] = (
             result["renda_per_capita_setor_2022"] * k_global
         )
@@ -565,18 +449,9 @@ def montar_base_setorial_uf(
     renda_uf: pd.DataFrame,
     *,
     uf: str,
-    k_global: float | None,
     m1_reference: pd.DataFrame | None = None,
     data_materializacao: str | None = None,
 ) -> gpd.GeoDataFrame:
-    """Monta a base setorial de UMA UF.
-
-    `k_global` e OBRIGATORIO e sem default de proposito: ele vem de `calcular_k_global`,
-    calculado sobre o Brasil inteiro. Quem chama com uma UF por vez nao tem como derivar o k
-    correto — omiti-lo agora e um `TypeError`, e nao mais um k por UF calculado em silencio.
-    Passe `None` explicitamente apenas quando tambem nao houver `m1_reference` (materializar
-    sem calibracao).
-    """
     if "cod_setor" not in gdf_malha.columns:
         raise ValueError(f"UF {uf}: malha sem coluna cod_setor para join por chave.")
     if "cod_setor" not in basico_uf.columns or "cod_setor" not in renda_uf.columns:
@@ -641,9 +516,7 @@ def montar_base_setorial_uf(
     result["qualidade_join_uf"] = "A" if taxa_match >= 0.95 else ("B" if taxa_match >= 0.90 else "C")
 
     geometries = result.geometry.copy()
-    result = _calcular_scores_setoriais(
-        pd.DataFrame(result.drop(columns="geometry")), m1_reference, k_global
-    )
+    result = _calcular_scores_setoriais(pd.DataFrame(result.drop(columns="geometry")), m1_reference)
     result = gpd.GeoDataFrame(result, geometry=geometries, crs=CRS_ORIGEM)
     result["geometry_wkb"] = result.geometry.to_wkb()
     result["crs_origem"] = CRS_ORIGEM
@@ -651,26 +524,7 @@ def montar_base_setorial_uf(
     return result[COLUNAS_ARTEFATO].reset_index(drop=True)
 
 
-def particoes_existentes(output_root: Path) -> list[Path]:
-    """Diretorios `uf=XX` ja presentes no destino, em ordem.
-
-    Usado pela trava de destino ocupado em `materializar_base_geo`. O glob e' ANCORADO em
-    `uf=*` de proposito: e' o unico padrao que esta funcao pode apagar, e restringi-lo aqui
-    (e nao no chamador) impede que um `output_root` errado leve um `rmtree` em algo que nao
-    seja particao deste artefato. `_metadata.json` e qualquer outro arquivo solto ficam fora.
-    """
-    if not output_root.exists():
-        return []
-    return sorted(p for p in output_root.glob("uf=*") if p.is_dir())
-
-
 def escrever_particoes(df: pd.DataFrame, output_root: Path) -> dict[str, int]:
-    """Escreve `uf=XX/cod_municipio=NNNNNNN/part-000.parquet` para cada particao do df.
-
-    ATENCAO: sobrescreve o que TOCA e deixa intacto o que nao toca — nao limpa o destino.
-    Quem garante que nao sobra safra antiga e' a trava de `materializar_base_geo`, nao esta
-    funcao (ver `particoes_existentes`).
-    """
     output_root.mkdir(parents=True, exist_ok=True)
     files = 0
     rows = 0
@@ -770,33 +624,7 @@ def materializar_base_geo(
     report_path: Path = DEFAULT_REPORT_PATH,
     m1_reference_path: Path = DEFAULT_M1_REFERENCE_PATH,
     max_municipios_por_uf: int | None = None,
-    sobrescrever: bool = False,
 ) -> dict:
-    """Materializa a base setorial com geometria, particionada por UF/municipio.
-
-    Sobre `sobrescrever` e o destino ocupado
-    ----------------------------------------
-    `escrever_particoes` sobrescreve o que TOCA e deixa intacto o que nao toca. Logo, uma
-    execucao PARCIAL (`ufs`, `municipios` ou `max_municipios_por_uf`) apontada para um
-    destino que ja tem dado deixa particoes da safra ANTERIOR misturadas com as novas — com
-    o `k` velho, e sem nenhum aviso. Pior: o `_metadata.json` e' reescrito de qualquer jeito,
-    entao o manifesto passaria a declarar um `k` que so vale para parte dos arquivos.
-
-    Por isso o default e' RECUSAR destino ocupado. E' a mesma pratica que o runbook de subida
-    ja adota na VPS: montar o artefato AO LADO e trocar por rename, nunca desempacotar por
-    cima. Com `sobrescrever=True`:
-
-    - sem filtro de municipio — cada `uf=XX` de `ufs` e' REMOVIDA antes de ser reescrita, o
-      que elimina tambem o municipio orfao (o que existia na safra anterior e sumiu do
-      insumo). UF fora de `ufs` nao e' tocada;
-    - com `municipios` ou `max_municipios_por_uf` — nada e' removido (apagar levaria junto os
-      municipios que o chamador queria manter) e sai um aviso, porque o destino passa a ter
-      duas safras.
-
-    Em qualquer execucao que nao cubra as 27 UFs sem filtro, o manifesto sai carimbado
-    `escopo_execucao=parcial` com os filtros usados, para que ninguem leia um manifesto
-    parcial como se descrevesse o artefato inteiro.
-    """
     for path in (basico_path, renda_path, shp_path):
         if not path.exists():
             raise FileNotFoundError(f"Insumo nao encontrado: {path}")
@@ -805,50 +633,6 @@ def materializar_base_geo(
     invalid = sorted(set(ufs) - set(UFS_BRASIL))
     if invalid:
         raise ValueError(f"UFs invalidas: {invalid}")
-
-    municipios_set = {m.strip() for m in municipios or []}
-    execucao_parcial = (
-        set(ufs) != set(UFS_BRASIL)
-        or bool(municipios_set)
-        or max_municipios_por_uf is not None
-    )
-
-    # Trava ANTES de carregar malha/basico/renda: a leitura do shapefile custa minutos, e
-    # falhar depois dela desperdicaria o trabalho todo por uma condicao conhecida de saida.
-    existentes = particoes_existentes(output_root)
-    if existentes and not sobrescrever:
-        raise FileExistsError(
-            f"Destino ja ocupado: {output_root} contem {len(existentes)} particao(oes) "
-            f"`uf=*` de uma materializacao anterior. Escrever por cima deixaria a safra "
-            f"antiga misturada com a nova (o writer so sobrescreve o que toca) e o "
-            f"`_metadata.json` passaria a declarar um `k` que nao vale para todos os "
-            f"arquivos. Materialize em um diretorio NOVO e troque por rename — e' o que o "
-            f"runbook de subida faz na VPS. Se a intencao e' mesmo reescrever este destino, "
-            f"passe `sobrescrever=True` (CLI: `--sobrescrever`)."
-        )
-    # Limpeza POR UF, nao do destino inteiro: apagamos so as UFs que ESTA execucao vai
-    # reescrever, para que municipio que sumiu do insumo nao sobreviva como orfao dentro
-    # delas. UF fora de `ufs` nao e' tocada — nao foi pedido reescreve-la. Com filtro de
-    # municipio NAO limpamos: ali a intencao e' escrever um subconjunto DENTRO da UF, e
-    # apagar levaria junto justamente os municipios que o chamador queria manter.
-    limpar_ufs = sobrescrever and not municipios_set and max_municipios_por_uf is None
-    if existentes and limpar_ufs:
-        removidas = [output_root / f"uf={uf}" for uf in ufs if (output_root / f"uf={uf}").is_dir()]
-        for particao in removidas:
-            shutil.rmtree(particao)
-        if removidas:
-            print(
-                f"[base-geo] destino limpo: {len(removidas)} particao(oes) `uf=*` removidas "
-                f"antes da escrita",
-                flush=True,
-            )
-    elif existentes:
-        print(
-            "[base-geo] AVISO: filtro de municipio sobre destino ocupado. As particoes nao "
-            "tocadas por esta execucao mantem a safra anterior, com o `k` anterior. NAO use "
-            "este diretorio como artefato de subida.",
-            flush=True,
-        )
 
     chaves_ordenadas = _ler_chaves_ordenadas(shp_path)
     basico = carregar_basico(basico_path, chaves_ordenadas=chaves_ordenadas)
@@ -859,18 +643,8 @@ def materializar_base_geo(
         else None
     )
 
-    # O `k` da calibracao e NACIONAL: calculado UMA vez, aqui, sobre o join basico x renda do
-    # Brasil inteiro — antes do laco por UF. Calcula-lo dentro do laco daria um `k` por estado
-    # (ver `calcular_k_global`), que apaga a diferenca de renda entre UFs.
-    k_global = calcular_k_global(basico, renda, m1_reference)
-    if k_global is None:
-        print("[base-geo] SEM referencia M1: materializando sem calibracao de renda", flush=True)
-    else:
-        # Precisao total no log e no manifesto: o carimbo em `metodo_renda_setor_2022` arredonda
-        # para 4 casas, e quem auditar pelo artefato precisa do valor exato para reproduzir.
-        print(f"[base-geo] k GLOBAL (nacional, unico para as 27 UFs) = {k_global!r}", flush=True)
-
     summaries: list[UFSummary] = []
+    municipios_set = {m.strip() for m in municipios or []}
     for uf in ufs:
         t0 = time.perf_counter()
         gdf_malha = carregar_malha_uf(shp_path, uf)
@@ -894,7 +668,6 @@ def materializar_base_geo(
             renda_uf,
             uf=uf,
             m1_reference=m1_reference,
-            k_global=k_global,
         )
         write_info = escrever_particoes(df_uf, output_root)
         uf_root = output_root / f"uf={uf}"
@@ -917,33 +690,13 @@ def materializar_base_geo(
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(gerar_relatorio(summaries, output_root, COLUNAS_ARTEFATO), encoding="utf-8")
-    # Anotado explicitamente: sem isso o mypy infere a uniao dos tipos do literal e rejeita o
-    # `metadata["filtros"] = {...}` condicional logo abaixo.
-    metadata: dict[str, Any] = {
+    metadata = {
         "data_execucao": date.today().isoformat(),
         "output_root": str(output_root),
         "report_path": str(report_path),
-        # O k em precisao TOTAL: NAO arredondar. O carimbo em `metodo_renda_setor_2022` ja
-        # corta em 4 casas, e ate 2026-08-12 este manifesto nao registrava k nenhum — logo nao
-        # havia como saber, so pelo artefato, se ele saira do k nacional ou de um k por UF.
-        # (Pior: o artefato defeituoso tambem se rotulava `multiplicativo_global`, entao a
-        # validacao pela palavra aprovava o errado; so o VALOR distingue.)
-        "k_global": k_global,
-        "k_escopo": "nacional_unico_27_ufs" if k_global is not None else "sem_calibracao",
-        # Sem este carimbo, o manifesto de uma execucao PARCIAL e' indistinguivel do de uma
-        # completa — e quem validasse o artefato pelo manifesto aprovaria um diretorio com
-        # duas safras dentro. `k_escopo` sozinho nao resolve: ele descreve o k CALCULADO
-        # nesta execucao, nao o k gravado em cada arquivo que esta no destino.
-        "escopo_execucao": "parcial" if execucao_parcial else "completo",
         "ufs": [s.__dict__ for s in summaries],
         "schema": COLUNAS_ARTEFATO,
     }
-    if execucao_parcial:
-        metadata["filtros"] = {
-            "ufs": sorted(ufs),
-            "municipios": sorted(municipios_set) or None,
-            "max_municipios_por_uf": max_municipios_por_uf,
-        }
     (output_root / "_metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -964,14 +717,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--report-path", default=str(DEFAULT_REPORT_PATH))
     parser.add_argument("--m1-reference-path", default=str(DEFAULT_M1_REFERENCE_PATH))
-    parser.add_argument(
-        "--sobrescrever",
-        action="store_true",
-        help=(
-            "Permite escrever em destino que ja tem particoes `uf=*`. Execucao completa "
-            "limpa as antigas antes; execucao parcial carimba o manifesto como parcial."
-        ),
-    )
     return parser
 
 
@@ -987,7 +732,6 @@ def main() -> None:
         report_path=Path(args.report_path),
         m1_reference_path=Path(args.m1_reference_path),
         max_municipios_por_uf=args.max_municipios_por_uf,
-        sobrescrever=args.sobrescrever,
     )
     total = sum(item["setores"] for item in metadata["ufs"])
     print(f"Base geo materializada: {total} setores em {metadata['output_root']}")
