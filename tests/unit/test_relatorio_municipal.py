@@ -1,7 +1,7 @@
 """Testes do Relatorio Municipal (BLK-RELMUN-01).
 
 Espelham o teste do Relatorio Pontual (`test_relatorio_pontual_censitario_export.py`):
-agregacao, formula D1, 11 paginas/`/Count 11`/`%PDF-1.4`, headers das 11 secoes, fallback sem
+agregacao, formula D1, 12 paginas/`/Count 12`/`%PDF-1.4`, headers das 12 secoes, fallback sem
 `dominio_df`, fallback Pagina 6 sem bairro, fallback sem assets, anti-PII, mapas SEM rede
 (`basemap=False`), contagem de pins por H3. NENHUM teste bate na rede.
 
@@ -311,6 +311,7 @@ def test_mapas_municipio_offline_sem_rede():
     mapas = render_mapas_municipio(
         df, res, competitors_df=_sample_competitors(), ultra_df=_sample_ultra(), basemap=False
     )
+    # `bairros_urbano` so existe quando ha bairro; este fixture nao tem `bairros_geo`.
     assert set(mapas) == {"resumo", "score", "residual", "dominio", "cobertura", "bairros"}
     for png in mapas.values():
         assert png.startswith(b"\x89PNG")
@@ -457,15 +458,20 @@ def test_rotulo_de_valor_fica_acima_do_marcador_blk_relpon_09_fu1():
 # ---------------------------------------------------------------------------
 
 
-def test_pdf_municipal_9_paginas_e_secoes():
+def test_pdf_municipal_12_paginas_e_secoes():
+    """Relatorio COMPLETO: com bairros na base, todas as 12 secoes aparecem.
+
+    `bairros_geo` e' obrigatorio aqui -- sem ele a pagina do nucleo urbano nao existe (ela so
+    e' emitida quando ha bairro para aproximar) e o teste nao cobriria todos os headers."""
     df = _sample_df()
-    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio())
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio(),
+                            bairros_geo=_bairros_geo_sample())
     mapas = render_mapas_municipio(df, res, basemap=False)
 
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas, ultra_dir="data/ultra")
 
     assert pdf_bytes.startswith(b"%PDF-1.4")
-    assert b"/Count 11" in pdf_bytes
+    assert b"/Count 12" in pdf_bytes
     assert len(pdf_bytes) > 15_000
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
@@ -508,13 +514,14 @@ def test_mapa_cobertura_offline():
 
 def test_pdf_municipal_offline_safe_sem_assets(tmp_path):
     df = _sample_df()
-    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio())
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio(),
+                            bairros_geo=_bairros_geo_sample())
     mapas = render_mapas_municipio(df, res, basemap=False)
 
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas, ultra_dir=tmp_path)
 
     assert pdf_bytes.startswith(b"%PDF")
-    assert b"/Count 11" in pdf_bytes
+    assert b"/Count 12" in pdf_bytes
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
 
@@ -827,7 +834,7 @@ def test_agregar_municipio_bairros_por_zona_com_fonte():
 
 
 def test_pdf_municipal_pagina_6_com_bairros_reais():
-    """A2: nomes de bairro REAIS aparecem nos bytes do PDF, /Count 11 mantido, sem PII."""
+    """A2: nomes de bairro REAIS aparecem nos bytes do PDF, /Count 12 mantido, sem PII."""
     df = _sample_df()
     bairros = _bairros_por_hex_sample(df)
     res = agregar_municipio(
@@ -1188,7 +1195,7 @@ def test_pdf_municipal_pagina_bairros_oficiais():
     mapas = render_mapas_municipio(df, res, basemap=False)
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
 
-    assert b"/Count 11" in pdf_bytes
+    assert b"/Count 12" in pdf_bytes
     assert "Bairros Oficiais".encode("latin-1") in pdf_bytes
     assert b"BAIRROS IDENTIFICADOS" in pdf_bytes
     assert b"MAIS POPULOSOS" in pdf_bytes
@@ -1223,7 +1230,10 @@ def test_pdf_municipal_sem_bairros_geo_mantem_comportamento():
 
     pdf_bytes = gerar_pdf_relatorio_municipal(res, render_mapas_municipio(df, res, basemap=False))
 
+    # 11 paginas: sem bairro nao ha nucleo urbano para aproximar, entao a pagina 4 nao e'
+    # emitida -- ela sairia com "Mapa indisponivel" e "0 bairros", dizendo nada (Sao Luis/MA).
     assert b"/Count 11" in pdf_bytes
+    assert "Núcleo Urbano".encode("latin-1") not in pdf_bytes
     assert "malha de bairros da prefeitura".encode("latin-1") in pdf_bytes
 
 
@@ -1669,48 +1679,44 @@ def test_municipio_so_com_sobra_mantem_mapas_por_hexagono():
     assert "Agregação H3 resolução 7".encode("latin-1") in pdf_bytes
 
 
-def test_cobertura_baixa_devolve_tematicos_ao_hexagono():
-    """Caso Campinas/SP: 31% de cobertura, distritos só na periferia.
-
-    Desenhar o temático por bairro deixava o miolo urbano cinza -- justamente onde a decisão
-    de expansão acontece -- apesar de o dado existir. Abaixo do limiar, volta ao hexágono.
+def test_cobertura_baixa_mantem_bairro_com_aviso():
+    """REVERTIDO em 2026-08-19 (Juan, depois de ver Sinop/MT): "só vistas de bairros sem
+    hexágonos". O fallback por cobertura saiu -- havendo bairro real, o temático sai por
+    BAIRRO. O que protege a leitura agora é o RECORTE URBANO (os temáticos usam o mesmo zoom
+    da página 4), não a troca de unidade. A página segue declarando a cobertura real.
     """
-    from motor_expansao.dashboard.relatorio_municipal import (
-        bairro_representa_o_municipio,
-        tem_bairro_real,
-    )
+    from motor_expansao.dashboard.relatorio_municipal import tem_bairro_real
 
     baixa = {**_bairros_geo_sample(), "cobertura": 0.31}
-    alta = {**_bairros_geo_sample(), "cobertura": 0.98}
-
-    # Ha bairro real nos dois; o que muda e' a representatividade.
-    assert tem_bairro_real(baixa) and tem_bairro_real(alta)
-    assert bairro_representa_o_municipio(baixa) is False
-    assert bairro_representa_o_municipio(alta) is True
+    assert tem_bairro_real(baixa)
 
     df = _sample_df()
-    res_baixa = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", bairros_geo=baixa)
-    pdf_baixa = gerar_pdf_relatorio_municipal(
-        res_baixa, render_mapas_municipio(df, res_baixa, basemap=False)
-    )
-    # Temático volta ao hexágono...
-    assert "Agregação H3 resolução 7".encode("latin-1") in pdf_baixa
-    assert "setores agregados por bairro".encode("latin-1") not in pdf_baixa
-    # ...mas a página de Bairros Oficiais continua lá, com o aviso de cobertura.
-    assert "Bairros Oficiais".encode("latin-1") in pdf_baixa
-    assert "cobrem s\xf3 31% dos setores".encode("latin-1") in pdf_baixa
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", bairros_geo=baixa)
+    pdf = gerar_pdf_relatorio_municipal(res, render_mapas_municipio(df, res, basemap=False))
+
+    assert "setores agregados por bairro".encode("latin-1") in pdf
+    assert "Agregação H3 resolução 7".encode("latin-1") not in pdf
+    assert "Bairros Oficiais".encode("latin-1") in pdf
+    assert "cobrem só 31% dos setores".encode("latin-1") in pdf
 
 
-def test_limiar_de_representatividade_e_o_mesmo_do_aviso():
-    """Um limiar só: avisar '31%' numa página e agir como se fosse pleno na outra é incoerente."""
-    from motor_expansao.dashboard.relatorio_municipal import (
-        _BAIRRO_COBERTURA_MIN,
-        bairro_representa_o_municipio,
-    )
+def test_limiar_de_cobertura_ainda_governa_o_aviso():
+    """O limiar deixou de trocar a unidade do mapa, mas continua governando o AVISO."""
+    from motor_expansao.dashboard.relatorio_municipal import _BAIRRO_COBERTURA_MIN
 
+    df = _sample_df()
     base = _bairros_geo_sample()
-    assert bairro_representa_o_municipio({**base, "cobertura": _BAIRRO_COBERTURA_MIN}) is True
-    assert bairro_representa_o_municipio({**base, "cobertura": _BAIRRO_COBERTURA_MIN - 0.01}) is False
+
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP",
+                            bairros_geo={**base, "cobertura": _BAIRRO_COBERTURA_MIN - 0.01})
+    pdf = gerar_pdf_relatorio_municipal(res, render_mapas_municipio(df, res, basemap=False))
+    assert "cobrem só".encode("latin-1") in pdf
+
+    res_ok = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP",
+                               bairros_geo={**base, "cobertura": 0.98})
+    pdf_ok = gerar_pdf_relatorio_municipal(res_ok,
+                                           render_mapas_municipio(df, res_ok, basemap=False))
+    assert "cobrem só".encode("latin-1") not in pdf_ok
 
 
 def test_sobra_e_visivel_no_mapa():
@@ -1738,3 +1744,65 @@ def test_sobra_e_visivel_no_mapa():
     r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
     cinza = (abs(r - g) < 14) & (abs(g - b) < 14) & (r > 180) & (r < 240)
     assert cinza.sum() > 3_000, f"sobra pouco visivel (pixels cinza: {cinza.sum()})"
+
+
+def test_recorte_urbano_ignora_area_rural_extensa():
+    """Sinop/MT: a cidade e' ~2% do territorio. O recorte tem de seguir a DENSIDADE, nao a
+    populacao bruta -- senao um distrito rural grande puxa o zoom de volta ao municipio."""
+    from motor_expansao.dashboard.relatorio_municipal import bounds_nucleo_urbano
+
+    urbano = _bairro_quadrado("Centro", 0.0, 0.0, 2_000.0, pop=40_000.0)
+    urbano["densidade"] = 10_000.0
+    rural = _bairro_quadrado("Distrito Rural", 200_000.0, 200_000.0, 80_000.0, pop=12_000.0)
+    rural["densidade"] = 2.0
+    geo = {"bairros": [urbano, rural], "contorno": [], "n_bairros": 2,
+           "n_setores": 50, "sem_localidade": 0, "cobertura": 1.0}
+
+    b = bounds_nucleo_urbano(geo)
+    assert b is not None
+    minx, miny, maxx, maxy = b
+    # O recorte fica no urbano, nao envolve o distrito rural a 200 km.
+    assert maxx < 100_000.0, "o recorte engoliu a area rural"
+    assert (maxx - minx) < 20_000.0, "recorte largo demais para um nucleo de 2 km"
+
+
+def test_recorte_urbano_respeita_extensao_minima():
+    """Nucleo minusculo nao pode gerar zoom ilegivel."""
+    from motor_expansao.dashboard.relatorio_municipal import (
+        _URBANO_SPAN_MIN_M,
+        bounds_nucleo_urbano,
+    )
+
+    minusculo = _bairro_quadrado("Vila", 0.0, 0.0, 120.0, pop=900.0)
+    minusculo["densidade"] = 5_000.0
+    geo = {"bairros": [minusculo], "contorno": [], "n_bairros": 1,
+           "n_setores": 3, "sem_localidade": 0, "cobertura": 1.0}
+
+    minx, _miny, maxx, _maxy = bounds_nucleo_urbano(geo)
+    assert (maxx - minx) >= _URBANO_SPAN_MIN_M
+
+
+def test_recorte_urbano_sem_bairro_devolve_none():
+    from motor_expansao.dashboard.relatorio_municipal import bounds_nucleo_urbano
+
+    assert bounds_nucleo_urbano(None) is None
+    assert bounds_nucleo_urbano({"bairros": []}) is None
+    assert bounds_nucleo_urbano(_bairros_geo_so_sobra()) is None, "so a sobra nao define urbano"
+
+
+def test_pagina_nucleo_urbano_no_pdf():
+    """A pagina entra e as DUAS vistas coexistem: municipio inteiro e zoom urbano."""
+    df = _sample_df()
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP",
+                            bairros_geo=_bairros_geo_sample())
+    mapas = render_mapas_municipio(df, res, basemap=False)
+    assert "bairros_urbano" in mapas and mapas["bairros_urbano"].startswith(b"\x89PNG")
+    # As duas vistas sao mapas DIFERENTES (enquadramentos distintos).
+    assert mapas["bairros"] != mapas["bairros_urbano"]
+
+    pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
+    assert b"/Count 12" in pdf_bytes
+    assert "Bairros Oficiais".encode("latin-1") in pdf_bytes
+    assert "Núcleo Urbano".encode("latin-1") in pdf_bytes
+    assert b"RECORTE URBANO" in pdf_bytes
+    assert "MAIS DENSOS".encode("latin-1") in pdf_bytes

@@ -108,7 +108,8 @@ def test_uf_invalida_mantem_etapa():
 
 
 def test_municipio_gera_pdf(monkeypatch):
-    monkeypatch.setattr(bot, "consultar_pdf_municipio", lambda uf, m, s, st: (b"%PDF-fake", None))
+    monkeypatch.setattr(bot, "consultar_pdf_municipio",
+                        lambda uf, m, s, st, unidade="bairro": (b"%PDF-fake", None))
     _auth(2, "Maria")
     bot.processar(2, "Relatorio Municipal", _S)
     bot.processar(2, "TO", _S)
@@ -123,7 +124,9 @@ def test_municipio_gera_pdf(monkeypatch):
 def test_municipio_erro_mostra_mensagem(monkeypatch):
     monkeypatch.setattr(
         bot, "consultar_pdf_municipio",
-        lambda uf, m, s, st: (None, "Municipio 'x' nao encontrado. Voce quis dizer: Palmas?"),
+        lambda uf, m, s, st, unidade="bairro": (
+            None, "Municipio 'x' nao encontrado. Voce quis dizer: Palmas?"
+        ),
     )
     _auth(3)
     bot.processar(3, "Relatorio Municipal", _S)
@@ -148,3 +151,50 @@ def test_pontual_ainda_funciona():
     out = bot.processar(5, "Relatorio Pontual", _S)
     assert "localizacao" in _textos(out).lower()
     assert bot._sessao(5).get("etapa") is None
+
+
+# --- Escolha da UNIDADE no menu (Juan, 2026-08-19) ------------------------------------
+# O bot passou a oferecer "Municipal (hexagonos)" e "Municipal (bairros)". A unidade e'
+# guardada na sessao e precisa chegar INTACTA ate a chamada da API -- se ela se perdesse no
+# meio, os dois botoes gerariam o mesmo relatorio e ninguem notaria pelo texto.
+
+
+def test_menu_oferece_as_tres_opcoes():
+    assert bot._KB_MENU == [
+        [bot._BTN_PONTUAL],
+        [bot._BTN_MUNICIPAL_HEX],
+        [bot._BTN_MUNICIPAL_BAIRRO],
+        ["Ajuda"],
+    ]
+
+
+@pytest.mark.parametrize(
+    ("botao", "esperado"),
+    [
+        ("Municipal (bairros)", "bairro"),
+        ("Municipal (hexagonos)", "hexagono"),
+        # Rotulo antigo (teclado em cache no Telegram) cai no default do produto.
+        ("Relatorio Municipal", "bairro"),
+    ],
+)
+def test_unidade_escolhida_chega_na_api(monkeypatch, botao, esperado):
+    recebido = {}
+
+    def _falso(uf, m, s, st, unidade="bairro"):
+        recebido["unidade"] = unidade
+        return b"%PDF-fake", None
+
+    monkeypatch.setattr(bot, "consultar_pdf_municipio", _falso)
+    chat = 900 + hash(botao) % 50
+    _auth(chat, "QA")
+    bot.processar(chat, botao, _S)
+    bot.processar(chat, "TO", _S)
+    out = bot.processar(chat, "Palmas", _S)
+
+    assert recebido["unidade"] == esperado
+    # O rotulo da mensagem diz ao usuario QUAL relatorio veio.
+    texto = _textos(out)
+    assert ("hexágonos" if esperado == "hexagono" else "bairros") in texto
+    # E o nome do arquivo tambem, para os dois nao se confundirem no Telegram.
+    nomes = [a.get("filename", "") for a in out if "pdf" in a]
+    assert any(esperado in n for n in nomes), nomes

@@ -83,6 +83,7 @@ PDF_SECTION_HEADERS = (
     "Potencial de Entrada de Novas Unidades",
     "Visão Geral do Município",
     "Bairros Oficiais",
+    "Bairros - Núcleo Urbano",
     "Comparação das Regiões",
     "Resumo da Região",
     "Score Censitário",
@@ -177,6 +178,34 @@ _SOBRA_FILL_RGBA = (120, 128, 140, 90)
 # encolher a fonte a ponto de nao se ler em projecao. O material de referencia do time usa 15
 # ("as 15 melhores ranqueados"); mantemos o mesmo teto para a leitura ficar familiar.
 _TABELA_HEXES_LIMITE = 15
+
+# Unidade de leitura do relatorio, escolhida por QUEM PEDE (Juan, 2026-08-19: o bot passa a
+# oferecer "Municipal (hexagonos)" e "Municipal (bairros)" como opcoes separadas).
+# - "bairro"   -> tematicos por bairro + as paginas Bairros Oficiais e Nucleo Urbano.
+# - "hexagono" -> tematicos por hexagono e SEM as paginas de bairro (o relatorio classico).
+# A escolha e' explicita de proposito: cada unidade responde melhor a uma pergunta, e antes
+# disso o codigo decidia sozinho -- o que surpreendia quem esperava a outra.
+UNIDADE_BAIRRO = "bairro"
+UNIDADE_HEXAGONO = "hexagono"
+
+# Recorte do NUCLEO URBANO (BLK-RELMUN-11). Municipio de fronteira agricola tem a cidade em
+# ~2% do territorio (Sinop/MT, Tangara da Serra/MT): enquadrar o municipio inteiro faz os
+# bairros virarem um ponto. Estas constantes definem o "onde a cidade esta de fato".
+#
+# Criterio = DENSIDADE, nao populacao bruta: um distrito rural extenso pode ter muita gente
+# somada e ainda assim nao ser cidade. Ordena por hab/km2 desc e acumula ate cobrir
+# `_URBANO_POP_ALVO` da populacao; o bbox desses bairros e' o nucleo.
+_URBANO_POP_ALVO = 0.85
+# Piso de densidade, como FRACAO da densidade do bairro mais denso. Sem ele o alvo de 85%
+# acima e' uma armadilha: quando o nucleo urbano sozinho nao alcanca a meta, o laco continua
+# somando bairros cada vez mais esparsos ate o recorte voltar a ser o municipio inteiro --
+# exatamente o que esta pagina existe para evitar. Com o piso, a area rural fica de fora
+# mesmo que a meta nao seja atingida.
+_URBANO_DENS_MIN_FRAC = 0.10
+# Extensao MINIMA do recorte (m). Sem isto, municipio de nucleo minusculo geraria um zoom
+# absurdo, com o basemap ilegivel.
+_URBANO_SPAN_MIN_M = 4000.0
+_URBANO_PAD_FRAC = 0.10
 
 # Abaixo desta fracao de setores COM localidade, a pagina para de vender a contagem de bairros
 # como se fosse o municipio mapeado e passa a avisar que a malha vem incompleta. Palmas/TO e o
@@ -529,27 +558,6 @@ def tem_bairro_real(bairros_geo: dict[str, Any] | None) -> bool:
     variacao intramunicipal) e ainda faz o rodape afirmar uma agregacao inexistente.
     """
     return any(not b.get("sobra") for b in ((bairros_geo or {}).get("bairros") or []))
-
-
-def bairro_representa_o_municipio(bairros_geo: dict[str, Any] | None) -> bool:
-    """Os bairros mapeados cobrem o municipio o bastante para os mapas TEMATICOS saírem neles?
-
-    Guard das camadas tematicas (score/residual/resumo/cobertura/dominio). Exige bairro real
-    E cobertura >= `_BAIRRO_COBERTURA_MIN` -- o MESMO limiar que ja marca a contagem como
-    "nao representativa" na pagina de Bairros Oficiais; usar dois limiares diferentes para a
-    mesma pergunta so criaria uma pagina que avisa e outra que age como se nada houvesse.
-
-    Motivo (decisao de Juan, 2026-08-18, sobre o caso Campinas/SP): la o IBGE nomeia 31% dos
-    setores, e os 6 distritos mapeados sao TODOS perifericos -- o miolo urbano, onde a decisao
-    de expansao acontece, ficava cinza no mapa de score, apesar de o dado existir (score medio
-    61,2, max 100,0). Abaixo do limiar o tematico volta ao hexagono e mostra a cidade inteira;
-    a pagina de Bairros Oficiais segue exibindo os bairros que existem, com o aviso. Afeta 65
-    dos 319 municipios de 100 mil+ (Campinas, Palmas, Anapolis, Montes Claros, Cotia...).
-    """
-    if not tem_bairro_real(bairros_geo):
-        return False
-    cobertura = float((bairros_geo or {}).get("cobertura", 0.0) or 0.0)
-    return cobertura >= _BAIRRO_COBERTURA_MIN
 
 
 def _partes_desenhaveis(geom: Any) -> list[Any]:
@@ -1983,12 +1991,75 @@ def _render_mapa_municipio(
     return out.getvalue()
 
 
+def bounds_nucleo_urbano(bairros_geo: dict[str, Any] | None) -> tuple[float, float, float, float] | None:
+    """bbox (EPSG:3857) da parte URBANA do municipio, ou None se nao der para distinguir.
+
+    Ordena os bairros por DENSIDADE (hab/km2) desc e acumula ate cobrir `_URBANO_POP_ALVO` da
+    populacao OU a densidade cair abaixo de `_URBANO_DENS_MIN_FRAC` da maior; o bbox dos
+    escolhidos e' o nucleo. Densidade e' o discriminante certo aqui -- por populacao bruta um
+    distrito rural grande entraria e o recorte voltaria a ser o municipio inteiro.
+
+    As DUAS condicoes de parada importam: so a meta de populacao nao basta, porque quando o
+    nucleo urbano nao a alcanca sozinho o laco segue somando bairros esparsos ate engolir a
+    area rural (medido em teste com nucleo de 40k e distrito rural de 12k a 200 km).
+
+    A sobra ("demais setores") fica FORA do calculo: ela e' tipicamente a area rural sem nome,
+    e inclui-la puxaria o recorte de volta para o territorio todo. Ela continua sendo DESENHADA
+    no recorte -- so nao vota em onde ele fica.
+
+    `None` quando nao ha bairro com area/populacao utilizavel (o chamador cai no mapa cheio).
+    """
+    bairros = [
+        b for b in ((bairros_geo or {}).get("bairros") or [])
+        if not b.get("sobra") and b.get("aneis")
+    ]
+    if not bairros:
+        return None
+    pop_total = sum(max(0.0, _safe_float(b.get("pop"))) for b in bairros)
+    if pop_total <= 0:
+        return None
+
+    def _dens(b: dict[str, Any]) -> float:
+        d = _safe_float(b.get("densidade"))
+        return -1.0 if math.isnan(d) else d
+
+    ordenados = sorted(bairros, key=_dens, reverse=True)
+    piso = max(0.0, _dens(ordenados[0])) * _URBANO_DENS_MIN_FRAC
+    # O mais denso entra SEMPRE (ancora do recorte); os seguintes so enquanto forem densos o
+    # bastante E a meta de populacao nao tiver sido atingida.
+    escolhidos: list[dict[str, Any]] = [ordenados[0]]
+    acumulado = max(0.0, _safe_float(ordenados[0].get("pop")))
+    for b in ordenados[1:]:
+        if acumulado >= pop_total * _URBANO_POP_ALVO or _dens(b) < piso:
+            break
+        escolhidos.append(b)
+        acumulado += max(0.0, _safe_float(b.get("pop")))
+    aneis = [anel for b in escolhidos for anel in b["aneis"]]
+    if not aneis:
+        return None
+
+    minx = min(x for anel in aneis for x, _ in anel)
+    maxx = max(x for anel in aneis for x, _ in anel)
+    miny = min(y for anel in aneis for _, y in anel)
+    maxy = max(y for anel in aneis for _, y in anel)
+
+    cx, cy = (minx + maxx) / 2.0, (miny + maxy) / 2.0
+    span_x = max(maxx - minx, _URBANO_SPAN_MIN_M)
+    span_y = max(maxy - miny, _URBANO_SPAN_MIN_M)
+    pad_x, pad_y = span_x * _URBANO_PAD_FRAC, span_y * _URBANO_PAD_FRAC
+    return (
+        cx - span_x / 2.0 - pad_x, cy - span_y / 2.0 - pad_y,
+        cx + span_x / 2.0 + pad_x, cy + span_y / 2.0 + pad_y,
+    )
+
+
 def _render_mapa_bairros(
     bairros_geo: dict[str, Any],
     *,
     titulo: str = "Bairros oficiais",
     destaque: set[str] | None = None,
     metrica: str | None = None,
+    bounds: tuple[float, float, float, float] | None = None,
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
     width: int = 1000,
@@ -2007,6 +2078,9 @@ def _render_mapa_bairros(
     agregacao EXATA de setores (~21 setores por bairro em Novo Hamburgo), enquanto o hexagono
     res-7 (5,16 km2) e' MAIOR que 86% dos bairros de la. Trazer metrica de hexagono para o bairro
     seria repartir, nao agregar -- por isso Residual/mercado seguem em hexagono.
+
+    `bounds` (EPSG:3857) enquadra um recorte explicito -- usado pela pagina do NUCLEO URBANO
+    (`bounds_nucleo_urbano`), onde o municipio inteiro faria a cidade virar um ponto.
 
     `destaque` (nomes) pinta um subconjunto em verde -- e o que separa "Bairros oficiais"
     (destaque vazio) de "Melhores bairros" sem duplicar renderizador.
@@ -2035,14 +2109,20 @@ def _render_mapa_bairros(
         image.save(out, format="PNG", optimize=True)
         return out.getvalue()
 
-    minx = min(x for anel in aneis_todos for x, _ in anel)
-    maxx = max(x for anel in aneis_todos for x, _ in anel)
-    miny = min(y for anel in aneis_todos for _, y in anel)
-    maxy = max(y for anel in aneis_todos for _, y in anel)
-    pad_x = (maxx - minx) * 0.06 + 1.0
-    pad_y = (maxy - miny) * 0.06 + 1.0
-    minx, maxx = minx - pad_x, maxx + pad_x
-    miny, maxy = miny - pad_y, maxy + pad_y
+    if bounds is not None:
+        # Recorte EXPLICITO (nucleo urbano): ja vem com padding proprio. Todos os bairros
+        # seguem sendo desenhados; os de fora apenas caem fora do quadro -- e o `clip` do
+        # `map_box` impede que invadam titulo e rodape.
+        minx, miny, maxx, maxy = bounds
+    else:
+        minx = min(x for anel in aneis_todos for x, _ in anel)
+        maxx = max(x for anel in aneis_todos for x, _ in anel)
+        miny = min(y for anel in aneis_todos for _, y in anel)
+        maxy = max(y for anel in aneis_todos for _, y in anel)
+        pad_x = (maxx - minx) * 0.06 + 1.0
+        pad_y = (maxy - miny) * 0.06 + 1.0
+        minx, maxx = minx - pad_x, maxx + pad_x
+        miny, maxy = miny - pad_y, maxy + pad_y
 
     span_x = max(maxx - minx, 1.0)
     span_y = max(maxy - miny, 1.0)
@@ -2278,6 +2358,7 @@ def render_mapas_municipio(
     df_muni: pd.DataFrame,
     municipio_result: dict[str, Any],
     *,
+    unidade: str = UNIDADE_BAIRRO,
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
     basemap: bool = False,
@@ -2344,12 +2425,39 @@ def render_mapas_municipio(
     # `focus_bounds` (que enquadra hexes relevantes) de proposito -- o slide serve para situar o
     # municipio todo, inclusive a parte rural que fica fora do recorte de oportunidade.
     bairros_geo = municipio_result.get("bairros_geo") or {}
+    if unidade == UNIDADE_HEXAGONO:
+        # Modo hexagono: nenhuma camada de bairro e' produzida, e os choropleths de hexagono
+        # acima ficam como estao. E' o relatorio classico, agora por escolha e nao por falta
+        # de dado.
+        return mapas
+
     mapas["bairros"] = _render_mapa_bairros(
         bairros_geo,
         basemap=basemap,
         width=width,
         height=height,
     )
+
+    # BLK-RELMUN-11: segunda vista, com ZOOM no nucleo urbano. Em municipio de fronteira
+    # agricola a cidade ocupa ~2% do territorio (Sinop/MT: 21 bairros viram um ponto no mapa
+    # do municipio inteiro, e so 3 nomes cabem). As duas vistas se complementam -- a primeira
+    # situa o municipio, esta mostra onde a decisao acontece. Pedido de Juan (2026-08-19).
+    # Leva os pins: no zoom eles finalmente sao distinguiveis.
+    bounds_urbano = bounds_nucleo_urbano(bairros_geo)
+    if bounds_urbano is not None:
+        mapas["bairros_urbano"] = _render_mapa_bairros(
+            bairros_geo,
+            titulo="Bairros - núcleo urbano (score censitário)",
+            # COLORIDO por score: sem metrica a pagina saia so com contorno vermelho e o
+            # leitor nao tinha o que ler no zoom (Juan, em Varzea Grande/MT: "falta as cores").
+            metrica="score",
+            bounds=bounds_urbano,
+            competitors_df=competitors_df,
+            ultra_df=ultra_df,
+            basemap=basemap,
+            width=width,
+            height=height,
+        )
 
     # BLK-RELMUN-09/10: TODAS as camadas tematicas passam a ser desenhadas POR BAIRRO.
     #
@@ -2359,11 +2467,15 @@ def render_mapas_municipio(
     # Hamburgo, entao esses quatro sao estimativa, nao medicao. Decisao do usuario (2026-08-14)
     # apos a alternativa conservadora ter sido apresentada e reconsiderada.
     #
-    # Fallback (2 casos): municipio SEM bairro na base, e municipio cujos bairros mapeados
-    # nao representam o territorio (<50% dos setores) -- ver `bairro_representa_o_municipio`.
-    # Nos dois, os tematicos mantem os choropleths de hexagono. A pagina de Bairros Oficiais
-    # (acima, fora do guard) segue mostrando os bairros que existirem, com o aviso.
-    if bairro_representa_o_municipio(bairros_geo):
+    # Fallback: SO municipio sem bairro real na base mantem os choropleths de hexagono.
+    #
+    # O corte por COBERTURA (<50% voltava ao hexagono, caso Campinas) foi REVERTIDO em
+    # 2026-08-19 a pedido de Juan, depois de ver Sinop/MT: "so vistas de bairros sem
+    # hexagonos". O que protege a leitura em cobertura baixa passou a ser o RECORTE URBANO
+    # abaixo, nao a troca de unidade -- e a pagina de Bairros Oficiais segue declarando a
+    # cobertura real. Consequencia aceita: em Campinas/SP (31%, distritos so na periferia) o
+    # miolo urbano aparece como area cinza "sem bairro na base" dentro do recorte.
+    if tem_bairro_real(bairros_geo):
         aplicar_metricas_hex_nos_bairros(
             bairros_geo, df_muni, hex_zona_geo=municipio_result.get("hex_zona_geo") or {}
         )
@@ -2379,6 +2491,12 @@ def render_mapas_municipio(
                 bairros_geo,
                 titulo=titulo,
                 metrica=camada,
+                # Mesmo recorte urbano da pagina 4. Sem ele, um distrito rural extenso domina
+                # o quadro e espreme a cidade a ponto de nao dar para ler onde ha espaco --
+                # Juan viu isso na Expansao de Dominio de Tangara da Serra/MT. E' o analogo do
+                # `focus_bounds` que as camadas de HEXAGONO ja usavam; era a paridade que
+                # faltava. A pagina 3 (municipio inteiro) segue sem recorte, de proposito.
+                bounds=bounds_urbano,
                 competitors_df=competitors_df if com_pins else None,
                 ultra_df=ultra_df if com_pins else None,
                 basemap=basemap,
@@ -2899,7 +3017,7 @@ def _score_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     # FU1: nota curta explicando as faixas do score (D5). BLK-RELMUN-09: quando o mapa sai por
     # BAIRRO, a nota e o rodape tem de dizer isso -- as demais paginas seguem em hexagono, e o
     # leitor precisa saber em que unidade esta olhando em cada uma.
-    por_bairro = bairro_representa_o_municipio(result.get("bairros_geo"))
+    por_bairro = tem_bairro_real(result.get("bairros_geo"))
     unidade = "por bairro (IBGE 2022)" if por_bairro else "H3 res 7 (IBGE 2022)"
     _draw_note(
         pdf, px, py0 + panel_h + 10, pw,
@@ -3117,6 +3235,70 @@ _BAIRRO_METRICA_RODAPE: dict[str, str] = {
     "cobertura": "Aprovação do bairro = maioria da população em hexágono aprovado",
     "dominio": "Zona do bairro = zona do hexágono com maior população do bairro",
 }
+
+
+def _bairros_urbano_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
+                         assets: dict[str, bytes | None], *,
+                         primary: tuple[int, int, int] = ULTRA_TURQUESA,
+                         secondary: tuple[int, int, int] = ULTRA_MAGENTA) -> None:
+    """Pagina "Bairros - Nucleo Urbano" (BLK-RELMUN-11): o zoom onde a cidade esta.
+
+    A pagina anterior enquadra o municipio INTEIRO -- necessario para situar, mas em municipio
+    de fronteira agricola a mancha urbana vira um ponto. Aqui o recorte e' o bbox dos bairros
+    mais DENSOS que somam 85% da populacao, com os pins de Ultra/concorrentes, que so neste
+    zoom ficam distinguiveis.
+    """
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, f"Bairros - Núcleo Urbano - {_local_label(result)}", rgb=primary)
+    _draw_framed_map(pdf, mapa, max_w=540.0, max_h=380.0, x_anchor=34.0, y_anchor=100.0,
+                     border_rgb=primary)
+
+    geo = result.get("bairros_geo") or {}
+    bairros = [b for b in (geo.get("bairros") or []) if not b.get("sobra")]
+    # Os mais DENSOS -- e' a leitura que interessa no zoom urbano, e o criterio que define
+    # o proprio recorte da pagina; ordenar por populacao aqui contradiria o mapa ao lado.
+    densos = sorted(
+        (b for b in bairros if not math.isnan(_safe_float(b.get("densidade")))),
+        key=lambda b: -_safe_float(b.get("densidade")),
+    )[:5]
+
+    px = 610.0
+    pw = _PAGE_W - px - 36.0
+    head_h = 100.0
+    panel_h = 36.0 + max(len(densos), 1) * 26.0 + 12.0
+    py0 = _centered_y(head_h + 12.0 + panel_h)
+
+    _rounded_panel(pdf, px, py0, pw, head_h, border_rgb=secondary)
+    pdf.set_text_color(*secondary)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_xy(px + 14, py0 + 12)
+    pdf.cell(pw - 28, 14, _ascii("RECORTE URBANO"))
+    pdf.set_font("Helvetica", "B", 40)
+    pdf.set_xy(px + 14, py0 + 32)
+    pdf.cell(pw - 28, 44, _ascii(_format_number(len(bairros), 0)))
+    pdf.set_text_color(45, 45, 45)
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_xy(px + 14, py0 + 80)
+    pdf.cell(pw - 28, 14, _ascii("bairros do município, com zoom na mancha urbana"))
+
+    linhas = (
+        [(str(b["nome"]), _format_number(b["densidade"], 0)) for b in densos]
+        if densos
+        else [("Sem densidade calculada", TEXTO_SEM_DADO)]
+    )
+    _info_panel(
+        pdf, px, py0 + head_h + 12, pw, "MAIS DENSOS (hab./km²)",
+        linhas, accent=ULTRA_LARANJA, border_rgb=_ciclo_cor(2),
+    )
+
+    _draw_note(
+        pdf, 34.0, 490.0, 540.0,
+        "Recorte = bairros mais densos que somam 85% da população do município (a página "
+        "anterior mostra o território inteiro). Densidade do Censo IBGE 2022; pins de Ultra e "
+        "concorrentes por posição real. Camada de display, não altera o M1.",
+    )
+    _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 
 def _tabela_hexes_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None], *,
@@ -3544,8 +3726,13 @@ def gerar_pdf_relatorio_municipal(
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
     versao: str | None = None,
+    unidade: str = UNIDADE_BAIRRO,
 ) -> bytes:
-    """Gera o PDF do Relatorio Municipal (11 paginas, 16:9, fpdf2, offline-safe).
+    """Gera o PDF do Relatorio Municipal.
+
+    `unidade` decide a leitura e o numero de paginas:
+    - `UNIDADE_BAIRRO` (default): 12 paginas, 11 quando o municipio nao tem bairro na base.
+    - `UNIDADE_HEXAGONO`: 10 paginas -- sem Bairros Oficiais e sem Nucleo Urbano.
 
     `mapas` = dict `{"cobertura","bairros","resumo","score","residual","dominio"}` (camadas PNG);
     ausente -> paginas com "Mapa indisponivel". `ultra_dir` aponta os assets de branding (fallback
@@ -3560,29 +3747,43 @@ def gerar_pdf_relatorio_municipal(
     # Tom principal alterna por pagina de conteudo (turquesa <-> magenta).
     p1, s1 = _tema_bicolor(1)
     p2, s2 = _tema_bicolor(2)
-    p3, _ = _tema_bicolor(3)
-    p4, s4 = _tema_bicolor(4)
+    p3, s3 = _tema_bicolor(3)
+    p4, _ = _tema_bicolor(4)
     p5, s5 = _tema_bicolor(5)
     p6, s6 = _tema_bicolor(6)
     p7, s7 = _tema_bicolor(7)
-    p8, _ = _tema_bicolor(8)
+    p8, s8 = _tema_bicolor(8)
     p9, _ = _tema_bicolor(9)
     p10, _ = _tema_bicolor(10)
+    p11, _ = _tema_bicolor(11)
 
     pdf = _UltraPDF()
     _cover_page(pdf, municipio_result, assets)
     _cobertura_page(pdf, municipio_result, mapas.get("cobertura"), assets, primary=p1, secondary=s1)
     # Territorio -> numeros -> mapas, a mesma ordem do material de referencia: primeiro o leitor
     # ancora o municipio em nomes que conhece, depois ve o ranking, so entao os mapas tematicos.
-    _bairros_mapa_page(pdf, municipio_result, mapas.get("bairros"), assets, primary=p2, secondary=s2)
-    _tabela_hexes_page(pdf, municipio_result, assets, primary=p3)
-    _resumo_page(pdf, municipio_result, mapas.get("resumo"), assets, primary=p4, secondary=s4)
-    _score_page(pdf, municipio_result, mapas.get("score"), assets, primary=p5, secondary=s5)
-    _residual_page(pdf, municipio_result, mapas.get("residual"), assets, primary=p6, secondary=s6)
-    _dominio_page(pdf, municipio_result, mapas.get("dominio"), assets, primary=p7, secondary=s7)
-    _bairros_page(pdf, municipio_result, assets, primary=p8)
-    _sintese_page(pdf, municipio_result, assets, primary=p9)
-    _espaco_academias_page(pdf, municipio_result, assets, primary=p10)
+    modo_bairro = unidade != UNIDADE_HEXAGONO
+    if modo_bairro:
+        _bairros_mapa_page(
+            pdf, municipio_result, mapas.get("bairros"), assets, primary=p2, secondary=s2
+        )
+    # Nucleo urbano: logo APOS a vista do municipio inteiro (situar -> aproximar), e SO quando
+    # ha bairro para aproximar. Sem bairro na base (Sao Luis/MA, Sorocaba/SP) a pagina saia com
+    # "Mapa indisponivel", "0 bairros" e "Sem densidade" -- uma pagina inteira dizendo nada,
+    # logo depois da pagina 3 que ja explicou a situacao com o aviso certo. Pagina que nao tem
+    # conteudo nao deve existir; o relatorio sai com 11 paginas nesses municipios.
+    if modo_bairro and tem_bairro_real(municipio_result.get("bairros_geo")):
+        _bairros_urbano_page(
+            pdf, municipio_result, mapas.get("bairros_urbano"), assets, primary=p3, secondary=s3
+        )
+    _tabela_hexes_page(pdf, municipio_result, assets, primary=p4)
+    _resumo_page(pdf, municipio_result, mapas.get("resumo"), assets, primary=p5, secondary=s5)
+    _score_page(pdf, municipio_result, mapas.get("score"), assets, primary=p6, secondary=s6)
+    _residual_page(pdf, municipio_result, mapas.get("residual"), assets, primary=p7, secondary=s7)
+    _dominio_page(pdf, municipio_result, mapas.get("dominio"), assets, primary=p8, secondary=s8)
+    _bairros_page(pdf, municipio_result, assets, primary=p9)
+    _sintese_page(pdf, municipio_result, assets, primary=p10)
+    _espaco_academias_page(pdf, municipio_result, assets, primary=p11)
 
     wm_text = _watermark_text(solicitante)
     for page_number in range(1, pdf.pages_count + 1):
@@ -3601,12 +3802,14 @@ def gerar_payloads_download_relatorio_municipal(
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
     versao: str | None = None,
+    unidade: str = UNIDADE_BAIRRO,
 ) -> RelatorioMunicipalDownloadPayloads:
     uf = _slug(municipio_result.get("uf", ""))
     muni = _slug(municipio_result.get("nome_municipio", "municipio"))
     prefix = filename_prefix or f"relatorio_municipal_{uf}_{muni}".strip("_")
     pdf_bytes = gerar_pdf_relatorio_municipal(
-        municipio_result, mapas, ultra_dir=ultra_dir, solicitante=solicitante, versao=versao
+        municipio_result, mapas, ultra_dir=ultra_dir, solicitante=solicitante, versao=versao,
+        unidade=unidade,
     )
     return RelatorioMunicipalDownloadPayloads(
         pdf_bytes=pdf_bytes,

@@ -612,8 +612,13 @@ def gerar_pdf_municipio(
     settings: Settings,
     *,
     solicitante: str | None = None,
+    unidade: str = "bairro",
 ) -> bytes:
-    """Gera o PDF de 10 paginas do Relatorio Municipal (BLK-RELMUN). READ-ONLY.
+    """Gera o PDF do Relatorio Municipal (BLK-RELMUN). READ-ONLY.
+
+    `unidade` escolhe a leitura: "bairro" (default, 12 paginas) ou "hexagono" (10 paginas,
+    o relatorio classico). No modo hexagono a leitura da particao geo de bairros e' PULADA --
+    e' a parte cara do caminho e nada dela seria usado.
 
     Resolve o municipio (aceita nome sem acento), agrega os hexes, renderiza os 6
     mapas (basemap online com fallback offline) e monta o PDF pelo gerador do
@@ -665,7 +670,7 @@ def gerar_pdf_municipio(
     # Em try/except PROPRIO: uma falha aqui so tira o slide "Bairros Oficiais", nao pode
     # levar junto o rotulo por hex da pagina "Bairros por Zona", que ja funcionava.
     try:
-        if cod:
+        if cod and unidade != "hexagono":
             bairros_geo = carregar_bairros_geo(uf, cod, settings.censo_geo_dir)
     except Exception:
         bairros_geo = None
@@ -702,7 +707,7 @@ def gerar_pdf_municipio(
     def _mapas(basemap: bool):
         return render_mapas_municipio(
             df_muni, result, competitors_df=comp_df, ultra_df=ultra_df, basemap=basemap,
-            poligono_municipio=poligono,
+            poligono_municipio=poligono, unidade=unidade,
         )
 
     try:
@@ -715,5 +720,6 @@ def gerar_pdf_municipio(
 
     payloads = gerar_payloads_download_relatorio_municipal(
         result, mapas, ultra_dir=ultra_dir, solicitante=solicitante or consumidor,
+        unidade=unidade,
     )
     return payloads.pdf_bytes
