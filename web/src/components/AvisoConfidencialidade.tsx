@@ -1,4 +1,4 @@
-import { Botao, Eyebrow, Glass } from './primitives'
+import { Botao, Glass } from './primitives'
 
 /* ---------------------------------------------------------------------------
    Aviso de confidencialidade — pop-up bloqueante de entrada (pedido do Felipe,
@@ -49,11 +49,20 @@ export default function AvisoConfidencialidade({ onConfirmar }: { onConfirmar: (
           boxShadow: 'var(--sh-pop)',
         }}
       >
-        <Eyebrow dot cor="var(--warn)">
-          Confidencial
-        </Eyebrow>
-        <h2 style={{ font: '700 19px/1.25 var(--f-ui)', color: 'var(--tx-max)', margin: 0 }}>
+        <h2
+          style={{
+            font: '700 19px/1.25 var(--f-ui)',
+            color: 'var(--tx-max)',
+            margin: 0,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+          }}
+        >
           {TITULO_CONFIDENCIALIDADE}
+          <span aria-hidden style={{ fontSize: 24, lineHeight: 1 }}>
+            🔒
+          </span>
         </h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {PARAGRAFOS_CONFIDENCIALIDADE.map((p) => (
