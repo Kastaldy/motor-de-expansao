@@ -10,9 +10,11 @@
 
 ## 1. O que é e para que serve
 
-O `graphify` transforma o repositório em um **grafo de conhecimento** persistente: 421 arquivos
-(290 de código extraídos por AST + 131 documentos, contratos e DECs extraídos por LLM) viram
-**7.633 nós e 15.362 arestas** (medido em 2026-07-28 sobre o `graphify-out/graph.json` versionado).
+O `graphify` transforma o repositório em um **grafo de conhecimento** persistente: 656 arquivos
+(502 de código extraídos por AST + 154 documentos, contratos e DECs extraídos por LLM) viram
+**12.999 nós e 25.705 arestas** (remedido em 2026-08-19 sobre o `graphify-out/graph.json`
+versionado; era 421 arquivos / 7.633 nós / 15.362 arestas em 2026-07-28, antes de o repositório
+crescer o `web/`, as DECs 027-036 e a camada de M&A).
 
 Serve para responder, em **uma consulta**, perguntas que hoje custam uma varredura inteira:
 "como X funciona", "o que chama Y", "onde vive Z", "o que quebra se eu mudar W". O benchmark do
@@ -195,7 +197,7 @@ PROTOCOL   : 2025-06-18
 SERVERINFO : {'name': 'graphify', 'version': '1.29.0'}
 TOOLS (10) : ['get_community', 'get_neighbors', 'get_node', 'get_pr_impact', 'god_nodes',
               'graph_stats', 'list_prs', 'query_graph', 'shortest_path', 'triage_prs']
-graph_stats: Nodes: 7633 | Edges: 15362 | Communities: 424 | EXTRACTED: 97% | INFERRED: 3% | AMBIGUOUS: 0%
+graph_stats: Nodes: 12999 | Edges: 25705 | Communities: 603 | EXTRACTED: 98% | INFERRED: 2% | AMBIGUOUS: 0%
 EXIT       : 0     STDERR: (vazio)     VERDICT: PASS
 ```
 
@@ -269,6 +271,11 @@ de exclusão**. Ele portanto ignora o recorte curado do corpus.
 > Os números do rebuild total e a contagem de logs foram medidos durante o BLK-GRAPH-01/02; as
 > colunas do curado foram remedidas em 2026-07-28 sobre o artefato versionado (o BLK-GRAPH-01
 > registrou 7.560/15.351/10.157.850, valores de um snapshot anterior).
+>
+> **A tabela é um experimento PAREADO de 2026-07-28 e fica congelada nessa data** — as duas
+> colunas só comparam porque foram medidas no mesmo corpus, no mesmo momento; atualizar uma delas
+> isolada destruiria a comparação. Para o tamanho ATUAL do grafo curado (2026-08-19: 656 arquivos,
+> 12.999 nós, 25.705 arestas, 17.165.315 bytes) ver a §1 e a §7.1.
 
 Ou seja: um `git checkout` de branch bastaria para inflar o grafo em ~78% de nós e jogar 566 logs de
 handoff dentro do corpus — exatamente o que o recorte da §7 do `CLAUDE.md` decidiu manter fora.
@@ -276,6 +283,26 @@ handoff dentro do corpus — exatamente o que o recorte da §7 do `CLAUDE.md` de
 Rodar `git config core.hooksPath .githooks` **neutraliza** o `post-checkout` local (o git passa a
 procurar hooks só em `.githooks/`, onde ele não existe). Reintroduzi-lo tem de ser um ato
 **consciente** — há um teste que falha se o arquivo aparecer.
+
+### 7.1 O risco desta seção se materializou (2026-08-04 → 2026-08-19)
+
+Não pelo `post-checkout`, que segue fora — **por uma reindexação manual que não filtrou o corpus
+antes de extrair**. O commit `8a75a4f` (2026-08-04) levou o grafo de 7.633 para 20.085 nós e pôs
+**584 arquivos de `context/handoff/` dentro do índice**; `498810e` (2026-08-12) manteve. Ficou
+assim por 15 dias, sem ninguém notar, porque **nada no CI mede a composição do grafo** — os
+números de nós aparecem só em prosa (nesta tabela e no §7 do `CLAUDE.md`), que envelheceu em
+silêncio enquanto o artefato divergia.
+
+Medido antes de corrigir: **11.181 dos 20.469 nós (54,6%) vinham de log de sessão**, não do
+repositório. Restaurado em 2026-08-19 por `build_merge(prune_sources=...)` + `to_json(force=True)`
+— o `force` é obrigatório porque a poda ENCOLHE o grafo e o shrink-guard (#479) recusaria a
+escrita.
+
+**A lição operacional, para a próxima reindexação:** o recorte curado não é imposto por nenhum
+código do graphify — nem o `detect`, nem o `--update`, nem o hook o conhecem. Ele só existe se
+**quem reindexa filtrar o corpus explicitamente** antes da extração. Um `/graphify . --update`
+rodado direto, sem filtro, refaz o estrago — e a conta é dupla: infla o índice E gasta ~29
+subagentes extraindo logs de handoff (908.656 palavras) que ninguém vai consultar.
 
 ---
 
