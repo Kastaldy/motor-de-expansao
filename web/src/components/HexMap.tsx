@@ -2,11 +2,20 @@ import { FlyToInterpolator, type Layer } from '@deck.gl/core'
 import { H3HexagonLayer } from '@deck.gl/geo-layers'
 import { IconLayer, PolygonLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
-import { cellToLatLng } from 'h3-js'
+import { cellToBoundary, cellToLatLng } from 'h3-js'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
+import {
+  type AlvoCaptura,
+  ESPERA_VOO_MS,
+  comporCanvas,
+  esperaDeCaptura,
+  larguraDoAnel,
+  zoomQueEnquadra,
+} from '../lib/captura-mapa'
+import { CORES_IDENTIDADE, corDeIdentidadeRgb, rotuloDoHex } from '../lib/comparacao'
 import { alunos, brl, distanciaCurta, num } from '../lib/format'
 import { sinaisDoRegime } from '../lib/sinais'
 import {
@@ -206,7 +215,11 @@ export interface HexMapProps {
   /** Pins de concorrentes (bandeira quadrada) + Ultra + ícones por rede. */
   pins?: Pins
   selecionado: string | null
-  /** Hexes do cenário multi-hex (contorno turquesa de seleção). */
+  /**
+   * Hexes do cenário multi-hex, NA ORDEM em que entraram — a ordem é o dado, não um
+   * detalhe: o índice de cada um define a cor de identidade do contorno, que precisa bater
+   * com a barra dele no painel de comparação.
+   */
   cenario?: string[]
   onSelecionar: (h: Hex) => void
   /**
@@ -219,6 +232,13 @@ export interface HexMapProps {
    * depois de arrastar o mapa e' um gesto legitimo, e comparar so' o id nao dispararia.
    */
   voarPara?: { hexId: string; n: number } | null
+  /**
+   * Pedido de CAPTURA: voa até cada hexágono da lista, na ordem, e devolve uma imagem por
+   * enquadramento. O `n` que só cresce segue a mesma razão do `voarPara`.
+   */
+  pedidoCaptura?: { alvos: AlvoCaptura[]; n: number } | null
+  /** As imagens, na ordem pedida. Entrada vazia = aquele hexágono não estava carregado. */
+  onCapturas?: (imagens: string[]) => void
   searchPin: SearchPin | null
   /**
    * Camera preservada de uma visita anterior ao mapa (ida e volta pela Viabilidade).
@@ -280,6 +300,8 @@ export default function HexMap({
   cenario,
   onSelecionar,
   voarPara = null,
+  pedidoCaptura = null,
+  onCapturas,
   searchPin,
   raio1km = false,
   independentes,
@@ -414,6 +436,94 @@ export default function HexMap({
     }))
   }, [voarPara, hexes])
 
+  /* CAPTURA do mapa, um enquadramento por hexágono (pedido do Juan, 2026-08-13).
+     Mesmo idioma do `voarPara`: contador que só cresce, para dar para pedir a mesma
+     sequência duas vezes.
+
+     O `preserveDrawingBuffer` entra SÓ AQUI. Ele é obrigatório para `toDataURL` não
+     devolver imagem em branco — o navegador descarta o buffer depois de pintar —, mas
+     custa desempenho em TODO frame, e o mapa é arrastado o tempo todo. Ligá-lo de forma
+     permanente cobraria de quem só navega, para servir a um print que acontece uma vez.
+     Trocar o flag exige recriar o contexto WebGL, e é o que a `key` do DeckGL faz. */
+  const [capturando, setCapturando] = useState(false)
+  /**
+   * O pin do quadro que esta' sendo capturado AGORA.
+   *
+   * Substitui o `searchPin` durante a captura, e nao se soma a ele: o `searchPin` e' um
+   * so' — o do ponto aberto na janela — entao capturar tres enderecos em sequencia punha
+   * a MESMA marca nas tres fotos, e nas duas primeiras ela apontava um imovel que nao era
+   * o assunto daquela coluna. Fora do modo de imovel fica `null`, e ai a captura sai sem
+   * pin nenhum: um pin de busca antigo no meio do deck se le como "o ponto e' aqui".
+   */
+  const [marcaCaptura, setMarcaCaptura] = useState<SearchPin | null>(null)
+  const capturaAnterior = useRef(pedidoCaptura?.n ?? 0)
+  useEffect(() => {
+    if (!pedidoCaptura || pedidoCaptura.n === capturaAnterior.current) return
+    capturaAnterior.current = pedidoCaptura.n
+    let cancelado = false
+    const pausa = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+    void (async () => {
+      setCapturando(true)
+      // Espera o remount COM o buffer preservado antes do primeiro voo; sem isto a
+      // primeira imagem sairia branca e as outras quatro certas, que é o pior dos mundos
+      // (parece defeito do hexágono, não da captura).
+      await pausa(500)
+
+      const imagens: string[] = []
+      for (const pedido of pedidoCaptura.alvos) {
+        if (cancelado) return
+        const alvo = hexes.find((h) => h.id === pedido.hexId)
+        if (!alvo) {
+          imagens.push('')
+          continue
+        }
+
+        /* ZOOM DERIVADO DO HEXAGONO, e nao os 13,2 fixos de antes. Em zoom fixo o
+           enquadramento dependia do tamanho da janela: numa tela larga a celula res-7
+           saia como um miolo de ~10% da foto e o resto era territorio que ninguem esta'
+           comparando ("a print do hexagono que ele esta', nao do mapa todo" — Juan,
+           2026-08-19). O recorte quadrado do `comporCanvas` fecha o resto. */
+        const caixa = caixaRef.current?.getBoundingClientRect()
+        const zoom = zoomQueEnquadra(
+          larguraDoAnel(cellToBoundary(pedido.hexId) as [number, number][]),
+          alvo.lat,
+          caixa?.width || 1200,
+          caixa?.height || 800,
+        )
+        // A marca do imovel entra ANTES do voo, para estar pintada quando o quadro parar.
+        setMarcaCaptura(
+          pedido.lat != null && pedido.lng != null
+            ? { lat: pedido.lat, lng: pedido.lng, hexId: pedido.hexId }
+            : null,
+        )
+        setView((v) => ({
+          ...v,
+          longitude: alvo.lng,
+          latitude: alvo.lat,
+          zoom,
+          transitionDuration: ESPERA_VOO_MS,
+          transitionInterpolator: FLY,
+        }))
+        await pausa(esperaDeCaptura())
+        if (cancelado) return
+        const canvases = Array.from(caixaRef.current?.querySelectorAll('canvas') ?? [])
+        imagens.push(
+          comporCanvas(canvases, document.createElement('canvas'), { recortar: true }) ?? '',
+        )
+      }
+
+      setMarcaCaptura(null)
+      setCapturando(false)
+      if (!cancelado) onCapturas?.(imagens)
+    })()
+
+    return () => {
+      cancelado = true
+      setMarcaCaptura(null)
+    }
+  }, [pedidoCaptura, hexes, onCapturas])
+
   // Cor da camada ativa: veste o "score forte" do tooltip e a borda do rotulo de
   // rank. Os dois dizem "isto e' da camada N" — antes diziam em turquesa, a mesma
   // cor do cenario multi-hex e do pin de busca na MESMA superficie.
@@ -421,7 +531,14 @@ export default function HexMap({
 
   const destaque = useMemo(() => new Set(passo.hexes), [passo.hexes])
   const cenarioSet = useMemo(() => new Set(cenario ?? []), [cenario])
-  const cenarioKey = (cenario ?? []).join(',')
+  /* POSICAO na lista, e nao so' "esta ou nao esta": e' o indice que da a cor de identidade,
+     a MESMA que o painel usa na barra daquele hexagono. Sem isto os cinco saiam com o
+     mesmo contorno turquesa e nada ligava a barra ao desenho.
+     `indexOf` e nao um Map: `Map` esta' SOMBREADO neste arquivo pelo componente de mesmo
+     nome do `react-map-gl`, e a lista tem no maximo `MAX_COMPARADOS` (5) itens — o `Set`
+     acima ja' descarta os outros 15 mil hexagonos antes de chegar aqui. */
+  const cenarioLista = useMemo(() => cenario ?? [], [cenario])
+  const cenarioKey = cenarioLista.join(',')
 
   // Posicao do rotulo = centro do proprio H3 (nao o lat/lng servido), para o numero
   // cair no meio do hexagono mesmo quando o filtro de faixa tira o hex do `hexes`.
@@ -463,6 +580,11 @@ export default function HexMap({
     return s
   }, [cobertura1k])
 
+  /* Qual pin o mapa desenha. Durante a captura manda o do quadro (`marcaCaptura`), que
+     e' `null` fora do modo de imovel — e ai a foto sai sem pin, em vez de carregar a marca
+     de uma busca antiga para dentro do PDF. */
+  const pinNoMapa = capturando ? marcaCaptura : searchPin
+
   const camadas = useMemo(() => {
     const base: Layer[] = [
       new H3HexagonLayer<Hex>({
@@ -479,13 +601,25 @@ export default function HexMap({
           return fillDoHex(d, passo.n, destaque.has(d.id), comRaio)
         },
         // Borda neutra e fina; hex SELECIONADO -> contorno claro; hexes do CENÁRIO
-        // multi-hex -> contorno turquesa (seleção deliberada, não o funil).
-        getLineColor: (d) =>
-          d.id === selecionado
-            ? [238, 243, 248, 255]
-            : cenarioSet.has(d.id)
-              ? [53, 201, 214, 255]
-              : [8, 11, 16, 55],
+        // multi-hex -> a COR DE IDENTIDADE da posição dele na comparação, a mesma da barra
+        // no painel (antes eram todos turquesa, e nada ligava barra a hexágono na tela).
+        getLineColor: (d) => {
+          if (d.id === selecionado) return [238, 243, 248, 255]
+          if (!cenarioSet.has(d.id)) return [8, 11, 16, 55]
+          // TETO na cor, e não no clique. O `cenario` cresce além de 5 de propósito — o
+          // painel troca para o modo SOMA e ali somar 8 hexágonos é legítimo. Mas a
+          // paleta tem 5 cores e `corDeIdentidade` cicla: o 6º hexágono sairia com a cor
+          // idêntica à do 1º, que é exatamente o que a paleta existe para impedir.
+          //
+          // Acima do teto vai um CINZA neutro. Não o turquesa `--ac`: ele é o mesmo
+          // `CRESC_ALTA_HEX` que preenche os hexágonos "Em alta" no passo 4, então usá-lo
+          // aqui faria o contorno de "está no cenário" colidir com um significado que a
+          // camada já dá àquela matiz — no passo 4, um hex do cenário que também fosse
+          // "Em alta" ficaria com contorno e preenchimento da mesma cor. Cinza não afirma
+          // nada, e a largura de 42 m (getLineWidth) já marca a seleção.
+          const i = cenarioLista.indexOf(d.id)
+          return i < CORES_IDENTIDADE.length ? corDeIdentidadeRgb(i) : [154, 167, 181, 255]
+        },
         getLineWidth: (d) => (d.id === selecionado ? 55 : cenarioSet.has(d.id) ? 42 : 6),
         lineWidthUnits: 'meters',
         lineWidthMinPixels: 0.5,
@@ -713,11 +847,11 @@ export default function HexMap({
     // Buscar um endereco e' uma forma de SELECIONAR, entao vale a mesma cor do hex
     // selecionado e do item ativo do painel; o turquesa ficou exclusivo do cenario
     // multi-hex, que era a unica marcacao turquesa deliberada do mapa.
-    if (searchPin) {
+    if (pinNoMapa) {
       base.push(
         new H3HexagonLayer<{ id: string }>({
           id: 'search-hex',
-          data: [{ id: searchPin.hexId }],
+          data: [{ id: pinNoMapa.hexId }],
           getHexagon: (d) => d.id,
           extruded: false,
           filled: true,
@@ -732,7 +866,7 @@ export default function HexMap({
       base.push(
         new ScatterplotLayer<SearchPin>({
           id: 'search-pin-ring',
-          data: [searchPin],
+          data: [pinNoMapa],
           getPosition: (d) => [d.lng, d.lat],
           getRadius: 11,
           radiusUnits: 'pixels',
@@ -743,7 +877,7 @@ export default function HexMap({
       base.push(
         new ScatterplotLayer<SearchPin>({
           id: 'search-pin-core',
-          data: [searchPin],
+          data: [pinNoMapa],
           getPosition: (d) => [d.lng, d.lat],
           getRadius: 6,
           radiusUnits: 'pixels',
@@ -796,7 +930,7 @@ export default function HexMap({
     cenarioSet,
     cenarioKey,
     onSelecionar,
-    searchPin,
+    pinNoMapa,
     pins,
     iconObjs,
     rotulosRank,
@@ -826,6 +960,11 @@ export default function HexMap({
           'radial-gradient(120% 90% at 46% 42%, var(--bg-lift) 0%, var(--bg-base) 76%)',
       }}
     >
+      {/* O DeckGL NÃO precisa de flag: no deck.gl v9 o `preserveDrawingBuffer` já é `true`
+          por padrão (está escrito nos próprios tipos), então o canvas das camadas sempre
+          foi capturável. Quem descarta o buffer é o BASEMAP — o MapLibre v5 usa
+          `preserveDrawingBuffer: false` por padrão. Só ele é recriado na captura, o que
+          torna o custo bem menor do que trocar o contexto dos dois. */}
       <DeckGL
         viewState={view}
         onViewStateChange={(e) => setView(e.viewState as ViewState)}
@@ -834,7 +973,16 @@ export default function HexMap({
         style={{ position: 'absolute', top: '0', left: '0', width: '100%', height: '100%' }}
         getCursor={({ isHovering }) => (isHovering ? 'pointer' : 'grab')}
       >
-        <Map mapStyle={BASEMAP_STYLE} attributionControl={{ compact: true }} reuseMaps />
+        {/* A `key` muda com `capturando` porque atributo de contexto WebGL não se troca num
+            contexto já criado — só recriando. E `reuseMaps` sai de cena junto: reaproveitar
+            a instância devolveria o canvas antigo, sem o buffer, e a imagem sairia branca. */}
+        <Map
+          key={capturando ? 'captura' : 'normal'}
+          mapStyle={BASEMAP_STYLE}
+          attributionControl={{ compact: true }}
+          reuseMaps={!capturando}
+          canvasContextAttributes={{ preserveDrawingBuffer: capturando }}
+        />
 
       </DeckGL>
 
@@ -855,9 +1003,19 @@ export default function HexMap({
             minWidth: 196,
           }}
         >
-          {/* Cabecalho: Municipio / UF, com o hex id como legenda (como o Streamlit) */}
+          {/* Cabecalho: o BAIRRO deste hexagono, com municipio/UF logo abaixo.
+              Era Municipio / UF — a MESMA linha para todos os hexagonos da cidade, entao
+              percorrer o mapa de Itaquaquecetuba mostrava "Itaquaquecetuba / SP" quinze
+              vezes e o unico distintivo era o id H3, que ninguem le. O nome do bairro e' o
+              que o painel da direita ja' usa; o tooltip passa a falar a mesma lingua. */}
           <div style={{ font: '600 12.5px/1.25 var(--f-ui)', color: 'var(--tx-max)' }}>
-            {municipio ? `${municipio}${uf ? ` / ${uf}` : ''}` : hover.h.id}
+            {rotuloDoHex(hover.h)}
+          </div>
+          <div
+            style={{ font: '500 10px/1.25 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 2 }}
+          >
+            {/* Sem repetir: quando o titulo ja' e' o municipio, sobra so' a UF. */}
+            {[hover.h.bairro ? municipio || hover.h.mun : null, uf].filter(Boolean).join(' / ')}
           </div>
           <div
             className="num"

@@ -51,6 +51,9 @@ AGRUPAMENTO_ABAS: tuple[tuple[str, str], ...] = (
     ("/api/ponto", "mapa"),
     ("/api/cobertura/", "mapa"),
     ("/api/relatorio/municipal", "mapa"),
+    # O deck de comparacao sai das telas de mapa (hexagonos no Explorar, pontos no
+    # modo de imovel) — nao da Viabilidade, que ele nao carrega por DEC-009.
+    ("/api/relatorio/comparacao", "mapa"),
     ("/api/uf/", "mapa"),
     ("/api/municipio/", "mapa"),
     ("/api/municipios/", "mapa"),

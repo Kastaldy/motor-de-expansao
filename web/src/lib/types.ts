@@ -41,8 +41,25 @@ export interface Hex {
   renda_dom: number | null
   /** rotulo da faixa de oportunidade M1 (ex.: "Alta") */
   faixa: string | null
+  /**
+   * Bairro/distrito dominante da celula (IBGE), quando o backend o resolveu.
+   *
+   * So' vem na rota de MUNICIPIO — depende do codigo dele, e a visao de UF serve
+   * dezenas de cidades numa resposta so'. Ausente ali nao significa "sem bairro", e por
+   * isso quem rotula cai no municipio em vez de mostrar vazio.
+   */
+  bairro?: string | null
   conc: number
   ultra: number
+  /* CONTAGEM de unidades mapeadas DENTRO do hexagono (celula H3 res-7), vinda dos MESMOS
+     pontos que viram pin no mapa. Nao confundir com `conc`/`ultra` acima: `conc` e'
+     `oferta_consumida_mercado_estimada / 2.500` (capacidade do modelo de 2 km, nao
+     contagem) e `ultra` vem da camada de performance. E' esta a leitura que a ficha do
+     hexagono promete no rotulo.
+     `null` = base de pontos nao montada ("nao sei"); `0` = montada e vazia aqui ("nao ha
+     unidade neste hexagono"). Sao afirmacoes diferentes e a tela nao pode fundi-las. */
+  conc_hex?: number | null
+  ultra_hex?: number | null
   /* PROTOTIPO da chave de raio (2 km centroide vs 1 km por area).
      `conc1k` = quantas concorrentes ALCANCAM este hexagono pelo disco de 1 km — e o que
      colore o mapa no modo novo. `oferta1k` = residual sob esse modelo.

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 import type { CrescimentoMunicipio } from '../lib/oportunidades'
-import { alunos, brl, num, pct } from '../lib/format'
+import { alunos, brl, num, pctVar } from '../lib/format'
 import type { Hex } from '../lib/types'
 import { FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from '../lib/faixas'
 import { BarraMercado, FilaApoio, MedidorScore, NumeroApoio } from './LeiturasVisuais'
@@ -27,10 +27,20 @@ import { Chip, Eyebrow, Kpi } from './primitives'
 export default function FichaHex({
   hex,
   cres,
+  onComparar,
 }: {
   hex: Hex
   /** Crescimento do MUNICÍPIO do hexágono (`MapaResposta.cres_mun`), quando houver. */
   cres?: CrescimentoMunicipio | null
+  /**
+   * Põe ESTE hexágono na comparação e liga o modo cenário. Ausente = o botão não aparece.
+   *
+   * SEM estado de "já está comparando", e isso é medido, não esquecimento: esta janela só
+   * abre com `!modoCenario` (`MapScreen`), e desligar o modo zera a lista. Logo o hexágono
+   * nunca está na comparação enquanto a ficha está aberta — um rótulo "tirar da
+   * comparação" seria um estado inalcançável prometendo comportamento que não existe.
+   */
+  onComparar?: () => void
 }) {
   return (
     <div style={{ display: 'grid', gap: 16 }}>
@@ -66,6 +76,28 @@ export default function FichaHex({
           >
             Abrir o centro no Google Maps ↗
           </a>
+          {/* COMPARAR A PARTIR DAQUI (pedido do Juan, 2026-08-13). A comparação já
+              existia, mas só se alcançava entrando no modo cenário ANTES de escolher — ou
+              seja, quem já estava lendo uma ficha tinha de sair dela e recomeçar. O botão
+              põe este hexágono na lista e liga o modo; o próximo clique no mapa entra como
+              o segundo, e a comparação aparece sozinha. */}
+          {onComparar && (
+            <button
+              type="button"
+              onClick={onComparar}
+              title="Põe este hexágono na comparação — clique em outro no mapa para comparar os dois"
+              style={{
+                padding: '4px 9px',
+                borderRadius: 999,
+                border: '1px solid var(--line-soft)',
+                background: 'var(--surf-raised)',
+                color: 'var(--tx-soft)',
+                font: '600 11px/1 var(--f-ui)',
+              }}
+            >
+              + Comparar com outro
+            </button>
+          )}
         </div>
       </div>
 
@@ -83,10 +115,25 @@ export default function FichaHex({
         </FilaApoio>
       </Bloco>
 
+      {/* CONTAGEM, e do HEXAGONO. Até 2026-08-13 este bloco lia `hex.conc`/`hex.ultra`,
+          que não são nenhuma das duas coisas: `conc` é `oferta_consumida_mercado_estimada
+          / 2.500` — capacidade do modelo de 2 km ponderado por distância —, então uma
+          concorrente a 1,8 km do centroide entrava aqui sem estar dentro do hexágono, e
+          `ultra` vem da camada de performance. O rótulo prometia "unidades mapeadas
+          dentro do hexágono" e entregava outra medida. O mesmo defeito de redação já
+          tinha sido corrigido no texto do funil ("RAIO, NÃO HEXÁGONO", em `app.py`).
+          Agora vem de `conc_hex`/`ultra_hex`, contagem de ponto por célula H3 res-7 sobre
+          os MESMOS pontos que viram pin no mapa — ficha e mapa não podem discordar. */}
       <Bloco titulo="Quem já disputa o aluno" nota="unidades mapeadas dentro do hexágono">
         <FilaApoio>
-          <NumeroApoio rotulo="Concorrentes" valor={num(hex.conc)} />
-          <NumeroApoio rotulo="Unidades Ultra" valor={num(hex.ultra)} />
+          <NumeroApoio
+            rotulo="Concorrentes"
+            valor={hex.conc_hex == null ? '—' : num(hex.conc_hex)}
+          />
+          <NumeroApoio
+            rotulo="Unidades Ultra"
+            valor={hex.ultra_hex == null ? '—' : num(hex.ultra_hex)}
+          />
         </FilaApoio>
       </Bloco>
 
@@ -121,9 +168,18 @@ export default function FichaHex({
           motivo, nunca desaparece em silêncio. */}
       {(hex.cres_hex_classe || hex.cres_hex_taxa != null || cres) && (
         <Bloco titulo="Como a região vem indo" nota={hex.mun ? `obra nova aqui · emprego em ${hex.mun}` : undefined}>
+          {/* Sinal EXPLICITO nas duas taxas deste bloco (`pctVar`). São VARIAÇÃO, não
+              participação: sem o `+`, "8,8%" não diz se a cidade cresceu ou se aquilo é
+              um patamar — e o bloco inteiro existe para responder "como a região vem
+              indo". O negativo já vinha; o positivo é que era mudo. */}
+          {/* A guarda `== null ? '—'` TEM de ficar: `pctVar` devolve `TEXTO_SEM_DADO`, que
+              é "Não disponível" por extenso, e este `Kpi` desenha o valor em 700 24px com
+              `nowrap` + `ellipsis` — o texto sairia truncado como "Não dispo…". Perdi a
+              guarda ao trocar `pct` por `pctVar`; o travessão curto é a regra deste
+              arquivo e a mesma nota que escrevi em `exec/PainelRede`. */}
           <Kpi
             label="Obra nova (2016→2023)"
-            valor={hex.cres_hex_taxa == null ? '—' : pct(hex.cres_hex_taxa)}
+            valor={hex.cres_hex_taxa == null ? '—' : pctVar(hex.cres_hex_taxa)}
             sub={hex.cres_hex_classe ?? undefined}
           />
           {/* O CAGED só é publicado com a mediana da UF ao lado: sem referência estadual
@@ -131,11 +187,11 @@ export default function FichaHex({
               Aqui isso vira "—" com o motivo por extenso, em vez de um número solto. */}
           <Kpi
             label="Emprego formal (município)"
-            valor={cres?.emp == null || cres?.uf_mediana == null ? '—' : pct(cres.emp)}
+            valor={cres?.emp == null || cres?.uf_mediana == null ? '—' : pctVar(cres.emp)}
             sub={
               cres?.uf_mediana == null
                 ? 'sem mediana da UF para comparar'
-                : `mediana da UF: ${pct(cres.uf_mediana)}`
+                : `mediana da UF: ${pctVar(cres.uf_mediana)}`
             }
           />
         </Bloco>
