@@ -806,7 +806,7 @@ def calcular_pressao_por_academia(
     UNIVERSO DE OFERTA (BLK-MA-16). Sem `independentes`, só as cadeias contam e o resultado é o
     histórico — `universo_oferta = "cadeias"`. Com `independentes`, elas entram com metade do peso
     de uma unidade de rede e o carimbo vira `"cadeias_e_independentes"`. **É condicional ao insumo,
-    no molde da DEC-027**: nenhuma rodada muda de régua sem o chamador fornecer o frame.
+    no molde da DEC-036**: nenhuma rodada muda de régua sem o chamador fornecer o frame.
 
     O que a inclusão corrige, medido em SP (2026-08-14, 7.106 independentes): a fração com pressão
     **`0` cai de 29,2% para 3,9%**. Aquele zero não era território livre — era o insumo, que só

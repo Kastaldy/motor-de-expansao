@@ -83,7 +83,7 @@ tudo READ-ONLY sobre o M1.
 - `tasks/current_task.md` — Passo 0 do orquestrador + a seção deste handoff
 - `docs/vulnerabilidade_ma_contrato.md` — §2 (INVERSÃO), §3/D1 (universo), §8.1 (emendas BLK-MA-14 e
   BLK-MA-16), §8.4 (universo do score, bordas de ausência), §14, §15
-- `docs/decisions/DEC-027.md` (S6 condicional, `w6 = 0,10`), `docs/decisions/DEC-029.md` (grão
+- `docs/decisions/DEC-036.md` (S6 condicional, `w6 = 0,10`), `docs/decisions/DEC-029.md` (grão
   academia, rota B sem bump de série), `docs/decisions/DEC-030.md` **local** (independentes na
   oferta; **atenção: colide com a DEC-030 de `origin/main`** — ver Q7)
 - `src/motor_expansao/vulnerabilidade/presenca_agregador.py` (`_filtrar_universo_sinal_1`, 141-153)
@@ -161,7 +161,7 @@ Caddy, `.env`, CI. **Não commitar** `graphify-out/*` (regerado pelo hook post-c
 
 - Metade 1: muda o universo DECLARADO da camada (§3/D1) — o backlog já a classifica Alta e exige DEC.
 - Metade 2: muda **quem conta como oferta** de um componente **ATIVO** do score (`w6 = 0,10`,
-  DEC-027) e desloca `score_vulnerabilidade` em **37,1% do universo** (medido, ver Q1). É o mesmo
+  DEC-036) e desloca `score_vulnerabilidade` em **37,1% do universo** (medido, ver Q1). É o mesmo
   eixo que a DEC-030 tratou como Alta, e com um agravante que a DEC-030 não tinha: lá o Spearman era
   `1,000000` (não reordenava); aqui é **0,991157** — **a ordem muda**.
 - **NÃO é Crítica:** nada aqui escreve em artefato do M1 nem reusa `renda=0.40`/`pop=0.60`. A
@@ -371,7 +371,7 @@ python -m pytest --collect-only -q   ->   3184 tests collected in 235.75s
   do merge — conferir na abertura do PR se 030 continua livre"*.
 - `origin/main` também tem **DEC-031** (régua do percentil de renda setorial, Crítica) e **DEC-032**
   (`k` nacional único, Crítica).
-- **DEC-027, DEC-028 e DEC-029 NÃO existem em `origin/main`** — são locais, da pilha do épico BLK-MA.
+- **DEC-036, DEC-028 e DEC-029 NÃO existem em `origin/main`** — são locais, da pilha do épico BLK-MA.
 
 Portanto: **033 é o primeiro número livre**, e a DEC-030 local terá de ser renumerada antes de
 qualquer merge (arrastando `docs/decisions/README.md`, `CLAUDE.md` §8, as citações em

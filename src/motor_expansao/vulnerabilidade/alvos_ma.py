@@ -521,7 +521,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--sem-pressao",
         action="store_true",
-        help="ignora o insumo de pressao e devolve o score sem o s6 (DEC-027)",
+        help="ignora o insumo de pressao e devolve o score sem o s6 (DEC-036)",
     )
     p.add_argument(
         "--oferta-so-cadeias",

@@ -250,7 +250,7 @@ def test_peso_acima_do_de_uma_rede_e_recusado() -> None:
 def test_sem_o_insumo_o_numero_e_identico_ao_de_antes_do_bloco() -> None:
     """A garantia que torna o bloco seguro de mergear antes do gate.
 
-    O universo novo é CONDICIONAL ao insumo (molde da DEC-027): sem `independentes`, a aritmética é
+    O universo novo é CONDICIONAL ao insumo (molde da DEC-036): sem `independentes`, a aritmética é
     a mesma de antes, não uma aproximação dela.
     """
     academias = _academias()

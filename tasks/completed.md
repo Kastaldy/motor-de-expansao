@@ -12471,7 +12471,7 @@ de qualquer forma. Deploy segue manual e não se aplica (nada vai a produção).
 ## Fechamento de ciclo — BLK-MA-12 (2026-08-13, registrado 2026-08-14)
 
 **Dívida de bookkeeping quitada aqui, não trabalho novo.** O BLK-MA-12 foi implementado e a
-DEC-027 foi escrita em 2026-08-13, mas o bloco **nunca existiu como bloco estruturado** no
+DEC-036 foi escrita em 2026-08-13, mas o bloco **nunca existiu como bloco estruturado** no
 `tasks/backlog.md` e nunca ganhou fechamento — o MESMO furo que o fechamento do BLK-MA-02 já
 registrara para o BLK-MA-04 e que o BLK-MA-05 registrou para si próprio. Registrado agora, junto do
 BLK-MA-13, porque é dele que o MA-13 depende.
@@ -12483,7 +12483,7 @@ promoção do S6 a **componente do score** em `score.py` (`_juntar_pressao`,
 `_regra_de_disponibilidade`, `_derivar_componentes`). O contrato de score vai de 22 para **24
 colunas**, com bump `score_vulnerabilidade_v2` -> `v3`.
 
-**A decisão que sustenta o bloco (DEC-027): o S6 é ATIVO mas CONDICIONAL.** Disponível se e somente
+**A decisão que sustenta o bloco (DEC-036): o S6 é ATIVO mas CONDICIONAL.** Disponível se e somente
 se o insumo de pressão vier na chamada, no mesmo molde do `s1` (casou no join). Medido com um
 harness antes de implementar: um S6 **sempre** disponível quebra 17 testes, e quatro deles não são
 asserts a atualizar — são invariantes de produto que deixam de existir (o regime
@@ -12497,11 +12497,11 @@ sai de **1 valor distinto** (50,0 para todas — artefato do `v1` constante) par
 
 **Ressalvas que viajaram para o BLK-MA-13, e não foram inventadas por ele:** (a) `w6 = 0,10` vale
 **40% do score efetivo hoje**, porque S3/S4 estão renormalizados para fora — descontinuidade na
-composição do score no meio da vida dele, declarada na DEC-027; (b) cobertura de **5,5%** na
+composição do score no meio da vida dele, declarada na DEC-036; (b) cobertura de **5,5%** na
 carteira (2.716 de 6.753, ou 40,2%, no universo de academias — hex de independente é urbano e
 denso); (c) onde falta coleta a pressão sai `0`, a leitura mais otimista da régua.
 
-**Governança.** DEC-027 (Alta) aprovada por Vinicius em 2026-08-13. READ-ONLY sobre o M1: nenhum
+**Governança.** DEC-036 (Alta) aprovada por Vinicius em 2026-08-13. READ-ONLY sobre o M1: nenhum
 peso, fórmula ou artefato oficial tocado; DEC-001 intacta.
 
 ---
@@ -12549,7 +12549,7 @@ existe e já foi aceito.
 ramp-up só-S1 de DOIS valores, e o S6 entrega 2.706. Travado por
 `test_pressao_tira_o_rampup_do_regime_provisorio` (falha se a emenda for revertida) e por
 `test_sem_o_s6_a_serie_imatura_continua_provisoria` (prova que ela é cirúrgica). A emenda foi
-escrita na DEC-028, e não na DEC-027 como o bloco previa: aquela DEC já estava fechada.
+escrita na DEC-028, e não na DEC-036 como o bloco previa: aquela DEC já estava fechada.
 
 **O colapso de regimes é função nomeada, não um `groupby`.** `colapsar_regimes_por_hex` é
 **SELEÇÃO, nunca agregação**: vence o regime de maior `n_sinais_disponiveis`, desempatado por
@@ -12560,7 +12560,7 @@ implícito a faria em silêncio, misturando as réguas que a emenda BLK-MA-04-FU
 
 **Três cores, três estados** (critério de aceite do bloco): medido (rampa invertida), "no universo
 mas sem pressão medida" (cinza azulado) e "fora do universo" (cinza neutro). Colapsá-los faria o
-mapa afirmar ausência de concorrência onde existe ausência de dado — o risco 2 da DEC-027.
+mapa afirmar ausência de concorrência onde existe ausência de dado — o risco 2 da DEC-036.
 
 **A rampa é lida AO CONTRÁRIO, e o complemento não é maquiagem.** A convenção do mapa inteiro é
 "vermelho = apertado, verde = folgado"; pressão alta é território apertado. O mapa pinta
@@ -12680,7 +12680,7 @@ as academias do hexágono — 26 delas com `67,85` no exemplo de SP. Agora mostr
 
 **Governança.** DEC-029 (Alta) aprovada por Vinicius em 2026-08-14, com a rota escolhida
 explicitamente. READ-ONLY sobre o M1: `score_priorizacao`, `hex_score_estrutural`, pesos, carteira,
-plano e artefatos oficiais intocados; DEC-001 e DEC-027 intactas (o `w6 = 0,10` não mudou — mudou de
+plano e artefatos oficiais intocados; DEC-001 e DEC-036 intactas (o `w6 = 0,10` não mudou — mudou de
 onde o `v6` é medido, não quanto ele pesa).
 
 ---
@@ -12754,7 +12754,7 @@ unidade, são 25 valores distintos.
 para os pins. Front: **587** em 28 arquivos, `tsc --noEmit` limpo. `ruff` limpo.
 
 **Governança.** Emenda 2 à DEC-028 (Alta), decidida por Vinicius em 2026-08-14. READ-ONLY sobre o
-M1: nenhum peso, fórmula ou artefato oficial tocado (DEC-001, DEC-027 e DEC-029 intactas). O PR toca
+M1: nenhum peso, fórmula ou artefato oficial tocado (DEC-001, DEC-036 e DEC-029 intactas). O PR toca
 `web/` e `src/motor_expansao/vulnerabilidade/` — exige `aprovado-humano`. Deploy manual: o artefato
 nomeado precisa ser materializado na VPS para os pins aparecerem em produção.
 
@@ -12823,7 +12823,7 @@ Arquivos alterados: `src/motor_expansao/vulnerabilidade/{contrato,pressao_compet
 Validações: 16 testes novos em `test_universo_oferta_s6.py`; 2.955 na suíte completa; `ruff` limpo;
 `loop_guard` sem CRITICO; fim-a-fim pela CLI nos dois universos
 Decisões relacionadas: **DEC-033** (Alta, aprovada por Vinicius em 2026-08-14, opção A; renumerada de DEC-030 em 2026-08-15, BLK-MA-17/G3). DEC-001,
-DEC-027 e DEC-029 intactas; anti-PII (DEC-012/§11) preservado — a coordenada entra no cálculo e morre
+DEC-036 e DEC-029 intactas; anti-PII (DEC-012/§11) preservado — a coordenada entra no cálculo e morre
 na função. Bumps: `pressao_competitiva_v2`, `score_vulnerabilidade_v5`, `alvos_ma_v2`,
 `alvos_ma_nomeados_v2`
 

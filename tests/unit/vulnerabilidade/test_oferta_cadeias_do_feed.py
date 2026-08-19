@@ -272,7 +272,7 @@ def test_9_no_universo_cadeias_as_duas_partes_e_as_duas_contagens_sao_zero() -> 
 # 10-11. O default e a régua histórica
 # --------------------------------------------------------------------------- #
 def test_10_sem_nenhum_dos_dois_frames_o_numero_e_identico_ao_de_antes_do_bloco() -> None:
-    """A garantia que torna o bloco seguro: o universo novo é CONDICIONAL ao insumo (DEC-027)."""
+    """A garantia que torna o bloco seguro: o universo novo é CONDICIONAL ao insumo (DEC-036)."""
     mapeados = _mapeados([("smart_fit", 700.0), ("bluefit", 1500.0)])
     obs = _observador()
     out = calcular_pressao_por_academia(obs, mapeados)
