@@ -1324,6 +1324,8 @@ export interface AcessosUsuarioLinha {
   abas: string[]
   /** Nº de IPs DISTINTOS na janela — sinal de anomalia, nunca o IP em si. */
   ips: number
+  /** Ações/dia dos últimos 14 dias (sparkline da tabela). */
+  serie14: number[]
 }
 
 export interface AcessosRotaLenta {
@@ -1370,6 +1372,23 @@ export interface AcessosFeature {
   n: number
 }
 
+export interface AcessosSessao {
+  dia: string
+  ini: string
+  fim: string
+  acoes: number
+  abas: string[]
+}
+
+/** Um evento da linha do tempo — FEATURE + hora, nunca rota/query/conteúdo. */
+export interface AcessosEventoTempo {
+  dia: string
+  hora: string
+  feature: string
+  aba: string | null
+  erro: boolean
+}
+
 export interface AcessosFicha {
   nome: string
   janela_dias: number
@@ -1379,6 +1398,13 @@ export interface AcessosFicha {
   ultimo_hora: string | null
   abas: string[]
   ips: number
+  erros: number
   dias: AcessosFichaDia[]
+  /** Mais recente primeiro; quebra por pausa > 30 min ou virada de dia. */
+  sessoes: AcessosSessao[]
   features: AcessosFeature[]
+  por_aba: { aba: string; acoes: number }[]
+  heatmap: number[][]
+  /** Mais recente primeiro; teto de 80 eventos. */
+  linha_do_tempo: AcessosEventoTempo[]
 }

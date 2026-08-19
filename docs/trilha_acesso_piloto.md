@@ -126,10 +126,14 @@ A trilha ganhou um consumidor visual: a aba `Acessos` do piloto
   Quem está fora vê **404** (existência não anunciada). Env vazia/ausente =
   painel desligado para todos, em dev e em produção.
 - **O que mostra**: agregados (série diária, heatmap hora×dia BRT, uso por aba,
-  saúde 4xx/5xx + p95) e, por usuário, janelas de atividade + contagem por
-  FEATURE ("rodou simulador 4x") + nº de IPs distintos. **O que nunca mostra**:
-  query/conteúdo (endereço pesquisado, parâmetros) e o IP em si — isso segue só
-  na trilha bruta.
+  saúde 4xx/5xx + p95) e, por usuário (redesign de 2026-08-19): sessões (pausa
+  > 30 min abre outra), linha do tempo das últimas 80 ações por FEATURE com hora
+  e flag de erro, heatmap de horários, distribuição por aba, contagem de erros,
+  sparkline de até 14 dias na tabela e nº de IPs distintos. **O que nunca mostra
+  POR USUÁRIO**: rota, query/conteúdo (endereço pesquisado, parâmetros) e o IP em
+  si — isso segue só na trilha bruta. Única exceção de rota na tela: o card de
+  saúde lista o path das rotas mais lentas como AGREGADO de latência (top-5 p95,
+  sem usuário e sem query) — observabilidade do sistema, não atividade de alguém.
 - **Rollup `uso-diario.json`** (mesmo diretório da trilha): consolidação
   write-once por dia BRT fechado com `{acoes, usuarios, por_aba}` — contagens,
   sem nome/IP/rota — e SEM poda: é o que dá tendência além dos 90 dias. Roda no

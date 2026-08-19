@@ -13723,3 +13723,25 @@ comportamento e OpenAPI; serie cai para contagem viva quando o rollup nao grava;
 no grafico; aria-pressed e feedback de refetch na tela. Suites: 3242 passed na completa (1 falha
 pre-existente ambiental do Windows) + 114 na bateria de acesso + 589 vitest + build da SPA. Merge
 admin + deploy autorizados por Felipe ("faca o trabalho completo, do PR -> Merge Admin -> Deploy").
+
+## Fechamento de ciclo — Redesign da aba Acessos (full-width + visual + ficha detalhada) (2026-08-19, ad-hoc)
+
+Pedido de Felipe (3 ajustes sobre a aba entregue no mesmo dia): layout distribuido pela tela toda,
+visual revisto (graficos/cores/design) e mais detalhe nos perfis individuais. Entrega: grid de 12
+colunas full-width; grafico de serie em SVG medido (barras de acoes + linha de usuarios unicos em
+base ZERO com escala propria declarada na legenda); Rosca da Executiva reaproveitada para uso por
+aba; COR DE IDENTIDADE por aba (--gr-azul executiva, --ac mapa, --gr-verde viabilidade, --gr-rosa
+oportunidades) em rosca, tabelas, avatares e linha do tempo; sparkline de ate 14 dias por usuario
+na tabela (nunca alem da janela carregada); heatmap com rampa color-mix. Ficha nova: sessoes por
+gap de 30 min com duracao, linha do tempo das ultimas 80 acoes (feature+hora+flag de erro — SEM
+rota/query/conteudo, corte da emenda DEC-027 intacto e agora VIGIADO no ramo fallback), heatmap e
+distribuicao por aba do usuario, contagem de erros, guardas contra payload antigo.
+
+QA: revisao adversarial por workflow (21 agentes: 4 lentes -> cetico com reproducao) — 16 achados
+confirmados (1 alta, 6 media, 9 baixa, com duplicatas entre lentes), TODOS corrigidos. Destaques:
+falso-verde no teste-guardiao de privacidade (o ramo 'Outras acoes' — o unico com a rota bruta em
+maos — nao era exercitado; sabotagem passou verde) -> evento de rota nao mapeada com sentinela no
+path; linha de usuarios em escala min-max sobre eixo numerico (serie constante desenhava no meio)
+-> base zero + escala propria; doc prometia 'rota nunca' mas o card de saude lista rotas agregadas
+-> claim escopado; tetos/virada-de-dia sem teste -> cobertos. Suites: 36 no modulo + 589 vitest +
+mypy/ruff limpos + build ok.
