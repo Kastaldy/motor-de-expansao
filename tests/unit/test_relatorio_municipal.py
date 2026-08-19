@@ -1667,3 +1667,47 @@ def test_municipio_so_com_sobra_mantem_mapas_por_hexagono():
     # ...mas o Score NAO pode afirmar agregacao por bairro.
     assert "setores agregados por bairro".encode("latin-1") not in pdf_bytes
     assert "Agregação H3 resolução 7".encode("latin-1") in pdf_bytes
+
+
+def test_cobertura_baixa_devolve_tematicos_ao_hexagono():
+    """Caso Campinas/SP: 31% de cobertura, distritos só na periferia.
+
+    Desenhar o temático por bairro deixava o miolo urbano cinza -- justamente onde a decisão
+    de expansão acontece -- apesar de o dado existir. Abaixo do limiar, volta ao hexágono.
+    """
+    from motor_expansao.dashboard.relatorio_municipal import (
+        bairro_representa_o_municipio,
+        tem_bairro_real,
+    )
+
+    baixa = {**_bairros_geo_sample(), "cobertura": 0.31}
+    alta = {**_bairros_geo_sample(), "cobertura": 0.98}
+
+    # Ha bairro real nos dois; o que muda e' a representatividade.
+    assert tem_bairro_real(baixa) and tem_bairro_real(alta)
+    assert bairro_representa_o_municipio(baixa) is False
+    assert bairro_representa_o_municipio(alta) is True
+
+    df = _sample_df()
+    res_baixa = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", bairros_geo=baixa)
+    pdf_baixa = gerar_pdf_relatorio_municipal(
+        res_baixa, render_mapas_municipio(df, res_baixa, basemap=False)
+    )
+    # Temático volta ao hexágono...
+    assert "Agregação H3 resolução 7".encode("latin-1") in pdf_baixa
+    assert "setores agregados por bairro".encode("latin-1") not in pdf_baixa
+    # ...mas a página de Bairros Oficiais continua lá, com o aviso de cobertura.
+    assert "Bairros Oficiais".encode("latin-1") in pdf_baixa
+    assert "cobrem s\xf3 31% dos setores".encode("latin-1") in pdf_baixa
+
+
+def test_limiar_de_representatividade_e_o_mesmo_do_aviso():
+    """Um limiar só: avisar '31%' numa página e agir como se fosse pleno na outra é incoerente."""
+    from motor_expansao.dashboard.relatorio_municipal import (
+        _BAIRRO_COBERTURA_MIN,
+        bairro_representa_o_municipio,
+    )
+
+    base = _bairros_geo_sample()
+    assert bairro_representa_o_municipio({**base, "cobertura": _BAIRRO_COBERTURA_MIN}) is True
+    assert bairro_representa_o_municipio({**base, "cobertura": _BAIRRO_COBERTURA_MIN - 0.01}) is False

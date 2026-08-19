@@ -109,7 +109,15 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
   "sem dado" e "medido e ruim" são afirmações diferentes.
 - Régua de cor INALTERADA (`score_band_to_color`, regra visual canônica do §5): a mesma cor
   significa a mesma faixa no mapa por bairro e nos mapas por hexágono.
-- Fallback: município sem bairro na base mantém o choropleth de hexágono anterior.
+- **Fallback em 2 casos** (`bairro_representa_o_municipio`): município **sem bairro** na base, e
+  município cujos bairros mapeados **não representam o território** (< 50% dos setores com
+  localidade). Nos dois, os temáticos mantêm o choropleth de hexágono e a página de Bairros
+  Oficiais segue mostrando o que existe, com o aviso. O limiar é o MESMO que dispara o aviso de
+  cobertura — avisar "31%" numa página e agir como se fosse pleno na outra seria incoerente.
+  Caso que motivou (Campinas/SP, decisão de Juan em 2026-08-18): 31% de cobertura e os 6
+  distritos mapeados **todos periféricos**, deixando o miolo urbano cinza no mapa de score
+  apesar de o dado existir (score médio 61,2, máx 100,0). Afeta 65 dos 319 municípios de
+  100 mil+ (Campinas, Palmas, Anápolis, Montes Claros, Cotia...).
 - Subtítulo: "Potencial socioeconômico por célula hexagonal H3".
 - **Mapa choropleth** H3 (verde→amarelo→laranja→vermelho) com pins Ultra/concorrentes.
 - Legenda (4 faixas): **Alto potencial** (verde), **Médio-alto** (amarelo/âmbar),

@@ -517,13 +517,33 @@ def _carregar_bairros_por_hex(
 def tem_bairro_real(bairros_geo: dict[str, Any] | None) -> bool:
     """Ha ao menos UM bairro de verdade (fora a sobra "<municipio> (demais setores)")?
 
-    E' o guard que decide se as camadas saem por bairro. NAO basta a lista ser nao-vazia:
-    municipio sem nenhuma localidade no IBGE (Apodi/RN) produz uma lista com SO a sobra, e
-    desenhar "por bairro" nesse caso pinta um poligono unico do municipio inteiro -- pior que
-    o mapa de hexagono que substituiu (perde toda a variacao intramunicipal) e ainda faz o
-    rodape afirmar uma agregacao por bairro que nao existe.
+    NAO basta a lista ser nao-vazia: municipio sem nenhuma localidade no IBGE (Apodi/RN)
+    produz uma lista com SO a sobra, e desenhar "por bairro" nesse caso pinta um poligono
+    unico do municipio inteiro -- pior que o mapa de hexagono que substituiu (perde toda a
+    variacao intramunicipal) e ainda faz o rodape afirmar uma agregacao inexistente.
     """
     return any(not b.get("sobra") for b in ((bairros_geo or {}).get("bairros") or []))
+
+
+def bairro_representa_o_municipio(bairros_geo: dict[str, Any] | None) -> bool:
+    """Os bairros mapeados cobrem o municipio o bastante para os mapas TEMATICOS saírem neles?
+
+    Guard das camadas tematicas (score/residual/resumo/cobertura/dominio). Exige bairro real
+    E cobertura >= `_BAIRRO_COBERTURA_MIN` -- o MESMO limiar que ja marca a contagem como
+    "nao representativa" na pagina de Bairros Oficiais; usar dois limiares diferentes para a
+    mesma pergunta so criaria uma pagina que avisa e outra que age como se nada houvesse.
+
+    Motivo (decisao de Juan, 2026-08-18, sobre o caso Campinas/SP): la o IBGE nomeia 31% dos
+    setores, e os 6 distritos mapeados sao TODOS perifericos -- o miolo urbano, onde a decisao
+    de expansao acontece, ficava cinza no mapa de score, apesar de o dado existir (score medio
+    61,2, max 100,0). Abaixo do limiar o tematico volta ao hexagono e mostra a cidade inteira;
+    a pagina de Bairros Oficiais segue exibindo os bairros que existem, com o aviso. Afeta 65
+    dos 319 municipios de 100 mil+ (Campinas, Palmas, Anapolis, Montes Claros, Cotia...).
+    """
+    if not tem_bairro_real(bairros_geo):
+        return False
+    cobertura = float((bairros_geo or {}).get("cobertura", 0.0) or 0.0)
+    return cobertura >= _BAIRRO_COBERTURA_MIN
 
 
 def _partes_desenhaveis(geom: Any) -> list[Any]:
@@ -2333,8 +2353,11 @@ def render_mapas_municipio(
     # Hamburgo, entao esses quatro sao estimativa, nao medicao. Decisao do usuario (2026-08-14)
     # apos a alternativa conservadora ter sido apresentada e reconsiderada.
     #
-    # Fallback: municipio sem bairro na base mantem os choropleths de hexagono de antes.
-    if tem_bairro_real(bairros_geo):
+    # Fallback (2 casos): municipio SEM bairro na base, e municipio cujos bairros mapeados
+    # nao representam o territorio (<50% dos setores) -- ver `bairro_representa_o_municipio`.
+    # Nos dois, os tematicos mantem os choropleths de hexagono. A pagina de Bairros Oficiais
+    # (acima, fora do guard) segue mostrando os bairros que existirem, com o aviso.
+    if bairro_representa_o_municipio(bairros_geo):
         aplicar_metricas_hex_nos_bairros(
             bairros_geo, df_muni, hex_zona_geo=municipio_result.get("hex_zona_geo") or {}
         )
@@ -2870,7 +2893,7 @@ def _score_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     # FU1: nota curta explicando as faixas do score (D5). BLK-RELMUN-09: quando o mapa sai por
     # BAIRRO, a nota e o rodape tem de dizer isso -- as demais paginas seguem em hexagono, e o
     # leitor precisa saber em que unidade esta olhando em cada uma.
-    por_bairro = tem_bairro_real(result.get("bairros_geo"))
+    por_bairro = bairro_representa_o_municipio(result.get("bairros_geo"))
     unidade = "por bairro (IBGE 2022)" if por_bairro else "H3 res 7 (IBGE 2022)"
     _draw_note(
         pdf, px, py0 + panel_h + 10, pw,
