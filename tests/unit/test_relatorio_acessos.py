@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -111,6 +111,26 @@ def _trilha(tmp_path: Path, linhas: list[str]) -> Path:
     return tmp_path
 
 
+def _trilha_agora(tmp_path: Path, usuario: str = "ana", rota: str = "/api/ponto") -> Path:
+    """Trilha ancorada no relógio REAL, para quem não aceita `agora_utc`.
+
+    A CLI (`main`) e o bot (`/acessos`) resolvem o dia com `datetime.now(UTC)` lá dentro — não
+    há por onde injetar. Um `_trilha` cravado em `_AGORA` (18/08) grava no arquivo daquele dia
+    e o leitor procura no de HOJE: o relatório sai vazio e o assert cai.
+
+    Isso não era hipótese — os três testes que usam este helper passavam **só em 2026-08-18** e
+    falharam em todos os dias seguintes, deixando a `main` vermelha (`BLK-FIX-ACESSOS-01`).
+
+    A margem de 2 h para trás cobre a borda: rodando entre 00:00 e 02:00 BRT, "agora" cru
+    cairia no arquivo UTC do dia seguinte enquanto o dia BRT ainda é o anterior.
+    """
+    agora = datetime.now(UTC) - timedelta(hours=2)
+    dia_brt = (agora + relatorio_acessos._FUSO_BRT).date()
+    arquivo = relatorio_acessos.arquivos_do_dia_brt(tmp_path, dia_brt)[0]
+    arquivo.write_text(_linha(usuario, rota, agora.isoformat()) + chr(10), encoding="utf-8")
+    return tmp_path
+
+
 def test_relatorio_formata_em_brt_com_labels(tmp_path: Path) -> None:
     base = _trilha(tmp_path, [
         _linha("ana", "/api/rede/carteira", "2026-08-18T12:00:00+00:00"),
@@ -184,7 +204,7 @@ def test_enviar_telegram_nao_vaza_token_e_particiona(monkeypatch: pytest.MonkeyP
 
 
 def test_cli_imprime_sem_enviar(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-    _trilha(tmp_path, [_linha("ana", "/api/ponto", "2026-08-18T12:00:00+00:00")])
+    _trilha_agora(tmp_path)
     codigo = relatorio_acessos.main(["--dir", str(tmp_path)])
     saida = capsys.readouterr().out
     assert codigo == 0
@@ -246,13 +266,13 @@ def _texto(acoes: list[dict]) -> str:
 
 def test_acessos_no_chat_de_ops_sem_senha(tmp_path: Path) -> None:
     """O chat de ops puxa o relatório DIRETO — sem passar pela senha do bot."""
-    _trilha(tmp_path, [_linha("ana", "/api/ponto", "2026-08-18T12:00:00+00:00")])
+    _trilha_agora(tmp_path)
     saida = _texto(bot.processar(777, "/acessos", _settings(tmp_path)))
     assert "ana" in saida and "Acessos do piloto" in saida
 
 
 def test_acessos_cobre_forma_de_grupo(tmp_path: Path) -> None:
-    _trilha(tmp_path, [_linha("ana", "/api/ponto", "2026-08-18T12:00:00+00:00")])
+    _trilha_agora(tmp_path)
     saida = _texto(bot.processar(777, "/acessos@MotorBot", _settings(tmp_path)))
     assert "ana" in saida
 
