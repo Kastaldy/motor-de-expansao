@@ -8,6 +8,8 @@ import {
   corDoPonto,
   compararPontos,
   indiceDoMesmoPonto,
+  passaNoEstudo,
+  resumoDoEstudo,
   rotuloDoPonto,
   rotulosDosPontos,
 } from './comparacao-pontos'
@@ -277,5 +279,46 @@ describe('MAX_PONTOS', () => {
     // paleta ja' dizia no comentario "cinco porque MAX_PONTOS e' 5" enquanto a constante
     // valia 4, e nada travava a divergencia.
     expect(MAX_PONTOS).toBeLessThanOrEqual(CORES_PONTO.length)
+  })
+})
+
+describe('resumoDoEstudo — a leitura ABSOLUTA, ao lado da relativa', () => {
+  const comCriterios = (passas: (boolean | null)[]) =>
+    ({
+      criterios: passas.map((passa, i) => ({
+        chave: `c${i}`,
+        rotulo: `Critério ${i}`,
+        valor: 1,
+        regua: 1,
+        unidade: '',
+        maior_melhor: true,
+        passa,
+      })),
+    }) as unknown as PontoPayload
+
+  it('conta cumpridos sobre AVALIADOS', () => {
+    expect(resumoDoEstudo(comCriterios([true, true, false, true, false]))).toEqual({
+      cumpridos: 3,
+      avaliados: 5,
+    })
+  })
+
+  it('sem dado sai dos DOIS lados da fracao, nunca vira reprovacao', () => {
+    // Tres criterios, um sem dado: a leitura e' 2 de 2, e nao 2 de 3.
+    expect(resumoDoEstudo(comCriterios([true, true, null]))).toEqual({
+      cumpridos: 2,
+      avaliados: 2,
+    })
+  })
+
+  it('sem criterio avaliado devolve null — nao ha o que afirmar', () => {
+    expect(resumoDoEstudo(comCriterios([null, null]))).toBeNull()
+    expect(resumoDoEstudo(comCriterios([]))).toBeNull()
+  })
+
+  it('concorda com o portao `passaNoEstudo`', () => {
+    expect(passaNoEstudo(comCriterios([true, true, true]))).toBe(true)
+    expect(passaNoEstudo(comCriterios([true, false, true]))).toBe(false)
+    expect(passaNoEstudo(comCriterios([null]))).toBeNull()
   })
 })

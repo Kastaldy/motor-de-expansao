@@ -18,6 +18,19 @@ export default function TabelaRanking({ ranking }: { ranking: RankingComparacao 
 
   // As dimensoes vem na mesma ordem em todos os itens (o ranqueador garante).
   const linhas = itens[0].porDimensao.map((d) => d.chave)
+
+  /* DENOMINADOR = o conjunto FIXO de parametros comparados, e nao os que separaram.
+     Era dinamico e crescia com a lista: dois hexagonos davam "1/2", tres davam "1/3",
+     quatro "1/4" — o mesmo hexagono mudava de fracao sem que nada nele mudasse, porque
+     acrescentar area alarga as diferencas e faz mais parametros passarem do limiar
+     (Juan, 2026-08-19). Fixo, a fracao responde a pergunta que o rotulo faz: destes N
+     parametros, em quantos esta area lidera.
+
+     A soma das fracoes pode NAO fechar o denominador, e isso e' a leitura certa: o que
+     sobra sao os parametros em que ninguem lidera — as areas ficaram perto demais, ou
+     empataram no topo. A tabela logo abaixo mostra essas linhas de-enfatizadas e sem
+     nenhum valor marcado, que e' onde o operador confere. */
+  const disputados = linhas.length
   const colunas = `minmax(96px, 1.2fr) repeat(${itens.length}, minmax(72px, 1fr))`
 
   return (
@@ -82,7 +95,7 @@ export default function TabelaRanking({ ranking }: { ranking: RankingComparacao 
                 paddingRight: i === itens.length - 1 ? 6 : 0,
               }}
             >
-              {it.vitorias}/{dimensoesDecisivas.length}
+              {it.vitorias}/{disputados}
             </span>
           ))}
 

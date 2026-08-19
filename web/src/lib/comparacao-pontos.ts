@@ -83,6 +83,47 @@ export const DIMENSOES_PONTO: readonly Dimensao<PontoPayload>[] = Object.freeze(
 ])
 
 /**
+ * O ponto passa em TODOS os criterios do estudo que foi possivel avaliar?
+ *
+ * `null` quando nenhum criterio foi avaliado — e' "nao sei", nao "reprovou". Criterio com
+ * `passa: null` (sem dado) fica FORA da conta pelo mesmo motivo: o servidor declara que
+ * ausencia nunca deve ser lida como reprovacao.
+ *
+ * Binario de proposito. Nao conta quantos criterios o ponto cumpre nem os soma: contar
+ * seria inventar um "score de aprovacao do imovel", que e' definicao nova de viabilidade
+ * e exige DEC (ver `_criterios_do_ponto` no servidor). Aqui e' a mesma pergunta de
+ * sim-ou-nao que o deck ja' imprime ao lado do nome de cada ponto.
+ */
+export function passaNoEstudo(p: PontoPayload): boolean | null {
+  const r = resumoDoEstudo(p)
+  return r && r.avaliados > 0 ? r.cumpridos === r.avaliados : null
+}
+
+/** Quantos criterios o ponto cumpre, de quantos foi possivel avaliar. */
+export interface ResumoEstudo {
+  cumpridos: number
+  avaliados: number
+}
+
+/**
+ * A leitura ABSOLUTA do ponto: quantos pisos do produto ele cumpre.
+ *
+ * Complementa o "lidera em X de N", que e' RELATIVO ao conjunto comparado — trocar de
+ * concorrente na comparacao muda aquele numero e nao muda este. As duas respondem
+ * perguntas diferentes e a decisao precisa das duas: um imovel pode ganhar a comparacao
+ * porque os outros sao piores, e ainda assim nao alcancar a regua do estudo.
+ *
+ * `null` quando nenhum criterio foi avaliado. Criterio com `passa: null` (sem dado) fica
+ * de fora da conta — do numerador E do denominador —, porque o servidor declara que
+ * ausencia nunca se le como reprovacao.
+ */
+export function resumoDoEstudo(p: PontoPayload): ResumoEstudo | null {
+  const avaliados = (p.criterios ?? []).filter((c) => c.passa != null)
+  if (!avaliados.length) return null
+  return { cumpridos: avaliados.filter((c) => c.passa === true).length, avaliados: avaliados.length }
+}
+
+/**
  * Casas decimais que definem "a mesma coordenada". 5 casas ≈ 1 metro.
  *
  * Nao e' igualdade exata de ponto flutuante de proposito: o mesmo endereco pode voltar
