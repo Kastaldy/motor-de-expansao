@@ -32,6 +32,12 @@ _GOOGLE_GEOCODE = "https://maps.googleapis.com/maps/api/geocode/json"
 _URL_RE = re.compile(r"https?://\S+")
 # Segmento de endereco em URLs /maps/place/<NOME+ENDERECO>/... (sem coordenada).
 _PLACE_RE = re.compile(r"/maps/place/([^/]+)")
+# Forma alternativa de place SEM coordenada: `?q=<endereco>&ftid=0x...` (o Maps do Android
+# devolve esta quando o link e' compartilhado pelo botao "Copiar link" de um pino salvo).
+# Aceita tambem `query=`/`destination=`, que aparecem em links de navegacao.
+_Q_ENDERECO_RE = re.compile(r"[?&](?:q|query|destination)=([^&]+)")
+# Par "lat,lng" ja e' tratado por `coord.parse_maps_url`; aqui so interessa TEXTO de endereco.
+_COORD_PURA_RE = re.compile(r"^-?\d+\.\d+\s*,\s*-?\d+\.\d+$")
 
 
 def extrair_endereco_de_place_url(url: str) -> str:
@@ -39,14 +45,29 @@ def extrair_endereco_de_place_url(url: str) -> str:
 
     Alguns links de compartilhamento do Maps expandem para um place SEM coordenada
     na URL (so nome + endereco + place-id; a coord so viria via JS). Mas o endereco
-    completo (com CEP) esta no proprio path -> extraimos para geocodificar. Devolve
-    "" se a URL nao for um link de place.
+    completo (com CEP) esta na propria URL -> extraimos para geocodificar.
+
+    Duas formas cobertas: o path `/maps/place/<NOME+ENDERECO>/...` e o parametro
+    `?q=<endereco>` (com `&ftid=0x...`), que e' o que o Maps do Android produz ao
+    compartilhar um pino. Devolve "" quando nao ha endereco textual na URL.
     """
-    m = _PLACE_RE.search(str(url or ""))
-    if not m:
-        return ""
-    seg = m.group(1).replace("+", " ")
-    return " ".join(unquote(seg).split())
+    texto = str(url or "")
+    m = _PLACE_RE.search(texto)
+    if m:
+        seg = m.group(1).replace("+", " ")
+        return " ".join(unquote(seg).split())
+
+    # Fallback `?q=<endereco>`: link do Maps mobile que expande para
+    # `google.com/maps?q=Av.+Santos+Dumont,+2915+-+Aldeota,+Fortaleza+-+CE,+60150-165&ftid=0x...`
+    # -- nem `@lat,lng` nem `!3d!4d`, entao o parser puro falha e sem este ramo o link inteiro
+    # morria em "Nao consegui localizar". O endereco vem completo, com CEP: geocodifica bem.
+    m = _Q_ENDERECO_RE.search(texto)
+    if m:
+        seg = unquote(m.group(1)).replace("+", " ")
+        seg = " ".join(seg.split())
+        if seg and not _COORD_PURA_RE.match(seg):
+            return seg
+    return ""
 
 
 def expandir_link_curto(texto: str) -> str:
