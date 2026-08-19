@@ -2796,6 +2796,18 @@ def me(
     return {"usuario": usuario, "abas": sorted(abas)}
 
 
+@app.post("/api/ciencia-confidencialidade")
+def ciencia_confidencialidade() -> dict[str, Any]:
+    """Registro de ciência do aviso de confidencialidade (pedido do Felipe, 2026-08-19).
+
+    O corpo é vazio de propósito: o VALOR do registro é a linha que o middleware da
+    trilha (DEC-027) grava para esta chamada — quem clicou, quando, desta rota — e que
+    a aba Acessos exibe rotulada na ficha do usuário. Nada é persistido aqui dentro.
+    Livre para qualquer usuário autenticado (`ROTAS_LIVRES`): todo mundo vê o pop-up.
+    """
+    return {"ok": True}
+
+
 # ============================================================================
 # Aba Acessos — analytics da trilha (emenda DEC-027; allowlist em `acesso.py`)
 # ============================================================================

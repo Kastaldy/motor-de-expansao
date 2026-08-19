@@ -127,6 +127,16 @@ def test_regras_por_prefixo() -> None:
         assert acesso.abas_necessarias(livre) is None, livre
 
 
+def test_ciencia_confidencialidade_existe_e_e_livre() -> None:
+    """O OK do pop-up de confidencialidade vira linha da trilha via POST proprio.
+
+    Livre de proposito: TODO usuario autenticado ve o pop-up — restringir por aba
+    deixaria usuario sem aba nenhuma fora do registro de ciencia (2026-08-19)."""
+    assert "/api/ciencia-confidencialidade" in acesso.ROTAS_LIVRES
+    rotas_api = {r.path for r in pilot_app.app.routes if getattr(r, "path", "").startswith("/api/")}
+    assert "/api/ciencia-confidencialidade" in rotas_api
+
+
 def test_toda_rota_do_app_tem_regra_ou_e_livre_declarada() -> None:
     """Rota /api/* nova SEM regra e fora de ROTAS_LIVRES = decisao que faltou tomar.
 

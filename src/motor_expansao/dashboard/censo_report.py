@@ -189,6 +189,15 @@ _PERFIL_DIVISOR_RGB = (232, 233, 237)  # linha divisoria fina entre metricas
 _ATRIBUICAO_TILES = "(c) OpenStreetMap, (c) CARTO"
 _CREDITO_ULTRA = "Relatório gerado pelo Motor de Expansão - Ultra Academia"
 
+# Aviso da pagina de Realizacao (pedido do Felipe, 2026-08-19). Substitui a fala tecnica de
+# READ-ONLY/score/plano — jargao interno que nao dizia nada a quem RECEBE o estudo. O que o
+# leitor precisa saber e' que o retrato tem data: as bases mudam com o tempo.
+_AVISO_DADOS_DINAMICOS = (
+    "Este estudo retrata as bases de dados disponíveis na data de geração. Os dados são "
+    "dinâmicos e podem ser alterados com o tempo; para decisão, utilize sempre a versão "
+    "mais recente do relatório."
+)
+
 # Nomes default dos assets de branding (gitignored; ficam no host/volume `data/ultra`).
 _ASSET_CAPA = "relatorio_capa_bg.png"
 _ASSET_CONTEUDO = "relatorio_conteudo_bg.png"
@@ -211,6 +220,19 @@ _WATERMARK_ALPHA = 0.65
 _WATERMARK_ANGLE = 0.0
 _WATERMARK_FONT_PT = 10
 _WATERMARK_MARGIN = 20.0
+
+# Marca d'agua de CONFIDENCIALIDADE (pedido do Felipe, 2026-08-19): "ARQUIVO CONFIDENCIAL"
+# diagonal, grande e translucida em TODAS as paginas — quem recebe o estudo entende a
+# seriedade do arquivo sem perder a leitura (alpha baixo de proposito). Mesmo racional da
+# marca de rastreabilidade acima: embutida em claro no content stream, por cima do conteudo.
+_CONFIDENCIAL_TEXT = "ARQUIVO CONFIDENCIAL"
+_CONFIDENCIAL_FONT_PT = 52
+_CONFIDENCIAL_ALPHA = 0.10
+# Na capa o fundo e' turquesa/foto (mais escuro que as paginas de conteudo): o branco a 0,10
+# sumiria — sobe um degrau, ainda discreto.
+_CONFIDENCIAL_ALPHA_CAPA = 0.16
+# Diagonal do slide 16:9: atan(540/960) = 29,36 graus (anti-horario, convencao do fpdf2).
+_CONFIDENCIAL_ANGLE = 29.36
 
 # ---------------------------------------------------------------------------
 # Variante "Apresentacao Classica Ultra" (BLK-EST-05): estetica GeoFusion antiga
@@ -364,6 +386,19 @@ def _truncar_por_largura(
     return corte + reticencias
 
 
+def _nome_exibicao(usuario: str) -> str:
+    """Nome de EXIBICAO do usuario: "felipe_castaldi" -> "Felipe Castaldi".
+
+    Camada de exibicao apenas (regra de identificadores, CLAUDE.md §2): o valor bruto do
+    usuario segue intacto em trilha/log/payload — aqui muda so' como ele aparece no PDF,
+    para o nome sair consistente em qualquer pagina que o exiba.
+    """
+    partes = [p for p in str(usuario).replace("_", " ").split() if p]
+    if not partes:
+        return str(usuario).strip()
+    return " ".join(p[:1].upper() + p[1:] for p in partes)
+
+
 def _watermark_text(solicitante: str | None) -> str:
     """Texto da marca d'agua: "Ultra Academia" ou "Ultra Academia | {solicitante}".
 
@@ -371,7 +406,7 @@ def _watermark_text(solicitante: str | None) -> str:
     """
     if solicitante is None or not solicitante.strip():
         return _ascii(_WATERMARK_BASE)
-    return _ascii(f"{_WATERMARK_BASE} | {solicitante.strip()}")
+    return _ascii(f"{_WATERMARK_BASE} | {_nome_exibicao(solicitante)}")
 
 
 # ---------------------------------------------------------------------------
@@ -964,7 +999,7 @@ def _info_imovel_page(
 # o PDF divergir da tela no MESMO cenario (aluguel-teto R$105.813,13 x R$55.535,18,
 # payback 33 x 35, acumulado M60 R$2,05 mi x R$1,89 mi). Chave ausente -> "n/d"/linha omitida.
 # ---------------------------------------------------------------------------
-_VIAB_NUMEROS_TITLE = "Viabilidade - Números"
+_VIAB_NUMEROS_TITLE = "Projeção de Viabilidade - Números"
 _VIAB_GRAFICOS_TITLE = "Viabilidade - Projeção financeira"
 
 
@@ -1421,10 +1456,10 @@ def _viabilidade_page(
     if dados.get("flag_zona_morta"):
         motivo = str(dados.get("motivo_zona_morta") or "").strip()
         rodape += f" Zona morta: {motivo}." if motivo else " Cenário em zona morta."
-    rodape += (
-        " A demanda é uma PREMISSA do operador (não prevista pela geografia). "
-        "READ-ONLY sobre o M1."
-    )
+    # Sem o "READ-ONLY sobre o M1" que fechava esta frase: jargao interno de governanca,
+    # que nao diz nada a quem RECEBE o estudo (limpeza de 2026-08-19; o guardrail em si
+    # continua valendo — e' regra de codigo, nao de rodape).
+    rodape += " A demanda é uma PREMISSA do operador (não prevista pela geografia)."
 
     pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 9)
@@ -1609,7 +1644,7 @@ _CONCLUSAO_NOTA = (
     "imóvel (metragem), aluguel-teto e critérios de retorno do cenário simulado. Cada eixo "
     "tem selo próprio e NÃO há veredito único: um item eliminatório reprova o eixo sozinho; "
     "os demais rebaixam aquele eixo para 'Aprovado com ressalvas'. Dado ausente nunca "
-    "reprova, apenas deixa o item sem avaliar. READ-ONLY sobre o M1."
+    "reprova, apenas deixa o item sem avaliar."
 )
 # Variantes do modo SO-ESTUDO (BLK-CONC-ESTUDO). Reusar as strings acima seria AFIRMAR que
 # o envelope do imovel e os criterios de retorno foram avaliados -- exatamente os que este
@@ -1627,7 +1662,7 @@ _CONCLUSAO_NOTA_ESTUDO = (
     "ficam fora deste parecer, que por isso traz só o selo demográfico. Reprova quando "
     f"{_CONCLUSAO_METAS_ELIMINATORIO_MIN} das {_CONCLUSAO_METAS_AVALIADAS} metas falham ao "
     "mesmo tempo; as demais observações rebaixam para 'Aprovado com ressalvas'. Dado "
-    "ausente nunca reprova, apenas deixa o item sem avaliar. READ-ONLY sobre o M1."
+    "ausente nunca reprova, apenas deixa o item sem avaliar."
 )
 # Piso da area de observacoes: a pagina e FIXA (auto_page_break OFF), entao texto que nao
 # cabe NAO vaza para a pagina seguinte -- ele some por baixo do rodape, em silencio.
@@ -2725,6 +2760,29 @@ def _draw_watermark(
         pdf.text(x, y, text)
 
 
+def _draw_confidencial(
+    pdf: _UltraPDF,
+    *,
+    rgb: tuple[int, int, int] = _WATERMARK_RGB,
+    alpha: float = _CONFIDENCIAL_ALPHA,
+) -> None:
+    """Marca d'agua diagonal "ARQUIVO CONFIDENCIAL", centrada na pagina.
+
+    Translucida de proposito: marca a seriedade do arquivo sem roubar a leitura do
+    conteudo. Mesma mecanica da `_draw_watermark` (chamada DEPOIS do conteudo, fica por
+    cima; `local_context` restaura o graphics state ao sair); a rotacao gira em torno do
+    centro da pagina, na diagonal do slide 16:9.
+    """
+    pdf.set_font("Helvetica", "B", _CONFIDENCIAL_FONT_PT)
+    pdf.set_text_color(*rgb)
+    w = pdf.get_string_width(_CONFIDENCIAL_TEXT)
+    # Baseline ~1/3 do corpo abaixo do pivo: centro OTICO do texto no centro da pagina.
+    y = _PAGE_H / 2 + _CONFIDENCIAL_FONT_PT * 0.35
+    with pdf.local_context(fill_opacity=alpha):
+        with pdf.rotation(_CONFIDENCIAL_ANGLE, _PAGE_W / 2, _PAGE_H / 2):
+            pdf.text((_PAGE_W - w) / 2, y, _CONFIDENCIAL_TEXT)
+
+
 def _parece_coordenada(texto: str) -> bool:
     """True se o texto for so um par "lat, lng" (entao NAO serve como nome do local)."""
     partes = str(texto or "").replace(" ", "").split(",")
@@ -2898,8 +2956,8 @@ def _big_numbers_page(
         11,
         _ascii(
             "Fontes: pop/renda/domicílios/score = censo (interseção de setores IBGE 2022 com círculo de "
-            f"{_RAIO_LABEL}, método {metodo}); SAM Fitness, Residual Fitness (em alunos) e consumo = lookup "
-            "READ-ONLY do hex H3 (sem recálculo do M1). Fundo do card: verde = meta atingida, vermelho = "
+            f"{_RAIO_LABEL}, método {metodo}); SAM Fitness, Residual Fitness (em alunos) e consumo = leitura "
+            "direta do hexágono H3. Fundo do card: verde = meta atingida, vermelho = "
             f"meta não atingida, cinza = '{TEXTO_SEM_DADO}' (dado ausente para o ponto)."
         ),
     )
@@ -3576,8 +3634,8 @@ def _classico_credit_page(
     now: datetime | None = None,
     origem_centroide_hex: bool = False,
 ) -> None:
-    """Realizacao/Credito: fundo turquesa solido + credito/metodo/READ-ONLY + link clicavel
-    do ponto + data por extenso.
+    """Realizacao/Credito: fundo turquesa solido + credito/metodo + aviso de dados
+    dinamicos (`_AVISO_DADOS_DINAMICOS`) + link clicavel do ponto + data por extenso.
 
     SEM logo, SEM cartao de contato (anti-PII). Usa turquesa solido (nao a foto da capa) para
     o texto ficar legivel no formato 16:9; a faixa de marca da capa ja cumpre o branding.
@@ -3611,10 +3669,7 @@ def _classico_credit_page(
     pdf.multi_cell(
         _PAGE_W - 320,
         16,
-        _ascii(
-            "READ-ONLY: este relatório não altera score_priorizacao, carteira, plano ou artefatos "
-            "oficiais do M1."
-        ),
+        _ascii(_AVISO_DADOS_DINAMICOS),
         align="C",
     )
 
@@ -3809,6 +3864,8 @@ def gerar_pdf_relatorio_pontual_classico(
     for page_number in range(1, pdf.pages_count + 1):
         pdf.page = page_number
         rgb = _WATERMARK_RGB_COVER if page_number == 1 else _WATERMARK_RGB
+        alpha = _CONFIDENCIAL_ALPHA_CAPA if page_number == 1 else _CONFIDENCIAL_ALPHA
+        _draw_confidencial(pdf, rgb=rgb, alpha=alpha)
         _draw_watermark(pdf, wm_text, rgb=rgb)
 
     output = pdf.output()

@@ -335,6 +335,11 @@ export const api = {
     return pedir<FaixaAlunos>(`/api/faixa-alunos?${q.toString()}`, {}, 30_000)
   },
 
+  /** Registra na trilha (DEC-027) o OK do aviso de confidencialidade. Corpo vazio:
+   *  o registro É a linha que o middleware grava para a chamada. */
+  cienciaConfidencialidade: () =>
+    pedir<{ ok: boolean }>('/api/ciencia-confidencialidade', { method: 'POST' }),
+
   viabilidade: (body: ViabilidadeIn) =>
     pedir<ViabilidadeOut>('/api/viabilidade', {
       method: 'POST',
