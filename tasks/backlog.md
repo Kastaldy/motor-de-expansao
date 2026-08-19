@@ -1612,6 +1612,48 @@ definido antes de qualquer código; validação com fixtures sintéticas; READ-O
 
 ---
 
+### BLK-MA-17-FU5 — O resíduo do dedup: ~87 duplicatas que o nome não casa porque o insumo não tem nome
+
+| | |
+|---|---|
+| **Criticidade** | **Baixa** — o FU4 já derrubou 320 das ~407 duplicatas. O que resta infla a pressão de um punhado de academias, não muda ordem (o `Spearman` do FU4 já foi `0,998`). READ-ONLY sobre o M1. |
+| **Prioridade** | Baixa — **não** bloqueia o BLK-MA-06. O gatilho do FU1/FU2/FU4 era a segunda fonte; este é qualidade de coletor, e piora devagar. |
+| **Esteira** | Builder → QA (sem gate: não muda universo nem critério, melhora a cobertura de um critério já aprovado). |
+| **Status** | Pendente — **resíduo declarado do BLK-MA-17-FU4 (2026-08-18)**. |
+| **Depende de** | BLK-MA-17-FU4 (concluído) — é ele que introduz `identidade.py`. |
+| **Autonomia** | **manual (NÃO loop-safe)** — mexe em dedup que alimenta o score. |
+
+**O defeito, medido.** O FU4 casa por `Jaccard >= 0,67` do discriminante geográfico. Onde o insumo
+mapeado **não tem nome informativo**, não há discriminante e o casamento nunca dispara — por
+construção e de propósito (`similaridade_nome` devolve `0` no caso vazio, que é o conservador). O
+caso emblemático medido: `Evoque Academia Campo Grande` (feed) contra `'2939'` (mapeado), a 181 m.
+Sobram **~87** pares nessa condição, contra os 320 que o FU4 colapsou.
+
+**Por que é de COLETOR, não de algoritmo.** `'2939'` não é um nome ruim de casar — é a ausência de
+nome. Nenhum matcher de string resolve, e afrouxar o critério para compensar reintroduziria
+exatamente os falsos positivos que a regra de ordinal eliminou (`Carpina` × `Carpina 2`).
+
+**Escopo (a decidir no Planner, as três saídas não são exclusivas).**
+1. **Corrigir na origem** — descobrir quais coletores gravam `nome_unidade` numérico ou vazio em
+   `concorrentes_mapeados` e corrigir a extração. É o único caminho que resolve de vez, e beneficia
+   tudo que lê o insumo, não só a dedup.
+2. **Terceiro sinal de identidade** — quando não há nome dos dois lados, cair para uma âncora
+   diferente (CEP, logradouro, ou o `hex_id_res7` com limiar apertado). Exige medir ganho/custo no
+   mesmo molde do FU4: contra o insumo mapeado, onde duas linhas da mesma rede são distintas por
+   definição.
+3. **Declarar na tela** — se as duplicatas remanescentes ficarem, a auditoria do pin deveria dizê-lo,
+   como `n_cadeias_do_feed_no_raio` já declara a outra lacuna.
+
+**Fora de escopo.** Afrouxar `JACCARD_MIN_NOME` ou `DIST_MAX_MESMO_NOME_M` (a curva do FU4 já mostrou
+que o custo dispara); mexer em `dedup_independentes` (é o FU1, concluído); qualquer
+artefato/peso/score do M1.
+
+**Critério de aceite.** Medir quantos dos ~87 cada saída resolve, no molde ganho/custo do FU4; o
+efeito na pressão medido antes e depois; nenhum falso positivo novo entre unidades numeradas;
+READ-ONLY sobre o M1; suíte verde.
+
+---
+
 ### BLK-ORQ-28 — Duas validações obrigatórias da esteira são impossíveis de cumprir
 
 | | |

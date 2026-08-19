@@ -514,6 +514,26 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 > aqui. Também exatamente nulo hoje (`0 de 19.329` colapsos, fonte única) — e é justamente esse o
 > risco: uma dedup sub-coberta devolve "nenhum colapso", indistinguível do caso correto.
 >
+> **[BLK-MA-17-FU4, 2026-08-18] O critério de dedup deixou de ser só distância — e este é o único
+> dos três que corrigiu dado ATIVO.** Os 150 m de `DEDUP_CADEIA_FEED_M` eram curtos demais: as duas
+> fontes geocodificam o mesmo endereço com desvio muito maior. Entre 150 m e 1 km havia **438 pares**
+> de mesma rede, e comparando os NOMES **407 (92,9%) eram a mesma academia** — `Bodytech Uberlândia
+> - NV Boulevard` contra nome idêntico a **299 m**, `SKYFIT ACADEMIA - BACABAL` contra `Bacabal (MA)`
+> a **940 m**. Diferente do FU1 e do FU2, cujo efeito era provadamente nulo enquanto houvesse uma
+> fonte só, estas 407 **estavam inflando a pressão desde a DEC-034**.
+>
+> Subir o limiar de distância não resolveria (apagaria academia real). Quem separa os dois casos é o
+> nome: terceira passagem com `rede igual E mesma_unidade(nome) E d <= 1200 m`, onde `mesma_unidade`
+> exige **Jaccard ≥ 0,67** do discriminante geográfico **e ordinais iguais** — ver
+> `src/motor_expansao/vulnerabilidade/identidade.py`. A regra de ordinal é uma NEGAÇÃO avaliada
+> ANTES do Jaccard, e é o que torna o matcher utilizável: sem ela, `Carpina` × `Carpina 2` (Jaccard
+> `1,00`, unidades distintas) colapsariam, e o custo saltava de 10 para 59 academias reais.
+>
+> Efeito: sobreviventes `1.171 -> 851`; pressão média `62,775 -> 62,479`; **2.829 de 19.329 (14,6%)**
+> mudam de valor, delta máximo `-20,82`; `Spearman = 0,9980718`. **Cinco bumps de série.** Resíduo
+> declarado: ~87 duplicatas que o nome não casa, quase todas porque o insumo mapeado tem nome não
+> informativo (ex.: `'2939'`) — é qualidade de coletor, não de algoritmo.
+>
 > **QUEBRA DE COMPARABILIDADE COM A SÉRIE `v5`, anunciada.** Diferente da emenda anterior — onde
 > `Spearman(pressão, oferta) = 1,000000` permitiu dizer "não embaralha o ranking" —, **aqui a ordem
 > muda**. Medido nacionalmente sobre 19.329 academias e o entregável de 6.753 linhas: ver o corpo

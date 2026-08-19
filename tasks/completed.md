@@ -13508,3 +13508,105 @@ passaria por suíte verde.
 **aplicação manual na VPS**, comando a comando, e é o caminho crítico (~2 meses de relógio até S3/S4
 maturarem). As duas dedups (FU1/FU2) eram pré-requisito dele e estão fechadas. `BLK-MA-07` (Google
 Places) — fonte externa paga, DEC própria, não bloqueia nada.
+
+## Fechamento de ciclo — BLK-MA-17-FU4 + revisão visual da metade 1 (2026-08-18/19, ad-hoc)
+
+**Ciclo AD-HOC, e o registro chega depois do código.** Nada disto nasceu no `tasks/backlog.md`: os
+dois trabalhos vieram de um pedido direto de Vinicius depois de ver a metade 1 rodando no piloto —
+*"as academias de rede da WH/TP devem seguir o mesmo padrão de quadrado com a bandeira (…) não uma
+opção ativável, mas uma constante (…) pode ser necessário também aprimorar o dedup"*. O
+`housekeeping_move_block.py` devolve `SKIP` para os dois IDs, como manda o guardrail de ciclo
+ad-hoc; o registro é este resumo.
+
+### Parte 1 — a revisão visual (emenda 1 da DEC-035, commit `3bb1a1e`)
+
+A metade 1, fechada horas antes, desenhava as unidades do agregador como **camada própria**: ponto
+circular azul, lista `redes` separada no payload e chave de liga/desliga. A justificativa original
+("juntar as listas esconderia a lacuna que a DEC-034 mediu") não sobreviveu ao uso: **uma academia
+de rede é uma academia de rede**, e dar-lhe outra forma obrigava o operador a ligar um toggle para
+enxergar concorrência que sempre esteve instalada ali.
+
+Agora são **bandeira quadrada com a logo da rede**, na mesma lista `pins.concorrentes`, sempre
+visíveis. A medição que destravou a mudança: as **83 redes do feed têm logo cadastrado (100%)** —
+nenhuma cairia no quadrado de sigla.
+
+**O destaque é um HALO, e as restrições que o definiram são as interessantes.** Não podia ser a
+borda do quadrado (7 px, já é a cor da REDE — sobrescrevê-la apagaria a marca); não podia ser ciano
+(`--ac: #35c9d6` é a Ultra e o contorno de seleção); não podia ser amarelo/verde/vermelho (é a
+escala de score dos hexágonos). Sobrou um claro neutro (`#E8EEF5`) num anel externo, com respiro
+transparente. O `viewBox` cresce de 128 para 160 e o `getSize` de 30 para 38 — **sem esse par o halo
+encolheria a marca**. A variante só é gerada para as redes com diagnóstico no recorte (29 em SP, não
+as 107).
+
+Saíram do código: a lista `redes`, `_pins_redes`, a camada `ScatterplotLayer`, o estado `redeHover`,
+o tooltip próprio, a `PilulaRedes` e os tipos `PinRede`/`Redes`.
+
+### Parte 2 — o dedup (emenda 2 da DEC-034, commit `ad6525e`)
+
+A pergunta de Vinicius era condicional ("pode ser necessário"). A medição respondeu que **era, e o
+defeito estava ativo em produção**.
+
+`DEDUP_CADEIA_FEED_M = 150 m` era curto demais para a divergência de geocodificação entre as duas
+fontes. Entre 150 m e 1 km havia **438 pares** de mesma rede entre o feed e `concorrentes_mapeados`;
+comparando os NOMES, **407 (92,9%) eram a mesma academia**. Diferente do FU1 e do FU2 — cujo efeito
+era provadamente nulo com uma fonte só —, **estas 407 inflavam a pressão desde a DEC-034**.
+
+**Por que a distância sozinha não resolvia, em número.** A taxa de pares próximos é ~10x o
+adensamento real da rede, medido no próprio insumo mapeado (onde duas linhas da mesma rede são
+academias distintas por definição): `1,29%` a ≤200 m e `2,07%` a ≤300 m, contra `5,0%` e `19,9%` do
+lado do feed. Mas subir o limiar apagaria academia real.
+
+**`identidade.py`** — terceira passagem, `rede igual E mesma_unidade(nome) E d <= 1200 m`:
+Jaccard ≥ `0,67` do **discriminante** (o nome menos o slug da rede, o ruído genérico e os ordinais;
+o que sobra é o LUGAR) **e ordinais iguais**.
+
+**A regra de ordinal é o achado do ciclo.** Sem ela o matcher colapsava unidades numeradas da mesma
+rede no mesmo bairro — `Águas Claras` × `Águas Claras II`, `Carpina` × `Carpina 2` —, e a causa era
+boba: o filtro de token curto descartava justamente o sufixo `2`/`II` que distingue. Aumentar o
+Jaccard **não** resolveria (esses pares têm Jaccard `1,00`). Efeito da regra sozinha a 800 m: o
+custo cai de **59 para 10** academias reais com o ganho intacto (292 -> 285); a razão ganho/custo
+sai de `4,9:1` para `28,5:1`. O limiar de 1.200 m saiu dessa curva: ganho 320 (27,3%), custo 12
+(0,27%), razão 26,7:1.
+
+**Performance.** Os 1.200 m custariam `grid_disk(k=31)` na `DEDUP_H3_RES = 11` (2.977 células por
+ponto). A passagem por nome usa bucket próprio na `DEDUP_NOME_H3_RES = 8` (aresta 531 m), onde o
+mesmo alcance sai com `k=4` — 61 células, 49x menos varredura. A dedup completa roda em **1,2 s**.
+
+### Efeito medido
+
+Sobreviventes `1.171 -> 851`. Pressão média `62,775 -> 62,479`; **2.829 de 19.329 (14,6%)** mudam de
+valor, delta médio `-2,02`, máximo `-20,82`; `Spearman = 0,9980718`; os zeros não se movem
+(`5,31%`). A pressão **cai**, como tem de ser — estava inflada por unidades contadas duas vezes. Em
+São Paulo, as bandeiras com halo caem de **96 para 72**.
+
+Arquivos alterados: `src/motor_expansao/vulnerabilidade/{identidade (novo),pressao_competitiva,contrato}.py`,
+`web/server/app.py`, `web/src/lib/types.ts`, `web/src/components/HexMap.tsx`,
+`web/src/screens/MapScreen.tsx`,
+`tests/unit/vulnerabilidade/{test_identidade (novo),test_dedup_por_nome (novo),test_oferta_cadeias_do_feed,test_auditoria_pressao_no_pin,test_redes_nomeadas}.py`,
+`tests/unit/test_piloto_web_redes.py`, `docs/decisions/{DEC-034,DEC-035}.md`,
+`docs/vulnerabilidade_ma_contrato.md`
+Validações (saída real): piloto + camada **589 passed**; `ruff check src tests web` limpo;
+`tsc --noEmit` limpo; `npm run build` OK; verificação ponta a ponta no piloto rodando (993 bandeiras
+em SP, 72 com halo, 29 variantes de ícone, lista separada ausente do payload, tooltip conferido em
+tela — "Sports Premium Academia", pressão 73,0, "13 num raio de 2 km (11 independentes)")
+Decisões relacionadas: **emenda 2 na DEC-034** (o dedup) e **emenda 1 na DEC-035** (o visual).
+**Cinco bumps de série**: `pressao_competitiva_v3 -> v4`, `score_vulnerabilidade_v6 -> v7`,
+`alvos_ma_v3 -> v4`, `alvos_ma_nomeados_v4 -> v5`, `redes_ma_nomeadas_v1 -> v2`. READ-ONLY sobre o M1.
+
+**Os 36 testes novos usam PARES REAIS medidos no insumo, não casos inventados** — é o que separa um
+matcher que funciona no papel de um que funciona no dado. `SKYFIT ACADEMIA - BACABAL` × `Bacabal
+(MA)` a 940 m é caso de teste porque foi medido; `Carpina` × `Carpina 2` também.
+
+**Uma correção de rota registrada:** um teste que eu mesmo escrevi (`mesma_unidade("Bluefit Centro
+Cívico", "Selfit Centro Cívico", "bluefit")`) esperava `True` e o comportamento real é `False` — só
+o slug da rede PASSADA sai do discriminante, então o token `selfit` do outro nome sobrevive e derruba
+o Jaccard para `0,50`. O teste foi corrigido para documentar a proteção de segunda ordem, que é
+melhor do que eu supunha: mesmo um chamador que esqueça de filtrar por rede erra para o lado seguro.
+
+**A precedência de pin mudou de natureza.** Enquanto as unidades do agregador tinham forma própria,
+desenhar uma colapsada era um detalhe interno. Com a forma unificada, é **duas bandeiras da mesma
+rede coladas no mapa** — erro visível. Foi exatamente isso que motivou a auditoria do dedup: a
+mudança visual expôs um defeito de dado que estava escondido havia dias.
+
+**Pendência aberta deste ciclo:** `BLK-MA-17-FU5` (resíduo de ~87 duplicatas com nome não
+informativo no insumo mapeado) — ver `tasks/backlog.md`.
