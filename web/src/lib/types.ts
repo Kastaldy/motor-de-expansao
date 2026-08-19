@@ -33,6 +33,14 @@ export interface Hex {
   renda_dom: number | null
   /** rotulo da faixa de oportunidade M1 (ex.: "Alta") */
   faixa: string | null
+  /**
+   * Bairro/distrito dominante da celula (IBGE), quando o backend o resolveu.
+   *
+   * So' vem na rota de MUNICIPIO — depende do codigo dele, e a visao de UF serve
+   * dezenas de cidades numa resposta so'. Ausente ali nao significa "sem bairro", e por
+   * isso quem rotula cai no municipio em vez de mostrar vazio.
+   */
+  bairro?: string | null
   conc: number
   ultra: number
   /* CONTAGEM de unidades mapeadas DENTRO do hexagono (celula H3 res-7), vinda dos MESMOS

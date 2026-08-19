@@ -229,6 +229,28 @@ export function corDeIdentidadeRgb(i: number, alfa = 255): [number, number, numb
  * O numero e' a POSICAO na lista, e nao a ordem do empate: e' assim que o rotulo casa com a
  * aba, com a cor de identidade e com o contorno no mapa.
  */
+/**
+ * Como um hexagono se chama numa comparacao: BAIRRO, senao municipio.
+ *
+ * Espelha o `rotuloDoPonto` do modo de imovel de proposito — as duas comparacoes
+ * respondem a mesma pergunta ("qual destas areas?") e nomear uma por bairro e a outra
+ * por cidade fazia o mesmo deck falar duas linguas. Cinco hexagonos de Sao Paulo davam
+ * cinco colunas "Sao Paulo", que o `rotulosUnicos` so' conseguia separar por numero.
+ *
+ * O municipio continua sendo a resposta certa na visao de UF, onde o backend nao resolve
+ * bairro (ver `Hex.bairro`), e para quem cai fora da malha de bairros do IBGE.
+ */
+export function rotuloDoHex(h: Hex, i?: number): string {
+  // Sem indice o fallback nao numera: quem pede o nome de UM hexagono (o titulo da
+  // ficha) nao esta' numa lista, e "Hexágono 1" ali afirmaria uma sequencia que nao ha'.
+  return h.bairro ?? h.mun ?? (i == null ? 'Hexágono' : `Hexágono ${i + 1}`)
+}
+
+/** Os rotulos da LISTA, ja' desambiguados — o par de `rotulosDosPontos`. */
+export function rotulosDosHexes(hexes: readonly Hex[]): string[] {
+  return rotulosUnicos(hexes.map(rotuloDoHex))
+}
+
 export function rotulosUnicos(nomes: readonly string[]): string[] {
   const vezes = new Map<string, number>()
   for (const n of nomes) vezes.set(n, (vezes.get(n) ?? 0) + 1)

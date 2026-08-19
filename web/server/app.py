@@ -1972,9 +1972,11 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
     ]
 
 
-def _hex_dict(r: pd.Series, fator_dom: float | None) -> dict[str, Any]:
+def _hex_dict(
+    r: pd.Series, fator_dom: float | None, bairro: str | None = None
+) -> dict[str, Any]:
     """Serializa um hex para o mapa (compartilhado entre as rotas UF e município)."""
-    return {
+    dados: dict[str, Any] = {
         "id": r["hex_id"],
         "lat": _num(r["lat"], 6),
         "lng": _num(r["lng"], 6),
@@ -2021,6 +2023,17 @@ def _hex_dict(r: pd.Series, fator_dom: float | None) -> dict[str, Any]:
         "cres_hex_classe": _ROTULO_CLASSE.get(str(r.get("cres_hex_classe") or ""))
         or _texto(r.get("cres_hex_classe")),
     }
+    # BAIRRO/DISTRITO dominante da celula, o mesmo `bairros_por_hex` que ja' nomeia os
+    # itens do funil. So' vem na rota de MUNICIPIO — depende do codigo dele, e a visao de
+    # UF serve 163 cidades numa resposta so'.
+    #
+    # A CHAVE NEM ENTRA quando nao ha' bairro, em vez de entrar como `null`. Esta funcao
+    # tambem serve /api/uf, onde o campo seria nulo nos ~15.000 hexes: sao ~210 KB de
+    # `"bairro":null` num payload que o comentario do `mun` acima persegue ao megabyte
+    # (SP 6,58 -> 4,71 MB). O front declara `bairro?` e todo leitor testa a presenca.
+    if bairro:
+        dados["bairro"] = bairro
+    return dados
 
 
 def _bloco_municipal(vis: pd.DataFrame) -> dict[str, dict[str, Any]]:
@@ -3431,7 +3444,9 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
     # municipio, como no tooltip do Streamlit). Calculado 1x aqui.
     fator_dom = _fator_domiciliar(uf.upper(), cod)
 
-    hexes = [_hex_dict(r, fator_dom) for _, r in vis.iterrows()]
+    hexes = [
+        _hex_dict(r, fator_dom, bairros.get(str(r.get("hex_id")))) for _, r in vis.iterrows()
+    ]
 
     for p in passos:
         p["hexes"] = p["hexes"][:400]

@@ -9,6 +9,8 @@ import {
   compararHexes,
   corDeIdentidade,
   corDeIdentidadeRgb,
+  rotuloDoHex,
+  rotulosDosHexes,
   rotulosUnicos,
 } from './comparacao'
 import type { Hex } from './types'
@@ -347,5 +349,40 @@ describe('compararComFrase', () => {
     const a = hex({ oferta: 9000, pop: 40000, conc: 1 })
     const b = hex({ oferta: 2000, pop: 10000, conc: 6 })
     expect(compararComFrase(a, b).frase).toBe(compararComFrase(a, b).frase)
+  })
+})
+
+describe('rotuloDoHex — o mesmo nome do painel da direita', () => {
+  it('usa o bairro quando o backend o resolveu', () => {
+    expect(rotuloDoHex(hex({ bairro: 'Aracaré', mun: 'Itaquaquecetuba' }), 0)).toBe('Aracaré')
+  })
+
+  it('cai no municipio na visao de UF, onde nao ha bairro', () => {
+    expect(rotuloDoHex(hex({ mun: 'Itaquaquecetuba' }), 0)).toBe('Itaquaquecetuba')
+    expect(rotuloDoHex(hex({ bairro: null, mun: 'Itaquaquecetuba' }), 0)).toBe('Itaquaquecetuba')
+  })
+
+  it('sem indice nao numera — e titulo de UM hexagono, nao item de lista', () => {
+    expect(rotuloDoHex(hex({ mun: null }))).toBe('Hexágono')
+    expect(rotuloDoHex(hex({ mun: null }), 2)).toBe('Hexágono 3')
+  })
+
+  it('desambigua bairros repetidos, e nao a cidade inteira', () => {
+    // Tres hexes da mesma cidade em bairros distintos: nomes distintos, sem numero.
+    expect(
+      rotulosDosHexes([
+        hex({ bairro: 'Aracaré', mun: 'Itaquaquecetuba' }),
+        hex({ bairro: 'Monte Belo', mun: 'Itaquaquecetuba' }),
+        hex({ bairro: 'Corredor', mun: 'Itaquaquecetuba' }),
+      ]),
+    ).toEqual(['Aracaré', 'Monte Belo', 'Corredor'])
+
+    // Dois hexes do MESMO bairro (acontece: "Rio Abaixo" tem tres celulas em Itaquá).
+    expect(
+      rotulosDosHexes([
+        hex({ bairro: 'Rio Abaixo', mun: 'Itaquaquecetuba' }),
+        hex({ bairro: 'Rio Abaixo', mun: 'Itaquaquecetuba' }),
+      ]),
+    ).toEqual(['1 · Rio Abaixo', '2 · Rio Abaixo'])
   })
 })

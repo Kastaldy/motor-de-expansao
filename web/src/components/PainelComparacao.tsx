@@ -5,7 +5,7 @@ import {
   DIMENSOES,
   blocosPorParametro,
   corDeIdentidade,
-  rotulosUnicos,
+  rotulosDosHexes,
 } from '../lib/comparacao'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import type { Hex } from '../lib/types'
@@ -42,7 +42,7 @@ export default function PainelComparacao({
 }) {
   /* Desambiguados: cinco hexágonos da mesma cidade davam cinco itens "São Paulo", e nada
      na tela ligava uma barra ao seu hexágono. */
-  const rotulos = rotulosUnicos(hexes.map((h, i) => h.mun ?? `Hexágono ${i + 1}`))
+  const rotulos = rotulosDosHexes(hexes)
   const ranking = ranquear(DIMENSOES, hexes, rotulos)
   const blocos = blocosPorParametro(DIMENSOES, hexes) as BlocoParametro<unknown>[]
 
