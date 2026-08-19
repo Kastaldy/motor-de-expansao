@@ -83,7 +83,12 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
 #   /api/ufs         — catalogo de UFs, carregado pelo App antes de saber a tela
 #   /api/metodologia — manual do funil, conteudo explicativo sem dado sensivel
 #   /api/me          — e' a rota que DIZ a SPA o que esconder
-ROTAS_LIVRES = frozenset({"/api/health", "/api/ufs", "/api/metodologia", "/api/me"})
+# `/api/ciencia-confidencialidade` e' livre de proposito: TODO usuario autenticado ve o
+# pop-up de entrada e o clique no OK precisa virar linha da trilha (DEC-027) — restringir
+# por aba deixaria usuarios sem aba nenhuma fora do registro de ciencia.
+ROTAS_LIVRES = frozenset(
+    {"/api/health", "/api/ufs", "/api/metodologia", "/api/me", "/api/ciencia-confidencialidade"}
+)
 
 # --- Aba Acessos (emenda DEC-027, 2026-08-19): controle PROPRIO, mais forte ------
 # O painel de acessos expoe atividade do TIME (dado pessoal), entao NAO entra no

@@ -409,7 +409,14 @@ export default function App() {
           a regra é "sempre que a pessoa entrar, clicar em OK". Último filho da raiz +
           z-index alto: cobre Dock e telas até a confirmação. */}
       {!cienteConfidencialidade && (
-        <AvisoConfidencialidade onConfirmar={() => setCienteConfidencialidade(true)} />
+        <AvisoConfidencialidade
+          onConfirmar={() => {
+            setCienteConfidencialidade(true)
+            // Registro da ciência na trilha (DEC-027) — best-effort de propósito: a
+            // falha da chamada não pode travar a entrada de quem já confirmou.
+            void api.cienciaConfidencialidade().catch(() => {})
+          }}
+        />
       )}
     </div>
   )

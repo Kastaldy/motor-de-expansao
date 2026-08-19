@@ -62,6 +62,7 @@ JANELA_DIAS_MAX = 90
 #: Prefixos mais específicos primeiro (`/api/rede/unidade/` antes de `/api/rede/`).
 #: Método só quando distingue leitura de escrita (PUT do cadastro).
 FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
+    ("POST", "/api/ciencia-confidencialidade", "Confirmou o aviso de confidencialidade"),
     ("PUT", "/api/rede/cadastro/", "Editou cadastro de unidade"),
     (None, "/api/rede/unidade/", "Abriu ficha de unidade"),
     (None, "/api/rede/carteira", "Consultou carteira da rede"),

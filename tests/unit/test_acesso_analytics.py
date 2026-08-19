@@ -343,6 +343,15 @@ def test_put_do_cadastro_e_feature_propria() -> None:
     )
 
 
+def test_ciencia_confidencialidade_e_feature_propria() -> None:
+    """O OK do pop-up (POST /api/ciencia-confidencialidade) sai rotulado na ficha —
+    e' o registro de ciencia pedido pelo Felipe em 2026-08-19, nao "Outras acoes"."""
+    assert (
+        aa._feature_do_evento({"metodo": "POST", "rota": "/api/ciencia-confidencialidade"})
+        == "Confirmou o aviso de confidencialidade"
+    )
+
+
 def test_toda_rota_com_regra_de_acesso_tem_rotulo_de_feature() -> None:
     """Anti-drift: rota nova em REGRAS_DE_ACESSO sem rótulo cairia em 'Outras ações'
     em silêncio — este teste obriga a decisão."""
