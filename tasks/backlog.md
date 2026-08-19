@@ -1726,6 +1726,46 @@ testes do piloto.
 
 ---
 
+### BLK-FIX-ACESSOS-01 — Três testes do relatório de acessos passam só no dia em que foram escritos
+
+| | |
+|---|---|
+| **Criticidade** | **Média** — não é defeito de produto, é a `main` VERMELHA. Enquanto valer, todo PR aberto herda 3 falhas alheias e o gate de CI deixa de distinguir "meu trabalho quebrou" de "a base já estava quebrada". READ-ONLY sobre o M1. |
+| **Prioridade** | **Alta** — cada dia que passa é mais um PR nascendo vermelho. |
+| **Esteira** | Builder → QA (sem gate: corrige teste, não comportamento). |
+| **Status** | Pendente — medido em 2026-08-19, na preparação do PR da pilha BLK-MA. |
+| **Depende de** | nada. |
+| **Autonomia** | **manual (NÃO loop-safe)** |
+
+**O defeito, medido.** Em `origin/main` puro (commit `7b70117`, worktree limpo com
+`PYTHONPATH` próprio), `tests/unit/test_relatorio_acessos.py` falha em 3 de 18:
+
+- `test_cli_imprime_sem_enviar`
+- `test_acessos_no_chat_de_ops_sem_senha`
+- `test_acessos_cobre_forma_de_grupo`
+
+**A causa.** Os três montam a trilha com uma data CRAVADA —
+`_linha("ana", "/api/ponto", "2026-08-18T12:00:00+00:00")` — e o relatório filtra por **hoje**. Em
+18/08 passavam; de 19/08 em diante o acesso cai fora da janela e a saída vira
+`"Nenhum acesso registrado hoje ainda"`, enquanto o assert procura `"ana"`.
+
+**Não é intermitência nem ambiente.** É determinístico: passa exatamente um dia e falha em todos os
+outros. Um teste assim dá uma garantia falsa — ele não afirma que o relatório funciona, afirma que
+funcionava ontem.
+
+**Escopo.** Trocar a data cravada por uma âncora relativa ao "hoje" que o próprio relatório usa
+(`datetime.now(BRT)` na fixture, ou injetar o relógio). Injetar é preferível: torna o teste capaz de
+cobrir a **borda** — o acesso de ontem 23:59 e o de hoje 00:01 —, que é justamente o que a versão
+cravada nunca testou.
+
+**Fora de escopo.** Mudar o comportamento do relatório ou a janela de "hoje"; qualquer
+artefato/peso/score do M1.
+
+**Critério de aceite.** Os 3 testes passam em qualquer data (verificar com o relógio deslocado,
+não só "hoje"); a borda de virada do dia coberta; suíte verde.
+
+---
+
 ### BLK-ORQ-28 — Duas validações obrigatórias da esteira são impossíveis de cumprir
 
 | | |
