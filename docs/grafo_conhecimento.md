@@ -10,9 +10,9 @@
 
 ## 1. O que é e para que serve
 
-O `graphify` transforma o repositório em um **grafo de conhecimento** persistente: 656 arquivos
-(502 de código extraídos por AST + 154 documentos, contratos e DECs extraídos por LLM) viram
-**12.999 nós e 25.705 arestas** (remedido em 2026-08-19 sobre o `graphify-out/graph.json`
+O `graphify` transforma o repositório em um **grafo de conhecimento** persistente: 660 arquivos
+(506 de código extraídos por AST + 154 documentos, contratos e DECs extraídos por LLM) viram
+**13.156 nós e 26.052 arestas** (remedido em 2026-08-19 sobre o `graphify-out/graph.json`
 versionado; era 421 arquivos / 7.633 nós / 15.362 arestas em 2026-07-28, antes de o repositório
 crescer o `web/`, as DECs 027-036 e a camada de M&A).
 
@@ -197,7 +197,7 @@ PROTOCOL   : 2025-06-18
 SERVERINFO : {'name': 'graphify', 'version': '1.29.0'}
 TOOLS (10) : ['get_community', 'get_neighbors', 'get_node', 'get_pr_impact', 'god_nodes',
               'graph_stats', 'list_prs', 'query_graph', 'shortest_path', 'triage_prs']
-graph_stats: Nodes: 12999 | Edges: 25705 | Communities: 603 | EXTRACTED: 98% | INFERRED: 2% | AMBIGUOUS: 0%
+graph_stats: Nodes: 13156 | Edges: 26052 | Communities: 613 | EXTRACTED: 98% | INFERRED: 2% | AMBIGUOUS: 0%
 EXIT       : 0     STDERR: (vazio)     VERDICT: PASS
 ```
 
@@ -274,8 +274,8 @@ de exclusão**. Ele portanto ignora o recorte curado do corpus.
 >
 > **A tabela é um experimento PAREADO de 2026-07-28 e fica congelada nessa data** — as duas
 > colunas só comparam porque foram medidas no mesmo corpus, no mesmo momento; atualizar uma delas
-> isolada destruiria a comparação. Para o tamanho ATUAL do grafo curado (2026-08-19: 656 arquivos,
-> 12.999 nós, 25.705 arestas, 17.165.315 bytes) ver a §1 e a §7.1.
+> isolada destruiria a comparação. Para o tamanho ATUAL do grafo curado (2026-08-19: 660 arquivos,
+> 13.156 nós, 26.052 arestas, 17.393.167 bytes) ver a §1 e a §7.1.
 
 Ou seja: um `git checkout` de branch bastaria para inflar o grafo em ~78% de nós e jogar 566 logs de
 handoff dentro do corpus — exatamente o que o recorte da §7 do `CLAUDE.md` decidiu manter fora.
