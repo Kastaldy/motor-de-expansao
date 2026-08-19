@@ -387,3 +387,53 @@ def test_diretorio_inexistente_devolve_resumo_vazio(tmp_path: Path) -> None:
 def test_dias_utc_da_janela_cobrem_o_transbordo() -> None:
     dias = aa._dias_utc_para_janela_brt(date(2026, 8, 18), date(2026, 8, 19))
     assert dias == [date(2026, 8, 18), date(2026, 8, 19), date(2026, 8, 20)]
+
+
+# --- ficha detalhada (redesign de 2026-08-19: sessões, linha do tempo, heatmap) --
+
+
+def test_ficha_quebra_sessoes_por_gap_de_30_minutos(tmp_path: Path) -> None:
+    base_t = AGORA.replace(hour=12, minute=0)  # 09:00 BRT
+    _gravar(tmp_path, base_t, rota="/api/ponto")
+    _gravar(tmp_path, base_t + timedelta(minutes=10), rota="/api/viabilidade")
+    _gravar(tmp_path, base_t + timedelta(hours=3), rota="/api/simulador/xlsx")  # nova sessão
+    ficha = aa.ficha_usuario("felipe", tmp_path, dias=7, agora_utc=AGORA)
+    assert ficha is not None
+    assert len(ficha["sessoes"]) == 2
+    recente, antiga = ficha["sessoes"]  # mais recente primeiro
+    assert antiga["ini"] == "09:00" and antiga["fim"] == "09:10" and antiga["acoes"] == 2
+    assert recente["ini"] == "12:00" and recente["acoes"] == 1
+    assert antiga["abas"] == ["Mapa", "Viabilidade"]
+
+
+def test_ficha_linha_do_tempo_e_por_feature_sem_rota_nem_conteudo(tmp_path: Path) -> None:
+    _gravar(tmp_path, AGORA, rota="/api/geocode", query="q=Av+Reservada+99", status=200)
+    _gravar(tmp_path, AGORA.replace(minute=5), rota="/api/uf/SP", status=500)
+    ficha = aa.ficha_usuario("felipe", tmp_path, dias=7, agora_utc=AGORA)
+    assert ficha is not None
+    tempo = ficha["linha_do_tempo"]
+    assert tempo[0]["hora"] == "12:05" and tempo[0]["erro"] is True  # mais recente primeiro
+    assert tempo[1]["feature"] == "Buscou endereço" and tempo[1]["erro"] is False
+    bruto = json.dumps(ficha, ensure_ascii=False, default=str)
+    assert "/api/" not in bruto, "a ficha nunca expõe rota"
+    assert "Reservada" not in bruto, "a ficha nunca expõe a query/conteúdo"
+
+
+def test_ficha_traz_heatmap_por_aba_e_erros(tmp_path: Path) -> None:
+    _gravar(tmp_path, AGORA, rota="/api/ponto", status=403)
+    _gravar(tmp_path, AGORA, rota="/api/rede/carteira")
+    ficha = aa.ficha_usuario("felipe", tmp_path, dias=7, agora_utc=AGORA)
+    assert ficha is not None
+    assert ficha["erros"] == 1
+    assert ficha["heatmap"][2][12] == 2  # quarta 12h BRT
+    assert {a["aba"] for a in ficha["por_aba"]} == {"Mapa", "Executiva"}
+
+
+def test_resumo_traz_sparkline_de_14_dias_por_usuario(tmp_path: Path) -> None:
+    _gravar(tmp_path, AGORA, usuario="ana")
+    _gravar(tmp_path, AGORA - timedelta(days=1), usuario="ana")
+    r = aa.resumo(tmp_path, dias=30, agora_utc=AGORA)
+    linha = next(u for u in r["usuarios"] if u["nome"] == "ana")
+    assert len(linha["serie14"]) == 14
+    assert linha["serie14"][-1] == 1 and linha["serie14"][-2] == 1
+    assert sum(linha["serie14"]) == 2

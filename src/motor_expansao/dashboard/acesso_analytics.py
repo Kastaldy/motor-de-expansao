@@ -84,6 +84,13 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
 )
 _FEATURE_OUTRAS = "Outras ações"
 
+#: Pausa que fecha uma sessão na ficha do usuário (leitura de "sentou para usar").
+_GAP_SESSAO = timedelta(minutes=30)
+#: Teto de eventos da linha do tempo da ficha (os mais recentes).
+_TETO_LINHA_DO_TEMPO = 80
+#: Dias da mini-série de atividade por usuário na tabela do resumo (sparkline).
+_DIAS_SPARKLINE = 14
+
 _LOCK_ROLLUP = threading.Lock()
 
 
@@ -360,14 +367,16 @@ def _saude(eventos: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _linhas_usuarios(eventos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _linhas_usuarios(eventos: list[dict[str, Any]], hoje: date) -> list[dict[str, Any]]:
     por_usuario: dict[str, list[dict[str, Any]]] = {}
     for r in eventos:
         por_usuario.setdefault(str(r.get("usuario") or "desconhecido"), []).append(r)
+    eixo_spark = [hoje - timedelta(days=i) for i in range(_DIAS_SPARKLINE - 1, -1, -1)]
     linhas: list[dict[str, Any]] = []
     for nome, evs in por_usuario.items():
         momentos = [r["momento"] for r in evs if isinstance(r.get("momento"), datetime)]
         ultimo = max(momentos) if momentos else None
+        contagem_dias = Counter(m.date() for m in momentos)
         linhas.append(
             {
                 "nome": nome,
@@ -377,6 +386,8 @@ def _linhas_usuarios(eventos: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "acoes": len(evs),
                 "abas": sorted({_label(r["aba"]) for r in evs if r.get("aba")}),
                 "ips": len({str(r.get("ip")) for r in evs if r.get("ip")}),
+                # Mini-série dos últimos 14 dias (sparkline da tabela) — só contagens.
+                "serie14": [contagem_dias.get(d, 0) for d in eixo_spark],
             }
         )
     linhas.sort(key=lambda x: (-(x["acoes"] or 0), x["nome"]))
@@ -478,7 +489,7 @@ def resumo(
         "serie": serie,
         "heatmap": heatmap,
         "por_aba": por_aba,
-        "usuarios": _linhas_usuarios(eventos),
+        "usuarios": _linhas_usuarios(eventos, hoje),
         "saude": _saude(eventos),
     }
 
@@ -503,6 +514,7 @@ def ficha_usuario(
     eventos = [r for r in da_janela if str(r.get("usuario") or "desconhecido") == nome]
     if not eventos:
         return None
+    eventos.sort(key=lambda r: r["momento"])
 
     por_dia: dict[str, list[datetime]] = {}
     for r in eventos:
@@ -517,9 +529,56 @@ def ficha_usuario(
         for d, ms in sorted(por_dia.items(), reverse=True)
     ]
 
+    # Sessões: sequência de ações sem pausa maior que o gap (ou virada de dia).
+    # É a leitura "quando a pessoa realmente sentou para usar" — mais fiel que a
+    # janela ini–fim do dia, que dilui manhã e noite numa faixa só.
+    sessoes: list[dict[str, Any]] = []
+    fim_anterior: datetime | None = None
+    for r in eventos:
+        m = r["momento"]
+        nova = (
+            fim_anterior is None
+            or (m - fim_anterior) > _GAP_SESSAO
+            or m.date() != fim_anterior.date()
+        )
+        if nova:
+            sessoes.append(
+                {"dia": m.date().isoformat(), "ini": _hhmm(m), "fim": _hhmm(m),
+                 "acoes": 0, "abas": set()}
+            )
+        sessao = sessoes[-1]
+        sessao["fim"] = _hhmm(m)
+        sessao["acoes"] += 1
+        if r.get("aba"):
+            sessao["abas"].add(_label(r["aba"]))
+        fim_anterior = m
+    for sessao in sessoes:
+        sessao["abas"] = sorted(sessao["abas"])
+    sessoes.reverse()  # mais recente primeiro
+
+    # Linha do tempo: os últimos N eventos como FEATURE + hora + status — o "log"
+    # legível da emenda, sem rota/query/conteúdo (o corte da DEC-027 permanece).
+    linha_do_tempo = [
+        {
+            "dia": r["momento"].date().isoformat(),
+            "hora": _hhmm(r["momento"]),
+            "feature": _feature_do_evento(r),
+            "aba": _label(r["aba"]) if r.get("aba") else None,
+            "erro": isinstance(r.get("status"), int) and r["status"] >= 400,
+        }
+        for r in eventos[-_TETO_LINHA_DO_TEMPO:]
+    ]
+    linha_do_tempo.reverse()
+
+    heatmap = [[0] * 24 for _ in range(7)]
+    for r in eventos:
+        heatmap[r["momento"].weekday()][r["momento"].hour] += 1
+
+    contagem_abas = Counter(str(r["aba"]) for r in eventos if r.get("aba"))
+    erros = sum(1 for r in eventos if isinstance(r.get("status"), int) and r["status"] >= 400)
+
     features = Counter(_feature_do_evento(r) for r in eventos)
-    momentos = [r["momento"] for r in eventos]
-    ultimo = max(momentos)
+    ultimo = eventos[-1]["momento"]
     return {
         "nome": nome,
         "janela_dias": dias,
@@ -529,6 +588,11 @@ def ficha_usuario(
         "ultimo_hora": _hhmm(ultimo),
         "abas": sorted({_label(r["aba"]) for r in eventos if r.get("aba")}),
         "ips": len({str(r.get("ip")) for r in eventos if r.get("ip")}),
+        "erros": erros,
         "dias": linhas_dias,
+        "sessoes": sessoes,
         "features": [{"feature": f, "n": n} for f, n in features.most_common()],
+        "por_aba": [{"aba": _label(a), "acoes": n} for a, n in contagem_abas.most_common()],
+        "heatmap": heatmap,
+        "linha_do_tempo": linha_do_tempo,
     }
