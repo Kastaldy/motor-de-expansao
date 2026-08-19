@@ -8,7 +8,7 @@ import {
   rotuloRanking,
   rotuloVsMedia,
 } from '../../lib/exec'
-import { brl, num, pct } from '../../lib/format'
+import { brl, num, pct, pctVar } from '../../lib/format'
 import type { RedeFicha } from '../../lib/types'
 import { Aviso, BarraMeta, Botao, Delta, Glass, Semaforo, Spinner } from '../primitives'
 import {
@@ -247,9 +247,9 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
                       }}
                       title={`${rotuloRanking(metrica)} · ${rotuloVsMedia(metrica)}`}
                     >
-                      {metrica.vs_media_pct === null
-                        ? '—'
-                        : `${metrica.vs_media_pct > 0 ? '+' : ''}${pct(metrica.vs_media_pct, 1)}`}
+                      {/* Sinal por `pctVar` (lib/format), nao colado a mao: desvio contra
+                          a media da rede e' VARIACAO, e a regra do `+` vive num lugar so'. */}
+                      {metrica.vs_media_pct === null ? '—' : pctVar(metrica.vs_media_pct, 1)}
                     </td>
                   </tr>
                 )

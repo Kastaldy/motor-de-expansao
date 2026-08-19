@@ -17,7 +17,9 @@ import { api, ApiError, baixar } from '../lib/api'
 import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
-import { MAX_COMPARADOS } from '../lib/ranking-comparacao'
+import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
+import type { AlvoCaptura } from '../lib/captura-mapa'
+import { DIMENSOES, rotuloDoHex, rotulosDosHexes } from '../lib/comparacao'
 import type {
   Cobertura1k,
   Hex,
@@ -86,9 +88,18 @@ export interface MapScreenProps {
   janelaDoHex?: boolean
   /** Sem UF escolhida, não desenha o hero — quem o publica é a camada de cima. */
   semLanding?: boolean
+  /**
+   * Publica a função de CAPTURA do mapa para quem está fora deste componente.
+   *
+   * O modo de ponto é irmão na árvore e usa o MESMO mapa (`App.tsx`), então ele precisa
+   * pedir capturas sem ter o mapa em mãos. Mesmo motivo pelo qual o `pinFixo` mora no App:
+   * quem consome o mapa é o mapa, e o App só reparte o canal.
+   */
+  registrarCaptura?: (capturar: (alvos: AlvoCaptura[]) => Promise<string[]>) => void
 }
 
 export default function MapScreen({
+  registrarCaptura,
   ufs,
   uf,
   onUf,
@@ -392,6 +403,102 @@ export default function MapScreen({
     setVoo((v) => ({ hexId, n: (v?.n ?? 0) + 1 }))
   }, [])
 
+  /* ---- Deck de comparacao (PDF) --------------------------------------------
+     O MapScreen orquestra porque so' ele tem as duas pontas: o mapa (que captura) e a
+     lista comparada (que vira o ranking). O painel so' pede.
+
+     A ORDEM importa: primeiro as capturas, depois o POST. O ranking e' calculado AQUI, no
+     mesmo `ranquear` que a tela usa, e viaja pronto — o servidor so' desenha, para nao
+     existir uma segunda regra de "quem vence" que possa divergir da tela. */
+  const [pedidoCaptura, setPedidoCaptura] = useState<{
+    alvos: AlvoCaptura[]
+    n: number
+  } | null>(null)
+  const [gerandoDeck, setGerandoDeck] = useState(false)
+
+  /* A captura vira uma PROMESSA, e nao um par pedido/callback espalhado pela tela. Duas
+     razoes: o fluxo do deck fica linear (`await capturar(...)` e segue), e o modo de PONTO
+     — que e' irmao deste componente na arvore e usa o MESMO mapa — precisa pedir capturas
+     tambem. Publicar a funcao por `registrarCaptura` e' o mesmo caminho que o `pinFixo` do
+     App ja' usa: quem consome o mapa e' o mapa, entao o canal mora aqui e o App so' o
+     reparte. */
+  const resolveCaptura = useRef<((imagens: string[]) => void) | null>(null)
+
+  const capturar = useCallback(
+    (alvos: AlvoCaptura[]) =>
+      new Promise<string[]>((resolve) => {
+        resolveCaptura.current = resolve
+        setPedidoCaptura((p) => ({ alvos, n: (p?.n ?? 0) + 1 }))
+      }),
+    [],
+  )
+
+  const aoCapturarMapas = useCallback((imagens: string[]) => {
+    const resolver = resolveCaptura.current
+    resolveCaptura.current = null
+    resolver?.(imagens)
+  }, [])
+
+  useEffect(() => {
+    registrarCaptura?.(capturar)
+  }, [registrarCaptura, capturar])
+
+  /* Os MESMOS rótulos do painel, e desambiguados: cinco hexágonos da mesma cidade davam
+     cinco itens "São Paulo" no PDF, indistinguíveis entre si. A regra vive no `lib/` —
+     duas cópias divergiriam no primeiro ajuste, e uma delas é o que vai para o PDF. */
+  const rotulosComparacao = useCallback((hs: Hex[]) => rotulosDosHexes(hs), [])
+
+  const pedirDeck = useCallback(
+    async () => {
+      const hs = hexesComparacao
+      if (!hs?.length || gerandoDeck) return
+      setGerandoDeck(true)
+      try {
+        // Sem coordenada: a comparacao de hexagonos nao tem imovel para marcar — o
+        // assunto de cada foto e' a celula inteira.
+        const imagens = await capturar(hs.map((h) => ({ hexId: h.id })))
+        const rotulos = rotulosComparacao(hs)
+        const ranking = ranquear(DIMENSOES, hs, rotulos)
+        /* O subtítulo nomeia a cidade só quando TODAS são da mesma. Na visão de UF o mapa
+           serve 15.000 hexágonos de 163 municípios (medido em SP), então o cenário pode
+           misturar cidades — e usar o município do primeiro fazia a capa afirmar
+           "São Paulo" para um conjunto que tinha só um hexágono de lá. */
+        const cidades = [...new Set(hs.map((h) => h.mun).filter(Boolean))] as string[]
+        const cidade =
+          cidades.length === 1
+            ? `${cidades[0]} - `
+            : cidades.length > 1
+              ? `${cidades.length} municípios - `
+              : ''
+        const resposta = await fetch('/api/relatorio/comparacao', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...ranking,
+            titulo: 'Comparação de hexágonos',
+            subtitulo: `${cidade}${hs.length} áreas`,
+            imagens,
+          }),
+        })
+        if (!resposta.ok) throw new Error(`HTTP ${resposta.status}`)
+        const blob = await resposta.blob()
+        // Baixa pelo link temporario e REVOGA a URL: sem o revoke o blob fica retido pela
+        // aba enquanto ela viver, e um deck tem alguns MB de imagem dentro.
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = 'comparacao-hexagonos.pdf'
+        a.click()
+        URL.revokeObjectURL(url)
+      } catch (erro) {
+        console.error('[deck] falhou ao gerar o PDF da comparação', erro)
+      } finally {
+        setGerandoDeck(false)
+      }
+    },
+    [hexesComparacao, rotulosComparacao, capturar, gerandoDeck],
+  )
+
   /**
    * Poe ou tira um hexagono da comparacao, direto da lista.
    *
@@ -602,6 +709,8 @@ export default function MapScreen({
           }}
           searchPin={pinFixo ?? pin}
           voarPara={voo}
+          pedidoCaptura={pedidoCaptura}
+          onCapturas={aoCapturarMapas}
         />
       )}
 
@@ -1052,14 +1161,25 @@ export default function MapScreen({
           coisas diferentes sobre a mesma seleção competiriam entre si. */}
       <JanelaFicha
         aberta={janelaDoHex && hexSelecionado != null && !modoCenario}
-        titulo={hexSelecionado?.mun ?? 'Hexágono'}
+        /* BAIRRO, o MESMO nome que o painel da direita usa na lista. O titulo saia como
+           o municipio, entao clicar em "Aracaré" no ranking abria uma ficha chamada
+           "Itaquaquecetuba" — e o item de baixo abria outra com o mesmo nome (Juan,
+           2026-08-19). Duas fichas com o titulo da cidade nao dizem qual area e' qual. */
+        titulo={hexSelecionado ? rotuloDoHex(hexSelecionado) : 'Hexágono'}
         /* O id do hexágono NÃO entra abreviado aqui. H3 é hierárquico: vizinhos dividem o
            prefixo, então `87a8c0ce…` é o mesmo texto para hexágonos diferentes — piorava
            exatamente o que se quer resolver, que é saber qual é qual. A coordenada
            distingue de imediato; o id inteiro fica no corpo da ficha. */
         subtitulo={
           hexSelecionado
-            ? [dados?.uf, coord(hexSelecionado.lat, hexSelecionado.lng)]
+            ? [
+                // O MUNICIPIO entra aqui quando o titulo virou bairro — senao "Aracaré"
+                // sozinho nao diz em que cidade fica. Quando o titulo JA' e' o municipio
+                // (visao de UF, ou hexagono fora da malha de bairros), nao se repete.
+                hexSelecionado.bairro ? hexSelecionado.mun : null,
+                dados?.uf,
+                coord(hexSelecionado.lat, hexSelecionado.lng),
+              ]
                 .filter(Boolean)
                 .join(' · ')
             : undefined
@@ -1068,7 +1188,13 @@ export default function MapScreen({
         recuoInferior={96}
       >
         {hexSelecionado && (
-          <FichaHex hex={hexSelecionado} cres={cresMunDoHex} />
+          <FichaHex
+            hex={hexSelecionado}
+            cres={cresMunDoHex}
+            /* `comparar` já põe na lista E liga o modo cenário — sem isso o hexágono
+               entraria marcado e o painel de comparação ficaria escondido. */
+            onComparar={() => comparar(hexSelecionado.id)}
+          />
         )}
       </JanelaFicha>
 
@@ -1086,7 +1212,16 @@ export default function MapScreen({
         recuoInferior={96}
       >
         {hexesComparacao ? (
-          <PainelComparacao hexes={hexesComparacao} onLimpar={() => setCenario([])} />
+          <PainelComparacao
+            hexes={hexesComparacao}
+            onLimpar={() => setCenario([])}
+            /* `selecionarDaLista` já é o caminho de "clicou na lista, leve-me lá": ele
+               seleciona e pede o voo. Clicar no mapa continua sem voo, porque lá o
+               hexágono já está sob o cursor. */
+            onIrPara={selecionarDaLista}
+            onRelatorio={pedirDeck}
+            gerandoRelatorio={gerandoDeck}
+          />
         ) : (
           <div>
             <div style={{ font: '700 12px/1 var(--f-ui)', color: 'var(--tx-max)' }}>

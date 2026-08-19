@@ -726,6 +726,22 @@ def _derivar(df: pd.DataFrame) -> pd.DataFrame:
         else 0
     )
 
+    # Contagem DENTRO do hexagono (ver `_contagem_no_hexagono`). Nao substitui as duas
+    # colunas acima — elas seguem alimentando o mapa, o funil e o ranking, que leem o
+    # modelo de 2 km de proposito. Estas sao o que a FICHA promete: ponto por celula.
+    # `Int64` (nullable) e nao `int64`: base de pontos ausente precisa chegar como NA ate'
+    # o serializador, senao vira zero — que afirmaria "nao ha unidade aqui".
+    # `hex_id` era o UNICO acesso nao defensivo desta funcao — todo o resto usa `.get` ou
+    # checa `in out.columns`, e `carregar_uf` monta a projecao a partir do schema real do
+    # parquet. Uma particao materializada sem a coluna degradava (mapa sem a camada de
+    # crescimento) e passaria a dar 500 no endpoint inteiro.
+    n_conc_hex, n_ultra_hex = _contagem_no_hexagono() if "hex_id" in out.columns else (None, None)
+    for coluna, contagem in (("n_conc_no_hex", n_conc_hex), ("n_ultra_no_hex", n_ultra_hex)):
+        if contagem is None:
+            out[coluna] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        else:
+            out[coluna] = out["hex_id"].astype(str).map(contagem).fillna(0).astype("Int64")
+
     # Populacao de leitura, com a mesma precedencia do dashboard.
     for origem in ("populacao_corte_hex", "pop_total_setor_2022", "pop_total"):
         if origem in out.columns:
@@ -800,6 +816,18 @@ def _num(v: Any, casas: int = 0) -> float | None:
     if math.isnan(f) or math.isinf(f):
         return None
     return round(f, casas) if casas else round(f)
+
+
+def _int(v: Any) -> int | None:
+    """Contagem JSON-safe. None/NaN/pd.NA viram None — NUNCA 0.
+
+    Existe separado de `_num` por dois motivos. (1) Numa CONTAGEM, zero e ausencia sao
+    afirmacoes diferentes: `0` diz "nao ha unidade aqui", `None` diz "nao sei" — e a
+    ficha do hexagono declara essa regra no proprio cabecalho. (2) `_num` devolve float,
+    o que faria uma contagem sair como `3.0` no JSON.
+    """
+    f = _num(v)
+    return None if f is None else int(f)
 
 
 # O artefato guarda o identificador sem acento (regra do projeto); a tela mostra
@@ -1237,12 +1265,34 @@ def _carregar_concorrentes() -> pd.DataFrame:
     cols = ["rede", "nome_unidade", "lat", "lng", "hex_id_res7"]
     if not CONCORRENTES_PARQUET.exists():
         return pd.DataFrame(columns=cols)
-    df = pd.read_parquet(
-        CONCORRENTES_PARQUET,
-        columns=[*cols, "flag_coord_valida"],
-    )
+    import pyarrow.parquet as pq
+
+    disponiveis = set(pq.read_schema(CONCORRENTES_PARQUET).names)
+    extras = [c for c in ("flag_coord_valida", "status_registro") if c in disponiveis]
+    df = pd.read_parquet(CONCORRENTES_PARQUET, columns=[*cols, *extras])
     if "flag_coord_valida" in df.columns:
         df = df[df["flag_coord_valida"].fillna(True).astype(bool)]
+
+    # HONRA O DESCARTE DA COLETA. `status_registro` separa `valido` (3.179) de
+    # `descartado_duplicado` (90) e `descartado_coord` (27) — medido em 2026-08-13.
+    #
+    # Este filtro NAO existia, e a ausencia dele passou despercebida porque as 90
+    # duplicadas chegam com `hex_id_res7` NULO: `_montar_pins` filtra por essa coluna e as
+    # perdia por acidente. Ou seja, a chave nula NAO e' defeito do artefato — e' como a
+    # coleta marca o que descartou. Derivar a celula do ponto para "consertar" o nulo
+    # ressuscita justamente as linhas que a coleta jogou fora (as 65 `bodytech` empilhadas
+    # numa unica coordenada no Rio sao 64 descartes + 1 valida). Filtrar pelo status e' o
+    # que expressa a intencao, em vez de depender de um nulo que ninguem prometeu manter.
+    #
+    # Nulo cai FORA, e nao dentro. E' a convencao dos outros tres consumidores do mesmo
+    # parquet (`pressao_1km._reparticao`, `revalidacao_residual_candidatos`,
+    # `enriquecimento_espacial_hexagonos`): todos comparam direto com "valido". Tratar nulo
+    # como valido so' aqui faria a MESMA concorrente entrar em `conc_hex` e ficar fora de
+    # `conc1k`, lado a lado na mesma tela — a classe de incoerencia que este bloco veio
+    # eliminar.
+    if "status_registro" in df.columns:
+        df = df[df["status_registro"].astype(str) == "valido"]
+
     df = df.dropna(subset=["lat", "lng"])
     return df[cols].reset_index(drop=True)
 
@@ -1292,6 +1342,86 @@ def _ultra_pontos_mapa() -> pd.DataFrame:
     return df[cols].reset_index(drop=True)
 
 
+@functools.lru_cache(maxsize=1)
+def _contagem_no_hexagono() -> tuple[pd.Series | None, pd.Series | None]:
+    """Quantas unidades MAPEADAS caem DENTRO de cada hexagono (H3 res-7).
+
+    POR QUE EXISTE. A ficha do hexagono promete "unidades mapeadas dentro do hexagono",
+    mas mostrava outra coisa: `n_concorrentes_est` e' `oferta_consumida_mercado_estimada
+    / 2.500` — capacidade do modelo de 2 km ponderado por distancia, nao contagem. Uma
+    concorrente a 1,8 km do centroide entrava ali sem estar dentro do hexagono. O mesmo
+    defeito de redacao ja tinha sido corrigido no texto do funil (ver "RAIO, NAO
+    HEXAGONO" em `_texto_passo3`); a ficha ficou para tras. Aqui a contagem passa a ser
+    o que o rotulo diz.
+
+    CONTA OS MESMOS PONTOS QUE O MAPA DESENHA, de proposito: reusa `_carregar_concorrentes`
+    (que ja filtra `flag_coord_valida`) e `_ultra_pontos_mapa` (curada + cadastro). Contar
+    de outra fonte faria a ficha dizer um numero e os pins mostrarem outro na mesma tela.
+
+    As concorrentes ja trazem `hex_id_res7` no parquet — e' a MESMA chave por onde
+    `_montar_pins` seleciona os pins. Os pontos Ultra chegam so' com lat/lng (a curada nao
+    tem a coluna), entao a celula e' derivada com o mesmo `h3` res-7 do M1.
+
+    CONTA ENDERECOS, NAO LINHAS (decisao do Juan, 2026-08-13). Mesmo depois de honrar o
+    descarte da coleta, sobram 3.179 unidades validas em 3.111 coordenadas: 68 linhas
+    caem sobre um ponto ja' ocupado — e a coleta NAO as marca como duplicadas
+    (`flag_duplicado_rede_coord` e' False nas 11 do hexagono que revelou isto), porque sao
+    redes DIFERENTES no mesmo endereco. O caso que prova: o trio `aera_pilates` +
+    `tonus_gym` + `vidya_studio` aparece junto em 4 coordenadas distintas — tres rotulos
+    para o mesmo endereco, nao tres academias. Contar linha fazia a ficha dizer 11 onde a
+    tela mostra 8 pins, porque os pins empilham no mesmo pixel; foi assim que apareceu.
+
+    O `drop_duplicates` por (lat, lng) alinha as concorrentes a MESMA regra que a Ultra ja
+    seguia via `_ultra_pontos_mapa`: sem ele, os dois numeros do mesmo bloco mediam coisas
+    diferentes. Preco assumido: shopping com duas academias reais no mesmo ponto conta 1 —
+    erra para baixo, que e' o lado seguro de "quem ja disputa o aluno".
+
+    Os PINS seguem com uma peca por linha, de proposito: a rede de cada uma ainda precisa
+    aparecer ao clicar. O que a ficha promete e' quantos ENDERECOS disputam ali.
+
+    Devolve `None` (e nao uma serie vazia) quando a base de pontos nao esta montada: o
+    chamador precisa distinguir "nao ha unidade neste hexagono" de "nao sei".
+    """
+    conc = _carregar_concorrentes()
+    n_conc: pd.Series | None = None
+    if len(conc) and "hex_id_res7" in conc.columns:
+        unicos = conc.drop_duplicates(subset=["lat", "lng"])
+        n_conc = unicos.groupby(unicos["hex_id_res7"].astype(str)).size()
+
+    # A conversao h3 roda no CAMINHO QUENTE: `_derivar` chama esta funcao em toda requisicao
+    # de UF/municipio. `_carregar_ultra_pontos` (planilha curada) so' faz `dropna` de
+    # lat/lng — nao tem `flag_coord_valida` nem checagem de dominio. Uma virgula decimal
+    # trocada na planilha (lat 235613.0) ou um `inf` levantaria `H3LatLngDomainError` de
+    # dentro do `_derivar` e derrubaria o MAPA INTEIRO, de todas as UFs, com 500. O
+    # experimento vizinho (`pressao_1km.anexar`) ja' e' embrulhado por esse motivo, com o
+    # comentario "experimento nao pode derrubar o piloto"; esta contagem merece o mesmo.
+    #
+    # Duas defesas, nesta ordem: filtrar o que esta' fora do dominio (preciso — um ponto
+    # ruim nao apaga os outros 53) e um `except` como rede, porque degradar para "nao sei"
+    # e' aceitavel e derrubar a tela nao e'.
+    ultra = _ultra_pontos_mapa()
+    n_ultra: pd.Series | None = None
+    if len(ultra):
+        try:
+            import h3
+
+            lat = pd.to_numeric(ultra["lat"], errors="coerce")
+            lng = pd.to_numeric(ultra["lng"], errors="coerce")
+            no_dominio = lat.between(-90, 90) & lng.between(-180, 180)
+            validos = ultra[no_dominio.fillna(False)]
+            if len(validos):
+                celulas = [
+                    h3.latlng_to_cell(float(la), float(ln), 7)
+                    for la, ln in zip(validos["lat"], validos["lng"], strict=True)
+                ]
+                n_ultra = pd.Series(celulas, name="hex_id_res7").value_counts()
+        except Exception as erro:  # pragma: no cover - rede: contagem nao derruba o mapa
+            print(f"[mapa] contagem de Ultra por hexagono indisponivel ({erro})", file=sys.stderr)
+            n_ultra = None
+
+    return n_conc, n_ultra
+
+
 def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
     """Pins de concorrentes (por hex do municipio) + Ultra (por bbox) + icones quadrados."""
     from motor_expansao.dashboard.competitors import COMPETITOR_BRANDS
@@ -1305,18 +1435,36 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
         # Hexes do municipio UNIAO a margem do raio (`PIN_MARGEM_M`): o raio de 2 km da pressao
         # cruza divisa municipal, e antes desta uniao o concorrente do outro lado contava sem ser
         # desenhado — uma das tres causas da auditoria do pin nao fechar (DEC-035).
+        chaves = conc["hex_id_res7"].astype(str)
         m_lat_min, m_lat_max, m_lng_min, m_lng_max = _bbox_com_margem(sel)
         na_margem = conc["lat"].between(m_lat_min, m_lat_max) & conc["lng"].between(
             m_lng_min, m_lng_max
         )
-        no_muni = conc[conc["hex_id_res7"].astype(str).isin(hex_ids) | na_margem]
-        if no_muni.empty:  # base antiga sem hex casavel -> cai no bbox
+        no_muni = conc[chaves.isin(hex_ids) | na_margem]
+        # O fallback e' para BASE ANTIGA sem hex casavel — nao para "este municipio nao tem
+        # concorrente". Antes ele disparava sempre que `no_muni` vinha vazio, e ai plotava,
+        # pelo bbox de centroides, o pin da cidade vizinha num municipio onde toda ficha diz
+        # "0 concorrentes". A condicao certa e' a base inteira nao ter chave utilizavel; com
+        # chave, vazio significa vazio.
+        base_sem_chave = not chaves.str.startswith("8").any()
+        if no_muni.empty and base_sem_chave:
             no_muni = conc[conc["lat"].between(lat_min, lat_max) & conc["lng"].between(lng_min, lng_max)]
         conc = no_muni.head(COMPETITOR_PIN_LIMIT)
 
     ultra = _ultra_pontos_mapa()
     if len(ultra):
-        ultra = ultra[ultra["lat"].between(lat_min, lat_max) & ultra["lng"].between(lng_min, lng_max)]
+        # MARGEM de uma celula. O bbox vem dos CENTROIDES dos hexagonos (`sel`), mas a
+        # contagem da ficha usa a celula inteira: uma unidade dentro do hexagono de borda,
+        # do lado de fora do centroide dele, caia do bbox — a ficha dizia "Unidades Ultra:
+        # 1" e o mapa nao desenhava pin nenhum, que e' exatamente a divergencia que este
+        # bloco existe para impedir. Uma celula res-7 tem ~1,2 km do centro a borda; 0,02°
+        # (~2,2 km) cobre isso com folga em qualquer latitude do Brasil. O custo e' algum
+        # pin logo alem da divisa, que no mapa le como contexto, nao como erro.
+        margem = 0.02
+        ultra = ultra[
+            ultra["lat"].between(lat_min - margem, lat_max + margem)
+            & ultra["lng"].between(lng_min - margem, lng_max + margem)
+        ]
 
     # ---- unidades de REDE do agregador entram na MESMA lista de bandeiras ----
     # `[BLK-MA-17 metade 1, revisado 2026-08-18]` Elas nao sao mais uma camada ativavel a parte:
@@ -2369,10 +2517,14 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
     ]
 
 
-def _hex_dict(r: pd.Series, fator_dom: float | None) -> dict[str, Any]:
+def _hex_dict(
+    r: pd.Series, fator_dom: float | None, bairro: str | None = None
+) -> dict[str, Any]:
     """Serializa um hex para o mapa (compartilhado entre as rotas UF e município)."""
+    # A renda domiciliar sai UMA vez e alimenta as duas chaves (`renda` per capita deriva
+    # dela) — hoisting vindo da main com o k nacional unico.
     renda_dom = _renda_domiciliar_hex(r, fator_dom)
-    return {
+    dados: dict[str, Any] = {
         "id": r["hex_id"],
         "lat": _num(r["lat"], 6),
         "lng": _num(r["lng"], 6),
@@ -2391,6 +2543,11 @@ def _hex_dict(r: pd.Series, fator_dom: float | None) -> dict[str, Any]:
         "faixa": _faixa_label(r.get("faixa_oportunidade")),
         "conc": int(r.get("n_concorrentes_est") or 0),
         "ultra": int(r.get("n_ultra") or 0),
+        # CONTAGEM de unidades mapeadas DENTRO do hexagono — o que a ficha promete no
+        # rotulo. Distinto de `conc`/`ultra` acima, que sao o modelo de 2 km e a camada
+        # de performance. `None` (nao 0) quando a base de pontos nao esta montada.
+        "conc_hex": _int(r.get("n_conc_no_hex")),
+        "ultra_hex": _int(r.get("n_ultra_no_hex")),
         # PROTOTIPO da chave de raio. `conc1k` = quantas concorrentes ALCANCAM este hex
         # pelo disco de 1 km (e o que colore o mapa no modo novo); `oferta1k` = o residual
         # sob esse modelo. Ausentes quando o parquet de concorrentes nao esta montado —
@@ -2417,6 +2574,17 @@ def _hex_dict(r: pd.Series, fator_dom: float | None) -> dict[str, Any]:
         "cres_hex_classe": _ROTULO_CLASSE.get(str(r.get("cres_hex_classe") or ""))
         or _texto(r.get("cres_hex_classe")),
     }
+    # BAIRRO/DISTRITO dominante da celula, o mesmo `bairros_por_hex` que ja' nomeia os
+    # itens do funil. So' vem na rota de MUNICIPIO — depende do codigo dele, e a visao de
+    # UF serve 163 cidades numa resposta so'.
+    #
+    # A CHAVE NEM ENTRA quando nao ha' bairro, em vez de entrar como `null`. Esta funcao
+    # tambem serve /api/uf, onde o campo seria nulo nos ~15.000 hexes: sao ~210 KB de
+    # `"bairro":null` num payload que o comentario do `mun` acima persegue ao megabyte
+    # (SP 6,58 -> 4,71 MB). O front declara `bairro?` e todo leitor testa a presenca.
+    if bairro:
+        dados["bairro"] = bairro
+    return dados
 
 
 def _bloco_municipal(vis: pd.DataFrame) -> dict[str, dict[str, Any]]:
@@ -3919,7 +4087,9 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
     # municipio, como no tooltip do Streamlit). Calculado 1x aqui.
     fator_dom = _fator_domiciliar(uf.upper(), cod)
 
-    hexes = [_hex_dict(r, fator_dom) for _, r in vis.iterrows()]
+    hexes = [
+        _hex_dict(r, fator_dom, bairros.get(str(r.get("hex_id")))) for _, r in vis.iterrows()
+    ]
 
     for p in passos:
         p["hexes"] = p["hexes"][:400]
@@ -7180,6 +7350,65 @@ def _gerar_simulador_xlsx_response(body: ViabilidadeIn, rotulo: str | None) -> R
         content=conteudo,
         media_type=XLSX_MEDIA_TYPE,
         headers={"Content-Disposition": f'attachment; filename="{nome}"'},
+    )
+
+
+# ============================================================================
+# Deck de comparacao (PDF)
+# ============================================================================
+
+
+def _png_de_data_url(valor: object) -> bytes | None:
+    """Decodifica um `data:image/png;base64,...` vindo da captura do mapa.
+
+    Devolve `None` — e nunca levanta — para captura vazia, truncada ou corrompida: o
+    gerador ja' sabe desenhar a moldura declarando "mapa nao capturado", e derrubar o
+    relatorio inteiro por causa de uma imagem seria trocar um slide incompleto por
+    nenhum PDF.
+    """
+    texto = str(valor or "")
+    marca = "base64,"
+    corte = texto.find(marca)
+    if corte < 0:
+        return None
+    try:
+        return base64.b64decode(texto[corte + len(marca) :], validate=True)
+    except Exception:  # noqa: BLE001 - captura ruim degrada, nao quebra
+        return None
+
+
+def _gerar_comparacao_pdf(payload: dict[str, Any]) -> bytes:
+    """Corpo SINCRONO do deck — roda no threadpool, nunca no event loop."""
+    from motor_expansao.dashboard.relatorio_comparacao import gerar_pdf_comparacao
+
+    imagens = [_png_de_data_url(v) for v in (payload.get("imagens") or [])]
+    return gerar_pdf_comparacao(payload, mapas=imagens, ultra_dir=ULTRA_DIR)
+
+
+@app.post("/api/relatorio/comparacao")
+async def relatorio_comparacao(payload: dict[str, Any]) -> Response:
+    """Deck de 6-7 slides da comparacao de areas.
+
+    O CORPO TRAZ O RANKING JA CALCULADO, e isso e' deliberado. A regra de comparacao —
+    dimensoes, limiares, quem lidera — vive em `web/src/lib/` e e' o que a TELA mostra;
+    recalcula-la aqui criaria uma segunda fonte da verdade para a mesma pergunta, e as duas
+    divergiriam no primeiro ajuste: o PDF apontaria um vencedor e o piloto, outro, sobre os
+    mesmos hexagonos. O servidor so' desenha.
+
+    As `imagens` sao capturas do proprio mapa (uma por area). Ver
+    `web/src/lib/captura-mapa.ts` para por que print, e nao render no servidor.
+
+    Threadpool + semaforo como o PDF Pontual: a montagem e' sincrona e pesada, e no event
+    loop do unico worker ela prendia TODAS as outras requisicoes — medido em producao em
+    2026-07-24, tres relatorios simultaneos serializaram em 12/21/31 s e um `/api/health`
+    levou 29 s.
+    """
+    async with _PDF_SEMAFORO:
+        pdf = await run_in_threadpool(_gerar_comparacao_pdf, payload)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="comparacao.pdf"'},
     )
 
 

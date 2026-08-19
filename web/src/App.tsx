@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import Dock from './components/Dock'
 import type { SearchPin } from './components/HexMap'
@@ -11,6 +11,7 @@ import PontoScreen from './screens/PontoScreen'
 import ViabilityScreen from './screens/ViabilityScreen'
 import { abasDoPayload, modosLiberados, telaInicial, telaLiberada, type Aba } from './lib/acesso'
 import { api, ApiError } from './lib/api'
+import type { AlvoCaptura } from './lib/captura-mapa'
 import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
 import type { Hex, MunicipioItem, MunicipioPayload } from './lib/types'
@@ -128,6 +129,24 @@ export default function App() {
 
   /** Tira a marca do endereço do mapa (a limpeza do modo de ponto). */
   const limparPinPonto = useCallback(() => setPinPonto(null), [])
+
+  /* CANAL DE CAPTURA do mapa, repartido entre as duas telas.
+     Mora aqui pelo mesmo motivo do `pinPonto` acima: quem tem o mapa é o `MapScreen`, e o
+     `PontoScreen` — que é irmão dele na árvore e usa o MESMO mapa — precisa pedir capturas
+     para montar o PDF dele. O App não captura nada; só guarda a função que o mapa publica
+     e a entrega a quem precisa.
+
+     `ref` e não `state`: trocar a função não deve redesenhar tela nenhuma. */
+  const capturaDoMapa = useRef<((alvos: AlvoCaptura[]) => Promise<string[]>) | null>(null)
+  const registrarCaptura = useCallback((fn: (alvos: AlvoCaptura[]) => Promise<string[]>) => {
+    capturaDoMapa.current = fn
+  }, [])
+  const capturarMapas = useCallback(
+    // Sem mapa montado devolve lista vazia em vez de pendurar a promessa: o gerador do PDF
+    // já sabe desenhar a moldura declarando "mapa não capturado".
+    (alvos: AlvoCaptura[]) => capturaDoMapa.current?.(alvos) ?? Promise.resolve([]),
+    [],
+  )
 
   // Foto do Mapa Territorial (ver lib/mapa-estado): vive AQUI porque o App nao desmonta
   // ao trocar de tela — e' o que devolve o mapa como estava na volta da Viabilidade.
@@ -250,6 +269,12 @@ export default function App() {
       // Só faz sentido guardar a intenção enquanto ela ainda não pôde ser aplicada.
       // Com UF já escolhida, aplicamos na hora — o operador que volta ao menu e pede a
       // fila não deveria ter de trocar de estado para ela aparecer.
+      /* PEDIR "analisar um ponto" RECOMECA a analise de ponto. O `PontoScreen` desmonta
+         ao sair do modo e volta sem ficha nenhuma, mas o pin do endereco anterior mora
+         AQUI e sobrevivia — o mapa reabria com a marca de um endereco que nao tem mais
+         ficha para explica-la (Juan, 2026-08-18). O territorio (uf/municipio/dados) fica:
+         ele custa uma carga de servidor e continua sendo um mapa util. */
+      if (modo === 'ponto') setPinPonto(null)
       const passo = passoAlvoDoModo(modo)
       if (passo !== null && uf) {
         setEstadoMapa({ ...ESTADO_MAPA_VAZIO, uf, municipio, passoN: passo })
@@ -286,6 +311,7 @@ export default function App() {
              e as duas telas divergiam. */
           <>
             <MapScreen
+              registrarCaptura={registrarCaptura}
               ufs={ufs}
               uf={uf}
               onUf={aoTrocarUf}
@@ -311,6 +337,7 @@ export default function App() {
               semLanding
             />
             <PontoScreen
+              onCapturarMapas={capturarMapas}
               onAnalisarPonto={irParaViabilidade}
               onLocalizar={localizarPonto}
               mapaPronto={dados != null}

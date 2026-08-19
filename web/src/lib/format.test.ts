@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { alunos, brl, coord, distanciaCurta, num, pct, pctFrac, rotuloMes } from './format'
+import { alunos, brl, coord, distanciaCurta, num, pct, pctFrac, pctVar, rotuloMes } from './format'
 import { TEXTO_SEM_DADO } from './constants'
 
 describe('num', () => {
@@ -62,6 +62,27 @@ describe('pctFrac', () => {
   })
   it.each([null, undefined, NaN, Infinity])('null/NaN/Infinity -> sem-dado', (v) => {
     expect(pctFrac(v)).toBe(TEXTO_SEM_DADO)
+  })
+})
+
+describe('pctVar', () => {
+  it('positivo ganha o + que faltava (8,8 -> +8,8%)', () => {
+    expect(pctVar(8.8)).toBe('+8,8%')
+  })
+  it('negativo mantem o sinal do Intl, sem duplicar', () => {
+    expect(pctVar(-3.1)).toBe('-3,1%')
+  })
+  it('zero NAO recebe sinal: +0,0% afirmaria crescimento que nao houve', () => {
+    expect(pctVar(0)).toBe('0,0%')
+  })
+  it('respeita as casas pedidas', () => {
+    expect(pctVar(211.4, 0)).toBe('+211%')
+  })
+  it.each([null, undefined, NaN, Infinity])('null/NaN/Infinity -> sem-dado', (v) => {
+    expect(pctVar(v)).toBe(TEXTO_SEM_DADO)
+  })
+  it('participacao segue sem sinal: o + fica so na variacao', () => {
+    expect(pct(18)).toBe('18,0%')
   })
 })
 

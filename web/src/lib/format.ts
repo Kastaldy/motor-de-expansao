@@ -70,6 +70,45 @@ export function pctFrac(v: number | null | undefined, casas = 1): string {
 }
 
 /**
+ * Percentual de VARIACAO, com o sinal sempre explicito: `+8,8%`, `-3,1%`, `0,0%`.
+ *
+ * Existe porque `pct` serve a duas familias que se leem diferente. Numa PARTICIPACAO
+ * (margem, share, conversao, mix) o valor e' um pedaco de um todo e o `+` viraria ruido —
+ * "margem +18%" nao quer dizer nada. Numa VARIACAO (crescimento de emprego, obra nova,
+ * desvio contra a media da rede) o sinal E' a informacao: sem ele, "8,8%" fica ambiguo,
+ * porque o leitor nao sabe se a cidade CRESCEU 8,8% ou se aquilo e' um patamar.
+ *
+ * O negativo ja' vinha do `Intl`; o que faltava era tornar o positivo VISIVEL. Zero nao
+ * recebe sinal — `+0,0%` afirmaria um crescimento que nao houve.
+ *
+ * Estava improvisado em dois lugares (`exec/FichaUnidade` e `exec/PainelRede`) com o mesmo
+ * `v > 0 ? '+' : ''` colado a mao. Virou funcao para o terceiro caso nao repetir a conta
+ * nem divergir na casa decimal.
+ */
+export function pctVar(v: number | null | undefined, casas = 1): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return TEXTO_SEM_DADO
+  return `${v > 0 ? '+' : ''}${pct(v, casas)}`
+}
+
+/**
+ * O valor de uma `Dimensao` na unidade dela.
+ *
+ * Vive aqui porque a comparacao passou a ter DOIS desenhos — a tabela A x B e os blocos
+ * por parametro — e os dois precisam escrever o mesmo numero do mesmo jeito. Com a funcao
+ * duplicada, a primeira mudanca de casa decimal faria as duas telas discordarem sobre o
+ * mesmo dado.
+ *
+ * `p.p.` sai assinado: ponto percentual e' VARIACAO, e ali o sinal e' a informacao.
+ */
+export function valorComUnidade(v: number | null, unidade: string): string {
+  if (v == null) return num(v)
+  if (unidade === 'R$') return `R$ ${num(v)}`
+  if (unidade === '%') return `${num(v, 1)}%`
+  if (unidade === 'p.p.') return `${pctVar(v, 1).replace('%', '')} p.p.`
+  return num(v)
+}
+
+/**
  * Rotulo de um mes da linha do tempo do motor (M-4..M+60). Mes negativo e
  * pre-abertura (obra); a partir de 1 e operacao. Nao existe mes 0.
  */
