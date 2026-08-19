@@ -409,14 +409,44 @@ def test_ficha_quebra_sessoes_por_gap_de_30_minutos(tmp_path: Path) -> None:
 def test_ficha_linha_do_tempo_e_por_feature_sem_rota_nem_conteudo(tmp_path: Path) -> None:
     _gravar(tmp_path, AGORA, rota="/api/geocode", query="q=Av+Reservada+99", status=200)
     _gravar(tmp_path, AGORA.replace(minute=5), rota="/api/uf/SP", status=500)
+    # Rota NÃO mapeada com conteúdo sensível no PATH: exercita o ramo fallback
+    # "Outras ações" — o ÚNICO ponto da ficha com a rota bruta em escopo. Sem este
+    # evento, sabotar o fallback para ecoar a rota passava verde (falso-verde
+    # demonstrado na revisão adversarial de 2026-08-19).
+    _gravar(tmp_path, AGORA.replace(minute=7), rota="/api/rota-nova/Trav-Sigilo-77")
     ficha = aa.ficha_usuario("felipe", tmp_path, dias=7, agora_utc=AGORA)
     assert ficha is not None
     tempo = ficha["linha_do_tempo"]
-    assert tempo[0]["hora"] == "12:05" and tempo[0]["erro"] is True  # mais recente primeiro
-    assert tempo[1]["feature"] == "Buscou endereço" and tempo[1]["erro"] is False
+    assert tempo[0]["feature"] == "Outras ações"  # mais recente primeiro
+    assert tempo[1]["hora"] == "12:05" and tempo[1]["erro"] is True
+    assert tempo[2]["feature"] == "Buscou endereço" and tempo[2]["erro"] is False
     bruto = json.dumps(ficha, ensure_ascii=False, default=str)
     assert "/api/" not in bruto, "a ficha nunca expõe rota"
     assert "Reservada" not in bruto, "a ficha nunca expõe a query/conteúdo"
+    assert "Sigilo" not in bruto, "rota desconhecida também não vaza (ramo fallback)"
+
+
+def test_linha_do_tempo_respeita_o_teto_de_80(tmp_path: Path) -> None:
+    """Remover o slice do teto manteria tudo verde (falso-verde da revisão)."""
+    for i in range(85):
+        _gravar(tmp_path, AGORA.replace(hour=10 + i // 60, minute=i % 60))
+    ficha = aa.ficha_usuario("felipe", tmp_path, dias=7, agora_utc=AGORA)
+    assert ficha is not None
+    assert len(ficha["linha_do_tempo"]) == 80
+    # E são os 80 MAIS RECENTES, do mais novo para o mais velho.
+    assert ficha["linha_do_tempo"][0]["hora"] == "08:24"  # 11:24 UTC = 08:24 BRT
+
+
+def test_sessao_quebra_na_virada_de_dia_mesmo_sem_gap(tmp_path: Path) -> None:
+    """23:50 e 00:05 BRT (10 min de intervalo) são DUAS sessões — dias distintos.
+    Remover a condição de data manteria tudo verde (falso-verde da revisão)."""
+    _gravar(tmp_path, datetime(2026, 8, 19, 2, 50, tzinfo=UTC))  # 23:50 BRT do dia 18
+    _gravar(tmp_path, datetime(2026, 8, 19, 3, 5, tzinfo=UTC))  # 00:05 BRT do dia 19
+    ficha = aa.ficha_usuario("felipe", tmp_path, dias=7, agora_utc=AGORA)
+    assert ficha is not None
+    assert len(ficha["sessoes"]) == 2
+    assert ficha["sessoes"][0]["dia"] == "2026-08-19" and ficha["sessoes"][0]["ini"] == "00:05"
+    assert ficha["sessoes"][1]["dia"] == "2026-08-18" and ficha["sessoes"][1]["fim"] == "23:50"
 
 
 def test_ficha_traz_heatmap_por_aba_e_erros(tmp_path: Path) -> None:
@@ -437,3 +467,12 @@ def test_resumo_traz_sparkline_de_14_dias_por_usuario(tmp_path: Path) -> None:
     assert len(linha["serie14"]) == 14
     assert linha["serie14"][-1] == 1 and linha["serie14"][-2] == 1
     assert sum(linha["serie14"]) == 2
+
+
+def test_sparkline_nunca_e_mais_longa_que_a_janela(tmp_path: Path) -> None:
+    """Janela de 7 dias com sparkline de 14 mostraria zeros FALSOS nos dias que
+    nem foram lidos — a série respeita a janela."""
+    _gravar(tmp_path, AGORA, usuario="ana")
+    r = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)
+    linha = next(u for u in r["usuarios"] if u["nome"] == "ana")
+    assert len(linha["serie14"]) == 7

@@ -367,11 +367,14 @@ def _saude(eventos: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _linhas_usuarios(eventos: list[dict[str, Any]], hoje: date) -> list[dict[str, Any]]:
+def _linhas_usuarios(
+    eventos: list[dict[str, Any]], hoje: date, dias: int = _DIAS_SPARKLINE
+) -> list[dict[str, Any]]:
     por_usuario: dict[str, list[dict[str, Any]]] = {}
     for r in eventos:
         por_usuario.setdefault(str(r.get("usuario") or "desconhecido"), []).append(r)
-    eixo_spark = [hoje - timedelta(days=i) for i in range(_DIAS_SPARKLINE - 1, -1, -1)]
+    largura_spark = min(int(dias), _DIAS_SPARKLINE)
+    eixo_spark = [hoje - timedelta(days=i) for i in range(largura_spark - 1, -1, -1)]
     linhas: list[dict[str, Any]] = []
     for nome, evs in por_usuario.items():
         momentos = [r["momento"] for r in evs if isinstance(r.get("momento"), datetime)]
@@ -489,7 +492,7 @@ def resumo(
         "serie": serie,
         "heatmap": heatmap,
         "por_aba": por_aba,
-        "usuarios": _linhas_usuarios(eventos, hoje),
+        "usuarios": _linhas_usuarios(eventos, hoje, dias),
         "saude": _saude(eventos),
     }
 

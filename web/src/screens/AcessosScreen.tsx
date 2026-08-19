@@ -14,7 +14,6 @@ import {
   Spinner,
 } from '../components/primitives'
 import { api, ApiError } from '../lib/api'
-import { caminhoSparkline } from '../lib/sparkline'
 import type {
   AcessosFicha,
   AcessosResumo,
@@ -203,19 +202,23 @@ function GraficoSerie({ serie: serieCompleta }: { serie: AcessosResumo['serie'] 
   const fatia = largura / n
   const larguraBarra = Math.max(1.5, Math.min(14, fatia * 0.62))
 
-  const linhaUsuarios = caminhoSparkline(
-    serie.map((d) => d.usuarios),
-    largura,
-    baseEixo - topo,
-    4,
-    'faixas',
-  )
+  // Linha de usuários com BASE ZERO e teto próprio — `caminhoSparkline` normaliza
+  // por min-max e, sobre um gráfico COM eixo numérico, uma série constante sairia
+  // cravada no meio da caixa (defeito da revisão adversarial de 2026-08-19).
+  const maxUsuarios = Math.max(1, ...serie.map((d) => d.usuarios))
+  const yUsuario = (v: number) => topo + (baseEixo - topo) * (1 - v / maxUsuarios)
+  const xCentro = (i: number) => i * fatia + fatia / 2
+  const caminhoUsuarios = serie
+    .map((d, i) => `${i === 0 ? 'M' : 'L'}${xCentro(i).toFixed(1)} ${yUsuario(d.usuarios).toFixed(1)}`)
+    .join(' ')
 
   // ~6 datas no eixo, sempre com a primeira e a última.
   const passo = Math.max(1, Math.ceil(n / 6))
   const comRotulo = (i: number) => i === 0 || i === n - 1 || (i % passo === 0 && i < n - passo / 2)
 
-  const gridY = [0.5, 1].map((f) => Math.round(maxAcoes * f))
+  // Dedup: com pico de 1 ação/dia, 0.5 e 1 arredondam para o MESMO tick (chave
+  // React duplicada + gridline dobrada).
+  const gridY = [...new Set([Math.max(1, Math.round(maxAcoes * 0.5)), maxAcoes])]
 
   return (
     <figure ref={medir} style={{ margin: 0 }}>
@@ -249,10 +252,11 @@ function GraficoSerie({ serie: serieCompleta }: { serie: AcessosResumo['serie'] 
                 <title>{`${diaCurto(d.dia)} — ${d.acoes} ações · ${d.usuarios} usuários`}</title>
               </rect>
               {comRotulo(i) && (
+                // Nas pontas o rótulo ancora para dentro, senão a borda do SVG o corta.
                 <text
-                  x={i * fatia + fatia / 2}
+                  x={i === 0 ? 2 : i === n - 1 ? largura - 2 : xCentro(i)}
                   y={altura - 4}
-                  textAnchor="middle"
+                  textAnchor={i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'}
                   style={{ font: '500 8.5px/1 var(--f-num)', fill: 'var(--tx-muted)' }}
                 >
                   {diaCurto(d.dia)}
@@ -261,18 +265,21 @@ function GraficoSerie({ serie: serieCompleta }: { serie: AcessosResumo['serie'] 
             </g>
           )
         })}
-        {linhaUsuarios.linha && (
-          <g transform={`translate(0 ${topo})`} pointerEvents="none">
+        {serie.length > 0 && (
+          <g pointerEvents="none">
             <path
-              d={linhaUsuarios.linha}
+              d={caminhoUsuarios}
               fill="none"
               stroke="var(--gr-azul)"
               strokeWidth={1.6}
               strokeLinejoin="round"
             />
-            {linhaUsuarios.ultimo && (
-              <circle cx={linhaUsuarios.ultimo.x} cy={linhaUsuarios.ultimo.y} r={2.6} fill="var(--gr-azul)" />
-            )}
+            <circle
+              cx={xCentro(n - 1)}
+              cy={yUsuario(serie[n - 1].usuarios)}
+              r={2.6}
+              fill="var(--gr-azul)"
+            />
           </g>
         )}
       </svg>
@@ -291,6 +298,7 @@ function GraficoSerie({ serie: serieCompleta }: { serie: AcessosResumo['serie'] 
         </span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
           <span style={{ width: 12, height: 2, background: 'var(--gr-azul)' }} /> usuários únicos
+          (escala própria, máx. {maxUsuarios})
         </span>
         {serieCompleta.length > MAX_DIAS_SERIE && (
           <span>· exibindo os últimos {MAX_DIAS_SERIE} dias (série desde {diaCurto(serieCompleta[0]?.dia ?? null)})</span>
@@ -474,10 +482,29 @@ function FichaUsuarioAcessos({
       </div>
     )
   }
-  if (erro) return <Aviso titulo="Não deu para abrir a ficha" corpo={erro} />
+  if (erro) {
+    return (
+      <Aviso
+        titulo="Não deu para abrir a ficha"
+        corpo={erro}
+        acao={
+          <Botao variante="ghost" onClick={onVoltar}>
+            ← Todos os usuários
+          </Botao>
+        }
+      />
+    )
+  }
   if (!ficha) return null
 
-  const diasAsc = [...ficha.dias].reverse()
+  // Guardas contra payload de backend ANTIGO (cache/deploy no meio): os campos do
+  // redesign podem faltar e a ficha degrada em vez de quebrar a tela inteira.
+  const sessoes = ficha.sessoes ?? []
+  const linhaDoTempo = ficha.linha_do_tempo ?? []
+  const porAba = ficha.por_aba ?? []
+  const nErros = ficha.erros ?? 0
+  const temHeatmap = Array.isArray(ficha.heatmap)
+  const diasAsc = [...(ficha.dias ?? [])].reverse()
 
   const colunasSessoes: Coluna<AcessosFicha['sessoes'][number]>[] = [
     {
@@ -524,7 +551,7 @@ function FichaUsuarioAcessos({
 
   // Linha do tempo agrupada por dia, preservando a ordem (mais recente primeiro).
   const grupos: { dia: string; eventos: AcessosFicha['linha_do_tempo'] }[] = []
-  for (const ev of ficha.linha_do_tempo) {
+  for (const ev of linhaDoTempo) {
     const grupo = grupos[grupos.length - 1]
     if (grupo && grupo.dia === ev.dia) grupo.eventos.push(ev)
     else grupos.push({ dia: ev.dia, eventos: [ev] })
@@ -545,7 +572,7 @@ function FichaUsuarioAcessos({
           </div>
         </div>
         <div style={{ display: 'inline-flex', gap: 12, marginLeft: 4 }}>
-          {ficha.abas.map((a) => (
+          {(ficha.abas ?? []).map((a) => (
             <PontoAba key={a} aba={a} />
           ))}
         </div>
@@ -553,7 +580,7 @@ function FichaUsuarioAcessos({
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
         <Kpi label="Ações na janela" valor={String(ficha.acoes)} />
-        <Kpi label="Sessões" valor={String(ficha.sessoes.length)} sub="pausa > 30 min abre outra" />
+        <Kpi label="Sessões" valor={String(sessoes.length)} sub="pausa > 30 min abre outra" />
         <Kpi label="Dias ativos" valor={String(ficha.dias_ativos)} />
         <Kpi
           label="IPs distintos"
@@ -562,8 +589,8 @@ function FichaUsuarioAcessos({
         />
         <Kpi
           label="Respostas de erro"
-          valor={String(ficha.erros)}
-          tone={ficha.erros > 0 ? 'var(--warn-text)' : undefined}
+          valor={String(nErros)}
+          tone={nErros > 0 ? 'var(--warn-text)' : undefined}
           sub="4xx/5xx recebidas por este usuário"
         />
       </div>
@@ -588,10 +615,10 @@ function FichaUsuarioAcessos({
           </div>
         </Card>
         <Card span={5} titulo="O que fez (por feature)">
-          <BarrasHorizontais itens={ficha.features.map((f) => ({ rotulo: f.feature, valor: f.n }))} />
-          {ficha.por_aba.length > 0 && (
+          <BarrasHorizontais itens={(ficha.features ?? []).map((f) => ({ rotulo: f.feature, valor: f.n }))} />
+          {porAba.length > 0 && (
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 2 }}>
-              {ficha.por_aba.map((a) => (
+              {porAba.map((a) => (
                 <span key={a.aba} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                   <PontoAba aba={a.aba} />
                   <span className="num" style={{ font: '600 11px/1 var(--f-num)', color: 'var(--tx-max)' }}>
@@ -605,14 +632,20 @@ function FichaUsuarioAcessos({
 
         <Card span={7} titulo="Sessões (mais recentes primeiro)">
           <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-            <Tabela colunas={colunasSessoes} dados={ficha.sessoes} chaveDe={(s) => `${s.dia}-${s.ini}`} />
+            <Tabela colunas={colunasSessoes} dados={sessoes} chaveDe={(s) => `${s.dia}-${s.ini}`} />
           </div>
         </Card>
         <Card span={5} titulo="Horários de uso (hora × dia, BRT)">
-          <Heatmap heatmap={ficha.heatmap} altura={13} />
+          {temHeatmap ? (
+            <Heatmap heatmap={ficha.heatmap} altura={13} />
+          ) : (
+            <span style={{ font: '400 12px/1.4 var(--f-ui)', color: 'var(--tx-muted)' }}>
+              Indisponível neste payload.
+            </span>
+          )}
         </Card>
 
-        <Card span={12} titulo={`Linha do tempo — últimas ${ficha.linha_do_tempo.length} ações (sem o conteúdo consultado)`}>
+        <Card span={12} titulo={`Linha do tempo — últimas ${linhaDoTempo.length} ações (sem o conteúdo consultado)`}>
           <div style={{ maxHeight: 420, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
             {grupos.map((g) => (
               <div key={g.dia}>
@@ -718,11 +751,11 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
     },
     {
       chave: 'serie14',
-      rotulo: '14 dias',
+      rotulo: 'Ritmo diário',
       largura: 100,
       ordenavel: false,
-      ajuda: 'Ações por dia nos últimos 14 dias',
-      render: (u) => <SparklineSvg valores={u.serie14} largura={84} altura={20} />,
+      ajuda: 'Ações por dia (série da janela, até 14 dias)',
+      render: (u) => <SparklineSvg valores={u.serie14 ?? []} largura={84} altura={20} />,
     },
     {
       chave: 'ultimo',
