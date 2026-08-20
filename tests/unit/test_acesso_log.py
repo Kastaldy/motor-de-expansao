@@ -308,7 +308,9 @@ def test_middleware_registra_usuario_ip_e_latencia(
     assert len(registros) == 1
     registro = registros[0]
     assert registro["usuario"] == "felipe.silva"
-    assert registro["ip"] == "189.69.25.227", "primeiro salto do X-Forwarded-For = cliente real"
+    # Pentest Onda A (2026-08-19): o Caddy ANEXA o peer real ao FIM do X-Forwarded-For;
+    # os tokens a esquerda sao forjaveis pelo cliente. O IP da trilha e' o ULTIMO hop.
+    assert registro["ip"] == "172.19.0.5", "ultimo hop do X-Forwarded-For = anexado pelo Caddy"
     assert registro["metodo"] == "GET"
     assert registro["rota"] == "/api/rede/carteira"
     assert registro["query"] == "inicio=2026-08-01&fim=2026-08-16"
