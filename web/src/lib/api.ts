@@ -8,6 +8,7 @@ import type {
   MePayload,
   MetodologiaPayload,
   MunicipioItem,
+  OportunidadesPayload,
   Cobertura1k,
   EstadosPayload,
   MunicipioPayload,
@@ -192,6 +193,15 @@ export const api = {
   me: () => pedir<MePayload>('/api/me', {}, 10_000),
 
   ufs: () => pedir<{ ufs: string[] }>('/api/ufs'),
+
+  /** Oportunidades imobiliárias (camada de oferta, READ-ONLY, sem PII). Lê o
+   *  viaveis.parquet do coletor já joinado ao M1; `uf` opcional filtra no servidor. */
+  oportunidades: (uf?: string) =>
+    pedir<OportunidadesPayload>(
+      `/api/oportunidades${uf ? `?uf=${encodeURIComponent(uf)}` : ''}`,
+      {},
+      30_000,
+    ),
 
   /** Manual do funil: o que cada camada mede e com que régua corta. Estático —
    *  não depende de UF nem de município, então a tela busca uma vez e guarda. */

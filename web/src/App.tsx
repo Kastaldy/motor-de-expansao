@@ -8,6 +8,7 @@ import ExecutiveScreen from './screens/ExecutiveScreen'
 import InicioScreen from './screens/InicioScreen'
 import MapScreen from './screens/MapScreen'
 import OportunidadesScreen from './screens/OportunidadesScreen'
+import OportunidadesImobiliariasScreen from './screens/OportunidadesImobiliariasScreen'
 import PontoScreen from './screens/PontoScreen'
 import ViabilityScreen from './screens/ViabilityScreen'
 import { abasDoPayload, modosLiberados, telaInicial, telaLiberada, type Aba } from './lib/acesso'
@@ -21,6 +22,7 @@ export type Tela =
   | 'inicio'
   | 'ponto'
   | 'oportunidades'
+  | 'oportunidades-imob'
   | 'mapa'
   | 'viabilidade'
   | 'executiva'
@@ -393,6 +395,10 @@ export default function App() {
           // Painel restrito (emenda DEC-027). Autônomo como a Executiva: não herda
           // UF/município — a trilha é da rede inteira, não de um recorte do mapa.
           <AcessosScreen onInicio={voltarAoInicio} />
+        ) : tela === 'oportunidades-imob' ? (
+          // Camada de oferta (imóveis de locação joinados ao M1). Autônoma: nacional,
+          // filtra por dentro; READ-ONLY e sem PII (contato do corretor só no dossiê).
+          <OportunidadesImobiliariasScreen onInicio={voltarAoInicio} />
         ) : (
           <ViabilityScreen
             ponto={ponto}

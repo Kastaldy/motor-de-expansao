@@ -7425,6 +7425,123 @@ async def relatorio_comparacao(payload: dict[str, Any]) -> Response:
 
 
 # ============================================================================
+# Oportunidades Imobiliarias (camada de oferta, READ-ONLY sobre o M1)
+# ============================================================================
+# Le o `viaveis.parquet` do coletor de oportunidades (imoveis de locacao ja
+# joinados ao M1). SEM PII: as colunas de corretor (nome/telefone/creci) NUNCA
+# saem daqui — a aba do piloto e' agregada por hex_id (o contato do corretor vive
+# no dossie PDF, atras do Authelia). Caminho por MOTOR_OPORTUNIDADES_PATH; default
+# no data/ (montado :ro em producao). Registrada ANTES do mount do SPA.
+OPORTUNIDADES_PATH = Path(
+    os.environ.get(
+        "MOTOR_OPORTUNIDADES_PATH", str(DATA_DIR / "oportunidades" / "viaveis.parquet")
+    )
+)
+
+_OPORTUNIDADES_COLS = [
+    "imovel_id", "fonte_listing_id", "titulo", "tipo", "operacao", "uf",
+    "municipio", "m1_cidade", "bairro", "area_relevante_m2", "area_util_m2",
+    "preco", "preco_aluguel", "iptu", "condominio", "hex_id",
+    "m1_residual_fitness", "m1_residual_total", "m1_score_priorizacao",
+    "censo_score_setorial_hex", "m1_faixa_oportunidade", "censo_pop_hex",
+    "m1_pop_hex", "censo_renda_per_capita_hex", "m1_renda_per_capita",
+    "m1_sam_fitness", "m1_n_unidades_ultra", "first_seen", "latitude",
+    "longitude", "url", "status",
+]
+
+_OPORTUNIDADES_CACHE: list[dict[str, Any]] | None = None
+
+
+def _op_num(v: Any, casas: int | None = None) -> float | int | None:
+    """NaN/None -> None; senao numero (int quando inteiro, ou arredondado)."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(f):
+        return None
+    if casas is None:
+        return int(f) if f == int(f) else f
+    return round(f, casas)
+
+
+def _op_txt(v: Any) -> str | None:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    s = str(v).strip()
+    return s or None
+
+
+def _carregar_oportunidades() -> list[dict[str, Any]]:
+    """Le o parquet UMA vez e monta os dicts sem PII, ordenados por residual."""
+    global _OPORTUNIDADES_CACHE
+    if _OPORTUNIDADES_CACHE is not None:
+        return _OPORTUNIDADES_CACHE
+    if not OPORTUNIDADES_PATH.exists():
+        _OPORTUNIDADES_CACHE = []
+        return _OPORTUNIDADES_CACHE
+    df = pd.read_parquet(OPORTUNIDADES_PATH)
+    df = df[[c for c in _OPORTUNIDADES_COLS if c in df.columns]]
+    if "status" in df.columns:
+        df = df[df["status"].astype(str).str.lower() != "removido"]
+    if "m1_residual_fitness" in df.columns:
+        df = df.sort_values("m1_residual_fitness", ascending=False, na_position="last")
+    itens: list[dict[str, Any]] = []
+    for r in df.itertuples(index=False):
+        d = r._asdict()
+        area = _op_num(d.get("area_relevante_m2")) or _op_num(d.get("area_util_m2"))
+        aluguel = _op_num(d.get("preco_aluguel")) or _op_num(d.get("preco"))
+        rs_m2 = round(aluguel / area, 1) if aluguel and area else None
+        primeiro = _op_txt(d.get("first_seen"))
+        itens.append(
+            {
+                "id": _op_txt(d.get("imovel_id")) or _op_txt(d.get("fonte_listing_id")) or "",
+                "titulo": _op_txt(d.get("titulo")) or "(sem titulo)",
+                "tipo": _op_txt(d.get("tipo")) or "Imovel",
+                "operacao": _op_txt(d.get("operacao")),
+                "uf": _op_txt(d.get("uf")) or "",
+                "municipio": _op_txt(d.get("municipio")) or _op_txt(d.get("m1_cidade")) or "",
+                "bairro": _op_txt(d.get("bairro")),
+                "area": area,
+                "aluguel": aluguel,
+                "iptu": _op_num(d.get("iptu")),
+                "condominio": _op_num(d.get("condominio")),
+                "rs_m2": rs_m2,
+                "hex_id": _op_txt(d.get("hex_id")) or "",
+                "residual": _op_num(d.get("m1_residual_fitness"), 1),
+                "residual_total": _op_num(d.get("m1_residual_total")),
+                "score": _op_num(d.get("m1_score_priorizacao"), 1),
+                "censo_score": _op_num(d.get("censo_score_setorial_hex"), 1),
+                "faixa": _op_txt(d.get("m1_faixa_oportunidade")),
+                "pop": _op_num(d.get("censo_pop_hex")) or _op_num(d.get("m1_pop_hex")),
+                "renda_pc": _op_num(d.get("censo_renda_per_capita_hex"))
+                or _op_num(d.get("m1_renda_per_capita")),
+                "sam": _op_num(d.get("m1_sam_fitness")),
+                "n_ultra": _op_num(d.get("m1_n_unidades_ultra")),
+                "first_seen": primeiro[:10] if primeiro else None,
+                "lat": _op_num(d.get("latitude"), 6),
+                "lng": _op_num(d.get("longitude"), 6),
+                "url": _op_txt(d.get("url")),
+            }
+        )
+    _OPORTUNIDADES_CACHE = itens
+    return itens
+
+
+@app.get("/api/oportunidades")
+def api_oportunidades(uf: str | None = None, limite: int = 500) -> dict[str, Any]:
+    """Oportunidades imobiliarias joinadas ao M1 (top-N por residual). `total` e' o
+    universo inteiro; `itens` vem capado por `limite` (o front filtra o resto)."""
+    todas = _carregar_oportunidades()
+    ufs = sorted({o["uf"] for o in todas if o["uf"]})
+    recorte = [o for o in todas if o["uf"] == uf.upper()] if uf else todas
+    n = max(1, min(limite, 3000))
+    return {"total": len(todas), "ufs": ufs, "itens": recorte[:n]}
+
+
+# ============================================================================
 # SPA estatico (build do Vite) — producao
 # ============================================================================
 # Em producao UM container serve o frontend (dist/) E a API na mesma porta; o

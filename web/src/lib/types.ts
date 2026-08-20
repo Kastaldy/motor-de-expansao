@@ -443,6 +443,47 @@ export interface FaixaAlunos {
   n_comparaveis: number
 }
 
+/**
+ * Uma oportunidade imobiliaria (imovel de locacao coletado, ja joinado ao M1).
+ *
+ * Espelha o que `/api/oportunidades` devolve — um SUBCONJUNTO do viaveis.parquet,
+ * SEM PII (as colunas de corretor nunca saem do backend). Numeros ausentes vem `null`.
+ */
+export interface Oportunidade {
+  id: string
+  titulo: string
+  tipo: string
+  operacao: string | null
+  uf: string
+  municipio: string
+  bairro: string | null
+  area: number | null
+  aluguel: number | null
+  iptu: number | null
+  condominio: number | null
+  rs_m2: number | null
+  hex_id: string
+  residual: number | null
+  residual_total: number | null
+  score: number | null
+  censo_score: number | null
+  faixa: string | null
+  pop: number | null
+  renda_pc: number | null
+  sam: number | null
+  n_ultra: number | null
+  first_seen: string | null
+  lat: number | null
+  lng: number | null
+  url: string | null
+}
+
+export interface OportunidadesPayload {
+  total: number
+  ufs: string[]
+  itens: Oportunidade[]
+}
+
 /* ---------------------------------------------------------------------------
    viabilidade_payload_v1 (FIN-VIAB-01)
 
