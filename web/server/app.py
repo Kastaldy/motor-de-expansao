@@ -7438,6 +7438,33 @@ OPORTUNIDADES_PATH = Path(
     )
 )
 
+# Dossies (PDF) gerados pelo coletor. O coletor so' produz PDF para o top-N por praca
+# (dezenas), nao para todos os pontos — entao a maioria cai no fallback do front
+# (Relatorio Pontual). Default no repo IRMAO `coleta-de-oportunidades` (dev); em
+# producao aponte MOTOR_DOSSIES_DIR para o volume montado. Nome: `im-<id>__slug.pdf`
+# (o `_` do imovel_id vira `-` no arquivo).
+DOSSIES_DIR = Path(
+    os.environ.get(
+        "MOTOR_DOSSIES_DIR",
+        str(_REPO_ROOT.parent / "coleta-de-oportunidades" / "data" / "dossies"),
+    )
+)
+
+
+def _dossie_index() -> dict[str, Any]:
+    """{imovel_id -> caminho do PDF}. Rescaneia a cada chamada (dezenas de arquivos):
+    barato e reflete uma regeneracao sem exigir restart do backend."""
+    import re as _re
+
+    idx: dict[str, Any] = {}
+    if not DOSSIES_DIR.is_dir():
+        return idx
+    for p in DOSSIES_DIR.rglob("*.pdf"):
+        m = _re.match(r"(im[-_][0-9a-fA-F]+)__", p.name)
+        if m:
+            idx.setdefault(m.group(1).replace("im-", "im_"), p)
+    return idx
+
 _OPORTUNIDADES_COLS = [
     "imovel_id", "fonte_listing_id", "titulo", "tipo", "operacao", "uf",
     "municipio", "m1_cidade", "bairro", "area_relevante_m2", "area_util_m2",
@@ -7538,7 +7565,24 @@ def api_oportunidades(uf: str | None = None, limite: int = 500) -> dict[str, Any
     ufs = sorted({o["uf"] for o in todas if o["uf"]})
     recorte = [o for o in todas if o["uf"] == uf.upper()] if uf else todas
     n = max(1, min(limite, 3000))
-    return {"total": len(todas), "ufs": ufs, "itens": recorte[:n]}
+    itens = recorte[:n]
+    dossies = _dossie_index()
+    for o in itens:
+        o["tem_dossie"] = o["id"] in dossies
+    return {"total": len(todas), "ufs": ufs, "itens": itens}
+
+
+@app.get("/api/oportunidades/{imovel_id}/dossie")
+def api_oportunidade_dossie(imovel_id: str) -> Any:
+    """Serve o dossie PDF do coletor para um imovel, quando existe (senao 404 — o front
+    cai no Relatorio Pontual). SEM PII na rota: o PDF ja e' o artefato do coletor."""
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+
+    pdf = _dossie_index().get(imovel_id)
+    if pdf is None or not Path(pdf).exists():
+        raise HTTPException(status_code=404, detail="Dossie nao disponivel para este imovel.")
+    return FileResponse(str(pdf), media_type="application/pdf", filename=Path(pdf).name)
 
 
 # ============================================================================

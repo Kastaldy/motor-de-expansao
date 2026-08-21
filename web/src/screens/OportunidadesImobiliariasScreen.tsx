@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Map, Marker } from 'react-map-gl/maplibre'
 
 import Select from '../components/Select'
-import { Aviso, Botao, Eyebrow, Glass, Spinner } from '../components/primitives'
+import { Aviso, BarraSegmentada, Botao, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
 import { SCORE_BANDS_HEX } from '../lib/colors'
 import { brl, num } from '../lib/format'
@@ -17,24 +17,33 @@ import 'maplibre-gl/dist/maplibre-gl.css'
  * `/api/oportunidades`. READ-ONLY sobre o M1 e AGREGADA por `hex_id` (contato do
  * corretor so' no dossie, atras do Authelia).
  *
- * DESENHO (rev. 2026-08-20): filtros por DROPDOWN (escalam p/ 27 UFs); leitura variada
- * (medidor radial, donut, scatter de posicionamento) no lugar de barras repetidas;
- * MINI-MAPA no quadrante direito da ficha (padrao da Executiva), centrado no ponto;
- * botoes de acao ligados — "Ver no Mapa Territorial" (deep link) e "Relatorio do ponto".
+ * DESENHO: filtros por DROPDOWN (escalam p/ 27 UFs); leitura variada (medidor radial,
+ * barra de COMPOSICAO por tipo, donut, scatter de posicionamento); paleta categorica
+ * por TIPO (laranja/azul/aqua, validada no dataviz) alem da rampa de residual; MINI-MAPA
+ * ao lado do scatter, com pan/zoom; dossie real do coletor (fallback: Relatorio Pontual).
  */
 
 const BASEMAP = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 
 const FAIXA_LABEL: Record<string, string> = {
-  prioridade_maxima: 'Prioridade máxima',
-  alta: 'Alta',
-  media: 'Média',
-  baixa: 'Baixa',
-  minima: 'Mínima',
+  prioridade_maxima: 'Prioridade máxima', alta: 'Alta', media: 'Média', baixa: 'Baixa', minima: 'Mínima',
 }
 const labelFaixa = (v: string | null): string | null =>
   v == null ? null : (FAIXA_LABEL[v] ?? v.charAt(0).toUpperCase() + v.slice(1))
 
+/** Paleta CATEGORICA por tipo (validada no dataviz, all-pairs, superficie escura). */
+const COR_TIPO: Record<string, string> = { galpao: '#d95926', comercial: '#3987e5', loja: '#3987e5', terreno: '#199e70' }
+const corTipo = (t: string): string => COR_TIPO[t] ?? '#8b97a5'
+const LABEL_TIPO: Record<string, string> = { galpao: 'Galpão', comercial: 'Comercial', loja: 'Loja', terreno: 'Terreno' }
+const labelTipo = (t: string): string => LABEL_TIPO[t] ?? (t.charAt(0).toUpperCase() + t.slice(1))
+/** Agrupamento para a barra de composicao (loja funde em comercial — so' 108 no total). */
+const GRUPOS = [
+  { chave: 'galpao', rotulo: 'Galpão', cor: '#d95926', tipos: ['galpao'] },
+  { chave: 'comercial', rotulo: 'Comercial/Loja', cor: '#3987e5', tipos: ['comercial', 'loja'] },
+  { chave: 'terreno', rotulo: 'Terreno', cor: '#199e70', tipos: ['terreno'] },
+]
+
+/** Rampa de RESIDUAL (score) — canonica do sistema. */
 const corResidual = (v: number | null | undefined): string => {
   if (v == null || Number.isNaN(v)) return '#6E7686'
   return SCORE_BANDS_HEX[Math.min(9, Math.max(0, Math.floor(v / 10)))]
@@ -49,7 +58,6 @@ const ORDENS: { value: Ordem; label: string }[] = [
   { value: 'area', label: 'Maior área' },
   { value: 'aluguel', label: 'Menor aluguel' },
 ]
-
 const MAX_PINS = 140
 
 export default function OportunidadesImobiliariasScreen({
@@ -116,7 +124,6 @@ export default function OportunidadesImobiliariasScreen({
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* Cabeçalho */}
       <header style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 20, padding: '16px 26px 12px' }}>
         <div>
           <Eyebrow dot>Camada de oferta &middot; READ-ONLY sobre o M1</Eyebrow>
@@ -125,57 +132,22 @@ export default function OportunidadesImobiliariasScreen({
           </h1>
           <div style={{ marginTop: 3, font: '400 12.5px/1.4 var(--f-ui)', color: 'var(--tx-narrative)' }}>
             {total ? (
-              <>
-                <b className="num" style={{ color: 'var(--ac-text)' }}>{num(total)}</b> imóveis de
-                locação coletados e cruzados com o território do M1.
-              </>
-            ) : (
-              'Imóveis de locação coletados e cruzados com o território do M1.'
-            )}
+              <><b className="num" style={{ color: 'var(--ac-text)' }}>{num(total)}</b> imóveis de locação coletados e cruzados com o território do M1.</>
+            ) : ('Imóveis de locação coletados e cruzados com o território do M1.')}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onInicio}
-          style={{ font: '600 12px/1 var(--f-ui)', color: 'var(--tx-muted)', border: '1px solid var(--line-mid)', borderRadius: 'var(--r-md)', padding: '8px 12px', background: 'var(--surf-raised)' }}
-        >
-          ← Início
-        </button>
+        <button type="button" onClick={onInicio} style={{ font: '600 12px/1 var(--f-ui)', color: 'var(--tx-muted)', border: '1px solid var(--line-mid)', borderRadius: 'var(--r-md)', padding: '8px 12px', background: 'var(--surf-raised)' }}>← Início</button>
       </header>
 
-      {/* Filtros — DROPDOWNS (escalam para 27 UFs) */}
+      {/* Filtros */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 26px', borderTop: '1px solid var(--line-soft)', borderBottom: '1px solid var(--line-soft)' }}>
-        <Select
-          label="Estado"
-          value={ufSel}
-          onChange={setUfSel}
-          placeholder="Todos os estados"
-          maxWidth={190}
-          options={[{ value: '', label: 'Todos os estados' }, ...ufs.map((u) => ({ value: u, label: u }))]}
-        />
-        <Select
-          label="Tipo de imóvel"
-          value={tipoSel}
-          onChange={setTipoSel}
-          placeholder="Todos os tipos"
-          maxWidth={190}
-          options={[{ value: '', label: 'Todos os tipos' }, ...tipos.map((t) => ({ value: t, label: t }))]}
-        />
-        <Select
-          label="Ordenar por"
-          value={ordem}
-          onChange={(v) => setOrdem(v as Ordem)}
-          maxWidth={190}
-          buscavel={false}
-          options={ORDENS}
-        />
-        <input
-          value={busca}
-          onChange={(e) => setBusca(e.target.value)}
-          placeholder="Buscar bairro, cidade, título…"
-          aria-label="Buscar oportunidade"
-          style={{ flex: 1, minWidth: 180, maxWidth: 320, height: 34, padding: '0 12px', background: 'var(--surf-input)', border: '1px solid var(--line-mid)', borderRadius: 'var(--r-md)', color: 'var(--tx-strong)', font: '500 13px/1 var(--f-ui)' }}
-        />
+        <Select label="Estado" value={ufSel} onChange={setUfSel} placeholder="Todos os estados" maxWidth={190}
+          options={[{ value: '', label: 'Todos os estados' }, ...ufs.map((u) => ({ value: u, label: u }))]} />
+        <Select label="Tipo de imóvel" value={tipoSel} onChange={setTipoSel} placeholder="Todos os tipos" maxWidth={190}
+          options={[{ value: '', label: 'Todos os tipos' }, ...tipos.map((t) => ({ value: t, label: labelTipo(t) }))]} />
+        <Select label="Ordenar por" value={ordem} onChange={(v) => setOrdem(v as Ordem)} maxWidth={190} buscavel={false} options={ORDENS} />
+        <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar bairro, cidade, título…" aria-label="Buscar oportunidade"
+          style={{ flex: 1, minWidth: 180, maxWidth: 320, height: 34, padding: '0 12px', background: 'var(--surf-input)', border: '1px solid var(--line-mid)', borderRadius: 'var(--r-md)', color: 'var(--tx-strong)', font: '500 13px/1 var(--f-ui)' }} />
         <span style={{ marginLeft: 'auto', font: '500 12px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>
           <b className="num" style={{ color: 'var(--tx-soft)' }}>{num(filtrados.length)}</b> no recorte
         </span>
@@ -183,12 +155,9 @@ export default function OportunidadesImobiliariasScreen({
 
       {/* Corpo: lista | ficha */}
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'minmax(300px, 32%) 1fr', minHeight: 0 }}>
-        {/* Lista */}
         <div style={{ borderRight: '1px solid var(--line-soft)', overflowY: 'auto', minHeight: 0 }}>
           {itens == null && !erro && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 24, color: 'var(--tx-muted)' }}>
-              <Spinner /> Carregando oportunidades…
-            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 24, color: 'var(--tx-muted)' }}><Spinner /> Carregando oportunidades…</div>
           )}
           {erro && <Aviso titulo="Não deu para carregar" corpo={`${erro} — confira o backend na porta 8899 e o data/oportunidades/viaveis.parquet.`} />}
           {itens != null && filtrados.length === 0 && (
@@ -199,7 +168,6 @@ export default function OportunidadesImobiliariasScreen({
           ))}
         </div>
 
-        {/* Ficha (com o mini-mapa no quadrante direito) */}
         <div style={{ overflowY: 'auto', minHeight: 0, padding: '18px 22px 26px' }}>
           {atual ? (
             <Ficha op={atual} pares={filtrados} onSel={setSel} onVerNoMapa={onVerNoMapa} />
@@ -217,33 +185,22 @@ function LinhaRanking({ pos, op, ativo, onClick }: { pos: number; op: Oportunida
   const cor = corResidual(op.residual)
   const r = rsM2(op)
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        width: '100%', textAlign: 'left', display: 'grid', gridTemplateColumns: '26px 1fr auto', gap: 11, alignItems: 'center',
-        padding: '11px 18px', borderBottom: '1px solid var(--line-soft)',
-        borderLeft: `2px solid ${ativo ? 'var(--ac)' : 'transparent'}`, background: ativo ? 'var(--ac-a08)' : 'transparent',
-      }}
-    >
+    <button type="button" onClick={onClick}
+      style={{ width: '100%', textAlign: 'left', display: 'grid', gridTemplateColumns: '26px 1fr auto', gap: 11, alignItems: 'center', padding: '11px 18px', borderBottom: '1px solid var(--line-soft)', borderLeft: `2px solid ${ativo ? 'var(--ac)' : 'transparent'}`, background: ativo ? 'var(--ac-a08)' : 'transparent' }}>
       <span className="num" style={{ font: '600 12px/1 var(--f-num)', color: ativo ? 'var(--ac-text)' : 'var(--tx-rank)', textAlign: 'right' }}>{pos}</span>
       <span style={{ minWidth: 0 }}>
         <span style={{ display: 'block', font: '600 13px/1.25 var(--f-ui)', color: 'var(--tx-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{op.titulo}</span>
-        <span style={{ display: 'block', font: '400 11.5px/1.3 var(--f-ui)', color: 'var(--tx-muted)', marginTop: 1 }}>
-          {op.bairro ? `${op.bairro} · ` : ''}{op.municipio}/{op.uf} · {op.tipo}
-        </span>
-        {(op.area != null || r != null) && (
-          <span style={{ display: 'flex', gap: 10, marginTop: 4, font: '400 11px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
-            {op.area != null && <span>{num(op.area)} m²</span>}
-            {r != null && <span>R$/m² {num(r, 0)}</span>}
+        <span style={{ display: 'block', font: '400 11.5px/1.3 var(--f-ui)', color: 'var(--tx-muted)', marginTop: 1 }}>{op.bairro ? `${op.bairro} · ` : ''}{op.municipio}/{op.uf}</span>
+        <span style={{ display: 'flex', gap: 8, marginTop: 5, alignItems: 'center' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, font: '400 11px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>
+            <span style={{ width: 7, height: 7, borderRadius: 2, background: corTipo(op.tipo) }} />{labelTipo(op.tipo)}
           </span>
-        )}
+          {op.area != null && <span className="num" style={{ font: '400 11px/1 var(--f-num)', color: 'var(--tx-sub)' }}>{num(op.area)} m²</span>}
+          {r != null && <span className="num" style={{ font: '400 11px/1 var(--f-num)', color: 'var(--tx-sub)' }}>R$/m² {num(r, 0)}</span>}
+        </span>
       </span>
-      <span
-        className="num"
-        title={`Residual ${op.residual != null ? num(op.residual, 0) : '—'}/100`}
-        style={{ width: 34, height: 34, borderRadius: 9, display: 'grid', placeItems: 'center', font: '700 13px/1 var(--f-num)', color: '#fff', background: cor, boxShadow: ativo ? '0 0 0 2px var(--ac)' : 'none' }}
-      >
+      <span className="num" title={`Residual ${op.residual != null ? num(op.residual, 0) : '—'}/100`}
+        style={{ width: 34, height: 34, borderRadius: 9, display: 'grid', placeItems: 'center', font: '700 13px/1 var(--f-num)', color: '#fff', background: cor, boxShadow: ativo ? '0 0 0 2px var(--ac)' : 'none' }}>
         {op.residual != null ? num(op.residual, 0) : '—'}
       </span>
     </button>
@@ -251,64 +208,50 @@ function LinhaRanking({ pos, op, ativo, onClick }: { pos: number; op: Oportunida
 }
 
 /* ======================= Ficha ======================= */
-function Ficha({
-  op,
-  pares,
-  onSel,
-  onVerNoMapa,
-}: {
-  op: Oportunidade
-  pares: Oportunidade[]
-  onSel: (id: string) => void
-  onVerNoMapa: (uf: string, municipio: string) => void
-}) {
+function Ficha({ op, pares, onSel, onVerNoMapa }: { op: Oportunidade; pares: Oportunidade[]; onSel: (id: string) => void; onVerNoMapa: (uf: string, municipio: string) => void }) {
   const r = rsM2(op)
   const ocupacao = [op.aluguel, op.iptu, op.condominio].reduce<number>((s, v) => s + (v ?? 0), 0)
   const cor = corResidual(op.residual)
-
   const [baixando, setBaixando] = useState(false)
   const [erroAcao, setErroAcao] = useState<string | null>(null)
 
   async function baixarDossie() {
-    if (op.lat == null || op.lng == null) {
-      setErroAcao('Este imóvel não tem coordenada para gerar o relatório.')
-      return
-    }
     setBaixando(true)
     setErroAcao(null)
     try {
-      const { blob, filename } = await api.relatorioPontual({
-        lat: op.lat,
-        lng: op.lng,
-        rotulo: `${op.titulo} — ${op.municipio}/${op.uf}`,
-      })
-      baixar(blob, filename)
+      // Prefere o dossiê real do coletor; se não houver, cai no Relatório Pontual do ponto.
+      if (op.tem_dossie) {
+        const { blob, filename } = await api.dossie(op.id)
+        baixar(blob, filename)
+      } else if (op.lat != null && op.lng != null) {
+        const { blob, filename } = await api.relatorioPontual({ lat: op.lat, lng: op.lng, rotulo: `${op.titulo} — ${op.municipio}/${op.uf}` })
+        baixar(blob, filename)
+      } else {
+        setErroAcao('Sem dossiê e sem coordenada para gerar o relatório do ponto.')
+      }
     } catch (e) {
-      setErroAcao(e instanceof ApiError ? e.message : 'Falha ao gerar o relatório.')
+      setErroAcao(e instanceof ApiError ? e.message : 'Falha ao gerar o documento.')
     } finally {
       setBaixando(false)
     }
   }
 
   const tese =
-    op.residual == null
-      ? 'Sem leitura de residual para este hexágono.'
+    op.residual == null ? 'Sem leitura de residual para este hexágono.'
       : op.residual_total != null && op.residual_total > 0
         ? `O mercado ainda comporta cerca de ${num(op.residual_total)} alunos além do já atendido aqui.`
         : 'Hexágono saturado: a oferta instalada já cobre o mercado potencial.'
 
   return (
     <div style={{ display: 'grid', gap: 15 }}>
-      {/* Row 1: hero (esq) + MINI-MAPA (quadrante direito) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 320px', gap: 14, alignItems: 'stretch' }}>
+      {/* Row 1: hero + composição do recorte */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.35fr) minmax(0,1fr)', gap: 14, alignItems: 'stretch' }}>
         <Glass style={{ padding: 16, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 16, alignItems: 'center' }}>
           <GaugeArc valor={op.residual} cor={cor} />
           <div style={{ minWidth: 0 }}>
             <Eyebrow dot>Oportunidade selecionada</Eyebrow>
             <div className="story" style={{ marginTop: 6, fontSize: 21, lineHeight: 1.12, color: 'var(--tx-max)' }}>{op.titulo}</div>
-            <div style={{ font: '400 12.5px/1.4 var(--f-ui)', color: 'var(--tx-narrative)', marginTop: 3 }}>
-              {op.bairro ? `${op.bairro} · ` : ''}{op.municipio}/{op.uf} · {op.tipo} para locação
-            </div>
+            <div style={{ font: '400 12.5px/1.4 var(--f-ui)', color: 'var(--tx-narrative)', marginTop: 3 }}>{op.bairro ? `${op.bairro} · ` : ''}{op.municipio}/{op.uf} · {labelTipo(op.tipo)} para locação</div>
             <div style={{ marginTop: 9, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               {op.faixa && <FaixaPill faixa={op.faixa} cor={cor} />}
               <span className="num" style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-sub)', padding: '4px 8px', borderRadius: 7, background: 'var(--surf-raised)', border: '1px solid var(--line-soft)' }}>{op.hex_id}</span>
@@ -317,10 +260,10 @@ function Ficha({
             <p style={{ margin: '11px 0 0', font: '400 12.5px/1.5 var(--f-ui)', color: 'var(--tx-soft)', borderTop: '1px solid var(--line-soft)', paddingTop: 10 }}>{tese}</p>
           </div>
         </Glass>
-        <MiniMapa op={op} pares={pares} onSel={onSel} />
+        <Composicao pontos={pares} />
       </div>
 
-      {/* A OFERTA — stat tiles */}
+      {/* A oferta */}
       <section>
         <TituloBloco titulo="A oferta" nota="dado coletado (OLX)" />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginTop: 10 }}>
@@ -333,13 +276,11 @@ function Ficha({
         </div>
       </section>
 
-      {/* MERCADO (donut) + TERRITÓRIO (tiles) */}
+      {/* Mercado (donut) + território (tiles) */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
         <section>
           <TituloBloco titulo="Mercado que sobra" nota="capacidade, não meta" ro />
-          <Glass style={{ padding: 14, marginTop: 10 }}>
-            <Donut sam={op.sam} residual={op.residual_total} />
-          </Glass>
+          <Glass style={{ padding: 14, marginTop: 10 }}><Donut sam={op.sam} residual={op.residual_total} /></Glass>
         </section>
         <section>
           <TituloBloco titulo="Quem mora aqui" nota="Censo 2022, no hexágono" ro />
@@ -352,101 +293,67 @@ function Ficha({
         </section>
       </div>
 
-      {/* POSICIONAMENTO — scatter */}
-      <section>
-        <TituloBloco titulo="Onde este imóvel cai" nota="entre os pontos do recorte" />
-        <Glass style={{ padding: 14, marginTop: 10 }}>
-          <Scatter pontos={pares} sel={op.id} />
-        </Glass>
-      </section>
+      {/* Scatter + Mini-mapa lado a lado */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <section>
+          <TituloBloco titulo="Onde este imóvel cai" nota="preço × residual, por tipo" />
+          <Glass style={{ padding: 14, marginTop: 10 }}><Scatter pontos={pares} sel={op.id} /></Glass>
+        </section>
+        <section>
+          <TituloBloco titulo="Localização" nota="arraste e dê zoom" />
+          <div style={{ marginTop: 10 }}><MiniMapa op={op} pares={pares} onSel={onSel} /></div>
+        </section>
+      </div>
 
-      {/* AÇÕES */}
+      {/* Ações */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-        <Botao onClick={() => onVerNoMapa(op.uf, op.municipio)} style={{ flex: 1, minWidth: 200, justifyContent: 'center', display: 'inline-flex' }}>
-          Ver no Mapa Territorial
-        </Botao>
-        <Botao variante="ghost" onClick={baixarDossie} disabled={baixando} style={{ flex: 1, minWidth: 200, justifyContent: 'center', display: 'inline-flex', gap: 8 }} title="Relatório Pontual Censitário do endereço (PDF)">
-          {baixando ? <><Spinner /> Gerando…</> : '↓ Relatório do ponto (PDF)'}
+        <Botao onClick={() => onVerNoMapa(op.uf, op.municipio)} style={{ flex: 1, minWidth: 200, justifyContent: 'center', display: 'inline-flex' }}>Ver no Mapa Territorial</Botao>
+        <Botao variante="ghost" onClick={baixarDossie} disabled={baixando} style={{ flex: 1, minWidth: 200, justifyContent: 'center', display: 'inline-flex', gap: 8 }}
+          title={op.tem_dossie ? 'Dossiê PDF do coletor (oferta + território)' : 'Sem dossiê pronto — gera o Relatório Pontual do endereço'}>
+          {baixando ? <><Spinner /> Gerando…</> : op.tem_dossie ? '↓ Baixar dossiê (PDF)' : '↓ Relatório do ponto (PDF)'}
         </Botao>
       </div>
       {erroAcao && <div style={{ font: '400 11.5px/1.4 var(--f-ui)', color: 'var(--neg)' }}>{erroAcao}</div>}
 
       <div style={{ display: 'flex', gap: 9, font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-sub)' }}>
         <span style={{ color: 'var(--ac-text)', flexShrink: 0 }}>ⓘ</span>
-        <span>Camada agregada por <span className="num">hex_id</span>, sem dado pessoal. O contato do corretor vive no dossiê do coletor, atrás do Authelia (legítimo interesse B2B).</span>
+        <span>Camada agregada por <span className="num">hex_id</span>, sem dado pessoal na tela. O contato do corretor vive no dossiê do coletor, servido sob acesso restrito.</span>
       </div>
     </div>
   )
 }
 
-/* ======================= Mini-mapa (quadrante direito) ======================= */
-function MiniMapa({ op, pares, onSel }: { op: Oportunidade; pares: Oportunidade[]; onSel: (id: string) => void }) {
-  const [vs, setVs] = useState(() => ({ longitude: op.lng ?? -49, latitude: op.lat ?? -16, zoom: op.lat != null ? 12.5 : 3.5 }))
-
-  // Recentra no ponto quando a seleção muda (mapa controlado, sem remontar).
-  useEffect(() => {
-    if (op.lat != null && op.lng != null) {
-      setVs((v) => ({ ...v, longitude: op.lng as number, latitude: op.lat as number, zoom: Math.max(v.zoom, 12.5) }))
-    }
-  }, [op.id, op.lat, op.lng])
-
-  const vizinhos = useMemo(
-    () => pares.filter((p) => p.id !== op.id && p.lat != null && p.lng != null).slice(0, MAX_PINS),
-    [pares, op.id],
-  )
-  const semCoord = op.lat == null || op.lng == null
-
+/* ======================= Composição do recorte (barra por tipo) ======================= */
+function Composicao({ pontos }: { pontos: Oportunidade[] }) {
+  const partes = GRUPOS.map((g) => ({
+    chave: g.chave, cor: g.cor, rotulo: g.rotulo,
+    valor: pontos.filter((o) => g.tipos.includes(o.tipo)).length,
+  })).filter((p) => p.valor > 0)
+  const totalN = partes.reduce((s, p) => s + p.valor, 0) || 1
   return (
-    <div style={{ position: 'relative', borderRadius: 'var(--r-lg)', overflow: 'hidden', border: '1px solid var(--line)', background: 'var(--bg-lift)', minHeight: 210 }}>
-      <div style={{ position: 'absolute', top: 8, left: 8, zIndex: 2, font: '600 9.5px/1 var(--f-ui)', textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--tx-label)', background: 'var(--surf-panel)', border: '1px solid var(--line-soft)', borderRadius: 7, padding: '5px 8px', backdropFilter: 'blur(10px)' }}>
-        Localização
+    <Glass style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12, justifyContent: 'center' }}>
+      <div style={{ font: '600 12px/1 var(--f-ui)', textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--tx-label)' }}>Composição do recorte</div>
+      <BarraSegmentada altura={14} partes={partes} />
+      <div style={{ display: 'grid', gap: 7 }}>
+        {partes.map((p) => (
+          <div key={p.chave} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 3, background: p.cor, flexShrink: 0 }} />
+            <span style={{ font: '400 12px/1.2 var(--f-ui)', color: 'var(--tx-soft)' }}>{p.rotulo}</span>
+            <span className="num" style={{ marginLeft: 'auto', font: '600 12px/1.2 var(--f-num)', color: 'var(--tx-strong)' }}>{num(p.valor)}</span>
+            <span className="num" style={{ font: '400 11px/1.2 var(--f-num)', color: 'var(--tx-sub)', width: 42, textAlign: 'right' }}>{Math.round((p.valor / totalN) * 100)}%</span>
+          </div>
+        ))}
       </div>
-      {semCoord ? (
-        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', font: '400 12px/1.5 var(--f-ui)', color: 'var(--tx-muted)', textAlign: 'center', padding: 16 }}>
-          Sem coordenada para este imóvel.
-        </div>
-      ) : (
-        <Map
-          longitude={vs.longitude}
-          latitude={vs.latitude}
-          zoom={vs.zoom}
-          onMove={(e) => setVs(e.viewState)}
-          mapStyle={BASEMAP}
-          scrollZoom={false}
-          dragRotate={false}
-          attributionControl={{ compact: true }}
-          reuseMaps
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
-        >
-          {vizinhos.map((p) => (
-            <Marker key={p.id} longitude={p.lng as number} latitude={p.lat as number} anchor="center" onClick={() => onSel(p.id)}>
-              <div title={p.titulo} style={{ width: 8, height: 8, borderRadius: '50%', background: corResidual(p.residual), border: '1px solid rgba(8,11,16,.7)', opacity: 0.75, cursor: 'pointer' }} />
-            </Marker>
-          ))}
-          <Marker longitude={op.lng as number} latitude={op.lat as number} anchor="center">
-            <div style={{ width: 16, height: 16, borderRadius: '50%', background: 'var(--ac)', border: '2px solid #fff', boxShadow: '0 0 0 4px var(--ac-a24), var(--sh-pop)' }} />
-          </Marker>
-        </Map>
-      )}
-    </div>
+    </Glass>
   )
 }
 
 /* ======================= Peças visuais ======================= */
-
-/** Medidor RADIAL (semicírculo) do residual. */
 function GaugeArc({ valor, cor }: { valor: number | null; cor: string }) {
   const R = 46, cx = 56, cy = 56
   const frac = valor == null ? 0 : Math.min(1, Math.max(0, valor / 100))
-  const ponto = (t: number): [number, number] => {
-    const ang = Math.PI * (1 - t)
-    return [cx + R * Math.cos(ang), cy - R * Math.sin(ang)]
-  }
-  const arco = (t0: number, t1: number) => {
-    const [x0, y0] = ponto(t0)
-    const [x1, y1] = ponto(t1)
-    return `M ${x0.toFixed(1)} ${y0.toFixed(1)} A ${R} ${R} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}`
-  }
+  const ponto = (t: number): [number, number] => { const a = Math.PI * (1 - t); return [cx + R * Math.cos(a), cy - R * Math.sin(a)] }
+  const arco = (t0: number, t1: number) => { const [x0, y0] = ponto(t0); const [x1, y1] = ponto(t1); return `M ${x0.toFixed(1)} ${y0.toFixed(1)} A ${R} ${R} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}` }
   return (
     <svg width="112" height="72" viewBox="0 0 112 72" aria-label={`Residual ${valor ?? 'sem dado'} de 100`}>
       <path d={arco(0, 1)} fill="none" stroke="var(--surf-pending)" strokeWidth="10" strokeLinecap="round" />
@@ -457,15 +364,12 @@ function GaugeArc({ valor, cor }: { valor: number | null; cor: string }) {
   )
 }
 
-/** DONUT: já atendido × sobra. */
 function Donut({ sam, residual }: { sam: number | null; residual: number | null }) {
   if (sam == null || residual == null || sam <= 0) {
     return <div style={{ font: '400 12px/1.5 var(--f-ui)', color: 'var(--tx-muted)', textAlign: 'center', padding: '18px 0' }}>Sem leitura de mercado para o hexágono.</div>
   }
-  const sobra = Math.max(0, Math.min(residual, sam))
-  const atendido = Math.max(0, sam - sobra)
-  const pct = Math.round((sobra / sam) * 100)
-  const R = 34, C = 2 * Math.PI * R
+  const sobra = Math.max(0, Math.min(residual, sam)), atendido = Math.max(0, sam - sobra)
+  const pct = Math.round((sobra / sam) * 100), R = 34, C = 2 * Math.PI * R
   const lenSobra = (sobra / sam) * C
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -478,14 +382,14 @@ function Donut({ sam, residual }: { sam: number | null; residual: number | null 
         <text x="46" y="58" textAnchor="middle" style={{ font: '400 8.5px var(--f-ui)', fill: 'var(--tx-sub)' }}>sobra</text>
       </svg>
       <div style={{ display: 'grid', gap: 8, minWidth: 0 }}>
-        <LegDonut cor="var(--ac)" rotulo="Sobra (residual)" valor={`${num(sobra)}`} forte />
-        <LegDonut cor="var(--tx-rank)" rotulo="Já atendido" valor={`${num(atendido)}`} />
+        <LegLinha cor="var(--ac)" rotulo="Sobra (residual)" valor={num(sobra)} forte />
+        <LegLinha cor="var(--tx-rank)" rotulo="Já atendido" valor={num(atendido)} />
         <div style={{ font: '400 10.5px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>de {num(sam)} alunos do mercado potencial (SAM)</div>
       </div>
     </div>
   )
 }
-function LegDonut({ cor, rotulo, valor, forte }: { cor: string; rotulo: string; valor: string; forte?: boolean }) {
+function LegLinha({ cor, rotulo, valor, forte }: { cor: string; rotulo: string; valor: string; forte?: boolean }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
       <span style={{ width: 9, height: 9, borderRadius: 3, background: cor, flexShrink: 0 }} />
@@ -495,12 +399,12 @@ function LegDonut({ cor, rotulo, valor, forte }: { cor: string; rotulo: string; 
   )
 }
 
-/** SCATTER de posicionamento: R$/m² (x) × residual (y). Aspecto fixo, sem distorcer. */
+/** SCATTER: R$/m² (x) × residual (y). Dots coloridos por TIPO. Aspecto fixo. */
 function Scatter({ pontos, sel }: { pontos: Oportunidade[]; sel: string }) {
   const W = 360, H = 190, padL = 34, padR = 12, padT = 12, padB = 30
   const dados = pontos
-    .map((o) => ({ id: o.id, x: rsM2(o), y: o.residual }))
-    .filter((d): d is { id: string; x: number; y: number } => d.x != null && d.y != null)
+    .map((o) => ({ id: o.id, x: rsM2(o), y: o.residual, tipo: o.tipo }))
+    .filter((d): d is { id: string; x: number; y: number; tipo: string } => d.x != null && d.y != null)
   if (dados.length < 3) {
     return <div style={{ font: '400 12px/1.5 var(--f-ui)', color: 'var(--tx-muted)', textAlign: 'center', padding: '14px 0' }}>Poucos pontos com preço e residual para comparar neste recorte.</div>
   }
@@ -512,41 +416,90 @@ function Scatter({ pontos, sel }: { pontos: Oportunidade[]; sel: string }) {
   const selD = dados.find((d) => d.id === sel)
   const eixoX = [0, Math.round(xMax / 2), Math.round(xMax)]
   const eixoY = [0, 50, 100]
+  const gruposPresentes = GRUPOS.filter((g) => dados.some((d) => g.tipos.includes(d.tipo)))
   return (
     <div>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', height: 'auto', maxHeight: 220 }} preserveAspectRatio="xMidYMid meet">
-        {/* quadrante-alvo: caro barato (x baixo) + residual alto (y alto) */}
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', height: 'auto', maxHeight: 210 }} preserveAspectRatio="xMidYMid meet">
         <rect x={px(0)} y={py(100)} width={px(xMed) - px(0)} height={py(50) - py(100)} fill="var(--ac-a08)" />
-        {/* eixos */}
         <line x1={padL} y1={padT} x2={padL} y2={H - padB} stroke="var(--line-mid)" strokeWidth="1" />
         <line x1={padL} y1={H - padB} x2={W - padR} y2={H - padB} stroke="var(--line-mid)" strokeWidth="1" />
-        {/* guias de mediana/meio */}
         <line x1={px(xMed)} y1={padT} x2={px(xMed)} y2={H - padB} stroke="var(--line-soft)" strokeWidth="1" strokeDasharray="3 3" />
         <line x1={padL} y1={py(50)} x2={W - padR} y2={py(50)} stroke="var(--line-soft)" strokeWidth="1" strokeDasharray="3 3" />
-        {/* ticks Y */}
-        {eixoY.map((v) => (
-          <text key={`y${v}`} x={padL - 6} y={py(v) + 3} textAnchor="end" style={{ font: '400 9px var(--f-num)', fill: 'var(--tx-sub)' }}>{v}</text>
-        ))}
-        {/* ticks X */}
-        {eixoX.map((v, i) => (
-          <text key={`x${v}-${i}`} x={px(v)} y={H - padB + 13} textAnchor={i === 0 ? 'start' : i === eixoX.length - 1 ? 'end' : 'middle'} style={{ font: '400 9px var(--f-num)', fill: 'var(--tx-sub)' }}>{v}</text>
-        ))}
-        {/* pontos */}
-        {dados.map((d) => (d.id === sel ? null : <circle key={d.id} cx={px(d.x)} cy={py(d.y)} r={3} fill={corResidual(d.y)} opacity={0.45} />))}
-        {selD && (
-          <>
-            <circle cx={px(selD.x)} cy={py(selD.y)} r={8} fill="none" stroke="var(--ac)" strokeWidth="2" />
-            <circle cx={px(selD.x)} cy={py(selD.y)} r={4.5} fill={corResidual(selD.y)} stroke="var(--bg-base)" strokeWidth="1.2" />
-          </>
-        )}
-        {/* rótulos de eixo */}
+        {eixoY.map((v) => <text key={`y${v}`} x={padL - 6} y={py(v) + 3} textAnchor="end" style={{ font: '400 9px var(--f-num)', fill: 'var(--tx-sub)' }}>{v}</text>)}
+        {eixoX.map((v, i) => <text key={`x${v}-${i}`} x={px(v)} y={H - padB + 13} textAnchor={i === 0 ? 'start' : i === eixoX.length - 1 ? 'end' : 'middle'} style={{ font: '400 9px var(--f-num)', fill: 'var(--tx-sub)' }}>{v}</text>)}
+        {dados.map((d) => (d.id === sel ? null : <circle key={d.id} cx={px(d.x)} cy={py(d.y)} r={3} fill={corTipo(d.tipo)} opacity={0.5} />))}
+        {selD && (<>
+          <circle cx={px(selD.x)} cy={py(selD.y)} r={8} fill="none" stroke="var(--ac)" strokeWidth="2" />
+          <circle cx={px(selD.x)} cy={py(selD.y)} r={4.5} fill={corTipo(selD.tipo)} stroke="var(--bg-base)" strokeWidth="1.2" />
+        </>)}
         <text x={(padL + W - padR) / 2} y={H - 4} textAnchor="middle" style={{ font: '400 9.5px var(--f-ui)', fill: 'var(--tx-sub)' }}>aluguel R$/m² →</text>
         <text x={12} y={(padT + H - padB) / 2} textAnchor="middle" transform={`rotate(-90 12 ${(padT + H - padB) / 2})`} style={{ font: '400 9.5px var(--f-ui)', fill: 'var(--tx-sub)' }}>residual →</text>
       </svg>
-      <p style={{ margin: '8px 0 0', font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-narrative)' }}>
-        O alvo é o quadrante <b style={{ color: 'var(--ac-text)' }}>superior esquerdo</b> (turquesa): aluguel barato por m² e residual alto. O anel turquesa marca este imóvel.
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 6 }}>
+        {gruposPresentes.map((g) => (
+          <span key={g.chave} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: g.cor }} />{g.rotulo}
+          </span>
+        ))}
+      </div>
+      <p style={{ margin: '7px 0 0', font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-narrative)' }}>
+        Alvo: quadrante <b style={{ color: 'var(--ac-text)' }}>superior esquerdo</b> (barato por m², residual alto). O anel turquesa marca este imóvel.
       </p>
     </div>
+  )
+}
+
+/* ======================= Mini-mapa (ao lado do scatter, com pan/zoom) ======================= */
+function MiniMapa({ op, pares, onSel }: { op: Oportunidade; pares: Oportunidade[]; onSel: (id: string) => void }) {
+  const [vs, setVs] = useState(() => ({ longitude: op.lng ?? -49, latitude: op.lat ?? -16, zoom: op.lat != null ? 13 : 3.5 }))
+  const [zoomArmado, setZoomArmado] = useState(false)
+
+  useEffect(() => {
+    if (op.lat != null && op.lng != null) setVs((v) => ({ ...v, longitude: op.lng as number, latitude: op.lat as number, zoom: Math.max(v.zoom, 13) }))
+  }, [op.id, op.lat, op.lng])
+
+  const vizinhos = useMemo(() => pares.filter((p) => p.id !== op.id && p.lat != null && p.lng != null).slice(0, MAX_PINS), [pares, op.id])
+  const semCoord = op.lat == null || op.lng == null
+  const ajustarZoom = (d: number) => setVs((v) => ({ ...v, zoom: Math.min(18, Math.max(3, v.zoom + d)) }))
+
+  return (
+    <div onPointerDown={() => setZoomArmado(true)} onMouseLeave={() => setZoomArmado(false)}
+      style={{ position: 'relative', borderRadius: 'var(--r-lg)', overflow: 'hidden', border: '1px solid var(--line)', background: 'var(--bg-lift)', height: 236 }}>
+      {semCoord ? (
+        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', font: '400 12px/1.5 var(--f-ui)', color: 'var(--tx-muted)', textAlign: 'center', padding: 16 }}>Sem coordenada para este imóvel.</div>
+      ) : (
+        <>
+          <Map longitude={vs.longitude} latitude={vs.latitude} zoom={vs.zoom} onMove={(e) => setVs(e.viewState)}
+            mapStyle={BASEMAP} scrollZoom={zoomArmado} dragRotate={false} attributionControl={{ compact: true }} reuseMaps
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+            {vizinhos.map((p) => (
+              <Marker key={p.id} longitude={p.lng as number} latitude={p.lat as number} anchor="center" onClick={() => onSel(p.id)}>
+                <div title={`${p.titulo} · ${labelTipo(p.tipo)}`} style={{ width: 9, height: 9, borderRadius: '50%', background: corTipo(p.tipo), border: '1px solid rgba(8,11,16,.7)', opacity: 0.85, cursor: 'pointer' }} />
+              </Marker>
+            ))}
+            <Marker longitude={op.lng as number} latitude={op.lat as number} anchor="center">
+              <div style={{ width: 16, height: 16, borderRadius: '50%', background: 'var(--ac)', border: '2px solid #fff', boxShadow: '0 0 0 4px var(--ac-a24), var(--sh-pop)' }} />
+            </Marker>
+          </Map>
+          {/* controles de zoom */}
+          <div style={{ position: 'absolute', right: 8, top: 8, display: 'flex', flexDirection: 'column', gap: 4, zIndex: 3 }}>
+            <BotaoZoom rotulo="Aproximar" onClick={() => ajustarZoom(1)}>+</BotaoZoom>
+            <BotaoZoom rotulo="Afastar" onClick={() => ajustarZoom(-1)}>−</BotaoZoom>
+          </div>
+          {!zoomArmado && (
+            <div style={{ position: 'absolute', left: 8, top: 8, zIndex: 3, font: '500 9.5px/1 var(--f-ui)', color: 'var(--tx-muted)', background: 'var(--surf-panel)', border: '1px solid var(--line-soft)', borderRadius: 6, padding: '4px 7px', backdropFilter: 'blur(8px)', pointerEvents: 'none' }}>
+              clique para a roda dar zoom · arraste para mover
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+function BotaoZoom({ children, rotulo, onClick }: { children: React.ReactNode; rotulo: string; onClick: () => void }) {
+  return (
+    <button type="button" title={rotulo} aria-label={rotulo} onClick={onClick}
+      style={{ width: 26, height: 26, display: 'grid', placeItems: 'center', borderRadius: 'var(--r-sm)', border: '1px solid var(--line-soft)', background: 'var(--surf-panel)', backdropFilter: 'blur(10px)', color: 'var(--tx-soft)', font: '600 15px/1 var(--f-ui)', cursor: 'pointer' }}>{children}</button>
   )
 }
 
@@ -556,8 +509,7 @@ function StatTile({ label, valor, unidade, destaque }: { label: string; valor: s
     <div style={{ background: 'var(--surf-raised)', border: '1px solid var(--line-soft)', borderRadius: 'var(--r-md)', padding: '9px 11px' }}>
       <div style={{ font: '500 10.5px/1.2 var(--f-ui)', color: 'var(--tx-label)' }}>{label}</div>
       <div className="num" style={{ font: '700 16px/1.1 var(--f-num)', color: destaque ? 'var(--ac-text)' : 'var(--tx-strong)', marginTop: 4 }}>
-        {valor}
-        {unidade && <span style={{ font: '400 10px var(--f-num)', color: 'var(--tx-sub)' }}> {unidade}</span>}
+        {valor}{unidade && <span style={{ font: '400 10px var(--f-num)', color: 'var(--tx-sub)' }}> {unidade}</span>}
       </div>
     </div>
   )
@@ -573,8 +525,6 @@ function TituloBloco({ titulo, nota, ro }: { titulo: string; nota?: string; ro?:
 }
 function FaixaPill({ faixa, cor }: { faixa: string; cor: string }) {
   return (
-    <span style={{ font: '700 10px/1 var(--f-ui)', textTransform: 'uppercase', letterSpacing: '.05em', padding: '4px 9px', borderRadius: 999, color: cor, background: `${cor}22`, border: `1px solid ${cor}55` }}>
-      {labelFaixa(faixa)}
-    </span>
+    <span style={{ font: '700 10px/1 var(--f-ui)', textTransform: 'uppercase', letterSpacing: '.05em', padding: '4px 9px', borderRadius: 999, color: cor, background: `${cor}22`, border: `1px solid ${cor}55` }}>{labelFaixa(faixa)}</span>
   )
 }

@@ -476,6 +476,8 @@ export interface Oportunidade {
   lat: number | null
   lng: number | null
   url: string | null
+  /** Se o coletor gerou um dossiê PDF para este imóvel (top-N por praça). */
+  tem_dossie?: boolean
 }
 
 export interface OportunidadesPayload {
