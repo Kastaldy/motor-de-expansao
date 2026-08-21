@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
-import { COR_TIPO, COR_TIPO_FALLBACK, corTipo, corTipoRgb, custoOcup, labelTipo, rsM2 } from './imovel'
+import {
+  COR_TIPO,
+  COR_TIPO_FALLBACK,
+  classeAluguelFat,
+  corTipo,
+  corTipoRgb,
+  custoOcup,
+  labelFaixa,
+  labelTipo,
+  pctAluguelFat,
+  rsM2,
+} from './imovel'
 import type { Oportunidade } from './types'
 
 function op(extra: Partial<Oportunidade> = {}): Oportunidade {
@@ -87,6 +98,36 @@ describe('custoOcup', () => {
   it('componente ausente conta como 0, nao como NaN', () => {
     expect(custoOcup(op({ aluguel: 10_000 }))).toBe(10_000)
     expect(custoOcup(op())).toBe(0)
+  })
+})
+
+describe('labelFaixa', () => {
+  it('traduz o valor cru da faixa para o rotulo acentuado', () => {
+    expect(labelFaixa('prioridade_maxima')).toBe('Prioridade máxima')
+    expect(labelFaixa('media')).toBe('Média')
+  })
+
+  it('faixa nova capitaliza; null passa adiante', () => {
+    expect(labelFaixa('promissora')).toBe('Promissora')
+    expect(labelFaixa(null)).toBeNull()
+  })
+})
+
+describe('regua aluguel/faturamento (15/20/30 do modelo de viabilidade)', () => {
+  it('pctAluguelFat deriva a fracao e exige as duas pontas', () => {
+    expect(pctAluguelFat(op({ aluguel: 30_000, fat_proj: 200_000 }))).toBe(15)
+    expect(pctAluguelFat(op({ aluguel: 30_000 }))).toBeNull()
+    expect(pctAluguelFat(op({ fat_proj: 200_000 }))).toBeNull()
+    expect(pctAluguelFat(op({ aluguel: 30_000, fat_proj: 0 }))).toBeNull()
+  })
+
+  it('classifica nos mesmos clusters e rotulos da Viabilidade', () => {
+    expect(classeAluguelFat(12)?.rotulo).toBe('dentro do ideal')
+    expect(classeAluguelFat(15)?.rotulo).toBe('dentro do ideal')
+    expect(classeAluguelFat(18)?.rotulo).toBe('no teto')
+    expect(classeAluguelFat(25)?.rotulo).toBe('exceção')
+    expect(classeAluguelFat(31)?.rotulo).toBe('acima do máximo')
+    expect(classeAluguelFat(null)).toBeNull()
   })
 })
 

@@ -20,9 +20,11 @@ import {
   COR_TIPO,
   corTipo,
   custoOcup,
+  labelFaixa,
   labelTipo,
   rsM2,
 } from '../lib/imovel'
+import { alternarVisita, lerVisitas } from '../lib/visitas'
 import type { Oportunidade } from '../lib/types'
 
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -57,12 +59,6 @@ const GRUPOS = [
   { chave: 'terreno', rotulo: 'Terreno', cor: COR_TIPO.terreno, tipos: ['terreno'] },
 ]
 
-const FAIXA_LABEL: Record<string, string> = {
-  prioridade_maxima: 'Prioridade máxima', alta: 'Alta', media: 'Média', baixa: 'Baixa', minima: 'Mínima',
-}
-const labelFaixa = (v: string | null): string | null =>
-  v == null ? null : (FAIXA_LABEL[v] ?? v.charAt(0).toUpperCase() + v.slice(1))
-
 /** Rampa de SCORE (residual) — canonica do sistema (RESIDUAL_SCORE_BANDS). */
 const corResidual = (v: number | null | undefined): string => {
   if (v == null || Number.isNaN(v)) return 'var(--tx-rank)'
@@ -88,23 +84,6 @@ const ORDENS: { value: Ordem; label: string }[] = [
   { value: 'area', label: 'Maior área' },
   { value: 'aluguel', label: 'Menor aluguel' },
 ]
-
-/* --- Marcador local "para visita" (localStorage, sem backend) ---------------- */
-const CHAVE_VISITAS = 'op-imob-visitas'
-function lerVisitas(): Set<string> {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(CHAVE_VISITAS) ?? '[]') as string[])
-  } catch {
-    return new Set()
-  }
-}
-function salvarVisitas(s: Set<string>) {
-  try {
-    localStorage.setItem(CHAVE_VISITAS, JSON.stringify([...s]))
-  } catch {
-    /* modo privado / cota cheia — o marcador some no reload, sem quebrar a tela */
-  }
-}
 
 /* ======================= Tela ======================= */
 export default function OportunidadesImobiliariasScreen({
@@ -209,14 +188,8 @@ export default function OportunidadesImobiliariasScreen({
     if (visitas.size === 0) setSoVisitas(false)
   }, [visitas])
 
-  function alternarVisita(id: string) {
-    setVisitas((prev) => {
-      const prox = new Set(prev)
-      if (prox.has(id)) prox.delete(id)
-      else prox.add(id)
-      salvarVisitas(prox)
-      return prox
-    })
+  function aoAlternarVisita(id: string) {
+    setVisitas((prev) => alternarVisita(prev, id))
   }
 
   const idxSel = filtrados.findIndex((o) => o.id === sel)
@@ -291,7 +264,7 @@ export default function OportunidadesImobiliariasScreen({
             <aside style={{ width: 400, flexShrink: 0, overflowY: 'auto', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
               {atual ? (
                 <Ficha op={atual} rank={idxSel + 1} pares={filtrados} medRsM2={medRsM2}
-                  visita={visitas.has(atual.id)} onVisita={() => alternarVisita(atual.id)}
+                  visita={visitas.has(atual.id)} onVisita={() => aoAlternarVisita(atual.id)}
                   onSel={setSel} onVerNoMapa={onVerNoMapa} lateral />
               ) : (
                 <Aviso titulo="Selecione uma oportunidade" corpo="Clique num ponto do mapa para ver o estudo." />
@@ -328,7 +301,7 @@ export default function OportunidadesImobiliariasScreen({
             <section style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
               {atual ? (
                 <Ficha op={atual} rank={idxSel + 1} pares={filtrados} medRsM2={medRsM2}
-                  visita={visitas.has(atual.id)} onVisita={() => alternarVisita(atual.id)}
+                  visita={visitas.has(atual.id)} onVisita={() => aoAlternarVisita(atual.id)}
                   onSel={setSel} onVerNoMapa={onVerNoMapa} />
               ) : (
                 <Aviso titulo="Selecione uma oportunidade" corpo="Escolha um imóvel no ranking à esquerda para ver o estudo." />

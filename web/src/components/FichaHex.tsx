@@ -1,13 +1,12 @@
-import type { ReactNode } from 'react'
-
 import type { CrescimentoMunicipio } from '../lib/oportunidades'
 import { alunos, brl, num, pctVar } from '../lib/format'
-import { corTipo, custoOcup, labelTipo } from '../lib/imovel'
+import { FAIXA_M1_HEX, bandSolid } from '../lib/colors'
+import { CAPACIDADE_UNIDADE_ALUNOS, FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from '../lib/faixas'
+import { classeAluguelFat, corTipo, custoOcup, labelTipo, pctAluguelFat } from '../lib/imovel'
+import { composicaoMercado, faixaDoValor, leituraDeSaturacao } from '../lib/medidor'
 import type { Hex, Oportunidade } from '../lib/types'
-import { FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from '../lib/faixas'
 import IconeTipo from './IconeTipo'
-import { BarraMercado, FilaApoio, MedidorScore, NumeroApoio } from './LeiturasVisuais'
-import { Chip, Eyebrow, Kpi } from './primitives'
+import { CardPainel, LinhaTabela, Ticks, TituloSecao } from './PecasPainel'
 
 /**
  * A leitura de UM hexagono, para viver dentro da janela flutuante do mapa.
@@ -18,13 +17,22 @@ import { Chip, Eyebrow, Kpi } from './primitives'
  * vezes para juntar populacao, renda, concorrencia e residual do mesmo hexagono. Aqui as
  * quatro leituras ficam paradas na tela, do mesmo jeito que a ficha do ponto colado.
  *
+ * DESENHO: porte do painel esquerdo do design "Paineis do Hexagono" (Claude Design,
+ * 2026-08-21), adaptado aos tokens/fontes do piloto — veredito narrativo no topo, tres
+ * scores com regua de tracinhos, censo em tabela, mercado por situacao e os imoveis
+ * coletados. As pecas de forma vivem em `PecasPainel`.
+ *
  * SEM VIABILIDADE, de proposito. Metragem e aluguel sao ENTRADA do operador sobre um
  * IMOVEL concreto (DEC-009, motor property-first); um hexagono e' uma area de ~5 km2, e
  * pedir "o aluguel do hexagono" seria inventar um imovel que nao existe. Quem tem o
  * imovel na mao entra pela analise de ponto, que ja' faz essa conta.
  *
- * NADA E' DERIVADO AQUI. Todo numero vem do payload; o que falta aparece como "—" em vez
- * de virar zero — zero e' uma AFIRMACAO ("nao ha' concorrente"), e ausencia nao afirma.
+ * NUMEROS: todo valor vem do payload; o que falta aparece como "—" em vez de virar
+ * zero — zero e' uma AFIRMACAO ("nao ha' concorrente"), e ausencia nao afirma. As unicas
+ * contas locais sao aritmetica de EXIBICAO sobre numeros ja servidos (atendido = SAM −
+ * residual via `composicaoMercado`, % da capacidade de 2.500), as mesmas da BarraMercado
+ * e da aba imobiliaria. Cor so' de regua publicada (faixas do mapa; clusters 15/20/30 do
+ * modelo de viabilidade nos imoveis) — nada colorido por limiar de olho.
  */
 export default function FichaHex({
   hex,
@@ -54,45 +62,127 @@ export default function FichaHex({
   /** Abre a janela de DETALHE do imóvel (a mesma que o pin da camada abre no mapa). */
   onVerImovel?: (o: Oportunidade) => void
 }) {
+  const corFaixaM1 = hex.faixa ? (FAIXA_M1_HEX[hex.faixa] ?? null) : null
+  const fxCenso = faixaDoValor(hex.censo, FAIXAS_POTENCIAL)
+  const fxResidual = faixaDoValor(hex.res, FAIXAS_DEMANDA)
+  /* Cor do HÍBRIDO pela rampa canônica de 10 faixas (CLAUDE.md §5: "Híbrido colore por
+     score_expansao_hibrido") — é régua de COR publicada; o que o híbrido não tem são
+     faixas NOMEADAS, por isso ele fica sem rótulo de veredito (sem badge). */
+  const corHibrido =
+    hex.hib == null ? null : bandSolid(Math.min(9, Math.max(0, Math.floor(hex.hib / 10))))
+  const mercado = composicaoMercado(hex.sam, hex.oferta)
+  const saturacao = leituraDeSaturacao(hex.sam, hex.oferta)
+  const ocupacaoAbertura =
+    hex.oferta == null
+      ? null
+      : Math.min(100, Math.round((100 * Math.max(0, hex.oferta)) / CAPACIDADE_UNIDADE_ALUNOS))
+
   return (
     <div style={{ display: 'grid', gap: 16 }}>
-      <div>
-        <Eyebrow dot>Hexágono selecionado</Eyebrow>
-        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      {/* ---- Veredito: a frase que resume, com a faixa M1 e os numeros-chave ---- */}
+      <CardPainel style={{ background: 'var(--surf-card)', border: '1px solid var(--line-mid)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 9 }}>
+          {/* Texto NEUTRO + swatch na cor da faixa — não a cor como texto: 'Inviável' é
+              #2E3040 e como texto sobre o card escuro dava ~1,4:1, ilegível. */}
+          {hex.faixa && (
+            <span
+              className="num"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '4px 9px',
+                borderRadius: 999,
+                background: corFaixaM1 ? `${corFaixaM1}26` : 'var(--surf-pending)',
+                border: '1px solid var(--line-soft)',
+                color: 'var(--tx-strong)',
+                font: '500 9px/1 var(--f-num)',
+                letterSpacing: '.12em',
+                textTransform: 'uppercase',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: 2,
+                  background: corFaixaM1 ?? 'var(--tx-sub)',
+                  flexShrink: 0,
+                }}
+              />
+              {hex.faixa}
+            </span>
+          )}
+          {hex.hib != null && (
+            <span
+              className="num"
+              style={{ font: '400 9.5px/1 var(--f-num)', letterSpacing: '.1em', color: 'var(--tx-sub)' }}
+            >
+              HÍBRIDO {num(hex.hib, 1)}
+            </span>
+          )}
+        </div>
+        <p style={{ margin: 0, font: '400 14.5px/1.5 var(--f-ui)', color: 'var(--tx-strong)' }}>
+          <FraseVeredito hex={hex} />
+        </p>
+        <div style={{ display: 'flex', gap: 8, marginTop: 13, flexWrap: 'wrap' }}>
+          {hex.censo != null && (
+            <ChipNumero valor={num(hex.censo, 1)} rotulo="censo" tom={fxCenso?.cor} />
+          )}
+          {hex.oferta != null && (
+            <ChipNumero valor={alunos(hex.oferta)} rotulo="alunos livres" tom="var(--ac-text)" />
+          )}
+          {/* "no hexágono" por extenso: os chips contam PONTOS dentro da célula, e sem a
+              base declarada leem-se como o modelo de raio de 2 km — a confusão
+              RAIO×HEXÁGONO que este arquivo já corrigiu uma vez (2026-08-13). O ZERO
+              aparece: contagem 0 é afirmação ("não há unidade aqui"), só null some. */}
+          {hex.conc_hex != null && (
+            <ChipNumero valor={num(hex.conc_hex)} rotulo="concorrentes no hexágono" />
+          )}
+          {hex.ultra_hex != null && (
+            <ChipNumero valor={num(hex.ultra_hex)} rotulo="Ultra no hexágono" />
+          )}
+        </div>
+
+        {/* Identidade e ações — o id inteiro (copiável), a saída para a rua e a
+            comparação. O rótulo do Maps diz "o centro" de propósito: o hexágono tem
+            ~5 km² e isto abre o CENTRO dele, não um endereço, que ele não tem. */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            flexWrap: 'wrap',
+            marginTop: 13,
+            paddingTop: 11,
+            borderTop: '1px solid var(--line-soft)',
+          }}
+        >
           <span
             className="num"
             style={{
-              font: '500 11px/1 var(--f-num)',
+              font: '500 10px/1 var(--f-num)',
               color: 'var(--tx-sub)',
               padding: '5px 8px',
-              borderRadius: 7,
+              borderRadius: 6,
               background: 'var(--surf-raised)',
               border: '1px solid var(--line-soft)',
             }}
           >
             {hex.id}
           </span>
-          {hex.faixa && <Chip tom="blue">{hex.faixa}</Chip>}
-          {/* O centroide no Maps: é assim que o operador sai da tela e vai ver a rua.
-              O hexágono tem ~5 km², então isto abre no CENTRO dele — não num endereço,
-              que o hexágono não tem. O rótulo diz isso para ninguém ler como "o imóvel". */}
           <a
             href={`https://www.google.com/maps/search/?api=1&query=${hex.lat},${hex.lng}`}
             target="_blank"
             rel="noreferrer"
-            style={{
-              font: '600 11px/1 var(--f-ui)',
-              color: 'var(--ac-text)',
-              textDecoration: 'underline',
-            }}
+            style={{ font: '600 11px/1 var(--f-ui)', color: 'var(--ac-text)', textDecoration: 'underline' }}
           >
             Abrir o centro no Google Maps ↗
           </a>
-          {/* COMPARAR A PARTIR DAQUI (pedido do Juan, 2026-08-13). A comparação já
-              existia, mas só se alcançava entrando no modo cenário ANTES de escolher — ou
-              seja, quem já estava lendo uma ficha tinha de sair dela e recomeçar. O botão
-              põe este hexágono na lista e liga o modo; o próximo clique no mapa entra como
-              o segundo, e a comparação aparece sozinha. */}
+          {/* COMPARAR A PARTIR DAQUI (pedido do Juan, 2026-08-13): põe este hexágono na
+              lista e liga o modo; o próximo clique no mapa entra como o segundo. */}
           {onComparar && (
             <button
               type="button"
@@ -105,137 +195,332 @@ export default function FichaHex({
                 background: 'var(--surf-raised)',
                 color: 'var(--tx-soft)',
                 font: '600 11px/1 var(--f-ui)',
+                cursor: 'pointer',
               }}
             >
               + Comparar com outro
             </button>
           )}
         </div>
+      </CardPainel>
+
+      {/* ---- Os três scores, com a régua de tracinhos do design ---- */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 9 }}>
+        <CardScore
+          rotulo="CENSO"
+          valor={hex.censo}
+          cor={fxCenso?.cor ?? 'var(--tx-max)'}
+          nota={fxCenso ? `${fxCenso.nome} na régua do potencial` : 'sem leitura do censo'}
+        />
+        <CardScore
+          rotulo="RESIDUAL"
+          valor={hex.res}
+          cor={fxResidual?.cor ?? 'var(--tx-max)'}
+          nota={fxResidual ? `${fxResidual.nome} — satura em ${num(CAPACIDADE_UNIDADE_ALUNOS)} alunos` : 'sem leitura de residual'}
+        />
+        {/* Cor pela rampa canônica de 10 faixas (regra visual do §5); sem faixas NOMEADAS
+            publicadas o híbrido segue sem rótulo de veredito — só a cor da rampa. */}
+        <CardScore
+          rotulo="HÍBRIDO"
+          valor={hex.hib}
+          cor={corHibrido ?? 'var(--tx-max)'}
+          nota="média ponderada de censo e residual"
+        />
       </div>
 
-      {/* MESMA HIERARQUIA da ficha do ponto: desenho primeiro, número como apoio. Duas
-          fichas que respondem à mesma pergunta não podem ler de jeitos diferentes. */}
-      <Bloco titulo="Quem mora aqui" nota="Censo 2022 (IBGE), no hexágono">
-        <MedidorScore rotulo="Score censitário" valor={hex.censo} faixas={FAIXAS_POTENCIAL} />
-        <FilaApoio>
-          <NumeroApoio rotulo="População" valor={num(hex.pop)} />
-          <NumeroApoio rotulo="Renda per capita" valor={hex.renda == null ? '—' : brl(hex.renda)} />
-          <NumeroApoio
-            rotulo="Renda domiciliar"
-            valor={hex.renda_dom == null ? '—' : brl(hex.renda_dom)}
-          />
-        </FilaApoio>
-      </Bloco>
-
-      {/* CONTAGEM, e do HEXAGONO. Até 2026-08-13 este bloco lia `hex.conc`/`hex.ultra`,
-          que não são nenhuma das duas coisas: `conc` é `oferta_consumida_mercado_estimada
-          / 2.500` — capacidade do modelo de 2 km ponderado por distância —, então uma
-          concorrente a 1,8 km do centroide entrava aqui sem estar dentro do hexágono, e
-          `ultra` vem da camada de performance. O rótulo prometia "unidades mapeadas
-          dentro do hexágono" e entregava outra medida. O mesmo defeito de redação já
-          tinha sido corrigido no texto do funil ("RAIO, NÃO HEXÁGONO", em `app.py`).
-          Agora vem de `conc_hex`/`ultra_hex`, contagem de ponto por célula H3 res-7 sobre
-          os MESMOS pontos que viram pin no mapa — ficha e mapa não podem discordar. */}
-      <Bloco titulo="Quem já disputa o aluno" nota="unidades mapeadas dentro do hexágono">
-        <FilaApoio>
-          <NumeroApoio
-            rotulo="Concorrentes"
-            valor={hex.conc_hex == null ? '—' : num(hex.conc_hex)}
-          />
-          <NumeroApoio
-            rotulo="Unidades Ultra"
-            valor={hex.ultra_hex == null ? '—' : num(hex.ultra_hex)}
-          />
-        </FilaApoio>
-      </Bloco>
-
-      <Bloco titulo="Quanto de mercado sobra" nota="capacidade, não meta de abertura">
-        <BarraMercado sam={hex.sam} residual={hex.oferta} />
-        <MedidorScore
-          rotulo="Score de residual"
-          valor={hex.res}
-          faixas={FAIXAS_DEMANDA}
-          nota="satura em 100 acima de 2.500 alunos — uma unidade cheia"
-        />
-        {/* SEM faixas: o híbrido combina duas escalas (censo e residual) e não tem régua
-            nomeada publicada. Colorir por analogia daria a ele um veredito que ninguém
-            aprovou. Fica na cor neutra. */}
-        <MedidorScore rotulo="Score híbrido" valor={hex.hib} />
-        <FilaApoio>
-          <NumeroApoio
-            rotulo="Mercado potencial (SAM)"
-            valor={hex.sam == null ? '—' : alunos(hex.sam)}
-          />
-          <NumeroApoio
-            rotulo="Residual disponível"
-            valor={hex.oferta == null ? '—' : alunos(hex.oferta)}
-          />
-        </FilaApoio>
-      </Bloco>
-
-      {/* A OFERTA IMOBILIÁRIA coletada dentro do hexágono. É a ponte entre as duas
-          leituras: o residual acima diz quanto mercado sobra, e aqui está o imóvel
-          concreto para capturá-lo. Os quatro números são os MESMOS do ranking da aba
-          (Aluguel, Custo de ocupação, Projeção de faturamento, Área) — o clique abre
-          a janela de detalhe, e dela se vai para a aba já focado no imóvel. */}
-      {imoveis != null && imoveis.length > 0 && (
-        <Bloco
-          titulo="Imóveis disponíveis aqui"
-          nota={
-            imoveis.length === 1
-              ? '1 oportunidade coletada neste hexágono'
-              : `${num(imoveis.length)} oportunidades coletadas neste hexágono`
-          }
+      {/* ---- Quem mora aqui ---- */}
+      <section>
+        <TituloSecao titulo="Quem mora aqui" nota="Censo 2022 · IBGE" />
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            borderRadius: 12,
+            overflow: 'hidden',
+            border: '1px solid var(--line-soft)',
+          }}
         >
-          {imoveis.map((o) => (
-            <CartaoImovel key={o.id} op={o} onAbrir={onVerImovel ? () => onVerImovel(o) : undefined} />
-          ))}
-        </Bloco>
-      )}
-
-      {/* O crescimento tem DUAS bases e elas não se misturam: a obra nova é DESTE
-          hexágono (satélite); o emprego formal é do MUNICÍPIO inteiro (CAGED). Rotular as
-          duas como "crescimento do hexágono" afirmaria sobre a área uma medida que é da
-          cidade. Some inteiro quando nenhuma das duas existe — bloco sem dado declara o
-          motivo, nunca desaparece em silêncio. */}
-      {(hex.cres_hex_classe || hex.cres_hex_taxa != null || cres) && (
-        <Bloco titulo="Como a região vem indo" nota={hex.mun ? `obra nova aqui · emprego em ${hex.mun}` : undefined}>
-          {/* Sinal EXPLICITO nas duas taxas deste bloco (`pctVar`). São VARIAÇÃO, não
-              participação: sem o `+`, "8,8%" não diz se a cidade cresceu ou se aquilo é
-              um patamar — e o bloco inteiro existe para responder "como a região vem
-              indo". O negativo já vinha; o positivo é que era mudo. */}
-          {/* A guarda `== null ? '—'` TEM de ficar: `pctVar` devolve `TEXTO_SEM_DADO`, que
-              é "Não disponível" por extenso, e este `Kpi` desenha o valor em 700 24px com
-              `nowrap` + `ellipsis` — o texto sairia truncado como "Não dispo…". Perdi a
-              guarda ao trocar `pct` por `pctVar`; o travessão curto é a regra deste
-              arquivo e a mesma nota que escrevi em `exec/PainelRede`. */}
-          <Kpi
-            label="Obra nova (2016→2023)"
-            valor={hex.cres_hex_taxa == null ? '—' : pctVar(hex.cres_hex_taxa)}
-            sub={hex.cres_hex_classe ?? undefined}
+          <CelulaCenso valor={hex.pop == null ? '—' : num(hex.pop)} rotulo="População" />
+          <CelulaCenso valor={hex.renda == null ? '—' : brl(hex.renda)} rotulo="Renda per capita" />
+          <CelulaCenso
+            valor={hex.renda_dom == null ? '—' : brl(hex.renda_dom)}
+            rotulo="Renda domiciliar"
+            ultima
           />
-          {/* O CAGED só é publicado com a mediana da UF ao lado: sem referência estadual
-              o número não deve ser mostrado nem classificado (regra do Juan, 2026-08-07).
-              Aqui isso vira "—" com o motivo por extenso, em vez de um número solto. */}
-          <Kpi
-            label="Emprego formal (município)"
-            valor={cres?.emp == null || cres?.uf_mediana == null ? '—' : pctVar(cres.emp)}
-            sub={
-              cres?.uf_mediana == null
-                ? 'sem mediana da UF para comparar'
-                : `mediana da UF: ${pctVar(cres.uf_mediana)}`
+        </div>
+      </section>
+
+      {/* ---- Quanto de mercado sobra (compacto — pedido do Felipe, 2026-08-21) ---- */}
+      <CardPainel style={{ padding: '13px 14px' }}>
+        <TituloSecao titulo="Quanto de mercado sobra" nota="capacidade, não meta" gap={10} />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 11 }}>
+          <BigAlunos
+            valor={hex.oferta}
+            cor="var(--ac-text)"
+            rotulo={
+              mercado
+                ? `Não atendidos · ${Math.round(mercado.fracaoDisponivel * 100)}% do mercado`
+                : 'Não atendidos'
             }
           />
-        </Bloco>
+          {/* "pela oferta instalada (raio de 2 km)" SEMPRE: o número vem do modelo de
+              raio ponderado por distância (SAM − residual, inclui a Ultra própria) —
+              creditá-lo ao `conc_hex` fundia as duas bases que o repo manda separar
+              ("RAIO, NÃO HEXÁGONO"); a contagem do hexágono vive nos chips acima. */}
+          <BigAlunos
+            valor={mercado ? mercado.atendido : null}
+            cor="var(--tx-soft)"
+            rotulo="Já atendidos pela oferta instalada (raio de 2 km)"
+          />
+        </div>
+        <div
+          style={{
+            borderRadius: 12,
+            background: 'var(--surf-raised)',
+            border: '1px solid var(--line-soft)',
+            padding: '2px 0',
+          }}
+        >
+          <LinhaTabela rotulo="Mercado total (SAM)" valor={hex.sam == null ? '—' : `${alunos(hex.sam)} alunos`} />
+          <LinhaTabela rotulo="Capacidade de uma unidade" valor={`${num(CAPACIDADE_UNIDADE_ALUNOS)} alunos`} />
+          {/* "Sobra vs capacidade", e NÃO "ocupação na abertura": o dado só diz quantos
+              alunos não são atendidos — prometer ocupação no dia 1 assumiria captura de
+              100% do residual, premissa que nenhuma régua publicada sustenta (a rampa de
+              abertura é do simulador de viabilidade). */}
+          <LinhaTabela
+            rotulo="Sobra vs capacidade de uma unidade"
+            valor={ocupacaoAbertura == null ? '—' : `${ocupacaoAbertura}%`}
+            tom={fxResidual?.cor}
+          />
+        </div>
+        {/* DÁ PARA ENTRAR? A frase vem de `leituraDeSaturacao`, regra de bolso publicada
+            (o corte é a capacidade de UMA unidade). NÃO é veredito de viabilidade — isso
+            é do simulador, sobre um imóvel concreto. */}
+        {saturacao && (
+          <p
+            style={{
+              margin: '10px 0 0',
+              font: '400 11px/1.5 var(--f-ui)',
+              color: saturacao.tom === 'saturado' ? 'var(--tx-soft)' : 'var(--tx-narrative)',
+            }}
+          >
+            {saturacao.frase}
+          </p>
+        )}
+      </CardPainel>
+
+      {/* ---- Como a região vem indo (obra nova é DESTE hex; emprego é do MUNICÍPIO —
+              as duas bases não se misturam, e o bloco some inteiro sem nenhuma) ---- */}
+      {(hex.cres_hex_classe || hex.cres_hex_taxa != null || cres) && (
+        <CardPainel>
+          <TituloSecao
+            titulo="Como a região vem indo"
+            nota={hex.mun ? `obra aqui · emprego em ${hex.mun}` : undefined}
+          />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 14px' }}>
+            {/* A guarda `== null ? '—'` TEM de ficar: `pctVar(null)` devolve "Não
+                disponível" por extenso e estouraria o número mono. */}
+            <MiniLeitura
+              valor={hex.cres_hex_taxa == null ? '—' : pctVar(hex.cres_hex_taxa)}
+              rotulo="Obra nova (2016→2023)"
+              nota={hex.cres_hex_classe ?? undefined}
+            />
+            {/* O CAGED só aparece com a mediana da UF ao lado (regra do Juan, 2026-08-07). */}
+            <MiniLeitura
+              valor={cres?.emp == null || cres?.uf_mediana == null ? '—' : pctVar(cres.emp)}
+              rotulo="Emprego formal (município)"
+              nota={
+                cres?.uf_mediana == null
+                  ? 'sem mediana da UF para comparar'
+                  : `mediana da UF: ${pctVar(cres.uf_mediana)}`
+              }
+            />
+          </div>
+        </CardPainel>
+      )}
+
+      {/* ---- Imóveis disponíveis aqui ---- */}
+      {imoveis != null && imoveis.length > 0 && (
+        <section>
+          <TituloSecao
+            titulo="Imóveis disponíveis aqui"
+            nota={imoveis.length === 1 ? '1 coletado' : `${num(imoveis.length)} coletados`}
+          />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {imoveis.map((o) => (
+              <CartaoImovel key={o.id} op={o} onAbrir={onVerImovel ? () => onVerImovel(o) : undefined} />
+            ))}
+          </div>
+        </section>
       )}
     </div>
   )
 }
 
-/** Um imóvel da seção "Imóveis disponíveis aqui": ícone do tipo + os 4 números do
- *  ranking da aba, em miniatura. O cartão inteiro é o clique — abre o detalhe. */
+/** A frase do veredito, montada só com o que o payload afirma. */
+function FraseVeredito({ hex }: { hex: Hex }) {
+  if (hex.sam == null && hex.oferta == null) {
+    return <>Sem leitura de mercado para este hexágono.</>
+  }
+  return (
+    <>
+      {hex.sam != null && (
+        <>
+          Mercado de <b className="num">{alunos(hex.sam)}</b> alunos
+        </>
+      )}
+      {hex.oferta != null && (
+        <>
+          {hex.sam != null ? ', com ' : 'Sobram '}
+          <b className="num" style={{ color: 'var(--ac-text)' }}>
+            {alunos(hex.oferta)}
+          </b>{' '}
+          ainda não atendidos
+        </>
+      )}
+      {hex.conc_hex != null && hex.conc_hex > 0 && (
+        <>
+          {' '}
+          e <b className="num">{num(hex.conc_hex)}</b> concorrente
+          {hex.conc_hex === 1 ? '' : 's'} instalado{hex.conc_hex === 1 ? '' : 's'}
+        </>
+      )}
+      .
+    </>
+  )
+}
+
+/** Chip de número-chave do veredito (valor mono + rótulo). */
+function ChipNumero({ valor, rotulo, tom }: { valor: string; rotulo: string; tom?: string }) {
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'baseline',
+        gap: 6,
+        padding: '7px 11px',
+        borderRadius: 9,
+        background: 'var(--surf-raised)',
+        border: '1px solid var(--line-soft)',
+      }}
+    >
+      <span className="num" style={{ font: '500 13px/1 var(--f-num)', color: tom ?? 'var(--tx-max)' }}>
+        {valor}
+      </span>
+      <span style={{ font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>{rotulo}</span>
+    </span>
+  )
+}
+
+/** Card de score com a régua de tracinhos. A cor vem da faixa publicada da camada. */
+function CardScore({
+  rotulo,
+  valor,
+  cor,
+  corTicks,
+  nota,
+}: {
+  rotulo: string
+  valor: number | null
+  cor: string
+  corTicks?: string
+  nota: string
+}) {
+  return (
+    <div
+      style={{
+        padding: '12px 12px 11px',
+        borderRadius: 13,
+        background: 'var(--surf-raised)',
+        border: '1px solid var(--line-soft)',
+      }}
+    >
+      <div
+        className="num"
+        style={{ font: '400 9px/1 var(--f-num)', letterSpacing: '.1em', color: 'var(--tx-sub)', marginBottom: 9 }}
+      >
+        {rotulo}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 3 }}>
+        <span
+          className="num"
+          style={{ font: '500 22px/1 var(--f-num)', color: valor == null ? 'var(--tx-sub)' : cor }}
+        >
+          {valor == null ? '—' : num(valor, 1)}
+        </span>
+        <span className="num" style={{ font: '400 10px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
+          /100
+        </span>
+      </div>
+      <div style={{ margin: '10px 0 8px' }}>
+        <Ticks score={valor} cor={corTicks ?? cor} />
+      </div>
+      <div style={{ font: '400 10.5px/1.35 var(--f-ui)', color: 'var(--tx-sub)' }}>{nota}</div>
+    </div>
+  )
+}
+
+function CelulaCenso({ valor, rotulo, ultima }: { valor: string; rotulo: string; ultima?: boolean }) {
+  return (
+    <div
+      style={{
+        padding: '13px 14px',
+        background: 'var(--surf-raised)',
+        borderRight: ultima ? undefined : '1px solid var(--line-soft)',
+      }}
+    >
+      <div className="num" style={{ font: '500 16px/1 var(--f-num)', color: 'var(--tx-max)' }}>{valor}</div>
+      <div style={{ font: '400 10.5px/1.25 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 5 }}>
+        {rotulo}
+      </div>
+    </div>
+  )
+}
+
+/** Número de alunos com a situação por extenso embaixo (19px: o card é apoio, não herói). */
+function BigAlunos({ valor, cor, rotulo }: { valor: number | null; cor: string; rotulo: string }) {
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+        <span
+          className="num"
+          style={{ font: '500 19px/1 var(--f-num)', color: valor == null ? 'var(--tx-sub)' : cor }}
+        >
+          {valor == null ? '—' : alunos(valor)}
+        </span>
+        <span style={{ font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>alunos</span>
+      </div>
+      <div style={{ font: '400 10.5px/1.35 var(--f-ui)', color: 'var(--tx-narrative)', marginTop: 4 }}>
+        {rotulo}
+      </div>
+    </div>
+  )
+}
+
+function MiniLeitura({ valor, rotulo, nota }: { valor: string; rotulo: string; nota?: string }) {
+  return (
+    <div>
+      <div className="num" style={{ font: '500 15px/1 var(--f-num)', color: 'var(--tx-max)' }}>{valor}</div>
+      <div style={{ font: '400 10.5px/1.3 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 4 }}>
+        {rotulo}
+      </div>
+      {nota && (
+        <div style={{ font: '400 10px/1.3 var(--f-ui)', color: 'var(--tx-label)', marginTop: 2 }}>
+          {nota}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Um imóvel da seção, com presença (pedido do Felipe, 2026-08-21): ícone maior, tipo e
+ *  bairro no subtítulo, os 4 números do ranking da aba em grade e a razão ALUGUEL/FAT
+ *  à direita — colorida pela régua 15/20/30 do modelo de viabilidade (a única publicada
+ *  que compara custo com retorno). O cartão inteiro é o clique. */
 function CartaoImovel({ op, onAbrir }: { op: Oportunidade; onAbrir?: () => void }) {
   const tint = corTipo(op.tipo)
+  const pct = pctAluguelFat(op)
+  const cls = classeAluguelFat(pct)
   const ocupacao = custoOcup(op)
   return (
     <button
@@ -246,64 +531,90 @@ function CartaoImovel({ op, onAbrir }: { op: Oportunidade; onAbrir?: () => void 
         width: '100%',
         textAlign: 'left',
         display: 'grid',
-        gap: 10,
-        padding: 12,
-        borderRadius: 'var(--r-lg)',
-        cursor: onAbrir ? 'pointer' : 'default',
+        gridTemplateColumns: '44px 1fr auto',
+        gap: 13,
+        alignItems: 'start',
+        padding: 14,
+        borderRadius: 14,
         background: 'var(--surf-raised)',
         border: '1px solid var(--line-soft)',
+        cursor: onAbrir ? 'pointer' : 'default',
       }}
     >
-      <span style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
+      <span
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: 12,
+          background: `${tint}1f`,
+          display: 'grid',
+          placeItems: 'center',
+          color: tint,
+        }}
+      >
+        <IconeTipo tipo={op.tipo} tamanho={22} />
+      </span>
+      <span style={{ minWidth: 0 }}>
         <span
           style={{
-            width: 30,
-            height: 30,
-            borderRadius: 8,
-            display: 'grid',
-            placeItems: 'center',
-            color: tint,
-            background: `${tint}1f`,
-            flexShrink: 0,
+            display: 'block',
+            font: '600 13.5px/1.3 var(--f-ui)',
+            color: 'var(--tx-max)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
           }}
         >
-          <IconeTipo tipo={op.tipo} tamanho={16} />
+          {op.titulo}
         </span>
-        <span style={{ minWidth: 0 }}>
-          <span
-            style={{
-              display: 'block',
-              font: '600 12.5px/1.25 var(--f-ui)',
-              color: 'var(--tx-strong)',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {op.titulo}
-          </span>
-          <span
-            style={{
-              display: 'block',
-              font: '400 10.5px/1.3 var(--f-ui)',
-              color: 'var(--tx-sub)',
-              marginTop: 2,
-            }}
-          >
-            {labelTipo(op.tipo)}
-            {op.bairro ? ` · ${op.bairro}` : ''}
-          </span>
+        <span
+          style={{
+            display: 'block',
+            font: '400 10.5px/1.3 var(--f-ui)',
+            color: 'var(--tx-sub)',
+            marginTop: 2,
+          }}
+        >
+          {labelTipo(op.tipo)}
+          {op.bairro ? ` · ${op.bairro}` : ''}
+        </span>
+        <span
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: '7px 16px',
+            marginTop: 9,
+          }}
+        >
+          <MiniNum rotulo="Aluguel" valor={op.aluguel == null ? '—' : brl(op.aluguel)} />
+          <MiniNum rotulo="Custo de ocupação" valor={ocupacao > 0 ? brl(ocupacao) : '—'} />
+          <MiniNum
+            rotulo="Faturamento proj."
+            valor={op.fat_proj == null ? '—' : `${brl(op.fat_proj, true)}/mês`}
+            verde
+          />
+          <MiniNum rotulo="Área" valor={op.area == null ? '—' : `${num(op.area)} m²`} />
         </span>
       </span>
-      <span style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 14px' }}>
-        <MiniNum rotulo="Aluguel" valor={op.aluguel == null ? '—' : brl(op.aluguel)} />
-        <MiniNum rotulo="Custo de ocupação" valor={ocupacao > 0 ? brl(ocupacao) : '—'} />
-        <MiniNum
-          rotulo="Faturamento proj."
-          valor={op.fat_proj == null ? '—' : `${brl(op.fat_proj, true)}/mês`}
-          verde
-        />
-        <MiniNum rotulo="Área" valor={op.area == null ? '—' : `${num(op.area)} m²`} />
+      <span style={{ textAlign: 'right', paddingTop: 2 }}>
+        <span
+          className="num"
+          style={{ display: 'block', font: '500 14px/1 var(--f-num)', color: cls?.tom ?? 'var(--tx-sub)' }}
+        >
+          {pct == null ? '—' : `${num(pct, 1)}%`}
+        </span>
+        <span
+          className="num"
+          style={{
+            display: 'block',
+            font: '400 8.5px/1 var(--f-num)',
+            letterSpacing: '.08em',
+            color: 'var(--tx-sub)',
+            marginTop: 3,
+          }}
+        >
+          ALUGUEL/FAT
+        </span>
       </span>
     </button>
   )
@@ -319,7 +630,7 @@ function MiniNum({ rotulo, valor, verde }: { rotulo: string; valor: string; verd
         className="num"
         style={{
           display: 'block',
-          font: '600 12px/1.3 var(--f-num)',
+          font: '600 12.5px/1.3 var(--f-num)',
           color: verde ? 'var(--pos-text)' : 'var(--tx-strong)',
           marginTop: 2,
           overflow: 'hidden',
@@ -330,30 +641,5 @@ function MiniNum({ rotulo, valor, verde }: { rotulo: string; valor: string; verd
         {valor}
       </span>
     </span>
-  )
-}
-
-/** Uma seção de KPIs. Grade de 2 colunas — a mesma da ficha do ponto. */
-function Bloco({
-  titulo,
-  nota,
-  children,
-}: {
-  titulo: string
-  nota?: string
-  children: ReactNode
-}) {
-  return (
-    <section>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-        <h3 style={{ margin: 0, font: '600 13px/1.2 var(--f-ui)', color: 'var(--tx-max)' }}>
-          {titulo}
-        </h3>
-        {nota && (
-          <span style={{ font: '400 11px/1.3 var(--f-ui)', color: 'var(--tx-sub)' }}>{nota}</span>
-        )}
-      </div>
-      <div style={{ marginTop: 10, display: 'grid', gap: 12 }}>{children}</div>
-    </section>
   )
 }

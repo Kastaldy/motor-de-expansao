@@ -240,11 +240,14 @@ export default function JanelaFicha({
         }}
       >
         <div style={{ display: 'grid', gap: 2, minWidth: 0, flex: 1 }}>
+          {/* SERIF: a voz narrativa dos títulos do produto (design "Paineis do Hexagono",
+              2026-08-21). Vale para TODAS as janelas — hexágono, imóvel, comparação e
+              ficha do ponto falam com a mesma cara. */}
           <span
+            className="story"
             style={{
-              font: '600 14px/1.2 var(--f-ui)',
+              font: '400 19px/1.15 var(--f-story)',
               color: 'var(--tx-max)',
-              letterSpacing: '-.01em',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',

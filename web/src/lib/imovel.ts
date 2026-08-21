@@ -47,6 +47,19 @@ export const labelTipo = (t: string): string => {
   return LABEL_TIPO[t] ?? t.charAt(0).toUpperCase() + t.slice(1)
 }
 
+/** Rotulo de EXIBICAO da faixa M1 do payload de oportunidades (valores CRUS como
+ *  `prioridade_maxima` — dominio diferente do `Hex.faixa` do mapa, que ja chega
+ *  com o nome de exibicao). Fallback capitaliza em vez de vazar o underscore. */
+export const FAIXA_LABEL: Record<string, string> = {
+  prioridade_maxima: 'Prioridade máxima',
+  alta: 'Alta',
+  media: 'Média',
+  baixa: 'Baixa',
+  minima: 'Mínima',
+}
+export const labelFaixa = (v: string | null): string | null =>
+  v == null ? null : (FAIXA_LABEL[v] ?? v.charAt(0).toUpperCase() + v.slice(1))
+
 /** Custo de ocupacao mensal = aluguel + IPTU + condominio (0 quando ausente). */
 export const custoOcup = (o: Oportunidade): number =>
   [o.aluguel, o.iptu, o.condominio].reduce<number>((s, v) => s + (v ?? 0), 0)
@@ -54,6 +67,31 @@ export const custoOcup = (o: Oportunidade): number =>
 /** R$/m² de aluguel: o do backend quando veio, senao derivado de aluguel/area. */
 export const rsM2 = (o: Oportunidade): number | null =>
   o.rs_m2 != null ? o.rs_m2 : o.aluguel != null && o.area ? o.aluguel / o.area : null
+
+/* --- Regua PUBLICADA do modelo de viabilidade: aluguel como % do faturamento --
+   Os clusters sao os MESMOS do simulador (`BlocoViabilidadePonto` / `aluguel_teto`
+   do backend): ideal 15%, teto 20%, excecao 30%. E' a unica regua aprovada que
+   compara custo com retorno — nada de limiar inventado (o design de referencia
+   trazia "18%", que nao existe no modelo). Rotulos/tons espelham a classificacao
+   da tela de Viabilidade (`tetoCls`), para as duas superficies falarem igual. */
+export const ALUGUEL_PCT_IDEAL = 15
+export const ALUGUEL_PCT_TETO = 20
+export const ALUGUEL_PCT_EXCECAO = 30
+
+/** % do faturamento projetado que o ALUGUEL toma; null sem as duas pontas. */
+export const pctAluguelFat = (o: Oportunidade): number | null =>
+  o.aluguel != null && o.fat_proj != null && o.fat_proj > 0
+    ? (o.aluguel / o.fat_proj) * 100
+    : null
+
+/** Classificacao do % na regua 15/20/30 — mesmos rotulos/tons da Viabilidade. */
+export function classeAluguelFat(pct: number | null): { rotulo: string; tom: string } | null {
+  if (pct == null || Number.isNaN(pct)) return null
+  if (pct <= ALUGUEL_PCT_IDEAL) return { rotulo: 'dentro do ideal', tom: 'var(--pos-text)' }
+  if (pct <= ALUGUEL_PCT_TETO) return { rotulo: 'no teto', tom: 'var(--warn-text)' }
+  if (pct <= ALUGUEL_PCT_EXCECAO) return { rotulo: 'exceção', tom: 'var(--warn-text)' }
+  return { rotulo: 'acima do máximo', tom: 'var(--neg)' }
+}
 
 /* --- Acento da camada imobiliaria = ROSA MAGENTA (pedido do Felipe) ----------
    Colore selecao/realces e o botao de acao da camada, na aba e no mapa. Hex
