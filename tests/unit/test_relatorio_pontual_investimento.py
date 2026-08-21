@@ -3,7 +3,9 @@
 O payload da API sempre trouxe `investimento.obra` e `investimento.equipamentos` -- sao
 os dois valores que o operador DIGITA na tela --, mas `_viab_normalizado` nao os lia e o
 PDF nunca os imprimia: o relatorio afirmava "investimento total X" sem dizer de que ele
-e' feito. Estes testes travam a linha nova e a degradacao graciosa dela.
+e' feito. A linha traz SO' OS VALORES (decisao de Juan, 2026-08-21): prazo, parcelamento
+e juros ficam na linha de Financiamento, logo abaixo. Estes testes travam isso e a
+degradacao graciosa.
 """
 
 from __future__ import annotations
@@ -35,12 +37,9 @@ def test_normalizado_passa_a_carregar_a_composicao():
     assert dados["juros_equipamentos_am"] == 0.0149
 
 
-def test_linha_nomeia_as_duas_naturezas():
+def test_linha_traz_os_dois_valores():
     linha = _viab_linha_composicao_investimento(_viab_normalizado(_PAYLOAD))
-    assert linha == (
-        "Investimento: obra R$ 850.000,00 (4x sem juros) + "
-        "equipamentos R$ 620.000,00 (financiados em 48x a 1,5% a.m.)."
-    )
+    assert linha == "Investimento: obra R$ 850.000,00 + equipamentos R$ 620.000,00."
 
 
 def test_a_linha_entra_no_slide():
@@ -50,21 +49,22 @@ def test_a_linha_entra_no_slide():
 
 def test_so_obra_nao_afirma_equipamentos():
     dados = _viab_normalizado({"investimento": {"obra": 400_000.0, "parcelas_obra": 4}})
-    assert _viab_linha_composicao_investimento(dados) == (
-        "Investimento: obra R$ 400.000,00 (4x sem juros)."
-    )
+    assert _viab_linha_composicao_investimento(dados) == "Investimento: obra R$ 400.000,00."
 
 
-def test_equipamentos_sem_prazo_nem_juros_nao_inventa_numero():
+def test_so_equipamentos_nao_afirma_obra():
     dados = _viab_normalizado({"investimento": {"equipamentos": 300_000.0}})
     assert _viab_linha_composicao_investimento(dados) == (
-        "Investimento: equipamentos R$ 300.000,00 (financiados)."
+        "Investimento: equipamentos R$ 300.000,00."
     )
 
 
-def test_parcela_unica_de_obra_nao_diz_parcelamento():
-    dados = _viab_normalizado({"investimento": {"obra": 400_000.0, "parcelas_obra": 1}})
-    assert _viab_linha_composicao_investimento(dados) == "Investimento: obra R$ 400.000,00."
+def test_condicao_de_contrato_nao_entra_na_linha():
+    # Prazo/parcelas/juros seguem no payload e na linha de Financiamento; esta linha
+    # responde so' "quanto em obra, quanto em equipamentos".
+    linha = _viab_linha_composicao_investimento(_viab_normalizado(_PAYLOAD))
+    for ruido in ("4x", "48x", "juros", "financiad"):
+        assert ruido not in linha
 
 
 def test_sem_composicao_no_payload_a_linha_nao_existe():

@@ -928,6 +928,14 @@ def _info_valor(value: Any, kind: str) -> str:
     return str(value)
 
 
+# Faixa de alerta no pe da pagina do imovel. Altura FIXA: a pagina nao tem quebra
+# automatica e o texto do alerta e' curto e de tamanho conhecido (contagem + distancia).
+_INFO_IMOVEL_ALERTA_H = 40.0
+_INFO_IMOVEL_ALERTA_ACENTO_H = 4.0
+# Folga ate o rodape, para a faixa nao encostar na assinatura da pagina.
+_INFO_IMOVEL_ALERTA_MARGEM_INFERIOR = 58.0
+
+
 def _info_imovel_page(
     pdf: _UltraPDF,
     info_imovel: dict[str, Any],
@@ -935,8 +943,16 @@ def _info_imovel_page(
     *,
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
     secondary: tuple[int, int, int] = ULTRA_MAGENTA,
+    alerta_canibalizacao: str | None = None,
 ) -> None:
-    """Pagina de informacoes do imovel: endereco + cards 3x2 + observacoes. READ-ONLY M1."""
+    """Pagina do imovel: endereco + cards 3x2 + observacoes + alerta. READ-ONLY M1.
+
+    `alerta_canibalizacao` e a frase ja pronta de `_conclusao_canibalizacao` -- esta pagina
+    RENDERIZA, nao decide. Vem no RODAPE e em VERMELHO SOLIDO (pedido de Juan, 2026-08-21):
+    o imovel e' o assunto do slide, e ter unidade nossa no raio e' informacao sobre ESTE
+    imovel, nao so' sobre a praca. A Conclusao segue trazendo a mesma frase como ressalva;
+    a duplicacao e deliberada, porque os dois slides sao lidos separados.
+    """
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _draw_title_band(pdf, _INFO_IMOVEL_PAGE_TITLE, rgb=primary)
@@ -984,6 +1000,24 @@ def _info_imovel_page(
         pdf.set_font("Helvetica", "", 10)
         pdf.set_xy(margin_x, y_obs + 16)
         pdf.multi_cell(_PAGE_W - 2 * margin_x, 13, _ascii(observacoes[:600]))
+
+    if alerta_canibalizacao:
+        # Faixa no pe da pagina: fundo pastel + barra de acento e texto no vermelho SOLIDO,
+        # o mesmo par (_CARD_VERMELHO_RGB, (198,57,57)) que a Conclusao usa no card
+        # eliminatorio -- reusar o par mantem "vermelho" com UM significado no documento.
+        fundo, tinta = _CONCLUSAO_OBS_CORES["eliminatorio"]
+        largura = _PAGE_W - 2 * margin_x
+        altura = _INFO_IMOVEL_ALERTA_H
+        y_alerta = _PAGE_H - _INFO_IMOVEL_ALERTA_MARGEM_INFERIOR - altura
+        pdf.set_fill_color(*fundo)
+        pdf.rect(margin_x, y_alerta, largura, altura, style="F")
+        pdf.set_fill_color(*tinta)
+        pdf.rect(margin_x, y_alerta, largura, _INFO_IMOVEL_ALERTA_ACENTO_H, style="F")
+        pdf.set_text_color(*tinta)
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_xy(margin_x + 14, y_alerta + 12)
+        pdf.multi_cell(largura - 28, 13, _ascii(alerta_canibalizacao))
+
     _draw_footer(pdf, with_attribution=False)
 
 
@@ -1296,13 +1330,12 @@ def _viab_linha_custos(viabilidade: dict[str, Any]) -> str | None:
 
 
 def _viab_linha_composicao_investimento(viabilidade: dict[str, Any]) -> str | None:
-    """Obra x Equipamentos: os dois valores digitados na tela de Viabilidade.
+    """Obra e Equipamentos: os dois valores que o operador digita na tela de Viabilidade.
 
-    Sao naturezas DIFERENTES e a frase precisa dizer isso, senao viram um total so' na
-    cabeca do leitor: a obra e' equity do franqueado, parcelada SEM juros junto do
-    contrato; os equipamentos sao FINANCIADOS (prazo + juros a.m.) e a PMT deles entra
-    abaixo do EBITDA. Cada metade so' entra se o payload a trouxe -- o PDF nunca inventa
-    prazo nem taxa que o backend nao mandou.
+    SO' OS VALORES (decisao de Juan, 2026-08-21). Prazo, parcelamento e juros continuam
+    no payload e na linha de Financiamento logo abaixo -- repeti-los aqui enchia a frase
+    de condicao de contrato quando a pergunta que ela responde e' simples: quanto foi
+    posto em obra e quanto em equipamentos. Cada metade so' entra se o payload a trouxe.
     """
     obra = viabilidade.get("obra")
     equipamentos = viabilidade.get("equipamentos")
@@ -1311,21 +1344,9 @@ def _viab_linha_composicao_investimento(viabilidade: dict[str, Any]) -> str | No
 
     partes: list[str] = []
     if _viab_tem(obra):
-        parcelas = _viab_inteiro(viabilidade.get("parcelas_obra"))
-        if parcelas is not None and parcelas > 1:
-            partes.append(f"obra {_viab_brl(obra)} ({parcelas}x sem juros)")
-        else:
-            partes.append(f"obra {_viab_brl(obra)}")
+        partes.append(f"obra {_viab_brl(obra)}")
     if _viab_tem(equipamentos):
-        prazo = _viab_inteiro(viabilidade.get("prazo_equipamentos"))
-        juros = viabilidade.get("juros_equipamentos_am")
-        if prazo is not None and prazo > 0 and _viab_tem(juros):
-            detalhe = f" (financiados em {prazo}x a {_viab_pct(juros)} a.m.)"
-        elif prazo is not None and prazo > 0:
-            detalhe = f" (financiados em {prazo}x)"
-        else:
-            detalhe = " (financiados)"
-        partes.append(f"equipamentos {_viab_brl(equipamentos)}{detalhe}")
+        partes.append(f"equipamentos {_viab_brl(equipamentos)}")
 
     return "Investimento: " + " + ".join(partes) + "."
 
@@ -2216,6 +2237,27 @@ def _conclusao_canibalizacao(result: Mapping[str, Any]) -> str | None:
     return f"Canibalização da rede: {sujeito} do estudo; {proxima} a {metros} m do ponto."
 
 
+# --- Recomendacao de disputa (praca com mercado consumido) -------------------
+#
+# Quando o residual acaba, o parecer ja dizia o NUMERO ("mercado ja consumido: residual X
+# contra potencial Y") e parava ali -- quem lia ficava sem saber se aquilo era um "nao
+# entre" ou um "entre preparado". Esta linha responde isso em texto.
+#
+# QUALITATIVA de proposito: a comparacao de metragem com as concorrentes exigiria a area
+# de cada uma, e `competitors.py` normaliza nome/coordenada/cidade/uf/rede/status -- area
+# NAO existe na base. Afirmar "maior que os N m2 das concorrentes" seria inventar o
+# numero; a recomendacao diz a direcao sem cravar o alvo.
+# PONTUACAO EM ASCII (CLAUDE.md secao 2): o travessao cai fora do latin-1 do core font
+# Helvetica e viraria "?" no PDF em silencio. Travado por
+# `test_pagina_de_conclusao_nao_usa_caractere_fora_de_latin1`, que pegou exatamente isso
+# na primeira versao desta frase.
+_CONCLUSAO_RECOMENDACAO_DISPUTA = (
+    "Recomendação: praça disputada. O mercado já está consumido pela oferta instalada, "
+    "então entrar aqui é brigar por aluno de concorrente. O imóvel precisa superar as "
+    "unidades vizinhas em metragem e estrutura para sustentar a disputa."
+)
+
+
 def _avaliar_conclusao(
     result: Mapping[str, Any] | None,
     residual: Mapping[str, Any] | None,
@@ -2291,6 +2333,7 @@ def _avaliar_conclusao(
             "Mercado já consumido pela oferta instalada: residual de "
             f"{_format_number(disponivel, 0)} contra potencial de {_format_number(sam, 0)} alunos."
         )
+        ressalvas.append(_CONCLUSAO_RECOMENDACAO_DISPUTA)
 
     # --- E5: metas censitarias falhando EM BLOCO (BLK-CONC-ESTUDO) ---
     # Vale nos DOIS modos desde a emenda da DEC-030 (Vinicius, 2026-08-14). Nasceu preso ao
@@ -3915,7 +3958,10 @@ def gerar_pdf_relatorio_pontual_classico(
     if foto_satelite:
         _foto_satelite_page(pdf, foto_satelite, assets, primary=p1, grande=foto_satelite_grande)
     if info_imovel:
-        _info_imovel_page(pdf, info_imovel, assets, primary=p2, secondary=s2)
+        _info_imovel_page(
+            pdf, info_imovel, assets, primary=p2, secondary=s2,
+            alerta_canibalizacao=_conclusao_canibalizacao(result),
+        )
     _classico_socioeconomia_residual_page(
         pdf, layers, assets, banda_texto=banda_texto, primary=p0
     )

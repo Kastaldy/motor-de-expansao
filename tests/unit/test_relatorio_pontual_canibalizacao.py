@@ -78,3 +78,60 @@ def test_alerta_rebaixa_o_selo_para_ressalvas():
     parecer = _parecer({"n_ultra": 1, "ultra_raio": pd.DataFrame({"dist_km": [0.42]})})
     assert parecer.demografico.status == CONCLUSAO_RESSALVAS
     assert any("Canibalização" in item for item in parecer.demografico.ressalvas)
+
+
+def test_alerta_vai_para_a_pagina_do_imovel(monkeypatch):
+    """A faixa vermelha no pe da pagina "Imovel - Informacoes" (pedido de Juan)."""
+    from motor_expansao.dashboard import censo_report
+
+    capturado: dict[str, object] = {}
+    original = censo_report._info_imovel_page
+
+    def _espiao(pdf, info_imovel, assets, **kwargs):
+        capturado.update(kwargs)
+        return original(pdf, info_imovel, assets, **kwargs)
+
+    monkeypatch.setattr(censo_report, "_info_imovel_page", _espiao)
+    censo_report.gerar_pdf_relatorio_pontual_classico(
+        {
+            "lat": -23.55,
+            "lng": -46.63,
+            "nome_municipio": "SAO PAULO",
+            "uf": "SP",
+            "raio_km": 1.0,
+            "n_ultra": 2,
+            "ultra_raio": pd.DataFrame({"dist_km": [0.38, 0.72]}),
+        },
+        None,
+        info_imovel={"metragem_m2": 1_800},
+    )
+    assert capturado["alerta_canibalizacao"] == (
+        "Canibalização da rede: 2 unidades Ultra dentro do raio do estudo; "
+        "a mais próxima está a 380 m do ponto."
+    )
+
+
+def test_sem_ultra_a_pagina_do_imovel_nao_ganha_faixa(monkeypatch):
+    from motor_expansao.dashboard import censo_report
+
+    capturado: dict[str, object] = {}
+    original = censo_report._info_imovel_page
+
+    def _espiao(pdf, info_imovel, assets, **kwargs):
+        capturado.update(kwargs)
+        return original(pdf, info_imovel, assets, **kwargs)
+
+    monkeypatch.setattr(censo_report, "_info_imovel_page", _espiao)
+    censo_report.gerar_pdf_relatorio_pontual_classico(
+        {
+            "lat": -23.55,
+            "lng": -46.63,
+            "nome_municipio": "SAO PAULO",
+            "uf": "SP",
+            "raio_km": 1.0,
+            "n_ultra": 0,
+        },
+        None,
+        info_imovel={"metragem_m2": 1_800},
+    )
+    assert capturado["alerta_canibalizacao"] is None
