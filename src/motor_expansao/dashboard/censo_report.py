@@ -1120,6 +1120,19 @@ def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
         "folha_pct": _viab_campo(viabilidade, "folha_pct", "premissas", "folha_pct"),
         "faixa_p10": _viab_campo(viabilidade, "faixa_p10", "faixa_alunos", "p10"),
         "faixa_p90": _viab_campo(viabilidade, "faixa_p90", "faixa_alunos", "p90"),
+        # Composicao do investimento: os DOIS valores que o operador digita na tela.
+        # Ate aqui o payload os trazia (`investimento.obra`/`.equipamentos`) e o PDF os
+        # DESCARTAVA -- o relatorio afirmava "investimento total X" sem nunca dizer de que
+        # ele e' feito, e quem digitou os numeros nao os reencontrava no documento.
+        "obra": _viab_campo(viabilidade, "obra", "investimento", "obra"),
+        "parcelas_obra": _viab_campo(viabilidade, "parcelas_obra", "investimento", "parcelas_obra"),
+        "equipamentos": _viab_campo(viabilidade, "equipamentos", "investimento", "equipamentos"),
+        "prazo_equipamentos": _viab_campo(
+            viabilidade, "prazo_equipamentos", "investimento", "prazo_equipamentos"
+        ),
+        "juros_equipamentos_am": _viab_campo(
+            viabilidade, "juros_equipamentos_am", "investimento", "juros_equipamentos_am"
+        ),
         "pmt_mensal": _viab_campo(viabilidade, "pmt_mensal", "investimento", "pmt"),
         "juros_totais": _viab_campo(viabilidade, "juros_totais", "investimento", "juros_totais"),
         "investimento_total": _viab_campo(
@@ -1282,6 +1295,41 @@ def _viab_linha_custos(viabilidade: dict[str, Any]) -> str | None:
     return f"{linha} {rotulo}: " + " + ".join(partes) + "."
 
 
+def _viab_linha_composicao_investimento(viabilidade: dict[str, Any]) -> str | None:
+    """Obra x Equipamentos: os dois valores digitados na tela de Viabilidade.
+
+    Sao naturezas DIFERENTES e a frase precisa dizer isso, senao viram um total so' na
+    cabeca do leitor: a obra e' equity do franqueado, parcelada SEM juros junto do
+    contrato; os equipamentos sao FINANCIADOS (prazo + juros a.m.) e a PMT deles entra
+    abaixo do EBITDA. Cada metade so' entra se o payload a trouxe -- o PDF nunca inventa
+    prazo nem taxa que o backend nao mandou.
+    """
+    obra = viabilidade.get("obra")
+    equipamentos = viabilidade.get("equipamentos")
+    if not any(_viab_tem(v) for v in (obra, equipamentos)):
+        return None
+
+    partes: list[str] = []
+    if _viab_tem(obra):
+        parcelas = _viab_inteiro(viabilidade.get("parcelas_obra"))
+        if parcelas is not None and parcelas > 1:
+            partes.append(f"obra {_viab_brl(obra)} ({parcelas}x sem juros)")
+        else:
+            partes.append(f"obra {_viab_brl(obra)}")
+    if _viab_tem(equipamentos):
+        prazo = _viab_inteiro(viabilidade.get("prazo_equipamentos"))
+        juros = viabilidade.get("juros_equipamentos_am")
+        if prazo is not None and prazo > 0 and _viab_tem(juros):
+            detalhe = f" (financiados em {prazo}x a {_viab_pct(juros)} a.m.)"
+        elif prazo is not None and prazo > 0:
+            detalhe = f" (financiados em {prazo}x)"
+        else:
+            detalhe = " (financiados)"
+        partes.append(f"equipamentos {_viab_brl(equipamentos)}{detalhe}")
+
+    return "Investimento: " + " + ".join(partes) + "."
+
+
 def _viab_linha_investimento(viabilidade: dict[str, Any]) -> str | None:
     """Linha de financiamento/investimento, incluindo o parcelamento da taxa de franquia.
 
@@ -1343,6 +1391,10 @@ def _viab_linhas_detalhe(viabilidade: dict[str, Any]) -> list[str]:
             f"{_viab_brl(faixas.get('ideal'))}  |  teto {_viab_brl(faixas.get('teto'))}"
             f"  |  exceção {_viab_brl(faixas.get('excecao'))} - o card acima traz o canônico."
         )
+
+    composicao_linha = _viab_linha_composicao_investimento(viabilidade)
+    if composicao_linha:
+        linhas.append(composicao_linha)
 
     investimento_linha = _viab_linha_investimento(viabilidade)
     if investimento_linha:
