@@ -326,10 +326,21 @@ export default function OportunidadesImobiliariasScreen({
             </aside>
           </div>
         ) : (
-          /* Vista RANKING: lista a esquerda (gruda no topo) + ficha ampla a direita */
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, padding: '18px 30px 44px', alignItems: 'flex-start' }}>
-            <section style={{ flex: '1 1 340px', maxWidth: 430, minWidth: 0, position: 'sticky', top: 4, display: 'flex', flexDirection: 'column', gap: 18 }}>
-              <div>
+          /* Vista RANKING: relatorio completo a ESQUERDA (fixo, rola so' internamente se
+             transbordar) + ranking a direita, onde os "3 melhores" ficam fixos e SO' o
+             "restante do recorte" rola, num quadrante proprio. */
+          <div style={{ display: 'flex', gap: 20, padding: '16px 26px', height: '100%', minHeight: 0 }}>
+            <section style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
+              {atual ? (
+                <Ficha op={atual} rank={idxSel + 1} pares={filtrados} medRsM2={medRsM2}
+                  visita={visitas.has(atual.id)} onVisita={() => alternarVisita(atual.id)}
+                  onSel={setSel} onVerNoMapa={onVerNoMapa} />
+              ) : (
+                <Aviso titulo="Selecione uma oportunidade" corpo="Escolha um imóvel no ranking à direita para ver o estudo." />
+              )}
+            </section>
+            <aside style={{ width: 400, flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: 0, gap: 14 }}>
+              <div style={{ flexShrink: 0 }}>
                 <CabecalhoLista titulo="Os 3 melhores do recorte" nota="RESIDUAL × R$/M²" />
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 9, marginTop: 11 }}>
                   {top3.map((o, i) => (
@@ -338,25 +349,18 @@ export default function OportunidadesImobiliariasScreen({
                 </div>
               </div>
               {resto.length > 0 && (
-                <div style={{ borderTop: '1px solid var(--line-soft)', paddingTop: 16 }}>
-                  <CabecalhoLista titulo="Restante do recorte" nota={`${num(resto.length)} imóveis`} sub />
-                  <div style={{ marginTop: 8 }}>
+                <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--line-soft)', paddingTop: 12 }}>
+                  <div style={{ flexShrink: 0 }}>
+                    <CabecalhoLista titulo="Restante do recorte" nota={`${num(resto.length)} imóveis`} sub />
+                  </div>
+                  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', marginTop: 8, marginRight: -6, paddingRight: 6 }}>
                     {resto.map((o, i) => (
                       <LinhaRest key={o.id} pos={i + 4} op={o} ativo={o.id === sel} visita={visitas.has(o.id)} onClick={() => setSel(o.id)} />
                     ))}
                   </div>
                 </div>
               )}
-            </section>
-            <section style={{ flex: '3 1 520px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 20 }}>
-              {atual ? (
-                <Ficha op={atual} rank={idxSel + 1} pares={filtrados} medRsM2={medRsM2}
-                  visita={visitas.has(atual.id)} onVisita={() => alternarVisita(atual.id)}
-                  onSel={setSel} onVerNoMapa={onVerNoMapa} />
-              ) : (
-                <Aviso titulo="Selecione uma oportunidade" corpo="Escolha um ponto no ranking à esquerda para ver o estudo." />
-              )}
-            </section>
+            </aside>
           </div>
         ))}
       </div>
