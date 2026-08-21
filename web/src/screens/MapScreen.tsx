@@ -149,6 +149,9 @@ export default function MapScreen({
   // hoje e nenhum numero muda sem alguem clicar. Nao entra no EstadoMapa de proposito —
   // e experimento, nao preferencia a preservar entre telas.
   const [raio1km, setRaio1km] = useState(false)
+  /* Regua do mapa (BLK-CONC-MEDIR): comeca DESLIGADA. Ligada, o clique mede em vez de
+     selecionar hexagono — por isso e' chave explicita e nao um gesto escondido. */
+  const [medindo, setMedindo] = useState(false)
 
   /* Pins das academias INDEPENDENTES com score (BLK-MA-15). Comeca DESLIGADO pela mesma razao da
      chave de raio: o piloto abre identico ao de hoje. Sao ate ~1,3 mil pontos numa capital, e
@@ -683,6 +686,7 @@ export default function MapScreen({
           selecionado={modoCenario ? null : selecionado}
           cenario={cenario}
           raio1km={raio1km}
+          medindo={medindo}
           independentes={verIndependentes ? independentes?.itens : undefined}
           cobertura1k={cobertura}
           /* A foto CONGELA na montagem, e trocar de UF/municipio zera `cameraRef` mas
@@ -1007,6 +1011,13 @@ export default function MapScreen({
                 </button>
               </div>
             )}
+            {/* Regua. PRIMEIRA da coluna e sem condicao nenhuma de passo, nivel ou
+                camada: medir a distancia ate uma concorrente ou ate uma unidade nossa e'
+                pergunta de qualquer etapa. No fim da pilha ela ficava abaixo da legenda e
+                das outras chaves -- que sao CONDICIONAIS --, entao a posicao dela mudava
+                conforme a tela e era facil nao encontra-la. */}
+            <PilulaRegua ligado={medindo} onToggle={() => setMedindo((v) => !v)} />
+
             {!nivelUf && (
               <div
                 style={{
@@ -1072,6 +1083,7 @@ export default function MapScreen({
                 onToggle={() => setRaio1km((v) => !v)}
               />
             )}
+
           </div>
         )}
 
@@ -1518,6 +1530,54 @@ function PainelMensagem({ children }: { children: React.ReactNode }) {
    de cada concorrente e a cor dos hexagonos que eles alcancam.
 
    Abre SEMPRE em 2 km — o piloto continua identico ao de hoje ate alguem clicar. */
+/* Chave da REGUA do mapa (BLK-CONC-MEDIR).
+
+   Modo dedicado, e nao clique-no-pin: o clique do mapa ja tem dono — selecionar hexagono
+   e' o gesto central do funil — e roubar esse gesto quebraria a tela de quem nunca vai
+   medir. Com a chave, o unico gesto que muda e' o de quem pediu a medicao. */
+function PilulaRegua({ ligado, onToggle }: { ligado: boolean; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      title={
+        ligado
+          ? 'Clique na origem e no destino; perto de uma bandeira a ponta trava nela'
+          : 'Medir a distancia entre dois pontos do mapa, travando nos pins'
+      }
+      style={{
+        // Mesmo motivo do `PilulaRaio`: o container da legenda tem `pointerEvents: 'none'`
+        // e sem devolver 'auto' aqui o clique atravessa o botao e vai para o mapa.
+        pointerEvents: 'auto',
+        marginTop: 8,
+        width: '100%',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        fontSize: 11,
+        fontWeight: 600,
+        padding: '7px 11px',
+        borderRadius: 9,
+        border: `1px solid ${ligado ? 'rgba(53,201,214,.45)' : 'rgba(255,255,255,.14)'}`,
+        background: '#000',
+        color: ligado ? '#7de3ec' : '#9aa7b5',
+      }}
+    >
+      <span
+        style={{
+          width: 9,
+          height: 9,
+          borderRadius: '50%',
+          background: ligado ? '#4fd3df' : '#5a6472',
+          flexShrink: 0,
+        }}
+      />
+      {ligado ? 'Regua ligada - clique dois pontos' : 'Medir distancia'}
+    </button>
+  )
+}
+
+
 function PilulaRaio({
   ligado,
   carregando,
