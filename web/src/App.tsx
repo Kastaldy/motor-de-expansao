@@ -398,7 +398,16 @@ export default function App() {
         ) : tela === 'oportunidades-imob' ? (
           // Camada de oferta (imóveis de locação joinados ao M1). Autônoma: nacional,
           // filtra por dentro; READ-ONLY e sem PII (contato do corretor só no dossiê).
-          <OportunidadesImobiliariasScreen onInicio={voltarAoInicio} />
+          // "Ver no Mapa" leva o Mapa Territorial ao UF/município do imóvel (deep link).
+          <OportunidadesImobiliariasScreen
+            onInicio={voltarAoInicio}
+            onVerNoMapa={(u, m) => {
+              setUf(u)
+              setMunicipio(m)
+              setEstadoMapa({ ...ESTADO_MAPA_VAZIO, uf: u, municipio: m })
+              navegar('mapa')
+            }}
+          />
         ) : (
           <ViabilityScreen
             ponto={ponto}
