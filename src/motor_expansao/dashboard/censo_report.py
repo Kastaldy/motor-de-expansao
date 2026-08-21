@@ -2119,6 +2119,51 @@ def _conclusao_eixo_financeiro(
     return _conclusao_eixo(eliminatorios, ressalvas)
 
 
+# --- Canibalizacao: unidade Ultra DENTRO do raio do estudo -------------------
+#
+# O dado ja existe e nao precisa de campo novo no pipeline: `censo_point` devolve
+# `n_ultra` (contagem no raio) e `ultra_raio` (as unidades, com `dist_km`, ordenadas da
+# mais proxima). Este helper so LE isso e escreve a frase -- funcao pura, sem I/O.
+#
+# NAO confundir com `flag_canibalizacao_ultra_1km` do M1: aquela e' por HEXAGONO e saiu do
+# gate do SAM pela DEC-007. Aqui a leitura e' do PONTO, no raio que o proprio estudo usa.
+_CANIBALIZACAO_TITULO = "Canibalização da rede"
+
+
+def _conclusao_menor_dist_km(unidades: Any) -> float | None:
+    """Menor `dist_km` de um conjunto de unidades (DataFrame ou sequencia de dicts)."""
+    if unidades is None:
+        return None
+    linhas: Any = unidades
+    if hasattr(unidades, "to_dict"):  # DataFrame -> lista de dicts
+        if getattr(unidades, "empty", False):
+            return None
+        linhas = unidades.to_dict("records")
+    distancias = [
+        d for d in (_conclusao_valor(linha.get("dist_km")) for linha in linhas) if d is not None
+    ]
+    return min(distancias) if distancias else None
+
+
+def _conclusao_canibalizacao(result: Mapping[str, Any]) -> str | None:
+    """Alerta de unidade Ultra no raio, ou `None` quando nao ha nenhuma. Funcao pura."""
+    n = _conclusao_valor(result.get("n_ultra"))
+    if n is None or n < 1:
+        return None
+    quantas = int(n)
+    dist_km = _conclusao_menor_dist_km(result.get("ultra_raio"))
+    sujeito = (
+        "1 unidade Ultra dentro do raio"
+        if quantas == 1
+        else f"{quantas} unidades Ultra dentro do raio"
+    )
+    if dist_km is None:
+        return f"Canibalização da rede: {sujeito} do estudo."
+    metros = int(round(float(dist_km) * 1000.0))
+    proxima = "a unidade está" if quantas == 1 else "a mais próxima está"
+    return f"Canibalização da rede: {sujeito} do estudo; {proxima} a {metros} m do ponto."
+
+
 def _avaliar_conclusao(
     result: Mapping[str, Any] | None,
     residual: Mapping[str, Any] | None,
@@ -2179,6 +2224,11 @@ def _avaliar_conclusao(
         ressalvas.append(
             "Metas censitárias não avaliadas: nenhum setor censitário no raio do ponto."
         )
+
+    # --- Canibalizacao (alerta de rede propria no raio) ---
+    alerta_canibalizacao = _conclusao_canibalizacao(result)
+    if alerta_canibalizacao is not None:
+        ressalvas.append(alerta_canibalizacao)
 
     # --- Mercado e metas censitarias (R7 / R4) ---
     sam = residual.get("sam_fitness_potencial")
