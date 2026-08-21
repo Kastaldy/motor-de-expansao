@@ -476,6 +476,12 @@ export interface Oportunidade {
   lat: number | null
   lng: number | null
   url: string | null
+  /** Alunos p50 da curva tamanho->densidade (simulador de Viabilidade), pela área. */
+  alunos_p50?: number | null
+  /** Faturamento projetado/mês = alunos_p50 × ticket (servido pronto pelo backend). */
+  fat_proj?: number | null
+  /** Ticket (mensalidade balcão) usado no fat_proj — do dimensionamento/config. */
+  ticket_proj?: number | null
   /** Se o coletor gerou um dossiê PDF para este imóvel (top-N por praça). */
   tem_dossie?: boolean
 }

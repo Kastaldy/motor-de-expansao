@@ -7501,6 +7501,58 @@ def _op_txt(v: Any) -> str | None:
     return s or None
 
 
+@functools.lru_cache(maxsize=1)
+def _ticket_proj_mensal() -> float:
+    """Ticket MISTO (balcao + agregador) do dimensionamento/config — o mesmo mix que o
+    simulador usa na receita: share*balcao + (1-share)*(balcao*fator_agregador) ~ R$120."""
+    try:
+        from motor_expansao.dimensionamento import config as _cfg
+
+        balcao = float(getattr(_cfg, "SIM_MENSALIDADE_BALCAO", 137))
+        share = float(getattr(_cfg, "SIM_SHARE_BALCAO", 0.69))
+        fator = float(getattr(_cfg, "SIM_TICKET_AGREGADOR_FATOR", 0.60))
+        return share * balcao + (1.0 - share) * (balcao * fator)
+    except Exception:  # noqa: BLE001 — degrada p/ default se o modulo nao carregar
+        return 120.0
+
+
+@functools.lru_cache(maxsize=1)
+def _area_curva_max() -> float:
+    """Teto de m2 aplicado a curva de alunos. A Ultra constroi ~1500-2000 m2 mesmo em
+    lote grande; projetar sobre a AREA CRUA (lote do terreno, galpao inteiro) infla o
+    faturamento (um terreno de 3.600 m2 nao vira uma academia de 3.600 m2). Cap =
+    AREA_IDEAL_MAX_M2 do config canonico."""
+    try:
+        from motor_expansao.config import AREA_IDEAL_MAX_M2
+
+        return float(AREA_IDEAL_MAX_M2)
+    except Exception:  # noqa: BLE001
+        return 2000.0
+
+
+@functools.lru_cache(maxsize=8192)
+def _alunos_p50_por_m2(m2_arred: int) -> float | None:
+    """p50 de alunos da curva tamanho->densidade p/ uma metragem (arredondada p/ cache).
+
+    Fonte UNICA: a mesma base e funcao de /api/faixa-alunos (simulador de Viabilidade).
+    Property-first (DEC-009): a faixa depende SO do tamanho, nao da geografia.
+    """
+    if not m2_arred:
+        return None
+    base, _fonte = _base_calibracao()
+    if base is None:
+        return None
+    try:
+        from motor_expansao.dimensionamento.viabilidade_ponto import (
+            faixa_alunos_por_densidade,
+        )
+
+        r = faixa_alunos_por_densidade(float(m2_arred), base)
+        return r.get("faixa_alunos_p50")
+    except Exception:  # noqa: BLE001 — sem base valida, projecao fica vazia
+        return None
+
+
 def _carregar_oportunidades() -> list[dict[str, Any]]:
     """Le o parquet UMA vez e monta os dicts sem PII, ordenados por residual."""
     global _OPORTUNIDADES_CACHE
@@ -7515,6 +7567,7 @@ def _carregar_oportunidades() -> list[dict[str, Any]]:
         df = df[df["status"].astype(str).str.lower() != "removido"]
     if "m1_residual_fitness" in df.columns:
         df = df.sort_values("m1_residual_fitness", ascending=False, na_position="last")
+    ticket = _ticket_proj_mensal()
     itens: list[dict[str, Any]] = []
     for r in df.itertuples(index=False):
         d = r._asdict()
@@ -7522,6 +7575,13 @@ def _carregar_oportunidades() -> list[dict[str, Any]]:
         aluguel = _op_num(d.get("preco_aluguel")) or _op_num(d.get("preco"))
         rs_m2 = round(aluguel / area, 1) if aluguel and area else None
         primeiro = _op_txt(d.get("first_seen"))
+        # Faturamento projetado = alunos p50 (curva tamanho->densidade) x ticket. p50
+        # depende SO do tamanho (property-first, DEC-009); m2 arredondado p/ cachear e
+        # capado no ideal (lote/galpao grande nao vira academia inteira — ver helper).
+        area_cap = min(float(area), _area_curva_max()) if area else 0.0
+        area_p50 = int(round(area_cap / 10.0) * 10) if area_cap else 0
+        alunos_p50 = _alunos_p50_por_m2(area_p50)
+        fat_proj = alunos_p50 * ticket if alunos_p50 else None
         itens.append(
             {
                 "id": _op_txt(d.get("imovel_id")) or _op_txt(d.get("fonte_listing_id")) or "",
@@ -7551,6 +7611,9 @@ def _carregar_oportunidades() -> list[dict[str, Any]]:
                 "lat": _op_num(d.get("latitude"), 6),
                 "lng": _op_num(d.get("longitude"), 6),
                 "url": _op_txt(d.get("url")),
+                "alunos_p50": _op_num(alunos_p50),
+                "fat_proj": _op_num(fat_proj),
+                "ticket_proj": _op_num(ticket),
             }
         )
     _OPORTUNIDADES_CACHE = itens
