@@ -642,8 +642,6 @@ export default function HexMap({
     )
   }
 
-  const distanciaMedida =
-    medicao?.b != null ? distanciaMetros(medicao.a, medicao.b) : null
 
   const camadas = useMemo(() => {
     const base: Layer[] = [
@@ -925,6 +923,38 @@ export default function HexMap({
           }) as unknown as LineLayer<Hex>,
         )
       }
+      if (medicao.b) {
+        /* O NUMERO VAI NO CANVAS, nao em HTML sobreposto.
+           Duas tentativas em HTML falharam: este container e' `inset: 0` e a tela tem
+           elementos que pintam por cima dele (o header do `MapScreen` no topo, o painel e
+           a doca embaixo), entao a leitura ficava escondida com a linha desenhada e o
+           numero invisivel. Desenhado pelo deck.gl, o rotulo e' parte do mapa e nenhuma
+           camada de DOM o alcanca — e ainda fica ONDE o operador esta olhando, colado a
+           medicao, em vez de num canto da tela. */
+        const meio = {
+          lat: (medicao.a.lat + medicao.b.lat) / 2,
+          lng: (medicao.a.lng + medicao.b.lng) / 2,
+        }
+        base.push(
+          new TextLayer<{ meio: typeof meio; texto: string }>({
+            id: 'regua-rotulo',
+            data: [{ meio, texto: distanciaCurta(distanciaMetros(medicao.a, medicao.b)) }],
+            getPosition: (d) => [d.meio.lng, d.meio.lat],
+            getText: (d) => d.texto,
+            getSize: 15,
+            sizeUnits: 'pixels',
+            getColor: [8, 11, 16, 255],
+            background: true,
+            getBackgroundColor: [238, 243, 248, 240],
+            backgroundPadding: [7, 4, 7, 4],
+            getPixelOffset: [0, -14],
+            fontWeight: 700,
+            characterSet: 'auto',
+            pickable: false,
+          }) as unknown as TextLayer<Hex>,
+        )
+      }
+
       base.push(
         new ScatterplotLayer<AlvoMedicao>({
           id: 'regua-pontas',
@@ -1094,53 +1124,6 @@ export default function HexMap({
         />
 
       </DeckGL>
-
-      {/* Leitura da regua. Canto superior central: o inferior esquerdo e' da legenda, o
-          direito e' do painel, e a medicao precisa ser lida SEM tapar o traco no mapa. */}
-      {medindo && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 16,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            padding: '9px 14px',
-            borderRadius: 10,
-            background: '#000',
-            border: '1px solid rgba(53,201,214,.45)',
-            font: '500 11.5px/1.4 var(--f-ui)',
-            color: '#9aa7b5',
-            pointerEvents: 'none',
-            maxWidth: 460,
-            textAlign: 'center',
-          }}
-        >
-          {distanciaMedida != null && medicao?.b ? (
-            <>
-              <span
-                className="num"
-                style={{ color: '#7de3ec', fontWeight: 700, fontSize: 13 }}
-              >
-                {distanciaCurta(distanciaMedida)}
-              </span>{' '}
-              <span style={{ color: 'var(--tx-sub)' }}>
-                de {medicao.a.rotulo} ate {medicao.b.rotulo}
-              </span>
-              <br />
-              <span style={{ color: '#5a6472', fontSize: 10.5 }}>
-                Clique de novo para comecar outra medicao.
-              </span>
-            </>
-          ) : medicao ? (
-            <>
-              Origem em <strong style={{ color: '#7de3ec' }}>{medicao.a.rotulo}</strong>. Clique
-              no destino — perto de uma bandeira, a ponta trava nela.
-            </>
-          ) : (
-            <>Clique na origem e depois no destino. As pontas travam nos pins.</>
-          )}
-        </div>
-      )}
 
       {hover && (
         <div
