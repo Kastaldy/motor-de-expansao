@@ -467,7 +467,7 @@ Permanece como roadmap até nova decisão de Felipe.
 - BLK-API-08 (concluído 2026-06-12) — ver tasks/completed.md
 
 
-### BLK-API-09 — Bot entrega o relatório DUPLICADO (409 Conflict não tratado)
+### BLK-API-09 — Bot entrega o relatório DUPLICADO (update reentregue no laço de long-polling)
 
 | Campo | Valor |
 |---|---|
@@ -478,26 +478,35 @@ Permanece como roadmap até nova decisão de Felipe.
 **Sintoma (reportado por Juan, 2026-07-22):** para UM endereço enviado, o bot responde
 "⏳ Gerando..." e entrega o PDF **duas vezes**.
 
-**Causa-raiz (confirmada por sondagem do token, 2026-07-22):** o Telegram só entrega cada update
-a **um** `getUpdates` por vez. Com **duas instâncias do bot no mesmo token**, elas se derrubam
-mutuamente (HTTP **409 Conflict**) e a mesma mensagem chega às duas → **dois relatórios**.
-Sondagem read-only (sem `offset`, nada consumido) mostrou 409 contínuo **nos dois tokens** —
-`@marioescolabot` (teste) **e `@Paulo_Ultra_Bot` (produção)** — a partir de um processo único,
-sem webhook e sem interceptação TLS. Ou seja: **produção também está afetada.**
+**Causa-raiz:** **reentrega do mesmo `update_id`.** O `offset` só é confirmado ao Telegram no
+`getUpdates` **seguinte**, e a geração do PDF leva ~2 min no meio. Qualquer restart ou erro de rede
+dentro dessa janela faz o Telegram reentregar o mesmo update — e o laço antigo, que não guardava o
+que já tinha tratado, gerava o **segundo relatório**. Acontece com **uma instância só**, sem
+concorrência nenhuma.
 
-O código não detectava nada disso: `main()` capturava `RequestException`, imprimia e refazia a
-volta **na hora** (`continue` sem espera) — um busy-loop que só produzia ruído no log.
+Agravante no mesmo laço: `main()` capturava `RequestException`, imprimia e refazia a volta **na
+hora** (`continue` sem espera) — um busy-loop que aumentava a chance de tropeço na janela acima e
+só produzia ruído no log.
+
+**Correção de diagnóstico (2026-08-21):** a primeira leitura, de 22/07, atribuiu o defeito a **duas
+instâncias no mesmo token**, com base numa sondagem read-only que viu 409 contínuo nos dois tokens.
+Essa evidência **não sustenta a conclusão**: sondar de fora um token cujo bot está no ar retorna 409
+por definição — o Telegram entrega cada update a um `getUpdates` por vez, então o 409 é a resposta
+**esperada para uma instância única e saudável**. `@Paulo_Ultra_Bot` (produção, no servidor) e
+`@marioescolabot` (teste) são **tokens separados**, justamente para não colidirem. Fica registrado
+como armadilha: **409 numa sondagem não é sinal de instância duplicada.**
 
 **Escopo (aditivo, READ-ONLY sobre o M1 — só a camada do bot):** em
 `src/motor_expansao/api/telegram_bot.py`:
 
-1. **Guarda de instância única** — 409 seguidos são contados; até `_MAX_CONFLITOS` o bot espera
-   (um 409 isolado é normal logo após restart, o long-poll anterior ainda está registrado), e ao
-   estourar **aborta com `SystemExit` e mensagem explícita** nomeando a causa. Servir duplicado é
-   pior que parar com erro claro.
+1. **Guarda de reentrega** *(a correção do sintoma)* — `update_id` menor ou igual ao último
+   tratado é ignorado, fechando a janela entre o processamento e a confirmação do `offset`.
 2. **Backoff exponencial** (1s→30s) em qualquer falha de `getUpdates`, no lugar do busy-loop.
-3. **Guarda de reentrega** — `update_id` menor ou igual ao último tratado é ignorado. O `offset` só
-   é confirmado ao Telegram no `getUpdates` seguinte, e a geração do PDF leva ~2 min no meio.
+3. **Guarda de instância única** *(defesa secundária)* — se um dia duas instâncias dividirem um
+   token, elas se derrubam mutuamente (HTTP **409 Conflict**) e a mesma mensagem chega às duas.
+   409 seguidos são contados; até `_MAX_CONFLITOS` o bot espera (um 409 isolado é normal logo após
+   restart, o long-poll anterior ainda está registrado), e ao estourar **aborta com `SystemExit` e
+   mensagem explícita** nomeando a causa. Servir duplicado é pior que parar com erro claro.
 4. **`flush=True`** nos `print` de `[ESTUDO]`, `[ESTUDO-MUNI]` e "Bot no ar" — sem isso ficavam
    presos no buffer justamente durante o diagnóstico. Os demais prints do arquivo já tinham.
 
@@ -505,10 +514,11 @@ volta **na hora** (`continue` sem espera) — um busy-loop que só produzia ruí
 cobertura nenhuma). O de reentrega **reproduz a duplicação** no código antigo (dois `processar`
 para o mesmo `update_id`) e passa no novo.
 
-**Fora de escopo (ação de operação, não de código):** localizar e encerrar a instância concorrente.
-O bot local (`APIGeoEspacial/motor-de-expansao-main/`, vivo desde 16/07) coexiste com a instância
-do servidor no token do Paulo. Enquanto as duas viverem, o código novo vai **abortar na subida** —
-que é o comportamento desejado, mas exige a limpeza operacional.
+**Impacto no deploy: nenhum.** A guarda de 409 só conta conflitos do token que **aquele** processo
+está pollando, e produção roda o Paulo sozinha no servidor — um bot de teste no Mario, em qualquer
+máquina, não gera 409 no Paulo. Restart do servidor também passa: são 7 esperas antes de abortar
+(2+4+8+16+30+30+30), ou seja **~2 min de 409 contínuo tolerados**, folgado para o long-poll do
+container antigo expirar.
 
 ---
 
