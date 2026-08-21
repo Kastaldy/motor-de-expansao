@@ -1542,7 +1542,7 @@ function PilulaRegua({ ligado, onToggle }: { ligado: boolean; onToggle: () => vo
       title={
         ligado
           ? 'Clique na origem e no destino; perto de uma bandeira a ponta trava nela'
-          : 'Medir a distancia entre dois pontos do mapa, travando nos pins'
+          : 'Medir a distância entre dois pontos do mapa, travando nos pins'
       }
       style={{
         // Mesmo motivo do `PilulaRaio`: o container da legenda tem `pointerEvents: 'none'`
@@ -1572,7 +1572,7 @@ function PilulaRegua({ ligado, onToggle }: { ligado: boolean; onToggle: () => vo
           flexShrink: 0,
         }}
       />
-      {ligado ? 'Regua ligada - clique dois pontos' : 'Medir distancia'}
+      {ligado ? 'Régua ligada — clique dois pontos' : 'Medir distância'}
     </button>
   )
 }

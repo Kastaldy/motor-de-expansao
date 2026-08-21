@@ -631,6 +631,13 @@ export default function HexMap({
     if (!medindo) setMedicao(null)
   }, [medindo])
 
+  /* Trocar de municipio/UF tambem limpa. Sem isto a medicao de uma cidade sobrevivia a
+     mudanca e o mapa desenhava linha e rotulo sobre um territorio que nao e' o dos pontos
+     medidos — um numero correto no lugar errado, que e' pior que numero nenhum. */
+  useEffect(() => {
+    setMedicao(null)
+  }, [municipio, uf])
+
   function medirNoClique(coordenada: number[] | undefined) {
     if (!coordenada) return
     const clique = { lat: coordenada[1], lng: coordenada[0] }
@@ -922,8 +929,6 @@ export default function HexMap({
             pickable: false,
           }) as unknown as LineLayer<Hex>,
         )
-      }
-      if (medicao.b) {
         /* O NUMERO VAI NO CANVAS, nao em HTML sobreposto.
            Duas tentativas em HTML falharam: este container e' `inset: 0` e a tela tem
            elementos que pintam por cima dele (o header do `MapScreen` no topo, o painel e
