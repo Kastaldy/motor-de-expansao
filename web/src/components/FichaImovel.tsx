@@ -3,8 +3,6 @@ import { useEffect, useState } from 'react'
 import { brl, num } from '../lib/format'
 import {
   ACC,
-  ACC_GLOW,
-  ACC_ON,
   ACC_TX,
   ALUGUEL_PCT_EXCECAO,
   ALUGUEL_PCT_IDEAL,
@@ -22,6 +20,19 @@ import type { Oportunidade } from '../lib/types'
 import IconeTipo from './IconeTipo'
 import { CardPainel, LinhaTabela, Pill, TituloSecao } from './PecasPainel'
 import { Botao } from './primitives'
+
+/* Gradientes do painel direito do design "Paineis do Hexagono" (pedido do Felipe,
+   2026-08-21): hero roxo-escuro, card de veredito em teal e botao primario magenta.
+   Hex direto — tela so-escura, como a aba. A BORDA verde do veredito e' condicional:
+   no artboard ela acompanha o selo positivo ("vale visita"); com o aluguel acima do
+   teto, moldura verde afirmaria um veredito que a regua nega — ai fica neutra. */
+const FUNDO_HERO = 'linear-gradient(140deg, #1d1424 0%, #0b1519 68%)'
+const BORDA_HERO = '#241b2e'
+const FUNDO_VEREDITO = 'linear-gradient(120deg, #101f22, #0d171b 70%)'
+const BORDA_VEREDITO_OK = '#1f4a3c'
+const FUNDO_BOTAO = 'linear-gradient(100deg, #f2599f, #e0459a)'
+const SOMBRA_BOTAO = '0 10px 28px -14px rgba(242,89,159,.8)'
+const TEXTO_BOTAO = '#2a0518'
 
 /**
  * O DETALHE de uma oportunidade imobiliaria, para viver dentro da janela flutuante
@@ -70,8 +81,17 @@ export default function FichaImovel({
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
-      {/* ---- Hero: o tipo como identidade ---- */}
-      <div>
+      {/* ---- Hero: o tipo como identidade ----
+          Margens NEGATIVAS anulam o padding de 16px do corpo da JanelaFicha: o
+          gradiente do design e' full-bleed, colado nas bordas e no header da janela. */}
+      <div
+        style={{
+          margin: '-16px -16px 0',
+          padding: '18px 16px 14px',
+          background: FUNDO_HERO,
+          borderBottom: `1px solid ${BORDA_HERO}`,
+        }}
+      >
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 13 }}>
           <span
             style={{
@@ -148,7 +168,12 @@ export default function FichaImovel({
 
       {/* ---- Veredito custo x retorno, pela régua 15/20/30 do modelo ---- */}
       {pct != null && cls && op.fat_proj != null ? (
-        <CardPainel style={{ background: 'var(--surf-card)', border: '1px solid var(--line-mid)' }}>
+        <CardPainel
+          style={{
+            background: FUNDO_VEREDITO,
+            border: `1px solid ${cls.tom === 'var(--pos-text)' ? BORDA_VEREDITO_OK : 'var(--line-mid)'}`,
+          }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 9 }}>
             <Pill texto={`Aluguel ${cls.rotulo}`} cor={cls.tom} />
             <span style={{ font: '400 10.5px/1.3 var(--f-ui)', color: 'var(--tx-sub)' }}>
@@ -429,9 +454,9 @@ export default function FichaImovel({
               alignItems: 'center',
               justifyContent: 'center',
               gap: 8,
-              background: ACC,
-              color: ACC_ON,
-              boxShadow: ACC_GLOW,
+              background: FUNDO_BOTAO,
+              color: TEXTO_BOTAO,
+              boxShadow: SOMBRA_BOTAO,
             }}
           >
             Ver na aba de imóveis →
