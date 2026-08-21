@@ -1,12 +1,23 @@
 import type { CrescimentoMunicipio } from '../lib/oportunidades'
 import { alunos, brl, num, pctVar } from '../lib/format'
-import { FAIXA_M1_HEX, bandSolid } from '../lib/colors'
+import { FAIXA_M1_HEX } from '../lib/colors'
 import { CAPACIDADE_UNIDADE_ALUNOS, FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from '../lib/faixas'
 import { classeAluguelFat, corTipo, custoOcup, labelTipo, pctAluguelFat } from '../lib/imovel'
 import { composicaoMercado, faixaDoValor, leituraDeSaturacao } from '../lib/medidor'
 import type { Hex, Oportunidade } from '../lib/types'
 import IconeTipo from './IconeTipo'
 import { CardPainel, LinhaTabela, Ticks, TituloSecao } from './PecasPainel'
+
+/* Cores do design "Paineis do Hexagono" aplicadas por pedido do Felipe (2026-08-21):
+   identidade FIXA por score (verde/turquesa/claro — a cor identifica O QUAL score, nao
+   o valor dele) e o fundo/borda do card de veredito. Hex direto: tela so-escura, como a
+   aba imobiliaria. O veredito por VALOR continua nas notas (nome da faixa publicada). */
+const COR_SCORE_CENSO = '#5ee6a8'
+const COR_SCORE_RESIDUAL = '#22d3e0'
+const COR_SCORE_HIBRIDO = '#eef6f7'
+const COR_TICKS_HIBRIDO = '#cfdfe3'
+const FUNDO_VEREDITO = 'linear-gradient(120deg, #11282a, #0d1a1e 70%)'
+const BORDA_VEREDITO = '#24474a'
 
 /**
  * A leitura de UM hexagono, para viver dentro da janela flutuante do mapa.
@@ -65,11 +76,6 @@ export default function FichaHex({
   const corFaixaM1 = hex.faixa ? (FAIXA_M1_HEX[hex.faixa] ?? null) : null
   const fxCenso = faixaDoValor(hex.censo, FAIXAS_POTENCIAL)
   const fxResidual = faixaDoValor(hex.res, FAIXAS_DEMANDA)
-  /* Cor do HÍBRIDO pela rampa canônica de 10 faixas (CLAUDE.md §5: "Híbrido colore por
-     score_expansao_hibrido") — é régua de COR publicada; o que o híbrido não tem são
-     faixas NOMEADAS, por isso ele fica sem rótulo de veredito (sem badge). */
-  const corHibrido =
-    hex.hib == null ? null : bandSolid(Math.min(9, Math.max(0, Math.floor(hex.hib / 10))))
   const mercado = composicaoMercado(hex.sam, hex.oferta)
   const saturacao = leituraDeSaturacao(hex.sam, hex.oferta)
   const ocupacaoAbertura =
@@ -80,7 +86,7 @@ export default function FichaHex({
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       {/* ---- Veredito: a frase que resume, com a faixa M1 e os numeros-chave ---- */}
-      <CardPainel style={{ background: 'var(--surf-card)', border: '1px solid var(--line-mid)' }}>
+      <CardPainel style={{ background: FUNDO_VEREDITO, border: `1px solid ${BORDA_VEREDITO}` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 9 }}>
           {/* Texto NEUTRO + swatch na cor da faixa — não a cor como texto: 'Inviável' é
               #2E3040 e como texto sobre o card escuro dava ~1,4:1, ilegível. */}
@@ -204,26 +210,27 @@ export default function FichaHex({
         </div>
       </CardPainel>
 
-      {/* ---- Os três scores, com a régua de tracinhos do design ---- */}
+      {/* ---- Os três scores, com a régua de tracinhos do design ----
+          As CORES são as do design (identidade fixa por score — pedido do Felipe); o
+          veredito por VALOR fica na nota, pelo nome da faixa publicada da camada. */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 9 }}>
         <CardScore
           rotulo="CENSO"
           valor={hex.censo}
-          cor={fxCenso?.cor ?? 'var(--tx-max)'}
+          cor={COR_SCORE_CENSO}
           nota={fxCenso ? `${fxCenso.nome} na régua do potencial` : 'sem leitura do censo'}
         />
         <CardScore
           rotulo="RESIDUAL"
           valor={hex.res}
-          cor={fxResidual?.cor ?? 'var(--tx-max)'}
+          cor={COR_SCORE_RESIDUAL}
           nota={fxResidual ? `${fxResidual.nome} — satura em ${num(CAPACIDADE_UNIDADE_ALUNOS)} alunos` : 'sem leitura de residual'}
         />
-        {/* Cor pela rampa canônica de 10 faixas (regra visual do §5); sem faixas NOMEADAS
-            publicadas o híbrido segue sem rótulo de veredito — só a cor da rampa. */}
         <CardScore
           rotulo="HÍBRIDO"
           valor={hex.hib}
-          cor={corHibrido ?? 'var(--tx-max)'}
+          cor={COR_SCORE_HIBRIDO}
+          corTicks={COR_TICKS_HIBRIDO}
           nota="média ponderada de censo e residual"
         />
       </div>
