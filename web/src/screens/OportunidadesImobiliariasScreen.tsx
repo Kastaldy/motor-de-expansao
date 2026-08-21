@@ -326,19 +326,10 @@ export default function OportunidadesImobiliariasScreen({
             </aside>
           </div>
         ) : (
-          /* Vista RANKING: relatorio completo a ESQUERDA (fixo, rola so' internamente se
-             transbordar) + ranking a direita, onde os "3 melhores" ficam fixos e SO' o
-             "restante do recorte" rola, num quadrante proprio. */
+          /* Vista RANKING: ranking a ESQUERDA (os "3 melhores" fixos + "restante do
+             recorte" num quadrante com scroll proprio) + relatorio completo a DIREITA,
+             fixo (rola so' internamente se transbordar). Rolar a lista nao move a ficha. */
           <div style={{ display: 'flex', gap: 20, padding: '16px 26px', height: '100%', minHeight: 0 }}>
-            <section style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
-              {atual ? (
-                <Ficha op={atual} rank={idxSel + 1} pares={filtrados} medRsM2={medRsM2}
-                  visita={visitas.has(atual.id)} onVisita={() => alternarVisita(atual.id)}
-                  onSel={setSel} onVerNoMapa={onVerNoMapa} />
-              ) : (
-                <Aviso titulo="Selecione uma oportunidade" corpo="Escolha um imóvel no ranking à direita para ver o estudo." />
-              )}
-            </section>
             <aside style={{ width: 400, flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: 0, gap: 14 }}>
               <div style={{ flexShrink: 0 }}>
                 <CabecalhoLista titulo="Os 3 melhores do recorte" nota="RESIDUAL × R$/M²" />
@@ -361,6 +352,15 @@ export default function OportunidadesImobiliariasScreen({
                 </div>
               )}
             </aside>
+            <section style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
+              {atual ? (
+                <Ficha op={atual} rank={idxSel + 1} pares={filtrados} medRsM2={medRsM2}
+                  visita={visitas.has(atual.id)} onVisita={() => alternarVisita(atual.id)}
+                  onSel={setSel} onVerNoMapa={onVerNoMapa} />
+              ) : (
+                <Aviso titulo="Selecione uma oportunidade" corpo="Escolha um imóvel no ranking à esquerda para ver o estudo." />
+              )}
+            </section>
           </div>
         ))}
       </div>
