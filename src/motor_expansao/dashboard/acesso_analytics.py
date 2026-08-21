@@ -83,6 +83,9 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
     (None, "/api/municipios/", "Explorou município"),
     (None, "/api/estados", "Ranking de estados"),
     (None, "/api/metodologia", "Leu a metodologia"),
+    # Camada imobiliária: o dossiê (prefixo com barra) antes da lista — first-match.
+    (None, "/api/oportunidades/", "Baixou dossiê de imóvel"),
+    (None, "/api/oportunidades", "Consultou oportunidades imobiliárias"),
 )
 _FEATURE_OUTRAS = "Outras ações"
 
