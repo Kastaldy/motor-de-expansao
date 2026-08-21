@@ -2,8 +2,10 @@ import type { ReactNode } from 'react'
 
 import type { CrescimentoMunicipio } from '../lib/oportunidades'
 import { alunos, brl, num, pctVar } from '../lib/format'
-import type { Hex } from '../lib/types'
+import { corTipo, custoOcup, labelTipo } from '../lib/imovel'
+import type { Hex, Oportunidade } from '../lib/types'
 import { FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from '../lib/faixas'
+import IconeTipo from './IconeTipo'
 import { BarraMercado, FilaApoio, MedidorScore, NumeroApoio } from './LeiturasVisuais'
 import { Chip, Eyebrow, Kpi } from './primitives'
 
@@ -28,6 +30,8 @@ export default function FichaHex({
   hex,
   cres,
   onComparar,
+  imoveis,
+  onVerImovel,
 }: {
   hex: Hex
   /** Crescimento do MUNICÍPIO do hexágono (`MapaResposta.cres_mun`), quando houver. */
@@ -41,6 +45,14 @@ export default function FichaHex({
    * comparação" seria um estado inalcançável prometendo comportamento que não existe.
    */
   onComparar?: () => void
+  /**
+   * Oportunidades imobiliárias coletadas DENTRO deste hexágono (casadas por `hex_id`,
+   * H3 res-7 — a mesma malha do M1). Vazia ou ausente = a seção não aparece: a maioria
+   * dos hexágonos não tem imóvel coletado, e um bloco "nenhum" em todos eles seria ruído.
+   */
+  imoveis?: Oportunidade[]
+  /** Abre a janela de DETALHE do imóvel (a mesma que o pin da camada abre no mapa). */
+  onVerImovel?: (o: Oportunidade) => void
 }) {
   return (
     <div style={{ display: 'grid', gap: 16 }}>
@@ -161,6 +173,26 @@ export default function FichaHex({
         </FilaApoio>
       </Bloco>
 
+      {/* A OFERTA IMOBILIÁRIA coletada dentro do hexágono. É a ponte entre as duas
+          leituras: o residual acima diz quanto mercado sobra, e aqui está o imóvel
+          concreto para capturá-lo. Os quatro números são os MESMOS do ranking da aba
+          (Aluguel, Custo de ocupação, Projeção de faturamento, Área) — o clique abre
+          a janela de detalhe, e dela se vai para a aba já focado no imóvel. */}
+      {imoveis != null && imoveis.length > 0 && (
+        <Bloco
+          titulo="Imóveis disponíveis aqui"
+          nota={
+            imoveis.length === 1
+              ? '1 oportunidade coletada neste hexágono'
+              : `${num(imoveis.length)} oportunidades coletadas neste hexágono`
+          }
+        >
+          {imoveis.map((o) => (
+            <CartaoImovel key={o.id} op={o} onAbrir={onVerImovel ? () => onVerImovel(o) : undefined} />
+          ))}
+        </Bloco>
+      )}
+
       {/* O crescimento tem DUAS bases e elas não se misturam: a obra nova é DESTE
           hexágono (satélite); o emprego formal é do MUNICÍPIO inteiro (CAGED). Rotular as
           duas como "crescimento do hexágono" afirmaria sobre a área uma medida que é da
@@ -197,6 +229,107 @@ export default function FichaHex({
         </Bloco>
       )}
     </div>
+  )
+}
+
+/** Um imóvel da seção "Imóveis disponíveis aqui": ícone do tipo + os 4 números do
+ *  ranking da aba, em miniatura. O cartão inteiro é o clique — abre o detalhe. */
+function CartaoImovel({ op, onAbrir }: { op: Oportunidade; onAbrir?: () => void }) {
+  const tint = corTipo(op.tipo)
+  const ocupacao = custoOcup(op)
+  return (
+    <button
+      type="button"
+      onClick={onAbrir}
+      title="Abrir os detalhes deste imóvel"
+      style={{
+        width: '100%',
+        textAlign: 'left',
+        display: 'grid',
+        gap: 10,
+        padding: 12,
+        borderRadius: 'var(--r-lg)',
+        cursor: onAbrir ? 'pointer' : 'default',
+        background: 'var(--surf-raised)',
+        border: '1px solid var(--line-soft)',
+      }}
+    >
+      <span style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
+        <span
+          style={{
+            width: 30,
+            height: 30,
+            borderRadius: 8,
+            display: 'grid',
+            placeItems: 'center',
+            color: tint,
+            background: `${tint}1f`,
+            flexShrink: 0,
+          }}
+        >
+          <IconeTipo tipo={op.tipo} tamanho={16} />
+        </span>
+        <span style={{ minWidth: 0 }}>
+          <span
+            style={{
+              display: 'block',
+              font: '600 12.5px/1.25 var(--f-ui)',
+              color: 'var(--tx-strong)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {op.titulo}
+          </span>
+          <span
+            style={{
+              display: 'block',
+              font: '400 10.5px/1.3 var(--f-ui)',
+              color: 'var(--tx-sub)',
+              marginTop: 2,
+            }}
+          >
+            {labelTipo(op.tipo)}
+            {op.bairro ? ` · ${op.bairro}` : ''}
+          </span>
+        </span>
+      </span>
+      <span style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 14px' }}>
+        <MiniNum rotulo="Aluguel" valor={op.aluguel == null ? '—' : brl(op.aluguel)} />
+        <MiniNum rotulo="Custo de ocupação" valor={ocupacao > 0 ? brl(ocupacao) : '—'} />
+        <MiniNum
+          rotulo="Faturamento proj."
+          valor={op.fat_proj == null ? '—' : `${brl(op.fat_proj, true)}/mês`}
+          verde
+        />
+        <MiniNum rotulo="Área" valor={op.area == null ? '—' : `${num(op.area)} m²`} />
+      </span>
+    </button>
+  )
+}
+
+function MiniNum({ rotulo, valor, verde }: { rotulo: string; valor: string; verde?: boolean }) {
+  return (
+    <span style={{ minWidth: 0 }}>
+      <span style={{ display: 'block', font: '400 9.5px/1.2 var(--f-ui)', color: 'var(--tx-label)' }}>
+        {rotulo}
+      </span>
+      <span
+        className="num"
+        style={{
+          display: 'block',
+          font: '600 12px/1.3 var(--f-num)',
+          color: verde ? 'var(--pos-text)' : 'var(--tx-strong)',
+          marginTop: 2,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {valor}
+      </span>
+    </span>
   )
 }
 

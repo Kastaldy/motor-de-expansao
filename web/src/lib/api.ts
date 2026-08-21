@@ -195,13 +195,16 @@ export const api = {
   ufs: () => pedir<{ ufs: string[] }>('/api/ufs'),
 
   /** Oportunidades imobiliárias (camada de oferta, READ-ONLY, sem PII). Lê o
-   *  viaveis.parquet do coletor já joinado ao M1; `uf` opcional filtra no servidor. */
-  oportunidades: (uf?: string) =>
-    pedir<OportunidadesPayload>(
-      `/api/oportunidades${uf ? `?uf=${encodeURIComponent(uf)}` : ''}`,
-      {},
-      30_000,
-    ),
+   *  viaveis.parquet do coletor já joinado ao M1; `uf` opcional filtra no servidor.
+   *  `limite` sobe o teto de itens (default 500 no servidor, cap 3000 na rota) —
+   *  o Mapa Territorial pede o teto para a camada de pins cobrir a UF inteira. */
+  oportunidades: (uf?: string, limite?: number) => {
+    const q = new URLSearchParams()
+    if (uf) q.set('uf', uf)
+    if (limite != null) q.set('limite', String(limite))
+    const qs = q.toString()
+    return pedir<OportunidadesPayload>(`/api/oportunidades${qs ? `?${qs}` : ''}`, {}, 30_000)
+  },
 
   /** Dossiê PDF do coletor para um imóvel (quando existe; 404 = sem dossiê). */
   dossie: (id: string) =>

@@ -16,7 +16,7 @@ import { api, ApiError } from './lib/api'
 import type { AlvoCaptura } from './lib/captura-mapa'
 import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
-import type { Hex, MunicipioItem, MunicipioPayload } from './lib/types'
+import type { Hex, MunicipioItem, MunicipioPayload, Oportunidade } from './lib/types'
 
 export type Tela =
   | 'inicio'
@@ -294,6 +294,24 @@ export default function App() {
 
   const voltarAoInicio = useCallback(() => setTela('inicio'), [])
 
+  /**
+   * Imovel que a aba imobiliaria deve abrir ja focado — o canal INVERSO do
+   * `onVerNoMapa` daquela aba. Mora aqui pelo mesmo motivo da foto do mapa: a troca
+   * de tela DESMONTA quem pediu, entao a intencao precisa sobreviver no App. Viaja o
+   * OBJETO inteiro (nao so o id): a rota nacional da aba serve o top-N por residual,
+   * e o imovel clicado no mapa pode estar fora dele. Consumido uma vez, na montagem
+   * da aba (`onFocoAplicado`).
+   */
+  const [focoImovel, setFocoImovel] = useState<Oportunidade | null>(null)
+  const verImovelNaAba = useCallback(
+    (o: Oportunidade) => {
+      if (!telaLiberada('oportunidades-imob', abas)) return
+      setFocoImovel(o)
+      setTela('oportunidades-imob')
+    },
+    [abas],
+  )
+
   return (
     <div
       style={{
@@ -340,6 +358,11 @@ export default function App() {
               janelaDoHex={false}
               /* O hero da tela vazia é o do modo de ponto, publicado pelo `PontoScreen`. */
               semLanding
+              /* `undefined` quando a aba é vetada: o contrato do MapScreen é "ausente =
+                 o botão não aparece" — passar sempre deixaria um botão primário morto. */
+              onVerImovelNaAba={
+                telaLiberada('oportunidades-imob', abas) ? verImovelNaAba : undefined
+              }
             />
             <PontoScreen
               onCapturarMapas={capturarMapas}
@@ -383,6 +406,10 @@ export default function App() {
             estadoInicial={estadoMapa}
             onEstado={setEstadoMapa}
             onInicio={voltarAoInicio}
+            /* Mesmo portão do modo de ponto: aba vetada = botão ausente, não morto. */
+            onVerImovelNaAba={
+              telaLiberada('oportunidades-imob', abas) ? verImovelNaAba : undefined
+            }
           />
         ) : tela === 'executiva' ? (
           // A Executiva NÃO recebe `uf` nem `onUf` (DEC-023): ela abre com a rede do
@@ -402,6 +429,8 @@ export default function App() {
           // COORDENADA do imóvel: pin + hexágono selecionado + câmera no ponto.
           <OportunidadesImobiliariasScreen
             onInicio={voltarAoInicio}
+            focoInicial={focoImovel}
+            onFocoAplicado={() => setFocoImovel(null)}
             onVerNoMapa={(u, m, ponto) => {
               setUf(u)
               setMunicipio(m)

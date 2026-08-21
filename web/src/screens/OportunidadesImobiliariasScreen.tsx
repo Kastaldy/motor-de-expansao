@@ -1,11 +1,28 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Map, Marker } from 'react-map-gl/maplibre'
 
+import IconeTipo from '../components/IconeTipo'
 import Select from '../components/Select'
 import { Aviso, Botao, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
 import { SCORE_BANDS_HEX } from '../lib/colors'
 import { brl, brlCurto, num } from '../lib/format'
+import {
+  ACC,
+  ACC_08,
+  ACC_10,
+  ACC_12,
+  ACC_24,
+  ACC_30,
+  ACC_GLOW,
+  ACC_ON,
+  ACC_TX,
+  COR_TIPO,
+  corTipo,
+  custoOcup,
+  labelTipo,
+  rsM2,
+} from '../lib/imovel'
 import type { Oportunidade } from '../lib/types'
 
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -29,50 +46,16 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 const BASEMAP = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 const MAX_PINS = 160
 
-/* --- Paleta CATEGORICA por tipo (identidade do imovel) -----------------------
-   Matizes originais do design (rosa/peri/menta): o Felipe confirmou que NAO eram elas
-   o problema — o "azul" a trocar era o turquesa da marca (ver ACC abaixo). Valores HEX
-   (tela so'-escura; SVG fill e alpha-composicao nao resolvem var() em atributo). Cada
-   uso categorico carrega ROTULO/ICONE junto; a cor de SCORE segue a rampa canonica
-   (corResidual), nao o tipo. */
-const COR_TIPO: Record<string, string> = {
-  galpao: '#f2597f',
-  comercial: '#7b9cf0',
-  loja: '#7b9cf0',
-  terreno: '#f2913a',
-}
-const corTipo = (t: string): string => COR_TIPO[t] ?? '#8b97a5'
-
-const LABEL_TIPO: Record<string, string> = {
-  galpao: 'Galpão',
-  comercial: 'Comercial',
-  loja: 'Loja',
-  terreno: 'Terreno',
-}
-const labelTipo = (t: string): string =>
-  LABEL_TIPO[t] ?? (t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Imóvel')
+/* Paleta por tipo, rotulos, custo de ocupacao, R$/m² e o acento MAGENTA vivem em
+   `lib/imovel` desde que a camada aparece tambem no Mapa Territorial (pontinhos +
+   secao da ficha do hexagono): uma unica fonte para as duas telas. */
 
 /** Agrupamento p/ a composicao e a legenda do scatter (loja funde em comercial). */
 const GRUPOS = [
-  { chave: 'galpao', rotulo: 'Galpão', cor: '#f2597f', tipos: ['galpao'] },
-  { chave: 'comercial', rotulo: 'Comercial/Loja', cor: '#7b9cf0', tipos: ['comercial', 'loja'] },
-  { chave: 'terreno', rotulo: 'Terreno', cor: '#f2913a', tipos: ['terreno'] },
+  { chave: 'galpao', rotulo: 'Galpão', cor: COR_TIPO.galpao, tipos: ['galpao'] },
+  { chave: 'comercial', rotulo: 'Comercial/Loja', cor: COR_TIPO.comercial, tipos: ['comercial', 'loja'] },
+  { chave: 'terreno', rotulo: 'Terreno', cor: COR_TIPO.terreno, tipos: ['terreno'] },
 ]
-
-/* --- Acento desta tela = ROSA MAGENTA (por pedido do Felipe) -----------------------
-   Colore os GRAFICOS (rosca, scatter, barra de aluguel), a SELECAO/REALCES e o botao
-   "Ver no Mapa". A projecao de faturamento segue VERDE (--pos-text), a parte, por ser
-   numero de resultado. Hex direto: SVG e composicao com alfa nao resolvem var() em
-   atributo, e esta tela e' so'-escura. */
-const ACC = '#dd3d97'
-const ACC_TX = '#f06fb6'
-const ACC_08 = 'rgba(221,61,151,.08)'
-const ACC_10 = 'rgba(221,61,151,.10)'
-const ACC_12 = 'rgba(221,61,151,.12)'
-const ACC_24 = 'rgba(221,61,151,.24)'
-const ACC_30 = 'rgba(221,61,151,.30)'
-const ACC_GLOW = '0 6px 16px -4px rgba(221,61,151,.45)'
-const ACC_ON = '#2a0714' // texto escuro sobre o magenta (botao primario)
 
 const FAIXA_LABEL: Record<string, string> = {
   prioridade_maxima: 'Prioridade máxima', alta: 'Alta', media: 'Média', baixa: 'Baixa', minima: 'Mínima',
@@ -86,23 +69,12 @@ const corResidual = (v: number | null | undefined): string => {
   return SCORE_BANDS_HEX[Math.min(9, Math.max(0, Math.floor(v / 10)))]
 }
 
-const rsM2 = (o: Oportunidade): number | null =>
-  o.rs_m2 != null ? o.rs_m2 : o.aluguel != null && o.area ? o.aluguel / o.area : null
-
 function mediana(xs: (number | null | undefined)[]): number | null {
   const s = xs.filter((x): x is number => x != null && !Number.isNaN(x)).sort((a, b) => a - b)
   if (!s.length) return null
   const m = Math.floor(s.length / 2)
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
 }
-
-/* Projecao ILUSTRATIVA de faturamento (storytelling do hero): fracao da sobra de
-   mercado que uma unidade capturaria, vezes um ticket low-cost. NAO e' o motor de
-   Viabilidade (p50, robusto) — a formula fica visivel na nota justamente p/ nao ser
-   lida como numero fechado. */
-/** Custo de ocupacao mensal = aluguel + IPTU + condominio (0 quando ausente). */
-const custoOcup = (o: Oportunidade): number =>
-  [o.aluguel, o.iptu, o.condominio].reduce<number>((s, v) => s + (v ?? 0), 0)
 
 /** Faturamento projetado/mes = alunos p50 da curva tamanho->densidade (simulador de
  *  Viabilidade, servido pronto pelo backend em `fat_proj`) x ticket. NAO usa residual. */
@@ -134,45 +106,24 @@ function salvarVisitas(s: Set<string>) {
   }
 }
 
-/* ======================= Icone por tipo (SVG, do design) ======================= */
-function IconeTipo({ tipo, tamanho }: { tipo: string; tamanho: number }) {
-  const comum = {
-    width: tamanho, height: tamanho, viewBox: '0 0 24 24', fill: 'none',
-    stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const,
-  }
-  if (tipo === 'terreno') {
-    return (
-      <svg {...comum} aria-hidden>
-        <path d="M4 8h16v12H4z" strokeDasharray="3 3" />
-        <path d="M4 8 8 4h12l-4 4" />
-      </svg>
-    )
-  }
-  if (tipo === 'galpao') {
-    return (
-      <svg {...comum} aria-hidden>
-        <path d="M3 10 12 5l9 5" />
-        <path d="M4.5 10v9h15v-9" />
-        <path d="M9.5 19v-5h5v5" />
-      </svg>
-    )
-  }
-  return (
-    <svg {...comum} aria-hidden>
-      <path d="M3 9h18l-2-4H5L3 9z" />
-      <path d="M5 9v11h14V9" />
-      <path d="M9 20v-6h6v6" />
-    </svg>
-  )
-}
-
 /* ======================= Tela ======================= */
 export default function OportunidadesImobiliariasScreen({
   onInicio,
   onVerNoMapa,
+  focoInicial = null,
+  onFocoAplicado,
 }: {
   onInicio: () => void
   onVerNoMapa: (uf: string, municipio: string, ponto?: { lat: number; lng: number; hexId: string }) => void
+  /**
+   * Imovel que deve abrir JA SELECIONADO — o caminho inverso do "Ver no Mapa
+   * Territorial": o botao "Ver na aba de imoveis" da janela do imovel no mapa.
+   * Viaja o OBJETO inteiro (nao so o id) de proposito: a rota nacional serve o
+   * top-N por residual, e o imovel focado pode estar fora dele.
+   */
+  focoInicial?: Oportunidade | null
+  /** Consome a intencao UMA vez, apos aplicar o foco (molde do `modoPendente` do App). */
+  onFocoAplicado?: () => void
 }) {
   const [itens, setItens] = useState<Oportunidade[] | null>(null)
   const [total, setTotal] = useState(0)
@@ -188,18 +139,40 @@ export default function OportunidadesImobiliariasScreen({
 
   useEffect(() => {
     let vivo = true
+    /* A intencao e' CONSUMIDA aqui, na montagem — nao no sucesso do fetch. Consumir
+       so' no .then deixava o foco vivo no App quando a rota falhava ou o operador
+       saia antes da resposta, e uma abertura futura da aba (pelo Dock, dias depois)
+       aplicava um foco fantasma. Mesmo idioma do `modoPendente` do App: a intencao
+       vale para ESTA entrada; o closure local segue com o objeto para o fetch usar. */
+    if (focoInicial) onFocoAplicado?.()
     api
       .oportunidades()
       .then((r) => {
         if (!vivo) return
-        setItens(r.itens)
+        /* O foco vindo do mapa pode estar FORA do top-N nacional que a rota serve:
+           o proprio objeto viaja na intencao e entra no conjunto — senao "Ver na
+           aba de imoveis" abriria a tela com OUTRO imovel selecionado. */
+        const itensComFoco =
+          focoInicial && !r.itens.some((i) => i.id === focoInicial.id)
+            ? [...r.itens, focoInicial]
+            : r.itens
+        setItens(itensComFoco)
         setTotal(r.total)
-        setSel(r.itens[0]?.id ?? null)
+        if (focoInicial) {
+          // O recorte abre na UF do imovel: e' o territorio que o operador estava lendo.
+          setUfSel(focoInicial.uf)
+          setSel(focoInicial.id)
+        } else {
+          setSel(r.itens[0]?.id ?? null)
+        }
       })
       .catch((e: ApiError) => vivo && setErro(e.message))
     return () => {
       vivo = false
     }
+    // So na MONTAGEM, de proposito: a tela desmonta ao sair (render condicional do
+    // App), entao o foco e' lido uma unica vez, aqui — mesmo idioma da foto do mapa.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const ufs = useMemo(() => Array.from(new Set((itens ?? []).map((o) => o.uf))).sort(), [itens])
@@ -431,8 +404,16 @@ function LinhaRest({ pos, op, ativo, visita, onClick }: { pos: number; op: Oport
   const tint = corTipo(op.tipo)
   const r = rsM2(op)
   const larg = Math.max(4, Math.min(100, op.residual ?? 0))
+  /* Quando a linha VIRA a selecionada sem clique do operador (foco vindo do mapa, ou a
+     re-selecao do guard de filtros), ela pode estar fora da area visivel da lista — a
+     ficha mostrava um imovel que a lista nao aparentava ter. `block: 'nearest'` nao
+     move nada quando a linha ja esta visivel (o caso do clique manual). */
+  const ref = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (ativo) ref.current?.scrollIntoView({ block: 'nearest' })
+  }, [ativo])
   return (
-    <button type="button" onClick={onClick}
+    <button ref={ref} type="button" onClick={onClick}
       style={{ width: '100%', textAlign: 'left', display: 'grid', gridTemplateColumns: '20px 30px 1fr auto', gap: 10, alignItems: 'center', padding: '9px 8px', borderBottom: '1px solid var(--line-soft)', borderLeft: `2px solid ${ativo ? ACC : 'transparent'}`, background: ativo ? ACC_08 : 'transparent', cursor: 'pointer' }}>
       <span className="num" style={{ font: '500 10.5px/1 var(--f-num)', color: 'var(--tx-rank)', textAlign: 'right' }}>{pos}</span>
       <span style={{ width: 30, height: 30, borderRadius: 8, display: 'grid', placeItems: 'center', color: tint, background: `${tint}1c` }}>
