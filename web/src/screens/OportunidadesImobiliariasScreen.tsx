@@ -5,7 +5,7 @@ import Select from '../components/Select'
 import { Aviso, Botao, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
 import { SCORE_BANDS_HEX } from '../lib/colors'
-import { brl, num } from '../lib/format'
+import { brl, brlCurto, num } from '../lib/format'
 import type { Oportunidade } from '../lib/types'
 
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -172,7 +172,7 @@ export default function OportunidadesImobiliariasScreen({
   onVerNoMapa,
 }: {
   onInicio: () => void
-  onVerNoMapa: (uf: string, municipio: string) => void
+  onVerNoMapa: (uf: string, municipio: string, ponto?: { lat: number; lng: number; hexId: string }) => void
 }) {
   const [itens, setItens] = useState<Oportunidade[] | null>(null)
   const [total, setTotal] = useState(0)
@@ -184,6 +184,7 @@ export default function OportunidadesImobiliariasScreen({
   const [sel, setSel] = useState<string | null>(null)
   const [vistaEsq, setVistaEsq] = useState<'ranking' | 'mapa'>('ranking')
   const [visitas, setVisitas] = useState<Set<string>>(lerVisitas)
+  const [soVisitas, setSoVisitas] = useState(false)
 
   useEffect(() => {
     let vivo = true
@@ -211,6 +212,7 @@ export default function OportunidadesImobiliariasScreen({
     let xs = itens ?? []
     if (ufSel) xs = xs.filter((o) => o.uf === ufSel)
     if (tipoSel) xs = xs.filter((o) => o.tipo === tipoSel)
+    if (soVisitas && visitas.size) xs = xs.filter((o) => visitas.has(o.id))
     if (busca.trim()) {
       const q = busca.trim().toLowerCase()
       xs = xs.filter((o) => `${o.titulo} ${o.bairro ?? ''} ${o.municipio}`.toLowerCase().includes(q))
@@ -224,11 +226,15 @@ export default function OportunidadesImobiliariasScreen({
       return (rsM2(a) ?? Infinity) - (rsM2(b) ?? Infinity)
     })
     return ord
-  }, [itens, ufSel, tipoSel, busca, ordem])
+  }, [itens, ufSel, tipoSel, busca, ordem, soVisitas, visitas])
 
   useEffect(() => {
     if (filtrados.length && !filtrados.some((o) => o.id === sel)) setSel(filtrados[0].id)
   }, [filtrados, sel])
+
+  useEffect(() => {
+    if (visitas.size === 0) setSoVisitas(false)
+  }, [visitas])
 
   function alternarVisita(id: string) {
     setVisitas((prev) => {
@@ -281,6 +287,15 @@ export default function OportunidadesImobiliariasScreen({
         <Select label="Ordenar por" value={ordem} onChange={(v) => setOrdem(v as Ordem)} maxWidth={200} buscavel={false} options={ORDENS} />
         <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar bairro, cidade, título…" aria-label="Buscar oportunidade"
           style={{ flex: 1, minWidth: 170, maxWidth: 340, height: 34, padding: '0 12px', background: 'var(--surf-input)', border: '1px solid var(--line-mid)', borderRadius: 'var(--r-md)', color: 'var(--tx-strong)', font: '500 13px/1 var(--f-ui)' }} />
+        {visitas.size > 0 && (
+          <button type="button" onClick={() => setSoVisitas((v) => !v)} aria-pressed={soVisitas}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 'var(--r-md)', cursor: 'pointer',
+              border: `1px solid ${soVisitas ? 'rgba(233,192,122,.5)' : 'var(--line-mid)'}`,
+              background: soVisitas ? 'rgba(233,192,122,.14)' : 'var(--surf-input)',
+              color: soVisitas ? 'var(--warn-text)' : 'var(--tx-muted)', font: '600 12px/1 var(--f-ui)' }}>
+            ★ Marcados <span className="num">{visitas.size}</span>
+          </button>
+        )}
         <SegVista vista={vistaEsq} onVista={setVistaEsq} />
       </div>
 
@@ -448,7 +463,7 @@ function Ficha({
   visita: boolean
   onVisita: () => void
   onSel: (id: string) => void
-  onVerNoMapa: (uf: string, municipio: string) => void
+  onVerNoMapa: (uf: string, municipio: string, ponto?: { lat: number; lng: number; hexId: string }) => void
   /** true = card lateral compacto da vista de Mapa: hero enxuto, sem o mini-mapa. */
   lateral?: boolean
 }) {
@@ -517,7 +532,7 @@ function Ficha({
             <HeroStat label="Área" valor={op.area == null ? '—' : num(op.area)} unidade="m²" />
             <HeroStat label="Aluguel" valor={op.aluguel == null ? '—' : num(op.aluguel)} unidade="R$/mês" />
             <HeroStat label="R$/m²" valor={r == null ? '—' : num(r, 0)} unidade="/mês" />
-            <HeroStat label="Projeção fat." valor={projFat == null ? '—' : brl(projFat, true)} unidade="/mês" cor="var(--pos-text)"
+            <HeroStat label="Projeção fat." valor={projFat == null ? '—' : brlCurto(projFat)} unidade="/mês" cor="var(--pos-text)"
               nota={alunosProj != null ? `${num(alunosProj)} alunos p50/m²` : ''} />
           </div>
         </Glass>
@@ -586,7 +601,7 @@ function Ficha({
 
       {/* Acoes */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'stretch' }}>
-        <Botao onClick={() => onVerNoMapa(op.uf, op.municipio)} style={{ flex: 1, minWidth: 220, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: ACC, color: ACC_ON, boxShadow: ACC_GLOW }}>Ver no Mapa Territorial →</Botao>
+        <Botao onClick={() => onVerNoMapa(op.uf, op.municipio, op.lat != null && op.lng != null ? { lat: op.lat, lng: op.lng, hexId: op.hex_id } : undefined)} style={{ flex: 1, minWidth: 220, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: ACC, color: ACC_ON, boxShadow: ACC_GLOW }}>Ver no Mapa Territorial →</Botao>
         <Botao variante="ghost" onClick={baixarDossie} disabled={baixando} style={{ flex: 1, minWidth: 220, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
           title={op.tem_dossie ? 'Dossiê PDF do coletor (oferta + território)' : 'Sem dossiê pronto — gera o Relatório Pontual do endereço'}>
           {baixando ? <><Spinner /> Gerando…</> : op.tem_dossie ? '↓ Baixar dossiê (PDF)' : '↓ Relatório do ponto (PDF)'}
@@ -729,6 +744,16 @@ function Scatter({ pontos, sel }: { pontos: Oportunidade[]; sel: string }) {
   const eixoX = [0, Math.round(xMax / 2), Math.round(xMax)]
   const eixoY = [0, Math.round(yMax / 2), Math.round(yMax)]
   const gruposPresentes = GRUPOS.filter((g) => dados.some((d) => g.tipos.includes(d.tipo)))
+  // Declutter: amostra uniforme dos pontos (preserva a forma da nuvem) + sempre o selecionado.
+  const LIM_PONTOS = 45
+  let plot = dados
+  if (dados.length > LIM_PONTOS) {
+    const passo = dados.length / LIM_PONTOS
+    const amostra: typeof dados = []
+    for (let i = 0; i < dados.length; i += passo) amostra.push(dados[Math.floor(i)])
+    if (selD && !amostra.some((d) => d.id === selD.id)) amostra.push(selD)
+    plot = amostra
+  }
   return (
     <div>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', height: 'auto', maxHeight: 320 }} preserveAspectRatio="xMidYMid meet">
@@ -741,7 +766,7 @@ function Scatter({ pontos, sel }: { pontos: Oportunidade[]; sel: string }) {
         <line x1={padL} y1={H - padB} x2={W - padR} y2={H - padB} stroke="var(--line-mid)" strokeWidth="1" />
         {eixoY.map((v, i) => <text key={`y${v}-${i}`} x={padL - 6} y={py(v) + 3} textAnchor="end" style={{ font: '400 9px var(--f-num)', fill: 'var(--tx-sub)' }}>{num(v)}</text>)}
         {eixoX.map((v, i) => <text key={`x${v}-${i}`} x={px(v)} y={H - padB + 13} textAnchor={i === 0 ? 'start' : i === eixoX.length - 1 ? 'end' : 'middle'} style={{ font: '400 9px var(--f-num)', fill: 'var(--tx-sub)' }}>{num(v)}</text>)}
-        {dados.map((d) => (d.id === sel ? null : <circle key={d.id} cx={px(d.x)} cy={py(d.y)} r={3.4} fill={corTipo(d.tipo)} opacity={0.55} />))}
+        {plot.map((d) => (d.id === sel ? null : <circle key={d.id} cx={px(d.x)} cy={py(d.y)} r={3.4} fill={corTipo(d.tipo)} opacity={0.55} />))}
         {selD && (<>
           <circle cx={px(selD.x)} cy={py(selD.y)} r={9} fill="none" stroke={ACC} strokeWidth="2" />
           <circle cx={px(selD.x)} cy={py(selD.y)} r={4.5} fill={corTipo(selD.tipo)} stroke="var(--bg-base)" strokeWidth="1.2" />
@@ -749,13 +774,15 @@ function Scatter({ pontos, sel }: { pontos: Oportunidade[]; sel: string }) {
         <text x={(padL + W - padR) / 2} y={H - 3} textAnchor="middle" style={{ font: '400 9.5px var(--f-ui)', fill: 'var(--tx-sub)' }}>aluguel R$/m² →</text>
         <text x={13} y={(padT + H - padB) / 2} textAnchor="middle" transform={`rotate(-90 13 ${(padT + H - padB) / 2})`} style={{ font: '400 9.5px var(--f-ui)', fill: 'var(--tx-sub)' }}>mercado que sobra (alunos) →</text>
       </svg>
-      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 8 }}>
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
         {gruposPresentes.map((g) => (
           <span key={g.chave} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, font: '400 11px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: g.cor }} />{g.rotulo}
-            <span className="num" style={{ color: 'var(--tx-rank)' }}>{dados.filter((d) => g.tipos.includes(d.tipo)).length}</span>
           </span>
         ))}
+        {plot.length < dados.length && (
+          <span className="num" style={{ marginLeft: 'auto', font: '400 10px/1 var(--f-num)', color: 'var(--tx-rank)' }}>amostra de {plot.length} de {num(dados.length)}</span>
+        )}
       </div>
     </div>
   )
@@ -901,8 +928,8 @@ function HeroStat({ label, valor, unidade, nota, cor }: { label: string; valor: 
   return (
     <div style={{ minWidth: 0 }}>
       <div className="num" style={{ font: '400 10px/1 var(--f-num)', letterSpacing: '.1em', textTransform: 'uppercase', color: cor ?? 'var(--tx-sub)', marginBottom: 6 }}>{label}</div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
-        <span className="num" style={{ font: '500 24px/1 var(--f-num)', color: cor ?? 'var(--tx-max)' }}>{valor}</span>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, whiteSpace: 'nowrap' }}>
+        <span className="num" style={{ font: '500 24px/1 var(--f-num)', color: cor ?? 'var(--tx-max)', whiteSpace: 'nowrap' }}>{valor}</span>
         {unidade && <span style={{ font: '400 12px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>{unidade}</span>}
       </div>
       {nota && <div style={{ font: '400 10.5px/1.3 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 5 }}>{nota}</div>}

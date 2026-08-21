@@ -396,15 +396,33 @@ export default function App() {
           // UF/município — a trilha é da rede inteira, não de um recorte do mapa.
           <AcessosScreen onInicio={voltarAoInicio} />
         ) : tela === 'oportunidades-imob' ? (
-          // Camada de oferta (imóveis de locação joinados ao M1). Autônoma: nacional,
-          // filtra por dentro; READ-ONLY e sem PII (contato do corretor só no dossiê).
-          // "Ver no Mapa" leva o Mapa Territorial ao UF/município do imóvel (deep link).
+          // Camada de oferta (imóveis de locação joinados ao território). Autônoma:
+          // nacional, filtra por dentro; sem PII (contato do corretor só no dossiê).
+          // "Ver no Mapa" abre o Mapa Territorial no UF/município do imóvel E crava a
+          // COORDENADA do imóvel: pin + hexágono selecionado + câmera no ponto.
           <OportunidadesImobiliariasScreen
             onInicio={voltarAoInicio}
-            onVerNoMapa={(u, m) => {
+            onVerNoMapa={(u, m, ponto) => {
               setUf(u)
               setMunicipio(m)
-              setEstadoMapa({ ...ESTADO_MAPA_VAZIO, uf: u, municipio: m })
+              setEstadoMapa({
+                ...ESTADO_MAPA_VAZIO,
+                uf: u,
+                municipio: m,
+                ...(ponto
+                  ? {
+                      pin: { lat: ponto.lat, lng: ponto.lng, hexId: ponto.hexId },
+                      selecionado: ponto.hexId,
+                      camera: {
+                        longitude: ponto.lng,
+                        latitude: ponto.lat,
+                        zoom: 14,
+                        pitch: 0,
+                        bearing: 0,
+                      },
+                    }
+                  : {}),
+              })
               navegar('mapa')
             }}
           />
