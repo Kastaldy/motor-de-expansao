@@ -43,6 +43,7 @@ export type TelaControlada =
   | 'inicio'
   | 'ponto'
   | 'oportunidades'
+  | 'oportunidades-imob'
   | 'mapa'
   | 'viabilidade'
   | 'executiva'
@@ -54,6 +55,9 @@ const ABA_DA_TELA: Record<Exclude<TelaControlada, 'inicio'>, Aba> = {
   ponto: 'mapa',
   mapa: 'mapa',
   oportunidades: 'oportunidades',
+  // A aba imobiliária é a camada de oferta; reusa o gate da aba `oportunidades`
+  // (não cria aba nova no backend). Um usuário que vê o funil vê os imóveis.
+  'oportunidades-imob': 'oportunidades',
   executiva: 'executiva',
   viabilidade: 'viabilidade',
   acessos: 'acessos',

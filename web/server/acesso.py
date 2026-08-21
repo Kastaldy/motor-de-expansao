@@ -76,6 +76,12 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/municipio/", frozenset({"mapa", "oportunidades"})),
     ("/api/municipios/", frozenset({"mapa", "oportunidades"})),
     ("/api/estados", frozenset({"oportunidades"})),
+    # Camada imobiliaria: o DOSSIE (PDF do coletor, carrega contato de corretor) fica
+    # so' na aba de oportunidades; a LISTA (agregado sem PII) tambem serve a camada de
+    # pins e a secao da ficha do hexagono no Mapa Territorial, entao "mapa" a libera.
+    # O prefixo com barra vem ANTES: o casamento e' first-match por startswith.
+    ("/api/oportunidades/", frozenset({"oportunidades"})),
+    ("/api/oportunidades", frozenset({"mapa", "oportunidades"})),
 )
 
 # Rotas /api/* deliberadamente livres (qualquer usuario autenticado):

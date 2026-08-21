@@ -58,6 +58,12 @@ AGRUPAMENTO_ABAS: tuple[tuple[str, str], ...] = (
     ("/api/municipio/", "mapa"),
     ("/api/municipios/", "mapa"),
     ("/api/estados", "oportunidades"),
+    # O dossie e' gesto da aba imobiliaria; a LISTA, liberada tambem para "mapa",
+    # e' buscada sozinha pelo Mapa Territorial a cada UF (camada de pins + secao do
+    # hexagono) — na pratica o grosso das chamadas vem de la', entao e' la' que ela
+    # conta (mesma logica do relatorio pontual, atribuido a viabilidade).
+    ("/api/oportunidades/", "oportunidades"),
+    ("/api/oportunidades", "mapa"),
 )
 
 #: Camada de LABEL (CLAUDE.md §2): valor bruto sem acento; exibição acentuada.

@@ -7425,6 +7425,230 @@ async def relatorio_comparacao(payload: dict[str, Any]) -> Response:
 
 
 # ============================================================================
+# Oportunidades Imobiliarias (camada de oferta, READ-ONLY sobre o M1)
+# ============================================================================
+# Le o `viaveis.parquet` do coletor de oportunidades (imoveis de locacao ja
+# joinados ao M1). SEM PII: as colunas de corretor (nome/telefone/creci) NUNCA
+# saem daqui — a aba do piloto e' agregada por hex_id (o contato do corretor vive
+# no dossie PDF, atras do Authelia). Caminho por MOTOR_OPORTUNIDADES_PATH; default
+# no data/ (montado :ro em producao). Registrada ANTES do mount do SPA.
+OPORTUNIDADES_PATH = Path(
+    os.environ.get(
+        "MOTOR_OPORTUNIDADES_PATH", str(DATA_DIR / "oportunidades" / "viaveis.parquet")
+    )
+)
+
+# Dossies (PDF) gerados pelo coletor. O coletor so' produz PDF para o top-N por praca
+# (dezenas), nao para todos os pontos — entao a maioria cai no fallback do front
+# (Relatorio Pontual). Default no repo IRMAO `coleta-de-oportunidades` (dev); em
+# producao aponte MOTOR_DOSSIES_DIR para o volume montado. Nome: `im-<id>__slug.pdf`
+# (o `_` do imovel_id vira `-` no arquivo).
+DOSSIES_DIR = Path(
+    os.environ.get(
+        "MOTOR_DOSSIES_DIR",
+        str(_REPO_ROOT.parent / "coleta-de-oportunidades" / "data" / "dossies"),
+    )
+)
+
+
+def _dossie_index() -> dict[str, Any]:
+    """{imovel_id -> caminho do PDF}. Rescaneia a cada chamada (dezenas de arquivos):
+    barato e reflete uma regeneracao sem exigir restart do backend."""
+    import re as _re
+
+    idx: dict[str, Any] = {}
+    if not DOSSIES_DIR.is_dir():
+        return idx
+    for p in DOSSIES_DIR.rglob("*.pdf"):
+        m = _re.match(r"(im[-_][0-9a-fA-F]+)__", p.name)
+        if m:
+            idx.setdefault(m.group(1).replace("im-", "im_"), p)
+    return idx
+
+_OPORTUNIDADES_COLS = [
+    "imovel_id", "fonte_listing_id", "titulo", "tipo", "operacao", "uf",
+    "municipio", "m1_cidade", "bairro", "area_relevante_m2", "area_util_m2",
+    "preco", "preco_aluguel", "iptu", "condominio", "hex_id",
+    "m1_residual_fitness", "m1_residual_total", "m1_score_priorizacao",
+    "censo_score_setorial_hex", "m1_faixa_oportunidade", "censo_pop_hex",
+    "m1_pop_hex", "censo_renda_per_capita_hex", "m1_renda_per_capita",
+    "m1_sam_fitness", "m1_n_unidades_ultra", "first_seen", "latitude",
+    "longitude", "url", "status",
+]
+
+_OPORTUNIDADES_CACHE: list[dict[str, Any]] | None = None
+
+
+def _op_num(v: Any, casas: int | None = None) -> float | int | None:
+    """NaN/None -> None; senao numero (int quando inteiro, ou arredondado)."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(f):
+        return None
+    if casas is None:
+        return int(f) if f == int(f) else f
+    return round(f, casas)
+
+
+def _op_txt(v: Any) -> str | None:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    s = str(v).strip()
+    return s or None
+
+
+@functools.lru_cache(maxsize=1)
+def _ticket_proj_mensal() -> float:
+    """Ticket MISTO (balcao + agregador) do dimensionamento/config — o mesmo mix que o
+    simulador usa na receita: share*balcao + (1-share)*(balcao*fator_agregador) ~ R$120."""
+    try:
+        from motor_expansao.dimensionamento import config as _cfg
+
+        balcao = float(getattr(_cfg, "SIM_MENSALIDADE_BALCAO", 137))
+        share = float(getattr(_cfg, "SIM_SHARE_BALCAO", 0.69))
+        fator = float(getattr(_cfg, "SIM_TICKET_AGREGADOR_FATOR", 0.60))
+        return share * balcao + (1.0 - share) * (balcao * fator)
+    except Exception:  # noqa: BLE001 — degrada p/ default se o modulo nao carregar
+        return 120.0
+
+
+@functools.lru_cache(maxsize=1)
+def _area_curva_max() -> float:
+    """Teto de m2 aplicado a curva de alunos. A Ultra constroi ~1500-2000 m2 mesmo em
+    lote grande; projetar sobre a AREA CRUA (lote do terreno, galpao inteiro) infla o
+    faturamento (um terreno de 3.600 m2 nao vira uma academia de 3.600 m2). Cap =
+    AREA_IDEAL_MAX_M2 do config canonico."""
+    try:
+        from motor_expansao.config import AREA_IDEAL_MAX_M2
+
+        return float(AREA_IDEAL_MAX_M2)
+    except Exception:  # noqa: BLE001
+        return 2000.0
+
+
+@functools.lru_cache(maxsize=8192)
+def _alunos_p50_por_m2(m2_arred: int) -> float | None:
+    """p50 de alunos da curva tamanho->densidade p/ uma metragem (arredondada p/ cache).
+
+    Fonte UNICA: a mesma base e funcao de /api/faixa-alunos (simulador de Viabilidade).
+    Property-first (DEC-009): a faixa depende SO do tamanho, nao da geografia.
+    """
+    if not m2_arred:
+        return None
+    base, _fonte = _base_calibracao()
+    if base is None:
+        return None
+    try:
+        from motor_expansao.dimensionamento.viabilidade_ponto import (
+            faixa_alunos_por_densidade,
+        )
+
+        r = faixa_alunos_por_densidade(float(m2_arred), base)
+        return r.get("faixa_alunos_p50")
+    except Exception:  # noqa: BLE001 — sem base valida, projecao fica vazia
+        return None
+
+
+def _carregar_oportunidades() -> list[dict[str, Any]]:
+    """Le o parquet UMA vez e monta os dicts sem PII, ordenados por residual."""
+    global _OPORTUNIDADES_CACHE
+    if _OPORTUNIDADES_CACHE is not None:
+        return _OPORTUNIDADES_CACHE
+    if not OPORTUNIDADES_PATH.exists():
+        _OPORTUNIDADES_CACHE = []
+        return _OPORTUNIDADES_CACHE
+    df = pd.read_parquet(OPORTUNIDADES_PATH)
+    df = df[[c for c in _OPORTUNIDADES_COLS if c in df.columns]]
+    if "status" in df.columns:
+        df = df[df["status"].astype(str).str.lower() != "removido"]
+    if "m1_residual_fitness" in df.columns:
+        df = df.sort_values("m1_residual_fitness", ascending=False, na_position="last")
+    ticket = _ticket_proj_mensal()
+    itens: list[dict[str, Any]] = []
+    for r in df.itertuples(index=False):
+        d = r._asdict()
+        area = _op_num(d.get("area_relevante_m2")) or _op_num(d.get("area_util_m2"))
+        aluguel = _op_num(d.get("preco_aluguel")) or _op_num(d.get("preco"))
+        rs_m2 = round(aluguel / area, 1) if aluguel and area else None
+        primeiro = _op_txt(d.get("first_seen"))
+        # Faturamento projetado = alunos p50 (curva tamanho->densidade) x ticket. p50
+        # depende SO do tamanho (property-first, DEC-009); m2 arredondado p/ cachear e
+        # capado no ideal (lote/galpao grande nao vira academia inteira — ver helper).
+        area_cap = min(float(area), _area_curva_max()) if area else 0.0
+        area_p50 = int(round(area_cap / 10.0) * 10) if area_cap else 0
+        alunos_p50 = _alunos_p50_por_m2(area_p50)
+        fat_proj = alunos_p50 * ticket if alunos_p50 else None
+        itens.append(
+            {
+                "id": _op_txt(d.get("imovel_id")) or _op_txt(d.get("fonte_listing_id")) or "",
+                "titulo": _op_txt(d.get("titulo")) or "(sem titulo)",
+                "tipo": _op_txt(d.get("tipo")) or "Imovel",
+                "operacao": _op_txt(d.get("operacao")),
+                "uf": _op_txt(d.get("uf")) or "",
+                "municipio": _op_txt(d.get("municipio")) or _op_txt(d.get("m1_cidade")) or "",
+                "bairro": _op_txt(d.get("bairro")),
+                "area": area,
+                "aluguel": aluguel,
+                "iptu": _op_num(d.get("iptu")),
+                "condominio": _op_num(d.get("condominio")),
+                "rs_m2": rs_m2,
+                "hex_id": _op_txt(d.get("hex_id")) or "",
+                "residual": _op_num(d.get("m1_residual_fitness"), 1),
+                "residual_total": _op_num(d.get("m1_residual_total")),
+                "score": _op_num(d.get("m1_score_priorizacao"), 1),
+                "censo_score": _op_num(d.get("censo_score_setorial_hex"), 1),
+                "faixa": _op_txt(d.get("m1_faixa_oportunidade")),
+                "pop": _op_num(d.get("censo_pop_hex")) or _op_num(d.get("m1_pop_hex")),
+                "renda_pc": _op_num(d.get("censo_renda_per_capita_hex"))
+                or _op_num(d.get("m1_renda_per_capita")),
+                "sam": _op_num(d.get("m1_sam_fitness")),
+                "n_ultra": _op_num(d.get("m1_n_unidades_ultra")),
+                "first_seen": primeiro[:10] if primeiro else None,
+                "lat": _op_num(d.get("latitude"), 6),
+                "lng": _op_num(d.get("longitude"), 6),
+                "url": _op_txt(d.get("url")),
+                "alunos_p50": _op_num(alunos_p50),
+                "fat_proj": _op_num(fat_proj),
+                "ticket_proj": _op_num(ticket),
+            }
+        )
+    _OPORTUNIDADES_CACHE = itens
+    return itens
+
+
+@app.get("/api/oportunidades")
+def api_oportunidades(uf: str | None = None, limite: int = 500) -> dict[str, Any]:
+    """Oportunidades imobiliarias joinadas ao M1 (top-N por residual). `total` e' o
+    universo inteiro; `itens` vem capado por `limite` (o front filtra o resto)."""
+    todas = _carregar_oportunidades()
+    ufs = sorted({o["uf"] for o in todas if o["uf"]})
+    recorte = [o for o in todas if o["uf"] == uf.upper()] if uf else todas
+    n = max(1, min(limite, 3000))
+    itens = recorte[:n]
+    dossies = _dossie_index()
+    for o in itens:
+        o["tem_dossie"] = o["id"] in dossies
+    return {"total": len(todas), "ufs": ufs, "itens": itens}
+
+
+@app.get("/api/oportunidades/{imovel_id}/dossie")
+def api_oportunidade_dossie(imovel_id: str) -> Any:
+    """Serve o dossie PDF do coletor para um imovel, quando existe (senao 404 — o front
+    cai no Relatorio Pontual). SEM PII na rota: o PDF ja e' o artefato do coletor."""
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+
+    pdf = _dossie_index().get(imovel_id)
+    if pdf is None or not Path(pdf).exists():
+        raise HTTPException(status_code=404, detail="Dossie nao disponivel para este imovel.")
+    return FileResponse(str(pdf), media_type="application/pdf", filename=Path(pdf).name)
+
+
+# ============================================================================
 # SPA estatico (build do Vite) — producao
 # ============================================================================
 # Em producao UM container serve o frontend (dist/) E a API na mesma porta; o
