@@ -250,7 +250,11 @@ def abas_do_usuario(usuario: str | None) -> frozenset[str]:
     _fail_closed_logado = False  # controle voltou -> permite logar de novo no proximo episodio
     if usuario is not None and usuario in mapa:
         return mapa[usuario]
-    return mapa.get("*", frozenset())
+    # Curinga NUNCA concede aba sensivel (pentest Onda B #14): executiva/imobiliaria/
+    # viabilidade (financeiro da rede + PII + escrita) exigem concessao NOMINAL no JSON,
+    # nunca por "*". Espelha o fail-closed (linha 248, `ABAS_VALIDAS - ABAS_SENSIVEIS`):
+    # um typo `{"*": ["executiva"]}` liberaria financeiro a TODO autenticado.
+    return mapa.get("*", frozenset()) - ABAS_SENSIVEIS
 
 
 def abas_necessarias(path: str) -> frozenset[str] | None:

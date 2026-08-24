@@ -79,8 +79,23 @@ def test_aba_desconhecida_e_descartada(escrever_mapa) -> None:
 
 
 def test_usuario_fora_do_mapa_cai_no_default(escrever_mapa) -> None:
-    escrever_mapa({"ana": ["mapa"], "*": ["executiva"]})
-    assert acesso.abas_do_usuario("novato") == frozenset({"executiva"})
+    # Curinga so' concede aba NAO-sensivel (pentest Onda B #14); usa "mapa" no default.
+    escrever_mapa({"ana": ["executiva"], "*": ["mapa"]})
+    assert acesso.abas_do_usuario("novato") == frozenset({"mapa"})
+
+
+def test_curinga_nao_concede_abas_sensiveis(escrever_mapa) -> None:
+    """Pentest Onda B #14: o curinga "*" NUNCA libera aba sensivel.
+
+    Um typo `{"*": ["executiva"]}` liberaria financeiro/PII/escrita a TODO autenticado.
+    Sensiveis (executiva/imobiliaria/viabilidade) exigem concessao NOMINAL no JSON; o
+    curinga so' carrega as nao-sensiveis (espelha o fail-closed).
+    """
+    escrever_mapa({"ana": ["executiva"], "*": ["executiva", "imobiliaria", "mapa"]})
+    # novato herda so' a nao-sensivel do curinga; sensiveis somem.
+    assert acesso.abas_do_usuario("novato") == frozenset({"mapa"})
+    # concessao NOMINAL segue intacta.
+    assert acesso.abas_do_usuario("ana") == frozenset({"executiva"})
 
 
 def test_usuario_fora_do_mapa_sem_default_nao_tem_nada(escrever_mapa) -> None:
@@ -351,6 +366,8 @@ def test_rotas_do_painel_devolvem_404_para_quem_nao_pode(
     for chamada in (
         lambda u: pilot_app.acessos_resumo(remote_user=u),
         lambda u: pilot_app.acessos_usuario("alguem", remote_user=u),
+        # Inventario diagnostico (pentest Onda B #8): mesma barreira das demais /acessos.
+        lambda u: pilot_app.acessos_saude_artefatos(remote_user=u),
     ):
         with pytest.raises(HTTPException) as exc:
             chamada("ana")
@@ -366,6 +383,17 @@ def test_resumo_responde_para_quem_esta_na_allowlist(
     _com_allowlist(monkeypatch, "felipe")
     payload = pilot_app.acessos_resumo(remote_user="felipe")
     assert "serie" in payload and "usuarios" in payload and "saude" in payload
+
+
+def test_saude_artefatos_responde_inventario_para_admin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pentest Onda B #8: o inventario (data_dir + caminhos + descricao) so' sai para
+    a allowlist de admin — saiu do /api/health publico."""
+    _com_allowlist(monkeypatch, "felipe")
+    payload = pilot_app.acessos_saude_artefatos(remote_user="felipe")
+    assert payload["status"] == "ok"
+    assert "data_dir" in payload and "artefatos" in payload
 
 
 def test_ficha_inexistente_devolve_404_mesmo_para_admin(
