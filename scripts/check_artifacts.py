@@ -57,6 +57,24 @@ PILOTO_CRESCIMENTO = [
      "Passo 4 do piloto: cor do mapa por hexagono (satelite 2016-2023)"),
 ]
 
+# Camada de M&A (BLK-MA-15 + DEC-035). Grupo PROPRIO pelo mesmo motivo do
+# `PILOTO_CRESCIMENTO`: quem some com eles apaga OUTRA coisa da tela, e um aviso generico
+# manda o operador investigar o lugar errado.
+#
+# Este grupo existe porque a camada ficou MORTA EM PRODUCAO de 2026-08-19 a 2026-08-24 sem
+# que nada acusasse: o codigo dos pins foi publicado, os dois parquets ficaram so' na maquina
+# de quem os gerou, e este script — o unico verificador local — terminava imprimindo
+# "OK: todos os artefatos criticos e de staging presentes". Ver BLK-MA-19.
+#
+# A variante SEM identidade (`vulnerabilidade_ma_academias.parquet`) NAO entra: nenhuma
+# superficie de producao a le. So' se verifica o que alguem consome.
+PILOTO_MA = [
+    ("staging/vulnerabilidade_ma_nomeadas.parquet",
+     "Pins das academias INDEPENDENTES com score (BLK-MA-15)"),
+    ("staging/vulnerabilidade_ma_redes.parquet",
+     "Pins das unidades de REDE do agregador, com pressao e sem score (DEC-035)"),
+]
+
 
 def _check_group(artifacts: list) -> list[str]:
     missing = []
@@ -87,6 +105,9 @@ def main() -> None:
     print("\nCrescimento — passo 4 do piloto web (BLK-TRAJ-01):")
     faltando_cresc = _check_group(PILOTO_CRESCIMENTO)
 
+    print("\nM&A — pins de academias no Mapa Territorial (BLK-MA-15 / DEC-035):")
+    faltando_ma = _check_group(PILOTO_MA)
+
     print()
     if faltando_criticos:
         print(f"BLOQUEIO: {len(faltando_criticos)} artefato(s) critico(s) ausente(s).")
@@ -113,7 +134,20 @@ def main() -> None:
         print("     `data/reports/crescimento/` a partir de insumos que nao estao no")
         print("     repo, e chegam em producao so' pelo bind mount do compose.")
         print("  -> No ar, conferir com: curl -fsS <host>/api/health")
-    if not (faltando_staging or faltando_cresc):
+    if faltando_ma:
+        print(f"AVISO: {len(faltando_ma)} artefato(s) de M&A ausente(s).")
+        print("  -> Os pins de academia SOMEM do Mapa Territorial sem deixar rastro: nao")
+        print("     ha pilula, nao ha erro, nao ha espaco vazio. A tela fica identica a'")
+        print("     de um recorte que nao tem academia nenhuma.")
+        print("  -> Gerar com as DUAS flags opt-in (sem elas nada nomeado e' gravado):")
+        print("     python -m motor_expansao.vulnerabilidade.alvos_ma \\")
+        print("       --base-dir data/staging/snapshots_concorrentes \\")
+        print("       --saida-nomeadas data/staging/vulnerabilidade_ma_nomeadas.parquet \\")
+        print("       --saida-redes data/staging/vulnerabilidade_ma_redes.parquet")
+        print("  -> No ar, `/api/health` verde NAO prova pins: os leitores sao")
+        print("     `lru_cache` e memoizam a ausencia. Depois do scp, RESTARTAR o `web`")
+        print("     e provar em /api/municipio/{uf}/{municipio}. Ver BLK-MA-19.")
+    if not (faltando_staging or faltando_cresc or faltando_ma):
         print("OK: todos os artefatos criticos e de staging presentes.")
 
 

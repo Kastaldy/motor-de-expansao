@@ -41,6 +41,7 @@
 # o regen le/escreve a camada de mercado.
 #
 # INSTALACAO (uma vez):
+#     install -d -m 0755 /opt/motor-expansao-infra     # idempotente; nada no repo cria este dir
 #     cp scripts/cron/run_snapshot_concorrentes.sh /opt/motor-expansao-infra/
 #     chmod +x /opt/motor-expansao-infra/run_snapshot_concorrentes.sh
 #     # e uma linha no /opt/gymscraping-infra/run_weekly_90.sh, apos a coleta:
@@ -54,7 +55,18 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-/opt/motor-expansao/app}"
 HOST_STAGING="${HOST_STAGING:-/opt/motor-expansao/data/staging}"
 # Raiz que contem `Unidades/`, `wellhub/csvs/` e `totalpass/csvs/`. CONFIRA com --dry-run.
-HOST_CONCORRENTES="${HOST_CONCORRENTES:-/opt/motor-expansao/data/concorrentes}"
+#
+# `/opt/gymscraping` e' o CLONE do repo de coleta (docs/infra_producao.md, secao do GymScraping):
+# e' la' que existe `Unidades/unidades_<rede>.csv`, que e' o que o glob do snapshot procura
+# (`concorrentes/Unidades/*.csv`, relativo ao mount `/app/concorrentes`).
+#
+# O default anterior era `/opt/motor-expansao/data/concorrentes`, que NAO EXISTE na VPS -- o script
+# abortava na checagem logo abaixo. E o palpite seguinte, `/opt/motor-expansao/concorrentes`, e' uma
+# armadilha pior: ele existe, mas guarda os CSVs ACHATADOS (o sync copia
+# `/opt/gymscraping/Unidades/unidades_<slug>.csv` direto para a raiz, sem o subdiretorio), entao o
+# glob nao casa com nada e o dry-run devolve `linhas_snapshot = 0` SEM erro nenhum -- que le como
+# "nao ha dado" em vez de "caminho errado".
+HOST_CONCORRENTES="${HOST_CONCORRENTES:-/opt/gymscraping}"
 FONTES="${FONTES:-unidades}"
 LOG_DIR="${LOG_DIR:-/var/log/motor-snapshots}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -69,7 +81,15 @@ echo ">> [$(date -u +%FT%TZ)] snapshot de concorrentes - inicio (fontes=${FONTES
 [ -d "$HOST_CONCORRENTES" ] || { echo "!! diretorio de concorrentes ausente: $HOST_CONCORRENTES"; exit 1; }
 
 # Imagem da API pinada por digest no .env do compose (ja carrega o motor completo).
-API_IMAGE="$(grep -E '^API_IMAGE=' "${APP_DIR}/.env" | head -1 | cut -d= -f2-)"
+#
+# `tr -d '\r'` NAO e' paranoia: o `.env` da VPS chegou por rsync de uma maquina Windows, entao
+# pode ter CRLF. Sem isso o `\r` final entra no nome da imagem e o `docker run` morre com
+# "invalid reference format" -- mensagem que aponta para o lugar errado (parece digest torto).
+# Mesmo tratamento que `run_relatorio_acessos.sh:44` ja fazia; este script tinha ficado de fora.
+# As aspas tambem sao removidas: `API_IMAGE="ghcr.io/..."` e' forma valida de .env.
+API_IMAGE="$(grep -E '^API_IMAGE=' "${APP_DIR}/.env" | head -1 | cut -d= -f2- | tr -d '\r' || true)"
+API_IMAGE="${API_IMAGE%\"}"; API_IMAGE="${API_IMAGE#\"}"
+API_IMAGE="${API_IMAGE%\'}"; API_IMAGE="${API_IMAGE#\'}"
 [ -n "$API_IMAGE" ] || { echo "!! API_IMAGE nao encontrado em ${APP_DIR}/.env"; exit 1; }
 
 ARGS=(--fontes ${FONTES})

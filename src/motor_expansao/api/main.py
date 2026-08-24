@@ -109,9 +109,13 @@ def create_app() -> FastAPI:
             "1.0 km. READ-ONLY sobre o M1; importa, nao edita, a camada censo_*."
         ),
         version=__version__,
-        # Docs interativa so fora de producao.
+        # Docs interativa so fora de producao. O schema OpenAPI tambem fecha em producao
+        # (pentest 2026-08-19): com so' docs_url/redoc_url off, /openapi.json continuava
+        # 200 anonimo e entregava toda a superficie da API — o /docs desligado sem o
+        # /openapi.json fechado e' meia trava.
         docs_url="/docs" if settings.environment != "production" else None,
         redoc_url="/redoc" if settings.environment != "production" else None,
+        openapi_url="/openapi.json" if settings.environment != "production" else None,
     )
 
     # allow_credentials=False (BLK-SEC-05): a auth desta API e por Bearer token, nao por

@@ -1,13 +1,16 @@
 /** Cliente do backend do piloto. Tudo passa pelo proxy /api do Vite. */
 
 import type {
+  AcaoImobiliaria,
   AcessosFicha,
   AcessosResumo,
+  AlvoEvento,
   ExecutivaPayload,
   FaixaAlunos,
   MePayload,
   MetodologiaPayload,
   MunicipioItem,
+  OportunidadesPayload,
   Cobertura1k,
   EstadosPayload,
   MunicipioPayload,
@@ -192,6 +195,51 @@ export const api = {
   me: () => pedir<MePayload>('/api/me', {}, 10_000),
 
   ufs: () => pedir<{ ufs: string[] }>('/api/ufs'),
+
+  /** Oportunidades imobiliárias (camada de oferta, READ-ONLY, sem PII). Lê o
+   *  viaveis.parquet do coletor já joinado ao M1; `uf` opcional filtra no servidor.
+   *  `limite` sobe o teto de itens (default 500 no servidor, cap 3000 na rota) —
+   *  o Mapa Territorial pede o teto para a camada de pins cobrir a UF inteira. */
+  oportunidades: (uf?: string, limite?: number) => {
+    const q = new URLSearchParams()
+    if (uf) q.set('uf', uf)
+    if (limite != null) q.set('limite', String(limite))
+    const qs = q.toString()
+    return pedir<OportunidadesPayload>(`/api/oportunidades${qs ? `?${qs}` : ''}`, {}, 30_000)
+  },
+
+  /** Dossiê PDF do coletor para um imóvel (quando existe; 404 = sem dossiê). */
+  dossie: (id: string) =>
+    pedirArquivo(
+      `/api/oportunidades/${encodeURIComponent(id)}/dossie`,
+      { method: 'GET' },
+      `dossie_${id}.pdf`,
+      { falha: 'Falha ao abrir o dossiê', rede: 'Não foi possível abrir o dossiê.' },
+    ),
+
+  /**
+   * Rastro de um gesto da camada imobiliária na trilha de acesso (DEC-027).
+   *
+   * A tela é restrita (aba `imobiliaria`) e quase tudo que se faz nela é
+   * client-side — abrir a ficha de um imóvel já carregado, marcar visita, trocar
+   * o recorte não geram requisição nenhuma. Sem esta chamada a trilha só saberia
+   * dizer "abriu a aba e baixou N dossiês". O corpo é vazio de propósito: quem
+   * registra é o middleware do backend; aqui só importa a rota + a query.
+   *
+   * Não bloqueia a UI e NUNCA propaga erro: rastro não pode quebrar interação.
+   * `keepalive` para o registro sobreviver a uma navegação logo em seguida.
+   */
+  eventoImobiliaria: (acao: AcaoImobiliaria, alvo: AlvoEvento = {}) => {
+    const q = new URLSearchParams()
+    for (const [chave, valor] of Object.entries(alvo)) {
+      if (valor != null && String(valor).trim()) q.set(chave, String(valor))
+    }
+    const qs = q.toString()
+    void fetch(`/api/imobiliaria/evento/${acao}${qs ? `?${qs}` : ''}`, {
+      method: 'POST',
+      keepalive: true,
+    }).catch(() => {})
+  },
 
   /** Manual do funil: o que cada camada mede e com que régua corta. Estático —
    *  não depende de UF nem de município, então a tela busca uma vez e guarda. */

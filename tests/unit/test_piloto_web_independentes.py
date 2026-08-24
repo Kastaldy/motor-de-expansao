@@ -203,7 +203,9 @@ def test_truncamento_e_declarado(com_independentes: Path, monkeypatch) -> None:
 
 
 def test_health_observa_o_artefato_nomeado(com_independentes: Path) -> None:
-    assert pilot.health()["artefatos"]["independentes_nomeadas"]["ok"] is True
+    # O inventario migrou do /api/health publico para `_inventario_artefatos()`
+    # (pentest Onda B #8).
+    assert pilot._inventario_artefatos()["artefatos"]["independentes_nomeadas"]["ok"] is True
 
 
 # --------------------------------------------------------------------------- #

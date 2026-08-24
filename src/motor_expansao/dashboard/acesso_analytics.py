@@ -83,6 +83,25 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
     (None, "/api/municipios/", "Explorou município"),
     (None, "/api/estados", "Ranking de estados"),
     (None, "/api/metodologia", "Leu a metodologia"),
+    # Camada imobiliária: o dossiê (prefixo com barra) antes da lista — first-match.
+    (None, "/api/oportunidades/", "Baixou dossiê de imóvel"),
+    (None, "/api/oportunidades", "Consultou oportunidades imobiliárias"),
+    # Gestos da tela imobiliária (rotas no-op cujo valor é a linha da trilha —
+    # `ACOES_IMOBILIARIA` em `web/server/app.py`). Uma entrada por ação, e não um
+    # prefixo genérico: é o que faz a ficha do usuário dizer O QUÊ foi feito, em vez
+    # de repetir "Ação na camada imobiliária" N vezes. Ação nova aqui e lá, junto.
+    ("POST", "/api/imobiliaria/evento/abrir-aba", "Abriu a aba imobiliária"),
+    ("POST", "/api/imobiliaria/evento/abrir-imovel", "Abriu ficha de imóvel"),
+    ("POST", "/api/imobiliaria/evento/abrir-dossie", "Pediu dossiê de imóvel"),
+    ("POST", "/api/imobiliaria/evento/marcar-visita", "Marcou imóvel para visita"),
+    ("POST", "/api/imobiliaria/evento/desmarcar-visita", "Desmarcou imóvel de visita"),
+    ("POST", "/api/imobiliaria/evento/ver-no-mapa", "Levou imóvel para o Mapa"),
+    ("POST", "/api/imobiliaria/evento/filtrar", "Trocou o recorte de imóveis"),
+    # Rede de segurança do prefixo, DEPOIS das ações (first-match): ação nova sem
+    # rótulo próprio, ou uma chamada malformada, cai num balde da camada certa em vez
+    # de "Outras ações". Não afrouxa o anti-drift: o par deste é
+    # `test_toda_acao_imobiliaria_tem_rotulo_proprio`, que exige rótulo por ação.
+    (None, "/api/imobiliaria/evento/", "Ação na camada imobiliária"),
 )
 _FEATURE_OUTRAS = "Outras ações"
 

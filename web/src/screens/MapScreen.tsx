@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { PontoEscolhido } from '../App'
 import BotaoInicio from '../components/BotaoInicio'
 import FichaHex from '../components/FichaHex'
+import FichaImovel from '../components/FichaImovel'
 import HexMap, { type SearchPin, type ViewState } from '../components/HexMap'
 import JanelaFicha from '../components/JanelaFicha'
 import MethodologyPanel from '../components/MethodologyPanel'
@@ -16,6 +17,7 @@ import { Botao } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
 import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
+import { ACC, ACC_50, ACC_TX } from '../lib/imovel'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import type { AlvoCaptura } from '../lib/captura-mapa'
@@ -26,6 +28,7 @@ import type {
   Independentes,
   MunicipioItem,
   MunicipioPayload,
+  Oportunidade,
 } from '../lib/types'
 
 /** Filtro global "melhores hexes": faixas M1 permitidas por nível. */
@@ -96,6 +99,12 @@ export interface MapScreenProps {
    * quem consome o mapa é o mapa, e o App só reparte o canal.
    */
   registrarCaptura?: (capturar: (alvos: AlvoCaptura[]) => Promise<string[]>) => void
+  /**
+   * Leva para a ABA de Oportunidades Imobiliárias já focada num imóvel — o caminho
+   * INVERSO do "Ver no Mapa Territorial" daquela aba. Quem troca de tela é o App
+   * (mesmo motivo do `onAnalisarPonto`); ausente = o botão da janela não aparece.
+   */
+  onVerImovelNaAba?: (o: Oportunidade) => void
 }
 
 export default function MapScreen({
@@ -117,6 +126,7 @@ export default function MapScreen({
   onPontoBuscado,
   janelaDoHex = true,
   semLanding = false,
+  onVerImovelNaAba,
 }: MapScreenProps) {
   // A foto so' vale se tiver sido tirada NESTA uf/municipio — `fotoAplicavel` faz esse
   // portao (lib/mapa-estado). Sem ele, um pin de Sao Paulo reapareceria depois de um
@@ -165,6 +175,78 @@ export default function MapScreen({
   useEffect(() => {
     if (!temIndependentes) setVerIndependentes(false)
   }, [temIndependentes])
+
+  /* Camada de OPORTUNIDADES IMOBILIARIAS (a oferta da aba, sobre o territorio).
+     Comeca DESLIGADA pela mesma razao das outras chaves: o piloto abre identico ao
+     de hoje. O dado vem por UF assim que ela e' escolhida — NAO espera a chave —
+     porque tambem alimenta a secao "Imoveis disponiveis aqui" da ficha do hexagono,
+     que vale com a camada apagada. E' leve perto do raio (payload JSON do top da UF,
+     cacheado no servidor), por isso nao repete o padrao sob demanda da cobertura. */
+  const [verImoveis, setVerImoveis] = useState(false)
+  const [imoveisUf, setImoveisUf] = useState<Oportunidade[] | null>(null)
+  /* A janela de DETALHE de um imovel — aberta pelo pin da camada ou pela secao da
+     ficha do hexagono. Janela propria (ancora direita), nao um modo da FichaHex:
+     o operador compara o imovel COM o hexagono, entao as duas ficam lado a lado. */
+  const [imovelAberto, setImovelAberto] = useState<Oportunidade | null>(null)
+
+  /* Porta UNICA de abertura por gesto humano: o pin da camada e a secao "Imoveis
+     disponiveis aqui" da ficha do hexagono passam os dois por aqui, entao o rastro
+     (DEC-027) sai UMA vez por clique, nao um por caminho. O fechamento segue chamando
+     `setImovelAberto(null)` direto — so a abertura e' intencao que a trilha precisa ver —
+     e o HOVER do pin NAO passa por aqui de proposito: dispara dezenas de vezes num
+     arrasto e afogaria a trilha. */
+  const abrirImovel = useCallback((o: Oportunidade) => {
+    api.eventoImobiliaria('abrir-imovel', {
+      imovel: o.id,
+      /* UF/municipio do IMOVEL, nao do recorte da tela: a ficha do hexagono lista imovel
+         pelo `hex_id` (inclusive sem coordenada), e e' o imovel que identifica o alvo. */
+      uf: o.uf,
+      municipio: o.municipio,
+      origem: 'mapa',
+    })
+    setImovelAberto(o)
+  }, [])
+
+  useEffect(() => {
+    if (!uf) {
+      setImoveisUf(null)
+      return
+    }
+    let vivo = true
+    /* Zera ANTES de buscar: sem isto, trocar de UF com a camada ligada deixava os
+       pontinhos (e a contagem da pilula) da UF ANTERIOR na tela ate' a resposta nova. */
+    setImoveisUf(null)
+    api
+      .oportunidades(uf, 3000)
+      .then((r) => {
+        if (vivo) setImoveisUf(r.itens)
+      })
+      .catch(() => {
+        /* Lista VAZIA, nao null: null e' "carregando" e pula o auto-desligamento da
+           chave — com null, um fetch falho deixava `verImoveis` ligado invisivel e a
+           camada reacendia sozinha na UF seguinte. Vazia, o efeito abaixo desliga.
+           Sem a camada o mapa segue como antes — a pilula nem aparece. */
+        if (vivo) setImoveisUf([])
+      })
+    return () => {
+      vivo = false
+    }
+  }, [uf])
+
+  /* O recorte da camada acompanha o drill-down: na visao da UF desenha a UF inteira,
+     no municipio so' o municipio (mesma chave de nome que o `onVerNoMapa` da aba ja
+     usa para chegar aqui). So' entram no MAPA os imoveis com coordenada; os sem
+     coordenada continuam aparecendo na secao da ficha do hexagono (via `hex_id`). */
+  const imoveisNoMapa = useMemo(() => {
+    const xs = (imoveisUf ?? []).filter((o) => o.lat != null && o.lng != null)
+    return municipio ? xs.filter((o) => o.municipio === municipio) : xs
+  }, [imoveisUf, municipio])
+  const temImoveis = imoveisNoMapa.length > 0
+
+  /* Mesma regra das independentes: a chave morre com o recorte que a justificava. */
+  useEffect(() => {
+    if (imoveisUf != null && !temImoveis) setVerImoveis(false)
+  }, [imoveisUf, temImoveis])
 
   /* Geometria do raio: buscada SOB DEMANDA, so' quando a chave liga. Fora do payload do
      mapa de proposito — custa ~2,4 s e ~3,9 MB na UF de SP, e quem nunca liga a chave nao
@@ -239,6 +321,7 @@ export default function MapScreen({
     setFiltroFaixa('')
     setModoCenario(false)
     setCenario([])
+    setImovelAberto(null)
     cameraRef.current = null
   }, [uf, municipio])
 
@@ -315,6 +398,17 @@ export default function MapScreen({
      divergirem depois de uma troca de município. */
   const hexSelecionado = selecionado ? (porId.get(selecionado) ?? null) : null
   const cresMunDoHex = hexSelecionado?.mun ? (dados?.cres_mun?.[hexSelecionado.mun] ?? null) : null
+
+  /* Os imoveis DESTE hexagono, para a secao da ficha. Casa por `hex_id` (H3 res-7,
+     a MESMA malha do M1) sobre o conjunto da UF inteira — independe da chave da
+     camada e do drill-down: o hexagono aberto ja' e' um recorte. */
+  const imoveisDoHex = useMemo(
+    () =>
+      hexSelecionado && imoveisUf
+        ? imoveisUf.filter((o) => o.hex_id === hexSelecionado.id)
+        : [],
+    [imoveisUf, hexSelecionado],
+  )
 
   // Municípios do dropdown: "Todos" (volta à UF) + lista alfabética.
   const opcoesMunicipio = useMemo(
@@ -688,6 +782,8 @@ export default function MapScreen({
           raio1km={raio1km}
           medindo={medindo}
           independentes={verIndependentes ? independentes?.itens : undefined}
+          imoveis={verImoveis ? imoveisNoMapa : undefined}
+          onImovel={abrirImovel}
           cobertura1k={cobertura}
           /* A foto CONGELA na montagem, e trocar de UF/municipio zera `cameraRef` mas
              nao tem como zerar `foto.camera`. Sem este portao: SP/Sao Paulo -> volta da
@@ -1073,6 +1169,31 @@ export default function MapScreen({
               />
             )}
 
+            {/* OPORTUNIDADES IMOBILIARIAS do recorte (a oferta da aba, como pontinhos).
+                Tambem vale em qualquer passo: "que imovel existe aqui?" e' pergunta de
+                territorio, nao de camada do funil. So aparece quando o recorte tem
+                imovel coletado — pilula sem nada para desenhar mentiria disponibilidade. */}
+            {temImoveis && (
+              <PilulaImoveis
+                ligado={verImoveis}
+                n={imoveisNoMapa.length}
+                onToggle={() => {
+                  /* Rastro (DEC-027) so no LIGAR: apagar a camada nao e' interesse pela
+                     oferta imobiliaria, e o auto-desligamento por recorte sem imovel nem
+                     passa por aqui (mexe no estado direto), entao nao vira gesto falso.
+                     Fora do updater de proposito — em StrictMode ele roda duas vezes. */
+                  if (!verImoveis) {
+                    api.eventoImobiliaria('filtrar', {
+                      uf,
+                      origem: 'mapa',
+                      detalhe: 'camada-imoveis',
+                    })
+                  }
+                  setVerImoveis((v) => !v)
+                }}
+              />
+            )}
+
             {/* PROTOTIPO — chave do raio de atuacao das concorrentes. So aparece nos
                 passos que falam de oferta e disputa, e so quando o backend serviu os
                 campos do modelo novo. */}
@@ -1206,6 +1327,34 @@ export default function MapScreen({
             /* `comparar` já põe na lista E liga o modo cenário — sem isso o hexágono
                entraria marcado e o painel de comparação ficaria escondido. */
             onComparar={() => comparar(hexSelecionado.id)}
+            imoveis={imoveisDoHex}
+            onVerImovel={abrirImovel}
+          />
+        )}
+      </JanelaFicha>
+
+      {/* ---------------- Janela do IMÓVEL (detalhe da oportunidade) ----------------
+          Aberta pelo pin da camada imobiliária ou pela seção "Imóveis disponíveis
+          aqui" da ficha do hexágono. Nasce à DIREITA: a ficha do hexágono usa a
+          âncora padrão (esquerda) e o fluxo natural é ler as duas lado a lado. */}
+      <JanelaFicha
+        aberta={imovelAberto != null}
+        ancora="direita"
+        titulo={imovelAberto?.titulo ?? 'Imóvel'}
+        subtitulo={
+          imovelAberto
+            ? [imovelAberto.bairro, imovelAberto.municipio, imovelAberto.uf]
+                .filter(Boolean)
+                .join(' · ')
+            : undefined
+        }
+        onFechar={() => setImovelAberto(null)}
+        recuoInferior={96}
+      >
+        {imovelAberto && (
+          <FichaImovel
+            op={imovelAberto}
+            onVerNaAba={onVerImovelNaAba ? () => onVerImovelNaAba(imovelAberto) : undefined}
           />
         )}
       </JanelaFicha>
@@ -1695,6 +1844,65 @@ function PilulaIndependentes({
       {ligado
         ? `${n} independentes${meta?.truncado ? ` de ${total} (teto)` : ''}`
         : 'Ver academias independentes'}
+    </button>
+  )
+}
+
+/* Chave dos pontinhos de OPORTUNIDADES IMOBILIARIAS (a oferta da aba, no territorio).
+
+   Identidade MAGENTA — o acento da propria aba imobiliaria (lib/imovel), que nenhuma
+   outra camada do mapa usa: turquesa e' acao/cenario, laranja e' das independentes, e
+   o comentario do card de metricas ja registrou que quase toda matiz do tema significa
+   algo. Os PONTOS em si saem na cor categorica do TIPO (a mesma da aba); o magenta e'
+   so o "isto e' da camada imobiliaria" da pilula e da janela de detalhe. */
+function PilulaImoveis({
+  ligado,
+  n,
+  onToggle,
+}: {
+  ligado: boolean
+  n: number
+  onToggle: () => void
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      title={
+        ligado
+          ? 'Cada ponto é um imóvel coletado, na cor do tipo (galpão, comercial/loja, terreno). ' +
+            'Passe o mouse para ver aluguel, custo de ocupação, projeção e área; clique para abrir o detalhe.'
+          : `Ver os ${n} imóveis de locação coletados neste recorte`
+      }
+      style={{
+        // Mesmo motivo das outras pilulas: o container da legenda tem `pointerEvents: 'none'`.
+        pointerEvents: 'auto',
+        marginTop: 8,
+        width: '100%',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        fontSize: 11,
+        fontWeight: 600,
+        padding: '7px 11px',
+        borderRadius: 9,
+        border: `1px solid ${ligado ? ACC_50 : 'rgba(255,255,255,.14)'}`,
+        background: '#000',
+        color: ligado ? ACC_TX : '#9aa7b5',
+      }}
+    >
+      <span
+        style={{
+          width: 9,
+          height: 9,
+          borderRadius: '50%',
+          background: ligado ? ACC : '#5a6472',
+          flexShrink: 0,
+        }}
+      />
+      {ligado
+        ? `${n} ${n === 1 ? 'imóvel no recorte' : 'imóveis no recorte'}`
+        : 'Ver oportunidades imobiliárias'}
     </button>
   )
 }

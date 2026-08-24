@@ -98,6 +98,17 @@ class CampoNaoEditavel(ValueError):
     """Tentativa de escrever fora da lista branca."""
 
 
+class UnidadeDesconhecida(RuntimeError):
+    """A unidade nao existe na rede nem no cadastro (pentest Onda B, finding #9).
+
+    Sem isso, `_aplicar` criava a chave incondicionalmente: um operador com a aba
+    `executiva` injetava unidades-fantasma (incham o JSON/log, poluem os filtros da
+    tela) apenas chamando o PUT com um id inventado. O universo valido e' a base da
+    rede UNIAO as chaves ja' presentes no cadastro -- editar quem ainda nao tem
+    registro (caso fundador da DEC-023) segue permitido; inventar id novo, nao.
+    """
+
+
 @dataclass(frozen=True)
 class Cadastro:
     versao: int
@@ -198,12 +209,17 @@ def atribuir(
     *,
     autor: str | None = None,
     versao_cliente: int | None = None,
+    universo: frozenset[str] | None = None,
     base: Path | None = None,
 ) -> Cadastro:
     """Aplica uma edicao no cadastro de UMA unidade e devolve o cadastro novo.
 
     `versao_cliente` implementa a concorrencia otimista: se nao bater com a do disco,
     levanta `ConflitoDeVersao` e nada e' gravado.
+
+    `universo` (pentest Onda B #9): se informado, so' aceita ids que estejam nele OU
+    ja' no cadastro -- id fora disso levanta `UnidadeDesconhecida`. `None` mantem o
+    comportamento antigo (sem validacao), para as chamadas que nao passam o universo.
     """
     invalidos = sorted(set(campos) - set(CAMPOS_EDITAVEIS))
     if invalidos:
@@ -215,7 +231,14 @@ def atribuir(
         raise ValueError("unidade_id vazio.")
 
     with _TRAVA:
-        return _aplicar(unidade_id, campos, autor=autor, versao_cliente=versao_cliente, base=base)
+        return _aplicar(
+            unidade_id,
+            campos,
+            autor=autor,
+            versao_cliente=versao_cliente,
+            universo=universo,
+            base=base,
+        )
 
 
 def _aplicar(
@@ -224,6 +247,7 @@ def _aplicar(
     *,
     autor: str | None,
     versao_cliente: int | None,
+    universo: frozenset[str] | None = None,
     base: Path | None,
 ) -> Cadastro:
     """Corpo de `atribuir`, ja sob a trava: ler, conferir a versao e gravar sao um passo so."""
@@ -231,6 +255,14 @@ def _aplicar(
     if not atual.disponivel:
         raise CadastroIndisponivel(
             "Cadastro não disponível para escrita neste ambiente (volume não montado)."
+        )
+    # Existencia ANTES da versao e' proposital: nao faz sentido conferir versao de um id
+    # que nao existe. Depois do check de disponibilidade, para o cenario sem volume
+    # continuar caindo em 503 (nao em 404). `atual.unidades` cobre quem so' esta no
+    # cadastro semeado (fora da base da rede) -- esse segue editavel.
+    if universo is not None and unidade_id not in universo and unidade_id not in atual.unidades:
+        raise UnidadeDesconhecida(
+            f"Unidade desconhecida: {unidade_id}. O cadastro só aceita unidades da rede."
         )
     if versao_cliente is not None and int(versao_cliente) != atual.versao:
         raise ConflitoDeVersao(atual.versao)

@@ -102,3 +102,38 @@ def test_log_estudo_nao_vaza_pii(monkeypatch, capsys) -> None:
     # O log NAO pode conter o nome do usuario nem o chat_id cru.
     assert "NomeSecretoDoUsuario" not in saida
     assert str(cid) not in saida
+
+
+# ── Pentest Onda B #13: escape de Markdown nos valores dinamicos ─────────────
+def test_escape_md_escapa_so_os_metacaracteres_legados() -> None:
+    bt = chr(96)  # backtick
+    assert bot._escape_md("a_b*c[d]" + bt + "e") == r"a\_b\*c\[d]" + "\\" + bt + "e"
+    # NAO escapa . ! ( ) - : no Markdown LEGADO isso imprimiria o backslash na tela.
+    assert bot._escape_md("R. Dr. Joao (SP)!") == "R. Dr. Joao (SP)!"
+    # preserva acento e emoji
+    assert bot._escape_md("São Paulo 🎯") == "São Paulo 🎯"
+
+
+def test_login_com_markdown_e_escapado() -> None:
+    """Um login `[x](http://evil)` nao pode virar hyperlink na saudacao do bot."""
+    cid = 700
+    bot.processar(cid, "abre", _S)  # autoriza -> pede login
+    out = bot.processar(cid, "[x](http://evil.example)", _S)  # login com injecao
+    texto = _textos(out)
+    # O colchete de abertura foi escapado -> o Telegram nao monta o link.
+    assert r"\[x]" in texto
+    # E o bold `*...*` NAO envolve um link funcional (o `*` nao e' seguido de `[`).
+    assert "*[x](" not in texto
+
+
+def test_nome_resolvido_e_login_escapados_no_relatorio(monkeypatch) -> None:
+    """Nome vindo do geocoder e login entram escapados na legenda do PDF pontual."""
+    monkeypatch.setattr(bot, "resolver_local", lambda t, s: (-23.5, -46.6, "Bar *do Ze*"))
+    monkeypatch.setattr(bot, "consultar_pdf", lambda p, s: b"%PDF-fake")
+    cid = 701
+    bot.processar(cid, "abre", _S)
+    bot.processar(cid, "chef_boss", _S)  # login com underscore
+    out = bot.processar(cid, "-23.5,-46.6", _S)
+    texto = _textos(out)
+    assert r"Bar \*do Ze\*" in texto  # asteriscos do nome escapados
+    assert r"chef\_boss" in texto  # underscore do login escapado

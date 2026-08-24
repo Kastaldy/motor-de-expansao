@@ -23,6 +23,7 @@ import {
   metrosPorPixel,
   travarNoAlvo,
 } from '../lib/medicao'
+import { corTipo, corTipoRgb, custoOcup, labelTipo, rsM2 } from '../lib/imovel'
 import { sinaisDoRegime } from '../lib/sinais'
 import {
   DISCARDED_FILL,
@@ -39,6 +40,7 @@ import type {
   Cobertura1k,
   CrescimentoMunicipal,
   Hex,
+  Oportunidade,
   Passo,
   PecaCobertura,
   Pin,
@@ -258,6 +260,11 @@ export interface HexMapProps {
    *  concorrentes: um universo e' quem disputa, o outro e' quem se compra. Vazia = camada
    *  desligada ou artefato ausente, e o mapa fica exatamente como antes. */
   independentes?: PinIndependente[]
+  /** Oportunidades IMOBILIARIAS do recorte (camada de oferta). Mesmo idioma das
+   *  independentes: lista-ou-undefined — quem decide se a camada liga e' o MapScreen. */
+  imoveis?: Oportunidade[]
+  /** Clique num pin de imovel: o MapScreen abre a janela de detalhe dele. */
+  onImovel?: (o: Oportunidade) => void
   /** PROTOTIPO: area coberta pelo raio, ja recortada dentro dos hexagonos. */
   cobertura1k?: Cobertura1k | null
   cameraInicial?: ViewState | null
@@ -319,6 +326,8 @@ export default function HexMap({
   searchPin,
   raio1km = false,
   independentes,
+  imoveis,
+  onImovel,
   cobertura1k,
   cameraInicial,
   onCamera,
@@ -355,6 +364,12 @@ export default function HexMap({
   // titulo/subtitulo do pin de concorrente.
   const [indepHover, setIndepHover] = useState<{
     d: PinIndependente
+    x: number
+    y: number
+  } | null>(null)
+  // Balao do IMOVEL (camada imobiliaria): os 4 numeros do ranking da aba.
+  const [imovelHover, setImovelHover] = useState<{
+    d: Oportunidade
     x: number
     y: number
   } | null>(null)
@@ -853,6 +868,50 @@ export default function HexMap({
           ]
         : []),
 
+      /* OPORTUNIDADES IMOBILIARIAS (camada de oferta, liga/desliga pela pilula).
+         Pontinho por imovel na COR CATEGORICA do tipo — a MESMA paleta da aba
+         imobiliaria (galpao rosa, comercial/loja azul, terreno laranja). Nao e' uma
+         segunda regua sobre a rampa de score ("dois idiomas"): tipo e' IDENTIDADE,
+         como a bandeira das redes, e o rotulo viaja no tooltip, como na aba.
+         So entram imoveis COM coordenada (lat/lng sao nullable no payload; `?? 0`
+         jogaria o ponto no Golfo da Guine). Desenhadas ANTES dos pins de rede: na
+         sobreposicao, a rede instalada vence — mesma precedencia das independentes. */
+      ...(imoveis?.length
+        ? [
+            new ScatterplotLayer<Oportunidade>({
+              id: 'imoveis-pins',
+              data: imoveis.filter((d) => d.lat != null && d.lng != null),
+              getPosition: (d) => [d.lng ?? 0, d.lat ?? 0],
+              getRadius: 5.5,
+              radiusUnits: 'pixels',
+              radiusMinPixels: 3.5,
+              radiusMaxPixels: 9,
+              getFillColor: (d) => {
+                const [r, g, b] = corTipoRgb(d.tipo)
+                return [r, g, b, 215]
+              },
+              stroked: true,
+              /* Anel MAGENTA (o acento da camada imobiliaria), nao o anel escuro das
+                 independentes: o laranja do 'terreno' (#f2913a) e o laranja das
+                 independentes (#e8663c) sao quase a mesma matiz em pontos de ~5 px —
+                 com as duas camadas ligadas, o anel e' o que diz de que universo o
+                 ponto e' (imovel para alugar vs academia para comprar). */
+              getLineColor: [221, 61, 151, 235],
+              lineWidthUnits: 'pixels',
+              getLineWidth: 1.2,
+              pickable: true,
+              onClick: (info) => {
+                const d = info.object as Oportunidade | undefined
+                if (d) onImovel?.(d)
+              },
+              onHover: (info) => {
+                const d = info.object as Oportunidade | undefined
+                setImovelHover(d ? { d, x: info.x, y: info.y } : null)
+              },
+            }) as unknown as ScatterplotLayer<Hex>,
+          ]
+        : []),
+
       // Concorrentes: bandeira QUADRADA com a logo da rede (fallback cor+sigla),
       // enxuta (pedido do Felipe). Ultra vem por cima, um pouco maior.
       new IconLayer<Pin>({
@@ -1074,6 +1133,8 @@ export default function HexMap({
     // funcionava. Foi exatamente o sintoma relatado ("o hexagono so aparece de uma cor").
     raio1km,
     independentes,
+    imoveis,
+    onImovel,
     cobertura1k,
     hexesCobertos,
     hexPorId,
@@ -1089,6 +1150,7 @@ export default function HexMap({
         setHover(null)
         setPinHover(null)
         setIndepHover(null)
+        setImovelHover(null)
       }}
       style={{
         position: 'absolute',
@@ -1449,7 +1511,81 @@ export default function HexMap({
         </div>
       )}
 
-      {pinHover && !hover && !indepHover && (
+      {/* Balao do IMOVEL (camada imobiliaria): titulo, tipo com a cor categorica e os
+          MESMOS 4 numeros do ranking da aba (Aluguel, Custo de ocupacao, Projecao de
+          faturamento, Area). A ultima linha avisa que o clique abre o detalhe — o pin
+          e' o unico ponto clicavel do mapa que NAO seleciona hexagono. */}
+      {imovelHover && (
+        <div
+          role="tooltip"
+          style={{
+            position: 'absolute',
+            ...ancora(imovelHover.x, imovelHover.y, 190, 240),
+            pointerEvents: 'none',
+            background: 'var(--surf-panel)',
+            border: '1px solid var(--line-mid)',
+            borderRadius: 'var(--r-md)',
+            padding: '9px 11px',
+            backdropFilter: 'blur(16px)',
+            boxShadow: '0 10px 30px -8px rgba(0,0,0,.7)',
+            zIndex: 31,
+            minWidth: 216,
+            maxWidth: 256,
+          }}
+        >
+          <div style={{ font: '600 12.5px/1.25 var(--f-ui)', color: 'var(--tx-max)' }}>
+            {imovelHover.d.titulo}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
+            <span
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: 2,
+                background: corTipo(imovelHover.d.tipo),
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ font: '400 10px/1.2 var(--f-ui)', color: 'var(--tx-sub)' }}>
+              {labelTipo(imovelHover.d.tipo)}
+              {imovelHover.d.bairro ? ` · ${imovelHover.d.bairro}` : ` · ${imovelHover.d.municipio}`}
+            </span>
+          </div>
+
+          <Divisoria />
+          <Linha
+            rotulo="Aluguel"
+            valor={
+              imovelHover.d.aluguel == null
+                ? '—'
+                : `${brl(imovelHover.d.aluguel)}${
+                    rsM2(imovelHover.d) != null ? ` · R$ ${num(rsM2(imovelHover.d), 0)}/m²` : ''
+                  }`
+            }
+          />
+          <Linha
+            rotulo="Custo de ocupação"
+            valor={custoOcup(imovelHover.d) > 0 ? brl(custoOcup(imovelHover.d)) : '—'}
+          />
+          <Linha
+            rotulo="Projeção de fat."
+            valor={imovelHover.d.fat_proj == null ? '—' : `${brl(imovelHover.d.fat_proj, true)}/mês`}
+            forte
+            cor="var(--pos-text)"
+          />
+          <Linha
+            rotulo="Área"
+            valor={imovelHover.d.area == null ? '—' : `${num(imovelHover.d.area)} m²`}
+          />
+          <div
+            style={{ font: '400 9px/1.35 var(--f-ui)', color: 'var(--tx-label)', marginTop: 6 }}
+          >
+            clique no ponto para abrir os detalhes
+          </div>
+        </div>
+      )}
+
+      {pinHover && !hover && !indepHover && !imovelHover && (
         <div
           role="tooltip"
           style={{

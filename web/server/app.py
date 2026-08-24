@@ -26,6 +26,7 @@ import base64
 import functools
 import hashlib
 import inspect
+import ipaddress
 import json
 import logging
 import math
@@ -40,10 +41,12 @@ from typing import Any
 
 import pandas as pd
 from fastapi import FastAPI, Header, HTTPException, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
 # Quantos Relatorios Pontuais podem ser gerados AO MESMO TEMPO. O gerador e pesado
@@ -59,6 +62,12 @@ _PDF_SEMAFORO = asyncio.Semaphore(_PDF_CONCORRENCIA_MAX)
 # semaforo. So bytes ate o teto sao mantidos em memoria.
 _FOTOS_MAX = 3
 _FOTO_MAX_BYTES = 8 * 1024 * 1024  # 8 MB por foto
+
+# Tetos do deck de comparacao (pentest Onda B #10). `_COMPARACAO_ITENS_MAX` casa com o
+# `MAX_ITENS`/`MAX_COMPARADOS` do gerador e da tela (5); `_IMAGEM_MAX_CHARS` e' o data-url
+# base64 de um PNG de ~8 MB (~4/3 do byte-teto da foto), teto por imagem capturada do mapa.
+_COMPARACAO_ITENS_MAX = 5
+_IMAGEM_MAX_CHARS = _FOTO_MAX_BYTES * 4 // 3 + 64
 
 # --- Localizacao do repo e dos dados ---------------------------------------
 # O backend do piloto vive em <repo>/web/server; o codigo do motor em <repo>/src.
@@ -186,7 +195,19 @@ FILA_MAX = 10  # tamanho maximo da fila do ultimo passo
 # `_etiqueta_crescimento`: no artefato vigente nenhuma UF chega perto, e o piso e defesa.
 _CRESC_PISO_MEDIANA = 1.0
 
-app = FastAPI(title="Piloto Web — Motor de Expansao", version="0.1.0")
+# OpenAPI/Swagger/ReDoc DESLIGADOS por padrao (pentest 2026-08-19): sem isso QUALQUER
+# usuario autenticado do piloto baixava /openapi.json|/docs|/redoc e enumerava toda a
+# superficie — inclusive a rota de ESCRITA `PUT /api/rede/cadastro/{id}` e o financeiro
+# `/api/rede/*`. Espelha o gate que a API Bearer ja fazia (api/main.py). Para inspecionar
+# em dev, exportar MOTOR_PILOTO_DOCS=1.
+_PILOTO_DOCS = os.environ.get("MOTOR_PILOTO_DOCS") == "1"
+app = FastAPI(
+    title="Piloto Web — Motor de Expansao",
+    version="0.1.0",
+    docs_url="/docs" if _PILOTO_DOCS else None,
+    redoc_url="/redoc" if _PILOTO_DOCS else None,
+    openapi_url="/openapi.json" if _PILOTO_DOCS else None,
+)
 # Em producao o SPA e a API sao servidos pela MESMA origem (mesmo container atras do
 # Caddy), entao CORS e irrelevante ali; estas origens sao so para o dev (Vite :5000).
 app.add_middleware(
@@ -195,6 +216,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _sanear_nao_finito(obj: Any) -> Any:
+    """Troca floats nao-finitos (NaN/Infinity) por sua string, recursivamente."""
+    if isinstance(obj, float) and not math.isfinite(obj):
+        return str(obj)  # "nan" / "inf" / "-inf"
+    if isinstance(obj, dict):
+        return {chave: _sanear_nao_finito(valor) for chave, valor in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanear_nao_finito(item) for item in obj]
+    return obj
+
+
+@app.exception_handler(RequestValidationError)
+async def _erro_de_validacao(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """422 limpo mesmo com NaN/Infinity no corpo (pentest Onda B #11).
+
+    NaN/Infinity passam pelo `json.loads` (parse_constant), voltam DENTRO do erro do
+    pydantic como float e o `json.dumps` do Starlette (`allow_nan=False`) estoura ao
+    serializar a resposta — transformando o 422 num 500 opaco. Sanear o `input`
+    nao-finito para string ANTES de serializar fecha isso, preservando o resto do
+    shape do 422 padrao do FastAPI.
+    """
+    detalhe = _sanear_nao_finito(jsonable_encoder(exc.errors()))
+    return JSONResponse({"detail": detalhe}, status_code=422)
 
 
 # Controle TEMPORARIO de acesso por aba (2026-08-13): o Authelia autentica; aqui cada
@@ -231,6 +277,30 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
 # da suite prova).
 
 
+def _ip_real_do_xff(xff: str | None, fallback: str | None) -> str | None:
+    """IP real do cliente atras do Caddy, para a trilha de acesso (DEC-027).
+
+    O Caddy ANEXA o peer real ao FIM do X-Forwarded-For, entao o ULTIMO token e' o
+    cliente verdadeiro; os tokens a' esquerda podem ser FORJADOS pelo proprio cliente.
+    Pentest 2026-08-19: antes usava-se `[0]` (o mais a' esquerda), exatamente o que o
+    atacante controla — `X-Forwarded-For: 8.8.8.8` fazia a acao dele constar de um IP
+    arbitrario na aba Acessos. Ha um unico hop (Caddy), entao `[-1]` e' o IP real.
+
+    Pentest Onda B #4: valida o FORMATO do ultimo token. Atras do Caddy ele e' sempre
+    um IP valido (o peer que o proxy anexa); um token nao-IP so' aparece se alguem
+    alcanca o backend SEM passar pelo Caddy — nesse caso cai no `fallback` (o peer TCP
+    real, `request.client.host`, que nao e' forjavel). Defesa em profundidade.
+    """
+    if xff:
+        candidato = xff.split(",")[-1].strip()
+        try:
+            ipaddress.ip_address(candidato)
+        except ValueError:
+            return fallback
+        return candidato
+    return fallback
+
+
 def _registrar_acesso(request: Request, *, status: int, inicio: float, tamanho: str | None) -> None:
     """Monta e grava a linha da trilha. Rastro, nao transacao: falha morre aqui."""
     try:
@@ -241,7 +311,7 @@ def _registrar_acesso(request: Request, *, status: int, inicio: float, tamanho: 
         cliente = request.client.host if request.client else None
         evento = acesso_log.montar_evento(
             usuario=request.headers.get("remote-user") or request.headers.get("remote-email"),
-            ip=(xff.split(",")[0] if xff else cliente),
+            ip=_ip_real_do_xff(xff, cliente),
             metodo=request.method,
             rota=caminho,
             query=request.url.query,
@@ -1543,6 +1613,16 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
         if len(ultra)
         else [],
         "icones": icones,
+        # `[BLK-MA-19]` O artefato de redes EXISTE e foi lido? Sem esta chave, um payload sem
+        # nenhuma bandeira com halo tinha DUAS causas indistinguiveis: (a) o municipio nao tem
+        # unidade de agregador — resposta legitima; (b) `vulnerabilidade_ma_redes.parquet` nao
+        # chegou ao servidor — camada morta. Foi (b) que passou 5 dias despercebida em producao.
+        #
+        # E' o mesmo papel do `disponivel` que `_pins_independentes` ja devolvia (:572); a camada
+        # de redes nasceu sem ele porque entra na lista `concorrentes` em vez de ter bloco proprio.
+        # `False` aqui significa ARTEFATO AUSENTE, nunca "recorte vazio": um recorte sem unidade
+        # de rede devolve `True` com `linhas_diag` vazia.
+        "redes_disponivel": diag is not None,
     }
 
 
@@ -2736,16 +2816,37 @@ def _artefatos_observados() -> list[tuple[str, Path, str]]:
             REDES_PATH,
             "pins das unidades de rede do agregador, com pressao e sem score (BLK-MA-17/DEC-035)",
         ),
+        # A camada imobiliaria degrada em SILENCIO: sem o parquet, `_carregar_oportunidades`
+        # devolve `[]`, a rota responde 200 com lista vazia e a tela mostra "Nada no
+        # recorte" — indistinguivel de um filtro que nao casou. Como o artefato vem de
+        # OUTRO repo (o coletor) por scp, e nao da imagem nem do git, ele e' justamente o
+        # que mais tende a faltar num deploy. Aqui e' onde isso vira sinal.
+        (
+            "oportunidades_imobiliarias",
+            OPORTUNIDADES_PATH,
+            "aba imobiliária: imóveis do coletor joinados ao M1",
+        ),
     ]
 
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    """Saude do processo + presenca dos artefatos que a tela depende.
+    """Healthcheck PUBLICO e mudo (pentest Onda B #8): so' `{"status": "ok"}`.
 
-    O healthcheck do container so' olha o status HTTP (`curl -fsS`), entao os campos
-    novos sao informativos: nada aqui pode derrubar o container. Por isso o `stat` vive
-    num try/except — um mount que sumiu no meio do voo devolve `erro`, nao 500.
+    O healthcheck do container (`curl -fsS`) so' precisa do HTTP 200. O inventario de
+    artefatos (com `data_dir` e caminhos ABSOLUTOS + descricao de negocio de cada
+    parquet) vazava o layout do FS e a camada de M&A para QUALQUER autenticado, ja' que
+    /api/health e' rota livre. O inventario mudou para `/api/acessos/saude-artefatos`,
+    gated pela allowlist de admin.
+    """
+    return {"status": "ok"}
+
+
+def _inventario_artefatos() -> dict[str, Any]:
+    """Inventario diagnostico dos artefatos que a tela depende (so' para admin).
+
+    O `stat` vive num try/except — um mount que sumiu no meio do voo devolve `erro`,
+    nao 500. Auditar o ambiente PUBLICADO sem SSH e' o motivo desta funcao existir.
     """
     artefatos: dict[str, Any] = {}
     for nome, caminho, para_que in _artefatos_observados():
@@ -2756,7 +2857,7 @@ def health() -> dict[str, Any]:
             # Diretorio (enriquecido) nao tem tamanho util; so' arquivo reporta MB.
             if existe and caminho.is_file():
                 item["mb"] = round(caminho.stat().st_size / (1024 * 1024), 2)
-        except OSError as e:  # mount caiu, permissao, disco — nunca derrubar o health
+        except OSError as e:  # mount caiu, permissao, disco — nunca derrubar
             item["ok"] = False
             item["erro"] = str(e)
         artefatos[nome] = item
@@ -2829,9 +2930,23 @@ def _exigir_admin_acessos(remote_user: str | None) -> None:
         raise HTTPException(status_code=404, detail="Not Found")
 
 
-# `include_in_schema=False` nas duas rotas: sem ele, /openapi.json e /docs (livres
+# `include_in_schema=False` nas rotas de acessos: sem ele, /openapi.json e /docs (livres
 # para qualquer autenticado) listavam os paths e as descricoes do painel — anulando
 # o 404 "existencia nao anunciada" (revisao adversarial de 2026-08-19).
+@app.get("/api/acessos/saude-artefatos", include_in_schema=False)
+def acessos_saude_artefatos(
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Inventario diagnostico dos artefatos (pentest Onda B #8): so' para admin.
+
+    Saiu do /api/health publico (que vazava caminhos absolutos + descricao de cada
+    parquet a qualquer autenticado). Sob `/api/acessos/`, ja' nasce guardado pelo 404
+    fail-closed do middleware; o `_exigir_admin_acessos` e' cinto e suspensorio.
+    """
+    _exigir_admin_acessos(remote_user)
+    return _inventario_artefatos()
+
+
 @app.get("/api/acessos/resumo", include_in_schema=False)
 def acessos_resumo(
     dias: int = acesso_analytics.JANELA_DIAS_DEFAULT,
@@ -4130,8 +4245,14 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
 
 
 class ViabilidadeIn(BaseModel):
-    lat: float
-    lng: float
+    # allow_inf_nan=False (pentest Onda B #11): recusa NaN/Infinity em TODOS os floats.
+    # Sem isso, `Infinity` passava no `Field(gt=0)` (inf > 0 e' True) e gerava DRE-lixo
+    # exibido como valido numa tela de decisao de investimento; o 422 resultante sai
+    # limpo pelo handler `_erro_de_validacao`.
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
     m2: float = Field(gt=0)
     aluguel: float = Field(ge=0)
     demanda: float = Field(gt=0, description="PREMISSA do operador — nunca prevista")
@@ -5126,6 +5247,17 @@ _REDE_MAX_UNIDADES = 400
 def _rede_base() -> pd.DataFrame:
     """Base Growth preparada: identidade resolvida e não-academias fora."""
     return rede_metricas.carregar_base(GROWTH_PARQUET)
+
+
+@functools.lru_cache(maxsize=1)
+def _rede_ids() -> frozenset[str]:
+    """Universo de `unidade_id` reais da rede (pentest Onda B #9): o PUT do cadastro
+    so' aceita ids daqui ou ja' presentes no cadastro, para nao criar unidades-fantasma.
+    lru_cache limpo junto dos demais por `limpar_caches` (varredura de globais)."""
+    base = _rede_base()
+    if "unidade_id" not in base.columns:
+        return frozenset()
+    return frozenset(str(u) for u in base["unidade_id"].dropna().unique())
 
 
 @functools.lru_cache(maxsize=1)
@@ -6737,12 +6869,16 @@ def rede_cadastro_atribuir(
             dict(body.campos),
             autor=_autor(remote_user, remote_email),
             versao_cliente=body.versao,
+            universo=_rede_ids(),
             base=CADASTRO_DIR,
         )
     except rede_cadastro.ConflitoDeVersao as erro:
         raise HTTPException(409, str(erro)) from erro
     except rede_cadastro.CampoNaoEditavel as erro:
         raise HTTPException(422, str(erro)) from erro
+    except rede_cadastro.UnidadeDesconhecida as erro:
+        # Id que nao existe na rede nem no cadastro: 404, sem criar unidade-fantasma.
+        raise HTTPException(404, str(erro)) from erro
     except rede_cadastro.CadastroIndisponivel as erro:
         raise HTTPException(503, str(erro)) from erro
     except PermissionError as erro:
@@ -6846,7 +6982,20 @@ class RelatorioMunicipalIn(BaseModel):
 
 
 @app.post("/api/relatorio/municipal")
-def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
+async def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
+    """Rota fina: gate de concorrencia `_PDF_SEMAFORO` + threadpool, igual a
+    /api/relatorio/pontual, /comparacao e /simulador/xlsx.
+
+    Antes (pentest 2026-08-19) esta rota era um `def` sincrono SEM o semaforo: varias
+    municipais concorrentes (cada ~45 s de CPU + fetch de tiles) saturavam o threadpool
+    do uvicorn e derrubavam ate' o /api/health. O corpo pesado agora vive no helper
+    sincrono `_gerar_relatorio_municipal_response`, chamado sob o teto de concorrencia.
+    """
+    async with _PDF_SEMAFORO:
+        return await run_in_threadpool(_gerar_relatorio_municipal_response, body)
+
+
+def _gerar_relatorio_municipal_response(body: RelatorioMunicipalIn) -> Response:
     """Relatorio Municipal (9 paginas). Acionado pelo 4o passo do mapa.
 
     Renderiza as 5 camadas de mapa (`render_mapas_municipio`) e AS PASSA ao gerador —
@@ -7340,8 +7489,13 @@ async def simulador_xlsx(body: ViabilidadeIn, rotulo: str | None = None) -> Resp
 
     GUARDRAILS: nada e escrito em disco (BytesIO dentro do gerador) e a demanda
     segue sendo PREMISSA do operador (DEC-009), nunca derivada de lat/lng.
+
+    Gate de concorrencia `_PDF_SEMAFORO` (pentest 2026-08-19): a montagem custa ~45 s de
+    CPU; sem o teto, N requisicoes concorrentes saturavam o threadpool do uvicorn e
+    derrubavam ate' o /api/health. Mesmo padrao de /api/relatorio/pontual e /comparacao.
     """
-    return await run_in_threadpool(_gerar_simulador_xlsx_response, body, rotulo)
+    async with _PDF_SEMAFORO:
+        return await run_in_threadpool(_gerar_simulador_xlsx_response, body, rotulo)
 
 
 def _gerar_simulador_xlsx_response(body: ViabilidadeIn, rotulo: str | None) -> Response:
@@ -7397,8 +7551,34 @@ def _gerar_comparacao_pdf(payload: dict[str, Any]) -> bytes:
     return gerar_pdf_comparacao(payload, mapas=imagens, ultra_dir=ULTRA_DIR)
 
 
+class ComparacaoItemIn(BaseModel):
+    # extra="allow": o item traz o ranking JA CALCULADO da tela (rotulo, posicao,
+    # melhor/pior...) e o servidor so' desenha — deixar passar sem acoplar release do
+    # backend a cada campo novo do front. So' `porDimensao` (a lista aninhada) e' o
+    # vetor sem teto, entao e' o unico limitado aqui.
+    model_config = ConfigDict(extra="allow")
+    porDimensao: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
+
+
+class ComparacaoIn(BaseModel):
+    """Corpo do deck de comparacao (pentest Onda B #10): fecha o type-confusion que
+    virava 500 opaco (`{"itens": ["a"]}`) e poe teto em itens/imagens/porDimensao."""
+
+    model_config = ConfigDict(extra="allow")
+    itens: list[ComparacaoItemIn] = Field(default_factory=list, max_length=_COMPARACAO_ITENS_MAX)
+    imagens: list[str] = Field(default_factory=list, max_length=_COMPARACAO_ITENS_MAX)
+
+    @field_validator("imagens")
+    @classmethod
+    def _imagens_dentro_do_teto(cls, valor: list[str]) -> list[str]:
+        for img in valor:
+            if len(img) > _IMAGEM_MAX_CHARS:
+                raise ValueError("Imagem do mapa acima do tamanho máximo permitido.")
+        return valor
+
+
 @app.post("/api/relatorio/comparacao")
-async def relatorio_comparacao(payload: dict[str, Any]) -> Response:
+async def relatorio_comparacao(body: ComparacaoIn) -> Response:
     """Deck de 6-7 slides da comparacao de areas.
 
     O CORPO TRAZ O RANKING JA CALCULADO, e isso e' deliberado. A regra de comparacao —
@@ -7414,14 +7594,324 @@ async def relatorio_comparacao(payload: dict[str, Any]) -> Response:
     loop do unico worker ela prendia TODAS as outras requisicoes — medido em producao em
     2026-07-24, tres relatorios simultaneos serializaram em 12/21/31 s e um `/api/health`
     levou 29 s.
+
+    Pentest Onda B #10: corpo tipado (`ComparacaoIn`) + try/except -> 422/400. Antes era
+    `dict[str, Any]` cru: type-confusion virava 500 opaco (poluia a trilha) e listas sem
+    teto alimentavam o gerador sincrono.
     """
     async with _PDF_SEMAFORO:
-        pdf = await run_in_threadpool(_gerar_comparacao_pdf, payload)
+        try:
+            pdf = await run_in_threadpool(_gerar_comparacao_pdf, body.model_dump())
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 — corpo malformado nao pode virar 500 opaco
+            raise HTTPException(
+                400, f"Não foi possível montar o deck de comparação: {exc}"
+            ) from exc
     return Response(
         content=pdf,
         media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="comparacao.pdf"'},
     )
+
+
+# ============================================================================
+# Oportunidades Imobiliarias (camada de oferta, READ-ONLY sobre o M1)
+# ============================================================================
+# Le o `viaveis.parquet` do coletor de oportunidades (imoveis de locacao ja
+# joinados ao M1). SEM PII: as colunas de corretor (nome/telefone/creci) NUNCA
+# saem daqui — a aba do piloto e' agregada por hex_id (o contato do corretor vive
+# no dossie PDF, atras do Authelia). Caminho por MOTOR_OPORTUNIDADES_PATH; default
+# no data/ (montado :ro em producao). Registrada ANTES do mount do SPA.
+OPORTUNIDADES_PATH = Path(
+    os.environ.get(
+        "MOTOR_OPORTUNIDADES_PATH", str(DATA_DIR / "oportunidades" / "viaveis.parquet")
+    )
+)
+
+# Dossies (PDF) gerados pelo coletor. O coletor so' produz PDF para o top-N por praca
+# (dezenas), nao para todos os pontos — entao a maioria cai no fallback do front
+# (Relatorio Pontual). Default no repo IRMAO `coleta-de-oportunidades` (dev); em
+# producao aponte MOTOR_DOSSIES_DIR para o volume montado. Nome: `im-<id>__slug.pdf`
+# (o `_` do imovel_id vira `-` no arquivo).
+DOSSIES_DIR = Path(
+    os.environ.get(
+        "MOTOR_DOSSIES_DIR",
+        str(_REPO_ROOT.parent / "coleta-de-oportunidades" / "data" / "dossies"),
+    )
+)
+
+
+def _dossie_index() -> dict[str, Any]:
+    """{imovel_id -> caminho do PDF}. Rescaneia a cada chamada (dezenas de arquivos):
+    barato e reflete uma regeneracao sem exigir restart do backend."""
+    import re as _re
+
+    idx: dict[str, Any] = {}
+    if not DOSSIES_DIR.is_dir():
+        return idx
+    for p in DOSSIES_DIR.rglob("*.pdf"):
+        m = _re.match(r"(im[-_][0-9a-fA-F]+)__", p.name)
+        if m:
+            idx.setdefault(m.group(1).replace("im-", "im_"), p)
+    return idx
+
+_OPORTUNIDADES_COLS = [
+    "imovel_id", "fonte_listing_id", "titulo", "tipo", "operacao", "uf",
+    "municipio", "m1_cidade", "bairro", "area_relevante_m2", "area_util_m2",
+    "preco", "preco_aluguel", "iptu", "condominio", "hex_id",
+    "m1_residual_fitness", "m1_residual_total", "m1_score_priorizacao",
+    "censo_score_setorial_hex", "m1_faixa_oportunidade", "censo_pop_hex",
+    "m1_pop_hex", "censo_renda_per_capita_hex", "m1_renda_per_capita",
+    "m1_sam_fitness", "m1_n_unidades_ultra", "first_seen", "latitude",
+    "longitude", "url", "status",
+]
+
+_OPORTUNIDADES_CACHE: list[dict[str, Any]] | None = None
+
+
+def _op_num(v: Any, casas: int | None = None) -> float | int | None:
+    """NaN/None -> None; senao numero (int quando inteiro, ou arredondado)."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(f):
+        return None
+    if casas is None:
+        return int(f) if f == int(f) else f
+    return round(f, casas)
+
+
+def _op_txt(v: Any) -> str | None:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    s = str(v).strip()
+    return s or None
+
+
+@functools.lru_cache(maxsize=1)
+def _ticket_proj_mensal() -> float:
+    """Ticket MISTO (balcao + agregador) do dimensionamento/config — o mesmo mix que o
+    simulador usa na receita: share*balcao + (1-share)*(balcao*fator_agregador) ~ R$120."""
+    try:
+        from motor_expansao.dimensionamento import config as _cfg
+
+        balcao = float(getattr(_cfg, "SIM_MENSALIDADE_BALCAO", 137))
+        share = float(getattr(_cfg, "SIM_SHARE_BALCAO", 0.69))
+        fator = float(getattr(_cfg, "SIM_TICKET_AGREGADOR_FATOR", 0.60))
+        return share * balcao + (1.0 - share) * (balcao * fator)
+    except Exception:  # noqa: BLE001 — degrada p/ default se o modulo nao carregar
+        return 120.0
+
+
+@functools.lru_cache(maxsize=1)
+def _area_curva_max() -> float:
+    """Teto de m2 aplicado a curva de alunos. A Ultra constroi ~1500-2000 m2 mesmo em
+    lote grande; projetar sobre a AREA CRUA (lote do terreno, galpao inteiro) infla o
+    faturamento (um terreno de 3.600 m2 nao vira uma academia de 3.600 m2). Cap =
+    AREA_IDEAL_MAX_M2 do config canonico."""
+    try:
+        from motor_expansao.config import AREA_IDEAL_MAX_M2
+
+        return float(AREA_IDEAL_MAX_M2)
+    except Exception:  # noqa: BLE001
+        return 2000.0
+
+
+@functools.lru_cache(maxsize=8192)
+def _alunos_p50_por_m2(m2_arred: int) -> float | None:
+    """p50 de alunos da curva tamanho->densidade p/ uma metragem (arredondada p/ cache).
+
+    Fonte UNICA: a mesma base e funcao de /api/faixa-alunos (simulador de Viabilidade).
+    Property-first (DEC-009): a faixa depende SO do tamanho, nao da geografia.
+    """
+    if not m2_arred:
+        return None
+    base, _fonte = _base_calibracao()
+    if base is None:
+        return None
+    try:
+        from motor_expansao.dimensionamento.viabilidade_ponto import (
+            faixa_alunos_por_densidade,
+        )
+
+        r = faixa_alunos_por_densidade(float(m2_arred), base)
+        return r.get("faixa_alunos_p50")
+    except Exception:  # noqa: BLE001 — sem base valida, projecao fica vazia
+        return None
+
+
+def _carregar_oportunidades() -> list[dict[str, Any]]:
+    """Le o parquet UMA vez e monta os dicts sem PII, ordenados por residual."""
+    global _OPORTUNIDADES_CACHE
+    if _OPORTUNIDADES_CACHE is not None:
+        return _OPORTUNIDADES_CACHE
+    if not OPORTUNIDADES_PATH.exists():
+        _OPORTUNIDADES_CACHE = []
+        return _OPORTUNIDADES_CACHE
+    df = pd.read_parquet(OPORTUNIDADES_PATH)
+    df = df[[c for c in _OPORTUNIDADES_COLS if c in df.columns]]
+    if "status" in df.columns:
+        df = df[df["status"].astype(str).str.lower() != "removido"]
+    # Ordem do top-N. O DESEMPATE nao e' cosmetico: `m1_residual_fitness` SATURA em
+    # 100,0 para 1.752 dos 4.003 imoveis (44%), medido em 2026-08-24. Sem segundo
+    # critério o corte do `limite` caía DENTRO do empate — o 1o, o 500o e o 501o
+    # tinham todos residual 100,0 — e como `sort_values` usa quicksort (instavel), quais
+    # linhas entravam era arbitrario: tres UFs inteiras (RJ, PR, SC) ficavam fora do
+    # recorte mesmo tendo imoveis com residual 100,0. `m1_residual_total` desempata
+    # porque NAO satura (e' o residual em pessoas, nao normalizado) e e' o mesmo eixo
+    # que o scatter da aba já usa. `kind="stable"` fecha a conta: empate duplo cai na
+    # ordem do parquet, que é reproduzivel, em vez de na sorte do quicksort.
+    ordenar_por = [c for c in ("m1_residual_fitness", "m1_residual_total") if c in df.columns]
+    if ordenar_por:
+        df = df.sort_values(
+            ordenar_por, ascending=False, na_position="last", kind="stable"
+        )
+    ticket = _ticket_proj_mensal()
+    itens: list[dict[str, Any]] = []
+    for r in df.itertuples(index=False):
+        d = r._asdict()
+        area = _op_num(d.get("area_relevante_m2")) or _op_num(d.get("area_util_m2"))
+        aluguel = _op_num(d.get("preco_aluguel")) or _op_num(d.get("preco"))
+        rs_m2 = round(aluguel / area, 1) if aluguel and area else None
+        primeiro = _op_txt(d.get("first_seen"))
+        # Faturamento projetado = alunos p50 (curva tamanho->densidade) x ticket. p50
+        # depende SO do tamanho (property-first, DEC-009); m2 arredondado p/ cachear e
+        # capado no ideal (lote/galpao grande nao vira academia inteira — ver helper).
+        area_cap = min(float(area), _area_curva_max()) if area else 0.0
+        area_p50 = int(round(area_cap / 10.0) * 10) if area_cap else 0
+        alunos_p50 = _alunos_p50_por_m2(area_p50)
+        fat_proj = alunos_p50 * ticket if alunos_p50 else None
+        itens.append(
+            {
+                "id": _op_txt(d.get("imovel_id")) or _op_txt(d.get("fonte_listing_id")) or "",
+                "titulo": _op_txt(d.get("titulo")) or "(sem titulo)",
+                "tipo": _op_txt(d.get("tipo")) or "Imovel",
+                "operacao": _op_txt(d.get("operacao")),
+                "uf": _op_txt(d.get("uf")) or "",
+                "municipio": _op_txt(d.get("municipio")) or _op_txt(d.get("m1_cidade")) or "",
+                "bairro": _op_txt(d.get("bairro")),
+                "area": area,
+                "aluguel": aluguel,
+                "iptu": _op_num(d.get("iptu")),
+                "condominio": _op_num(d.get("condominio")),
+                "rs_m2": rs_m2,
+                "hex_id": _op_txt(d.get("hex_id")) or "",
+                "residual": _op_num(d.get("m1_residual_fitness"), 1),
+                "residual_total": _op_num(d.get("m1_residual_total")),
+                "score": _op_num(d.get("m1_score_priorizacao"), 1),
+                "censo_score": _op_num(d.get("censo_score_setorial_hex"), 1),
+                "faixa": _op_txt(d.get("m1_faixa_oportunidade")),
+                "pop": _op_num(d.get("censo_pop_hex")) or _op_num(d.get("m1_pop_hex")),
+                "renda_pc": _op_num(d.get("censo_renda_per_capita_hex"))
+                or _op_num(d.get("m1_renda_per_capita")),
+                "sam": _op_num(d.get("m1_sam_fitness")),
+                "n_ultra": _op_num(d.get("m1_n_unidades_ultra")),
+                "first_seen": primeiro[:10] if primeiro else None,
+                "lat": _op_num(d.get("latitude"), 6),
+                "lng": _op_num(d.get("longitude"), 6),
+                "url": _op_txt(d.get("url")),
+                "alunos_p50": _op_num(alunos_p50),
+                "fat_proj": _op_num(fat_proj),
+                "ticket_proj": _op_num(ticket),
+            }
+        )
+    _OPORTUNIDADES_CACHE = itens
+    return itens
+
+
+@app.get("/api/oportunidades")
+def api_oportunidades(uf: str | None = None, limite: int = 500) -> dict[str, Any]:
+    """Oportunidades imobiliarias joinadas ao M1 (top-N por residual).
+
+    Tres contagens, e a diferenca entre elas importa:
+      `total`         — o universo inteiro, independente de `uf`;
+      `total_recorte` — quantas existem no recorte pedido (a UF, ou o universo);
+      `len(itens)`    — quantas cabem em `limite` (cap de 3000).
+
+    `total_recorte` existe para a tela poder dizer "mostrando N de M **deste recorte**".
+    Sem ele so' havia `total`, e filtrar por UF fazia a tela comparar 1.501 itens de SP
+    contra os 4.003 nacionais — numero que nao responde pergunta nenhuma.
+
+    `ufs` e' SEMPRE o universo, nunca as UFs dos `itens`: filtrar por UF nao pode
+    encolher o proprio seletor de UF, e o top-N nacional nao contem todas as UFs (o
+    residual satura, ver `_carregar_oportunidades`).
+    """
+    todas = _carregar_oportunidades()
+    ufs = sorted({o["uf"] for o in todas if o["uf"]})
+    recorte = [o for o in todas if o["uf"] == uf.upper()] if uf else todas
+    n = max(1, min(limite, 3000))
+    itens = recorte[:n]
+    dossies = _dossie_index()
+    for o in itens:
+        o["tem_dossie"] = o["id"] in dossies
+    return {
+        "total": len(todas),
+        "total_recorte": len(recorte),
+        "ufs": ufs,
+        "itens": itens,
+    }
+
+
+@app.get("/api/oportunidades/{imovel_id}/dossie")
+def api_oportunidade_dossie(imovel_id: str) -> Any:
+    """Serve o dossie PDF do coletor para um imovel, quando existe (senao 404 — o front
+    cai no Relatorio Pontual). SEM PII na rota: o PDF ja e' o artefato do coletor."""
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+
+    pdf = _dossie_index().get(imovel_id)
+    if pdf is None or not Path(pdf).exists():
+        raise HTTPException(status_code=404, detail="Dossie nao disponivel para este imovel.")
+    return FileResponse(str(pdf), media_type="application/pdf", filename=Path(pdf).name)
+
+
+# --- Trilha propria da camada imobiliaria (pedido do Felipe, 2026-08-24) -------------
+# A camada imobiliaria e' restrita (aba `imobiliaria`), entao precisa de rastro do que
+# foi FEITO nela — nao so' de quais rotas de dados foram chamadas. O problema: a maior
+# parte dos gestos da tela e' client-side e nao gera requisicao nenhuma (abrir a ficha
+# de um imovel da lista ja' carregada, marcar para visita, trocar o recorte). Sem estas
+# rotas, a trilha responderia "fulano abriu a aba e baixou 2 dossies" e mais nada.
+#
+# Desenho: uma rota NO-OP por acao, no molde do `/api/ciencia-confidencialidade` — o
+# valor do registro e' a linha que o middleware da trilha (DEC-027) grava, nao a
+# resposta. A acao vive no PATH (e nao na query) de proposito: `FEATURES_ROTULOS` do
+# painel de Acessos casa por prefixo de rota, entao cada acao vira uma linha legivel
+# ("Abriu ficha de imovel") em vez de um generico com a acao escondida na query.
+# O ALVO (imovel, UF, municipio, origem) vai na QUERY, que a trilha ja' grava inteira.
+#
+# Nada e' persistido aqui dentro: o backend do piloto segue sem escritor de FS fora do
+# cadastro (DEC-023) e da propria trilha (DEC-027) — e' o que o guardrail AST prova.
+ACOES_IMOBILIARIA: frozenset[str] = frozenset(
+    {
+        "abrir-aba",  # entrou na aba imobiliaria
+        "abrir-imovel",  # abriu a ficha de um imovel (query `origem` diz se foi aba ou mapa)
+        "abrir-dossie",  # pediu o dossie/relatorio do imovel (o GET do PDF pode nem existir)
+        "marcar-visita",
+        "desmarcar-visita",
+        "ver-no-mapa",  # deep link da ficha para o Mapa Territorial
+        "filtrar",  # trocou o recorte (UF, tipo, ordenacao)
+    }
+)
+
+
+@app.post("/api/imobiliaria/evento/{acao}")
+def api_imobiliaria_evento(acao: str) -> dict[str, Any]:
+    """Registra um gesto da camada imobiliaria na trilha de acesso (DEC-027).
+
+    Corpo vazio de proposito. O alvo do gesto viaja na QUERY (`imovel`, `uf`,
+    `municipio`, `origem`) e nao e' declarado aqui: quem grava e' o middleware da
+    trilha, que ja' persiste `request.url.query` inteira. Acao desconhecida devolve
+    404 para o vocabulario nao virar lixo no painel de Acessos.
+    """
+    from fastapi import HTTPException
+
+    if acao not in ACOES_IMOBILIARIA:
+        raise HTTPException(status_code=404, detail="Acao desconhecida.")
+    return {"ok": True}
 
 
 # ============================================================================

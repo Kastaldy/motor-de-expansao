@@ -195,10 +195,13 @@ def test_todas_as_rotas_registradas() -> None:
 
 
 def test_health_contrato(empty_data: Path) -> None:
-    h = pilot.health()
-    assert h["status"] == "ok"
-    assert h["data_ok"] is False
-    assert h["data_dir"] == str(empty_data)
+    # /api/health publico e' mudo (pentest Onda B #8); o diagnostico com data_dir/data_ok
+    # migrou para `_inventario_artefatos()` (rota admin /api/acessos/saude-artefatos).
+    assert pilot.health() == {"status": "ok"}
+    inv = pilot._inventario_artefatos()
+    assert inv["status"] == "ok"
+    assert inv["data_ok"] is False
+    assert inv["data_dir"] == str(empty_data)
 
 
 def test_ufs_sem_base_levanta_500(empty_data: Path) -> None:
@@ -239,7 +242,7 @@ def test_executiva_sem_growth_levanta_404(empty_data: Path) -> None:
 
 def test_relatorio_municipal_sem_dados_levanta_httpexception(empty_data: Path) -> None:
     with pytest.raises(HTTPException):
-        pilot.relatorio_municipal(pilot.RelatorioMunicipalIn(uf="SP", municipio="X"))
+        asyncio.run(pilot.relatorio_municipal(pilot.RelatorioMunicipalIn(uf="SP", municipio="X")))
 
 
 def test_relatorio_pontual_sem_geo_levanta_404(empty_data: Path) -> None:
@@ -788,7 +791,7 @@ def test_relatorio_municipal_renderiza_e_passa_os_mapas(monkeypatch: pytest.Monk
         relmun, "gerar_payloads_download_relatorio_municipal", _fake_payloads
     )
 
-    resp = pilot.relatorio_municipal(pilot.RelatorioMunicipalIn(uf="DF", municipio="X"))
+    resp = asyncio.run(pilot.relatorio_municipal(pilot.RelatorioMunicipalIn(uf="DF", municipio="X")))
     assert resp.media_type == "application/pdf"
     assert chamada.get("render") is True, "o endpoint nao chamou render_mapas_municipio"
     assert chamada.get("poligono_kwarg") is True, (
@@ -867,11 +870,21 @@ def test_relatorio_pontual_nao_bloqueia_o_event_loop():
 
 
 def test_relatorio_municipal_tambem_fora_do_event_loop():
-    """O Relatorio Municipal e igualmente pesado; como e `def` (nao `async def`), o
-    proprio FastAPI ja o roda no threadpool. Trava esse invariante junto."""
+    """O Relatorio Municipal e igualmente pesado. Desde o pentest 2026-08-19 a rota e'
+    `async def` FINA: serializa pelo `_PDF_SEMAFORO` e delega o corpo pesado ao
+    threadpool via `_gerar_relatorio_municipal_response`, igual a /pontual. Antes era um
+    `def` sincrono SEM o semaforo, entao um flood de municipais saturava o threadpool e
+    derrubava ate' o /api/health. Trava o invariante novo: corpo pesado FORA do event
+    loop + gate de concorrencia."""
     import inspect
 
-    assert not inspect.iscoroutinefunction(pilot.relatorio_municipal)
+    assert inspect.iscoroutinefunction(pilot.relatorio_municipal)
+    assert not inspect.iscoroutinefunction(pilot._gerar_relatorio_municipal_response)
+    fonte = inspect.getsource(pilot.relatorio_municipal)
+    assert "_PDF_SEMAFORO" in fonte
+    assert "run_in_threadpool" in fonte
+    assert "_gerar_relatorio_municipal_response" in fonte
+    assert "render_mapas_municipio" not in fonte  # corpo pesado NAO na rota fina
 
 
 # ===========================================================================

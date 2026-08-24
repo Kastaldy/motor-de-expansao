@@ -112,6 +112,60 @@ O merge + deploy da imagem `web` ativa a camada 1 **somente depois** destes pass
    navegar no piloto logado e `tail /opt/motor-expansao/logs/acesso/acesso-$(date -u
    +%F).jsonl` deve mostrar linhas com o seu usuário.
 
+## Camada imobiliária — trilha própria da aba restrita (2026-08-24)
+
+A aba de oportunidades imobiliárias ganhou gate próprio (`imobiliaria`, restrita a um
+subconjunto do time) e, com ele, a exigência de rastro do que foi **feito** nela — não
+apenas de quais rotas de dados foram chamadas.
+
+**O problema:** quase todo gesto da tela é client-side e não gera requisição nenhuma.
+Abrir a ficha de um imóvel que já está na lista carregada, marcar para visita, trocar o
+recorte — nada disso toca a rede. Sem instrumentação, a trilha responderia "fulano abriu
+a aba e baixou 2 dossiês" e mais nada.
+
+**A solução** (molde do `POST /api/ciencia-confidencialidade`): uma família de rotas
+**no-op** cujo único valor é a linha que este middleware grava.
+
+```
+POST /api/imobiliaria/evento/{acao}?imovel=<id>&uf=<UF>&municipio=<nome>&origem=<aba|mapa>
+```
+
+| Ação | Significa | Rótulo na aba Acessos |
+| --- | --- | --- |
+| `abrir-aba` | entrou na tela imobiliária | Abriu a aba imobiliária |
+| `abrir-imovel` | abriu a ficha de um imóvel (`origem` diz se foi pela aba ou pelo pin do mapa) | Abriu ficha de imóvel |
+| `abrir-dossie` | pediu o dossiê (`detalhe` = `dossie` ou `relatorio-pontual`, o fallback) | Pediu dossiê de imóvel |
+| `marcar-visita` / `desmarcar-visita` | toggle "Marcar para visita" | Marcou / Desmarcou imóvel |
+| `ver-no-mapa` | deep link da ficha para o Mapa Territorial | Levou imóvel para o Mapa |
+| `filtrar` | trocou o recorte (UF, tipo, ordenação, marcados) ou ligou a camada no mapa | Trocou o recorte de imóveis |
+
+Decisões de contrato que valem sempre:
+
+- **A ação vive no PATH, o alvo na QUERY.** `FEATURES_ROTULOS` casa por prefixo de rota,
+  então ação no path é o que faz a ficha do usuário dizer *o quê* em vez de repetir um
+  rótulo genérico com a ação escondida na query.
+- **Vocabulário fechado.** `ACOES_IMOBILIARIA` (`web/server/app.py`) é a lista fechada;
+  ação fora dela recebe **404**, mesmo de usuário autorizado — senão o front poderia
+  inventar rótulo e poluir o painel. Dois testes travam isso: um exige que a rota esteja
+  em `REGRAS_DE_ACESSO`, outro que **cada** ação tenha rótulo próprio em
+  `FEATURES_ROTULOS` (o rótulo genérico do prefixo é só rede de segurança).
+- **Sem PII.** A query leva `imovel`/`uf`/`municipio`/`origem`/`detalhe` e nada mais —
+  nunca nome, telefone ou CRECI de corretor. Esse contato existe só dentro do PDF do
+  dossiê, e é justamente por causa dele que a rota do dossiê é a única da camada
+  restrita **exclusivamente** à aba `imobiliaria`.
+- **Nada de enxurrada.** Os eventos saem de *handlers* de gesto humano, nunca de
+  `useEffect` que observa estado. Hover de pin e campo de busca livre **não** são
+  instrumentados de propósito: um arrasto no mapa ou uma frase digitada gerariam dezenas
+  de linhas e inutilizariam 90 dias de trilha.
+- **Rastro não pode quebrar interação.** `api.eventoImobiliaria` é fire-and-forget
+  (`keepalive`, `.catch(() => {})`); falha de rede é engolida, como no gravador.
+- **Gate do evento:** `{mapa, imobiliaria}` — o pin do Mapa Territorial também abre ficha
+  de imóvel, e quem tem só `mapa` precisa poder registrar isso. Quem não tem nenhuma das
+  duas não consegue nem sujar a trilha (403).
+- **Agrupamento:** no relatório do Telegram e no painel, os eventos contam **sempre** na
+  aba `imobiliaria`, mesmo disparados do mapa — ali a pergunta é "quanto a camada foi
+  usada"; de onde vieram está na query `origem`.
+
 ## Aba Acessos — painel restrito sobre a trilha (emenda DEC-027, 2026-08-19)
 
 A trilha ganhou um consumidor visual: a aba `Acessos` do piloto

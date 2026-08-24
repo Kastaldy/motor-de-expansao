@@ -213,3 +213,28 @@ def test_sensibilidade_valores_corretos() -> None:
     for valor in [0.15, 0.05, 0.20, 0.12]:
         assert any(abs(v - valor) < 1e-6 for v in numericos), \
             f"Valor {valor} nao encontrado na aba Sensibilidade"
+
+
+# ---------------------------------------------------------------------------
+# Pentest Onda B #12: nome_ponto iniciado em metacaractere de formula e neutralizado
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("prefixo", ["=", "+", "-", "@", "\t", "\r"])
+def test_nome_ponto_iniciado_em_formula_e_neutralizado(prefixo: str) -> None:
+    """Um `nome_ponto` como `=HYPERLINK(...)` NAO pode virar formula viva no XLSX."""
+    payload = f"{prefixo}HYPERLINK(\"http://evil.example\",\"x\")"
+    result_bytes = gerar_excel_viabilidade(_RESULT, _SERIE, nome_ponto=payload)
+    wb = openpyxl.load_workbook(BytesIO(result_bytes))
+    c = wb["Resumo"].cell(row=2, column=1)
+    assert c.data_type != "f", "a celula virou formula viva"
+    # Propriedade de seguranca: o valor comeca por `'` (neutralizado). Nao checamos o
+    # char seguinte porque o openpyxl normaliza \r -> \n no XML da celula.
+    assert str(c.value).startswith("'")
+
+
+def test_nome_ponto_benigno_nao_ganha_apostrofo() -> None:
+    """Nome normal passa intacto (sem o apostrofo de neutralizacao)."""
+    result_bytes = gerar_excel_viabilidade(_RESULT, _SERIE, nome_ponto="Jardins SP")
+    c = openpyxl.load_workbook(BytesIO(result_bytes))["Resumo"].cell(row=2, column=1)
+    assert c.value == "Jardins SP"

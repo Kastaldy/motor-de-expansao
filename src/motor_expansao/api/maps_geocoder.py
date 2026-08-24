@@ -77,14 +77,37 @@ def url_maps_segura(url: str) -> bool:
     Recusa `file://`/esquemas exoticos, host interno da rede Docker e QUALQUER
     IP-literal. Usado antes de CADA requisicao a um link fornecido pelo usuario
     (inclusive a cada salto de redirect).
+
+    ENDURECIMENTO (pentest 2026-08-19): fecha o bypass por DIVERGENCIA DE PARSER.
+    `http://api:8077\\@goo.gl/` fazia o `urlsplit` (validacao) ver host `goo.gl` e
+    LIBERAR, enquanto o `requests`/urllib3 (o cliente que de fato disca) conectava em
+    `api:8077` — idem `http://169.254.169.254\\@goo.gl/` (metadata da nuvem). Duas
+    defesas somadas: (1) recusar backslash, espaco e byte de controle, que sao o
+    gatilho da divergencia e nunca aparecem num link real do Maps; (2) exigir que o
+    host visto pelo `urlsplit` seja IGUAL ao host que o urllib3 vai discar — se os dois
+    parsers discordam, recusa (nao aposta em qual deles o cliente HTTP honra).
     """
+    bruto = str(url or "")
+    # Caracteres que separam os dois parsers (backslash/espaco/controle): fail-closed.
+    if any(c in bruto for c in "\\ \t\r\n") or any(ord(c) < 0x20 for c in bruto):
+        return False
     try:
-        parts = urlsplit(str(url or ""))
+        parts = urlsplit(bruto)
     except ValueError:
         return False
     if parts.scheme not in ("http", "https"):
         return False
-    return host_de_maps_permitido(parts.hostname or "")
+    host_validacao = (parts.hostname or "").lower()
+    # Segunda opiniao: o MESMO parser (urllib3) que o `requests` usa para conectar.
+    try:
+        from urllib3.util import parse_url
+
+        host_conexao = (parse_url(bruto).host or "").lower()
+    except Exception:  # noqa: BLE001 — sem o parser de conexao, fail-closed
+        return False
+    if not host_validacao or host_validacao != host_conexao:
+        return False
+    return host_de_maps_permitido(host_validacao)
 
 
 def normalize_cep(cep: str) -> str:

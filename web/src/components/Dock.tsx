@@ -28,6 +28,12 @@ const ICONES: Record<string, React.JSX.Element> = {
       <path d="M15 6h6v6" />
     </>
   ),
+  /* Predio — a camada de oferta imobiliaria (imoveis de locacao coletados). */
+  oport: (
+    <>
+      <path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h.01M9 13h.01M9 17h.01M15 9h.01M15 13h.01M15 17h.01" />
+    </>
+  ),
   /* Pulso de atividade — o painel de acessos (restrito; some para quem não pode). */
   acessos: (
     <>
@@ -52,6 +58,7 @@ const ITENS: { id: string; tela: Tela | null; titulo: string }[] = [
   { id: 'exec', tela: 'executiva', titulo: 'Visão executiva' },
   { id: 'dom', tela: null, titulo: 'Expansão de domínio (fora do piloto)' },
   { id: 'cart', tela: null, titulo: 'Carteira e plano (fora do piloto)' },
+  { id: 'oport', tela: 'oportunidades-imob', titulo: 'Oportunidades imobiliárias' },
   { id: 'viab', tela: 'viabilidade', titulo: 'Viabilidade do ponto' },
   /* Aba restrita (emenda DEC-027): telaLiberada e deny-by-default — para quem não
      está na allowlist o ícone simplesmente não existe, como toda tela vetada. */

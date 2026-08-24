@@ -284,6 +284,15 @@ export interface Pins {
   concorrentes: Pin[]
   ultra: Pin[]
   icones: Record<string, string>
+  /**
+   * O artefato de unidades de rede do agregador (DEC-035) existe e foi lido? (BLK-MA-19)
+   *
+   * `false` significa ARTEFATO AUSENTE — nunca "este recorte não tem unidade de agregador",
+   * que devolve `true` com nenhuma bandeira de halo. Sem esta chave, os dois casos eram
+   * indistinguíveis no payload, e foi assim que a camada passou cinco dias morta em produção
+   * sem ninguém notar. Opcional: payload antigo não a traz.
+   */
+  redes_disponivel?: boolean
 }
 
 /**
@@ -441,6 +450,93 @@ export interface FaixaAlunos {
   p50: number | null
   p90: number | null
   n_comparaveis: number
+}
+
+/**
+ * Uma oportunidade imobiliaria (imovel de locacao coletado, ja joinado ao M1).
+ *
+ * Espelha o que `/api/oportunidades` devolve — um SUBCONJUNTO do viaveis.parquet,
+ * SEM PII (as colunas de corretor nunca saem do backend). Numeros ausentes vem `null`.
+ */
+export interface Oportunidade {
+  id: string
+  titulo: string
+  tipo: string
+  operacao: string | null
+  uf: string
+  municipio: string
+  bairro: string | null
+  area: number | null
+  aluguel: number | null
+  iptu: number | null
+  condominio: number | null
+  rs_m2: number | null
+  hex_id: string
+  residual: number | null
+  residual_total: number | null
+  score: number | null
+  censo_score: number | null
+  faixa: string | null
+  pop: number | null
+  renda_pc: number | null
+  sam: number | null
+  n_ultra: number | null
+  first_seen: string | null
+  lat: number | null
+  lng: number | null
+  url: string | null
+  /** Alunos p50 da curva tamanho->densidade (simulador de Viabilidade), pela área. */
+  alunos_p50?: number | null
+  /** Faturamento projetado/mês = alunos_p50 × ticket (servido pronto pelo backend). */
+  fat_proj?: number | null
+  /** Ticket (mensalidade balcão) usado no fat_proj — do dimensionamento/config. */
+  ticket_proj?: number | null
+  /** Se o coletor gerou um dossiê PDF para este imóvel (top-N por praça). */
+  tem_dossie?: boolean
+}
+
+export interface OportunidadesPayload {
+  /** Universo inteiro, independente da UF pedida. */
+  total: number
+  /**
+   * Quantas existem NO RECORTE pedido (a UF, ou o universo). É o denominador honesto:
+   * sem ele, filtrar por UF fazia a tela comparar os 1.501 de SP contra os 4.003
+   * nacionais. Opcional porque um backend anterior a 2026-08-24 não o manda.
+   */
+  total_recorte?: number
+  /** UFs do UNIVERSO — nunca as UFs dos `itens`, que são só o recorte capado. */
+  ufs: string[]
+  itens: Oportunidade[]
+}
+
+/**
+ * Gestos da camada imobiliária registrados na trilha de acesso (DEC-027).
+ *
+ * Espelho EXATO de `ACOES_IMOBILIARIA` em `web/server/app.py` — ação fora da lista
+ * recebe 404 do backend e some do rastro. Cada ação também precisa de rótulo próprio
+ * em `FEATURES_ROTULOS` (`acesso_analytics.py`), senão a ficha do usuário no painel
+ * de Acessos mostra o balde genérico; há teste travando isso nos dois lados.
+ */
+export type AcaoImobiliaria =
+  | 'abrir-aba'
+  | 'abrir-imovel'
+  | 'abrir-dossie'
+  | 'marcar-visita'
+  | 'desmarcar-visita'
+  | 'ver-no-mapa'
+  | 'filtrar'
+
+/**
+ * Alvo do gesto — vai na QUERY, que a trilha grava inteira (teto de 2000 chars).
+ * SEM PII: nada de corretor, telefone ou contato; só o que identifica o imóvel e o
+ * recorte. `origem` distingue o gesto feito na aba do gesto feito pelo pin do mapa.
+ */
+export interface AlvoEvento {
+  imovel?: string | null
+  uf?: string | null
+  municipio?: string | null
+  origem?: 'aba' | 'mapa' | null
+  detalhe?: string | null
 }
 
 /* ---------------------------------------------------------------------------

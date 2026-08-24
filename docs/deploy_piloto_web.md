@@ -70,6 +70,13 @@ Confira o que o piloto precisa (senão a feature degrada em silêncio):
   `data/reports/crescimento/` (ordem obrigatória no README de lá).
 - `data/staging/{growth_api_historico,concorrentes_mapeados,unidades_ultra_performance_hex}.parquet`
   — Visão Executiva + pins.
+- `data/staging/{vulnerabilidade_ma_nomeadas,vulnerabilidade_ma_redes}.parquet` — **pins de
+  academia no Mapa Territorial** (BLK-MA-15 + DEC-035): independentes com score e unidades de rede
+  do agregador com pressão. **OPCIONAIS e silenciosos** — sem eles não há pílula, não há erro e não
+  há espaço vazio: a tela fica idêntica à de um recorte sem academia nenhuma. Foi exatamente esse
+  silêncio que manteve a camada fora do ar de 2026-08-19 a 2026-08-24 (BLK-MA-19). Juntos têm
+  ~2,9 MB. **Depois do `scp`, RESTARTAR o `web`** — ver o aviso logo abaixo. A variante
+  `vulnerabilidade_ma_academias.parquet` **não** sobe: nenhuma superfície de produção a lê.
 - `concorrentes/logo_<rede>.png` — **logos das bandeiras** (pendente; sem eles, fallback sigla+cor).
 
 Enviar arquivos que faltarem (scp permitido; ssh remoto não — §6 do CLAUDE.md):
@@ -77,6 +84,24 @@ Enviar arquivos que faltarem (scp permitido; ssh remoto não — §6 do CLAUDE.m
 scp -i ~/.ssh/id_ultra_mcp <arquivo> root@2.25.137.241:/opt/motor-expansao/data/staging/
 # validar na VPS: md5sum
 ```
+
+> ### ⚠ `scp` sem restart não acende nada — e o `/api/health` fica verde mentindo
+>
+> Os leitores do backend **memoizam a ausência**, por dois mecanismos diferentes:
+> `@functools.lru_cache(maxsize=1)` em `carregar_independentes` e `carregar_redes`, e um global de
+> módulo (`_OPORTUNIDADES_CACHE`) em `_carregar_oportunidades`. Nenhum dos dois é invalidado em
+> runtime — `limpar_caches()` é helper de teste, não rota. Se o arquivo chegar com o container de
+> pé, o leitor já guardou o `None` da primeira requisição e continuará devolvendo `None` até o
+> processo morrer.
+>
+> O `/api/health`, por outro lado, faz `exists()` **a cada chamada** — então ele fica **verde na
+> hora**, com a camada ainda invisível na tela. É a pior combinação possível: o sinal que o
+> operador consulta afirma que está tudo certo, e não está.
+>
+> **Portanto:** depois de qualquer `scp` para `data/staging/`, `docker restart motor_expansao_web`,
+> e a prova de aceite é a **rota que serve a camada**, nunca o health. Use `docker restart` e não
+> `up -d --force-recreate`: este último recria a partir do `${WEB_IMAGE}` do `.env` e trocaria a
+> versão do piloto junto com o dado, dando duas causas para qualquer problema na mesma janela.
 
 ---
 
@@ -146,30 +171,113 @@ O Authelia autentica; **quem autoriza por aba é o backend do piloto**
 /opt/motor-expansao/cadastro/acesso_abas.json
 ```
 
-Formato (abas válidas: `mapa`, `oportunidades`, `executiva`, `viabilidade`;
-`"*"` é o default para usuário fora da lista; chave começando com `_` é comentário):
+Formato (abas válidas: `mapa`, `oportunidades`, `imobiliaria`, `executiva`,
+`viabilidade`; `"*"` é o default para usuário fora da lista; chave começando com `_` é
+comentário):
 
 ```json
 {
   "_comentario": "editar e salvar — vale na requisição seguinte, sem restart",
-  "felipe_castaldi": ["mapa", "oportunidades", "executiva", "viabilidade"],
+  "felipe_castaldi": ["mapa", "oportunidades", "imobiliaria", "executiva", "viabilidade"],
   "fulano_da_silva": ["executiva"],
   "*": []
 }
 ```
 
+> **`imobiliaria` (2026-08-24)** é a **tela dedicada** de oportunidades imobiliárias.
+> Quem **não** a tem continua vendo os **pins de imóvel dentro do Mapa Territorial** e a
+> seção de imóveis na ficha do hexágono — essa camada é da aba `mapa`, por decisão do
+> Felipe ("todos os usuários com acesso ao mapa também têm acesso a esses imóveis"). O
+> que a aba `imobiliaria` guarda é a tela dedicada **e o dossiê PDF**, que carrega
+> contato de corretor. Antes desta data a tela reusava o gate de `oportunidades`, o que
+> tornava impossível restringir os imóveis sem tirar o funil de expansão de quem o usa.
+>
+> Aba **desconhecida** no JSON é descartada em silêncio pelo parser — se você conceder
+> `imobiliaria` a alguém e a tela não aparecer, a imagem em produção provavelmente é
+> anterior a 2026-08-24. Confira com `GET /api/me` (a lista de abas vem dele).
+
 Regras de operação:
 
 - **Editar o arquivo basta** — o backend relê por mtime; não precisa de restart.
 - **Validar o JSON antes de salvar** (`python -m json.tool acesso_abas.json`): arquivo
-  ilegível ou JSON inválido **desliga o controle** (fail-open, com warning no log) —
-  um typo devolve acesso cheio a todos, nunca um piloto morto.
-- **Sem o arquivo** (dev local, mount ausente) o controle fica desligado — todos veem
-  tudo, comportamento igual ao de antes da feature.
+  ilegível ou JSON inválido faz o controle **degradar**, e o comportamento depende do
+  ambiente (BLK-SEC-05):
+  - **em produção — fail-CLOSED nas abas sensíveis** (`executiva`, `viabilidade`,
+    `imobiliaria`): elas são **negadas a todos** até o controle voltar, com um `ERROR`
+    no log. As não sensíveis (`mapa`, `oportunidades`) seguem, para um typo não trancar
+    100% do piloto. Consequência concreta: com o JSON quebrado **ninguém baixa dossiê**,
+    mas os pins de imóvel no mapa continuam.
+  - **em dev/local — fail-OPEN** (todas as abas), para não atrapalhar o
+    desenvolvimento. O que separa os dois é `_fail_closed_ativo()`: `MOTOR_CADASTRO_DIR`
+    setado (só o compose o seta) ou o override `MOTOR_ACESSO_FAIL_CLOSED`.
+- **Sem o arquivo** (dev local, mount ausente) vale a mesma regra acima — em dev, todos
+  veem tudo.
 - A SPA esconde as abas via `GET /api/me`; o bloqueio real é o middleware (403 nas
   rotas da aba vetada). Rota nova sem regra reprova em
   `tests/unit/test_piloto_web_acesso.py` (cobertura obrigatória).
 - Solução **temporária** até o banco de identidade (plano de 2026-08-07).
+
+---
+
+## 2.3 Camada imobiliária — dados do coletor (volume `:ro`, 2026-08-24)
+
+A aba de oportunidades imobiliárias é a **única** superfície do piloto alimentada por um
+**repositório diferente**: o coletor imobiliário (`coleta-de-oportunidades`, repo do
+Vinicius), com cadência de coleta própria (semanal). Por isso os dados têm mount
+próprio, e não uma pasta dentro de `outputs/` ou `staging/` — deixar claro de quem é a
+responsabilidade de atualizar vale mais que economizar um volume.
+
+**Layout no host** (`docker-compose.prod.yml` monta em `/app/data/oportunidades:ro`):
+
+```
+/opt/motor-expansao/data/oportunidades/
+├── viaveis.parquet          # imóveis viáveis já joinados ao M1
+└── dossies/                 # PDFs por imóvel (top-N por praça — não há um por imóvel)
+    ├── fonte=olx/...
+    └── fonte=fii/...
+```
+
+**Origem no repo do coletor** (os nomes divergem — atenção):
+
+| Destino na VPS | Origem no coletor |
+| --- | --- |
+| `viaveis.parquet` | `data/opportunities/_derivados/viaveis.parquet` |
+| `dossies/` | `data/dossies/` (só os `*.pdf`; os `INDICE_*` não são usados) |
+
+**Envio** (do PC, com a chave de deploy):
+
+```bash
+scp -i ~/.ssh/id_ultra_mcp \
+  <coletor>/data/opportunities/_derivados/viaveis.parquet \
+  root@2.25.137.241:/opt/motor-expansao/data/oportunidades/viaveis.parquet
+
+scp -i ~/.ssh/id_ultra_mcp -r \
+  <coletor>/data/dossies/. \
+  root@2.25.137.241:/opt/motor-expansao/data/oportunidades/dossies/
+```
+
+**Depois de trocar o parquet, RESTARTAR o `web`:**
+
+```bash
+docker compose -f docker-compose.prod.yml restart web
+```
+
+> Isto **não é opcional**. `_carregar_oportunidades()` guarda a lista inteira num global
+> (`_OPORTUNIDADES_CACHE`) que **nunca é invalidado** — o backend lê o parquet uma única
+> vez, na primeira requisição do processo. Sem restart, um parquet novo **não aparece**, e
+> pior: se ele estava ausente naquela primeira leitura, o cache guardou lista **vazia** e
+> a aba continua vazia para sempre. Os **dossiês** são a exceção: `_dossie_index()`
+> reescaneia o diretório a cada chamada, então PDF novo vale na hora.
+
+**Conferir no ar:**
+
+```bash
+curl -s https://<host-do-piloto>/api/health | jq '.artefatos.oportunidades_imobiliarias, .artefatos_faltando'
+```
+
+Sem o mount, a rota `/api/oportunidades` responde **200 com lista vazia** e a tela diz
+"Nada no recorte" — exatamente o que ela diz quando um filtro não casou. Foi por isso que
+o artefato entrou no `/api/health`: é o único lugar onde essa falta vira sinal.
 
 ---
 
@@ -255,6 +363,17 @@ Abrir `https://piloto.ultra-expansao.tech` → login Authelia → piloto.
       Sem eles o piloto sobe normal e o **passo 4 sai vazio e sem cor, em silêncio**,
       então nenhum outro item deste checklist acusa a falta. Se aparecer algum nome ali,
       copiar o arquivo para o staging do VPS (juntos têm ~2,4 MB) e repetir o `up -d`.
+      **Vale igual para `independentes_nomeadas` e `redes_nomeadas`** (pins de academia,
+      ~2,9 MB juntos): a lista de nomes possíveis aqui não é só a de crescimento.
+- [ ] **Os pins de academia aparecem de fato** — e este item é separado do anterior de
+      propósito: `artefatos_faltando` vazio prova apenas que o arquivo está **no disco**.
+      Os leitores memoizam a ausência (ver o aviso do §2), então health verde + pins
+      invisíveis é um estado possível e foi o que ocorreu no BLK-MA-19. A prova é a rota
+      que serve a camada: `GET /api/municipio/{uf}/{municipio}` com
+      `independentes.disponivel = true` e ao menos um item de `pins.concorrentes` com
+      `"diag": true`. Na tela: a **pílula "Ver academias independentes"** aparece no
+      drill-down municipal. (`pins.redes_disponivel` só existe em imagem ≥ BLK-MA-19 —
+      ausente **não** é falha; ver a nota em `docs/infra_producao.md`.)
 - [ ] `https://piloto.ultra-expansao.tech` exige login (Authelia) e abre o SPA depois.
 - [ ] Mapa Territorial carrega uma UF (a 1ª leitura carrega a partição inteira, demora).
 - [ ] Viabilidade calcula um ponto e mostra o **banner "preliminar"**.
