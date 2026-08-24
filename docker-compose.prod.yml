@@ -168,6 +168,25 @@ services:
       # valendo sem excecao nenhuma. Sem o volume, a aba sobe igual, so sem as dimensoes
       # de cadastro (leitura degrada, escrita devolve 503).
       MOTOR_CADASTRO_DIR: "/app/cadastro"
+      # Camada imobiliaria (2026-08-24). As duas envs sao EXPLICITAS de proposito: o
+      # default do codigo resolveria o parquet para dentro do MOTOR_DATA_DIR (que existe)
+      # mas o diretorio de dossies para o repo IRMAO do coletor (`../coleta-de-oportunidades`),
+      # que NAO existe no container — e ai a aba subiria sem dossie nenhum, em silencio.
+      #
+      # Mount PROPRIO, e nao uma pasta dentro de `outputs`/`staging`, porque este e' o unico
+      # artefato do piloto que vem de OUTRO REPOSITORIO (o coletor imobiliario) e tem cadencia
+      # de coleta propria — misturar com os artefatos do M1 confundiria de quem e' a
+      # responsabilidade de atualizar. Sobe por scp; ver docs/deploy_piloto_web.md.
+      #
+      # Sem o mount a aba responde 200 com lista VAZIA e a tela diz "Nada no recorte" — a
+      # mesma frase de um filtro que nao casou. Por isso o artefato entrou no
+      # `/api/health` (`artefatos.oportunidades_imobiliarias`): e' onde a falta vira sinal.
+      #
+      # O DOSSIE (PDF do coletor) carrega contato de corretor, e por isso a rota que o serve
+      # e' a unica da camada restrita a aba `imobiliaria`; a LISTA e' agregada e sem PII, e
+      # segue liberada tambem pela aba `mapa` (pins do Mapa Territorial).
+      MOTOR_OPORTUNIDADES_PATH: "/app/data/oportunidades/viaveis.parquet"
+      MOTOR_DOSSIES_DIR: "/app/data/oportunidades/dossies"
       # DEC-027 — trilha de acesso do piloto (quem fez o que): JSONL diario com
       # usuario (Remote-User do Authelia), IP real (X-Forwarded-For), rota+query,
       # status e latencia; retencao de 90 dias podada pelo proprio backend.
@@ -210,6 +229,10 @@ services:
       - /opt/motor-expansao/data/ibge:/app/data/ibge:ro          # malha municipal
       - /opt/motor-expansao/data/ultra:/app/data/ultra:ro        # branding do PDF
       - /opt/motor-expansao/concorrentes:/app/concorrentes:ro    # logos de pins (logo_<rede>.png)
+      # Camada imobiliaria: `viaveis.parquet` + `dossies/` do coletor (outro repo, cadencia
+      # propria). READ-ONLY como todo dado. Ausente = aba vazia SEM erro; confira no ar com
+      # `GET /api/health` -> `artefatos.oportunidades_imobiliarias`.
+      - /opt/motor-expansao/data/oportunidades:/app/data/oportunidades:ro
       # Mounts de ESCRITA do piloto — os UNICOS, ambos fora de /app/data de proposito:
       # cadastro (DEC-023) e trilha de acesso (DEC-027). Host: `chown 1000:1000` (appuser).
       - /opt/motor-expansao/cadastro:/app/cadastro:rw            # cadastro operacional (consultor etc.)

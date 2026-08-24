@@ -116,6 +116,19 @@ export default function OportunidadesImobiliariasScreen({
   const [visitas, setVisitas] = useState<Set<string>>(lerVisitas)
   const [soVisitas, setSoVisitas] = useState(false)
 
+  /* Trilha de acesso (DEC-027): a ABERTURA da aba, uma vez por montagem. A tela
+     desmonta ao sair (render condicional do App), entao voltar aqui e' uma abertura
+     nova; o `ref` so' impede a contagem dobrada do StrictMode, que remonta o mesmo
+     componente em dev. Nao ha UF no estado inicial, exceto quando o operador chega
+     focando um imovel — ai o recorte ja' nasce na UF dele (ver o efeito abaixo). */
+  const aberturaRegistrada = useRef(false)
+  useEffect(() => {
+    if (aberturaRegistrada.current) return
+    aberturaRegistrada.current = true
+    api.eventoImobiliaria('abrir-aba', { uf: focoInicial?.uf ?? null, origem: 'aba' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     let vivo = true
     /* A intencao e' CONSUMIDA aqui, na montagem — nao no sucesso do fetch. Consumir
@@ -188,8 +201,44 @@ export default function OportunidadesImobiliariasScreen({
     if (visitas.size === 0) setSoVisitas(false)
   }, [visitas])
 
-  function aoAlternarVisita(id: string) {
-    setVisitas((prev) => alternarVisita(prev, id))
+  /**
+   * Selecao por GESTO do operador (card, linha da lista, pin do mapa ou do mini-mapa).
+   * O `setSel` cru fica nos caminhos AUTOMATICOS — foco vindo do mapa, primeiro item
+   * do recorte ao carregar e a re-selecao quando o filtro derruba o item atual —, que
+   * nao sao gesto e nao podem virar rastro.
+   */
+  function selecionarImovel(id: string) {
+    setSel(id)
+    const op = (itens ?? []).find((o) => o.id === id)
+    api.eventoImobiliaria('abrir-imovel', {
+      imovel: id,
+      uf: op?.uf ?? null,
+      municipio: op?.municipio ?? null,
+      origem: 'aba',
+    })
+  }
+
+  function aoAlternarVisita(op: Oportunidade) {
+    // A acao carimbada e' o estado RESULTANTE do toggle, nao o atual.
+    const marcando = !visitas.has(op.id)
+    api.eventoImobiliaria(marcando ? 'marcar-visita' : 'desmarcar-visita', {
+      imovel: op.id,
+      uf: op.uf,
+      municipio: op.municipio,
+      origem: 'aba',
+    })
+    setVisitas((prev) => alternarVisita(prev, op.id))
+  }
+
+  /**
+   * Trilha do RECORTE, sempre no handler do controle — nunca num efeito que observe
+   * o estado do filtro: ali entrariam tambem as mudancas automaticas e cada
+   * re-render, e a trilha viraria ruido. A BUSCA livre fica de fora de proposito
+   * (seria um evento por tecla, e nem com debounce o termo digitado pagaria o
+   * volume); o que importa e' o recorte que sobrou, ja' visivel nos outros campos.
+   */
+  function registrarFiltro(campo: string, valor: string, uf = ufSel) {
+    api.eventoImobiliaria('filtrar', { uf: uf || null, origem: 'aba', detalhe: `${campo}=${valor}` })
   }
 
   const idxSel = filtrados.findIndex((o) => o.id === sel)
@@ -226,15 +275,15 @@ export default function OportunidadesImobiliariasScreen({
 
       {/* Filtros + alternador de vista */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 30px', borderTop: '1px solid var(--line-soft)', borderBottom: '1px solid var(--line-soft)' }}>
-        <Select label="Estado" value={ufSel} onChange={setUfSel} placeholder="Todos os estados" maxWidth={188}
+        <Select label="Estado" value={ufSel} onChange={(v) => { setUfSel(v); registrarFiltro('uf', v || 'todos', v) }} placeholder="Todos os estados" maxWidth={188}
           options={[{ value: '', label: 'Todos os estados' }, ...ufs.map((u) => ({ value: u, label: u }))]} />
-        <Select label="Tipo de imóvel" value={tipoSel} onChange={setTipoSel} placeholder="Todos os tipos" maxWidth={188}
+        <Select label="Tipo de imóvel" value={tipoSel} onChange={(v) => { setTipoSel(v); registrarFiltro('tipo', v || 'todos') }} placeholder="Todos os tipos" maxWidth={188}
           options={[{ value: '', label: 'Todos os tipos' }, ...tipos.map((t) => ({ value: t, label: labelTipo(t) }))]} />
-        <Select label="Ordenar por" value={ordem} onChange={(v) => setOrdem(v as Ordem)} maxWidth={200} buscavel={false} options={ORDENS} />
+        <Select label="Ordenar por" value={ordem} onChange={(v) => { setOrdem(v as Ordem); registrarFiltro('ordem', v) }} maxWidth={200} buscavel={false} options={ORDENS} />
         <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar bairro, cidade, título…" aria-label="Buscar oportunidade"
           style={{ flex: 1, minWidth: 170, maxWidth: 340, height: 34, padding: '0 12px', background: 'var(--surf-input)', border: '1px solid var(--line-mid)', borderRadius: 'var(--r-md)', color: 'var(--tx-strong)', font: '500 13px/1 var(--f-ui)' }} />
         {visitas.size > 0 && (
-          <button type="button" onClick={() => setSoVisitas((v) => !v)} aria-pressed={soVisitas}
+          <button type="button" onClick={() => { setSoVisitas((v) => !v); registrarFiltro('marcados', soVisitas ? 'off' : 'on') }} aria-pressed={soVisitas}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 'var(--r-md)', cursor: 'pointer',
               border: `1px solid ${soVisitas ? 'rgba(233,192,122,.5)' : 'var(--line-mid)'}`,
               background: soVisitas ? 'rgba(233,192,122,.14)' : 'var(--surf-input)',
@@ -259,13 +308,13 @@ export default function OportunidadesImobiliariasScreen({
           /* Vista MAPA: mapa como principal + card lateral menor com o estudo do imovel */
           <div style={{ display: 'flex', gap: 16, padding: '16px 24px', height: '100%', minHeight: 0 }}>
             <div style={{ flex: 1, minWidth: 0, height: '100%' }}>
-              <MapaRecorte pontos={filtrados} sel={sel} onSel={setSel} altura="100%" />
+              <MapaRecorte pontos={filtrados} sel={sel} onSel={selecionarImovel} altura="100%" />
             </div>
             <aside style={{ width: 400, flexShrink: 0, overflowY: 'auto', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
               {atual ? (
                 <Ficha op={atual} rank={idxSel + 1} pares={filtrados} medRsM2={medRsM2}
-                  visita={visitas.has(atual.id)} onVisita={() => aoAlternarVisita(atual.id)}
-                  onSel={setSel} onVerNoMapa={onVerNoMapa} lateral />
+                  visita={visitas.has(atual.id)} onVisita={() => aoAlternarVisita(atual)}
+                  onSel={selecionarImovel} onVerNoMapa={onVerNoMapa} lateral />
               ) : (
                 <Aviso titulo="Selecione uma oportunidade" corpo="Clique num ponto do mapa para ver o estudo." />
               )}
@@ -281,7 +330,7 @@ export default function OportunidadesImobiliariasScreen({
                 <CabecalhoLista titulo="Os 3 melhores do recorte" nota="RESIDUAL × R$/M²" />
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 9, marginTop: 11 }}>
                   {top3.map((o, i) => (
-                    <CardTop key={o.id} pos={i + 1} op={o} ativo={o.id === sel} visita={visitas.has(o.id)} onClick={() => setSel(o.id)} />
+                    <CardTop key={o.id} pos={i + 1} op={o} ativo={o.id === sel} visita={visitas.has(o.id)} onClick={() => selecionarImovel(o.id)} />
                   ))}
                 </div>
               </div>
@@ -292,7 +341,7 @@ export default function OportunidadesImobiliariasScreen({
                   </div>
                   <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', marginTop: 8, marginRight: -6, paddingRight: 6 }}>
                     {resto.map((o, i) => (
-                      <LinhaRest key={o.id} pos={i + 4} op={o} ativo={o.id === sel} visita={visitas.has(o.id)} onClick={() => setSel(o.id)} />
+                      <LinhaRest key={o.id} pos={i + 4} op={o} ativo={o.id === sel} visita={visitas.has(o.id)} onClick={() => selecionarImovel(o.id)} />
                     ))}
                   </div>
                 </div>
@@ -301,8 +350,8 @@ export default function OportunidadesImobiliariasScreen({
             <section style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
               {atual ? (
                 <Ficha op={atual} rank={idxSel + 1} pares={filtrados} medRsM2={medRsM2}
-                  visita={visitas.has(atual.id)} onVisita={() => aoAlternarVisita(atual.id)}
-                  onSel={setSel} onVerNoMapa={onVerNoMapa} />
+                  visita={visitas.has(atual.id)} onVisita={() => aoAlternarVisita(atual)}
+                  onSel={selecionarImovel} onVerNoMapa={onVerNoMapa} />
               ) : (
                 <Aviso titulo="Selecione uma oportunidade" corpo="Escolha um imóvel no ranking à esquerda para ver o estudo." />
               )}
@@ -438,6 +487,16 @@ function Ficha({
   const [erroAcao, setErroAcao] = useState<string | null>(null)
 
   async function baixarDossie() {
+    /* Registra ANTES de escolher o caminho: o gesto e' o mesmo ("quero o documento
+       deste imovel"), e `detalhe` diz qual documento o operador recebeu — o dossie
+       do coletor ou o Relatorio Pontual do endereco, que e' o fallback. */
+    api.eventoImobiliaria('abrir-dossie', {
+      imovel: op.id,
+      uf: op.uf,
+      municipio: op.municipio,
+      origem: 'aba',
+      detalhe: op.tem_dossie ? 'dossie' : 'relatorio-pontual',
+    })
     setBaixando(true)
     setErroAcao(null)
     try {
@@ -559,7 +618,10 @@ function Ficha({
 
       {/* Acoes */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'stretch' }}>
-        <Botao onClick={() => onVerNoMapa(op.uf, op.municipio, op.lat != null && op.lng != null ? { lat: op.lat, lng: op.lng, hexId: op.hex_id } : undefined)} style={{ flex: 1, minWidth: 220, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: ACC, color: ACC_ON, boxShadow: ACC_GLOW }}>Ver no Mapa Territorial →</Botao>
+        <Botao onClick={() => {
+          api.eventoImobiliaria('ver-no-mapa', { imovel: op.id, uf: op.uf, municipio: op.municipio, origem: 'aba' })
+          onVerNoMapa(op.uf, op.municipio, op.lat != null && op.lng != null ? { lat: op.lat, lng: op.lng, hexId: op.hex_id } : undefined)
+        }} style={{ flex: 1, minWidth: 220, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: ACC, color: ACC_ON, boxShadow: ACC_GLOW }}>Ver no Mapa Territorial →</Botao>
         <Botao variante="ghost" onClick={baixarDossie} disabled={baixando} style={{ flex: 1, minWidth: 220, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
           title={op.tem_dossie ? 'Dossiê PDF do coletor (oferta + território)' : 'Sem dossiê pronto — gera o Relatório Pontual do endereço'}>
           {baixando ? <><Spinner /> Gerando…</> : op.tem_dossie ? '↓ Baixar dossiê (PDF)' : '↓ Relatório do ponto (PDF)'}

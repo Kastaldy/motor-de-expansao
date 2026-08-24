@@ -20,23 +20,35 @@ import { MODOS, type ModoDefinicao } from './inicio'
 
 /** Valores brutos de aba — devem bater 1:1 com o que o /api/me pode devolver
  *  (ABAS_VALIDAS do backend + a aba `acessos`, que vem da allowlist de env). */
-export type Aba = 'mapa' | 'oportunidades' | 'executiva' | 'viabilidade' | 'acessos'
+export type Aba =
+  | 'mapa'
+  | 'oportunidades'
+  | 'imobiliaria'
+  | 'executiva'
+  | 'viabilidade'
+  | 'acessos'
 
 export const TODAS_AS_ABAS: readonly Aba[] = Object.freeze([
   'mapa',
   'oportunidades',
+  'imobiliaria',
   'executiva',
   'viabilidade',
   'acessos',
 ])
 
 /**
- * Abas que o fail-open NÃO concede (emenda DEC-027): a aba `acessos` expõe
- * atividade do time e só existe para quem o /api/me listar EXPLICITAMENTE —
- * um /api/me fora do ar não pode fazê-la aparecer para todo mundo. O backend
- * barra de verdade (404); aqui é só o espelho visual do deny-by-default.
+ * Abas que o fail-open NÃO concede: `acessos` (emenda DEC-027) expõe atividade do
+ * time, e `imobiliaria` (2026-08-24) é a camada de imóveis restrita a um subconjunto
+ * do time. Ambas só existem para quem o /api/me listar EXPLICITAMENTE — um /api/me
+ * fora do ar não pode fazê-las aparecer para todo mundo. O backend barra de verdade
+ * (404 / 403); aqui é só o espelho visual do deny-by-default.
+ *
+ * Só a TELA dedicada entra aqui. A camada de imóveis DENTRO do Mapa Territorial
+ * (pins + seção da ficha do hexágono) segue a aba `mapa` de propósito — decisão do
+ * Felipe em 2026-08-24: quem tem o mapa vê os imóveis por lá.
  */
-const ABAS_SEM_FAIL_OPEN: ReadonlySet<Aba> = new Set(['acessos'])
+const ABAS_SEM_FAIL_OPEN: ReadonlySet<Aba> = new Set(['acessos', 'imobiliaria'])
 
 /** Telas do App que o controle conhece (subconjunto local do `Tela` do App.tsx). */
 export type TelaControlada =
@@ -55,9 +67,11 @@ const ABA_DA_TELA: Record<Exclude<TelaControlada, 'inicio'>, Aba> = {
   ponto: 'mapa',
   mapa: 'mapa',
   oportunidades: 'oportunidades',
-  // A aba imobiliária é a camada de oferta; reusa o gate da aba `oportunidades`
-  // (não cria aba nova no backend). Um usuário que vê o funil vê os imóveis.
-  'oportunidades-imob': 'oportunidades',
+  // Camada de oferta com gate PRÓPRIO desde 2026-08-24. Antes reusava o gate de
+  // `oportunidades`, o que amarrava os imóveis ao funil de expansão: não dava para
+  // restringir um sem tirar o outro de quem o usa. Os pins de imóvel no Mapa
+  // Territorial NÃO passam por aqui — são da aba `mapa` (ver ABAS_SEM_FAIL_OPEN).
+  'oportunidades-imob': 'imobiliaria',
   executiva: 'executiva',
   viabilidade: 'viabilidade',
   acessos: 'acessos',
