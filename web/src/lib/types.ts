@@ -492,6 +492,36 @@ export interface OportunidadesPayload {
   itens: Oportunidade[]
 }
 
+/**
+ * Gestos da camada imobiliária registrados na trilha de acesso (DEC-027).
+ *
+ * Espelho EXATO de `ACOES_IMOBILIARIA` em `web/server/app.py` — ação fora da lista
+ * recebe 404 do backend e some do rastro. Cada ação também precisa de rótulo próprio
+ * em `FEATURES_ROTULOS` (`acesso_analytics.py`), senão a ficha do usuário no painel
+ * de Acessos mostra o balde genérico; há teste travando isso nos dois lados.
+ */
+export type AcaoImobiliaria =
+  | 'abrir-aba'
+  | 'abrir-imovel'
+  | 'abrir-dossie'
+  | 'marcar-visita'
+  | 'desmarcar-visita'
+  | 'ver-no-mapa'
+  | 'filtrar'
+
+/**
+ * Alvo do gesto — vai na QUERY, que a trilha grava inteira (teto de 2000 chars).
+ * SEM PII: nada de corretor, telefone ou contato; só o que identifica o imóvel e o
+ * recorte. `origem` distingue o gesto feito na aba do gesto feito pelo pin do mapa.
+ */
+export interface AlvoEvento {
+  imovel?: string | null
+  uf?: string | null
+  municipio?: string | null
+  origem?: 'aba' | 'mapa' | null
+  detalhe?: string | null
+}
+
 /* ---------------------------------------------------------------------------
    viabilidade_payload_v1 (FIN-VIAB-01)
 

@@ -186,6 +186,24 @@ export default function MapScreen({
      o operador compara o imovel COM o hexagono, entao as duas ficam lado a lado. */
   const [imovelAberto, setImovelAberto] = useState<Oportunidade | null>(null)
 
+  /* Porta UNICA de abertura por gesto humano: o pin da camada e a secao "Imoveis
+     disponiveis aqui" da ficha do hexagono passam os dois por aqui, entao o rastro
+     (DEC-027) sai UMA vez por clique, nao um por caminho. O fechamento segue chamando
+     `setImovelAberto(null)` direto — so a abertura e' intencao que a trilha precisa ver —
+     e o HOVER do pin NAO passa por aqui de proposito: dispara dezenas de vezes num
+     arrasto e afogaria a trilha. */
+  const abrirImovel = useCallback((o: Oportunidade) => {
+    api.eventoImobiliaria('abrir-imovel', {
+      imovel: o.id,
+      /* UF/municipio do IMOVEL, nao do recorte da tela: a ficha do hexagono lista imovel
+         pelo `hex_id` (inclusive sem coordenada), e e' o imovel que identifica o alvo. */
+      uf: o.uf,
+      municipio: o.municipio,
+      origem: 'mapa',
+    })
+    setImovelAberto(o)
+  }, [])
+
   useEffect(() => {
     if (!uf) {
       setImoveisUf(null)
@@ -761,7 +779,7 @@ export default function MapScreen({
           raio1km={raio1km}
           independentes={verIndependentes ? independentes?.itens : undefined}
           imoveis={verImoveis ? imoveisNoMapa : undefined}
-          onImovel={setImovelAberto}
+          onImovel={abrirImovel}
           cobertura1k={cobertura}
           /* A foto CONGELA na montagem, e trocar de UF/municipio zera `cameraRef` mas
              nao tem como zerar `foto.camera`. Sem este portao: SP/Sao Paulo -> volta da
@@ -1148,7 +1166,20 @@ export default function MapScreen({
               <PilulaImoveis
                 ligado={verImoveis}
                 n={imoveisNoMapa.length}
-                onToggle={() => setVerImoveis((v) => !v)}
+                onToggle={() => {
+                  /* Rastro (DEC-027) so no LIGAR: apagar a camada nao e' interesse pela
+                     oferta imobiliaria, e o auto-desligamento por recorte sem imovel nem
+                     passa por aqui (mexe no estado direto), entao nao vira gesto falso.
+                     Fora do updater de proposito — em StrictMode ele roda duas vezes. */
+                  if (!verImoveis) {
+                    api.eventoImobiliaria('filtrar', {
+                      uf,
+                      origem: 'mapa',
+                      detalhe: 'camada-imoveis',
+                    })
+                  }
+                  setVerImoveis((v) => !v)
+                }}
               />
             )}
 
@@ -1285,7 +1316,7 @@ export default function MapScreen({
                entraria marcado e o painel de comparação ficaria escondido. */
             onComparar={() => comparar(hexSelecionado.id)}
             imoveis={imoveisDoHex}
-            onVerImovel={setImovelAberto}
+            onVerImovel={abrirImovel}
           />
         )}
       </JanelaFicha>

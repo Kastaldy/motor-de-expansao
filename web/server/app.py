@@ -2736,6 +2736,16 @@ def _artefatos_observados() -> list[tuple[str, Path, str]]:
             REDES_PATH,
             "pins das unidades de rede do agregador, com pressao e sem score (BLK-MA-17/DEC-035)",
         ),
+        # A camada imobiliaria degrada em SILENCIO: sem o parquet, `_carregar_oportunidades`
+        # devolve `[]`, a rota responde 200 com lista vazia e a tela mostra "Nada no
+        # recorte" — indistinguivel de um filtro que nao casou. Como o artefato vem de
+        # OUTRO repo (o coletor) por scp, e nao da imagem nem do git, ele e' justamente o
+        # que mais tende a faltar num deploy. Aqui e' onde isso vira sinal.
+        (
+            "oportunidades_imobiliarias",
+            OPORTUNIDADES_PATH,
+            "aba imobiliária: imóveis do coletor joinados ao M1",
+        ),
     ]
 
 
@@ -7646,6 +7656,51 @@ def api_oportunidade_dossie(imovel_id: str) -> Any:
     if pdf is None or not Path(pdf).exists():
         raise HTTPException(status_code=404, detail="Dossie nao disponivel para este imovel.")
     return FileResponse(str(pdf), media_type="application/pdf", filename=Path(pdf).name)
+
+
+# --- Trilha propria da camada imobiliaria (pedido do Felipe, 2026-08-24) -------------
+# A camada imobiliaria e' restrita (aba `imobiliaria`), entao precisa de rastro do que
+# foi FEITO nela — nao so' de quais rotas de dados foram chamadas. O problema: a maior
+# parte dos gestos da tela e' client-side e nao gera requisicao nenhuma (abrir a ficha
+# de um imovel da lista ja' carregada, marcar para visita, trocar o recorte). Sem estas
+# rotas, a trilha responderia "fulano abriu a aba e baixou 2 dossies" e mais nada.
+#
+# Desenho: uma rota NO-OP por acao, no molde do `/api/ciencia-confidencialidade` — o
+# valor do registro e' a linha que o middleware da trilha (DEC-027) grava, nao a
+# resposta. A acao vive no PATH (e nao na query) de proposito: `FEATURES_ROTULOS` do
+# painel de Acessos casa por prefixo de rota, entao cada acao vira uma linha legivel
+# ("Abriu ficha de imovel") em vez de um generico com a acao escondida na query.
+# O ALVO (imovel, UF, municipio, origem) vai na QUERY, que a trilha ja' grava inteira.
+#
+# Nada e' persistido aqui dentro: o backend do piloto segue sem escritor de FS fora do
+# cadastro (DEC-023) e da propria trilha (DEC-027) — e' o que o guardrail AST prova.
+ACOES_IMOBILIARIA: frozenset[str] = frozenset(
+    {
+        "abrir-aba",  # entrou na aba imobiliaria
+        "abrir-imovel",  # abriu a ficha de um imovel (query `origem` diz se foi aba ou mapa)
+        "abrir-dossie",  # pediu o dossie/relatorio do imovel (o GET do PDF pode nem existir)
+        "marcar-visita",
+        "desmarcar-visita",
+        "ver-no-mapa",  # deep link da ficha para o Mapa Territorial
+        "filtrar",  # trocou o recorte (UF, tipo, ordenacao)
+    }
+)
+
+
+@app.post("/api/imobiliaria/evento/{acao}")
+def api_imobiliaria_evento(acao: str) -> dict[str, Any]:
+    """Registra um gesto da camada imobiliaria na trilha de acesso (DEC-027).
+
+    Corpo vazio de proposito. O alvo do gesto viaja na QUERY (`imovel`, `uf`,
+    `municipio`, `origem`) e nao e' declarado aqui: quem grava e' o middleware da
+    trilha, que ja' persiste `request.url.query` inteira. Acao desconhecida devolve
+    404 para o vocabulario nao virar lixo no painel de Acessos.
+    """
+    from fastapi import HTTPException
+
+    if acao not in ACOES_IMOBILIARIA:
+        raise HTTPException(status_code=404, detail="Acao desconhecida.")
+    return {"ok": True}
 
 
 # ============================================================================

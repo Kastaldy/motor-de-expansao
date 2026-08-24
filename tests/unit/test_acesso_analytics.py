@@ -367,6 +367,26 @@ def test_toda_rota_com_regra_de_acesso_tem_rotulo_de_feature() -> None:
         assert rotulo != "Outras ações", f"prefixo sem rótulo de feature: {prefixo}"
 
 
+def test_toda_acao_imobiliaria_tem_rotulo_proprio() -> None:
+    """Anti-drift da camada imobiliária: `/api/imobiliaria/evento/` tem um rótulo
+    genérico de rede de segurança, então o teste acima passaria mesmo com uma ação
+    nova sem rótulo — e a ficha do usuário diria só "Ação na camada imobiliária".
+    Este teste exige que CADA ação de `ACOES_IMOBILIARIA` tenha rótulo próprio."""
+    import sys
+
+    server = Path(__file__).resolve().parents[2] / "web" / "server"
+    if str(server) not in sys.path:
+        sys.path.insert(0, str(server))
+    import app as app_mod  # noqa: PLC0415
+
+    for acao in sorted(app_mod.ACOES_IMOBILIARIA):
+        rota = f"/api/imobiliaria/evento/{acao}"
+        rotulo = aa._feature_do_evento({"metodo": "POST", "rota": rota})
+        assert rotulo not in ("Outras ações", "Ação na camada imobiliária"), (
+            f"ação sem rótulo próprio em FEATURES_ROTULOS: {acao}"
+        )
+
+
 def test_saude_conta_erros_e_p95(tmp_path: Path) -> None:
     for i in range(6):
         _gravar(tmp_path, AGORA, rota="/api/ponto", duracao_ms=100 + i * 100)

@@ -494,3 +494,100 @@ def test_startup_consolida_o_rollup(
     monkeypatch.setenv("MOTOR_ACESSO_LOG_DIR", str(trilha))
     pilot_app._consolidar_rollup_de_uso()
     assert _aa.caminho_rollup(trilha).exists()
+
+
+# --- Aba imobiliaria (2026-08-24): dossie restrito, lista/pins seguem o mapa -----
+# A camada de imoveis ganhou aba PROPRIA porque antes reusava o gate de
+# `oportunidades` — nao dava para restringir os imoveis sem tirar o funil de expansao
+# de quem o usa. O recorte fino e' entre as DUAS rotas de oportunidades: o DOSSIE (PDF
+# do coletor, com contato de corretor) fica so' na aba nova; a LISTA agregada tambem
+# alimenta os pins do Mapa Territorial, entao "mapa" a libera (decisao do Felipe).
+
+_DOSSIE = "/api/oportunidades/im_x/dossie"
+_LISTA = "/api/oportunidades"
+_EVENTO = "/api/imobiliaria/evento/abrir-imovel"
+
+
+def test_imobiliaria_e_aba_valida_e_sensivel() -> None:
+    """Valida (pode ser concedida no JSON) e sensivel (cai no fail-closed de prod)."""
+    assert "imobiliaria" in acesso.ABAS_VALIDAS
+    assert "imobiliaria" in acesso.ABAS_SENSIVEIS
+
+
+def test_regras_separam_dossie_de_lista() -> None:
+    """O prefixo com barra vem ANTES no first-match: `/api/oportunidades/` (dossie)
+    nao pode ser engolido pela regra mais curta da lista."""
+    assert acesso.abas_necessarias(_DOSSIE) == frozenset({"imobiliaria"})
+    assert acesso.abas_necessarias(_LISTA) == frozenset({"mapa", "imobiliaria"})
+    assert acesso.abas_necessarias(_EVENTO) == frozenset({"mapa", "imobiliaria"})
+
+
+def test_so_mapa_ve_a_lista_mas_nao_baixa_dossie(escrever_mapa) -> None:
+    """Cerne da decisao: quem tem o Mapa Territorial ve os imoveis (pins e ficha do
+    hexagono vem da lista agregada), mas o PDF com contato de corretor fica fora."""
+    escrever_mapa({"ana": ["mapa"]})
+    assert acesso.motivo_bloqueio(_LISTA, "ana") is None
+    detalhe = acesso.motivo_bloqueio(_DOSSIE, "ana")
+    assert detalhe is not None and "não tem acesso" in detalhe
+
+
+def test_so_imobiliaria_passa_nas_duas(escrever_mapa) -> None:
+    escrever_mapa({"ana": ["imobiliaria"]})
+    assert acesso.motivo_bloqueio(_LISTA, "ana") is None
+    assert acesso.motivo_bloqueio(_DOSSIE, "ana") is None
+
+
+def test_sem_mapa_nem_imobiliaria_nada_passa(escrever_mapa) -> None:
+    escrever_mapa({"ana": ["executiva", "viabilidade", "oportunidades"]})
+    assert acesso.motivo_bloqueio(_LISTA, "ana") is not None
+    assert acesso.motivo_bloqueio(_DOSSIE, "ana") is not None
+
+
+def test_evento_de_imobiliaria_segue_o_gate_da_lista(escrever_mapa) -> None:
+    """O pin do Mapa Territorial tambem abre ficha de imovel, entao o evento aceita
+    "mapa"; quem nao tem nenhuma das duas nao consegue nem sujar a trilha."""
+    escrever_mapa({"do_mapa": ["mapa"], "da_imob": ["imobiliaria"], "nenhuma": ["executiva"]})
+    assert acesso.motivo_bloqueio(_EVENTO, "do_mapa") is None
+    assert acesso.motivo_bloqueio(_EVENTO, "da_imob") is None
+    assert acesso.motivo_bloqueio(_EVENTO, "nenhuma") is not None
+
+
+def test_prod_com_controle_caido_nega_dossie_e_mantem_a_lista(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail-closed (BLK-SEC-05) aplicado a decisao: com o JSON fora do ar ninguem
+    baixa dossie, mas os pins do mapa continuam — quem perde `imobiliaria` no
+    fail-closed ainda tem `mapa`, e a lista aceita as duas."""
+    _forcar_prod(monkeypatch)
+    monkeypatch.setenv("MOTOR_ACESSO_ABAS_PATH", _NAO_EXISTE)
+    abas = acesso.abas_do_usuario("alguem")
+    assert "imobiliaria" not in abas
+    assert "mapa" in abas
+    assert acesso.motivo_bloqueio(_DOSSIE, "alguem") is not None
+    assert acesso.motivo_bloqueio(_LISTA, "alguem") is None
+    assert acesso.motivo_bloqueio(_EVENTO, "alguem") is None
+
+
+def test_rota_de_evento_existe_no_app_e_esta_coberta() -> None:
+    """A rota nova nasce dentro do controle: aparece no app E casa com uma regra —
+    e' o mesmo criterio que `test_toda_rota_do_app_tem_regra_ou_e_livre_declarada`
+    aplica ao path TEMPLATE registrado pelo FastAPI."""
+    rotas_api = {r.path for r in pilot_app.app.routes if getattr(r, "path", "").startswith("/api/")}
+    template = "/api/imobiliaria/evento/{acao}"
+    assert template in rotas_api
+    assert acesso.abas_necessarias(template) == frozenset({"mapa", "imobiliaria"})
+    assert template not in acesso.ROTAS_LIVRES
+
+
+def test_acao_desconhecida_e_404_mesmo_para_quem_pode(escrever_mapa) -> None:
+    """404 do VOCABULARIO, nao do gate: o usuario passa no controle de aba e ainda
+    assim leva 404 — senao a trilha viraria lixo com acao inventada pelo front."""
+    from fastapi import HTTPException
+
+    escrever_mapa({"ana": ["imobiliaria"]})
+    assert acesso.motivo_bloqueio("/api/imobiliaria/evento/inventada", "ana") is None
+    with pytest.raises(HTTPException) as exc:
+        pilot_app.api_imobiliaria_evento("inventada")
+    assert exc.value.status_code == 404
+    # E a acao do vocabulario responde normalmente.
+    assert pilot_app.api_imobiliaria_evento("abrir-imovel") == {"ok": True}
