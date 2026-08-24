@@ -186,7 +186,19 @@ FILA_MAX = 10  # tamanho maximo da fila do ultimo passo
 # `_etiqueta_crescimento`: no artefato vigente nenhuma UF chega perto, e o piso e defesa.
 _CRESC_PISO_MEDIANA = 1.0
 
-app = FastAPI(title="Piloto Web — Motor de Expansao", version="0.1.0")
+# OpenAPI/Swagger/ReDoc DESLIGADOS por padrao (pentest 2026-08-19): sem isso QUALQUER
+# usuario autenticado do piloto baixava /openapi.json|/docs|/redoc e enumerava toda a
+# superficie — inclusive a rota de ESCRITA `PUT /api/rede/cadastro/{id}` e o financeiro
+# `/api/rede/*`. Espelha o gate que a API Bearer ja fazia (api/main.py). Para inspecionar
+# em dev, exportar MOTOR_PILOTO_DOCS=1.
+_PILOTO_DOCS = os.environ.get("MOTOR_PILOTO_DOCS") == "1"
+app = FastAPI(
+    title="Piloto Web — Motor de Expansao",
+    version="0.1.0",
+    docs_url="/docs" if _PILOTO_DOCS else None,
+    redoc_url="/redoc" if _PILOTO_DOCS else None,
+    openapi_url="/openapi.json" if _PILOTO_DOCS else None,
+)
 # Em producao o SPA e a API sao servidos pela MESMA origem (mesmo container atras do
 # Caddy), entao CORS e irrelevante ali; estas origens sao so para o dev (Vite :5000).
 app.add_middleware(
@@ -231,6 +243,20 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
 # da suite prova).
 
 
+def _ip_real_do_xff(xff: str | None, fallback: str | None) -> str | None:
+    """IP real do cliente atras do Caddy, para a trilha de acesso (DEC-027).
+
+    O Caddy ANEXA o peer real ao FIM do X-Forwarded-For, entao o ULTIMO token e' o
+    cliente verdadeiro; os tokens a' esquerda podem ser FORJADOS pelo proprio cliente.
+    Pentest 2026-08-19: antes usava-se `[0]` (o mais a' esquerda), exatamente o que o
+    atacante controla — `X-Forwarded-For: 8.8.8.8` fazia a acao dele constar de um IP
+    arbitrario na aba Acessos. Ha um unico hop (Caddy), entao `[-1]` e' o IP real.
+    """
+    if xff:
+        return xff.split(",")[-1].strip() or fallback
+    return fallback
+
+
 def _registrar_acesso(request: Request, *, status: int, inicio: float, tamanho: str | None) -> None:
     """Monta e grava a linha da trilha. Rastro, nao transacao: falha morre aqui."""
     try:
@@ -241,7 +267,7 @@ def _registrar_acesso(request: Request, *, status: int, inicio: float, tamanho: 
         cliente = request.client.host if request.client else None
         evento = acesso_log.montar_evento(
             usuario=request.headers.get("remote-user") or request.headers.get("remote-email"),
-            ip=(xff.split(",")[0] if xff else cliente),
+            ip=_ip_real_do_xff(xff, cliente),
             metodo=request.method,
             rota=caminho,
             query=request.url.query,
@@ -6856,7 +6882,20 @@ class RelatorioMunicipalIn(BaseModel):
 
 
 @app.post("/api/relatorio/municipal")
-def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
+async def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
+    """Rota fina: gate de concorrencia `_PDF_SEMAFORO` + threadpool, igual a
+    /api/relatorio/pontual, /comparacao e /simulador/xlsx.
+
+    Antes (pentest 2026-08-19) esta rota era um `def` sincrono SEM o semaforo: varias
+    municipais concorrentes (cada ~45 s de CPU + fetch de tiles) saturavam o threadpool
+    do uvicorn e derrubavam ate' o /api/health. O corpo pesado agora vive no helper
+    sincrono `_gerar_relatorio_municipal_response`, chamado sob o teto de concorrencia.
+    """
+    async with _PDF_SEMAFORO:
+        return await run_in_threadpool(_gerar_relatorio_municipal_response, body)
+
+
+def _gerar_relatorio_municipal_response(body: RelatorioMunicipalIn) -> Response:
     """Relatorio Municipal (9 paginas). Acionado pelo 4o passo do mapa.
 
     Renderiza as 5 camadas de mapa (`render_mapas_municipio`) e AS PASSA ao gerador —
@@ -7350,8 +7389,13 @@ async def simulador_xlsx(body: ViabilidadeIn, rotulo: str | None = None) -> Resp
 
     GUARDRAILS: nada e escrito em disco (BytesIO dentro do gerador) e a demanda
     segue sendo PREMISSA do operador (DEC-009), nunca derivada de lat/lng.
+
+    Gate de concorrencia `_PDF_SEMAFORO` (pentest 2026-08-19): a montagem custa ~45 s de
+    CPU; sem o teto, N requisicoes concorrentes saturavam o threadpool do uvicorn e
+    derrubavam ate' o /api/health. Mesmo padrao de /api/relatorio/pontual e /comparacao.
     """
-    return await run_in_threadpool(_gerar_simulador_xlsx_response, body, rotulo)
+    async with _PDF_SEMAFORO:
+        return await run_in_threadpool(_gerar_simulador_xlsx_response, body, rotulo)
 
 
 def _gerar_simulador_xlsx_response(body: ViabilidadeIn, rotulo: str | None) -> Response:
