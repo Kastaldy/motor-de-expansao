@@ -11,6 +11,10 @@
 > **Emenda BLK-MA-03 (2026-07-29):** seção 8.1 — granularidade de v1 (hex, não academia), domínio efetivo e tratamento no §8.2/§8.4. Marcada com [emenda BLK-MA-03].
 > **Emenda BLK-MA-04 (2026-07-30, gate humano — G-D1/G-D2/G-D3 ratificados):** §8.1 (v3 do estado `novo`), §8.2 (normalização de v4 — razão absoluta), §8.4 (universo do score, bordas de ausência e flags), §8.5 (grão da linha = academia e contrato de coluna). Marcadas com [emenda BLK-MA-04].
 > **Emenda BLK-MA-04-FU1 (2026-08-12):** §8.5 — alcance da coluna `score_vulnerabilidade_ordenavel`: ela não cobre regime de 1 sinal quando esse sinal é o S3, e o BLK-MA-05 deve segmentar por `n_sinais_disponiveis` antes de ordenar. Marcada com [emenda BLK-MA-04-FU1].
+> **Emenda BLK-MA-19 (2026-08-24):** §3 — `redes_ma_nomeadas_v1` -> **`v2`** e correção do split de
+> precedência de pin (`1.171/1.673` era pré-FU4; hoje é **851/1.993**); §13 — registro dos blocos
+> BLK-MA-12..19 que a decomposição original não conhecia, tabela das **versões de contrato vigentes**
+> e o **critério escrito de "epic concluído"**, que não existia. Marcadas com `[2026-08-24]`.
 > Regra de manutenção: manter curto; a implementação é dos blocos sucessores BLK-MA-02..08 (ver seção 13).
 
 Este documento fixa o contrato dos sinais de vulnerabilidade de concorrentes independentes, a
@@ -133,15 +137,21 @@ tem demanda e interesse de presença). É um funil comercial, não uma decisão 
   `sumiu_recente` no mesmo dia, e o composto leria um evento de negociação como 440 alvos. Molde do
   G-D2 e da DEC-026: o fato entra antes do peso.
 
-  Artefato próprio, `redes_ma_nomeadas_v1` (20 colunas, gitignored, opt-in por `--saida-redes`), com
-  guard que levanta se qualquer coluna `score_*`/`v6` aparecer nele. **A pressão dessas unidades já
-  era calculada e descartada** — o cálculo roda sobre o feed inteiro (22.173 linhas) e é o join do
+  Artefato próprio, **`redes_ma_nomeadas_v2`** (20 colunas, gitignored, opt-in por `--saida-redes`),
+  com guard que levanta se qualquer coluna `score_*`/`v6` aparecer nele. **A pressão dessas unidades
+  já era calculada e descartada** — o cálculo roda sobre o feed inteiro (22.173 linhas) e é o join do
   score que as filtra —, então esta metade não recalcula nada: materializa o que era jogado fora.
 
-  **Precedência de pin, herdada de graça da dedup da DEC-034:** as **1.171** sobreviventes são, por
+  **Precedência de pin, herdada de graça da dedup da DEC-034:** as sobreviventes são, por
   construção, as sem ponto equivalente em `concorrentes_mapeados`, logo as únicas sem pin no funil;
-  as **1.673** colapsadas já têm o pin de lá, e desenhar outro faria a contagem do tooltip parar de
-  fechar.
+  as colapsadas já têm o pin de lá, e desenhar outro faria a contagem do tooltip parar de fechar.
+
+  > **[correção 2026-08-24 / BLK-MA-19] O split desta linha era `1.171 / 1.673` e envelheceu.** Os
+  > números da DEC-034 foram medidos **antes** do BLK-MA-17-FU4, que introduziu o casamento por nome
+  > (`identidade.py`) e colapsou **mais 320** duplicatas. No artefato materializado hoje
+  > (`redes_ma_nomeadas_v2`) o split é **851 com pin próprio / 1.993 já cobertas** — conferível em
+  > `tem_pin_proprio`, das 2.844 linhas. É esse `851` que o backend desenha (`carregar_redes` filtra
+  > por `tem_pin_proprio`), e é ele que a auditoria do pin tem de usar como expectativa.
 
 ---
 
@@ -914,6 +924,71 @@ Ajustada pelo **D3 = Não** (rating não é coletado → sinal 2 depende de ajus
 | **BLK-MA-11** | **CONCLUÍDO (2026-08-10).** Vocabulário "V2" do filtro de musculação + taxonomia fora do hash de staleness (DEC-025). | — |
 
 D7 (anti-PII) é transversal a BLK-MA-02..05 e BLK-MA-08.
+
+### [2026-08-24] Blocos posteriores ao BLK-MA-11, que a tabela acima não conhecia
+
+A tabela nasceu com a decomposição de 2026-07-23 e parou no MA-11; o epic seguiu. Isto **não** é
+decomposição nova — é o registro do que já ocorreu, para o leitor não concluir que o epic terminou
+onde a tabela termina. O corpo de cada um está em `tasks/completed.md` e nas DECs citadas.
+
+| Bloco | O que fez | Decisão |
+|---|---|---|
+| **BLK-MA-12** | Sinal 6 (pressão competitiva com decaimento por distância) entra no score com `w6 = 0,10`, **ativo mas CONDICIONAL** ao insumo. | DEC-036 |
+| **BLK-MA-13** | Overlay de pressão no piloto — **construído e REVERTIDO no mesmo dia**, por redundância com a camada 3 do funil. Permanece só a emenda do G-D1. | DEC-028 (emendada) |
+| **BLK-MA-14** | O S6 passa a ser medido **por academia**, não do centroide do hex. Os dois grãos coexistem com carimbo `pressao_grao`. | DEC-029 |
+| **BLK-MA-15** | O score chega à tela **por academia**, com identidade: nasce o artefato NOMEADO e os pins das independentes. | emenda à DEC-028 |
+| **BLK-MA-16** | Independentes entram na **oferta** do S6 com metade do peso de uma unidade de rede. | DEC-033 |
+| **BLK-MA-17** | Metade 1: unidades de REDE do agregador ganham diagnóstico visível, com **fato e sem score**. Metade 2: elas entram na oferta do S6 com peso `1,0`. | DEC-035, DEC-034 |
+| **BLK-MA-17-FU1..FU4** | Correções da segunda fonte e do dedup; o FU4 traz `identidade.py` (casamento por nome) e colapsa mais 320 duplicatas. | — |
+| **BLK-MA-18** | A conta por trás da pressão chega ao pin (auditoria: `n_conc`, `n_indep`, `n_cadeias_feed`, `oferta`, `dist_m`). | — |
+| **BLK-MA-19** | **Transporte para produção.** O código dos pins estava publicado e os dois parquets nunca foram enviados; a camada ficou morta de 2026-08-19 a 2026-08-24. Cria o bloco de deploy, ensina a camada ao `check_artifacts` e escreve o runbook. | — |
+
+**Pendentes do epic:** **BLK-MA-06** (cron do snapshot — liga o relógio de S3/S4), **BLK-MA-05**
+(lista comercial, que depende da série madura), **BLK-MA-07** (reputação externa, opcional) e
+**BLK-MA-17-FU5** (~87 duplicatas residuais, baixa).
+
+### O que é "epic BLK-MA concluído" — critério escrito, que faltava
+
+Até 2026-08-24 não havia nenhum. A ausência tem consequência prática: sem critério, "o bloco
+mergeou" foi lido como "a coisa está entregue", e foi assim que a camada passou cinco dias
+publicada e morta. São **três** condições, e elas são **independentes** — cumprir uma não implica
+as outras:
+
+1. **A camada existe para o operador.** Os dois parquets nomeados presentes em produção **e lidos**
+   — prova por `GET /api/municipio/{uf}/{municipio}`: `independentes.disponivel = true` e ao menos
+   um item de `pins.concorrentes` com `"diag": true`. **Nunca** por `/api/health`, que só enxerga
+   disco. (`pins.redes_disponivel` só existe em imagem ≥ BLK-MA-19.) → BLK-MA-19.
+2. **O relógio está ligado.** O snapshot semanal rodando na VPS, com partições
+   `semana=AAAA-SS` acumulando. → BLK-MA-06. **Não** é pré-requisito de (1): os artefatos são
+   materializáveis com zero semanas de série.
+3. **O número significa o que o rótulo diz.** Enquanto S3/S4 estiverem imaturos,
+   `sinais_disponiveis` é `s1,s6` em 100% das linhas e o score reduz a `30 + 40·v6` — o que um
+   ranking ordena é **pressão competitiva**, não vulnerabilidade (DEC-028, decisões 1 e 2). Só com
+   a série ≥ `MIN_SEMANAS = 8` o rótulo "vulnerabilidade" passa a ser honesto, e só aí o **BLK-MA-05**
+   tem o que ordenar.
+
+Hoje (2026-08-24): (1) em aplicação, (2) pendente, (3) não atingido.
+
+### Versões de contrato vigentes — leia `contrato.py`, não a prosa
+
+As versões aparecem espalhadas pelo corpo deste documento **em contexto histórico** (a frase que
+registra um bump cita a versão daquele momento e não deve ser reescrita, senão o registro do bump
+se perde). Para saber o que vale **hoje**, a fonte é `src/motor_expansao/vulnerabilidade/contrato.py`.
+Estado em **2026-08-24**:
+
+| constante | valor |
+|---|---|
+| `VERSAO_CONTRATO_SNAPSHOT` | `snapshots_concorrentes_v3` |
+| `VERSAO_CONTRATO_CHURN` | `churn_staleness_v2` |
+| `VERSAO_CONTRATO_PRESENCA_AGREGADOR` | `presenca_agregador_v1` |
+| `VERSAO_CONTRATO_SCORE` | `score_vulnerabilidade_v7` |
+| `VERSAO_CONTRATO_PRESSAO` | `pressao_competitiva_v4` |
+| `VERSAO_CONTRATO_ALVOS_MA` | `alvos_ma_v4` |
+| `VERSAO_CONTRATO_ALVOS_NOMEADOS` | `alvos_ma_nomeados_v5` |
+| `VERSAO_CONTRATO_REDES_NOMEADAS` | `redes_ma_nomeadas_v2` |
+
+Cada artefato carrega a sua na coluna `versao_contrato` — é assim que se descobre, sem adivinhação,
+se um parquet em produção é da safra corrente.
 
 ---
 

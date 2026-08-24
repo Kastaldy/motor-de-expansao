@@ -1500,6 +1500,28 @@ produção e exige DEC + gate humano.
 recorte `--fontes` no materializador, e a seção de runbook em `docs/infra_producao.md` com a linha
 exata a inserir no `run_weekly_90.sh`.
 
+> **[2026-08-24 / BLK-MA-19] Dois defeitos do script corrigidos ANTES da aplicação — o bloco teria
+> falhado no passo (2).** Achados na auditoria do handoff, os dois no caminho exato do modo seco:
+>
+> 1. **`HOST_CONCORRENTES` apontava para `/opt/motor-expansao/data/concorrentes`, que não existe** —
+>    o script abortaria na checagem de diretório. Default corrigido para **`/opt/gymscraping`**, o
+>    clone da coleta, único lugar com `Unidades/unidades_<rede>.csv`, que é o padrão que o glob
+>    procura (`snapshots.py`). **O palpite seguinte é pior:**
+>    `/opt/motor-expansao/concorrentes` EXISTE mas guarda os CSVs **achatados**, sem o subdiretório —
+>    ali o glob não casa e o dry-run devolve `linhas_snapshot = 0` **sem erro**, que se lê como "não
+>    há dado" em vez de "caminho errado". Era exatamente o sintoma que o passo (2) manda investigar,
+>    com o diagnóstico apontando para o lugar errado.
+> 2. **A leitura de `API_IMAGE` no `.env` não tolerava CRLF** (`cut -d= -f2-` sem `tr -d '\r'`),
+>    enquanto `run_relatorio_acessos.sh` já tolerava. O `.env` da VPS veio por rsync de Windows: o
+>    `\r` entrava no nome da imagem e o `docker run` morria com `invalid reference format`, mensagem
+>    que sugere digest torto.
+>
+> **Consequência para a aplicação:** a cópia no checkout `/opt/motor-expansao/app` é a de 2026-08-11
+> e **tem os dois defeitos** — aquele checkout não é atualizado por ninguém (o runner não faz
+> `git pull`, de propósito). O passo (1) deixa de ser `cp` do checkout e passa a ser **`scp` do
+> script corrigido**, entregue no pacote de handoff. E o `install -d -m 0755
+> /opt/motor-expansao-infra` passa a ser passo explícito: nada no repo cria esse diretório.
+
 **Por que o runner não é um PR.** O `run_weekly_90.sh` vive em `/opt/gymscraping-infra/` **na VPS,
 fora de qualquer repo** (`docs/infra_producao.md`). Versionar o passo como script próprio reduz a
 superfície não versionada a **uma linha** de invocação — que é o que o Felipe aplica, com o
@@ -1516,16 +1538,31 @@ segundo maior peso, e silencioso. O recorte de cada partição fica em `fontes_l
 próprio, e quando existir chama o MESMO script com `--fontes totalpass wellhub`); o entregável
 comercial (**BLK-MA-05**); a reputação externa (**BLK-MA-07**).
 
-> **[nota BLK-MA-13, 2026-08-14] O comando do entregável mudou, e o overlay do piloto depende dele.**
-> `python -m motor_expansao.vulnerabilidade.alvos_ma --base-dir <snapshots>` agora calcula o **sinal
-> 6** por padrão (lê `data/staging/concorrentes_mapeados.parquet`; `--sem-pressao` volta ao
-> comportamento antigo, bit a bit) e materializa um **terceiro artefato**,
-> `data/outputs/alvos_ma_hex.parquet` (`--saida-hex`), que é o que o piloto web serve no overlay de
-> pressão competitiva (DEC-028). Consequência prática para a aplicação na VPS: **rodar o snapshot
-> não basta para o overlay aparecer em produção** — alguém precisa rodar o entregável depois, e o
-> parquet tem de estar no bind mount de `data/outputs`. Sem ele a pílula simplesmente não aparece
-> (degradação silenciosa deliberada, molde do `crescimento_hex`); com ele, o `/api/health` passa a
-> reportar `pressao_ma_hex`.
+> **[nota BLK-MA-13, 2026-08-14 — CORRIGIDA em 2026-08-24 pelo BLK-MA-19] O comando do entregável
+> mudou, e os pins do piloto dependem dele.**
+> `python -m motor_expansao.vulnerabilidade.alvos_ma --base-dir <snapshots>` calcula o **sinal 6**
+> por padrão (lê `data/staging/concorrentes_mapeados.parquet`; `--sem-pressao` volta ao
+> comportamento antigo, bit a bit). **Essa metade continua verdadeira** — `alvos_ma.py:522`.
+>
+> **O que a nota afirmava e deixou de ser verdade.** Ela mandava materializar um terceiro artefato,
+> `data/outputs/alvos_ma_hex.parquet` (`--saida-hex`), e conferir `pressao_ma_hex` no
+> `/api/health`. **Nada disso existe.** O overlay de pressão foi construído e **REVERTIDO no mesmo
+> dia** (emenda da DEC-028, 2026-08-14, por redundância com a camada 3 do funil: Pearson `1,0000`
+> contra o mesmo insumo), e a flag saiu do código junto — `grep -rn "saida-hex\|alvos_ma_hex" src/
+> web/ scripts/` devolve **0**, e a CLI real está em `alvos_ma.py:498-560`. Seguir a nota como
+> escrita faz o operador procurar um arquivo e um campo de health que nunca vão aparecer.
+>
+> **O que vale no lugar.** Os artefatos que o piloto realmente serve são os **dois NOMEADOS**, ambos
+> opt-in (sem o argumento **nada nomeado é gravado**) e ambos restritos a `data/staging/`:
+> `--saida-nomeadas data/staging/vulnerabilidade_ma_nomeadas.parquet` (pins das independentes com
+> score — BLK-MA-15) e `--saida-redes data/staging/vulnerabilidade_ma_redes.parquet` (pins das
+> unidades de rede do agregador, com pressão e sem score — DEC-035). Chegam a produção pelo bind
+> mount `data/staging:ro` e aparecem no `/api/health` como `independentes_nomeadas` e
+> `redes_nomeadas`.
+>
+> A consequência prática que a nota queria registrar **continua valendo**, só que sobre outros
+> arquivos: **rodar o snapshot não basta para os pins aparecerem em produção.** O transporte é o
+> **BLK-MA-19**, abaixo — e ele **não depende deste bloco**.
 
 **`MIN_SEMANAS` — RESOLVIDO em 2026-08-11 (Vinicius): fica em 8. NÃO reabrir sem dado novo.**
 Cumpre a obrigação que o D2 do contrato delegou a este bloco. A revisão foi feita com a cadência
@@ -1544,6 +1581,82 @@ torná-lo por fonte, e isso é escopo novo.
 recorte e que as duas metades reconstroem o todo; `fontes_lidas` na auditoria; runbook com o modo
 seco como passo obrigatório ANTES de agendar; suíte sem regressão; `ruff`/`mypy` limpos; `loop_guard`
 sem CRÍTICO. **Nenhum comando executado na VPS por agente.**
+
+---
+
+### BLK-MA-19 — Materializar a camada de M&A em produção: o código está no ar, o dado não
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — leva IDENTIDADE de estabelecimento (nome + coordenada de 19.329 academias) para um ambiente publicado. READ-ONLY sobre o M1: nenhum artefato oficial, score, peso ou `config.py` é tocado; a camada é opcional por construção e o rollback é apagar dois arquivos. |
+| **Prioridade** | **Alta.** É a única coisa entre a epic BLK-MA e o operador: BLK-MA-15 e DEC-035 estão entregues, testados e mergeados na `main`, e mesmo assim a camada não existe para ninguém. |
+| **Esteira** | Builder (bookkeeping + verificador + docs) → QA → `[aplicação na VPS: passo MANUAL, comando a comando — §6]`. |
+| **Status** | **AGUARDANDO APLICAÇÃO NA VPS.** Achado de 2026-08-24: `/opt/motor-expansao/data/staging/` não tem `vulnerabilidade_ma_nomeadas.parquet` nem `vulnerabilidade_ma_redes.parquet`. Os pins nunca chegaram ao ar. |
+| **Depende de** | BLK-MA-15 e BLK-MA-17 metade 1 (concluídos) — são eles que criam os dois artefatos e os leitores. **NÃO depende do BLK-MA-06:** os parquets foram materializados com dado real e zero semanas de série. |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca produção. NUNCA marcar loop-safe. |
+
+**O defeito, medido.** O código dos pins entrou na `main` em 2026-08-19 (#243) e foi publicado no
+GHCR; `web/server/app.py` define `NOMEADAS_PATH`/`REDES_PATH` e já os observa no `/api/health`.
+Os dois parquets, porém, são **gitignored** (`.gitignore:19`) e cortados da imagem
+(`.dockerignore`): em produção eles só chegam pelo bind mount `data/staging:ro`
+(`docker-compose.prod.yml`). Ninguém foi obrigado a levá-los — antes deste bloco,
+`grep -n "vulnerabilidade_ma" tasks/backlog.md` devolvia **0**.
+
+**Por que passou despercebido.** A camada degrada em silêncio **por decisão de projeto**, nos dois
+lados: no backend `carregar_independentes`/`carregar_redes` devolvem `None` quando o arquivo falta, e
+no frontend `MapScreen.tsx` só desenha a pílula sob `temIndependentes` — sem o artefato, **não há
+nem pílula, nem erro, nem espaço vazio**. O único sinal existente é o `/api/health`, e ele não é
+lido por ninguém no fim de um deploy. `scripts/check_artifacts.py` também não conhecia a camada e
+imprimia "OK: todos os artefatos criticos e de staging presentes" com ela morta — corrigido neste
+bloco.
+
+**O que vai ao ar (safra 2026-08-18, versões correntes do `contrato.py`).**
+
+| arquivo | linhas | colunas | bytes | `versao_contrato` | MD5 |
+|---|---|---|---|---|---|
+| `vulnerabilidade_ma_nomeadas.parquet` | 19.329 | 24 | 2.658.028 | `alvos_ma_nomeados_v5` | `f24c39db0b4ad7285e701f544092c875` |
+| `vulnerabilidade_ma_redes.parquet` | 2.844 | 20 | 343.477 | `redes_ma_nomeadas_v2` | `e69c927a3b98e44d030294477ee87d45` |
+
+`vulnerabilidade_ma_academias.parquet` (a variante SEM identidade) **não sobe**: nenhuma superfície
+de produção o lê — `grep -rn "vulnerabilidade_ma_academias" web/ src/motor_expansao/api/` = 0.
+
+**A armadilha do deploy: `/api/health` verde NÃO prova pins.** `carregar_independentes` e
+`carregar_redes` são `@functools.lru_cache(maxsize=1)` e **memoizam a ausência**. Copiar o parquet
+com o container de pé deixa o health verde (ele faz `exists()` a cada chamada) e os pins invisíveis,
+porque o leitor já guardou o `None`. **Restart do `web` é obrigatório**, e o critério de aceite não
+pode ser o health.
+
+> **"Publicado no GHCR" não é "rodando na VPS", e este bloco depende do segundo.** O deploy é
+> **manual por digest** (§6), então a imagem em execução pode ser anterior a #243 — e nesse caso
+> enviar o dado **não acende nada**, porque o processo no ar não conhece os dois caminhos. A
+> revisão em execução **nunca foi verificada** ao abrir este bloco; virou pré-condição do runbook:
+> `docker inspect motor_expansao_web --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'`,
+> que tem de devolver commit ≥ #243. Se vier anterior, o trabalho **não é este bloco** — é deploy de
+> imagem primeiro.
+
+**Fora de escopo.** O cron do snapshot (**BLK-MA-06**, bloco próprio, aplicado na mesma janela mas
+com verificação separada); **troca de imagem** — que fica de fora **condicionalmente**: se a
+verificação acima mostrar revisão ≥ #243, o deploy é só `scp` + `restart`, sem tocar o `.env`; se
+mostrar anterior, o deploy de imagem é pré-requisito e não parte deste bloco; o entregável comercial
+(**BLK-MA-05**); gate de aba próprio
+para a camada — decisão de 2026-08-24 foi **manter o gate de hoje** (`/api/municipio/` liberado por
+`{mapa, oportunidades}`) e conferir na aplicação se existe usuário com `oportunidades` **sem**
+`mapa`; se existir, abre-se bloco próprio no molde da DEC-037.
+
+**Como o dado chega a quem aplica.** Os dois parquets **não viajam pelo repositório** e não existem
+em backup fora da estação que os gerou — nem `docs/backup_restore.md` cobre `data/staging/`. Quem
+executa na VPS recebe um **pacote** (os dois parquets + `CHECKSUMS.md5` + o
+`run_snapshot_concorrentes.sh` corrigido), por canal interno. **Regenerar do outro lado não é
+alternativa:** os insumos também são gitignored, e sem eles a cadeia grava artefatos **vazios** — o
+`/api/health` para de acusar e a camada fica invisível **com sinal verde**, que é pior que o estado
+de hoje.
+
+**Critério de aceite.** (0) A revisão da imagem em execução é ≥ #243 — se não for, este bloco não
+começa; (1) Os dois parquets presentes em `/opt/motor-expansao/data/staging/` com os
+MD5 acima; (2) `web` reiniciado; (3) **prova funcional em `/api/municipio/{uf}/{municipio}`** —
+`independentes.disponivel = true` com `total > 0` e ≥1 pin de concorrente com `diag: true`, **não**
+o `/api/health`; (4) a pílula de independentes visível na tela, no drill-down municipal; (5)
+`scripts/check_artifacts.py` nomeia os dois artefatos quando faltam, travado por teste.
 
 ---
 

@@ -1569,6 +1569,16 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
         if len(ultra)
         else [],
         "icones": icones,
+        # `[BLK-MA-19]` O artefato de redes EXISTE e foi lido? Sem esta chave, um payload sem
+        # nenhuma bandeira com halo tinha DUAS causas indistinguiveis: (a) o municipio nao tem
+        # unidade de agregador — resposta legitima; (b) `vulnerabilidade_ma_redes.parquet` nao
+        # chegou ao servidor — camada morta. Foi (b) que passou 5 dias despercebida em producao.
+        #
+        # E' o mesmo papel do `disponivel` que `_pins_independentes` ja devolvia (:572); a camada
+        # de redes nasceu sem ele porque entra na lista `concorrentes` em vez de ter bloco proprio.
+        # `False` aqui significa ARTEFATO AUSENTE, nunca "recorte vazio": um recorte sem unidade
+        # de rede devolve `True` com `linhas_diag` vazia.
+        "redes_disponivel": diag is not None,
     }
 
 

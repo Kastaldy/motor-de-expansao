@@ -70,6 +70,13 @@ Confira o que o piloto precisa (senão a feature degrada em silêncio):
   `data/reports/crescimento/` (ordem obrigatória no README de lá).
 - `data/staging/{growth_api_historico,concorrentes_mapeados,unidades_ultra_performance_hex}.parquet`
   — Visão Executiva + pins.
+- `data/staging/{vulnerabilidade_ma_nomeadas,vulnerabilidade_ma_redes}.parquet` — **pins de
+  academia no Mapa Territorial** (BLK-MA-15 + DEC-035): independentes com score e unidades de rede
+  do agregador com pressão. **OPCIONAIS e silenciosos** — sem eles não há pílula, não há erro e não
+  há espaço vazio: a tela fica idêntica à de um recorte sem academia nenhuma. Foi exatamente esse
+  silêncio que manteve a camada fora do ar de 2026-08-19 a 2026-08-24 (BLK-MA-19). Juntos têm
+  ~2,9 MB. **Depois do `scp`, RESTARTAR o `web`** — ver o aviso logo abaixo. A variante
+  `vulnerabilidade_ma_academias.parquet` **não** sobe: nenhuma superfície de produção a lê.
 - `concorrentes/logo_<rede>.png` — **logos das bandeiras** (pendente; sem eles, fallback sigla+cor).
 
 Enviar arquivos que faltarem (scp permitido; ssh remoto não — §6 do CLAUDE.md):
@@ -77,6 +84,24 @@ Enviar arquivos que faltarem (scp permitido; ssh remoto não — §6 do CLAUDE.m
 scp -i ~/.ssh/id_ultra_mcp <arquivo> root@2.25.137.241:/opt/motor-expansao/data/staging/
 # validar na VPS: md5sum
 ```
+
+> ### ⚠ `scp` sem restart não acende nada — e o `/api/health` fica verde mentindo
+>
+> Os leitores do backend **memoizam a ausência**, por dois mecanismos diferentes:
+> `@functools.lru_cache(maxsize=1)` em `carregar_independentes` e `carregar_redes`, e um global de
+> módulo (`_OPORTUNIDADES_CACHE`) em `_carregar_oportunidades`. Nenhum dos dois é invalidado em
+> runtime — `limpar_caches()` é helper de teste, não rota. Se o arquivo chegar com o container de
+> pé, o leitor já guardou o `None` da primeira requisição e continuará devolvendo `None` até o
+> processo morrer.
+>
+> O `/api/health`, por outro lado, faz `exists()` **a cada chamada** — então ele fica **verde na
+> hora**, com a camada ainda invisível na tela. É a pior combinação possível: o sinal que o
+> operador consulta afirma que está tudo certo, e não está.
+>
+> **Portanto:** depois de qualquer `scp` para `data/staging/`, `docker restart motor_expansao_web`,
+> e a prova de aceite é a **rota que serve a camada**, nunca o health. Use `docker restart` e não
+> `up -d --force-recreate`: este último recria a partir do `${WEB_IMAGE}` do `.env` e trocaria a
+> versão do piloto junto com o dado, dando duas causas para qualquer problema na mesma janela.
 
 ---
 
@@ -338,6 +363,17 @@ Abrir `https://piloto.ultra-expansao.tech` → login Authelia → piloto.
       Sem eles o piloto sobe normal e o **passo 4 sai vazio e sem cor, em silêncio**,
       então nenhum outro item deste checklist acusa a falta. Se aparecer algum nome ali,
       copiar o arquivo para o staging do VPS (juntos têm ~2,4 MB) e repetir o `up -d`.
+      **Vale igual para `independentes_nomeadas` e `redes_nomeadas`** (pins de academia,
+      ~2,9 MB juntos): a lista de nomes possíveis aqui não é só a de crescimento.
+- [ ] **Os pins de academia aparecem de fato** — e este item é separado do anterior de
+      propósito: `artefatos_faltando` vazio prova apenas que o arquivo está **no disco**.
+      Os leitores memoizam a ausência (ver o aviso do §2), então health verde + pins
+      invisíveis é um estado possível e foi o que ocorreu no BLK-MA-19. A prova é a rota
+      que serve a camada: `GET /api/municipio/{uf}/{municipio}` com
+      `independentes.disponivel = true` e ao menos um item de `pins.concorrentes` com
+      `"diag": true`. Na tela: a **pílula "Ver academias independentes"** aparece no
+      drill-down municipal. (`pins.redes_disponivel` só existe em imagem ≥ BLK-MA-19 —
+      ausente **não** é falha; ver a nota em `docs/infra_producao.md`.)
 - [ ] `https://piloto.ultra-expansao.tech` exige login (Authelia) e abre o SPA depois.
 - [ ] Mapa Territorial carrega uma UF (a 1ª leitura carrega a partição inteira, demora).
 - [ ] Viabilidade calcula um ponto e mostra o **banner "preliminar"**.
