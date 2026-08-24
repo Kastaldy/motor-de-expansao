@@ -144,6 +144,12 @@ def test_comparacao_recusa_imagem_gigante() -> None:
         pilot_app.ComparacaoIn(itens=[{"porDimensao": []}], imagens=[grande])
 
 
+def test_comparacao_recusa_imagens_acima_do_teto() -> None:
+    imagens = ["data:image/png;base64,x"] * (pilot_app._COMPARACAO_ITENS_MAX + 1)
+    with pytest.raises(ValidationError):
+        pilot_app.ComparacaoIn(itens=[{"porDimensao": []}], imagens=imagens)
+
+
 def test_comparacao_payload_valido_preserva_extras() -> None:
     """Corpo valido passa e `extra="allow"` mantem o ranking ja calculado (model_dump)."""
     corpo = pilot_app.ComparacaoIn(
