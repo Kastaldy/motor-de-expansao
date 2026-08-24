@@ -299,6 +299,92 @@ caminho de `HOST_CONCORRENTES` está errado; só agende depois de ver contagem p
 > único não serve a um feed semanal e a outro mensal ao mesmo tempo; se isso incomodar no futuro, a
 > pergunta certa é torná-lo por fonte — escopo novo, fora do BLK-MA-06.
 
+### Entregável de M&A no piloto (BLK-MA-19 — os pins de academia no Mapa Territorial)
+
+**Por que esta seção existe.** O snapshot acima produz a **série**; esta seção trata do **produto**
+dela, que é outra coisa e tem outro ciclo de vida. Entre 2026-08-19 e 2026-08-24 o código dos pins
+esteve publicado e funcionando em produção sem que **nenhum dos dois parquets** tivesse sido
+enviado — a camada não existia para ninguém, e nada acusou. Não havia bloco de backlog, não havia
+linha de runbook, e `scripts/check_artifacts.py` imprimia "OK".
+
+**Os dois artefatos.** Ambos vivem em `data/staging/` (gitignored, carregam identidade — autorizado
+pela emenda de 2026-08-14 à DEC-028) e são **opt-in**: sem a flag, nada nomeado é gravado.
+
+| arquivo | o que desenha | contrato |
+|---|---|---|
+| `vulnerabilidade_ma_nomeadas.parquet` | pins das academias INDEPENDENTES, com score (BLK-MA-15) | `alvos_ma_nomeados_v5` |
+| `vulnerabilidade_ma_redes.parquet` | pins das unidades de REDE do agregador, com pressão e **sem** score (DEC-035) | `redes_ma_nomeadas_v2` |
+
+`vulnerabilidade_ma_academias.parquet` (variante sem identidade) **não vai a produção**: nenhuma
+superfície de lá o lê.
+
+**Gerar — na estação, nunca na VPS:**
+
+```bash
+python -m motor_expansao.vulnerabilidade.alvos_ma \
+  --base-dir data/staging/snapshots_concorrentes \
+  --saida-nomeadas data/staging/vulnerabilidade_ma_nomeadas.parquet \
+  --saida-redes    data/staging/vulnerabilidade_ma_redes.parquet
+```
+
+> **Por que NÃO gerar na VPS**, ainda que a imagem da `api` tenha o módulo:
+> 1. `data/staging` e `data/outputs` são montados **`:ro`** nos containers de longa duração — o
+>    `to_csv` do entregável aborta antes de chegar nos dois nomeados.
+> 2. Num one-shot `docker run --rm`, os **defaults do módulo mentem**: o pacote é instalado
+>    não-editável, então o `ROOT = parents[3]` resolve para dentro de `site-packages`, o
+>    `mkdir(parents=True)` **cria o diretório e grava lá com exit code 0**, e o `--rm` apaga tudo.
+>    Sai "sucesso" e não há arquivo.
+> 3. Sem `snapshots_concorrentes/semana=*` no host, a cadeia devolve frames **vazios** de ponta a
+>    ponta e grava artefatos vazios — aí o `/api/health` **para de acusar** e a camada fica
+>    invisível **com sinal verde**, que é pior que o estado de hoje.
+>
+> Caminho canônico: gerar na estação, conferir, e **transportar por `scp`**.
+
+**Transportar — `.tmp` + `md5sum` + rename atômico**, para não haver janela de arquivo truncado
+sendo lido por um container de pé (mesmo molde da camada de crescimento):
+
+```bash
+scp -i ~/.ssh/id_ultra_mcp data/staging/vulnerabilidade_ma_nomeadas.parquet \
+  root@2.25.137.241:/opt/motor-expansao/data/staging/vulnerabilidade_ma_nomeadas.parquet.tmp
+```
+```bash
+scp -i ~/.ssh/id_ultra_mcp data/staging/vulnerabilidade_ma_redes.parquet \
+  root@2.25.137.241:/opt/motor-expansao/data/staging/vulnerabilidade_ma_redes.parquet.tmp
+```
+Conferir na VPS (`md5sum` dos `.tmp` contra os da estação), depois `chmod 0644` e `mv -f` de cada um
+sobre o nome final. **Não rodar `chown`** no staging: o diretório é compartilhado com a `api`.
+
+**RESTARTAR o `web` — obrigatório, não higiene.** `carregar_independentes` e `carregar_redes` são
+`@functools.lru_cache(maxsize=1)` e **memoizam a ausência**. Com o container de pé, o `/api/health`
+fica **verde na hora** (ele faz `exists()` a cada chamada) e os pins seguem invisíveis:
+
+```bash
+docker restart motor_expansao_web
+```
+
+Use `docker restart`, **não** `up -d --force-recreate` — este recria a partir do `${WEB_IMAGE}` do
+`.env` e trocaria a versão do piloto junto com o dado, dando duas causas na mesma janela.
+
+**Provar que funcionou.** O `/api/health` é necessário e **insuficiente** (prova disco, não leitura).
+A prova é a rota que serve a camada, num drill-down **municipal** — a visão de UF nunca traz M&A:
+
+```bash
+docker exec motor_expansao_web curl -fsS -H 'Remote-User: <usuario com a aba mapa>' \
+  'http://127.0.0.1:8899/api/municipio/SP/S%C3%A3o%20Paulo'
+```
+Esperado: `independentes.disponivel = true` com `total > 0`, e `pins.redes_disponivel = true`. Na
+tela, a pílula **"Ver academias independentes"** aparece no drill-down. Um `403` aqui significa que o
+`Remote-User` escolhido não tem a aba `mapa` — **não** prova ausência de artefato.
+
+> **Contagem de pins não fecha com o total do artefato, e isso é correto.** Das 2.844 unidades de
+> rede, só as **851** com `tem_pin_proprio = True` são desenhadas: as demais colapsaram contra um
+> ponto de `concorrentes_mapeados` na dedup da DEC-034/FU4 e **já têm bandeira naquele endereço** —
+> desenhá-las de novo daria duas bandeiras no mesmo lugar. Esperar 2.844 bandeiras é expectativa
+> errada, não defeito.
+
+**Rollback, em dois comandos:** `rm -f` dos dois parquets e `docker restart motor_expansao_web`. Os
+dois leitores são opcionais e devolvem `None` — o piloto volta byte a byte ao comportamento anterior.
+
 ### Ingestão DIÁRIA da Growth API (Visão Executiva do piloto web)
 
 A **Visão Executiva** do piloto web (`/api/executiva/{uf}`) lê `data/staging/growth_api_historico.parquet`

@@ -284,6 +284,15 @@ export interface Pins {
   concorrentes: Pin[]
   ultra: Pin[]
   icones: Record<string, string>
+  /**
+   * O artefato de unidades de rede do agregador (DEC-035) existe e foi lido? (BLK-MA-19)
+   *
+   * `false` significa ARTEFATO AUSENTE — nunca "este recorte não tem unidade de agregador",
+   * que devolve `true` com nenhuma bandeira de halo. Sem esta chave, os dois casos eram
+   * indistinguíveis no payload, e foi assim que a camada passou cinco dias morta em produção
+   * sem ninguém notar. Opcional: payload antigo não a traz.
+   */
+  redes_disponivel?: boolean
 }
 
 /**

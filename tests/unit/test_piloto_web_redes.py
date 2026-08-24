@@ -102,6 +102,27 @@ def com_redes(synth_data: Path) -> Path:  # noqa: F811
     return synth_data
 
 
+@pytest.fixture
+def com_redes_longe(synth_data: Path) -> Path:  # noqa: F811
+    """Artefato PRESENTE, com todas as unidades FORA do recorte de SP.
+
+    Existe para separar as duas causas de "zero bandeira com halo" (BLK-MA-19). Manaus fica a
+    ~2.700 km do bbox do recorte — bem além da margem de `PIN_MARGEM_M` (2 km) — e o `hex_id_res7`
+    usa outro prefixo, então nenhuma das duas metades do filtro (`isin(hex_ids)` ou bbox) casa.
+    """
+    staging = synth_data / "staging"
+    staging.mkdir(parents=True, exist_ok=True)
+    longe = _redes().assign(
+        lat=-3.10,
+        lng=-60.02,
+        hex_id_res7=[f"87b0{h}0000000ffff" for h in range(3)],
+    )
+    longe.to_parquet(staging / "vulnerabilidade_ma_redes.parquet", index=False)
+    pilot.carregar_redes.cache_clear()
+    pilot.carregar_uf.cache_clear()
+    return synth_data
+
+
 def _com_diag(dados: dict) -> list[dict]:
     return [p for p in dados["pins"]["concorrentes"] if p.get("diag")]
 
@@ -138,6 +159,45 @@ def test_sem_o_artefato_o_mapa_fica_como_antes(synth_data: Path) -> None:  # noq
     dados = _muni()
     assert _com_diag(dados) == []
     assert "concorrentes" in dados["pins"]
+
+
+def test_o_payload_DIZ_quando_o_artefato_de_redes_faltou(synth_data: Path) -> None:  # noqa: F811
+    """`redes_disponivel` separa "não chegou ao servidor" de "não há unidade aqui" (BLK-MA-19).
+
+    Sem esta chave os dois casos eram o MESMO payload — zero bandeiras com halo —, e foi
+    exatamente assim que a camada passou de 2026-08-19 a 2026-08-24 morta em produção sem que
+    nada acusasse: o código dos pins estava publicado, o parquet nunca foi enviado, e nem a tela
+    nem o payload tinham como dizer a diferença.
+
+    Contraste com `_pins_independentes`, que já devolvia `disponivel` desde o BLK-MA-15: a camada
+    de redes nasceu sem o equivalente porque entra na lista `concorrentes` em vez de ter bloco
+    próprio no payload.
+    """
+    pilot.carregar_redes.cache_clear()
+    dados = _muni()
+    assert dados["pins"]["redes_disponivel"] is False
+    assert _com_diag(dados) == [], "premissa: sem artefato nao ha bandeira com halo"
+
+
+def test_com_o_artefato_presente_o_payload_diz_disponivel(com_redes: Path) -> None:
+    """A outra metade: presente = `True`, e aí zero halo passa a significar recorte vazio."""
+    dados = _muni()
+    assert dados["pins"]["redes_disponivel"] is True
+
+
+def test_recorte_sem_unidade_de_rede_nao_e_confundido_com_artefato_ausente(
+    com_redes_longe: Path,
+) -> None:
+    """O caso que a chave existe para distinguir, provado no lugar certo.
+
+    Artefato PRESENTE, mas sem nenhuma unidade que caia no recorte: tem de devolver `True` com a
+    lista de halo vazia. Se aqui viesse `False`, a chave estaria medindo o RECORTE em vez do
+    ARTEFATO — e seria pior que não existir, porque mandaria o operador procurar na VPS um arquivo
+    que está lá.
+    """
+    dados = _muni()
+    assert dados["pins"]["redes_disponivel"] is True
+    assert _com_diag(dados) == [], "premissa: as unidades estao fora do recorte de SP"
 
 
 # --------------------------------------------------------------------------- #
