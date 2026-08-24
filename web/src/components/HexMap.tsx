@@ -1,6 +1,6 @@
 import { FlyToInterpolator, type Layer } from '@deck.gl/core'
 import { H3HexagonLayer } from '@deck.gl/geo-layers'
-import { IconLayer, PolygonLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
+import { IconLayer, LineLayer, PolygonLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
 import { cellToBoundary, cellToLatLng } from 'h3-js'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -17,6 +17,12 @@ import {
 } from '../lib/captura-mapa'
 import { CORES_IDENTIDADE, corDeIdentidadeRgb, rotuloDoHex } from '../lib/comparacao'
 import { alunos, brl, distanciaCurta, num } from '../lib/format'
+import {
+  type AlvoMedicao,
+  distanciaMetros,
+  metrosPorPixel,
+  travarNoAlvo,
+} from '../lib/medicao'
 import { corTipo, corTipoRgb, custoOcup, labelTipo, rsM2 } from '../lib/imovel'
 import { sinaisDoRegime } from '../lib/sinais'
 import {
@@ -264,6 +270,14 @@ export interface HexMapProps {
   cameraInicial?: ViewState | null
   /** Reporta a camera ao pai a cada mudanca, para sobreviver ao unmount da tela. */
   onCamera?: (v: ViewState) => void
+  /**
+   * Regua ligada: o clique MEDE em vez de selecionar hexagono.
+   *
+   * Modo dedicado, e nao clique-no-pin: o clique do mapa ja tem dono (selecionar
+   * hexagono e' o gesto central do funil) e roubar esse gesto quebraria a tela para
+   * quem nunca vai medir. Com a chave, o unico gesto que muda e' o de quem pediu.
+   */
+  medindo?: boolean
 }
 
 /**
@@ -317,6 +331,7 @@ export default function HexMap({
   cobertura1k,
   cameraInicial,
   onCamera,
+  medindo = false,
 }: HexMapProps) {
   // O tooltip do passo 4 ficou alto (porte, obra, setor, salario, empresas) e era
   // cortado quando o cursor estava na parte de baixo ou na direita do mapa. Medimos
@@ -600,6 +615,56 @@ export default function HexMap({
      de uma busca antiga para dentro do PDF. */
   const pinNoMapa = capturando ? marcaCaptura : searchPin
 
+  /* --- Regua (BLK-CONC-MEDIR): ponta A -> ponta B, com trava nos pins --- */
+  const [medicao, setMedicao] = useState<{ a: AlvoMedicao; b: AlvoMedicao | null } | null>(null)
+
+  /* Tudo que a regua imanta: as bandeiras de concorrente, as unidades nossas e o proprio
+     ponto analisado. O ponto entra na lista porque a medicao TIPICA parte dele — sem isso
+     a ponta de origem seria um clique livre e o par deixaria de ser reprodutivel. */
+  const alvosImantaveis = useMemo<AlvoMedicao[]>(() => {
+    const lista: AlvoMedicao[] = []
+    if (searchPin) {
+      lista.push({
+        lat: searchPin.lat,
+        lng: searchPin.lng,
+        rotulo: 'Ponto analisado',
+        tipo: 'ponto',
+      })
+    }
+    for (const p of pins?.concorrentes ?? []) {
+      lista.push({ lat: p.lat, lng: p.lng, rotulo: p.nome || p.label || 'Concorrente', tipo: 'concorrente' })
+    }
+    for (const p of pins?.ultra ?? []) {
+      lista.push({ lat: p.lat, lng: p.lng, rotulo: p.nome || 'Ultra Academia', tipo: 'ultra' })
+    }
+    return lista
+  }, [pins, searchPin])
+
+  /* Desligar a regua limpa a medicao: deixar a linha na tela depois da chave desligada
+     faria o mapa afirmar uma medicao que o operador nao consegue mais mexer. */
+  useEffect(() => {
+    if (!medindo) setMedicao(null)
+  }, [medindo])
+
+  /* Trocar de municipio/UF tambem limpa. Sem isto a medicao de uma cidade sobrevivia a
+     mudanca e o mapa desenhava linha e rotulo sobre um territorio que nao e' o dos pontos
+     medidos — um numero correto no lugar errado, que e' pior que numero nenhum. */
+  useEffect(() => {
+    setMedicao(null)
+  }, [municipio, uf])
+
+  function medirNoClique(coordenada: number[] | undefined) {
+    if (!coordenada) return
+    const clique = { lat: coordenada[1], lng: coordenada[0] }
+    const mpp = metrosPorPixel(view.zoom, clique.lat)
+    const travado = travarNoAlvo(clique, alvosImantaveis, mpp)
+    const ponta: AlvoMedicao = travado ?? { ...clique, rotulo: 'Ponto livre', tipo: 'ponto' }
+    setMedicao((atual) =>
+      atual == null || atual.b != null ? { a: ponta, b: null } : { a: atual.a, b: ponta },
+    )
+  }
+
+
   const camadas = useMemo(() => {
     const base: Layer[] = [
       new H3HexagonLayer<Hex>({
@@ -642,6 +707,9 @@ export default function HexMap({
         autoHighlight: true,
         highlightColor: [236, 240, 245, 40],
         onClick: (info) => {
+          // Com a regua ligada o clique e' da medicao: selecionar hexagono AQUI trocaria
+          // a camada colorida embaixo da linha que o operador acabou de tracar.
+          if (medindo) return
           if (info.object) onSelecionar(info.object as Hex)
         },
         onHover: (info) => {
@@ -902,6 +970,72 @@ export default function HexMap({
       }),
     ]
 
+    /* Regua: linha A-B e as duas pontas. Fica no FIM de `base` para desenhar por cima
+       de hexagono, cobertura e bandeiras — uma medicao escondida sob o choropleth nao
+       serve para nada. */
+    if (medicao) {
+      const pontas = medicao.b ? [medicao.a, medicao.b] : [medicao.a]
+      if (medicao.b) {
+        base.push(
+          new LineLayer<{ de: AlvoMedicao; para: AlvoMedicao }>({
+            id: 'regua-linha',
+            data: [{ de: medicao.a, para: medicao.b }],
+            getSourcePosition: (d) => [d.de.lng, d.de.lat],
+            getTargetPosition: (d) => [d.para.lng, d.para.lat],
+            getColor: [238, 243, 248, 235],
+            getWidth: 2.5,
+            widthUnits: 'pixels',
+            pickable: false,
+          }) as unknown as LineLayer<Hex>,
+        )
+        /* O NUMERO VAI NO CANVAS, nao em HTML sobreposto.
+           Duas tentativas em HTML falharam: este container e' `inset: 0` e a tela tem
+           elementos que pintam por cima dele (o header do `MapScreen` no topo, o painel e
+           a doca embaixo), entao a leitura ficava escondida com a linha desenhada e o
+           numero invisivel. Desenhado pelo deck.gl, o rotulo e' parte do mapa e nenhuma
+           camada de DOM o alcanca — e ainda fica ONDE o operador esta olhando, colado a
+           medicao, em vez de num canto da tela. */
+        const meio = {
+          lat: (medicao.a.lat + medicao.b.lat) / 2,
+          lng: (medicao.a.lng + medicao.b.lng) / 2,
+        }
+        base.push(
+          new TextLayer<{ meio: typeof meio; texto: string }>({
+            id: 'regua-rotulo',
+            data: [{ meio, texto: distanciaCurta(distanciaMetros(medicao.a, medicao.b)) }],
+            getPosition: (d) => [d.meio.lng, d.meio.lat],
+            getText: (d) => d.texto,
+            getSize: 15,
+            sizeUnits: 'pixels',
+            getColor: [8, 11, 16, 255],
+            background: true,
+            getBackgroundColor: [238, 243, 248, 240],
+            backgroundPadding: [7, 4, 7, 4],
+            getPixelOffset: [0, -14],
+            fontWeight: 700,
+            characterSet: 'auto',
+            pickable: false,
+          }) as unknown as TextLayer<Hex>,
+        )
+      }
+
+      base.push(
+        new ScatterplotLayer<AlvoMedicao>({
+          id: 'regua-pontas',
+          data: pontas,
+          getPosition: (d) => [d.lng, d.lat],
+          getRadius: 6,
+          radiusUnits: 'pixels',
+          radiusMinPixels: 5,
+          getFillColor: [8, 11, 16, 235],
+          getLineColor: [238, 243, 248, 255],
+          lineWidthMinPixels: 2,
+          stroked: true,
+          pickable: false,
+        }) as unknown as ScatterplotLayer<Hex>,
+      )
+    }
+
     // Ponto buscado: hexagono marcado + pin em BRANCO (anel claro, miolo escuro).
     // Buscar um endereco e' uma forma de SELECIONAR, entao vale a mesma cor do hex
     // selecionado e do item ativo do painel; o turquesa ficou exclusivo do cenario
@@ -1004,6 +1138,9 @@ export default function HexMap({
     cobertura1k,
     hexesCobertos,
     hexPorId,
+    // Mesmo motivo do bloco acima: o corpo LE as duas para montar (ou nao) a regua.
+    medindo,
+    medicao,
   ])
 
   return (
@@ -1033,7 +1170,14 @@ export default function HexMap({
         controller={{ dragRotate: false }}
         layers={camadas}
         style={{ position: 'absolute', top: '0', left: '0', width: '100%', height: '100%' }}
-        getCursor={({ isHovering }) => (isHovering ? 'pointer' : 'grab')}
+        onClick={(info) => {
+          // `info.coordinate` existe mesmo em clique no vazio do mapa — e' isso que
+          // permite a ponta livre quando o clique nao cai perto de pin nenhum.
+          if (medindo) medirNoClique(info.coordinate as number[] | undefined)
+        }}
+        getCursor={({ isHovering }) =>
+          medindo ? 'crosshair' : isHovering ? 'pointer' : 'grab'
+        }
       >
         {/* A `key` muda com `capturando` porque atributo de contexto WebGL não se troca num
             contexto já criado — só recriando. E `reuseMaps` sai de cena junto: reaproveitar
