@@ -291,6 +291,20 @@ def _msg(texto: str, keyboard: list | None = None) -> dict:
     return {"text": texto, "keyboard": keyboard}
 
 
+# Markdown LEGADO do Telegram (parse_mode='Markdown') so' reconhece escape de _ * [ `.
+# Aplicar o conjunto do MarkdownV2 (. ! - ( ) ...) aqui imprimiria o backslash LITERAL
+# na tela. Escapamos os valores DINAMICOS na renderizacao (pentest Onda B #13): um
+# `login`/nome com `[texto](http://evil)` viraria hyperlink numa linha de autoria do
+# bot ("Solicitado por ..."). NUNCA escapar no store -- `s['login']` persiste e vai
+# como solicitante para a capa do PDF; backslash vazaria para la'.
+_MD_ESCAPE = str.maketrans({c: "\\" + c for c in "_*[`"})
+
+
+def _escape_md(texto: object) -> str:
+    """Escapa os metacaracteres do Markdown legado num valor dinamico antes de interpolar."""
+    return str(texto).translate(_MD_ESCAPE)
+
+
 def _acao_relatorio_acessos(chat_id: int, settings: Settings) -> list[dict]:
     """`/acessos`: agregado de uso do piloto (quem, janela, abas) — chat de ops apenas.
 
@@ -370,7 +384,7 @@ def processar(
         s["login"] = t.strip() or "anonimo"
         s["etapa"] = None
         return [
-            _msg(f"Prazer, *{s['login']}*! 👋", _KB_MENU),
+            _msg(f"Prazer, *{_escape_md(s['login'])}*! 👋", _KB_MENU),
             _msg(_PEDIR_LOCAL, _KB_MENU),
         ]
 
@@ -413,12 +427,12 @@ def processar(
             notify(_GERANDO_MUNI)
         pdf, err = consultar_pdf_municipio(uf, t, s.get("login"), settings)
         if pdf is None:
-            return [_msg(f"⚠️ {err}\n\nDigite outro nome ou toque em *⬅️ Voltar*.", _KB_VOLTAR)]
+            return [_msg(f"⚠️ {_escape_md(err)}\n\nDigite outro nome ou toque em *⬅️ Voltar*.", _KB_VOLTAR)]
         s["etapa"] = None
         # Rastreio sem PII (BLK-SEC-05): chat opaco (hash), sem o nome do solicitante.
         print(f"[ESTUDO-MUNI] chat={_chat_ref(chat_id, settings.telegram_token)} uf={uf} municipio={t}")
         return [
-            _msg(f"📄 *Relatorio Municipal* — {t.strip()} - {uf}\n_Solicitado por {s.get('login', '?')}_"),
+            _msg(f"📄 *Relatorio Municipal* — {_escape_md(t.strip())} - {uf}\n_Solicitado por {_escape_md(s.get('login', '?'))}_"),
             {"pdf": pdf, "filename": f"relatorio_municipal_{uf.lower()}.pdf"},
             _msg("Pronto! Escolha outra opcao no menu. 👇", _KB_MENU),
         ]
@@ -435,12 +449,12 @@ def processar(
     payload = {"lat": lat, "lng": lng, "rotulo": nome}
     pdf = consultar_pdf(payload, settings)
     if pdf is None:
-        return [_msg(f"⚠️ {_erro_api(payload, settings)}", _KB_MENU)]
+        return [_msg(f"⚠️ {_escape_md(_erro_api(payload, settings))}", _KB_MENU)]
     # Rastreio sem PII (BLK-SEC-05): chat opaco (hash), sem nome do solicitante nem
     # o endereco resolvido; a coordenada (alvo do estudo) e' dado de negocio.
     print(f"[ESTUDO] chat={_chat_ref(chat_id, settings.telegram_token)} coord={lat},{lng}")
     return [
-        _msg(f"📄 Relatorio de *{nome}*\n_Solicitado por {s.get('login', '?')}_"),
+        _msg(f"📄 Relatorio de *{_escape_md(nome)}*\n_Solicitado por {_escape_md(s.get('login', '?'))}_"),
         {"pdf": pdf},
         _msg("Pronto! Envie outra localizacao quando quiser.", _KB_MENU),
     ]

@@ -105,3 +105,63 @@ def test_ip_real_pega_ultimo_hop_do_xff() -> None:
     assert pilot_app._ip_real_do_xff("203.0.113.7", None) == "203.0.113.7"
     # XFF vazio/em branco -> fallback do socket, nunca string vazia.
     assert pilot_app._ip_real_do_xff("   ", "10.0.0.1") == "10.0.0.1"
+
+
+# ── Pentest Onda B #4: valida o FORMATO do IP na trilha ──────────────────────
+def test_ip_real_recusa_token_nao_ip_e_cai_no_fallback() -> None:
+    """Token nao-IP no ultimo hop -> cai no peer TCP (fallback), nunca grava lixo."""
+    assert pilot_app._ip_real_do_xff("8.8.8.8, lixo-nao-ip", "10.0.0.1") == "10.0.0.1"
+    # Sem fallback disponivel, token invalido vira None (nao a string-lixo).
+    assert pilot_app._ip_real_do_xff("nao-e-ip", None) is None
+
+
+def test_ip_real_aceita_ipv6_e_mapeado() -> None:
+    assert pilot_app._ip_real_do_xff("8.8.8.8, ::ffff:203.0.113.7", None) == "::ffff:203.0.113.7"
+    assert pilot_app._ip_real_do_xff("2001:db8::1", None) == "2001:db8::1"
+
+
+# ── Pentest Onda B #10: schema/limites no deck de comparacao ─────────────────
+def test_comparacao_recusa_item_nao_objeto() -> None:
+    """Type-confusion `{"itens": ["a"]}` vira 422 de validacao, nao 500 opaco."""
+    with pytest.raises(ValidationError):
+        pilot_app.ComparacaoIn(itens=["a"])
+
+
+def test_comparacao_recusa_itens_acima_do_teto() -> None:
+    itens = [{"porDimensao": []} for _ in range(pilot_app._COMPARACAO_ITENS_MAX + 1)]
+    with pytest.raises(ValidationError):
+        pilot_app.ComparacaoIn(itens=itens)
+
+
+def test_comparacao_teto_de_itens_casa_com_o_gerador() -> None:
+    from motor_expansao.dashboard import relatorio_comparacao
+    assert pilot_app._COMPARACAO_ITENS_MAX == relatorio_comparacao.MAX_ITENS
+
+
+def test_comparacao_recusa_imagem_gigante() -> None:
+    grande = "d" * (pilot_app._IMAGEM_MAX_CHARS + 1)
+    with pytest.raises(ValidationError):
+        pilot_app.ComparacaoIn(itens=[{"porDimensao": []}], imagens=[grande])
+
+
+def test_comparacao_recusa_imagens_acima_do_teto() -> None:
+    imagens = ["data:image/png;base64,x"] * (pilot_app._COMPARACAO_ITENS_MAX + 1)
+    with pytest.raises(ValidationError):
+        pilot_app.ComparacaoIn(itens=[{"porDimensao": []}], imagens=imagens)
+
+
+def test_comparacao_payload_valido_preserva_extras() -> None:
+    """Corpo valido passa e `extra="allow"` mantem o ranking ja calculado (model_dump)."""
+    corpo = pilot_app.ComparacaoIn(
+        itens=[{"porDimensao": [{"chave": "renda", "valor": 1.0}], "rotulo": "Area A"}],
+        titulo="Comparacao",
+    )
+    despejo = corpo.model_dump()
+    assert despejo["titulo"] == "Comparacao"  # extra top-level preservado
+    assert despejo["itens"][0]["rotulo"] == "Area A"  # extra do item preservado
+
+
+def test_comparacao_route_tem_try_except() -> None:
+    import inspect
+    fonte = inspect.getsource(pilot_app.relatorio_comparacao)
+    assert "except" in fonte and "HTTPException" in fonte

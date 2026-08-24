@@ -242,8 +242,8 @@ def test_sem_pii_de_corretor_no_payload(apontar) -> None:
 
 
 def test_sem_o_parquet_devolve_vazio_e_nao_500(monkeypatch, tmp_path) -> None:
-    """A aba degrada para lista vazia — é por isso que o artefato entrou no
-    `/api/health` (a tela não distingue "sem dado" de "filtro não casou")."""
+    """A aba degrada para lista vazia — é por isso que o artefato entrou no inventário
+    `/api/acessos/saude-artefatos` (a tela não distingue "sem dado" de "filtro não casou")."""
     monkeypatch.setattr(pilot_app, "OPORTUNIDADES_PATH", tmp_path / "nao-existe.parquet")
     monkeypatch.setattr(pilot_app, "_OPORTUNIDADES_CACHE", None)
     r = pilot_app.api_oportunidades()

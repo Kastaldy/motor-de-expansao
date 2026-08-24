@@ -474,6 +474,19 @@ def test_cadastro_sem_volume_devolve_503(sem_dados: Path) -> None:
     assert erro.value.status_code == 503
 
 
+def test_cadastro_unidade_desconhecida_devolve_404(rede: Path) -> None:
+    """Pentest Onda B #9: id fora da rede E fora do cadastro -> 404, sem unidade-fantasma."""
+    with pytest.raises(HTTPException) as erro:
+        pilot.rede_cadastro_atribuir(
+            "unidade-fantasma-zz",
+            pilot.CadastroIn(versao=1, campos={"consultor": "A"}),
+            remote_user="felipe",
+        )
+    assert erro.value.status_code == 404
+    # A chave-fantasma nao pode ter sido gravada.
+    assert "unidade-fantasma-zz" not in rede_cadastro.ler_cadastro(pilot.CADASTRO_DIR).unidades
+
+
 def test_escrita_do_cadastro_nao_toca_o_data_dir(rede: Path) -> None:
     """A prova que autoriza o mount `:rw`: a escrita nao sai do diretorio do cadastro."""
     fora = {

@@ -26,6 +26,7 @@ import base64
 import functools
 import hashlib
 import inspect
+import ipaddress
 import json
 import logging
 import math
@@ -40,10 +41,12 @@ from typing import Any
 
 import pandas as pd
 from fastapi import FastAPI, Header, HTTPException, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
 # Quantos Relatorios Pontuais podem ser gerados AO MESMO TEMPO. O gerador e pesado
@@ -59,6 +62,12 @@ _PDF_SEMAFORO = asyncio.Semaphore(_PDF_CONCORRENCIA_MAX)
 # semaforo. So bytes ate o teto sao mantidos em memoria.
 _FOTOS_MAX = 3
 _FOTO_MAX_BYTES = 8 * 1024 * 1024  # 8 MB por foto
+
+# Tetos do deck de comparacao (pentest Onda B #10). `_COMPARACAO_ITENS_MAX` casa com o
+# `MAX_ITENS`/`MAX_COMPARADOS` do gerador e da tela (5); `_IMAGEM_MAX_CHARS` e' o data-url
+# base64 de um PNG de ~8 MB (~4/3 do byte-teto da foto), teto por imagem capturada do mapa.
+_COMPARACAO_ITENS_MAX = 5
+_IMAGEM_MAX_CHARS = _FOTO_MAX_BYTES * 4 // 3 + 64
 
 # --- Localizacao do repo e dos dados ---------------------------------------
 # O backend do piloto vive em <repo>/web/server; o codigo do motor em <repo>/src.
@@ -209,6 +218,31 @@ app.add_middleware(
 )
 
 
+def _sanear_nao_finito(obj: Any) -> Any:
+    """Troca floats nao-finitos (NaN/Infinity) por sua string, recursivamente."""
+    if isinstance(obj, float) and not math.isfinite(obj):
+        return str(obj)  # "nan" / "inf" / "-inf"
+    if isinstance(obj, dict):
+        return {chave: _sanear_nao_finito(valor) for chave, valor in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanear_nao_finito(item) for item in obj]
+    return obj
+
+
+@app.exception_handler(RequestValidationError)
+async def _erro_de_validacao(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """422 limpo mesmo com NaN/Infinity no corpo (pentest Onda B #11).
+
+    NaN/Infinity passam pelo `json.loads` (parse_constant), voltam DENTRO do erro do
+    pydantic como float e o `json.dumps` do Starlette (`allow_nan=False`) estoura ao
+    serializar a resposta — transformando o 422 num 500 opaco. Sanear o `input`
+    nao-finito para string ANTES de serializar fecha isso, preservando o resto do
+    shape do 422 padrao do FastAPI.
+    """
+    detalhe = _sanear_nao_finito(jsonable_encoder(exc.errors()))
+    return JSONResponse({"detail": detalhe}, status_code=422)
+
+
 # Controle TEMPORARIO de acesso por aba (2026-08-13): o Authelia autentica; aqui cada
 # rota e' liberada pela aba que a consome, segundo o `Remote-User` que o Caddy repassa.
 # Regras, mapa `usuario -> [abas]` e degradacao (fail-open sem o JSON) em `acesso.py`.
@@ -251,9 +285,19 @@ def _ip_real_do_xff(xff: str | None, fallback: str | None) -> str | None:
     Pentest 2026-08-19: antes usava-se `[0]` (o mais a' esquerda), exatamente o que o
     atacante controla — `X-Forwarded-For: 8.8.8.8` fazia a acao dele constar de um IP
     arbitrario na aba Acessos. Ha um unico hop (Caddy), entao `[-1]` e' o IP real.
+
+    Pentest Onda B #4: valida o FORMATO do ultimo token. Atras do Caddy ele e' sempre
+    um IP valido (o peer que o proxy anexa); um token nao-IP so' aparece se alguem
+    alcanca o backend SEM passar pelo Caddy — nesse caso cai no `fallback` (o peer TCP
+    real, `request.client.host`, que nao e' forjavel). Defesa em profundidade.
     """
     if xff:
-        return xff.split(",")[-1].strip() or fallback
+        candidato = xff.split(",")[-1].strip()
+        try:
+            ipaddress.ip_address(candidato)
+        except ValueError:
+            return fallback
+        return candidato
     return fallback
 
 
@@ -2787,11 +2831,22 @@ def _artefatos_observados() -> list[tuple[str, Path, str]]:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    """Saude do processo + presenca dos artefatos que a tela depende.
+    """Healthcheck PUBLICO e mudo (pentest Onda B #8): so' `{"status": "ok"}`.
 
-    O healthcheck do container so' olha o status HTTP (`curl -fsS`), entao os campos
-    novos sao informativos: nada aqui pode derrubar o container. Por isso o `stat` vive
-    num try/except — um mount que sumiu no meio do voo devolve `erro`, nao 500.
+    O healthcheck do container (`curl -fsS`) so' precisa do HTTP 200. O inventario de
+    artefatos (com `data_dir` e caminhos ABSOLUTOS + descricao de negocio de cada
+    parquet) vazava o layout do FS e a camada de M&A para QUALQUER autenticado, ja' que
+    /api/health e' rota livre. O inventario mudou para `/api/acessos/saude-artefatos`,
+    gated pela allowlist de admin.
+    """
+    return {"status": "ok"}
+
+
+def _inventario_artefatos() -> dict[str, Any]:
+    """Inventario diagnostico dos artefatos que a tela depende (so' para admin).
+
+    O `stat` vive num try/except — um mount que sumiu no meio do voo devolve `erro`,
+    nao 500. Auditar o ambiente PUBLICADO sem SSH e' o motivo desta funcao existir.
     """
     artefatos: dict[str, Any] = {}
     for nome, caminho, para_que in _artefatos_observados():
@@ -2802,7 +2857,7 @@ def health() -> dict[str, Any]:
             # Diretorio (enriquecido) nao tem tamanho util; so' arquivo reporta MB.
             if existe and caminho.is_file():
                 item["mb"] = round(caminho.stat().st_size / (1024 * 1024), 2)
-        except OSError as e:  # mount caiu, permissao, disco — nunca derrubar o health
+        except OSError as e:  # mount caiu, permissao, disco — nunca derrubar
             item["ok"] = False
             item["erro"] = str(e)
         artefatos[nome] = item
@@ -2875,9 +2930,23 @@ def _exigir_admin_acessos(remote_user: str | None) -> None:
         raise HTTPException(status_code=404, detail="Not Found")
 
 
-# `include_in_schema=False` nas duas rotas: sem ele, /openapi.json e /docs (livres
+# `include_in_schema=False` nas rotas de acessos: sem ele, /openapi.json e /docs (livres
 # para qualquer autenticado) listavam os paths e as descricoes do painel — anulando
 # o 404 "existencia nao anunciada" (revisao adversarial de 2026-08-19).
+@app.get("/api/acessos/saude-artefatos", include_in_schema=False)
+def acessos_saude_artefatos(
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Inventario diagnostico dos artefatos (pentest Onda B #8): so' para admin.
+
+    Saiu do /api/health publico (que vazava caminhos absolutos + descricao de cada
+    parquet a qualquer autenticado). Sob `/api/acessos/`, ja' nasce guardado pelo 404
+    fail-closed do middleware; o `_exigir_admin_acessos` e' cinto e suspensorio.
+    """
+    _exigir_admin_acessos(remote_user)
+    return _inventario_artefatos()
+
+
 @app.get("/api/acessos/resumo", include_in_schema=False)
 def acessos_resumo(
     dias: int = acesso_analytics.JANELA_DIAS_DEFAULT,
@@ -4176,8 +4245,14 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
 
 
 class ViabilidadeIn(BaseModel):
-    lat: float
-    lng: float
+    # allow_inf_nan=False (pentest Onda B #11): recusa NaN/Infinity em TODOS os floats.
+    # Sem isso, `Infinity` passava no `Field(gt=0)` (inf > 0 e' True) e gerava DRE-lixo
+    # exibido como valido numa tela de decisao de investimento; o 422 resultante sai
+    # limpo pelo handler `_erro_de_validacao`.
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
     m2: float = Field(gt=0)
     aluguel: float = Field(ge=0)
     demanda: float = Field(gt=0, description="PREMISSA do operador — nunca prevista")
@@ -5172,6 +5247,17 @@ _REDE_MAX_UNIDADES = 400
 def _rede_base() -> pd.DataFrame:
     """Base Growth preparada: identidade resolvida e não-academias fora."""
     return rede_metricas.carregar_base(GROWTH_PARQUET)
+
+
+@functools.lru_cache(maxsize=1)
+def _rede_ids() -> frozenset[str]:
+    """Universo de `unidade_id` reais da rede (pentest Onda B #9): o PUT do cadastro
+    so' aceita ids daqui ou ja' presentes no cadastro, para nao criar unidades-fantasma.
+    lru_cache limpo junto dos demais por `limpar_caches` (varredura de globais)."""
+    base = _rede_base()
+    if "unidade_id" not in base.columns:
+        return frozenset()
+    return frozenset(str(u) for u in base["unidade_id"].dropna().unique())
 
 
 @functools.lru_cache(maxsize=1)
@@ -6783,12 +6869,16 @@ def rede_cadastro_atribuir(
             dict(body.campos),
             autor=_autor(remote_user, remote_email),
             versao_cliente=body.versao,
+            universo=_rede_ids(),
             base=CADASTRO_DIR,
         )
     except rede_cadastro.ConflitoDeVersao as erro:
         raise HTTPException(409, str(erro)) from erro
     except rede_cadastro.CampoNaoEditavel as erro:
         raise HTTPException(422, str(erro)) from erro
+    except rede_cadastro.UnidadeDesconhecida as erro:
+        # Id que nao existe na rede nem no cadastro: 404, sem criar unidade-fantasma.
+        raise HTTPException(404, str(erro)) from erro
     except rede_cadastro.CadastroIndisponivel as erro:
         raise HTTPException(503, str(erro)) from erro
     except PermissionError as erro:
@@ -7461,8 +7551,34 @@ def _gerar_comparacao_pdf(payload: dict[str, Any]) -> bytes:
     return gerar_pdf_comparacao(payload, mapas=imagens, ultra_dir=ULTRA_DIR)
 
 
+class ComparacaoItemIn(BaseModel):
+    # extra="allow": o item traz o ranking JA CALCULADO da tela (rotulo, posicao,
+    # melhor/pior...) e o servidor so' desenha — deixar passar sem acoplar release do
+    # backend a cada campo novo do front. So' `porDimensao` (a lista aninhada) e' o
+    # vetor sem teto, entao e' o unico limitado aqui.
+    model_config = ConfigDict(extra="allow")
+    porDimensao: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
+
+
+class ComparacaoIn(BaseModel):
+    """Corpo do deck de comparacao (pentest Onda B #10): fecha o type-confusion que
+    virava 500 opaco (`{"itens": ["a"]}`) e poe teto em itens/imagens/porDimensao."""
+
+    model_config = ConfigDict(extra="allow")
+    itens: list[ComparacaoItemIn] = Field(default_factory=list, max_length=_COMPARACAO_ITENS_MAX)
+    imagens: list[str] = Field(default_factory=list, max_length=_COMPARACAO_ITENS_MAX)
+
+    @field_validator("imagens")
+    @classmethod
+    def _imagens_dentro_do_teto(cls, valor: list[str]) -> list[str]:
+        for img in valor:
+            if len(img) > _IMAGEM_MAX_CHARS:
+                raise ValueError("Imagem do mapa acima do tamanho máximo permitido.")
+        return valor
+
+
 @app.post("/api/relatorio/comparacao")
-async def relatorio_comparacao(payload: dict[str, Any]) -> Response:
+async def relatorio_comparacao(body: ComparacaoIn) -> Response:
     """Deck de 6-7 slides da comparacao de areas.
 
     O CORPO TRAZ O RANKING JA CALCULADO, e isso e' deliberado. A regra de comparacao —
@@ -7478,9 +7594,20 @@ async def relatorio_comparacao(payload: dict[str, Any]) -> Response:
     loop do unico worker ela prendia TODAS as outras requisicoes — medido em producao em
     2026-07-24, tres relatorios simultaneos serializaram em 12/21/31 s e um `/api/health`
     levou 29 s.
+
+    Pentest Onda B #10: corpo tipado (`ComparacaoIn`) + try/except -> 422/400. Antes era
+    `dict[str, Any]` cru: type-confusion virava 500 opaco (poluia a trilha) e listas sem
+    teto alimentavam o gerador sincrono.
     """
     async with _PDF_SEMAFORO:
-        pdf = await run_in_threadpool(_gerar_comparacao_pdf, payload)
+        try:
+            pdf = await run_in_threadpool(_gerar_comparacao_pdf, body.model_dump())
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 — corpo malformado nao pode virar 500 opaco
+            raise HTTPException(
+                400, f"Não foi possível montar o deck de comparação: {exc}"
+            ) from exc
     return Response(
         content=pdf,
         media_type="application/pdf",
