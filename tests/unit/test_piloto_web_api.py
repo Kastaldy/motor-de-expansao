@@ -40,6 +40,12 @@ def _apontar(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
         pilot_app, "NOMEADAS_PATH", staging / "vulnerabilidade_ma_nomeadas.parquet"
     )
     monkeypatch.setattr(pilot_app, "REDES_PATH", staging / "vulnerabilidade_ma_redes.parquet")
+    # Camada imobiliaria: NAO fica sob `outputs/` nem `staging/` — e' artefato de outro
+    # repo (o coletor), com mount proprio em producao. O global tambem e' derivado do
+    # DATA_DIR no import, entao precisa ser repontado aqui como os demais.
+    monkeypatch.setattr(
+        pilot_app, "OPORTUNIDADES_PATH", data_dir / "oportunidades" / "viaveis.parquet"
+    )
 
 
 def test_health_ok() -> None:
@@ -72,6 +78,11 @@ def test_health_reporta_os_artefatos_que_a_tela_depende() -> None:
         # com um agravante proprio: sem este artefato as 1.171 unidades que a DEC-034 poe na
         # oferta continuam contando na pressao sem aparecer no mapa.
         "redes_nomeadas",
+        # Camada imobiliaria (2026-08-24). Mesma classe, e a mais fragil de todas: nao vem do
+        # git NEM de outro pipeline deste repo — e' artefato de OUTRO repositorio (o coletor),
+        # copiado por scp com cadencia propria. Sem ele a rota responde 200 com lista vazia e a
+        # tela diz "Nada no recorte", que e' o que ela diz tambem quando o filtro nao casou.
+        "oportunidades_imobiliarias",
     }
     for nome, a in artefatos.items():
         assert isinstance(a["ok"], bool), nome
@@ -105,6 +116,7 @@ def test_health_nao_estoura_com_data_dir_inexistente(monkeypatch) -> None:
         "crescimento_municipal",
         "enriquecido",
         "independentes_nomeadas",
+        "oportunidades_imobiliarias",
         "redes_nomeadas",
     ]
     # Os caminhos reportados tem de sair do data_dir REPONTADO. Se a lista de artefatos
@@ -142,6 +154,7 @@ def test_health_sobrevive_a_stat_que_levanta(monkeypatch) -> None:
         "CRESCIMENTO_HEX_PATH",
         "NOMEADAS_PATH",
         "REDES_PATH",
+        "OPORTUNIDADES_PATH",
     ):
         monkeypatch.setattr(pilot_app, glob, _CaminhoQueCai(f"/app/data/{glob}"))
 

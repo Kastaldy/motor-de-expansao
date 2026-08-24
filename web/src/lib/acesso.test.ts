@@ -118,3 +118,32 @@ describe('telaInicial', () => {
     expect(telaInicial(setDe())).toBe('inicio')
   })
 })
+
+describe('camada imobiliaria', () => {
+  it('mapa sozinho NAO abre a tela dedicada (so os pins dentro do Mapa Territorial)', () => {
+    // A camada de imoveis DENTRO do mapa e da aba `mapa`; a tela dedicada, nao.
+    expect(telaLiberada('oportunidades-imob', setDe('mapa'))).toBe(false)
+  })
+
+  it('a aba imobiliaria abre a tela dedicada', () => {
+    expect(telaLiberada('oportunidades-imob', setDe('imobiliaria'))).toBe(true)
+  })
+
+  it('oportunidades NAO abre mais a tela — regressao do acoplamento antigo', () => {
+    // Ate 2026-08-24 a tela reusava o gate de `oportunidades`, e era exatamente isso
+    // que impedia restringir os imoveis sem tirar o funil de expansao de quem o usa.
+    expect(telaLiberada('oportunidades-imob', setDe('oportunidades'))).toBe(false)
+  })
+
+  it('fail-open NAO concede a tela, mas o mapa (com os pins) continua', () => {
+    // /api/me fora do ar nao pode escancarar a camada restrita; o trabalho segue.
+    expect(telaLiberada('oportunidades-imob', null)).toBe(false)
+    expect(telaLiberada('mapa', null)).toBe(true)
+  })
+
+  it('`imobiliaria` sobrevive ao abasDoPayload (nao e filtrada como desconhecida)', () => {
+    const s = abasDoPayload({ usuario: 'ana', abas: ['mapa', 'imobiliaria'] })
+    expect((s as Set<Aba>).has('imobiliaria')).toBe(true)
+    expect(telaLiberada('oportunidades-imob', s)).toBe(true)
+  })
+})

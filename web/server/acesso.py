@@ -36,13 +36,20 @@ _REPO_ROOT = _HERE.parents[2]
 
 # Valores brutos de aba — identificadores SEM acento (regra do CLAUDE.md §2). A SPA
 # usa exatamente estes nomes em `web/src/lib/acesso.ts`; mudou aqui, muda la' junto.
-ABAS_VALIDAS = frozenset({"executiva", "mapa", "oportunidades", "viabilidade"})
+ABAS_VALIDAS = frozenset({"executiva", "imobiliaria", "mapa", "oportunidades", "viabilidade"})
 
 # Abas com dado SENSIVEL (financeiro da rede, PII de franqueado/consultor, ESCRITA) —
 # negadas no fail-CLOSED quando o controle cai em producao (BLK-SEC-05). `executiva`
 # cobre `/api/rede/` (carteira + PUT cadastro) e `/api/executiva/`; `viabilidade` cobre
-# `/api/simulador/` e `/api/faixa-alunos`. `mapa`/`oportunidades` (analitico) seguem.
-ABAS_SENSIVEIS = frozenset({"executiva", "viabilidade"})
+# `/api/simulador/` e `/api/faixa-alunos`; `imobiliaria` cobre o DOSSIE do coletor
+# (`/api/oportunidades/{id}/dossie`), que carrega contato de corretor. `mapa` e
+# `oportunidades` (analitico agregado) seguem no fail-closed.
+#
+# Consequencia deliberada: com o controle caido em producao, ninguem baixa dossie —
+# mas a LISTA agregada continua servindo os pins do Mapa Territorial, porque quem
+# perde `imobiliaria` no fail-closed ainda tem `mapa` (decisao do Felipe, 2026-08-24:
+# "todos os usuarios com acesso ao mapa tambem tem acesso a esses imoveis").
+ABAS_SENSIVEIS = frozenset({"executiva", "imobiliaria", "viabilidade"})
 
 # Que abas LIBERAM cada rota (basta ter UMA delas). Casamento por PREFIXO do path.
 # Rota sem regra = livre para qualquer usuario autenticado (health, catalogos, /api/me);
@@ -76,6 +83,18 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/municipio/", frozenset({"mapa", "oportunidades"})),
     ("/api/municipios/", frozenset({"mapa", "oportunidades"})),
     ("/api/estados", frozenset({"oportunidades"})),
+    # Camada imobiliaria (aba PROPRIA `imobiliaria` desde 2026-08-24; ate' entao a tela
+    # reusava o gate de `oportunidades`, o que impedia restringir os imoveis sem tirar o
+    # funil de expansao de quem o usa). O DOSSIE (PDF do coletor, carrega contato de
+    # corretor) fica SO' na aba imobiliaria; a LISTA (agregado sem PII) tambem serve a
+    # camada de pins e a secao da ficha do hexagono no Mapa Territorial, entao "mapa" a
+    # libera. O prefixo com barra vem ANTES: o casamento e' first-match por startswith.
+    ("/api/oportunidades/", frozenset({"imobiliaria"})),
+    ("/api/oportunidades", frozenset({"mapa", "imobiliaria"})),
+    # Eventos de tela da camada imobiliaria (rotas no-op cujo VALOR e' a linha que o
+    # middleware da trilha grava — molde do `/api/ciencia-confidencialidade`). Aceita
+    # "mapa" porque o pin do Mapa Territorial tambem abre ficha de imovel.
+    ("/api/imobiliaria/evento/", frozenset({"mapa", "imobiliaria"})),
 )
 
 # Rotas /api/* deliberadamente livres (qualquer usuario autenticado):

@@ -58,11 +58,22 @@ AGRUPAMENTO_ABAS: tuple[tuple[str, str], ...] = (
     ("/api/municipio/", "mapa"),
     ("/api/municipios/", "mapa"),
     ("/api/estados", "oportunidades"),
+    # O dossie e' gesto da aba imobiliaria; a LISTA, liberada tambem para "mapa",
+    # e' buscada sozinha pelo Mapa Territorial a cada UF (camada de pins + secao do
+    # hexagono) — na pratica o grosso das chamadas vem de la', entao e' la' que ela
+    # conta (mesma logica do relatorio pontual, atribuido a viabilidade).
+    ("/api/oportunidades/", "imobiliaria"),
+    ("/api/oportunidades", "mapa"),
+    # Gestos da tela imobiliaria (rotas no-op da trilha): contam SEMPRE na aba
+    # imobiliaria, mesmo quando disparados do Mapa Territorial — a query `origem`
+    # e' que diz de onde vieram; aqui a pergunta e' "quanto a camada foi usada".
+    ("/api/imobiliaria/evento/", "imobiliaria"),
 )
 
 #: Camada de LABEL (CLAUDE.md §2): valor bruto sem acento; exibição acentuada.
 LABEL_ABA = {
     "executiva": "Executiva",
+    "imobiliaria": "Imobiliária",
     "mapa": "Mapa",
     "oportunidades": "Oportunidades",
     "viabilidade": "Viabilidade",

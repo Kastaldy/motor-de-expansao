@@ -8,6 +8,7 @@ import ExecutiveScreen from './screens/ExecutiveScreen'
 import InicioScreen from './screens/InicioScreen'
 import MapScreen from './screens/MapScreen'
 import OportunidadesScreen from './screens/OportunidadesScreen'
+import OportunidadesImobiliariasScreen from './screens/OportunidadesImobiliariasScreen'
 import PontoScreen from './screens/PontoScreen'
 import ViabilityScreen from './screens/ViabilityScreen'
 import { abasDoPayload, modosLiberados, telaInicial, telaLiberada, type Aba } from './lib/acesso'
@@ -15,12 +16,13 @@ import { api, ApiError } from './lib/api'
 import type { AlvoCaptura } from './lib/captura-mapa'
 import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
-import type { Hex, MunicipioItem, MunicipioPayload } from './lib/types'
+import type { Hex, MunicipioItem, MunicipioPayload, Oportunidade } from './lib/types'
 
 export type Tela =
   | 'inicio'
   | 'ponto'
   | 'oportunidades'
+  | 'oportunidades-imob'
   | 'mapa'
   | 'viabilidade'
   | 'executiva'
@@ -292,6 +294,24 @@ export default function App() {
 
   const voltarAoInicio = useCallback(() => setTela('inicio'), [])
 
+  /**
+   * Imovel que a aba imobiliaria deve abrir ja focado — o canal INVERSO do
+   * `onVerNoMapa` daquela aba. Mora aqui pelo mesmo motivo da foto do mapa: a troca
+   * de tela DESMONTA quem pediu, entao a intencao precisa sobreviver no App. Viaja o
+   * OBJETO inteiro (nao so o id): a rota nacional da aba serve o top-N por residual,
+   * e o imovel clicado no mapa pode estar fora dele. Consumido uma vez, na montagem
+   * da aba (`onFocoAplicado`).
+   */
+  const [focoImovel, setFocoImovel] = useState<Oportunidade | null>(null)
+  const verImovelNaAba = useCallback(
+    (o: Oportunidade) => {
+      if (!telaLiberada('oportunidades-imob', abas)) return
+      setFocoImovel(o)
+      setTela('oportunidades-imob')
+    },
+    [abas],
+  )
+
   return (
     <div
       style={{
@@ -338,6 +358,11 @@ export default function App() {
               janelaDoHex={false}
               /* O hero da tela vazia é o do modo de ponto, publicado pelo `PontoScreen`. */
               semLanding
+              /* `undefined` quando a aba é vetada: o contrato do MapScreen é "ausente =
+                 o botão não aparece" — passar sempre deixaria um botão primário morto. */
+              onVerImovelNaAba={
+                telaLiberada('oportunidades-imob', abas) ? verImovelNaAba : undefined
+              }
             />
             <PontoScreen
               onCapturarMapas={capturarMapas}
@@ -381,6 +406,10 @@ export default function App() {
             estadoInicial={estadoMapa}
             onEstado={setEstadoMapa}
             onInicio={voltarAoInicio}
+            /* Mesmo portão do modo de ponto: aba vetada = botão ausente, não morto. */
+            onVerImovelNaAba={
+              telaLiberada('oportunidades-imob', abas) ? verImovelNaAba : undefined
+            }
           />
         ) : tela === 'executiva' ? (
           // A Executiva NÃO recebe `uf` nem `onUf` (DEC-023): ela abre com a rede do
@@ -393,6 +422,39 @@ export default function App() {
           // Painel restrito (emenda DEC-027). Autônomo como a Executiva: não herda
           // UF/município — a trilha é da rede inteira, não de um recorte do mapa.
           <AcessosScreen onInicio={voltarAoInicio} />
+        ) : tela === 'oportunidades-imob' ? (
+          // Camada de oferta (imóveis de locação joinados ao território). Autônoma:
+          // nacional, filtra por dentro; sem PII (contato do corretor só no dossiê).
+          // "Ver no Mapa" abre o Mapa Territorial no UF/município do imóvel E crava a
+          // COORDENADA do imóvel: pin + hexágono selecionado + câmera no ponto.
+          <OportunidadesImobiliariasScreen
+            onInicio={voltarAoInicio}
+            focoInicial={focoImovel}
+            onFocoAplicado={() => setFocoImovel(null)}
+            onVerNoMapa={(u, m, ponto) => {
+              setUf(u)
+              setMunicipio(m)
+              setEstadoMapa({
+                ...ESTADO_MAPA_VAZIO,
+                uf: u,
+                municipio: m,
+                ...(ponto
+                  ? {
+                      pin: { lat: ponto.lat, lng: ponto.lng, hexId: ponto.hexId },
+                      selecionado: ponto.hexId,
+                      camera: {
+                        longitude: ponto.lng,
+                        latitude: ponto.lat,
+                        zoom: 14,
+                        pitch: 0,
+                        bearing: 0,
+                      },
+                    }
+                  : {}),
+              })
+              navegar('mapa')
+            }}
+          />
         ) : (
           <ViabilityScreen
             ponto={ponto}
