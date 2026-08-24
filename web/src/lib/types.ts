@@ -487,7 +487,15 @@ export interface Oportunidade {
 }
 
 export interface OportunidadesPayload {
+  /** Universo inteiro, independente da UF pedida. */
   total: number
+  /**
+   * Quantas existem NO RECORTE pedido (a UF, ou o universo). É o denominador honesto:
+   * sem ele, filtrar por UF fazia a tela comparar os 1.501 de SP contra os 4.003
+   * nacionais. Opcional porque um backend anterior a 2026-08-24 não o manda.
+   */
+  total_recorte?: number
+  /** UFs do UNIVERSO — nunca as UFs dos `itens`, que são só o recorte capado. */
   ufs: string[]
   itens: Oportunidade[]
 }

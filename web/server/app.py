@@ -7575,8 +7575,20 @@ def _carregar_oportunidades() -> list[dict[str, Any]]:
     df = df[[c for c in _OPORTUNIDADES_COLS if c in df.columns]]
     if "status" in df.columns:
         df = df[df["status"].astype(str).str.lower() != "removido"]
-    if "m1_residual_fitness" in df.columns:
-        df = df.sort_values("m1_residual_fitness", ascending=False, na_position="last")
+    # Ordem do top-N. O DESEMPATE nao e' cosmetico: `m1_residual_fitness` SATURA em
+    # 100,0 para 1.752 dos 4.003 imoveis (44%), medido em 2026-08-24. Sem segundo
+    # critério o corte do `limite` caía DENTRO do empate — o 1o, o 500o e o 501o
+    # tinham todos residual 100,0 — e como `sort_values` usa quicksort (instavel), quais
+    # linhas entravam era arbitrario: tres UFs inteiras (RJ, PR, SC) ficavam fora do
+    # recorte mesmo tendo imoveis com residual 100,0. `m1_residual_total` desempata
+    # porque NAO satura (e' o residual em pessoas, nao normalizado) e e' o mesmo eixo
+    # que o scatter da aba já usa. `kind="stable"` fecha a conta: empate duplo cai na
+    # ordem do parquet, que é reproduzivel, em vez de na sorte do quicksort.
+    ordenar_por = [c for c in ("m1_residual_fitness", "m1_residual_total") if c in df.columns]
+    if ordenar_por:
+        df = df.sort_values(
+            ordenar_por, ascending=False, na_position="last", kind="stable"
+        )
     ticket = _ticket_proj_mensal()
     itens: list[dict[str, Any]] = []
     for r in df.itertuples(index=False):
@@ -7632,8 +7644,21 @@ def _carregar_oportunidades() -> list[dict[str, Any]]:
 
 @app.get("/api/oportunidades")
 def api_oportunidades(uf: str | None = None, limite: int = 500) -> dict[str, Any]:
-    """Oportunidades imobiliarias joinadas ao M1 (top-N por residual). `total` e' o
-    universo inteiro; `itens` vem capado por `limite` (o front filtra o resto)."""
+    """Oportunidades imobiliarias joinadas ao M1 (top-N por residual).
+
+    Tres contagens, e a diferenca entre elas importa:
+      `total`         — o universo inteiro, independente de `uf`;
+      `total_recorte` — quantas existem no recorte pedido (a UF, ou o universo);
+      `len(itens)`    — quantas cabem em `limite` (cap de 3000).
+
+    `total_recorte` existe para a tela poder dizer "mostrando N de M **deste recorte**".
+    Sem ele so' havia `total`, e filtrar por UF fazia a tela comparar 1.501 itens de SP
+    contra os 4.003 nacionais — numero que nao responde pergunta nenhuma.
+
+    `ufs` e' SEMPRE o universo, nunca as UFs dos `itens`: filtrar por UF nao pode
+    encolher o proprio seletor de UF, e o top-N nacional nao contem todas as UFs (o
+    residual satura, ver `_carregar_oportunidades`).
+    """
     todas = _carregar_oportunidades()
     ufs = sorted({o["uf"] for o in todas if o["uf"]})
     recorte = [o for o in todas if o["uf"] == uf.upper()] if uf else todas
@@ -7642,7 +7667,12 @@ def api_oportunidades(uf: str | None = None, limite: int = 500) -> dict[str, Any
     dossies = _dossie_index()
     for o in itens:
         o["tem_dossie"] = o["id"] in dossies
-    return {"total": len(todas), "ufs": ufs, "itens": itens}
+    return {
+        "total": len(todas),
+        "total_recorte": len(recorte),
+        "ufs": ufs,
+        "itens": itens,
+    }
 
 
 @app.get("/api/oportunidades/{imovel_id}/dossie")
