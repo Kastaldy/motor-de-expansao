@@ -49,21 +49,33 @@ def _apontar(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
 
 
 def test_health_ok() -> None:
-    # /api/health: liveness + diagnostico (data_dir etc.); basta o status ok.
+    # /api/health: liveness PUBLICO e mudo; basta o status ok.
     assert pilot_app.health().get("status") == "ok"
 
 
+def test_health_publico_nao_vaza_caminhos() -> None:
+    """Pentest Onda B #8: o /api/health publico devolve EXATAMENTE {"status":"ok"}.
+
+    O inventario (data_dir + caminhos absolutos + descricao de cada parquet) vazava o
+    layout do FS e a camada de M&A a qualquer autenticado, ja' que a rota e' livre.
+    Trava contra readicao silenciosa desses campos no payload publico.
+    """
+    assert pilot_app.health() == {"status": "ok"}
+
+
 def test_health_reporta_os_artefatos_que_a_tela_depende() -> None:
-    """O health tem de ACUSAR artefato ausente — era o unico jeito de ver isso no ar.
+    """O inventario diagnostico tem de ACUSAR artefato ausente — era o unico jeito de
+    ver isso no ar. Migrou do /api/health publico para `_inventario_artefatos()`, servido
+    pela rota admin `/api/acessos/saude-artefatos` (pentest Onda B #8).
 
     Os parquets de crescimento nao vem do git (`.gitignore`: `data/staging/*`) nem da
     imagem (`.dockerignore` corta `data/`): so' chegam pelo bind mount do compose. Sem
     eles `carregar_crescimento*()` devolve None e o passo 4 sai vazio EM SILENCIO —
     nenhum erro, nenhum log, e `scripts/check_artifacts.py` so' enxerga disco local.
     """
-    h = pilot_app.health()
+    h = pilot_app._inventario_artefatos()
 
-    # Contrato antigo intacto: o healthcheck do container faz `curl -fsS` nesta rota.
+    # Contrato do inventario: data_dir + data_ok para o operador auditar o ar.
     assert {"status", "data_dir", "data_ok"} <= set(h)
 
     artefatos = h["artefatos"]
@@ -107,7 +119,7 @@ def test_health_nao_estoura_com_data_dir_inexistente(monkeypatch) -> None:
     fantasma = Path("Z:/mount/que/nao/existe/data")
     _apontar(monkeypatch, fantasma)
 
-    h = pilot_app.health()
+    h = pilot_app._inventario_artefatos()
     assert h["status"] == "ok"
     assert h["data_ok"] is False
     assert h["data_dir"] == str(fantasma)
@@ -158,8 +170,8 @@ def test_health_sobrevive_a_stat_que_levanta(monkeypatch) -> None:
     ):
         monkeypatch.setattr(pilot_app, glob, _CaminhoQueCai(f"/app/data/{glob}"))
 
-    h = pilot_app.health()
-    assert h["status"] == "ok", "o health NAO pode cair junto com o mount"
+    h = pilot_app._inventario_artefatos()
+    assert h["status"] == "ok", "o inventario NAO pode cair junto com o mount"
     assert h["data_ok"] is False
     # O motivo tem de chegar ao operador: sem `erro`, "ok=False" nao distingue
     # "arquivo nunca foi copiado" de "o mount de rede caiu agora".
@@ -403,3 +415,63 @@ def test_distribuicao_de_renda_le_a_coluna_corrigida() -> None:
     assert '_dist("renda_per_capita_setor_2022_calibrada")' not in src, (
         "distribuicao saindo da coluna calibrada reintroduz o `k` na renda exibida"
     )
+
+
+# --- Pentest Onda B #11: floats nao-finitos em /api/viabilidade ----------------
+# Estes casos vivem na camada de validacao/serializacao (o corpo cru com NaN/Infinity),
+# invisivel chamando a funcao de rota direto — precisam de TestClient. Mesmo padrao
+# "pula se httpx ausente" de test_api_skeleton.py; httpx esta no constraints (roda no CI).
+
+_CORPO_VIAB_OK = (
+    '{"lat": -23.5, "lng": -46.6, "m2": 1500, "aluguel": 30000, "demanda": 1600}'
+)
+
+
+def _client_viab():
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    return TestClient(pilot_app.app, raise_server_exceptions=False)
+
+
+def _post_viab_cru(corpo: str):
+    # `content=` manda o JSON CRU: o `json=` do httpx recusa NaN/Infinity no cliente,
+    # e e' justamente o corpo nao-finito que precisamos entregar ao servidor.
+    return _client_viab().post(
+        "/api/viabilidade", content=corpo, headers={"content-type": "application/json"}
+    )
+
+
+@pytest.mark.parametrize(
+    "corpo",
+    [
+        '{"lat": -23.5, "lng": -46.6, "m2": NaN, "aluguel": 30000, "demanda": 1600}',
+        '{"lat": -23.5, "lng": -46.6, "m2": Infinity, "aluguel": 30000, "demanda": 1600}',
+        '{"lat": -23.5, "lng": -46.6, "m2": 1500, "aluguel": Infinity, "demanda": 1600}',
+        '{"lat": NaN, "lng": -46.6, "m2": 1500, "aluguel": 30000, "demanda": 1600}',
+    ],
+)
+def test_viabilidade_nao_finito_e_422_nao_500(corpo: str) -> None:
+    """NaN/Infinity no corpo -> 422 limpo (nao 500 opaco, nem 200 com DRE-lixo)."""
+    resp = _post_viab_cru(corpo)
+    assert resp.status_code == 422, resp.text
+    # O 422 tem de ser parseavel: o handler saneia o input nao-finito para string ANTES
+    # de serializar (senao o json.dumps do Starlette com allow_nan=False estouraria = 500).
+    assert isinstance(resp.json().get("detail"), list)
+
+
+@pytest.mark.parametrize(
+    "corpo",
+    [
+        '{"lat": 999, "lng": -46.6, "m2": 1500, "aluguel": 30000, "demanda": 1600}',
+        '{"lat": -23.5, "lng": -999, "m2": 1500, "aluguel": 30000, "demanda": 1600}',
+    ],
+)
+def test_viabilidade_latlng_fora_do_bound_e_422(corpo: str) -> None:
+    """lat/lng fora de [-90,90]/[-180,180] -> 422 (antes passava com 200)."""
+    assert _post_viab_cru(corpo).status_code == 422
+
+
+def test_viabilidade_corpo_valido_segue_200() -> None:
+    """Baseline: o fix nao pode quebrar o caminho feliz."""
+    assert _post_viab_cru(_CORPO_VIAB_OK).status_code == 200

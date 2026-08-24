@@ -195,10 +195,13 @@ def test_todas_as_rotas_registradas() -> None:
 
 
 def test_health_contrato(empty_data: Path) -> None:
-    h = pilot.health()
-    assert h["status"] == "ok"
-    assert h["data_ok"] is False
-    assert h["data_dir"] == str(empty_data)
+    # /api/health publico e' mudo (pentest Onda B #8); o diagnostico com data_dir/data_ok
+    # migrou para `_inventario_artefatos()` (rota admin /api/acessos/saude-artefatos).
+    assert pilot.health() == {"status": "ok"}
+    inv = pilot._inventario_artefatos()
+    assert inv["status"] == "ok"
+    assert inv["data_ok"] is False
+    assert inv["data_dir"] == str(empty_data)
 
 
 def test_ufs_sem_base_levanta_500(empty_data: Path) -> None:
