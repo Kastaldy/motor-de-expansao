@@ -47,6 +47,10 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 
 const BASEMAP = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 const MAX_PINS = 160
+/* Teto da rota `/api/oportunidades` (cap de 3.000 no servidor). Pedimos o teto porque
+   uma UF inteira cabe folgada nele — a maior, SP, tem 1.501 imoveis. So' o recorte
+   NACIONAL (4.003) estoura, e ai o hero diz que a lista esta capada. */
+const TETO_ITENS = 3000
 
 /* Paleta por tipo, rotulos, custo de ocupacao, R$/m² e o acento MAGENTA vivem em
    `lib/imovel` desde que a camada aparece tambem no Mapa Territorial (pontinhos +
@@ -106,8 +110,15 @@ export default function OportunidadesImobiliariasScreen({
 }) {
   const [itens, setItens] = useState<Oportunidade[] | null>(null)
   const [total, setTotal] = useState(0)
+  /** Quantas existem NO RECORTE pedido (a UF, ou o universo) — o denominador honesto. */
+  const [totalRecorte, setTotalRecorte] = useState(0)
+  /** UFs do UNIVERSO, vindas do payload. Ver `ufs` abaixo para o porquê. */
+  const [ufsUniverso, setUfsUniverso] = useState<string[]>([])
   const [erro, setErro] = useState<string | null>(null)
-  const [ufSel, setUfSel] = useState('')
+  const [carregando, setCarregando] = useState(true)
+  /* O recorte NASCE na UF do imovel focado, e nao e' ajustado depois: assim o primeiro
+     fetch ja' sai com `uf=` e o operador nao paga duas viagens (nacional -> UF). */
+  const [ufSel, setUfSel] = useState(focoInicial?.uf ?? '')
   const [tipoSel, setTipoSel] = useState('')
   const [ordem, setOrdem] = useState<Ordem>('residual')
   const [busca, setBusca] = useState('')
@@ -129,53 +140,75 @@ export default function OportunidadesImobiliariasScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  /* A intencao e' CONSUMIDA na MONTAGEM — nao no sucesso do fetch. Consumir so' no
+     `.then` deixava o foco vivo no App quando a rota falhava ou o operador saia antes
+     da resposta, e uma abertura futura da aba (pelo Dock, dias depois) aplicava um foco
+     fantasma. Mesmo idioma do `modoPendente` do App: a intencao vale para ESTA entrada.
+     O objeto fica no ref para o PRIMEIRO fetch usar — os refetches por UF nao podem
+     reaplicar o foco, senao trocar de estado sequestraria a selecao de volta. */
+  const focoPendente = useRef<Oportunidade | null>(focoInicial)
+  useEffect(() => {
+    if (focoInicial) onFocoAplicado?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /* O recorte e' SERVER-SIDE: trocar de UF refaz o fetch com `uf=`, e o backend filtra
+     ANTES de aplicar o cap. Antes disso a tela baixava o top-500 NACIONAL e filtrava
+     local — e como o residual satura em 100,0 para 44% do universo, o corte caia dentro
+     do empate e tres UFs inteiras (RJ, PR, SC) eram INALCANCAVEIS pela aba, junto com
+     87,5% dos imoveis e 185 dos 203 dossies que existem. Pedimos o TETO da rota (3.000)
+     porque uma UF inteira cabe folgada nele (a maior, SP, tem 1.501). */
   useEffect(() => {
     let vivo = true
-    /* A intencao e' CONSUMIDA aqui, na montagem — nao no sucesso do fetch. Consumir
-       so' no .then deixava o foco vivo no App quando a rota falhava ou o operador
-       saia antes da resposta, e uma abertura futura da aba (pelo Dock, dias depois)
-       aplicava um foco fantasma. Mesmo idioma do `modoPendente` do App: a intencao
-       vale para ESTA entrada; o closure local segue com o objeto para o fetch usar. */
-    if (focoInicial) onFocoAplicado?.()
+    setCarregando(true)
+    setErro(null)
     api
-      .oportunidades()
+      .oportunidades(ufSel || undefined, TETO_ITENS)
       .then((r) => {
         if (!vivo) return
-        /* O foco vindo do mapa pode estar FORA do top-N nacional que a rota serve:
-           o proprio objeto viaja na intencao e entra no conjunto — senao "Ver na
-           aba de imoveis" abriria a tela com OUTRO imovel selecionado. */
+        /* O foco vindo do mapa pode estar FORA do recorte que a rota serve: o proprio
+           objeto viaja na intencao e entra no conjunto — senao "Ver na aba de imoveis"
+           abriria a tela com OUTRO imovel selecionado. */
+        const foco = focoPendente.current
         const itensComFoco =
-          focoInicial && !r.itens.some((i) => i.id === focoInicial.id)
-            ? [...r.itens, focoInicial]
-            : r.itens
+          foco && !r.itens.some((i) => i.id === foco.id) ? [...r.itens, foco] : r.itens
         setItens(itensComFoco)
         setTotal(r.total)
-        if (focoInicial) {
-          // O recorte abre na UF do imovel: e' o territorio que o operador estava lendo.
-          setUfSel(focoInicial.uf)
-          setSel(focoInicial.id)
+        setTotalRecorte(r.total_recorte ?? r.total)
+        setUfsUniverso(r.ufs)
+        if (foco) {
+          setSel(foco.id)
+          focoPendente.current = null // consumido: refetch por UF nao reaplica
         } else {
+          /* Seleciona o 1o do recorte novo. Automatico: NAO passa por
+             `selecionarImovel`, entao nao vira rastro (DEC-037). */
           setSel(r.itens[0]?.id ?? null)
         }
       })
       .catch((e: ApiError) => vivo && setErro(e.message))
+      .finally(() => {
+        if (vivo) setCarregando(false)
+      })
     return () => {
       vivo = false
     }
-    // So na MONTAGEM, de proposito: a tela desmonta ao sair (render condicional do
-    // App), entao o foco e' lido uma unica vez, aqui — mesmo idioma da foto do mapa.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [ufSel])
 
-  const ufs = useMemo(() => Array.from(new Set((itens ?? []).map((o) => o.uf))).sort(), [itens])
+  /* O seletor de UF vem do UNIVERSO (payload), nunca dos itens carregados. Derivar dos
+     itens tinha duas consequencias: (a) o seletor mostrava so' as UFs que caíram no
+     recorte — 3 de 6 —, e (b) escolher uma UF encolhia o proprio seletor a um item,
+     tornando impossivel voltar para outra. */
+  const ufs = ufsUniverso
   const tipos = useMemo(
     () => Array.from(new Set((itens ?? []).map((o) => o.tipo).filter(Boolean))).sort(),
     [itens],
   )
 
   const filtrados = useMemo(() => {
+    /* SEM filtro por UF aqui: o recorte de estado e' SERVER-SIDE (ver o fetch acima).
+       Filtrar de novo aqui seria inocuo hoje e uma armadilha amanha — esconderia o
+       imovel focado vindo do mapa se ele fosse de outra UF. */
     let xs = itens ?? []
-    if (ufSel) xs = xs.filter((o) => o.uf === ufSel)
     if (tipoSel) xs = xs.filter((o) => o.tipo === tipoSel)
     if (soVisitas && visitas.size) xs = xs.filter((o) => visitas.has(o.id))
     if (busca.trim()) {
@@ -191,7 +224,7 @@ export default function OportunidadesImobiliariasScreen({
       return (rsM2(a) ?? Infinity) - (rsM2(b) ?? Infinity)
     })
     return ord
-  }, [itens, ufSel, tipoSel, busca, ordem, soVisitas, visitas])
+  }, [itens, tipoSel, busca, ordem, soVisitas, visitas])
 
   useEffect(() => {
     if (filtrados.length && !filtrados.some((o) => o.id === sel)) setSel(filtrados[0].id)
@@ -263,6 +296,13 @@ export default function OportunidadesImobiliariasScreen({
               <>
                 <b className="num" style={{ color: 'var(--tx-strong)' }}>{num(total)}</b> imóveis de locação cruzados com o território do M1.{' '}
                 <b className="num" style={{ color: ACC_TX }}>{num(filtrados.length)}</b> sobrevivem ao recorte atual.
+                {totalRecorte > TETO_ITENS && (
+                  <>
+                    {' '}A lista carrega os <b className="num">{num(TETO_ITENS)}</b> primeiros por
+                    residual, de <b className="num">{num(totalRecorte)}</b> — escolha um estado para
+                    ver o recorte inteiro.
+                  </>
+                )}
               </>
             )}
           </p>
@@ -282,6 +322,13 @@ export default function OportunidadesImobiliariasScreen({
         <Select label="Ordenar por" value={ordem} onChange={(v) => { setOrdem(v as Ordem); registrarFiltro('ordem', v) }} maxWidth={200} buscavel={false} options={ORDENS} />
         <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar bairro, cidade, título…" aria-label="Buscar oportunidade"
           style={{ flex: 1, minWidth: 170, maxWidth: 340, height: 34, padding: '0 12px', background: 'var(--surf-input)', border: '1px solid var(--line-mid)', borderRadius: 'var(--r-md)', color: 'var(--tx-strong)', font: '500 13px/1 var(--f-ui)' }} />
+        {carregando && itens != null && (
+          /* Refetch por UF: a lista antiga fica na tela (sem piscar) e o spinner diz que
+             o recorte esta trocando. `itens == null` ja' cobre a PRIMEIRA carga abaixo. */
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, color: 'var(--tx-muted)', font: '500 12px/1 var(--f-ui)' }}>
+            <Spinner /> trocando o recorte…
+          </span>
+        )}
         {visitas.size > 0 && (
           <button type="button" onClick={() => { setSoVisitas((v) => !v); registrarFiltro('marcados', soVisitas ? 'off' : 'on') }} aria-pressed={soVisitas}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 'var(--r-md)', cursor: 'pointer',
