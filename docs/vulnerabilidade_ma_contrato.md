@@ -955,8 +955,9 @@ publicada e morta. São **três** condições, e elas são **independentes** —
 as outras:
 
 1. **A camada existe para o operador.** Os dois parquets nomeados presentes em produção **e lidos**
-   — prova por `GET /api/municipio/{uf}/{municipio}` (`independentes.disponivel = true`,
-   `pins.redes_disponivel = true`), **nunca** por `/api/health`, que só enxerga disco. → BLK-MA-19.
+   — prova por `GET /api/municipio/{uf}/{municipio}`: `independentes.disponivel = true` e ao menos
+   um item de `pins.concorrentes` com `"diag": true`. **Nunca** por `/api/health`, que só enxerga
+   disco. (`pins.redes_disponivel` só existe em imagem ≥ BLK-MA-19.) → BLK-MA-19.
 2. **O relógio está ligado.** O snapshot semanal rodando na VPS, com partições
    `semana=AAAA-SS` acumulando. → BLK-MA-06. **Não** é pré-requisito de (1): os artefatos são
    materializáveis com zero semanas de série.

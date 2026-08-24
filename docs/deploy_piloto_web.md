@@ -370,8 +370,10 @@ Abrir `https://piloto.ultra-expansao.tech` → login Authelia → piloto.
       Os leitores memoizam a ausência (ver o aviso do §2), então health verde + pins
       invisíveis é um estado possível e foi o que ocorreu no BLK-MA-19. A prova é a rota
       que serve a camada: `GET /api/municipio/{uf}/{municipio}` com
-      `independentes.disponivel = true` e `pins.redes_disponivel = true`. Na tela: a
-      **pílula "Ver academias independentes"** aparece no drill-down municipal.
+      `independentes.disponivel = true` e ao menos um item de `pins.concorrentes` com
+      `"diag": true`. Na tela: a **pílula "Ver academias independentes"** aparece no
+      drill-down municipal. (`pins.redes_disponivel` só existe em imagem ≥ BLK-MA-19 —
+      ausente **não** é falha; ver a nota em `docs/infra_producao.md`.)
 - [ ] `https://piloto.ultra-expansao.tech` exige login (Authelia) e abre o SPA depois.
 - [ ] Mapa Territorial carrega uma UF (a 1ª leitura carrega a partição inteira, demora).
 - [ ] Viabilidade calcula um ponto e mostra o **banner "preliminar"**.

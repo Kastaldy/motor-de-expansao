@@ -1500,6 +1500,28 @@ produção e exige DEC + gate humano.
 recorte `--fontes` no materializador, e a seção de runbook em `docs/infra_producao.md` com a linha
 exata a inserir no `run_weekly_90.sh`.
 
+> **[2026-08-24 / BLK-MA-19] Dois defeitos do script corrigidos ANTES da aplicação — o bloco teria
+> falhado no passo (2).** Achados na auditoria do handoff, os dois no caminho exato do modo seco:
+>
+> 1. **`HOST_CONCORRENTES` apontava para `/opt/motor-expansao/data/concorrentes`, que não existe** —
+>    o script abortaria na checagem de diretório. Default corrigido para **`/opt/gymscraping`**, o
+>    clone da coleta, único lugar com `Unidades/unidades_<rede>.csv`, que é o padrão que o glob
+>    procura (`snapshots.py`). **O palpite seguinte é pior:**
+>    `/opt/motor-expansao/concorrentes` EXISTE mas guarda os CSVs **achatados**, sem o subdiretório —
+>    ali o glob não casa e o dry-run devolve `linhas_snapshot = 0` **sem erro**, que se lê como "não
+>    há dado" em vez de "caminho errado". Era exatamente o sintoma que o passo (2) manda investigar,
+>    com o diagnóstico apontando para o lugar errado.
+> 2. **A leitura de `API_IMAGE` no `.env` não tolerava CRLF** (`cut -d= -f2-` sem `tr -d '\r'`),
+>    enquanto `run_relatorio_acessos.sh` já tolerava. O `.env` da VPS veio por rsync de Windows: o
+>    `\r` entrava no nome da imagem e o `docker run` morria com `invalid reference format`, mensagem
+>    que sugere digest torto.
+>
+> **Consequência para a aplicação:** a cópia no checkout `/opt/motor-expansao/app` é a de 2026-08-11
+> e **tem os dois defeitos** — aquele checkout não é atualizado por ninguém (o runner não faz
+> `git pull`, de propósito). O passo (1) deixa de ser `cp` do checkout e passa a ser **`scp` do
+> script corrigido**, entregue no pacote de handoff. E o `install -d -m 0755
+> /opt/motor-expansao-infra` passa a ser passo explícito: nada no repo cria esse diretório.
+
 **Por que o runner não é um PR.** O `run_weekly_90.sh` vive em `/opt/gymscraping-infra/` **na VPS,
 fora de qualquer repo** (`docs/infra_producao.md`). Versionar o passo como script próprio reduz a
 superfície não versionada a **uma linha** de invocação — que é o que o Felipe aplica, com o
