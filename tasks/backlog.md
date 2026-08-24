@@ -1589,14 +1589,14 @@ sem CRÍTICO. **Nenhum comando executado na VPS por agente.**
 | Campo | Valor |
 |---|---|
 | **Criticidade** | **Alta** — leva IDENTIDADE de estabelecimento (nome + coordenada de 19.329 academias) para um ambiente publicado. READ-ONLY sobre o M1: nenhum artefato oficial, score, peso ou `config.py` é tocado; a camada é opcional por construção e o rollback é apagar dois arquivos. |
-| **Prioridade** | **Alta.** É a única coisa entre a epic BLK-MA e o operador: BLK-MA-15 e DEC-035 estão entregues, testados e **publicados na imagem**, e mesmo assim a camada não existe para ninguém. |
+| **Prioridade** | **Alta.** É a única coisa entre a epic BLK-MA e o operador: BLK-MA-15 e DEC-035 estão entregues, testados e mergeados na `main`, e mesmo assim a camada não existe para ninguém. |
 | **Esteira** | Builder (bookkeeping + verificador + docs) → QA → `[aplicação na VPS: passo MANUAL, comando a comando — §6]`. |
 | **Status** | **AGUARDANDO APLICAÇÃO NA VPS.** Achado de 2026-08-24: `/opt/motor-expansao/data/staging/` não tem `vulnerabilidade_ma_nomeadas.parquet` nem `vulnerabilidade_ma_redes.parquet`. Os pins nunca chegaram ao ar. |
 | **Depende de** | BLK-MA-15 e BLK-MA-17 metade 1 (concluídos) — são eles que criam os dois artefatos e os leitores. **NÃO depende do BLK-MA-06:** os parquets foram materializados com dado real e zero semanas de série. |
 | **Autonomia** | **manual (NÃO loop-safe)** — toca produção. NUNCA marcar loop-safe. |
 
-**O defeito, medido.** O código dos pins entrou na `main` em 2026-08-19 (#243) e está na imagem web
-publicada; `web/server/app.py` define `NOMEADAS_PATH`/`REDES_PATH` e já os observa no `/api/health`.
+**O defeito, medido.** O código dos pins entrou na `main` em 2026-08-19 (#243) e foi publicado no
+GHCR; `web/server/app.py` define `NOMEADAS_PATH`/`REDES_PATH` e já os observa no `/api/health`.
 Os dois parquets, porém, são **gitignored** (`.gitignore:19`) e cortados da imagem
 (`.dockerignore`): em produção eles só chegam pelo bind mount `data/staging:ro`
 (`docker-compose.prod.yml`). Ninguém foi obrigado a levá-los — antes deste bloco,
@@ -1626,14 +1626,33 @@ com o container de pé deixa o health verde (ele faz `exists()` a cada chamada) 
 porque o leitor já guardou o `None`. **Restart do `web` é obrigatório**, e o critério de aceite não
 pode ser o health.
 
+> **"Publicado no GHCR" não é "rodando na VPS", e este bloco depende do segundo.** O deploy é
+> **manual por digest** (§6), então a imagem em execução pode ser anterior a #243 — e nesse caso
+> enviar o dado **não acende nada**, porque o processo no ar não conhece os dois caminhos. A
+> revisão em execução **nunca foi verificada** ao abrir este bloco; virou pré-condição do runbook:
+> `docker inspect motor_expansao_web --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'`,
+> que tem de devolver commit ≥ #243. Se vier anterior, o trabalho **não é este bloco** — é deploy de
+> imagem primeiro.
+
 **Fora de escopo.** O cron do snapshot (**BLK-MA-06**, bloco próprio, aplicado na mesma janela mas
-com verificação separada); qualquer troca de imagem (o código já está publicado; deploy mínimo é
-`scp` + `restart`, sem tocar o `.env`); o entregável comercial (**BLK-MA-05**); gate de aba próprio
+com verificação separada); **troca de imagem** — que fica de fora **condicionalmente**: se a
+verificação acima mostrar revisão ≥ #243, o deploy é só `scp` + `restart`, sem tocar o `.env`; se
+mostrar anterior, o deploy de imagem é pré-requisito e não parte deste bloco; o entregável comercial
+(**BLK-MA-05**); gate de aba próprio
 para a camada — decisão de 2026-08-24 foi **manter o gate de hoje** (`/api/municipio/` liberado por
 `{mapa, oportunidades}`) e conferir na aplicação se existe usuário com `oportunidades` **sem**
 `mapa`; se existir, abre-se bloco próprio no molde da DEC-037.
 
-**Critério de aceite.** (1) Os dois parquets presentes em `/opt/motor-expansao/data/staging/` com os
+**Como o dado chega a quem aplica.** Os dois parquets **não viajam pelo repositório** e não existem
+em backup fora da estação que os gerou — nem `docs/backup_restore.md` cobre `data/staging/`. Quem
+executa na VPS recebe um **pacote** (os dois parquets + `CHECKSUMS.md5` + o
+`run_snapshot_concorrentes.sh` corrigido), por canal interno. **Regenerar do outro lado não é
+alternativa:** os insumos também são gitignored, e sem eles a cadeia grava artefatos **vazios** — o
+`/api/health` para de acusar e a camada fica invisível **com sinal verde**, que é pior que o estado
+de hoje.
+
+**Critério de aceite.** (0) A revisão da imagem em execução é ≥ #243 — se não for, este bloco não
+começa; (1) Os dois parquets presentes em `/opt/motor-expansao/data/staging/` com os
 MD5 acima; (2) `web` reiniciado; (3) **prova funcional em `/api/municipio/{uf}/{municipio}`** —
 `independentes.disponivel = true` com `total > 0` e ≥1 pin de concorrente com `diag: true`, **não**
 o `/api/health`; (4) a pílula de independentes visível na tela, no drill-down municipal; (5)
