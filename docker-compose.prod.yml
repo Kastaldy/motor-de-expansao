@@ -86,8 +86,7 @@ services:
       # em silencio: `carregar_crescimento*()` devolve None quando o arquivo nao existe.
       # Eles nao vem na imagem (`.dockerignore` corta `data/`) nem no git
       # (`.gitignore`: `data/staging/*`); so chegam por este mount. Como sao gerados:
-      # `data/reports/crescimento/README.md`. Conferir no ar: `GET /api/acessos/saude-artefatos`
-      # (inventario saiu do /api/health publico p/ rota admin — pentest Onda B #8).
+      # `data/reports/crescimento/README.md`. Conferir no ar: `GET /api/health`.
       - /opt/motor-expansao/data/staging:/app/data/staging:ro    # mercado/SAM + concorrentes/Ultra + crescimento (passo 4)
       - /opt/motor-expansao/data/ultra:/app/data/ultra:ro        # branding do PDF (opcional)
       - /opt/motor-expansao/concorrentes:/app/concorrentes:ro    # logos de pins (logo_<rede>.png)
@@ -180,9 +179,8 @@ services:
       # responsabilidade de atualizar. Sobe por scp; ver docs/deploy_piloto_web.md.
       #
       # Sem o mount a aba responde 200 com lista VAZIA e a tela diz "Nada no recorte" — a
-      # mesma frase de um filtro que nao casou. Por isso o artefato entrou no inventario
-      # `/api/acessos/saude-artefatos` (`artefatos.oportunidades_imobiliarias`): e' onde a
-      # falta vira sinal (saiu do /api/health publico — pentest Onda B #8).
+      # mesma frase de um filtro que nao casou. Por isso o artefato entrou no
+      # `/api/health` (`artefatos.oportunidades_imobiliarias`): e' onde a falta vira sinal.
       #
       # O DOSSIE (PDF do coletor) carrega contato de corretor, e por isso a rota que o serve
       # e' a unica da camada restrita a aba `imobiliaria`; a LISTA e' agregada e sem PII, e
@@ -226,16 +224,14 @@ services:
       # Idem ao servico acima: alem de mercado/SAM, concorrentes/Ultra e renda
       # domiciliar, este mount carrega os dois parquets de crescimento do passo 4.
       # Sem eles a camada "Como as cidades estao indo" fica vazia sem erro nenhum.
-      # Conferir no ar: `GET /api/acessos/saude-artefatos` -> `artefatos.crescimento_*`
-      # (rota admin; saiu do /api/health publico — pentest Onda B #8).
+      # Conferir no ar: `GET /api/health` -> `artefatos.crescimento_*`.
       - /opt/motor-expansao/data/staging:/app/data/staging:ro    # mercado/SAM + concorrentes/Ultra + renda domiciliar + crescimento
       - /opt/motor-expansao/data/ibge:/app/data/ibge:ro          # malha municipal
       - /opt/motor-expansao/data/ultra:/app/data/ultra:ro        # branding do PDF
       - /opt/motor-expansao/concorrentes:/app/concorrentes:ro    # logos de pins (logo_<rede>.png)
       # Camada imobiliaria: `viaveis.parquet` + `dossies/` do coletor (outro repo, cadencia
       # propria). READ-ONLY como todo dado. Ausente = aba vazia SEM erro; confira no ar com
-      # `GET /api/acessos/saude-artefatos` -> `artefatos.oportunidades_imobiliarias`
-      # (rota admin; saiu do /api/health publico — pentest Onda B #8).
+      # `GET /api/health` -> `artefatos.oportunidades_imobiliarias`.
       - /opt/motor-expansao/data/oportunidades:/app/data/oportunidades:ro
       # Mounts de ESCRITA do piloto — os UNICOS, ambos fora de /app/data de proposito:
       # cadastro (DEC-023) e trilha de acesso (DEC-027). Host: `chown 1000:1000` (appuser).
