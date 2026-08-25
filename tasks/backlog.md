@@ -1712,6 +1712,140 @@ o `/api/health`; (4) a pílula de independentes visível na tela, no drill-down 
 
 ---
 
+### BLK-MA-20 — TotalPass entra como FONTE do score (o arquivamento foi da NOTA, não da fonte)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — muda o UNIVERSO de uma camada paralela e reordena o ranking em escala sem precedente aprovado (Spearman `0,692`; a DEC-034 tratou `0,991` como material). READ-ONLY sobre o M1: não toca `score_priorizacao`, pesos do M1, `config.py`, `pipelines/m1` nem artefato oficial. **Exige DEC própria antes do Builder** (molde DEC-033/034). |
+| **Prioridade** | **Alta, e a janela é agora.** O S1 hoje tem **variância zero** — 6.753 de 6.753 hexes com `n_agregadores_no_hex = 1` — e por isso o score é pressão renomeada. O TotalPass é a única coisa disponível que devolve variância a um componente ATIVO, e isso **independe de série**. E o custo de absorver a reordenação cresce com o histórico: hoje há **uma** partição local e **zero** em produção. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE humano — DEC própria]` → Builder → QA. |
+| **Status** | Pendente — **levantamento concluído em 2026-08-24**, com números medidos (abaixo). Nenhuma linha de produção escrita. |
+| **Depende de** | **BLK-MA-06** (o cron; sem relógio o S3/S4 do TotalPass nunca amadurece) e um **bloco novo do cron MENSAL dos agregadores**, que não existe e não tem dono — ver "O caminho". |
+| **Autonomia** | **manual (NÃO loop-safe)** — tem gate humano (DEC) e depende de cron de produção. |
+
+**A pergunta que abriu o bloco (Vinicius, 2026-08-24), e por que ela procede.** A DEC-026 tornou a
+nota do WellHub **coluna-fato SEM PESO**. Logo, a ausência permanente de nota no TotalPass é
+**irrelevante para o score** — e a assimetria que o spike do BLK-MA-10 declarou "permanente" afeta
+uma coluna de fato, não o ranking. Verificado: o spike arquivou o TotalPass literalmente **"como
+fonte de NOTA"** (`data/reports/spike_totalpass_nota_2026-08-05.md:101`); **nenhuma DEC de 001 a 037
+o proíbe como FONTE**, e o contrato já o declara agregador de primeira classe
+(`FONTES_AGREGADORES = ("totalpass", "wellhub")`, `contrato.py:76`), com entrada própria em
+`CAMPOS_HASH_POR_FONTE` e filtro de ruído específico dele. O schema do sinal 1 tem
+`fontes_presentes_no_hex` como *"subconjunto de FONTES_AGREGADORES"*: o desenho **espera** os dois.
+
+**O bloqueio não é o que parecia — CORREÇÃO de premissa, medida em 2026-08-24.** O feed do TotalPass
+**EXISTE**: 27 CSVs, **15.986 linhas**, `data_coleta = 2026-06-01` em 100% delas, schema de 10
+colunas (sem as duas de rating), em `GymScraping/TotalPass/csvs/` — o repo irmão do coletor. O que
+não existe é `motor-de-expansao/concorrentes/totalpass/`, que é o default de onde o snapshot lê.
+**O bloqueio de dado é uma CÓPIA de 27 arquivos**, não uma coleta a fazer. O CSV já sai pós-filtro de
+musculação, então é o universo "V2" da DEC-025, comparável ao WellHub.
+
+**Código: zero mudança para RODAR.** A cadeia inteira (`ler_feeds` → `limpar_ruido` →
+`derivar_chave` → `montar_snapshot` → `extrair_presenca_agregador` → `_pressao_por_academia` →
+`calcular_score_vulnerabilidade`) roda com as duas fontes sem editar uma linha; `montar_snapshot` já
+preenche a nota com `NA` para TotalPass. **Nenhum teste quebra** — as fixtures da suíte já são de
+duas fontes (158 ocorrências de `totalpass` em `tests/`), e um teste hoje `skipped` passa a rodar.
+
+#### O preço não está onde a pergunta supõe: o S6 é benigno, o S1 é que detona
+
+| efeito | Spearman contra hoje | top-100 |
+|---|---|---|
+| só o **S6** (oferta maior) | `0,985` | troca **9** |
+| **total**, com o S1 solto | **`0,692`** | troca **100 de 100** |
+
+Hoje, no regime `{s1,s6}`, o S1 tem peso efetivo **0,600** e contribui CONSTANTE (`v1 ≡ 0,5`), o que
+reduz o score a `30 + 40·v6`. Soltar o `v1` sem mais nada **não cria um discriminador — cria um
+degrau**: como `_V1_POR_N_AGREGADORES = {2: 0.0, 1: 0.5}` só mapeia para baixo, as duas populações
+caem em faixas quase disjuntas — `40·v6` (teto **38,6**) e `30 + 40·v6` (piso **30,0**) —, e
+**91,7% das academias ficariam acima do teto do outro grupo** independentemente da pressão real.
+
+**E o S1 estaria errado no GRÃO — é a DEC-029 se repetindo.** O `v1` é medido por HEXÁGONO. Com uma
+fonte só isso é vacuoso; com duas vira o erro dominante: o hex diz "2 agregadores" para **89,60%**
+das academias do WellHub, mas só **50,35%** têm gêmea do TotalPass a ≤50 m — **falso "2 agregadores"
+em 7.603 linhas (39,33% do universo)**, num sinal de peso seis vezes o do S6.
+
+**O que desarma: o tempo.** O mesmo TotalPass entra dominante hoje e informativo depois.
+
+| regime | peso efetivo do S1 |
+|---|---|
+| `s1,s6` — hoje | **0,600** |
+| `s1,s3,s6` | 0,250 |
+| `s1,s3,s4,s6` — completo | **0,176** |
+
+**Ganho real de universo, menor que o bruto.** Dos 14.281 independentes do TotalPass, **67,39% já
+estão no funil pelo WellHub**. Alvos genuinamente novos: **da ordem de 3.290** (+17% a +24% no
+universo, conforme a dedup case por distância ou também por nome).
+
+#### O caminho, na ordem
+
+0. **Copiar o feed** — 27 CSVs para `concorrentes/totalpass/csvs/`, com `PROVENIENCIA.md` no molde do
+   WellHub. Aqui **e** na VPS. Não exige nada além do ato.
+1. **Bloco NOVO do cron MENSAL dos agregadores** — não existe dono (o BLK-MA-06 o põe em "fora de
+   escopo"; o runbook de infra o lista como "Pendentes (futuro)"). **Resolver ali um defeito que não
+   está escrito em lugar nenhum:** se o cron semanal e o mensal caírem na mesma semana ISO, o segundo
+   **APAGA** o primeiro — `escrever_particao_semana` usa `existing_data_behavior="delete_matching"`
+   e não há caminho de merge no pacote.
+2. **Calibrar `DEDUP_INDEPENDENTES_M`** com o primeiro par real. Hoje o valor é **arbitrado e não
+   calibrado**, declarado assim de propósito por não haver par TP×WH. A CDF medida: p25 `1,7 m` ·
+   p50 `13,6 m` · p75 `95,0 m` · p90 `367,2 m` — os 50 m de hoje pegam ~67% dos pares. Subir o
+   limiar sem matcher de nome apaga vizinho real, então calibrar provavelmente significa **portar
+   `identidade.mesma_unidade` para independentes**.
+3. **Decidir o GRÃO do S1** — é o passo que mais importa (ver os 39,33% acima). Opções: manter no
+   hex e aceitar o viés; medir por academia (molde da DEC-029); ou a via abaixo.
+4. **DEC Alta**, declarando o deslocamento medido e os **5 bumps obrigatórios**:
+   `presenca_agregador_v1→v2`, `score_v7→v8`, `pressao_v4→v5`, `alvos_ma_v4→v5`, `nomeados_v5→v6`
+   (candidatos: `redes_ma_nomeadas`, `snapshots_concorrentes_v3→v4`, `churn_staleness`).
+
+> **Terceira via a avaliar no gate — entrar com o TotalPass tratando o S1 como FATO SEM PESO**, no
+> molde exato da DEC-026 com a nota. Ganha-se o universo novo e a dedup calibrada com par real,
+> **sem** deixar um sinal binário de grão errado sequestrar 60% do ranking; o S1 volta a pesar
+> quando S3/S4 maturarem e ele valer 0,176 em vez de 0,600.
+
+**Fora de escopo.** A NOTA do TotalPass (arquivada, e a re-sonda de 2026-08-24 reconfirmou que não
+existe — o caminho para ela é comercial, não técnico); o BLK-MA-07 (reputação externa); qualquer
+peso do D4, que segue CONGELADO; e o cron mensal em si, que é o bloco do passo 1.
+
+**Riscos e o que fazer com eles.**
+- **S4 falso positivo em massa** se o feed de 01/06 for fotografado sem recoleta: a defasagem é de
+  ~10-11 semanas contra `STALE_SEMANAS = 12`, e a própria infra registra que fotografar feed não
+  recoletado é "pior do que não fotografar". → Recoletar o TotalPass **antes** da primeira foto, ou
+  entrar só com S1+S6 e ligar o S4 dele após a 2ª coleta real.
+- **Dupla contagem a jusante:** a dedup existe só do lado da OFERTA. `n_independentes_vulneraveis`
+  conta `chave_snapshot`, que embute a `fonte` → o CSV do comercial somaria 2 para a mesma academia,
+  e o pin do piloto desenharia dois. → Precisa de colapso explícito por estabelecimento.
+- **O corte por nota do BLK-MA-05 excluiria em silêncio o universo TotalPass inteiro** — deixa de ser
+  filtro de qualidade e vira filtro de FONTE.
+- **ToS de marca:** reter nome de estabelecimento do TotalPass num produto **publicado** (os pins do
+  piloto) é ato diferente da sonda read-only; os ToS restringem uso comercial de marca e reprodução
+  de conteúdo. Ninguém avaliou o caso publicado. → Uma linha na DEC.
+- **Nada carimba no parquet quais fontes a partição fotografou** (`fontes_lidas` só existe na
+  auditoria impressa), então "TotalPass não fotografado" fica indistinguível de "lido e vazio". →
+  Barato, cabe no mesmo bump.
+
+> **Dois números do levantamento que NÃO se sustentaram, registrados para ninguém os repetir.**
+> (1) *"A Smart Fit é invisível para a camada de M&A"* — **falso**: ela é a maior rede de
+> `concorrentes_mapeados.parquet`, com **1.000 unidades**, o dobro das 504 do TotalPass, e é esse o
+> insumo do S6. A pressão já a conta.
+> (2) *"A retenção de 26 semanas contra `MIN_SEMANAS = 8` faria a série nunca amadurecer em cadência
+> mensal"* — **falso**: `podar_snapshots` é **keep-newest-N sobre PARTIÇÕES**
+> (`candidatos[: len(candidatos) - 26]`), não poda por idade de calendário. Com coleta mensal
+> guardam-se as 26 partições mais recentes = 26 meses, e a série chega a 8 observações em ~8 meses.
+
+**Procedência dos números.** Verificados de primeira mão em 2026-08-24: o feed do TotalPass (27
+CSVs / 15.986 linhas / `data_coleta`), a contagem da Smart Fit nas três bases, os pesos efetivos por
+regime, as faixas `30–68,6` × `0–38,6` e os 91,7%, o `keep-newest-N` da poda e o `delete_matching`.
+**Medidos pela auditoria e NÃO re-verificados linha a linha:** os Spearman, a interseção de hexes,
+os 92,24% / 39,33%, os ~3.290 alvos novos e a CDF da dedup. O critério de aceite abaixo exige
+re-medir esses antes da DEC.
+
+**Critério de aceite.** (1) Os números do parágrafo anterior marcados como não re-verificados são
+**re-medidos** e entram na DEC com script reproduzível; (2) a decisão de GRÃO do S1 está tomada e
+justificada com número; (3) a dedup está calibrada contra par real, com o efeito medido antes e
+depois; (4) os 5 bumps aplicados e a quebra de comparabilidade declarada; (5) nenhum peso do D4
+alterado; (6) READ-ONLY sobre o M1; (7) suíte verde e `loop_guard` sem CRÍTICO.
+
+---
+
 ### BLK-MA-07 — Reputação externa para o universo sem nota in-app (Google Places)
 
 | Campo | Valor |
