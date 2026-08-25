@@ -474,6 +474,19 @@ def test_cadastro_sem_volume_devolve_503(sem_dados: Path) -> None:
     assert erro.value.status_code == 503
 
 
+def test_cadastro_unidade_desconhecida_devolve_404(rede: Path) -> None:
+    """Pentest Onda B #9: id fora da rede E fora do cadastro -> 404, sem unidade-fantasma."""
+    with pytest.raises(HTTPException) as erro:
+        pilot.rede_cadastro_atribuir(
+            "unidade-fantasma-zz",
+            pilot.CadastroIn(versao=1, campos={"consultor": "A"}),
+            remote_user="felipe",
+        )
+    assert erro.value.status_code == 404
+    # A chave-fantasma nao pode ter sido gravada.
+    assert "unidade-fantasma-zz" not in rede_cadastro.ler_cadastro(pilot.CADASTRO_DIR).unidades
+
+
 def test_escrita_do_cadastro_nao_toca_o_data_dir(rede: Path) -> None:
     """A prova que autoriza o mount `:rw`: a escrita nao sai do diretorio do cadastro."""
     fora = {
@@ -487,8 +500,12 @@ def test_escrita_do_cadastro_nao_toca_o_data_dir(rede: Path) -> None:
     assert {p: p.stat().st_mtime_ns for p in fora} == fora
 
 
-def test_compose_monta_o_cadastro_como_unico_volume_de_escrita() -> None:
-    """Infra: todo volume do `web` e' `:ro`, menos o cadastro."""
+def test_compose_monta_somente_cadastro_e_trilha_como_volumes_de_escrita() -> None:
+    """Infra: todo volume do `web` e' `:ro`, menos cadastro (DEC-023) e trilha (DEC-027).
+
+    A lista de escritas e' EXATA de proposito: um terceiro `:rw` so entra aqui com
+    DEC propria, como aconteceu com a trilha de acesso.
+    """
     compose = (_REPO / "docker-compose.prod.yml").read_text(encoding="utf-8")
     bloco = compose.split("motor_expansao_web", 1)[1].split("caddy:", 1)[0]
     montagens = [
@@ -497,9 +514,13 @@ def test_compose_monta_o_cadastro_como_unico_volume_de_escrita() -> None:
         if linha.strip().startswith("- /opt/motor-expansao")
     ]
     escritas = [m for m in montagens if m.endswith(":rw")]
-    assert escritas == ["/opt/motor-expansao/cadastro:/app/cadastro:rw"]
+    assert escritas == [
+        "/opt/motor-expansao/cadastro:/app/cadastro:rw",
+        "/opt/motor-expansao/logs/acesso:/app/logs/acesso:rw",
+    ]
     assert all(m.endswith((":ro", ":rw")) for m in montagens), "montagem sem modo explicito"
     assert 'MOTOR_CADASTRO_DIR: "/app/cadastro"' in compose
+    assert 'MOTOR_ACESSO_LOG_DIR: "/app/logs/acesso"' in compose
     assert "/opt/motor-expansao/data" not in "".join(escritas), (
         "nenhum artefato do M1 pode ficar sob mount de escrita"
     )

@@ -273,3 +273,59 @@ def test_dataset_enriquecido_particionado_bate_com_runtime_para_uf(tmp_path):
         )
     # nenhuma coluna do frame de runtime se perde no round-trip (uf reconstruida da particao)
     assert set(runtime.columns) <= set(materializado.columns)
+
+
+def test_read_censo_trace_le_as_tres_fontes_incluindo_a_nacional(tmp_path, monkeypatch):
+    """Regressao: o dataset enriquecido (que o piloto web le) precisa do censo NACIONAL.
+
+    Ate 2026-08-25 `_read_censo_trace_frame` iterava so [core, expandido] -- as 6 UFs
+    de CENSO_UFS. O parquet nacional (21 UFs) existia e nunca foi ligado, entao
+    `renda_per_capita_setor_2022_calibrada` chegava a 18,1% dos hexagonos em vez de
+    84,4%, e a tela ficava sem renda intraurbana em 21 UFs. Mesma familia do furo de
+    `keep_cols` em modelo_hibrido_expansao. A ordem core > expandido > nacional e a
+    precedencia da deduplicacao e nao pode inverter.
+    """
+    from motor_expansao.pipelines.m1 import fase1_bi_exports as bi
+
+    def _fonte(hex_id: str, uf: str, renda: float, score: float) -> pd.DataFrame:
+        return pd.DataFrame(
+            [{
+                "hex_id": hex_id,
+                "uf": uf,
+                "cod_municipio": "1",
+                "nome_municipio": "X",
+                "pop_total_setor_2022": 1000.0,
+                "score_setor_2022_calibrado": score,
+                "renda_per_capita_setor_2022_calibrada": renda,
+                "densidade_pop_setor_hab_km2": 100.0,
+                "coverage_pct_setor_2022": 95.0,
+            }]
+        )
+
+    core = tmp_path / "core.parquet"
+    expandido = tmp_path / "expandido.parquet"
+    nacional = tmp_path / "nacional.parquet"
+    validado = tmp_path / "validado.parquet"
+    _fonte("h_core", "SP", 3100.0, 80.0).to_parquet(core, index=False)
+    _fonte("h_exp", "MG", 1700.0, 65.0).to_parquet(expandido, index=False)
+    # h_core repetido no nacional com valor diferente: o core deve vencer.
+    pd.concat(
+        [_fonte("h_nac", "BA", 950.0, 55.0), _fonte("h_core", "SP", 1.0, 1.0)],
+        ignore_index=True,
+    ).to_parquet(nacional, index=False)
+    _fonte("h_core", "SP", 3100.0, 80.0).iloc[0:0].to_parquet(validado, index=False)
+
+    monkeypatch.setattr(bi, "CENSO_CORE_PATH", core)
+    monkeypatch.setattr(bi, "CENSO_EXPANDED_PATH", expandido)
+    monkeypatch.setattr(bi, "CENSO_NACIONAL_PATH", nacional)
+    monkeypatch.setattr(bi, "CENSO_VALIDATED_PATH", validado)
+
+    trace = bi._read_censo_trace_frame()
+
+    assert set(trace["hex_id"]) == {"h_core", "h_exp", "h_nac"}, (
+        "o censo nacional nao foi lido -- o enriquecido volta a cobrir so 6 UFs"
+    )
+    renda = trace.set_index("hex_id")["renda_per_capita_setor_2022_calibrada"]
+    assert renda.notna().all()
+    assert renda["h_nac"] == 950.0
+    assert renda["h_core"] == 3100.0, "core deve vencer o nacional na deduplicacao"

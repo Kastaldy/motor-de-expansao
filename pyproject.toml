@@ -60,7 +60,16 @@ dev = [
     # este pacote o nivel 2 de `tests/unit/dimensionamento/test_simulador_xlsx.py`
     # (~4.293 formulas conferidas contra `simular()`) ficava SKIPPED via
     # `pytest.importorskip("formulas")` — planilha com formula errada passava no CI.
-    # SO em [dev]: o Dockerfile instala sem [dev], entao nao entra na imagem publicada.
+    # Desde 2026-08-18 o MESMO pacote tambem entra na imagem do web, pelo extra
+    # `simulador_cache` (valores em cache do XLSX) — este daqui segue sendo o do CI.
+    "formulas>=1.2.0,<2",
+]
+# Valores em cache do simulador XLSX (fix de 2026-08-18): recalcula as formulas do
+# arquivo gerado e grava o resultado junto de cada uma — sem isso, visualizador que
+# nao recalcula (Excel em Modo de Exibicao Protegida, previews, LibreOffice default)
+# mostrava DRE/Fluxo/Resumo EM BRANCO. Mesmo pacote ja usado no nivel 2 dos testes.
+# A imagem do web instala este extra (Dockerfile.web); a da api/bot NAO precisa.
+simulador_cache = [
     "formulas>=1.2.0,<2",
 ]
 # Subset MVP da API GeoEspacial on-demand (BLK-API-02+, §11 do contrato).

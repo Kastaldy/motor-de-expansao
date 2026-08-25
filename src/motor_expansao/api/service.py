@@ -280,6 +280,9 @@ def analisar_ponto(lat: float, lng: float, consumidor: str | None, settings: Set
         "renda_domiciliar_total_raio": result.get("renda_domiciliar_total_raio"),
         "domicilios_total_raio": result.get("domicilios_total_raio"),
         "metodo_renda_domiciliar_raio": result.get("metodo_renda_domiciliar_raio"),
+        # ADITIVO (2026-08-14): fracao (0-1) do raio cuja renda depende de uplift
+        # EXTRAPOLADO — a ressalva de leitura cautelosa que antes morria no result.
+        "fracao_uplift_extrapolado_raio": result.get("fracao_uplift_extrapolado_raio"),
         "densidade_pop_raio_hab_km2": result.get("densidade_pop_raio_hab_km2"),
         "score_setor_medio": result.get("score_setor_medio"),
         "score_setor_max": result.get("score_setor_max"),

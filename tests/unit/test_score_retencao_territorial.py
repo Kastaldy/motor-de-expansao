@@ -259,6 +259,14 @@ def test_run_readonly_m1_por_mtime():
     existentes = [p for p in artefatos if p.exists()]
     if not existentes:
         pytest.skip("artefatos M1 oficiais nao presentes no ambiente")
+    # BLK-FIX-LTV-01: o guard acima cobria so' os artefatos M1 — que EXISTEM na estacao local —,
+    # entao o teste seguia e o `run()` estourava `FileNotFoundError` no proprio insumo da camada
+    # LTV. Faltava a segunda metade da mesma pergunta: o dataset que o `run()` LE tambem precisa
+    # estar presente. Sem isto, a suite local nasce com um vermelho permanente, e um vermelho
+    # cronico e' pior que nenhum teste: ele treina quem roda a suite a ignorar a cor.
+    insumo = staging / "unidade_territorio_retencao.parquet"
+    if not insumo.exists():
+        pytest.skip(f"insumo da camada LTV ausente no ambiente: {insumo.name}")
     antes = {p: p.stat().st_mtime_ns for p in existentes}
     run(root=root)  # roda de verdade sobre os parquets reais
     depois = {p: p.stat().st_mtime_ns for p in existentes}

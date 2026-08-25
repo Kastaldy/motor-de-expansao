@@ -168,6 +168,7 @@ def _padronizar_censo(df: pd.DataFrame, *, fonte: str) -> pd.DataFrame:
         "cod_municipio",
         "nome_municipio",
         "pop_total_setor_2022",
+        "renda_per_capita_setor_2022_calibrada",
         "score_setor_2022_calibrado",
         "coverage_pct_setor_2022",
         "qualidade_join_uf",
@@ -182,6 +183,7 @@ def _padronizar_censo(df: pd.DataFrame, *, fonte: str) -> pd.DataFrame:
     out = df[cols].copy()
     for col, default in {
         "pop_total_setor_2022": np.nan,
+        "renda_per_capita_setor_2022_calibrada": np.nan,
         "flag_join_uf_restrito": False,
         "flag_baixa_pop_setor": False,
         "flag_outlier_espacial": False,
@@ -358,6 +360,7 @@ def construir_dataset_hibrido(
     for col, default in {
         "qualidade_join_uf": pd.NA,
         "pop_total_setor_2022": np.nan,
+        "renda_per_capita_setor_2022_calibrada": np.nan,
         "densidade_pop_setor_hab_km2": np.nan,
         "flag_join_uf_restrito": False,
         "flag_baixa_pop_setor": False,

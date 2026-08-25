@@ -14,6 +14,10 @@ from pyproj import Transformer
 from shapely.geometry import MultiPolygon, Point, Polygon, box
 from shapely.geometry.base import BaseGeometry
 
+# `constants` tambem como MODULO: `FATOR_TEMPORAL_RENDA` e' recalculado quando o piloto
+# reaponta os paths de staging (ver nota equivalente em censo_point.py) — importar o NOME
+# congelaria aqui o fallback 1.0 do import feito com CWD errado.
+from motor_expansao.dashboard import constants as _constants
 from motor_expansao.dashboard.censo_point import (
     CRS_ORIGEM_CENSO,
     RAIO_CENSITARIO_DEFAULT_KM,
@@ -27,7 +31,6 @@ from motor_expansao.dashboard.censo_point import (
 from motor_expansao.dashboard.competitors import _render_square_logo_tile
 from motor_expansao.dashboard.constants import (
     DENSIDADE_POP_BANDS,
-    FATOR_TEMPORAL_RENDA,
     OFERTA_DISPONIVEL_ALUNOS_BANDS,
     RENDA_MEDIA_DOMICILIAR_BANDS,
     RENDA_PER_CAPITA_BANDS,
@@ -1655,28 +1658,28 @@ def render_mapas_censitarios_combinados(
         densidade_vals.append(
             float(pd.to_numeric(record.get("densidade_pop_setor_hab_km2"), errors="coerce"))
         )
-        renda_calibrada = pd.to_numeric(
-            record.get("renda_per_capita_setor_2022_calibrada"), errors="coerce"
-        )
-        renda_raw = renda_calibrada
-        if pd.isna(renda_raw):
-            renda_raw = pd.to_numeric(record.get("renda_per_capita_setor_2022"), errors="coerce")
-        renda_vals.append(float(renda_raw))
         score_vals.append(
             float(pd.to_numeric(record.get("score_setor_2022_calibrado"), errors="coerce"))
         )
-        # Renda media domiciliar por setor (formula setorial do #124, censo_point.py:328-352):
-        # renda_pc(CALIBRADA) x moradores x uplift_SETORIAL(cod_setor) x fator_temporal, com fallback
-        # POR SETOR para renda_responsavel_media_setor_2022 quando calibrada x moradores e' NaN
-        # (`.where(notna, _resp)` do #124). Usa a CALIBRADA (nao a bruta do renda_per_capita), para o
-        # setor entrar na cor com o MESMO valor com que entra no agregado `renda_domiciliar_total_raio`.
+        # Renda media domiciliar por setor: V06004 BRUTA x uplift_SETORIAL x fator_temporal.
+        # A base tem de ser a mesma de `censo_point.py` — o choropleth e o Big Number saem na
+        # MESMA pagina do PDF, e sair em escalas diferentes e contradicao visivel.
+        # Ate 2026-08-13 esta linha usava `calibrada x moradores`, que devolve `V06004 x k` (os
+        # moradores se cancelam), e o `k` virava fator EXTRA em cima do uplift — que ja foi
+        # DEFINIDO como (renda domiciliar do IBGE) / (V06004 bruta). Eram +23,35% de excesso, e
+        # 136.185 setores (30,3%) caiam em faixa de cor errada. Ver a docstring da correcao em
+        # `censo_point.py`.
         moradores = pd.to_numeric(
             record.get("avg_moradores_domicilio_setor_2022"), errors="coerce"
         )
-        renda_domiciliar = renda_calibrada * moradores
+        renda_domiciliar = pd.to_numeric(
+            record.get("renda_responsavel_media_setor_2022"), errors="coerce"
+        )
         if pd.isna(renda_domiciliar):
-            renda_domiciliar = pd.to_numeric(
-                record.get("renda_responsavel_media_setor_2022"), errors="coerce"
+            # Fallback pela per capita BRUTA, nunca pela calibrada: a calibrada reintroduziria o k.
+            renda_domiciliar = (
+                pd.to_numeric(record.get("renda_per_capita_setor_2022"), errors="coerce")
+                * moradores
             )
         uf_val = record.get("uf")
         mun_val = record.get("cod_municipio")
@@ -1685,8 +1688,20 @@ def render_mapas_censitarios_combinados(
             str(uf_val) if pd.notna(uf_val) else None,
             str(mun_val) if pd.notna(mun_val) else None,
         )
-        renda_domiciliar_vals.append(
-            float(renda_domiciliar * uplift_setor * float(FATOR_TEMPORAL_RENDA))
+        renda_domiciliar_total = (
+            renda_domiciliar * uplift_setor * float(_constants.FATOR_TEMPORAL_RENDA)
+        )
+        renda_domiciliar_vals.append(float(renda_domiciliar_total))
+        # A camada "Renda per capita" sai da MESMA conta, dividida pelos moradores — igual ao
+        # `renda_per_capita_domiciliar` de `censo_point.py`. Ate aqui ela era a coluna CALIBRADA
+        # (V06004/moradores x k), que ficou para tras quando o resto da cadeia foi corrigido: o
+        # mapa de per capita saia numa escala e o Big Number de per capita da MESMA pagina saia
+        # noutra. Pior que divergir no numero, as faixas de cor (`RENDA_PER_CAPITA_BANDS`) sao
+        # cortes ABSOLUTOS — colorir pela escala antiga contra regua nova pinta a faixa errada.
+        renda_vals.append(
+            float(renda_domiciliar_total / moradores)
+            if pd.notna(moradores) and moradores > 0
+            else float("nan")
         )
 
     densidade_series = pd.Series(densidade_vals, dtype="float64")

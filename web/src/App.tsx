@@ -1,19 +1,32 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
+import AvisoConfidencialidade from './components/AvisoConfidencialidade'
 import Dock from './components/Dock'
 import type { SearchPin } from './components/HexMap'
+import AcessosScreen from './screens/AcessosScreen'
 import ExecutiveScreen from './screens/ExecutiveScreen'
 import InicioScreen from './screens/InicioScreen'
 import MapScreen from './screens/MapScreen'
 import OportunidadesScreen from './screens/OportunidadesScreen'
+import OportunidadesImobiliariasScreen from './screens/OportunidadesImobiliariasScreen'
 import PontoScreen from './screens/PontoScreen'
 import ViabilityScreen from './screens/ViabilityScreen'
+import { abasDoPayload, modosLiberados, telaInicial, telaLiberada, type Aba } from './lib/acesso'
 import { api, ApiError } from './lib/api'
+import type { AlvoCaptura } from './lib/captura-mapa'
 import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
-import type { Hex, MunicipioItem, MunicipioPayload } from './lib/types'
+import type { Hex, MunicipioItem, MunicipioPayload, Oportunidade } from './lib/types'
 
-export type Tela = 'inicio' | 'ponto' | 'oportunidades' | 'mapa' | 'viabilidade' | 'executiva'
+export type Tela =
+  | 'inicio'
+  | 'ponto'
+  | 'oportunidades'
+  | 'oportunidades-imob'
+  | 'mapa'
+  | 'viabilidade'
+  | 'executiva'
+  | 'acessos'
 
 /** O ponto que viaja do mapa para a Viabilidade — a costura entre as duas telas. */
 export interface PontoEscolhido {
@@ -38,6 +51,37 @@ export default function App() {
   // O app abre no MENU, nao no mapa: a primeira pergunta e' "qual analise?", nao
   // "qual estado?". A escolha de UF continua existindo, como passo 2 do modo de regiao.
   const [tela, setTela] = useState<Tela>('inicio')
+  // Ciencia do aviso de confidencialidade — nasce false a CADA carga do app.
+  const [cienteConfidencialidade, setCienteConfidencialidade] = useState(false)
+
+  /**
+   * Abas que o usuário logado pode usar (controle temporário, /api/me).
+   * `null` = ainda não sabemos (ou o backend não tem a rota) -> tudo liberado,
+   * espelhando o fail-open do backend — que é quem barra de verdade, rota a rota.
+   */
+  const [abas, setAbas] = useState<Set<Aba> | null>(null)
+  useEffect(() => {
+    api
+      .me()
+      .then((r) => {
+        const s = abasDoPayload(r)
+        setAbas(s)
+        // Se o usuário abriu numa tela que não pode ver (estado antigo, deep state),
+        // leva para o lugar certo em vez de deixar a tela vazia atrás de 403s.
+        if (s) setTela((t) => (telaLiberada(t, s) ? t : telaInicial(s)))
+      })
+      .catch(() => {
+        /* sem /api/me -> segue sem controle; o backend continua barrando o que deve */
+      })
+  }, [])
+
+  /** Toda troca de tela vinda de navegação passa por aqui: tela vetada é ignorada. */
+  const navegar = useCallback(
+    (t: Tela) => {
+      if (telaLiberada(t, abas)) setTela(t)
+    },
+    [abas],
+  )
 
   const [ufs, setUfs] = useState<string[]>([])
   // Começa SEM estado: o app abre na porta de entrada (escolha de UF).
@@ -90,6 +134,24 @@ export default function App() {
 
   /** Tira a marca do endereço do mapa (a limpeza do modo de ponto). */
   const limparPinPonto = useCallback(() => setPinPonto(null), [])
+
+  /* CANAL DE CAPTURA do mapa, repartido entre as duas telas.
+     Mora aqui pelo mesmo motivo do `pinPonto` acima: quem tem o mapa é o `MapScreen`, e o
+     `PontoScreen` — que é irmão dele na árvore e usa o MESMO mapa — precisa pedir capturas
+     para montar o PDF dele. O App não captura nada; só guarda a função que o mapa publica
+     e a entrega a quem precisa.
+
+     `ref` e não `state`: trocar a função não deve redesenhar tela nenhuma. */
+  const capturaDoMapa = useRef<((alvos: AlvoCaptura[]) => Promise<string[]>) | null>(null)
+  const registrarCaptura = useCallback((fn: (alvos: AlvoCaptura[]) => Promise<string[]>) => {
+    capturaDoMapa.current = fn
+  }, [])
+  const capturarMapas = useCallback(
+    // Sem mapa montado devolve lista vazia em vez de pendurar a promessa: o gerador do PDF
+    // já sabe desenhar a moldura declarando "mapa não capturado".
+    (alvos: AlvoCaptura[]) => capturaDoMapa.current?.(alvos) ?? Promise.resolve([]),
+    [],
+  )
 
   // Foto do Mapa Territorial (ver lib/mapa-estado): vive AQUI porque o App nao desmonta
   // ao trocar de tela — e' o que devolve o mapa como estava na volta da Viabilidade.
@@ -193,11 +255,12 @@ export default function App() {
 
   const irParaViabilidade = useCallback(
     (p: PontoEscolhido) => {
+      if (!telaLiberada('viabilidade', abas)) return
       setPonto(p)
       setOrigemViab(tela === 'ponto' ? 'ponto' : 'mapa')
       setTela('viabilidade')
     },
-    [tela],
+    [tela, abas],
   )
 
   /** Um card do menu foi escolhido: guarda a intenção e abre a tela que a atende hoje. */
@@ -205,9 +268,18 @@ export default function App() {
     (modo: ModoInicio) => {
       const def = modoPorId(modo)
       if (!def) return
+      // Card de modo vetado nem aparece no Início, mas a checagem fica aqui também:
+      // a intenção pode chegar por outro caminho (estado guardado, clique programático).
+      if (!telaLiberada(def.destino, abas)) return
       // Só faz sentido guardar a intenção enquanto ela ainda não pôde ser aplicada.
       // Com UF já escolhida, aplicamos na hora — o operador que volta ao menu e pede a
       // fila não deveria ter de trocar de estado para ela aparecer.
+      /* PEDIR "analisar um ponto" RECOMECA a analise de ponto. O `PontoScreen` desmonta
+         ao sair do modo e volta sem ficha nenhuma, mas o pin do endereco anterior mora
+         AQUI e sobrevivia — o mapa reabria com a marca de um endereco que nao tem mais
+         ficha para explica-la (Juan, 2026-08-18). O territorio (uf/municipio/dados) fica:
+         ele custa uma carga de servidor e continua sendo um mapa util. */
+      if (modo === 'ponto') setPinPonto(null)
       const passo = passoAlvoDoModo(modo)
       if (passo !== null && uf) {
         setEstadoMapa({ ...ESTADO_MAPA_VAZIO, uf, municipio, passoN: passo })
@@ -217,10 +289,28 @@ export default function App() {
       }
       setTela(def.destino)
     },
-    [uf, municipio],
+    [uf, municipio, abas],
   )
 
   const voltarAoInicio = useCallback(() => setTela('inicio'), [])
+
+  /**
+   * Imovel que a aba imobiliaria deve abrir ja focado — o canal INVERSO do
+   * `onVerNoMapa` daquela aba. Mora aqui pelo mesmo motivo da foto do mapa: a troca
+   * de tela DESMONTA quem pediu, entao a intencao precisa sobreviver no App. Viaja o
+   * OBJETO inteiro (nao so o id): a rota nacional da aba serve o top-N por residual,
+   * e o imovel clicado no mapa pode estar fora dele. Consumido uma vez, na montagem
+   * da aba (`onFocoAplicado`).
+   */
+  const [focoImovel, setFocoImovel] = useState<Oportunidade | null>(null)
+  const verImovelNaAba = useCallback(
+    (o: Oportunidade) => {
+      if (!telaLiberada('oportunidades-imob', abas)) return
+      setFocoImovel(o)
+      setTela('oportunidades-imob')
+    },
+    [abas],
+  )
 
   return (
     <div
@@ -231,11 +321,11 @@ export default function App() {
         overflow: 'hidden',
       }}
     >
-      <Dock tela={tela} onTela={setTela} />
+      <Dock tela={tela} onTela={navegar} abas={abas} />
 
       <main style={{ flex: 1, position: 'relative', minWidth: 0 }}>
         {tela === 'inicio' ? (
-          <InicioScreen onEscolher={escolherModo} />
+          <InicioScreen onEscolher={escolherModo} modos={modosLiberados(abas)} />
         ) : tela === 'ponto' ? (
           /* O modo de ponto É o Explorar, com a janela da ficha por cima (pedido do Juan,
              2026-08-11). O `MapScreen` vem inteiro e com as MESMAS props do modo `mapa` —
@@ -244,6 +334,7 @@ export default function App() {
              e as duas telas divergiam. */
           <>
             <MapScreen
+              registrarCaptura={registrarCaptura}
               ufs={ufs}
               uf={uf}
               onUf={aoTrocarUf}
@@ -267,8 +358,14 @@ export default function App() {
               janelaDoHex={false}
               /* O hero da tela vazia é o do modo de ponto, publicado pelo `PontoScreen`. */
               semLanding
+              /* `undefined` quando a aba é vetada: o contrato do MapScreen é "ausente =
+                 o botão não aparece" — passar sempre deixaria um botão primário morto. */
+              onVerImovelNaAba={
+                telaLiberada('oportunidades-imob', abas) ? verImovelNaAba : undefined
+              }
             />
             <PontoScreen
+              onCapturarMapas={capturarMapas}
               onAnalisarPonto={irParaViabilidade}
               onLocalizar={localizarPonto}
               mapaPronto={dados != null}
@@ -291,7 +388,7 @@ export default function App() {
             onInicio={voltarAoInicio}
             onVerNoMapa={(m) => {
               setMunicipio(m)
-              setTela('mapa')
+              navegar('mapa')
             }}
           />
         ) : tela === 'mapa' ? (
@@ -309,6 +406,10 @@ export default function App() {
             estadoInicial={estadoMapa}
             onEstado={setEstadoMapa}
             onInicio={voltarAoInicio}
+            /* Mesmo portão do modo de ponto: aba vetada = botão ausente, não morto. */
+            onVerImovelNaAba={
+              telaLiberada('oportunidades-imob', abas) ? verImovelNaAba : undefined
+            }
           />
         ) : tela === 'executiva' ? (
           // A Executiva NÃO recebe `uf` nem `onUf` (DEC-023): ela abre com a rede do
@@ -317,6 +418,43 @@ export default function App() {
           // `/api/uf/{uf}` no Mapa toda vez que se trocava o estado aqui — leitura que
           // pode passar de 15 s.
           <ExecutiveScreen onInicio={voltarAoInicio} />
+        ) : tela === 'acessos' ? (
+          // Painel restrito (emenda DEC-027). Autônomo como a Executiva: não herda
+          // UF/município — a trilha é da rede inteira, não de um recorte do mapa.
+          <AcessosScreen onInicio={voltarAoInicio} />
+        ) : tela === 'oportunidades-imob' ? (
+          // Camada de oferta (imóveis de locação joinados ao território). Autônoma:
+          // nacional, filtra por dentro; sem PII (contato do corretor só no dossiê).
+          // "Ver no Mapa" abre o Mapa Territorial no UF/município do imóvel E crava a
+          // COORDENADA do imóvel: pin + hexágono selecionado + câmera no ponto.
+          <OportunidadesImobiliariasScreen
+            onInicio={voltarAoInicio}
+            focoInicial={focoImovel}
+            onFocoAplicado={() => setFocoImovel(null)}
+            onVerNoMapa={(u, m, ponto) => {
+              setUf(u)
+              setMunicipio(m)
+              setEstadoMapa({
+                ...ESTADO_MAPA_VAZIO,
+                uf: u,
+                municipio: m,
+                ...(ponto
+                  ? {
+                      pin: { lat: ponto.lat, lng: ponto.lng, hexId: ponto.hexId },
+                      selecionado: ponto.hexId,
+                      camera: {
+                        longitude: ponto.lng,
+                        latitude: ponto.lat,
+                        zoom: 14,
+                        pitch: 0,
+                        bearing: 0,
+                      },
+                    }
+                  : {}),
+              })
+              navegar('mapa')
+            }}
+          />
         ) : (
           <ViabilityScreen
             ponto={ponto}
@@ -327,6 +465,21 @@ export default function App() {
           />
         )}
       </main>
+
+      {/* Pop-up de confidencialidade (2026-08-19): estado LOCAL de propósito — some no
+          OK e volta em toda nova entrada (recarga do app). Sem localStorage/sessionStorage:
+          a regra é "sempre que a pessoa entrar, clicar em OK". Último filho da raiz +
+          z-index alto: cobre Dock e telas até a confirmação. */}
+      {!cienteConfidencialidade && (
+        <AvisoConfidencialidade
+          onConfirmar={() => {
+            setCienteConfidencialidade(true)
+            // Registro da ciência na trilha (DEC-027) — best-effort de propósito: a
+            // falha da chamada não pode travar a entrada de quem já confirmou.
+            void api.cienciaConfidencialidade().catch(() => {})
+          }}
+        />
+      )}
     </div>
   )
 }

@@ -1,16 +1,21 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 
+import BlocosComparacao from './BlocosComparacao'
 import CampoPonto from './CampoPonto'
-import Select from './Select'
-import TabelaComparacao from './TabelaComparacao'
 import { Botao, Glass } from './primitives'
+import type { AlvoCaptura } from '../lib/captura-mapa'
 import type { EntradaClassificada } from '../lib/entrada-ponto'
+import { type BlocoParametro, blocosPorParametro } from '../lib/comparacao'
 import {
+  DIMENSOES_PONTO,
   MAX_PONTOS,
   compararPontos,
   corDoPonto,
+  passaNoEstudo,
+  resumoDoEstudo,
   rotulosDosPontos,
 } from '../lib/comparacao-pontos'
+import { ranquear } from '../lib/ranking-comparacao'
 import { alunos, num } from '../lib/format'
 import type { PontoPayload } from '../lib/types'
 
@@ -33,6 +38,7 @@ export default function PainelPontos({
   onLimpar,
   carregando,
   erro,
+  onCapturarMapas,
 }: {
   fichas: PontoPayload[]
   aberto: number
@@ -44,26 +50,92 @@ export default function PainelPontos({
   onLimpar: () => void
   carregando: boolean
   erro: string | null
+  /**
+   * Captura do mapa, publicada pelo App. O modo de ponto usa o MESMO mapa do Explorar, e
+   * cada ficha traz o `hex_id` do hexágono em que o endereço caiu — é por ele que o mapa
+   * enquadra. A COORDENADA vai junto: o hexágono tem ~5 km² e comporta mais de um imóvel,
+   * então sem ela a foto não diz qual endereço é o assunto daquela coluna.
+   * Ausente = o PDF sai sem mapas, declarando a ausência.
+   */
+  onCapturarMapas?: (alvos: AlvoCaptura[]) => Promise<string[]>
 }) {
-  const [a, setA] = useState(0)
-  const [b, setB] = useState(1)
   /** O campo de colar aberto aqui dentro, ao lado do botão que o pediu. */
   const [adicionando, setAdicionando] = useState(false)
+  const [gerandoRelatorio, setGerandoRelatorio] = useState(false)
+  const [erroRelatorio, setErroRelatorio] = useState<string | null>(null)
 
   /* Rotulos da LISTA, nao de cada ponto isolado: dois enderecos da mesma cidade sem
      bairro resolvido tinham o mesmo nome, e as abas, os seletores e as duas colunas da
      tabela ficavam indistinguiveis. */
   const rotulos = useMemo(() => rotulosDosPontos(fichas), [fichas])
 
-  // Com 3+ pontos o operador escolhe o par; com 2 nao ha o que escolher.
-  const iA = Math.min(a, fichas.length - 1)
-  const iB = Math.min(b, fichas.length - 1)
+  const blocos = useMemo(
+    () => blocosPorParametro(DIMENSOES_PONTO, fichas),
+    [fichas],
+  ) as BlocoParametro<unknown>[]
+
+  /* O deck em PDF dos pontos. HÁ captura de mapa, sim — um enquadramento por endereço,
+     no hexágono em que ele caiu e com o imóvel marcado. (Esta nota dizia o contrário: ela
+     é anterior ao commit que trouxe o mapa para o deck de pontos e ficou para trás.)
+
+     Cada item leva os CRITÉRIOS avaliados junto: liderar parâmetros e passar no estudo são
+     perguntas diferentes, e um ponto pode ganhar a comparação e ainda assim reprovar num
+     piso do produto. Viabilidade fica de fora de propósito — é entrada do operador sobre um
+     imóvel concreto (DEC-009), e a comparação não a tem. */
+  const gerarRelatorio = useCallback(async () => {
+    if (fichas.length < 2 || gerandoRelatorio) return
+    setGerandoRelatorio(true)
+    setErroRelatorio(null)
+    try {
+      const ranking = ranquear(DIMENSOES_PONTO, fichas, rotulos, { aprovado: passaNoEstudo })
+      const itens = ranking.itens.map((it) => ({
+        ...it,
+        criterios: (fichas[it.indice]?.criterios ?? []).map((c) => ({
+          rotulo: c.rotulo,
+          passa: c.passa,
+        })),
+      }))
+      /* Um enquadramento por ENDEREÇO, pelo hexágono em que ele caiu. O mapa se mexe
+         sozinho durante isso — o botão avisa. Falha na captura não impede o PDF: o slide
+         declara a ausência em vez de sumir. */
+      const imagens = onCapturarMapas
+        ? await onCapturarMapas(
+            fichas.map((f) => ({ hexId: String(f.hex_id ?? ''), lat: f.lat, lng: f.lng })),
+          )
+        : []
+      const cidade = fichas[0]?.local?.municipio ? `${fichas[0].local.municipio} - ` : ''
+      const resposta = await fetch('/api/relatorio/comparacao', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...ranking,
+          itens,
+          titulo: 'Comparação de pontos',
+          subtitulo: `${cidade}${fichas.length} pontos`,
+          dePontos: true,
+          imagens,
+        }),
+      })
+      if (!resposta.ok) throw new Error(`HTTP ${resposta.status}`)
+      const blob = await resposta.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'comparacao-pontos.pdf'
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (erro) {
+      setErroRelatorio('Não foi possível gerar o PDF. Tente de novo.')
+      console.error('[deck] falhou ao gerar o PDF da comparação de pontos', erro)
+    } finally {
+      setGerandoRelatorio(false)
+    }
+  }, [fichas, rotulos, gerandoRelatorio, onCapturarMapas])
+
+  // A prosa comparativa só com DOIS pontos — ver a nota no JSX.
   const comparacao = useMemo(
-    () =>
-      fichas.length >= 2 && iA !== iB
-        ? compararPontos(fichas[iA], fichas[iB], rotulos[iA], rotulos[iB])
-        : null,
-    [fichas, iA, iB, rotulos],
+    () => (fichas.length === 2 ? compararPontos(fichas[0], fichas[1], rotulos[0], rotulos[1]) : null),
+    [fichas, rotulos],
   )
 
   return (
@@ -183,42 +255,109 @@ export default function PainelPontos({
             </span>
           </div>
 
-          {/* Seletores só com 3+: com dois pontos não há par a escolher. */}
-          {fichas.length > 2 && (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <Select
-                label="Primeiro ponto"
-                value={String(iA)}
-                onChange={(v) => setA(Number(v))}
-                maxWidth={170}
-                options={rotulos.map((r, i) => ({ value: String(i), label: r }))}
-              />
-              <Select
-                label="Segundo ponto"
-                value={String(iB)}
-                onChange={(v) => setB(Number(v))}
-                maxWidth={170}
-                options={rotulos.map((r, i) => ({ value: String(i), label: r }))}
-              />
-            </div>
+          {/* A LEITURA ABSOLUTA, ao lado da relativa. Os blocos abaixo dizem quem ganha de
+              quem em cada parâmetro; esta linha diz quantos pisos do produto cada ponto
+              cumpre — número que não muda quando se troca o concorrente da comparação.
+              As duas juntas evitam a leitura de que "o melhor da lista" já serve (pedido
+              do Juan, 2026-08-19). */}
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+            {fichas.map((f, i) => {
+              const r = resumoDoEstudo(f)
+              if (!r) return null
+              const completo = r.cumpridos === r.avaliados
+              return (
+                <span
+                  key={`estudo-${i}`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  <span
+                    aria-hidden
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 2,
+                      background: corDoPonto(i),
+                    }}
+                  />
+                  <span style={{ font: '400 11px/1.3 var(--f-ui)', color: 'var(--tx-sub)' }}>
+                    {rotulos[i]}
+                  </span>
+                  <span
+                    className="num"
+                    style={{
+                      font: '700 11px/1.3 var(--f-num)',
+                      color: completo ? 'var(--ac-text)' : 'var(--neg)',
+                    }}
+                  >
+                    {r.cumpridos}/{r.avaliados}
+                  </span>
+                  <span style={{ font: '400 10.5px/1.3 var(--f-ui)', color: 'var(--tx-muted)' }}>
+                    critérios
+                  </span>
+                </span>
+              )
+            })}
+          </div>
+
+          {/* BLOCO POR PARÂMETRO, com TODOS os pontos dentro (pedido do Juan,
+              2026-08-13). Substitui o par A x B como leitura principal: com 5 pontos são
+              10 pares, e "qual tem mais residual?" virava varredura. Aqui cada parâmetro
+              responde sozinho, e o seletor de par deixa de ser necessário — foi ele que
+              segurava o teto em 4 pontos. */}
+          <BlocosComparacao
+            blocos={blocos}
+            rotulos={rotulos}
+            cor={corDoPonto}
+            onRelatorio={gerarRelatorio}
+            rotuloRelatorio={
+              gerandoRelatorio
+                ? 'Gerando o PDF - o mapa está sendo capturado...'
+                : 'Gerar relatório em PDF'
+            }
+          />
+
+          {/* SÓ A FRASE, e não a tabela A x B inteira. Ela ficou aqui por uma versão e o
+              resultado foi a janela repetir os MESMOS seis parâmetros duas vezes, uma nos
+              blocos e outra na tabela ("ainda está péssima para visualização", Juan,
+              2026-08-13). O que a tabela acrescentava era o veredito em prosa; os números
+              já estão nos blocos, com barra e destaque.
+
+              E o veredito só existe com DOIS pontos: com três ou mais, "X é o melhor"
+              precisaria de um critério que some parâmetros — score novo, que exige DEC.
+              Some em vez de mentir. */}
+          {fichas.length === 2 && comparacao && (
+            <p
+              style={{
+                margin: 0,
+                paddingTop: 10,
+                borderTop: '1px solid var(--line-soft)',
+                font: '400 11.5px/1.55 var(--f-ui)',
+                color: 'var(--tx-narrative)',
+              }}
+            >
+              {comparacao.frase}
+            </p>
           )}
 
-          {comparacao ? (
-            <TabelaComparacao
-              comparacao={comparacao}
-              rotuloA={rotulos[iA]}
-              rotuloB={rotulos[iB]}
-              corA={corDoPonto(iA)}
-              corB={corDoPonto(iB)}
-            />
-          ) : (
-            <p style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
-              Escolha dois pontos diferentes para comparar.
+          {erroRelatorio && (
+            /* A falha é DITA, não engolida: um botão que não responde faz o operador
+               clicar de novo e achar que a tela travou. */
+            <p
+              style={{
+                margin: 0,
+                padding: '9px 11px',
+                borderRadius: 'var(--r-md)',
+                border: '1px solid var(--neg)',
+                font: '400 11.5px/1.5 var(--f-ui)',
+                color: 'var(--tx-soft)',
+              }}
+            >
+              {erroRelatorio}
             </p>
           )}
 
           <p style={{ font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
-            Cada leitura sai do raio de {num((fichas[iA]?.raio_km ?? 1) * 1000)} m em torno do
+            Cada leitura sai do raio de {num((fichas[0]?.raio_km ?? 1) * 1000)} m em torno do
             ponto — a mesma régua do Relatório Pontual.
           </p>
         </Glass>

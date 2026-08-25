@@ -42,7 +42,19 @@
   --tx-narrative: #9aa7b5;
   --tx-label: #8b97a5;
   --tx-muted: #7b8794;
-  --tx-sub: #6f7b89;
+  /* 4,53:1 sobre o fundo das janelas (--surf-panel sobre --bg-base, ~#0d141d). Era
+     #6f7b89 = 4,29:1, ABAIXO do minimo de 4,5 para corpo — e este token pinta as legendas
+     ("Ja atendido", "Sobra") em 10,5px, texto pequeno, que precisa do 4,5. Foi o que o
+     Juan chamou de "o fundo preto e a legenda cinza nao combina": nao era gosto, era
+     reprovacao de contraste. A correcao e' minima de proposito: sobe o suficiente para
+     passar, sem clarear a ponto de competir com o --tx-muted logo acima. */
+  --tx-sub: #727f8d;
+  /* 3,17:1 — DE-ENFASE DELIBERADA, nao texto de leitura. Fica abaixo do 4,5 porque a
+     funcao dele e' APAGAR (a diferenca irrelevante da comparacao, que segue visivel para
+     auditoria sem virar argumento). Texto que carrega SIGNIFICADO nao pode usar este
+     token: as micro-legendas de direcao ("menos e' melhor") migraram para --tx-sub por
+     isso. Subi-lo ate 4,5 daria #707f91, praticamente identico ao --tx-sub, e a hierarquia
+     entre "apagado" e "secundario" sumiria. */
   --tx-off: #5a6675;
   --tx-rank: #4a5765;
 
@@ -277,7 +289,12 @@
   --tx-narrative: #45566a;
   --tx-label: #52657a;
   --tx-muted: #5d7085;
-  --tx-sub: #66798e;
+  /* 4,54:1 sobre o painel claro. Era #66798e = 4,24:1 — o tema claro tinha a MESMA
+     reprovacao do escuro, pelo mesmo motivo (legenda de 10,5px). Ver a nota no bloco
+     escuro; o ajuste aqui e' na direcao oposta, escurecendo. */
+  --tx-sub: #627489;
+  /* 3,11:1 — de-enfase deliberada, espelhando o --tx-off do escuro. Mesma regra: texto
+     com significado nao usa este token. */
   --tx-off: #7d90a4;
   --tx-rank: #93a3b5;
 

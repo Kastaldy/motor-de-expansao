@@ -45,6 +45,7 @@ from motor_expansao.dashboard.censo_report import (
     _cor_consumo_concorrentes,
     _cor_por_meta,
     _load_branding_assets,
+    _nome_exibicao,
     _UltraPDF,
     gerar_csv_setores_censitarios,
     gerar_payloads_download_relatorio_censitario,
@@ -440,6 +441,58 @@ def test_pdf_marca_dagua_em_todas_as_paginas():
 
     # Uma ocorrencia da marca d'agua por pagina (7) -> contagem minima verificavel >= 7.
     assert pdf_bytes.count(b"Ultra Academia") >= 7
+
+
+def test_pdf_confidencial_em_todas_as_paginas():
+    """Marca d'agua "ARQUIVO CONFIDENCIAL" (pedido de 2026-08-19) em TODAS as paginas.
+
+    Uma ocorrencia por pagina (7) e nenhuma pagina nova criada por ela."""
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
+
+    assert pdf_bytes.count(b"ARQUIVO CONFIDENCIAL") >= 7
+    assert b"/Count 7" in pdf_bytes
+
+
+def test_pdf_marca_dagua_humaniza_login():
+    """Solicitante em forma de login ("felipe_castaldi") -> exibido "Felipe Castaldi".
+
+    O login bruto (com underscore) NAO pode aparecer em lugar nenhum do PDF — a
+    transformacao e' de exibicao e vale para qualquer pagina que mostre o nome."""
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
+        result, mapas, residual=_RESIDUAL_OK, solicitante="felipe_castaldi"
+    )
+
+    assert b"Felipe Castaldi" in pdf_bytes
+    assert b"felipe_castaldi" not in pdf_bytes
+
+
+def test_nome_exibicao_variantes():
+    """Login -> nome de exibicao; entrada ja "humana" passa intacta; vazio nao explode."""
+    assert _nome_exibicao("felipe_castaldi") == "Felipe Castaldi"
+    assert _nome_exibicao("marcel_gandra") == "Marcel Gandra"
+    assert _nome_exibicao("Analista Teste") == "Analista Teste"
+    assert _nome_exibicao("  ana  ") == "Ana"
+    assert _nome_exibicao("") == ""
+
+
+def test_pdf_realizacao_aviso_dados_dinamicos():
+    """A Realizacao troca a fala tecnica (READ-ONLY/score/plano, jargao interno) pelo aviso
+    de dados dinamicos (pedido de 2026-08-19). O jargao nao pode voltar ao PDF.
+
+    Needles de UMA palavra: `multi_cell` quebra linha em espacos, entao frase inteira
+    poderia partir no wrap — palavra e' atomica no content stream."""
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
+
+    assert "dinâmicos".encode("latin-1") in pdf_bytes
+    assert b"alterados" in pdf_bytes
+    assert b"READ-ONLY" not in pdf_bytes
+    assert b"score_priorizacao" not in pdf_bytes
 
 
 def test_pdf_atribuicao_de_tiles_no_rodape():

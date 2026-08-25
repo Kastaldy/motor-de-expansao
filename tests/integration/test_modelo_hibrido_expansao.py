@@ -313,3 +313,75 @@ def test_load_censo_sem_nacional_nao_falha(local_tmp_dir):
     resultado = _load_censo(core_path, expanded_path, None)
     assert len(resultado) == 1
     assert "h1" in resultado["hex_id"].values
+
+
+def test_load_censo_propaga_renda_setorial_das_tres_fontes(local_tmp_dir):
+    """Regressao: a renda setorial NAO pode ser descartada por _padronizar_censo.
+
+    Ate 2026-08-25 a coluna `renda_per_capita_setor_2022_calibrada` faltava em
+    `keep_cols`. As tres fontes (core/expandido/nacional) tem a coluna, mas ela era
+    filtrada aqui e, a jusante, `calcular_colunas_mercado.anexar_colunas_censo` a
+    repreenchia SO com o parquet core (GO/RJ/SP). Resultado: a renda intraurbana caia
+    de ~85% para 7,4% dos hexagonos, em silencio -- a coluna existia, so estava nula.
+    Sem renda por setor nao ha gate socioeconomico nem quadrante fora de 3 UFs.
+    """
+    base = {
+        "coverage_pct_setor_2022": 95.0,
+        "qualidade_join_uf": "A",
+        "flag_join_uf_restrito": False,
+        "flag_baixa_pop_setor": False,
+        "flag_outlier_espacial": False,
+        "status_espacial_uf": "GO",
+    }
+    core = pd.DataFrame(
+        {
+            "hex_id": ["h_core"],
+            "uf": ["SP"],
+            "pop_total_setor_2022": [1200.0],
+            "renda_per_capita_setor_2022_calibrada": [3100.0],
+            "score_setor_2022_calibrado": [80.0],
+            **{k: [v] for k, v in base.items()},
+        }
+    )
+    expandido = pd.DataFrame(
+        {
+            "hex_id": ["h_exp"],
+            "uf": ["MG"],
+            "pop_total_setor_2022": [900.0],
+            "renda_per_capita_setor_2022_calibrada": [1700.0],
+            "score_setor_2022_calibrado": [65.0],
+            **{k: [v] for k, v in base.items()},
+        }
+    )
+    nacional = pd.DataFrame(
+        {
+            "hex_id": ["h_nac"],
+            "uf": ["BA"],
+            "pop_total_setor_2022": [800.0],
+            "renda_per_capita_setor_2022_calibrada": [950.0],
+            "score_setor_2022_calibrado": [55.0],
+            **{k: [v] for k, v in base.items()},
+        }
+    )
+
+    core_path = local_tmp_dir / "core_renda.parquet"
+    expandido_path = local_tmp_dir / "expandido_renda.parquet"
+    nacional_path = local_tmp_dir / "nacional_renda.parquet"
+    core.to_parquet(core_path, index=False)
+    expandido.to_parquet(expandido_path, index=False)
+    nacional.to_parquet(nacional_path, index=False)
+
+    resultado = _load_censo(core_path, expandido_path, nacional_path)
+
+    assert "renda_per_capita_setor_2022_calibrada" in resultado.columns, (
+        "renda setorial sumiu de _load_censo -- provavelmente caiu de keep_cols"
+    )
+    renda = resultado.set_index("hex_id")["renda_per_capita_setor_2022_calibrada"]
+    assert renda.notna().all(), (
+        "renda setorial nula em alguma fonte: "
+        f"{renda[renda.isna()].index.tolist()} -- o expandido e o nacional tambem "
+        "precisam propagar a coluna, senao a cobertura cai para as UFs do core"
+    )
+    assert renda["h_core"] == 3100.0
+    assert renda["h_exp"] == 1700.0
+    assert renda["h_nac"] == 950.0

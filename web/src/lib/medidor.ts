@@ -12,7 +12,8 @@
  * régua inexistente — na tela isso vira decisão de abertura.
  */
 
-import type { FaixaNomeada } from './faixas'
+import { CAPACIDADE_UNIDADE_ALUNOS, type FaixaNomeada } from './faixas'
+import { num } from './format'
 
 /** Escala dos scores do produto (censitário, residual, socioeconômico). */
 export const SCORE_MAX = 100
@@ -87,6 +88,62 @@ export function composicaoMercado(
     atendido: sam - disponivel,
     disponivel,
     fracaoDisponivel: disponivel / sam,
+  }
+}
+
+/** O veredito de entrada quando o mercado está apertado. */
+export type LeituraSaturacao = {
+  /** `folga` cabe uma unidade cheia · `disputa` sobra, mas não o bastante · `saturado` não sobra. */
+  tom: 'folga' | 'disputa' | 'saturado'
+  /** Frase pronta, por REGRA — com o critério escrito nela mesma. Nunca LLM. */
+  frase: string
+}
+
+/**
+ * Dá para entrar aqui, ou entrar significa brigar por aluno de concorrente?
+ *
+ * POR QUE EXISTE (pedido do Juan, 2026-08-13). "Sobra 900 alunos" não responde a pergunta
+ * que vem depois. Quem lê precisa saber se esses 900 sustentam uma unidade ou se abrir ali
+ * é, desde o primeiro dia, tirar aluno de quem já está instalado — duas decisões
+ * diferentes que o número sozinho não separa.
+ *
+ * REGRA DE BOLSO, E ELA SE DECLARA. O corte é `CAPACIDADE_UNIDADE_ALUNOS` (2.500), a
+ * capacidade de UMA unidade cheia que o próprio produto já publica — a mesma constante que
+ * satura o `score_oportunidade_residual`. A frase cita o número para ninguém precisar
+ * adivinhar de onde ele saiu, no mesmo espírito do aviso de "região disputada" (DEC-009),
+ * que também diz na cara que é regra de bolso.
+ *
+ * NÃO É VEREDITO DE VIABILIDADE. Não afirma que o ponto dá ou não dá retorno: isso é do
+ * simulador, sobre um imóvel concreto, e a tela não deriva número financeiro. Aqui só se
+ * compara a sobra com o tamanho de uma unidade.
+ */
+export function leituraDeSaturacao(
+  sam: number | null | undefined,
+  residual: number | null | undefined,
+): LeituraSaturacao | null {
+  const c = composicaoMercado(sam, residual)
+  if (!c) return null
+
+  const cabe = CAPACIDADE_UNIDADE_ALUNOS
+  if (c.disponivel >= cabe) {
+    return {
+      tom: 'folga',
+      frase: `A sobra comporta uma unidade cheia (${num(cabe)} alunos) só com quem ainda não treina.`,
+    }
+  }
+  if (c.disponivel <= 0) {
+    return {
+      tom: 'saturado',
+      frase:
+        'Não sobra mercado: a demanda estimada já está toda atendida. Entrar aqui é disputa direta — ' +
+        'cada aluno vem de um concorrente.',
+    }
+  }
+  return {
+    tom: 'disputa',
+    frase:
+      `Sobram ${num(c.disponivel)} alunos, menos que os ${num(cabe)} de uma unidade cheia: ` +
+      'dá para entrar, mas encher a casa exige tirar aluno de concorrente.',
   }
 }
 

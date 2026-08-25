@@ -15,6 +15,18 @@ import {
 const TOPO_PADRAO = 88
 
 /**
+ * Pilha das janelas ABERTAS, na ordem de abertura (módulo, não estado: os listeners
+ * de Esc de instâncias diferentes precisam enxergar a MESMA lista no mesmo evento).
+ *
+ * Existe porque cada instância registra o próprio keydown no `window`, e com duas
+ * janelas abertas — a ficha do hexágono e o detalhe do imóvel, o primeiro par
+ * co-aberto do produto — um único Esc disparava os dois `onFechar`: as duas janelas
+ * sumiam juntas e a seleção do hexágono ia embora de quebra. Com a pilha, Esc fecha
+ * só a do topo (a aberta por último), que é a convenção de janelas empilhadas.
+ */
+const pilhaAbertas: symbol[] = []
+
+/**
  * A JANELA que traz a ficha por cima do mapa, no modo de ponto.
  *
  * ERA UMA GAVETA colada na borda direita (`GavetaFicha`, ate 2026-08-11). Virou janela
@@ -92,15 +104,32 @@ export default function JanelaFicha({
   const atual =
     geo ?? (area.largura ? geometriaPadrao(area, TOPO_PADRAO, recuoInferior, ancora) : null)
 
+  /** Identidade estável desta instância na pilha de janelas abertas. */
+  const idJanela = useRef(Symbol('janela'))
+  /* `onFechar` costuma vir inline (identidade nova a cada render). Se o efeito da pilha
+     dependesse dele, todo re-render tiraria e re-empilharia a janela — e a ordem da
+     pilha (que é o dado: quem está no topo) se corromperia. O ref desacopla. */
+  const onFecharRef = useRef(onFechar)
+  useEffect(() => {
+    onFecharRef.current = onFechar
+  })
+
   // Esc fecha. E' o gesto que todo mundo tenta primeiro numa janela por cima de algo.
+  // Com mais de uma aberta, fecha SO' a do topo da pilha (ver `pilhaAbertas`).
   useEffect(() => {
     if (!aberta) return
+    const id = idJanela.current
+    pilhaAbertas.push(id)
     const aoTeclar = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onFechar()
+      if (e.key === 'Escape' && pilhaAbertas[pilhaAbertas.length - 1] === id) onFecharRef.current()
     }
     window.addEventListener('keydown', aoTeclar)
-    return () => window.removeEventListener('keydown', aoTeclar)
-  }, [aberta, onFechar])
+    return () => {
+      const i = pilhaAbertas.indexOf(id)
+      if (i >= 0) pilhaAbertas.splice(i, 1)
+      window.removeEventListener('keydown', aoTeclar)
+    }
+  }, [aberta])
 
   /**
    * Arrasto e redimensionamento, no mesmo motor.
@@ -211,11 +240,14 @@ export default function JanelaFicha({
         }}
       >
         <div style={{ display: 'grid', gap: 2, minWidth: 0, flex: 1 }}>
+          {/* SERIF: a voz narrativa dos títulos do produto (design "Paineis do Hexagono",
+              2026-08-21). Vale para TODAS as janelas — hexágono, imóvel, comparação e
+              ficha do ponto falam com a mesma cara. */}
           <span
+            className="story"
             style={{
-              font: '600 14px/1.2 var(--f-ui)',
+              font: '400 19px/1.15 var(--f-story)',
               color: 'var(--tx-max)',
-              letterSpacing: '-.01em',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',

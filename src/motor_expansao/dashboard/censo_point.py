@@ -11,10 +11,15 @@ from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform
 
+# `constants` importado como MODULO de proposito: `FATOR_TEMPORAL_RENDA`/`DATA_REFERENCIA_RENDA`
+# sao recalculados quando o piloto reaponta os paths de staging para caminhos absolutos
+# (`_init_renda_domiciliar_paths` em web/server/app.py). Importar o NOME congelaria aqui o
+# valor do import — no container do piloto (CWD=web/server) isso era o fallback 1.0, e toda
+# renda do /ponto saia em valores nominais de julho/2022, mesmo com o artefato montado.
+from motor_expansao.dashboard import constants as _constants
 from motor_expansao.dashboard.constants import (
-    DATA_REFERENCIA_RENDA,
-    FATOR_TEMPORAL_RENDA,
     uplift_composicao_por_setor,
+    uplift_extrapolado,
     uplift_renda_domiciliar,
 )
 
@@ -111,6 +116,11 @@ def _empty_setores_frame() -> pd.DataFrame:
             "pop_total_setor_2022",
             "pop_estimada_intersecao",
             "renda_per_capita_setor_2022_calibrada",
+            # Per capita DOMICILIAR por setor — a MESMA grandeza dos agregados do raio e
+            # do setor do ponto. Sem ela no frame, o consumidor so tem a CALIBRADA para
+            # montar min/mediana/max, e a distribuicao sai numa escala diferente da dos
+            # campos irmaos do mesmo payload.
+            "renda_per_capita_domiciliar_setor",
             "densidade_pop_setor_hab_km2",
             "score_setor_2022_calibrado",
             "flag_renda_disponivel",
@@ -233,8 +243,13 @@ def analisar_ponto_censitario_setores(
         "fator_uplift_renda_domiciliar": None,
         "fator_uplift_composicao": None,
         "fator_uplift_composicao_municipio": None,
-        "fator_temporal_renda": FATOR_TEMPORAL_RENDA,
-        "data_referencia_renda": DATA_REFERENCIA_RENDA,
+        # Fracao dos DOMICILIOS do raio cujo uplift foi extrapolado para fora da faixa de
+        # calibracao do municipio (o pipeline marca como "leitura cautelosa"). Ate 2026-08-13
+        # essa flag existia no artefato e morria na carga — 20,3% dos setores do pais chegavam
+        # ao relatorio sem ressalva nenhuma. Campo ADITIVO: nao muda nenhum numero de renda.
+        "fracao_uplift_extrapolado_raio": None,
+        "fator_temporal_renda": _constants.FATOR_TEMPORAL_RENDA,
+        "data_referencia_renda": _constants.DATA_REFERENCIA_RENDA,
         "densidade_pop_raio_hab_km2": None,
         # BLK-RELPON-06 (D1): densidade sobre area de espaco VALIDO (exclui agua/vazio) --
         # ver docstring abaixo. Difere de `densidade_pop_raio_hab_km2` (divide por pi*raio^2
@@ -294,10 +309,22 @@ def analisar_ponto_censitario_setores(
         area_intersecao_m2 = float(intersection.area)
         if area_intersecao_m2 <= 0:
             continue
+        # O peso tem de comparar duas areas na MESMA projecao. O numerador (`intersection.area`)
+        # sai da AEQD local, centrada no ponto pesquisado e praticamente exata num raio de 1 km.
+        # Ate 2026-08-13 o denominador vinha de `area_setor_m2` do artefato, calculada em
+        # EPSG:5880 (Policonica do Brasil), que NAO e equivalente em area: a distorcao cresce com
+        # a distancia ao meridiano central de -54. Medido, a razao AEQD/artefato e sistematica —
+        # Recife 0,9481, Fortaleza 0,9648, Sao Paulo 0,9931, Porto Alegre 0,9991 —, entao um setor
+        # INTEIRAMENTE dentro do raio recebia peso 0,948 no Recife em vez de 1,0, e o `min(1, ...)`
+        # nao corrigia nada porque a razao e sistematicamente menor que 1. Isso subestimava
+        # populacao e domicilios do raio em ate 5,2%, direto nos Big Numbers de meta ABSOLUTA.
+        area_setor_metrica = float(geom_metric.area)
+        peso_area = max(0.0, min(1.0, area_intersecao_m2 / area_setor_metrica))
+        # `area_setor_m2` do artefato segue valendo para EXIBICAO (e a area oficial do setor,
+        # comparavel entre setores do pais); ela so nao serve de denominador do peso local.
         area_setor_m2 = pd.to_numeric(row.get("area_setor_m2", np.nan), errors="coerce")
         if pd.isna(area_setor_m2) or float(area_setor_m2) <= 0:
-            area_setor_m2 = float(geom_metric.area)
-        peso_area = max(0.0, min(1.0, area_intersecao_m2 / float(area_setor_m2)))
+            area_setor_m2 = area_setor_metrica
         record = row.to_dict()
         record["area_setor_m2"] = float(area_setor_m2)
         record["area_intersecao_m2"] = area_intersecao_m2
@@ -333,13 +360,31 @@ def analisar_ponto_censitario_setores(
     score_weight = pop_weights.where(pop_weights.gt(0), area_weights)
 
     # ── Renda media domiciliar por setor (fase seguinte) ──────────────────────────────────────
-    # renda domiciliar setor = renda per capita (calibrada) x moradores/domicilio (= renda do
-    # responsavel V06004). Fallback: renda do responsavel bruta quando faltar per capita/moradores.
+    # A base e a renda do responsavel BRUTA (V06004), NUNCA a calibrada.
+    #
+    # Por que (corrigido em 2026-08-13): `uplift_composicao` foi DEFINIDO como
+    #     uplift = (renda domiciliar per capita do SIDRA x moradores) / V06004_bruta
+    # (ver `pipelines/derivar_uplift_renda_domiciliar.py`), ou seja ele JA leva a V06004 para a
+    # escala domiciliar do IBGE. Ate esta data a base vinha de `calibrada x moradores`; como a
+    # calibrada e `V06004 / moradores x k`, a ida-e-volta cancelava os moradores e sobrava
+    # `V06004 x k` — o `k` virava um fator EXTRA em cima de uma conversao ja feita.
+    # Medido em 5.551 municipios: a renda domiciliar exibida era exatamente 1,2335x a do IBGE,
+    # com dispersao ZERO (p05 = p95 = 1,2335), isto e +23,35%. Ironia que confirma o diagnostico:
+    # k x uplift = 1,2335 x 1,632 = 2,013, quase o 2,02 da GeoFusion que este mesmo pipeline
+    # rejeita por escrito como circular.
+    # O `k` continua existindo e continua correto no seu papel: alinhar a renda a regua de
+    # percentil do M1 (`renda_pct_nacional_calibrado` -> score). Ele nunca foi fator de escala
+    # de renda exibida.
     moradores = _numeric(intersectados, "avg_moradores_domicilio_setor_2022")
-    renda_domiciliar = renda * moradores
     if "renda_responsavel_media_setor_2022" in intersectados.columns:
-        _resp = _numeric(intersectados, "renda_responsavel_media_setor_2022")
-        renda_domiciliar = renda_domiciliar.where(renda_domiciliar.notna(), _resp)
+        renda_domiciliar = _numeric(intersectados, "renda_responsavel_media_setor_2022")
+    else:
+        renda_domiciliar = pd.Series(np.nan, index=intersectados.index, dtype="float64")
+    # Fallback sem a V06004: reconstroi pela per capita BRUTA (V06004/moradores), nunca pela
+    # calibrada — usar a calibrada aqui reintroduziria o k pela porta dos fundos.
+    if renda_domiciliar.isna().any() and "renda_per_capita_setor_2022" in intersectados.columns:
+        _bruta = _numeric(intersectados, "renda_per_capita_setor_2022") * moradores
+        renda_domiciliar = renda_domiciliar.where(renda_domiciliar.notna(), _bruta)
     # UF/municipio do ponto (moda) para a cascata do uplift.
     uf_ponto = None
     if "uf" in intersectados.columns:
@@ -360,10 +405,38 @@ def analisar_ponto_censitario_setores(
         index=intersectados.index,
         dtype="float64",
     )
-    renda_domiciliar_total = renda_domiciliar * fator_composicao_setor * FATOR_TEMPORAL_RENDA
+    renda_domiciliar_total = renda_domiciliar * fator_composicao_setor * _constants.FATOR_TEMPORAL_RENDA
+    # Renda PER CAPITA exibida = renda do domicilio dividida pelos moradores dele. E o mesmo
+    # conceito que o IBGE publica (SIDRA t.10295 v.13431, "rendimento nominal medio mensal
+    # domiciliar per capita") e que o M1 carrega em `renda_per_capita` — por isso e ele que se
+    # compara com referencia externa e com corte absoluto.
+    #
+    # Ate 2026-08-13 exibia-se a coluna CALIBRADA (V06004/moradores x k). Aquilo nao era renda
+    # per capita de ninguem: era a renda do RESPONSAVEL diluida por todos os moradores, escalada
+    # por um k que e uma versao parcial do uplift (k = 1,2335 contra uplift 1,632). Medido, dava
+    # 19,62% ABAIXO do IBGE. Note que so REMOVER o k pioraria para -34,84%: o defeito nao era o k
+    # estar la, era ele estar no lugar do uplift.
+    # Com esta troca, as duas rendas do relatorio passam a fechar entre si:
+    #     renda domiciliar = renda per capita x moradores
+    renda_per_capita_domiciliar = renda_domiciliar_total / moradores.where(moradores > 0)
+    # Ressalva de leitura (ADITIVA): quanto do raio depende de uplift extrapolado.
+    extrapolado_setor = pd.Series(
+        [
+            uplift_extrapolado(cod)
+            for cod in intersectados.get("cod_setor", pd.Series(index=intersectados.index))
+        ],
+        index=intersectados.index,
+        dtype="boolean",
+    ).fillna(False)
     fator_composicao = uplift_renda_domiciliar(uf_ponto, municipio_ponto)
     # Renda domiciliar do raio: ponderada por DOMICILIOS (fallback pop/area quando ausentes).
     renda_domiciliar_weight = dom_weights.where(dom_weights.gt(0), renda_weight)
+
+    # Injetada ANTES do corte de `display_cols`: `renda_per_capita_domiciliar` foi calculada
+    # acima e e o que os dois agregados ja usam. Deixar de expo-la aqui foi o que manteve
+    # `detalhe.distribuicao.renda_per_capita` (web/server/app.py) na escala antiga,
+    # ~24% distante dos dois campos irmaos do MESMO payload.
+    intersectados["renda_per_capita_domiciliar_setor"] = renda_per_capita_domiciliar
 
     display_cols = _available_columns(_empty_setores_frame().columns, intersectados)
     result["setores_intersectados"] = intersectados[display_cols].copy()
@@ -386,11 +459,26 @@ def analisar_ponto_censitario_setores(
         result["flag_setor_ponto_encontrado"] = True
         cod_setor_val = ponto_row.get("cod_setor")
         result["cod_setor_ponto"] = None if pd.isna(cod_setor_val) else str(cod_setor_val)
+        # MESMA grandeza do agregado do raio: renda DOMICILIAR per capita (V06004 x uplift do
+        # setor x fator temporal / moradores). Lido de `renda_per_capita_domiciliar` pelo rotulo
+        # do indice — `intersectados` tem RangeIndex unico (`reset_index(drop=True)`), entao a
+        # busca devolve escalar. Reaproveitar a Serie em vez de recalcular e' o que garante que o
+        # setor do ponto e o raio nunca divirjam: um recalculo aqui abriria espaco para as duas
+        # expressoes andarem separadas no proximo diff.
+        #
+        # Ate esta correcao o campo saia da coluna CALIBRADA — a mesma que o resto deste arquivo
+        # deixou de usar. Como so o raio tinha sido corrigido, o payload passava a carregar DUAS
+        # "renda per capita" em escalas ~24% distintas (`setor_do_ponto.renda_per_capita` em
+        # `web/server/app.py` contra `renda_per_capita_media_raio`), justamente o sintoma que
+        # esta mudanca promete curar. Antes dela as duas concordavam — ambas erradas, mas
+        # coerentes —, entao corrigir so metade era uma regressao de coerencia.
+        #
+        # Sem fallback proprio: `renda_per_capita_domiciliar` ja carrega a cascata (V06004, e na
+        # falta dela a per capita BRUTA x moradores). NaN aqui significa setor sem renda, e o
+        # certo e devolver None — igual ao que o raio faz.
         renda_ponto = pd.to_numeric(
-            ponto_row.get("renda_per_capita_setor_2022_calibrada"), errors="coerce"
+            renda_per_capita_domiciliar.get(ponto_row.name, np.nan), errors="coerce"
         )
-        if pd.isna(renda_ponto):
-            renda_ponto = pd.to_numeric(ponto_row.get("renda_per_capita_setor_2022"), errors="coerce")
         result["renda_per_capita_setor_ponto"] = (
             None if pd.isna(renda_ponto) else round(float(renda_ponto), 2)
         )
@@ -439,12 +527,14 @@ def analisar_ponto_censitario_setores(
     if dom_weights.notna().any():
         result["domicilios_total_raio"] = round(float(dom_weights.fillna(0).sum()), 2)
 
-    result["renda_per_capita_media_raio"] = _weighted_average(renda, renda_weight)
+    result["renda_per_capita_media_raio"] = _weighted_average(
+        renda_per_capita_domiciliar, renda_weight
+    )
     if result["renda_per_capita_media_raio"] is not None:
         result["metodo_renda_raio"] = (
-            "ponderada_populacao_estimada"
+            "domiciliar_per_capita_ponderada_populacao"
             if pop_weights.gt(0).any()
-            else "ponderada_area_intersecao"
+            else "domiciliar_per_capita_ponderada_area"
         )
 
     # ── Agregacao da renda media domiciliar no raio (ADITIVO) ─────────────────────────────────
@@ -460,6 +550,11 @@ def analisar_ponto_censitario_setores(
     result["renda_domiciliar_total_raio"] = _weighted_average(
         renda_domiciliar_total, renda_domiciliar_weight
     )
+    _peso_extrap = renda_domiciliar_weight.fillna(0).clip(lower=0)
+    if float(_peso_extrap.sum()) > 0:
+        result["fracao_uplift_extrapolado_raio"] = round(
+            float(_peso_extrap[extrapolado_setor].sum() / _peso_extrap.sum()), 4
+        )
     # Uplift EFETIVO do raio: media dos setores ponderada por domicilios (nao o escalar municipal).
     # Sem _weighted_average aqui: ele arredonda a 2 casas, e um fator truncado nao reproduziria a
     # renda aplicada por setor.
@@ -479,7 +574,9 @@ def analisar_ponto_censitario_setores(
         uplift_efetivo = fator_composicao
     result["uf_renda_uplift"] = uf_ponto
     result["cod_municipio_renda_uplift"] = municipio_ponto
-    result["fator_uplift_renda_domiciliar"] = round(uplift_efetivo * FATOR_TEMPORAL_RENDA, 4)
+    result["fator_uplift_renda_domiciliar"] = round(
+        uplift_efetivo * _constants.FATOR_TEMPORAL_RENDA, 4
+    )
     result["fator_uplift_composicao"] = round(uplift_efetivo, 4)
     result["fator_uplift_composicao_municipio"] = round(fator_composicao, 4)
 

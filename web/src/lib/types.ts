@@ -4,6 +4,14 @@ export type { CriterioPonto, ReguasPonto }
 
 /** Contrato entre o front e o backend do piloto (web/server/app.py). */
 
+/** Resposta do /api/me — controle temporário de acesso por aba (web/server/acesso.py).
+ *  `abas` chega como string[] cru de propósito: quem valida e estreita é
+ *  `abasDoPayload` em lib/acesso.ts, defensiva contra payload velho ou inesperado. */
+export interface MePayload {
+  usuario: string | null
+  abas: string[]
+}
+
 /** Tom do chip do ranking. Fronteira TS<->Python sem contrato gerado: o produtor
  *  e' web/server/app.py. Note que `RankItem.tag_cor` tem PRECEDENCIA sobre o tom no
  *  `Chip` — onde a etiqueta sai de uma faixa da legenda, quem pinta e' a cor exata
@@ -33,8 +41,25 @@ export interface Hex {
   renda_dom: number | null
   /** rotulo da faixa de oportunidade M1 (ex.: "Alta") */
   faixa: string | null
+  /**
+   * Bairro/distrito dominante da celula (IBGE), quando o backend o resolveu.
+   *
+   * So' vem na rota de MUNICIPIO — depende do codigo dele, e a visao de UF serve
+   * dezenas de cidades numa resposta so'. Ausente ali nao significa "sem bairro", e por
+   * isso quem rotula cai no municipio em vez de mostrar vazio.
+   */
+  bairro?: string | null
   conc: number
   ultra: number
+  /* CONTAGEM de unidades mapeadas DENTRO do hexagono (celula H3 res-7), vinda dos MESMOS
+     pontos que viram pin no mapa. Nao confundir com `conc`/`ultra` acima: `conc` e'
+     `oferta_consumida_mercado_estimada / 2.500` (capacidade do modelo de 2 km, nao
+     contagem) e `ultra` vem da camada de performance. E' esta a leitura que a ficha do
+     hexagono promete no rotulo.
+     `null` = base de pontos nao montada ("nao sei"); `0` = montada e vazia aqui ("nao ha
+     unidade neste hexagono"). Sao afirmacoes diferentes e a tela nao pode fundi-las. */
+  conc_hex?: number | null
+  ultra_hex?: number | null
   /* PROTOTIPO da chave de raio (2 km centroide vs 1 km por area).
      `conc1k` = quantas concorrentes ALCANCAM este hexagono pelo disco de 1 km — e o que
      colore o mapa no modo novo. `oferta1k` = residual sob esse modelo.
@@ -201,6 +226,31 @@ export interface Pin {
   rede?: string
   label?: string
   nome: string
+  /**
+   * `true` quando esta unidade veio do feed de um agregador (WellHub/TotalPass) e por isso temos
+   * DADOS EXTRAS sobre ela — pressão medida da coordenada dela, nota, presença na série.
+   *
+   * Ela é uma bandeira igual a todas as outras, e isso é deliberado: uma academia de rede é uma
+   * academia de rede, e dar-lhe outra forma obrigaria o operador a ligar uma chave para ver
+   * concorrência que sempre existiu. O que muda é um **halo** em volta do quadrado, e o bloco
+   * extra que o tooltip abre.
+   *
+   * **Não há `score` aqui, e a ausência é a decisão (DEC-035):** numa rede, presença em agregador
+   * e churn medem negociação da MARCA, não fragilidade desta unidade.
+   */
+  diag?: boolean
+  /** Pressão competitiva medida da coordenada desta unidade. Só quando `diag`. */
+  pressao?: number | null
+  nota?: number | null
+  n_aval?: number | null
+  /** Estado de presença na série semanal — fato sem peso. */
+  churn?: string | null
+  /** A conta por trás da pressão, igual à do pin de independente. */
+  n_conc?: number | null
+  n_indep?: number | null
+  n_cadeias_feed?: number | null
+  oferta?: number | null
+  dist_m?: number | null
 }
 
 /** Pins do município + ícones quadrados por rede (data URI SVG). */
@@ -234,6 +284,76 @@ export interface Pins {
   concorrentes: Pin[]
   ultra: Pin[]
   icones: Record<string, string>
+  /**
+   * O artefato de unidades de rede do agregador (DEC-035) existe e foi lido? (BLK-MA-19)
+   *
+   * `false` significa ARTEFATO AUSENTE — nunca "este recorte não tem unidade de agregador",
+   * que devolve `true` com nenhuma bandeira de halo. Sem esta chave, os dois casos eram
+   * indistinguíveis no payload, e foi assim que a camada passou cinco dias morta em produção
+   * sem ninguém notar. Opcional: payload antigo não a traz.
+   */
+  redes_disponivel?: boolean
+}
+
+/**
+ * Academia INDEPENDENTE com identidade e score (BLK-MA-15).
+ *
+ * Lista própria, nunca misturada a `Pins.concorrentes`: são universos de semântica OPOSTA — o
+ * concorrente é quem disputa o mercado com a Ultra; a independente é quem se COMPRA. A interseção
+ * entre os dois é vazia por construção, porque o universo de M&A exclui cadeias (sem esse filtro a
+ * Smart Fit entraria na lista de alvos).
+ */
+export interface PinIndependente {
+  lat: number | null
+  lng: number | null
+  nome: string
+  /** `score_vulnerabilidade` — preenchido sempre que há ≥ 1 sinal. */
+  score: number | null
+  /** `score_vulnerabilidade_ordenavel` — NULO no regime provisório (G-D1). O par com `score`
+   *  existe porque um diz o número e o outro diz se ele pode ordenar. */
+  ordenavel: number | null
+  /** Pressão competitiva medida da coordenada DESTA academia (grão unidade, DEC-029). */
+  pressao: number | null
+  /** Nota do WellHub. Anda SEMPRE com `n_aval` ao lado (DEC-026). */
+  nota: number | null
+  n_aval: number | null
+  /** Regime de sinais (ex.: `"s1,s6"`) — réguas de regimes diferentes não se comparam. */
+  regime: string | null
+  provisorio: boolean
+  /**
+   * A CONTA por trás de `pressao` (BLK-MA-18). Sem ela o número não é conferível: a saturação
+   * `100·(1 − 1/(1+oferta))` gasta METADE da escala numa única unidade equivalente, então `40,4`
+   * significa **0,68 concorrentes efetivos** — e não "40% de pressão", que é a leitura que um
+   * número de 0 a 100 num pin convida a fazer.
+   *
+   * `n_conc` é o que dá para contar no mapa; `oferta` é o mesmo conjunto DEPOIS do decaimento. A
+   * diferença entre os dois é, literalmente, a distância.
+   */
+  n_conc: number | null
+  /** Quantos dos `n_conc` são independentes — o resto é cadeia. Muda a tese de M&A. */
+  n_indep: number | null
+  /** Concorrentes EFETIVOS (soma dos pesos por distância). */
+  oferta: number | null
+  /** Distância até o concorrente mais próximo, em metros. Responde o que a soma esconde. */
+  dist_m: number | null
+  /**
+   * Quantos dos `n_conc` são unidades de REDE vindas do agregador (DEC-034). Ela existe porque a
+   * promessa da auditoria é "conta os pins no mapa e o número fecha", e parte dessas unidades
+   * **não tinha pin desenhado** até a metade 1 do BLK-MA-17. Medido: 5.451 de 19.329 linhas
+   * (28,2%) têm valor > 0 — eram 7.218 (37,3%) antes de o FU4 colapsar 320 duplicatas por nome.
+   * Sem esta parcela, a conta não fechava e a explicação não estava em
+   * lugar nenhum da tela.
+   */
+  n_cadeias_feed: number | null
+}
+
+export interface Independentes {
+  itens: PinIndependente[]
+  disponivel: boolean
+  /** Quantas existem no recorte, ANTES do teto. */
+  total: number
+  /** true = o teto cortou. Declarado porque corte silencioso mente sobre a densidade. */
+  truncado: boolean
 }
 
 export interface MunicipioPayload {
@@ -252,6 +372,8 @@ export interface MunicipioPayload {
   /** Passo 4, uma entrada por cidade. Esparso: cidade sem leitura não aparece. */
   cres_mun: Record<string, CrescimentoMunicipal>
   pins: Pins
+  /** Academias independentes com score (BLK-MA-15). Ausente em payload antigo. */
+  independentes?: Independentes
 }
 
 export interface MunicipioItem {
@@ -328,6 +450,93 @@ export interface FaixaAlunos {
   p50: number | null
   p90: number | null
   n_comparaveis: number
+}
+
+/**
+ * Uma oportunidade imobiliaria (imovel de locacao coletado, ja joinado ao M1).
+ *
+ * Espelha o que `/api/oportunidades` devolve — um SUBCONJUNTO do viaveis.parquet,
+ * SEM PII (as colunas de corretor nunca saem do backend). Numeros ausentes vem `null`.
+ */
+export interface Oportunidade {
+  id: string
+  titulo: string
+  tipo: string
+  operacao: string | null
+  uf: string
+  municipio: string
+  bairro: string | null
+  area: number | null
+  aluguel: number | null
+  iptu: number | null
+  condominio: number | null
+  rs_m2: number | null
+  hex_id: string
+  residual: number | null
+  residual_total: number | null
+  score: number | null
+  censo_score: number | null
+  faixa: string | null
+  pop: number | null
+  renda_pc: number | null
+  sam: number | null
+  n_ultra: number | null
+  first_seen: string | null
+  lat: number | null
+  lng: number | null
+  url: string | null
+  /** Alunos p50 da curva tamanho->densidade (simulador de Viabilidade), pela área. */
+  alunos_p50?: number | null
+  /** Faturamento projetado/mês = alunos_p50 × ticket (servido pronto pelo backend). */
+  fat_proj?: number | null
+  /** Ticket (mensalidade balcão) usado no fat_proj — do dimensionamento/config. */
+  ticket_proj?: number | null
+  /** Se o coletor gerou um dossiê PDF para este imóvel (top-N por praça). */
+  tem_dossie?: boolean
+}
+
+export interface OportunidadesPayload {
+  /** Universo inteiro, independente da UF pedida. */
+  total: number
+  /**
+   * Quantas existem NO RECORTE pedido (a UF, ou o universo). É o denominador honesto:
+   * sem ele, filtrar por UF fazia a tela comparar os 1.501 de SP contra os 4.003
+   * nacionais. Opcional porque um backend anterior a 2026-08-24 não o manda.
+   */
+  total_recorte?: number
+  /** UFs do UNIVERSO — nunca as UFs dos `itens`, que são só o recorte capado. */
+  ufs: string[]
+  itens: Oportunidade[]
+}
+
+/**
+ * Gestos da camada imobiliária registrados na trilha de acesso (DEC-027).
+ *
+ * Espelho EXATO de `ACOES_IMOBILIARIA` em `web/server/app.py` — ação fora da lista
+ * recebe 404 do backend e some do rastro. Cada ação também precisa de rótulo próprio
+ * em `FEATURES_ROTULOS` (`acesso_analytics.py`), senão a ficha do usuário no painel
+ * de Acessos mostra o balde genérico; há teste travando isso nos dois lados.
+ */
+export type AcaoImobiliaria =
+  | 'abrir-aba'
+  | 'abrir-imovel'
+  | 'abrir-dossie'
+  | 'marcar-visita'
+  | 'desmarcar-visita'
+  | 'ver-no-mapa'
+  | 'filtrar'
+
+/**
+ * Alvo do gesto — vai na QUERY, que a trilha grava inteira (teto de 2000 chars).
+ * SEM PII: nada de corretor, telefone ou contato; só o que identifica o imóvel e o
+ * recorte. `origem` distingue o gesto feito na aba do gesto feito pelo pin do mapa.
+ */
+export interface AlvoEvento {
+  imovel?: string | null
+  uf?: string | null
+  municipio?: string | null
+  origem?: 'aba' | 'mapa' | null
+  detalhe?: string | null
 }
 
 /* ---------------------------------------------------------------------------
@@ -1198,4 +1407,117 @@ export interface EstadosPayload {
     capacidade_concorrente: number
   }
   estados: EstadoRanking[]
+}
+
+/* ------------------------------------------------------------------------- *
+ * Aba Acessos — analytics da trilha (emenda DEC-027; GET /api/acessos/*)    *
+ * Restrita por allowlist de env no backend; a SPA só a mostra se /api/me    *
+ * devolver a aba `acessos`.                                                 *
+ * ------------------------------------------------------------------------- */
+
+export interface AcessosSerieDia {
+  dia: string
+  acoes: number
+  usuarios: number
+}
+
+export interface AcessosPorAba {
+  /** Rótulo de exibição (acentuado) — o backend já aplica a camada de LABEL. */
+  aba: string
+  acoes: number
+  usuarios: number
+}
+
+export interface AcessosUsuarioLinha {
+  nome: string
+  ultimo_dia: string | null
+  ultimo_hora: string | null
+  dias_ativos: number
+  acoes: number
+  abas: string[]
+  /** Nº de IPs DISTINTOS na janela — sinal de anomalia, nunca o IP em si. */
+  ips: number
+  /** Ações/dia dos últimos 14 dias (sparkline da tabela). */
+  serie14: number[]
+}
+
+export interface AcessosRotaLenta {
+  rota: string
+  n: number
+  p95_ms: number | null
+}
+
+export interface AcessosSaude {
+  total: number
+  erros_4xx: number
+  erros_5xx: number
+  taxa_erro_pct: number
+  lentas: AcessosRotaLenta[]
+}
+
+export interface AcessosResumo {
+  gerado_em: string
+  janela_dias: number
+  hoje: {
+    usuarios: number
+    acoes: number
+    aba_top: string | null
+    ultimo: { usuario: string; hora: string | null } | null
+  }
+  serie: AcessosSerieDia[]
+  /** 7 linhas (0 = segunda) × 24 horas BRT. */
+  heatmap: number[][]
+  por_aba: AcessosPorAba[]
+  usuarios: AcessosUsuarioLinha[]
+  saude: AcessosSaude
+}
+
+export interface AcessosFichaDia {
+  dia: string
+  ini: string
+  fim: string
+  acoes: number
+}
+
+export interface AcessosFeature {
+  /** Rótulo humano ("Rodou simulação de viabilidade") — nunca a rota/conteúdo. */
+  feature: string
+  n: number
+}
+
+export interface AcessosSessao {
+  dia: string
+  ini: string
+  fim: string
+  acoes: number
+  abas: string[]
+}
+
+/** Um evento da linha do tempo — FEATURE + hora, nunca rota/query/conteúdo. */
+export interface AcessosEventoTempo {
+  dia: string
+  hora: string
+  feature: string
+  aba: string | null
+  erro: boolean
+}
+
+export interface AcessosFicha {
+  nome: string
+  janela_dias: number
+  acoes: number
+  dias_ativos: number
+  ultimo_dia: string
+  ultimo_hora: string | null
+  abas: string[]
+  ips: number
+  erros: number
+  dias: AcessosFichaDia[]
+  /** Mais recente primeiro; quebra por pausa > 30 min ou virada de dia. */
+  sessoes: AcessosSessao[]
+  features: AcessosFeature[]
+  por_aba: { aba: string; acoes: number }[]
+  heatmap: number[][]
+  /** Mais recente primeiro; teto de 80 eventos. */
+  linha_do_tempo: AcessosEventoTempo[]
 }
