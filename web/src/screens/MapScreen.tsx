@@ -17,11 +17,12 @@ import { Botao } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
 import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
-import { ACC, ACC_50, ACC_TX } from '../lib/imovel'
+import { ACC, ACC_50 } from '../lib/imovel'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import type { AlvoCaptura } from '../lib/captura-mapa'
 import { DIMENSOES, rotuloDoHex, rotulosDosHexes } from '../lib/comparacao'
+import type { Tema } from '../lib/tema'
 import type {
   Cobertura1k,
   Hex,
@@ -105,6 +106,14 @@ export interface MapScreenProps {
    * (mesmo motivo do `onAnalisarPonto`); ausente = o botão da janela não aparece.
    */
   onVerImovelNaAba?: (o: Oportunidade) => void
+  /**
+   * Tema do app, repassado ao `HexMap`.
+   *
+   * Só o mapa precisa dele nesta tela: o resto do `MapScreen` é DOM e lê os tokens pela
+   * cascata, sem saber que existe tema. O deck.gl e o MapLibre não leem `var()` — o
+   * basemap e as cores de seleção têm de chegar como valor.
+   */
+  tema: Tema
 }
 
 export default function MapScreen({
@@ -127,6 +136,7 @@ export default function MapScreen({
   janelaDoHex = true,
   semLanding = false,
   onVerImovelNaAba,
+  tema,
 }: MapScreenProps) {
   // A foto so' vale se tiver sido tirada NESTA uf/municipio — `fotoAplicavel` faz esse
   // portao (lib/mapa-estado). Sem ele, um pin de Sao Paulo reapareceria depois de um
@@ -772,6 +782,7 @@ export default function MapScreen({
         <HexMap
           hexes={hexesFiltrados}
           passo={passo}
+          tema={tema}
           cresMun={dados.cres_mun}
           centro={dados.centro}
           municipio={dados.municipio ?? undefined}
@@ -1707,9 +1718,12 @@ function PilulaRegua({ ligado, onToggle }: { ligado: boolean; onToggle: () => vo
         fontWeight: 600,
         padding: '7px 11px',
         borderRadius: 9,
-        border: `1px solid ${ligado ? 'rgba(53,201,214,.45)' : 'rgba(255,255,255,.14)'}`,
-        background: '#000',
-        color: ligado ? '#7de3ec' : '#9aa7b5',
+        border: `1px solid ${ligado ? 'var(--ac-a45)' : 'var(--linha-mapa)'}`,
+        // Mesma troca das outras pílulas: fundo OPACO, não PRETO. No escuro `--surf-mapa`
+        // é o mesmo #000; no claro é branco chapado, porque o que resolve a legenda
+        // atravessando o texto é a opacidade, não a cor.
+        background: 'var(--surf-mapa)',
+        color: ligado ? 'var(--ac-chip)' : 'var(--tx-narrative)',
       }}
     >
       <span
@@ -1717,7 +1731,7 @@ function PilulaRegua({ ligado, onToggle }: { ligado: boolean; onToggle: () => vo
           width: 9,
           height: 9,
           borderRadius: '50%',
-          background: ligado ? '#4fd3df' : '#5a6472',
+          background: ligado ? 'var(--ac-text)' : 'var(--sinal-off)',
           flexShrink: 0,
         }}
       />
@@ -1760,11 +1774,14 @@ function PilulaRaio({
         fontWeight: 600,
         padding: '7px 11px',
         borderRadius: 9,
-        border: `1px solid ${ligado ? 'rgba(53,201,214,.45)' : 'rgba(255,255,255,.14)'}`,
-        // Fundo PRETO (pedido do Felipe): o botao fica sobre o mapa, e um fundo
-        // translucido deixava a legenda das faixas atravessar o texto.
-        background: '#000',
-        color: ligado ? '#7de3ec' : '#9aa7b5',
+        border: `1px solid ${ligado ? 'var(--ac-a45)' : 'var(--linha-mapa)'}`,
+        // Fundo OPACO (pedido do Felipe): o botão fica sobre o mapa, e um fundo
+        // translúcido deixava a legenda das faixas atravessar o texto. No escuro
+        // `--surf-mapa` É o preto que ele pediu; no claro é branco chapado, porque o que
+        // resolve o problema é a opacidade, não a cor — um retângulo preto sobre o
+        // Positron seria a única mancha escura da tela.
+        background: 'var(--surf-mapa)',
+        color: ligado ? 'var(--ac-chip)' : 'var(--tx-narrative)',
       }}
     >
       <span
@@ -1772,7 +1789,12 @@ function PilulaRaio({
           width: 9,
           height: 9,
           borderRadius: '50%',
-          background: carregando ? '#f2c230' : ligado ? '#4fd3df' : '#5a6472',
+          // Os três viraram `var()` para seguir o tema sem este componente saber que ele
+          // existe. No ESCURO os três valem exatamente o que valiam como hex solto:
+          // --carga = #f2c230, --ac-text = #4fd3df, --sinal-off = #5a6472. O âmbar e o
+          // cinza ganharam token PRÓPRIO em vez de cair em --warn/--tx-off, que eram
+          // vizinhos e não iguais (ver tokens.css).
+          background: carregando ? 'var(--carga)' : ligado ? 'var(--ac-text)' : 'var(--sinal-off)',
           flexShrink: 0,
         }}
       />
@@ -1827,9 +1849,13 @@ function PilulaIndependentes({
         fontWeight: 600,
         padding: '7px 11px',
         borderRadius: 9,
-        border: `1px solid ${ligado ? 'rgba(232,102,60,.5)' : 'rgba(255,255,255,.14)'}`,
-        background: '#000',
-        color: ligado ? '#f2a488' : '#9aa7b5',
+        border: `1px solid ${ligado ? 'rgba(232,102,60,.5)' : 'var(--linha-mapa)'}`,
+        // Mesma troca da `PilulaRaio`: fundo OPACO em vez de PRETO. O que resolve a
+        // legenda atravessando o texto é a opacidade, não a cor — e três retângulos
+        // pretos empilhados sob um card de legenda branco seriam a única mancha escura
+        // da tela. No escuro `--surf-mapa` é o mesmo #000 de antes.
+        background: 'var(--surf-mapa)',
+        color: ligado ? 'var(--indep-tx)' : 'var(--tx-narrative)',
       }}
     >
       <span
@@ -1837,7 +1863,9 @@ function PilulaIndependentes({
           width: 9,
           height: 9,
           borderRadius: '50%',
-          background: ligado ? '#e8663c' : '#5a6472',
+          // O ponto LIGADO fica no hex da camada: é elemento gráfico e passa nos dois
+          // fundos. Só o desligado virou token, e `--sinal-off` é o #5a6472 de antes.
+          background: ligado ? '#e8663c' : 'var(--sinal-off)',
           flexShrink: 0,
         }}
       />
@@ -1886,9 +1914,9 @@ function PilulaImoveis({
         fontWeight: 600,
         padding: '7px 11px',
         borderRadius: 9,
-        border: `1px solid ${ligado ? ACC_50 : 'rgba(255,255,255,.14)'}`,
-        background: '#000',
-        color: ligado ? ACC_TX : '#9aa7b5',
+        border: `1px solid ${ligado ? ACC_50 : 'var(--linha-mapa)'}`,
+        background: 'var(--surf-mapa)',
+        color: ligado ? 'var(--imovel-tx)' : 'var(--tx-narrative)',
       }}
     >
       <span
@@ -1896,7 +1924,7 @@ function PilulaImoveis({
           width: 9,
           height: 9,
           borderRadius: '50%',
-          background: ligado ? ACC : '#5a6472',
+          background: ligado ? ACC : 'var(--sinal-off)',
           flexShrink: 0,
         }}
       />

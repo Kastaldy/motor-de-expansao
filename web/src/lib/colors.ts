@@ -168,8 +168,19 @@ export function crescClasseToColor(classe: string | null | undefined): RGBA {
 
    Por que o RGB aparece de novo: o deck.gl pinta em array [r,g,b,a] e nao le
    variavel CSS, entao a borda do rotulo de rank (HexMap) precisa do numero cru —
-   e' a mesma razao de SCORE_BANDS_HEX viver neste arquivo. As duas formas tem de
-   andar juntas: ao mexer num --lN de tokens.css, mexa no `rgb` do mesmo item.
+   e' a mesma razao de SCORE_BANDS_HEX viver neste arquivo.
+
+   O `rgb` NAO segue o tema, e os `var()` acima seguem. Isso parece divergencia e nao
+   e': eles vestem superficies diferentes. Os `var()` pintam DOM (cabecalho do painel,
+   bolinha do stepper) sobre o fundo do app, que troca de cor; o `rgb` pinta a borda do
+   chip de rank, que pousa no MAPA e e' ESCURO nos dois temas — o chip precisa ser
+   escuro porque cobre a rampa inteira, do vermelho ao verde, e e' o fundo dele que
+   garante a leitura do numero. Sobre esse chip escuro valem as matizes CLARAS, que sao
+   justamente as do `:root`.
+
+   Ao mexer num --lN de tokens.css: se o valor mexido for o do `:root` (escuro), mexa no
+   `rgb` do mesmo item aqui. Se for o do bloco [data-tema='claro'], NAO mexa — aquele
+   valor nunca chega ao WebGL.
    --------------------------------------------------------------------------- */
 
 export interface CamadaCor {
