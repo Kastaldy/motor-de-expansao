@@ -38,6 +38,7 @@ RESUMO_EXECUTIVO_PATH = Path("data/reports/resumo_executivo_fase1.md")
 HYBRID_PATH = Path("data/outputs/oportunidades_expansao_hibrido.parquet")
 CENSO_CORE_PATH = Path("data/staging/censo2022_setores_calibrado.parquet")
 CENSO_EXPANDED_PATH = Path("data/staging/censo2022_setores_calibrado_piloto_expandido.parquet")
+CENSO_NACIONAL_PATH = Path("data/staging/censo2022_setores_calibrado_nacional_completo.parquet")
 CENSO_VALIDATED_PATH = Path("data/staging/censo2022_setores_validado_v2.parquet")
 ESTRUTURAL_PATH = Path("data/staging/brasil_estrutural.parquet")
 ENRIQUECIDO_DIR = Path("data/outputs/hexagonos_dashboard_enriquecido")
@@ -539,7 +540,11 @@ def _read_hybrid_frame(path: Path | str = HYBRID_PATH) -> pd.DataFrame:
 
 def _read_censo_trace_frame() -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
-    for path in [CENSO_CORE_PATH, CENSO_EXPANDED_PATH]:
+    # Ordem = precedencia da deduplicacao (drop_duplicates keep="first"), a mesma de
+    # modelo_hibrido_expansao._load_censo: core > expandido > nacional. O nacional
+    # (21 UFs) faltava aqui, e por isso o dataset enriquecido -- que o piloto web le --
+    # so tinha censo nas 6 UFs de core+expandido.
+    for path in [CENSO_CORE_PATH, CENSO_EXPANDED_PATH, CENSO_NACIONAL_PATH]:
         frame = _prepare_censo_trace(_read_optional_parquet_subset(path, CENSO_TRACE_LOAD_COLS))
         if not frame.empty:
             frames.append(frame)

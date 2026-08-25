@@ -1,6 +1,6 @@
 # Modelo Hibrido de Expansao
 
-> Data: 2026-06-03
+> Data: 2026-08-25
 > Status: GO para uso pratico controlado como camada complementar ao M1
 
 ## Regra final do modelo
