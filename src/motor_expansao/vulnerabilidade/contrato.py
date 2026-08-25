@@ -1,8 +1,8 @@
 """Contrato canônico da camada paralela de Vulnerabilidade para M&A (snapshots + churn).
 
 Fonte única de verdade do schema dos snapshots semanais
-(`data/staging/snapshots_concorrentes/semana=AAAA-SS/parte-*.parquet`, gitignored) e do frame de
-churn/staleness derivado dele. **SEM I/O e SEM pandas** — só stdlib (BLK-MA-02 / DEC-012).
+(`data/staging/snapshots_concorrentes/semana=AAAA-SS/fonte=<fonte>/parte-*.parquet`, gitignored) e
+do frame de churn/staleness derivado dele. **SEM I/O e SEM pandas** — só stdlib (BLK-MA-02/DEC-012).
 
 Diferença consciente em relação ao molde `demanda_revelada/contrato.py` (só constantes): aqui as
 **primitivas de derivação também SÃO o contrato**. Alterar `normalizar_texto`, os campos da chave,
@@ -11,9 +11,17 @@ churn artificial em massa — por isso elas ficam no mesmo arquivo que carrega
 `VERSAO_CONTRATO_SNAPSHOT`, e qualquer mudança **exige bump** dessa versão (o BLK-MA-04 deve tratar
 o bump como descontinuidade de série). Histórico de bumps do snapshot: `v1` (BLK-MA-02) -> `v2`
 (BLK-MA-11 / DEC-025, saída da taxonomia do hash) -> `v3` (BLK-MA-09 / DEC-026, entrada das duas
-colunas-fato de rating). **Os três foram feitos com a série ainda VAZIA, logo sem migração** — a
-janela grátis fecha na primeira coleta do cron mensal. O `v3` levou junto o bump de
-`VERSAO_CONTRATO_CHURN` e de `VERSAO_CONTRATO_SCORE`, porque os dois schemas também mudaram.
+colunas-fato de rating) -> `v4` (BLK-MA-21 / DEC-038, entrada de `fontes_lidas` e da segunda chave
+de partição `fonte=`). Os TRÊS primeiros foram feitos com a série ainda VAZIA, logo sem migração.
+
+**A janela grátis de bump FECHOU, e o `v4` é o primeiro bump COM série no disco.** Existe partição
+viva (medida em 2026-08-25: `semana=2026-33`, 22.173 linhas, só `wellhub`, `v3`), e ela é o insumo
+de artefatos que estão em produção. Política de convivência, que vale a partir daqui: **a partição
+antiga permanece legível** — `ler_snapshots` declara `schema=` por arquivo (DEC-026), então o
+pyarrow preenche o que falta partição a partição — e sai com `fontes_lidas` **nula**, que se lê como
+"gravada antes do `v4`", nunca como "nenhuma fonte foi lida". O `v3` levou junto o bump de
+`VERSAO_CONTRATO_CHURN` e de `VERSAO_CONTRATO_SCORE`, porque os dois schemas também mudaram; o `v4`
+**não** os leva, porque nenhum dos dois derivados ganhou coluna.
 
 GUARDRAILS (CLAUDE.md §1/§2/§5; contrato `docs/vulnerabilidade_ma_contrato.md` §11/§14):
   - READ-ONLY sobre o M1: nada aqui recalcula `score_priorizacao`, `hex_score_estrutural`, os pesos
@@ -36,7 +44,7 @@ from datetime import date
 # --------------------------------------------------------------------------- #
 # Carimbos de reprodutibilidade e parâmetros do contrato
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v3"
+VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v4"
 VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
 VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v7"
@@ -48,7 +56,30 @@ H3_RES_CONTRATO = 7
 # contam semanas OBSERVADAS, não semanas de calendário (ver §6/§12 do contrato).
 MIN_SEMANAS = 8
 STALE_SEMANAS = 12
-RETENCAO_SEMANAS = 26
+
+# `RETENCAO_SEMANAS` é a ÚNICA das três que conta semanas de CALENDÁRIO, e é essa assimetria que
+# torna o valor um parâmetro de produto, não de disco `[BLK-MA-21 / DEC-038, 2026-08-25]`.
+#
+# A aritmética das DUAS cadências, escrita, porque ela decide o número. `podar_snapshots` é
+# keep-newest-N sobre diretórios `semana=`, e o cron SEMANAL escreve em toda semana ISO. Logo o
+# conjunto de partições é o conjunto de semanas de calendário, e reter N delas retém, para um feed
+# de cadência MENSAL, apenas `N / 4,345` observações daquela fonte (4,345 = 52,18/12).
+#
+#   | N  | semanas do feed semanal | observações do feed mensal |
+#   |----|-------------------------|----------------------------|
+#   | 26 | 26                      | 5,98  <- ABAIXO de MIN_SEMANAS: nunca amadurece |
+#   | 53 | 53                      | 12,2  <- iguala STALE_SEMANAS, sem folga        |
+#   | 78 | 78                      | 17,9  <- com folga sobre STALE_SEMANAS          |
+#
+# Com `26`, `n_semanas_serie` de um agregador para em 5,98, `flag_serie_imatura` fica `True` para
+# sempre e o `v4` fica preso em `<= 6/12 = 0,5`: ligar o cron mensal entregaria um relógio que marca
+# a hora errada para sempre. Custo de disco do `78`, medido em 2026-08-25 sobre a partição viva
+# (155,8 bytes/linha): 78 semanais de `unidades` (~16k linhas) + 18 observações mensais dos dois
+# agregadores ~= 310 MB. Não é restrição.
+#
+# Poda POR FONTE dentro da partição (que serviria as duas cadências com menos disco) foi
+# deliberadamente adiada para bloco próprio: ela mexe na única função do pacote que apaga arquivo.
+RETENCAO_SEMANAS = 78
 
 # ARBITRADO, nao medido (sem serie real; revisitar no BLK-MA-06). O valor importa menos que o
 # DESENHO: o rebaixamento GLOBAL da chave só ocorre se o chamador INJETAR a taxa medida (default
@@ -59,8 +90,14 @@ LIMIAR_SLUG_ESTAVEL = 0.90
 # Folga (~55 km) sobre o bbox da UF, para não descartar academia legítima junto a divisa.
 TOLERANCIA_BBOX_UF_GRAUS = 0.5
 
-# Coluna de partição hive do snapshot (não é coluna do arquivo: vive no caminho).
-COLUNA_PARTICAO = "semana"
+# Chaves de partição hive do snapshot (não são colunas do arquivo: vivem no caminho). A ORDEM é a
+# ordem das chaves hive no caminho — `semana=AAAA-SS/fonte=<fonte>/parte-*.parquet`.
+#
+# Era escalar (`COLUNA_PARTICAO = "semana"`) até o BLK-MA-21 / DEC-038. A segunda chave existe
+# porque duas cadências escrevem na MESMA semana ISO: com uma chave só, `delete_matching` fazia a
+# execução mensal apagar a partição inteira que a semanal tinha acabado de gravar (e vice-versa).
+# Com `fonte=` a idempotência passa a ser por FOLHA — ver `escrever_particao_semana`.
+COLUNAS_PARTICAO: tuple[str, ...] = ("semana", "fonte")
 
 RE_SEMANA = re.compile(r"^\d{4}-\d{2}$")
 RE_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
@@ -203,8 +240,14 @@ CAMPOS_NUMERICOS: frozenset[str] = frozenset({"latitude", "longitude"})
 # --------------------------------------------------------------------------- #
 # Schemas canônicos
 # --------------------------------------------------------------------------- #
-# Snapshot semanal: 12 colunas, nesta ORDEM. `semana` NÃO é coluna do arquivo — é chave de
+# Snapshot semanal: 13 colunas, nesta ORDEM. `semana` NÃO é coluna do arquivo — é chave de
 # partição hive (igual ao `uf` do enriquecido em `fase1_bi_exports.py`), materializada na leitura.
+#
+# `fonte` é caso HÍBRIDO desde o BLK-MA-21: ela está aqui (é coluna LÓGICA do contrato, exigida pelo
+# `_assert_schema_snapshot` e devolvida por `ler_snapshots`), mas virou a SEGUNDA chave de partição
+# — e o pyarrow remove do arquivo toda coluna que promove a chave. Consequência medida (pyarrow
+# 23.0.1): o parquet físico tem 12 colunas, não 13, e um `pd.read_parquet` de UMA folha não vê
+# `fonte`. Quem lê a série pela função de produção continua vendo as 13.
 CONTRATO_COLUNAS_SNAPSHOT: dict[str, str] = {
     "snapshot_date": "string",  # `data_coleta` POR LINHA (ISO) -> medidor de frescor
     "slug": "string",  # ID nativo do provedor (nulável: `unidades` não emite)
@@ -222,6 +265,16 @@ CONTRATO_COLUNAS_SNAPSHOT: dict[str, str] = {
     # Ficam FORA de `CAMPOS_HASH_POR_FONTE` — a nota muda a cada avaliação e mataria o S4.
     "nota_wellhub": "Float64",  # [NOTA_WELLHUB_MIN, NOTA_WELLHUB_MAX]; nulável
     "qtd_avaliacoes_wellhub": "Int64",  # >= 0; nulável
+    # `[BLK-MA-21 / DEC-038]` O recorte que a EXECUÇÃO PEDIU (`--fontes`), como CSV ordenado —
+    # ex.: `"totalpass,wellhub"`. NÃO é o que a partição contém, e a diferença é o motivo de a
+    # coluna existir: com a guarda de frescor da curadoria, o TotalPass pode ter sido **tentado e
+    # recusado** (feed velho), e nesse caso a folha `fonte=totalpass` simplesmente não existe.
+    # Inferir o recorte das folhas presentes responderia "que fontes esta PARTIÇÃO tem", que é
+    # outra pergunta, e leria "tentado e recusado" como "nunca tentado".
+    # Constante por execução, e redundante por linha de propósito: é o único lugar onde o
+    # consumidor da série a encontra sem um segundo artefato (o custo em disco é ~0 por dictionary
+    # encoding). Fora de `CAMPOS_HASH_POR_FONTE` — mudar o recorte não é o cadastro mudar.
+    "fontes_lidas": "string",
     "versao_contrato": "string",  # carimbo; mudança = descontinuidade de série
 }
 
@@ -1078,7 +1131,7 @@ __all__ = [
     "RETENCAO_SEMANAS",
     "LIMIAR_SLUG_ESTAVEL",
     "TOLERANCIA_BBOX_UF_GRAUS",
-    "COLUNA_PARTICAO",
+    "COLUNAS_PARTICAO",
     "RE_SEMANA",
     "RE_UUID",
     "FONTES_VALIDAS",

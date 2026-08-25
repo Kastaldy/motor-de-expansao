@@ -66,6 +66,7 @@ from .contrato import (
     CONTRATO_COLUNAS_ACADEMIAS_MA,
     CONTRATO_COLUNAS_ALVOS_MA,
     CONTRATO_COLUNAS_SCORE,
+    FONTES_VALIDAS,
     H3_RES_CONTRATO,
     LIMIAR_RESIDUAL_SATURADO,
     QUANTIL_SAM_QUENTE,
@@ -78,6 +79,20 @@ ROOT = Path(__file__).resolve().parents[3]
 CARTEIRA_PATH_DEFAULT = ROOT / "data" / "outputs" / "carteira_expansao_acionavel.parquet"
 ACADEMIAS_PATH_DEFAULT = ROOT / "data" / "staging" / "vulnerabilidade_ma_academias.parquet"
 ALVOS_CSV_DEFAULT = ROOT / "data" / "outputs" / "alvos_ma_priorizados.csv"
+
+# FRONTEIRA COM O BLK-MA-20, E ELA É FAIL-CLOSED `[emenda de 2026-08-25 à DEC-038, D9]`.
+#
+# Este é o recorte de fontes que vale quando NINGUÉM digita nada. A DEC-038 rejeitou a opção "a DEC
+# proíbe por escrito" com a frase "é prosa: a cadeia roda com as duas fontes sem editar uma linha" —
+# e a primeira implementação tinha a MESMA propriedade, só que o gesto que vazava passou a ser *não
+# digitar o flag*. Duas das três receitas canônicas do próprio repositório omitiam `--fontes
+# wellhub` (`docs/infra_producao.md` e `scripts/check_artifacts.py`), então o vazamento não era
+# hipotético: era o caminho que o operador copiava.
+#
+# Com o default abaixo, OMITIR é o comportamento seguro. Consumir a série inteira passa a exigir um
+# gesto explícito (`--todas-as-fontes`), que é o que o BLK-MA-20 vai autorizar quando decidir o grão
+# do S1 e calibrar a dedup TP x WH — hoje arbitrada, não medida.
+FONTES_ENTREGAVEL_DEFAULT: tuple[str, ...] = ("wellhub",)
 
 # A chave de join tem nome diferente dos dois lados: `hex_id` na carteira, `hex_id_res7` na
 # academia. Mesmo conteúdo, e a diferença é herdada — renomear qualquer um dos dois seria mudança
@@ -555,12 +570,49 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "-- sem este argumento nada e' gravado, e so' aceita caminho sob `data/staging/`."
         ),
     )
+    recorte = p.add_mutually_exclusive_group()
+    recorte.add_argument(
+        "--fontes",
+        nargs="+",
+        choices=sorted(FONTES_VALIDAS),
+        default=None,
+        help=(
+            "recorta a serie de snapshots ANTES de derivar churn/presenca. OMITIR NAO desliga o "
+            f"recorte: sem este argumento vale {list(FONTES_ENTREGAVEL_DEFAULT)}, que e' a "
+            "fronteira com o BLK-MA-20 (DEC-038, D9). A particao do totalpass e' GRAVADA desde o "
+            "primeiro mes (para o cronometro de MIN_SEMANAS correr), mas nao entra no ranking. "
+            "Para consumir a serie inteira, use `--todas-as-fontes`"
+        ),
+    )
+    recorte.add_argument(
+        "--todas-as-fontes",
+        action="store_true",
+        help=(
+            "consome a serie INTEIRA, sem recorte. E' a porta que o BLK-MA-20 abre quando decidir "
+            "o grao do S1 e calibrar a dedup TP x WH; ate' la', usa-la poe o totalpass no ranking "
+            "com dedup arbitrada. Incompativel com `--fontes`"
+        ),
+    )
     p.add_argument(
         "--dry-run",
         action="store_true",
         help="compõe tudo e reporta a auditoria, sem gravar arquivo algum",
     )
     return p.parse_args(argv)
+
+
+def resolver_fontes(args: argparse.Namespace) -> tuple[str, ...] | None:
+    """Recorte de fontes EFETIVO: `None` só quando alguém pediu a série inteira de propósito.
+
+    É aqui que a fronteira do D9 deixa de ser prosa. A ordem importa e é fail-closed: o gesto
+    explícito (`--todas-as-fontes`) manda; depois o recorte explícito (`--fontes`); e a AUSÊNCIA de
+    gesto cai no `FONTES_ENTREGAVEL_DEFAULT`, nunca em "tudo".
+    """
+    if getattr(args, "todas_as_fontes", False):
+        return None
+    if args.fontes:
+        return tuple(str(f) for f in args.fontes)
+    return FONTES_ENTREGAVEL_DEFAULT
 
 
 def _pressao_por_academia(
@@ -640,9 +692,26 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     from .snapshots import coordenadas_por_chave
 
+    # A fronteira com o BLK-MA-20, RESOLVIDA antes de qualquer leitura e FAIL-CLOSED: omitir o flag
+    # nao devolve a serie inteira, devolve `FONTES_ENTREGAVEL_DEFAULT` (DEC-038 D9, emenda de
+    # 2026-08-25). O log sai SEMPRE — inclusive quando ninguem digitou nada —, porque o recorte
+    # silencioso e' o mesmo defeito de sinal trocado que este bloco veio matar.
+    fontes = resolver_fontes(args)
+    if fontes is None:
+        _logger.warning(
+            "recorte de fontes DESLIGADO por `--todas-as-fontes`: a serie INTEIRA entra no "
+            "ranking, com a dedup TP x WH ainda arbitrada (DEC-038, D9)"
+        )
+    else:
+        _logger.info(
+            "recorte de fontes: %s%s",
+            ",".join(sorted(fontes)),
+            "" if args.fontes else " (default do entregavel; use `--todas-as-fontes` para abrir)",
+        )
+
     # UMA leitura do feed cru serve aos dois consumidores (pressao e artefato nomeado). Ler duas
     # vezes custaria o dobro e abriria a chance de os dois verem feeds diferentes.
-    coordenadas = coordenadas_por_chave()
+    coordenadas = coordenadas_por_chave(fontes=fontes)
 
     if args.sem_pressao:
         pressao, motivo = None, "`--sem-pressao`: score sem o s6, por pedido explicito"
@@ -656,7 +725,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     # score le-lo internamente: o mesmo frame serve aos dois consumidores. Ler duas vezes custaria o
     # dobro e abriria a chance de o artefato de redes ver uma serie diferente da que gerou o score.
     churn_lido = None
-    if args.saida_redes is not None:
+    if fontes is not None:
+        # RECORTE POR FONTE (DEC-038, D9). A serie e' lida UMA vez, ja' recortada, e INJETADA nos
+        # dois extratores -- eles nao podem reler do disco, senao voltariam a ver a serie inteira e
+        # o recorte seria decorativo. E' o mesmo molde do ramo `--saida-redes` abaixo.
+        from .churn_staleness import extrair_churn_staleness
+        from .presenca_agregador import extrair_presenca_agregador
+        from .snapshots import ler_snapshots
+
+        serie = ler_snapshots(Path(args.base_dir), fontes=fontes)
+        injetada = [serie] if not serie.empty else []
+        _logger.info(
+            "recorte de fontes ATIVO (%s): %d linha(s) na serie",
+            ",".join(sorted(fontes)),
+            len(serie),
+        )
+        churn_lido = extrair_churn_staleness(snapshots=injetada)
+        score = calcular_score_vulnerabilidade(
+            churn=churn_lido,
+            presenca=extrair_presenca_agregador(snapshots=injetada),
+            pressao=pressao,
+        )
+    elif args.saida_redes is not None:
         from .churn_staleness import extrair_churn_staleness
         from .presenca_agregador import extrair_presenca_agregador
 
@@ -729,11 +819,13 @@ __all__ = [
     "ACADEMIAS_PATH_DEFAULT",
     "ALVOS_CSV_DEFAULT",
     "CARTEIRA_PATH_DEFAULT",
+    "FONTES_ENTREGAVEL_DEFAULT",
     "academias_com_hotness",
     "agregar_alvos_por_hex",
     "main",
     "marcar_hex_quente",
     "materializar_alvos_ma",
+    "resolver_fontes",
 ]
 
 
