@@ -39,7 +39,7 @@ def test_calcular_corte_top_respeita_minimo():
                 "qualidade_join_uf": "A",
                 "flag_join_uf_restrito": False,
                 "flag_baixa_pop_setor": False,
-                "densidade_pop_setor_hab_km2": 6000.0,
+                "pop_total_setor_2022": 6000.0,
                 "score_priorizacao": 80.0,
             },
             "sem_score_censitario",
@@ -51,7 +51,7 @@ def test_calcular_corte_top_respeita_minimo():
                 "qualidade_join_uf": "A",
                 "flag_join_uf_restrito": False,
                 "flag_baixa_pop_setor": False,
-                "densidade_pop_setor_hab_km2": 6000.0,
+                "pop_total_setor_2022": 6000.0,
                 "score_priorizacao": 80.0,
             },
             "coverage_baixa",
@@ -63,7 +63,7 @@ def test_calcular_corte_top_respeita_minimo():
                 "qualidade_join_uf": "C",
                 "flag_join_uf_restrito": False,
                 "flag_baixa_pop_setor": False,
-                "densidade_pop_setor_hab_km2": 6000.0,
+                "pop_total_setor_2022": 6000.0,
                 "score_priorizacao": 80.0,
             },
             "join_uf_fora_regra",
@@ -75,10 +75,10 @@ def test_calcular_corte_top_respeita_minimo():
                 "qualidade_join_uf": "A",
                 "flag_join_uf_restrito": False,
                 "flag_baixa_pop_setor": True,
-                "densidade_pop_setor_hab_km2": 4200.0,
+                "pop_total_setor_2022": 4200.0,
                 "score_priorizacao": 75.0,
             },
-            "densidade_abaixo_piso",
+            "pop_abaixo_piso",
         ),
         (
             {
@@ -87,10 +87,10 @@ def test_calcular_corte_top_respeita_minimo():
                 "qualidade_join_uf": "A",
                 "flag_join_uf_restrito": False,
                 "flag_baixa_pop_setor": False,
-                "densidade_pop_setor_hab_km2": None,
+                "pop_total_setor_2022": None,
                 "score_priorizacao": 75.0,
             },
-            "densidade_indisponivel",
+            "pop_setor_indisponivel",
         ),
         (
             {
@@ -99,7 +99,7 @@ def test_calcular_corte_top_respeita_minimo():
                 "qualidade_join_uf": "A",
                 "flag_join_uf_restrito": False,
                 "flag_baixa_pop_setor": False,
-                "densidade_pop_setor_hab_km2": 6100.0,
+                "pop_total_setor_2022": 6100.0,
                 "score_priorizacao": 75.0,
             },
             "elegivel",
@@ -155,7 +155,8 @@ def test_construir_dataset_hibrido_aplica_duas_etapas(local_tmp_dir):
             "cod_municipio": ["001", "001", "002", "002"],
             "nome_municipio": ["A", "A", "B", "B"],
             "score_setor_2022_calibrado": [70.0, 90.0, 80.0, 20.0],
-            "pop_total_setor_2022": [15000.0, 42000.0, 35000.0, 1000.0],
+            # h1 = 4.000 hab: ABAIXO do piso de 5.000 -> exercita `pop_abaixo_piso`.
+            "pop_total_setor_2022": [4000.0, 42000.0, 35000.0, 1000.0],
             "coverage_pct_setor_2022": [100.0, 100.0, 100.0, 100.0],
             "qualidade_join_uf": ["A", "A", "A", "A"],
             "flag_join_uf_restrito": [False, False, False, False],
@@ -195,7 +196,7 @@ def test_construir_dataset_hibrido_aplica_duas_etapas(local_tmp_dir):
 
     assert bool(result.loc[result["hex_id"] == "h2", "flag_hex_hibrido_elegivel"].iloc[0]) is True
     assert bool(result.loc[result["hex_id"] == "h1", "flag_hex_hibrido_elegivel"].iloc[0]) is False
-    assert result.loc[result["hex_id"] == "h1", "motivo_nao_elegivel_censo"].iloc[0] == "densidade_abaixo_piso"
+    assert result.loc[result["hex_id"] == "h1", "motivo_nao_elegivel_censo"].iloc[0] == "pop_abaixo_piso"
     assert bool(result.loc[result["hex_id"] == "h3", "flag_hex_hibrido_elegivel"].iloc[0]) is False
 
 
@@ -385,3 +386,31 @@ def test_load_censo_propaga_renda_setorial_das_tres_fontes(local_tmp_dir):
     assert renda["h_core"] == 3100.0
     assert renda["h_exp"] == 1700.0
     assert renda["h_nac"] == 950.0
+
+
+def test_piso_do_hibrido_e_de_5000_habitantes_nao_de_25806(local_tmp_dir):
+    """Regressao do alinhamento de 2026-08-25.
+
+    Ate entao o piso era escrito `DENSIDADE_MIN_HAB_KM2 = 5_000.0` (hab/km2). Como a densidade do
+    hexagono e' `pop / 5,161293 km2` (area FIXA do H3 res-7), aquele "5.000" exigia na verdade
+    pop >= 25.806 -- 5,16x o `POP_MIN_SAM_GATE = 5_000` escrito com o MESMO numero na camada de
+    mercado. O piso antigo cortava 723.943 dos 724.793 hexes que passavam score+coverage+join.
+
+    Este teste trava a FAIXA que o alinhamento passou a admitir: um hexagono com 15.000 habitantes
+    (antes: densidade 2.906 -> barrado; agora: 15.000 >= 5.000 -> elegivel).
+    """
+    comum = {
+        "score_setor_2022_calibrado": 90.0,
+        "coverage_pct_setor_2022": 100.0,
+        "qualidade_join_uf": "A",
+        "flag_join_uf_restrito": False,
+        "flag_baixa_pop_setor": False,
+        "score_priorizacao": 80.0,
+    }
+    # 15.000 hab = 2.906 hab/km2 no hexagono: reprovado pelo piso ANTIGO, aprovado pelo novo.
+    assert classificar_motivo_nao_elegivel(pop_total_setor_2022=15_000.0, **comum) == "elegivel"
+    # a faixa toda entre os dois pisos passa a valer
+    assert classificar_motivo_nao_elegivel(pop_total_setor_2022=5_000.0, **comum) == "elegivel"
+    assert classificar_motivo_nao_elegivel(pop_total_setor_2022=25_000.0, **comum) == "elegivel"
+    # e o piso novo continua mordendo abaixo de 5.000
+    assert classificar_motivo_nao_elegivel(pop_total_setor_2022=4_999.0, **comum) == "pop_abaixo_piso"

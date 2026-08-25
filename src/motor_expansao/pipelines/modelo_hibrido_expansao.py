@@ -53,7 +53,14 @@ TOP_OPORTUNIDADES_POR_MUNICIPIO = 10
 COVERAGE_MIN_SETOR = 85.0
 JOIN_CLASSES_ELEGIVEIS = {"A", "B"}
 LOCAL_BONUS_DIVISOR = 100_000.0
-DENSIDADE_MIN_HAB_KM2 = 5_000.0
+# Piso de porte do hexagono para a camada hibrida, em HABITANTES.
+# Ate 2026-08-25 esta regra era escrita como DENSIDADE_MIN_HAB_KM2 = 5_000.0 (hab/km2). Como a
+# densidade do hexagono e' `pop / h3.average_hexagon_area(7)` -- area FIXA de 5,161293 km2 --,
+# aquele "5.000" exigia na verdade pop >= 25.806 por hexagono: 5,16x o POP_MIN_SAM_GATE = 5_000
+# que vive na camada de mercado e e' escrito com o MESMO numero. Duas constantes "5.000" lado a
+# lado significando coisas diferentes por um fator de 5. Medido: o piso antigo cortava 723.943
+# dos 724.793 hexes que passam score+coverage+join (99,88%), e o flag legado nao cortava nenhum.
+POP_MIN_HEX_HIBRIDO = 5_000
 H3_RESOLUTION_PADRAO = 7
 
 
@@ -93,7 +100,7 @@ def classificar_motivo_nao_elegivel(
     qualidade_join_uf: str | None,
     flag_join_uf_restrito: bool,
     flag_baixa_pop_setor: bool,
-    densidade_pop_setor_hab_km2: float | None,
+    pop_total_setor_2022: float | None,
     score_priorizacao: float,
 ) -> str:
     """Explica por que um hex nao pode usar a camada censitaria no fluxo hibrido."""
@@ -105,10 +112,10 @@ def classificar_motivo_nao_elegivel(
         return "join_uf_fora_regra"
     if bool(flag_join_uf_restrito):
         return "join_uf_restrito"
-    if pd.isna(densidade_pop_setor_hab_km2):
-        return "densidade_indisponivel"
-    if bool(flag_baixa_pop_setor) or float(densidade_pop_setor_hab_km2) < DENSIDADE_MIN_HAB_KM2:  # type: ignore[arg-type]
-        return "densidade_abaixo_piso"
+    if pd.isna(pop_total_setor_2022):
+        return "pop_setor_indisponivel"
+    if bool(flag_baixa_pop_setor) or float(pop_total_setor_2022) < POP_MIN_HEX_HIBRIDO:  # type: ignore[arg-type]
+        return "pop_abaixo_piso"
     return "elegivel"
 
 
@@ -382,8 +389,8 @@ def construir_dataset_hibrido(
         densidade_calculada,
     )
     flag_baixa_legado = pd.Series(df["flag_baixa_pop_setor"], dtype="boolean").fillna(False).astype(bool)
-    piso_densidade = df["densidade_pop_setor_hab_km2"].lt(DENSIDADE_MIN_HAB_KM2).fillna(False)
-    df["flag_baixa_pop_setor"] = (flag_baixa_legado | piso_densidade).astype(bool)
+    piso_pop = pd.to_numeric(df["pop_total_setor_2022"], errors="coerce").lt(POP_MIN_HEX_HIBRIDO).fillna(False)
+    df["flag_baixa_pop_setor"] = (flag_baixa_legado | piso_pop).astype(bool)
 
     df["motivo_nao_elegivel_censo"] = df.apply(
         lambda row: classificar_motivo_nao_elegivel(
@@ -392,7 +399,7 @@ def construir_dataset_hibrido(
             qualidade_join_uf=row.get("qualidade_join_uf"),
             flag_join_uf_restrito=bool(row.get("flag_join_uf_restrito", False)),
             flag_baixa_pop_setor=bool(row.get("flag_baixa_pop_setor", False)),
-            densidade_pop_setor_hab_km2=row.get("densidade_pop_setor_hab_km2"),
+            pop_total_setor_2022=row.get("pop_total_setor_2022"),
             score_priorizacao=float(row["score_priorizacao"]),
         ),
         axis=1,
@@ -521,7 +528,7 @@ def gerar_relatorio(df: pd.DataFrame, monitoring: pd.DataFrame) -> str:
         "1. O municipio e aprovado primeiro pelo M1 via `score_priorizacao`.",
         f"2. O corte municipal usa top {int(TOP_MUNICIPIO_PCT * 100)}% de municipios por UF, com minimo operacional de 1 municipio por UF.",
         "3. So depois disso o censitario entra para ranquear hexes dentro dos municipios aprovados.",
-        "4. O censitario so participa quando o hex passa nas regras de robustez: score disponivel, coverage >= 85%, join UF classe A/B, sem restricao de join e com densidade setorial minima de 5.000 hab/km2.",
+        "4. O censitario so participa quando o hex passa nas regras de robustez: score disponivel, coverage >= 85%, join UF classe A/B, sem restricao de join e com no minimo 5.000 habitantes no hexagono (piso de PORTE, nao de densidade -- ver POP_MIN_HEX_HIBRIDO).",
         "5. `score_expansao_hibrido` preserva o M1 como criterio principal e usa o censitario apenas como desempate/refino local.",
         "",
         "## Cobertura operacional",

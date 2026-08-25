@@ -280,7 +280,10 @@ def _motivo_priorizacao(row: pd.Series) -> str:
     if bool(row.get("flag_outlier_espacial", False)):
         parts.append("outlier espacial explicado")
     if bool(row.get("flag_baixa_pop_setor", False)):
-        parts.append("densidade abaixo do piso")
+        # Ate 2026-08-25 esta linha dizia "densidade abaixo do piso" e disparava em 91,7% da
+        # carteira: a flag era o OR com um piso escrito em hab/km2 que exigia pop >= 25.806.
+        # Com POP_MIN_HEX_HIBRIDO alinhado em 5.000 habitantes, o texto passa a dizer o que mede.
+        parts.append("população abaixo do piso")
 
     return " | ".join(parts)
 

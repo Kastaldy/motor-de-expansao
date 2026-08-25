@@ -8,16 +8,16 @@
 1. O municipio e aprovado primeiro pelo M1 via `score_priorizacao`.
 2. O corte municipal usa top 20% de municipios por UF, com minimo operacional de 1 municipio por UF.
 3. So depois disso o censitario entra para ranquear hexes dentro dos municipios aprovados.
-4. O censitario so participa quando o hex passa nas regras de robustez: score disponivel, coverage >= 85%, join UF classe A/B, sem restricao de join e com densidade setorial minima de 5.000 hab/km2.
+4. O censitario so participa quando o hex passa nas regras de robustez: score disponivel, coverage >= 85%, join UF classe A/B, sem restricao de join e com no minimo 5.000 habitantes no hexagono (piso de PORTE, nao de densidade -- ver POP_MIN_HEX_HIBRIDO).
 5. `score_expansao_hibrido` preserva o M1 como criterio principal e usa o censitario apenas como desempate/refino local.
 
 ## Cobertura operacional
 
 - UFs com camada censitaria disponivel: AC, AL, AM, AP, BA, CE, DF, ES, GO, MA, MG, MS, MT, PA, PB, PE, PI, PR, RJ, RN, RO, RR, RS, SC, SE, SP, TO
 - Hexes com score censitario disponivel: 1,302,296
-- Hexes elegiveis no fluxo hibrido: 780
-- Municipios top M1 com camada local utilizavel: 159
-- Registros priorizados para monitoramento futuro: 522
+- Hexes elegiveis no fluxo hibrido: 4,674
+- Municipios top M1 com camada local utilizavel: 771
+- Registros priorizados para monitoramento futuro: 3,442
 
 ## Como usar na pratica
 
@@ -30,46 +30,46 @@
 
 | UF | Municipios top M1 com camada local | Score medio municipal |
 | --- | --- | --- |
-| SP | 49 | 98.08 |
-| MG | 31 | 94.92 |
-| BA | 18 | 84.15 |
-| RJ | 11 | 97.38 |
-| RS | 10 | 98.45 |
-| SC | 8 | 100.00 |
-| GO | 8 | 90.74 |
-| PR | 7 | 98.48 |
-| ES | 6 | 95.93 |
-| RN | 4 | 91.59 |
-| MT | 3 | 99.23 |
+| MG | 167 | 77.67 |
+| SP | 129 | 95.75 |
+| RS | 92 | 85.98 |
+| BA | 79 | 69.18 |
+| PR | 76 | 85.42 |
+| SC | 56 | 89.35 |
+| GO | 49 | 81.18 |
+| MT | 27 | 86.24 |
+| RN | 27 | 62.53 |
+| RJ | 18 | 96.68 |
+| TO | 18 | 59.70 |
+| MS | 15 | 85.09 |
+| ES | 13 | 91.52 |
+| AC | 4 | 70.54 |
 | DF | 1 | 100.00 |
-| MS | 1 | 100.00 |
-| AC | 1 | 94.92 |
-| TO | 1 | 94.35 |
 
 ## Top 20 oportunidades Brasil
 
 | Rank Brasil | UF | Municipio | Hex | Score M1 | Score censitario | Score hibrido | Rank intraurbano |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | PR | Londrina | 87a801374ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 2 | PR | Curitiba | 87a804d92ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 3 | SP | São Paulo | 87a810764ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 4 | SP | Campinas | 87a81148bffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 5 | PR | Curitiba | 87a831361ffffff | 100.00 | 100.00 | 100.00100 | 2 |
-| 6 | SC | Joinville | 87a835640ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 7 | SC | Itajaí | 87a835c40ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 8 | MG | Belo Horizonte | 87a88cda6ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 9 | GO | Goiânia | 87a8c0ce0ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 10 | GO | Goiânia | 87a8c0ce1ffffff | 100.00 | 100.00 | 100.00100 | 2 |
-| 11 | GO | Goiânia | 87a8c0ce3ffffff | 100.00 | 100.00 | 100.00100 | 3 |
-| 12 | DF | Brasília | 87a8c2405ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 13 | DF | Brasília | 87a8c2419ffffff | 100.00 | 100.00 | 100.00100 | 2 |
-| 14 | DF | Brasília | 87a8c24e4ffffff | 100.00 | 100.00 | 100.00100 | 3 |
-| 15 | DF | Brasília | 87a8c24f3ffffff | 100.00 | 100.00 | 100.00100 | 4 |
-| 16 | DF | Brasília | 87a8d186affffff | 100.00 | 100.00 | 100.00100 | 5 |
-| 17 | RS | Porto Alegre | 87a901281ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 18 | RS | Porto Alegre | 87a901283ffffff | 100.00 | 100.00 | 100.00100 | 2 |
-| 19 | RS | Porto Alegre | 87a90128effffff | 100.00 | 100.00 | 100.00100 | 3 |
-| 20 | RS | Porto Alegre | 87a90129dffffff | 100.00 | 100.00 | 100.00100 | 4 |
+| 1 | MT | Cuiabá | 878ba6506ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 2 | MT | Cuiabá | 878ba6531ffffff | 100.00 | 100.00 | 100.00100 | 2 |
+| 3 | MT | Cuiabá | 878ba6535ffffff | 100.00 | 100.00 | 100.00100 | 3 |
+| 4 | PR | Londrina | 87a80132affffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 5 | PR | Londrina | 87a801374ffffff | 100.00 | 100.00 | 100.00100 | 2 |
+| 6 | PR | Londrina | 87a801adbffffff | 100.00 | 100.00 | 100.00100 | 3 |
+| 7 | PR | Curitiba | 87a804d92ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 8 | SP | São Paulo | 87a810764ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 9 | SP | Campinas | 87a81148bffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 10 | SP | Piracicaba | 87a811640ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 11 | SP | São José dos Campos | 87a812aa4ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 12 | SP | São Carlos | 87a81ea82ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 13 | SP | São Carlos | 87a81ea9effffff | 100.00 | 100.00 | 100.00100 | 2 |
+| 14 | PR | Cascavel | 87a82c26dffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 15 | PR | Cascavel | 87a82dc83ffffff | 100.00 | 100.00 | 100.00100 | 2 |
+| 16 | PR | Cascavel | 87a82dc91ffffff | 100.00 | 100.00 | 100.00100 | 3 |
+| 17 | PR | Cascavel | 87a82dc9affffff | 100.00 | 100.00 | 100.00100 | 4 |
+| 18 | PR | Curitiba | 87a831361ffffff | 100.00 | 100.00 | 100.00100 | 2 |
+| 19 | SC | Jaraguá do Sul | 87a835313ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 20 | SC | Jaraguá do Sul | 87a83531cffffff | 100.00 | 100.00 | 100.00100 | 2 |
 
 ## Monitoramento futuro (6-12 meses)
 
