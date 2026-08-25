@@ -943,9 +943,31 @@ onde a tabela termina. O corpo de cada um está em `tasks/completed.md` e nas DE
 | **BLK-MA-18** | A conta por trás da pressão chega ao pin (auditoria: `n_conc`, `n_indep`, `n_cadeias_feed`, `oferta`, `dist_m`). | — |
 | **BLK-MA-19** | **Transporte para produção.** O código dos pins estava publicado e os dois parquets nunca foram enviados; a camada ficou morta de 2026-08-19 a 2026-08-24. Cria o bloco de deploy, ensina a camada ao `check_artifacts` e escreve o runbook. | — |
 
-**Pendentes do epic:** **BLK-MA-06** (cron do snapshot — liga o relógio de S3/S4), **BLK-MA-05**
-(lista comercial, que depende da série madura), **BLK-MA-07** (reputação externa, opcional) e
-**BLK-MA-17-FU5** (~87 duplicatas residuais, baixa).
+**Pendentes do epic:** **BLK-MA-06** (cron semanal do snapshot), **BLK-MA-21** (cron **mensal** dos
+agregadores — o relógio dos INDEPENDENTES, criado em 2026-08-25), **BLK-MA-05** (lista comercial, que
+depende da série madura), **BLK-MA-07** (reputação externa, opcional), **BLK-MA-17-FU5** (~87
+duplicatas residuais, baixa) e **BLK-MA-20** (TotalPass como FONTE).
+
+> **[2026-08-25] Qual cron liga qual relógio — a confusão que já custou uma afirmação errada neste
+> repo.** O §12/D8 manda plugar o snapshot no `run_weekly_90.sh`, e a ressalva honesta de lá é
+> load-bearing: **isso produz série de CADEIAS**. Os `~2 meses` que circulam como prazo de maturação
+> valem para o feed `unidades`, **não** para o universo do funil. Os independentes vivem só nos
+> agregadores, cuja cadência é mensal — lá `MIN_SEMANAS = 8` são **~8 meses**, e o cronômetro só
+> começa quando o **BLK-MA-21** existir. Quem citar prazo de maturação tem de dizer de qual feed
+> está falando.
+
+> **[2026-08-25] O arquivamento do TotalPass foi da NOTA, não da fonte — e a distinção abre o
+> BLK-MA-20.** Como a DEC-026 tornou o rating **coluna-fato sem peso**, a ausência permanente de nota
+> no TotalPass é irrelevante para o score, e a assimetria que o §7/D3 e o spike do BLK-MA-10 tratam
+> como "fragmentação permanente do universo" afeta uma coluna de fato, **não o ranking**. Nada neste
+> contrato nem em DEC alguma proíbe o TotalPass como FONTE: o §3/D1 e `FONTES_AGREGADORES` já o
+> declaram agregador de primeira classe, e `fontes_presentes_no_hex` é definido como *subconjunto de
+> `FONTES_AGREGADORES`* — o desenho espera os dois.
+>
+> A consequência que o BLK-MA-20 tem de resolver antes de qualquer inclusão: hoje o `v1` tem
+> **variância zero** (6.753 de 6.753 hexes com um agregador), e soltá-lo no regime `{s1,s6}` — onde
+> o S1 pesa **0,600** — produz um **degrau**, não um discriminador. Detalhe, números e as três vias
+> no bloco.
 
 ### O que é "epic BLK-MA concluído" — critério escrito, que faltava
 
