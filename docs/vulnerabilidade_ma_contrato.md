@@ -943,9 +943,18 @@ onde a tabela termina. O corpo de cada um está em `tasks/completed.md` e nas DE
 | **BLK-MA-18** | A conta por trás da pressão chega ao pin (auditoria: `n_conc`, `n_indep`, `n_cadeias_feed`, `oferta`, `dist_m`). | — |
 | **BLK-MA-19** | **Transporte para produção.** O código dos pins estava publicado e os dois parquets nunca foram enviados; a camada ficou morta de 2026-08-19 a 2026-08-24. Cria o bloco de deploy, ensina a camada ao `check_artifacts` e escreve o runbook. | — |
 
-**Pendentes do epic:** **BLK-MA-06** (cron do snapshot — liga o relógio de S3/S4), **BLK-MA-05**
-(lista comercial, que depende da série madura), **BLK-MA-07** (reputação externa, opcional),
-**BLK-MA-17-FU5** (~87 duplicatas residuais, baixa) e **BLK-MA-20** (TotalPass como FONTE).
+**Pendentes do epic:** **BLK-MA-06** (cron semanal do snapshot), **BLK-MA-21** (cron **mensal** dos
+agregadores — o relógio dos INDEPENDENTES, criado em 2026-08-25), **BLK-MA-05** (lista comercial, que
+depende da série madura), **BLK-MA-07** (reputação externa, opcional), **BLK-MA-17-FU5** (~87
+duplicatas residuais, baixa) e **BLK-MA-20** (TotalPass como FONTE).
+
+> **[2026-08-25] Qual cron liga qual relógio — a confusão que já custou uma afirmação errada neste
+> repo.** O §12/D8 manda plugar o snapshot no `run_weekly_90.sh`, e a ressalva honesta de lá é
+> load-bearing: **isso produz série de CADEIAS**. Os `~2 meses` que circulam como prazo de maturação
+> valem para o feed `unidades`, **não** para o universo do funil. Os independentes vivem só nos
+> agregadores, cuja cadência é mensal — lá `MIN_SEMANAS = 8` são **~8 meses**, e o cronômetro só
+> começa quando o **BLK-MA-21** existir. Quem citar prazo de maturação tem de dizer de qual feed
+> está falando.
 
 > **[2026-08-25] O arquivamento do TotalPass foi da NOTA, não da fonte — e a distinção abre o
 > BLK-MA-20.** Como a DEC-026 tornou o rating **coluna-fato sem peso**, a ausência permanente de nota
