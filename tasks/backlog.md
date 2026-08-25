@@ -1854,19 +1854,35 @@ alterado; (6) READ-ONLY sobre o M1; (7) suíte verde e `loop_guard` sem CRÍTICO
 | **Criticidade** | **Alta** — cria um **cron de produção** na VPS que dispara ~21h de coleta e invoca o único módulo do pacote que **apaga arquivo** (a poda de retenção). READ-ONLY sobre o M1: escreve só em `data/staging/snapshots_concorrentes/`. **Exige DEC própria** (cadência + resolução da colisão de partição + nova retenção). |
 | **Prioridade** | **Alta, e é caminho crítico do epic inteiro.** Os independentes — o universo-alvo do funil de M&A — vivem **só** nesses dois agregadores. O cron semanal fotografa o feed `unidades`, que é de **cadeias**. Sem este bloco, S3 e S4 sobre independentes **nunca** amadurecem e o score fica preso em `{s1,s6}` = pressão renomeada, para sempre. |
 | **Esteira** | Block Orchestrator → Planner → `[GATE humano — DEC própria]` → Builder → QA → `[aplicação na VPS: passo MANUAL, comando a comando — §6]`. |
-| **Status** | Pendente — **levantamento concluído em 2026-08-25**. Listado desde sempre como "Pendentes (futuro)" em `docs/infra_producao.md` e posto em "fora de escopo — bloco próprio" pelo BLK-MA-06; **nunca teve dono nem ID até agora**. |
+| **Status** | Pendente, **pronto para iniciar** — levantamento concluído em 2026-08-25 e o **bloqueador (1) já caiu** (`GymScraping` #11). Listado desde sempre como "Pendentes (futuro)" em `docs/infra_producao.md` e posto em "fora de escopo — bloco próprio" pelo BLK-MA-06; **nunca teve dono nem ID até 2026-08-25**. |
 | **Depende de** | **BLK-MA-06 — dependência DURA, não de conveniência.** É ele quem prova, com `DRY_RUN=1`, que o caminho dos CSVs e o `API_IMAGE` estão certos. Ligar o mensal antes é depurar dois caminhos não validados ao mesmo tempo, num job em que **cada iteração de diagnóstico custa um mês**. |
 | **Autonomia** | **manual (NÃO loop-safe)** — cron de produção + gate humano. NUNCA marcar loop-safe. |
 
 #### Dois bloqueadores que precisam cair ANTES de qualquer agendamento
 
-**(1) O coletor do TotalPass não importa no Linux.** O git indexou o diretório como **`Totalpass`**
-(p minúsculo) — os 46 arquivos — enquanto os 13 imports escrevem **`TotalPass`**. No Windows passa,
-porque NTFS é case-insensitive; na VPS, o clone em `/opt/gymscraping` cria `Totalpass/` e
-`python -m TotalPass.coletor_totalpass` morre com `ModuleNotFoundError` **antes de qualquer log**.
-Nada nunca pegou isso: o repo do coletor **não tem CI** e o `CMD` do Dockerfile só roda
-`executar_coletores.py`, que nunca importa o módulo. Correção no repo **GymScraping**: renomear no
-índice do git (via nome temporário) ou padronizar os imports — e travar com teste.
+**(1) O coletor do TotalPass não importava no Linux — ✅ RESOLVIDO em 2026-08-25.** O git havia
+indexado o diretório como **`Totalpass`** (p minúsculo) nos 46 arquivos, enquanto os 13 imports
+escrevem **`TotalPass`**. No Windows passa, porque NTFS é case-insensitive; na VPS, o clone em
+`/opt/gymscraping` criava `Totalpass/` e `python -m TotalPass.coletor_totalpass` morria com
+`ModuleNotFoundError` **antes de qualquer log**. Nada nunca pegou: o repo do coletor **não tem CI** e
+o `CMD` do Dockerfile só roda `executar_coletores.py`, que nunca importa o módulo.
+
+> **Onde a correção vive, porque NÃO está no histórico deste repo.** Ela foi feita no repositório
+> irmão **`GymScraping`** (`../GymScraping`, remote `VinhoAbencoado/GymScraping`), PR **#11**, merge
+> `6311cb9`: renomeação **pura** dos 46 arquivos (0 inserções, 0 deleções, em dois passos via nome
+> temporário) mais `tests/test_caixa_dos_pacotes.py`, que trava a regressão lendo o **índice do
+> git** e não o disco — num filesystem case-insensitive `Path("TotalPass").exists()` devolve `True`
+> mesmo com o diretório chamado `Totalpass`, então um teste de filesystem passaria verde exatamente
+> no caso que deveria pegar. O `Wellhub` foi conferido no mesmo passe e estava correto.
+>
+> **Na VPS ainda é preciso `git pull` do clone `/opt/gymscraping`** para a correção chegar lá — o
+> runner semanal faz esse pull, mas confirme antes de contar com ele.
+>
+> Como efeito colateral do mesmo PR, `scripts/auditoria_maps.py` deixou de ser instável: quatro
+> `subprocess.run(..., capture_output=True)` sem `stdin` faziam ~1 execução em 3 morrer com
+> `OSError: [WinError 6]` sob a captura do pytest (e o mesmo valeria sob cron, onde o descritor está
+> fechado). Vale como precedente para o wrapper deste bloco: **`capture_output` não redireciona o
+> stdin.**
 
 **(2) Os diretórios de leitura divergem em caixa.** O motor lê
 `concorrentes/{totalpass,wellhub}/csvs` (minúsculo); o coletor grava em `Wellhub/csvs` e
@@ -1965,7 +1981,8 @@ executor central. **Medidos pela auditoria e não re-verificados linha a linha:*
 do frame vazio e o comportamento do `_assert_schema_snapshot` na mescla. **Não medidos:** o espaço
 livre real da VPS e a grade horária do job — o §6 proíbe comando na VPS sem confirmação.
 
-**Critério de aceite.** (1) Os dois bloqueadores de caixa caídos, com teste que impeça a regressão;
+**Critério de aceite.** (1) Os dois bloqueadores caídos — o **(1) já está**, em `GymScraping` #11
+(`6311cb9`), com teste de regressão; **falta o (2)**, a curadoria dos diretórios;
 (2) colisão resolvida pela opção (a), com teste que prove que duas fontes coexistem na mesma semana
 **e** que nenhum caminho construa dataset de uma chave; (3) retenção nova com a aritmética declarada;
 (4) `fontes_lidas` no parquet; (5) `DRY_RUN` como passo obrigatório do runbook; (6) check de idade no
