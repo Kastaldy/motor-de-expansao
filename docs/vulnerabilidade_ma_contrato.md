@@ -218,7 +218,7 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
   reescrever uma semana passada e, com `existing_data_behavior="delete_matching"`, **apagá-la**.
   Com a partição vindo da execução, o `snapshot_date` por linha passa a servir de **medidor de
   frescor** (é o único detector de "o CSV é o da semana passada").
-- **Payload por linha (sem crus além do hash) `[emenda 2026-07-29; 12 colunas desde a DEC-026; 13 desde a DEC-038]`.** 13 colunas, nesta ordem:
+- **Payload por linha (sem crus além do hash) `[emenda 2026-07-29; 12 colunas desde a DEC-026; 13 desde a DEC-039]`.** 13 colunas, nesta ordem:
   `{snapshot_date, slug, concorrente_id, chave_snapshot, chave_origem, hex_id_res7, rede, fonte,
   hash_campos_raspados, nota_wellhub, qtd_avaliacoes_wellhub, fontes_lidas, versao_contrato}` — as
   duas de rating entraram pela DEC-026 como FATO sem peso; são nuláveis (`Float64`/`Int64`) e só o
@@ -227,7 +227,7 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
   nem a taxonomia — ver a emenda BLK-MA-11 abaixo). `fonte` não é opcional: o sinal 1 da seção 4 é derivado dela, e sem ela a regra de "gap
   de feed não vira churn" é impossível de implementar. `semana` **não** é coluna do arquivo — vive
   no caminho, como chave de partição hive.
-  - **`fontes_lidas` `[BLK-MA-21 / DEC-038]`** é o recorte que a **execução pediu** (`--fontes`),
+  - **`fontes_lidas` `[BLK-MA-21 / DEC-039]`** é o recorte que a **execução pediu** (`--fontes`),
     como CSV ordenado — ex.: `"totalpass,wellhub"`. **Não** é o que a partição contém, e a diferença
     é a razão de a coluna existir: com a guarda de frescor da curadoria, um agregador pode ter sido
     **tentado e recusado** (feed velho), e nesse caso a folha dele simplesmente não existe. Inferir
@@ -268,7 +268,7 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
   "Teste Raised"); **entradas de tecnologia/onboarding do TotalPass** ("Zon Tecnologia", "SAGAZ
   Sistemas", "TSITECH Soluções", "DATAFITNESS - TTP" e variações "Batatão Jeans - <fornecedor>"); e
   coords geograficamente inconsistentes com `cidade`/`uf`. Filtrar essas linhas é passo do BLK-MA-02.
-- **Local / retenção `[emenda BLK-MA-21 / DEC-038, 2026-08-25]`.**
+- **Local / retenção `[emenda BLK-MA-21 / DEC-039, 2026-08-25]`.**
   `data/staging/snapshots_concorrentes/semana=AAAA-SS/fonte=<fonte>/parte-*.parquet`
   (**gitignored**, vive na VPS). Retenção rolante **78 semanas** (era 26).
   - **A partição tem DUAS chaves porque duas CADÊNCIAS escrevem na mesma semana ISO:** o cron
@@ -288,7 +288,7 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
     da mesma fonte na mesma semana — por isso a escrita recusa semana com layout legado, e a
     migração é um ato explícito (`--migrar-layout`), que escreve num diretório temporário irmão e
     move por rename atômico.
-  - **O consumo pelo score é FAIL-CLOSED `[emenda de 2026-08-25 à DEC-038, D9]`.** As duas fontes são
+  - **O consumo pelo score é FAIL-CLOSED `[emenda de 2026-08-25 à DEC-039, D9]`.** As duas fontes são
     GRAVADAS desde o 1º mês, mas `alvos_ma` **sem** `--fontes` aplica
     `FONTES_ENTREGAVEL_DEFAULT = ("wellhub",)`. Abrir a série exige `--todas-as-fontes`, e é isso que
     o BLK-MA-20 autoriza quando decidir o grão do S1 e calibrar a dedup TP × WH.

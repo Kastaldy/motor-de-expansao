@@ -361,7 +361,7 @@ def test_schema_snapshot_13_colunas_em_ordem(dirs_sinteticos: tuple[Path, Path, 
     snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
     assert list(snap.columns) == list(c.CONTRATO_COLUNAS_SNAPSHOT.keys())
     # 10 -> 12 no BLK-MA-09 / DEC-026 (as duas colunas-fato de rating, sem peso);
-    # 12 -> 13 no BLK-MA-21 / DEC-038 (`fontes_lidas`, o recorte que a execucao pediu).
+    # 12 -> 13 no BLK-MA-21 / DEC-039 (`fontes_lidas`, o recorte que a execucao pediu).
     assert len(list(snap.columns)) == 13
     assert (snap["fontes_lidas"] == "totalpass,unidades,wellhub").all()
     assert snap["nota_wellhub"].dtype == "Float64"
@@ -544,7 +544,7 @@ def test_materializar_duas_vezes_mesma_semana_nao_duplica(
 def test_reescrita_encolhe_a_folha_e_preserva_as_irmas(
     dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
 ) -> None:
-    """A idempotencia passou a ser por FOLHA, nao por particao (BLK-MA-21 / DEC-038).
+    """A idempotencia passou a ser por FOLHA, nao por particao (BLK-MA-21 / DEC-039).
 
     Com UMA chave de particao, `delete_matching` casava a semana inteira: a execucao mensal dos
     agregadores apagava o que a semanal (`--fontes unidades`) tinha acabado de gravar na mesma
@@ -1461,7 +1461,7 @@ def test_cli_aceita_fontes_do_cron_semanal() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# BLK-MA-21 / DEC-038 - particao de 2 chaves, migracao de layout e `fontes_lidas`
+# BLK-MA-21 / DEC-039 - particao de 2 chaves, migracao de layout e `fontes_lidas`
 # --------------------------------------------------------------------------- #
 def _gravar_particao_legada(base: Path, semana: str, snap: pd.DataFrame) -> Path:
     """Grava uma particao no layout ANTIGO (1 chave, `fonte` DENTRO do arquivo).
@@ -1900,7 +1900,7 @@ def test_fontes_lidas_distingue_tentado_de_vazio(tmp_path: Path) -> None:
 def test_ler_snapshots_recorta_por_fonte(
     dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
 ) -> None:
-    """O recorte da DEC-038 (D9) e' IMPOSTO na leitura, nao prometido em prosa.
+    """O recorte da DEC-039 (D9) e' IMPOSTO na leitura, nao prometido em prosa.
 
     A particao do `totalpass` e' GRAVADA desde o primeiro mes (para o cronometro de MIN_SEMANAS
     correr), mas fica fora do consumo ate' o BLK-MA-20 calibrar a dedup TP x WH.

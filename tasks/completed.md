@@ -13767,7 +13767,7 @@ Ciclo ad-hoc pedido pelo Felipe (urgência de estudos/extração de relatórios)
 | **Criticidade** | **Alta** — cria um **cron de produção** na VPS que dispara ~21h de coleta e invoca o único módulo do pacote que **apaga arquivo** (a poda de retenção). READ-ONLY sobre o M1: escreve só em `data/staging/snapshots_concorrentes/`. **Exige DEC própria** (cadência + resolução da colisão de partição + nova retenção). |
 | **Prioridade** | **Alta, e é caminho crítico do epic inteiro.** Os independentes — o universo-alvo do funil de M&A — vivem **só** nesses dois agregadores. O cron semanal fotografa o feed `unidades`, que é de **cadeias**. Sem este bloco, S3 e S4 sobre independentes **nunca** amadurecem e o score fica preso em `{s1,s6}` = pressão renomeada, para sempre. |
 | **Esteira** | Block Orchestrator → Planner → `[GATE humano — DEC própria]` → Builder → QA → `[aplicação na VPS: passo MANUAL, comando a comando — §6]`. |
-| **Status** | **EM QA (2026-08-25)** — gate humano aprovado por Felipe ("Pode seguir com o plano", D1..D9 tais como recomendadas) e registrado na **DEC-038**; Builder concluído. Código, testes e runbook entregues; **a aplicação na VPS continua pendente e é MANUAL, comando a comando** (ordem em `docs/infra_producao.md`, seção "Coleta mensal dos agregadores"). Levantamento concluído em 2026-08-25 e o **bloqueador (1) já caiu** (`GymScraping` #11). |
+| **Status** | **EM QA (2026-08-25)** — gate humano aprovado por Felipe ("Pode seguir com o plano", D1..D9 tais como recomendadas) e registrado na **DEC-039**; Builder concluído. Código, testes e runbook entregues; **a aplicação na VPS continua pendente e é MANUAL, comando a comando** (ordem em `docs/infra_producao.md`, seção "Coleta mensal dos agregadores"). Levantamento concluído em 2026-08-25 e o **bloqueador (1) já caiu** (`GymScraping` #11). |
 | **Depende de** | **BLK-MA-06 — dependência DURA, não de conveniência.** É ele quem prova, com `DRY_RUN=1`, que o caminho dos CSVs e o `API_IMAGE` estão certos. Ligar o mensal antes é depurar dois caminhos não validados ao mesmo tempo, num job em que **cada iteração de diagnóstico custa um mês**. |
 | **Autonomia** | **manual (NÃO loop-safe)** — cron de produção + gate humano. NUNCA marcar loop-safe. |
 
@@ -13910,7 +13910,7 @@ healthcheck; (7) a fronteira com o BLK-MA-20 escrita na DEC; (8) READ-ONLY sobre
 **Esteira:** Block Orchestrator → Planner → **[GATE humano — aprovado por Felipe]** → Builder →
 QA → **painel adversarial** → Builder (correção) → QA (re-auditoria).
 **Criticidade:** Alta. **Modo de merge:** merge-humano (label `aprovado-humano`).
-**DEC:** [DEC-038](../docs/decisions/DEC-038.md), com **Emenda 1** (fronteira D9 fail-closed).
+**DEC:** [DEC-039](../docs/decisions/DEC-039.md), com **Emenda 1** (fronteira D9 fail-closed).
 
 ### O que entrou
 
@@ -13949,11 +13949,11 @@ este repositório, e todos com o mesmo formato: **`exit 0` e o dado apodrece em 
    `Wellhub/csvs` **20,0 d** contra **7,15 d**. *(mtime também não sobrevive a `scp`/`clone`.)*
 3. **A fronteira D9 era fail-open.** `--fontes` tinha `default=None`, e as **duas receitas canônicas
    do próprio repo** (o bloco copiável do runbook e o `print` do `check_artifacts.py`) omitiam
-   `--fontes wellhub`. A DEC-038 havia rejeitado a opção (a) com a frase *"é prosa: a cadeia roda
+   `--fontes wellhub`. A DEC-039 havia rejeitado a opção (a) com a frase *"é prosa: a cadeia roda
    com as duas fontes sem editar uma linha"* — e a implementação entregue tinha a **mesma
    propriedade**, só mudando o gesto que vaza para "não digitar o flag".
    → **fail-closed**: `FONTES_ENTREGAVEL_DEFAULT = ("wellhub",)`, com `--todas-as-fontes` como porta
-   explícita. Registrado como **Emenda 1 da DEC-038**.
+   explícita. Registrado como **Emenda 1 da DEC-039**.
 
 O bloco `BLK-MA-21-FU1`, aberto pelo QA só para o defeito (3), foi **absorvido** nesta rodada e
 removido do backlog sem stub — nunca chegou a existir num commit.

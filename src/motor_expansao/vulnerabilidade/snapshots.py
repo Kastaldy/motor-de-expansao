@@ -5,7 +5,7 @@ CSV cru dos coletores -> limpeza de ruído auditável -> chave estável -> `hash
 NÃO oficial do M1). É o produtor que faltava: o `run_weekly_90.sh` **sobrescreve** os CSVs a cada
 coleta, então toda semana não fotografada é perdida para sempre (`docs/infra_producao.md:136-149`).
 
-**Duas cadências escrevem na MESMA semana ISO `[BLK-MA-21 / DEC-038]`:** o cron SEMANAL fotografa
+**Duas cadências escrevem na MESMA semana ISO `[BLK-MA-21 / DEC-039]`:** o cron SEMANAL fotografa
 `--fontes unidades` (o feed de cadeias, o único recoletado toda semana) e o cron MENSAL fotografa
 `--fontes totalpass wellhub`. Por isso a partição tem DUAS chaves: com uma só, a segunda execução
 da semana apagava a primeira via `delete_matching`. Ver `escrever_particao_semana`.
@@ -598,7 +598,7 @@ def montar_snapshot(
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     """Projeta as **13 colunas do contrato**, coage dtypes, colapsa colisões e valida o schema.
 
-    `fontes_lidas` é kwarg **obrigatório e sem default** `[BLK-MA-21 / DEC-038]`: é o recorte que a
+    `fontes_lidas` é kwarg **obrigatório e sem default** `[BLK-MA-21 / DEC-039]`: é o recorte que a
     EXECUÇÃO pediu (CSV ordenado, ex. `"totalpass,wellhub"`), e um default o tornaria adivinhável —
     exatamente o que a coluna existe para impedir. Ela distingue "o TotalPass não foi tentado" de
     "foi tentado e a curadoria o recusou por feed velho": no segundo caso a folha `fonte=totalpass`
@@ -788,7 +788,7 @@ def escrever_particao_semana(
 ) -> Path:
     """Grava `base_dir/semana=AAAA-SS/fonte=<fonte>/parte-*.parquet` (partição hive de 2 chaves).
 
-    **A idempotência é por FOLHA, não por partição `[BLK-MA-21 / DEC-038]`.** Com uma chave só,
+    **A idempotência é por FOLHA, não por partição `[BLK-MA-21 / DEC-039]`.** Com uma chave só,
     `existing_data_behavior="delete_matching"` casava a SEMANA inteira: a execução mensal dos
     agregadores apagava o que a semanal (`--fontes unidades`) tinha acabado de gravar na mesma
     semana ISO, e vice-versa — ~21h de coleta perdidas com `exit 0`. Com `fonte=` como segunda
@@ -909,7 +909,7 @@ def ler_snapshots(
     `semana`/`fonte` como algo diferente de string. Base inexistente/vazia -> frame vazio
     bem-formado.
 
-    **Declarar as DUAS chaves não é simetria estética — é correção `[BLK-MA-21 / DEC-038]`.** Sobre
+    **Declarar as DUAS chaves não é simetria estética — é correção `[BLK-MA-21 / DEC-039]`.** Sobre
     a árvore de duas chaves, um leitor que declare só `semana` devolve **`fonte = None` para 100%
     das linhas, sem exceção, sem erro e sem log** (medido em pyarrow 23.0.1). Como
     `(fonte, chave_snapshot)` é a chave primária composta de todo o pacote — churn, presença, score
@@ -933,14 +933,14 @@ def ler_snapshots(
     por ele que uma partição `v3` (sem `fontes_lidas`) segue legível, saindo com a coluna nula.
 
     `fontes` recorta a série pelas fontes pedidas, no mesmo molde de `semanas` (filtro depois do
-    `to_pandas`). Existe para impor POR CÓDIGO a fronteira com o BLK-MA-20 (DEC-038, D9): a
+    `to_pandas`). Existe para impor POR CÓDIGO a fronteira com o BLK-MA-20 (DEC-039, D9): a
     partição do `totalpass` passa a ser GRAVADA desde o primeiro mês — para o cronômetro de
     `MIN_SEMANAS` começar a correr —, mas o consumo dela pelo score espera a calibração da dedup
     TP x WH, que hoje está arbitrada. Prosa não impediria: a cadeia inteira roda com as duas fontes
     sem editar uma linha. Nome fora de `FONTES_VALIDAS` **levanta**, e levanta ANTES da saída
     antecipada por base vazia — ver o comentário no corpo.
     """
-    # A validação vem ANTES da saída antecipada `[emenda de 2026-08-25 à DEC-038]`. Ela estava
+    # A validação vem ANTES da saída antecipada `[emenda de 2026-08-25 à DEC-039]`. Ela estava
     # depois, e o efeito era o oposto do prometido: sobre base inexistente ou sem partição — que é
     # exatamente o estado da VPS hoje, zero partições — `fontes=["wellub"]` devolvia frame VAZIO em
     # vez de levantar. Um erro de digitação na fronteira do D9 sairia como "não há dado", que é a
@@ -993,7 +993,7 @@ def podar_snapshots(
     inteira, com todas as fontes que ela tiver. É essa granularidade que faz `RETENCAO_SEMANAS`
     contar semanas de CALENDÁRIO e não observações — a aritmética das duas cadências está no
     comentário da constante, em `contrato.py`. Poda por FONTE dentro da partição foi adiada para
-    bloco próprio (DEC-038, D5).
+    bloco próprio (DEC-039, D5).
 
     Semântica sem `date.today()` de propósito (determinística e testável). **APAGA DIRETÓRIOS EM
     DISCO**, e por isso é conservadora: só olha filhos DIRETOS de `base_dir` cujo nome casa
@@ -1040,7 +1040,7 @@ def _fontes_do_legado(
 def diagnosticar_layout_particoes(base_dir: Path = SNAPSHOTS_DIR_DEFAULT) -> dict[str, list[str]]:
     """`{"migraveis": [...], "ambiguas": [...]}` — **nunca levanta por ambiguidade, nunca toca disco**.
 
-    Existe para que o operador possa OLHAR antes de agir `[emenda de 2026-08-25 à DEC-038]`. O
+    Existe para que o operador possa OLHAR antes de agir `[emenda de 2026-08-25 à DEC-039]`. O
     `--dry-run` da migração levantava no primeiro estado ambíguo e não dizia mais nada: com duas
     semanas ambíguas, a segunda só aparecia depois de a primeira ser resolvida à mão, uma por
     execução. Diagnóstico que aborta no primeiro achado não é diagnóstico.
@@ -1083,7 +1083,7 @@ def migrar_layout_particoes(
 
     `semana=AAAA-SS/parte-*.parquet` -> `semana=AAAA-SS/fonte=<fonte>/parte-0.parquet`. É a
     **segunda** função do módulo que apaga arquivo, e por isso vive colada à poda: o agrupamento
-    torna visível quantos caminhos destrutivos existem. Ela é EXPLÍCITA de propósito (DEC-038, D8)
+    torna visível quantos caminhos destrutivos existem. Ela é EXPLÍCITA de propósito (DEC-039, D8)
     — auto-migrar dentro de `escrever_particao_semana` poria leitura, reescrita e apagamento no
     caminho onde uma exceção custa a semana inteira de coleta.
 
@@ -1092,7 +1092,7 @@ def migrar_layout_particoes(
     diretório da semana). Downstream isso aparece como `chave (semana, fonte, chave_snapshot)
     duplicada`, dias depois e longe da causa.
 
-    **Ordem segura: escreve FORA da série e só então move `[emenda de 2026-08-25 à DEC-038]`.** A
+    **Ordem segura: escreve FORA da série e só então move `[emenda de 2026-08-25 à DEC-039]`.** A
     versão anterior gravava com `write_dataset` direto no caminho final e só depois apagava o
     legado — e o docstring prometia que "se a escrita falhar, o legado continua lá e a série segue
     legível pelo caminho misto", o que era FALSO: um crash no meio do `write_dataset` deixa uma

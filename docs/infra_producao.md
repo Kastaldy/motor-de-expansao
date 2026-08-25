@@ -295,7 +295,7 @@ DRY_RUN=1 /opt/motor-expansao-infra/run_snapshot_concorrentes.sh
 > na hora. Se precisar sobrescrever: `HOST_CONCORRENTES=/outro/caminho DRY_RUN=1 ...`.
 
 `--dry-run` roda a cadeia inteira **sem gravar e sem podar** (a poda de retenção,
-`RETENCAO_SEMANAS = 78` desde o BLK-MA-21 / DEC-038 — era `26`; a aritmética das duas cadências está
+`RETENCAO_SEMANAS = 78` desde o BLK-MA-21 / DEC-039 — era `26`; a aritmética das duas cadências está
 na seção do cron mensal, abaixo). Se `linhas_snapshot` vier `0`, o caminho de `HOST_CONCORRENTES`
 está errado; só agende depois de ver contagem plausível.
 
@@ -323,7 +323,7 @@ está errado; só agende depois de ver contagem plausível.
 > único não serve a um feed semanal e a outro mensal ao mesmo tempo; se isso incomodar no futuro, a
 > pergunta certa é torná-lo por fonte — escopo novo, fora do BLK-MA-06.
 
-### Coleta mensal dos agregadores (BLK-MA-21 / DEC-038 — o relógio dos independentes)
+### Coleta mensal dos agregadores (BLK-MA-21 / DEC-039 — o relógio dos independentes)
 
 **Por que existe.** Os **independentes** — o universo-alvo do funil de M&A — vivem **só** no WellHub
 e no TotalPass. O snapshot semanal acima fotografa `--fontes unidades`, que é o feed de **cadeias**.
@@ -332,7 +332,7 @@ vulnerabilidade fica preso no regime `{s1,s6}` — em que o `v1` é constante e 
 pressão competitiva renomeada, para sempre.
 
 **Script versionado:** `scripts/cron/run_snapshot_agregadores.sh`. Ele faz os **três** passos numa
-execução só (decisão D2 da DEC-038): coleta (~21h45) → curadoria → snapshot, com um `flock -n`
+execução só (decisão D2 da DEC-039): coleta (~21h45) → curadoria → snapshot, com um `flock -n`
 cobrindo a janela inteira. READ-ONLY sobre o M1. **O script nunca atualiza o clone do coletor, nunca
 copia arquivo entre máquinas, nunca abre sessão remota e nunca faz deploy** — tudo isso é passo
 manual, comando a comando (§6 do `CLAUDE.md`).
@@ -521,14 +521,14 @@ que é o estado real enquanto o cron não for agendado.
 > sempre na semana 1. A régua nova pode **adiantar** o alerta em até ~1 dia, nunca atrasá-lo — direção
 > segura para um monitor. Chave ilegível cai no mtime e **diz** que caiu, no texto do alerta.
 
-**Fronteira com o BLK-MA-20 (DEC-038, D9) — e ela é FAIL-CLOSED** *(emenda de 2026-08-25)*. A
+**Fronteira com o BLK-MA-20 (DEC-039, D9) — e ela é FAIL-CLOSED** *(emenda de 2026-08-25)*. A
 partição do **TotalPass é gravada desde o primeiro mês** (o cronômetro de `MIN_SEMANAS = 8` são 8
 meses de cadência mensal — cada mês de espera é irrecuperável), mas o **consumo** dela pelo score
 espera o BLK-MA-20 decidir o grão do S1 e calibrar a dedup TP × WH, que hoje está *arbitrada*.
 
 O recorte é imposto por código **na ausência de gesto**: `alvos_ma` sem `--fontes` aplica
 `FONTES_ENTREGAVEL_DEFAULT = ("wellhub",)` e registra o recorte no log. A primeira implementação
-tinha `default=None` e, com isso, a mesma propriedade que a DEC-038 rejeitou com a frase *"é prosa: a
+tinha `default=None` e, com isso, a mesma propriedade que a DEC-039 rejeitou com a frase *"é prosa: a
 cadeia roda com as duas fontes sem editar uma linha"* — só que o gesto que vazava passou a ser **não
 digitar o flag**, e duas das três receitas canônicas do próprio repositório o omitiam. Para consumir
 a série inteira quando o MA-20 fechar, o gesto é explícito: `--todas-as-fontes` (incompatível com
@@ -562,7 +562,7 @@ python -m motor_expansao.vulnerabilidade.alvos_ma \
   --saida-redes    data/staging/vulnerabilidade_ma_redes.parquet
 ```
 
-> **Não falta `--fontes wellhub` aqui — o recorte é FAIL-CLOSED** *(DEC-038, D9; emenda de
+> **Não falta `--fontes wellhub` aqui — o recorte é FAIL-CLOSED** *(DEC-039, D9; emenda de
 > 2026-08-25)*. Omitir o flag aplica `FONTES_ENTREGAVEL_DEFAULT = ("wellhub",)`, e o log da execução
 > diz qual recorte valeu. Até 2026-08-25 este mesmo bloco copiável rodava **sem recorte nenhum**,
 > vinte e quatro linhas depois de a seção do cron mensal prometer, em prosa, que "o entregável roda

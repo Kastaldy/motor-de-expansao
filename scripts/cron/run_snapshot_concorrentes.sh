@@ -7,7 +7,7 @@
 # semana seguinte sobrescrever os CSVs crus. Sem ele, S3 (churn) e S4 (staleness)
 # nunca tem serie -- e toda semana nao fotografada esta perdida para sempre.
 #
-# ATENCAO -- a particao tem DUAS chaves desde o BLK-MA-21 / DEC-038. Se este script
+# ATENCAO -- a particao tem DUAS chaves desde o BLK-MA-21 / DEC-039. Se este script
 # rodar numa IMAGEM ANTIGA (que escreve so' `semana=`), ele APAGA a folha gravada
 # pela cadencia mensal na mesma semana ISO. Antes de instalar, confira na saida do
 # `DRY_RUN=1` que `versao_contrato` e' `snapshots_concorrentes_v4`; com `v3`, NAO
@@ -30,7 +30,7 @@
 # que e' exatamente o sinal de vulnerabilidade que alimenta o funil de M&A. Falso
 # positivo em massa, no sinal de segundo maior peso, e silencioso.
 #
-# O CRON MENSAL DOS AGREGADORES **NAO** PASSA POR AQUI (BLK-MA-21 / DEC-038).
+# O CRON MENSAL DOS AGREGADORES **NAO** PASSA POR AQUI (BLK-MA-21 / DEC-039).
 #
 # Esta linha dizia, ate' 2026-08-25, que a cadencia mensal invocaria "este mesmo
 # script com `--fontes totalpass wellhub`". Seguir a instrucao PULARIA a curadoria

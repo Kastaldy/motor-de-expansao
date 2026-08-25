@@ -3,7 +3,7 @@
 # Snapshot MENSAL dos AGREGADORES (WellHub + TotalPass)
 #     -> data/staging/snapshots_concorrentes/semana=AAAA-SS/fonte=<fonte>/
 #
-# E' o BLK-MA-21 / DEC-038: o relogio dos INDEPENDENTES, que nunca foi ligado.
+# E' o BLK-MA-21 / DEC-039: o relogio dos INDEPENDENTES, que nunca foi ligado.
 # Os independentes -- o universo-alvo do funil de M&A -- vivem SO' nesses dois
 # agregadores. O cron semanal (`run_snapshot_concorrentes.sh`) fotografa o feed
 # `unidades`, que e' de CADEIAS: sem este script, S3 (churn) e S4 (staleness)

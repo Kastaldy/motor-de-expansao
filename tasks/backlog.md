@@ -1862,7 +1862,7 @@ alterado; (6) READ-ONLY sobre o M1; (7) suíte verde e `loop_guard` sem CRÍTICO
 | **Depende de** | BLK-MA-21 (concluído) — é nele que a fronteira D9 nasce. |
 | **Autonomia** | **manual (NÃO loop-safe)** — toca a fronteira de consumo do score de M&A. |
 
-**O defeito, medido pelo QA.** A Emenda 1 da DEC-038 tornou a fronteira D9 **fail-closed**, e ela
+**O defeito, medido pelo QA.** A Emenda 1 da DEC-039 tornou a fronteira D9 **fail-closed**, e ela
 funciona: `alvos_ma` sem flag nenhum recorta para `wellhub` (22.173 linhas, 19.329 academias), e
 abrir exige `--todas-as-fontes`. Mas a trava é **fluxo de controle dentro de `alvos_ma.main`** — a
 superfície de BIBLIOTECA continua sem `fontes=`: `calcular_score_vulnerabilidade`,

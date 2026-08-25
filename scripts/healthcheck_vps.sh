@@ -198,7 +198,7 @@ check_agregadores() {
     # que a falha de um não silencie o alerta do outro.
     #
     # A idade sai da CHAVE `semana=AAAA-SS`, não do mtime do diretório `fonte=`
-    # [emenda de 2026-08-25 à DEC-038]. O mtime mentia, e mentia justamente onde dói: o passo 2
+    # [emenda de 2026-08-25 à DEC-039]. O mtime mentia, e mentia justamente onde dói: o passo 2
     # OBRIGATÓRIO da ordem de aplicação roda `--migrar-layout`, que CRIA a folha `fonte=` com
     # mtime de agora. Medido sobre cópia da partição viva: dado de 2026-08-05 (20 dias) reportado
     # como `0d`, e com limiar de 45 dias o FAIL atrasaria ~20 dias. A distância é arbitrária para

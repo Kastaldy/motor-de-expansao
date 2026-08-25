@@ -425,7 +425,7 @@ def test_min_semanas_e_stale_semanas_sao_parametros_injetaveis(
     """Os defaults vem do contrato (gate 2026-07-23) e NÃO são alterados por este bloco."""
     assert c.MIN_SEMANAS == 8
     assert c.STALE_SEMANAS == 12
-    # 26 -> 78 no BLK-MA-21 / DEC-038: com 26, um feed MENSAL rendia 5,98 observacoes (26/4,345)
+    # 26 -> 78 no BLK-MA-21 / DEC-039: com 26, um feed MENSAL rendia 5,98 observacoes (26/4,345)
     # e nunca alcançava MIN_SEMANAS. A aritmetica das duas cadencias esta em `contrato.py`.
     assert c.RETENCAO_SEMANAS == 78
     out = extrair_churn_staleness(snapshots=serie_10_semanas, min_semanas=3, stale_semanas=5)

@@ -11,7 +11,7 @@ churn artificial em massa — por isso elas ficam no mesmo arquivo que carrega
 `VERSAO_CONTRATO_SNAPSHOT`, e qualquer mudança **exige bump** dessa versão (o BLK-MA-04 deve tratar
 o bump como descontinuidade de série). Histórico de bumps do snapshot: `v1` (BLK-MA-02) -> `v2`
 (BLK-MA-11 / DEC-025, saída da taxonomia do hash) -> `v3` (BLK-MA-09 / DEC-026, entrada das duas
-colunas-fato de rating) -> `v4` (BLK-MA-21 / DEC-038, entrada de `fontes_lidas` e da segunda chave
+colunas-fato de rating) -> `v4` (BLK-MA-21 / DEC-039, entrada de `fontes_lidas` e da segunda chave
 de partição `fonte=`). Os TRÊS primeiros foram feitos com a série ainda VAZIA, logo sem migração.
 
 **A janela grátis de bump FECHOU, e o `v4` é o primeiro bump COM série no disco.** Existe partição
@@ -58,7 +58,7 @@ MIN_SEMANAS = 8
 STALE_SEMANAS = 12
 
 # `RETENCAO_SEMANAS` é a ÚNICA das três que conta semanas de CALENDÁRIO, e é essa assimetria que
-# torna o valor um parâmetro de produto, não de disco `[BLK-MA-21 / DEC-038, 2026-08-25]`.
+# torna o valor um parâmetro de produto, não de disco `[BLK-MA-21 / DEC-039, 2026-08-25]`.
 #
 # A aritmética das DUAS cadências, escrita, porque ela decide o número. `podar_snapshots` é
 # keep-newest-N sobre diretórios `semana=`, e o cron SEMANAL escreve em toda semana ISO. Logo o
@@ -93,7 +93,7 @@ TOLERANCIA_BBOX_UF_GRAUS = 0.5
 # Chaves de partição hive do snapshot (não são colunas do arquivo: vivem no caminho). A ORDEM é a
 # ordem das chaves hive no caminho — `semana=AAAA-SS/fonte=<fonte>/parte-*.parquet`.
 #
-# Era escalar (`COLUNA_PARTICAO = "semana"`) até o BLK-MA-21 / DEC-038. A segunda chave existe
+# Era escalar (`COLUNA_PARTICAO = "semana"`) até o BLK-MA-21 / DEC-039. A segunda chave existe
 # porque duas cadências escrevem na MESMA semana ISO: com uma chave só, `delete_matching` fazia a
 # execução mensal apagar a partição inteira que a semanal tinha acabado de gravar (e vice-versa).
 # Com `fonte=` a idempotência passa a ser por FOLHA — ver `escrever_particao_semana`.
@@ -265,7 +265,7 @@ CONTRATO_COLUNAS_SNAPSHOT: dict[str, str] = {
     # Ficam FORA de `CAMPOS_HASH_POR_FONTE` — a nota muda a cada avaliação e mataria o S4.
     "nota_wellhub": "Float64",  # [NOTA_WELLHUB_MIN, NOTA_WELLHUB_MAX]; nulável
     "qtd_avaliacoes_wellhub": "Int64",  # >= 0; nulável
-    # `[BLK-MA-21 / DEC-038]` O recorte que a EXECUÇÃO PEDIU (`--fontes`), como CSV ordenado —
+    # `[BLK-MA-21 / DEC-039]` O recorte que a EXECUÇÃO PEDIU (`--fontes`), como CSV ordenado —
     # ex.: `"totalpass,wellhub"`. NÃO é o que a partição contém, e a diferença é o motivo de a
     # coluna existir: com a guarda de frescor da curadoria, o TotalPass pode ter sido **tentado e
     # recusado** (feed velho), e nesse caso a folha `fonte=totalpass` simplesmente não existe.

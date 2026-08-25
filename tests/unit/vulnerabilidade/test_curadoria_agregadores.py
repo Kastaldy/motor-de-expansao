@@ -1,4 +1,4 @@
-"""BLK-MA-21 / DEC-038: testes da curadoria dos feeds dos agregadores.
+"""BLK-MA-21 / DEC-039: testes da curadoria dos feeds dos agregadores.
 
 Fixtures 100% SINTETICAS em `tmp_path` (CSVs com `sep=";"` / `encoding="utf-8-sig"`, nomes
 inventados). Nenhum teste toca o clone real do coletor -- ele e' irmao deste repo, carrega PII na
@@ -46,7 +46,7 @@ def _envelhecer(caminho: Path, dias: float, *, agora: datetime = AGORA) -> None:
 def _envelhecer_conteudo(caminho: Path, dias: int, *, agora: datetime = AGORA) -> None:
     """Empurra a coluna `data_coleta` DENTRO do CSV, preservando o mtime.
 
-    E' a regua PRIMARIA desde a emenda de 2026-08-25 a' DEC-038 -- e a razao de ela existir e'
+    E' a regua PRIMARIA desde a emenda de 2026-08-25 a' DEC-039 -- e a razao de ela existir e'
     exatamente que as duas podem DIVERGIR: `split_by_state` reescreve os CSVs por UF em modo "w" ao
     fim de toda execucao, mesmo sem recoletar nada, o que rejuvenesce o mtime sem tocar o dado.
     """
@@ -376,7 +376,7 @@ def test_nao_apaga_csv_existente_no_destino(origem: Path, tmp_path: Path) -> Non
 def test_copia_preserva_o_mtime(origem: Path, tmp_path: Path) -> None:
     """O mtime e' o FALLBACK da guarda de frescor do mes seguinte.
 
-    Desde a emenda de 2026-08-25 a' DEC-038 a regua primaria e' `data_coleta`, que viaja DENTRO do
+    Desde a emenda de 2026-08-25 a' DEC-039 a regua primaria e' `data_coleta`, que viaja DENTRO do
     arquivo e nao depende disto. Mas o fallback continua valendo para feed sem data legivel, e com
     `shutil.copy` puro (sem `2`) ele pareceria recem-coletado para sempre.
     """

@@ -161,7 +161,7 @@ def main() -> None:
         print("       --base-dir data/staging/snapshots_concorrentes \\")
         print("       --saida-nomeadas data/staging/vulnerabilidade_ma_nomeadas.parquet \\")
         print("       --saida-redes data/staging/vulnerabilidade_ma_redes.parquet")
-        print("  -> O recorte de fontes e' FAIL-CLOSED (DEC-038 D9, emenda de 2026-08-25):")
+        print("  -> O recorte de fontes e' FAIL-CLOSED (DEC-039 D9, emenda de 2026-08-25):")
         print("     omitir `--fontes` aplica o default do entregavel (`wellhub`), NAO a")
         print("     serie inteira. O totalpass e' GRAVADO desde o 1o mes mas nao entra no")
         print("     ranking ate' o BLK-MA-20 fechar; abrir exige `--todas-as-fontes`.")

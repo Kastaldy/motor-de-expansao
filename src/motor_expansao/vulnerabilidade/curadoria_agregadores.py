@@ -4,7 +4,7 @@
 é onde `snapshots.py` procura (`DIR_WELLHUB_DEFAULT` / `DIR_TOTALPASS_DEFAULT`). É o passo 2 do cron
 MENSAL (`scripts/cron/run_snapshot_agregadores.sh`), entre a coleta e o snapshot.
 
-**Por que isto é código versionado e testado, e não três `cp` no shell (DEC-038, D6).** Ele decide
+**Por que isto é código versionado e testado, e não três `cp` no shell (DEC-039, D6).** Ele decide
 duas coisas que, decididas errado, produzem um NÚMERO MAIOR em vez de um erro:
 
   1. **QUAL diretório é a fonte de cada agregador.** No WellHub os dois universos coexistem no
@@ -22,7 +22,7 @@ duas coisas que, decididas errado, produzem um NÚMERO MAIOR em vez de um erro:
      com `exit 0`. É a mesma razão pela qual o cron SEMANAL roda `--fontes unidades`.
 
 **A idade sai da coluna `data_coleta`, DENTRO do CSV — não do `mtime` `[emenda de 2026-08-25 à
-DEC-038]`.** A guarda nasceu medindo `p.stat().st_mtime`, e isso a tornava cega justamente ao caso
+DEC-039]`.** A guarda nasceu medindo `p.stat().st_mtime`, e isso a tornava cega justamente ao caso
 que ela existe para pegar. Medido nesta estação, no clone real: os 27 CSVs de `TotalPass/csvs/`
 tinham `mtime = 2026-08-25` (idade `0` dia) e `data_coleta = 2026-06-01` em **15.982 de 15.986**
 linhas — idade real de **85 dias**. A explicação é o `split_by_state` do coletor, que abre cada
@@ -130,7 +130,7 @@ def _contar_linhas(arquivos: Sequence[Path]) -> int:
 def escolher_diretorio_fonte(origem: Path, agregador: str) -> tuple[Path, str]:
     """Diretório de origem do agregador + o MOTIVO da escolha, em prosa auditável.
 
-    Regra por agregador (DEC-038, D3):
+    Regra por agregador (DEC-039, D3):
 
     | agregador | escolha |
     |---|---|
@@ -368,7 +368,7 @@ def curar(
     `escolher_diretorio_fonte` levantando é OUTRA coisa e **derruba** a execução: ali o estado é
     ambíguo, e publicar o universo errado é pior que não publicar nada.
 
-    **Tudo ou nada, e por isso em DUAS fases `[emenda de 2026-08-25 à DEC-038]`.** Decidir os dois
+    **Tudo ou nada, e por isso em DUAS fases `[emenda de 2026-08-25 à DEC-039]`.** Decidir os dois
     agregadores primeiro e copiar depois é o que torna a promessa acima verdadeira: no laço único
     anterior, o `totalpass` (primeiro na ordem canônica) já tinha sido COPIADO quando a ambiguidade
     do `wellhub` levantava, e o destino ficava com meia curadoria de um mês novo enquanto o wrapper

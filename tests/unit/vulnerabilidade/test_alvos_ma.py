@@ -598,7 +598,7 @@ def test_cli_analisa_os_argumentos() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# BLK-MA-21 / DEC-038 (D9) — a fronteira com o BLK-MA-20, imposta POR CÓDIGO
+# BLK-MA-21 / DEC-039 (D9) — a fronteira com o BLK-MA-20, imposta POR CÓDIGO
 # --------------------------------------------------------------------------- #
 def test_cli_aceita_recorte_de_fontes() -> None:
     """`--fontes wellhub` é o que o entregável roda enquanto o BLK-MA-20 não fecha.
@@ -616,7 +616,7 @@ def test_cli_aceita_recorte_de_fontes() -> None:
 
 
 def test_o_recorte_de_fontes_e_FAIL_CLOSED(caplog: pytest.LogCaptureFixture) -> None:
-    """Emenda de 2026-08-25 à DEC-038: **omitir o flag é o comportamento SEGURO**.
+    """Emenda de 2026-08-25 à DEC-039: **omitir o flag é o comportamento SEGURO**.
 
     O D9 rejeitou "a DEC proíbe por escrito" com a frase *"é prosa: a cadeia roda com as duas
     fontes sem editar uma linha"*. A primeira implementação tinha `default=None` e, com isso, a

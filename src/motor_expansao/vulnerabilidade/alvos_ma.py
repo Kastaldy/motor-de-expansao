@@ -80,9 +80,9 @@ CARTEIRA_PATH_DEFAULT = ROOT / "data" / "outputs" / "carteira_expansao_acionavel
 ACADEMIAS_PATH_DEFAULT = ROOT / "data" / "staging" / "vulnerabilidade_ma_academias.parquet"
 ALVOS_CSV_DEFAULT = ROOT / "data" / "outputs" / "alvos_ma_priorizados.csv"
 
-# FRONTEIRA COM O BLK-MA-20, E ELA É FAIL-CLOSED `[emenda de 2026-08-25 à DEC-038, D9]`.
+# FRONTEIRA COM O BLK-MA-20, E ELA É FAIL-CLOSED `[emenda de 2026-08-25 à DEC-039, D9]`.
 #
-# Este é o recorte de fontes que vale quando NINGUÉM digita nada. A DEC-038 rejeitou a opção "a DEC
+# Este é o recorte de fontes que vale quando NINGUÉM digita nada. A DEC-039 rejeitou a opção "a DEC
 # proíbe por escrito" com a frase "é prosa: a cadeia roda com as duas fontes sem editar uma linha" —
 # e a primeira implementação tinha a MESMA propriedade, só que o gesto que vazava passou a ser *não
 # digitar o flag*. Duas das três receitas canônicas do próprio repositório omitiam `--fontes
@@ -579,7 +579,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help=(
             "recorta a serie de snapshots ANTES de derivar churn/presenca. OMITIR NAO desliga o "
             f"recorte: sem este argumento vale {list(FONTES_ENTREGAVEL_DEFAULT)}, que e' a "
-            "fronteira com o BLK-MA-20 (DEC-038, D9). A particao do totalpass e' GRAVADA desde o "
+            "fronteira com o BLK-MA-20 (DEC-039, D9). A particao do totalpass e' GRAVADA desde o "
             "primeiro mes (para o cronometro de MIN_SEMANAS correr), mas nao entra no ranking. "
             "Para consumir a serie inteira, use `--todas-as-fontes`"
         ),
@@ -693,14 +693,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     from .snapshots import coordenadas_por_chave
 
     # A fronteira com o BLK-MA-20, RESOLVIDA antes de qualquer leitura e FAIL-CLOSED: omitir o flag
-    # nao devolve a serie inteira, devolve `FONTES_ENTREGAVEL_DEFAULT` (DEC-038 D9, emenda de
+    # nao devolve a serie inteira, devolve `FONTES_ENTREGAVEL_DEFAULT` (DEC-039 D9, emenda de
     # 2026-08-25). O log sai SEMPRE — inclusive quando ninguem digitou nada —, porque o recorte
     # silencioso e' o mesmo defeito de sinal trocado que este bloco veio matar.
     fontes = resolver_fontes(args)
     if fontes is None:
         _logger.warning(
             "recorte de fontes DESLIGADO por `--todas-as-fontes`: a serie INTEIRA entra no "
-            "ranking, com a dedup TP x WH ainda arbitrada (DEC-038, D9)"
+            "ranking, com a dedup TP x WH ainda arbitrada (DEC-039, D9)"
         )
     else:
         _logger.info(
@@ -726,7 +726,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # dobro e abriria a chance de o artefato de redes ver uma serie diferente da que gerou o score.
     churn_lido = None
     if fontes is not None:
-        # RECORTE POR FONTE (DEC-038, D9). A serie e' lida UMA vez, ja' recortada, e INJETADA nos
+        # RECORTE POR FONTE (DEC-039, D9). A serie e' lida UMA vez, ja' recortada, e INJETADA nos
         # dois extratores -- eles nao podem reler do disco, senao voltariam a ver a serie inteira e
         # o recorte seria decorativo. E' o mesmo molde do ramo `--saida-redes` abaixo.
         from .churn_staleness import extrair_churn_staleness

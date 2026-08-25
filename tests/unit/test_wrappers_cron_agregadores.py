@@ -1,4 +1,4 @@
-"""BLK-MA-21 / DEC-038: contrato TEXTUAL dos dois scripts de shell do cron mensal.
+"""BLK-MA-21 / DEC-039: contrato TEXTUAL dos dois scripts de shell do cron mensal.
 
 Não há precedente de teste de shell neste repo, e um teste que EXECUTASSE os wrappers precisaria de
 Docker, do clone do coletor e de ~21h de coleta — inviável em suíte. O que dá para travar de graça,
@@ -91,7 +91,7 @@ def test_wrapper_agregadores_falha_quando_nada_e_publicado() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Emenda de 2026-08-25 à DEC-038 — os dois críticos que vivem na fronteira com
+# Emenda de 2026-08-25 à DEC-039 — os dois críticos que vivem na fronteira com
 # o repo irmão do coletor
 # --------------------------------------------------------------------------- #
 def test_wrapper_rotaciona_o_consolidado_de_cada_coletor() -> None:
