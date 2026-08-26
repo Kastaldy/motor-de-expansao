@@ -23,8 +23,10 @@ body,
 
    O app foi desenhado para tela grande e a 100% o mapa e os painéis disputam a mesma
    dobra: quem abre num notebook passa a análise inteira rolando. A 75% a leitura cabe
-   de uma vez — e cabe SEM o operador ter que lembrar de apertar Ctrl+menos em toda
-   máquina nova, que era o estado anterior.
+   de uma vez, e cabe para TODO MUNDO — o padrão do time deixa de depender de cada um
+   descobrir sozinho que precisa diminuir. (O Ctrl+menos continua existindo e o Chrome
+   guarda o nível por origem: quem já fazia isso não fazia toda vez, fazia uma vez por
+   máquina. O ganho aqui é o padrão, não a tecla.)
 
    `zoom` e não `transform: scale(.75)`: zoom participa do LAYOUT — o conteúdo reflui e
    ocupa a tela inteira. `scale` só encolhe o desenho pronto e deixaria faixa morta à
