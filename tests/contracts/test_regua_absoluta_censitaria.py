@@ -119,3 +119,39 @@ def test_corte_do_funil_bate_com_a_escala():
     assert SCORE_CORTE_QUENTE == 30.0
     # um perfil de praca real (renda mediana da rede, porte urbano) tem de passar o corte
     assert _score(1_500.0, 15_000.0) >= SCORE_CORTE_QUENTE
+
+
+def test_reversao_para_percentil_nao_depende_de_backup():
+    """Voltar atras tem de ser um comando, nao arqueologia.
+
+    `recalcular_score_absoluto` reescreve o score in-place nos parquets censitarios, e o Censo
+    bruto nao vive na estacao -- entao, sem isto, reverter exigiria reprocessar uma fonte que
+    nao esta aqui. A saida e' que os percentis (`renda_pct_nacional_calibrado`,
+    `pop_pct_municipal`) sao PRESERVADOS, e a formula antiga se reconstitui deles.
+    Medido contra o backup do artefato nacional em 2026-08-26: erro maximo 0,0 exato.
+    """
+    import pandas as pd  # noqa: PLC0415
+
+    from motor_expansao.pipelines.recalcular_score_absoluto import (  # noqa: PLC0415
+        recalcular,
+        reverter,
+    )
+
+    original = pd.DataFrame(
+        {
+            "renda_per_capita_setor_2022_calibrada": [500.0, 1_500.0, 3_000.0, 900.0],
+            "pop_total_setor_2022": [800.0, 15_000.0, 60_000.0, 3.0],
+            "renda_pct_nacional_calibrado": [0.10, 0.55, 0.95, 0.40],
+            "pop_pct_municipal": [0.20, 0.60, 0.90, 0.80],
+        }
+    )
+    # score ANTIGO, como o artefato tinha antes da troca de regua
+    antigo, _ = reverter(original.copy())
+    esperado = antigo["score_setor_2022_calibrado"].tolist()
+
+    # aplica a regua nova e depois reverte
+    novo, _ = recalcular(antigo.copy())
+    assert novo["score_setor_2022_calibrado"].tolist() != esperado, "a regua nova nao mudou nada"
+
+    voltou, _ = reverter(novo.copy())
+    assert voltou["score_setor_2022_calibrado"].tolist() == esperado

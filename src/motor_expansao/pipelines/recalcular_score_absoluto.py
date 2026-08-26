@@ -25,7 +25,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from motor_expansao.pipelines.calibrar_renda_setor_2022 import calcular_score_calibrado
+from motor_expansao.pipelines.calibrar_renda_setor_2022 import (
+    ajuste_executivo,
+    calcular_score_calibrado,
+)
 
 ALVOS = (
     Path("data/staging/censo2022_setores_calibrado.parquet"),
@@ -38,6 +41,8 @@ COL_POP = "pop_total_setor_2022"
 COL_SCORE = "score_setor_2022_calibrado"
 COL_HEX = "hex_score_estrutural_calibrado"
 COL_AJUSTE = "ajuste_calibrado"
+COL_RENDA_PCT = "renda_pct_nacional_calibrado"
+COL_POP_PCT = "pop_pct_municipal"
 
 
 def recalcular(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
@@ -80,24 +85,74 @@ def recalcular(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     return df, resumo
 
 
+def reverter(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Reconstitui o score ANTIGO (percentil) a partir das colunas de auditoria.
+
+    A reversao NAO depende de backup: `renda_pct_nacional_calibrado` e `pop_pct_municipal`
+    sao preservados por `recalcular`, e a formula antiga era
+    `clip(100*(0,60*renda_pct + 0,40*pop_pct) + ajuste_executivo, 0, 100)`.
+    Verificado contra o backup do artefato nacional em 2026-08-26: erro maximo 0,0 exato.
+
+    Existe para que voltar atras seja um comando, e nao uma arqueologia.
+    """
+    faltam = [c for c in (COL_RENDA_PCT, COL_POP_PCT) if c not in df.columns]
+    if faltam:
+        raise KeyError(f"colunas de auditoria ausentes, reversao impossivel: {faltam}")
+
+    r = pd.to_numeric(df[COL_RENDA_PCT], errors="coerce")
+    p = pd.to_numeric(df[COL_POP_PCT], errors="coerce")
+    mask = r.notna() & p.notna()
+
+    for col in (COL_HEX, COL_AJUSTE, COL_SCORE):
+        if col not in df.columns:
+            df[col] = float("nan")
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    if mask.any():
+        rv = r.loc[mask].to_numpy()
+        pv = p.loc[mask].to_numpy()
+        hex_score = 100.0 * (0.60 * rv + 0.40 * pv)
+        adj = ajuste_executivo(rv, pv)
+        df.loc[mask, COL_HEX] = hex_score
+        df.loc[mask, COL_AJUSTE] = adj
+        df.loc[mask, COL_SCORE] = (hex_score + adj).clip(0.0, 100.0)
+    df.loc[~mask, [COL_HEX, COL_AJUSTE, COL_SCORE]] = float("nan")
+
+    depois = pd.to_numeric(df[COL_SCORE], errors="coerce")
+    return df, {
+        "linhas": int(len(df)),
+        "revertidas": int(mask.sum()),
+        "sem_insumo": int((~mask).sum()),
+        "score_mediana_depois": float(depois.median()) if depois.notna().any() else float("nan"),
+        "saturam_em_100": int((depois >= 99.995).sum()),
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true", help="mede sem gravar")
+    ap.add_argument(
+        "--reverter",
+        action="store_true",
+        help="volta ao score de PERCENTIL usando as colunas de auditoria (nao precisa de backup)",
+    )
     args = ap.parse_args()
 
-    print("Recalculo do score censitario pela regua ABSOLUTA")
+    modo = "REVERSAO para a regua de PERCENTIL" if args.reverter else "regua ABSOLUTA"
+    print(f"Score censitario -- {modo}")
     print("=" * 70)
     for alvo in ALVOS:
         if not alvo.exists():
             print(f"  PULADO (ausente): {alvo}")
             continue
         df = pd.read_parquet(alvo)
-        df, r = recalcular(df)
+        df, r = reverter(df) if args.reverter else recalcular(df)
         antes = r.get("score_mediana_antes")
         antes_txt = f"{antes:.1f}" if antes is not None else "n/d"
         print(f"  {alvo.name}")
         print(
-            f"     linhas {r['linhas']:>9,} | recalculadas {r['recalculadas']:>9,} | "
+            f"     linhas {r['linhas']:>9,} | "
+            f"aplicadas {r.get('recalculadas', r.get('revertidas', 0)):>9,} | "
             f"sem insumo {r['sem_insumo']:>9,}"
         )
         print(
