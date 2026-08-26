@@ -816,6 +816,28 @@ export default function HexMap({
         extruded: false,
         filled: true,
         stroked: true,
+        /* GEOMETRIA FIEL — o default `highPrecision: 'auto'` nao serve aqui.
+
+           'auto' so' liga a precisao alta com globo, pentagono no dataset, resolucoes
+           misturadas ou res<=5. Nada disso vale nesta camada (tudo res-7, mercator),
+           entao ela cai no caminho rapido: o deck.gl calcula os 6 vertices de UM
+           hexagono — o do centro da tela — e desenha todos os outros como aquele mesmo
+           poligono TRANSLADADO. Longe do centro o clone deixa de bater com a celula H3
+           real: as celulas saem inclinadas e abrem fresta entre as vizinhas.
+
+           E ele so' recalcula quando o centro anda alem de um limiar — por isso a torcao
+           ANDA ao dar zoom ou arrastar (relato do Juan, 2026-08-26: "se eu coloco zoom e
+           tiro, os hexagonos ficam tortos").
+
+           DOI MUITO MAIS NA ARGENTINA, e por isso o Brasil nunca reclamou: um pentagono
+           H3 res-7 fica a 504 km da costa argentina (-39,10/-57,70) e comprime a grade em
+           volta. Erro maximo medido, invariante a rotacao: Grande Sao Paulo 10 m (1% da
+           aresta), Estado de SP 81 m (6%), Grande Buenos Aires 1.089 m — 77% da aresta de
+           1.406 m. A armadilha: 'auto' ligaria a precisao se houvesse pentagono NO
+           DATASET, mas esse esta no oceano, onde nunca havera hexagono povoado.
+
+           Com 42 mil celulas, sem custo perceptivel. */
+        highPrecision: true,
         getFillColor: (d) => {
           const comRaio = raio1km && PASSOS_DA_PRESSAO.has(passo.n)
           // Transparente onde a cobertura ja pinta o hexagono inteiro (ver `hexesCobertos`).
@@ -1195,6 +1217,9 @@ export default function HexMap({
           extruded: false,
           filled: true,
           stroked: true,
+          /* Mesma razao da camada `hex`: o realce do ponto buscado tem de POUSAR
+             exatamente sobre a celula de baixo. */
+          highPrecision: true,
           getFillColor: pele.selecaoTenue,
           getLineColor: pele.selecao,
           getLineWidth: 3,
