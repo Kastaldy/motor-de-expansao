@@ -179,7 +179,11 @@ function useLargura(): [(no: HTMLElement | null) => void, number] {
     // para a largura real. Como trocar de métrica remonta a figura (barra e linha são
     // componentes diferentes), esse salto acontecia a cada clique nos chips: um flash do
     // exato defeito que este componente acaba de corrigir.
-    setLargura(no.getBoundingClientRect().width)
+    // `clientWidth`, e nao o rect: sob o zoom padrao de 75% (global.css) o rect fala
+    // em px VISUAIS e o `contentRect` do observador abaixo fala em px de CSS. A medida
+    // imediata sairia 25% menor que a do observador e o grafico daria exatamente o
+    // salto de um quadro que este bloco existe para eliminar.
+    setLargura(no.clientWidth)
     if (typeof ResizeObserver === 'undefined') return
     // Daqui em diante quem manda é o observador: janela redimensionada, dock recolhido,
     // filtro que muda a altura da carteira — tudo mexe na largura deste cartão.
