@@ -1543,7 +1543,7 @@ produção e exige DEC + gate humano.
 | **Criticidade** | **Alta** (o passo entra num **cron de produção na VPS** e o módulo invocado é o único do pacote que **apaga arquivo** — a poda de retenção. READ-ONLY sobre o M1: não toca `score_priorizacao`, pesos, `config.py`, `pipelines/m1` nem artefato oficial; escreve só em `data/staging/snapshots_concorrentes/`). |
 | **Prioridade** | **É o caminho crítico do epic, não o último passo.** Sem série não há S3/S4; sem S3/S4 o `score_vulnerabilidade_ordenavel` nasce nulo e o **BLK-MA-05 não tem o que ordenar**. Cada semana sem este bloco é uma semana a mais de espera. |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA → `[aplicação na VPS: passo MANUAL do Felipe, comando a comando — §6]`. |
-| **Status** | **AGUARDANDO APLICAÇÃO NA VPS — o que falta é humano, não técnico.** Código e runbook na `main` desde 2026-08-11 (PR #221): `scripts/cron/run_snapshot_concorrentes.sh`, o recorte `--fontes` com `fontes_lidas` na auditoria, a seção de runbook em `docs/infra_producao.md` e `MIN_SEMANAS` decidido (fica em 8). **Este bloco NÃO fecha com o merge:** a esteira termina na aplicação, e enquanto ela não ocorrer **a série continua em ZERO semanas** — nenhum snapshot é gravado, S3/S4 não maturam e o BLK-MA-05 segue sem o que ordenar. Passos que restam, na ordem, todos do Felipe (§6, comando a comando): (1) `cp scripts/cron/run_snapshot_concorrentes.sh /opt/motor-expansao-infra/` + `chmod +x`; (2) **`DRY_RUN=1 /opt/motor-expansao-infra/run_snapshot_concorrentes.sh`** e conferir que `linhas_snapshot` > 0 — se vier `0`, `HOST_CONCORRENTES` está errado (o layout dos CSVs na VPS não é versionado, e este passo é a única forma de descobri-lo sem gravar nem podar); (3) uma linha no `/opt/gymscraping-infra/run_weekly_90.sh` após a coleta, terminando em `\|\| echo` para não abortar o lote. Só depois de (3) o relógio começa: **~2 meses** até S3/S4 maturarem no feed `unidades`. |
+| **Status** | **APLICADO NA VPS em 2026-08-26** (confirmado por Felipe: "o coletor e o cron semanal"). O relógio de S3/S4 do feed `unidades` **está correndo** — os três passos que faltavam (cópia do wrapper, `DRY_RUN=1`, linha no `run_weekly_90.sh`) foram executados. Código e runbook na `main` desde 2026-08-11 (PR #221). **Consequência para o BLK-MA-21, medida em 2026-08-26:** a série na VPS deixou de estar vazia e passa a acumular **uma partição de layout LEGADO (uma chave) por semana** — o que transforma a migração de layout de hipótese em trabalho certo, proporcional ao tempo até a aplicação do bloco. |
 | **Depende de** | BLK-MA-02-FU1 (o m6 deu ao materializador a CLI com `--dry-run`/`--base-dir`; sem ela não se pluga isso num cron) e o item 2 do mesmo bloco (import lazy, que tirou `sklearn`/`scipy` do caminho). |
 | **Autonomia** | **manual (NÃO loop-safe)** — toca cron de produção. NUNCA marcar loop-safe. |
 
@@ -1847,16 +1847,62 @@ alterado; (6) READ-ONLY sobre o M1; (7) suíte verde e `loop_guard` sem CRÍTICO
 
 ---
 
-### BLK-MA-21 — Cron MENSAL dos agregadores: o relógio dos independentes, que nunca foi ligado
+### BLK-MA-21 — Cron SEMANAL dos agregadores: o relógio dos independentes, que nunca foi ligado
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **Alta** — cria um **cron de produção** na VPS que dispara ~21h de coleta e invoca o único módulo do pacote que **apaga arquivo** (a poda de retenção). READ-ONLY sobre o M1: escreve só em `data/staging/snapshots_concorrentes/`. **Exige DEC própria** (cadência + resolução da colisão de partição + nova retenção). |
+| **Criticidade** | **Alta** — cria um **cron de produção** na VPS que dispara ~21h45 de coleta **toda semana** e invoca o único módulo do pacote que **apaga arquivo** (a poda de retenção). READ-ONLY sobre o M1: escreve só em `data/staging/snapshots_concorrentes/`. **Exige DEC própria** (cadência + resolução da colisão de partição + retenção + limiar de frescor). |
 | **Prioridade** | **Alta, e é caminho crítico do epic inteiro.** Os independentes — o universo-alvo do funil de M&A — vivem **só** nesses dois agregadores. O cron semanal fotografa o feed `unidades`, que é de **cadeias**. Sem este bloco, S3 e S4 sobre independentes **nunca** amadurecem e o score fica preso em `{s1,s6}` = pressão renomeada, para sempre. |
 | **Esteira** | Block Orchestrator → Planner → `[GATE humano — DEC própria]` → Builder → QA → `[aplicação na VPS: passo MANUAL, comando a comando — §6]`. |
-| **Status** | Pendente — **levantamento concluído em 2026-08-25**. Listado desde sempre como "Pendentes (futuro)" em `docs/infra_producao.md` e posto em "fora de escopo — bloco próprio" pelo BLK-MA-06; **nunca teve dono nem ID até agora**. |
-| **Depende de** | **BLK-MA-06 — dependência DURA, não de conveniência.** É ele quem prova, com `DRY_RUN=1`, que o caminho dos CSVs e o `API_IMAGE` estão certos. Ligar o mensal antes é depurar dois caminhos não validados ao mesmo tempo, num job em que **cada iteração de diagnóstico custa um mês**. |
+| **Status** | **Pendente — REABERTO em 2026-08-26 com a cadência corrigida para SEMANAL** (decisão de Felipe). Um ciclo completo rodou em 2026-08-25 sobre a premissa MENSAL e o PR **#263 foi FECHADO** por isso; o trabalho está preservado na branch `ciclo/BLK-MA-21` (commits `7b5fc9b`, `58f2b98`, `43fa42d`) e a maior parte dele **sobrevive** — ver "Correção de premissa" abaixo. Levantamento original concluído em 2026-08-25; o **bloqueador (1) caiu** (`GymScraping` #11). |
+| **Depende de** | **BLK-MA-06 — SATISFEITA em 2026-08-26.** O coletor e o cron semanal foram aplicados na VPS por Felipe, então o caminho dos CSVs e o `API_IMAGE` já estão provados por `DRY_RUN`. **A dependência deixou de bloquear e virou um relógio contra o bloco:** com o cron rodando, a série na VPS acumula **uma partição de layout LEGADO por semana** (a `main` segue com particionamento de UMA chave), e cada semana de espera é uma partição a mais para o `--migrar-layout`. |
 | **Autonomia** | **manual (NÃO loop-safe)** — cron de produção + gate humano. NUNCA marcar loop-safe. |
+
+#### Correção de premissa (2026-08-26): a cadência é SEMANAL, não mensal
+
+O bloco nasceu, foi planejado e foi implementado inteiro sobre a premissa de coleta **mensal**.
+Felipe corrigiu em 2026-08-26: **WellHub e TotalPass serão fotografados semanalmente**, e as duas
+coletas **convivem** com o cron semanal do feed `unidades` (não o substituem). O PR #263 foi
+fechado. O que muda, item a item — o corpo abaixo foi mantido **intacto** porque é evidência
+medida, mas as passagens marcadas aqui deixaram de valer:
+
+**CAI — decidido sobre a cadência errada:**
+- **D1 (cadência).** "1ª terça do mês, 02:00 UTC" fica sem objeto. A janela nova precisa caber numa
+  grade **semanal** que já tem o `unidades` (dom 06:00 UTC) e ~22h de agregadores.
+- **D5 (retenção `26` -> `78`).** O argumento inteiro era aritmético: com coleta mensal e poda
+  keep-newest-N sobre semanas de CALENDÁRIO, 26 partições davam **5,98 observações**, abaixo de
+  `MIN_SEMANAS = 8`. **Com coleta semanal isso desaparece** — 26 partições = 26 observações de cada
+  fonte, e as 8 exigidas chegam em 8 semanas. A seção "Retenção: a régua não serve a duas cadências"
+  perde o pressuposto: agora as três fontes têm a MESMA cadência. Refazer a aritmética do zero.
+- **O custo por iteração de diagnóstico.** "cada iteração custa um mês" vira "custa uma semana" — o
+  que baixa o risco de errar o agendamento e muda o cálculo de quanto vale depurar antes de ligar.
+
+**SOBREVIVE — e a cadência semanal torna mais urgente:**
+- **A colisão de partição e a opção (a) (`semana=X/fonte=Y`).** Era o item mais importante e agora é
+  pior: com **três** fontes escrevendo na MESMA semana ISO, o `delete_matching` de uma chave passa a
+  ter **duas vítimas por semana**, não uma. E como o BLK-MA-06 já está aplicado (ver "Depende de"),
+  isso deixou de ser risco futuro: é o estado de produção no dia em que os agregadores entrarem.
+- **A curadoria versionada** (escolha de diretório por agregador + o abort na ambiguidade),
+  **a rotação do consolidado**, o **`fontes_lidas` no parquet**, o **`--migrar-layout`** e a
+  **fronteira D9 fail-closed** — nenhum depende da cadência.
+- Os **três críticos** que o painel adversarial encontrou na fronteira com o `GymScraping` continuam
+  todos de pé, e as correções valem como estão.
+
+**NASCE — defeito novo criado pela cadência semanal:**
+- **O limiar de frescor colide com o período de coleta.** A guarda recusa feed com mais de
+  `--max-idade-dias` (default **7**). Com coleta semanal, o feed chega ao snapshot com **~7 dias de
+  idade por construção** — em cima do limiar, passando ou sendo recusado por margem de horas,
+  conforme a hora em que cada coletor terminou. **O default herdado do desenho mensal é inseguro
+  aqui** e tem de ser reescolhido junto com a cadência (a régua em si, por `data_coleta`, continua
+  certa — o que está errado é o número).
+- **A janela de ~22h/semana numa KVM4 com 6 containers permanentes** deixa de ser evento mensal e
+  vira carga recorrente, concorrendo com a coleta dos 90 coletores do `unidades`. A grade precisa
+  ser desenhada, não herdada.
+
+**Reaproveitamento.** A branch `ciclo/BLK-MA-21` tem código, testes (T1..T9 + 42 novos), runbook e a
+DEC (renumerada para **DEC-039** — a `main` levou a 038 no PR #260). O caminho barato é partir dela,
+não do zero: mexem-se a cadência (D1), a aritmética da retenção (D5) e o limiar de frescor; o resto
+passa como está. **Reabrir o gate humano é obrigatório** — três das nove decisões mudam.
 
 #### Dois bloqueadores que precisam cair ANTES de qualquer agendamento
 
