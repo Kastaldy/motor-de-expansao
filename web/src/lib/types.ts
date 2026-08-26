@@ -244,6 +244,15 @@ export interface Pin {
   label?: string
   nome: string
   /**
+   * Nome do ARQUIVO da foto desta unidade, servido por `/api/foto-concorrente/<arquivo>`.
+   *
+   * Nome e não URL porque quem decide onde a pasta mora é o servidor (`MOTOR_COMPETITORS_
+   * PHOTO_DIR`), e porque um caminho vindo do dado seria entrada não confiável chegando
+   * pronta na tela. Ausente na maioria: só a camada coletada na web traz imagem — o POI de
+   * mapa aberto não tem nenhuma.
+   */
+  foto?: string | null
+  /**
    * `true` quando esta unidade veio do feed de um agregador (WellHub/TotalPass) e por isso temos
    * DADOS EXTRAS sobre ela — pressão medida da coordenada dela, nota, presença na série.
    *

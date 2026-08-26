@@ -1756,6 +1756,32 @@ export default function HexMap({
             maxWidth: 240,
           }}
         >
+          {/* FOTO DA UNIDADE, quando a base a trouxe (pedido do Juan, 2026-08-26).
+              Vem ANTES do nome, como capa: quem passa o mouse quer reconhecer a casa, e a
+              foto faz isso mais rapido que o texto. `onError` esconde a imagem em vez de
+              deixar o icone de quebrado — a base pode citar um arquivo que sumiu, e um
+              retangulo vazio le pior que nenhum. `loading="lazy"` porque o balao troca a
+              cada pino sob o cursor: sem isso, arrastar o mouse pelo mapa dispararia uma
+              requisicao por unidade tocada. */}
+          {pinHover.d?.foto && (
+            <img
+              src={`/api/foto-concorrente/${encodeURIComponent(pinHover.d.foto)}`}
+              alt=""
+              loading="lazy"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none'
+              }}
+              style={{
+                display: 'block',
+                width: '100%',
+                height: 96,
+                objectFit: 'cover',
+                borderRadius: 'var(--r-sm)',
+                marginBottom: 7,
+                background: 'var(--surf-raised)',
+              }}
+            />
+          )}
           <div style={{ font: '600 12px/1.2 var(--f-ui)', color: 'var(--tx-max)' }}>
             {pinHover.titulo}
           </div>

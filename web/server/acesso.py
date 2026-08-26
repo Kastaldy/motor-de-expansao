@@ -102,6 +102,13 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     # middleware da trilha grava — molde do `/api/ciencia-confidencialidade`). Aceita
     # "mapa" porque o pin do Mapa Territorial tambem abre ficha de imovel.
     ("/api/imobiliaria/evento/", frozenset({"mapa", "imobiliaria"})),
+    # Foto da UNIDADE concorrente, desenhada no balao do pino do Mapa Territorial.
+    # MESMO gate de `/api/municipio/`, que e' a rota que serve o payload de pins onde o
+    # nome do arquivo aparece: quem recebe a lista de pins ja' recebeu o nome da foto, e
+    # negar a imagem depois de entregar o nome nao protegeria nada — so' deixaria o balao
+    # quebrado para o operador de `oportunidades`. Mais FROUXO tambem nao: a foto e' base
+    # servida, e nao bundle do produto, entao ela nao pode vazar para quem nao ve o mapa.
+    ("/api/foto-concorrente/", frozenset({"mapa", "oportunidades"})),
 )
 
 # Rotas /api/* deliberadamente livres (qualquer usuario autenticado):

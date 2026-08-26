@@ -1215,6 +1215,17 @@ ULTRA_MAPEADAS_PARQUET = STAGING_DIR / "unidades_ultra_mapeadas.parquet"
 # Diretorio das logos PNG das redes (`logo_<rede>.png`). Canonico do motor =
 # <repo>/concorrentes (normalizar_concorrentes.CONCORRENTES_DIR); override por env.
 # As logos sao gitignored -> fallback gracioso (quadrado cor+sigla) quando ausentes.
+# Fotos das unidades concorrentes (a imagem do balao do pino). Diretorio PROPRIO, e nao
+# junto das logos: logo e' da MARCA e vem no bundle do produto; foto e' da UNIDADE e vem com
+# a base servida. Ausente -> os pinos seguem sem foto, que e' degradacao correta.
+COMPETITORS_PHOTO_DIR = Path(
+    os.environ.get("MOTOR_COMPETITORS_PHOTO_DIR", str(_REPO_ROOT / "concorrentes" / "fotos"))
+)
+# So' letras, digitos, ponto, hifen e sublinhado, terminando em .jpg/.png/.webp. O nome vem
+# do DADO, entao ele e' entrada nao confiavel: sem esta trava, um `../` no parquet leria
+# qualquer arquivo do servidor (mesma classe do BLK-SEC-05, que ja travou o codigo de UF).
+_FOTO_RE = re.compile(r"^[A-Za-z0-9._-]{1,120}\.(jpg|jpeg|png|webp)$")
+
 COMPETITORS_LOGO_DIR = Path(
     os.environ.get("MOTOR_COMPETITORS_LOGO_DIR", str(_REPO_ROOT / "concorrentes"))
 )
@@ -1357,6 +1368,13 @@ def _slug_rede(nome: str) -> str:
     return re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", puro)).strip("_")
 
 
+def _foto_valida(nome: Any) -> str | None:
+    """Nome de arquivo de foto que passa na trava, ou `None`."""
+    if not nome or not isinstance(nome, str):
+        return None
+    return nome if _FOTO_RE.match(nome) and (COMPETITORS_PHOTO_DIR / nome).is_file() else None
+
+
 # BLK-RELPON-14: 64 era folgado com as 39 redes antigas — e as 68 novas nem tinham entrada em
 # COMPETITOR_LOGO_FILES, entao `_quadrado_logo(None, ...)` curto-circuitava sem custo. Agora as 107
 # tem `logo_<slug>.png`, e cada MISS custa Path.exists() + read_bytes() + base64 do PNG. Com 107
@@ -1403,7 +1421,13 @@ def _carregar_concorrentes() -> pd.DataFrame:
     import pyarrow.parquet as pq
 
     disponiveis = set(pq.read_schema(CONCORRENTES_PARQUET).names)
-    extras = [c for c in ("flag_coord_valida", "status_registro") if c in disponiveis]
+    # `foto` entra aqui, e OPCIONAL como as outras: a base que nao a traz continua lendo
+    # igual. Esquecer uma coluna numa lista de projecao e' o defeito que a DEC-038 pagou
+    # caro — a coluna EXISTE no artefato, so' nao chega, e o sintoma e' um campo vazio sem
+    # erro nenhum. Foi o que aconteceu aqui na primeira tentativa.
+    extras = [
+        c for c in ("flag_coord_valida", "status_registro", "foto") if c in disponiveis
+    ]
     df = pd.read_parquet(CONCORRENTES_PARQUET, columns=[*cols, *extras])
     if "flag_coord_valida" in df.columns:
         df = df[df["flag_coord_valida"].fillna(True).astype(bool)]
@@ -1429,7 +1453,12 @@ def _carregar_concorrentes() -> pd.DataFrame:
         df = df[df["status_registro"].astype(str) == "valido"]
 
     df = df.dropna(subset=["lat", "lng"])
-    return df[cols].reset_index(drop=True)
+    # A PROJECAO FINAL tambem precisa deixar `foto` passar. As outras extras entram so' para
+    # FILTRAR linhas e podem cair aqui; a foto precisa CHEGAR ao payload do pino. Sem esta
+    # linha ela era lida do parquet e descartada na saida — coluna presente, campo vazio,
+    # zero erro. Exatamente a forma do defeito da DEC-038, agora numa TERCEIRA lista.
+    saida = [*cols, *(c for c in ("foto",) if c in df.columns)]
+    return df[saida].reset_index(drop=True)
 
 
 @functools.lru_cache(maxsize=1)
@@ -1665,6 +1694,10 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
                 "rede": str(t.rede),
                 "label": _label(str(t.rede)),
                 "nome": _clean(t.nome_unidade),
+                # Nome do ARQUIVO, servido por /api/foto-concorrente. Ausente quando a
+                # unidade nao tem imagem (o POI de mapa aberto nunca tem) — o balao
+                # simplesmente sai sem foto.
+                "foto": _foto_valida(getattr(t, "foto", None)),
             }
             for t in conc.itertuples(index=False)
         ]
@@ -8653,6 +8686,31 @@ def api_imobiliaria_evento(acao: str) -> dict[str, Any]:
     if acao not in ACOES_IMOBILIARIA:
         raise HTTPException(status_code=404, detail="Acao desconhecida.")
     return {"ok": True}
+
+
+@app.get("/api/foto-concorrente/{arquivo}")
+def foto_concorrente(arquivo: str):
+    """Foto da unidade concorrente, para o balao do pino.
+
+    ARQUIVO, e nao caminho. O nome vem do parquet, que e' entrada nao confiavel, entao passa
+    pela mesma trava do payload (`_FOTO_RE`) e ainda e' resolvido e conferido contra o
+    diretorio: `resolve()` colapsa qualquer `..` que tenha escapado da regex, e a checagem
+    de prefixo garante que o resultado ficou dentro. Duas travas para o mesmo risco porque
+    ler arquivo arbitrario do servidor e' o pior desfecho possivel aqui.
+
+    404 — e nao 403 — quando o nome nao presta: para quem chama, "nao existe" e "voce nao
+    pode" sao a mesma coisa, e o 404 nao confirma a existencia de nada.
+    """
+    from fastapi.responses import FileResponse
+
+    if not _FOTO_RE.match(arquivo):
+        raise HTTPException(status_code=404, detail="foto nao encontrada")
+    caminho = (COMPETITORS_PHOTO_DIR / arquivo).resolve()
+    raiz = COMPETITORS_PHOTO_DIR.resolve()
+    if not str(caminho).startswith(str(raiz)) or not caminho.is_file():
+        raise HTTPException(status_code=404, detail="foto nao encontrada")
+    # Imutavel por nome: o arquivo so' muda se o slug mudar, e ai a URL muda junto.
+    return FileResponse(str(caminho), headers={"Cache-Control": "public, max-age=86400"})
 
 
 # ============================================================================

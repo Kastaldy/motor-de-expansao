@@ -71,6 +71,10 @@ AGRUPAMENTO_ABAS: tuple[tuple[str, str], ...] = (
     # imobiliaria, mesmo quando disparados do Mapa Territorial — a query `origem`
     # e' que diz de onde vieram; aqui a pergunta e' "quanto a camada foi usada".
     ("/api/imobiliaria/evento/", "imobiliaria"),
+    # A foto do balao e' disparada pelo Mapa Territorial, que e' onde o pino mora: das
+    # duas abas que a LIBERAM, "mapa" e' onde o uso acontece na pratica (mesma logica do
+    # relatorio pontual, atribuido a viabilidade).
+    ("/api/foto-concorrente/", "mapa"),
 )
 
 #: Camada de LABEL (CLAUDE.md §2): valor bruto sem acento; exibição acentuada.
