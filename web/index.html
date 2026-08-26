@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="dark light" />
     <link rel="icon" type="image/png" href="/logo-ultra.png" />
     <link rel="apple-touch-icon" href="/logo-ultra.png" />
     <title>Inteligência de Expansão · Ultra Academia</title>
@@ -11,6 +11,34 @@
       name="description"
       content="Onde abrir a próxima Ultra, e se o imóvel fecha a conta."
     />
+    <!--
+      Tema ANTES da primeira pintura.
+
+      O `App` também põe `data-tema` no <html>, mas por um efeito do React, que só roda
+      depois que a página já apareceu. O `body` lê `background: var(--bg-base)` desde o
+      primeiro frame, então sem este trecho quem escolheu o claro via a tela nascer preta
+      e clarear — um flash a cada carregamento, justamente para quem pediu o tema claro.
+
+      Fica em linha, e não num módulo, porque `/src/main.tsx` é `defer` por natureza: um
+      arquivo separado chegaria tarde demais e o flash voltaria.
+
+      Espelha `CHAVE_TEMA` / `CHAVE_TEMA_LEGADA` / `TEMA_PADRAO` de `src/lib/tema.ts` —
+      ao renomear uma chave lá, renomeie aqui. O `try` existe porque tocar em
+      `localStorage` LEVANTA em aba anônima com cookies de terceiros bloqueados; sem ele
+      o app inteiro morreria antes de montar por causa de uma preferência de cor.
+    -->
+    <script>
+      try {
+        var t =
+          localStorage.getItem('motor.tema') || localStorage.getItem('motor.exec.tema')
+        document.documentElement.setAttribute(
+          'data-tema',
+          t === 'claro' || t === 'escuro' ? t : 'escuro',
+        )
+      } catch (e) {
+        document.documentElement.setAttribute('data-tema', 'escuro')
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

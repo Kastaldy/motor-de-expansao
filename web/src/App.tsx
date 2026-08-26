@@ -16,6 +16,8 @@ import { api, ApiError } from './lib/api'
 import type { AlvoCaptura } from './lib/captura-mapa'
 import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
+import type { Tema } from './lib/tema'
+import { depositoDoNavegador, gravarTema, lerTema } from './lib/tema'
 import type { Hex, MunicipioItem, MunicipioPayload, Oportunidade } from './lib/types'
 
 export type Tela =
@@ -82,6 +84,37 @@ export default function App() {
     },
     [abas],
   )
+
+  /**
+   * Tema do APP (2026-08-25). Nasceu dentro da Visão Executiva e subiu para cá quando
+   * o claro passou a valer para as cinco telas — ver `lib/tema.ts`.
+   *
+   * Lido do depósito no INICIALIZADOR do `useState`, não num efeito: efeito roda depois
+   * da primeira pintura, e quem tinha escolhido o claro veria a tela nascer preta e
+   * clarear em seguida.
+   */
+  const [tema, setTema] = useState<Tema>(() => lerTema(depositoDoNavegador()))
+
+  /**
+   * O atributo vai no `<html>`, e não no `<div>` raiz daqui.
+   *
+   * Duas coisas ficam FORA desta árvore e mesmo assim precisam do tema: o `<body>`, cuja
+   * cor aparece no overscroll e na barra de rolagem do documento, e as regras de
+   * `[data-tema='claro']` do `global.css` que tratam chrome nativo (`color-scheme` do
+   * popup de `select` e do calendário do `input type=date`), scrollbar e o controle de
+   * atribuição do MapLibre.
+   *
+   * Grava na AÇÃO (`trocarTema`), não num efeito sobre `tema`: um efeito também
+   * dispararia na montagem e reescreveria a chave com o valor que acabou de ler.
+   */
+  useEffect(() => {
+    document.documentElement.setAttribute('data-tema', tema)
+  }, [tema])
+
+  const trocarTema = useCallback((novo: Tema) => {
+    setTema(novo)
+    gravarTema(novo, depositoDoNavegador())
+  }, [])
 
   const [ufs, setUfs] = useState<string[]>([])
   // Começa SEM estado: o app abre na porta de entrada (escolha de UF).
@@ -321,7 +354,7 @@ export default function App() {
         overflow: 'hidden',
       }}
     >
-      <Dock tela={tela} onTela={navegar} abas={abas} />
+      <Dock tela={tela} onTela={navegar} abas={abas} tema={tema} onTema={trocarTema} />
 
       <main style={{ flex: 1, position: 'relative', minWidth: 0 }}>
         {tela === 'inicio' ? (
@@ -348,6 +381,7 @@ export default function App() {
               estadoInicial={estadoMapa}
               onEstado={setEstadoMapa}
               onInicio={voltarAoInicio}
+              tema={tema}
               pinFixo={pinPonto}
               /* A lupa do cabeçalho vira a entrada do modo de ponto: buscar um endereço
                  ali produz a MESMA ficha que colá-lo. Sem isto havia duas caixas pedindo
@@ -410,6 +444,7 @@ export default function App() {
             onVerImovelNaAba={
               telaLiberada('oportunidades-imob', abas) ? verImovelNaAba : undefined
             }
+            tema={tema}
           />
         ) : tela === 'executiva' ? (
           // A Executiva NÃO recebe `uf` nem `onUf` (DEC-023): ela abre com a rede do
@@ -417,7 +452,7 @@ export default function App() {
           // de confundir dois produtos diferentes, disparava um refetch de
           // `/api/uf/{uf}` no Mapa toda vez que se trocava o estado aqui — leitura que
           // pode passar de 15 s.
-          <ExecutiveScreen onInicio={voltarAoInicio} />
+          <ExecutiveScreen onInicio={voltarAoInicio} tema={tema} />
         ) : tela === 'acessos' ? (
           // Painel restrito (emenda DEC-027). Autônomo como a Executiva: não herda
           // UF/município — a trilha é da rede inteira, não de um recorte do mapa.

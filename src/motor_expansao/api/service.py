@@ -486,13 +486,36 @@ def _norm(texto: object) -> str:
 
 
 def _normalizar_cod(valor: object) -> str | None:
-    """cod_municipio pode vir como float/int/str; devolve string de digitos ou None."""
+    """cod_municipio pode vir como float/int/str; devolve string de digitos ou None.
+
+    NaN precisa virar None EXPLICITAMENTE: `str(float("nan"))` e' `"nan"`, uma string
+    verdadeira que passa no `if cod:` do chamador e vai procurar a particao
+    `cod_municipio=nan/` -- que nunca existe. O sintoma seria o relatorio sair mudo,
+    sem bairro nenhum, como se o municipio nao tivesse.
+    """
     if valor is None:
+        return None
+    if isinstance(valor, float) and valor != valor:  # NaN
         return None
     s = str(valor).strip()
     if s.endswith(".0"):
         s = s[:-2]
-    return s or None
+    if not s or s.casefold() in {"nan", "none", "<na>"}:
+        return None
+    return s
+
+
+def _primeiro_cod_municipio(df_muni: object) -> object:
+    """1o `cod_municipio` nao-nulo do slice do municipio (None se a coluna faltar/for toda nula).
+
+    O slice tem uma linha por hexagono e todas do MESMO municipio, entao qualquer valor
+    preenchido serve -- o que nao serve e' assumir que a primeira linha tem um.
+    """
+    coluna = getattr(df_muni, "get", lambda _k: None)("cod_municipio")
+    if coluna is None:
+        return None
+    validos = coluna.dropna()
+    return validos.iloc[0] if not validos.empty else None
 
 
 @lru_cache(maxsize=8)
@@ -599,10 +622,15 @@ def gerar_pdf_municipio(
     settings: Settings,
     *,
     solicitante: str | None = None,
+    unidade: str = "bairro",
 ) -> bytes:
-    """Gera o PDF de 9 paginas do Relatorio Municipal (BLK-RELMUN). READ-ONLY.
+    """Gera o PDF do Relatorio Municipal (BLK-RELMUN). READ-ONLY.
 
-    Resolve o municipio (aceita nome sem acento), agrega os hexes, renderiza os 5
+    `unidade` escolhe a leitura: "bairro" (default, 12 paginas) ou "hexagono" (10 paginas,
+    o relatorio classico). No modo hexagono a leitura da particao geo de bairros e' PULADA --
+    e' a parte cara do caminho e nada dela seria usado.
+
+    Resolve o municipio (aceita nome sem acento), agrega os hexes, renderiza os 6
     mapas (basemap online com fallback offline) e monta o PDF pelo gerador do
     dashboard. Levanta 404 se o municipio nao existe/nao tem hexes na UF.
     """
@@ -611,7 +639,9 @@ def gerar_pdf_municipio(
     from motor_expansao.dashboard.relatorio_municipal import (
         _carregar_bairros_por_hex,
         agregar_municipio,
+        carregar_bairros_geo,
         carregar_poligono_municipio,
+        carregar_renda_domiciliar_por_hex,
         gerar_payloads_download_relatorio_municipal,
         render_mapas_municipio,
     )
@@ -637,12 +667,33 @@ def gerar_pdf_municipio(
     # Bairros reais (best-effort): usa cod_municipio da propria linha + particao geo.
     cod: str | None = None
     bairros: dict | None = None
+    bairros_geo: dict | None = None
     try:
-        cod = _normalizar_cod(df_muni.iloc[0].get("cod_municipio"))
+        # Primeiro valor NAO-NULO, nao `iloc[0]`: a coluna vem do censo trace e fica vazia nos
+        # hexes sem setor casado (no Rio, 51 das 240 linhas). Se a 1a linha do slice calhasse de
+        # ser uma dessas, TODA a camada de bairro sumia do relatorio -- e sem erro nenhum.
+        cod = _normalizar_cod(_primeiro_cod_municipio(df_muni))
         if cod:
             bairros = _carregar_bairros_por_hex(uf, cod, settings.censo_geo_dir)
     except Exception:
         bairros = None
+    # BLK-RELMUN-06: limite territorial dos bairros (mesma particao geo, segunda leitura).
+    # Em try/except PROPRIO: uma falha aqui so tira o slide "Bairros Oficiais", nao pode
+    # levar junto o rotulo por hex da pagina "Bairros por Zona", que ja funcionava.
+    try:
+        if cod and unidade != "hexagono":
+            bairros_geo = carregar_bairros_geo(uf, cod, settings.censo_geo_dir)
+    except Exception:
+        bairros_geo = None
+    # Renda DOMICILIAR por hexagono para a tabela de comparacao: vale nas DUAS unidades
+    # (a tabela e' sempre por hexagono), entao fica fora do guard de `unidade` acima.
+    # try/except proprio: falha aqui so tira a coluna de renda, nao o resto do relatorio.
+    renda_dom: dict | None = None
+    try:
+        if cod:
+            renda_dom = carregar_renda_domiciliar_por_hex(uf, cod, settings.censo_geo_dir)
+    except Exception:
+        renda_dom = None
 
     # BLK-RELMUN-05: divisa REAL do municipio (malha IBGE, ja montada neste container) para
     # recortar os pins. `None` -> recorte por hexes res-7; o relatorio sai igual, so menos exato.
@@ -651,6 +702,7 @@ def gerar_pdf_municipio(
     result = agregar_municipio(
         df, nome_municipio=nome_exato, uf=uf, dominio_df=dominio_df,
         competitors_df=comp_df, ultra_df=ultra_df, bairros_por_hex=bairros,
+        bairros_geo=bairros_geo, renda_domiciliar_por_hex=renda_dom,
         df_pre_filtrado=df_muni, poligono_municipio=poligono,
     )
     if result.get("n_hex_total", 0) == 0:
@@ -676,7 +728,7 @@ def gerar_pdf_municipio(
     def _mapas(basemap: bool):
         return render_mapas_municipio(
             df_muni, result, competitors_df=comp_df, ultra_df=ultra_df, basemap=basemap,
-            poligono_municipio=poligono,
+            poligono_municipio=poligono, unidade=unidade,
         )
 
     try:
@@ -689,5 +741,6 @@ def gerar_pdf_municipio(
 
     payloads = gerar_payloads_download_relatorio_municipal(
         result, mapas, ultra_dir=ultra_dir, solicitante=solicitante or consumidor,
+        unidade=unidade,
     )
     return payloads.pdf_bytes
