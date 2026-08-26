@@ -1,9 +1,17 @@
 import type { Tela } from '../App'
+import BotaoTema from './BotaoTema'
 import { telaLiberada, type Aba, type TelaControlada } from '../lib/acesso'
+import type { Tema } from '../lib/tema'
 
 /* Dock vertical fixo. No piloto so as duas telas do escopo estao ativas; as
    demais aparecem desabilitadas para o operador entender que o mapa e a
-   viabilidade sao um recorte, nao o produto inteiro. */
+   viabilidade sao um recorte, nao o produto inteiro.
+
+   O alternador de tema mora no PE deste rail (2026-08-25), separado dos itens de
+   navegacao por um empurrao de `marginTop: auto`. Ele nao e' um destino, e' um
+   ajuste da tela inteira — misturado a' fila de icones viraria uma sexta "tela".
+   O Dock e' o unico chrome que existe nas cinco, entao e' o unico lugar de onde
+   UM botao alcanca o produto todo. */
 
 const ICONES: Record<string, React.JSX.Element> = {
   exec: (
@@ -69,11 +77,15 @@ export default function Dock({
   tela,
   onTela,
   abas = null,
+  tema,
+  onTema,
 }: {
   tela: Tela
   onTela: (t: Tela) => void
   /** Abas permitidas ao usuário (controle temporário). `null` = sem controle. */
   abas?: Set<Aba> | null
+  tema: Tema
+  onTema: (t: Tema) => void
 }) {
   // Ícone de tela vetada SOME em vez de aparecer desabilitado: os desabilitados do
   // Dock já significam "fora do piloto", e um terceiro estado ("existe mas não para
@@ -176,6 +188,12 @@ export default function Dock({
           </button>
         )
       })}
+
+      {/* `marginTop: auto` empurra o alternador para o pé do rail: ele fica longe da
+          fila de destinos, que é o que o separa de uma sexta tela. */}
+      <div style={{ marginTop: 'auto' }}>
+        <BotaoTema tema={tema} onTema={onTema} />
+      </div>
     </nav>
   )
 }
