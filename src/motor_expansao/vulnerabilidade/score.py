@@ -26,8 +26,8 @@ alvos de M&A. O universo é fechado aqui, no passo 2, reusando `_filtrar_univers
 definição), e é travado de novo na fronteira de saída pelo `_assert_schema_score`.
 
 LEITURA HONESTA DO RAMP-UP (registrar antes de qualquer uso comercial): enquanto S3 e S4
-estiverem imaturos (~8-12 meses na cadência real, §6/§12 do contrato), o §8.4 os renormaliza para
-fora e S1 fica sendo o único sinal — peso renormalizado `1,00` e domínio `{0.0, 0.5}`, logo o
+estiverem imaturos (~8-12 SEMANAS na cadência real, que é semanal para as três fontes — §6/§12 do
+contrato), o §8.4 os renormaliza para fora e S1 fica sendo o único sinal — peso renormalizado `1,00` e domínio `{0.0, 0.5}`, logo o
 score vive em `{0, 50}`. E **esse `0` NÃO significa "não vulnerável"**: significa apenas "o hex
 tem os dois agregadores". É uma afirmação de solidez que ninguém mediu. Por isso a saída traz
 `score_vulnerabilidade` (o número auditável do D4, sempre preenchido quando há >= 1 sinal) **e**

@@ -59,6 +59,9 @@ def _linha(
         "rede": rede,
         "fonte": fonte,
         "hash_campos_raspados": hash_,
+        # `[BLK-MA-21]` O recorte que a execucao pediu. Constante nas fixtures: o que
+        # varia nos testes desta camada e a serie, nao o recorte.
+        "fontes_lidas": "totalpass,wellhub",
         "versao_contrato": c.VERSAO_CONTRATO_SNAPSHOT,
     }
 
