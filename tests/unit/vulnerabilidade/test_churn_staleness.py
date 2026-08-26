@@ -54,6 +54,9 @@ def _linha(
         # correto para as fontes que não são WellHub.
         "nota_wellhub": nota,
         "qtd_avaliacoes_wellhub": qtd,
+        # `[BLK-MA-21]` O recorte que a execucao pediu. Constante nas fixtures: o que varia
+        # nos testes desta camada e a serie, nao o recorte.
+        "fontes_lidas": "totalpass,wellhub",
         "versao_contrato": c.VERSAO_CONTRATO_SNAPSHOT,
     }
 
@@ -422,7 +425,9 @@ def test_min_semanas_e_stale_semanas_sao_parametros_injetaveis(
     """Os defaults vem do contrato (gate 2026-07-23) e NÃO são alterados por este bloco."""
     assert c.MIN_SEMANAS == 8
     assert c.STALE_SEMANAS == 12
-    assert c.RETENCAO_SEMANAS == 26
+    # 26 -> 78 no BLK-MA-21 / DEC-039: com 26, um feed MENSAL rendia 5,98 observacoes (26/4,345)
+    # e nunca alcançava MIN_SEMANAS. A aritmetica das duas cadencias esta em `contrato.py`.
+    assert c.RETENCAO_SEMANAS == 78
     out = extrair_churn_staleness(snapshots=serie_10_semanas, min_semanas=3, stale_semanas=5)
     assert bool(_linha_de(out, "k_novo")["flag_serie_imatura"]) is True  # 2 < 3
     assert bool(_linha_de(out, "k_estavel")["flag_staleness_interpretavel"]) is True  # 10 >= 5

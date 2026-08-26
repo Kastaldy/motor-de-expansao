@@ -218,15 +218,29 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
   reescrever uma semana passada e, com `existing_data_behavior="delete_matching"`, **apagá-la**.
   Com a partição vindo da execução, o `snapshot_date` por linha passa a servir de **medidor de
   frescor** (é o único detector de "o CSV é o da semana passada").
-- **Payload por linha (sem crus além do hash) `[emenda 2026-07-29; 12 colunas desde a DEC-026]`.** 12 colunas, nesta ordem:
+- **Payload por linha (sem crus além do hash) `[emenda 2026-07-29; 12 colunas desde a DEC-026; 13 desde a DEC-039]`.** 13 colunas, nesta ordem:
   `{snapshot_date, slug, concorrente_id, chave_snapshot, chave_origem, hex_id_res7, rede, fonte,
-  hash_campos_raspados, nota_wellhub, qtd_avaliacoes_wellhub, versao_contrato}` — as duas de rating
-  entraram pela DEC-026 como FATO sem peso, entre o hash e o carimbo de versão; são nuláveis
-  (`Float64`/`Int64`) e só o WellHub as preenche — **sem** nome/coordenadas brutas; a única "impressão
+  hash_campos_raspados, nota_wellhub, qtd_avaliacoes_wellhub, fontes_lidas, versao_contrato}` — as
+  duas de rating entraram pela DEC-026 como FATO sem peso; são nuláveis (`Float64`/`Int64`) e só o
+  WellHub as preenche — **sem** nome/coordenadas brutas; a única "impressão
   digital" dos campos raspados é o `hash_campos_raspados` (que **não** inclui `data_coleta`, `slug`
   nem a taxonomia — ver a emenda BLK-MA-11 abaixo). `fonte` não é opcional: o sinal 1 da seção 4 é derivado dela, e sem ela a regra de "gap
   de feed não vira churn" é impossível de implementar. `semana` **não** é coluna do arquivo — vive
   no caminho, como chave de partição hive.
+  - **`fontes_lidas` `[BLK-MA-21 / DEC-039]`** é o recorte que a **execução pediu** (`--fontes`),
+    como CSV ordenado — ex.: `"totalpass,wellhub"`. **Não** é o que a partição contém, e a diferença
+    é a razão de a coluna existir: com a guarda de frescor da curadoria, um agregador pode ter sido
+    **tentado e recusado** (feed velho), e nesse caso a folha dele simplesmente não existe. Inferir
+    o recorte das folhas presentes leria "tentado e recusado" como "nunca tentado". Fica fora de
+    `CAMPOS_HASH_POR_FONTE` (mudar o recorte não é o cadastro mudar) e fora das nuláveis.
+  - **`fonte` é caso híbrido desde o mesmo bloco:** é coluna lógica do contrato **e** segunda chave
+    de partição. O pyarrow remove do arquivo toda coluna promovida a chave, então o parquet **físico**
+    tem 12 colunas; as 13 voltam por `ler_snapshots`. Um `pd.read_parquet` de uma folha isolada não
+    vê `fonte` — e nenhum código de produção faz isso.
+  - **O bump `v3 → v4` foi o primeiro COM série viva no disco.** Os três anteriores foram gratuitos
+    (série vazia). Política de convivência: a partição antiga permanece legível (`schema=` por
+    arquivo, DEC-026) e sai com `fontes_lidas` **nula**, que se lê como "gravada antes do `v4`" —
+    nunca como "nenhuma fonte foi lida".
 
 > **[emenda BLK-MA-09, 2026-08-10] Domínio da nota e normalização do par: degradar, nunca abortar.**
 > O domínio de `nota_wellhub` é **`[1,0 ; 5,0]`** (`NOTA_WELLHUB_MIN`/`NOTA_WELLHUB_MAX` em
@@ -254,8 +268,38 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
   "Teste Raised"); **entradas de tecnologia/onboarding do TotalPass** ("Zon Tecnologia", "SAGAZ
   Sistemas", "TSITECH Soluções", "DATAFITNESS - TTP" e variações "Batatão Jeans - <fornecedor>"); e
   coords geograficamente inconsistentes com `cidade`/`uf`. Filtrar essas linhas é passo do BLK-MA-02.
-- **Local / retenção.** `data/staging/snapshots_concorrentes/semana=AAAA-SS/parte-*.parquet`
-  (**gitignored**, vive na VPS). Retenção rolante **26 semanas** (6 meses).
+- **Local / retenção `[emenda BLK-MA-21 / DEC-039, 2026-08-25]`.**
+  `data/staging/snapshots_concorrentes/semana=AAAA-SS/fonte=<fonte>/parte-*.parquet`
+  (**gitignored**, vive na VPS). Retenção rolante **78 semanas** (era 26).
+  - **A partição tem DUAS chaves porque duas CADÊNCIAS escrevem na mesma semana ISO:** o cron
+    semanal grava `--fontes unidades` e o cron mensal grava `--fontes totalpass wellhub`. Com uma
+    chave só, o `existing_data_behavior="delete_matching"` casava a semana inteira e a segunda
+    execução **apagava** a folha da primeira — ~21h de coleta perdidas com `exit 0`. A idempotência
+    passou a ser **por folha**: reescrever uma semana substitui só as folhas das fontes presentes no
+    frame, e a folha de uma fonte ausente sobrevive.
+  - **Um leitor que declare só `semana` devolve `fonte` NULA para 100% das linhas, sem erro e sem
+    log** (medido, pyarrow 23.0.1). Como `(fonte, chave_snapshot)` é a chave primária composta de
+    toda a camada, isso colapsaria todas as fontes numa só, em silêncio. A leitura de produção
+    (`ler_snapshots`) declara as duas chaves, e um teste de AST proíbe qualquer `ds.dataset` **e
+    `ds.write_dataset`** do pacote sem as DUAS chaves declaradas — exigir só que o kwarg
+    `partitioning` *exista* deixava passar verde o próprio bug (*emenda de 2026-08-25*), e o modo de
+    falha destrutivo vem do **escritor**. Séries **mistas** (partição legada de 1 chave ao lado de
+    folhas novas) são lidas corretamente; o que não pode coexistir é arquivo legado **e** folha nova
+    da mesma fonte na mesma semana — por isso a escrita recusa semana com layout legado, e a
+    migração é um ato explícito (`--migrar-layout`), que escreve num diretório temporário irmão e
+    move por rename atômico.
+  - **O consumo pelo score é FAIL-CLOSED `[emenda de 2026-08-25 à DEC-039, D9]`.** As duas fontes são
+    GRAVADAS desde o 1º mês, mas `alvos_ma` **sem** `--fontes` aplica
+    `FONTES_ENTREGAVEL_DEFAULT = ("wellhub",)`. Abrir a série exige `--todas-as-fontes`, e é isso que
+    o BLK-MA-20 autoriza quando decidir o grão do S1 e calibrar a dedup TP × WH.
+  - **Por que 78 e não 26.** A poda é keep-newest-N sobre diretórios `semana=` e o semanal escreve
+    em toda semana ISO, logo N partições = N semanas de **calendário** = `N / 4,345` observações de
+    um feed **mensal**. Com `26` o agregador para em **5,98 observações**, permanentemente abaixo de
+    `MIN_SEMANAS = 8`: `flag_serie_imatura` fica `True` para sempre e o `v4` fica preso em `≤ 0,5`.
+    Não era desperdício de disco — era o epic sendo impedido de funcionar. `78` dá **17,9**
+    observações mensais, com folga sobre `STALE_SEMANAS = 12`, a ~310 MB (155,8 bytes/linha). Poda
+    **por fonte** dentro da partição serviria as duas cadências com menos disco, e foi adiada para
+    bloco próprio: ela mexe na única função do pacote que apaga arquivo.
 - **Derivação dos sinais.**
   - Churn (sinal 3): o `slug` (fallback `concorrente_id`) aparece / some / reaparece ("piscando") entre semanas.
   - Staleness (sinal 4): nº de semanas desde a última mudança de `hash_campos_raspados`.
@@ -996,11 +1040,11 @@ Hoje (2026-08-24): (1) em aplicação, (2) pendente, (3) não atingido.
 As versões aparecem espalhadas pelo corpo deste documento **em contexto histórico** (a frase que
 registra um bump cita a versão daquele momento e não deve ser reescrita, senão o registro do bump
 se perde). Para saber o que vale **hoje**, a fonte é `src/motor_expansao/vulnerabilidade/contrato.py`.
-Estado em **2026-08-24**:
+Estado em **2026-08-25**:
 
 | constante | valor |
 |---|---|
-| `VERSAO_CONTRATO_SNAPSHOT` | `snapshots_concorrentes_v3` |
+| `VERSAO_CONTRATO_SNAPSHOT` | `snapshots_concorrentes_v4` |
 | `VERSAO_CONTRATO_CHURN` | `churn_staleness_v2` |
 | `VERSAO_CONTRATO_PRESENCA_AGREGADOR` | `presenca_agregador_v1` |
 | `VERSAO_CONTRATO_SCORE` | `score_vulnerabilidade_v7` |

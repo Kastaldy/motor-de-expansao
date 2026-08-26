@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 # ============================================================================
 # Snapshot SEMANAL de concorrentes -> data/staging/snapshots_concorrentes/
-#     semana=AAAA-SS/parte-*.parquet
+#     semana=AAAA-SS/fonte=<fonte>/parte-*.parquet
 #
 # E' o passo do BLK-MA-06: fotografa o feed de concorrentes ANTES de a coleta da
 # semana seguinte sobrescrever os CSVs crus. Sem ele, S3 (churn) e S4 (staleness)
 # nunca tem serie -- e toda semana nao fotografada esta perdida para sempre.
+#
+# ATENCAO -- a particao tem DUAS chaves desde o BLK-MA-21 / DEC-039. Se este script
+# rodar numa IMAGEM ANTIGA (que escreve so' `semana=`), ele APAGA a folha gravada
+# pela cadencia mensal na mesma semana ISO. Antes de instalar, confira na saida do
+# `DRY_RUN=1` que `versao_contrato` e' `snapshots_concorrentes_v4`; com `v3`, NAO
+# agende -- aplique a imagem nova primeiro (ordem de 6 passos em
+# docs/infra_producao.md, "Coleta mensal dos agregadores").
 #
 # READ-ONLY sobre o M1: nao toca score_priorizacao, pesos, config.py, pipelines/m1
 # nem artefato oficial. Escreve SO em data/staging/snapshots_concorrentes/.
@@ -23,8 +30,14 @@
 # que e' exatamente o sinal de vulnerabilidade que alimenta o funil de M&A. Falso
 # positivo em massa, no sinal de segundo maior peso, e silencioso.
 #
-# Quando o cron mensal dos agregadores existir, ele invoca este mesmo script com
-# `--fontes totalpass wellhub` (ou os tres), na SUA cadencia.
+# O CRON MENSAL DOS AGREGADORES **NAO** PASSA POR AQUI (BLK-MA-21 / DEC-039).
+#
+# Esta linha dizia, ate' 2026-08-25, que a cadencia mensal invocaria "este mesmo
+# script com `--fontes totalpass wellhub`". Seguir a instrucao PULARIA a curadoria
+# inteira: a escolha do diretorio de origem do WellHub (dois universos que diferem
+# por 2-3x) e a guarda de frescor -- que sao a razao de o bloco existir. O mensal
+# tem wrapper proprio, `scripts/cron/run_snapshot_agregadores.sh`, que faz coleta +
+# curadoria + snapshot sob um `flock` so'.
 #
 # ---------------------------------------------------------------------------
 # ANTES DE LIGAR NO CRON: rode o modo seco e confira o caminho dos CSVs.

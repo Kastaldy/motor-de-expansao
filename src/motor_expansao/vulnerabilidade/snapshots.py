@@ -1,9 +1,14 @@
 """BLK-MA-02: materializador dos snapshots semanais de concorrentes (insumo de S3/S4).
 
 CSV cru dos coletores -> limpeza de ruído auditável -> chave estável -> `hash_campos_raspados` ->
-`data/staging/snapshots_concorrentes/semana=AAAA-SS/parte-*.parquet` (**gitignored**, NÃO oficial
-do M1). É o produtor que faltava: o `run_weekly_90.sh` **sobrescreve** os CSVs a cada coleta, então
-toda semana não fotografada é perdida para sempre (`docs/infra_producao.md:136-149`).
+`data/staging/snapshots_concorrentes/semana=AAAA-SS/fonte=<fonte>/parte-*.parquet` (**gitignored**,
+NÃO oficial do M1). É o produtor que faltava: o `run_weekly_90.sh` **sobrescreve** os CSVs a cada
+coleta, então toda semana não fotografada é perdida para sempre (`docs/infra_producao.md:136-149`).
+
+**Duas cadências escrevem na MESMA semana ISO `[BLK-MA-21 / DEC-039]`:** o cron SEMANAL fotografa
+`--fontes unidades` (o feed de cadeias, o único recoletado toda semana) e o cron MENSAL fotografa
+`--fontes totalpass wellhub`. Por isso a partição tem DUAS chaves: com uma só, a segunda execução
+da semana apagava a primeira via `delete_matching`. Ver `escrever_particao_semana`.
 
 Fronteira desta camada: aqui nasce UMA partição de UMA semana. A leitura da série e a derivação de
 churn/staleness são de `churn_staleness.py` — o materializador **nunca** olha semanas anteriores
@@ -27,7 +32,7 @@ GUARDRAILS (CLAUDE.md §1/§2/§5; DEC-012; DEC-013):
     raiz nem `pipelines/normalizar_concorrentes.py` (`_DENY_CRITICO` do loop_guard — molde de
     leitura apenas; a fórmula do `concorrente_id` foi REPLICADA em `contrato.py`).
   - Anti-PII (DEC-012 / contrato §11): `nome`/coordenadas/endereço/CEP existem **só em memória**;
-    o Parquet leva apenas as 12 colunas do contrato. A auditoria da limpeza carrega **só
+    o Parquet leva apenas as 13 colunas do contrato. A auditoria da limpeza carrega **só
     contagens**, jamais o texto ofensor. Testes com fixtures 100% sintéticas.
   - CSV do projeto: `sep=";"`, `encoding="utf-8-sig"`. Staging sempre em Parquet.
 
@@ -38,8 +43,10 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
 import shutil
+import tempfile
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
@@ -53,6 +60,7 @@ from motor_expansao.demanda_revelada.classificacao_rede_menor import classificar
 
 from .contrato import (
     CHAVE_ORIGEM_VALIDAS,
+    COLUNAS_PARTICAO,
     COLUNAS_PII_PROIBIDAS,
     COLUNAS_SNAPSHOT_NULAVEIS,
     CONTRATO_COLUNAS_SNAPSHOT,
@@ -184,7 +192,9 @@ def ler_feeds(
     ativas = FONTES_VALIDAS if fontes is None else frozenset(str(f) for f in fontes)
     desconhecidas = sorted(ativas - FONTES_VALIDAS)
     if desconhecidas:
-        raise ValueError(f"fonte fora do contrato: {desconhecidas}; aceitas: {sorted(FONTES_VALIDAS)}")
+        raise ValueError(
+            f"fonte fora do contrato: {desconhecidas}; aceitas: {sorted(FONTES_VALIDAS)}"
+        )
     if not ativas:
         raise ValueError("`fontes` vazio: nao ha o que ler")
     partes: list[pd.DataFrame] = []
@@ -583,8 +593,16 @@ def coordenadas_por_chave(
     )
 
 
-def montar_snapshot(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
-    """Projeta as **12 colunas do contrato**, coage dtypes, colapsa colisões e valida o schema.
+def montar_snapshot(
+    df: pd.DataFrame, *, fontes_lidas: str
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Projeta as **13 colunas do contrato**, coage dtypes, colapsa colisões e valida o schema.
+
+    `fontes_lidas` é kwarg **obrigatório e sem default** `[BLK-MA-21 / DEC-039]`: é o recorte que a
+    EXECUÇÃO pediu (CSV ordenado, ex. `"totalpass,wellhub"`), e um default o tornaria adivinhável —
+    exatamente o que a coluna existe para impedir. Ela distingue "o TotalPass não foi tentado" de
+    "foi tentado e a curadoria o recusou por feed velho": no segundo caso a folha `fonte=totalpass`
+    não existe, e olhar as folhas presentes leria os dois casos como o mesmo.
 
     **Não recebe `data_referencia`** (removido no BLK-MA-02-FU1, m2). O parâmetro existia, nunca era
     lido, e sugeria exatamente a coisa errada: que o `snapshot_date` saísse dele. Não sai — ele é
@@ -617,6 +635,7 @@ def montar_snapshot(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
         for valor, fonte in zip(out["data_coleta"], out["fonte"], strict=False)
     ]
     out["versao_contrato"] = VERSAO_CONTRATO_SNAPSHOT
+    out["fontes_lidas"] = str(fontes_lidas)
     # As colunas-fato de rating só existem no feed do WellHub; TotalPass e `unidades` chegam sem
     # elas e ficam nulas por construção (DEC-026). Sem este preenchimento a projeção abaixo levanta
     # `KeyError` para essas duas fontes.
@@ -737,26 +756,75 @@ def _assert_schema_snapshot(df: pd.DataFrame) -> None:
 # --------------------------------------------------------------------------- #
 # 6. Escrita/leitura particionada (I/O) — pyarrow hive, molde fase1_bi_exports.py:588-608
 # --------------------------------------------------------------------------- #
+def _particionamento_hive() -> ds.Partitioning:
+    """Particionamento hive das DUAS chaves do contrato, na ordem de `COLUNAS_PARTICAO`.
+
+    Função ÚNICA de propósito: escrita e leitura têm de declarar exatamente as mesmas chaves. Se
+    divergirem, o modo de falha é silencioso — um leitor de UMA chave sobre a árvore de duas
+    devolve `fonte` nula para 100% das linhas, sem erro e sem log (medido). Como
+    `(fonte, chave_snapshot)` é a chave primária composta de todo o pacote, isso envenenaria churn,
+    presença e score de uma vez. `test_nenhum_leitor_do_pacote_usa_particionamento_de_uma_chave`
+    trava a regressão por AST.
+    """
+    return ds.partitioning(
+        pa.schema([(chave, pa.string()) for chave in COLUNAS_PARTICAO]), flavor="hive"
+    )
+
+
+def _arquivos_legados_da_semana(base_dir: Path, semana: str) -> list[Path]:
+    """`parte-*.parquet` SOLTOS dentro de `semana=AAAA-SS/` (layout antigo, de 1 chave).
+
+    Profundidade 1 de propósito: o layout novo põe os arquivos em `semana=X/fonte=Y/`, então
+    qualquer `parte-*.parquet` filho DIRETO do diretório da semana é resíduo do layout de 1 chave.
+    """
+    diretorio = Path(base_dir) / f"semana={semana}"
+    if not diretorio.is_dir():
+        return []
+    return sorted(p for p in diretorio.glob("parte-*.parquet") if p.is_file())
+
+
 def escrever_particao_semana(
     df: pd.DataFrame, base_dir: Path = SNAPSHOTS_DIR_DEFAULT, *, semana: str
 ) -> Path:
-    """Grava `base_dir/semana=AAAA-SS/parte-*.parquet` (dataset pyarrow, partição hive).
+    """Grava `base_dir/semana=AAAA-SS/fonte=<fonte>/parte-*.parquet` (partição hive de 2 chaves).
 
-    `existing_data_behavior="delete_matching"` dá idempotência VERDADEIRA de partição: reescrever a
-    mesma semana apaga e regrava a partição inteira, então a idempotência vale mesmo quando a
-    semana **encolhe**. O preço é que um frame PARCIAL apagaria o resto daquela semana — por isso a
-    primeira coisa aqui é exigir **exatamente uma** semana ISO por chamada (CA-17/R7).
+    **A idempotência é por FOLHA, não por partição `[BLK-MA-21 / DEC-039]`.** Com uma chave só,
+    `existing_data_behavior="delete_matching"` casava a SEMANA inteira: a execução mensal dos
+    agregadores apagava o que a semanal (`--fontes unidades`) tinha acabado de gravar na mesma
+    semana ISO, e vice-versa — ~21h de coleta perdidas com `exit 0`. Com `fonte=` como segunda
+    chave, reescrever uma semana substitui **só as folhas das fontes presentes no frame**, e a
+    folha de uma fonte AUSENTE do frame **sobrevive** (medido em pyarrow 23.0.1). Onde antes se
+    lia "a semana encolheu", leia-se agora "a folha encolheu": chamar com um frame parcial encolhe
+    exatamente as folhas daquele frame. A exigência de **exatamente uma** semana ISO por chamada
+    (CA-17/R7) continua, porque a `semana` ainda vem da data de referência da execução.
+
+    O `fonte` **sai de dentro do arquivo** quando vira chave de partição — o pyarrow o move para o
+    caminho. O parquet físico tem 12 colunas; as 13 do contrato voltam em `ler_snapshots`, que
+    declara as duas chaves. Um leitor que declare só `semana` devolve `fonte` **nula para 100% das
+    linhas, sem erro e sem log** (ver `ler_snapshots`).
 
     **EXCEÇÃO, e ela é deliberada (BLK-MA-02-FU1, m1):** frame **vazio** NÃO apaga a partição
     existente e NÃO cria diretório — a função sai cedo, avisando em WARNING, e o caminho devolvido
-    **pode não existir**. A idempotência do parágrafo acima vale para "a semana encolheu", não para
+    **pode não existir**. A idempotência do parágrafo acima vale para "a folha encolheu", não para
     "a semana sumiu". Motivo: zero linha quase sempre é **coleta que falhou**, não universo
     realmente vazio; apagar aqui trocaria uma falha transitória por perda permanente de série, o
     mesmo modo de falha que o `_coagir_rating` evita do lado do dado. Para zerar uma semana de
     propósito, apague a partição à mão.
+
+    **Recusa semana com layout LEGADO (D8).** Se a semana já tiver `parte-*.parquet` solto (layout
+    de 1 chave), a função levanta em vez de gravar: o `delete_matching` de 2 chaves **não** apaga o
+    arquivo legado, e o resultado medido é a linha voltando **duas vezes** na leitura — dias depois
+    e longe da causa, como `chave (semana, fonte, chave_snapshot) duplicada`. A migração é um ato
+    explícito (`migrar_layout_particoes` / `--migrar-layout`), nunca um efeito colateral da escrita.
     """
     if not isinstance(semana, str) or not RE_SEMANA.match(semana):
         raise ValueError("escrever_particao_semana exige `semana` no formato ISO AAAA-SS")
+    legados = _arquivos_legados_da_semana(Path(base_dir), semana)
+    if legados:
+        raise ValueError(
+            f"particao legada de 1 chave em semana={semana} "
+            f"({len(legados)} arquivo(s) solto(s)); rode --migrar-layout antes de gravar"
+        )
     if df.empty:
         _logger.warning(
             "frame vazio para semana=%s: nada gravado e particao existente PRESERVADA "
@@ -790,7 +858,7 @@ def escrever_particao_semana(
         tabela,
         base_dir=str(base_dir),
         format="parquet",
-        partitioning=ds.partitioning(pa.schema([("semana", pa.string())]), flavor="hive"),
+        partitioning=_particionamento_hive(),
         basename_template="parte-{i}.parquet",
         existing_data_behavior="delete_matching",
     )
@@ -830,12 +898,30 @@ def _frame_snapshot_vazio(com_semana: bool = True) -> pd.DataFrame:
 
 
 def ler_snapshots(
-    base_dir: Path = SNAPSHOTS_DIR_DEFAULT, *, semanas: Sequence[str] | None = None
+    base_dir: Path = SNAPSHOTS_DIR_DEFAULT,
+    *,
+    semanas: Sequence[str] | None = None,
+    fontes: Sequence[str] | None = None,
 ) -> pd.DataFrame:
-    """Lê a série de partições -> 12 colunas do contrato + `semana` (string, vinda do caminho).
+    """Lê a série de partições -> 13 colunas do contrato + `semana` (string, vinda do caminho).
 
     O `partitioning` é explícito também na LEITURA para o pyarrow não inferir tipo e devolver
-    `semana` como algo diferente de string. Base inexistente/vazia -> frame vazio bem-formado.
+    `semana`/`fonte` como algo diferente de string. Base inexistente/vazia -> frame vazio
+    bem-formado.
+
+    **Declarar as DUAS chaves não é simetria estética — é correção `[BLK-MA-21 / DEC-039]`.** Sobre
+    a árvore de duas chaves, um leitor que declare só `semana` devolve **`fonte = None` para 100%
+    das linhas, sem exceção, sem erro e sem log** (medido em pyarrow 23.0.1). Como
+    `(fonte, chave_snapshot)` é a chave primária composta de todo o pacote — churn, presença, score
+    e o universo do sinal 1 —, o resultado seria o colapso de todas as fontes numa só, em silêncio.
+    A trava contra um leitor futuro nascer com esse defeito é o teste de AST
+    `test_nenhum_leitor_do_pacote_usa_particionamento_de_uma_chave`, e o defeito em si é
+    caracterizado por `test_leitor_de_uma_chave_devolve_fonte_nula_em_silencio`.
+
+    Séries MISTAS (partição legada de 1 chave, com `fonte` dentro do arquivo, ao lado de folhas
+    novas) são lidas corretamente: medido, `fonte` volta certa e com zero nulos. O que NÃO pode
+    coexistir é arquivo legado e folha nova **da mesma fonte na mesma semana** — aí a linha volta
+    duas vezes. Por isso `escrever_particao_semana` recusa semana com layout legado.
 
     **O `schema=` explícito não é otimização — é correção `[BLK-MA-09 / DEC-026]`.** Sem ele o
     pyarrow infere o schema do PRIMEIRO arquivo do dataset. Numa série com partições de contratos
@@ -843,8 +929,31 @@ def ler_snapshots(
     partição antiga, as colunas novas são **descartadas de todas as outras**; o laço de
     preenchimento abaixo então as recria como `pd.NA`, e o resultado é uma coluna **nula para o
     universo inteiro, sem erro e sem log** — inclusive para as linhas que tinham valor. Com o
-    schema declarado, o pyarrow preenche o que falta **por arquivo**, que é a semântica certa.
+    schema declarado, o pyarrow preenche o que falta **por arquivo**, que é a semântica certa. É
+    por ele que uma partição `v3` (sem `fontes_lidas`) segue legível, saindo com a coluna nula.
+
+    `fontes` recorta a série pelas fontes pedidas, no mesmo molde de `semanas` (filtro depois do
+    `to_pandas`). Existe para impor POR CÓDIGO a fronteira com o BLK-MA-20 (DEC-039, D9): a
+    partição do `totalpass` passa a ser GRAVADA desde o primeiro mês — para o cronômetro de
+    `MIN_SEMANAS` começar a correr —, mas o consumo dela pelo score espera a calibração da dedup
+    TP x WH, que hoje está arbitrada. Prosa não impediria: a cadeia inteira roda com as duas fontes
+    sem editar uma linha. Nome fora de `FONTES_VALIDAS` **levanta**, e levanta ANTES da saída
+    antecipada por base vazia — ver o comentário no corpo.
     """
+    # A validação vem ANTES da saída antecipada `[emenda de 2026-08-25 à DEC-039]`. Ela estava
+    # depois, e o efeito era o oposto do prometido: sobre base inexistente ou sem partição — que é
+    # exatamente o estado da VPS hoje, zero partições — `fontes=["wellub"]` devolvia frame VAZIO em
+    # vez de levantar. Um erro de digitação na fronteira do D9 sairia como "não há dado", que é a
+    # leitura errada e a única que não faz ninguém procurar a causa.
+    if fontes is not None:
+        pedidas = {str(f) for f in fontes}
+        desconhecidas = sorted(pedidas - FONTES_VALIDAS)
+        if desconhecidas:
+            raise ValueError(
+                f"fonte fora do contrato: {desconhecidas}; aceitas: {sorted(FONTES_VALIDAS)}"
+            )
+        if not pedidas:
+            raise ValueError("`fontes` vazio: nao ha o que ler")
     base = Path(base_dir)
     if not base.exists() or not any(_RE_DIR_SEMANA.match(p.name) for p in base.iterdir()):
         return _frame_snapshot_vazio()
@@ -852,13 +961,15 @@ def ler_snapshots(
         str(base),
         format="parquet",
         schema=_schema_arrow_snapshot(),
-        partitioning=ds.partitioning(pa.schema([("semana", pa.string())]), flavor="hive"),
+        partitioning=_particionamento_hive(),
     )
     tabela = dataset.to_table()
     df = tabela.to_pandas(types_mapper=_TIPO_PANDAS_POR_ARROW.get)
     if semanas is not None:
         alvo = {str(s) for s in semanas}
         df = df[df["semana"].astype(str).isin(alvo)]
+    if fontes is not None:
+        df = df[df["fonte"].astype(str).isin({str(f) for f in fontes})]
     colunas = list(CONTRATO_COLUNAS_SNAPSHOT.keys()) + ["semana"]
     for coluna in colunas:
         if coluna not in df.columns:
@@ -875,7 +986,14 @@ def podar_snapshots(
     *,
     dry_run: bool = False,
 ) -> list[str]:
-    """Retenção rolante **keep-newest-N** (contrato §6: 26 semanas). Retorna as semanas removidas.
+    """Retenção rolante **keep-newest-N** (contrato §6; default `RETENCAO_SEMANAS`). Devolve as
+    semanas removidas.
+
+    A unidade é o DIRETÓRIO `semana=`, e a folha `fonte=` **não** é olhada: podar remove a semana
+    inteira, com todas as fontes que ela tiver. É essa granularidade que faz `RETENCAO_SEMANAS`
+    contar semanas de CALENDÁRIO e não observações — a aritmética das duas cadências está no
+    comentário da constante, em `contrato.py`. Poda por FONTE dentro da partição foi adiada para
+    bloco próprio (DEC-039, D5).
 
     Semântica sem `date.today()` de propósito (determinística e testável). **APAGA DIRETÓRIOS EM
     DISCO**, e por isso é conservadora: só olha filhos DIRETOS de `base_dir` cujo nome casa
@@ -904,6 +1022,169 @@ def podar_snapshots(
             shutil.rmtree(caminho)
         removidas.append(semana)
     return sorted(removidas)
+
+
+def _fontes_do_legado(
+    base: Path, semana: str, legados: Sequence[Path]
+) -> tuple[pd.DataFrame, list[str]]:
+    """`(frame concatenado do legado, fontes distintas)`. Levanta se o legado não tiver `fonte`."""
+    antigo = pd.concat([pd.read_parquet(arquivo) for arquivo in legados], ignore_index=True)
+    if "fonte" not in antigo.columns:
+        raise ValueError(
+            f"particao legada em semana={semana} sem a coluna `fonte`: "
+            "nao da' para decidir a folha de destino"
+        )
+    return antigo, sorted({str(v) for v in antigo["fonte"]})
+
+
+def diagnosticar_layout_particoes(base_dir: Path = SNAPSHOTS_DIR_DEFAULT) -> dict[str, list[str]]:
+    """`{"migraveis": [...], "ambiguas": [...]}` — **nunca levanta por ambiguidade, nunca toca disco**.
+
+    Existe para que o operador possa OLHAR antes de agir `[emenda de 2026-08-25 à DEC-039]`. O
+    `--dry-run` da migração levantava no primeiro estado ambíguo e não dizia mais nada: com duas
+    semanas ambíguas, a segunda só aparecia depois de a primeira ser resolvida à mão, uma por
+    execução. Diagnóstico que aborta no primeiro achado não é diagnóstico.
+
+    A migração de verdade (`dry_run=False`) **continua levantando** — ali adivinhar custa dado.
+    """
+    base = Path(base_dir)
+    diagnostico: dict[str, list[str]] = {"migraveis": [], "ambiguas": []}
+    if not base.exists():
+        return diagnostico
+    for filho in sorted(base.iterdir()):
+        if not filho.is_dir():
+            continue
+        casa = _RE_DIR_SEMANA.match(filho.name)
+        if not casa:
+            continue
+        semana = casa.group(1)
+        legados = _arquivos_legados_da_semana(base, semana)
+        if not legados:
+            continue
+        _antigo, fontes_no_legado = _fontes_do_legado(base, semana, legados)
+        ja_existem = [f for f in fontes_no_legado if (filho / f"fonte={f}").is_dir()]
+        if ja_existem:
+            diagnostico["ambiguas"].append(semana)
+            _logger.error(
+                "estado ambiguo em semana=%s: arquivo legado e folha `fonte=` da(s) mesma(s) "
+                "fonte(s) %s coexistem; resolva a mao antes de migrar",
+                semana,
+                ja_existem,
+            )
+        else:
+            diagnostico["migraveis"].append(semana)
+    return diagnostico
+
+
+def migrar_layout_particoes(
+    base_dir: Path = SNAPSHOTS_DIR_DEFAULT, *, dry_run: bool = False
+) -> list[str]:
+    """Converte partições do layout LEGADO (1 chave) para o de 2 chaves. Devolve as semanas tocadas.
+
+    `semana=AAAA-SS/parte-*.parquet` -> `semana=AAAA-SS/fonte=<fonte>/parte-0.parquet`. É a
+    **segunda** função do módulo que apaga arquivo, e por isso vive colada à poda: o agrupamento
+    torna visível quantos caminhos destrutivos existem. Ela é EXPLÍCITA de propósito (DEC-039, D8)
+    — auto-migrar dentro de `escrever_particao_semana` poria leitura, reescrita e apagamento no
+    caminho onde uma exceção custa a semana inteira de coleta.
+
+    O que ela resolve, medido: arquivo legado e folha nova **da mesma fonte, na mesma semana** fazem
+    a leitura devolver a linha DUAS vezes (o `delete_matching` de 2 chaves casa folhas, não o
+    diretório da semana). Downstream isso aparece como `chave (semana, fonte, chave_snapshot)
+    duplicada`, dias depois e longe da causa.
+
+    **Ordem segura: escreve FORA da série e só então move `[emenda de 2026-08-25 à DEC-039]`.** A
+    versão anterior gravava com `write_dataset` direto no caminho final e só depois apagava o
+    legado — e o docstring prometia que "se a escrita falhar, o legado continua lá e a série segue
+    legível pelo caminho misto", o que era FALSO: um crash no meio do `write_dataset` deixa uma
+    folha PARCIAL ao lado do legado, e é exatamente esse par (legado + folha da mesma fonte) que
+    faz a leitura devolver linha duplicada. Pior: a retentativa então bate na guarda de estado
+    ambíguo e a migração fica travada até alguém apagar arquivo à mão.
+
+    Agora: as folhas nascem num diretório temporário IRMÃO de `base_dir` (mesmo sistema de
+    arquivos, logo o `os.replace` é rename e não cópia), e cada folha `fonte=Y` é movida para o
+    lugar por um rename atômico. Irmão, e não filho, de propósito: um filho com parquets dentro
+    entraria no `ds.dataset(base)` de `ler_snapshots` com profundidade errada de chaves.
+
+    **Janela residual, declarada.** Entre o rename da primeira folha e o `unlink` do legado ainda
+    há um instante em que os dois coexistem — mas agora ele mede alguns renames, não a escrita
+    inteira. Se um crash pegar exatamente ali, o estado é o legado mais N folhas já movidas;
+    `diagnosticar_layout_particoes` o reporta como ambíguo e o conserto é apagar as folhas movidas
+    e repetir. Para eliminar a janela por completo seria preciso rename atômico de um diretório
+    sobre outro, que nem POSIX nem Windows oferecem para diretório não vazio — por isso o passo 2
+    do runbook pede CÓPIA da partição antes de migrar.
+
+    **Estado ambíguo levanta** (em `dry_run=False`). Se a semana já tiver folha `fonte=Y` da MESMA
+    fonte que o arquivo legado carrega, não há como saber qual das duas é a boa — e adivinhar aqui
+    é escolher entre perder dado e duplicá-lo. Resolva à mão.
+
+    `dry_run=True` **não toca disco** e **não levanta**: devolve as semanas migráveis e reporta as
+    ambíguas em ERROR, via `diagnosticar_layout_particoes` — o operador precisa ver TODAS antes de
+    agir, não uma por execução.
+    """
+    base = Path(base_dir)
+    if not base.exists():
+        return []
+    if dry_run:
+        return diagnosticar_layout_particoes(base)["migraveis"]
+    migradas: list[str] = []
+    for filho in sorted(base.iterdir()):
+        if not filho.is_dir():
+            continue
+        casa = _RE_DIR_SEMANA.match(filho.name)
+        if not casa:
+            continue
+        semana = casa.group(1)
+        legados = _arquivos_legados_da_semana(base, semana)
+        if not legados:
+            continue
+
+        antigo, fontes_no_legado = _fontes_do_legado(base, semana, legados)
+        ja_existem = [f for f in fontes_no_legado if (filho / f"fonte={f}").is_dir()]
+        if ja_existem:
+            raise ValueError(
+                f"estado ambiguo em semana={semana}: arquivo legado e folha `fonte=` da(s) "
+                f"mesma(s) fonte(s) {ja_existem} coexistem; resolva a mao antes de migrar"
+            )
+
+        # `reindex` (e nao projecao direta): a particao legada pode ser de um contrato ANTERIOR e
+        # nao ter as colunas novas. Preencher com nulo e' a mesma semantica do `schema=` por
+        # arquivo do `ler_snapshots` — "gravada antes do bump", nunca "sem valor por engano".
+        frame = antigo.reindex(columns=list(CONTRATO_COLUNAS_SNAPSHOT.keys()))
+        for coluna, dtype in CONTRATO_COLUNAS_SNAPSHOT.items():
+            frame[coluna] = frame[coluna].astype(dtype)
+        frame["semana"] = str(semana)
+        tabela = pa.Table.from_pandas(frame, preserve_index=False, schema=_schema_arrow_snapshot())
+        # Diretorio IRMAO de `base` (`data/staging/`): mesmo sistema de arquivos que o destino,
+        # logo `os.replace` e' rename. Dentro de `base` ele seria varrido pelo `ds.dataset`.
+        temporario = Path(tempfile.mkdtemp(dir=str(base.parent), prefix=".migracao-"))
+        try:
+            ds.write_dataset(
+                tabela,
+                base_dir=str(temporario),
+                format="parquet",
+                partitioning=_particionamento_hive(),
+                basename_template="parte-{i}.parquet",
+                existing_data_behavior="delete_matching",
+            )
+            for fonte in fontes_no_legado:
+                origem_folha = temporario / f"semana={semana}" / f"fonte={fonte}"
+                if not origem_folha.is_dir():  # pragma: no cover - o write acabou de cria-la
+                    raise ValueError(
+                        f"folha `fonte={fonte}` nao foi escrita em {temporario}: migracao abortada"
+                    )
+                os.replace(origem_folha, filho / f"fonte={fonte}")
+            for arquivo in legados:
+                arquivo.unlink()
+        finally:
+            shutil.rmtree(temporario, ignore_errors=True)
+        migradas.append(semana)
+        _logger.info(
+            "layout migrado: semana=%s -> %d folha(s) fonte= (%d linha(s))",
+            semana,
+            len(fontes_no_legado),
+            len(frame),
+        )
+    return migradas
 
 
 # --------------------------------------------------------------------------- #
@@ -939,14 +1220,17 @@ def materializar(
     com_chave = derivar_chave(
         com_hash, taxa_slug_persistente=taxa_slug_persistente, politica=politica_chave
     )
-    snapshot, auditoria_snapshot = montar_snapshot(com_chave)
+    # Quais feeds ESTA execução PEDIU. Calculado UMA vez e usado nos dois lugares — a coluna do
+    # parquet e a auditoria impressa —, para que a auditoria espelhe exatamente o que foi gravado
+    # em vez de recalcular a mesma coisa por outro caminho (dois caminhos podem divergir; um não).
+    # A resposta muda com a cadência (BLK-MA-06): quem ler a série meses depois precisa saber que
+    # as semanas antigas só tinham `unidades`, sob pena de ler ausência de agregador como churn.
+    fontes_lidas = ",".join(sorted(FONTES_VALIDAS if fontes is None else {str(f) for f in fontes}))
+    snapshot, auditoria_snapshot = montar_snapshot(com_chave, fontes_lidas=fontes_lidas)
 
     auditoria: dict[str, object] = {
         "semana": semana,
-        # Quais feeds ESTA partição fotografou. Fica no snapshot porque a resposta muda com a
-        # cadência (BLK-MA-06): quem ler a série meses depois precisa saber que as semanas antigas
-        # só tinham `unidades`, sob pena de ler ausência de agregador como churn.
-        "fontes_lidas": sorted(FONTES_VALIDAS if fontes is None else {str(f) for f in fontes}),
+        "fontes_lidas": fontes_lidas,
         **auditoria_limpeza,
         **auditoria_snapshot,
     }
@@ -975,6 +1259,12 @@ def executar(
     `dry_run=True` roda o caminho inteiro e **não toca disco**: nada é gravado e **nada é podado**.
     Existe porque este é o unico ponto do pacote que APAGA arquivo, e um cron novo precisa poder ser
     validado antes de rodar para valer (BLK-MA-02-FU1, m6).
+
+    A auditoria carrega `retencao_semanas` e `versao_contrato` `[BLK-MA-21]`. Não é cosmético: é a
+    única forma de um `DRY_RUN` na VPS provar **qual imagem está rodando** antes de agendar. Uma
+    imagem antiga escreve com UMA chave de partição e APAGA a folha da outra cadência; e a lição de
+    "código publicado != camada no ar" veio de exatamente esse tipo de suposição não verificada.
+    Nenhum dos dois campos toca o parquet, logo nenhum exige bump.
     """
     _snapshot, auditoria = materializar(
         dir_totalpass,
@@ -985,6 +1275,8 @@ def executar(
         escrever=not dry_run,
         fontes=fontes,
     )
+    auditoria["retencao_semanas"] = int(retencao_semanas)
+    auditoria["versao_contrato"] = VERSAO_CONTRATO_SNAPSHOT
     if dry_run:
         # A poda e' irreversivel; em modo seco ela nem e' consultada, so' anunciada.
         auditoria["dry_run"] = True
@@ -1034,6 +1326,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="roda tudo sem gravar e SEM PODAR; use antes de ligar o cron",
     )
     p.add_argument(
+        "--migrar-layout",
+        action="store_true",
+        help=(
+            "converte particoes do layout legado (`semana=X/parte-*.parquet`) para o de 2 chaves "
+            "(`semana=X/fonte=Y/`) e SAI, sem materializar nada. Com `--dry-run` DIAGNOSTICA: "
+            "lista as migraveis e TODAS as ambiguas, sem levantar e sem tocar o disco"
+        ),
+    )
+    p.add_argument(
         "--fontes",
         nargs="+",
         choices=sorted(FONTES_VALIDAS),
@@ -1051,6 +1352,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Entrada do `python -m`. Devolve 0 em sucesso — codigo de saida importa para o cron."""
     args = _parse_args(argv)
     logging.basicConfig(level=logging.INFO)
+    if args.migrar_layout:
+        # ANTES de `executar()`, e sem materializar nada: a migração é um ato próprio, e misturá-la
+        # a uma coleta faria a operação destrutiva viajar de carona numa execução de rotina.
+        if args.dry_run:
+            # Modo seco DIAGNOSTICA: reporta TODAS as semanas ambíguas de uma vez, em vez de
+            # levantar na primeira. O operador precisa da lista inteira antes de mexer à mão.
+            diagnostico = diagnosticar_layout_particoes(args.base_dir)
+            print(
+                {
+                    "migrar_layout": diagnostico["migraveis"],
+                    "ambiguas": diagnostico["ambiguas"],
+                    "dry_run": True,
+                }
+            )
+            return 0
+        migradas = migrar_layout_particoes(args.base_dir)
+        print({"migrar_layout": migradas, "ambiguas": [], "dry_run": False})
+        return 0
     auditoria = executar(
         dir_totalpass=args.dir_totalpass,
         dir_wellhub=args.dir_wellhub,
@@ -1079,6 +1398,8 @@ __all__ = [
     "escrever_particao_semana",
     "ler_snapshots",
     "podar_snapshots",
+    "diagnosticar_layout_particoes",
+    "migrar_layout_particoes",
     "materializar",
     "executar",
     "main",
