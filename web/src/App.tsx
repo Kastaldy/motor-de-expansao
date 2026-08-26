@@ -315,7 +315,12 @@ export default function App() {
   return (
     <div
       style={{
-        height: '100vh',
+        /* `100%` e nao `100vh`: com o zoom padrao de 75% (global.css) as unidades
+           de VIEWPORT nao acompanham o zoom — `100vh` devolvia a altura da tela em
+           px NAO-zoomados e a casca renderizava a 75% dela, deixando um quarto da
+           tela preto embaixo. `100%` herda de #root -> body -> html, que ja estao
+           no espaco certo. */
+        height: '100%',
         display: 'flex',
         background: 'var(--bg-base)',
         overflow: 'hidden',

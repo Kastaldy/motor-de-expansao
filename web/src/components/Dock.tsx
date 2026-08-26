@@ -5,6 +5,65 @@ import { telaLiberada, type Aba, type TelaControlada } from '../lib/acesso'
    demais aparecem desabilitadas para o operador entender que o mapa e a
    viabilidade sao um recorte, nao o produto inteiro. */
 
+/* CARIMBO DE PAÍS — fica colado na logo, acima da navegação.
+
+   O mesmo binário do piloto também é o que serve a base da Argentina (muda só o
+   `MOTOR_DATA_DIR`; ver `piloto_rep/LEIA-ME.md` no repo Motor-Argentina). Sem
+   carimbo as duas instâncias são idênticas na tela, e com as duas abertas o
+   operador não sabe em qual está. Este é o carimbo do BRASIL, fixo.
+
+   Não é botão e não tem hover: informa a identidade da instância, não é destino
+   de clique. E a sigla escrita acompanha a bandeira porque cor sozinha não é
+   acessível.
+
+   Desenhada em SVG e não em PNG: entra no bundle, sobrevive offline, não borra em
+   tela 2x e não pede um arquivo a mais ao servidor por 26px de imagem. */
+const CARIMBO_BRASIL = (
+  <div
+    role="img"
+    title="Base de dados: Brasil"
+    aria-label="Motor de Expansão — Brasil"
+    style={{
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: 3,
+      marginTop: -2,
+      marginBottom: 8,
+      flexShrink: 0,
+    }}
+  >
+    <svg
+      viewBox="0 0 24 17"
+      width={26}
+      height={18}
+      role="img"
+      aria-hidden="true"
+      style={{
+        borderRadius: 3,
+        display: 'block',
+        /* Anel claro em vez de sombra: o verde encosta no cromo escuro do Dock e
+           sem ele a bandeira perde a silhueta de retângulo. */
+        boxShadow: '0 0 0 1px rgba(255,255,255,.22)',
+      }}
+    >
+      <rect width="24" height="17" rx="2" fill="#009b3a" />
+      <path d="M12 2.2 21.4 8.5 12 14.8 2.6 8.5Z" fill="#ffdf00" />
+      <circle cx="12" cy="8.5" r="3.4" fill="#002776" />
+    </svg>
+    <span
+      style={{
+        font: '600 8px/1 var(--f-ui)',
+        letterSpacing: '.1em',
+        color: 'var(--tx-off)',
+        textTransform: 'uppercase',
+      }}
+    >
+      BR
+    </span>
+  </div>
+)
+
 const ICONES: Record<string, React.JSX.Element> = {
   exec: (
     <>
@@ -132,6 +191,8 @@ export default function Dock({
           style={{ width: '100%', height: '100%', objectFit: 'cover' }}
         />
       </button>
+
+      {CARIMBO_BRASIL}
 
       {itens.map((it) => {
         const ativo = it.tela !== null && it.tela === tela

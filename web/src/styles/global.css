@@ -19,6 +19,26 @@ body,
   height: 100%;
 }
 
+/* ZOOM PADRÃO DE 75% (pedido do Juan, 2026-08-26).
+
+   O app foi desenhado para tela grande e a 100% o mapa e os painéis disputam a mesma
+   dobra: quem abre num notebook passa a análise inteira rolando. A 75% a leitura cabe
+   de uma vez — e cabe SEM o operador ter que lembrar de apertar Ctrl+menos em toda
+   máquina nova, que era o estado anterior.
+
+   `zoom` e não `transform: scale(.75)`: zoom participa do LAYOUT — o conteúdo reflui e
+   ocupa a tela inteira. `scale` só encolhe o desenho pronto e deixaria faixa morta à
+   direita e embaixo, além de quebrar `position: fixed` dentro do subárvore.
+
+   `height: 100%` acima NÃO precisa de compensação: no zoom do Chrome a porcentagem já
+   resolve no espaço zoomado (medido — `innerHeight` e `html.clientHeight` batem).
+
+   O zoom do BROWSER continua por cima deste: quem quiser 100% dá Ctrl+0 e depois
+   Ctrl+mais; este valor é só o ponto de partida. */
+html {
+  zoom: 0.75;
+}
+
 body {
   margin: 0;
   background: var(--bg-base);

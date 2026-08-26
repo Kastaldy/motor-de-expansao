@@ -345,9 +345,13 @@ export default function HexMap({
   /** Leitura da cidade do hexagono sob o cursor — `undefined` se ela nao tem leitura. */
   const cresDoHex = (h: Hex) => (h.mun ? cresMun?.[h.mun] : undefined)
   function ancora(x: number, y: number, altura = 360, largura = 240) {
-    const b = caixaRef.current?.getBoundingClientRect()
-    const viraY = b ? y + altura + 14 > b.height : false
-    const viraX = b ? x + largura + 14 > b.width : false
+    /* `clientWidth/Height` e nao `getBoundingClientRect`: com o zoom padrao de
+       75% (global.css) o rect fala em px VISUAIS, enquanto o `x`/`y` que chega
+       do deck.gl fala em px de CSS. Comparados entre si, a caixa parecia 25%
+       menor e o balao virava de lado antes da hora. */
+    const caixa = caixaRef.current
+    const viraY = caixa ? y + altura + 14 > caixa.clientHeight : false
+    const viraX = caixa ? x + largura + 14 > caixa.clientWidth : false
     return {
       left: x + (viraX ? -14 : 14),
       top: y + (viraY ? -14 : 14),
@@ -519,12 +523,17 @@ export default function HexMap({
            saia como um miolo de ~10% da foto e o resto era territorio que ninguem esta'
            comparando ("a print do hexagono que ele esta', nao do mapa todo" — Juan,
            2026-08-19). O recorte quadrado do `comporCanvas` fecha o resto. */
-        const caixa = caixaRef.current?.getBoundingClientRect()
+        /* Medido com `clientWidth/Height`, que fala a MESMA lingua do mapa (px de
+           CSS). Com o zoom padrao de 75% (global.css), `getBoundingClientRect`
+           devolveria px visuais — 0,75 do tamanho real — e o zoom calculado cairia
+           ~0,42 nivel: o hexagono sairia MENOR no print, que e' exatamente o
+           defeito que este bloco existe para corrigir. */
+        const caixa = caixaRef.current
         const zoom = zoomQueEnquadra(
           larguraDoAnel(cellToBoundary(pedido.hexId) as [number, number][]),
           alvo.lat,
-          caixa?.width || 1200,
-          caixa?.height || 800,
+          caixa?.clientWidth || 1200,
+          caixa?.clientHeight || 800,
         )
         // A marca do imovel entra ANTES do voo, para estar pintada quando o quadro parar.
         setMarcaCaptura(

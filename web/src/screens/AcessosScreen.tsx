@@ -173,7 +173,10 @@ function useLarguraLocal(): [(no: HTMLElement | null) => void, number] {
   const medir = useCallback((no: HTMLElement | null) => {
     observador.current?.disconnect()
     if (!no) return
-    setLargura(no.getBoundingClientRect().width)
+    // `clientWidth` para casar com o `contentRect` do observador abaixo: os dois
+    // falam em px de CSS. O rect fala em px visuais e, sob o zoom padrao, dava uma
+    // largura 25% menor no primeiro quadro.
+    setLargura(no.clientWidth)
     if (typeof ResizeObserver === 'undefined') return
     const obs = new ResizeObserver(([entrada]) => setLargura(entrada.contentRect.width))
     obs.observe(no)

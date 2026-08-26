@@ -70,8 +70,13 @@ export default function Select({
     if (!r) return
     const folga = 16
     const buscaH = temBusca ? 46 : 0
-    const abaixo = window.innerHeight - r.bottom - folga - buscaH
-    const acima = r.top - folga - buscaH
+    /* `getBoundingClientRect` e `innerHeight` falam em px VISUAIS; com o zoom
+       padrao de 75% (global.css) eles valem 0,75 do px de CSS em que `maxLista`
+       sera' aplicado depois. Sem dividir, a lista abria 25% mais baixa do que o
+       espaco que existia. Com zoom 1 a conta e' identica a de antes. */
+    const escala = parseFloat(getComputedStyle(document.documentElement).zoom) || 1
+    const abaixo = (window.innerHeight - r.bottom) / escala - folga - buscaH
+    const acima = r.top / escala - folga - buscaH
     const paraCima = abaixo < 200 && acima > abaixo
     setAbrirPara(paraCima ? 'cima' : 'baixo')
     setMaxLista(Math.max(140, Math.min(300, paraCima ? acima : abaixo)))
