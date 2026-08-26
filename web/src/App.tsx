@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import AvisoConfidencialidade from './components/AvisoConfidencialidade'
 import Dock from './components/Dock'
@@ -15,6 +15,7 @@ import { abasDoPayload, modosLiberados, telaInicial, telaLiberada, type Aba } fr
 import { api, ApiError } from './lib/api'
 import type { AlvoCaptura } from './lib/captura-mapa'
 import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
+import { paisDaBase } from './lib/pais-da-base'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
 import type { Tema } from './lib/tema'
 import { depositoDoNavegador, gravarTema, lerTema } from './lib/tema'
@@ -117,6 +118,10 @@ export default function App() {
   }, [])
 
   const [ufs, setUfs] = useState<string[]>([])
+  /* País da base, para o carimbo do Dock. Sai da lista de UFs que já está aqui — nenhuma
+     requisição a mais, nenhuma variável de ambiente para alguém esquecer de exportar.
+     Ver `lib/pais-da-base.ts` para o porquê de a dedução ser segura. */
+  const pais = useMemo(() => paisDaBase(ufs), [ufs])
   // Começa SEM estado: o app abre na porta de entrada (escolha de UF).
   const [uf, setUf] = useState('')
   const [municipios, setMunicipios] = useState<MunicipioItem[]>([])
@@ -354,7 +359,7 @@ export default function App() {
         overflow: 'hidden',
       }}
     >
-      <Dock tela={tela} onTela={navegar} abas={abas} tema={tema} onTema={trocarTema} />
+      <Dock tela={tela} onTela={navegar} abas={abas} tema={tema} onTema={trocarTema} pais={pais} />
 
       <main style={{ flex: 1, position: 'relative', minWidth: 0 }}>
         {tela === 'inicio' ? (
