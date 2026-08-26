@@ -109,6 +109,10 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     # quebrado para o operador de `oportunidades`. Mais FROUXO tambem nao: a foto e' base
     # servida, e nao bundle do produto, entao ela nao pode vazar para quem nao ve o mapa.
     ("/api/foto-concorrente/", frozenset({"mapa", "oportunidades"})),
+    # A MESMA foto, emoldurada para virar icone do pino. Gate igual ao da foto crua de
+    # proposito: e' o mesmo arquivo, servido em outra roupa — dar-lhe regra diferente
+    # deixaria uma das duas portas mais larga que a outra sobre o mesmo dado.
+    ("/api/pin-concorrente/", frozenset({"mapa", "oportunidades"})),
 )
 
 # Rotas /api/* deliberadamente livres (qualquer usuario autenticado):

@@ -75,6 +75,7 @@ AGRUPAMENTO_ABAS: tuple[tuple[str, str], ...] = (
     # duas abas que a LIBERAM, "mapa" e' onde o uso acontece na pratica (mesma logica do
     # relatorio pontual, atribuido a viabilidade).
     ("/api/foto-concorrente/", "mapa"),
+    ("/api/pin-concorrente/", "mapa"),
 )
 
 #: Camada de LABEL (CLAUDE.md §2): valor bruto sem acento; exibição acentuada.

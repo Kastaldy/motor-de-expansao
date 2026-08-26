@@ -1368,6 +1368,23 @@ def _slug_rede(nome: str) -> str:
     return re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", puro)).strip("_")
 
 
+# Teto de pinos que podem virar FOTO numa mesma vista. O deck.gl empacota os icones num
+# atlas de textura, e alguns milhares de imagens de 128px o estouram. Medido na base
+# argentina (2026-08-26): o pior municipio tem 253 independentes com foto e a MEDIANA e' 2,
+# entao 600 nunca dispara hoje — e' guarda contra base patologica, nao regra de produto.
+# Alem do teto o pino volta ao quadrado com sigla, que e' o comportamento de sempre.
+PIN_FOTO_MAX = 600
+
+
+@functools.lru_cache(maxsize=256)
+def _rede_tem_logo(rede: str) -> bool:
+    """A rede tem ARQUIVO de logo? Se nao, o pino dela cai no quadrado com sigla."""
+    from motor_expansao.dashboard.competitors import COMPETITOR_LOGO_FILES
+
+    nome = COMPETITOR_LOGO_FILES.get(rede) or f"logo_{_slug_rede(rede)}.png"
+    return (COMPETITORS_LOGO_DIR / nome).is_file()
+
+
 def _foto_valida(nome: Any) -> str | None:
     """Nome de arquivo de foto que passa na trava, ou `None`."""
     if not nome or not isinstance(nome, str):
@@ -1686,24 +1703,56 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
     def _label(r: str) -> str:
         return str(COMPETITOR_BRANDS.get(r, {}).get("label", r))
 
+    def _com_teto(linhas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Aplica `PIN_FOTO_MAX` na ordem da lista.
+
+        Ordem ESTAVEL, e nao amostra: o mesmo recorte tem de produzir sempre os mesmos
+        pinos com foto. Um teto que sorteia muda a tela a cada carga, e quem olha conclui
+        que o DADO mudou.
+        """
+        usados = 0
+        for linha in linhas:
+            if not linha.get("icone_foto"):
+                continue
+            if usados >= PIN_FOTO_MAX:
+                linha["icone_foto"] = False
+            else:
+                usados += 1
+        return linhas
+
+    def _linha_conc(t: Any) -> dict[str, Any]:
+        """Uma linha de pino de concorrente.
+
+        A validacao da foto roda UMA vez por unidade, e nao uma por campo: `_foto_valida`
+        termina num `is_file()`, entao chama-la nos dois lugares custaria um stat de disco
+        a mais por linha — no municipio grande da base argentina sao milhares de stats para
+        responder duas vezes exatamente a mesma pergunta.
+        """
+        foto = _foto_valida(getattr(t, "foto", None))
+        return {
+            "lat": _num(t.lat, 6),
+            "lng": _num(t.lng, 6),
+            "rede": str(t.rede),
+            "label": _label(str(t.rede)),
+            "nome": _clean(t.nome_unidade),
+            # Nome do ARQUIVO, servido por /api/foto-concorrente. Ausente quando a
+            # unidade nao tem imagem (o POI de mapa aberto nunca tem) — o balao
+            # simplesmente sai sem foto.
+            "foto": foto,
+            # A FOTO VIRA O PINO quando a rede nao tem logo — o caso de toda
+            # independente, que aparecia como quadrado cinza com "IND" (relato do Juan,
+            # 2026-08-26). Quem TEM marca mantem a marca: reconhecer um SportClub no
+            # mapa vale mais que ver a fachada daquela unidade, e a foto continua no
+            # balao para as duas. O teto e' aplicado depois, sobre a lista montada.
+            "icone_foto": bool(foto and not _rede_tem_logo(str(t.rede))),
+        }
+
     return {
-        "concorrentes": [
-            {
-                "lat": _num(t.lat, 6),
-                "lng": _num(t.lng, 6),
-                "rede": str(t.rede),
-                "label": _label(str(t.rede)),
-                "nome": _clean(t.nome_unidade),
-                # Nome do ARQUIVO, servido por /api/foto-concorrente. Ausente quando a
-                # unidade nao tem imagem (o POI de mapa aberto nunca tem) — o balao
-                # simplesmente sai sem foto.
-                "foto": _foto_valida(getattr(t, "foto", None)),
-            }
-            for t in conc.itertuples(index=False)
-        ]
-        + linhas_diag
-        if (len(conc) or linhas_diag)
-        else [],
+        "concorrentes": _com_teto(
+            [_linha_conc(t) for t in conc.itertuples(index=False)] + linhas_diag
+            if (len(conc) or linhas_diag)
+            else []
+        ),
         "ultra": [
             {"lat": _num(t.lat, 6), "lng": _num(t.lng, 6), "nome": _clean(t.nome)}
             for t in ultra.itertuples(index=False)
@@ -8686,6 +8735,45 @@ def api_imobiliaria_evento(acao: str) -> dict[str, Any]:
     if acao not in ACOES_IMOBILIARIA:
         raise HTTPException(status_code=404, detail="Acao desconhecida.")
     return {"ok": True}
+
+
+@app.get("/api/pin-concorrente/{arquivo}")
+def pin_concorrente(arquivo: str):
+    """A MESMA foto, emoldurada como os pinos de marca — para virar icone no mapa.
+
+    Por que uma segunda rota e nao a `foto-concorrente` direto: o pino de rede e' um
+    quadrado branco arredondado com a marca dentro, e uma foto crua ao lado dele leria como
+    outro tipo de objeto. A moldura aqui e' a MESMA de `_quadrado_logo` (viewBox 128, raio
+    26, borda 7) para os dois pousarem no mapa com o mesmo peso.
+
+    O balao continua usando a foto CRUA (`/api/foto-concorrente`): la' ela ocupa a largura
+    toda e a moldura so' atrapalharia.
+    """
+    from fastapi.responses import Response
+
+    if not _FOTO_RE.match(arquivo):
+        raise HTTPException(status_code=404, detail="foto nao encontrada")
+    caminho = (COMPETITORS_PHOTO_DIR / arquivo).resolve()
+    raiz = COMPETITORS_PHOTO_DIR.resolve()
+    if not str(caminho).startswith(str(raiz)) or not caminho.is_file():
+        raise HTTPException(status_code=404, detail="foto nao encontrada")
+    b64 = base64.b64encode(caminho.read_bytes()).decode("ascii")
+    mime = "image/png" if caminho.suffix.lower() == ".png" else "image/jpeg"
+    # `clipPath` porque a foto e' retangular e a moldura e' arredondada: sem o recorte, os
+    # cantos da imagem vazariam por cima da borda.
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+        'width="128" height="128" viewBox="0 0 128 128">'
+        '<defs><clipPath id="c"><rect x="8" y="8" width="112" height="112" rx="22"/></clipPath></defs>'
+        '<rect x="4" y="4" width="120" height="120" rx="26" fill="#FFFFFF" stroke="#64748B" stroke-width="7"/>'
+        f'<image href="data:{mime};base64,{b64}" x="8" y="8" width="112" height="112" '
+        'preserveAspectRatio="xMidYMid slice" clip-path="url(#c)"/></svg>'
+    )
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.get("/api/foto-concorrente/{arquivo}")
