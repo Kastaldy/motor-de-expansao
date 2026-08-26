@@ -326,6 +326,13 @@ def test_wrapper_e_runbook_citam_a_mesma_retencao() -> None:
     O `26` passou a ser o valor CERTO. Se a constante mudar e estes dois textos não mudarem junto,
     o próprio runbook barra a imagem correta — e o operador (que aplica na VPS comando a comando)
     não tem como saber que a instrução envelheceu.
+
+    **O assert do runbook é ANCORADO na linha do checklist, de propósito.** A versão anterior pedia
+    só a substring `` `26` `` no arquivo inteiro, e o QA de 2026-08-26 provou por mutação que ela
+    NÃO pegava a regressão que a trava existe para pegar: trocar o número na linha da tabela do
+    `DRY_RUN` passava VERDE, porque duas ocorrências de PROSA na mesma página (a seção que conta a
+    história do `78` -> `26`) já satisfaziam a substring. A prosa pode envelhecer sozinha sem
+    machucar ninguém; a INSTRUÇÃO OPERACIONAL, não — é ela que decide se o operador agenda o cron.
     """
     from motor_expansao.vulnerabilidade import contrato as c
 
@@ -339,8 +346,10 @@ def test_wrapper_e_runbook_citam_a_mesma_retencao() -> None:
     assert f"tem de ser {esperado}" in wrapper, (
         "o checklist do cabeçalho não manda conferir a retenção vigente"
     )
-    assert f"`{esperado}`" in runbook and "retencao_semanas" in runbook, (
-        "o checklist do runbook não cita a retenção vigente"
+    assert f"| `retencao_semanas` | tem de ser `{esperado}`" in runbook, (
+        "a LINHA do checklist do runbook (tabela do `DRY_RUN`) não manda conferir a retenção "
+        "vigente; prosa sobre o número em outro ponto da página não vale — foi exatamente assim "
+        "que a regressão escapou"
     )
     # E nenhum dos dois pode continuar mandando NÃO agendar por causa do valor certo.
     assert f"`{esperado}` é o valor antigo" not in runbook

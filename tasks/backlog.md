@@ -1790,7 +1790,7 @@ universo, conforme a dedup case por distância ou também por nome).
    2026-08-26). É lá que ficam a colisão de
    partição, a retenção por cadência e os dois bloqueadores de caixa do coletor. **Correção de uma
    afirmação deste bloco:** a colisão não é condicional — o semanal roda todo domingo e toda semana
-   ISO tem um domingo, então ela é **certa, todo mês**. E a saída medida (particionar por
+   ISO tem um domingo, então ela é **certa, toda semana**. E a saída medida (particionar por
    `semana=X/fonte=Y`) **não exige bump** de `VERSAO_CONTRATO_SNAPSHOT`, ao contrário do que a lista
    de bumps abaixo sugeria.
 2. **Calibrar `DEDUP_INDEPENDENTES_M`** com o primeiro par real. Hoje o valor é **arbitrado e não

@@ -509,7 +509,7 @@ Confira na saída, nesta ordem:
 | campo | o que significa se vier errado |
 |---|---|
 | `fontes_publicadas=` | vazio ⇒ os dois feeds estão velhos ou o caminho do clone está errado |
-| `regua_idade` | por agregador: `data_coleta_min` é a régua boa; `mtime` é **fallback** (o feed não trouxe data legível) e vale bem menos — foi por medir mtime que 85 dias saíram como `0`. O rótulo sem o sufixo `_min` também denuncia imagem antiga |
+| `regua_idade` | por agregador: `data_coleta_min` é a régua boa; `mtime` é **fallback** (o feed não trouxe data legível) e vale bem menos — foi por medir mtime que 85 dias saíram como `0`. O rótulo sem o sufixo `_min` também denuncia imagem antiga. `indisponivel` **com** CSVs no diretório ⇒ o mtime está no **futuro** (relógio torto na máquina que coletou): a curadoria recusa em vez de publicar, porque idade negativa passaria por qualquer limiar. Corrija o relógio e recolete |
 | `linhas_snapshot` | `0` ⇒ o caminho dos CSVs curados está errado (o glob não casou com nada). **Exceção:** na **primeira instalação**, com o destino ainda vazio, `0` é o esperado *por construção* — a curadoria em `DRY_RUN` não copia nada, então não há o que o snapshot leia. Repita o modo seco **depois** da 1ª execução real para a leitura valer |
 | `versao_contrato` | tem de ser `snapshots_concorrentes_v4`. **`v3` = imagem ANTIGA na VPS** — ela escreve com uma chave e apaga a folha da outra cadência. **Não agende**: aplique a imagem nova primeiro |
 | `retencao_semanas` | tem de ser `26` (piso duro medido: **13**; nunca abaixo). O `78` é o valor da premissa **mensal**, que morreu — se o `DRY_RUN` mostrar `78`, a VPS está com imagem antiga |

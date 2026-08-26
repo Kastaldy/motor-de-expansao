@@ -565,3 +565,75 @@ def test_feed_inteiro_no_futuro_cai_no_fallback_de_mtime(tmp_path: Path) -> None
     assert regua == cur.REGUA_MTIME
     assert idade == pytest.approx(40.0, abs=0.01)
     assert cur.feed_esta_fresco(csvs, cur.MAX_IDADE_DIAS_DEFAULT, AGORA)[0] is False
+
+
+# --------------------------------------------------------------------------- #
+# Pos-QA de 2026-08-26: o FALLBACK de mtime tambem e' fail-closed contra o
+# futuro, e a recusa diz QUAL arquivo e QUAL data
+# --------------------------------------------------------------------------- #
+def test_mtime_no_futuro_e_recusado_em_vez_de_publicar(tmp_path: Path) -> None:
+    """A porta dos FUNDOS que a blindagem da regua primaria tinha deixado aberta.
+
+    Cenario REALISTA, nao exotico: relogio torto na maquina de coleta carimba `data_coleta` no
+    futuro (toda descartada pela regua primaria) **e** deixa o mtime no futuro. Antes desta
+    correcao o fallback fazia `(agora - mtime)/86400 = -40.0`, e `feed_esta_fresco` devolvia
+    `(True, -40.0)`: idade NEGATIVA passa por qualquer limiar e PUBLICA.
+
+    Idade negativa e' estado impossivel -- o feed nao pode ter sido colhido depois de agora.
+    Clampar em `0.0` seria pior que recusar: `0.0` e' exatamente a leitura de "coleta
+    recem-terminada", e a corrupcao passaria por saude.
+    """
+    csvs = tmp_path / "csvs"
+    arquivo = csvs / "unidades_totalpass_sp.csv"
+    _escrever_csv(arquivo, linhas=3, data_coleta="2026-12-31")
+    _envelhecer(arquivo, -40.0)  # mtime 40 dias no FUTURO
+
+    assert cur.idade_do_feed(csvs, AGORA) == (None, cur.REGUA_INDISPONIVEL)
+    assert cur.feed_esta_fresco(csvs, cur.MAX_IDADE_DIAS_DEFAULT, AGORA) == (False, None), (
+        "o fallback publicou um feed com idade negativa"
+    )
+
+
+def test_curar_recusa_agregador_com_relogio_no_futuro(origem: Path, tmp_path: Path) -> None:
+    """Ponta a ponta: a recusa e' acionavel e nao derruba o outro agregador."""
+    csvs = origem / "TotalPass" / "csvs"
+    for arquivo in csvs.glob("*.csv"):
+        _envelhecer_conteudo(arquivo, -40)  # `data_coleta` no futuro: regua primaria descarta tudo
+        _envelhecer(arquivo, -40.0)  # e o mtime junto, que e' o que o relogio torto produz
+
+    relatorio = cur.curar(origem, tmp_path / "destino", agora=AGORA)
+
+    assert relatorio["totalpass"]["publicado"] is False
+    assert relatorio["totalpass"]["idade_dias"] is None
+    assert relatorio["totalpass"]["regua_idade"] == cur.REGUA_INDISPONIVEL
+    motivo = str(relatorio["totalpass"]["motivo_recusa"])
+    assert "FUTURO" in motivo, motivo
+    assert "relogio" in motivo, "a recusa nao diz ao operador o que conferir"
+    assert str(csvs) in motivo, "a recusa nao diz em que arquivo o mtime esta no futuro"
+    # Uma fonte recusada nao derruba a outra: meia foto e' melhor que nenhuma.
+    assert relatorio["fontes_publicadas"] == ["wellhub"]
+
+
+def test_recusa_de_feed_velho_diz_qual_arquivo_e_qual_data(origem: Path, tmp_path: Path) -> None:
+    """A regua `min` inverteu a direcao de falha: UMA linha ruim entre 27 CSVs recusa o feed todo.
+
+    Recusar e' o comportamento certo (fail-closed, decidido na emenda de 2026-08-26), mas com
+    diretorio + idade + regua o operador tinha de varrer 27 arquivos a mao para achar a linha. A
+    mensagem passa a citar o CAMINHO do arquivo e a DATA lida.
+    """
+    csvs = origem / "TotalPass" / "csvs"
+    for i in range(27):
+        _escrever_csv(
+            csvs / f"unidades_totalpass_uf{i:02d}.csv", linhas=2, data_coleta="2026-08-25"
+        )
+    corrompido = csvs / "unidades_totalpass_uf13.csv"
+    _escrever_csv(corrompido, linhas=2, data_coleta="1970-01-01")
+
+    relatorio = cur.curar(origem, tmp_path / "destino", agora=AGORA, dry_run=True)
+
+    assert relatorio["totalpass"]["publicado"] is False
+    motivo = str(relatorio["totalpass"]["motivo_recusa"])
+    assert "feed velho" in motivo
+    assert f"`{cur.REGUA_DATA_COLETA}`" in motivo, "a procedencia da regua sumiu da recusa"
+    assert "1970-01-01" in motivo, "a recusa nao diz QUAL data foi lida"
+    assert str(corrompido) in motivo, "a recusa nao diz em QUAL dos 28 arquivos ela esta"

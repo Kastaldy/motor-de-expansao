@@ -120,12 +120,22 @@ def _csvs(diretorio: Path) -> list[Path]:
     return sorted(p for p in diretorio.glob("*.csv") if p.is_file())
 
 
-def _mtime_mais_novo(diretorio: Path) -> float | None:
-    """mtime do CSV mais NOVO do diretório, ou `None` se não houver nenhum."""
+def _csv_mais_novo(diretorio: Path) -> tuple[float, Path] | None:
+    """`(mtime, arquivo)` do CSV mais NOVO do diretório, ou `None` se não houver nenhum.
+
+    Devolve o ARQUIVO junto porque a mensagem de recusa tem de dizer ao operador onde olhar: o
+    diretório sozinho não basta quando ele guarda 27 CSVs por UF.
+    """
     arquivos = _csvs(diretorio)
     if not arquivos:
         return None
-    return max(p.stat().st_mtime for p in arquivos)
+    return max(((p.stat().st_mtime, p) for p in arquivos), key=lambda par: par[0])
+
+
+def _mtime_mais_novo(diretorio: Path) -> float | None:
+    """mtime do CSV mais NOVO do diretório, ou `None` se não houver nenhum."""
+    achado = _csv_mais_novo(diretorio)
+    return None if achado is None else achado[0]
 
 
 def _contar_linhas(arquivos: Sequence[Path]) -> int:
@@ -200,8 +210,13 @@ def _iso(mtime: float) -> str:
     return datetime.fromtimestamp(mtime, tz=UTC).isoformat(timespec="seconds")
 
 
-def _data_coleta_mais_antiga(arquivos: Sequence[Path], hoje: date) -> date | None:
-    """MENOR `data_coleta` legível do conjunto, ou `None` se nenhuma linha oferecer uma.
+def _data_coleta_mais_antiga(arquivos: Sequence[Path], hoje: date) -> tuple[date, Path] | None:
+    """`(MENOR data_coleta legível, arquivo onde ela está)`, ou `None` se nenhuma linha oferecer uma.
+
+    **O arquivo volta junto de propósito `[emenda de 2026-08-26 à DEC-039]`.** Com a agregação por
+    MÍNIMO a direção de falha é fail-closed: **uma** linha corrompida entre 27 CSVs recusa o feed
+    inteiro. Recusar é o comportamento certo, mas o operador precisa saber ONDE olhar — sem o
+    caminho, a recusa manda varrer 27 arquivos à mão.
 
     **Por que MÍNIMO e não máximo `[emenda de 2026-08-26 à DEC-039]`.** A régua nasceu agregando por
     `max`, e isso a tornava cega ao modo de falha mais provável do coletor: uma coleta que roda e
@@ -228,7 +243,7 @@ def _data_coleta_mais_antiga(arquivos: Sequence[Path], hoje: date) -> date | Non
     ISO simplesmente não contribuem. Quem decide o que fazer com a ausência é `idade_do_feed`, que
     cai no fallback de `mtime` e DIZ que caiu.
     """
-    melhor: date | None = None
+    melhor: tuple[date, Path] | None = None
     for arquivo in arquivos:
         try:
             with arquivo.open("r", encoding="utf-8-sig", errors="replace", newline="") as fh:
@@ -246,11 +261,63 @@ def _data_coleta_mais_antiga(arquivos: Sequence[Path], hoje: date) -> date | Non
                         continue
                     if valor > hoje:  # corrupção: não envelhece nem rejuvenesce o feed
                         continue
-                    if melhor is None or valor < melhor:
-                        melhor = valor
+                    if melhor is None or valor < melhor[0]:
+                        melhor = (valor, arquivo)
         except OSError:  # pragma: no cover - disco/permissão; o fallback de mtime cobre
             continue
     return melhor
+
+
+def _idade_do_feed_detalhada(diretorio: Path, agora: datetime) -> tuple[float | None, str, str]:
+    """`(idade em dias, régua usada, PROCEDÊNCIA em prosa)` — o núcleo de `idade_do_feed`.
+
+    A procedência é a frase que a mensagem de recusa cola para o operador: qual ARQUIVO e qual
+    DATA decidiram a idade. Ela nasce aqui, e não em `_decidir`, porque é aqui que se sabe qual
+    das duas réguas respondeu — recomputá-la fora abriria a chance de o texto divergir do número,
+    que é o mesmo defeito que a régua declarada (`regua_idade`) existe para fechar.
+
+    Contrato de `idade`:
+
+    | caso | idade | régua |
+    |---|---|---|
+    | nenhum CSV no diretório | `None` | `indisponivel` |
+    | há `data_coleta` legível (descartando futuro) | `>= 0` | `data_coleta_min` |
+    | não há data legível e o `mtime` é do passado | `>= 0` | `mtime` |
+    | não há data legível e o `mtime` está no FUTURO | `None` | `indisponivel` |
+
+    **A última linha é a blindagem de 2026-08-26 (fail-closed no FALLBACK).** A régua primária já
+    descartava data futura, mas o fallback ficou aberto e a assimetria era explorável pelo cenário
+    REALISTA: relógio torto na origem carimba `data_coleta` no futuro (toda descartada) **e** deixa
+    o `mtime` no futuro, e aí `(agora - mtime)/86400` devolvia idade NEGATIVA — que passa por
+    qualquer limiar e PUBLICA. Idade negativa é estado impossível: o feed não pode ter sido colhido
+    depois de agora. Clampar em `0.0` seria a escolha errada, porque `0.0` é exatamente a leitura de
+    "coleta recém-terminada" e faria a corrupção passar por saúde.
+    """
+    arquivos = _csvs(Path(diretorio))
+    if not arquivos:
+        return None, REGUA_INDISPONIVEL, f"nenhum CSV em {diretorio}"
+
+    achado = _data_coleta_mais_antiga(arquivos, agora.date())
+    if achado is not None:
+        coletada, arquivo = achado
+        procedencia = f"`{COLUNA_DATA_COLETA}` mais antiga: {coletada.isoformat()} em {arquivo}"
+        return float((agora.date() - coletada).days), REGUA_DATA_COLETA, procedencia
+
+    mais_novo = _csv_mais_novo(Path(diretorio))
+    if mais_novo is None:  # pragma: no cover - há CSV, logo há mtime
+        return None, REGUA_INDISPONIVEL, f"nenhum CSV em {diretorio}"
+    mtime, arquivo = mais_novo
+    if mtime > agora.timestamp():
+        return (
+            None,
+            REGUA_INDISPONIVEL,
+            (
+                f"mtime no FUTURO: {_iso(mtime)} em {arquivo}, contra "
+                f"{agora.isoformat(timespec='seconds')} de agora"
+            ),
+        )
+    procedencia = f"mtime mais novo: {_iso(mtime)} em {arquivo}"
+    return (agora.timestamp() - mtime) / 86400.0, REGUA_MTIME, procedencia
 
 
 def idade_do_feed(diretorio: Path, agora: datetime) -> tuple[float | None, str]:
@@ -272,18 +339,17 @@ def idade_do_feed(diretorio: Path, agora: datetime) -> tuple[float | None, str]:
     ao fim de toda execução, mesmo quando o checkpoint impediu qualquer recoleta.
 
     A granularidade da régua primária é o **DIA**, porque `data_coleta` é uma data (`AAAA-MM-DD`) e
-    fingir precisão de hora seria inventar informação que o feed não carrega.
+    fingir precisão de hora seria inventar informação que o feed não carrega. Ela também é a razão
+    de o limiar de 3 dias comportar com folga: `data_coleta` é carimbada UMA vez por coleta (antes
+    do `ThreadPoolExecutor`), então o spread real medido é **0 dia** em 83.685 linhas dos três
+    diretórios do clone — não há "spread de horas" a acomodar.
+
+    **O fallback de `mtime` também é fail-closed contra o FUTURO** desde 2026-08-26: `mtime` maior
+    que `agora` devolve `(None, 'indisponivel')`, e o chamador recusa. Detalhe e medição no
+    docstring de `_idade_do_feed_detalhada`.
     """
-    arquivos = _csvs(Path(diretorio))
-    if not arquivos:
-        return None, REGUA_INDISPONIVEL
-    coletada = _data_coleta_mais_antiga(arquivos, agora.date())
-    if coletada is not None:
-        return float((agora.date() - coletada).days), REGUA_DATA_COLETA
-    mtime = _mtime_mais_novo(Path(diretorio))
-    if mtime is None:  # pragma: no cover - há CSV, logo há mtime
-        return None, REGUA_INDISPONIVEL
-    return (agora.timestamp() - mtime) / 86400.0, REGUA_MTIME
+    idade, regua, _ = _idade_do_feed_detalhada(Path(diretorio), agora)
+    return idade, regua
 
 
 def feed_esta_fresco(
@@ -331,7 +397,7 @@ def _decidir(
     # UMA leitura da idade serve à decisão E ao relatório. Chamar `feed_esta_fresco` e
     # `idade_do_feed` em separado varreria os CSVs duas vezes e abriria a chance de a régua
     # relatada divergir da que decidiu — dois caminhos podem divergir; um não.
-    idade, regua = idade_do_feed(dir_origem, agora)
+    idade, regua, procedencia = _idade_do_feed_detalhada(dir_origem, agora)
     fresco = idade is not None and idade <= float(max_idade_dias)
     if idade is not None:
         _logger.info(
@@ -347,10 +413,20 @@ def _decidir(
     recusa: str | None = None
     if not arquivos:
         recusa = f"nenhum CSV em {dir_origem}"
+    elif idade is None:
+        # Fail-closed do FALLBACK: `mtime` no futuro (relogio torto na origem). Idade negativa e'
+        # estado impossivel -- o feed nao pode ter sido colhido depois de agora --, e antes de
+        # 2026-08-26 ela passava por QUALQUER limiar e publicava.
+        recusa = (
+            f"idade INDISPONIVEL em {dir_origem}: {procedencia}. Idade negativa e' estado "
+            "impossivel, entao a curadoria recusa em vez de publicar. Confira o relogio da "
+            "maquina que coletou, corrija e recolete"
+        )
     elif not fresco:
         recusa = (
             f"feed velho: idade {idade:.1f} dia(s) pela regua `{regua}`, "
-            f"limite {float(max_idade_dias):.1f}. Fotografar feed nao recoletado faz o S4 "
+            f"limite {float(max_idade_dias):.1f}. {procedencia}. "
+            "Fotografar feed nao recoletado faz o S4 "
             "marcar o universo inteiro desta fonte como parado"
         )
     elif limite is not None and n_linhas > int(limite):
