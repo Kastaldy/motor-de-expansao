@@ -304,7 +304,7 @@ def test_flag_troca_nao_liga_com_mistura_estavel_de_origens() -> None:
 
     Por que isso importa: no feed TP/WH o rebaixamento de chave ocorre **por linha** e
     convive com o `slug` na mesma semana, então a flag antiga valeria `True` para todo o
-    universo, todo mês — um sinal morto entregue ao consumidor do score.
+    universo, toda semana — um sinal morto entregue ao consumidor do score.
     """
     snaps = [
         _snapshot(
@@ -425,9 +425,12 @@ def test_min_semanas_e_stale_semanas_sao_parametros_injetaveis(
     """Os defaults vem do contrato (gate 2026-07-23) e NÃO são alterados por este bloco."""
     assert c.MIN_SEMANAS == 8
     assert c.STALE_SEMANAS == 12
-    # 26 -> 78 no BLK-MA-21 / DEC-039: com 26, um feed MENSAL rendia 5,98 observacoes (26/4,345)
-    # e nunca alcançava MIN_SEMANAS. A aritmetica das duas cadencias esta em `contrato.py`.
-    assert c.RETENCAO_SEMANAS == 78
+    # 78 -> 26 na emenda de 2026-08-26: a cadencia e' SEMANAL para as tres fontes, entao N
+    # particoes = N observacoes de CADA fonte, e o piso MEDIDO para o `v4` saturar e' 13
+    # (`_semanas_sem_mudanca` vale k-1 contra `STALE_SEMANAS`=12). 26 = 2x o piso, o menor
+    # valor que ainda satura com a fonte perdendo metade das semanas. NUNCA abaixo de 13.
+    assert c.RETENCAO_SEMANAS == 26
+    assert c.RETENCAO_SEMANAS >= 13
     out = extrair_churn_staleness(snapshots=serie_10_semanas, min_semanas=3, stale_semanas=5)
     assert bool(_linha_de(out, "k_novo")["flag_serie_imatura"]) is True  # 2 < 3
     assert bool(_linha_de(out, "k_estavel")["flag_staleness_interpretavel"]) is True  # 10 >= 5

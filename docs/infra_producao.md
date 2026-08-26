@@ -241,8 +241,8 @@ Falhas individuais de coletor **não** abortam o lote; redes que falham mantêm 
 com o deploy; se os pipelines da cadeia mudarem, re-sincronizar o checkout manualmente.
 
 > **Pendentes (futuro):** integração dos agregadores ao residual com remodelagem (Huff por tipo de
-> rede + dedup) usando as bases `NAO_ABRA/`. *(O cron **mensal** dos agregadores saiu desta lista no
-> BLK-MA-21 — tem script versionado e seção própria abaixo.)*
+> rede + dedup) usando as bases `NAO_ABRA/`. *(O cron **semanal** dos agregadores saiu desta lista
+> no BLK-MA-21 — tem script versionado e seção própria abaixo.)*
 
 ### Snapshot semanal de concorrentes (BLK-MA-06 — insumo de churn/staleness)
 
@@ -255,15 +255,15 @@ está perdida **para sempre**. O snapshot é o produtor da série que os sinais 
 `run_growth_daily.sh`: container efêmero na imagem da `api`, `--user 0:0`, concorrentes montado
 `:ro`). Instalação e a linha a inserir no `run_weekly_90.sh` estão no cabeçalho do próprio script.
 
-**`--fontes unidades`, e isto NÃO é detalhe de configuração.** O cron semanal recoleta só os 90
-coletores, que atualizam `Unidades/unidades_<rede>.csv`; WellHub e TotalPass dependem do cron mensal
-listado acima como pendente. **Fotografar um feed que não foi recoletado é pior do que não
+**`--fontes unidades`, e isto NÃO é detalhe de configuração.** O runner de domingo recoleta só os 90
+coletores, que atualizam `Unidades/unidades_<rede>.csv`; WellHub e TotalPass são recoletados pelo
+cron **semanal dos agregadores**, na terça (seção própria abaixo). **Fotografar um feed que não foi recoletado é pior do que não
 fotografar:** o `hash_campos_raspados` sai idêntico semana após semana, `semanas_sem_mudanca` cresce
 sozinho e o **S4 marca o universo inteiro daquela fonte como "parado"** — que é exatamente o sinal de
 vulnerabilidade que o funil de M&A procura. Falso positivo em massa, no sinal de segundo maior peso,
-e silencioso. Quando o cron mensal dos agregadores existir, ele chama o **mesmo** script com
-`--fontes totalpass wellhub`, na cadência dele. O recorte de cada partição fica registrado em
-`fontes_lidas`, na auditoria.
+e silencioso. O cron dos agregadores **não** passa por este script: ele tem wrapper próprio
+(`run_snapshot_agregadores.sh`), porque precisa da curadoria antes do snapshot. O recorte de cada
+partição fica registrado em `fontes_lidas`, na auditoria.
 
 **Instalação, uma vez.** Nada no repo cria `/opt/motor-expansao-infra/` — o `cp` dos wrappers de cron
 o pressupõe. `install -d` é idempotente, então rodá-lo mesmo já existindo não custa nada:
@@ -295,8 +295,9 @@ DRY_RUN=1 /opt/motor-expansao-infra/run_snapshot_concorrentes.sh
 > na hora. Se precisar sobrescrever: `HOST_CONCORRENTES=/outro/caminho DRY_RUN=1 ...`.
 
 `--dry-run` roda a cadeia inteira **sem gravar e sem podar** (a poda de retenção,
-`RETENCAO_SEMANAS = 78` desde o BLK-MA-21 / DEC-039 — era `26`; a aritmética das duas cadências está
-na seção do cron mensal, abaixo). Se `linhas_snapshot` vier `0`, o caminho de `HOST_CONCORRENTES`
+`RETENCAO_SEMANAS = 26` desde a emenda de 2026-08-26 ao BLK-MA-21 / DEC-039 — o `78` foi comprado
+pela premissa mensal, que morreu; a aritmética está na seção do cron dos agregadores, abaixo). Se
+`linhas_snapshot` vier `0`, o caminho de `HOST_CONCORRENTES`
 está errado; só agende depois de ver contagem plausível.
 
 **Falha do snapshot não pode abortar o lote** — a linha sugerida termina em
@@ -313,17 +314,17 @@ está errado; só agende depois de ver contagem plausível.
 > score viraria ordenável com 6 observações enquanto o `v4` ainda estaria confinado a `≤ 0,5` —
 > metade da escala do sinal mais importante do ranking, inacessível justamente na largada.
 >
-> E o prazo longo não vem da régua, vem da **cadência**: com o feed `unidades` semanal (o único que
-> o snapshot fotografa hoje), 8 observações são **~2 meses**; os ~8 meses valem só para os
-> agregadores, cujo cron mensal **ainda não existe** — reduzir o parâmetro encurtaria um cronômetro
-> que não foi ligado. O caminho com retorno real para encurtar o prazo é **dar cron próprio aos
-> agregadores**, não afrouxar o critério.
+> E o prazo vem da **cadência**: com as três fontes semanais, 8 observações são **~2 meses** para
+> todas. Quando esta nota foi escrita, os agregadores ainda não tinham cron e valiam ~8 meses; o
+> BLK-MA-21 deu cron próprio a eles, na terça, e a maturação caiu para ~8 **semanas** — que era
+> justamente o caminho com retorno real, em vez de afrouxar o critério.
 >
-> Fica registrado, para quando houver dado: o parâmetro é **global** e a cadência **não é**. Um valor
-> único não serve a um feed semanal e a outro mensal ao mesmo tempo; se isso incomodar no futuro, a
-> pergunta certa é torná-lo por fonte — escopo novo, fora do BLK-MA-06.
+> Fica registrado, para quando houver dado: o parâmetro é **global**, e agora a cadência também é.
+> A assimetria que sobra não é de cadência, é de **buraco**: a semana em que a curadoria recusa um
+> feed velho ocupa slot de calendário sem render observação àquela fonte. Se isso incomodar, a
+> pergunta certa é tornar o parâmetro por fonte — escopo novo, fora do BLK-MA-06.
 
-### Coleta mensal dos agregadores (BLK-MA-21 / DEC-039 — o relógio dos independentes)
+### Coleta semanal dos agregadores (BLK-MA-21 / DEC-039 — o relógio dos independentes)
 
 **Por que existe.** Os **independentes** — o universo-alvo do funil de M&A — vivem **só** no WellHub
 e no TotalPass. O snapshot semanal acima fotografa `--fontes unidades`, que é o feed de **cadeias**.
@@ -337,8 +338,9 @@ cobrindo a janela inteira. READ-ONLY sobre o M1. **O script nunca atualiza o clo
 copia arquivo entre máquinas, nunca abre sessão remota e nunca faz deploy** — tudo isso é passo
 manual, comando a comando (§6 do `CLAUDE.md`).
 
-> **O cron mensal NÃO usa o wrapper semanal.** O cabeçalho de `run_snapshot_concorrentes.sh` mandava,
-> até 2026-08-25, invocar "este mesmo script com `--fontes totalpass wellhub`" na cadência mensal.
+> **O cron dos agregadores NÃO usa o wrapper de domingo.** O cabeçalho de
+> `run_snapshot_concorrentes.sh` mandava, até 2026-08-25, invocar "este mesmo script com
+> `--fontes totalpass wellhub`" na cadência dos agregadores.
 > Seguir aquilo pularia a curadoria inteira — a escolha do diretório do WellHub e a guarda de
 > frescor, que são a razão deste bloco existir. Os dois wrappers são distintos e não se substituem.
 
@@ -346,7 +348,7 @@ manual, comando a comando (§6 do `CLAUDE.md`).
 *(emenda de 2026-08-25)*. Nos dois coletores, `--no-resume` faz **apenas** `checkpoint.unlink()`. O
 CSV consolidado (`Wellhub/unidades_wellhub.csv`, `TotalPass/unidades_totalpass.csv`) é escrito em
 modo `"a"`, e `ensure_header` **retorna cedo** quando o arquivo já existe com conteúdo: **nada
-trunca o consolidado**. No segundo mês as duas safras coexistem no mesmo arquivo e `split_by_state`
+trunca o consolidado**. Na segunda semana as duas safras coexistem no mesmo arquivo e `split_by_state`
 (modo `"w"`) propaga as duas para os 27 CSVs por UF.
 
 O estrago não é volume, é **inversão de sinal**. `montar_snapshot` desempata por
@@ -360,8 +362,13 @@ sumir do feed, então `sumiu_recente` (S1, o de maior peso) nunca dispara e nasc
 O wrapper **rotaciona, não apaga**: o consolidado vira `<nome>.<AAAAMMDD-HHMMSS>.bak` ao lado do
 original (sufixo sem `.csv`, para nenhum glob voltar a casá-lo), a coleta nasce limpa e o histórico
 fica no disco para auditoria. Só roda quando a coleta vai rodar — com `DRY_RUN=1` ou
-`PULAR_COLETA=1` rotacionar destruiria justamente o feed que se quer reaproveitar. **Os arquivos
-`.bak` acumulam um por mês e ninguém os apaga:** ~200 KB cada, e a limpeza é do operador.
+`PULAR_COLETA=1` rotacionar destruiria justamente o feed que se quer reaproveitar.
+
+> **Os arquivos `.bak` acumulam um por SEMANA e ninguém os apaga — e não são ~200 KB.** Medido em
+> 2026-08-26 no clone irmão: `unidades_wellhub.csv` = **11.707.221 B** (11,16 MiB) e
+> `unidades_totalpass.csv` = **3.319.377 B** (3,17 MiB), ou seja **14,33 MiB por rotação**. Com 52
+> rotações por ano são **~745 MiB/ano, sem teto e sem dono** — mais do que a série de snapshots
+> inteira. A limpeza é do operador, e agora ela é mensal, não anual.
 
 **E o TotalPass agora também roda `--no-resume`.** Sem ele, `TotalPass/pipeline.py` filtra
 `pending = [s for s in slugs if not checkpoint.already_processed(s)]` e retorna cedo com
@@ -380,10 +387,11 @@ wrapper nunca disparava.
 |---|---|---|
 | qual diretório | `TotalPass/csvs`; WellHub prefere `Wellhub/csvs_musculacao` e cai em `Wellhub/csvs` se ele não existir | os dois universos do WellHub diferem por 2-3× (16.432 × 6.850 linhas medidas em SP). `csvs/` já sai filtrado no modo **default** do coletor; `csvs_musculacao/` só é gerado quando o filtro do pipeline está desligado |
 | ambiguidade | `csvs_musculacao/` presente mas **mais antigo** que `csvs/` ⇒ **aborta** | significa que a última coleta rodou noutro modo. Escolher em silêncio é o modo de falha que este bloco existe para matar |
-| frescor | recusa publicar agregador cuja **`data_coleta`** mais nova passe de `MAX_IDADE_DIAS` (default **7**) | se um coletor morrer no meio da janela de 20h, os CSVs antigos ficam no disco. Fotografá-los faz `semanas_sem_mudanca` crescer sozinho e o **S4 marcar o universo inteiro daquela fonte como "parado"** — falso positivo em massa, no sinal de segundo maior peso, com `exit 0` |
+| frescor | recusa publicar agregador cuja **`data_coleta`** mais VELHA ainda no diretório passe de `MAX_IDADE_DIAS` (default **3**) | se um coletor morrer no meio da janela de 20h, os CSVs antigos ficam no disco. Fotografá-los faz `semanas_sem_mudanca` crescer sozinho e o **S4 marcar o universo inteiro daquela fonte como "parado"** — falso positivo em massa, no sinal de segundo maior peso, com `exit 0` |
 | piso de volume | recusa volume abaixo de `--piso-relativo` (default **0,5**) do que já está publicado no destino | o teto pega universo que **infla**; sem piso, coleta que morreu na metade passa — CSVs frescos, metade das linhas, e as que faltam viram `sumiu_recente` em massa no **S1**. Inerte na 1ª execução (sem baseline); `0` desliga |
 
-> **A idade sai de `data_coleta`, não do `mtime`** *(emenda de 2026-08-25)*. A guarda nasceu medindo
+> **A idade sai da linha mais VELHA do feed (`min(data_coleta)`), não do `mtime` nem do máximo**
+> *(emenda de 2026-08-25, régua ajustada para o mínimo em 2026-08-26)*. A guarda nasceu medindo
 > `p.stat().st_mtime` e isso a tornava cega ao caso que ela existe para pegar. Medido no clone real:
 > os 27 CSVs de `TotalPass/csvs/` tinham `mtime` de **hoje** e `data_coleta = 2026-06-01` em
 > **15.982 de 15.986** linhas — **85 dias** reportados como `0`. O `mtime` mede quando o arquivo foi
@@ -392,7 +400,20 @@ wrapper nunca disparava.
 > que o arquivo nasceu — não a VPS. O `mtime` fica como **fallback declarado** (feed sem `data_coleta`
 > legível) e continua sendo a régua da **ambiguidade** acima, onde a pergunta é outra ("qual diretório
 > o coletor escreveu por último") e ele é a resposta certa. Qual régua decidiu cada agregador sai no
-> relatório, em `regua_idade`, e no log.
+> relatório, em `regua_idade`, e no log — com o rótulo `data_coleta_min`, cujo sufixo existe para a
+> procedência não ficar ambígua entre versões da imagem (a anterior agregava por **máximo**).
+>
+> **Por que o mínimo, e não o máximo** *(2026-08-26)*. `Wellhub/split_by_state.py` só reescreve as
+> UFs presentes no consolidado e **nada apaga**: uma coleta que morre no meio deixa as demais UFs com
+> a safra anterior no disco. Simulado com as proporções reais das 27 UFs (só SP recoletada hoje, 26
+> UFs de 7 dias atrás), o **máximo** reportava `idade_dias = 0,0` e publicava **45.526 linhas das
+> quais só 36,1% eram frescas** — e o piso relativo de volume não dispara, porque o total continua em
+> 100% do baseline. Pelo mínimo o mesmo diretório mede 7 dias e é recusado. A troca custa zero hoje:
+> o spread real medido é **0** em 83.685 linhas dos três diretórios do clone. **Direção de falha:
+> fail-closed** — uma única linha com data corrompida no passado passa a recusar o feed inteiro, o
+> wrapper sai com `exit 3` e chama o operador. `data_coleta` no **futuro** é descartada (não é dado,
+> é corrupção): com o máximo, 1 linha corrompida em 10.000 dava `idade_do_feed = -1,0` e absolvia o
+> feed inteiro.
 
 Fonte recusada **sai do `--fontes`** do snapshot, e a partição registra o que foi *pedido* na coluna
 `fontes_lidas` do parquet — que é como se distingue "o TotalPass não foi tentado" de "foi tentado e
@@ -401,29 +422,37 @@ fotografar é falha, não sucesso silencioso.
 
 A curadoria decide os **dois** agregadores antes de copiar qualquer byte *(emenda de 2026-08-25)*:
 no laço único anterior, o `totalpass` (primeiro na ordem canônica) já tinha sido publicado quando a
-ambiguidade do `wellhub` levantava, e o destino ficava com meia curadoria de um mês novo enquanto o
-wrapper abortava.
+ambiguidade do `wellhub` levantava, e o destino ficava com meia curadoria de uma semana nova enquanto
+o wrapper abortava.
 
-> **Ação humana pendente, e ela se repete todo mês se não for resolvida.** O wrapper roda o WellHub
+> **Ação humana pendente, e ela se repete toda SEMANA se não for resolvida.** O wrapper roda o WellHub
 > no modo **default** (filtro do pipeline ligado), em que só `csvs/` é regenerado —
 > `Wellhub/csvs_musculacao/` fica para trás e vira "estritamente mais antigo", que é exatamente o
 > gatilho da linha *ambiguidade* acima. Nesta estação o clone já está nesse estado
 > (`csvs/` de `2026-08-18` contra `csvs_musculacao/` de `2026-08-07`). **Antes da primeira execução
-> mensal:** confirmar de que modo o coletor rodou e **apagar `Wellhub/csvs_musculacao/` à mão**. Com
+> agendada:** confirmar de que modo o coletor rodou e **apagar `Wellhub/csvs_musculacao/` à mão**. Com
 > o filtro ligado, `csvs/` já É o subset de musculação e o diretório antigo não tem função.
 
-**Retenção: `RETENCAO_SEMANAS` foi de `26` para `78`, e o número decide o epic.** `podar_snapshots`
-é keep-newest-N sobre diretórios `semana=`, e o cron semanal escreve em **toda** semana ISO — logo N
-partições = N semanas de **calendário**, o que dá `N / 4,345` observações de um feed **mensal**:
+**Retenção: `RETENCAO_SEMANAS` voltou de `78` para `26`, e o número decide o epic.**
+`podar_snapshots` é keep-newest-N sobre diretórios `semana=`. Com as **três** fontes semanais, N
+partições = N observações de **cada** fonte no caminho feliz — o divisor `4,345` do feed mensal não
+existe mais. O piso é **13**, medido: `_semanas_sem_mudanca` conta observações estritamente **após**
+a última mudança, logo vale `k-1` com hash constante, contra o denominador `STALE_SEMANAS = 12`.
 
-| N | semanas do feed semanal | observações do feed mensal | |
+| N | `semanas_sem_mudanca` | `v4` | |
 |---|---|---|---|
-| 26 | 26 | 5,98 | **abaixo de `MIN_SEMANAS = 8`: a série nunca amadurece** |
-| 53 | 53 | 12,2 | iguala `STALE_SEMANAS`, sem folga |
-| **78** | 78 | **17,9** | com folga sobre `STALE_SEMANAS` |
+| 8 | 7 | 0,5833 | |
+| 12 | 11 | 0,9167 | **teto permanente: nunca satura** |
+| 13 | 12 | 1,0000 | **piso duro — nunca descer abaixo daqui** |
+| **26** | 25 | **1,0000** | 2× o piso: satura mesmo com 50% de buraco de folha |
 
-Com `26`, ligar este cron entregaria um relógio que marca a hora errada para sempre. Custo em disco
-do `78`, medido a 155,8 bytes/linha: ~310 MB.
+`26` é o menor N que ainda satura o `v4` com uma fonte perdendo **metade** das semanas (26 semanas,
+50% de falha → 13 observações → `semanas_sem_mudanca = 12` → `v4 = 1,0000`, exatamente no piso).
+Custo em disco medido em 2026-08-26 (42.535 linhas/semana somando as três fontes, 151,7
+bytes/linha): **160,0 MB** — não é restrição num NVMe de 200 GB. O que restringe é a **leitura**:
+`ler_snapshots` carrega a série inteira em memória e o pico de RSS medido cresce ~70,5 MB por semana
+retida (N=13 → 999 MB; N=26 → 1,9 GB). Numa KVM4 de 16 GB com 6 containers permanentes, 1,9 GB é
+folgado; o `78` extrapolava para ~5,6 GB, que não é obviamente seguro.
 
 **Ordem de aplicação — ela é a defesa contra o modo destrutivo.** A partição passou a ter **duas**
 chaves (`semana=AAAA-SS/fonte=<fonte>/`), porque duas cadências escrevem na mesma semana ISO e, com
@@ -480,50 +509,64 @@ Confira na saída, nesta ordem:
 | campo | o que significa se vier errado |
 |---|---|
 | `fontes_publicadas=` | vazio ⇒ os dois feeds estão velhos ou o caminho do clone está errado |
-| `regua_idade` | por agregador: `data_coleta` é a régua boa; `mtime` é **fallback** (o feed não trouxe data legível) e vale bem menos — foi por medir mtime que 85 dias saíram como `0` |
+| `regua_idade` | por agregador: `data_coleta_min` é a régua boa; `mtime` é **fallback** (o feed não trouxe data legível) e vale bem menos — foi por medir mtime que 85 dias saíram como `0`. O rótulo sem o sufixo `_min` também denuncia imagem antiga |
 | `linhas_snapshot` | `0` ⇒ o caminho dos CSVs curados está errado (o glob não casou com nada). **Exceção:** na **primeira instalação**, com o destino ainda vazio, `0` é o esperado *por construção* — a curadoria em `DRY_RUN` não copia nada, então não há o que o snapshot leia. Repita o modo seco **depois** da 1ª execução real para a leitura valer |
 | `versao_contrato` | tem de ser `snapshots_concorrentes_v4`. **`v3` = imagem ANTIGA na VPS** — ela escreve com uma chave e apaga a folha da outra cadência. **Não agende**: aplique a imagem nova primeiro |
-| `retencao_semanas` | tem de ser `78`. `26` é o valor antigo, e com ele o agregador para em 5,98 observações |
+| `retencao_semanas` | tem de ser `26` (piso duro medido: **13**; nunca abaixo). O `78` é o valor da premissa **mensal**, que morreu — se o `DRY_RUN` mostrar `78`, a VPS está com imagem antiga |
 
 > Os dois últimos campos entraram na auditoria **exatamente** para isto: são a única forma de o
 > `DRY_RUN` provar **qual imagem está rodando** antes de agendar. A lição é do BLK-MA-19 — "código
 > publicado ≠ camada no ar".
 
-**Linha de crontab (D1 — primeira terça do mês, 02:00 UTC):**
+**Linha de crontab (D1 — TODA terça, 02:00 UTC = segunda 23:00 BRT):**
 
 ```cron
-0 2 * * 2 [ "$(date +\%d)" -le 07 ] && /opt/motor-expansao-infra/run_snapshot_agregadores.sh
+0 2 * * 2 /opt/motor-expansao-infra/run_snapshot_agregadores.sh
 ```
 
-A janela sequencial mede ~21h45: começando 02:00 UTC de terça, fecha ~23h45 de terça e **nunca**
-encosta na do semanal (domingo 06:00 UTC). Dia fixo do mês cairia em domingo ~1 vez a cada 7 meses,
-e nessas as duas coletas dividiriam 4 vCPU com os 6 containers permanentes. O `%` escapado (`\%`) é
-exigência do crontab.
+**Sem guarda de dia do mês** — ela existia só para emular "1ª terça", e com ela cai também o `%`
+escapado (`\%`) que o crontab exigia. A janela sequencial mede ~21h45: começando 02:00 UTC de terça,
+fecha ~23h45 de terça. Folga de **39h depois** do runner de domingo (06:00 UTC) e de **~102h antes**
+do próximo — as duas janelas nunca se encostam, nem na banda alta de 31h medida para o WellHub.
+Terça também deixa a retentativa caber na **mesma semana ISO**: falha na terça → `FAIL` do
+healthcheck na quinta 12:00 → retentativa manual fecha sexta, e a observação da semana é salva.
+
+> **Terça e domingo caem na MESMA semana ISO** (medido: `2026-08-25` e `2026-08-30` são ambos
+> `2026-35`), então as três fontes colidem numa partição **por construção** — é para isso que a
+> chave dupla `semana=/fonte=` existe. E `materializar` deriva a semana de `date.today()` no passo
+> 3, nunca de `data_coleta`, então nem a banda alta de 31h atravessa a fronteira ISO.
 
 **Alerta de idade** (a partir daqui a ausência do cron deixa de ser silenciosa):
 
 ```cron
-0 12 * * 1 /opt/motor-monitoring/healthcheck_vps.sh agregadores   # segunda 09h BRT
+0 12 * * 4 /opt/motor-monitoring/healthcheck_vps.sh agregadores   # quinta 09h BRT
 ```
 
 O check olha a partição **por fonte** (`fonte=wellhub`, `fonte=totalpass`) e não a série inteira: o
-cron semanal escreve toda semana, então a série nunca *parece* velha e um mensal morto passaria
-despercebido para sempre. Limiar `MONITOR_AGREGADOR_MAX_DIAS` (default **45** = cadência de 28-35
-dias + margem para uma execução perdida). Partição que **nunca existiu** também dispara `FAIL` —
-que é o estado real enquanto o cron não for agendado.
+cron de domingo escreve toda semana, então a série nunca *parece* velha e um cron de agregador morto
+passaria despercebido para sempre. Limiar `MONITOR_AGREGADOR_MAX_DIAS` (default **9**). Partição que
+**nunca existiu** também dispara `FAIL` — que é o estado real enquanto o cron não for agendado.
+
+> **Por que quinta, e por que 9** *(2026-08-26)*. A régua deriva a idade da **segunda-feira da semana
+> ISO** da partição, não do instante da coleta. Na quinta 12:00 UTC: com a rodada da própria terça a
+> idade mede **3** dias; com uma rodada perdida, **10**. A faixa que separa os dois casos é `[3, 9]`
+> inteira, e `9` é o **teto** dela — o mais tolerante a uma rodada que legitimamente escorregue
+> dentro da semana. (Não é o *único* valor que separa; a justificativa de unicidade era falsa.) O
+> `45` herdado da premissa mensal deixava passar **até 6 rodadas perdidas** antes do primeiro `FAIL`.
+> Quinta alerta 2 dias depois da falha e deixa sexta livre para a retentativa dentro da semana ISO.
 
 > **A idade sai da chave `semana=AAAA-SS`, não do mtime do diretório `fonte=`** *(emenda de
 > 2026-08-25)*. O check media `stat -c %Y` da folha, e o **passo 2 obrigatório desta mesma ordem de
 > aplicação** — `--migrar-layout` — **cria** a folha com mtime de agora. Medido sobre cópia da
-> partição viva: dado de `2026-08-05` (20 dias) reportado como `0d`; com limiar de 45, o `FAIL`
+> partição viva: dado de `2026-08-05` (20 dias) reportado como `0d`; com o limiar herdado de 45, o `FAIL`
 > atrasaria ~20 dias, e a distância é arbitrária para qualquer `rsync`/restore do volume. A conversão
 > ISO-week é feita à mão (`date -d` não parseia data ISO-week em nenhum coreutils): 4 de janeiro cai
 > sempre na semana 1. A régua nova pode **adiantar** o alerta em até ~1 dia, nunca atrasá-lo — direção
 > segura para um monitor. Chave ilegível cai no mtime e **diz** que caiu, no texto do alerta.
 
 **Fronteira com o BLK-MA-20 (DEC-039, D9) — e ela é FAIL-CLOSED** *(emenda de 2026-08-25)*. A
-partição do **TotalPass é gravada desde o primeiro mês** (o cronômetro de `MIN_SEMANAS = 8` são 8
-meses de cadência mensal — cada mês de espera é irrecuperável), mas o **consumo** dela pelo score
+partição do **TotalPass é gravada desde a primeira semana** (o cronômetro de `MIN_SEMANAS = 8` são 8
+semanas na cadência real — cada semana de espera é irrecuperável), mas o **consumo** dela pelo score
 espera o BLK-MA-20 decidir o grão do S1 e calibrar a dedup TP × WH, que hoje está *arbitrada*.
 
 O recorte é imposto por código **na ausência de gesto**: `alvos_ma` sem `--fontes` aplica
@@ -565,7 +608,7 @@ python -m motor_expansao.vulnerabilidade.alvos_ma \
 > **Não falta `--fontes wellhub` aqui — o recorte é FAIL-CLOSED** *(DEC-039, D9; emenda de
 > 2026-08-25)*. Omitir o flag aplica `FONTES_ENTREGAVEL_DEFAULT = ("wellhub",)`, e o log da execução
 > diz qual recorte valeu. Até 2026-08-25 este mesmo bloco copiável rodava **sem recorte nenhum**,
-> vinte e quatro linhas depois de a seção do cron mensal prometer, em prosa, que "o entregável roda
+> vinte e quatro linhas depois de a seção do cron dos agregadores prometer, em prosa, que "o entregável roda
 > `--fontes wellhub`" — o gesto que vazava tinha deixado de ser "editar uma linha" e passado a ser
 > "não digitar o flag". Para consumir a série inteira quando o BLK-MA-20 fechar, o gesto é
 > explícito: `--todas-as-fontes`.
@@ -828,7 +871,7 @@ O que é vigiado e a cadência (crontab do root):
 0 * * * *   /opt/motor-monitoring/healthcheck_vps.sh host        # disco >80% / memória <10%
 0 11 * * *  /opt/motor-monitoring/healthcheck_vps.sh authelia    # resumo diário de falhas de login (08h BRT)
 0 18 * * 0  /opt/motor-monitoring/healthcheck_vps.sh coleta      # domingo 15h BRT: resumo/falha da coleta semanal
-0 12 * * 1  /opt/motor-monitoring/healthcheck_vps.sh agregadores # segunda 09h BRT: idade da partição de cada agregador (BLK-MA-21)
+0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh agregadores # quinta 09h BRT: idade da partição de cada agregador (BLK-MA-21)
 ```
 
 Comportamento anti-spam: alerta na transição OK→FAIL, lembrete a cada 1h enquanto durar,

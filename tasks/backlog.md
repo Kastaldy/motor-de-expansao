@@ -1579,16 +1579,19 @@ fora de qualquer repo** (`docs/infra_producao.md`). Versionar o passo como scrip
 superfície não versionada a **uma linha** de invocação — que é o que o Felipe aplica, com o
 guardrail do §6 valendo comando a comando.
 
-**A decisão que sustenta o bloco: `--fontes unidades`.** O cron semanal recoleta só os 90 coletores.
-WellHub e TotalPass dependem de um cron mensal que **não existe** (listado como pendente no runbook).
+**A decisão que sustenta o bloco: `--fontes unidades`.** O runner de domingo recoleta só os 90
+coletores. WellHub e TotalPass dependem do cron dos agregadores, que é **SEMANAL** (terça) e nasceu
+no **BLK-MA-21**. *(Esta linha dizia "um cron mensal que não existe" — as duas coisas deixaram de
+valer: 2026-08-25 criou o bloco e 2026-08-26 corrigiu a cadência.)*
 Fotografar um feed não recoletado é **pior** que não fotografar: o `hash_campos_raspados` sai
 idêntico toda semana, `semanas_sem_mudanca` cresce sozinho e o **S4 marca o universo inteiro daquela
 fonte como "parado"** — o próprio sinal de vulnerabilidade. Falso positivo em massa, no sinal de
 segundo maior peso, e silencioso. O recorte de cada partição fica em `fontes_lidas`, na auditoria.
 
-**Fora de escopo.** Qualquer artefato/score/peso do M1; o cron **mensal** dos agregadores (bloco
-próprio, e quando existir chama o MESMO script com `--fontes totalpass wellhub`); o entregável
-comercial (**BLK-MA-05**); a reputação externa (**BLK-MA-07**).
+**Fora de escopo.** Qualquer artefato/score/peso do M1; o cron **semanal dos agregadores** (bloco
+próprio, **BLK-MA-21** — e ele **NÃO** chama este script: tem wrapper próprio, porque precisa da
+curadoria antes do snapshot); o entregável comercial (**BLK-MA-05**); a reputação externa
+(**BLK-MA-07**).
 
 > **[nota BLK-MA-13, 2026-08-14 — CORRIGIDA em 2026-08-24 pelo BLK-MA-19] O comando do entregável
 > mudou, e os pins do piloto dependem dele.**
@@ -1622,12 +1625,15 @@ medida e o veredito é manter. Três razões, nesta ordem: (1) são **dois** par
 distintos — `MIN_SEMANAS = 8` libera o `s3`, `STALE_SEMANAS = 12` é o **denominador** do `v4`
 (`score.py`) —, e baixar só o primeiro deixaria o score ordenável enquanto o `v4` ainda estivesse
 confinado a `≤ 0,5`, metade da escala do sinal mais importante, bem na largada; (2) o parâmetro
-conta **observações, não meses**: com o feed `unidades` semanal — o único que o snapshot fotografa
-hoje — 8 observações são **~2 meses**, e os ~8 meses valem só para os agregadores, cujo cron mensal
-**não existe** (reduzir encurtaria um cronômetro desligado); (3) o caminho com retorno real para
-encurtar o prazo é **dar cron próprio aos agregadores**, não afrouxar o critério. Registrado para o
-futuro: o parâmetro é **global** e a cadência **não é** — se voltar a incomodar, a pergunta certa é
-torná-lo por fonte, e isso é escopo novo.
+conta **observações, não meses**: com o feed `unidades` semanal — o único que o snapshot fotografava
+então — 8 observações são **~2 meses**, e os ~8 meses valiam só para os agregadores, cujo cron
+**não existia** (reduzir encurtaria um cronômetro desligado); (3) o caminho com retorno real para
+encurtar o prazo é **dar cron próprio aos agregadores**, não afrouxar o critério. *(O caminho (3)
+foi seguido: o **BLK-MA-21** deu cron próprio aos agregadores, SEMANAL, e a maturação deles caiu de
+~8 meses para **~8 semanas** — as três fontes passaram a ter o mesmo prazo.)* Registrado para o
+futuro: o parâmetro é **global**, e agora a cadência também é; a assimetria que sobra é o **buraco
+de folha** (semana em que a curadoria recusa um feed velho ocupa slot sem render observação). Se
+voltar a incomodar, a pergunta certa é torná-lo por fonte, e isso é escopo novo.
 
 **Critério de aceite.** Script versionado com sintaxe validada; `--fontes` com teste que prove o
 recorte e que as duas metades reconstroem o todo; `fontes_lidas` na auditoria; runbook com o modo
@@ -1720,7 +1726,7 @@ o `/api/health`; (4) a pílula de independentes visível na tela, no drill-down 
 | **Prioridade** | **Alta, e a janela é agora.** O S1 hoje tem **variância zero** — 6.753 de 6.753 hexes com `n_agregadores_no_hex = 1` — e por isso o score é pressão renomeada. O TotalPass é a única coisa disponível que devolve variância a um componente ATIVO, e isso **independe de série**. E o custo de absorver a reordenação cresce com o histórico: hoje há **uma** partição local e **zero** em produção. |
 | **Esteira** | Block Orchestrator → Planner → `[GATE humano — DEC própria]` → Builder → QA. |
 | **Status** | Pendente — **levantamento concluído em 2026-08-24**, com números medidos (abaixo). Nenhuma linha de produção escrita. |
-| **Depende de** | **BLK-MA-06** (o cron semanal; é ele que valida o caminho com `DRY_RUN`) e **BLK-MA-21** (o cron MENSAL dos agregadores — criado em 2026-08-25; sem ele o S3/S4 do TotalPass nunca amadurece, e é lá que a colisão de partição é resolvida). |
+| **Depende de** | **BLK-MA-06** (o cron semanal; é ele que valida o caminho com `DRY_RUN`) e **BLK-MA-21** (o cron SEMANAL dos agregadores, na terça — criado em 2026-08-25, cadência corrigida de mensal para semanal em 2026-08-26; sem ele o S3/S4 do TotalPass nunca amadurece, e é lá que a colisão de partição é resolvida). |
 | **Autonomia** | **manual (NÃO loop-safe)** — tem gate humano (DEC) e depende de cron de produção. |
 
 **A pergunta que abriu o bloco (Vinicius, 2026-08-24), e por que ela procede.** A DEC-026 tornou a
@@ -1780,7 +1786,8 @@ universo, conforme a dedup case por distância ou também por nome).
 
 0. **Copiar o feed** — 27 CSVs para `concorrentes/totalpass/csvs/`, com `PROVENIENCIA.md` no molde do
    WellHub. Aqui **e** na VPS. Não exige nada além do ato.
-1. **BLK-MA-21 — cron MENSAL dos agregadores** (criado em 2026-08-25). É lá que ficam a colisão de
+1. **BLK-MA-21 — cron SEMANAL dos agregadores** (criado em 2026-08-25; cadência corrigida em
+   2026-08-26). É lá que ficam a colisão de
    partição, a retenção por cadência e os dois bloqueadores de caixa do coletor. **Correção de uma
    afirmação deste bloco:** a colisão não é condicional — o semanal roda todo domingo e toda semana
    ISO tem um domingo, então ela é **certa, todo mês**. E a saída medida (particionar por
@@ -1804,7 +1811,8 @@ universo, conforme a dedup case por distância ou também por nome).
 
 **Fora de escopo.** A NOTA do TotalPass (arquivada, e a re-sonda de 2026-08-24 reconfirmou que não
 existe — o caminho para ela é comercial, não técnico); o BLK-MA-07 (reputação externa); qualquer
-peso do D4, que segue CONGELADO; e o cron mensal em si, que é o bloco do passo 1.
+peso do D4, que segue CONGELADO; e o cron **semanal** dos agregadores em si, que é o bloco do
+passo 1 (**BLK-MA-21**).
 
 **Riscos e o que fazer com eles.**
 - **S4 falso positivo em massa** se o feed de 01/06 for fotografado sem recoleta: a defasagem é de
@@ -1829,8 +1837,10 @@ peso do D4, que segue CONGELADO; e o cron mensal em si, que é o bloco do passo 
 > insumo do S6. A pressão já a conta.
 > (2) *"A retenção de 26 semanas contra `MIN_SEMANAS = 8` faria a série nunca amadurecer em cadência
 > mensal"* — **falso**: `podar_snapshots` é **keep-newest-N sobre PARTIÇÕES**
-> (`candidatos[: len(candidatos) - 26]`), não poda por idade de calendário. Com coleta mensal
-> guardam-se as 26 partições mais recentes = 26 meses, e a série chega a 8 observações em ~8 meses.
+> (`candidatos[: len(candidatos) - 26]`), não poda por idade de calendário. *(Nota de 2026-08-26: a
+> premissa da cadência mensal caiu de vez — os agregadores rodam SEMANALMENTE, então 26 partições
+> são 26 observações de cada fonte, e a `RETENCAO_SEMANAS` voltou de `78` para `26`. O piso medido
+> para o `v4` saturar é **13**.)*
 
 **Procedência dos números.** Verificados de primeira mão em 2026-08-24: o feed do TotalPass (27
 CSVs / 15.986 linhas / `data_coleta`), a contagem da Smart Fit nas três bases, os pesos efetivos por
@@ -1873,7 +1883,12 @@ medida, mas as passagens marcadas aqui deixaram de valer:
   keep-newest-N sobre semanas de CALENDÁRIO, 26 partições davam **5,98 observações**, abaixo de
   `MIN_SEMANAS = 8`. **Com coleta semanal isso desaparece** — 26 partições = 26 observações de cada
   fonte, e as 8 exigidas chegam em 8 semanas. A seção "Retenção: a régua não serve a duas cadências"
-  perde o pressuposto: agora as três fontes têm a MESMA cadência. Refazer a aritmética do zero.
+  perde o pressuposto: agora as três fontes têm a MESMA cadência. **REFEITA em 2026-08-26:** o valor
+  volta a **`26`**, o **piso duro é `13`** (medido — `_semanas_sem_mudanca` vale `k-1` contra o
+  denominador `STALE_SEMANAS = 12` do `v4`, então com 12 observações o `v4` fica preso em `0,9167`
+  para sempre) e `26 = 2× o piso` é o menor N que ainda satura com uma fonte perdendo METADE das
+  semanas. Disco: **160,0 MB** (42.535 linhas/semana, 151,7 bytes/linha). O que restringe é a
+  LEITURA — pico de RSS medido cresce ~70,5 MB por semana retida (N=26 -> 1,9 GB).
 - **O custo por iteração de diagnóstico.** "cada iteração custa um mês" vira "custa uma semana" — o
   que baixa o risco de errar o agendamento e muda o cálculo de quanto vale depurar antes de ligar.
 
@@ -1889,12 +1904,17 @@ medida, mas as passagens marcadas aqui deixaram de valer:
   todos de pé, e as correções valem como estão.
 
 **NASCE — defeito novo criado pela cadência semanal:**
-- **O limiar de frescor colide com o período de coleta.** A guarda recusa feed com mais de
-  `--max-idade-dias` (default **7**). Com coleta semanal, o feed chega ao snapshot com **~7 dias de
-  idade por construção** — em cima do limiar, passando ou sendo recusado por margem de horas,
-  conforme a hora em que cada coletor terminou. **O default herdado do desenho mensal é inseguro
-  aqui** e tem de ser reescolhido junto com a cadência (a régua em si, por `data_coleta`, continua
-  certa — o que está errado é o número).
+- **O limiar de frescor é INERTE sob cadência semanal.** A guarda recusa feed com mais de
+  `--max-idade-dias` (default herdado **7**). *(Este bullet dizia que o feed chega ao snapshot com
+  "~7 dias de idade **por construção**" — **é FALSO**, e foi medido em 2026-08-26: numa coleta
+  bem-sucedida o feed chega com **0 ou 1 dia**, porque coleta e curadoria rodam na MESMA execução,
+  sob um `flock` só, nos passos 1-2-3 do wrapper. Os ~7 dias são a idade quando a coleta **FALHA** —
+  que é exatamente o que o limiar 7 deixava passar, porque a borda é inclusiva.)*
+  **RESOLVIDO em 2026-08-26:** default vai a **3** (a janela que separa é `[1, 6]`: teto saudável
+  medido 1 dia, defeito 7-8 dias) **e** a régua troca de `max(data_coleta)` para `min`, com descarte
+  de data no futuro — o número sozinho não bastava, porque com `max` uma coleta que morre no meio
+  continua medindo idade 0 (simulado: 26 de 27 UFs velhas, `idade_dias = 0,0`, 36,1% de linhas
+  frescas, publicado). Direção de falha passa a ser **fail-closed**.
 - **A janela de ~22h/semana numa KVM4 com 6 containers permanentes** deixa de ser evento mensal e
   vira carga recorrente, concorrendo com a coleta dos 90 coletores do `unidades`. A grade precisa
   ser desenhada, não herdada.
@@ -1920,7 +1940,7 @@ Nada nunca pegou isso: o repo do coletor **não tem CI** e o `CMD` do Dockerfile
 
 #### Os dois defeitos do snapshot — e um deles é pior do que parecia
 
-**A colisão de partição não é "se": é CERTA, todo mês, para sempre.** A semana ISO vai de segunda a
+**A colisão de partição não é "se": é CERTA, toda semana, para sempre.** A semana ISO vai de segunda a
 domingo, e o cron semanal roda `0 6 * * 0` — **todo domingo**, o último dia da semana ISO. Logo toda
 semana ISO recebe uma escrita do semanal com `--fontes unidades`, e `escrever_particao_semana` usa
 `existing_data_behavior="delete_matching"`, que apaga a partição **inteira** antes de gravar. A
@@ -1929,7 +1949,8 @@ fora, com `exit 0` nos dois runs**. Probabilidade de colisão = 1.
 
 > **A inversão que muda a ordem do trabalho:** hoje isso ainda não destrói nada, porque um frame
 > VAZIO sai cedo com WARNING e **não** apaga a partição existente. Ou seja, o cenário atual ("o
-> mensal lê zero por caminho errado") falha em silêncio, inofensivo. **Consertar o caminho é o que
+> cron dos agregadores lê zero por caminho errado") falha em silêncio, inofensivo. **Consertar o
+> caminho é o que
 > ATIVA o defeito.** Os bloqueadores acima e a correção da colisão têm de entrar na MESMA entrega.
 
 **Sem carimbo de fonte no parquet**, "TotalPass não fotografado" fica indistinguível de "lido e
@@ -1956,15 +1977,31 @@ série viva: `_assert_schema_snapshot` levanta se a partição carregar mais de 
 numa mescla as linhas da fonte não reescrita ficam na versão antiga → a escrita **aborta** e a semana
 inteira se perde. Ainda é mais cara e amplia a janela não-atômica entre delete e write.
 
-#### Retenção: a régua não serve a duas cadências
+#### Retenção: `26`, com piso duro de `13` *(refeita em 2026-08-26 sobre a cadência uniforme)*
 
-`RETENCAO_SEMANAS = 26` é **keep-newest-N sobre partições**, não poda por idade. Com coleta mensal,
-26 partições = 26 meses — a série amadurece normalmente. O problema é o **desperdício e a mistura**:
-uma régua só para um feed semanal e outro mensal. Caminho barato: subir para **≥53** (um ano ≈ 12-13
-observações mensais, no limiar do `STALE_SEMANAS`) ou **78** (18 meses, com folga) — é uma constante,
-sem bump. Caminho correto: com a opção (a), podar as N folhas mais recentes **por fonte**, cada
-cadência com régua própria. **Disco não é restrição:** ~155 bytes/linha comprimidos → 26 semanas
-≈ 53 MB, 53 ≈ 108 MB, 78 ≈ 161 MB.
+`RETENCAO_SEMANAS` é **keep-newest-N sobre diretórios `semana=`**, não poda por idade. *(A versão
+anterior desta seção chamava-se "a régua não serve a duas cadências" e argumentava sobre um feed
+mensal — o pressuposto morreu, e os três números de disco que ela citava estavam errados por ~3×:
+"26 ≈ 53 MB, 53 ≈ 108, 78 ≈ 161" contra os **160,0 / 326,1 / 479,9 MB** medidos, porque contavam
+só o feed `unidades` e não as três fontes.)*
+
+Com as três fontes semanais, N partições = **N observações de cada fonte** no caminho feliz. O piso
+é **13**, medido rodando `extrair_churn_staleness` sobre séries sintéticas de hash constante:
+`_semanas_sem_mudanca` conta observações estritamente **após** a última mudança, logo vale `k-1`,
+contra o denominador `STALE_SEMANAS = 12` do `v4`.
+
+| N | `semanas_sem_mudanca` | `v4` | |
+|---|---|---|---|
+| 8 | 7 | 0,5833 | |
+| 12 | 11 | 0,9167 | **teto permanente: nunca satura** |
+| 13 | 12 | 1,0000 | **piso duro — nunca descer abaixo daqui** |
+| **26** | 25 | **1,0000** | 2× o piso: satura mesmo com 50% de buraco de folha |
+
+**Disco medido em 2026-08-26** (42.535 linhas/semana somando as três fontes; 151,7 bytes/linha —
+partir em 3 folhas BAIXA o custo por linha, contra 155,8 numa folha só): N=13 → 80,0 MB;
+**N=26 → 160,0 MB**; N=53 → 326,1 MB; N=78 → 479,9 MB. Não é restrição num NVMe de 200 GB. **O que
+restringe é a LEITURA:** `ler_snapshots` carrega a série inteira em memória, e o pico de RSS medido
+cresce ~70,5 MB por semana retida (N=13 → 999 MB; N=26 → 1,9 GB; N=78 → ~5,6 GB **extrapolado**).
 
 #### O custo real da coleta, medido (e o número do runbook está incompleto)
 
@@ -1987,14 +2024,26 @@ adota** — muda o desenho do wrapper.
 2. **Wrapper próprio** `run_snapshot_agregadores.sh`, com `--dir-wellhub`/`--dir-totalpass`
    explícitos, `flock -n`, `--retencao-semanas` e **`DRY_RUN=1` obrigatório antes de agendar**.
 3. **Resolver a colisão** pela opção (a), com o teste que impede um dataset de uma chave.
-4. **Nova retenção**, com a aritmética das duas cadências declarada.
+4. **Nova retenção**, com a aritmética da **cadência uniforme** declarada (piso medido `13`,
+   valor `26`).
 5. **Carimbar `fontes_lidas`** no parquet (ou no nome da partição).
 6. **Check de idade da partição de agregador no `healthcheck_vps.sh`** — hoje ele só confere se
-   existe um `relatorio_crescimento_*.txt` de hoje, então uma falha do mensal **não seria vista**.
+   existe um `relatorio_crescimento_*.txt` de hoje, então uma falha do cron dos agregadores **não
+   seria vista**.
+7. **Limiar e grade do próprio check** *(acrescentado em 2026-08-26; não estava em escopo nenhum)*:
+   `MONITOR_AGREGADOR_MAX_DIAS` de **45** para **9**, e o check de `0 12 * * 1` (segunda) para
+   **`0 12 * * 4`** (quinta). Com 45 dias a cadência semanal deixava passar **até 6 rodadas
+   perdidas** antes do primeiro FAIL. A régua deriva a idade da SEGUNDA da semana ISO da partição:
+   na quinta 12:00 UTC a rodada da própria terça mede **3** dias e uma rodada perdida mede **10** —
+   a faixa que separa é `[3, 9]` inteira, e `9` é o TETO dela (não o único valor, como se afirmou).
+   Quinta alerta 2 dias depois da falha e deixa sexta livre para a retentativa **dentro da mesma
+   semana ISO**. Junto vai o `exec > >(tee -a "$LOG")` para ANTES do `flock`, senão uma rodada
+   travada faz toda semana seguinte sair `exit 0` sem deixar log.
 
 **Fora de escopo, explicitamente.** O **TotalPass como FONTE do score** — isso é o **BLK-MA-20**, que
 exige DEC própria por reordenar o ranking (Spearman `0,692`). **A fronteira precisa estar escrita na
-DEC**, senão o mensal faz o TotalPass entrar pela porta dos fundos: basta ele gravar a partição para
+DEC**, senão o cron dos agregadores faz o TotalPass entrar pela porta dos fundos: basta ele gravar a
+partição para
 o extrator começar a consumi-lo. Também fora: pesos do D4 (congelados), qualquer artefato do M1, e a
 integração dos agregadores ao residual (parte 3 da DEC-013).
 
@@ -2013,10 +2062,82 @@ livre real da VPS e a grade horária do job — o §6 proíbe comando na VPS sem
 
 **Critério de aceite.** (1) Os dois bloqueadores de caixa caídos, com teste que impeça a regressão;
 (2) colisão resolvida pela opção (a), com teste que prove que duas fontes coexistem na mesma semana
-**e** que nenhum caminho construa dataset de uma chave; (3) retenção nova com a aritmética declarada;
+**e** que nenhum caminho construa dataset de uma chave; (3) retenção nova com a aritmética da cadência
+uniforme declarada e o piso `13` travado por teste;
 (4) `fontes_lidas` no parquet; (5) `DRY_RUN` como passo obrigatório do runbook; (6) check de idade no
 healthcheck; (7) a fronteira com o BLK-MA-20 escrita na DEC; (8) READ-ONLY sobre o M1, suíte verde,
 `loop_guard` sem CRÍTICO. **Nenhum comando executado na VPS por agente.**
+
+---
+
+### BLK-MA-21-FU3 — `flock` no wrapper de domingo, e a poda concorrente que não tem defesa
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** — mexe num wrapper de cron **já aplicado na VPS**, o que exige reaplicação manual do Felipe. READ-ONLY sobre o M1. |
+| **Prioridade** | Média. O risco é real mas de cauda: exige que uma rodada de agregador atrase até domingo, o que hoje só acontece por travamento. |
+| **Esteira** | Block Orchestrator → Builder → QA → `[aplicação na VPS: passo MANUAL — §6]`. |
+| **Status** | Pendente — **criado em 2026-08-26**, fatiado do BLK-MA-21 pela decisão de escopo do sintetizador. |
+| **Depende de** | BLK-MA-21 (o wrapper da terça e a grade semanal). |
+| **Autonomia** | **manual (NÃO loop-safe)** — cron de produção. |
+
+**O achado, medido.** `grep -n flock scripts/cron/run_snapshot_concorrentes.sh` → a **única**
+ocorrência é o comentário da linha 40, que fala do *outro* script. **O wrapper de domingo não tem
+lock nenhum.** Os dois wrappers nunca se excluem mutuamente; quem impede o estrago é o
+particionamento de **duas chaves**, que faz o `delete_matching` casar folhas distintas.
+
+**O que a chave dupla NÃO cobre:** `podar_snapshots` faz `shutil.rmtree` em diretórios `semana=` e é
+chamada pelas **duas** cadências (`snapshots.py`, `executar`). Duas podas concorrentes num diretório
+sendo escrito **não têm defesa nenhuma no código** — a chave dupla protege a escrita, não a poda.
+
+**Por que ficou fora do BLK-MA-21** *(decisão de escopo, 2026-08-26)*: mexer no wrapper do BLK-MA-06,
+que **já está aplicado na VPS**, é mudança de superfície de produção fora do objeto daquele bloco, e
+exigiria uma reaplicação manual a mais no mesmo deploy. Ficou **registrado por escrito** no cabeçalho
+de `run_snapshot_concorrentes.sh`.
+
+**Escopo.** (1) `flock -n` no wrapper de domingo, com o mesmo molde do wrapper da terça (log ANTES do
+lock); (2) decidir se os dois compartilham o **mesmo** lock (serializa as duas cadências, mais
+seguro) ou locks distintos (só protege contra reexecução própria); (3) teste textual no molde de
+`tests/unit/test_wrappers_cron_agregadores.py`. **Critério de aceite:** os dois wrappers não podem
+podar concorrentemente; suíte verde; `loop_guard` sem CRÍTICO; nenhum comando na VPS por agente.
+
+---
+
+### BLK-MA-21-FU4 — Poda POR FONTE dentro da partição (margem, não dívida)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — mexe na única função do pacote que **apaga arquivo** (`podar_snapshots`, `shutil.rmtree`). READ-ONLY sobre o M1. |
+| **Prioridade** | **Baixa** *(rebaixada em 2026-08-26)*. A margem que ela compraria já vem de graça no `RETENCAO_SEMANAS = 26 = 2× o piso`. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente — **criado em 2026-08-26**; existia como "adiado" dentro do BLK-MA-21 / DEC-039 (D5), com a justificativa da cadência MENSAL, que morreu. |
+| **Depende de** | BLK-MA-21. |
+| **Autonomia** | **manual (NÃO loop-safe)** — apaga arquivo em disco. |
+
+**A justificativa antiga morreu; esta é a que sobrevive.** A razão original era servir **duas
+cadências** (semanal + mensal) com menos disco. Com a cadência uniforme isso não existe mais. O que
+**não** morreu é a **assimetria de unidade**: `RETENCAO_SEMANAS` conta semanas de **CALENDÁRIO**
+(`podar_snapshots` itera diretórios `semana=` e faz `rmtree` na semana inteira, com todas as folhas
+`fonte=` juntas), enquanto `MIN_SEMANAS`/`STALE_SEMANAS` contam semanas **OBSERVADAS** do escopo
+`(fonte, rede)` (`churn_staleness.py`, `n_semanas_serie = len(ativo)`).
+
+**As duas unidades coincidem só no caminho feliz.** Medido em 2026-08-26 (20 semanas, `unidades`
+toda semana, `wellhub` só nas pares = 50% de falha):
+
+```
+antes: semanas=20  obs por fonte = {unidades: 20, wellhub: 10}
+poda(N=13) removeu 7 semanas
+depois: semanas=13  obs por fonte = {unidades: 13, wellhub: 7}
+```
+
+`7 < MIN_SEMANAS = 8`: dentro de uma janela de 13, uma fonte com 50% de falha **nem amadurece**. E a
+fonte **perde folha por construção** — a guarda de frescor (D4) tira a fonte do `--fontes` quando o
+feed está velho.
+
+**Escopo.** Poda keep-newest-N de **folhas `fonte=`** dentro da partição, mantendo N observações por
+fonte independentemente de buraco. **Critério de aceite:** teste que prove N observações por fonte
+com buraco de folha; nenhuma semana com folha sobrevivente pode ser removida; suíte verde;
+`loop_guard` sem CRÍTICO.
 
 ---
 

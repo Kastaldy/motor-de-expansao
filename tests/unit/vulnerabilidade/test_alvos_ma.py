@@ -603,8 +603,8 @@ def test_cli_analisa_os_argumentos() -> None:
 def test_cli_aceita_recorte_de_fontes() -> None:
     """`--fontes wellhub` é o que o entregável roda enquanto o BLK-MA-20 não fecha.
 
-    A partição do `totalpass` passa a ser GRAVADA desde o primeiro mês — para o cronômetro de
-    `MIN_SEMANAS` começar a correr, já que a 8ª observação de um feed mensal está a 8 meses —, mas
+    A partição do `totalpass` passa a ser GRAVADA desde a primeira semana — para o cronômetro de
+    `MIN_SEMANAS` começar a correr, já que a 8ª observação está a ~8 SEMANAS na cadência real —, mas
     **não entra no ranking** antes de o grão do S1 ser decidido e a dedup TP × WH ser calibrada
     (ela está arbitrada, não medida: não existe par real).
     """

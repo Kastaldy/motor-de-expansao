@@ -121,24 +121,30 @@ def test_agregador_fora_do_contrato_levanta(origem: Path) -> None:
 def test_feed_velho_nao_e_publicado(origem: Path, tmp_path: Path) -> None:
     """O defeito mais PROVAVEL do cron, nao o mais exotico.
 
-    O snapshot mensal roda depois de ~21h de coleta. Se o coletor do WellHub morrer no meio da
-    janela de 20h, os CSVs antigos ficam no disco -- e fotografa-los faz o `hash_campos_raspados`
-    sair identico ao do mes anterior, `semanas_sem_mudanca` crescer sozinho e o S4 marcar o
-    universo INTEIRO daquela fonte como "parado". Falso positivo em massa, com codigo de saida 0.
+    O snapshot dos agregadores roda depois de ~21h de coleta. Se o coletor do WellHub morrer no
+    meio da janela de 20h, os CSVs antigos ficam no disco -- e fotografa-los faz o
+    `hash_campos_raspados` sair identico ao da semana anterior, `semanas_sem_mudanca` crescer
+    sozinho e o S4 marcar o universo INTEIRO daquela fonte como "parado". Falso positivo em massa,
+    com codigo de saida 0.
+
+    Envelhece **7 dias**, que e' a idade do feed da rodada anterior sob cadencia SEMANAL (o cron
+    comeca terca 02:00 UTC), e usa o DEFAULT -- nao um limiar explicito. Com `max_idade_dias=7`
+    passado a mao o teste ficava verde pelo motivo errado: a borda e' inclusiva, entao `7 <= 7` e o
+    feed velho PUBLICARIA se o default fosse 7.
     """
     # Os DOIS diretorios do WellHub envelhecem junto: o coletor nao rodou, entao nada la' e' novo.
     # Envelhecer so' um deles cairia no ramo de AMBIGUIDADE de D3, que e' outro defeito.
     # Envelhece CONTEUDO e mtime: aqui as duas reguas concordam, e e' esse o caso comum.
     for arquivo in (origem / "Wellhub").rglob("*.csv"):
-        _envelhecer_conteudo(arquivo, 30)
-        _envelhecer(arquivo, 30.0)
+        _envelhecer_conteudo(arquivo, 7)
+        _envelhecer(arquivo, 7.0)
 
-    relatorio = cur.curar(origem, tmp_path / "destino", agora=AGORA, max_idade_dias=7)
+    relatorio = cur.curar(origem, tmp_path / "destino", agora=AGORA)
 
     assert relatorio["fontes_publicadas"] == ["totalpass"]
     assert relatorio["wellhub"]["publicado"] is False
     assert "feed velho" in relatorio["wellhub"]["motivo_recusa"]
-    assert relatorio["wellhub"]["idade_dias"] == pytest.approx(30.0, abs=0.1)
+    assert relatorio["wellhub"]["idade_dias"] == pytest.approx(7.0, abs=0.1)
     # Recusar uma fonte NAO pode derrubar a outra: meia foto e' melhor que nenhuma, e a metade
     # que falta e' declarada pelo `fontes_lidas` do parquet.
     assert relatorio["totalpass"]["publicado"] is True
@@ -225,10 +231,18 @@ def test_regua_cai_no_mtime_quando_data_coleta_e_ilegivel(origem: Path) -> None:
 
 
 def test_regua_usada_vai_ao_relatorio(origem: Path, tmp_path: Path) -> None:
-    """`regua_idade` por agregador: "3 dias" nunca pode ser um numero sem procedencia."""
+    """`regua_idade` por agregador: "3 dias" nunca pode ser um numero sem procedencia.
+
+    O rotulo carrega o SUFIXO da agregacao (`data_coleta_min`) desde a emenda de 2026-08-26: a
+    imagem anterior agregava por MAXIMO sob o rotulo `data_coleta`, e sem o sufixo o mesmo
+    diretorio reportaria idades diferentes em duas versoes com a procedencia escrita igual.
+    """
     relatorio = cur.curar(origem, tmp_path / "destino", agora=AGORA, dry_run=True)
     for agregador in cur.AGREGADORES:
         assert relatorio[agregador]["regua_idade"] == cur.REGUA_DATA_COLETA
+    assert cur.REGUA_DATA_COLETA == "data_coleta_min", (
+        "o rotulo perdeu o sufixo da agregacao: a procedencia volta a ser ambigua entre imagens"
+    )
 
 
 def test_data_coleta_lida_com_parser_csv_e_nao_por_split(tmp_path: Path) -> None:
@@ -243,7 +257,7 @@ def test_data_coleta_lida_com_parser_csv_e_nao_por_split(tmp_path: Path) -> None
     )
     idade, regua = cur.idade_do_feed(caminho.parent, AGORA)
     assert regua == cur.REGUA_DATA_COLETA
-    assert idade == pytest.approx(3.0), "leu a data mais NOVA, sem se perder no `;` entre aspas"
+    assert idade == pytest.approx(5.0), "leu a data mais VELHA, sem se perder no `;` entre aspas"
 
 
 def test_piso_relativo_barra_coleta_que_morreu_na_metade(origem: Path, tmp_path: Path) -> None:
@@ -253,7 +267,7 @@ def test_piso_relativo_barra_coleta_que_morreu_na_metade(origem: Path, tmp_path:
     `sumiu_recente` em massa no S1, que e' o sinal de MAIOR peso.
     """
     destino = tmp_path / "destino"
-    # Baseline: 20 linhas ja' publicadas no mes anterior.
+    # Baseline: 20 linhas ja' publicadas na semana anterior.
     _escrever_csv(destino / "wellhub" / "csvs" / "unidades_wellhub_sp_musculacao.csv", linhas=20)
 
     relatorio = cur.curar(origem, destino, agora=AGORA)  # a origem tem 3 linhas (15%)
@@ -281,7 +295,7 @@ def test_curadoria_e_tudo_ou_nada_quando_a_decisao_levanta(origem: Path, tmp_pat
     """Ambiguidade do WellHub NAO pode deixar o TotalPass ja' publicado no destino.
 
     A ordem canonica poe `totalpass` primeiro; no laco unico anterior ele ja' tinha sido COPIADO
-    quando a excecao do `wellhub` subia, e o destino ficava com meia curadoria de um mes novo
+    quando a excecao do `wellhub` subia, e o destino ficava com meia curadoria de uma semana nova
     enquanto o wrapper abortava.
     """
     # Estado ambiguo de D3: `csvs_musculacao/` estritamente mais antigo que `csvs/`.
@@ -374,7 +388,7 @@ def test_nao_apaga_csv_existente_no_destino(origem: Path, tmp_path: Path) -> Non
 
 
 def test_copia_preserva_o_mtime(origem: Path, tmp_path: Path) -> None:
-    """O mtime e' o FALLBACK da guarda de frescor do mes seguinte.
+    """O mtime e' o FALLBACK da guarda de frescor da semana seguinte.
 
     Desde a emenda de 2026-08-25 a' DEC-039 a regua primaria e' `data_coleta`, que viaja DENTRO do
     arquivo e nao depende disto. Mas o fallback continua valendo para feed sem data legivel, e com
@@ -467,3 +481,87 @@ def test_modulo_nao_importa_o_m1_nem_dashboard() -> None:
             "motor_expansao.config",
         ):
             assert not casa_proibicao(n, proibido), (n, proibido)
+
+
+# --------------------------------------------------------------------------- #
+# D4, emenda de 2026-08-26: cadencia SEMANAL -- o limiar cai para 3 e a regua
+# passa a ser a linha mais VELHA do diretorio
+# --------------------------------------------------------------------------- #
+def test_feed_de_7_dias_e_recusado_e_o_de_1_dia_publica(origem: Path, tmp_path: Path) -> None:
+    """A fronteira que importa sob cadencia semanal, nos DOIS lados.
+
+    O feed da rodada anterior mede 7 dias (cron comecando terca 02:00 UTC) ou 8 (comecando 06:00),
+    e uma coleta saudavel mede 0 ou 1 -- conforme quantas meias-noites UTC a janela de ~21h43
+    atravessa. Qualquer limiar em [1, 6] separa os dois casos; o `7` herdado NAO separa, porque a
+    borda e' inclusiva.
+    """
+    assert cur.MAX_IDADE_DIAS_DEFAULT == 3.0, "o limiar mudou; reveja a fronteira medida"
+
+    csvs = origem / "TotalPass" / "csvs"
+    for arquivo in csvs.glob("*.csv"):
+        _envelhecer_conteudo(arquivo, 7)
+    fresco, idade = cur.feed_esta_fresco(csvs, cur.MAX_IDADE_DIAS_DEFAULT, AGORA)
+    assert idade == pytest.approx(7.0)
+    assert fresco is False, "o feed da rodada anterior passaria por fresco"
+    # E a prova de que o `7` era INERTE: com ele, o MESMO feed publica.
+    assert cur.feed_esta_fresco(csvs, 7.0, AGORA)[0] is True
+
+    # O outro lado: coleta saudavel (`_escrever_csv` carimba a vespera de AGORA) publica.
+    for arquivo in csvs.glob("*.csv"):
+        _escrever_csv(arquivo, linhas=4)
+    assert cur.feed_esta_fresco(csvs, cur.MAX_IDADE_DIAS_DEFAULT, AGORA) == (True, 1.0)
+
+
+def test_idade_sai_da_linha_mais_velha_do_feed(tmp_path: Path) -> None:
+    """Coleta que roda e morre no meio: `max` mede 0 dia sobre um diretorio quase todo velho.
+
+    `Wellhub/split_by_state.py` so' reescreve as UFs presentes no consolidado e **nada apaga**: as
+    UFs que nao vieram ficam com a safra anterior no disco. Simulado com as proporcoes reais das 27
+    UFs (so' SP recoletada hoje, 26 UFs de 7 dias atras), a regua de MAXIMO reportava
+    `idade_dias=0.0` e publicava -- e o piso relativo de volume NAO dispara, porque o total
+    continua em 100% do baseline. E' o buraco que a troca `max` -> `min` fecha.
+    """
+    csvs = tmp_path / "csvs"
+    _escrever_csv(csvs / "unidades_wellhub_sp.csv", linhas=16, data_coleta="2026-08-25")
+    for i in range(26):
+        _escrever_csv(csvs / f"unidades_wellhub_uf{i:02d}.csv", linhas=1, data_coleta="2026-08-18")
+
+    idade, regua = cur.idade_do_feed(csvs, AGORA)
+    assert regua == cur.REGUA_DATA_COLETA
+    assert idade == pytest.approx(7.0), "a regua de MAXIMO diria 0,0 sobre o mesmo diretorio"
+    assert cur.feed_esta_fresco(csvs, cur.MAX_IDADE_DIAS_DEFAULT, AGORA)[0] is False
+
+
+def test_data_coleta_no_futuro_nao_zera_a_idade(tmp_path: Path) -> None:
+    """UMA linha corrompida com data de amanha nao pode absolver o feed inteiro.
+
+    Com a regua de MAXIMO, 1 linha em 10.000 com data futura dava `idade_do_feed = -1.0` e passava
+    por QUALQUER limiar. Com `min` puro ela seria inocua, mas o descarte mantem a regua honesta nos
+    dois sentidos: `data_coleta` no futuro nao e' dado, e' corrupcao -- nao pode nem rejuvenescer
+    nem envelhecer o feed.
+    """
+    csvs = tmp_path / "csvs"
+    _escrever_csv(csvs / "unidades_totalpass_sp.csv", linhas=3, data_coleta="2026-08-20")
+    _escrever_csv(csvs / "unidades_totalpass_rj.csv", linhas=1, data_coleta="2026-12-31")
+
+    idade, regua = cur.idade_do_feed(csvs, AGORA)
+    assert regua == cur.REGUA_DATA_COLETA
+    assert idade == pytest.approx(5.0), "a data no futuro contaminou a regua"
+    assert idade > 0, "idade negativa: a linha corrompida absolveu o feed"
+    assert cur.feed_esta_fresco(csvs, cur.MAX_IDADE_DIAS_DEFAULT, AGORA)[0] is False
+
+
+def test_feed_inteiro_no_futuro_cai_no_fallback_de_mtime(tmp_path: Path) -> None:
+    """Descartar TODAS as datas nao pode virar "fresco por falta de evidencia".
+
+    Sem nenhuma `data_coleta` aproveitavel, a regua primaria nao responde e o modulo cai no
+    `mtime`, DIZENDO que caiu -- mesmo caminho do feed sem a coluna.
+    """
+    csvs = tmp_path / "csvs"
+    _escrever_csv(csvs / "unidades_totalpass_sp.csv", linhas=3, data_coleta="2026-12-31")
+    _envelhecer(csvs / "unidades_totalpass_sp.csv", 40.0)
+
+    idade, regua = cur.idade_do_feed(csvs, AGORA)
+    assert regua == cur.REGUA_MTIME
+    assert idade == pytest.approx(40.0, abs=0.01)
+    assert cur.feed_esta_fresco(csvs, cur.MAX_IDADE_DIAS_DEFAULT, AGORA)[0] is False

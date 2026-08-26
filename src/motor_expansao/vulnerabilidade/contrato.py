@@ -58,28 +58,37 @@ MIN_SEMANAS = 8
 STALE_SEMANAS = 12
 
 # `RETENCAO_SEMANAS` é a ÚNICA das três que conta semanas de CALENDÁRIO, e é essa assimetria que
-# torna o valor um parâmetro de produto, não de disco `[BLK-MA-21 / DEC-039, 2026-08-25]`.
+# torna o valor um parâmetro de produto, não de disco
+# `[BLK-MA-21 / DEC-039, emenda de 2026-08-26 — cadência SEMANAL]`.
 #
-# A aritmética das DUAS cadências, escrita, porque ela decide o número. `podar_snapshots` é
-# keep-newest-N sobre diretórios `semana=`, e o cron SEMANAL escreve em toda semana ISO. Logo o
-# conjunto de partições é o conjunto de semanas de calendário, e reter N delas retém, para um feed
-# de cadência MENSAL, apenas `N / 4,345` observações daquela fonte (4,345 = 52,18/12).
+# A cadência é UNIFORME: as três fontes rodam toda semana ISO (`unidades` no domingo, os dois
+# agregadores na terça). `podar_snapshots` é keep-newest-N sobre diretórios `semana=`, então reter N
+# partições retém, NO CAMINHO FELIZ, N observações de CADA fonte. Fora dele não: a fonte que perde a
+# folha da semana (a curadoria recusa feed velho, o coletor cai) perde a observação, mas a semana
+# continua ocupando um slot — é essa a folga que o número tem de comprar.
 #
-#   | N  | semanas do feed semanal | observações do feed mensal |
-#   |----|-------------------------|----------------------------|
-#   | 26 | 26                      | 5,98  <- ABAIXO de MIN_SEMANAS: nunca amadurece |
-#   | 53 | 53                      | 12,2  <- iguala STALE_SEMANAS, sem folga        |
-#   | 78 | 78                      | 17,9  <- com folga sobre STALE_SEMANAS          |
+# O piso é **13**, MEDIDO (`extrair_churn_staleness` com séries sintéticas de hash constante):
+# `_semanas_sem_mudanca` conta observações ESTRITAMENTE após a última mudança, logo com k semanas
+# presentes vale `k-1`, contra o denominador `STALE_SEMANAS = 12` do `v4`.
 #
-# Com `26`, `n_semanas_serie` de um agregador para em 5,98, `flag_serie_imatura` fica `True` para
-# sempre e o `v4` fica preso em `<= 6/12 = 0,5`: ligar o cron mensal entregaria um relógio que marca
-# a hora errada para sempre. Custo de disco do `78`, medido em 2026-08-25 sobre a partição viva
-# (155,8 bytes/linha): 78 semanais de `unidades` (~16k linhas) + 18 observações mensais dos dois
-# agregadores ~= 310 MB. Não é restrição.
+#   | N  | semanas_sem_mudanca | v4     |                                            |
+#   |----|---------------------|--------|--------------------------------------------|
+#   |  8 |  7                  | 0,5833 |                                            |
+#   | 12 | 11                  | 0,9167 | <- teto permanente: NUNCA satura           |
+#   | 13 | 12                  | 1,0000 | <- PISO DURO; nunca descer abaixo daqui    |
+#   | 26 | 25                  | 1,0000 | <- 2x o piso: satura mesmo com 50% de buraco |
 #
-# Poda POR FONTE dentro da partição (que serviria as duas cadências com menos disco) foi
-# deliberadamente adiada para bloco próprio: ela mexe na única função do pacote que apaga arquivo.
-RETENCAO_SEMANAS = 78
+# `26` é o menor N que ainda satura o `v4` com uma fonte perdendo METADE das semanas (26 semanas,
+# 50% de falha -> 13 observações -> `semanas_sem_mudanca` = 12 -> `v4` = 1,0000, exatamente no piso).
+# Disco medido em 2026-08-26 (42.535 linhas/semana somando as três fontes, 151,7 bytes/linha):
+# **160,0 MB**. Não é restrição. O que restringe é a LEITURA — `ler_snapshots` carrega a série
+# INTEIRA em memória (`ds.dataset(...).to_table().to_pandas()`) e o pico de RSS medido cresce
+# ~70,5 MB por semana retida: N=13 -> 999 MB, N=26 -> 1,9 GB numa KVM4 de 16 GB com 6 containers.
+#
+# Poda POR FONTE dentro da partição (que garantiria N observações por fonte mesmo com buraco de
+# folha) fica em bloco próprio: ela mexe na única função do pacote que apaga arquivo, e a margem que
+# compraria já vem de graça no 26 = 2x o piso.
+RETENCAO_SEMANAS = 26
 
 # ARBITRADO, nao medido (sem serie real; revisitar no BLK-MA-06). O valor importa menos que o
 # DESENHO: o rebaixamento GLOBAL da chave só ocorre se o chamador INJETAR a taxa medida (default
@@ -94,8 +103,10 @@ TOLERANCIA_BBOX_UF_GRAUS = 0.5
 # ordem das chaves hive no caminho — `semana=AAAA-SS/fonte=<fonte>/parte-*.parquet`.
 #
 # Era escalar (`COLUNA_PARTICAO = "semana"`) até o BLK-MA-21 / DEC-039. A segunda chave existe
-# porque duas cadências escrevem na MESMA semana ISO: com uma chave só, `delete_matching` fazia a
-# execução mensal apagar a partição inteira que a semanal tinha acabado de gravar (e vice-versa).
+# porque duas execuções escrevem na MESMA semana ISO (a terça dos agregadores e o domingo do
+# `unidades` caem na mesma semana ISO — medido): com uma chave só, `delete_matching` fazia a
+# execução dos agregadores apagar a partição inteira que a do `unidades` tinha acabado de gravar
+# (e vice-versa).
 # Com `fonte=` a idempotência passa a ser por FOLHA — ver `escrever_particao_semana`.
 COLUNAS_PARTICAO: tuple[str, ...] = ("semana", "fonte")
 

@@ -9,7 +9,7 @@
 #   host        disco e memória do host (cron horário)
 #   authelia    resumo diário de falhas de login (cron 1x/dia)
 #   coleta      domingo pós-coleta: resumo do relatório GymScraping ou alerta de falha
-#   agregadores idade da última partição de snapshot de cada agregador (cron mensal, BLK-MA-21)
+#   agregadores idade da última partição de snapshot de cada agregador (cron semanal, BLK-MA-21)
 #   test        envia mensagem de teste ao chat de ops
 #
 # Anti-spam: alerta só na transição OK->FAIL, lembrete a cada REMIND_SECS enquanto
@@ -28,12 +28,18 @@ MEM_AVAIL_PCT_MIN="${MONITOR_MEM_AVAIL_PCT_MIN:-10}"
 EDGE_URL="${MONITOR_EDGE_URL:-https://piloto.ultra-expansao.tech}"
 GYM_REPORT_DIR="${MONITOR_GYM_REPORT_DIR:-/opt/gymscraping-infra}"
 GYM_LOG_HINT="/var/log/gymscraping/weekly_latest.log"
-# Série de snapshots de concorrentes (BLK-MA-21). O cron MENSAL dos agregadores é o único
-# produtor de `fonte=wellhub` / `fonte=totalpass`; se ele parar, nada mais acusa — o score
-# continua saindo, só que sobre uma série congelada, e o S4 lê a estagnação como sinal.
+# Série de snapshots de concorrentes (BLK-MA-21). O cron SEMANAL dos agregadores (terça 02:00
+# UTC) é o único produtor de `fonte=wellhub` / `fonte=totalpass`; se ele parar, nada mais
+# acusa — o score continua saindo, só que sobre uma série congelada, e o S4 lê a estagnação
+# como sinal.
 SNAPSHOTS_DIR="${MONITOR_SNAPSHOTS_DIR:-/opt/motor-expansao/data/staging/snapshots_concorrentes}"
-# 45 dias = cadência de 28-35 dias (1ª terça do mês) + margem para uma execução perdida.
-AGREGADOR_MAX_DIAS="${MONITOR_AGREGADOR_MAX_DIAS:-45}"
+# 9 dias, sob a cadência SEMANAL (terça 02:00 UTC) com o check na quinta 12:00 UTC: a rodada
+# da própria semana dá 3 dias de idade (a régua sai da SEGUNDA da semana ISO, não do instante
+# da coleta) e uma rodada perdida dá 10. A faixa que separa os dois casos é [3, 9] inteira —
+# 9 é o TETO dela, escolhido por ser o mais tolerante a uma rodada que escorregue dentro da
+# semana, não por unicidade. Com o `45` herdado da premissa mensal seriam até 6 rodadas
+# perdidas antes do primeiro FAIL.
+AGREGADOR_MAX_DIAS="${MONITOR_AGREGADOR_MAX_DIAS:-9}"
 AGREGADORES=(wellhub totalpass)
 CONTAINERS=(
     motor_expansao_caddy
@@ -192,16 +198,16 @@ epoch_da_semana_iso() {
 check_agregadores() {
     # Idade da última partição de cada agregador na série de snapshots (BLK-MA-21).
     #
-    # Por que por FONTE e não pela série inteira: o cron SEMANAL escreve `fonte=unidades` toda
-    # semana, então a série nunca parece velha — olhar só a partição mais recente esconderia,
-    # para sempre, um cron mensal que morreu. Cada agregador tem chave de estado própria, para
-    # que a falha de um não silencie o alerta do outro.
+    # Por que por FONTE e não pela série inteira: o cron de DOMINGO escreve `fonte=unidades`
+    # toda semana, então a série nunca parece velha — olhar só a partição mais recente
+    # esconderia, para sempre, um cron dos agregadores que morreu. Cada agregador tem chave de
+    # estado própria, para que a falha de um não silencie o alerta do outro.
     #
     # A idade sai da CHAVE `semana=AAAA-SS`, não do mtime do diretório `fonte=`
     # [emenda de 2026-08-25 à DEC-039]. O mtime mentia, e mentia justamente onde dói: o passo 2
     # OBRIGATÓRIO da ordem de aplicação roda `--migrar-layout`, que CRIA a folha `fonte=` com
     # mtime de agora. Medido sobre cópia da partição viva: dado de 2026-08-05 (20 dias) reportado
-    # como `0d`, e com limiar de 45 dias o FAIL atrasaria ~20 dias. A distância é arbitrária para
+    # como `0d`, e com o limiar herdado de 45 dias o FAIL atrasaria ~20 dias. A distância é arbitrária para
     # qualquer `rsync`/restore do volume, que também rejuvenesce mtime.
     #
     # A régua nova pode ADIANTAR o alerta em até ~1 dia (a segunda da semana ISO é anterior ao
@@ -217,7 +223,7 @@ check_agregadores() {
         alvo=$(find "$SNAPSHOTS_DIR" -mindepth 2 -maxdepth 2 -type d -name "fonte=$f" \
             -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2- || true)
         if [[ -z "$alvo" ]]; then
-            report "agregador_$f" FAIL "Snapshot do agregador ${f} NUNCA foi fotografado (nenhuma partição em ${SNAPSHOTS_DIR}). O cron mensal foi agendado?"
+            report "agregador_$f" FAIL "Snapshot do agregador ${f} NUNCA foi fotografado (nenhuma partição em ${SNAPSHOTS_DIR}). O cron semanal dos agregadores foi agendado?"
             continue
         fi
         referencia=$(epoch_da_semana_iso "$particao" 2>/dev/null || true)

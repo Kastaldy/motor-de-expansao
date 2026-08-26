@@ -2,7 +2,8 @@
 
 `<clone GymScraping>/{Wellhub,TotalPass}/csvs*` -> `<destino>/{wellhub,totalpass}/csvs/*.csv`, que
 é onde `snapshots.py` procura (`DIR_WELLHUB_DEFAULT` / `DIR_TOTALPASS_DEFAULT`). É o passo 2 do cron
-MENSAL (`scripts/cron/run_snapshot_agregadores.sh`), entre a coleta e o snapshot.
+SEMANAL dos agregadores (`scripts/cron/run_snapshot_agregadores.sh`, terça 02:00 UTC), entre a
+coleta e o snapshot.
 
 **Por que isto é código versionado e testado, e não três `cp` no shell (DEC-039, D6).** Ele decide
 duas coisas que, decididas errado, produzem um NÚMERO MAIOR em vez de um erro:
@@ -14,12 +15,13 @@ duas coisas que, decididas errado, produzem um NÚMERO MAIOR em vez de um erro:
      DESLIGADO (`Wellhub/coletor_wellhub.py`, ramo `--no-musculacao-filter`). Copiar o errado
      infla o universo do funil de M&A com academias sem musculação, em silêncio. No TotalPass não
      há escolha: o filtro é `hardcoded` no coletor e só existe `csvs/`.
-  2. **Se o feed é FRESCO o bastante para ser fotografado.** O snapshot mensal roda depois de ~21h
-     de coleta; se um coletor falhar no meio, os CSVs **antigos continuam no disco** e publicá-los
-     faria o `hash_campos_raspados` sair idêntico ao do mês anterior -> `semanas_sem_mudanca`
-     cresce sozinho -> o **S4 marca o universo inteiro daquela fonte como "parado"**, que é o
-     próprio sinal de vulnerabilidade. Falso positivo em massa, no sinal de segundo maior peso,
-     com `exit 0`. É a mesma razão pela qual o cron SEMANAL roda `--fontes unidades`.
+  2. **Se o feed é FRESCO o bastante para ser fotografado.** O snapshot dos agregadores roda depois
+     de ~21h de coleta; se um coletor falhar no meio, os CSVs **antigos continuam no disco** e
+     publicá-los faria o `hash_campos_raspados` sair idêntico ao da semana anterior ->
+     `semanas_sem_mudanca` cresce sozinho -> o **S4 marca o universo inteiro daquela fonte como
+     "parado"**, que é o próprio sinal de vulnerabilidade. Falso positivo em massa, no sinal de
+     segundo maior peso, com `exit 0`. É a mesma razão pela qual o cron do domingo roda
+     `--fontes unidades`.
 
 **A idade sai da coluna `data_coleta`, DENTRO do CSV — não do `mtime` `[emenda de 2026-08-25 à
 DEC-039]`.** A guarda nasceu medindo `p.stat().st_mtime`, e isso a tornava cega justamente ao caso
@@ -76,7 +78,17 @@ _DIR_ORIGEM_POR_AGREGADOR: dict[str, str] = {"totalpass": "TotalPass", "wellhub"
 
 ORIGEM_DEFAULT = Path("gymscraping")
 DESTINO_DEFAULT = Path("concorrentes")
-MAX_IDADE_DIAS_DEFAULT = 7.0
+
+# Limiar da guarda de frescor, em DIAS `[BLK-MA-21 / DEC-039, emenda de 2026-08-26]`. O `7` herdado
+# era **INERTE** sob cadência semanal: a borda é inclusiva (`idade <= max_idade_dias`), e o feed da
+# rodada anterior mede exatamente 7 dias quando o cron começa 02:00 UTC — logo `7 <= 7` PUBLICAVA o
+# feed velho, e a segurança da guarda virava acidente do horário do cron.
+#
+# A janela que separa é [1, 6]: o teto medido de uma coleta saudável é **1 dia** (0 ou 1, conforme
+# quantas meias-noites UTC a janela de ~21h43 atravessa) e o defeito que a guarda existe para pegar
+# mede **7-8 dias**. `3` custa ZERO no lado do defeito e compra 2 dias de folga contra a duração do
+# WellHub, que tem duas medições incompatíveis (20h03 x 31h08) e ainda não foi desempatada.
+MAX_IDADE_DIAS_DEFAULT = 3.0
 
 # Coluna de data de coleta, ÚLTIMA por convenção nos dois coletores agregadores
 # (`Wellhub/csv_writer.py` e `TotalPass/csv_writer.py`). É a régua PRIMÁRIA de frescor.
@@ -85,7 +97,11 @@ DELIMITADOR_FEED = ";"
 
 # Rótulos da régua que decidiu a idade — vão ao relatório e ao log, para que "3 dias" nunca seja um
 # número sem procedência. `mtime` é o fallback e `indisponivel` é "não há CSV nenhum".
-REGUA_DATA_COLETA = "data_coleta"
+#
+# O rótulo diz `data_coleta_min` (e não `data_coleta`) desde a emenda de 2026-08-26: a régua agrega
+# por MÍNIMO, e a versão anterior da imagem agregava por MÁXIMO sob o mesmo rótulo. Sem o sufixo, o
+# mesmo diretório reportaria idades diferentes em duas imagens com a procedência escrita igual.
+REGUA_DATA_COLETA = "data_coleta_min"
 REGUA_MTIME = "mtime"
 REGUA_INDISPONIVEL = "indisponivel"
 
@@ -184,8 +200,24 @@ def _iso(mtime: float) -> str:
     return datetime.fromtimestamp(mtime, tz=UTC).isoformat(timespec="seconds")
 
 
-def _data_coleta_mais_nova(arquivos: Sequence[Path]) -> date | None:
-    """Maior `data_coleta` legível do conjunto, ou `None` se nenhuma linha oferecer uma.
+def _data_coleta_mais_antiga(arquivos: Sequence[Path], hoje: date) -> date | None:
+    """MENOR `data_coleta` legível do conjunto, ou `None` se nenhuma linha oferecer uma.
+
+    **Por que MÍNIMO e não máximo `[emenda de 2026-08-26 à DEC-039]`.** A régua nasceu agregando por
+    `max`, e isso a tornava cega ao modo de falha mais provável do coletor: uma coleta que roda e
+    morre no meio. `Wellhub/split_by_state.py` só reescreve as UFs presentes no consolidado e **nada
+    apaga** — as UFs que não vieram ficam com a safra anterior no disco. Simulado com as proporções
+    reais das 27 UFs: só SP recoletada hoje, 26 UFs de 7 dias atrás -> por `max` o diretório mede
+    `idade_dias = 0.0` e publica 45.526 linhas das quais só 36,1% são frescas, e o piso relativo de
+    volume NÃO dispara porque o total está em 100% do baseline. Pelo MÍNIMO o mesmo diretório mede
+    7 dias e é recusado. A troca custa ZERO hoje: o spread real medido é 0 em 83.685 linhas dos três
+    diretórios do clone (`collection_date` é calculado UMA vez, antes do `ThreadPoolExecutor`, e
+    carimbado idêntico em toda linha).
+
+    **Data no FUTURO é DESCARTADA**, não agregada. Com `max` uma única linha corrompida com a data
+    de amanhã em 10.000 dava `idade_do_feed = -1.0` e passava por qualquer limiar; com `min` puro
+    ela seria inócua, mas descartar mantém a régua honesta nos dois sentidos — `data_coleta` no
+    futuro não é dado, é corrupção, e ela não pode nem rejuvenescer nem envelhecer o feed.
 
     Leitura em modo TEXTO com o `csv` da stdlib — e **só** a coluna `data_coleta` é olhada; nenhuma
     outra célula é lida, guardada ou derivada (anti-PII do módulo). Um `cut -d';' -f10` do shell
@@ -212,7 +244,9 @@ def _data_coleta_mais_nova(arquivos: Sequence[Path]) -> date | None:
                         valor = date.fromisoformat(linha[indice].strip())
                     except ValueError:
                         continue
-                    if melhor is None or valor > melhor:
+                    if valor > hoje:  # corrupção: não envelhece nem rejuvenesce o feed
+                        continue
+                    if melhor is None or valor < melhor:
                         melhor = valor
         except OSError:  # pragma: no cover - disco/permissão; o fallback de mtime cobre
             continue
@@ -222,9 +256,18 @@ def _data_coleta_mais_nova(arquivos: Sequence[Path]) -> date | None:
 def idade_do_feed(diretorio: Path, agora: datetime) -> tuple[float | None, str]:
     """`(idade em dias, régua usada)` do feed. `(None, 'indisponivel')` quando não há CSV.
 
-    A régua PRIMÁRIA é `data_coleta` (dentro do arquivo) e o fallback é `mtime` (do arquivo). A
-    diferença não é acadêmica: medido no clone real em 2026-08-25, `TotalPass/csvs/` tinha
-    `mtime` de HOJE e `data_coleta = 2026-06-01` em 15.982 de 15.986 linhas — 85 dias de idade
+    A régua PRIMÁRIA é a linha **mais VELHA** ainda no diretório (`min(data_coleta)`, descartando
+    data no futuro) e o fallback é `mtime` (do arquivo). A pergunta que ela responde é "há quanto
+    tempo foi colhido o dado MAIS ANTIGO que eu estaria publicando", não "quando foi a última vez
+    que alguém tocou aqui" — as duas divergem exatamente nos dois modos de falha do coletor.
+
+    **Direção de falha: FAIL-CLOSED, de propósito.** Uma única linha com `data_coleta` corrompida no
+    passado passa a recusar o feed inteiro (e o wrapper sai com `exit 3`, chamando o operador).
+    Recusar é a direção segura: publicar meia foto cria `sumiu_recente` em massa no S1 e
+    `semanas_sem_mudanca` no S4 — falso positivo nos dois sinais de maior peso, com `exit 0`.
+
+    O fallback de `mtime` não é acadêmico: medido no clone real em 2026-08-25, `TotalPass/csvs/`
+    tinha `mtime` de HOJE e `data_coleta = 2026-06-01` em 15.982 de 15.986 linhas — 85 dias de idade
     reportados como `0`. O `split_by_state` do coletor reescreve os 27 CSVs por UF em modo `"w"`
     ao fim de toda execução, mesmo quando o checkpoint impediu qualquer recoleta.
 
@@ -234,7 +277,7 @@ def idade_do_feed(diretorio: Path, agora: datetime) -> tuple[float | None, str]:
     arquivos = _csvs(Path(diretorio))
     if not arquivos:
         return None, REGUA_INDISPONIVEL
-    coletada = _data_coleta_mais_nova(arquivos)
+    coletada = _data_coleta_mais_antiga(arquivos, agora.date())
     if coletada is not None:
         return float((agora.date() - coletada).days), REGUA_DATA_COLETA
     mtime = _mtime_mais_novo(Path(diretorio))
@@ -371,7 +414,7 @@ def curar(
     **Tudo ou nada, e por isso em DUAS fases `[emenda de 2026-08-25 à DEC-039]`.** Decidir os dois
     agregadores primeiro e copiar depois é o que torna a promessa acima verdadeira: no laço único
     anterior, o `totalpass` (primeiro na ordem canônica) já tinha sido COPIADO quando a ambiguidade
-    do `wellhub` levantava, e o destino ficava com meia curadoria de um mês novo enquanto o wrapper
+    do `wellhub` levantava, e o destino ficava com meia curadoria de uma semana nova enquanto o wrapper
     abortava. Agora nenhuma exceção de decisão alcança o disco de destino.
 
     `dry_run=True` faz tudo menos copiar — inclusive criar diretório.
@@ -407,7 +450,7 @@ def curar(
             if not dry_run:
                 destino_agregador.mkdir(parents=True, exist_ok=True)
                 for arquivo in arquivos:
-                    # `copy2` preserva o mtime, que é o FALLBACK da guarda de frescor do mês
+                    # `copy2` preserva o mtime, que é o FALLBACK da guarda de frescor da semana
                     # seguinte (a régua primária, `data_coleta`, viaja dentro do próprio arquivo e
                     # não depende disto). Com `copy` puro, um feed sem `data_coleta` legível
                     # pareceria recém-coletado para sempre.
@@ -430,7 +473,9 @@ def curar(
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """CLI da curadoria. É o passo 2 do wrapper mensal — o wrapper lê `fontes_publicadas` do stdout."""
+    """CLI da curadoria. É o passo 2 do wrapper semanal dos agregadores — o wrapper lê
+    `fontes_publicadas` do stdout.
+    """
     p = argparse.ArgumentParser(
         prog="python -m motor_expansao.vulnerabilidade.curadoria_agregadores",
         description=(

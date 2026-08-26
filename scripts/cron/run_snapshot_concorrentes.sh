@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Snapshot SEMANAL de concorrentes -> data/staging/snapshots_concorrentes/
+# Snapshot de concorrentes do DOMINGO -> data/staging/snapshots_concorrentes/
 #     semana=AAAA-SS/fonte=<fonte>/parte-*.parquet
 #
 # E' o passo do BLK-MA-06: fotografa o feed de concorrentes ANTES de a coleta da
@@ -9,10 +9,21 @@
 #
 # ATENCAO -- a particao tem DUAS chaves desde o BLK-MA-21 / DEC-039. Se este script
 # rodar numa IMAGEM ANTIGA (que escreve so' `semana=`), ele APAGA a folha gravada
-# pela cadencia mensal na mesma semana ISO. Antes de instalar, confira na saida do
-# `DRY_RUN=1` que `versao_contrato` e' `snapshots_concorrentes_v4`; com `v3`, NAO
-# agende -- aplique a imagem nova primeiro (ordem de 6 passos em
-# docs/infra_producao.md, "Coleta mensal dos agregadores").
+# pelo cron dos AGREGADORES na mesma semana ISO -- e terca e domingo caem na MESMA
+# semana ISO, medido. Antes de instalar, confira na saida do `DRY_RUN=1` que
+# `versao_contrato` e' `snapshots_concorrentes_v4`; com `v3`, NAO agende -- aplique
+# a imagem nova primeiro (ordem de 6 passos em docs/infra_producao.md, "Coleta
+# semanal dos agregadores").
+#
+# OS DOIS WRAPPERS NUNCA SE EXCLUEM MUTUAMENTE. Este script NAO tem `flock`; o dos
+# agregadores tem, mas o lock dele so' protege contra reexecucao do PROPRIO script.
+# Quem impede o estrago e' o particionamento de DUAS chaves, que faz o
+# `delete_matching` casar folhas distintas. Nao e' redundancia: e' a unica defesa.
+# A excecao conhecida e' `podar_snapshots`, que faz `shutil.rmtree` em diretorios
+# `semana=` e e' chamada pelas DUAS cadencias -- duas podas concorrentes no mesmo
+# diretorio nao tem defesa nenhuma no codigo. Fica registrado como bloco proprio
+# (BLK-MA-21-FU3): adicionar `flock` aqui muda um wrapper JA' aplicado na VPS e
+# exigiria reaplicacao manual, entao ficou fora do escopo do BLK-MA-21.
 #
 # READ-ONLY sobre o M1: nao toca score_priorizacao, pesos, config.py, pipelines/m1
 # nem artefato oficial. Escreve SO em data/staging/snapshots_concorrentes/.
@@ -20,9 +31,10 @@
 # ---------------------------------------------------------------------------
 # POR QUE `--fontes unidades` E NAO OS TRES FEEDS  (decisao de 2026-08-11)
 #
-# O cron semanal (`run_weekly_90.sh`, dom 06:00 UTC) recoleta SO os 90 coletores,
-# que atualizam `Unidades/unidades_<rede>.csv`. WellHub e TotalPass dependem de um
-# cron mensal que AINDA NAO EXISTE (docs/infra_producao.md, "Pendentes").
+# O runner de domingo (`run_weekly_90.sh`, dom 06:00 UTC) recoleta SO os 90
+# coletores, que atualizam `Unidades/unidades_<rede>.csv`. WellHub e TotalPass sao
+# recoletados pelo cron SEMANAL dos agregadores (terca 02:00 UTC), que tem wrapper
+# proprio e passa pela curadoria -- ver abaixo.
 #
 # Fotografar um feed que nao foi recoletado e' pior que nao fotografar: o
 # `hash_campos_raspados` sai identico semana apos semana, `semanas_sem_mudanca`
@@ -30,14 +42,14 @@
 # que e' exatamente o sinal de vulnerabilidade que alimenta o funil de M&A. Falso
 # positivo em massa, no sinal de segundo maior peso, e silencioso.
 #
-# O CRON MENSAL DOS AGREGADORES **NAO** PASSA POR AQUI (BLK-MA-21 / DEC-039).
+# O CRON DOS AGREGADORES (terca) **NAO** PASSA POR AQUI (BLK-MA-21 / DEC-039).
 #
-# Esta linha dizia, ate' 2026-08-25, que a cadencia mensal invocaria "este mesmo
-# script com `--fontes totalpass wellhub`". Seguir a instrucao PULARIA a curadoria
-# inteira: a escolha do diretorio de origem do WellHub (dois universos que diferem
-# por 2-3x) e a guarda de frescor -- que sao a razao de o bloco existir. O mensal
-# tem wrapper proprio, `scripts/cron/run_snapshot_agregadores.sh`, que faz coleta +
-# curadoria + snapshot sob um `flock` so'.
+# Esta linha dizia, ate' 2026-08-25, que a cadencia dos agregadores invocaria "este
+# mesmo script com `--fontes totalpass wellhub`". Seguir a instrucao PULARIA a
+# curadoria inteira: a escolha do diretorio de origem do WellHub (dois universos que
+# diferem por 2-3x) e a guarda de frescor -- que sao a razao de o bloco existir. Os
+# agregadores tem wrapper proprio, `scripts/cron/run_snapshot_agregadores.sh`, que
+# faz coleta + curadoria + snapshot sob um `flock` so'.
 #
 # ---------------------------------------------------------------------------
 # ANTES DE LIGAR NO CRON: rode o modo seco e confira o caminho dos CSVs.

@@ -5,10 +5,12 @@ CSV cru dos coletores -> limpeza de ruído auditável -> chave estável -> `hash
 NÃO oficial do M1). É o produtor que faltava: o `run_weekly_90.sh` **sobrescreve** os CSVs a cada
 coleta, então toda semana não fotografada é perdida para sempre (`docs/infra_producao.md:136-149`).
 
-**Duas cadências escrevem na MESMA semana ISO `[BLK-MA-21 / DEC-039]`:** o cron SEMANAL fotografa
-`--fontes unidades` (o feed de cadeias, o único recoletado toda semana) e o cron MENSAL fotografa
-`--fontes totalpass wellhub`. Por isso a partição tem DUAS chaves: com uma só, a segunda execução
-da semana apagava a primeira via `delete_matching`. Ver `escrever_particao_semana`.
+**Duas execuções escrevem na MESMA semana ISO `[BLK-MA-21 / DEC-039]`:** o cron de DOMINGO
+fotografa `--fontes unidades` (o feed de cadeias) e o cron dos AGREGADORES, na TERÇA, fotografa
+`--fontes totalpass wellhub`. As duas cadências são SEMANAIS e terça e domingo caem na mesma
+semana ISO (medido), então elas colidem numa partição POR CONSTRUÇÃO. Por isso a partição tem
+DUAS chaves: com uma só, a segunda execução da semana apagava a primeira via `delete_matching`.
+Ver `escrever_particao_semana`.
 
 Fronteira desta camada: aqui nasce UMA partição de UMA semana. A leitura da série e a derivação de
 churn/staleness são de `churn_staleness.py` — o materializador **nunca** olha semanas anteriores
@@ -181,9 +183,10 @@ def ler_feeds(
     entram como `""`. Diretório inexistente contribui 0 linhas e **nunca** levanta.
 
     `fontes` restringe QUAIS feeds entram (default: todos). Existe por causa de um descasamento de
-    CADÊNCIA, não de gosto (BLK-MA-06): o cron semanal recoleta só o feed `unidades`; WellHub e
-    TotalPass dependem de um cron mensal que ainda **não existe**
-    (`docs/infra_producao.md`, "Pendentes"). Fotografar um feed que não foi recoletado produz
+    JANELA, não de gosto (BLK-MA-06): o runner de domingo recoleta só o feed `unidades`; WellHub e
+    TotalPass são recoletados pelo cron dos agregadores, na TERÇA
+    (`docs/infra_producao.md`, "Coleta semanal dos agregadores"). Fotografar um feed que não foi
+    recoletado produz
     `hash_campos_raspados` idêntico semana após semana -> `semanas_sem_mudanca` cresce sozinho ->
     o **S4 marcaria o universo inteiro de agregador como "parado"**, que é justamente o sinal de
     vulnerabilidade. Passar `fontes` explicitamente deixa esse recorte auditável no log e na
@@ -789,8 +792,8 @@ def escrever_particao_semana(
     """Grava `base_dir/semana=AAAA-SS/fonte=<fonte>/parte-*.parquet` (partição hive de 2 chaves).
 
     **A idempotência é por FOLHA, não por partição `[BLK-MA-21 / DEC-039]`.** Com uma chave só,
-    `existing_data_behavior="delete_matching"` casava a SEMANA inteira: a execução mensal dos
-    agregadores apagava o que a semanal (`--fontes unidades`) tinha acabado de gravar na mesma
+    `existing_data_behavior="delete_matching"` casava a SEMANA inteira: a execução dos
+    agregadores (terça) apagava o que a do `unidades` (domingo) tinha acabado de gravar na mesma
     semana ISO, e vice-versa — ~21h de coleta perdidas com `exit 0`. Com `fonte=` como segunda
     chave, reescrever uma semana substitui **só as folhas das fontes presentes no frame**, e a
     folha de uma fonte AUSENTE do frame **sobrevive** (medido em pyarrow 23.0.1). Onde antes se
@@ -934,7 +937,7 @@ def ler_snapshots(
 
     `fontes` recorta a série pelas fontes pedidas, no mesmo molde de `semanas` (filtro depois do
     `to_pandas`). Existe para impor POR CÓDIGO a fronteira com o BLK-MA-20 (DEC-039, D9): a
-    partição do `totalpass` passa a ser GRAVADA desde o primeiro mês — para o cronômetro de
+    partição do `totalpass` passa a ser GRAVADA desde a primeira semana — para o cronômetro de
     `MIN_SEMANAS` começar a correr —, mas o consumo dela pelo score espera a calibração da dedup
     TP x WH, que hoje está arbitrada. Prosa não impediria: a cadeia inteira roda com as duas fontes
     sem editar uma linha. Nome fora de `FONTES_VALIDAS` **levanta**, e levanta ANTES da saída
@@ -991,9 +994,15 @@ def podar_snapshots(
 
     A unidade é o DIRETÓRIO `semana=`, e a folha `fonte=` **não** é olhada: podar remove a semana
     inteira, com todas as fontes que ela tiver. É essa granularidade que faz `RETENCAO_SEMANAS`
-    contar semanas de CALENDÁRIO e não observações — a aritmética das duas cadências está no
-    comentário da constante, em `contrato.py`. Poda por FONTE dentro da partição foi adiada para
-    bloco próprio (DEC-039, D5).
+    contar semanas de CALENDÁRIO e não observações — a aritmética está no comentário da
+    constante, em `contrato.py`.
+
+    Poda por FONTE dentro da partição fica em bloco próprio (DEC-039, D5). Sob cadência uniforme
+    as duas unidades coincidem NO CAMINHO FELIZ, mas divergem assim que uma fonte perde a folha
+    da semana (a curadoria recusa feed velho, o coletor cai): a semana continua ocupando um slot
+    e a fonte perde a observação. Medido: 20 semanas com `wellhub` só nas pares, poda em N=13 ->
+    `unidades` fica com 13 observações e `wellhub` com 7, abaixo de `MIN_SEMANAS = 8`. A margem
+    que a poda por fonte compraria já vem de graça no `RETENCAO_SEMANAS = 26` (2x o piso 13).
 
     Semântica sem `date.today()` de propósito (determinística e testável). **APAGA DIRETÓRIOS EM
     DISCO**, e por isso é conservadora: só olha filhos DIRETOS de `base_dir` cujo nome casa
@@ -1223,7 +1232,7 @@ def materializar(
     # Quais feeds ESTA execução PEDIU. Calculado UMA vez e usado nos dois lugares — a coluna do
     # parquet e a auditoria impressa —, para que a auditoria espelhe exatamente o que foi gravado
     # em vez de recalcular a mesma coisa por outro caminho (dois caminhos podem divergir; um não).
-    # A resposta muda com a cadência (BLK-MA-06): quem ler a série meses depois precisa saber que
+    # A resposta muda com a cadência (BLK-MA-06): quem ler a série semanas depois precisa saber que
     # as semanas antigas só tinham `unidades`, sob pena de ler ausência de agregador como churn.
     fontes_lidas = ",".join(sorted(FONTES_VALIDAS if fontes is None else {str(f) for f in fontes}))
     snapshot, auditoria_snapshot = montar_snapshot(com_chave, fontes_lidas=fontes_lidas)

@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Snapshot MENSAL dos AGREGADORES (WellHub + TotalPass)
+# Snapshot SEMANAL dos AGREGADORES (WellHub + TotalPass) -- terca, 02:00 UTC
 #     -> data/staging/snapshots_concorrentes/semana=AAAA-SS/fonte=<fonte>/
 #
 # E' o BLK-MA-21 / DEC-039: o relogio dos INDEPENDENTES, que nunca foi ligado.
 # Os independentes -- o universo-alvo do funil de M&A -- vivem SO' nesses dois
-# agregadores. O cron semanal (`run_snapshot_concorrentes.sh`) fotografa o feed
+# agregadores. O cron de DOMINGO (`run_snapshot_concorrentes.sh`) fotografa o feed
 # `unidades`, que e' de CADEIAS: sem este script, S3 (churn) e S4 (staleness)
-# sobre independentes NUNCA amadurecem.
+# sobre independentes NUNCA amadurecem. As duas cadencias sao SEMANAIS e caem na
+# MESMA semana ISO (medido: terca e domingo da mesma semana dao a mesma chave
+# `semana=`) -- e' por isso que a particao tem DUAS chaves, `semana=/fonte=`.
 #
 # READ-ONLY sobre o M1: nao toca score_priorizacao, pesos, config.py, pipelines/m1
 # nem artefato oficial. Escreve SO em data/staging/snapshots_concorrentes/ e no
@@ -39,8 +41,8 @@
 # (`Wellhub/coletor_wellhub.py:138-140`, `TotalPass/coletor_totalpass.py`). O CSV
 # consolidado (`Wellhub/unidades_wellhub.csv`, `TotalPass/unidades_totalpass.csv`)
 # e' escrito por `csv_writer.append_rows` em modo "a", e `ensure_header` RETORNA
-# CEDO quando o arquivo ja' existe com conteudo: NADA trunca o consolidado. No 2o
-# mes as duas safras coexistem no mesmo arquivo, e `split_by_state` (modo "w")
+# CEDO quando o arquivo ja' existe com conteudo: NADA trunca o consolidado. Na 2a
+# SEMANA as duas safras coexistem no mesmo arquivo, e `split_by_state` (modo "w")
 # propaga as duas para os 27 CSVs por UF.
 #
 # O estrago nao e' volume, e' INVERSAO DE SINAL. `montar_snapshot` desempata por
@@ -61,15 +63,18 @@
 # POR QUE A CURADORIA EXISTE, E POR QUE ELA PODE RECUSAR UMA FONTE
 #
 # Fotografar um feed que NAO foi recoletado e' pior do que nao fotografar: o
-# `hash_campos_raspados` sai identico ao do mes anterior, `semanas_sem_mudanca`
+# `hash_campos_raspados` sai identico ao da semana anterior, `semanas_sem_mudanca`
 # cresce sozinho e o S4 marca o universo INTEIRO daquela fonte como "parado" --
 # que e' exatamente o sinal de vulnerabilidade que o funil de M&A procura. Falso
 # positivo em massa, no sinal de segundo maior peso, e com codigo de saida 0.
 #
 # Se o coletor do WellHub morrer no meio da janela de 20h, os CSVs antigos ficam
-# no disco. A curadoria mede a idade do CSV mais novo e recusa publicar acima de
-# MAX_IDADE_DIAS; este script entao tira aquela fonte do `--fontes`. A particao
-# sai com meia foto -- e o parquet carimba `fontes_lidas` dizendo qual metade.
+# no disco. A curadoria mede a idade da linha mais VELHA ainda no diretorio
+# (`min(data_coleta)`) e recusa publicar acima de MAX_IDADE_DIAS; este script
+# entao tira aquela fonte do `--fontes`. A particao sai com meia foto -- e o
+# parquet carimba `fontes_lidas` dizendo qual metade. A regua e' o MINIMO, nao o
+# maximo: uma coleta que recolhe SO' uma UF e deixa as outras 26 velhas mediria
+# idade 0 pelo maximo, e o piso relativo de volume nao dispararia (o total nao cai).
 #
 # ---------------------------------------------------------------------------
 # ANTES DE AGENDAR: rode o modo seco. E' passo OBRIGATORIO.
@@ -78,7 +83,7 @@
 #
 # Confira na saida, nesta ordem:
 #   * `fontes_publicadas=` -- se vier vazio, o caminho ou o frescor estao errados;
-#   * `regua_idade`        -- por agregador: `data_coleta` (regua boa) ou `mtime`
+#   * `regua_idade`        -- por agregador: `data_coleta_min` (regua boa) ou `mtime`
 #                             (fallback; o feed nao trouxe data legivel). Idade medida
 #                             por `mtime` num feed nao recoletado da' ~0 dia mesmo com
 #                             85 dias de atraso -- foi medido no clone real;
@@ -91,24 +96,32 @@
 #                             a VPS esta rodando IMAGEM ANTIGA, que escreve com UMA
 #                             chave de particao e APAGA a folha da outra cadencia.
 #                             NAO agende: aplique a imagem nova primeiro.
-#   * `retencao_semanas`   -- tem de ser 78. Com 26 (valor antigo) o agregador para
-#                             em 5,98 observacoes e nunca alcanca MIN_SEMANAS=8.
+#   * `retencao_semanas`   -- tem de ser 26. O `78` e' o valor da premissa MENSAL,
+#                             que morreu: sob cadencia SEMANAL N particoes = N
+#                             observacoes de CADA fonte, e o piso MEDIDO para o v4
+#                             saturar e' 13 (`semanas_sem_mudanca` vale k-1 contra
+#                             STALE_SEMANAS=12). 26 = 2x o piso. NUNCA abaixo de 13.
 #
 # INSTALACAO (uma vez):
 #     install -d -m 0755 /opt/motor-expansao-infra   # idempotente
 #     cp /opt/motor-expansao/app/scripts/cron/run_snapshot_agregadores.sh /opt/motor-expansao-infra/
 #     chmod +x /opt/motor-expansao-infra/run_snapshot_agregadores.sh
 #
-# LINHA DE CRONTAB (D1 -- primeira terca do mes, 02:00 UTC):
-#     0 2 * * 2 [ "$(date +\%d)" -le 07 ] && /opt/motor-expansao-infra/run_snapshot_agregadores.sh
+# LINHA DE CRONTAB (D1 -- TODA terca, 02:00 UTC = segunda 23:00 BRT):
+#     0 2 * * 2 /opt/motor-expansao-infra/run_snapshot_agregadores.sh
+#
+# SEM guarda de dia do mes: a cadencia e' SEMANAL, e com ela cai tambem o `%`
+# escapado que o crontab exigia para emular "1a terca".
 #
 # A janela sequencial mede ~21h45: comecando 02:00 UTC de terca, fecha ~23h45 de
-# terca e NUNCA encosta na do semanal (domingo 06:00 UTC). Dia fixo do mes cairia
-# em domingo ~1 vez a cada 7 meses, e nessas duas coletas dividiriam 4 vCPU com os
-# 6 containers permanentes. O `%` escapado (`\%`) e' exigencia do crontab.
+# terca. Folga de 39h DEPOIS do runner de domingo (06:00 UTC) e de ~102h ANTES do
+# proximo -- as duas janelas nunca se encostam, nem na banda alta de 31h medida
+# para o WellHub. Terca tambem deixa a retentativa manual caber na MESMA semana
+# ISO: falha na terca -> FAIL do healthcheck na quinta 12:00 -> retentativa fecha
+# sexta, e a observacao da semana e' salva.
 #
 # ORDEM DE APLICACAO (a ordem e' a defesa contra o modo destrutivo -- ver runbook
-# em docs/infra_producao.md, secao "Coleta mensal dos agregadores (BLK-MA-21)").
+# em docs/infra_producao.md, secao "Coleta semanal dos agregadores (BLK-MA-21)").
 # ============================================================================
 set -euo pipefail
 
@@ -128,7 +141,10 @@ DRY_RUN="${DRY_RUN:-0}"
 # sem pagar 21h de coleta. A guarda de frescor continua valendo -- feed velho continua
 # sendo recusado, e e' isso que torna o atalho seguro.
 PULAR_COLETA="${PULAR_COLETA:-0}"
-MAX_IDADE_DIAS="${MAX_IDADE_DIAS:-7}"
+# 3 dias (nao 7): a borda da guarda e' INCLUSIVA, e o feed da rodada anterior mede exatamente
+# 7 dias com o cron comecando 02:00 UTC -- com o default antigo, `7 <= 7` PUBLICAVA o feed
+# velho, e a seguranca da guarda virava acidente do horario do cron.
+MAX_IDADE_DIAS="${MAX_IDADE_DIAS:-3}"
 MAX_LINHAS_WELLHUB="${MAX_LINHAS_WELLHUB:-}"
 MAX_LINHAS_TOTALPASS="${MAX_LINHAS_TOTALPASS:-}"
 # Piso RELATIVO de volume (fracao do que ja' esta publicado no destino). O teto acima pega universo
@@ -140,18 +156,24 @@ IMAGEM_COLETOR="${IMAGEM_COLETOR:-gymscraping:local}"
 CONSOLIDADO_TOTALPASS="${CONSOLIDADO_TOTALPASS:-TotalPass/unidades_totalpass.csv}"
 CONSOLIDADO_WELLHUB="${CONSOLIDADO_WELLHUB:-Wellhub/unidades_wellhub.csv}"
 
+# LOG ANTES DO LOCK, de proposito. Sob cadencia SEMANAL, uma rodada TRAVADA (nao apenas
+# atrasada) segura o lock e faz TODA semana seguinte sair com `exit 0`. Se o `tee` so'
+# comecasse depois do `flock`, a colisao nao deixaria arquivo NENHUM em $LOG_DIR: o unico
+# destino do aviso seria o stdout do cron (mail do root, que pode nem estar configurado) e o
+# symlink `_latest.log` continuaria apontando para a ultima rodada COMPLETA -- o script
+# pularia EM SILENCIO. Agora cada colisao deixa o proprio arquivo de log, datado.
+TS="$(date -u +%Y%m%d-%H%M%S)"
+mkdir -p "$LOG_DIR"
+LOG="${LOG_DIR}/snapshot_agregadores_${TS}.log"
+exec > >(tee -a "$LOG") 2>&1
+
 # `flock -n` sobre o script INTEIRO: a janela e' de ~21h45 e duas execucoes concorrentes
 # duplicariam as sessoes HTTP dos coletores e fariam a curadoria ler diretorio em escrita.
 # Sair com 0 quando ja' ha' uma instancia e' deliberado: "ja' esta rodando" nao e' falha.
 exec 9>"$LOCK_FILE"
 flock -n 9 || { echo ">> ja rodando (lock $LOCK_FILE); saindo"; exit 0; }
 
-TS="$(date -u +%Y%m%d-%H%M%S)"
-mkdir -p "$LOG_DIR"
-LOG="${LOG_DIR}/snapshot_agregadores_${TS}.log"
-exec > >(tee -a "$LOG") 2>&1
-
-echo ">> [$(date -u +%FT%TZ)] snapshot MENSAL dos agregadores - inicio (dry_run=${DRY_RUN}, pular_coleta=${PULAR_COLETA})"
+echo ">> [$(date -u +%FT%TZ)] snapshot SEMANAL dos agregadores - inicio (dry_run=${DRY_RUN}, pular_coleta=${PULAR_COLETA})"
 
 # --------------------------------------------------------------------------
 # Pre-checagens que abortam CEDO, com mensagem acionavel (antes de qualquer passo)
@@ -183,7 +205,7 @@ mkdir -p "$HOST_AGREGADORES"
 # Passo 0 - ROTACAO do consolidado (so' quando a coleta vai rodar)
 #
 # `--no-resume` apaga o CHECKPOINT, nao o consolidado -- e o consolidado e' escrito
-# em modo "a". Sem esta rotacao, o mes 2 anexa safra sobre safra e o desempate por
+# em modo "a". Sem esta rotacao, a semana 2 anexa safra sobre safra e o desempate por
 # menor hash congela a linha VELHA de quem mudou. Detalhe no cabecalho.
 # --------------------------------------------------------------------------
 rotacionar_consolidado() {
@@ -260,7 +282,7 @@ FONTES="$(printf '%s' "$FONTES_CSV" | tr ',' ' ')"
 echo ">> fontes publicadas pela curadoria: '${FONTES_CSV}'"
 
 # Nada fresco para fotografar e' FALHA, nao sucesso silencioso: se sairmos com 0 aqui, o
-# healthcheck de idade da particao seria a unica coisa a perceber -- 45 dias depois.
+# healthcheck de idade da particao seria a unica coisa a perceber -- 9 dias depois.
 if [ -z "$FONTES_CSV" ]; then
   echo "!! nenhuma fonte publicada: os dois feeds estao velhos ou ausentes."
   echo "   Confira a saida da curadoria acima (motivo_recusa por agregador) e o log dos coletores."
@@ -268,7 +290,7 @@ if [ -z "$FONTES_CSV" ]; then
 fi
 
 # --------------------------------------------------------------------------
-# Passo 3 - SNAPSHOT (mesmo modulo do cron semanal, outra cadencia)
+# Passo 3 - SNAPSHOT (mesmo modulo do cron de domingo, outro dia da semana)
 # --------------------------------------------------------------------------
 echo ">> [$(date -u +%FT%TZ)] passo 3 - snapshot das fontes publicadas"
 SNAP_ARGS=(--fontes)
@@ -293,12 +315,12 @@ docker run --rm \
 
 if [ "$DRY_RUN" = "1" ]; then
   echo '>> DRY-RUN: nada gravado, nenhuma semana podada.'
-  echo '   Confira acima: fontes_publicadas, linhas_snapshot, retencao_semanas=78 e'
+  echo '   Confira acima: fontes_publicadas, linhas_snapshot, retencao_semanas=26 e'
   echo '   versao_contrato=snapshots_concorrentes_v4 (v3 = imagem ANTIGA; NAO agende).'
 else
   echo ">> particoes em ${HOST_STAGING}/snapshots_concorrentes/"
   ls -la "${HOST_STAGING}/snapshots_concorrentes/" 2>/dev/null || echo "   (primeira execucao?)"
 fi
 
-echo ">> [$(date -u +%FT%TZ)] snapshot MENSAL dos agregadores - OK"
+echo ">> [$(date -u +%FT%TZ)] snapshot SEMANAL dos agregadores - OK"
 ln -sfn "$LOG" "${LOG_DIR}/snapshot_agregadores_latest.log"

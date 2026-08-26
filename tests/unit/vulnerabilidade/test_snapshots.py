@@ -546,8 +546,8 @@ def test_reescrita_encolhe_a_folha_e_preserva_as_irmas(
 ) -> None:
     """A idempotencia passou a ser por FOLHA, nao por particao (BLK-MA-21 / DEC-039).
 
-    Com UMA chave de particao, `delete_matching` casava a semana inteira: a execucao mensal dos
-    agregadores apagava o que a semanal (`--fontes unidades`) tinha acabado de gravar na mesma
+    Com UMA chave de particao, `delete_matching` casava a semana inteira: a execucao dos
+    agregadores (terca) apagava o que a do `unidades` (domingo) tinha acabado de gravar na mesma
     semana ISO. Aqui a segunda execucao so' traz o TotalPass -- a folha `fonte=totalpass` encolhe
     de 2 para 2 (mesmo conteudo) e as folhas irmas `fonte=wellhub` e `fonte=unidades` SOBREVIVEM.
     """
@@ -1430,7 +1430,7 @@ def test_materializar_propaga_fontes_e_audita_o_recorte(
 ) -> None:
     """O recorte tem de ficar VISÃVEL na auditoria.
 
-    Quem ler a sÃ©rie meses depois precisa saber que as semanas antigas sÃ³ tinham `unidades`, sob
+    Quem ler a sÃ©rie semanas depois precisa saber que as semanas antigas sÃ³ tinham `unidades`, sob
     pena de interpretar a ausÃªncia de agregador como churn.
     """
     tp, wh, un = dirs_sinteticos
@@ -1484,7 +1484,8 @@ def test_duas_fontes_coexistem_na_mesma_semana(
 ) -> None:
     """T1 - o defeito que este bloco existe para matar: duas CADENCIAS, uma semana ISO.
 
-    O cron SEMANAL grava `--fontes unidades`; o MENSAL grava `--fontes totalpass wellhub`. Com uma
+    O cron de DOMINGO grava `--fontes unidades`; o da TERCA grava `--fontes totalpass wellhub` --
+    as duas cadencias sao semanais e caem na MESMA semana ISO. Com uma
     chave de particao so', o segundo apagava o primeiro via `delete_matching` -- ~21h de coleta
     perdidas com `exit 0`. Aqui as tres folhas coexistem e nenhuma linha se perde.
     """
@@ -1902,7 +1903,7 @@ def test_ler_snapshots_recorta_por_fonte(
 ) -> None:
     """O recorte da DEC-039 (D9) e' IMPOSTO na leitura, nao prometido em prosa.
 
-    A particao do `totalpass` e' GRAVADA desde o primeiro mes (para o cronometro de MIN_SEMANAS
+    A particao do `totalpass` e' GRAVADA desde a primeira semana (para o cronometro de MIN_SEMANAS
     correr), mas fica fora do consumo ate' o BLK-MA-20 calibrar a dedup TP x WH.
     """
     tp, wh, un = dirs_sinteticos
@@ -1925,22 +1926,88 @@ def test_ler_snapshots_recorta_por_fonte(
         m.ler_snapshots(base, fontes=[])
 
 
-def test_retencao_serve_as_duas_cadencias() -> None:
-    """T9 - trava a RAZAO da retencao, nao so' o valor (a aritmetica das duas cadencias).
+def _serie_hash_constante(semanas: list[int]) -> list[pd.DataFrame]:
+    """Uma serie de snapshots com UMA chave, presente nas `semanas` dadas, com hash CONSTANTE.
 
-    `podar_snapshots` e' keep-newest-N sobre `semana=`, e o cron semanal escreve em toda semana
-    ISO: N particoes = N semanas de calendario = `N / 4,345` observacoes de um feed MENSAL. Com
-    `26`, o agregador para em 5,98 observacoes -- permanentemente abaixo de `MIN_SEMANAS = 8` --,
-    `flag_serie_imatura` fica `True` para sempre e o `v4` fica preso em `<= 0,5`.
+    Hash constante e' o pior caso do `v4`: nada muda, entao `semanas_sem_mudanca` cresce com a
+    serie e satura (ou nao) contra `STALE_SEMANAS`. E' assim que se mede o PISO da retencao.
     """
-    semanas_por_mes = 52.18 / 12  # 4,345
-    observacoes_mensais = c.RETENCAO_SEMANAS / semanas_por_mes
+    import h3
 
-    assert observacoes_mensais >= c.MIN_SEMANAS, (
-        "a retencao nao permite a serie de um feed mensal amadurecer"
+    hex_id = h3.latlng_to_cell(-23.5500, -46.6300, c.H3_RES_CONTRATO)
+    frames: list[pd.DataFrame] = []
+    for i in semanas:
+        linha = {
+            "snapshot_date": "2026-01-05",
+            "slug": None,
+            "concorrente_id": "0" * 40,
+            "chave_snapshot": "k_parada",
+            "chave_origem": "hash_estavel",
+            "hex_id_res7": hex_id,
+            "rede": "independente",
+            "fonte": "wellhub",
+            "hash_campos_raspados": "hash_congelado",
+            "nota_wellhub": None,
+            "qtd_avaliacoes_wellhub": None,
+            "fontes_lidas": "totalpass,wellhub",
+            "versao_contrato": c.VERSAO_CONTRATO_SNAPSHOT,
+        }
+        df = pd.DataFrame([linha], columns=list(c.CONTRATO_COLUNAS_SNAPSHOT.keys()))
+        df["semana"] = f"2026-{i:02d}"
+        frames.append(df)
+    return frames
+
+
+def test_retencao_satura_o_v4_na_cadencia_semanal() -> None:
+    """T9 - trava a RAZAO da retencao, nao so' o valor. A cadencia e' UNIFORME (semanal).
+
+    O teste anterior (`test_retencao_serve_as_duas_cadencias`) dividia a retencao por 4,345 para
+    converter semanas de calendario em observacoes de um feed MENSAL, e cravava
+    `assert 26 / semanas_por_mes < c.MIN_SEMANAS` -- uma REJEICAO HARD-CODED do valor que a
+    cadencia semanal torna correto. Quem so' trocasse a constante veria CI vermelho e concluiria
+    que o `26` esta errado.
+
+    A razao nova, MEDIDA: com as tres fontes semanais, N particoes = N observacoes de CADA fonte no
+    caminho feliz, e o piso para o `v4` saturar e' **13** -- porque `_semanas_sem_mudanca` conta
+    observacoes ESTRITAMENTE apos a ultima mudanca (vale `k-1` com hash constante) contra o
+    denominador `STALE_SEMANAS = 12`.
+    """
+    assert c.RETENCAO_SEMANAS >= 13, (
+        "abaixo de 13 o v4 NUNCA satura: com k semanas, semanas_sem_mudanca vale k-1 e o "
+        "denominador e' STALE_SEMANAS=12"
     )
-    assert observacoes_mensais >= c.STALE_SEMANAS, (
+
+    out = mchurn.extrair_churn_staleness(
+        snapshots=_serie_hash_constante(list(range(1, c.RETENCAO_SEMANAS + 1)))
+    )
+    linha = out[out["chave_snapshot"] == "k_parada"].iloc[0]
+    assert int(linha["n_semanas_serie"]) == c.RETENCAO_SEMANAS
+    assert int(linha["semanas_sem_mudanca"]) == c.RETENCAO_SEMANAS - 1
+    assert int(linha["semanas_sem_mudanca"]) >= c.STALE_SEMANAS, (
         "a retencao nao cobre o denominador do v4 (semanas_sem_mudanca / STALE_SEMANAS)"
     )
-    # O valor rejeitado, para o teste falhar por MOTIVO e nao por coincidencia.
-    assert 26 / semanas_por_mes < c.MIN_SEMANAS
+    assert bool(linha["flag_serie_imatura"]) is False
+    assert bool(linha["flag_staleness_interpretavel"]) is True
+
+    # O PISO, provado pelo lado de baixo: com 12 observacoes o v4 fica preso em 11/12 = 0,9167.
+    doze = mchurn.extrair_churn_staleness(snapshots=_serie_hash_constante(list(range(1, 13))))
+    assert int(doze[doze["chave_snapshot"] == "k_parada"].iloc[0]["semanas_sem_mudanca"]) == 11
+
+
+def test_retencao_tolera_metade_das_semanas_perdidas() -> None:
+    """`26` = 2x o piso: satura o `v4` mesmo com a fonte perdendo METADE das semanas.
+
+    Fora do caminho feliz, N particoes NAO sao N observacoes: a fonte que perde a folha da semana
+    (a curadoria recusa feed velho, o coletor cai) perde a observacao, mas a semana continua
+    ocupando um slot de retencao. Com a fonte presente so' nas semanas pares dentro da janela de
+    `RETENCAO_SEMANAS`, sobram 13 observacoes -- exatamente o piso.
+    """
+    pares = [i for i in range(1, c.RETENCAO_SEMANAS + 1) if i % 2 == 0]
+    assert len(pares) >= 13, (
+        "a janela retida nao entrega o piso de 13 observacoes com 50% de buraco"
+    )
+
+    out = mchurn.extrair_churn_staleness(snapshots=_serie_hash_constante(pares))
+    linha = out[out["chave_snapshot"] == "k_parada"].iloc[0]
+    assert int(linha["n_semanas_serie"]) == len(pares)
+    assert int(linha["semanas_sem_mudanca"]) >= c.STALE_SEMANAS

@@ -579,8 +579,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help=(
             "recorta a serie de snapshots ANTES de derivar churn/presenca. OMITIR NAO desliga o "
             f"recorte: sem este argumento vale {list(FONTES_ENTREGAVEL_DEFAULT)}, que e' a "
-            "fronteira com o BLK-MA-20 (DEC-039, D9). A particao do totalpass e' GRAVADA desde o "
-            "primeiro mes (para o cronometro de MIN_SEMANAS correr), mas nao entra no ranking. "
+            "fronteira com o BLK-MA-20 (DEC-039, D9). A particao do totalpass e' GRAVADA desde a "
+            "primeira semana (para o cronometro de MIN_SEMANAS correr), mas nao entra no ranking. "
             "Para consumir a serie inteira, use `--todas-as-fontes`"
         ),
     )
