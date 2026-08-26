@@ -1,4 +1,6 @@
 import { MODOS, type ModoDefinicao, type ModoInicio } from '../lib/inicio'
+import { useUfsDaBase } from '../lib/base-contexto'
+import { rodapeDaBase } from '../lib/rodape-base'
 
 /**
  * Tela de INICIO do piloto — a porta de entrada do produto.
@@ -27,6 +29,7 @@ export default function InicioScreen({
   /** Cards visíveis para este usuário (controle temporário de acesso). */
   modos?: readonly ModoDefinicao[]
 }) {
+  const ufs = useUfsDaBase()
   return (
     <div
       style={{
@@ -132,17 +135,20 @@ export default function InicioScreen({
           )}
         </div>
 
-        <p
-          style={{
-            font: '400 11.5px/1.5 var(--f-ui)',
-            color: 'var(--tx-sub)',
-            margin: '26px 0 0',
-            textAlign: 'center',
-          }}
-        >
-          27 estados · Censo 2022 (IBGE) + rede Ultra e concorrentes mapeados · camada
-          visual read-only
-        </p>
+        {/* Sem base carregada nao ha' procedencia a declarar — o <p> inteiro sai, em vez
+            de anunciar "0 estados". */}
+        {rodapeDaBase(ufs) && (
+          <p
+            style={{
+              font: '400 11.5px/1.5 var(--f-ui)',
+              color: 'var(--tx-sub)',
+              margin: '26px 0 0',
+              textAlign: 'center',
+            }}
+          >
+            {rodapeDaBase(ufs)}
+          </p>
+        )}
       </div>
     </div>
   )

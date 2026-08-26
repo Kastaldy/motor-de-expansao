@@ -1,4 +1,6 @@
 import type { CrescimentoMunicipio } from '../lib/oportunidades'
+import { useUfsDaBase } from '../lib/base-contexto'
+import { censoDaBase } from '../lib/rodape-base'
 import { alunos, brl, num, pctVar } from '../lib/format'
 import { FAIXA_M1_HEX } from '../lib/colors'
 import { CAPACIDADE_UNIDADE_ALUNOS, FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from '../lib/faixas'
@@ -90,6 +92,7 @@ export default function FichaHex({
   /** Abre a janela de DETALHE do imóvel (a mesma que o pin da camada abre no mapa). */
   onVerImovel?: (o: Oportunidade) => void
 }) {
+  const ufsDaBase = useUfsDaBase()
   const corFaixaM1 = hex.faixa ? (FAIXA_M1_HEX[hex.faixa] ?? null) : null
   const fxCenso = faixaDoValor(hex.censo, FAIXAS_POTENCIAL)
   const fxResidual = faixaDoValor(hex.res, FAIXAS_DEMANDA)
@@ -298,7 +301,7 @@ export default function FichaHex({
 
       {/* ---- Quem mora aqui ---- */}
       <section>
-        <TituloSecao titulo="Quem mora aqui" nota="Censo 2022 · IBGE" />
+        <TituloSecao titulo="Quem mora aqui" nota={censoDaBase(ufsDaBase) ?? undefined} />
         <div
           style={{
             display: 'grid',
