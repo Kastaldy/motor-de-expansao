@@ -157,7 +157,12 @@ POP_MIN_ACIONAVEL = 5000  # regua operacional do dashboard (<5k = descartado)
 # Subiram para ca' porque o painel de Metodologia (/api/metodologia) publica estes
 # MESMOS nomes na tela: com o numero escrito em dois lugares, ajustar um parametro
 # fazia a explicacao mentir sem ninguem perceber. Mudou aqui, muda no funil E no texto.
-SCORE_CORTE_QUENTE = 70.0  # piso do passo 1 (hexagono "quente")
+SCORE_CORTE_QUENTE = 30.0  # piso do passo 1 (hexagono "quente")
+# 70,0 -> 30,0 em 2026-08-26, junto com a troca do score censitario para REGUA ABSOLUTA.
+# Na escala antiga (percentil nacional de renda + percentil MUNICIPAL de populacao) o corte
+# de 70 deixava passar 104.835 hexes cuja populacao MEDIANA era 9 habitantes -- Oriximina/PA
+# tinha hexes de 0,2 habitante com score 70,3. Manter o 70 na escala nova derrubaria a camada
+# 1 de 11.255 para 148 hexes. Com 30: 4.339 hexes, populacao mediana 14.769, renda R$ 1.505.
 
 # --- Reguas do CRITERIO DO IMOVEL ("Serve este imovel?"), so' do modo de ponto ---------
 # Decisao do Juan em 2026-08-12: afrouxar os dois cortes que mais reprovavam imovel.

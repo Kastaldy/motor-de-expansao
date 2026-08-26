@@ -141,9 +141,12 @@ def processar_uf(
         & ~df_result["fallback_setor_2022"].fillna(False)
     )
     if cal_mask.any():
+        # Regua ABSOLUTA (2026-08-26): passa renda em R$ e populacao do setor, nao mais
+        # os percentis. `renda_pct_nacional_calibrado` e `pop_pct_municipal` seguem
+        # materializados como colunas de auditoria, mas nao alimentam mais o score.
         hex_score, ajuste, score = calcular_score_calibrado(
-            df_result.loc[cal_mask, "renda_pct_nacional_calibrado"].to_numpy(),
-            df_result.loc[cal_mask, "pop_pct_municipal"].to_numpy(),
+            df_result.loc[cal_mask, "renda_per_capita_setor_2022_calibrada"].to_numpy(),
+            df_result.loc[cal_mask, "pop_total_setor_2022"].to_numpy(),
         )
         df_result.loc[cal_mask, "hex_score_estrutural_calibrado"] = hex_score
         df_result.loc[cal_mask, "ajuste_calibrado"] = ajuste

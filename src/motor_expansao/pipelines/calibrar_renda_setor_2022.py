@@ -62,6 +62,31 @@ DEFAULT_M1_PATH = Path("data/staging/brasil_estrutural.parquet")
 DEFAULT_OUTPUT_PATH = Path("data/staging/censo2022_setores_calibrado.parquet")
 DEFAULT_REPORT_PATH = Path("data/reports/calibracao_renda_setor_2022.md")
 
+# ---------------------------------------------------------------------------
+# Regua ABSOLUTA (2026-08-26). Substitui os dois percentis do score censitario.
+#
+# Ate aqui o score era `100*(0.60*renda_pct_NACIONAL + 0.40*pop_pct_MUNICIPAL)`. O termo de
+# populacao era percentil DENTRO do municipio, entao toda cidade produzia seus proprios
+# "melhores hexagonos" no teto da escala, por construcao: Goiania (pop mediana 7.421, renda
+# R$ 952) chegava a 96,2 no p90 e Sao Paulo (35.570 e R$ 1.696) so' a 94,2. Comparar praca
+# entre cidades era impossivel, e dentro da cidade o setor ralo batia o denso em 37% a 73%
+# dos pares (medido em 72.623 setores de 11 capitais).
+#
+# Efeito colateral do percentil: dos 104.835 hexes com score >= 70, a populacao MEDIANA era
+# 9 habitantes -- Oriximina/PA tinha hexes de 0,2 habitante com score 70,3.
+#
+# Ancoras medidas no universo POVOADO (pop >= 1.000, 21.107 hexes), arredondadas:
+#   renda  p05 = R$ 296  -> ancora inferior R$ 300
+#          p95 = R$ 1.889, p99 = R$ 3.123, max R$ 8.756 -> teto R$ 4.000 (satura 0,38%)
+#   pop    p05 = 1.103 -> ancora inferior 1.000
+#          p95 = 28.845, p99 = 62.335, max 141.507 -> teto 100.000 (satura 0,000%)
+# Populacao em LOG porque e' muito assimetrica (p50 3.561 contra p95 28.845); renda linear,
+# que e' mais legivel e discrimina melhor no topo.
+RENDA_ABS_MIN = 300.0
+RENDA_ABS_MAX = 4_000.0
+POP_ABS_MIN = 1_000.0
+POP_ABS_MAX = 100_000.0
+
 UFS_PILOTO = ["GO", "SP", "RJ"]
 CAPITALS = {
     "GO": "5208707",  # Goiânia
@@ -86,8 +111,27 @@ def percentile_in_distribution(values: np.ndarray, reference: np.ndarray) -> np.
     return np.searchsorted(ref_sorted, values, side="left") / len(ref_sorted)
 
 
+def nota_renda_absoluta(renda: np.ndarray) -> np.ndarray:
+    """Renda per capita (R$) -> 0-100, linear entre RENDA_ABS_MIN e RENDA_ABS_MAX."""
+    r = np.asarray(renda, dtype="float64")
+    return np.clip(100.0 * (r - RENDA_ABS_MIN) / (RENDA_ABS_MAX - RENDA_ABS_MIN), 0.0, 100.0)
+
+
+def nota_pop_absoluta(pop: np.ndarray) -> np.ndarray:
+    """Populacao do setor -> 0-100, LOG entre POP_ABS_MIN e POP_ABS_MAX."""
+    p = np.clip(np.asarray(pop, dtype="float64"), 1.0, None)
+    escala = np.log(POP_ABS_MAX) - np.log(POP_ABS_MIN)
+    return np.clip(100.0 * (np.log(p) - np.log(POP_ABS_MIN)) / escala, 0.0, 100.0)
+
+
 def ajuste_executivo(renda_pct: np.ndarray, pop_pct: np.ndarray) -> np.ndarray:
-    """Regra oficial de ajuste executivo do M1 (CLAUDE.md seção 5)."""
+    """Regra oficial de ajuste executivo do M1 (CLAUDE.md seção 5).
+
+    Recebe os dois termos ja' normalizados em 0-1. Na regua absoluta sao as notas/100,
+    e nao mais percentis -- os limiares 0,75 e 0,25 passam a significar "nota 75" e
+    "nota 25" na escala absoluta, preservando a intencao (bonus quando forte nos dois,
+    penalidade quando fraco).
+    """
     adj = np.zeros(len(renda_pct))
     adj += np.where((renda_pct >= 0.75) & (pop_pct >= 0.75), 5.0, 0.0)
     adj += np.where((renda_pct >= 0.75) & (pop_pct < 0.75), 2.0, 0.0)
@@ -98,12 +142,19 @@ def ajuste_executivo(renda_pct: np.ndarray, pop_pct: np.ndarray) -> np.ndarray:
 
 
 def calcular_score_calibrado(
-    renda_pct: np.ndarray,
-    pop_pct: np.ndarray,
+    renda_abs: np.ndarray,
+    pop_abs: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Calcula hex_score_calibrado, ajuste_calibrado e score_setor_2022_calibrado."""
-    hex_score = 100.0 * (0.60 * renda_pct + 0.40 * pop_pct)
-    adj = ajuste_executivo(renda_pct, pop_pct)
+    """Calcula hex_score_calibrado, ajuste_calibrado e score_setor_2022_calibrado.
+
+    ATENCAO -- mudanca de contrato em 2026-08-26: os argumentos passaram de PERCENTIS
+    (renda_pct nacional, pop_pct municipal) para VALORES ABSOLUTOS (renda per capita em
+    R$, populacao do setor). Ver o bloco de constantes RENDA_ABS_*/POP_ABS_* acima.
+    """
+    nr = nota_renda_absoluta(renda_abs)
+    npop = nota_pop_absoluta(pop_abs)
+    hex_score = 0.60 * nr + 0.40 * npop
+    adj = ajuste_executivo(nr / 100.0, npop / 100.0)
     score = np.clip(hex_score + adj, 0.0, 100.0)
     return hex_score, adj, score
 
@@ -267,11 +318,16 @@ def calibrar(
     # -----------------------------------------------------------------------
     # 4. Score calibrado (mesma fórmula M1, pop via percentil municipal)
     # -----------------------------------------------------------------------
-    cal_mask = df_ufs["renda_pct_nacional_calibrado"].notna() & df_ufs["pop_pct_municipal"].notna()
-    r_pct = df_ufs.loc[cal_mask, "renda_pct_nacional_calibrado"].values
-    p_pct = df_ufs.loc[cal_mask, "pop_pct_municipal"].values
+    # Regua ABSOLUTA (2026-08-26): o score deixa de usar os percentis. Eles seguem
+    # materializados como colunas de auditoria.
+    cal_mask = (
+        df_ufs["renda_per_capita_setor_2022_calibrada"].notna()
+        & df_ufs["pop_total_setor_2022"].notna()
+    )
+    r_abs = df_ufs.loc[cal_mask, "renda_per_capita_setor_2022_calibrada"].values
+    p_abs = df_ufs.loc[cal_mask, "pop_total_setor_2022"].values
 
-    hex_score_cal, adj_cal, score_cal = calcular_score_calibrado(r_pct, p_pct)
+    hex_score_cal, adj_cal, score_cal = calcular_score_calibrado(r_abs, p_abs)
 
     df_ufs.loc[cal_mask, "hex_score_estrutural_calibrado"] = hex_score_cal
     df_ufs.loc[cal_mask, "ajuste_calibrado"] = adj_cal
