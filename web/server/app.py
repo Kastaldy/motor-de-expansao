@@ -1337,6 +1337,26 @@ def _quadrado_sigla(short: str, bg: str, fg: str, *, halo: bool = False) -> str:
     return _svg_data_uri(svg)
 
 
+# Cache proprio: o slug e' funcao pura do nome e cada rede reaparece uma vez por pino do
+# municipio inteiro. Fica ANTES do bloco do BLK-RELPON-14 de proposito — aquele comentario e
+# o decorator abaixo dele dimensionam o cache de `_icone_rede`, e nao o deste.
+@functools.lru_cache(maxsize=256)
+def _slug_rede(nome: str) -> str:
+    """`"Megatlón"` -> `megatlon`. Nome de ARQUIVO, nao identificador de payload.
+
+    Precisa casar com o slug que o outro lado usa ao materializar as logos
+    (`escrever_logos`, em `pipelines/exportar_piloto_rep.py` no repo Motor-Argentina).
+    Regra unica dos dois lados: sem acento, minusculo, tudo que nao e' letra ou digito vira
+    `_`. Uma TABELA de-para aqui teria de ser mantida nos dois repositorios e envelheceria
+    calada — a regra nao.
+    """
+    puro = "".join(
+        c for c in unicodedata.normalize("NFD", str(nome))
+        if unicodedata.category(c) != "Mn"
+    ).lower()
+    return re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", puro)).strip("_")
+
+
 # BLK-RELPON-14: 64 era folgado com as 39 redes antigas — e as 68 novas nem tinham entrada em
 # COMPETITOR_LOGO_FILES, entao `_quadrado_logo(None, ...)` curto-circuitava sem custo. Agora as 107
 # tem `logo_<slug>.png`, e cada MISS custa Path.exists() + read_bytes() + base64 do PNG. Com 107
@@ -1351,8 +1371,15 @@ def _icone_rede(rede: str, halo: bool = False) -> str:
     brand = COMPETITOR_BRANDS.get(
         rede, {"short": (rede[:3].upper() or "C"), "bg": "#64748B", "fg": "#FFFFFF"}
     )
-    logo_file = COMPETITOR_LOGO_FILES.get(rede)
-    logo_path = COMPETITORS_LOGO_DIR / logo_file if logo_file else None
+    # O dicionario e' a fonte preferida — ele carrega os apelidos historicos do
+    # GymScraping, onde parte dos arquivos esta sob outro slug. Quando ele NAO conhece a
+    # rede, deriva-se o nome do arquivo do proprio nome dela em vez de desistir: era isso
+    # que deixava o mapa argentino inteiro sem marca nenhuma, porque "SportClub",
+    # "Megatlon" e as demais nunca estariam num dicionario de redes brasileiras (relato do
+    # Juan, 2026-08-26). Rede sem arquivo continua caindo no quadrado com sigla, que e' a
+    # resposta certa para "nao tenho a logo".
+    logo_file = COMPETITOR_LOGO_FILES.get(rede) or f"logo_{_slug_rede(rede)}.png"
+    logo_path = COMPETITORS_LOGO_DIR / logo_file
     return _quadrado_logo(logo_path, str(brand["bg"]), halo=halo) or _quadrado_sigla(
         str(brand["short"]), str(brand["bg"]), str(brand["fg"]), halo=halo
     )
