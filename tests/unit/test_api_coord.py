@@ -51,3 +51,73 @@ def test_resolver_coordenada_latlng_e_url() -> None:
     assert resolver_coordenada(None, None, "?q=-21.9180,-46.6855") == AGUAS
     with pytest.raises(CoordenadaInvalidaError):
         resolver_coordenada(None, None, None)
+
+
+# --- Apple Maps / iPhone (BLK-FIX-MAPSQ) ---------------------------------------------
+# O app nativo de Mapas do iOS NUNCA compartilha com `@lat,lng`: usa `ll=`, `coordinate=`
+# ou `daddr=`. Sem estes parametros o link do iPhone morria em "Nao consegui localizar".
+
+
+def test_apple_maps_coordinate():
+    from motor_expansao.api.coord import parse_maps_url
+
+    lat, lng = parse_maps_url(
+        "https://maps.apple.com/place?coordinate=-3.7361,-38.4975&name=AYO+Gym"
+    )
+    assert (round(lat, 4), round(lng, 4)) == (-3.7361, -38.4975)
+
+
+def test_apple_maps_daddr_e_saddr():
+    """Rota do Apple Maps: destino (`daddr`) e origem (`saddr`)."""
+    from motor_expansao.api.coord import parse_maps_url
+
+    assert parse_maps_url("https://maps.apple.com/?daddr=-3.7361,-38.4975")[0] == -3.7361
+    assert parse_maps_url("https://maps.apple.com/?saddr=-23.55,-46.63")[1] == -46.63
+
+
+def test_apple_maps_ll_continua_valendo():
+    from motor_expansao.api.coord import parse_maps_url
+
+    lat, lng = parse_maps_url("https://maps.apple.com/?ll=-3.7327,-38.4869&q=Marcado")
+    assert (round(lat, 4), round(lng, 4)) == (-3.7327, -38.4869)
+
+
+def test_pino_exato_tem_prioridade_sobre_viewport():
+    """`!3d!4d` (pino) vence `@lat,lng` (centro da camera) -- a ordem dos padroes importa:
+    o centro do viewport pode estar a centenas de metros do ponto pedido."""
+    from motor_expansao.api.coord import parse_maps_url
+
+    url = ("https://www.google.com/maps/place/X/@-3.7000,-38.4000,17z/"
+           "data=!3m1!4b1!4m5!3d-3.7673!4d-38.4867")
+    assert parse_maps_url(url) == (-3.7673, -38.4867)
+
+
+def test_coordenada_em_parametro_desconhecido():
+    """Ultimo recurso: par lat,lng em parametro que nenhuma lista nossa preve."""
+    from motor_expansao.api.coord import parse_maps_url
+
+    assert parse_maps_url("https://maps.apple.com/?pin=-3.7361,-38.4975&x=1") == (-3.7361, -38.4975)
+    assert parse_maps_url("https://maps.novo.app/v2?geo_point=-23.5505,-46.6333") == (-23.5505, -46.6333)
+
+
+def test_fallback_generico_nao_rouba_precedencia_do_pino():
+    """O generico so roda quando TODOS os especificos falham -- o pino continua vencendo."""
+    from motor_expansao.api.coord import parse_maps_url
+
+    url = ("https://google.com/maps/place/X/@-3.70,-38.40,17z/"
+           "data=!3d-3.7673!4d-38.4867&pin=-1.0,-2.0")
+    assert parse_maps_url(url) == (-3.7673, -38.4867)
+
+
+def test_par_espurio_e_barrado_pelo_bounding_box():
+    """Rede de seguranca do generico: par que nao e' geografico cai fora do Brasil."""
+    import pytest
+
+    from motor_expansao.api.coord import (
+        CoordenadaInvalidaError,
+        parse_maps_url,
+        validar_brasil,
+    )
+
+    with pytest.raises(CoordenadaInvalidaError):
+        validar_brasil(*parse_maps_url("https://x.com/?versao=1.0,2.0"))
