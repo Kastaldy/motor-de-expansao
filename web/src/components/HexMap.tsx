@@ -62,6 +62,11 @@ function iconeDeck(url: string): IconeDeck {
   return { url, width: 128, height: 128, anchorX: 64, anchorY: 64, mask: false }
 }
 
+// Logo do WellHub para os pins de academias INDEPENDENTES (todas vem do feed do WellHub).
+// Identidade de modulo (estavel) -> nao dispara re-pack do atlas. So' as independentes usam
+// esta marca; as unidades de REDE seguem com a bandeira propria (iconObjs por rede em `conc-pins`).
+const ICONE_WELLHUB: IconeDeck = iconeDeck('/logo-wellhub.png')
+
 /* ---------------------------------------------------------------------------
    Mapa de hexagonos H3 res-7 sobre basemap MapLibre.
 
@@ -918,37 +923,30 @@ export default function HexMap({
           ]
         : []),
 
-      /* INDEPENDENTES (BLK-MA-15): circulo, nao bandeira. Elas nao tem marca — sao academias
-         de bairro —, entao nao ha logo a exibir, e um icone generico competiria visualmente com
-         as bandeiras das cadeias sem acrescentar informacao.
-
-         COR UNICA, de proposito. A tentacao e' colorir por score, mas isso exigiria uma regua
-         nova sobre a rampa de 10 faixas que ja colore os hexagonos por baixo — duas escalas de
-         cor na mesma tela, medindo coisas diferentes, e' o defeito que o repo ja registrou como
-         "dois idiomas". O numero vive no tooltip, onde tem rotulo e contexto. Desenhadas ANTES
-         dos concorrentes e da Ultra: onde houver sobreposicao, quem manda na leitura e' a rede
-         instalada. */
+      /* INDEPENDENTES (BLK-MA-15): logo do WellHub. Todas vem do feed do WellHub, entao a marca
+         do agregador as identifica — pedido do Felipe (2026-08-25). SO' as independentes levam a
+         logo do WellHub; as unidades de REDE mantem a bandeira propria (camada `conc-pins`).
+         O numero vive no tooltip (setIndepHover). Desenhadas ANTES dos concorrentes e da Ultra:
+         onde houver sobreposicao, quem manda na leitura e' a rede instalada. */
       ...(independentes?.length
         ? [
-            new ScatterplotLayer<PinIndependente>({
+            new IconLayer<PinIndependente>({
               id: 'independentes-pins',
               data: independentes,
               getPosition: (d) => [d.lng ?? 0, d.lat ?? 0],
-              getRadius: 5,
-              radiusUnits: 'pixels',
-              radiusMinPixels: 3,
-              radiusMaxPixels: 8,
-              getFillColor: [232, 102, 60, 205],
-              stroked: true,
-              getLineColor: [16, 20, 28, 210],
-              lineWidthUnits: 'pixels',
-              getLineWidth: 1,
+              getIcon: () => ICONE_WELLHUB,
+              // Menor que a bandeira das cadeias (30-38): a independente e' camada secundaria e
+              // nao pode competir com a rede instalada. Cap 30 evita upscaling do atlas de 128px.
+              getSize: 22,
+              sizeUnits: 'pixels',
+              sizeMinPixels: 10,
+              sizeMaxPixels: 30,
               pickable: true,
               onHover: (info) => {
                 const d = info.object as PinIndependente | undefined
                 setIndepHover(d ? { d, x: info.x, y: info.y } : null)
               },
-            }) as unknown as ScatterplotLayer<Hex>,
+            }) as unknown as IconLayer<Hex>,
           ]
         : []),
 
