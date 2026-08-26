@@ -433,7 +433,9 @@ export default function App() {
               onCapturarMapas={capturarMapas}
               onAnalisarPonto={irParaViabilidade}
               onLocalizar={localizarPonto}
-              mapaPronto={dados != null}
+              /* `mapaPronto` saiu (2026-08-26): o território carregado aqui dizia "sim"
+                 para sempre depois da primeira análise, e era o que impedia a tela de
+                 entrada do modo de voltar. Ver o bloco `semMapa` no `PontoScreen`. */
               pedido={pedidoPonto}
               onLimparPin={limparPinPonto}
               onInicio={voltarAoInicio}
