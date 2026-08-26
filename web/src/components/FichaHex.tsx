@@ -19,6 +19,23 @@ const COR_TICKS_HIBRIDO = '#cfdfe3'
 const FUNDO_VEREDITO = 'linear-gradient(120deg, #11282a, #0d1a1e 70%)'
 const BORDA_VEREDITO = '#24474a'
 
+/* QUAIS FAIXAS GANHAM O PREFIXO "Prioridade" NO SELO.
+   Tabela explicita, e nao uma regra sobre o texto. A lista de faixas e' FECHADA e vive em
+   `FAIXA_M1_ORDEM` (`lib/colors.ts`): 'Prioridade máxima', 'Alta', 'Média', 'Baixa',
+   'Descartado', 'Inviável'.
+
+   So' as tres do MEIO sao GRAU de prioridade, e so' elas ficam ambiguas sozinhas — era
+   "ALTA" solto no topo que se lia como veredito do hexagono inteiro, contra a sobra de
+   mercado do rodape. As outras tres nao precisam: 'Prioridade máxima' ja' traz a palavra,
+   e 'Descartado'/'Inviável' sao ESTADO, nao grau — "Prioridade Descartado" nao e'
+   portugues nem e' o que o M1 diz.
+
+   Perguntar ao texto ("contem 'prioridade'?") acertava por acidente nas duas primeiras e
+   errava nas duas ultimas. Pertencer a um conjunto declarado nao depende de sorte, e no
+   dia em que o M1 publicar uma faixa nova o silencio aqui e' o comportamento seguro: sai
+   sem prefixo, exatamente como a API escreveu. */
+const FAIXAS_M1_COM_PREFIXO = new Set(['Alta', 'Média', 'Baixa'])
+
 /**
  * A leitura de UM hexagono, para viver dentro da janela flutuante do mapa.
  *
@@ -83,6 +100,28 @@ export default function FichaHex({
       ? null
       : Math.min(100, Math.round((100 * Math.max(0, hex.oferta)) / CAPACIDADE_UNIDADE_ALUNOS))
 
+  /* AS DUAS LEITURAS QUE PARECIAM SE CONTRADIZER (Juan, 2026-08-26: "em cima fala que é
+     alta prioridade e embaixo fala que não tem mercado disponível").
+
+     Elas medem coisas diferentes, e a ficha nunca dizia isso:
+
+       faixa M1 (topo)   percentil de `score_priorizacao` = 0,40·renda + 0,60·população.
+                         É PERFIL do lugar. A concorrência NÃO entra na conta.
+       sobra (rodapé)    SAM − oferta instalada. É MERCADO ainda não atendido, e é
+                         justamente a concorrência que o consome.
+
+     Um bairro rico e denso cheio de academias marca "Alta" em cima e "não sobra mercado"
+     embaixo — as duas frases estão certas ao mesmo tempo. Sem dizer de onde cada uma vem,
+     a janela parecia com defeito, e uma leitura assim não sustenta decisão de abertura.
+
+     A correção é de LINGUAGEM, não de número: nada aqui recalcula, reordena ou esconde
+     nada. A faixa passa a se declarar (a nota sob o selo) e, quando as duas leituras
+     apontam para lados opostos, a ficha explica o porquê em vez de deixar o leitor
+     resolver sozinho. */
+  const FAIXAS_M1_DE_ENTRAR = new Set(['Prioridade máxima', 'Alta'])
+  const perfilBomMercadoTomado =
+    saturacao?.tom === 'saturado' && hex.faixa != null && FAIXAS_M1_DE_ENTRAR.has(hex.faixa)
+
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       {/* ---- Veredito: a frase que resume, com a faixa M1 e os numeros-chave ---- */}
@@ -93,6 +132,10 @@ export default function FichaHex({
           {hex.faixa && (
             <span
               className="num"
+              /* O selo diz o NOME da régua junto com o valor. Sozinho, "ALTA" era lido
+                 como veredito do hexágono inteiro — e logo abaixo, na mesma janela, a
+                 sobra de mercado dizia o contrário. */
+              title="Faixa de prioridade do M1: percentil de renda e população. Não considera a concorrência instalada — isso é o bloco 'Quanto de mercado sobra'."
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -118,7 +161,9 @@ export default function FichaHex({
                   flexShrink: 0,
                 }}
               />
-              {hex.faixa}
+              {/* "PRIORIDADE ALTA", não "ALTA" — só nas faixas que são grau de prioridade
+                  (ver `FAIXAS_M1_COM_PREFIXO`). As demais saem como a API as escreveu. */}
+              {FAIXAS_M1_COM_PREFIXO.has(hex.faixa) ? `Prioridade ${hex.faixa}` : hex.faixa}
             </span>
           )}
           {hex.hib != null && (
@@ -130,6 +175,22 @@ export default function FichaHex({
             </span>
           )}
         </div>
+
+        {/* De onde vem a faixa. Uma linha, sempre visível — o `title` do selo não serve
+            sozinho: não aparece no toque, e era exatamente esta informação que faltava
+            para as duas leituras da janela pararem de parecer contraditórias. */}
+        {hex.faixa && (
+          <p
+            style={{
+              margin: '0 0 9px',
+              font: '400 10.5px/1.45 var(--f-ui)',
+              color: 'var(--tx-sub)',
+            }}
+          >
+            Faixa do M1 — perfil de renda e população do hexágono. A concorrência instalada
+            entra em “Quanto de mercado sobra”, abaixo.
+          </p>
+        )}
         <p style={{ margin: 0, font: '400 14.5px/1.5 var(--f-ui)', color: 'var(--tx-strong)' }}>
           <FraseVeredito hex={hex} />
         </p>
@@ -312,6 +373,26 @@ export default function FichaHex({
             }}
           >
             {saturacao.frase}
+          </p>
+        )}
+        {/* A RECONCILIAÇÃO, só quando as duas leituras apontam para lados opostos. Não é
+            um terceiro veredito: é a frase que diz por que as outras duas convivem. */}
+        {perfilBomMercadoTomado && (
+          <p
+            style={{
+              margin: '8px 0 0',
+              padding: '8px 10px',
+              borderRadius: 9,
+              background: 'var(--surf-raised)',
+              border: '1px solid var(--line-soft)',
+              font: '400 11px/1.5 var(--f-ui)',
+              color: 'var(--tx-sub)',
+            }}
+          >
+            Não contradiz a faixa <b>{hex.faixa?.toLowerCase()}</b> do topo: ela mede o{' '}
+            <b>perfil</b> do lugar (renda e população), e esta leitura mede o{' '}
+            <b>mercado que sobra</b> depois da oferta já instalada. Aqui o perfil é dos
+            bons e o mercado já está tomado — o ponto é bom, a praça é disputada.
           </p>
         )}
       </CardPainel>
