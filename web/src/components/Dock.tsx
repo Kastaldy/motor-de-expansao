@@ -2,6 +2,7 @@ import type { Tela } from '../App'
 import BotaoTema from './BotaoTema'
 import { telaLiberada, type Aba, type TelaControlada } from '../lib/acesso'
 import type { Tema } from '../lib/tema'
+import type { PaisDaBase } from '../lib/pais-da-base'
 
 /* Dock vertical fixo. No piloto so as duas telas do escopo estao ativas; as
    demais aparecem desabilitadas para o operador entender que o mapa e a
@@ -12,6 +13,104 @@ import type { Tema } from '../lib/tema'
    ajuste da tela inteira — misturado a' fila de icones viraria uma sexta "tela".
    O Dock e' o unico chrome que existe nas cinco, entao e' o unico lugar de onde
    UM botao alcanca o produto todo. */
+/* CARIMBO DE PAÍS — fica colado na logo, acima da navegação.
+
+   O mesmo binário do piloto também é o que serve a base da Argentina (muda só o
+   `MOTOR_DATA_DIR`; ver `piloto_rep/LEIA-ME.md` no repo Motor-Argentina). Sem
+   carimbo as duas instâncias são idênticas na tela, e com as duas abertas o
+   operador não sabe em qual está.
+
+   O CARIMBO SEGUE A BASE, e deixou de ser fixo no Brasil (Juan, 2026-08-26: "está
+   com o ícone do Brasil… é da Argentina"). Fixo, ele ficava errado exatamente na
+   instância em que a dúvida existe — e uma bandeira errada é pior do que nenhuma,
+   porque é a leitura errada que este carimbo existe para evitar. Quem descobre o
+   país é `lib/pais-da-base.ts`, a partir da lista de UFs que o app já carrega.
+
+   País desconhecido (`null`) NÃO carimba nada: sem lista ainda, ou base misturada.
+
+   Não é botão e não tem hover: informa a identidade da instância, não é destino
+   de clique. E a sigla escrita acompanha a bandeira porque cor sozinha não é
+   acessível — as duas bandeiras têm azul e branco em comum.
+
+   Desenhada em SVG e não em PNG: entra no bundle, sobrevive offline, não borra em
+   tela 2x e não pede um arquivo a mais ao servidor por 26px de imagem. */
+const BANDEIRAS: Record<'BR' | 'AR', { nome: string; svg: React.JSX.Element }> = {
+  BR: {
+    nome: 'Brasil',
+    svg: (
+      <>
+        <rect width="24" height="17" rx="2" fill="#009b3a" />
+        <path d="M12 2.2 21.4 8.5 12 14.8 2.6 8.5Z" fill="#ffdf00" />
+        <circle cx="12" cy="8.5" r="3.4" fill="#002776" />
+      </>
+    ),
+  },
+  AR: {
+    nome: 'Argentina',
+    svg: (
+      <>
+        <rect width="24" height="17" rx="2" fill="#74acdf" />
+        <rect y="5.7" width="24" height="5.6" fill="#fff" />
+        <circle cx="12" cy="8.5" r="1.9" fill="#f6b40e" />
+      </>
+    ),
+  },
+}
+
+function Carimbo({ pais }: { pais: PaisDaBase }) {
+  const bandeira = pais ? BANDEIRAS[pais] : undefined
+  if (!bandeira) return null
+  return (
+  <div
+    role="img"
+    title={`Base de dados: ${bandeira.nome}`}
+    aria-label={`Motor de Expansão — ${bandeira.nome}`}
+    style={{
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: 3,
+      marginTop: -2,
+      marginBottom: 8,
+      flexShrink: 0,
+    }}
+  >
+    <svg
+      viewBox="0 0 24 17"
+      width={26}
+      height={18}
+      role="img"
+      aria-hidden="true"
+      style={{
+        borderRadius: 3,
+        display: 'block',
+        /* Anel claro em vez de sombra: o verde do Brasil e a faixa branca da
+           Argentina encostam no cromo escuro do Dock, e sem ele a bandeira perde
+           a silhueta de retângulo. */
+        boxShadow: '0 0 0 1px rgba(255,255,255,.22)',
+      }}
+    >
+      {bandeira.svg}
+    </svg>
+    <span
+      style={{
+        font: '600 8px/1 var(--f-ui)',
+        letterSpacing: '.1em',
+        /* `--tx-muted`, e nao `--tx-off`: medido contra o cromo do Dock (#101822),
+           --tx-off da 3,06:1 e --tx-sub 4,37:1 — os dois abaixo do minimo AA de 4,5
+           para texto pequeno; --tx-muted da 4,88:1. A sigla existe JUSTAMENTE porque
+           cor sozinha nao e' acessivel, entao ela ilegivel anula o proprio motivo de
+           estar ali. (`--tx-off` continua certo no lugar dele: rotulo decorativo, que
+           esta nao e'.) */
+        color: 'var(--tx-muted)',
+        textTransform: 'uppercase',
+      }}
+    >
+      {pais}
+    </span>
+  </div>
+  )
+}
 
 const ICONES: Record<string, React.JSX.Element> = {
   exec: (
@@ -79,6 +178,7 @@ export default function Dock({
   abas = null,
   tema,
   onTema,
+  pais = null,
 }: {
   tela: Tela
   onTela: (t: Tela) => void
@@ -86,6 +186,8 @@ export default function Dock({
   abas?: Set<Aba> | null
   tema: Tema
   onTema: (t: Tema) => void
+  /** País da base servida. `null` = ainda não dá para afirmar -> não carimba. */
+  pais?: PaisDaBase
 }) {
   // Ícone de tela vetada SOME em vez de aparecer desabilitado: os desabilitados do
   // Dock já significam "fora do piloto", e um terceiro estado ("existe mas não para
@@ -144,6 +246,8 @@ export default function Dock({
           style={{ width: '100%', height: '100%', objectFit: 'cover' }}
         />
       </button>
+
+      <Carimbo pais={pais} />
 
       {itens.map((it) => {
         const ativo = it.tela !== null && it.tela === tela
