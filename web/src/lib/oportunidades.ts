@@ -189,3 +189,46 @@ export const UFS_COM_SATELITE: readonly string[] = Object.freeze([
 export function temCoberturaSatelite(uf: string | null | undefined): boolean {
   return !!uf && UFS_COM_SATELITE.includes(uf.toUpperCase())
 }
+
+
+/**
+ * Um item do ranking nacional vira DESTINO no mapa — ou `null` quando não pode.
+ *
+ * POR QUE ISTO É UMA REGRA, E NÃO UM `onClick`. O "Ver no mapa" da lista levava só ao
+ * MUNICÍPIO do hexágono: o operador escolhia um ponto específico no ranking e chegava
+ * numa cidade inteira, tendo de reencontrar a olho o que acabara de escolher. Levar o
+ * pin junto é o que faz o `MapScreen` amarrar as três leituras que ele já sabe amarrar
+ * — a câmera voa até a coordenada, o hexágono ganha o contorno de seleção, e a ficha
+ * dele abre.
+ *
+ * POR QUE PODE DEVOLVER `null`. O backend declara `uf`, `municipio`, `lat` e `lng` como
+ * ANULÁVEIS: a coluna pode não existir na partição, e o `_num` do servidor devolve
+ * `None` para NaN em vez de propagar o NaN. Um pin com coordenada ausente não erra — ele
+ * leva a câmera para o meio do oceano em silêncio, que é pior. Sem os quatro campos, o
+ * item não é navegável e quem chama deve desligar o botão.
+ *
+ * Mora aqui, e não no `.tsx`, pela mesma razão de `lib/inicio.ts`: o vitest do piloto
+ * roda em ambiente `node` e só casa `src/**\/*.test.ts`. Regra em `lib/` é regra testável.
+ */
+export interface DestinoHex {
+  uf: string
+  municipio: string
+  pin: { lat: number; lng: number; hexId: string }
+}
+
+export function destinoDoHex(h: {
+  uf: string | null
+  municipio: string | null
+  lat: number | null
+  lng: number | null
+  hex_id: string
+}): DestinoHex | null {
+  if (!h.uf || !h.municipio || !h.hex_id) return null
+  if (h.lat === null || h.lng === null) return null
+  if (!Number.isFinite(h.lat) || !Number.isFinite(h.lng)) return null
+  return {
+    uf: h.uf,
+    municipio: h.municipio,
+    pin: { lat: h.lat, lng: h.lng, hexId: h.hex_id },
+  }
+}

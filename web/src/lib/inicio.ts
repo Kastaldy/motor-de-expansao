@@ -84,13 +84,15 @@ export const MODOS: readonly ModoDefinicao[] = Object.freeze([
     eyebrow: 'A fila pronta',
     titulo: 'Ver as melhores oportunidades',
     resumo:
-      'Você quer a resposta direta: a fila de cidades com mais alunos não atendidos, já filtrada por potencial socioeconômico, população e ausência de concorrente.',
-    /* Na visao de estado os itens da fila sao CIDADES, nao hexagonos — o texto antigo
-       prometia hexagono e entregava municipio. */
+      'Você quer a resposta direta: os hexágonos do Brasil inteiro com mais alunos não atendidos, já filtrados por potencial socioeconômico, população e ausência de concorrente — sem precisar escolher um estado antes.',
+    /* O texto DESTE card ja mentiu duas vezes, nas duas direcoes: prometeu hexagono
+       enquanto a tela entregava municipio, e depois prometeu cidade enquanto a tela
+       passava a entregar o ranking nacional por hexagono. Ele muda no MESMO commit da
+       rota, nunca num commit de acompanhamento. */
     bullets: Object.freeze([
-      'A fila pronta, com o porquê de cada posição',
-      'Só onde não há concorrente mapeado',
-      'Ordenada por alunos não atendidos',
+      'O ranking do Brasil inteiro, hexágono a hexágono',
+      'Sem escolher estado: região é filtro, não pré-requisito',
+      'Ordenado por alunos não atendidos, só onde não há concorrente mapeado',
     ]),
     chamada: 'Ver a fila',
     destino: 'oportunidades',

@@ -58,6 +58,16 @@ const BASEMAP_STYLE =
 
 const FLY = new FlyToInterpolator({ speed: 1.6 })
 
+/**
+ * Zoom em que UM hexagono res-7 domina a tela — o enquadramento de "olhar este ponto".
+ * E' o mesmo piso que os voos automaticos ja usavam; virou constante para os tres
+ * lugares que decidem camera (estado inicial, voo do centro, voo do pin) nao poderem
+ * divergir em silencio.
+ */
+const ZOOM_DO_HEXAGONO = 13
+/** Cidade inteira na tela: o padrao de quem abriu um municipio para explorar. */
+const ZOOM_DO_MUNICIPIO = 9.6
+
 export interface SearchPin {
   lat: number
   lng: number
@@ -293,18 +303,44 @@ export default function HexMap({
     return m
   }, [pins?.icones])
 
-  // Camera restaurada tem precedencia sobre o centro do municipio: e' ela que devolve
-  // o enquadramento de antes quando o operador volta do estudo pontual.
-  const [view, setView] = useState<ViewState>(
-    () =>
-      cameraInicial ?? {
-        longitude: centro.lng ?? -47.9,
-        latitude: centro.lat ?? -15.78,
-        zoom: 9.6,
+  /**
+   * O ENQUADRAMENTO INICIAL, em ordem de precedencia.
+   *
+   * 1. Camera restaurada (volta do estudo pontual) — devolve o que o operador tinha.
+   * 2. PIN EXTERNO — alguem ja escolheu um ponto: o mapa NASCE nele, aproximado.
+   * 3. Centro do municipio — o padrao de quem abriu uma cidade para explorar.
+   *
+   * POR QUE O PIN ENTRA AQUI, E NAO SO' NO VOO. Havia (e ha) um efeito que voa ate o
+   * `searchPin` com zoom >= 13. Medido em 28/08/2026, chegando pelo ranking nacional,
+   * ele NAO surtia efeito: o mapa parava em 9,6 — o enquadramento da cidade inteira —
+   * e o operador tinha de dar zoom a mao ate o hexagono que acabara de escolher na
+   * lista, que e' exatamente o trabalho que clicar em "Ver no mapa" deveria poupar.
+   *
+   * Este componente so' MONTA depois que o payload do municipio chega (o pai o renderiza
+   * sob `dados &&`), e o pin externo ja existe nesse instante. Entao nao ha nada a
+   * esperar: em vez de nascer longe e depender de um voo que corre contra os outros
+   * efeitos de camera, ele nasce ja enquadrado. Voo que nao precisa acontecer nao tem
+   * como chegar atrasado.
+   */
+  const [view, setView] = useState<ViewState>(() => {
+    if (cameraInicial) return cameraInicial
+    if (searchPin) {
+      return {
+        longitude: searchPin.lng,
+        latitude: searchPin.lat,
+        zoom: ZOOM_DO_HEXAGONO,
         pitch: 0,
         bearing: 0,
-      },
-  )
+      }
+    }
+    return {
+      longitude: centro.lng ?? -47.9,
+      latitude: centro.lat ?? -15.78,
+      zoom: ZOOM_DO_MUNICIPIO,
+      pitch: 0,
+      bearing: 0,
+    }
+  })
 
   // Sobe a camera para o pai a cada mudanca. Sem isso ela morre no unmount da tela
   // (App troca `mapa` por `viabilidade` com render condicional, o que DESMONTA a arvore).
@@ -316,21 +352,45 @@ export default function HexMap({
   }, [view, onCamera])
 
   // Voa para o centro do municipio quando ele muda.
+  //
+  // UM PIN EXTERNO VENCE O CENTRO DO MUNICIPIO. Sem esta regra o zoom do pin era
+  // desfeito por uma corrida: quem chega pelo ranking nacional muda UF e municipio na
+  // mesma passagem, o voo ate' o pin roda de imediato (zoom >= 13) e, quando o payload
+  // do municipio finalmente chega, `centro` muda e ESTE efeito afastava a camera de
+  // volta para 9.6 — a cidade inteira, que e' exatamente o que o operador acabou de
+  // pedir para nao ter de olhar. Os dois voos estao certos; so' a ordem enganava,
+  // porque o segundo depende de dado que chega DEPOIS do primeiro.
+  //
+  // O centro do municipio continua sendo o destino certo quando NINGUEM escolheu um
+  // ponto: e' o enquadramento de quem acabou de abrir uma cidade para explorar.
   const centroKey = `${centro.lat},${centro.lng}`
   const centroAnterior = useRef(centroKey)
   useEffect(() => {
     if (centro.lat == null || centro.lng == null) return
     if (centroAnterior.current === centroKey) return
     centroAnterior.current = centroKey
+    if (searchPin) {
+      setView((v) => ({
+        ...v,
+        longitude: searchPin.lng,
+        latitude: searchPin.lat,
+        // Mesmo piso do voo do pin, e pelo mesmo motivo: nunca AFASTAR de quem ja'
+        // esta' aproximado. `max` guarda o zoom do operador se ele ja' foi mais fundo.
+        zoom: Math.max(ZOOM_DO_HEXAGONO, v.zoom),
+        transitionDuration: 700,
+        transitionInterpolator: FLY,
+      }))
+      return
+    }
     setView((v) => ({
       ...v,
       longitude: centro.lng!,
       latitude: centro.lat!,
-      zoom: 9.6,
+      zoom: ZOOM_DO_MUNICIPIO,
       transitionDuration: 700,
       transitionInterpolator: FLY,
     }))
-  }, [centroKey, centro.lat, centro.lng])
+  }, [centroKey, centro.lat, centro.lng, searchPin])
 
   // Voa e aproxima quando um ponto e buscado. No PRIMEIRO render com camera restaurada
   // o voo e' pulado de proposito: o pin ja existia antes da ida a Viabilidade, e voar
@@ -351,7 +411,7 @@ export default function HexMap({
       ...v,
       longitude: searchPin.lng,
       latitude: searchPin.lat,
-      zoom: Math.max(13, v.zoom),
+      zoom: Math.max(ZOOM_DO_HEXAGONO, v.zoom),
       transitionDuration: 800,
       transitionInterpolator: FLY,
     }))

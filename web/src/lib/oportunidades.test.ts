@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   MARGEM_MEDIANA_PP,
   UFS_COM_SATELITE,
+  destinoDoHex,
   filtrarPorCrescimento,
   lerCrescimento,
   leituraDoItem,
@@ -172,5 +173,46 @@ describe('cobertura de satelite', () => {
   it('nulo nao quebra', () => {
     expect(temCoberturaSatelite(null)).toBe(false)
     expect(temCoberturaSatelite(undefined)).toBe(false)
+  })
+})
+
+
+describe('destinoDoHex — o "Ver no mapa" do ranking nacional', () => {
+  const COMPLETO = {
+    uf: 'TO',
+    municipio: 'Palmas',
+    lat: -10.1849,
+    lng: -48.3336,
+    hex_id: '87817101bffffff',
+  }
+
+  it('leva o HEXÁGONO, não só a cidade — o pin é o que o mapa precisa', () => {
+    const d = destinoDoHex(COMPLETO)
+    expect(d).not.toBeNull()
+    // uf + municipio escolhem o território; o pin escolhe o PONTO dentro dele.
+    expect(d?.uf).toBe('TO')
+    expect(d?.municipio).toBe('Palmas')
+    expect(d?.pin).toEqual({ lat: -10.1849, lng: -48.3336, hexId: '87817101bffffff' })
+  })
+
+  it('sem coordenada NÃO é destino — pin sem lat/lng leva a câmera para o oceano', () => {
+    expect(destinoDoHex({ ...COMPLETO, lat: null })).toBeNull()
+    expect(destinoDoHex({ ...COMPLETO, lng: null })).toBeNull()
+  })
+
+  it('NaN é tratado como coordenada ausente, não propagado para o mapa', () => {
+    expect(destinoDoHex({ ...COMPLETO, lat: Number.NaN })).toBeNull()
+    expect(destinoDoHex({ ...COMPLETO, lng: Number.POSITIVE_INFINITY })).toBeNull()
+  })
+
+  it('sem UF ou município não é destino: o mapa abriria o lugar errado', () => {
+    expect(destinoDoHex({ ...COMPLETO, uf: null })).toBeNull()
+    expect(destinoDoHex({ ...COMPLETO, municipio: null })).toBeNull()
+    expect(destinoDoHex({ ...COMPLETO, municipio: '' })).toBeNull()
+  })
+
+  it('coordenada ZERO é válida — `!h.lat` teria descartado o meridiano', () => {
+    const d = destinoDoHex({ ...COMPLETO, lat: 0, lng: 0 })
+    expect(d?.pin).toEqual({ lat: 0, lng: 0, hexId: '87817101bffffff' })
   })
 })

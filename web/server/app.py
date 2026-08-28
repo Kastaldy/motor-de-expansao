@@ -32,7 +32,7 @@ import os
 import re
 import sys
 import unicodedata
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -1176,6 +1176,135 @@ def _narrativa_crescimento(df_muni: pd.DataFrame, municipio: str) -> str:
     return " ".join(partes)
 
 
+# ============================================================================
+# A cascata do funil — UMA redacao, tres leitores
+# ============================================================================
+#
+# POR QUE ESTE BLOCO EXISTE. A regra que decide se um hexagono e' acionavel
+# (quente -> povoado -> com residual -> sem concorrente) estava escrita em DOIS
+# lugares que nao conseguiam se enxergar:
+#
+#   - `montar_funil` a expressa pelas colunas DERIVADAS (`pop_leitura`,
+#     `n_concorrentes_est`), que so existem depois de `_derivar`, dentro de
+#     `carregar_uf` — isto e', so quando se le UMA particao `uf=XX` por vez;
+#   - `_ranking_estados` le o dataset INTEIRO por `pyarrow.dataset`, nunca passa
+#     por `carregar_uf`, e por isso refazia o corte na origem, na mao.
+#
+# A leitura nacional por hexagono (`_ranking_hexagonos`) seria a TERCEIRA redacao.
+# Tres redacoes da mesma regra nao dao erro: elas desencontram em silencio, e o
+# Modo 2 (funil por estado) passa a discordar do Modo 3 (ranking nacional) sobre
+# quais hexagonos sao elegiveis — desencontro que so aparece meses depois, longe
+# da causa. Aqui a regra e' escrita uma vez e os tres leitores a chamam.
+
+#: Precedencia da coluna de populacao do hexagono. `pop_leitura` vem primeiro porque
+#: e' o que `_derivar` ja materializou; as demais reproduzem, na MESMA ordem, a
+#: precedencia que ele usa — necessario para quem le o dataset cru, sem derivadas.
+COLS_POP_LEITURA: tuple[str, ...] = (
+    "pop_leitura",
+    "populacao_corte_hex",
+    "pop_total_setor_2022",
+    "pop_total",
+)
+
+
+def _serie_pop(df: pd.DataFrame, precedencia: Sequence[str] = COLS_POP_LEITURA) -> pd.Series:
+    """Populacao de leitura, pela primeira coluna disponivel da precedencia."""
+    for origem in precedencia:
+        if origem in df.columns:
+            return pd.to_numeric(df[origem], errors="coerce")
+    return pd.Series(float("nan"), index=df.index, dtype="float64")
+
+
+def _quente(df: pd.DataFrame) -> pd.Series:
+    """Passo 1 — potencial socioeconomico acima do piso do funil."""
+    if "score_setor_2022_calibrado" not in df.columns:
+        return pd.Series(False, index=df.index)
+    return pd.to_numeric(df["score_setor_2022_calibrado"], errors="coerce") >= SCORE_CORTE_QUENTE
+
+
+def _povoado(df: pd.DataFrame, precedencia: Sequence[str] = COLS_POP_LEITURA) -> pd.Series:
+    """Passo 1 (segunda metade) — gente suficiente para sustentar a unidade."""
+    return _serie_pop(df, precedencia) >= POP_MIN_ACIONAVEL
+
+
+def _com_residual(df: pd.DataFrame, minimo: float = OFERTA_DESTAQUE_MIN) -> pd.Series:
+    """Passo 2 — sobra demanda nao atendida acima do piso de destaque."""
+    if "oferta_efetiva_disponivel" not in df.columns:
+        return pd.Series(False, index=df.index)
+    return pd.to_numeric(df["oferta_efetiva_disponivel"], errors="coerce") >= minimo
+
+
+def _sem_concorrente(df: pd.DataFrame, *, capacidade_por_linha: bool = True) -> pd.Series:
+    """Passo 3 — white space: nenhum concorrente ESTIMADO no hexagono.
+
+    Usa `n_concorrentes_est` quando ela existe (caminho de `carregar_uf`); senao
+    refaz a mesma conta na ORIGEM, que e' o unico caminho possivel para a varredura
+    nacional — ela le o dataset direto e nao tem colunas derivadas.
+
+    **O `fillna(0)` e' a armadilha desta rota, nao um detalhe.** Consumo AUSENTE nao
+    e' consumo ZERO. Num recorte de UF a diferenca e' ruido; numa leitura NACIONAL
+    ela decide o topo, porque as UFs com mapeamento de concorrente ralo sobem
+    inteiras — "nao mapeei" vira "nao tem ninguem". Quem consome esta mascara
+    nacionalmente tem de CONTAR e PUBLICAR quantos dos primeiros colocados vem de
+    consumo nulo, em vez de deixar a lista afirmar white space que ninguem mediu.
+    Ver `_ranking_hexagonos`, campo `topo_sem_medicao`.
+    """
+    if "n_concorrentes_est" in df.columns:
+        return pd.to_numeric(df["n_concorrentes_est"], errors="coerce").fillna(0) == 0
+    if "oferta_consumida_mercado_estimada" not in df.columns:
+        return pd.Series(True, index=df.index)
+    consumida = pd.to_numeric(df["oferta_consumida_mercado_estimada"], errors="coerce").fillna(0)
+    if not capacidade_por_linha:
+        # Divisor CONSTANTE: e' o que `_ranking_estados` sempre usou. Para a
+        # capacidade padrao as duas contas coincidem — `round(x / 2500) == 0` e
+        # `x < 1250` so divergem no empate exato em 1250 —, mas elas deixam de
+        # coincidir em qualquer hexagono cuja coluna de capacidade fuja do padrao.
+        return consumida < (CAPACIDADE_CONCORRENTE_PADRAO / 2.0)
+    cap = (
+        pd.to_numeric(df["capacidade_default_concorrente_alunos"], errors="coerce")
+        if "capacidade_default_concorrente_alunos" in df.columns
+        else pd.Series(CAPACIDADE_CONCORRENTE_PADRAO, index=df.index, dtype="float64")
+    )
+    n = (consumida / cap.replace(0, float("nan"))).replace(
+        [float("inf"), float("-inf")], float("nan")
+    )
+    return n.fillna(0).round() == 0
+
+
+def mascara_acionavel(
+    df: pd.DataFrame,
+    *,
+    precedencia_pop: Sequence[str] = COLS_POP_LEITURA,
+    residual_minimo: float | None = OFERTA_DESTAQUE_MIN,
+    capacidade_por_linha: bool = True,
+) -> pd.Series:
+    """A cascata inteira como UMA mascara booleana.
+
+    **OS PARAMETROS SAO AS DIVERGENCIAS QUE JA EXISTIAM, ditas em voz alta.** Os dois
+    leitores antigos nao aplicavam a cascata do mesmo jeito, e unifica-los em silencio
+    teria MUDADO o payload de `/api/estados` — uma regressao vestida de faxina:
+
+      - `residual_minimo=None` reproduz `_ranking_estados`, que pula do "quente e
+        povoado" direto para "sem concorrente", SEM o piso de `OFERTA_DESTAQUE_MIN`
+        que o funil aplica no passo 2;
+      - `capacidade_por_linha=False` reproduz o divisor CONSTANTE dele, no lugar da
+        coluna de capacidade por hexagono que `_derivar` usa;
+      - `precedencia_pop` reproduz a coluna de populacao que cada leitor enxerga.
+
+    Trocar um default aqui MUDA numero na tela. Nao e' ajuste de estilo.
+    """
+    return (
+        _quente(df)
+        & _povoado(df, precedencia_pop)
+        & (
+            pd.Series(True, index=df.index)
+            if residual_minimo is None
+            else _com_residual(df, residual_minimo)
+        )
+        & _sem_concorrente(df, capacidade_por_linha=capacidade_por_linha)
+    )
+
+
 def montar_funil(
     df_muni: pd.DataFrame, municipio: str, bairros: dict[str, str] | None = None
 ) -> list[dict[str, Any]]:
@@ -1190,19 +1319,15 @@ def montar_funil(
     # regiao precisa de gente suficiente para sustentar a unidade (mesma regua
     # POP_MIN_ACIONAVEL do mapa, que ja pinta <5k em cinza). O corte propaga por
     # todo o funil (residual/concorrencia/recomendacao derivam de `quentes`).
+    # Os tres cortes vem dos predicados compartilhados (ver "A cascata do funil"
+    # acima): sao os MESMOS que a leitura nacional aplica, e nao uma segunda
+    # redacao da mesma regra. O resultado e' identico ao das comparacoes escritas
+    # a mao que estavam aqui — `tests/unit/test_piloto_web_endpoints.py` trava isso.
     col_censo = "score_setor_2022_calibrado"
-    if col_censo in df_muni.columns:
-        pop = df_muni["pop_leitura"] if "pop_leitura" in df_muni.columns else float("nan")
-        quentes = df_muni[(df_muni[col_censo] >= SCORE_CORTE_QUENTE) & (pop >= POP_MIN_ACIONAVEL)]
-    else:
-        quentes = df_muni.iloc[0:0]
+    quentes = df_muni[_quente(df_muni) & _povoado(df_muni)]
 
     # Passo 2 — Residual: quentes que ainda tem espaco de oferta
-    residual = (
-        quentes[quentes["oferta_efetiva_disponivel"] >= OFERTA_DESTAQUE_MIN]
-        if "oferta_efetiva_disponivel" in quentes.columns
-        else quentes.iloc[0:0]
-    )
+    residual = quentes[_com_residual(quentes)]
     alunos_residual = _num(residual["oferta_efetiva_disponivel"].sum()) if len(residual) else 0
 
     # Passo 3 — Concorrencia: dos residuais, quais estao desguarnecidos. `white` e a
@@ -1213,7 +1338,7 @@ def montar_funil(
     # hexagono APAGADO e contradizia o proprio numerao (0). Municipio saturado passa a
     # ter os passos 3 e 4 sem NENHUM item, e a lista vazia e a resposta CORRETA ("nao
     # ha area livre aqui") — o texto do passo (`_narrativa_concorrencia`) diz isso.
-    white = residual[residual["n_concorrentes_est"] == 0] if len(residual) else residual
+    white = residual[_sem_concorrente(residual)] if len(residual) else residual
 
     # Passo 4 — as areas do passo 3 que TEM leitura de satelite. A cobertura e parcial
     # (41.135 hexes em 12 UFs, so na mancha urbana medida), e o numerao do passo antes
@@ -1669,20 +1794,13 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
     total = len(df_uf)
     n_munis = int(df_uf["nome_municipio"].nunique()) if "nome_municipio" in df_uf.columns else 0
 
-    col = "score_setor_2022_calibrado"
-    if col in df_uf.columns:
-        pop = df_uf["pop_leitura"] if "pop_leitura" in df_uf.columns else float("nan")
-        quentes = df_uf[(df_uf[col] >= SCORE_CORTE_QUENTE) & (pop >= POP_MIN_ACIONAVEL)]
-    else:
-        quentes = df_uf.iloc[0:0]
+    # Mesmos predicados compartilhados do funil municipal (ver "A cascata do funil"):
+    # esta era a QUARTA redacao da mesma regra no arquivo.
+    quentes = df_uf[_quente(df_uf) & _povoado(df_uf)]
 
-    residual = (
-        quentes[quentes["oferta_efetiva_disponivel"] >= OFERTA_DESTAQUE_MIN]
-        if "oferta_efetiva_disponivel" in quentes.columns
-        else quentes.iloc[0:0]
-    )
+    residual = quentes[_com_residual(quentes)]
     alunos_res = _num(residual["oferta_efetiva_disponivel"].sum()) if len(residual) else 0
-    white = residual[residual["n_concorrentes_est"] == 0] if len(residual) else residual
+    white = residual[_sem_concorrente(residual)] if len(residual) else residual
     # Presenca de VALOR, nao de coluna: o artefato pode existir e o join nao casar
     # (o fallback por nome e o caminho principal em 21 das 27 UFs), e nesse caso a
     # coluna chega cheia de NaN — a prosa afirmava CAGED ao lado de 0 cidades.
@@ -2719,14 +2837,20 @@ def _ranking_estados() -> list[dict[str, Any]]:
     if df.empty:
         return []
 
-    quente = df["score_setor_2022_calibrado"] >= SCORE_CORTE_QUENTE
-    povoado = df[col_pop] >= POP_MIN_ACIONAVEL
-    # `n_concorrentes_est` e' DERIVADO (round(consumida / 2500)) e nao existe no
-    # artefato: reproduzimos o mesmo corte na origem, sem materializar a coluna.
-    livre = df["oferta_consumida_mercado_estimada"].fillna(0) < (
-        CAPACIDADE_CONCORRENTE_PADRAO / 2.0
-    )
-    elegivel = df[quente & povoado & livre]
+    # A cascata vem da funcao compartilhada, com as DUAS divergencias historicas
+    # desta rota declaradas como parametro em vez de reescritas na mao:
+    #   - `residual_minimo=None`: o ranking de UF nunca aplicou o piso do passo 2;
+    #   - `capacidade_por_linha=False`: ele sempre dividiu pela capacidade CONSTANTE.
+    # Mudar qualquer um dos dois muda o numero que a tela mostra — sao decisoes de
+    # produto, nao detalhes de implementacao, e por isso ficam visiveis aqui.
+    elegivel = df[
+        mascara_acionavel(
+            df,
+            precedencia_pop=(col_pop,),
+            residual_minimo=None,
+            capacidade_por_linha=False,
+        )
+    ]
 
     out: list[dict[str, Any]] = []
     for uf_nome, bloco in df.groupby("uf", observed=True):
@@ -2765,6 +2889,198 @@ def estados() -> dict[str, Any]:
         },
         "estados": ranking,
     }
+
+
+# ============================================================================
+# Ranking NACIONAL por HEXAGONO — o Modo 3 sem escolher regiao
+# ============================================================================
+
+#: Teto de itens devolvidos pela varredura nacional. Nao e' regua de negocio: e'
+#: tamanho de payload. A cascata ja filtrou; isto so corta a cauda da lista.
+TOP_HEXAGONOS_NACIONAL = 50
+#: Teto absoluto que o parametro `limite` pode pedir.
+MAX_HEXAGONOS_NACIONAL = 500
+
+#: Projecao minima da varredura nacional. Parquet e' colunar: o custo e' proporcional
+#: ao numero de COLUNAS, nao ao de linhas — e a base tem 1,5 milhao de linhas. Pedir
+#: `_COLS_DESEJADAS` inteiro aqui (26 colunas) multiplicaria a leitura por seis.
+_COLS_NACIONAL: tuple[str, ...] = (
+    "uf",
+    "hex_id",
+    "lat",
+    "lng",
+    "nome_municipio",
+    "cod_municipio",
+    "score_setor_2022_calibrado",
+    "oferta_efetiva_disponivel",
+    "oferta_consumida_mercado_estimada",
+    "capacidade_default_concorrente_alunos",
+    "faixa_oportunidade",
+    "populacao_corte_hex",
+    "pop_total_setor_2022",
+    "pop_total",
+    "renda_per_capita_setor_2022_calibrada",
+    "renda_per_capita",
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _hexagonos_acionaveis_brasil() -> pd.DataFrame:
+    """Todo hexágono acionável do país, em UMA varredura. READ-ONLY sobre o M1.
+
+    POR QUE ESTA ROTA EXISTE. O piloto sempre soube ler hexágono, mas só DENTRO de um
+    município, que por sua vez só existia DENTRO de um estado escolhido a mão. Quem
+    perguntava "quais são os melhores hexágonos do Brasil?" recebia, na melhor das
+    hipóteses, o ranking de UF de `/api/estados` — e esse ordena por residual SOMADO
+    por estado, uma grandeza de tamanho. Estado grande cheio de hexágono mediano vence
+    estado pequeno que tem o melhor hexágono do país. Era a pergunta certa respondida
+    na escala errada.
+
+    O QUE ELA NAO FAZ. Não filtra por UF antes de ranquear, nem aplica cota por
+    estado, nem monta a lista a partir do topo de `/api/estados`. Fazer isso
+    reproduziria exatamente o defeito acima: filtrar por uma escala (soma por estado)
+    e entregar outra (hexágono). A varredura é sobre a base inteira, uma vez.
+
+    O QUE ELA REAPROVEITA. A mesma cascata do funil (`mascara_acionavel`, com os
+    defaults do funil municipal — inclusive o piso do passo 2, que o ranking de UF
+    não aplica) e a mesma varredura colunar que `_ranking_estados` já provou caber.
+    Nenhum critério novo, nenhum score recalculado em runtime (CLAUDE.md §4).
+    """
+    import pyarrow.dataset as ds
+
+    if not ENRICHED_DIR.exists():
+        raise HTTPException(500, f"Base nao encontrada em {ENRICHED_DIR}.")
+
+    dset = ds.dataset(str(ENRICHED_DIR), partitioning="hive")
+    disp = set(dset.schema.names)
+    cols = [c for c in _COLS_NACIONAL if c in disp]
+    df = dset.to_table(columns=cols).to_pandas()
+    if df.empty:
+        return df
+
+    eleg = df[mascara_acionavel(df)].copy()
+    if eleg.empty:
+        return eleg
+    # `pop_leitura`/`renda_leitura` com a MESMA precedencia de `_derivar`: a varredura
+    # nao passa por `carregar_uf`, entao as derivadas nao vem prontas.
+    eleg["pop_leitura"] = _serie_pop(eleg)
+    for origem in ("renda_per_capita_setor_2022_calibrada", "renda_per_capita"):
+        if origem in eleg.columns:
+            eleg["renda_leitura"] = pd.to_numeric(eleg[origem], errors="coerce")
+            break
+    else:
+        eleg["renda_leitura"] = float("nan")
+    # `n_concorrentes_est` = 0 por construcao (a cascata ja tirou o resto). Existe
+    # para o `_etiqueta` do chip nao precisar de um ramo especial nesta rota.
+    eleg["n_concorrentes_est"] = 0
+    return eleg.sort_values(
+        ["oferta_efetiva_disponivel", "pop_leitura"], ascending=False
+    ).reset_index(drop=True)
+
+
+def _ranking_hexagonos(
+    limite: int = TOP_HEXAGONOS_NACIONAL,
+    uf: str = "",
+    municipio: str = "",
+    por_municipio: bool = False,
+) -> dict[str, Any]:
+    """O ranking nacional, com os filtros OPCIONAIS aplicados depois da ordenação.
+
+    A ordem dos passos é o ponto: ranqueia o país inteiro e SÓ ENTÃO filtra. `uf` e
+    `municipio` recortam a mesma lista nacional — não voltam a ser pré-requisito dela,
+    que é justamente o que o Modo 3 fazia antes.
+    """
+    base = _hexagonos_acionaveis_brasil()
+    hexes_base = int(len(base))
+    if hexes_base:
+        if uf:
+            base = base[base["uf"].astype(str).str.upper() == uf.strip().upper()]
+        if municipio and "nome_municipio" in base.columns:
+            # Mesma normalizacao de `_juntar_crescimento` — nao uma sexta redacao dela.
+            alvo = _norm_nome(pd.Series([municipio])).iloc[0]
+            base = base[_norm_nome(base["nome_municipio"]) == alvo]
+
+    if por_municipio and len(base) and "nome_municipio" in base.columns:
+        # Convencao JA VIGENTE no piloto (`_rank_items`): um item por localidade, o
+        # melhor hexagono de cada. Sem ela, num recorte nacional os primeiros lugares
+        # viram uma sequencia de hexagonos VIZINHOS da mesma regiao metropolitana —
+        # tecnicamente corretos e inuteis como lista de decisao. Opcional de proposito:
+        # o pedido foi "os melhores hexagonos do Brasil", e o default entrega isso.
+        base = base.drop_duplicates(subset=["uf", "nome_municipio"], keep="first")
+
+    corte = max(1, min(int(limite or TOP_HEXAGONOS_NACIONAL), MAX_HEXAGONOS_NACIONAL))
+    topo = base.head(corte)
+
+    itens: list[dict[str, Any]] = []
+    for posicao, (_, r) in enumerate(topo.iterrows(), 1):
+        residual = _num(r.get("oferta_efetiva_disponivel"))
+        etiqueta, tom, cor = _etiqueta("residual", _numf(r.get("oferta_efetiva_disponivel")), posicao, r)
+        itens.append(
+            {
+                "rank": posicao,
+                "hex_id": str(r.get("hex_id")),
+                "uf": _texto(r.get("uf")),
+                "municipio": _texto(r.get("nome_municipio")),
+                "cod_municipio": _texto(r.get("cod_municipio")),
+                "lat": _num(r.get("lat"), 5),
+                "lng": _num(r.get("lng"), 5),
+                "residual": residual,
+                "score": _num(r.get("score_setor_2022_calibrado"), 1),
+                "pop": _num(r.get("pop_leitura")),
+                "renda": _num(r.get("renda_leitura")),
+                "tag": etiqueta,
+                "tom": tom,
+                "tag_cor": cor,
+                # O consumo do concorrente foi MEDIDO neste hexagono, ou esta ausente?
+                # Ver `topo_sem_medicao`, abaixo, e o aviso em `_sem_concorrente`.
+                "consumo_medido": bool(
+                    pd.notna(r.get("oferta_consumida_mercado_estimada"))
+                    if "oferta_consumida_mercado_estimada" in topo.columns
+                    else False
+                ),
+            }
+        )
+
+    return {
+        "reguas": {
+            "score_minimo": SCORE_CORTE_QUENTE,
+            "pop_minima": POP_MIN_ACIONAVEL,
+            "residual_minimo": OFERTA_DESTAQUE_MIN,
+            "capacidade_concorrente": CAPACIDADE_CONCORRENTE_PADRAO,
+        },
+        "cobertura": {
+            # Quantos hexagonos do PAIS sobrevivem a cascata, antes de qualquer filtro
+            # ou corte de payload — o denominador honesto da lista.
+            "hexes_acionaveis_brasil": hexes_base,
+            "hexes_no_recorte": int(len(base)),
+            "ufs_no_recorte": int(base["uf"].nunique()) if len(base) else 0,
+            # A CONTA QUE IMPEDE A LISTA DE MENTIR. `_sem_concorrente` trata consumo
+            # AUSENTE como white space (`fillna(0)`). Numa UF isso e' ruido; num
+            # ranking NACIONAL as UFs com mapeamento de concorrente ralo subiriam
+            # inteiras, e a tela afirmaria "sem concorrente" onde ninguem mediu.
+            # Publicar o numero e' o que separa "nao ha concorrente" de "nao medi".
+            "topo_sem_medicao": sum(1 for i in itens if not i["consumo_medido"]),
+        },
+        "itens": itens,
+    }
+
+
+@app.get("/api/hexagonos")
+def hexagonos(
+    limite: int = TOP_HEXAGONOS_NACIONAL,
+    uf: str = "",
+    municipio: str = "",
+    por_municipio: bool = False,
+) -> dict[str, Any]:
+    """Os melhores hexágonos do BRASIL, sem precisar escolher estado.
+
+    `uf` e `municipio` são filtros opcionais SOBRE a lista nacional, aplicados depois
+    da ordenação — nunca antes dela. `por_municipio=true` mantém só o melhor hexágono
+    de cada cidade, quando a leitura desejada é "quais cidades", não "quais pontos".
+    """
+    return _ranking_hexagonos(
+        limite=limite, uf=uf, municipio=municipio, por_municipio=por_municipio
+    )
 
 
 @app.get("/api/resolver-ponto")

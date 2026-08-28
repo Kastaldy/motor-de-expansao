@@ -76,6 +76,23 @@ export default function App() {
   }, [])
 
   /**
+   * O hexagono escolhido numa LISTA — hoje, o ranking nacional do Modo 3.
+   *
+   * POR QUE UM ESTADO PROPRIO, e nao o `pinPonto`. Os dois viram `pinFixo` no
+   * `MapScreen` e produzem o mesmo efeito (voo da camera, contorno de selecao, ficha
+   * do hexagono), mas tem DONOS diferentes: `pinPonto` pertence ao modo de ponto e e'
+   * apagado pelo `onLimparPin` de la'. Compartilhar o mesmo state faria um endereco
+   * colado semanas antes ressuscitar como destino do ranking, e vice-versa.
+   *
+   * POR QUE NAO BASTAVA `setUf` + `setMunicipio`. Era o que esta tela fazia: o "Ver no
+   * mapa" da lista levava ao MUNICIPIO do hexagono e parava ali — o operador chegava
+   * numa cidade inteira e tinha de reencontrar, a olho, o hexagono que acabara de
+   * escolher. Levar o pin junto e' o que fecha as tres leituras que o `MapScreen` ja'
+   * sabe amarrar: o ponto no mapa, o hexagono em volta dele e a ficha.
+   */
+  const [pinDestino, setPinDestino] = useState<SearchPin | null>(null)
+
+  /**
    * A busca do cabecalho do mapa pediu a analise de uma coordenada (so' no modo de ponto).
    *
    * O `n` que so' cresce e' o que permite pedir a MESMA coordenada duas vezes: sem ele, o
@@ -170,6 +187,9 @@ export default function App() {
     (u: string) => {
       setUf(u)
       setMunicipio('')
+      // Trocar de estado A MAO descarta o hexagono que uma lista tinha escolhido: ele
+      // era de outro territorio, e voar ate' ele contradiria o que o operador pediu.
+      setPinDestino(null)
 
       // Agora que existe UF, a intenção guardada no menu vira foto — com o contexto
       // certo, senão `fotoAplicavel` a jogaria fora. Consumimos a intenção aqui: ela
@@ -220,7 +240,13 @@ export default function App() {
     [uf, municipio],
   )
 
-  const voltarAoInicio = useCallback(() => setTela('inicio'), [])
+  const voltarAoInicio = useCallback(() => {
+    // O destino escolhido numa lista morre ao sair para o menu: sem isto, entrar no
+    // Explorar depois faria a camera voar para um hexagono escolhido em outra sessao
+    // de leitura, sem ninguem ter pedido.
+    setPinDestino(null)
+    setTela('inicio')
+  }, [])
 
   return (
     <div
@@ -291,6 +317,18 @@ export default function App() {
             onInicio={voltarAoInicio}
             onVerNoMapa={(m) => {
               setMunicipio(m)
+              // Este item e' uma CIDADE, nao um hexagono: qualquer destino de hexagono
+              // anterior deixa de valer, senao a camera voaria para o hexagono errado.
+              setPinDestino(null)
+              setTela('mapa')
+            }}
+            /* Item da lista NACIONAL: carrega a UF e o HEXAGONO junto. `setUf` +
+               `setMunicipio` + pin na mesma passagem, como em `localizarPonto` — chamar
+               `aoTrocarUf` aqui zeraria o municipio de proposito e desfaria o destino. */
+            onVerHexNoMapa={(u, m, pin) => {
+              setUf(u)
+              setMunicipio(m)
+              setPinDestino(pin)
               setTela('mapa')
             }}
           />
@@ -301,7 +339,15 @@ export default function App() {
             onUf={aoTrocarUf}
             municipios={municipios}
             municipio={municipio}
-            onMunicipio={setMunicipio}
+            /* Trocar de municipio A MAO (ou clicar em "Todos os municipios") descarta o
+               hexagono que a lista tinha escolhido. Sem isto o pin sobreviveria a troca
+               e a camera voaria para o hexagono ANTIGO em vez da cidade nova — o pin
+               vence o centro do municipio no `HexMap`, e essa precedencia so' vale
+               enquanto o destino ainda for o que o operador pediu. */
+            onMunicipio={(m) => {
+              setPinDestino(null)
+              setMunicipio(m)
+            }}
             dados={dados}
             carregando={carregando}
             erro={erro}
@@ -309,6 +355,11 @@ export default function App() {
             estadoInicial={estadoMapa}
             onEstado={setEstadoMapa}
             onInicio={voltarAoInicio}
+            /* O hexagono escolhido no ranking nacional. `pinFixo` existe justamente
+               para o caso "quem escolheu o territorio veio de fora": ele sobrevive a
+               limpeza que a troca de UF/municipio faz no pin da busca local, e e' o que
+               leva a camera, o contorno de selecao e a ficha ao hexagono certo. */
+            pinFixo={pinDestino}
           />
         ) : tela === 'executiva' ? (
           // A Executiva NÃO recebe `uf` nem `onUf` (DEC-023): ela abre com a rede do
