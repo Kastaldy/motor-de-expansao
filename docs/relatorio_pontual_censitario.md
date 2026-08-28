@@ -133,7 +133,7 @@ Regras implementadas:
 - Join malha x Basico por posicao dentro da UF, preservando o alinhamento confirmado no Bloco 1.
 - Join da renda por posicao dentro da UF, porque `CD_SETOR` do CSV de renda vem truncado em notacao cientifica e o arquivo tem menos linhas que a malha/Basico.
 - `renda_per_capita_setor_2022 = V06004 / v0005`; quando `data/staging/brasil_estrutural.parquet` esta disponivel, `renda_per_capita_setor_2022_calibrada` usa multiplicador global contra a mediana M1.
-- `score_setor_2022_calibrado` e operacional paralelo: `0.60*renda_pct_nacional_calibrado + 0.40*pop_pct_municipal`, com ajuste executivo equivalente ao usado na camada censitaria. Nao altera o M1.
+- `score_setor_2022_calibrado` e operacional paralelo e, desde a DEC-040 (2026-08-26), esta em REGUA ABSOLUTA: `clip(0.60*nota_renda + 0.40*nota_pop + ajuste_executivo, 0, 100)`, com `nota_renda` LINEAR sobre `renda_per_capita_setor_2022_calibrada` (R$ 300 -> 0, R$ 4.000 -> 100) e `nota_pop` em LOG sobre `pop_total_setor_2022` (1.000 hab -> 0, 100.000 hab -> 100). Os pesos 0.60/0.40 sao os mesmos de sempre; o que mudou foi a ESCALA. Ate 2026-08-25 os dois termos eram PERCENTIS (`0.60*renda_pct_nacional_calibrado + 0.40*pop_pct_municipal`), e o de populacao era percentil MUNICIPAL, entao toda cidade produzia seus proprios "melhores hexagonos" no topo da escala por construcao. As duas colunas de percentil continuam materializadas, mas so' como AUDITORIA e caminho de reversao (`recalcular_score_absoluto --reverter`); nao alimentam mais o score. Nao altera o M1.
 
 Validacao real executada no DF: 5.418 setores, 1 arquivo, 3,46 MB, ~35s, 97,16% de cobertura de renda/score. Relatorio em `data/reports/relatorio_pontual_censitario_base_geo.md`.
 
