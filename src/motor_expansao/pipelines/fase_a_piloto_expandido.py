@@ -530,7 +530,7 @@ def processar_uf(
     df_result["transformacao_renda_setor_2022"] = "V06004_div_v0005"
     df_result["data_validacao_fase_a"] = date.today().isoformat()
     df_result["metodo_calibracao_renda"] = f"multiplicativo_global_k={k_global:.4f}"
-    df_result["metodo_calibracao_pop"] = "pop_pct_municipal_within_municipio"
+    df_result["metodo_calibracao_pop"] = "pop_absoluta_log_dec039"
     df_result["referencia_calibracao"] = "m1_nacional_mediana_piloto_go_sp_rj"
     df_result["data_calibracao"] = date.today().isoformat()
     df_result["score_oficial_nome_calibrado"] = "score_setor_2022_calibrado"

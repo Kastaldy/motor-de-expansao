@@ -171,13 +171,16 @@ SCORE_CORTE_QUENTE = 30.0  # piso do passo 1 (hexagono "quente")
 # `SCORE_CORTE_QUENTE` (piso do passo 1) e a concorrencia usava o white space do passo 5
 # (zero concorrente). A partir daqui elas DIVERGEM de proposito, e isso tem consequencia
 # que precisa estar escrita: um imovel pode passar no criterio da ficha e ficar de fora do
-# funil, porque o funil continua exigindo 70 e zero concorrente. Nao e' contradicao — sao
+# funil, porque o funil exige `SCORE_CORTE_QUENTE` e zero concorrente. Nao e' contradicao — sao
 # perguntas diferentes ("este imovel serve?" contra "quais hexagonos entram na fila") —,
 # mas quem comparar as duas telas vai notar, e a explicacao tem de existir.
 #
-# O FUNIL NAO FOI TOCADO. Mexer em `SCORE_CORTE_QUENTE` mudaria o passo 1 do mapa inteiro
-# e o texto da metodologia junto; o pedido era sobre a janela de analise de pontos.
-CRIT_PONTO_SCORE_MIN = 60.0  # era SCORE_CORTE_QUENTE (70,0)
+# ATENCAO -- a RELACAO entre as duas reguas se INVERTEU na DEC-039 (2026-08-26). Ate' ali o
+# funil pedia 70 e a ficha 60: a ficha era mais FROUXA, que era a intencao do Juan. Com a regua
+# absoluta o funil caiu para 30, e a ficha passou a ser mais DURA que ele. Reescalado de 60,0
+# para 50,0 por decisao do Felipe (2026-08-28), o que ATENUA sem inverter de volta: hoje a ficha
+# passa 8,60% dos hexes com pop >= 5.000 contra 39,33% do funil (com 60,0 eram 3,81%).
+CRIT_PONTO_SCORE_MIN = 50.0  # regua da FICHA do ponto; nao confundir com SCORE_CORTE_QUENTE (30,0)
 CRIT_PONTO_CONC_MAX = 3  # era 0 (white space do passo 5)
 # SEM USO desde o BLK-MAPA-FAIXAS-01 (regua unica legenda<->etiqueta): as quatro linhas
 # abaixo descrevem os cortes de Quente/Forte/Solido e Alta/Media/Baixa POR HEXAGONO,
@@ -3783,7 +3786,8 @@ def _criterios_do_ponto(
     corte, e o operador lê as cinco.
 
     DUAS DESSAS RÉGUAS DIVERGEM DO FUNIL desde 2026-08-12, por decisão do Juan:
-    `CRIT_PONTO_SCORE_MIN` (60, contra 70 do passo 1) e `CRIT_PONTO_CONC_MAX` (3, contra
+    `CRIT_PONTO_SCORE_MIN` (50 desde a DEC-039, contra 30 do passo 1 -- a relacao se INVERTEU:
+    a ficha, que era mais frouxa que o funil, ficou mais dura) e `CRIT_PONTO_CONC_MAX` (3, contra
     o white space do passo 5). As outras três seguem canônicas do `config.py`
     (`POP_MIN_ACIONAVEL`, `OFERTA_DESTAQUE_MIN`, `RENDA_MIN`). Consequência declarada: um
     imóvel pode passar aqui e o hexágono dele não entrar na fila do mapa.

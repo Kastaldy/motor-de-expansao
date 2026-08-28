@@ -36,6 +36,14 @@ ALVOS = (
     Path("data/staging/censo2022_setores_calibrado_nacional_completo.parquet"),
 )
 
+# O artefato GEO por setor (`uf=XX/cod_municipio=N/part-*.parquet`) carrega a MESMA coluna
+# `score_setor_2022_calibrado` e alimenta o choropleth de SETOR do Relatorio Pontual. Se ele
+# ficar na escala antiga enquanto o de hexagono vai para a nova, o MESMO PDF sai com duas
+# escalas na MESMA paleta (`score_band_to_color`, 0-100) -- o mesmo ponto verde num painel e
+# amarelo no outro, sem aviso. Medido em Sao Paulo antes do conserto: geo p50 66,1 / p90 88,2
+# contra hexagono p50 49,5 / p90 77,1.
+GEO_DIR_DEFAULT = Path("data/outputs/setores_censitarios_2022_geo")
+
 COL_RENDA = "renda_per_capita_setor_2022_calibrada"
 COL_POP = "pop_total_setor_2022"
 COL_SCORE = "score_setor_2022_calibrado"
@@ -128,6 +136,29 @@ def reverter(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     }
 
 
+def recalcular_geo(geo_dir: Path, *, dry_run: bool, reverso: bool) -> dict:
+    """Aplica a mesma regua ao artefato GEO por setor, particao a particao.
+
+    Le e reescreve arquivo a arquivo em vez de carregar tudo: o dataset inteiro passa de 1 GB
+    por causa do `geometry_wkb`, e a geometria nao e' tocada aqui.
+    """
+    partes = sorted(geo_dir.glob("uf=*/cod_municipio=*/*.parquet"))
+    total = {"arquivos": len(partes), "linhas": 0, "aplicadas": 0, "sem_insumo": 0, "erros": 0}
+    for arq in partes:
+        try:
+            df = pd.read_parquet(arq)
+            df, r = reverter(df) if reverso else recalcular(df)
+            total["linhas"] += r["linhas"]
+            total["aplicadas"] += r.get("recalculadas", r.get("revertidas", 0))
+            total["sem_insumo"] += r["sem_insumo"]
+            if not dry_run:
+                df.to_parquet(arq, index=False)
+        except (KeyError, OSError, ValueError) as erro:
+            total["erros"] += 1
+            print(f"     ERRO em {arq}: {erro}")
+    return total
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true", help="mede sem gravar")
@@ -135,6 +166,18 @@ def main() -> None:
         "--reverter",
         action="store_true",
         help="volta ao score de PERCENTIL usando as colunas de auditoria (nao precisa de backup)",
+    )
+    ap.add_argument(
+        "--geo-dir",
+        type=Path,
+        default=None,
+        help=(
+            "tambem reescreve o artefato GEO por setor (default: "
+            f"{GEO_DIR_DEFAULT}). Sem isto, o choropleth de SETOR do Relatorio Pontual fica "
+            "numa escala e o de HEXAGONO na outra, com a mesma paleta."
+        ),
+        nargs="?",
+        const=GEO_DIR_DEFAULT,
     )
     args = ap.parse_args()
 
@@ -162,6 +205,20 @@ def main() -> None:
         if not args.dry_run:
             df.to_parquet(alvo, index=False)
             print("     gravado")
+    if args.geo_dir is not None:
+        if not args.geo_dir.exists():
+            print(f"  GEO PULADO (ausente): {args.geo_dir}")
+        else:
+            print(f"  GEO por setor: {args.geo_dir}")
+            g = recalcular_geo(args.geo_dir, dry_run=args.dry_run, reverso=args.reverter)
+            print(
+                f"     arquivos {g['arquivos']:>6,} | linhas {g['linhas']:>9,} | "
+                f"aplicadas {g['aplicadas']:>9,} | sem insumo {g['sem_insumo']:>9,} | "
+                f"erros {g['erros']}"
+            )
+            if not args.dry_run and g["erros"] == 0:
+                print("     gravado")
+
     print("=" * 70)
     if args.dry_run:
         print("dry-run: nada foi gravado")

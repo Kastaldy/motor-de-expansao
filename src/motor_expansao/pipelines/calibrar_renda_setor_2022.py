@@ -25,7 +25,11 @@ Abordagem vencedora: Multiplicativo global (renda) + pop_pct_municipal (híbrida
       dentro de cada mercado local
 
   SCORE:
-    score_setor_2022_calibrado = clip(100*(0.60*renda_pct + 0.40*pop_pct_mun) + ajuste, 0, 100)
+    score_setor_2022_calibrado = clip(0.60*nota_renda + 0.40*nota_pop + ajuste, 0, 100)
+    -- REGUA ABSOLUTA desde a DEC-039 (2026-08-26). O bloco de POPULACAO acima descreve o
+       percentil municipal, que era a regua ATE' 2026-08-25 e hoje so' existe como coluna de
+       auditoria. `nota_renda` e' LINEAR (R$ 300 -> 0, R$ 4.000 -> 100) e `nota_pop` e' LOG
+       (1.000 -> 0, 100.000 -> 100). Ver RENDA_ABS_*/POP_ABS_* e docs/decisions/DEC-039.md.
 
   Resultados:
   - k ≈ 1.02: ajuste mínimo, preserva toda variação intraurbana
@@ -341,7 +345,7 @@ def calibrar(
     # 5. Rastreabilidade
     # -----------------------------------------------------------------------
     df_ufs["metodo_calibracao_renda"] = f"multiplicativo_global_k={k_global:.4f}"
-    df_ufs["metodo_calibracao_pop"] = "pop_pct_municipal_within_municipio"
+    df_ufs["metodo_calibracao_pop"] = "pop_absoluta_log_dec039"
     df_ufs["referencia_calibracao"] = "m1_nacional_mediana"
     df_ufs["data_calibracao"] = date.today().isoformat()
     df_ufs["score_oficial_nome_calibrado"] = "score_setor_2022_calibrado"
