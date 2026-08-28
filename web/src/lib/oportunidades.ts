@@ -105,15 +105,26 @@ export interface ItemFila {
   municipio?: string | null
   titulo?: string | null
   valor?: number | null
+  /* Evidencias do passo 5 (DEC-041) — opcionais: os outros passos nao as emitem. */
+  quadrante?: string | null
+  nota_socio?: number | null
+  nota_demanda?: number | null
+  residual?: number | null
+  conc?: number | null
 }
 
 /**
  * Reordena APENAS o desempate.
  *
- * A chave primaria continua sendo `valor` (residual em alunos, do servidor). O
- * crescimento so' decide entre itens de residual IGUAL — ele nunca vira peso, nunca
- * reordena quem tem mais residual para baixo. Transformar contexto em componente de
- * ordenacao seria, na pratica, um score novo.
+ * A chave primaria e' `valor`, que no passo 5 passou a ser o INDICE DE PRACA (0-100,
+ * uma casa decimal) e nao mais o residual em alunos — DEC-041. Ordenar por `valor`
+ * decrescente continua reproduzindo a ordem do servidor, que ordena pela mesma
+ * grandeza; o crescimento so' decide entre itens de valor IGUAL, e nunca vira peso.
+ * Transformar contexto em componente de ordenacao seria, na pratica, um score novo.
+ *
+ * A CASA DECIMAL do indice importa aqui: arredondado a inteiro, dez posicoes numa
+ * escala 0-100 empatariam com frequencia e o desempate por crescimento — que o
+ * servidor nao escolheu — passaria a mandar na fila.
  */
 export function ordenarComDesempate<T extends ItemFila>(
   itens: readonly T[],
@@ -144,24 +155,62 @@ export function filtrarPorCrescimento<T extends ItemFila>(
   )
 }
 
+/** Explicação do quadrante — espelha `praca_indice.QUADRANTE_EXPLICACAO` no servidor. */
+const TESE_POR_QUADRANTE: Record<string, string> = {
+  prioridade: 'é boa nos dois eixos ao mesmo tempo',
+  praca_forte: 'tem perfil socioeconômico forte, com espaço apertado',
+  volume: 'tem muita demanda não atendida, em praça de perfil mediano',
+  marginal: 'passa no mínimo dos dois eixos, sem se destacar em nenhum',
+}
+
+/** A leitura competitiva, na MESMA régua do chip do passo 3 (`CONC_ADENSAR_MAX` = 2). */
+function leituraCompetitiva(conc: number | null | undefined): string {
+  if (conc == null) return 'sem leitura de concorrência no raio'
+  if (conc <= 0) return 'sem concorrente mapeado em 2 km'
+  if (conc === 1) return 'com 1 concorrente em 2 km'
+  return `com ${conc.toLocaleString('pt-BR')} concorrentes em 2 km`
+}
+
 /**
- * Leitura de UM item da fila, deterministica.
+ * FRASE DE TESE de um item da fila (DEC-041).
  *
- * Diz o que o item JA' garante por estar na fila (residual, e zero concorrente
- * mapeado — a cascata do passo 5 so' aceita white space) e acrescenta o contexto de
- * crescimento. Nao promete o que o dado nao sustenta.
+ * O que ela existe para resolver: o consultor precisa defender a recomendacao numa
+ * reuniao, e "1º lugar, 64,3" nao se defende. A frase diz POR QUE aquela posicao esta'
+ * ali, com as tres evidencias que a ordenaram — quadrante, os dois eixos, e a
+ * concorrencia — mais o contexto de crescimento.
+ *
+ * Ela e' montada dos MESMOS campos que ordenaram a fila (`nota_socio`, `nota_demanda`,
+ * `residual`, `conc`, `quadrante`), e nao de uma segunda leitura do payload. Nao fala
+ * de RENDA de proposito: a renda que a tela exibe passa por `k` e uplift domiciliar, e
+ * o numero cru contradiria o tooltip do mesmo hexagono.
+ *
+ * NAO PROMETE FATURAMENTO. Territorio ranqueia praca; nao preve desempenho de unidade
+ * (medido: 4 preditores contra 267 unidades, todos os IC cruzando zero).
  */
 export function leituraDoItem(
   item: ItemFila,
   cres: CrescimentoMunicipio | null | undefined,
 ): string {
   const nome = item.titulo ?? item.municipio ?? 'Este item'
-  const residual =
-    item.valor != null
-      ? `${item.valor.toLocaleString('pt-BR')} alunos de residual`
-      : 'residual acima do corte'
+  const tese = item.quadrante ? TESE_POR_QUADRANTE[item.quadrante] : undefined
 
-  const base = `${nome} entra com ${residual} e nenhum concorrente mapeado no recorte.`
+  const partes: string[] = []
+  if (tese) {
+    partes.push(`${nome} ${tese}`)
+  } else {
+    partes.push(`${nome} entra na fila`)
+  }
+
+  const evidencias: string[] = []
+  if (item.nota_socio != null) {
+    evidencias.push(`nota socioeconômica ${item.nota_socio.toLocaleString('pt-BR')}`)
+  }
+  if (item.residual != null) {
+    evidencias.push(`${Math.round(item.residual).toLocaleString('pt-BR')} alunos não atendidos`)
+  }
+  evidencias.push(leituraCompetitiva(item.conc))
+
+  const base = `${partes[0]}: ${evidencias.join(', ')}.`
 
   const c = lerCrescimento(cres)
   if (c.classe === 'acima') return `${base} A cidade cresce acima da mediana do estado.`

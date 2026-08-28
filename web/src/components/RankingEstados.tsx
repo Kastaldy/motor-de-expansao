@@ -70,9 +70,9 @@ export default function RankingEstados({
         </span>
         <p style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
           Ordenado por <strong style={{ color: 'var(--tx-soft)' }}>alunos não atendidos onde
-          ainda cabe abrir</strong> — o mesmo funil de sempre (potencial ≥ 70, população ≥ 5.000,
-          sem concorrente mapeado), somado por estado. Clique num estado para abrir as camadas
-          dele.
+          ainda cabe abrir</strong> — o mesmo funil de sempre (potencial e população acima do
+          corte, sem saturação de concorrência), somado por estado. Os cortes exatos estão no
+          painel de Metodologia. Clique num estado para abrir as camadas dele.
         </p>
       </div>
 

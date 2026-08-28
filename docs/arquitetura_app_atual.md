@@ -28,10 +28,15 @@ São **3 superfícies** (DEC-020 definiu esse escopo; "substituir 100% o Streaml
 = paridade destas três):
 
 - **Mapa Territorial** (default) — porta de entrada por UF, funil de 5 camadas
-  (Potencial → setores quentes → residual → white spaces → como a cidade está
-  indo → aberturas; a penúltima é contexto e não corta ninguém) com
-  drill-down até o município, multi-hex, filtro "MELHORES", busca por
-  coordenada/link/endereço e geração dos Relatórios Municipal e Pontual.
+  (Potencial → setores quentes → residual → pressão concorrencial → como a cidade
+  está indo → aberturas) com drill-down até o município, multi-hex, filtro
+  "MELHORES", busca por coordenada/link/endereço e geração dos Relatórios Municipal
+  e Pontual. **Duas camadas quase não cortam:** a 4 é contexto e não corta ninguém,
+  e a 3 desde a DEC-041 só elimina saturação extrema (mais de `CONC_ADENSAR_MAX`
+  concorrentes em 2 km) — ter concorrente por perto deixou de desqualificar, porque
+  a oferta instalada já foi descontada na camada 2. A camada 5 ordena por
+  `indice_praca` (`0,70 × nota socioeconômica + 0,30 × nota de demanda`, ambas em
+  régua absoluta), não mais por residual puro.
 - **Visão Executiva** — a rede Ultra REAL por estado (Growth API,
   `growth_api_historico.parquet`, ingestão semanal — DEC-013): bubble map,
   KPIs com variação vs M-1, ranking de unidades, seletor de competência.

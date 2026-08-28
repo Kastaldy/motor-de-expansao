@@ -335,3 +335,59 @@ def test_a_fila_nao_promete_fallback_para_regiao_disputada(metodologia):
     )
     passos = pilot.montar_funil(df, "Cidade", {})
     assert passos[4]["itens"] == []
+
+
+def test_o_corte_publicado_da_camada_3_e_o_corte_que_o_funil_aplica(metodologia):
+    """DEC-041: a camada 3 tolera concorrente. Se o painel voltar a prometer "zero",
+    o usuário lê uma explicação convincente e errada.
+
+    O `corte` publicado tem de conter o número real (`CONC_ADENSAR_MAX`), e o funil tem
+    de deixar passar um hexágono com exatamente esse tanto de concorrente.
+    """
+    c3 = _camada(metodologia, 3)["corte"]
+    assert str(pilot.CONC_ADENSAR_MAX) in c3, f"camada 3 publica corte sem o número real: {c3!r}"
+
+    df = pd.DataFrame(
+        {
+            "hex_id": ["8a1", "8a2"],
+            "nome_municipio": ["Cidade", "Cidade"],
+            # um NO TETO (entra) e um ACIMA dele (sai)
+            "n_concorrentes_est": [pilot.CONC_ADENSAR_MAX, pilot.CONC_ADENSAR_MAX + 1],
+            "oferta_efetiva_disponivel": [9000.0, 9000.0],
+            "score_setor_2022_calibrado": [90.0, 90.0],
+            "pop_leitura": [30000, 30000],
+        }
+    )
+    passos = pilot.montar_funil(df, "Cidade", {"8a1": "A", "8a2": "B"})
+    assert passos[2]["hexes"] == ["8a1"], (
+        "o hexágono no teto de concorrentes deveria passar na camada 3, e o acima dele sair"
+    )
+    assert passos[4]["hexes"] == ["8a1"]
+
+
+def test_a_camada_5_publica_a_ordenacao_que_de_fato_aplica(metodologia):
+    """A ordenação da fila é POLÍTICA declarada — e o painel tem de declarar a mesma
+    que o código roda, com os mesmos pesos e âncoras.
+
+    Estes números são interpolados do módulo (`praca_indice`), então não podem
+    divergir por edição de prosa; o teste protege contra alguém voltar a escrevê-los à
+    mão, que é como a camada 1 ficou publicando percentil por dois dias depois da
+    DEC-040.
+    """
+    import praca_indice
+
+    c5 = _camada(metodologia, 5)
+    regra = " ".join(m["regra"] for m in c5["metricas"])
+    ressalva = " ".join(m.get("ressalva", "") for m in c5["metricas"])
+
+    assert f"{praca_indice.PESO_SOCIO * 100:.0f}%" in regra
+    assert f"{praca_indice.PESO_DEMANDA * 100:.0f}%" in regra
+    for ancora in (praca_indice.DEMANDA_MIN_ALUNOS, praca_indice.DEMANDA_MAX_ALUNOS):
+        assert f"{ancora:,.0f}".replace(",", ".") in regra, f"âncora {ancora} não publicada"
+
+    # E a ressalva que impede a leitura mais cara possível deste painel.
+    assert "não é previsão" in ressalva.lower() or "NÃO é previsão" in ressalva
+    assert "política de expansão declarada" in ressalva
+
+    # A coluna publicada é a que o funil ordena.
+    assert any(m["coluna"] == pilot.COL_INDICE_PRACA for m in c5["metricas"])
