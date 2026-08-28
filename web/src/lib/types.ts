@@ -127,6 +127,23 @@ export interface RankItem {
   dims?: string | null
   /** Visão de UF, passo 4: séries DESTE município, no formato produzido por `_series_por_municipio`. */
   series?: string | null
+
+  /* --- Evidências do passo 5 (DEC-041) -------------------------------------
+   * Só a camada 5 as emite (`extras` no `_rank_items`). São os MESMOS números que
+   * ordenaram a fila — a frase de tese se monta deles e não de uma segunda leitura
+   * do payload do mapa, que poderia divergir do que decidiu a ordem.
+   * Não há renda aqui de propósito: a que a tela mostra passa por `k` e uplift
+   * domiciliar, e o valor cru contradiria o tooltip do mesmo hexágono. */
+  /** `prioridade` | `praca_forte` | `volume` | `marginal` — valor BRUTO, sem acento. */
+  quadrante?: string | null
+  /** Nota socioeconômica absoluta 0-100 (a mesma da camada 1). */
+  nota_socio?: number | null
+  /** Nota de demanda absoluta 0-100 (residual em escala log). */
+  nota_demanda?: number | null
+  /** Residual em alunos — o número por trás da nota de demanda. */
+  residual?: number | null
+  /** Concorrentes estimados num raio de 2 km. */
+  conc?: number | null
 }
 
 export interface Passo {

@@ -137,12 +137,41 @@ describe('filtrarPorCrescimento', () => {
   })
 })
 
-describe('leituraDoItem', () => {
-  it('declara o que a fila ja garante e acrescenta o crescimento', () => {
-    const t = leituraDoItem({ rank: 1, titulo: 'Goiânia', valor: 57164 }, GOIANIA)
-    expect(t).toContain('57.164 alunos de residual') // milhar pt-BR
-    expect(t).toContain('nenhum concorrente mapeado')
-    expect(t).toContain('acima da mediana')
+describe('leituraDoItem — frase de tese do passo 5 (DEC-041)', () => {
+  it('diz POR QUE a posicao esta ali, com as tres evidencias que a ordenaram', () => {
+    const t = leituraDoItem(
+      {
+        rank: 1,
+        titulo: 'Goiânia',
+        valor: 71.4,
+        quadrante: 'prioridade',
+        nota_socio: 78.2,
+        nota_demanda: 61.1,
+        residual: 57164,
+        conc: 0,
+      },
+      GOIANIA,
+    )
+    expect(t).toContain('é boa nos dois eixos') // a tese
+    expect(t).toContain('78,2') // eixo 1, decimal pt-BR
+    expect(t).toContain('57.164 alunos não atendidos') // eixo 2, milhar pt-BR
+    expect(t).toContain('sem concorrente mapeado em 2 km') // leitura competitiva
+    expect(t).toContain('acima da mediana') // contexto
+  })
+
+  it('a regua competitiva e a MESMA do chip do passo 3 — concorrente nao e mais veto', () => {
+    const base = { rank: 1, titulo: 'X', valor: 60, quadrante: 'praca_forte', residual: 4000 }
+    expect(leituraDoItem({ ...base, conc: 1 }, null)).toContain('com 1 concorrente em 2 km')
+    expect(leituraDoItem({ ...base, conc: 2 }, null)).toContain('com 2 concorrentes em 2 km')
+    // E a frase NAO pode afirmar ausencia de concorrente quando ha' concorrente: era
+    // exatamente o que a versao antiga fazia, porque a fila so' aceitava white space.
+    expect(leituraDoItem({ ...base, conc: 2 }, null)).not.toContain('sem concorrente')
+  })
+
+  it('sem leitura de concorrencia nao afirma ausencia dela', () => {
+    const t = leituraDoItem({ rank: 1, titulo: 'X', valor: 60, quadrante: 'volume' }, null)
+    expect(t).toContain('sem leitura de concorrência')
+    expect(t).not.toContain('sem concorrente mapeado')
   })
 
   it('sem medicao diz isso, em vez de omitir', () => {

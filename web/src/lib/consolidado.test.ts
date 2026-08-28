@@ -110,11 +110,18 @@ describe('fraseConsolidada', () => {
     expect(f).toContain('1ª da fila de recomendação')
   })
 
-  it('fora da fila diz o motivo, em vez de omitir', () => {
+  it('fora da fila diz isso, em vez de omitir — e sem inventar o motivo', () => {
     const ps = funil()
     ps[4] = passo(5, 'Para onde crescer', ['Zzz'])
     const g = consolidar(ps)[0]
-    expect(fraseConsolidada(g, 5)).toContain('concorrente mapeado')
+    const f = fraseConsolidada(g, 5)
+    expect(f).toContain('Não entra na fila de recomendação')
+    // A frase AFIRMAVA a causa ("há concorrente mapeado no recorte"), e desde a
+    // DEC-041 isso e' falso: ter concorrente nao tira ninguem da fila (so' saturacao
+    // acima de `CONC_ADENSAR_MAX` tira), e um hexagono pode ficar de fora por
+    // qualquer uma das camadas anteriores. Diagnosticar a causa aqui exigiria um dado
+    // que esta funcao nao recebe — entao ela declara o fato e para.
+    expect(f).not.toContain('concorrente mapeado')
   })
 
   it('e deterministica', () => {

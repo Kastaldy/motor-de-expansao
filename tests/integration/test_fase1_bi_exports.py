@@ -1,8 +1,10 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from motor_expansao.dashboard.constants import REQUIRED_COLUMNS
 from motor_expansao.dashboard.data import _prepare_dataframe, enrich_dashboard_data
+from motor_expansao.pipelines.m1 import fase1_bi_exports
 from motor_expansao.pipelines.m1.fase1_bi_exports import (
     build_dashboard_dataset,
     build_hexagonos_mapa_sample,
@@ -329,3 +331,26 @@ def test_read_censo_trace_le_as_tres_fontes_incluindo_a_nacional(tmp_path, monke
     assert renda.notna().all()
     assert renda["h_nac"] == 950.0
     assert renda["h_core"] == 3100.0, "core deve vencer o nacional na deduplicacao"
+
+
+def test_materializacao_recusa_frame_sem_colunas_de_mercado():
+    """O artefato mutilado de 2026-08-28 nao pode voltar em silencio.
+
+    Uma rematerializacao feita sem `enriquecer_outputs_residual_mercado` produziu 65
+    colunas em vez de 82. O piloto nao quebrou -- `montar_funil` le a coluna de forma
+    defensiva -- entao as camadas 2, 3 e 5 apenas ficaram vazias em producao. O guarda
+    troca esse silencio por uma excecao com o nome do passo que faltou.
+    """
+    completo = pd.DataFrame(
+        {c: [1.0] for c in fase1_bi_exports.COLUNAS_CRITICAS_ENRIQUECIDO}
+    )
+    fase1_bi_exports.verificar_colunas_criticas(completo)  # nao levanta
+
+    mutilado = completo.drop(columns=["oferta_efetiva_disponivel"])
+    with pytest.raises(ValueError) as exc:
+        fase1_bi_exports.verificar_colunas_criticas(mutilado)
+
+    mensagem = str(exc.value)
+    assert "oferta_efetiva_disponivel" in mensagem
+    # A mensagem tem que dizer o que RODAR, nao so' o que faltou.
+    assert "enriquecer_outputs_residual_mercado" in mensagem

@@ -84,13 +84,13 @@ export const MODOS: readonly ModoDefinicao[] = Object.freeze([
     eyebrow: 'A fila pronta',
     titulo: 'Ver as melhores oportunidades',
     resumo:
-      'Você quer a resposta direta: a fila de cidades com mais alunos não atendidos, já filtrada por potencial socioeconômico, população e ausência de concorrente.',
+      'Você quer a resposta direta: a fila de cidades ordenada por ser boa nos dois eixos ao mesmo tempo — perfil socioeconômico da praça e demanda ainda não atendida.',
     /* Na visao de estado os itens da fila sao CIDADES, nao hexagonos — o texto antigo
        prometia hexagono e entregava municipio. */
     bullets: Object.freeze([
       'A fila pronta, com o porquê de cada posição',
-      'Só onde não há concorrente mapeado',
-      'Ordenada por alunos não atendidos',
+      'Praça disputada não é praça descartada',
+      'Ordenada pelos dois eixos: perfil e demanda',
     ]),
     chamada: 'Ver a fila',
     destino: 'oportunidades',

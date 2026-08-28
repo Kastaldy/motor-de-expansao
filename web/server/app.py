@@ -83,6 +83,7 @@ if str(_SRC) not in sys.path:
 # export (`rede_export`) segue lazy, dentro das rotas: ele puxa fpdf2 e openpyxl.
 import acesso  # noqa: E402  (controle TEMPORARIO de acesso por aba, por Remote-User)
 import cobertura_1km  # noqa: E402  (PROTOTIPO — area coberta pelo raio, para desenhar)
+import praca_indice  # noqa: E402  (indice conjuntivo da camada 5 — DEC-041)
 import pressao_1km  # noqa: E402  (PROTOTIPO — chave de raio 2 km / 1 km por area)
 
 from motor_expansao.dashboard import (  # noqa: E402
@@ -168,12 +169,15 @@ SCORE_CORTE_QUENTE = 30.0  # piso do passo 1 (hexagono "quente")
 # Decisao do Juan em 2026-08-12: afrouxar os dois cortes que mais reprovavam imovel.
 #
 # ATE ENTAO estas duas reguas eram AS MESMAS do funil — o score usava
-# `SCORE_CORTE_QUENTE` (piso do passo 1) e a concorrencia usava o white space do passo 5
-# (zero concorrente). A partir daqui elas DIVERGEM de proposito, e isso tem consequencia
+# `SCORE_CORTE_QUENTE` (piso do passo 1) e a concorrencia exigia zero concorrente, que era
+# o corte da camada 3. A partir daqui elas DIVERGEM de proposito, e isso tem consequencia
 # que precisa estar escrita: um imovel pode passar no criterio da ficha e ficar de fora do
-# funil, porque o funil exige `SCORE_CORTE_QUENTE` e zero concorrente. Nao e' contradicao — sao
-# perguntas diferentes ("este imovel serve?" contra "quais hexagonos entram na fila") —,
-# mas quem comparar as duas telas vai notar, e a explicacao tem de existir.
+# funil, e vice-versa. Nao e' contradicao — sao perguntas diferentes ("este imovel serve?"
+# contra "quais hexagonos entram na fila") —, mas quem comparar as duas telas vai notar.
+#
+# A distancia no eixo da CONCORRENCIA quase fechou na DEC-041 (2026-08-28): a camada 3 do
+# funil deixou de exigir zero concorrente e passou a tolerar ate' `CONC_ADENSAR_MAX` (2),
+# contra os `CRIT_PONTO_CONC_MAX` (3) da ficha. De um abismo (0 contra 3) sobrou um degrau.
 #
 # ATENCAO -- a RELACAO entre as duas reguas se INVERTEU na DEC-040 (2026-08-26). Ate' ali o
 # funil pedia 70 e a ficha 60: a ficha era mais FROUXA, que era a intencao do Juan. Com a regua
@@ -181,7 +185,7 @@ SCORE_CORTE_QUENTE = 30.0  # piso do passo 1 (hexagono "quente")
 # para 50,0 por decisao do Felipe (2026-08-28), o que ATENUA sem inverter de volta: hoje a ficha
 # passa 8,60% dos hexes com pop >= 5.000 contra 39,33% do funil (com 60,0 eram 3,81%).
 CRIT_PONTO_SCORE_MIN = 50.0  # regua da FICHA do ponto; nao confundir com SCORE_CORTE_QUENTE (30,0)
-CRIT_PONTO_CONC_MAX = 3  # era 0 (white space do passo 5)
+CRIT_PONTO_CONC_MAX = 3  # era 0 (o antigo corte da camada 3); hoje o funil tolera 2
 # SEM USO desde o BLK-MAPA-FAIXAS-01 (regua unica legenda<->etiqueta): as quatro linhas
 # abaixo descrevem os cortes de Quente/Forte/Solido e Alta/Media/Baixa POR HEXAGONO,
 # vocabularios que `_etiqueta` nao emite mais — hoje ele deriva de FAIXAS_MAPA_* (de 20
@@ -199,6 +203,18 @@ FAIXA_HEXES_POLO = 30  # etiqueta Polo, em nº de hexes quentes do municipio
 FAIXA_HEXES_FORTE = 8  # etiqueta Forte; abaixo, Emergente
 CONC_ADENSAR_MAX = 2  # ate' 2 concorrentes estimados = cabe adensar
 FILA_MAX = 10  # tamanho maximo da fila do ultimo passo
+
+# Colunas DERIVADAS EM RUNTIME pela camada 5 (DEC-041). Nao existem em artefato nenhum:
+# nascem em `_anotar_indice_praca` e morrem no fim da requisicao. Ficam nomeadas aqui
+# porque tres lugares as referenciam (o funil municipal, o de UF e o desempate de
+# `_rank_items`), e um literal repetido em tres pontos e' um erro de digitacao esperando
+# acontecer -- que sairia como fila ordenada errado, sem excecao nenhuma.
+COL_NOTA_DEMANDA = "nota_demanda_praca"
+COL_INDICE_PRACA = "indice_praca"
+COL_QUADRANTE = "quadrante_praca"
+#: Concorrencia NEGADA, so' para poder ordenar "menos disputado primeiro" numa funcao
+#: que ordena sempre decrescente. Nao vai para a tela.
+COL_FOLGA_CONC = "_folga_competitiva"
 # Abaixo disto a mediana da UF nao serve de divisor (a razao explode). Ver
 # `_etiqueta_crescimento`: no artefato vigente nenhuma UF chega perto, e o piso e defesa.
 _CRESC_PISO_MEDIANA = 1.0
@@ -1729,6 +1745,15 @@ def _etiqueta(
         # chip. Com o `or 0` que estava aqui, hex sem score caia na primeira faixa e
         # a tela AFIRMAVA "Desfavorável" (chip vermelho) sobre um dado que nao existe.
         return _faixa_para_chip(valor, FAIXAS_MAPA_POTENCIAL)
+    if metrica == "índice de praça":
+        # Camada 5 (DEC-041): o chip e' o QUADRANTE, nao uma faixa do proprio indice.
+        # O indice ja' e' o numero exibido; repeti-lo como chip ("Alto"/"Médio") nao
+        # acrescenta nada. O quadrante diz a coisa que o numero sozinho esconde: se a
+        # praca chegou ali por ser boa nos DOIS eixos ou por ser forte em um so'.
+        quad = row.get("quadrante_praca")
+        if not quad or (isinstance(quad, float) and pd.isna(quad)):
+            return "", "", None
+        return praca_indice.QUADRANTE_LABELS.get(str(quad), ""), "blue", None
     if metrica == "conc. 2 km":
         # Leitura COMPETITIVA da camada 3 (PR #184): quantos concorrentes ha no hex.
         n = int(row.get("n_concorrentes_est") or 0)
@@ -1774,11 +1799,13 @@ def _rank_items(
     bairros: dict[str, str] | None = None,
     limite: int = FILA_MAX,
     metrica_etiqueta: str | None = None,
+    ordem_extra: list[str] | None = None,
+    extras: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Top-N localidades por uma coluna, no formato do painel de ranking.
 
     `limite` = 10: mostra ate as 10 melhores. Como o df ja chega FILTRADO pelo
-    funil (quentes / residual >= 2000 / white space), todo item e viavel por
+    funil (quentes / residual >= 2000 / nao saturado), todo item e viavel por
     construcao; se houver menos de 10 localidades distintas, a lista encurta
     sozinha (Felipe 2026-07-20: "as 10 melhores, apenas se forem viaveis").
 
@@ -1798,7 +1825,22 @@ def _rank_items(
     # Fica o melhor hex de cada bairro, que e o candidato a ponto.
     # Desempate por populacao: no passo 1 muitos hexes empatam em score 100, e sem
     # criterio secundario o topo do ranking vira ordem alfabetica acidental.
-    chaves = [col] + [c for c in ("pop_leitura", "oferta_efetiva_disponivel") if c in df.columns]
+    # Desempate: populacao primeiro, residual depois. EXCECAO para o indice de praca
+    # (camada 5): la' o desempate por populacao devolveria pela porta dos fundos
+    # exatamente o vies que a DEC-041 removeu -- entre duas pracas de mesmo indice,
+    # ganharia a mais populosa, que e' a mais periferica. Ali desempata a nota
+    # socioeconomica, o eixo que o indice pondera mais.
+    if col == COL_INDICE_PRACA:
+        secundarias = [c for c in ("score_setor_2022_calibrado", "oferta_efetiva_disponivel") if c in df.columns]
+    else:
+        secundarias = [c for c in ("pop_leitura", "oferta_efetiva_disponivel") if c in df.columns]
+    # `ordem_extra` entra ANTES de `col` e manda na ordenacao. Existe para o passo 3, que
+    # exibe residual (por isso `col` continua sendo residual, e o `label` do item tambem)
+    # mas ordena por FOLGA COMPETITIVA: as menos disputadas primeiro e, entre elas, as de
+    # maior residual. Sem isso o passo 3 sairia com a MESMA lista do passo 2 e so' o chip
+    # mudaria -- medido antes de decidir: os top-10 dos dois coincidiam 100% em 7 das 8
+    # maiores capitais quando ambos ordenavam por residual.
+    chaves = [c for c in (ordem_extra or []) if c in df.columns] + [col] + secundarias
     ordenado = df.dropna(subset=[col]).sort_values(chaves, ascending=False)
     itens: list[dict[str, Any]] = []
     vistos: set[str] = set()
@@ -1819,57 +1861,83 @@ def _rank_items(
         etiqueta, tom_item, cor_item = _etiqueta(
             metrica_etiqueta or label_metrica, _numf(r.get(col)), rank, r
         )
-        itens.append(
-            {
-                "rank": rank,
-                "hex_id": hid,
-                "titulo": titulo,
-                "sub": (r.get("nome_municipio") if local else f"hex {hid[:9]}…"),
-                "valor": valor,
-                "label": label_metrica,
-                "tag": etiqueta,
-                "tom": tom_item or tom,
-                "tag_cor": cor_item,
-            }
-        )
+        item = {
+            "rank": rank,
+            "hex_id": hid,
+            "titulo": titulo,
+            "sub": (r.get("nome_municipio") if local else f"hex {hid[:9]}…"),
+            "valor": valor,
+            "label": label_metrica,
+            "tag": etiqueta,
+            "tom": tom_item or tom,
+            "tag_cor": cor_item,
+        }
+        # EVIDENCIAS do item, para a frase de tese da camada 5 (DEC-041). O painel
+        # precisa poder dizer POR QUE aquela posicao esta ali — e a frase tem que ser
+        # montada a partir dos MESMOS numeros que ordenaram a fila, nao de uma segunda
+        # leitura do payload do mapa que poderia divergir. Opcional: quem nao passa
+        # `extras` recebe exatamente o dicionario de antes.
+        for chave, coluna in (extras or {}).items():
+            if coluna in df.columns:
+                bruto = r.get(coluna)
+                item[chave] = bruto if isinstance(bruto, str) else _num(bruto, 1)
+        itens.append(item)
         if len(itens) == limite:
             break
     return itens
 
 
-def _narrativa_concorrencia(n_residual: int, n_white: int) -> str:
-    """Texto do passo 3, com o caso `n_white == 0` dito por extenso.
+def _narrativa_concorrencia(n_residual: int, n_livre: int, n_adensar: int, n_disputa: int) -> str:
+    """Texto do passo 3: a COMPOSICAO da pressao, nao mais um corte de sobrevivencia.
 
-    Compartilhada pelos dois niveis (municipio e UF) porque a regra e a mesma: sem
-    fallback, `n_white == 0` deixa os passos 3 e 4 SEM itens — e a lista vazia so nao
-    parece bug se a narrativa disser que nao ha area sem concorrencia no recorte. Alem
-    disso a frase antiga saia agramatical no zero ("0 nao tem nenhum concorrente").
+    Compartilhada pelos dois niveis (municipio e UF) porque a regra e a mesma.
 
-    RAIO, NAO HEXAGONO: o texto dizia "concorrente dentro do hexagono", e isso nao e'
-    o que a coluna mede. `n_concorrentes_est` deriva de `oferta_efetiva_mapeada_2km`
+    MUDOU EM 2026-08-28 (DEC-041). Ate' aqui o passo 3 ELIMINAVA todo hexagono com pelo
+    menos um concorrente, e a narrativa contava quantos "estavam desguarnecidos". Duas
+    medicoes derrubaram a regra: (i) nas 8 maiores capitais, sem excecao, os eliminados
+    tinham score socioeconomico MEDIANO MAIOR que os mantidos -- o filtro cortava as
+    melhores pracas; (ii) a concorrencia ja' era descontada na camada 2
+    (`residual = SAM - oferta instalada`), entao elimina-la de novo aqui a penalizava
+    duas vezes. Agora so' sai a saturacao extrema (mais de `CONC_ADENSAR_MAX`), e o
+    resto e' LEITURA.
+
+    RAIO, NAO HEXAGONO: `n_concorrentes_est` deriva de `oferta_efetiva_mapeada_2km`
     (`calcular_colunas_mercado`), que soma os concorrentes ate 2 km ponderados por
     distancia — o proprio cabecalho do passo ja exibe "conc. 2 km". Um concorrente a
-    1,8 km do centroide conta aqui e nao esta "dentro do hexagono", entao a redacao
-    antiga fazia o usuario procurar no lugar errado.
+    1,8 km do centroide conta aqui e nao esta "dentro do hexagono".
     """
     if n_residual == 0:
         return (
             "Nenhuma região chegou com residual até aqui, então não há pressão "
             "concorrencial a avaliar neste recorte."
         )
-    if n_white == 0:
+    viaveis = n_livre + n_adensar
+    if viaveis == 0:
         return (
-            f"Dessas {_fmt(n_residual)}, quais estão desguarnecidas? Nenhuma: todas já "
-            "têm concorrente mapeado num raio de 2 km. Não há área sem concorrência "
-            "neste recorte — por isso a lista abaixo fica vazia. Entrar aqui significa "
-            "disputar espaço, protegendo o corredor Ultra."
+            f"Dessas {_fmt(n_residual)}, quantas comportam uma entrada? Nenhuma: todas "
+            f"já têm mais de {CONC_ADENSAR_MAX} concorrentes num raio de 2 km. Ter "
+            "concorrente não desqualifica uma região — mercado disputado é mercado que "
+            "existe —, mas neste recorte a oferta instalada não deixa espaço."
         )
-    verbo = "não tem" if n_white == 1 else "não têm"
-    return (
-        f"Dessas {_fmt(n_residual)}, quais estão desguarnecidas? {_fmt(n_white)} {verbo} "
-        "nenhum concorrente mapeado num raio de 2 km; as demais exigem entrar "
-        "protegendo o corredor Ultra contra a concorrência."
-    )
+    partes = [
+        f"Ter concorrente não elimina uma região: mercado disputado é mercado que "
+        f"existe, e a oferta já instalada foi descontada do residual na camada anterior. "
+        f"Das {_fmt(n_residual)} regiões, {_fmt(viaveis)} comportam uma entrada"
+    ]
+    detalhe = []
+    if n_livre:
+        detalhe.append(f"{_fmt(n_livre)} sem nenhum concorrente em 2 km")
+    if n_adensar:
+        detalhe.append(f"{_fmt(n_adensar)} com espaço para adensar")
+    if detalhe:
+        partes.append(" — " + " e ".join(detalhe))
+    if n_disputa:
+        plural = "região sai" if n_disputa == 1 else "regiões saem"
+        partes.append(
+            f". Só {_fmt(n_disputa)} {plural} daqui, por saturação: mais de "
+            f"{CONC_ADENSAR_MAX} concorrentes no raio"
+        )
+    return "".join(partes) + "."
 
 def _mun_val(df_muni: pd.DataFrame, col: str) -> Any:
     """Valor municipal (broadcast): basta a 1a linha nao nula."""
@@ -1957,6 +2025,64 @@ def _narrativa_crescimento(df_muni: pd.DataFrame, municipio: str) -> str:
     return " ".join(partes)
 
 
+def _anotar_indice_praca(df: pd.DataFrame, col_censo: str) -> pd.DataFrame:
+    """Materializa nota de demanda, indice de praca e quadrante (DEC-041).
+
+    Vetorizado de proposito: a base do funil vai de dezenas (municipio) a milhares (UF),
+    e uma passagem linha a linha aqui apareceria no tempo de resposta da tela.
+
+    Devolve um frame NOVO — o `df` que chega e' fatia de um cache `lru_cache` por UF, e
+    escrever nele contaminaria a proxima requisicao da mesma UF com colunas de recorte
+    alheio.
+    """
+    if col_censo not in df.columns or "oferta_efetiva_disponivel" not in df.columns:
+        # Sem insumo nao se inventa indice: as colunas nascem NULAS e a camada 5 fica
+        # sem fila, que e' a resposta correta. Elas precisam EXISTIR mesmo assim, senao
+        # `_rank_items` devolve [] por coluna ausente e a causa some do rastro.
+        return df.assign(**{c: float("nan") for c in (COL_NOTA_DEMANDA, COL_INDICE_PRACA, COL_QUADRANTE)})
+    if not len(df):
+        return df.assign(**{c: pd.Series(dtype="float64") for c in (COL_NOTA_DEMANDA, COL_INDICE_PRACA, COL_QUADRANTE)})
+    nota_dem = praca_indice.nota_demanda(df["oferta_efetiva_disponivel"]).to_numpy()
+    nota_socio = pd.to_numeric(df[col_censo], errors="coerce").to_numpy()
+    folga = -pd.to_numeric(df.get("n_concorrentes_est", 0), errors="coerce").fillna(0)
+    return df.assign(
+        **{
+            COL_NOTA_DEMANDA: nota_dem,
+            COL_INDICE_PRACA: praca_indice.indice_praca(nota_socio, nota_dem).to_numpy(),
+            COL_QUADRANTE: praca_indice.rotulo_quadrante(nota_socio, nota_dem).to_numpy(),
+            COL_FOLGA_CONC: folga.to_numpy() if hasattr(folga, "to_numpy") else folga,
+        }
+    )
+
+
+def _composicao_pressao(df: pd.DataFrame) -> tuple[int, int, int]:
+    """(livres, adensaveis, disputados) pela MESMA regua do chip da camada 3.
+
+    A regua vive em `_etiqueta` (ramo "conc. 2 km") e e' `n_concorrentes_est` contra
+    `CONC_ADENSAR_MAX`. Contar aqui por outro criterio faria a narrativa do passo dizer
+    um numero e os chips da lista dizerem outro.
+    """
+    if not len(df) or "n_concorrentes_est" not in df.columns:
+        return len(df), 0, 0
+    n = pd.to_numeric(df["n_concorrentes_est"], errors="coerce").fillna(0)
+    livres = int((n <= 0).sum())
+    adensar = int(((n > 0) & (n <= CONC_ADENSAR_MAX)).sum())
+    return livres, adensar, len(df) - livres - adensar
+
+
+def _viaveis_para_entrada(df: pd.DataFrame) -> pd.DataFrame:
+    """Corta APENAS a saturacao extrema (> `CONC_ADENSAR_MAX` concorrentes em 2 km).
+
+    Substitui o antigo `white = residual[n_concorrentes_est == 0]`. O corte velho
+    eliminava 31% das regioes que tinham demanda real, e as que eliminava eram, nas 8
+    maiores capitais e sem uma excecao, as de MELHOR perfil socioeconomico.
+    """
+    if not len(df) or "n_concorrentes_est" not in df.columns:
+        return df
+    n = pd.to_numeric(df["n_concorrentes_est"], errors="coerce").fillna(0)
+    return df[n <= CONC_ADENSAR_MAX]
+
+
 def montar_funil(
     df_muni: pd.DataFrame, municipio: str, bairros: dict[str, str] | None = None
 ) -> list[dict[str, Any]]:
@@ -1985,35 +2111,58 @@ def montar_funil(
         else quentes.iloc[0:0]
     )
     alunos_residual = _num(residual["oferta_efetiva_disponivel"].sum()) if len(residual) else 0
+    residual = _anotar_indice_praca(residual, col_censo)
 
-    # Passo 3 — Concorrencia: dos residuais, quais estao desguarnecidos. `white` e a
-    # base UNICA dos passos 3 e 4 — SEM fallback para o residual (decisao do dono,
-    # 2026-08-03: "os top 10 deverao se referir aos hexagonos livres"). O passo 3 ja
-    # destacava so o white no mapa (`hexes`) e contava so o white no numerao
-    # (`funil_big`); ranquear o residual quando nao havia white enchia o painel de
-    # hexagono APAGADO e contradizia o proprio numerao (0). Municipio saturado passa a
-    # ter os passos 3 e 4 sem NENHUM item, e a lista vazia e a resposta CORRETA ("nao
-    # ha area livre aqui") — o texto do passo (`_narrativa_concorrencia`) diz isso.
-    white = residual[residual["n_concorrentes_est"] == 0] if len(residual) else residual
+    # Passo 3 — Pressao concorrencial. DEIXOU DE SER FILTRO DE SOBREVIVENCIA (DEC-041).
+    #
+    # A regra anterior (decisao do dono em 2026-08-03, PR #184: "os top 10 deverao se
+    # referir aos hexagonos livres") mandava os passos 3-5 operarem so' sobre hexagono
+    # com ZERO concorrente. O proprio dono a reverteu em 2026-08-28, depois da medicao:
+    #
+    #   - o corte eliminava 31% das regioes que tinham demanda real e, nas 8 maiores
+    #     capitais SEM UMA EXCECAO, as eliminadas tinham score socioeconomico mediano
+    #     MAIOR que as mantidas (Sao Paulo 56,8 x 55,0; Rio 54,9 x 44,2; Campo Grande
+    #     51,1 x 34,9). Ele cortava justamente as melhores pracas;
+    #   - e penalizava concorrencia DUAS VEZES: a camada 2 ja' subtrai a oferta
+    #     instalada do potencial (`residual = SAM - oferta consumida`).
+    #
+    # Fica so' o corte de SATURACAO EXTREMA (> CONC_ADENSAR_MAX concorrentes em 2 km) —
+    # o que a tela ja' chamava de "Disputa". O resto vira LEITURA: os chips Livre /
+    # Adensar seguem exatamente como estavam.
+    viavel = _viaveis_para_entrada(residual)
+    n_livre, n_adensar, n_disputa = _composicao_pressao(residual)
 
     # Passo 4 — as areas do passo 3 que TEM leitura de satelite. A cobertura e parcial
     # (41.135 hexes em 12 UFs, so na mancha urbana medida), e o numerao do passo antes
-    # contava os hexes medidos do MUNICIPIO INTEIRO enquanto o mapa acendia o white:
-    # com 60 medidos e 44 white, a caixa lia "60 de 60" e o mapa acendia 44. Nenhum dos
+    # contava os hexes medidos do MUNICIPIO INTEIRO enquanto o mapa acendia a base do
+    # passo 3: com 60 medidos e 44 na base, a caixa lia "60 de 60" e o mapa acendia 44. Nenhum dos
     # dois conjuntos continha o outro. Toda a convencao do funil e `funil_big` contar
     # exatamente o que `hexes` acende — este era o unico passo que a violava.
     medidos = (
-        white[white["cres_hex_classe"].notna()]
-        if "cres_hex_classe" in white.columns
-        else white.iloc[0:0]
+        viavel[viavel["cres_hex_classe"].notna()]
+        if "cres_hex_classe" in viavel.columns
+        else viavel.iloc[0:0]
     )
 
-    # Passo 5 — Recomendacao: fila de ate FILA_MAX aberturas priorizada por residual,
-    # so com white space. A fila e 100% viavel; encurta sozinha com menos candidatos e
-    # fica vazia quando nao ha nenhum (o `if` so protege o df sem a coluna).
-    # SEM fallback para o residual disputado (decisao do dono, 2026-08-03, PR #184):
-    # nao se reverte isso em silencio na resolucao de um conflito.
-    fila = white.nlargest(FILA_MAX, "oferta_efetiva_disponivel") if len(white) else white
+    # Passo 5 — Recomendacao: fila de ate FILA_MAX aberturas, ordenada pelo INDICE DE
+    # PRACA (DEC-041), nao mais pelo residual puro.
+    #
+    # POR QUE MUDOU: `oferta_efetiva_disponivel` e' populacao quase pura (Spearman 0,995
+    # contra `pop_hex_base`). Ordenar por ela era ordenar por quantidade de gente — e
+    # dentro de uma cidade a maior quantidade de gente esta' na periferia densa. Medido
+    # nas 8 maiores capitais, `rho(residual, renda)` deu NEGATIVO em TODAS (-0,06 em Sao
+    # Paulo a -0,58 em Campo Grande), e a fila caia no percentil 20-49 de renda do
+    # proprio conjunto que ja' passara no gate. O dono descreveu a dor como
+    # "recomendacao apenas em periferias".
+    #
+    # O indice pondera os dois eixos em regua ABSOLUTA (`praca_indice`): 0,70 de nota
+    # socioeconomica e 0,30 de nota de demanda. A conjuncao ("boa nos DOIS") e' garantida
+    # pelo GATE, que ja' exige minimo em cada eixo; o indice ordena dentro do admissivel.
+    #
+    # NAO E' PREVISAO DE FATURAMENTO. O experimento E3 testou 4 preditores territoriais
+    # contra desempenho real de 267 unidades: todos os IC cruzam zero. Isto e' politica
+    # de expansao declarada, e a metodologia publica diz isso com estas palavras.
+    fila = viavel.nlargest(FILA_MAX, COL_INDICE_PRACA) if len(viavel) else viavel
 
     # O tom passado a `_rank_items` e' o tom PADRAO do passo, e hoje ele NAO PINTA
     # em lugar nenhum: `RankItem.tag_cor` (a cor exata da faixa da legenda) tem
@@ -2059,20 +2208,28 @@ def montar_funil(
             "n": 3,
             "mode": "competitivo",
             "titulo": "Pressão concorrencial",
-            "narrativa": _narrativa_concorrencia(len(residual), len(white)),
-            "funil_big": len(white),
-            "funil_unit": _unidade(len(white), "área sem concorrência", "áreas sem concorrência"),
+            "narrativa": _narrativa_concorrencia(len(residual), n_livre, n_adensar, n_disputa),
+            "funil_big": len(viavel),
+            "funil_unit": _unidade(
+                len(viavel), "região que comporta entrada", "regiões que comportam entrada"
+            ),
             "funil_from": f"{_fmt(len(residual))} regiões",
             "metrica": "conc. 2 km",
+            # ORDEM PROPRIA (DEC-041): menos disputadas primeiro, e entre elas as de maior
+            # residual. Sem `ordem_extra` esta lista sairia identica a do passo 2, so' com
+            # outro chip -- medido nas 8 maiores capitais: os top-10 coincidiam 100% em
+            # sete delas e 90% na oitava quando ambos ordenavam por residual puro. O
+            # `valor` exibido continua sendo residual, em alunos.
             "itens": _rank_items(
-                white,
+                viavel,
                 "oferta_efetiva_disponivel",
                 "residual",
                 "amber",
                 bairros=bairros,
                 metrica_etiqueta="conc. 2 km",
+                ordem_extra=[COL_FOLGA_CONC],
             ),
-            "hexes": white["hex_id"].tolist(),
+            "hexes": viavel["hex_id"].tolist(),
         },
         {
             "n": 4,
@@ -2088,7 +2245,7 @@ def montar_funil(
             "funil_unit": _unidade(
                 len(medidos), "área com medição de satélite", "áreas com medição de satélite"
             ),
-            "funil_from": f"{_fmt(len(white))} áreas sem concorrência",
+            "funil_from": f"{_fmt(len(viavel))} regiões que comportam entrada",
             "metrica": "crescimento",
             # Sem lista propria: o passo 5 ja rankeia os mesmos hexes pela mesma
             # coluna (a lista saia identica, so mudando a etiqueta). A leitura deste
@@ -2103,23 +2260,43 @@ def montar_funil(
             "mode": "recomendação",
             "titulo": "Para onde crescer",
             "narrativa": (
-                f"A síntese das camadas vira ação: uma fila de {_fmt(len(fila))} aberturas "
-                "que captura o máximo de residual sem canibalizar a rede atual."
+                f"A síntese das camadas vira ação: uma fila de {_fmt(len(fila))} aberturas, "
+                "ordenada por ser boa nos dois eixos ao mesmo tempo — perfil "
+                "socioeconômico da praça e demanda ainda não atendida. É a política de "
+                "expansão declarada, não uma previsão de faturamento."
                 if len(fila)
-                else "A síntese das camadas não gera fila aqui: sem nenhuma área livre de "
-                "concorrência, não há abertura a recomendar neste recorte. Avalie outro "
-                "município — ou uma entrada disputando espaço, que é decisão à parte."
+                else "A síntese das camadas não gera fila aqui: nenhuma região passou nas "
+                "camadas anteriores com espaço para uma entrada. Avalie outro município."
             ),
             "funil_big": len(fila),
             "funil_unit": _unidade(len(fila), "abertura na fila", "aberturas na fila"),
-            "funil_from": f"{_fmt(len(white))} áreas sem concorrência",
-            "metrica": "residual",
+            "funil_from": f"{_fmt(len(viavel))} regiões que comportam entrada",
+            "metrica": "índice de praça",
             "itens": _rank_items(
                 fila.assign(_fila=True),
-                "oferta_efetiva_disponivel",
-                "residual",
+                COL_INDICE_PRACA,
+                "índice de praça",
                 "blue",
+                # Uma casa decimal, e nao zero: o indice e' 0-100 e, arredondado a
+                # inteiro, dez posicoes empatariam com frequencia. O front reordena a
+                # fila por `valor` (`ordenarComDesempate`), entao empate ali devolve a
+                # decisao a um criterio de desempate que o servidor nao escolheu.
+                casas=1,
                 bairros=bairros,
+                metrica_etiqueta="índice de praça",
+                # SEM renda de proposito. `renda_leitura` e' a per capita CALIBRADA, e a
+                # tela nunca a mostra crua: `_base_renda_domiciliar` divide pelo `k` e
+                # depois aplica o uplift domiciliar. Publicar o valor bruto aqui poria
+                # dois numeros de renda diferentes na MESMA tela, para o mesmo hexagono
+                # — e replicar a formula de exibicao so' para a frase seria uma segunda
+                # implementacao dela. A renda ja' esta' correta no tooltip e na ficha.
+                extras={
+                    "quadrante": COL_QUADRANTE,
+                    "nota_socio": col_censo,
+                    "nota_demanda": COL_NOTA_DEMANDA,
+                    "residual": "oferta_efetiva_disponivel",
+                    "conc": "n_concorrentes_est",
+                },
             ),
             "hexes": fila["hex_id"].tolist(),
         },
@@ -2323,6 +2500,13 @@ def _rank_municipios(
     elif modo == "crescimento":
         # Metrica MUNICIPAL (broadcast): somar entre hexes daria numero sem sentido.
         serie = g[value_col].max()
+    elif modo == "max":
+        # Indice de praca (DEC-041): 0-100 POR HEXAGONO e NAO somavel — somar daria
+        # "Sao Paulo 12.000", que nao e' um indice, e' uma contagem disfarcada. O
+        # municipio vale pelo seu MELHOR hexagono, pela mesma razao ja' escrita no
+        # docstring desta funcao para as faixas: a pergunta do ranking de UF e' "vale a
+        # pena olhar esta cidade?", e a resposta e' o melhor ponto que ela oferece.
+        serie = g[value_col].max()
     else:
         serie = g[value_col].sum()
     # O `serie > 0` nasceu para matar municipio-fantasma do Categorical no modo
@@ -2390,10 +2574,10 @@ def _rank_municipios(
 
 
 def montar_crescimento_estado(df_uf: pd.DataFrame) -> dict[str, Any] | None:
-    """Ranking de crescimento sobre a UF INTEIRA — não sobre o white space.
+    """Ranking de crescimento sobre a UF INTEIRA — não sobre a base do funil.
 
     POR QUE NÃO É REUSO DO PASSO 4. O passo 4 do funil descreve as cidades que
-    SOBREVIVERAM aos passos 1-3: `cres_uf = white[...]` (ver `montar_funil_uf`), e o
+    SOBREVIVERAM aos passos 1-3: `cres_uf = viavel[...]` (ver `montar_funil_uf`), e o
     comentário lá diz por escrito que ele "não é o estado inteiro". Ler aquele ranking
     como retrato do estado é o erro fácil: numa UF onde quase tudo tem concorrente, o
     passo 4 lista meia dúzia de cidades e some com o resto.
@@ -2463,30 +2647,32 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
         else quentes.iloc[0:0]
     )
     alunos_res = _num(residual["oferta_efetiva_disponivel"].sum()) if len(residual) else 0
-    white = residual[residual["n_concorrentes_est"] == 0] if len(residual) else residual
+    residual = _anotar_indice_praca(residual, col)
+    # Mesma cirurgia do funil municipal (DEC-041): o corte deixa de ser "zero
+    # concorrente" e passa a ser so' saturacao extrema. Ver o comentario longo em
+    # `montar_funil`, que registra a medicao que derrubou a regra anterior.
+    viavel = _viaveis_para_entrada(residual)
+    n_livre, n_adensar, n_disputa = _composicao_pressao(residual)
     # Presenca de VALOR, nao de coluna: o artefato pode existir e o join nao casar
     # (o fallback por nome e o caminho principal em 21 das 27 UFs), e nesse caso a
     # coluna chega cheia de NaN — a prosa afirmava CAGED ao lado de 0 cidades.
-    tem_cres = "cres_emp_pct" in white.columns and bool(white["cres_emp_pct"].notna().any())
+    tem_cres = "cres_emp_pct" in viavel.columns and bool(viavel["cres_emp_pct"].notna().any())
     # Passo 4 — as areas do passo 3 cujas CIDADES tem leitura de crescimento. O numerao
-    # antes contava cidades com emprego >= 15% enquanto o mapa acendia todo o white,
+    # antes contava cidades com emprego >= 15% enquanto o mapa acendia toda a base,
     # inclusive as cidades estaveis e em queda: pelos percentis nacionais o corte cai
     # entre a mediana e o p90, entao tipicamente 80-85% do que estava aceso ficava fora
     # da conta — e o numero podia ser 0 com a camada inteira acesa. Sem contar que
     # contava CIDADES e o `funil_from` dizia AREAS. O passo nao filtra: quem nao tem
     # leitura simplesmente nao e descrito, e segue inteiro para a fila do passo 5.
-    cres_uf = white[white["cres_emp_pct"].notna()] if tem_cres else white.iloc[0:0]
+    cres_uf = viavel[viavel["cres_emp_pct"].notna()] if tem_cres else viavel.iloc[0:0]
     n_cidades_cres = int(cres_uf["nome_municipio"].nunique()) if len(cres_uf) else 0
-    n_cidades_white = int(white["nome_municipio"].nunique()) if len(white) else 0
-    # Base dos passos 3, 4 e 5: SOMENTE o white space, igual ao funil municipal
-    # (decisao do dono, 2026-08-03). Sem hexagono livre a UF inteira sai com esses
-    # passos vazios — e isso e o certo: o numerao ja diz 0 e o mapa nao acende nada;
-    # ranquear o residual ali fazia o painel prometer municipios que o passo acabara
-    # de excluir. O passo 4 (crescimento) le a MESMA base: ele descreve as cidades que
-    # chegaram ate aqui, nao o estado inteiro — senao falaria de praca ja descartada.
+    n_cidades_viavel = int(viavel["nome_municipio"].nunique()) if len(viavel) else 0
+    # Base dos passos 3, 4 e 5: as regioes que COMPORTAM ENTRADA (`viavel`), igual ao
+    # funil municipal. O passo 4 (crescimento) le a MESMA base: ele descreve as cidades
+    # que chegaram ate aqui, nao o estado inteiro — senao falaria de praca ja descartada.
     n_reco = (
-        int(white.groupby("nome_municipio", observed=True)["oferta_efetiva_disponivel"].sum().gt(0).sum())
-        if len(white)
+        int(viavel.groupby("nome_municipio", observed=True)[COL_INDICE_PRACA].max().gt(0).sum())
+        if len(viavel)
         else 0
     )
 
@@ -2526,17 +2712,22 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
             "n": 3,
             "mode": "competitivo",
             "titulo": "Pressão concorrencial",
-            "narrativa": _narrativa_concorrencia(len(residual), len(white)),
-            "funil_big": len(white),
-            "funil_unit": _unidade(len(white), "área sem concorrência", "áreas sem concorrência"),
+            "narrativa": _narrativa_concorrencia(len(residual), n_livre, n_adensar, n_disputa),
+            "funil_big": len(viavel),
+            "funil_unit": _unidade(
+                len(viavel), "região que comporta entrada", "regiões que comportam entrada"
+            ),
             "funil_from": f"{_fmt(len(residual))} regiões",
             "metrica": "conc. 2 km",
-            # Fonte `white` vem do #184 (corrige a camada 3 a mostrar so' o que nao
-            # tem concorrente); `faixa_por` vem do BLK-MAPA-FAIXAS-01.
+            # Ao contrario do funil MUNICIPAL, aqui a lista sobrevive: ela ranqueia
+            # MUNICIPIOS por residual somado, e a do passo 2 tambem — mas sobre bases
+            # diferentes o bastante (a UF tem centenas de cidades, e as saturadas caem
+            # inteiras do recorte) para as duas nao sairem iguais. `faixa_por` vem do
+            # BLK-MAPA-FAIXAS-01.
             "itens": _rank_municipios(
-                white, "oferta_efetiva_disponivel", "sum", "residual", "amber", faixa_por="demanda"
+                viavel, "oferta_efetiva_disponivel", "sum", "residual", "amber", faixa_por="demanda"
             ),
-            "hexes": (white["hex_id"].tolist() if len(white) else []),
+            "hexes": (viavel["hex_id"].tolist() if len(viavel) else []),
         },
         {
             "n": 4,
@@ -2557,14 +2748,14 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
                 if tem_cres
                 else (
                     "Sem leitura de crescimento para este estado — o artefato municipal não "
-                    "está disponível. As áreas sem concorrência seguem valendo."
+                    "está disponível. As regiões que comportam entrada seguem valendo."
                 )
             ),
             "funil_big": n_cidades_cres,
             "funil_unit": _unidade(
                 n_cidades_cres, "cidade com leitura", "cidades com leitura"
             ),
-            "funil_from": f"{_fmt(n_cidades_white)} cidades sem concorrência",
+            "funil_from": f"{_fmt(n_cidades_viavel)} cidades com região viável",
             "metrica": "% emprego",
             "itens": (
                 _rank_municipios(cres_uf, "cres_emp_pct", "crescimento", "% emprego", "green")
@@ -2578,29 +2769,32 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
             "mode": "recomendação",
             "titulo": "Para onde crescer",
             "narrativa": (
-                f"A fila de municípios para entrar: {_fmt(n_reco)} onde o residual é maior e a "
-                "rede Ultra ainda tem espaço. Clique num município para aprofundar."
+                f"A fila de municípios para entrar: {_fmt(n_reco)}, ordenados pela melhor "
+                "praça que cada um oferece — boa nos dois eixos ao mesmo tempo, perfil "
+                "socioeconômico e demanda não atendida. Clique num município para "
+                "aprofundar."
                 if n_reco
-                else "Nenhum município deste estado tem área livre de concorrência com "
-                "residual: a fila fica vazia. Amplie o recorte ou avalie uma entrada "
-                "disputando espaço, que é decisão à parte."
+                else "Nenhum município deste estado tem região que comporte uma entrada: "
+                "a fila fica vazia. Amplie o recorte."
             ),
             "funil_big": n_reco,
             "funil_unit": _unidade(n_reco, "município na fila", "municípios na fila"),
-            "funil_from": f"{_fmt(len(white))} áreas sem concorrência",
-            "metrica": "residual",
+            "funil_from": f"{_fmt(len(viavel))} regiões que comportam entrada",
+            "metrica": "índice de praça",
+            # `modo="max"` e nao `"sum"`: o indice e' 0-100 por hexagono e nao e' somavel
+            # (DEC-041). O municipio vale pelo seu melhor ponto.
             "itens": _rank_municipios(
-                white,
-                "oferta_efetiva_disponivel",
-                "sum",
-                "residual",
+                viavel,
+                COL_INDICE_PRACA,
+                "max",
+                "índice de praça",
                 "blue",
                 fila=True,
                 # Passo 4 = faixa de oportunidade do M1, igual a legenda desta camada.
                 # A ordem da fila continua legivel no rank (1º, 2º, 3º) do proprio item.
                 faixa_por="m1",
             ),
-            "hexes": (white["hex_id"].tolist() if len(white) else []),
+            "hexes": (viavel["hex_id"].tolist() if len(viavel) else []),
         },
     ]
 
@@ -3226,8 +3420,12 @@ def montar_metodologia() -> dict[str, Any]:
             "o tamanho de um bairro grande. Cada camada do funil recebe apenas o que a "
             "anterior aprovou e aplica mais uma régua. A quarta é a exceção declarada: "
             "ela não corta nada e não entra na ordenação — descreve como a cidade vem se "
-            "movendo, para separar 'entrar agora' de 'ficar de olho'. No fim sobra uma "
-            "fila de aberturas em que toda posição já passou por todos os filtros."
+            "movendo, para separar 'entrar agora' de 'ficar de olho'. A terceira quase "
+            "não corta: desde agosto de 2026 ela só elimina a saturação extrema, e para "
+            "o resto serve como leitura — ter concorrente por perto não desqualifica uma "
+            "região, porque a oferta já instalada foi descontada na camada anterior. No "
+            "fim sobra uma fila de aberturas em que toda posição já passou por todos os "
+            "filtros, ordenada por ser boa nos dois eixos ao mesmo tempo."
         ),
         "fontes": [
             {
@@ -3285,15 +3483,19 @@ def montar_metodologia() -> dict[str, Any]:
                             "maior, mais perto a região está do público que a rede converte."
                         ),
                         "regra": (
-                            "Dois insumos do setor censitário, com pesos fixos: a renda per "
-                            "capita, calibrada e comparada em percentil NACIONAL (peso 0,60), "
-                            "e a população do setor, comparada dentro do próprio município "
-                            "(peso 0,40). A parte de renda usa a mesma régua para o Brasil "
-                            "inteiro — é o que permite comparar regiões de estados diferentes; "
-                            "a parte de população é relativa à cidade, para não apagar os "
-                            "bairros densos de municípios pequenos. A nota do setor passa para "
-                            f"o hexágono que o cobre. Abaixo de {score} o hexágono não entra "
-                            "em nenhuma camada seguinte."
+                            "Dois insumos do setor censitário, com pesos fixos e em régua "
+                            "ABSOLUTA: a renda per capita calibrada (peso 0,60), numa escala "
+                            "linear em que R$ 300 vale 0 e R$ 4.000 vale 100; e a população do "
+                            "setor (peso 0,40), numa escala logarítmica em que 1.000 habitantes "
+                            "valem 0 e 100.000 valem 100. Absoluta quer dizer que o mesmo par "
+                            "de renda e população dá a mesma nota em qualquer cidade do país — "
+                            "é o que permite comparar praças entre municípios. Até agosto de "
+                            "2026 os dois termos eram percentis (renda contra o Brasil, "
+                            "população dentro do próprio município), e o percentil municipal "
+                            "fazia toda cidade produzir seus próprios 'melhores hexágonos' no "
+                            "topo da escala por construção. A nota do setor passa para o "
+                            f"hexágono que o cobre. Abaixo de {score} o hexágono não entra em "
+                            "nenhuma camada seguinte."
                         ),
                     },
                     {
@@ -3378,8 +3580,8 @@ def montar_metodologia() -> dict[str, Any]:
             {
                 "n": 3,
                 "titulo": "Pressão concorrencial",
-                "pergunta": "Dessas, quais estão desguarnecidas?",
-                "corte": "nenhum concorrente estimado num raio de 2 km",
+                "pergunta": "Dessas, quais comportam uma entrada?",
+                "corte": f"mais de {CONC_ADENSAR_MAX} concorrentes estimados num raio de 2 km",
                 "metricas": [
                     {
                         "nome": "Concorrentes em 2 km",
@@ -3387,14 +3589,21 @@ def montar_metodologia() -> dict[str, Any]:
                         "fonte": F_CONC,
                         "resumo": (
                             "Quantas academias concorrentes existem na vizinhança imediata. "
-                            "Zero significa que ninguém disputa esse público hoje — a "
-                            "situação mais confortável para abrir."
+                            "Ter concorrente NÃO desqualifica a região: mercado disputado é "
+                            "mercado que existe. Só a saturação elimina."
                         ),
                         "regra": (
                             "O modelo mede a oferta concorrente num raio de 2 km do hexágono e "
                             "converte esse volume em número de unidades, dividindo pela "
-                            f"capacidade média de {cap} alunos. Só segue para a última camada "
-                            "quem tem zero."
+                            f"capacidade média de {cap} alunos. Sai da conta quem tem mais de "
+                            f"{CONC_ADENSAR_MAX}; o resto segue, rotulado. Até agosto de 2026 "
+                            "esta camada eliminava QUALQUER região com pelo menos um "
+                            "concorrente, e a regra caiu por duas medições: ela derrubava 31% "
+                            "das regiões que tinham demanda real e, nas oito maiores capitais "
+                            "sem uma exceção, as derrubadas tinham perfil socioeconômico "
+                            "MELHOR que as mantidas — cortava justamente as boas praças. Além "
+                            "disso a concorrência já era descontada na camada anterior, então "
+                            "eliminá-la de novo aqui a penalizava duas vezes."
                         ),
                         "ressalva": (
                             "É uma estimativa derivada do volume de oferta, não a contagem de "
@@ -3504,25 +3713,58 @@ def montar_metodologia() -> dict[str, Any]:
                 "n": 5,
                 "titulo": "Para onde crescer",
                 "pergunta": "Em que ordem abrir?",
-                "corte": f"as {FILA_MAX} maiores por residual, entre as aprovadas",
+                "corte": f"as {FILA_MAX} maiores por índice de praça, entre as aprovadas",
                 "metricas": [
                     {
-                        "nome": "Fila de aberturas",
-                        "coluna": "oferta_efetiva_disponivel",
-                        "fonte": "Resultado das três camadas anteriores",
+                        "nome": "Índice de praça",
+                        "coluna": COL_INDICE_PRACA,
+                        "fonte": "Resultado das camadas anteriores",
                         "resumo": (
-                            f"A ordem sugerida para abrir, com até {FILA_MAX} posições. Toda "
-                            "posição já passou pelos três filtros — não há candidato inviável "
-                            "na fila."
+                            f"A ordem sugerida para abrir, com até {FILA_MAX} posições. Uma nota "
+                            "de 0 a 100 que premia a região por ser boa nos DOIS eixos ao mesmo "
+                            "tempo: perfil socioeconômico da praça e demanda ainda não atendida."
                         ),
                         "regra": (
-                            "Entre as regiões que chegaram sem concorrência, ordena-se pelo "
-                            "residual: quem tem mais alunos desatendidos vem primeiro. A fila "
-                            "sai EXCLUSIVAMENTE dessas áreas livres — não há recurso a região "
-                            "disputada. Por isso ela encurta sozinha em cidade pequena, em vez "
-                            "de completar com candidato ruim, e fica VAZIA quando o recorte não "
-                            "tem nenhuma área livre: entrar disputando espaço é decisão à "
-                            "parte, fora do funil."
+                            "Média ponderada de duas notas absolutas: "
+                            f"{_fmt(praca_indice.PESO_SOCIO * 100)}% da nota socioeconômica (a mesma "
+                            f"da camada 1) e {_fmt(praca_indice.PESO_DEMANDA * 100)}% da nota de "
+                            "demanda, que converte o residual numa escala logarítmica onde "
+                            f"{_fmt(int(praca_indice.DEMANDA_MIN_ALUNOS))} alunos valem 0 e "
+                            f"{_fmt(int(praca_indice.DEMANDA_MAX_ALUNOS))} valem 100. O mínimo "
+                            "em cada eixo já foi exigido pelas camadas anteriores, então tudo "
+                            "que chega aqui é bom nos dois; o índice decide a ORDEM. Até agosto "
+                            "de 2026 a fila era ordenada só pelo residual — e residual é "
+                            "população quase pura, então a recomendação caía sistematicamente "
+                            "nas periferias densas: medido nas oito maiores capitais, a "
+                            "correlação entre residual e renda era NEGATIVA em todas."
+                        ),
+                        "ressalva": (
+                            "Os dois eixos não têm a mesma dispersão: dentro do funil a nota de "
+                            "demanda varia cerca de 1,7 vez mais que a socioeconômica, então o "
+                            f"peso nominal de {_fmt(praca_indice.PESO_SOCIO * 100)}% produz uma "
+                            "influência real próxima do equilíbrio entre os dois. E este índice "
+                            "NÃO é previsão de faturamento: quatro variáveis territoriais foram "
+                            "testadas contra o desempenho real de 267 unidades de três redes e "
+                            "nenhuma se distinguiu do acaso. É política de expansão declarada — "
+                            "a ordem em que a empresa escolheu priorizar —, não uma projeção."
+                        ),
+                    },
+                    {
+                        "nome": "Quadrante da praça",
+                        "coluna": COL_QUADRANTE,
+                        "fonte": "Resultado das camadas anteriores",
+                        "resumo": (
+                            "O rótulo ao lado de cada posição diz POR QUE ela chegou ali: se é "
+                            "boa nos dois eixos ou forte em apenas um."
+                        ),
+                        "regra": (
+                            "Corte em "
+                            f"{_fmt(praca_indice.QUADRANTE_CORTE)} nas duas notas absolutas. "
+                            + " ".join(
+                                f"{praca_indice.QUADRANTE_LABELS[k]}: "
+                                f"{praca_indice.QUADRANTE_EXPLICACAO[k]}"
+                                for k in ("prioridade", "praca_forte", "volume", "marginal")
+                            )
                         ),
                     },
                 ],
@@ -3535,6 +3777,24 @@ def montar_metodologia() -> dict[str, Any]:
             {"nome": "Residual mínimo", "valor": f"{res} alunos"},
             {"nome": "Capacidade média por academia", "valor": f"{cap} alunos"},
             {"nome": "Raio de concorrência", "valor": "2 km"},
+            {
+                "nome": "Concorrentes tolerados na camada 3",
+                "valor": f"até {CONC_ADENSAR_MAX} em 2 km",
+            },
+            {
+                "nome": "Peso do índice de praça (socioeconômico / demanda)",
+                "valor": (
+                    f"{_fmt(praca_indice.PESO_SOCIO * 100)}% / "
+                    f"{_fmt(praca_indice.PESO_DEMANDA * 100)}%"
+                ),
+            },
+            {
+                "nome": "Âncoras da nota de demanda",
+                "valor": (
+                    f"{_fmt(int(praca_indice.DEMANDA_MIN_ALUNOS))} a "
+                    f"{_fmt(int(praca_indice.DEMANDA_MAX_ALUNOS))} alunos"
+                ),
+            },
             {"nome": "Tamanho máximo da fila", "valor": str(FILA_MAX)},
         ],
     }
@@ -3788,7 +4048,7 @@ def _criterios_do_ponto(
     DUAS DESSAS RÉGUAS DIVERGEM DO FUNIL desde 2026-08-12, por decisão do Juan:
     `CRIT_PONTO_SCORE_MIN` (50 desde a DEC-040, contra 30 do passo 1 -- a relacao se INVERTEU:
     a ficha, que era mais frouxa que o funil, ficou mais dura) e `CRIT_PONTO_CONC_MAX` (3, contra
-    o white space do passo 5). As outras três seguem canônicas do `config.py`
+    os 2 que a camada 3 tolera desde a DEC-041). As outras três seguem canônicas do `config.py`
     (`POP_MIN_ACIONAVEL`, `OFERTA_DESTAQUE_MIN`, `RENDA_MIN`). Consequência declarada: um
     imóvel pode passar aqui e o hexágono dele não entrar na fila do mapa.
 
@@ -3832,9 +4092,10 @@ def _criterios_do_ponto(
             crit("residual", "Residual disponível", mercado.get("residual"), OFERTA_DESTAQUE_MIN, "alunos")
         )
     if concorrencia.get("disponivel"):
-        # O teto e' `CRIT_PONTO_CONC_MAX`, NAO o white space do passo 5. A fila do funil
-        # continua exigindo zero concorrente mapeado; aqui a pergunta e' outra — um imovel
-        # com tres concorrentes no raio de 1 km nao esta descartado, esta disputado.
+        # O teto e' `CRIT_PONTO_CONC_MAX` (3), NAO o `CONC_ADENSAR_MAX` (2) da camada 3
+        # do funil. Desde a DEC-041 as duas reguas so' diferem por um: o funil tolera ate'
+        # 2 concorrentes na fila, a ficha ate' 3 — um imovel com tres concorrentes no raio
+        # de 1 km nao esta descartado, esta disputado.
         itens.append(
             crit(
                 "concorrentes", "Concorrentes no raio",

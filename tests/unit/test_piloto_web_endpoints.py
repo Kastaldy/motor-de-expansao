@@ -933,18 +933,24 @@ def _funil_muni(concorrentes: list[int]) -> tuple[pd.DataFrame, dict[str, str]]:
 @pytest.mark.parametrize(
     ("concorrentes", "tags_esperadas"),
     [
-        # A base do passo 3 e SEMPRE o white space (sem fallback), entao todo item que
-        # chega ao painel tem n = 0 concorrentes -> "Livre". O que estes casos provam e
-        # que o ramo competitivo ROda: os hexes com concorrente somem da lista em vez de
-        # aparecer com etiqueta de intensidade de residual.
-        pytest.param([0, 0, 3], ["Livre", "Livre"], id="dois-livres-um-disputado"),
-        pytest.param([0, 1, 2, 3], ["Livre"], id="um-livre-tres-disputados"),
+        # A base do passo 3 mudou na DEC-041: em vez de exigir ZERO concorrente, ela
+        # aceita ate' `CONC_ADENSAR_MAX` (2). Entao o passo passou a exibir os TRES
+        # rotulos do vocabulario competitivo, e nao so' "Livre" -- que e' o unico jeito
+        # de "Adensar" chegar a tela. Quem passa de 2 (saturado) continua fora.
+        # A ORDEM e' a do passo: menos disputado primeiro (`ordem_extra`).
+        pytest.param([0, 0, 3], ["Livre", "Livre"], id="dois-livres-um-saturado"),
+        pytest.param([0, 1, 2, 3], ["Livre", "Adensar", "Adensar"], id="livre-adensar-saturado"),
     ],
 )
 def test_passo3_etiqueta_pelo_vocabulario_competitivo(
     concorrentes: list[int], tags_esperadas: list[str]
 ) -> None:
     """C2/N5: o passo 3 etiqueta por CONCORRENCIA — o ramo "conc. 2 km" tem que rodar.
+
+    Desde a DEC-041 este teste tem um segundo papel: provar que "Adensar" EXISTE na
+    tela. Enquanto o passo cortava todo hexagono com concorrente, o unico rotulo que
+    chegava ao painel era "Livre" — os outros dois ramos do vocabulario estavam
+    escritos e inalcancaveis.
 
     `_rank_items` recebia UM parametro para duas coisas diferentes: o texto exibido sob
     o valor e a chave que escolhe o ramo do `_etiqueta`. Como o passo 3 exibe um valor
@@ -1031,95 +1037,144 @@ def test_passo3_ranqueia_os_hexes_que_o_mapa_destaca() -> None:
     assert passo3["funil_big"] == len(destacados)
 
 
-def test_passo5_so_recomenda_hexagono_livre() -> None:
-    """A fila do passo 5 sai do MESMO white space do passo 3, nunca do residual.
+def test_passo5_recomenda_disputado_mas_nunca_saturado() -> None:
+    """A fila do passo 5 sai da MESMA base do passo 3 — que na DEC-041 deixou de ser
+    "zero concorrente" e passou a ser "ate' `CONC_ADENSAR_MAX`".
 
-    Complementa o N13 no passo da recomendacao: com hexes livres E disputados na mesma
-    fixture, a fila nao pode "completar" as 10 vagas com hexagono que tem concorrente.
+    Duas afirmacoes num teste so', porque sao os dois lados da mesma decisao:
+
+    (a) ter concorrente NAO elimina mais. Era a Dor 1 do dono: o corte antigo derrubava
+        31% das regioes com demanda real e, nas 8 maiores capitais sem uma excecao, as
+        derrubadas tinham score socioeconomico mediano MAIOR que as mantidas.
+    (b) saturacao extrema continua eliminando, e a fila segue SEM FALLBACK: ela nunca
+        "completa" as 10 vagas com hexagono que o proprio passo 3 excluiu. Este era o
+        invariante do PR #184 e ele sobrevive inteiro — so' mudou onde fica a linha.
     """
     df, bairros = _funil_muni([0, 1, 2, 3])
     passos = pilot.montar_funil(df, "Sao Paulo", bairros)
     passo3, passo5 = passos[2], passos[4]
 
-    livres = set(passo3["hexes"])
-    assert len(livres) == 1, "a fixture precisa ter livre E disputado para o teste valer"
-    assert set(passo5["hexes"]) <= livres, (
-        f"passo 5 recomendou hexagono com concorrente: {sorted(set(passo5['hexes']) - livres)}"
+    viaveis = set(passo3["hexes"])
+    assert len(viaveis) == 3, (
+        "a fixture precisa ter livre, adensavel E saturado para o teste valer; "
+        f"viaveis={len(viaveis)}"
     )
-    assert {i["hex_id"] for i in passo5["itens"]} <= livres
-    assert passo5["funil_big"] == len(passo5["hexes"]) == 1
+    saturado = set(df[df["n_concorrentes_est"] > pilot.CONC_ADENSAR_MAX]["hex_id"])
+    assert saturado, "fixture sem hexagono saturado: o lado (b) do teste ficaria vago"
+
+    # (a) o disputado entra
+    disputados = set(df[df["n_concorrentes_est"].between(1, pilot.CONC_ADENSAR_MAX)]["hex_id"])
+    assert disputados & viaveis, "regiao com concorrente voltou a ser eliminada no passo 3"
+
+    # (b) o saturado nao entra, e a fila nao inventa fallback
+    assert not (set(passo5["hexes"]) & saturado), (
+        f"passo 5 recomendou hexagono saturado: {sorted(set(passo5['hexes']) & saturado)}"
+    )
+    assert set(passo5["hexes"]) <= viaveis
+    assert {i["hex_id"] for i in passo5["itens"]} <= viaveis
+    assert passo5["funil_big"] == len(passo5["hexes"]) == 3
 
 
-def test_sem_hexagono_livre_os_passos_3_e_5_ficam_vazios() -> None:
-    """Sem white space, os passos 3 e 5 nao tem NENHUM item — e isso e o correto.
+def test_sem_regiao_que_comporte_entrada_os_passos_3_e_5_ficam_vazios() -> None:
+    """Com TUDO saturado, os passos 3 e 5 nao tem NENHUM item — e isso e o correto.
 
-    Regra do dono (2026-08-03): "os top 10 deverao se referir aos hexagonos livres".
-    Havia fallback — sem white space o ranking caia para o residual inteiro —, e ele
-    produzia a incoerencia que o dono rejeitou: numerao do passo em 0, mapa sem nenhum
-    hexagono aceso e, ao lado, um painel listando 01-10 regioes. Agora a lista vazia e a
-    RESPOSTA ("nao ha area sem concorrencia aqui"), coerente com o numerao e com o mapa.
+    O invariante e' o do PR #184 e sobrevive a DEC-041: a fila NUNCA cai num fallback
+    para o residual inteiro. O fallback produzia a incoerencia que o dono rejeitou —
+    numerao do passo em 0, mapa sem nenhum hexagono aceso e, ao lado, um painel listando
+    01-10 regioes. O que mudou foi so' ONDE fica a linha: era "tem concorrente", virou
+    "passa de `CONC_ADENSAR_MAX` concorrentes".
 
-    Este teste substitui o `test_passo3_sem_white_space_cai_no_residual_e_o_destaque_
-    fica_vazio`, que travava exatamente o comportamento rejeitado.
+    A fixture precisou mudar junto. Com [1,2,3,4] este teste era sobre "todo mundo tem
+    concorrente"; hoje 1 e 2 concorrentes SAO viaveis, e a fixture antiga passaria a
+    exercitar o caso cheio. Aqui todos os hexes estao acima do teto.
+    """
+    df, bairros = _funil_muni([3, 4, 5, 6])
+    passos = pilot.montar_funil(df, "Sao Paulo", bairros)
+    passo3, passo5 = passos[2], passos[4]
+
+    # Fixture com residual de sobra: o funil so morre no filtro de SATURACAO.
+    assert passos[1]["funil_big"] == 4, "a fixture perdeu o residual; o teste seria vago"
+
+    # O passo 4 (crescimento) le a mesma base, entao apaga junto — mas por outro motivo
+    # (nao ha o que descrever), e nao pelo fallback que este teste trava.
+    assert passos[3]["hexes"] == [], "passo 4 destacou hexagono sem base viavel"
+
+    for passo in (passo3, passo5):
+        assert passo["hexes"] == [], f"passo {passo['n']}: nada viavel, nada a destacar"
+        assert passo["funil_big"] == 0
+        assert passo["itens"] == [], (
+            f"passo {passo['n']} listou {len(passo['itens'])} itens sem nenhuma regiao "
+            "viavel — o fallback para o residual voltou (numerao 0, mapa apagado e painel "
+            "cheio: a incoerencia que o dono rejeitou)"
+        )
+
+    # E o estado vazio nao pode parecer bug: a narrativa explica em texto.
+    assert "Nenhuma" in passo3["narrativa"], (
+        f"passo 3 nao explica a lista vazia: {passo3['narrativa']!r}"
+    )
+    assert "não gera fila aqui" in passo5["narrativa"], (
+        f"passo 5 nao explica a fila vazia: {passo5['narrativa']!r}"
+    )
+
+
+def test_regiao_com_concorrente_volta_a_ser_recomendavel() -> None:
+    """O coracao da DEC-041, no nivel do funil: a fixture que ANTES zerava os passos 3-5
+    agora produz fila.
+
+    Com [1, 2, 3, 4] concorrentes, a regra antiga ("so' hexagono livre") deixava os tres
+    ultimos passos VAZIOS — nenhum hex tinha zero concorrente. Pela regra nova, os dois
+    primeiros (1 e 2 concorrentes) comportam entrada e a fila existe. E' exatamente a
+    dor que o dono descreveu: "a camada 5 esta' jogando recomendacao apenas em
+    periferias", porque as pracas boas o bastante para atrair concorrente eram cortadas.
     """
     df, bairros = _funil_muni([1, 2, 3, 4])
     passos = pilot.montar_funil(df, "Sao Paulo", bairros)
     passo3, passo5 = passos[2], passos[4]
 
-    # Fixture com residual de sobra: o funil so morre no filtro de CONCORRENCIA.
-    assert passos[1]["funil_big"] == 4, "a fixture perdeu o residual; o teste seria vago"
-
-    # O passo 4 (crescimento) tambem destaca o white space, entao apaga junto — mas por
-    # outro motivo (nao ha o que destacar), e nao pelo fallback que este teste trava.
-    assert passos[3]["hexes"] == [], "passo 4 destacou hexagono sem white space"
-
-    for passo in (passo3, passo5):
-        assert passo["hexes"] == [], f"passo {passo['n']}: sem white space nada a destacar"
-        assert passo["funil_big"] == 0
-        assert passo["itens"] == [], (
-            f"passo {passo['n']} listou {len(passo['itens'])} itens sem nenhum hexagono "
-            "livre — o fallback para o residual voltou (numerao 0, mapa apagado e painel "
-            "cheio: a incoerencia que o dono rejeitou)"
-        )
-
-    # E o estado vazio nao pode parecer bug: a narrativa explica em texto.
-    assert "Não há área sem concorrência" in passo3["narrativa"], (
-        f"passo 3 nao explica a lista vazia: {passo3['narrativa']!r}"
+    assert passo3["funil_big"] == 2, (
+        "a regra antiga voltou: hexagono com 1-2 concorrentes esta' sendo eliminado no "
+        f"passo 3. funil_big={passo3['funil_big']}"
     )
-    assert "0 não têm" not in passo3["narrativa"], "frase agramatical do caso n=0"
-    assert "não há abertura a recomendar" in passo5["narrativa"], (
-        f"passo 5 nao explica a fila vazia: {passo5['narrativa']!r}"
+    assert passo5["funil_big"] == 2 and passo5["itens"], (
+        "passo 5 ficou sem fila num recorte que tem regiao viavel"
+    )
+    assert passo5["metrica"] == "índice de praça", (
+        "a camada 5 voltou a ordenar por residual puro — a ordenacao conjuntiva caiu"
     )
 
 
 def _uf_saturada() -> pd.DataFrame:
-    """UF sintetica sem NENHUM hexagono livre (todo hex com >= 1 concorrente)."""
+    """UF sintetica sem NENHUMA regiao viavel (todo hex acima de `CONC_ADENSAR_MAX`).
+
+    Era "1 concorrente por hex" ate' a DEC-041; com o teto em 2, isso deixou de saturar
+    coisa nenhuma — a fixture continuaria verde medindo outra coisa.
+    """
     base = _synthetic_enriched().copy()
-    base["oferta_consumida_mercado_estimada"] = 2500.0  # 1 concorrente por hex
+    base["oferta_consumida_mercado_estimada"] = 2500.0 * (pilot.CONC_ADENSAR_MAX + 2)
     df = pilot._derivar(base)
-    assert (df["n_concorrentes_est"] >= 1).all(), "fixture nao saturou"
+    assert (df["n_concorrentes_est"] > pilot.CONC_ADENSAR_MAX).all(), "fixture nao saturou"
     return df
 
 
-def test_uf_sem_hexagono_livre_tambem_fica_com_os_passos_3_4_e_5_vazios() -> None:
+def test_uf_sem_regiao_viavel_tambem_fica_com_os_passos_3_4_e_5_vazios() -> None:
     """Mesma regra no funil de UF — deixar um nivel com fallback so muda a incoerencia de lugar.
 
-    A visao de estado ranqueia MUNICIPIOS; sem white space na UF inteira ela recomendava
+    A visao de estado ranqueia MUNICIPIOS; sem base viavel na UF inteira ela recomendava
     municipios que o proprio passo acabara de excluir (numerao 0, mapa apagado).
     """
     passos = pilot.montar_funil_uf(_uf_saturada(), "SP")
     passo3, passo5 = passos[2], passos[4]
 
     assert passos[1]["funil_big"] == 8, "a fixture perdeu o residual; o teste seria vago"
-    # Os tres saem do mesmo `white`: o passo 4 le a base do funil, nao a UF inteira.
+    # Os tres saem da mesma base: o passo 4 le a base do funil, nao a UF inteira.
     for passo in (passo3, passos[3], passo5):
-        assert passo["hexes"] == [], f"passo {passo['n']} da UF destacou hex sem white space"
+        assert passo["hexes"] == [], f"passo {passo['n']} da UF destacou hex sem base viavel"
         assert passo["funil_big"] == 0
         assert passo["itens"] == [], (
-            f"passo {passo['n']} da UF listou municipios sem nenhum hexagono livre — o "
+            f"passo {passo['n']} da UF listou municipios sem nenhuma regiao viavel — o "
             "fallback para o residual voltou no nivel de UF"
         )
-    assert "Não há área sem concorrência" in passo3["narrativa"]
+    assert "Nenhuma" in passo3["narrativa"]
     assert "a fila fica vazia" in passo5["narrativa"], (
         f"passo 5 da UF nao explica a fila vazia: {passo5['narrativa']!r}"
     )
