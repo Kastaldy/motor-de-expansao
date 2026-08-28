@@ -63,7 +63,7 @@ Colunas adicionais disponiveis:
 - `score_setor_2022_calibrado`
 - `renda_pct_nacional_calibrado`, `pop_pct_municipal` — colunas de AUDITORIA apenas
 
-> `score_setor_2022_calibrado` passou a REGUA ABSOLUTA na DEC-039 (2026-08-26): `clip(0,60*nota_renda + 0,40*nota_pop + ajuste_executivo, 0, 100)`, com `nota_renda` linear (R$ 300 -> 0, R$ 4.000 -> 100) e `nota_pop` em log (1.000 -> 0, 100.000 -> 100); pesos 0,60/0,40 preservados. Os dois percentis continuam materializados no parquet, mas NAO alimentam mais o score — servem de auditoria e permitem reconstituir a formula antiga (`recalcular_score_absoluto --reverter`). **Nao reintroduzir nenhum dos dois como insumo de score.**
+> `score_setor_2022_calibrado` passou a REGUA ABSOLUTA na DEC-040 (2026-08-26): `clip(0,60*nota_renda + 0,40*nota_pop + ajuste_executivo, 0, 100)`, com `nota_renda` linear (R$ 300 -> 0, R$ 4.000 -> 100) e `nota_pop` em log (1.000 -> 0, 100.000 -> 100); pesos 0,60/0,40 preservados. Os dois percentis continuam materializados no parquet, mas NAO alimentam mais o score — servem de auditoria e permitem reconstituir a formula antiga (`recalcular_score_absoluto --reverter`). **Nao reintroduzir nenhum dos dois como insumo de score.**
 
 ### 2.4 Bases de concorrentes disponiveis
 

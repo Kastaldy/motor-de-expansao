@@ -21,7 +21,7 @@
 | Camada | Pergunta que responde | Papel | Artefato canônico |
 |---|---|---|---|
 | **M1 territorial** | Onde expandir (município/UF)? | Executivo — triagem macro | `score_priorizacao` (renda 0,40 + pop 0,60) |
-| **Censitário** | Qual praça (hexágono) tem melhor renda e população? | Operacional — régua **absoluta**, comparável entre cidades (DEC-039) | `score_setor_2022_calibrado` |
+| **Censitário** | Qual praça (hexágono) tem melhor renda e população? | Operacional — régua **absoluta**, comparável entre cidades (DEC-040) | `score_setor_2022_calibrado` |
 | **Mercado / Residual** | Onde há oferta consumida vs. demanda? | Oportunidade de mercado | `score_oportunidade_residual` |
 | **Demanda Revelada + Huff** | Onde há demanda paga observada? | Leitura de demanda (corporativa) | `membros`, `share_captura_huff` |
 | **Viabilidade de Imóvel** | Este imóvel fecha a conta? | Property-first — decisão econômica | `viabilidade_ponto.py` |

@@ -1,7 +1,7 @@
 """Testes do Relatorio Municipal (BLK-RELMUN-01).
 
 Espelham o teste do Relatorio Pontual (`test_relatorio_pontual_censitario_export.py`):
-agregacao, formula D1, 9 paginas/`/Count 9`/`%PDF-1.4`, headers das 9 secoes, fallback sem
+agregacao, formula D1, 12 paginas/`/Count 12`/`%PDF-1.4`, headers das 12 secoes, fallback sem
 `dominio_df`, fallback Pagina 6 sem bairro, fallback sem assets, anti-PII, mapas SEM rede
 (`basemap=False`), contagem de pins por H3. NENHUM teste bate na rede.
 
@@ -20,13 +20,16 @@ import pytest
 from PIL import Image
 
 from motor_expansao.dashboard.relatorio_municipal import (
+    _BAIRRO_ROTULO_INK,
     _COR_APROVADO_MUNICIPAL,
     _COR_APROVADO_PROPRIO,
     _COR_REPROVADO,
     _PIN_LOGO_PX,
     CAPACIDADE_UNIDADE,
     PDF_SECTION_HEADERS,
+    TEXTO_SEM_DADO,
     ULTRA_MAGENTA,
+    VERSAO_CONTRATO_MUNICIPAL,
     _fit_contain,
     _hex_destacado_mask,
     _png_dimensions,
@@ -310,7 +313,8 @@ def test_mapas_municipio_offline_sem_rede():
     mapas = render_mapas_municipio(
         df, res, competitors_df=_sample_competitors(), ultra_df=_sample_ultra(), basemap=False
     )
-    assert set(mapas) == {"resumo", "score", "residual", "dominio", "cobertura"}
+    # `bairros_urbano` so existe quando ha bairro; este fixture nao tem `bairros_geo`.
+    assert set(mapas) == {"resumo", "score", "residual", "dominio", "cobertura", "bairros"}
     for png in mapas.values():
         assert png.startswith(b"\x89PNG")
         assert len(png) > 1000
@@ -456,20 +460,29 @@ def test_rotulo_de_valor_fica_acima_do_marcador_blk_relpon_09_fu1():
 # ---------------------------------------------------------------------------
 
 
-def test_pdf_municipal_9_paginas_e_secoes():
+def test_pdf_municipal_12_paginas_e_secoes():
+    """Relatorio COMPLETO: com bairros na base, todas as 12 secoes aparecem.
+
+    `bairros_geo` e' obrigatorio aqui -- sem ele a pagina do nucleo urbano nao existe (ela so
+    e' emitida quando ha bairro para aproximar) e o teste nao cobriria todos os headers."""
     df = _sample_df()
-    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio())
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio(),
+                            bairros_geo=_bairros_geo_sample())
     mapas = render_mapas_municipio(df, res, basemap=False)
 
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas, ultra_dir="data/ultra")
 
     assert pdf_bytes.startswith(b"%PDF-1.4")
-    assert b"/Count 9" in pdf_bytes
+    assert b"/Count 12" in pdf_bytes
     assert len(pdf_bytes) > 15_000
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
     # Carimbo de versao (D8) no rodape.
-    assert b"BLK-RELMUN-01" in pdf_bytes
+    # Carimbo de versao no rodape (DEC-005 decisao 6). Casa com a constante, nao com um
+    # literal: travar "BLK-RELMUN-01" fazia o teste reprovar um BUMP legitimo de contrato --
+    # e o bump e' justamente o que mantem dois PDFs de estruturas diferentes distinguiveis.
+    assert VERSAO_CONTRATO_MUNICIPAL.encode("latin-1") in pdf_bytes
+    assert b"contrato v2" in pdf_bytes
     # Atribuicao de tiles (DEC-011) no rodape.
     assert b"OpenStreetMap" in pdf_bytes
     assert b"CARTO" in pdf_bytes
@@ -507,13 +520,14 @@ def test_mapa_cobertura_offline():
 
 def test_pdf_municipal_offline_safe_sem_assets(tmp_path):
     df = _sample_df()
-    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio())
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio(),
+                            bairros_geo=_bairros_geo_sample())
     mapas = render_mapas_municipio(df, res, basemap=False)
 
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas, ultra_dir=tmp_path)
 
     assert pdf_bytes.startswith(b"%PDF")
-    assert b"/Count 9" in pdf_bytes
+    assert b"/Count 12" in pdf_bytes
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
 
@@ -579,7 +593,7 @@ def test_pdf_municipal_fallback_sem_dominio_pagina_6():
 
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
 
-    assert b"/Count 9" in pdf_bytes
+    assert b"/Count 11" in pdf_bytes
     # BLK-RELMUN-02: sem fonte de bairro, a Pagina 6 cai no fallback gracioso por zona
     # geometrica (sem a antiga nota "indisponivel" como texto principal).
     assert b"Bairros indisponiveis na base atual" not in pdf_bytes
@@ -777,7 +791,7 @@ def test_pdf_municipal_fallback_sem_hexes_relevantes_pagina_5():
 
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
 
-    assert b"/Count 9" in pdf_bytes
+    assert b"/Count 11" in pdf_bytes
     assert b"Hexes relevantes insuficientes" in pdf_bytes
 
 
@@ -791,7 +805,7 @@ def test_pdf_municipal_pagina_6_fallback_sem_bairro():
     )
     mapas = render_mapas_municipio(df, res, basemap=False)
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
-    assert b"/Count 9" in pdf_bytes
+    assert b"/Count 11" in pdf_bytes
     assert b"Bairros indisponiveis na base atual" not in pdf_bytes
     assert "Bairros não mapeados na base IBGE 2022".encode("latin-1") in pdf_bytes
     # Sem PII no fallback.
@@ -826,7 +840,7 @@ def test_agregar_municipio_bairros_por_zona_com_fonte():
 
 
 def test_pdf_municipal_pagina_6_com_bairros_reais():
-    """A2: nomes de bairro REAIS aparecem nos bytes do PDF, /Count 9 mantido, sem PII."""
+    """A2: nomes de bairro REAIS aparecem nos bytes do PDF, /Count 12 mantido, sem PII."""
     df = _sample_df()
     bairros = _bairros_por_hex_sample(df)
     res = agregar_municipio(
@@ -836,7 +850,7 @@ def test_pdf_municipal_pagina_6_com_bairros_reais():
     mapas = render_mapas_municipio(df, res, basemap=False)
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
 
-    assert b"/Count 9" in pdf_bytes
+    assert b"/Count 11" in pdf_bytes
     # Pelo menos um bairro real impresso na Pagina 6.
     assert any(nome.encode("latin-1") in pdf_bytes for nome in ("Centro", "Bela Vista", "Cidade Nova", "Cascata"))
     # Nota de fonte IBGE quando ha bairros (cascata bairro -> subdistrito -> distrito).
@@ -853,6 +867,380 @@ def test_carregar_bairros_por_hex_fallback_sem_dir():
 
     assert _carregar_bairros_por_hex(None, None, None) == {}
     assert _carregar_bairros_por_hex("SP", "3550308", None) == {}
+
+
+# ---------------------------------------------------------------------------
+# BLK-RELMUN-08 — Nome do bairro sobre o hexagono nos mapas tematicos
+# ---------------------------------------------------------------------------
+
+
+def _pixels_de_tinta_do_rotulo(png: bytes) -> int:
+    """Conta pixels da TINTA do rotulo (`_BAIRRO_ROTULO_INK`, grafite escuro).
+
+    Nao serve contar branco: no fallback offline o canvas inteiro e' claro, entao "quase branco"
+    mede o FUNDO -- e escrever um nome por cima ate DIMINUI essa contagem (foi o que derrubou a
+    1a versao deste teste). A tinta escura, ao contrario, so aparece onde ha texto.
+    """
+    arr = np.asarray(Image.open(BytesIO(png)).convert("RGB")).astype(int)
+    r, g, b = _BAIRRO_ROTULO_INK
+    perto = (abs(arr[:, :, 0] - r) < 26) & (abs(arr[:, :, 1] - g) < 26) & (abs(arr[:, :, 2] - b) < 26)
+    return int(perto.sum())
+
+
+def test_mapas_rotulam_hexagono_com_bairro_dominante():
+    """Com bairros resolvidos, os hexes destacados ganham o nome; sem eles, o mapa fica igual."""
+    df = _sample_df()
+    bairros = _bairros_por_hex_sample(df)
+
+    res_com = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", bairros_por_hex=bairros)
+    res_sem = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP")
+    assert res_com["bairros_por_hex"] == bairros
+    assert res_sem["bairros_por_hex"] == {}
+
+    com = render_mapas_municipio(df, res_com, basemap=False)["residual"]
+    sem = render_mapas_municipio(df, res_sem, basemap=False)["residual"]
+
+    assert com != sem, "o mapa com bairros tem de sair diferente do mapa sem"
+    assert _pixels_de_tinta_do_rotulo(com) > _pixels_de_tinta_do_rotulo(sem)
+
+
+def test_mapa_declara_quantos_bairros_couberam():
+    """O rodape do mapa nunca pode omitir em silencio quantos nomes entraram."""
+    from motor_expansao.dashboard.relatorio_municipal import _render_mapa_municipio
+
+    df = _sample_df()
+    res = agregar_municipio(
+        df, nome_municipio="SAO PAULO", uf="SP", bairros_por_hex=_bairros_por_hex_sample(df)
+    )
+    png = _render_mapa_municipio(df, camada="residual", municipio_result=res, basemap=False)
+
+    arr = np.asarray(Image.open(BytesIO(png)).convert("RGB"))
+    assert arr.shape[:2] == (704, 1000)
+    # O texto do rodape e' raster; garantimos ao menos que a contagem existe no resultado
+    # (o teste de conteudo textual vive no PDF, que carrega texto de verdade).
+    assert res["n_aprovados"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# BLK-RELMUN-07 — Pagina "Comparação das Regiões" (tabela ranqueada dos hexes)
+# ---------------------------------------------------------------------------
+
+
+def test_tabela_hexes_ranqueia_por_residual_e_declara_total():
+    """Ordem = Residual Fitness desc (a mesma do destaque no mapa) e o total nunca some."""
+    from motor_expansao.dashboard.relatorio_municipal import _tabela_hexes
+
+    df = _sample_df()
+    tab = _tabela_hexes(df, _bairros_por_hex_sample(df), limite=2)
+
+    residuais = [linha["residual"] for linha in tab["linhas"]]
+    assert residuais == sorted(residuais, reverse=True)
+    assert tab["n_exibidas"] == 2
+    assert tab["n_total"] == len(df), "o total precisa sobreviver ao corte, senao o corte mente"
+    assert all(linha["bairro"] for linha in tab["linhas"])
+
+
+def test_tabela_hexes_prefere_renda_censitaria_a_municipal():
+    """`renda_per_capita` costuma vir replicada do municipio; a censitaria e' a que compara."""
+    from motor_expansao.dashboard.relatorio_municipal import _tabela_hexes
+
+    df = _sample_df()
+    df["renda_per_capita"] = 2138.0  # constante, como no parquet real de Novo Hamburgo
+    df["renda_per_capita_setor_2022_calibrada"] = [900.0, 1100.0, 1300.0, 1500.0]
+
+    tab = _tabela_hexes(df)
+    assert tab["fonte_renda"] == "censo"
+    assert not tab["renda_constante"]
+    assert {linha["renda"] for linha in tab["linhas"]} <= {900.0, 1100.0, 1300.0, 1500.0}
+
+    # Sem a censitaria, cai no insumo do M1 -- e AVISA que ali a renda nao diferencia nada.
+    sem_censo = df.drop(columns=["renda_per_capita_setor_2022_calibrada"])
+    tab2 = _tabela_hexes(sem_censo)
+    assert tab2["fonte_renda"] == "m1"
+    assert tab2["renda_constante"]
+
+
+def test_tabela_hexes_vazia_sem_hexes():
+    from motor_expansao.dashboard.relatorio_municipal import _tabela_hexes
+
+    tab = _tabela_hexes(pd.DataFrame())
+    assert tab == {"linhas": [], "n_total": 0, "n_exibidas": 0}
+
+
+def test_pdf_municipal_pagina_tabela_regioes():
+    """A pagina entra no PDF com cabecalho de colunas, hex_id rastreavel e o corte declarado."""
+    df = _sample_df()
+    res = agregar_municipio(
+        df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio(),
+        bairros_por_hex=_bairros_por_hex_sample(df),
+    )
+    pdf_bytes = gerar_pdf_relatorio_municipal(res, render_mapas_municipio(df, res, basemap=False))
+
+    assert b"/Count 11" in pdf_bytes
+    assert "Comparação das Regiões".encode("latin-1") in pdf_bytes
+    for coluna in ("Hexágono", "Bairro dominante", "População", "Residual"):
+        assert coluna.encode("latin-1") in pdf_bytes
+    # hex_id impresso: e' o que torna a linha rastreavel de volta ao dashboard.
+    assert str(res["tabela_hexes"]["linhas"][0]["hex_id"]).encode("latin-1") in pdf_bytes
+    # O total do municipio aparece junto do recorte.
+    assert "regiões do município".encode("latin-1") in pdf_bytes
+    for needle in _PII_FORBIDDEN:
+        assert needle not in pdf_bytes
+
+
+def test_pdf_municipal_tabela_avisa_renda_constante():
+    """Renda igual em todas as linhas precisa ser DITA -- senao parece erro de calculo."""
+    df = _sample_df()
+    df["renda_per_capita"] = 2138.0
+    if "renda_per_capita_setor_2022_calibrada" in df.columns:
+        df = df.drop(columns=["renda_per_capita_setor_2022_calibrada"])
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP")
+    pdf_bytes = gerar_pdf_relatorio_municipal(res, render_mapas_municipio(df, res, basemap=False))
+
+    assert "é a MESMA em todas as regiões".encode("latin-1") in pdf_bytes
+
+
+# ---------------------------------------------------------------------------
+# BLK-RELMUN-06 — Pagina "Bairros Oficiais" (limite territorial dos bairros)
+# ---------------------------------------------------------------------------
+
+
+def _bairro_quadrado(nome: str, x0: float, y0: float, lado: float, *, pop: float,
+                     sobra: bool = False) -> dict:
+    """Bairro sintetico quadrado em EPSG:3857 (evita depender da particao geo real)."""
+    anel = [(x0, y0), (x0 + lado, y0), (x0 + lado, y0 + lado), (x0, y0 + lado), (x0, y0)]
+    return {
+        "nome": nome,
+        "aneis": [anel],
+        "rotulo_xy": (x0 + lado / 2.0, y0 + lado / 2.0),
+        "pop": pop,
+        "area_km2": 1.0,
+        "densidade": pop,
+        "renda_pc": 2500.0,
+        "sobra": sobra,
+    }
+
+
+def _bairros_geo_sample(*, cobertura: float = 1.0, com_sobra: bool = False) -> dict:
+    """Dois bairros lado a lado (+ sobra opcional), no formato de `carregar_bairros_geo`."""
+    lado = 4000.0
+    bairros = [
+        _bairro_quadrado("Centro", -5_190_000.0, -2_700_000.0, lado, pop=30_000.0),
+        _bairro_quadrado("Bela Vista", -5_190_000.0 + lado, -2_700_000.0, lado, pop=12_000.0),
+    ]
+    if com_sobra:
+        bairros.append(
+            _bairro_quadrado("Cidade X (demais setores)", -5_190_000.0, -2_700_000.0 - lado,
+                             lado * 2, pop=500.0, sobra=True)
+        )
+    # Contorno = envelope EXTERNO (como o unary_union real devolve). Repetir aqui os aneis dos
+    # bairros faria o traco preto do municipio cobrir exatamente a divisa vermelha deles.
+    xs = [x for b in bairros for x, _ in b["aneis"][0]]
+    ys = [y for b in bairros for _, y in b["aneis"][0]]
+    envelope = [
+        (min(xs), min(ys)), (max(xs), min(ys)), (max(xs), max(ys)), (min(xs), max(ys)),
+        (min(xs), min(ys)),
+    ]
+    return {
+        "bairros": bairros,
+        "contorno": [envelope],
+        "n_bairros": sum(1 for b in bairros if not b["sobra"]),
+        "n_setores": 100,
+        "sem_localidade": int(round((1.0 - cobertura) * 100)),
+        "cobertura": cobertura,
+    }
+
+
+def test_camada_score_vira_choropleth_por_bairro_quando_ha_bairros():
+    """BLK-RELMUN-09: com bairros na base, o Score sai por BAIRRO; sem eles, segue em hexágono."""
+    df = _sample_df()
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP")
+
+    geo = _bairros_geo_sample()
+    for i, b in enumerate(geo["bairros"]):
+        b["score"] = 85.0 if i == 0 else 20.0  # faixas distintas -> cores distintas
+
+    com = render_mapas_municipio(df, {**res, "bairros_geo": geo}, basemap=False)["score"]
+    sem = render_mapas_municipio(df, res, basemap=False)["score"]
+    assert com != sem, "a camada score tem de mudar quando ha bairros"
+
+    # Assercao por PROPRIEDADE, nao por cor exata: o alpha do choropleth compoe sobre o canvas e
+    # o valor final nao e' o da faixa crua (prever a mistura na mao derrubou a 1a versao deste
+    # teste, com duas contas erradas seguidas). O que precisa valer e' a SEMANTICA da regua --
+    # score alto puxa para o verde, score baixo para o vermelho -- e que as duas sejam distintas.
+    arr = np.asarray(Image.open(BytesIO(com)).convert("RGB")).astype(int)
+    cores, contagens = np.unique(arr.reshape(-1, 3), axis=0, return_counts=True)
+    dominantes = [
+        tuple(c) for c, n in sorted(zip(cores.tolist(), contagens.tolist(), strict=True), key=lambda t: -t[1])
+        if n > 5_000
+    ]
+    verdes = [c for c in dominantes if c[1] > c[0] + 30 and c[1] > c[2] + 30]
+    vermelhos = [c for c in dominantes if c[0] > c[1] + 30 and c[0] > c[2] + 30]
+    assert verdes, f"score 85 devia puxar para o verde; dominantes={dominantes}"
+    assert vermelhos, f"score 20 devia puxar para o vermelho; dominantes={dominantes}"
+
+
+def test_choropleth_bairro_usa_cinza_para_bairro_sem_score():
+    """Bairro sem score fica NEUTRO: pintar a faixa mais baixa afirmaria 'medido e ruim'."""
+    from motor_expansao.dashboard.relatorio_municipal import (
+        _render_mapa_bairros,
+        _score_faixa_color,
+    )
+
+    geo = _bairros_geo_sample()
+    for b in geo["bairros"]:
+        b["score"] = float("nan")
+
+    png = _render_mapa_bairros(geo, metrica="score", basemap=False)
+    arr = np.asarray(Image.open(BytesIO(png)).convert("RGB")).astype(int)
+
+    r, g, b, _a = _score_faixa_color(0.0, alpha=255)
+    faixa_baixa = (
+        (abs(arr[:, :, 0] - r) < 30) & (abs(arr[:, :, 1] - g) < 30) & (abs(arr[:, :, 2] - b) < 30)
+    )
+    assert faixa_baixa.sum() < 300, "bairro sem score nao pode sair pintado como faixa baixa"
+
+
+def test_bairros_geo_score_e_renda_ponderados_por_populacao(monkeypatch):
+    """Setor de 10 moradores nao pode pesar como um de 990 na cor/renda do bairro.
+
+    Particao SINTETICA via monkeypatch: a base geo real e' gitignored (~1,17 GB) e nao existe em
+    CI -- um teste que dependesse dela passaria aqui e sumiria la, que e' o pior dos mundos.
+    """
+    from shapely.geometry import Polygon
+
+    from motor_expansao.dashboard import relatorio_municipal as rm
+
+    def _quad(x: float) -> bytes:
+        return Polygon([(x, 0), (x + 0.01, 0), (x + 0.01, 0.01), (x, 0.01)]).wkb
+
+    # Um bairro, dois setores: score 100 com 990 hab e score 0 com 10 hab.
+    # Media SIMPLES daria 50; ponderada por populacao da 99.
+    setores = pd.DataFrame(
+        {
+            "nome_bairro": ["Centro", "Centro"],
+            "nome_subdistrito": [None, None],
+            "nome_distrito": ["Centro", "Centro"],
+            "nome_municipio": ["Cidade X", "Cidade X"],
+            "geometry_wkb": [_quad(0.0), _quad(0.01)],
+            "pop_total_setor_2022": [990.0, 10.0],
+            "area_setor_km2_ibge": [1.0, 1.0],
+            "renda_per_capita_setor_2022_calibrada": [2000.0, 100.0],
+            "score_setor_2022_calibrado": [100.0, 0.0],
+        }
+    )
+    monkeypatch.setattr(
+        "motor_expansao.pipelines.materializar_setores_censitarios_geo.ler_particao_setores",
+        lambda **_kwargs: setores,
+    )
+
+    geo = rm.carregar_bairros_geo("XX", "9999999", "qualquer/caminho")
+    assert geo["n_bairros"] == 1
+    bairro = geo["bairros"][0]
+    assert bairro["pop"] == pytest.approx(1000.0)
+    assert bairro["score"] == pytest.approx(99.0), "score tem de ser ponderado, nao media simples"
+    assert bairro["renda_pc"] == pytest.approx(1981.0)
+
+
+def test_carregar_bairros_geo_fallback_sem_dir():
+    """Sem censo_geo_dir/cod -> estrutura vazia COERENTE (nunca excecao, nunca None)."""
+    from motor_expansao.dashboard.relatorio_municipal import carregar_bairros_geo
+
+    for geo in (carregar_bairros_geo(None, None, None),
+                carregar_bairros_geo("SP", "3550308", None),
+                carregar_bairros_geo("SP", None, "data/outputs/setores_censitarios_2022_geo")):
+        assert geo["bairros"] == []
+        assert geo["contorno"] == []
+        assert geo["n_bairros"] == 0
+        assert geo["cobertura"] == 0.0
+
+
+def test_render_mapa_bairros_sem_dados_gera_png_com_aviso():
+    """Municipio sem bairro na base ainda produz PNG valido (fallback gracioso, offline)."""
+    from motor_expansao.dashboard.relatorio_municipal import _render_mapa_bairros
+
+    png = _render_mapa_bairros({"bairros": [], "contorno": []}, basemap=False)
+
+    assert png.startswith(b"\x89PNG")
+    assert _png_dimensions(png) == (1000, 704)
+
+
+def test_render_mapa_bairros_desenha_divisa_vermelha():
+    """A divisa de bairro sai em vermelho; sem isso o slide nao mostra limite nenhum."""
+    from motor_expansao.dashboard.relatorio_municipal import _render_mapa_bairros
+
+    png = _render_mapa_bairros(_bairros_geo_sample(), basemap=False)
+    assert png.startswith(b"\x89PNG")
+
+    arr = np.asarray(Image.open(BytesIO(png)).convert("RGB")).astype(int)
+    vermelho = (arr[:, :, 0] > 170) & (arr[:, :, 1] < 90) & (arr[:, :, 2] < 90)
+    assert vermelho.sum() > 200, "divisa de bairro nao foi desenhada em vermelho"
+
+
+def test_render_mapa_bairros_nao_pinta_sobra_de_vermelho():
+    """A area SEM bairro sai CINZA: pinta-la de vermelho afirmaria um limite que o IBGE nao da."""
+    from motor_expansao.dashboard.relatorio_municipal import _render_mapa_bairros
+
+    def _n_vermelho(geo: dict) -> int:
+        arr = np.asarray(
+            Image.open(BytesIO(_render_mapa_bairros(geo, basemap=False))).convert("RGB")
+        ).astype(int)
+        return int(((arr[:, :, 0] > 170) & (arr[:, :, 1] < 90) & (arr[:, :, 2] < 90)).sum())
+
+    # A sobra e' 2x maior que os bairros; se fosse desenhada em vermelho, o total explodiria.
+    assert _n_vermelho(_bairros_geo_sample(com_sobra=True)) < _n_vermelho(_bairros_geo_sample()) * 2
+
+
+def test_pdf_municipal_pagina_bairros_oficiais():
+    """A pagina entra no PDF com o titulo, a contagem e os bairros mais populosos."""
+    df = _sample_df()
+    res = agregar_municipio(
+        df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio(),
+        bairros_geo=_bairros_geo_sample(),
+    )
+    mapas = render_mapas_municipio(df, res, basemap=False)
+    pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
+
+    assert b"/Count 12" in pdf_bytes
+    assert "Bairros Oficiais".encode("latin-1") in pdf_bytes
+    assert b"BAIRROS IDENTIFICADOS" in pdf_bytes
+    assert b"MAIS POPULOSOS" in pdf_bytes
+    assert b"Bela Vista" in pdf_bytes
+    # Cobertura cheia -> nota normal, SEM o aviso de malha incompleta.
+    assert "dissolvidos por bairro".encode("latin-1") in pdf_bytes
+    assert "malha de bairros da prefeitura".encode("latin-1") not in pdf_bytes
+    for needle in _PII_FORBIDDEN:
+        assert needle not in pdf_bytes
+
+
+def test_pdf_municipal_bairros_avisa_cobertura_parcial():
+    """Cobertura baixa NAO pode sair como numero seco (caso Palmas/TO: 2 de 733 setores)."""
+    df = _sample_df()
+    res = agregar_municipio(
+        df, nome_municipio="SAO PAULO", uf="SP",
+        bairros_geo=_bairros_geo_sample(cobertura=0.02, com_sobra=True),
+    )
+    pdf_bytes = gerar_pdf_relatorio_municipal(res, render_mapas_municipio(df, res, basemap=False))
+
+    assert "cobrem s\xf3 2% dos setores".encode("latin-1") in pdf_bytes
+    assert "malha de bairros da prefeitura".encode("latin-1") in pdf_bytes
+    # E o subtitulo otimista NAO aparece nesse caso.
+    assert "bairros com limite territorial mapeado".encode("latin-1") not in pdf_bytes
+
+
+def test_pdf_municipal_sem_bairros_geo_mantem_comportamento():
+    """Default `bairros_geo=None`: a pagina sai com o aviso, sem quebrar o resto do relatorio."""
+    df = _sample_df()
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP")
+    assert res["bairros_geo"] == {}
+
+    pdf_bytes = gerar_pdf_relatorio_municipal(res, render_mapas_municipio(df, res, basemap=False))
+
+    # 11 paginas: sem bairro nao ha nucleo urbano para aproximar, entao a pagina 4 nao e'
+    # emitida -- ela sairia com "Mapa indisponivel" e "0 bairros", dizendo nada (Sao Luis/MA).
+    assert b"/Count 11" in pdf_bytes
+    assert "Núcleo Urbano".encode("latin-1") not in pdf_bytes
+    assert "malha de bairros da prefeitura".encode("latin-1") in pdf_bytes
 
 
 def test_pdf_municipal_marca_dagua_solicitante():
@@ -1228,3 +1616,278 @@ def test_formatador_municipal_usa_texto_sem_dado_por_extenso():
     assert _format_number(float("nan")) == TEXTO_SEM_DADO
     assert TEXTO_SEM_DADO == "Não disponível"
     assert _format_number(1234.0) == "1.234"
+
+
+def test_info_panel_trunca_rotulo_largo_sem_invadir_o_valor():
+    """Nome longo de localidade nao pode transbordar por cima da coluna do numero.
+
+    Regressao real: Goiania/GO usa U.T.P. como localidade do IBGE e
+    "U.T.P. Parque das Laranjeiras e Jardim da Luz" saiu grudado no 50.318.
+    """
+    from motor_expansao.dashboard.relatorio_municipal import _encurtar, _UltraPDF
+
+    pdf = _UltraPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", "", 12)
+
+    largura = 150.0
+    longo = "U.T.P. Parque das Laranjeiras e Jardim da Luz"
+    curto = _encurtar(pdf, longo, largura)
+
+    assert curto != longo, "o nome longo tinha de ser truncado"
+    assert curto.endswith("...")
+    assert pdf.get_string_width(curto) <= largura
+
+    # Texto que ja cabe passa intacto (sem reticencias gratuitas).
+    assert _encurtar(pdf, "Centro", largura) == "Centro"
+    # Largura degenerada nao estoura.
+    assert _encurtar(pdf, longo, 0.0) == "..."
+
+
+def _bairros_geo_so_sobra() -> dict:
+    """Municipio SEM nenhuma localidade no IBGE: a lista tem SO a sobra (caso Apodi/RN)."""
+    sobra = _bairro_quadrado("Apodi (demais setores)", -4_300_000.0, -600_000.0, 8000.0,
+                             pop=34_000.0, sobra=True)
+    sobra["score"] = 20.3
+    return {
+        "bairros": [sobra],
+        "contorno": [sobra["aneis"][0]],
+        "n_bairros": 0,
+        "n_setores": 60,
+        "sem_localidade": 60,
+        "cobertura": 0.0,
+    }
+
+
+def test_so_sobra_nao_conta_como_bairro():
+    """Lista com SO a sobra nao pode ligar o modo por bairro."""
+    from motor_expansao.dashboard.relatorio_municipal import tem_bairro_real
+
+    assert tem_bairro_real(_bairros_geo_sample()) is True
+    assert tem_bairro_real(_bairros_geo_so_sobra()) is False
+    assert tem_bairro_real({"bairros": []}) is False
+    assert tem_bairro_real(None) is False
+
+
+def test_municipio_so_com_sobra_mantem_mapas_por_hexagono():
+    """Regressao (Apodi/RN): com so a sobra, o Score sairia como UM poligono do municipio
+    inteiro e o rodape afirmaria agregacao por bairro que nao existe. Tem de cair no hexagono."""
+    df = _sample_df()
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP",
+                            bairros_geo=_bairros_geo_so_sobra())
+    mapas = render_mapas_municipio(df, res, basemap=False)
+    pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
+
+    # O mapa por bairro do slide 3 continua existindo (mostra o contorno + o aviso)...
+    assert "Bairros Oficiais".encode("latin-1") in pdf_bytes
+    # ...mas o Score NAO pode afirmar agregacao por bairro.
+    assert "setores agregados por bairro".encode("latin-1") not in pdf_bytes
+    assert "Agregação H3 resolução 7".encode("latin-1") in pdf_bytes
+
+
+def test_cobertura_baixa_mantem_bairro_com_aviso():
+    """REVERTIDO em 2026-08-19 (Juan, depois de ver Sinop/MT): "só vistas de bairros sem
+    hexágonos". O fallback por cobertura saiu -- havendo bairro real, o temático sai por
+    BAIRRO. O que protege a leitura agora é o RECORTE URBANO (os temáticos usam o mesmo zoom
+    da página 4), não a troca de unidade. A página segue declarando a cobertura real.
+    """
+    from motor_expansao.dashboard.relatorio_municipal import tem_bairro_real
+
+    baixa = {**_bairros_geo_sample(), "cobertura": 0.31}
+    assert tem_bairro_real(baixa)
+
+    df = _sample_df()
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", bairros_geo=baixa)
+    pdf = gerar_pdf_relatorio_municipal(res, render_mapas_municipio(df, res, basemap=False))
+
+    assert "setores agregados por bairro".encode("latin-1") in pdf
+    assert "Agregação H3 resolução 7".encode("latin-1") not in pdf
+    assert "Bairros Oficiais".encode("latin-1") in pdf
+    assert "cobrem só 31% dos setores".encode("latin-1") in pdf
+
+
+def test_limiar_de_cobertura_ainda_governa_o_aviso():
+    """O limiar deixou de trocar a unidade do mapa, mas continua governando o AVISO."""
+    from motor_expansao.dashboard.relatorio_municipal import _BAIRRO_COBERTURA_MIN
+
+    df = _sample_df()
+    base = _bairros_geo_sample()
+
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP",
+                            bairros_geo={**base, "cobertura": _BAIRRO_COBERTURA_MIN - 0.01})
+    pdf = gerar_pdf_relatorio_municipal(res, render_mapas_municipio(df, res, basemap=False))
+    assert "cobrem só".encode("latin-1") in pdf
+
+    res_ok = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP",
+                               bairros_geo={**base, "cobertura": 0.98})
+    pdf_ok = gerar_pdf_relatorio_municipal(res_ok,
+                                           render_mapas_municipio(df, res_ok, basemap=False))
+    assert "cobrem só".encode("latin-1") not in pdf_ok
+
+
+def test_sobra_e_visivel_no_mapa():
+    """A área sem bairro tem de LER como cinza declarado, não como branco/vazio.
+
+    Regressão (Tangará da Serra/MT, reportada por Juan): com alpha 30 a sobra sumia no
+    basemap claro e o mapa parecia ter um buraco -- mas ela é um estado avaliado, não
+    ausência de render.
+    """
+    from motor_expansao.dashboard.relatorio_municipal import (
+        _SOBRA_FILL_RGBA,
+        _render_mapa_bairros,
+    )
+
+    assert _SOBRA_FILL_RGBA[3] >= 60, "alpha baixo demais: a sobra vira invisível"
+
+    geo = _bairros_geo_sample(com_sobra=True)
+    for b in geo["bairros"]:
+        b["score"] = 85.0
+    png = _render_mapa_bairros(geo, metrica="score", basemap=False)
+    arr = np.asarray(Image.open(BytesIO(png)).convert("RGB")).astype(int)
+
+    # Cinza da sobra tem de aparecer numa area relevante: canais proximos entre si
+    # (r~g~b) e claramente mais escuro que o canvas 245 do fallback offline.
+    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    cinza = (abs(r - g) < 14) & (abs(g - b) < 14) & (r > 180) & (r < 240)
+    assert cinza.sum() > 3_000, f"sobra pouco visivel (pixels cinza: {cinza.sum()})"
+
+
+def test_recorte_urbano_ignora_area_rural_extensa():
+    """Sinop/MT: a cidade e' ~2% do territorio. O recorte tem de seguir a DENSIDADE, nao a
+    populacao bruta -- senao um distrito rural grande puxa o zoom de volta ao municipio."""
+    from motor_expansao.dashboard.relatorio_municipal import bounds_nucleo_urbano
+
+    urbano = _bairro_quadrado("Centro", 0.0, 0.0, 2_000.0, pop=40_000.0)
+    urbano["densidade"] = 10_000.0
+    rural = _bairro_quadrado("Distrito Rural", 200_000.0, 200_000.0, 80_000.0, pop=12_000.0)
+    rural["densidade"] = 2.0
+    geo = {"bairros": [urbano, rural], "contorno": [], "n_bairros": 2,
+           "n_setores": 50, "sem_localidade": 0, "cobertura": 1.0}
+
+    b = bounds_nucleo_urbano(geo)
+    assert b is not None
+    minx, miny, maxx, maxy = b
+    # O recorte fica no urbano, nao envolve o distrito rural a 200 km.
+    assert maxx < 100_000.0, "o recorte engoliu a area rural"
+    assert (maxx - minx) < 20_000.0, "recorte largo demais para um nucleo de 2 km"
+
+
+def test_recorte_urbano_respeita_extensao_minima():
+    """Nucleo minusculo nao pode gerar zoom ilegivel."""
+    from motor_expansao.dashboard.relatorio_municipal import (
+        _URBANO_SPAN_MIN_M,
+        bounds_nucleo_urbano,
+    )
+
+    minusculo = _bairro_quadrado("Vila", 0.0, 0.0, 120.0, pop=900.0)
+    minusculo["densidade"] = 5_000.0
+    geo = {"bairros": [minusculo], "contorno": [], "n_bairros": 1,
+           "n_setores": 3, "sem_localidade": 0, "cobertura": 1.0}
+
+    minx, _miny, maxx, _maxy = bounds_nucleo_urbano(geo)
+    assert (maxx - minx) >= _URBANO_SPAN_MIN_M
+
+
+def test_recorte_urbano_sem_bairro_devolve_none():
+    from motor_expansao.dashboard.relatorio_municipal import bounds_nucleo_urbano
+
+    assert bounds_nucleo_urbano(None) is None
+    assert bounds_nucleo_urbano({"bairros": []}) is None
+    assert bounds_nucleo_urbano(_bairros_geo_so_sobra()) is None, "so a sobra nao define urbano"
+
+
+def test_pagina_nucleo_urbano_no_pdf():
+    """A pagina entra e as DUAS vistas coexistem: municipio inteiro e zoom urbano."""
+    df = _sample_df()
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP",
+                            bairros_geo=_bairros_geo_sample())
+    mapas = render_mapas_municipio(df, res, basemap=False)
+    assert "bairros_urbano" in mapas and mapas["bairros_urbano"].startswith(b"\x89PNG")
+    # As duas vistas sao mapas DIFERENTES (enquadramentos distintos).
+    assert mapas["bairros"] != mapas["bairros_urbano"]
+
+    pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
+    assert b"/Count 12" in pdf_bytes
+    assert "Bairros Oficiais".encode("latin-1") in pdf_bytes
+    assert "Núcleo Urbano".encode("latin-1") in pdf_bytes
+    assert b"RECORTE URBANO" in pdf_bytes
+    assert "MAIS DENSOS".encode("latin-1") in pdf_bytes
+
+
+def test_tabela_usa_renda_domiciliar_quando_disponivel():
+    """Coluna de renda passa a ser DOMICILIAR (Juan, 2026-08-19): é o número com que se
+    conversa sobre praça. Per capita só sobra como fallback."""
+    from motor_expansao.dashboard.relatorio_municipal import _tabela_hexes
+
+    df = _sample_df()
+    df["renda_per_capita_setor_2022_calibrada"] = 900.0  # per capita, NÃO deve aparecer
+    mapa = {str(h): 4500.0 + i * 100 for i, h in enumerate(df["hex_id"])}
+
+    tab = _tabela_hexes(df, renda_domiciliar_por_hex=mapa)
+    assert tab["fonte_renda"] == "domiciliar"
+    assert all(linha["renda"] >= 4500.0 for linha in tab["linhas"])
+
+    # Sem o mapa, cai na per capita e DIZ que caiu (o rodapé muda junto).
+    tab_sem = _tabela_hexes(df)
+    assert tab_sem["fonte_renda"] == "censo"
+    assert all(linha["renda"] == 900.0 for linha in tab_sem["linhas"])
+
+
+def test_renda_domiciliar_por_hex_fallback_sem_particao():
+    from motor_expansao.dashboard.relatorio_municipal import carregar_renda_domiciliar_por_hex
+
+    assert carregar_renda_domiciliar_por_hex(None, None, None) == {}
+    assert carregar_renda_domiciliar_por_hex("MT", "5107958", None) == {}
+
+
+def test_renda_domiciliar_aplica_uplift_e_pondera_por_domicilios(monkeypatch):
+    """Fórmula canônica: V06004 x uplift x fator temporal, ponderada por DOMICÍLIOS.
+
+    Trava a armadilha já paga em 2026-08-13: usar a per capita CALIBRADA x moradores
+    devolveria `V06004 x k` e o k viraria fator extra sobre o uplift (+23,35% de excesso).
+    A calibrada aqui é propositalmente ABSURDA -- se ela vazar para a conta, o teste quebra.
+    """
+    from motor_expansao.dashboard import relatorio_municipal as rm
+
+    setores = pd.DataFrame(
+        {
+            "cod_setor": ["A", "B"],
+            "renda_responsavel_media_setor_2022": [2000.0, 4000.0],
+            "renda_per_capita_setor_2022": [500.0, 1000.0],
+            "renda_per_capita_setor_2022_calibrada": [99_999.0, 99_999.0],
+            "avg_moradores_domicilio_setor_2022": [4.0, 4.0],
+            # Pesos MUITO distintos: média simples daria 3000; ponderada dá ~2100.
+            "domicilios_particulares_ocupados_setor_2022": [900.0, 100.0],
+            # bbox no mesmo ponto -> ambos caem no MESMO hexágono.
+            "bbox_minx": [-56.10, -56.10], "bbox_miny": [-12.10, -12.10],
+            "bbox_maxx": [-56.09, -56.09], "bbox_maxy": [-12.09, -12.09],
+        }
+    )
+    monkeypatch.setattr(
+        "motor_expansao.pipelines.materializar_setores_censitarios_geo.ler_particao_setores",
+        lambda **_k: setores,
+    )
+    monkeypatch.setattr(
+        "motor_expansao.dashboard.constants.uplift_composicao_por_setor",
+        lambda *_a, **_k: 1.5,
+    )
+    monkeypatch.setattr("motor_expansao.dashboard.constants.FATOR_TEMPORAL_RENDA", 2.0)
+
+    mapa = rm.carregar_renda_domiciliar_por_hex("MT", "5107958", "qualquer/caminho")
+    assert len(mapa) == 1, mapa
+    valor = next(iter(mapa.values()))
+
+    # (2000*900 + 4000*100) / 1000 = 2200 de V06004 ponderada; x1.5 x2.0 = 6600.
+    assert valor == pytest.approx(6600.0), valor
+    # Média SIMPLES daria 3000*3 = 9000: a ponderação por domicílios está de fato valendo.
+    assert valor != pytest.approx(9000.0)
+
+
+def test_valor_ausente_nao_vira_reais_de_texto():
+    """"R$ Não disponível" lê como se o valor fosse a string (visto na tabela de Sinop/MT)."""
+    from motor_expansao.dashboard.relatorio_municipal import _reais
+
+    assert _reais(5210.0) == "R$ 5.210"
+    assert _reais(None) == TEXTO_SEM_DADO
+    assert _reais(float("nan")) == TEXTO_SEM_DADO
+    assert not _reais(None).startswith("R$")

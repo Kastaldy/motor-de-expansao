@@ -26,7 +26,7 @@ Abordagem vencedora: Multiplicativo global (renda) + pop_pct_municipal (híbrida
 
   SCORE:
     score_setor_2022_calibrado = clip(0.60*nota_renda + 0.40*nota_pop + ajuste, 0, 100)
-    -- REGUA ABSOLUTA desde a DEC-039 (2026-08-26). O bloco de POPULACAO acima descreve o
+    -- REGUA ABSOLUTA desde a DEC-040 (2026-08-26). O bloco de POPULACAO acima descreve o
        percentil municipal, que era a regua ATE' 2026-08-25 e hoje so' existe como coluna de
        auditoria. `nota_renda` e' LINEAR (R$ 300 -> 0, R$ 4.000 -> 100) e `nota_pop` e' LOG
        (1.000 -> 0, 100.000 -> 100). Ver RENDA_ABS_*/POP_ABS_* e docs/decisions/DEC-039.md.

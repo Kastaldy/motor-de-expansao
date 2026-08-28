@@ -7,8 +7,9 @@ pesos, `score_vulnerabilidade`, `n_sinais_disponiveis` e `flag_score_provisorio`
 
 O DEFEITO MAIS PROVÁVEL DESTA CAMADA, e como ele é neutralizado:
 
-  **Gap de feed não pode virar churn.** O feed dos independentes (TotalPass/WellHub) é mensal e
-  ainda pendente (`docs/infra_producao.md:186`), e o feed `unidades` é **um CSV por rede** — se o
+  **Gap de feed não pode virar churn.** O feed dos independentes (TotalPass/WellHub) é SEMANAL
+  (cron da terça, `docs/infra_producao.md`, "Coleta semanal dos agregadores"), e o feed
+  `unidades` é **um CSV por rede** — se o
   coletor de uma rede falhar, a fonte continua tendo linhas das outras redes. Por isso o escopo de
   observabilidade é o par **`(fonte, rede)`**, e não a `fonte`: uma semana em que o escopo não foi
   observado simplesmente **não entra no eixo** daquela chave, logo não pode gerar transição
@@ -25,8 +26,10 @@ LIMITAÇÃO REGISTRADA (tratamento é BLK-MA-04): coletor que falha mantém o CS
 detector desse modo de falha — sem ela, staleness e coletor quebrado ficam indistinguíveis.
 
 MATURIDADE: `MIN_SEMANAS`/`STALE_SEMANAS` contam **semanas OBSERVADAS**, não de calendário. Na
-cadência real (mensal), 8 observações são ~8 MESES — ver `docs/vulnerabilidade_ma_contrato.md`
-§6/§12.
+cadência real, que é SEMANAL para as três fontes, 8 observações são ~8 SEMANAS no caminho
+feliz — e mais do que isso na medida em que a curadoria recuse feeds velhos, porque a semana
+recusada ocupa slot de calendário sem render observação. Ver
+`docs/vulnerabilidade_ma_contrato.md` §6/§12.
 
 GUARDRAILS: READ-ONLY sobre o M1; pacote DISJUNTO (nunca importa `pipelines/m1/`, `dashboard/`,
 `api`, `censo_*`, `config.py` raiz ou `normalizar_concorrentes.py`); anti-PII por construção (só
@@ -160,7 +163,7 @@ def _estado_por_chave(
     # origens MISTAS" -- pergunta diferente de "a chave TROCOU de politica ao longo da
     # serie", que e' o que o nome da flag promete e o que o consumidor le. No feed TP/WH o
     # rebaixamento de chave ocorre POR LINHA e convive com o `slug` na MESMA semana, entao
-    # a versao antiga nascia `True` para todo o universo, todo mes -- um sinal morto.
+    # a versao antiga nascia `True` para todo o universo, toda semana -- um sinal morto.
     # Sonda do QA do BLK-MA-02: 4 semanas, mesmo escopo, uma chave sempre `slug` e outra
     # sempre `hash_estavel`, ZERO troca temporal, e a flag saia `True` para as duas.
     origens_por_semana: dict[tuple[str, str], dict[str, set[str]]] = {}

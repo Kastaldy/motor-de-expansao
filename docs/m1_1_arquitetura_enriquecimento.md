@@ -297,7 +297,7 @@ O parquet `censo_2022_h3_res7.parquet` deve passar todos os gates abaixo antes d
 | valores distintos de score por capital | > 30% dos hexagonos da capital |
 | desvio padrao do score censuario dentro de capitais | > 15 |
 
-> **Nota de escala (DEC-039, 2026-08-26).** As duas linhas de SCORE acima foram escritas para a escala antiga, em que a componente de populacao era percentil DENTRO do municipio: cada capital era esticada de 0 a 100 por construcao, e os dois limiares eram satisfeitos de graca — mediam a normalizacao, nao a qualidade do dado. Com a regua ABSOLUTA a dispersao dentro da capital passou a depender do porte real da cidade, e estes limiares NAO valem mais como gate de aceite. A primeira linha da tabela (amplitude de `renda_per_capita_setor_2022`) NAO foi afetada: a renda setorial e' insumo da regua, nao saida dela.
+> **Nota de escala (DEC-040, 2026-08-26).** As duas linhas de SCORE acima foram escritas para a escala antiga, em que a componente de populacao era percentil DENTRO do municipio: cada capital era esticada de 0 a 100 por construcao, e os dois limiares eram satisfeitos de graca — mediam a normalizacao, nao a qualidade do dado. Com a regua ABSOLUTA a dispersao dentro da capital passou a depender do porte real da cidade, e estes limiares NAO valem mais como gate de aceite. A primeira linha da tabela (amplitude de `renda_per_capita_setor_2022`) NAO foi afetada: a renda setorial e' insumo da regua, nao saida dela.
 
 ### 7.3 Rastreabilidade
 

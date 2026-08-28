@@ -175,7 +175,7 @@ SCORE_CORTE_QUENTE = 30.0  # piso do passo 1 (hexagono "quente")
 # perguntas diferentes ("este imovel serve?" contra "quais hexagonos entram na fila") —,
 # mas quem comparar as duas telas vai notar, e a explicacao tem de existir.
 #
-# ATENCAO -- a RELACAO entre as duas reguas se INVERTEU na DEC-039 (2026-08-26). Ate' ali o
+# ATENCAO -- a RELACAO entre as duas reguas se INVERTEU na DEC-040 (2026-08-26). Ate' ali o
 # funil pedia 70 e a ficha 60: a ficha era mais FROUXA, que era a intencao do Juan. Com a regua
 # absoluta o funil caiu para 30, e a ficha passou a ser mais DURA que ele. Reescalado de 60,0
 # para 50,0 por decisao do Felipe (2026-08-28), o que ATENUA sem inverter de volta: hoje a ficha
@@ -3786,7 +3786,7 @@ def _criterios_do_ponto(
     corte, e o operador lê as cinco.
 
     DUAS DESSAS RÉGUAS DIVERGEM DO FUNIL desde 2026-08-12, por decisão do Juan:
-    `CRIT_PONTO_SCORE_MIN` (50 desde a DEC-039, contra 30 do passo 1 -- a relacao se INVERTEU:
+    `CRIT_PONTO_SCORE_MIN` (50 desde a DEC-040, contra 30 do passo 1 -- a relacao se INVERTEU:
     a ficha, que era mais frouxa que o funil, ficou mais dura) e `CRIT_PONTO_CONC_MAX` (3, contra
     o white space do passo 5). As outras três seguem canônicas do `config.py`
     (`POP_MIN_ACIONAVEL`, `OFERTA_DESTAQUE_MIN`, `RENDA_MIN`). Consequência declarada: um
