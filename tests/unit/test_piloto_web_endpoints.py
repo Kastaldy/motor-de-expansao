@@ -1385,3 +1385,57 @@ def test_metodologia_documenta_TODAS_as_camadas_do_funil(monkeypatch) -> None:
             "documentacao pela metade e' pior que ausencia, porque parece completa"
         )
         assert c["metricas"], f"camada {c['n']} nao declara nenhuma metrica"
+
+
+def test_viabilidade_liga_o_catchment_em_vez_de_deixar_a_flag_sempre_nula(monkeypatch) -> None:
+    """DEC-042: `_payload_viabilidade` PRECISA passar `setores_df` ao motor.
+
+    Este teste existe por causa de um defeito que ficou vivo e mudo por semanas: sem esse
+    argumento o motor pula o catchment e `flag_zona_morta` sai SEMPRE `None` — o que
+    apagava, em silêncio, duas coisas ao mesmo tempo. O aviso de zona morta da tela de
+    Viabilidade nunca renderizava, e o gate E4 da Conclusão do PDF, que a DEC-030 declara
+    como "o único gate da praça que REPROVA fora do só-estudo", nunca disparava.
+
+    Nada quebrava: `flag_zona_morta = None` é resposta VÁLIDA (município sem malha
+    materializada), então o valor nulo atravessava o payload, a tela e o PDF sem erro,
+    sem log e sem teste vermelho. É a mesma classe de falha da DEC-038 e do artefato
+    mutilado: um valor legítimo em si, que no lugar errado apaga uma superfície inteira.
+
+    O teste trava a CHAMADA, não o resultado — em ambiente de teste não há malha do IBGE
+    e o catchment devolveria `None` de qualquer jeito, o que faria um teste de resultado
+    passar mesmo com o fio solto.
+    """
+    from motor_expansao.dimensionamento import viabilidade_ponto as vp
+
+    capturado: dict = {}
+    original = vp.analisar_viabilidade_ponto
+
+    def _espiao(*args, **kwargs):
+        capturado.update(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(vp, "analisar_viabilidade_ponto", _espiao)
+
+    body = pilot.ViabilidadeIn(lat=-23.5505, lng=-46.6333, m2=1500, aluguel=40000, demanda=1800)
+    pilot._payload_viabilidade(body)
+
+    assert "setores_df" in capturado, (
+        "`_payload_viabilidade` voltou a chamar o motor SEM `setores_df`: o catchment não "
+        "roda, `flag_zona_morta` vira `None` para sempre e o gate E4 do PDF morre em silêncio"
+    )
+
+
+def test_catchment_ausente_nao_derruba_a_viabilidade() -> None:
+    """Coordenada fora da malha do IBGE: a análise financeira continua saindo.
+
+    O contrário seria trocar um defeito por outro — a viabilidade é financeira e não
+    depende de setor censitário. Sem catchment, a flag volta a `None` com motivo
+    explícito, que é o contrato que já valia antes de a DEC-042 ligar o fio.
+    """
+    body = pilot.ViabilidadeIn(lat=-20.0, lng=-35.0, m2=1500, aluguel=40000, demanda=1800)
+    payload = pilot._payload_viabilidade(body)
+
+    assert payload["flag_zona_morta"] is None
+    assert payload["motivo_zona_morta"] == "catchment_indisponivel"
+    # E o financeiro segue inteiro.
+    assert payload["break_even"]["ebitda"] is not None

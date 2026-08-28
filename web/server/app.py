@@ -4812,6 +4812,38 @@ def _grade_json(grade: pd.DataFrame | None) -> list[dict[str, Any]]:
 VIABILIDADE_PAYLOAD_VERSAO = "viabilidade_payload_v1"
 
 
+def _setores_para_catchment(lat: Any, lng: Any) -> pd.DataFrame | None:
+    """Setores do municipio da coordenada, para o catchment da viabilidade (DEC-042).
+
+    SEM CACHE PROPRIO, e isso e' medido, nao descuido. O custo da chamada se decompoe em
+    2,75 s de `_carregar_malha` (a malha municipal do IBGE) mais 0,08 s de leitura da
+    particao do municipio — e a malha JA' e' cacheada dentro do servico, entao os 2,75 s
+    sao pagos UMA vez por processo (o caminho do PDF ja' os paga hoje). Sobra 0,08 s por
+    requisicao, que nao justifica guardar um DataFrame de 27 mil linhas num `lru_cache`
+    de modulo: o frame voltaria COMPARTILHADO entre requisicoes, e bastaria um consumidor
+    futuro escrever nele para envenenar todas as seguintes.
+
+    NUNCA LEVANTA. `_resolver_e_carregar` sobe 400 (coordenada fora da malha do IBGE) e
+    404 (municipio sem particao materializada), e nenhum dos dois pode derrubar a
+    viabilidade — a analise financeira nao depende de setor censitario. Falhou -> `None`,
+    e o motor devolve `flag_zona_morta = None` com motivo `catchment_indisponivel`,
+    exatamente o contrato que ja' valia.
+    """
+    from motor_expansao.api.service import Settings, _resolver_e_carregar
+
+    try:
+        cfg = Settings(
+            censo_geo_dir=CENSO_GEO_DIR,
+            ibge_dir=IBGE_DIR,
+            ultra_dir=ULTRA_DIR,
+            staging_dir=STAGING_DIR,
+        )
+        _uf, _cod, setores_df = _resolver_e_carregar(float(lat), float(lng), cfg)
+        return setores_df
+    except Exception:  # noqa: BLE001 — catchment e' CONTEXTO; sua ausencia nao e' erro
+        return None
+
+
 def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
     """Monta o `viabilidade_payload_v1` a partir de UMA rodada do nucleo.
 
@@ -4844,6 +4876,17 @@ def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
         demanda_premissa=body.demanda,
         premissas=premissas,
         base_calibracao_df=base,
+        # LIGA O CATCHMENT (DEC-042). Sem este argumento o motor pula o catchment e
+        # `flag_zona_morta` sai SEMPRE `None` — foi o estado de producao ate' hoje, e
+        # ele nao deixava nada quebrado: apagava em SILENCIO o aviso da tela de
+        # Viabilidade E o gate E4 da Conclusao do PDF, que a DEC-030 declara como "o
+        # unico gate da praca que REPROVA fora do so-estudo".
+        #
+        # `None` continua sendo resposta VALIDA (municipio sem malha materializada,
+        # coordenada fora da malha do IBGE): a flag volta a `None` com motivo
+        # `catchment_indisponivel`, exatamente como antes. O que muda e' que agora isso
+        # e' a EXCECAO e nao a regra.
+        setores_df=_setores_para_catchment(body.lat, body.lng),
         formato=body.formato,
         **inv,
     )
