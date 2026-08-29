@@ -1,5 +1,12 @@
+import BlocosComparacao from './BlocosComparacao'
 import TabelaRanking from './TabelaRanking'
-import { DIMENSOES } from '../lib/comparacao'
+import {
+  type BlocoParametro,
+  DIMENSOES,
+  blocosPorParametro,
+  corDeIdentidade,
+  rotulosDosHexes,
+} from '../lib/comparacao'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import type { Hex } from '../lib/types'
 
@@ -17,12 +24,27 @@ import type { Hex } from '../lib/types'
 export default function PainelComparacao({
   hexes,
   onLimpar,
+  onIrPara,
+  onRelatorio,
+  gerandoRelatorio = false,
 }: {
   hexes: Hex[]
   onLimpar: () => void
+  /** Leva o mapa até o hexágono. Recebe o id, que é o que o mapa conhece. */
+  onIrPara?: (hexId: string) => void
+  /**
+   * Pede o deck em PDF. Fica no MapScreen, e não aqui, porque gerar exige as DUAS pontas:
+   * capturar o mapa (que este painel não tem) e montar o ranking.
+   */
+  onRelatorio?: () => void
+  /** Enquanto o mapa voa e captura, o botão precisa dizer que está trabalhando. */
+  gerandoRelatorio?: boolean
 }) {
-  const rotulos = hexes.map((h, i) => h.mun ?? `Hexágono ${i + 1}`)
+  /* Desambiguados: cinco hexágonos da mesma cidade davam cinco itens "São Paulo", e nada
+     na tela ligava uma barra ao seu hexágono. */
+  const rotulos = rotulosDosHexes(hexes)
   const ranking = ranquear(DIMENSOES, hexes, rotulos)
+  const blocos = blocosPorParametro(DIMENSOES, hexes) as BlocoParametro<unknown>[]
 
   return (
     /* SEM caixa nem teto de largura: este painel vive DENTRO da janela flutuante, que já
@@ -33,6 +55,43 @@ export default function PainelComparacao({
       <div style={{ font: '700 12px/1 var(--f-ui)', color: 'var(--tx-max)' }}>
         Comparando {hexes.length} hexágonos
       </div>
+
+      {/* UM BLOCO POR PARÂMETRO (pedido do Juan, 2026-08-13), acima do ranking. Responde
+          "qual ganha NESTE parâmetro" sem obrigar a ler a tabela inteira. Não ordena a
+          lista: ordenar exigiria somar parâmetros num número único, que é score novo e só
+          muda por DEC — o ranking abaixo continua CONTANDO vitórias, que é outra coisa. */}
+      {/* COR DE IDENTIDADE por hexágono (pedido do Juan, 2026-08-13). Sem ela as cinco
+          barras saíam todas turquesa e não havia como ligar "esta barra" ao hexágono
+          desenhado no mapa. É a MESMA paleta e a MESMA ordem que o mapa usa no contorno
+          do cenário — os dois leem `cenario` pelo índice. */}
+      <BlocosComparacao
+        blocos={blocos}
+        rotulos={rotulos}
+        cor={corDeIdentidade}
+        onIrPara={onIrPara ? (i) => onIrPara(hexes[i].id) : undefined}
+        onRelatorio={onRelatorio}
+        rotuloRelatorio={
+          gerandoRelatorio ? 'Gerando o PDF - o mapa está sendo capturado...' : 'Gerar relatório em PDF'
+        }
+      />
+
+      {gerandoRelatorio && (
+        /* O mapa VOA até cada área antes de capturar, então a tela se mexe sozinha por
+           alguns segundos. Sem dizer isso, o movimento parece defeito. */
+        <p
+          style={{
+            margin: 0,
+            padding: '9px 11px',
+            borderRadius: 'var(--r-md)',
+            border: '1px dashed var(--ac-a25)',
+            font: '400 11.5px/1.5 var(--f-ui)',
+            color: 'var(--tx-narrative)',
+          }}
+        >
+          O mapa vai passar por cada área para fotografar o entorno. Não mexa nele até o
+          download começar.
+        </p>
+      )}
 
       <TabelaRanking ranking={ranking} />
 

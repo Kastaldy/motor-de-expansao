@@ -64,6 +64,12 @@ class AnalisarMunicipioRequest(BaseModel):
     uf: str = Field(examples=["TO"], description="Sigla da UF (2 letras).")
     municipio: str = Field(examples=["Palmas"], description="Nome do municipio (sem acento tolerado).")
     formato: Literal["pdf"] = "pdf"
+    # Unidade de leitura. Default "bairro" -- e' a leitura que o time de Expansao usa; quem
+    # quiser o relatorio classico pede "hexagono" explicitamente.
+    unidade: Literal["bairro", "hexagono"] = Field(
+        default="bairro",
+        description='Unidade dos mapas: "bairro" (12 paginas) ou "hexagono" (10 paginas).',
+    )
     solicitante: str | None = Field(
         default=None,
         description="Nome de quem pediu; carimba a marca d'agua do PDF.",
@@ -100,6 +106,9 @@ class AnalisarResponseJSON(BaseModel):
     renda_domiciliar_total_raio: float | None = None
     domicilios_total_raio: float | None = None
     metodo_renda_domiciliar_raio: str | None = None
+    # ADITIVO (2026-08-14): fracao (0-1, por peso de domicilios) do raio cuja renda depende
+    # de uplift EXTRAPOLADO para fora do envelope de calibracao — pede leitura cautelosa.
+    fracao_uplift_extrapolado_raio: float | None = None
     densidade_pop_raio_hab_km2: float | None = None
     score_setor_medio: float | None = None
     score_setor_max: float | None = None

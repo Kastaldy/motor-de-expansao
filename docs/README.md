@@ -33,6 +33,7 @@ Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de s
 - [deploy.md](deploy.md) — runbook curto de deploy (modo PULL do GHCR).
 - [deploy_api_bot.md](deploy_api_bot.md) — containerização/deploy da API + bot Telegram.
 - [backup_restore.md](backup_restore.md) — **[canônico]** backup e regeneração (DR) de segredos e dados.
+- [trilha_acesso_piloto.md](trilha_acesso_piloto.md) — **[canônico]** trilha de acesso do piloto (DEC-027): quem fez o quê, retenção e habilitação na VPS.
 - [deploy_piloto_web.md](deploy_piloto_web.md) — **[canônico]** runbook completo de deploy do piloto web (imagem `motor-expansao-web` por digest).
 - [deploy_plan.md](deploy_plan.md) · [archive/deploy_vps_streamlit.md](archive/deploy_vps_streamlit.md) — **[histórico]** planos/runbooks antigos de deploy (ver `infra_producao.md`).
 

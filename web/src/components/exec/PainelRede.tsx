@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 
 import type { BaseDoDestaque, DestaqueDoRecorte, DestaquesDoRecorte } from '../../lib/exec'
 import { origemDaSerie, rotuloMesCompetencia, rotuloMesCurto } from '../../lib/exec'
-import { brl, brlCurto, num, pct } from '../../lib/format'
+import { brl, brlCurto, num, pct, pctVar } from '../../lib/format'
 import type {
   RedeCoorteResumo,
   RedeFaixas,
@@ -794,8 +794,11 @@ function LinhaDestaque({
 /** `9` -> `"+9,0%"`; a queda já vem com o sinal do próprio número. O `+` explícito existe
  *  porque, sem ele, "9,0%" ao lado de "2,5%" não diz qual dos dois é crescimento. */
 function sinalPct(v: number | null): string {
+  // O sinal vem de `pctVar` (lib/format), e nao de um `v > 0 ? '+' : ''` colado aqui: e' a
+  // MESMA regra da ficha do hexagono e nao pode divergir na casa decimal. O travessao curto
+  // fica: esta tabela e' compacta e nao comporta o "Não disponível" por extenso.
   if (v === null || !Number.isFinite(v)) return '—'
-  return `${v > 0 ? '+' : ''}${pct(v, 1)}`
+  return pctVar(v, 1)
 }
 
 /** Verde sobe, vermelho cai — vale só para métrica em que subir é bom, que é o caso de

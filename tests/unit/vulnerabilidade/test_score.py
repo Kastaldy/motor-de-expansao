@@ -66,6 +66,9 @@ def _linha(
         "rede": rede,
         "fonte": fonte,
         "hash_campos_raspados": hash_,
+        # `[BLK-MA-21]` O recorte que a execucao pediu. Constante nas fixtures: o que
+        # varia nos testes desta camada e a serie, nao o recorte.
+        "fontes_lidas": "totalpass,wellhub",
         "versao_contrato": c.VERSAO_CONTRATO_SNAPSHOT,
     }
 
@@ -260,12 +263,138 @@ def serie_universo_misturado() -> list[pd.DataFrame]:
 # --------------------------------------------------------------------------- #
 # CA-1 — pesos-alvo do D4 e renormalização GENÉRICA
 # --------------------------------------------------------------------------- #
-def test_pesos_alvo_sao_os_quatro_do_d4_e_somam_um() -> None:
-    """Congelados no gate de 2026-07-23: este bloco lê os pesos, nunca os altera."""
-    assert c.PESOS_ALVO_SINAIS == {"s1": 0.15, "s2": 0.25, "s3": 0.35, "s4": 0.25}
-    assert abs(sum(c.PESOS_ALVO_SINAIS.values()) - 1.0) < 1e-9
-    assert tuple(c.PESOS_ALVO_SINAIS) == c.SINAIS_ORDEM
+def test_pesos_do_d4_seguem_congelados_e_somam_um() -> None:
+    """O gate de 2026-07-23 continua valendo: o S6 entrou POR CIMA, sem repesar S1..S4.
+
+    Este é o teste que impede a entrada de um sinal novo de virar repesagem por tabela. Se alguém
+    adotar o conjunto ilustrativo de 6 sinais do §8.3 (que muda `s1` de 0,15 para 0,12), ele
+    quebra — e tem de quebrar, porque isso é reabrir o gate.
+    """
+    assert c.PESOS_ALVO_D4 == {"s1": 0.15, "s2": 0.25, "s3": 0.35, "s4": 0.25}
+    assert abs(sum(c.PESOS_ALVO_D4.values()) - 1.0) < 1e-9
+    for sinal, peso in c.PESOS_ALVO_D4.items():
+        assert c.PESOS_ALVO_SINAIS[sinal] == peso, f"o S6 nao pode ter mexido em `{sinal}`"
     assert c.SINAIS_INATIVOS == ("s2",)
+
+
+def test_soma_alvo_maior_que_um_e_inocua_por_construcao() -> None:
+    """Com o S6, `PESOS_ALVO_SINAIS` soma 1,10 — e isso não altera peso efetivo algum.
+
+    `renormalizar_pesos` divide pela soma dos PRESENTES, nunca pelo total do dicionário. A soma do
+    dicionário é, portanto, um número sem consumidor: o que vale é sempre a razão dentro do regime.
+    """
+    assert abs(sum(c.PESOS_ALVO_SINAIS.values()) - 1.10) < 1e-9
+    assert tuple(c.PESOS_ALVO_SINAIS) == c.SINAIS_ORDEM
+    for subconjunto in (["s1"], ["s1", "s3"], ["s1", "s3", "s4"], ["s3", "s4"]):
+        assert abs(sum(c.renormalizar_pesos(subconjunto).values()) - 1.0) < 1e-9
+
+
+def _pressao(pares: list[tuple[str, float]]) -> pd.DataFrame:
+    """Frame mínimo de pressão: `hex_id_res7` + `pressao_competitiva_no_hex` em [0, 100).
+
+    `universo_oferta` entra no mínimo desde o BLK-MA-16: o score se recusa a inferir QUEM contou
+    como concorrência, e o frame mínimo é justamente onde essa omissão passaria despercebida.
+    """
+    return pd.DataFrame(
+        {
+            "hex_id_res7": pd.Series([h for h, _ in pares], dtype="string"),
+            "pressao_competitiva_no_hex": pd.Series([p for _, p in pares], dtype="float64"),
+            "universo_oferta": pd.Series(
+                [c.UNIVERSO_OFERTA_CADEIAS] * len(pares), dtype="string"
+            ),
+        }
+    )
+
+
+# --------------------------------------------------------------------------- #
+# BLK-MA-12 — o S6 como COMPONENTE (não mais fato sem peso)
+# --------------------------------------------------------------------------- #
+def test_s6_entra_no_regime_quando_o_insumo_vem(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
+    churn, presenca = _insumos(serie_madura_s3_s4)
+    out = calcular_score_vulnerabilidade(
+        churn=churn, presenca=presenca, pressao=_pressao([(HEX_A, 60.0), (HEX_B, 0.0)])
+    )
+    linha = _linha_de(out, "k_tp")
+    assert "s6" in _tokens(linha)
+    assert float(linha["v6"]) == pytest.approx(0.60)
+    assert int(linha["n_sinais_disponiveis"]) == 4
+
+
+def test_v6_e_razao_absoluta_nao_percentil_do_lote() -> None:
+    """G-D3 aplicado ao S6: o valor de uma linha não pode depender de quem mais está no lote.
+
+    Percentil por universo tornaria o score não-monotônico — acrescentar uma academia muito
+    pressionada baixaria o `v6` de todas as outras. É o mesmo defeito que tirou o `v4` do percentil.
+    """
+    linhas = [
+        _linha_churn("k_a", hex_id=HEX_A, n_semanas_serie=13, interpretavel=True),
+        _linha_churn("k_b", hex_id=HEX_B, n_semanas_serie=13, interpretavel=True),
+    ]
+    pressao = _pressao([(HEX_A, 40.0), (HEX_B, 90.0)])
+    dupla = calcular_score_vulnerabilidade(
+        churn=_churn(linhas), presenca=_presenca([_linha_presenca(HEX_A), _linha_presenca(HEX_B)]),
+        pressao=pressao,
+    )
+    sozinha = calcular_score_vulnerabilidade(
+        churn=_churn(linhas[:1]), presenca=_presenca([_linha_presenca(HEX_A)]), pressao=pressao
+    )
+    assert float(_linha_de(dupla, "k_a")["v6"]) == float(_linha_de(sozinha, "k_a")["v6"])
+    assert float(_linha_de(dupla, "k_a")["score_vulnerabilidade"]) == pytest.approx(
+        float(_linha_de(sozinha, "k_a")["score_vulnerabilidade"])
+    )
+
+
+def test_pressao_zero_e_medicao_e_entra_no_score() -> None:
+    """`0` medido NÃO é ausência: o sinal está disponível e contribui com `v6 = 0`."""
+    churn = _churn([_linha_churn("k", hex_id=HEX_A, n_semanas_serie=13, interpretavel=True)])
+    out = calcular_score_vulnerabilidade(
+        churn=churn, presenca=_presenca([_linha_presenca()]), pressao=_pressao([(HEX_A, 0.0)])
+    )
+    linha = out.iloc[0]
+    assert "s6" in _tokens(linha)
+    assert float(linha["v6"]) == 0.0
+    assert not pd.isna(linha["score_vulnerabilidade"])
+
+
+def test_hex_sem_par_na_pressao_fica_com_s6_fora() -> None:
+    """Miss no join = sinal indisponível, exatamente como no `s1`. Nunca imputa zero."""
+    churn = _churn([_linha_churn("k", hex_id=HEX_B, n_semanas_serie=13, interpretavel=True)])
+    out = calcular_score_vulnerabilidade(
+        churn=churn,
+        presenca=_presenca([_linha_presenca(HEX_B)]),
+        pressao=_pressao([(HEX_A, 80.0)]),
+    )
+    linha = out.iloc[0]
+    assert "s6" not in _tokens(linha)
+    assert pd.isna(linha["v6"])
+
+
+def test_zero_sinais_continua_alcancavel_com_o_s6_no_contrato() -> None:
+    """A invariante mais antiga da camada NÃO pode virar inalcançável.
+
+    Um S6 "sempre disponível" extinguiria o regime `n_sinais_disponiveis == 0` e, com ele, a trava
+    "ausência nunca é zero" — que passaria a nunca disparar. Condicionar o S6 ao insumo é o que
+    mantém o regime alcançável.
+    """
+    churn = _churn(
+        [_linha_churn("k", hex_id=HEX_B, status="novo", n_semanas_serie=3, imatura=True)]
+    )
+    out = calcular_score_vulnerabilidade(
+        churn=churn, presenca=_presenca([_linha_presenca()]), pressao=_pressao([(HEX_A, 50.0)])
+    )
+    linha = out.iloc[0]
+    assert int(linha["n_sinais_disponiveis"]) == 0
+    assert pd.isna(linha["score_vulnerabilidade"]), "ausencia nunca e' zero"
+
+
+def test_frame_de_pressao_com_hex_duplicado_levanta() -> None:
+    churn = _churn([_linha_churn("k", n_semanas_serie=13, interpretavel=True)])
+    with pytest.raises(ValueError, match="duplicado"):
+        calcular_score_vulnerabilidade(
+            churn=churn,
+            presenca=_presenca([_linha_presenca()]),
+            pressao=_pressao([(HEX_A, 10.0), (HEX_A, 20.0)]),
+        )
 
 
 def test_renormalizar_pesos_reescala_para_somar_um() -> None:
@@ -280,15 +409,35 @@ def test_renormalizar_pesos_reescala_para_somar_um() -> None:
 
 
 def test_pesos_efetivos_do_plano_b_sao_calculados_nao_digitados() -> None:
-    """Os `~0,20 / ~0,467 / ~0,333` são CONSEQUÊNCIA de o S2 estar inativo, nunca constante."""
-    ativos = [s for s in c.SINAIS_ORDEM if s not in c.SINAIS_INATIVOS]
-    pesos = c.renormalizar_pesos(ativos)
-    soma_alvo = sum(c.PESOS_ALVO_SINAIS[s] for s in ativos)
-    for sinal in ativos:
+    """Os `~0,20 / ~0,467 / ~0,333` são CONSEQUÊNCIA da renormalização, nunca constante.
+
+    O Plano B é o REGIME `{s1, s3, s4}` — a linha sem insumo de pressão, que é o caso geral. Não é
+    mais "todos os sinais não-inativos": com o S6 passou a existir a categoria **ativo mas
+    condicional** (existe no contrato, disponível só quando o insumo vem). É por isso que o regime
+    é enumerado aqui em vez de derivado de `SINAIS_INATIVOS`.
+    """
+    plano_b = ["s1", "s3", "s4"]
+    pesos = c.renormalizar_pesos(plano_b)
+    soma_alvo = sum(c.PESOS_ALVO_SINAIS[s] for s in plano_b)
+    for sinal in plano_b:
         assert pesos[sinal] == pytest.approx(c.PESOS_ALVO_SINAIS[sinal] / soma_alvo)
     assert pesos["s1"] == pytest.approx(0.2, abs=1e-3)
     assert pesos["s3"] == pytest.approx(0.4667, abs=1e-3)
     assert pesos["s4"] == pytest.approx(0.3333, abs=1e-3)
+
+
+def test_s6_nao_desloca_os_pesos_de_quem_nao_tem_pressao() -> None:
+    """A garantia central do desenho: sem insumo de pressão, o score é bit a bit o de antes.
+
+    Se o S6 fosse "sempre disponível", os pesos efetivos de S1/S3/S4 cairiam para
+    `0,176 / 0,412 / 0,294` e TODA linha mudaria de valor — inclusive as que não têm pressão
+    medida. Este teste é o que impede essa regressão.
+    """
+    for regime in (["s1"], ["s1", "s3"], ["s1", "s3", "s4"], ["s3", "s4"], ["s3"]):
+        sem_s6 = c.renormalizar_pesos(regime)
+        esperado = {s: c.PESOS_ALVO_D4[s] / sum(c.PESOS_ALVO_D4[x] for x in regime) for s in regime}
+        for sinal in regime:
+            assert sem_s6[sinal] == pytest.approx(esperado[sinal]), (regime, sinal)
 
 
 def test_renormalizar_pesos_vazio_devolve_dict_vazio() -> None:
@@ -624,6 +773,94 @@ def test_rampup_coluna_ordenavel_e_toda_nula(serie_rampup: list[pd.DataFrame]) -
     assert bool(ordenado["score_vulnerabilidade_ordenavel"].isna().all())
 
 
+# --------------------------------------------------------------------------- #
+# Emenda do G-D1 pela DEC-028: o S6 entra na conjunção do provisório
+# --------------------------------------------------------------------------- #
+def _pressao_forte(hexes: list[str]) -> pd.DataFrame:
+    """Pressão positiva em todos os hexes, e DIFERENTE em cada um.
+
+    A distância varia por índice de propósito: com todos os concorrentes à mesma distância, o `v6`
+    sairia constante e o teste provaria só que a flag mudou — não que o score voltou a discriminar,
+    que é a razão de a emenda existir.
+    """
+    from motor_expansao.vulnerabilidade.pressao_competitiva import calcular_pressao_por_hex
+
+    pontos = []
+    for i, h in enumerate(hexes):
+        lat, lng = h3.cell_to_latlng(h)
+        pontos.append(
+            {
+                "rede": "smart_fit",
+                "lat": lat + 0.002 * (i + 1),
+                "lng": lng,
+                "status_registro": "valido",
+            }
+        )
+    return calcular_pressao_por_hex(hexes, pd.DataFrame(pontos))
+
+
+def test_pressao_tira_o_rampup_do_regime_provisorio(serie_rampup: list[pd.DataFrame]) -> None:
+    """A EMENDA DA DEC-028, medida onde ela muda o resultado.
+
+    Sem `& (~s6)` na conjunção, este frame sai com `flag_score_provisorio` em TODAS as linhas e
+    `score_vulnerabilidade_ordenavel` universalmente NULA — que foi o estado medido sobre as
+    19.329 academias reais: um `sort_values` devolvia `NaN` em tudo. Este teste FALHA se a emenda
+    for revertida, e é a única prova executável dela.
+    """
+    churn, presenca = _insumos(serie_rampup)
+    hexes = presenca["hex_id_res7"].astype(str).tolist()
+
+    sem = calcular_score_vulnerabilidade(churn=churn, presenca=presenca)
+    com = calcular_score_vulnerabilidade(
+        churn=churn, presenca=presenca, pressao=_pressao_forte(hexes)
+    )
+
+    # O estado ANTES: nada ordenável, exatamente como o G-D1 original queria.
+    assert bool(sem["flag_score_provisorio"].all())
+    assert bool(sem["score_vulnerabilidade_ordenavel"].isna().all())
+
+    # E DEPOIS de o insumo chegar: a régua deixa de ter dois valores e volta a ordenar.
+    assert not bool(com["flag_score_provisorio"].any())
+    assert not bool(com["score_vulnerabilidade_ordenavel"].isna().any())
+    # A ordenação só faz sentido se houver o que ordenar. Sem o S6 a régua é CATEGÓRICA: o `v1`
+    # só assume `{0.0, 0.5}`, então o score só pode ser `{0, 50}` — dois valores, por mais linhas
+    # que a série tenha, e era esse domínio que o G-D1 se recusava a ordenar. Com o S6 ela passa a
+    # ser contínua. (Contar `nunique` não serviria aqui: esta fixture tem 3 linhas em 2 hexes, e
+    # a pressão é do HEX — as duas linhas do mesmo hexágono empatam por construção.)
+    assert set(float(v) for v in sem["score_vulnerabilidade"]) <= {0.0, 50.0}
+    assert not set(float(v) for v in com["score_vulnerabilidade"]) & {0.0, 50.0}
+    assert com["v6"].nunique() > 1, "a pressao precisa discriminar entre hexes"
+    for _, linha in com.iterrows():
+        assert "s6" in _tokens(linha)
+
+
+def test_sem_o_s6_a_serie_imatura_continua_provisoria() -> None:
+    """A emenda é CIRÚRGICA: quem não recebe pressão continua exatamente como antes.
+
+    Sem este par, a emenda poderia ter sido escrita como "nunca provisório" e ninguém veria.
+    """
+    churn = _churn([_linha_churn("k", hex_id=HEX_A, imatura=True, n_semanas_serie=3)])
+    out = calcular_score_vulnerabilidade(churn=churn, presenca=_presenca([_linha_presenca(HEX_A)]))
+    linha = _linha_de(out, "k")
+    assert bool(linha["flag_score_provisorio"]) is True
+    assert pd.isna(linha["score_vulnerabilidade_ordenavel"])
+
+
+def test_assert_schema_rejeita_provisorio_que_ignora_o_s6() -> None:
+    """O guard de saída também foi emendado — e um frame forjado prova que ele morde."""
+    churn = _churn([_linha_churn("k", hex_id=HEX_A, imatura=True, n_semanas_serie=3)])
+    out = calcular_score_vulnerabilidade(
+        churn=churn,
+        presenca=_presenca([_linha_presenca(HEX_A)]),
+        pressao=_pressao_forte([HEX_A]),
+    )
+    assert bool(out.iloc[0]["flag_score_provisorio"]) is False
+    ruim = out.copy()
+    ruim.loc[ruim.index[0], "flag_score_provisorio"] = True
+    with pytest.raises(ValueError, match="flag_score_provisorio"):
+        _assert_schema_score(ruim)
+
+
 def test_score_zero_no_rampup_nao_significa_nao_vulneravel(
     serie_rampup: list[pd.DataFrame],
 ) -> None:
@@ -872,16 +1109,22 @@ def test_docstring_registra_por_que_as_colunas_ressalvadas_ficam_fora() -> None:
 # --------------------------------------------------------------------------- #
 # CA-11 — contrato de 20 colunas e `_assert_schema_score`
 # --------------------------------------------------------------------------- #
-def test_schema_22_colunas_em_ordem_e_dtypes(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
+def test_schema_26_colunas_em_ordem_e_dtypes(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
     churn, presenca = _insumos(serie_madura_s3_s4)
     out = calcular_score_vulnerabilidade(churn=churn, presenca=presenca)
     assert list(out.columns) == list(c.CONTRATO_COLUNAS_SCORE.keys())
-    # 20 -> 22 no BLK-MA-09 / DEC-026. Os dois novos sao FATOS, nao componentes: nao ha `v2`,
-    # e `n_sinais_disponiveis` continua limitado a 3.
-    assert len(list(out.columns)) == 22
+    # 20 -> 22 no BLK-MA-09 / DEC-026 (dois FATOS de rating); 22 -> 24 no BLK-MA-12 (`v6` e a
+    # pressao que o audita); 24 -> 25 no BLK-MA-14 / DEC-029 (`pressao_grao`, o carimbo de qual
+    # regua produziu o numero); 25 -> 26 no BLK-MA-16 (`universo_oferta`, o carimbo do OUTRO eixo
+    # — QUEM contou como concorrencia). Sem insumo de pressao, `v6` sai NULO e
+    # `n_sinais_disponiveis` continua limitado a 3 — a chamada acima nao passa `pressao=`.
+    assert len(list(out.columns)) == 26
     assert "v2" not in out.columns
     assert out["nota_wellhub"].dtype == "Float64"
     assert out["qtd_avaliacoes_wellhub"].dtype == "Int64"
+    assert out["v6"].isna().all(), "sem insumo de pressao, o S6 nao existe na linha"
+    assert out["pressao_grao"].isna().all(), "sem pressao nao ha grao a carimbar"
+    assert out["universo_oferta"].isna().all(), "sem pressao nao ha universo a carimbar"
     assert int(out["n_sinais_disponiveis"].max()) <= 3
     assert (out["versao_contrato"] == c.VERSAO_CONTRATO_SCORE).all()
     # `Int64` NULÁVEL, não `int64`: a linha sem par no sinal 1 precisa carregar nulo.
@@ -1227,3 +1470,113 @@ def test_rating_nao_altera_o_score(serie_madura_s3_s4: list[pd.DataFrame]) -> No
     pd.testing.assert_series_equal(
         a["sinais_disponiveis"], b["sinais_disponiveis"], check_names=False
     )
+
+
+# --------------------------------------------------------------------------- #
+# BLK-MA-14 / DEC-029 — o `v6` passa a aceitar os DOIS grãos, com carimbo
+# --------------------------------------------------------------------------- #
+def _pressao_academia(chaves_e_pressao: dict[str, float]) -> pd.DataFrame:
+    """Frame de pressão POR ACADEMIA, forjado no contrato — sem passar pelo cálculo geodésico."""
+    linhas = [
+        {
+            "fonte": "totalpass",
+            "chave_snapshot": chave,
+            "pressao_competitiva": p,
+            "v6": p / 100.0,
+            "oferta_ponderada": 1.0,
+            "n_concorrentes_no_raio": 1,
+            "dist_concorrente_mais_proximo_m": 500.0,
+            "oferta_independentes": 0.0,
+            "n_independentes_no_raio": 0,
+            # Decomposição por PROCEDÊNCIA (BLK-MA-17): zerada aqui porque este frame é forjado no
+            # universo `cadeias`, e o assert do contrato exige exatamente isso.
+            "oferta_cadeias_do_feed": 0.0,
+            "n_cadeias_do_feed_no_raio": 0,
+            "kernel_pressao": c.PRESSAO_KERNEL_DEFAULT,
+            "raio_pressao_m": c.PRESSAO_RAIO_M,
+            "universo_oferta": c.UNIVERSO_OFERTA_CADEIAS,
+            "versao_contrato": c.VERSAO_CONTRATO_PRESSAO,
+        }
+        for chave, p in chaves_e_pressao.items()
+    ]
+    df = pd.DataFrame(linhas, columns=list(c.CONTRATO_COLUNAS_PRESSAO_ACADEMIA.keys()))
+    for coluna, dtype in c.CONTRATO_COLUNAS_PRESSAO_ACADEMIA.items():
+        df[coluna] = df[coluna].astype(dtype)
+    return df
+
+
+def test_pressao_por_academia_nao_empata_dentro_do_hexagono() -> None:
+    """O ganho do bloco, medido na saída do SCORE: duas academias do mesmo hex divergem.
+
+    Com o grão hex isto era impossível por construção — o join `many_to_one` dava a mesma linha de
+    pressão às duas. Este teste falha se alguém devolver o `v6` ao grão de território.
+    """
+    churn = _churn(
+        [
+            _linha_churn("k_a", hex_id=HEX_A, n_semanas_serie=13, interpretavel=True),
+            _linha_churn("k_b", hex_id=HEX_A, n_semanas_serie=13, interpretavel=True),
+        ]
+    )
+    out = calcular_score_vulnerabilidade(
+        churn=churn,
+        presenca=_presenca([_linha_presenca(HEX_A)]),
+        pressao=_pressao_academia({"k_a": 90.0, "k_b": 10.0}),
+    )
+    assert out["hex_id_res7"].nunique() == 1, "as duas academias vivem no MESMO hexagono"
+    assert float(_linha_de(out, "k_a")["v6"]) == pytest.approx(0.90)
+    assert float(_linha_de(out, "k_b")["v6"]) == pytest.approx(0.10)
+    assert out["score_vulnerabilidade"].nunique() == 2
+
+
+def test_grao_e_carimbado_na_saida_e_so_onde_ha_pressao() -> None:
+    """`pressao_grao` diz de qual régua o número veio — sem isso as duas seriam comparadas às cegas."""
+    churn = _churn(
+        [
+            _linha_churn("k_com", hex_id=HEX_A, n_semanas_serie=13, interpretavel=True),
+            _linha_churn("k_sem", hex_id=HEX_A, n_semanas_serie=13, interpretavel=True),
+        ]
+    )
+    out = calcular_score_vulnerabilidade(
+        churn=churn,
+        presenca=_presenca([_linha_presenca(HEX_A)]),
+        pressao=_pressao_academia({"k_com": 42.0}),  # `k_sem` fica sem par no join
+    )
+    assert str(_linha_de(out, "k_com")["pressao_grao"]) == c.PRESSAO_GRAO_ACADEMIA
+    assert pd.isna(_linha_de(out, "k_sem")["pressao_grao"]), "sem pressao nao ha grao a carimbar"
+    assert pd.isna(_linha_de(out, "k_sem")["v6"])
+
+
+def test_grao_hex_continua_aceito_e_carimbado_como_hex() -> None:
+    """O grão antigo não foi removido: ele é a grandeza comparável com a camada de mercado."""
+    from motor_expansao.vulnerabilidade.pressao_competitiva import calcular_pressao_por_hex
+
+    lat, lng = h3.cell_to_latlng(HEX_A)
+    conc = pd.DataFrame([{"rede": "smart_fit", "lat": lat, "lng": lng, "status_registro": "valido"}])
+    out = calcular_score_vulnerabilidade(
+        churn=_churn([_linha_churn("k", hex_id=HEX_A, n_semanas_serie=13, interpretavel=True)]),
+        presenca=_presenca([_linha_presenca(HEX_A)]),
+        pressao=calcular_pressao_por_hex([HEX_A], conc),
+    )
+    assert str(out.iloc[0]["pressao_grao"]) == c.PRESSAO_GRAO_HEX
+    assert float(out.iloc[0]["v6"]) > 0.0
+
+
+def test_frame_de_pressao_sem_chave_reconhecivel_levanta() -> None:
+    ruim = pd.DataFrame([{"algo": 1, "pressao_competitiva": 10.0}])
+    with pytest.raises(ValueError, match="grao academia"):
+        calcular_score_vulnerabilidade(
+            churn=_churn([_linha_churn("k", hex_id=HEX_A)]),
+            presenca=_presenca([_linha_presenca(HEX_A)]),
+            pressao=ruim,
+        )
+
+
+def test_pressao_por_academia_duplicada_levanta() -> None:
+    """Duplicata envenenaria o join da chave primária do score."""
+    dupla = pd.concat([_pressao_academia({"k": 10.0}), _pressao_academia({"k": 20.0})])
+    with pytest.raises(ValueError, match="duplicado"):
+        calcular_score_vulnerabilidade(
+            churn=_churn([_linha_churn("k", hex_id=HEX_A)]),
+            presenca=_presenca([_linha_presenca(HEX_A)]),
+            pressao=dupla,
+        )

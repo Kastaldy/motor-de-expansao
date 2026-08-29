@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { PontoEscolhido } from '../App'
 import BotaoInicio from '../components/BotaoInicio'
 import FichaHex from '../components/FichaHex'
+import FichaImovel from '../components/FichaImovel'
 import HexMap, { type SearchPin, type ViewState } from '../components/HexMap'
 import JanelaFicha from '../components/JanelaFicha'
 import MethodologyPanel from '../components/MethodologyPanel'
@@ -16,9 +17,20 @@ import { Botao } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
 import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
+import { ACC, ACC_50 } from '../lib/imovel'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
-import { MAX_COMPARADOS } from '../lib/ranking-comparacao'
-import type { Cobertura1k, Hex, MunicipioItem, MunicipioPayload } from '../lib/types'
+import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
+import type { AlvoCaptura } from '../lib/captura-mapa'
+import { DIMENSOES, rotuloDoHex, rotulosDosHexes } from '../lib/comparacao'
+import type { Tema } from '../lib/tema'
+import type {
+  Cobertura1k,
+  Hex,
+  Independentes,
+  MunicipioItem,
+  MunicipioPayload,
+  Oportunidade,
+} from '../lib/types'
 
 /** Filtro global "melhores hexes": faixas M1 permitidas por nível. */
 const FAIXA_FILTROS: Record<string, Set<string>> = {
@@ -80,9 +92,32 @@ export interface MapScreenProps {
   janelaDoHex?: boolean
   /** Sem UF escolhida, não desenha o hero — quem o publica é a camada de cima. */
   semLanding?: boolean
+  /**
+   * Publica a função de CAPTURA do mapa para quem está fora deste componente.
+   *
+   * O modo de ponto é irmão na árvore e usa o MESMO mapa (`App.tsx`), então ele precisa
+   * pedir capturas sem ter o mapa em mãos. Mesmo motivo pelo qual o `pinFixo` mora no App:
+   * quem consome o mapa é o mapa, e o App só reparte o canal.
+   */
+  registrarCaptura?: (capturar: (alvos: AlvoCaptura[]) => Promise<string[]>) => void
+  /**
+   * Leva para a ABA de Oportunidades Imobiliárias já focada num imóvel — o caminho
+   * INVERSO do "Ver no Mapa Territorial" daquela aba. Quem troca de tela é o App
+   * (mesmo motivo do `onAnalisarPonto`); ausente = o botão da janela não aparece.
+   */
+  onVerImovelNaAba?: (o: Oportunidade) => void
+  /**
+   * Tema do app, repassado ao `HexMap`.
+   *
+   * Só o mapa precisa dele nesta tela: o resto do `MapScreen` é DOM e lê os tokens pela
+   * cascata, sem saber que existe tema. O deck.gl e o MapLibre não leem `var()` — o
+   * basemap e as cores de seleção têm de chegar como valor.
+   */
+  tema: Tema
 }
 
 export default function MapScreen({
+  registrarCaptura,
   ufs,
   uf,
   onUf,
@@ -100,6 +135,8 @@ export default function MapScreen({
   onPontoBuscado,
   janelaDoHex = true,
   semLanding = false,
+  onVerImovelNaAba,
+  tema,
 }: MapScreenProps) {
   // A foto so' vale se tiver sido tirada NESTA uf/municipio — `fotoAplicavel` faz esse
   // portao (lib/mapa-estado). Sem ele, um pin de Sao Paulo reapareceria depois de um
@@ -132,6 +169,94 @@ export default function MapScreen({
   // hoje e nenhum numero muda sem alguem clicar. Nao entra no EstadoMapa de proposito —
   // e experimento, nao preferencia a preservar entre telas.
   const [raio1km, setRaio1km] = useState(false)
+  /* Regua do mapa (BLK-CONC-MEDIR): comeca DESLIGADA. Ligada, o clique mede em vez de
+     selecionar hexagono — por isso e' chave explicita e nao um gesto escondido. */
+  const [medindo, setMedindo] = useState(false)
+
+  /* Pins das academias INDEPENDENTES com score (BLK-MA-15). Comeca DESLIGADO pela mesma razao da
+     chave de raio: o piloto abre identico ao de hoje. Sao ate ~1,3 mil pontos numa capital, e
+     desenha-los sem pedido roubaria a leitura dos hexagonos por baixo. */
+  const [verIndependentes, setVerIndependentes] = useState(false)
+  const independentes = dados?.independentes ?? null
+  const temIndependentes = independentes?.disponivel === true && independentes.itens.length > 0
+
+  /* A chave morre com o recorte que a justificava: sair de um municipio COM camada para um SEM
+     deixaria a pilula ligada sem nada para desenhar. */
+  useEffect(() => {
+    if (!temIndependentes) setVerIndependentes(false)
+  }, [temIndependentes])
+
+  /* Camada de OPORTUNIDADES IMOBILIARIAS (a oferta da aba, sobre o territorio).
+     Comeca DESLIGADA pela mesma razao das outras chaves: o piloto abre identico ao
+     de hoje. O dado vem por UF assim que ela e' escolhida — NAO espera a chave —
+     porque tambem alimenta a secao "Imoveis disponiveis aqui" da ficha do hexagono,
+     que vale com a camada apagada. E' leve perto do raio (payload JSON do top da UF,
+     cacheado no servidor), por isso nao repete o padrao sob demanda da cobertura. */
+  const [verImoveis, setVerImoveis] = useState(false)
+  const [imoveisUf, setImoveisUf] = useState<Oportunidade[] | null>(null)
+  /* A janela de DETALHE de um imovel — aberta pelo pin da camada ou pela secao da
+     ficha do hexagono. Janela propria (ancora direita), nao um modo da FichaHex:
+     o operador compara o imovel COM o hexagono, entao as duas ficam lado a lado. */
+  const [imovelAberto, setImovelAberto] = useState<Oportunidade | null>(null)
+
+  /* Porta UNICA de abertura por gesto humano: o pin da camada e a secao "Imoveis
+     disponiveis aqui" da ficha do hexagono passam os dois por aqui, entao o rastro
+     (DEC-027) sai UMA vez por clique, nao um por caminho. O fechamento segue chamando
+     `setImovelAberto(null)` direto — so a abertura e' intencao que a trilha precisa ver —
+     e o HOVER do pin NAO passa por aqui de proposito: dispara dezenas de vezes num
+     arrasto e afogaria a trilha. */
+  const abrirImovel = useCallback((o: Oportunidade) => {
+    api.eventoImobiliaria('abrir-imovel', {
+      imovel: o.id,
+      /* UF/municipio do IMOVEL, nao do recorte da tela: a ficha do hexagono lista imovel
+         pelo `hex_id` (inclusive sem coordenada), e e' o imovel que identifica o alvo. */
+      uf: o.uf,
+      municipio: o.municipio,
+      origem: 'mapa',
+    })
+    setImovelAberto(o)
+  }, [])
+
+  useEffect(() => {
+    if (!uf) {
+      setImoveisUf(null)
+      return
+    }
+    let vivo = true
+    /* Zera ANTES de buscar: sem isto, trocar de UF com a camada ligada deixava os
+       pontinhos (e a contagem da pilula) da UF ANTERIOR na tela ate' a resposta nova. */
+    setImoveisUf(null)
+    api
+      .oportunidades(uf, 3000)
+      .then((r) => {
+        if (vivo) setImoveisUf(r.itens)
+      })
+      .catch(() => {
+        /* Lista VAZIA, nao null: null e' "carregando" e pula o auto-desligamento da
+           chave — com null, um fetch falho deixava `verImoveis` ligado invisivel e a
+           camada reacendia sozinha na UF seguinte. Vazia, o efeito abaixo desliga.
+           Sem a camada o mapa segue como antes — a pilula nem aparece. */
+        if (vivo) setImoveisUf([])
+      })
+    return () => {
+      vivo = false
+    }
+  }, [uf])
+
+  /* O recorte da camada acompanha o drill-down: na visao da UF desenha a UF inteira,
+     no municipio so' o municipio (mesma chave de nome que o `onVerNoMapa` da aba ja
+     usa para chegar aqui). So' entram no MAPA os imoveis com coordenada; os sem
+     coordenada continuam aparecendo na secao da ficha do hexagono (via `hex_id`). */
+  const imoveisNoMapa = useMemo(() => {
+    const xs = (imoveisUf ?? []).filter((o) => o.lat != null && o.lng != null)
+    return municipio ? xs.filter((o) => o.municipio === municipio) : xs
+  }, [imoveisUf, municipio])
+  const temImoveis = imoveisNoMapa.length > 0
+
+  /* Mesma regra das independentes: a chave morre com o recorte que a justificava. */
+  useEffect(() => {
+    if (imoveisUf != null && !temImoveis) setVerImoveis(false)
+  }, [imoveisUf, temImoveis])
 
   /* Geometria do raio: buscada SOB DEMANDA, so' quando a chave liga. Fora do payload do
      mapa de proposito — custa ~2,4 s e ~3,9 MB na UF de SP, e quem nunca liga a chave nao
@@ -206,6 +331,7 @@ export default function MapScreen({
     setFiltroFaixa('')
     setModoCenario(false)
     setCenario([])
+    setImovelAberto(null)
     cameraRef.current = null
   }, [uf, municipio])
 
@@ -282,6 +408,17 @@ export default function MapScreen({
      divergirem depois de uma troca de município. */
   const hexSelecionado = selecionado ? (porId.get(selecionado) ?? null) : null
   const cresMunDoHex = hexSelecionado?.mun ? (dados?.cres_mun?.[hexSelecionado.mun] ?? null) : null
+
+  /* Os imoveis DESTE hexagono, para a secao da ficha. Casa por `hex_id` (H3 res-7,
+     a MESMA malha do M1) sobre o conjunto da UF inteira — independe da chave da
+     camada e do drill-down: o hexagono aberto ja' e' um recorte. */
+  const imoveisDoHex = useMemo(
+    () =>
+      hexSelecionado && imoveisUf
+        ? imoveisUf.filter((o) => o.hex_id === hexSelecionado.id)
+        : [],
+    [imoveisUf, hexSelecionado],
+  )
 
   // Municípios do dropdown: "Todos" (volta à UF) + lista alfabética.
   const opcoesMunicipio = useMemo(
@@ -372,6 +509,102 @@ export default function MapScreen({
     setPin(null)
     setVoo((v) => ({ hexId, n: (v?.n ?? 0) + 1 }))
   }, [])
+
+  /* ---- Deck de comparacao (PDF) --------------------------------------------
+     O MapScreen orquestra porque so' ele tem as duas pontas: o mapa (que captura) e a
+     lista comparada (que vira o ranking). O painel so' pede.
+
+     A ORDEM importa: primeiro as capturas, depois o POST. O ranking e' calculado AQUI, no
+     mesmo `ranquear` que a tela usa, e viaja pronto — o servidor so' desenha, para nao
+     existir uma segunda regra de "quem vence" que possa divergir da tela. */
+  const [pedidoCaptura, setPedidoCaptura] = useState<{
+    alvos: AlvoCaptura[]
+    n: number
+  } | null>(null)
+  const [gerandoDeck, setGerandoDeck] = useState(false)
+
+  /* A captura vira uma PROMESSA, e nao um par pedido/callback espalhado pela tela. Duas
+     razoes: o fluxo do deck fica linear (`await capturar(...)` e segue), e o modo de PONTO
+     — que e' irmao deste componente na arvore e usa o MESMO mapa — precisa pedir capturas
+     tambem. Publicar a funcao por `registrarCaptura` e' o mesmo caminho que o `pinFixo` do
+     App ja' usa: quem consome o mapa e' o mapa, entao o canal mora aqui e o App so' o
+     reparte. */
+  const resolveCaptura = useRef<((imagens: string[]) => void) | null>(null)
+
+  const capturar = useCallback(
+    (alvos: AlvoCaptura[]) =>
+      new Promise<string[]>((resolve) => {
+        resolveCaptura.current = resolve
+        setPedidoCaptura((p) => ({ alvos, n: (p?.n ?? 0) + 1 }))
+      }),
+    [],
+  )
+
+  const aoCapturarMapas = useCallback((imagens: string[]) => {
+    const resolver = resolveCaptura.current
+    resolveCaptura.current = null
+    resolver?.(imagens)
+  }, [])
+
+  useEffect(() => {
+    registrarCaptura?.(capturar)
+  }, [registrarCaptura, capturar])
+
+  /* Os MESMOS rótulos do painel, e desambiguados: cinco hexágonos da mesma cidade davam
+     cinco itens "São Paulo" no PDF, indistinguíveis entre si. A regra vive no `lib/` —
+     duas cópias divergiriam no primeiro ajuste, e uma delas é o que vai para o PDF. */
+  const rotulosComparacao = useCallback((hs: Hex[]) => rotulosDosHexes(hs), [])
+
+  const pedirDeck = useCallback(
+    async () => {
+      const hs = hexesComparacao
+      if (!hs?.length || gerandoDeck) return
+      setGerandoDeck(true)
+      try {
+        // Sem coordenada: a comparacao de hexagonos nao tem imovel para marcar — o
+        // assunto de cada foto e' a celula inteira.
+        const imagens = await capturar(hs.map((h) => ({ hexId: h.id })))
+        const rotulos = rotulosComparacao(hs)
+        const ranking = ranquear(DIMENSOES, hs, rotulos)
+        /* O subtítulo nomeia a cidade só quando TODAS são da mesma. Na visão de UF o mapa
+           serve 15.000 hexágonos de 163 municípios (medido em SP), então o cenário pode
+           misturar cidades — e usar o município do primeiro fazia a capa afirmar
+           "São Paulo" para um conjunto que tinha só um hexágono de lá. */
+        const cidades = [...new Set(hs.map((h) => h.mun).filter(Boolean))] as string[]
+        const cidade =
+          cidades.length === 1
+            ? `${cidades[0]} - `
+            : cidades.length > 1
+              ? `${cidades.length} municípios - `
+              : ''
+        const resposta = await fetch('/api/relatorio/comparacao', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...ranking,
+            titulo: 'Comparação de hexágonos',
+            subtitulo: `${cidade}${hs.length} áreas`,
+            imagens,
+          }),
+        })
+        if (!resposta.ok) throw new Error(`HTTP ${resposta.status}`)
+        const blob = await resposta.blob()
+        // Baixa pelo link temporario e REVOGA a URL: sem o revoke o blob fica retido pela
+        // aba enquanto ela viver, e um deck tem alguns MB de imagem dentro.
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = 'comparacao-hexagonos.pdf'
+        a.click()
+        URL.revokeObjectURL(url)
+      } catch (erro) {
+        console.error('[deck] falhou ao gerar o PDF da comparação', erro)
+      } finally {
+        setGerandoDeck(false)
+      }
+    },
+    [hexesComparacao, rotulosComparacao, capturar, gerandoDeck],
+  )
 
   /**
    * Poe ou tira um hexagono da comparacao, direto da lista.
@@ -549,6 +782,7 @@ export default function MapScreen({
         <HexMap
           hexes={hexesFiltrados}
           passo={passo}
+          tema={tema}
           cresMun={dados.cres_mun}
           centro={dados.centro}
           municipio={dados.municipio ?? undefined}
@@ -557,6 +791,10 @@ export default function MapScreen({
           selecionado={modoCenario ? null : selecionado}
           cenario={cenario}
           raio1km={raio1km}
+          medindo={medindo}
+          independentes={verIndependentes ? independentes?.itens : undefined}
+          imoveis={verImoveis ? imoveisNoMapa : undefined}
+          onImovel={abrirImovel}
           cobertura1k={cobertura}
           /* A foto CONGELA na montagem, e trocar de UF/municipio zera `cameraRef` mas
              nao tem como zerar `foto.camera`. Sem este portao: SP/Sao Paulo -> volta da
@@ -582,6 +820,8 @@ export default function MapScreen({
           }}
           searchPin={pinFixo ?? pin}
           voarPara={voo}
+          pedidoCaptura={pedidoCaptura}
+          onCapturas={aoCapturarMapas}
         />
       )}
 
@@ -878,6 +1118,13 @@ export default function MapScreen({
                 </button>
               </div>
             )}
+            {/* Regua. PRIMEIRA da coluna e sem condicao nenhuma de passo, nivel ou
+                camada: medir a distancia ate uma concorrente ou ate uma unidade nossa e'
+                pergunta de qualquer etapa. No fim da pilha ela ficava abaixo da legenda e
+                das outras chaves -- que sao CONDICIONAIS --, entao a posicao dela mudava
+                conforme a tela e era facil nao encontra-la. */}
+            <PilulaRegua ligado={medindo} onToggle={() => setMedindo((v) => !v)} />
+
             {!nivelUf && (
               <div
                 style={{
@@ -922,6 +1169,42 @@ export default function MapScreen({
 
             <ScoreLegend passoN={passo.n} />
 
+            {/* Academias INDEPENDENTES com score (BLK-MA-15). Vale em QUALQUER passo: a
+                pergunta "quem ja opera aqui e esta espremido?" e' a INVERSAO do funil (comprar,
+                nao abrir), entao nao pertence a camada nenhuma dele. */}
+            {temIndependentes && (
+              <PilulaIndependentes
+                ligado={verIndependentes}
+                meta={independentes}
+                onToggle={() => setVerIndependentes((v) => !v)}
+              />
+            )}
+
+            {/* OPORTUNIDADES IMOBILIARIAS do recorte (a oferta da aba, como pontinhos).
+                Tambem vale em qualquer passo: "que imovel existe aqui?" e' pergunta de
+                territorio, nao de camada do funil. So aparece quando o recorte tem
+                imovel coletado — pilula sem nada para desenhar mentiria disponibilidade. */}
+            {temImoveis && (
+              <PilulaImoveis
+                ligado={verImoveis}
+                n={imoveisNoMapa.length}
+                onToggle={() => {
+                  /* Rastro (DEC-027) so no LIGAR: apagar a camada nao e' interesse pela
+                     oferta imobiliaria, e o auto-desligamento por recorte sem imovel nem
+                     passa por aqui (mexe no estado direto), entao nao vira gesto falso.
+                     Fora do updater de proposito — em StrictMode ele roda duas vezes. */
+                  if (!verImoveis) {
+                    api.eventoImobiliaria('filtrar', {
+                      uf,
+                      origem: 'mapa',
+                      detalhe: 'camada-imoveis',
+                    })
+                  }
+                  setVerImoveis((v) => !v)
+                }}
+              />
+            )}
+
             {/* PROTOTIPO — chave do raio de atuacao das concorrentes. So aparece nos
                 passos que falam de oferta e disputa, e so quando o backend serviu os
                 campos do modelo novo. */}
@@ -932,6 +1215,7 @@ export default function MapScreen({
                 onToggle={() => setRaio1km((v) => !v)}
               />
             )}
+
           </div>
         )}
 
@@ -1021,14 +1305,25 @@ export default function MapScreen({
           coisas diferentes sobre a mesma seleção competiriam entre si. */}
       <JanelaFicha
         aberta={janelaDoHex && hexSelecionado != null && !modoCenario}
-        titulo={hexSelecionado?.mun ?? 'Hexágono'}
+        /* BAIRRO, o MESMO nome que o painel da direita usa na lista. O titulo saia como
+           o municipio, entao clicar em "Aracaré" no ranking abria uma ficha chamada
+           "Itaquaquecetuba" — e o item de baixo abria outra com o mesmo nome (Juan,
+           2026-08-19). Duas fichas com o titulo da cidade nao dizem qual area e' qual. */
+        titulo={hexSelecionado ? rotuloDoHex(hexSelecionado) : 'Hexágono'}
         /* O id do hexágono NÃO entra abreviado aqui. H3 é hierárquico: vizinhos dividem o
            prefixo, então `87a8c0ce…` é o mesmo texto para hexágonos diferentes — piorava
            exatamente o que se quer resolver, que é saber qual é qual. A coordenada
            distingue de imediato; o id inteiro fica no corpo da ficha. */
         subtitulo={
           hexSelecionado
-            ? [dados?.uf, coord(hexSelecionado.lat, hexSelecionado.lng)]
+            ? [
+                // O MUNICIPIO entra aqui quando o titulo virou bairro — senao "Aracaré"
+                // sozinho nao diz em que cidade fica. Quando o titulo JA' e' o municipio
+                // (visao de UF, ou hexagono fora da malha de bairros), nao se repete.
+                hexSelecionado.bairro ? hexSelecionado.mun : null,
+                dados?.uf,
+                coord(hexSelecionado.lat, hexSelecionado.lng),
+              ]
                 .filter(Boolean)
                 .join(' · ')
             : undefined
@@ -1037,7 +1332,41 @@ export default function MapScreen({
         recuoInferior={96}
       >
         {hexSelecionado && (
-          <FichaHex hex={hexSelecionado} cres={cresMunDoHex} />
+          <FichaHex
+            hex={hexSelecionado}
+            cres={cresMunDoHex}
+            /* `comparar` já põe na lista E liga o modo cenário — sem isso o hexágono
+               entraria marcado e o painel de comparação ficaria escondido. */
+            onComparar={() => comparar(hexSelecionado.id)}
+            imoveis={imoveisDoHex}
+            onVerImovel={abrirImovel}
+          />
+        )}
+      </JanelaFicha>
+
+      {/* ---------------- Janela do IMÓVEL (detalhe da oportunidade) ----------------
+          Aberta pelo pin da camada imobiliária ou pela seção "Imóveis disponíveis
+          aqui" da ficha do hexágono. Nasce à DIREITA: a ficha do hexágono usa a
+          âncora padrão (esquerda) e o fluxo natural é ler as duas lado a lado. */}
+      <JanelaFicha
+        aberta={imovelAberto != null}
+        ancora="direita"
+        titulo={imovelAberto?.titulo ?? 'Imóvel'}
+        subtitulo={
+          imovelAberto
+            ? [imovelAberto.bairro, imovelAberto.municipio, imovelAberto.uf]
+                .filter(Boolean)
+                .join(' · ')
+            : undefined
+        }
+        onFechar={() => setImovelAberto(null)}
+        recuoInferior={96}
+      >
+        {imovelAberto && (
+          <FichaImovel
+            op={imovelAberto}
+            onVerNaAba={onVerImovelNaAba ? () => onVerImovelNaAba(imovelAberto) : undefined}
+          />
         )}
       </JanelaFicha>
 
@@ -1055,7 +1384,16 @@ export default function MapScreen({
         recuoInferior={96}
       >
         {hexesComparacao ? (
-          <PainelComparacao hexes={hexesComparacao} onLimpar={() => setCenario([])} />
+          <PainelComparacao
+            hexes={hexesComparacao}
+            onLimpar={() => setCenario([])}
+            /* `selecionarDaLista` já é o caminho de "clicou na lista, leve-me lá": ele
+               seleciona e pede o voo. Clicar no mapa continua sem voo, porque lá o
+               hexágono já está sob o cursor. */
+            onIrPara={selecionarDaLista}
+            onRelatorio={pedirDeck}
+            gerandoRelatorio={gerandoDeck}
+          />
         ) : (
           <div>
             <div style={{ font: '700 12px/1 var(--f-ui)', color: 'var(--tx-max)' }}>
@@ -1352,6 +1690,57 @@ function PainelMensagem({ children }: { children: React.ReactNode }) {
    de cada concorrente e a cor dos hexagonos que eles alcancam.
 
    Abre SEMPRE em 2 km — o piloto continua identico ao de hoje ate alguem clicar. */
+/* Chave da REGUA do mapa (BLK-CONC-MEDIR).
+
+   Modo dedicado, e nao clique-no-pin: o clique do mapa ja tem dono — selecionar hexagono
+   e' o gesto central do funil — e roubar esse gesto quebraria a tela de quem nunca vai
+   medir. Com a chave, o unico gesto que muda e' o de quem pediu a medicao. */
+function PilulaRegua({ ligado, onToggle }: { ligado: boolean; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      title={
+        ligado
+          ? 'Clique na origem e no destino; perto de uma bandeira a ponta trava nela'
+          : 'Medir a distância entre dois pontos do mapa, travando nos pins'
+      }
+      style={{
+        // Mesmo motivo do `PilulaRaio`: o container da legenda tem `pointerEvents: 'none'`
+        // e sem devolver 'auto' aqui o clique atravessa o botao e vai para o mapa.
+        pointerEvents: 'auto',
+        marginTop: 8,
+        width: '100%',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        fontSize: 11,
+        fontWeight: 600,
+        padding: '7px 11px',
+        borderRadius: 9,
+        border: `1px solid ${ligado ? 'var(--ac-a45)' : 'var(--linha-mapa)'}`,
+        // Mesma troca das outras pílulas: fundo OPACO, não PRETO. No escuro `--surf-mapa`
+        // é o mesmo #000; no claro é branco chapado, porque o que resolve a legenda
+        // atravessando o texto é a opacidade, não a cor.
+        background: 'var(--surf-mapa)',
+        color: ligado ? 'var(--ac-chip)' : 'var(--tx-narrative)',
+      }}
+    >
+      <span
+        style={{
+          width: 9,
+          height: 9,
+          borderRadius: '50%',
+          background: ligado ? 'var(--ac-text)' : 'var(--sinal-off)',
+          flexShrink: 0,
+        }}
+      />
+      {ligado ? 'Régua ligada — clique dois pontos' : 'Medir distância'}
+    </button>
+  )
+}
+
+
 function PilulaRaio({
   ligado,
   carregando,
@@ -1385,11 +1774,14 @@ function PilulaRaio({
         fontWeight: 600,
         padding: '7px 11px',
         borderRadius: 9,
-        border: `1px solid ${ligado ? 'rgba(53,201,214,.45)' : 'rgba(255,255,255,.14)'}`,
-        // Fundo PRETO (pedido do Felipe): o botao fica sobre o mapa, e um fundo
-        // translucido deixava a legenda das faixas atravessar o texto.
-        background: '#000',
-        color: ligado ? '#7de3ec' : '#9aa7b5',
+        border: `1px solid ${ligado ? 'var(--ac-a45)' : 'var(--linha-mapa)'}`,
+        // Fundo OPACO (pedido do Felipe): o botão fica sobre o mapa, e um fundo
+        // translúcido deixava a legenda das faixas atravessar o texto. No escuro
+        // `--surf-mapa` É o preto que ele pediu; no claro é branco chapado, porque o que
+        // resolve o problema é a opacidade, não a cor — um retângulo preto sobre o
+        // Positron seria a única mancha escura da tela.
+        background: 'var(--surf-mapa)',
+        color: ligado ? 'var(--ac-chip)' : 'var(--tx-narrative)',
       }}
     >
       <span
@@ -1397,7 +1789,12 @@ function PilulaRaio({
           width: 9,
           height: 9,
           borderRadius: '50%',
-          background: carregando ? '#f2c230' : ligado ? '#4fd3df' : '#5a6472',
+          // Os três viraram `var()` para seguir o tema sem este componente saber que ele
+          // existe. No ESCURO os três valem exatamente o que valiam como hex solto:
+          // --carga = #f2c230, --ac-text = #4fd3df, --sinal-off = #5a6472. O âmbar e o
+          // cinza ganharam token PRÓPRIO em vez de cair em --warn/--tx-off, que eram
+          // vizinhos e não iguais (ver tokens.css).
+          background: carregando ? 'var(--carga)' : ligado ? 'var(--ac-text)' : 'var(--sinal-off)',
           flexShrink: 0,
         }}
       />
@@ -1406,6 +1803,134 @@ function PilulaRaio({
         : ligado
           ? 'Raio 1 km por concorrente'
           : 'Ver raio de 1 km das concorrentes'}
+    </button>
+  )
+}
+
+
+/* Chave dos pins das academias INDEPENDENTES (BLK-MA-15).
+
+   O texto diz de QUEM e' o pin, e nao so' "academias": o mapa ja tem bandeiras de CADEIA, e os
+   dois universos sao opostos — a cadeia e' quem disputa o mercado, a independente e' quem se
+   compra. Confundi-los na tela seria pior que nao mostrar nenhum.
+
+   O TETO E' DECLARADO quando morde: corte silencioso num municipio grande mentiria sobre a
+   densidade, que e' o defeito que o teto de pins de concorrente ja registrou. */
+function PilulaIndependentes({
+  ligado,
+  meta,
+  onToggle,
+}: {
+  ligado: boolean
+  meta: Independentes | null
+  onToggle: () => void
+}) {
+  const n = meta?.itens.length ?? 0
+  const total = meta?.total ?? 0
+  return (
+    <button
+      onClick={onToggle}
+      title={
+        ligado
+          ? 'Cada ponto e uma academia independente. Passe o mouse para ver o score, a pressao ' +
+            'competitiva medida da coordenada dela e a nota do WellHub.'
+          : `Ver as ${total} academias independentes deste recorte, com score`
+      }
+      style={{
+        // Mesmo motivo do `PilulaRaio`: o container da legenda tem `pointerEvents: 'none'`.
+        pointerEvents: 'auto',
+        marginTop: 8,
+        width: '100%',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        fontSize: 11,
+        fontWeight: 600,
+        padding: '7px 11px',
+        borderRadius: 9,
+        border: `1px solid ${ligado ? 'rgba(232,102,60,.5)' : 'var(--linha-mapa)'}`,
+        // Mesma troca da `PilulaRaio`: fundo OPACO em vez de PRETO. O que resolve a
+        // legenda atravessando o texto é a opacidade, não a cor — e três retângulos
+        // pretos empilhados sob um card de legenda branco seriam a única mancha escura
+        // da tela. No escuro `--surf-mapa` é o mesmo #000 de antes.
+        background: 'var(--surf-mapa)',
+        color: ligado ? 'var(--indep-tx)' : 'var(--tx-narrative)',
+      }}
+    >
+      <span
+        style={{
+          width: 9,
+          height: 9,
+          borderRadius: '50%',
+          // O ponto LIGADO fica no hex da camada: é elemento gráfico e passa nos dois
+          // fundos. Só o desligado virou token, e `--sinal-off` é o #5a6472 de antes.
+          background: ligado ? '#e8663c' : 'var(--sinal-off)',
+          flexShrink: 0,
+        }}
+      />
+      {ligado
+        ? `${n} independentes${meta?.truncado ? ` de ${total} (teto)` : ''}`
+        : 'Ver academias independentes'}
+    </button>
+  )
+}
+
+/* Chave dos pontinhos de OPORTUNIDADES IMOBILIARIAS (a oferta da aba, no territorio).
+
+   Identidade MAGENTA — o acento da propria aba imobiliaria (lib/imovel), que nenhuma
+   outra camada do mapa usa: turquesa e' acao/cenario, laranja e' das independentes, e
+   o comentario do card de metricas ja registrou que quase toda matiz do tema significa
+   algo. Os PONTOS em si saem na cor categorica do TIPO (a mesma da aba); o magenta e'
+   so o "isto e' da camada imobiliaria" da pilula e da janela de detalhe. */
+function PilulaImoveis({
+  ligado,
+  n,
+  onToggle,
+}: {
+  ligado: boolean
+  n: number
+  onToggle: () => void
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      title={
+        ligado
+          ? 'Cada ponto é um imóvel coletado, na cor do tipo (galpão, comercial/loja, terreno). ' +
+            'Passe o mouse para ver aluguel, custo de ocupação, projeção e área; clique para abrir o detalhe.'
+          : `Ver os ${n} imóveis de locação coletados neste recorte`
+      }
+      style={{
+        // Mesmo motivo das outras pilulas: o container da legenda tem `pointerEvents: 'none'`.
+        pointerEvents: 'auto',
+        marginTop: 8,
+        width: '100%',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        fontSize: 11,
+        fontWeight: 600,
+        padding: '7px 11px',
+        borderRadius: 9,
+        border: `1px solid ${ligado ? ACC_50 : 'var(--linha-mapa)'}`,
+        background: 'var(--surf-mapa)',
+        color: ligado ? 'var(--imovel-tx)' : 'var(--tx-narrative)',
+      }}
+    >
+      <span
+        style={{
+          width: 9,
+          height: 9,
+          borderRadius: '50%',
+          background: ligado ? ACC : 'var(--sinal-off)',
+          flexShrink: 0,
+        }}
+      />
+      {ligado
+        ? `${n} ${n === 1 ? 'imóvel no recorte' : 'imóveis no recorte'}`
+        : 'Ver oportunidades imobiliárias'}
     </button>
   )
 }

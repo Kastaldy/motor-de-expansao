@@ -11,12 +11,20 @@ Ponto plugavel: `geo` (geocoding endereco+CEP -> coordenada).
 
 Rodar (com a API no ar):
     API_TELEGRAM_TOKEN=... python -m motor_expansao.api.telegram_bot
+
+UMA instancia por token. O Telegram entrega cada update a um `getUpdates` so; duas
+instancias com o mesmo token se derrubam (HTTP 409) e a mesma mensagem chega as duas
+— a pessoa recebe o relatorio DUPLICADO. O laco detecta isso e aborta (ver
+`_MAX_CONFLITOS`). Para testar em paralelo com producao, use OUTRO token de bot.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import socket
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -38,8 +46,18 @@ _TELEGRAM = "https://api.telegram.org/bot{token}/{method}"
 
 # Dois tipos de relatorio no menu.
 _BTN_PONTUAL = "Relatorio Pontual"
-_BTN_MUNICIPAL = "Relatorio Municipal"
-_KB_MENU = [[_BTN_PONTUAL], [_BTN_MUNICIPAL], ["Ajuda"]]
+# Municipal em DUAS opcoes (Juan, 2026-08-19): a unidade vira escolha de quem pede, nao deducao
+# do codigo. Cada uma responde melhor a uma pergunta -- bairro para conversar com o time e com
+# o locador (nomes que todos reconhecem), hexagono para a leitura de mercado, que e' a unidade
+# nativa do residual.
+_BTN_MUNICIPAL_HEX = "Municipal (hexagonos)"
+_BTN_MUNICIPAL_BAIRRO = "Municipal (bairros)"
+# Rotulo antigo, mantido SO para reconhecer o toque: o teclado fica em CACHE no Telegram,
+# entao quem ja usava o bot continua vendo "Relatorio Municipal" ate abrir o menu de novo.
+# Ele NAO escolhe unidade -- responde explicando que a opcao virou duas e troca o teclado.
+# Mapear silenciosamente para bairro seria o mesmo chute que este ciclo veio eliminar.
+_BTN_MUNICIPAL_ANTIGO = "Relatorio Municipal"
+_KB_MENU = [[_BTN_PONTUAL], [_BTN_MUNICIPAL_HEX], [_BTN_MUNICIPAL_BAIRRO], ["Ajuda"]]
 _KB_VOLTAR = [["⬅️ Voltar"]]
 
 # UFs para o teclado de escolha do estado (Relatorio Municipal).
@@ -59,12 +77,25 @@ def _kb_ufs() -> list[list[str]]:
 _MENU = (
     "📋 *Menu* — o que voce quer gerar?\n\n"
     "• *Relatorio Pontual* — estudo de um ponto (raio 1,0 km)\n"
-    "• *Relatorio Municipal* — estudo de um municipio inteiro\n"
+    "• *Municipal (hexagonos)* — municipio inteiro, mapas por hexagono\n"
+    "• *Municipal (bairros)* — municipio inteiro, mapas por bairro\n"
     "• *Ajuda* — como funciona\n\n"
     "Toque em uma opcao abaixo. 👇"
 )
 
-_PEDIR_UF = "🗺️ *Relatorio Municipal* — primeiro, escolha o *estado (UF)*:"
+_MUNICIPAL_VIROU_DOIS = (
+    "ℹ️ O *Relatorio Municipal* agora tem duas leituras — escolha uma:\n\n"
+    "• *Municipal (hexagonos)* — mapas por hexagono (leitura de mercado)\n"
+    "• *Municipal (bairros)* — mapas por bairro (nomes que o time reconhece)\n\n"
+    "Toque em uma opcao abaixo. 👇"
+)
+
+
+def _pedir_uf(unidade: str) -> str:
+    """Prompt de UF dizendo QUAL relatorio esta sendo montado (o menu ja ficou para tras)."""
+    rotulo = "hexágonos" if unidade == "hexagono" else "bairros"
+    return f"🗺️ *Relatorio Municipal ({rotulo})* — escolha o *estado (UF)*:"
+
 
 
 def _pedir_municipio(uf: str) -> str:
@@ -89,6 +120,31 @@ _SAUDACAO = (
 )
 
 _SENHA_INCORRETA = "🔒 Senha incorreta. Tente novamente — envie a *senha* de acesso."
+
+# Anti-brute-force da senha compartilhada do bot (BLK-SEC-05): apos N erros seguidos,
+# o chat fica bloqueado por um tempo. Estado vive na sessao (persiste em disco).
+_SENHA_MAX_TENTATIVAS = 5
+_SENHA_LOCKOUT_SEGUNDOS = 300  # 5 minutos
+
+
+def _bloqueado_msg(segundos: int) -> str:
+    minutos = max(1, round(segundos / 60))
+    return f"🔒 Muitas tentativas. Aguarde ~{minutos} min antes de tentar a senha de novo."
+
+
+def _chat_ref(chat_id: object, chave: str = "") -> str:
+    """Referencia OPACA e estavel do chat para log (LGPD): correlaciona linhas sem
+    expor o chat_id do Telegram (identificador de pessoa).
+
+    Usa HMAC-SHA256 com o TOKEN DO BOT como chave: sem o token nao da para reverter.
+    Um `sha256` NU seria trivial de forcar, porque o chat_id e um inteiro de espaco
+    pequeno e conhecido. Sem chave (dev/teste), cai no sha256 nu."""
+    msg = str(chat_id).encode("utf-8")
+    if chave:
+        dig = hmac.new(chave.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+    else:
+        dig = hashlib.sha256(msg).hexdigest()
+    return "#" + dig[:8]
 
 _PEDIR_LOGIN = (
     "✅ Senha correta!\n\n"
@@ -182,14 +238,18 @@ def consultar_pdf(payload: dict, settings: Settings) -> bytes | None:
 
 
 def consultar_pdf_municipio(
-    uf: str, municipio: str, solicitante: str | None, settings: Settings
+    uf: str, municipio: str, solicitante: str | None, settings: Settings,
+    unidade: str = "bairro",
 ) -> tuple[bytes | None, str | None]:
     """POST /analisar-municipio -> (pdf_bytes, None) ou (None, mensagem_de_erro).
 
     Em 404 a API devolve `detail` ja com sugestoes de nome — repassamos ao usuario.
     """
     url = f"{settings.api_base_url}{settings.api_prefix}/analisar-municipio"
-    payload = {"uf": uf, "municipio": municipio, "solicitante": solicitante or ""}
+    payload = {
+        "uf": uf, "municipio": municipio, "solicitante": solicitante or "",
+        "unidade": unidade,
+    }
     try:
         # 300s: 1a geracao carrega a base de mercado (~1,9 GB) + baixa tiles.
         resp = _session.post(url, json=payload, headers=_headers(settings), timeout=300)
@@ -263,6 +323,41 @@ def _msg(texto: str, keyboard: list | None = None) -> dict:
     return {"text": texto, "keyboard": keyboard}
 
 
+# Markdown LEGADO do Telegram (parse_mode='Markdown') so' reconhece escape de _ * [ `.
+# Aplicar o conjunto do MarkdownV2 (. ! - ( ) ...) aqui imprimiria o backslash LITERAL
+# na tela. Escapamos os valores DINAMICOS na renderizacao (pentest Onda B #13): um
+# `login`/nome com `[texto](http://evil)` viraria hyperlink numa linha de autoria do
+# bot ("Solicitado por ..."). NUNCA escapar no store -- `s['login']` persiste e vai
+# como solicitante para a capa do PDF; backslash vazaria para la'.
+_MD_ESCAPE = str.maketrans({c: "\\" + c for c in "_*[`"})
+
+
+def _escape_md(texto: object) -> str:
+    """Escapa os metacaracteres do Markdown legado num valor dinamico antes de interpolar."""
+    return str(texto).translate(_MD_ESCAPE)
+
+
+def _acao_relatorio_acessos(chat_id: int, settings: Settings) -> list[dict]:
+    """`/acessos`: agregado de uso do piloto (quem, janela, abas) — chat de ops apenas.
+
+    Restrições deliberadas: (1) só o chat cujo id está em `acessos_admin_chat_id`
+    recebe o relatório — para os demais a resposta é neutra e sem dado; (2) o
+    conteúdo é o AGREGADO da trilha (DEC-027), nunca rota/detalhe do que cada um fez.
+    """
+    admin = (settings.acessos_admin_chat_id or "").strip()
+    if not admin or str(chat_id) != admin:
+        return [_msg("Esse comando é restrito ao chat de operações.")]
+    if not settings.acesso_log_dir:
+        return [_msg("Relatório indisponível: trilha de acesso não configurada neste ambiente.")]
+    from motor_expansao.api import relatorio_acessos  # noqa: PLC0415 — só nesta rota
+
+    try:
+        return [_msg(relatorio_acessos.gerar_relatorio(settings.acesso_log_dir))]
+    except Exception as erro:  # noqa: BLE001 — relatorio nunca derruba o loop do bot
+        print(f"[bot] falha ao gerar o relatorio de acessos: {erro}", flush=True)
+        return [_msg("Não consegui gerar o relatório agora. Tente de novo em instantes.")]
+
+
 def processar(
     chat_id: int,
     texto: str,
@@ -283,15 +378,37 @@ def processar(
     t = (texto or "").strip()
     low = t.lower()
 
+    # 0. /acessos — relatorio agregado de uso do piloto (trilha DEC-027), SO no chat
+    # de ops/alertas (id em `acessos_admin_chat_id`). Vem ANTES do gate de senha de
+    # proposito: o id do chat e' autorizacao mais forte que a senha compartilhada, e
+    # o grupo de ops nao passa pelo fluxo de login individual. `startswith` cobre a
+    # forma de grupo `/acessos@NomeDoBot`.
+    if low.startswith("/acessos") or low == "acessos":
+        return _acao_relatorio_acessos(chat_id, settings)
+
     # 1. Acesso por senha (saudacao na 1a interacao).
     if not s.get("autorizado"):
-        if t == settings.bot_senha:
+        # Lockout anti-brute-force (BLK-SEC-05): chat bloqueado -> nem tenta comparar.
+        agora = time.time()
+        if s.get("bloqueado_ate", 0) > agora:
+            return [_msg(_bloqueado_msg(int(s["bloqueado_ate"] - agora)))]
+        # Comparacao em tempo constante (nao vaza tamanho/prefixo da senha por timing).
+        if hmac.compare_digest(t, settings.bot_senha):
             s["autorizado"] = True
             s["etapa"] = "login"
+            s["tentativas"] = 0
+            s.pop("bloqueado_ate", None)
             return [_msg(_PEDIR_LOGIN)]
+        # 1a interacao: so sauda (nao conta como tentativa de senha).
         if not s.get("saudou"):
             s["saudou"] = True
             return [_msg(_SAUDACAO)]
+        # Senha errada (ja saudou): conta e, no teto, bloqueia o chat.
+        s["tentativas"] = int(s.get("tentativas", 0)) + 1
+        if s["tentativas"] >= _SENHA_MAX_TENTATIVAS:
+            s["bloqueado_ate"] = agora + _SENHA_LOCKOUT_SEGUNDOS
+            s["tentativas"] = 0
+            return [_msg(_bloqueado_msg(_SENHA_LOCKOUT_SEGUNDOS))]
         return [_msg(_SENHA_INCORRETA)]
 
     # 2. Login (nome/identificador) — uma vez, logo apos a senha.
@@ -299,7 +416,7 @@ def processar(
         s["login"] = t.strip() or "anonimo"
         s["etapa"] = None
         return [
-            _msg(f"Prazer, *{s['login']}*! 👋", _KB_MENU),
+            _msg(f"Prazer, *{_escape_md(s['login'])}*! 👋", _KB_MENU),
             _msg(_PEDIR_LOCAL, _KB_MENU),
         ]
 
@@ -313,13 +430,23 @@ def processar(
     if low in (_BTN_PONTUAL.lower(), "pontual", "relatorio", "relatório", "/relatorio"):
         s["etapa"] = None
         return [_msg(_PEDIR_LOCAL, _KB_MENU)]
-    if low in (_BTN_MUNICIPAL.lower(), "municipal", "/municipal"):
+    if low in (_BTN_MUNICIPAL_BAIRRO.lower(), "bairros", "bairro", "/bairros"):
         s["etapa"] = "muni_uf"
-        return [_msg(_PEDIR_UF, _kb_ufs())]
+        s["muni_unidade"] = "bairro"
+        return [_msg(_pedir_uf("bairro"), _kb_ufs())]
+    if low in (_BTN_MUNICIPAL_HEX.lower(), "hexagonos", "hexágonos", "/hexagonos",
+               "/municipal", "municipal"):
+        # `/municipal` cai no hexagono: e' o relatorio classico, o que esse comando sempre deu.
+        s["etapa"] = "muni_uf"
+        s["muni_unidade"] = "hexagono"
+        return [_msg(_pedir_uf("hexagono"), _kb_ufs())]
+    if low == _BTN_MUNICIPAL_ANTIGO.lower():
+        s["etapa"] = None
+        return [_msg(_MUNICIPAL_VIROU_DOIS, _KB_MENU)]
     # "Analisar" foi removido — trata um toque no botao fantasma (teclado antigo
     # em cache no Telegram) de forma limpa e ja troca o teclado para o atual.
     if low in ("analisar", "/analisar"):
-        return [_msg("Esse botao saiu. 🙂 Toque em *Relatorio Pontual* ou *Relatorio Municipal*.", _KB_MENU)]
+        return [_msg("Esse botao saiu. 🙂 Toque em *Relatorio Pontual*, *Municipal (hexagonos)* ou *Municipal (bairros)*.", _KB_MENU)]
 
     # 3. Fluxo do Relatorio Municipal: escolha da UF -> digitar o municipio.
     if s.get("etapa") == "muni_uf":
@@ -332,25 +459,29 @@ def processar(
         s["muni_uf"] = uf
         s["etapa"] = "muni_nome"
         return [_msg(_pedir_municipio(uf), _KB_VOLTAR)]
-
     if s.get("etapa") == "muni_nome":
         if low in ("⬅️ voltar", "voltar", "cancelar"):
             s["etapa"] = "muni_uf"
-            return [_msg(_PEDIR_UF, _kb_ufs())]
+            return [_msg(_pedir_uf(s.get("muni_unidade", "bairro")), _kb_ufs())]
         uf = s.get("muni_uf", "")
+        unidade = s.get("muni_unidade", "bairro")
         if notify is not None:
             notify(_GERANDO_MUNI)
-        pdf, err = consultar_pdf_municipio(uf, t, s.get("login"), settings)
+        pdf, err = consultar_pdf_municipio(uf, t, s.get("login"), settings, unidade=unidade)
         if pdf is None:
-            return [_msg(f"⚠️ {err}\n\nDigite outro nome ou toque em *⬅️ Voltar*.", _KB_VOLTAR)]
+            return [_msg(f"⚠️ {_escape_md(err)}\n\nDigite outro nome ou toque em *⬅️ Voltar*.", _KB_VOLTAR)]
         s["etapa"] = None
-        print(f"[ESTUDO-MUNI] login={s.get('login', '?')} chat={chat_id} uf={uf} municipio={t}")
+        rotulo = "hexágonos" if unidade == "hexagono" else "bairros"
+        # Rastreio sem PII (BLK-SEC-05): chat opaco (hash), sem o nome do solicitante.
+        # A unidade entra no log para separar os dois relatorios na apuracao de uso.
+        print(f"[ESTUDO-MUNI] chat={_chat_ref(chat_id, settings.telegram_token)} uf={uf} "
+              f"municipio={t} unidade={unidade}", flush=True)
         return [
-            _msg(f"📄 *Relatorio Municipal* — {t.strip()} - {uf}\n_Solicitado por {s.get('login', '?')}_"),
-            {"pdf": pdf, "filename": f"relatorio_municipal_{uf.lower()}.pdf"},
+            _msg(f"📄 *Relatorio Municipal ({rotulo})* — {_escape_md(t.strip())} - {uf}"
+                 f"\n_Solicitado por {_escape_md(s.get('login', '?'))}_"),
+            {"pdf": pdf, "filename": f"relatorio_municipal_{unidade}_{uf.lower()}.pdf"},
             _msg("Pronto! Escolha outra opcao no menu. 👇", _KB_MENU),
         ]
-
     # 4. Qualquer outra mensagem = localizacao -> PDF (Relatorio Pontual).
     # Avisa ANTES do trabalho pesado (geocoding ~14s + PDF) pra nao parecer travado.
     if notify is not None:
@@ -363,11 +494,13 @@ def processar(
     payload = {"lat": lat, "lng": lng, "rotulo": nome}
     pdf = consultar_pdf(payload, settings)
     if pdf is None:
-        return [_msg(f"⚠️ {_erro_api(payload, settings)}", _KB_MENU)]
-    # Rastreio: quem pediu o estudo (login) + onde.
-    print(f"[ESTUDO] login={s.get('login', '?')} chat={chat_id} coord={lat},{lng} local={nome}")
+        return [_msg(f"⚠️ {_escape_md(_erro_api(payload, settings))}", _KB_MENU)]
+    # Rastreio sem PII (BLK-SEC-05): chat opaco (hash), sem nome do solicitante nem
+    # o endereco resolvido; a coordenada (alvo do estudo) e' dado de negocio.
+    print(f"[ESTUDO] chat={_chat_ref(chat_id, settings.telegram_token)} coord={lat},{lng}",
+          flush=True)
     return [
-        _msg(f"📄 Relatorio de *{nome}*\n_Solicitado por {s.get('login', '?')}_"),
+        _msg(f"📄 Relatorio de *{_escape_md(nome)}*\n_Solicitado por {_escape_md(s.get('login', '?'))}_"),
         {"pdf": pdf},
         _msg("Pronto! Envie outra localizacao quando quiser.", _KB_MENU),
     ]
@@ -412,6 +545,36 @@ def _enviar(token: str, chat_id: int, acao: dict) -> None:
                   f"{resp2.json().get('description', '')[:120]}", flush=True)
 
 
+# --- guarda de instancia unica (409 Conflict) -------------------------------
+#
+# O Telegram so entrega cada update a UM `getUpdates` por vez. Se DUAS instancias
+# do bot rodam com o MESMO token, elas se derrubam mutuamente (HTTP 409) e a mesma
+# mensagem acaba entregue as duas -> a pessoa recebe o relatorio DUPLICADO.
+#
+# Um 409 isolado e normal logo apos um restart: o long-poll da instancia anterior
+# ainda fica registrado no Telegram por alguns segundos. Muitos 409 SEGUIDOS, nao —
+# ai e outra instancia viva. Melhor parar com erro claro do que servir duplicado.
+_MAX_CONFLITOS = 8
+
+_AVISO_CONFLITO = (
+    "Outra instancia do bot esta fazendo getUpdates com ESTE MESMO token "
+    "(HTTP 409). Duas instancias recebem a mesma mensagem, entao cada pedido "
+    "vira DOIS relatorios. Encerre a outra instancia (inclusive em outra "
+    "maquina/servidor) e suba de novo."
+)
+
+
+def _espera(tentativa: int) -> float:
+    """Backoff exponencial 1s -> 30s. Sem isso o laco de erro vira busy-loop."""
+    return min(2.0 ** tentativa, 30.0)
+
+
+def _status_http(exc: requests.RequestException) -> int | None:
+    """Codigo HTTP do erro, quando ha resposta (409 vs. queda de rede)."""
+    resp = getattr(exc, "response", None)
+    return None if resp is None else int(resp.status_code)
+
+
 def _configurar_menu_comandos(token: str) -> None:
     """Define o menu de comandos do bot (substitui qualquer lista antiga, ex.: /analisar)."""
     comandos = [
@@ -437,16 +600,37 @@ def main() -> None:
 
     _configurar_menu_comandos(token)
     _carregar_sessoes(settings)  # restaura quem ja estava logado antes do restart
-    print(f"Bot no ar. API em {settings.api_base_url}. Ctrl+C para sair.")
+    print(f"Bot no ar. API em {settings.api_base_url}. Ctrl+C para sair.", flush=True)
     offset: int | None = None
+    # Ultimo update_id JA tratado. O offset so e confirmado ao Telegram no
+    # getUpdates SEGUINTE — e a geracao do PDF leva ~2min no meio. Se algo
+    # reentregar o mesmo update nesse intervalo, isto barra o 2o relatorio.
+    ultimo_tratado = -1
+    conflitos = 0   # 409 seguidos (outra instancia no mesmo token)
+    falhas = 0      # erros de rede seguidos
     while True:
         try:
             updates = _tg(token, "getUpdates", offset=offset, timeout=30)
         except requests.RequestException as exc:
-            print(f"getUpdates falhou: {exc}")
+            if _status_http(exc) == 409:
+                conflitos += 1
+                print(f"[CONFLITO {conflitos}/{_MAX_CONFLITOS}] {_AVISO_CONFLITO}", flush=True)
+                if conflitos >= _MAX_CONFLITOS:
+                    raise SystemExit(f"Abortando. {_AVISO_CONFLITO}") from exc
+                time.sleep(_espera(conflitos))
+                continue
+            falhas += 1
+            print(f"getUpdates falhou: {exc}", flush=True)
+            time.sleep(_espera(falhas))
             continue
+        conflitos = 0
+        falhas = 0
         for upd in updates.get("result", []):
             offset = upd["update_id"] + 1
+            if upd["update_id"] <= ultimo_tratado:
+                print(f"[DUPLICADO] update {upd['update_id']} reentregue — ignorado.", flush=True)
+                continue
+            ultimo_tratado = upd["update_id"]
             msg = upd.get("message") or upd.get("edited_message")
             if not msg or "text" not in msg:
                 continue

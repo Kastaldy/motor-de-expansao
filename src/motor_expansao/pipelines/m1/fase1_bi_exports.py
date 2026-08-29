@@ -38,6 +38,7 @@ RESUMO_EXECUTIVO_PATH = Path("data/reports/resumo_executivo_fase1.md")
 HYBRID_PATH = Path("data/outputs/oportunidades_expansao_hibrido.parquet")
 CENSO_CORE_PATH = Path("data/staging/censo2022_setores_calibrado.parquet")
 CENSO_EXPANDED_PATH = Path("data/staging/censo2022_setores_calibrado_piloto_expandido.parquet")
+CENSO_NACIONAL_PATH = Path("data/staging/censo2022_setores_calibrado_nacional_completo.parquet")
 CENSO_VALIDATED_PATH = Path("data/staging/censo2022_setores_validado_v2.parquet")
 ESTRUTURAL_PATH = Path("data/staging/brasil_estrutural.parquet")
 ENRIQUECIDO_DIR = Path("data/outputs/hexagonos_dashboard_enriquecido")
@@ -539,7 +540,11 @@ def _read_hybrid_frame(path: Path | str = HYBRID_PATH) -> pd.DataFrame:
 
 def _read_censo_trace_frame() -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
-    for path in [CENSO_CORE_PATH, CENSO_EXPANDED_PATH]:
+    # Ordem = precedencia da deduplicacao (drop_duplicates keep="first"), a mesma de
+    # modelo_hibrido_expansao._load_censo: core > expandido > nacional. O nacional
+    # (21 UFs) faltava aqui, e por isso o dataset enriquecido -- que o piloto web le --
+    # so tinha censo nas 6 UFs de core+expandido.
+    for path in [CENSO_CORE_PATH, CENSO_EXPANDED_PATH, CENSO_NACIONAL_PATH]:
         frame = _prepare_censo_trace(_read_optional_parquet_subset(path, CENSO_TRACE_LOAD_COLS))
         if not frame.empty:
             frames.append(frame)
@@ -619,11 +624,62 @@ def read_enriched_dashboard(
     return dataset.to_table(filter=ds.field("uf") == str(uf)).to_pandas()
 
 
+#: Colunas sem as quais o artefato enriquecido sobe MUTILADO e o piloto degrada em
+#: SILENCIO -- nao com erro, apenas parando de responder. Cada uma sustenta uma
+#: superficie inteira:
+#:   `oferta_efetiva_disponivel`          -> camadas 2, 3 e 5 do funil (a recomendacao)
+#:   `score_setor_2022_calibrado`         -> camada 1 e a paleta do mapa censitario
+#:   `oferta_consumida_mercado_estimada`  -> `n_concorrentes_est`, a leitura de pressao
+#:   `populacao_corte_hex`                -> `pop_leitura`, o gate de populacao do funil
+#:   `renda_per_capita_setor_2022_calibrada` -> renda intraurbana (DEC-038)
+#:
+#: POR QUE ISTO EXISTE: em 2026-08-28 uma rematerializacao rodou SEM o passo anterior
+#: (`enriquecer_outputs_residual_mercado`, que devolve as colunas de mercado ao hibrido)
+#: e produziu 65 colunas em vez de 82. O artefato existia, era legivel e tinha todas as
+#: linhas -- so' faltava a coluna. `montar_funil` a le' de forma defensiva
+#: (`if "oferta_efetiva_disponivel" in quentes.columns`), entao as camadas 2, 3 e 5
+#: simplesmente ficaram VAZIAS em producao, sem log, sem 500, sem teste vermelho.
+#: E' a mesma classe de falha da DEC-038 ("invisivel porque a coluna existe"), com o
+#: agravante de que aqui a coluna nem existia e ainda assim nada gritou.
+#: A materializacao agora RECUSA escrever um frame sem elas.
+COLUNAS_CRITICAS_ENRIQUECIDO = (
+    "hex_id",
+    "score_setor_2022_calibrado",
+    "oferta_efetiva_disponivel",
+    "oferta_consumida_mercado_estimada",
+    "populacao_corte_hex",
+    "renda_per_capita_setor_2022_calibrada",
+)
+
+
+def verificar_colunas_criticas(df: pd.DataFrame) -> None:
+    """Levanta se o frame enriquecido nao carrega o minimo que o piloto consome.
+
+    Falha ALTO e cedo: o custo de um artefato mutilado nao e' um erro, e' um piloto que
+    para de recomendar em silencio ate' alguem reparar.
+    """
+    faltam = [c for c in COLUNAS_CRITICAS_ENRIQUECIDO if c not in df.columns]
+    if not faltam:
+        return
+    dica = ""
+    if any(c.startswith("oferta_") or c == "sam_fitness_potencial" for c in faltam):
+        dica = (
+            " As colunas de mercado chegam ao hibrido pelo passo "
+            "`python -m motor_expansao.pipelines.enriquecer_outputs_residual_mercado`, "
+            "que precisa rodar ANTES desta materializacao."
+        )
+    raise ValueError(
+        "Frame enriquecido sem colunas criticas: "
+        f"{faltam}. Escrever assim deixaria o piloto degradado em silencio.{dica}"
+    )
+
+
 def materialize_enriched_dashboard(
     dashboard_path: Path | str = DASHBOARD_PATH,
     base_dir: Path | str = ENRIQUECIDO_DIR,
 ) -> pd.DataFrame:
     df_enriched = build_enriched_dashboard_frame(dashboard_path)
+    verificar_colunas_criticas(df_enriched)
     write_enriched_dashboard_partitioned(df_enriched, base_dir)
     return df_enriched
 

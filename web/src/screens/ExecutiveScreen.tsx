@@ -5,7 +5,6 @@ import ExecMap from '../components/ExecMap'
 import PeriodoPicker from '../components/PeriodoPicker'
 import Select from '../components/Select'
 import Tabela, { type Coluna } from '../components/Tabela'
-import BotaoTema from '../components/exec/BotaoTema'
 import FichaUnidade from '../components/exec/FichaUnidade'
 import { FunilComercial } from '../components/exec/ExecCharts'
 import {
@@ -46,7 +45,6 @@ import { brlCurto, num, pct } from '../lib/format'
 import type { Periodo } from '../lib/periodo'
 import { rotuloDoPeriodo } from '../lib/periodo'
 import type { Tema } from '../lib/tema'
-import { depositoDoNavegador, gravarTema, lerTema } from '../lib/tema'
 import type { RedeCarteira, RedeFiltros, RedeSeveridade, RedeUnidade } from '../lib/types'
 
 /* ---------------------------------------------------------------------------
@@ -121,7 +119,14 @@ const COLUNA_TRILHO = { flex: '1 1 330px', minWidth: 0, maxWidth: 430 } as const
 
 const TODOS = '__todos__'
 
-export default function ExecutiveScreen({ onInicio }: { onInicio: () => void }) {
+export default function ExecutiveScreen({
+  onInicio,
+  tema,
+}: {
+  onInicio: () => void
+  /** Tema do app (`App`). A aba já foi dona dele; hoje só o LÊ, para o `ExecMap`. */
+  tema: Tema
+}) {
   const [filtros, setFiltros] = useState<RedeFiltros | null>(null)
   const [carteira, setCarteira] = useState<RedeCarteira | null>(null)
   const [carregando, setCarregando] = useState(true)
@@ -152,21 +157,6 @@ export default function ExecutiveScreen({ onInicio }: { onInicio: () => void }) 
   // não pode fechar a lista que a pessoa acabou de abrir.
   const [baseDestaque, setBaseDestaque] = useState<BaseDoDestaque>('sss')
   const [destaquesAbertos, setDestaquesAbertos] = useState(false)
-
-  // Tema da ABA, não do app. Lido do depósito na PRIMEIRA renderização (inicializador
-  // preguiçoso do `useState`, que roda uma vez): num `useEffect` a tela pintaria escura e
-  // trocaria para clara logo depois, e quem escolheu o claro veria um flash preto a cada
-  // entrada.
-  const [tema, setTema] = useState<Tema>(() => lerTema(depositoDoNavegador()))
-  // Grava na AÇÃO, não num efeito sobre `tema`. O efeito também dispararia a cada
-  // montagem, com o valor que acabou de ser LIDO — e numa montagem em que a leitura
-  // falhasse (`localStorage` bloqueado por um instante) ele gravaria de volta o padrão
-  // escuro por cima da escolha guardada. Escrever só quando a pessoa clica torna isso
-  // impossível: o depósito nunca recebe um valor que ela não escolheu.
-  const trocarTema = useCallback((novo: Tema) => {
-    setTema(novo)
-    gravarTema(novo, depositoDoNavegador())
-  }, [])
 
   // Largura REAL da carteira, medida. Não dá para decidir por media query: a tabela divide
   // a linha com o trilho do mapa, então a largura que ela tem depende também da janela do
@@ -448,13 +438,11 @@ export default function ExecutiveScreen({ onInicio }: { onInicio: () => void }) 
   }
 
   return (
-    // `data-tema` mora AQUI, na raiz da aba, e não no <html>: é o que mantém o tema claro
-    // dentro da Executiva sem repintar o Mapa Territorial nem a Viabilidade, que não
-    // pediram tema nenhum (a paleta vive em `styles/tokens.css`). O `background` explícito
-    // é a outra metade disso — o fundo do app é pintado pelo `App`, que está FORA deste
-    // container, então sem esta linha o claro apareceria como uma ilha sobre fundo preto.
+    // `data-tema` NÃO mora mais aqui: desde 2026-08-25 ele está no <html> (ver `App`), e
+    // repetí-lo neste container criaria uma segunda fonte da verdade que só divergiria.
+    // O `background`/`color` explícitos ficam — a aba é `position: absolute; inset: 0`
+    // sobre o `main`, então ela precisa pintar o próprio fundo em qualquer tema.
     <div
-      data-tema={tema}
       style={{
         position: 'absolute',
         inset: 0,
@@ -565,12 +553,16 @@ export default function ExecutiveScreen({ onInicio }: { onInicio: () => void }) 
           </Botao>
         )}
 
-        {/* O sol/lua encosta na borda direita. O vão flexível antes dele o separa dos
-            filtros — ele não recorta nada, só troca a pele da tela, e ficar colado na
-            busca o faria parecer mais um critério de recorte. */}
-        <div style={{ flex: 1, minWidth: 0 }} />
-        <BotaoTema tema={tema} onTema={trocarTema} />
+        {/* O sol/lua morava aqui, encostado na borda direita, e saiu em 2026-08-25: com o
+            tema valendo para o app inteiro ele passou para o pé do Dock, o único chrome
+            presente nas cinco telas. Dois alternadores para um estado só fariam o daqui
+            parecer que troca a pele apenas desta aba.
 
+            O vão flexível que o empurrava saiu JUNTO. Sozinho no fim de uma linha
+            `flexWrap: 'wrap'` ele não empurrava mais nada, e em tela estreita — quando os
+            filtros quebram — caía numa linha própria de altura zero, somando os 10px do
+            `gap` como uma faixa vazia sob o cabeçalho. Os filtros já ficam à esquerda pelo
+            `flex-start` padrão do contêiner. */}
         </div>
 
         {/* Faixa 2 — legenda: o que o número em cima significa. Uma linha discreta, que

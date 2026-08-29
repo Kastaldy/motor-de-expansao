@@ -20,10 +20,18 @@ data/staging/*
 data/snapshots/
 data/ultra/
 data/osm_cache/
+# Backups/limpezas locais de producao — dados reais da rede Ultra, NUNCA versionar
+# (BLK-SEC-05: estes diretorios estavam untracked e nao-ignorados, a um `git add` de
+# entrar no repo; o gitleaks nem inspeciona conteudo parquet).
+data/_backup*/
+data/_pre_regen/
 # Cadastro operacional (consultor, franqueado, master franquia): dado real de negocio,
 # semeado da planilha do time de campo. E o default de MOTOR_CADASTRO_DIR, entao aparece
 # aqui em qualquer maquina que rode o piloto local — em producao ele vive num volume :rw.
 data/cadastro/
+# Trilha de acesso do piloto (DEC-027): default de MOTOR_ACESSO_LOG_DIR em dev;
+# em producao vive num volume :rw proprio.
+data/acesso_log/
 data/models/*.pkl
 data/models/*.joblib
 concorrentes/
@@ -176,3 +184,13 @@ graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
 # untracked E fora do ignore, entao um `git add -A` distraido o varria para dentro
 # de um commit — foi o que motivou commitar por path no lote de 2026-07-31.
 TEMP_backlog_piloto.md
+
+# === Cache do preview local do piloto ===
+# `vite.preview.local.config.ts` aponta o `cacheDir` para ca' (fora do node_modules,
+# que e' uma JUNCAO compartilhada entre os worktrees). Sao ~24 MB de deps otimizadas,
+# regeneraveis, e estavam untracked E fora do ignore — a mesma armadilha do
+# TEMP_backlog acima, achada na revisao de 2026-08-19.
+#
+# O `vite.preview.local.config.ts` em si NAO entra aqui de proposito: a nota dentro
+# dele diz que ficar visivel como untracked e' o que lembra de nao commita-lo.
+web/.vite-cache-local/

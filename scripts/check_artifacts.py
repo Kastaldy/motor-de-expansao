@@ -15,6 +15,7 @@ nenhum: manda procurar o problema no lugar errado.
 O QUE ELE NAO ALCANCA: o ambiente PUBLICADO. Aqui so' se ve o disco local. Para o VPS,
 `GET /api/health` devolve os mesmos artefatos em `artefatos_faltando`.
 """
+
 import os
 import sys
 from pathlib import Path
@@ -24,24 +25,32 @@ DATA_DIR = Path(os.environ.get("MOTOR_DATA_DIR", str(REPO / "data")))
 
 # Sem estes, os pipelines e o piloto web nao tem insumo (DEC-022)
 CRITICOS = [
-    ("outputs/hexagonos_brasil_dashboard.parquet",
-     "Mapa executivo principal — gerado por fase1_bi_exports.py"),
-    ("outputs/oportunidades_expansao_hibrido.parquet",
-     "Oportunidades M1+Hibrido — gerado por jobs/pipelines/modelo_hibrido_expansao.py"),
-    ("outputs/carteira_expansao_acionavel.parquet",
-     "Carteira de expansao — gerado por jobs/pipelines/gerar_carteira_acionavel.py"),
-    ("outputs/plano_expansao_curto_prazo.parquet",
-     "Plano de curto prazo — gerado por jobs/pipelines/gerar_plano_expansao_curto_prazo.py"),
+    (
+        "outputs/hexagonos_brasil_dashboard.parquet",
+        "Mapa executivo principal — gerado por fase1_bi_exports.py",
+    ),
+    (
+        "outputs/oportunidades_expansao_hibrido.parquet",
+        "Oportunidades M1+Hibrido — gerado por jobs/pipelines/modelo_hibrido_expansao.py",
+    ),
+    (
+        "outputs/carteira_expansao_acionavel.parquet",
+        "Carteira de expansao — gerado por jobs/pipelines/gerar_carteira_acionavel.py",
+    ),
+    (
+        "outputs/plano_expansao_curto_prazo.parquet",
+        "Plano de curto prazo — gerado por jobs/pipelines/gerar_plano_expansao_curto_prazo.py",
+    ),
 ]
 
 # Ausentes degradam abas Censitario/Hibrido, mas nao travam o dashboard
 STAGING_OPCIONAL = [
-    ("staging/censo2022_setores_calibrado.parquet",
-     "Aba Censitario — core (DF/GO/MG/RJ/RS/SP)"),
-    ("staging/censo2022_setores_calibrado_piloto_expandido.parquet",
-     "Aba Censitario — piloto expandido"),
-    ("staging/censo2022_setores_validado_v2.parquet",
-     "Aba Censitario — validado v2"),
+    ("staging/censo2022_setores_calibrado.parquet", "Aba Censitario — core (DF/GO/MG/RJ/RS/SP)"),
+    (
+        "staging/censo2022_setores_calibrado_piloto_expandido.parquet",
+        "Aba Censitario — piloto expandido",
+    ),
+    ("staging/censo2022_setores_validado_v2.parquet", "Aba Censitario — validado v2"),
 ]
 
 # Grupo PROPRIO, e nao mais junto do staging das abas Censitario/Hibrido. Os dois moram
@@ -51,10 +60,36 @@ STAGING_OPCIONAL = [
 # podem falhar ao carregar" para quem tinha acabado de perder a camada de crescimento —
 # a mensagem mandava investigar o lugar errado.
 PILOTO_CRESCIMENTO = [
-    ("staging/crescimento_municipal.parquet",
-     "Passo 4 do piloto: emprego/empresas por cidade (CAGED, Receita)"),
-    ("staging/crescimento_hex.parquet",
-     "Passo 4 do piloto: cor do mapa por hexagono (satelite 2016-2023)"),
+    (
+        "staging/crescimento_municipal.parquet",
+        "Passo 4 do piloto: emprego/empresas por cidade (CAGED, Receita)",
+    ),
+    (
+        "staging/crescimento_hex.parquet",
+        "Passo 4 do piloto: cor do mapa por hexagono (satelite 2016-2023)",
+    ),
+]
+
+# Camada de M&A (BLK-MA-15 + DEC-035). Grupo PROPRIO pelo mesmo motivo do
+# `PILOTO_CRESCIMENTO`: quem some com eles apaga OUTRA coisa da tela, e um aviso generico
+# manda o operador investigar o lugar errado.
+#
+# Este grupo existe porque a camada ficou MORTA EM PRODUCAO de 2026-08-19 a 2026-08-24 sem
+# que nada acusasse: o codigo dos pins foi publicado, os dois parquets ficaram so' na maquina
+# de quem os gerou, e este script — o unico verificador local — terminava imprimindo
+# "OK: todos os artefatos criticos e de staging presentes". Ver BLK-MA-19.
+#
+# A variante SEM identidade (`vulnerabilidade_ma_academias.parquet`) NAO entra: nenhuma
+# superficie de producao a le. So' se verifica o que alguem consome.
+PILOTO_MA = [
+    (
+        "staging/vulnerabilidade_ma_nomeadas.parquet",
+        "Pins das academias INDEPENDENTES com score (BLK-MA-15)",
+    ),
+    (
+        "staging/vulnerabilidade_ma_redes.parquet",
+        "Pins das unidades de REDE do agregador, com pressao e sem score (DEC-035)",
+    ),
 ]
 
 
@@ -87,6 +122,9 @@ def main() -> None:
     print("\nCrescimento — passo 4 do piloto web (BLK-TRAJ-01):")
     faltando_cresc = _check_group(PILOTO_CRESCIMENTO)
 
+    print("\nM&A — pins de academias no Mapa Territorial (BLK-MA-15 / DEC-035):")
+    faltando_ma = _check_group(PILOTO_MA)
+
     print()
     if faltando_criticos:
         print(f"BLOQUEIO: {len(faltando_criticos)} artefato(s) critico(s) ausente(s).")
@@ -113,7 +151,24 @@ def main() -> None:
         print("     `data/reports/crescimento/` a partir de insumos que nao estao no")
         print("     repo, e chegam em producao so' pelo bind mount do compose.")
         print("  -> No ar, conferir com: curl -fsS <host>/api/health")
-    if not (faltando_staging or faltando_cresc):
+    if faltando_ma:
+        print(f"AVISO: {len(faltando_ma)} artefato(s) de M&A ausente(s).")
+        print("  -> Os pins de academia SOMEM do Mapa Territorial sem deixar rastro: nao")
+        print("     ha pilula, nao ha erro, nao ha espaco vazio. A tela fica identica a'")
+        print("     de um recorte que nao tem academia nenhuma.")
+        print("  -> Gerar com as DUAS flags opt-in (sem elas nada nomeado e' gravado):")
+        print("     python -m motor_expansao.vulnerabilidade.alvos_ma \\")
+        print("       --base-dir data/staging/snapshots_concorrentes \\")
+        print("       --saida-nomeadas data/staging/vulnerabilidade_ma_nomeadas.parquet \\")
+        print("       --saida-redes data/staging/vulnerabilidade_ma_redes.parquet")
+        print("  -> O recorte de fontes e' FAIL-CLOSED (DEC-039 D9, emenda de 2026-08-25):")
+        print("     omitir `--fontes` aplica o default do entregavel (`wellhub`), NAO a")
+        print("     serie inteira. O totalpass e' GRAVADO desde o 1o mes mas nao entra no")
+        print("     ranking ate' o BLK-MA-20 fechar; abrir exige `--todas-as-fontes`.")
+        print("  -> No ar, `/api/health` verde NAO prova pins: os leitores sao")
+        print("     `lru_cache` e memoizam a ausencia. Depois do scp, RESTARTAR o `web`")
+        print("     e provar em /api/municipio/{uf}/{municipio}. Ver BLK-MA-19.")
+    if not (faltando_staging or faltando_cresc or faltando_ma):
         print("OK: todos os artefatos criticos e de staging presentes.")
 
 

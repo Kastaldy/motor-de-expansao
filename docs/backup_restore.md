@@ -587,11 +587,15 @@ Checklist apos `docker compose up -d`:
 docker compose -f docker-compose.prod.yml ps
 # Esperado: web, api, telegram-bot, caddy, authelia todos 'healthy' ou 'running'
 
-# 2. Healthcheck do piloto web
-curl -fsS https://piloto.ultra-expansao.tech/api/health
-# Esperado: HTTP 200 + {"status":"ok"}
-# (Alternativa por dentro do container, sem passar pelo edge:
-#  docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:8899/api/health)
+# 2. Healthcheck do piloto web — POR DENTRO do container (este e' o caminho bom)
+docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:8899/api/health
+# Esperado: HTTP 200 + {"status":"ok","artefatos_faltando":[], ...}
+#
+# NAO usar `curl -fsS https://piloto.ultra-expansao.tech/api/health` como verificacao: o
+# `forward_auth` do Caddy vale para o SITE INTEIRO (ver o bloco do Caddyfile em
+# docs/deploy_piloto_web.md §3) e nao ha matcher que isente `/api/health`, entao um curl
+# anonimo recebe o redirect do Authelia — e como `-f` nao falha em 3xx, o comando sai com
+# exit 0 e corpo VAZIO, que le como sucesso. Por fora, so' no navegador ja logado.
 
 # 3. Login Authelia
 # Abrir em navegador: https://auth.ultra-expansao.tech

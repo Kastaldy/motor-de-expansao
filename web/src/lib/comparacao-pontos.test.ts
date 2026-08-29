@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest'
 
 import {
   CORES_PONTO,
+  chaveDaCoordenada,
   DIMENSOES_PONTO,
   MAX_PONTOS,
   corDoPonto,
   compararPontos,
   indiceDoMesmoPonto,
+  passaNoEstudo,
+  resumoDoEstudo,
   rotuloDoPonto,
   rotulosDosPontos,
 } from './comparacao-pontos'
@@ -234,8 +237,88 @@ describe('compararPontos', () => {
   })
 })
 
+describe('chaveDaCoordenada', () => {
+  /* O defeito de 2026-08-14: a tela guardava "onde o mapa já está" pelo `hex_id`, e um
+     hexágono res-7 tem ~5 km2. Medido contra a API, estes dois endereços de Cotia distam
+     1,2 km e caem no MESMO hexágono (87a81006bffffff) — com a guarda por hexágono, o
+     segundo entrava na lista e trocava a janela, mas o mapa ficava no primeiro. */
+  const A = { lat: -23.61369, lng: -46.84487 }
+  const B = { lat: -23.60569, lng: -46.83687 }
+
+  it('separa dois endereços que dividem o mesmo hexágono', () => {
+    expect(chaveDaCoordenada(A.lat, A.lng)).not.toBe(chaveDaCoordenada(B.lat, B.lng))
+  })
+
+  it('a MESMA coordenada continua sendo o mesmo ponto', () => {
+    expect(chaveDaCoordenada(A.lat, A.lng)).toBe(chaveDaCoordenada(A.lat, A.lng))
+  })
+
+  it('absorve ruído abaixo de ~1 m, que é a razão de existir o arredondamento', () => {
+    // O mesmo endereço volta do servidor com o último dígito diferente conforme o caminho
+    // (colado, link curto, geocodificado). 30 cm é o mesmo imóvel num raio de 1.000 m.
+    expect(chaveDaCoordenada(-23.613690_4, -46.844870_2)).toBe(chaveDaCoordenada(A.lat, A.lng))
+  })
+
+  it('é a MESMA noção que `indiceDoMesmoPonto` usa — uma regra, não duas', () => {
+    const ponto = (lat: number, lng: number) => ({ lat, lng }) as never
+    expect(indiceDoMesmoPonto([ponto(A.lat, A.lng)], B.lat, B.lng)).toBe(-1)
+    expect(indiceDoMesmoPonto([ponto(A.lat, A.lng)], A.lat, A.lng)).toBe(0)
+  })
+})
+
 describe('MAX_PONTOS', () => {
-  it('teto de 4 — a tabela e de duas colunas', () => {
-    expect(MAX_PONTOS).toBe(4)
+  it('teto de 5 desde 2026-08-13 (pedido do Juan)', () => {
+    // Eram 4 porque a comparacao era a tabela de DUAS colunas e o operador escolhia
+    // pares. Com os blocos por parametro todos os pontos entram no mesmo bloco, a escolha
+    // de par sumiu, e com ela o motivo do teto antigo.
+    expect(MAX_PONTOS).toBe(5)
+  })
+
+  it('nao passa do tamanho da paleta de identidade', () => {
+    // A sexta cor repetiria e duas abas ficariam iguais. Este invariante NAO existia: a
+    // paleta ja' dizia no comentario "cinco porque MAX_PONTOS e' 5" enquanto a constante
+    // valia 4, e nada travava a divergencia.
+    expect(MAX_PONTOS).toBeLessThanOrEqual(CORES_PONTO.length)
+  })
+})
+
+describe('resumoDoEstudo — a leitura ABSOLUTA, ao lado da relativa', () => {
+  const comCriterios = (passas: (boolean | null)[]) =>
+    ({
+      criterios: passas.map((passa, i) => ({
+        chave: `c${i}`,
+        rotulo: `Critério ${i}`,
+        valor: 1,
+        regua: 1,
+        unidade: '',
+        maior_melhor: true,
+        passa,
+      })),
+    }) as unknown as PontoPayload
+
+  it('conta cumpridos sobre AVALIADOS', () => {
+    expect(resumoDoEstudo(comCriterios([true, true, false, true, false]))).toEqual({
+      cumpridos: 3,
+      avaliados: 5,
+    })
+  })
+
+  it('sem dado sai dos DOIS lados da fracao, nunca vira reprovacao', () => {
+    // Tres criterios, um sem dado: a leitura e' 2 de 2, e nao 2 de 3.
+    expect(resumoDoEstudo(comCriterios([true, true, null]))).toEqual({
+      cumpridos: 2,
+      avaliados: 2,
+    })
+  })
+
+  it('sem criterio avaliado devolve null — nao ha o que afirmar', () => {
+    expect(resumoDoEstudo(comCriterios([null, null]))).toBeNull()
+    expect(resumoDoEstudo(comCriterios([]))).toBeNull()
+  })
+
+  it('concorda com o portao `passaNoEstudo`', () => {
+    expect(passaNoEstudo(comCriterios([true, true, true]))).toBe(true)
+    expect(passaNoEstudo(comCriterios([true, false, true]))).toBe(false)
+    expect(passaNoEstudo(comCriterios([null]))).toBeNull()
   })
 })

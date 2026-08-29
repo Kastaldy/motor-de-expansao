@@ -15,16 +15,37 @@ import { MODOS, type ModoDefinicao, type ModoInicio } from '../lib/inicio'
  *
  * O conteudo dos cards NAO esta aqui: mora em `lib/inicio.ts`, que e' testado.
  */
+/** Fator do zoom desta tela. Um lugar só: o `zoom` e a compensação de tamanho
+ *  têm de andar juntos, e separados eles saem de sincronia na primeira edição. */
+const ZOOM = 0.75
+
 export default function InicioScreen({
   onEscolher,
+  modos = MODOS,
 }: {
   onEscolher: (modo: ModoInicio) => void
+  /** Cards visíveis para este usuário (controle temporário de acesso). */
+  modos?: readonly ModoDefinicao[]
 }) {
   return (
     <div
       style={{
         position: 'absolute',
         inset: 0,
+        /* ZOOM DE 75%, SÓ NESTA TELA (pedido do Juan, 2026-08-26).
+
+           Fica no contêiner do Início e NÃO no `html`, de propósito. No `html` ele
+           valeria para o app inteiro — e aí `getBoundingClientRect`/`innerHeight`
+           (px VISUAIS) passam a divergir 25% de `clientWidth`/`contentRect`/estilos
+           (px de CSS). O mapa, a Visão Executiva, as listas suspensas e o painel de
+           acessos medem num espaço e aplicam no outro: medido, sete lugares passavam
+           a errar, dois deles desfazendo correções feitas de propósito. Aqui dentro
+           não existe nenhum: o Início é um grid de cartões, sem medição de tela.
+
+           `inset: 0` NÃO precisa de compensação — a porcentagem já resolve no espaço
+           zoomado (medido: com `width: 133%` o contêiner saía 1602 px onde o `main`
+           tem 1202). O Dock e as demais telas seguem em 100%. */
+        zoom: ZOOM,
         overflowY: 'auto',
         display: 'grid',
         placeItems: 'center',
@@ -89,9 +110,26 @@ export default function InicioScreen({
             alignItems: 'stretch',
           }}
         >
-          {MODOS.map((modo) => (
+          {modos.map((modo) => (
             <CardModo key={modo.id} modo={modo} onEscolher={onEscolher} />
           ))}
+          {modos.length === 0 && (
+            /* Usuário sem nenhum modo de análise (ex.: acesso só à Visão Executiva).
+               Ele normalmente nem pousa aqui — telaInicial() o leva direto —, mas a
+               logo sempre traz de volta ao Início, e a tela não pode ficar muda. */
+            <p
+              style={{
+                gridColumn: '1 / -1',
+                textAlign: 'center',
+                font: '400 14px/1.6 var(--f-ui)',
+                color: 'var(--tx-narrative)',
+                margin: '8px 0 0',
+              }}
+            >
+              Seu usuário não tem acesso aos modos de análise — use o menu à esquerda
+              para abrir as áreas liberadas para você.
+            </p>
+          )}
         </div>
 
         <p

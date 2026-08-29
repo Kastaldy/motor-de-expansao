@@ -245,7 +245,15 @@ function Resultado({ res, m2, demanda }: { res: ViabilidadeOut; m2: number; dema
         />
       )}
       {res.flag_zona_morta && (
-        <Aviso titulo="Zona morta" corpo={res.motivo_zona_morta ?? 'O cenário cai numa faixa em que o motor não sustenta recomendação.'} />
+        <Aviso
+          titulo="Zona morta"
+          /* Texto TRADUZIDO pelo servidor. `motivo_zona_morta` e' o token cru
+             (`pop<5000`), que nunca pode chegar ao operador — §2 do CLAUDE.md. */
+          corpo={
+            res.motivo_zona_morta_texto ??
+            'O cenário cai numa faixa em que o motor não sustenta recomendação.'
+          }
+        />
       )}
     </div>
   )

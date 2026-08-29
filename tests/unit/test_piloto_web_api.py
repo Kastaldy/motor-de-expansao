@@ -36,28 +36,66 @@ def _apontar(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
     monkeypatch.setattr(pilot_app, "ENRICHED_DIR", outputs / "hexagonos_dashboard_enriquecido")
     monkeypatch.setattr(pilot_app, "CRESCIMENTO_PATH", staging / "crescimento_municipal.parquet")
     monkeypatch.setattr(pilot_app, "CRESCIMENTO_HEX_PATH", staging / "crescimento_hex.parquet")
+    monkeypatch.setattr(
+        pilot_app, "NOMEADAS_PATH", staging / "vulnerabilidade_ma_nomeadas.parquet"
+    )
+    monkeypatch.setattr(pilot_app, "REDES_PATH", staging / "vulnerabilidade_ma_redes.parquet")
+    # Camada imobiliaria: NAO fica sob `outputs/` nem `staging/` — e' artefato de outro
+    # repo (o coletor), com mount proprio em producao. O global tambem e' derivado do
+    # DATA_DIR no import, entao precisa ser repontado aqui como os demais.
+    monkeypatch.setattr(
+        pilot_app, "OPORTUNIDADES_PATH", data_dir / "oportunidades" / "viaveis.parquet"
+    )
 
 
 def test_health_ok() -> None:
-    # /api/health: liveness + diagnostico (data_dir etc.); basta o status ok.
+    # /api/health: liveness PUBLICO e mudo; basta o status ok.
     assert pilot_app.health().get("status") == "ok"
 
 
+def test_health_publico_nao_vaza_caminhos() -> None:
+    """Pentest Onda B #8: o /api/health publico devolve EXATAMENTE {"status":"ok"}.
+
+    O inventario (data_dir + caminhos absolutos + descricao de cada parquet) vazava o
+    layout do FS e a camada de M&A a qualquer autenticado, ja' que a rota e' livre.
+    Trava contra readicao silenciosa desses campos no payload publico.
+    """
+    assert pilot_app.health() == {"status": "ok"}
+
+
 def test_health_reporta_os_artefatos_que_a_tela_depende() -> None:
-    """O health tem de ACUSAR artefato ausente — era o unico jeito de ver isso no ar.
+    """O inventario diagnostico tem de ACUSAR artefato ausente — era o unico jeito de
+    ver isso no ar. Migrou do /api/health publico para `_inventario_artefatos()`, servido
+    pela rota admin `/api/acessos/saude-artefatos` (pentest Onda B #8).
 
     Os parquets de crescimento nao vem do git (`.gitignore`: `data/staging/*`) nem da
     imagem (`.dockerignore` corta `data/`): so' chegam pelo bind mount do compose. Sem
     eles `carregar_crescimento*()` devolve None e o passo 4 sai vazio EM SILENCIO —
     nenhum erro, nenhum log, e `scripts/check_artifacts.py` so' enxerga disco local.
     """
-    h = pilot_app.health()
+    h = pilot_app._inventario_artefatos()
 
-    # Contrato antigo intacto: o healthcheck do container faz `curl -fsS` nesta rota.
+    # Contrato do inventario: data_dir + data_ok para o operador auditar o ar.
     assert {"status", "data_dir", "data_ok"} <= set(h)
 
     artefatos = h["artefatos"]
-    assert set(artefatos) == {"enriquecido", "crescimento_municipal", "crescimento_hex"}
+    assert set(artefatos) == {
+        "enriquecido",
+        "crescimento_municipal",
+        "crescimento_hex",
+        # Pins das independentes (BLK-MA-15): mesma classe dos de crescimento — nao vem do git nem
+        # da imagem, so' pelo bind mount, e sem ele a camada some EM SILENCIO.
+        "independentes_nomeadas",
+        # Pins das unidades de REDE do agregador (BLK-MA-17 metade 1 / DEC-035). Mesma classe, e
+        # com um agravante proprio: sem este artefato as 1.171 unidades que a DEC-034 poe na
+        # oferta continuam contando na pressao sem aparecer no mapa.
+        "redes_nomeadas",
+        # Camada imobiliaria (2026-08-24). Mesma classe, e a mais fragil de todas: nao vem do
+        # git NEM de outro pipeline deste repo — e' artefato de OUTRO repositorio (o coletor),
+        # copiado por scp com cadencia propria. Sem ele a rota responde 200 com lista vazia e a
+        # tela diz "Nada no recorte", que e' o que ela diz tambem quando o filtro nao casou.
+        "oportunidades_imobiliarias",
+    }
     for nome, a in artefatos.items():
         assert isinstance(a["ok"], bool), nome
         # `para_que` e' o que transforma "faltou um arquivo" em "o passo 4 vai sair
@@ -81,7 +119,7 @@ def test_health_nao_estoura_com_data_dir_inexistente(monkeypatch) -> None:
     fantasma = Path("Z:/mount/que/nao/existe/data")
     _apontar(monkeypatch, fantasma)
 
-    h = pilot_app.health()
+    h = pilot_app._inventario_artefatos()
     assert h["status"] == "ok"
     assert h["data_ok"] is False
     assert h["data_dir"] == str(fantasma)
@@ -89,6 +127,9 @@ def test_health_nao_estoura_com_data_dir_inexistente(monkeypatch) -> None:
         "crescimento_hex",
         "crescimento_municipal",
         "enriquecido",
+        "independentes_nomeadas",
+        "oportunidades_imobiliarias",
+        "redes_nomeadas",
     ]
     # Os caminhos reportados tem de sair do data_dir REPONTADO. Se a lista de artefatos
     # for montada no import, ela congela os `Path` originais e o health passa a falar do
@@ -119,11 +160,18 @@ def test_health_sobrevive_a_stat_que_levanta(monkeypatch) -> None:
         def __str__(self) -> str:
             return self._rotulo
 
-    for glob in ("ENRICHED_DIR", "CRESCIMENTO_PATH", "CRESCIMENTO_HEX_PATH"):
+    for glob in (
+        "ENRICHED_DIR",
+        "CRESCIMENTO_PATH",
+        "CRESCIMENTO_HEX_PATH",
+        "NOMEADAS_PATH",
+        "REDES_PATH",
+        "OPORTUNIDADES_PATH",
+    ):
         monkeypatch.setattr(pilot_app, glob, _CaminhoQueCai(f"/app/data/{glob}"))
 
-    h = pilot_app.health()
-    assert h["status"] == "ok", "o health NAO pode cair junto com o mount"
+    h = pilot_app._inventario_artefatos()
+    assert h["status"] == "ok", "o inventario NAO pode cair junto com o mount"
     assert h["data_ok"] is False
     # O motivo tem de chegar ao operador: sem `erro`, "ok=False" nao distingue
     # "arquivo nunca foi copiado" de "o mount de rede caiu agora".
@@ -337,3 +385,93 @@ def test_rotulo_do_metodo_acompanha_o_raio() -> None:
     assert METODO_RELATORIO_PONTUAL_CENSITARIO == "setor_censitario_intersecao_area_1km"
     assert "1p5km" not in METODO_RELATORIO_PONTUAL_CENSITARIO
     assert RAIO_CENSITARIO_DEFAULT_KM == 1.0
+
+
+def test_distribuicao_de_renda_le_a_coluna_corrigida() -> None:
+    """`detalhe.distribuicao.renda_per_capita` tem de sair da coluna DOMICILIAR per capita.
+
+    Contrato sobre o fonte, no mesmo molde de `test_backend_e_read_only`: montar o payload
+    inteiro num teste exigiria a malha IBGE real em disco (`ponto()` falha antes de chegar no
+    analisador), e o `_dist` e' uma closure dentro do endpoint — nao da' para chama-lo isolado.
+
+    O payload de `/ponto` expoe renda per capita em TRES campos irmaos: o agregado do raio,
+    o setor do ponto e esta distribuicao min/mediana/max. A correcao de escala de 2026-08-13
+    pegou os dois primeiros e deixou este lendo `renda_per_capita_setor_2022_calibrada` — a
+    coluna com o `k` —, o que punha ~24% de diferenca dentro do MESMO documento. Achado pela
+    revisao automatica do PR #237, nao pela suite: nenhum teste olhava a coluna que o alimenta.
+
+    A escala do VALOR esta travada em
+    `test_os_tres_campos_de_renda_per_capita_do_payload_na_MESMA_escala`
+    (tests/unit/test_relatorio_pontual_censitario_motor.py); aqui trava-se a LIGACAO.
+    """
+    src = (_SERVER / "app.py").read_text(encoding="utf-8")
+
+    assert '"renda_per_capita": _dist("renda_per_capita_domiciliar_setor")' in src, (
+        "a distribuicao de renda do payload precisa ler `renda_per_capita_domiciliar_setor`"
+    )
+    # Nenhuma distribuicao pode sair da coluna calibrada. Note que a calibrada CONTINUA valida
+    # em `_base_renda_domiciliar`, que a converte dividindo pelo `k` — por isso o alvo aqui e'
+    # o `_dist(...)`, e nao a mera presenca do nome da coluna no arquivo.
+    assert '_dist("renda_per_capita_setor_2022_calibrada")' not in src, (
+        "distribuicao saindo da coluna calibrada reintroduz o `k` na renda exibida"
+    )
+
+
+# --- Pentest Onda B #11: floats nao-finitos em /api/viabilidade ----------------
+# Estes casos vivem na camada de validacao/serializacao (o corpo cru com NaN/Infinity),
+# invisivel chamando a funcao de rota direto — precisam de TestClient. Mesmo padrao
+# "pula se httpx ausente" de test_api_skeleton.py; httpx esta no constraints (roda no CI).
+
+_CORPO_VIAB_OK = (
+    '{"lat": -23.5, "lng": -46.6, "m2": 1500, "aluguel": 30000, "demanda": 1600}'
+)
+
+
+def _client_viab():
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    return TestClient(pilot_app.app, raise_server_exceptions=False)
+
+
+def _post_viab_cru(corpo: str):
+    # `content=` manda o JSON CRU: o `json=` do httpx recusa NaN/Infinity no cliente,
+    # e e' justamente o corpo nao-finito que precisamos entregar ao servidor.
+    return _client_viab().post(
+        "/api/viabilidade", content=corpo, headers={"content-type": "application/json"}
+    )
+
+
+@pytest.mark.parametrize(
+    "corpo",
+    [
+        '{"lat": -23.5, "lng": -46.6, "m2": NaN, "aluguel": 30000, "demanda": 1600}',
+        '{"lat": -23.5, "lng": -46.6, "m2": Infinity, "aluguel": 30000, "demanda": 1600}',
+        '{"lat": -23.5, "lng": -46.6, "m2": 1500, "aluguel": Infinity, "demanda": 1600}',
+        '{"lat": NaN, "lng": -46.6, "m2": 1500, "aluguel": 30000, "demanda": 1600}',
+    ],
+)
+def test_viabilidade_nao_finito_e_422_nao_500(corpo: str) -> None:
+    """NaN/Infinity no corpo -> 422 limpo (nao 500 opaco, nem 200 com DRE-lixo)."""
+    resp = _post_viab_cru(corpo)
+    assert resp.status_code == 422, resp.text
+    # O 422 tem de ser parseavel: o handler saneia o input nao-finito para string ANTES
+    # de serializar (senao o json.dumps do Starlette com allow_nan=False estouraria = 500).
+    assert isinstance(resp.json().get("detail"), list)
+
+
+@pytest.mark.parametrize(
+    "corpo",
+    [
+        '{"lat": 999, "lng": -46.6, "m2": 1500, "aluguel": 30000, "demanda": 1600}',
+        '{"lat": -23.5, "lng": -999, "m2": 1500, "aluguel": 30000, "demanda": 1600}',
+    ],
+)
+def test_viabilidade_latlng_fora_do_bound_e_422(corpo: str) -> None:
+    """lat/lng fora de [-90,90]/[-180,180] -> 422 (antes passava com 200)."""
+    assert _post_viab_cru(corpo).status_code == 422
+
+
+def test_viabilidade_corpo_valido_segue_200() -> None:
+    """Baseline: o fix nao pode quebrar o caminho feliz."""
+    assert _post_viab_cru(_CORPO_VIAB_OK).status_code == 200

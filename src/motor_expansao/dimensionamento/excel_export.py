@@ -28,6 +28,21 @@ _FONTE_PADRAO = "Calibri"
 _FMT_BRL = "R$ #,##0.00"
 _FMT_PCT = "0.0%"
 
+# Prefixos que o Excel interpreta como formula viva ao abrir a planilha (=/+/-/@,
+# tab e CR). Mesmo conjunto de `dashboard/rede_export._celula` -- ver comentario la'.
+_INICIO_DE_FORMULA = ("=", "+", "-", "@", chr(9), chr(13))
+
+
+def _texto_seguro(texto: str) -> str:
+    """Neutraliza injecao de formula (pentest Onda B #12): um `nome_ponto` como
+    `=HYPERLINK("http://evil","x")` vira formula viva no XLSX. Prefixar `'` faz o
+    Excel tratar a celula como texto. Duplicado (nao importado) de proposito: o
+    pacote `dimensionamento` nao deve depender de `dashboard`.
+    """
+    if texto[:1] in _INICIO_DE_FORMULA:
+        return "'" + texto
+    return texto
+
 
 def _fill(hex_argb: str) -> PatternFill:
     return PatternFill(fill_type="solid", fgColor=hex_argb)
@@ -69,7 +84,7 @@ def _write_aba_resumo(
     # Linha 2: nome_ponto
     if nome_ponto:
         ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=2)
-        c = ws.cell(row=2, column=1, value=nome_ponto)
+        c = ws.cell(row=2, column=1, value=_texto_seguro(nome_ponto))
         c.fill = _fill(_CINZA_CLR)
         c.font = _body_font(bold=True)
 

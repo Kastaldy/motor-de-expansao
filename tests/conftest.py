@@ -24,9 +24,17 @@ o teste pretende verificar. Producao (`censo_report.py`) fica INTOCADA.
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 
 import pytest
+
+# Desliga a etapa de valores em cache do simulador XLSX para a suite INTEIRA, ja na
+# importacao do conftest: a fixture autouse abaixo e' de escopo de FUNCAO e nao cobre
+# fixtures de MODULO que geram a planilha (elas instanciam antes) — sem esta linha,
+# essas geracoes pagariam ~9s de recalculo cada. Os testes da propria etapa
+# (`test_simulador_xlsx_cache.py`) sobrescrevem a env explicitamente.
+os.environ.setdefault("MOTOR_SIMULADOR_XLSX_SEM_CACHE", "1")
 
 # Instante fixo usado para congelar o relogio do fpdf2 nos testes.
 _FROZEN_NOW = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
@@ -63,3 +71,31 @@ def _freeze_fpdf_clock(monkeypatch):
     if hasattr(_output_mod, "datetime"):
         monkeypatch.setattr(_output_mod, "datetime", _FrozenDateTime)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _simulador_xlsx_sem_cache(monkeypatch):
+    """Desliga a etapa de valores em cache do simulador XLSX na suite.
+
+    A etapa recalcula ~4.600 formulas com a lib `formulas` (~9s POR GERACAO) e o
+    nivel 2 de `test_simulador_xlsx.py` ja recalcula as formulas por conta propria.
+    Os testes DA PROPRIA etapa (`test_simulador_xlsx_cache.py`) removem a env.
+    """
+    monkeypatch.setenv("MOTOR_SIMULADOR_XLSX_SEM_CACHE", "1")
+
+
+@pytest.fixture(autouse=True)
+def _isolar_trilha_acesso(monkeypatch, tmp_path):
+    """Aponta a trilha de acesso do piloto (DEC-027) para um tmp por teste.
+
+    O middleware do piloto grava uma linha JSONL por requisicao de TestClient; sem
+    isto, qualquer teste que use TestClient escreveria em `<repo>/data/acesso_log`
+    da maquina de quem roda. A resolucao do diretorio e' lazy (le a env var a cada
+    chamada), entao o patch vale independentemente da ordem de import dos modulos.
+
+    A allowlist da aba Acessos (emenda DEC-027) e' LIMPA pelo mesmo motivo: se a
+    maquina de quem roda tiver `MOTOR_ACESSOS_ADMIN_USUARIOS` no ambiente, os
+    testes de guard (deny-by-default) mudariam de resultado.
+    """
+    monkeypatch.setenv("MOTOR_ACESSO_LOG_DIR", str(tmp_path / "acesso_log"))
+    monkeypatch.delenv("MOTOR_ACESSOS_ADMIN_USUARIOS", raising=False)

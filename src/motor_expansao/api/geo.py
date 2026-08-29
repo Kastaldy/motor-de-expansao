@@ -16,7 +16,7 @@ from __future__ import annotations
 import atexit
 import re
 import threading
-from urllib.parse import unquote
+from urllib.parse import unquote, urljoin
 
 import requests
 
@@ -32,6 +32,43 @@ _GOOGLE_GEOCODE = "https://maps.googleapis.com/maps/api/geocode/json"
 _URL_RE = re.compile(r"https?://\S+")
 # Segmento de endereco em URLs /maps/place/<NOME+ENDERECO>/... (sem coordenada).
 _PLACE_RE = re.compile(r"/maps/place/([^/]+)")
+# Forma alternativa de place SEM coordenada: `?q=<endereco>&ftid=0x...` (o Maps do Android
+# devolve esta quando o link e' compartilhado pelo botao "Copiar link" de um pino salvo).
+# Aceita tambem `query=`/`destination=` (Google) e `address=`/`daddr=` (Apple Maps do
+# iPhone), que aparecem em links de navegacao e de place sem coordenada.
+_Q_ENDERECO_RE = re.compile(r"[?&](?:q|query|destination|address|daddr)=([^&]+)")
+# Par "lat,lng" ja e' tratado por `coord.parse_maps_url`; aqui so interessa TEXTO de endereco.
+_COORD_PURA_RE = re.compile(r"^-?\d+\.\d+\s*,\s*-?\d+\.\d+$")
+
+
+# Parametros que NUNCA sao endereco: identificadores, controles de camera e de UI. Sem esta
+# lista o ultimo recurso abaixo devolveria coisas como "gps" (entry) ou "CAE" (shh) como se
+# fossem logradouro.
+_PARAMS_LIXO = frozenset({
+    "ftid", "place-id", "placeid", "auid", "cid", "pb", "data", "entry", "shh", "lucs",
+    "g_st", "gs_lcp", "hl", "gl", "ie", "oe", "output", "format", "source", "api", "t",
+    "z", "zoom", "spn", "span", "layer", "view", "mode", "dirflg", "mapmode", "map_action",
+    "basemap", "near", "sll", "ll", "coordinate", "center", "daddr", "saddr",
+})
+_PARAM_RE = re.compile(r"[?&]([A-Za-z_][\w.-]*)=([^&]+)")
+# ID hexadecimal do Google (0x...:0x...) disfarcado de texto.
+_ID_HEX_RE = re.compile(r"^0x[0-9a-f]+(:0x[0-9a-f]+)?$", re.I)
+
+
+def _limpar_valor(valor: str) -> str:
+    """Decodifica percent-encoding, troca `+` por espaco e normaliza espacos."""
+    return " ".join(unquote(str(valor or "")).replace("+", " ").split())
+
+
+def _parece_endereco(valor: str) -> bool:
+    """Heuristica conservadora: texto com letras, comprido o bastante e que nao seja ID/coord.
+
+    Prefere DEIXAR PASSAR pouco a arriscar geocodificar lixo: um valor errado aqui viraria um
+    relatorio no lugar errado, que e' pior que o link falhar com mensagem clara.
+    """
+    if len(valor) < 8 or _COORD_PURA_RE.match(valor) or _ID_HEX_RE.match(valor):
+        return False
+    return any(c.isalpha() for c in valor) and (" " in valor or "," in valor)
 
 
 def extrair_endereco_de_place_url(url: str) -> str:
@@ -39,38 +76,87 @@ def extrair_endereco_de_place_url(url: str) -> str:
 
     Alguns links de compartilhamento do Maps expandem para um place SEM coordenada
     na URL (so nome + endereco + place-id; a coord so viria via JS). Mas o endereco
-    completo (com CEP) esta no proprio path -> extraimos para geocodificar. Devolve
-    "" se a URL nao for um link de place.
+    completo (com CEP) esta na propria URL -> extraimos para geocodificar.
+
+    Duas formas cobertas: o path `/maps/place/<NOME+ENDERECO>/...` e o parametro
+    `?q=<endereco>` (com `&ftid=0x...`), que e' o que o Maps do Android produz ao
+    compartilhar um pino. Devolve "" quando nao ha endereco textual na URL.
     """
-    m = _PLACE_RE.search(str(url or ""))
-    if not m:
-        return ""
-    seg = m.group(1).replace("+", " ")
-    return " ".join(unquote(seg).split())
+    texto = str(url or "")
+    m = _PLACE_RE.search(texto)
+    if m:
+        seg = m.group(1).replace("+", " ")
+        return " ".join(unquote(seg).split())
+
+    # Fallback `?q=<endereco>`: link do Maps mobile que expande para
+    # `google.com/maps?q=Av.+Santos+Dumont,+2915+-+Aldeota,+Fortaleza+-+CE,+60150-165&ftid=0x...`
+    # -- nem `@lat,lng` nem `!3d!4d`, entao o parser puro falha e sem este ramo o link inteiro
+    # morria em "Nao consegui localizar". O endereco vem completo, com CEP: geocodifica bem.
+    m = _Q_ENDERECO_RE.search(texto)
+    if m:
+        seg = _limpar_valor(m.group(1))
+        if _parece_endereco(seg):
+            return seg
+
+    # ULTIMO RECURSO: qualquer OUTRO parametro cujo valor pareca endereco. Mesma razao do
+    # fallback generico de coordenada em `coord.py` -- a lista de nomes acima veio dos formatos
+    # que conhecemos, e um app novo pode usar um nome que ninguem previu. Pega o valor mais
+    # LONGO entre os candidatos: num link de place, o endereco completo e' quase sempre o campo
+    # mais extenso, enquanto os curtos sao rotulo/ID.
+    candidatos = [
+        limpo
+        for chave, bruto in _PARAM_RE.findall(texto)
+        if chave.casefold() not in _PARAMS_LIXO
+        and _parece_endereco(limpo := _limpar_valor(bruto))
+    ]
+    return max(candidatos, key=len) if candidatos else ""
 
 
 def expandir_link_curto(texto: str) -> str:
     """Segue o redirect de um link e devolve a URL FINAL (para links compactados).
 
     Links curtos/compartilhaveis do Maps (`maps.app.goo.gl/...`, `goo.gl/maps/...`,
-    `g.co/...`, encurtadores em geral) NAO contem coordenada — sao um 30x para a URL
-    completa (com `@lat,lng` / `!3d!4d`). Aqui seguimos o redirect de QUALQUER URL
-    encontrada no texto e devolvemos a URL final, para o `parse_maps_url` (puro)
-    extrair a coordenada. Sem lista fixa de hosts: aceita qualquer encurtador.
+    `g.co/...`) NAO contem coordenada — sao um 30x para a URL completa (com
+    `@lat,lng` / `!3d!4d`). Aqui seguimos o redirect e devolvemos a URL final, para o
+    `parse_maps_url` (puro) extrair a coordenada.
+
+    Guardrail SSRF (BLK-SEC-05): so seguimos links de dominio/encurtador do Google
+    Maps (`url_maps_segura`), validando CADA salto de redirect. Um link para host
+    interno da rede Docker (api:8077, authelia:9091), IP de metadata ou `file://` e
+    recusado -> devolvemos o texto ORIGINAL (cai no geocoding, que so envia o texto
+    como QUERY ao Nominatim, sem fetch da URL).
 
     Pensado para ser chamado SO quando o parse direto ja falhou — assim links
-    completos (que ja parseiam) nao gastam rede. Sem URL no texto, ou falha de rede,
-    devolve o texto ORIGINAL inalterado (cai no geocoding).
+    completos (que ja parseiam) nao gastam rede. Sem URL valida no texto, ou falha de
+    rede, devolve o texto ORIGINAL inalterado.
     """
+    from motor_expansao.api.maps_geocoder import url_maps_segura
+
     m = _URL_RE.search(str(texto or ""))
     if not m:
         return texto
+    url = m.group(0)
+    if not url_maps_segura(url):
+        return texto
     try:
-        resp = requests.get(
-            m.group(0), allow_redirects=True, timeout=10,
-            headers={"User-Agent": _BROWSER_UA},
-        )
-        return resp.url or texto
+        atual = url
+        for _ in range(6):  # teto de saltos de redirect (evita loop/cadeia longa)
+            resp = requests.get(
+                atual, allow_redirects=False, timeout=10,
+                headers={"User-Agent": _BROWSER_UA},
+            )
+            if resp.is_redirect or resp.is_permanent_redirect:
+                destino = resp.headers.get("Location")
+                if not destino:
+                    return resp.url or texto
+                destino = urljoin(atual, destino)
+                # Re-valida cada salto: redirect para host interno e recusado.
+                if not url_maps_segura(destino):
+                    return texto
+                atual = destino
+                continue
+            return resp.url or atual or texto
+        return texto  # excesso de redirects
     except requests.RequestException:
         return texto
 

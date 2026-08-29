@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  CORES_IDENTIDADE,
   DIMENSOES,
   MAX_DIMENSOES_NA_FRASE,
+  blocosPorParametro,
   compararComFrase,
   compararHexes,
+  corDeIdentidade,
+  corDeIdentidadeRgb,
+  rotuloDoHex,
+  rotulosDosHexes,
+  rotulosUnicos,
 } from './comparacao'
 import type { Hex } from './types'
 
@@ -23,6 +30,160 @@ function hex(over: Partial<Hex> = {}): Hex {
     ...over,
   } as Hex
 }
+
+describe('rotulosUnicos', () => {
+  it('numera os EMPATADOS — cinco hexágonos da mesma cidade eram cinco "São Paulo"', () => {
+    expect(rotulosUnicos(['São Paulo', 'São Paulo', 'São Paulo'])).toEqual([
+      '1 · São Paulo',
+      '2 · São Paulo',
+      '3 · São Paulo',
+    ])
+  })
+
+  it('não numera quem já se distingue', () => {
+    expect(rotulosUnicos(['Osasco', 'Santo André'])).toEqual(['Osasco', 'Santo André'])
+  })
+
+  it('numera SÓ quem empata, preservando o nome de quem é único', () => {
+    expect(rotulosUnicos(['São Paulo', 'Osasco', 'São Paulo'])).toEqual([
+      '1 · São Paulo',
+      'Osasco',
+      '3 · São Paulo',
+    ])
+  })
+
+  it('o número é a POSIÇÃO na lista — é o que casa com a cor e com o mapa', () => {
+    // A cor de identidade sai do índice; se o rótulo numerasse pela ordem do empate, o
+    // "2 · São Paulo" poderia ser o terceiro item, com a cor do terceiro.
+    expect(rotulosUnicos(['A', 'São Paulo', 'São Paulo'])[2]).toBe('3 · São Paulo')
+  })
+
+  it('o resultado nunca tem duas entradas iguais', () => {
+    const r = rotulosUnicos(['X', 'X', 'X', 'X', 'X'])
+    expect(new Set(r).size).toBe(r.length)
+  })
+
+  it('lista vazia sobrevive', () => {
+    expect(rotulosUnicos([])).toEqual([])
+  })
+})
+
+describe('corDeIdentidade', () => {
+  it('a versao RGB e a MESMA cor do painel, so que no formato do deck.gl', () => {
+    // E' este casamento que faz o contorno do hexagono no mapa bater com a barra dele na
+    // janela. Se as duas funcoes divergirem, o operador perde a ligacao e o motivo de
+    // existir a cor vai junto.
+    expect(corDeIdentidade(0)).toBe('#4FA3F7')
+    expect(corDeIdentidadeRgb(0)).toEqual([0x4f, 0xa3, 0xf7, 255])
+  })
+
+  it('cobre as cinco posicoes sem repetir', () => {
+    const cores = CORES_IDENTIDADE.map((_, i) => corDeIdentidade(i))
+    expect(new Set(cores).size).toBe(CORES_IDENTIDADE.length)
+  })
+
+  it('cicla em vez de estourar quando o indice passa da paleta', () => {
+    expect(corDeIdentidadeRgb(CORES_IDENTIDADE.length)).toEqual(corDeIdentidadeRgb(0))
+  })
+
+  it('aceita alfa proprio, sem mexer no RGB', () => {
+    expect(corDeIdentidadeRgb(1, 120)).toEqual([...corDeIdentidadeRgb(1).slice(0, 3), 120])
+  })
+
+  it('nenhuma cor de identidade e o vermelho da rampa — ali ele significa RUIM', () => {
+    expect(CORES_IDENTIDADE).not.toContain('#B92323')
+  })
+})
+
+describe('blocosPorParametro', () => {
+  const bloco = (blocos: ReturnType<typeof blocosPorParametro<Hex>>, chave: string) =>
+    blocos.find((b) => b.dimensao.chave === chave)!
+
+  it('poe TODOS os itens dentro de cada parametro, na ordem da lista', () => {
+    const b = blocosPorParametro(DIMENSOES, [
+      hex({ oferta: 1000 }),
+      hex({ oferta: 5000 }),
+      hex({ oferta: 3000 }),
+    ])
+    expect(bloco(b, 'oferta').valores.map((v) => v.valor)).toEqual([1000, 5000, 3000])
+    expect(bloco(b, 'oferta').valores.map((v) => v.indice)).toEqual([0, 1, 2])
+  })
+
+  it('destaca melhor e pior do parametro, sem ordenar a lista', () => {
+    const b = bloco(
+      blocosPorParametro(DIMENSOES, [
+        hex({ oferta: 1000 }),
+        hex({ oferta: 5000 }),
+        hex({ oferta: 3000 }),
+      ]),
+      'oferta',
+    )
+    expect(b.melhores).toEqual([1])
+    expect(b.piores).toEqual([0])
+  })
+
+  it('inverte o lado vencedor onde MENOS e melhor (concorrentes)', () => {
+    const b = bloco(
+      blocosPorParametro(DIMENSOES, [hex({ conc: 9 }), hex({ conc: 1 }), hex({ conc: 5 })]),
+      'conc',
+    )
+    expect(b.melhores).toEqual([1])
+    expect(b.piores).toEqual([0])
+  })
+
+  it('empate mantem TODOS os empatados, sem desempatar pela ordem da lista', () => {
+    const b = bloco(
+      blocosPorParametro(DIMENSOES, [
+        hex({ oferta: 5000 }),
+        hex({ oferta: 5000 }),
+        hex({ oferta: 1000 }),
+      ]),
+      'oferta',
+    )
+    expect(b.melhores).toEqual([0, 1])
+    expect(b.piores).toEqual([2])
+  })
+
+  it('todos iguais nao tem melhor nem pior — seria pintar a tela inteira de destaque', () => {
+    const b = bloco(
+      blocosPorParametro(DIMENSOES, [hex({ oferta: 5000 }), hex({ oferta: 5000 })]),
+      'oferta',
+    )
+    expect(b.melhores).toEqual([])
+    expect(b.piores).toEqual([])
+    expect(b.relevante).toBe(false)
+  })
+
+  it('diferenca abaixo do limiar destaca, mas nao vira relevante', () => {
+    // 1 concorrente contra 2 e +100%, e nao significa quase nada.
+    const b = bloco(blocosPorParametro(DIMENSOES, [hex({ conc: 1 }), hex({ conc: 2 })]), 'conc')
+    expect(b.melhores).toEqual([0])
+    expect(b.relevante).toBe(false)
+  })
+
+  it('ausente entra como null e nao compete pelo destaque', () => {
+    const b = bloco(
+      blocosPorParametro(DIMENSOES, [
+        hex({ oferta: null }),
+        hex({ oferta: 5000 }),
+        hex({ oferta: 1000 }),
+      ]),
+      'oferta',
+    )
+    expect(b.valores[0].valor).toBeNull()
+    expect(b.melhores).toEqual([1])
+    expect(b.piores).toEqual([2])
+  })
+
+  it('com menos de dois valores comparaveis nao ha o que destacar', () => {
+    const b = bloco(
+      blocosPorParametro(DIMENSOES, [hex({ oferta: 5000 }), hex({ oferta: null })]),
+      'oferta',
+    )
+    expect(b.melhores).toEqual([])
+    expect(b.relevante).toBe(false)
+  })
+})
 
 describe('DIMENSOES', () => {
   it('segue a ordem de prioridade combinada', () => {
@@ -188,5 +349,40 @@ describe('compararComFrase', () => {
     const a = hex({ oferta: 9000, pop: 40000, conc: 1 })
     const b = hex({ oferta: 2000, pop: 10000, conc: 6 })
     expect(compararComFrase(a, b).frase).toBe(compararComFrase(a, b).frase)
+  })
+})
+
+describe('rotuloDoHex — o mesmo nome do painel da direita', () => {
+  it('usa o bairro quando o backend o resolveu', () => {
+    expect(rotuloDoHex(hex({ bairro: 'Aracaré', mun: 'Itaquaquecetuba' }), 0)).toBe('Aracaré')
+  })
+
+  it('cai no municipio na visao de UF, onde nao ha bairro', () => {
+    expect(rotuloDoHex(hex({ mun: 'Itaquaquecetuba' }), 0)).toBe('Itaquaquecetuba')
+    expect(rotuloDoHex(hex({ bairro: null, mun: 'Itaquaquecetuba' }), 0)).toBe('Itaquaquecetuba')
+  })
+
+  it('sem indice nao numera — e titulo de UM hexagono, nao item de lista', () => {
+    expect(rotuloDoHex(hex({ mun: null }))).toBe('Hexágono')
+    expect(rotuloDoHex(hex({ mun: null }), 2)).toBe('Hexágono 3')
+  })
+
+  it('desambigua bairros repetidos, e nao a cidade inteira', () => {
+    // Tres hexes da mesma cidade em bairros distintos: nomes distintos, sem numero.
+    expect(
+      rotulosDosHexes([
+        hex({ bairro: 'Aracaré', mun: 'Itaquaquecetuba' }),
+        hex({ bairro: 'Monte Belo', mun: 'Itaquaquecetuba' }),
+        hex({ bairro: 'Corredor', mun: 'Itaquaquecetuba' }),
+      ]),
+    ).toEqual(['Aracaré', 'Monte Belo', 'Corredor'])
+
+    // Dois hexes do MESMO bairro (acontece: "Rio Abaixo" tem tres celulas em Itaquá).
+    expect(
+      rotulosDosHexes([
+        hex({ bairro: 'Rio Abaixo', mun: 'Itaquaquecetuba' }),
+        hex({ bairro: 'Rio Abaixo', mun: 'Itaquaquecetuba' }),
+      ]),
+    ).toEqual(['1 · Rio Abaixo', '2 · Rio Abaixo'])
   })
 })

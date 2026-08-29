@@ -83,6 +83,47 @@ export const DIMENSOES_PONTO: readonly Dimensao<PontoPayload>[] = Object.freeze(
 ])
 
 /**
+ * O ponto passa em TODOS os criterios do estudo que foi possivel avaliar?
+ *
+ * `null` quando nenhum criterio foi avaliado — e' "nao sei", nao "reprovou". Criterio com
+ * `passa: null` (sem dado) fica FORA da conta pelo mesmo motivo: o servidor declara que
+ * ausencia nunca deve ser lida como reprovacao.
+ *
+ * Binario de proposito. Nao conta quantos criterios o ponto cumpre nem os soma: contar
+ * seria inventar um "score de aprovacao do imovel", que e' definicao nova de viabilidade
+ * e exige DEC (ver `_criterios_do_ponto` no servidor). Aqui e' a mesma pergunta de
+ * sim-ou-nao que o deck ja' imprime ao lado do nome de cada ponto.
+ */
+export function passaNoEstudo(p: PontoPayload): boolean | null {
+  const r = resumoDoEstudo(p)
+  return r && r.avaliados > 0 ? r.cumpridos === r.avaliados : null
+}
+
+/** Quantos criterios o ponto cumpre, de quantos foi possivel avaliar. */
+export interface ResumoEstudo {
+  cumpridos: number
+  avaliados: number
+}
+
+/**
+ * A leitura ABSOLUTA do ponto: quantos pisos do produto ele cumpre.
+ *
+ * Complementa o "lidera em X de N", que e' RELATIVO ao conjunto comparado — trocar de
+ * concorrente na comparacao muda aquele numero e nao muda este. As duas respondem
+ * perguntas diferentes e a decisao precisa das duas: um imovel pode ganhar a comparacao
+ * porque os outros sao piores, e ainda assim nao alcancar a regua do estudo.
+ *
+ * `null` quando nenhum criterio foi avaliado. Criterio com `passa: null` (sem dado) fica
+ * de fora da conta — do numerador E do denominador —, porque o servidor declara que
+ * ausencia nunca se le como reprovacao.
+ */
+export function resumoDoEstudo(p: PontoPayload): ResumoEstudo | null {
+  const avaliados = (p.criterios ?? []).filter((c) => c.passa != null)
+  if (!avaliados.length) return null
+  return { cumpridos: avaliados.filter((c) => c.passa === true).length, avaliados: avaliados.length }
+}
+
+/**
  * Casas decimais que definem "a mesma coordenada". 5 casas ≈ 1 metro.
  *
  * Nao e' igualdade exata de ponto flutuante de proposito: o mesmo endereco pode voltar
@@ -101,44 +142,35 @@ export const CASAS_COORD = 5
  * normal — quem nao viu a tela reagir tenta de novo —, entao a tela e' que precisa
  * absorver a repeticao, em vez de transformar cada Enter num item novo.
  */
+/**
+ * A identidade de um ponto: a coordenada arredondada em `CASAS_COORD`.
+ *
+ * Publicada porque DOIS lugares precisam da mesma nocao de "e' o mesmo ponto": esta
+ * funcao, que evita duplicar a ficha, e a tela, que decide se leva o mapa ate' ele. A
+ * tela usava o `hex_id` para isso e errava — um hexagono res-7 tem ~5 km2, entao dois
+ * enderecos a mais de 1 km um do outro cabem no mesmo, e o mapa ficava parado no primeiro
+ * enquanto a janela ja' mostrava o segundo (relato do Juan, 2026-08-14).
+ */
+export function chaveDaCoordenada(lat: number, lng: number): string {
+  return `${lat.toFixed(CASAS_COORD)},${lng.toFixed(CASAS_COORD)}`
+}
+
 export function indiceDoMesmoPonto(
   pontos: readonly PontoPayload[],
   lat: number,
   lng: number,
 ): number {
-  const chave = (a: number, b: number) => `${a.toFixed(CASAS_COORD)},${b.toFixed(CASAS_COORD)}`
+  const chave = (a: number, b: number) => chaveDaCoordenada(a, b)
   const alvo = chave(lat, lng)
   return pontos.findIndex((p) => chave(p.lat, p.lng) === alvo)
 }
 
-/**
- * Uma cor por ponto analisado, para a aba e a coluna dele falarem a mesma coisa.
- *
- * POR QUE NAO E' O TURQUESA DA MARCA. Turquesa e' ACAO neste produto (botoes, cenario
- * multi-hex, pin de busca): usa-lo para identificar um ponto o faria competir com o que
- * ja' significa "clique aqui". Estas cinco sao IDENTIDADE — a mesma funcao das cores de
- * serie num grafico —, escolhidas para se distinguirem entre si no fundo escuro.
- *
- * NAO SAO VEREDITO. Nenhuma delas diz bom ou ruim: a leitura de qualidade vem da rampa
- * publicada (`lib/faixas.ts`), que colore os medidores. Um ponto vermelho aqui e' o
- * terceiro da lista, nao um ponto ruim — por isso o vermelho da rampa (`#B92323`) fica
- * fora desta paleta.
- *
- * Cinco porque `MAX_PONTOS` e' 5. Se o teto subir, a lista precisa subir junto: o `%`
- * evita quebrar, mas repetir cor derruba o proposito.
- */
-export const CORES_PONTO = [
-  '#4FA3F7',
-  '#F2A73B',
-  '#9B7BF0',
-  '#2FBF9E',
-  '#E8618C',
-] as const
-
-/** A cor do ponto na posicao `i`. Cicla se um dia houver mais pontos que cores. */
-export function corDoPonto(i: number): string {
-  return CORES_PONTO[((i % CORES_PONTO.length) + CORES_PONTO.length) % CORES_PONTO.length]
-}
+/* A paleta de identidade MUDOU DE CASA em 2026-08-13: virou `CORES_IDENTIDADE` /
+   `corDeIdentidade` em `lib/comparacao`, porque deixou de ser "cor do ponto" — os
+   hexagonos em comparacao passaram a usar a MESMA paleta, e manter a fonte da verdade
+   dentro do modulo de pontos faria a segunda tela importar de um lugar que nao a
+   descreve. `corDoPonto` continua existindo aqui como o nome que a tela de pontos usa. */
+export { CORES_IDENTIDADE as CORES_PONTO, corDeIdentidade as corDoPonto } from './comparacao'
 
 /** Rotulo curto de um ponto: bairro, senao municipio, senao a coordenada. */
 export function rotuloDoPonto(p: PontoPayload): string {
@@ -193,8 +225,16 @@ export function compararPontos(
 /**
  * Teto de pontos na comparacao.
  *
- * Quatro porque a tabela e' de DUAS colunas: acima disso o operador escolhe pares num
- * seletor que ja e' mais trabalho do que colar de novo. E cada ponto custa uma leitura
- * de particao de municipio no servidor.
+ * CINCO desde 2026-08-13 (pedido do Juan). Eram quatro porque a comparacao era a tabela
+ * de DUAS colunas: acima disso o operador escolhia pares num seletor que ja' dava mais
+ * trabalho do que colar de novo. Com os BLOCOS POR PARAMETRO todos os pontos entram no
+ * mesmo bloco e a escolha de par deixa de existir, entao o teto que a tabela impunha caiu.
+ *
+ * Cinco, e nao mais: e' o tamanho da paleta de identidade (`CORES_PONTO`), escolhida para
+ * as cores se distinguirem entre si no fundo escuro — a sexta cor repetiria e duas abas
+ * ficariam iguais. O comentario de la' ja' dizia "cinco porque MAX_PONTOS e' 5"; era o
+ * codigo que estava atrasado em relacao ao proprio desenho.
+ *
+ * Cada ponto ainda custa uma leitura de particao de municipio no servidor.
  */
-export const MAX_PONTOS = 4
+export const MAX_PONTOS = 5

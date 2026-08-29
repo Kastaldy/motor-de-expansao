@@ -20,7 +20,13 @@ import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
 import { Aviso, Botao, Chip, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { api, ApiError } from '../lib/api'
-import { MAX_PONTOS, indiceDoMesmoPonto, rotulosDosPontos } from '../lib/comparacao-pontos'
+import {
+  MAX_PONTOS,
+  chaveDaCoordenada,
+  indiceDoMesmoPonto,
+  rotulosDosPontos,
+} from '../lib/comparacao-pontos'
+import type { AlvoCaptura } from '../lib/captura-mapa'
 import { linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
 import { num } from '../lib/format'
 import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
@@ -52,6 +58,7 @@ import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
  * seria lido como defeito. Nenhum texto de estado vazio e' inventado aqui.
  */
 export default function PontoScreen({
+  onCapturarMapas,
   onAnalisarPonto,
   onLocalizar,
   mapaPronto,
@@ -91,6 +98,8 @@ export default function PontoScreen({
   onLimparPin: () => void
   /** Volta ao menu de modos — só o hero de entrada usa, como o Explorar faz. */
   onInicio: () => void
+  /** Captura do mapa, publicada pelo App. Ausente = o PDF sai sem mapas. */
+  onCapturarMapas?: (alvos: AlvoCaptura[]) => Promise<string[]>
 }) {
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -108,11 +117,15 @@ export default function PontoScreen({
   /**
    * A caixa de colar so' aparece quando pedida — depois do 1o ponto ela some.
    *
-   * Nasce FECHADA se o mapa ja' estava montado ao entrar no modo (quem explorou uma
-   * regiao e depois trocou para "analisar um ponto"): nesse caso a busca do cabecalho ja'
-   * esta' na tela e abrir a caixa seria duplica-la de saida.
+   * Nasce ABERTA, sempre. Ela nascia fechada quando o mapa ja' estava montado, para nao
+   * duplicar a busca do cabecalho de quem "explorou uma regiao e depois trocou para
+   * analisar um ponto" — mas esse caminho nao existe mais: o Dock deixou de oferecer os
+   * modos (2026-08-12) e a UNICA porta para ca' e' o card do Inicio. Hoje "entrar com o
+   * mapa montado" so' significa uma coisa: o territorio ficou carregado no `App` de uma
+   * analise anterior. Nesse caso a tela abria direto no mapa, sem lugar nenhum para colar
+   * o endereco que o proprio card acabou de prometer (Juan, 2026-08-18).
    */
-  const [colando, setColando] = useState(() => !mapaPronto)
+  const [colando, setColando] = useState(true)
   /**
    * A janela da ficha.
    *
@@ -149,10 +162,24 @@ export default function PontoScreen({
           setJanela(true)
           return
         }
+        /* TETO CHEIO: recusa e DIZ, em vez de engolir o ponto. O `slice(0, MAX_PONTOS)`
+           que estava aqui mantinha os cinco PRIMEIROS e descartava justamente o novo, e
+           ainda abria a aba do quinto antigo — o operador colava um endereço, esperava a
+           leitura e recebia um ponto velho, sem nenhum aviso. Foi a outra metade do
+           "depois de algumas vezes ele buga" (Juan, 2026-08-14). A regra já estava
+           escrita na tela ("Máximo de N pontos - remova um para colar outro"); o que
+           faltava era o código honrá-la. A checagem vem ANTES da chamada: não faz sentido
+           gastar uma leitura de servidor para descartar o resultado. */
+        if (fichas.length >= MAX_PONTOS) {
+          setErro(
+            `Máximo de ${MAX_PONTOS} pontos na comparação. Remova um para analisar outro.`,
+          )
+          return
+        }
         const nova = await api.ponto(lat, lng)
         // O ponto novo entra no fim e vira o aberto: quem acabou de pedir quer ver ele.
         setFichas((atuais) => {
-          const proximas = [...atuais, nova].slice(0, MAX_PONTOS)
+          const proximas = [...atuais, nova]
           setAberto(proximas.length - 1)
           return proximas
         })
@@ -188,10 +215,21 @@ export default function PontoScreen({
    * o mapa continuava parado no ultimo ponto colado, entao nao dava para ver QUAL area
    * cada coluna da comparacao descreve (relato do Juan, 2026-08-12).
    *
-   * A chave e' o `hex_id` da ficha aberta, nao o indice: remover um ponto do meio muda o
-   * indice de todos os seguintes sem mudar o ponto que esta' aberto, e re-localizar ali
-   * seria um voo sem motivo. Trocar de aba entre pontos da MESMA cidade nao recarrega
-   * territorio nenhum — `uf`/`municipio` continuam iguais e so' o pin muda.
+   * A chave e' a COORDENADA da ficha aberta — nao o indice, e NAO o `hex_id`.
+   *
+   * Nao o indice: remover um ponto do meio muda o indice de todos os seguintes sem mudar o
+   * ponto aberto, e re-localizar ali seria um voo sem motivo.
+   *
+   * NAO O HEX_ID, e isso era um DEFEITO (relato do Juan em 2026-08-14: "ao mudar algumas
+   * vezes as coordenadas ele buga, seja a camera, janela, ou nao busca a coordenada"). Um
+   * hexagono res-7 tem ~5 km2, entao dois enderecos a MAIS DE 1 KM um do outro cabem no
+   * mesmo. Medido contra a API: -23.61369,-46.84487 e -23.60569,-46.83687 (1,2 km, ambos
+   * em Cotia) devolvem `hex_id` 87a81006bffffff nos DOIS. Com a guarda por hexagono o
+   * segundo endereco entrava na lista e trocava a janela, mas o mapa e o pin ficavam no
+   * primeiro — janela e mapa descrevendo pontos diferentes, sem erro nenhum na tela.
+   *
+   * Trocar de aba entre pontos da MESMA cidade nao recarrega territorio nenhum:
+   * `uf`/`municipio` continuam iguais e so' o pin muda.
    */
   const ultimoLocalizado = useRef<string | null>(null)
   useEffect(() => {
@@ -199,8 +237,9 @@ export default function PontoScreen({
       ultimoLocalizado.current = null
       return
     }
-    if (ultimoLocalizado.current === ficha.hex_id) return
-    ultimoLocalizado.current = ficha.hex_id
+    const chave = chaveDaCoordenada(ficha.lat, ficha.lng)
+    if (ultimoLocalizado.current === chave) return
+    ultimoLocalizado.current = chave
     onLocalizar(ficha.local.uf ?? '', ficha.local.municipio ?? '', {
       lat: ficha.lat,
       lng: ficha.lng,
@@ -242,16 +281,23 @@ export default function PontoScreen({
   }
 
   /**
-   * A caixa e a busca do cabecalho NUNCA convivem.
+   * A caixa aparece exatamente quando NAO HA' PONTO na tela.
    *
-   * Regra dura, e nao "quase nunca": duas caixas pedindo endereco na mesma tela sao
-   * redundantes ainda que uma delas tenha sido aberta a pedido (foi o defeito que sobrou
-   * da primeira tentativa — o "+ Adicionar mais um ponto" reabria a caixa por cima da
-   * busca). Com o mapa montado a entrada e' a lupa do cabecalho, ponto final; sem mapa a
-   * caixa e' a unica entrada que existe, porque a tela vazia do Explorar so' oferece o
-   * seletor de estado.
+   * `colando` so' vira `true` em tres momentos, e os tres sao esse mesmo estado: ao
+   * montar, ao limpar tudo, e ao remover o ultimo ponto. Com ponto na tela quem
+   * acrescenta o 2o..5o e' o `CampoPonto` de dentro do `PainelPontos`, que nao mexe neste
+   * estado — entao a caixa NAO volta a conviver com a busca do cabecalho, que era o
+   * defeito da primeira versao ("+ Adicionar mais um ponto" reabria a caixa por cima da
+   * lupa).
+   *
+   * O `!mapaPronto` que guardava isto SAIU. Ele existia para o operador que explorava uma
+   * regiao e trocava de modo com o mapa montado — caminho que nao existe mais desde que o
+   * Dock deixou de oferecer os modos (2026-08-12). O que sobrou dele foi impedir a caixa
+   * de aparecer para quem volta ao Inicio e pede "analisar um ponto" de novo: o
+   * territorio da analise anterior continua carregado no `App`, `mapaPronto` e' `true`, e
+   * a tela abria direto no mapa sem lugar nenhum para colar o endereco (Juan, 2026-08-18).
    */
-  const mostrandoCaixa = !mapaPronto && (colando || fichas.length === 0)
+  const mostrandoCaixa = colando || fichas.length === 0
 
   /* SEM MAPA AINDA: a tela é o HERO do modo — o mesmo desenho do "Explorar uma região",
      com o texto desta análise e a caixa de colar no lugar do seletor de estado (pedido do
@@ -419,6 +465,7 @@ export default function PontoScreen({
         {ficha && (
           <div style={{ display: 'grid', gap: 16 }}>
             <PainelPontos
+            onCapturarMapas={onCapturarMapas}
               fichas={fichas}
               aberto={aberto}
               onAbrir={setAberto}

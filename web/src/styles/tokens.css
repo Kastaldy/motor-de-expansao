@@ -23,6 +23,14 @@
   --surf-raised: rgba(255, 255, 255, 0.03);
   --surf-input: rgba(255, 255, 255, 0.04);
   --surf-pending: rgba(255, 255, 255, 0.06);
+  /* Superficie OPACA de um controle que flutua SOBRE O MAPA (hoje, a pilula do raio de
+     1 km). Opaca pelo mesmo motivo do --surf-select, e nao pelo do resto das superficies:
+     por baixo dela passa a legenda das faixas, e qualquer alfa deixava a legenda
+     atravessar o texto (pedido do Felipe, que no escuro pediu PRETO — e' este valor).
+     No claro o preto nao serve, e o que se preserva do pedido e' a OPACIDADE, nao a cor:
+     um preto chapado sobre o Positron seria a unica mancha escura da tela. */
+  --surf-mapa: #000000;
+
   /* Superficie OPACA do seletor — o botao do `Select` e as `option` do select nativo.
      Opaca, e nao um alfa como os de cima, porque a lista flutua sobre o conteudo e
      precisa cobri-lo. Era o hex #101a26 repetido em `Select.tsx` e no `global.css`. */
@@ -42,7 +50,19 @@
   --tx-narrative: #9aa7b5;
   --tx-label: #8b97a5;
   --tx-muted: #7b8794;
-  --tx-sub: #6f7b89;
+  /* 4,53:1 sobre o fundo das janelas (--surf-panel sobre --bg-base, ~#0d141d). Era
+     #6f7b89 = 4,29:1, ABAIXO do minimo de 4,5 para corpo — e este token pinta as legendas
+     ("Ja atendido", "Sobra") em 10,5px, texto pequeno, que precisa do 4,5. Foi o que o
+     Juan chamou de "o fundo preto e a legenda cinza nao combina": nao era gosto, era
+     reprovacao de contraste. A correcao e' minima de proposito: sobe o suficiente para
+     passar, sem clarear a ponto de competir com o --tx-muted logo acima. */
+  --tx-sub: #727f8d;
+  /* 3,17:1 — DE-ENFASE DELIBERADA, nao texto de leitura. Fica abaixo do 4,5 porque a
+     funcao dele e' APAGAR (a diferenca irrelevante da comparacao, que segue visivel para
+     auditoria sem virar argumento). Texto que carrega SIGNIFICADO nao pode usar este
+     token: as micro-legendas de direcao ("menos e' melhor") migraram para --tx-sub por
+     isso. Subi-lo ate 4,5 daria #707f91, praticamente identico ao --tx-sub, e a hierarquia
+     entre "apagado" e "secundario" sumiria. */
   --tx-off: #5a6675;
   --tx-rank: #4a5765;
 
@@ -60,6 +80,7 @@
   --ac-a24: rgba(53, 201, 214, 0.24);
   --ac-a25: rgba(53, 201, 214, 0.25);
   --ac-a30: rgba(53, 201, 214, 0.3);
+  --ac-a45: rgba(53, 201, 214, 0.45);
   --ac-a60: rgba(53, 201, 214, 0.6);
   --ac-glow: 0 6px 16px -4px rgba(53, 201, 214, 0.5);
 
@@ -198,6 +219,47 @@
      socioeconomico. Fica aqui para quem precisar de azul informativo LONGE do funil. */
   --info: #2f6bed;
 
+  /* --- Valores que nasceram CRAVADOS nos componentes -----------------------
+     Estes seis eram hex/rgba literais espalhados por `MapScreen` e
+     `ViabilityCharts`. Viraram token na promocao do tema (2026-08-25) porque no
+     claro todos falham: os brancos com alfa somem no branco e o preto da sombra
+     suja o papel.
+
+     O valor do ESCURO aqui e' o ORIGINAL, byte a byte — nenhum deles foi
+     aproximado para um token vizinho que ja' existia. A tentacao era grande
+     (--warn no lugar do #f2c230, --line-strong no lugar do branco .14,
+     --surf-pending no lugar do .08) e foi recusada de proposito: a diferenca era
+     pequena, mas "pequena" nao e' "nenhuma", e o pedido era manter o escuro
+     intacto. Um token por valor custa cinco linhas e nao mente.
+
+     Ao mexer no ESCURO destes, voce esta mexendo na tela que ja' estava no ar.
+     ------------------------------------------------------------------------- */
+  /* Ponto do estado "carregando" na pilula do raio de 1 km. E' um ambar TERCEIRO,
+     mais saturado que --warn (#d9a441) e que --warn-text (#e9c07a): "carregando"
+     nao e' aviso, e por isso nunca entrou na familia warn. */
+  --carga: #f2c230;
+  /* Ponto do mesmo controle, estado DESLIGADO. Vizinho de --tx-off (#5a6675), mas
+     nao igual — e' o cinza que o controle sempre teve. */
+  --sinal-off: #5a6472;
+  /* Hairline da pilula sobre o mapa. Nao usa a familia --line-* porque ela e'
+     calibrada para superficie do APP, e esta borda mora sobre o basemap. */
+  --linha-mapa: rgba(255, 255, 255, 0.14);
+  /* Veu do chip de premissa nos graficos de viabilidade. */
+  --surf-chip: rgba(255, 255, 255, 0.08);
+  /* Linha de zero dos graficos (payback e fluxo). Tracejada, sobre o card. */
+  --linha-eixo: rgba(255, 255, 255, 0.28);
+  /* Sombra do ponto/marcador dentro de um grafico. Mais rasa que --sh-pin. */
+  --sh-ponto: 0 3px 10px rgba(0, 0, 0, 0.5);
+  /* Anel de HOVER num pin do mapa (Oportunidades Imobiliarias). */
+  --anel-mapa: rgba(255, 255, 255, 0.18);
+  /* Texto LIGADO das duas pilulas de camada que acompanham a do raio. Cada uma tem a
+     matiz da sua camada — coral nas academias independentes, magenta nos imoveis — e
+     por isso nao cabem em --ac-*. O ponto e a borda de cada pilula continuam com o hex
+     da camada (`#e8663c`, ACC, ACC_50): sao ELEMENTO GRAFICO, passam nos dois fundos.
+     O TEXTO nao passava: #f2a488 da' ~2,2:1 e #f06fb6 ~2,3:1 sobre o branco. */
+  --indep-tx: #f2a488;
+  --imovel-tx: #f06fb6;
+
   /* --- Tipografia ---------------------------------------------------------- */
   --f-ui: 'Instrument Sans Variable', 'Instrument Sans', system-ui, sans-serif;
   --f-story: 'Instrument Serif', Georgia, serif;
@@ -224,15 +286,20 @@
 /* ============================================================================
    TEMA CLARO — escopado por [data-tema='claro'].
 
-   Nao e' o tema do produto: e' um atributo posto num CONTAINER (hoje, a raiz da
-   Visao Executiva). Como token de CSS herda, tudo que esta' dentro passa a ler
-   estes valores e o resto do app continua no escuro do `:root`, sem `!important`,
-   sem classe em cada componente e sem duplicar folha de estilo. Trocar de aba nao
-   deixa residuo: o atributo sai junto com o container.
+   E' o tema do APP: o atributo vive no <html> (posto pelo `App`, ver lib/tema.ts)
+   e alcanca as cinco telas. Ate' 2026-08-25 ele morava no container da Visao
+   Executiva e so' ela era clara; o resto do produto ficava escuro por baixo.
 
-   Redefine SO' o que a Visao Executiva consome — as camadas --l1..--l5 sao chrome
-   do Mapa Territorial e nunca entram aqui. Quem levar um --l* para dentro da
-   Executiva tem de trazer o valor claro junto: no branco, --l5 (#eef3f8) some.
+   O mecanismo nao mudou com a promocao, e e' o motivo de ela ter sido barata:
+   token de CSS herda, entao subir o atributo de um <div> para o <html> repinta
+   tudo que le' `var()` sem `!important`, sem classe por componente e sem uma
+   segunda folha de estilo. O escuro do `:root` continua sendo o padrao do
+   produto — quem nunca escolheu nada nao ve' diferenca.
+
+   O que a promocao EXIGIU foi o bloco --l1..--l5 la' embaixo. Ele nao existia
+   aqui, porque as camadas sao chrome do Mapa Territorial e o Mapa nunca era
+   claro; sem valor proprio, --l5 (#eef3f8) sumia no branco e as outras quatro
+   viravam pastel ilegivel sobre os cards.
 
    As cores nao foram "invertidas": as que carregam TEXTO tiveram de escurecer de
    verdade. O turquesa #35c9d6 da' ~1,9:1 sobre branco (reprova como texto em
@@ -262,6 +329,8 @@
   --surf-input: rgba(13, 27, 42, 0.04);
   --surf-pending: rgba(13, 27, 42, 0.08);
   --surf-select: #ffffff;
+  /* Branco chapado: mesma funcao do preto do escuro — tapar a legenda que passa por baixo. */
+  --surf-mapa: #ffffff;
 
   /* --- Hairlines ----------------------------------------------------------- */
   --line: rgba(13, 27, 42, 0.13);
@@ -277,7 +346,12 @@
   --tx-narrative: #45566a;
   --tx-label: #52657a;
   --tx-muted: #5d7085;
-  --tx-sub: #66798e;
+  /* 4,54:1 sobre o painel claro. Era #66798e = 4,24:1 — o tema claro tinha a MESMA
+     reprovacao do escuro, pelo mesmo motivo (legenda de 10,5px). Ver a nota no bloco
+     escuro; o ajuste aqui e' na direcao oposta, escurecendo. */
+  --tx-sub: #627489;
+  /* 3,11:1 — de-enfase deliberada, espelhando o --tx-off do escuro. Mesma regra: texto
+     com significado nao usa este token. */
   --tx-off: #7d90a4;
   --tx-rank: #93a3b5;
 
@@ -297,6 +371,7 @@
   --ac-a24: rgba(14, 142, 156, 0.24);
   --ac-a25: rgba(14, 142, 156, 0.25);
   --ac-a30: rgba(14, 142, 156, 0.3);
+  --ac-a45: rgba(14, 142, 156, 0.45);
   --ac-a60: rgba(14, 142, 156, 0.6);
   --ac-glow: 0 6px 16px -6px rgba(14, 142, 156, 0.4);
 
@@ -304,6 +379,54 @@
   /* O #c8001e sobre branco ja' passa como elemento grafico; escurece um tom so' para
      nao vibrar contra o cinza do fundo. Continua proibido como cor de rotulo. */
   --ultra: #b30019;
+
+  /* --- Identidade das camadas do funil (--l1..--l5) -------------------------
+     Mesma regra do resto do bloco: a MATIZ e' preservada e a luminancia desce ate'
+     o texto passar. As matizes claras do escuro reprovam todas sobre branco — --l1
+     (#6fa4f7) da' ~2,1:1 e --l5 (#eef3f8) simplesmente nao existe ali.
+
+     As DUAS COINCIDENCIAS deliberadas do escuro sobrevivem, e isso nao e' descuido:
+       --l4 == --ac    (a camada 4 herda o turquesa que ela ja' usa no mapa para
+                        "Em alta"; separa-los aqui faria o cabecalho brigar com o
+                        hexagono ao lado, que e' a razao original)
+       --l5 == --tx-max (a camada da SINTESE fica sem matiz; no claro o "claro
+                        neutro" vira o ESCURO neutro, senao ela some)
+     Ao mexer num dos pares, mexa nos dois lados do arquivo — sao os mesmos numeros
+     de proposito, e o escuro tem o mesmo par.
+
+     Estes valores NAO tem gemeo em `lib/colors.ts`. O `rgb` de `CAMADA_CORES` veste
+     a borda do chip de rank, que e' escuro nos dois temas — ver o comentario de la'. */
+
+  /* Camada 1 · azul frio. Mesmo valor de --gr-azul, como no escuro (#6fa4f7 nos dois). */
+  --l1: #2f6bc9;
+  --l1-a10: rgba(47, 107, 201, 0.1);
+  --l1-a24: rgba(47, 107, 201, 0.24);
+  --l1-a60: rgba(47, 107, 201, 0.6);
+
+  /* Camada 2 · violeta. Segue a unica matiz ausente da rampa de score e dos chips. */
+  --l2: #5d43c0;
+  --l2-a10: rgba(93, 67, 192, 0.1);
+  --l2-a24: rgba(93, 67, 192, 0.24);
+  --l2-a60: rgba(93, 67, 192, 0.6);
+
+  /* Camada 3 · ambar = atrito. Desce ate' a faixa de --warn-text: no claro o ambar e'
+     a cor que mais perde contraste, e a camada tem de sobreviver como TEXTO. */
+  --l3: #8a6110;
+  --l3-a10: rgba(138, 97, 16, 0.1);
+  --l3-a24: rgba(138, 97, 16, 0.24);
+  --l3-a60: rgba(138, 97, 16, 0.6);
+
+  /* Camada 4 · turquesa — o MESMO valor de --ac neste tema, por desenho (ver acima). */
+  --l4: #0e8e9c;
+  --l4-a10: rgba(14, 142, 156, 0.1);
+  --l4-a24: rgba(14, 142, 156, 0.24);
+  --l4-a60: rgba(14, 142, 156, 0.6);
+
+  /* Camada 5 · a sintese, sem matiz — o MESMO valor de --tx-max neste tema. */
+  --l5: #0b1219;
+  --l5-a10: rgba(11, 18, 25, 0.1);
+  --l5-a24: rgba(11, 18, 25, 0.24);
+  --l5-a60: rgba(11, 18, 25, 0.6);
 
   /* --- Semantica ----------------------------------------------------------- */
   --pos: #0f9d55;
@@ -330,6 +453,23 @@
   --gr-verde: #0f9d55;
   --gr-coral: #d1495e;
   --faixa-neutra: #94a3b3;
+
+  /* --- Os seis que eram valor cravado (ver o bloco gemeo no :root) ---------
+     Aqui eles ganham o par que nunca existiu. Os tres brancos com alfa INVERTEM o
+     sinal (tinta sobre claro), o ambar e o cinza descem de luminancia para
+     sobreviver ao branco, e a sombra troca o preto por azul-tinta com menos alfa —
+     preto sobre branco suja, nao separa. */
+  --carga: #a9770f;
+  --sinal-off: #7d90a4;
+  --linha-mapa: rgba(13, 27, 42, 0.2);
+  --surf-chip: rgba(13, 27, 42, 0.08);
+  --linha-eixo: rgba(13, 27, 42, 0.3);
+  --sh-ponto: 0 3px 10px rgba(13, 27, 42, 0.18);
+  --anel-mapa: rgba(13, 27, 42, 0.28);
+  /* Mesma MATIZ dos pares escuros (~17 graus e ~327 graus), luminancia derrubada ate' o
+     texto passar sobre o branco da pilula. */
+  --indep-tx: #b04a22;
+  --imovel-tx: #a81b6b;
 
   /* --- Sombras ------------------------------------------------------------- */
   /* Sombra no claro e' separacao, nao vedacao: preta demais suja o branco. */

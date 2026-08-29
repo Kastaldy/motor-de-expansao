@@ -201,3 +201,50 @@ def test_gravacao_recusa_valor_nao_finito(base: Path) -> None:
     )
     with pytest.raises(ValueError):
         rcad.gravar_cadastro(quebrado, base)
+
+
+# --- Pentest Onda B #9: universo trava unidades-fantasma no PUT ------------------
+
+
+def test_universo_rejeita_id_desconhecido(base: Path) -> None:
+    """Id fora do universo E fora do cadastro -> UnidadeDesconhecida, nada gravado."""
+    versao_antes = rcad.ler_cadastro(base).versao
+    with pytest.raises(rcad.UnidadeDesconhecida):
+        rcad.atribuir(
+            "unidade-fantasma-zz",
+            {"consultor": "X"},
+            universo=frozenset({"orfa-sp"}),
+            base=base,
+        )
+    depois = rcad.ler_cadastro(base)
+    assert depois.versao == versao_antes  # sem bump
+    assert "unidade-fantasma-zz" not in depois.unidades  # sem chave nova
+
+
+def test_universo_permite_id_ja_no_cadastro(base: Path) -> None:
+    """Unidade so' no cadastro semeado (fora do universo da base) SEGUE editavel —
+    caso fundador da DEC-023 (corrigir registro semeado)."""
+    novo = rcad.atribuir(
+        "botafogo-rj",
+        {"consultor": "NOVA"},
+        universo=frozenset({"so-outra-xx"}),  # botafogo-rj NAO esta aqui
+        base=base,
+    )
+    assert novo.de("botafogo-rj")["consultor"] == "NOVA"
+
+
+def test_universo_permite_id_na_base_ainda_sem_registro(base: Path) -> None:
+    """Atribuir a quem esta na base mas ainda nao tem registro (caso fundador)."""
+    novo = rcad.atribuir(
+        "nova-unidade-sp",
+        {"consultor": "JOSE"},
+        universo=frozenset({"nova-unidade-sp"}),
+        base=base,
+    )
+    assert novo.de("nova-unidade-sp")["consultor"] == "JOSE"
+
+
+def test_universo_none_nao_valida(base: Path) -> None:
+    """universo=None mantem o comportamento antigo (chamadas sem universo)."""
+    novo = rcad.atribuir("qualquer-id-novo", {"consultor": "Z"}, universo=None, base=base)
+    assert novo.de("qualquer-id-novo")["consultor"] == "Z"

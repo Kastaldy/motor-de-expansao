@@ -88,6 +88,10 @@ def _point_app_at(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
     # alcanca, e sem isto o teste le o parquet real da maquina de quem roda.
     monkeypatch.setattr(pilot, "CRESCIMENTO_PATH", staging / "crescimento_municipal.parquet")
     monkeypatch.setattr(pilot, "CRESCIMENTO_HEX_PATH", staging / "crescimento_hex.parquet")
+    # Calculada no import, como as de cima. Sem esta linha a suite leria o artefato NOMEADO real
+    # de quem roda, e os pins apareceriam (ou nao) conforme a maquina.
+    monkeypatch.setattr(pilot, "NOMEADAS_PATH", staging / "vulnerabilidade_ma_nomeadas.parquet")
+    monkeypatch.setattr(pilot, "REDES_PATH", staging / "vulnerabilidade_ma_redes.parquet")
     monkeypatch.setattr(pilot, "GEOCODE_CACHE_DIR", data_dir / "cache" / "geocode")
     _clear_caches()
 
@@ -192,10 +196,13 @@ def test_todas_as_rotas_registradas() -> None:
 
 
 def test_health_contrato(empty_data: Path) -> None:
-    h = pilot.health()
-    assert h["status"] == "ok"
-    assert h["data_ok"] is False
-    assert h["data_dir"] == str(empty_data)
+    # /api/health publico e' mudo (pentest Onda B #8); o diagnostico com data_dir/data_ok
+    # migrou para `_inventario_artefatos()` (rota admin /api/acessos/saude-artefatos).
+    assert pilot.health() == {"status": "ok"}
+    inv = pilot._inventario_artefatos()
+    assert inv["status"] == "ok"
+    assert inv["data_ok"] is False
+    assert inv["data_dir"] == str(empty_data)
 
 
 def test_ufs_sem_base_levanta_500(empty_data: Path) -> None:
@@ -236,7 +243,7 @@ def test_executiva_sem_growth_levanta_404(empty_data: Path) -> None:
 
 def test_relatorio_municipal_sem_dados_levanta_httpexception(empty_data: Path) -> None:
     with pytest.raises(HTTPException):
-        pilot.relatorio_municipal(pilot.RelatorioMunicipalIn(uf="SP", municipio="X"))
+        asyncio.run(pilot.relatorio_municipal(pilot.RelatorioMunicipalIn(uf="SP", municipio="X")))
 
 
 def test_relatorio_pontual_sem_geo_levanta_404(empty_data: Path) -> None:
@@ -785,7 +792,7 @@ def test_relatorio_municipal_renderiza_e_passa_os_mapas(monkeypatch: pytest.Monk
         relmun, "gerar_payloads_download_relatorio_municipal", _fake_payloads
     )
 
-    resp = pilot.relatorio_municipal(pilot.RelatorioMunicipalIn(uf="DF", municipio="X"))
+    resp = asyncio.run(pilot.relatorio_municipal(pilot.RelatorioMunicipalIn(uf="DF", municipio="X")))
     assert resp.media_type == "application/pdf"
     assert chamada.get("render") is True, "o endpoint nao chamou render_mapas_municipio"
     assert chamada.get("poligono_kwarg") is True, (
@@ -864,11 +871,21 @@ def test_relatorio_pontual_nao_bloqueia_o_event_loop():
 
 
 def test_relatorio_municipal_tambem_fora_do_event_loop():
-    """O Relatorio Municipal e igualmente pesado; como e `def` (nao `async def`), o
-    proprio FastAPI ja o roda no threadpool. Trava esse invariante junto."""
+    """O Relatorio Municipal e igualmente pesado. Desde o pentest 2026-08-19 a rota e'
+    `async def` FINA: serializa pelo `_PDF_SEMAFORO` e delega o corpo pesado ao
+    threadpool via `_gerar_relatorio_municipal_response`, igual a /pontual. Antes era um
+    `def` sincrono SEM o semaforo, entao um flood de municipais saturava o threadpool e
+    derrubava ate' o /api/health. Trava o invariante novo: corpo pesado FORA do event
+    loop + gate de concorrencia."""
     import inspect
 
-    assert not inspect.iscoroutinefunction(pilot.relatorio_municipal)
+    assert inspect.iscoroutinefunction(pilot.relatorio_municipal)
+    assert not inspect.iscoroutinefunction(pilot._gerar_relatorio_municipal_response)
+    fonte = inspect.getsource(pilot.relatorio_municipal)
+    assert "_PDF_SEMAFORO" in fonte
+    assert "run_in_threadpool" in fonte
+    assert "_gerar_relatorio_municipal_response" in fonte
+    assert "render_mapas_municipio" not in fonte  # corpo pesado NAO na rota fina
 
 
 # ===========================================================================
@@ -917,18 +934,24 @@ def _funil_muni(concorrentes: list[int]) -> tuple[pd.DataFrame, dict[str, str]]:
 @pytest.mark.parametrize(
     ("concorrentes", "tags_esperadas"),
     [
-        # A base do passo 3 e SEMPRE o white space (sem fallback), entao todo item que
-        # chega ao painel tem n = 0 concorrentes -> "Livre". O que estes casos provam e
-        # que o ramo competitivo ROda: os hexes com concorrente somem da lista em vez de
-        # aparecer com etiqueta de intensidade de residual.
-        pytest.param([0, 0, 3], ["Livre", "Livre"], id="dois-livres-um-disputado"),
-        pytest.param([0, 1, 2, 3], ["Livre"], id="um-livre-tres-disputados"),
+        # A base do passo 3 mudou na DEC-041: em vez de exigir ZERO concorrente, ela
+        # aceita ate' `CONC_ADENSAR_MAX` (2). Entao o passo passou a exibir os TRES
+        # rotulos do vocabulario competitivo, e nao so' "Livre" -- que e' o unico jeito
+        # de "Adensar" chegar a tela. Quem passa de 2 (saturado) continua fora.
+        # A ORDEM e' a do passo: menos disputado primeiro (`ordem_extra`).
+        pytest.param([0, 0, 3], ["Livre", "Livre"], id="dois-livres-um-saturado"),
+        pytest.param([0, 1, 2, 3], ["Livre", "Adensar", "Adensar"], id="livre-adensar-saturado"),
     ],
 )
 def test_passo3_etiqueta_pelo_vocabulario_competitivo(
     concorrentes: list[int], tags_esperadas: list[str]
 ) -> None:
     """C2/N5: o passo 3 etiqueta por CONCORRENCIA — o ramo "conc. 2 km" tem que rodar.
+
+    Desde a DEC-041 este teste tem um segundo papel: provar que "Adensar" EXISTE na
+    tela. Enquanto o passo cortava todo hexagono com concorrente, o unico rotulo que
+    chegava ao painel era "Livre" — os outros dois ramos do vocabulario estavam
+    escritos e inalcancaveis.
 
     `_rank_items` recebia UM parametro para duas coisas diferentes: o texto exibido sob
     o valor e a chave que escolhe o ramo do `_etiqueta`. Como o passo 3 exibe um valor
@@ -1015,95 +1038,144 @@ def test_passo3_ranqueia_os_hexes_que_o_mapa_destaca() -> None:
     assert passo3["funil_big"] == len(destacados)
 
 
-def test_passo5_so_recomenda_hexagono_livre() -> None:
-    """A fila do passo 5 sai do MESMO white space do passo 3, nunca do residual.
+def test_passo5_recomenda_disputado_mas_nunca_saturado() -> None:
+    """A fila do passo 5 sai da MESMA base do passo 3 — que na DEC-041 deixou de ser
+    "zero concorrente" e passou a ser "ate' `CONC_ADENSAR_MAX`".
 
-    Complementa o N13 no passo da recomendacao: com hexes livres E disputados na mesma
-    fixture, a fila nao pode "completar" as 10 vagas com hexagono que tem concorrente.
+    Duas afirmacoes num teste so', porque sao os dois lados da mesma decisao:
+
+    (a) ter concorrente NAO elimina mais. Era a Dor 1 do dono: o corte antigo derrubava
+        31% das regioes com demanda real e, nas 8 maiores capitais sem uma excecao, as
+        derrubadas tinham score socioeconomico mediano MAIOR que as mantidas.
+    (b) saturacao extrema continua eliminando, e a fila segue SEM FALLBACK: ela nunca
+        "completa" as 10 vagas com hexagono que o proprio passo 3 excluiu. Este era o
+        invariante do PR #184 e ele sobrevive inteiro — so' mudou onde fica a linha.
     """
     df, bairros = _funil_muni([0, 1, 2, 3])
     passos = pilot.montar_funil(df, "Sao Paulo", bairros)
     passo3, passo5 = passos[2], passos[4]
 
-    livres = set(passo3["hexes"])
-    assert len(livres) == 1, "a fixture precisa ter livre E disputado para o teste valer"
-    assert set(passo5["hexes"]) <= livres, (
-        f"passo 5 recomendou hexagono com concorrente: {sorted(set(passo5['hexes']) - livres)}"
+    viaveis = set(passo3["hexes"])
+    assert len(viaveis) == 3, (
+        "a fixture precisa ter livre, adensavel E saturado para o teste valer; "
+        f"viaveis={len(viaveis)}"
     )
-    assert {i["hex_id"] for i in passo5["itens"]} <= livres
-    assert passo5["funil_big"] == len(passo5["hexes"]) == 1
+    saturado = set(df[df["n_concorrentes_est"] > pilot.CONC_ADENSAR_MAX]["hex_id"])
+    assert saturado, "fixture sem hexagono saturado: o lado (b) do teste ficaria vago"
+
+    # (a) o disputado entra
+    disputados = set(df[df["n_concorrentes_est"].between(1, pilot.CONC_ADENSAR_MAX)]["hex_id"])
+    assert disputados & viaveis, "regiao com concorrente voltou a ser eliminada no passo 3"
+
+    # (b) o saturado nao entra, e a fila nao inventa fallback
+    assert not (set(passo5["hexes"]) & saturado), (
+        f"passo 5 recomendou hexagono saturado: {sorted(set(passo5['hexes']) & saturado)}"
+    )
+    assert set(passo5["hexes"]) <= viaveis
+    assert {i["hex_id"] for i in passo5["itens"]} <= viaveis
+    assert passo5["funil_big"] == len(passo5["hexes"]) == 3
 
 
-def test_sem_hexagono_livre_os_passos_3_e_5_ficam_vazios() -> None:
-    """Sem white space, os passos 3 e 5 nao tem NENHUM item — e isso e o correto.
+def test_sem_regiao_que_comporte_entrada_os_passos_3_e_5_ficam_vazios() -> None:
+    """Com TUDO saturado, os passos 3 e 5 nao tem NENHUM item — e isso e o correto.
 
-    Regra do dono (2026-08-03): "os top 10 deverao se referir aos hexagonos livres".
-    Havia fallback — sem white space o ranking caia para o residual inteiro —, e ele
-    produzia a incoerencia que o dono rejeitou: numerao do passo em 0, mapa sem nenhum
-    hexagono aceso e, ao lado, um painel listando 01-10 regioes. Agora a lista vazia e a
-    RESPOSTA ("nao ha area sem concorrencia aqui"), coerente com o numerao e com o mapa.
+    O invariante e' o do PR #184 e sobrevive a DEC-041: a fila NUNCA cai num fallback
+    para o residual inteiro. O fallback produzia a incoerencia que o dono rejeitou —
+    numerao do passo em 0, mapa sem nenhum hexagono aceso e, ao lado, um painel listando
+    01-10 regioes. O que mudou foi so' ONDE fica a linha: era "tem concorrente", virou
+    "passa de `CONC_ADENSAR_MAX` concorrentes".
 
-    Este teste substitui o `test_passo3_sem_white_space_cai_no_residual_e_o_destaque_
-    fica_vazio`, que travava exatamente o comportamento rejeitado.
+    A fixture precisou mudar junto. Com [1,2,3,4] este teste era sobre "todo mundo tem
+    concorrente"; hoje 1 e 2 concorrentes SAO viaveis, e a fixture antiga passaria a
+    exercitar o caso cheio. Aqui todos os hexes estao acima do teto.
+    """
+    df, bairros = _funil_muni([3, 4, 5, 6])
+    passos = pilot.montar_funil(df, "Sao Paulo", bairros)
+    passo3, passo5 = passos[2], passos[4]
+
+    # Fixture com residual de sobra: o funil so morre no filtro de SATURACAO.
+    assert passos[1]["funil_big"] == 4, "a fixture perdeu o residual; o teste seria vago"
+
+    # O passo 4 (crescimento) le a mesma base, entao apaga junto — mas por outro motivo
+    # (nao ha o que descrever), e nao pelo fallback que este teste trava.
+    assert passos[3]["hexes"] == [], "passo 4 destacou hexagono sem base viavel"
+
+    for passo in (passo3, passo5):
+        assert passo["hexes"] == [], f"passo {passo['n']}: nada viavel, nada a destacar"
+        assert passo["funil_big"] == 0
+        assert passo["itens"] == [], (
+            f"passo {passo['n']} listou {len(passo['itens'])} itens sem nenhuma regiao "
+            "viavel — o fallback para o residual voltou (numerao 0, mapa apagado e painel "
+            "cheio: a incoerencia que o dono rejeitou)"
+        )
+
+    # E o estado vazio nao pode parecer bug: a narrativa explica em texto.
+    assert "Nenhuma" in passo3["narrativa"], (
+        f"passo 3 nao explica a lista vazia: {passo3['narrativa']!r}"
+    )
+    assert "não gera fila aqui" in passo5["narrativa"], (
+        f"passo 5 nao explica a fila vazia: {passo5['narrativa']!r}"
+    )
+
+
+def test_regiao_com_concorrente_volta_a_ser_recomendavel() -> None:
+    """O coracao da DEC-041, no nivel do funil: a fixture que ANTES zerava os passos 3-5
+    agora produz fila.
+
+    Com [1, 2, 3, 4] concorrentes, a regra antiga ("so' hexagono livre") deixava os tres
+    ultimos passos VAZIOS — nenhum hex tinha zero concorrente. Pela regra nova, os dois
+    primeiros (1 e 2 concorrentes) comportam entrada e a fila existe. E' exatamente a
+    dor que o dono descreveu: "a camada 5 esta' jogando recomendacao apenas em
+    periferias", porque as pracas boas o bastante para atrair concorrente eram cortadas.
     """
     df, bairros = _funil_muni([1, 2, 3, 4])
     passos = pilot.montar_funil(df, "Sao Paulo", bairros)
     passo3, passo5 = passos[2], passos[4]
 
-    # Fixture com residual de sobra: o funil so morre no filtro de CONCORRENCIA.
-    assert passos[1]["funil_big"] == 4, "a fixture perdeu o residual; o teste seria vago"
-
-    # O passo 4 (crescimento) tambem destaca o white space, entao apaga junto — mas por
-    # outro motivo (nao ha o que destacar), e nao pelo fallback que este teste trava.
-    assert passos[3]["hexes"] == [], "passo 4 destacou hexagono sem white space"
-
-    for passo in (passo3, passo5):
-        assert passo["hexes"] == [], f"passo {passo['n']}: sem white space nada a destacar"
-        assert passo["funil_big"] == 0
-        assert passo["itens"] == [], (
-            f"passo {passo['n']} listou {len(passo['itens'])} itens sem nenhum hexagono "
-            "livre — o fallback para o residual voltou (numerao 0, mapa apagado e painel "
-            "cheio: a incoerencia que o dono rejeitou)"
-        )
-
-    # E o estado vazio nao pode parecer bug: a narrativa explica em texto.
-    assert "Não há área sem concorrência" in passo3["narrativa"], (
-        f"passo 3 nao explica a lista vazia: {passo3['narrativa']!r}"
+    assert passo3["funil_big"] == 2, (
+        "a regra antiga voltou: hexagono com 1-2 concorrentes esta' sendo eliminado no "
+        f"passo 3. funil_big={passo3['funil_big']}"
     )
-    assert "0 não têm" not in passo3["narrativa"], "frase agramatical do caso n=0"
-    assert "não há abertura a recomendar" in passo5["narrativa"], (
-        f"passo 5 nao explica a fila vazia: {passo5['narrativa']!r}"
+    assert passo5["funil_big"] == 2 and passo5["itens"], (
+        "passo 5 ficou sem fila num recorte que tem regiao viavel"
+    )
+    assert passo5["metrica"] == "índice de praça", (
+        "a camada 5 voltou a ordenar por residual puro — a ordenacao conjuntiva caiu"
     )
 
 
 def _uf_saturada() -> pd.DataFrame:
-    """UF sintetica sem NENHUM hexagono livre (todo hex com >= 1 concorrente)."""
+    """UF sintetica sem NENHUMA regiao viavel (todo hex acima de `CONC_ADENSAR_MAX`).
+
+    Era "1 concorrente por hex" ate' a DEC-041; com o teto em 2, isso deixou de saturar
+    coisa nenhuma — a fixture continuaria verde medindo outra coisa.
+    """
     base = _synthetic_enriched().copy()
-    base["oferta_consumida_mercado_estimada"] = 2500.0  # 1 concorrente por hex
+    base["oferta_consumida_mercado_estimada"] = 2500.0 * (pilot.CONC_ADENSAR_MAX + 2)
     df = pilot._derivar(base)
-    assert (df["n_concorrentes_est"] >= 1).all(), "fixture nao saturou"
+    assert (df["n_concorrentes_est"] > pilot.CONC_ADENSAR_MAX).all(), "fixture nao saturou"
     return df
 
 
-def test_uf_sem_hexagono_livre_tambem_fica_com_os_passos_3_4_e_5_vazios() -> None:
+def test_uf_sem_regiao_viavel_tambem_fica_com_os_passos_3_4_e_5_vazios() -> None:
     """Mesma regra no funil de UF — deixar um nivel com fallback so muda a incoerencia de lugar.
 
-    A visao de estado ranqueia MUNICIPIOS; sem white space na UF inteira ela recomendava
+    A visao de estado ranqueia MUNICIPIOS; sem base viavel na UF inteira ela recomendava
     municipios que o proprio passo acabara de excluir (numerao 0, mapa apagado).
     """
     passos = pilot.montar_funil_uf(_uf_saturada(), "SP")
     passo3, passo5 = passos[2], passos[4]
 
     assert passos[1]["funil_big"] == 8, "a fixture perdeu o residual; o teste seria vago"
-    # Os tres saem do mesmo `white`: o passo 4 le a base do funil, nao a UF inteira.
+    # Os tres saem da mesma base: o passo 4 le a base do funil, nao a UF inteira.
     for passo in (passo3, passos[3], passo5):
-        assert passo["hexes"] == [], f"passo {passo['n']} da UF destacou hex sem white space"
+        assert passo["hexes"] == [], f"passo {passo['n']} da UF destacou hex sem base viavel"
         assert passo["funil_big"] == 0
         assert passo["itens"] == [], (
-            f"passo {passo['n']} da UF listou municipios sem nenhum hexagono livre — o "
+            f"passo {passo['n']} da UF listou municipios sem nenhuma regiao viavel — o "
             "fallback para o residual voltou no nivel de UF"
         )
-    assert "Não há área sem concorrência" in passo3["narrativa"]
+    assert "Nenhuma" in passo3["narrativa"]
     assert "a fila fica vazia" in passo5["narrativa"], (
         f"passo 5 da UF nao explica a fila vazia: {passo5['narrativa']!r}"
     )
@@ -1532,3 +1604,88 @@ def test_mascara_acionavel_reproduz_o_corte_historico_de_ranking_estados() -> No
     )
     assert list(como_o_funil) == [False, True], "o funil aplica o piso do passo 2"
     assert list(como_o_ranking_de_uf) == [True, True], "o ranking de UF nunca o aplicou"
+def test_viabilidade_liga_o_catchment_em_vez_de_deixar_a_flag_sempre_nula(monkeypatch) -> None:
+    """DEC-042: `_payload_viabilidade` PRECISA passar `setores_df` ao motor.
+
+    Este teste existe por causa de um defeito que ficou vivo e mudo por semanas: sem esse
+    argumento o motor pula o catchment e `flag_zona_morta` sai SEMPRE `None` — o que
+    apagava, em silêncio, duas coisas ao mesmo tempo. O aviso de zona morta da tela de
+    Viabilidade nunca renderizava, e o gate E4 da Conclusão do PDF, que a DEC-030 declara
+    como "o único gate da praça que REPROVA fora do só-estudo", nunca disparava.
+
+    Nada quebrava: `flag_zona_morta = None` é resposta VÁLIDA (município sem malha
+    materializada), então o valor nulo atravessava o payload, a tela e o PDF sem erro,
+    sem log e sem teste vermelho. É a mesma classe de falha da DEC-038 e do artefato
+    mutilado: um valor legítimo em si, que no lugar errado apaga uma superfície inteira.
+
+    O teste trava a CHAMADA, não o resultado — em ambiente de teste não há malha do IBGE
+    e o catchment devolveria `None` de qualquer jeito, o que faria um teste de resultado
+    passar mesmo com o fio solto.
+    """
+    from motor_expansao.dimensionamento import viabilidade_ponto as vp
+
+    capturado: dict = {}
+    original = vp.analisar_viabilidade_ponto
+
+    def _espiao(*args, **kwargs):
+        capturado.update(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(vp, "analisar_viabilidade_ponto", _espiao)
+
+    body = pilot.ViabilidadeIn(lat=-23.5505, lng=-46.6333, m2=1500, aluguel=40000, demanda=1800)
+    pilot._payload_viabilidade(body)
+
+    assert "setores_df" in capturado, (
+        "`_payload_viabilidade` voltou a chamar o motor SEM `setores_df`: o catchment não "
+        "roda, `flag_zona_morta` vira `None` para sempre e o gate E4 do PDF morre em silêncio"
+    )
+
+
+def test_catchment_ausente_nao_derruba_a_viabilidade() -> None:
+    """Coordenada fora da malha do IBGE: a análise financeira continua saindo.
+
+    O contrário seria trocar um defeito por outro — a viabilidade é financeira e não
+    depende de setor censitário. Sem catchment, a flag volta a `None` com motivo
+    explícito, que é o contrato que já valia antes de a DEC-042 ligar o fio.
+    """
+    body = pilot.ViabilidadeIn(lat=-20.0, lng=-35.0, m2=1500, aluguel=40000, demanda=1800)
+    payload = pilot._payload_viabilidade(body)
+
+    assert payload["flag_zona_morta"] is None
+    assert payload["motivo_zona_morta"] == "catchment_indisponivel"
+    # E o financeiro segue inteiro.
+    assert payload["break_even"]["ebitda"] is not None
+
+
+def test_motivo_de_zona_morta_chega_traduzido_para_a_tela() -> None:
+    """O token cru NUNCA pode chegar ao operador (§2 do CLAUDE.md).
+
+    Achado da revisão automática no PR da DEC-042, e ele estava certo: enquanto
+    `flag_zona_morta` era sempre `None`, o ramo da tela que exibe o motivo nunca
+    renderizava — então ninguém percebeu que `ViabilityScreen` e `BlocoViabilidadePonto`
+    mostravam `res.motivo_zona_morta` DIRETO, que é o identificador (`renda<500`), não
+    texto de usuário. Ligar o gate expunha isso.
+
+    O payload agora carrega os dois: o bruto (contrato, para o PDF, que traduz por conta
+    própria) e o traduzido (para a tela). A tradução é a MESMA função nos dois — uma
+    segunda tabela no TypeScript seria uma segunda régua para a mesma coisa.
+    """
+    from motor_expansao.dimensionamento.viabilidade_ponto import (
+        POP_ZONA_MORTA_MIN,
+        RENDA_ZONA_MORTA_MIN,
+    )
+
+    bruto = f"pop<{int(POP_ZONA_MORTA_MIN)}; renda<{int(RENDA_ZONA_MORTA_MIN)}"
+    texto = pilot._motivo_zona_morta_legivel(bruto)
+
+    assert texto and "pop<" not in texto and "renda<" not in texto, (
+        f"token cru vazou para o texto da tela: {texto!r}"
+    )
+    assert "população de captação" in texto and "renda per capita" in texto
+    # Sem motivo nao ha frase — a tela tem o proprio fallback.
+    assert pilot._motivo_zona_morta_legivel(None) is None
+
+    # E o payload publica o campo, senao a tela cai no fallback para sempre.
+    body = pilot.ViabilidadeIn(lat=-20.0, lng=-35.0, m2=1500, aluguel=40000, demanda=1800)
+    assert "motivo_zona_morta_texto" in pilot._payload_viabilidade(body)

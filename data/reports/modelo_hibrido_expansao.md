@@ -1,6 +1,6 @@
 # Modelo Hibrido de Expansao
 
-> Data: 2026-06-03
+> Data: 2026-08-26
 > Status: GO para uso pratico controlado como camada complementar ao M1
 
 ## Regra final do modelo
@@ -17,7 +17,7 @@
 - Hexes com score censitario disponivel: 1,302,296
 - Hexes elegiveis no fluxo hibrido: 780
 - Municipios top M1 com camada local utilizavel: 159
-- Registros priorizados para monitoramento futuro: 522
+- Registros priorizados para monitoramento futuro: 565
 
 ## Como usar na pratica
 
@@ -50,26 +50,26 @@
 
 | Rank Brasil | UF | Municipio | Hex | Score M1 | Score censitario | Score hibrido | Rank intraurbano |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | PR | Londrina | 87a801374ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 2 | PR | Curitiba | 87a804d92ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 3 | SP | São Paulo | 87a810764ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 4 | SP | Campinas | 87a81148bffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 5 | PR | Curitiba | 87a831361ffffff | 100.00 | 100.00 | 100.00100 | 2 |
-| 6 | SC | Joinville | 87a835640ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 7 | SC | Itajaí | 87a835c40ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 8 | MG | Belo Horizonte | 87a88cda6ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 9 | GO | Goiânia | 87a8c0ce0ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 10 | GO | Goiânia | 87a8c0ce1ffffff | 100.00 | 100.00 | 100.00100 | 2 |
-| 11 | GO | Goiânia | 87a8c0ce3ffffff | 100.00 | 100.00 | 100.00100 | 3 |
-| 12 | DF | Brasília | 87a8c2405ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 13 | DF | Brasília | 87a8c2419ffffff | 100.00 | 100.00 | 100.00100 | 2 |
-| 14 | DF | Brasília | 87a8c24e4ffffff | 100.00 | 100.00 | 100.00100 | 3 |
-| 15 | DF | Brasília | 87a8c24f3ffffff | 100.00 | 100.00 | 100.00100 | 4 |
-| 16 | DF | Brasília | 87a8d186affffff | 100.00 | 100.00 | 100.00100 | 5 |
-| 17 | RS | Porto Alegre | 87a901281ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 18 | RS | Porto Alegre | 87a901283ffffff | 100.00 | 100.00 | 100.00100 | 2 |
-| 19 | RS | Porto Alegre | 87a90128effffff | 100.00 | 100.00 | 100.00100 | 3 |
-| 20 | RS | Porto Alegre | 87a90129dffffff | 100.00 | 100.00 | 100.00100 | 4 |
+| 1 | DF | Brasília | 87a8c241bffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 2 | SP | São Paulo | 87a8100c5ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 3 | SP | São Paulo | 87a8100dbffffff | 100.00 | 100.00 | 100.00100 | 2 |
+| 4 | MG | Belo Horizonte | 87a88cdb0ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 5 | SP | São Paulo | 87a810770ffffff | 100.00 | 100.00 | 100.00100 | 3 |
+| 6 | SP | São Paulo | 87a8100d9ffffff | 100.00 | 100.00 | 100.00100 | 4 |
+| 7 | SP | São Paulo | 87a810700ffffff | 100.00 | 100.00 | 100.00100 | 5 |
+| 8 | RJ | Rio de Janeiro | 87a8a06a5ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 9 | SP | São Paulo | 87a810773ffffff | 100.00 | 99.95 | 100.00100 | 6 |
+| 10 | RJ | Rio de Janeiro | 87a8a078bffffff | 100.00 | 99.90 | 100.00100 | 2 |
+| 11 | SP | São Paulo | 87a810775ffffff | 100.00 | 99.29 | 100.00099 | 7 |
+| 12 | SP | São Paulo | 87a810766ffffff | 100.00 | 99.11 | 100.00099 | 8 |
+| 13 | PR | Curitiba | 87a83136effffff | 100.00 | 98.57 | 100.00099 | 1 |
+| 14 | SP | São Paulo | 87a810774ffffff | 100.00 | 98.06 | 100.00098 | 9 |
+| 15 | SP | São Paulo | 87a8103b1ffffff | 100.00 | 97.87 | 100.00098 | 10 |
+| 16 | DF | Brasília | 87a8d1b26ffffff | 100.00 | 97.22 | 100.00097 | 2 |
+| 17 | GO | Goiânia | 87a8c0ce2ffffff | 100.00 | 97.09 | 100.00097 | 1 |
+| 18 | GO | Goiânia | 87a8c0ce3ffffff | 100.00 | 96.99 | 100.00097 | 2 |
+| 19 | RS | Porto Alegre | 87a901299ffffff | 100.00 | 95.65 | 100.00096 | 1 |
+| 20 | PR | Curitiba | 87a831345ffffff | 100.00 | 95.64 | 100.00096 | 2 |
 
 ## Monitoramento futuro (6-12 meses)
 
