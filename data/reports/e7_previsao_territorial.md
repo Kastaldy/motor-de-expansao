@@ -125,16 +125,43 @@ o limitante é o N, não o método.
 
 ---
 
-## Dívidas que a verificação adversarial levantou e eu NÃO verifiquei
+## A dívida do grão — VERIFICADA em 2026-08-29
 
-Registradas como pendência, não como achado — não as medi eu mesmo:
+O painel adversarial reportou que o score do hexágono res-7 e o do setor no ponto teriam
+Spearman de apenas **+0,085**. **Medi na malha nacional (container de produção, N=48) e o
+número do painel está errado:**
 
-1. **Grão errado.** O painel reportou que o score do hexágono res-7 e o score do setor no
-   ponto têm Spearman de apenas **+0,085** (erro médio de 28,6 pontos). Se procede, o E7
-   testou uma materialização que **não é a que o Relatório Pontual serve** — problema de
-   validade de construto, não de sinal. Verificar exige a malha censitária nacional, que
-   não vive nesta estação (só SP).
-2. **Teste de maior potência disponível.** `base_calibracao_multirede` traz ~260 unidades
+| comparação | Spearman | Pearson | erro absoluto médio |
+|---|---|---|---|
+| hexágono res-7 × **setor do ponto** | **+0,389** | +0,495 | **26,0 pts** |
+| hexágono res-7 × **média no raio de 1 km** | **+0,508** | +0,605 | 24,5 pts |
+
+A correlação é **moderada, não nula**. Mas a dívida é real por outro motivo, que os números
+mostram melhor que a correlação:
+
+- o erro absoluto médio é de **26 pontos numa escala de 0 a 100** (mediana 27, máximo 68);
+- o hexágono lê **sistematicamente mais alto**: mediana 48,0 contra 33,4 do setor do ponto;
+- casos extremos: **Paranoá Parque** mede 68,0 no hexágono e **0,0** no setor do ponto;
+  Carapicuíba 47,5 × 0,0; Recanto das Emas 45,2 × 0,0.
+
+Isso não é defeito de um dos dois — é que **medem coisas diferentes**. O hexágono cobre
+~5 km² e faz média de muitos setores (é o bairro); o setor do ponto tem algumas centenas de
+domicílios (é a quadra). Com a régua absoluta da DEC-040, um setor comercial ou de baixa
+densidade residencial pontua perto de zero legitimamente, enquanto o bairro em volta pontua
+48.
+
+**Consequência prática:** análise feita no grão do hexágono **não é intercambiável** com o
+que o Relatório Pontual serve ao operador. Quem comparar os dois lado a lado vai ver números
+muito diferentes para o mesmo endereço — e os dois estão certos, para perguntas diferentes.
+
+**Isto enfraquece o E7?** Em parte, e a parte é pequena: erro de medida no preditor atenua
+relação e enviesaria o E7 para NO-GO. Mas o bloco de features do E7 **já continha os dois
+grãos** — `pop_captacao` e `renda_per_capita_captacao` vêm do catchment de 1,5 km em torno
+do **ponto**, não do hexágono. O grão fino estava no modelo e não mudou o veredito.
+
+## Dívida que eu NÃO verifiquei
+
+1. **Teste de maior potência disponível.** `base_calibracao_multirede` traz ~260 unidades
    de três redes em 23 UFs — poder muito maior. Mas o desfecho lá é `alunos_reais`, **não
    faturamento**: licenciaria "sem sinal territorial para DEMANDA", que é uma pergunta
    vizinha, não esta. Vale como evidência de apoio se for medido com o mesmo rigor.
