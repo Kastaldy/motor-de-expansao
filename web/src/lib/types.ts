@@ -859,7 +859,12 @@ export interface ViabilidadeOut {
   split: { balcao: number | null; agregadores: number | null }
   flag_fora_envelope: boolean
   flag_zona_morta: boolean | null
+  /** Token CRU (`pop<5000; renda<500`) — identificador, para consumidores que traduzem
+   *  por conta propria (o PDF). NUNCA renderizar direto: use `motivo_zona_morta_texto`. */
   motivo_zona_morta: string | null
+  /** O MESMO motivo em português, traduzido pelo servidor com a mesma função do PDF
+   *  (DEC-042). É este que vai para a tela. `null` quando não há motivo. */
+  motivo_zona_morta_texto?: string | null
   grade: Record<string, unknown>[]
   /** Sugestão de ajuste quando o payback estoura (> 40 meses); null se ok. NÃO é KPI:
    *  é LEITURA da série do motor feita no backend, nunca uma conta da tela. */
