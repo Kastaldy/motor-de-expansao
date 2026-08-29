@@ -82,6 +82,11 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
     (None, "/api/municipio/", "Explorou município"),
     (None, "/api/municipios/", "Explorou município"),
     (None, "/api/estados", "Ranking de estados"),
+    # DEC-044. Rotulo PROPRIO e nao "Ranking de estados": sao a mesma pergunta do
+    # Modo 3 respondida em GRAOS diferentes (estado x hexagono), e juntar as duas na
+    # mesma linha da trilha apagaria justamente o que se quer saber -- se o operador
+    # usa a leitura nacional ou a por estado.
+    (None, "/api/hexagonos", "Ranking nacional de hexágonos"),
     (None, "/api/metodologia", "Leu a metodologia"),
     # Camada imobiliária: o dossiê (prefixo com barra) antes da lista — first-match.
     (None, "/api/oportunidades/", "Baixou dossiê de imóvel"),
