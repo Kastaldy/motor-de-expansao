@@ -1520,6 +1520,10 @@ def test_hexagonos_publica_as_reguas_e_o_denominador(nacional_data: Path) -> Non
         "pop_minima": pilot.POP_MIN_ACIONAVEL,
         "residual_minimo": pilot.OFERTA_DESTAQUE_MIN,
         "capacidade_concorrente": pilot.CAPACIDADE_CONCORRENTE_PADRAO,
+        # Publicada desde a DEC-041/044: o texto da tela DERIVA dela em vez de escrever
+        # o numero a mao — foi assim que a copia passou a prometer "nenhum concorrente"
+        # depois que a regra ja' admitia dois.
+        "conc_max": pilot.CONC_ADENSAR_MAX,
     }
     cob = body["cobertura"]
     assert cob["hexes_acionaveis_brasil"] == 7  # 6 em SP + 1 em TO
@@ -1689,3 +1693,31 @@ def test_motivo_de_zona_morta_chega_traduzido_para_a_tela() -> None:
     # E o payload publica o campo, senao a tela cai no fallback para sempre.
     body = pilot.ViabilidadeIn(lat=-20.0, lng=-35.0, m2=1500, aluguel=40000, demanda=1800)
     assert "motivo_zona_morta_texto" in pilot._payload_viabilidade(body)
+
+
+def test_ranking_nacional_etiqueta_pelo_criterio_que_o_ordenou(nacional_data: Path) -> None:
+    """O chip do item tem de explicar a POSIÇÃO dele (DEC-041/DEC-044).
+
+    Achado da revisão automática, e estava certo: a rota passou a ordenar por
+    `indice_praca` mas continuava etiquetando pelo ramo `"residual"` do `_etiqueta`, e
+    os campos `indice`/`quadrante` — declarados em `types.ts` — nunca eram preenchidos.
+    O 1º lugar podia exibir uma faixa de demanda mediana, e o operador não teria como
+    saber por que ele é o primeiro.
+    """
+    payload = pilot.hexagonos(limite=10)
+
+    itens = payload["itens"]
+    assert itens, "fixture não acendeu o ranking nacional"
+    for it in itens:
+        assert it.get("indice") is not None, "o número que ordena não chegou ao payload"
+        assert it.get("quadrante"), "o rótulo que explica a posição não chegou ao payload"
+    # E o chip vem do vocabulário de quadrante, não do de intensidade de residual.
+    import praca_indice
+
+    rotulos = set(praca_indice.QUADRANTE_LABELS.values())
+    assert {i["tag"] for i in itens} <= rotulos, (
+        f"chips fora do vocabulário de quadrante: {sorted({i['tag'] for i in itens})} — "
+        "o chip voltou a sair do ramo `residual`, que não é o critério da ordenação"
+    )
+    # A régua de concorrência é PUBLICADA, para o texto da tela derivar dela.
+    assert payload["reguas"]["conc_max"] == pilot.CONC_ADENSAR_MAX

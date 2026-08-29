@@ -4232,7 +4232,13 @@ def _ranking_hexagonos(
     itens: list[dict[str, Any]] = []
     for posicao, (_, r) in enumerate(topo.iterrows(), 1):
         residual = _num(r.get("oferta_efetiva_disponivel"))
-        etiqueta, tom, cor = _etiqueta("residual", _numf(r.get("oferta_efetiva_disponivel")), posicao, r)
+        # CHIP PELO MESMO CRITERIO QUE ORDENOU A LISTA (DEC-041). Etiquetar por
+        # "residual" enquanto a ordem sai do `indice_praca` poe na tela um chip que
+        # nao explica a posicao: o 1o lugar podia exibir uma faixa de demanda mediana
+        # e o operador nao teria como saber por que ele e' o primeiro.
+        etiqueta, tom, cor = _etiqueta(
+            "índice de praça", _numf(r.get(COL_INDICE_PRACA)), posicao, r
+        )
         itens.append(
             {
                 "rank": posicao,
@@ -4243,6 +4249,10 @@ def _ranking_hexagonos(
                 "lat": _num(r.get("lat"), 5),
                 "lng": _num(r.get("lng"), 5),
                 "residual": residual,
+                # O numero que ORDENA, e o rotulo que diz por que (DEC-041). Sem eles a
+                # tela recebia `indice`/`quadrante` declarados no tipo e NUNCA preenchidos.
+                "indice": _num(r.get(COL_INDICE_PRACA), 1),
+                "quadrante": _texto(r.get(COL_QUADRANTE)),
                 "score": _num(r.get("score_setor_2022_calibrado"), 1),
                 "pop": _num(r.get("pop_leitura")),
                 "renda": _num(r.get("renda_leitura")),
@@ -4265,6 +4275,10 @@ def _ranking_hexagonos(
             "pop_minima": POP_MIN_ACIONAVEL,
             "residual_minimo": OFERTA_DESTAQUE_MIN,
             "capacidade_concorrente": CAPACIDADE_CONCORRENTE_PADRAO,
+            # PUBLICADA para o texto da tela DERIVAR dela. A copia dizia "nenhum
+            # concorrente estimado a 2 km" -- verdade ate' a DEC-041, falsa depois dela.
+            # Numero escrito a mao na tela e' numero que mente na proxima recalibracao.
+            "conc_max": CONC_ADENSAR_MAX,
         },
         "cobertura": {
             # Quantos hexagonos do PAIS sobrevivem a cascata, antes de qualquer filtro

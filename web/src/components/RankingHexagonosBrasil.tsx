@@ -105,8 +105,14 @@ export default function RankingHexagonosBrasil({
           ) : (
             <>, sobre a base inteira — não por estado.</>
           )}{' '}
+          {/* Os números saem do payload, nunca escritos à mão: este texto já mentiu uma
+              vez, prometendo "nenhum concorrente" depois que a DEC-041 passou a admitir
+              até `conc_max`. */}
           A cascata é a mesma do funil: potencial acima de {num(dados.reguas.score_minimo)},
-          população acima de {num(dados.reguas.pop_minima)} e nenhum concorrente estimado a 2 km.
+          população acima de {num(dados.reguas.pop_minima)} e até{' '}
+          {num(dados.reguas.conc_max)} concorrentes estimados a 2 km — praça disputada não é
+          praça descartada. A ordem sai do índice de praça, que pondera perfil
+          socioeconômico e demanda não atendida.
         </p>
       </div>
 

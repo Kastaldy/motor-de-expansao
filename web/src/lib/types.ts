@@ -1475,6 +1475,8 @@ export interface HexagonosPayload {
     pop_minima: number
     residual_minimo: number
     capacidade_concorrente: number
+    /** Concorrentes tolerados na cascata (DEC-041). Era 0 até ela; hoje `CONC_ADENSAR_MAX`. */
+    conc_max: number
   }
   cobertura: {
     /** Hexágonos do país inteiro que sobrevivem à cascata, antes de qualquer filtro. */
