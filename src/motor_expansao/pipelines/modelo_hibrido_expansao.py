@@ -377,10 +377,14 @@ def construir_dataset_hibrido(
         df["hex_id"],
         df["pop_total_setor_2022"],
     )
-    df["densidade_pop_setor_hab_km2"] = df["densidade_pop_setor_hab_km2"].where(
-        df["densidade_pop_setor_hab_km2"].notna(),
-        densidade_calculada,
-    )
+    # SEM `.where(notna, ...)`. O ramo "use a que veio do censo, so' calcule quando faltar"
+    # era CODIGO MORTO: nenhum dos tres parquets censitarios materializa esta coluna, entao
+    # 100% das linhas ja' usavam a calculada. Pior, ele era uma ARMADILHA LATENTE -- no dia
+    # em que uma densidade de AREA REAL (do setor, em EPSG:5880) entrasse no `keep_cols`,
+    # duas grandezas homonimas se misturariam na MESMA coluna, sem erro nenhum: parte das
+    # linhas com densidade real e parte com `pop / area fixa da celula`.
+    # Densidade de area real, se um dia for desejada, entra com COLUNA PROPRIA.
+    df["densidade_pop_setor_hab_km2"] = densidade_calculada
     flag_baixa_legado = pd.Series(df["flag_baixa_pop_setor"], dtype="boolean").fillna(False).astype(bool)
     piso_densidade = df["densidade_pop_setor_hab_km2"].lt(DENSIDADE_MIN_HAB_KM2).fillna(False)
     df["flag_baixa_pop_setor"] = (flag_baixa_legado | piso_densidade).astype(bool)

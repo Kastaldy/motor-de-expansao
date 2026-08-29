@@ -4351,7 +4351,7 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
             # maquina do que `criterios` avalia; publicar `SCORE_CORTE_QUENTE` aqui
             # deixaria o MESMO payload dizendo 60 num campo e 70 no outro — foi o que o
             # merge com a main criou, e e' exatamente a divergencia que este bloco existe
-            # para eliminar. O funil segue publicando 70 em `/api/estados`, que fala dele.
+            # para eliminar. O funil publica o SEU corte em `/api/estados` (30 desde a DEC-040).
             "score_minimo": CRIT_PONTO_SCORE_MIN,
             "renda_domiciliar_minima": _num(float(_cfg.RENDA_MIN)),
             "area_min_m2": _num(float(_cfg.AREA_MIN_M2)),

@@ -37,6 +37,17 @@ ssh -i ~/.ssh/id_ultra root@2.25.137.241
 
 Chave privada local: `~/.ssh/id_ultra` (Windows: `C:\Users\Felipe Silva\.ssh\id_ultra`)
 
+> **Duas chaves, papeis distintos** (declarado em `~/.ssh/config`): `id_ultra` e' a do
+> OPERADOR — os comandos deste runbook, rodados pelo Felipe. `id_ultra_mcp` e' a de
+> AUTOMACAO (MCP e `scp`/`ssh` de agente). Nao sao alternativas: revogar uma nao derruba a
+> outra. Se um comando falhar por chave, confira qual papel esta' em uso antes de trocar.
+>
+> **Tres diretorios na VPS, e eles nao se misturam:**
+> - `/opt/motor-expansao/app` — o `docker-compose.prod.yml` e o `.env` (e' daqui que se roda
+>   `docker compose`, ou com `--project-directory` apontando para ca);
+> - `/opt/motor-expansao/data/{outputs,staging}` — os Parquets, montados `:ro` nos containers;
+> - `/opt/motor-expansao` — so' a raiz que contem os dois acima; nao e' o diretorio do compose.
+
 ---
 
 ## Atualizar o web (modo PULL, sem build)
