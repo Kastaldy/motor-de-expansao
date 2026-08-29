@@ -92,7 +92,6 @@ CENSO_TRACE_LOAD_COLS = [
     "renda_per_capita_setor_2022_calibrada",
 ]
 
-CENSO_UFS = ["DF", "GO", "MG", "RJ", "RS", "SP"]
 HYBRID_ELIGIBILITY_ORDER = ["Elegivel", "Nao elegivel", "Sem camada"]
 # Camada de LABEL de exibicao (D1-bis): exibe a elegibilidade hibrida acentuada sem
 # tocar o valor bruto gravado em `elegibilidade_hibrida` (comparado em `.isin`).
