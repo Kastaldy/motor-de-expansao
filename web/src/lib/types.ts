@@ -1431,6 +1431,64 @@ export interface EstadosPayload {
   estados: EstadoRanking[]
 }
 
+/**
+ * Um hexágono no ranking NACIONAL (`/api/hexagonos`).
+ *
+ * Não é um `RankItem`: aquele é um item de LOCALIDADE dentro de um recorte já
+ * escolhido (bairro de um município, município de uma UF) e carrega o vocabulário do
+ * funil. Aqui a unidade é o hexágono e o recorte é o país — por isso `uf` e
+ * `municipio` são parte da identidade do item, e não contexto implícito da tela.
+ */
+export interface HexagonoNacional {
+  rank: number
+  hex_id: string
+  uf: string | null
+  municipio: string | null
+  cod_municipio: string | null
+  lat: number | null
+  lng: number | null
+  /** Alunos não atendidos no hexágono. */
+  residual: number | null
+  /** Índice de praça (DEC-041) — o número que ORDENA a lista. */
+  indice: number | null
+  /** Quadrante da praça: `prioridade` | `praca_forte` | `volume` | `marginal`. */
+  quadrante: string | null
+  score: number | null
+  pop: number | null
+  renda: number | null
+  tag: string
+  tom: Tom | null
+  tag_cor: string | null
+  /**
+   * O consumo de concorrente foi MEDIDO neste hexágono, ou está ausente?
+   *
+   * O backend trata consumo ausente como white space. Num recorte de UF isso é
+   * ruído; num ranking nacional decide o topo — por isso a distinção sobe até a tela
+   * em vez de ficar escondida no filtro.
+   */
+  consumo_medido: boolean
+}
+
+export interface HexagonosPayload {
+  reguas: {
+    score_minimo: number
+    pop_minima: number
+    residual_minimo: number
+    capacidade_concorrente: number
+    /** Concorrentes tolerados na cascata (DEC-041). Era 0 até ela; hoje `CONC_ADENSAR_MAX`. */
+    conc_max: number
+  }
+  cobertura: {
+    /** Hexágonos do país inteiro que sobrevivem à cascata, antes de qualquer filtro. */
+    hexes_acionaveis_brasil: number
+    hexes_no_recorte: number
+    ufs_no_recorte: number
+    /** Quantos dos itens devolvidos vêm de consumo de concorrente NÃO medido. */
+    topo_sem_medicao: number
+  }
+  itens: HexagonoNacional[]
+}
+
 /* ------------------------------------------------------------------------- *
  * Aba Acessos — analytics da trilha (emenda DEC-027; GET /api/acessos/*)    *
  * Restrita por allowlist de env no backend; a SPA só a mostra se /api/me    *

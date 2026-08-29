@@ -83,6 +83,13 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/municipio/", frozenset({"mapa", "oportunidades"})),
     ("/api/municipios/", frozenset({"mapa", "oportunidades"})),
     ("/api/estados", frozenset({"oportunidades"})),
+    # Ranking NACIONAL por hexagono (DEC-044). MESMO gate de `/api/estados`: e' a
+    # outra leitura do Modo 3 ("ver as melhores oportunidades"), sobre a mesma
+    # cascata e o mesmo dado -- so' muda a unidade (hexagono no lugar de estado) e
+    # a ordem dos passos (ranqueia o pais, depois filtra). Dar-lhe um gate mais
+    # FROUXO abriria por uma porta o que a outra fecha; um mais DURO esconderia do
+    # operador de `oportunidades` a versao boa da propria tela dele.
+    ("/api/hexagonos", frozenset({"oportunidades"})),
     # Camada imobiliaria (aba PROPRIA `imobiliaria` desde 2026-08-24; ate' entao a tela
     # reusava o gate de `oportunidades`, o que impedia restringir os imoveis sem tirar o
     # funil de expansao de quem o usa). O DOSSIE (PDF do coletor, carrega contato de

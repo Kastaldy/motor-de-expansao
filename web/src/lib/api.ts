@@ -13,6 +13,7 @@ import type {
   OportunidadesPayload,
   Cobertura1k,
   EstadosPayload,
+  HexagonosPayload,
   MunicipioPayload,
   PontoPayload,
   PontoResolvido,
@@ -266,6 +267,23 @@ export const api = {
    * compara UFs, e por isso tem timeout próprio.
    */
   estados: () => pedir<EstadosPayload>('/api/estados', {}, 120_000),
+
+  /**
+   * Ranking NACIONAL por HEXÁGONO — os melhores do Brasil, sem escolher estado.
+   *
+   * `uf`/`municipio` são filtros SOBRE a lista nacional, aplicados no servidor depois
+   * da ordenação: nunca antes dela. Mesma varredura das 27 partições de `estados()`,
+   * e por isso o mesmo timeout longo na primeira chamada.
+   */
+  hexagonos: (opts: { limite?: number; uf?: string; municipio?: string; porMunicipio?: boolean } = {}) => {
+    const q = new URLSearchParams()
+    if (opts.limite) q.set('limite', String(opts.limite))
+    if (opts.uf) q.set('uf', opts.uf)
+    if (opts.municipio) q.set('municipio', opts.municipio)
+    if (opts.porMunicipio) q.set('por_municipio', 'true')
+    const texto = q.toString()
+    return pedir<HexagonosPayload>(`/api/hexagonos${texto ? `?${texto}` : ''}`, {}, 120_000)
+  },
 
   /** Visão de UF inteira: funil por UF + recomendação de municípios. */
   ufView: (uf: string) => pedir<MunicipioPayload>(`/api/uf/${encodeURIComponent(uf)}`),

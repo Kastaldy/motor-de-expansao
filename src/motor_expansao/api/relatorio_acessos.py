@@ -58,6 +58,9 @@ AGRUPAMENTO_ABAS: tuple[tuple[str, str], ...] = (
     ("/api/municipio/", "mapa"),
     ("/api/municipios/", "mapa"),
     ("/api/estados", "oportunidades"),
+    # Ranking nacional por hexagono (DEC-044): a outra leitura do MESMO Modo 3,
+    # entao conta na mesma aba que o ranking de estados.
+    ("/api/hexagonos", "oportunidades"),
     # O dossie e' gesto da aba imobiliaria; a LISTA, liberada tambem para "mapa",
     # e' buscada sozinha pelo Mapa Territorial a cada UF (camada de pins + secao do
     # hexagono) — na pratica o grosso das chamadas vem de la', entao e' la' que ela

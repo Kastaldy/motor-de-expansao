@@ -181,6 +181,7 @@ def test_todas_as_rotas_registradas() -> None:
         "/api/uf/{uf}",
         "/api/municipio/{uf}/{municipio}",
         "/api/faixa-alunos",
+        "/api/hexagonos",
         "/api/viabilidade",
         "/api/executiva/{uf}",
         "/api/relatorio/municipal",
@@ -1387,6 +1388,226 @@ def test_metodologia_documenta_TODAS_as_camadas_do_funil(monkeypatch) -> None:
         assert c["metricas"], f"camada {c['n']} nao declara nenhuma metrica"
 
 
+# ===========================================================================
+# Ranking NACIONAL por hexagono (/api/hexagonos) — o Modo 3 sem escolher regiao
+# ===========================================================================
+#
+# O defeito que estes testes travam: perguntado "quais os melhores hexagonos do
+# Brasil?", o piloto respondia com o ranking de UF (`/api/estados`), que ordena por
+# residual SOMADO por estado. Soma e' grandeza de TAMANHO — estado grande cheio de
+# hexagono mediano vence estado pequeno dono do melhor hexagono do pais. A fixture
+# abaixo constroi exatamente esse cenario, para que a diferenca entre as duas
+# leituras seja verificavel e nao uma questao de opiniao.
+
+
+def _nacional_duas_ufs() -> dict[str, pd.DataFrame]:
+    """Base sintetica onde a UF que LIDERA por soma NAO tem o melhor hexagono.
+
+    `SP` recebe muitos hexagonos medianos; `TO` recebe um unico hexagono, o de maior
+    residual do pais. No ranking por estado SP ganha (soma maior); no ranking por
+    hexagono o primeiro lugar tem de ser o de `TO`.
+    """
+
+    def linha(uf: str, muni: str, cod: str, i: int, residual: float) -> dict[str, object]:
+        return {
+            "hex_id": f"87{uf.lower()}{i:02d}0000000ffff",
+            "lat": -23.5 + 0.01 * i,
+            "lng": -46.6 + 0.01 * i,
+            "nome_municipio": muni,
+            "cod_municipio": cod,
+            "score_setor_2022_calibrado": 75.0,  # >= SCORE_CORTE_QUENTE
+            "oferta_efetiva_disponivel": residual,
+            "oferta_consumida_mercado_estimada": 0.0,  # white space MEDIDO
+            "capacidade_default_concorrente_alunos": 2500.0,
+            "faixa_oportunidade": "alta",
+            "populacao_corte_hex": 9000.0,  # >= POP_MIN_ACIONAVEL
+            "pop_total_setor_2022": 9000.0,
+            "pop_total": 9000.0,
+            "renda_per_capita_setor_2022_calibrada": 2600.0,
+            "renda_per_capita": 2500.0,
+        }
+
+    # 6 hexagonos medianos em duas cidades de SP; 1 hexagono campeao em TO.
+    sp = [linha("SP", "Sao Paulo", "3550308", i, 4000.0) for i in range(3)]
+    sp += [linha("SP", "Campinas", "3509502", 10 + i, 3500.0) for i in range(3)]
+    to = [linha("TO", "Palmas", "1721000", 0, 9000.0)]
+    return {"SP": pd.DataFrame(sp), "TO": pd.DataFrame(to)}
+
+
+def _montar_base_nacional(raiz: Path, dados: dict[str, pd.DataFrame]) -> None:
+    for uf, df in dados.items():
+        part = raiz / f"uf={uf}"
+        part.mkdir(parents=True)
+        df.to_parquet(part / "part-0.parquet")  # escrita do TESTE, nao do app
+
+
+@pytest.fixture
+def nacional_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """App apontado para um enriquecido sintetico com DUAS UFs."""
+    _montar_base_nacional(
+        tmp_path / "outputs" / "hexagonos_dashboard_enriquecido", _nacional_duas_ufs()
+    )
+    _point_app_at(monkeypatch, tmp_path)
+    yield tmp_path
+    _clear_caches()
+
+
+def test_hexagonos_sem_base_levanta_500(empty_data: Path) -> None:
+    with pytest.raises(HTTPException) as e:
+        pilot.hexagonos()
+    assert e.value.status_code == 500
+
+
+def test_o_primeiro_do_brasil_nao_vem_da_uf_que_lidera_por_soma(nacional_data: Path) -> None:
+    """O teste que DEFINE a rota: o campeao nacional esta na UF perdedora do ranking
+    por estado. Se a lista fosse montada a partir do topo de `/api/estados`, ou com
+    cota por UF, este hexagono nao apareceria em primeiro — viria depois de todo o
+    estado de SP, ou nao viria."""
+    lider_por_soma = pilot.estados()["estados"][0]["uf"]
+    assert lider_por_soma == "SP", "fixture nao reproduziu o cenario: SP deveria somar mais"
+
+    itens = pilot.hexagonos()["itens"]
+    assert itens[0]["uf"] == "TO", "o melhor hexagono do pais nao chegou em primeiro"
+    assert itens[0]["municipio"] == "Palmas"
+    assert itens[0]["residual"] == 9000
+
+
+def test_ranking_nacional_nao_agrupa_por_uf(nacional_data: Path) -> None:
+    """`/api/estados` faz `groupby('uf')`; esta rota NAO pode fazer. A lista e' de
+    hexagonos, e mais de uma UF convive nela, ordenada por residual."""
+    itens = pilot.hexagonos()["itens"]
+    assert len({i["uf"] for i in itens}) > 1, "a lista ficou presa a uma UF"
+    valores = [i["residual"] for i in itens]
+    assert valores == sorted(valores, reverse=True)
+    assert [i["rank"] for i in itens] == list(range(1, len(itens) + 1))
+
+
+def test_filtro_de_uf_recorta_a_lista_nacional_em_vez_de_preceder_a(
+    nacional_data: Path,
+) -> None:
+    """UF e municipio sao FILTROS sobre a lista do pais, aplicados depois da
+    ordenacao — nao voltam a ser pre-requisito dela, que era o defeito do Modo 3."""
+    todos = pilot.hexagonos()["itens"]
+    so_sp = pilot.hexagonos(uf="sp")["itens"]  # minusculo de proposito
+    assert {i["uf"] for i in so_sp} == {"SP"}
+    # A ordem relativa sobrevive ao recorte: e' a MESMA lista, filtrada.
+    ordem_nacional = [i["hex_id"] for i in todos if i["uf"] == "SP"]
+    assert [i["hex_id"] for i in so_sp] == ordem_nacional
+
+    so_campinas = pilot.hexagonos(municipio="Campinas")["itens"]
+    assert {i["municipio"] for i in so_campinas} == {"Campinas"}
+
+
+def test_por_municipio_deixa_o_melhor_hexagono_de_cada_cidade(nacional_data: Path) -> None:
+    """Sem isto, num recorte nacional o topo vira uma sequencia de hexagonos vizinhos
+    da mesma regiao metropolitana. E' OPCIONAL: o pedido foi "os melhores hexagonos",
+    e o default entrega hexagono, nao cidade."""
+    um_por_cidade = pilot.hexagonos(por_municipio=True)["itens"]
+    cidades = [(i["uf"], i["municipio"]) for i in um_por_cidade]
+    assert len(cidades) == len(set(cidades)), "repetiu cidade com `por_municipio=True`"
+    # E continua sendo o MELHOR de cada uma, nao um qualquer.
+    assert um_por_cidade[0]["municipio"] == "Palmas"
+    residual_sp = next(i["residual"] for i in um_por_cidade if i["municipio"] == "Sao Paulo")
+    assert residual_sp == 4000
+
+
+def test_hexagonos_publica_as_reguas_e_o_denominador(nacional_data: Path) -> None:
+    """A lista declara com que regua cortou e sobre quantos hexagonos — sem isso o
+    operador nao tem como saber se esta vendo o pais ou um pedaco dele."""
+    body = pilot.hexagonos()
+    assert body["reguas"] == {
+        "score_minimo": pilot.SCORE_CORTE_QUENTE,
+        "pop_minima": pilot.POP_MIN_ACIONAVEL,
+        "residual_minimo": pilot.OFERTA_DESTAQUE_MIN,
+        "capacidade_concorrente": pilot.CAPACIDADE_CONCORRENTE_PADRAO,
+        # Publicada desde a DEC-041/044: o texto da tela DERIVA dela em vez de escrever
+        # o numero a mao — foi assim que a copia passou a prometer "nenhum concorrente"
+        # depois que a regra ja' admitia dois.
+        "conc_max": pilot.CONC_ADENSAR_MAX,
+    }
+    cob = body["cobertura"]
+    assert cob["hexes_acionaveis_brasil"] == 7  # 6 em SP + 1 em TO
+    assert cob["ufs_no_recorte"] == 2
+    # JSON-safe: o payload inteiro sobrevive ao serializador estrito.
+    json.dumps(body, allow_nan=False)
+
+
+def test_consumo_ausente_e_contado_em_vez_de_virar_white_space_silencioso(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A armadilha desta rota. `_sem_concorrente` faz `fillna(0)`: consumo AUSENTE
+    entra como "sem concorrente". Numa UF isso e' ruido; num ranking NACIONAL as UFs
+    com mapeamento ralo subiriam inteiras e a tela afirmaria "livre" onde ninguem
+    mediu. O contrato e': o hexagono pode entrar, mas a lista tem de DIZER quantos
+    dos seus primeiros colocados vem de dado ausente."""
+    dados = _nacional_duas_ufs()
+    dados["TO"]["oferta_consumida_mercado_estimada"] = float("nan")  # nunca mapeado
+    _montar_base_nacional(tmp_path / "outputs" / "hexagonos_dashboard_enriquecido", dados)
+    _point_app_at(monkeypatch, tmp_path)
+    try:
+        body = pilot.hexagonos()
+        assert body["itens"][0]["uf"] == "TO"
+        assert body["itens"][0]["consumo_medido"] is False
+        assert body["cobertura"]["topo_sem_medicao"] == 1
+        assert all(i["consumo_medido"] for i in body["itens"][1:])
+    finally:
+        _clear_caches()
+
+
+# ===========================================================================
+# A cascata do funil e' UMA redacao — os leitores nao podem divergir
+# ===========================================================================
+
+
+def test_ranking_nacional_e_funil_municipal_concordam_sobre_o_elegivel(
+    nacional_data: Path,
+) -> None:
+    """A prova de que a regra foi unificada, e nao copiada.
+
+    Ha quatro leitores da mesma cascata no backend (`montar_funil`, `montar_funil_uf`,
+    `_ranking_estados`, `_ranking_hexagonos`). Se cada um a reescrevesse, o Modo 2 e o
+    Modo 3 passariam a discordar sobre quais hexagonos sao elegiveis — desencontro que
+    nao levanta erro e so aparece meses depois. Aqui os dois caminhos sao comparados
+    pelo CONJUNTO DE HEXAGONOS, que e' onde a divergencia apareceria."""
+    do_nacional = {i["hex_id"] for i in pilot.hexagonos(uf="SP", limite=500)["itens"]}
+
+    df_sp = pilot.carregar_uf("SP")
+    passos = pilot.montar_funil(df_sp[df_sp["nome_municipio"] == "Sao Paulo"], "Sao Paulo")
+    # O passo 3 e' o conjunto ELEGIVEL inteiro do municipio; o passo 5 e' a fila.
+    do_funil = set(next(p for p in passos if p["n"] == 3)["hexes"])
+    assert do_funil, "fixture nao acendeu o funil — o teste nao provaria nada"
+    assert do_funil <= do_nacional, (
+        "o passo 3 do funil e o ranking nacional discordam sobre o conjunto elegivel — "
+        "a cascata voltou a ter mais de uma redacao"
+    )
+
+
+def test_mascara_acionavel_reproduz_o_corte_historico_de_ranking_estados() -> None:
+    """As DUAS divergencias do ranking de UF sao parametros, nao acidentes.
+
+    `_ranking_estados` nunca aplicou o piso do passo 2 e sempre dividiu pela
+    capacidade CONSTANTE. Unificar em silencio teria mudado o payload de
+    `/api/estados` — regressao vestida de faxina. Este teste trava as duas leituras
+    como DIFERENTES de proposito, para que ninguem "conserte" o default e mova numero
+    na tela sem querer."""
+    df = pd.DataFrame(
+        {
+            "score_setor_2022_calibrado": [75.0, 75.0],
+            "pop_total_setor_2022": [9000.0, 9000.0],
+            # O primeiro tem residual ABAIXO do piso do passo 2; o segundo, acima.
+            "oferta_efetiva_disponivel": [500.0, 5000.0],
+            "oferta_consumida_mercado_estimada": [0.0, 0.0],
+        }
+    )
+    como_o_funil = pilot.mascara_acionavel(df)
+    como_o_ranking_de_uf = pilot.mascara_acionavel(
+        df,
+        precedencia_pop=("pop_total_setor_2022",),
+        residual_minimo=None,
+        capacidade_por_linha=False,
+    )
+    assert list(como_o_funil) == [False, True], "o funil aplica o piso do passo 2"
+    assert list(como_o_ranking_de_uf) == [True, True], "o ranking de UF nunca o aplicou"
 def test_viabilidade_liga_o_catchment_em_vez_de_deixar_a_flag_sempre_nula(monkeypatch) -> None:
     """DEC-042: `_payload_viabilidade` PRECISA passar `setores_df` ao motor.
 
@@ -1472,3 +1693,31 @@ def test_motivo_de_zona_morta_chega_traduzido_para_a_tela() -> None:
     # E o payload publica o campo, senao a tela cai no fallback para sempre.
     body = pilot.ViabilidadeIn(lat=-20.0, lng=-35.0, m2=1500, aluguel=40000, demanda=1800)
     assert "motivo_zona_morta_texto" in pilot._payload_viabilidade(body)
+
+
+def test_ranking_nacional_etiqueta_pelo_criterio_que_o_ordenou(nacional_data: Path) -> None:
+    """O chip do item tem de explicar a POSIÇÃO dele (DEC-041/DEC-044).
+
+    Achado da revisão automática, e estava certo: a rota passou a ordenar por
+    `indice_praca` mas continuava etiquetando pelo ramo `"residual"` do `_etiqueta`, e
+    os campos `indice`/`quadrante` — declarados em `types.ts` — nunca eram preenchidos.
+    O 1º lugar podia exibir uma faixa de demanda mediana, e o operador não teria como
+    saber por que ele é o primeiro.
+    """
+    payload = pilot.hexagonos(limite=10)
+
+    itens = payload["itens"]
+    assert itens, "fixture não acendeu o ranking nacional"
+    for it in itens:
+        assert it.get("indice") is not None, "o número que ordena não chegou ao payload"
+        assert it.get("quadrante"), "o rótulo que explica a posição não chegou ao payload"
+    # E o chip vem do vocabulário de quadrante, não do de intensidade de residual.
+    import praca_indice
+
+    rotulos = set(praca_indice.QUADRANTE_LABELS.values())
+    assert {i["tag"] for i in itens} <= rotulos, (
+        f"chips fora do vocabulário de quadrante: {sorted({i['tag'] for i in itens})} — "
+        "o chip voltou a sair do ramo `residual`, que não é o critério da ordenação"
+    )
+    # A régua de concorrência é PUBLICADA, para o texto da tela derivar dela.
+    assert payload["reguas"]["conc_max"] == pilot.CONC_ADENSAR_MAX

@@ -84,13 +84,17 @@ export const MODOS: readonly ModoDefinicao[] = Object.freeze([
     eyebrow: 'A fila pronta',
     titulo: 'Ver as melhores oportunidades',
     resumo:
-      'Você quer a resposta direta: a fila de cidades ordenada por ser boa nos dois eixos ao mesmo tempo — perfil socioeconômico da praça e demanda ainda não atendida.',
-    /* Na visao de estado os itens da fila sao CIDADES, nao hexagonos — o texto antigo
-       prometia hexagono e entregava municipio. */
+      'Você quer a resposta direta: os hexágonos do Brasil inteiro ordenados por serem bons nos dois eixos ao mesmo tempo — perfil socioeconômico da praça e demanda não atendida —, sem precisar escolher um estado antes.',
+    /* O texto DESTE card ja mentiu duas vezes, nas duas direcoes: prometeu hexagono
+       enquanto a tela entregava municipio, e depois prometeu cidade enquanto a tela
+       passava a entregar o ranking nacional por hexagono. Ele muda no MESMO commit da
+       rota, nunca num commit de acompanhamento. A terceira redacao corrige o que a
+       DEC-041 revogou: nao se promete mais "ausencia de concorrente", porque praca
+       disputada deixou de ser praca descartada. */
     bullets: Object.freeze([
-      'A fila pronta, com o porquê de cada posição',
-      'Praça disputada não é praça descartada',
-      'Ordenada pelos dois eixos: perfil e demanda',
+      'O ranking do Brasil inteiro, hexágono a hexágono',
+      'Sem escolher estado: região é filtro, não pré-requisito',
+      'Ordenado pelos dois eixos: perfil e demanda',
     ]),
     chamada: 'Ver a fila',
     destino: 'oportunidades',
