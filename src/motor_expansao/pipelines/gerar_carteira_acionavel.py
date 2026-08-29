@@ -280,7 +280,10 @@ def _motivo_priorizacao(row: pd.Series) -> str:
     if bool(row.get("flag_outlier_espacial", False)):
         parts.append("outlier espacial explicado")
     if bool(row.get("flag_baixa_pop_setor", False)):
-        parts.append("densidade abaixo do piso")
+        # NAO "densidade": o piso e' de POPULACAO. No grao do hexagono a densidade e'
+        # `pop / 5,161293` (area fixa da celula res-7), entao "densidade abaixo do piso"
+        # faz o operador ler "lugar vazio" onde o dado diz "menos de 25,8 mil pessoas".
+        parts.append("população abaixo do piso")
 
     return " | ".join(parts)
 
