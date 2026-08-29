@@ -4812,6 +4812,22 @@ def _grade_json(grade: pd.DataFrame | None) -> list[dict[str, Any]]:
 VIABILIDADE_PAYLOAD_VERSAO = "viabilidade_payload_v1"
 
 
+def _motivo_zona_morta_legivel(bruto: str | None) -> str | None:
+    """Token cru de zona morta -> frase de usuario, pela MESMA tradução do PDF.
+
+    `None` entra e sai como `None`: sem motivo nao ha frase, e a tela ja' tem o seu
+    proprio texto de fallback para o caso de a flag existir sem motivo.
+    """
+    if not bruto:
+        return None
+    try:
+        from motor_expansao.dashboard.censo_report import _conclusao_motivo_zona_morta
+
+        return _conclusao_motivo_zona_morta(str(bruto))
+    except Exception:  # noqa: BLE001 — sem traducao, a tela cai no seu fallback
+        return None
+
+
 def _setores_para_catchment(lat: Any, lng: Any) -> pd.DataFrame | None:
     """Setores do municipio da coordenada, para o catchment da viabilidade (DEC-042).
 
@@ -5124,7 +5140,19 @@ def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
             "agregadores": _num(res.alunos_agregadores_premissa, 1),
         },
         "flag_zona_morta": res.flag_zona_morta,
+        # BRUTO (`pop<5000; renda<500`): identificador, nao texto de usuario. Fica no
+        # contrato porque o PDF e os consumidores historicos ja' o leem e o traduzem.
         "motivo_zona_morta": res.motivo_zona_morta,
+        # TRADUZIDO, para a TELA. Enquanto a flag era sempre `None` (ver DEC-042) o ramo
+        # que exibe o motivo nunca renderizava, e ninguem reparou que a tela mostraria o
+        # TOKEN CRU ao operador — contra o §2 do CLAUDE.md, que manda texto de usuario ser
+        # portugues acentuado e identificador nunca aparecer. Ligar o gate expunha isso.
+        #
+        # Traduzido AQUI e nao no front de proposito: `_conclusao_motivo_zona_morta` ja' e'
+        # a traducao do PDF, e ela deriva dos limiares. Uma segunda tabela no TypeScript
+        # seria uma segunda regua para a mesma coisa — o defeito que esta sessao passou o
+        # dia corrigindo.
+        "motivo_zona_morta_texto": _motivo_zona_morta_legivel(res.motivo_zona_morta),
         "flag_fora_envelope": bool(res.flag_fora_envelope),
         "grade": _grade_json(res.grade_sensibilidade),
         # Sugestao de ajuste quando o payback estoura (LEITURA da serie; nao e KPI).

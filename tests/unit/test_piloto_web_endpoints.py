@@ -1439,3 +1439,36 @@ def test_catchment_ausente_nao_derruba_a_viabilidade() -> None:
     assert payload["motivo_zona_morta"] == "catchment_indisponivel"
     # E o financeiro segue inteiro.
     assert payload["break_even"]["ebitda"] is not None
+
+
+def test_motivo_de_zona_morta_chega_traduzido_para_a_tela() -> None:
+    """O token cru NUNCA pode chegar ao operador (§2 do CLAUDE.md).
+
+    Achado da revisão automática no PR da DEC-042, e ele estava certo: enquanto
+    `flag_zona_morta` era sempre `None`, o ramo da tela que exibe o motivo nunca
+    renderizava — então ninguém percebeu que `ViabilityScreen` e `BlocoViabilidadePonto`
+    mostravam `res.motivo_zona_morta` DIRETO, que é o identificador (`renda<500`), não
+    texto de usuário. Ligar o gate expunha isso.
+
+    O payload agora carrega os dois: o bruto (contrato, para o PDF, que traduz por conta
+    própria) e o traduzido (para a tela). A tradução é a MESMA função nos dois — uma
+    segunda tabela no TypeScript seria uma segunda régua para a mesma coisa.
+    """
+    from motor_expansao.dimensionamento.viabilidade_ponto import (
+        POP_ZONA_MORTA_MIN,
+        RENDA_ZONA_MORTA_MIN,
+    )
+
+    bruto = f"pop<{int(POP_ZONA_MORTA_MIN)}; renda<{int(RENDA_ZONA_MORTA_MIN)}"
+    texto = pilot._motivo_zona_morta_legivel(bruto)
+
+    assert texto and "pop<" not in texto and "renda<" not in texto, (
+        f"token cru vazou para o texto da tela: {texto!r}"
+    )
+    assert "população de captação" in texto and "renda per capita" in texto
+    # Sem motivo nao ha frase — a tela tem o proprio fallback.
+    assert pilot._motivo_zona_morta_legivel(None) is None
+
+    # E o payload publica o campo, senao a tela cai no fallback para sempre.
+    body = pilot.ViabilidadeIn(lat=-20.0, lng=-35.0, m2=1500, aluguel=40000, demanda=1800)
+    assert "motivo_zona_morta_texto" in pilot._payload_viabilidade(body)
