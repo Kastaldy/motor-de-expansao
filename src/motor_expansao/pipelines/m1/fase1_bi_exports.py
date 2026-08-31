@@ -21,6 +21,10 @@ from motor_expansao.dashboard.data import (
     _read_parquet_subset,
     enrich_dashboard_data,
 )
+from motor_expansao.pipelines.agregar_censo_hex_da_malha import (
+    DEFAULT_OUTPUT_PATH as MALHA_CENSO_PATH,
+)
+from motor_expansao.pipelines.agregar_censo_hex_da_malha import sobrepor_renda_da_malha
 from motor_expansao.pipelines.m1.ibge_censo import carregar_lookup_municipios_ibge
 from motor_expansao.pipelines.m1.provenance import write_manifest
 
@@ -538,7 +542,7 @@ def _read_hybrid_frame(path: Path | str = HYBRID_PATH) -> pd.DataFrame:
     return _prepare_dataframe(_read_optional_parquet_subset(Path(path), HYBRID_LOAD_COLS))
 
 
-def _read_censo_trace_frame() -> pd.DataFrame:
+def _read_censo_trace_frame(malha_path: Path = MALHA_CENSO_PATH) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     # Ordem = precedencia da deduplicacao (drop_duplicates keep="first"), a mesma de
     # modelo_hibrido_expansao._load_censo: core > expandido > nacional. O nacional
@@ -553,6 +557,11 @@ def _read_censo_trace_frame() -> pd.DataFrame:
         return pd.DataFrame()
 
     censo = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["hex_id"], keep="first")
+    # Mesma sobreposicao de `modelo_hibrido_expansao._load_censo`: renda e score do censo
+    # no grao do hexagono vem da MALHA de setores. As DUAS leituras precisam chamar a
+    # MESMA funcao — duas redacoes da mesma regra nao dao erro, desencontram em silencio
+    # (a licao da DEC-044).
+    censo = sobrepor_renda_da_malha(censo, malha_path=malha_path)
     validated = _prepare_censo_trace(_read_optional_parquet_subset(CENSO_VALIDATED_PATH, CENSO_TRACE_LOAD_COLS))
     if validated.empty:
         return censo

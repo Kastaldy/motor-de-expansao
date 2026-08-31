@@ -29,6 +29,11 @@ import h3
 import numpy as np
 import pandas as pd
 
+from motor_expansao.pipelines.agregar_censo_hex_da_malha import (
+    DEFAULT_OUTPUT_PATH as MALHA_CENSO_PATH,
+)
+from motor_expansao.pipelines.agregar_censo_hex_da_malha import sobrepor_renda_da_malha
+
 BASE_DIR = Path(__file__).resolve().parents[3]
 DATA_DIR = BASE_DIR / "data"
 
@@ -211,6 +216,7 @@ def _load_censo(
     censo_core_path: Path,
     censo_expanded_path: Path,
     censo_nacional_path: Path | None = None,
+    malha_path: Path = MALHA_CENSO_PATH,
 ) -> pd.DataFrame:
     partes = [
         _padronizar_censo(pd.read_parquet(censo_core_path), fonte="fase_a_calibrada"),
@@ -229,7 +235,11 @@ def _load_censo(
     # Ordem de prioridade na deduplicacao: core > expandido > nacional
     censo = pd.concat(partes, ignore_index=True)
     censo = censo.drop_duplicates(subset=["hex_id"], keep="first")
-    return censo
+    # A renda e o score censitarios do hexagono passam a vir da MALHA de setores (a mesma
+    # que o Relatorio Pontual serve), nao do join posicional da Fase A. Sobreposicao no
+    # fim, depois da deduplicacao: a precedencia entre as tres fontes segue valendo para
+    # as demais colunas (cobertura, qualidade de join, flags), que a malha nao produz.
+    return sobrepor_renda_da_malha(censo, malha_path=malha_path)
 
 
 def _rank_desc(df: pd.DataFrame, sort_cols: list[str], group_cols: list[str] | None = None) -> pd.Series:

@@ -15,6 +15,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from motor_expansao.pipelines.agregar_censo_hex_da_malha import (
+    sobrepor_renda_da_malha,
+)
 from motor_expansao.pipelines.pop_corte import (
     derive_confianca_geografica,
     derive_pop_cut_columns,
@@ -93,7 +96,12 @@ def anexar_colunas_censo(df: pd.DataFrame) -> pd.DataFrame:
             merged[col] = merged[col].where(merged[col].notna(), merged[core_col])
         else:
             merged[col] = merged[core_col]
-    return merged.drop(columns=[f"{col}_core" for col in CENSO_COLS[1:]])
+    merged = merged.drop(columns=[f"{col}_core" for col in CENSO_COLS[1:]])
+    # A sobreposicao da malha vem DEPOIS do preenchimento por lacuna, e nao antes, porque
+    # este pipeline le o PROPRIO artefato como entrada (`MERCADO_PATH` == `OUT_PATH`): o
+    # valor antigo ja esta materializado e nao-nulo, entao a regra de "so preencher lacuna"
+    # o preservaria para sempre. Preencher lacuna resolve COBERTURA; a malha resolve VALOR.
+    return sobrepor_renda_da_malha(merged)
 
 
 def calibrar_taxa_fitness_mercado(df: pd.DataFrame) -> float:

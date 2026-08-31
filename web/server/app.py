@@ -1050,6 +1050,9 @@ _LOG_RENDA = logging.getLogger("piloto.renda")
 # k do artefato GEO setorial (1,2335 na safra 2026-08-12): sao calibracoes independentes.
 _K_CALIBRACAO_FALLBACK = 1.0239
 _CENSO_HEX_STAGING_PARQUET = "censo2022_setores_calibrado.parquet"
+# Artefato da MALHA (agregado dos setores). Quando existe, e ELE quem carrega o k da
+# coluna servida — ver `_k_calibracao_renda`.
+_CENSO_MALHA_PARQUET = "censo2022_hex_da_malha.parquet"
 _RE_K_CARIMBO = re.compile(r"k=([0-9]+(?:\.[0-9]+)?)")
 
 
@@ -1067,16 +1070,27 @@ def _k_calibracao_renda() -> float:
     Guarda de plausibilidade [0,5; 3,0] e fallback para a constante da safra conhecida, sempre
     com log — NUNCA cair em 1,0 em silencio: reintroduziria a dupla contagem sem pista.
     """
+    # Desde 2026-08-31 a coluna calibrada SERVIDA e' agregada da MALHA setorial
+    # (`sobrepor_renda_da_malha`), com o k da malha — nao mais o k do staging hex. A fonte
+    # do carimbo tem de acompanhar a fonte do VALOR: ler o carimbo antigo aqui desfaria um
+    # k que a coluna nao tem mais e erraria a renda domiciliar em 20,47%, que e' o mesmo
+    # defeito de 2026-08-14 com o sinal trocado. Ordem = precedencia: malha primeiro.
+    fontes = (
+        (STAGING_DIR / _CENSO_MALHA_PARQUET, "metodo_calibracao_renda_malha"),
+        (STAGING_DIR / _CENSO_HEX_STAGING_PARQUET, "metodo_calibracao_renda"),
+    )
     try:
-        serie = pd.read_parquet(
-            STAGING_DIR / _CENSO_HEX_STAGING_PARQUET, columns=["metodo_calibracao_renda"]
-        )["metodo_calibracao_renda"].dropna()
+        disponiveis = [(caminho, coluna) for caminho, coluna in fontes if caminho.exists()]
+        if not disponiveis:
+            raise FileNotFoundError(f"nenhum de {[str(p) for p, _ in fontes]}")
+        caminho, coluna = disponiveis[0]
+        serie = pd.read_parquet(caminho, columns=[coluna])[coluna].dropna()
         carimbo = str(serie.mode().iloc[0])
         k = float(_RE_K_CARIMBO.search(carimbo).group(1))  # type: ignore[union-attr]
     except Exception as exc:  # noqa: BLE001 — staging ausente/carimbo ilegivel: constante conhecida
         _LOG_RENDA.warning(
             "k de calibracao do hex: carimbo ilegivel em %s (%s); usando fallback %s",
-            _CENSO_HEX_STAGING_PARQUET, exc, _K_CALIBRACAO_FALLBACK,
+            [str(p) for p, _ in fontes], exc, _K_CALIBRACAO_FALLBACK,
         )
         return _K_CALIBRACAO_FALLBACK
     if not 0.5 <= k <= 3.0:
