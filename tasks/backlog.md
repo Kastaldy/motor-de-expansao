@@ -330,6 +330,91 @@ dispara o rebuild da imagem da API — republicar manualmente e conferir o smoke
 
 - BLK-RELMUN-04 (concluído 2026-07-02) — ver tasks/completed.md
 
+### BLK-RELMUN-07 — Levar ao ar o Relatório Municipal por bairro: o código está na `main`, o bot no ar é o antigo
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — troca a imagem dos serviços `api` + `telegram-bot` em produção, por digest. READ-ONLY sobre o M1: nenhum artefato oficial, score, peso ou `config.py` é tocado; o rollback é repontar `API_IMAGE` para o digest anterior e repetir `pull` + `up -d`. |
+| **Prioridade** | **Alta.** É a única coisa entre o #264 e o time de Expansão: o ciclo foi mergeado em 2026-08-26, a imagem foi publicada no GHCR no mesmo dia, e mesmo assim ninguém no Telegram consegue escolher a unidade do Relatório Municipal. |
+| **Esteira** | `[aplicação na VPS: passo MANUAL, comando a comando — §6]`. Não há código a escrever: o entregável deste bloco é a troca do digest e a verificação. |
+| **Status** | **AGUARDANDO APLICAÇÃO NA VPS.** Achado de 2026-08-31 (Juan, uso real): o menu do bot continua com um único botão "Relatorio Municipal". O rótulo antigo NÃO leva mais à escolha de UF no código da `main` — leva à mensagem "o Relatorio Municipal agora tem duas leituras". Se ele ainda vai direto para a lista de estados, a imagem em execução é anterior ao #264. |
+| **Depende de** | #264 (mergeado 2026-08-26, `8e24f08`) — é ele que cria os dois botões e o campo `unidade` no contrato. Nada mais. |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca produção. NUNCA marcar loop-safe. |
+
+**O defeito, medido.** O #264 partiu o botão único em dois (`Municipal (hexagonos)` e
+`Municipal (bairros)`) e passou a unidade escolhida no payload do `POST /analisar-municipio`:
+
+- `src/motor_expansao/api/telegram_bot.py:60` — `_KB_MENU` com os dois botões;
+- `src/motor_expansao/api/schemas/__init__.py:69` — `unidade: Literal["bairro", "hexagono"]`.
+
+O merge publicou a imagem: o job `publish-api` do run `32980523365` (2026-08-26) concluiu com
+sucesso, e o filtro de path casou (`src/motor_expansao/api/**`). Mas **publicar no GHCR não é
+subir na VPS** — o `API_IMAGE` do `/opt/motor-expansao/app/.env` nunca foi repontado. O container
+`motor_expansao_telegram_bot` segue rodando o digest anterior, com o menu de um botão só.
+
+**Por que passou despercebido.** O deploy é manual por digest (§6) e o auto-merge não deploya
+(DEC-016). Não existe nenhum sinal automático entre "a `main` mudou o bot" e "o bot no ar mudou":
+o `/health` da API responde igual nas duas imagens, e o teclado do Telegram fica em **cache no
+cliente**, então nem o usuário consegue distinguir "imagem velha" de "teclado velho desenhado na
+tela" sem tocar no botão. Mesmo defeito de processo do BLK-MA-19, em outra superfície.
+
+**O que vai ao ar.**
+
+| item | valor |
+|---|---|
+| imagem | `ghcr.io/kastaldy/motor-de-expansao/motor-expansao-api` |
+| digest | `sha256:3f8a2f87c0bed4eb677a6ae2dd157c4a73a51d1601b01627bb7c36a21ea37d65` |
+| commit | `2f25911` (#278) — cabeça da `main` em 2026-08-29 |
+| publicado por | run `33280217775`, job `publish-api`, 2026-08-29T23:26Z |
+| serviços | `api` + `telegram-bot` (mesma imagem). `web`, `caddy` e `authelia` **não** reiniciam |
+
+**Runbook (cada comando com confirmação, §6).**
+
+```bash
+cd /opt/motor-expansao/app
+grep API_IMAGE .env                      # 0. GUARDAR — é o rollback
+# 1. repontar API_IMAGE para o digest da tabela acima
+docker compose -f docker-compose.prod.yml pull api telegram-bot
+docker compose -f docker-compose.prod.yml up -d api telegram-bot
+```
+
+**Critério de aceite — o `/health` NÃO serve.** Ele responde `{"status":"ok"}` nas duas imagens.
+Os dois checks que de fato separam:
+
+```bash
+docker inspect motor_expansao_telegram_bot \
+  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'   # ≥ 8e24f08
+docker compose -f docker-compose.prod.yml exec -T telegram-bot \
+  python -c "from motor_expansao.api import telegram_bot as t; print(t._KB_MENU)"
+```
+
+O segundo tem de imprimir exatamente
+`[['Relatorio Pontual'], ['Municipal (hexagonos)'], ['Municipal (bairros)'], ['Ajuda']]`.
+Se vier `[['Relatorio Pontual'], ['Relatorio Municipal'], ['Ajuda']]`, o `pull` não pegou.
+
+Fechamento no Telegram: mandar `/start` (obrigatório — o teclado antigo fica em cache no cliente
+e não se atualiza sozinho), tocar em **Municipal (bairros)**, escolher UF e município, e conferir
+que o PDF chega com o nome `relatorio_municipal_bairro_<uf>.pdf`.
+
+**A carona: este digest é a `main` de 29/08, não só o #264.** Sobem junto, e o revisor precisa
+ver isso antes de aprovar:
+
+- `fix(renda)` (parte do próprio #264) — um `k` nacional único e o fim da dupla contagem na renda
+  exibida. **65% dos setores trocam de faixa de cor**; relatório gerado antes e depois deste deploy
+  **não é comparável**. Se há PDF em circulação com o time ou com locador, avisar.
+- #273 (camada 3 do funil deixa de vetar concorrência), #275 (gate de zona morta + corte de renda),
+  #271 (régua absoluta de renda/população no score censitário).
+
+**Pré-condição de dado que este bloco NÃO cobre.** O aviso de falha silenciosa do
+`docs/deploy_api_bot.md` continua valendo: sem `uplift_renda_domiciliar_municipio.parquet`,
+`uplift_composicao_setor.parquet` e `fator_temporal_renda.json` em `/opt/motor-expansao/data/staging/`,
+o PDF sai com renda domiciliar errada e **sem erro nenhum**. Conferir a presença dos três antes de
+dar o deploy por concluído.
+
+**Fora de escopo.** Imagem `web` (o piloto não muda de comportamento com este bloco); envio de
+dado novo por `scp`; qualquer recálculo do M1.
+
+
 
 
 ---
