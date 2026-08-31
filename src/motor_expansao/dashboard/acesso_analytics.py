@@ -107,6 +107,15 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
     # de "Outras ações". Não afrouxa o anti-drift: o par deste é
     # `test_toda_acao_imobiliaria_tem_rotulo_proprio`, que exige rótulo por ação.
     (None, "/api/imobiliaria/evento/", "Ação na camada imobiliária"),
+    # Foto da unidade concorrente no balão do pino. É gesto de INTERESSE, e não desenho de
+    # tela: o balão só monta quando o operador para o cursor sobre aquele pino, então a
+    # linha na trilha diz que ele quis reconhecer aquela casa.
+    (None, "/api/foto-concorrente/", "Viu a foto de uma unidade concorrente"),
+    # Rótulo PRÓPRIO, e não o mesmo da foto do balão: este é o mapa DESENHANDO os pinos
+    # das independentes, e dispara sozinho a cada carga, sem gesto nenhum do operador.
+    # Juntar os dois na mesma linha faria a trilha somar desenho de tela com interesse
+    # declarado, que é exatamente a diferença que se quer enxergar.
+    (None, "/api/pin-concorrente/", "Carregou pinos com foto no mapa"),
 )
 _FEATURE_OUTRAS = "Outras ações"
 

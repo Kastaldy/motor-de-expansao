@@ -1215,6 +1215,17 @@ ULTRA_MAPEADAS_PARQUET = STAGING_DIR / "unidades_ultra_mapeadas.parquet"
 # Diretorio das logos PNG das redes (`logo_<rede>.png`). Canonico do motor =
 # <repo>/concorrentes (normalizar_concorrentes.CONCORRENTES_DIR); override por env.
 # As logos sao gitignored -> fallback gracioso (quadrado cor+sigla) quando ausentes.
+# Fotos das unidades concorrentes (a imagem do balao do pino). Diretorio PROPRIO, e nao
+# junto das logos: logo e' da MARCA e vem no bundle do produto; foto e' da UNIDADE e vem com
+# a base servida. Ausente -> os pinos seguem sem foto, que e' degradacao correta.
+COMPETITORS_PHOTO_DIR = Path(
+    os.environ.get("MOTOR_COMPETITORS_PHOTO_DIR", str(_REPO_ROOT / "concorrentes" / "fotos"))
+)
+# So' letras, digitos, ponto, hifen e sublinhado, terminando em .jpg/.png/.webp. O nome vem
+# do DADO, entao ele e' entrada nao confiavel: sem esta trava, um `../` no parquet leria
+# qualquer arquivo do servidor (mesma classe do BLK-SEC-05, que ja travou o codigo de UF).
+_FOTO_RE = re.compile(r"^[A-Za-z0-9._-]{1,120}\.(jpg|jpeg|png|webp)$")
+
 COMPETITORS_LOGO_DIR = Path(
     os.environ.get("MOTOR_COMPETITORS_LOGO_DIR", str(_REPO_ROOT / "concorrentes"))
 )
@@ -1337,6 +1348,50 @@ def _quadrado_sigla(short: str, bg: str, fg: str, *, halo: bool = False) -> str:
     return _svg_data_uri(svg)
 
 
+# Cache proprio: o slug e' funcao pura do nome e cada rede reaparece uma vez por pino do
+# municipio inteiro. Fica ANTES do bloco do BLK-RELPON-14 de proposito — aquele comentario e
+# o decorator abaixo dele dimensionam o cache de `_icone_rede`, e nao o deste.
+@functools.lru_cache(maxsize=256)
+def _slug_rede(nome: str) -> str:
+    """`"Megatlón"` -> `megatlon`. Nome de ARQUIVO, nao identificador de payload.
+
+    Precisa casar com o slug que o outro lado usa ao materializar as logos
+    (`escrever_logos`, em `pipelines/exportar_piloto_rep.py` no repo Motor-Argentina).
+    Regra unica dos dois lados: sem acento, minusculo, tudo que nao e' letra ou digito vira
+    `_`. Uma TABELA de-para aqui teria de ser mantida nos dois repositorios e envelheceria
+    calada — a regra nao.
+    """
+    puro = "".join(
+        c for c in unicodedata.normalize("NFD", str(nome))
+        if unicodedata.category(c) != "Mn"
+    ).lower()
+    return re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", puro)).strip("_")
+
+
+# Teto de pinos que podem virar FOTO numa mesma vista. O deck.gl empacota os icones num
+# atlas de textura, e alguns milhares de imagens de 128px o estouram. Medido na base
+# argentina (2026-08-26): o pior municipio tem 253 independentes com foto e a MEDIANA e' 2,
+# entao 600 nunca dispara hoje — e' guarda contra base patologica, nao regra de produto.
+# Alem do teto o pino volta ao quadrado com sigla, que e' o comportamento de sempre.
+PIN_FOTO_MAX = 600
+
+
+@functools.lru_cache(maxsize=256)
+def _rede_tem_logo(rede: str) -> bool:
+    """A rede tem ARQUIVO de logo? Se nao, o pino dela cai no quadrado com sigla."""
+    from motor_expansao.dashboard.competitors import COMPETITOR_LOGO_FILES
+
+    nome = COMPETITOR_LOGO_FILES.get(rede) or f"logo_{_slug_rede(rede)}.png"
+    return (COMPETITORS_LOGO_DIR / nome).is_file()
+
+
+def _foto_valida(nome: Any) -> str | None:
+    """Nome de arquivo de foto que passa na trava, ou `None`."""
+    if not nome or not isinstance(nome, str):
+        return None
+    return nome if _FOTO_RE.match(nome) and (COMPETITORS_PHOTO_DIR / nome).is_file() else None
+
+
 # BLK-RELPON-14: 64 era folgado com as 39 redes antigas — e as 68 novas nem tinham entrada em
 # COMPETITOR_LOGO_FILES, entao `_quadrado_logo(None, ...)` curto-circuitava sem custo. Agora as 107
 # tem `logo_<slug>.png`, e cada MISS custa Path.exists() + read_bytes() + base64 do PNG. Com 107
@@ -1351,8 +1406,15 @@ def _icone_rede(rede: str, halo: bool = False) -> str:
     brand = COMPETITOR_BRANDS.get(
         rede, {"short": (rede[:3].upper() or "C"), "bg": "#64748B", "fg": "#FFFFFF"}
     )
-    logo_file = COMPETITOR_LOGO_FILES.get(rede)
-    logo_path = COMPETITORS_LOGO_DIR / logo_file if logo_file else None
+    # O dicionario e' a fonte preferida — ele carrega os apelidos historicos do
+    # GymScraping, onde parte dos arquivos esta sob outro slug. Quando ele NAO conhece a
+    # rede, deriva-se o nome do arquivo do proprio nome dela em vez de desistir: era isso
+    # que deixava o mapa argentino inteiro sem marca nenhuma, porque "SportClub",
+    # "Megatlon" e as demais nunca estariam num dicionario de redes brasileiras (relato do
+    # Juan, 2026-08-26). Rede sem arquivo continua caindo no quadrado com sigla, que e' a
+    # resposta certa para "nao tenho a logo".
+    logo_file = COMPETITOR_LOGO_FILES.get(rede) or f"logo_{_slug_rede(rede)}.png"
+    logo_path = COMPETITORS_LOGO_DIR / logo_file
     return _quadrado_logo(logo_path, str(brand["bg"]), halo=halo) or _quadrado_sigla(
         str(brand["short"]), str(brand["bg"]), str(brand["fg"]), halo=halo
     )
@@ -1376,7 +1438,13 @@ def _carregar_concorrentes() -> pd.DataFrame:
     import pyarrow.parquet as pq
 
     disponiveis = set(pq.read_schema(CONCORRENTES_PARQUET).names)
-    extras = [c for c in ("flag_coord_valida", "status_registro") if c in disponiveis]
+    # `foto` entra aqui, e OPCIONAL como as outras: a base que nao a traz continua lendo
+    # igual. Esquecer uma coluna numa lista de projecao e' o defeito que a DEC-038 pagou
+    # caro — a coluna EXISTE no artefato, so' nao chega, e o sintoma e' um campo vazio sem
+    # erro nenhum. Foi o que aconteceu aqui na primeira tentativa.
+    extras = [
+        c for c in ("flag_coord_valida", "status_registro", "foto") if c in disponiveis
+    ]
     df = pd.read_parquet(CONCORRENTES_PARQUET, columns=[*cols, *extras])
     if "flag_coord_valida" in df.columns:
         df = df[df["flag_coord_valida"].fillna(True).astype(bool)]
@@ -1402,7 +1470,12 @@ def _carregar_concorrentes() -> pd.DataFrame:
         df = df[df["status_registro"].astype(str) == "valido"]
 
     df = df.dropna(subset=["lat", "lng"])
-    return df[cols].reset_index(drop=True)
+    # A PROJECAO FINAL tambem precisa deixar `foto` passar. As outras extras entram so' para
+    # FILTRAR linhas e podem cair aqui; a foto precisa CHEGAR ao payload do pino. Sem esta
+    # linha ela era lida do parquet e descartada na saida — coluna presente, campo vazio,
+    # zero erro. Exatamente a forma do defeito da DEC-038, agora numa TERCEIRA lista.
+    saida = [*cols, *(c for c in ("foto",) if c in df.columns)]
+    return df[saida].reset_index(drop=True)
 
 
 @functools.lru_cache(maxsize=1)
@@ -1630,20 +1703,56 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
     def _label(r: str) -> str:
         return str(COMPETITOR_BRANDS.get(r, {}).get("label", r))
 
+    def _com_teto(linhas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Aplica `PIN_FOTO_MAX` na ordem da lista.
+
+        Ordem ESTAVEL, e nao amostra: o mesmo recorte tem de produzir sempre os mesmos
+        pinos com foto. Um teto que sorteia muda a tela a cada carga, e quem olha conclui
+        que o DADO mudou.
+        """
+        usados = 0
+        for linha in linhas:
+            if not linha.get("icone_foto"):
+                continue
+            if usados >= PIN_FOTO_MAX:
+                linha["icone_foto"] = False
+            else:
+                usados += 1
+        return linhas
+
+    def _linha_conc(t: Any) -> dict[str, Any]:
+        """Uma linha de pino de concorrente.
+
+        A validacao da foto roda UMA vez por unidade, e nao uma por campo: `_foto_valida`
+        termina num `is_file()`, entao chama-la nos dois lugares custaria um stat de disco
+        a mais por linha — no municipio grande da base argentina sao milhares de stats para
+        responder duas vezes exatamente a mesma pergunta.
+        """
+        foto = _foto_valida(getattr(t, "foto", None))
+        return {
+            "lat": _num(t.lat, 6),
+            "lng": _num(t.lng, 6),
+            "rede": str(t.rede),
+            "label": _label(str(t.rede)),
+            "nome": _clean(t.nome_unidade),
+            # Nome do ARQUIVO, servido por /api/foto-concorrente. Ausente quando a
+            # unidade nao tem imagem (o POI de mapa aberto nunca tem) — o balao
+            # simplesmente sai sem foto.
+            "foto": foto,
+            # A FOTO VIRA O PINO quando a rede nao tem logo — o caso de toda
+            # independente, que aparecia como quadrado cinza com "IND" (relato do Juan,
+            # 2026-08-26). Quem TEM marca mantem a marca: reconhecer um SportClub no
+            # mapa vale mais que ver a fachada daquela unidade, e a foto continua no
+            # balao para as duas. O teto e' aplicado depois, sobre a lista montada.
+            "icone_foto": bool(foto and not _rede_tem_logo(str(t.rede))),
+        }
+
     return {
-        "concorrentes": [
-            {
-                "lat": _num(t.lat, 6),
-                "lng": _num(t.lng, 6),
-                "rede": str(t.rede),
-                "label": _label(str(t.rede)),
-                "nome": _clean(t.nome_unidade),
-            }
-            for t in conc.itertuples(index=False)
-        ]
-        + linhas_diag
-        if (len(conc) or linhas_diag)
-        else [],
+        "concorrentes": _com_teto(
+            [_linha_conc(t) for t in conc.itertuples(index=False)] + linhas_diag
+            if (len(conc) or linhas_diag)
+            else []
+        ),
         "ultra": [
             {"lat": _num(t.lat, 6), "lng": _num(t.lng, 6), "nome": _clean(t.nome)}
             for t in ultra.itertuples(index=False)
@@ -8626,6 +8735,70 @@ def api_imobiliaria_evento(acao: str) -> dict[str, Any]:
     if acao not in ACOES_IMOBILIARIA:
         raise HTTPException(status_code=404, detail="Acao desconhecida.")
     return {"ok": True}
+
+
+@app.get("/api/pin-concorrente/{arquivo}")
+def pin_concorrente(arquivo: str):
+    """A MESMA foto, emoldurada como os pinos de marca — para virar icone no mapa.
+
+    Por que uma segunda rota e nao a `foto-concorrente` direto: o pino de rede e' um
+    quadrado branco arredondado com a marca dentro, e uma foto crua ao lado dele leria como
+    outro tipo de objeto. A moldura aqui e' a MESMA de `_quadrado_logo` (viewBox 128, raio
+    26, borda 7) para os dois pousarem no mapa com o mesmo peso.
+
+    O balao continua usando a foto CRUA (`/api/foto-concorrente`): la' ela ocupa a largura
+    toda e a moldura so' atrapalharia.
+    """
+    from fastapi.responses import Response
+
+    if not _FOTO_RE.match(arquivo):
+        raise HTTPException(status_code=404, detail="foto nao encontrada")
+    caminho = (COMPETITORS_PHOTO_DIR / arquivo).resolve()
+    raiz = COMPETITORS_PHOTO_DIR.resolve()
+    if not str(caminho).startswith(str(raiz)) or not caminho.is_file():
+        raise HTTPException(status_code=404, detail="foto nao encontrada")
+    b64 = base64.b64encode(caminho.read_bytes()).decode("ascii")
+    mime = "image/png" if caminho.suffix.lower() == ".png" else "image/jpeg"
+    # `clipPath` porque a foto e' retangular e a moldura e' arredondada: sem o recorte, os
+    # cantos da imagem vazariam por cima da borda.
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+        'width="128" height="128" viewBox="0 0 128 128">'
+        '<defs><clipPath id="c"><rect x="8" y="8" width="112" height="112" rx="22"/></clipPath></defs>'
+        '<rect x="4" y="4" width="120" height="120" rx="26" fill="#FFFFFF" stroke="#64748B" stroke-width="7"/>'
+        f'<image href="data:{mime};base64,{b64}" x="8" y="8" width="112" height="112" '
+        'preserveAspectRatio="xMidYMid slice" clip-path="url(#c)"/></svg>'
+    )
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@app.get("/api/foto-concorrente/{arquivo}")
+def foto_concorrente(arquivo: str):
+    """Foto da unidade concorrente, para o balao do pino.
+
+    ARQUIVO, e nao caminho. O nome vem do parquet, que e' entrada nao confiavel, entao passa
+    pela mesma trava do payload (`_FOTO_RE`) e ainda e' resolvido e conferido contra o
+    diretorio: `resolve()` colapsa qualquer `..` que tenha escapado da regex, e a checagem
+    de prefixo garante que o resultado ficou dentro. Duas travas para o mesmo risco porque
+    ler arquivo arbitrario do servidor e' o pior desfecho possivel aqui.
+
+    404 — e nao 403 — quando o nome nao presta: para quem chama, "nao existe" e "voce nao
+    pode" sao a mesma coisa, e o 404 nao confirma a existencia de nada.
+    """
+    from fastapi.responses import FileResponse
+
+    if not _FOTO_RE.match(arquivo):
+        raise HTTPException(status_code=404, detail="foto nao encontrada")
+    caminho = (COMPETITORS_PHOTO_DIR / arquivo).resolve()
+    raiz = COMPETITORS_PHOTO_DIR.resolve()
+    if not str(caminho).startswith(str(raiz)) or not caminho.is_file():
+        raise HTTPException(status_code=404, detail="foto nao encontrada")
+    # Imutavel por nome: o arquivo so' muda se o slug mudar, e ai a URL muda junto.
+    return FileResponse(str(caminho), headers={"Cache-Control": "public, max-age=86400"})
 
 
 # ============================================================================
