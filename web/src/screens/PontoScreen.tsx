@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useUfsDaBase } from '../lib/base-contexto'
+import { censoDaBase, institutoDoCenso } from '../lib/rodape-base'
 
 import type { PontoEscolhido } from '../App'
 
@@ -61,7 +63,6 @@ export default function PontoScreen({
   onCapturarMapas,
   onAnalisarPonto,
   onLocalizar,
-  mapaPronto,
   pedido,
   onLimparPin,
   onInicio,
@@ -76,16 +77,11 @@ export default function PontoScreen({
    * fechado do que seria com a cidade resolvida.
    */
   onLocalizar: (uf: string, municipio: string, pin: SearchPin) => void
-  /**
-   * O Explorar ja' esta' com territorio na tela — e, portanto, com a busca dele no
-   * cabecalho.
-   *
-   * E' o que decide se a caixa de colar aparece. Com o mapa montado ela seria uma SEGUNDA
-   * caixa pedindo endereco, ao lado da que ja' existe; sem o mapa (nenhuma UF escolhida)
-   * ela e' a unica entrada que o modo tem, porque a tela vazia do Explorar so' oferece o
-   * seletor de estado.
-   */
-  mapaPronto: boolean
+  /* `mapaPronto` SAIU daqui (2026-08-26). Ele dizia "o Explorar já tem território na
+     tela", e era o que decidia entre o hero e a camada flutuante. Só que o território
+     fica carregado no `App` depois da primeira análise, de propósito — então a resposta
+     era "sim" para sempre e o hero virava inalcançável. Quem manda agora é o que a tela
+     de fato tem: ficha, ou nenhuma. Sem consumidor, a prop não fica de enfeite. */
   /**
    * Coordenada resolvida pela busca do Explorar, para virar ficha aqui.
    *
@@ -101,6 +97,8 @@ export default function PontoScreen({
   /** Captura do mapa, publicada pelo App. Ausente = o PDF sai sem mapas. */
   onCapturarMapas?: (alvos: AlvoCaptura[]) => Promise<string[]>
 }) {
+  const ufsDaBase = useUfsDaBase()
+  const institutoDaBase = institutoDoCenso(ufsDaBase)
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   /**
@@ -292,18 +290,35 @@ export default function PontoScreen({
    *
    * O `!mapaPronto` que guardava isto SAIU. Ele existia para o operador que explorava uma
    * regiao e trocava de modo com o mapa montado — caminho que nao existe mais desde que o
-   * Dock deixou de oferecer os modos (2026-08-12). O que sobrou dele foi impedir a caixa
-   * de aparecer para quem volta ao Inicio e pede "analisar um ponto" de novo: o
-   * territorio da analise anterior continua carregado no `App`, `mapaPronto` e' `true`, e
-   * a tela abria direto no mapa sem lugar nenhum para colar o endereco (Juan, 2026-08-18).
+   * Dock deixou de oferecer os modos (2026-08-12).
+   *
+   * Hoje, com fichas.length === 0 a tela inteira e' o hero (ver `semMapa` abaixo), entao
+   * esta caixa flutuante so' aparece no caso que ela existe para servir: acrescentar o
+   * 2o..5o ponto a uma comparacao ja' em andamento.
    */
   const mostrandoCaixa = colando || fichas.length === 0
 
-  /* SEM MAPA AINDA: a tela é o HERO do modo — o mesmo desenho do "Explorar uma região",
+  /* SEM PONTO NA TELA: a tela é o HERO do modo — o mesmo desenho do "Explorar uma região",
      com o texto desta análise e a caixa de colar no lugar do seletor de estado (pedido do
      Juan, 2026-08-12). Antes, o hero do Explorar aparecia no fundo falando de território
-     enquanto a caixa de endereço flutuava por cima: dois assuntos na mesma tela. */
-  const semMapa = !mapaPronto && fichas.length === 0
+     enquanto a caixa de endereço flutuava por cima: dois assuntos na mesma tela.
+
+     A CONDIÇÃO É SÓ "NÃO HÁ FICHA" (Juan, 2026-08-26: "coloca um endereço e ele não volta
+     para a tela que aparece 'Cole o link do Google Maps ou a coordenada'"). O `!mapaPronto`
+     que a guardava tornava o hero INALCANÇÁVEL depois da primeira análise: o território
+     fica carregado no `App` de propósito — custa uma leitura de servidor —, então
+     `mapaPronto` segue `true` para sempre, e quem saía do modo e voltava caía direto no
+     mapa com uma caixa flutuante por cima. O ajuste de 2026-08-18 tinha atacado a metade
+     errada do problema: garantiu que a CAIXA existisse, não que a TELA DE ENTRADA
+     voltasse — e é a tela de entrada que o card do Início promete.
+
+     O território NÃO é descartado junto: o hero cobre o mapa, e o primeiro endereço colado
+     reaproveita a carga que já está lá. Sair e voltar continua de graça para o servidor; o
+     que muda é só o que a pessoa vê ao entrar.
+
+     Vale também para o botão "Limpar", que zera as fichas: limpar tudo passa a devolver a
+     tela de entrada, em vez de deixar a caixa flutuando sobre um mapa sem ficha nenhuma. */
+  const semMapa = fichas.length === 0
   if (semMapa) {
     return (
       <div style={{ position: 'absolute', inset: 0, zIndex: 40 }}>
@@ -319,8 +334,8 @@ export default function PontoScreen({
                 versão desta tela — a mesma frase duas vezes, uma embaixo da outra. */}
             <CampoPonto onResolver={resolver} ocupado={carregando} erro={erro} />
             <p style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
-              A leitura sai do Censo 2022 do IBGE, no raio de 1,0 km — a mesma régua do
-              Relatório Pontual.
+              A leitura sai do Censo 2022{institutoDaBase ? ` do ${institutoDaBase}` : ''}, no
+              raio de 1,0 km — a mesma régua do Relatório Pontual.
             </p>
           </Glass>
         </Landing>
@@ -369,39 +384,29 @@ export default function PontoScreen({
             }}
           >
             <CampoPonto onResolver={resolver} ocupado={carregando} erro={erro} />
-            {fichas.length > 0 ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setColando(false)
-                  setErro(null)
-                }}
-                style={{
-                  justifySelf: 'start',
-                  padding: '6px 10px',
-                  borderRadius: 8,
-                  border: '1px solid var(--line-soft)',
-                  background: 'var(--surf-raised)',
-                  color: 'var(--tx-soft)',
-                  font: '600 11px/1 var(--f-ui)',
-                }}
-              >
-                Cancelar
-              </button>
-            ) : (
-              /* A régua e a fonte, que antes viviam no aviso de tela vazia. Sem isto,
-                 a origem do número sumiria junto com a tela de ficha. */
-              <p
-                style={{
-                  font: '400 11.5px/1.5 var(--f-ui)',
-                  color: 'var(--tx-sub)',
-                  margin: 0,
-                }}
-              >
-                A leitura sai do Censo 2022 do IBGE, no raio de 1,0 km — a mesma régua do
-                Relatório Pontual.
-              </p>
-            )}
+            {/* Só "Cancelar": aqui já existe ficha na tela, sempre. O ramo `fichas.length
+                === 0` desta escolha — que repetia a régua do Censo — virou inalcançável
+                quando o hero passou a cobrir esse caso, e ramo morto em JSX é pior do que
+                em código comum: ninguém consegue provar na tela que ele ainda funciona.
+                A régua continua publicada onde ela é lida de fato: no hero e na ficha. */}
+            <button
+              type="button"
+              onClick={() => {
+                setColando(false)
+                setErro(null)
+              }}
+              style={{
+                justifySelf: 'start',
+                padding: '6px 10px',
+                borderRadius: 8,
+                border: '1px solid var(--line-soft)',
+                background: 'var(--surf-raised)',
+                color: 'var(--tx-soft)',
+                font: '600 11px/1 var(--f-ui)',
+              }}
+            >
+              Cancelar
+            </button>
           </Glass>
         )}
 
@@ -506,6 +511,7 @@ function Ficha({
   ficha: PontoPayload
   onAnalisarPonto: (p: PontoEscolhido) => void
 }) {
+  const ufsDaBase = useUfsDaBase()
   const { local, censo, concorrencia, mercado } = ficha
 
   /* A viabilidade e as entradas sobem do bloco filho porque a RECOMENDACAO precisa
@@ -592,7 +598,7 @@ function Ficha({
       </Glass>
 
       {/* ---------------- Socioeconomia (sempre disponível) ---------------- */}
-      <Secao titulo="Quem mora em volta" nota={`Censo 2022 (IBGE) · raio de ${num(ficha.raio_km * 1000)} m`}>
+      <Secao titulo="Quem mora em volta" nota={`${censoDaBase(ufsDaBase) ?? 'Censo 2022'} · raio de ${num(ficha.raio_km * 1000)} m`}>
         {/* ---- O VISUAL VEM PRIMEIRO ----
             A hierarquia estava invertida: cinco cards de 24px dominavam o bloco e a barra
             aparecia como rodapé. Quem escolhe imóvel pergunta "isso é muito?", e essa
