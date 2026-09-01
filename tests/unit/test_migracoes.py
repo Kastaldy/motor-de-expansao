@@ -29,14 +29,14 @@ MANIFESTO = MIGRACOES / "manifesto.json"
 
 #: Contagem conferida contra o DUMP do cluster real (`pg_dump --schema-only`, 26/08/2026),
 #: que fechou os seis numeros da §0 da `verificacao.md` em 11/42/12/11/5/7 -- indices foram a 43
-#: na D23 (`idx_usuarios_login_ativo`). Sao estes os
+#: na D23 (`idx_usuarios_login_ativo`) e a 46 na D24 (os tres de `metadados`). Sao estes os
 #: objetos que as migrations tem de criar -- se um sumir daqui, o banco novo nasce
 #: diferente do que ja' esta no ar, e nenhum teste de sintaxe pegaria isso.
 OBJETOS_ESPERADOS = {
     "CREATE TABLE": 11,
     "CREATE TRIGGER": 5,
 }
-INDICES_ESPERADOS = 30   # +1 desde a D23: idx_usuarios_login_ativo
+INDICES_ESPERADOS = 33   # +1 na D23 (login) e +3 na D24 (metadados: imovel/unidade/hex)
 FUNCOES_ESPERADAS = 7
 
 

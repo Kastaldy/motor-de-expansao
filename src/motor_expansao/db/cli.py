@@ -54,7 +54,7 @@ TABELAS_DO_MODELO = (
     "perfil_permissoes_historico",
 )
 NUMEROS_DA_SECAO_ZERO = {
-    "indices": 43,   # 30 explicitos + 11 de PK + 2 de UNIQUE (D23 somou o do login)
+    "indices": 46,   # 33 explicitos + 11 de PK + 2 de UNIQUE (D24 somou os 3 de metadados)
     "constraints CHECK": 12,
     "chaves estrangeiras": 11,
     "triggers": 5,

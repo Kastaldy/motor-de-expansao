@@ -48,8 +48,8 @@ um valor é editar esta tabela primeiro.
 
 | `tipo` | Quando | `entidade` | `metadados` |
 |---|---|---|---|
-| `relatorio.gerado` | Pontual, Municipal, Comparação ou Simulador XLSX | conforme o alvo | **`report_id` (UUID, obrigatório)**, `formato`, `origem` |
-| `dossie.baixado` | `GET /api/oportunidades/{id}/dossie` | `imovel` | `imovel_id` |
+| `relatorio.gerado` | Pontual, Municipal, Comparação ou Simulador XLSX | — (ver D24) | **`report_id` (UUID, obrigatório)**, o alvo (`hex_id`/`imovel_id`/`unidade_id`), `formato`, `origem` |
+| `dossie.baixado` | `GET /api/oportunidades/{id}/dossie` | — | `imovel_id` |
 
 **`report_id` é obrigatório em todo `relatorio.gerado`.** É o que o D17 embute no PDF e o que
 permite, dado um arquivo vazado, chegar ao evento e daí a quem o gerou — o `idx_eventos_metadados_report_id`
@@ -62,7 +62,7 @@ e o único que o motor não gera: vem do coletor imobiliário. É o mesmo proble
 
 | `tipo` | Quando | `entidade` | `metadados` |
 |---|---|---|---|
-| `cadastro.editado` | `PUT /api/rede/cadastro/{id}` | `unidade` | `campo`, `de`, `para` |
+| `cadastro.editado` | `PUT /api/rede/cadastro/{id}` | — | `unidade_id`, `campo`, `de`, `para` |
 
 Hoje é a **única escrita do piloto**, e já tem auditoria própria em `cadastro_log.jsonl` (DEC-023).
 Duplicar em `eventos` só se justifica quando o log em arquivo sair — não antes.
@@ -74,7 +74,7 @@ fora dele. **Nem todos são ação no mesmo grau**, e por isso só três sobem p
 
 | Gesto | Vai para `eventos`? | Por quê |
 |---|---|---|
-| `marcar-visita` / `desmarcar-visita` | **sim** — `imovel.visita_marcada` / `_desmarcada` | decisão de negócio sobre um imóvel |
+| `marcar-visita` / `desmarcar-visita` | **sim** — `imovel.visita_marcada` / `_desmarcada`, com `imovel_id` em `metadados` | decisão de negócio sobre um imóvel |
 | `abrir-dossie` | **sim** — vira `dossie.baixado` | é o pedido do PDF com PII |
 | `abrir-aba`, `abrir-imovel`, `ver-no-mapa`, `filtrar` | não | uso de tela; a trilha da DEC-027 já os tem |
 
@@ -82,7 +82,7 @@ fora dele. **Nem todos são ação no mesmo grau**, e por isso só três sobem p
 
 | `tipo` | Quando | `entidade` | `metadados` |
 |---|---|---|---|
-| `viabilidade.calculada` | `POST /api/viabilidade` | `hexagono` ou `imovel` | metragem, aluguel pedido |
+| `viabilidade.calculada` | `POST /api/viabilidade` | — | `hex_id` e/ou `imovel_id`, metragem, aluguel pedido |
 
 O usuário digita premissas e recebe break-even — é decisão de análise, não leitura passiva.
 
@@ -105,16 +105,43 @@ O usuário digita premissas e recebe break-even — é decisão de análise, nã
 
 ## 3. Duas coisas que o esquema precisa acomodar
 
-### 3.1 O `CHECK` de `entidade` não cobre o motor
+### 3.1 O alvo das entidades do motor vai em `metadados` (D24 — resolvido)
 
-Ele aceita `area_estudo` e `contrato`, que são o domínio **futuro**. As entidades reais das ações do
-piloto são **`unidade`**, **`imovel`** e **`hexagono`**. Sem ampliá-lo, essas ações só cabem com
-`entidade` nula — o vínculo cai em `metadados` e o `idx_eventos_entidade_entidade_id` deixa de
-servir. O **D11** já prevê o caminho: *"ao criar um novo tipo de entidade, adicionar o valor ao
-CHECK"*. É migration de uma linha.
+O `CHECK` de `entidade` aceita só `area_estudo` e `contrato`. A saída aparente seria ampliá-lo para
+`unidade`, `imovel` e `hexagono` — **e ela não funciona**. A razão não é o vocabulário, é o tipo.
 
-Ressalva de tipo: `entidade_id` é `BIGINT`, e o id de imóvel do coletor pode não ser numérico —
-conferir antes, ou o vínculo do imóvel fica em `metadados` por necessidade, não por escolha.
+`chk_evento_entidade` obriga o par a andar junto: ou `entidade` e `entidade_id` são os dois nulos, ou
+os dois estão preenchidos. Não existe preencher só o rótulo. E `entidade_id` é `BIGINT`, porque
+aponta para o `BIGSERIAL` de uma tabela **daquele** banco. Os três ids do motor foram conferidos no
+código, e nenhum é numérico:
+
+| Entidade | Id | Onde nasce |
+|---|---|---|
+| `imovel` | `im_3f2a9b` (regex `im[-_][0-9a-fA-F]+`) | `_dossie_index`, `web/server/app.py` |
+| `unidade` | slug `patio-brasil-df`, `aguas-claras-df-2` | `resolver_identidade`, `dashboard/rede_metricas.py` |
+| `hexagono` | índice H3, 15 caracteres | `hex_id`, `str()` em todo o motor |
+
+Então `entidade = 'imovel'` exigiria um `entidade_id` que não existe: ampliar o `CHECK` trocaria uma
+recusa por outra.
+
+**Decidido na D24: o vínculo vive em `metadados`, com índice de expressão** — o mesmo padrão que a
+tabela já usa para o `report_id` do D17. A migration `014` criou os três
+(`idx_eventos_metadados_imovel_id`, `_unidade_id`, `_hex_id`), parciais por presença da chave e
+compostos com `criado_em_evento`. O `CHECK` **não muda**.
+
+O ganho é de coerência: `entidade`/`entidade_id` continuam significando uma coisa só — linha de uma
+tabela daquele banco. Nas alternativas descartadas (trocar o tipo para `TEXT`, ou dar ao banco um
+registro próprio de imóveis e hexágonos) o par passaria a significar às vezes isso e às vezes um
+identificador externo, e nenhuma consulta poderia confiar nele sem saber de antemão qual caso está
+lendo.
+
+> **Os nomes das chaves são contrato.** `imovel_id`, `unidade_id`, `hex_id` — exatamente como o motor
+> os chama. Gravar `id_imovel` ou `imovel` põe o evento fora dos índices, e o defeito é **silencioso**:
+> a escrita passa, a consulta fica lenta, e ninguém descobre até a tabela crescer.
+
+> **Emenda ao D17.** A convenção dizia que todo `relatorio.gerado` carrega `report_id` **e**
+> `entidade`/`entidade_id`. A segunda metade só vale quando o alvo é linha do banco: relatório sobre
+> hexágono ou imóvel põe o alvo em `metadados`. O `report_id` segue obrigatório sempre.
 
 ### 3.2 Transição de status: trigger ou aplicação?
 
@@ -148,5 +175,5 @@ recomendação que este contrato pressupõe.
 ## 5. O que ainda não existe
 
 Nada disto está implementado: o motor **não grava evento nenhum** hoje. Este documento é o contrato
-que a implementação deve seguir, e ela é trabalho novo — o esquema já comporta, exceto pelo `CHECK`
-da §3.1.
+que a implementação deve seguir, e ela é trabalho novo. **O esquema já comporta tudo isto** — a
+D24 fechou a última pendência de modelo, e a `014` criou os índices que faltavam.

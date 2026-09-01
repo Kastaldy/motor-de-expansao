@@ -124,10 +124,11 @@ def test_sql_de_registro_e_idempotente() -> None:
 def test_contagens_conferem_com_os_seis_numeros_da_secao_zero() -> None:
     esperado: dict[str, Any] = dict(cli.NUMEROS_DA_SECAO_ZERO)
     assert esperado == {
-        # 43 desde a D23: `idx_usuarios_login_ativo`. Este numero e o da §0 da
-        # `verificacao.md` tem de andar JUNTOS — se um ficar para tras, um banco
+        # 46 desde a D24: os tres indices de expressao sobre `metadados` (o de
+        # `idx_usuarios_login_ativo` da D23 levou de 42 a 43). Este numero e o da §0
+        # da `verificacao.md` tem de andar JUNTOS — se um ficar para tras, um banco
         # correto passa a acusar DIVERGENTE.
-        "indices": 43,
+        "indices": 46,
         "constraints CHECK": 12,
         "chaves estrangeiras": 11,
         "triggers": 5,
