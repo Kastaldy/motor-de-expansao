@@ -273,3 +273,164 @@ def motivo_bloqueio(path: str, usuario: object) -> str | None:
     if necessarias & abas_do_usuario(normalizar_usuario(usuario)):
         return None
     return "Seu usuário não tem acesso a esta área do piloto. Fale com o Felipe."
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Camada de BANCO (F4.2) — o que este módulo foi escrito para virar
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# O mecanismo de abas acima permanece INTACTO, e continua sendo o caminho quando não há
+# banco configurado: o piloto tem de subir sem ele, e um deploy que ligue os dois ao mesmo
+# tempo seria irreversível na prática. Enquanto `MOTOR_DATABASE_URL` não existir, nada muda.
+#
+# A diferença entre os dois modelos não é de implementação, é de granularidade. A "aba" nunca
+# foi a unidade real: o casamento sempre foi por PREFIXO DE ROTA, e a DEC-037 fez o recorte
+# mais fino do sistema entre DUAS ROTAS DA MESMA TELA — o dossiê do imóvel (com contato de
+# corretor) restrito, e a lista agregada liberada porque alimenta os pins do Mapa. O banco
+# modela `recurso.acao`, que é o que isso sempre foi.
+#
+# E ele acrescenta o que o modelo por aba não expressa: o MÉTODO HTTP. Hoje `/api/rede/`
+# libera ver a carteira e editar o cadastro pela mesma chave, indistinguíveis. Com o método
+# no gate, `rede.ver` e `rede.cadastro_editar` viram permissões separadas de verdade.
+
+#: (prefixo, métodos que exigem esta capacidade ou None = todos, capacidade).
+#: ORDEM SIGNIFICATIVA — first-match, como as `REGRAS_DE_ACESSO`. Duas precedências
+#: importam e são frágeis se reordenadas:
+#:   * `/api/rede/cadastro` com métodos de ESCRITA vem antes de `/api/rede/`, senão editar
+#:     o cadastro cairia em `rede.ver` e a separação do D22 não valeria nada;
+#:   * `/api/oportunidades/` (dossiê) antes de `/api/oportunidades` (lista) — a barra final
+#:     é o que separa os dois, e é a distinção que a DEC-037 existe para fazer.
+REGRAS_POR_CAPACIDADE: tuple[tuple[str, tuple[str, ...] | None, str], ...] = (
+    ("/api/rede/cadastro", ("PUT", "POST", "PATCH", "DELETE"), "rede.cadastro_editar"),
+    ("/api/rede/", None, "rede.ver"),
+    ("/api/executiva/", None, "rede.ver"),
+    ("/api/geocode", None, "ponto.analisar"),
+    ("/api/resolver-ponto", None, "ponto.analisar"),
+    ("/api/ponto", None, "ponto.analisar"),
+    ("/api/cobertura/", None, "ponto.analisar"),
+    ("/api/relatorio/comparacao", None, "relatorio.comparacao"),
+    ("/api/relatorio/municipal", None, "relatorio.municipal"),
+    ("/api/relatorio/pontual", None, "relatorio.pontual"),
+    ("/api/viabilidade", None, "viabilidade.calcular"),
+    ("/api/faixa-alunos", None, "viabilidade.simular"),
+    ("/api/simulador/", None, "viabilidade.simular"),
+    ("/api/uf/", None, "territorio.explorar"),
+    ("/api/municipio/", None, "territorio.explorar"),
+    ("/api/municipios/", None, "territorio.explorar"),
+    ("/api/estados", None, "territorio.ranking_nacional"),
+    ("/api/oportunidades/", None, "imovel.dossie_ver"),
+    ("/api/oportunidades", None, "imovel.listar"),
+    ("/api/imobiliaria/evento/", None, "imovel.registrar_gesto"),
+    ("/api/acessos/", None, "acesso.painel_ver"),
+)
+
+#: Capacidades equivalentes às `ABAS_SENSIVEIS`: são estas que o fail-closed nega quando o
+#: banco cai em produção. Financeiro da rede, PII de corretor, escrita e o painel de acessos.
+CAPACIDADES_SENSIVEIS = frozenset(
+    {
+        "rede.ver",
+        "rede.cadastro_editar",
+        "imovel.dossie_ver",
+        "viabilidade.calcular",
+        "viabilidade.simular",
+        "acesso.painel_ver",
+    }
+)
+
+
+def banco_no_comando() -> bool:
+    """O RBAC do banco manda? Só quando ele está configurado E o driver existe."""
+    try:
+        from motor_expansao import db
+    except ImportError:
+        return False
+    return db.configurado()
+
+
+def capacidade_necessaria(path: str, metodo: str) -> str | None:
+    """Capacidade que libera esta rota+método; `None` = rota sem controle."""
+    for prefixo, metodos, capacidade in REGRAS_POR_CAPACIDADE:
+        if not path.startswith(prefixo):
+            continue
+        if metodos is not None and metodo.upper() not in metodos:
+            continue  # a regra é de escrita e o método não é: cai para a próxima
+        return capacidade
+    return None
+
+
+def motivo_bloqueio_por_banco(path: str, metodo: str, usuario: object) -> str | None:
+    """`None` = pode passar; string = detail do 403.
+
+    Degradação idêntica à do JSON, e pelo mesmo raciocínio: banco fora do ar em PRODUÇÃO
+    nega as capacidades sensíveis e mantém as demais, para não trancar o piloto inteiro por
+    um incidente de infraestrutura; em dev, fail-open. O que muda é só de onde vem a
+    resposta quando tudo está no ar.
+    """
+    necessaria = capacidade_necessaria(path, metodo)
+    if necessaria is None:
+        return None
+
+    from motor_expansao import db
+    from motor_expansao.db import rbac
+
+    try:
+        quem = rbac.identidade(normalizar_usuario(usuario))
+    except (db.BancoIndisponivel, db.BancoNaoConfigurado) as erro:
+        if not _fail_closed_ativo():
+            return None  # dev: fail-open histórico
+        _LOG.error("RBAC indisponivel (%s) — negando capacidades sensiveis", erro)
+        if necessaria in CAPACIDADES_SENSIVEIS:
+            return "Acesso indisponível no momento. Tente novamente em instantes."
+        return None
+
+    if quem is None or not quem.pode(necessaria):
+        return "Seu usuário não tem acesso a esta área do piloto. Fale com o Felipe."
+    return None
+
+
+#: Capacidade que SUSTENTA cada aba da SPA. O `/api/me` responde em ABAS mesmo com o banco
+#: no comando — o contrato do front não muda, e `web/src/lib/acesso.ts` continua valendo.
+#:
+#: A escolha de UMA capacidade por aba (e não "qualquer uma que a aba use") é o que faz a
+#: interface contar a mesma história que o gate: a aba aparece quando a pessoa consegue
+#: fazer o que aquela superfície existe para fazer, não quando ela alcança um pedaço solto.
+#:
+#: Conferido contra os quatro perfis da D22 — o resultado reproduz exatamente as abas que
+#: cada um tinha no `acesso_abas.json`:
+#:   expansao    -> mapa, oportunidades, imobiliaria, viabilidade
+#:   consultoria -> executiva
+#:   lideres     -> as cinco
+#:   growth      -> as cinco (+ acessos, que vem da env)
+CAPACIDADE_QUE_SUSTENTA_A_ABA: dict[str, str] = {
+    "mapa": "territorio.explorar",
+    "oportunidades": "territorio.ranking_nacional",
+    "imobiliaria": "imovel.dossie_ver",
+    "viabilidade": "viabilidade.simular",
+    "executiva": "rede.ver",
+}
+
+
+def abas_do_usuario_por_banco(usuario: object) -> frozenset[str]:
+    """Abas derivadas das capacidades do RBAC. Mesma degradação do caminho por JSON.
+
+    `ABA_ACESSOS` fica de fora aqui, como no outro caminho: ela vem da allowlist de env e
+    é somada pela rota. A capacidade `acesso.painel_ver` existe no banco e governa a ROTA,
+    mas não anuncia a aba — as duas camadas são independentes de propósito (DEC-027).
+    """
+    from motor_expansao import db
+    from motor_expansao.db import rbac
+
+    try:
+        quem = rbac.identidade(normalizar_usuario(usuario))
+    except (db.BancoIndisponivel, db.BancoNaoConfigurado) as erro:
+        if not _fail_closed_ativo():
+            return ABAS_VALIDAS  # dev: fail-open histórico
+        _LOG.error("RBAC indisponivel no /api/me (%s) — escondendo abas sensiveis", erro)
+        return ABAS_VALIDAS - ABAS_SENSIVEIS
+    if quem is None:
+        return frozenset()
+    return frozenset(
+        aba
+        for aba, capacidade in CAPACIDADE_QUE_SUSTENTA_A_ABA.items()
+        if quem.pode(capacidade)
+    )

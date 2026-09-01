@@ -256,7 +256,19 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
     # ja nasca guardada (impossivel esquecer a dependencia).
     if acesso.bloqueio_acessos(request.url.path, remote_user):
         return JSONResponse({"detail": "Not Found"}, status_code=404)
-    detalhe = acesso.motivo_bloqueio(request.url.path, remote_user)
+    # Com o banco configurado, quem manda e' o RBAC (capacidades por rota+METODO, D22);
+    # sem ele, segue o mapa `usuario -> [abas]` do JSON, sem nada mudar. A troca e' por
+    # ENV, e nao por deploy: `MOTOR_DATABASE_URL` liga, e tirar a var volta atras.
+    #
+    # O `bloqueio_acessos` acima continua ANTES dos dois, e por cima dos dois: o painel de
+    # acessos tem allowlist propria de env, responde 404 (nao 403) e nao e' concedivel por
+    # nenhum dos dois mecanismos. Isso e' emenda da DEC-027 e nao muda com o banco.
+    if acesso.banco_no_comando():
+        detalhe = acesso.motivo_bloqueio_por_banco(
+            request.url.path, request.method, remote_user
+        )
+    else:
+        detalhe = acesso.motivo_bloqueio(request.url.path, remote_user)
     if detalhe is not None:
         return JSONResponse({"detail": detalhe}, status_code=403)
     return await call_next(request)
@@ -2889,9 +2901,19 @@ def me(
     rota so' informa.
     """
     usuario = acesso.normalizar_usuario(remote_user)
-    abas = set(acesso.abas_do_usuario(usuario))
-    # A aba Acessos NUNCA vem do JSON de abas: so' da allowlist de env (emenda
-    # DEC-027). Entra aqui apenas para a SPA saber que pode mostrar o icone.
+    # Com o banco no comando, as abas saem das CAPACIDADES do RBAC; sem ele, do mapa
+    # `usuario -> [abas]`. O contrato da resposta nao muda nos dois casos -- a SPA
+    # (`web/src/lib/acesso.ts`) segue recebendo nomes de aba.
+    #
+    # Isto tem de acompanhar o middleware: enquanto a rota respondia so' pelo JSON e o
+    # gate ja' decidia pelo banco, a interface OFERECIA aba que o backend negava --
+    # a tela e o gate contando historias diferentes sobre a mesma pessoa.
+    if acesso.banco_no_comando():
+        abas = set(acesso.abas_do_usuario_por_banco(remote_user))
+    else:
+        abas = set(acesso.abas_do_usuario(usuario))
+    # A aba Acessos NUNCA vem do JSON de abas nem do RBAC: so' da allowlist de env
+    # (emenda DEC-027). Entra aqui apenas para a SPA saber que pode mostrar o icone.
     if acesso.pode_ver_acessos(usuario):
         abas.add(acesso.ABA_ACESSOS)
     return {"usuario": usuario, "abas": sorted(abas)}
@@ -2925,6 +2947,23 @@ def _consolidar_rollup_de_uso() -> None:
     acesso_analytics.consolidar_rollup_seguro()
 
 
+@app.on_event("shutdown")
+def _fechar_pool_do_banco() -> None:
+    """Devolve as conexoes ao encerrar. NAO ha `startup` correspondente de proposito:
+    o pool nasce sob demanda, para que um banco fora do ar (ou ausente) nunca atrase
+    nem impeca o boot do piloto -- que serve tudo que nao depende dele.
+
+    Import tardio e `except` largo pelo mesmo motivo do rollup acima: shutdown e'
+    higiene, e nao pode ser o que derruba o encerramento.
+    """
+    try:
+        from motor_expansao import db
+
+        db.fechar_pool()
+    except Exception:  # noqa: BLE001 - encerramento nunca falha por causa disto
+        pass
+
+
 def _exigir_admin_acessos(remote_user: str | None) -> None:
     if not acesso.pode_ver_acessos(remote_user):
         raise HTTPException(status_code=404, detail="Not Found")
@@ -2944,7 +2983,31 @@ def acessos_saude_artefatos(
     fail-closed do middleware; o `_exigir_admin_acessos` e' cinto e suspensorio.
     """
     _exigir_admin_acessos(remote_user)
-    return _inventario_artefatos()
+    inventario = _inventario_artefatos()
+    inventario["banco"] = _saude_do_banco()
+    return inventario
+
+
+def _saude_do_banco() -> dict[str, Any]:
+    """Estado do banco para o diagnostico de ADMIN — nunca para o /api/health.
+
+    O `/api/health` e' rota LIVRE e foi emudecido de proposito (pentest Onda B #8):
+    versao de servidor, versao de PostGIS e estado de migration sao exatamente o tipo
+    de reconhecimento que aquele achado tirou de la'. Aqui, sob `/api/acessos/`, ja'
+    nasce atras do 404 fail-closed do middleware.
+
+    O healthcheck do container tambem NAO deve olhar o banco: o piloto foi desenhado
+    para servir sem ele, e amarrar os dois faria o Docker reiniciar o `web` a cada
+    piscada do Postgres -- derrubando o que ainda estava funcionando.
+
+    Import tardio pelo mesmo motivo de `rede_export`: o pacote so' e' tocado por quem
+    de fato consulta o banco, e um ambiente sem o extra `db` instalado nao paga nada.
+    """
+    try:
+        from motor_expansao import db
+    except ImportError as erro:
+        return {"configurado": False, "conectado": False, "erro": f"pacote db ausente: {erro}"}
+    return db.saude()
 
 
 @app.get("/api/acessos/resumo", include_in_schema=False)
