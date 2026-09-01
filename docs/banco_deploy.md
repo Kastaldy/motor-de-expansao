@@ -64,8 +64,9 @@ compose -f docker-compose.prod.yml up -d postgres` roda igual, e só as imagens 
 
 ### 1.2 Banco de ensaio — separado do de teste
 
-Use um banco **novo**, e não o `banco_de_reservas_teste`: o ponto do ensaio é provar a sequência
-desde o zero, e um banco que já tem as migrations aplicadas não prova isso.
+Use um banco **novo**, e não o `teste_banco_v2` (o banco de teste em uso): o ponto do ensaio é
+provar a sequência desde o zero, e um banco que já tem as migrations aplicadas não prova isso — e
+um ensaio que dropa o banco de trabalho custa caro por nada.
 
 ```powershell
 $PGBIN = "C:\Program Files\PostgreSQL\18\bin"

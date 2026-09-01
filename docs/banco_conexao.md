@@ -44,7 +44,7 @@ no boot por uma dependência que aquele caminho não usa.
 pip install -e ".[db]"
 
 # 2. apontar para o SEU banco
-export MOTOR_DATABASE_URL="postgresql://postgres:SENHA@localhost:5432/banco_de_reservas_teste"
+export MOTOR_DATABASE_URL="postgresql://postgres:SENHA@localhost:5432/teste_banco_v2"
 
 # 3. subir o backend
 cd web/server && MOTOR_DATA_DIR=<repo>/data python -m uvicorn app:app --port 8899
