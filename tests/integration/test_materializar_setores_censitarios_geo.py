@@ -26,6 +26,10 @@ def _malha_fake() -> gpd.GeoDataFrame:
             "uf": ["SP", "SP", "SP"],
             "cod_uf": ["35", "35", "35"],
             "cod_municipio": ["3550308", "3550308", "3550308"],
+            # F0.1: `ler_particao_setores` SEMPRE devolve esta coluna — do `CD_DIST` da malha
+            # quando ele existe, `pd.NA` quando nao. Sao os 9 primeiros digitos do `cod_setor`,
+            # e por isso os dois setores do distrito ...801 a compartilham.
+            "cod_distrito": ["355030801", "355030801", "355030802"],
             "nome_municipio": ["SAO PAULO", "SAO PAULO", "SAO PAULO"],
             # BLK-RELMUN-02: NM_BAIRRO materializado (cobertura heterogenea: 1 setor sem bairro).
             "nome_bairro": ["Bela Vista", "Centro", pd.NA],
@@ -240,6 +244,7 @@ def _cenario_duas_ufs() -> tuple[gpd.GeoDataFrame, pd.DataFrame, pd.DataFrame, p
                     "uf": uf,
                     "cod_uf": cod_uf,
                     "cod_municipio": cod[:7],
+                    "cod_distrito": cod[:9],  # F0.1 — sempre presente na saida do leitor
                     "nome_municipio": f"MUN {uf}",
                     "nome_bairro": pd.NA,
                     "cod_bairro": pd.NA,
