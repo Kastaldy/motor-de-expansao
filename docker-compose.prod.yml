@@ -200,6 +200,20 @@ services:
       # sem fail-open). Vazia/ausente = painel DESLIGADO para todos (404).
       # O valor vive no .env da VPS (ex.: MOTOR_ACESSOS_ADMIN_USUARIOS=felipe).
       MOTOR_ACESSOS_ADMIN_USUARIOS: ${MOTOR_ACESSOS_ADMIN_USUARIOS:-}
+      # Banco PostgreSQL/PostGIS. OPCIONAL de proposito, e por isso `:-` e nao `:?`:
+      # ausente ou vazia, o piloto sobe e serve como sempre, sem tentar conexao nenhuma
+      # (`motor_expansao.db` trata "sem env" e "sem driver" como o mesmo estado de nao
+      # configurado). Assim esta imagem vai para producao ANTES de existir servico de
+      # banco no compose, e ligar depois e' preencher o .env — nao um rebuild.
+      #
+      # Quando o servico existir, o valor aponta para o papel `app` do D20 (sem DDL),
+      # nunca para o dono do schema: e' o dono que poderia desligar a propria trigger
+      # de auditoria, que e' o caminho que o SECURITY DEFINER do D19 declara barrar.
+      #
+      # Diagnostico: `/api/acessos/saude-artefatos` -> bloco `banco`. O `/api/health`
+      # NAO olha o banco de proposito — amarrar os dois faria o healthcheck derrubar o
+      # container a cada piscada do Postgres, levando junto tudo que nao depende dele.
+      MOTOR_DATABASE_URL: ${MOTOR_DATABASE_URL:-}
       # BLK-SAT-01: chave do ArcGIS Location Platform p/ a vista aerea (satelite) do
       # Relatorio Pontual. Sem a var -> render devolve None -> pagina omitida (PDF sai igual).
       API_ARCGIS_API_KEY: ${API_ARCGIS_API_KEY:-}

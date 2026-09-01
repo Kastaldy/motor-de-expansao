@@ -63,6 +63,13 @@ dev = [
     # Desde 2026-08-18 o MESMO pacote tambem entra na imagem do web, pelo extra
     # `simulador_cache` (valores em cache do XLSX) — este daqui segue sendo o do CI.
     "formulas>=1.2.0,<2",
+    # Parser REAL do PostgreSQL (libpg_query) rodando offline, sem conexao. E' a rede de
+    # seguranca que o recorte de 25/08 pede: como nenhum comando SQL parte do
+    # desenvolvimento, erro de sintaxe numa migration so' apareceria quando o arquivo
+    # chegasse no Vinicius -- e cada ida-e-volta custa o tempo dele. O `pglast` pega toda
+    # essa classe antes. Nao pega coluna inexistente nem erro de tipo: isso segue sendo
+    # verificado contra o banco real, do outro lado.
+    "pglast>=7,<9",
 ]
 # Valores em cache do simulador XLSX (fix de 2026-08-18): recalcula as formulas do
 # arquivo gerado e grava o resultado junto de cada uma — sem isso, visualizador que
@@ -81,6 +88,18 @@ api_mvp = [
     "pydantic>=2.7.0",
     "pydantic-settings>=2.2.0",
     "python-multipart>=0.0.9",
+]
+# Banco PostgreSQL/PostGIS (`src/motor_expansao/db/`). Extra PROPRIO, e nao dependencia
+# base, por dois motivos: quem roda os pipelines do M1 nao precisa de driver de banco, e
+# o motor tem de subir sem ele — o modulo trata "driver ausente" como um dos estados de
+# "banco nao configurado", ao lado de "env nao definida".
+#
+# psycopg 3 (NAO o `psycopg2-binary` que o extra `api` legado arrasta): `[binary]` evita
+# exigir libpq do SO, e `[pool]` traz o `psycopg_pool` do gerenciador de conexoes. Sem
+# SQLAlchemy de proposito — o esquema do `banco-de-reservas` e' SQL escrito a mao, com
+# triggers SECURITY DEFINER e indices parciais que um ORM nao expressa.
+db = [
+    "psycopg[binary,pool]>=3.2,<4",
 ]
 # (O extra do geocoder do bot — selenium/webdriver-manager — e o `geocoder`,
 # definido abaixo junto de [basemap]; a imagem do bot usa .[basemap,api_mvp,geocoder].)

@@ -332,6 +332,8 @@ pathspec==1.1.1
     #   prefect
 pendulum==3.2.0 ; python_full_version < '3.13'
     # via prefect
+pglast==8.4
+    # via motor-expansao (pyproject.toml)
 pillow==12.3.0
     # via
     #   motor-expansao (pyproject.toml)
@@ -357,6 +359,12 @@ propcache==0.5.2
     #   yarl
 psutil==7.2.2
     # via motor-expansao (pyproject.toml)
+psycopg==3.3.4
+    # via motor-expansao (pyproject.toml)
+psycopg-binary==3.3.4 ; implementation_name != 'pypy'
+    # via psycopg
+psycopg-pool==3.3.1
+    # via psycopg
 psycopg2-binary==2.9.12
     # via motor-expansao (pyproject.toml)
 py-key-value-aio==0.4.5
@@ -602,6 +610,8 @@ typing-extensions==4.16.0
     #   opentelemetry-api
     #   pandera
     #   prefect
+    #   psycopg
+    #   psycopg-pool
     #   py-key-value-aio
     #   pydantic
     #   pydantic-core
@@ -627,6 +637,7 @@ tzdata==2026.3
     #   apprise
     #   pandas
     #   pendulum
+    #   psycopg
     #   pydocket
     #   tzlocal
     #   whenever

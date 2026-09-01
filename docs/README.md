@@ -36,6 +36,7 @@ Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de s
 - [trilha_acesso_piloto.md](trilha_acesso_piloto.md) — **[canônico]** trilha de acesso do piloto (DEC-027): quem fez o quê, retenção e habilitação na VPS.
 - [deploy_piloto_web.md](deploy_piloto_web.md) — **[canônico]** runbook completo de deploy do piloto web (imagem `motor-expansao-web` por digest).
 - [deploy_plan.md](deploy_plan.md) · [archive/deploy_vps_streamlit.md](archive/deploy_vps_streamlit.md) — **[histórico]** planos/runbooks antigos de deploy (ver `infra_producao.md`).
+- [banco_conexao.md](banco_conexao.md) — **[canônico]** conexão com o banco PostgreSQL/PostGIS (`MOTOR_DATABASE_URL`): os três estados, leitura `READ ONLY` × escrita com `app.id_usuario`, e por que o diagnóstico não fica no `/api/health`.
 
 ## 5. Orquestração, Loop e Governança
 - [portao_merge_orq21.md](portao_merge_orq21.md) — **[canônico]** runbook do portão de merge (DEC-016/BLK-ORQ-21).
