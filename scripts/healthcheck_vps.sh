@@ -52,8 +52,13 @@ CONTAINERS=(
     # a degradacao so apareceria quando alguem olhasse um PDF.
     motor_expansao_tileserver
     # Piloto web (`Dockerfile.web`, servico `web` do compose): o app de producao desde a
-    # DEC-022 (o container motor_expansao_streamlit saiu da vigilancia no corte). Total: 6.
+    # DEC-022 (o container motor_expansao_streamlit saiu da vigilancia no corte).
     motor_expansao_web
+    # Postgres/PostGIS. O `web` NAO cai junto quando ele morre -- o piloto foi desenhado
+    # para servir sem banco, e o healthcheck do container deliberadamente nao o consulta.
+    # Sem esta linha, o banco fora do ar seria invisivel: leitura de parquet segue servindo,
+    # e so o RBAC comeca a negar. Total: 7.
+    motor_expansao_postgres
 )
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"
