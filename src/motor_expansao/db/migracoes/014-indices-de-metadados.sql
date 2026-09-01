@@ -1,6 +1,6 @@
 -- ARQUIVO GERADO -- nao editar a mao.
 -- Origem: banco-de-reservas/sql/014-indices-de-metadados.md (primeiro bloco ```sql).
--- sha256 do bloco extraido: be4e5129252ff33ac10de26acd342a612f5e46a406319a8fd057e14f6c06fb2c
+-- sha256 do bloco extraido: 1076430b0b71083a22f8ad6229fc1c5977f5cbc5f763f0c02fbab6f75494513c
 -- Regenerar: python scripts/extrair_migracoes.py --origem <.../banco-de-reservas/sql>
 --
 -- O `banco-de-reservas` e' a fonte da verdade do DESENHO (convencoes §7): mudanca de
@@ -36,5 +36,17 @@ CREATE INDEX IF NOT EXISTS idx_eventos_metadados_unidade_id
 CREATE INDEX IF NOT EXISTS idx_eventos_metadados_hex_id
   ON eventos ((metadados->>'hex_id'), criado_em_evento)
   WHERE (metadados->>'hex_id') IS NOT NULL;
+
+-- `usuario` e' a UNICA das entidades novas cujo id e' `BIGSERIAL` deste banco -- e' o caso
+-- para o qual `entidade`/`entidade_id` foram criadas. `id_usuario` segue sendo QUEM FEZ; o
+-- `entidade_id` passa a ser QUEM SOFREU (o alvo da criacao/desativacao/troca de perfil).
+--
+-- DROP + ADD, e nao ALTER: o PostgreSQL nao tem `ALTER CONSTRAINT` para trocar a expressao
+-- de um CHECK. Recriar com o MESMO NOME mantem os seis numeros da §0 intactos (12 checks) --
+-- um nome novo os quebraria em silencio. Ampliar nunca falha por linha existente: toda linha
+-- que passava no predicado antigo passa no novo.
+ALTER TABLE eventos DROP CONSTRAINT chk_evento_entidade_valor;
+ALTER TABLE eventos ADD  CONSTRAINT chk_evento_entidade_valor
+  CHECK (entidade IS NULL OR entidade IN ('area_estudo','contrato','usuario'));
 
 COMMIT;

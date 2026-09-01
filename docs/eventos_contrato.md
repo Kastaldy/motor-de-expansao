@@ -100,10 +100,25 @@ O usuário digita premissas e recebe break-even — é decisão de análise, nã
 
 ### 2.7 Gestão de acesso
 
-`usuario.criado`, `usuario.desativado`, `usuario.reativado`, `usuario.perfil_alterado` — todos com
-`entidade` nula (usuário não é entidade do `CHECK`), e o alvo em `metadados.id_usuario_alvo`.
+| `tipo` | `entidade` | `entidade_id` | `metadados` |
+|---|---|---|---|
+| `usuario.criado` | `usuario` | id do alvo | `perfil` |
+| `usuario.desativado` / `usuario.reativado` | `usuario` | id do alvo | — |
+| `usuario.perfil_alterado` | `usuario` | id do alvo | `de`, `para` |
 
-## 3. Duas coisas que o esquema precisa acomodar
+**Aqui são duas pessoas por linha, e elas não podem se confundir.** `id_usuario` é **quem fez** —
+chega por `app.id_usuario`, como em todo evento. `entidade_id` é **quem sofreu**. Foi para isso que a
+D24 pôs `usuario` no `CHECK`: é a única das entidades novas cujo id é `BIGSERIAL` deste banco, então
+o par funciona como projetado, e `idx_eventos_entidade_entidade_id` passa a responder *"tudo que já
+fizeram com esta pessoa"* — a pergunta de auditoria da tela de administração.
+
+**Nunca o login nem o e-mail do alvo em `metadados`** — é PII, e a §4 vale aqui como em todo lugar.
+O id basta: quem tem acesso a `eventos` resolve o nome em `usuarios`.
+
+## 3. O que o esquema precisa acomodar
+
+Duas questões de modelo. A primeira está **resolvida** (D24, migration `014`); a segunda segue
+aberta e depende da F5.4 existir.
 
 ### 3.1 O alvo das entidades do motor vai em `metadados` (D24 — resolvido)
 
@@ -127,7 +142,11 @@ recusa por outra.
 **Decidido na D24: o vínculo vive em `metadados`, com índice de expressão** — o mesmo padrão que a
 tabela já usa para o `report_id` do D17. A migration `014` criou os três
 (`idx_eventos_metadados_imovel_id`, `_unidade_id`, `_hex_id`), parciais por presença da chave e
-compostos com `criado_em_evento`. O `CHECK` **não muda**.
+compostos com `criado_em_evento`.
+
+**O `CHECK` muda numa coisa só, e não é nenhuma das três: `usuario` entra.** É a exceção que a
+regra produz — `usuarios.id_usuario` é `BIGSERIAL` daquele banco, exatamente o caso para o qual as
+duas colunas foram feitas. Ver a §2.7.
 
 O ganho é de coerência: `entidade`/`entidade_id` continuam significando uma coisa só — linha de uma
 tabela daquele banco. Nas alternativas descartadas (trocar o tipo para `TEXT`, ou dar ao banco um
