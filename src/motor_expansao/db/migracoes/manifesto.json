@@ -1,0 +1,104 @@
+{
+  "origem": "banco-de-reservas/sql",
+  "gerado_por": "scripts/extrair_migracoes.py",
+  "migracoes": [
+    {
+      "versao": "000",
+      "arquivo": "000-migracoes-aplicadas.sql",
+      "documento": null,
+      "sha256_bloco": null,
+      "sha256_arquivo": "546bb0538b5483d465dafb096a112ac8dfa9747dae33ad6a2bc9cf776a86d08a"
+    },
+    {
+      "versao": "001",
+      "arquivo": "001-extensoes.sql",
+      "documento": "001-extensoes.md",
+      "sha256_bloco": "4213e537ea97f9ca011acf10f59fcdbb5d31b54bcac5c63d40bed3b01bf85a76",
+      "sha256_arquivo": "a91fec9509e972d1e8bb5bd6606c71b05a8fe8eb30960a473a0b00b78cedb6f5"
+    },
+    {
+      "versao": "002",
+      "arquivo": "002-perfis-e-permissoes.sql",
+      "documento": "002-perfis-e-permissoes.md",
+      "sha256_bloco": "7c8ed3ed674bb19c1aca676aff5019bb20e051edd9edfb6ee5f7c0ee854efc8d",
+      "sha256_arquivo": "00c381c7765e668fd5841f3b1e9d76175811bed0513b45090035e823b5167dfe"
+    },
+    {
+      "versao": "003",
+      "arquivo": "003-usuarios.sql",
+      "documento": "003-usuarios.md",
+      "sha256_bloco": "d1c182e8cc805febc63e45d3a7765949f273d6e0fa6961b4f11ad9eb121e93c2",
+      "sha256_arquivo": "95f989b4c87283896b0896ef3d9cc46fa4128a8582e1091ea678f0a14f2a4c3e"
+    },
+    {
+      "versao": "004",
+      "arquivo": "004-perfil-permissoes.sql",
+      "documento": "004-perfil-permissoes.md",
+      "sha256_bloco": "56f7b9038e16be7c64ab6ac859b01d0d8bdab00f17254f3e5b2a53bce3823997",
+      "sha256_arquivo": "b4f31b6fa874041b31ce1a84c5bbb237a020639d044a37096a24c3120bae90ec"
+    },
+    {
+      "versao": "005",
+      "arquivo": "005-eventos.sql",
+      "documento": "005-eventos.md",
+      "sha256_bloco": "813aab1bdc77b87321ff624fcd26e65aa418b2bafbd45f7d701529c0c8c987c6",
+      "sha256_arquivo": "e02bc4765fb5952fb2c5252d666f7446a645997afa2fe62755b996ddfa63d6c6"
+    },
+    {
+      "versao": "006",
+      "arquivo": "006-bases-de-referencia.sql",
+      "documento": "006-bases-de-referencia.md",
+      "sha256_bloco": "2db928b2544a6200a7f79e528f7546bb25367ab3ca959e1fee4d7daba46368ca",
+      "sha256_arquivo": "e06c56898d067f292cd172142833bc3f2755a30faffc7826029613570f5a5bb8"
+    },
+    {
+      "versao": "007",
+      "arquivo": "007-regioes.sql",
+      "documento": "007-regioes.md",
+      "sha256_bloco": "bb68805dd6b7355fdb8c015bbb2cfdcd2334aa78755a9317ac6f0d589ca7c411",
+      "sha256_arquivo": "0bf4dc5526e7cd66b69c2894ae48fce55a733ab4a6bfe3bb40aedac91693b457"
+    },
+    {
+      "versao": "008",
+      "arquivo": "008-triggers-atualizado-em.sql",
+      "documento": "008-triggers-atualizado-em.md",
+      "sha256_bloco": "9f22f59ecbd44a1eae05d43858566a56824ca7b55cc3aec29de4ca67cf4aa657",
+      "sha256_arquivo": "ac8ce94d439b52b3b7c5740909f09659bc49644ab9dcb5ed609bb5d0d9f6a9dc"
+    },
+    {
+      "versao": "009",
+      "arquivo": "009-historico-perfil-permissoes.sql",
+      "documento": "009-historico-perfil-permissoes.md",
+      "sha256_bloco": "89b46c7ea710ebe6070407291f5674347e0e76d789f6f44e812de027d775b86e",
+      "sha256_arquivo": "aec6ca852356104f33c84bd78c7eb1d49cffff54123b7711bc909c5fc46b06e4"
+    },
+    {
+      "versao": "010",
+      "arquivo": "010-seed-rbac.sql",
+      "documento": "010-seed-rbac.md",
+      "sha256_bloco": "085060ee2e18920cbf2da765873b748640b1d35cfa85a1d5eccecf938d583066",
+      "sha256_arquivo": "87c6d3f5786106df8508078070a183e682412a9ab4105229a17d1b5381655306"
+    },
+    {
+      "versao": "011",
+      "arquivo": "011-endurecimento-auditoria.sql",
+      "documento": "011-endurecimento-auditoria.md",
+      "sha256_bloco": "b66c3603b9aafca8f9ebff5ce4c5d9762d69222c9fabbbea1f206e69352db313",
+      "sha256_arquivo": "a8f76308b2cda063a547ac804d8a2a092f232a9e4fa5d2e86f54c72e4bd25c80"
+    },
+    {
+      "versao": "012",
+      "arquivo": "012-seed-rbac-real.sql",
+      "documento": "012-seed-rbac-real.md",
+      "sha256_bloco": "9de851bcc309c22461f4bf6fec34e6518e20c5d45efb811888834adef061cfd2",
+      "sha256_arquivo": "fb9575ce799e8f84354ac9ba8477c96f947472da658bc59c3beb53adad1db98e"
+    },
+    {
+      "versao": "013",
+      "arquivo": "013-login-do-usuario.sql",
+      "documento": "013-login-do-usuario.md",
+      "sha256_bloco": "40c5e9c7c551a8b7e6309417817eb1ddd22ecf28bdab1e9f55716154e70aad9b",
+      "sha256_arquivo": "df187958be0a014fccb371c0665613c633d104f9caf09a436ab73e69edde0bb3"
+    }
+  ]
+}
