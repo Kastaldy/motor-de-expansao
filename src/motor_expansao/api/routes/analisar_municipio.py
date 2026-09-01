@@ -61,7 +61,7 @@ async def municipios(
 @router.post(
     "/analisar-municipio",
     responses=_ERR,
-    summary="Gera o Relatorio Municipal (PDF de 9 paginas)",
+    summary="Gera o Relatorio Municipal (PDF; unidade bairro ou hexagono)",
 )
 async def analisar_municipio(
     payload: AnalisarMunicipioRequest,
@@ -69,7 +69,8 @@ async def analisar_municipio(
     settings: Settings = Depends(get_settings),
 ) -> Response:
     pdf_bytes = gerar_pdf_municipio(
-        payload.uf, payload.municipio, consumidor, settings, solicitante=payload.solicitante
+        payload.uf, payload.municipio, consumidor, settings,
+        solicitante=payload.solicitante, unidade=payload.unidade,
     )
     return Response(
         content=pdf_bytes,

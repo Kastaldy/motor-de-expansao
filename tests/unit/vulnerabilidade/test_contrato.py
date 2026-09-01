@@ -161,7 +161,8 @@ def test_identificadores_do_contrato_sao_ascii() -> None:
         c.VERSAO_CONTRATO_PRESENCA_AGREGADOR,
         c.VERSAO_CONTRATO_SCORE,
         c.CATEGORIA_INDEPENDENTE,
-        c.COLUNA_PARTICAO,
+        # Tupla desde o BLK-MA-21 (era o escalar `COLUNA_PARTICAO`): as DUAS chaves hive.
+        *c.COLUNAS_PARTICAO,
     ]
     for valor in alvos:
         assert valor.isascii(), f"identificador com caractere fora de ASCII: {valor!r}"

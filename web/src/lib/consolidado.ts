@@ -120,5 +120,5 @@ export function fraseConsolidada(c: CidadeConsolidada, totalCamadas: number): st
 
   return c.posicaoFila != null
     ? `${base} É a ${c.posicaoFila}ª da fila de recomendação.`
-    : `${base} Não entra na fila de recomendação — há concorrente mapeado no recorte.`
+    : `${base} Não entra na fila de recomendação neste recorte.`
 }

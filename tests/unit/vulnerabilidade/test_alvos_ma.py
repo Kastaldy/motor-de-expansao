@@ -537,7 +537,7 @@ def _pressao_em(hexes: list[str], perto_de: str) -> pd.DataFrame:
 
 
 def test_sem_pressao_no_score_as_colunas_do_s6_chegam_nulas() -> None:
-    """"Não calculei" tem de continuar distinguível de "medi e não há".
+    """ "Não calculei" tem de continuar distinguível de "medi e não há".
 
     Na régua do §8.1 o `0` é a leitura mais OTIMISTA ("ninguém espremendo"); confundir ausência de
     cálculo com ausência de concorrência rebaixaria o alvo por falta de dado.
@@ -597,6 +597,167 @@ def test_cli_analisa_os_argumentos() -> None:
     assert args.carteira == m.CARTEIRA_PATH_DEFAULT
 
 
+# --------------------------------------------------------------------------- #
+# BLK-MA-21 / DEC-039 (D9) — a fronteira com o BLK-MA-20, imposta POR CÓDIGO
+# --------------------------------------------------------------------------- #
+def test_cli_aceita_recorte_de_fontes() -> None:
+    """`--fontes wellhub` é o que o entregável roda enquanto o BLK-MA-20 não fecha.
+
+    A partição do `totalpass` passa a ser GRAVADA desde a primeira semana — para o cronômetro de
+    `MIN_SEMANAS` começar a correr, já que a 8ª observação está a ~8 SEMANAS na cadência real —, mas
+    **não entra no ranking** antes de o grão do S1 ser decidido e a dedup TP × WH ser calibrada
+    (ela está arbitrada, não medida: não existe par real).
+    """
+    args = m._parse_args(["--base-dir", "x", "--fontes", "wellhub"])
+    assert args.fontes == ["wellhub"]
+
+    with pytest.raises(SystemExit):
+        m._parse_args(["--base-dir", "x", "--fontes", "gympass"])  # nome antigo do WellHub
+
+
+def test_o_recorte_de_fontes_e_FAIL_CLOSED(caplog: pytest.LogCaptureFixture) -> None:
+    """Emenda de 2026-08-25 à DEC-039: **omitir o flag é o comportamento SEGURO**.
+
+    O D9 rejeitou "a DEC proíbe por escrito" com a frase *"é prosa: a cadeia roda com as duas
+    fontes sem editar uma linha"*. A primeira implementação tinha `default=None` e, com isso, a
+    MESMA propriedade — só que o gesto que vazava passou a ser **não digitar o flag**. E as duas
+    receitas canônicas do próprio repositório o omitiam. O teste anterior travava exatamente o
+    comportamento errado, assertando `default is None`.
+    """
+    assert m.FONTES_ENTREGAVEL_DEFAULT == ("wellhub",)
+
+    # 1. Omissão => recorte do entregável, NUNCA a série inteira.
+    assert m.resolver_fontes(m._parse_args(["--base-dir", "x"])) == ("wellhub",)
+    # 2. Recorte explícito manda sobre o default.
+    assert m.resolver_fontes(m._parse_args(["--base-dir", "x", "--fontes", "unidades"])) == (
+        "unidades",
+    )
+    # 3. Série inteira exige GESTO, e ele é mutuamente exclusivo com `--fontes`.
+    assert m.resolver_fontes(m._parse_args(["--base-dir", "x", "--todas-as-fontes"])) is None
+    with pytest.raises(SystemExit):
+        m._parse_args(["--base-dir", "x", "--todas-as-fontes", "--fontes", "wellhub"])
+
+
+def test_recorte_de_fontes_e_prosa_sem_o_flag() -> None:
+    """A DEC exige que o recorte seja IMPOSTO, não prometido: o parâmetro tem de existir de ponta
+    a ponta — `ler_snapshots(fontes=)` e `coordenadas_por_chave(fontes=)`.
+
+    Sem os dois, a cadeia inteira roda com as duas fontes sem editar uma linha, e "proibido por
+    escrito" não impede nada.
+    """
+    import inspect
+
+    from motor_expansao.vulnerabilidade import snapshots as msnap
+
+    assert "fontes" in inspect.signature(msnap.ler_snapshots).parameters
+    assert "fontes" in inspect.signature(msnap.coordenadas_por_chave).parameters
+
+
+def _serie_de_duas_fontes(base: Path, *, semanas: int = 13) -> None:
+    """Série SINTÉTICA em disco com `wellhub` e `totalpass`, uma academia independente cada.
+
+    Escrita pela função de produção (`escrever_particao_semana`), para que o teste exercite o
+    layout de duas chaves de verdade — e não uma aproximação dele.
+    """
+    from motor_expansao.vulnerabilidade import snapshots as msnap
+
+    hexes = {"wellhub": HEX_Q, "totalpass": HEX_VIZ}
+    for i in range(semanas):
+        semana = f"2026-{i + 10:02d}"
+        linhas = [
+            {
+                "snapshot_date": f"2026-03-{i + 1:02d}",
+                "slug": f"academia-{fonte}",
+                "concorrente_id": f"id-{fonte}",
+                "chave_snapshot": f"slug:{fonte}:academia-{fonte}",
+                "chave_origem": "slug",
+                "hex_id_res7": hexes[fonte],
+                "rede": c.CATEGORIA_INDEPENDENTE,
+                "fonte": fonte,
+                "hash_campos_raspados": f"h{fonte}{i:02d}",
+                "nota_wellhub": pd.NA,
+                "qtd_avaliacoes_wellhub": pd.NA,
+                "fontes_lidas": "totalpass,wellhub",
+                "versao_contrato": c.VERSAO_CONTRATO_SNAPSHOT,
+            }
+            for fonte in ("wellhub", "totalpass")
+        ]
+        frame = pd.DataFrame(linhas)
+        for coluna, dtype in c.CONTRATO_COLUNAS_SNAPSHOT.items():
+            frame[coluna] = frame[coluna].astype(dtype)
+        msnap.escrever_particao_semana(frame, base, semana=semana)
+
+
+def test_ramo_que_impoe_o_recorte_tira_o_totalpass_do_entregavel(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """O RAMO, não o `argparse`: prova que o TotalPass sai do entregável de ponta a ponta.
+
+    Os dois testes D9 originais cobriam só `argparse` e `inspect.signature`; o ramo de `main()` que
+    lê a série recortada e a **injeta** nos dois extratores (`snapshots=[serie]`) não era
+    exercitado por teste nenhum. Se os extratores voltassem a ler do disco, o recorte seria
+    decorativo — e nada ficaria vermelho.
+    """
+    base = tmp_path / "serie"
+    _serie_de_duas_fontes(base)
+    carteira = tmp_path / "carteira.parquet"
+    _carteira().to_parquet(carteira, index=False)
+
+    comum = [
+        "--base-dir", str(base),
+        "--carteira", str(carteira),
+        "--sem-pressao",
+        "--dry-run",
+    ]  # fmt: skip
+
+    assert m.main(comum) == 0
+    fechado = capsys.readouterr().out
+    assert m.main([*comum, "--todas-as-fontes"]) == 0
+    aberto = capsys.readouterr().out
+
+    assert "'academias': 1" in fechado, (
+        f"a omissao do flag deixou passar mais de uma fonte: {fechado}"
+    )
+    assert "'academias': 2" in aberto, f"`--todas-as-fontes` nao abriu a serie: {aberto}"
+
+
+def test_as_receitas_canonicas_nao_regridem_para_fail_open() -> None:
+    """As duas instruções que o operador COPIA têm de ser coerentes com o código.
+
+    Com o recorte fail-closed, a receita correta é a que **omite** o flag — e o que não pode
+    aparecer nelas é `--todas-as-fontes`, que abriria a série. Até 2026-08-25 elas omitiam
+    `--fontes wellhub` sobre um `default=None`, e omitir era exatamente o gesto que vazava.
+    """
+    import re
+
+    raiz = Path(m.__file__).resolve().parents[3]
+    runbook = (raiz / "docs" / "infra_producao.md").read_text(encoding="utf-8")
+    diagnostico = (raiz / "scripts" / "check_artifacts.py").read_text(encoding="utf-8")
+
+    # Só os blocos COPIÁVEIS: as cercas ```bash do runbook e as linhas `print(...)` do
+    # diagnóstico. A prosa ao redor PODE (e deve) citar `--todas-as-fontes` para explicar a porta.
+    blocos = [b for b in re.findall(r"```bash\n(.*?)```", runbook, re.S) if "alvos_ma" in b]
+    # No diagnóstico a receita e a prosa saem pelo MESMO `print`: o que é comando são as linhas
+    # que começam por `python -m` ou por `--`. A prosa ao redor pode citar a porta explícita.
+    impressas = re.findall(r'print\("(.*?)"\)', diagnostico)
+    receita_diag = "\n".join(
+        linha for linha in impressas if linha.strip().startswith(("python -m", "--"))
+    )
+    assert blocos, "o runbook perdeu o bloco copiavel do entregavel"
+    assert "alvos_ma" in receita_diag, "o diagnostico perdeu a receita impressa"
+
+    for nome, texto in (
+        ("infra_producao.md", "\n".join(blocos)),
+        ("check_artifacts.py", receita_diag),
+    ):
+        assert "--todas-as-fontes" not in texto, f"{nome}: a receita copiavel abre a serie inteira"
+
+    # E as duas dizem, em prosa, que a OMISSÃO já recorta — senão o operador lê "sem flag = tudo".
+    assert "FAIL-CLOSED" in runbook, "o runbook nao declara que o recorte vale sem o flag"
+    assert "FAIL-CLOSED" in diagnostico, "o diagnostico nao declara o recorte da omissao"
+    assert "wellhub" in "\n".join(impressas), "o diagnostico nao nomeia o recorte que vale"
+
+
 def test_caminhos_de_saida_nao_casam_o_deny_critico_do_loop_guard() -> None:
     """`carteira_expansao*`/`plano_expansao*`/`hexagonos_mercado*` são CRÍTICO no `loop_guard`."""
     for caminho in (m.ACADEMIAS_PATH_DEFAULT, m.ALVOS_CSV_DEFAULT):
@@ -645,9 +806,7 @@ def test_agregacao_usa_media_e_maximo_nunca_o_first() -> None:
 
 def test_maximo_revela_a_academia_espremida_que_a_media_esconde() -> None:
     """O caso que justifica carregar as DUAS colunas em vez de só a média."""
-    score = _score_com_pressao_por_academia(
-        {"k1": 5.0, "k2": 5.0, "k3": 5.0, "k_espremida": 95.0}
-    )
+    score = _score_com_pressao_por_academia({"k1": 5.0, "k2": 5.0, "k3": 5.0, "k_espremida": 95.0})
     linha = agregar_alvos_por_hex(academias_com_hotness(score, _carteira())).iloc[0]
     assert float(linha["pressao_competitiva_media"]) < 30.0, "a media dilui o caso extremo"
     assert float(linha["pressao_competitiva_max"]) == pytest.approx(95.0)

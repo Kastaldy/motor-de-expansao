@@ -46,8 +46,18 @@ _TELEGRAM = "https://api.telegram.org/bot{token}/{method}"
 
 # Dois tipos de relatorio no menu.
 _BTN_PONTUAL = "Relatorio Pontual"
-_BTN_MUNICIPAL = "Relatorio Municipal"
-_KB_MENU = [[_BTN_PONTUAL], [_BTN_MUNICIPAL], ["Ajuda"]]
+# Municipal em DUAS opcoes (Juan, 2026-08-19): a unidade vira escolha de quem pede, nao deducao
+# do codigo. Cada uma responde melhor a uma pergunta -- bairro para conversar com o time e com
+# o locador (nomes que todos reconhecem), hexagono para a leitura de mercado, que e' a unidade
+# nativa do residual.
+_BTN_MUNICIPAL_HEX = "Municipal (hexagonos)"
+_BTN_MUNICIPAL_BAIRRO = "Municipal (bairros)"
+# Rotulo antigo, mantido SO para reconhecer o toque: o teclado fica em CACHE no Telegram,
+# entao quem ja usava o bot continua vendo "Relatorio Municipal" ate abrir o menu de novo.
+# Ele NAO escolhe unidade -- responde explicando que a opcao virou duas e troca o teclado.
+# Mapear silenciosamente para bairro seria o mesmo chute que este ciclo veio eliminar.
+_BTN_MUNICIPAL_ANTIGO = "Relatorio Municipal"
+_KB_MENU = [[_BTN_PONTUAL], [_BTN_MUNICIPAL_HEX], [_BTN_MUNICIPAL_BAIRRO], ["Ajuda"]]
 _KB_VOLTAR = [["⬅️ Voltar"]]
 
 # UFs para o teclado de escolha do estado (Relatorio Municipal).
@@ -67,12 +77,25 @@ def _kb_ufs() -> list[list[str]]:
 _MENU = (
     "📋 *Menu* — o que voce quer gerar?\n\n"
     "• *Relatorio Pontual* — estudo de um ponto (raio 1,0 km)\n"
-    "• *Relatorio Municipal* — estudo de um municipio inteiro\n"
+    "• *Municipal (hexagonos)* — municipio inteiro, mapas por hexagono\n"
+    "• *Municipal (bairros)* — municipio inteiro, mapas por bairro\n"
     "• *Ajuda* — como funciona\n\n"
     "Toque em uma opcao abaixo. 👇"
 )
 
-_PEDIR_UF = "🗺️ *Relatorio Municipal* — primeiro, escolha o *estado (UF)*:"
+_MUNICIPAL_VIROU_DOIS = (
+    "ℹ️ O *Relatorio Municipal* agora tem duas leituras — escolha uma:\n\n"
+    "• *Municipal (hexagonos)* — mapas por hexagono (leitura de mercado)\n"
+    "• *Municipal (bairros)* — mapas por bairro (nomes que o time reconhece)\n\n"
+    "Toque em uma opcao abaixo. 👇"
+)
+
+
+def _pedir_uf(unidade: str) -> str:
+    """Prompt de UF dizendo QUAL relatorio esta sendo montado (o menu ja ficou para tras)."""
+    rotulo = "hexágonos" if unidade == "hexagono" else "bairros"
+    return f"🗺️ *Relatorio Municipal ({rotulo})* — escolha o *estado (UF)*:"
+
 
 
 def _pedir_municipio(uf: str) -> str:
@@ -215,14 +238,18 @@ def consultar_pdf(payload: dict, settings: Settings) -> bytes | None:
 
 
 def consultar_pdf_municipio(
-    uf: str, municipio: str, solicitante: str | None, settings: Settings
+    uf: str, municipio: str, solicitante: str | None, settings: Settings,
+    unidade: str = "bairro",
 ) -> tuple[bytes | None, str | None]:
     """POST /analisar-municipio -> (pdf_bytes, None) ou (None, mensagem_de_erro).
 
     Em 404 a API devolve `detail` ja com sugestoes de nome — repassamos ao usuario.
     """
     url = f"{settings.api_base_url}{settings.api_prefix}/analisar-municipio"
-    payload = {"uf": uf, "municipio": municipio, "solicitante": solicitante or ""}
+    payload = {
+        "uf": uf, "municipio": municipio, "solicitante": solicitante or "",
+        "unidade": unidade,
+    }
     try:
         # 300s: 1a geracao carrega a base de mercado (~1,9 GB) + baixa tiles.
         resp = _session.post(url, json=payload, headers=_headers(settings), timeout=300)
@@ -403,13 +430,23 @@ def processar(
     if low in (_BTN_PONTUAL.lower(), "pontual", "relatorio", "relatório", "/relatorio"):
         s["etapa"] = None
         return [_msg(_PEDIR_LOCAL, _KB_MENU)]
-    if low in (_BTN_MUNICIPAL.lower(), "municipal", "/municipal"):
+    if low in (_BTN_MUNICIPAL_BAIRRO.lower(), "bairros", "bairro", "/bairros"):
         s["etapa"] = "muni_uf"
-        return [_msg(_PEDIR_UF, _kb_ufs())]
+        s["muni_unidade"] = "bairro"
+        return [_msg(_pedir_uf("bairro"), _kb_ufs())]
+    if low in (_BTN_MUNICIPAL_HEX.lower(), "hexagonos", "hexágonos", "/hexagonos",
+               "/municipal", "municipal"):
+        # `/municipal` cai no hexagono: e' o relatorio classico, o que esse comando sempre deu.
+        s["etapa"] = "muni_uf"
+        s["muni_unidade"] = "hexagono"
+        return [_msg(_pedir_uf("hexagono"), _kb_ufs())]
+    if low == _BTN_MUNICIPAL_ANTIGO.lower():
+        s["etapa"] = None
+        return [_msg(_MUNICIPAL_VIROU_DOIS, _KB_MENU)]
     # "Analisar" foi removido — trata um toque no botao fantasma (teclado antigo
     # em cache no Telegram) de forma limpa e ja troca o teclado para o atual.
     if low in ("analisar", "/analisar"):
-        return [_msg("Esse botao saiu. 🙂 Toque em *Relatorio Pontual* ou *Relatorio Municipal*.", _KB_MENU)]
+        return [_msg("Esse botao saiu. 🙂 Toque em *Relatorio Pontual*, *Municipal (hexagonos)* ou *Municipal (bairros)*.", _KB_MENU)]
 
     # 3. Fluxo do Relatorio Municipal: escolha da UF -> digitar o municipio.
     if s.get("etapa") == "muni_uf":
@@ -422,27 +459,29 @@ def processar(
         s["muni_uf"] = uf
         s["etapa"] = "muni_nome"
         return [_msg(_pedir_municipio(uf), _KB_VOLTAR)]
-
     if s.get("etapa") == "muni_nome":
         if low in ("⬅️ voltar", "voltar", "cancelar"):
             s["etapa"] = "muni_uf"
-            return [_msg(_PEDIR_UF, _kb_ufs())]
+            return [_msg(_pedir_uf(s.get("muni_unidade", "bairro")), _kb_ufs())]
         uf = s.get("muni_uf", "")
+        unidade = s.get("muni_unidade", "bairro")
         if notify is not None:
             notify(_GERANDO_MUNI)
-        pdf, err = consultar_pdf_municipio(uf, t, s.get("login"), settings)
+        pdf, err = consultar_pdf_municipio(uf, t, s.get("login"), settings, unidade=unidade)
         if pdf is None:
             return [_msg(f"⚠️ {_escape_md(err)}\n\nDigite outro nome ou toque em *⬅️ Voltar*.", _KB_VOLTAR)]
         s["etapa"] = None
+        rotulo = "hexágonos" if unidade == "hexagono" else "bairros"
         # Rastreio sem PII (BLK-SEC-05): chat opaco (hash), sem o nome do solicitante.
-        print(f"[ESTUDO-MUNI] chat={_chat_ref(chat_id, settings.telegram_token)} uf={uf} municipio={t}",
-              flush=True)
+        # A unidade entra no log para separar os dois relatorios na apuracao de uso.
+        print(f"[ESTUDO-MUNI] chat={_chat_ref(chat_id, settings.telegram_token)} uf={uf} "
+              f"municipio={t} unidade={unidade}", flush=True)
         return [
-            _msg(f"📄 *Relatorio Municipal* — {_escape_md(t.strip())} - {uf}\n_Solicitado por {_escape_md(s.get('login', '?'))}_"),
-            {"pdf": pdf, "filename": f"relatorio_municipal_{uf.lower()}.pdf"},
+            _msg(f"📄 *Relatorio Municipal ({rotulo})* — {_escape_md(t.strip())} - {uf}"
+                 f"\n_Solicitado por {_escape_md(s.get('login', '?'))}_"),
+            {"pdf": pdf, "filename": f"relatorio_municipal_{unidade}_{uf.lower()}.pdf"},
             _msg("Pronto! Escolha outra opcao no menu. 👇", _KB_MENU),
         ]
-
     # 4. Qualquer outra mensagem = localizacao -> PDF (Relatorio Pontual).
     # Avisa ANTES do trabalho pesado (geocoding ~14s + PDF) pra nao parecer travado.
     if notify is not None:

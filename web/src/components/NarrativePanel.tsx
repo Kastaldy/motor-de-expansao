@@ -8,6 +8,7 @@ import { alunos, num } from '../lib/format'
 import {
   filtrarPorCrescimento,
   lerCrescimento,
+  leituraDoItem,
   ordenarComDesempate,
   temCoberturaSatelite,
   type CrescimentoMunicipio,
@@ -386,8 +387,10 @@ export default function NarrativePanel({
   // Vem UMA vez no passo, nao repetido em cada hexagono (o payload de uma UF
   // triplicava). Na visao de UF cada item do ranking traz o seu.
   /* Só o passo 5 passa por aqui. Nos outros a lista é a do servidor, intocada.
-     `ordenarComDesempate` NÃO reordena por crescimento: a chave primária continua
-     sendo o residual, e o crescimento só decide entre empates. */
+     `ordenarComDesempate` NÃO reordena por crescimento: a chave primária é `valor`,
+     que desde a DEC-041 é o ÍNDICE DE PRAÇA (0-100) e não mais o residual, e o
+     crescimento só decide entre empates — que o servidor evita mandando o índice com
+     uma casa decimal. */
   const itens =
     passo.n === 5
       ? filtrarPorCrescimento(ordenarComDesempate(passo.itens, cresMun), cresMun, soCrescendo)
@@ -668,6 +671,22 @@ export default function NarrativePanel({
                   )}
                   {passo.n === 5 && (
                     <EtiquetaCrescimento cres={cresMun?.[it.municipio ?? it.titulo ?? '']} />
+                  )}
+                  {/* FRASE DE TESE (DEC-041): por que esta posição está aqui, montada
+                      dos mesmos números que ordenaram a fila. Só aparece onde o
+                      servidor manda as evidências — na visão de UF o item é um
+                      município e `quadrante` não vem. */}
+                  {passo.n === 5 && it.quadrante && (
+                    <span
+                      style={{
+                        display: 'block',
+                        font: '400 11.5px/1.45 var(--f-ui)',
+                        color: 'var(--tx-label)',
+                        marginTop: 5,
+                      }}
+                    >
+                      {leituraDoItem(it, cresMun?.[it.municipio ?? it.titulo ?? ''])}
+                    </span>
                   )}
                 </span>
 

@@ -72,7 +72,7 @@ OS DOIS DEFEITOS QUE ESTE MÓDULO NEUTRALIZA POR DESENHO:
 GAP DE FEED (R3): a janela não é encurtada e observação velha não é descartada — uma fonte em gap
 não apaga a cobertura que ela já provou. Em troca, o contrato carrega os dois relógios do §6 por
 fonte: `semana_ultima_observacao_*` (relógio do PIPELINE) e `snapshot_date_ultimo_*` (relógio do
-COLETOR), para o BLK-MA-06 distinguir "a fonte não roda há meses" de "a fonte rodou servindo um
+COLETOR), para o BLK-MA-06 distinguir "a fonte não roda há semanas" de "a fonte rodou servindo um
 arquivo congelado". A flag formal de staleness é do BLK-MA-06, não deste bloco.
 
 GUARDRAILS: READ-ONLY sobre o M1; pacote DISJUNTO (nunca importa `pipelines/m1/`, `dashboard/`,

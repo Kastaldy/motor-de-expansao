@@ -1597,7 +1597,11 @@ export default function ViabilityScreen({
               >
                 {res.flag_fora_envelope &&
                   'A metragem está fora do envelope de imóveis comparáveis — a faixa de alunos é extrapolação, não leitura. '}
-                {res.flag_zona_morta && (res.motivo_zona_morta ?? 'Ponto sinalizado como zona morta.')}
+                {/* `motivo_zona_morta_texto` e nao `motivo_zona_morta`: o segundo e' o
+                    TOKEN CRU (`renda<500`), identificador e nao texto de usuario. O
+                    servidor traduz com a MESMA funcao do PDF (DEC-042). */}
+                {res.flag_zona_morta &&
+                  (res.motivo_zona_morta_texto ?? 'Ponto sinalizado como zona morta.')}
               </p>
             </Glass>
           )}

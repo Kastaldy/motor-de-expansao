@@ -193,3 +193,58 @@ describe('baixar', () => {
     }
   })
 })
+
+/**
+ * `api.hexagonos` — a chamada do ranking NACIONAL do Modo 3.
+ *
+ * O que estes testes protegem: a rota entrega o Brasil inteiro quando NENHUM filtro é
+ * passado. Mandar `uf=` ou `municipio=` vazios na query faria o servidor receber
+ * strings vazias e — dependendo de como o filtro fosse escrito lá — recortar a lista
+ * para nada. O contrato é: filtro ausente não vai na URL.
+ */
+describe('hexagonos — o ranking nacional', () => {
+  function capturarGet(): { url: () => string } {
+    let capturada = ''
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        capturada = url
+        return {
+          ok: true,
+          json: async () => ({ reguas: {}, cobertura: {}, itens: [] }),
+        } as unknown as Response
+      }),
+    )
+    return { url: () => capturada }
+  }
+
+  it('sem filtro nenhum, pede o Brasil inteiro — sem query de recorte', async () => {
+    const cap = capturarGet()
+    await api.hexagonos()
+    expect(cap.url()).toBe('/api/hexagonos')
+  })
+
+  it('filtro vazio NÃO vira parâmetro vazio na URL', async () => {
+    const cap = capturarGet()
+    await api.hexagonos({ uf: '', municipio: '', porMunicipio: false })
+    expect(cap.url()).toBe('/api/hexagonos')
+  })
+
+  it('leva só os filtros realmente preenchidos', async () => {
+    const cap = capturarGet()
+    await api.hexagonos({ uf: 'GO', limite: 25 })
+    const query = new URLSearchParams(cap.url().split('?')[1] ?? '')
+    expect(query.get('uf')).toBe('GO')
+    expect(query.get('limite')).toBe('25')
+    expect(query.has('municipio')).toBe(false)
+    expect(query.has('por_municipio')).toBe(false)
+  })
+
+  it('escapa o nome do município em vez de quebrar a URL', async () => {
+    const cap = capturarGet()
+    await api.hexagonos({ municipio: 'Santa Bárbara d’Oeste', porMunicipio: true })
+    const query = new URLSearchParams(cap.url().split('?')[1] ?? '')
+    expect(query.get('municipio')).toBe('Santa Bárbara d’Oeste')
+    expect(query.get('por_municipio')).toBe('true')
+  })
+})

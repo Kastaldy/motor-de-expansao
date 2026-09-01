@@ -154,7 +154,7 @@ export function ReguaBreakEven({
                 ? 'var(--warn-text)'
                 : 'var(--neg)',
             border: '3px solid var(--bg-knob)',
-            boxShadow: '0 3px 10px rgba(0,0,0,.5)',
+            boxShadow: 'var(--sh-ponto)',
           }}
         />
         <div
@@ -166,7 +166,10 @@ export function ReguaBreakEven({
             transform: 'translateX(-50%)',
             font: '600 10.5px/1 var(--f-num)',
             color: 'var(--tx-strong)',
-            background: 'rgba(255,255,255,.08)',
+            // Era um véu BRANCO: sobre o claro ele simplesmente não existia, e o chip
+            // da premissa ficava sem fundo em cima da barra. `--surf-chip` inverte o sinal
+            // do alfa junto com o tema e mantém no escuro o MESMO .08 de antes.
+            background: 'var(--surf-chip)',
             padding: '4px 8px',
             borderRadius: 6,
             whiteSpace: 'nowrap',
@@ -852,7 +855,7 @@ export function FluxoCaixa({
           y1={zeroY}
           x2={W - padR}
           y2={zeroY}
-          stroke="rgba(255,255,255,.28)"
+          stroke="var(--linha-eixo)"
           strokeWidth="1"
           strokeDasharray="4 4"
         />
@@ -1055,7 +1058,7 @@ export function FluxoCaixaOperacional({
             y1={zeroY}
             x2={W - padR}
             y2={zeroY}
-            stroke="rgba(255,255,255,.28)"
+            stroke="var(--linha-eixo)"
             strokeWidth="1"
             strokeDasharray="4 4"
           />

@@ -1,8 +1,13 @@
-import type { Tema } from '../../lib/tema'
-import { outroTema } from '../../lib/tema'
+import type { Tema } from '../lib/tema'
+import { outroTema } from '../lib/tema'
 
 /* ---------------------------------------------------------------------------
-   Sol/lua da Visão Executiva.
+   Sol/lua do app. Mora no Dock, o único chrome presente nas cinco telas — por isso
+   saiu de `components/exec/`, onde nasceu quando só a Executiva tinha tema.
+
+   UM alternador, e não um por tela: o tema é do produto (`lib/tema.ts`), então dois
+   botões seriam dois caminhos para o mesmo estado, e o segundo pareceria controlar
+   só a tela em que está.
 
    Mostra o ícone do tema para o qual se VAI, não o do tema em que se está: é o
    que o botão faz, e é como todo alternador de tema que a pessoa já usou se
@@ -25,16 +30,20 @@ export default function BotaoTema({ tema, onTema }: { tema: Tema; onTema: (t: Te
       aria-label={rotulo}
       onClick={() => onTema(alvo)}
       style={{
-        width: 28,
-        height: 28,
+        /* Métrica do Dock (42 / raio 11), e não a do cabeçalho da Executiva (28 / --r-sm)
+           em que ele nasceu: aqui ele é vizinho dos ícones de navegação, e um botão menor
+           no meio da fila lia como um controle de outra ordem. */
+        width: 42,
+        height: 42,
         flexShrink: 0,
         display: 'grid',
         placeItems: 'center',
-        borderRadius: 'var(--r-sm)',
+        borderRadius: 11,
         border: '1px solid var(--line-soft)',
         background: 'var(--surf-raised)',
-        color: 'var(--tx-soft)',
+        color: 'var(--tx-muted)',
         cursor: 'pointer',
+        transition: 'background .15s ease, color .15s ease',
       }}
     >
       {alvo === 'claro' ? <Sol /> : <Lua />}
@@ -43,12 +52,13 @@ export default function BotaoTema({ tema, onTema }: { tema: Tema; onTema: (t: Te
 }
 
 /* Os dois traçados são `currentColor` e `stroke`, sem preenchimento: assim o ícone
-   herda a cor do botão e não precisa de uma variante por tema. 15 px é o tamanho em
-   que o miolo do sol e os oito raios ainda se separam. */
+   herda a cor do botão e não precisa de uma variante por tema. 18 px acompanha os 19 px
+   dos ícones vizinhos do Dock — o piso continua sendo 15, abaixo do qual o miolo do sol
+   e os oito raios deixam de se separar. */
 
 function Sol() {
   return (
-    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" aria-hidden>
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" aria-hidden>
       <circle cx={12} cy={12} r={4.2} />
       <path d="M12 2.4v2.3M12 19.3v2.3M4.2 4.2l1.6 1.6M18.2 18.2l1.6 1.6M2.4 12h2.3M19.3 12h2.3M4.2 19.8l1.6-1.6M18.2 5.8l1.6-1.6" />
     </svg>
@@ -59,7 +69,7 @@ function Lua() {
   // Crescente por SUBTRAÇÃO de dois círculos, e não um arco desenhado à mão: o arco
   // fechava com as pontas grossas e a lua lia como uma vírgula.
   return (
-    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinejoin="round" aria-hidden>
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinejoin="round" aria-hidden>
       <path d="M20.5 14.6A8.9 8.9 0 0 1 9.4 3.5a8.9 8.9 0 1 0 11.1 11.1Z" />
     </svg>
   )

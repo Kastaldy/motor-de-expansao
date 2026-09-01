@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   CHAVE_TEMA,
+  CHAVE_TEMA_LEGADA,
   TEMA_PADRAO,
   type DepositoDeTema,
   ehTema,
@@ -36,6 +37,25 @@ describe('tema', () => {
     expect(lerTema(d)).toBe('claro')
     gravarTema('escuro', d)
     expect(lerTema(d)).toBe('escuro')
+  })
+
+  it('quem escolheu o claro na Executiva não volta ao escuro quando a chave muda de nome', () => {
+    // A preferência morava em `motor.exec.tema` enquanto o tema era só daquela aba. Sem a
+    // leitura da chave antiga, o dia do deploy leria como "o botão parou de funcionar".
+    expect(lerTema(deposito({ [CHAVE_TEMA_LEGADA]: 'claro' }))).toBe('claro')
+    expect(lerTema(deposito({ [CHAVE_TEMA_LEGADA]: 'escuro' }))).toBe('escuro')
+  })
+
+  it('a chave nova VENCE a antiga, e é a única em que se grava', () => {
+    // Senão a escolha migrada seria imutável: gravar 'escuro' na chave nova não teria
+    // efeito nenhum enquanto a antiga continuasse dizendo 'claro'.
+    const d = deposito({ [CHAVE_TEMA_LEGADA]: 'claro' })
+    gravarTema('escuro', d)
+    expect(lerTema(d)).toBe('escuro')
+  })
+
+  it('lixo na chave antiga também cai no padrão', () => {
+    expect(lerTema(deposito({ [CHAVE_TEMA_LEGADA]: 'light' }))).toBe(TEMA_PADRAO)
   })
 
   it('valor estragado cai no padrão, não vira data-tema inválido', () => {

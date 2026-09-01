@@ -28,7 +28,7 @@ tasks/completed.md  merge=union
 # inteiro" por EOL misto (CRLF na main x LF nos branches). O merge=union do
 # completed.md so funciona com EOL consistente. DEC-017.
 tasks/*.md          text eol=lf
-docs/*.md           text eol=lf
+docs/**/*.md           text eol=lf
 
 # Hooks versionados (BLK-GRAPH-02): `.githooks/post-commit` nao tem extensao, entao o
 # `*.sh` da L12 NAO o cobre. Roda sob o `sh` do Git for Windows e, com core.autocrlf=true,

@@ -83,6 +83,13 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/municipio/", frozenset({"mapa", "oportunidades"})),
     ("/api/municipios/", frozenset({"mapa", "oportunidades"})),
     ("/api/estados", frozenset({"oportunidades"})),
+    # Ranking NACIONAL por hexagono (DEC-044). MESMO gate de `/api/estados`: e' a
+    # outra leitura do Modo 3 ("ver as melhores oportunidades"), sobre a mesma
+    # cascata e o mesmo dado -- so' muda a unidade (hexagono no lugar de estado) e
+    # a ordem dos passos (ranqueia o pais, depois filtra). Dar-lhe um gate mais
+    # FROUXO abriria por uma porta o que a outra fecha; um mais DURO esconderia do
+    # operador de `oportunidades` a versao boa da propria tela dele.
+    ("/api/hexagonos", frozenset({"oportunidades"})),
     # Camada imobiliaria (aba PROPRIA `imobiliaria` desde 2026-08-24; ate' entao a tela
     # reusava o gate de `oportunidades`, o que impedia restringir os imoveis sem tirar o
     # funil de expansao de quem o usa). O DOSSIE (PDF do coletor, carrega contato de
@@ -95,6 +102,17 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     # middleware da trilha grava — molde do `/api/ciencia-confidencialidade`). Aceita
     # "mapa" porque o pin do Mapa Territorial tambem abre ficha de imovel.
     ("/api/imobiliaria/evento/", frozenset({"mapa", "imobiliaria"})),
+    # Foto da UNIDADE concorrente, desenhada no balao do pino do Mapa Territorial.
+    # MESMO gate de `/api/municipio/`, que e' a rota que serve o payload de pins onde o
+    # nome do arquivo aparece: quem recebe a lista de pins ja' recebeu o nome da foto, e
+    # negar a imagem depois de entregar o nome nao protegeria nada — so' deixaria o balao
+    # quebrado para o operador de `oportunidades`. Mais FROUXO tambem nao: a foto e' base
+    # servida, e nao bundle do produto, entao ela nao pode vazar para quem nao ve o mapa.
+    ("/api/foto-concorrente/", frozenset({"mapa", "oportunidades"})),
+    # A MESMA foto, emoldurada para virar icone do pino. Gate igual ao da foto crua de
+    # proposito: e' o mesmo arquivo, servido em outra roupa — dar-lhe regra diferente
+    # deixaria uma das duas portas mais larga que a outra sobre o mesmo dado.
+    ("/api/pin-concorrente/", frozenset({"mapa", "oportunidades"})),
 )
 
 # Rotas /api/* deliberadamente livres (qualquer usuario autenticado):

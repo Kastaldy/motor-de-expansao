@@ -11,9 +11,9 @@
  * O QUE CADA PASSO ENTREGA (medido no payload real de GO):
  *   1 'Potencial socioeconomico' -> `valor` = hexagonos quentes (label "hexágonos")
  *   2 'Demanda nao atendida'     -> `valor` = residual bruto, em alunos
- *   3 'Pressao concorrencial'    -> `valor` = residual em white space
+ *   3 'Pressao concorrencial'    -> `valor` = residual do que comporta entrada
  *   4 'Como as cidades estao indo'-> `valor` = % de emprego (CAGED)
- *   5 'Para onde crescer'        -> `valor` = residual da fila
+ *   5 'Para onde crescer'        -> `valor` = indice de praca da fila (0-100, DEC-041)
  *
  * CRESCIMENTO SO' CONTRA MARGEM ESTADUAL. O passo 4 traz o % de emprego cru. Compara-lo
  * aqui e' legitimo porque os dois municipios sao da MESMA UF — e' leitura estadual, nao

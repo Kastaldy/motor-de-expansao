@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import AvisoConfidencialidade from './components/AvisoConfidencialidade'
 import Dock from './components/Dock'
@@ -15,7 +15,11 @@ import { abasDoPayload, modosLiberados, telaInicial, telaLiberada, type Aba } fr
 import { api, ApiError } from './lib/api'
 import type { AlvoCaptura } from './lib/captura-mapa'
 import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
+import { BaseProvider } from './lib/base-contexto'
+import { paisDaBase } from './lib/pais-da-base'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
+import type { Tema } from './lib/tema'
+import { depositoDoNavegador, gravarTema, lerTema } from './lib/tema'
 import type { Hex, MunicipioItem, MunicipioPayload, Oportunidade } from './lib/types'
 
 export type Tela =
@@ -83,7 +87,42 @@ export default function App() {
     [abas],
   )
 
+  /**
+   * Tema do APP (2026-08-25). Nasceu dentro da Visão Executiva e subiu para cá quando
+   * o claro passou a valer para as cinco telas — ver `lib/tema.ts`.
+   *
+   * Lido do depósito no INICIALIZADOR do `useState`, não num efeito: efeito roda depois
+   * da primeira pintura, e quem tinha escolhido o claro veria a tela nascer preta e
+   * clarear em seguida.
+   */
+  const [tema, setTema] = useState<Tema>(() => lerTema(depositoDoNavegador()))
+
+  /**
+   * O atributo vai no `<html>`, e não no `<div>` raiz daqui.
+   *
+   * Duas coisas ficam FORA desta árvore e mesmo assim precisam do tema: o `<body>`, cuja
+   * cor aparece no overscroll e na barra de rolagem do documento, e as regras de
+   * `[data-tema='claro']` do `global.css` que tratam chrome nativo (`color-scheme` do
+   * popup de `select` e do calendário do `input type=date`), scrollbar e o controle de
+   * atribuição do MapLibre.
+   *
+   * Grava na AÇÃO (`trocarTema`), não num efeito sobre `tema`: um efeito também
+   * dispararia na montagem e reescreveria a chave com o valor que acabou de ler.
+   */
+  useEffect(() => {
+    document.documentElement.setAttribute('data-tema', tema)
+  }, [tema])
+
+  const trocarTema = useCallback((novo: Tema) => {
+    setTema(novo)
+    gravarTema(novo, depositoDoNavegador())
+  }, [])
+
   const [ufs, setUfs] = useState<string[]>([])
+  /* País da base, para o carimbo do Dock. Sai da lista de UFs que já está aqui — nenhuma
+     requisição a mais, nenhuma variável de ambiente para alguém esquecer de exportar.
+     Ver `lib/pais-da-base.ts` para o porquê de a dedução ser segura. */
+  const pais = useMemo(() => paisDaBase(ufs), [ufs])
   // Começa SEM estado: o app abre na porta de entrada (escolha de UF).
   const [uf, setUf] = useState('')
   const [municipios, setMunicipios] = useState<MunicipioItem[]>([])
@@ -118,6 +157,23 @@ export default function App() {
     setMunicipio(m)
     setPinPonto(pin)
   }, [])
+
+  /**
+   * O hexagono escolhido numa LISTA — hoje, o ranking nacional do Modo 3.
+   *
+   * POR QUE UM ESTADO PROPRIO, e nao o `pinPonto`. Os dois viram `pinFixo` no
+   * `MapScreen` e produzem o mesmo efeito (voo da camera, contorno de selecao, ficha
+   * do hexagono), mas tem DONOS diferentes: `pinPonto` pertence ao modo de ponto e e'
+   * apagado pelo `onLimparPin` de la'. Compartilhar o mesmo state faria um endereco
+   * colado semanas antes ressuscitar como destino do ranking, e vice-versa.
+   *
+   * POR QUE NAO BASTAVA `setUf` + `setMunicipio`. Era o que esta tela fazia: o "Ver no
+   * mapa" da lista levava ao MUNICIPIO do hexagono e parava ali — o operador chegava
+   * numa cidade inteira e tinha de reencontrar, a olho, o hexagono que acabara de
+   * escolher. Levar o pin junto e' o que fecha as tres leituras que o `MapScreen` ja'
+   * sabe amarrar: o ponto no mapa, o hexagono em volta dele e a ficha.
+   */
+  const [pinDestino, setPinDestino] = useState<SearchPin | null>(null)
 
   /**
    * A busca do cabecalho do mapa pediu a analise de uma coordenada (so' no modo de ponto).
@@ -232,6 +288,9 @@ export default function App() {
     (u: string) => {
       setUf(u)
       setMunicipio('')
+      // Trocar de estado A MAO descarta o hexagono que uma lista tinha escolhido: ele
+      // era de outro territorio, e voar ate' ele contradiria o que o operador pediu.
+      setPinDestino(null)
 
       // Agora que existe UF, a intenção guardada no menu vira foto — com o contexto
       // certo, senão `fotoAplicavel` a jogaria fora. Consumimos a intenção aqui: ela
@@ -292,7 +351,13 @@ export default function App() {
     [uf, municipio, abas],
   )
 
-  const voltarAoInicio = useCallback(() => setTela('inicio'), [])
+  const voltarAoInicio = useCallback(() => {
+    // O destino escolhido numa lista morre ao sair para o menu: sem isto, entrar no
+    // Explorar depois faria a camera voar para um hexagono escolhido em outra sessao
+    // de leitura, sem ninguem ter pedido.
+    setPinDestino(null)
+    setTela('inicio')
+  }, [])
 
   /**
    * Imovel que a aba imobiliaria deve abrir ja focado — o canal INVERSO do
@@ -313,6 +378,7 @@ export default function App() {
   )
 
   return (
+    <BaseProvider ufs={ufs}>
     <div
       style={{
         height: '100vh',
@@ -321,7 +387,7 @@ export default function App() {
         overflow: 'hidden',
       }}
     >
-      <Dock tela={tela} onTela={navegar} abas={abas} />
+      <Dock tela={tela} onTela={navegar} abas={abas} tema={tema} onTema={trocarTema} pais={pais} />
 
       <main style={{ flex: 1, position: 'relative', minWidth: 0 }}>
         {tela === 'inicio' ? (
@@ -348,6 +414,7 @@ export default function App() {
               estadoInicial={estadoMapa}
               onEstado={setEstadoMapa}
               onInicio={voltarAoInicio}
+              tema={tema}
               pinFixo={pinPonto}
               /* A lupa do cabeçalho vira a entrada do modo de ponto: buscar um endereço
                  ali produz a MESMA ficha que colá-lo. Sem isto havia duas caixas pedindo
@@ -368,7 +435,9 @@ export default function App() {
               onCapturarMapas={capturarMapas}
               onAnalisarPonto={irParaViabilidade}
               onLocalizar={localizarPonto}
-              mapaPronto={dados != null}
+              /* `mapaPronto` saiu (2026-08-26): o território carregado aqui dizia "sim"
+                 para sempre depois da primeira análise, e era o que impedia a tela de
+                 entrada do modo de voltar. Ver o bloco `semMapa` no `PontoScreen`. */
               pedido={pedidoPonto}
               onLimparPin={limparPinPonto}
               onInicio={voltarAoInicio}
@@ -388,6 +457,20 @@ export default function App() {
             onInicio={voltarAoInicio}
             onVerNoMapa={(m) => {
               setMunicipio(m)
+              // Este item e' uma CIDADE, nao um hexagono: qualquer destino de hexagono
+              // anterior deixa de valer, senao a camera voaria para o hexagono errado.
+              setPinDestino(null)
+              navegar('mapa')
+            }}
+            /* Item da lista NACIONAL: carrega a UF e o HEXAGONO junto. `setUf` +
+               `setMunicipio` + pin na mesma passagem, como em `localizarPonto` — chamar
+               `aoTrocarUf` aqui zeraria o municipio de proposito e desfaria o destino.
+               `navegar` (e nao `setTela`) porque a main passou a centralizar a troca de
+               tela nele; usar o setter cru aqui pularia o que ele faz de proposito. */
+            onVerHexNoMapa={(u, m, pin) => {
+              setUf(u)
+              setMunicipio(m)
+              setPinDestino(pin)
               navegar('mapa')
             }}
           />
@@ -398,7 +481,15 @@ export default function App() {
             onUf={aoTrocarUf}
             municipios={municipios}
             municipio={municipio}
-            onMunicipio={setMunicipio}
+            /* Trocar de municipio A MAO (ou clicar em "Todos os municipios") descarta o
+               hexagono que a lista tinha escolhido. Sem isto o pin sobreviveria a troca
+               e a camera voaria para o hexagono ANTIGO em vez da cidade nova — o pin
+               vence o centro do municipio no `HexMap`, e essa precedencia so' vale
+               enquanto o destino ainda for o que o operador pediu. */
+            onMunicipio={(m) => {
+              setPinDestino(null)
+              setMunicipio(m)
+            }}
             dados={dados}
             carregando={carregando}
             erro={erro}
@@ -406,10 +497,16 @@ export default function App() {
             estadoInicial={estadoMapa}
             onEstado={setEstadoMapa}
             onInicio={voltarAoInicio}
+            /* O hexagono escolhido no ranking nacional. `pinFixo` existe justamente
+               para o caso "quem escolheu o territorio veio de fora": ele sobrevive a
+               limpeza que a troca de UF/municipio faz no pin da busca local, e e' o que
+               leva a camera, o contorno de selecao e a ficha ao hexagono certo. */
+            pinFixo={pinDestino}
             /* Mesmo portão do modo de ponto: aba vetada = botão ausente, não morto. */
             onVerImovelNaAba={
               telaLiberada('oportunidades-imob', abas) ? verImovelNaAba : undefined
             }
+            tema={tema}
           />
         ) : tela === 'executiva' ? (
           // A Executiva NÃO recebe `uf` nem `onUf` (DEC-023): ela abre com a rede do
@@ -417,7 +514,7 @@ export default function App() {
           // de confundir dois produtos diferentes, disparava um refetch de
           // `/api/uf/{uf}` no Mapa toda vez que se trocava o estado aqui — leitura que
           // pode passar de 15 s.
-          <ExecutiveScreen onInicio={voltarAoInicio} />
+          <ExecutiveScreen onInicio={voltarAoInicio} tema={tema} />
         ) : tela === 'acessos' ? (
           // Painel restrito (emenda DEC-027). Autônomo como a Executiva: não herda
           // UF/município — a trilha é da rede inteira, não de um recorte do mapa.
@@ -481,5 +578,6 @@ export default function App() {
         />
       )}
     </div>
+    </BaseProvider>
   )
 }

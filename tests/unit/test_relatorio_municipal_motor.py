@@ -214,7 +214,7 @@ def test_cadeia_ui_gera_pdf_valido_e_filename_canonico():
 
     assert payload is not None
     assert payload.pdf_bytes.startswith(b"%PDF-1.4")
-    assert b"/Count 9" in payload.pdf_bytes
+    assert b"/Count 11" in payload.pdf_bytes
     assert payload.pdf_filename == "relatorio_municipal_sp_sao_paulo.pdf"
 
 

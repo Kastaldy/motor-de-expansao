@@ -83,6 +83,17 @@ _DENY_CRITICO: list[tuple[str, str]] = [
         r"^src/motor_expansao/pipelines/(calibrar_renda_setor_2022|modelo_hibrido_expansao|normalizar_concorrentes|normalizar_unidades_ultra|calcular_penetracao_ultra_hex|gerar_relatorio_expansao_dominio)\.py$",
         "score/insumo paralelo servido em producao (censitario/hibrido/oferta)",
     ),
+    # PRODUTORES da camada censitaria. A linha acima cobre quem CALIBRA o score; estes sao
+    # quem MATERIALIZA a renda e a populacao por setor e por hexagono -- ou seja, o insumo
+    # do score. Ate 2026-08-31 os cinco saiam LIMPOS do guard, e por isso um PR "Media"
+    # auto-mergeavel podia reescrever a renda de 1,3 milhao de hexagonos sem gate humano.
+    # Nao e' hipotese: foi por um defeito nesses arquivos que a renda censitaria de TODAS
+    # as UFs ficou espacialmente errada, com Sao Paulo trocando 10 dos 10 primeiros da fila.
+    (
+        r"^src/motor_expansao/pipelines/(fase_a_[a-z0-9_]+|recalcular_score_absoluto|"
+        r"materializar_setores_censitarios_geo|agregar_censo_hex_da_malha)\.py$",
+        "produtor da camada censitaria (renda/populacao por setor e por hexagono)",
+    ),
     (
         r"^src/motor_expansao/dashboard/relatorio_municipal\.py$",
         "limiares do 'hexagono destacado' do Relatorio Municipal (DEC-011)",

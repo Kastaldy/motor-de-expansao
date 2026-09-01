@@ -150,6 +150,7 @@ def test_sem_escrita_em_disco(tmp_path: object, monkeypatch: pytest.MonkeyPatch)
     """
     import builtins
     import os
+    import tempfile
 
     original_open = builtins.open
 
@@ -158,9 +159,18 @@ def test_sem_escrita_em_disco(tmp_path: object, monkeypatch: pytest.MonkeyPatch)
 
     def _guarded_open(file: object, mode: str = "r", *args: object, **kwargs: object) -> object:
         if isinstance(file, str) and "w" in str(mode):
-            # /tmp e /var/tmp sao permitidos (openpyxl usa internamente para zip)
+            # Temporarios sao permitidos: o openpyxl usa um arquivo temporario para
+            # montar o zip do .xlsx. A allowlist era so' POSIX (`/tmp`, `/var/tmp`) e
+            # por isso o teste FALHAVA em qualquer Windows, onde o temporario cai em
+            # `%TEMP%` -- passava no CI apenas porque os 9 jobs sao `ubuntu-latest`.
+            # `tempfile.gettempdir()` resolve o diretorio da plataforma em que se roda.
             normalized = os.path.normpath(file)
-            if not (normalized.startswith("/tmp") or normalized.startswith("/var/tmp")):
+            permitidos = (
+                os.path.normpath(tempfile.gettempdir()),
+                os.path.normpath("/tmp"),
+                os.path.normpath("/var/tmp"),
+            )
+            if not any(normalized.startswith(base) for base in permitidos):
                 user_written.append(str(file))
         return original_open(file, mode, *args, **kwargs)  # type: ignore[call-overload]
 

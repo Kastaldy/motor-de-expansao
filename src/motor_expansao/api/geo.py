@@ -32,6 +32,43 @@ _GOOGLE_GEOCODE = "https://maps.googleapis.com/maps/api/geocode/json"
 _URL_RE = re.compile(r"https?://\S+")
 # Segmento de endereco em URLs /maps/place/<NOME+ENDERECO>/... (sem coordenada).
 _PLACE_RE = re.compile(r"/maps/place/([^/]+)")
+# Forma alternativa de place SEM coordenada: `?q=<endereco>&ftid=0x...` (o Maps do Android
+# devolve esta quando o link e' compartilhado pelo botao "Copiar link" de um pino salvo).
+# Aceita tambem `query=`/`destination=` (Google) e `address=`/`daddr=` (Apple Maps do
+# iPhone), que aparecem em links de navegacao e de place sem coordenada.
+_Q_ENDERECO_RE = re.compile(r"[?&](?:q|query|destination|address|daddr)=([^&]+)")
+# Par "lat,lng" ja e' tratado por `coord.parse_maps_url`; aqui so interessa TEXTO de endereco.
+_COORD_PURA_RE = re.compile(r"^-?\d+\.\d+\s*,\s*-?\d+\.\d+$")
+
+
+# Parametros que NUNCA sao endereco: identificadores, controles de camera e de UI. Sem esta
+# lista o ultimo recurso abaixo devolveria coisas como "gps" (entry) ou "CAE" (shh) como se
+# fossem logradouro.
+_PARAMS_LIXO = frozenset({
+    "ftid", "place-id", "placeid", "auid", "cid", "pb", "data", "entry", "shh", "lucs",
+    "g_st", "gs_lcp", "hl", "gl", "ie", "oe", "output", "format", "source", "api", "t",
+    "z", "zoom", "spn", "span", "layer", "view", "mode", "dirflg", "mapmode", "map_action",
+    "basemap", "near", "sll", "ll", "coordinate", "center", "daddr", "saddr",
+})
+_PARAM_RE = re.compile(r"[?&]([A-Za-z_][\w.-]*)=([^&]+)")
+# ID hexadecimal do Google (0x...:0x...) disfarcado de texto.
+_ID_HEX_RE = re.compile(r"^0x[0-9a-f]+(:0x[0-9a-f]+)?$", re.I)
+
+
+def _limpar_valor(valor: str) -> str:
+    """Decodifica percent-encoding, troca `+` por espaco e normaliza espacos."""
+    return " ".join(unquote(str(valor or "")).replace("+", " ").split())
+
+
+def _parece_endereco(valor: str) -> bool:
+    """Heuristica conservadora: texto com letras, comprido o bastante e que nao seja ID/coord.
+
+    Prefere DEIXAR PASSAR pouco a arriscar geocodificar lixo: um valor errado aqui viraria um
+    relatorio no lugar errado, que e' pior que o link falhar com mensagem clara.
+    """
+    if len(valor) < 8 or _COORD_PURA_RE.match(valor) or _ID_HEX_RE.match(valor):
+        return False
+    return any(c.isalpha() for c in valor) and (" " in valor or "," in valor)
 
 
 def extrair_endereco_de_place_url(url: str) -> str:
@@ -39,14 +76,40 @@ def extrair_endereco_de_place_url(url: str) -> str:
 
     Alguns links de compartilhamento do Maps expandem para um place SEM coordenada
     na URL (so nome + endereco + place-id; a coord so viria via JS). Mas o endereco
-    completo (com CEP) esta no proprio path -> extraimos para geocodificar. Devolve
-    "" se a URL nao for um link de place.
+    completo (com CEP) esta na propria URL -> extraimos para geocodificar.
+
+    Duas formas cobertas: o path `/maps/place/<NOME+ENDERECO>/...` e o parametro
+    `?q=<endereco>` (com `&ftid=0x...`), que e' o que o Maps do Android produz ao
+    compartilhar um pino. Devolve "" quando nao ha endereco textual na URL.
     """
-    m = _PLACE_RE.search(str(url or ""))
-    if not m:
-        return ""
-    seg = m.group(1).replace("+", " ")
-    return " ".join(unquote(seg).split())
+    texto = str(url or "")
+    m = _PLACE_RE.search(texto)
+    if m:
+        seg = m.group(1).replace("+", " ")
+        return " ".join(unquote(seg).split())
+
+    # Fallback `?q=<endereco>`: link do Maps mobile que expande para
+    # `google.com/maps?q=Av.+Santos+Dumont,+2915+-+Aldeota,+Fortaleza+-+CE,+60150-165&ftid=0x...`
+    # -- nem `@lat,lng` nem `!3d!4d`, entao o parser puro falha e sem este ramo o link inteiro
+    # morria em "Nao consegui localizar". O endereco vem completo, com CEP: geocodifica bem.
+    m = _Q_ENDERECO_RE.search(texto)
+    if m:
+        seg = _limpar_valor(m.group(1))
+        if _parece_endereco(seg):
+            return seg
+
+    # ULTIMO RECURSO: qualquer OUTRO parametro cujo valor pareca endereco. Mesma razao do
+    # fallback generico de coordenada em `coord.py` -- a lista de nomes acima veio dos formatos
+    # que conhecemos, e um app novo pode usar um nome que ninguem previu. Pega o valor mais
+    # LONGO entre os candidatos: num link de place, o endereco completo e' quase sempre o campo
+    # mais extenso, enquanto os curtos sao rotulo/ID.
+    candidatos = [
+        limpo
+        for chave, bruto in _PARAM_RE.findall(texto)
+        if chave.casefold() not in _PARAMS_LIXO
+        and _parece_endereco(limpo := _limpar_valor(bruto))
+    ]
+    return max(candidatos, key=len) if candidatos else ""
 
 
 def expandir_link_curto(texto: str) -> str:

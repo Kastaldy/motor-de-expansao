@@ -52,13 +52,26 @@ LIMIAR_RHO_GO: float = 0.30  # |rho| minimo p/ GO (relevancia material; document
 N_MIN_PAR: int = 10  # abaixo disso o par vira "n/d" (variancia/robustez insuficiente)
 
 # As 7 features TERRITORIAIS (lidas de unidade_territorio_retencao.parquet).
+#
+# `pop_total_setor_2022` ESTAVA AQUI COMO `densidade_pop_setor_hab_km2`, e o rotulo era
+# falso. No grao do hexagono a densidade e' `pop / 5,161293` -- a area da celula res-7 e'
+# CONSTANTE --, entao as duas colunas sao a MESMA grandeza reescalada: medido neste proprio
+# dataset, Spearman entre elas = 1,0 EXATO (N=49). Como Spearman e' invariante a escala
+# positiva, `rho(densidade, alvo)` era IDENTICO a `rho(pop, alvo)` ate' o ultimo digito.
+#
+# Consequencia do rotulo errado: o relatorio publicado AFIRMAVA ter testado densidade (e nao
+# ter testado populacao) quando o que rodou foi populacao nas duas vezes. Nenhum numero muda
+# com a troca -- muda o que o relatorio pode dizer que mediu.
+#
+# Se um dia a densidade de AREA REAL (do setor, em EPSG:5880) entrar na analise, ela precisa
+# de COLUNA PROPRIA: reusar este nome poe duas grandezas homonimas no mesmo lugar.
 FEATURES_TERRITORIAIS: tuple[str, ...] = (
     "renda_per_capita",
     "score_priorizacao",
     "score_expansao_hibrido",
     "score_oportunidade_residual",
     "n_concorrentes_mapeados_1km",
-    "densidade_pop_setor_hab_km2",
+    "pop_total_setor_2022",
     "score_setor_2022_calibrado",
 )
 

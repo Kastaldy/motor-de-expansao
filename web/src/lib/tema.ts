@@ -1,16 +1,20 @@
 /**
- * Tema visual da Visão Executiva — o valor, a persistência e nada mais.
+ * Tema visual do app — o valor, a persistência e nada mais.
  *
- * A aba nasceu só no escuro, e o escuro continua sendo o padrão do produto inteiro. O
- * claro existe porque a Executiva é a única tela que sai do monitor: ela é projetada em
- * reunião e impressa em PDF, e num projetor o fundo escuro come o contraste que os
- * gráficos precisam ter. Por isso o atributo `data-tema` vive no CONTAINER da tela, e
- * não no `<html>`: o Mapa Territorial e a Viabilidade não pediram tema claro e não vão
- * ganhar um por tabela (ver o bloco `[data-tema='claro']` em `styles/tokens.css`).
+ * O claro nasceu na Visão Executiva, a única tela que sai do monitor: ela é projetada
+ * em reunião e impressa em PDF, e num projetor o fundo escuro come o contraste que os
+ * gráficos precisam ter. Por isso o `data-tema` morava no CONTAINER daquela aba.
+ *
+ * Desde 2026-08-25 ele vive no `<html>` e vale para as cinco telas (pedido do Juan). O
+ * motivo de subir é o mesmo que fez o claro existir, agora dito para o produto todo:
+ * a tela é apresentada, e metade dela clarear enquanto a outra metade continua preta
+ * era o pior dos dois mundos. O escuro segue sendo o PADRÃO — ninguém é movido de tema
+ * sem pedir.
  *
  * Nada aqui toca React nem lê `window` por conta própria — o depósito entra por
- * parâmetro. É o mesmo motivo de `lib/periodo.ts` não ler o relógio: função que alcança
- * o ambiente sozinha não tem teste determinístico.
+ * parâmetro, e quem escreve o atributo no DOM é o `App`. É o mesmo motivo de
+ * `lib/periodo.ts` não ler o relógio: função que alcança o ambiente sozinha não tem
+ * teste determinístico.
  */
 
 export type Tema = 'escuro' | 'claro'
@@ -19,7 +23,17 @@ export type Tema = 'escuro' | 'claro'
 export const TEMA_PADRAO: Tema = 'escuro'
 
 /** Chave no `localStorage`. Namespaced: o domínio é compartilhado com outras telas. */
-export const CHAVE_TEMA = 'motor.exec.tema'
+export const CHAVE_TEMA = 'motor.tema'
+
+/**
+ * Onde a preferência morava enquanto o tema era só da Executiva.
+ *
+ * Lida como SEGUNDA opção por `lerTema`, e nunca escrita. Sem isto, quem já tinha
+ * escolhido o claro na Executiva voltaria ao escuro no dia do deploy — e leria como
+ * "o botão parou de funcionar", não como "a chave mudou de nome". A migração acontece
+ * sozinha na primeira gravação, que já sai na chave nova.
+ */
+export const CHAVE_TEMA_LEGADA = 'motor.exec.tema'
 
 /** Subconjunto do `Storage` que este módulo usa — o bastante para um duble em teste. */
 export interface DepositoDeTema {
@@ -48,7 +62,12 @@ export function outroTema(tema: Tema): Tema {
 export function lerTema(deposito: DepositoDeTema | null | undefined): Tema {
   try {
     const bruto = deposito?.getItem(CHAVE_TEMA)
-    return ehTema(bruto) ? bruto : TEMA_PADRAO
+    if (ehTema(bruto)) return bruto
+    // Só chega aqui quem nunca gravou na chave nova. A antiga é lida uma vez e não é
+    // apagada: remover exigiria `removeItem` no `DepositoDeTema`, e ampliar a interface
+    // por causa de uma chave órfã de poucos bytes não se paga.
+    const legado = deposito?.getItem(CHAVE_TEMA_LEGADA)
+    return ehTema(legado) ? legado : TEMA_PADRAO
   } catch {
     return TEMA_PADRAO
   }

@@ -20,11 +20,30 @@ class CoordenadaInvalidaError(ValueError):
 
 # Ordem de tentativa: !3dLAT!4dLNG (pino exato do place) tem prioridade sobre
 # @lat,lng (centro do viewport), depois query params e "lat,lng" cru.
+# Os query params cobrem Google Maps E Apple Maps (iPhone): o app nativo de Mapas do
+# iOS compartilha com `ll=`, `coordinate=` ou `daddr=`, nunca com `@lat,lng`.
 _PADROES = (
     re.compile(r"!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)"),
     re.compile(r"@(-?\d+\.\d+),(-?\d+\.\d+)"),
-    re.compile(r"[?&](?:q|query|ll|sll|center|destination)=(-?\d+\.\d+),\s*(-?\d+\.\d+)"),
+    # `ll`/`sll` (Apple e Google), `coordinate` (Apple Maps place), `daddr`/`saddr`
+    # (rota do Apple Maps -- destino/origem), `q`/`query`/`center`/`destination` (Google).
+    re.compile(
+        r"[?&](?:q|query|ll|sll|center|destination|coordinate|daddr|saddr)="
+        r"(-?\d+\.\d+),\s*(-?\d+\.\d+)"
+    ),
     re.compile(r"^\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*$"),
+    # ULTIMO RECURSO: QUALQUER parametro cujo valor seja um par "lat,lng".
+    #
+    # Existe para o parser nao depender de conhecermos o nome do parametro. A lista acima foi
+    # montada a partir dos formatos que sabemos existir (Google e Apple), mas um app novo -- ou
+    # uma versao futura do proprio Maps -- pode usar um nome que ninguem previu, e hoje esse
+    # caso e' perda TOTAL do link. Como este padrao so e' tentado depois de todos os
+    # especificos falharem, ele nunca rouba a precedencia do pino (`!3d!4d`) sobre o centro do
+    # viewport (`@lat,lng`): quando algum especifico casa, este nem chega a rodar.
+    #
+    # Risco contido por `validar_brasil`: um par espurio (ex.: uma versao "1.0,2.0") cai fora
+    # do bounding box e vira erro claro, nao um relatorio no lugar errado.
+    re.compile(r"[?&][A-Za-z_][\w.-]*=(-?\d+\.\d+),\s*(-?\d+\.\d+)(?:&|$)"),
 )
 
 

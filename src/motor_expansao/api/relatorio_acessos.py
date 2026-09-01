@@ -58,6 +58,9 @@ AGRUPAMENTO_ABAS: tuple[tuple[str, str], ...] = (
     ("/api/municipio/", "mapa"),
     ("/api/municipios/", "mapa"),
     ("/api/estados", "oportunidades"),
+    # Ranking nacional por hexagono (DEC-044): a outra leitura do MESMO Modo 3,
+    # entao conta na mesma aba que o ranking de estados.
+    ("/api/hexagonos", "oportunidades"),
     # O dossie e' gesto da aba imobiliaria; a LISTA, liberada tambem para "mapa",
     # e' buscada sozinha pelo Mapa Territorial a cada UF (camada de pins + secao do
     # hexagono) — na pratica o grosso das chamadas vem de la', entao e' la' que ela
@@ -68,6 +71,11 @@ AGRUPAMENTO_ABAS: tuple[tuple[str, str], ...] = (
     # imobiliaria, mesmo quando disparados do Mapa Territorial — a query `origem`
     # e' que diz de onde vieram; aqui a pergunta e' "quanto a camada foi usada".
     ("/api/imobiliaria/evento/", "imobiliaria"),
+    # A foto do balao e' disparada pelo Mapa Territorial, que e' onde o pino mora: das
+    # duas abas que a LIBERAM, "mapa" e' onde o uso acontece na pratica (mesma logica do
+    # relatorio pontual, atribuido a viabilidade).
+    ("/api/foto-concorrente/", "mapa"),
+    ("/api/pin-concorrente/", "mapa"),
 )
 
 #: Camada de LABEL (CLAUDE.md §2): valor bruto sem acento; exibição acentuada.

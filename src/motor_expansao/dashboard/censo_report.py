@@ -1687,11 +1687,34 @@ _CONCLUSAO_METAS_AVALIADAS = 6
 
 # `motivo_zona_morta` chega como token bruto do motor ("pop<5000"). Traduzir aqui mantem
 # o valor cru intacto e ainda assim legivel; token novo cai no fallback e sai como veio.
-_CONCLUSAO_MOTIVO_ZONA_MORTA = {
-    "pop<5000": "população de captação abaixo de 5.000",
-    "renda<1600": "renda per capita de captação abaixo de R$ 1.600",
-    "catchment_indisponivel": "captação indisponível",
-}
+def _motivos_zona_morta_traduzidos() -> dict[str, str]:
+    """Tradução dos tokens de zona morta, DERIVADA dos limiares — nunca escrita à mão.
+
+    Os tokens nascem em `viabilidade_ponto.flag_zona_morta` como f-strings dos próprios
+    pisos (`f"pop<{int(pop_min)}"`). Enquanto este dicionário os repetia literalmente
+    (`"renda<1600"`), qualquer recalibração de limiar quebrava a tradução em silêncio: o
+    token deixava de casar, caía no fallback e o PDF imprimia `renda<500` cru no lugar da
+    frase. Aconteceria na DEC-042, que levou o piso de renda de 1.600 para 500.
+
+    Derivando das constantes, mexer no limiar muda o token e a frase JUNTOS.
+    """
+    from motor_expansao.dimensionamento.viabilidade_ponto import (
+        POP_ZONA_MORTA_MIN,
+        RENDA_ZONA_MORTA_MIN,
+    )
+
+    pop = int(POP_ZONA_MORTA_MIN)
+    renda = int(RENDA_ZONA_MORTA_MIN)
+    return {
+        f"pop<{pop}": f"população de captação abaixo de {pop:,.0f}".replace(",", "."),
+        f"renda<{renda}": (
+            f"renda per capita de captação abaixo de R$ {renda:,.0f}".replace(",", ".")
+        ),
+        "catchment_indisponivel": "captação indisponível",
+    }
+
+
+_CONCLUSAO_MOTIVO_ZONA_MORTA = _motivos_zona_morta_traduzidos()
 
 # Texto de confirmacao por EIXO (DEC-030): cada selo tem o seu, porque cada um afirma
 # ter avaliado coisas diferentes. O texto unico anterior citava envelope do imovel E metas

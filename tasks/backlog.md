@@ -1543,7 +1543,7 @@ produção e exige DEC + gate humano.
 | **Criticidade** | **Alta** (o passo entra num **cron de produção na VPS** e o módulo invocado é o único do pacote que **apaga arquivo** — a poda de retenção. READ-ONLY sobre o M1: não toca `score_priorizacao`, pesos, `config.py`, `pipelines/m1` nem artefato oficial; escreve só em `data/staging/snapshots_concorrentes/`). |
 | **Prioridade** | **É o caminho crítico do epic, não o último passo.** Sem série não há S3/S4; sem S3/S4 o `score_vulnerabilidade_ordenavel` nasce nulo e o **BLK-MA-05 não tem o que ordenar**. Cada semana sem este bloco é uma semana a mais de espera. |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA → `[aplicação na VPS: passo MANUAL do Felipe, comando a comando — §6]`. |
-| **Status** | **AGUARDANDO APLICAÇÃO NA VPS — o que falta é humano, não técnico.** Código e runbook na `main` desde 2026-08-11 (PR #221): `scripts/cron/run_snapshot_concorrentes.sh`, o recorte `--fontes` com `fontes_lidas` na auditoria, a seção de runbook em `docs/infra_producao.md` e `MIN_SEMANAS` decidido (fica em 8). **Este bloco NÃO fecha com o merge:** a esteira termina na aplicação, e enquanto ela não ocorrer **a série continua em ZERO semanas** — nenhum snapshot é gravado, S3/S4 não maturam e o BLK-MA-05 segue sem o que ordenar. Passos que restam, na ordem, todos do Felipe (§6, comando a comando): (1) `cp scripts/cron/run_snapshot_concorrentes.sh /opt/motor-expansao-infra/` + `chmod +x`; (2) **`DRY_RUN=1 /opt/motor-expansao-infra/run_snapshot_concorrentes.sh`** e conferir que `linhas_snapshot` > 0 — se vier `0`, `HOST_CONCORRENTES` está errado (o layout dos CSVs na VPS não é versionado, e este passo é a única forma de descobri-lo sem gravar nem podar); (3) uma linha no `/opt/gymscraping-infra/run_weekly_90.sh` após a coleta, terminando em `\|\| echo` para não abortar o lote. Só depois de (3) o relógio começa: **~2 meses** até S3/S4 maturarem no feed `unidades`. |
+| **Status** | **APLICADO NA VPS em 2026-08-26** (confirmado por Felipe: "o coletor e o cron semanal"). O relógio de S3/S4 do feed `unidades` **está correndo** — os três passos que faltavam (cópia do wrapper, `DRY_RUN=1`, linha no `run_weekly_90.sh`) foram executados. Código e runbook na `main` desde 2026-08-11 (PR #221). **Consequência para o BLK-MA-21, medida em 2026-08-26:** a série na VPS deixou de estar vazia e passa a acumular **uma partição de layout LEGADO (uma chave) por semana** — o que transforma a migração de layout de hipótese em trabalho certo, proporcional ao tempo até a aplicação do bloco. |
 | **Depende de** | BLK-MA-02-FU1 (o m6 deu ao materializador a CLI com `--dry-run`/`--base-dir`; sem ela não se pluga isso num cron) e o item 2 do mesmo bloco (import lazy, que tirou `sklearn`/`scipy` do caminho). |
 | **Autonomia** | **manual (NÃO loop-safe)** — toca cron de produção. NUNCA marcar loop-safe. |
 
@@ -1579,16 +1579,19 @@ fora de qualquer repo** (`docs/infra_producao.md`). Versionar o passo como scrip
 superfície não versionada a **uma linha** de invocação — que é o que o Felipe aplica, com o
 guardrail do §6 valendo comando a comando.
 
-**A decisão que sustenta o bloco: `--fontes unidades`.** O cron semanal recoleta só os 90 coletores.
-WellHub e TotalPass dependem de um cron mensal que **não existe** (listado como pendente no runbook).
+**A decisão que sustenta o bloco: `--fontes unidades`.** O runner de domingo recoleta só os 90
+coletores. WellHub e TotalPass dependem do cron dos agregadores, que é **SEMANAL** (terça) e nasceu
+no **BLK-MA-21**. *(Esta linha dizia "um cron mensal que não existe" — as duas coisas deixaram de
+valer: 2026-08-25 criou o bloco e 2026-08-26 corrigiu a cadência.)*
 Fotografar um feed não recoletado é **pior** que não fotografar: o `hash_campos_raspados` sai
 idêntico toda semana, `semanas_sem_mudanca` cresce sozinho e o **S4 marca o universo inteiro daquela
 fonte como "parado"** — o próprio sinal de vulnerabilidade. Falso positivo em massa, no sinal de
 segundo maior peso, e silencioso. O recorte de cada partição fica em `fontes_lidas`, na auditoria.
 
-**Fora de escopo.** Qualquer artefato/score/peso do M1; o cron **mensal** dos agregadores (bloco
-próprio, e quando existir chama o MESMO script com `--fontes totalpass wellhub`); o entregável
-comercial (**BLK-MA-05**); a reputação externa (**BLK-MA-07**).
+**Fora de escopo.** Qualquer artefato/score/peso do M1; o cron **semanal dos agregadores** (bloco
+próprio, **BLK-MA-21** — e ele **NÃO** chama este script: tem wrapper próprio, porque precisa da
+curadoria antes do snapshot); o entregável comercial (**BLK-MA-05**); a reputação externa
+(**BLK-MA-07**).
 
 > **[nota BLK-MA-13, 2026-08-14 — CORRIGIDA em 2026-08-24 pelo BLK-MA-19] O comando do entregável
 > mudou, e os pins do piloto dependem dele.**
@@ -1622,12 +1625,15 @@ medida e o veredito é manter. Três razões, nesta ordem: (1) são **dois** par
 distintos — `MIN_SEMANAS = 8` libera o `s3`, `STALE_SEMANAS = 12` é o **denominador** do `v4`
 (`score.py`) —, e baixar só o primeiro deixaria o score ordenável enquanto o `v4` ainda estivesse
 confinado a `≤ 0,5`, metade da escala do sinal mais importante, bem na largada; (2) o parâmetro
-conta **observações, não meses**: com o feed `unidades` semanal — o único que o snapshot fotografa
-hoje — 8 observações são **~2 meses**, e os ~8 meses valem só para os agregadores, cujo cron mensal
-**não existe** (reduzir encurtaria um cronômetro desligado); (3) o caminho com retorno real para
-encurtar o prazo é **dar cron próprio aos agregadores**, não afrouxar o critério. Registrado para o
-futuro: o parâmetro é **global** e a cadência **não é** — se voltar a incomodar, a pergunta certa é
-torná-lo por fonte, e isso é escopo novo.
+conta **observações, não meses**: com o feed `unidades` semanal — o único que o snapshot fotografava
+então — 8 observações são **~2 meses**, e os ~8 meses valiam só para os agregadores, cujo cron
+**não existia** (reduzir encurtaria um cronômetro desligado); (3) o caminho com retorno real para
+encurtar o prazo é **dar cron próprio aos agregadores**, não afrouxar o critério. *(O caminho (3)
+foi seguido: o **BLK-MA-21** deu cron próprio aos agregadores, SEMANAL, e a maturação deles caiu de
+~8 meses para **~8 semanas** — as três fontes passaram a ter o mesmo prazo.)* Registrado para o
+futuro: o parâmetro é **global**, e agora a cadência também é; a assimetria que sobra é o **buraco
+de folha** (semana em que a curadoria recusa um feed velho ocupa slot sem render observação). Se
+voltar a incomodar, a pergunta certa é torná-lo por fonte, e isso é escopo novo.
 
 **Critério de aceite.** Script versionado com sintaxe validada; `--fontes` com teste que prove o
 recorte e que as duas metades reconstroem o todo; `fontes_lidas` na auditoria; runbook com o modo
@@ -1709,6 +1715,429 @@ MD5 acima; (2) `web` reiniciado; (3) **prova funcional em `/api/municipio/{uf}/{
 `independentes.disponivel = true` com `total > 0` e ≥1 pin de concorrente com `diag: true`, **não**
 o `/api/health`; (4) a pílula de independentes visível na tela, no drill-down municipal; (5)
 `scripts/check_artifacts.py` nomeia os dois artefatos quando faltam, travado por teste.
+
+---
+
+### BLK-MA-20 — TotalPass entra como FONTE do score (o arquivamento foi da NOTA, não da fonte)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — muda o UNIVERSO de uma camada paralela e reordena o ranking em escala sem precedente aprovado (Spearman `0,692`; a DEC-034 tratou `0,991` como material). READ-ONLY sobre o M1: não toca `score_priorizacao`, pesos do M1, `config.py`, `pipelines/m1` nem artefato oficial. **Exige DEC própria antes do Builder** (molde DEC-033/034). |
+| **Prioridade** | **Alta, e a janela é agora.** O S1 hoje tem **variância zero** — 6.753 de 6.753 hexes com `n_agregadores_no_hex = 1` — e por isso o score é pressão renomeada. O TotalPass é a única coisa disponível que devolve variância a um componente ATIVO, e isso **independe de série**. E o custo de absorver a reordenação cresce com o histórico: hoje há **uma** partição local e **zero** em produção. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE humano — DEC própria]` → Builder → QA. |
+| **Status** | Pendente — **levantamento concluído em 2026-08-24**, com números medidos (abaixo). Nenhuma linha de produção escrita. |
+| **Depende de** | **BLK-MA-06** (o cron semanal; é ele que valida o caminho com `DRY_RUN`) e **BLK-MA-21** (o cron SEMANAL dos agregadores, na terça — criado em 2026-08-25, cadência corrigida de mensal para semanal em 2026-08-26; sem ele o S3/S4 do TotalPass nunca amadurece, e é lá que a colisão de partição é resolvida). |
+| **Autonomia** | **manual (NÃO loop-safe)** — tem gate humano (DEC) e depende de cron de produção. |
+
+**A pergunta que abriu o bloco (Vinicius, 2026-08-24), e por que ela procede.** A DEC-026 tornou a
+nota do WellHub **coluna-fato SEM PESO**. Logo, a ausência permanente de nota no TotalPass é
+**irrelevante para o score** — e a assimetria que o spike do BLK-MA-10 declarou "permanente" afeta
+uma coluna de fato, não o ranking. Verificado: o spike arquivou o TotalPass literalmente **"como
+fonte de NOTA"** (`data/reports/spike_totalpass_nota_2026-08-05.md:101`); **nenhuma DEC de 001 a 037
+o proíbe como FONTE**, e o contrato já o declara agregador de primeira classe
+(`FONTES_AGREGADORES = ("totalpass", "wellhub")`, `contrato.py:76`), com entrada própria em
+`CAMPOS_HASH_POR_FONTE` e filtro de ruído específico dele. O schema do sinal 1 tem
+`fontes_presentes_no_hex` como *"subconjunto de FONTES_AGREGADORES"*: o desenho **espera** os dois.
+
+**O bloqueio não é o que parecia — CORREÇÃO de premissa, medida em 2026-08-24.** O feed do TotalPass
+**EXISTE**: 27 CSVs, **15.986 linhas**, `data_coleta = 2026-06-01` em 100% delas, schema de 10
+colunas (sem as duas de rating), em `GymScraping/TotalPass/csvs/` — o repo irmão do coletor. O que
+não existe é `motor-de-expansao/concorrentes/totalpass/`, que é o default de onde o snapshot lê.
+**O bloqueio de dado é uma CÓPIA de 27 arquivos**, não uma coleta a fazer. O CSV já sai pós-filtro de
+musculação, então é o universo "V2" da DEC-025, comparável ao WellHub.
+
+**Código: zero mudança para RODAR.** A cadeia inteira (`ler_feeds` → `limpar_ruido` →
+`derivar_chave` → `montar_snapshot` → `extrair_presenca_agregador` → `_pressao_por_academia` →
+`calcular_score_vulnerabilidade`) roda com as duas fontes sem editar uma linha; `montar_snapshot` já
+preenche a nota com `NA` para TotalPass. **Nenhum teste quebra** — as fixtures da suíte já são de
+duas fontes (158 ocorrências de `totalpass` em `tests/`), e um teste hoje `skipped` passa a rodar.
+
+#### O preço não está onde a pergunta supõe: o S6 é benigno, o S1 é que detona
+
+| efeito | Spearman contra hoje | top-100 |
+|---|---|---|
+| só o **S6** (oferta maior) | `0,985` | troca **9** |
+| **total**, com o S1 solto | **`0,692`** | troca **100 de 100** |
+
+Hoje, no regime `{s1,s6}`, o S1 tem peso efetivo **0,600** e contribui CONSTANTE (`v1 ≡ 0,5`), o que
+reduz o score a `30 + 40·v6`. Soltar o `v1` sem mais nada **não cria um discriminador — cria um
+degrau**: como `_V1_POR_N_AGREGADORES = {2: 0.0, 1: 0.5}` só mapeia para baixo, as duas populações
+caem em faixas quase disjuntas — `40·v6` (teto **38,6**) e `30 + 40·v6` (piso **30,0**) —, e
+**91,7% das academias ficariam acima do teto do outro grupo** independentemente da pressão real.
+
+**E o S1 estaria errado no GRÃO — é a DEC-029 se repetindo.** O `v1` é medido por HEXÁGONO. Com uma
+fonte só isso é vacuoso; com duas vira o erro dominante: o hex diz "2 agregadores" para **89,60%**
+das academias do WellHub, mas só **50,35%** têm gêmea do TotalPass a ≤50 m — **falso "2 agregadores"
+em 7.603 linhas (39,33% do universo)**, num sinal de peso seis vezes o do S6.
+
+**O que desarma: o tempo.** O mesmo TotalPass entra dominante hoje e informativo depois.
+
+| regime | peso efetivo do S1 |
+|---|---|
+| `s1,s6` — hoje | **0,600** |
+| `s1,s3,s6` | 0,250 |
+| `s1,s3,s4,s6` — completo | **0,176** |
+
+**Ganho real de universo, menor que o bruto.** Dos 14.281 independentes do TotalPass, **67,39% já
+estão no funil pelo WellHub**. Alvos genuinamente novos: **da ordem de 3.290** (+17% a +24% no
+universo, conforme a dedup case por distância ou também por nome).
+
+#### O caminho, na ordem
+
+0. **Copiar o feed** — 27 CSVs para `concorrentes/totalpass/csvs/`, com `PROVENIENCIA.md` no molde do
+   WellHub. Aqui **e** na VPS. Não exige nada além do ato.
+1. **BLK-MA-21 — cron SEMANAL dos agregadores** (criado em 2026-08-25; cadência corrigida em
+   2026-08-26). É lá que ficam a colisão de
+   partição, a retenção por cadência e os dois bloqueadores de caixa do coletor. **Correção de uma
+   afirmação deste bloco:** a colisão não é condicional — o semanal roda todo domingo e toda semana
+   ISO tem um domingo, então ela é **certa, toda semana**. E a saída medida (particionar por
+   `semana=X/fonte=Y`) **não exige bump** de `VERSAO_CONTRATO_SNAPSHOT`, ao contrário do que a lista
+   de bumps abaixo sugeria.
+2. **Calibrar `DEDUP_INDEPENDENTES_M`** com o primeiro par real. Hoje o valor é **arbitrado e não
+   calibrado**, declarado assim de propósito por não haver par TP×WH. A CDF medida: p25 `1,7 m` ·
+   p50 `13,6 m` · p75 `95,0 m` · p90 `367,2 m` — os 50 m de hoje pegam ~67% dos pares. Subir o
+   limiar sem matcher de nome apaga vizinho real, então calibrar provavelmente significa **portar
+   `identidade.mesma_unidade` para independentes**.
+3. **Decidir o GRÃO do S1** — é o passo que mais importa (ver os 39,33% acima). Opções: manter no
+   hex e aceitar o viés; medir por academia (molde da DEC-029); ou a via abaixo.
+4. **DEC Alta**, declarando o deslocamento medido e os **5 bumps obrigatórios**:
+   `presenca_agregador_v1→v2`, `score_v7→v8`, `pressao_v4→v5`, `alvos_ma_v4→v5`, `nomeados_v5→v6`
+   (candidatos: `redes_ma_nomeadas`, `snapshots_concorrentes_v3→v4`, `churn_staleness`).
+
+> **Terceira via a avaliar no gate — entrar com o TotalPass tratando o S1 como FATO SEM PESO**, no
+> molde exato da DEC-026 com a nota. Ganha-se o universo novo e a dedup calibrada com par real,
+> **sem** deixar um sinal binário de grão errado sequestrar 60% do ranking; o S1 volta a pesar
+> quando S3/S4 maturarem e ele valer 0,176 em vez de 0,600.
+
+**Fora de escopo.** A NOTA do TotalPass (arquivada, e a re-sonda de 2026-08-24 reconfirmou que não
+existe — o caminho para ela é comercial, não técnico); o BLK-MA-07 (reputação externa); qualquer
+peso do D4, que segue CONGELADO; e o cron **semanal** dos agregadores em si, que é o bloco do
+passo 1 (**BLK-MA-21**).
+
+**Riscos e o que fazer com eles.**
+- **S4 falso positivo em massa** se o feed de 01/06 for fotografado sem recoleta: a defasagem é de
+  ~10-11 semanas contra `STALE_SEMANAS = 12`, e a própria infra registra que fotografar feed não
+  recoletado é "pior do que não fotografar". → Recoletar o TotalPass **antes** da primeira foto, ou
+  entrar só com S1+S6 e ligar o S4 dele após a 2ª coleta real.
+- **Dupla contagem a jusante:** a dedup existe só do lado da OFERTA. `n_independentes_vulneraveis`
+  conta `chave_snapshot`, que embute a `fonte` → o CSV do comercial somaria 2 para a mesma academia,
+  e o pin do piloto desenharia dois. → Precisa de colapso explícito por estabelecimento.
+- **O corte por nota do BLK-MA-05 excluiria em silêncio o universo TotalPass inteiro** — deixa de ser
+  filtro de qualidade e vira filtro de FONTE.
+- **ToS de marca:** reter nome de estabelecimento do TotalPass num produto **publicado** (os pins do
+  piloto) é ato diferente da sonda read-only; os ToS restringem uso comercial de marca e reprodução
+  de conteúdo. Ninguém avaliou o caso publicado. → Uma linha na DEC.
+- **Nada carimba no parquet quais fontes a partição fotografou** (`fontes_lidas` só existe na
+  auditoria impressa), então "TotalPass não fotografado" fica indistinguível de "lido e vazio". →
+  Barato, cabe no mesmo bump.
+
+> **Dois números do levantamento que NÃO se sustentaram, registrados para ninguém os repetir.**
+> (1) *"A Smart Fit é invisível para a camada de M&A"* — **falso**: ela é a maior rede de
+> `concorrentes_mapeados.parquet`, com **1.000 unidades**, o dobro das 504 do TotalPass, e é esse o
+> insumo do S6. A pressão já a conta.
+> (2) *"A retenção de 26 semanas contra `MIN_SEMANAS = 8` faria a série nunca amadurecer em cadência
+> mensal"* — **falso**: `podar_snapshots` é **keep-newest-N sobre PARTIÇÕES**
+> (`candidatos[: len(candidatos) - 26]`), não poda por idade de calendário. *(Nota de 2026-08-26: a
+> premissa da cadência mensal caiu de vez — os agregadores rodam SEMANALMENTE, então 26 partições
+> são 26 observações de cada fonte, e a `RETENCAO_SEMANAS` voltou de `78` para `26`. O piso medido
+> para o `v4` saturar é **13**.)*
+
+**Procedência dos números.** Verificados de primeira mão em 2026-08-24: o feed do TotalPass (27
+CSVs / 15.986 linhas / `data_coleta`), a contagem da Smart Fit nas três bases, os pesos efetivos por
+regime, as faixas `30–68,6` × `0–38,6` e os 91,7%, o `keep-newest-N` da poda e o `delete_matching`.
+**Medidos pela auditoria e NÃO re-verificados linha a linha:** os Spearman, a interseção de hexes,
+os 92,24% / 39,33%, os ~3.290 alvos novos e a CDF da dedup. O critério de aceite abaixo exige
+re-medir esses antes da DEC.
+
+**Critério de aceite.** (1) Os números do parágrafo anterior marcados como não re-verificados são
+**re-medidos** e entram na DEC com script reproduzível; (2) a decisão de GRÃO do S1 está tomada e
+justificada com número; (3) a dedup está calibrada contra par real, com o efeito medido antes e
+depois; (4) os 5 bumps aplicados e a quebra de comparabilidade declarada; (5) nenhum peso do D4
+alterado; (6) READ-ONLY sobre o M1; (7) suíte verde e `loop_guard` sem CRÍTICO.
+
+---
+
+### BLK-MA-21 — Cron SEMANAL dos agregadores: o relógio dos independentes, que nunca foi ligado
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — cria um **cron de produção** na VPS que dispara ~21h45 de coleta **toda semana** e invoca o único módulo do pacote que **apaga arquivo** (a poda de retenção). READ-ONLY sobre o M1: escreve só em `data/staging/snapshots_concorrentes/`. **Exige DEC própria** (cadência + resolução da colisão de partição + retenção + limiar de frescor). |
+| **Prioridade** | **Alta, e é caminho crítico do epic inteiro.** Os independentes — o universo-alvo do funil de M&A — vivem **só** nesses dois agregadores. O cron semanal fotografa o feed `unidades`, que é de **cadeias**. Sem este bloco, S3 e S4 sobre independentes **nunca** amadurecem e o score fica preso em `{s1,s6}` = pressão renomeada, para sempre. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE humano — DEC própria]` → Builder → QA → `[aplicação na VPS: passo MANUAL, comando a comando — §6]`. |
+| **Status** | **Pendente — REABERTO em 2026-08-26 com a cadência corrigida para SEMANAL** (decisão de Felipe). Um ciclo completo rodou em 2026-08-25 sobre a premissa MENSAL e o PR **#263 foi FECHADO** por isso; o trabalho está preservado na branch `ciclo/BLK-MA-21` (commits `7b5fc9b`, `58f2b98`, `43fa42d`) e a maior parte dele **sobrevive** — ver "Correção de premissa" abaixo. Levantamento original concluído em 2026-08-25; o **bloqueador (1) caiu** (`GymScraping` #11). |
+| **Depende de** | **BLK-MA-06 — SATISFEITA em 2026-08-26.** O coletor e o cron semanal foram aplicados na VPS por Felipe, então o caminho dos CSVs e o `API_IMAGE` já estão provados por `DRY_RUN`. **A dependência deixou de bloquear e virou um relógio contra o bloco:** com o cron rodando, a série na VPS acumula **uma partição de layout LEGADO por semana** (a `main` segue com particionamento de UMA chave), e cada semana de espera é uma partição a mais para o `--migrar-layout`. |
+| **Autonomia** | **manual (NÃO loop-safe)** — cron de produção + gate humano. NUNCA marcar loop-safe. |
+
+#### Correção de premissa (2026-08-26): a cadência é SEMANAL, não mensal
+
+O bloco nasceu, foi planejado e foi implementado inteiro sobre a premissa de coleta **mensal**.
+Felipe corrigiu em 2026-08-26: **WellHub e TotalPass serão fotografados semanalmente**, e as duas
+coletas **convivem** com o cron semanal do feed `unidades` (não o substituem). O PR #263 foi
+fechado. O que muda, item a item — o corpo abaixo foi mantido **intacto** porque é evidência
+medida, mas as passagens marcadas aqui deixaram de valer:
+
+**CAI — decidido sobre a cadência errada:**
+- **D1 (cadência).** "1ª terça do mês, 02:00 UTC" fica sem objeto. A janela nova precisa caber numa
+  grade **semanal** que já tem o `unidades` (dom 06:00 UTC) e ~22h de agregadores.
+- **D5 (retenção `26` -> `78`).** O argumento inteiro era aritmético: com coleta mensal e poda
+  keep-newest-N sobre semanas de CALENDÁRIO, 26 partições davam **5,98 observações**, abaixo de
+  `MIN_SEMANAS = 8`. **Com coleta semanal isso desaparece** — 26 partições = 26 observações de cada
+  fonte, e as 8 exigidas chegam em 8 semanas. A seção "Retenção: a régua não serve a duas cadências"
+  perde o pressuposto: agora as três fontes têm a MESMA cadência. **REFEITA em 2026-08-26:** o valor
+  volta a **`26`**, o **piso duro é `13`** (medido — `_semanas_sem_mudanca` vale `k-1` contra o
+  denominador `STALE_SEMANAS = 12` do `v4`, então com 12 observações o `v4` fica preso em `0,9167`
+  para sempre) e `26 = 2× o piso` é o menor N que ainda satura com uma fonte perdendo METADE das
+  semanas. Disco: **160,0 MB** (42.535 linhas/semana, 151,7 bytes/linha). O que restringe é a
+  LEITURA — pico de RSS medido cresce ~70,5 MB por semana retida (N=26 -> 1,9 GB).
+- **O custo por iteração de diagnóstico.** "cada iteração custa um mês" vira "custa uma semana" — o
+  que baixa o risco de errar o agendamento e muda o cálculo de quanto vale depurar antes de ligar.
+
+**SOBREVIVE — e a cadência semanal torna mais urgente:**
+- **A colisão de partição e a opção (a) (`semana=X/fonte=Y`).** Era o item mais importante e agora é
+  pior: com **três** fontes escrevendo na MESMA semana ISO, o `delete_matching` de uma chave passa a
+  ter **duas vítimas por semana**, não uma. E como o BLK-MA-06 já está aplicado (ver "Depende de"),
+  isso deixou de ser risco futuro: é o estado de produção no dia em que os agregadores entrarem.
+- **A curadoria versionada** (escolha de diretório por agregador + o abort na ambiguidade),
+  **a rotação do consolidado**, o **`fontes_lidas` no parquet**, o **`--migrar-layout`** e a
+  **fronteira D9 fail-closed** — nenhum depende da cadência.
+- Os **três críticos** que o painel adversarial encontrou na fronteira com o `GymScraping` continuam
+  todos de pé, e as correções valem como estão.
+
+**NASCE — defeito novo criado pela cadência semanal:**
+- **O limiar de frescor é INERTE sob cadência semanal.** A guarda recusa feed com mais de
+  `--max-idade-dias` (default herdado **7**). *(Este bullet dizia que o feed chega ao snapshot com
+  "~7 dias de idade **por construção**" — **é FALSO**, e foi medido em 2026-08-26: numa coleta
+  bem-sucedida o feed chega com **0 ou 1 dia**, porque coleta e curadoria rodam na MESMA execução,
+  sob um `flock` só, nos passos 1-2-3 do wrapper. Os ~7 dias são a idade quando a coleta **FALHA** —
+  que é exatamente o que o limiar 7 deixava passar, porque a borda é inclusiva.)*
+  **RESOLVIDO em 2026-08-26:** default vai a **3** (a janela que separa é `[1, 6]`: teto saudável
+  medido 1 dia, defeito 7-8 dias) **e** a régua troca de `max(data_coleta)` para `min`, com descarte
+  de data no futuro — o número sozinho não bastava, porque com `max` uma coleta que morre no meio
+  continua medindo idade 0 (simulado: 26 de 27 UFs velhas, `idade_dias = 0,0`, 36,1% de linhas
+  frescas, publicado). Direção de falha passa a ser **fail-closed**.
+- **A janela de ~22h/semana numa KVM4 com 6 containers permanentes** deixa de ser evento mensal e
+  vira carga recorrente, concorrendo com a coleta dos 90 coletores do `unidades`. A grade precisa
+  ser desenhada, não herdada.
+
+**Reaproveitamento.** A branch `ciclo/BLK-MA-21` tem código, testes (T1..T9 + 42 novos), runbook e a
+DEC (renumerada para **DEC-039** — a `main` levou a 038 no PR #260). O caminho barato é partir dela,
+não do zero: mexem-se a cadência (D1), a aritmética da retenção (D5) e o limiar de frescor; o resto
+passa como está. **Reabrir o gate humano é obrigatório** — três das nove decisões mudam.
+
+#### Dois bloqueadores que precisam cair ANTES de qualquer agendamento
+
+**(1) O coletor do TotalPass não importa no Linux.** O git indexou o diretório como **`Totalpass`**
+(p minúsculo) — os 46 arquivos — enquanto os 13 imports escrevem **`TotalPass`**. No Windows passa,
+porque NTFS é case-insensitive; na VPS, o clone em `/opt/gymscraping` cria `Totalpass/` e
+`python -m TotalPass.coletor_totalpass` morre com `ModuleNotFoundError` **antes de qualquer log**.
+Nada nunca pegou isso: o repo do coletor **não tem CI** e o `CMD` do Dockerfile só roda
+`executar_coletores.py`, que nunca importa o módulo. Correção no repo **GymScraping**: renomear no
+índice do git (via nome temporário) ou padronizar os imports — e travar com teste.
+
+**(2) Os diretórios de leitura divergem em caixa.** O motor lê
+`concorrentes/{totalpass,wellhub}/csvs` (minúsculo); o coletor grava em `Wellhub/csvs` e
+`Totalpass/csvs`. Sem um passo de curadoria que renomeie, o snapshot lê **zero linhas em silêncio**.
+
+#### Os dois defeitos do snapshot — e um deles é pior do que parecia
+
+**A colisão de partição não é "se": é CERTA, toda semana, para sempre.** A semana ISO vai de segunda a
+domingo, e o cron semanal roda `0 6 * * 0` — **todo domingo**, o último dia da semana ISO. Logo toda
+semana ISO recebe uma escrita do semanal com `--fontes unidades`, e `escrever_particao_semana` usa
+`existing_data_behavior="delete_matching"`, que apaga a partição **inteira** antes de gravar. A
+`fonte` é coluna **dentro** do arquivo, nunca chave de caminho. Resultado: **~21h de coleta jogadas
+fora, com `exit 0` nos dois runs**. Probabilidade de colisão = 1.
+
+> **A inversão que muda a ordem do trabalho:** hoje isso ainda não destrói nada, porque um frame
+> VAZIO sai cedo com WARNING e **não** apaga a partição existente. Ou seja, o cenário atual ("o
+> cron dos agregadores lê zero por caminho errado") falha em silêncio, inofensivo. **Consertar o
+> caminho é o que
+> ATIVA o defeito.** Os bloqueadores acima e a correção da colisão têm de entrar na MESMA entrega.
+
+**Sem carimbo de fonte no parquet**, "TotalPass não fotografado" fica indistinguível de "lido e
+vazio" — `fontes_lidas` só existe na auditoria impressa.
+
+#### A saída medida para a colisão
+
+**Opção (a) — particionar por `semana=X/fonte=Y`. Testada com pyarrow e recomendada.** Escrever
+`unidades` e depois `wellhub` na mesma semana produz duas folhas, e as duas sobrevivem:
+`delete_matching` apaga só a folha que está sendo escrita. Um dataset **misto** (partição antiga com
+`fonte` dentro do arquivo, ao lado de partição nova) lido com particionamento de duas chaves devolve
+as duas corretamente. **Não há migração e não há bump de `VERSAO_CONTRATO_SNAPSHOT`** — as 12 colunas
+lógicas não mudam. A poda continua funcionando (os filhos diretos seguem sendo `semana=X`), e
+`ds.dataset` sobre a série existe em **um único lugar** do pacote (`ler_snapshots`), então trocar o
+particionamento num ponto cobre a jusante inteira.
+
+> **O risco a travar por teste:** um leitor com particionamento de **uma** chave devolve
+> `fonte = None` **em silêncio**, sem erro e sem log. Como `(fonte, chave_snapshot)` é chave primária
+> composta em todo o pacote, um `fonte` nulo envenena churn, presença e score de uma vez. É o mesmo
+> modo de falha que a DEC-026 combateu ao exigir `schema=` explícito em `ler_snapshots`.
+
+**Opção (b) — ler-mesclar-reescrever: descartar.** Ela quebra sozinha no primeiro bump depois da
+série viva: `_assert_schema_snapshot` levanta se a partição carregar mais de um `versao_contrato`, e
+numa mescla as linhas da fonte não reescrita ficam na versão antiga → a escrita **aborta** e a semana
+inteira se perde. Ainda é mais cara e amplia a janela não-atômica entre delete e write.
+
+#### Retenção: `26`, com piso duro de `13` *(refeita em 2026-08-26 sobre a cadência uniforme)*
+
+`RETENCAO_SEMANAS` é **keep-newest-N sobre diretórios `semana=`**, não poda por idade. *(A versão
+anterior desta seção chamava-se "a régua não serve a duas cadências" e argumentava sobre um feed
+mensal — o pressuposto morreu, e os três números de disco que ela citava estavam errados por ~3×:
+"26 ≈ 53 MB, 53 ≈ 108, 78 ≈ 161" contra os **160,0 / 326,1 / 479,9 MB** medidos, porque contavam
+só o feed `unidades` e não as três fontes.)*
+
+Com as três fontes semanais, N partições = **N observações de cada fonte** no caminho feliz. O piso
+é **13**, medido rodando `extrair_churn_staleness` sobre séries sintéticas de hash constante:
+`_semanas_sem_mudanca` conta observações estritamente **após** a última mudança, logo vale `k-1`,
+contra o denominador `STALE_SEMANAS = 12` do `v4`.
+
+| N | `semanas_sem_mudanca` | `v4` | |
+|---|---|---|---|
+| 8 | 7 | 0,5833 | |
+| 12 | 11 | 0,9167 | **teto permanente: nunca satura** |
+| 13 | 12 | 1,0000 | **piso duro — nunca descer abaixo daqui** |
+| **26** | 25 | **1,0000** | 2× o piso: satura mesmo com 50% de buraco de folha |
+
+**Disco medido em 2026-08-26** (42.535 linhas/semana somando as três fontes; 151,7 bytes/linha —
+partir em 3 folhas BAIXA o custo por linha, contra 155,8 numa folha só): N=13 → 80,0 MB;
+**N=26 → 160,0 MB**; N=53 → 326,1 MB; N=78 → 479,9 MB. Não é restrição num NVMe de 200 GB. **O que
+restringe é a LEITURA:** `ler_snapshots` carrega a série inteira em memória, e o pico de RSS medido
+cresce ~70,5 MB por semana retida (N=13 → 999 MB; N=26 → 1,9 GB; N=78 → ~5,6 GB **extrapolado**).
+
+#### O custo real da coleta, medido (e o número do runbook está incompleto)
+
+| coletor | comando | duração medida |
+|---|---|---|
+| WellHub | `python -m Wellhub.coletor_wellhub --workers 2 --delay 1.0 --no-resume` | **20h03** (2026-08-05, 45.685 slugs) |
+| TotalPass | `python -m TotalPass.coletor_totalpass --workers 5 --delay 0.3` | **~1h40** (2026-06-01, 34.917 slugs) |
+
+O `~20h` de `docs/infra_producao.md` é o **WellHub sozinho**; o par sequencial é **~21h45**. Os dois
+coletores vivem **fora do executor central** (`executar_coletores.py` só varre `Coletores/`), então
+são dois `python -m` distintos — é isso que a doc chama de "invocação separada". A VPS é KVM4
+(4 vCPU / 16 GB), com 6 containers permanentes; rodar os dois em paralelo encurta a janela para ~20h
+mas põe duas sessões HTTP concorrentes na mesma vCPU. **O bloco tem de declarar qual das duas formas
+adota** — muda o desenho do wrapper.
+
+#### Escopo
+
+1. **Passo de curadoria V2 versionado** (filtro de musculação + renomeação + cópia para a raiz que o
+   motor lê) — hoje não existe em script nenhum.
+2. **Wrapper próprio** `run_snapshot_agregadores.sh`, com `--dir-wellhub`/`--dir-totalpass`
+   explícitos, `flock -n`, `--retencao-semanas` e **`DRY_RUN=1` obrigatório antes de agendar**.
+3. **Resolver a colisão** pela opção (a), com o teste que impede um dataset de uma chave.
+4. **Nova retenção**, com a aritmética da **cadência uniforme** declarada (piso medido `13`,
+   valor `26`).
+5. **Carimbar `fontes_lidas`** no parquet (ou no nome da partição).
+6. **Check de idade da partição de agregador no `healthcheck_vps.sh`** — hoje ele só confere se
+   existe um `relatorio_crescimento_*.txt` de hoje, então uma falha do cron dos agregadores **não
+   seria vista**.
+7. **Limiar e grade do próprio check** *(acrescentado em 2026-08-26; não estava em escopo nenhum)*:
+   `MONITOR_AGREGADOR_MAX_DIAS` de **45** para **9**, e o check de `0 12 * * 1` (segunda) para
+   **`0 12 * * 4`** (quinta). Com 45 dias a cadência semanal deixava passar **até 6 rodadas
+   perdidas** antes do primeiro FAIL. A régua deriva a idade da SEGUNDA da semana ISO da partição:
+   na quinta 12:00 UTC a rodada da própria terça mede **3** dias e uma rodada perdida mede **10** —
+   a faixa que separa é `[3, 9]` inteira, e `9` é o TETO dela (não o único valor, como se afirmou).
+   Quinta alerta 2 dias depois da falha e deixa sexta livre para a retentativa **dentro da mesma
+   semana ISO**. Junto vai o `exec > >(tee -a "$LOG")` para ANTES do `flock`, senão uma rodada
+   travada faz toda semana seguinte sair `exit 0` sem deixar log.
+
+**Fora de escopo, explicitamente.** O **TotalPass como FONTE do score** — isso é o **BLK-MA-20**, que
+exige DEC própria por reordenar o ranking (Spearman `0,692`). **A fronteira precisa estar escrita na
+DEC**, senão o cron dos agregadores faz o TotalPass entrar pela porta dos fundos: basta ele gravar a
+partição para
+o extrator começar a consumi-lo. Também fora: pesos do D4 (congelados), qualquer artefato do M1, e a
+integração dos agregadores ao residual (parte 3 da DEC-013).
+
+**Marco zero, já pré-anunciado.** A `PROVENIENCIA` registra que o universo WellHub passou de 12.769
+para 22.173 por mudança de **critério**, não por churn, e que a primeira janela depois da troca não é
+comparável. A mesma obrigação recai aqui: **a primeira partição de agregador é marco zero, não
+observação comparável.**
+
+**Procedência.** Verificados de primeira mão em 2026-08-25: a divergência de caixa do `Totalpass/`
+(46 arquivos no índice contra 13 imports), os schemas e safras dos dois feeds (WellHub 12 colunas com
+nota, 05/08; TotalPass 10 colunas sem nota, 01/06) e o isolamento dos dois coletores em relação ao
+executor central. **Medidos pela auditoria e não re-verificados linha a linha:** as durações (vêm do
+`MIGRACAO_NOTA.md` e do `RECON.md` do coletor), o experimento pyarrow da opção (a), a saída antecipada
+do frame vazio e o comportamento do `_assert_schema_snapshot` na mescla. **Não medidos:** o espaço
+livre real da VPS e a grade horária do job — o §6 proíbe comando na VPS sem confirmação.
+
+**Critério de aceite.** (1) Os dois bloqueadores de caixa caídos, com teste que impeça a regressão;
+(2) colisão resolvida pela opção (a), com teste que prove que duas fontes coexistem na mesma semana
+**e** que nenhum caminho construa dataset de uma chave; (3) retenção nova com a aritmética da cadência
+uniforme declarada e o piso `13` travado por teste;
+(4) `fontes_lidas` no parquet; (5) `DRY_RUN` como passo obrigatório do runbook; (6) check de idade no
+healthcheck; (7) a fronteira com o BLK-MA-20 escrita na DEC; (8) READ-ONLY sobre o M1, suíte verde,
+`loop_guard` sem CRÍTICO. **Nenhum comando executado na VPS por agente.**
+
+---
+
+### BLK-MA-21-FU3 — `flock` no wrapper de domingo, e a poda concorrente que não tem defesa
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** — mexe num wrapper de cron **já aplicado na VPS**, o que exige reaplicação manual do Felipe. READ-ONLY sobre o M1. |
+| **Prioridade** | Média. O risco é real mas de cauda: exige que uma rodada de agregador atrase até domingo, o que hoje só acontece por travamento. |
+| **Esteira** | Block Orchestrator → Builder → QA → `[aplicação na VPS: passo MANUAL — §6]`. |
+| **Status** | Pendente — **criado em 2026-08-26**, fatiado do BLK-MA-21 pela decisão de escopo do sintetizador. |
+| **Depende de** | BLK-MA-21 (o wrapper da terça e a grade semanal). |
+| **Autonomia** | **manual (NÃO loop-safe)** — cron de produção. |
+
+**O achado, medido.** `grep -n flock scripts/cron/run_snapshot_concorrentes.sh` → a **única**
+ocorrência é o comentário da linha 40, que fala do *outro* script. **O wrapper de domingo não tem
+lock nenhum.** Os dois wrappers nunca se excluem mutuamente; quem impede o estrago é o
+particionamento de **duas chaves**, que faz o `delete_matching` casar folhas distintas.
+
+**O que a chave dupla NÃO cobre:** `podar_snapshots` faz `shutil.rmtree` em diretórios `semana=` e é
+chamada pelas **duas** cadências (`snapshots.py`, `executar`). Duas podas concorrentes num diretório
+sendo escrito **não têm defesa nenhuma no código** — a chave dupla protege a escrita, não a poda.
+
+**Por que ficou fora do BLK-MA-21** *(decisão de escopo, 2026-08-26)*: mexer no wrapper do BLK-MA-06,
+que **já está aplicado na VPS**, é mudança de superfície de produção fora do objeto daquele bloco, e
+exigiria uma reaplicação manual a mais no mesmo deploy. Ficou **registrado por escrito** no cabeçalho
+de `run_snapshot_concorrentes.sh`.
+
+**Escopo.** (1) `flock -n` no wrapper de domingo, com o mesmo molde do wrapper da terça (log ANTES do
+lock); (2) decidir se os dois compartilham o **mesmo** lock (serializa as duas cadências, mais
+seguro) ou locks distintos (só protege contra reexecução própria); (3) teste textual no molde de
+`tests/unit/test_wrappers_cron_agregadores.py`. **Critério de aceite:** os dois wrappers não podem
+podar concorrentemente; suíte verde; `loop_guard` sem CRÍTICO; nenhum comando na VPS por agente.
+
+---
+
+### BLK-MA-21-FU4 — Poda POR FONTE dentro da partição (margem, não dívida)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — mexe na única função do pacote que **apaga arquivo** (`podar_snapshots`, `shutil.rmtree`). READ-ONLY sobre o M1. |
+| **Prioridade** | **Baixa** *(rebaixada em 2026-08-26)*. A margem que ela compraria já vem de graça no `RETENCAO_SEMANAS = 26 = 2× o piso`. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente — **criado em 2026-08-26**; existia como "adiado" dentro do BLK-MA-21 / DEC-039 (D5), com a justificativa da cadência MENSAL, que morreu. |
+| **Depende de** | BLK-MA-21. |
+| **Autonomia** | **manual (NÃO loop-safe)** — apaga arquivo em disco. |
+
+**A justificativa antiga morreu; esta é a que sobrevive.** A razão original era servir **duas
+cadências** (semanal + mensal) com menos disco. Com a cadência uniforme isso não existe mais. O que
+**não** morreu é a **assimetria de unidade**: `RETENCAO_SEMANAS` conta semanas de **CALENDÁRIO**
+(`podar_snapshots` itera diretórios `semana=` e faz `rmtree` na semana inteira, com todas as folhas
+`fonte=` juntas), enquanto `MIN_SEMANAS`/`STALE_SEMANAS` contam semanas **OBSERVADAS** do escopo
+`(fonte, rede)` (`churn_staleness.py`, `n_semanas_serie = len(ativo)`).
+
+**As duas unidades coincidem só no caminho feliz.** Medido em 2026-08-26 (20 semanas, `unidades`
+toda semana, `wellhub` só nas pares = 50% de falha):
+
+```
+antes: semanas=20  obs por fonte = {unidades: 20, wellhub: 10}
+poda(N=13) removeu 7 semanas
+depois: semanas=13  obs por fonte = {unidades: 13, wellhub: 7}
+```
+
+`7 < MIN_SEMANAS = 8`: dentro de uma janela de 13, uma fonte com 50% de falha **nem amadurece**. E a
+fonte **perde folha por construção** — a guarda de frescor (D4) tira a fonte do `--fontes` quando o
+feed está velho.
+
+**Escopo.** Poda keep-newest-N de **folhas `fonte=`** dentro da partição, mantendo N observações por
+fonte independentemente de buraco. **Critério de aceite:** teste que prove N observações por fonte
+com buraco de folha; nenhuma semana com folha sobrevivente pode ser removida; suíte verde;
+`loop_guard` sem CRÍTICO.
 
 ---
 

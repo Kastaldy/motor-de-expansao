@@ -1,7 +1,12 @@
 {
-  "data_execucao": "2026-06-24",
-  "output_root": "C:\\Users\\Vinicius Cruz\\AppData\\Local\\Temp\\claude\\c--Users-Vinicius-Cruz-Downloads-Projetos-motor-de-expansao\\47908ff4-6b72-4978-a19f-a45a0dd95e61\\scratchpad\\geo_cascata_full",
-  "report_path": "C:\\Users\\Vinicius Cruz\\AppData\\Local\\Temp\\claude\\c--Users-Vinicius-Cruz-Downloads-Projetos-motor-de-expansao\\47908ff4-6b72-4978-a19f-a45a0dd95e61\\scratchpad\\geo_cascata_full\\_report.md",
+  "data_execucao": "2026-08-12",
+  "output_root": "data/outputs/setores_censitarios_2022_geo",
+  "report_path": "data/reports/relatorio_pontual_censitario_base_geo.md",
+  "k_global": 1.2334632197,
+  "k_global_carimbo": "v06004_div_v0005_multiplicativo_global_k=1.2335",
+  "k_escopo": "nacional_unico_27_ufs",
+  "commit": "44e8f26",
+  "branch": "fix/k-global-nacional",
   "ufs": [
     {
       "uf": "AC",
@@ -9,7 +14,6 @@
       "setores": 2215,
       "arquivos": 22,
       "tamanho_mb": 13.1,
-      "tempo_s": 4.82,
       "renda_cobertura_pct": 89.44,
       "score_cobertura_pct": 89.44
     },
@@ -18,8 +22,7 @@
       "municipios": 102,
       "setores": 6359,
       "arquivos": 102,
-      "tamanho_mb": 19.96,
-      "tempo_s": 9.32,
+      "tamanho_mb": 19.94,
       "renda_cobertura_pct": 96.98,
       "score_cobertura_pct": 96.98
     },
@@ -28,8 +31,7 @@
       "municipios": 62,
       "setores": 10729,
       "arquivos": 62,
-      "tamanho_mb": 83.91,
-      "tempo_s": 9.88,
+      "tamanho_mb": 83.89,
       "renda_cobertura_pct": 78.65,
       "score_cobertura_pct": 78.65
     },
@@ -39,7 +41,6 @@
       "setores": 1492,
       "arquivos": 16,
       "tamanho_mb": 3.76,
-      "tempo_s": 7.96,
       "renda_cobertura_pct": 91.09,
       "score_cobertura_pct": 91.09
     },
@@ -48,8 +49,7 @@
       "municipios": 417,
       "setores": 30985,
       "arquivos": 417,
-      "tamanho_mb": 92.03,
-      "tempo_s": 20.0,
+      "tamanho_mb": 91.98,
       "renda_cobertura_pct": 98.46,
       "score_cobertura_pct": 98.46
     },
@@ -58,8 +58,7 @@
       "municipios": 184,
       "setores": 20979,
       "arquivos": 184,
-      "tamanho_mb": 25.03,
-      "tempo_s": 12.16,
+      "tamanho_mb": 24.99,
       "renda_cobertura_pct": 95.79,
       "score_cobertura_pct": 95.79
     },
@@ -69,7 +68,6 @@
       "setores": 5418,
       "arquivos": 1,
       "tamanho_mb": 3.46,
-      "tempo_s": 16.36,
       "renda_cobertura_pct": 97.16,
       "score_cobertura_pct": 97.16
     },
@@ -79,7 +77,6 @@
       "setores": 8706,
       "arquivos": 78,
       "tamanho_mb": 19.8,
-      "tempo_s": 11.17,
       "renda_cobertura_pct": 97.31,
       "score_cobertura_pct": 97.31
     },
@@ -89,7 +86,6 @@
       "setores": 12861,
       "arquivos": 246,
       "tamanho_mb": 85.64,
-      "tempo_s": 29.1,
       "renda_cobertura_pct": 98.16,
       "score_cobertura_pct": 98.16
     },
@@ -98,8 +94,7 @@
       "municipios": 217,
       "setores": 16301,
       "arquivos": 217,
-      "tamanho_mb": 41.13,
-      "tempo_s": 21.1,
+      "tamanho_mb": 41.07,
       "renda_cobertura_pct": 95.52,
       "score_cobertura_pct": 95.52
     },
@@ -108,8 +103,7 @@
       "municipios": 853,
       "setores": 51387,
       "arquivos": 853,
-      "tamanho_mb": 151.47,
-      "tempo_s": 49.26,
+      "tamanho_mb": 151.48,
       "renda_cobertura_pct": 97.86,
       "score_cobertura_pct": 97.86
     },
@@ -119,7 +113,6 @@
       "setores": 6117,
       "arquivos": 79,
       "tamanho_mb": 24.25,
-      "tempo_s": 30.91,
       "renda_cobertura_pct": 97.84,
       "score_cobertura_pct": 97.84
     },
@@ -129,7 +122,6 @@
       "setores": 9381,
       "arquivos": 141,
       "tamanho_mb": 38.37,
-      "tempo_s": 22.82,
       "renda_cobertura_pct": 93.74,
       "score_cobertura_pct": 93.74
     },
@@ -138,8 +130,7 @@
       "municipios": 144,
       "setores": 16714,
       "arquivos": 144,
-      "tamanho_mb": 34.11,
-      "tempo_s": 12.55,
+      "tamanho_mb": 34.08,
       "renda_cobertura_pct": 92.9,
       "score_cobertura_pct": 92.9
     },
@@ -148,8 +139,7 @@
       "municipios": 223,
       "setores": 9639,
       "arquivos": 223,
-      "tamanho_mb": 20.39,
-      "tempo_s": 12.01,
+      "tamanho_mb": 20.37,
       "renda_cobertura_pct": 98.24,
       "score_cobertura_pct": 98.24
     },
@@ -158,8 +148,7 @@
       "municipios": 185,
       "setores": 19578,
       "arquivos": 185,
-      "tamanho_mb": 31.3,
-      "tempo_s": 13.73,
+      "tamanho_mb": 31.26,
       "renda_cobertura_pct": 98.07,
       "score_cobertura_pct": 98.07
     },
@@ -168,8 +157,7 @@
       "municipios": 224,
       "setores": 7340,
       "arquivos": 224,
-      "tamanho_mb": 31.35,
-      "tempo_s": 27.13,
+      "tamanho_mb": 31.33,
       "renda_cobertura_pct": 98.26,
       "score_cobertura_pct": 98.26
     },
@@ -178,8 +166,7 @@
       "municipios": 399,
       "setores": 23777,
       "arquivos": 399,
-      "tamanho_mb": 47.05,
-      "tempo_s": 30.77,
+      "tamanho_mb": 47.06,
       "renda_cobertura_pct": 97.48,
       "score_cobertura_pct": 97.48
     },
@@ -188,8 +175,7 @@
       "municipios": 92,
       "setores": 41700,
       "arquivos": 92,
-      "tamanho_mb": 46.62,
-      "tempo_s": 17.53,
+      "tamanho_mb": 46.63,
       "renda_cobertura_pct": 95.45,
       "score_cobertura_pct": 95.45
     },
@@ -199,7 +185,6 @@
       "setores": 6095,
       "arquivos": 167,
       "tamanho_mb": 7.74,
-      "tempo_s": 10.12,
       "renda_cobertura_pct": 97.7,
       "score_cobertura_pct": 97.7
     },
@@ -208,8 +193,7 @@
       "municipios": 52,
       "setores": 3456,
       "arquivos": 52,
-      "tamanho_mb": 6.95,
-      "tempo_s": 5.34,
+      "tamanho_mb": 6.96,
       "renda_cobertura_pct": 90.71,
       "score_cobertura_pct": 90.71
     },
@@ -219,7 +203,6 @@
       "setores": 1783,
       "arquivos": 15,
       "tamanho_mb": 5.46,
-      "tempo_s": 4.97,
       "renda_cobertura_pct": 65.79,
       "score_cobertura_pct": 65.79
     },
@@ -229,7 +212,6 @@
       "setores": 25569,
       "arquivos": 498,
       "tamanho_mb": 48.97,
-      "tempo_s": 18.41,
       "renda_cobertura_pct": 97.27,
       "score_cobertura_pct": 97.27
     },
@@ -239,7 +221,6 @@
       "setores": 16736,
       "arquivos": 295,
       "tamanho_mb": 99.48,
-      "tempo_s": 18.07,
       "renda_cobertura_pct": 96.43,
       "score_cobertura_pct": 96.43
     },
@@ -248,8 +229,7 @@
       "municipios": 75,
       "setores": 5346,
       "arquivos": 75,
-      "tamanho_mb": 8.58,
-      "tempo_s": 19.84,
+      "tamanho_mb": 8.57,
       "renda_cobertura_pct": 97.25,
       "score_cobertura_pct": 97.25
     },
@@ -258,8 +238,7 @@
       "municipios": 645,
       "setores": 103319,
       "arquivos": 645,
-      "tamanho_mb": 126.23,
-      "tempo_s": 63.57,
+      "tamanho_mb": 126.22,
       "renda_cobertura_pct": 96.04,
       "score_cobertura_pct": 96.04
     },
@@ -269,7 +248,6 @@
       "setores": 4117,
       "arquivos": 139,
       "tamanho_mb": 66.37,
-      "tempo_s": 17.83,
       "renda_cobertura_pct": 94.66,
       "score_cobertura_pct": 94.66
     }
@@ -312,5 +290,6 @@
     "metodo_renda_setor_2022",
     "metodo_score_setor_2022",
     "data_materializacao"
-  ]
+  ],
+  "nota": "Materializado em lotes em 12/08/2026 com k NACIONAL unico. Artefatos anteriores a esta data tem um k DIFERENTE por UF (0,7956 a 2,5505) e nao sao comparaveis com este."
 }

@@ -64,6 +64,12 @@ class AnalisarMunicipioRequest(BaseModel):
     uf: str = Field(examples=["TO"], description="Sigla da UF (2 letras).")
     municipio: str = Field(examples=["Palmas"], description="Nome do municipio (sem acento tolerado).")
     formato: Literal["pdf"] = "pdf"
+    # Unidade de leitura. Default "bairro" -- e' a leitura que o time de Expansao usa; quem
+    # quiser o relatorio classico pede "hexagono" explicitamente.
+    unidade: Literal["bairro", "hexagono"] = Field(
+        default="bairro",
+        description='Unidade dos mapas: "bairro" (12 paginas) ou "hexagono" (10 paginas).',
+    )
     solicitante: str | None = Field(
         default=None,
         description="Nome de quem pediu; carimba a marca d'agua do PDF.",

@@ -9,6 +9,7 @@
 #   host        disco e memória do host (cron horário)
 #   authelia    resumo diário de falhas de login (cron 1x/dia)
 #   coleta      domingo pós-coleta: resumo do relatório GymScraping ou alerta de falha
+#   agregadores idade da última partição de snapshot de cada agregador (cron semanal, BLK-MA-21)
 #   test        envia mensagem de teste ao chat de ops
 #
 # Anti-spam: alerta só na transição OK->FAIL, lembrete a cada REMIND_SECS enquanto
@@ -27,6 +28,19 @@ MEM_AVAIL_PCT_MIN="${MONITOR_MEM_AVAIL_PCT_MIN:-10}"
 EDGE_URL="${MONITOR_EDGE_URL:-https://piloto.ultra-expansao.tech}"
 GYM_REPORT_DIR="${MONITOR_GYM_REPORT_DIR:-/opt/gymscraping-infra}"
 GYM_LOG_HINT="/var/log/gymscraping/weekly_latest.log"
+# Série de snapshots de concorrentes (BLK-MA-21). O cron SEMANAL dos agregadores (terça 02:00
+# UTC) é o único produtor de `fonte=wellhub` / `fonte=totalpass`; se ele parar, nada mais
+# acusa — o score continua saindo, só que sobre uma série congelada, e o S4 lê a estagnação
+# como sinal.
+SNAPSHOTS_DIR="${MONITOR_SNAPSHOTS_DIR:-/opt/motor-expansao/data/staging/snapshots_concorrentes}"
+# 9 dias, sob a cadência SEMANAL (terça 02:00 UTC) com o check na quinta 12:00 UTC: a rodada
+# da própria semana dá 3 dias de idade (a régua sai da SEGUNDA da semana ISO, não do instante
+# da coleta) e uma rodada perdida dá 10. A faixa que separa os dois casos é [3, 9] inteira —
+# 9 é o TETO dela, escolhido por ser o mais tolerante a uma rodada que escorregue dentro da
+# semana, não por unicidade. Com o `45` herdado da premissa mensal seriam até 6 rodadas
+# perdidas antes do primeiro FAIL.
+AGREGADOR_MAX_DIAS="${MONITOR_AGREGADOR_MAX_DIAS:-9}"
+AGREGADORES=(wellhub totalpass)
 CONTAINERS=(
     motor_expansao_caddy
     motor_expansao_authelia
@@ -164,17 +178,85 @@ ${falhas}"
     send_telegram "$msg" || true
 }
 
+# Epoch (UTC) da SEGUNDA-FEIRA da semana ISO `AAAA-SS`, ou vazio se a chave não casar.
+#
+# `date -d` não parseia data ISO-week em nenhuma versão do coreutils, então a conversão é feita à
+# mão pela definição da ISO-8601: **4 de janeiro cai sempre na semana 1**. A segunda da semana 1 é
+# `04/01 - (dia_da_semana - 1)`, e a da semana W está `(W-1)` semanas adiante.
+epoch_da_semana_iso() {
+    local chave="$1" ano semana jan4 dow seg1
+    [[ "$chave" =~ ^([0-9]{4})-([0-9]{2})$ ]] || return 1
+    ano="${BASH_REMATCH[1]}"
+    semana="$((10#${BASH_REMATCH[2]}))"   # `10#` : `08`/`09` não podem ser lidos como octal
+    ((semana >= 1 && semana <= 53)) || return 1
+    jan4=$(date -u -d "${ano}-01-04" +%s 2>/dev/null) || return 1
+    dow=$(date -u -d "${ano}-01-04" +%u 2>/dev/null) || return 1
+    seg1=$((jan4 - (dow - 1) * 86400))
+    echo $((seg1 + (semana - 1) * 604800))
+}
+
+check_agregadores() {
+    # Idade da última partição de cada agregador na série de snapshots (BLK-MA-21).
+    #
+    # Por que por FONTE e não pela série inteira: o cron de DOMINGO escreve `fonte=unidades`
+    # toda semana, então a série nunca parece velha — olhar só a partição mais recente
+    # esconderia, para sempre, um cron dos agregadores que morreu. Cada agregador tem chave de
+    # estado própria, para que a falha de um não silencie o alerta do outro.
+    #
+    # A idade sai da CHAVE `semana=AAAA-SS`, não do mtime do diretório `fonte=`
+    # [emenda de 2026-08-25 à DEC-039]. O mtime mentia, e mentia justamente onde dói: o passo 2
+    # OBRIGATÓRIO da ordem de aplicação roda `--migrar-layout`, que CRIA a folha `fonte=` com
+    # mtime de agora. Medido sobre cópia da partição viva: dado de 2026-08-05 (20 dias) reportado
+    # como `0d`, e com o limiar herdado de 45 dias o FAIL atrasaria ~20 dias. A distância é arbitrária para
+    # qualquer `rsync`/restore do volume, que também rejuvenesce mtime.
+    #
+    # A régua nova pode ADIANTAR o alerta em até ~1 dia (a segunda da semana ISO é anterior ao
+    # instante da coleta), nunca atrasá-lo — que é a direção segura para um monitor. Quando a
+    # chave não for parseável, cai no mtime e DIZ que caiu.
+    local f alvo idade_seg idade_dias particao referencia regua
+    for f in "${AGREGADORES[@]}"; do
+        # Ordena pela CHAVE `semana=` (lexicográfica == cronológica, graças ao zero-padding),
+        # nunca por mtime: é o mtime que este bloco deixou de confiar.
+        particao=$(find "$SNAPSHOTS_DIR" -mindepth 2 -maxdepth 2 -type d -name "fonte=$f" \
+            -printf '%p\n' 2>/dev/null \
+            | sed -n 's#.*/semana=\([0-9]\{4\}-[0-9]\{2\}\)/fonte=.*#\1#p' | sort | tail -1 || true)
+        alvo=$(find "$SNAPSHOTS_DIR" -mindepth 2 -maxdepth 2 -type d -name "fonte=$f" \
+            -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2- || true)
+        if [[ -z "$alvo" ]]; then
+            report "agregador_$f" FAIL "Snapshot do agregador ${f} NUNCA foi fotografado (nenhuma partição em ${SNAPSHOTS_DIR}). O cron semanal dos agregadores foi agendado?"
+            continue
+        fi
+        referencia=$(epoch_da_semana_iso "$particao" 2>/dev/null || true)
+        if [[ -n "$referencia" ]]; then
+            regua="semana="
+        else
+            regua="mtime (fallback: chave semana= ilegível)"
+            referencia=$(stat -c %Y "$alvo")
+            particao="${particao:-desconhecida}"
+        fi
+        idade_seg=$(($(date +%s) - referencia))
+        idade_dias=$((idade_seg / 86400))
+        if ((idade_dias > AGREGADOR_MAX_DIAS)); then
+            report "agregador_$f" FAIL "Snapshot do agregador ${f} com ${idade_dias} dias (limiar ${AGREGADOR_MAX_DIAS}, régua ${regua}). Última partição: ${particao}. Ver /var/log/motor-snapshots/snapshot_agregadores_latest.log"
+        else
+            log "agregadores: ${f} OK (${idade_dias}d por ${regua}, ${particao})"
+            report "agregador_$f" OK ""
+        fi
+    done
+}
+
 case "${1:-}" in
 containers) check_containers ;;
 host) check_host ;;
 authelia) check_authelia ;;
 coleta) check_coleta ;;
+agregadores) check_agregadores ;;
 test)
     send_telegram "✅ [VPS Ultra] Monitoramento ativo — mensagem de teste"
     echo "mensagem de teste enviada"
     ;;
 *)
-    echo "uso: $0 {containers|host|authelia|coleta|test}" >&2
+    echo "uso: $0 {containers|host|authelia|coleta|agregadores|test}" >&2
     exit 2
     ;;
 esac

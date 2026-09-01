@@ -515,9 +515,12 @@ def processar_uf(
         & ~df_result["fallback_setor_2022"].fillna(False)
     )
     if cal_mask.any():
+        # Regua ABSOLUTA (2026-08-26): passa renda em R$ e populacao do setor, nao mais
+        # os percentis. `renda_pct_nacional_calibrado` e `pop_pct_municipal` seguem
+        # materializados como colunas de auditoria, mas nao alimentam mais o score.
         hex_score, ajuste, score = calcular_score_calibrado(
-            df_result.loc[cal_mask, "renda_pct_nacional_calibrado"].to_numpy(),
-            df_result.loc[cal_mask, "pop_pct_municipal"].to_numpy(),
+            df_result.loc[cal_mask, "renda_per_capita_setor_2022_calibrada"].to_numpy(),
+            df_result.loc[cal_mask, "pop_total_setor_2022"].to_numpy(),
         )
         df_result.loc[cal_mask, "hex_score_estrutural_calibrado"] = hex_score
         df_result.loc[cal_mask, "ajuste_calibrado"] = ajuste
@@ -527,7 +530,7 @@ def processar_uf(
     df_result["transformacao_renda_setor_2022"] = "V06004_div_v0005"
     df_result["data_validacao_fase_a"] = date.today().isoformat()
     df_result["metodo_calibracao_renda"] = f"multiplicativo_global_k={k_global:.4f}"
-    df_result["metodo_calibracao_pop"] = "pop_pct_municipal_within_municipio"
+    df_result["metodo_calibracao_pop"] = "pop_absoluta_log_dec039"
     df_result["referencia_calibracao"] = "m1_nacional_mediana_piloto_go_sp_rj"
     df_result["data_calibracao"] = date.today().isoformat()
     df_result["score_oficial_nome_calibrado"] = "score_setor_2022_calibrado"

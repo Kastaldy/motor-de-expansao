@@ -31,6 +31,10 @@ from motor_expansao.dashboard.censo_report import (
     gerar_pdf_relatorio_pontual_classico,
 )
 from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
+from motor_expansao.dimensionamento.viabilidade_ponto import (
+    POP_ZONA_MORTA_MIN,
+    RENDA_ZONA_MORTA_MIN,
+)
 
 _MIN_RESULT = {
     "lat": -23.55,
@@ -164,7 +168,7 @@ def test_so_estudo_ignora_todos_os_gates_de_imovel_e_retorno():
 def test_so_estudo_ainda_reprova_por_zona_morta_se_o_flag_chegar():
     """Mudanca de comportamento ACEITA na DEC-030, sem efeito no bot de producao.
 
-    A zona morta dispara por `pop<5000` / `renda<1600` na captacao: e' juizo sobre a
+    A zona morta dispara por `pop<5000` / `renda<500` na captacao: e' juizo sobre a
     PRACA, entao pertence ao eixo demografico, que o so-estudo avalia. Na pratica o caminho
     API/bot chama a pagina com `viabilidade=None` (`api/service.py`), logo `dados_viab` sai
     vazio e o gate nunca tem insumo -- o PDF do bot de producao segue como antes. Este
@@ -487,7 +491,7 @@ def test_e4_zona_morta_reprova_o_eixo_demografico_e_traduz_o_motivo():
     """DEC-030: a zona morta e' juizo sobre a PRACA, nao sobre o imovel nem sobre o retorno.
 
     O flag chega pelo payload de viabilidade, mas o que ele afirma -- `pop<5000` /
-    `renda<1600` na captacao -- e' demografico. Com o cenario financeiro limpo, ele reprova
+    `renda<500` na captacao -- e' demografico. Com o cenario financeiro limpo, ele reprova
     o selo da praca e deixa o financeiro verde: e' exatamente o conflito que os dois selos
     existem para mostrar, e que o status unico colapsava.
     """
@@ -1002,7 +1006,7 @@ def test_ponto_ruim_em_tudo_ainda_mostra_os_dois_blocos():
         viab={
             "margem_ebitda_pct": 0.10, "payback_meses": None, "flag_viavel": False,
             "flag_fora_envelope": True, "flag_zona_morta": True,
-            "motivo_zona_morta": "pop<5000; renda<1600",
+            "motivo_zona_morta": f"pop<{int(POP_ZONA_MORTA_MIN)}; renda<{int(RENDA_ZONA_MORTA_MIN)}",
         },
     )
     assert _TITULO_PRACA in pdf_bytes
@@ -1380,15 +1384,26 @@ def test_texto_da_observacao_chega_aos_bytes_do_pdf():
     assert "fora da faixa ideal".encode("latin-1") in pdf_bytes
 
 
+# Tokens DERIVADOS dos limiares, nunca escritos a mao (DEC-042): estes mesmos testes
+# quebraram quando o piso de renda foi recalibrado de 1.600 para 500, porque repetiam o
+# numero literal. Amarrar as duas pontas e' o unico jeito de a proxima recalibracao nao
+# exigir caca a literais espalhados.
+_TOKEN_POP = f"pop<{int(POP_ZONA_MORTA_MIN)}"
+_TOKEN_RENDA = f"renda<{int(RENDA_ZONA_MORTA_MIN)}"
+_FRASE_POP = f"população de captação abaixo de {int(POP_ZONA_MORTA_MIN):,}".replace(",", ".")
+_FRASE_RENDA = (
+    f"renda per capita de captação abaixo de R$ {int(RENDA_ZONA_MORTA_MIN):,}".replace(",", ".")
+)
+
+
 @pytest.mark.parametrize(
     "bruto,esperado",
     [
-        ("pop<5000", "população de captação abaixo de 5.000"),
-        ("renda<1600", "renda per capita de captação abaixo de R$ 1.600"),
+        (_TOKEN_POP, _FRASE_POP),
+        (_TOKEN_RENDA, _FRASE_RENDA),
         # O motor junta com "; " quando pop E renda estao abaixo do piso -- o caso MAIS
         # grave era o unico que nunca traduzia e saia com o token cru no PDF.
-        ("pop<5000; renda<1600",
-         "população de captação abaixo de 5.000; renda per capita de captação abaixo de R$ 1.600"),
+        (f"{_TOKEN_POP}; {_TOKEN_RENDA}", f"{_FRASE_POP}; {_FRASE_RENDA}"),
         ("token_novo", "token_novo"),  # desconhecido sai como veio
     ],
 )
@@ -1400,10 +1415,10 @@ def test_motivo_de_zona_morta_traduz_token_a_token(bruto, esperado):
 
 def test_zona_morta_composta_nao_vaza_token_cru_para_o_parecer():
     parecer = _parecer(
-        viab={"flag_zona_morta": True, "motivo_zona_morta": "pop<5000; renda<1600"}
+        viab={"flag_zona_morta": True, "motivo_zona_morta": f"{_TOKEN_POP}; {_TOKEN_RENDA}"}
     )
     texto = _texto(parecer)
-    assert "pop<5000" not in texto and "renda<1600" not in texto
+    assert _TOKEN_POP not in texto and _TOKEN_RENDA not in texto
     assert "população de captação" in texto and "renda per capita de captação" in texto
 
 
@@ -1722,3 +1737,38 @@ def test_rosa_e_silva_reprova_pela_regua_financeira_e_nao_pelo_mercado():
     assert any("Mercado já consumido" in linha for linha in parecer.ressalvas)
     # O apontamento de mercado e' do eixo da PRACA -- nao pode ter vazado para o financeiro.
     assert any("Mercado já consumido" in linha for linha in parecer.demografico.ressalvas)
+
+
+def test_traducao_do_motivo_de_zona_morta_acompanha_os_limiares() -> None:
+    """DEC-042: os tokens traduzidos derivam dos pisos, não são escritos à mão.
+
+    `flag_zona_morta` monta o motivo como f-string dos próprios limiares
+    (`f"pop<{int(pop_min)}"`). Enquanto o dicionário de tradução repetia o número
+    literalmente, recalibrar um piso quebrava a tradução em silêncio: o token deixava de
+    casar, caía no fallback e o PDF imprimia `renda<500` cru no lugar da frase. Este
+    teste liga as duas pontas.
+    """
+    from motor_expansao.dashboard.censo_report import (
+        _CONCLUSAO_MOTIVO_ZONA_MORTA,
+        _conclusao_motivo_zona_morta,
+    )
+    from motor_expansao.dimensionamento.viabilidade_ponto import (
+        POP_ZONA_MORTA_MIN,
+        RENDA_ZONA_MORTA_MIN,
+        flag_zona_morta,
+    )
+
+    # O caso MAIS grave: os dois pisos violados, que o motor junta com "; ".
+    motivo_bruto = flag_zona_morta(
+        {"pop_captacao": POP_ZONA_MORTA_MIN - 1, "renda_per_capita_captacao": RENDA_ZONA_MORTA_MIN - 1}
+    )["motivo_zona_morta"]
+
+    for token in (parte.strip() for parte in motivo_bruto.split(";")):
+        assert token in _CONCLUSAO_MOTIVO_ZONA_MORTA, (
+            f"token {token!r} emitido pelo motor não tem tradução — o PDF imprimiria o "
+            "token cru na Conclusão"
+        )
+
+    traduzido = _conclusao_motivo_zona_morta(motivo_bruto)
+    assert str(int(RENDA_ZONA_MORTA_MIN)) in traduzido
+    assert "renda<" not in traduzido, "sobrou token cru na frase traduzida"

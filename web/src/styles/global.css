@@ -19,6 +19,17 @@ body,
   height: 100%;
 }
 
+/* `color-scheme` no DOCUMENTO decide a cor do canvas do navegador (o que aparece no
+   overscroll) e da barra de rolagem da pagina. As regras la' embaixo tratam o chrome
+   nativo de `select`/`input`; estas duas tratam a moldura. */
+html {
+  color-scheme: dark;
+}
+
+html[data-tema='claro'] {
+  color-scheme: light;
+}
+
 body {
   margin: 0;
   background: var(--bg-base);

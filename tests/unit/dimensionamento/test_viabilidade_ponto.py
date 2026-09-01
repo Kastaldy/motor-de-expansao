@@ -8,6 +8,7 @@ zona morta e testada diretamente com dicts de catchment sinteticos.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -572,21 +573,100 @@ def test_franquia_parcelada_chega_ao_nucleo_pelo_orquestrador() -> None:
 
 
 # ---------------------------------------------------------------------------
-# BLK-DIM-17 — Testes de fronteira do novo limiar RENDA_ZONA_MORTA_MIN = 1600
+# DEC-042 — Fronteiras do limiar de renda, RECALIBRADO de 1.600 para 500
 # ---------------------------------------------------------------------------
 
-def test_flag_zona_morta_renda_abaixo_novo_limiar() -> None:
-    """renda=1500 < 1600 -> flag_zona_morta=True (fronteira inferior)."""
-    out = flag_zona_morta({"pop_captacao": 50000.0, "renda_per_capita_captacao": 1500.0})
+def test_flag_zona_morta_renda_abaixo_do_limiar() -> None:
+    """renda=499 < 500 -> dispara (fronteira inferior)."""
+    from motor_expansao.dimensionamento.viabilidade_ponto import RENDA_ZONA_MORTA_MIN
+
+    out = flag_zona_morta(
+        {"pop_captacao": 50000.0, "renda_per_capita_captacao": RENDA_ZONA_MORTA_MIN - 1}
+    )
     assert out["flag_zona_morta"] is True
-    assert "renda<1600" in out["motivo_zona_morta"]
+    assert f"renda<{int(RENDA_ZONA_MORTA_MIN)}" in out["motivo_zona_morta"]
 
 
 def test_flag_zona_morta_renda_no_limiar_nao_dispara() -> None:
-    """renda=1600 == limiar -> flag_zona_morta=False (limiar inclusivo: < dispara, >= nao dispara)."""
-    out = flag_zona_morta({"pop_captacao": 50000.0, "renda_per_capita_captacao": 1600.0})
+    """renda == limiar -> nao dispara (limiar inclusivo: `<` dispara, `>=` nao)."""
+    from motor_expansao.dimensionamento.viabilidade_ponto import RENDA_ZONA_MORTA_MIN
+
+    out = flag_zona_morta(
+        {"pop_captacao": 50000.0, "renda_per_capita_captacao": RENDA_ZONA_MORTA_MIN}
+    )
     assert out["flag_zona_morta"] is False
     assert out["motivo_zona_morta"] == "ok"
+
+
+def test_o_limiar_de_renda_nao_pode_vetar_a_praca_mais_pobre_da_rede() -> None:
+    """O criterio de parada do experimento E6, congelado como teste.
+
+    Medido em 2026-08-28 sobre as 54 unidades Ultra maduras (`base_calibracao_maduras`,
+    catchment de 1,5 km ja' materializado): com o limiar antigo de R$ 1.600 o gate vetava
+    24 das 53 unidades com catchment, e DOZE delas operavam ACIMA da mediana da rede. O
+    grupo vetado ainda faturava MAIS que o nao vetado (R$ 222.867 contra R$ 179.965 de
+    mediana). O corte nao separava praca ruim de boa.
+
+    A praca mais pobre em que a Ultra opera tem renda per capita de R$ 599 (Arapoanga
+    Planaltina/DF) e essa unidade entrega 1,591 alunos/m2 -- a mediana da rede. Logo
+    QUALQUER limiar acima de 599 e' falso-veto por construcao.
+
+    E' politica de marca, nao ajuste fino: a Ultra e' low-cost/massa (CLAUDE.md §1) e
+    opera bem em renda baixa. Se alguem devolver o limiar para a casa dos milhares, este
+    teste cai e a razao esta' aqui.
+    """
+    from motor_expansao.dimensionamento.viabilidade_ponto import RENDA_ZONA_MORTA_MIN
+
+    RENDA_MAIS_POBRE_DA_REDE = 599.0
+    assert RENDA_ZONA_MORTA_MIN < RENDA_MAIS_POBRE_DA_REDE, (
+        f"limiar de renda em {RENDA_ZONA_MORTA_MIN} vetaria a praca mais pobre em que a "
+        f"Ultra opera (R$ {RENDA_MAIS_POBRE_DA_REDE:.0f}), que entrega a MEDIANA da rede"
+    )
+    out = flag_zona_morta(
+        {"pop_captacao": 50_000.0, "renda_per_capita_captacao": RENDA_MAIS_POBRE_DA_REDE}
+    )
+    assert out["flag_zona_morta"] is False, (
+        "a unidade real da praca mais pobre da rede foi marcada como zona morta"
+    )
+
+
+def test_falso_veto_zero_contra_a_rede_real() -> None:
+    """Mesma pergunta do teste acima, mas contra a BASE REAL quando ela existe.
+
+    `base_calibracao_maduras.parquet` e' dado real e gitignorado — no CI ele nao existe e
+    o teste pula. Onde existe, ele e' a checagem forte: NENHUMA unidade madura que opere
+    na mediana ou acima pode ser marcada como zona morta.
+
+    RESSALVA DE METODO, que vale registrar: esta amostra e' condicionada no desfecho (a
+    Ultra so' abriu onde decidiu abrir). Ela prova FALSO-VETO — o gate rejeitando o que
+    sabidamente funciona — e NAO prova que o gate acerta ao rejeitar praca ruim, porque
+    nao ha contrafactual. E' de proposito que o criterio de parada e' de falso-positivo.
+    """
+    caminho = Path("data/staging/base_calibracao_maduras.parquet")
+    if not caminho.exists():
+        pytest.skip("base real ausente (gitignored); teste de falso-veto so' roda local")
+
+    base = pd.read_parquet(caminho)
+    base = base[base["pop_captacao"].notna()]
+    if base.empty:
+        pytest.skip("base sem catchment materializado")
+
+    mediana = base["alunos_por_m2"].median()
+    boas = base[base["alunos_por_m2"] >= mediana]
+    vetadas = [
+        (linha["unidade"], linha["renda_per_capita_captacao"], linha["pop_captacao"])
+        for _, linha in boas.iterrows()
+        if flag_zona_morta(
+            {
+                "pop_captacao": linha["pop_captacao"],
+                "renda_per_capita_captacao": linha["renda_per_capita_captacao"],
+            }
+        )["flag_zona_morta"]
+    ]
+    assert not vetadas, (
+        f"{len(vetadas)} de {len(boas)} unidades que operam >= mediana foram marcadas "
+        f"como zona morta: {vetadas[:5]}"
+    )
 
 
 # ---------------------------------------------------------------------------

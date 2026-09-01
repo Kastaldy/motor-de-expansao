@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { useUfsDaBase } from '../lib/base-contexto'
+import { institutoDoCenso } from '../lib/rodape-base'
 
 import { num } from '../lib/format'
 import type { PontoCensoDetalhe, PontoConcorrencia } from '../lib/types'
@@ -21,6 +23,7 @@ export default function DetalheRegiao({
   detalhe: PontoCensoDetalhe
   concorrencia: PontoConcorrencia
 }) {
+  const instituto = institutoDoCenso(useUfsDaBase())
   const [aberto, setAberto] = useState(false)
   const sp = detalhe.setor_do_ponto
 
@@ -80,9 +83,9 @@ export default function DetalheRegiao({
             <Titulo>Área e densidade</Titulo>
             <Linha rotulo="Área do círculo" valor={`${num(detalhe.area_circulo_km2, 2)} km²`} />
             <Linha
-              rotulo="Área com setor do IBGE"
+              rotulo={`Área com setor do ${instituto ?? "censo"}`}
               valor={`${num(detalhe.area_intersectada_km2, 2)} km²`}
-              nota="o IBGE não cobre água nem vazio"
+              nota={`${instituto ?? "o censo"} não cobre água nem vazio`}
             />
             <Linha
               rotulo="Densidade sobre o círculo"
@@ -113,7 +116,7 @@ export default function DetalheRegiao({
 
           {detalhe.data_referencia && (
             <p style={{ font: '400 10.5px/1.4 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
-              Fonte: Censo 2022 do IBGE · {detalhe.data_referencia}
+              Fonte: Censo 2022{instituto ? ` do ${instituto}` : ''} · {detalhe.data_referencia}
             </p>
           )}
         </div>

@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
 
 import BotaoInicio from '../components/BotaoInicio'
+import type { SearchPin } from '../components/HexMap'
 import RankingEstados from '../components/RankingEstados'
+import RankingHexagonosBrasil from '../components/RankingHexagonosBrasil'
 import Select from '../components/Select'
 import { Aviso, Chip, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { camadaCor } from '../lib/colors'
@@ -21,7 +23,26 @@ import {
 import type { MunicipioItem, MunicipioPayload, Passo, RankItem } from '../lib/types'
 
 /**
- * Modo 3 — as melhores oportunidades, POR CAMADA e depois consolidadas.
+ * Modo 3 — as melhores oportunidades. ENTRA PELO BRASIL, não por um estado.
+ *
+ * O QUE MUDOU E POR QUE. Esta tela abria pedindo um estado: o `RankingEstados`
+ * ordenava as 27 UFs, o operador escolhia uma, e só então via cidades — e hexágonos
+ * apenas se descesse mais um degrau, até um município. Perguntado "quais são os
+ * melhores hexágonos do Brasil?", o piloto respondia numa escala diferente da
+ * pergunta: o ranking de UF ordena por residual SOMADO por estado, que é grandeza de
+ * tamanho, então estado grande cheio de hexágono mediano vencia estado pequeno dono do
+ * melhor hexágono do país. Agora a tela abre com `RankingHexagonosBrasil` — a base
+ * inteira, ordenada por hexágono — e estado/município passam a ser FILTROS sobre essa
+ * lista, aplicados depois da ordenação. Nunca antes: filtrar por região primeiro é
+ * exatamente o defeito que isto corrige.
+ *
+ * O QUE FICOU IGUAL. Escolhido um estado, tudo o que vem abaixo é o que já existia —
+ * o ranking de UF, o consolidado por camada e as camadas do funil. Elas não são mais a
+ * porta de entrada; são a evidência de quem já escolheu um recorte.
+ *
+ * ---
+ *
+ * O bloco por CAMADA (abaixo do ranking nacional), preservado como estava:
  *
  * POR QUE NAO E' UMA LISTA SO'. A fila do passo 5 e' a recomendacao do motor, mas
  * sozinha ela esconde ONDE cada cidade se destaca: uma pode estar ali por residual
@@ -47,6 +68,7 @@ export default function OportunidadesScreen({
   onMunicipio,
   onInicio,
   onVerNoMapa,
+  onVerHexNoMapa,
 }: {
   ufs: string[]
   uf: string
@@ -59,6 +81,13 @@ export default function OportunidadesScreen({
   erro: string | null
   onInicio: () => void
   onVerNoMapa: (municipio: string) => void
+  /**
+   * Um item da lista NACIONAL leva UF e HEXÁGONO junto: sem a UF o mapa abriria o
+   * município certo no estado em que o operador já estava — que pode não ser nenhum —,
+   * e sem o pin ele pararia na cidade inteira, deixando o operador reencontrar a olho
+   * o hexágono que acabou de escolher.
+   */
+  onVerHexNoMapa: (uf: string, municipio: string, pin: SearchPin) => void
 }) {
   const [verTudo, setVerTudo] = useState(false)
 
@@ -104,14 +133,21 @@ export default function OportunidadesScreen({
         >
           Melhores oportunidades
         </h1>
+        {/* Rótulo e placeholder dizem que a UF virou FILTRO: a tela já respondeu a
+            pergunta antes de o operador tocar aqui. A opção vazia é o que permite
+            desfazer o recorte e voltar ao Brasil — sem ela, escolher um estado seria
+            um caminho sem volta. */}
         <Select
-          label="Estado"
+          label="Filtrar estado"
           value={uf}
           onChange={onUf}
-          maxWidth={130}
+          maxWidth={150}
           buscavel
-          placeholder="Estado…"
-          options={ufs.map((u) => ({ value: u, label: u }))}
+          placeholder="Brasil inteiro"
+          options={[
+            { value: '', label: 'Brasil inteiro' },
+            ...ufs.map((u) => ({ value: u, label: u })),
+          ]}
         />
         {/* O drill-down para MUNICIPIO e' o que responde "quais bairros": no nivel de
             municipio os itens do funil deixam de ser cidades e passam a ser bairros
@@ -139,8 +175,15 @@ export default function OportunidadesScreen({
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
         <div style={{ maxWidth: 1000, margin: '0 auto', display: 'grid', gap: 18 }}>
-          {/* O ranking E' o seletor de estado: antes o operador escolhia numa lista
-              alfabetica que nao dizia nada sobre qual valia a pena. */}
+          {/* A RESPOSTA vem primeiro, e ela e' nacional e por hexagono. Tudo o que
+              vem depois — ranking de estados, consolidado, camadas — e' evidencia e
+              recorte de quem quer descer, nao pre-requisito para ver a resposta. */}
+          <Glass style={{ padding: 18 }}>
+            <RankingHexagonosBrasil uf={uf} municipio={municipio} onVerNoMapa={onVerHexNoMapa} />
+          </Glass>
+
+          {/* O ranking de estados continua sendo o seletor de UF — mas agora ele
+              FILTRA a lista acima em vez de destrava-la. */}
           <Glass style={{ padding: 18 }}>
             <RankingEstados ufSelecionada={uf} onEscolher={onUf} />
           </Glass>

@@ -43,8 +43,33 @@ from motor_expansao.dimensionamento.simulador import (
 )
 
 # --- Thresholds de zona morta (exogenos; NAO preveem alunos) -----------------
+# Sao guardas de ABSURDO ("esta praca nao tem gente / e' pobre alem de qualquer coisa em
+# que a Ultra ja' operou"), nao previsao de demanda. Calibrados contra a REDE REAL em
+# 2026-08-28 (DEC-042), sobre as 54 unidades maduras de `base_calibracao_maduras`, que
+# ja' trazem o catchment de 1,5 km calculado.
+#
+# POPULACAO -- MANTIDA em 5.000. Veta exatamente UMA unidade da rede (Lago Sul/DF, 1.403
+# habitantes no raio), e essa unidade opera a 1,119 alunos/m2 contra a mediana de 1,591:
+# e' acerto, nao falso-veto. Nenhum corte ate' 5.000 produz um unico falso-veto.
 POP_ZONA_MORTA_MIN: float = 5_000.0       # alinhado com POP_MIN_ACIONAVEL do dashboard
-RENDA_ZONA_MORTA_MIN: float = 1_600.0     # renda per capita minima do entorno
+
+# RENDA -- era 1.600 e foi REFUTADA pela medicao. Naquele valor o gate vetava 24 das 53
+# unidades com catchment, e DOZE delas operavam ACIMA da mediana da rede -- entre as
+# melhores que a Ultra tem (Cariacica 2,970 al/m2, Suzano 2,975, Botanic Mall 2,765). O
+# grupo vetado ainda faturava MAIS que o nao vetado (mediana R$ 222.867 contra
+# R$ 179.965). Ou seja: o corte nao separava praca ruim de boa -- se separava algo, era
+# ao contrario.
+#
+# A causa e' de POSICIONAMENTO, nao de calibracao fina: a Ultra e' marca LOW-COST/MASSA
+# (CLAUDE.md §1) e opera bem em praca de renda baixa. Um gate que reprova renda per
+# capita abaixo de R$ 1.600 contradiz a propria estrategia da rede.
+#
+# NAO EXISTE corte de renda "quase certo": a menor renda da rede e' R$ 599 (Arapoanga
+# Planaltina/DF) e essa unidade opera NA mediana. Qualquer valor acima de 599 derruba
+# unidade boa. Por isso o novo valor e' deliberadamente INERTE sobre a rede de hoje --
+# ele so' dispara em praca mais pobre que qualquer uma em que a Ultra ja' operou, que e'
+# exatamente o mandato de "vetar absurdo".
+RENDA_ZONA_MORTA_MIN: float = 500.0       # inerte na rede atual; guarda de absurdo
 
 # --- Faixa de comparaveis por densidade (curva tamanho->densidade) -----------
 FAIXA_M2_TOLERANCIA: float = 0.20         # +/-20% do m2 do imovel

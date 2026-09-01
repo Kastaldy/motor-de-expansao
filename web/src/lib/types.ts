@@ -127,6 +127,23 @@ export interface RankItem {
   dims?: string | null
   /** Visão de UF, passo 4: séries DESTE município, no formato produzido por `_series_por_municipio`. */
   series?: string | null
+
+  /* --- Evidências do passo 5 (DEC-041) -------------------------------------
+   * Só a camada 5 as emite (`extras` no `_rank_items`). São os MESMOS números que
+   * ordenaram a fila — a frase de tese se monta deles e não de uma segunda leitura
+   * do payload do mapa, que poderia divergir do que decidiu a ordem.
+   * Não há renda aqui de propósito: a que a tela mostra passa por `k` e uplift
+   * domiciliar, e o valor cru contradiria o tooltip do mesmo hexágono. */
+  /** `prioridade` | `praca_forte` | `volume` | `marginal` — valor BRUTO, sem acento. */
+  quadrante?: string | null
+  /** Nota socioeconômica absoluta 0-100 (a mesma da camada 1). */
+  nota_socio?: number | null
+  /** Nota de demanda absoluta 0-100 (residual em escala log). */
+  nota_demanda?: number | null
+  /** Residual em alunos — o número por trás da nota de demanda. */
+  residual?: number | null
+  /** Concorrentes estimados num raio de 2 km. */
+  conc?: number | null
 }
 
 export interface Passo {
@@ -226,6 +243,27 @@ export interface Pin {
   rede?: string
   label?: string
   nome: string
+  /**
+   * Nome do ARQUIVO da foto desta unidade, servido por `/api/foto-concorrente/<arquivo>`.
+   *
+   * Nome e não URL porque quem decide onde a pasta mora é o servidor (`MOTOR_COMPETITORS_
+   * PHOTO_DIR`), e porque um caminho vindo do dado seria entrada não confiável chegando
+   * pronta na tela. Ausente na maioria: só a camada coletada na web traz imagem — o POI de
+   * mapa aberto não tem nenhuma.
+   */
+  foto?: string | null
+  /**
+   * A foto deve ser o ÍCONE deste pino, e não só a capa do balão.
+   *
+   * Vem `true` quando a rede não tem logo — o caso de toda independente, que sem isso
+   * aparece como quadrado cinza com "IND". Quem TEM marca mantém a marca: reconhecer um
+   * SportClub no mapa vale mais que ver a fachada daquela unidade.
+   *
+   * Quem decide é o SERVIDOR, que sabe quais arquivos de logo existem, e ele também aplica
+   * o teto de quantos pinos podem virar imagem numa mesma vista (o atlas de textura do
+   * deck.gl não é infinito).
+   */
+  icone_foto?: boolean
   /**
    * `true` quando esta unidade veio do feed de um agregador (WellHub/TotalPass) e por isso temos
    * DADOS EXTRAS sobre ela — pressão medida da coordenada dela, nota, presença na série.
@@ -842,7 +880,12 @@ export interface ViabilidadeOut {
   split: { balcao: number | null; agregadores: number | null }
   flag_fora_envelope: boolean
   flag_zona_morta: boolean | null
+  /** Token CRU (`pop<5000; renda<500`) — identificador, para consumidores que traduzem
+   *  por conta propria (o PDF). NUNCA renderizar direto: use `motivo_zona_morta_texto`. */
   motivo_zona_morta: string | null
+  /** O MESMO motivo em português, traduzido pelo servidor com a mesma função do PDF
+   *  (DEC-042). É este que vai para a tela. `null` quando não há motivo. */
+  motivo_zona_morta_texto?: string | null
   grade: Record<string, unknown>[]
   /** Sugestão de ajuste quando o payback estoura (> 40 meses); null se ok. NÃO é KPI:
    *  é LEITURA da série do motor feita no backend, nunca uma conta da tela. */
@@ -1407,6 +1450,64 @@ export interface EstadosPayload {
     capacidade_concorrente: number
   }
   estados: EstadoRanking[]
+}
+
+/**
+ * Um hexágono no ranking NACIONAL (`/api/hexagonos`).
+ *
+ * Não é um `RankItem`: aquele é um item de LOCALIDADE dentro de um recorte já
+ * escolhido (bairro de um município, município de uma UF) e carrega o vocabulário do
+ * funil. Aqui a unidade é o hexágono e o recorte é o país — por isso `uf` e
+ * `municipio` são parte da identidade do item, e não contexto implícito da tela.
+ */
+export interface HexagonoNacional {
+  rank: number
+  hex_id: string
+  uf: string | null
+  municipio: string | null
+  cod_municipio: string | null
+  lat: number | null
+  lng: number | null
+  /** Alunos não atendidos no hexágono. */
+  residual: number | null
+  /** Índice de praça (DEC-041) — o número que ORDENA a lista. */
+  indice: number | null
+  /** Quadrante da praça: `prioridade` | `praca_forte` | `volume` | `marginal`. */
+  quadrante: string | null
+  score: number | null
+  pop: number | null
+  renda: number | null
+  tag: string
+  tom: Tom | null
+  tag_cor: string | null
+  /**
+   * O consumo de concorrente foi MEDIDO neste hexágono, ou está ausente?
+   *
+   * O backend trata consumo ausente como white space. Num recorte de UF isso é
+   * ruído; num ranking nacional decide o topo — por isso a distinção sobe até a tela
+   * em vez de ficar escondida no filtro.
+   */
+  consumo_medido: boolean
+}
+
+export interface HexagonosPayload {
+  reguas: {
+    score_minimo: number
+    pop_minima: number
+    residual_minimo: number
+    capacidade_concorrente: number
+    /** Concorrentes tolerados na cascata (DEC-041). Era 0 até ela; hoje `CONC_ADENSAR_MAX`. */
+    conc_max: number
+  }
+  cobertura: {
+    /** Hexágonos do país inteiro que sobrevivem à cascata, antes de qualquer filtro. */
+    hexes_acionaveis_brasil: number
+    hexes_no_recorte: number
+    ufs_no_recorte: number
+    /** Quantos dos itens devolvidos vêm de consumo de concorrente NÃO medido. */
+    topo_sem_medicao: number
+  }
+  itens: HexagonoNacional[]
 }
 
 /* ------------------------------------------------------------------------- *

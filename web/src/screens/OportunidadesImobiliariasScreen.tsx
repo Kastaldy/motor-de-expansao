@@ -882,7 +882,7 @@ function MiniMapa({ op, pares, onSel }: { op: Oportunidade; pares: Oportunidade[
             {vizinhos.map((p) => (
               <Marker key={p.id} longitude={p.lng as number} latitude={p.lat as number} anchor="center" onClick={() => onSel(p.id)}>
                 <div style={{ position: 'relative', zIndex: hover === p.id ? 10 : 1 }} onMouseEnter={() => setHover(p.id)} onMouseLeave={() => setHover((h) => (h === p.id ? null : h))}>
-                  <div style={{ width: 13, height: 13, borderRadius: '50%', background: corTipo(p.tipo), border: '1.5px solid rgba(8,11,16,.75)', boxShadow: hover === p.id ? '0 0 0 3px rgba(255,255,255,.18)' : 'none', opacity: 0.9, cursor: 'pointer' }} />
+                  <div style={{ width: 13, height: 13, borderRadius: '50%', background: corTipo(p.tipo), border: '1.5px solid rgba(8,11,16,.75)', boxShadow: hover === p.id ? '0 0 0 3px var(--anel-mapa)' : 'none', opacity: 0.9, cursor: 'pointer' }} />
                   {hover === p.id && <TooltipImovel op={p} />}
                 </div>
               </Marker>
@@ -937,7 +937,7 @@ function MapaRecorte({ pontos, sel, onSel, altura = 620 }: { pontos: Oportunidad
           return (
             <Marker key={p.id} longitude={p.lng as number} latitude={p.lat as number} anchor="center" onClick={() => onSel(p.id)}>
               <div style={{ position: 'relative', zIndex: hover === p.id ? 10 : on ? 5 : 1 }} onMouseEnter={() => setHover(p.id)} onMouseLeave={() => setHover((h) => (h === p.id ? null : h))}>
-                <div style={{ width: on ? 18 : 13, height: on ? 18 : 13, borderRadius: '50%', background: corTipo(p.tipo), border: on ? '2px solid #fff' : '1.5px solid rgba(8,11,16,.75)', boxShadow: on ? `0 0 0 5px ${ACC_24}` : hover === p.id ? '0 0 0 3px rgba(255,255,255,.18)' : 'none', opacity: on ? 1 : 0.88, cursor: 'pointer' }} />
+                <div style={{ width: on ? 18 : 13, height: on ? 18 : 13, borderRadius: '50%', background: corTipo(p.tipo), border: on ? '2px solid #fff' : '1.5px solid rgba(8,11,16,.75)', boxShadow: on ? `0 0 0 5px ${ACC_24}` : hover === p.id ? '0 0 0 3px var(--anel-mapa)' : 'none', opacity: on ? 1 : 0.88, cursor: 'pointer' }} />
                 {hover === p.id && <TooltipImovel op={p} />}
               </div>
             </Marker>

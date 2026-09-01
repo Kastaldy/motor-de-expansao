@@ -36,6 +36,7 @@ import {
   crescClasseToColor,
   type RGBA,
 } from '../lib/colors'
+import type { Tema } from '../lib/tema'
 import type {
   Cobertura1k,
   CrescimentoMunicipal,
@@ -61,6 +62,27 @@ function iconeDeck(url: string): IconeDeck {
   return { url, width: 128, height: 128, anchorX: 64, anchorY: 64, mask: false }
 }
 
+// Logo do WellHub para os pins de academias INDEPENDENTES (todas vem do feed do WellHub).
+// Identidade de modulo (estavel) -> nao dispara re-pack do atlas. So' as independentes usam
+// esta marca; as unidades de REDE seguem com a bandeira propria (iconObjs por rede em `conc-pins`).
+const ICONE_WELLHUB: IconeDeck = iconeDeck('/logo-wellhub.png')
+
+/* Icones de FOTO, um por unidade sem marca — memoizados por arquivo.
+   Passa pelo MESMO `iconeDeck` das marcas, e isso nao e' cosmetico: sem `anchorX/anchorY`
+   o deck.gl ancora no rodape da imagem e o pino sai deslocado meio icone; sem `mask: false`
+   ele pinta a imagem com `getColor` em vez de mostra-la.
+   E o objeto precisa ser ESTAVEL entre renders: devolver um literal novo a cada chamada de
+   `getIcon` faz o atlas ser reempacotado a cada quadro. */
+/* Objeto simples, e nao `Map`: neste arquivo `Map` e' o componente do `react-map-gl`
+   (import no topo), que sombreia o `Map` do JS. */
+const _fotoIcones: Record<string, IconeDeck> = {}
+function iconeDaFoto(arquivo: string): IconeDeck {
+  const ic =
+    _fotoIcones[arquivo] ??
+    (_fotoIcones[arquivo] = iconeDeck(`/api/pin-concorrente/${encodeURIComponent(arquivo)}`))
+  return ic
+}
+
 /* ---------------------------------------------------------------------------
    Mapa de hexagonos H3 res-7 sobre basemap MapLibre.
 
@@ -69,13 +91,89 @@ function iconeDeck(url: string): IconeDeck {
    NaN com fill proprio. A opacidade e mais baixa que a do dashboard para as ruas
    do basemap respirarem por baixo (pedido do Felipe).
 
-   Basemap CARTO Dark Matter (online, fallback ao gradiente se faltar rede).
+   Basemap CARTO (online, fallback ao gradiente se faltar rede): Dark Matter no tema
+   escuro, Positron no claro.
    --------------------------------------------------------------------------- */
 
-const BASEMAP_STYLE =
-  'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+/* --- O que o tema muda AQUI dentro -----------------------------------------
+   Este arquivo pinta em dois motores que NAO leem `var()`: o deck.gl (WebGL, cor em
+   [r,g,b,a]) e o MapLibre (estilo por URL). Entao o tema, que no resto do app viaja
+   pela cascata de CSS, aqui tem de chegar como VALOR. E' a mesma razao do
+   `useCoresDaSeveridade` no ExecMap — a diferenca e' que la' os tokens sao lidos do
+   DOM, e aqui a paleta e' curta e fixa o bastante para viver como tabela.
+
+   Dark Matter e Positron sao o par claro/escuro do MESMO desenho cartografico da CARTO:
+   ruas, rotulos e hierarquia de vias ficam onde estavam, so' a pele muda.
+
+   O que NAO esta aqui, de proposito:
+     · a rampa de score (SCORE_BANDS_HEX) — e' porte 1:1 de `RESIDUAL_SCORE_BANDS`, a
+       mesma regua do dashboard e do PDF. Trocar matiz por tema faria o mapa discordar
+       do relatorio impresso. So' o ALPHA muda (ver `alphaHex`).
+     · o chip do rotulo de rank — escuro nos DOIS temas, porque ele pousa em cima da
+       rampa inteira (do vermelho ao verde) e e' o fundo dele que garante o contraste
+       do numero, nao o basemap.
+     · a linha fina neutra do hexagono e a sombra do concorrente — ambas sao tinta
+       ESCURA de baixo alfa, e escurecer funciona sobre os dois basemaps.
+   --------------------------------------------------------------------------- */
+interface PeleDoMapa {
+  basemap: string
+  /** Contorno do hex SELECIONADO e do hex do endereco buscado. Contrario do basemap. */
+  selecao: RGBA
+  /** `highlightColor` do deck.gl: o veu de hover sobre o hexagono. */
+  realce: RGBA
+  /** Preenchimento do hex do endereco buscado (mesma cor da selecao, bem transparente). */
+  selecaoTenue: RGBA
+  /** Anel e miolo do pin de endereco — a rosca inverte junto com o fundo. */
+  pinAnel: RGBA
+  pinMiolo: RGBA
+  /**
+   * Alpha do preenchimento dos hexes.
+   *
+   * No escuro sao 115, mais baixo que os 170 do dashboard, para as ruas do Dark Matter
+   * respirarem por baixo (pedido do Felipe). No claro isso nao se sustenta: sobre o
+   * Positron, 115 lava a rampa inteira em pastel — #EEC828 vira (247,230,158), quase
+   * o branco do papel, e o verde e o vermelho param de se distinguir num relance.
+   * O claro volta aos 170 CANONICOS do dashboard, e nao a um numero inventado: o
+   * Positron e' claro o bastante para as ruas sobreviverem a essa tinta.
+   */
+  alphaHex: number
+}
+
+const PELE: Record<Tema, PeleDoMapa> = {
+  escuro: {
+    basemap: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+    selecao: [238, 243, 248, 255],
+    realce: [236, 240, 245, 40],
+    selecaoTenue: [238, 243, 248, 45],
+    pinAnel: [255, 255, 255, 240],
+    pinMiolo: [8, 11, 16, 255],
+    alphaHex: HEX_FILL_ALPHA,
+  },
+  claro: {
+    basemap: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+    // Espelhos de --tx-max e --ac do bloco [data-tema='claro'] (styles/tokens.css).
+    // Ao mexer la', mexa aqui: o contorno da selecao no mapa e o item ativo do painel
+    // dizem a MESMA coisa, e divergir faria a tela se contradizer.
+    selecao: [11, 18, 25, 255],
+    realce: [11, 18, 25, 36],
+    selecaoTenue: [11, 18, 25, 45],
+    pinAnel: [11, 18, 25, 240],
+    pinMiolo: [255, 255, 255, 255],
+    alphaHex: 170,
+  },
+}
 
 const FLY = new FlyToInterpolator({ speed: 1.6 })
+
+/**
+ * Zoom em que UM hexagono res-7 domina a tela — o enquadramento de "olhar este ponto".
+ * E' o mesmo piso que os voos automaticos ja usavam; virou constante para os tres
+ * lugares que decidem camera (estado inicial, voo do centro, voo do pin) nao poderem
+ * divergir em silencio.
+ */
+const ZOOM_DO_HEXAGONO = 13
+/** Cidade inteira na tela: o padrao de quem abriu um municipio para explorar. */
+const ZOOM_DO_MUNICIPIO = 9.6
 
 export interface SearchPin {
   lat: number
@@ -121,11 +219,11 @@ const DIM_FORA_DO_PASSO = 0.5
    duas reguas lado a lado dariam cores incongruentes, medindo grandezas diferentes. */
 const PASSOS_DA_PRESSAO = new Set([2, 3])
 
-/** Alpha das pecas de cobertura = o MESMO do hexagono normal (`HEX_FILL_ALPHA`).
- *  Usar um alpha maior fazia o recorte parecer outra paleta, mais saturada que o resto
- *  do mapa. A leitura tem de ser a de sempre: a cor sai da mesma regua de faixas, e o
- *  que muda entre a parte livre e a coberta e' o SCORE, nao a intensidade da tinta. */
-const ALPHA_COBERTURA = HEX_FILL_ALPHA
+/* O alpha das pecas de cobertura e' o MESMO do hexagono normal (`pele.alphaHex`), e por
+   isso deixou de ser constante de modulo quando o tema entrou: usar um alpha maior fazia
+   o recorte parecer outra paleta, mais saturada que o resto do mapa. A leitura tem de ser
+   a de sempre — a cor sai da mesma regua de faixas, e o que muda entre a parte livre e a
+   coberta e' o SCORE, nao a intensidade da tinta. */
 
 /** Alpha de UMA sombra de concorrente. Baixo de proposito: o efeito e' CUMULATIVO.
  *  Com 34, uma concorrente escurece ~13%, duas ~25%, tres ~35%, e um aglomerado satura
@@ -136,7 +234,13 @@ const ALPHA_SOMBRA = 34
 /** Precedencia do dashboard: pop<5k vence, senao NaN, senao faixa de score.
  *  Hexes fora do passo atual entram esmaecidos (holofote no funil).
  *  Com `raio1km` ligado nos passos 2/3, a contagem de concorrentes vem ANTES de tudo. */
-function fillDoHex(h: Hex, passoN: number, noPasso: boolean, raio1km = false): RGBA {
+function fillDoHex(
+  h: Hex,
+  passoN: number,
+  noPasso: boolean,
+  raio1km = false,
+  alphaHex: number = HEX_FILL_ALPHA,
+): RGBA {
   /* O hexagono NAO muda de cor com a chave ligada — de proposito.
      Pintar o hexagono inteiro (por contagem ou por alunos perdidos) afirmava que ele
      todo esta sob a concorrente, quando o disco quase sempre cobre so' um PEDACO. Quem
@@ -157,10 +261,10 @@ function fillDoHex(h: Hex, passoN: number, noPasso: boolean, raio1km = false): R
   let base: RGBA
   if (h.pop !== null && h.pop < POP_MIN_ACIONAVEL) base = [...DISCARDED_FILL]
   else if (passoN === PASSO_POR_FAIXA_M1) {
-    base = h.faixa ? faixaM1ToColor(h.faixa, HEX_FILL_ALPHA) : [...NAN_SCORE_FILL]
+    base = h.faixa ? faixaM1ToColor(h.faixa, alphaHex) : [...NAN_SCORE_FILL]
   } else {
     const score = scoreDoPasso(h, passoN, raio1km)
-    base = score === null ? [...NAN_SCORE_FILL] : scoreBandToColor(score, HEX_FILL_ALPHA)
+    base = score === null ? [...NAN_SCORE_FILL] : scoreBandToColor(score, alphaHex)
   }
   if (noPasso) return base
   return [base[0], base[1], base[2], Math.round(base[3] * DIM_FORA_DO_PASSO)]
@@ -267,6 +371,8 @@ export interface HexMapProps {
   onImovel?: (o: Oportunidade) => void
   /** PROTOTIPO: area coberta pelo raio, ja recortada dentro dos hexagonos. */
   cobertura1k?: Cobertura1k | null
+  /** Tema do app: escolhe o basemap e as cores que o WebGL nao le' do CSS (ver `PELE`). */
+  tema: Tema
   cameraInicial?: ViewState | null
   /** Reporta a camera ao pai a cada mudanca, para sobreviver ao unmount da tela. */
   onCamera?: (v: ViewState) => void
@@ -329,10 +435,12 @@ export default function HexMap({
   imoveis,
   onImovel,
   cobertura1k,
+  tema,
   cameraInicial,
   onCamera,
   medindo = false,
 }: HexMapProps) {
+  const pele = PELE[tema]
   // O tooltip do passo 4 ficou alto (porte, obra, setor, salario, empresas) e era
   // cortado quando o cursor estava na parte de baixo ou na direita do mapa. Medimos
   // a caixa do mapa e viramos o balao para o lado que tem espaco.
@@ -380,18 +488,44 @@ export default function HexMap({
     return m
   }, [pins?.icones])
 
-  // Camera restaurada tem precedencia sobre o centro do municipio: e' ela que devolve
-  // o enquadramento de antes quando o operador volta do estudo pontual.
-  const [view, setView] = useState<ViewState>(
-    () =>
-      cameraInicial ?? {
-        longitude: centro.lng ?? -47.9,
-        latitude: centro.lat ?? -15.78,
-        zoom: 9.6,
+  /**
+   * O ENQUADRAMENTO INICIAL, em ordem de precedencia.
+   *
+   * 1. Camera restaurada (volta do estudo pontual) — devolve o que o operador tinha.
+   * 2. PIN EXTERNO — alguem ja escolheu um ponto: o mapa NASCE nele, aproximado.
+   * 3. Centro do municipio — o padrao de quem abriu uma cidade para explorar.
+   *
+   * POR QUE O PIN ENTRA AQUI, E NAO SO' NO VOO. Havia (e ha) um efeito que voa ate o
+   * `searchPin` com zoom >= 13. Medido em 28/08/2026, chegando pelo ranking nacional,
+   * ele NAO surtia efeito: o mapa parava em 9,6 — o enquadramento da cidade inteira —
+   * e o operador tinha de dar zoom a mao ate o hexagono que acabara de escolher na
+   * lista, que e' exatamente o trabalho que clicar em "Ver no mapa" deveria poupar.
+   *
+   * Este componente so' MONTA depois que o payload do municipio chega (o pai o renderiza
+   * sob `dados &&`), e o pin externo ja existe nesse instante. Entao nao ha nada a
+   * esperar: em vez de nascer longe e depender de um voo que corre contra os outros
+   * efeitos de camera, ele nasce ja enquadrado. Voo que nao precisa acontecer nao tem
+   * como chegar atrasado.
+   */
+  const [view, setView] = useState<ViewState>(() => {
+    if (cameraInicial) return cameraInicial
+    if (searchPin) {
+      return {
+        longitude: searchPin.lng,
+        latitude: searchPin.lat,
+        zoom: ZOOM_DO_HEXAGONO,
         pitch: 0,
         bearing: 0,
-      },
-  )
+      }
+    }
+    return {
+      longitude: centro.lng ?? -47.9,
+      latitude: centro.lat ?? -15.78,
+      zoom: ZOOM_DO_MUNICIPIO,
+      pitch: 0,
+      bearing: 0,
+    }
+  })
 
   // Sobe a camera para o pai a cada mudanca. Sem isso ela morre no unmount da tela
   // (App troca `mapa` por `viabilidade` com render condicional, o que DESMONTA a arvore).
@@ -403,21 +537,45 @@ export default function HexMap({
   }, [view, onCamera])
 
   // Voa para o centro do municipio quando ele muda.
+  //
+  // UM PIN EXTERNO VENCE O CENTRO DO MUNICIPIO. Sem esta regra o zoom do pin era
+  // desfeito por uma corrida: quem chega pelo ranking nacional muda UF e municipio na
+  // mesma passagem, o voo ate' o pin roda de imediato (zoom >= 13) e, quando o payload
+  // do municipio finalmente chega, `centro` muda e ESTE efeito afastava a camera de
+  // volta para 9.6 — a cidade inteira, que e' exatamente o que o operador acabou de
+  // pedir para nao ter de olhar. Os dois voos estao certos; so' a ordem enganava,
+  // porque o segundo depende de dado que chega DEPOIS do primeiro.
+  //
+  // O centro do municipio continua sendo o destino certo quando NINGUEM escolheu um
+  // ponto: e' o enquadramento de quem acabou de abrir uma cidade para explorar.
   const centroKey = `${centro.lat},${centro.lng}`
   const centroAnterior = useRef(centroKey)
   useEffect(() => {
     if (centro.lat == null || centro.lng == null) return
     if (centroAnterior.current === centroKey) return
     centroAnterior.current = centroKey
+    if (searchPin) {
+      setView((v) => ({
+        ...v,
+        longitude: searchPin.lng,
+        latitude: searchPin.lat,
+        // Mesmo piso do voo do pin, e pelo mesmo motivo: nunca AFASTAR de quem ja'
+        // esta' aproximado. `max` guarda o zoom do operador se ele ja' foi mais fundo.
+        zoom: Math.max(ZOOM_DO_HEXAGONO, v.zoom),
+        transitionDuration: 700,
+        transitionInterpolator: FLY,
+      }))
+      return
+    }
     setView((v) => ({
       ...v,
       longitude: centro.lng!,
       latitude: centro.lat!,
-      zoom: 9.6,
+      zoom: ZOOM_DO_MUNICIPIO,
       transitionDuration: 700,
       transitionInterpolator: FLY,
     }))
-  }, [centroKey, centro.lat, centro.lng])
+  }, [centroKey, centro.lat, centro.lng, searchPin])
 
   // Voa e aproxima quando um ponto e buscado. No PRIMEIRO render com camera restaurada
   // o voo e' pulado de proposito: o pin ja existia antes da ida a Viabilidade, e voar
@@ -438,7 +596,7 @@ export default function HexMap({
       ...v,
       longitude: searchPin.lng,
       latitude: searchPin.lat,
-      zoom: Math.max(13, v.zoom),
+      zoom: Math.max(ZOOM_DO_HEXAGONO, v.zoom),
       transitionDuration: 800,
       transitionInterpolator: FLY,
     }))
@@ -674,17 +832,40 @@ export default function HexMap({
         extruded: false,
         filled: true,
         stroked: true,
+        /* GEOMETRIA FIEL — o default `highPrecision: 'auto'` nao serve aqui.
+
+           'auto' so' liga a precisao alta com globo, pentagono no dataset, resolucoes
+           misturadas ou res<=5. Nada disso vale nesta camada (tudo res-7, mercator),
+           entao ela cai no caminho rapido: o deck.gl calcula os 6 vertices de UM
+           hexagono — o do centro da tela — e desenha todos os outros como aquele mesmo
+           poligono TRANSLADADO. Longe do centro o clone deixa de bater com a celula H3
+           real: as celulas saem inclinadas e abrem fresta entre as vizinhas.
+
+           E ele so' recalcula quando o centro anda alem de um limiar — por isso a torcao
+           ANDA ao dar zoom ou arrastar (relato do Juan, 2026-08-26: "se eu coloco zoom e
+           tiro, os hexagonos ficam tortos").
+
+           DOI MUITO MAIS NA ARGENTINA, e por isso o Brasil nunca reclamou: um pentagono
+           H3 res-7 fica a 504 km da costa argentina (-39,10/-57,70) e comprime a grade em
+           volta. Erro maximo medido, invariante a rotacao: Grande Sao Paulo 10 m (1% da
+           aresta), Estado de SP 81 m (6%), Grande Buenos Aires 1.089 m — 77% da aresta de
+           1.406 m. A armadilha: 'auto' ligaria a precisao se houvesse pentagono NO
+           DATASET, mas esse esta no oceano, onde nunca havera hexagono povoado.
+
+           Com 42 mil celulas, sem custo perceptivel. */
+        highPrecision: true,
         getFillColor: (d) => {
           const comRaio = raio1km && PASSOS_DA_PRESSAO.has(passo.n)
           // Transparente onde a cobertura ja pinta o hexagono inteiro (ver `hexesCobertos`).
           if (comRaio && hexesCobertos.has(d.id)) return [0, 0, 0, 0]
-          return fillDoHex(d, passo.n, destaque.has(d.id), comRaio)
+          return fillDoHex(d, passo.n, destaque.has(d.id), comRaio, pele.alphaHex)
         },
-        // Borda neutra e fina; hex SELECIONADO -> contorno claro; hexes do CENÁRIO
+        // Borda neutra e fina; hex SELECIONADO -> contorno CONTRÁRIO ao basemap (claro
+        // no escuro, escuro no claro); hexes do CENÁRIO
         // multi-hex -> a COR DE IDENTIDADE da posição dele na comparação, a mesma da barra
         // no painel (antes eram todos turquesa, e nada ligava barra a hexágono na tela).
         getLineColor: (d) => {
-          if (d.id === selecionado) return [238, 243, 248, 255]
+          if (d.id === selecionado) return pele.selecao
           if (!cenarioSet.has(d.id)) return [8, 11, 16, 55]
           // TETO na cor, e não no clique. O `cenario` cresce além de 5 de propósito — o
           // painel troca para o modo SOMA e ali somar 8 hexágonos é legítimo. Mas a
@@ -697,6 +878,10 @@ export default function HexMap({
           // camada já dá àquela matiz — no passo 4, um hex do cenário que também fosse
           // "Em alta" ficaria com contorno e preenchimento da mesma cor. Cinza não afirma
           // nada, e a largura de 42 m (getLineWidth) já marca a seleção.
+          // As CORES_IDENTIDADE não seguem o tema, e isso é deliberado: são as mesmas
+          // cores das barras do painel de comparação, e é essa igualdade que liga a
+          // barra ao hexágono. Fazê-las mudar de valor no claro quebraria o par. São de
+          // tonalidade média, em linha opaca de 42 m — sobrevivem nos dois basemaps.
           const i = cenarioLista.indexOf(d.id)
           return i < CORES_IDENTIDADE.length ? corDeIdentidadeRgb(i) : [154, 167, 181, 255]
         },
@@ -705,7 +890,7 @@ export default function HexMap({
         lineWidthMinPixels: 0.5,
         pickable: true,
         autoHighlight: true,
-        highlightColor: [236, 240, 245, 40],
+        highlightColor: pele.realce,
         onClick: (info) => {
           // Com a regua ligada o clique e' da medicao: selecionar hexagono AQUI trocaria
           // a camada colorida embaixo da linha que o operador acabou de tracar.
@@ -718,8 +903,10 @@ export default function HexMap({
           )
         },
         updateTriggers: {
-          getFillColor: [passo.n, raio1km, hexesCobertos],
-          getLineColor: [selecionado, cenarioKey],
+          // `tema` entra nos dois gatilhos: as funções acima o capturam por closure, e
+          // sem ele o deck.gl reusa os buffers e o mapa fica com a pele antiga.
+          getFillColor: [passo.n, raio1km, hexesCobertos, tema],
+          getLineColor: [selecionado, cenarioKey, tema],
           getLineWidth: [selecionado, cenarioKey],
         },
         transitions: { getFillColor: 260 },
@@ -752,7 +939,7 @@ export default function HexMap({
                  cai — e cai MAIS quanto mais concorrente consome, o que da a intensidade
                  da disputa sem empilhar geometria (a versao anterior desenhava uma peca
                  por concorrente e 49 poligonos sobrepostos poluiam o mapa). */
-              getFillColor: (d) => scoreBandToColor(d.score, ALPHA_COBERTURA),
+              getFillColor: (d) => scoreBandToColor(d.score, pele.alphaHex),
               /* PICKABLE: sem isto o tooltip morria sobre qualquer hexagono coberto.
                  O preenchimento do hexagono e' zerado onde a cobertura pinta (para nao
                  pintar a mesma cor duas vezes), e o hover passava a nao encontrar
@@ -767,7 +954,7 @@ export default function HexMap({
               // pela camada `conc-alcance-1km`. Contornar cada peca acrescentaria as
               // ARESTAS DOS HEXAGONOS ao desenho e traria de volta a poluicao.
               stroked: false,
-              updateTriggers: { getFillColor: [passo.n] },
+              updateTriggers: { getFillColor: [passo.n, tema] },
               pickable: true,
               // O H3HexagonLayer desenha no MESMO plano (z=0). Com o teste de
               // profundidade ligado as duas geometrias disputam o pixel e a cobertura
@@ -834,37 +1021,30 @@ export default function HexMap({
           ]
         : []),
 
-      /* INDEPENDENTES (BLK-MA-15): circulo, nao bandeira. Elas nao tem marca — sao academias
-         de bairro —, entao nao ha logo a exibir, e um icone generico competiria visualmente com
-         as bandeiras das cadeias sem acrescentar informacao.
-
-         COR UNICA, de proposito. A tentacao e' colorir por score, mas isso exigiria uma regua
-         nova sobre a rampa de 10 faixas que ja colore os hexagonos por baixo — duas escalas de
-         cor na mesma tela, medindo coisas diferentes, e' o defeito que o repo ja registrou como
-         "dois idiomas". O numero vive no tooltip, onde tem rotulo e contexto. Desenhadas ANTES
-         dos concorrentes e da Ultra: onde houver sobreposicao, quem manda na leitura e' a rede
-         instalada. */
+      /* INDEPENDENTES (BLK-MA-15): logo do WellHub. Todas vem do feed do WellHub, entao a marca
+         do agregador as identifica — pedido do Felipe (2026-08-25). SO' as independentes levam a
+         logo do WellHub; as unidades de REDE mantem a bandeira propria (camada `conc-pins`).
+         O numero vive no tooltip (setIndepHover). Desenhadas ANTES dos concorrentes e da Ultra:
+         onde houver sobreposicao, quem manda na leitura e' a rede instalada. */
       ...(independentes?.length
         ? [
-            new ScatterplotLayer<PinIndependente>({
+            new IconLayer<PinIndependente>({
               id: 'independentes-pins',
               data: independentes,
               getPosition: (d) => [d.lng ?? 0, d.lat ?? 0],
-              getRadius: 5,
-              radiusUnits: 'pixels',
-              radiusMinPixels: 3,
-              radiusMaxPixels: 8,
-              getFillColor: [232, 102, 60, 205],
-              stroked: true,
-              getLineColor: [16, 20, 28, 210],
-              lineWidthUnits: 'pixels',
-              getLineWidth: 1,
+              getIcon: () => ICONE_WELLHUB,
+              // Menor que a bandeira das cadeias (30-38): a independente e' camada secundaria e
+              // nao pode competir com a rede instalada. Cap 30 evita upscaling do atlas de 128px.
+              getSize: 22,
+              sizeUnits: 'pixels',
+              sizeMinPixels: 10,
+              sizeMaxPixels: 30,
               pickable: true,
               onHover: (info) => {
                 const d = info.object as PinIndependente | undefined
                 setIndepHover(d ? { d, x: info.x, y: info.y } : null)
               },
-            }) as unknown as ScatterplotLayer<Hex>,
+            }) as unknown as IconLayer<Hex>,
           ]
         : []),
 
@@ -921,6 +1101,19 @@ export default function HexMap({
         // Unidade com diagnostico usa a variante com HALO. O fallback para o icone normal importa:
         // se o backend nao mandou a variante, o pin aparece igual aos outros em vez de sumir.
         getIcon: (d) =>
+          /* FOTO NO LUGAR DO QUADRADO. A independente não tem logo e caía num quadrado
+             cinza com "IND" — três letras iguais em milhares de pinos, que não distinguem
+             nada (pedido do Juan, 2026-08-26). Com a foto da unidade, cada pino vira a
+             fachada dela.
+
+             O ícone é montado AQUI, e não recebido pronto em `pins.icones` como as marcas:
+             logo é da REDE e são ~12 no país inteiro, cabendo num dicionário; foto é da
+             UNIDADE e são milhares — embuti-las no payload o levaria a centenas de MB. Por
+             URL, o deck.gl empacota sozinho e o navegador guarda em cache.
+
+             Quem decide QUAIS pinos entram é o servidor (`icone_foto`): ele sabe quais
+             logos existem e aplica o teto do atlas. */
+          (d.icone_foto && d.foto ? iconeDaFoto(d.foto) : undefined) ??
           (d.diag ? iconObjs[`${d.rede ?? ''}__diag`] : undefined) ??
           iconObjs[d.rede ?? ''] ??
           iconObjs.__ultra__,
@@ -982,7 +1175,10 @@ export default function HexMap({
             data: [{ de: medicao.a, para: medicao.b }],
             getSourcePosition: (d) => [d.de.lng, d.de.lat],
             getTargetPosition: (d) => [d.para.lng, d.para.lat],
-            getColor: [238, 243, 248, 235],
+            // CONTRARIO ao basemap: era o quase-branco fixo, que sobre o Positron
+            // desaparecia — uma regua invisivel nao mede nada. No escuro `pele.selecao`
+            // devolve o mesmo (238,243,248); o 235 de alfa e' preservado.
+            getColor: [pele.selecao[0], pele.selecao[1], pele.selecao[2], 235],
             getWidth: 2.5,
             widthUnits: 'pixels',
             pickable: false,
@@ -1036,7 +1232,8 @@ export default function HexMap({
       )
     }
 
-    // Ponto buscado: hexagono marcado + pin em BRANCO (anel claro, miolo escuro).
+    // Ponto buscado: hexagono marcado + pin de DUAS camadas (anel na cor da selecao,
+    // miolo no fundo do tema — no escuro anel claro/miolo escuro, no claro o inverso).
     // Buscar um endereco e' uma forma de SELECIONAR, entao vale a mesma cor do hex
     // selecionado e do item ativo do painel; o turquesa ficou exclusivo do cenario
     // multi-hex, que era a unica marcacao turquesa deliberada do mapa.
@@ -1049,8 +1246,11 @@ export default function HexMap({
           extruded: false,
           filled: true,
           stroked: true,
-          getFillColor: [238, 243, 248, 45],
-          getLineColor: [238, 243, 248, 255],
+          /* Mesma razao da camada `hex`: o realce do ponto buscado tem de POUSAR
+             exatamente sobre a celula de baixo. */
+          highPrecision: true,
+          getFillColor: pele.selecaoTenue,
+          getLineColor: pele.selecao,
           getLineWidth: 3,
           lineWidthUnits: 'pixels',
           pickable: false,
@@ -1063,7 +1263,7 @@ export default function HexMap({
           getPosition: (d) => [d.lng, d.lat],
           getRadius: 11,
           radiusUnits: 'pixels',
-          getFillColor: [255, 255, 255, 240],
+          getFillColor: pele.pinAnel,
           pickable: false,
         }) as unknown as ScatterplotLayer<Hex>,
       )
@@ -1074,9 +1274,9 @@ export default function HexMap({
           getPosition: (d) => [d.lng, d.lat],
           getRadius: 6,
           radiusUnits: 'pixels',
-          // Miolo no fundo do tema (--bg-base): o pin vira uma rosca branca em vez
-          // de uma bolha chapada, e continua sem usar matiz nenhuma.
-          getFillColor: [8, 11, 16, 255],
+          // Miolo no fundo do tema (--bg-base): o pin vira uma rosca em vez de uma
+          // bolha chapada, e continua sem usar matiz nenhuma.
+          getFillColor: pele.pinMiolo,
           pickable: false,
         }) as unknown as ScatterplotLayer<Hex>,
       )
@@ -1141,6 +1341,10 @@ export default function HexMap({
     // Mesmo motivo do bloco acima: o corpo LE as duas para montar (ou nao) a regua.
     medindo,
     medicao,
+    // `pele` e `tema` andam juntos (um deriva do outro), mas os dois entram: `pele` é o
+    // que o corpo do memo lê, e `tema` é o que vai nos `updateTriggers` das camadas.
+    pele,
+    tema,
   ])
 
   return (
@@ -1179,12 +1383,16 @@ export default function HexMap({
           medindo ? 'crosshair' : isHovering ? 'pointer' : 'grab'
         }
       >
-        {/* A `key` muda com `capturando` porque atributo de contexto WebGL não se troca num
-            contexto já criado — só recriando. E `reuseMaps` sai de cena junto: reaproveitar
-            a instância devolveria o canvas antigo, sem o buffer, e a imagem sairia branca. */}
+        {/* A `key` carrega DOIS motivos de remontagem, e os dois precisam estar nela.
+            `capturando`: atributo de contexto WebGL não se troca num contexto já criado —
+            só recriando; e `reuseMaps` sai de cena junto, porque reaproveitar a instância
+            devolveria o canvas antigo, sem o buffer, e a imagem sairia branca.
+            `tema`: trocar `mapStyle` no ar mantém as camadas do estilo antigo até o novo
+            terminar de carregar, e as duas peles aparecem sobrepostas (mesma solução do
+            `ExecMap`). */}
         <Map
-          key={capturando ? 'captura' : 'normal'}
-          mapStyle={BASEMAP_STYLE}
+          key={`${tema}|${capturando ? 'captura' : 'normal'}`}
+          mapStyle={pele.basemap}
           attributionControl={{ compact: true }}
           reuseMaps={!capturando}
           canvasContextAttributes={{ preserveDrawingBuffer: capturando }}
@@ -1204,7 +1412,7 @@ export default function HexMap({
             borderRadius: 'var(--r-md)',
             padding: '10px 12px',
             backdropFilter: 'blur(16px)',
-            boxShadow: '0 10px 30px -8px rgba(0,0,0,.7)',
+            boxShadow: 'var(--sh-pop)',
             zIndex: 30,
             minWidth: 196,
           }}
@@ -1597,11 +1805,37 @@ export default function HexMap({
             borderRadius: 'var(--r-md)',
             padding: '7px 10px',
             backdropFilter: 'blur(16px)',
-            boxShadow: '0 10px 30px -8px rgba(0,0,0,.7)',
+            boxShadow: 'var(--sh-pop)',
             zIndex: 30,
             maxWidth: 240,
           }}
         >
+          {/* FOTO DA UNIDADE, quando a base a trouxe (pedido do Juan, 2026-08-26).
+              Vem ANTES do nome, como capa: quem passa o mouse quer reconhecer a casa, e a
+              foto faz isso mais rapido que o texto. `onError` esconde a imagem em vez de
+              deixar o icone de quebrado — a base pode citar um arquivo que sumiu, e um
+              retangulo vazio le pior que nenhum. `loading="lazy"` porque o balao troca a
+              cada pino sob o cursor: sem isso, arrastar o mouse pelo mapa dispararia uma
+              requisicao por unidade tocada. */}
+          {pinHover.d?.foto && (
+            <img
+              src={`/api/foto-concorrente/${encodeURIComponent(pinHover.d.foto)}`}
+              alt=""
+              loading="lazy"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none'
+              }}
+              style={{
+                display: 'block',
+                width: '100%',
+                height: 96,
+                objectFit: 'cover',
+                borderRadius: 'var(--r-sm)',
+                marginBottom: 7,
+                background: 'var(--surf-raised)',
+              }}
+            />
+          )}
           <div style={{ font: '600 12px/1.2 var(--f-ui)', color: 'var(--tx-max)' }}>
             {pinHover.titulo}
           </div>
