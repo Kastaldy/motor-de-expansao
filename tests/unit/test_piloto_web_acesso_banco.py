@@ -173,10 +173,31 @@ def test_o_painel_de_acessos_continua_fora_do_mecanismo() -> None:
 
 
 def test_o_mecanismo_de_abas_continua_intacto() -> None:
-    """A troca é por env, e é reversível: sem `MOTOR_DATABASE_URL`, nada muda. As 19 regras
+    """A troca é por env, e é reversível: sem `MOTOR_DATABASE_URL`, nada muda. As regras
     antigas seguem no módulo, e o middleware escolhe entre os dois caminhos."""
-    assert len(acesso.REGRAS_DE_ACESSO) == 19
+    assert acesso.REGRAS_DE_ACESSO
     assert acesso.abas_necessarias("/api/rede/") == frozenset({"executiva"})
+
+
+def test_toda_rota_controlada_por_aba_tem_capacidade_correspondente() -> None:
+    """O teste que o número mágico não fazia.
+
+    Enquanto os dois mecanismos coexistem, uma rota nova entra primeiro no modelo por aba
+    (é lá que o `test_piloto_web_acesso` obriga). Se ela não ganhar capacidade aqui, fica
+    SEM CONTROLE com o banco no comando -- passa livre, em silêncio, para quem quer que
+    seja. Foi o que aconteceu na sincronia com a main de 01/09, que trouxe `/api/hexagonos`,
+    `/api/foto-concorrente/` e `/api/pin-concorrente/`: contar regras pegou o sintoma pelo
+    número; isto pega a causa, e continua pegando na próxima vez.
+    """
+    sem_capacidade = [
+        prefixo
+        for prefixo, _abas in acesso.REGRAS_DE_ACESSO
+        if acesso.capacidade_necessaria(prefixo, "GET") is None
+    ]
+    assert not sem_capacidade, (
+        f"rotas controladas por aba e SEM capacidade no RBAC: {sem_capacidade}. "
+        "Acrescente-as a REGRAS_POR_CAPACIDADE e a migration de seed correspondente."
+    )
 
 
 # --------------------------------------------------------------------------------------

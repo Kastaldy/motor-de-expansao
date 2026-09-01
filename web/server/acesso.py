@@ -336,6 +336,14 @@ REGRAS_POR_CAPACIDADE: tuple[tuple[str, tuple[str, ...] | None, str], ...] = (
     ("/api/municipio/", None, "territorio.explorar"),
     ("/api/municipios/", None, "territorio.explorar"),
     ("/api/estados", None, "territorio.ranking_nacional"),
+    # Ranking NACIONAL de hexagonos (DEC-044) — mesma natureza de `/api/estados`: a fila
+    # pronta sem escolher estado. No modelo por aba as duas sao `oportunidades`.
+    ("/api/hexagonos", None, "territorio.ranking_nacional"),
+    # Foto e pino da unidade concorrente: camada VISUAL do Mapa Territorial. No modelo por
+    # aba sao `{mapa, oportunidades}`; aqui `territorio.explorar` nao perde ninguem, porque
+    # todo perfil da D22 que tem o ranking tem tambem a exploracao.
+    ("/api/foto-concorrente/", None, "territorio.explorar"),
+    ("/api/pin-concorrente/", None, "territorio.explorar"),
     ("/api/oportunidades/", None, "imovel.dossie_ver"),
     ("/api/oportunidades", None, "imovel.listar"),
     ("/api/imobiliaria/evento/", None, "imovel.registrar_gesto"),
