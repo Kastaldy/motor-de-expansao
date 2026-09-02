@@ -3381,6 +3381,8 @@ def _perfil_do_cliente() -> dict[str, Any]:
     de carona, sem round trip novo e sem superficie nova para o gate de acesso cobrir.
 
     A lista e curta de proposito. Cada campo aqui tem um leitor nomeado no front:
+      pais                       -> o carimbo de bandeira do Dock e os rotulos de
+                                    unidade federativa (`rodape-base.ts`)
       nome                       -> a frase "fora de X" (`entrada-ponto.ts`)
       locale                     -> `new Intl.NumberFormat(...)` (`format.ts`)
       moeda                      -> os oito literais de `R$` (`format.ts`)
@@ -3393,6 +3395,7 @@ def _perfil_do_cliente() -> dict[str, Any]:
     no front seria numero que envelhece calado — a mesma regra da spec §1.1.
     """
     return {
+        "pais": PERFIL.pais,
         "nome": PERFIL.nome,
         "locale": PERFIL.locale,
         "moeda": {"codigo": PERFIL.moeda.codigo, "simbolo": PERFIL.moeda.simbolo},

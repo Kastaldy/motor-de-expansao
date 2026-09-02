@@ -737,7 +737,7 @@ export default function MapScreen({
     return (
       <Landing
         marcador="Explorar uma região"
-        titulo={tituloEscolhaUnidade(ufs)}
+        titulo={tituloEscolhaUnidade()}
         explicacao="O mapa lê o território inteiro e monta a sequência de camadas — do potencial socioeconômico até os municípios com mais espaço para abrir."
         onInicio={onInicio}
       >

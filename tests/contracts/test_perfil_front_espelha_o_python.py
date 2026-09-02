@@ -56,6 +56,7 @@ def ts_br() -> dict[str, Any]:
 #: `_perfil_do_cliente()` monta em `web/server/app.py` — se as duas divergirem, um dos
 #: dois testes abaixo falha nomeando o campo.
 CAMPOS_DO_FRONT = [
+    "pais",
     "nome",
     "locale",
     "moeda.codigo",
