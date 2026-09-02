@@ -48,7 +48,7 @@ O boot é **fail-closed**. As três formas de falha são diferentes de propósit
 
 > **O que continua valendo do texto antigo.** O modo de falha que este arquivo existe para matar é o `_DEFAULT_DATA` de `web/server/app.py:99-101` — um caminho absoluto da máquina de um desenvolvedor. **Esse** morre, e é diferente do default de dev: o `_DEFAULT_DATA` apontava para **dados** de uma máquina que não existe no container e servia dado errado com HTTP 200; o perfil BR embarcado é **versionado, revisável em PR e travado por teste de contrato**, e em produção nunca é alcançado, porque em produção `MOTOR_DATA_DIR` está setado. Um default que só existe quando a env está ausente não pode subir uma instância com o país errado: se a env falta, não há volume de país nenhum para errar.
 
-**Escrito também na DEC-046** (seção "Consequências para decisões anteriores"), para a próxima pessoa não "consertar" de volta para o fail-closed incondicional.
+**Escrito também na DEC-047** (seção "Consequências para decisões anteriores"), para a próxima pessoa não "consertar" de volta para o fail-closed incondicional.
 
 ### 3.2 Campo obrigatório ausente ou nulo → o container não sobe
 

@@ -30,7 +30,7 @@ tenha lido no repositório ou que não esteja marcada como pendente de teste no 
 | **`Caddyfile` e `authelia/*` NÃO estão no git** | `.gitignore:129-131`; `git ls-files Caddyfile authelia/configuration.yml authelia/users_database.yml` devolve **vazio**; `git check-ignore -v` aponta as três linhas | ✅ — e é o fato que **parte o §7.4 em dois** e limita o que o §7.3 pode exigir do guard |
 | Um diretório novo na raiz **entra** nas imagens | `Dockerfile.web:43` e `Dockerfile.api:33` fazem `COPY . .` | ✅ — daí o §5.2 |
 | O padrão para tirar arquivo de deploy da imagem já existe | `.dockerignore:39-42` — *"Configurações de deploy (montados via volume)"*: `Caddyfile`, `authelia/`, `.env` | ✅ |
-| A DEC-046 recusa **seletor de país em runtime** | `docs/decisions/DEC-046.md:6` (item 1) | ✅ — texto citado no §1.2 |
+| A DEC-047 recusa **seletor de país em runtime** | `docs/decisions/DEC-047.md:6` (item 1) | ✅ — texto citado no §1.2 |
 | Deploy sempre manual, por digest | `CLAUDE.md:131-137` (§6) e a ressalva da DEC-016 em `CLAUDE.md:144` | ✅ |
 | Repo na VPS em `/opt/motor-expansao/app` | `docs/infra_producao.md:772`, `:824` | ✅ — é o que faz o bind relativo `./portal` funcionar (§5.2) |
 
@@ -82,9 +82,9 @@ Comportamento pedido, e é só isto:
 | **vários** países | vê a página de escolha — **com os países que ele pode abrir, e só eles** |
 | **nenhum** país | vê uma explicação em português dizendo a quem pedir acesso — nomeadamente: *"Fale com o Felipe — é liberação de grupo, leva minutos"* (§5.4). Não um 403 seco, e muito menos o 404 cru do Caddy. |
 
-### 1.2 Por que isto NÃO contradiz a DEC-046 — e este parágrafo precisa sobreviver a qualquer edição
+### 1.2 Por que isto NÃO contradiz a DEC-047 — e este parágrafo precisa sobreviver a qualquer edição
 
-A DEC-046 (`docs/decisions/DEC-046.md:6`) recusa, textualmente:
+A DEC-047 (`docs/decisions/DEC-047.md:6`) recusa, textualmente:
 
 > *"Não existe seletor de país em runtime, não existe eixo de país em chave de cache, em rota, em
 > payload ou em `localStorage`."*
@@ -106,10 +106,10 @@ país no PDF do outro, calado.
    com uma promessa.
 3. **Depois do redirect ele sai da frente.** O navegador termina a requisição em
    `piloto.ultra-expansao.tech` ou em `piloto-ar.ultra-expansao.tech`. Cada país segue com **seu
-   processo, seu cache e seu `perfil.json`**, exatamente como a DEC-046 manda.
+   processo, seu cache e seu `perfil.json`**, exatamente como a DEC-047 manda.
 
 > **A frase que resolve a discussão:** este é um **roteador de porta de entrada**, não um seletor de
-> tenant. Ele decide um **destino**; a DEC-046 proíbe decidir uma **base**. O eixo de país continua
+> tenant. Ele decide um **destino**; a DEC-047 proíbe decidir uma **base**. O eixo de país continua
 > sendo propriedade do deploy — o portal apenas para de exigir que o humano decore qual deploy é o
 > dele.
 
@@ -182,10 +182,10 @@ Substitui integralmente as linhas **19-22** do `Caddyfile`.
 # ── PORTAL DE SELECAO DE PAIS (raiz) ────────────────────────────────────────────
 # Decidido em 2026-08-31. Spec: docs/spec_portal_selecao_pais.md.
 #
-# POR QUE ISTO NAO CONTRADIZ A DEC-046: este bloco nao serve dado nenhum. Ele le UM
+# POR QUE ISTO NAO CONTRADIZ A DEC-047: este bloco nao serve dado nenhum. Ele le UM
 # cabecalho (Remote-Groups, que o Authelia ja entrega) e devolve ou um 302 ou uma
 # tela estatica. Nao ha processo de pais aqui, nao ha cache, nao ha MOTOR_DATA_DIR.
-# A DEC-046 proibe escolher a BASE em runtime; isto escolhe o DESTINO e sai da frente.
+# A DEC-047 proibe escolher a BASE em runtime; isto escolhe o DESTINO e sai da frente.
 # Cada pais segue com seu processo, seu cache e seu perfil.json.
 ultra-expansao.tech, www.ultra-expansao.tech {
     import sec_headers

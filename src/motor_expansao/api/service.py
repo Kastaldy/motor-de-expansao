@@ -168,11 +168,218 @@ def _carregar_pontos(path_str: str, colunas: tuple[str, ...]):
         return None
 
 
-def _competitors_ultra(settings: Settings):
-    """(competitors_df, ultra_df) da staging, ou (None, None) se ausente. READ-ONLY."""
-    comp = _carregar_pontos(
-        str(settings.staging_dir / "concorrentes_mapeados.parquet"), ("rede", "lat", "lng")
+# --- oferta unida do Relatorio Pontual (DEC-046) -----------------------------
+#
+# Ate' a DEC-046 a oferta vinha SO' de `concorrentes_mapeados.parquet`, que e' um cadastro
+# de CADEIAS: 4.499 pontos, 104 redes, ZERO independentes -- por construcao (DEC-033), nao
+# por falha de coleta. Medido: 53,46% dos enderecos urbanos do pais devolviam ZERO
+# concorrente em 1 km, e 13 das 40 maiores cidades saiam zeradas no centro.
+#
+# A uniao das 3 fontes corrige a COBERTURA. A coluna `classe` e' o que impede a correcao de
+# INVERTER o criterio PASS/FAIL da ficha: com o universo indo de 4,5 mil para ~24,5 mil
+# pontos, um teto absoluto de 3 reprovaria 70% das pracas onde a propria Ultra opera hoje
+# (medido: 27 -> 105 das 150 unidades). Por isso a ficha le `n_concorrentes_cadeia`
+# (regua INTACTA) e o total entra como fato exibido -- D2/D3 da DEC-046.
+#
+# Identificadores CRUS, sem acento (regra do CLAUDE.md secao 2): sao comparados em codigo
+# e em teste.
+#
+# A FONTE CANONICA do vocabulario e' `dashboard.censo_point` (o motor define, a API produz
+# conforme). Aqui sao repetidos como literais, e nao importados, porque o import do motor e'
+# LAZY neste modulo de proposito -- ele puxa pandas/pyproj e so' deve custar isso no caminho
+# de analise. A igualdade entre os dois pares e' travada por
+# `test_classe_da_oferta_casa_com_o_vocabulario_do_motor`, para a duplicacao nao driftar.
+CLASSE_CADEIA = "cadeia"
+CLASSE_INDEPENDENTE = "independente"
+
+FONTE_MAPEADOS = "concorrentes_mapeados"
+FONTE_REDES_AGREGADOR = "vulnerabilidade_ma_redes"
+FONTE_INDEPENDENTES = "vulnerabilidade_ma_nomeadas"
+FONTES_OFERTA = (FONTE_MAPEADOS, FONTE_REDES_AGREGADOR, FONTE_INDEPENDENTES)
+
+# D5 da DEC-046: independente colapsa contra QUALQUER cadeia a <= 50 m. Reusa o piso da
+# DEC-034 e NAO casa nome -- independente nao tem `rede` com que casar.
+_DEDUP_INDEPENDENTE_M = 50.0
+
+_COLS_OFERTA = ["rede", "nome", "lat", "lng", "classe"]
+
+
+def _ler_fonte_oferta(path: Path, obrigatorias: tuple[str, ...], opcionais: tuple[str, ...]):
+    """Le um parquet de oferta projetando SO' as colunas que existem no schema.
+
+    `read_parquet(columns=[...])` levanta quando uma coluna nao existe, e um `except` no
+    chamador transformaria isso em "fonte ausente": a fonte INTEIRA sumiria em silencio por
+    causa de uma coluna opcional. E' a forma do defeito que a DEC-038 pagou caro (a coluna
+    existia, so' nao chegava, e o sintoma era campo vazio sem erro nenhum).
+
+    Devolve `None` quando o arquivo falta ou quando falta coluna OBRIGATORIA -- os dois
+    casos sao "esta fonte nao entrou", e quem chama registra isso em `fontes_unidas`.
+    """
+    import pandas as pd
+    import pyarrow.parquet as pq
+
+    if not path.is_file():
+        return None
+    try:
+        disponiveis = set(pq.read_schema(path).names)
+        if not set(obrigatorias).issubset(disponiveis):
+            return None
+        extras = [c for c in opcionais if c in disponiveis]
+        return pd.read_parquet(path, columns=[*obrigatorias, *extras])
+    except Exception:
+        return None
+
+
+@lru_cache(maxsize=2)
+def _oferta_unida(staging_dir_str: str):
+    """(df_oferta, fontes_presentes) — uniao das 3 fontes, com `classe` por linha.
+
+    READ-ONLY: nao escreve nada e nao recalcula artefato do M1. O custo e' UNICO por
+    processo (`lru_cache`): ~575 ms a frio para 24.314 pontos e 0,004 ms quente — a dedup
+    espacial da cKDTree domina o custo a frio. Medido em 2026-09-01.
+
+    `fontes_presentes` e' o que sustenta o D7 da DEC-046: sem ele, fonte ausente vira
+    contagem menor, contagem menor vira PASS no criterio de concorrencia, e um ponto
+    saturado e' APROVADO por ausencia de dado com o PDF de aparencia normal.
+    """
+    import pandas as pd
+
+    staging = Path(staging_dir_str)
+    presentes: list[str] = []
+    partes: list[pd.DataFrame] = []
+
+    # (1) CADEIAS mapeadas. `status_registro` filtra o que a coleta ja' descartou -- a
+    # funcao irma do piloto (`_carregar_concorrentes`) sempre filtrou e esta NAO, o que
+    # fazia o mesmo processo responder 77 concorrentes num ponto do Rio onde ha 11
+    # validos (64 `bodytech` empilhadas numa unica coordenada). D4 da DEC-046.
+    mapeados = _ler_fonte_oferta(
+        staging / f"{FONTE_MAPEADOS}.parquet",
+        ("rede", "lat", "lng"),
+        ("nome_unidade", "status_registro", "flag_coord_valida"),
     )
+    if mapeados is not None:
+        presentes.append(FONTE_MAPEADOS)
+        if "status_registro" in mapeados.columns:
+            mapeados = mapeados[mapeados["status_registro"].astype(str) == "valido"]
+        if "flag_coord_valida" in mapeados.columns:
+            mapeados = mapeados[mapeados["flag_coord_valida"].fillna(True).astype(bool)]
+        partes.append(
+            pd.DataFrame({
+                "rede": mapeados["rede"].astype("string"),
+                "nome": (
+                    mapeados["nome_unidade"].astype("string")
+                    if "nome_unidade" in mapeados.columns
+                    else pd.Series([pd.NA] * len(mapeados), dtype="string")
+                ),
+                "lat": pd.to_numeric(mapeados["lat"], errors="coerce"),
+                "lng": pd.to_numeric(mapeados["lng"], errors="coerce"),
+                "classe": CLASSE_CADEIA,
+            })
+        )
+
+    # (2) Unidades de REDE que o agregador lista. `tem_pin_proprio` ja' carrega a dedup da
+    # DEC-034 MATERIALIZADA na geracao: quem e' False colapsa contra um ponto ja' mapeado e
+    # nao pode ganhar pin proprio, senao volta o pin duplicado que a DEC-034 existe para
+    # impedir. Ausencia da coluna -> entra tudo (artefato antigo; e' o comportamento
+    # conservador, porque a alternativa seria descartar a fonte inteira).
+    redes = _ler_fonte_oferta(
+        staging / f"{FONTE_REDES_AGREGADOR}.parquet",
+        ("rede", "lat", "lng"),
+        ("nome", "tem_pin_proprio"),
+    )
+    if redes is not None:
+        presentes.append(FONTE_REDES_AGREGADOR)
+        if "tem_pin_proprio" in redes.columns:
+            redes = redes[redes["tem_pin_proprio"].fillna(False).astype(bool)]
+        partes.append(
+            pd.DataFrame({
+                "rede": redes["rede"].astype("string"),
+                "nome": (
+                    redes["nome"].astype("string")
+                    if "nome" in redes.columns
+                    else pd.Series([pd.NA] * len(redes), dtype="string")
+                ),
+                "lat": pd.to_numeric(redes["lat"], errors="coerce"),
+                "lng": pd.to_numeric(redes["lng"], errors="coerce"),
+                "classe": CLASSE_CADEIA,
+            })
+        )
+
+    cadeias = (
+        pd.concat(partes, ignore_index=True) if partes else pd.DataFrame(columns=_COLS_OFERTA)
+    )
+    cadeias = cadeias.dropna(subset=["lat", "lng"])
+
+    # (3) INDEPENDENTES. Nao tem coluna `rede` — e' o que as define, e e' de onde a `classe`
+    # sai por construcao, sem heuristica de nome.
+    indep = _ler_fonte_oferta(
+        staging / f"{FONTE_INDEPENDENTES}.parquet", ("nome", "lat", "lng"), ()
+    )
+    if indep is not None:
+        presentes.append(FONTE_INDEPENDENTES)
+        indep = pd.DataFrame({
+            "rede": pd.Series([pd.NA] * len(indep), dtype="string"),
+            "nome": indep["nome"].astype("string"),
+            "lat": pd.to_numeric(indep["lat"], errors="coerce"),
+            "lng": pd.to_numeric(indep["lng"], errors="coerce"),
+            "classe": CLASSE_INDEPENDENTE,
+        }).dropna(subset=["lat", "lng"])
+        indep = _dedup_independentes(indep, cadeias)
+    else:
+        indep = pd.DataFrame(columns=_COLS_OFERTA)
+
+    # Concat so' do que tem linha: o pandas depreciou concatenar frame vazio (o dtype dele
+    # entra na inferencia do resultado) e isso emitiria FutureWarning em toda chamada.
+    vivos = [parte for parte in (cadeias, indep) if not parte.empty]
+    if not vivos:
+        return None, tuple(presentes)
+    unida = pd.concat(vivos, ignore_index=True)
+    return unida[_COLS_OFERTA].reset_index(drop=True), tuple(presentes)
+
+
+def _dedup_independentes(indep, cadeias):
+    """Descarta independente a <= `_DEDUP_INDEPENDENTE_M` de QUALQUER cadeia (D5, DEC-046).
+
+    Sem indice espacial isto seria 19.329 x 5.217 pares -- ~100 milhoes, centenas de MB.
+    A cKDTree sobre coordenadas cartesianas na esfera resolve em milissegundos e o raio
+    vira a CORDA equivalente ao arco de 50 m (a diferenca corda/arco a 50 m e' de ordem
+    1e-11 do raio da Terra: irrelevante, e para MENOS, entao nunca colapsa a mais).
+    """
+    import numpy as np
+
+    if indep.empty or cadeias.empty:
+        return indep
+
+    from scipy.spatial import cKDTree
+
+    def _xyz(lat, lng):
+        la, lo = np.radians(np.asarray(lat, dtype=float)), np.radians(np.asarray(lng, dtype=float))
+        return np.column_stack((np.cos(la) * np.cos(lo), np.cos(la) * np.sin(lo), np.sin(la)))
+
+    raio_terra_m = 6_371_000.0
+    corda = 2.0 * np.sin(_DEDUP_INDEPENDENTE_M / (2.0 * raio_terra_m))
+    arvore = cKDTree(_xyz(cadeias["lat"], cadeias["lng"]))
+    vizinho = arvore.query_ball_point(_xyz(indep["lat"], indep["lng"]), r=corda)
+    manter = np.array([len(v) == 0 for v in vizinho], dtype=bool)
+    return indep.loc[manter]
+
+
+def fontes_oferta_presentes(settings: Settings) -> tuple[str, ...]:
+    """Quais das 3 fontes de oferta foram efetivamente lidas. Sustenta o D7 da DEC-046."""
+    _df, presentes = _oferta_unida(str(settings.staging_dir))
+    return presentes
+
+
+def _competitors_ultra(settings: Settings):
+    """(competitors_df, ultra_df) da staging, ou (None, None) se ausente. READ-ONLY.
+
+    Desde a DEC-046 `competitors_df` e' a UNIAO das 3 fontes de oferta, com a coluna
+    `classe` distinguindo `cadeia` de `independente`. A aridade e o contrato de `None`
+    ficam INTACTOS de proposito: dois testes monkeypatcham esta funcao com
+    `lambda cfg: (None, None)` e as 3 rotas do piloto a chamam desempacotando um par.
+    Quem precisa saber QUAIS fontes entraram usa `fontes_oferta_presentes`.
+    """
+    comp, _presentes = _oferta_unida(str(settings.staging_dir))
     ultra = _carregar_pontos(
         str(settings.staging_dir / "unidades_ultra_mapeadas.parquet"), ("lat", "lng")
     )
@@ -286,7 +493,15 @@ def analisar_ponto(lat: float, lng: float, consumidor: str | None, settings: Set
         "densidade_pop_raio_hab_km2": result.get("densidade_pop_raio_hab_km2"),
         "score_setor_medio": result.get("score_setor_medio"),
         "score_setor_max": result.get("score_setor_max"),
+        # DEC-046 (emenda a DEC-005): `n_concorrentes` MANTEM o nome e passa a valer o TOTAL
+        # de academias no raio (cadeia + independente). Quem decide veredito le
+        # `n_concorrentes_cadeia`; `fontes_oferta` diz de quais das 3 fontes o numero saiu,
+        # para que fonte ausente nao vire contagem menor sem ninguem perceber.
         "n_concorrentes": result.get("n_concorrentes", 0),
+        "n_concorrentes_cadeia": result.get("n_concorrentes_cadeia", 0),
+        "n_academias_total": result.get("n_academias_total", 0),
+        "fontes_oferta": list(fontes_oferta_presentes(settings)),
+        "oferta_completa": set(fontes_oferta_presentes(settings)) == set(FONTES_OFERTA),
         "n_ultra": result.get("n_ultra", 0),
         "versao_contrato": __version__,
         "versao_score": _VERSAO_SCORE,

@@ -1,7 +1,7 @@
 # SPEC EXECUTÁVEL — Bloco A: o perfil do país
 
 - Data: 2026-08-31 | Status: **PRONTA PARA CODAR** | Dono do arquivo: esta spec (o `docs/plano_multipais.md` e `docs/decisions/` têm outros donos e **não** são alterados por aqui)
-- Escopo: **Bloco A da §5.0** do `plano_multipais.md` = **BLK-INTL-02** (parte de perfil), sob a **DEC-046**.
+- Escopo: **Bloco A da §5.0** do `plano_multipais.md` = **BLK-INTL-02** (parte de perfil), sob a **DEC-047**.
 - Esforço declarado no plano: **7-11 dias · 1 dev**. Exige **`critica-aprovada`** (ver §8).
 - Objetivo operacional: depois deste bloco, **nenhum literal brasileiro de identidade territorial, de moeda, de fonte de dado ou de régua absoluta vive em constante de módulo**. Todos são lidos de um objeto congelado resolvido uma vez no import.
 
@@ -13,7 +13,7 @@
 
 > ⚠️ **AVISO QUE POUPA MEIA HORA.** As referências a `web/server/app.py` **acima da linha ~3200** no
 > `docs/plano_multipais.md` estão **14 linhas defasadas** (o arquivo tem 8.647 linhas e cresceu depois
-> que o plano foi escrito). A DEC-046 já registra a mesma defasagem para `limpar_caches`
+> que o plano foi escrito). A DEC-047 já registra a mesma defasagem para `limpar_caches`
 > (`3092-3103` no plano → **`3106-3117`** de fato). Exemplos que você vai encontrar:
 >
 > | o plano diz | está de fato em | o quê |
@@ -42,7 +42,7 @@
 **Um campo só entra se esta spec puder apontar a LINHA que o lê.** A coluna "quem lê" abaixo não é
 documentação: é o critério. Campos que o §6.2 do plano lista mas que **nenhuma linha deste repositório
 consome** estão na §1.4 (recusados), com o motivo — pôr um campo sem leitor é criar um número que
-envelhece calado, que é exatamente a classe de defeito que a DEC-045 e a DEC-046 combatem.
+envelhece calado, que é exatamente a classe de defeito que a DEC-045 e a DEC-047 combatem.
 
 ### 1.2 O schema, campo a campo
 
@@ -122,7 +122,7 @@ descobriu que esta tabela, o `data/perfis/LEIA-ME.md` §3.2 e os dois `perfil.js
 | `moeda.simbolo` | `str`, não-vazio | **sim** | os `R$` de `web/src/lib/format.ts`: `:38`, `:39`, `:41` (`brl`), `:52`, `:53`, `:54` (`brlCurto`) e `:105` (`valorComUnidade`); e o `R$` da frase da âncora em `web/server/app.py:3626`. |
 | `moeda.codigo` | `str` ISO-4217 | **sim** | nada hoje. Leitor criado neste bloco: nenhum — **mas ele é a chave que o Bloco C+ carimba no PDF/XLSX** (decisão 0.7). Único campo que entra sem leitor de produção, e entra **declarado**: se o Bloco C+ for cortado, este campo sai junto. |
 | `bbox.lat_min/lat_max/lng_min/lng_max` | `float` | **sim** | as **seis** cópias do §2.1. Invariante validada: `lat_min < lat_max`, `lng_min < lng_max`, todos em `[-90,90]`/`[-180,180]`. |
-| `vista_padrao.lat/lng/zoom` | `float` | **sim** | `VISTA_BRASIL = { longitude: -52.9, latitude: -14.5, zoom: 3.4 }` — `web/src/lib/mapa-ponto.ts:32`, consumido por `web/src/components/MapaPonto.tsx:63`. **Achado desta spec:** não está em nenhuma das listas do plano nem da DEC-046, e é superfície do DIA 1. |
+| `vista_padrao.lat/lng/zoom` | `float` | **sim** | `VISTA_BRASIL = { longitude: -52.9, latitude: -14.5, zoom: 3.4 }` — `web/src/lib/mapa-ponto.ts:32`, consumido por `web/src/components/MapaPonto.tsx:63`. **Achado desta spec:** não está em nenhuma das listas do plano nem da DEC-047, e é superfície do DIA 1. |
 | `geocode.countrycodes` | `str`, `^[a-z]{2}(,[a-z]{2})*$` | **sim** | `"countrycodes": "br"` em **dois** lugares: `web/server/app.py:3978` (a sétima restrição do plano) **e** `src/motor_expansao/api/maps_geocoder.py:246` (**oitava — achado desta spec**, não listada em lugar nenhum). |
 | `geocode.idioma` | `str` BCP-47 | **sim** | `"Accept-Language": "pt-BR"` — `src/motor_expansao/api/maps_geocoder.py:256`. (`/api/geocode` **não** manda `Accept-Language` hoje; passa a mandar neste bloco.) |
 | `geocode.regex_cp` | `str` (regex) | opcional (`null` = sem código postal) | `CEP_RE = re.compile(r"\b(\d{5})-?(\d{3})\b")` — `src/motor_expansao/api/maps_geocoder.py:32`. Consumido por `normalize_cep` (`:113`) e `split_address_cep` (`:119`). |
@@ -180,7 +180,7 @@ alargar B2 → B1 em `dashboard/data.py`, e estreitar B3 → B1 em `competitors.
 ## 2. A tabela de substituição, sítio a sítio
 
 Legenda de classe: **[6BB]** = uma das seis cópias de bbox do plano · **[7ª]** = a sétima restrição
-(`countrycodes`) · **[NOVO]** = sítio **achado por esta spec**, ausente do plano e da DEC-046.
+(`countrycodes`) · **[NOVO]** = sítio **achado por esta spec**, ausente do plano e da DEC-047.
 
 ### 2.1 As seis cópias de bbox + as achadas
 
@@ -202,7 +202,7 @@ Legenda de classe: **[6BB]** = uma das seis cópias de bbox do plano · **[7ª]*
 |---|---|---|---|
 | 10 | `web/server/app.py:3978` | `params={"q": termo, "format": "json", "limit": 1, "countrycodes": "br"}` | `"countrycodes": PERFIL.geocode.countrycodes` | **[7ª]** |
 | 11 | `web/server/app.py:3979` | `headers={"User-Agent": _GEOCODE_UA}` | `headers={"User-Agent": _GEOCODE_UA, "Accept-Language": PERFIL.geocode.idioma}` | novo header |
-| 12 | `src/motor_expansao/api/maps_geocoder.py:246` | `"countrycodes": "br"` | `PERFIL.geocode.countrycodes` | **[NOVO]** — segunda cópia de `countrycodes`, **não listada** no plano nem na DEC-046. |
+| 12 | `src/motor_expansao/api/maps_geocoder.py:246` | `"countrycodes": "br"` | `PERFIL.geocode.countrycodes` | **[NOVO]** — segunda cópia de `countrycodes`, **não listada** no plano nem na DEC-047. |
 | 13 | `src/motor_expansao/api/maps_geocoder.py:256` | `"Accept-Language": "pt-BR"` | `PERFIL.geocode.idioma` | **[NOVO]** |
 | 14 | `src/motor_expansao/api/maps_geocoder.py:32` | `CEP_RE = re.compile(r"\b(\d{5})-?(\d{3})\b")` | compilado de `PERFIL.geocode.regex_cp`; `None` ⇒ `normalize_cep` devolve `""` e `split_address_cep` devolve `(texto, "")` | **[NOVO]** |
 
@@ -513,7 +513,7 @@ e os quatro sítios passam a incluir `perfil=PERFIL`. **Ordem obrigatória:** o 
 
 ### 3.5 Como o perfil chega ao front
 
-**Não** entra rota nova (DEC-046: "não entra requisição"). O front já pede `GET /api/me` na abertura
+**Não** entra rota nova (DEC-047: "não entra requisição"). O front já pede `GET /api/me` na abertura
 (`web/server/app.py:3221`). O payload de `/api/me` ganha um campo `perfil` com **exatamente** o que o
 front lê: `nome`, `locale`, `moeda`, `bbox`, `vista_padrao`, `reguas.pop_min_acionavel`,
 `reguas.capacidade_unidade_alunos`. Nada mais.
@@ -544,7 +544,7 @@ ser classificado **antes** de ser tocado, em duas classes:
 > `HexMap.tsx:506-507`, como circulou na revisão. `:506-507` são os literais `-47.9`/`-15.78` — o
 > fallback de Brasília para o centro do município —, e `VISTA_BRASIL` vive em `mapa-ponto.ts:32`,
 > consumido em `MapaPonto.tsx:63`. **São dois sítios distintos, ambos da classe (2)**, e o
-> `-47.9`/`-15.78` do `HexMap` não aparece em nenhuma lista do plano nem da DEC-046: some do A9 se
+> `-47.9`/`-15.78` do `HexMap` não aparece em nenhuma lista do plano nem da DEC-047: some do A9 se
 > alguém o classificar como "só bbox".
 
 ---
@@ -859,7 +859,7 @@ Registrado para não gastar tempo:
    **13** números de hoje: `bbox` = B1; `reguas` = `30.0 / 5000 / 2000.0 / 2500.0 / 2500 /
    300.0 / 4000.0 / 1000.0 / 100000.0`. **É este teste que garante "a suíte brasileira passa sem um
    número se mover".**
-3. `tests/contracts/test_fio_de_alarme_pais.py` — DEC-046: varre `src/`, `web/`, `scripts/` atrás de
+3. `tests/contracts/test_fio_de_alarme_pais.py` — DEC-047: varre `src/`, `web/`, `scripts/` atrás de
    `pais ==`, `pais==`, `country ==`; lista de exceções **vazia**. Medido hoje: **zero ocorrências**.
 4. `tests/contracts/test_geocode_valida_o_bbox.py` — Nominatim mockado devolvendo Buenos Aires com
    perfil BR ⇒ `{"found": False, "motivo": "fora_do_pais"}`; com perfil AR ⇒ `found: True`.
@@ -980,7 +980,7 @@ tudo que roda no checkout fica verde com o container quebrado.
    Esperado: contagem de testes coletados, **zero erros**. (Rode **antes** de abrir o PR de A3.)
 
 2. **A suíte brasileira passa sem um número se mover.** **Tome a baseline com o gate de governança
-   VERDE:** até 2026-08-31 `tests/unit/test_claude_md_size.py` estava **vermelho** (a `DEC-046.md`
+   VERDE:** até 2026-08-31 `tests/unit/test_claude_md_size.py` estava **vermelho** (a `DEC-047.md`
    existia sem linha-índice no `CLAUDE.md` §8 e sem entrada em `docs/decisions/README.md`), e uma
    baseline colhida ali embutiria uma falha alheia a este bloco na contagem de `passed`. Corrigido;
    confirme com `python -m pytest tests/unit/test_claude_md_size.py -q` **antes** de anotar o número.
@@ -1033,7 +1033,7 @@ tudo que roda no checkout fica verde com o container quebrado.
    medido **quebrava** `tests/unit/test_coord_search.py:58` — a linha que a §5.2 afirma ficar verde.
    Rode de novo se o parquet for regenerado; se der diferente de zero, **pare** e reabra a §1.3.
 
-6. **O fio de alarme da DEC-046 está armado e a casa continua limpa.**
+6. **O fio de alarme da DEC-047 está armado e a casa continua limpa.**
    ```
    python -m pytest tests/contracts/test_fio_de_alarme_pais.py -q
    grep -rn "pais ==\|pais==\|country ==" --include=*.py --include=*.ts --include=*.tsx src web scripts
