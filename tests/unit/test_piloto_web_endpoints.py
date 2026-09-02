@@ -1721,3 +1721,99 @@ def test_ranking_nacional_etiqueta_pelo_criterio_que_o_ordenou(nacional_data: Pa
     )
     # A régua de concorrência é PUBLICADA, para o texto da tela derivar dela.
     assert payload["reguas"]["conc_max"] == pilot.CONC_ADENSAR_MAX
+
+
+# ---------------------------------------------------------------------------
+# `/api/estados`: os DOIS papeis da coluna de populacao (2026-09-02)
+#
+# A rota tratava como um so' o que sao dois: a coluna que o passo 1 CORTA em 5.000 e a
+# coluna que o payload SOMA para dizer o tamanho da UF. Enquanto o unico pacote era o
+# brasileiro isso nao aparecia — `pop_total_setor_2022` serve aos dois papeis la'. O
+# pacote argentino nao tem essa coluna, e a linha
+#
+#     col_pop = "pop_total_setor_2022" if ... else "pop_hex_base"
+#
+# escolhia um nome que ninguem verificava existir: `cols` filtrava fora, e a rota morria
+# em `KeyError: 'pop_hex_base'` na hora de somar. A tela de "por qual estado comecar"
+# respondia 500 na Argentina inteira.
+# ---------------------------------------------------------------------------
+
+
+def _enriquecido_sem(colunas: set[str]) -> pd.DataFrame:
+    """O sintetico, menos as colunas pedidas — para simular a forma de outro pacote."""
+    return _synthetic_enriched().drop(columns=[c for c in colunas if c])
+
+
+def _apontar_para(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, df: pd.DataFrame) -> None:
+    part = tmp_path / "outputs" / "hexagonos_dashboard_enriquecido" / "uf=SP"
+    part.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(part / "part-0.parquet")
+    _point_app_at(monkeypatch, tmp_path)
+
+
+def test_estados_sem_nenhuma_coluna_de_populacao_ACUSA(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Antes: `KeyError` cru. Agora: 500 que diz o que falta e quais colunas serviriam."""
+    _apontar_para(
+        tmp_path,
+        monkeypatch,
+        _enriquecido_sem({"pop_total_setor_2022", "populacao_corte_hex", "pop_total"}),
+    )
+    with pytest.raises(HTTPException) as erro:
+        pilot._ranking_estados()
+    assert erro.value.status_code == 500
+    assert "população por hexágono" in str(erro.value.detail)
+    _clear_caches()
+
+
+def test_estados_com_a_forma_do_pacote_ARGENTINO(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sem `pop_total_setor_2022` a rota nao pode quebrar — corta pela captacao e soma nada.
+
+    Esta e' a forma do pacote argentino ANTES do de-para de `montar_hexagonos`, e a forma
+    de qualquer pacote futuro que so' materialize a captacao. O total por UF sai `None`:
+    somar `populacao_corte_hex` double-conta (hexagono + 6 vizinhos), e no pacote real
+    argentino daria 288 milhoes para um pais de 46.
+    """
+    _apontar_para(
+        tmp_path, monkeypatch, _enriquecido_sem({"pop_total_setor_2022", "pop_total"})
+    )
+    ranking = pilot._ranking_estados()
+    assert ranking, "a rota devolveu vazio em vez do ranking"
+    assert all(r["pop_total"] is None for r in ranking), (
+        "somou uma coluna que se sobrepoe entre hexagonos"
+    )
+    assert any(r["hexes_elegiveis"] for r in ranking), "o corte nao caiu sobre a captacao"
+    _clear_caches()
+
+
+def test_estados_NAO_soma_pop_total_nem_quando_ela_e_a_unica(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O falso amigo nao vira fallback por desespero.
+
+    `pop_total` no pacote brasileiro e' a populacao do MUNICIPIO repetida em cada
+    hexagono dele — somada no pais da' 79,3 bilhoes. Um pacote que so' a tenha nao tem
+    populacao POR HEXAGONO, e a resposta certa e' acusar, nao estimar.
+    """
+    _apontar_para(
+        tmp_path,
+        monkeypatch,
+        _enriquecido_sem({"pop_total_setor_2022", "populacao_corte_hex"}),
+    )
+    with pytest.raises(HTTPException) as erro:
+        pilot._ranking_estados()
+    assert erro.value.status_code == 500
+    _clear_caches()
+
+
+def test_estados_no_pacote_brasileiro_segue_somando_o_setor(
+    synth_data: Path,
+) -> None:
+    """A UF brasileira nao muda: corta e soma na mesma coluna de sempre."""
+    ranking = pilot._ranking_estados()
+    assert ranking and ranking[0]["uf"] == "SP"
+    esperado = float(_synthetic_enriched()["pop_total_setor_2022"].sum())
+    assert ranking[0]["pop_total"] == pytest.approx(esperado)
