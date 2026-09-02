@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import AvisoConfidencialidade from './components/AvisoConfidencialidade'
 import Dock from './components/Dock'
@@ -16,11 +16,11 @@ import { api, ApiError } from './lib/api'
 import type { AlvoCaptura } from './lib/captura-mapa'
 import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
 import { BaseProvider } from './lib/base-contexto'
-import { paisDaBase } from './lib/pais-da-base'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
 import type { Tema } from './lib/tema'
 import { depositoDoNavegador, gravarTema, lerTema } from './lib/tema'
 import type { Hex, MunicipioItem, MunicipioPayload, Oportunidade } from './lib/types'
+import { perfilDoCliente } from './lib/perfil'
 
 export type Tela =
   | 'inicio'
@@ -119,10 +119,11 @@ export default function App() {
   }, [])
 
   const [ufs, setUfs] = useState<string[]>([])
-  /* País da base, para o carimbo do Dock. Sai da lista de UFs que já está aqui — nenhuma
-     requisição a mais, nenhuma variável de ambiente para alguém esquecer de exportar.
-     Ver `lib/pais-da-base.ts` para o porquê de a dedução ser segura. */
-  const pais = useMemo(() => paisDaBase(ufs), [ufs])
+  /* País da instância, para o carimbo do Dock. Vem do PERFIL, resolvido no `main.tsx`
+     antes de esta árvore existir (DEC-047) — não é mais deduzido da lista de UFs.
+     A dedução era por disjunção binária BR/AR: acerta com dois países e carimbaria a
+     Argentina na Colômbia. Ver o cabeçalho de `lib/rodape-base.ts`. */
+  const pais = perfilDoCliente().pais
   // Começa SEM estado: o app abre na porta de entrada (escolha de UF).
   const [uf, setUf] = useState('')
   const [municipios, setMunicipios] = useState<MunicipioItem[]>([])

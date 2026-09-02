@@ -13,12 +13,22 @@
  *                   exportador crava `n_unidades_ultra = 0` de propósito ("zero é a
  *                   resposta CERTA, não dado faltando").
  *
- * A frase agora sai da lista de UFs que a tela já tem: o TAMANHO dela dá a contagem, e
- * `paisDaBase` dá o país. Sem contagem confiável não há frase — devolve `null` e quem
- * chama não desenha nada, em vez de anunciar "0 estados".
+ * A frase sai de duas fontes, e desde 2026-09-02 elas são diferentes: o TAMANHO da lista
+ * de UFs dá a contagem, e o PERFIL DA INSTÂNCIA dá o país. Sem contagem confiável não há
+ * frase — devolve `null` e quem chama não desenha nada, em vez de anunciar "0 estados".
+ *
+ * O país vinha de `paisDaBase(ufs)`, que o deduzia por disjunção binária: todas as siglas
+ * brasileiras → Brasil, nenhuma → Argentina. A dedução era boa no seu tempo e a docstring
+ * dela dizia por quê — não havia canal do backend, e depender de variável de ambiente é
+ * "o modo de falhar mais provável de um carimbo de identidade".
+ *
+ * Essa objeção morreu com o Bloco A (DEC-047): o país não é mais uma env que alguém
+ * esquece de exportar, é um ARQUIVO sem o qual o container não sobe, e `/api/me` já o
+ * entrega ao front. E a dedução tinha prazo de validade — com dois países ela acerta;
+ * com a Colômbia entrando, "nenhuma sigla brasileira" passaria a carimbar Argentina.
  */
 
-import { paisDaBase } from './pais-da-base'
+import { perfilDoCliente } from './perfil'
 
 /** Como cada país nomeia a própria unidade federativa. O ARTIGO entra aqui, e não numa
  *  gambiarra de string mais adiante: "estado" é masculino e "província" é feminino, e
@@ -49,14 +59,27 @@ const PONTOS = {
   AR: 'concorrentes mapeados',
 } as const
 
+/** Sigla do país da instância, quando estas tabelas sabem falar dele.
+ *
+ * `null` = país sem vocabulário aqui. É o ÚNICO lugar do módulo que conhece o perfil, e
+ * `PaisComVocabulario` é o tipo que garante, em compilação, que ninguém indexe `UNIDADE`,
+ * `CENSO` ou `INSTITUTO` com uma sigla que elas não têm. */
+type PaisComVocabulario = keyof typeof UNIDADE
+
+function paisDoPerfil(): PaisComVocabulario | null {
+  const pais = perfilDoCliente().pais
+  return pais in UNIDADE ? (pais as PaisComVocabulario) : null
+}
+
 export function rodapeDaBase(ufs: readonly string[] | null | undefined): string | null {
   const n = ufs?.length ?? 0
   if (n === 0) return null
 
-  const pais = paisDaBase(ufs)
-  // País indefinido (base misturada, sigla nova): conta as unidades, que é fato, e cala
-  // sobre censo e pontos, que dependem de saber o país. Meia frase certa vale mais que
-  // uma frase inteira chutada.
+  const pais = paisDoPerfil()
+  // País que ainda não tem vocabulário nestas tabelas (a Colômbia, quando entrar): conta
+  // as unidades, que é fato, e cala sobre censo e pontos. Meia frase certa vale mais que
+  // uma frase inteira chutada. O ramo é o mesmo de antes; o MOTIVO é melhor — era "não
+  // sei o país", passou a ser "sei o país e ainda não traduzi a palavra dele".
   if (pais === null) {
     return `${n} unidades federativas · camada visual read-only`
   }
@@ -68,7 +91,7 @@ export function rodapeDaBase(ufs: readonly string[] | null | undefined): string 
 /** A mesma leitura, para a espera do ranking ("Comparando os N …"). */
 export function nomeDasUnidades(ufs: readonly string[] | null | undefined): string {
   const n = ufs?.length ?? 0
-  const pais = paisDaBase(ufs)
+  const pais = paisDoPerfil()
   if (n === 0 || pais === null) return 'as unidades federativas'
   const u = UNIDADE[pais]
   return n === 1 ? `${u.artigo} ${u.um}` : `${u.artigoPlural} ${n} ${u.varios}`
@@ -81,8 +104,8 @@ export function nomeDasUnidades(ufs: readonly string[] | null | undefined): stri
  * que e' propriedade da palavra (ver UNIDADE). Sem saber o pais, cai no termo neutro em
  * vez de escolher um dos dois.
  */
-export function tituloEscolhaUnidade(ufs: readonly string[] | null | undefined): string {
-  const pais = paisDaBase(ufs)
+export function tituloEscolhaUnidade(): string {
+  const pais = paisDoPerfil()
   if (pais === null) return 'Escolha a unidade federativa'
   const u = UNIDADE[pais]
   return `Escolha ${u.artigo} ${u.um}`
@@ -99,13 +122,13 @@ export function tituloEscolhaUnidade(ufs: readonly string[] | null | undefined):
  * `null` quando nao da' para afirmar: quem chama omite a nota em vez de chutar um
  * instituto.
  */
-export function censoDaBase(ufs: readonly string[] | null | undefined): string | null {
-  const pais = paisDaBase(ufs)
+export function censoDaBase(): string | null {
+  const pais = paisDoPerfil()
   return pais === null ? null : CENSO[pais]
 }
 
 /** So' a sigla do instituto ("IBGE" / "INDEC"), para compor frases proprias. */
-export function institutoDoCenso(ufs: readonly string[] | null | undefined): string | null {
-  const pais = paisDaBase(ufs)
+export function institutoDoCenso(): string | null {
+  const pais = paisDoPerfil()
   return pais === null ? null : INSTITUTO[pais]
 }

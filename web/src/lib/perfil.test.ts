@@ -14,6 +14,7 @@ import { PERFIL_BR } from './perfil-br'
 
 /** Perfil argentino de teste — a caixa real do `data/perfis/AR/perfil.json`. */
 const AR: PerfilCliente = {
+  pais: 'AR',
   nome: 'Argentina',
   locale: 'es-AR',
   moeda: { codigo: 'ARS', simbolo: '$' },
@@ -80,6 +81,7 @@ describe('definirPerfil — fail-safe, e por que ele e assim', () => {
     ['null', null],
     ['string', 'BR'],
     ['objeto vazio', {}],
+    ['sem pais', { ...AR, pais: undefined }],
     ['sem bbox', { ...AR, bbox: undefined }],
     ['bbox incompleto', { ...AR, bbox: { lat_min: -55, lat_max: -21 } }],
     ['bbox com string', { ...AR, bbox: { ...AR.bbox, lat_min: '-55.2' } }],

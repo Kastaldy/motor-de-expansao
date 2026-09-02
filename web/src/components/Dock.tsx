@@ -2,7 +2,6 @@ import type { Tela } from '../App'
 import BotaoTema from './BotaoTema'
 import { telaLiberada, type Aba, type TelaControlada } from '../lib/acesso'
 import type { Tema } from '../lib/tema'
-import type { PaisDaBase } from '../lib/pais-da-base'
 
 /* Dock vertical fixo. No piloto so as duas telas do escopo estao ativas; as
    demais aparecem desabilitadas para o operador entender que o mapa e a
@@ -57,8 +56,10 @@ const BANDEIRAS: Record<'BR' | 'AR', { nome: string; svg: React.JSX.Element }> =
   },
 }
 
-function Carimbo({ pais }: { pais: PaisDaBase }) {
-  const bandeira = pais ? BANDEIRAS[pais] : undefined
+function Carimbo({ pais }: { pais?: string | null }) {
+  // Sigla sem bandeira desenhada (a Colombia, quando entrar) nao carimba nada — a
+  // tabela e dado, e acrescentar pais e acrescentar uma entrada.
+  const bandeira = pais && pais in BANDEIRAS ? BANDEIRAS[pais as keyof typeof BANDEIRAS] : undefined
   if (!bandeira) return null
   return (
   <div
@@ -187,7 +188,7 @@ export default function Dock({
   tema: Tema
   onTema: (t: Tema) => void
   /** País da base servida. `null` = ainda não dá para afirmar -> não carimba. */
-  pais?: PaisDaBase
+  pais?: string | null
 }) {
   // Ícone de tela vetada SOME em vez de aparecer desabilitado: os desabilitados do
   // Dock já significam "fora do piloto", e um terceiro estado ("existe mas não para

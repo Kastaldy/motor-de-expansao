@@ -17,6 +17,7 @@
 import type { PerfilCliente } from './perfil'
 
 export const PERFIL_BR: PerfilCliente = {
+    "pais": "BR",
     "nome": "Brasil",
     "locale": "pt-BR",
     "moeda": {

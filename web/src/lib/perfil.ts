@@ -38,6 +38,12 @@ export interface Bbox {
 }
 
 export interface PerfilCliente {
+  /** Sigla ISO do pais da instancia. IDENTIFICADOR — nunca exibido cru: o Dock o usa
+   *  para escolher a bandeira e o `rodape-base.ts` para escolher o vocabulario de
+   *  unidade federativa. Ate 2026-09-02 esta resposta era DEDUZIDA da lista de UFs
+   *  (`pais-da-base.ts`), por disjuncao binaria BR/AR — que acerta com dois paises e
+   *  erra no terceiro. */
+  pais: string
   /** Nome do pais, para as mensagens ("Essa coordenada esta fora de X"). */
   nome: string
   /** Tag BCP-47 UNICA — vai direto para `Intl.NumberFormat`. */
@@ -78,6 +84,7 @@ export function definirPerfil(p: unknown): void {
   if (!p || typeof p !== 'object') return
   const c = p as Partial<PerfilCliente>
   if (
+    typeof c.pais !== 'string' ||
     typeof c.nome !== 'string' ||
     typeof c.locale !== 'string' ||
     !c.moeda ||
