@@ -31,6 +31,13 @@ const UNIDADE = {
 /** Quem publica o censo de cada base. */
 const CENSO = { BR: 'Censo 2022 (IBGE)', AR: 'Censo 2022 (INDEC)' } as const
 
+/** So a sigla do instituto. Tabela, e nao um ternario `pais === 'BR' ? ... : ...`,
+ *  que era o que estava aqui ate 2026-09-02: com dois paises o ternario acerta por
+ *  sorte, e no TERCEIRO a Colombia sairia creditando o INDEC. A DEC-047 proibe
+ *  ramo de codigo por pais justamente por isso, e `test_fio_de_alarme_pais.py`
+ *  passa a travar a volta. Acrescentar pais aqui e uma linha de dado. */
+const INSTITUTO = { BR: 'IBGE', AR: 'INDEC' } as const
+
 /**
  * O que a camada de pontos contém.
  *
@@ -100,5 +107,5 @@ export function censoDaBase(ufs: readonly string[] | null | undefined): string |
 /** So' a sigla do instituto ("IBGE" / "INDEC"), para compor frases proprias. */
 export function institutoDoCenso(ufs: readonly string[] | null | undefined): string | null {
   const pais = paisDaBase(ufs)
-  return pais === null ? null : (pais === 'BR' ? 'IBGE' : 'INDEC')
+  return pais === null ? null : INSTITUTO[pais]
 }
