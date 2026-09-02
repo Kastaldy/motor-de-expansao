@@ -27,6 +27,7 @@ tenha lido no repositório ou que não esteja marcada como pendente de teste no 
 | `access_control` nega por padrão e tem **duas** regras, sem `subject` | `authelia/configuration.yml:80-86` (`default_policy: deny` na 81; regras em `:83-86`) | ✅ |
 | 19 usuários, todos num único grupo `ultra_team` | `authelia/users_database.yml` — 19 `displayname`; `groups: [ultra_team]` em `:12`, `:19`, `:26`, … `:138` | ✅ |
 | `Caddyfile`, `docker-compose*` e `authelia/` são CRITICO no guard | `scripts/loop_guard.py:122-124` | ✅ (`.dockerignore` é CRITICO em `:121`) |
+| **`Caddyfile` e `authelia/*` NÃO estão no git** | `.gitignore:129-131`; `git ls-files Caddyfile authelia/configuration.yml authelia/users_database.yml` devolve **vazio**; `git check-ignore -v` aponta as três linhas | ✅ — e é o fato que **parte o §7.4 em dois** e limita o que o §7.3 pode exigir do guard |
 | Um diretório novo na raiz **entra** nas imagens | `Dockerfile.web:43` e `Dockerfile.api:33` fazem `COPY . .` | ✅ — daí o §5.2 |
 | O padrão para tirar arquivo de deploy da imagem já existe | `.dockerignore:39-42` — *"Configurações de deploy (montados via volume)"*: `Caddyfile`, `authelia/`, `.env` | ✅ |
 | A DEC-046 recusa **seletor de país em runtime** | `docs/decisions/DEC-046.md:6` (item 1) | ✅ — texto citado no §1.2 |
@@ -38,7 +39,7 @@ por **renderização** (`if` de template por país), nunca por CSS. Uma primeira
 emitia os dois cartões sempre e escondia um com `display:none` — o corpo HTTP continuava dizendo
 quais países existem, para qualquer usuário autenticado. Isso contradizia o próprio §6.2 (o motivo de
 a raiz exigir `one_factor` em vez de `bypass`) e reprovava três aceites do §7.2. **A regra passa a ser
-explícita e testada** (§7.4, asserts 11 e 12): conteúdo controlado por permissão **não é emitido** —
+explícita e testada** (§7.4.1, asserts 11 e 12, no CI): conteúdo controlado por permissão **não é emitido** —
 e isso vale também para o **comentário HTML**, que viaja no corpo como qualquer outro byte.
 
 **O que NÃO deu para conferir aqui, e por quê:**
@@ -170,7 +171,7 @@ deles deixa de importar**.
 
 **Cuidado com o curinga.** `*expansao_ar*` é **substring**: um grupo futuro chamado `expansao_argentina`
 casaria como se fosse `expansao_ar`. A regra que fecha isso é de **nomenclatura**, e vale a pena estar
-escrita: **nenhum grupo `expansao_*` pode ser prefixo ou substring de outro.** O teste do §7.4 verifica
+escrita: **nenhum grupo `expansao_*` pode ser prefixo ou substring de outro.** O assert 6 do §7.4.2 verifica
 isso mecanicamente contra o `users_database.yml`.
 
 ### 2.3 O bloco, pronto para colar
@@ -262,7 +263,7 @@ ultra-expansao.tech, www.ultra-expansao.tech {
         # 1) A saida manual vence tudo. UNICA ordem que importa neste bloco.
         #    `templates` NAO E' OPCIONAL: e' ele que executa os `if` por pais do
         #    index.html. Sem ele a pagina sai com as acoes de template em texto e
-        #    ninguem ve cartao nenhum. O §7.4 assert 9 verifica que os DOIS handle
+        #    ninguem ve cartao nenhum. O assert 9 do §7.4.2 verifica que os DOIS handle
         #    que servem o index.html tem esta linha.
         handle @escolher {
             rewrite * /index.html
@@ -302,7 +303,9 @@ ultra-expansao.tech, www.ultra-expansao.tech {
 > **As duas linhas que costumam sumir numa revisao apressada:** `templates` nos **dois** `handle` que
 > servem o `index.html`, e as **duas remocoes incondicionais** de `X-Portal-*`. Sem a primeira, a
 > filtragem por pais nao acontece; sem a segunda, ela acontece a favor de quem forjou o cabecalho.
-> Ambas viraram assert no §7.4.
+> A primeira virou o **assert 9 do §7.4.2**. A segunda **não tem assert de texto** — o que a prova é o
+> aceite **9a/9b do §7.2**, com o Caddy no ar e o cabeçalho forjado de fato; um `grep` no `Caddyfile`
+> confirmaria a linha existir, não que ela vence a ordem.
 
 ---
 
@@ -335,7 +338,7 @@ outra.
 
 **O que transforma "escada" em "escada verificada".** O conjunto é **fechado e conhecido** (6 países,
 um lançamento por vez, separados por semanas). O que torna a repetição segura não é a disciplina de
-quem edita — é o teste do §7.4, que lê o `Caddyfile` e falha se algum `@so_<pais>` deixar de negar
+quem edita — é o **assert 1 do §7.4.2**, que lê o `Caddyfile` e falha se algum `@so_<pais>` deixar de negar
 todos os outros. **Reabrir esta decisão** se aparecer um 7º país fora da lista de 6, ou se a régua
 deixar de ser "país" (ex.: acesso por região dentro de um país) — aí o eixo mudou e a forma tem de
 mudar junto.
@@ -545,7 +548,7 @@ escolhido por três motivos verificáveis:
   o **nome do grupo** no documento, e `templates` executa como template de **texto**, sem escape de
   HTML: um grupo com `'`, `"` ou `<` quebraria o atributo e, no limite, o documento. Os nomes vêm de
   um arquivo administrado, então não é vetor de usuário — é um modo de falha calado que sai de graça
-  ao não injetar nada. O assert 10 do §7.4 fecha o resto com uma regex de nome de grupo.
+  ao não injetar nada. O assert 10 do §7.4.2 fecha o resto com uma regex de nome de grupo.
 
 **O caso que os dois artefatos precisam cobrir junto: `?escolher=1` sem nenhum país.** `@escolher`
 vence `@sem_pais` de propósito (§4.2), então esse usuário recebe o `index.html`, **não** o
@@ -558,7 +561,7 @@ nenhum** (é o mesmo usuário do §6.2). Verificado pelo item 12 do §7.2.
 template em texto e ninguém vê cartão nenhum: falha **alta e visível na primeira requisição**. A
 alternativa — degradar para "lista todos os países" — foi recusada: ela é silenciosa e insegura ao
 mesmo tempo, porque mostra o roteiro de expansão a quem não tem acesso a país nenhum e oferece portas
-que devolvem 403. **Entre falhar barulhento e vazar calado, falha barulhento.** O assert 9 do §7.4
+que devolvem 403. **Entre falhar barulhento e vazar calado, falha barulhento.** O assert 9 do §7.4.2
 verifica que os dois `handle` que servem o `index.html` têm a diretiva.
 
 **Requisitos da página** (valem para os dois arquivos):
@@ -637,11 +640,37 @@ access_control:
       policy: one_factor
 ```
 
-**Fica de fora desta spec:** a regra de `piloto-ar.ultra-expansao.tech`. Ela pertence ao
-**BLK-INTL-08 (Bloco E)**, que sobe o host argentino, não a este. Está listada no §10 (item 13) como
-adjacente, para não ser esquecida — **um portal que aponta para um host sem regra manda a pessoa para
-um 403; um portal que aponta para um host que nem existe no `Caddyfile` manda a pessoa para um erro
-de TLS.** É por isso que o §9 fixa `BLK-INTL-08` **antes** deste bloco.
+**A regra da raiz é a ÚNICA que fica deliberadamente sem `subject`, e isso é desenho, não
+esquecimento.** Com `subject: - "group:expansao_br"` — ou qualquer lista de grupos — o Authelia
+devolveria **403 a quem não tem país nenhum**, e essa pessoa nunca chegaria ao `handle @sem_pais`,
+nunca leria o `portal/sem-acesso.html` e não teria como descobrir a quem pedir acesso. **O 403 do
+Authelia é uma parede sem texto; o `sem-acesso.html` é a explicação em português** que o §5.4 escreveu
+exatamente para esse caso. Os aceites **8 e 12 do §7.2** morreriam juntos. Ou seja: a raiz **autentica**
+(`one_factor`) e **não autoriza por grupo** — quem autoriza por grupo é o `route` do §2.3, que sabe
+transformar "sem grupo" numa página em vez de num código de erro. Nos **hosts de país** é o contrário:
+lá o `subject` é obrigatório, e é isso que o BLK-INTL-05 entrega.
+
+> **Divergência a alinhar — e ela não se resolve nesta spec.** `tasks/backlog.md:4327` (BLK-INTL-D1)
+> fecha o critério de aceite com *"Nenhuma regra fica sem `subject`"*, que é literalmente o oposto do
+> parágrafo acima. O texto está **certo para os hosts de país e errado para a raiz**, que ainda não
+> existia quando foi escrito. **O backlog tem outro dono e não é editado por aqui** (cabeçalho, §0): o
+> ajuste é acrescentar a exceção da raiz àquele critério. Quem for fazer o BLK-INTL-D1 precisa ler isto
+> **antes** de "corrigir" a regra da raiz para o que o backlog manda — seria a mudança de uma linha que
+> troca a tela de "sem acesso" por um 403 mudo, sem quebrar teste nenhum.
+
+**Fica de fora desta spec:** a regra de `access_control` de `piloto-ar.ultra-expansao.tech`. Ela
+pertence ao **BLK-INTL-05 (Bloco D)** — **não** ao Bloco E, como versões anteriores desta spec diziam.
+`docs/plano_multipais.md:300` põe a regra do host AR dentro do Bloco D com todas as letras (*"o host AR
+precisa de regra de qualquer jeito (senão o deny fecha), e acrescentar `subject: - "group:expansao_ar"`
+custa a mesma linha"*), `:512` a repete na entrega verificável do BLK-INTL-05, e o esforço de **1 dia**
+de `:506` **já está orçado com ela dentro** — atribuí-la ao Bloco E tiraria trabalho de um bloco sem
+devolver a estimativa ao outro. O que é do **BLK-INTL-08 (Bloco E)** é o **bloco de host no
+`Caddyfile`**: coisa diferente, arquivo diferente. As duas estão no §10 (itens 12 e 13) como
+adjacentes, para não serem esquecidas — **um portal que aponta para um host sem regra manda a pessoa
+para um 403; um portal que aponta para um host que nem existe no `Caddyfile` manda a pessoa para um
+erro de TLS.** É por isso que o §9 fixa `BLK-INTL-08` **antes** deste bloco: **aquele argumento de ordem
+se apoia no `Caddyfile`, e o `Caddyfile` continua sendo do Bloco E** — a correção de dono acima não o
+toca.
 
 ### 6.3 O que **não** muda — e é bom que não mude
 
@@ -719,34 +748,61 @@ grupos ainda não existem (§9). **Este bloco não pode ser mergeado** — ele e
 
 ### 7.3 Governança
 
-`python scripts/loop_guard.py` sobre o diff deve acusar **CRITICO** para `Caddyfile`,
-`docker-compose.prod.yml`, `.dockerignore` e `authelia/configuration.yml`. **Se não acusar, o guard
-está quebrado** — e isso é um bug maior que este bloco.
+`python scripts/loop_guard.py` sobre o diff deve acusar **CRITICO** — e **só para dois arquivos**:
+`docker-compose.prod.yml` (`scripts/loop_guard.py:122`) e `.dockerignore` (`:121`). **Se acusar só
+esses dois, o guard está certo.**
 
-### 7.4 Teste novo — `tests/unit/test_caddy_portal_paises.py`
+**Por que os outros dois não aparecem, e por que isso não é o guard falhando.** O `loop_guard` não olha
+o disco: ele deriva os caminhos do **git** — `git diff --name-only <base>..HEAD` mais
+`git diff --cached --name-only` (`scripts/loop_guard.py:258` e `:262`), ou a lista que chega de
+`gh pr diff --name-only` no modo `--stdin` (`:268`). E `Caddyfile` e `authelia/configuration.yml`
+**não estão no git**: são ignorados em `.gitignore:129` e `:131`, e
+`git ls-files Caddyfile authelia/configuration.yml` devolve **vazio**. Arquivo que o git não vê nunca
+entra num diff, logo nunca chega ao guard. As regras `(^|/)Caddyfile` (`:123`) e `^authelia/` (`:124`)
+existem para o dia em que alguém tentar versioná-los — **não são acionáveis por este bloco**, e exigir
+que disparem seria pedir ao guard que adivinhasse.
 
-É o que converte a escada do §3 de disciplina em verificação. Lê o `Caddyfile` (e, nos dois últimos,
-o `users_database.yml` e as páginas) como texto e afirma:
+**A consequência é a razão de o §7.1, o §7.2 e o §7.4.2 rodarem na VPS.** As duas mudanças de maior
+alcance deste bloco — o `route` do §2.3 e as duas linhas de Authelia do §6 — **não passam por revisão
+automática nenhuma**: nem guard, nem CI, nem diff no PR. A revisão delas é humana e é na VPS. É daí que
+vêm as três obrigações: `caddy validate` **antes** de qualquer reload (§7.1), os aceites com sessão real
+(§7.2) e a **saída do script de aceite colada no PR** (§7.4.2). **Nenhuma delas substitui o guard, e o
+guard não substitui nenhuma delas** — o guard protege o que está no git; a colagem é a única evidência
+revisável do que está fora dele.
 
-1. para **cada** `@so_<pais>` encontrado, existe **uma** linha `not header Remote-Groups *expansao_<outro>*`
-   para **cada** outro país declarado — a escada nunca fica pela metade;
-2. o bloco raiz **não** contém a palavra `permanent`;
-3. cada `handle @so_<pais>` redireciona com **`302`** explícito;
-4. o `handle @escolher` é o **primeiro** `handle` dentro do `route` (a única ordem que importa, §2.2);
-5. `forward_auth` aparece **antes** de qualquer `handle` dentro do `route` (armadilha §2.1);
-6. **nenhum grupo `expansao_*` do `authelia/users_database.yml` é substring de outro** (armadilha do
-   curinga, §2.2);
-7. `portal/` está no `.dockerignore` (§5.3);
+### 7.4 Verificação automatizada — **dois** artefatos, e por que não pode ser um
+
+É o que converte a escada do §3 de disciplina em verificação. **A numeração 1-12 abaixo é a original e
+não muda**: o §0, o §2.3, o §3, o §4.2 e o §5.4 citam asserts por número, e renumerar quebraria seis
+referências. O que muda é **onde cada um roda**.
+
+**Por que a lista teve de ser partida.** Oito dos doze asserts leem `Caddyfile` ou
+`authelia/users_database.yml`, e **nenhum dos dois está no git**: `.gitignore:129` e `:130`,
+`git ls-files` vazio para ambos (`git check-ignore -v` aponta as duas linhas). **Num checkout limpo
+esses arquivos não existem.** E o CI roda `python -m pytest -q` **sem filtro de caminho**
+(`.github/workflows/ci.yml:60`) sobre `testpaths = ["tests"]` (`pyproject.toml:157`) — quer dizer que um
+único arquivo em `tests/` que os abra **reprova o CI de todo mundo, em todo PR, para sempre**, e não só
+o deste bloco. Não é um teste frágil: é um teste que **nunca** poderia passar.
+
+**Por que a saída óbvia é pior que o problema.** `skipif(not Path("Caddyfile").exists())` deixa o CI
+verde e não verifica nada. Não há chave `age` no runner, então `secrets/Caddyfile.enc` não decripta e
+**a condição de skip nunca deixa de valer** — a suíte passa a exibir doze asserts "verdes-por-omissão"
+que ninguém jamais executou, dívida disfarçada de cobertura, invisível no `pytest -q`. **Não usar `skip`
+aqui.** Os quatro asserts que **podem** rodar no CI rodam de verdade, sem condição; os outros oito rodam
+onde os arquivos existem, que é a VPS.
+
+#### 7.4.1 CI — `tests/unit/test_portal_paises.py` (asserts **7, 8, 11 e 12**)
+
+**Por que estes quatro e não outros.** São os únicos que leem apenas arquivos **rastreados**:
+`.dockerignore` (confirmado em `git ls-files`) e os dois `portal/*.html`, que **nascem versionados**
+neste bloco. E são, não por acaso, os asserts de **vazamento** — a lista de países escapando no corpo
+HTTP, ou a página entrando na imagem de aplicação. Justamente os que mais precisavam sobreviver ao corte
+foram os que sobreviveram.
+
+7. `portal/` está no `.dockerignore` (§5.3). Sem essa linha o `COPY . .` do `Dockerfile.web:43` e do
+   `Dockerfile.api:33` põe a página dentro das **duas** imagens de aplicação (§5.2);
 8. `portal/index.html` não referencia `http://` nem `https://` fora dos hosts `*.ultra-expansao.tech`
    (a CSP `default-src 'none'` bloquearia, e é melhor falhar no CI que no ar);
-9. **os dois `handle` que servem `/index.html` contêm a diretiva `templates`** — o `handle @escolher` e
-   o `handle` de fallback. Sem ela a filtragem por país simplesmente não acontece, e o modo de falha é
-   uma página crua servida a todo mundo (§5.4). No mesmo assert: `templates` **não** aparece no
-   `handle @sem_pais` nem em nenhum `handle` que faça `reverse_proxy`;
-10. **todo grupo do `users_database.yml` casa `^[a-z0-9_]+$`** — uma linha de regex que fecha, junto
-    com o assert 6, as duas armadilhas de nome de grupo: a do curinga de substring (§2.2) e a de um
-    nome com `'`, `"` ou `<` chegar a um contexto que o trate como texto. Nada é interpolado no HTML
-    hoje (§5.4), e este assert é o que impede que volte a ser sem ninguém perceber;
 11. **nenhuma das duas páginas de `portal/` esconde conteúdo de país por CSS**: nem `display:none`
     sobre `.pais`, nem seletor de classe sobre grupo (`[class*="expansao_"]`). Filtragem é de
     renderização (§5.4) — este assert é o que impede o vazamento do §6.2 de voltar como "só um
@@ -755,19 +811,83 @@ o `users_database.yml` e as páginas) como texto e afirma:
     `piloto-<pais>`**, e `portal/sem-acesso.html` não os contém em lugar nenhum — **comentário HTML
     incluído**, porque ele viaja no corpo (§5.4). É a versão em CI dos aceites 6, 8 e 9 do §7.2.
 
+**Como se roda.** Local: `python -m pytest tests/unit/test_portal_paises.py -q`. No CI entra sozinho no
+`pytest -q` do `ci.yml:60`, sem configuração nova nenhuma.
+
+> **Regra de manutenção deste arquivo — é a única coisa que impede a regressão:** ele **não pode abrir
+> `Caddyfile` nem nada sob `authelia/`**, nem no corpo do teste, nem em fixture, nem dentro de um
+> `skipif`, nem num `Path(...).exists()` de guarda. No dia em que abrir, o CI de todo mundo passa a
+> depender de um arquivo que só existe na VPS. O que precisar deles vai para o §7.4.2.
+
+O nome mudou de `test_caddy_portal_paises.py` para `test_portal_paises.py` de propósito: o teste **não
+lê mais o `Caddyfile`**, e o prefixo `caddy_` seria um convite a acrescentar um assert que lê.
+
+#### 7.4.2 Aceite na VPS — `scripts/aceite_portal_paises.sh` (asserts **1-6, 9 e 10**)
+
+**Onde roda:** `/opt/motor-expansao/app` na VPS (`docs/infra_producao.md:772`, `:824`) — o único lugar
+onde `Caddyfile` e `authelia/users_database.yml` existem. **Não é pytest, não fica em `tests/` e não é
+chamado por workflow nenhum**; se fosse, voltaria a reprovar o CI pelo motivo do §7.4. É script `bash`
+no molde do `scripts/healthcheck_vps.sh` (`set -euo pipefail`).
+
+**Contrato do script.** Lê os dois arquivos como texto, imprime **uma linha por assert** — `OK <n> — o
+que checou` ou `FALHA <n> — <arquivo>:<linha>, o que esperava` — e sai **`1`** se qualquer um falhar.
+**Não imprime o conteúdo dos arquivos**: nome de usuário e nome de grupo **nunca** vão para a saída; os
+asserts 6 e 10 relatam *quantos* grupos leram e *qual índice* reprovou, não qual grupo. Isso não é zelo
+decorativo — a saída deste script vai **colada num PR do repositório**, e `users_database.yml` é
+gitignored justamente por ser o que é.
+
+1. para **cada** `@so_<pais>` encontrado no `Caddyfile`, existe **uma** linha
+   `not header Remote-Groups *expansao_<outro>*` para **cada** outro país declarado — a escada nunca
+   fica pela metade;
+2. o bloco raiz **não** contém a palavra `permanent`;
+3. cada `handle @so_<pais>` redireciona com **`302`** explícito;
+4. o `handle @escolher` é o **primeiro** `handle` dentro do `route` (a única ordem que importa, §2.2);
+5. `forward_auth` aparece **antes** de qualquer `handle` dentro do `route` (armadilha §2.1);
+6. **nenhum grupo `expansao_*` do `authelia/users_database.yml` é substring de outro** (armadilha do
+   curinga, §2.2);
+9. **os dois `handle` que servem `/index.html` contêm a diretiva `templates`** — o `handle @escolher` e
+   o `handle` de fallback. Sem ela a filtragem por país simplesmente não acontece, e o modo de falha é
+   uma página crua servida a todo mundo (§5.4). No mesmo assert: `templates` **não** aparece no
+   `handle @sem_pais` nem em nenhum `handle` que faça `reverse_proxy`;
+10. **todo grupo do `users_database.yml` casa `^[a-z0-9_]+$`** — uma linha de regex que fecha, junto
+    com o assert 6, as duas armadilhas de nome de grupo: a do curinga de substring (§2.2) e a de um
+    nome com `'`, `"` ou `<` chegar a um contexto que o trate como texto. Nada é interpolado no HTML
+    hoje (§5.4), e este assert é o que impede que volte a ser sem ninguém perceber.
+
+**Como se roda, e o que vai para o PR:**
+
+```bash
+# NA VPS, ANTES do `up -d caddy` do §7.1 — e' leitura de texto, roda com o Caddy velho no ar
+cd /opt/motor-expansao/app
+bash scripts/aceite_portal_paises.sh ; echo "exit=$?"
+# esperado: 8 linhas comecando com OK, e exit=0
+```
+
+**A saída inteira — as 8 linhas mais o `exit=` — é colada no PR**, ao lado da versão do Caddy do §7.1.
+É a **única evidência revisável** de que a metade não-versionada deste bloco foi conferida: sem ela o
+revisor aprova um `Caddyfile` que ele não tem como ver (§7.3). **Rodar de novo depois do
+`up -d caddy`**, porque o script lê o arquivo do repo e não o do container — quem prova que o container
+recebeu o mesmo byte é o `caddy validate` do §7.1 e os aceites do §7.2.
+
 ### 7.5 Definição de pronto
 
 Os 14 itens do §7.2 verdes (1-8, 9a, 9b, 10-13) · o passo manual do navegador feito · `loop_guard`
-acusando CRITICO · os **12 asserts** do §7.4 verdes · **o aviso do §4.1 enviado no mesmo dia** ·
-versão do Caddy anotada no PR.
+acusando CRITICO nos **dois** arquivos que ele enxerga (§7.3) · os **4 asserts** do §7.4.1 verdes no CI
+· os **8 asserts** do §7.4.2 verdes na VPS, **com a saída colada no PR** · **o aviso do §4.1 enviado no
+mesmo dia** · versão do Caddy anotada no PR.
 
 ---
 
 ## 8. Criticidade e governança
 
-- **Classe: CRITICO.** Quatro dos arquivos alterados casam a lista CRITICO do guard:
-  `docker-compose` (`scripts/loop_guard.py:122`), `Caddyfile` (`:123`), `^authelia/` (`:124`) e
-  `.dockerignore` (`:121`).
+- **Classe: CRITICO.** Quatro dos arquivos alterados casam a lista CRITICO do guard — mas **o guard só
+  enxerga dois**: `.dockerignore` (`scripts/loop_guard.py:121`) e `docker-compose.prod.yml` (`:122`).
+  Os outros dois casam o padrão e **nunca chegam ao guard**, porque não estão no git: `Caddyfile`
+  (`:123`, ignorado em `.gitignore:129`) e `authelia/configuration.yml` (`^authelia/`, `:124`, ignorado
+  em `.gitignore:131`) — `git ls-files` devolve vazio para os dois, e o guard deriva seus caminhos do
+  git (`loop_guard.py:258`, `:262`, `:268`). **A classe do bloco continua CRITICO**: ela vem do que a
+  mudança faz, não do que o guard alcança, e o critério do `CLAUDE.md:141` (toca VPS/deploy) já basta
+  sozinho. O §7.3 explica o que cobre a metade invisível.
 - **Exige a label `critica-aprovada` do próprio Felipe** para merge. Pela DEC-016 (`CLAUDE.md:144`),
   Baixa/Média fazem auto-merge com 4 checks verdes; **Crítica não** — o merge segue humano, e a label
   é do dono, não do revisor.
@@ -810,12 +930,16 @@ cabeça. É indisponibilidade total do caminho normal, sem erro no log, sem aler
 2. **Provar que os grupos chegam ao Caddy**, com a receita do §7.2: `grupos=` tem de trazer
    `ultra_team,expansao_br`. **Não presumir** — é justamente esta suposição que o §2.1 mostra
    falhando de forma silenciosa.
-3. **O host argentino, que é o BLK-INTL-08 (Bloco E)** — `piloto-ar.ultra-expansao.tech` no
-   `Caddyfile` **e** a regra de `access_control` correspondente (§6.2). Hoje o `Caddyfile` tem cinco
-   hosts (linhas 19, 24, 32, 49, 54) e nenhum é o argentino, e o `access_control` tem duas regras
-   (`authelia/configuration.yml:82-86`). **Antes deste passo, `handle @so_ar` redireciona para um host
-   que não existe** — o usuário toma erro de TLS/host desconhecido, que é pior de diagnosticar que um
-   403 porque nem chega ao Authelia.
+3. **O host argentino no `Caddyfile`, que é o BLK-INTL-08 (Bloco E)** — o bloco de
+   `piloto-ar.ultra-expansao.tech`. Hoje o `Caddyfile` tem cinco hosts (linhas 19, 24, 32, 49, 54) e
+   nenhum é o argentino. **Antes deste passo, `handle @so_ar` redireciona para um host que não
+   existe** — o usuário toma erro de TLS/host desconhecido, que é pior de diagnosticar que um 403
+   porque nem chega ao Authelia.
+   **A regra de `access_control` desse host não é deste passo**: ela é do **BLK-INTL-05 (Bloco D)**, que
+   já a orça (`docs/plano_multipais.md:300`, `:506`, `:512` — ver §6.2). Ou seja, ela chega no **passo
+   1** e o host chega aqui; hoje o `access_control` tem duas regras (`authelia/configuration.yml:82-86`)
+   e nenhuma é a argentina. **A ordem abaixo não muda por causa disso** — ela se apoia em quem escreve
+   no `Caddyfile`, e o `Caddyfile` continua sendo do Bloco E.
 4. **Só então o portal** (este bloco).
 
 **A ordem, em uma linha: `BLK-INTL-05` → `BLK-INTL-08` → `BLK-INTL-13`.** Os dois últimos escrevem no
@@ -853,7 +977,8 @@ Recomendo as duas etapas. Elas separam a mudança **arriscada** (roteamento por 
 | 4 | `C:\dev\motor-de-expansao\.dockerignore` | +1 linha `portal/` na seção das linhas **39-42** | **CRITICO** (`loop_guard.py:121`) |
 | 5 | `C:\dev\motor-de-expansao\docker-compose.prod.yml` | +1 volume `./portal:/srv/portal:ro` no serviço `caddy` (**268-274**) | **CRITICO** (`loop_guard.py:122`) |
 | 6 | `C:\dev\motor-de-expansao\authelia\configuration.yml` | linha **59** (`default_redirection_url`) + regra da raiz em **80-86** | **CRITICO** (`loop_guard.py:124`) |
-| 7 | `C:\dev\motor-de-expansao\tests\unit\test_caddy_portal_paises.py` | **novo** — os 12 asserts do §7.4 | teste |
+| 7 | `C:\dev\motor-de-expansao\tests\unit\test_portal_paises.py` | **novo** — os **4** asserts do §7.4.1 (7, 8, 11 e 12). **Renomeado** (era `test_caddy_portal_paises.py`): não lê mais o `Caddyfile`, que é gitignored, e o prefixo `caddy_` mentiria | teste |
+| 7b | `C:\dev\motor-de-expansao\scripts\aceite_portal_paises.sh` | **novo** — os **8** asserts do §7.4.2 (1-6, 9 e 10), que leem `Caddyfile` e `users_database.yml`. **Roda na VPS, fora de `tests/`**, com a saída colada no PR | aceite |
 | 8 | `C:\dev\motor-de-expansao\scripts\loop_guard.py` | +1 entrada `^portal/` em `_DENY_GOVERNANCA` (**163-201**), ao lado do `^web/` (`:184`) | GOVERNANCA |
 | 9 | `C:\dev\motor-de-expansao\docs\infra_producao.md` | runbook: recriar `caddy` (não `reload`) no 1º deploy; como editar a página depois | doc |
 | 10 | `C:\dev\motor-de-expansao\tasks\backlog.md` | abrir **BLK-INTL-13** sob a epic `BLK-INTL`, **sem** o marcador `loop-safe`, com `Depende de: BLK-INTL-05` | GOVERNANCA (`loop_guard.py:168`) |
@@ -864,7 +989,7 @@ Recomendo as duas etapas. Elas separam a mudança **arriscada** (roteamento por 
 |---|---|---|---|
 | 11 | `C:\dev\motor-de-expansao\authelia\users_database.yml` | grupos `expansao_br` (19 usuários) e `expansao_ar` | **BLK-INTL-05** |
 | 12 | `C:\dev\motor-de-expansao\Caddyfile` | bloco do host `piloto-ar.ultra-expansao.tech` — **escreve ANTES deste bloco** no mesmo arquivo CRITICO (§9) | **BLK-INTL-08** (Bloco E) |
-| 13 | `C:\dev\motor-de-expansao\authelia\configuration.yml` | regra `access_control` de `piloto-ar` | **BLK-INTL-08** (Bloco E) |
+| 13 | `C:\dev\motor-de-expansao\authelia\configuration.yml` | regra `access_control` de `piloto-ar` — **com `subject`**, ao contrário da regra da raiz (§6.2) | **BLK-INTL-05 (Bloco D)** — e não o Bloco E: `plano_multipais.md:300` e `:512` a põem lá, e o esforço de `:506` já a orça (§6.2) |
 | 14 | `C:\dev\motor-de-expansao\web\` | link "trocar de país" → `https://ultra-expansao.tech/?escolher=1` dentro do piloto (§4.2, obrigação 1) | **a definir** |
 | 15 | `C:\dev\motor-de-expansao\docs\plano_multipais.md` | ponteiro para esta spec | **outra pessoa** — não é editado por aqui |
 | 16 | `C:\dev\motor-de-expansao\docs\decisions\DEC-0XX.md` | registrar a decisão do portal (recomendado). **Pegar o ID por `ls docs/decisions/DEC-*.md` no momento do commit, não na abertura da branch** — foi assim que a DEC-045 foi tomada debaixo do plano multipaís | a criar |

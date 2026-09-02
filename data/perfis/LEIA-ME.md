@@ -120,14 +120,14 @@ O método não foi inventado: é **literalmente o critério escrito** em `src/mo
 
 **(a) Isto não é conversão de moeda.** O teto brasileiro não vira o teto argentino dividido por 1.397,71. R$ 4.000 ÷ 1.397,71 = US$ 2,86 — número sem sentido. O que se transporta é o **critério** (qual percentil vira piso, qual saturação é aceitável), aplicado a uma distribuição diferente.
 
-**(b) A âncora de população brasileira é de SETOR CENSITÁRIO; a argentina alimentaria com HEXÁGONO.** O cabeçalho do arquivo de calibração fala em "hexes", mas a coluna efetivamente usada é `pop_col = "pop_total_setor_2022"` (`:309`) — setor. Reusar 1.000/100.000 na Argentina só se sustenta porque as duas distribuições **coincidem por medição**:
+**(b) A âncora de população brasileira é de HEXÁGONO H3 res 7 — a mesma unidade que a Argentina alimenta.** O **nome da coluna** engana, e por isso este parágrafo já afirmou o contrário até 2026-09-02: `pop_col = "pop_total_setor_2022"` (`:309`) é o valor do setor **carregado no hexágono**, não a granularidade da linha. As linhas do dataframe são hexes, e o código diz isso em três lugares — `:82` mede as âncoras "no universo POVOADO (pop >= 1.000, **21.107 hexes**)", `:265` imprime `f"  Setor: {len(df_ufs):,} hexes"` e `:320` faz merge com o M1 `on="hex_id"`. Confere com `rotulos.unidade_analise` do próprio `BR/perfil.json`. Reusar 1.000/100.000 na Argentina é portanto o **casamento correto de unidade**, e a medição confirma:
 
 | | p05 | p50 | p95 |
 |---|---|---|---|
-| BR, setor censitário povoado | 1.103 | 3.561 | 28.845 |
+| BR, hexágono H3 res 7 povoado | 1.103 | 3.561 | 28.845 |
 | AR, hexágono H3 res 7 povoado | 1.127 | 3.699 | 28.500 |
 
-É coincidência empírica entre duas unidades diferentes, **não derivação**. Está escrito assim no `_nota_pop` do perfil AR de propósito: quem ler daqui a seis meses precisa saber que o número é reutilizado, não deduzido.
+São **a mesma unidade** medida nos dois países — é por isso que os números batem. A consequência inverte a leitura antiga e está escrita assim no `_nota_pop` do perfil AR de propósito: quem migrar a âncora argentina para radio censal estaria **criando** o descasamento que essa nota dizia existir.
 
 ### A tensão que o Felipe precisa resolver (P1)
 
@@ -181,6 +181,8 @@ Três consequências de disciplina, visíveis no arquivo:
 
 O `bbox` do Brasil é o único campo em que a transcrição não foi possível — há **seis cópias divergentes**, em **três** caixas distintas (listadas em `bbox._copias_hoje`).
 
+**Os textos de `fontes` são transcritos com a acentuação do código** (`app.py:3550`, `:3553`, `:3572-3575`, `:3599-3603`), travessão inclusive. Não é detalhe de estilo: `/api/metodologia` (`app.py:3941`) é **rota livre** e publica essas strings na tela do usuário, e depois do commit A7 elas passam a sair **deste arquivo**. Uma cópia sem acento vira português errado em produção, e nenhum teste pega — o contrato do A7 compara o texto **servido**, que a partir dali é este. Vale a regra do `CLAUDE.md` §2: acento em texto de usuário, nunca em identificador. O resto do arquivo — chaves e notas `_`-prefixadas — continua sem acento, porque não é texto de usuário.
+
 **BR-P1 está FECHADA desde 2026-08-31, em B1** (`lat [-34,0 · 5,5]` · `lng [-74,0 · -28,0]`), que é o que a spec §1.3 já decidia. O default anterior deste arquivo era a **união** (`lat_max 6,0` / `lng_min -75,0` = a caixa B3 de `competitors.py`), e a justificativa dela — "unificar numa caixa mais estreita passaria a rejeitar coordenada hoje aceita" — foi **medida e não se sustenta**:
 
 - O único sítio que a união preservava é o filtro de pins de `dashboard/competitors.py`. O comando de verificação obrigatório da spec §7.5, rodado sobre `data/staging/concorrentes_mapeados.parquet` (**3.296 linhas**): **B3 = 3.269, B1 = 3.269, delta 0**. Estreitar de B3 para B1 não descarta um pin sequer.
@@ -197,18 +199,19 @@ Manter as duas coisas separadas é deliberado. São blocos diferentes, com donos
 
 ## 8. Inventário de pendências
 
-Cada pendência tem `campo`, `estado`, `decide`, `pergunta`, `default`, `justificativa` e `o_que_muda_quando_decidir`. Dois estados:
+Cada pendência tem `campo`, `estado`, `decide`, `pergunta`, `default`, `justificativa` e `o_que_muda_quando_decidir`. Três estados:
 
 - **`default_provisorio`** — há um valor usável no arquivo; a instância sobe; a decisão refina.
 - **`ausente`** — o valor é `null`; a instância sobe **só porque a superfície que precisaria dele está bloqueada**. Liberar a superfície sem preencher deve falhar o boot (§3.3).
+- **`decidido`** — o dono já escolheu; o item carrega `decidido_em` e `decisao` e fica no inventário como registro, não como pendência aberta.
 
-### Argentina — 9 pendências
+### Argentina — 9 itens (8 abertos, 1 decidido)
 
 | # | Campo | Estado | Decide | Trava o dia 1? |
 |---|---|---|---|---|
 | P1 | `reguas.renda_abs_min/max` | default provisório (350 / 1.000 USD) | **Felipe** | não |
 | P2 | `reguas.pop_abs_min/max` | default provisório (1.000 / 100.000) | **Felipe** | não |
-| P3 | `reguas.score_pesos` / qual score o mapa pinta | **ausente** | Felipe com o Juan | **decide o esforço do Bloco B** |
+| P3 | `reguas.score_pesos` / qual score o mapa pinta | **decidido** (2026-09-02) | Felipe com o Juan | não — já decidido; define o esforço do Bloco B |
 | P4 | `moeda.indicadores_renda` (USD ou ARS na tela) | default provisório (USD) | Felipe (produto) | não |
 | P5 | `reguas.metas_big_numbers` | **ausente** | Felipe + Expansão Internacional | não — `ponto` está bloqueada |
 | P6 | `reguas.score_corte_quente` | default provisório (30,0) | Felipe | não — revisar **depois** de P1/P2 |
@@ -218,7 +221,7 @@ Cada pendência tem `campo`, `estado`, `decide`, `pergunta`, `default`, `justifi
 
 **P9 nasceu em 2026-08-31, junto com a unificação de schema.** São os dois campos que a spec §1.2 declara obrigatórios e para os quais o pacote do Juan não tem fonte argentina: o loader do commit A1 reprovaria o perfil sem eles. `fontes.crescimento` descreve a **ausência** de um equivalente ao CAGED/RAIS mensal em vez de traduzir a frase brasileira (que afirmaria CAGED e RAIS na Argentina); `oferta_destaque_min` entrou com o valor brasileiro (2.000) porque a régua é uma fração da capacidade de uma unidade **Ultra** — que é a mesma nos dois países (2.500) — e não da capacidade de um concorrente local (1.070 na AR). **Não toca a agenda do Felipe.**
 
-**P3 merece destaque, porque é a única sem default seguro.** O motor brasileiro calcula `0,60·renda + 0,40·pop`. O parquet argentino já traz um `hex_score_estrutural` com os pesos **invertidos**: `100 × (0,40·renda_pct + 0,60·pop_pct)`. Se a plataforma recomputar o score nas âncoras AR, o valor vai divergir da coluna `score_priorizacao` que veio no pacote, e as duas vão existir lado a lado. Escolher em silêncio produz um mapa que discorda do parquet entregue — e ninguém descobre por erro; descobre por reunião.
+**P3 era a única sem default seguro, e foi FECHADA em 2026-09-02** (`AR/perfil.json`, bloco `reguas.score_pesos` e a entrada P3 do inventário). O motor brasileiro calcula `0,60·renda + 0,40·pop`; o parquet argentino já traz um `score_priorizacao` com os pesos **invertidos** (`0,40·renda_pct + 0,60·pop_pct`, percentil nacional). **Decisão do Felipe: a plataforma RECOMPUTA com a fórmula brasileira** (`calibrar_renda_setor_2022.py:160`) sobre as âncoras AR declaradas no perfil. O motivo é de régua, não de gosto: `score_corte_quente = 30` e as faixas de cor foram calibrados contra a saída da fórmula brasileira, e aplicá-los ao score nativo seria usar uma régua sobre uma distribuição que ela não conhece. Consequência medida: **5,5%** dos hexágonos passam no corte 30, contra 12,2% pelo score nativo. As duas colunas convivem no parquet; a servida é a recomputada.
 
 ### Brasil — 3 pendências
 
@@ -234,6 +237,6 @@ Estão escritos nos `_nota` para não virarem surpresa:
 
 - **Renda argentina tem erro estrutural de ±15%** (mediana urbana; ±24% no P90), e **85% dos hexágonos têm `renda_confianca = "baixa"`** (rural, renda extrapolada da média urbana). O gate de população tira quase todos das teses — mas **a leitura do mapa não tem esse gate**.
 - **A concorrência argentina enxerga ~37% do universo real** de academias. O fator de cobertura 2,675 corrige o **agregado**, não o hexágono individual.
-- **`taxa_fitness_osm_calibrada = 0,358`** no parquet AR diverge **4,6×** do benchmark de 0,078 e é gravada sem alertar. **Não usar essa coluna** — o perfil declara `taxa_fitness: 0.078`.
+- **`taxa_fitness_osm_calibrada = 0,3529`** no parquet AR diverge **4,52×** do benchmark de 0,078 e é gravada sem alertar. **Não usar essa coluna** — o perfil declara `taxa_fitness: 0.078`. *Dívida de procedência:* o valor `0,358` (4,6×) que este item trazia até 2026-09-02 só aparece no `dicionario_dados.md` do Juan, em nenhum parquet; como nem o parquet nem o dicionário estão neste repo, a divergência entre as duas fontes **não é conferível daqui** e fecha com o Juan. A conclusão não muda em nenhum dos dois valores.
 - **`mem_limit: 2g` da AR é palpite de disco, não RSS medido.** `carregar_uf_completo` (`web/server/app.py:786-789`) faz `read_parquet` sem projeção de colunas, e o parquet AR carrega `geometry_wkb` por linha — coluna que o enriquecido brasileiro não tem. Medir no Bloco E **antes** de fixar.
 - **O mapa argentino sobe sem nome de rua** (decisão 0.9, aceita por escrito). `_labels_tiles_url` (`censo_map.py:729-738`) devolve `None` sem `API_BASEMAP_LABELS_URL` e **não há fallback embutido** — a falha é silenciosa. `avisos.mapa_sem_toponimo` existe para o silêncio virar frase.

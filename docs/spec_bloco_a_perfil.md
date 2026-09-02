@@ -47,8 +47,22 @@ envelhece calado, que é exatamente a classe de defeito que a DEC-045 e a DEC-04
 ### 1.2 O schema, campo a campo
 
 `perfil.json` mora na **raiz do `MOTOR_DATA_DIR`**: `${MOTOR_DATA_DIR}/perfil.json`. As **fontes
-versionadas** que o deploy copia para lá são `data/perfis/BR/perfil.json` e `data/perfis/AR/perfil.json`
-(§3.1) — e o BR é também o default de dev/teste.
+versionadas** são `data/perfis/BR/perfil.json` e `data/perfis/AR/perfil.json` (§3.1) — e o BR é
+também o default de dev/teste.
+
+> ⚠️ **CORREÇÃO DE 2026-09-02 — "o deploy copia para a raiz do volume" era instrução IMPOSSÍVEL.**
+> Esta linha dizia que o deploy copia a fonte certa "para a raiz do volume". **Não existe raiz de
+> volume para copiar.** `/app/data` **não é** um mount: o `docker-compose.prod.yml` monta apenas
+> **subdiretórios** dele — `outputs` (`:223`), `staging` (`:228`), `ibge` (`:229`), `ultra` (`:230`)
+> e `oportunidades` (`:235`). O `/app/data` em si é diretório **da imagem** (`Dockerfile.web:85`,
+> `mkdir -p /app/data`), e escrever nele no host não chega ao container. Com `MOTOR_DATA_DIR=/app/data`
+> fixo em `Dockerfile.web:30` e repetido em `docker-compose.prod.yml:162`, o loader da §3.1 procura
+> `/app/data/perfil.json` — **um caminho sem origem**. Como se chega ao arquivo está na
+> **pré-condição de infra do A3** (§6.1); a prova está no critério de aceite nº 11 (§7).
+>
+> **A MESMA frase está em `data/perfis/LEIA-ME.md:29`**, e o diagrama de `:21-27` desenha
+> `MOTOR_DATA_DIR/` como uma árvore única — o modelo mental que produziu o erro. Aquele arquivo
+> **não é desta spec** e não foi editado aqui: fica registrado que precisa da mesma correção.
 
 **Duas regras de admissão do loader, para o schema ser UM só** (acrescentadas em 2026-08-31, quando se
 descobriu que esta tabela, o `data/perfis/LEIA-ME.md` §3.2 e os dois `perfil.json` entregues descreviam
@@ -285,13 +299,48 @@ construção**, e o conserto é aqui.
 > Colômbia, México, Peru e Paraguai (todos aceitam "de" sem artigo em registro formal). É deliberado
 > e está escrito aqui para não ser "consertado" depois.
 
-### 2.7 Lint que impede a volta
+### 2.7 Guarda que impede a volta
 
-No mesmo bloco, uma regra de ESLint proibindo o literal `R$` em `web/src/**/*.{ts,tsx}`
-(`no-restricted-syntax` sobre `Literal[value=/R\$/]`), com allowlist **vazia** e o motivo no arquivo
-de config. Sem isso, o próximo componente reintroduz o símbolo e nada acusa. (Análogo Python: um teste
-de contrato que varre `web/server/app.py` e `src/motor_expansao/dashboard/` atrás de `R$` em string
-de usuário — ver §5.9.)
+**Escopo: `web/src/lib/**/*.ts`, allowlist vazia.** Uma guarda que falha quando `R$` reaparece fora
+de comentário nesses arquivos, com o motivo escrito nela. Sem isso, o próximo módulo de formatação
+reintroduz o símbolo e nada acusa.
+
+> ⚠️ **REESCRITA EM 2026-09-02. A versão anterior dizia "regra de ESLint sobre `web/src/**/*.{ts,tsx}`,
+> `no-restricted-syntax` sobre `Literal[value=/R\$/]`, allowlist vazia". Ela não fechava, por dois
+> motivos independentes — e ambos foram MEDIDOS.**
+
+**Por que o escopo é `lib/` e não `web/src/**`.** Medido hoje em `web/src`, fora de `*.test.*` e fora
+de comentário: **63 ocorrências de `R$` em 15 arquivos**. Delas, **32 literais de string em 11
+arquivos** (33 ocorrências — `ViabilityScreen.tsx:969` traz duas no mesmo literal) casariam com
+`Literal[value=/R\$/]`; **21 vivem em template literal** e **9 em texto JSX**, que o seletor
+`Literal[]` **não enxerga**. Uma regra sobre `web/src/**` com allowlist vazia não é a porta fechada:
+são **32 erros no dia 1** num PR de front que já não auto-mergeia (`^web/` é GOVERNANCA, §8) — e
+ainda deixaria passar as 21+9 que o A9 mais precisa travar.
+
+Em `web/src/lib/**/*.ts` são **11 ocorrências em 4 arquivos**: `format.ts` (8 — `:38`, `:39`, `:41`,
+`:52`, `:53`, `:54` e as duas de `:105`), `comparacao.ts:98`, `comparacao-pontos.ts:60` e
+`recomendacao.ts:206`. **As 11 são movidas pelo A9**, então a allowlist nasce vazia **e** verde. Note
+que só **3** delas são `Literal` de string (`comparacao.ts:98`, `comparacao-pontos.ts:60`,
+`format.ts:105`): as seis do `brl`/`brlCurto` (`format.ts:38-54`) são **template literal**. Um
+seletor só de `Literal[]` deixaria passar exatamente o sítio que este bloco existe para matar.
+
+**Por que teste de contrato e não ESLint — NÃO HÁ ESLint NESTE PROJETO.** Conferido:
+`web/package.json` não traz `eslint` em `devDependencies` e define `"lint": "tsc --noEmit"`; não há
+`eslint.config.*` nem `.eslintrc*` em lugar nenhum do repositório. Escrever a guarda como regra de
+ESLint significa **introduzir ESLint + `typescript-eslint` + passo de CI** — dependência e trabalho
+que não estão nos 7-11 dias do bloco, num commit cujo papel é fechar a porta, não abrir uma frente.
+**A guarda é um teste de contrato**, `tests/contracts/test_sem_moeda_hardcoded_no_front.py`, no mesmo
+padrão de `test_faixas_mapa_espelho.py`: varre `web/src/lib/**/*.ts` atrás de `R$` fora de comentário
+e falha nomeando arquivo e linha. Mesmo efeito, zero dependência nova, e roda no `pytest` que o
+critério de aceite já executa. (Análogo do lado Python, no mesmo teste: `web/server/app.py` e
+`src/motor_expansao/dashboard/` atrás de `R$` em string de usuário — ver §5.9.)
+
+**Os `R$` de `ViabilityScreen.tsx` NÃO entram no escopo** — `:580`, `:582`, `:595`, `:597`, `:874`,
+`:877`, `:904`, `:907`, `:966` e as duas de `:969` (os `prefixo="R$"` das caixas e os `title` que
+explicam a unidade). Convertê-los **contrariaria a decisão 0.6**: a viabilidade argentina sobe **em
+reais, com tributo brasileiro**, como provisório declarado. Um símbolo parametrizado ali escreveria
+"$" numa tela cujos números continuam sendo reais — pior do que o provisório assumido, porque some
+com o único sinal de que são reais. Saem junto com o BLK-INTL-11, não antes.
 
 ---
 
@@ -476,6 +525,28 @@ testados pelo Vitest **sem servidor**, e sem esse default os testes de §5.7 e �
 `undefined`, não por régua. O default BR do front vive num único `perfil-br.ts` gerado do mesmo
 `data/perfis/BR/perfil.json` — e um teste de contrato trava que os dois batem (§5.9).
 
+**QUANDO é seguro ler o perfil no cliente — acrescentado em 2026-09-02.** O `/api/me` chega num
+`useEffect` de `web/src/App.tsx` (`useState<Set<Aba>|null>(null)` em `:65`, `useEffect(…, [])` em
+`:66-79`): **o payload só existe DEPOIS da primeira pintura.** Junte isso ao default BR compilado do
+parágrafo acima e aparece o modo de falha que nenhum teste pega: uma substituição
+**literal-por-literal** dos sítios de front deixa a leitura acontecer cedo demais, o default
+responde, e o resultado é o **bbox brasileiro congelado** — a instância AR recusando Buenos Aires na
+barra de busca do mapa, que é superfície do DIA 1 (decisão 0.6). Os quatro testes da §5.8 ficam
+**verdes por construção**, porque é o default que eles exercitam. Por isso cada sítio do A9 precisa
+ser classificado **antes** de ser tocado, em duas classes:
+
+| classe | como é hoje | o que o A9 faz | por quê |
+|---|---|---|---|
+| **(1) leitura sob INPUT do usuário** | `const BR = { latMin: -34.0, … }` de **módulo**: `web/src/lib/coord.ts:8` (lido por `noBrasil`, `:15-20`) e `web/src/lib/entrada-ponto.ts:44` | **mover a leitura para o CORPO da função** — `noBrasil()` passa a chamar `perfilDoCliente().bbox` a cada chamada, em vez de fechar sobre uma const de módulo avaliada no import | Essas funções só rodam quando o operador **digita**, sempre depois do `/api/me`. O custo é um acesso a objeto; o ganho é validar contra o país da instância em vez de contra o Brasil de sempre. Aqui um getter **resolve** |
+| **(2) leitura na PRIMEIRA RENDERIZAÇÃO** | o inicializador preguiçoso `useState<ViewState>(() => …)` de `web/src/components/HexMap.tsx:494-512`, com os literais `-47.9` / `-15.78` em **`:506-507`**; e `VISTA_BRASIL` (`web/src/lib/mapa-ponto.ts:32`) lido no corpo de `web/src/components/MapaPonto.tsx:63` | **o perfil tem de estar resolvido ANTES da primeira pintura**: o bootstrap preenche `perfil.ts` antes de montar a árvore, ou a árvore não monta enquanto ele não chegar | Inicializador de `useState` roda **antes de qualquer efeito**. Aqui **getter NÃO resolve**: por mais tardia que a leitura seja escrita, ela acontece cedo demais. Uma câmera que nasce em Brasília e voa para Buenos Aires depois do `/api/me` não é chateação de teste — é a tela nascendo no país errado |
+
+> **Correção de referência, para o A9 não perder um sítio.** `VISTA_BRASIL` **não** está em
+> `HexMap.tsx:506-507`, como circulou na revisão. `:506-507` são os literais `-47.9`/`-15.78` — o
+> fallback de Brasília para o centro do município —, e `VISTA_BRASIL` vive em `mapa-ponto.ts:32`,
+> consumido em `MapaPonto.tsx:63`. **São dois sítios distintos, ambos da classe (2)**, e o
+> `-47.9`/`-15.78` do `HexMap` não aparece em nenhuma lista do plano nem da DEC-046: some do A9 se
+> alguém o classificar como "só bbox".
+
 ---
 
 ## 4. A parametrização das âncoras
@@ -555,18 +626,29 @@ AR é percentil e o corte de 30 é absoluto.
 
 ### 4.4 A decisão do Felipe que este bloco NÃO toma
 
-As âncoras argentinas de **renda (USD)** e de **população por hexágono**. As brasileiras saem de
-distribuição de **setor censitário** (`calibrar_renda_setor_2022.py:85-86`: p05 = 1.103, p95 = 28.845);
-a AR alimentaria com população de **hexágono**. Converter só a moeda e manter `POP_ABS_MIN/MAX` **não
-é escolher âncora argentina — é trocar a unidade em silêncio**.
+As âncoras argentinas de **renda (USD)** e de **população por hexágono**.
 
-**Corrigido em 2026-08-31 — a redação anterior desta seção descrevia um perfil que não é o entregue.**
+**Corrigido em 2026-09-02 — esta seção afirmava que a âncora brasileira de população vem de SETOR
+CENSITÁRIO. É falso, e a consequência inverte a recomendação.** A âncora brasileira **também é de
+hexágono H3 res 7**: `calibrar_renda_setor_2022.py:82` diz, com todas as letras,
+`# Ancoras medidas no universo POVOADO (pop >= 1.000, 21.107 hexes)`, e `:265` imprime
+`f"  Setor: {len(df_ufs):,} hexes"`. A coluna se chama `pop_total_setor_2022` porque isso é a
+**procedência do atributo** — Censo 2022 por setor, atribuído ao hexágono —, não a unidade da linha.
+
+Logo, manter `POP_ABS_MIN/MAX = 1.000/100.000` na Argentina **não é trocar a unidade em silêncio: é o
+casamento correto de unidade**, mesma grade e mesma régua. Quem quiser derivar a âncora AR de *radio
+censal* é que estaria criando descasamento — 66.502 radios contra uma régua medida em 21.107
+hexágonos. O que continua sendo decisão do Felipe é o **valor**, não a unidade (pendência **P2** em
+`data/perfis/AR/perfil.json`, cuja recomendação já foi invertida no mesmo commit).
+
+**Corrigido antes, em 2026-08-31 — a redação anterior desta seção descrevia um perfil que não é o entregue.**
 Ela dizia que "o `perfil_ar.json` nasce com **as âncoras brasileiras copiadas** e um campo
 `reguas._provisorio: true`", e que "o código do Bloco A fica pronto com âncora BR na AR". Nada disso
 existe: **não há arquivo `perfil_ar.json`** (é `data/perfis/AR/perfil.json`), **não há campo
-`reguas._provisorio`**, e as âncoras de renda **não** são brasileiras. Pior: "âncora BR na AR" é
-exatamente o defeito que o §5.0 do plano chama de **"trocar a unidade em silêncio"** — a spec estava
-recomendando o que o plano proíbe. O estado real, e o que vale:
+`reguas._provisorio`**, e as âncoras de renda **não** são brasileiras — copiar a âncora de RENDA de um
+país para o outro seria erro real, porque as duas distribuições nada têm a ver (R$ contra USD, p95/p05
+de 6,4 contra 2,2). Isso vale para a renda e **só** para ela: a de população é a mesma grade, ver a
+correção acima. O estado real, e o que vale:
 
 > O `data/perfis/AR/perfil.json` **já nasce com âncoras argentinas medidas**: `renda_abs_min` = **350,0**
 > e `renda_abs_max` = **1.000,0 USD**, `pop_abs_min` = **1.000** e `pop_abs_max` = **100.000**. A
@@ -578,11 +660,10 @@ recomendando o que o plano proíbe. O estado real, e o que vale:
 saturando < 0,4%) aplicado à distribuição argentina medida no pacote em 2026-08-31 (universo povoado,
 pop ≥ 1.000, 5.148 hexágonos): p05 = 342,4 · p50 = 478,4 · p95 = 740,5 · p99 = 926,2 · max = 1.141,1.
 Piso 350, teto 1.000 (satura 0,29%; o Brasil satura 0,38% com R$ 4.000). Os 1.000/100.000 de população
-são os **mesmos números** do Brasil, e o `_nota_pop` do arquivo diz **por quê** e o que isso custa: a
-âncora BR foi medida sobre **setor censitário** e a AR alimentaria com **hexágono** — unidades
-diferentes, reusadas porque as duas distribuições coincidem **por medição** (BR p05 1.103 / p50 3.561 /
-p95 28.845 · AR 1.127 / 3.699 / 28.500), não por analogia. É essa frase escrita que separa "âncora
-provisória declarada" de "trocar a unidade em silêncio".
+são os **mesmos números** do Brasil, e agora se sabe **por quê**: é a **mesma unidade**, hexágono H3
+res 7 dos dois lados. As distribuições coincidem (BR p05 1.103 / p50 3.561 / p95 28.845 · AR 1.127 /
+3.699 / 28.500) porque medem a mesma coisa sobre a mesma grade — não por coincidência a ser
+desconfiada. O `_nota_pop` do arquivo carrega essa procedência.
 
 **O que isto significa para o Bloco A: nada muda no código.** O bloco **não escolhe âncora nenhuma** —
 ele entrega a *capacidade* de recebê-las (`Ancoras(...)` com default `ANCORAS_BR`, §4.2), e quem as
@@ -785,6 +866,10 @@ Registrado para não gastar tempo:
    **É a prova do A1.**
 5. `tests/contracts/test_perfil_front_espelha_o_python.py` — `web/src/lib/perfil-br.ts` bate com
    `data/perfis/BR/perfil.json`, no mesmo padrão do `test_faixas_mapa_espelho.py`.
+6. `tests/contracts/test_sem_moeda_hardcoded_no_front.py` (A10) — varre `web/src/lib/**/*.ts` atrás de
+   `R$` fora de comentário e falha nomeando arquivo e linha; allowlist **vazia**. Escopo e números
+   medidos na §2.7. Substitui a regra de ESLint que a versão anterior desta spec pedia — **não há
+   ESLint neste projeto**.
 
 ---
 
@@ -794,24 +879,99 @@ Registrado para não gastar tempo:
 |---|---|---|---|
 | **A1** | `perfil: dataclass congelada + loader + perfil.json do Brasil` | `src/motor_expansao/perfil.py` (novo), `data/perfis/BR/perfil.json` (**já versionado — o commit o REESCREVE no schema da §1.2, não o cria**), `tests/unit/test_perfil_loader.py`, `tests/contracts/test_perfil_br_reproduz_as_constantes.py` | **Ninguém importa `perfil` ainda.** Zero risco. Todo o desenho fica revisável antes de qualquer sítio mudar. |
 | **A2** | `perfil: campo em Settings, com default None` | `src/motor_expansao/api/settings.py` | Campo com default não muda nenhum construtor existente. **Precede A6 obrigatoriamente** (§3.4). |
-| **A3** | `perfil: resolver no import, matar o _DEFAULT_DATA` | `web/server/app.py:99-102` | Fail-closed **só com `MOTOR_DATA_DIR`** (§3.2) ⇒ os 15 `import app` de topo seguem coletando. **Rode `pytest --collect-only` antes de abrir o PR** (§7, item 1). |
+| **A3** | `perfil: resolver no import, matar o _DEFAULT_DATA` | `web/server/app.py:99-102` **+ `docker-compose.prod.yml` (mount do perfil em `web` e `api`) + `docs/deploy_piloto_web.md` (passo de cópia) — ver §6.1, é PRÉ-CONDIÇÃO, não opcional** | Fail-closed **só com `MOTOR_DATA_DIR`** (§3.2) ⇒ os 15 `import app` de topo seguem coletando. **Rode `pytest --collect-only` antes de abrir o PR** (§7, item 1) **e o critério nº 11, que roda o import DENTRO da imagem** — sem ele o commit fica verde no CI e indeployável na VPS. |
 | **A4** | `perfil: bbox unificado nos 6 sítios + geocoder parametrizado + validação do resultado` | `api/coord.py:13-14`, `api/maps_geocoder.py:32,171-172,246,256`, `dashboard/data.py:624-627`, `dashboard/competitors.py:10-11`, `app.py:3978-3979` + validação em `:3997`, `tests/unit/test_coord_search.py:52-60`, `tests/contracts/test_geocode_valida_o_bbox.py` | O commit **maior** e o único que muda comportamento de aceite. Carrega a correção do §5.2 e o comando de verificação do §5.3. |
 | **A5** | `perfil: reguas do funil derivadas do perfil` | `app.py:152-154,161`, `dashboard/constants.py:144,379`, `dashboard/relatorio_municipal.py:61`, `tests/contracts/test_regua_absoluta_censitaria.py:103-121` | **A correção do regex viaja NESTE commit** — é a condição para não quebrar longe da causa (§5.1). |
 | **A6** | `perfil: injetar nos 4 sitios de Settings` | `app.py:4522,5224,7739,8008` | Depende de A2 e A3. Quatro linhas idênticas. |
 | **A7** | `perfil: fontes e ancoras no painel de metodologia` | `app.py:3550,3553,3572-3577,3599-3605,3626-3628` | `test_metodologia_espelha_o_funil.py` continua verde (§5.5) e passa a provar que o painel lê o perfil. |
 | **A8** | `ancoras: (valores, *, ancoras=ANCORAS_BR)` — **CRITICO, exige `critica-aprovada`** | `pipelines/calibrar_renda_setor_2022.py:118,124,148` (+ `ANCORAS_BR` novo) | Default nas constantes de hoje ⇒ os **5** chamadores não mudam e os contratos de régua ficam byte a byte (§4.2). **Isolado num commit só** para a revisão CRITICO ver um diff de ~15 linhas, não de 800. |
 | **A9** | `perfil no front: bbox, locale, moeda, vista, reguas` | `web/src/lib/perfil.ts` + `perfil-br.ts` (novos), `coord.ts:8`, `entrada-ponto.ts:44,116`, `format.ts:6,38-41,51-53`, `faixas.ts:84`, `mapa-ponto.ts:32,49`, `colors.ts:65`, `HexMap.tsx:506-507`, `app.py` (`/api/me`), + os 4 `.test.ts` do §5.7/§5.8 | Sozinho porque `^web/` é **GOVERNANCA** e nenhum PR de front auto-mergeia (§8): separar poupa o Felipe de revisar front e Python no mesmo PR. |
-| **A10** | `guardas: fio de alarme do pais + lint anti-R$ + espelho do perfil no front` | `tests/contracts/test_fio_de_alarme_pais.py`, `test_perfil_front_espelha_o_python.py`, config do ESLint | Fecha a porta de volta. Último de propósito: guarda que entra antes da mudança falha por motivo errado. |
+| **A10** | `guardas: fio de alarme do pais + varredura anti-R$ + espelho do perfil no front` | `tests/contracts/test_fio_de_alarme_pais.py`, `test_perfil_front_espelha_o_python.py`, `test_sem_moeda_hardcoded_no_front.py` (escopo `web/src/lib/**/*.ts` — **NÃO** é regra de ESLint; não há ESLint no projeto, §2.7) | Fecha a porta de volta. Último de propósito: guarda que entra antes da mudança falha por motivo errado. |
 
 **Serial obrigatório:** A1 → A2 → A3 → {A4, A5, A7} → A6; A8 independente; A9 depois de A3; A10 por último.
 **A8 pode correr em paralelo desde o dia 1** — é o único que não depende do loader, e é o que precisa
 da agenda do Felipe (§8). **Comece por ele e por A1 no mesmo dia.**
 
+### 6.1 Pré-condição de INFRA do A3 — e por que ela pertence ao Bloco A
+
+**O A3 é o commit que torna o `perfil.json` obrigatório para o processo subir. Ele não pode entrar
+sozinho: hoje o arquivo NÃO EXISTE EM CONTAINER NENHUM, e o container `web` brasileiro não sobe no
+primeiro deploy deliberado depois dele.** Conferido em 2026-09-02, no working tree:
+
+1. `MOTOR_DATA_DIR=/app/data` está fixo em `Dockerfile.web:30` e repetido em
+   `docker-compose.prod.yml:162` ⇒ o loader da §3.1 entra pelo ramo de **produção** e procura
+   `/app/data/perfil.json`.
+2. `/app/data` **não é** um mount. O compose monta só **subdiretórios**: `:223` (`outputs`), `:228`
+   (`staging`), `:229` (`ibge`), `:230` (`ultra`), `:235` (`oportunidades`). O `/app/data` em si vem
+   da imagem (`Dockerfile.web:85`). **`/app/data/perfil.json` não tem origem.**
+3. O ramo embarcado tampouco salva: `.dockerignore:2` corta `data/` do contexto de build, e a
+   instalação é **NÃO-EDITÁVEL** (`Dockerfile.web:45` / `Dockerfile.api:37`, `pip install "."`) — o
+   mesmo motivo que o próprio compose já explica em `:59-60` para os `API_*_DIR`.
+4. Não há passo de cópia em lugar nenhum: `grep -n perfil docs/deploy_piloto_web.md` devolve **zero
+   linhas**.
+
+**A correção é um par de mounts, e ela entra no MESMO commit A3:**
+
+```yaml
+# docker-compose.prod.yml — servico `web`, junto dos mounts de :223-:239
+      - /opt/motor-expansao/data/perfil.json:/app/data/perfil.json:ro
+
+# docker-compose.prod.yml — servico `api`, junto dos mounts de :81-:92
+      - /opt/motor-expansao/data/perfil.json:/app/data/perfil.json:ro
+    # ... e a env que o `api` NAO tem hoje:
+    environment:
+      MOTOR_DATA_DIR: "/app/data"
+```
+
+**Por que no `api` também, e por que ele precisa da env.** O A4 move `src/motor_expansao/api/coord.py`
+e `src/motor_expansao/api/maps_geocoder.py` para o perfil, e os dois vivem na **imagem da API**
+(`Dockerfile.api:37`). Lá `MOTOR_DATA_DIR` **não existe** — o compose só passa `API_*` (`:53-79`) —,
+então o loader cairia no ramo embarcado; e `PERFIL_BR_EMBARCADO` é `parents[2]` a partir de
+`__file__`, que sob instalação não-editável resolve para
+`/usr/local/lib/python3.11/data/perfis/BR/perfil.json`, caminho que nunca existe. **A API quebraria
+no A4 pelo mesmo defeito do A3, uma semana depois e longe da causa.** Acrescentar `MOTOR_DATA_DIR` ao
+`api` é inerte para todo o resto: `grep -rn MOTOR_DATA_DIR src/ web/server/ scripts/` devolve como
+únicos leitores `web/server/app.py:102` e `scripts/check_artifacts.py:24`, e o `Settings` da API tem
+`env_prefix="API_"` (`src/motor_expansao/api/settings.py:29`), que não casa com `MOTOR_DATA_DIR`.
+
+**Por que `.dockerignore` com `!data/perfis/` NÃO resolve — registrado para ninguém tentar.**
+Un-ignorar a pasta põe o arquivo em `/app/data/perfis/BR/perfil.json` **dentro da imagem**, e nenhum
+dos dois ramos do loader olha para lá:
+
+- **Ramo de produção** (o do `web`): `MOTOR_DATA_DIR` está setado, então procura-se `/app/data/perfil.json`
+  — a **raiz**, não `perfis/BR/`. Continua sem origem.
+- **Ramo embarcado** (o do `api`, sem a env): `PERFIL_BR_EMBARCADO` resolve por `__file__`, e o
+  `__file__` é o do pacote **instalado**, em `site-packages` — não o de `/app/src`, que não está no
+  `sys.path`. Mudar o contexto de build não move esse caminho um milímetro.
+- E o wheel não carregaria o arquivo nem se o contexto deixasse: `pyproject.toml:161-162`
+  (`[tool.hatch.build.targets.wheel]`, `packages = ["src/motor_expansao"]`) empacota **só** o pacote;
+  `data/` não é package data.
+
+O `.dockerignore` é a **terceira** camada do problema, não a causa. Mexer nele sem o mount troca
+"arquivo ausente" por "arquivo presente no lugar errado" — falha igual e explica pior.
+
+**Por que esta linha de compose é do Bloco A e não do E — e por que isto CORRIGE a §8.4.** A §8.4
+listava `docker-compose*` como território do Bloco E, e o Bloco E declara o compose intacto: o
+conserto ficava **órfão**, que é como um bloqueador atravessa uma revisão inteira. Quem **cria** a
+necessidade é o A3 — antes dele o compose está correto, depois dele está quebrado. Separar a linha do
+commit que a exige abre uma janela em que a `main` fica **verde no CI e indeployável na VPS**,
+exatamente a classe de defeito que só aparece no primeiro deploy deliberado, quando ninguém mais está
+olhando para este PR. O que continua sendo do Bloco E é todo o resto do compose: serviço novo, rede,
+Caddy, Authelia.
+
+**Runbook, e ele também é do A3.** `docs/deploy_piloto_web.md` ganha, nas pré-condições, a linha que
+hoje não existe — `scp data/perfis/BR/perfil.json <vps>:/opt/motor-expansao/data/perfil.json` (e
+`AR/perfil.json` para a instância argentina), **antes** do `docker compose up -d`. Sem esse passo o
+bind de arquivo do Docker cria um **diretório vazio** no host, e o container falha com "is a
+directory" — mensagem pior do que a do fail-closed, e que não menciona perfil nenhum.
+
 ---
 
 ## 7. Critério de aceite do bloco — verificável por comando
 
-Todos rodam da raiz do repositório. **Nenhum exige env nova.**
+Os itens **1 a 10** rodam da raiz do repositório e **nenhum exige env nova**. O item **11 é
+diferente de propósito** — roda `docker build`/`docker run` — e é justamente por isso que ele existe:
+tudo que roda no checkout fica verde com o container quebrado.
 
 1. **A coleta do pytest fica verde sem `MOTOR_DATA_DIR`** — é o primeiro lugar onde o fail-closed quebra.
    ```
@@ -841,11 +1001,19 @@ Todos rodam da raiz do repositório. **Nenhum exige env nova.**
      src/motor_expansao/dashboard/data.py src/motor_expansao/dashboard/competitors.py \
      web/src/lib/coord.ts web/src/lib/entrada-ponto.ts
    grep -n 'countrycodes' web/server/app.py src/motor_expansao/api/maps_geocoder.py
-   grep -n 'R\$' web/src/lib/format.ts
    grep -nE '^(SCORE_CORTE_QUENTE|OFERTA_DESTAQUE_MIN|POP_MIN_ACIONAVEL|CAPACIDADE_CONCORRENTE_PADRAO)\s*=\s*[0-9]' web/server/app.py
+   python -m pytest tests/contracts/test_sem_moeda_hardcoded_no_front.py -q
    ```
-   Esperado: **as quatro sem nenhuma linha de saída** (exceto `data/perfis/BR/perfil.json`, que é onde os
-   números passam a morar).
+   Esperado: **os três `grep` sem nenhuma linha de saída** (exceto `data/perfis/BR/perfil.json`, que é
+   onde os números passam a morar) e o **teste verde**.
+
+   > **O `R$` virou teste, e não `grep`, por medição (2026-09-02).** A versão anterior deste critério
+   > greppava **só o `web/src/lib/format.ts`**. Fora de comentário, `web/src/lib` tem `R$` em **quatro**
+   > arquivos — `format.ts`, `comparacao.ts:98`, `comparacao-pontos.ts:60`, `recomendacao.ts:206`
+   > (§2.7) —, então três passariam calados; e um `grep` cru também acusaria os **comentários** que
+   > citam `R$` em `imovel.ts`, `mascara.ts`, `sparkline.ts`, `types.ts`, `exec.ts` e `report.ts`, que
+   > são legítimos. Separar código de comentário é trabalho de parser, não de `grep`: é o teste do A10
+   > que faz isso, e é ele o critério.
 
 5. **O estreitamento do bbox de concorrentes não descarta um pin sequer** (§5.3).
    ```
@@ -894,6 +1062,40 @@ Todos rodam da raiz do repositório. **Nenhum exige env nova.**
     ```
     Esperado: **CRITICO** apenas em `dashboard/constants.py`, `dashboard/relatorio_municipal.py` e
     `pipelines/calibrar_renda_setor_2022.py`. Qualquer outro CRITICO é escopo que vazou.
+
+11. **O import roda DENTRO DA IMAGEM CONSTRUÍDA, não no checkout** — acrescentado em 2026-09-02.
+    **É o único critério desta lista que pega o defeito da §6.1.** Os itens 1 e 7 rodam no working
+    tree, onde `data/perfis/BR/perfil.json` existe e `/app/data` não: os dois ficariam **verdes com o
+    container quebrado**. É a diferença entre provar que o código está certo e provar que o deploy sobe.
+    ```
+    docker build -f Dockerfile.web -t motor-expansao-web:local .
+
+    # (a) SEM o mount do perfil -> tem de FALHAR, nomeando /app/data/perfil.json
+    docker run --rm motor-expansao-web:local \
+      python -c "import sys; sys.path.insert(0,'web/server'); import app"; echo "exit=$?"
+
+    # (b) COM o mount da pre-condicao da §6.1 -> tem de imprimir BR
+    docker run --rm -v /opt/motor-expansao/data/perfil.json:/app/data/perfil.json:ro \
+      motor-expansao-web:local \
+      python -c "import sys; sys.path.insert(0,'web/server'); import app; print(app.PERFIL.pais)"
+    ```
+    Esperado: **(a) `exit=1`, com `PerfilInvalidoError` citando `/app/data/perfil.json`; (b) `BR`.**
+    Se **(a)** passar, o fail-closed não está armado. Se **(b)** falhar, o mount da §6.1 não entrou —
+    e é este o cenário que hoje derruba o piloto no próximo deploy.
+
+    E o mesmo para a imagem da API, que o A4 põe no mesmo caminho:
+    ```
+    docker build -f Dockerfile.api -t motor-expansao-api:local .
+    docker run --rm -e MOTOR_DATA_DIR=/app/data \
+      -v /opt/motor-expansao/data/perfil.json:/app/data/perfil.json:ro \
+      motor-expansao-api:local \
+      python -c "from motor_expansao.perfil import resolver_perfil; print(resolver_perfil().pais)"
+    ```
+    > **Por que `python -c` funciona nas duas imagens.** A camada BLK-SEC-04 remove
+    > `pip`/`setuptools`/`wheel`, **não** o interpretador — o próprio smoke de `Dockerfile.web:80` é um
+    > `python -c` que roda depois da remoção. E não há `ENTRYPOINT` em nenhum dos dois Dockerfiles
+    > (só `CMD`, em `Dockerfile.web:94` e `Dockerfile.api:88`), então o argumento substitui o comando
+    > em vez de virar parâmetro do uvicorn.
 
 **O que NÃO é critério de aceite:** `/api/health` verde. Health verde é exatamente o que a instância
 vazia devolve (§5.0.4 do plano).
@@ -960,9 +1162,21 @@ embarcado: a fixture arrastaria `conftest.py` para dentro de um bloco que já te
 ### 8.4 O que este bloco NÃO toca — por decisão, não por esquecimento
 
 `scripts/loop_guard.py` · `REVIEW.md` · `CLAUDE.md` · `docs/plano_multipais.md` · `docs/decisions/**` ·
-`web/server/acesso.py` (é o Bloco C) · `authelia/**` (Bloco D) · `docker-compose*` e `Caddyfile`
-(Bloco E) · `web/server/app.py:412` (`_UF_RE`, BLK-INTL-04) · `web/src/lib/pais-da-base.ts`
+`web/server/acesso.py` (é o Bloco C) · `authelia/**` (Bloco D) · `Caddyfile` e `docker-compose*`
+**com UMA exceção nomeada** (Bloco E) · `web/server/app.py:412` (`_UF_RE`, BLK-INTL-04) · `web/src/lib/pais-da-base.ts`
 (§5.0.2, dívida nº 2) · `_COLS_DESEJADAS` (`app.py:376-405`) e as quatro leituras do funil (Bloco B) ·
 `pipelines/normalizar_unidades_ultra.py:27-28` (§2.1, item 7) ·
 `vulnerabilidade/contrato.py:142` (§2.1, item 9) · `dashboard/constants.py:145` (`BRASIL_CENTER`,
 constante morta — §1.4).
+
+> ⚠️ **A EXCEÇÃO NOMEADA, e por que ela precisou existir (2026-09-02).** Este bloco **toca**
+> `docker-compose.prod.yml` em exatamente **duas linhas de mount e uma de env** — o `perfil.json` nos
+> serviços `web` e `api`, mais `MOTOR_DATA_DIR` no `api` — e **acrescenta o passo de cópia** em
+> `docs/deploy_piloto_web.md`. Tudo especificado na **§6.1**, tudo dentro do commit **A3**.
+>
+> **Isto é correção de uma ORFANDADE, não expansão de escopo.** A versão anterior desta lista mandava
+> todo `docker-compose*` para o Bloco E, e o Bloco E declara o compose intacto: o único conserto que
+> faz o container subir depois do A3 não tinha dono em bloco nenhum. Um bloqueador sem dono não é
+> adiado — ele é esquecido, e reaparece como o piloto que não sobe. Quem cria a necessidade é o A3, e
+> por isso é o A3 que a paga. O resto do compose — serviço novo, rede, Caddy, Authelia — continua
+> sendo do Bloco E, sem uma linha de sobreposição.

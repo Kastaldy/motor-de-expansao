@@ -3926,7 +3926,7 @@ barata e sem tocar `web/**`: cron que roda a validação HTTP da §5 do
 ## Epic BLK-INTL — Internacionalização do Motor de Expansão (instância por país; AR primeiro; READ-ONLY sobre o M1)
 
 > Aberta em **2026-08-31** a partir de `docs/plano_multipais.md` e de [DEC-046](../docs/decisions/DEC-046.md).
-> Leituras obrigatórias antes de pegar qualquer bloco: **§0** do plano (as 11 decisões do dono, que
+> Leituras obrigatórias antes de pegar qualquer bloco: **§0** do plano (as 19 decisões do dono, que
 > **não se rediscutem** durante a subida da Argentina), **§1.1** (fronteira de repositório) e **§5.0**
 > (o caminho crítico). O **Bloco A** tem spec executável própria — `docs/spec_bloco_a_perfil.md`
 > (schema de 23 campos, **37 sítios** de substituição numerados, **10 commits** cada um verde sozinho,
@@ -3989,13 +3989,27 @@ argentinas de renda (USD) e de POPULAÇÃO (por hexágono)**. `data/perfis/AR/pe
 `score_corte_quente` **30,0** —, derivado aplicando à distribuição AR medida o critério literal de
 `pipelines/calibrar_renda_setor_2022.py:83-92`, e cada um aparece na lista `_pendencias` do próprio
 arquivo com dono nomeado. Trocar uma âncora depois é editar um JSON e reprocessar, não refazer código.
-**Achado que precisa ficar registrado:** a âncora de população **brasileira** é de **setor censitário**
-(`pop_col = "pop_total_setor_2022"`, `:309` — o cabeçalho do arquivo diz "hexes" e **está errado**), e
-as duas distribuições coincidirem (p05 1.103 vs 1.127; p95 28.845 vs 28.500) é **coincidência empírica
-entre unidades diferentes, não derivação**. **A exceção que precisa de resposta ANTES do Bloco B**, e
-que **não tem default defensável**, é `reguas.score_pesos` — **qual score o mapa pinta**: o parquet do
-Juan traz `hex_score_estrutural = 100 × (0,40·renda_pct + 0,60·pop_pct)`, com os pesos **invertidos**
-em relação ao `0,60·renda + 0,40·pop` de `calibrar_renda_setor_2022.py:160`. Ela decide o esforço do B1.
+**Achado CORRIGIDO em 2026-09-02 — a formulação anterior desta linha estava errada e chegou a circular
+como motivo para desconfiar da âncora:** a âncora de população **brasileira** é de **hexágono H3 res 7**,
+**não** de setor censitário. Está escrito no cabeçalho que define as âncoras —
+`pipelines/calibrar_renda_setor_2022.py:82`: `# Ancoras medidas no universo POVOADO (pop >= 1.000,
+21.107 hexes)` — e os seis números logo abaixo (`:83-88`; renda p05 296 / p95 1.889 / p99 3.123 / max
+8.756; pop p05 1.103 / p95 28.845 / p99 62.335 / max 141.507) foram reproduzidos **exatos** sobre
+hexágonos. `pop_col = "pop_total_setor_2022"` (`:309`) é **nome de coluna herdado**, não unidade de
+linha: o `df_ufs` em que ela é lida tem **uma linha por hexágono** — o merge de auditoria é
+`on="hex_id"` (`:317-320`) e o comentário da escolha do componente fala em "todos hexes" de SP
+capital (`:301-307`). **Consequência para o Bloco B:** manter `pop_abs_min/max = 1.000/100.000` na
+Argentina é o **casamento CORRETO de unidade**, e as distribuições coincidirem (BR p05 1.103 / p95
+28.845 contra AR p05 1.127 / p95 28.500) é comparação **hexágono contra hexágono**, não analogia
+entre unidades diferentes. Migrar a âncora AR para *radio censal* seria a **única** opção que
+**cria** descasamento com o Brasil — 66.502 radios não são 42.388 hexágonos.
+**`reguas.score_pesos` está DECIDIDA e NÃO é gate de bloco nenhum.** Decisão de 2026-09-02, registrada
+em `data/perfis/AR/perfil.json:401-411` (`"id": "P3"`, `"estado": "decidido"`): o mapa argentino pinta o
+score **RECOMPUTADO** pela plataforma com a **fórmula brasileira — `0,60·renda + 0,40·pop`**
+(`calibrar_renda_setor_2022.py:160`) — sobre as **âncoras AR**, e **não** o
+`hex_score_estrutural = 100 × (0,40·renda_pct + 0,60·pop_pct)` que vem no parquet do Juan com os pesos
+invertidos. O que ela decidia era o **esforço** do B1, e esse esforço agora está fixado: recompute
+dentro do exportador, não renomeação de coluna.
 
 **O que a Argentina entrega no dia 1 (§5.0.4) — e o que NÃO entrega (§5.0.5), com o mesmo destaque.**
 Superfícies: **`mapa` + `viabilidade`**, só. **NÃO** sobe `oportunidades` (o funil), nem `ponto`, nem
@@ -4137,7 +4151,7 @@ da Colômbia**, não antes da Argentina.
 | **Prioridade** | **Máxima** — sem ele o mapa da AR **mente com número**. |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — de-para e recompute de score]` → Builder → QA → Felipe. |
 | **Status** | Pendente. |
-| **Depende de** | **BLK-INTL-A1** (**SERIAL**: o de-para lê as réguas e as âncoras do perfil, e o recompute só é executável porque o A3 parametriza `calcular_score_calibrado`) **+ a decisão de `reguas.score_pesos`** (§0 do plano) **+ o re-export do Juan** (dependência de outra pessoa). |
+| **Depende de** | **BLK-INTL-A1** (**SERIAL**: o de-para lê as réguas e as âncoras do perfil, e o recompute só é executável porque o A3 parametriza `calcular_score_calibrado`) **+ o re-export do Juan** (dependência de outra pessoa). **`reguas.score_pesos` NÃO é dependência**: foi decidida em 2026-09-02 (`data/perfis/AR/perfil.json:401-411`, `"estado": "decidido"`) e está registrada no corpo deste bloco — enquanto ficou listada aqui, era lida como **gate** e travava o Bloco B sem motivo. |
 | **Esforço** | **4-6 dias de código · 1 dev + 2-3 dias de ida-e-volta com o Juan** (era 5-7 antes de a decisão 0.6 tirar as camadas 2 e 3 do funil do bloqueio de subida; **a dependência externa não encolhe**). |
 | **Autonomia** | **manual (NÃO loop-safe)** — `^web/` nunca é loop-safe (DEC-022) e o de-para exige olho humano sobre semântica de coluna. NÃO marcar loop-safe. |
 
@@ -4167,6 +4181,15 @@ errado.
 (100 × (0,40·renda_pct + 0,60·pop_pct)) e o corte de 30 é **absoluto**. Renomear ali é **trocar a pergunta
 em silêncio**. O correto e barato é **recomputar** com `calcular_score_calibrado` nas âncoras AR declaradas
 no perfil, **dentro do exportador**.
+
+**E isso já é DECISÃO TOMADA, não proposta — é o que destrava este bloco.** `reguas.score_pesos`
+(`data/perfis/AR/perfil.json:401-411`, `"id": "P3"`, `"estado": "decidido"`, `"decidido_em":
+"2026-09-02"`): **recomputar com a fórmula brasileira, `0,60·renda + 0,40·pop`**
+(`calibrar_renda_setor_2022.py:160`), **sobre as âncoras AR**. O parquet do Juan continua trazendo
+`hex_score_estrutural` com os pesos invertidos (0,40/0,60, em percentil nacional), e ele **não** é o
+que o mapa pinta — o que fazer com ele no payload é escopo do de-para, não decisão em aberto. As âncoras de população AR seguem
+`1.000/100.000` **por casar unidade com o Brasil**, cuja âncora é de **hexágono H3 res 7** — ver o
+achado corrigido na abertura da epic e `calibrar_renda_setor_2022.py:82`.
 
 **Entrega verificável.** (a) Mapa declarativo `nome_canônico → nome_de_origem` resolvido **na fronteira de
 leitura** de `carregar_uf` (`app.py:435`) — o padrão já existe e funciona no repo (`app.py:2051-2064`,
@@ -4304,7 +4327,7 @@ viabilidade argentina do defeito R2 é este bloco.
 | **Esforço** | **1 dia · Felipe + 1 dev** (era 2-3 dias antes de se ver que a regra do host AR precisa existir de qualquer jeito e que o `subject` custa a mesma linha). |
 | **Autonomia** | **manual (NÃO loop-safe)** — infra de autenticação + VPS. NÃO marcar loop-safe. |
 
-**O defeito.** `authelia/configuration.yml:79-86` tem `default_policy: deny` e **duas regras `one_factor`
+**O defeito.** `authelia/configuration.yml:80-86` tem `default_policy: deny` (`:81`) e **duas regras `one_factor`
 SEM `subject`** (dashboard e piloto), com todos os usuários num grupo único: **quem autentica alcança
 qualquer host protegido.** O host AR precisa de regra de qualquer jeito (senão o `deny` fecha), e
 acrescentar `subject: - "group:expansao_ar"` custa a mesma linha.
@@ -4322,9 +4345,21 @@ concedida só **nominalmente**. **Mas isso é sorte de desenho de outro bloco, n
 `docs/deploy_piloto_web.md:314-322` e **nunca foi aplicado**: aplicar, não projetar. O `subject` nas **duas
 regras existentes** entra **NO MESMO COMMIT** da regra do host AR — é essa a parte que não pode ficar para depois.
 
+**Dono da regra do host AR, dito sem ambiguidade porque dois documentos já divergiram nisto:** a regra de
+`access_control` de `piloto-ar.ultra-expansao.tech` é **deste bloco** — o `BLK-INTL-05` (Bloco D) do plano —,
+**não** do `BLK-ARG-E1` (Bloco E). O E1 sobe o host no `Caddyfile`, no DNS e no compose; quem escreve em
+`authelia/configuration.yml` é aqui, e é aqui que a regra já nasce com `subject: - "group:expansao_ar"`.
+Deixá-la no E1 significaria abrir um arquivo **CRITICO** (`scripts/loop_guard.py:124`) duas vezes, a segunda
+só para acrescentar o `subject` que podia ter nascido junto. `docs/spec_portal_selecao_pais.md` §6.2 tem de
+apontar para este bloco.
+
 **Critério de aceite.** Usuário do grupo `expansao_ar` recebe **403** em `piloto.ultra-expansao.tech`;
 usuário do grupo `expansao_br` recebe **403** em `piloto-ar.ultra-expansao.tech`; cada um entra no seu.
-Nenhuma regra fica sem `subject`. Nenhum usuário brasileiro existente perde acesso ao que já tinha.
+Nenhuma regra de **host de país** fica sem `subject` — e a **raiz** `ultra-expansao.tech` é a **exceção
+deliberada**, que continua **sem** `subject` (`docs/spec_portal_selecao_pais.md` §6.2, `authelia/configuration.yml:80-86`):
+com `subject`, quem ainda não tem nenhum grupo `expansao_*` toma **403** em vez de conseguir ler o
+`portal/sem-acesso.html`, que é exatamente a tela que o portal existe para dar. Nenhum usuário brasileiro
+existente perde acesso ao que já tinha.
 
 ---
 

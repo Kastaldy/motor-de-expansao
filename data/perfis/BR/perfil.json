@@ -75,13 +75,13 @@
   "fontes": {
     "censo": {
       "nome": "Censo 2022 (IBGE)",
-      "detalhe": "Renda, domicilios e populacao por setor censitario - recortes de algumas centenas de domicilios cada. E a base de tudo que o funil chama de potencial: nenhuma estimativa de demanda e arbitrada, toda ela sai do setor onde o hexagono cai.",
-      "_procedencia": "F_CENSO em web/server/app.py:3550 (usada em :3570, :3617, :3642, :3671); o `detalhe` transcreve o paragrafo de :3572-3575. O literal do codigo e ACENTUADO (texto de usuario, CLAUDE.md 2); a transcricao aqui segue a convencao sem acento deste arquivo, e o teste de contrato do A7 compara o texto SERVIDO, nao esta copia."
+      "detalhe": "Renda, domicílios e população por setor censitário — recortes de algumas centenas de domicílios cada. É a base de tudo que o funil chama de potencial: nenhuma estimativa de demanda é arbitrada, toda ela sai do setor onde o hexágono cai.",
+      "_procedencia": "F_CENSO em web/server/app.py:3550 (usada em :3570, :3617, :3642, :3671); o `detalhe` transcreve o paragrafo de :3572-3575 BYTE A BYTE, com acentuacao e travessao. NAO desacentuar: isto e TEXTO DE USUARIO (CLAUDE.md 2) e a rota /api/metodologia (app.py:3941, rota livre) publica esta string na tela. Depois do A7 ela passa a sair DESTE arquivo, entao uma copia sem acento vira portugues errado em producao — e o teste de contrato do A7 compara o texto SERVIDO, que a partir dali e este. A convencao sem acento do resto do arquivo vale para chaves e notas `_`-prefixadas, que nao sao texto de usuario."
     },
     "crescimento": {
-      "nome": "CAGED, RAIS, Receita Federal e satelite",
-      "detalhe": "As quatro leituras de movimento do municipio: emprego formal e salario de admissao (CAGED mensal, apoiado no estoque da RAIS), abertura e fechamento de empresas (Receita Federal), renda e populacao (IBGE) e a area construida medida por satelite entre 2016 e 2023. Nao entra em nenhum corte do funil - e o retrato de para onde a cidade vem andando.",
-      "_procedencia": "F_CRES em web/server/app.py:3553 (usada em :3597, :3789, :3815); o `detalhe` transcreve o paragrafo de :3599-3603."
+      "nome": "CAGED, RAIS, Receita Federal e satélite",
+      "detalhe": "As quatro leituras de movimento do município: emprego formal e salário de admissão (CAGED mensal, apoiado no estoque da RAIS), abertura e fechamento de empresas (Receita Federal), renda e população (IBGE) e a área construída medida por satélite entre 2016 e 2023. Não entra em nenhum corte do funil — é o retrato de para onde a cidade vem andando.",
+      "_procedencia": "F_CRES em web/server/app.py:3553 (usada em :3597, :3789, :3815); o `detalhe` transcreve o paragrafo de :3599-3603 BYTE A BYTE, com acentuacao e travessao — mesma razao do `_procedencia` do censo acima."
     },
     "_motivo_do_resto": "Os campos abaixo NAO fazem parte do schema da spec 1.2 - nenhuma linha deste repositorio os le - e ficam `_`-prefixados como PROCEDENCIA, nao como configuracao. `fator_temporal` e recusado NOMINALMENTE pela spec 1.4 (zero leitores).",
     "_instituto": "IBGE",
@@ -166,8 +166,8 @@
 
     "pop_abs_min": 1000.0,
     "pop_abs_max": 100000.0,
-    "pop_unidade": "habitantes por SETOR CENSITARIO (pop_total_setor_2022)",
-    "_nota_pop": "POP_ABS_MIN / POP_ABS_MAX, calibrar_renda_setor_2022.py:91-92. p05 = 1.103 -> piso 1.000; p95 = 28.845, p99 = 62.335, max 141.507 -> teto 100.000 (satura 0,000%). Populacao entra em LOG porque a distribuicao e muito assimetrica (p50 3.561 contra p95 28.845). A UNIDADE IMPORTA e e facil de errar lendo o cabecalho do arquivo, que fala em 'hexes': a coluna efetivamente usada e pop_col = 'pop_total_setor_2022' (:309), ou seja SETOR. E por isso que reusar estes numeros num pais que alimenta com HEXAGONO precisa de justificativa medida, nao de analogia.",
+    "pop_unidade": "habitantes por HEXAGONO H3 res 7 (coluna pop_total_setor_2022 = valor do setor carregado no hexagono)",
+    "_nota_pop": "POP_ABS_MIN / POP_ABS_MAX, calibrar_renda_setor_2022.py:91-92. p05 = 1.103 -> piso 1.000; p95 = 28.845, p99 = 62.335, max 141.507 -> teto 100.000 (satura 0,000%). Populacao entra em LOG porque a distribuicao e muito assimetrica (p50 3.561 contra p95 28.845). A UNIDADE E HEXAGONO, e o NOME DA COLUNA ENGANA: pop_col = 'pop_total_setor_2022' (:309) e o valor do setor carregado no hexagono, nao a granularidade da linha. As linhas do dataframe sao hexes, e o codigo diz isso em tres lugares: o cabecalho das ancoras (:82) mede 'no universo POVOADO (pop >= 1.000, 21.107 hexes)', :265 imprime 'Setor: {len(df_ufs):,} hexes' e :320 faz merge com o M1 on='hex_id'. Bate com rotulos.unidade_analise (:59) deste mesmo arquivo. Consequencia: reusar 1.000/100.000 num pais que tambem alimenta com HEXAGONO H3 res 7 e o casamento CORRETO de unidade, nao analogia — ver pendencia P2 do perfil AR.",
 
     "score_pesos": { "renda": 0.60, "pop": 0.40 },
     "_nota_score_pesos": "calcular_score_calibrado, calibrar_renda_setor_2022.py:160: hex_score = 0,60·nota_renda + 0,40·nota_pop, mais o ajuste executivo (:130-144: +5 se ambos >= 75, +2 so renda, +1 so pop, -5 se renda < 25, -3 se pop < 25), tudo clipado em 0-100. E contrato do M1 (CLAUDE.md §5) — READ-ONLY. Esta declarado aqui para ficar VISIVEL que o parquet argentino usa os pesos invertidos, nao para virar parametro ajustavel no Brasil.",
