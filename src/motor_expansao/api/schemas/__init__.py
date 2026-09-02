@@ -29,7 +29,7 @@ class HealthResponse(BaseModel):
 class ErrorResponse(BaseModel):
     """Corpo de erro padrao (contrato §9)."""
 
-    detail: str = Field(examples=["Coordenada fora do Brasil"])
+    detail: str = Field(examples=["Coordenada fora de Brasil"])
     codigo: str = Field(examples=["coordenada_invalida"])
 
 

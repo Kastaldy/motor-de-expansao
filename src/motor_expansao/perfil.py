@@ -63,7 +63,21 @@ SUPERFICIES_VALIDAS = frozenset(
 
 _RE_PAIS = re.compile(r"^[A-Z]{2}$")
 _RE_MOEDA = re.compile(r"^[A-Z]{3}$")
+#: Tag BCP-47 UNICA. E o que `locale` tem de ser: quem o consome e
+#: `new Intl.NumberFormat(locale, ...)`, que quer uma tag, nao uma lista.
 _RE_LOCALE = re.compile(r"^[a-z]{2}(-[A-Za-z0-9]{2,8})*$")
+
+#: `geocode.idioma` NAO e um locale: e o valor de um header `Accept-Language`, que por
+#: RFC 9110 aceita LISTA com fallback e q-value — `es-AR,es` e `pt-BR,pt;q=0.9` sao
+#: validos e uteis. Ate 2026-09-02 este campo era validado por `_RE_LOCALE`, e o efeito
+#: era concreto: o `data/perfis/AR/perfil.json`, que declara `es-AR,es`, REPROVAVA no
+#: loader — ou seja, a instancia argentina nao subiria, e o defeito so apareceria no
+#: primeiro boot da AR. Dois campos com formatos diferentes precisam de duas regras.
+_RE_ACCEPT_LANGUAGE = re.compile(
+    r"^[a-z]{2}(-[A-Za-z0-9]{2,8})*(;q=[01](\.\d{1,3})?)?"
+    r"(\s*,\s*[a-z]{2}(-[A-Za-z0-9]{2,8})*(;q=[01](\.\d{1,3})?)?)*$"
+)
+
 _RE_COUNTRYCODES = re.compile(r"^[a-z]{2}(,[a-z]{2})*$")
 
 
@@ -287,7 +301,9 @@ def _ler_geocode(dados: dict[str, Any], caminho: Path) -> Geocode:
         countrycodes=_texto(
             bruto, "countrycodes", caminho, prefixo="geocode.", padrao=_RE_COUNTRYCODES
         ),
-        idioma=_texto(bruto, "idioma", caminho, prefixo="geocode.", padrao=_RE_LOCALE),
+        idioma=_texto(
+            bruto, "idioma", caminho, prefixo="geocode.", padrao=_RE_ACCEPT_LANGUAGE
+        ),
         regex_cp=regex_cp,
     )
 

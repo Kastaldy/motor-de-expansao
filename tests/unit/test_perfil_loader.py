@@ -343,6 +343,53 @@ def test_campo_extra_sem_underscore_e_tolerado(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    "idioma", ["es-AR,es", "pt-BR", "pt-BR,pt;q=0.9", "es-AR, es;q=0.8, en;q=0.5"]
+)
+def test_idioma_aceita_lista_de_accept_language(tmp_path: Path, idioma: str) -> None:
+    """**Regressao de um defeito real, achado em 2026-09-02 pelo teste do A4.**
+
+    `geocode.idioma` NAO e um locale: e o valor de um header `Accept-Language`, que por
+    RFC 9110 aceita lista com fallback e q-value. Enquanto foi validado pela regex de
+    `locale` (tag unica), o `data/perfis/AR/perfil.json` — que declara `es-AR,es` —
+    REPROVAVA no loader. A instancia argentina nao subiria, e isso so apareceria no
+    primeiro boot dela.
+    """
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["geocode"]["idioma"] = idioma
+    assert carregar_perfil(_gravar(tmp_path, dados)).geocode.idioma == idioma
+
+
+@pytest.mark.parametrize("idioma", ["ES-ar", "es_AR", "", "es-AR;;q=2"])
+def test_idioma_malformado_ainda_levanta(tmp_path: Path, idioma: str) -> None:
+    """Afrouxar para aceitar lista nao pode virar aceitar qualquer coisa."""
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["geocode"]["idioma"] = idioma
+    with pytest.raises(PerfilInvalidoError, match="idioma"):
+        carregar_perfil(_gravar(tmp_path, dados))
+
+
+def test_locale_continua_exigindo_tag_unica(tmp_path: Path) -> None:
+    """`locale` alimenta `new Intl.NumberFormat(locale, ...)`, que quer UMA tag. O
+    afrouxamento do `geocode.idioma` nao pode ter vazado para ca."""
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["locale"] = "es-AR,es"
+    with pytest.raises(PerfilInvalidoError, match="locale"):
+        carregar_perfil(_gravar(tmp_path, dados))
+
+
+def test_os_dois_perfis_versionados_carregam(tmp_path: Path) -> None:
+    """O loader tem de aceitar os perfis que o repositorio de fato entrega — os dois.
+
+    Sem este teste, um aperto de validacao passa verde no BR e so quebra no dia da
+    subida da Argentina, que foi exatamente o que aconteceu com `geocode.idioma`.
+    """
+    raiz = PERFIL_BR_EMBARCADO.parents[1]
+    for pais in ("BR", "AR"):
+        perfil = carregar_perfil(raiz / pais / "perfil.json")
+        assert perfil.pais == pais
+
+
 def test_regex_cp_null_e_declaracao_nao_ausencia(tmp_path: Path) -> None:
     perfil = carregar_perfil(_gravar(tmp_path, _copia_profunda(PERFIL_MINIMO)))
     assert perfil.geocode.regex_cp is None

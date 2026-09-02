@@ -7,8 +7,19 @@ from pathlib import Path
 
 import pandas as pd
 
-LAT_MIN, LAT_MAX = -34.0, 6.0
-LNG_MIN, LNG_MAX = -75.0, -28.0
+from motor_expansao.perfil import resolver_perfil
+
+# Caixa do pais da instancia, do perfil (Bloco A / DEC-047). Era a B3 — a mais LARGA das
+# tres do repositorio (lat ate 6,0; lng ate -75,0), e larga justamente onde nao ha Brasil.
+# O perfil unifica na B1, o que AQUI ESTREITA. Medido ANTES de aplicar, sobre as 3.296
+# linhas de `data/staging/concorrentes_mapeados.parquet`: B3 = 3.269 e B1 = 3.269 —
+# **delta ZERO**, nenhum pin de concorrente e descartado. E o criterio de aceite nº 5 da
+# spec, e existe porque este e o unico sitio do bloco que estreita SEM nenhum teste que
+# pegue: `_coord_in_brazil` nao e exercitado diretamente em `tests/`. Se o parquet for
+# regenerado, rodar de novo.
+_BBOX_PAIS = resolver_perfil().bbox
+LAT_MIN, LAT_MAX = _BBOX_PAIS.lat_min, _BBOX_PAIS.lat_max
+LNG_MIN, LNG_MAX = _BBOX_PAIS.lng_min, _BBOX_PAIS.lng_max
 
 COMPETITOR_COLUMNS = [
     "rede",
