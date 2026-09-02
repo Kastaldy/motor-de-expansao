@@ -1,0 +1,277 @@
+{
+  "schema_versao": 1,
+  "_schema": "perfil-pais/1 (rotulo legado; o campo NORMATIVO e `schema_versao`, spec 1.2 — `_schema` e chave `_`-prefixada e o loader a IGNORA)",
+  "_nota": "Perfil do BRASIL. NAO e um perfil novo: e a transcricao dos valores que HOJE sao literais espalhados pelo codigo. Existe para uma coisa so — provar que declarar o pais nao muda o comportamento brasileiro. Todo campo abaixo cita arquivo:linha. Se um valor daqui divergir do literal citado, o teste de contrato do Bloco A deve FALHAR: e o perfil que esta errado, nao o codigo.",
+  "_metodo": "Conferido em arquivo:linha em 2026-08-31 no checkout de C:/dev/motor-de-expansao. Onde o valor e resolvido em runtime (fator temporal, taxa de fitness calibrada) o perfil declara o FALLBACK e o artefato, nunca um numero congelado. Onde o campo do schema nao existe no codigo hoje, o valor e null e o _nota diz isso — nao inventei parametro brasileiro para preencher tabela.",
+
+  "pais": "BR",
+  "nome": "Brasil",
+  "_idioma": "pt-BR (RECUSADO pela spec 1.4: sem leitor. `format.ts:6` le `locale`; o Accept-Language do geocoder le `geocode.idioma`. Mantido `_`-prefixado como comentario.)",
+  "locale": "pt-BR",
+
+  "moeda": {
+    "codigo": "BRL",
+    "simbolo": "R$",
+    "nome_exibicao": "real",
+    "comparacao": null,
+    "indicadores_renda": "BRL",
+    "base_monetaria": null,
+    "cambio_base": null,
+    "separador_milhar": ".",
+    "separador_decimal": ",",
+    "_nota": "Hoje o literal 'R$' esta espalhado em .tsx e em ~453 strings de PDF. O item 8 do §3 do plano transforma isso em formatadorDe(locale, moeda) e proibe o literal por lint. Este bloco e a entrada dessa fabrica; o valor de saida e identico ao de hoje. `base_monetaria` e null de proposito: o Brasil nao tem mes-base unico como a Argentina — a renda e de jul/2022 e sobe por fator temporal (ver fontes.fator_temporal)."
+  },
+
+  "bbox": {
+    "_nota": "B1 — DECIDIDO em 2026-08-31, BR-P1 FECHADA. Vale a spec do Bloco A (docs/spec_bloco_a_perfil.md §1.3): lat [-34,0 · 5,5] · lng [-74,0 · -28,0], a caixa de api/coord.py:13-14, coord.ts:8 e entrada-ponto.ts:44. O default ANTERIOR deste arquivo era a UNIAO (lat_max 6,0 / lng_min -75,0, a caixa B3 de competitors.py) e ele foi ABANDONADO por tres razoes medidas: (1) B1 nao ESTREITA nada do que as rotas de coordenada ja aceitam — as tres copias que validam entrada do operador JA sao B1; (2) B1 contem os extremos reais do pais (+5,27 Monte Caburai · -33,75 Chui · -73,99 Serra do Divisor · -28,85 Martin Vaz), enquanto B2 exclui Martin Vaz e ja esta errada hoje; (3) o unico sitio que a uniao preservava era o estreitamento de B3->B1 em competitors.py, e o comando de verificacao obrigatorio da spec §7.5 foi RODADO sobre data/staging/concorrentes_mapeados.parquet (3.296 linhas): B3 = 3.269, B1 = 3.269, DELTA 0 — estreitar nao descarta um pin sequer. A uniao tambem QUEBRAVA um teste que a spec §5.2 afirma ficar verde: com lat_max 6,0, `assert parse_coordinate_input(\"6.0,-60.0\") is None` (tests/unit/test_coord_search.py:58) falha, porque 6,0 <= 6,0. Sob B1 quem quebra e a :60 (fronteira sul inclusiva), que a spec §5.2 ja lista e corrige no commit A4.",
+    "lat_min": -34.0,
+    "lat_max": 5.5,
+    "lng_min": -74.0,
+    "lng_max": -28.0,
+    "_copias_hoje": [
+      { "onde": "src/motor_expansao/api/coord.py:13-14", "lat": [-34.0, 5.5], "lng": [-74.0, -28.0], "uso": "parser de link do Maps; valida entrada de coordenada do operador" },
+      { "onde": "web/src/lib/coord.ts:8", "lat": [-34.0, 5.5], "lng": [-74.0, -28.0], "uso": "mesma validacao, do lado do front" },
+      { "onde": "web/src/lib/entrada-ponto.ts:44", "lat": [-34.0, 5.5], "lng": [-74.0, -28.0], "uso": "terceira copia da mesma caixa, no mesmo repo" },
+      { "onde": "src/motor_expansao/api/maps_geocoder.py:171-172", "lat": [-33.75, 5.27], "lng": [-73.99, -28.65], "uso": "a MAIS ESTREITA; comentario diz que duplica data._validate_brazil_bbox para nao depender da camada dashboard" },
+      { "onde": "src/motor_expansao/dashboard/data.py:624-627", "lat": "_BRAZIL_LAT_MIN/MAX", "lng": "_BRAZIL_LNG_MIN/MAX", "uso": "as CONSTANTES; o leitor e _validate_brazil_bbox (:630, comparacao em :631), chamado em :657, :666, :676 e :686 por parse_coordinate_input" },
+      { "onde": "src/motor_expansao/dashboard/competitors.py:10-11", "lat": [-34.0, 6.0], "lng": [-75.0, -28.0], "uso": "a MAIS LARGA; filtro de pins de concorrente" }
+    ],
+    "_setima_restricao": "Ha uma SETIMA restricao a Brasil que NAO e bbox e por isso escapou da lista ate 2026-08-31: countrycodes='br' cravado em web/server/app.py:3978 (rota /api/geocode, definida em :3953). Ela vive no bloco `geocode` abaixo."
+  },
+
+  "vista_padrao": {
+    "lng": -52.9,
+    "lat": -14.5,
+    "zoom": 3.4,
+    "_nota": "VISTA_BRASIL, web/src/lib/mapa-ponto.ts:32. Ha dois outros defaults de camera no codigo que NAO sao o mesmo ponto e que este campo nao unifica sozinho: fallback de Brasilia em web/src/components/HexMap.tsx:506-507 (lng -47,9 / lat -15,78) e web/src/lib/exec.ts:316 (lat -15,78 / lng -47,93 / zoom 3,4). Sao fallbacks de 'centro ausente', nao vista inicial — resolver com o mesmo campo e possivel, mas e mudanca de comportamento e precisa de teste proprio."
+  },
+
+  "_rotulos": {
+    "_motivo": "RECUSADO pela spec 1.4: os leitores destes rotulos sao as ~2.400 linhas de copy do front e os 453 textos de PDF = BLK-INTL-12, fora desta onda. `_`-prefixado para o loader IGNORAR (LEIA-ME 3.4). Move-se para o BLK-INTL-12 quando ele abrir.",
+    "nivel1": "Estado",
+    "nivel1_plural": "Estados",
+    "nivel1_artigo": "o",
+    "nivel2": "Municipio",
+    "nivel2_plural": "Municipios",
+    "nivel2_artigo": "o",
+    "unidade_censitaria": "setor censitario",
+    "unidade_censitaria_plural": "setores censitarios",
+    "unidade_analise": "hexagono H3 res 7",
+    "_nota": "Na tela e nos PDFs o nivel 1 aparece tanto como 'Estado' quanto como 'UF' (sigla). `nivel1` e o substantivo; a sigla e a propria chave de particao — ver bloco `particao`."
+  },
+
+  "_particao": {
+    "_motivo": "RECUSADO pela spec 1.4/1.1: o leitor seria o `_UF_RE` afrouxado = BLK-INTL-04, fora do caminho critico (plano 5.0.2, divida no 1). `_`-prefixado para o loader IGNORAR (LEIA-ME 3.4).",
+    "nivel1_chave": "uf",
+    "nivel1_formato": "^[A-Za-z]{2}$",
+    "nivel1_exemplo": "GO",
+    "nivel2_chave": "cod_municipio",
+    "nivel2_formato": "^[0-9]{7}$",
+    "nivel2_exemplo": "5208707",
+    "convencao_raiz": "uf=GO/cod_municipio=5208707/part-0.parquet",
+    "_nota": "`nivel1_formato` e literalmente _UF_RE (web/server/app.py:412 = ^[A-Za-z]{2}$). Ele e guardrail anti-path-traversal do BLK-SEC-05, nao validador semantico — o proprio comentario (:405-411) diz isso. Afrouxa-lo para ^[A-Za-z0-9]{2,6}$ mantem a propriedade de seguranca e libera codigos INDEC/DANE/INEGI; o teste de traversal entra no MESMO commit. A convencao pais=BR/uf=GO/ do §1 do plano ainda NAO esta aplicada no Brasil — hoje a raiz e uf= direto."
+  },
+
+  "fontes": {
+    "censo": {
+      "nome": "Censo 2022 (IBGE)",
+      "detalhe": "Renda, domicílios e população por setor censitário — recortes de algumas centenas de domicílios cada. É a base de tudo que o funil chama de potencial: nenhuma estimativa de demanda é arbitrada, toda ela sai do setor onde o hexágono cai.",
+      "_procedencia": "F_CENSO em web/server/app.py:3550 (usada em :3570, :3617, :3642, :3671); o `detalhe` transcreve o paragrafo de :3572-3575 BYTE A BYTE, com acentuacao e travessao. NAO desacentuar: isto e TEXTO DE USUARIO (CLAUDE.md 2) e a rota /api/metodologia (app.py:3941, rota livre) publica esta string na tela. Depois do A7 ela passa a sair DESTE arquivo, entao uma copia sem acento vira portugues errado em producao — e o teste de contrato do A7 compara o texto SERVIDO, que a partir dali e este. A convencao sem acento do resto do arquivo vale para chaves e notas `_`-prefixadas, que nao sao texto de usuario."
+    },
+    "crescimento": {
+      "nome": "CAGED, RAIS, Receita Federal e satélite",
+      "detalhe": "As quatro leituras de movimento do município: emprego formal e salário de admissão (CAGED mensal, apoiado no estoque da RAIS), abertura e fechamento de empresas (Receita Federal), renda e população (IBGE) e a área construída medida por satélite entre 2016 e 2023. Não entra em nenhum corte do funil — é o retrato de para onde a cidade vem andando.",
+      "_procedencia": "F_CRES em web/server/app.py:3553 (usada em :3597, :3789, :3815); o `detalhe` transcreve o paragrafo de :3599-3603 BYTE A BYTE, com acentuacao e travessao — mesma razao do `_procedencia` do censo acima."
+    },
+    "_motivo_do_resto": "Os campos abaixo NAO fazem parte do schema da spec 1.2 - nenhuma linha deste repositorio os le - e ficam `_`-prefixados como PROCEDENCIA, nao como configuracao. `fator_temporal` e recusado NOMINALMENTE pela spec 1.4 (zero leitores).",
+    "_instituto": "IBGE",
+    "_instituto_nome_extenso": "Instituto Brasileiro de Geografia e Estatistica",
+    "_safra_censo": "2022",
+    "_universo_populacional": "pop_total_setor_2022 (Censo 2022). Artefato geo setorial NACIONAL: data/outputs/setores_censitarios_2022_geo, 27 particoes uf=, 1,2 GB (medido).",
+    "_unidade_censitaria_base": "setor censitario",
+    "_fonte_renda": {
+      "modelo": "renda_per_capita_setor_2022 (V06004/v0005 do Censo 2022), calibrada para a escala M1 por src/motor_expansao/pipelines/calibrar_renda_setor_2022.py",
+      "erro_estrutural": null,
+      "ressalva_rural": null,
+      "_nota": "Sem banda de erro declarada porque a renda brasileira e MEDIDA no censo, nao modelada de survey. E a diferenca de natureza que o §6.1 D3 do plano descreve, e a razao pela qual a Argentina carrega ±15% e o Brasil nao carrega nada."
+    },
+    "_fonte_concorrencia": {
+      "cobertura": null,
+      "cadencia": "GymScraping semanal (domingo 06:00 UTC), agregadores (terca 02:00 UTC), Growth municipal diario (06:30 UTC). As tres sao brasileiras (§6.6 do plano)."
+    },
+    "_fator_temporal": {
+      "valor": null,
+      "artefato": "data/staging/fator_temporal_renda.json",
+      "fallback": 1.0,
+      "rotulo_fallback": "julho/2022 (Censo IBGE)",
+      "faixa_plausivel": [1.0, 2.0],
+      "_nota": "RESOLVIDO EM RUNTIME, nao congelado no perfil: _carregar_fator_temporal (src/motor_expansao/dashboard/constants.py:457-473) le o artefato, aceita so valores entre 1,0 e 2,0 e cai em 1,0 com rotulo 'julho/2022 (Censo IBGE)' quando o arquivo falta. Neste checkout o artefato NAO existe, entao o valor efetivo hoje e 1,0. Congelar um numero aqui QUEBRARIA o comportamento atual — por isso `valor` e null e o perfil declara caminho e fallback.",
+      "data_referencia_renda": "2022-07"
+    },
+    "_documentos": [
+      "docs/modelo_mercado_hexagonos.md",
+      "docs/relatorio_pontual_censitario.md",
+      "PREMISSAS_VIABILIDADE.md"
+    ]
+  },
+
+  "geocode": {
+    "countrycodes": "br",
+    "idioma": "pt-BR",
+    "regex_cp": "\\b(\\d{5})-?(\\d{3})\\b",
+    "_sufixo": "null - RECUSADO pela spec 1.4: zero leitores; nem app.py:3977-3980 nem maps_geocoder.py:241-248 concatenam sufixo a query.",
+    "_regex_cp_legado": "null - o Brasil tem um formato so de CEP.",
+    "validar_contra_bbox": false,
+    "_divergencia_aberta": "NAO RESOLVIDA nesta passada - ler ANTES de codar o A4. Este campo NAO existe no schema da spec 1.2, e a spec 2.3 manda inserir a validacao do retorno do Nominatim contra `perfil.bbox` de forma INCONDICIONAL (entre o `except` de app.py:3998 e o cache de :4000). Sob a spec, o `false` daqui nao e lido e o Brasil PASSA a validar - que e mudanca de comportamento brasileiro, exatamente o que BR-P2 queria manter em aberto. Escolher entre (a) a spec vira condicional a este campo, ou (b) BR-P2 e fechada em `true` e o campo sai do arquivo.",
+    "_nota": "ESTADO DE HOJE da ROTA, mais os DOIS literais que a spec 1.2 exige transcrever e que antes de 2026-08-31 estavam `null` aqui (o que reprovaria o loader e apagaria dois literais brasileiros vivos): `idioma` e o \"Accept-Language\": \"pt-BR\" de src/motor_expansao/api/maps_geocoder.py:256, e `regex_cp` e o CEP_RE de maps_geocoder.py:32, consumido por normalize_cep (:113) e split_address_cep (:119). web/server/app.py:3978 manda params={'q':termo,'format':'json','limit':1,'countrycodes':'br'} (rota /api/geocode, :3953-4005) para o Nominatim e devolve o top-1 CRU: sem accept-language, sem sufixo de ancoragem, sem regex de CEP e SEM validar o resultado contra bbox nenhum. Os quatro nulls e o `validar_contra_bbox:false` sao a descricao honesta do codigo atual, nao lacuna do perfil. Ligar `validar_contra_bbox` no Brasil e MUDANCA DE COMPORTAMENTO e precisa do proprio teste — nao entra de carona com o perfil."
+  },
+
+  "_subdivisoes": {
+    "_motivo": "RECUSADO pela spec 1.4: o leitor seria o `_UF_RE` afrouxado = BLK-INTL-04. `_`-prefixado para o loader IGNORAR (LEIA-ME 3.4).",
+    "_nota": "Chave = chave de particao (a sigla). `codigo` = codigo IBGE de 2 digitos, de UFS_BRASIL em src/motor_expansao/pipelines/materializar_setores_censitarios_geo.py:65-93. As 27 conferidas contra essa tabela.",
+    "RO": { "nome": "Rondonia", "codigo": "11" },
+    "AC": { "nome": "Acre", "codigo": "12" },
+    "AM": { "nome": "Amazonas", "codigo": "13" },
+    "RR": { "nome": "Roraima", "codigo": "14" },
+    "PA": { "nome": "Para", "codigo": "15" },
+    "AP": { "nome": "Amapa", "codigo": "16" },
+    "TO": { "nome": "Tocantins", "codigo": "17" },
+    "MA": { "nome": "Maranhao", "codigo": "21" },
+    "PI": { "nome": "Piaui", "codigo": "22" },
+    "CE": { "nome": "Ceara", "codigo": "23" },
+    "RN": { "nome": "Rio Grande do Norte", "codigo": "24" },
+    "PB": { "nome": "Paraiba", "codigo": "25" },
+    "PE": { "nome": "Pernambuco", "codigo": "26" },
+    "AL": { "nome": "Alagoas", "codigo": "27" },
+    "SE": { "nome": "Sergipe", "codigo": "28" },
+    "BA": { "nome": "Bahia", "codigo": "29" },
+    "MG": { "nome": "Minas Gerais", "codigo": "31" },
+    "ES": { "nome": "Espirito Santo", "codigo": "32" },
+    "RJ": { "nome": "Rio de Janeiro", "codigo": "33" },
+    "SP": { "nome": "Sao Paulo", "codigo": "35" },
+    "PR": { "nome": "Parana", "codigo": "41" },
+    "SC": { "nome": "Santa Catarina", "codigo": "42" },
+    "RS": { "nome": "Rio Grande do Sul", "codigo": "43" },
+    "MS": { "nome": "Mato Grosso do Sul", "codigo": "50" },
+    "MT": { "nome": "Mato Grosso", "codigo": "51" },
+    "GO": { "nome": "Goias", "codigo": "52" },
+    "DF": { "nome": "Distrito Federal", "codigo": "53" }
+  },
+
+  "reguas": {
+    "renda_abs_min": 300.0,
+    "renda_abs_max": 4000.0,
+    "renda_unidade": "BRL per capita/mes (renda_per_capita_setor_2022_calibrada)",
+    "_nota_renda": "RENDA_ABS_MIN / RENDA_ABS_MAX, src/motor_expansao/pipelines/calibrar_renda_setor_2022.py:89-90. Regua ABSOLUTA de 2026-08-26, que substituiu os dois percentis do score censitario. Ancoras medidas no universo povoado (pop >= 1.000, 21.107 unidades): p05 = R$ 296 -> piso 300; p95 = R$ 1.889, p99 = R$ 3.123, max R$ 8.756 -> teto R$ 4.000, saturando 0,38%. Renda entra LINEAR (mais legivel e discrimina melhor no topo).",
+
+    "pop_abs_min": 1000.0,
+    "pop_abs_max": 100000.0,
+    "pop_unidade": "habitantes por HEXAGONO H3 res 7 (coluna pop_total_setor_2022 = valor do setor carregado no hexagono)",
+    "_nota_pop": "POP_ABS_MIN / POP_ABS_MAX, calibrar_renda_setor_2022.py:91-92. p05 = 1.103 -> piso 1.000; p95 = 28.845, p99 = 62.335, max 141.507 -> teto 100.000 (satura 0,000%). Populacao entra em LOG porque a distribuicao e muito assimetrica (p50 3.561 contra p95 28.845). A UNIDADE E HEXAGONO, e o NOME DA COLUNA ENGANA: pop_col = 'pop_total_setor_2022' (:309) e o valor do setor carregado no hexagono, nao a granularidade da linha. As linhas do dataframe sao hexes, e o codigo diz isso em tres lugares: o cabecalho das ancoras (:82) mede 'no universo POVOADO (pop >= 1.000, 21.107 hexes)', :265 imprime 'Setor: {len(df_ufs):,} hexes' e :320 faz merge com o M1 on='hex_id'. Bate com rotulos.unidade_analise (:59) deste mesmo arquivo. Consequencia: reusar 1.000/100.000 num pais que tambem alimenta com HEXAGONO H3 res 7 e o casamento CORRETO de unidade, nao analogia — ver pendencia P2 do perfil AR.",
+
+    "score_pesos": { "renda": 0.60, "pop": 0.40 },
+    "_nota_score_pesos": "calcular_score_calibrado, calibrar_renda_setor_2022.py:160: hex_score = 0,60·nota_renda + 0,40·nota_pop, mais o ajuste executivo (:130-144: +5 se ambos >= 75, +2 so renda, +1 so pop, -5 se renda < 25, -3 se pop < 25), tudo clipado em 0-100. E contrato do M1 (CLAUDE.md §5) — READ-ONLY. Esta declarado aqui para ficar VISIVEL que o parquet argentino usa os pesos invertidos, nao para virar parametro ajustavel no Brasil.",
+
+    "score_corte_quente": 30.0,
+    "_nota_score_corte": "SCORE_CORTE_QUENTE, web/server/app.py:161 — piso do passo 1 do funil, aplicado sobre score_setor_2022_calibrado (:2085). Medido nas 27 particoes de data/outputs/hexagonos_dashboard_enriquecido (1.303.414 hexagonos, 2026-08-31): 2,2% ficam >= 30 e 0,5% >= 50. NAO CONFUNDIR com CRIT_PONTO_SCORE_MIN = 50,0 (:187), que e a regua da FICHA do ponto, nem com FAIXA_SCORE_QUENTE = 90,0 (:194), que esta orfa.",
+
+    "pop_min_acionavel": 5000,
+    "_nota_pop_min": "POP_MIN_ACIONAVEL. Declarado DUAS vezes hoje: src/motor_expansao/dashboard/constants.py:144 (5_000) e web/server/app.py:154 (5000). Ha um terceiro, alinhado a mao: POP_ZONA_MORTA_MIN = 5_000.0 em src/motor_expansao/dimensionamento/viabilidade_ponto.py:54. Tres literais, um numero — o tipo de coisa que o perfil existe para acabar.",
+
+    "oferta_destaque_min": 2000.0,
+    "_nota_oferta_destaque": "OFERTA_DESTAQUE_MIN = 2000.0. Campo OBRIGATORIO da spec 1.2 que FALTAVA neste arquivo. DUAS copias hoje: web/server/app.py:153 e src/motor_expansao/dashboard/relatorio_municipal.py:61 - e e a segunda que torna `relatorio_municipal.py` o TERCEIRO arquivo CRITICO do Bloco A (spec 8.1), que nenhum documento listava. Leitores: _com_residual (app.py:2093), app.py:2145, relatorio_municipal.py:397.",
+
+    "capacidade_concorrente": 2500.0,
+    "capacidade_concorrente_unidade": "alunos por unidade",
+    "capacidade_unidade_alunos": 2500,
+    "_nota_capacidade_unidade": "CAPACIDADE_UNIDADE_ALUNOS = 2500. Campo OBRIGATORIO da spec 1.2 que FALTAVA. TRES copias: src/motor_expansao/dashboard/constants.py:379, web/src/lib/faixas.ts:84 e web/src/lib/mapa-ponto.ts:49. Leitores: app.py:1802, faixas.ts:97-98, mapa-ponto.ts:61, medidor.ts:127. NAO CONFUNDIR com `capacidade_concorrente`: aqui e a capacidade de uma unidade ULTRA; la e a capacidade atribuida a uma unidade CONCORRENTE. No Brasil os dois numeros coincidem em 2.500 e por isso a duplicacao passou despercebida - na Argentina eles DIVERGEM (2.500 contra 1.070).",
+    "_nota_capacidade": "CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS = 2_500.0 (src/motor_expansao/pipelines/calcular_colunas_mercado.py:41), espelhado por CAPACIDADE_UNIDADE_ALUNOS = 2500 (src/motor_expansao/dashboard/constants.py:379) e repetido em gerar_plano_expansao_dominio.py:39. E a ancora que da sentido a faixa de demanda: score = 100 × oferta_efetiva_disponivel / 2.500, logo 100 = livre e 0 = saturado.",
+
+    "taxa_fitness": 0.10,
+    "_nota_taxa_fitness": "FALLBACK, nao o valor efetivo. TAXA_FITNESS_MERCADO_FALLBACK = 0.10 (calcular_colunas_mercado.py:38); o valor real e CALIBRADO em runtime por calibrar_taxa_fitness_mercado (:107) e gravado em taxa_fitness_mercado_calibrada. Congelar aqui o numero calibrado mudaria o comportamento — o perfil declara o fallback, que e o unico literal.",
+
+    "faixas_mapa_potencial": [
+      [0, 20, "Desfavoravel", "#B92323", "red"],
+      [20, 40, "Fraco", "#DC6914", "amber"],
+      [40, 60, "Promissor", "#EEC828", "gray"],
+      [60, 80, "Forte", "#50C33C", "green"],
+      [80, 100, "Excelente", "#0A8226", "blue"]
+    ],
+    "faixas_mapa_demanda": [
+      [0, 20, "Saturado", "#B92323", "red"],
+      [20, 40, "Restrito", "#DC6914", "amber"],
+      [40, 60, "Moderado", "#EEC828", "gray"],
+      [60, 80, "Amplo", "#50C33C", "green"],
+      [80, 100, "Livre", "#0A8226", "blue"]
+    ],
+    "_nota_faixas_mapa": "FAIXAS_MAPA_POTENCIAL e FAIXAS_MAPA_DEMANDA, src/motor_expansao/dashboard/constants.py:357-376. Tupla (score_de, score_ate, nome exibido, cor solida, tom do chip); score_ate e EXCLUSIVO e a ultima faixa fecha em 100 inclusive. O front tem a copia espelhada em web/src/lib/faixas.ts, com teste que trava os nomes. Sao faixas de SCORE, entao sao neutras de pais depois que as ancoras normalizam a escala.",
+
+    "faixas_renda": null,
+    "_nota_faixas_renda": "NAO EXISTE no codigo. O §6.2 do plano lista o campo, mas nao ha choropleth de renda: o mapa pinta score. Declarado null nos dois paises para o campo nao virar convite a inventar regua.",
+
+    "_metas_big_numbers": {
+      "_motivo": "RECUSADO pela spec 1.4: as metas do semaforo (dashboard/censo_report.py:139-152) so sao lidas pelas superficies `ponto` e `municipal`, que o Bloco C bloqueia no dia 1. Entram no BLK-INTL-10. `_`-prefixado para o loader IGNORAR.",
+      "pop_total_raio": 10000.0,
+      "renda_per_capita_media_raio": 1500.0,
+      "renda_domiciliar_total_raio": 4000.0,
+      "domicilios_total_raio": 3000.0,
+      "score_setor_medio": 60.0,
+      "sam_fitness_potencial": 2000.0,
+      "residual_fitness_disponivel": 2000.0,
+      "_nota": "Metas do semaforo do Relatorio Pontual, src/motor_expansao/dashboard/censo_report.py:141-152. Quatro delas sao em REAIS ou em escala brasileira — sao exatamente as que pintariam todo card de verde num pais com renda em outra moeda. Historico registrado no proprio arquivo: o corte de 10.000 habitantes FICOU apos a mudanca de raio (decisao de Felipe, 2026-07-30), com o limiar implicito de densidade subindo de ~1.415 para ~3.183 hab/km2 — endurecimento deliberado; e a meta de renda domiciliar caiu de 6.200 para 4.000 a pedido de Felipe em 2026-07-23."
+    },
+    "moradores_por_domicilio": 2.79,
+    "_nota_moradores": "MORADORES_DOMICILIO_NACIONAL, src/motor_expansao/dashboard/constants.py:447 (IBGE Censo 2022). Fallback quando o municipio nao esta na tabela de uplift."
+  },
+
+  "superficies": ["mapa", "oportunidades", "imobiliaria", "executiva", "viabilidade"],
+  "_nota_superficies": "TODAS as abas de ABAS_VALIDAS (web/server/acesso.py:39), que e o estado de hoje: no Brasil quem limita e a permissao do usuario, nao o pais. Listar as cinco aqui e o que garante que o gate de superficie do Bloco C seja INERTE no Brasil — se este campo trouxesse menos que cinco, o perfil estaria mudando o comportamento brasileiro, que e justamente o que ele existe para nao fazer.",
+
+  "avisos": {
+    "_nota": "VAZIO de proposito. O Brasil nao carrega aviso de provisoriedade: o modelo financeiro foi CALIBRADO contra celulas rastreaveis de planilha oficial e 6 DREs gerenciais reais (§6.3 do plano). E precisamente por isso que a Argentina carrega — e que o aviso nao pode ser generico de plataforma, tem que ser campo de perfil."
+  },
+
+  "operacao": {
+    "pdf_concorrencia_max": 3,
+    "_nota_pdf": "_PDF_CONCORRENCIA_MAX = 3, literal de modulo em web/server/app.py:52-57 (nao e env). O semaforo e POR PROCESSO e cada instancia roda UM worker uvicorn (Dockerfile.web:94, sem --workers — a :91 e o CMD do HEALTHCHECK). O comentario no codigo justifica o 3 por 'as 4 CPUs da VPS' — premissa escrita quando havia uma instancia so.",
+    "mem_limit_alvo": "8g",
+    "_nota_mem": "docker-compose.prod.yml:156-157 (8g / 10g swap), INALTERADO. Numero historico sem justificativa registrada; o §1 do plano atribui isso ao cache de particao ser maxsize=6 (web/server/app.py:421), que trata SC (342,3 MB de pico) e AM (826,0 MB) como iguais.",
+    "basemap_labels_url_obrigatoria": true,
+    "_nota_labels": "API_BASEMAP_LABELS_URL nao tem fallback embutido (src/motor_expansao/dashboard/censo_map.py:729-738, BLK-BASEMAP-06): sem a env o mapa sai sem nome de rua, em silencio. No Brasil a env esta definida (docker-compose.prod.yml:216-221); na Argentina nao estara no dia 1, e por isso la o campo e false e ha aviso de tela."
+  },
+
+  "_pendencias": [
+    {
+      "id": "BR-P1",
+      "campo": "bbox",
+      "estado": "FECHADA",
+      "fechada_em": "2026-08-31",
+      "decide": "Bloco A (Felipe aprova a DEC)",
+      "pergunta": "Qual das tres caixas divergentes vira a unica do Brasil?",
+      "decisao": "B1 — lat [-34.0, 5.5] · lng [-74.0, -28.0]. E o que esta gravado no bloco `bbox` acima e o que a spec §1.3 ja decidia; a UNIAO (lat_max 6,0 / lng_min -75,0) foi abandonada.",
+      "default_anterior": { "lat": [-34.0, 6.0], "lng": [-75.0, -28.0] },
+      "justificativa": "A justificativa da uniao ('unificar numa caixa mais estreita passaria a REJEITAR coordenada hoje aceita') foi MEDIDA e nao se sustenta. O unico sitio que a uniao preservava e o filtro de pins de competitors.py, e o comando obrigatorio da spec §7.5 rodado sobre data/staging/concorrentes_mapeados.parquet (3.296 linhas) da B3 = 3.269 e B1 = 3.269, DELTA 0: estreitar de B3 para B1 nao descarta um pin sequer. Alem disso a uniao QUEBRA tests/unit/test_coord_search.py:58 (`parse_coordinate_input(\"6.0,-60.0\") is None` falha com lat_max 6,0), um teste que a spec §5.2 afirma ficar verde e nao lista entre os que quebram — ou seja, manter a uniao exigiria corrigir a spec; adotar B1 nao exige nada alem do que a spec §5.2 ja escreveu.",
+      "o_que_mudou": "As duas mudancas de comportamento sao as que a spec §1.3 ja declarava e cobria com teste: dashboard/data.py ALARGA de B2 (-33,75 / 5,27 / -73,99 / -28,65) para B1, e dashboard/competitors.py ESTREITA de B3 para B1 (delta 0 medido). O teste que quebra por isso e test_coord_search.py:60 (fronteira sul passa a ser inclusiva), corrigido no mesmo commit A4 pela receita da spec §5.2."
+    },
+    {
+      "id": "BR-P2",
+      "campo": "geocode.validar_contra_bbox",
+      "estado": "default_provisorio",
+      "decide": "Bloco A",
+      "pergunta": "O Brasil tambem passa a validar o retorno do Nominatim contra o bbox?",
+      "default": false,
+      "justificativa": "false = comportamento de hoje (/api/geocode devolve o top-1 cru). Ligar e melhoria real, mas e mudanca de comportamento brasileiro e precisa de teste proprio; nao entra de carona no perfil.",
+      "o_que_muda_quando_decidir": "Com true, buscas que hoje retornam um pin fora do Brasil passariam a responder found:false."
+    },
+    {
+      "id": "BR-P3",
+      "campo": "vista_padrao",
+      "estado": "default_provisorio",
+      "decide": "Bloco A",
+      "pergunta": "Os dois fallbacks de camera em Brasilia (HexMap.tsx:506-507 e exec.ts:316) passam a ler este campo?",
+      "default": { "lng": -52.9, "lat": -14.5, "zoom": 3.4 },
+      "justificativa": "O default transcreve VISTA_BRASIL. Os fallbacks de Brasilia sao outro ponto e outro proposito ('centro ausente'), e unifica-los muda o enquadramento em telas que hoje abrem sobre o DF.",
+      "o_que_muda_quando_decidir": "Enquadramento inicial de duas telas. Zero efeito em dado."
+    }
+  ]
+}

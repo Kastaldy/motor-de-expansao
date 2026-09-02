@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Motor de Expansão — escolha o país</title>
+
+<!--
+================================================================================
+  PORTAL DE ENTRADA — ultra-expansao.tech (raiz)
+  DEC do Felipe em 2026-08-31. Spec: docs/spec_portal_selecao_pais.md.
+================================================================================
+
+  DUAS REGRAS DE OURO DESTE ARQUIVO, ANTES DE QUALQUER OUTRA COISA
+  ----------------------------------------------------------------
+  1. **Comentário HTML VIAJA NO CORPO da resposta.** Tudo o que está escrito aqui
+     é servido a qualquer usuário autenticado, exatamente como o conteúdo visível.
+     Por isso NENHUM comentário deste arquivo nomeia um país, um host `piloto-*`
+     ou um grupo `expansao_<pais>` concreto: a lista de países é o roteiro de
+     expansão internacional, e escondê-la dos cartões enquanto ela vaza pelo
+     comentário seria fingir de conta. É a mesma regra do §6.2 da spec, e é o que
+     os aceites 6, 8 e 9 do §7.2 verificam com `grep` sobre o corpo. Ao
+     acrescentar um país, o nome dele entra APENAS dentro do `if` daquele país.
+  2. **A diretiva `templates` executa este arquivo INTEIRO como template de
+     texto** — comentário HTML incluído. Um par de chaves duplas dentro de um
+     comentário NÃO é comentário para o Caddy: é uma ação, e uma ação com variável
+     inexistente derruba a resposta com erro de execução. Por isso, em TODO o
+     texto explicativo abaixo, as ações de template são citadas SEM as chaves ("um
+     `if` por país", "a ação `else`"). As únicas chaves duplas deste arquivo estão
+     no corpo, onde elas são para valer.
+
+  POR QUE ESTA PÁGINA EXISTE
+  --------------------------
+  O colaborador salva UM favorito só (a raiz) e o portal decide para onde ele vai:
+    · acesso a UM país      -> o Caddy redireciona (302) direto, sem mostrar nada
+    · acesso a VÁRIOS       -> esta página, com os países que ele pode abrir
+    · acesso a NENHUM       -> `sem-acesso.html` (handle @sem_pais do Caddyfile).
+      Exceção: com `?escolher=1` a saída manual vence todos os matchers e traz
+      ESTA página mesmo para quem não tem país nenhum — por isso ela também tem o
+      bloco `.sem-acesso`, no ramo `else` da grade. Sem esse ramo o caso cairia
+      numa grade VAZIA, sem explicação (spec §5.4).
+
+  POR QUE ISSO NÃO CONTRADIZ A DEC-046
+  ------------------------------------
+  A DEC-046 recusou o país virar VARIÁVEL DENTRO do app — um seletor em runtime
+  trocando a base servida, o que rechavearia os 35 `lru_cache` de `web/server/app.py`.
+  Este portal NÃO serve dado nenhum: decide um destino e sai da frente. Cada país
+  continua com seu processo, seu cache e seu `perfil.json`. É roteador de porta de
+  entrada, não seletor de tenant. Por isso a página também não roda dentro do
+  container de país nenhum — ela é um arquivo estático montado no Caddy, e não
+  infla a imagem de país nenhum.
+
+  ZERO REQUISIÇÃO EXTERNA
+  -----------------------
+  Um único arquivo: CSS inline, bandeiras em SVG inline, nenhuma fonte remota,
+  nenhum CDN, nenhuma imagem, ZERO JavaScript. Ela abre atrás do Authelia e tem de
+  pintar no primeiro frame. A CSP do bloco raiz é `default-src 'none'` — qualquer
+  asset externo seria bloqueado, de propósito.
+
+  NÃO usamos `web/public/logo-ultra.png`: apesar do nome, o arquivo é um AVIF
+  (magic bytes `ftypavif`, conferido em 2026-08-31), e embutir 9,7 KB de base64 de
+  um formato que nem todo navegador antigo decodifica, numa página cujo único
+  mérito é abrir instantaneamente, é risco sem retorno. A marca aqui é
+  TIPOGRÁFICA — mesmos tokens de cor e os mesmos papéis de fonte do produto.
+
+  FONTES: `web/src/styles/global.css` importa Instrument Sans/Serif e IBM Plex Mono
+  via @fontsource — pacotes que o Vite empacota no bundle do app e que NÃO existem
+  aqui. Os tokens `--f-*` abaixo mantêm os mesmos PAPÉIS (sans na UI, serif na voz
+  narrativa, mono em endereço/código) usando exatamente as pilhas de fallback que o
+  `web/src/styles/tokens.css:264-266` já declara. A página parece do produto sem
+  baixar um byte.
+
+================================================================================
+  A FILTRAGEM É DE RENDERIZAÇÃO, E `templates` É REQUISITO — NÃO É OPCIONAL
+================================================================================
+
+  A página é estática e NÃO tem como ler os grupos sozinha. Quem conta a ela é o
+  Caddy, em duas peças que andam JUNTAS (spec §2.3 e §5.4):
+
+    1. dentro do `route` do bloco raiz do `Caddyfile`, por país, DUAS linhas —
+       nesta ordem, e a ordem é a defesa inteira:
+           request_header -X-Portal-<Sigla>              <- remoção INCONDICIONAL
+           request_header @tem_<pais> X-Portal-<Sigla> 1 <- só então o `set`
+       A remoção incondicional é o anti-spoof: sem ela, um cliente que mandasse o
+       cabeçalho à mão o teria PRESERVADO, porque `request_header` com matcher só
+       sobrescreve quando o matcher casa. O bloco concreto, com os nomes reais,
+       está na spec §2.3 — e é lá que ele deve ser lido, não aqui (regra de ouro
+       nº 1).
+    2. a diretiva `templates` nos DOIS `handle` que servem este arquivo
+       (`handle @escolher` e o `handle` de fallback), sem a qual as ações abaixo
+       não são executadas.
+
+  Cada cartão de país vive dentro de um `if` por país. O cartão de um país que o
+  usuário não tem NÃO EXISTE NO CORPO da resposta — não é escondido por CSS. Essa
+  é a diferença que importa: a versão anterior desta página escondia os cartões
+  com `display:none`, e o corpo HTTP continuava carregando o nome e o host de
+  todos os países para qualquer pessoa autenticada. Isso contradizia o motivo
+  escrito na própria spec para a raiz exigir `one_factor` em vez de `bypass`
+  (§6.2: "a página do seletor DIZ QUAIS PAÍSES EXISTEM. Isso é o roteiro de
+  expansão internacional") e reprovava os aceites 6, 8 e 9 do §7.2. Filtragem
+  cosmética não serve aqui.
+
+  POR QUE `X-Portal-*` E NÃO `Remote-Groups` DIRETO
+  -------------------------------------------------
+  Os dois chegam ao Caddy. `X-Portal-*` foi o escolhido (spec §5.4) porque:
+    · mantém o anti-spoof legível — as duas remoções incondicionais acima são a
+      defesa inteira, e ela cabe em duas linhas revisáveis num arquivo CRITICO;
+    · desacopla a página do FORMATO do `Remote-Groups` (hoje `a,b,c` sem espaço) —
+      a página não precisa saber separar lista nenhuma;
+    · nada vindo do usuário é interpolado no HTML. Ler `Remote-Groups` cru
+      injetaria o NOME DO GRUPO no documento, e o módulo `templates` do Caddy
+      executa como template de TEXTO, sem escape de HTML: um grupo com aspa ou
+      sinal de menor quebraria o atributo, e no limite o documento.
+
+  SE `templates` NÃO ESTIVER LIGADO
+  ---------------------------------
+  A página sai com as ações de template VISÍVEIS em texto, e ninguém vê cartão
+  nenhum. É falha alta e barulhenta, DE PROPÓSITO: a versão anterior tinha um modo
+  degradado silencioso ("lista todos") que era apresentado como seguro e não era —
+  sem `templates` todo mundo via todos os cartões, inclusive quem não tem, e o estado
+  "sem acesso" nunca aparecia. Falhar visível na primeira requisição é melhor que
+  vazar o roteiro de expansão calado. O §7.4 da spec tem um assert para isso.
+
+  ISTO NÃO É CONTROLE DE ACESSO
+  -----------------------------
+  Não mostrar um cartão evita oferecer uma porta que não abre; quem BARRA de
+  verdade é o `forward_auth` de cada host de país (`Caddyfile:68-71` já faz
+  `copy_headers Remote-User Remote-Groups Remote-Email`) mais as regras do
+  `authelia/configuration.yml`. E o portal precisa ficar ATRÁS do `forward_auth`
+  também, senão o cabeçalho que ele lê é um que o próprio cliente mandou.
+
+  DEPENDÊNCIAS FORA DESTE ARQUIVO (donos: outros blocos)
+  -------------------------------------------------------
+  1. `docker-compose.prod.yml:268-274` monta no Caddy APENAS o Caddyfile, os
+     volumes `caddy_data`/`caddy_config` e o diretório de log. A pasta `portal/`
+     NÃO chega ao container. Precisa do mount `- ./portal:/srv/portal:ro`.
+  2. O bloco `ultra-expansao.tech` do `Caddyfile:19-22` hoje só faz
+     `redir ... permanent`. `permanent` é 301 e o navegador cacheia 301 PARA
+     SEMPRE — quem ganhar um segundo país depois nunca veria o seletor. Todo
+     redirect deste fluxo tem de ser 302.
+  3. Os grupos `expansao_*` ainda não existem: hoje
+     `authelia/users_database.yml` tem 19 usuários num grupo único `ultra_team`.
+     Enquanto o BLK-INTL-05 não rodar, TODO mundo cai em `@sem_pais`. Este bloco
+     sobe DEPOIS dos grupos, não antes (spec §9).
+  4. O `Caddyfile` tem hoje 5 hosts (linhas 19, 24, 32, 49, 54) e o
+     `access_control` duas regras (`authelia/configuration.yml:82-86`) — o segundo
+     host de país não está em nenhum dos dois. Ele nasce no **BLK-INTL-08**, que
+     também é dono do `Caddyfile` e do `docker-compose.prod.yml`. Ordem obrigatória:
+     BLK-INTL-05 -> BLK-INTL-08 -> BLK-INTL-13 (este). Fora dessa ordem, um cartão
+     aponta para um host que não existe.
+  Os três arquivos de infra são CRITICO em `scripts/loop_guard.py:122-124` e
+  exigem a label `critica-aprovada` do Felipe. Este arquivo deve entrar como
+  GOVERNANCA em `_DENY_GOVERNANCA` (spec §8) — hoje nenhum padrão de
+  `_DENY_CRITICO` casa `portal/`, e sem a entrada a página da porta de entrada
+  fica editável por bloco "Média" auto-mergeável.
+
+================================================================================
+  COMO ACRESCENTAR O PRÓXIMO PAÍS
+================================================================================
+  Um toque AQUI: copie um bloco de cartão inteiro, do `if` de abertura ao `end`,
+  troque a variável, a sigla, o nome, o host e a bandeira; some a variável nova à
+  linha de variáveis logo abaixo do <body>, lendo o header `X-Portal-<Sigla>`; e
+  some essa variável ao `or` que abre a grade. Lembre da regra de ouro nº 1: o
+  nome do país entra SÓ dentro do `if` dele, nunca num comentário.
+
+  E três toques FORA daqui, que não são seus:
+    · o par `@tem_<pais>` / `request_header @tem_<pais> X-Portal-<Sigla> 1` e o
+      `@so_<pais>` no `Caddyfile` (com a negação de TODOS os outros países — spec
+      §2.2/§3);
+    · a regra de `access_control` do host novo no `authelia/configuration.yml`;
+    · o grupo `expansao_<pais>` no `authelia/users_database.yml` — que não pode ser
+      prefixo nem substring de nenhum outro `expansao_*` (armadilha do curinga) e
+      tem de casar `^[a-z0-9_]+$`. As duas regras são verificadas no §7.4.
+================================================================================
+-->
+
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#080b10" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#eef2f6" media="(prefers-color-scheme: light)">
+<meta name="robots" content="noindex, nofollow">
+
+<style>
+/* ============================================================================
+   TOKENS — subconjunto de `web/src/styles/tokens.css`, só o que esta página usa.
+   Mesma estrutura do original: o ESCURO é o padrão do produto e mora no :root
+   (tokens.css:10), o CLARO sobrescreve (tokens.css:311). Lá a troca é por
+   `[data-tema='claro']`, posto pelo app no <html>; aqui não há app nem botão de
+   tema, então quem decide é `prefers-color-scheme` — o atributo `data-tema` fica
+   aceito também, para o dia em que alguém quiser forçar um tema pela URL/proxy.
+   ============================================================================ */
+:root {
+  --bg-base: #080b10;
+  --bg-lift: #0e1824;
+  --surf-card: rgba(14, 21, 30, 0.7);
+  --surf-raised: rgba(255, 255, 255, 0.03);
+
+  --line: rgba(255, 255, 255, 0.08);
+  --line-soft: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.12);
+
+  --tx-max: #eef3f8;
+  --tx-strong: #e6edf3;
+  --tx-soft: #cdd8e2;
+  --tx-narrative: #9aa7b5;
+  --tx-muted: #7b8794;
+  --tx-sub: #727f8d;
+
+  --ac: #35c9d6;
+  --ac-text: #4fd3df;
+  --ac-a12: rgba(53, 201, 214, 0.12);
+  --ac-a30: rgba(53, 201, 214, 0.3);
+
+  --ultra: #c8001e;
+
+  /* Anel claro sob a bandeira: as faixas claras de algumas bandeiras encostam no
+     cromo e perdem a silhueta de retângulo. Mesmo truque do
+     `web/src/components/Dock.tsx:90`. */
+  --anel-bandeira: rgba(255, 255, 255, 0.22);
+
+  --f-ui: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --f-story: Georgia, 'Times New Roman', serif;
+  --f-num: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --r-md: 10px;
+  --r-lg: 12px;
+  --r-xl: 14px;
+  --r-2xl: 16px;
+
+  --sh-pop: 0 10px 30px -8px rgba(0, 0, 0, 0.7);
+}
+
+/* --- TEMA CLARO. Valores de `tokens.css:311+`. As cores que carregam TEXTO
+   escurecem de verdade: o turquesa #35c9d6 dá ~1,9:1 sobre branco e reprova em
+   qualquer régua; escurecer preserva a MATIZ e devolve o contraste. --- */
+@media (prefers-color-scheme: light) {
+  :root:not([data-tema='escuro']) {
+    --bg-base: #eef2f6;
+    --bg-lift: #e3eaf1;
+    --surf-card: rgba(255, 255, 255, 0.82);
+    --surf-raised: rgba(13, 27, 42, 0.06);
+
+    --line: rgba(13, 27, 42, 0.13);
+    --line-soft: rgba(13, 27, 42, 0.1);
+    --line-strong: rgba(13, 27, 42, 0.2);
+
+    --tx-max: #0b1219;
+    --tx-strong: #16202b;
+    --tx-soft: #29394a;
+    --tx-narrative: #45566a;
+    --tx-muted: #5d7085;
+    --tx-sub: #627489;
+
+    --ac: #0e8e9c;
+    --ac-text: #0a7180;
+    --ac-a12: rgba(14, 142, 156, 0.12);
+    --ac-a30: rgba(14, 142, 156, 0.3);
+
+    --ultra: #b30019;
+
+    --anel-bandeira: rgba(13, 27, 42, 0.18);
+
+    --sh-pop: 0 10px 26px -10px rgba(13, 27, 42, 0.35);
+  }
+}
+
+/* Override explícito, para quem quiser fixar o tema sem depender do sistema. */
+:root[data-tema='claro'] {
+  --bg-base: #eef2f6;
+  --bg-lift: #e3eaf1;
+  --surf-card: rgba(255, 255, 255, 0.82);
+  --surf-raised: rgba(13, 27, 42, 0.06);
+  --line: rgba(13, 27, 42, 0.13);
+  --line-soft: rgba(13, 27, 42, 0.1);
+  --line-strong: rgba(13, 27, 42, 0.2);
+  --tx-max: #0b1219;
+  --tx-strong: #16202b;
+  --tx-soft: #29394a;
+  --tx-narrative: #45566a;
+  --tx-muted: #5d7085;
+  --tx-sub: #627489;
+  --ac: #0e8e9c;
+  --ac-text: #0a7180;
+  --ac-a12: rgba(14, 142, 156, 0.12);
+  --ac-a30: rgba(14, 142, 156, 0.3);
+  --ultra: #b30019;
+  --anel-bandeira: rgba(13, 27, 42, 0.18);
+  --sh-pop: 0 10px 26px -10px rgba(13, 27, 42, 0.35);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { color-scheme: dark; }
+@media (prefers-color-scheme: light) { html:not([data-tema='escuro']) { color-scheme: light; } }
+html[data-tema='claro'] { color-scheme: light; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--bg-base);
+  color: var(--tx-strong);
+  font: 14px/1.5 var(--f-ui);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* `safe-area-inset` por causa do notch: a página é centralizada e no iPhone em
+     paisagem o cartão da ponta ficava sob a moldura. */
+  padding: 40px max(20px, env(safe-area-inset-left)) 40px max(20px, env(safe-area-inset-right));
+  gap: 34px;
+}
+
+/* Fundo: um halo turquesa MUITO baixo atrás do conteúdo, na linha do `--ac-glow`
+   do produto. Puro CSS, sem imagem, e some no `prefers-reduced-transparency`. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(60% 50% at 50% 0%, var(--ac-a12), transparent 70%);
+  z-index: 0;
+}
+body > * { position: relative; z-index: 1; width: 100%; max-width: 680px; }
+
+/* ---------- Cabeçalho ---------- */
+.marca {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+/* Barra vermelha da marca Ultra. `--ultra` é 3,26:1 sobre o fundo escuro: passa
+   como ELEMENTO GRÁFICO (>=3:1) e reprova como texto pequeno. Por isso ela é uma
+   régua, nunca a cor de um rótulo — a mesma proibição escrita em
+   `web/src/styles/tokens.css:88-90`. */
+.marca::before {
+  content: '';
+  width: 3px;
+  height: 26px;
+  border-radius: 2px;
+  background: var(--ultra);
+  flex-shrink: 0;
+}
+.marca-txt {
+  font: 600 11px/1 var(--f-ui);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--tx-muted);
+}
+
+h1 {
+  margin: 0 0 10px;
+  font: 400 clamp(30px, 7vw, 44px)/1.1 var(--f-story);
+  letter-spacing: 0.005em;
+  color: var(--tx-max);
+}
+.sub {
+  margin: 0;
+  max-width: 46ch;
+  color: var(--tx-narrative);
+  font-size: 15px;
+}
+
+/* ---------- Grade de países ---------- */
+.grade {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px;
+}
+.pais { display: block; }
+
+.cartao {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 100%;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2xl);
+  background: var(--surf-card);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.cartao:hover {
+  border-color: var(--ac-a30);
+  transform: translateY(-2px);
+  box-shadow: var(--sh-pop);
+}
+/* Foco: mesma regra do `global.css` — 2px de `--ac` com offset 2. Vale para
+   teclado E é o que dá o "onde eu estou" na navegação por Tab. */
+.cartao:focus-visible {
+  outline: 2px solid var(--ac);
+  outline-offset: 2px;
+  border-color: var(--ac-a30);
+}
+.bandeira {
+  display: block;
+  width: 34px;
+  height: 24px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px var(--anel-bandeira);
+}
+.rotulo { min-width: 0; flex: 1; }
+.nome {
+  display: block;
+  font: 600 16px/1.25 var(--f-ui);
+  color: var(--tx-strong);
+}
+/* O endereço em mono porque é literalmente um endereço para digitar/conferir —
+   mesmo papel do `--f-num` no produto. `overflow-wrap` para não estourar a
+   largura no celular. */
+.host {
+  display: block;
+  margin-top: 3px;
+  font: 400 11.5px/1.3 var(--f-num);
+  color: var(--tx-muted);
+  overflow-wrap: anywhere;
+}
+.seta {
+  flex-shrink: 0;
+  color: var(--tx-sub);
+  transition: color 0.15s ease, transform 0.15s ease;
+}
+.cartao:hover .seta,
+.cartao:focus-visible .seta { color: var(--ac-text); transform: translateX(2px); }
+
+/* ---------- Estado "sem acesso a nenhum país" ----------
+   SEM `display:none`. Este bloco só chega ao navegador quando o template decide
+   emiti-lo (o ramo `else` da grade), e nesse caso ele É a página. A versão
+   anterior o escondia por CSS e dependia de um seletor de classe para revelá-lo —
+   o mesmo mecanismo cosmético que vazava a lista de países. Filtragem por CSS
+   saiu inteira deste arquivo; se você estiver prestes a escrever `display:none`
+   para esconder conteúdo por permissão, pare: o conteúdo não deve ser emitido. */
+.sem-acesso {
+  padding: 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-2xl);
+  background: var(--surf-raised);
+}
+.sem-acesso h2 {
+  margin: 0 0 8px;
+  font: 600 15px/1.3 var(--f-ui);
+  color: var(--tx-strong);
+}
+.sem-acesso p { margin: 0 0 8px; color: var(--tx-narrative); }
+.sem-acesso p:last-child { margin-bottom: 0; }
+
+/* ---------- Rodapé ---------- */
+footer {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 16px;
+  color: var(--tx-muted);
+  font-size: 12px;
+}
+footer p { margin: 0 0 6px; }
+footer p:last-child { margin-bottom: 0; }
+footer a {
+  font: 400 11.5px/1.3 var(--f-num);
+  color: var(--ac-text);
+  overflow-wrap: anywhere;
+}
+footer a:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .cartao:hover { transform: none; }
+}
+</style>
+</head>
+
+<body class="portal">
+{{- $br := .Req.Header.Get "X-Portal-Br" -}}
+{{- $ar := .Req.Header.Get "X-Portal-Ar" -}}
+
+  <header>
+    <div class="marca"><span class="marca-txt">Ultra Academia</span></div>
+    <h1>Motor de Expansão</h1>
+{{if or $br $ar}}
+    <p class="sub">Escolha o país que você quer abrir. Cada país tem sua própria base, seu próprio mapa e sua própria carteira.</p>
+{{end}}
+  </header>
+
+  <main>
+{{if or $br $ar}}
+    <!-- Cartões são <a>, nunca <div> com onclick: assim o teclado alcança, o
+         "abrir em nova aba" funciona e o leitor de tela anuncia como link.
+         Cada <li> vive DENTRO do seu próprio `if`: o cartão de um país que o
+         usuário não tem não é escondido — ele não é emitido. -->
+    <ul class="grade">
+
+{{if $br}}
+      <li class="pais pais--br">
+        <a class="cartao" href="https://piloto.ultra-expansao.tech/">
+          <!-- Bandeiras em SVG inline, os mesmos desenhos do
+               `web/src/components/Dock.tsx:37-58` (const BANDEIRAS):
+               entram no arquivo, sobrevivem offline, não borram em tela 2x e não
+               pedem uma requisição a mais. `aria-hidden` porque o nome do país
+               está escrito ao lado — a bandeira não acrescenta informação. -->
+          <svg class="bandeira" viewBox="0 0 24 17" aria-hidden="true" focusable="false">
+            <rect width="24" height="17" rx="2" fill="#009b3a"/>
+            <path d="M12 2.2 21.4 8.5 12 14.8 2.6 8.5Z" fill="#ffdf00"/>
+            <circle cx="12" cy="8.5" r="3.4" fill="#002776"/>
+          </svg>
+          <span class="rotulo">
+            <span class="nome">Brasil</span>
+            <span class="host">piloto.ultra-expansao.tech</span>
+          </span>
+          <svg class="seta" width="18" height="18" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2" stroke-linecap="round"
+               stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M5 12h14M13 6l6 6-6 6"/>
+          </svg>
+        </a>
+      </li>
+{{end}}
+
+{{if $ar}}
+      <li class="pais pais--ar">
+        <a class="cartao" href="https://piloto-ar.ultra-expansao.tech/">
+          <svg class="bandeira" viewBox="0 0 24 17" aria-hidden="true" focusable="false">
+            <rect width="24" height="17" rx="2" fill="#74acdf"/>
+            <rect y="5.7" width="24" height="5.6" fill="#fff"/>
+            <circle cx="12" cy="8.5" r="1.9" fill="#f6b40e"/>
+          </svg>
+          <span class="rotulo">
+            <span class="nome">Argentina</span>
+            <span class="host">piloto-ar.ultra-expansao.tech</span>
+          </span>
+          <svg class="seta" width="18" height="18" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2" stroke-linecap="round"
+               stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M5 12h14M13 6l6 6-6 6"/>
+          </svg>
+        </a>
+      </li>
+{{end}}
+
+      <!-- PRÓXIMO PAÍS: copie um bloco acima inteiro, do `if` ao `end`, e troque
+           variável/sigla/nome/host/bandeira. Ver o cabeçalho deste arquivo. -->
+
+    </ul>
+{{else}}
+    <!-- Só se chega aqui por `?escolher=1` sem nenhum país: a saída manual vence
+         `@sem_pais` no Caddyfile e traz ESTA página. O caminho normal de quem não
+         tem país nenhum é `sem-acesso.html`. Os dois textos dizem a mesma coisa e
+         nenhum dos dois nomeia país nenhum (spec §5.4 e §6.2). Se você mudar a
+         frase de suporte aqui, mude no outro arquivo também. -->
+    <section class="sem-acesso">
+      <h2>Você ainda não tem acesso a nenhum país</h2>
+      <p>Seu login está válido — o que falta é a liberação de um país específico. O acesso é concedido por país, não de uma vez só.</p>
+      <p>Fale com o Felipe — é liberação de grupo, leva minutos.</p>
+    </section>
+{{end}}
+  </main>
+
+  <footer>
+    <p>O acesso é definido pelo seu grupo no Authelia. Se você abre um país só, esta página é pulada e você cai direto nele.</p>
+    <!-- A saída da "cela": quem tem um país só é redirecionado sem ver o seletor,
+         e sem este endereço não teria como voltar para trocar de país sem
+         deslogar. `?escolher=1` é a forma CANÔNICA (spec §4.2) — a mesma grafia
+         publicada no aviso ao time (§4.1) — e é também o antídoto do 301 já
+         cacheado, porque a query string entra na chave de cache. Link de verdade,
+         não `<code>`: quem chega aqui procurando "como troco de país" tem de
+         poder clicar e guardar. -->
+    <p>Para voltar a esta escolha a qualquer momento, abra <a href="/?escolher=1">ultra-expansao.tech/?escolher=1</a>.</p>
+  </footer>
+
+</body>
+</html>
