@@ -28,7 +28,11 @@ from motor_expansao.dashboard.censo_point import (
     _transformer,
     analisar_ponto_censitario_setores,
 )
-from motor_expansao.dashboard.competitors import _render_square_logo_tile
+from motor_expansao.dashboard.competitors import (
+    CHAVE_AGREGADOR,
+    PIN_INDEPENDENTE_PX,
+    _render_square_logo_tile,
+)
 from motor_expansao.dashboard.constants import (
     DENSIDADE_POP_BANDS,
     OFERTA_DISPONIVEL_ALUNOS_BANDS,
@@ -515,6 +519,13 @@ def _paste_logo_pin(
     segue marcado pelo pin vermelho central (`_draw_center_pin`, INALTERADO). Reusa a
     mascara alpha do tile RGBA. Logo real quando ha PNG no _ICON_CACHE; sigla no fallback.
     """
+    # DEC-046 (D6): linha SEM `rede` e' academia INDEPENDENTE — recebe o marcador comum do
+    # agregador, MENOR que a bandeira de cadeia. O ramo e' ADITIVO de proposito: so' e'
+    # alcancado quando a chave vem vazia, entao toda camada existente segue byte-identica
+    # (`test_camadas_existentes_ficam_byte_identicas_com_os_defaults_novos` e
+    # `test_shared_transformer_bytes_identicos` cobram exatamente isso).
+    if not key:
+        key, size = CHAVE_AGREGADOR, PIN_INDEPENDENTE_PX
     tile = cast(Image.Image, _render_square_logo_tile(key, size))
     image.paste(tile, (int(px) - size // 2, int(py) - size // 2), tile)
 
@@ -681,6 +692,12 @@ def _project_points(
         rede = row.get("rede")
         key = str(rede) if rede is not None and not pd.isna(rede) and str(rede).strip() else ""
         coords.append((x, y, key))
+    # DEC-046 (D6): independente (chave VAZIA) sai ANTES da cadeia, entao a bandeira da rede
+    # instalada fica POR CIMA na sobreposicao — a mesma precedencia que o Mapa Territorial
+    # do piloto aplica. `sort` e' ESTAVEL: dentro de cada grupo a ordem por distancia que
+    # `_points_in_radius` produziu e' preservada. Sem chave vazia no recorte (todo caminho
+    # anterior a DEC-046, e os pins da Ultra) a lista sai IDENTICA.
+    coords.sort(key=lambda ponto: bool(ponto[2]))
     return coords
 
 

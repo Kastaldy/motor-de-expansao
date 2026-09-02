@@ -384,7 +384,27 @@ COMPETITOR_LOGO_FILES: dict[str, str] = {
 
 ULTRA_LOGO_FILE = "logo_ultra.png"
 
-# cache de logos PNG: rede -> icon_data; "__ultra__" para Ultra
+# --- marcador da academia INDEPENDENTE (DEC-046, D6) -------------------------
+#
+# Independente nao tem marca, entao nao tem bandeira: todas recebem UM marcador comum,
+# menor que o das cadeias, na cor do agregador que as revelou. E' a mesma regra que o Mapa
+# Territorial do piloto ja' usa (`HexMap.tsx`, camada `independentes-pins`, BLK-MA-15).
+#
+# O PNG e' OPCIONAL de proposito. Ele vive no diretorio de logos montado em producao
+# (`concorrentes/`, o mesmo do `sync_concorrentes_dashboard`), e nao dentro do pacote: o
+# `motor_expansao` nao distribui asset binario nenhum hoje, e criar esse precedente por um
+# icone cobraria configuracao de package-data e um caminho novo no build. Sem o arquivo, o
+# marcador cai num ponto solido na cor da marca — que continua cumprindo o que o marcador
+# precisa cumprir (ser pequeno, uniforme e distinguivel da bandeira de cadeia).
+CHAVE_AGREGADOR = "__wellhub__"
+AGREGADOR_LOGO_FILE = "logo_wellhub.png"
+AGREGADOR_BRAND = {"label": "Independente", "short": "", "bg": "#F04E6E", "fg": "#FFFFFF"}
+# 20 px contra os 30 px da bandeira de cadeia (`_PIN_LOGO_PX`), na mesma proporcao que o
+# mapa usa (22 contra 30-38): a independente e' camada secundaria e nao pode competir com a
+# rede instalada na leitura.
+PIN_INDEPENDENTE_PX = 20
+
+# cache de logos PNG: rede -> icon_data; "__ultra__" para Ultra; "__wellhub__" p/ independente
 _ICON_CACHE: dict[str, dict] = {}
 
 
@@ -428,6 +448,13 @@ def preload_logos(competitors_dir: Path, ultra_dir: Path | None = None) -> None:
         icon = _png_icon_data(ultra_dir / ULTRA_LOGO_FILE, pin_bg=ULTRA_BRAND["bg"])
         if icon is not None:
             _ICON_CACHE["__ultra__"] = icon
+    # DEC-046: marcador do independente. Ausente -> `_render_marcador_independente` cai no
+    # ponto solido; nao ha erro nem pin faltando.
+    icon = _png_icon_data(
+        competitors_dir / AGREGADOR_LOGO_FILE, pin_bg=str(AGREGADOR_BRAND["bg"])
+    )
+    if icon is not None:
+        _ICON_CACHE[CHAVE_AGREGADOR] = icon
 
 
 # ── I/O ────────────────────────────────────────────────────────────────────────
@@ -878,6 +905,12 @@ def _render_square_logo_tile(
 
     if key == "__ultra__":
         brand: dict[str, str] = dict(ULTRA_BRAND)
+    elif key == CHAVE_AGREGADOR:
+        # DEC-046: independente. Com o PNG no `_ICON_CACHE` sai a marca do agregador; sem
+        # ele cai no fallback abaixo e vira uma placa SOLIDA na cor da marca — `short` e'
+        # vazio de proposito, porque sigla nenhuma distingue 19 mil academias sem marca
+        # (o piloto abandonou o "IND" pelo mesmo motivo, em 2026-08-26).
+        brand = dict(AGREGADOR_BRAND)
     else:
         brand = dict(
             COMPETITOR_BRANDS.get(

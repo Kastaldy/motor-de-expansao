@@ -3515,7 +3515,11 @@ def _faixas_competitivas() -> list[dict[str, Any]]:
         return _fx(rotulo, condicao, tom or "gray", "municipio")
 
     return [
-        faixa(0, "nenhum concorrente mapeado em 2 km"),
+        # DEC-046: o calculo e' sobre `concorrentes_mapeados`, que e' cadastro de CADEIA.
+        # Sem o qualificador, o mapa afirma "nenhum concorrente" no mesmo hexagono em que a
+        # ficha do ponto passa a listar academias independentes -- duas verdades vizinhas.
+        # Mudanca de ROTULO, nao de calculo.
+        faixa(0, "nenhuma cadeia mapeada em 2 km"),
         faixa(CONC_ADENSAR_MAX, f"até {CONC_ADENSAR_MAX} concorrentes estimados"),
         faixa(CONC_ADENSAR_MAX + 1, f"mais de {CONC_ADENSAR_MAX} concorrentes estimados"),
     ] + _faixas_da_rampa(FAIXAS_MAPA_DEMANDA, "uf", em_alunos=True)
@@ -4578,10 +4582,25 @@ def _criterios_do_ponto(
         # do funil. Desde a DEC-041 as duas reguas so' diferem por um: o funil tolera ate'
         # 2 concorrentes na fila, a ficha ate' 3 — um imovel com tres concorrentes no raio
         # de 1 km nao esta descartado, esta disputado.
+        #
+        # DEC-046: o insumo passa a ser `n_concorrentes_cadeia`, NAO o total. O teto de 3
+        # foi calibrado contra um universo so'-cadeia de 4.499 pontos; contra as ~24 mil
+        # academias da uniao ele deixaria de significar "praca disputada" e passaria a
+        # significar "existe academia por perto" -- reprovaria 103 das 150 pracas onde a
+        # propria Ultra opera hoje. A regua NAO muda; muda quem a alimenta.
+        #
+        # D7: com fonte de oferta faltando, o valor vai `None` e `crit` devolve
+        # `passa=None` (indecidivel). E' deliberado que a ausencia NAO vire PASS: sem isto,
+        # um ponto saturado seria aprovado porque um parquet nao chegou na VPS.
         itens.append(
             crit(
-                "concorrentes", "Concorrentes no raio",
-                concorrencia.get("n_concorrentes"), CRIT_PONTO_CONC_MAX, "", False,
+                "concorrentes", "Concorrentes de rede no raio",
+                (
+                    concorrencia.get("n_concorrentes_cadeia")
+                    if concorrencia.get("completo")
+                    else None
+                ),
+                CRIT_PONTO_CONC_MAX, "", False,
             )
         )
     return itens
@@ -4617,6 +4636,7 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
     )
     from motor_expansao.api.settings import Settings
     from motor_expansao.dashboard.censo_point import (
+        CLASSE_CADEIA_OFERTA,
         RAIO_CENSITARIO_DEFAULT_KM,
         analisar_ponto_censitario_setores,
     )
@@ -4753,12 +4773,21 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
     # Concorrentes por distancia. `concorrentes_raio` e' DataFrame: serializar campo a
     # campo, nunca o objeto cru — ele nao e' JSON e derrubaria a rota.
     lista_conc: list[dict[str, Any]] = []
+    _n_lista_total = 0
     _cr = res.get("concorrentes_raio")
     if _cr is not None and getattr(_cr, "empty", True) is False:
+        _n_lista_total = len(_cr)
         for _, _linha in _cr.sort_values("dist_km").head(30).iterrows():
+            # DEC-046: independente nao tem `rede` — o campo passa a carregar o NOME dela.
+            # Deixar vazio faria 19 mil academias virarem a MESMA palavra generica na tela
+            # (`rotuloDaRede` troca vazio por rotulo padrao). `classe` viaja junto para a
+            # tela saber o que esta lendo sem inferir pelo formato da string.
+            _rede = _texto(_linha.get("rede"))
+            _classe = _texto(_linha.get("classe")) or CLASSE_CADEIA_OFERTA
             lista_conc.append(
                 {
-                    "rede": _texto(_linha.get("rede")),
+                    "rede": _rede or _texto(_linha.get("nome")),
+                    "classe": _classe,
                     "dist_km": _num(_linha.get("dist_km"), 2),
                 }
             )
@@ -4783,14 +4812,43 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         "detalhe": detalhe_censo,
     }
 
+    # DEC-046 (D7): a oferta vem de TRES fontes e a resposta declara quais entraram. Sem
+    # isto, fonte ausente vira contagem menor, contagem menor vira PASS no criterio de
+    # concorrencia, e um ponto saturado e' APROVADO por ausencia de dado -- com o PDF de
+    # aparencia normal. `completo` e' o que o criterio consulta antes de emitir veredito.
+    from motor_expansao.api.service import FONTES_OFERTA, fontes_oferta_presentes
+
+    _fontes = fontes_oferta_presentes(cfg) if tem_concorrentes else ()
+    _faltando = [f for f in FONTES_OFERTA if f not in _fontes]
+
     conc_bloco = {
         "disponivel": tem_concorrentes,
         "motivo": None if tem_concorrentes else (
             "Sem base de concorrentes montada (data/staging/concorrentes_mapeados.parquet)."
         ),
+        # NOME MANTIDO, SIGNIFICADO NOVO (DEC-046): passa a ser o total de academias no
+        # raio, cadeia + independente. E' o numero que a tela sempre exibiu.
         "n_concorrentes": _num(res.get("n_concorrentes")) if tem_concorrentes else None,
+        # Insumo do criterio PASS/FAIL. Separado porque o teto de 3 foi calibrado contra um
+        # universo so'-cadeia: contra o total ele reprovaria 103 das 150 pracas onde a
+        # propria Ultra opera hoje (medido em 2026-09-01).
+        "n_concorrentes_cadeia": (
+            _num(res.get("n_concorrentes_cadeia")) if tem_concorrentes else None
+        ),
+        "n_academias_total": (
+            _num(res.get("n_academias_total")) if tem_concorrentes else None
+        ),
         "n_ultra": _num(res.get("n_ultra")) if tem_concorrentes else None,
+        "fontes_unidas": list(_fontes),
+        "fontes_faltando": _faltando,
+        "completo": tem_concorrentes and not _faltando,
         "lista": lista_conc,
+        # DEC-046: a lista trunca em 30 e ate' aqui isso era MUDO. Com o universo antigo o
+        # cap nunca mordia (maximo medido: 19); com a uniao ele morde, e sem o carimbo a
+        # tela conta `lista.length` e afirma uma densidade que nao e' a real
+        # (`leituraDeAglomeracao` monta a partitiva sobre o total da lista).
+        "lista_truncada": _n_lista_total > len(lista_conc),
+        "lista_total": _n_lista_total,
     }
 
     mercado_bloco = {

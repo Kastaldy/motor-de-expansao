@@ -3066,7 +3066,15 @@ def _big_numbers_page(
             _format_number(oferta_disponivel, 0),
             _cor_por_meta(oferta_disponivel, _META_RESIDUAL_FITNESS_DISPONIVEL),
         ),
-        ("Concorrentes no raio", _format_number(result.get("n_concorrentes"), 0), cor_consumo),
+        # DEC-046: o numero passa a ser o TOTAL (cadeia + independente) e o rotulo diz isso.
+        # A cor continua ESPELHANDO o card de consumo, que e' calculado so' sobre cadeias --
+        # por isso o universo de cada um vai NOMEADO, senao a pagina mostraria "14 academias"
+        # em verde ao lado de um consumo estimado de 2,8 unidades sem explicar a diferenca.
+        (
+            "Academias no raio (todas)",
+            _format_number(result.get("n_concorrentes"), 0),
+            cor_consumo,
+        ),
         (
             "Consumo concorrentes (est.)",
             _format_number(residual.get("oferta_consumida_mercado_estimada"), 0),
@@ -3178,15 +3186,38 @@ def _redes_no_raio(result: dict[str, Any], *, max_nomes: int = 12) -> tuple[str,
     def _nomes(df: pd.DataFrame | None) -> list[str]:
         if df is None or df.empty:
             return []
-        col = next(
-            (c for c in ("rede", "nome_unidade", "nome", "brand") if c in df.columns), None
-        )
-        if col is None:
+        # DEC-046: a coluna `rede` traz SLUG para cadeia (`force_one`) e vazio para
+        # independente, que se identifica por `nome`. Sem resolver os dois, a faixa saia
+        # misturando snake_case com nome proprio ("force_one, allp_fit, Academia Pura Vida"),
+        # que le como defeito. A traducao e' feita ITEM A ITEM, e nao por substituicao no
+        # texto ja' montado: slugs curtos como `one` e `hi` casariam DENTRO do nome de uma
+        # independente.
+        from motor_expansao.dashboard.competitors import COMPETITOR_BRANDS
+
+        colunas = set(df.columns)
+        if not ({"rede", "nome", "nome_unidade", "brand"} & colunas):
             return []
+        def _txt(valor: Any) -> str:
+            """`str` seguro para celula de DataFrame.
+
+            NAO usar `valor or ""`: com `pd.NA` (dtype `string`, que e' o da uniao da
+            DEC-046) o `or` avalia o valor em contexto booleano e o pandas levanta
+            `TypeError: boolean value of NA is ambiguous`. `pd.isna` e' o unico teste que
+            cobre None, NaN e NA de uma vez.
+            """
+            if valor is None or pd.isna(valor):
+                return ""
+            texto = str(valor).strip()
+            return "" if texto.lower() in {"nan", "none", "<na>"} else texto
+
         vistos: set[str] = set()
         out: list[str] = []
-        for valor in df[col].astype(str):
-            nome = valor.strip()
+        for _, linha in df.iterrows():
+            slug = _txt(linha.get("rede"))
+            if slug:
+                nome = str(COMPETITOR_BRANDS.get(slug, {}).get("label", slug))
+            else:
+                nome = _txt(linha.get("nome")) or _txt(linha.get("nome_unidade"))
             if nome and nome.lower() not in vistos:
                 vistos.add(nome.lower())
                 out.append(nome)
