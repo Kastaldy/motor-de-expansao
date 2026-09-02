@@ -24,6 +24,7 @@ from motor_expansao.dashboard.constants import (
     TEXT_COLUMNS,
 )
 from motor_expansao.dashboard.schemas import validate_dashboard_frame
+from motor_expansao.perfil import resolver_perfil
 from motor_expansao.pipelines.pop_corte import (
     derive_confianca_geografica as _derive_confianca_geografica_impl,
 )
@@ -621,10 +622,16 @@ def build_uf_summary(df: pd.DataFrame) -> pd.DataFrame:
 
 # ── Coordinate search ────────────────────────────────────────────────────────
 
-_BRAZIL_LAT_MIN = -33.75
-_BRAZIL_LAT_MAX = 5.27
-_BRAZIL_LNG_MIN = -73.99
-_BRAZIL_LNG_MAX = -28.65
+# Caixa do pais da instancia, do perfil (Bloco A / DEC-047). Eram a B2 — a mais ESTREITA
+# das tres que o repositorio carregava, e ja errada hoje: `-28.65` exclui Martin Vaz
+# (-28,85). O perfil unifica na B1, o que no Brasil ALARGA. A fronteira sul passa a ser
+# inclusiva em -34,0, e e por isso que `tests/unit/test_coord_search.py:60` muda no mesmo
+# commit — nao e efeito colateral, e a decisao da spec §1.3.
+_BBOX_PAIS = resolver_perfil().bbox
+_BRAZIL_LAT_MIN = _BBOX_PAIS.lat_min
+_BRAZIL_LAT_MAX = _BBOX_PAIS.lat_max
+_BRAZIL_LNG_MIN = _BBOX_PAIS.lng_min
+_BRAZIL_LNG_MAX = _BBOX_PAIS.lng_max
 
 
 def _validate_brazil_bbox(lat: float, lng: float) -> tuple[float, float] | None:

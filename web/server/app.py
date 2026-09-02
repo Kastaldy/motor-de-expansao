@@ -4085,11 +4085,14 @@ _GEOCODE_UA = "MotorExpansaoUltra-Piloto/1.0 (contato: felipe.silva@ultraacademi
 
 @app.get("/api/geocode")
 def geocode(q: str) -> dict[str, Any]:
-    """Resolve um ENDEREÇO livre -> lat/lng (Nominatim, restrito ao Brasil).
+    """Resolve um ENDEREÇO livre -> lat/lng (Nominatim, restrito ao país da instância).
 
     DEC-010: cache em disco por hash da consulta, timeout curto, fallback gracioso
     ({"found": false}) quando a rede/serviço falha. Não persiste PII; a consulta é
     uma localização (endereço de imóvel), não dado pessoal de aluno.
+
+    Bloco A / DEC-047: `countrycodes` e `Accept-Language` saem do perfil, e o resultado
+    passa a ser VALIDADO contra `perfil.bbox` — ver o comentário no ponto da validação.
     """
     termo = (q or "").strip()
     if len(termo) < 3:
@@ -4108,8 +4111,18 @@ def geocode(q: str) -> dict[str, Any]:
     try:
         resp = requests.get(
             _NOMINATIM_URL,
-            params={"q": termo, "format": "json", "limit": 1, "countrycodes": "br"},
-            headers={"User-Agent": _GEOCODE_UA},
+            params={
+                "q": termo,
+                "format": "json",
+                "limit": 1,
+                "countrycodes": PERFIL.geocode.countrycodes,
+            },
+            headers={
+                "User-Agent": _GEOCODE_UA,
+                # Nao havia `Accept-Language` aqui: o Nominatim respondia no idioma que
+                # quisesse. `maps_geocoder.py` sempre mandou; esta rota, nao.
+                "Accept-Language": PERFIL.geocode.idioma,
+            },
             timeout=10,
         )
         arr = resp.json() if resp.ok else []
@@ -4129,6 +4142,22 @@ def geocode(q: str) -> dict[str, Any]:
         }
     except (KeyError, TypeError, ValueError):
         return {"found": False}
+
+    # Validação do RETORNO contra o bbox do país — não existia (BR-P2, fechada em
+    # 2026-09-02). Esta rota devolvia o top-1 CRU do Nominatim, e o `countrycodes` do
+    # Nominatim é uma DICA, não uma garantia: buscar "Buenos Aires" com `countrycodes=br`
+    # resolve para o município homônimo de Pernambuco e volta com `found: true` — um pin
+    # errado com cara de certo, que é pior do que não achar. Compare com
+    # `resolve_endereco_http` e `resolve_plus_code`, que já validavam.
+    #
+    # Fica FORA do `try` acima de propósito: dentro dele, um `KeyError` do bbox viraria
+    # "found: false" pelo motivo errado.
+    #
+    # A rejeição NÃO é cacheada. O cache é por hash do termo e sobreviveria a uma troca
+    # de perfil: um "Buenos Aires" recusado sob perfil BR não pode voltar recusado depois
+    # de a instância virar AR.
+    if not PERFIL.bbox.contem(out["lat"], out["lng"]):
+        return {"found": False, "motivo": "fora_do_pais"}
 
     try:  # cacheia só sucessos
         GEOCODE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -4484,6 +4513,7 @@ def resolver_ponto(q: str) -> dict[str, Any]:
     """
     from motor_expansao.api.coord import (
         CoordenadaInvalidaError,
+        ForaDoPaisError,
         parse_maps_url,
         validar_brasil,
     )
@@ -4503,14 +4533,24 @@ def resolver_ponto(q: str) -> dict[str, Any]:
     try:
         lat, lng = validar_brasil(*parse_maps_url(termo))
         return _coord(lat, lng, "coordenada")
-    except CoordenadaInvalidaError as exc:
-        # "Fora do Brasil" é DIFERENTE de "não parseei": a coordenada foi lida, e
-        # dizer "não reconheci" mandaria o operador procurar erro de digitação.
-        if "fora do Brasil" in str(exc):
-            return {
-                "found": False,
-                "motivo": "Essa coordenada está fora do Brasil. Confira se a latitude e a longitude não vieram trocadas.",
-            }
+    except ForaDoPaisError:
+        # "Fora do país" é DIFERENTE de "não parseei": a coordenada foi lida, e dizer
+        # "não reconheci" mandaria o operador procurar erro de digitação.
+        #
+        # Discriminado pelo TIPO da exceção desde 2026-09-02. Antes era
+        # `if "fora do Brasil" in str(exc)` — controle de fluxo preso a uma string
+        # voltada ao usuário. Bastou a mensagem virar "fora de Brasil" no Bloco A para
+        # o ramo parar de casar, em silêncio, e o operador passar a ver "não reconheci
+        # esse link" para uma coordenada perfeitamente lida.
+        return {
+            "found": False,
+            "motivo": (
+                f"Essa coordenada está fora de {PERFIL.nome}. Confira se a latitude "
+                "e a longitude não vieram trocadas."
+            ),
+        }
+    except CoordenadaInvalidaError:
+        pass  # não parseei: segue para o link curto, abaixo
 
     # 2. Link curto: segue o redirect e tenta o parse de novo.
     expandida = expandir_link_curto(termo)

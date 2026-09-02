@@ -9,13 +9,41 @@ from __future__ import annotations
 
 import re
 
-# Bounding box aproximado do Brasil (inclui ilhas oceanicas: Noronha, Trindade).
-BRASIL_LAT_MIN, BRASIL_LAT_MAX = -34.0, 5.5
-BRASIL_LNG_MIN, BRASIL_LNG_MAX = -74.0, -28.0
+from motor_expansao.perfil import resolver_perfil
+
+# Bounding box do pais da INSTANCIA, nao mais do Brasil cravado (Bloco A / DEC-047). No
+# perfil brasileiro sao os mesmos quatro numeros de sempre — `data/perfis/BR/perfil.json`
+# os transcreve e `tests/contracts/test_perfil_br_reproduz_as_constantes.py` trava a
+# igualdade —, entao o comportamento brasileiro nao muda um decimal. No perfil argentino
+# sao os da Argentina, e e por isso que Buenos Aires (-34,60) deixa de ser recusada ANTES
+# de qualquer leitura de disco.
+#
+# Resolvido no IMPORT porque um processo serve UM pais so (DEC-047). Os NOMES continuam
+# `BRASIL_*` e a funcao continua `validar_brasil`: renomear custa 3 call sites em
+# `web/server/app.py` mais o `test_api_coord.py`, e a spec §2.1 adia isso para o Bloco B
+# de proposito — nesta onda muda o VALOR, nao a superficie.
+_PERFIL = resolver_perfil()
+_BBOX = _PERFIL.bbox
+_NOME_DO_PAIS = _PERFIL.nome
+BRASIL_LAT_MIN, BRASIL_LAT_MAX = _BBOX.lat_min, _BBOX.lat_max
+BRASIL_LNG_MIN, BRASIL_LNG_MAX = _BBOX.lng_min, _BBOX.lng_max
 
 
 class CoordenadaInvalidaError(ValueError):
-    """Coordenada nao parseavel ou fora do Brasil (-> HTTP 400)."""
+    """Coordenada nao parseavel ou fora do pais da instancia (-> HTTP 400)."""
+
+
+class ForaDoPaisError(CoordenadaInvalidaError):
+    """A coordenada FOI lida, mas cai fora do bbox do pais da instancia.
+
+    Subclasse para que quem precisa distinguir os dois casos o faca pelo TIPO, e nao
+    pelo texto da mensagem. `web/server/app.py` (`/api/resolver-ponto`) fazia
+    `if "fora do Brasil" in str(exc)` — controle de fluxo preso a uma string voltada ao
+    usuario. Bastou a mensagem virar "fora de Brasil" no Bloco A para o ramo parar de
+    casar e o operador passar a ver "nao reconheci esse link" para uma coordenada
+    perfeitamente lida. Herda de `CoordenadaInvalidaError` de proposito: todo `except`
+    que ja existia continua pegando esta, entao nenhum chamador precisa mudar.
+    """
 
 
 # Ordem de tentativa: !3dLAT!4dLNG (pino exato do place) tem prioridade sobre
@@ -62,17 +90,20 @@ def parse_maps_url(url: str) -> tuple[float, float]:
 
 
 def validar_brasil(lat: float, lng: float) -> tuple[float, float]:
-    """Valida que ``(lat, lng)`` esta no bounding box do Brasil.
+    """Valida que ``(lat, lng)`` esta no bounding box do PAIS DA INSTANCIA.
 
     Levanta `CoordenadaInvalidaError` quando fora. Nao confirma municipio — isso
     e responsabilidade do ponto-em-poligono no `service.py`.
+
+    O nome ficou `validar_brasil` de proposito nesta onda (spec §2.1): renomear custa
+    3 call sites em `web/server/app.py` e o `test_api_coord.py`, e nao muda uma virgula
+    de comportamento. O Bloco B renomeia.
     """
-    dentro = (
-        BRASIL_LAT_MIN <= lat <= BRASIL_LAT_MAX
-        and BRASIL_LNG_MIN <= lng <= BRASIL_LNG_MAX
-    )
-    if not dentro:
-        raise CoordenadaInvalidaError("Coordenada fora do Brasil")
+    if not _BBOX.contem(lat, lng):
+        # "fora de X" e nao "fora do X": funciona em pt-BR para Brasil, Argentina,
+        # Colombia, Mexico, Peru e Paraguai. `f"fora do {nome}"` sairia "fora do
+        # Argentina". Deliberado, escrito aqui para nao ser "consertado" depois.
+        raise ForaDoPaisError(f"Coordenada fora de {_NOME_DO_PAIS}")
     return lat, lng
 
 

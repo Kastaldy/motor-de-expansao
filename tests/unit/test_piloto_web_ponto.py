@@ -125,7 +125,9 @@ def test_coordenada_fora_do_brasil_para_no_bounding_box() -> None:
     with pytest.raises(HTTPException) as exc:
         pilot.ponto(lat=LAT_LIS, lng=LNG_LIS)
     assert exc.value.status_code == 400
-    assert "fora do Brasil" in exc.value.detail
+    # Ancorado no PERFIL, nao no literal: a mensagem e `f"Coordenada fora de {nome}"`
+    # desde o Bloco A, e numa instancia argentina ela diz "fora de Argentina".
+    assert f"fora de {pilot.PERFIL.nome}" in exc.value.detail
 
 
 @requer_malha
@@ -162,7 +164,45 @@ def test_resolver_fora_do_brasil_tem_motivo_proprio() -> None:
     """Nao pode cair no generico "nao encontrei": a coordenada FOI lida, so' nao e' Brasil."""
     r = pilot.resolver_ponto(q=f"{LAT_LIS}, {LNG_LIS}")
     assert r["found"] is False
-    assert "fora do Brasil" in r["motivo"]
+    assert f"fora de {pilot.PERFIL.nome}" in r["motivo"]
+
+
+def test_resolver_discrimina_fora_do_pais_pelo_TIPO_e_nao_pelo_TEXTO() -> None:
+    """**Regressao de um defeito real, de 2026-09-02.**
+
+    `resolver_ponto` distinguia "fora do pais" de "nao parseei" com
+    `if "fora do Brasil" in str(exc)` — controle de fluxo preso a uma string voltada ao
+    usuario. Quando o Bloco A trocou a mensagem para `f"Coordenada fora de {nome}"`, o
+    ramo parou de casar EM SILENCIO: o operador passava a ver "nao reconheci esse link"
+    para uma coordenada perfeitamente lida.
+
+    Aqui a mensagem e trocada por uma que nao contem nem "fora" nem o nome do pais. Se
+    alguem voltar a comparar texto, este teste falha; comparando TIPO, passa.
+    """
+    from motor_expansao.api import coord
+
+    original = coord.validar_brasil
+
+    def _recusa_com_outro_texto(lat: float, lng: float):
+        raise coord.ForaDoPaisError("texto completamente diferente")
+
+    coord.validar_brasil = _recusa_com_outro_texto
+    try:
+        r = pilot.resolver_ponto(q=f"{LAT_SP}, {LNG_SP}")
+    finally:
+        coord.validar_brasil = original
+
+    assert r["found"] is False
+    assert f"fora de {pilot.PERFIL.nome}" in r["motivo"], (
+        "a discriminacao voltou a depender do texto da excecao"
+    )
+
+
+def test_fora_do_pais_e_subclasse_de_coordenada_invalida() -> None:
+    """Todo `except CoordenadaInvalidaError` que ja existia continua pegando a nova."""
+    from motor_expansao.api.coord import CoordenadaInvalidaError, ForaDoPaisError
+
+    assert issubclass(ForaDoPaisError, CoordenadaInvalidaError)
 
 
 def test_resolver_vazio_nao_vai_a_rede() -> None:

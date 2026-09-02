@@ -121,8 +121,7 @@
     "regex_cp": "\\b(\\d{5})-?(\\d{3})\\b",
     "_sufixo": "null - RECUSADO pela spec 1.4: zero leitores; nem app.py:3977-3980 nem maps_geocoder.py:241-248 concatenam sufixo a query.",
     "_regex_cp_legado": "null - o Brasil tem um formato so de CEP.",
-    "validar_contra_bbox": false,
-    "_divergencia_aberta": "NAO RESOLVIDA nesta passada - ler ANTES de codar o A4. Este campo NAO existe no schema da spec 1.2, e a spec 2.3 manda inserir a validacao do retorno do Nominatim contra `perfil.bbox` de forma INCONDICIONAL (entre o `except` de app.py:3998 e o cache de :4000). Sob a spec, o `false` daqui nao e lido e o Brasil PASSA a validar - que e mudanca de comportamento brasileiro, exatamente o que BR-P2 queria manter em aberto. Escolher entre (a) a spec vira condicional a este campo, ou (b) BR-P2 e fechada em `true` e o campo sai do arquivo.",
+    "_divergencia_resolvida": "FECHADA em 2026-09-02 por decisao do Felipe: LIGAR nos dois paises. O campo `validar_contra_bbox` SAIU dos dois perfis. A spec 2.3 valida o retorno do Nominatim contra `perfil.bbox` de forma INCONDICIONAL, entao um campo que so poderia valer true seria o `campo sem leitor` que a spec 1.4 recusa — numero que envelhece calado. A mudanca de comportamento brasileiro e real e esta declarada na pendencia BR-P2 abaixo, com teste proprio (tests/contracts/test_geocode_valida_o_bbox.py).",
     "_nota": "ESTADO DE HOJE da ROTA, mais os DOIS literais que a spec 1.2 exige transcrever e que antes de 2026-08-31 estavam `null` aqui (o que reprovaria o loader e apagaria dois literais brasileiros vivos): `idioma` e o \"Accept-Language\": \"pt-BR\" de src/motor_expansao/api/maps_geocoder.py:256, e `regex_cp` e o CEP_RE de maps_geocoder.py:32, consumido por normalize_cep (:113) e split_address_cep (:119). web/server/app.py:3978 manda params={'q':termo,'format':'json','limit':1,'countrycodes':'br'} (rota /api/geocode, :3953-4005) para o Nominatim e devolve o top-1 CRU: sem accept-language, sem sufixo de ancoragem, sem regex de CEP e SEM validar o resultado contra bbox nenhum. Os quatro nulls e o `validar_contra_bbox:false` sao a descricao honesta do codigo atual, nao lacuna do perfil. Ligar `validar_contra_bbox` no Brasil e MUDANCA DE COMPORTAMENTO e precisa do proprio teste — nao entra de carona com o perfil."
   },
 
@@ -256,12 +255,14 @@
     {
       "id": "BR-P2",
       "campo": "geocode.validar_contra_bbox",
-      "estado": "default_provisorio",
-      "decide": "Bloco A",
+      "estado": "FECHADA",
+      "fechada_em": "2026-09-02",
+      "decide": "Bloco A (Felipe)",
       "pergunta": "O Brasil tambem passa a validar o retorno do Nominatim contra o bbox?",
-      "default": false,
-      "justificativa": "false = comportamento de hoje (/api/geocode devolve o top-1 cru). Ligar e melhoria real, mas e mudanca de comportamento brasileiro e precisa de teste proprio; nao entra de carona no perfil.",
-      "o_que_muda_quando_decidir": "Com true, buscas que hoje retornam um pin fora do Brasil passariam a responder found:false."
+      "decisao": "SIM, nos dois paises. O campo saiu dos dois perfis e a validacao e INCONDICIONAL (spec 2.3), aplicada no commit A4.",
+      "default_anterior": false,
+      "justificativa": "O comportamento anterior nao era neutro: /api/geocode devolvia o top-1 CRU do Nominatim, entao buscar 'Buenos Aires' com countrycodes=br resolvia para o municipio HOMONIMO de Pernambuco e voltava com found:true — um pin errado com cara de certo, que e pior do que nao achar. Manter o Brasil de fora tambem criaria DOIS caminhos onde a DEC-047 pede um. Um campo que so pode valer true seria o campo sem leitor que a spec 1.4 recusa.",
+      "o_que_mudou": "Buscas que hoje retornam um pin FORA do bbox do pais passam a responder {found:false, motivo:'fora_do_pais'}. A rejeicao NAO e cacheada: o cache de /api/geocode e por hash do termo e sobreviveria a uma troca de perfil, entao um 'Buenos Aires' recusado sob perfil BR nao pode voltar recusado depois de a instancia virar AR."
     },
     {
       "id": "BR-P3",
