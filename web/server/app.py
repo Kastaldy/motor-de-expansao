@@ -95,11 +95,31 @@ from motor_expansao.dashboard import (  # noqa: E402
     rede_faturamento_financeiro,
     rede_metricas,
 )
+from motor_expansao.perfil import resolver_perfil  # noqa: E402
 
-_DEFAULT_DATA = Path(
-    r"C:\Users\Felipe Silva\Downloads\motor-de-expansao\motor-de-expansao\data"
+# --- Perfil do pais desta instancia (Bloco A / DEC-047) ----------------------
+# O pais e propriedade do DEPLOY, nao um `if` no codigo: um processo serve um pais so,
+# e qual pais e isso esta declarado no `perfil.json` que mora na RAIZ do MOTOR_DATA_DIR.
+# Resolvido UMA vez, aqui, no import — e por isso que os ~40 `lru_cache` deste modulo
+# continuam corretos sem chave de pais (`carregar_uf("SC")` so e inequivoco com um SC
+# por processo).
+#
+# `_DEFAULT_DATA` morreu aqui: era o Downloads de uma maquina especifica, que so nao
+# quebrava porque producao sempre passa MOTOR_DATA_DIR. O default agora e o `data/` do
+# repositorio, resolvido pelo loader, e em producao a ausencia do perfil DERRUBA o
+# processo com o campo nomeado, em vez de servir numero brasileiro em instancia
+# argentina. Ver docs/spec_bloco_a_perfil.md §3.2 e §6.1.
+PERFIL = resolver_perfil()
+DATA_DIR = PERFIL.raiz
+logging.getLogger("piloto.perfil").info(
+    "perfil: pais=%s nome=%s moeda=%s bbox=%s superficies=%s raiz=%s",
+    PERFIL.pais,
+    PERFIL.nome,
+    PERFIL.moeda.codigo,
+    PERFIL.bbox,
+    ",".join(PERFIL.superficies),
+    DATA_DIR,
 )
-DATA_DIR = Path(os.environ.get("MOTOR_DATA_DIR", str(_DEFAULT_DATA)))
 OUTPUTS_DIR = DATA_DIR / "outputs"
 STAGING_DIR = DATA_DIR / "staging"
 IBGE_DIR = DATA_DIR / "ibge"

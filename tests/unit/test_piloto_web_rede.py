@@ -118,6 +118,16 @@ def rede(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(pilot, "GROWTH_PARQUET", staging / "growth_api_historico.parquet")
     monkeypatch.setattr(pilot, "ULTRA_PERF_PARQUET", staging / "nao_existe.parquet")
     monkeypatch.setattr(pilot, "ULTRA_MAPEADAS_PARQUET", staging / "tambem_nao.parquet")
+    # A planilha financeira TAMBEM precisa ser declarada ausente, como as duas acima:
+    # `FATURAMENTO_FINANCEIRO_PARQUET` e constante de MODULO, resolvida no import a partir
+    # do `STAGING_DIR` de ENTAO — repontar `STAGING_DIR` aqui em cima nao a move. Sem esta
+    # linha, quem tiver `data/staging/faturamento_financeiro.parquet` no worktree le a
+    # planilha REAL. Passava por acidente ate 2026-09-02, quando `STAGING_DIR` derivava do
+    # `_DEFAULT_DATA` cravado no Downloads de UMA maquina: com a raiz quebrada, nenhum
+    # arquivo existia. O Bloco A (DEC-047) trocou a raiz pelo `data/` do repo.
+    monkeypatch.setattr(
+        pilot, "FATURAMENTO_FINANCEIRO_PARQUET", staging / "sem_planilha.parquet"
+    )
     monkeypatch.setattr(pilot, "CADASTRO_DIR", cadastro_dir)
     _limpar_caches()
     yield tmp_path
@@ -763,6 +773,16 @@ def rede_anual(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(pilot, "GROWTH_PARQUET", staging / "growth_api_historico.parquet")
     monkeypatch.setattr(pilot, "ULTRA_PERF_PARQUET", staging / "nao_existe.parquet")
     monkeypatch.setattr(pilot, "ULTRA_MAPEADAS_PARQUET", staging / "tambem_nao.parquet")
+    # A planilha financeira TAMBEM precisa ser declarada ausente, como as duas acima:
+    # `FATURAMENTO_FINANCEIRO_PARQUET` e constante de MODULO, resolvida no import a partir
+    # do `STAGING_DIR` de ENTAO — repontar `STAGING_DIR` aqui em cima nao a move. Sem esta
+    # linha, quem tiver `data/staging/faturamento_financeiro.parquet` no worktree le a
+    # planilha REAL. Passava por acidente ate 2026-09-02, quando `STAGING_DIR` derivava do
+    # `_DEFAULT_DATA` cravado no Downloads de UMA maquina: com a raiz quebrada, nenhum
+    # arquivo existia. O Bloco A (DEC-047) trocou a raiz pelo `data/` do repo.
+    monkeypatch.setattr(
+        pilot, "FATURAMENTO_FINANCEIRO_PARQUET", staging / "sem_planilha.parquet"
+    )
     monkeypatch.setattr(pilot, "CADASTRO_DIR", cadastro_dir)
     _limpar_caches()
     yield tmp_path

@@ -77,7 +77,22 @@ services:
       # mapas de calor saem sem nome nenhum; nao ha mais fallback para o CARTO.
       #   API_BASEMAP_LABELS_URL=http://motor_expansao_tileserver:8080/styles/ultra-labels/{z}/{x}/{y}@2x.png
       API_BASEMAP_LABELS_URL: ${API_BASEMAP_LABELS_URL:-}
+      # Raiz de dados desta instancia — e onde `motor_expansao.perfil` procura o
+      # `perfil.json` (Bloco A / DEC-047). O servico `web` ja tinha esta var; o `api`
+      # NAO, e sem ela o loader cairia no ramo "BR embarcado", que resolve por `__file__`
+      # para site-packages/data/... — caminho que NUNCA existe sob instalacao
+      # nao-editavel (Dockerfile.api:37). Inerte para todo o resto: os unicos leitores de
+      # MOTOR_DATA_DIR sao `web/server/app.py` e `scripts/check_artifacts.py`, e o
+      # `Settings` daqui tem env_prefix `API_`, que nao casa com este nome.
+      MOTOR_DATA_DIR: "/app/data"
     volumes:
+      # O perfil do pais. Bind de ARQUIVO, e nao de diretorio, porque `/app/data` vem da
+      # IMAGEM e so os subdiretorios abaixo sao montados — a RAIZ nao e mount, entao
+      # `/app/data/perfil.json` nao teria origem nenhuma. **Pre-condicao de deploy:** o
+      # arquivo tem de EXISTIR no host antes do `up`, senao o Docker cria um DIRETORIO
+      # vazio no lugar e o container falha com "is a directory", mensagem que nao menciona
+      # perfil nenhum. Ver docs/deploy_piloto_web.md e docs/spec_bloco_a_perfil.md §6.1.
+      - /opt/motor-expansao/data/perfil.json:/app/data/perfil.json:ro
       - /opt/motor-expansao/data/outputs:/app/data/outputs:ro   # censo geo (obrigatorio)
       - /opt/motor-expansao/data/ibge:/app/data/ibge:ro          # malha municipal (obrigatorio)
       # Mercado/SAM + concorrentes/Ultra + os DOIS parquets de crescimento do passo 4
@@ -220,6 +235,14 @@ services:
       #   API_BASEMAP_LABELS_URL=http://motor_expansao_tileserver:8080/styles/ultra-labels/{z}/{x}/{y}@2x.png
       API_BASEMAP_LABELS_URL: ${API_BASEMAP_LABELS_URL:-}
     volumes:
+      # O perfil do pais desta instancia (Bloco A / DEC-047). E o PRIMEIRO arquivo que o
+      # `web/server/app.py` le no import: sem ele o processo NAO sobe, de proposito — uma
+      # instancia sem perfil serviria bbox e regua brasileiras com rotulo de outro pais.
+      # Bind de ARQUIVO porque `/app/data` vem da imagem (Dockerfile.web:85) e so os
+      # subdiretorios abaixo sao mount; a raiz nao e. **Pre-condicao de deploy:** o arquivo
+      # tem de EXISTIR no host antes do `up` — senao o Docker cria um DIRETORIO vazio e o
+      # container falha com "is a directory". Ver docs/deploy_piloto_web.md.
+      - /opt/motor-expansao/data/perfil.json:/app/data/perfil.json:ro
       - /opt/motor-expansao/data/outputs:/app/data/outputs:ro    # censo geo + enriquecido + base_calibracao
       # Idem ao servico acima: alem de mercado/SAM, concorrentes/Ultra e renda
       # domiciliar, este mount carrega os dois parquets de crescimento do passo 4.
