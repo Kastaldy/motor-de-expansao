@@ -208,8 +208,8 @@
     "faixas_renda": null,
     "_nota_faixas_renda": "NAO EXISTE no codigo. O §6.2 do plano lista o campo, mas nao ha choropleth de renda: o mapa pinta score. Declarado null nos dois paises para o campo nao virar convite a inventar regua.",
 
-    "_metas_big_numbers": {
-      "_motivo": "RECUSADO pela spec 1.4: as metas do semaforo (dashboard/censo_report.py:139-152) so sao lidas pelas superficies `ponto` e `municipal`, que o Bloco C bloqueia no dia 1. Entram no BLK-INTL-10. `_`-prefixado para o loader IGNORAR.",
+    "metas_big_numbers": {
+      "_motivo": "PROMOVIDO em 2026-09-02: ate entao era `_`-prefixado por nao ter leitor (spec 1.4). Agora tem — `dashboard/censo_report.py` le as sete daqui em vez das constantes `_META_*` de modulo. Os valores NAO se moveram: sao os mesmos literais de `:141-152`, e o teste de contrato trava a igualdade.",
       "pop_total_raio": 10000.0,
       "renda_per_capita_media_raio": 1500.0,
       "renda_domiciliar_total_raio": 4000.0,

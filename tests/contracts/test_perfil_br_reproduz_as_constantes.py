@@ -249,15 +249,82 @@ def test_o_perfil_ARGENTINO_torna_o_uplift_IDENTIDADE() -> None:
     assert renda_domiciliar_ar * br.reguas.uplift_composicao == pytest.approx(1_632.0)
 
 
-def test_moradores_argentino_usa_HOGARES_e_nao_viviendas() -> None:
-    """2,8623 e `sum(pop_total)/sum(hogares_total)` nos 42.388 hexagonos do pacote.
+def test_moradores_argentino_casa_com_a_CADEIA_e_nao_com_a_definicao_BR() -> None:
+    """2,5654 = `sum(POB_TOT_P)/sum(VIV_TOT_P)` nos 66.347 rádios com dado.
 
-    A escolha da coluna nao e detalhe: `vivienda` inclui as VAGAS, e o analogo brasileiro
-    (`domicilios_particulares_ocupados`, v0007) sao os OCUPADOS. Pela mesma base,
-    `pop/viviendas` da 2,5781 — uns 11% abaixo. Como este numero divide a renda per capita
-    para chegar a domiciliar, o 11% iria direto para a tela.
+    **Corrigido em 2026-09-02, no mesmo dia em que entrou como 2,8623** (pop/hogares, no
+    nível do hexágono). O 2,8623 é mais fiel à definição brasileira — `domicilios_
+    particulares_ocupados` (v0007) são OCUPADOS, e `vivienda` inclui as vagas — e é errado
+    como fallback aqui, por razão de **cadeia**, não de definição:
+
+    o censo por RÁDIO publica só `VIV_TOT_P` e `POB_TOT_P`, sem hogares (conferido nos 529
+    arquivos). O exportador deriva o `avg_moradores_domicilio_setor_2022` de viviendas, e a
+    cadeia argentina inteira roda sobre viviendas. Um fallback 11% acima dos valores que
+    ele SUBSTITUI criaria degrau visível entre rádios com e sem dado.
+
+    Consistência interna vence fidelidade à definição do outro país.
     """
     ar = carregar_perfil(_RAIZ / "data" / "perfis" / "AR" / "perfil.json")
-    assert ar.reguas.moradores_por_domicilio == pytest.approx(2.8623, abs=1e-4)
-    # Longe do valor que sairia de `viviendas`, e longe do brasileiro.
-    assert abs(ar.reguas.moradores_por_domicilio - 2.5781) > 0.2
+    assert ar.reguas.moradores_por_domicilio == pytest.approx(2.5654, abs=1e-4)
+    # Longe do brasileiro (2,79) e do que sairia de hogares (2,86).
+    assert abs(ar.reguas.moradores_por_domicilio - 2.79) > 0.2
+
+
+def test_as_sete_metas_do_semaforo_batem_com_o_censo_report(perfil) -> None:
+    """As metas passaram a vir do perfil, e no Brasil não se moveram um decimal."""
+    from motor_expansao.dashboard import censo_report as cr  # noqa: PLC0415
+
+    m = perfil.reguas.metas_big_numbers
+    assert m.pop_total_raio == cr._META_POP_TOTAL_RAIO == 10_000.0
+    assert m.renda_per_capita_media_raio == cr._META_RENDA_PER_CAPITA_MEDIA_RAIO == 1_500.0
+    assert m.renda_domiciliar_total_raio == cr._META_RENDA_DOMICILIAR_TOTAL_RAIO == 4_000.0
+    assert m.domicilios_total_raio == cr._META_DOMICILIOS_TOTAL_RAIO == 3_000.0
+    assert m.score_setor_medio == cr._META_SCORE_SETOR_MEDIO == 60.0
+    assert m.sam_fitness_potencial == cr._META_SAM_FITNESS_POTENCIAL == 2_000.0
+    assert m.residual_fitness_disponivel == cr._META_RESIDUAL_FITNESS_DISPONIVEL == 2_000.0
+
+
+def test_as_metas_ARGENTINAS_saem_da_canasta_e_nao_de_conversao() -> None:
+    """**A decisão do Felipe, 2026-09-02**, com a conta reproduzida aqui.
+
+    Renda per capita = **1,2 canastas**. Não é conversão de moeda: é a linha de pobreza
+    argentina (CBT do INDEC por adulto equivalente) vezes 1,2, levada a USD pelo MESMO
+    câmbio e pelo MESMO mês-base em que o `renda_estimada_usd` do pacote foi construído.
+
+    O mês-base é o detalhe que mais importa: usar a canasta de jul/2026 (506.380,55) com
+    dado de mai/2026 poria meta e dado em moedas de meses diferentes.
+    """
+    ar = carregar_perfil(_RAIZ / "data" / "perfis" / "AR" / "perfil.json")
+    m = ar.reguas.metas_big_numbers
+
+    CBT_ADULTO_EQUIVALENTE_MAIO_2026 = 485_029.58  # INDEC, série 150.1_CSTA_BATAL_0_D_20
+    CAMBIO_MAIO_2026 = 1_397.71  # BCRA — o mesmo de `moeda.cambio_base`
+    assert m.renda_per_capita_media_raio == pytest.approx(
+        1.2 * CBT_ADULTO_EQUIVALENTE_MAIO_2026 / CAMBIO_MAIO_2026, abs=0.01
+    )
+
+    # Domiciliar = a per capita vezes o tamanho do domicílio ARGENTINO. Tem de sair da
+    # mesma construção do número exibido, que é `per capita x moradores`.
+    assert m.renda_domiciliar_total_raio == pytest.approx(
+        m.renda_per_capita_media_raio * ar.reguas.moradores_por_domicilio, abs=0.01
+    )
+
+    # População MANTIDA — é contagem de gente, não tem o que converter.
+    assert m.pop_total_raio == 10_000.0
+    # E as três neutras de país (score 0-100, alunos por hexágono) idem.
+    assert m.score_setor_medio == 60.0
+    assert m.sam_fitness_potencial == 2_000.0
+
+
+def test_o_cambio_base_do_perfil_e_o_usado_na_meta() -> None:
+    """Se a base monetária for atualizada e a meta não, os dois se separam em silêncio.
+
+    Esta é a rede: a meta tem de continuar sendo 1,2 canastas no câmbio DECLARADO.
+    """
+    import json  # noqa: PLC0415
+
+    bruto = json.loads(
+        (_RAIZ / "data" / "perfis" / "AR" / "perfil.json").read_text(encoding="utf-8")
+    )
+    assert bruto["moeda"]["base_monetaria"] == "2026-05"
+    assert bruto["moeda"]["cambio_base"]["valor"] == pytest.approx(1_397.71)
