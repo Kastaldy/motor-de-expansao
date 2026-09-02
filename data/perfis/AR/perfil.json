@@ -235,7 +235,7 @@
     "score_corte_quente": 30.0,
     "_nota_score_corte": "DEFAULT PROVISORIO: mesmo valor do Brasil (SCORE_CORTE_QUENTE, web/server/app.py:161). Verificado que nao produz absurdo: com as ancoras default acima, 5,5% dos hexagonos argentinos ficam >= 30, contra 2,2% dos hexagonos brasileiros (medido nas 27 particoes de data/outputs/hexagonos_dashboard_enriquecido, 1.303.414 hexes). Mesma ordem de grandeza, AR um pouco mais generosa. Para comparacao, o score NATIVO do pacote argentino (percentil, pesos invertidos) marcaria 12,2%.",
     "pop_min_acionavel": 5000,
-    "_nota_pop_min": "Coincide com o Brasil (POP_MIN_ACIONAVEL = 5.000, src/motor_expansao/dashboard/constants.py:144 e web/server/app.py:154) E com o gate que o proprio Juan usou (flag_pop_min_5k = populacao de captacao >= 5.000, dicionario_dados.md). Nao e default provisorio: e coincidencia com procedencia dos dois lados.",
+    "_nota_pop_min": "Coincide com o Brasil (POP_MIN_ACIONAVEL = 5.000, src/motor_expansao/dashboard/constants.py:144 e web/server/app.py:154) E com o gate que o proprio Juan usou (flag_pop_min_5k = populacao de captacao >= 5.000, dicionario_dados.md). Nao e default provisorio: e coincidencia com procedencia dos dois lados. DECIDIDO por Felipe em 2026-09-02: \"um hexagono precisa ter no minimo 5k de habitantes para ser minimamente viavel\". Efeito medido na AR (score recomputado, corte 30): quentes caem de 2.966 (7,0%) para 1.516 (3,6%) e a populacao mediana do quente sobe de 5.263 para 15.656; saem 1.450 hexagonos de populacao mediana 237 (Bariloche 93, Cushamen 55, Punilla 38, Lacar 35 - praca de turismo com renda modelada alta e ninguem morando). Ja aplicado na superficie do dia 1 por web/src/components/HexMap.tsx:262. Este gate move o ranking MAIS do que qualquer escolha de ancora.",
     "oferta_destaque_min": 2000.0,
     "_nota_oferta_destaque": "Campo OBRIGATORIO da spec 1.2 que FALTAVA neste arquivo (o loader do commit A1 reprovaria o perfil sem ele). MESMO valor do Brasil (OFERTA_DESTAQUE_MIN = 2000.0, web/server/app.py:153 e dashboard/relatorio_municipal.py:61), e nao por analogia preguicosa: a regua e um piso de RESIDUAL medido em alunos de uma unidade ULTRA, e a unidade Ultra argentina e a mesma da brasileira - logo ela viaja com `capacidade_unidade_alunos` (2.500, igual), nao com `capacidade_concorrente` (1.070, diferente). NAO trava o dia 1: `oportunidades` (o funil, unico consumidor desta regua) esta FORA de `superficies` pela decisao 0.6. Revisar quando o funil argentino subir - ver pendencia P9.",
     "capacidade_concorrente": 1070.0,
@@ -375,7 +375,7 @@
     {
       "id": "P1",
       "campo": "reguas.renda_abs_min / reguas.renda_abs_max",
-      "estado": "default_provisorio",
+      "estado": "decidido",
       "decide": "Felipe",
       "pergunta": "Qual criterio fixa o teto de renda argentino: mesma saturacao do Brasil (1.000 USD) ou mesma posicao relativa do p95 (impossivel — daria 1.570 USD, acima do maximo observado de 1.141)?",
       "default": [
@@ -383,12 +383,14 @@
         1000.0
       ],
       "justificativa": "Espelha literalmente o criterio escrito no codigo brasileiro (piso = p05 arredondado, teto acima do p99 saturando <0,4%), aplicado a distribuicao AR medida no pacote em 2026-08-31.",
-      "o_que_muda_quando_decidir": "Muda a nota de renda de TODOS os 42.388 hexagonos, logo muda o score, o ranking, a cor de cada hexagono no mapa e quem passa no corte quente. Nao muda uma linha de codigo — so este arquivo."
+      "o_que_muda_quando_decidir": "Muda a nota de renda de TODOS os 42.388 hexagonos, logo muda o score, o ranking, a cor de cada hexagono no mapa e quem passa no corte quente. Nao muda uma linha de codigo — so este arquivo.",
+      "decidido_em": "2026-09-02",
+      "decisao": "RATIFICADO o default, apos analise de sensibilidade com 4 ancoras candidatas: top-30 de hexagonos compartilha 27-29 de 30, top-15 de departamentos 12-15 de 15, Spearman 0,96-0,998. A ancora nao reordena a fila, so move onde o corte cai nela. Contra o score percentil nativo o Spearman cai para 0,46 - a decisao que importava (regua absoluta x percentil) ja estava tomada."
     },
     {
       "id": "P2",
       "campo": "reguas.pop_abs_min / reguas.pop_abs_max",
-      "estado": "default_provisorio",
+      "estado": "decidido",
       "decide": "Felipe",
       "pergunta": "A ancora de populacao argentina fica em HEXAGONO H3 res 7 (o que o pacote entrega, e a MESMA unidade em que a ancora brasileira foi medida) ou passa a ser derivada de RADIO CENSAL (disponivel em censo_radios)?",
       "default": [
@@ -396,7 +398,9 @@
         100000.0
       ],
       "justificativa": "RECOMENDACAO: MANTER O DEFAULT. Identico ao Brasil porque e a MESMA UNIDADE dos dois lados — nao e analogia, e casamento. A ancora brasileira foi medida sobre hexagono H3 res 7: calibrar_renda_setor_2022.py:82 mede 'no universo POVOADO (pop >= 1.000, 21.107 hexes)', :265 imprime 'hexes' e :320 faz merge on='hex_id'. O nome da coluna brasileira ('pop_total_setor_2022', :309) e o valor do setor carregado no hexagono, nao a granularidade da linha — confundir os dois foi o erro corrigido em 2026-09-02. A medicao fecha: BR hexagono povoado p05 1.103 / p50 3.561 / p95 28.845 contra AR hexagono povoado p05 1.127 / p50 3.699 / p95 28.500.",
-      "o_que_muda_quando_decidir": "Continua sendo decisao do Felipe, mas as duas opcoes NAO sao simetricas. Manter o hexagono preserva o casamento de unidade com o Brasil. Migrar para radio censal e a UNICA opcao que CRIA descasamento: passaria a comparar 66.502 radios com uma regua medida em 21.107 hexagonos, e o argumento de 'radio censal e o analogo do setor brasileiro' nao alinha nada, porque a regua brasileira nunca foi de setor. Se ainda assim a migracao for escolhida, os quatro numeros precisam ser remedidos do zero sobre censo_radios e este default cai."
+      "o_que_muda_quando_decidir": "Continua sendo decisao do Felipe, mas as duas opcoes NAO sao simetricas. Manter o hexagono preserva o casamento de unidade com o Brasil. Migrar para radio censal e a UNICA opcao que CRIA descasamento: passaria a comparar 66.502 radios com uma regua medida em 21.107 hexagonos, e o argumento de 'radio censal e o analogo do setor brasileiro' nao alinha nada, porque a regua brasileira nunca foi de setor. Se ainda assim a migracao for escolhida, os quatro numeros precisam ser remedidos do zero sobre censo_radios e este default cai.",
+      "decidido_em": "2026-09-02",
+      "decisao": "RATIFICADO o default, apos analise de sensibilidade com 4 ancoras candidatas: top-30 de hexagonos compartilha 27-29 de 30, top-15 de departamentos 12-15 de 15, Spearman 0,96-0,998. A ancora nao reordena a fila, so move onde o corte cai nela. Contra o score percentil nativo o Spearman cai para 0,46 - a decisao que importava (regua absoluta x percentil) ja estava tomada."
     },
     {
       "id": "P3",
