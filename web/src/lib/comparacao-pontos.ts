@@ -14,6 +14,7 @@
  */
 
 import { compararDimensoesComFrase, type Comparacao, type Dimensao } from './comparacao'
+import { UNIDADE_MOEDA } from './format'
 import type { PontoPayload } from './types'
 
 /**
@@ -57,7 +58,7 @@ export const DIMENSOES_PONTO: readonly Dimensao<PontoPayload>[] = Object.freeze(
     chave: 'renda_domiciliar',
     rotulo: 'Renda domiciliar',
     ler: (p: PontoPayload) => p.censo?.renda_media_domiciliar ?? null,
-    unidade: 'R$',
+    unidade: UNIDADE_MOEDA,
     maiorEhMelhor: true,
     limiarRelativo: 0.1,
     limiarAbsoluto: 300,

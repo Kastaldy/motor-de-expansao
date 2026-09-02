@@ -36,6 +36,7 @@ import {
   crescClasseToColor,
   type RGBA,
 } from '../lib/colors'
+import { perfilDoCliente } from '../lib/perfil'
 import type { Tema } from '../lib/tema'
 import type {
   Cobertura1k,
@@ -518,9 +519,15 @@ export default function HexMap({
         bearing: 0,
       }
     }
+    // Fallback de "centro ausente". Era Brasília cravada (-47,9 / -15,78) — e é leitura
+    // de PRIMEIRA RENDERIZAÇÃO (classe (2) da spec §3.5): inicializador de `useState`
+    // roda antes de qualquer efeito. É por isso que o perfil é resolvido no `main.tsx`
+    // ANTES de a árvore ser importada; aqui um getter tardio não salvaria, e o resultado
+    // seria a câmera nascendo no Brasil numa instância argentina.
+    const vista = perfilDoCliente().vista_padrao
     return {
-      longitude: centro.lng ?? -47.9,
-      latitude: centro.lat ?? -15.78,
+      longitude: centro.lng ?? vista.lng,
+      latitude: centro.lat ?? vista.lat,
       zoom: ZOOM_DO_MUNICIPIO,
       pitch: 0,
       bearing: 0,

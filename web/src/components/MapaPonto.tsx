@@ -8,7 +8,7 @@ import { Map } from 'react-map-gl/maplibre'
 import { HEX_FILL_ALPHA, scoreBandToColor } from '../lib/colors'
 import { num } from '../lib/format'
 import {
-  VISTA_BRASIL,
+  VISTA_PADRAO,
   faixaDoResidual,
   motivoSemHexagonos,
   vistaDoPonto,
@@ -60,7 +60,7 @@ const FLY = new FlyToInterpolator({ speed: 1.6 })
 const BASEMAP = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 
 function vistaInicial(ficha: PontoPayload | null): Vista {
-  const base = ficha ? vistaDoPonto(ficha.lat, ficha.lng) : VISTA_BRASIL
+  const base = ficha ? vistaDoPonto(ficha.lat, ficha.lng) : VISTA_PADRAO
   return { ...base, pitch: 0, bearing: 0 }
 }
 

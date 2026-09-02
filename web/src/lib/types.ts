@@ -10,6 +10,11 @@ export type { CriterioPonto, ReguasPonto }
 export interface MePayload {
   usuario: string | null
   abas: string[]
+  /** Perfil do país da instância (Bloco A / DEC-047). `unknown` e opcional de
+   *  propósito: um backend anterior ao bloco não manda o campo, e o front tem de
+   *  continuar abrindo. Quem valida e estreita é `definirPerfil` em `lib/perfil.ts`,
+   *  no mesmo espírito defensivo de `abasDoPayload`. */
+  perfil?: unknown
 }
 
 /** Tom do chip do ranking. Fronteira TS<->Python sem contrato gerado: o produtor

@@ -3369,7 +3369,49 @@ def me(
     # DEC-027). Entra aqui apenas para a SPA saber que pode mostrar o icone.
     if acesso.pode_ver_acessos(usuario):
         abas.add(acesso.ABA_ACESSOS)
-    return {"usuario": usuario, "abas": sorted(abas)}
+    return {"usuario": usuario, "abas": sorted(abas), "perfil": _perfil_do_cliente()}
+
+
+@functools.lru_cache(maxsize=1)
+def _perfil_do_cliente() -> dict[str, Any]:
+    """O recorte do perfil que o FRONT consome — e nada alem dele.
+
+    Por que sai por `/api/me` e nao por rota propria: a DEC-047 diz que o perfil "nao
+    entra requisicao". O front ja pede esta rota UMA vez na abertura, entao o pais chega
+    de carona, sem round trip novo e sem superficie nova para o gate de acesso cobrir.
+
+    A lista e curta de proposito. Cada campo aqui tem um leitor nomeado no front:
+      nome                       -> a frase "fora de X" (`entrada-ponto.ts`)
+      locale                     -> `new Intl.NumberFormat(...)` (`format.ts`)
+      moeda                      -> os oito literais de `R$` (`format.ts`)
+      bbox                       -> `coord.ts` e `entrada-ponto.ts`
+      vista_padrao               -> `mapa-ponto.ts` e o fallback de camera do `HexMap`
+      reguas.pop_min_acionavel   -> `colors.ts`
+      reguas.capacidade_unidade_alunos -> `faixas.ts` e `mapa-ponto.ts`
+
+    Nao mandar `superficies`, `fontes` nem `geocode`: sao do servidor. Campo sem leitor
+    no front seria numero que envelhece calado — a mesma regra da spec §1.1.
+    """
+    return {
+        "nome": PERFIL.nome,
+        "locale": PERFIL.locale,
+        "moeda": {"codigo": PERFIL.moeda.codigo, "simbolo": PERFIL.moeda.simbolo},
+        "bbox": {
+            "lat_min": PERFIL.bbox.lat_min,
+            "lat_max": PERFIL.bbox.lat_max,
+            "lng_min": PERFIL.bbox.lng_min,
+            "lng_max": PERFIL.bbox.lng_max,
+        },
+        "vista_padrao": {
+            "lat": PERFIL.vista_padrao.lat,
+            "lng": PERFIL.vista_padrao.lng,
+            "zoom": PERFIL.vista_padrao.zoom,
+        },
+        "reguas": {
+            "pop_min_acionavel": PERFIL.reguas.pop_min_acionavel,
+            "capacidade_unidade_alunos": PERFIL.reguas.capacidade_unidade_alunos,
+        },
+    }
 
 
 @app.post("/api/ciencia-confidencialidade")

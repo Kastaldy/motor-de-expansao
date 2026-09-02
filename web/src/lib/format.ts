@@ -1,9 +1,15 @@
-/** Formatacao pt-BR. Todo numero exibido passa por aqui. */
+/** Formatacao do PAIS DA INSTANCIA. Todo numero exibido passa por aqui.
+ *
+ *  O locale e o simbolo de moeda saem do perfil (Bloco A / DEC-047). Ate 2026-09-02
+ *  eram 'pt-BR' e 'R$' cravados — oito literais so neste arquivo. */
 
 import { TEXTO_SEM_DADO } from './constants'
+import { moeda, perfilDoCliente } from './perfil'
 
+// Sem memo por locale de proposito: `perfilDoCliente()` e um acesso a variavel de
+// modulo, e `Intl.NumberFormat` ja e barato o bastante para o volume desta tela.
 const nf = (casas: number) =>
-  new Intl.NumberFormat('pt-BR', {
+  new Intl.NumberFormat(perfilDoCliente().locale, {
     minimumFractionDigits: casas,
     maximumFractionDigits: casas,
   })
@@ -35,10 +41,10 @@ export function brl(v: number | null | undefined, compacto = false, casas = 0): 
   if (v === null || v === undefined || Number.isNaN(v)) return TEXTO_SEM_DADO
   if (compacto) {
     const abs = Math.abs(v)
-    if (abs >= 1_000_000) return `R$ ${nf(1).format(v / 1_000_000)} mi`
-    if (abs >= 1_000) return `R$ ${nf(0).format(v / 1_000)} mil`
+    if (abs >= 1_000_000) return `${moeda()} ${nf(1).format(v / 1_000_000)} mi`
+    if (abs >= 1_000) return `${moeda()} ${nf(0).format(v / 1_000)} mil`
   }
-  return `R$ ${nf(casas).format(v)}`
+  return `${moeda()} ${nf(casas).format(v)}`
 }
 
 /**
@@ -49,9 +55,9 @@ export function brl(v: number | null | undefined, compacto = false, casas = 0): 
 export function brlCurto(v: number | null | undefined): string {
   if (v === null || v === undefined || Number.isNaN(v)) return TEXTO_SEM_DADO
   const abs = Math.abs(v)
-  if (abs >= 1_000_000) return `R$ ${nf(abs >= 10_000_000 ? 0 : 1).format(v / 1_000_000)}M`
-  if (abs >= 1_000) return `R$ ${nf(0).format(v / 1_000)}k`
-  return `R$ ${nf(0).format(v)}`
+  if (abs >= 1_000_000) return `${moeda()} ${nf(abs >= 10_000_000 ? 0 : 1).format(v / 1_000_000)}M`
+  if (abs >= 1_000) return `${moeda()} ${nf(0).format(v / 1_000)}k`
+  return `${moeda()} ${nf(0).format(v)}`
 }
 
 export function pct(v: number | null | undefined, casas = 1): string {
@@ -91,6 +97,17 @@ export function pctVar(v: number | null | undefined, casas = 1): string {
 }
 
 /**
+ * Unidade "dinheiro" de uma `Dimensao`. Sentinela, e nao o simbolo: ate 2026-09-02 as
+ * duas telas de comparacao cravavam `unidade: 'R$'` e o `valorComUnidade` comparava com
+ * o literal — ou seja, o simbolo da moeda era ao mesmo tempo o VALOR exibido e a CHAVE
+ * de despacho. Numa instancia com outra moeda os dois se separam, e comparar com o
+ * simbolo passaria a nao casar em silencio, caindo no `num(v)` sem unidade nenhuma.
+ *
+ * IDENTIFICADOR, entao sem acento e nunca exibido (CLAUDE.md §2).
+ */
+export const UNIDADE_MOEDA = 'moeda'
+
+/**
  * O valor de uma `Dimensao` na unidade dela.
  *
  * Vive aqui porque a comparacao passou a ter DOIS desenhos — a tabela A x B e os blocos
@@ -102,7 +119,7 @@ export function pctVar(v: number | null | undefined, casas = 1): string {
  */
 export function valorComUnidade(v: number | null, unidade: string): string {
   if (v == null) return num(v)
-  if (unidade === 'R$') return `R$ ${num(v)}`
+  if (unidade === UNIDADE_MOEDA) return `${moeda()} ${num(v)}`
   if (unidade === '%') return `${num(v, 1)}%`
   if (unidade === 'p.p.') return `${pctVar(v, 1).replace('%', '')} p.p.`
   return num(v)
