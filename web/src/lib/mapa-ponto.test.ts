@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CAPACIDADE_UNIDADE_ALUNOS,
   MOTIVO_SEM_MERCADO_PADRAO,
-  VISTA_BRASIL,
+  VISTA_PADRAO,
   ZOOM_PONTO,
   faixaDoResidual,
   motivoSemHexagonos,
@@ -110,9 +110,9 @@ describe('vistaDoPonto', () => {
   })
 
   it('parte do Brasil inteiro enquanto nao ha ponto', () => {
-    expect(VISTA_BRASIL.zoom).toBeLessThan(ZOOM_PONTO)
-    expect(VISTA_BRASIL.latitude).toBeLessThan(0)
-    expect(VISTA_BRASIL.longitude).toBeLessThan(0)
+    expect(VISTA_PADRAO.zoom).toBeLessThan(ZOOM_PONTO)
+    expect(VISTA_PADRAO.latitude).toBeLessThan(0)
+    expect(VISTA_PADRAO.longitude).toBeLessThan(0)
   })
 })
 

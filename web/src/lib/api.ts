@@ -188,12 +188,26 @@ export function baixar(blob: Blob, filename: string): void {
   }, VIDA_DA_BLOB_URL_MS)
 }
 
+/** Resolução única de `/api/me` por carga de página — ver o comentário em `api.me`. */
+let _me: Promise<MePayload> | null = null
+
 export const api = {
   health: () => pedir<{ status: string; data_ok: boolean }>('/api/health', {}, 10_000),
 
   /** Quem sou eu + que abas posso usar (controle temporário de acesso). A SPA
-   *  esconde o que está fora da lista; o bloqueio real é do backend (middleware). */
-  me: () => pedir<MePayload>('/api/me', {}, 10_000),
+   *  esconde o que está fora da lista; o bloqueio real é do backend (middleware).
+   *
+   *  MEMOIZADA desde o Bloco A, quando passou a ter DOIS chamadores na abertura: o
+   *  `main.tsx`, que resolve o perfil do país antes de montar a árvore, e o `useEffect`
+   *  do `App.tsx`, que lê as abas. Sem a memo seriam duas requisições por carga — e
+   *  `/api/me` é gravada na trilha de acesso (DEC-027), então a duplicata inflaria a
+   *  contagem de ações que a aba Acessos publica. Falha NÃO é memoizada: o `catch`
+   *  limpa, para um erro de rede na abertura não condenar a sessão inteira. */
+  me: (): Promise<MePayload> =>
+    (_me ??= pedir<MePayload>('/api/me', {}, 10_000).catch((e) => {
+      _me = null
+      throw e
+    })),
 
   ufs: () => pedir<{ ufs: string[] }>('/api/ufs'),
 

@@ -21,6 +21,7 @@
  */
 
 import { parseCoordinate, type Coord } from './coord'
+import { perfilDoCliente } from './perfil'
 
 export type TipoEntrada =
   | 'vazio'
@@ -40,8 +41,6 @@ export interface EntradaClassificada {
   aviso: string
 }
 
-/** Mesmos limites do backend (`api/coord.py`) e de `lib/coord.ts`. */
-const BR = { latMin: -34.0, latMax: 5.5, lngMin: -74.0, lngMax: -28.0 }
 
 /** Encurtadores que o app do Google Maps usa ao compartilhar. */
 const RE_LINK_CURTO = /(?:maps\.app\.goo\.gl|goo\.gl\/maps)/i
@@ -59,14 +58,22 @@ const RE_PAR_NUMERICO =
  * Serve so' para separar "nao entendi o que voce colou" de "entendi, mas isso nao e'
  * Brasil" — duas mensagens bem diferentes para quem esta olhando a tela.
  */
+/**
+ * Par numerico lido, mas fora do bbox do PAIS DA INSTANCIA. Ate 2026-09-02 a caixa
+ * estava cravada aqui, e era a TERCEIRA copia dos mesmos quatro numeros — esta linha
+ * era o que recusava Buenos Aires ANTES de sair requisicao.
+ *
+ * Leitura no corpo (classe (1) da spec §3.5): so roda quando o operador digita.
+ */
 function pareceCoordenadaForaDoBrasil(texto: string): boolean {
   const m = texto.match(RE_PAR_NUMERICO)
   if (!m) return false
   const lat = Number(m[1].replace(',', '.'))
   const lng = Number(m[2].replace(',', '.'))
   if (Number.isNaN(lat) || Number.isNaN(lng)) return false
+  const bb = perfilDoCliente().bbox
   return (
-    lat < BR.latMin || lat > BR.latMax || lng < BR.lngMin || lng > BR.lngMax
+    lat < bb.lat_min || lat > bb.lat_max || lng < bb.lng_min || lng > bb.lng_max
   )
 }
 
@@ -112,8 +119,10 @@ export function classificarEntrada(bruto: string): EntradaClassificada {
       tipo: 'fora-do-brasil',
       coord: null,
       precisaServidor: false,
-      aviso:
-        'Essa coordenada está fora do Brasil. Confira se a latitude e a longitude não vieram trocadas.',
+      // "fora de X" e nao "fora do X": funciona para Brasil, Argentina, Colombia,
+      // Mexico, Peru e Paraguai. O VALOR do enum (`fora-do-brasil`) NAO muda —
+      // renomea-lo seria churn puro, e o teste do enum continua verde.
+      aviso: `Essa coordenada está fora de ${perfilDoCliente().nome}. Confira se a latitude e a longitude não vieram trocadas.`,
     }
   }
 

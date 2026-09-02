@@ -1,3 +1,4 @@
+import { perfilDoCliente } from './perfil'
 /* ---------------------------------------------------------------------------
    Cores dos hexagonos — porte fiel do dashboard Streamlit.
 
@@ -61,8 +62,12 @@ export const DISCARDED_LINE: RGBA = [170, 170, 190, 160]
 /** Hex valido do M1 sem score na camada ativa (components._NAN_SCORE_FILL). */
 export const NAN_SCORE_FILL: RGBA = [110, 116, 140, CUT_ALPHA]
 
-/** Regua operacional do dashboard (POP_MIN_ACIONAVEL). */
-export const POP_MIN_ACIONAVEL = 5000
+/** Regua operacional do PAIS da instancia (`perfil.reguas.pop_min_acionavel`).
+ *
+ * Continua sendo `const` de modulo, e nao funcao, porque o `main.tsx` resolve o perfil
+ * ANTES de importar a arvore (import dinamico) — quando esta linha e avaliada, o perfil
+ * ja e o da instancia. Vira-la em funcao arrastaria todos os call sites sem ganho. */
+export const POP_MIN_ACIONAVEL = perfilDoCliente().reguas.pop_min_acionavel
 
 /**
  * Porte 1:1 de `score_band_to_color`: mapeia score 0-100 para a faixa de 10 pts.

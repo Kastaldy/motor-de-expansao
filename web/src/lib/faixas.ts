@@ -1,3 +1,4 @@
+import { perfilDoCliente } from './perfil'
 /* ---------------------------------------------------------------------------
    Faixas NOMEADAS por camada do funil (BLK-MAPA-FAIXAS-01)
 
@@ -80,8 +81,10 @@ export const FAIXAS_DEMANDA: FaixaNomeada[] = [
   { de: 80, ate: 100, nome: 'Livre', cor: '#0A8226' },
 ]
 
-/** Alunos equivalentes de um score residual (a ancora dos 2.500). */
-export const CAPACIDADE_UNIDADE_ALUNOS = 2500
+/** Alunos equivalentes de um score residual — a ancora do PAIS da instancia
+ *  (`perfil.reguas.capacidade_unidade_alunos`; 2.500 no Brasil, e a Argentina diverge). */
+export const CAPACIDADE_UNIDADE_ALUNOS =
+  perfilDoCliente().reguas.capacidade_unidade_alunos
 
 /**
  * Etiqueta de alunos sob o nome da faixa: "1.000–1.500".
