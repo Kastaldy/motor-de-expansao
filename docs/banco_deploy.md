@@ -73,7 +73,18 @@ $PGBIN = "C:\Program Files\PostgreSQL\18\bin"
 & "$PGBIN\createdb" -U postgres banco_de_reservas_ensaio
 ```
 
+> **`PYTHONPATH` primeiro, ou o Python acha o pacote errado.** O projeto usa layout `src/`, e
+> o `motor_expansao` instalado em modo editável aponta para o **checkout principal** — onde o
+> módulo `db` não existe, porque ele só vive nesta branch. Estar dentro da worktree não basta:
+> o diretório atual não expõe `motor_expansao`. Sem a linha abaixo o erro é
+> `No module named motor_expansao.db`, que parece pacote quebrado e não é.
+>
+> **Não conserte com `pip install -e .` daqui.** Isso repontaria o pacote para esta branch em
+> todo o seu Python, e o trabalho no checkout principal passaria a importar código desta branch
+> sem aviso nenhum. O `PYTHONPATH` vale só para o terminal onde você o define.
+
 ```powershell
+$env:PYTHONPATH = "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\.claude\worktrees\wt-db\src"
 $env:MOTOR_DATABASE_URL_ADMIN = "postgresql://postgres:SENHA@localhost:5432/banco_de_reservas_ensaio"
 python -m motor_expansao.db estado
 python -m motor_expansao.db aplicar --simular
@@ -89,6 +100,8 @@ Em seguida, o `sql/papeis-e-privilegios.md` do `banco-de-reservas` por `psql`, e
 O backend aceita identidade de desenvolvimento quando não há `Remote-User` na frente:
 
 ```powershell
+# Mesma ressalva do §1.2 — se este for um terminal NOVO, repita o PYTHONPATH.
+$env:PYTHONPATH = "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\.claude\worktrees\wt-db\src"
 $env:MOTOR_DATABASE_URL = "postgresql://app:SENHA@localhost:5432/banco_de_reservas_ensaio"
 $env:MOTOR_DEV_USUARIO = "<login_usuario de um dos perfis>"
 python -m uvicorn app:app --app-dir web/server --port 8899
