@@ -169,16 +169,22 @@ _COLS_CRESCIMENTO = [
     "v_frase",
 ]
 
-CAPACIDADE_CONCORRENTE_PADRAO = 2500.0
-OFERTA_DESTAQUE_MIN = 2000.0  # espelha relatorio_municipal (emenda BLK-RELMUN-03)
-POP_MIN_ACIONAVEL = 5000  # regua operacional do dashboard (<5k = descartado)
+# As reguas absolutas passam a vir do perfil do pais (Bloco A / DEC-047). Os NOMES de
+# modulo permanecem, e isso nao e preguica: quatro contratos os leem POR ATRIBUTO
+# (`test_metodologia_espelha_o_funil.py`, `test_faixas_mapa_espelho.py`,
+# `test_piloto_web_endpoints.py`, `test_piloto_web_ponto.py`), e e o que prova que o
+# painel publica o numero que o funil aplica. Substituir os usos por `PERFIL.reguas.*`
+# inline e apagar estes nomes trocaria quatro redes de protecao por nada.
+CAPACIDADE_CONCORRENTE_PADRAO = PERFIL.reguas.capacidade_concorrente
+OFERTA_DESTAQUE_MIN = PERFIL.reguas.oferta_destaque_min  # espelha relatorio_municipal
+POP_MIN_ACIONAVEL = PERFIL.reguas.pop_min_acionavel  # <5k = descartado
 
 # --- Reguas do funil e das etiquetas -----------------------------------------
 # Estavam como literais espalhados dentro de _etiqueta/_etiqueta_muni/montar_funil.
 # Subiram para ca' porque o painel de Metodologia (/api/metodologia) publica estes
 # MESMOS nomes na tela: com o numero escrito em dois lugares, ajustar um parametro
 # fazia a explicacao mentir sem ninguem perceber. Mudou aqui, muda no funil E no texto.
-SCORE_CORTE_QUENTE = 30.0  # piso do passo 1 (hexagono "quente")
+SCORE_CORTE_QUENTE = PERFIL.reguas.score_corte_quente  # piso do passo 1 ("quente")
 # 70,0 -> 30,0 em 2026-08-26, junto com a troca do score censitario para REGUA ABSOLUTA.
 # Na escala antiga (percentil nacional de renda + percentil MUNICIPAL de populacao) o corte
 # de 70 deixava passar 104.835 hexes cuja populacao MEDIANA era 9 habitantes -- Oriximina/PA
@@ -3452,6 +3458,17 @@ def _mil(v: float) -> str:
     return f"{v:,.0f}".replace(",", ".")
 
 
+def _moeda(v: float) -> str:
+    """Valor com o simbolo do PAIS da instancia. "R$ 4.000" no Brasil.
+
+    Existe para o painel de Metodologia — rota LIVRE, fora do alcance do gate de
+    superficie do Bloco C — nao cravar "R$" numa instancia que serve outra moeda. A
+    separacao de milhar continua a de `_mil`: locale de NUMERO e o BLK-INTL-12, que
+    esta fora desta onda de proposito.
+    """
+    return f"{PERFIL.moeda.simbolo} {_mil(v)}"
+
+
 def _fx(
     etiqueta: str, condicao: str, tom: str, escopo: str = "", cor: str | None = None
 ) -> dict[str, Any]:
@@ -3680,10 +3697,14 @@ def montar_metodologia() -> dict[str, Any]:
     res = _mil(OFERTA_DESTAQUE_MIN)
     score = f"{SCORE_CORTE_QUENTE:.0f}"
 
-    F_CENSO = "Censo 2022 (IBGE)"
+    # Fontes do PERFIL (Bloco A / DEC-047). Esta rota e LIVRE (`acesso.py`,
+    # `ROTAS_LIVRES`), entao o gate de superficie do Bloco C nao a alcanca por
+    # construcao: se o texto nao sair do perfil, a instancia argentina publica
+    # "Censo 2022 (IBGE)" e "setor censitario" na tela. O conserto e aqui.
+    F_CENSO = PERFIL.fontes.censo.nome
     F_CONC = "Mapeamento de concorrentes"
     F_ULTRA = "Base de unidades Ultra"
-    F_CRES = "CAGED, RAIS, Receita Federal e satélite"
+    F_CRES = PERFIL.fontes.crescimento.nome
 
     return {
         "intro": (
@@ -3701,12 +3722,7 @@ def montar_metodologia() -> dict[str, Any]:
         "fontes": [
             {
                 "nome": F_CENSO,
-                "detalhe": (
-                    "Renda, domicílios e população por setor censitário — recortes de "
-                    "algumas centenas de domicílios cada. É a base de tudo que o funil "
-                    "chama de potencial: nenhuma estimativa de demanda é arbitrada, toda "
-                    "ela sai do setor onde o hexágono cai."
-                ),
+                "detalhe": PERFIL.fontes.censo.detalhe,
             },
             {
                 "nome": F_CONC,
@@ -3728,13 +3744,7 @@ def montar_metodologia() -> dict[str, Any]:
             },
             {
                 "nome": F_CRES,
-                "detalhe": (
-                    "As quatro leituras de movimento do município: emprego formal e salário "
-                    "de admissão (CAGED mensal, apoiado no estoque da RAIS), abertura e "
-                    "fechamento de empresas (Receita Federal), renda e população (IBGE) e a "
-                    "área construída medida por satélite entre 2016 e 2023. Não entra em "
-                    "nenhum corte do funil — é o retrato de para onde a cidade vem andando."
-                ),
+                "detalhe": PERFIL.fontes.crescimento.detalhe,
             },
         ],
         "camadas": [
@@ -3756,9 +3766,12 @@ def montar_metodologia() -> dict[str, Any]:
                         "regra": (
                             "Dois insumos do setor censitário, com pesos fixos e em régua "
                             "ABSOLUTA: a renda per capita calibrada (peso 0,60), numa escala "
-                            "linear em que R$ 300 vale 0 e R$ 4.000 vale 100; e a população do "
-                            "setor (peso 0,40), numa escala logarítmica em que 1.000 habitantes "
-                            "valem 0 e 100.000 valem 100. Absoluta quer dizer que o mesmo par "
+                            f"linear em que {_moeda(PERFIL.reguas.renda_abs_min)} vale 0 e "
+                            f"{_moeda(PERFIL.reguas.renda_abs_max)} vale 100; e a população do "
+                            "setor (peso 0,40), numa escala logarítmica em que "
+                            f"{_mil(PERFIL.reguas.pop_abs_min)} habitantes "
+                            f"valem 0 e {_mil(PERFIL.reguas.pop_abs_max)} valem 100. "
+                            "Absoluta quer dizer que o mesmo par "
                             "de renda e população dá a mesma nota em qualquer cidade do país — "
                             "é o que permite comparar praças entre municípios. Até agosto de "
                             "2026 os dois termos eram percentis (renda contra o Brasil, "
@@ -4713,6 +4726,7 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         ibge_dir=IBGE_DIR,
         ultra_dir=ULTRA_DIR,
         staging_dir=STAGING_DIR,
+        perfil=PERFIL,
     )
 
     try:
@@ -5453,6 +5467,7 @@ def _setores_para_catchment(lat: Any, lng: Any) -> pd.DataFrame | None:
             ibge_dir=IBGE_DIR,
             ultra_dir=ULTRA_DIR,
             staging_dir=STAGING_DIR,
+            perfil=PERFIL,
         )
         _uf, _cod, setores_df = _resolver_e_carregar(float(lat), float(lng), cfg)
         return setores_df
@@ -7968,6 +7983,7 @@ def _gerar_relatorio_municipal_response(body: RelatorioMunicipalIn) -> Response:
         ibge_dir=IBGE_DIR,
         ultra_dir=ULTRA_DIR,
         staging_dir=STAGING_DIR,
+        perfil=PERFIL,
     )
     comp_df, ultra_df = _competitors_ultra(cfg)
 
@@ -8237,6 +8253,7 @@ def _gerar_relatorio_pontual_pdf(
         ibge_dir=IBGE_DIR,
         ultra_dir=ULTRA_DIR,
         staging_dir=STAGING_DIR,
+        perfil=PERFIL,
     )
 
     try:
