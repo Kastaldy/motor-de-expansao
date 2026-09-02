@@ -3666,6 +3666,114 @@ seguem em 1,5 km — são outro escopo.
 
 ---
 
+### BLK-RELPON-16 — O Relatório Pontual passa a enxergar as independentes, e o critério de concorrência se separa em dois
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (muda o significado de um campo do contrato da API e o insumo de um critério PASS/FAIL de decisão de imóvel; READ-ONLY sobre o M1) |
+| **Esteira** | Block Orchestrator → Planner → **[aprovação humana]** → Builder → QA |
+| **Depende de** | `BLK-MA-19` (aplicação dos 2 parquets na VPS) para o efeito NO AR; o código não depende |
+| **Status** | **Código pronto** (PR aberto): união + separação do critério + marcador + testes + contratos. Aguarda merge humano e, para o efeito NO AR, a aplicação do `BLK-MA-19` na VPS |
+| **Autonomia** | **NÃO loop-safe** — toca `src/motor_expansao/api/` e `web/`, servidos em produção (classe governança no `loop_guard`), e exige deploy de dado na VPS |
+| **Decisão** | [DEC-046](../docs/decisions/DEC-046.md) — APROVADA |
+
+#### Problema
+
+`_competitors_ultra` (`src/motor_expansao/api/service.py:171-179`) lê só
+`("rede","lat","lng")` de `concorrentes_mapeados.parquet` — cadastro de **cadeias**, zero
+independentes por construção. Medido: **53,46%** dos endereços urbanos do país devolvem ZERO
+concorrente em 1 km; 13 das 40 maiores cidades saem zeradas no centro, o Rio incluído. Em
+Londrina o relatório desenha 1 academia onde existem 9.
+
+Na mesma função, `status_registro` não é aplicado — enquanto `_carregar_concorrentes`
+(`web/server/app.py:1433`, filtro em `:1470`) aplica. Dois leitores do mesmo arquivo, regras
+diferentes, no mesmo processo: num ponto do Rio a API conta **77** onde há **11** válidos.
+
+#### Escopo
+
+Rota do **Relatório Pontual** (PDF do bot/API e PDF do piloto) e `/api/ponto`.
+A rota **municipal fica FORA** (`web/server/app.py:7854` intacto) — `relatorio_municipal.py`
+é classe CRÍTICO no guard e o defeito medido não é dele.
+
+#### Passos
+
+**P0 — Cobertura ANTES da mudança (obrigatório).**
+`grep -rn "_competitors_ultra" tests/` devolve 3 ocorrências: duas **desligam** a função por
+monkeypatch e uma é menção em docstring. **Nenhum teste trava o comportamento atual**, então
+quase nenhum quebraria — a união entraria nas rotas de produção sem que a suíte a enxergasse.
+Criar teste hermético com os 3 parquets sintéticos em `tmp_path`.
+
+**P1 — `_competitors_ultra` passa a unir as 3 fontes.**
+Lê `concorrentes_mapeados` (com `status_registro == "valido"`), `vulnerabilidade_ma_redes`
+(honrando `tem_pin_proprio`) e `vulnerabilidade_ma_nomeadas`. Acrescenta a coluna `classe`
+(`"cadeia"` / `"independente"`, cru, sem acento), derivada da origem. Dedup das independentes
+por distância pura ≤ 50 m (D5 da DEC-046). Devolve também quais fontes entraram.
+Custo medido: **42,0 ms a frio / 16,3 ms quente, 3,43 MB residentes** sob `lru_cache`, contra
+`mem_limit: 6g` — irrelevante.
+
+**P2 — Contagem separada.**
+`censo_point.analisar_ponto_censitario_setores` passa a expor `n_concorrentes_cadeia` e
+`n_academias_total` além de `n_concorrentes` (que mantém o nome e passa a valer o total).
+`web/server/app.py:4584` troca o insumo do `crit("concorrentes", ...)` para
+`n_concorrentes_cadeia`. **`CRIT_PONTO_CONC_MAX = 3` (`:188`) NÃO muda.**
+
+**P3 — Gate de procedência (D7).**
+O bloco de concorrência do payload carrega `fontes_unidas`. Faltando qualquer uma das três, o
+critério **não emite veredito** (marca provisório) em vez de PASSAR por ausência de dado.
+Sem isto, o estado ATUAL da VPS aprovaria pontos saturados em silêncio.
+
+**P4 — Marcador do independente (aditivo).**
+`_paste_logo_pin` (`censo_map.py:518`) ganha ramo alcançado **só quando `rede` está vazia**:
+marcador WellHub de 20 px, desenhado ANTES das cadeias. Registrar a chave `__wellhub__` fora
+do laço de `COMPETITOR_LOGO_FILES`; o arquivo `web/public/logo-wellhub.png` **já está na
+imagem da API** (o `.dockerignore` corta só `web/node_modules/` e `web/dist/`).
+Restrição: preservar a byte-identidade que `test_camadas_existentes_ficam_byte_identicas...`
+e `test_shared_transformer_bytes_identicos` cobram.
+
+**P5 — Rótulos que passariam a mentir.**
+(i) `web/server/app.py:3518` → "nenhuma **cadeia** mapeada em 2 km" (1.390 hexes densos
+marcados white space têm > 0 academia da união em 1 km).
+(ii) Os dois cards de `censo_report.py` ganham rótulo de universo — hoje "Concorrentes no raio"
+espelha a cor do card de consumo e imprimiria 14 em VERDE.
+(iii) A faixa "Redes no raio" traduz slug de cadeia para label de exibição — hoje sairia
+`force_one, allp_fit, Academia Pura Vida`, misturando snake_case com nome próprio.
+
+**P6 — Cap da lista.**
+`web/server/app.py:4758` (`head(30)`) ganha campo `truncado`. Hoje o máximo medido é 19; com a
+união, 2 das 150 sondas passam de 30. Sem o campo, `leituraDeAglomeracao` e `ReguaConcorrentes`
+afirmam a densidade errada.
+
+**P7 — Rótulo do independente no payload.**
+Independente tem `nome`, não `rede`. Decidir o que ocupa o campo, senão 19 mil academias viram
+a mesma palavra genérica na tela (`web/src/lib/concorrentes.test.ts:110/117` travam isto).
+
+**P8 — Contratos e deploy.**
+Emendar `docs/relatorio_pontual_censitario.md` (§6 l. 183 — a regra do marcador —, e §5, §7),
+`docs/api_geoespacial_contrato.md:193/202` e o OpenAPI. Acrescentar os 2 parquets à tabela de
+pré-condições de `docs/deploy_api_bot.md:37` e o **`docker restart` da `api` E do
+`telegram-bot`** (processos separados, cache próprio). Expor os 3 artefatos no `/health` da
+API (`src/motor_expansao/api/main.py:181-187`, hoje sem inventário nenhum), espelhando
+`_artefatos_observados` (`web/server/app.py:3236`).
+
+#### Aceite
+
+1. Ponto de Londrina (`-23.31896, -51.15666`): a união devolve **9** academias em 1 km, com
+   `classe` correta — 2 cadeia, 7 independente.
+2. Ponto do Rio (`-22.95020, -43.18846`): `n_concorrentes` cai de 77 para o número de válidos.
+3. `n_concorrentes_cadeia` das 150 sondas Ultra reproduz **27 reprovações** — o mesmo de hoje.
+   Este é o teste que prova que a régua não se moveu.
+4. Faltando um parquet, o critério de concorrência sai **sem veredito**, não PASS.
+5. Suíte verde com `PYTHONPATH` apontando para o worktree (senão testa o checkout principal).
+6. Os números do universo são medidos **na implementação**, não copiados desta página:
+   `tem_pin_proprio = True` são 851 no artefato de 18/08 contra 1.171 na DEC-034.
+
+#### Fora de escopo
+
+Recalcular SAM/residual com a união (a 2.500 alunos/unidade o residual vai a −73.411 em
+Augusta/SP); a rota municipal; mexer em `CRIT_PONTO_CONC_MAX`; qualquer artefato do M1.
+
+---
+
 ### BLK-EXEC-COORD-01 — Pins da Visão Executiva: a lista tinha 85 unidades e o mapa, 52
 
 | Campo | Valor |
