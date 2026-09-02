@@ -92,7 +92,8 @@ python -m motor_expansao.db aplicar
 python -m motor_expansao.db conferir
 ```
 
-Em seguida, o `sql/papeis-e-privilegios.md` do `banco-de-reservas` por `psql`, exatamente como no
+Em seguida, o `sql/papeis-e-privilegios.md` do `banco-de-reservas` — por `psql` ou pelo Query Tool
+do pgAdmin, tanto faz desde 02/09 —, exatamente como no
 §6 — inclusive os blocos de validação e teste dele, e o de append-only **depois** do `ALTER TABLE`.
 
 ### 1.3 Exercitar o RBAC sem Authelia
@@ -259,7 +260,7 @@ Rode o conteúdo dele por `psql` dentro do container, trocando as duas senhas de
 
 ```bash
 docker exec -it motor_expansao_postgres \
-  psql -U reservas_owner -d banco_de_reservas -v DBNAME=banco_de_reservas
+  psql -U reservas_owner -d banco_de_reservas
 ```
 
 Três pontos do script que não são "boa prática de segurança" genérica:
