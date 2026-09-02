@@ -164,7 +164,14 @@ jobs:
           # de viabilidade — sem eles a imagem ficava STALE quando o motor mudava (era o
           # gotcha documentado no CLAUDE.md §2; o PR #237 mudaria a escala da renda no web
           # e deixaria API publica + bot na escala antiga ate um republish manual).
-          if git diff --name-only "$BASE" "${{ github.sha }}" | grep -qE '^(Dockerfile\.api|src/motor_expansao/api/|src/motor_expansao/dashboard/|src/motor_expansao/dimensionamento/|pyproject\.toml$)'; then
+          # `perfil.py` entra no filtro (2026-09-02, Bloco A / DEC-047): desde o commit A4 a
+          # imagem da API IMPORTA o loader do perfil — `api/coord.py` e `api/maps_geocoder.py`
+          # leem `resolver_perfil()` no import. Sem esta linha, uma mudanca SO no loader
+          # (um campo novo no schema, uma validacao corrigida) nao rebuildaria a imagem, e a
+          # API ficaria com o loader velho lendo um `perfil.json` novo. E a MESMA classe do
+          # gotcha que trouxe `dashboard/` para ca em 2026-08-14 — a diferenca e que aqui a
+          # falha e' de CONTRATO, nao de numero: o container pode ate subir e ler errado.
+          if git diff --name-only "$BASE" "${{ github.sha }}" | grep -qE '^(Dockerfile\.api|src/motor_expansao/api/|src/motor_expansao/dashboard/|src/motor_expansao/dimensionamento/|src/motor_expansao/perfil\.py$|pyproject\.toml$)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"; echo "arquivos da API mudaram -> publica"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"; echo "nada da API mudou -> pula build"
@@ -272,7 +279,10 @@ jobs:
           if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE" 2>/dev/null; then
             echo "changed=true" >> "$GITHUB_OUTPUT"; echo "sem base comparavel -> publica"; exit 0
           fi
-          if git diff --name-only "$BASE" "${{ github.sha }}" | grep -qE '^(Dockerfile\.web|web/|src/motor_expansao/(dashboard|dimensionamento|api)/|pyproject\.toml$)'; then
+          # `perfil.py` pelo mesmo motivo do `publish-api` (ver o comentario la'): desde o
+          # commit A3 o `web/server/app.py` resolve o perfil NO IMPORT, entao esta imagem
+          # depende do loader tanto quanto a outra.
+          if git diff --name-only "$BASE" "${{ github.sha }}" | grep -qE '^(Dockerfile\.web|web/|src/motor_expansao/(dashboard|dimensionamento|api)/|src/motor_expansao/perfil\.py$|pyproject\.toml$)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"; echo "arquivos do web mudaram -> publica"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"; echo "nada do web mudou -> pula build"
