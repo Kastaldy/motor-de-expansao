@@ -1,4 +1,5 @@
 import { latLngToCell } from 'h3-js'
+import { useUfsDaBase } from '../lib/base-contexto'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import type { PontoEscolhido } from '../App'
@@ -20,6 +21,7 @@ import { alunos, coord, num } from '../lib/format'
 import { ACC, ACC_50 } from '../lib/imovel'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
+import { rodapeDaBase, tituloEscolhaUnidade } from '../lib/rodape-base'
 import type { AlvoCaptura } from '../lib/captura-mapa'
 import { DIMENSOES, rotuloDoHex, rotulosDosHexes } from '../lib/comparacao'
 import type { Tema } from '../lib/tema'
@@ -735,7 +737,7 @@ export default function MapScreen({
     return (
       <Landing
         marcador="Explorar uma região"
-        titulo="Escolha o estado"
+        titulo={tituloEscolhaUnidade(ufs)}
         explicacao="O mapa lê o território inteiro e monta a sequência de camadas — do potencial socioeconômico até os municípios com mais espaço para abrir."
         onInicio={onInicio}
       >
@@ -1467,6 +1469,7 @@ export function Landing({
   /** O controle da tela: o seletor de estado, a caixa de colar, o que o modo pedir. */
   children: ReactNode
 }) {
+  const ufsDaBase = useUfsDaBase()
   return (
     <div
       style={{
@@ -1525,15 +1528,19 @@ export function Landing({
 
         <div style={{ marginTop: 30 }}>{children}</div>
 
-        <p
-          style={{
-            font: '400 11.5px/1.5 var(--f-ui)',
-            color: 'var(--tx-sub)',
-            margin: '18px 0 0',
-          }}
-        >
-          27 estados · Censo 2022 (IBGE) + rede Ultra e concorrentes mapeados · camada visual read-only
-        </p>
+        {/* Sem base carregada nao ha' procedencia a declarar — o <p> inteiro sai, em
+            vez de anunciar "0 estados". */}
+        {rodapeDaBase(ufsDaBase) && (
+          <p
+            style={{
+              font: '400 11.5px/1.5 var(--f-ui)',
+              color: 'var(--tx-sub)',
+              margin: '18px 0 0',
+            }}
+          >
+            {rodapeDaBase(ufsDaBase)}
+          </p>
+        )}
       </div>
     </div>
   )

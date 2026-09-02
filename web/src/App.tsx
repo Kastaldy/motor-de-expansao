@@ -15,6 +15,7 @@ import { abasDoPayload, modosLiberados, telaInicial, telaLiberada, type Aba } fr
 import { api, ApiError } from './lib/api'
 import type { AlvoCaptura } from './lib/captura-mapa'
 import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
+import { BaseProvider } from './lib/base-contexto'
 import { paisDaBase } from './lib/pais-da-base'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
 import type { Tema } from './lib/tema'
@@ -377,6 +378,7 @@ export default function App() {
   )
 
   return (
+    <BaseProvider ufs={ufs}>
     <div
       style={{
         height: '100vh',
@@ -433,7 +435,9 @@ export default function App() {
               onCapturarMapas={capturarMapas}
               onAnalisarPonto={irParaViabilidade}
               onLocalizar={localizarPonto}
-              mapaPronto={dados != null}
+              /* `mapaPronto` saiu (2026-08-26): o território carregado aqui dizia "sim"
+                 para sempre depois da primeira análise, e era o que impedia a tela de
+                 entrada do modo de voltar. Ver o bloco `semMapa` no `PontoScreen`. */
               pedido={pedidoPonto}
               onLimparPin={limparPinPonto}
               onInicio={voltarAoInicio}
@@ -574,5 +578,6 @@ export default function App() {
         />
       )}
     </div>
+    </BaseProvider>
   )
 }

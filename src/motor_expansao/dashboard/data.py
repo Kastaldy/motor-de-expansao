@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
@@ -35,6 +36,8 @@ from motor_expansao.pipelines.pop_corte import (
 from motor_expansao.pipelines.pop_corte import (
     normalized_join_quality as _normalized_join_quality_impl,
 )
+
+_LOG = logging.getLogger("piloto.dados")
 
 
 def _read_parquet_subset(path: Path, columns: list[str]) -> pd.DataFrame:
@@ -161,7 +164,26 @@ def read_censo_geo_partition(
         cod_value = str(cod_municipio)
         part_dir = base / f"uf={uf_value}" / f"cod_municipio={cod_value}"
         if part_dir.is_dir():
-            frame = pd.read_parquet(part_dir)
+            try:
+                frame = pd.read_parquet(part_dir)
+            except Exception:
+                # Particao ILEGIVEL (parquet truncado/corrompido) e' o mesmo desfecho
+                # pratico de particao AUSENTE: nao ha censo para este municipio. Devolver
+                # vazio faz o chamador cair no 404 "base_geo_ausente", que ja diz ao
+                # operador exatamente o que fazer -- em vez de estourar ArrowInvalid e
+                # virar 500 sem mensagem.
+                #
+                # NAO e' um `except` cosmetico: registra em ERROR de proposito, porque
+                # arquivo corrompido em producao e' incidente, nao estado normal.
+                # Encontrado em 2026-08-31 em uf=CE/cod_municipio=2313955 (Varjota, 26
+                # hexagonos, 18.105 habitantes), corrompido pela migracao do artefato
+                # para a regua absoluta da DEC-040 -- que subia por scp sem conferir
+                # integridade depois de gravar.
+                _LOG.error(
+                    "particao_geo_ilegivel uf=%s cod_municipio=%s dir=%s",
+                    uf_value, cod_value, part_dir,
+                )
+                return pd.DataFrame()
             if "uf" not in frame.columns:
                 frame["uf"] = uf_value
             if "cod_municipio" not in frame.columns:

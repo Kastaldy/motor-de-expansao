@@ -244,6 +244,27 @@ export interface Pin {
   label?: string
   nome: string
   /**
+   * Nome do ARQUIVO da foto desta unidade, servido por `/api/foto-concorrente/<arquivo>`.
+   *
+   * Nome e não URL porque quem decide onde a pasta mora é o servidor (`MOTOR_COMPETITORS_
+   * PHOTO_DIR`), e porque um caminho vindo do dado seria entrada não confiável chegando
+   * pronta na tela. Ausente na maioria: só a camada coletada na web traz imagem — o POI de
+   * mapa aberto não tem nenhuma.
+   */
+  foto?: string | null
+  /**
+   * A foto deve ser o ÍCONE deste pino, e não só a capa do balão.
+   *
+   * Vem `true` quando a rede não tem logo — o caso de toda independente, que sem isso
+   * aparece como quadrado cinza com "IND". Quem TEM marca mantém a marca: reconhecer um
+   * SportClub no mapa vale mais que ver a fachada daquela unidade.
+   *
+   * Quem decide é o SERVIDOR, que sabe quais arquivos de logo existem, e ele também aplica
+   * o teto de quantos pinos podem virar imagem numa mesma vista (o atlas de textura do
+   * deck.gl não é infinito).
+   */
+  icone_foto?: boolean
+  /**
    * `true` quando esta unidade veio do feed de um agregador (WellHub/TotalPass) e por isso temos
    * DADOS EXTRAS sobre ela — pressão medida da coordenada dela, nota, presença na série.
    *

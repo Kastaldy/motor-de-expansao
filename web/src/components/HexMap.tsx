@@ -67,6 +67,22 @@ function iconeDeck(url: string): IconeDeck {
 // esta marca; as unidades de REDE seguem com a bandeira propria (iconObjs por rede em `conc-pins`).
 const ICONE_WELLHUB: IconeDeck = iconeDeck('/logo-wellhub.png')
 
+/* Icones de FOTO, um por unidade sem marca — memoizados por arquivo.
+   Passa pelo MESMO `iconeDeck` das marcas, e isso nao e' cosmetico: sem `anchorX/anchorY`
+   o deck.gl ancora no rodape da imagem e o pino sai deslocado meio icone; sem `mask: false`
+   ele pinta a imagem com `getColor` em vez de mostra-la.
+   E o objeto precisa ser ESTAVEL entre renders: devolver um literal novo a cada chamada de
+   `getIcon` faz o atlas ser reempacotado a cada quadro. */
+/* Objeto simples, e nao `Map`: neste arquivo `Map` e' o componente do `react-map-gl`
+   (import no topo), que sombreia o `Map` do JS. */
+const _fotoIcones: Record<string, IconeDeck> = {}
+function iconeDaFoto(arquivo: string): IconeDeck {
+  const ic =
+    _fotoIcones[arquivo] ??
+    (_fotoIcones[arquivo] = iconeDeck(`/api/pin-concorrente/${encodeURIComponent(arquivo)}`))
+  return ic
+}
+
 /* ---------------------------------------------------------------------------
    Mapa de hexagonos H3 res-7 sobre basemap MapLibre.
 
@@ -816,6 +832,28 @@ export default function HexMap({
         extruded: false,
         filled: true,
         stroked: true,
+        /* GEOMETRIA FIEL — o default `highPrecision: 'auto'` nao serve aqui.
+
+           'auto' so' liga a precisao alta com globo, pentagono no dataset, resolucoes
+           misturadas ou res<=5. Nada disso vale nesta camada (tudo res-7, mercator),
+           entao ela cai no caminho rapido: o deck.gl calcula os 6 vertices de UM
+           hexagono — o do centro da tela — e desenha todos os outros como aquele mesmo
+           poligono TRANSLADADO. Longe do centro o clone deixa de bater com a celula H3
+           real: as celulas saem inclinadas e abrem fresta entre as vizinhas.
+
+           E ele so' recalcula quando o centro anda alem de um limiar — por isso a torcao
+           ANDA ao dar zoom ou arrastar (relato do Juan, 2026-08-26: "se eu coloco zoom e
+           tiro, os hexagonos ficam tortos").
+
+           DOI MUITO MAIS NA ARGENTINA, e por isso o Brasil nunca reclamou: um pentagono
+           H3 res-7 fica a 504 km da costa argentina (-39,10/-57,70) e comprime a grade em
+           volta. Erro maximo medido, invariante a rotacao: Grande Sao Paulo 10 m (1% da
+           aresta), Estado de SP 81 m (6%), Grande Buenos Aires 1.089 m — 77% da aresta de
+           1.406 m. A armadilha: 'auto' ligaria a precisao se houvesse pentagono NO
+           DATASET, mas esse esta no oceano, onde nunca havera hexagono povoado.
+
+           Com 42 mil celulas, sem custo perceptivel. */
+        highPrecision: true,
         getFillColor: (d) => {
           const comRaio = raio1km && PASSOS_DA_PRESSAO.has(passo.n)
           // Transparente onde a cobertura ja pinta o hexagono inteiro (ver `hexesCobertos`).
@@ -1063,6 +1101,19 @@ export default function HexMap({
         // Unidade com diagnostico usa a variante com HALO. O fallback para o icone normal importa:
         // se o backend nao mandou a variante, o pin aparece igual aos outros em vez de sumir.
         getIcon: (d) =>
+          /* FOTO NO LUGAR DO QUADRADO. A independente não tem logo e caía num quadrado
+             cinza com "IND" — três letras iguais em milhares de pinos, que não distinguem
+             nada (pedido do Juan, 2026-08-26). Com a foto da unidade, cada pino vira a
+             fachada dela.
+
+             O ícone é montado AQUI, e não recebido pronto em `pins.icones` como as marcas:
+             logo é da REDE e são ~12 no país inteiro, cabendo num dicionário; foto é da
+             UNIDADE e são milhares — embuti-las no payload o levaria a centenas de MB. Por
+             URL, o deck.gl empacota sozinho e o navegador guarda em cache.
+
+             Quem decide QUAIS pinos entram é o servidor (`icone_foto`): ele sabe quais
+             logos existem e aplica o teto do atlas. */
+          (d.icone_foto && d.foto ? iconeDaFoto(d.foto) : undefined) ??
           (d.diag ? iconObjs[`${d.rede ?? ''}__diag`] : undefined) ??
           iconObjs[d.rede ?? ''] ??
           iconObjs.__ultra__,
@@ -1195,6 +1246,9 @@ export default function HexMap({
           extruded: false,
           filled: true,
           stroked: true,
+          /* Mesma razao da camada `hex`: o realce do ponto buscado tem de POUSAR
+             exatamente sobre a celula de baixo. */
+          highPrecision: true,
           getFillColor: pele.selecaoTenue,
           getLineColor: pele.selecao,
           getLineWidth: 3,
@@ -1756,6 +1810,32 @@ export default function HexMap({
             maxWidth: 240,
           }}
         >
+          {/* FOTO DA UNIDADE, quando a base a trouxe (pedido do Juan, 2026-08-26).
+              Vem ANTES do nome, como capa: quem passa o mouse quer reconhecer a casa, e a
+              foto faz isso mais rapido que o texto. `onError` esconde a imagem em vez de
+              deixar o icone de quebrado — a base pode citar um arquivo que sumiu, e um
+              retangulo vazio le pior que nenhum. `loading="lazy"` porque o balao troca a
+              cada pino sob o cursor: sem isso, arrastar o mouse pelo mapa dispararia uma
+              requisicao por unidade tocada. */}
+          {pinHover.d?.foto && (
+            <img
+              src={`/api/foto-concorrente/${encodeURIComponent(pinHover.d.foto)}`}
+              alt=""
+              loading="lazy"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none'
+              }}
+              style={{
+                display: 'block',
+                width: '100%',
+                height: 96,
+                objectFit: 'cover',
+                borderRadius: 'var(--r-sm)',
+                marginBottom: 7,
+                background: 'var(--surf-raised)',
+              }}
+            />
+          )}
           <div style={{ font: '600 12px/1.2 var(--f-ui)', color: 'var(--tx-max)' }}>
             {pinHover.titulo}
           </div>

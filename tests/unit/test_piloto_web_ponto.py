@@ -339,5 +339,8 @@ def test_lista_de_concorrentes_vem_ordenada_por_distancia() -> None:
     assert lista, "com concorrencia disponivel a lista nao pode vir vazia"
     dists = [c["dist_km"] for c in lista if c["dist_km"] is not None]
     assert dists == sorted(dists)
-    # DataFrame nao e' JSON: se vazasse cru, isto quebraria.
-    assert all(set(c) == {"rede", "dist_km"} for c in lista)
+    # DataFrame nao e' JSON: se vazasse cru, isto quebraria. `classe` entrou pela DEC-046
+    # (a tela precisa distinguir cadeia de independente sem inferir pelo formato da string);
+    # o conjunto segue FECHADO de proposito, para o vazamento continuar sendo detectado.
+    assert all(set(c) == {"rede", "classe", "dist_km"} for c in lista)
+    assert all(c["classe"] in {"cadeia", "independente"} for c in lista)

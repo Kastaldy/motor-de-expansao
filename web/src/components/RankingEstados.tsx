@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { useUfsDaBase } from '../lib/base-contexto'
+import { nomeDasUnidades } from '../lib/rodape-base'
 
 import { Aviso, Chip, Eyebrow, Spinner } from './primitives'
 import { api, ApiError } from '../lib/api'
@@ -25,6 +27,7 @@ export default function RankingEstados({
   ufSelecionada: string
   onEscolher: (uf: string) => void
 }) {
+  const ufs = useUfsDaBase()
   const [estados, setEstados] = useState<EstadoRanking[] | null>(null)
   const [erro, setErro] = useState<string | null>(null)
   const [tudo, setTudo] = useState(false)
@@ -40,7 +43,7 @@ export default function RankingEstados({
     }
   }, [])
 
-  if (erro) return <Aviso titulo="Não deu para ler o ranking de estados" corpo={erro} />
+  if (erro) return <Aviso titulo="Não deu para ler o ranking" corpo={erro} />
 
   if (!estados) {
     return (
@@ -54,7 +57,7 @@ export default function RankingEstados({
           margin: 0,
         }}
       >
-        <Spinner /> Comparando os 27 estados…
+        <Spinner /> Comparando {nomeDasUnidades(ufs)}…
       </p>
     )
   }

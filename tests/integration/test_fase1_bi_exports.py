@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -322,7 +324,13 @@ def test_read_censo_trace_le_as_tres_fontes_incluindo_a_nacional(tmp_path, monke
     monkeypatch.setattr(bi, "CENSO_NACIONAL_PATH", nacional)
     monkeypatch.setattr(bi, "CENSO_VALIDATED_PATH", validado)
 
-    trace = bi._read_censo_trace_frame()
+    # `malha_path` aponta de proposito para um caminho INEXISTENTE: este teste e' de
+    # PRECEDENCIA entre as tres fontes, nao da sobreposicao da malha (que tem contrato
+    # proprio em tests/contracts/test_censo_hex_da_malha.py). Sem o parametro explicito
+    # o resultado dependeria de o artefato estar materializado no checkout -- verde no
+    # CI, vermelho na maquina de quem tem os dados.
+    _SEM_MALHA = Path("__sem_malha__.parquet")
+    trace = bi._read_censo_trace_frame(malha_path=_SEM_MALHA)
 
     assert set(trace["hex_id"]) == {"h_core", "h_exp", "h_nac"}, (
         "o censo nacional nao foi lido -- o enriquecido volta a cobrir so 6 UFs"
