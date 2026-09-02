@@ -429,7 +429,21 @@ def test_cli_defaults() -> None:
 def test_main_imprime_fontes_publicadas_em_formato_fixo(
     origem: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """O shell le ESTA linha com `grep`/`cut`; nunca o dicionario Python, que muda de forma."""
+    """O shell le ESTA linha com `grep`/`cut`; nunca o dicionario Python, que muda de forma.
+
+    O FEED E' REFRESCADO CONTRA O RELOGIO REAL de proposito. `cur.main` e' o caminho da CLI, e
+    so' a funcao interna aceita `agora` injetado -- a CLI cai em `datetime.now()`. Enquanto este
+    teste dependia do `data_coleta` default da fixture (uma data FIXA), ele passava so' enquanto
+    o calendario nao andasse: a data venceu a regua de 7 dias em 2026-08-31 e o teste comecou a
+    falhar sozinho, sem nenhuma mudanca de codigo, derrubando o check `test` de TODO PR do
+    repositorio. E' o mesmo padrao que o teste irmao (`..._com_tudo_velho_...`) ja' usava para o
+    caso oposto -- ele envelhece contra `datetime.now()` em vez de confiar na data da fixture.
+    """
+    agora_real = datetime.now(tz=UTC)
+    for arquivo in origem.rglob("*.csv"):
+        _envelhecer_conteudo(arquivo, 1, agora=agora_real)
+        _envelhecer(arquivo, 1.0, agora=agora_real)
+
     rc = cur.main(
         [
             "--origem",
