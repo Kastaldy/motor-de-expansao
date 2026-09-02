@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Motor de Expansão — sem país liberado</title>
+
+<!--
+================================================================================
+  PORTAL DE ENTRADA — ultra-expansao.tech (raiz), estado "sem país nenhum"
+  Spec: docs/spec_portal_selecao_pais.md §5.2, §5.4 e §10 item 3.
+================================================================================
+
+  QUANDO ESTA PÁGINA APARECE
+  --------------------------
+  Só pelo `handle @sem_pais` do bloco raiz do `Caddyfile` (spec §2.3):
+
+      @sem_pais { not header Remote-Groups *expansao_* }
+      handle @sem_pais { rewrite * /sem-acesso.html; file_server }
+
+  Ou seja: usuário AUTENTICADO (o `forward_auth` já rodou — este arquivo nunca é
+  servido a anônimo) que não está em nenhum grupo `expansao_*`. Enquanto o
+  BLK-INTL-05 não criar os grupos, este é o estado dos 19 usuários, que hoje estão
+  todos e apenas em `ultra_team`. É exatamente por isso que este arquivo TEM de
+  existir antes de o bloco do §2.3 entrar no `Caddyfile`: sem ele, o `file_server`
+  devolve o 404 cru do Caddy, em inglês, na porta de entrada da empresa — o
+  oposto do "não um 403 seco" do §1.1.
+
+  DUAS REGRAS QUE NÃO PODEM SER QUEBRADAS AQUI
+  --------------------------------------------
+  1. **Esta página não nomeia país nenhum** — nem no conteúdo visível, nem em
+     comentário. Comentário HTML viaja no corpo da resposta como qualquer outro
+     byte, então escrever o nome de um país aqui vaza igual. Quem chega nesta
+     página é justamente quem não tem acesso a país nenhum, e a lista de países é
+     o roteiro de expansão internacional — é o mesmo motivo pelo qual a raiz exige
+     `one_factor` em vez de `bypass` (§6.2). O aceite §7.2 item 8 verifica isso
+     com `grep` sobre o corpo da resposta.
+  2. **Sem ação de template.** O `handle @sem_pais` NÃO tem a diretiva `templates`
+     (não precisa: não há nada condicional aqui). Um par de chaves duplas neste
+     arquivo, mesmo dentro de comentário, seria servido como texto literal ao
+     usuário. Não escreva nenhum.
+
+  O texto de suporte ("fale com o Felipe") é o mesmo do aviso ao time do §4.1 e o
+  mesmo do bloco `.sem-acesso` do `index.html` — os três têm de dizer a mesma
+  coisa. Se o canal mudar, mude nos três.
+
+  CSS: subconjunto exato do `index.html`, mesmos tokens de `web/src/styles/tokens.css`.
+  Zero JavaScript, zero asset externo, zero fonte remota — a CSP do bloco raiz é
+  `default-src 'none'`.
+================================================================================
+-->
+
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#080b10" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#eef2f6" media="(prefers-color-scheme: light)">
+<meta name="robots" content="noindex, nofollow">
+
+<style>
+:root {
+  --bg-base: #080b10;
+  --surf-raised: rgba(255, 255, 255, 0.03);
+
+  --line-soft: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.12);
+
+  --tx-max: #eef3f8;
+  --tx-strong: #e6edf3;
+  --tx-narrative: #9aa7b5;
+  --tx-muted: #7b8794;
+
+  --ac: #35c9d6;
+  --ac-text: #4fd3df;
+  --ac-a12: rgba(53, 201, 214, 0.12);
+
+  --ultra: #c8001e;
+
+  --f-ui: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --f-story: Georgia, 'Times New Roman', serif;
+  --f-num: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --r-2xl: 16px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-tema='escuro']) {
+    --bg-base: #eef2f6;
+    --surf-raised: rgba(13, 27, 42, 0.06);
+    --line-soft: rgba(13, 27, 42, 0.1);
+    --line-strong: rgba(13, 27, 42, 0.2);
+    --tx-max: #0b1219;
+    --tx-strong: #16202b;
+    --tx-narrative: #45566a;
+    --tx-muted: #5d7085;
+    --ac: #0e8e9c;
+    --ac-text: #0a7180;
+    --ac-a12: rgba(14, 142, 156, 0.12);
+    --ultra: #b30019;
+  }
+}
+
+:root[data-tema='claro'] {
+  --bg-base: #eef2f6;
+  --surf-raised: rgba(13, 27, 42, 0.06);
+  --line-soft: rgba(13, 27, 42, 0.1);
+  --line-strong: rgba(13, 27, 42, 0.2);
+  --tx-max: #0b1219;
+  --tx-strong: #16202b;
+  --tx-narrative: #45566a;
+  --tx-muted: #5d7085;
+  --ac: #0e8e9c;
+  --ac-text: #0a7180;
+  --ac-a12: rgba(14, 142, 156, 0.12);
+  --ultra: #b30019;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { color-scheme: dark; }
+@media (prefers-color-scheme: light) { html:not([data-tema='escuro']) { color-scheme: light; } }
+html[data-tema='claro'] { color-scheme: light; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--bg-base);
+  color: var(--tx-strong);
+  font: 14px/1.5 var(--f-ui);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px max(20px, env(safe-area-inset-left)) 40px max(20px, env(safe-area-inset-right));
+  gap: 34px;
+}
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(60% 50% at 50% 0%, var(--ac-a12), transparent 70%);
+  z-index: 0;
+}
+body > * { position: relative; z-index: 1; width: 100%; max-width: 680px; }
+
+.marca { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+.marca::before {
+  content: '';
+  width: 3px;
+  height: 26px;
+  border-radius: 2px;
+  background: var(--ultra);
+  flex-shrink: 0;
+}
+.marca-txt {
+  font: 600 11px/1 var(--f-ui);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--tx-muted);
+}
+
+h1 {
+  margin: 0;
+  font: 400 clamp(26px, 6vw, 38px)/1.15 var(--f-story);
+  letter-spacing: 0.005em;
+  color: var(--tx-max);
+}
+
+.aviso {
+  padding: 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-2xl);
+  background: var(--surf-raised);
+}
+.aviso p { margin: 0 0 10px; color: var(--tx-narrative); font-size: 15px; }
+.aviso p:last-child { margin-bottom: 0; }
+.aviso strong { color: var(--tx-strong); font-weight: 600; }
+
+footer {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 16px;
+  color: var(--tx-muted);
+  font-size: 12px;
+}
+footer p { margin: 0 0 6px; }
+footer p:last-child { margin-bottom: 0; }
+footer a {
+  font: 400 11.5px/1.3 var(--f-num);
+  color: var(--ac-text);
+  overflow-wrap: anywhere;
+}
+footer a:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+</style>
+</head>
+
+<body class="portal">
+
+  <header>
+    <div class="marca"><span class="marca-txt">Ultra Academia</span></div>
+    <h1>Você ainda não tem acesso liberado</h1>
+  </header>
+
+  <main>
+    <section class="aviso">
+      <p><strong>Seu login está válido.</strong> O que falta é a liberação de acesso — ela é concedida por área, uma de cada vez, e a sua conta ainda não tem nenhuma.</p>
+      <p>Fale com o Felipe — é liberação de grupo, leva minutos.</p>
+      <p>Assim que a liberação sair, basta abrir este mesmo endereço de novo: você cai direto no que foi liberado, sem precisar fazer mais nada.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>Guarde só este endereço: <a href="/?escolher=1">ultra-expansao.tech/?escolher=1</a>. Ele é a porta de entrada do Motor de Expansão e continua valendo depois da liberação.</p>
+  </footer>
+
+</body>
+</html>

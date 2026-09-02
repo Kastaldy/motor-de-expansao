@@ -1,0 +1,477 @@
+{
+  "schema_versao": 1,
+  "_schema": "perfil-pais/1 (rotulo legado; o campo NORMATIVO e `schema_versao`, spec 1.2 - `_schema` e chave `_`-prefixada e o loader a IGNORA)",
+  "_nota": "Perfil da ARGENTINA. Vai em MOTOR_DATA_DIR/perfil.json da instancia AR. Lido UMA vez no import (ao lado de onde MOTOR_DATA_DIR ja e resolvido, web/server/app.py:99-108), congelado, sem I/O em caminho quente. Boot FAIL-CLOSED: perfil ausente, JSON invalido ou campo obrigatorio nulo derruba o container. Estrutura conforme docs/plano_multipais.md §6.2. Toda linha marcada 'DEFAULT PROVISORIO' esta listada em _pendencias no fim do arquivo.",
+  "_procedencia": "Numeros da Argentina vem de: (a) pacote Motor-Argentina do Juan, 2026-07-23 (HANDOFF.md + docs/dicionario_dados.md); (b) medicao feita direto no parquet dados/hexagonos_h3 (42.388 hexagonos) em 2026-08-31; (c) codigos INDEC lidos das 24 particoes provincia= do proprio pacote. Onde nao ha fonte, o campo e null e aparece em _pendencias — nenhum numero foi inventado.",
+  "pais": "AR",
+  "nome": "Argentina",
+  "_idioma": "es-AR (RECUSADO pela spec 1.4: sem leitor. `format.ts:6` le `locale`; o Accept-Language do geocoder le `geocode.idioma`, que aqui e \"es-AR,es\". Mantido `_`-prefixado como comentario.)",
+  "locale": "es-AR",
+  "moeda": {
+    "_nota": "Tres moedas convivem e confundir uma com a outra e a forma mais barata de produzir numero errado. `codigo` e a moeda do pais. `indicadores_renda` e a moeda em que a coluna de renda do parquet chega (renda_estimada_usd = renda_per_capita, o insumo do score — dicionario_dados.md, bloco Renda). `comparacao` e a moeda de leitura executiva (plano_multipais.md §6.2). A superficie `viabilidade` do dia 1 NAO usa nenhuma das tres: ela sai em BRL com tributo brasileiro (decisao 0.6) e carrega o aviso de `avisos.viabilidade_tributo_provisorio`.",
+    "codigo": "ARS",
+    "simbolo": "$",
+    "nome_exibicao": "peso argentino",
+    "comparacao": "USD",
+    "indicadores_renda": "USD",
+    "base_monetaria": "2026-05",
+    "cambio_base": {
+      "par": "ARS/USD",
+      "valor": 1397.71,
+      "fonte": "BCRA, maio/2026 (dicionario_dados.md, coluna renda_estimada_usd). Conferido no parquet: mediana de renda_estimada_ars / renda_estimada_usd = 1397,71 exato em 42.388 hexagonos."
+    },
+    "separador_milhar": ".",
+    "separador_decimal": ",",
+    "_nota_separadores": "es-AR usa ponto de milhar e virgula decimal, igual ao pt-BR. Nenhuma mudanca de mascara em relacao ao Brasil — o que muda e o simbolo e o codigo, nao a pontuacao."
+  },
+  "bbox": {
+    "_nota": "Guarda grosseira de coordenada (anti-absurdo), nao afirmacao de soberania. Substitui as seis copias divergentes do Brasil listadas em plano_multipais.md §3 item 3. RESOLVE A DECISAO 0.8: Buenos Aires (-34,6037 / -58,3816) fica CONFORTAVELMENTE dentro — o corte em -34,0 de src/motor_expansao/api/coord.py:13, web/src/lib/coord.ts:8 e web/src/lib/entrada-ponto.ts:44 e brasileiro e morre com este campo.",
+    "lat_min": -55.2,
+    "lat_max": -21.6,
+    "lng_min": -74.0,
+    "lng_max": -53.4,
+    "_medido": "Envelope real dos 42.388 hexagonos do pacote (shapely sobre geometry_wkb, 2026-08-31): lat -54,86406 a -21,91967 · lng -72,93060 a -53,61675. A caixa acima tem ~0,3 grau de folga em cada lado para cobrir extremos habitados fora da malha censitaria (Cabo San Pio ~-55,06; Bernardo de Irigoyen ~-53,64; extremo oeste de Santa Cruz ~-73,58).",
+    "_fora_da_caixa_de_proposito": "Reivindicacao antartica e Islas Malvinas nao entram como criterio: a caixa e um retangulo de sanidade. O filtro semantico de pais e geocode.countrycodes, nao o bbox."
+  },
+  "vista_padrao": {
+    "_nota": "Espelha VISTA_BRASIL (web/src/lib/mapa-ponto.ts:32 = lng -52,9 / lat -14,5 / zoom 3,4), que e o centro do bbox brasileiro. Aqui: centro do bbox argentino. Zoom 3,6 porque a Argentina tem 33,6 graus de latitude contra 40 do Brasil (3,4 + log2(40/33,6) = 3,65). CONFIRMAR VISUALMENTE no smoke test do Bloco E — e enquadramento, nao decisao de negocio.",
+    "lng": -63.7,
+    "lat": -38.4,
+    "zoom": 3.6,
+    "_alternativa": "Centroide ponderado por populacao (medido no pacote): lng -61,3550 / lat -32,9356. Enquadra onde esta a demanda (GBA + Pampeana) e deixa a Patagonia fora da primeira tela. Trocar se o time achar que a tela inicial desperdicia area vazia."
+  },
+  "_rotulos": {
+    "_motivo": "RECUSADO pela spec 1.4: os leitores destes rotulos sao a copy do front e os textos de PDF = BLK-INTL-12, fora desta onda. `_`-prefixado para o loader IGNORAR (LEIA-ME 3.4).",
+    "_nota": "Texto de tela e de PDF. `nivel1`/`nivel2` sao os nomes das duas divisoes administrativas que hoje o codigo chama de UF e Municipio.",
+    "nivel1": "Provincia",
+    "nivel1_plural": "Provincias",
+    "nivel1_artigo": "a",
+    "nivel2": "Departamento",
+    "nivel2_plural": "Departamentos",
+    "nivel2_artigo": "o",
+    "unidade_censitaria": "radio censal",
+    "unidade_censitaria_plural": "radios censais",
+    "unidade_analise": "hexagono H3 res 7",
+    "_ressalva_nivel2": "Na Ciudad Autonoma de Buenos Aires (provincia 02) a divisao de nivel 2 chama-se COMUNA, e na provincia de Buenos Aires (06) chama-se PARTIDO. `Departamento` e o termo generico do INDEC e o que o pacote usa em nome_departamento nas 24 provincias. Rotulo por provincia nao existe neste schema e nao entra na primeira onda."
+  },
+  "_particao": {
+    "_motivo": "RECUSADO pela spec 1.4/1.1: o leitor seria o `_UF_RE` afrouxado = BLK-INTL-04, fora do caminho critico. `_`-prefixado para o loader IGNORAR (LEIA-ME 3.4).",
+    "_nota": "Layout Hive. O pacote do Juan chega como provincia=<2 dig>/departamento=<5 dig>; o HANDOFF.md §3 diz explicitamente 'e so renomear as pastas'. A instancia AR le uf=/cod_municipio= como o Brasil — a chave muda de nome, o conteudo nao. Este bloco existe para justificar o afrouxamento de _UF_RE (hoje ^[A-Za-z]{2}$ em web/server/app.py:412) para ^[A-Za-z0-9]{2,6}$, mantendo a propriedade anti-path-traversal do BLK-SEC-05.",
+    "nivel1_chave": "uf",
+    "nivel1_formato": "^[0-9]{2}$",
+    "nivel1_exemplo": "06",
+    "nivel2_chave": "cod_municipio",
+    "nivel2_formato": "^[0-9]{5}$",
+    "nivel2_exemplo": "06028",
+    "convencao_raiz": "pais=AR/uf=06/cod_municipio=06028/part-0.parquet"
+  },
+  "fontes": {
+    "censo": {
+      "nome": "Censo 2022 (INDEC)",
+      "detalhe": "Renda, domicilios e populacao por radio censal (66.502 radios no pacote censo_radios), agregados ao hexagono H3 res 7. A renda NAO e medida: e MODELADA a partir da EPH 2025 com clima educativo harmonizado ao HOGAR_EDUHOG do censo e raking por regiao EPH, com erro estrutural de +/-15% na mediana urbana (+/-24% no P90) e 85% dos hexagonos marcados renda_confianca = baixa. Ler estimativa como medicao e o erro que estas duas frases existem para impedir.",
+      "_procedencia": "Equivalente argentino do F_CENSO brasileiro (web/server/app.py:3550). O `detalhe` NAO e traducao do paragrafo brasileiro de :3572-3575: o brasileiro diz que nenhuma estimativa e arbitrada, o que na Argentina seria FALSO. Este e o campo que a spec 1.2 marca obrigatorio e que faltava neste arquivo ate 2026-08-31."
+    },
+    "crescimento": {
+      "nome": "INDEC (EPH, EMAE) e registros administrativos",
+      "detalhe": "As leituras de movimento disponiveis para o municipio argentino no pacote entregue. NAO ha equivalente do CAGED/RAIS mensal brasileiro, e o painel de metodologia precisa dizer isso em vez de repetir a frase brasileira. Nao entra em nenhum corte do funil - e ele que nao sobe no dia 1 (superficies = mapa + viabilidade).",
+      "_procedencia": "Equivalente argentino do F_CRES (web/server/app.py:3553). PROVISORIO e declarado: o pacote do Juan nao traz bloco de crescimento municipal, entao este texto descreve a AUSENCIA em vez de inventar quatro fontes. Ver pendencia P9."
+    },
+    "_motivo_do_resto": "Os campos abaixo NAO fazem parte do schema da spec 1.2 - nenhuma linha deste repositorio os le - e ficam `_`-prefixados como PROCEDENCIA, nao como configuracao. `fator_temporal` e recusado NOMINALMENTE pela spec 1.4 (zero leitores).",
+    "_instituto": "INDEC",
+    "_instituto_nome_extenso": "Instituto Nacional de Estadistica y Censos de la Republica Argentina",
+    "_safra_censo": "2022",
+    "_universo_populacional": "Populacao em domicilios particulares (POB_TOT_P). 44,77 M hab = 98,1% do total, cobertos por 42.388 hexagonos com densidade >= 3 hab/km2. Nao e o total do pais.",
+    "_unidade_censitaria_base": "radio censal (66.502 radios no pacote censo_radios)",
+    "_fonte_renda": {
+      "modelo": "Modelo EPH 2025 (Encuesta Permanente de Hogares) com clima educativo harmonizado ao HOGAR_EDUHOG do censo e raking por regiao EPH",
+      "erro_estrutural": "±15% na mediana urbana, ±24% no P90; ~±8% dentro de regiao apos raking. Medido por leave-one-aglomerado-out (renda_validacao.py).",
+      "ressalva_rural": "85% dos hexagonos tem renda_confianca = 'baixa' (rural < 150 hab/km2, renda extrapolada da media urbana). O gate de populacao tira quase todos das teses, mas a leitura do mapa NAO tem esse gate."
+    },
+    "_fonte_concorrencia": {
+      "cobertura": "~37% do universo real de academias (3.238 vistas contra parque estimado de 8.662). O fator de cobertura 2,675 corrige o agregado, nao o hexagono individual.",
+      "cadencia": "GymScraping argentino roda MENSALMENTE no repositorio do Juan (decisao 0.10). O dado de concorrencia envelhece ate 30 dias — declarado, nao defeito."
+    },
+    "_fator_temporal": {
+      "_nota": "O Brasil precisa de fator temporal porque a renda do Censo e de julho/2022 e o PDF sai hoje (FATOR_TEMPORAL_RENDA, src/motor_expansao/dashboard/constants.py:453-473). A Argentina NAO precisa: a renda ja vem em pesos constantes de maio/2026, a mesma base monetaria de todo o pacote.",
+      "valor": 1.0,
+      "artefato": null,
+      "rotulo": "maio/2026 (modelo EPH, cambio BCRA)",
+      "data_referencia_renda": "2026-05"
+    },
+    "_documentos": [
+      "Motor-Argentina/HANDOFF.md (Juan, 2026-07-23)",
+      "Motor-Argentina/docs/dicionario_dados.md (86 colunas)",
+      "Motor-Argentina/docs/metodologia_motor_argentina.pdf",
+      "https://github.com/juancalu/motor-argentina"
+    ]
+  },
+  "geocode": {
+    "_nota": "Parametriza a rota /api/geocode (web/server/app.py:3953-4005; o countrycodes cru esta na :3978), que hoje manda countrycodes='br' cru para o Nominatim e devolve o top-1 SEM validar nada. Sem este bloco, 'Buenos Aires' casa o municipio de Pernambuco e o operador ve found:true com pin BRASILEIRO no mapa argentino — Cordoba, Santa Fe e Rosario tem o mesmo problema.",
+    "countrycodes": "ar",
+    "idioma": "es-AR,es",
+    "regex_cp": "^[A-Za-z][0-9]{4}[A-Za-z]{3}$",
+    "_sufixo": ", Argentina (RECUSADO pela spec 1.4: zero leitores - nem app.py:3977-3980 nem maps_geocoder.py:241-248 concatenam sufixo a query. Se o sufixo virar necessario para desambiguar, ele entra com LEITOR, nao como campo orfao.)",
+    "_regex_cp_legado": "^[0-9]{4}$ (formato de 4 digitos anterior a 1999, ainda em circulacao; sem leitor no schema da spec 1.2, que so preve `regex_cp`).",
+    "_nota_cp": "CPA (Codigo Postal Argentino) desde 1999: letra de provincia + 4 digitos + 3 letras de face de quadra, ex. C1425DKE. O formato antigo de 4 digitos ainda circula e por isso tem regex propria. Nenhum dos dois e usado hoje pelo backend brasileiro (nao ha regex de CEP no codigo) — entram com o Bloco A.",
+    "validar_contra_bbox": true
+  },
+  "_subdivisoes": {
+    "_motivo": "RECUSADO pela spec 1.4: leitor seria o `_UF_RE` afrouxado = BLK-INTL-04. `_`-prefixado para o loader IGNORAR (LEIA-ME 3.4).",
+    "_nota": "Chave = chave de particao (uf=). Valor = {nome legivel, codigo oficial}. Ligeiro desvio do §6.2 (que descreve codigo -> nome string): no Brasil a chave de particao e a SIGLA e o codigo IBGE e outro numero, entao um mapa de string para string nao serve aos dois paises. As 24 jurisdicoes foram lidas das particoes provincia= do pacote e conferidas contra a coluna nome_provincia — nenhuma foi digitada de memoria.",
+    "02": {
+      "nome": "Ciudad Autonoma de Buenos Aires",
+      "codigo": "02"
+    },
+    "06": {
+      "nome": "Buenos Aires",
+      "codigo": "06"
+    },
+    "10": {
+      "nome": "Catamarca",
+      "codigo": "10"
+    },
+    "14": {
+      "nome": "Cordoba",
+      "codigo": "14"
+    },
+    "18": {
+      "nome": "Corrientes",
+      "codigo": "18"
+    },
+    "22": {
+      "nome": "Chaco",
+      "codigo": "22"
+    },
+    "26": {
+      "nome": "Chubut",
+      "codigo": "26"
+    },
+    "30": {
+      "nome": "Entre Rios",
+      "codigo": "30"
+    },
+    "34": {
+      "nome": "Formosa",
+      "codigo": "34"
+    },
+    "38": {
+      "nome": "Jujuy",
+      "codigo": "38"
+    },
+    "42": {
+      "nome": "La Pampa",
+      "codigo": "42"
+    },
+    "46": {
+      "nome": "La Rioja",
+      "codigo": "46"
+    },
+    "50": {
+      "nome": "Mendoza",
+      "codigo": "50"
+    },
+    "54": {
+      "nome": "Misiones",
+      "codigo": "54"
+    },
+    "58": {
+      "nome": "Neuquen",
+      "codigo": "58"
+    },
+    "62": {
+      "nome": "Rio Negro",
+      "codigo": "62"
+    },
+    "66": {
+      "nome": "Salta",
+      "codigo": "66"
+    },
+    "70": {
+      "nome": "San Juan",
+      "codigo": "70"
+    },
+    "74": {
+      "nome": "San Luis",
+      "codigo": "74"
+    },
+    "78": {
+      "nome": "Santa Cruz",
+      "codigo": "78"
+    },
+    "82": {
+      "nome": "Santa Fe",
+      "codigo": "82"
+    },
+    "86": {
+      "nome": "Santiago del Estero",
+      "codigo": "86"
+    },
+    "90": {
+      "nome": "Tucuman",
+      "codigo": "90"
+    },
+    "94": {
+      "nome": "Tierra del Fuego, Antartida e Islas del Atlantico Sur",
+      "codigo": "94"
+    }
+  },
+  "reguas": {
+    "_nota": "Esta e a classe de item que produz NUMERO ERRADO em vez de erro. Meta de R$ 1.500 contra renda em outra moeda pinta todo card verde e ninguem ve. Por isso as reguas sao declaradas no dia 1, mesmo as das superficies que ainda nao subiram.",
+    "renda_abs_min": 350.0,
+    "renda_abs_max": 1000.0,
+    "renda_unidade": "USD per capita/mes (coluna renda_estimada_usd = renda_per_capita)",
+    "_nota_renda": "DEFAULT PROVISORIO — decide FELIPE (pendencia P1). Metodo: espelha LITERALMENTE o criterio escrito em src/motor_expansao/pipelines/calibrar_renda_setor_2022.py:83-86, que fixou o piso no p05 arredondado e o teto acima do p99 e abaixo do maximo, saturando <0,4%. Medido no pacote AR em 2026-08-31, universo povoado (pop >= 1.000, 5.148 hexagonos): p05 = 342,4 · p50 = 478,4 · p95 = 740,5 · p99 = 926,2 · max = 1.141,1 USD. Piso 350 (p05 arredondado, zera 7,4%) e teto 1.000 (satura 0,29% — o Brasil satura 0,38% com R$ 4.000). NAO E CONVERSAO DE MOEDA: e a mesma receita aplicada a outra distribuicao.",
+    "_tensao_renda": "As duas leituras defensaveis do metodo brasileiro DISCORDAM em ~1,6x e Felipe precisa escolher uma. (a) Mesma SATURACAO: teto 1.000 (o default acima). (b) Mesma posicao relativa do p95: o Brasil pos o teto em 2,12x o p95, o que na AR daria 1.570 USD — acima do maximo observado (1.141), ou seja impossivel. A distribuicao argentina e COMPRIMIDA porque a renda e MODELADA (EPH), nao medida: p95/p05 = 2,2 na AR contra 6,4 no Brasil. Consequencia pratica: com o default, o hexagono mediano tira nota 20 de renda e o p95 tira 60 — contra 43 no p95 brasileiro. O default e mais generoso no topo.",
+    "pop_abs_min": 1000.0,
+    "pop_abs_max": 100000.0,
+    "pop_unidade": "habitantes por hexagono H3 res 7 (coluna pop_total)",
+    "_nota_pop": "DEFAULT PROVISORIO — decide FELIPE (pendencia P2). Valores IDENTICOS aos do Brasil (POP_ABS_MIN/POP_ABS_MAX, calibrar_renda_setor_2022.py:88-91), e isso precisa ser lido com cuidado: a ancora brasileira foi medida sobre POPULACAO DE SETOR CENSITARIO (pop_col = 'pop_total_setor_2022', :309), e a argentina alimentaria com POPULACAO DE HEXAGONO. Sao unidades diferentes; reusar o numero so se sustenta porque as duas distribuicoes coincidem por medicao, nao por principio. Medido: BR setor povoado p05 1.103 / p50 3.561 / p95 28.845 · AR hexagono povoado p05 1.127 / p50 3.699 / p95 28.500 (2026-08-31). Teto 100.000 satura 0,136% na AR e 0,000% no BR. Se Felipe quiser a ancora AR derivada de radio censal (o analogo real do setor), o numero muda e este default cai.",
+    "score_pesos": {
+      "renda": 0.6,
+      "pop": 0.4
+    },
+    "_nota_score_pesos": "DECIDIDO por Felipe em 2026-09-02: a plataforma RECOMPUTA o score com a formula brasileira (0,60*nota_renda + 0,40*nota_pop, calibrar_renda_setor_2022.py:160) sobre as ancoras AR declaradas aqui. O `score_priorizacao` que veio no pacote (percentil, pesos 0,40/0,60) NAO e o que o mapa pinta. Motivo: `score_corte_quente` = 30 e as faixas de cor foram calibrados contra a saida da formula brasileira; aplica-las ao score nativo seria usar uma regua sobre uma distribuicao que ela nao conhece. Consequencia medida: 5,5% dos hexagonos passam no corte 30 (contra 12,2% pelo score nativo). As duas colunas convivem no parquet; a coluna servida e a recomputada.",
+    "score_corte_quente": 30.0,
+    "_nota_score_corte": "DEFAULT PROVISORIO: mesmo valor do Brasil (SCORE_CORTE_QUENTE, web/server/app.py:161). Verificado que nao produz absurdo: com as ancoras default acima, 5,5% dos hexagonos argentinos ficam >= 30, contra 2,2% dos hexagonos brasileiros (medido nas 27 particoes de data/outputs/hexagonos_dashboard_enriquecido, 1.303.414 hexes). Mesma ordem de grandeza, AR um pouco mais generosa. Para comparacao, o score NATIVO do pacote argentino (percentil, pesos invertidos) marcaria 12,2%.",
+    "pop_min_acionavel": 5000,
+    "_nota_pop_min": "Coincide com o Brasil (POP_MIN_ACIONAVEL = 5.000, src/motor_expansao/dashboard/constants.py:144 e web/server/app.py:154) E com o gate que o proprio Juan usou (flag_pop_min_5k = populacao de captacao >= 5.000, dicionario_dados.md). Nao e default provisorio: e coincidencia com procedencia dos dois lados.",
+    "oferta_destaque_min": 2000.0,
+    "_nota_oferta_destaque": "Campo OBRIGATORIO da spec 1.2 que FALTAVA neste arquivo (o loader do commit A1 reprovaria o perfil sem ele). MESMO valor do Brasil (OFERTA_DESTAQUE_MIN = 2000.0, web/server/app.py:153 e dashboard/relatorio_municipal.py:61), e nao por analogia preguicosa: a regua e um piso de RESIDUAL medido em alunos de uma unidade ULTRA, e a unidade Ultra argentina e a mesma da brasileira - logo ela viaja com `capacidade_unidade_alunos` (2.500, igual), nao com `capacidade_concorrente` (1.070, diferente). NAO trava o dia 1: `oportunidades` (o funil, unico consumidor desta regua) esta FORA de `superficies` pela decisao 0.6. Revisar quando o funil argentino subir - ver pendencia P9.",
+    "capacidade_concorrente": 1070.0,
+    "capacidade_concorrente_unidade": "alunos por academia VISTA pelo motor",
+    "_nota_capacidade": "capacidade_concorrente_calibrada do dicionario do Juan = 400 (capacidade real de academia tipica, Mercado Fitness, back-derivado 416) x 2,675 (fator de cobertura = 8.662 do parque estimado / 3.238 academias que o motor enxerga). Contra CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS = 2.500 no Brasil. A diferenca de 2,3x NAO e erro: o parque argentino e de academias menores e o motor argentino ve so 37% delas. ALARME HERDADO, registrado: taxa_fitness_osm_calibrada = 0,358 no mesmo parquet diverge 4,6x do benchmark de 0,078 e e gravada sem alertar (§3.8 do dicionario). Nao usar essa coluna.",
+    "capacidade_unidade_alunos": 2500,
+    "_nota_capacidade_unidade": "Campo OBRIGATORIO da spec 1.2 que FALTAVA. E a capacidade de uma unidade ULTRA (CAPACIDADE_UNIDADE_ALUNOS = 2500 em dashboard/constants.py:379, web/src/lib/faixas.ts:84 e web/src/lib/mapa-ponto.ts:49) - o formato da rede, que nao muda ao cruzar a fronteira. NAO CONFUNDIR com `capacidade_concorrente` = 1.070, que e a capacidade atribuida a uma academia ARGENTINA vista pelo motor. No Brasil os dois numeros coincidem em 2.500 e a duplicacao passou despercebida; aqui eles DIVERGEM, e e por isso que a spec 1.2 exige os dois campos separados.",
+    "taxa_fitness": 0.078,
+    "_nota_taxa_fitness": "Penetracao fitness argentina (so gimnasios), fonte Radiografia del Fitness 2024, constante no pacote (coluna taxa_fitness_mercado). No Brasil o equivalente e TAXA_FITNESS_MERCADO_FALLBACK = 0,10, sobrescrito em runtime pela calibracao (calcular_colunas_mercado.py:38-39, :107). Na AR e constante — nao ha calibracao propria.",
+    "faixas_mapa_potencial": [
+      [
+        0,
+        20,
+        "Desfavoravel",
+        "#B92323",
+        "red"
+      ],
+      [
+        20,
+        40,
+        "Fraco",
+        "#DC6914",
+        "amber"
+      ],
+      [
+        40,
+        60,
+        "Promissor",
+        "#EEC828",
+        "gray"
+      ],
+      [
+        60,
+        80,
+        "Forte",
+        "#50C33C",
+        "green"
+      ],
+      [
+        80,
+        100,
+        "Excelente",
+        "#0A8226",
+        "blue"
+      ]
+    ],
+    "faixas_mapa_demanda": [
+      [
+        0,
+        20,
+        "Saturado",
+        "#B92323",
+        "red"
+      ],
+      [
+        20,
+        40,
+        "Restrito",
+        "#DC6914",
+        "amber"
+      ],
+      [
+        40,
+        60,
+        "Moderado",
+        "#EEC828",
+        "gray"
+      ],
+      [
+        60,
+        80,
+        "Amplo",
+        "#50C33C",
+        "green"
+      ],
+      [
+        80,
+        100,
+        "Livre",
+        "#0A8226",
+        "blue"
+      ]
+    ],
+    "_nota_faixas_mapa": "IDENTICAS ao Brasil (FAIXAS_MAPA_POTENCIAL / FAIXAS_MAPA_DEMANDA, src/motor_expansao/dashboard/constants.py:357-376) e isso esta CERTO: sao faixas de SCORE 0-100, nao de dinheiro. O score ja foi normalizado pelas ancoras acima, entao a regua de cor e neutra de pais por construcao. Ressalva de leitura: a faixa de DEMANDA foi escrita quando 100 significava 'uma unidade de 2.500 alunos livre'; na AR a capacidade de referencia e 1.070, logo o rotulo 'Livre' passa a significar uma academia argentina de porte local, nao uma Ultra. Rotulo a revisar quando a superficie de funil subir — nao no dia 1, porque `oportunidades` nao sobe.",
+    "faixas_renda": null,
+    "_nota_faixas_renda": "AUSENTE DE PROPOSITO, e o Brasil tambem nao tem. O §6.2 do plano lista `faixas_renda` no schema, mas nao existe choropleth de RENDA no codigo hoje: o mapa pinta score (as duas listas acima) e o relatorio pontual usa metas de semaforo (metas_big_numbers). Deixar null e honesto; inventar cinco faixas de renda em USD seria criar regua que ninguem pediu e que nada le. Se o campo for exigido pelo validador, ele deve aceitar null.",
+    "_metas_big_numbers": null,
+    "_nota_metas": "RECUSADO pela spec 1.4 (o campo nao tem leitor no Bloco A: as metas so sao lidas pelas superficies `ponto`/`municipal`, que entram no BLK-INTL-10) E null por nao se aplicar no dia 1 — as duas razoes valem e nao se anulam. NULL PORQUE NAO SE APLICA NO DIA 1 — e nao porque foi esquecido. As metas de semaforo (src/motor_expansao/dashboard/censo_report.py:141-152) so existem no RELATORIO PONTUAL, e a superficie `ponto` esta BLOQUEADA na Argentina pela decisao 0.6. Sao 7 numeros brasileiros: populacao no raio 10.000 · renda per capita media R$ 1.500 · renda domiciliar total R$ 4.000 · domicilios 3.000 · score medio 60 · SAM fitness 2.000 · residual fitness 2.000. Os quatro primeiros sao em REAIS ou em escala brasileira e pintariam TODOS os cards de verde ou de vermelho por construcao contra renda em USD. Preencher isto e pre-requisito do BLK-INTL-10, junto com a superficie `ponto`. Enquanto `ponto` estiver bloqueada, null e o estado correto — e o gate de superficie e quem garante que ninguem le meta nula."
+  },
+  "superficies": [
+    "mapa",
+    "viabilidade"
+  ],
+  "_nota_superficies": "EXATAMENTE a decisao 0.6, no vocabulario de ABAS_VALIDAS (conferido em web/server/acesso.py:39 nesta data: frozenset {'executiva','imobiliaria','mapa','oportunidades','viabilidade'}). NAO sobem: `oportunidades` (o funil), `imobiliaria`, `executiva`. `ponto` e `municipal` NAO SAO ABAS — hoje moram dentro de `mapa` (acesso.py:59,:74,:77 e ABA_DA_TELA em web/src/lib/acesso.ts:65-77), entao o gate do Bloco C precisa de tabela PROPRIA rota->superficie com semantica de CONJUNCAO: a tabela de acesso.py:69-105 e de UNIAO e a Argentina passaria por ter 'mapa'. Rota fora da lista responde 404 com motivo nomeado; o front esconde a aba.",
+  "avisos": {
+    "_nota": "Textos que VIAJAM no artefato exportado. Condicao de aceite inegociavel do Bloco C+ (decisao 0.7): o PDF e o XLSX vao ao locador e ao comite; a tela fica no escritorio. Aviso que nao viaja no arquivo nao e aviso. Mecanismo ja existe: _nota(ws, row, texto, n_cols, *, alerta=True) em src/motor_expansao/dimensionamento/simulador_xlsx.py:424 (fundo amarelo, negrito) e os impostos ja saem de Premissas via _bloco_impostos (:584), nao de literal espalhado.",
+    "viabilidade_tributo_provisorio": {
+      "codigo": "AR-VIAB-TRIB-PROVISORIO",
+      "ativo": true,
+      "alerta": true,
+      "obrigatorio": true,
+      "onde": [
+        "tela",
+        "pdf",
+        "xlsx"
+      ],
+      "titulo": "Simulacao provisoria — conta feita com a tributacao do Brasil",
+      "texto_longo": "Esta simulacao foi feita em reais (R$) e com a legislacao tributaria e trabalhista do BRASIL. O Motor de Expansao ainda nao tem um pacote de premissas argentino: os impostos sobre a receita, o regime de imposto de renda, os encargos sobre a folha, os salarios, os custos fixos e o ticket usados aqui sao os da operacao brasileira. Na Argentina esses numeros sao outros — o Ingresos Brutos e cobrado por provincia, os encargos trabalhistas seguem regras proprias, e a rede ainda nao tem nenhuma unidade no pais para calibrar o modelo. Use estes resultados para comparar pracas e dimensionar o tamanho da operacao. NAO os use para fechar contrato de locacao, definir valor de aluguel, precificar mensalidade ou aprovar aporte. Um pacote de premissas argentino, revisado por assessor fiscal e contabil local, substitui integralmente esta simulacao.",
+      "texto_curto": "ATENCAO: simulacao feita em reais e com a tributacao BRASILEIRA. A Argentina ainda nao tem premissas fiscais proprias no Motor. Serve para comparar pracas — nao para fechar contrato, definir aluguel ou aprovar aporte.",
+      "texto_rodape": "Simulacao provisoria: tributos, encargos e custos do Brasil, valores em R$. Nao e a conta fiscal argentina.",
+      "_nota_texto": "Escrito para locador e comite, nao para o time. Sem jargao interno (nada de 'Bloco C', 'premissas nao calibradas', 'BLK-INTL-11'). A frase que faz o trabalho e a que diz o que a pessoa NAO pode fazer com o numero. `texto_curto` cabe na linha unica mesclada do _nota() do XLSX; `texto_longo` e para a caixa do PDF e da tela; `texto_rodape` e para o rodape de cada pagina de simulacao.",
+      "_remover_quando": "O pacote de premissas financeiras argentino (BLK-INTL-11, plano §6.3: ~20-25 numeros com dono nomeado) for aprovado e passar no gate local. Ate la o aviso e obrigatorio e o teste de contrato deve FALHAR se o PDF ou o XLSX sair sem ele."
+    },
+    "mapa_sem_toponimo": {
+      "codigo": "AR-MAPA-SEM-ROTULO",
+      "ativo": true,
+      "alerta": false,
+      "obrigatorio": false,
+      "onde": [
+        "tela"
+      ],
+      "titulo": "Mapa sem nome de rua",
+      "texto_curto": "O mapa da Argentina ainda nao tem camada de nomes de rua, avenida e bairro. O desenho dos hexagonos, a busca de endereco e os pins estao corretos; falta so o rotulo sobre o fundo.",
+      "_nota": "Decisao 0.9, aceita por escrito: tiles e rotulos sao gerados de madrugada, fora do caminho critico. O risco tecnico e que isso acontece EM SILENCIO — _labels_tiles_url (src/motor_expansao/dashboard/censo_map.py:729-738) devolve None sem API_BASEMAP_LABELS_URL e nao ha fallback embutido (BLK-BASEMAP-06). Este aviso existe para o silencio virar frase."
+    }
+  },
+  "operacao": {
+    "_nota": "Parametros de execucao da instancia. Nao sao dados de pais; sao a consequencia operacional de duas instancias dividirem UMA VPS de 4 vCPU (decisoes 0.4 e 0.5).",
+    "pdf_concorrencia_max": 1,
+    "_nota_pdf": "Decisao 0.5. _PDF_CONCORRENCIA_MAX e literal de modulo hoje (= 3, web/server/app.py:52-57) e o semaforo e POR PROCESSO; cada instancia roda UM worker uvicorn (Dockerfile.web:94, sem --workers — a :91 e o CMD do HEALTHCHECK). Duas instancias com viabilidade ligada dariam ate 6 jobs de PDF em 4 vCPU. A AR sobe com 1. O risco e CPU, nao RAM.",
+    "mem_limit_alvo": "2g",
+    "_nota_mem": "PROVISORIO e explicitamente NAO MEDIDO. Sai do tamanho EM DISCO do pacote (42 MB + 93 MB + 580 KB), nao de RSS. carregar_uf_completo (web/server/app.py:786-789) faz read_parquet sem projecao de colunas e o parquet AR carrega geometry_wkb por linha — coluna que o enriquecido brasileiro nao tem. Medir uma particao COM geometry_wkb no Bloco E ANTES de fixar o numero.",
+    "basemap_labels_url_obrigatoria": false
+  },
+  "_ver_tambem": "Este perfil NAO carrega o de-para de COLUNAS (oferta_consumida_mercado, n_academias, renda_estimada_usd, e a derivacao de hex_id/lat/lng/cidade/cod_municipio que o parquet AR nao tem). Esse adaptador e o Bloco B / BLK-INTL-02 item 10a, e o exportador (exportar_piloto_rep.py) precisa vir do repo do Juan para a plataforma. Manter as duas coisas separadas e deliberado: o perfil declara REGUAS e IDENTIDADE; o adaptador traduz SCHEMA.",
+  "_pendencias": [
+    {
+      "id": "P1",
+      "campo": "reguas.renda_abs_min / reguas.renda_abs_max",
+      "estado": "default_provisorio",
+      "decide": "Felipe",
+      "pergunta": "Qual criterio fixa o teto de renda argentino: mesma saturacao do Brasil (1.000 USD) ou mesma posicao relativa do p95 (impossivel — daria 1.570 USD, acima do maximo observado de 1.141)?",
+      "default": [
+        350.0,
+        1000.0
+      ],
+      "justificativa": "Espelha literalmente o criterio escrito no codigo brasileiro (piso = p05 arredondado, teto acima do p99 saturando <0,4%), aplicado a distribuicao AR medida no pacote em 2026-08-31.",
+      "o_que_muda_quando_decidir": "Muda a nota de renda de TODOS os 42.388 hexagonos, logo muda o score, o ranking, a cor de cada hexagono no mapa e quem passa no corte quente. Nao muda uma linha de codigo — so este arquivo."
+    },
+    {
+      "id": "P2",
+      "campo": "reguas.pop_abs_min / reguas.pop_abs_max",
+      "estado": "default_provisorio",
+      "decide": "Felipe",
+      "pergunta": "A ancora de populacao argentina fica em HEXAGONO (o que o pacote entrega) ou passa a ser derivada de RADIO CENSAL (o analogo real do setor censitario brasileiro, disponivel em censo_radios)?",
+      "default": [
+        1000.0,
+        100000.0
+      ],
+      "justificativa": "Identico ao Brasil, e sustentado por medicao, nao por analogia: BR setor povoado p05 1.103 / p50 3.561 / p95 28.845 contra AR hexagono povoado p05 1.127 / p50 3.699 / p95 28.500. As duas distribuicoes coincidem apesar de serem unidades diferentes.",
+      "o_que_muda_quando_decidir": "Se a ancora migrar para radio censal, os numeros mudam e a coincidencia acima deixa de valer — a distribuicao de 66.502 radios nao e a de 42.388 hexagonos. Recalcular antes de trocar."
+    },
+    {
+      "id": "P3",
+      "campo": "reguas.score_pesos / qual score o mapa pinta",
+      "estado": "decidido",
+      "decide": "Felipe (com o Juan)",
+      "pergunta": "O mapa argentino pinta o score RECOMPUTADO pela plataforma (0,60 renda + 0,40 pop, ancoras AR) ou o score_priorizacao NATIVO que veio no pacote (0,40 renda + 0,60 pop, percentil nacional)? Os pesos estao invertidos entre os dois e os valores vao divergir hexagono a hexagono.",
+      "default": null,
+      "justificativa": "Nao ha default seguro. Escolher em silencio produz um mapa que discorda do parquet que o Juan entregou, e ninguem descobre por erro — descobre por reuniao.",
+      "o_que_muda_quando_decidir": "Define se o Bloco B recomputa score na fronteira de leitura ou apenas renomeia colunas. Muda o esforco do Bloco B.",
+      "decidido_em": "2026-09-02",
+      "decisao": "Recomputar com a formula brasileira (0,60 renda / 0,40 pop) sobre as ancoras AR."
+    },
+    {
+      "id": "P4",
+      "campo": "moeda.indicadores_renda",
+      "estado": "default_provisorio",
+      "decide": "Felipe (produto)",
+      "pergunta": "A renda no mapa argentino aparece em USD (a coluna que o score usa) ou em ARS (a moeda do pais, que o locador entende)?",
+      "default": "USD",
+      "justificativa": "renda_per_capita = renda_estimada_usd no pacote; o Bloco B ja previu formatar a renda USD com a fabrica de formatacao. ARS de maio/2026 esta disponivel na mesma linha (renda_estimada_ars) e o cambio 1.397,71 e unico e conhecido, entao trocar e barato.",
+      "o_que_muda_quando_decidir": "Formatacao de tooltip e de tabela. Nao toca score nem ranking."
+    },
+    {
+      "id": "P5",
+      "campo": "reguas.metas_big_numbers",
+      "estado": "ausente",
+      "decide": "Felipe + time de Expansao Internacional",
+      "pergunta": "Quais sao as 7 metas de semaforo do relatorio pontual argentino (populacao no raio, renda per capita, renda domiciliar, domicilios, score, SAM, residual)?",
+      "default": null,
+      "justificativa": "Nao se aplica no dia 1: a superficie `ponto` esta bloqueada pela decisao 0.6. Copiar as metas brasileiras (R$ 1.500 / R$ 4.000) contra renda em USD pintaria todo card de verde por construcao — o modo de falha exato que o §1 do plano nomeia.",
+      "o_que_muda_quando_decidir": "Pre-requisito de liberar `ponto` (BLK-INTL-10). Ate la o gate de superficie e a protecao."
+    },
+    {
+      "id": "P6",
+      "campo": "reguas.score_corte_quente",
+      "estado": "default_provisorio",
+      "decide": "Felipe",
+      "pergunta": "O corte de 30 continua sendo o piso de hexagono quente na Argentina?",
+      "default": 30.0,
+      "justificativa": "Mesmo valor do Brasil, verificado que nao produz absurdo: 5,5% dos hexagonos AR ficam >= 30 com as ancoras default, contra 2,2% no Brasil. Depende de P1 e P2 — mexer nas ancoras move este percentual.",
+      "o_que_muda_quando_decidir": "Muda quantos hexagonos entram na leitura de praca. Revisar DEPOIS de P1 e P2, nunca antes."
+    },
+    {
+      "id": "P7",
+      "campo": "fontes / malha adm2 (municipios_<COD>.geojson)",
+      "estado": "ausente",
+      "decide": "Juan (produz) / Felipe (aceita)",
+      "pergunta": "Quem entrega a malha de departamentos argentinos em GeoJSON, na convencao municipios_<COD>.geojson com codarea/CD_MUN/cod_municipio?",
+      "default": null,
+      "justificativa": "Item D6 do contrato de pais (§6.1), marcado Pendente. E a porta de entrada de src/motor_expansao/api/service.py:73-102. Nao bloqueia o dia 1 porque a superficie `ponto` esta fechada, mas bloqueia o BLK-INTL-10.",
+      "o_que_muda_quando_decidir": "Desbloqueia o modo Ponto argentino."
+    },
+    {
+      "id": "P8",
+      "campo": "operacao.mem_limit_alvo",
+      "estado": "default_provisorio",
+      "decide": "medicao do Bloco E, nao pessoa",
+      "pergunta": "Quanto RSS a instancia AR consome de fato carregando uma particao COM geometry_wkb?",
+      "default": "2g",
+      "justificativa": "O numero sai de tamanho em disco, nao de RSS medido. A conta de ~26 GB do §4 somava mem_limit DECLARADOS e esta errada como argumento (decisao 0.4).",
+      "o_que_muda_quando_decidir": "Fixa o mem_limit do compose. Uma hora de medicao, nao um programa de baseline."
+    },
+    {
+      "id": "P9",
+      "campo": "fontes.crescimento.{nome,detalhe} / reguas.oferta_destaque_min",
+      "estado": "default_provisorio",
+      "aberta_em": "2026-08-31",
+      "decide": "Bloco A/B (dev) — NAO e decisao de Felipe e NAO entra no caminho critico dele",
+      "pergunta": "Os dois campos que o schema da spec §1.2 declara OBRIGATORIOS e para os quais o pacote do Juan nao tem fonte argentina: (a) qual e o bloco de crescimento municipal argentino que o painel de metodologia deve citar, ja que nao ha equivalente de CAGED/RAIS mensal; (b) o piso de residual em alunos (`oferta_destaque_min`) fica em 2.000 na Argentina?",
+      "default": {
+        "fontes.crescimento.nome": "INDEC (EPH, EMAE) e registros administrativos",
+        "reguas.oferta_destaque_min": 2000.0
+      },
+      "justificativa": "Os dois campos entraram neste arquivo em 2026-08-31 porque SEM ELES o loader do commit A1 reprova o perfil (spec §1.2 + §3.2 fail-closed) — nao porque uma medicao argentina os produziu. (a) O texto de crescimento descreve a AUSENCIA em vez de traduzir a frase brasileira, que afirmaria CAGED e RAIS na Argentina. (b) O 2.000 e o valor brasileiro, e viaja porque a regua e uma fracao da capacidade de uma unidade ULTRA (`capacidade_unidade_alunos` = 2.500 nos dois paises), NAO da capacidade de um concorrente local (1.070 na AR contra 2.500 no BR) — se fosse desta ultima, o numero teria de cair junto.",
+      "o_que_muda_quando_decidir": "NADA no dia 1. `oferta_destaque_min` so e lida pelo FUNIL (`_com_residual`, web/server/app.py:2093) e `oportunidades` esta FORA de `superficies` pela decisao 0.6; o texto de crescimento so aparece no painel de metodologia. Revisar quando o funil argentino subir (BLK-INTL-10)."
+    }
+  ]
+}
