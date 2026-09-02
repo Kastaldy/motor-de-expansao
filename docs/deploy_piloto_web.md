@@ -57,6 +57,40 @@ O serviço `web` monta os mesmos diretórios da `api`:
 `/opt/motor-expansao/data/{outputs,staging,ibge,ultra}` e `/opt/motor-expansao/concorrentes`.
 O backend deriva tudo de `MOTOR_DATA_DIR=/app/data`.
 
+> ### 🔴 `perfil.json` — o único arquivo cuja ausência DERRUBA o container
+>
+> **Passo obrigatório desde o Bloco A (DEC-047), e ele vem ANTES do `docker compose up`.**
+> Todo o resto desta seção degrada em silêncio; este não: `web/server/app.py` resolve o
+> perfil do país no **import**, e sem o arquivo o processo não sobe. É deliberado — uma
+> instância sem perfil serviria bbox e régua **brasileiras** com rótulo de outro país.
+>
+> ```bash
+> # instância BRASILEIRA (a de hoje)
+> scp -i ~/.ssh/id_ultra_mcp data/perfis/BR/perfil.json \
+>     root@2.25.137.241:/opt/motor-expansao/data/perfil.json
+>
+> # instância ARGENTINA (quando subir, com raiz de dados própria)
+> scp -i ~/.ssh/id_ultra_mcp data/perfis/AR/perfil.json \
+>     root@2.25.137.241:/opt/motor-expansao-ar/data/perfil.json
+> ```
+>
+> **Antes do `up`, não depois.** O mount é bind de **arquivo** (`docker-compose.prod.yml`,
+> serviços `web` e `api`), e um bind de arquivo cuja origem não existe faz o Docker criar
+> um **diretório vazio** no host — o container falha com `"is a directory"`, mensagem que
+> não menciona perfil nenhum e manda procurar no lugar errado.
+>
+> Por que não vem na imagem: `.dockerignore` corta `data/` do contexto de build, a
+> instalação é não-editável (`pip install "."`) e o wheel empacota só `src/motor_expansao`
+> (`pyproject.toml`, `[tool.hatch.build.targets.wheel]`). Só chega por este mount.
+>
+> Conferir depois do `up`:
+> ```bash
+> docker logs motor_expansao_web 2>&1 | grep 'perfil:'
+> # esperado: perfil: pais=BR nome=Brasil moeda=BRL bbox=... raiz=/app/data
+> ```
+> Se a linha não aparecer, o container não subiu: procure o `PerfilInvalidoError` no log
+> — ele **nomeia o campo** que faltou.
+
 Confira o que o piloto precisa (senão a feature degrada em silêncio):
 - `data/outputs/hexagonos_dashboard_enriquecido/` — **obrigatório** (Mapa Territorial, carga por UF).
 - `data/outputs/setores_censitarios_2022_geo/` — Relatório Pontual (malha real IBGE).

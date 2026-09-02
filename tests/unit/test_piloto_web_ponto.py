@@ -183,7 +183,30 @@ requer_enriquecido = pytest.mark.skipif(
 )
 
 
+def _tem_crescimento() -> bool:
+    return pilot.CRESCIMENTO_PATH.is_file()
+
+
+# Gate PROPRIO, e nao o `requer_enriquecido`, para os tres testes do bloco de crescimento
+# do estado: eles leem `crescimento_municipal.parquet`, artefato SEPARADO do enriquecido
+# e com cadencia propria (`data/reports/crescimento/README.md`).
+#
+# Ate 2026-09-02 os tres pegavam carona no `requer_enriquecido`, e funcionava por
+# ACIDENTE: `STAGING_DIR` derivava de um `_DEFAULT_DATA` cravado no Downloads de UMA
+# maquina, caminho que nao existe em lugar nenhum — nem no CI, nem em worktree de dev.
+# Com a raiz quebrada, TODO artefato ficava "ausente" junto, e o gate errado nunca doia.
+# O Bloco A (DEC-047) faz `DATA_DIR` derivar do perfil e apontar para o `data/` do
+# repositorio; ai os tres passam a RODAR num worktree que tem o enriquecido mas nao tem
+# o crescimento, e falham com `TypeError: 'NoneType' object is not subscriptable` — que
+# nao diz uma palavra sobre artefato faltando.
+requer_crescimento = pytest.mark.skipif(
+    not _tem_crescimento(),
+    reason="crescimento_municipal.parquet nao materializado neste worktree",
+)
+
+
 @requer_enriquecido
+@requer_crescimento
 def test_crescimento_estado_olha_a_uf_INTEIRA_nao_o_white_space() -> None:
     """O passo 4 descreve so' quem sobreviveu aos filtros; este bloco, o estado todo.
 
@@ -204,6 +227,7 @@ def test_crescimento_estado_olha_a_uf_INTEIRA_nao_o_white_space() -> None:
 
 
 @requer_enriquecido
+@requer_crescimento
 def test_crescimento_estado_declara_o_piso_em_vez_de_cortar_em_silencio() -> None:
     """Sem piso, o topo e' municipio minusculo com variacao percentual enorme sobre
     base de poucas centenas de empregos. O corte existe, e o payload diz quanto cortou."""
@@ -214,6 +238,7 @@ def test_crescimento_estado_declara_o_piso_em_vez_de_cortar_em_silencio() -> Non
 
 
 @requer_enriquecido
+@requer_crescimento
 def test_crescimento_estado_traz_a_mediana_da_propria_uf() -> None:
     """O CAGED so' vale contra margem estadual: sem a mediana no payload a tela nao
     teria contra o que dizer que a cidade cresce muito ou pouco."""
