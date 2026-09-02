@@ -208,3 +208,56 @@ def test_brasil_habilita_todas_as_superficies(perfil) -> None:
     este campo trouxesse menos que cinco, o perfil estaria mudando o comportamento
     brasileiro — justamente o que ele existe para nao fazer."""
     assert set(perfil.superficies) == SUPERFICIES_VALIDAS
+
+
+# --------------------------------------------------------------------------------
+# As duas reguas de composicao familiar (Bloco B)
+# --------------------------------------------------------------------------------
+
+
+def test_uplift_e_moradores_batem_com_o_dashboard(perfil) -> None:
+    """Os dois fallbacks nacionais passaram a vir do perfil, e no Brasil nao se moveram."""
+    assert perfil.reguas.uplift_composicao == dash_constants.UPLIFT_COMPOSICAO_NACIONAL
+    assert (
+        perfil.reguas.moradores_por_domicilio
+        == dash_constants.MORADORES_DOMICILIO_NACIONAL
+    )
+    assert perfil.reguas.uplift_composicao == 1.632
+    assert perfil.reguas.moradores_por_domicilio == 2.79
+
+
+def test_o_perfil_ARGENTINO_torna_o_uplift_IDENTIDADE() -> None:
+    """**O defeito que este campo conserta, e ele foi medido.**
+
+    A plataforma calcula `renda_media_domiciliar = renda_responsavel x uplift x temporal`.
+    No Brasil aquela coluna traz a renda do RESPONSAVEL, e o uplift de 1,632 a leva ao
+    domicilio. O exportador argentino escreve `renda_per_capita x moradores`, que **ja e**
+    a renda domiciliar: aplicar 1,632 sobre ela poe a renda do Relatorio Pontual **63%
+    acima da real** (`1.632` = +63,2%).
+
+    O Juan resolvia com `MOTOR_PAIS=AR` no ambiente. A env NAO entra: seria o pais
+    escolhendo caminho de execucao, que a DEC-047 proibe e o fio de alarme do A10 pega.
+    Um multiplicador de 1,0 resolve o mesmo problema **sem ramo nenhum**.
+    """
+    ar = carregar_perfil(_RAIZ / "data" / "perfis" / "AR" / "perfil.json")
+    assert ar.reguas.uplift_composicao == 1.0
+
+    # A prova numerica: a mesma renda domiciliar, pelas duas reguas.
+    renda_domiciliar_ar = 1_000.0
+    br = carregar_perfil(PERFIL_BR_EMBARCADO)
+    assert renda_domiciliar_ar * ar.reguas.uplift_composicao == 1_000.0
+    assert renda_domiciliar_ar * br.reguas.uplift_composicao == pytest.approx(1_632.0)
+
+
+def test_moradores_argentino_usa_HOGARES_e_nao_viviendas() -> None:
+    """2,8623 e `sum(pop_total)/sum(hogares_total)` nos 42.388 hexagonos do pacote.
+
+    A escolha da coluna nao e detalhe: `vivienda` inclui as VAGAS, e o analogo brasileiro
+    (`domicilios_particulares_ocupados`, v0007) sao os OCUPADOS. Pela mesma base,
+    `pop/viviendas` da 2,5781 — uns 11% abaixo. Como este numero divide a renda per capita
+    para chegar a domiciliar, o 11% iria direto para a tela.
+    """
+    ar = carregar_perfil(_RAIZ / "data" / "perfis" / "AR" / "perfil.json")
+    assert ar.reguas.moradores_por_domicilio == pytest.approx(2.8623, abs=1e-4)
+    # Longe do valor que sairia de `viviendas`, e longe do brasileiro.
+    assert abs(ar.reguas.moradores_por_domicilio - 2.5781) > 0.2

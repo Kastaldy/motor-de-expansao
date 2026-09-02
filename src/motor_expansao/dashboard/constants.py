@@ -450,10 +450,15 @@ RENDA_PER_CAPITA_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
 # uplift de composicao: responsavel -> domicilio inteiro. Mediana nacional 1.632 (~61% da renda vem
 # do responsavel). Por MUNICIPIO (IBGE) e, quando disponivel, por SETOR (agregado de parentesco,
 # rakeado por municipio: a media ponderada dos setores reproduz o uplift municipal do IBGE).
-UPLIFT_COMPOSICAO_NACIONAL = 1.632
+# FALLBACK do pais da instancia (Bloco B / DEC-047). No Brasil e o 1,632 de sempre, e as
+# tabelas por municipio e por setor continuam tendo precedencia sobre ele. Num pais SEM
+# essas tabelas — a Argentina — este e o UNICO valor que responde, e e por isso que ele
+# precisa vir do perfil: la o exportador ja entrega a renda na escala domiciliar, entao o
+# multiplicador correto e 1,0. Sem isto a renda argentina sai 63% acima da real.
+UPLIFT_COMPOSICAO_NACIONAL = _REGUAS.uplift_composicao
 # Media nacional de moradores por domicilio (IBGE Censo 2022 ~2.79) — fallback quando o municipio
 # nao esta na tabela. Usado pela renda media domiciliar por hex (tooltip do Mapa Territorial).
-MORADORES_DOMICILIO_NACIONAL = 2.79
+MORADORES_DOMICILIO_NACIONAL = _REGUAS.moradores_por_domicilio
 UPLIFT_COMPOSICAO_PATH = Path("data/staging/uplift_renda_domiciliar_municipio.parquet")
 UPLIFT_COMPOSICAO_SETOR_PATH = Path("data/staging/uplift_composicao_setor.parquet")
 

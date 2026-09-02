@@ -219,6 +219,9 @@
       "residual_fitness_disponivel": 2000.0,
       "_nota": "Metas do semaforo do Relatorio Pontual, src/motor_expansao/dashboard/censo_report.py:141-152. Quatro delas sao em REAIS ou em escala brasileira — sao exatamente as que pintariam todo card de verde num pais com renda em outra moeda. Historico registrado no proprio arquivo: o corte de 10.000 habitantes FICOU apos a mudanca de raio (decisao de Felipe, 2026-07-30), com o limiar implicito de densidade subindo de ~1.415 para ~3.183 hab/km2 — endurecimento deliberado; e a meta de renda domiciliar caiu de 6.200 para 4.000 a pedido de Felipe em 2026-07-23."
     },
+    "uplift_composicao": 1.632,
+    "_nota_uplift": "UPLIFT_COMPOSICAO_NACIONAL, src/motor_expansao/dashboard/constants.py:453. Leva a renda do RESPONSAVEL (V06004) para a escala do domicilio inteiro; mediana nacional do IBGE, ~61% da renda vem do responsavel. E o FALLBACK: `uplift_composicao_por_setor` cascateia setor -> municipio -> UF -> este numero, e no Brasil as tres primeiras quase sempre respondem. Num pais SEM essas tabelas o fallback e o unico valor que vale — e por isso ele precisa morar no perfil, e nao numa constante de modulo. Ver o `_nota_uplift` do perfil AR para o que isso significa la.",
+
     "moradores_por_domicilio": 2.79,
     "_nota_moradores": "MORADORES_DOMICILIO_NACIONAL, src/motor_expansao/dashboard/constants.py:447 (IBGE Censo 2022). Fallback quando o municipio nao esta na tabela de uplift."
   },

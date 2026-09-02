@@ -143,6 +143,12 @@ class Reguas:
     oferta_destaque_min: float
     capacidade_concorrente: float
     capacidade_unidade_alunos: int
+    #: Responsavel -> domicilio inteiro. E o FALLBACK nacional: no Brasil as tabelas por
+    #: municipio e por setor tem precedencia, e este valor so vale onde elas nao alcancam.
+    #: Num pais sem essas tabelas, e o unico valor que vale — e por isso ele mora aqui.
+    uplift_composicao: float
+    #: Moradores medios por domicilio. Mesmo papel de fallback do campo acima.
+    moradores_por_domicilio: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -334,6 +340,10 @@ def _ler_reguas(dados: dict[str, Any], caminho: Path) -> Reguas:
         capacidade_unidade_alunos=_inteiro(
             bruto, "capacidade_unidade_alunos", caminho, prefixo=p
         ),
+        uplift_composicao=_numero(bruto, "uplift_composicao", caminho, prefixo=p),
+        moradores_por_domicilio=_numero(
+            bruto, "moradores_por_domicilio", caminho, prefixo=p
+        ),
     )
     # Regua degenerada nao levanta na leitura: levanta uma divisao por zero LA na
     # frente, dentro de `nota_renda_absoluta`, com traceback que nao menciona perfil.
@@ -345,6 +355,12 @@ def _ler_reguas(dados: dict[str, Any], caminho: Path) -> Reguas:
     # numero ruim, e `-inf` silencioso.
     if reguas.pop_abs_min <= 0:
         raise _erro(caminho, "reguas.pop_abs_min", "deveria ser > 0 (a escala e log)")
+    # Os dois sao MULTIPLICADORES de renda exibida. Zero ou negativo nao produz erro:
+    # produz renda zerada ou negativa na tela, que se le como "regiao pobre".
+    if reguas.uplift_composicao <= 0:
+        raise _erro(caminho, "reguas.uplift_composicao", "deveria ser > 0")
+    if reguas.moradores_por_domicilio <= 0:
+        raise _erro(caminho, "reguas.moradores_por_domicilio", "deveria ser > 0")
     return reguas
 
 

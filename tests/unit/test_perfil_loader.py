@@ -54,6 +54,8 @@ PERFIL_MINIMO: dict = {
         "oferta_destaque_min": 2000.0,
         "capacidade_concorrente": 1070.0,
         "capacidade_unidade_alunos": 2500,
+        "uplift_composicao": 1.0,
+        "moradores_por_domicilio": 2.8623,
     },
     "superficies": ["mapa", "viabilidade"],
 }
@@ -252,6 +254,11 @@ def test_bbox_degenerada_ou_fora_do_globo_levanta(tmp_path: Path, bbox: dict) ->
         ("pop_abs_min", 100000.0),  # >= pop_abs_max
         ("pop_abs_min", 0.0),  # a nota de populacao entra em log
         ("pop_abs_min", -5.0),
+        # Multiplicadores de renda EXIBIDA: zero ou negativo nao produz erro, produz
+        # renda zerada ou negativa na tela, que se le como "regiao pobre".
+        ("uplift_composicao", 0.0),
+        ("uplift_composicao", -1.0),
+        ("moradores_por_domicilio", 0.0),
     ],
 )
 def test_regua_degenerada_levanta(tmp_path: Path, campo: str, valor: float) -> None:
