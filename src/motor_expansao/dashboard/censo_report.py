@@ -23,6 +23,7 @@ from motor_expansao.dashboard.censo_point import (
     RAIO_CENSITARIO_DEFAULT_KM,
 )
 from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
+from motor_expansao.perfil import resolver_perfil
 
 # Cabecalhos canonicos das 7 paginas do template Ultra. Renderizam em latin-1 (core font
 # Helvetica do fpdf2), que cobre integralmente os acentos portugueses -- o que e PROIBIDO e
@@ -138,18 +139,25 @@ _RAIO_LABEL = f"{_RAIO_TXT} km"
 #
 # As metas de MEDIA (renda per capita, renda domiciliar, score) sao escala-invariantes e nao
 # seriam afetadas de todo jeito. Idem SAM/Residual Fitness, que sao por hexagono H3.
-_META_POP_TOTAL_RAIO = 10_000.0
-_META_RENDA_PER_CAPITA_MEDIA_RAIO = 1_500.0
+# As sete metas vem do PERFIL do pais (Bloco B / DEC-047). No Brasil sao os mesmos numeros
+# de sempre — `data/perfis/BR/perfil.json` os transcreve e o teste de contrato trava a
+# igualdade. Quatro delas sao em MOEDA ou em escala do pais: contra renda em USD, as metas
+# brasileiras pintariam TODOS os cards de uma cor por construcao, que e a classe de defeito
+# que produz numero errado em vez de erro.
+_METAS = resolver_perfil().reguas.metas_big_numbers
+
+_META_POP_TOTAL_RAIO = _METAS.pop_total_raio
+_META_RENDA_PER_CAPITA_MEDIA_RAIO = _METAS.renda_per_capita_media_raio
 # Renda media domiciliar TOTAL (com uplift): verde a partir de 4.000 -- pedido de Felipe
 # (2026-07-23, "acima de R$ 4.000 o card NAO deve vir vermelho") e confirmado por Vinicius no
 # gate visual do BLK-RELPON-13 (2026-07-24); substitui o alvo anterior de 6.200 (~C1 GeoFusion).
 # Alinha com a 1a faixa "verde" das bandas.
-_META_RENDA_DOMICILIAR_TOTAL_RAIO = 4_000.0
-_META_DOMICILIOS_TOTAL_RAIO = 3_000.0  # mantido junto com a meta de populacao (decisao de Felipe,
+_META_RENDA_DOMICILIAR_TOTAL_RAIO = _METAS.renda_domiciliar_total_raio
+_META_DOMICILIOS_TOTAL_RAIO = _METAS.domicilios_total_raio  # mantido junto com a meta de populacao (decisao de Felipe,
 # 2026-07-30): manter uma reescalada e a outra nao deixaria o semaforo com duas filosofias.
-_META_SCORE_SETOR_MEDIO = 60.0
-_META_SAM_FITNESS_POTENCIAL = 2_000.0
-_META_RESIDUAL_FITNESS_DISPONIVEL = 2_000.0
+_META_SCORE_SETOR_MEDIO = _METAS.score_setor_medio
+_META_SAM_FITNESS_POTENCIAL = _METAS.sam_fitness_potencial
+_META_RESIDUAL_FITNESS_DISPONIVEL = _METAS.residual_fitness_disponivel
 
 # Geometria do grid 4x2 do Big Numbers (8 cards; o card "Score censitario medio" foi removido do
 # PDF por pedido de Felipe 2026-07-17 — segue em result/CSV). A pagina e' FIXA 960x540 com

@@ -27,6 +27,7 @@ __all__ = [
     "Fonte",
     "Fontes",
     "Geocode",
+    "Metas",
     "Moeda",
     "Perfil",
     "PerfilInvalidoError",
@@ -133,6 +134,26 @@ class Fontes:
 
 
 @dataclass(frozen=True, slots=True)
+class Metas:
+    """As sete metas do semaforo do Relatorio Pontual.
+
+    Sao ALVOS de tela, nao cortes de funil: pintam o card de verde ou vermelho e nao
+    entram em decisao nenhuma. Mesmo assim moram no perfil, porque quatro delas sao em
+    MOEDA ou em escala do pais — contra renda em outra moeda, o semaforo pinta tudo de
+    uma cor por construcao, que e a classe de defeito que produz NUMERO ERRADO em vez de
+    erro.
+    """
+
+    pop_total_raio: float
+    renda_per_capita_media_raio: float
+    renda_domiciliar_total_raio: float
+    domicilios_total_raio: float
+    score_setor_medio: float
+    sam_fitness_potencial: float
+    residual_fitness_disponivel: float
+
+
+@dataclass(frozen=True, slots=True)
 class Reguas:
     renda_abs_min: float
     renda_abs_max: float
@@ -143,6 +164,14 @@ class Reguas:
     oferta_destaque_min: float
     capacidade_concorrente: float
     capacidade_unidade_alunos: int
+    #: Responsavel -> domicilio inteiro. E o FALLBACK nacional: no Brasil as tabelas por
+    #: municipio e por setor tem precedencia, e este valor so vale onde elas nao alcancam.
+    #: Num pais sem essas tabelas, e o unico valor que vale — e por isso ele mora aqui.
+    uplift_composicao: float
+    #: Moradores medios por domicilio. Mesmo papel de fallback do campo acima.
+    moradores_por_domicilio: float
+    #: Metas do semaforo do Relatorio Pontual.
+    metas_big_numbers: Metas
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,6 +346,47 @@ def _ler_fonte(dados: dict[str, Any], chave: str, caminho: Path) -> Fonte:
     )
 
 
+def _ler_metas(reguas: dict[str, Any], caminho: Path) -> Metas:
+    bruto = _obj(
+        _pegar(reguas, "metas_big_numbers", caminho, "reguas."),
+        caminho,
+        "reguas.metas_big_numbers",
+    )
+    p = "reguas.metas_big_numbers."
+    metas = Metas(
+        pop_total_raio=_numero(bruto, "pop_total_raio", caminho, prefixo=p),
+        renda_per_capita_media_raio=_numero(
+            bruto, "renda_per_capita_media_raio", caminho, prefixo=p
+        ),
+        renda_domiciliar_total_raio=_numero(
+            bruto, "renda_domiciliar_total_raio", caminho, prefixo=p
+        ),
+        domicilios_total_raio=_numero(bruto, "domicilios_total_raio", caminho, prefixo=p),
+        score_setor_medio=_numero(bruto, "score_setor_medio", caminho, prefixo=p),
+        sam_fitness_potencial=_numero(bruto, "sam_fitness_potencial", caminho, prefixo=p),
+        residual_fitness_disponivel=_numero(
+            bruto, "residual_fitness_disponivel", caminho, prefixo=p
+        ),
+    )
+    # Meta <= 0 pinta o card de VERDE sempre — e um semaforo que nunca acusa e pior que
+    # semaforo nenhum, porque parece estar funcionando.
+    for campo in (
+        "pop_total_raio",
+        "renda_per_capita_media_raio",
+        "renda_domiciliar_total_raio",
+        "domicilios_total_raio",
+        "score_setor_medio",
+        "sam_fitness_potencial",
+        "residual_fitness_disponivel",
+    ):
+        if getattr(metas, campo) <= 0:
+            raise _erro(caminho, f"{p}{campo}", "deveria ser > 0 (meta <= 0 nunca acusa)")
+    # O score e 0-100 por construcao: meta acima de 100 nunca fica verde.
+    if metas.score_setor_medio > 100:
+        raise _erro(caminho, f"{p}score_setor_medio", "deveria ser <= 100")
+    return metas
+
+
 def _ler_reguas(dados: dict[str, Any], caminho: Path) -> Reguas:
     bruto = _obj(_pegar(dados, "reguas", caminho), caminho, "reguas")
     p = "reguas."
@@ -334,6 +404,11 @@ def _ler_reguas(dados: dict[str, Any], caminho: Path) -> Reguas:
         capacidade_unidade_alunos=_inteiro(
             bruto, "capacidade_unidade_alunos", caminho, prefixo=p
         ),
+        uplift_composicao=_numero(bruto, "uplift_composicao", caminho, prefixo=p),
+        moradores_por_domicilio=_numero(
+            bruto, "moradores_por_domicilio", caminho, prefixo=p
+        ),
+        metas_big_numbers=_ler_metas(bruto, caminho),
     )
     # Regua degenerada nao levanta na leitura: levanta uma divisao por zero LA na
     # frente, dentro de `nota_renda_absoluta`, com traceback que nao menciona perfil.
@@ -345,6 +420,12 @@ def _ler_reguas(dados: dict[str, Any], caminho: Path) -> Reguas:
     # numero ruim, e `-inf` silencioso.
     if reguas.pop_abs_min <= 0:
         raise _erro(caminho, "reguas.pop_abs_min", "deveria ser > 0 (a escala e log)")
+    # Os dois sao MULTIPLICADORES de renda exibida. Zero ou negativo nao produz erro:
+    # produz renda zerada ou negativa na tela, que se le como "regiao pobre".
+    if reguas.uplift_composicao <= 0:
+        raise _erro(caminho, "reguas.uplift_composicao", "deveria ser > 0")
+    if reguas.moradores_por_domicilio <= 0:
+        raise _erro(caminho, "reguas.moradores_por_domicilio", "deveria ser > 0")
     return reguas
 
 

@@ -54,6 +54,17 @@ PERFIL_MINIMO: dict = {
         "oferta_destaque_min": 2000.0,
         "capacidade_concorrente": 1070.0,
         "capacidade_unidade_alunos": 2500,
+        "uplift_composicao": 1.0,
+        "moradores_por_domicilio": 2.5654,
+        "metas_big_numbers": {
+            "pop_total_raio": 10000.0,
+            "renda_per_capita_media_raio": 416.42,
+            "renda_domiciliar_total_raio": 1068.28,
+            "domicilios_total_raio": 3000.0,
+            "score_setor_medio": 60.0,
+            "sam_fitness_potencial": 2000.0,
+            "residual_fitness_disponivel": 2000.0,
+        },
     },
     "superficies": ["mapa", "viabilidade"],
 }
@@ -252,6 +263,11 @@ def test_bbox_degenerada_ou_fora_do_globo_levanta(tmp_path: Path, bbox: dict) ->
         ("pop_abs_min", 100000.0),  # >= pop_abs_max
         ("pop_abs_min", 0.0),  # a nota de populacao entra em log
         ("pop_abs_min", -5.0),
+        # Multiplicadores de renda EXIBIDA: zero ou negativo nao produz erro, produz
+        # renda zerada ou negativa na tela, que se le como "regiao pobre".
+        ("uplift_composicao", 0.0),
+        ("uplift_composicao", -1.0),
+        ("moradores_por_domicilio", 0.0),
     ],
 )
 def test_regua_degenerada_levanta(tmp_path: Path, campo: str, valor: float) -> None:
@@ -474,3 +490,23 @@ def test_resolver_perfil_e_resolvido_uma_vez_por_processo(
         assert resolver_perfil() is resolver_perfil()
     finally:
         resolver_perfil.cache_clear()
+
+
+@pytest.mark.parametrize(
+    ("campo", "valor"),
+    [
+        ("renda_per_capita_media_raio", 0.0),
+        ("renda_domiciliar_total_raio", -100.0),
+        ("pop_total_raio", 0.0),
+        # 0-100 por construcao: meta acima de 100 nunca fica verde.
+        ("score_setor_medio", 101.0),
+    ],
+)
+def test_meta_que_nunca_acusa_levanta(tmp_path: Path, campo: str, valor: float) -> None:
+    """Meta <= 0 pinta o card de verde SEMPRE, e meta de score acima de 100 pinta de
+    vermelho sempre. Um semaforo que nunca acusa e pior que semaforo nenhum, porque
+    parece estar funcionando."""
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["reguas"]["metas_big_numbers"][campo] = valor
+    with pytest.raises(PerfilInvalidoError, match=campo):
+        carregar_perfil(_gravar(tmp_path, dados))
