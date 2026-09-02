@@ -3187,6 +3187,11 @@ def _resumo(df: pd.DataFrame) -> dict[str, Any]:
     """KPIs de topo (residual, população, score médio, concorrentes, espaço)."""
     return {
         "residual_total": _num(df["oferta_efetiva_disponivel"].sum()),
+        # SEM fallback, e de proposito. E' uma SOMA, entao so' vale coluna que nao se
+        # sobrepoe entre hexagonos: `pop_total` e' o municipio repetido em cada hexagono
+        # (no Brasil) e `populacao_corte_hex` e' a captacao com os 6 vizinhos dentro —
+        # qualquer uma das duas devolveria um total inflado com cara de certo. Ver
+        # `_COLS_POP_SOMA_UF`. Campo vazio e' a resposta honesta quando a coluna falta.
         "pop_total": (
             _num(df["pop_total_setor_2022"].sum())
             if "pop_total_setor_2022" in df.columns
@@ -4225,6 +4230,30 @@ def geocode(q: str) -> dict[str, Any]:
     return out
 
 
+#: Populacao por hexagono desta rota, em DOIS papeis que o codigo tratava como um so'.
+#:
+#: `pop_total` NAO aparece em nenhum dos dois, e a ausencia e' deliberada: ela e' um FALSO
+#: AMIGO entre os pacotes. No brasileiro e' a populacao do MUNICIPIO repetida em cada
+#: hexagono dele (medido em SP: 645/645 municipios com um unico valor distinto; somada no
+#: pais da' 79,3 bilhoes, 391x o Brasil). No argentino e' a populacao do HEXAGONO. Mesmo
+#: nome, unidades de observacao diferentes — quem soma recebe uma resposta plausivel e
+#: errada, e nada acusa. O exportador argentino passou a entregar a populacao do hexagono
+#: em `pop_total_setor_2022`, que e' a gaveta com essa semantica nos dois lados.
+#:
+#: CORTE: o passo 1 pergunta "cabe gente suficiente NESTE hexagono?" — vale qualquer
+#: coluna por hexagono, inclusive a de captacao, que se sobrepoe entre vizinhos.
+_COLS_POP_CORTE_UF: tuple[str, ...] = (
+    "pop_total_setor_2022",
+    "pop_hex_base",
+    "populacao_corte_hex",
+)
+#: SOMA: o `pop_total` do payload e' um TOTAL por UF — so' entra coluna que NAO se
+#: sobrepoe entre hexagonos. `populacao_corte_hex` fica de fora por isso: ela e' o
+#: hexagono mais os 6 vizinhos, e somada na Argentina da' 288 milhoes, 6,3x o pais.
+#: Sem nenhuma delas o total sai `None` — melhor um campo vazio que um numero inflado.
+_COLS_POP_SOMA_UF: tuple[str, ...] = ("pop_total_setor_2022", "pop_hex_base")
+
+
 @functools.lru_cache(maxsize=1)
 def _ranking_estados() -> list[dict[str, Any]]:
     """Ranking NACIONAL por UF — a pergunta "por qual estado começar?".
@@ -4253,29 +4282,56 @@ def _ranking_estados() -> list[dict[str, Any]]:
 
     dset = ds.dataset(str(ENRICHED_DIR), partitioning="hive")
     disp = set(dset.schema.names)
-    col_pop = "pop_total_setor_2022" if "pop_total_setor_2022" in disp else "pop_hex_base"
-    cols = [
-        c
-        for c in (
-            "uf", "nome_municipio", "oferta_efetiva_disponivel",
-            "oferta_consumida_mercado_estimada", "score_setor_2022_calibrado", col_pop,
+    # Ate' 2026-09-02 esta linha era `... if "pop_total_setor_2022" in disp else
+    # "pop_hex_base"` — um fallback para uma coluna cuja existencia ninguem checava. No
+    # Brasil a primeira sempre esta la' e o ramo nunca rodava; no pacote argentino nenhuma
+    # das duas existe, `cols` filtrava o nome fora e a rota morria em `KeyError:
+    # 'pop_hex_base'` na hora de somar. A tela de "por qual estado comecar" respondia 500.
+    col_corte = next((c for c in _COLS_POP_CORTE_UF if c in disp), None)
+    col_soma = next((c for c in _COLS_POP_SOMA_UF if c in disp), None)
+    if col_corte is None:
+        raise HTTPException(
+            500,
+            "A base não traz nenhuma coluna de população por hexágono "
+            f"({', '.join(_COLS_POP_CORTE_UF)}); o ranking por UF não pode ser montado.",
         )
-        if c in disp
-    ]
+    # `dict.fromkeys` e' o dedup: quando as duas colunas resolvem para o MESMO nome (o
+    # caso normal, `pop_total_setor_2022` nos dois papeis), pedi-la duas vezes ao pyarrow
+    # devolve um frame com a coluna repetida, e `df[nome]` deixa de ser Series.
+    cols = list(
+        dict.fromkeys(
+            c
+            for c in (
+                "uf", "nome_municipio", "oferta_efetiva_disponivel",
+                "oferta_consumida_mercado_estimada", "score_setor_2022_calibrado",
+                col_corte, col_soma,
+            )
+            if c is not None and c in disp
+        )
+    )
     df = dset.to_table(columns=cols).to_pandas()
     if df.empty:
         return []
 
-    # A cascata vem da funcao compartilhada, com as DUAS divergencias historicas
+    # A cascata vem da funcao compartilhada, com as TRES divergencias historicas
     # desta rota declaradas como parametro em vez de reescritas na mao:
     #   - `residual_minimo=None`: o ranking de UF nunca aplicou o piso do passo 2;
-    #   - `capacidade_por_linha=False`: ele sempre dividiu pela capacidade CONSTANTE.
-    # Mudar qualquer um dos dois muda o numero que a tela mostra — sao decisoes de
+    #   - `capacidade_por_linha=False`: ele sempre dividiu pela capacidade CONSTANTE;
+    #   - `precedencia_pop=(col_corte,)`: o corte de populacao cai sobre a coluna do
+    #     SETOR, enquanto o funil municipal corta sobre `populacao_corte_hex` (a
+    #     captacao: hexagono + 6 vizinhos). Esta terceira divergencia NAO estava dita —
+    #     a rota promete "a mesma cascata do funil" e ha' uma decada de leitura em cima
+    #     dela. Medido em 2026-09-02, alinhar o corte ao funil daria:
+    #         Brasil     4.301 -> 7.610 hexes elegiveis (+77%), residual +0,30%,
+    #                    e as 27 UFs na MESMA posicao — o ranking nao se mexe;
+    #         Argentina    943 -> 1.438 hexes elegiveis (+52%), residual +9,2%.
+    #     Fica como esta' ate' decisao de produto: e' numero na tela, nao faxina.
+    # Mudar qualquer um dos tres muda o numero que a tela mostra — sao decisoes de
     # produto, nao detalhes de implementacao, e por isso ficam visiveis aqui.
     elegivel = df[
         mascara_acionavel(
             df,
-            precedencia_pop=(col_pop,),
+            precedencia_pop=(col_corte,),
             residual_minimo=None,
             capacidade_por_linha=False,
         )
@@ -4296,7 +4352,7 @@ def _ranking_estados() -> list[dict[str, Any]]:
                 # Contexto, para o operador ver o tamanho do estado por tras do numero.
                 "residual_total": _num(bloco["oferta_efetiva_disponivel"].sum()),
                 "hexes_total": int(len(bloco)),
-                "pop_total": _num(bloco[col_pop].sum()),
+                "pop_total": _num(bloco[col_soma].sum()) if col_soma else None,
             }
         )
 

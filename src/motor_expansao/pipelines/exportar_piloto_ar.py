@@ -234,11 +234,33 @@ def montar_hexagonos(hx: pd.DataFrame) -> pd.DataFrame:
             # O backend monta `pop_leitura` na precedência populacao_corte_hex >
             # pop_total_setor_2022 > pop_total, e o front corta em 5.000 sobre ela.
             # O motor argentino aplica esses MESMOS 5.000 sobre a CAPTAÇÃO (hexágono +
-            # 6 vizinhos, ~25 km²) — confere 100% com `flag_pop_min_5k`. Com
-            # `pop_total` (célula de ~4,3 km², mediana de 40 moradores) o corte apagaria
-            # 5.325 hexágonos que o motor considera viáveis, 932 deles "abrir agora".
+            # 6 vizinhos, ~25 km²) — confere 100% com `flag_pop_min_5k`. Sobre a CÉLULA
+            # (~4,3 km², a coluna logo abaixo) o corte apagaria 5.325 hexágonos que o
+            # motor considera viáveis, 932 deles "abrir agora".
             "populacao_corte_hex": hx["pop_captacao"],
-            "pop_total": hx["pop_total"],
+            # `pop_total_setor_2022`, e NAO `pop_total` — a diferenca nao e' de nome, e' de
+            # UNIDADE DE OBSERVACAO. No pacote brasileiro as duas colunas medem coisas
+            # diferentes, e so' uma delas e' o hexagono:
+            #
+            #   pop_total            = populacao do MUNICIPIO, repetida em cada hexagono dele.
+            #                          Medido em SP: 645/645 municipios com um unico valor
+            #                          distinto; Sao Paulo carrega 11.451.999 nos seus 296
+            #                          hexagonos (censo 2022: 11.451.245). Somar a coluna no
+            #                          Brasil inteiro da' 79,3 BILHOES — 391x o pais.
+            #   pop_total_setor_2022 = populacao dos setores censitarios agregada AO HEXAGONO.
+            #                          Nao se sobrepoe: soma 195,8 milhoes, 96,4% do censo.
+            #
+            # A `pop_total` argentina e' populacao DO HEXAGONO — ou seja, tem a semantica da
+            # segunda e o nome da primeira. Entregar o numero certo na gaveta errada e' o pior
+            # dos mundos: nada quebra, e quem somar recebe uma resposta plausivel e errada.
+            # Medido no pacote argentino: somando 15.186 hexagonos da' 43,5 milhoes = 94,4% do
+            # censo 2022 (46.044.703) — o mesmo desvio de cobertura do lado brasileiro.
+            #
+            # O radio censal argentino e' o equivalente do setor censitario, entao o nome
+            # continua descrevendo o que a coluna e'. `pop_total` simplesmente NAO e' emitida:
+            # a Argentina nao tem o total departamental repetido por hexagono, e inventa-lo
+            # so' para preencher a gaveta criaria o falso amigo de novo.
+            "pop_total_setor_2022": hx["pop_total"],
             # --- renda --------------------------------------------------------
             # Em USD/mês. Até o Bloco A o piloto rotulava "R$" fixo e o símbolo saía
             # errado; desde o commit A9 ele lê `moeda.simbolo` do perfil, e o argentino
@@ -951,9 +973,14 @@ def main(argv: list[str] | None = None) -> int:
     # "N hexágonos habitáveis". Mandar a grade argentina inteira não é só feio, é outra
     # população de células:
     #
-    #     mediana de pop_total   Brasil (SP)  20.250
-    #                            Argentina        40   <- grade inteira
-    #                            Argentina     2.236   <- só habitáveis
+    #     mediana de população POR HEXÁGONO
+    #         Brasil (SP)      16   `pop_total_setor_2022`  (Brasil inteiro: 5)
+    #         Argentina        40   grade inteira
+    #         Argentina     2.236   só habitáveis
+    #
+    # A linha do Brasil é `pop_total_setor_2022` de propósito. A `pop_total` brasileira
+    # daria 20.250 e a comparação sairia invertida — ela não é o hexágono, é o MUNICÍPIO
+    # repetido em cada hexágono dele (ver o de-para de `montar_hexagonos`).
     #
     # 83,6% das células têm `hex_sem_populacao = True`: o valor de população ali é
     # resíduo do modelo, não gente. Com elas dentro o mapa abre vazio E a câmera cai no
