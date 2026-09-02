@@ -169,16 +169,22 @@ _COLS_CRESCIMENTO = [
     "v_frase",
 ]
 
-CAPACIDADE_CONCORRENTE_PADRAO = 2500.0
-OFERTA_DESTAQUE_MIN = 2000.0  # espelha relatorio_municipal (emenda BLK-RELMUN-03)
-POP_MIN_ACIONAVEL = 5000  # regua operacional do dashboard (<5k = descartado)
+# As reguas absolutas passam a vir do perfil do pais (Bloco A / DEC-047). Os NOMES de
+# modulo permanecem, e isso nao e preguica: quatro contratos os leem POR ATRIBUTO
+# (`test_metodologia_espelha_o_funil.py`, `test_faixas_mapa_espelho.py`,
+# `test_piloto_web_endpoints.py`, `test_piloto_web_ponto.py`), e e o que prova que o
+# painel publica o numero que o funil aplica. Substituir os usos por `PERFIL.reguas.*`
+# inline e apagar estes nomes trocaria quatro redes de protecao por nada.
+CAPACIDADE_CONCORRENTE_PADRAO = PERFIL.reguas.capacidade_concorrente
+OFERTA_DESTAQUE_MIN = PERFIL.reguas.oferta_destaque_min  # espelha relatorio_municipal
+POP_MIN_ACIONAVEL = PERFIL.reguas.pop_min_acionavel  # <5k = descartado
 
 # --- Reguas do funil e das etiquetas -----------------------------------------
 # Estavam como literais espalhados dentro de _etiqueta/_etiqueta_muni/montar_funil.
 # Subiram para ca' porque o painel de Metodologia (/api/metodologia) publica estes
 # MESMOS nomes na tela: com o numero escrito em dois lugares, ajustar um parametro
 # fazia a explicacao mentir sem ninguem perceber. Mudou aqui, muda no funil E no texto.
-SCORE_CORTE_QUENTE = 30.0  # piso do passo 1 (hexagono "quente")
+SCORE_CORTE_QUENTE = PERFIL.reguas.score_corte_quente  # piso do passo 1 ("quente")
 # 70,0 -> 30,0 em 2026-08-26, junto com a troca do score censitario para REGUA ABSOLUTA.
 # Na escala antiga (percentil nacional de renda + percentil MUNICIPAL de populacao) o corte
 # de 70 deixava passar 104.835 hexes cuja populacao MEDIANA era 9 habitantes -- Oriximina/PA

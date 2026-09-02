@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from motor_expansao.perfil import resolver_perfil
+
+# Reguas absolutas do pais da INSTANCIA (Bloco A / DEC-047). No perfil brasileiro sao
+# os mesmos numeros de sempre — `data/perfis/BR/perfil.json` os transcreve e
+# `tests/contracts/test_perfil_br_reproduz_as_constantes.py` trava a igualdade.
+_REGUAS = resolver_perfil().reguas
+
 # Texto exibido nos relatorios PDF quando a metrica nao existe para o recorte (nenhum setor
 # censitario intersectado, coluna ausente no parquet, valor NaN). Era a sigla "n/d", trocada
 # por extenso a pedido de Juan (2026-07-31): quem le o PDF nao e do time e nao decodificava a
@@ -141,7 +148,9 @@ COMPETITOR_CLUSTER_RES = 4            # resolucao H3 coarse (~22km/celula) p/ re
 COMPETITOR_CLUSTER_LIMIT = 2000      # cap duro de bolhas de cluster (garante payload << 3MB)
 COMPETITOR_CLUSTER_TOP_REDES = 4     # max redes no breakdown do tooltip antes de "+N redes"
 TABLE_ROW_LIMIT = 1000
-POP_MIN_ACIONAVEL = 5_000
+# SEGUNDA copia do piso de populacao (a primeira e `web/server/app.py`). Duas copias de
+# um numero so — exatamente o que o perfil existe para acabar.
+POP_MIN_ACIONAVEL = _REGUAS.pop_min_acionavel
 BRASIL_CENTER = {"lat": -14.235, "lon": -51.9253}
 FLOAT_COLUMNS = [
     "lat",
@@ -376,7 +385,7 @@ FAIXAS_MAPA_DEMANDA: list[tuple[int, int, str, str, str]] = [
 
 # Ancora da camada de demanda: score 100 <=> uma unidade cheia.
 # Espelha SCORE_RESIDUAL_CAPACIDADE_REFERENCIA de `pipelines/calcular_colunas_mercado`.
-CAPACIDADE_UNIDADE_ALUNOS = 2500
+CAPACIDADE_UNIDADE_ALUNOS = _REGUAS.capacidade_unidade_alunos
 
 
 def faixa_do_score(
