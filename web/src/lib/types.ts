@@ -1622,3 +1622,41 @@ export interface AcessosFicha {
   /** Mais recente primeiro; teto de 80 eventos. */
   linha_do_tempo: AcessosEventoTempo[]
 }
+
+/* ---- Administração de usuários (D25) — quem entra, com que perfil ---- */
+
+/** Uma linha da tabela de administração. Inclui INATIVOS: escondê-los tornaria a
+ *  reativação impossível pela tela, que é o caso de quem volta de licença. */
+export interface AdminUsuario {
+  id_usuario: number
+  /** O `Remote-User` do Authelia (D23) — a chave que casa com a trilha da DEC-027. */
+  login: string
+  nome: string
+  email: string
+  perfil: string
+  ativo: boolean
+}
+
+/** Opção do seletor de perfil. A ordem vem do backend e é a hierarquia da D22
+ *  (Expansão ⊂ Líderes ⊂ Growth, Consultoria ⊂ Líderes), do menor para o maior. */
+export interface AdminPerfil {
+  perfil: string
+  descricao: string
+  capacidades: number
+}
+
+export interface AdminUsuariosPayload {
+  usuarios: AdminUsuario[]
+  perfis: AdminPerfil[]
+  /** `id_usuario` de quem está olhando: a tela desabilita a própria linha. O backend
+   *  recusa de todo jeito (403) — isto é para o botão não prometer o que será negado. */
+  eu: number
+}
+
+/** Resposta do PATCH. Cada bloco só vem se o campo correspondente foi enviado, e
+ *  `mudou: false` significa "já estava assim" — sucesso sem evento gravado. */
+export interface AdminAlteracao {
+  id_usuario: number
+  perfil?: { id_usuario: number; de: string; para: string; mudou: boolean }
+  status?: { id_usuario: number; ativo: boolean; mudou: boolean }
+}

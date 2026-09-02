@@ -3483,6 +3483,133 @@ def acessos_usuario(
     return ficha
 
 
+# ---------------------------------------------------------------------------
+# Administracao de usuarios (D25) — quem entra, com que perfil
+#
+# Existe para desfazer uma REGRESSAO: antes do banco, mudar o acesso de alguem era
+# editar o `acesso_abas.json` no volume `:rw`, sem rebuild e sem deploy. Com o RBAC
+# no banco, a mesma mudanca viraria `UPDATE` manual na VPS.
+#
+# GATE DUPLO, de proposito. Estas rotas estao sob `/api/acessos/`, entao passam pela
+# allowlist de env do painel (`_exigir_admin_acessos`, 404 que nao anuncia existencia)
+# E pela capacidade do banco — `acesso.painel_ver` no GET, `acesso.usuario_gerir` nas
+# escritas (regra propria em `acesso.py`, antes da generica). Ver o `/api/rede/cadastro`,
+# que separa leitura de escrita do mesmo jeito.
+#
+# O SQL nao mora aqui: `motor_expansao.db.usuarios`. O CI nao tem Postgres, entao o SQL
+# precisa ser localizavel para o gate de sintaxe offline alcancar e para haver o que
+# revisar antes de rodar contra banco real.
+# ---------------------------------------------------------------------------
+
+
+class UsuarioAdminIn(BaseModel):
+    """Mudanca de acesso. Os dois campos sao opcionais e independentes."""
+
+    perfil: str | None = None
+    ativo: bool | None = None
+
+
+def _identidade_do_admin(remote_user: str | None) -> Any:
+    """Quem esta pedindo. Levanta 503 se o banco nao responder.
+
+    Sem `id_usuario` nao ha o que carimbar em `app.id_usuario`, e uma escrita cujo autor
+    ficou nulo por acidente e' exatamente o que o D19 existe para impedir — entao aqui a
+    ausencia de identidade e' erro, nunca acao de sistema.
+    """
+    from motor_expansao.db import BancoIndisponivel, rbac
+
+    try:
+        eu = rbac.identidade(remote_user)
+    except BancoIndisponivel as erro:
+        raise HTTPException(503, f"Banco indisponível: {erro}") from erro
+    if eu is None:
+        # O `_exigir_admin_acessos` ja passou (allowlist de env), mas a pessoa nao tem
+        # linha em `usuarios`. Os dois cadastros divergiram — e a acao nao pode sair sem autor.
+        raise HTTPException(
+            409,
+            "Você está na allowlist do painel mas não tem cadastro no banco. "
+            "Sem isso não há autor para registrar a mudança.",
+        )
+    return eu
+
+
+def _erro_de_usuarios(erro: Exception) -> HTTPException:
+    """Traduz as excecoes do modulo de dados para o status certo."""
+    from motor_expansao.db import BancoIndisponivel
+    from motor_expansao.db import usuarios as db_usuarios
+
+    if isinstance(erro, db_usuarios.UsuarioDesconhecido):
+        return HTTPException(404, str(erro))
+    if isinstance(erro, db_usuarios.PerfilDesconhecido):
+        return HTTPException(422, str(erro))
+    if isinstance(erro, db_usuarios.AlvoEhOAutor):
+        return HTTPException(403, str(erro))
+    if isinstance(erro, BancoIndisponivel):
+        return HTTPException(503, f"Banco indisponível: {erro}")
+    raise erro
+
+
+@app.get("/api/acessos/usuarios", include_in_schema=False)
+def acessos_usuarios_listar(
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Todos os usuarios (ativos e inativos) e os perfis disponiveis.
+
+    Inativos vem juntos de proposito: escondê-los tornaria a REATIVACAO impossivel pela
+    tela, que e' o caso de quem volta de licenca ou muda de area e retorna.
+    """
+    _exigir_admin_acessos(remote_user)
+    from motor_expansao.db import usuarios as db_usuarios
+
+    eu = _identidade_do_admin(remote_user)
+    try:
+        lista = db_usuarios.listar()
+        opcoes = db_usuarios.perfis()
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_usuarios(erro) from erro
+    return {
+        "usuarios": [u.como_json() for u in lista],
+        "perfis": opcoes,
+        # A tela desabilita a propria linha. O backend recusa de todo jeito
+        # (`AlvoEhOAutor`); isto e' para o botao nao prometer o que sera negado.
+        "eu": eu.id_usuario,
+    }
+
+
+@app.patch("/api/acessos/usuarios/{id_usuario}", include_in_schema=False)
+def acessos_usuarios_alterar(
+    id_usuario: int,
+    body: UsuarioAdminIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Troca o perfil e/ou o status. Cada mudanca grava seu evento na MESMA transacao.
+
+    Os dois campos sao independentes e podem vir juntos; quando vem, sao DUAS transacoes
+    e DOIS eventos, porque sao duas decisoes distintas — "virou Growth" e "foi desativado"
+    respondem a perguntas diferentes na auditoria e nao devem colapsar numa linha so'.
+    """
+    _exigir_admin_acessos(remote_user)
+    from motor_expansao.db import usuarios as db_usuarios
+
+    if body.perfil is None and body.ativo is None:
+        raise HTTPException(422, "Informe `perfil`, `ativo`, ou os dois.")
+
+    eu = _identidade_do_admin(remote_user)
+    resultado: dict[str, Any] = {"id_usuario": id_usuario}
+    try:
+        if body.perfil is not None:
+            resultado["perfil"] = db_usuarios.alterar_perfil(
+                id_usuario, body.perfil, autor=eu.id_usuario
+            )
+        if body.ativo is not None:
+            resultado["status"] = db_usuarios.definir_ativo(
+                id_usuario, body.ativo, autor=eu.id_usuario
+            )
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_usuarios(erro) from erro
+    return resultado
+
+
 # ============================================================================
 # Metodologia — o "manual" do funil do Mapa
 # ============================================================================

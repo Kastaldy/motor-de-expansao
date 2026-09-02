@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import BotaoInicio from '../components/BotaoInicio'
+import PainelUsuarios from '../components/PainelUsuarios'
 import Tabela, { type Coluna } from '../components/Tabela'
 import { Rosca } from '../components/exec/ExecCharts'
 import {
@@ -1020,6 +1021,10 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
                       : 'Nenhum acesso registrado na janela.'
                   }
                 />
+              </Card>
+
+              <Card span={12} titulo="Administração de usuários">
+                <PainelUsuarios />
               </Card>
 
               <div

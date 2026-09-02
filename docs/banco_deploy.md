@@ -104,6 +104,11 @@ na VPS.
 
 Depois, um `MOTOR_DEV_USUARIO` de cada perfil, conferindo contra a matriz da migration `012`.
 
+E, com um Growth, exercite a **administração de usuários** da aba de Acessos: troque o perfil de
+outra pessoa, desative e reative. Confira depois, no banco, que cada ação virou linha em `eventos`
+com `id_usuario` = você e `entidade_id` = o alvo — se os dois vierem trocados, a auditoria responde
+ao contrário e parece certa.
+
 ### 1.4 Ensaiar o restore
 
 A parte do backup que precisa de prova não é o dump — é a volta.
@@ -269,6 +274,12 @@ a pessoa autenticada com a linha do banco (D23). Confira contra o
 
 Deixe **pelo menos um** usuário do perfil Growth pronto antes do passo 8: é o único que enxerga o
 painel de Acessos, e é por ele que você verifica que o RBAC subiu certo.
+
+**Só o primeiro precisa de SQL.** A partir dele, a aba de Acessos administra os demais — trocar
+perfil e ativar/desativar, com autor e de-para registrados em `eventos` (D25). O que a tela **não**
+faz é criar pessoa: quem entra nasce no `authelia/users_database.yml`, e a linha em `usuarios` vem
+depois. Enquanto o Authelia autenticar (P19), os dois cadastros andam juntos e é preciso lembrar
+dos dois.
 
 ## 8. Ligar — e o que fazer se der errado
 

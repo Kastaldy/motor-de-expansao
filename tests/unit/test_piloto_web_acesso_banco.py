@@ -88,19 +88,49 @@ def test_rota_sem_regra_nao_e_controlada() -> None:
         assert acesso.capacidade_necessaria(livre, "GET") is None
 
 
+def _capacidades_semeadas() -> set[str]:
+    """As chaves que as migrations realmente inserem em `permissoes`.
+
+    LIDAS dos arquivos, e não copiadas para cá: a lista à mão já ficou para trás uma vez —
+    a 015 acrescentou `acesso.usuario_gerir` e o teste acusou uma capacidade "sem seed" que
+    o seed tinha. Derivar mantém os dois lados casados sozinhos.
+    """
+    import re
+    from pathlib import Path
+
+    migracoes = Path(__file__).resolve().parents[2] / "src/motor_expansao/db/migracoes"
+    chaves: set[str] = set()
+    for sql in sorted(migracoes.glob("*.sql")):
+        texto = sql.read_text(encoding="utf-8")
+        for bloco in re.findall(r"INSERT INTO permissoes\b.*?;", texto, re.DOTALL):
+            chaves.update(re.findall(r"\(\s*'([a-z][a-z_]*\.[a-z_]+)'\s*,", bloco))
+    return chaves
+
+
 def test_toda_capacidade_do_mapa_existe_no_seed() -> None:
-    """Se o mapa citar uma capacidade que a migration 012 não cria, a rota fica INALCANÇÁVEL
+    """Se o mapa citar uma capacidade que nenhuma migration cria, a rota fica INALCANÇÁVEL
     para todos — e em silêncio, porque ninguém teria a chave."""
-    do_seed = {
-        "territorio.explorar", "territorio.ranking_nacional", "ponto.analisar",
-        "relatorio.comparacao", "relatorio.municipal", "relatorio.pontual",
-        "viabilidade.calcular", "viabilidade.simular", "imovel.listar",
-        "imovel.dossie_ver", "imovel.registrar_gesto", "rede.ver",
-        "rede.cadastro_editar", "acesso.painel_ver",
-    }
+    do_seed = _capacidades_semeadas()
+    assert do_seed, "nenhuma capacidade lida das migrations — o parser quebrou"
     do_mapa = {capacidade for _, _, capacidade in acesso.REGRAS_POR_CAPACIDADE}
     assert do_mapa <= do_seed, f"capacidades sem seed: {sorted(do_mapa - do_seed)}"
     assert acesso.CAPACIDADES_SENSIVEIS <= do_seed
+
+
+def test_gerir_usuario_e_capacidade_propria_e_vem_antes_da_generica() -> None:
+    """Ver o painel é leitura; mudar quem entra é escrita (D25).
+
+    Duas coisas travadas aqui. A capacidade das ESCRITAS não pode ser `acesso.painel_ver` —
+    senão uma chave de leitura autoriza desativar gente. E a ordem importa: o mapa casa por
+    prefixo com `first-match`, então a regra específica tem de vir antes de `/api/acessos/`.
+    """
+    assert acesso.capacidade_necessaria("/api/acessos/usuarios", "GET") == "acesso.painel_ver"
+    assert acesso.capacidade_necessaria("/api/acessos/usuarios/7", "PATCH") == (
+        "acesso.usuario_gerir"
+    )
+    assert acesso.capacidade_necessaria("/api/acessos/resumo", "GET") == "acesso.painel_ver"
+    # Mudar quem entra é tão sensível quanto o financeiro da rede: fail-closed nega em produção.
+    assert "acesso.usuario_gerir" in acesso.CAPACIDADES_SENSIVEIS
 
 
 # --------------------------------------------------------------------------------------

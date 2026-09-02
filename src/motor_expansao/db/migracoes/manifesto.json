@@ -106,6 +106,13 @@
       "documento": "014-indices-de-metadados.md",
       "sha256_bloco": "1076430b0b71083a22f8ad6229fc1c5977f5cbc5f763f0c02fbab6f75494513c",
       "sha256_arquivo": "87174d522ed6a0384a7e4608a54861705e85d50d50297edfc7f0e272a4d61bbc"
+    },
+    {
+      "versao": "015",
+      "arquivo": "015-capacidade-gerir-usuario.sql",
+      "documento": "015-capacidade-gerir-usuario.md",
+      "sha256_bloco": "af7e24c9e754574f2008c62443688bc94fe8a78ec4139e12f215da8e3c7dd1da",
+      "sha256_arquivo": "ba87b000818bf8b04b40aa9d2b8d1c97bcd6581218881c65b6de3e912cacf307"
     }
   ]
 }

@@ -100,11 +100,11 @@ O usuário digita premissas e recebe break-even — é decisão de análise, nã
 
 ### 2.7 Gestão de acesso
 
-| `tipo` | `entidade` | `entidade_id` | `metadados` |
-|---|---|---|---|
-| `usuario.criado` | `usuario` | id do alvo | `perfil` |
-| `usuario.desativado` / `usuario.reativado` | `usuario` | id do alvo | — |
-| `usuario.perfil_alterado` | `usuario` | id do alvo | `de`, `para` |
+| `tipo` | `entidade` | `entidade_id` | `metadados` | grava? |
+|---|---|---|---|---|
+| `usuario.perfil_alterado` | `usuario` | id do alvo | `de`, `para` | **sim** |
+| `usuario.desativado` / `usuario.reativado` | `usuario` | id do alvo | — | **sim** |
+| `usuario.criado` | `usuario` | id do alvo | `perfil` | não — ver abaixo |
 
 **Aqui são duas pessoas por linha, e elas não podem se confundir.** `id_usuario` é **quem fez** —
 chega por `app.id_usuario`, como em todo evento. `entidade_id` é **quem sofreu**. Foi para isso que a
@@ -114,6 +114,11 @@ fizeram com esta pessoa"* — a pergunta de auditoria da tela de administração
 
 **Nunca o login nem o e-mail do alvo em `metadados`** — é PII, e a §4 vale aqui como em todo lugar.
 O id basta: quem tem acesso a `eventos` resolve o nome em `usuarios`.
+
+> **`usuario.criado` ainda não tem produtor**, e a razão não é preguiça: criar linha em `usuarios`
+> não cria a pessoa no Authelia, que autentica até o **P19** ser executado, e `senha_hash` é
+> `NOT NULL` sem consumidor. A tela de administração nasce com trocar perfil e ativar/desativar; a
+> criação segue manual até a epic de autenticação fechar esse buraco.
 
 ## 3. O que o esquema precisa acomodar
 
@@ -191,8 +196,15 @@ recomendação que este contrato pressupõe.
 - **`tipo` fora deste documento é defeito**, não estilo — o D11 alerta que texto livre fragmenta
   filtro, e a padronização é aqui.
 
-## 5. O que ainda não existe
+## 5. O que já grava, e o que não
 
-Nada disto está implementado: o motor **não grava evento nenhum** hoje. Este documento é o contrato
-que a implementação deve seguir, e ela é trabalho novo. **O esquema já comporta tudo isto** — a
-D24 fechou a última pendência de modelo, e a `014` criou os índices que faltavam.
+**Grava (desde 02/09/2026):** os três da §2.7 — `usuario.perfil_alterado`, `usuario.desativado` e
+`usuario.reativado` —, escritos pela tela de administração de usuários. São os primeiros eventos do
+sistema, e cada um sai na **mesma transação** da mudança que descreve
+(`motor_expansao.db.usuarios`).
+
+**Não grava:** todo o resto. As famílias §2.1 a §2.6 são contrato para implementação futura, e as
+da §2.6 dependem da F5.4 existir.
+
+**O esquema comporta tudo isto.** A D24 fechou a última pendência de modelo e a `014` criou os
+índices que faltavam; a `015` acrescentou a capacidade que separa ver o painel de mudar quem entra.

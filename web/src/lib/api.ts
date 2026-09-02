@@ -4,6 +4,8 @@ import type {
   AcaoImobiliaria,
   AcessosFicha,
   AcessosResumo,
+  AdminAlteracao,
+  AdminUsuariosPayload,
   AlvoEvento,
   ExecutivaPayload,
   FaixaAlunos,
@@ -259,6 +261,37 @@ export const api = {
       `/api/acessos/usuario/${encodeURIComponent(nome)}?dias=${dias}`,
       {},
       30_000,
+    ),
+
+  /* ---- Administração de usuários (D25) ---- */
+
+  /** Quem existe, com que perfil, e as opções do seletor. Traz inativos. */
+  adminUsuarios: () =>
+    pedir<AdminUsuariosPayload>('/api/acessos/usuarios', {}, 15_000),
+
+  /**
+   * Muda perfil e/ou status de UMA pessoa.
+   *
+   * Os dois campos são independentes: mandar só `perfil` não mexe no status, e
+   * vice-versa. Cada um vira seu próprio evento no banco, porque "virou Growth" e
+   * "foi desativado" respondem a perguntas diferentes na auditoria.
+   *
+   * Erros que a tela precisa distinguir: **403** é a trava de auto-alvo (ninguém muda
+   * o próprio acesso), **409** é estar na allowlist do painel sem ter cadastro no
+   * banco, e **503** é banco fora do ar.
+   */
+  adminAlterarUsuario: (
+    idUsuario: number,
+    mudanca: { perfil?: string; ativo?: boolean },
+  ) =>
+    pedir<AdminAlteracao>(
+      `/api/acessos/usuarios/${idUsuario}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mudanca),
+      },
+      15_000,
     ),
 
   /**

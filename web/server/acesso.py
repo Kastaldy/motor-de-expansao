@@ -347,6 +347,10 @@ REGRAS_POR_CAPACIDADE: tuple[tuple[str, tuple[str, ...] | None, str], ...] = (
     ("/api/oportunidades/", None, "imovel.dossie_ver"),
     ("/api/oportunidades", None, "imovel.listar"),
     ("/api/imobiliaria/evento/", None, "imovel.registrar_gesto"),
+    # ORDEM SIGNIFICATIVA: a escrita vem antes da regra generica do painel, como
+    # `/api/rede/cadastro` vem antes de `/api/rede/`. Ver o painel (a trilha de quem usou
+    # o que) e' LEITURA; mudar quem entra e' outra coisa, e por isso outra capacidade (D25).
+    ("/api/acessos/usuarios", ("POST", "PATCH", "PUT", "DELETE"), "acesso.usuario_gerir"),
     ("/api/acessos/", None, "acesso.painel_ver"),
 )
 
@@ -360,6 +364,7 @@ CAPACIDADES_SENSIVEIS = frozenset(
         "viabilidade.calcular",
         "viabilidade.simular",
         "acesso.painel_ver",
+        "acesso.usuario_gerir",
     }
 )
 
