@@ -67,6 +67,7 @@ PERFIL_MINIMO: dict = {
         },
     },
     "superficies": ["mapa", "viabilidade"],
+    "malha_municipal_disponivel": False,
 }
 
 #: Caminho pontilhado de todo campo obrigatorio -> usado para remover um por vez.
@@ -368,6 +369,24 @@ def test_superficie_invalida_levanta_no_boot(
     dados = _copia_profunda(PERFIL_MINIMO)
     dados["superficies"] = superficies
     with pytest.raises(PerfilInvalidoError, match="superficies"):
+        carregar_perfil(_gravar(tmp_path, dados))
+
+
+def test_malha_municipal_disponivel_ausente_levanta_no_boot(tmp_path: Path) -> None:
+    """Campo do Bloco C — sem ele, o gate de `/api/ponto` etc. nao teria como decidir."""
+    dados = _copia_profunda(PERFIL_MINIMO)
+    del dados["malha_municipal_disponivel"]
+    with pytest.raises(PerfilInvalidoError, match="malha_municipal_disponivel"):
+        carregar_perfil(_gravar(tmp_path, dados))
+
+
+@pytest.mark.parametrize("valor", ["true", 1, None, ["true"]])
+def test_malha_municipal_disponivel_fora_do_tipo_levanta(
+    tmp_path: Path, valor: object
+) -> None:
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["malha_municipal_disponivel"] = valor
+    with pytest.raises(PerfilInvalidoError, match="malha_municipal_disponivel"):
         carregar_perfil(_gravar(tmp_path, dados))
 
 
