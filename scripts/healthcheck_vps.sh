@@ -52,8 +52,12 @@ CONTAINERS=(
     # a degradacao so apareceria quando alguem olhasse um PDF.
     motor_expansao_tileserver
     # Piloto web (`Dockerfile.web`, servico `web` do compose): o app de producao desde a
-    # DEC-022 (o container motor_expansao_streamlit saiu da vigilancia no corte). Total: 6.
+    # DEC-022 (o container motor_expansao_streamlit saiu da vigilancia no corte).
     motor_expansao_web
+    # Instancia ARGENTINA (Bloco E / BLK-INTL-08, servico `web_ar` do docker-compose.ar.yml,
+    # MESMA VPS): entra na vigilancia junto com a subida. EDGE_URL segue escalar (so o host
+    # BR) — debito consciente ate o BLK-INTL-09. Total: 7.
+    motor_expansao_web_ar
 )
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"

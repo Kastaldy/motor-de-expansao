@@ -1,0 +1,117 @@
+# docker-compose.ar.yml — instancia ARGENTINA do piloto web (Bloco E / BLK-INTL-08)
+#
+# COMPOSE NOVO, de proposito: o docker-compose.prod.yml (BR) fica INTACTO —
+# parametriza-lo quebraria o teste de mounts por igualdade exata
+# (tests/unit/test_piloto_web_rede.py:513-537) longe da causa. A parametrizacao do
+# compose BR segue como divida declarada (plano_multipais.md §5.0.6, item 3).
+#
+# UM servico so (`web_ar`): sem api e sem bot (decisao do plano — a AR do dia 1 e'
+# mapa + viabilidade; o bot e o PDF por API sao superficies BR). Caddy e Authelia
+# NAO se repetem aqui: sao COMPARTILHADOS com a stack BR (docs/backup_restore.md),
+# e o Caddy segue o unico a bindar 80/443.
+#
+# Roda do MESMO diretorio da stack BR na VPS (/opt/motor-expansao/app), com o MESMO
+# .env — e' assim que ${WEB_IMAGE} resolve para o MESMO digest da BR (DEC-047: uma
+# imagem, o pais vem do perfil). Subida: docs/deploy_piloto_web.md §8.
+#
+# `name:` proprio e' OBRIGATORIO: sem ele o project name viria do diretorio (`app`,
+# o mesmo da stack BR) e os dois composes colidiriam de dentro do mesmo cwd.
+name: motor-expansao-ar
+
+services:
+
+  # ── Piloto Web AR (SPA + API FastAPI, um unico container, porta interna 8899) ──
+  web_ar:
+    # MESMA imagem e MESMO digest da instancia BR, pelo MESMO ${WEB_IMAGE} do .env
+    # (DEC-047: uma imagem para todos os paises; o que muda e' o perfil.json montado).
+    image: ${WEB_IMAGE:?defina WEB_IMAGE com o digest imutavel ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest> — ver docs/deploy_piloto_web.md}
+    container_name: motor_expansao_web_ar
+    restart: unless-stopped
+    # PROVISORIO E NAO MEDIDO (perfil.operacao.mem_limit_alvo = "2g"): o numero sai do
+    # tamanho EM DISCO do pacote AR, nao de RSS. `carregar_uf_completo`
+    # (web/server/app.py:836) faz read_parquet SEM projecao de colunas e o parquet AR
+    # carrega `geometry_wkb` por linha — coluna que o enriquecido BR nao tem. MEDIR o
+    # RSS com uma particao AR carregada (passo 5 do runbook, docs/deploy_piloto_web.md
+    # §8) ANTES de fixar este valor; ajustar aqui + no perfil no mesmo commit.
+    mem_limit: 2g
+    memswap_limit: 3g
+    expose:
+      - "8899"
+    environment:
+      # O backend deriva OUTPUTS/STAGING/ULTRA/etc. de MOTOR_DATA_DIR (igual ao BR).
+      MOTOR_DATA_DIR: "/app/data"
+      WEB_DIST_DIR: "/app/web/dist"
+      # ── Acesso (a "segunda armadilha" do plano_multipais.md, BLK-INTL-08) ──────
+      # Sem MOTOR_CADASTRO_DIR e sem override, `abas_do_usuario`
+      # (web/server/acesso.py:363-388) cai no ramo fail-OPEN e devolve ABAS_VALIDAS
+      # INTEIRA (executiva/imobiliaria/viabilidade incluidas) para TODO autenticado.
+      # Aqui as DUAS travas entram juntas, de proposito:
+      #   1. MOTOR_CADASTRO_DIR liga o fail-closed por presenca (acesso.py:352-354) e
+      #      aponta onde mora o acesso_abas.json da AR (acesso.py:279-288).
+      #   2. MOTOR_ACESSO_FAIL_CLOSED="1" e' o cinto explicito: o override e' avaliado
+      #      ANTES da presenca do cadastro (acesso.py:352-353) — remover o mount do
+      #      cadastro no futuro NUNCA reabre a instancia em silencio.
+      MOTOR_CADASTRO_DIR: "/app/cadastro"
+      MOTOR_ACESSO_FAIL_CLOSED: "1"
+      # Trilha de acesso (DEC-027): mesmo desenho do BR — fora do MOTOR_DATA_DIR para
+      # nenhum artefato ficar sob mount de escrita. Sem o volume, degrada em silencio.
+      MOTOR_ACESSO_LOG_DIR: "/app/logs/acesso"
+      # ── O que NAO entra, e por que ─────────────────────────────────────────────
+      # API_BASEMAP_LABELS_URL / API_BASEMAP_TILES_URL: decisao 0.9 — o perfil AR
+      #   declara basemap_labels_url_obrigatoria=false (mapa sem toponimo, com aviso
+      #   de tela); o PDF pontual, que e' quem consome o basemap, esta bloqueado pela
+      #   malha ate' o P7.
+      # MOTOR_OPORTUNIDADES_PATH / MOTOR_DOSSIES_DIR: superficie `oportunidades`
+      #   fora de perfil.superficies — bloqueada pelo gate de pais do Bloco C (404).
+      # API_ARCGIS_API_KEY: relatorio pontual bloqueado por malha ate' o P7.
+      # MOTOR_ACESSOS_ADMIN_USUARIOS: ausente = painel de acessos DESLIGADO (404).
+    volumes:
+      # O perfil do pais (Bloco A / DEC-047) — data/perfis/AR/perfil.json do repo.
+      # Bind de ARQUIVO, mesma pre-condicao do BR: o arquivo tem de EXISTIR no host
+      # ANTES do `up`, senao o Docker cria um DIRETORIO vazio e o container falha com
+      # "is a directory", mensagem que nao menciona perfil nenhum.
+      - /opt/motor-expansao-ar/data/perfil.json:/app/data/perfil.json:ro
+      - /opt/motor-expansao-ar/data/outputs:/app/data/outputs:ro   # pacote AR (hexagonos enriquecidos)
+      - /opt/motor-expansao-ar/data/staging:/app/data/staging:ro   # camadas paralelas do pacote AR
+      # Branding do PDF/XLSX: aponta para o diretorio da instancia BR de proposito —
+      # a marca e' a MESMA Ultra e o XLSX da viabilidade ja' sai no dia 1; uma copia
+      # em /opt/motor-expansao-ar divergiria em silencio a cada atualizacao do
+      # branding BR. Leitura pura (:ro), nenhum acoplamento de escrita entre stacks.
+      - /opt/motor-expansao/data/ultra:/app/data/ultra:ro
+      # SEM mount de `ibge`: a malha adm2 argentina e' o P7 (pendente). O app tolera a
+      # ausencia (as rotas que a exigem respondem 404 com motivo pelo gate de pais);
+      # o mount entra no MESMO commit que trouxer a malha.
+      # SEM mount de `oportunidades` (superficie bloqueada — ver environment) e SEM
+      # `concorrentes` (logos sao das redes BR; sem o mount vale o fallback sigla+cor;
+      # catalogo de concorrentes por pais e' o BLK-INTL-10).
+      # Mounts de ESCRITA — os UNICOS, espelhando a semantica BR:
+      # cadastro = so' o acesso_abas.json da AR (modelo: docs/acesso_abas_ar.exemplo.json);
+      # a escrita de cadastro operacional (/api/rede/) nem existe aqui — superficie
+      # `executiva` fora do perfil (404 pelo gate de pais). Host: chown 1000:1000.
+      - /opt/motor-expansao-ar/cadastro:/app/cadastro:rw           # acesso_abas.json (fail-closed + concessoes)
+      - /opt/motor-expansao-ar/logs/acesso:/app/logs/acesso:rw     # trilha de acesso (DEC-027)
+    networks:
+      - app_net
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8899/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+# ── Rede: a MESMA rede do edge da stack BR, EXTERNA ────────────────────────────
+# Fail-closed de proposito: se a rede nao existir, o `up` FALHA — melhor que criar
+# uma rede propria isolada do Caddy (a instancia subiria "verde" e inalcancavel).
+# O nome runtime vem do project name da stack BR: o compose BR nao tem `name:` e
+# roda de /opt/motor-expansao/app -> project `app` -> rede `app_app_net`. Precedente
+# EM PRODUCAO com este mesmo nome: openmaptiles-infra/docker-compose.yml:35-40
+# (tileserver na mesma rede externa). Ainda assim, conferir com `docker network ls`
+# ANTES do primeiro `up` (passo 2 do runbook, docs/deploy_piloto_web.md §8).
+networks:
+  app_net:
+    external: true
+    name: app_app_net
