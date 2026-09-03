@@ -538,6 +538,37 @@ def _draw_footer(pdf: _UltraPDF, *, with_attribution: bool = True) -> None:
     pdf.cell(_PAGE_W - 72, 12, _ascii(text))
 
 
+#: Corpos tentados no rodape de aviso, do preferido ao minimo legivel — mesma tecnica
+#: do `rodape()` de `pdf_base.py`: `cell` do fpdf2 NAO quebra nem avisa quando o texto
+#: nao cabe, ele simplesmente sai pela margem direita e some.
+_CORPOS_RODAPE_AVISO: tuple[float, ...] = (8.0, 7.5, 7.0, 6.5, 6.0)
+
+
+def _rodape_aviso(pdf: _UltraPDF, texto: str) -> None:
+    """Carimba um AVISO no rodape da pagina, EMPILHADO acima do credito Ultra.
+
+    Bloco C+ (decisao 0.7 do plano multi-pais): o aviso de provisoriedade declarado no
+    perfil da instancia tem de viajar no arquivo, nao so na tela. O credito de
+    `_draw_footer` (em `_PAGE_H - 22`) fica intacto — este texto entra numa linha
+    propria acima dele, em magenta e negrito para nao se confundir com o credito.
+    Encolhe ate caber numa linha; no limite, quebra em duas subindo o bloco.
+    """
+    largura = _PAGE_W - 72
+    limpo = _ascii(texto)
+    pdf.set_text_color(*ULTRA_MAGENTA)
+    for corpo in _CORPOS_RODAPE_AVISO:
+        pdf.set_font("Helvetica", "B", corpo)
+        if pdf.get_string_width(limpo) <= largura:
+            pdf.set_xy(36, _PAGE_H - 36)
+            pdf.cell(largura, 10, limpo)
+            return
+    # Nem no menor corpo coube numa linha: duas linhas, subindo para nao invadir o
+    # credito nem a borda inferior.
+    pdf.set_font("Helvetica", "B", _CORPOS_RODAPE_AVISO[-1])
+    pdf.set_xy(36, _PAGE_H - 46)
+    pdf.multi_cell(largura, 9, limpo, max_line_height=9)
+
+
 # ---------------------------------------------------------------------------
 # Slide consolidado "Mapas de calor" (BLK-RELPON-01, hoje GRID 2x2): as 4 camadas
 # censitarias (densidade/renda/score/renda_domiciliar) num unico slide, sem
@@ -3942,6 +3973,7 @@ def gerar_pdf_relatorio_pontual_classico(
     foto_satelite_grande: bool = False,
     origem_centroide_hex: bool = False,
     conclusao_so_estudo: bool = False,
+    aviso_rodape: str | None = None,
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
 
@@ -3977,6 +4009,15 @@ def gerar_pdf_relatorio_pontual_classico(
     pagina com `TEXTO_SEM_DADO` gracioso. `now` e injetavel para data determinista em teste. `solicitante`
     (BLK-EST-01) carimba a marca d'agua de rastreabilidade em TODAS as paginas: None -> so
     "Ultra Academia"; preenchido -> "Ultra Academia | {solicitante}". Geracao 100% offline, sem PII.
+
+    `aviso_rodape` (Bloco C+, decisao 0.7 do plano multi-pais) e o texto de AVISO a
+    carimbar via `_rodape_aviso` em TODAS as paginas de RESULTADO FINANCEIRO do
+    relatorio — as de `_viabilidade_page` (numeros e, se houver, graficos) e a de
+    `_conclusao_page` quando ela carrega o parecer financeiro. Quem decide o texto e o
+    PERFIL da instancia (o piloto web le `avisos.viabilidade_tributo_provisorio.
+    texto_rodape`); este modulo nao conhece pais nenhum (DEC-047). `None` (default) =
+    nenhum carimbo, saida identica a de antes do parametro. Sem payload de
+    `viabilidade` nao existe pagina financeira e nada e carimbado, mesmo com texto.
     """
     assets = _load_branding_assets(ultra_dir)
     layers = dict(_normalize_mapas_by_key(mapas))
@@ -4037,8 +4078,15 @@ def gerar_pdf_relatorio_pontual_classico(
     )
     _big_numbers_page(pdf, result, residual, assets, primary=p4, secondary=s4)
     _classico_banda_magenta_rodape(pdf)
+    # Paginas de RESULTADO FINANCEIRO (numeros de viabilidade, graficos e conclusao com
+    # parecer financeiro), anotadas POR NUMERO na ordem em que nascem: e nelas — e so
+    # nelas — que o `aviso_rodape` do Bloco C+ e carimbado, mais abaixo, pelo mesmo
+    # mecanismo de reabrir pagina da marca d'agua.
+    paginas_financeiras: list[int] = []
     if viabilidade:
+        antes = pdf.pages_count
         _viabilidade_page(pdf, viabilidade, assets, primary=p1, secondary=p2)
+        paginas_financeiras.extend(range(antes + 1, pdf.pages_count + 1))
     # CONCLUSAO: fecha o relatorio com o parecer do ponto, logo antes do credito.
     #
     # COM `viabilidade` -> parecer completo, como desde 2026-08-06.
@@ -4052,6 +4100,7 @@ def gerar_pdf_relatorio_pontual_classico(
     # -- ganharia a pagina junto, fora do escopo pedido. Default `False` = comportamento
     # historico intacto para todo chamador que nao se manifeste.
     if viabilidade or conclusao_so_estudo:
+        antes = pdf.pages_count
         _conclusao_page(
             pdf,
             result,
@@ -4063,9 +4112,22 @@ def gerar_pdf_relatorio_pontual_classico(
             secondary=s5,
             somente_estudo=not viabilidade,
         )
+        # No modo so-estudo a conclusao NAO tem eixo financeiro (nem cards de aluguel,
+        # nem selo) — nao e pagina de resultado financeiro e nao leva o carimbo.
+        if viabilidade:
+            paginas_financeiras.extend(range(antes + 1, pdf.pages_count + 1))
     _classico_credit_page(
         pdf, result, assets, rotulo=rotulo, now=now, origem_centroide_hex=origem_centroide_hex
     )
+
+    # Carimbo do aviso do perfil (Bloco C+, decisao 0.7) nas paginas financeiras —
+    # ANTES da marca d'agua, para ela continuar por cima de tudo. Mesmo mecanismo de
+    # reabrir pagina: `pdf.page = n` anexa ao stream daquela pagina.
+    if aviso_rodape and paginas_financeiras:
+        for page_number in paginas_financeiras:
+            pdf.page = page_number
+            _rodape_aviso(pdf, aviso_rodape)
+        pdf.page = pdf.pages_count
 
     # Marca d'agua POR CIMA do conteudo de cada pagina (BLK-EST-01, D2=todas as paginas).
     # Escrever na pagina `n` via `pdf.page = n` ANEXA ao stream dessa pagina -> sobreposicao.

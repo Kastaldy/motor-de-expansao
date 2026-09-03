@@ -16,23 +16,28 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 __all__ = [
     "Ancoras",
+    "Aviso",
     "Bbox",
     "Fonte",
     "Fontes",
     "Geocode",
     "Metas",
     "Moeda",
+    "Operacao",
     "Perfil",
     "PerfilInvalidoError",
     "Reguas",
     "Vista",
+    "AVISO_ONDE_VALIDO",
     "PERFIL_BR_EMBARCADO",
     "SCHEMA_VERSAO",
     "SUPERFICIES_VALIDAS",
@@ -61,6 +66,12 @@ SCHEMA_VERSAO = 1
 SUPERFICIES_VALIDAS = frozenset(
     {"executiva", "imobiliaria", "mapa", "oportunidades", "viabilidade"}
 )
+
+#: Vocabulario de `avisos.*.onde` — os artefatos em que um aviso pode viajar (Bloco C+,
+#: decisao 0.7). Validado no BOOT pelo mesmo motivo de `SUPERFICIES_VALIDAS`: um typo
+#: ("PDF", "planilha") nao produziria erro, produziria um aviso que NUNCA e carimbado —
+#: exatamente a classe de defeito silencioso que este loader existe para impedir.
+AVISO_ONDE_VALIDO = frozenset({"tela", "pdf", "xlsx"})
 
 _RE_PAIS = re.compile(r"^[A-Z]{2}$")
 _RE_MOEDA = re.compile(r"^[A-Z]{3}$")
@@ -194,6 +205,42 @@ class Reguas:
 
 
 @dataclass(frozen=True, slots=True)
+class Aviso:
+    """Um aviso do perfil que VIAJA no artefato exportado (Bloco C+, decisao 0.7).
+
+    O PDF e o XLSX vao ao locador e ao comite; a tela fica no escritorio — aviso que
+    nao viaja no arquivo nao e aviso. Os TEXTOS moram no `perfil.json` (sao dado de
+    pais, nunca literal de plataforma); o codigo so decide ONDE carimbar, lendo `onde`.
+
+    `texto_longo` e `texto_rodape` podem faltar no JSON (ex.: o aviso de tela
+    `mapa_sem_toponimo` do AR so tem `texto_curto`) e viram `""`. `titulo` e
+    `texto_curto` sao obrigatorios: um aviso sem o que dizer nao carimba nada.
+    """
+
+    codigo: str
+    ativo: bool
+    alerta: bool
+    obrigatorio: bool
+    onde: frozenset[str]
+    titulo: str
+    texto_longo: str
+    texto_curto: str
+    texto_rodape: str
+
+
+@dataclass(frozen=True, slots=True)
+class Operacao:
+    """Parametros de EXECUCAO da instancia (decisao 0.5) — consequencia operacional de
+    duas instancias dividirem uma VPS de 4 vCPU, nao dado de pais.
+
+    `pdf_concorrencia_max` e o teto do `_PDF_SEMAFORO` de `web/server/app.py` (por
+    PROCESSO; cada instancia roda UM worker uvicorn). BR=3, AR=1.
+    """
+
+    pdf_concorrencia_max: int
+
+
+@dataclass(frozen=True, slots=True)
 class Ancoras:
     """As quatro ancoras da regua absoluta, no formato que o pipeline consome.
 
@@ -232,6 +279,13 @@ class Perfil:
     #: `/api/relatorio/pontual` com 404 nomeado, em vez de deixa-los estourar 500 na
     #: primeira coordenada clicada.
     malha_municipal_disponivel: bool
+    #: Avisos que viajam no artefato exportado (Bloco C+ / decisao 0.7), por chave do
+    #: JSON (ex.: `viabilidade_tributo_provisorio`). Chave iniciada por `_` e nota de
+    #: procedencia e NAO entra aqui. O mapeamento e imutavel (`MappingProxyType`) pelo
+    #: mesmo motivo de o dataclass ser congelado: perfil nao muda em runtime.
+    avisos: Mapping[str, Aviso]
+    #: Parametros de execucao da instancia (decisao 0.5) — ver `Operacao`.
+    operacao: Operacao
     #: Pasta de onde o `perfil.json` veio. E o que substitui o `DATA_DIR` de
     #: `web/server/app.py:102` — os diretorios derivados (outputs, staging, ibge,
     #: ultra, censo_geo, enriched) continuam pendurados nela sem mudar uma linha.
@@ -262,8 +316,9 @@ PERFIL_BR_EMBARCADO = (
 #   1. Chave iniciada por `_` e COMENTARIO: o loader a ignora, sem validar tipo.
 #   2. Campo fora do schema e sem `_` e TOLERADO, nao reprovado. O fail-closed e
 #      sobre AUSENCIA e TIPO do que o schema exige; o que sobra passa. E o que deixa
-#      `reguas.score_pesos`, `avisos` e `operacao` viverem nos arquivos com leitor
-#      previsto para bloco POSTERIOR sem virarem contrato do Bloco A.
+#      `reguas.score_pesos` viver nos arquivos com leitor previsto para bloco
+#      POSTERIOR sem virar contrato do Bloco A. (`avisos` e `operacao` ja SAIRAM
+#      dessa lista: ganharam leitor no Bloco C+ e agora sao contrato.)
 # --------------------------------------------------------------------------------
 
 
@@ -298,6 +353,24 @@ def _texto(
         raise _erro(caminho, nome, "deveria ser string nao-vazia")
     if padrao is not None and not padrao.match(valor):
         raise _erro(caminho, nome, f"nao casa com {padrao.pattern!r} (veio {valor!r})")
+    return valor
+
+
+def _texto_ou_vazio(
+    dados: dict[str, Any], campo: str, caminho: Path, *, prefixo: str = ""
+) -> str:
+    """Campo de texto OPCIONAL: ausente vira `""`; presente tem de ser string nao-vazia.
+
+    E o meio-termo deliberado entre `_texto` (obrigatorio) e ignorar o campo: um aviso
+    sem `texto_rodape` e legitimo (nem todo aviso viaja em rodape), mas `texto_rodape`
+    presente com tipo errado e erro de digitacao que passaria calado.
+    """
+    if campo not in dados:
+        return ""
+    nome = f"{prefixo}{campo}"
+    valor = dados[campo]
+    if not isinstance(valor, str) or not valor.strip():
+        raise _erro(caminho, nome, "deveria ser string nao-vazia (ou simplesmente ausente)")
     return valor
 
 
@@ -482,6 +555,63 @@ def _ler_superficies(dados: dict[str, Any], caminho: Path) -> tuple[str, ...]:
     return tuple(bruto)
 
 
+def _ler_aviso(chave: str, bruto: Any, caminho: Path) -> Aviso:
+    prefixo = f"avisos.{chave}."
+    dados = _obj(bruto, caminho, f"avisos.{chave}")
+    onde_bruto = _pegar(dados, "onde", caminho, prefixo)
+    if not isinstance(onde_bruto, list) or not onde_bruto:
+        raise _erro(caminho, f"{prefixo}onde", "deveria ser lista nao-vazia")
+    fora = [o for o in onde_bruto if not isinstance(o, str) or o not in AVISO_ONDE_VALIDO]
+    if fora:
+        # Um typo aqui ("PDF", "planilha") nao produziria erro: produziria um aviso
+        # que nunca e carimbado — e a decisao 0.7 diz que isso nao e aviso.
+        raise _erro(
+            caminho,
+            f"{prefixo}onde",
+            f"valor fora do vocabulario: {fora!r} (validos: {sorted(AVISO_ONDE_VALIDO)})",
+        )
+    return Aviso(
+        codigo=_texto(dados, "codigo", caminho, prefixo=prefixo),
+        ativo=_bool(dados, "ativo", caminho, prefixo=prefixo),
+        alerta=_bool(dados, "alerta", caminho, prefixo=prefixo),
+        obrigatorio=_bool(dados, "obrigatorio", caminho, prefixo=prefixo),
+        onde=frozenset(onde_bruto),
+        titulo=_texto(dados, "titulo", caminho, prefixo=prefixo),
+        texto_longo=_texto_ou_vazio(dados, "texto_longo", caminho, prefixo=prefixo),
+        texto_curto=_texto(dados, "texto_curto", caminho, prefixo=prefixo),
+        texto_rodape=_texto_ou_vazio(dados, "texto_rodape", caminho, prefixo=prefixo),
+    )
+
+
+def _ler_avisos(dados: dict[str, Any], caminho: Path) -> Mapping[str, Aviso]:
+    """Le o bloco `avisos`. `{}` e legitimo e significa "este pais nao carrega aviso"
+    (o Brasil, calibrado, e exatamente esse caso). Chave iniciada por `_` e nota de
+    procedencia — regra 1 de admissao — e nao vira `Aviso`.
+    """
+    bruto = _obj(_pegar(dados, "avisos", caminho), caminho, "avisos")
+    return MappingProxyType(
+        {
+            chave: _ler_aviso(chave, valor, caminho)
+            for chave, valor in bruto.items()
+            if not chave.startswith("_")
+        }
+    )
+
+
+def _ler_operacao(dados: dict[str, Any], caminho: Path) -> Operacao:
+    bruto = _obj(_pegar(dados, "operacao", caminho), caminho, "operacao")
+    teto = _inteiro(bruto, "pdf_concorrencia_max", caminho, prefixo="operacao.")
+    # Zero nao e "sem teto": `asyncio.Semaphore(0)` nunca libera — todo pedido de PDF
+    # da instancia ficaria pendurado para sempre, sem erro nenhum no log.
+    if teto < 1:
+        raise _erro(
+            caminho,
+            "operacao.pdf_concorrencia_max",
+            "deveria ser >= 1 (semaforo com teto 0 nunca libera um PDF)",
+        )
+    return Operacao(pdf_concorrencia_max=teto)
+
+
 def carregar_perfil(caminho: Path, *, raiz: Path | None = None) -> Perfil:
     """Le, valida e congela o perfil. Qualquer defeito levanta `PerfilInvalidoError`.
 
@@ -554,6 +684,8 @@ def carregar_perfil(caminho: Path, *, raiz: Path | None = None) -> Perfil:
         reguas=_ler_reguas(dados, caminho),
         superficies=_ler_superficies(dados, caminho),
         malha_municipal_disponivel=_bool(dados, "malha_municipal_disponivel", caminho),
+        avisos=_ler_avisos(dados, caminho),
+        operacao=_ler_operacao(dados, caminho),
         raiz=Path(raiz) if raiz is not None else caminho.parent,
     )
 

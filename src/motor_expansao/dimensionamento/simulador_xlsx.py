@@ -1034,12 +1034,19 @@ def _write_aba_premissas(
     wb: openpyxl.Workbook,
     blocos: list[tuple[str, list[dict[str, Any]]]],
     nome_ponto: str,
+    aviso_nota: str | None = None,
 ) -> dict[str, str]:
     """Escreve a aba Premissas e devolve o mapa `key -> "Premissas!$B$n"`.
 
     Passo 1 aloca as linhas (para as formulas derivadas poderem se referir umas as
     outras), passo 2 escreve. Sem isso uma derivada nao conseguiria apontar para
     uma celula definida depois dela.
+
+    `aviso_nota` (Bloco C+, decisao 0.7) ocupa a linha 3 — hoje vazia, entre a
+    legenda de cores e o primeiro bloco —, que e a posicao de maior destaque da
+    primeira aba do arquivo: e a primeira coisa que o investidor ve depois do
+    titulo. `None` (default) deixa a linha 3 vazia como sempre foi — nenhuma outra
+    linha se move, e a saida fica identica byte a byte a de antes do parametro.
     """
     ws = wb.create_sheet(ABA_PREMISSAS)
     titulo = "ULTRA Academia — Simulador financeiro: PREMISSAS (toda célula de entrada)"
@@ -1052,6 +1059,8 @@ def _write_aba_premissas(
         "cinza escuro = estrutural (mudar aqui não recria as colunas da planilha).",
         len(_PREM_COLS),
     )
+    if aviso_nota:
+        _nota(ws, 3, aviso_nota, len(_PREM_COLS), alerta=True)
 
     # Passo 1: alocar linhas.
     row = 4
@@ -2492,6 +2501,7 @@ def gerar_simulador_xlsx(
     rotulo: str | None = None,
     m2: float | None = None,
     resultado: ViabilidadeResult | None = None,
+    aviso_nota: str | None = None,
 ) -> bytes:
     """Gera o simulador financeiro completo em .xlsx com FORMULAS VIVAS.
 
@@ -2521,6 +2531,14 @@ def gerar_simulador_xlsx(
     resultado:
         Resultado de `simular()` ja calculado. Quando None, e calculado aqui — e a
         FONTE dos valores estaticos da aba Afericao.
+    aviso_nota:
+        Texto de AVISO a carimbar na planilha (Bloco C+, decisao 0.7 do plano
+        multi-pais): entra como linha de nota com fundo de alerta (`_nota(...,
+        alerta=True)`) na linha 3 da aba Premissas — a primeira aba, acima do
+        primeiro bloco. Quem decide o texto e o PERFIL da instancia (o caller do
+        piloto web le `avisos.viabilidade_tributo_provisorio.texto_curto`, que cabe
+        na linha unica mesclada); este modulo nao conhece pais nenhum (DEC-047).
+        `None` (default) = comportamento identico ao anterior, byte a byte.
 
     Returns
     -------
@@ -2574,7 +2592,7 @@ def gerar_simulador_xlsx(
         juros_equipamentos_am=juros_equipamentos_am, taxa_franquia=taxa_franquia,
         parcelas_franquia=parcelas_franquia,
     )
-    refs = _write_aba_premissas(wb, blocos, titulo_ponto)
+    refs = _write_aba_premissas(wb, blocos, titulo_ponto, aviso_nota=aviso_nota)
     _write_aba_folha(wb, premissas, refs, letra_st_dre)
     _write_aba_dre(wb, meses, refs)
     _write_aba_fluxo(wb, meses, refs)
