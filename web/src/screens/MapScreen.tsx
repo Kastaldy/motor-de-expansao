@@ -3,6 +3,7 @@ import { useUfsDaBase } from '../lib/base-contexto'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import type { PontoEscolhido } from '../App'
+import BarraCamadas, { type ChaveDeCamada } from '../components/BarraCamadas'
 import BotaoInicio from '../components/BotaoInicio'
 import FichaHex from '../components/FichaHex'
 import FichaImovel from '../components/FichaImovel'
@@ -18,7 +19,12 @@ import { Botao } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
 import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
-import { ACC, ACC_50 } from '../lib/imovel'
+import { ACC } from '../lib/imovel'
+
+/* O magenta da camada imobiliaria com o mesmo alpha .16 que o turquesa usa em
+   `--ac-a16`. Nao vive em `lib/imovel` porque la' a escada de alphas (08/10/12/24/30/50)
+   foi montada para a ABA; este e' o realce da LINHA do painel de camadas do mapa. */
+const ACC_16 = 'rgba(221,61,151,.16)'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import { rodapeDaBase, tituloEscolhaUnidade } from '../lib/rodape-base'
@@ -28,11 +34,20 @@ import type { Tema } from '../lib/tema'
 import type {
   Cobertura1k,
   Hex,
-  Independentes,
   MunicipioItem,
   MunicipioPayload,
   Oportunidade,
 } from '../lib/types'
+
+/* A CAMADA em que o raio de 1 km vale. Camada 3 e' "Pressao concorrencial", e o modelo de
+   1 km E' a medida dessa pressao — nas outras o mapa mede outra grandeza (1 = censo, 2 =
+   demanda nao atendida, 4 = crescimento, 5 = faixa do M1) e o recorte de cobertura
+   responderia a uma pergunta que ninguem fez ali.
+
+   Constante nomeada porque o mesmo numero governa DUAS coisas em arquivos diferentes:
+   este portao e o `PASSOS_DA_PRESSAO` do `HexMap`. Mudar um sem o outro deixa o mapa
+   pintando por uma regua e desenhando o recorte por outra. */
+const CAMADA_DO_RAIO = 3
 
 /** Filtro global "melhores hexes": faixas M1 permitidas por nível. */
 const FAIXA_FILTROS: Record<string, Set<string>> = {
@@ -167,13 +182,52 @@ export default function MapScreen({
   const [cenario, setCenario] = useState<string[]>(foto.cenario)
   const [copiado, setCopiado] = useState(false)
 
-  // PROTOTIPO da chave de raio. Comeca SEMPRE em 2 km: o piloto abre identico ao de
-  // hoje e nenhum numero muda sem alguem clicar. Nao entra no EstadoMapa de proposito —
-  // e experimento, nao preferencia a preservar entre telas.
-  const [raio1km, setRaio1km] = useState(false)
+  /* Somatorio ao vivo dos dois modelos (2 km x 1 km) sobre os hexes que o backend serviu
+     para o recorte atual. Vive aqui, ANTES do `raio1km`, porque e' ele quem responde se a
+     base tem os campos do modelo novo — sem isso nao ha' o que desenhar. O funil (numeros
+     grandes e narrativa) continua vindo do modelo de 2 km: trocar aquilo exige mexer no
+     payload do servidor. */
+  const comparativoRaio = useMemo(() => {
+    const hs = dados?.hexes ?? []
+    if (!hs.length || hs[0].conc1k == null) return null
+    let res2 = 0
+    let res1 = 0
+    let comConc = 0
+    for (const h of hs) {
+      res2 += h.oferta ?? 0
+      res1 += h.oferta1k ?? 0
+      if ((h.conc1k ?? 0) > 0) comConc += 1
+    }
+    return { res2, res1, comConc, total: hs.length }
+  }, [dados])
+
+  /* RAIO DE 1 KM — deixou de ser chave e virou o PADRAO DA CAMADA 3 (Juan, 2026-09-02:
+     "tirar o botão de ver raio de 1 km de concorrentes, deixar ele funcionando por
+     padrão... e só poder ser visto essa visão na camada 3").
+
+     Era um prototipo com liga/desliga em duas camadas (2 e 3), aberto sempre desligado
+     para o piloto continuar identico ao de antes. O experimento acabou: o modelo de 1 km
+     e' a leitura da PRESSAO CONCORRENCIAL, e pressao concorrencial e' a camada 3 — nas
+     outras o mapa mede outra grandeza (1 = censo, 2 = demanda nao atendida, 4 =
+     crescimento, 5 = faixa do M1) e o recorte de cobertura respondia a uma pergunta que
+     ninguem tinha feito ali.
+
+     DERIVADO, e nao state: o valor e' uma FUNCAO da camada aberta, e guarda-lo num
+     `useState` abriria a porta para os dois divergirem (camada 4 na tela, raio ligado
+     por um clique antigo). `comparativoRaio` continua no portao porque a geometria so'
+     existe quando o backend serviu os campos do modelo novo — base velha desenha o mapa
+     de sempre, sem cobertura. */
+  const raio1km = comparativoRaio != null && passoN === CAMADA_DO_RAIO
   /* Regua do mapa (BLK-CONC-MEDIR): comeca DESLIGADA. Ligada, o clique mede em vez de
      selecionar hexagono — por isso e' chave explicita e nao um gesto escondido. */
   const [medindo, setMedindo] = useState(false)
+
+  /* Legenda das faixas: VISIVEL por padrao, e agora com chave propria no trilho de
+     camadas. Ela sempre foi obrigatoria na tela — quem esconde a legenda de um mapa
+     colorido tira a unica coisa que traduz a cor. A chave existe para o caso oposto:
+     o operador que ja sabe a regua e quer o territorio embaixo dela, tipicamente para
+     tirar print. Nao entra no `EstadoMapa`: e' preferencia do momento, nao da analise. */
+  const [legendaVisivel, setLegendaVisivel] = useState(true)
 
   /* Pins das academias INDEPENDENTES com score (BLK-MA-15). Comeca DESLIGADO pela mesma razao da
      chave de raio: o piloto abre identico ao de hoje. Sao ate ~1,3 mil pontos numa capital, e
@@ -260,10 +314,16 @@ export default function MapScreen({
     if (imoveisUf != null && !temImoveis) setVerImoveis(false)
   }, [imoveisUf, temImoveis])
 
-  /* Geometria do raio: buscada SOB DEMANDA, so' quando a chave liga. Fora do payload do
-     mapa de proposito — custa ~2,4 s e ~3,9 MB na UF de SP, e quem nunca liga a chave nao
-     deve pagar isso. Trocar de UF/municipio zera a geometria (ela e' daquele recorte) e
-     dispara nova busca se a chave estiver ligada. */
+  /* Geometria do raio: buscada SOB DEMANDA, so' quando a CAMADA 3 esta aberta. Fora do
+     payload do mapa de proposito — custa ~2,4 s e ~3,9 MB na UF de SP, e quem so' passa
+     pelas camadas 1, 2, 4 e 5 nao deve pagar isso. Trocar de UF/municipio zera a
+     geometria (ela e' daquele recorte) e dispara nova busca se a camada 3 seguir aberta.
+
+     Com o raio virando padrao a busca deixou de depender de um clique: entrar na camada 3
+     ja' a dispara. Por isso `carregandoRaio` continua existindo e agora aparece na barra
+     de ferramentas — antes quem esperava tinha ligado a chave e sabia por que esperava;
+     hoje o custo chega sem pedido, e uma tela que demora calada e' o defeito, nao a
+     demora. */
   const [cobertura, setCobertura] = useState<Cobertura1k | null>(null)
   const [carregandoRaio, setCarregandoRaio] = useState(false)
 
@@ -453,24 +513,6 @@ export default function MapScreen({
     const hs = cenario.map((id) => porId.get(id)).filter(Boolean) as Hex[]
     return hs.length === cenario.length ? hs : null
   }, [cenario, porId])
-
-  /* Comparativo ao vivo dos dois modelos, somado no cliente a partir dos hexes que o
-     backend serviu para o recorte atual. O funil (numeros grandes e narrativa) continua
-     vindo do modelo de 2 km — trocar aquilo exige mexer no payload do servidor, e este
-     experimento existe para VER o efeito, nao para virar a chave. */
-  const comparativoRaio = useMemo(() => {
-    const hs = dados?.hexes ?? []
-    if (!hs.length || hs[0].conc1k == null) return null
-    let res2 = 0
-    let res1 = 0
-    let comConc = 0
-    for (const h of hs) {
-      res2 += h.oferta ?? 0
-      res1 += h.oferta1k ?? 0
-      if ((h.conc1k ?? 0) > 0) comConc += 1
-    }
-    return { res2, res1, comConc, total: hs.length }
-  }, [dados])
 
   // Agregação do cenário multi-hex (soma no cliente a partir dos hexes servidos).
   const resumoCenario = useMemo(() => {
@@ -725,6 +767,124 @@ export default function MapScreen({
       uf: dados.uf,
     })
   }
+
+  /* Liga/desliga do cenario multi-hex. Extraido porque agora tem DOIS chamadores — a
+     linha do painel e o icone do trilho — e duplicar o corpo deixaria os dois divergirem
+     no primeiro ajuste (sair do modo tem de limpar a selecao E o cenario). */
+  const alternarCenario = useCallback(() => {
+    /* O `setCenario` fica FORA do updater de proposito: updater de estado tem de ser puro,
+       e em StrictMode ele roda duas vezes. Ler `modoCenario` do fecho custa a dependencia
+       abaixo e paga com um corpo que faz o que parece fazer. */
+    if (modoCenario) setCenario([])
+    setModoCenario((m) => !m)
+    setSelecionado(null)
+  }, [modoCenario])
+
+  /* AS CHAVES DO PAINEL, na ordem fixa do desenho.
+
+     Regua e comparacao sao FERRAMENTAS (mudam o que o clique no mapa faz); independentes
+     e imoveis sao CAMADAS DE DADO (desenham pontos por cima). Convivem no mesmo painel
+     porque, do ponto de vista de quem opera, as quatro respondem a mesma pergunta — "o
+     que este mapa esta me mostrando agora?" — e tê-las em dois lugares foi justamente o
+     que a pilha de pilulas fazia de errado.
+
+     As condicionais somem em vez de aparecerem desabilitadas: chave apagada que nao pode
+     acender mente sobre a disponibilidade do dado. Quem some do painel some com o dado,
+     nao com a permissao. */
+  const chavesDoMapa = useMemo<ChaveDeCamada[]>(() => {
+    const lista: ChaveDeCamada[] = [
+      {
+        id: 'medir',
+        titulo: 'Medir distância',
+        sub: medindo ? 'clique 2 pontos no mapa' : 'clique para ativar',
+        ligado: medindo,
+        onToggle: () => setMedindo((v) => !v),
+        cor: 'var(--ac-text)',
+        corTexto: 'var(--ac-chip)',
+        corRealce: 'var(--ac-a16)',
+      },
+    ]
+
+    /* So' no drill-down: na visao de UF a lista e' de cidades, e comparar cidades tem
+       tela propria. */
+    if (!nivelUf) {
+      lista.push({
+        id: 'comparar',
+        titulo: 'Comparar hexes',
+        sub: modoCenario
+          ? `${cenario.length} de ${MAX_COMPARADOS} selecionados`
+          : 'some vários num cenário',
+        ligado: modoCenario,
+        onToggle: alternarCenario,
+        cor: 'var(--ac-text)',
+        corTexto: 'var(--ac-chip)',
+        corRealce: 'var(--ac-a16)',
+      })
+    }
+
+    /* Academias INDEPENDENTES com score (BLK-MA-15). Vale em QUALQUER camada: a pergunta
+       "quem ja opera aqui e esta espremido?" e' a INVERSAO do funil (comprar, nao abrir).
+       O titulo diz de QUEM e' o pin — o mapa ja tem bandeiras de CADEIA, e os dois
+       universos sao opostos. O TETO e' declarado quando morde: corte silencioso num
+       municipio grande mentiria sobre a densidade. */
+    if (temIndependentes) {
+      const n = independentes?.itens.length ?? 0
+      const total = independentes?.total ?? 0
+      lista.push({
+        id: 'indep',
+        titulo: 'Academias independentes',
+        sub: verIndependentes
+          ? `${n} · visível${independentes?.truncado ? ` de ${total} (teto)` : ''}`
+          : `${total} no recorte`,
+        ligado: verIndependentes,
+        onToggle: () => setVerIndependentes((v) => !v),
+        cor: '#e8663c',
+        corTexto: 'var(--indep-tx)',
+        corRealce: 'rgba(232,102,60,.16)',
+      })
+    }
+
+    /* OPORTUNIDADES IMOBILIARIAS do recorte. Tambem vale em qualquer camada: "que imovel
+       existe aqui?" e' pergunta de territorio, nao de camada do funil. */
+    if (temImoveis) {
+      lista.push({
+        id: 'imoveis',
+        titulo: 'Oportunidades imobiliárias',
+        sub: verImoveis
+          ? `${imoveisNoMapa.length} · visível`
+          : `${imoveisNoMapa.length} no recorte`,
+        ligado: verImoveis,
+        onToggle: () => {
+          /* Rastro (DEC-027) so' no LIGAR: apagar a camada nao e' interesse pela oferta
+             imobiliaria, e o auto-desligamento por recorte sem imovel nem passa por aqui
+             (mexe no estado direto), entao nao vira gesto falso. Fora do updater de
+             proposito — em StrictMode ele roda duas vezes. */
+          if (!verImoveis) {
+            api.eventoImobiliaria('filtrar', { uf, origem: 'mapa', detalhe: 'camada-imoveis' })
+          }
+          setVerImoveis((v) => !v)
+        },
+        cor: ACC,
+        corTexto: 'var(--imovel-tx)',
+        corRealce: ACC_16,
+      })
+    }
+
+    return lista
+  }, [
+    medindo,
+    nivelUf,
+    modoCenario,
+    cenario.length,
+    alternarCenario,
+    temIndependentes,
+    independentes,
+    verIndependentes,
+    temImoveis,
+    imoveisNoMapa.length,
+    verImoveis,
+    uf,
+  ])
 
   // ---------------- Passo 2 do modo de região: escolha de estado ----------------
   // Já NÃO é a porta de entrada do produto — essa é a `InicioScreen`. Aqui só se
@@ -987,10 +1147,15 @@ export default function MapScreen({
         {/* Manual do funil. Ao lado do MELHORES e ANTES do `flex:1`: ocupa a folga do
             meio, entao o bloco de metricas segue ancorado na borda direita.
 
-            A quebra do header em duas linhas a 100% de zoom NAO vem daqui — a 1280 px
-            logicos (notebook Full HD com escala 150% do Windows, padrao de fabrica)
-            todos os paineis da tela quebram, com ou sem este botao. E' aperto geral de
-            layout, assunto separado. */}
+            A quebra do header em duas linhas a 100% de zoom NAO vem daqui, e nao se
+            resolve mexendo em peca nenhuma dele: a linha inteira pede ~1860px e um
+            notebook Full HD com a escala de 150% do Windows (padrao de fabrica) da ~1265.
+            Ja se tentou enxugar o cabecalho (tirar este rotulo, o titulo, os rotulos dos
+            seletores, e mudar os tres numeros de lugar) — o Juan recusou em 2026-09-02:
+            "o residual, espaco para academias foi pra outra coluna q nao gostei". A
+            resposta passou a ser ESCALA: o app inteiro renderiza a 80% (ver
+            `--escala-app` em `styles/global.css`), que e' o mesmo efeito do zoom do
+            navegador sem exigir que alguem o ajuste em toda maquina. */}
         <Botao
           variante="ghost"
           onClick={() => setMetodologiaAberta((v) => !v)}
@@ -1120,103 +1285,42 @@ export default function MapScreen({
                 </button>
               </div>
             )}
-            {/* Regua. PRIMEIRA da coluna e sem condicao nenhuma de passo, nivel ou
-                camada: medir a distancia ate uma concorrente ou ate uma unidade nossa e'
-                pergunta de qualquer etapa. No fim da pilha ela ficava abaixo da legenda e
-                das outras chaves -- que sao CONDICIONAIS --, entao a posicao dela mudava
-                conforme a tela e era facil nao encontra-la. */}
-            <PilulaRegua ligado={medindo} onToggle={() => setMedindo((v) => !v)} />
+            {/* ---------------- Trilho + painel "Camadas do mapa" ----------------
+                O desenho e o porque moram em `components/BarraCamadas`. Aqui fica so a
+                LIGACAO: quais chaves existem neste recorte, o texto de cada uma e a
+                identidade de cor de cada camada.
 
-            {!nivelUf && (
-              <div
-                style={{
-                  pointerEvents: 'auto',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 8,
-                  maxWidth: 280,
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (modoCenario) setCenario([])
-                    setModoCenario((m) => !m)
-                    setSelecionado(null)
-                  }}
-                  style={{
-                    alignSelf: 'flex-start',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    background: modoCenario ? 'var(--ac-a16)' : 'var(--surf-panel)',
-                    border: `1px solid ${modoCenario ? 'var(--ac-a30)' : 'var(--line-soft)'}`,
-                    borderRadius: 'var(--r-md)',
-                    padding: '8px 11px',
-                    font: '600 12px/1 var(--f-ui)',
-                    color: modoCenario ? 'var(--ac-text)' : 'var(--tx-soft)',
-                    backdropFilter: 'blur(16px)',
-                  }}
-                >
-                  {modoCenario ? '◆ Comparando hexes' : '◇ Comparar vários hexes'}
-                </button>
+                A ORDEM E' FIXA e comeca pela regua — ela e' a unica que nao depende de
+                camada, nivel nem recorte, entao e' a unica que esta SEMPRE la'. As
+                condicionais entram depois; assim o que existe sempre nunca muda de lugar
+                quando o que e' condicional aparece ou some.
 
-                {/* O conteúdo da comparação saiu daqui e foi para uma JANELA (abaixo, no
-                    fim da árvore). Como caixa presa ao canto, ela crescia sobre o mapa sem
-                    o operador poder tirá-la do caminho — e é justamente o território que
-                    ele está comparando que ficava coberto. Este botão continua sendo o
-                    liga/desliga do modo. */}
-              </div>
-            )}
-
-            <ScoreLegend passoN={passo.n} />
-
-            {/* Academias INDEPENDENTES com score (BLK-MA-15). Vale em QUALQUER passo: a
-                pergunta "quem ja opera aqui e esta espremido?" e' a INVERSAO do funil (comprar,
-                nao abrir), entao nao pertence a camada nenhuma dele. */}
-            {temIndependentes && (
-              <PilulaIndependentes
-                ligado={verIndependentes}
-                meta={independentes}
-                onToggle={() => setVerIndependentes((v) => !v)}
+                A LEGENDA ficou LADO A LADO com o painel, e nao embaixo: empilhada, ela
+                subia e descia conforme o recorte tivesse ou nao independentes e imoveis
+                — exatamente o defeito que este redesenho veio corrigir. */}
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
+              <BarraCamadas
+                chaves={chavesDoMapa}
+                regua={{ ligado: medindo, onToggle: () => setMedindo((v) => !v) }}
+                comparar={
+                  nivelUf
+                    ? null
+                    : {
+                        ligado: modoCenario,
+                        onToggle: alternarCenario,
+                      }
+                }
+                legendaVisivel={legendaVisivel}
+                onLegenda={() => setLegendaVisivel((v) => !v)}
+                /* A espera do raio de 1 km. Ela nasceu quando o raio deixou de ser chave
+                   e virou o padrao da camada 3: a geometria custa ~2,4 s numa UF grande e
+                   agora e' buscada sem ninguem pedir, entao o unico jeito honesto de
+                   cobrar essa espera e' dizer que ela esta acontecendo. */
+                aviso={carregandoRaio ? 'Carregando o raio de 1 km das concorrentes…' : null}
               />
-            )}
 
-            {/* OPORTUNIDADES IMOBILIARIAS do recorte (a oferta da aba, como pontinhos).
-                Tambem vale em qualquer passo: "que imovel existe aqui?" e' pergunta de
-                territorio, nao de camada do funil. So aparece quando o recorte tem
-                imovel coletado — pilula sem nada para desenhar mentiria disponibilidade. */}
-            {temImoveis && (
-              <PilulaImoveis
-                ligado={verImoveis}
-                n={imoveisNoMapa.length}
-                onToggle={() => {
-                  /* Rastro (DEC-027) so no LIGAR: apagar a camada nao e' interesse pela
-                     oferta imobiliaria, e o auto-desligamento por recorte sem imovel nem
-                     passa por aqui (mexe no estado direto), entao nao vira gesto falso.
-                     Fora do updater de proposito — em StrictMode ele roda duas vezes. */
-                  if (!verImoveis) {
-                    api.eventoImobiliaria('filtrar', {
-                      uf,
-                      origem: 'mapa',
-                      detalhe: 'camada-imoveis',
-                    })
-                  }
-                  setVerImoveis((v) => !v)
-                }}
-              />
-            )}
-
-            {/* PROTOTIPO — chave do raio de atuacao das concorrentes. So aparece nos
-                passos que falam de oferta e disputa, e so quando o backend serviu os
-                campos do modelo novo. */}
-            {comparativoRaio && (passo.n === 2 || passo.n === 3) && (
-              <PilulaRaio
-                ligado={raio1km}
-                carregando={carregandoRaio}
-                onToggle={() => setRaio1km((v) => !v)}
-              />
-            )}
+              {legendaVisivel && <ScoreLegend passoN={passo.n} />}
+            </div>
 
           </div>
         )}
@@ -1687,257 +1791,5 @@ function PainelMensagem({ children }: { children: React.ReactNode }) {
     >
       {children}
     </aside>
-  )
-}
-
-/* --- PROTOTIPO: pilula do raio de atuacao das concorrentes ------------------
-   Substituiu um painel de texto que ficava embaixo das faixas: o Felipe pediu
-   leitura VISUAL, no mapa, nao um bloco de numeros na lateral. Aqui fica so o
-   liga/desliga; quem conta a historia sao os circulos de 1 km desenhados em volta
-   de cada concorrente e a cor dos hexagonos que eles alcancam.
-
-   Abre SEMPRE em 2 km — o piloto continua identico ao de hoje ate alguem clicar. */
-/* Chave da REGUA do mapa (BLK-CONC-MEDIR).
-
-   Modo dedicado, e nao clique-no-pin: o clique do mapa ja tem dono — selecionar hexagono
-   e' o gesto central do funil — e roubar esse gesto quebraria a tela de quem nunca vai
-   medir. Com a chave, o unico gesto que muda e' o de quem pediu a medicao. */
-function PilulaRegua({ ligado, onToggle }: { ligado: boolean; onToggle: () => void }) {
-  return (
-    <button
-      onClick={onToggle}
-      title={
-        ligado
-          ? 'Clique na origem e no destino; perto de uma bandeira a ponta trava nela'
-          : 'Medir a distância entre dois pontos do mapa, travando nos pins'
-      }
-      style={{
-        // Mesmo motivo do `PilulaRaio`: o container da legenda tem `pointerEvents: 'none'`
-        // e sem devolver 'auto' aqui o clique atravessa o botao e vai para o mapa.
-        pointerEvents: 'auto',
-        marginTop: 8,
-        width: '100%',
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        fontSize: 11,
-        fontWeight: 600,
-        padding: '7px 11px',
-        borderRadius: 9,
-        border: `1px solid ${ligado ? 'var(--ac-a45)' : 'var(--linha-mapa)'}`,
-        // Mesma troca das outras pílulas: fundo OPACO, não PRETO. No escuro `--surf-mapa`
-        // é o mesmo #000; no claro é branco chapado, porque o que resolve a legenda
-        // atravessando o texto é a opacidade, não a cor.
-        background: 'var(--surf-mapa)',
-        color: ligado ? 'var(--ac-chip)' : 'var(--tx-narrative)',
-      }}
-    >
-      <span
-        style={{
-          width: 9,
-          height: 9,
-          borderRadius: '50%',
-          background: ligado ? 'var(--ac-text)' : 'var(--sinal-off)',
-          flexShrink: 0,
-        }}
-      />
-      {ligado ? 'Régua ligada — clique dois pontos' : 'Medir distância'}
-    </button>
-  )
-}
-
-
-function PilulaRaio({
-  ligado,
-  carregando,
-  onToggle,
-}: {
-  ligado: boolean
-  carregando: boolean
-  onToggle: () => void
-}) {
-  return (
-    <button
-      onClick={onToggle}
-      title={
-        ligado
-          ? 'Mostrando o raio de 1 km de cada concorrente e os hexágonos que ela alcança'
-          : 'Modelo atual: peso linear até 2 km medido do centróide do hexágono'
-      }
-      style={{
-        // O container da legenda e' um overlay com `pointerEvents: 'none'` (para nao
-        // roubar o arraste do mapa). Sem devolver 'auto' AQUI, o clique atravessa o
-        // botao e vai para o mapa: a pilula aparece, mas nao liga nada. Era esse o
-        // motivo de "nenhuma mudanca" — a chave nunca chegava a ficar true.
-        pointerEvents: 'auto',
-        marginTop: 8,
-        width: '100%',
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        fontSize: 11,
-        fontWeight: 600,
-        padding: '7px 11px',
-        borderRadius: 9,
-        border: `1px solid ${ligado ? 'var(--ac-a45)' : 'var(--linha-mapa)'}`,
-        // Fundo OPACO (pedido do Felipe): o botão fica sobre o mapa, e um fundo
-        // translúcido deixava a legenda das faixas atravessar o texto. No escuro
-        // `--surf-mapa` É o preto que ele pediu; no claro é branco chapado, porque o que
-        // resolve o problema é a opacidade, não a cor — um retângulo preto sobre o
-        // Positron seria a única mancha escura da tela.
-        background: 'var(--surf-mapa)',
-        color: ligado ? 'var(--ac-chip)' : 'var(--tx-narrative)',
-      }}
-    >
-      <span
-        style={{
-          width: 9,
-          height: 9,
-          borderRadius: '50%',
-          // Os três viraram `var()` para seguir o tema sem este componente saber que ele
-          // existe. No ESCURO os três valem exatamente o que valiam como hex solto:
-          // --carga = #f2c230, --ac-text = #4fd3df, --sinal-off = #5a6472. O âmbar e o
-          // cinza ganharam token PRÓPRIO em vez de cair em --warn/--tx-off, que eram
-          // vizinhos e não iguais (ver tokens.css).
-          background: carregando ? 'var(--carga)' : ligado ? 'var(--ac-text)' : 'var(--sinal-off)',
-          flexShrink: 0,
-        }}
-      />
-      {carregando
-        ? 'Carregando raio…'
-        : ligado
-          ? 'Raio 1 km por concorrente'
-          : 'Ver raio de 1 km das concorrentes'}
-    </button>
-  )
-}
-
-
-/* Chave dos pins das academias INDEPENDENTES (BLK-MA-15).
-
-   O texto diz de QUEM e' o pin, e nao so' "academias": o mapa ja tem bandeiras de CADEIA, e os
-   dois universos sao opostos — a cadeia e' quem disputa o mercado, a independente e' quem se
-   compra. Confundi-los na tela seria pior que nao mostrar nenhum.
-
-   O TETO E' DECLARADO quando morde: corte silencioso num municipio grande mentiria sobre a
-   densidade, que e' o defeito que o teto de pins de concorrente ja registrou. */
-function PilulaIndependentes({
-  ligado,
-  meta,
-  onToggle,
-}: {
-  ligado: boolean
-  meta: Independentes | null
-  onToggle: () => void
-}) {
-  const n = meta?.itens.length ?? 0
-  const total = meta?.total ?? 0
-  return (
-    <button
-      onClick={onToggle}
-      title={
-        ligado
-          ? 'Cada ponto e uma academia independente. Passe o mouse para ver o score, a pressao ' +
-            'competitiva medida da coordenada dela e a nota do WellHub.'
-          : `Ver as ${total} academias independentes deste recorte, com score`
-      }
-      style={{
-        // Mesmo motivo do `PilulaRaio`: o container da legenda tem `pointerEvents: 'none'`.
-        pointerEvents: 'auto',
-        marginTop: 8,
-        width: '100%',
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        fontSize: 11,
-        fontWeight: 600,
-        padding: '7px 11px',
-        borderRadius: 9,
-        border: `1px solid ${ligado ? 'rgba(232,102,60,.5)' : 'var(--linha-mapa)'}`,
-        // Mesma troca da `PilulaRaio`: fundo OPACO em vez de PRETO. O que resolve a
-        // legenda atravessando o texto é a opacidade, não a cor — e três retângulos
-        // pretos empilhados sob um card de legenda branco seriam a única mancha escura
-        // da tela. No escuro `--surf-mapa` é o mesmo #000 de antes.
-        background: 'var(--surf-mapa)',
-        color: ligado ? 'var(--indep-tx)' : 'var(--tx-narrative)',
-      }}
-    >
-      <span
-        style={{
-          width: 9,
-          height: 9,
-          borderRadius: '50%',
-          // O ponto LIGADO fica no hex da camada: é elemento gráfico e passa nos dois
-          // fundos. Só o desligado virou token, e `--sinal-off` é o #5a6472 de antes.
-          background: ligado ? '#e8663c' : 'var(--sinal-off)',
-          flexShrink: 0,
-        }}
-      />
-      {ligado
-        ? `${n} independentes${meta?.truncado ? ` de ${total} (teto)` : ''}`
-        : 'Ver academias independentes'}
-    </button>
-  )
-}
-
-/* Chave dos pontinhos de OPORTUNIDADES IMOBILIARIAS (a oferta da aba, no territorio).
-
-   Identidade MAGENTA — o acento da propria aba imobiliaria (lib/imovel), que nenhuma
-   outra camada do mapa usa: turquesa e' acao/cenario, laranja e' das independentes, e
-   o comentario do card de metricas ja registrou que quase toda matiz do tema significa
-   algo. Os PONTOS em si saem na cor categorica do TIPO (a mesma da aba); o magenta e'
-   so o "isto e' da camada imobiliaria" da pilula e da janela de detalhe. */
-function PilulaImoveis({
-  ligado,
-  n,
-  onToggle,
-}: {
-  ligado: boolean
-  n: number
-  onToggle: () => void
-}) {
-  return (
-    <button
-      onClick={onToggle}
-      title={
-        ligado
-          ? 'Cada ponto é um imóvel coletado, na cor do tipo (galpão, comercial/loja, terreno). ' +
-            'Passe o mouse para ver aluguel, custo de ocupação, projeção e área; clique para abrir o detalhe.'
-          : `Ver os ${n} imóveis de locação coletados neste recorte`
-      }
-      style={{
-        // Mesmo motivo das outras pilulas: o container da legenda tem `pointerEvents: 'none'`.
-        pointerEvents: 'auto',
-        marginTop: 8,
-        width: '100%',
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        fontSize: 11,
-        fontWeight: 600,
-        padding: '7px 11px',
-        borderRadius: 9,
-        border: `1px solid ${ligado ? ACC_50 : 'var(--linha-mapa)'}`,
-        background: 'var(--surf-mapa)',
-        color: ligado ? 'var(--imovel-tx)' : 'var(--tx-narrative)',
-      }}
-    >
-      <span
-        style={{
-          width: 9,
-          height: 9,
-          borderRadius: '50%',
-          background: ligado ? ACC : 'var(--sinal-off)',
-          flexShrink: 0,
-        }}
-      />
-      {ligado
-        ? `${n} ${n === 1 ? 'imóvel no recorte' : 'imóveis no recorte'}`
-        : 'Ver oportunidades imobiliárias'}
-    </button>
   )
 }

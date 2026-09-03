@@ -214,11 +214,19 @@ const PASSO_POR_FAIXA_M1 = 5
  *  bordas azuis). Sem isso, as 10 aberturas do passo 5 sumiriam no meio do mapa. */
 const DIM_FORA_DO_PASSO = 0.5
 
-/* Onde a REGUA DO RESIDUAL vale: 2 (Demanda nao atendida) e 3 (Pressao concorrencial).
-   So' nestes passos o recorte livre/coberto pode ser pintado pelo score do modelo de 1 km
-   — nos demais o mapa mede outra coisa (1 = censo, 4 = crescimento, 5 = faixa do M1) e
-   duas reguas lado a lado dariam cores incongruentes, medindo grandezas diferentes. */
-const PASSOS_DA_PRESSAO = new Set([2, 3])
+/* Onde a REGUA DO RESIDUAL vale: SO' a camada 3 (Pressao concorrencial).
+
+   Era {2, 3} enquanto o raio de 1 km foi uma chave que o operador ligava. Desde que ele
+   virou o padrao da camada 3 (Juan, 2026-09-02), a camada 2 saiu daqui: "Demanda nao
+   atendida" mede o residual do modelo de 2 km, e pintar parte dela pelo modelo de 1 km
+   punha duas reguas no mesmo mapa medindo grandezas diferentes — que e' exatamente o
+   defeito que este conjunto existe para evitar nas camadas 1, 4 e 5.
+
+   O portao e' REDUNDANTE com o `raio1km` que o `MapScreen` calcula (la' ele ja' so' e'
+   `true` na camada 3), e continua aqui de proposito: o `HexMap` e' quem sabe que a cor de
+   um hexagono tem de sair de uma regua so', e essa invariante nao deve depender de quem
+   passa a prop. */
+const PASSOS_DA_PRESSAO = new Set([3])
 
 /* O alpha das pecas de cobertura e' o MESMO do hexagono normal (`pele.alphaHex`), e por
    isso deixou de ser constante de modulo quando o tema entrou: usar um alpha maior fazia
@@ -985,7 +993,7 @@ export default function HexMap({
          concorrentes nao pertence a regua nenhuma — ela responde "quantas me alcancam
          aqui?", que e' verdade em qualquer camada do funil. Quem depende da regua e' o
          recorte COLORIDO acima, nao esta tinta escura (pedido do Felipe, 2026-08-12). */
-      ...(raio1km && cobertura1k?.sombras?.length
+      ...(raio1km && PASSOS_DA_PRESSAO.has(passo.n) && cobertura1k?.sombras?.length
         ? [
             new PolygonLayer<number[][][]>({
               id: 'cobertura-sombra-1km',
@@ -1010,7 +1018,7 @@ export default function HexMap({
          Tambem em TODOS os passos: "ate onde a concorrencia chega" e' um fato geografico,
          nao uma leitura de regua. Enquanto estava preso aos passos 2 e 3, ligar a chave em
          qualquer outra camada nao desenhava nada e parecia defeito. */
-      ...(raio1km && cobertura1k?.contorno?.length
+      ...(raio1km && PASSOS_DA_PRESSAO.has(passo.n) && cobertura1k?.contorno?.length
         ? [
             new PolygonLayer<number[][][]>({
               id: 'conc-alcance-1km',

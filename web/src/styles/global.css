@@ -19,6 +19,68 @@ body,
   height: 100%;
 }
 
+/* ESCALA DO APP — 69% (Juan, 2026-09-02; recalibrada na revisao de 2026-09-03).
+
+   O piloto e' uma tela de UMA pagina que nao rola: cabecalho, mapa, painel narrativo e
+   barra de camadas dividem a largura da janela, e o cabecalho sozinho pede ~1.665px numa
+   linha (medido no app, na visao mais apertada: o drill-down de municipio, a unica que
+   carrega o botao "Todos os municipios"). Com o Dock, as margens e o padding do header,
+   sao ~1.790px de layout. Num notebook Full HD com a escala de 150% do Windows — padrao
+   de fabrica — sobram ~1.265px logicos. O resultado era o operador ajustando o zoom do
+   navegador em toda maquina, toda vez, e os tres numeros do territorio (hexagonos,
+   residual, espaco p/ academias) caindo para uma segunda fileira.
+
+   ESCALA, e nao enxugar as pecas. Tentou-se antes tirar o titulo, os rotulos dos
+   seletores e mudar os tres numeros para o painel da direita; o Juan recusou — "o
+   residual, espaco para academias foi pra outra coluna q nao gostei". E com razao: cada
+   peca cortada resolvia ~100px de um deficit de ~400, e cobrava uma perda de leitura por
+   isso. A escala resolve o deficit inteiro sem tirar nada de lugar.
+
+   DE ONDE VEM 0,69. O ponto de partida foi a tela do operador: com o app a 0,8 ele ainda
+   precisava por o navegador em 90% para o cabecalho fechar numa linha (0,8 x 0,9 = 0,72).
+   Mas 0,72 so' fecha a visao de ESTADO. Medido no app com "Sao Jose do Rio Preto"
+   aberto: o cabecalho pedia 1.659px e recebia 1.639 — faltavam 20, e os tres numeros
+   caiam para a segunda fileira de novo, que e' exatamente o defeito que esta escala veio
+   corrigir.
+
+   O valor sai do PIOR CASO, e nao do caso que estava na tela: o seletor de municipio tem
+   `maxWidth: 210`, entao um nome longo o bastante o satura e soma +45px sobre a medida
+   acima. Pior caso = 1.704px de cabecalho + 126 de cromo (Dock 70 + margens 32 + padding
+   24) = ~1.830px de layout. Numa tela de 1.272px logicos isso exige escala <= 0,695;
+   0,69 da 1.843px, com 13px de folga. Assim o cabecalho fecha numa linha em QUALQUER
+   municipio do pais, e nao apenas nos de nome curto.
+
+   MUDAR SO' COM MEDIDA NOVA. Para remedir: abrir o app, somar `offsetWidth` dos filhos do
+   `<header>` (fora o espacador de `flex: 1`) mais os gaps de 12px, e acrescentar 126px de
+   cromo (Dock 70 + margens 32 + padding 24).
+
+   A MEDIDA vem primeiro, a escala depois: `#root` e' dimensionado em 1/escala e so entao
+   encolhido. E' isso que faz o LAYOUT acontecer numa janela virtual maior — o cabecalho
+   cabe numa linha porque ele realmente tem o espaco, nao porque alguem tirou peca dele.
+
+   `transform: scale()` e nao `zoom`. O `zoom` do Chrome deixa `getBoundingClientRect()`
+   nas coordenadas de LAYOUT enquanto `clientX/clientY` dos eventos chegam nas VISUAIS — e
+   o deck.gl e o MapLibre convertem o ponteiro em latitude subtraindo um do outro, entao o
+   clique cairia fora do hexagono sob o cursor. Com `transform` os dois vivem no mesmo
+   espaco e a conta fecha sem o mapa saber que existe escala. (Medido em 2026-09-02: com
+   `zoom`, o proprio layout da tela de inicio ja saia deslocado.)
+
+   `transform-origin: 0 0` ancora no canto superior esquerdo — sem isto a escala parte do
+   centro e sobra faixa vazia em cima e a' esquerda.
+
+   O `App` mede `height: 100%` e nao `100vh` pelo mesmo motivo das medidas de `#root`:
+   `100vh` e' a altura da JANELA, e dentro de um `#root` maior ela cobriria so parte dela. */
+:root {
+  --escala-app: 0.69;
+}
+
+#root {
+  width: calc(100% / var(--escala-app));
+  height: calc(100% / var(--escala-app));
+  transform: scale(var(--escala-app));
+  transform-origin: 0 0;
+}
+
 /* `color-scheme` no DOCUMENTO decide a cor do canvas do navegador (o que aparece no
    overscroll) e da barra de rolagem da pagina. As regras la' embaixo tratam o chrome
    nativo de `select`/`input`; estas duas tratam a moldura. */

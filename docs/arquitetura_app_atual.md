@@ -44,10 +44,18 @@ São **3 superfícies** (DEC-020 definiu esse escopo; "substituir 100% o Streaml
   chama `simular()` (`dimensionamento/simulador.py`) e serve o
   `viabilidade_payload_v1` único que tela, API e PDF consomem sem recalcular.
 
-O Dock mostra `Expansão de domínio` e `Carteira e plano` desabilitadas de
+O Dock MOSTRAVA `Expansão de domínio` e `Carteira e plano` desabilitadas de
 propósito: a DEC-020 decidiu que Domínio não vira tela (a Fase 4 do Mapa cobre a
 análise) e que Carteira/Plano vira, no futuro, "Oportunidades Imobiliárias"
 (placeholder; epic própria pendente de DEC + spec).
+
+Os dois ícones SAÍRAM do rail em 2026-09-02, a pedido do Juan ("eles não estão
+sendo utilizados, então tirar os ícones deles"). A decisão da DEC-020 continua
+valendo — o que caiu foi o ANÚNCIO dela na tela: dois botões permanentemente
+apagados não dizem por que estão apagados, e o mesmo raciocínio já tinha decidido
+que tela vetada SOME em vez de aparecer desabilitada. O suporte a `tela: null`
+segue no tipo de `ITENS` (`components/Dock.tsx`), que é o que permite reintroduzir
+um destino futuro sem reabrir a lista.
 
 ## A.2 Peças e dependências
 
