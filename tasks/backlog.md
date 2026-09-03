@@ -4515,7 +4515,7 @@ viabilidade argentina do defeito R2 é este bloco.
 | **Criticidade** | **Crítica** — `^authelia/` é CRITICO (`scripts/loop_guard.py:124`), logo **exige `critica-aprovada`**. **Zero código de aplicação.** |
 | **Prioridade** | Alta — **tem de estar no ar ANTES de qualquer login internacional ser concedido.** |
 | **Esteira** | `[GATE HUMANO — critica-aprovada do Felipe]` → Builder → QA → Felipe (aplicação manual, VPS §6). |
-| **Status** | Pendente. |
+| **Status** | Feita em 2026-09-03 — aplicada na VPS (aprovacao comando a comando) e backups no PR #308 (`d3d173a`). |
 | **Depende de** | — . **Paraleliza com A1, B1 e C1.** |
 | **Esforço** | **1 dia · Felipe + 1 dev** (era 2-3 dias antes de se ver que a regra do host AR precisa existir de qualquer jeito e que o `subject` custa a mesma linha). |
 | **Autonomia** | **manual (NÃO loop-safe)** — infra de autenticação + VPS. NÃO marcar loop-safe. |
@@ -4563,7 +4563,7 @@ existente perde acesso ao que já tinha.
 | **Criticidade** | **Crítica** — `docker-compose` (`scripts/loop_guard.py:122`) e `(^|/)Caddyfile` (`:123`) são CRITICO, logo **exige `critica-aprovada`**, além do **deploy manual por digest pelo dono** (`CLAUDE.md` §6). |
 | **Prioridade** | Alta — é o bloco que fecha a onda; **sem ele não existe URL para o time acessar.** |
 | **Esteira** | Block Orchestrator → Planner → `[GATE HUMANO — critica-aprovada do Felipe]` → Builder → QA → Felipe (deploy manual + 24 h de observação). |
-| **Status** | Pendente. |
+| **Status** | Feita em 2026-09-03 — stack AR no ar (PRs #309-#312), piloto-ar.ultra-expansao.tech servindo. |
 | **Depende de** | **A1 + B1 + C1 + C2 + D1** para a **SUBIDA**. A **preparação** (DNS, bloco de Caddy, `.env`, `mem_limit` provisório) corre em paralelo a B1, C1 e C2. |
 | **Esforço** | **3-4 dias · 1 dev + Felipe no deploy + 24 h de observação de RSS e de CPU** (era 1-1,5 semana quando incluía parametrizar o compose brasileiro, que saiu — ver abaixo). |
 | **Autonomia** | **manual (NÃO loop-safe)** — VPS, compose, Caddy, DNS, deploy. **Nunca** loop-safe. |
@@ -4641,3 +4641,32 @@ quando existir pacote de premissas AR revisado por **assessor fiscal local**.
 
 **Guardrail.** §5 READ-ONLY M1. `docker-compose.prod.yml` e o Caddy do Brasil ficam **intactos**. Deploy
 **sempre manual, por digest, comando a comando** — auto-merge **não** deploya, em nenhum caso.
+
+---
+
+#### BLK-INTL-13 — Portal de seleção de país na raiz `ultra-expansao.tech`
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — toca `docker-compose.prod.yml` (`scripts/loop_guard.py:122`) e `.dockerignore` (`:121`), logo **exige `critica-aprovada`**; a metade Caddyfile/Authelia é gitignored e não chega ao guard (spec §7.3/§8). |
+| **Prioridade** | Alta — com os Blocos D e E no ar, é o que falta para o time ter **um** endereço de entrada em vez de decorar subdomínio por país. |
+| **Esteira** | `[GATE HUMANO — critica-aprovada do Felipe]` → Builder → QA → Felipe (aplicação do Caddyfile/Authelia + aceites na VPS, §6 do `CLAUDE.md`). |
+| **Status** | **Em andamento — metade versionada entregue** (PR deste bloco): `portal/*.html` revisados, mount `./portal:/srv/portal:ro` no caddy, `portal/` no `.dockerignore`, `tests/unit/test_portal_paises.py` (asserts 7/8/11/12 no CI), `scripts/aceite_portal_paises.sh` (asserts 1-6/9/10, roda na VPS), `^portal/` em `_DENY_GOVERNANCA`, runbook em `docs/infra_producao.md`. **Pendente (dono da sessão, na VPS):** bloco raiz do `Caddyfile` (spec §2.3), `default_redirection_url` + regra da raiz no Authelia (spec §6), aceites §7.1/§7.2/§7.4.2 com a saída colada no PR, aviso ao time (§4.1) no dia da virada. |
+| **Depende de** | **BLK-INTL-05 (Bloco D / BLK-INTL-D1)** — **FECHADA em 2026-09-03** (grupos `expansao_br`/`expansao_ar` aplicados no Authelia da VPS). BLK-INTL-08 (Bloco E) também fechada em 2026-09-03: o host AR existe no `Caddyfile` com TLS e `forward_auth` — a ordem do §9 da spec foi cumprida. |
+| **Esforço** | 1-2 dias, dos quais mais da metade é a migração de cache do 301 e o aviso ao time — não é código (spec, cabeçalho). |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca VPS/deploy (`CLAUDE.md:141`). NÃO marcar loop-safe. |
+
+**O que é.** A raiz deixa de ser atalho fixo para o piloto brasileiro e passa a rotear por
+`Remote-Groups`: um país → 302 direto; vários → seletor com **só** os países do usuário (filtragem por
+**renderização**, nunca CSS); nenhum → explicação em português com a quem pedir acesso. Spec com
+autoridade total: **`docs/spec_portal_selecao_pais.md`** (por que não contradiz a DEC-047: §1.2).
+
+**Verificação partida em dois porque o git parte em dois (spec §7.4):** os asserts que leem só arquivos
+rastreados rodam no CI (`test_portal_paises.py`); os que leem `Caddyfile`/`users_database.yml` — gitignored —
+rodam na VPS (`aceite_portal_paises.sh`), e a **saída colada no PR** é a única evidência revisável dessa
+metade. O teste de CI **não pode abrir** `Caddyfile` nem `authelia/` (nem em `skipif`) — regra de manutenção
+do §7.4.1.
+
+**Guardrail.** Deploy manual, comando a comando (`CLAUDE.md` §6). No **primeiro** deploy o caddy é
+**recriado** (`up -d caddy`, não `reload`) — o volume `./portal` só entra na recriação; ver
+`docs/infra_producao.md`, seção "Portal de seleção de país na raiz".

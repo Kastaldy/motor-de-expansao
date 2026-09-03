@@ -743,6 +743,28 @@ scp -i "$env:USERPROFILE\.ssh\id_ultra" -r data/ultra/ root@2.25.137.241:/opt/mo
 
 ---
 
+## Portal de seleção de país na raiz (BLK-INTL-13)
+
+A raiz `ultra-expansao.tech` é o portal de seleção de país (spec e roteamento:
+`docs/spec_portal_selecao_pais.md`). As duas páginas versionadas (`portal/index.html` e
+`portal/sem-acesso.html`) chegam ao Caddy por bind mount read-only
+(`./portal:/srv/portal:ro` no serviço `caddy` do `docker-compose.prod.yml`).
+
+**Primeiro deploy do portal: RECRIAR o caddy, não `reload`.** O volume `./portal` é novo e
+volume só entra na recriação do container:
+
+```bash
+cd /opt/motor-expansao/app
+docker compose -f docker-compose.prod.yml exec caddy caddy validate --config /etc/caddy/Caddyfile
+docker compose -f docker-compose.prod.yml up -d caddy    # NAO `caddy reload` neste primeiro deploy
+```
+
+Depois disso, edições de HTML em `portal/` são **ao vivo** (o bind entrega o arquivo novo na
+requisição seguinte, sem restart); mudanças no `Caddyfile` seguem pedindo
+`caddy reload` como sempre. Aceites da metade não-versionada (Caddyfile/Authelia):
+`bash scripts/aceite_portal_paises.sh` em `/opt/motor-expansao/app`, com a saída colada no PR
+(spec §7.4.2).
+
 ## Gerenciar usuários do login (Authelia)
 
 > O login continua igual após a DEC-022: o Authelia protege `piloto.ultra-expansao.tech`

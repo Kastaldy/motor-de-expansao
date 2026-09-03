@@ -290,6 +290,7 @@ services:
       - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./portal:/srv/portal:ro                                 # portal de selecao de pais (spec docs/spec_portal_selecao_pais.md)
       - caddy_data:/data
       - caddy_config:/config
       # Access log do host piloto (DEC-027): a diretiva `log` do Caddyfile escreve

@@ -40,9 +40,11 @@
       bloco `.sem-acesso`, no ramo `else` da grade. Sem esse ramo o caso cairia
       numa grade VAZIA, sem explicação (spec §5.4).
 
-  POR QUE ISSO NÃO CONTRADIZ A DEC-046
+  POR QUE ISSO NÃO CONTRADIZ A DEC-047
   ------------------------------------
-  A DEC-046 recusou o país virar VARIÁVEL DENTRO do app — um seletor em runtime
+  (A decisão nasceu como DEC-046 e foi RENUMERADA para DEC-047 em 2026-09-02 —
+  quinta colisão de número do repo; ver o cabeçalho da própria DEC-047.)
+  A DEC-047 recusou o país virar VARIÁVEL DENTRO do app — um seletor em runtime
   trocando a base servida, o que rechavearia os 35 `lru_cache` de `web/server/app.py`.
   Este portal NÃO serve dado nenhum: decide um destino e sai da frente. Cada país
   continua com seu processo, seu cache e seu `perfil.json`. É roteador de porta de
@@ -129,30 +131,30 @@
   `authelia/configuration.yml`. E o portal precisa ficar ATRÁS do `forward_auth`
   também, senão o cabeçalho que ele lê é um que o próprio cliente mandou.
 
-  DEPENDÊNCIAS FORA DESTE ARQUIVO (donos: outros blocos)
-  -------------------------------------------------------
-  1. `docker-compose.prod.yml:268-274` monta no Caddy APENAS o Caddyfile, os
-     volumes `caddy_data`/`caddy_config` e o diretório de log. A pasta `portal/`
-     NÃO chega ao container. Precisa do mount `- ./portal:/srv/portal:ro`.
-  2. O bloco `ultra-expansao.tech` do `Caddyfile:19-22` hoje só faz
-     `redir ... permanent`. `permanent` é 301 e o navegador cacheia 301 PARA
+  DEPENDÊNCIAS FORA DESTE ARQUIVO — estado em 2026-09-03 (BLK-INTL-13)
+  ---------------------------------------------------------------------
+  1. FECHADA NESTE PR: o mount `- ./portal:/srv/portal:ro` entrou no serviço
+     `caddy` do `docker-compose.prod.yml`. No PRIMEIRO deploy o container tem de
+     ser RECRIADO (`up -d caddy`, não `reload`) — volume novo só entra na
+     recriação. Edições de HTML depois disso são ao vivo, pelo bind.
+  2. PENDENTE (dono: sessão do Felipe, na VPS): o bloco raiz do `Caddyfile`
+     (linhas 19-22, hoje `redir ... permanent`) ainda precisa ser substituído
+     pelo `route` da spec §2.3. `permanent` é 301 e o navegador cacheia 301 PARA
      SEMPRE — quem ganhar um segundo país depois nunca veria o seletor. Todo
-     redirect deste fluxo tem de ser 302.
-  3. Os grupos `expansao_*` ainda não existem: hoje
-     `authelia/users_database.yml` tem 19 usuários num grupo único `ultra_team`.
-     Enquanto o BLK-INTL-05 não rodar, TODO mundo cai em `@sem_pais`. Este bloco
-     sobe DEPOIS dos grupos, não antes (spec §9).
-  4. O `Caddyfile` tem hoje 5 hosts (linhas 19, 24, 32, 49, 54) e o
-     `access_control` duas regras (`authelia/configuration.yml:82-86`) — o segundo
-     host de país não está em nenhum dos dois. Ele nasce no **BLK-INTL-08**, que
-     também é dono do `Caddyfile` e do `docker-compose.prod.yml`. Ordem obrigatória:
-     BLK-INTL-05 -> BLK-INTL-08 -> BLK-INTL-13 (este). Fora dessa ordem, um cartão
-     aponta para um host que não existe.
-  Os três arquivos de infra são CRITICO em `scripts/loop_guard.py:122-124` e
-  exigem a label `critica-aprovada` do Felipe. Este arquivo deve entrar como
-  GOVERNANCA em `_DENY_GOVERNANCA` (spec §8) — hoje nenhum padrão de
-  `_DENY_CRITICO` casa `portal/`, e sem a entrada a página da porta de entrada
-  fica editável por bloco "Média" auto-mergeável.
+     redirect deste fluxo tem de ser 302. O `Caddyfile` é gitignored: essa
+     metade não passa por PR nenhum (spec §7.3), e a evidência revisável dela é
+     a saída do `scripts/aceite_portal_paises.sh` colada no PR.
+  3. FECHADA em 2026-09-03 (Bloco D / BLK-INTL-05 aplicado): os grupos por país
+     existem no Authelia da VPS, e todo usuário ativo está no grupo do primeiro
+     país. `Remote-Groups` já chega ao Caddy com eles.
+  4. FECHADA em 2026-09-03 (Bloco E / BLK-INTL-08 deployado): o host do segundo
+     país existe no `Caddyfile` com TLS e `forward_auth`. A ordem do §9 da spec
+     (BLK-INTL-05 -> BLK-INTL-08 -> BLK-INTL-13) foi cumprida — nenhum cartão
+     desta página aponta para host inexistente.
+  `Caddyfile`, `docker-compose.prod.yml` e `authelia/` são CRITICO em
+  `scripts/loop_guard.py` e exigem a label `critica-aprovada` do Felipe. Este
+  arquivo é GOVERNANCA (`_DENY_GOVERNANCA`, entrada `^portal/` — spec §8): não
+  entra por bloco "Média" auto-mergeável.
 
 ================================================================================
   COMO ACRESCENTAR O PRÓXIMO PAÍS
@@ -574,6 +576,7 @@ footer a:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
          não `<code>`: quem chega aqui procurando "como troco de país" tem de
          poder clicar e guardar. -->
     <p>Para voltar a esta escolha a qualquer momento, abra <a href="/?escolher=1">ultra-expansao.tech/?escolher=1</a>.</p>
+    <p>Precisa de acesso a mais alguma coisa? Fale com o Felipe — é liberação de grupo, leva minutos.</p>
   </footer>
 
 </body>
