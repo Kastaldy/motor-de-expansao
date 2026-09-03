@@ -438,3 +438,72 @@ Abrir `https://piloto.ultra-expansao.tech` → login Authelia → piloto.
   (não subpath), está correto. Se um dia for servido em `/piloto`, setar `base` no `vite.config.ts`.
 - **Node só no build**: a imagem final é `python:3.11-slim` (sem Node) — o Vite roda só no
   estágio 1 do `Dockerfile.web`.
+
+---
+
+## 8. Subida da instância AR (Bloco E / BLK-INTL-08)
+
+Checklist do deploy **manual** da stack argentina (`docker-compose.ar.yml` — mesma VPS,
+mesma imagem/digest via `WEB_IMAGE`, Caddy e Authelia compartilhados). **Todo comando
+executado na VPS é com aprovação do Felipe, comando a comando (CLAUDE.md §6).** Em
+ordem:
+
+1. **DNS** — registro **A** `piloto-ar.ultra-expansao.tech` → `2.25.137.241`
+   (Hostinger). *Já em andamento com o Felipe.*
+2. **Conferir a rede ANTES do `up`** *(na VPS, com aprovação do Felipe, comando a
+   comando — CLAUDE.md §6)*: `docker network ls | grep app` — esperado `app_app_net`
+   (o compose BR roda de `/opt/motor-expansao/app` sem `name:` → project `app`;
+   precedente em produção: `openmaptiles-infra/docker-compose.yml:35-40`). Se o nome
+   for OUTRO, ajustar `networks.app_net.name` no `docker-compose.ar.yml` **antes** de
+   subir — a rede é `external` de propósito: rede inexistente faz o `up` **falhar**,
+   em vez de criar uma rede própria isolada do Caddy.
+3. **Diretórios e dono** *(na VPS, com aprovação do Felipe, comando a comando)*:
+   `mkdir -p /opt/motor-expansao-ar/data/{outputs,staging}
+   /opt/motor-expansao-ar/{cadastro,logs/acesso}` e depois
+   `chown -R 1000:1000 /opt/motor-expansao-ar/{cadastro,logs/acesso}` — os **dois
+   únicos `:rw`**; sem o `chown`, a primeira escrita devolve 500 (mesmo gotcha do
+   §2.1).
+4. **`scp` do perfil e dos artefatos** *(scp é permitido; validação na VPS com
+   aprovação, comando a comando)*:
+   - `data/perfis/AR/perfil.json` → `/opt/motor-expansao-ar/data/perfil.json` —
+     **antes do `up`** (bind de arquivo; origem ausente vira diretório vazio e o
+     container morre com `"is a directory"` — mesmo aviso do §2);
+   - pacote AR (saída do exportador do BLK-INTL-02) → `/opt/motor-expansao-ar/data/{outputs,staging}`;
+   - `docs/acesso_abas_ar.exemplo.json`, **com os usuários reais no lugar dos de
+     exemplo**, → `/opt/motor-expansao-ar/cadastro/acesso_abas.json`. A linha nominal
+     `["mapa", "viabilidade"]` de cada usuário AR entra **no mesmo ato** em que ele é
+     criado no `users_database.yml` do Authelia (o curinga nunca concede
+     `viabilidade` — `web/server/acesso.py:383-388`).
+5. **Medir o RSS ANTES de fixar o `mem_limit`** *(na VPS, com aprovação do Felipe,
+   comando a comando)*: subir o container uma vez (passo 7), abrir uma partição AR no
+   mapa (a 1ª leitura chama `carregar_uf_completo`, `web/server/app.py:836` —
+   `read_parquet` **sem projeção de colunas**, e o parquet AR carrega `geometry_wkb`
+   por linha, coluna que o enriquecido BR não tem) e ler `docker stats
+   motor_expansao_web_ar`. O `2g/3g` do compose é **PROVISÓRIO E NÃO MEDIDO**
+   (`perfil.operacao.mem_limit_alvo`); fixar o valor medido (regime < 70% do teto) no
+   compose **e** no perfil, no mesmo commit.
+6. **Caddy + Authelia** *(na VPS, com aprovação do Felipe, comando a comando)*:
+   anexar o bloco de `deploy/caddy/piloto-ar.Caddyfile.template` ao Caddyfile da VPS;
+   criar a regra do Authelia para `piloto-ar.ultra-expansao.tech` com grupo próprio
+   (ex.: `group:ultra_ar`) e `subject` nas regras BR existentes (plano_multipais.md,
+   BLK-INTL-05); `caddy reload`; atualizar os backups cifrados (`secrets/`).
+7. **Validar e subir** *(na VPS, de `/opt/motor-expansao/app`, com aprovação do
+   Felipe, comando a comando)*: `docker compose -f docker-compose.ar.yml config`
+   (a validação sintática final — `docker compose` não roda na máquina de dev) e
+   `docker compose -f docker-compose.ar.yml up -d`. O mesmo `.env` da stack BR
+   resolve `WEB_IMAGE` → **mesmo digest** (DEC-047: uma imagem, o país vem do
+   perfil).
+8. **Validação** *(na VPS, com aprovação do Felipe, comando a comando)*:
+   `docker compose -f docker-compose.ar.yml exec web_ar curl -fsS
+   http://127.0.0.1:8899/api/health`; log com `perfil: pais=AR`; abrir
+   `https://piloto-ar.ultra-expansao.tech` → login → mapa AR; a aba Viabilidade
+   aparece para usuário com linha nominal e o XLSX sai com o aviso
+   `AR-VIAB-TRIB-PROVISORIO`.
+9. **p95 do BR sob carga AR**: medir o p95 do piloto BR **com a AR gerando o
+   PDF/XLSX de viabilidade** — as duas instâncias dividem 4 vCPU
+   (`perfil.operacao.pdf_concorrencia_max: 1`, decisão 0.5); o BR não pode degradar.
+10. **Vigilância + 24 h de observação** *(na VPS, com aprovação do Felipe, comando a
+    comando)*: atualizar `scripts/healthcheck_vps.sh` na VPS (o array já tem
+    `motor_expansao_web_ar` — copiar **depois** do `up`, senão o check alerta
+    container ausente) e observar 24 h: RSS em regime abaixo de 70% do `mem_limit`
+    medido e CPU sem briga com o BR.

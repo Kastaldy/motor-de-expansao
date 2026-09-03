@@ -49,6 +49,23 @@
 > Esses arquivos estao no `.gitignore` da raiz do repo (linhas 80-86 atuais).
 > Nenhuma versao em claro pode entrar no git.
 
+### 2.1 Instancia AR (Bloco E / BLK-INTL-08)
+
+A stack AR (`docker-compose.ar.yml`) **nao cria segredo novo**: Caddy, Authelia e o
+`.env` sao os MESMOS da stack BR (compartilhados — o que muda neles e' so o bloco/regra
+do host `piloto-ar`, ja coberto pelos backups cifrados acima). O que a AR acrescenta:
+
+| Caminho no VPS                                     | O que e'                                                                     |
+| -------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `/opt/motor-expansao-ar/data/perfil.json`          | Copia de `data/perfis/AR/perfil.json` (versionado — restore = scp do repo)   |
+| `/opt/motor-expansao-ar/cadastro/acesso_abas.json` | Concessoes de aba da AR (editado em producao, so existe no servidor); molde em `docs/acesso_abas_ar.exemplo.json` |
+
+A trilha de acesso AR (`/opt/motor-expansao-ar/logs/acesso/`) segue o regime da trilha
+BR (retencao de 90 dias podada pelo backend, DEC-027). Artefatos de dados AR
+(`/opt/motor-expansao-ar/data/{outputs,staging}`) seguem a MESMA politica dos BR (§3):
+nao entram no git nem no backup cifrado — sao reproduziveis a partir do pacote
+Motor-Argentina e sobem por `scp`.
+
 ---
 
 ## 3. Inventario do que existe so localmente (dados brutos)

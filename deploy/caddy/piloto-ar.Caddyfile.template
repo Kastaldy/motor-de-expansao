@@ -1,0 +1,29 @@
+# Bloco do Caddy para a instancia ARGENTINA do piloto (Bloco E / BLK-INTL-08).
+#
+# TEMPLATE versionado: o Caddyfile REAL e' gitignored (backup cifrado em
+# secrets/Caddyfile.enc) e vive na VPS em /opt/motor-expansao/app/Caddyfile.
+# Aplicacao (cada comando na VPS com aprovacao do Felipe, comando a comando —
+# CLAUDE.md §6):
+#   1. Anexar este bloco ao Caddyfile da VPS (ao lado do bloco de
+#      piloto.ultra-expansao.tech — docs/deploy_piloto_web.md §3).
+#   2. Garantir a regra do Authelia para piloto-ar.ultra-expansao.tech (grupo
+#      PROPRIO, ex.: group:ultra_ar) e `subject` nas regras BR existentes — a
+#      segregacao BR/AR e' do MESMO ato (plano_multipais.md, BLK-INTL-05).
+#   3. Recarregar sem downtime:
+#      docker compose -f docker-compose.prod.yml exec caddy \
+#          caddy reload --config /etc/caddy/Caddyfile
+#   4. Atualizar o backup cifrado (sops secrets/Caddyfile.enc).
+#
+# Espelha o bloco BR (docs/deploy_piloto_web.md §3) com UMA diferenca deliberada:
+# o BR usa `reverse_proxy web:8899` (alias de SERVICO, valido porque Caddy e `web`
+# estao no MESMO compose). O alias de servico NAO cruza projects diferentes — o
+# `web_ar` mora no docker-compose.ar.yml (project motor-expansao-ar) — entao aqui
+# o alvo e' o container_name, que e' resolvido na rede compartilhada app_app_net.
+
+piloto-ar.ultra-expansao.tech {
+    forward_auth authelia:9091 {
+        uri /api/verify?rd=https://auth.ultra-expansao.tech
+        copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
+    }
+    reverse_proxy motor_expansao_web_ar:8899
+}

@@ -1,0 +1,9 @@
+{
+  "_comentario": "Modelo do acesso_abas.json INICIAL da instancia AR (Bloco E). Copiar para /opt/motor-expansao-ar/cadastro/acesso_abas.json ANTES do up. Editar e salvar vale na requisicao seguinte (relido por mtime), sem restart.",
+  "_regra_curinga": "O curinga '*' NUNCA concede aba sensivel (executiva/imobiliaria/viabilidade) — web/server/acesso.py:383-388, pentest Onda B #14. Por isso 'viabilidade' exige linha NOMINAL: adicione a linha do usuario AR no MESMO ato em que ele entra no users_database.yml do Authelia.",
+  "_regra_superficies": "Conceder 'oportunidades'/'executiva'/'imobiliaria' aqui seria inerte: a instancia AR nao declara essas superficies (data/perfis/AR/perfil.json) e o gate de pais responde 404 antes do gate de usuario.",
+  "_TROCAR": "As duas linhas abaixo sao EXEMPLO — substituir pelos usuarios reais (Remote-User do Authelia) do time AR do dia 1.",
+  "usuario_ar_1": ["mapa", "viabilidade"],
+  "usuario_ar_2": ["mapa", "viabilidade"],
+  "*": ["mapa"]
+}
