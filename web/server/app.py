@@ -4573,7 +4573,11 @@ def _ranking_hexagonos(
         "cobertura": {
             # Quantos hexagonos do PAIS sobrevivem a cascata, antes de qualquer filtro
             # ou corte de payload — o denominador honesto da lista.
-            "hexes_acionaveis_brasil": hexes_base,
+            # Ate' 2026-09-03: "hexes_acionaveis_brasil". A rota e' a varredura NACIONAL —
+            # o pais do payload e' o do PERFIL da instancia, e a Argentina serve este mesmo
+            # endpoint. Nome fixo de pais na chave e' o mesmo defeito que a DEC-047 ja'
+            # baniu do backend: contrato dependente de QUAL pais roda por baixo.
+            "hexes_acionaveis_pais": hexes_base,
             "hexes_no_recorte": int(len(base)),
             "ufs_no_recorte": int(base["uf"].nunique()) if len(base) else 0,
             # A CONTA QUE IMPEDE A LISTA DE MENTIR. `_sem_concorrente` trata consumo
