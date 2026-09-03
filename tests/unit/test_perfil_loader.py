@@ -9,8 +9,9 @@ O que este arquivo prova, e por que cada coisa importa:
 - **Chave `_`-prefixada e comentario.** E onde moram os campos que a spec §1.4 RECUSOU
   por nao terem leitor. Se o loader os validasse, os dois perfis entregues reprovariam.
 - **Campo extra sem `_` passa.** O fail-closed e sobre AUSENCIA e TIPO do que o schema
-  exige. E o que deixa `reguas.score_pesos`, `avisos` e `operacao` viverem nos arquivos
-  com leitor previsto para os Blocos B/C/C+ sem virarem contrato do Bloco A.
+  exige. E o que deixa `reguas.score_pesos` viver nos arquivos com leitor previsto para
+  bloco posterior sem virar contrato do Bloco A. (`avisos` e `operacao` JA SAIRAM dessa
+  lista: ganharam leitor no Bloco C+ e agora sao contrato — ver a secao propria abaixo.)
 
 Spec: `docs/spec_bloco_a_perfil.md` §1.2, §3.1 e §3.2.
 """
@@ -68,6 +69,23 @@ PERFIL_MINIMO: dict = {
     },
     "superficies": ["mapa", "viabilidade"],
     "malha_municipal_disponivel": False,
+    # Bloco C+: `{}` e o minimo legitimo de `avisos` (o Brasil real e exatamente isso);
+    # `operacao` exige o teto do semaforo de PDF.
+    "avisos": {},
+    "operacao": {"pdf_concorrencia_max": 1},
+}
+
+# Aviso VALIDO minimo (Bloco C+): so os campos obrigatorios de um `Aviso` — os textos
+# opcionais (`texto_longo`/`texto_rodape`) ficam de fora de proposito, como no aviso
+# real `mapa_sem_toponimo` do perfil AR.
+AVISO_MINIMO: dict = {
+    "codigo": "XX-TESTE",
+    "ativo": True,
+    "alerta": True,
+    "obrigatorio": True,
+    "onde": ["pdf", "xlsx"],
+    "titulo": "Titulo do aviso",
+    "texto_curto": "Texto curto do aviso.",
 }
 
 #: Caminho pontilhado de todo campo obrigatorio -> usado para remover um por vez.
@@ -102,6 +120,9 @@ CAMPOS_OBRIGATORIOS = [
     "reguas.capacidade_concorrente",
     "reguas.capacidade_unidade_alunos",
     "superficies",
+    "avisos",
+    "operacao",
+    "operacao.pdf_concorrencia_max",
 ]
 
 
@@ -391,6 +412,107 @@ def test_malha_municipal_disponivel_fora_do_tipo_levanta(
 
 
 # --------------------------------------------------------------------------------
+# `avisos` e `operacao` — Bloco C+ (decisoes 0.5 e 0.7 do plano multi-pais)
+# --------------------------------------------------------------------------------
+
+
+def test_operacao_pdf_concorrencia_max_chega_no_perfil(tmp_path: Path) -> None:
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["operacao"]["pdf_concorrencia_max"] = 3
+    perfil = carregar_perfil(_gravar(tmp_path, dados))
+    assert perfil.operacao.pdf_concorrencia_max == 3
+
+
+@pytest.mark.parametrize("valor", [0, -1])
+def test_pdf_concorrencia_max_abaixo_de_um_levanta(tmp_path: Path, valor: int) -> None:
+    """`asyncio.Semaphore(0)` nunca libera: todo pedido de PDF da instancia ficaria
+    pendurado para sempre, sem nenhum erro no log — pior que derrubar o boot."""
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["operacao"]["pdf_concorrencia_max"] = valor
+    with pytest.raises(PerfilInvalidoError, match="pdf_concorrencia_max"):
+        carregar_perfil(_gravar(tmp_path, dados))
+
+
+@pytest.mark.parametrize("valor", [3.0, "3", True, None])
+def test_pdf_concorrencia_max_nao_inteiro_levanta(tmp_path: Path, valor: object) -> None:
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["operacao"]["pdf_concorrencia_max"] = valor
+    with pytest.raises(PerfilInvalidoError, match="pdf_concorrencia_max"):
+        carregar_perfil(_gravar(tmp_path, dados))
+
+
+def test_aviso_completo_carrega_com_todos_os_campos(tmp_path: Path) -> None:
+    dados = _copia_profunda(PERFIL_MINIMO)
+    aviso = dict(AVISO_MINIMO, texto_longo="Texto longo.", texto_rodape="Rodape.")
+    dados["avisos"] = {"meu_aviso": aviso}
+    perfil = carregar_perfil(_gravar(tmp_path, dados))
+    lido = perfil.avisos["meu_aviso"]
+    assert lido.codigo == "XX-TESTE"
+    assert lido.ativo and lido.alerta and lido.obrigatorio
+    assert lido.onde == frozenset({"pdf", "xlsx"})
+    assert (lido.texto_longo, lido.texto_rodape) == ("Texto longo.", "Rodape.")
+
+
+@pytest.mark.parametrize("campo", ["codigo", "ativo", "alerta", "obrigatorio", "onde", "titulo", "texto_curto"])
+def test_aviso_sem_campo_obrigatorio_levanta_nomeando_o_campo(
+    tmp_path: Path, campo: str
+) -> None:
+    """`titulo` e `texto_curto` sao obrigatorios: um aviso sem o que dizer nao carimba
+    nada — e um aviso que nao carimba nao e aviso (decisao 0.7)."""
+    dados = _copia_profunda(PERFIL_MINIMO)
+    aviso = dict(AVISO_MINIMO)
+    del aviso[campo]
+    dados["avisos"] = {"meu_aviso": aviso}
+    with pytest.raises(PerfilInvalidoError, match=campo):
+        carregar_perfil(_gravar(tmp_path, dados))
+
+
+def test_textos_opcionais_do_aviso_ausentes_viram_string_vazia(tmp_path: Path) -> None:
+    """O aviso real `mapa_sem_toponimo` do AR so tem `texto_curto` — `texto_longo` e
+    `texto_rodape` ausentes nao podem reprovar o perfil nem virar None."""
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["avisos"] = {"meu_aviso": dict(AVISO_MINIMO)}
+    lido = carregar_perfil(_gravar(tmp_path, dados)).avisos["meu_aviso"]
+    assert lido.texto_longo == ""
+    assert lido.texto_rodape == ""
+
+
+def test_chaves_underscore_em_avisos_sao_notas_e_nao_viram_aviso(tmp_path: Path) -> None:
+    """Os dois perfis reais carregam `_nota`/`_nota_texto`/`_remover_quando` dentro do
+    bloco — regra 1 de admissao: sao procedencia, nao configuracao."""
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["avisos"] = {
+        "_nota": "texto livre de procedencia, sem schema nenhum",
+        "meu_aviso": dict(AVISO_MINIMO, _remover_quando="quando o BLK-INTL-11 fechar"),
+    }
+    perfil = carregar_perfil(_gravar(tmp_path, dados))
+    assert sorted(perfil.avisos) == ["meu_aviso"]
+
+
+def test_avisos_vazio_e_legitimo_e_significa_pais_sem_aviso(tmp_path: Path) -> None:
+    """O Brasil real e exatamente isso: modelo calibrado, `avisos` = `{}`."""
+    perfil = carregar_perfil(_gravar(tmp_path, _copia_profunda(PERFIL_MINIMO)))
+    assert dict(perfil.avisos) == {}
+
+
+@pytest.mark.parametrize("onde", [[], ["PDF"], ["planilha"], ["pdf", 3], "pdf"])
+def test_onde_fora_do_vocabulario_levanta(tmp_path: Path, onde: object) -> None:
+    """Um typo em `onde` nao produziria erro: produziria um aviso que NUNCA e
+    carimbado — exatamente o defeito silencioso que a decisao 0.7 proibe."""
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["avisos"] = {"meu_aviso": dict(AVISO_MINIMO, onde=onde)}
+    with pytest.raises(PerfilInvalidoError, match="onde"):
+        carregar_perfil(_gravar(tmp_path, dados))
+
+
+def test_avisos_do_perfil_sao_imutaveis(tmp_path: Path) -> None:
+    """Perfil congelado com um dict mutavel dentro seria congelamento de fachada."""
+    perfil = carregar_perfil(_gravar(tmp_path, _copia_profunda(PERFIL_MINIMO)))
+    with pytest.raises(TypeError):
+        perfil.avisos["novo"] = None  # type: ignore[index]
+
+
+# --------------------------------------------------------------------------------
 # As duas regras de admissao (spec §1.2)
 # --------------------------------------------------------------------------------
 
@@ -408,12 +530,13 @@ def test_chave_prefixada_por_underscore_e_ignorada(tmp_path: Path) -> None:
 
 
 def test_campo_extra_sem_underscore_e_tolerado(tmp_path: Path) -> None:
-    """Campo fora da tabela do schema PASSA. E o que deixa `score_pesos`, `avisos` e
-    `operacao` viverem nos arquivos com leitor previsto para os Blocos B/C/C+."""
+    """Campo fora da tabela do schema PASSA. E o que deixa `score_pesos` viver nos
+    arquivos com leitor previsto para bloco posterior. (`avisos` e `operacao`, que
+    eram os outros dois exemplos aqui, ganharam leitor no Bloco C+ e agora sao campos
+    OBRIGATORIOS validados — ver a secao propria abaixo.)"""
     dados = _copia_profunda(PERFIL_MINIMO)
     dados["reguas"]["score_pesos"] = {"renda": 0.6, "pop": 0.4}
-    dados["avisos"] = {"tributo": "provisorio"}
-    dados["operacao"] = {"pdf_concorrencia_max": 3}
+    dados["operacao"]["mem_limit_alvo"] = "2g"  # extra DENTRO de bloco lido tambem passa
     perfil = carregar_perfil(_gravar(tmp_path, dados))
     assert perfil.reguas.score_corte_quente == 30.0
 

@@ -49,13 +49,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
-# Quantos Relatorios Pontuais podem ser gerados AO MESMO TEMPO. O gerador e pesado
-# (interseccao de setores, tiles de basemap/satelite, matplotlib, fpdf) e roda no
-# threadpool; sem teto, N pedidos simultaneos disputariam as 4 CPUs da VPS e inflariam
-# a memoria. 3 deixa folga para o event loop e para os demais apps do host.
-_PDF_CONCORRENCIA_MAX = 3
-_PDF_SEMAFORO = asyncio.Semaphore(_PDF_CONCORRENCIA_MAX)
-
 # Teto anti-DoS de memoria nos uploads de foto do Relatorio Pontual (BLK-SEC-05): o
 # PDF usa no maximo 2 fotos, entao lemos poucas e limitamos o tamanho de cada uma —
 # sem isso, N pedidos com arquivos grandes inflavam a RAM do unico worker ANTES do
@@ -120,6 +113,38 @@ logging.getLogger("piloto.perfil").info(
     ",".join(PERFIL.superficies),
     DATA_DIR,
 )
+# Quantos Relatorios Pontuais podem ser gerados AO MESMO TEMPO. O gerador e pesado
+# (interseccao de setores, tiles de basemap/satelite, matplotlib, fpdf) e roda no
+# threadpool; sem teto, N pedidos simultaneos disputariam as 4 CPUs da VPS e inflariam
+# a memoria. O teto agora vem do PERFIL (`operacao.pdf_concorrencia_max` — Bloco C+,
+# decisao 0.5 do plano multi-pais): ele e por PROCESSO e cada instancia roda UM worker
+# uvicorn, entao duas instancias na mesma VPS somam os tetos — BR sobe com 3 (o valor
+# historico, que deixa folga para o event loop e os demais apps do host) e a AR com 1.
+_PDF_CONCORRENCIA_MAX = PERFIL.operacao.pdf_concorrencia_max
+_PDF_SEMAFORO = asyncio.Semaphore(_PDF_CONCORRENCIA_MAX)
+
+
+def _texto_do_aviso_de_viabilidade(onde: str, campo: str) -> str | None:
+    """Texto do aviso `viabilidade_tributo_provisorio` a carimbar no artefato `onde`.
+
+    Bloco C+ (decisao 0.7): o aviso viaja no PDF e no XLSX, nao so na tela. O PERFIL
+    declara (`avisos` no perfil.json) e o codigo obedece — nenhum `if pais` aqui
+    (DEC-047). No Brasil `avisos` e `{}` e esta funcao devolve `None` para qualquer
+    artefato: os exports brasileiros nao mudam um byte.
+
+    `onde` e um valor de `AVISO_ONDE_VALIDO` ("pdf"/"xlsx"); `campo` e qual texto do
+    aviso o artefato comporta ("texto_curto" na linha de nota do XLSX, "texto_rodape"
+    no rodape das paginas financeiras do PDF).
+    """
+    # A chave e CONTRATO entre plataforma e perfis: um pais que declare o aviso de
+    # viabilidade sob outro nome teria um aviso que nunca carimba, em silencio.
+    # Testado em tests/contracts/test_aviso_carimbado_no_perfil.py.
+    aviso = PERFIL.avisos.get("viabilidade_tributo_provisorio")
+    if aviso is None or not aviso.ativo or onde not in aviso.onde:
+        return None
+    return getattr(aviso, campo) or None
+
+
 OUTPUTS_DIR = DATA_DIR / "outputs"
 STAGING_DIR = DATA_DIR / "staging"
 IBGE_DIR = DATA_DIR / "ibge"
@@ -8509,6 +8534,10 @@ def _gerar_relatorio_pontual_pdf(
         foto_satelite=foto_satelite,
         # Marcador EXPLICITO de origem (parametro proprio, nunca embutido no `rotulo`).
         origem_centroide_hex=origem_centroide_hex,
+        # Bloco C+ (decisao 0.7): se o perfil declara o aviso de viabilidade com "pdf"
+        # em `onde`, o `texto_rodape` e carimbado em todas as paginas de resultado
+        # financeiro. No Brasil (`avisos` = {}) isto e None e o PDF nao muda um byte.
+        aviso_rodape=_texto_do_aviso_de_viabilidade("pdf", "texto_rodape"),
     )
     return Response(
         content=pdf,
@@ -8607,7 +8636,17 @@ def _gerar_simulador_xlsx_response(body: ViabilidadeIn, rotulo: str | None) -> R
     gerar = _gerador_simulador_xlsx()
     premissas = _premissas_do_body(body)
     inv = _investimento(body)
-    extras = _kwargs_aceitos(gerar, rotulo=rotulo, m2=float(body.m2))
+    # Bloco C+ (decisao 0.7): se o perfil da instancia declara o aviso de viabilidade
+    # com "xlsx" em `onde`, o `texto_curto` entra como linha de nota com fundo de
+    # alerta na aba Premissas. No Brasil (`avisos` = {}) isto e `None` e a planilha
+    # nao muda um byte. Passa por `_kwargs_aceitos` como os demais opcionais: um
+    # gerador trocado em teste sem o parametro nao vira TypeError.
+    extras = _kwargs_aceitos(
+        gerar,
+        rotulo=rotulo,
+        m2=float(body.m2),
+        aviso_nota=_texto_do_aviso_de_viabilidade("xlsx", "texto_curto"),
+    )
 
     conteudo = gerar(float(body.demanda), premissas, inv, **extras)
 
