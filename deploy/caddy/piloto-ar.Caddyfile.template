@@ -6,9 +6,10 @@
 # CLAUDE.md §6):
 #   1. Anexar este bloco ao Caddyfile da VPS (ao lado do bloco de
 #      piloto.ultra-expansao.tech — docs/deploy_piloto_web.md §3).
-#   2. Garantir a regra do Authelia para piloto-ar.ultra-expansao.tech (grupo
-#      PROPRIO, ex.: group:ultra_ar) e `subject` nas regras BR existentes — a
-#      segregacao BR/AR e' do MESMO ato (plano_multipais.md, BLK-INTL-05).
+#   2. A regra do Authelia para piloto-ar.ultra-expansao.tech JA EXISTE (Bloco D,
+#      aplicado na VPS em 2026-09-03; backups no PR #308): subject group:expansao_ar,
+#      e as regras BR ja tem group:expansao_br. Resta so conceder o grupo
+#      expansao_ar aos usuarios AR no users_database.yml.
 #   3. Recarregar sem downtime:
 #      docker compose -f docker-compose.prod.yml exec caddy \
 #          caddy reload --config /etc/caddy/Caddyfile
@@ -26,4 +27,12 @@ piloto-ar.ultra-expansao.tech {
         copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
     }
     reverse_proxy motor_expansao_web_ar:8899
+    # Access log de edge do host AR (DEC-027 — metade da trilha: IP real, user-agent,
+    # latencia no Caddy; a outra metade e' o JSONL do backend). O bloco BR real tem
+    # diretiva `log` equivalente (o Caddyfile real e' gitignored): CONFERIR o formato
+    # contra o bloco BR na hora de aplicar. /var/log/caddy e' o mount de
+    # /opt/motor-expansao/logs/caddy (docker-compose.prod.yml:297).
+    log {
+        output file /var/log/caddy/piloto-ar-access.log
+    }
 }

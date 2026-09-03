@@ -386,6 +386,12 @@ Abrir `https://piloto.ultra-expansao.tech` → login Authelia → piloto.
 
 **Rollback**: apontar `WEB_IMAGE` para o digest anterior e repetir `pull` + `up -d web`.
 
+> **Com a stack AR no ar (§8):** o mesmo bump de `WEB_IMAGE` precisa recriar TAMBÉM a
+> AR — `docker compose -f docker-compose.ar.yml pull web_ar && docker compose -f
+> docker-compose.ar.yml up -d web_ar`. O `up -d web` do BR **não** recria o container
+> AR, e o digest divergiria **em silêncio** (quebra da DEC-047 "uma imagem" que nenhum
+> teste ou healthcheck acusa hoje). Mesma regra no rollback.
+
 ---
 
 ## 6. Checklist de verificação pós-deploy
@@ -483,12 +489,17 @@ ordem:
    (`perfil.operacao.mem_limit_alvo`); fixar o valor medido (regime < 70% do teto) no
    compose **e** no perfil, no mesmo commit.
 6. **Caddy + Authelia** *(na VPS, com aprovação do Felipe, comando a comando)*:
-   anexar o bloco de `deploy/caddy/piloto-ar.Caddyfile.template` ao Caddyfile da VPS;
-   criar a regra do Authelia para `piloto-ar.ultra-expansao.tech` com grupo próprio
-   (ex.: `group:ultra_ar`) e `subject` nas regras BR existentes (plano_multipais.md,
-   BLK-INTL-05); `caddy reload`; atualizar os backups cifrados (`secrets/`).
+   anexar o bloco de `deploy/caddy/piloto-ar.Caddyfile.template` ao Caddyfile da VPS
+   — **incluindo a diretiva `log`** (conferir o formato contra o bloco BR real). A
+   regra do Authelia **já existe** (Bloco D, aplicado na VPS em 2026-09-03; backups no
+   PR #308 — `subject group:expansao_ar`, e as regras BR com `group:expansao_br`):
+   resta conceder o grupo `expansao_ar` aos usuários AR no `users_database.yml`, no
+   mesmo ato da linha nominal do passo 4; `caddy reload`; atualizar os backups
+   cifrados (`secrets/`).
 7. **Validar e subir** *(na VPS, de `/opt/motor-expansao/app`, com aprovação do
-   Felipe, comando a comando)*: `docker compose -f docker-compose.ar.yml config`
+   Felipe, comando a comando)*: primeiro `git pull` — é o que traz o
+   `docker-compose.ar.yml` e o template para a VPS (o merge deste PR precisa já ter
+   acontecido); depois `docker compose -f docker-compose.ar.yml config`
    (a validação sintática final — `docker compose` não roda na máquina de dev) e
    `docker compose -f docker-compose.ar.yml up -d`. O mesmo `.env` da stack BR
    resolve `WEB_IMAGE` → **mesmo digest** (DEC-047: uma imagem, o país vem do
@@ -506,4 +517,14 @@ ordem:
     comando)*: atualizar `scripts/healthcheck_vps.sh` na VPS (o array já tem
     `motor_expansao_web_ar` — copiar **depois** do `up`, senão o check alerta
     container ausente) e observar 24 h: RSS em regime abaixo de 70% do `mem_limit`
-    medido e CPU sem briga com o BR.
+    medido e CPU sem briga com o BR — **e a memória livre do HOST** com as duas
+    stacks em regime (`free -m` nos picos): a soma dos tetos rígidos fecha os 16 GB
+    (api 6g + web BR 8g + web_ar 2g) com caddy/authelia/bot/tileserver **sem teto**;
+    se `available` cair abaixo de ~2 GB nos picos, rever os tetos **antes** do fim da
+    observação — num aperto, o OOM killer escolhe uma vítima sem teto (Authelia ou
+    Caddy) e derruba o edge das **duas** stacks.
+
+> **Dívida declarada (até o BLK-INTL-09, operação em matriz):** o relatório periódico
+> de acessos (`scripts/cron/run_relatorio_acessos.sh`) e o `/acessos` do bot leem
+> **só a trilha BR**. A trilha AR (`/opt/motor-expansao-ar/logs/acesso`) é escrita
+> desde o dia 1, mas só é lida **manualmente** na VPS.
