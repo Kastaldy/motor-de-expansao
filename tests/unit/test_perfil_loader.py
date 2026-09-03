@@ -36,7 +36,7 @@ PERFIL_MINIMO: dict = {
     "pais": "AR",
     "nome": "Argentina",
     "locale": "es-AR",
-    "moeda": {"codigo": "USD", "simbolo": "US$"},
+    "moeda": {"codigo": "USD", "simbolo": "US$", "indicadores_renda": "USD"},
     "bbox": {"lat_min": -55.1, "lat_max": -21.8, "lng_min": -73.6, "lng_max": -53.6},
     "vista_padrao": {"lat": -38.4, "lng": -63.6, "zoom": 3.6},
     "geocode": {"countrycodes": "ar", "idioma": "es-AR", "regex_cp": None},
@@ -67,6 +67,7 @@ PERFIL_MINIMO: dict = {
         },
     },
     "superficies": ["mapa", "viabilidade"],
+    "malha_municipal_disponivel": False,
 }
 
 #: Caminho pontilhado de todo campo obrigatorio -> usado para remover um por vez.
@@ -239,6 +240,51 @@ def test_moeda_fora_do_iso4217_levanta(tmp_path: Path) -> None:
         carregar_perfil(_gravar(tmp_path, dados))
 
 
+def test_indicadores_renda_ausente_levanta_nomeando_o_campo(tmp_path: Path) -> None:
+    """A Argentina reporta renda em USD com moeda oficial ARS — sem este campo, o
+    formatador de renda cairia de volta ao simbolo da moeda oficial (o defeito de
+    2026-09-03: "$" do peso sobre um numero que sao dolares)."""
+    dados = _copia_profunda(PERFIL_MINIMO)
+    del dados["moeda"]["indicadores_renda"]
+    with pytest.raises(PerfilInvalidoError, match="moeda.indicadores_renda"):
+        carregar_perfil(_gravar(tmp_path, dados))
+
+
+def test_indicadores_renda_fora_do_iso4217_levanta(tmp_path: Path) -> None:
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["moeda"]["indicadores_renda"] = "dolar"
+    with pytest.raises(PerfilInvalidoError, match="moeda.indicadores_renda"):
+        carregar_perfil(_gravar(tmp_path, dados))
+
+
+def test_simbolo_renda_e_o_simbolo_do_pais_quando_as_moedas_coincidem(
+    tmp_path: Path,
+) -> None:
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["moeda"] = {"codigo": "BRL", "simbolo": "R$", "indicadores_renda": "BRL"}
+    perfil = carregar_perfil(_gravar(tmp_path, dados))
+    assert perfil.moeda.simbolo_renda() == "R$"
+
+
+def test_simbolo_renda_e_o_CODIGO_do_indicador_quando_diverge_da_moeda_oficial(
+    tmp_path: Path,
+) -> None:
+    """A caixa real da Argentina: moeda oficial ARS ("$"), renda do pacote em USD.
+
+    Sem simbolo dedicado para USD no perfil, o codigo e' o que desambigua — nunca o
+    simbolo "$" da moeda oficial, que um leitor argentino leria como peso.
+    """
+    # PERFIL_MINIMO ja usa moeda USD/US$/USD: nao diverge, simbolo_renda() == simbolo.
+    perfil = carregar_perfil(_gravar(tmp_path, PERFIL_MINIMO, "perfil_a.json"))
+    assert perfil.moeda.simbolo_renda() == "US$"
+
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["moeda"] = {"codigo": "ARS", "simbolo": "$", "indicadores_renda": "USD"}
+    perfil = carregar_perfil(_gravar(tmp_path, dados, "perfil_b.json"))
+    assert perfil.moeda.simbolo_renda() == "USD"
+    assert perfil.moeda.simbolo_renda() != perfil.moeda.simbolo
+
+
 @pytest.mark.parametrize(
     "bbox",
     [
@@ -323,6 +369,24 @@ def test_superficie_invalida_levanta_no_boot(
     dados = _copia_profunda(PERFIL_MINIMO)
     dados["superficies"] = superficies
     with pytest.raises(PerfilInvalidoError, match="superficies"):
+        carregar_perfil(_gravar(tmp_path, dados))
+
+
+def test_malha_municipal_disponivel_ausente_levanta_no_boot(tmp_path: Path) -> None:
+    """Campo do Bloco C — sem ele, o gate de `/api/ponto` etc. nao teria como decidir."""
+    dados = _copia_profunda(PERFIL_MINIMO)
+    del dados["malha_municipal_disponivel"]
+    with pytest.raises(PerfilInvalidoError, match="malha_municipal_disponivel"):
+        carregar_perfil(_gravar(tmp_path, dados))
+
+
+@pytest.mark.parametrize("valor", ["true", 1, None, ["true"]])
+def test_malha_municipal_disponivel_fora_do_tipo_levanta(
+    tmp_path: Path, valor: object
+) -> None:
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["malha_municipal_disponivel"] = valor
+    with pytest.raises(PerfilInvalidoError, match="malha_municipal_disponivel"):
         carregar_perfil(_gravar(tmp_path, dados))
 
 

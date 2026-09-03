@@ -1,6 +1,29 @@
-import { describe, expect, it } from 'vitest'
-import { alunos, brl, coord, distanciaCurta, num, pct, pctFrac, pctVar, rotuloMes } from './format'
+import { afterEach, describe, expect, it } from 'vitest'
+import {
+  alunos,
+  brl,
+  coord,
+  distanciaCurta,
+  num,
+  pct,
+  pctFrac,
+  pctVar,
+  renda,
+  rotuloMes,
+} from './format'
 import { TEXTO_SEM_DADO } from './constants'
+import { _resetarPerfilParaTeste, definirPerfil, type PerfilCliente } from './perfil'
+
+/** Mesma caixa de `perfil.test.ts`: moeda oficial ARS, renda do pacote em USD. */
+const AR: PerfilCliente = {
+  pais: 'AR',
+  nome: 'Argentina',
+  locale: 'es-AR',
+  moeda: { codigo: 'ARS', simbolo: '$', indicadores_renda: 'USD' },
+  bbox: { lat_min: -55.2, lat_max: -21.6, lng_min: -74.0, lng_max: -53.4 },
+  vista_padrao: { lat: -38.4, lng: -63.6, zoom: 3.6 },
+  reguas: { pop_min_acionavel: 5000, capacidade_unidade_alunos: 2500 },
+}
 
 describe('num', () => {
   it('formata inteiro com separador de milhar pt-BR', () => {
@@ -35,6 +58,36 @@ describe('brl', () => {
   })
   it('null -> sem-dado', () => {
     expect(brl(null)).toBe(TEXTO_SEM_DADO)
+  })
+})
+
+describe('renda — NUNCA o simbolo da moeda oficial quando ela diverge do indicador', () => {
+  afterEach(() => {
+    _resetarPerfilParaTeste()
+  })
+
+  it('no Brasil e identico a brl(): as duas moedas coincidem', () => {
+    expect(renda(1500)).toBe('R$ 1.500')
+    expect(renda(1500)).toBe(brl(1500))
+  })
+
+  it('na Argentina sai em USD, nunca "$" — o defeito que este arquivo existe para travar', () => {
+    // Sem `renda()`, `brl(508)` imprimiria "$ 508": o simbolo do PESO argentino sobre um
+    // numero que sao 508 DOLARES — 1.397x mais barato do que realmente e.
+    definirPerfil(AR)
+    expect(renda(508)).toBe('USD 508')
+    expect(renda(508)).not.toContain('$ 508')
+    expect(brl(508)).toBe('$ 508') // brl() continua certo para aluguel/DRE (moeda oficial)
+  })
+
+  it('compacto e casas se comportam como em brl()', () => {
+    definirPerfil(AR)
+    expect(renda(1_500_000, true)).toBe('USD 1,5 mi')
+    expect(renda(88.2, false, 2)).toBe('USD 88,20')
+  })
+
+  it('null -> sem-dado', () => {
+    expect(renda(null)).toBe(TEXTO_SEM_DADO)
   })
 })
 

@@ -4,7 +4,7 @@
  *  eram 'pt-BR' e 'R$' cravados — oito literais so neste arquivo. */
 
 import { TEXTO_SEM_DADO } from './constants'
-import { moeda, perfilDoCliente } from './perfil'
+import { moeda, moedaRenda, perfilDoCliente } from './perfil'
 
 // Sem memo por locale de proposito: `perfilDoCliente()` e um acesso a variavel de
 // modulo, e `Intl.NumberFormat` ja e barato o bastante para o volume desta tela.
@@ -45,6 +45,26 @@ export function brl(v: number | null | undefined, compacto = false, casas = 0): 
     if (abs >= 1_000) return `${moeda()} ${nf(0).format(v / 1_000)} mil`
   }
   return `${moeda()} ${nf(casas).format(v)}`
+}
+
+/**
+ * Valor de RENDA — nunca `brl()`. Mesma forma de `brl()`, mas com o simbolo de
+ * `moedaRenda()` em vez de `moeda()`.
+ *
+ * A distincao existe porque a coluna de renda do pacote (`renda_estimada_usd` /
+ * `renda_per_capita`) pode estar numa moeda DIFERENTE da moeda oficial do pais — a
+ * Argentina reporta renda em USD com moeda oficial ARS. `brl()` imprimiria "$ 508" (o
+ * simbolo do peso) para um numero que sao 508 DOLARES; esta funcao imprime "USD 508".
+ * No Brasil as duas moedas coincidem e o resultado e' identico ao de `brl()`.
+ */
+export function renda(v: number | null | undefined, compacto = false, casas = 0): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return TEXTO_SEM_DADO
+  if (compacto) {
+    const abs = Math.abs(v)
+    if (abs >= 1_000_000) return `${moedaRenda()} ${nf(1).format(v / 1_000_000)} mi`
+    if (abs >= 1_000) return `${moedaRenda()} ${nf(0).format(v / 1_000)} mil`
+  }
+  return `${moedaRenda()} ${nf(casas).format(v)}`
 }
 
 /**

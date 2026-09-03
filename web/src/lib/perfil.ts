@@ -48,7 +48,7 @@ export interface PerfilCliente {
   nome: string
   /** Tag BCP-47 UNICA — vai direto para `Intl.NumberFormat`. */
   locale: string
-  moeda: { codigo: string; simbolo: string }
+  moeda: { codigo: string; simbolo: string; indicadores_renda: string }
   bbox: Bbox
   vista_padrao: { lat: number; lng: number; zoom: number }
   reguas: { pop_min_acionavel: number; capacidade_unidade_alunos: number }
@@ -65,9 +65,24 @@ export function perfilDoCliente(): PerfilCliente {
   return atual
 }
 
-/** Simbolo da moeda. Atalho de conveniencia — `format.ts` o usa em oito lugares. */
+/** Simbolo da moeda OFICIAL do pais. Atalho de conveniencia — `format.ts` o usa em
+ *  oito lugares. NAO usar para valor de RENDA — ver `moedaRenda()`. */
 export function moeda(): string {
   return atual.moeda.simbolo
+}
+
+/**
+ * Simbolo/codigo a exibir junto de um valor de RENDA — nunca `moeda()` cru.
+ *
+ * `moeda.indicadores_renda` diverge de `moeda.codigo` na Argentina: a moeda oficial e'
+ * ARS ("$"), mas a coluna de renda do pacote chega em USD. Usar `moeda()` ali imprimiria
+ * "$ 508" para um numero que sao 508 DOLARES — a mesma leitura errada por 1.397x que o
+ * exportador corrige do lado do backend (`pipelines/exportar_piloto_ar.py`). Quando as
+ * duas moedas coincidem (Brasil: BRL/BRL), o resultado e' identico a `moeda()`.
+ */
+export function moedaRenda(): string {
+  const { codigo, simbolo, indicadores_renda } = atual.moeda
+  return indicadores_renda === codigo ? simbolo : indicadores_renda
 }
 
 /**
@@ -89,6 +104,7 @@ export function definirPerfil(p: unknown): void {
     typeof c.locale !== 'string' ||
     !c.moeda ||
     typeof c.moeda.simbolo !== 'string' ||
+    typeof c.moeda.indicadores_renda !== 'string' ||
     !c.bbox ||
     typeof c.bbox.lat_min !== 'number' ||
     typeof c.bbox.lat_max !== 'number' ||

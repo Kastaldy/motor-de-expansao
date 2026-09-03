@@ -61,6 +61,7 @@ CAMPOS_DO_FRONT = [
     "locale",
     "moeda.codigo",
     "moeda.simbolo",
+    "moeda.indicadores_renda",
     "bbox.lat_min",
     "bbox.lat_max",
     "bbox.lng_min",
@@ -149,6 +150,7 @@ def test_o_payload_bate_com_o_perfil_carregado() -> None:
     assert payload["nome"] == pilot.PERFIL.nome
     assert payload["locale"] == pilot.PERFIL.locale
     assert payload["moeda"]["simbolo"] == pilot.PERFIL.moeda.simbolo
+    assert payload["moeda"]["indicadores_renda"] == pilot.PERFIL.moeda.indicadores_renda
     assert payload["bbox"]["lat_min"] == pilot.PERFIL.bbox.lat_min
     assert payload["vista_padrao"]["zoom"] == pilot.PERFIL.vista_padrao.zoom
     assert (

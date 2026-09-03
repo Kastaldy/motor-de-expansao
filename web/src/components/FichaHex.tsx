@@ -1,6 +1,6 @@
 import type { CrescimentoMunicipio } from '../lib/oportunidades'
 import { censoDaBase } from '../lib/rodape-base'
-import { alunos, brl, num, pctVar } from '../lib/format'
+import { alunos, brl, num, pctVar, renda } from '../lib/format'
 import { FAIXA_M1_HEX } from '../lib/colors'
 import { CAPACIDADE_UNIDADE_ALUNOS, FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from '../lib/faixas'
 import { classeAluguelFat, corTipo, custoOcup, labelTipo, pctAluguelFat } from '../lib/imovel'
@@ -310,9 +310,9 @@ export default function FichaHex({
           }}
         >
           <CelulaCenso valor={hex.pop == null ? '—' : num(hex.pop)} rotulo="População" />
-          <CelulaCenso valor={hex.renda == null ? '—' : brl(hex.renda)} rotulo="Renda per capita" />
+          <CelulaCenso valor={hex.renda == null ? '—' : renda(hex.renda)} rotulo="Renda per capita" />
           <CelulaCenso
-            valor={hex.renda_dom == null ? '—' : brl(hex.renda_dom)}
+            valor={hex.renda_dom == null ? '—' : renda(hex.renda_dom)}
             rotulo="Renda domiciliar"
             ultima
           />

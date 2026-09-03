@@ -102,6 +102,25 @@ class Bbox:
 class Moeda:
     codigo: str
     simbolo: str
+    #: Codigo da moeda em que a coluna de RENDA do pacote chega (`renda_estimada_usd` =
+    #: `renda_per_capita`, o insumo do score). NAO e sempre igual a `codigo`: a Argentina
+    #: reporta renda em USD enquanto `codigo`/`simbolo` sao os da moeda oficial (ARS/"$").
+    #: Confundir os dois e' a forma mais barata de produzir numero errado — o proprio
+    #: `perfil.json` diz isso na `_nota` do bloco `moeda`. Ver `Moeda.simbolo_renda()`.
+    indicadores_renda: str
+
+    def simbolo_renda(self) -> str:
+        """Simbolo/codigo a exibir junto de um valor de RENDA — nunca `simbolo` cru.
+
+        Quando `indicadores_renda` bate com `codigo` (Brasil hoje: BRL/BRL), o simbolo do
+        pais e' honesto e sai como sempre saiu ("R$"). Quando diverge (Argentina:
+        moeda ARS, renda em USD), sair "$" seria rotular um numero em dolar com o simbolo
+        do peso — a Argentina nao tem simbolo dedicado no perfil, entao o CODIGO
+        (`"USD"`) e' o que desambigua, sem inventar um registro de simbolos por moeda.
+        """
+        if self.indicadores_renda == self.codigo:
+            return self.simbolo
+        return self.indicadores_renda
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +221,17 @@ class Perfil:
     fontes: Fontes
     reguas: Reguas
     superficies: tuple[str, ...]
+    #: A malha administrativa de NIVEL 2 (municipio/departamento, GeoJSON — a que
+    #: `api/service._carregar_malha` exige) e' um recurso SEPARADO do vocabulario de
+    #: `superficies`, de proposito: `ponto`/`municipal` nao sao abas (§3, item 5, do
+    #: plano multi-pais — moram DENTRO de `mapa`), entao nao cabem em
+    #: `SUPERFICIES_VALIDAS` sem virar permissao de usuario que ninguem pediu. Este
+    #: campo e' o sinal PROPRIO: a Argentina tem `mapa`, mas nao tem esta malha (D6
+    #: do contrato de pais, pendente) — `False` aqui e' o que faz o Bloco C bloquear
+    #: `/api/ponto`, `/api/resolver-ponto`, `/api/relatorio/municipal` e
+    #: `/api/relatorio/pontual` com 404 nomeado, em vez de deixa-los estourar 500 na
+    #: primeira coordenada clicada.
+    malha_municipal_disponivel: bool
     #: Pasta de onde o `perfil.json` veio. E o que substitui o `DATA_DIR` de
     #: `web/server/app.py:102` — os diretorios derivados (outputs, staging, ibge,
     #: ultra, censo_geo, enriched) continuam pendurados nela sem mudar uma linha.
@@ -290,6 +320,14 @@ def _inteiro(
     valor = _pegar(dados, campo, caminho, prefixo)
     if isinstance(valor, bool) or not isinstance(valor, int):
         raise _erro(caminho, nome, f"deveria ser inteiro, veio {type(valor).__name__}")
+    return valor
+
+
+def _bool(dados: dict[str, Any], campo: str, caminho: Path, *, prefixo: str = "") -> bool:
+    nome = f"{prefixo}{campo}"
+    valor = _pegar(dados, campo, caminho, prefixo)
+    if not isinstance(valor, bool):
+        raise _erro(caminho, nome, f"deveria ser booleano, veio {type(valor).__name__}")
     return valor
 
 
@@ -494,6 +532,13 @@ def carregar_perfil(caminho: Path, *, raiz: Path | None = None) -> Perfil:
                 moeda_bruto, "codigo", caminho, prefixo="moeda.", padrao=_RE_MOEDA
             ),
             simbolo=_texto(moeda_bruto, "simbolo", caminho, prefixo="moeda."),
+            indicadores_renda=_texto(
+                moeda_bruto,
+                "indicadores_renda",
+                caminho,
+                prefixo="moeda.",
+                padrao=_RE_MOEDA,
+            ),
         ),
         bbox=_ler_bbox(dados, caminho),
         vista_padrao=Vista(
@@ -508,6 +553,7 @@ def carregar_perfil(caminho: Path, *, raiz: Path | None = None) -> Perfil:
         ),
         reguas=_ler_reguas(dados, caminho),
         superficies=_ler_superficies(dados, caminho),
+        malha_municipal_disponivel=_bool(dados, "malha_municipal_disponivel", caminho),
         raiz=Path(raiz) if raiz is not None else caminho.parent,
     )
 

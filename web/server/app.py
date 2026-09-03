@@ -306,6 +306,13 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
     # ja nasca guardada (impossivel esquecer a dependencia).
     if acesso.bloqueio_acessos(request.url.path, remote_user):
         return JSONResponse({"detail": "Not Found"}, status_code=404)
+    # Gate de PAIS (Bloco C): "esta INSTANCIA oferece isto?", ANTES de "este usuario
+    # pode?" — mais barato (sem I/O do JSON de cadastro) e mais fundamental: nao faz
+    # sentido perguntar se um usuario TEM uma aba que a propria instancia nao serve.
+    # 404 (nao 403): o recurso nao existe NESTE deploy, nao e' negado por permissao.
+    detalhe_pais = acesso.motivo_bloqueio_pais(request.url.path, PERFIL)
+    if detalhe_pais is not None:
+        return JSONResponse({"detail": detalhe_pais}, status_code=404)
     detalhe = acesso.motivo_bloqueio(request.url.path, remote_user)
     if detalhe is not None:
         return JSONResponse({"detail": detalhe}, status_code=403)
@@ -3369,9 +3376,18 @@ def me(
     rota so' informa.
     """
     usuario = acesso.normalizar_usuario(remote_user)
-    abas = set(acesso.abas_do_usuario(usuario))
+    # Interseccao com `PERFIL.superficies` (Bloco C): o cadastro de abas e' um
+    # arquivo OPERACIONAL por instancia (DEC-023), separado do perfil — nada o
+    # impede de conceder "oportunidades" a um usuario argentino por copia-e-cola do
+    # cadastro brasileiro. Sem esta linha, a SPA mostraria o card e o clique
+    # morreria no 404 do gate de pais (`acesso.motivo_bloqueio_pais`); com ela, o
+    # card simplesmente nao aparece — a instancia e' quem decide o TETO, o cadastro
+    # so' pode conceder DENTRO dele.
+    abas = set(acesso.abas_do_usuario(usuario)) & set(PERFIL.superficies)
     # A aba Acessos NUNCA vem do JSON de abas: so' da allowlist de env (emenda
-    # DEC-027). Entra aqui apenas para a SPA saber que pode mostrar o icone.
+    # DEC-027). Entra aqui apenas para a SPA saber que pode mostrar o icone. Fica DE
+    # FORA da interseccao acima de proposito: nao e' superficie de pais (nao esta em
+    # `ABAS_VALIDAS`/`PERFIL.superficies`), e' controle de equipe interna.
     if acesso.pode_ver_acessos(usuario):
         abas.add(acesso.ABA_ACESSOS)
     return {"usuario": usuario, "abas": sorted(abas), "perfil": _perfil_do_cliente()}
@@ -3391,6 +3407,9 @@ def _perfil_do_cliente() -> dict[str, Any]:
       nome                       -> a frase "fora de X" (`entrada-ponto.ts`)
       locale                     -> `new Intl.NumberFormat(...)` (`format.ts`)
       moeda                      -> os oito literais de `R$` (`format.ts`)
+      moeda.indicadores_renda    -> `moedaRenda()` (`perfil.ts`), o simbolo que
+                                    acompanha RENDA — diverge de `moeda.simbolo` na
+                                    Argentina (ARS oficial, renda reportada em USD)
       bbox                       -> `coord.ts` e `entrada-ponto.ts`
       vista_padrao               -> `mapa-ponto.ts` e o fallback de camera do `HexMap`
       reguas.pop_min_acionavel   -> `colors.ts`
@@ -3403,7 +3422,11 @@ def _perfil_do_cliente() -> dict[str, Any]:
         "pais": PERFIL.pais,
         "nome": PERFIL.nome,
         "locale": PERFIL.locale,
-        "moeda": {"codigo": PERFIL.moeda.codigo, "simbolo": PERFIL.moeda.simbolo},
+        "moeda": {
+            "codigo": PERFIL.moeda.codigo,
+            "simbolo": PERFIL.moeda.simbolo,
+            "indicadores_renda": PERFIL.moeda.indicadores_renda,
+        },
         "bbox": {
             "lat_min": PERFIL.bbox.lat_min,
             "lat_max": PERFIL.bbox.lat_max,
@@ -3515,8 +3538,22 @@ def _moeda(v: float) -> str:
     superficie do Bloco C — nao cravar "R$" numa instancia que serve outra moeda. A
     separacao de milhar continua a de `_mil`: locale de NUMERO e o BLK-INTL-12, que
     esta fora desta onda de proposito.
+
+    NAO usar para valor de RENDA — ver `_moeda_renda`.
     """
     return f"{PERFIL.moeda.simbolo} {_mil(v)}"
+
+
+def _moeda_renda(v: float) -> str:
+    """Valor de RENDA com o simbolo/codigo CERTO — nunca `PERFIL.moeda.simbolo` cru.
+
+    `PERFIL.reguas.renda_abs_min/max` estao na mesma escala da coluna de renda do
+    pacote (`moeda.indicadores_renda`), que diverge da moeda OFICIAL do pais na
+    Argentina: `moeda.simbolo` e' "$" (peso), mas a renda e' reportada em USD. `_moeda`
+    imprimiria "$ 350" para um numero que sao 350 DOLARES — a mesma leitura errada por
+    1.397x que motivou o de-para do exportador (ver `pipelines/exportar_piloto_ar.py`).
+    """
+    return f"{PERFIL.moeda.simbolo_renda()} {_mil(v)}"
 
 
 def _fx(
@@ -3816,8 +3853,8 @@ def montar_metodologia() -> dict[str, Any]:
                         "regra": (
                             "Dois insumos do setor censitário, com pesos fixos e em régua "
                             "ABSOLUTA: a renda per capita calibrada (peso 0,60), numa escala "
-                            f"linear em que {_moeda(PERFIL.reguas.renda_abs_min)} vale 0 e "
-                            f"{_moeda(PERFIL.reguas.renda_abs_max)} vale 100; e a população do "
+                            f"linear em que {_moeda_renda(PERFIL.reguas.renda_abs_min)} vale 0 e "
+                            f"{_moeda_renda(PERFIL.reguas.renda_abs_max)} vale 100; e a população do "
                             "setor (peso 0,40), numa escala logarítmica em que "
                             f"{_mil(PERFIL.reguas.pop_abs_min)} habitantes "
                             f"valem 0 e {_mil(PERFIL.reguas.pop_abs_max)} valem 100. "
@@ -4573,7 +4610,11 @@ def _ranking_hexagonos(
         "cobertura": {
             # Quantos hexagonos do PAIS sobrevivem a cascata, antes de qualquer filtro
             # ou corte de payload — o denominador honesto da lista.
-            "hexes_acionaveis_brasil": hexes_base,
+            # Ate' 2026-09-03: "hexes_acionaveis_brasil". A rota e' a varredura NACIONAL —
+            # o pais do payload e' o do PERFIL da instancia, e a Argentina serve este mesmo
+            # endpoint. Nome fixo de pais na chave e' o mesmo defeito que a DEC-047 ja'
+            # baniu do backend: contrato dependente de QUAL pais roda por baixo.
+            "hexes_acionaveis_pais": hexes_base,
             "hexes_no_recorte": int(len(base)),
             "ufs_no_recorte": int(base["uf"].nunique()) if len(base) else 0,
             # A CONTA QUE IMPEDE A LISTA DE MENTIR. `_sem_concorrente` trata consumo
