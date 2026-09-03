@@ -16,7 +16,7 @@ import {
   zoomQueEnquadra,
 } from '../lib/captura-mapa'
 import { CORES_IDENTIDADE, corDeIdentidadeRgb, rotuloDoHex } from '../lib/comparacao'
-import { alunos, brl, distanciaCurta, num } from '../lib/format'
+import { alunos, brl, distanciaCurta, num, renda } from '../lib/format'
 import {
   type AlvoMedicao,
   distanciaMetros,
@@ -1474,9 +1474,9 @@ export default function HexMap({
 
           <Divisoria />
           <Linha rotulo="Habitantes" valor={num(hover.h.pop)} />
-          <Linha rotulo="Renda per capita" valor={brl(hover.h.renda)} />
+          <Linha rotulo="Renda per capita" valor={renda(hover.h.renda)} />
           {hover.h.renda_dom !== null && (
-            <Linha rotulo="Renda domiciliar" valor={brl(hover.h.renda_dom)} />
+            <Linha rotulo="Renda domiciliar" valor={renda(hover.h.renda_dom)} />
           )}
           <Linha rotulo="Residual Fitness" valor={`${alunos(hover.h.oferta)} alunos`} />
           <Linha rotulo="Concorrentes 2 km" valor={num(hover.h.conc)} />

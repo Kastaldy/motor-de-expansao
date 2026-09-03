@@ -3391,6 +3391,9 @@ def _perfil_do_cliente() -> dict[str, Any]:
       nome                       -> a frase "fora de X" (`entrada-ponto.ts`)
       locale                     -> `new Intl.NumberFormat(...)` (`format.ts`)
       moeda                      -> os oito literais de `R$` (`format.ts`)
+      moeda.indicadores_renda    -> `moedaRenda()` (`perfil.ts`), o simbolo que
+                                    acompanha RENDA — diverge de `moeda.simbolo` na
+                                    Argentina (ARS oficial, renda reportada em USD)
       bbox                       -> `coord.ts` e `entrada-ponto.ts`
       vista_padrao               -> `mapa-ponto.ts` e o fallback de camera do `HexMap`
       reguas.pop_min_acionavel   -> `colors.ts`
@@ -3403,7 +3406,11 @@ def _perfil_do_cliente() -> dict[str, Any]:
         "pais": PERFIL.pais,
         "nome": PERFIL.nome,
         "locale": PERFIL.locale,
-        "moeda": {"codigo": PERFIL.moeda.codigo, "simbolo": PERFIL.moeda.simbolo},
+        "moeda": {
+            "codigo": PERFIL.moeda.codigo,
+            "simbolo": PERFIL.moeda.simbolo,
+            "indicadores_renda": PERFIL.moeda.indicadores_renda,
+        },
         "bbox": {
             "lat_min": PERFIL.bbox.lat_min,
             "lat_max": PERFIL.bbox.lat_max,
@@ -3515,8 +3522,22 @@ def _moeda(v: float) -> str:
     superficie do Bloco C — nao cravar "R$" numa instancia que serve outra moeda. A
     separacao de milhar continua a de `_mil`: locale de NUMERO e o BLK-INTL-12, que
     esta fora desta onda de proposito.
+
+    NAO usar para valor de RENDA — ver `_moeda_renda`.
     """
     return f"{PERFIL.moeda.simbolo} {_mil(v)}"
+
+
+def _moeda_renda(v: float) -> str:
+    """Valor de RENDA com o simbolo/codigo CERTO — nunca `PERFIL.moeda.simbolo` cru.
+
+    `PERFIL.reguas.renda_abs_min/max` estao na mesma escala da coluna de renda do
+    pacote (`moeda.indicadores_renda`), que diverge da moeda OFICIAL do pais na
+    Argentina: `moeda.simbolo` e' "$" (peso), mas a renda e' reportada em USD. `_moeda`
+    imprimiria "$ 350" para um numero que sao 350 DOLARES — a mesma leitura errada por
+    1.397x que motivou o de-para do exportador (ver `pipelines/exportar_piloto_ar.py`).
+    """
+    return f"{PERFIL.moeda.simbolo_renda()} {_mil(v)}"
 
 
 def _fx(
@@ -3816,8 +3837,8 @@ def montar_metodologia() -> dict[str, Any]:
                         "regra": (
                             "Dois insumos do setor censitário, com pesos fixos e em régua "
                             "ABSOLUTA: a renda per capita calibrada (peso 0,60), numa escala "
-                            f"linear em que {_moeda(PERFIL.reguas.renda_abs_min)} vale 0 e "
-                            f"{_moeda(PERFIL.reguas.renda_abs_max)} vale 100; e a população do "
+                            f"linear em que {_moeda_renda(PERFIL.reguas.renda_abs_min)} vale 0 e "
+                            f"{_moeda_renda(PERFIL.reguas.renda_abs_max)} vale 100; e a população do "
                             "setor (peso 0,40), numa escala logarítmica em que "
                             f"{_mil(PERFIL.reguas.pop_abs_min)} habitantes "
                             f"valem 0 e {_mil(PERFIL.reguas.pop_abs_max)} valem 100. "

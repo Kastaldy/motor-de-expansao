@@ -22,7 +22,8 @@ export const PERFIL_BR: PerfilCliente = {
     "locale": "pt-BR",
     "moeda": {
       "codigo": "BRL",
-      "simbolo": "R$"
+      "simbolo": "R$",
+      "indicadores_renda": "BRL"
     },
     "bbox": {
       "lat_min": -34.0,
