@@ -1,0 +1,120 @@
+# authelia/configuration.yml — Motor de Expansão Ultra Academia
+#
+# IMPORTANTE: Substituir SEU_DOMINIO.COM.BR pelo domínio real da Hostinger antes do deploy
+# IMPORTANTE: Os segredos JWT, sessão e storage são injetados via variáveis de ambiente (.env)
+# Referência: https://www.authelia.com/configuration/prologue/introduction/
+
+---
+server:
+  address: "0.0.0.0:9091"
+
+log:
+  level: info
+
+# ── Sessão ────────────────────────────────────────────────────────────────────
+session:
+  name: authelia_session
+  # expiration: ABSOLUTO, contado do login. Medido em 2026-08-06 num Authelia
+  # descartavel: nao desliza com atividade e nenhum Set-Cookie novo e emitido
+  # durante a sessao -- o cookie morre em login+8h mesmo com o usuario ativo.
+  expiration: 8h
+  # inactivity: janela de ociosidade ate a sessao morrer.
+  #
+  # NUNCA use 0 aqui, e nao e' opiniao: no 4.38 o validador COAGE qualquer valor
+  # <= 0 para 5 MINUTOS. Fonte, internal/configuration/validator/session.go:
+  #     if config.Session.Inactivity <= 0 {
+  #         config.Session.Inactivity = schema.DefaultSessionConfiguration.Inactivity // 5 min.
+  #     }
+  # Vale igual para expiration (<=0 vira 1h) e remember_me (<=0 vira 1 mes). A unica
+  # excecao e' a constante -1 em remember_me, que liga DisableRememberMe.
+  #
+  # Custou um incidente em 06/08/2026: alguem trocou 30m por 0 achando que desligava
+  # a ociosidade, e a rede inteira passou ~4h deslogando a cada 5 minutos. O sintoma
+  # que chegou ao time NAO parecia login: a tela do piloto dizia "nao foi possivel
+  # falar com o servidor. Ele esta rodando na porta 8899?" -- porque com a sessao
+  # morta o Caddy responde 302 para o dominio auth, o fetch do SPA morre em CORS e
+  # cai na mensagem generica. O backend estava saudavel o tempo todo.
+  #
+  # Para testar mudanca aqui sem cobaia humana: Authelia descartavel em /tmp com a
+  # config real, porta so em 127.0.0.1, sqlite e segredos proprios. 10 minutos, e
+  # ninguem e' deslogado.
+  inactivity: 30m
+  # remember_me LIMITADO -- nem desligado, nem o padrao. As tres opcoes:
+  #   sem a linha : padrao de 1 MES, que passa por cima do expiration. Era a
+  #                 causa de as pessoas seguirem logadas por dias.
+  #   -1          : desliga a caixinha "lembrar de mim", e o cookie vira cookie
+  #                 DE SESSAO do browser, sem data de validade. Em 06/08/2026
+  #                 isso derrubou o login do time a cada recarga (no celular o
+  #                 browser mata o processo o tempo todo), e a tela do piloto
+  #                 acusava "nao foi possivel falar com o servidor" -- que era o
+  #                 /api caindo no redirect para o dominio auth, nao o servidor.
+  #   8h          : cookie persistente, sobrevive a fechar o browser, e expira
+  #                 junto com a sessao. E' o meio termo em uso.
+  # ATENCAO: sem aspas. Duracao entre aspas nao parseia como duracao e o
+  # container morre no boot com "could not parse ... as a duration".
+  remember_me: 8h
+  cookies:
+    - domain: ultra-expansao.tech
+      authelia_url: https://auth.ultra-expansao.tech
+      default_redirection_url: https://dashboard.ultra-expansao.tech
+  # secret injetado via AUTHELIA_SESSION_SECRET no docker-compose
+
+# ── Storage (SQLite local — sem dependência externa) ──────────────────────────
+storage:
+  local:
+    path: /config/db.sqlite3
+  # encryption_key injetado via AUTHELIA_STORAGE_ENCRYPTION_KEY no docker-compose
+
+# ── Backend de autenticação (arquivo local de usuários) ───────────────────────
+authentication_backend:
+  file:
+    path: /config/users_database.yml
+    password:
+      algorithm: argon2id
+      iterations: 3
+      salt_length: 16
+      parallelism: 8
+      memory: 65536
+
+# ── Controle de acesso ────────────────────────────────────────────────────────
+access_control:
+  default_policy: deny
+  rules:
+    # Segregacao por pais via grupo (plano multipais §5.0, Bloco D): sem `subject`,
+    # qualquer usuario autenticado alcancava o host BR e via o mapa/funil do Brasil
+    # inteiro. Cada host agora exige o grupo do seu pais; default_policy: deny
+    # continua fechando qualquer host sem regra.
+    - domain: dashboard.ultra-expansao.tech
+      policy: one_factor
+      subject:
+        - "group:expansao_br"
+    - domain: piloto.ultra-expansao.tech
+      policy: one_factor
+      subject:
+        - "group:expansao_br"
+    - domain: piloto-ar.ultra-expansao.tech
+      policy: one_factor
+      subject:
+        - "group:expansao_ar"
+
+# ── Regulacao (anti-brute-force) ──────────────────────────────────────────────
+# Pentest 2026-08-19: sem este bloco EXPLICITO um password-spray contra o login
+# (/api/firstfactor) so' custava a latencia do argon2id — que ainda vira amplificacao
+# de DoS (cada tentativa aloca 64 MiB). Bloqueia o usuario apos `max_retries` falhas
+# dentro de `find_time`, pelo periodo `ban_time`. Os usuarios sao poucos e conhecidos,
+# entao 4 tentativas em 2 min e' folgado para o uso legitimo e apertado para ataque.
+regulation:
+  max_retries: 4
+  find_time: 2m
+  ban_time: 10m
+
+# ── Notificador (filesystem — sem SMTP) ──────────────────────────────────────
+notifier:
+  filesystem:
+    filename: /config/notification.txt
+
+# ── Segredos via variáveis de ambiente ───────────────────────────────────────
+# jwt_secret         → AUTHELIA_JWT_SECRET
+# session.secret     → AUTHELIA_SESSION_SECRET
+# storage.encryption_key → AUTHELIA_STORAGE_ENCRYPTION_KEY
+# (Authelia lê automaticamente as variáveis AUTHELIA_* do ambiente)

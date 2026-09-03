@@ -1,0 +1,161 @@
+# ATENÇÃO: Este arquivo contém hashes de senhas — NÃO commitar com dados reais
+# Para gerar hash: docker run authelia/authelia:4.38 authelia crypto hash generate argon2 --password 'SuaSenha'
+# Após editar, reiniciar o container: docker compose -f docker-compose.prod.yml restart authelia
+
+---
+# Grupos de pais (plano multipais §5.0, Bloco D): todos os usuarios atuais recebem
+# expansao_br alem de ultra_team. expansao_ar e' concedido nominalmente — quem
+# entra nessa lista e' decisao do Felipe.
+users:
+  rodrigo_oliveira:
+    displayname: "Rodrigo Oliveira"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: moveresultados@gmail.com
+    groups:
+      - ultra_team
+      - expansao_br
+
+  marcel_gandra:
+    displayname: "Marcel Gandra"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: marcel.gandra@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
+
+  marcos_minchiotti:
+    displayname: "Marcos Minchiotti"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: marcos.minchiotti@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
+
+  fernando_nero:
+    displayname: "Fernando Nero"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: fernando.nero@gmail.com
+    groups:
+      - ultra_team
+      - expansao_br
+
+  william_urso:
+    displayname: "William Urso"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: william.urso@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
+
+  miguel_ritton:
+    displayname: "Miguel Ritton"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: miguel.ritton@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
+
+  juan_calu:
+    displayname: "Juan Calu"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: Juan.lima@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
+
+  priscila_vampre:
+    displayname: "Priscila Vampré"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: priscila.vampre@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
+
+  vinicius_cruz:
+    displayname: "Vinicius Cruz"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: vinicius.cruz@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
+
+  felipe_castaldi:
+    displayname: "Felipe Castaldi"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: felipe.silva@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
+      - expansao_ar
+
+  jefferson_cantalejo:
+    displayname: "Jefferson Cantalejo"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: jefferson.cantalejo@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
+
+  karina_silva:
+    displayname: "Karina Silva"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: Karina.silva@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
+
+  daniele_mendes:
+    displayname: "Daniele Mendes"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: daniele.mendes@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
+
+  paulo_miranda:
+    displayname: "Paulo Miranda"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: paulo.miranda@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
+
+  isamara_santana:
+    displayname: "Isamara Santana"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: isamara.santana@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
+
+  marise_pierami:
+    displayname: "Marise Pierami"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: marise.pierami@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
+
+  jailson_alves:
+    displayname: "Jailson Alves"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: jailson.alves@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
+
+  anderson_kalbertzer:
+    displayname: "Anderson Kalbertzer"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: anderson.kalbertzer@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
+
+  guilherme_lacerda:
+    displayname: "Guilherme Lacerda"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$I/TmfOiLg1OmpMa+lADjCw$0WcrAUgS56uR+vOqsPhEhIHsMIAhEXK3a19wLjTvs0A"
+    email: guilherme.lacerda@ultraacademia.com.br
+    groups:
+      - ultra_team
+      - expansao_br
