@@ -4515,7 +4515,7 @@ viabilidade argentina do defeito R2 é este bloco.
 | **Criticidade** | **Crítica** — `^authelia/` é CRITICO (`scripts/loop_guard.py:124`), logo **exige `critica-aprovada`**. **Zero código de aplicação.** |
 | **Prioridade** | Alta — **tem de estar no ar ANTES de qualquer login internacional ser concedido.** |
 | **Esteira** | `[GATE HUMANO — critica-aprovada do Felipe]` → Builder → QA → Felipe (aplicação manual, VPS §6). |
-| **Status** | Pendente. |
+| **Status** | Feita em 2026-09-03 — aplicada na VPS (aprovacao comando a comando) e backups no PR #308 (`d3d173a`). |
 | **Depende de** | — . **Paraleliza com A1, B1 e C1.** |
 | **Esforço** | **1 dia · Felipe + 1 dev** (era 2-3 dias antes de se ver que a regra do host AR precisa existir de qualquer jeito e que o `subject` custa a mesma linha). |
 | **Autonomia** | **manual (NÃO loop-safe)** — infra de autenticação + VPS. NÃO marcar loop-safe. |
@@ -4563,7 +4563,7 @@ existente perde acesso ao que já tinha.
 | **Criticidade** | **Crítica** — `docker-compose` (`scripts/loop_guard.py:122`) e `(^|/)Caddyfile` (`:123`) são CRITICO, logo **exige `critica-aprovada`**, além do **deploy manual por digest pelo dono** (`CLAUDE.md` §6). |
 | **Prioridade** | Alta — é o bloco que fecha a onda; **sem ele não existe URL para o time acessar.** |
 | **Esteira** | Block Orchestrator → Planner → `[GATE HUMANO — critica-aprovada do Felipe]` → Builder → QA → Felipe (deploy manual + 24 h de observação). |
-| **Status** | Pendente. |
+| **Status** | Feita em 2026-09-03 — stack AR no ar (PRs #309-#312), piloto-ar.ultra-expansao.tech servindo. |
 | **Depende de** | **A1 + B1 + C1 + C2 + D1** para a **SUBIDA**. A **preparação** (DNS, bloco de Caddy, `.env`, `mem_limit` provisório) corre em paralelo a B1, C1 e C2. |
 | **Esforço** | **3-4 dias · 1 dev + Felipe no deploy + 24 h de observação de RSS e de CPU** (era 1-1,5 semana quando incluía parametrizar o compose brasileiro, que saiu — ver abaixo). |
 | **Autonomia** | **manual (NÃO loop-safe)** — VPS, compose, Caddy, DNS, deploy. **Nunca** loop-safe. |

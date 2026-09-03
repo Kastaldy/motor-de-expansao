@@ -128,3 +128,51 @@ def test_assert_12_pais_so_dentro_do_if_do_proprio_pais() -> None:
     assert re.search(r"piloto", sem_acesso, re.IGNORECASE) is None, (
         "sem-acesso.html contém 'piloto' — o grep do aceite 8 do §7.2 reprovaria"
     )
+
+
+_IF_PAIS_CAPTURA_RE = re.compile(r"\{\{if \$(\w+)\}\}(.*?)\{\{end\}\}", re.DOTALL)
+
+# O que o cartao de cada pais NAO pode conter: o nome/host DO OUTRO. Achado da
+# revisao adversarial do PR #313: o assert 12 tratava qualquer `if` como zona segura
+# para qualquer pais — "Argentina" dentro do `{{if $br}}` passava verde, e o corpo
+# HTTP diria a um usuario so-BR quais outros paises existem (a classe de vazamento
+# que o §6.2 fecha). Ao entrar o 3o pais, acrescentar a linha dele aqui.
+_PROIBIDO_NO_BLOCO = {
+    "br": re.compile(r"argentina|piloto-ar", re.IGNORECASE),
+    "ar": re.compile(r"brasil|piloto\.ultra", re.IGNORECASE),
+}
+
+
+def test_assert_12b_cartao_de_um_pais_nao_cita_o_outro() -> None:
+    """Complemento do assert 12: DENTRO do `if` de um pais, so aquele pais.
+
+    A regra de ouro do proprio index.html: o nome entra APENAS dentro do `if`
+    DAQUELE pais. Sem esta checagem, colar o cartao novo dentro do `if` errado
+    passaria no CI e so seria pego pelo aceite manual §7.2 item 6, na VPS.
+    """
+    index = _INDEX.read_text(encoding="utf-8")
+    blocos = _IF_PAIS_CAPTURA_RE.findall(index)
+    assert blocos, "nenhum bloco '{{if $<pais>}}' capturado — regex ou pagina mudou"
+    for var, corpo in blocos:
+        proibido = _PROIBIDO_NO_BLOCO.get(var)
+        if proibido is None:
+            continue
+        vazou = proibido.search(corpo)
+        assert vazou is None, (
+            f"index.html: bloco '{{{{if ${var}}}}}' cita o OUTRO pais "
+            f"({vazou.group(0)!r}) — cartao no if errado vaza a lista de paises (§6.2)"
+        )
+
+
+def test_assert_11b_sem_display_none_inline() -> None:
+    """Complemento do assert 11: `style=` inline com display:none tambem e proibido.
+
+    O assert 11 varre corpos de regra CSS; um atributo inline escaparia. Nas duas
+    paginas do portal nao ha uso legitimo de display:none inline — presenca e
+    sinal de filtragem por CSS (§5.4), que e exatamente o que o assert existe
+    para impedir.
+    """
+    for pagina in (_INDEX, _SEM_ACESSO):
+        texto = pagina.read_text(encoding="utf-8")
+        m = re.search(r"style=\"[^\"]*display\s*:\s*none", texto)
+        assert m is None, f"{pagina.name}: display:none inline ({m.group(0)!r})"
