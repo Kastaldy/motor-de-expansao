@@ -119,17 +119,6 @@ const ICONES: Record<string, React.JSX.Element> = {
       <path d="M4 19V9M10 19V5M16 19v-7M22 19H2" />
     </>
   ),
-  dom: (
-    <>
-      <circle cx="12" cy="12" r="8.5" />
-      <circle cx="12" cy="12" r="4" />
-    </>
-  ),
-  cart: (
-    <>
-      <path d="M4 6h16M4 12h16M4 18h10" />
-    </>
-  ),
   viab: (
     <>
       <path d="M3 17l5.5-6 4 3.5L21 6" />
@@ -164,8 +153,12 @@ const ICONES: Record<string, React.JSX.Element> = {
  */
 const ITENS: { id: string; tela: Tela | null; titulo: string }[] = [
   { id: 'exec', tela: 'executiva', titulo: 'Visão executiva' },
-  { id: 'dom', tela: null, titulo: 'Expansão de domínio (fora do piloto)' },
-  { id: 'cart', tela: null, titulo: 'Carteira e plano (fora do piloto)' },
+  /* "Expansão de domínio" e "Carteira e plano" SAIRAM (Juan, 2026-09-02: "eles não
+     estão sendo utilizados, então tirar os ícones deles"). Eram os dois únicos itens
+     com `tela: null` — existiam para anunciar que o piloto é um recorte do produto,
+     mas dois botões permanentemente apagados viraram só ruído no rail. O suporte a
+     `tela: null` fica no tipo: é o que permite reintroduzir um destino futuro sem
+     reabrir esta lista. */
   { id: 'oport', tela: 'oportunidades-imob', titulo: 'Oportunidades imobiliárias' },
   { id: 'viab', tela: 'viabilidade', titulo: 'Viabilidade do ponto' },
   /* Aba restrita (emenda DEC-027): telaLiberada e deny-by-default — para quem não
@@ -190,9 +183,10 @@ export default function Dock({
   /** País da base servida. `null` = ainda não dá para afirmar -> não carimba. */
   pais?: string | null
 }) {
-  // Ícone de tela vetada SOME em vez de aparecer desabilitado: os desabilitados do
-  // Dock já significam "fora do piloto", e um terceiro estado ("existe mas não para
-  // você") só gastaria a paciência de quem não pode clicar de qualquer jeito.
+  // Ícone de tela vetada SOME em vez de aparecer desabilitado: um ícone apagado não
+  // diz por que está apagado, e "existe mas não para você" só gastaria a paciência de
+  // quem não pode clicar de qualquer jeito. (Foi também o que condenou os dois itens
+  // "fora do piloto" que viviam aqui — ver ITENS.)
   const itens = ITENS.filter(
     (it) => it.tela === null || telaLiberada(it.tela as TelaControlada, abas),
   )
