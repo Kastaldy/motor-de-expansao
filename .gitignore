@@ -194,3 +194,12 @@ TEMP_backlog_piloto.md
 # O `vite.preview.local.config.ts` em si NAO entra aqui de proposito: a nota dentro
 # dele diz que ficar visivel como untracked e' o que lembra de nao commita-lo.
 web/.vite-cache-local/
+
+# --- Material de trabalho LOCAL da raiz — NUNCA entra no git -------------------
+# Dois incidentes no mesmo dia (2026-09-03) provaram que convencao nao basta:
+# o PR #306 (git add -f de um agente) e o commit 8238e2e (git add -A), ambos
+# contidos com a branch reescrita. Estes padroes fecham a porta por mecanismo.
+PENTEST-*.md
+*-APLICAR.md
+GAP-CLICKUP-*.md
+amostra-*confidencial*.pdf
