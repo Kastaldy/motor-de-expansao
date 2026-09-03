@@ -58,11 +58,13 @@ def test_compose_ar_monta_somente_cadastro_e_trilha_como_volumes_de_escrita() ->
     )
 
 
-def test_compose_ar_sem_ibge_e_sem_oportunidades() -> None:
-    """Malha adm2 e' o P7 (o mount entra no commit da malha); `oportunidades` esta
-    fora de `perfil.superficies` — monta-los agora esconderia os dois gates."""
+def test_compose_ar_com_ibge_e_sem_oportunidades() -> None:
+    """A malha adm2 chegou (P7 fechada em 2026-09-03): o mount de ibge e' OBRIGATORIO
+    e :ro, no mesmo commit em que o perfil virou malha_municipal_disponivel=true —
+    compose sem o mount deixaria as rotas de ponto liberadas pelo gate estourarem 500
+    na primeira coordenada. `oportunidades` segue fora de `perfil.superficies`."""
     montagens = "\n".join(str(v) for v in _web_ar()["volumes"])
-    assert "/app/data/ibge" not in montagens
+    assert "/opt/motor-expansao-ar/data/ibge:/app/data/ibge:ro" in montagens
     assert "oportunidades" not in montagens
 
 

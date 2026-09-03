@@ -78,9 +78,11 @@ services:
       # em /opt/motor-expansao-ar divergiria em silencio a cada atualizacao do
       # branding BR. Leitura pura (:ro), nenhum acoplamento de escrita entre stacks.
       - /opt/motor-expansao/data/ultra:/app/data/ultra:ro
-      # SEM mount de `ibge`: a malha adm2 argentina e' o P7 (pendente). O app tolera a
-      # ausencia (as rotas que a exigem respondem 404 com motivo pelo gate de pais);
-      # o mount entra no MESMO commit que trouxer a malha.
+      # Malha adm2 argentina (P7 FECHADA em 2026-09-03): ibge/municipios_<UF>.geojson
+      # (24 arquivos, 529 departamentos) + setores do recorte, escritos pelo
+      # exportar_piloto_rep a partir de dados/malha_admin do Juan. Mesmo commit em que
+      # perfil.malha_municipal_disponivel virou true — as rotas de ponto liberam juntas.
+      - /opt/motor-expansao-ar/data/ibge:/app/data/ibge:ro
       # SEM mount de `oportunidades` (superficie bloqueada — ver environment) e SEM
       # `concorrentes` (logos sao das redes BR; sem o mount vale o fallback sigla+cor;
       # catalogo de concorrentes por pais e' o BLK-INTL-10).
