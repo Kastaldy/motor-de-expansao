@@ -182,6 +182,11 @@ _DENY_GOVERNANCA: list[tuple[str, str]] = [
     # (web/server) calcula/exibe os numeros do comite e o frontend define o que o usuario
     # ve; nenhum dos dois entra por bloco "Media" auto-mergeavel sem olho humano.
     (r"^web/", "piloto web servido em producao (frontend + backend FastAPI)"),
+    # BLK-INTL-13 — as duas paginas estaticas que o Caddy serve na raiz (bind mount
+    # `./portal:/srv/portal:ro`). Nao decidem roteamento nem acesso (por isso nao e'
+    # CRITICO), mas sao conteudo servido em producao na porta de entrada: nao entram
+    # por bloco "Media" auto-mergeavel sem olho humano (spec docs/spec_portal_selecao_pais.md §8).
+    (r"^portal/", "portal de selecao de pais servido na raiz"),
     (
         r"^src/motor_expansao/dimensionamento/viabilidade_ponto\.py$",
         "motor de viabilidade (DEC-009)",

@@ -19,12 +19,12 @@
       handle @sem_pais { rewrite * /sem-acesso.html; file_server }
 
   Ou seja: usuário AUTENTICADO (o `forward_auth` já rodou — este arquivo nunca é
-  servido a anônimo) que não está em nenhum grupo `expansao_*`. Enquanto o
-  BLK-INTL-05 não criar os grupos, este é o estado dos 19 usuários, que hoje estão
-  todos e apenas em `ultra_team`. É exatamente por isso que este arquivo TEM de
-  existir antes de o bloco do §2.3 entrar no `Caddyfile`: sem ele, o `file_server`
-  devolve o 404 cru do Caddy, em inglês, na porta de entrada da empresa — o
-  oposto do "não um 403 seco" do §1.1.
+  servido a anônimo) que não está em nenhum grupo `expansao_*`. Os grupos por
+  país existem desde 2026-09-03 (Bloco D / BLK-INTL-05 aplicado), então este é o
+  estado RESIDUAL: uma conta recém-criada, ou uma que teve o acesso por país
+  revogado. Mesmo assim este arquivo TEM de existir antes de o bloco do §2.3
+  entrar no `Caddyfile`: sem ele, o `file_server` devolve o 404 cru do Caddy, em
+  inglês, na porta de entrada da empresa — o oposto do "não um 403 seco" do §1.1.
 
   DUAS REGRAS QUE NÃO PODEM SER QUEBRADAS AQUI
   --------------------------------------------
