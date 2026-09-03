@@ -83,9 +83,12 @@ services:
       # exportar_piloto_rep a partir de dados/malha_admin do Juan. Mesmo commit em que
       # perfil.malha_municipal_disponivel virou true — as rotas de ponto liberam juntas.
       - /opt/motor-expansao-ar/data/ibge:/app/data/ibge:ro
-      # SEM mount de `oportunidades` (superficie bloqueada — ver environment) e SEM
-      # `concorrentes` (logos sao das redes BR; sem o mount vale o fallback sigla+cor;
-      # catalogo de concorrentes por pais e' o BLK-INTL-10).
+      # SEM mount de `oportunidades` (superficie bloqueada — ver environment).
+      # Logos e fotos dos concorrentes ARGENTINOS (o pacote do Juan chegou em
+      # 2026-09-03): logo_<rede>.png na raiz e fotos/ dos baloes — os defaults do
+      # app (_REPO_ROOT/concorrentes e .../fotos) resolvem os dois com UM mount,
+      # espelho do BR. Sem ele valia o fallback sigla+cor.
+      - /opt/motor-expansao-ar/concorrentes:/app/concorrentes:ro
       # Mounts de ESCRITA — os UNICOS, espelhando a semantica BR:
       # cadastro = so' o acesso_abas.json da AR (modelo: docs/acesso_abas_ar.exemplo.json);
       # a escrita de cadastro operacional (/api/rede/) nem existe aqui — superficie
