@@ -22,6 +22,7 @@ quatro rotas de malha, cada uma com 404 nomeando o que falta.
 
 from __future__ import annotations
 
+import dataclasses
 import sys
 from pathlib import Path
 
@@ -128,11 +129,24 @@ def test_argentina_bloqueia_o_que_a_decisao_06_nao_libera(
     "rota",
     ["/api/ponto", "/api/resolver-ponto", "/api/relatorio/municipal", "/api/relatorio/pontual"],
 )
-def test_argentina_bloqueia_as_quatro_rotas_de_malha_ausente(ar: Perfil, rota: str) -> None:
-    """O achado que motivou este campo: as quatro rotas que HOJE estourariam 500 na
-    primeira coordenada clicada (`_carregar_malha` sem nenhum `municipios_*.geojson`
-    argentino), viram 404 nomeado ANTES de chegar la'."""
-    detalhe = acesso.motivo_bloqueio_pais(rota, ar)
+def test_argentina_com_malha_libera_as_quatro_rotas_de_ponto(ar: Perfil, rota: str) -> None:
+    """P7 fechada em 2026-09-03: a malha adm2 chegou (dados/malha_admin do Juan,
+    529 departamentos -> ibge/municipios_<UF>.geojson via exportador) e o perfil AR
+    real virou malha_municipal_disponivel=true — as rotas de ponto liberam, e com o
+    /api/relatorio/pontual o carimbo do Bloco C+ no PDF sai da dormencia."""
+    assert acesso.motivo_bloqueio_pais(rota, ar) is None, rota
+
+
+@pytest.mark.parametrize(
+    "rota",
+    ["/api/ponto", "/api/resolver-ponto", "/api/relatorio/municipal", "/api/relatorio/pontual"],
+)
+def test_pais_sem_malha_bloqueia_as_quatro_rotas_com_404_nomeado(ar: Perfil, rota: str) -> None:
+    """O comportamento que motivou o campo, agora provado com perfil SINTETICO (o
+    proximo pais sem malha): as quatro rotas que estourariam 500 na primeira
+    coordenada clicada viram 404 nomeado ANTES de chegar la'."""
+    sem_malha = dataclasses.replace(ar, malha_municipal_disponivel=False)
+    detalhe = acesso.motivo_bloqueio_pais(rota, sem_malha)
     assert detalhe is not None, rota
     assert "malha municipal" in detalhe
     assert "Argentina" in detalhe
