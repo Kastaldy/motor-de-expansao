@@ -1506,7 +1506,7 @@ export interface HexagonosPayload {
   }
   cobertura: {
     /** Hexágonos do país inteiro que sobrevivem à cascata, antes de qualquer filtro. */
-    hexes_acionaveis_brasil: number
+    hexes_acionaveis_pais: number
     hexes_no_recorte: number
     ufs_no_recorte: number
     /** Quantos dos itens devolvidos vêm de consumo de concorrente NÃO medido. */

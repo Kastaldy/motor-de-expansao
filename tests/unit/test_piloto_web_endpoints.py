@@ -1526,7 +1526,7 @@ def test_hexagonos_publica_as_reguas_e_o_denominador(nacional_data: Path) -> Non
         "conc_max": pilot.CONC_ADENSAR_MAX,
     }
     cob = body["cobertura"]
-    assert cob["hexes_acionaveis_brasil"] == 7  # 6 em SP + 1 em TO
+    assert cob["hexes_acionaveis_pais"] == 7  # 6 em SP + 1 em TO
     assert cob["ufs_no_recorte"] == 2
     # JSON-safe: o payload inteiro sobrevive ao serializador estrito.
     json.dumps(body, allow_nan=False)

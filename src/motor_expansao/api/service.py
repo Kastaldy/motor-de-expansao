@@ -26,9 +26,15 @@ from shapely.geometry import Point, shape
 from motor_expansao.api import __version__
 from motor_expansao.api.errors import APIError
 from motor_expansao.api.settings import Settings
+from motor_expansao.perfil import resolver_perfil
 
 # Nome da coluna de score setorial usada nos KPIs (carimbo `versao_score`).
 _VERSAO_SCORE = "score_setor_2022_calibrado"
+
+# Resolvido UMA vez, no import — mesmo padrao de `coord.py`/`maps_geocoder.py` (DEC-047).
+# So' usado para NOMEAR a fonte de censo e o pais nas mensagens de erro abaixo; a malha
+# em si continua vindo de `settings.ibge_dir`, que e' o que muda por instancia.
+_PERFIL = resolver_perfil()
 
 
 # Tolerancia do "encoste" na malha municipal, em GRAUS (~0.018 deg ~ 2 km no Brasil).
@@ -99,27 +105,42 @@ def _carregar_malha(ibge_dir_str: str) -> _MalhaMunicipal:
             except Exception:  # geometria malformada -> ignora o municipio
                 continue
     if not geoms:
-        raise APIError(500, "Malha municipal IBGE ausente ou vazia", "erro_interno")
+        # Ate' 2026-09-03 esta mensagem cravava "IBGE" — verdade para o Brasil, falsa em
+        # qualquer outra instancia. A Argentina nao materializa `ibge/municipios_*.geojson`
+        # ainda (o Relatorio Pontual dela e' trabalho futuro), e o operador via um erro que
+        # citava o instituto de OUTRO pais.
+        raise APIError(
+            500,
+            f"Malha municipal ({_PERFIL.fontes.censo.nome}) ausente ou vazia",
+            "erro_interno",
+        )
     return _MalhaMunicipal(STRtree(geoms), meta, geoms)
 
 
 def _resolver_e_carregar(lat: float, lng: float, settings: Settings):
     """Resolve ``(uf, cod_municipio)`` e carrega ``setores_df``. Levanta 400/404."""
-    from motor_expansao.dashboard.data import read_censo_geo_partition
-
     malha = _carregar_malha(str(settings.ibge_dir))
     resolvido = malha.resolver(lat, lng)
     if resolvido is None:
         # Mensagem PRECISA: o que falhou foi o ponto-em-poligono na malha municipal, nao o
         # bounding box do Brasil (esse fica em `coord.validar_brasil`). Dizer "fora do Brasil"
         # para um ponto a 2 km da costa confundia o operador (relato de Felipe em 2026-07-24).
+        # "de" e nao "do"/"da" antes do nome do pais, de proposito (mesma convencao de
+        # `coord.ForaDoPaisError`): sidesteps o genero gramatical sem precisar carrega-lo
+        # no perfil.
         raise APIError(
             400,
-            "Coordenada fora da malha municipal do IBGE (mar aberto, fora do Brasil "
-            "ou a mais de 2 km de qualquer municipio)",
+            f"Coordenada fora da malha municipal do {_PERFIL.fontes.censo.nome} (mar "
+            f"aberto, fora de {_PERFIL.nome} ou a mais de 2 km de qualquer municipio)",
             "coordenada_invalida",
         )
     uf, cod_municipio = resolvido
+
+    # Import adiado ate' AQUI (e nao no topo da funcao): o ramo 400 acima nao precisa do
+    # motor de censo, e adiar evita puxar a cadeia dashboard.data -> dashboard.schemas ->
+    # h3 so' para levantar um erro de coordenada. Mesmo espirito dos imports LAZY do
+    # modulo (ver docstring do topo do arquivo).
+    from motor_expansao.dashboard.data import read_censo_geo_partition
 
     setores_df = read_censo_geo_partition(settings.censo_geo_dir, uf, cod_municipio)
     if setores_df is None or setores_df.empty:
