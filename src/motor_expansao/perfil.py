@@ -102,6 +102,25 @@ class Bbox:
 class Moeda:
     codigo: str
     simbolo: str
+    #: Codigo da moeda em que a coluna de RENDA do pacote chega (`renda_estimada_usd` =
+    #: `renda_per_capita`, o insumo do score). NAO e sempre igual a `codigo`: a Argentina
+    #: reporta renda em USD enquanto `codigo`/`simbolo` sao os da moeda oficial (ARS/"$").
+    #: Confundir os dois e' a forma mais barata de produzir numero errado — o proprio
+    #: `perfil.json` diz isso na `_nota` do bloco `moeda`. Ver `Moeda.simbolo_renda()`.
+    indicadores_renda: str
+
+    def simbolo_renda(self) -> str:
+        """Simbolo/codigo a exibir junto de um valor de RENDA — nunca `simbolo` cru.
+
+        Quando `indicadores_renda` bate com `codigo` (Brasil hoje: BRL/BRL), o simbolo do
+        pais e' honesto e sai como sempre saiu ("R$"). Quando diverge (Argentina:
+        moeda ARS, renda em USD), sair "$" seria rotular um numero em dolar com o simbolo
+        do peso — a Argentina nao tem simbolo dedicado no perfil, entao o CODIGO
+        (`"USD"`) e' o que desambigua, sem inventar um registro de simbolos por moeda.
+        """
+        if self.indicadores_renda == self.codigo:
+            return self.simbolo
+        return self.indicadores_renda
 
 
 @dataclass(frozen=True, slots=True)
@@ -494,6 +513,13 @@ def carregar_perfil(caminho: Path, *, raiz: Path | None = None) -> Perfil:
                 moeda_bruto, "codigo", caminho, prefixo="moeda.", padrao=_RE_MOEDA
             ),
             simbolo=_texto(moeda_bruto, "simbolo", caminho, prefixo="moeda."),
+            indicadores_renda=_texto(
+                moeda_bruto,
+                "indicadores_renda",
+                caminho,
+                prefixo="moeda.",
+                padrao=_RE_MOEDA,
+            ),
         ),
         bbox=_ler_bbox(dados, caminho),
         vista_padrao=Vista(

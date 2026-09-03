@@ -7,17 +7,20 @@ import {
   _resetarPerfilParaTeste,
   definirPerfil,
   moeda,
+  moedaRenda,
   perfilDoCliente,
   type PerfilCliente,
 } from './perfil'
 import { PERFIL_BR } from './perfil-br'
 
-/** Perfil argentino de teste — a caixa real do `data/perfis/AR/perfil.json`. */
+/** Perfil argentino de teste — a caixa real do `data/perfis/AR/perfil.json`.
+ *  `indicadores_renda: 'USD'` DIVERGE de `moeda.codigo: 'ARS'` de proposito: e'
+ *  exatamente a caixa real (moeda oficial ARS, renda do pacote em USD). */
 const AR: PerfilCliente = {
   pais: 'AR',
   nome: 'Argentina',
   locale: 'es-AR',
-  moeda: { codigo: 'ARS', simbolo: '$' },
+  moeda: { codigo: 'ARS', simbolo: '$', indicadores_renda: 'USD' },
   bbox: { lat_min: -55.2, lat_max: -21.6, lng_min: -74.0, lng_max: -53.4 },
   vista_padrao: { lat: -38.4, lng: -63.6, zoom: 3.6 },
   reguas: { pop_min_acionavel: 5000, capacidade_unidade_alunos: 2500 },
@@ -72,6 +75,20 @@ describe('definirPerfil — instala o pais da instancia', () => {
   })
 })
 
+describe('moedaRenda — o simbolo do INDICADOR de renda, nao o da moeda oficial', () => {
+  it('no Brasil as duas moedas coincidem: moedaRenda() == moeda()', () => {
+    expect(moedaRenda()).toBe('R$')
+    expect(moedaRenda()).toBe(moeda())
+  })
+
+  it('na Argentina DIVERGE: moeda oficial e ARS, renda do pacote e USD', () => {
+    definirPerfil(AR)
+    expect(moeda()).toBe('$') // moeda oficial (ARS) — para aluguel, DRE, viabilidade
+    expect(moedaRenda()).toBe('USD') // a coluna de renda do pacote — NUNCA "$"
+    expect(moedaRenda()).not.toBe(moeda())
+  })
+})
+
 describe('definirPerfil — fail-safe, e por que ele e assim', () => {
   // Derrubar a SPA por causa de um campo ausente trocaria uma degradacao por uma tela
   // branca. Quem falha ALTO quando o perfil falta e o backend, no boot do container,
@@ -87,6 +104,7 @@ describe('definirPerfil — fail-safe, e por que ele e assim', () => {
     ['bbox com string', { ...AR, bbox: { ...AR.bbox, lat_min: '-55.2' } }],
     ['sem reguas', { ...AR, reguas: undefined }],
     ['sem moeda', { ...AR, moeda: undefined }],
+    ['sem indicadores_renda', { ...AR, moeda: { codigo: 'ARS', simbolo: '$' } }],
     ['sem vista_padrao', { ...AR, vista_padrao: undefined }],
   ])('payload %s mantem o default e nao levanta', (_nome, payload) => {
     expect(() => definirPerfil(payload)).not.toThrow()

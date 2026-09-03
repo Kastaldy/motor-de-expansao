@@ -27,7 +27,7 @@ const AR: PerfilCliente = {
   pais: 'AR',
   nome: 'Argentina',
   locale: 'es-AR',
-  moeda: { codigo: 'ARS', simbolo: '$' },
+  moeda: { codigo: 'ARS', simbolo: '$', indicadores_renda: 'USD' },
   bbox: { lat_min: -55.2, lat_max: -21.6, lng_min: -74.0, lng_max: -53.4 },
   vista_padrao: { lat: -38.4, lng: -63.6, zoom: 3.6 },
   reguas: { pop_min_acionavel: 5000, capacidade_unidade_alunos: 2500 },
