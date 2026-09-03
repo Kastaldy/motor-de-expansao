@@ -306,6 +306,13 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
     # ja nasca guardada (impossivel esquecer a dependencia).
     if acesso.bloqueio_acessos(request.url.path, remote_user):
         return JSONResponse({"detail": "Not Found"}, status_code=404)
+    # Gate de PAIS (Bloco C): "esta INSTANCIA oferece isto?", ANTES de "este usuario
+    # pode?" — mais barato (sem I/O do JSON de cadastro) e mais fundamental: nao faz
+    # sentido perguntar se um usuario TEM uma aba que a propria instancia nao serve.
+    # 404 (nao 403): o recurso nao existe NESTE deploy, nao e' negado por permissao.
+    detalhe_pais = acesso.motivo_bloqueio_pais(request.url.path, PERFIL)
+    if detalhe_pais is not None:
+        return JSONResponse({"detail": detalhe_pais}, status_code=404)
     detalhe = acesso.motivo_bloqueio(request.url.path, remote_user)
     if detalhe is not None:
         return JSONResponse({"detail": detalhe}, status_code=403)
@@ -3369,9 +3376,18 @@ def me(
     rota so' informa.
     """
     usuario = acesso.normalizar_usuario(remote_user)
-    abas = set(acesso.abas_do_usuario(usuario))
+    # Interseccao com `PERFIL.superficies` (Bloco C): o cadastro de abas e' um
+    # arquivo OPERACIONAL por instancia (DEC-023), separado do perfil — nada o
+    # impede de conceder "oportunidades" a um usuario argentino por copia-e-cola do
+    # cadastro brasileiro. Sem esta linha, a SPA mostraria o card e o clique
+    # morreria no 404 do gate de pais (`acesso.motivo_bloqueio_pais`); com ela, o
+    # card simplesmente nao aparece — a instancia e' quem decide o TETO, o cadastro
+    # so' pode conceder DENTRO dele.
+    abas = set(acesso.abas_do_usuario(usuario)) & set(PERFIL.superficies)
     # A aba Acessos NUNCA vem do JSON de abas: so' da allowlist de env (emenda
-    # DEC-027). Entra aqui apenas para a SPA saber que pode mostrar o icone.
+    # DEC-027). Entra aqui apenas para a SPA saber que pode mostrar o icone. Fica DE
+    # FORA da interseccao acima de proposito: nao e' superficie de pais (nao esta em
+    # `ABAS_VALIDAS`/`PERFIL.superficies`), e' controle de equipe interna.
     if acesso.pode_ver_acessos(usuario):
         abas.add(acesso.ABA_ACESSOS)
     return {"usuario": usuario, "abas": sorted(abas), "perfil": _perfil_do_cliente()}

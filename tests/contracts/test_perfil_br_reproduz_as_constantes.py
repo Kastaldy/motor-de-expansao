@@ -210,6 +210,13 @@ def test_brasil_habilita_todas_as_superficies(perfil) -> None:
     assert set(perfil.superficies) == SUPERFICIES_VALIDAS
 
 
+def test_brasil_tem_a_malha_municipal(perfil) -> None:
+    """A OUTRA metade da inercia do Bloco C: sem isto, `/api/ponto`,
+    `/api/resolver-ponto`, `/api/relatorio/municipal` e `/api/relatorio/pontual`
+    passariam a responder 404 no Brasil, que TEM a malha adm2 hoje."""
+    assert perfil.malha_municipal_disponivel is True
+
+
 # --------------------------------------------------------------------------------
 # As duas reguas de composicao familiar (Bloco B)
 # --------------------------------------------------------------------------------
