@@ -65,6 +65,7 @@ def test_compose_ar_com_ibge_e_sem_oportunidades() -> None:
     na primeira coordenada. `oportunidades` segue fora de `perfil.superficies`."""
     montagens = "\n".join(str(v) for v in _web_ar()["volumes"])
     assert "/opt/motor-expansao-ar/data/ibge:/app/data/ibge:ro" in montagens
+    assert "/opt/motor-expansao-ar/concorrentes:/app/concorrentes:ro" in montagens
     assert "oportunidades" not in montagens
 
 
