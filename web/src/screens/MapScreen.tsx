@@ -1153,7 +1153,7 @@ export default function MapScreen({
             Ja se tentou enxugar o cabecalho (tirar este rotulo, o titulo, os rotulos dos
             seletores, e mudar os tres numeros de lugar) — o Juan recusou em 2026-09-02:
             "o residual, espaco para academias foi pra outra coluna q nao gostei". A
-            resposta passou a ser ESCALA: o app inteiro renderiza a 80% (ver
+            resposta passou a ser ESCALA: o app inteiro renderiza a 69% (ver
             `--escala-app` em `styles/global.css`), que e' o mesmo efeito do zoom do
             navegador sem exigir que alguem o ajuste em toda maquina. */}
         <Botao
