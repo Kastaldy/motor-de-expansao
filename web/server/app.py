@@ -136,6 +136,9 @@ def _texto_do_aviso_de_viabilidade(onde: str, campo: str) -> str | None:
     aviso o artefato comporta ("texto_curto" na linha de nota do XLSX, "texto_rodape"
     no rodape das paginas financeiras do PDF).
     """
+    # A chave e CONTRATO entre plataforma e perfis: um pais que declare o aviso de
+    # viabilidade sob outro nome teria um aviso que nunca carimba, em silencio.
+    # Testado em tests/contracts/test_aviso_carimbado_no_perfil.py.
     aviso = PERFIL.avisos.get("viabilidade_tributo_provisorio")
     if aviso is None or not aviso.ativo or onde not in aviso.onde:
         return None

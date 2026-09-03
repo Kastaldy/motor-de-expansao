@@ -27,6 +27,9 @@ import pytest
 pytest.importorskip(
     "h3",
     reason="censo_report importa h3; sem o binario nativo (WinError 4551) so o CI roda",
+    # O h3 quebrado levanta ImportError (DLL bloqueada), nao ModuleNotFoundError;
+    # sem exc_type o pytest futuro trataria a colecao como ERROR em vez de SKIP.
+    exc_type=ImportError,
 )
 
 from PIL import Image  # noqa: E402
