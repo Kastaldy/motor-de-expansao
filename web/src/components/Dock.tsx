@@ -1,6 +1,7 @@
 import type { Tela } from '../App'
 import BotaoTema from './BotaoTema'
-import { telaLiberada, type Aba, type TelaControlada } from '../lib/acesso'
+import { telaLiberada, type Aba } from '../lib/acesso'
+import { ITENS_DOCK } from '../lib/dock-itens'
 import type { Tema } from '../lib/tema'
 
 /* Dock vertical fixo. No piloto so as duas telas do escopo estao ativas; as
@@ -114,6 +115,13 @@ function Carimbo({ pais }: { pais?: string | null }) {
 }
 
 const ICONES: Record<string, React.JSX.Element> = {
+  /* Mapa dobrado — o atalho do Mapa Territorial (o "Explorar uma região" do Início). */
+  mapa: (
+    <>
+      <path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z" />
+      <path d="M9 4v14M15 6v14" />
+    </>
+  ),
   exec: (
     <>
       <path d="M4 19V9M10 19V5M16 19v-7M22 19H2" />
@@ -139,32 +147,9 @@ const ICONES: Record<string, React.JSX.Element> = {
   ),
 }
 
-/**
- * O Dock NAO lista os MODOS DE ANALISE.
- *
- * "Análise de ponto" e "Explorar uma região" sairam daqui a pedido do Juan (2026-08-12):
- * eles sao escolha de PERGUNTA, e essa escolha se faz na tela de inicio, onde cada card
- * explica o que o modo responde e do que ele precisa. Repetidos como dois ícones sem
- * rótulo, viravam um segundo caminho mudo para a mesma decisão — e dois pinos quase
- * iguais, ainda por cima.
- *
- * O ícone de início tambem saiu: quem volta ao menu agora clica na LOGO, que ja estava
- * ali em cima e nao fazia nada.
- */
-const ITENS: { id: string; tela: Tela | null; titulo: string }[] = [
-  { id: 'exec', tela: 'executiva', titulo: 'Visão executiva' },
-  /* "Expansão de domínio" e "Carteira e plano" SAIRAM (Juan, 2026-09-02: "eles não
-     estão sendo utilizados, então tirar os ícones deles"). Eram os dois únicos itens
-     com `tela: null` — existiam para anunciar que o piloto é um recorte do produto,
-     mas dois botões permanentemente apagados viraram só ruído no rail. O suporte a
-     `tela: null` fica no tipo: é o que permite reintroduzir um destino futuro sem
-     reabrir esta lista. */
-  { id: 'oport', tela: 'oportunidades-imob', titulo: 'Oportunidades imobiliárias' },
-  { id: 'viab', tela: 'viabilidade', titulo: 'Viabilidade do ponto' },
-  /* Aba restrita (emenda DEC-027): telaLiberada e deny-by-default — para quem não
-     está na allowlist o ícone simplesmente não existe, como toda tela vetada. */
-  { id: 'acessos', tela: 'acessos', titulo: 'Acessos e uso do piloto' },
-]
+/* A fila de destinos (que itens existem, em que ordem, para onde levam) vive em
+   `lib/dock-itens.ts`, testável sem DOM — este componente só desenha o que está
+   declarado lá, com os ícones daqui (SVG é desenho, não regra). */
 
 export default function Dock({
   tela,
@@ -186,10 +171,8 @@ export default function Dock({
   // Ícone de tela vetada SOME em vez de aparecer desabilitado: um ícone apagado não
   // diz por que está apagado, e "existe mas não para você" só gastaria a paciência de
   // quem não pode clicar de qualquer jeito. (Foi também o que condenou os dois itens
-  // "fora do piloto" que viviam aqui — ver ITENS.)
-  const itens = ITENS.filter(
-    (it) => it.tela === null || telaLiberada(it.tela as TelaControlada, abas),
-  )
+  // "fora do piloto" que viviam aqui — ver ITENS_DOCK em lib/dock-itens.ts.)
+  const itens = ITENS_DOCK.filter((it) => it.tela === null || telaLiberada(it.tela, abas))
   return (
     <nav
       aria-label="Navegação principal"
