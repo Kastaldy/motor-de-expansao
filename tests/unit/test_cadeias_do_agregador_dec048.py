@@ -147,6 +147,42 @@ def test_coordenada_nullable_float64_do_feed_e_aceita():
     assert len(unir_cadeias(cadastro, feed)) == 2
 
 
+def test_saida_tem_coordenada_float64_pura():
+    """DTYPE da saida, nao so' "nao levantou" — foi por aqui que o pipeline real quebrou.
+
+    O cadastro guarda float64 e o feed guarda `Float64` nullable; o `concat` promove a coluna
+    para nullable, e `calc_comp_metrics` faz `.values` direto sobre as duas colunas — o que
+    sobre nullable devolve `object` e derruba o `np.radians`. O teste anterior passava porque
+    exercitava `unir_cadeias` ISOLADA: verificava que nao levantava, nao o que devolvia.
+    """
+    cadastro = _cadastro(("smart_fit", LAT, LNG))
+    feed = _feed(("selfit", _desloca(LAT, 900.0), LNG))
+    feed["lat"] = feed["lat"].astype("Float64")
+    feed["lng"] = feed["lng"].astype("Float64")
+    uni = unir_cadeias(cadastro, feed)
+    assert uni["lat"].dtype == "float64"
+    assert uni["lng"].dtype == "float64"
+    # a prova de fogo: o array que o consumidor monta tem de ser numerico de verdade
+    assert uni[["lat", "lng"]].values.dtype == "float64"
+
+
+def test_saida_alimenta_calc_comp_metrics_sem_quebrar():
+    """Teste de INTEGRACAO curto: `unir_cadeias` -> `calc_comp_metrics`, que e' o caminho real.
+
+    Os testes de unidade nao pegaram o defeito porque nenhum ligava as duas pontas.
+    """
+    import numpy as np
+
+    from motor_expansao.pipelines.enriquecimento_espacial_hexagonos import calc_comp_metrics
+
+    cadastro = _cadastro(("smart_fit", LAT, LNG))
+    feed = _feed(("selfit", _desloca(LAT, 900.0), LNG))
+    feed["lat"] = feed["lat"].astype("Float64")
+    feed["lng"] = feed["lng"].astype("Float64")
+    metrics = calc_comp_metrics(np.radians(np.array([[LAT, LNG]])), unir_cadeias(cadastro, feed))
+    assert metrics["n_concorrentes_mapeados_2km"][0] == 2
+
+
 def test_coordenada_nula_no_feed_e_descartada_sem_excecao():
     cadastro = _cadastro(("smart_fit", LAT, LNG))
     feed = pd.DataFrame({"rede": ["selfit"], "lat": [None], "lng": [None], "nome": ["X"]})

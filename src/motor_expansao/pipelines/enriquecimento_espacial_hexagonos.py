@@ -132,9 +132,17 @@ def unir_cadeias(df_comp: pd.DataFrame, df_redes: pd.DataFrame | None) -> pd.Dat
     novas = redes.loc[nova].copy()
     novas["status_registro"] = "valido"
     colunas = ["rede", "lat", "lng", "status_registro"]
-    return pd.concat(
-        [comp_ok[colunas], novas[colunas]], ignore_index=True
-    ).reset_index(drop=True)
+    unido = pd.concat([comp_ok[colunas], novas[colunas]], ignore_index=True)
+    # float64 PURO na saida, e nao `Float64` nullable. O cadastro guarda float64 e o feed do
+    # agregador guarda nullable; o `concat` dos dois promove a coluna para nullable, e
+    # `calc_comp_metrics` -- que consome este frame -- faz `.values` direto sobre as duas
+    # colunas, o que sobre nullable devolve `object` e derruba o `np.radians`.
+    # Sanear na FRONTEIRA de saida, e nao no consumidor: quem recebe este frame tem direito
+    # de assumir coordenada numerica de verdade. (Encontrado ao rodar o pipeline real: os
+    # testes passavam porque exercitavam `unir_cadeias` isolada, sem a funcao a jusante.)
+    for col in ("lat", "lng"):
+        unido[col] = unido[col].astype("float64")
+    return unido.reset_index(drop=True)
 
 
 def calc_comp_metrics(
