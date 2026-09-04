@@ -20,6 +20,9 @@ ROOT = Path(__file__).resolve().parents[3]
 HIBRIDO_PATH = ROOT / "data" / "outputs" / "oportunidades_expansao_hibrido.parquet"
 ESTRUTURAL_PATH = ROOT / "data" / "staging" / "brasil_estrutural.parquet"
 CONCORRENTES_PATH = ROOT / "data" / "staging" / "concorrentes_mapeados.parquet"
+# DEC-048: unidades de REDE vistas pelo agregador. OPCIONAL — ausente, o universo de cadeia
+# fica so' com o cadastro e o artefato sai IDENTICO ao de antes.
+REDES_AGREGADOR_PATH = ROOT / "data" / "staging" / "vulnerabilidade_ma_redes.parquet"
 ULTRA_PATH = ROOT / "data" / "staging" / "unidades_ultra_mapeadas.parquet"
 OUT_PATH = ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"
 
@@ -27,6 +30,11 @@ EARTH_RADIUS_M = 6_371_000.0
 RADIUS_1KM_RAD = 1_000.0 / EARTH_RADIUS_M
 RADIUS_2KM_RAD = 2_000.0 / EARTH_RADIUS_M
 CHUNK_SIZE = 100_000
+# DEC-048: unidades de REDE que o agregador lista e o cadastro nao tem. A dedup e' a da
+# DEC-034 -- casar a rede ate' 150 m salva concorrente real que a distancia pura apagaria;
+# o piso de 50 m recupera endereco igual com slug divergente.
+DEDUP_CADEIA_REDE_M = 150.0
+DEDUP_CADEIA_COORD_M = 50.0
 
 
 def _knn_dist_m(
@@ -43,6 +51,98 @@ def _knn_dist_m(
         dists_rad, _ = tree.query(hex_coords_rad[start:end], k=1)
         result[start:end] = dists_rad[:, 0] * EARTH_RADIUS_M
     return result
+
+
+def _coords_rad(df: pd.DataFrame) -> np.ndarray:
+    """(lat, lng) em radianos, como float64 puro.
+
+    NAO usar `df[["lat","lng"]].values` direto: o artefato do agregador guarda as coordenadas em
+    `Float64` NULLABLE (dtype de extensao do pandas), e `.values` sobre DUAS colunas dessas
+    devolve um array `object` -- ai `np.radians` levanta
+    `loop of ufunc does not support argument 0 of type float`. `pd.to_numeric` NAO resolve:
+    ele preserva o dtype de extensao. O `astype("float64")` e' que materializa o array real.
+    `concorrentes_mapeados` guarda float64 puro e por isso nunca sofreu disso.
+    """
+    return np.radians(df[["lat", "lng"]].astype("float64").values)
+
+
+def unir_cadeias(df_comp: pd.DataFrame, df_redes: pd.DataFrame | None) -> pd.DataFrame:
+    """Universo de CADEIA = mapeadas validas + as do agregador que ainda nao estao la'.
+
+    O feed do agregador lista 2.844 unidades de REDE. Medido contra `concorrentes_mapeados`:
+    1.673 sao a MESMA academia ja' contada e 1.171 NAO estao no cadastro -- Panobianco (130),
+    Selfit (130), SkyFit (96), Bluefit (49) e outras. Elas existem, disputam o mesmo aluno e
+    nao pressionavam ninguem: a oferta instalada de cadeia estava **36,8% subestimada**.
+
+    Elas entram no MESMO universo, e nao num termo paralelo, porque sao a mesma coisa: unidade
+    de rede, com a mesma capacidade de clube. Fosse um termo separado, `flag_white_space_2km`,
+    `gap_competitivo_2km` e a contagem exibida continuariam mentindo -- so' o residual ficaria
+    certo. Como a capacidade e' identica, `oferta_consumida_mercado_estimada / 2500` segue
+    devolvendo a CONTAGEM correta; nao ha unidade mista aqui.
+
+    Dedup pela regra da DEC-034: `(mesma rede E d <= 150 m) OU (d <= 50 m)`. Casar a rede salva
+    concorrente real que a distancia pura apagaria; o piso de 50 m recupera endereco igual com
+    slug divergente.
+
+    `df_redes=None` (artefato ausente) devolve so' as mapeadas -- comportamento anterior,
+    bit a bit.
+    """
+    comp_ok = df_comp[df_comp["status_registro"] == "valido"].copy()
+    for col in ("lat", "lng"):
+        comp_ok[col] = pd.to_numeric(comp_ok[col], errors="coerce")
+    comp_ok = comp_ok.dropna(subset=["lat", "lng"]).reset_index(drop=True)
+    if df_redes is None or df_redes.empty:
+        return comp_ok
+
+    redes = df_redes.copy()
+    for col in ("lat", "lng"):
+        redes[col] = pd.to_numeric(redes[col], errors="coerce")
+    redes = redes.dropna(subset=["lat", "lng"])
+    # Segunda checagem de vazio, DEPOIS do dropna: a primeira olha o frame cru. Um feed em que
+    # todas as coordenadas sao nulas chega aqui nao-vazio e sai vazio -- e `query_radius` sobre
+    # zero linhas LEVANTA no sklearn, derrubando o pipeline inteiro por um insumo degradado.
+    if redes.empty:
+        return comp_ok
+    # Ordem estavel antes da dedup: sem isso, qual duplicata sobrevive dependeria da ordem do
+    # arquivo, e a contagem publicada mudaria de uma safra para outra sem ninguem mexer em nada.
+    chaves = [c for c in ("chave_snapshot", "nome") if c in redes.columns]
+    if chaves:
+        redes = redes.sort_values(chaves, kind="stable")
+    redes = redes.reset_index(drop=True)
+
+    tree = BallTree(_coords_rad(comp_ok), metric="haversine")
+    idxs, dists = tree.query_radius(
+        _coords_rad(redes),
+        r=DEDUP_CADEIA_REDE_M / EARTH_RADIUS_M,
+        return_distance=True,
+        sort_results=False,
+    )
+    rede_comp = comp_ok["rede"].astype(str).to_numpy()
+    rede_feed = redes["rede"].astype(str).to_numpy()
+    nova = np.ones(len(redes), dtype=bool)
+    for i, (ii, dd) in enumerate(zip(idxs, dists, strict=False)):
+        if len(ii) == 0:
+            continue
+        dm = dd * EARTH_RADIUS_M
+        if (dm <= DEDUP_CADEIA_COORD_M).any() or (
+            (rede_comp[ii] == rede_feed[i]) & (dm <= DEDUP_CADEIA_REDE_M)
+        ).any():
+            nova[i] = False
+
+    novas = redes.loc[nova].copy()
+    novas["status_registro"] = "valido"
+    colunas = ["rede", "lat", "lng", "status_registro"]
+    unido = pd.concat([comp_ok[colunas], novas[colunas]], ignore_index=True)
+    # float64 PURO na saida, e nao `Float64` nullable. O cadastro guarda float64 e o feed do
+    # agregador guarda nullable; o `concat` dos dois promove a coluna para nullable, e
+    # `calc_comp_metrics` -- que consome este frame -- faz `.values` direto sobre as duas
+    # colunas, o que sobre nullable devolve `object` e derruba o `np.radians`.
+    # Sanear na FRONTEIRA de saida, e nao no consumidor: quem recebe este frame tem direito
+    # de assumir coordenada numerica de verdade. (Encontrado ao rodar o pipeline real: os
+    # testes passavam porque exercitavam `unir_cadeias` isolada, sem a funcao a jusante.)
+    for col in ("lat", "lng"):
+        unido[col] = unido[col].astype("float64")
+    return unido.reset_index(drop=True)
 
 
 def calc_comp_metrics(
@@ -285,7 +385,18 @@ def main():
     print(f"   Base: {len(df_base):,} linhas")
 
     print("\n3. Metricas de concorrentes...")
-    comp_metrics = calc_comp_metrics(hex_coords_rad, df_comp)
+    # DEC-048: o universo de CADEIA passa a incluir as unidades de rede que o agregador ve'
+    # e o cadastro nao tem. O ramo ausente FALA: um artefato com a oferta subestimada em
+    # mais de um terco nao pode passar despercebido.
+    if REDES_AGREGADOR_PATH.is_file():
+        df_redes_wh = pd.read_parquet(REDES_AGREGADOR_PATH)
+        cadeias = unir_cadeias(df_comp, df_redes_wh)
+        n_base = int((df_comp.status_registro == 'valido').sum())
+        print(f"   cadeias: {n_base:,} do cadastro + {len(cadeias) - n_base:,} do agregador = {len(cadeias):,}")
+    else:
+        print(f"   AUSENTE: {REDES_AGREGADOR_PATH.name} - so' o cadastro; a oferta de cadeia segue subestimada.")
+        cadeias = unir_cadeias(df_comp, None)
+    comp_metrics = calc_comp_metrics(hex_coords_rad, cadeias)
 
     print("\n4. Metricas Ultra...")
     ultra_metrics = calc_ultra_metrics(hex_coords_rad, df_ultra)
