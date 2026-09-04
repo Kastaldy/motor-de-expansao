@@ -73,7 +73,12 @@ _DENY_CRITICO: list[tuple[str, str]] = [
     # Scores PARALELOS servidos em producao (DEC-006/DEC-007 gate do SAM, carteira, plano, residual).
     # O regex `*scoring*` acima NAO casa esses arquivos - eram o furo do guard.
     (
-        r"^src/motor_expansao/pipelines/(calcular_colunas_mercado|pop_corte|gerar_carteira|gerar_plano|enriquecer)",
+    # `enriquec` (e nao `enriquecer`): o prefixo antigo casava
+    # `enriquecer_outputs_residual_mercado.py` e NAO casava
+    # `enriquecimento_espacial_hexagonos.py` -- justamente quem materializa a oferta de
+    # 1,5 milhao de hexes, o insumo do consumo e do residual. Ele saia LIMPO, entao um PR
+    # "Media" auto-mergeavel podia reescrever a oferta do pais sem gate humano (DEC-048).
+        r"^src/motor_expansao/pipelines/(calcular_colunas_mercado|pop_corte|gerar_carteira|gerar_plano|enriquec)",
         "camada de mercado/residual servida em producao (flag_sam/carteira/plano - DEC-006/DEC-007)",
     ),
     # Insumos/scores PARALELOS que alimentam o que e servido em producao: o censitario calibrado
