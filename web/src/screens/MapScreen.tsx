@@ -1153,9 +1153,9 @@ export default function MapScreen({
             Ja se tentou enxugar o cabecalho (tirar este rotulo, o titulo, os rotulos dos
             seletores, e mudar os tres numeros de lugar) — o Juan recusou em 2026-09-02:
             "o residual, espaco para academias foi pra outra coluna q nao gostei". A
-            resposta passou a ser ESCALA: o app inteiro renderiza a 69% (ver
-            `--escala-app` em `styles/global.css`), que e' o mesmo efeito do zoom do
-            navegador sem exigir que alguem o ajuste em toda maquina. */}
+            resposta seguinte foi uma ESCALA global de 69% (`--escala-app`, PR #301),
+            que o Juan tambem reverteu em 2026-09-08: em tela apertada o operador ajusta
+            o zoom do proprio navegador (lib/escala-app.test.ts guarda a reversao). */}
         <Botao
           variante="ghost"
           onClick={() => setMetodologiaAberta((v) => !v)}

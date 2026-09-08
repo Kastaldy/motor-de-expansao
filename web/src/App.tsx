@@ -382,11 +382,7 @@ export default function App() {
     <BaseProvider ufs={ufs}>
     <div
       style={{
-        /* `100%` e nao `100vh`: o `#root` renderiza reduzido (`--escala-app` em
-           `styles/global.css`) e ja' foi dimensionado em 1/escala para cobrir a janela.
-           Unidade de viewport nao enxerga a escala — com `100vh` o app mediria a altura
-           da janela, encolheria junto e deixaria uma faixa vazia no pe da tela. */
-        height: '100%',
+        height: '100vh',
         display: 'flex',
         background: 'var(--bg-base)',
         overflow: 'hidden',
