@@ -20,6 +20,9 @@ ROOT = Path(__file__).resolve().parents[3]
 HIBRIDO_PATH = ROOT / "data" / "outputs" / "oportunidades_expansao_hibrido.parquet"
 ESTRUTURAL_PATH = ROOT / "data" / "staging" / "brasil_estrutural.parquet"
 CONCORRENTES_PATH = ROOT / "data" / "staging" / "concorrentes_mapeados.parquet"
+# DEC-048: unidades de REDE vistas pelo agregador. OPCIONAL — ausente, o universo de cadeia
+# fica so' com o cadastro e o artefato sai IDENTICO ao de antes.
+REDES_AGREGADOR_PATH = ROOT / "data" / "staging" / "vulnerabilidade_ma_redes.parquet"
 ULTRA_PATH = ROOT / "data" / "staging" / "unidades_ultra_mapeadas.parquet"
 OUT_PATH = ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"
 
@@ -43,6 +46,67 @@ def _knn_dist_m(
         dists_rad, _ = tree.query(hex_coords_rad[start:end], k=1)
         result[start:end] = dists_rad[:, 0] * EARTH_RADIUS_M
     return result
+
+
+def unir_cadeias(df_comp: pd.DataFrame, df_redes: pd.DataFrame | None) -> pd.DataFrame:
+    """Universo de CADEIA = mapeadas validas + as do agregador que ainda nao estao la'.
+
+    O feed do agregador lista 2.844 unidades de REDE. Medido contra `concorrentes_mapeados`:
+    1.673 sao a MESMA academia ja' contada e 1.171 NAO estao no cadastro -- Panobianco (130),
+    Selfit (130), SkyFit (96), Bluefit (49) e outras. Elas existem, disputam o mesmo aluno e
+    nao pressionavam ninguem: a oferta instalada de cadeia estava **26,7% subestimada**.
+
+    Elas entram no MESMO universo, e nao num termo paralelo, porque sao a mesma coisa: unidade
+    de rede, com a mesma capacidade de clube. Fosse um termo separado, `flag_white_space_2km`,
+    `gap_competitivo_2km` e a contagem exibida continuariam mentindo -- so' o residual ficaria
+    certo. Como a capacidade e' identica, `oferta_consumida_mercado_estimada / 2500` segue
+    devolvendo a CONTAGEM correta; nao ha unidade mista aqui.
+
+    A DEDUP REUSA `tem_pin_proprio`, ja' calculada em `redes_nomeadas.py` via
+    `dedup_cadeias_do_feed` (pressao_competitiva.py) -- a MESMA funcao que serve o sinal 6 e o
+    consumo de `_oferta_unida` no DEC-046 (api/service.py), com as TRES regras da DEC-034/
+    BLK-MA-17-FU4: `(mesma rede E d <= 150 m)` OU `(d <= 50 m)` OU casamento por NOME (ate' 1200
+    m, quando as duas fontes geocodificam o mesmo endereco com desvio maior que os limiares de
+    distancia). Uma versao anterior desta funcao reimplementava so' as duas primeiras regras
+    diretamente aqui -- sem o 3o ramo, ~400 duplicatas por NOME (revisao de codigo em
+    2026-09-08 mediu 407 na mesma comparacao) entravam como "nova", inflando a oferta e
+    reduzindo o white space alem do que os numeros medidos acima afirmam. `tem_pin_proprio`
+    ausente na coluna (artefato antigo, pre-BLK-MA-17) e' tratado como "sem dedup pronta" --
+    entra tudo, mesmo comportamento conservador de `_oferta_unida`.
+
+    `df_redes=None` (artefato ausente) devolve so' as mapeadas -- comportamento anterior,
+    bit a bit.
+    """
+    comp_ok = df_comp[df_comp["status_registro"] == "valido"].copy()
+    for col in ("lat", "lng"):
+        comp_ok[col] = pd.to_numeric(comp_ok[col], errors="coerce")
+    comp_ok = comp_ok.dropna(subset=["lat", "lng"]).reset_index(drop=True)
+    if df_redes is None or df_redes.empty:
+        return comp_ok
+
+    redes = df_redes.copy()
+    if "tem_pin_proprio" in redes.columns:
+        redes = redes[redes["tem_pin_proprio"].fillna(False).astype(bool)]
+    for col in ("lat", "lng"):
+        redes[col] = pd.to_numeric(redes[col], errors="coerce")
+    redes = redes.dropna(subset=["lat", "lng"])
+    if redes.empty:
+        return comp_ok
+
+    novas = redes.copy()
+    novas["status_registro"] = "valido"
+    colunas = ["rede", "lat", "lng", "status_registro"]
+    unido = pd.concat([comp_ok[colunas], novas[colunas]], ignore_index=True)
+    # float64 PURO na saida, e nao `Float64` nullable. O cadastro guarda float64 e o feed do
+    # agregador guarda nullable; o `concat` dos dois promove a coluna para nullable, e
+    # `calc_comp_metrics` -- que consome este frame -- faz `.values` direto sobre as duas
+    # colunas, o que sobre nullable devolve `object` e derruba o `np.radians`.
+    # Sanear na FRONTEIRA de saida, e nao no consumidor: quem recebe este frame tem direito
+    # de assumir coordenada numerica de verdade. (Encontrado ao rodar o pipeline real: os
+    # testes passavam porque exercitavam `unir_cadeias` isolada, sem a funcao a jusante.)
+    for col in ("lat", "lng"):
+        unido[col] = unido[col].astype("float64")
+    return unido.reset_index(drop=True)
 
 
 def calc_comp_metrics(
@@ -285,7 +349,18 @@ def main():
     print(f"   Base: {len(df_base):,} linhas")
 
     print("\n3. Metricas de concorrentes...")
-    comp_metrics = calc_comp_metrics(hex_coords_rad, df_comp)
+    # DEC-048: o universo de CADEIA passa a incluir as unidades de rede que o agregador ve'
+    # e o cadastro nao tem. O ramo ausente FALA: um artefato com a oferta subestimada em
+    # mais de um terco nao pode passar despercebido.
+    if REDES_AGREGADOR_PATH.is_file():
+        df_redes_wh = pd.read_parquet(REDES_AGREGADOR_PATH)
+        cadeias = unir_cadeias(df_comp, df_redes_wh)
+        n_base = int((df_comp.status_registro == 'valido').sum())
+        print(f"   cadeias: {n_base:,} do cadastro + {len(cadeias) - n_base:,} do agregador = {len(cadeias):,}")
+    else:
+        print(f"   AUSENTE: {REDES_AGREGADOR_PATH.name} - so' o cadastro; a oferta de cadeia segue subestimada.")
+        cadeias = unir_cadeias(df_comp, None)
+    comp_metrics = calc_comp_metrics(hex_coords_rad, cadeias)
 
     print("\n4. Metricas Ultra...")
     ultra_metrics = calc_ultra_metrics(hex_coords_rad, df_ultra)
