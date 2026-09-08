@@ -268,3 +268,25 @@ def test_sem_url_do_piloto_recusa(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(SystemExit) as caiu:
         cli.cmd_privilegios(argparse.Namespace())
     assert postgres.ENV_URL in str(caiu.value)
+
+
+def test_falha_de_conexao_no_privilegios_vira_mensagem(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Traceback de sete quadros esconde a linha que importa. A primeira versão do
+    `privilegios` chamava `psycopg.connect` direto e fazia exatamente isso — o mesmo
+    defeito que o runner já tinha consertado, repetido por o conserto não ser reusável."""
+
+    class _Erro(Exception):
+        pass
+
+    def _falha(_url: str) -> None:
+        raise _Erro("FATAL: autenticacao do tipo senha falhou para o usuario 'app'")
+
+    falso = types.SimpleNamespace(connect=_falha, OperationalError=_Erro)
+    monkeypatch.setitem(sys.modules, "psycopg", falso)
+    monkeypatch.setenv(postgres.ENV_URL, "postgresql://app:x@localhost/banco")
+
+    with pytest.raises(SystemExit) as caiu:
+        cli.cmd_privilegios(argparse.Namespace())
+    texto = str(caiu.value)
+    assert "nao consegui conectar" in texto
+    assert "PGPASSWORD" in texto, "a dica do caractere especial na URL precisa aparecer"

@@ -136,6 +136,17 @@ def _conectar_para_ddl() -> Any:
             "ele repontaria o pacote instalado e afetaria o checkout principal.)"
         ) from None
 
+    return _conectar_com_diagnostico(psycopg, url)
+
+
+def _conectar_com_diagnostico(psycopg: Any, url: str) -> Any:
+    """Conecta traduzindo a falha em mensagem util.
+
+    Toda entrada do CLI passa por aqui. Ficou como funcao propria porque a primeira
+    versao do `privilegios` chamou `psycopg.connect` direto e devolveu traceback de sete
+    quadros onde devia haver uma linha -- o mesmo defeito que este bloco ja' consertava
+    para o runner, repetido por nao ser reusavel.
+    """
     try:
         return psycopg.connect(url)
     except psycopg.OperationalError as erro:
@@ -468,7 +479,7 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
     import psycopg
 
     problemas: list[str] = []
-    with psycopg.connect(url) as con:
+    with _conectar_com_diagnostico(psycopg, url) as con:
         quem = _valor_unico(con, postgres.SQL_USUARIO_ATUAL)
         print(f"papel conectado: {quem}\n")
 
