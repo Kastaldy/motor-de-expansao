@@ -762,10 +762,11 @@ valor). O cabeçalho do script é o runbook detalhado — inclusive o modo seco
 **Insumos (repasse inicial, uma vez):** `/opt/motor-expansao/data/insumos_crescimento/`
 com `socioeconomico/{caged,rais,cnpj,pib}` (~90 MB de agregados), `crescimento_tec/`
 (3 CSVs do projeto TEC), `poc_satelite/data/uf=XX/` (mosaicos das 12 UFs) e
-`eixo/_eixo_trajetoria.parquet`. **Pré-requisito declarado na DEC-049:** TEC, satélite
-e eixo estão com quem gerou a camada em agosto — não estão no repo nem na estação do
-Juan. O CSV do CAGED entra com o nome canônico `caged_municipio_mensal_consolidado.csv`
-(o job o atualiza sozinho dali em diante).
+`eixo/_eixo_trajetoria.parquet`. **Todos os insumos estão na estação do Juan** (foi ele
+quem gerou a camada em agosto) — caminhos exatos e a regeneração do
+`_eixo_trajetoria.parquet` estão no pacote de repasse. O CSV do CAGED entra com o nome
+canônico `caged_municipio_mensal_consolidado.csv` (o job o atualiza sozinho dali em
+diante).
 
 **Linha de crontab (dia 5 de fev/mai/ago/nov, 03:00 UTC = 00:00 BRT):**
 

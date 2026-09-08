@@ -37,11 +37,17 @@ insumos_crescimento/
 └── eixo/_eixo_trajetoria.parquet
 ```
 
-É ~algumas centenas de MB de AGREGADOS (o microdado gigante fica de fora, como sempre).
-**Onde estão hoje:** `socioeconomico/` existe na estação do Juan (`C:\dados\socioeconomico`);
-`crescimento_tec/`, `poc_satelite/` e o `_eixo_trajetoria.parquet` estão com quem gerou
-a camada em agosto — é o único pré-requisito em aberto da DEC-049. O envio é
-`scp -i ~/.ssh/id_ultra` da estação para a VPS.
+É ~200 MB de AGREGADOS (o microdado gigante fica de fora, como sempre). **Tudo está na
+estação do Juan** (foi ele quem gerou a camada em agosto):
+
+| Peça | Onde está na estação | Tamanho |
+|---|---|---|
+| `socioeconomico/` | `C:\dados\socioeconomico` (só os agregados da árvore acima) | ~90 MB |
+| `crescimento_tec/` | `Área de Trabalho\Crescimento Regional TEC\output\` (os 3 CSVs) | 26 MB |
+| `poc_satelite/data/uf=XX/` | `Área de Trabalho\Google Engine\poc_satelite\data\uf=XX\` | 81 MB |
+| `eixo/_eixo_trajetoria.parquet` | **regenerar** (a cópia de agosto não ficou no disco): em `Google Engine\poc_satelite\_proposta_camada_motor\prototipo\`, rodar `python p1_base.py && python p2_eixo.py` — o arquivo sai no diretório corrente | pequeno |
+
+O envio é `scp -i ~/.ssh/id_ultra` da estação para a VPS.
 
 ## Passo 1 — instalar o wrapper
 
