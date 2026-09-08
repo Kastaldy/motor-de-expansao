@@ -44,6 +44,13 @@ export interface Hex {
   renda: number | null
   /** renda media domiciliar (R$/mes) = renda per capita x fator municipal */
   renda_dom: number | null
+  /**
+   * `true` quando `renda`/`renda_dom` vem do FALLBACK municipal (SIDRA, o mesmo
+   * numero repetido em todo hexagono da cidade), nao do setor censitario (granular).
+   * Sem isso o operador ve um numero com cara de leitura intraurbana que na verdade
+   * e' so' o municipio inteiro (Bloco A/DEC-050). `false`/ausente = leitura de setor.
+   */
+  renda_municipal?: boolean | null
   /** rotulo da faixa de oportunidade M1 (ex.: "Alta") */
   faixa: string | null
   /**

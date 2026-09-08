@@ -3131,6 +3131,14 @@ def _hex_dict(
         # mostravam numeros diferentes para a mesma coordenada.
         "renda": _renda_per_capita_hex(r, fator_dom, dom=renda_dom),
         "renda_dom": renda_dom,
+        # Fallback municipal (Bloco A/DEC-050): `renda_origem` vem de `_derivar`, que
+        # tenta `renda_per_capita_setor_2022_calibrada` (setor, granular) primeiro e so
+        # cai para `renda_per_capita` (SIDRA municipal, o MESMO numero repetido em todo
+        # hexagono da cidade) quando o setor nao esta disponivel/confiavel para o hex. O
+        # operador via um numero com cara de precisao intraurbana sem saber que, ali, e
+        # so o municipio inteiro. `True` so quando a origem e' de fato a municipal —
+        # `None`/ausente (sem renda nenhuma) fica de fora de proposito.
+        "renda_municipal": r.get("renda_origem") == "renda_per_capita",
         "faixa": _faixa_label(r.get("faixa_oportunidade")),
         "conc": int(r.get("n_concorrentes_est") or 0),
         "ultra": int(r.get("n_ultra") or 0),
