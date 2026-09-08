@@ -180,6 +180,7 @@ def test_todas_as_rotas_registradas() -> None:
         "/api/municipios/{uf}",
         "/api/uf/{uf}",
         "/api/municipio/{uf}/{municipio}",
+        "/api/municipio/{uf}/{municipio}/setores-heatmap",
         "/api/faixa-alunos",
         "/api/hexagonos",
         "/api/viabilidade",
@@ -217,6 +218,7 @@ def test_ufs_sem_base_levanta_500(empty_data: Path) -> None:
         lambda: pilot.municipios("SP"),
         lambda: pilot.uf_view("SP"),
         lambda: pilot.municipio("SP", "Qualquer"),
+        lambda: pilot.setores_heatmap("SP", "Qualquer"),
     ],
 )
 def test_rotas_uf_sem_particao_levantam_404(empty_data: Path, chamada) -> None:
@@ -643,6 +645,50 @@ def test_leituras_nao_mutam_artefatos(synth_data: Path) -> None:
 
     depois = _snapshot(synth_data)
     assert antes == depois, "backend escreveu/alterou artefato fora do cache durante leituras"
+
+
+def test_setores_heatmap_serve_poligonos_com_densidade_e_renda(synth_data: Path) -> None:
+    """Bloco D: o mapa de calor opcional serve poligonos de setor censitario, so' no
+    drill-down de municipio. Ate' este endpoint, essa geometria nunca saia do servidor
+    (o heatmap do Relatorio Pontual e' 100% PNG renderizado em Pillow).
+    """
+    from shapely.geometry import Polygon
+
+    def _quad(x: float) -> bytes:
+        return Polygon([(x, 0.0), (x + 0.01, 0.0), (x + 0.01, 0.01), (x, 0.01)]).wkb
+
+    geo_dir = synth_data / "outputs" / "setores_censitarios_2022_geo" / "uf=SP" / "cod_municipio=3550308"
+    geo_dir.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "cod_setor": ["A", "B"],
+            "geometry_wkb": [_quad(0.0), _quad(0.01)],
+            "densidade_pop_setor_hab_km2": [12000.0, 3000.0],
+            "renda_per_capita_setor_2022_calibrada": [4200.0, 1100.0],
+            "pop_total_setor_2022": [500.0, 800.0],
+        }
+    ).to_parquet(geo_dir / "part-000.parquet")
+    pilot.limpar_caches()
+
+    payload = pilot.setores_heatmap("SP", "Sao Paulo")
+
+    assert payload["disponivel"] is True
+    assert len(payload["setores"]) == 2
+    setor = next(s for s in payload["setores"] if s["setor"] == "A")
+    assert setor["densidade"] == pytest.approx(12000.0)
+    assert setor["renda"] == pytest.approx(4200.0)
+    assert setor["anel"], "poligono vazio — a simplificacao/serializacao engoliu a geometria"
+    # Formato deck.gl (mesmo de PecaCobertura): [anel_externo, buraco1, ...].
+    anel_externo = setor["anel"][0]
+    assert len(anel_externo) >= 4
+    json.dumps(payload, allow_nan=False)  # JSON-safe de ponta a ponta
+
+
+def test_setores_heatmap_sem_particao_geo_degrada_graciosamente(synth_data: Path) -> None:
+    """Municipio existe no enriquecido, mas sem particao geo (base parcial/em rollout):
+    `disponivel=False`, nunca 404 — o front so' esconde a chave da camada."""
+    payload = pilot.setores_heatmap("SP", "Sao Paulo")
+    assert payload == {"disponivel": False, "setores": []}
 
 
 def test_pins_ultra_das_rotas_incluem_o_cadastro_amplo(synth_data: Path) -> None:

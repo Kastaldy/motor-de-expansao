@@ -84,3 +84,62 @@ def test_paleta_web_bate_cor_a_cor_com_residual_score_bands() -> None:
         "  - web/src/lib/colors.ts -> SCORE_BANDS_HEX (mapa deck.gl do piloto)\n"
         "Ajuste o lado que ficou para trás; não mude a paleta sem decisão explícita."
     )
+
+
+# ---------------------------------------------------------------------------
+# Bloco D — faixas ABSOLUTAS de densidade/renda de setor (mapa de calor opcional).
+# Mesma lógica de paridade acima, formato diferente: cada item é
+# `[corte_superior, 'rótulo', [r, g, b, a]]`, e a última faixa usa infinito.
+# ---------------------------------------------------------------------------
+
+from motor_expansao.dashboard.constants import (  # noqa: E402
+    DENSIDADE_POP_BANDS,
+    RENDA_PER_CAPITA_BANDS,
+)
+
+_FAIXA_ABS_ITEM_RE = re.compile(
+    # O rotulo pode ser string simples ('...') ou template literal (`...`, quando
+    # interpola moedaRenda() — ver RENDA_SETOR_BANDS). O teste nao checa o TEXTO do
+    # rotulo, so' precisa transpor-lo para chegar no corte e na cor.
+    r"\[\s*(?P<corte>[\d_]+|Infinity)\s*,\s*(?:'[^']*'|`[^`]*`)\s*,\s*"
+    r"\[\s*(?P<r>\d+)\s*,\s*(?P<g>\d+)\s*,\s*(?P<b>\d+)\s*,\s*(?P<a>\d+)\s*\]\s*\]"
+)
+
+
+def _faixas_absolutas_web(nome_const: str) -> list[tuple[float, tuple[int, int, int, int]]]:
+    """Lê `[corte, 'rotulo', [r,g,b,a]]` de uma constante TS de `colors.ts`."""
+    fonte = _COLORS_TS.read_text(encoding="utf-8")
+    bloco_re = re.compile(
+        rf"export\s+const\s+{nome_const}\s*:[^=]*=\s*\[(?P<corpo>.*?)\n\]",
+        re.DOTALL,
+    )
+    bloco = bloco_re.search(fonte)
+    assert bloco is not None, (
+        f"não achei `export const {nome_const} = [...]` em "
+        f"{_COLORS_TS.relative_to(_REPO).as_posix()}."
+    )
+    itens = []
+    for m in _FAIXA_ABS_ITEM_RE.finditer(bloco.group("corpo")):
+        corte_txt = m.group("corte")
+        corte = float("inf") if corte_txt == "Infinity" else float(corte_txt.replace("_", ""))
+        rgba = (int(m.group("r")), int(m.group("g")), int(m.group("b")), int(m.group("a")))
+        itens.append((corte, rgba))
+    return itens
+
+
+@pytest.mark.parametrize(
+    "nome_web,bands_py",
+    [
+        ("DENSIDADE_BANDS", DENSIDADE_POP_BANDS),
+        ("RENDA_SETOR_BANDS", RENDA_PER_CAPITA_BANDS),
+    ],
+)
+def test_faixas_absolutas_batem_corte_e_cor_com_o_nucleo(nome_web, bands_py) -> None:
+    web = _faixas_absolutas_web(nome_web)
+    nucleo = [(corte, rgba) for corte, _rotulo, rgba in bands_py]
+    assert web == nucleo, (
+        f"{nome_web} (web/src/lib/colors.ts) divergiu de {bands_py!r} "
+        "(src/motor_expansao/dashboard/constants.py) — as duas são cópias manuais que "
+        "precisam andar juntas, corte e cor, na mesma ordem. "
+        f"web={web!r} núcleo={nucleo!r}"
+    )
