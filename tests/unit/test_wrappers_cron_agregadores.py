@@ -215,7 +215,7 @@ def test_healthcheck_expoe_subcomando_agregadores() -> None:
     texto = HEALTHCHECK.read_text(encoding="utf-8")
     assert "check_agregadores()" in texto, "a função do subcomando não existe"
     assert "agregadores) check_agregadores ;;" in texto, "o `case` não roteia o subcomando"
-    assert "{containers|host|authelia|coleta|agregadores|test}" in texto, (
+    assert "{containers|host|authelia|coleta|agregadores|crescimento|test}" in texto, (
         "a string de uso não lista o subcomando: ele existiria sem ser descobrível"
     )
 
