@@ -147,9 +147,32 @@ def usuarios_admin_acessos() -> frozenset[str]:
     return frozenset(u.strip().casefold() for u in bruto.split(",") if u.strip())
 
 
+def _login_para_allowlist(usuario: object) -> str | None:
+    """O login a comparar com a allowlist: o header, ou a identidade de DEV sem ele.
+
+    Sem isto o painel era INALCANCAVEL na maquina de quem desenvolve. Nao ha Authelia
+    local, entao nao ha `Remote-User`; a identidade vem do `MOTOR_DEV_USUARIO`, que o
+    RBAC ja' honra em `abas_do_usuario_por_banco` -- mas a allowlist nao honrava. As duas
+    camadas liam a MESMA pessoa de fontes diferentes, e o resultado era 404 em todo o
+    `/api/acessos/`, inclusive na tela de administracao de usuarios.
+
+    NAO afrouxa producao: quem resolve a identidade de dev e' o `rbac.login_efetivo`, com
+    as duas travas que ele ja' tem -- override explicito e, na ausencia dele, o sinal de
+    producao (`MOTOR_CADASTRO_DIR`) mandando. Havendo header, ele vence sempre.
+    """
+    nome = normalizar_usuario(usuario)
+    if nome is not None:
+        return nome
+    try:
+        from motor_expansao.db import rbac
+    except ImportError:
+        return None
+    return rbac.login_efetivo(None)
+
+
 def pode_ver_acessos(usuario: object) -> bool:
     """Se este Remote-User pode usar o painel de acessos (deny-by-default)."""
-    nome = normalizar_usuario(usuario)
+    nome = _login_para_allowlist(usuario)
     if nome is None:
         return False
     return nome.casefold() in usuarios_admin_acessos()

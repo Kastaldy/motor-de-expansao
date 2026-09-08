@@ -295,3 +295,44 @@ def test_banco_fora_em_producao_esconde_as_abas_sensiveis(
     monkeypatch.setenv("MOTOR_CADASTRO_DIR", "/app/cadastro")
     abas = acesso.abas_do_usuario_por_banco("x")
     assert abas == acesso.ABAS_VALIDAS - acesso.ABAS_SENSIVEIS
+
+
+# --------------------------------------------------------------------------------------
+# O painel na máquina de quem desenvolve
+# --------------------------------------------------------------------------------------
+
+
+def test_painel_alcancavel_com_identidade_de_dev(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sem Authelia local não há `Remote-User`, e a allowlist não via a identidade de dev.
+
+    O RBAC já honrava o `MOTOR_DEV_USUARIO` (as abas apareciam), mas a allowlist não —
+    então as duas camadas liam a MESMA pessoa de fontes diferentes e o painel devolvia
+    404 na própria máquina, incluindo a tela de administração de usuários.
+    """
+    from motor_expansao.db import rbac
+
+    monkeypatch.delenv(rbac.ENV_SINAL_PRODUCAO, raising=False)
+    monkeypatch.setenv(rbac.ENV_DEV_USUARIO, "vinicius.teste")
+    monkeypatch.setenv(acesso.ENV_ADMIN_ACESSOS, "vinicius.teste")
+    assert acesso.pode_ver_acessos(None) is True
+
+
+def test_identidade_de_dev_nao_vale_em_producao(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O sinal de produção manda: com ele, a env de dev é ignorada e sobra o header."""
+    from motor_expansao.db import rbac
+
+    monkeypatch.setenv(rbac.ENV_SINAL_PRODUCAO, "/app/cadastro")
+    monkeypatch.delenv(rbac.ENV_DEV_IDENTIDADE, raising=False)
+    monkeypatch.setenv(rbac.ENV_DEV_USUARIO, "vinicius.teste")
+    monkeypatch.setenv(acesso.ENV_ADMIN_ACESSOS, "vinicius.teste")
+    assert acesso.pode_ver_acessos(None) is False
+
+
+def test_header_sempre_vence_a_env_de_dev(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Havendo header, ele decide — a env nunca sobrescreve quem o Authelia autenticou."""
+    from motor_expansao.db import rbac
+
+    monkeypatch.delenv(rbac.ENV_SINAL_PRODUCAO, raising=False)
+    monkeypatch.setenv(rbac.ENV_DEV_USUARIO, "vinicius.teste")
+    monkeypatch.setenv(acesso.ENV_ADMIN_ACESSOS, "vinicius.teste")
+    assert acesso.pode_ver_acessos("outra_pessoa") is False

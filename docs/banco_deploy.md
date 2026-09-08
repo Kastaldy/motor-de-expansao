@@ -104,8 +104,27 @@ O backend aceita identidade de desenvolvimento quando não há `Remote-User` na 
 # Mesma ressalva do §1.2 — se este for um terminal NOVO, repita o PYTHONPATH.
 $env:PYTHONPATH = "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\.claude\worktrees\wt-db\src"
 $env:MOTOR_DATABASE_URL = "postgresql://app:SENHA@localhost:5432/banco_de_reservas_ensaio"
-$env:MOTOR_DEV_USUARIO = "<login_usuario de um dos perfis>"
+$env:MOTOR_DEV_USUARIO = "vinicius.teste"   # um login_usuario que exista em `usuarios`
+
+# Sem esta, a aba de Acessos é 404 PARA TODOS — por construção, e não por defeito:
+# a allowlist do painel é de env e vive fora do RBAC (emenda da DEC-027). Vazia =
+# painel desligado. É ela que libera também a tela de administração de usuários.
+$env:MOTOR_ACESSOS_ADMIN_USUARIOS = "vinicius.teste"
+
+# SÓ se você também for exercitar o cadastro da Visão Executiva: `MOTOR_CADASTRO_DIR`
+# é o SINAL DE PRODUÇÃO, e a presença dele DESLIGA a identidade de dev — você ficaria
+# sem `Remote-User` e sem `MOTOR_DEV_USUARIO`, ou seja, sem identidade nenhuma.
+# O override explícito reabre o modo de dev:
+#   $env:MOTOR_DEV_IDENTIDADE = "1"
+
 python -m uvicorn app:app --app-dir web/server --port 8899
+```
+
+Em outro terminal, a SPA — o Vite já faz proxy de `/api` para a `:8899`:
+
+```powershell
+cd web
+npm run dev     # abre em http://localhost:5000
 ```
 
 Duas travas impedem isso de vazar para produção: `MOTOR_DEV_IDENTIDADE` como override explícito e,
@@ -118,7 +137,8 @@ na VPS.
 
 Depois, um `MOTOR_DEV_USUARIO` de cada perfil, conferindo contra a matriz da migration `012`.
 
-E, com um Growth, exercite a **administração de usuários** da aba de Acessos: troque o perfil de
+E, com um Growth, exercite a **administração de usuários** da aba de Acessos — ela só aparece com
+o `MOTOR_ACESSOS_ADMIN_USUARIOS` preenchido: troque o perfil de
 outra pessoa, desative e reative. Confira depois, no banco, que cada ação virou linha em `eventos`
 com `id_usuario` = você e `entidade_id` = o alvo — se os dois vierem trocados, a auditoria responde
 ao contrário e parece certa.
