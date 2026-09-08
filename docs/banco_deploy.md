@@ -164,6 +164,45 @@ na VPS.
 
 Depois, um `MOTOR_DEV_USUARIO` de cada perfil, conferindo contra a matriz da migration `012`.
 
+### Dois perfis ao mesmo tempo
+
+A identidade em dev vem do `MOTOR_DEV_USUARIO` **do processo do backend**, então trocar de perfil
+exigiria reiniciar. Comparar lado a lado é melhor, e sai com duas instâncias — o Vite lê a porta
+e o alvo do proxy de env:
+
+```powershell
+# Terminal 1 — backend growth (vê tudo, inclusive a aba de Acessos)
+$env:MOTOR_DEV_USUARIO = "vinicius.teste"
+$env:MOTOR_ACESSOS_ADMIN_USUARIOS = "vinicius.teste"
+python -m uvicorn app:app --app-dir "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\.claude\worktrees\wt-db\web\server" --port 8899
+
+# Terminal 2 — backend expansão (11 capacidades, sem carteira e sem Acessos)
+$env:MOTOR_DEV_USUARIO = "ana.teste"
+$env:MOTOR_ACESSOS_ADMIN_USUARIOS = ""
+python -m uvicorn app:app --app-dir "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\.claude\worktrees\wt-db\web\server" --port 8898
+
+# Terminal 3 — SPA do growth
+cd web; npm run dev                       # http://localhost:5000
+
+# Terminal 4 — SPA da expansão
+$env:MOTOR_WEB_PORT = "5001"
+$env:MOTOR_API_URL  = "http://127.0.0.1:8898"
+cd web; npm run dev                       # http://localhost:5001
+```
+
+Os dois backends compartilham o MESMO banco e o mesmo papel `app` — o que muda é só quem cada um
+diz ser. É exatamente o recorte que se quer exercitar: a mesma aplicação, a mesma credencial de
+banco, e o acesso decidido pela linha em `usuarios`.
+
+> Cada terminal precisa do `PYTHONPATH`, do `MOTOR_DATA_DIR`, da `MOTOR_DATABASE_URL` e do
+> `PGPASSWORD` — env de PowerShell não atravessa janelas. E repare no
+> `MOTOR_ACESSOS_ADMIN_USUARIOS` vazio no segundo: a aba de Acessos vive fora do RBAC, numa
+> allowlist de env, então é assim que se prova que ela some (404, e o ícone nem aparece no Dock).
+
+> **`strictPort` está ligado de propósito.** Se o Vite escolhesse outra porta em silêncio ao
+> achar a 5001 ocupada, você olharia a tela do perfil errado sem nenhum sinal disso — e o teste
+> inteiro passaria a medir outra coisa.
+
 E, com um Growth, exercite a **administração de usuários** da aba de Acessos — ela só aparece com
 o `MOTOR_ACESSOS_ADMIN_USUARIOS` preenchido: troque o perfil de
 outra pessoa, desative e reative. Confira depois, no banco, que cada ação virou linha em `eventos`
