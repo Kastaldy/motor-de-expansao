@@ -4,6 +4,7 @@
     python -m motor_expansao.db aplicar     # aplica as pendentes, em ordem, registrando
     python -m motor_expansao.db registrar   # registra migrations cujo efeito JA' esta no banco
     python -m motor_expansao.db conferir    # o banco bate com o que o motor espera?
+    python -m motor_expansao.db privilegios # o papel `app` e' mesmo incapaz do que nao deve
 
 Quem executa e' o operador
 --------------------------
@@ -337,6 +338,184 @@ def cmd_conferir(_args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------------------
+# `privilegios` — a reposicao do guardrail READ-ONLY (F6.2)
+#
+# O piloto provava ser read-only de duas formas: AST sobre o `app.py` e snapshot do
+# filesystem em runtime. A segunda parou de valer no dia em que ele ganhou banco: um
+# `INSERT` nao aparece em snapshot de arquivo. A prova nao FALHOU -- ela deixou de
+# cobrir, sem avisar, que e' o pior jeito de uma rede de seguranca sumir.
+#
+# O que a repoe nao e' outro teste de codigo: e' o PRIVILEGIO. Com o D20 de pe, a escrita
+# indevida deixa de ser improvavel e passa a ser impossivel -- o papel nao tem como. Este
+# comando e' o que prova isso contra o banco real, do lado de dentro da mesma credencial
+# que o piloto usa.
+#
+# TUDO AQUI E' LEITURA DE CATALOGO (`has_*_privilege`, `pg_class`, `pg_parameter_acl`).
+# Nenhuma checagem tenta escrever para ver se falha: isso deixaria lixo, dependeria de
+# rollback e, num banco com auditoria append-only, a propria tentativa vira linha.
+# ---------------------------------------------------------------------------------------
+
+def _checagens_negativas() -> list[tuple[str, str, str]]:
+    """(rotulo, SQL -> bool, por que importa). `True` = o papel PODE = FALHA."""
+    return [
+        (
+            "criar objeto no schema public",
+            "SELECT has_schema_privilege(current_user, 'public', 'CREATE')",
+            "DDL no papel da aplicacao anula o D20: quem cria tabela cria trigger, e quem "
+            "cria trigger na propria tabela desliga a auditoria",
+        ),
+        (
+            "escrever no historico de permissoes",
+            "SELECT has_table_privilege(current_user, 'perfil_permissoes_historico', 'INSERT')",
+            "o D19 promete que a aplicacao nao forja linha de auditoria; com INSERT direto a "
+            "promessa e' so' prosa",
+        ),
+        (
+            "alterar o historico de permissoes",
+            "SELECT has_table_privilege(current_user, 'perfil_permissoes_historico', 'UPDATE')",
+            "append-only: reescrever o passado e' pior que apaga-lo, porque nao deixa buraco",
+        ),
+        (
+            "apagar do historico de permissoes",
+            "SELECT has_table_privilege(current_user, 'perfil_permissoes_historico', 'DELETE')",
+            "mesma razao do UPDATE",
+        ),
+        (
+            "esvaziar perfil_permissoes",
+            "SELECT has_table_privilege(current_user, 'perfil_permissoes', 'TRUNCATE')",
+            "o TRUNCATE tem trigger propria (D19), mas conceder o privilegio e' convidar o "
+            "caminho que ela existe para vigiar",
+        ),
+        (
+            "alterar evento ja' gravado",
+            "SELECT has_table_privilege(current_user, 'eventos', 'UPDATE')",
+            "`eventos` e' append-only por contrato (§4) -- e e' onde a tela de administracao "
+            "grava quem mudou o acesso de quem",
+        ),
+        (
+            "apagar evento",
+            "SELECT has_table_privilege(current_user, 'eventos', 'DELETE')",
+            "mesma razao do UPDATE em eventos",
+        ),
+        (
+            "criar tabela temporaria",
+            "SELECT has_database_privilege(current_user, current_database(), 'TEMP')",
+            "era o caminho da forja que a revisao de 26/08 achou: TEMP TABLE propria + funcao "
+            "SECURITY DEFINER da 009 = linha forjada com o privilegio do dono (D21)",
+        ),
+        (
+            "ser dono das tabelas auditadas",
+            "SELECT bool_or(c.relowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)) "
+            "FROM pg_class c WHERE c.relname IN "
+            "('perfil_permissoes', 'perfil_permissoes_historico', 'eventos')",
+            "dono desliga a propria trigger com um ALTER TABLE, e nenhum GRANT protege contra isso",
+        ),
+        (
+            "receber SET em session_replication_role",
+            "SELECT EXISTS (SELECT 1 FROM pg_parameter_acl "
+            "WHERE parname = 'session_replication_role')",
+            "desde o PG15 esse GRANT existe, e quem o recebe desliga TODAS as triggers da "
+            "sessao -- o `ENABLE ALWAYS` da §7 do D20 e' a defesa, este e' o alarme",
+        ),
+    ]
+
+
+def _checagens_positivas() -> list[tuple[str, str, str]]:
+    """(rotulo, SQL -> bool, por que importa). `False` = o piloto QUEBRA em runtime."""
+    return [
+        (
+            "gravar evento",
+            "SELECT has_table_privilege(current_user, 'eventos', 'INSERT')",
+            "sem isto nenhuma acao e' registrada, e o D17 nao fecha",
+        ),
+        (
+            "usar a sequence de eventos",
+            "SELECT has_sequence_privilege(current_user, 'eventos_id_evento_seq', 'USAGE')",
+            "GRANT INSERT na tabela NAO cobre a sequence do BIGSERIAL -- sem esta, todo "
+            "INSERT morre por permissao negada, e so' em runtime",
+        ),
+        (
+            "atualizar usuarios",
+            "SELECT has_table_privilege(current_user, 'usuarios', 'UPDATE')",
+            "e' o que a tela de administracao faz: trocar perfil e ativar/desativar",
+        ),
+        (
+            "ler spatial_ref_sys",
+            "SELECT has_table_privilege(current_user, 'spatial_ref_sys', 'SELECT')",
+            "sem ela o PostGIS quebra ao tocar `geography` -- e o erro aparece longe daqui",
+        ),
+    ]
+
+
+def _valor_unico(con: Any, sql: str) -> Any:
+    """Primeira coluna da primeira linha. `None` quando a consulta nao devolve nada --
+    o que aqui e' resposta legitima (ex.: `bool_or` sobre zero linhas)."""
+    linha = con.execute(sql).fetchone()
+    return None if linha is None else linha[0]
+
+
+def cmd_privilegios(_args: argparse.Namespace) -> int:
+    """O papel do piloto e' mesmo incapaz do que nao deve? Le catalogo, nunca escreve."""
+    url = postgres.url_configurada()
+    if url is None:
+        raise SystemExit(
+            f"ERRO: defina {postgres.ENV_URL} com a credencial do PILOTO (papel `app`).\n"
+            "  Este comando checa o papel que a aplicacao usa -- conferir com a credencial\n"
+            "  de DONO nao prova nada, porque o dono pode tudo."
+        )
+
+    import psycopg
+
+    problemas: list[str] = []
+    with psycopg.connect(url) as con:
+        quem = _valor_unico(con, postgres.SQL_USUARIO_ATUAL)
+        print(f"papel conectado: {quem}\n")
+
+        print("== o que este papel NAO pode ==")
+        for rotulo, sql, porque in _checagens_negativas():
+            pode = bool(_valor_unico(con, sql))
+            print(f"  {'FALHA' if pode else 'ok   '} {rotulo}")
+            if pode:
+                print(f"        por que importa: {porque}")
+                problemas.append(rotulo)
+
+        print("\n== o que este papel PRECISA poder ==")
+        for rotulo, sql, porque in _checagens_positivas():
+            pode = bool(_valor_unico(con, sql))
+            print(f"  {'ok   ' if pode else 'FALHA'} {rotulo}")
+            if not pode:
+                print(f"        por que importa: {porque}")
+                problemas.append(rotulo)
+
+        print("\n== auditoria endurecida (D21) ==")
+        estado = con.execute(postgres.SQL_ESTADO_TRIGGER, ("trg_perfil_permissoes_auditoria",))
+        linha = estado.fetchone()
+        atual = linha[0] if linha else None
+        ok = atual == "A"
+        print(f"  {'ok   ' if ok else 'FALHA'} trigger de auditoria: {atual!r} (esperado 'A')")
+        if not ok:
+            print(
+                "        por que importa: fora de 'A', uma sessao em session_replication_role="
+                "replica\n        escreve sem deixar rastro. E' o ALTER TABLE da secao 7 do D20."
+            )
+            problemas.append("trigger de auditoria fora de ENABLE ALWAYS")
+
+    print()
+    if problemas:
+        print(f"PRIVILEGIOS COM {len(problemas)} PROBLEMA(S):")
+        for p in problemas:
+            print(f"  - {p}")
+        print(
+            "\nSe o papel conectado for o DONO do schema, e' esperado que quase tudo falhe --\n"
+            "rode de novo com a URL do papel `app`. Se ja' for o `app`, o provisionamento do\n"
+            "D20 (sql/papeis-e-privilegios.md) nao esta completo."
+        )
+        return 1
+    print("PRIVILEGIOS OK: o papel do piloto nao consegue o que nao deve, e consegue o que precisa.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m motor_expansao.db", description=__doc__)
     sub = parser.add_subparsers(dest="comando", required=True)
@@ -357,6 +536,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("conferir", help="o banco bate com o que o motor espera?").set_defaults(
         funcao=cmd_conferir
     )
+
+    sub.add_parser(
+        "privilegios",
+        help="o papel `app` e' mesmo incapaz do que nao deve? (usa MOTOR_DATABASE_URL)",
+    ).set_defaults(funcao=cmd_privilegios)
 
     args = parser.parse_args(argv)
     return int(args.funcao(args))

@@ -39,6 +39,7 @@ restore — roda inteiro no PostgreSQL nativo desta máquina, sem Docker.
 | RBAC por perfil: abas que aparecem e somem | mesma coisa |
 | `conferir`: o motor concorda com o banco | runner nativo |
 | Dump, checksum e **restore em base limpa** | `pg_dump`/`pg_restore` 18.4 locais |
+| O papel `app` é mesmo incapaz do que não deve (F6.2) | `python -m motor_expansao.db privilegios` |
 
 O que **não** tem equivalente local, porque esta máquina não tem Docker:
 
@@ -95,6 +96,32 @@ python -m motor_expansao.db conferir
 Em seguida, o `sql/papeis-e-privilegios.md` do `banco-de-reservas` — por `psql` ou pelo Query Tool
 do pgAdmin, tanto faz desde 02/09 —, exatamente como no
 §6 — inclusive os blocos de validação e teste dele, e o de append-only **depois** do `ALTER TABLE`.
+
+### O guardrail read-only, reposto (F6.2)
+
+Provisionado o D20, prove que ele pegou — **com a credencial do `app`, não a de dono**:
+
+```powershell
+$env:PYTHONPATH = "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\.claude\worktrees\wt-db\src"
+$env:MOTOR_DATABASE_URL = "postgresql://app:SENHA@localhost:5432/banco_de_reservas_ensaio"
+python -m motor_expansao.db privilegios
+```
+
+**Por que isto existe.** O piloto provava ser read-only de duas formas: AST sobre o `app.py` e
+snapshot do filesystem em runtime. A segunda parou de valer no dia em que ele ganhou banco — um
+`INSERT` não aparece em snapshot de arquivo. Ela não falhou: **deixou de cobrir, sem avisar**,
+que é o pior jeito de uma rede de segurança sumir.
+
+O que a repõe não é outro teste de código, é o **privilégio**: com o D20 de pé, a escrita
+indevida deixa de ser improvável e passa a ser impossível. O comando confere, por catálogo e
+sem escrever nada, que o papel do piloto não cria objeto, não escreve no histórico de
+permissões, não altera nem apaga evento, não cria tabela temporária, não é dono das tabelas
+auditadas — e que consegue o que precisa, inclusive a `USAGE` na sequence de `eventos`, cuja
+falta só apareceria em runtime.
+
+> **Rodando com a credencial de dono, quase tudo reprova — e é o esperado.** O dono pode tudo;
+> é essa a razão de o piloto não usar a credencial dele. Se você conectar como `app` e ainda
+> assim reprovar, o provisionamento não está completo.
 
 ### 1.3 Exercitar o RBAC sem Authelia
 
@@ -334,7 +361,11 @@ Verificação, nesta ordem:
 docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN \
   web python -m motor_expansao.db conferir
 
-# 2. o piloto enxerga o banco? — bloco `banco` da rota de admin
+# 2. o papel `app` continua incapaz do que nao deve? (F6.2)
+docker compose -f docker-compose.prod.yml run --rm web \
+  python -m motor_expansao.db privilegios
+
+# 3. o piloto enxerga o banco? — bloco `banco` da rota de admin
 #    (o /api/health NÃO olha o banco, de propósito: ver §9)
 curl -s https://<dominio>/api/acessos/saude-artefatos | jq .banco
 ```

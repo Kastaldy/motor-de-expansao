@@ -22,6 +22,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -1721,3 +1722,74 @@ def test_ranking_nacional_etiqueta_pelo_criterio_que_o_ordenou(nacional_data: Pa
     )
     # A régua de concorrência é PUBLICADA, para o texto da tela derivar dela.
     assert payload["reguas"]["conc_max"] == pilot.CONC_ADENSAR_MAX
+
+
+# ===========================================================================
+# 6) Guardrail READ-ONLY sobre o BANCO (F6.2) — o que o snapshot de FS não vê
+# ===========================================================================
+
+# Verbos de ESCRITA em SQL. `SELECT` fica de fora: leitura é o que o backend deve fazer.
+_SQL_DE_ESCRITA = re.compile(
+    r"\b(INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|TRUNCATE|ALTER\s+TABLE"
+    r"|CREATE\s+(TABLE|INDEX|TRIGGER|FUNCTION)|DROP\s+\w+|GRANT|REVOKE)\b",
+    re.IGNORECASE,
+)
+
+
+def test_backend_nao_tem_sql_de_escrita_embutido() -> None:
+    """A prova de read-only que o banco quebrou, reposta do lado que sobrou.
+
+    O piloto provava ser read-only de duas formas: AST sobre este arquivo e snapshot do
+    filesystem em runtime. A segunda parou de valer no dia em que ele ganhou banco — um
+    `INSERT` não aparece em snapshot de arquivo. Ela não falhou: deixou de cobrir, sem
+    avisar, que é o pior jeito de uma rede de segurança sumir.
+
+    O que este teste guarda é a consequência de arquitetura da F6.1: o SQL precisa ser
+    LOCALIZÁVEL, em `motor_expansao.db.*`, nunca interpolado no meio de uma rota. Sem isso
+    nem o gate de sintaxe offline alcança tudo, nem há o que revisar antes de rodar contra
+    banco real — e a escrita escapa da transação que carimba o autor (D19).
+
+    A outra metade da F6.2 não é testável aqui, e é a que vale mais: o PRIVILÉGIO do papel
+    `app`. Ela vive em `python -m motor_expansao.db privilegios`, contra banco real.
+    """
+    tree = ast.parse((_SERVER / "app.py").read_text(encoding="utf-8"))
+    ofensas: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            achado = _SQL_DE_ESCRITA.search(node.value)
+            if achado:
+                ofensas.append((node.lineno, achado.group(0)))
+    assert not ofensas, (
+        "SQL de escrita embutido no backend. Ele pertence a `motor_expansao/db/`, onde o "
+        f"gate de sintaxe o alcança e a transação carimba o autor: {ofensas}"
+    )
+
+
+def test_a_escrita_no_banco_passa_pela_transacao_que_carimba_o_autor() -> None:
+    """O módulo de administração é o único caminho de escrita, e ele usa `transacao`.
+
+    `transacao(id_usuario=...)` é o que declara `app.id_usuario` para as triggers do D19.
+    Uma escrita por `conexao()` (a via de leitura) seria recusada pelo próprio Postgres —
+    ela abre `READ ONLY` —, mas uma por conexão crua não seria, e a auditoria sairia com
+    autor nulo, sem erro nenhum.
+    """
+    from motor_expansao.db import usuarios as db_usuarios
+
+    fonte = Path(db_usuarios.__file__).read_text(encoding="utf-8")
+    arvore = ast.parse(fonte)
+    escritoras = {"alterar_perfil", "definir_ativo"}
+    vistas: set[str] = set()
+    for node in ast.walk(arvore):
+        if isinstance(node, ast.FunctionDef) and node.name in escritoras:
+            chamadas = {
+                n.func.id
+                for n in ast.walk(node)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+            }
+            assert "transacao" in chamadas, (
+                f"`{node.name}` escreve sem `transacao(id_usuario=...)` — a auditoria do D19 "
+                "sairia com autor nulo, e sem erro nenhum"
+            )
+            assert "conexao" not in chamadas, f"`{node.name}` usa a via de LEITURA para escrever"
+            vistas.add(node.name)
+    assert vistas == escritoras, f"funcao de escrita nova sem cobertura: {escritoras - vistas}"
