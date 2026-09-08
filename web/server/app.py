@@ -5294,6 +5294,102 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
     }
 
 
+# Tolerancia de simplificacao dos poligonos de setor para o mapa de calor (graus).
+# ~0,0001 grau ~= 11 m no equador -- preserva o contorno de quadra/bairro visivel no
+# zoom de municipio e corta a maior parte dos vertices originais (a malha do IBGE tem
+# resolucao muito mais fina do que o mapa consegue desenhar).
+#
+# LIMITE CONHECIDO, nao resolvido nesta rodada: o payload escala com o NUMERO de
+# setores, nao so' com o detalhe geometrico -- simplificar mais agressivo tem retorno
+# decrescente. Medido em Sao Paulo capital (27.301 setores, pior caso do pais):
+#   tol=0,00005 -> 10,3 MB | tol=0,0001 -> 8,8 MB | tol=0,0004 -> 6,5 MB
+# Cidades medias ficam bem menores (Sao Bernardo do Campo, 1.759 setores, ~1,2 MB). Se
+# Sao Paulo/Rio-escala precisar de carregamento mais leve, o caminho e' vetor-tile ou
+# recorte por viewport, nao mais simplificacao -- registrar como follow-up, nao
+# resolver aqui, dado que a chave e' opt-in (o operador so paga o custo se ligar).
+SETORES_HEATMAP_SIMPLIFY_GRAUS = 0.0001
+
+
+@functools.lru_cache(maxsize=8)
+def _setores_heatmap_features(uf: str, cod_municipio: str) -> list[dict[str, Any]]:
+    """Poligonos de setor simplificados para o mapa de calor opcional. Cache por município.
+
+    Mesma fonte do Relatório Pontual (`setores_censitarios_2022_geo`), mas aqui a
+    geometria é servida ao NAVEGADOR pela primeira vez — até este endpoint, o heatmap
+    era 100% renderizado em Pillow no servidor (`censo_map.py`), sem nenhuma rota
+    devolvendo `geometry_wkb` como JSON. `_aneis` (de `cobertura_1km`) já resolve os
+    dois problemas medidos naquele módulo — MultiPolygon com buracos, e auto-interseção
+    depois de simplificar/arredondar — em vez de reimplementar e repetir os mesmos bugs.
+    """
+    from shapely import from_wkb
+
+    from motor_expansao.dashboard.data import read_censo_geo_partition
+
+    df = read_censo_geo_partition(CENSO_GEO_DIR, uf, cod_municipio)
+    if df.empty:
+        return []
+
+    feats: list[dict[str, Any]] = []
+    for _, r in df.iterrows():
+        wkb = r.get("geometry_wkb")
+        if wkb is None:
+            continue
+        try:
+            geom = from_wkb(wkb)
+        except Exception:  # noqa: BLE001 — geometria corrompida não pode derrubar o municipio inteiro
+            continue
+        if geom is None or geom.is_empty:
+            continue
+        if not geom.is_valid:
+            geom = geom.buffer(0)
+        try:
+            geom = geom.simplify(SETORES_HEATMAP_SIMPLIFY_GRAUS, preserve_topology=True)
+        except Exception:  # noqa: BLE001
+            pass
+        # `_aneis` devolve uma PARTE por item ([anel_externo, buraco1, ...]) — o mesmo
+        # formato de `PecaCobertura.anel` no front. Um setor MultiPolygon (raro, mas
+        # existe: rio/rodovia cortando o poligono) vira mais de uma "peca" aqui, todas
+        # com os MESMOS atributos — o deck.gl PolygonLayer nao desenha corretamente um
+        # MultiPolygon dentro de uma unica entrada `getPolygon`.
+        for parte in cobertura_1km._aneis(geom):
+            feats.append(
+                {
+                    "setor": _texto(r.get("cod_setor")),
+                    "anel": parte,
+                    "densidade": _num(r.get("densidade_pop_setor_hab_km2")),
+                    "renda": _num(r.get("renda_per_capita_setor_2022_calibrada")),
+                    "pop": _num(r.get("pop_total_setor_2022")),
+                }
+            )
+    return feats
+
+
+@app.get("/api/municipio/{uf}/{municipio}/setores-heatmap")
+def setores_heatmap(uf: str, municipio: str) -> dict[str, Any]:
+    """Polígonos de setor censitário (densidade/renda) para o mapa de calor opcional.
+
+    PROTÓTIPO NOVO (Bloco D) — só ativa no drill-down de município, mesmo gate dos pins
+    de concorrente (nunca em escala nacional/UF: São Paulo capital sozinha tem 27.301
+    setores). `disponivel=False` quando não há partição geo para o município — o front
+    não mostra a chave de camada nesse caso, em vez de uma chave que nunca liga.
+    READ-ONLY sobre o M1: só leitura do artefato geo derivado, nenhum score recalculado.
+    """
+    df = carregar_uf(uf)
+    sel = df[df["nome_municipio"].str.casefold() == municipio.casefold()]
+    if sel.empty:
+        raise HTTPException(404, f"Município '{municipio}' não encontrado na UF {uf}.")
+    cod = (
+        sel["cod_municipio"].dropna().astype(str).iloc[0]
+        if "cod_municipio" in sel.columns and sel["cod_municipio"].notna().any()
+        else None
+    )
+    if not cod or not CENSO_GEO_DIR.exists():
+        return {"disponivel": False, "setores": []}
+
+    setores = _setores_heatmap_features(uf.upper(), cod)
+    return {"disponivel": bool(setores), "setores": setores}
+
+
 # ============================================================================
 # Rotas — Viabilidade
 # ============================================================================

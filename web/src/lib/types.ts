@@ -323,6 +323,29 @@ export interface Cobertura1k {
   truncado: boolean
 }
 
+/**
+ * Bloco D — um polígono de SETOR censitário para o mapa de calor opcional (densidade
+ * demográfica / renda per capita). Mesmo formato de `PecaCobertura.anel`
+ * ([anel_externo, buraco1, ...]) — um setor MultiPolygon vira mais de uma entrada aqui,
+ * todas com os MESMOS atributos.
+ */
+export interface SetorHeatmap {
+  setor: string
+  anel: number[][]
+  /** hab/km², já ponderado por área na malha do setor. `null` = sem leitura. */
+  densidade: number | null
+  /** R$/pessoa/mês (per capita, calibrada) — a MESMA régua do Relatório Pontual. */
+  renda: number | null
+  pop: number | null
+}
+
+/** `disponivel=false` = sem partição geo para o município (base parcial/em rollout);
+ *  o front esconde a chave da camada em vez de oferecer um toggle que nunca liga. */
+export interface SetoresHeatmapPayload {
+  disponivel: boolean
+  setores: SetorHeatmap[]
+}
+
 export interface Pins {
   concorrentes: Pin[]
   ultra: Pin[]
