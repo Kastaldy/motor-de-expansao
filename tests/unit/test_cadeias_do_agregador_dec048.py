@@ -3,13 +3,15 @@
 O que estes testes travam sao as decisoes que, tomadas errado, produzem um NUMERO PLAUSIVEL em
 vez de um erro:
 
-  · D3  a dedup da DEC-034 tem DOIS bracos, e cada um pega um caso que o outro perde:
-        casar a rede ate' 150 m salva concorrente REAL que a distancia pura apagaria; o piso de
-        50 m recupera o mesmo endereco com slug divergente. Perder um braco nao levanta nada --
-        so' muda a contagem;
-  · D3  ordem estavel: sem ela o total publicado muda de uma safra para outra sozinho;
-  · D4  insumo ausente tem de reproduzir o comportamento anterior, senao o codigo nao pode
-        entrar antes da regeneracao do parquet;
+  · D3  a dedup e' a de `dedup_cadeias_do_feed` (pressao_competitiva.py), via a coluna
+        `tem_pin_proprio` ja' materializada em `vulnerabilidade_ma_redes.parquet` -- NAO uma
+        reimplementacao aqui. Reimplementar so' com 2 das 3 regras da DEC-034/BLK-MA-17-FU4
+        (revisao de codigo, 2026-09-08) deixava passar ~400 duplicatas que so' o casamento por
+        NOME pega -- a mecanica da dedup em si tem cobertura propria em
+        `tests/unit/vulnerabilidade/test_dedup_por_nome.py` e vizinhos; aqui so' o CONTRATO
+        importa: `unir_cadeias` respeita o que `tem_pin_proprio` diz;
+  · D4  insumo ausente (arquivo ou coluna) tem de reproduzir o comportamento anterior, senao o
+        codigo nao pode entrar antes da regeneracao do parquet;
   · D5  o produtor da oferta saia LIMPO do guard -- regressao de governanca.
 
 Fixtures 100% sinteticas: os parquets reais sao gitignored e nao existem no CI.
@@ -22,11 +24,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from motor_expansao.pipelines.enriquecimento_espacial_hexagonos import (
-    DEDUP_CADEIA_COORD_M,
-    DEDUP_CADEIA_REDE_M,
-    unir_cadeias,
-)
+from motor_expansao.pipelines.enriquecimento_espacial_hexagonos import unir_cadeias
 
 LAT, LNG = -23.55, -46.63
 
@@ -46,21 +44,22 @@ def _cadastro(*linhas) -> pd.DataFrame:
     })
 
 
-def _feed(*linhas, nomes=None) -> pd.DataFrame:
-    """(rede, lat, lng) — o feed do agregador."""
+def _feed(*linhas, tem_pin_proprio=True) -> pd.DataFrame:
+    """(rede, lat, lng) — o artefato `vulnerabilidade_ma_redes`, ja' com a dedup materializada.
+
+    `tem_pin_proprio=True` por default: a maioria dos testes aqui quer simular a unidade
+    SOBREVIVENTE da dedup (o caso "academia nova"). Os testes que exercitam o contrato de
+    `tem_pin_proprio` passam o valor explicitamente.
+    """
+    n = len(linhas)
+    pin = tem_pin_proprio if isinstance(tem_pin_proprio, list) else [tem_pin_proprio] * n
     return pd.DataFrame({
         "rede": [x[0] for x in linhas],
         "lat": [x[1] for x in linhas],
         "lng": [x[2] for x in linhas],
-        "nome": nomes or [f"Unidade {i}" for i in range(len(linhas))],
+        "nome": [f"Unidade {i}" for i in range(n)],
+        "tem_pin_proprio": pin,
     })
-
-
-# --- os limiares da DEC-034 --------------------------------------------------
-
-def test_limiares_sao_os_da_dec034():
-    assert DEDUP_CADEIA_REDE_M == 150.0
-    assert DEDUP_CADEIA_COORD_M == 50.0
 
 
 # --- D4: insumo ausente reproduz o comportamento anterior --------------------
@@ -84,47 +83,45 @@ def test_descartes_do_cadastro_nao_entram():
     assert len(unir_cadeias(cadastro, None)) == 1
 
 
-# --- D3: os DOIS bracos da dedup --------------------------------------------
+# --- D3: o contrato com `tem_pin_proprio` ------------------------------------
 
-def test_mesma_rede_a_menos_de_150m_colapsa():
-    """Braco do NOME: a mesma Selfit com coordenada levemente diferente nao entra duas vezes."""
-    cadastro = _cadastro(("selfit", LAT, LNG))
-    feed = _feed(("selfit", _desloca(LAT, 100.0), LNG))
-    assert len(unir_cadeias(cadastro, feed)) == 1
+def test_tem_pin_proprio_true_entra_como_nova():
+    """Sobrevivente da dedup (o que a DEC-048 chama de "academia nova")."""
+    cadastro = _cadastro(("smart_fit", LAT, LNG))
+    feed = _feed(("selfit", _desloca(LAT, 900.0), LNG), tem_pin_proprio=True)
+    assert len(unir_cadeias(cadastro, feed)) == 2
 
 
-def test_rede_DIFERENTE_a_120m_e_academia_NOVA():
-    """O braco do nome existe para isto: a distancia pura apagaria um concorrente REAL.
+def test_tem_pin_proprio_false_nao_entra():
+    """O CASO DO ACHADO (revisao 2026-09-08): colapsada pela dedup nao pode contar como nova.
 
-    Duas academias de marcas distintas a 120 m sao duas academias, nao um registro duplicado.
+    Sem checar `tem_pin_proprio`, esta unidade (mesma coisa que ja' esta' no cadastro, so' que
+    geocodificada diferente pelas duas fontes) entraria e infla a oferta em duplicidade.
     """
     cadastro = _cadastro(("selfit", LAT, LNG))
-    feed = _feed(("panobianco", _desloca(LAT, 120.0), LNG))
-    assert len(unir_cadeias(cadastro, feed)) == 2
-
-
-def test_qualquer_rede_a_menos_de_50m_colapsa():
-    """Piso de coordenada: mesmo endereco com slug divergente nao pode virar duas academias."""
-    cadastro = _cadastro(("skyfit", LAT, LNG))
-    feed = _feed(("sky_fit", _desloca(LAT, 20.0), LNG))
+    feed = _feed(("selfit", _desloca(LAT, 900.0), LNG), tem_pin_proprio=False)
     assert len(unir_cadeias(cadastro, feed)) == 1
 
 
-def test_mesma_rede_longe_e_unidade_nova():
-    cadastro = _cadastro(("selfit", LAT, LNG))
-    feed = _feed(("selfit", _desloca(LAT, 900.0), LNG))
+def test_tem_pin_proprio_ausente_entra_tudo():
+    """Artefato antigo (pre-BLK-MA-17), sem a coluna: conservador, mesmo regime de `_oferta_unida`
+    (DEC-046) -- sem saber quem sobreviveu a dedup, o codigo nao arrisca descartar concorrencia
+    real."""
+    cadastro = _cadastro(("smart_fit", LAT, LNG))
+    feed = _feed(("selfit", _desloca(LAT, 900.0), LNG)).drop(columns=["tem_pin_proprio"])
     assert len(unir_cadeias(cadastro, feed)) == 2
 
 
-# --- D3: ordem estavel -------------------------------------------------------
-
-def test_dedup_e_deterministica_sob_reordenacao_do_feed():
-    """Sem ordem estavel o total publicado mudaria de safra para safra sozinho."""
-    cadastro = _cadastro(("selfit", LAT, LNG))
-    pontos = [("selfit", _desloca(LAT, 300.0 * i), LNG) for i in range(1, 7)]
-    direto = len(unir_cadeias(cadastro, _feed(*pontos)))
-    invertido = len(unir_cadeias(cadastro, _feed(*reversed(pontos))))
-    assert direto == invertido
+def test_mistura_de_pin_proprio_filtra_so_as_true():
+    cadastro = _cadastro(("smart_fit", LAT, LNG))
+    feed = _feed(
+        ("selfit", _desloca(LAT, 300.0), LNG),
+        ("bluefit", _desloca(LAT, 600.0), LNG),
+        tem_pin_proprio=[True, False],
+    )
+    uni = unir_cadeias(cadastro, feed)
+    assert len(uni) == 2
+    assert set(uni["rede"]) == {"smart_fit", "selfit"}
 
 
 # --- contrato de saida -------------------------------------------------------
@@ -185,7 +182,10 @@ def test_saida_alimenta_calc_comp_metrics_sem_quebrar():
 
 def test_coordenada_nula_no_feed_e_descartada_sem_excecao():
     cadastro = _cadastro(("smart_fit", LAT, LNG))
-    feed = pd.DataFrame({"rede": ["selfit"], "lat": [None], "lng": [None], "nome": ["X"]})
+    feed = pd.DataFrame({
+        "rede": ["selfit"], "lat": [None], "lng": [None], "nome": ["X"],
+        "tem_pin_proprio": [True],
+    })
     assert len(unir_cadeias(cadastro, feed)) == 1
 
 
