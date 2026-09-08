@@ -156,6 +156,10 @@ ENRICHED_DIR = OUTPUTS_DIR / "hexagonos_dashboard_enriquecido"
 # Receita). Nao prediz, nao ranqueia oportunidade, nao reconstroi nada.
 # Artefato PARALELO e OPCIONAL; NAO e escrito no enriquecido — M1 READ-ONLY.
 CONCORRENTES_PATH = STAGING_DIR / "concorrentes_mapeados.parquet"
+# Universo NACIONAL de hexagonos validos do M1 (so' `hex_id` e' lido). Usado por
+# `pressao_1km._universo_hex_valido` pra renormalizar a massa do disco de 1 km que cai
+# fora da base (litoral/fronteira/hex podado) — ver docstring de pressao_1km.py.
+DASHBOARD_NACIONAL_PATH = OUTPUTS_DIR / "hexagonos_brasil_dashboard.parquet"
 CRESCIMENTO_PATH = STAGING_DIR / "crescimento_municipal.parquet"
 # Taxa de crescimento da area construida POR HEXAGONO (satelite 2016-2023). E o
 # que colore o mapa no passo 4: quem decide olha taxa de crescimento, nao emprego
@@ -919,9 +923,9 @@ def _derivar(df: pd.DataFrame) -> pd.DataFrame:
     # tocar nenhuma coluna existente. Degrada em silencio se o parquet de concorrentes
     # nao estiver montado — o front nao recebe os campos e a chave nem aparece.
     # Ver web/server/pressao_1km.py.
-    if pressao_1km.disponivel(CONCORRENTES_PATH):
+    if pressao_1km.disponivel(CONCORRENTES_PATH, DASHBOARD_NACIONAL_PATH):
         try:
-            out = pressao_1km.anexar(out, CONCORRENTES_PATH)
+            out = pressao_1km.anexar(out, CONCORRENTES_PATH, DASHBOARD_NACIONAL_PATH)
         except Exception:  # pragma: no cover - experimento nao pode derrubar o piloto
             pass
 

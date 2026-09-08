@@ -43,17 +43,26 @@ entre os hexagonos que o disco cobre, na proporcao da AREA DE INTERSECAO:
     oferta_efetiva_1km_area[h] = SOMA_c share(c -> h)
     consumo_concorrentes_1km_area[h] = oferta_efetiva_1km_area[h] * capacidade
 
-LIMITACAO CONHECIDA — MASSA RETIDA NA BORDA DA BASE. `shares_por_hex` conserva massa
-por construcao (soma 1,00 sobre TODAS as celulas H3 que o disco cobre), mas
-`anexar_pressao_1km_area` faz `merge` contra o DataFrame de hexes: o share que cai em
-celula FORA da base — litoral, fronteira, hexagono podado pelo criterio de fracao de
-terra (`M1_HEX_LAND_FRACTION_MIN`) — e' DESCARTADO em silencio. Medido na base real:
-**119 dos 3.179 concorrentes validos (3,7%) perdem parte da conta**, mediana 15,8% e ate
-100% nos casos em que o concorrente esta inteiramente fora da malha; no total somem
-**27,4 unidades = 68.431 alunos** de consumo. O efeito e' subestimar a pressao em hexes
-de borda. Fica REGISTRADO como limitacao ate a DEC; renormalizar (dividir o share pelo
-que ficou dentro) ou sinalizar a perda por hexagono sao os dois caminhos, e nenhum foi
-tomado aqui.
+LIMITACAO CONHECIDA — MASSA RETIDA NA BORDA DA BASE (CORRIGIDO). `shares_por_hex`
+conserva massa por construcao (soma 1,00 sobre TODAS as celulas H3 que o disco cobre),
+mas antes desta correcao `anexar_pressao_1km_area` fazia `merge` contra o DataFrame de
+hexes e o share que caia em celula FORA da base — litoral, fronteira, hexagono podado
+pelo criterio de fracao de terra (`M1_HEX_LAND_FRACTION_MIN`) — era DESCARTADO em
+silencio. Medido na base real, antes do fix: **119 dos 3.179 concorrentes validos
+(3,7%) perdiam parte da conta**, mediana 15,8% e ate 100% nos casos em que o concorrente
+estava inteiramente fora da malha; no total somiam **27,4 unidades = 68.431 alunos** de
+consumo — vies sistematico de SUBESTIMAR a pressao (logo SUPERESTIMAR o residual) em
+hexes de litoral/fronteira, justamente onde ficam varias metropoles-alvo da Ultra.
+
+Corrigido por RENORMALIZACAO (decisao de Felipe): `repartir_concorrentes` agora aceita
+`hex_ids_validos` e, quando informado, filtra o share de cada concorrente aos hexagonos
+que existem na base e redistribui a fracao restante para fechar em 1,0 sobre esse
+subconjunto — ANTES de agregar entre concorrentes. `anexar_pressao_1km_area` sempre
+passa `set(df_hex["hex_id"])`, entao o `merge` que segue nunca mais descarta massa (os
+shares ja chegam filtrados). Um concorrente cujo disco caia 100% fora da base continua
+contribuindo zero — nao ha hexagono valido para receber a massa dele, e isso e'
+diferente de "perda por acidente": e' o concorrente genuinamente nao pressionar
+nenhum hexagono brasileiro coberto pelo motor.
 
 Kernel UNIFORME por decisao de Felipe (2026-08-05): cada m2 do disco pesa igual, o
 share e' area pura. Alternativas avaliadas e recusadas nesta rodada: decaimento linear
@@ -250,6 +259,7 @@ def repartir_concorrentes(
     capacidade_alunos: float = CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS,
     coluna_lat: str = "lat",
     coluna_lng: str = "lng",
+    hex_ids_validos: set[str] | None = None,
 ) -> pd.DataFrame:
     """Agrega os shares de TODOS os concorrentes por hexagono.
 
@@ -261,11 +271,17 @@ def repartir_concorrentes(
       - `n_concorrentes_influencia_1km` quantos concorrentes distintos alcancam o hex
       - `consumo_concorrentes_1km_area` oferta * capacidade, em alunos
 
-    Invariante, VALIDO SO' AQUI (antes do merge): `oferta_efetiva_1km_area.sum()` ==
-    numero de concorrentes de entrada com coordenada. A coluna HOMONIMA que sai de
-    `anexar_pressao_1km_area` soma MENOS — na base nacional, 3.151,6 para 3.179
-    concorrentes — porque o merge descarta o share caido fora dela. Ver LIMITACAO
-    CONHECIDA no docstring do modulo antes de usar essa soma como aferidor.
+    `hex_ids_validos`: quando informado, o share de CADA concorrente e' filtrado a esse
+    conjunto e RENORMALIZADO para fechar em 1,0 sobre os hexagonos validos que ele
+    alcanca — antes de agregar entre concorrentes. Um concorrente sem NENHUM hexagono
+    valido no alcance contribui zero (nao ha' massa para redistribuir). Com
+    `hex_ids_validos=None` (default), a funcao NAO filtra nem renormaliza — comportamento
+    historico, preservado para quem chama sem conhecer a base de hexes de antemao.
+
+    Invariante quando `hex_ids_validos=None`: `oferta_efetiva_1km_area.sum()` == numero
+    de concorrentes de entrada com coordenada. Quando `hex_ids_validos` e' informado, a
+    soma e' o numero de concorrentes que alcancam PELO MENOS UM hexagono valido (pode ser
+    menor que o total de concorrentes, se algum estiver inteiramente fora da base).
     """
     lats = pd.to_numeric(df_concorrentes[coluna_lat], errors="coerce")
     lngs = pd.to_numeric(df_concorrentes[coluna_lng], errors="coerce")
@@ -274,9 +290,14 @@ def repartir_concorrentes(
     acumulado: dict[str, float] = {}
     contagem: dict[str, int] = {}
     for lat, lng in zip(lats[validos], lngs[validos], strict=True):
-        for hex_id, share in shares_por_hex(
-            float(lat), float(lng), raio_m=raio_m, h3_res=h3_res
-        ).items():
+        shares = shares_por_hex(float(lat), float(lng), raio_m=raio_m, h3_res=h3_res)
+        if hex_ids_validos is not None:
+            shares = {h: s for h, s in shares.items() if h in hex_ids_validos}
+            total_valido = sum(shares.values())
+            if total_valido <= 0.0:
+                continue  # concorrente inteiramente fora da base -- nada a redistribuir
+            shares = {h: s / total_valido for h, s in shares.items()}
+        for hex_id, share in shares.items():
             acumulado[hex_id] = acumulado.get(hex_id, 0.0) + share
             contagem[hex_id] = contagem.get(hex_id, 0) + 1
 
@@ -317,13 +338,14 @@ def anexar_pressao_1km_area(
     nenhum concorrente recebem oferta 0 -> `gap_competitivo_1km_area` = 1 e
     `pressao_concorrencial_score_1km_area` = 0 (mesma convencao do modelo de 2 km).
 
-    NAO CONSERVA MASSA — e' aqui que a perda acontece. O `merge` abaixo descarta, em
-    silencio, todo share que caiu em celula H3 ausente de `df_hex` (litoral, fronteira,
-    hexagono podado por `M1_HEX_LAND_FRACTION_MIN`). Medido na base nacional: 119 dos
-    3.179 concorrentes perdem parte da conta, 27,4 unidades no total. O `fillna(0.0)`
-    torna "tocado, mas fora da base" indistinguivel de "nunca tocado", e o assert de
-    cardinalidade no fim mede LINHAS, nao massa — nenhum dos dois acusa a perda. Ver
-    LIMITACAO CONHECIDA no docstring do modulo.
+    CONSERVA MASSA sobre a base real (corrigido). `repartir_concorrentes` recebe
+    `hex_ids_validos=set(df_hex["hex_id"])`, entao cada concorrente ja chega com o share
+    filtrado e renormalizado para fechar em 1,0 sobre os hexagonos que EXISTEM em
+    `df_hex` -- o `merge` abaixo nao descarta mais massa (so' pode faltar bater algo que
+    ja chegou zerado). Excecao inevitavel: um concorrente cujo disco de 1 km cai 100%
+    fora da base (litoral, fronteira, hexagono podado por `M1_HEX_LAND_FRACTION_MIN`)
+    contribui zero -- nao ha hexagono valido para receber a massa dele. Ver o docstring
+    do modulo para o numero medido antes desta correcao.
     """
     n_orig = len(df_hex)
     agregado = repartir_concorrentes(
@@ -331,6 +353,7 @@ def anexar_pressao_1km_area(
         raio_m=raio_m,
         h3_res=h3_res,
         capacidade_alunos=capacidade_alunos,
+        hex_ids_validos=set(df_hex["hex_id"]),
     )
 
     out = df_hex.drop(
