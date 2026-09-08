@@ -130,6 +130,19 @@ O backend aceita identidade de desenvolvimento quando não há `Remote-User` na 
 ```powershell
 # Mesma ressalva do §1.2 — se este for um terminal NOVO, repita o PYTHONPATH.
 $env:PYTHONPATH = "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\.claude\worktrees\wt-db\src"
+
+# Os artefatos vivem no CHECKOUT PRINCIPAL, nao aqui: eles sao gitignored e nao
+# viajam para a worktree (1 parquet contra 11.252). Apontar para o `data/` daqui da'
+# um piloto que sobe e nao carrega nada -- e o sintoma nao acusa a causa.
+#
+# Ler o diretorio do checkout principal e' seguro: o piloto e' READ-ONLY sobre os
+# artefatos, e ha teste que trava isso (`test_leituras_nao_mutam_artefatos`).
+$env:MOTOR_DATA_DIR = "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\data"
+
+# NAO defina o MOTOR_CADASTRO_DIR: ele e' o SINAL DE PRODUCAO, e a presenca dele
+# desliga a identidade de dev -- voce ficaria sem `Remote-User` e sem
+# `MOTOR_DEV_USUARIO`. Se precisar do cadastro da Visao Executiva, ligue junto o
+# override: $env:MOTOR_DEV_IDENTIDADE = "1"
 $env:MOTOR_DATABASE_URL = "postgresql://app:SENHA@localhost:5432/banco_de_reservas_ensaio"
 $env:MOTOR_DEV_USUARIO = "vinicius.teste"   # um login_usuario que exista em `usuarios`
 
@@ -194,8 +207,8 @@ Os dois backends compartilham o MESMO banco e o mesmo papel `app` — o que muda
 diz ser. É exatamente o recorte que se quer exercitar: a mesma aplicação, a mesma credencial de
 banco, e o acesso decidido pela linha em `usuarios`.
 
-> Cada terminal precisa do `PYTHONPATH`, do `MOTOR_DATA_DIR`, da `MOTOR_DATABASE_URL` e do
-> `PGPASSWORD` — env de PowerShell não atravessa janelas. E repare no
+> Cada terminal precisa do `PYTHONPATH`, do `MOTOR_DATA_DIR` (o do **checkout principal** — ver
+> acima), da `MOTOR_DATABASE_URL` e do `PGPASSWORD` — env de PowerShell não atravessa janelas. E repare no
 > `MOTOR_ACESSOS_ADMIN_USUARIOS` vazio no segundo: a aba de Acessos vive fora do RBAC, numa
 > allowlist de env, então é assim que se prova que ela some (404, e o ícone nem aparece no Dock).
 
