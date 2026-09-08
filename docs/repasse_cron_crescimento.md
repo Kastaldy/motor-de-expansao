@@ -89,7 +89,7 @@ E o aviso de sucesso deve ter chegado no chat de ops.
 ```bash
 ( crontab -l 2>/dev/null
   echo '0 3 5 2,5,8,11 * /opt/motor-expansao-infra/run_atualizacao_crescimento.sh'
-  echo '0 12 6 * * /opt/motor-monitoring/healthcheck_vps.sh crescimento'
+  echo '0 12 * * 4 /opt/motor-monitoring/healthcheck_vps.sh crescimento'
 ) | crontab -
 ```
 

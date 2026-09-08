@@ -113,6 +113,12 @@ echo ">> API_IMAGE=${API_IMAGE}"
 API_TELEGRAM_TOKEN="$(_env_do_compose API_TELEGRAM_TOKEN)"
 MONITOR_TELEGRAM_CHAT_ID="$(_env_do_compose MONITOR_TELEGRAM_CHAT_ID)"
 export API_TELEGRAM_TOKEN MONITOR_TELEGRAM_CHAT_ID
+# Credencial ausente NAO aborta a atualizacao (o dado vale mais que o aviso), mas
+# fica GRITADO no log: sem isso os avisos morreriam engolidos pelo `|| true` e
+# ninguem saberia que ops ficou surdo.
+if [ "$DRY_RUN" != "1" ] && { [ -z "$API_TELEGRAM_TOKEN" ] || [ -z "$MONITOR_TELEGRAM_CHAT_ID" ]; }; then
+  echo "!! AVISO: API_TELEGRAM_TOKEN/MONITOR_TELEGRAM_CHAT_ID ausentes no .env — a rodada segue, mas NENHUM aviso chegara ao chat de ops"
+fi
 
 # Pre-checagens que abortam CEDO, com mensagem acionavel.
 [ -d "${APP_DIR}/data/reports/crescimento" ] || { echo "!! cadeia ausente no checkout: ${APP_DIR}/data/reports/crescimento"; exit 1; }

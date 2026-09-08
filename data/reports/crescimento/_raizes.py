@@ -112,6 +112,22 @@ def outputs(*partes: str) -> Path:
     return raiz("MOTOR").joinpath("outputs", *partes)
 
 
+_MES_PT = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
+
+
+def competencia_legivel(comp: str) -> str:
+    """AAAAMM -> "jun/2026". Rotulo do fim MOVEL da serie CAGED.
+
+    Ate a DEC-049 os scripts 07/09/10 escreviam o rotulo LITERAL ("jun/2026"): o
+    cron trimestral avancaria o dado e o tooltip continuaria dizendo o mes velho —
+    contradicao publicada sem erro. O rotulo agora deriva da mesma competencia que
+    delimita o dado. Ha um gemeo em `motor_expansao/crescimento/atualizar.py` (que
+    nao pode importar daqui); a paridade e travada por teste.
+    """
+    comp = str(comp)
+    return f"{_MES_PT[int(comp[4:6]) - 1]}/{comp[:4]}"
+
+
 def caged_consolidado() -> Path:
     """CSV consolidado do CAGED — canonico com fallback para o nome legado.
 

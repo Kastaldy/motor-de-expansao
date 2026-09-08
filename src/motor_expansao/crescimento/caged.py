@@ -116,6 +116,12 @@ def _baixar_7z(comp: str, destino: Path, timeout: int = 300) -> Path | None:
     local = destino / nome
     if local.exists() and local.stat().st_size > 1000:
         return local
+    # Baixa em `.part` e so' renomeia COMPLETO: uma queda de conexao no meio do
+    # retrbinary deixaria arquivo parcial > 1000 bytes que o atalho acima reusaria
+    # em TODA rodada futura — o cron quebraria no py7zr para sempre, ate' alguem
+    # apagar o .7z na mao (defeito pego na revisao adversarial; o script original
+    # era interativo e podia pagar esse preco, um cron autonomo nao).
+    parcial = local.with_suffix(local.suffix + ".part")
     ftp = ftplib.FTP(FTP_HOST, timeout=timeout)
     try:
         ftp.login()
@@ -123,10 +129,11 @@ def _baixar_7z(comp: str, destino: Path, timeout: int = 300) -> Path | None:
             ftp.cwd(f"{FTP_BASE}/{comp[:4]}/{comp}")
         except ftplib.error_perm:
             return None  # mes ainda nao publicado — esperado no fim da fila
-        with open(local, "wb") as f:
+        with open(parcial, "wb") as f:
             ftp.retrbinary("RETR " + nome, f.write, blocksize=1024 * 1024)
     finally:
         ftp.quit()
+    os.replace(parcial, local)
     return local
 
 

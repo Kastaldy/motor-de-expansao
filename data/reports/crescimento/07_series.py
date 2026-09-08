@@ -4,7 +4,7 @@ Formato por dimensao: nome|unidade|rotulo_ini|rotulo_fim|v1,v2,...   unidas por 
 import pandas as pd, numpy as np, glob, zipfile, unicodedata, sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
-from _raizes import TRABALHO, artefato_municipal, caged_consolidado, entrada, raiz, trabalho  # noqa: E402
+from _raizes import TRABALHO, artefato_municipal, caged_consolidado, competencia_legivel, entrada, raiz, trabalho  # noqa: E402
 ART = artefato_municipal()
 D = str(raiz("SOCIO"))
 C = str(raiz("TEC"))
@@ -79,7 +79,8 @@ piv = cg.pivot_table(index="cod6", columns="competencia", values="saldo", aggfun
 comps = sorted(piv.columns)
 rol = piv[comps].T.rolling(12).sum().T
 usar = comps[11:][-30:]
-S["emprego"] = ("Emprego", "vagas", "jan/2024", "jun/2026", rol[usar].round(0))
+S["emprego"] = ("Emprego", "vagas", competencia_legivel(usar[0]), competencia_legivel(usar[-1]),
+                rol[usar].round(0))
 print(f"emprego: {len(rol):,} x {len(usar)} meses")
 
 # --- codifica ---------------------------------------------------------------

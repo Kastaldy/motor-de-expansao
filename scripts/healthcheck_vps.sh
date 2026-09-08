@@ -43,8 +43,9 @@ SNAPSHOTS_DIR="${MONITOR_SNAPSHOTS_DIR:-/opt/motor-expansao/data/staging/snapsho
 AGREGADOR_MAX_DIAS="${MONITOR_AGREGADOR_MAX_DIAS:-9}"
 AGREGADORES=(wellhub totalpass)
 # Camada de crescimento municipal (DEC-049): cadencia TRIMESTRAL (dia 5 de
-# fev/mai/ago/nov). 100 = um trimestre (~92 dias) + folga de uma semana para a
-# retentativa manual; uma rodada perdida mede ~184 e dispara com sobra. A regua e'
+# fev/mai/ago/nov). 100 = um trimestre (~92 dias) + folga para retentativa manual;
+# com o check SEMANAL (quinta), uma rodada perdida dispara na 1a quinta depois de
+# a idade passar de 100 — ~1-2 semanas apos o cron falhar, nao um mes. A regua e'
 # o MTIME do parquet publicado — aqui ele e' confiavel porque o unico produtor e' o
 # rename atomico do proprio job (nao ha rsync/migracao rejuvenescendo a folha, o
 # defeito que tirou o mtime da regua dos agregadores). Arquivo que NUNCA existiu

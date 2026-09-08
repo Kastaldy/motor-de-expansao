@@ -950,7 +950,7 @@ O que é vigiado e a cadência (crontab do root):
 0 11 * * *  /opt/motor-monitoring/healthcheck_vps.sh authelia    # resumo diário de falhas de login (08h BRT)
 0 18 * * 0  /opt/motor-monitoring/healthcheck_vps.sh coleta      # domingo 15h BRT: resumo/falha da coleta semanal
 0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh agregadores # quinta 09h BRT: idade da partição de cada agregador (BLK-MA-21)
-0 12 6 * *  /opt/motor-monitoring/healthcheck_vps.sh crescimento # dia 6, 09h BRT: idade da camada de crescimento municipal (DEC-049; limiar 100 dias)
+0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh crescimento # quinta 09h BRT: idade da camada de crescimento municipal (DEC-049; limiar 100 dias)
 ```
 
 Comportamento anti-spam: alerta na transição OK→FAIL, lembrete a cada 1h enquanto durar,

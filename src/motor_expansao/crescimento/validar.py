@@ -111,7 +111,9 @@ def validar_municipal(df: pd.DataFrame) -> list[str]:
 def validar_hex(df: pd.DataFrame) -> list[str]:
     """Lista de defeitos do artefato por hexagono ([] = integro)."""
     erros: list[str] = []
-    for col in ("hex_id", "cres_hex_classe"):
+    # As 3 colunas do contrato: o payload do mapa consome `cres_hex_taxa` alem da
+    # classe — sem ela o portao passaria e a taxa sairia nula no tooltip em silencio.
+    for col in ("hex_id", "cres_hex_classe", "cres_hex_taxa"):
         if col not in df.columns:
             erros.append(f"coluna ausente no hex: {col}")
     if len(df) < MIN_LINHAS_HEX:

@@ -6,7 +6,7 @@
 import pandas as pd, numpy as np, sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
-from _raizes import artefato_municipal, caged_consolidado, raiz  # noqa: E402
+from _raizes import artefato_municipal, caged_consolidado, competencia_legivel, raiz  # noqa: E402
 ART = artefato_municipal()
 D = str(raiz("SOCIO"))
 c6 = lambda s: s.astype(str).str.replace(r"\D", "", regex=True).str.zfill(6).str[:6]
@@ -33,7 +33,7 @@ passo = ["202212"] + meses[1::2]
 emp_niv = niv[passo].round(0)
 
 PERIODO = {"Renda": "2020→2024", "População": "2016→2021", "Empresas": "2020–2025",
-           "Prédios": "2016→2023", "Emprego": "2022→jun/2026"}
+           "Prédios": "2016→2023", "Emprego": f"2022→{competencia_legivel(meses[-1])}"}
 
 def des(s, sep):
     if not isinstance(s, str): return {}
@@ -47,7 +47,7 @@ def refaz_series(row):
     d = des(row.cres_series, "|")
     if row.cod6 in emp_niv.index:
         v = emp_niv.loc[row.cod6]
-        d["Emprego"] = ["Emprego", "vínculos", "dez/2022", "jun/2026",
+        d["Emprego"] = ["Emprego", "vínculos", "dez/2022", competencia_legivel(passo[-1]),
                         ",".join(f"{x:.0f}" for x in v)]
     return ";".join("|".join(p) for p in d.values()) if d else None
 

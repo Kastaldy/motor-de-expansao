@@ -74,7 +74,7 @@ def test_hex_integro_e_dominio():
         {
             "hex_id": [f"h{i}" for i in range(31000)],
             "cres_hex_classe": ["Em alta", "Estavel", "Sem obra nova", None] * 7750,
-            "outra": [0] * 31000,
+            "cres_hex_taxa": [0.1] * 31000,
         }
     )
     assert validar.validar_hex(ok) == []
@@ -82,6 +82,9 @@ def test_hex_integro_e_dominio():
     ruim.loc[0, "cres_hex_classe"] = "Estável"
     assert any("cres_hex_classe" in e for e in validar.validar_hex(ruim))
     assert any("hexes" in e for e in validar.validar_hex(ok.head(100)))
+    # a taxa e' consumida pelo payload do mapa: hex de 2 colunas nao passa
+    sem_taxa = ok.drop(columns=["cres_hex_taxa"])
+    assert any("cres_hex_taxa" in e for e in validar.validar_hex(sem_taxa))
 
 
 # ------------------------------------------------------------------- CAGED --
@@ -273,11 +276,36 @@ def test_wrapper_chama_modulos_que_existem():
         importlib.import_module(m)
 
 
+def test_paridade_competencia_legivel_com_raizes():
+    """O rotulo AAAAMM->"mes/ano" existe em `_raizes.py` (cadeia) e em
+    `atualizar.py` (aviso) — dois arquivos que nao se importam; a paridade e' o
+    que impede o tooltip e o bot de dizerem meses diferentes."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_raizes_teste", DIR_CADEIA / "_raizes.py")
+    assert spec and spec.loader
+    raizes = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(raizes)
+    from motor_expansao.crescimento.atualizar import _competencia_legivel
+
+    for comp in ("202001", "202603", "202612", "203107"):
+        assert raizes.competencia_legivel(comp) == _competencia_legivel(comp)
+
+
 def test_paridade_nome_consolidado_com_raizes():
     """Os DOIS nomes do consolidado em `_raizes.py` == constantes de `caged.py`."""
     raizes = (DIR_CADEIA / "_raizes.py").read_text(encoding="utf-8")
     assert f'"{caged.NOME_CONSOLIDADO}"' in raizes
     assert f'"{caged.NOME_CONSOLIDADO_LEGADO}"' in raizes
+
+
+def test_cadeia_sem_rotulo_de_periodo_congelado():
+    """Nenhum script da cadeia pode ter "jun/2026" (ou outro fim de serie) LITERAL:
+    o cron avanca o dado e o rotulo congelado viraria contradicao publicada — o fim
+    da serie CAGED sai de `competencia_legivel(...)`, derivado do consolidado."""
+    for nome in ORDEM_SCRIPTS:
+        fonte = (DIR_CADEIA / nome).read_text(encoding="utf-8")
+        assert "jun/2026" not in fonte, nome
 
 
 def test_cadeia_sem_caminho_windows():
