@@ -142,8 +142,15 @@ services:
       # 3/3h e' do cron do host (scripts/cron/run_relatorio_acessos.sh), nao do bot.
       API_ACESSO_LOG_DIR: "/app/logs/acesso"
       API_ACESSOS_ADMIN_CHAT_ID: ${MONITOR_TELEGRAM_CHAT_ID:-}
+      # Raiz de dados desta instancia (Bloco A / DEC-047) — mesma razao do servico `api`
+      # (comentario la' explica o "ramo BR embarcado" que nunca existe sob instalacao
+      # nao-editavel). Faltava aqui: o bot importa `api.coord`, que resolve o perfil NO
+      # IMPORT — sem isto o container entra em crash loop na subida (2026-09-08).
+      MOTOR_DATA_DIR: "/app/data"
     volumes:
       - bot_data:/data
+      # O perfil do pais (mesmo bind de ARQUIVO do servico `api`; ver o comentario la').
+      - /opt/motor-expansao/data/perfil.json:/app/data/perfil.json:ro
       # Trilha de acesso do piloto (DEC-027) em LEITURA — alimenta o /acessos.
       - /opt/motor-expansao/logs/acesso:/app/logs/acesso:ro
     networks:
