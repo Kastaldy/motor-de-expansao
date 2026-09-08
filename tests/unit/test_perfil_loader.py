@@ -697,3 +697,73 @@ def test_meta_que_nunca_acusa_levanta(tmp_path: Path, campo: str, valor: float) 
     dados["reguas"]["metas_big_numbers"][campo] = valor
     with pytest.raises(PerfilInvalidoError, match=campo):
         carregar_perfil(_gravar(tmp_path, dados))
+
+
+# ── reguas.faixas_renda: as faixas dos mapas de calor de renda ─────────────────
+#
+# Regua de COR declarada pelo pais (contra a renda argentina em USD, os cortes
+# brasileiros em R$ poem 99,88% da populacao na primeira faixa e o choropleth sai de
+# uma cor so). `None` = pais usa os literais brasileiros; declarada, e fail-closed.
+
+_FAIXAS_VALIDAS: dict = {
+    "per_capita": [
+        {"ate": 341, "rotulo": "ate US$ 340"},
+        {"ate": 850, "rotulo": "US$ 341-850"},
+        {"ate": None, "rotulo": ">US$ 850"},
+    ],
+    "domiciliar": [
+        {"ate": 880, "rotulo": "ate US$ 880"},
+        {"ate": None, "rotulo": ">US$ 880"},
+    ],
+}
+
+
+def _perfil_com_faixas(faixas: object) -> dict:
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["reguas"]["faixas_renda"] = faixas
+    return dados
+
+
+def test_faixas_renda_ausente_e_null_viram_none(tmp_path: Path) -> None:
+    """Os dois jeitos de nao declarar sao equivalentes: o pais fica nos literais BR."""
+    sem_campo = carregar_perfil(_gravar(tmp_path, _copia_profunda(PERFIL_MINIMO)))
+    assert sem_campo.reguas.faixas_renda is None
+    explicito = carregar_perfil(
+        _gravar(tmp_path, _perfil_com_faixas(None), nome="perfil2.json")
+    )
+    assert explicito.reguas.faixas_renda is None
+
+
+def test_faixas_renda_validas_carregam_com_topo_aberto(tmp_path: Path) -> None:
+    perfil = carregar_perfil(_gravar(tmp_path, _perfil_com_faixas(_FAIXAS_VALIDAS)))
+    faixas = perfil.reguas.faixas_renda
+    assert faixas is not None
+    assert [f.rotulo for f in faixas.per_capita] == [
+        "ate US$ 340", "US$ 341-850", ">US$ 850",
+    ]
+    assert faixas.per_capita[-1].ate == float("inf")
+    assert faixas.domiciliar[0].ate == 880.0
+
+
+def test_faixas_renda_teto_fora_de_ordem_levanta_nomeando_o_campo(tmp_path: Path) -> None:
+    """Dois tetos iguais fazem a segunda faixa inalcancavel EM SILENCIO — por isso aborta."""
+    ruins = _copia_profunda(_FAIXAS_VALIDAS)
+    ruins["per_capita"][1]["ate"] = 341
+    with pytest.raises(PerfilInvalidoError, match=r"per_capita\[1\]\.ate"):
+        carregar_perfil(_gravar(tmp_path, _perfil_com_faixas(ruins)))
+
+
+def test_faixas_renda_topo_fechado_levanta(tmp_path: Path) -> None:
+    """Sem topo aberto, renda acima do ultimo teto ficaria sem cor definida."""
+    ruins = _copia_profunda(_FAIXAS_VALIDAS)
+    ruins["domiciliar"][-1]["ate"] = 99999
+    with pytest.raises(PerfilInvalidoError, match=r"domiciliar\[1\]\.ate"):
+        carregar_perfil(_gravar(tmp_path, _perfil_com_faixas(ruins)))
+
+
+def test_faixas_renda_rotulo_acentuado_levanta(tmp_path: Path) -> None:
+    """A legenda rasteriza com fonte sem glifo acentuado: acento viraria tofu calado."""
+    ruins = _copia_profunda(_FAIXAS_VALIDAS)
+    ruins["per_capita"][0]["rotulo"] = "até US$ 340"
+    with pytest.raises(PerfilInvalidoError, match=r"per_capita\[0\]\.rotulo"):
+        carregar_perfil(_gravar(tmp_path, _perfil_com_faixas(ruins)))

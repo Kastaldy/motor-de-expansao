@@ -435,13 +435,46 @@ DENSIDADE_POP_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
 # -> verde-claro -> verde solido (renda alta). Cores absolutas pedidas: #F7F48B / #FFFF00 /
 # #FFD21C / #A8FFA8 / #00CC00. alpha 150 = cor da LEGENDA; o FILL no mapa usa _CHOROPLETH_ALPHA.
 # Camada de VISUALIZACAO do Relatorio Pontual Censitario — NAO altera score/artefatos M1.
-RENDA_PER_CAPITA_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
+_RENDA_PER_CAPITA_BANDS_BR: list[tuple[float, str, tuple[int, int, int, int]]] = [
     (1_000.0,   "ate R$ 1.000",        (247, 244, 139, 150)),   # #F7F48B
     (2_000.0,   "R$ 1.001-2.000",      (255, 255, 0,   150)),   # #FFFF00
     (3_500.0,   "R$ 2.001-3.500",      (255, 210, 28,  150)),   # #FFD21C
     (5_000.0,   "R$ 3.501-5.000",      (168, 255, 168, 150)),   # #A8FFA8
     (float("inf"), ">R$ 5.000",        (0,   204, 0,   150)),   # #00CC00
 ]
+
+# A MESMA rampa dos literais acima, mais um verde-escuro de topo (o de OFERTA_*_BANDS).
+# Serve as faixas DECLARADAS NO PERFIL (`reguas.faixas_renda`): pais cujo choropleth de
+# renda nao e' legivel na regua brasileira declara os proprios cortes/rotulos no perfil,
+# e a COR vem daqui — regua e' dado de pais, paleta e' identidade da plataforma. Regra de
+# atribuicao: as N-1 primeiras faixas tomam as N-1 primeiras cores, a de topo toma SEMPRE
+# a ultima — com 6 faixas a rampa sai inteira; com 5, identica a brasileira.
+_RAMPA_RENDA: list[tuple[int, int, int, int]] = [
+    (247, 244, 139, 150),   # #F7F48B
+    (255, 255, 0,   150),   # #FFFF00
+    (255, 210, 28,  150),   # #FFD21C
+    (168, 255, 168, 150),   # #A8FFA8
+    (0,   204, 0,   150),   # #00CC00
+    (20,  170, 80,  150),   # verde-escuro de OFERTA_*_BANDS
+]
+
+
+def _bands_de_faixas(
+    faixas,  # tuple[perfil.FaixaRenda, ...]
+) -> list[tuple[float, str, tuple[int, int, int, int]]]:
+    """Faixas do perfil -> formato de bands dos mapas de calor (teto, rotulo, RGBA)."""
+    cores = list(_RAMPA_RENDA[: len(faixas) - 1]) + [_RAMPA_RENDA[-1]]
+    return [(f.ate, f.rotulo, cor) for f, cor in zip(faixas, cores, strict=True)]
+
+
+# Pais com `reguas.faixas_renda` declarado (a Argentina, ancorada na canasta do INDEC)
+# usa as faixas do perfil; sem o campo (o Brasil), os literais de sempre, byte a byte —
+# travado por tests/contracts/test_perfil_br_reproduz_as_constantes.py.
+RENDA_PER_CAPITA_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = (
+    _bands_de_faixas(_REGUAS.faixas_renda.per_capita)
+    if _REGUAS.faixas_renda is not None
+    else _RENDA_PER_CAPITA_BANDS_BR
+)
 
 # ── Renda media domiciliar (fase seguinte, portada do prototipo) ──────────────
 # renda_media_domiciliar = renda do responsavel (V06004) x uplift de composicao x fator temporal,
@@ -640,13 +673,20 @@ def uplift_extrapolado(cod_setor: object) -> bool:
 # ("até" saia bugado; per capita ja usa "ate"). Faixas pedidas por Felipe (2026-07-17): 2.000 /
 # 4.000 / 8.000 / 14.000 (corte de 4.600 -> 4.000 a pedido de Felipe 2026-07-23). Camada de
 # VISUALIZACAO do Relatorio Pontual; NAO altera score/artefatos M1.
-RENDA_MEDIA_DOMICILIAR_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
+_RENDA_MEDIA_DOMICILIAR_BANDS_BR: list[tuple[float, str, tuple[int, int, int, int]]] = [
     (2_000.0,   "ate R$ 2.000",        (247, 244, 139, 150)),   # #F7F48B
     (4_000.0,   "R$ 2.001-4.000",      (255, 255, 0,   150)),   # #FFFF00
     (8_000.0,   "R$ 4.001-8.000",      (255, 210, 28,  150)),   # #FFD21C
     (14_000.0,  "R$ 8.001-14.000",     (168, 255, 168, 150)),   # #A8FFA8
     (float("inf"), ">R$ 14.000",       (0,   204, 0,   150)),   # #00CC00
 ]
+
+# Mesma regra da per capita: faixas declaradas no perfil vencem; sem elas, o literal BR.
+RENDA_MEDIA_DOMICILIAR_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = (
+    _bands_de_faixas(_REGUAS.faixas_renda.domiciliar)
+    if _REGUAS.faixas_renda is not None
+    else _RENDA_MEDIA_DOMICILIAR_BANDS_BR
+)
 
 # Faixas absolutas de RESIDUAL FITNESS DISPONIVEL (`oferta_efetiva_disponivel`), em ALUNOS —
 # NAO confundir com `RESIDUAL_SCORE_BANDS`, que e' score 0-100. Ancora: 2.500 alunos = capacidade
