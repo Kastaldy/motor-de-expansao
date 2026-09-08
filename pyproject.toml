@@ -72,6 +72,16 @@ dev = [
 simulador_cache = [
     "formulas>=1.2.0,<2",
 ]
+# Atualizacao trimestral da camada de crescimento (DEC-049): o py7zr abre o .7z do
+# microdado CAGED baixado do FTP do PDET. Import TARDIO em `crescimento/caged.py` —
+# CI e dev nao instalam este extra (os testes mockam a extracao); quem precisa dele
+# e' a imagem da api/bot (Dockerfile.api instala .[...,crescimento]), onde o job
+# trimestral roda. AINDA SEM PIN no constraints.txt: o proximo refresh do lock
+# (`uv pip compile ... --all-extras`, ci.yml) o incorpora; ate' la' a imagem resolve
+# o py7zr livre — declarado na DEC-049, nao e' esquecimento.
+crescimento = [
+    "py7zr>=0.21,<1",
+]
 # Subset MVP da API GeoEspacial on-demand (BLK-API-02+, §11 do contrato).
 # Isolado do bloco `api` legado (PostGIS/Prefect/Sentry) — NAO arrastar aquele.
 # Instalar: pip install -e ".[api_mvp]"

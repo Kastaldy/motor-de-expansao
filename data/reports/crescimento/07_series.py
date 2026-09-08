@@ -4,7 +4,7 @@ Formato por dimensao: nome|unidade|rotulo_ini|rotulo_fim|v1,v2,...   unidas por 
 import pandas as pd, numpy as np, glob, zipfile, unicodedata, sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
-from _raizes import TRABALHO, artefato_municipal, entrada, raiz, trabalho  # noqa: E402
+from _raizes import TRABALHO, artefato_municipal, caged_consolidado, entrada, raiz, trabalho  # noqa: E402
 ART = artefato_municipal()
 D = str(raiz("SOCIO"))
 C = str(raiz("TEC"))
@@ -13,7 +13,7 @@ def norm(s):
     s = unicodedata.normalize("NFKD", str(s)).encode("ascii","ignore").decode().upper().strip()
     return " ".join(s.split())
 
-base = pd.read_csv(rf"{C}\indices_crescimento_municipal.csv", low_memory=False,
+base = pd.read_csv(f"{C}/indices_crescimento_municipal.csv", low_memory=False,
                    usecols=["cod6","cidade","uf"])
 base["cod6"] = base.cod6.astype(str).str.zfill(6)
 S = {}
@@ -21,7 +21,7 @@ S = {}
 # --- RENDA: remuneracao media RAIS 2020..2024 -------------------------------
 anos_r = list(range(2020, 2025)); part = []
 for a in anos_r:
-    d = pd.read_csv(rf"{D}\rais\rais_municipio_{a}.csv", dtype={"cod_municipio": str})
+    d = pd.read_csv(f"{D}/rais/rais_municipio_{a}.csv", dtype={"cod_municipio": str})
     d["cod6"] = c6(d.cod_municipio)
     g = d.groupby("cod6").agg(v=("vinculos_ativos","sum"), m=("massa_salarial_mensal","sum"))
     part.append((g.m / g.v).rename(a))
@@ -30,7 +30,7 @@ S["renda"] = ("Renda", "R$", str(anos_r[0]), str(anos_r[-1]), renda.round(0))
 print(f"renda: {len(renda):,} municipios x {len(anos_r)} anos")
 
 # --- POPULACAO --------------------------------------------------------------
-po = pd.read_csv(rf"{D}\pib\populacao_6579_serie.csv", dtype={"cod6": str})
+po = pd.read_csv(f"{D}/pib/populacao_6579_serie.csv", dtype={"cod6": str})
 po["cod6"] = po.cod6.astype(str).str.zfill(6)
 pv = po.pivot_table(index="cod6", columns="ano", values="populacao", aggfunc="first")
 anos_p = [a for a in sorted(pv.columns) if a >= 2016]
@@ -39,12 +39,12 @@ S["pop"] = ("População", "hab", str(anos_p[0]), str(anos_p[-1]), pop.round(0))
 print(f"populacao: {len(pop):,} x {len(anos_p)} anos {anos_p}")
 
 # --- EMPRESAS: saldo CNPJ por ano ------------------------------------------
-cj = pd.read_parquet(rf"{D}\cnpj\agg\municipio_ano_dinamismo.parquet")
+cj = pd.read_parquet(f"{D}/cnpj/agg/municipio_ano_dinamismo.parquet")
 cj["ano_i"] = pd.to_numeric(cj.ano, errors="coerce")
 cj = cj[(cj.ano_i >= 2018) & (cj.ano_i <= 2025)]
 cj["sinal"] = np.where(cj.tipo.eq("abertura"), 1, -1)
 cj["liq"] = cj.n * cj.sinal
-with zipfile.ZipFile(rf"{D}\cnpj\Municipios.zip") as z:
+with zipfile.ZipFile(f"{D}/cnpj/Municipios.zip") as z:
     mref = pd.read_csv(z.open(z.namelist()[0]), sep=";", header=None,
                        names=["cod_receita","nome"], dtype=str, encoding="latin1")
 mref["cod_receita"] = mref.cod_receita.str.zfill(4); mref["nn"] = mref.nome.map(norm)
@@ -71,7 +71,7 @@ S["predios"] = ("Prédios", "m²", "2016", "2023", (pr/1000).round(0))   # milha
 print(f"predios: {len(pr):,} x 8 anos")
 
 # --- EMPREGO: saldo CAGED acumulado 12m (mensal) ---------------------------
-cg = pd.read_csv(rf"{D}\caged\caged_municipio_mensal_2020_2026.csv",
+cg = pd.read_csv(caged_consolidado(),
                  dtype={"competencia": str, "cod_municipio": str})
 cg["cod6"] = c6(cg.cod_municipio); cg = cg[cg.cod6 != "999999"]
 cg["saldo"] = pd.to_numeric(cg.saldo, errors="coerce").fillna(0)

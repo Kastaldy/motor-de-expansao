@@ -112,6 +112,23 @@ def outputs(*partes: str) -> Path:
     return raiz("MOTOR").joinpath("outputs", *partes)
 
 
+def caged_consolidado() -> Path:
+    """CSV consolidado do CAGED — canonico com fallback para o nome legado.
+
+    O nome antigo embutia o periodo (`_2020_2026`): quando o cron trimestral
+    (DEC-049) passasse de 2026, ele atualizaria um arquivo que a cadeia nao le.
+    O canonico e' o `_consolidado`; o legado continua valendo onde a migracao
+    ainda nao rodou (estacao do autor). Os DOIS nomes tambem vivem em
+    `src/motor_expansao/crescimento/caged.py` (que nao pode ser importado daqui);
+    `tests/unit/test_crescimento_atualizacao.py` trava a paridade.
+    """
+    caged_dir = raiz("SOCIO") / "caged"
+    novo = caged_dir / "caged_municipio_mensal_consolidado.csv"
+    if novo.exists():
+        return novo
+    return entrada(caged_dir, "caged_municipio_mensal_2020_2026.csv")
+
+
 #: O artefato municipal, mutado em sequencia por 03 -> 05 -> 06 -> 07 -> 08 -> 09 -> 10.
 def artefato_municipal() -> Path:
     return staging("crescimento_municipal.parquet")

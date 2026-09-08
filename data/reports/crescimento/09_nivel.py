@@ -10,7 +10,7 @@ e empresas."""
 import pandas as pd, numpy as np, sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
-from _raizes import artefato_municipal, raiz  # noqa: E402
+from _raizes import artefato_municipal, caged_consolidado, raiz  # noqa: E402
 ART = artefato_municipal()
 D = str(raiz("SOCIO"))
 c6 = lambda s: s.astype(str).str.replace(r"\D", "", regex=True).str.zfill(6).str[:6]
@@ -19,11 +19,11 @@ art = pd.read_parquet(ART)
 art["cod6"] = art.cod6.astype(str).str.zfill(6)
 
 # ---- EMPREGO: estoque = RAIS 2022 + saldo acumulado desde 2023 -------------
-rais = pd.read_csv(rf"{D}\rais\rais_municipio_2022.csv", dtype={"cod_municipio": str})
+rais = pd.read_csv(f"{D}/rais/rais_municipio_2022.csv", dtype={"cod_municipio": str})
 rais["cod6"] = c6(rais.cod_municipio)
 estoque = rais.groupby("cod6").vinculos_ativos.sum()
 
-cg = pd.read_csv(rf"{D}\caged\caged_municipio_mensal_2020_2026.csv",
+cg = pd.read_csv(caged_consolidado(),
                  dtype={"competencia": str, "cod_municipio": str})
 cg["cod6"] = c6(cg.cod_municipio); cg = cg[cg.cod6 != "999999"]
 cg["saldo"] = pd.to_numeric(cg.saldo, errors="coerce").fillna(0)
