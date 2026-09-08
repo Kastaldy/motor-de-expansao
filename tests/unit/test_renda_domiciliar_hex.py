@@ -372,6 +372,48 @@ def test_payload_do_hex_serve_a_per_capita_domiciliar(staging_sintetico: Path) -
     assert payload["renda_dom"] == approx(payload["renda"] * 3.2, rel=1e-3)
 
 
+def test_payload_sinaliza_fallback_municipal_da_renda(staging_sintetico: Path) -> None:
+    """`renda_municipal` avisa o operador quando a renda exibida NAO e' do setor.
+
+    Regressao (pedido de Felipe, 2026-09-08): o hex sem `renda_per_capita_setor_2022_calibrada`
+    cai para `renda_per_capita` (SIDRA municipal, o MESMO numero repetido em toda a cidade) e
+    o tooltip/ficha mostravam um numero com cara de precisao intraurbana sem avisar a origem.
+    """
+    com_setor = pd.DataFrame(
+        {
+            "hex_id": ["a"],
+            "lat": [-23.55],
+            "lng": [-46.63],
+            "uf": ["SP"],
+            "cod_municipio": ["3550308"],
+            "renda_per_capita_setor_2022_calibrada": [1500.0],
+        }
+    )
+    sem_setor = pd.DataFrame(
+        {
+            "hex_id": ["b"],
+            "lat": [-23.55],
+            "lng": [-46.63],
+            "uf": ["SP"],
+            "cod_municipio": ["3550308"],
+            # A coluna do setor fica de fora DE PROPOSITO (nao so' None): a precedencia
+            # de `_derivar` e' por COLUNA presente, nao por valor (mesma familia da
+            # DEC-038) -- so' cai pra `renda_per_capita` quando a outra nem existe.
+            "renda_per_capita": [1800.0],
+        }
+    )
+    fator = pilot._fator_domiciliar("SP", "3550308")
+
+    linha_setor = pilot._derivar(com_setor).loc[0]
+    payload_setor = pilot._hex_dict(linha_setor, fator)
+    assert payload_setor["renda_municipal"] is False
+
+    linha_municipal = pilot._derivar(sem_setor).loc[0]
+    payload_municipal = pilot._hex_dict(linha_municipal, fator)
+    assert payload_municipal["renda_municipal"] is True
+    assert payload_municipal["renda"] is not None
+
+
 def test_k_da_calibracao_le_o_carimbo_do_staging_hex(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

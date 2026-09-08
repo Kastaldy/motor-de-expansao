@@ -1482,9 +1482,15 @@ export default function HexMap({
 
           <Divisoria />
           <Linha rotulo="Habitantes" valor={num(hover.h.pop)} />
-          <Linha rotulo="Renda per capita" valor={renda(hover.h.renda)} />
+          <Linha
+            rotulo={hover.h.renda_municipal ? 'Renda per capita (municipal)' : 'Renda per capita'}
+            valor={renda(hover.h.renda)}
+          />
           {hover.h.renda_dom !== null && (
-            <Linha rotulo="Renda domiciliar" valor={renda(hover.h.renda_dom)} />
+            <Linha
+              rotulo={hover.h.renda_municipal ? 'Renda domiciliar (municipal)' : 'Renda domiciliar'}
+              valor={renda(hover.h.renda_dom)}
+            />
           )}
           <Linha rotulo="Residual Fitness" valor={`${alunos(hover.h.oferta)} alunos`} />
           <Linha rotulo="Concorrentes 2 km" valor={num(hover.h.conc)} />
