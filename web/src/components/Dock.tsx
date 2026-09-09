@@ -122,21 +122,34 @@ const ICONES: Record<string, React.JSX.Element> = {
       <path d="M9 4v14M15 6v14" />
     </>
   ),
+  /* Carteira de BOLSO (porta-notas com o fecho) — a carteira da rede, coração da
+     Visão Executiva (Juan, 2026-09-09: "quero uma carteira de bolso"; a maleta e as
+     barrinhas anteriores não liam como carteira). */
   exec: (
     <>
-      <path d="M4 19V9M10 19V5M16 19v-7M22 19H2" />
+      <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1" />
+      <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4" />
     </>
   ),
+  /* Cifrão — viabilidade é a conta do dinheiro (Juan, 2026-09-09: "algo que remeta
+     dinheiro"; antes era uma linha de tendência). */
   viab: (
     <>
-      <path d="M3 17l5.5-6 4 3.5L21 6" />
-      <path d="M15 6h6v6" />
+      <circle cx="12" cy="12" r="9" />
+      <path d="M15.5 9.3c-.5-.9-1.9-1.5-3.5-1.5-1.9 0-3.2.9-3.2 2.1 0 3 6.9 1.5 6.9 4.4 0 1.2-1.5 2.1-3.5 2.1-1.7 0-3.2-.7-3.7-1.7" />
+      <path d="M12 5.8v12.4" />
     </>
   ),
-  /* Predio — a camada de oferta imobiliaria (imoveis de locacao coletados). */
+  /* Casa com uma pessoa ao lado (o icone classico de corretor) — a camada de oferta
+     imobiliaria (Juan, 2026-09-09, sobre referencia de busca de "icone de imoveis";
+     antes era um predio pontilhado, que lia como "cidade" e nao como "imovel"). */
   oport: (
     <>
-      <path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h.01M9 13h.01M9 17h.01M15 9h.01M15 13h.01M15 17h.01" />
+      <circle cx="6.3" cy="9.6" r="2.3" />
+      <path d="M2.8 20v-2.1a3.5 3.5 0 0 1 7 0V20" />
+      <path d="M12.5 20v-8.4l4.75-3.9L22 11.6V20" />
+      <path d="M15.4 20v-4.2h3.7V20" />
+      <path d="M2 20h20" />
     </>
   ),
   /* Pulso de atividade — o painel de acessos (restrito; some para quem não pode). */
@@ -150,6 +163,20 @@ const ICONES: Record<string, React.JSX.Element> = {
 /* A fila de destinos (que itens existem, em que ordem, para onde levam) vive em
    `lib/dock-itens.ts`, testável sem DOM — este componente só desenha o que está
    declarado lá, com os ícones daqui (SVG é desenho, não regra). */
+
+/* Cada destino tem a SUA cor, fixa (Juan, 2026-09-09). Começou como alternância por
+   posição na fila, mas posição mente: com o gate de abas escondendo itens, o mesmo
+   destino mudava de cor conforme quem olhava — e o pedido seguinte já falava do
+   "botão laranja" pelo destino. Verde na viabilidade é semântica ("como dinheiro
+   mesmo"), laranja nas oportunidades, turquesa no mapa, magenta na executiva, azul
+   nos acessos. Tokens da paleta de série: cada tema entrega o contraste certo. */
+const COR_ICONE: Record<string, string> = {
+  mapa: 'var(--ac-text)',
+  exec: 'var(--gr-rosa)',
+  oport: 'var(--gr-coral)',
+  viab: 'var(--gr-verde)',
+  acessos: 'var(--gr-azul)',
+}
 
 export default function Dock({
   tela,
@@ -176,6 +203,7 @@ export default function Dock({
   return (
     <nav
       aria-label="Navegação principal"
+      className="cromo-escuro"
       style={{
         width: 70,
         flexShrink: 0,
@@ -184,8 +212,11 @@ export default function Dock({
         alignItems: 'center',
         gap: 8,
         padding: '14px 8px',
-        background: 'var(--surf-chrome)',
-        borderRight: '1px solid var(--line-soft)',
+        /* Rail sempre ESCURO com lavagem turquesa — a classe `cromo-escuro` (tokens.css)
+           mantém o cromo escuro mesmo no tema claro (Juan, 2026-09-09: a barra lateral
+           clara ficou ruim em todas as lavagens de cor; a caixa escura resolveu). */
+        background: 'linear-gradient(180deg, var(--rail-a16), var(--rail-a08)), var(--surf-chrome)',
+        borderRight: '1px solid var(--rail-a24)',
         backdropFilter: 'blur(14px)',
         zIndex: 20,
       }}
@@ -230,6 +261,7 @@ export default function Dock({
       {itens.map((it) => {
         const ativo = it.tela !== null && it.tela === tela
         const disponivel = it.tela !== null
+        const cor = COR_ICONE[it.id] ?? 'var(--ac-text)'
         return (
           <button
             key={it.id}
@@ -245,12 +277,10 @@ export default function Dock({
               borderRadius: 11,
               display: 'grid',
               placeItems: 'center',
-              background: ativo ? 'var(--ac-a16)' : 'transparent',
-              color: ativo
-                ? 'var(--ac-text)'
-                : disponivel
-                  ? 'var(--tx-muted)'
-                  : 'var(--tx-rank)',
+              /* O ativo se marca pelo FUNDO (tinta da própria cor do ícone), já que a
+                 cor sozinha deixou de dizer "você está aqui" quando todos ganharam uma. */
+              background: ativo ? `color-mix(in srgb, ${cor} 16%, transparent)` : 'transparent',
+              color: disponivel ? cor : 'var(--tx-rank)',
               opacity: disponivel ? 1 : 0.5,
               transition: 'background .15s ease, color .15s ease',
             }}

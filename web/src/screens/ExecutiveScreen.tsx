@@ -453,6 +453,7 @@ export default function ExecutiveScreen({
       }}
     >
       <header
+        className="cromo-escuro"
         style={{
           flexShrink: 0,
           margin: '16px 16px 0',
@@ -656,11 +657,22 @@ export default function ExecutiveScreen({
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              {KPIS.map((k) => {
+              {/* Rotulos dos KPIs no ciclo turquesa -> magenta -> laranja do Dock
+                  (Juan, 2026-09-09). So' o ROTULO alterna: o numero segue no semaforo
+                  proprio dele (destaque/tx-max), senao a cor da marca disputaria com a
+                  leitura de bom/ruim do Delta logo abaixo.
+
+                  O laranja entra pelo par de TEXTO (--gr-coral-tx), nao pelo token de
+                  serie: em 10,5px o --gr-coral do tema claro da' 3,28:1, que e' a regua
+                  de PREENCHIMENTO e reprova em texto pequeno — os indices 2 e 5 do ciclo
+                  ("Churn" e "Saldo operacional") caiam nele. Turquesa e magenta ja'
+                  passavam (4,69 e 4,83), e por isso so' o terceiro trocou de token. */}
+              {KPIS.map((k, i) => {
                 const m = carteira.kpis[k.chave]
+                const corKpi = ['var(--ac-text)', 'var(--gr-rosa)', 'var(--gr-coral-tx)'][i % 3]
                 return (
                   <Glass key={k.chave} style={{ flex: '1 1 168px', padding: '13px 15px', minWidth: 0 }}>
-                    <div style={{ font: '500 10.5px/1.2 var(--f-ui)', color: 'var(--tx-label)' }}>{k.rotulo}</div>
+                    <div style={{ font: '600 10.5px/1.2 var(--f-ui)', color: corKpi }}>{k.rotulo}</div>
                     <div
                       className="num"
                       style={{
@@ -706,16 +718,18 @@ export default function ExecutiveScreen({
             <div style={{ display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
               <Glass style={{ ...COLUNA_PRINCIPAL, padding: 0, overflow: 'hidden' }}>
                 <div
+                  className="cromo-escuro"
                   style={{
                     padding: '13px 16px 11px',
                     display: 'flex',
                     alignItems: 'center',
                     gap: 10,
                     flexWrap: 'wrap',
+                    background: 'var(--surf-chrome)',
                     borderBottom: '1px solid var(--line-soft)',
                   }}
                 >
-                  <span style={{ font: '600 10.5px/1 var(--f-ui)', letterSpacing: '.09em', textTransform: 'uppercase', color: 'var(--tx-muted)' }}>
+                  <span style={{ font: '600 10.5px/1 var(--f-ui)', letterSpacing: '.09em', textTransform: 'uppercase', color: 'var(--tx-strong)' }}>
                     Carteira
                   </span>
                   <div style={{ flex: 1 }} />
@@ -775,7 +789,7 @@ export default function ExecutiveScreen({
                   terminava em serrilha. */}
               <div style={{ ...COLUNA_TRILHO, display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <Glass style={{ flex: '1 1 auto', minHeight: 300, padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ padding: '13px 16px 9px', font: '600 10.5px/1 var(--f-ui)', letterSpacing: '.09em', textTransform: 'uppercase', color: 'var(--tx-muted)' }}>
+                  <div className="cromo-escuro" style={{ padding: '13px 16px 9px', font: '600 10.5px/1 var(--f-ui)', letterSpacing: '.09em', textTransform: 'uppercase', color: 'var(--tx-strong)', background: 'var(--surf-chrome)' }}>
                     Onde estão
                   </div>
                   {/* O mapa é quem ESTICA: `flex: 1` faz a altura dele ser a sobra da
@@ -994,7 +1008,7 @@ export default function ExecutiveScreen({
 function Filtro({ rotulo, children }: { rotulo: string; children: React.ReactNode }) {
   return (
     <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <span className="num" style={{ font: '500 10px/1 var(--f-num)', color: 'var(--tx-muted)', textTransform: 'uppercase' }}>
+      <span className="num" style={{ font: '600 10px/1 var(--f-num)', color: 'var(--tx-strong)', textTransform: 'uppercase' }}>
         {rotulo}
       </span>
       {children}
@@ -1009,7 +1023,11 @@ function Rotulo({ children }: { children: React.ReactNode }) {
         font: '600 10.5px/1 var(--f-ui)',
         letterSpacing: '.09em',
         textTransform: 'uppercase',
-        color: 'var(--tx-muted)',
+        /* Titulo de secao em NEUTRO FORTE. Chegou a ser turquesa por meio dia
+           (2026-09-09), revertido pelo proprio Juan: "deixar com uma cor que gere
+           contraste (seja preto ou um cinza)" — a cor da marca ficou nos KPIs e no
+           rail; o titulo volta a ancorar a leitura. */
+        color: 'var(--tx-strong)',
         marginBottom: 11,
       }}
     >
