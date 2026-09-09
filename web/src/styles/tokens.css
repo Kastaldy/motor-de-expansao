@@ -89,11 +89,13 @@
   --ac-glow: 0 6px 16px -4px rgba(48, 207, 194, 0.5);
 
   /* --- Lavagem do rail (Dock e trilho de camadas) ---------------------------
-     A "barra lateral" tem tinta PROPRIA por tema (Juan, 2026-09-09): aqui no escuro
-     e' o turquesa do acento ("ficou bom"); no claro e' o MAGENTA Ultra — sobre o gelo
-     ja' turquesa do fundo claro, a lavagem turquesa sumia (ver o bloco claro). */
+     A "barra lateral" leva a lavagem TURQUESA do acento ("ficou bom", Juan
+     2026-09-09) — e leva a MESMA nos dois temas, porque no claro o rail nao vive
+     sobre o gelo: ele vive DENTRO do escopo `.cromo-escuro` (ver o bloco no fim do
+     arquivo), onde valem estes valores. Lavagem MAGENTA sobre a caixa clara chegou a
+     ser escrita aqui e nunca existiu no codigo; a versao testada em 2026-09-09 caiu
+     junto com a turquesa e a laranja, e a resposta foi escurecer a CAIXA. */
   --rail-a08: rgba(48, 207, 194, 0.08);
-  --rail-a12: rgba(48, 207, 194, 0.12);
   --rail-a16: rgba(48, 207, 194, 0.16);
   --rail-a24: rgba(48, 207, 194, 0.24);
 
@@ -215,6 +217,13 @@
   --gr-rosa: #e054a8;
   --gr-verde: #5fd08c;
   --gr-coral: #f9965a;
+  /* O coral como TEXTO. Existe pelo mesmo motivo de --indep-tx/--imovel-tx la' embaixo:
+     o token de SERIE e' calibrado para PREENCHIMENTO (3:1 basta numa fatia ou barra) e
+     no claro ele desce so' ate' ai — usado como rotulo de 10,5px dava 3,28:1, abaixo do
+     4,5 de texto pequeno. Aqui no escuro os dois valores COINCIDEM (o coral claro da'
+     8,54:1 sobre o card) e a separacao parece ociosa; ela existe para o par claro, que
+     diverge. Quem pintar TEXTO com a cor de serie usa este; quem pintar area, o outro. */
+  --gr-coral-tx: #f9965a;
   /* Degrau NEUTRO da escala de faixa de faturamento ("Bom", entre o ambar do Regular e
      o turquesa do Excelente). Neutro quer dizer discreto: e' o degrau que nao deve
      chamar atencao. Tem token proprio porque um cinza de TEXTO nao serve — no escuro o
@@ -494,6 +503,12 @@
   --gr-verde: #0f9d55;
   /* Desceu com o vidro da terceira rodada: #cd7c37 dava 2,93:1 sobre #eaf7f5. */
   --gr-coral: #c1732f;
+  /* O par de TEXTO do coral (ver o :root). E' aqui que os dois valores DIVERGEM: o
+     --gr-coral de cima para em 3,28:1 sobre o card, que serve a preenchimento e reprova
+     como rotulo — a revisao do PR #331 achou o defeito nos rotulos de KPI da Executiva,
+     em 10,5px. Este desce mais um degrau e da' 4,86:1 no card, 4,72 no fundo e 4,90 no
+     painel, preservando a matiz do laranja Ultra (28,6° contra 27,7° do #EF7F1F). */
+  --gr-coral-tx: #9c5a1e;
   --faixa-neutra: #8ba4a3;
 
   /* --- Os seis que eram valor cravado (ver o bloco gemeo no :root) ---------
@@ -534,10 +549,41 @@
    O mecanismo e' o mesmo que promoveu o tema ao app inteiro: token herda. Este
    bloco re-declara no ESCOPO os valores do bloco escuro, entao todo controle ali
    dentro (Select, busca, chips, pilulas) se repinta sozinho, sem prop de tema e
-   sem classe por componente. Os valores sao ESPELHO do :root la' de cima — quem
-   mudar la', muda aqui. No tema escuro o seletor nao casa e o escopo e' inocuo. */
+   sem classe por componente. No tema escuro o seletor nao casa e o escopo e' inocuo.
+
+   O espelho e' FECHADO POR TESTE, e essa e' a regra que vale: `tema-claro-ultra.test.ts`
+   exige que TODO token declarado no bloco claro apareca aqui ou esteja na lista de
+   excecoes de la', comentado um a um. Nao e' zelo — a primeira versao deste bloco
+   prometia "espelho" em prosa e deixava 18 tokens para tras, entre eles o --surf-panel,
+   que pinta o popup do `Select`: no tema claro a lista abria com fundo CLARO e texto do
+   tema ESCURO, 1,07:1 no campo de busca. Comentario nao segura invariante; teste segura.
+
+   E' espelho COM DESVIOS DELIBERADOS — sao estes 10, e nenhum outro (a lista tambem
+   e' travada por teste, entao ela nao pode envelhecer caladamente):
+     · --surf-chrome  o :root compoe 0,8 sobre o #080b10 e chega a ~#0d141d; aqui atras
+                      passa o gelo CLARO, entao o alfa e' trocado pela superficie ja'
+                      composta (opaca). 0,95 deixava 5% do gelo atravessar e derrubava
+                      --tx-muted a 4,28:1 e --tx-sub a 3,83:1 na legenda do cabecalho.
+     · --surf-mapa    #000 no :root (pedido do Felipe para a pilula sobre o mapa); aqui
+                      o preto chapado seria a unica mancha da tela clara.
+     · as cinco --line* e os tres --surf-raised/input/pending sobem o alfa (+0,02): sao
+                      brancos sobre a caixa escura recortada contra papel claro, e a
+                      borda que basta no escuro some quando a moldura e' clara. */
 [data-tema='claro'] .cromo-escuro {
-  --surf-chrome: rgba(15, 26, 32, 0.95);
+  /* Fundos. Nenhuma das cinco subarvores `.cromo-escuro` de hoje pinta area com eles,
+     mas quem herda a caixa escura herda o fundo dela: sem estes, o primeiro componente
+     que usar var(--bg-*) aqui dentro abre um retangulo de gelo claro no meio do cromo. */
+  --bg-base: #080b10;
+  --bg-lift: #0e1824;
+  --bg-knob: #0e151e;
+
+  /* Superficies. O --surf-panel e' o que pinta o popup do `Select` (`Select.tsx`, sem
+     `createPortal`, logo descendente do cabecalho) — o token que faltava. */
+  --surf-panel: rgba(14, 21, 30, 0.88);
+  --surf-card: rgba(14, 21, 30, 0.7);
+  --surf-sidebar: rgba(14, 21, 30, 0.8);
+  --surf-verdict: rgba(14, 21, 30, 0.72);
+  --surf-chrome: #0d141d;
   --surf-bar: rgba(16, 24, 34, 0.86);
   --surf-raised: rgba(255, 255, 255, 0.05);
   --surf-input: rgba(255, 255, 255, 0.06);
@@ -575,6 +621,7 @@
   --ac-a30: rgba(48, 207, 194, 0.3);
   --ac-a45: rgba(48, 207, 194, 0.45);
   --ac-a60: rgba(48, 207, 194, 0.6);
+  --ac-glow: 0 6px 16px -4px rgba(48, 207, 194, 0.5);
   --l1: #6fa4f7;
   --l1-a10: rgba(111, 164, 247, 0.1);
   --l1-a24: rgba(111, 164, 247, 0.24);
@@ -603,6 +650,7 @@
   --gr-rosa: #e054a8;
   --gr-verde: #5fd08c;
   --gr-coral: #f9965a;
+  --gr-coral-tx: #f9965a;
   --faixa-neutra: #cdd8e2;
   --pos: #2ec86e;
   --pos-text: #4fe08a;
@@ -611,11 +659,30 @@
   --neg-bar: #d9556a;
   --warn: #d9a441;
   --warn-text: #e9c07a;
+  --ultra: #c8001e;
+  --info: #2f6bed;
   --carga: #f2c230;
   --sinal-off: #5a6472;
+  --linha-mapa: rgba(255, 255, 255, 0.14);
   --surf-chip: rgba(255, 255, 255, 0.08);
+  --linha-eixo: rgba(255, 255, 255, 0.28);
+  --anel-mapa: rgba(255, 255, 255, 0.18);
+  --indep-tx: #f2a488;
+  --imovel-tx: #f06fb6;
+  /* Sombras: as do bloco claro sao teal com pouco alfa, para SEPARAR sobre papel; aqui
+     dentro a caixa e' escura de novo e a sombra volta a ser preta, a VEDACAO do :root. */
+  --sh-pin: 0 5px 12px rgba(0, 0, 0, 0.5);
+  --sh-frame: 0 30px 70px -30px rgba(0, 0, 0, 0.6);
+  --sh-ponto: 0 3px 10px rgba(0, 0, 0, 0.5);
   --sh-pop: 0 10px 30px -8px rgba(0, 0, 0, 0.7);
   --sh-menu: 0 14px 34px -10px rgba(0, 0, 0, 0.75);
+
+  /* O chrome nativo tambem precisa saber que a caixa virou escura: o `color-scheme`
+     do documento continua `light` (o atributo vive no <html>), entao o glifo do
+     calendario do `<input type="date">` do PeriodoPicker seria desenhado escuro sobre
+     a caixa escura e sumiria. O valor da data nunca esteve em risco — o texto ja' vem
+     dos --tx-* espelhados acima; o que se recupera aqui e' o icone. */
+  color-scheme: dark;
 }
 
 /* As rampas --ramp-indigo-* / --ramp-green-*, herdadas do prototipo standalone,

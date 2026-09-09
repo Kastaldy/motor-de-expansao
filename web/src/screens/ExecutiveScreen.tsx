@@ -660,10 +660,16 @@ export default function ExecutiveScreen({
               {/* Rotulos dos KPIs no ciclo turquesa -> magenta -> laranja do Dock
                   (Juan, 2026-09-09). So' o ROTULO alterna: o numero segue no semaforo
                   proprio dele (destaque/tx-max), senao a cor da marca disputaria com a
-                  leitura de bom/ruim do Delta logo abaixo. */}
+                  leitura de bom/ruim do Delta logo abaixo.
+
+                  O laranja entra pelo par de TEXTO (--gr-coral-tx), nao pelo token de
+                  serie: em 10,5px o --gr-coral do tema claro da' 3,28:1, que e' a regua
+                  de PREENCHIMENTO e reprova em texto pequeno — os indices 2 e 5 do ciclo
+                  ("Churn" e "Saldo operacional") caiam nele. Turquesa e magenta ja'
+                  passavam (4,69 e 4,83), e por isso so' o terceiro trocou de token. */}
               {KPIS.map((k, i) => {
                 const m = carteira.kpis[k.chave]
-                const corKpi = ['var(--ac-text)', 'var(--gr-rosa)', 'var(--gr-coral)'][i % 3]
+                const corKpi = ['var(--ac-text)', 'var(--gr-rosa)', 'var(--gr-coral-tx)'][i % 3]
                 return (
                   <Glass key={k.chave} style={{ flex: '1 1 168px', padding: '13px 15px', minWidth: 0 }}>
                     <div style={{ font: '600 10.5px/1.2 var(--f-ui)', color: corKpi }}>{k.rotulo}</div>
