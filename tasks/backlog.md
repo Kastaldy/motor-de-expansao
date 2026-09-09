@@ -4670,3 +4670,56 @@ do §7.4.1.
 **Guardrail.** Deploy manual, comando a comando (`CLAUDE.md` §6). No **primeiro** deploy o caddy é
 **recriado** (`up -d caddy`, não `reload`) — o volume `./portal` só entra na recriação; ver
 `docs/infra_producao.md`, seção "Portal de seleção de país na raiz".
+
+---
+
+### BLK-JOINUF-01 — `qualidade_join_uf` é granularidade de ESTADO, não de município/hex; hexágono litorâneo quebra a classificação
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — mexe em `qualidade_join_uf`/`confianca_geografica`, insumo da camada censitária PRIMÁRIA (§1) e do gate híbrido (DEC-040/045/050). Precisa de DEC própria. |
+| **Esteira** | `[GATE HUMANO]` — investigação + medição de impacto antes de qualquer PR. |
+| **Depende de** | DEC-050 (aprofunda o mesmo achado — a DEC-050 corrigiu o composto obsoleto vs. `classe_join_uf`, mas nem o `classe_join_uf` "corrigido" resolve os dois problemas abaixo) |
+| **Status** | **Achado, não iniciado** — registrado em 2026-09-09 a pedido do Felipe, depois de reportar hexágonos com fallback municipal em Manaus/AM, Fortaleza/CE e litoral do RJ/SP mesmo com o mapa de calor mostrando setor censitário real na mesma área |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca score/confiança censitária, Crítica |
+
+**O que foi medido (comparando o parquet `hexagonos_dashboard_enriquecido` real da VPS pós-DEC-050
+contra o setor censitário bruto que alimenta o mapa de calor do BLK do dia):**
+
+**Mecanismo 1 — granularidade de UF inteira.** `qualidade_join_uf`/`classe_join_uf` é UM valor por
+ESTADO, não por município nem por hex: os 293.991 hexágonos do Amazonas inteiro — de Manaus (capital,
+com dado de setor real e denso) a municípios de floresta como Barcelos e Tapauá — têm o **mesmo**
+`C`. Isso significa que a nota agregada do interior rural do estado arrasta para baixo a nota da
+capital, mesmo onde a capital tem cobertura de setor excelente. Efeito prático: `população`
+(`confianca_geografica`) cai em fallback municipal (o total de Manaus, 2.063.689, repetido em TODO
+hexágono) mesmo em hexágonos centrais com dado real de setor de até 83 mil habitantes. **A renda não
+sofre esse gate hoje** (o `_derivar` do piloto usa a coluna sempre que ela existe, sem checar
+`qualidade_join_uf`) — o que evita esse sintoma na renda, mas por acidente, não por desenho: um valor
+de renda de um hex com join ruim é exibido sem nenhum aviso de baixa confiança.
+
+**Mecanismo 2 — hexágono na linha da costa quebra a classificação.** Em Fortaleza, 80% dos hexágonos
+têm ótima nota (`B`), mas os 11 problemáticos (`"Não informado"` → fallback municipal) se concentram
+exatamente na faixa de latitude mais ao norte, a costa da cidade — hexágono que cruza a linha d'água
+não tem setor censitário cobrindo o oceano, a métrica de mismatch degenera e a classificação nunca
+sai de `"Não informado"`. Mesmo padrão esperado no litoral do RJ e SP (medição em RJ é mais ruidosa
+por causa da baía/relevo, mas a mecânica geométrica é a mesma).
+
+**Por que isso não é bug do trabalho recém-entregue.** As flags `renda_municipal`/`pop_municipal`
+(fallback-legend) e o mapa de calor (Bloco D) estão corretos — eles só tornaram VISÍVEL um limite
+estrutural que já existia: o sinal de confiança é grosso demais (UF) para uma decisão que é fina
+(hex/setor), e a costa é um caso geométrico degenerado que a métrica atual não trata.
+
+**Escopo de investigação sugerido, quando priorizado:**
+1. Recalcular `classe_join_uf`/mismatch por MUNICÍPIO (ou cluster de hexes), não por UF — medir se
+   isso recupera capitais/cidades bem cobertas hoje presas atrás de estados ruins (Manaus é o caso
+   comprovado; medir Belém/PA, outras capitais de UF 100% `C`).
+2. Tratar hexágono de borda litorânea como classe própria (ex.: herdar a nota do hexágono terrestre
+   mais próximo, ou usar só a fração de área com setor real) em vez de `"Não informado"` automático.
+3. Decidir se a renda deveria respeitar o mesmo gate de confiança que a população (hoje não respeita)
+   — e se sim, medir quantos hexágonos perderiam renda granular ao ficarem consistentes.
+4. Medir o efeito nacional (UFs afetadas, % de população recuperada, hash do M1 intacto) antes de
+   qualquer PR, no mesmo padrão de rigor da DEC-050/045.
+
+**Guardrail.** §5 READ-ONLY M1. Qualquer mudança em `qualidade_join_uf`/`confianca_geografica`/
+`score_setor_2022_calibrado` exige DEC própria (Crítica) e medição antes/depois por UF, igual à
+DEC-050.
