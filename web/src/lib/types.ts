@@ -1216,6 +1216,7 @@ export interface RedeFiltros {
   mes_padrao: string
   ufs: string[]
   masters: string[]
+  masters_regiao: string[]
   consultores: string[]
   masters_franquia: string[]
   coortes: { chave: string; rotulo: string; n: number }[]

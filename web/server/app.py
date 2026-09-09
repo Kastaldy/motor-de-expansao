@@ -6924,7 +6924,7 @@ def _rede_faixas(recorte: pd.DataFrame, contexto: dict[str, Any]) -> dict[str, A
     """Quantas unidades do recorte em cada faixa ABSOLUTA de faturamento do time de campo.
 
     Roda sempre sobre o último mês FECHADO, nunca sobre a competência em curso. As faixas
-    (`Crítico <150k … Excelente+ ≥300k`) são limiares de MÊS INTEIRO: aplicá-las ao
+    (`Crítico <150k … Excelente+ ≥400k`) são limiares de MÊS INTEIRO: aplicá-las ao
     acumulado de três dias jogaria a rede inteira em "Crítico" — o mesmo motivo pelo qual
     o diagnóstico não roda sobre mês aberto.
     """
@@ -7442,7 +7442,16 @@ def _rede_filtrar(contexto: dict[str, Any], filtros: dict[str, str | None]) -> p
     if filtros.get("uf"):
         dados = dados[dados["uf"].astype(str).str.upper() == str(filtros["uf"]).upper()]
     if filtros.get("master"):
-        dados = dados[dados["master"].astype(str) == filtros["master"]]
+        # Casa pelo CADASTRO (`master_franquia`), como o `consultor` abaixo -- e nao pela
+        # coluna `master` da Growth, que e' sigla de regiao. Unidade sem cadastro nao entra
+        # em nenhum recorte de master; ela continua inteira na carteira sem o filtro.
+        alvo_master = str(filtros["master"])
+        ids_master = {
+            uid
+            for uid, registro in cadastro.unidades.items()
+            if str(registro.get("master_franquia") or "") == alvo_master
+        }
+        dados = dados[dados["unidade_id"].isin(ids_master)]
     if filtros.get("coorte"):
         dados = dados[dados["coorte"].astype(str) == filtros["coorte"]]
     if filtros.get("consultor"):
@@ -7492,7 +7501,16 @@ def rede_filtros(mes: str | None = None) -> dict[str, Any]:
         "meses": meses[:_REDE_MESES_NO_SELETOR],
         "mes_padrao": meses[0],
         "ufs": sorted({str(u) for u in atual["uf"].dropna().unique()}),
-        "masters": sorted({str(m) for m in atual["master"].dropna().unique() if str(m).strip()}),
+        # NOME do master franqueado (cadastro), nao a sigla de REGIAO que a Growth manda em
+        # `master`. A sigla nao identifica franqueado: medido em 2026-09-09, `DF/GO` cobre 2
+        # masters, `RJ/SP 01` cobre 3 e `ULTRA` cobre 3 -- filtrar por ela nunca respondeu
+        # "as unidades de quem". A ficha ja' exibia `master_franquia`; o filtro e' que lia
+        # outra coluna, entao a tela dizia um nome e filtrava por outro criterio.
+        "masters": rede_cadastro.valores_distintos(cadastro, "master_franquia"),
+        # Sigla de regiao da Growth, preservada para quem precisar do recorte antigo.
+        "masters_regiao": sorted(
+            {str(m) for m in atual["master"].dropna().unique() if str(m).strip()}
+        ),
         "consultores": rede_cadastro.valores_distintos(cadastro, "consultor"),
         "masters_franquia": rede_cadastro.valores_distintos(cadastro, "master_franquia"),
         "coortes": rede_coorte.resumo_coortes(atual),

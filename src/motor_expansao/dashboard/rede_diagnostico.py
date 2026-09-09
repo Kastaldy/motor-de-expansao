@@ -153,13 +153,21 @@ REGUAS_VIGENTES: dict[str, dict[str, object]] = {
 # numero MENOR do que aquele para o qual foram feitas, e a rede aparecia sistematicamente
 # pior. Medido em 2026-07 sobre as 86 unidades comparaveis: "Critico" cai de 33 para 17
 # unidades quando o faturamento passa a vir do Financeiro, e 39 unidades (45%) mudam de
-# faixa sem ter mudado de desempenho. Nao mexer nos limiares e' deliberado -- eles voltaram
-# a pousar sobre a grandeza certa. Ver `rede_faturamento_financeiro`.
+# faixa sem ter mudado de desempenho. Ver `rede_faturamento_financeiro`.
+#
+# TETOS ALARGADOS por decisao de Felipe em 2026-09-09: `bom` 250k -> 300k e `excelente`
+# 300k -> 400k (o teto de `critico` e o de `regular` ficaram como estavam). Ate' aqui o
+# comentario dizia que nao mexer nos limiares era deliberado -- e era, enquanto a unica
+# mudanca em jogo fosse compensar a troca de fonte do faturamento. Esta e' outra coisa: a
+# regua do topo passou a comprimir demais: com o teto anterior, `Excelente+` era qualquer
+# coisa acima de 300k e deixava de separar a unidade forte da flagship. A ressalva do
+# paragrafo acima continua valendo integralmente -- seguem faixas ABSOLUTAS, aplicadas
+# igual a unidade de bairro e a flagship, com o benchmark por coorte como contrapeso.
 FAIXAS_FATURAMENTO: tuple[tuple[float, str, str], ...] = (
     (150_000.0, "critico", "Crítico"),
     (200_000.0, "regular", "Regular"),
-    (250_000.0, "bom", "Bom"),
-    (300_000.0, "excelente", "Excelente"),
+    (300_000.0, "bom", "Bom"),
+    (400_000.0, "excelente", "Excelente"),
     (float("inf"), "excelente_mais", "Excelente+"),
 )
 
