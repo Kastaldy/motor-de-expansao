@@ -10,7 +10,7 @@ ART = artefato_municipal()
 D = str(raiz("SOCIO"))
 
 # ---------- 1. populacao na base consistente --------------------------------
-po = pd.read_csv(rf"{D}\pib\populacao_6579_serie.csv", dtype={"cod6": str})
+po = pd.read_csv(f"{D}/pib/populacao_6579_serie.csv", dtype={"cod6": str})
 po["cod6"] = po.cod6.astype(str).str.zfill(6)
 pv = po.pivot_table(index="cod6", columns="ano", values="populacao", aggfunc="first")
 ANOS_P = [2016, 2017, 2018, 2019, 2020, 2021]          # base pre-Censo 2022

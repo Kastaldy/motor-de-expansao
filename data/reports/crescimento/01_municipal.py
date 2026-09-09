@@ -7,9 +7,9 @@ sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
 from _raizes import raiz, trabalho  # noqa: E402
 C = str(raiz("TEC"))
 
-b  = pd.read_csv(rf"{C}\indices_crescimento_municipal.csv", low_memory=False)
-cm = pd.read_csv(rf"{C}\crescimento_municipio.csv", low_memory=False)
-cn = pd.read_csv(rf"{C}\indices_desenvolvimento_municipal.csv", low_memory=False)
+b  = pd.read_csv(f"{C}/indices_crescimento_municipal.csv", low_memory=False)
+cm = pd.read_csv(f"{C}/crescimento_municipio.csv", low_memory=False)
+cn = pd.read_csv(f"{C}/indices_desenvolvimento_municipal.csv", low_memory=False)
 for d in (b, cm, cn): d["cod6"] = d.cod6.astype(str).str.zfill(6)
 
 d = (b[["cod6","cidade","uf","confiabilidade","pop_2024","vinculos_2024","rem_media_2024",

@@ -112,6 +112,54 @@ def outputs(*partes: str) -> Path:
     return raiz("MOTOR").joinpath("outputs", *partes)
 
 
+_MES_PT = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
+
+
+def competencia_legivel(comp: str) -> str:
+    """AAAAMM -> "jun/2026". Rotulo do fim MOVEL da serie CAGED.
+
+    Ate a DEC-052 os scripts 07/09/10 escreviam o rotulo LITERAL ("jun/2026"): o
+    cron trimestral avancaria o dado e o tooltip continuaria dizendo o mes velho —
+    contradicao publicada sem erro. O rotulo agora deriva da mesma competencia que
+    delimita o dado. Ha um gemeo em `motor_expansao/crescimento/atualizar.py` (que
+    nao pode importar daqui); a paridade e travada por teste.
+    """
+    comp = str(comp)
+    return f"{_MES_PT[int(comp[4:6]) - 1]}/{comp[:4]}"
+
+
+def serie_passos(meses: list[str]) -> list[str]:
+    """Competencias que viram pontos da serie de Emprego: base + meses alternados.
+
+    O downsample (`meses[1::2]`) derruba o ULTIMO mes quando a lista tem tamanho
+    impar — e como a rodada trimestral acrescenta 3 meses, a paridade alterna: em
+    metade dos trimestres o badge da dimensao ("2022→set/2026") e o ultimo rotulo
+    do grafico divergiriam em um mes, no mesmo cartao da tela. A ponta da serie
+    tem que ser sempre `meses[-1]`, a mesma competencia do badge.
+    """
+    passo = ["202212"] + meses[1::2]
+    if meses and passo[-1] != meses[-1]:
+        passo.append(meses[-1])
+    return passo
+
+
+def caged_consolidado() -> Path:
+    """CSV consolidado do CAGED — canonico com fallback para o nome legado.
+
+    O nome antigo embutia o periodo (`_2020_2026`): quando o cron trimestral
+    (DEC-052) passasse de 2026, ele atualizaria um arquivo que a cadeia nao le.
+    O canonico e' o `_consolidado`; o legado continua valendo onde a migracao
+    ainda nao rodou (estacao do autor). Os DOIS nomes tambem vivem em
+    `src/motor_expansao/crescimento/caged.py` (que nao pode ser importado daqui);
+    `tests/unit/test_crescimento_atualizacao.py` trava a paridade.
+    """
+    caged_dir = raiz("SOCIO") / "caged"
+    novo = caged_dir / "caged_municipio_mensal_consolidado.csv"
+    if novo.exists():
+        return novo
+    return entrada(caged_dir, "caged_municipio_mensal_2020_2026.csv")
+
+
 #: O artefato municipal, mutado em sequencia por 03 -> 05 -> 06 -> 07 -> 08 -> 09 -> 10.
 def artefato_municipal() -> Path:
     return staging("crescimento_municipal.parquet")

@@ -9,7 +9,7 @@ sozinho nao da:
 import pandas as pd, numpy as np, unicodedata, zipfile, sys, os
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
-from _raizes import raiz, trabalho  # noqa: E402
+from _raizes import caged_consolidado, raiz, trabalho  # noqa: E402
 C = str(raiz("TEC"))
 D = str(raiz("SOCIO"))
 
@@ -17,13 +17,13 @@ def norm(s):
     s = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().upper().strip()
     return " ".join(s.split())
 
-base = pd.read_csv(rf"{C}\indices_crescimento_municipal.csv", low_memory=False,
+base = pd.read_csv(f"{C}/indices_crescimento_municipal.csv", low_memory=False,
                    usecols=["cod6","cidade","uf"])
 base["cod6"] = base.cod6.astype(str).str.zfill(6)
 base["chave"] = base.uf.map(norm) + "|" + base.cidade.map(norm)
 
 # ---------- 1 e 2: CAGED mensal ---------------------------------------------
-cg = pd.read_csv(rf"{D}\caged\caged_municipio_mensal_2020_2026.csv",
+cg = pd.read_csv(caged_consolidado(),
                  dtype={"competencia": str, "cod_municipio": str})
 cg["cod6"] = cg.cod_municipio.str.zfill(6).str[:6]
 cg = cg[cg.cod6 != "999999"]
@@ -66,7 +66,7 @@ def secao(div):
         if lo <= d <= hi: return nome
     return None
 
-st = pd.read_parquet(rf"{D}\cnpj\agg\municipio_ano_setor_dinamismo.parquet")
+st = pd.read_parquet(f"{D}/cnpj/agg/municipio_ano_setor_dinamismo.parquet")
 st["ano_i"] = pd.to_numeric(st.ano, errors="coerce")
 st = st[(st.ano_i >= 2020) & (st.ano_i <= 2026)]
 st["secao"] = st.cnae_div.map(secao)
@@ -75,7 +75,7 @@ st["sinal"] = np.where(st.tipo.eq("abertura"), 1, -1)
 st["liq"] = st.n * st.sinal
 agg = st.groupby(["uf","municipio","secao"])["liq"].sum().reset_index()
 
-with zipfile.ZipFile(rf"{D}\cnpj\Municipios.zip") as z:
+with zipfile.ZipFile(f"{D}/cnpj/Municipios.zip") as z:
     mref = pd.read_csv(z.open(z.namelist()[0]), sep=";", header=None,
                        names=["cod_receita","nome"], dtype=str, encoding="latin1")
 mref["cod_receita"] = mref.cod_receita.str.zfill(4)
@@ -104,7 +104,7 @@ print(f"setor definido para {len(setor_df):,} municipios")
 print(setor_df.cres_setor.value_counts().head(8).to_string())
 
 # ---------- 4: mediana da UF -------------------------------------------------
-cm = pd.read_csv(rf"{C}\crescimento_municipio.csv", dtype={"cod6": str})
+cm = pd.read_csv(f"{C}/crescimento_municipio.csv", dtype={"cod6": str})
 cm["cod6"] = cm.cod6.astype(str).str.zfill(6)
 cm = cm.merge(base[["cod6","uf"]], on="cod6", how="left")
 med_uf = cm.groupby("uf")["emp_cresc_pct"].median().rename("cres_uf_mediana").round(1)
