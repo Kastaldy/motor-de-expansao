@@ -184,6 +184,36 @@ class Metas:
 
 
 @dataclass(frozen=True, slots=True)
+class FaixaRenda:
+    """Uma faixa do mapa de calor de renda: teto (exclusivo) + rotulo da legenda.
+
+    `ate = inf` marca a faixa de topo aberta ("> US$ 850"). O rotulo viaja pronto do
+    perfil porque carrega MOEDA e formatacao do pais — e vai rasterizado num PNG cuja
+    fonte nao tem glifo acentuado, entao ASCII puro (excecao de RENDER do CLAUDE.md §2).
+    """
+
+    ate: float
+    rotulo: str
+
+
+@dataclass(frozen=True, slots=True)
+class FaixasRenda:
+    """Faixas dos mapas de calor de renda do Relatorio Pontual, por escala.
+
+    Sao regua de COR, nao de decisao: pintam o choropleth e a legenda, e nada mais.
+    Mesmo assim moram no perfil, pela mesma razao das `Metas`: os cortes sao em moeda
+    e escala do pais. Contra a renda argentina (US$ 246-1.114 no pais inteiro), os
+    cortes brasileiros (R$ 1.000/2.000/3.500/5.000) poem 99,88% da populacao na
+    PRIMEIRA faixa — o mapa sai de uma cor so e a legenda mostra cores que nunca
+    ocorrem. `None` no perfil = pais usa as faixas brasileiras de sempre (literais de
+    `dashboard/constants.py`, que sao o fallback e continuam byte a byte identicas).
+    """
+
+    per_capita: tuple[FaixaRenda, ...]
+    domiciliar: tuple[FaixaRenda, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Reguas:
     renda_abs_min: float
     renda_abs_max: float
@@ -202,6 +232,8 @@ class Reguas:
     moradores_por_domicilio: float
     #: Metas do semaforo do Relatorio Pontual.
     metas_big_numbers: Metas
+    #: Faixas dos mapas de calor de renda (ver `FaixasRenda`). `None` = literais BR.
+    faixas_renda: FaixasRenda | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -498,6 +530,68 @@ def _ler_metas(reguas: dict[str, Any], caminho: Path) -> Metas:
     return metas
 
 
+def _ler_uma_escala_de_faixas(
+    bruto: Any, caminho: Path, nome: str
+) -> tuple[FaixaRenda, ...]:
+    """Uma lista de faixas de renda, validada fail-closed (ver `FaixasRenda`).
+
+    Regras que derrubam o boot, cada uma com o campo no erro: lista com menos de 2 ou
+    mais de 6 faixas (a rampa de cores da plataforma tem 6 degraus — `_RAMPA_RENDA` em
+    `dashboard/constants.py` — e faixa sem cor seria atribuicao silenciosa); item que nao e objeto; `rotulo` vazio ou nao-ASCII (a legenda e
+    rasterizada com fonte sem glifo acentuado — viraria tofu calado); `ate` que nao e
+    numero positivo (exceto o `null` do topo); topo que NAO e aberto (`ate` da ultima
+    faixa deve ser `null`); tetos fora de ordem estrita (duas faixas com o mesmo teto
+    fazem a segunda inalcancavel em silencio).
+    """
+    if not isinstance(bruto, list) or not 2 <= len(bruto) <= 6:
+        raise _erro(caminho, nome, "deveria ser lista de 2 a 6 faixas")
+    faixas: list[FaixaRenda] = []
+    anterior = 0.0
+    for i, item in enumerate(bruto):
+        campo = f"{nome}[{i}]"
+        if not isinstance(item, dict):
+            raise _erro(caminho, campo, "deveria ser objeto {ate, rotulo}")
+        rotulo = item.get("rotulo")
+        if not isinstance(rotulo, str) or not rotulo.strip():
+            raise _erro(caminho, f"{campo}.rotulo", "deveria ser texto nao vazio")
+        if not rotulo.isascii():
+            raise _erro(
+                caminho, f"{campo}.rotulo",
+                "deveria ser ASCII puro (a legenda rasteriza com fonte sem acento)",
+            )
+        ate = item.get("ate")
+        ultimo = i == len(bruto) - 1
+        if ultimo:
+            if ate is not None:
+                raise _erro(caminho, f"{campo}.ate", "a faixa de topo deve ser aberta (null)")
+            teto = float("inf")
+        else:
+            if isinstance(ate, bool) or not isinstance(ate, (int, float)) or ate <= 0:
+                raise _erro(caminho, f"{campo}.ate", "deveria ser numero positivo")
+            teto = float(ate)
+            if teto <= anterior:
+                raise _erro(caminho, f"{campo}.ate", "tetos devem ser estritamente crescentes")
+            anterior = teto
+        faixas.append(FaixaRenda(ate=teto, rotulo=rotulo.strip()))
+    return tuple(faixas)
+
+
+def _ler_faixas_renda(bruto: dict[str, Any], caminho: Path) -> FaixasRenda | None:
+    """`reguas.faixas_renda`: ausente ou `null` = pais usa as faixas brasileiras."""
+    valor = bruto.get("faixas_renda")
+    if valor is None:
+        return None
+    obj = _obj(valor, caminho, "reguas.faixas_renda")
+    return FaixasRenda(
+        per_capita=_ler_uma_escala_de_faixas(
+            obj.get("per_capita"), caminho, "reguas.faixas_renda.per_capita"
+        ),
+        domiciliar=_ler_uma_escala_de_faixas(
+            obj.get("domiciliar"), caminho, "reguas.faixas_renda.domiciliar"
+        ),
+    )
+
+
 def _ler_reguas(dados: dict[str, Any], caminho: Path) -> Reguas:
     bruto = _obj(_pegar(dados, "reguas", caminho), caminho, "reguas")
     p = "reguas."
@@ -520,6 +614,7 @@ def _ler_reguas(dados: dict[str, Any], caminho: Path) -> Reguas:
             bruto, "moradores_por_domicilio", caminho, prefixo=p
         ),
         metas_big_numbers=_ler_metas(bruto, caminho),
+        faixas_renda=_ler_faixas_renda(bruto, caminho),
     )
     # Regua degenerada nao levanta na leitura: levanta uma divisao por zero LA na
     # frente, dentro de `nota_renda_absoluta`, com traceback que nao menciona perfil.

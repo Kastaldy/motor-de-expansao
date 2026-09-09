@@ -335,3 +335,53 @@ def test_o_cambio_base_do_perfil_e_o_usado_na_meta() -> None:
     )
     assert bruto["moeda"]["base_monetaria"] == "2026-05"
     assert bruto["moeda"]["cambio_base"]["valor"] == pytest.approx(1_397.71)
+
+
+# --------------------------------------------------------------------------------
+# Faixas dos mapas de calor de renda (reguas.faixas_renda)
+# --------------------------------------------------------------------------------
+
+
+def test_br_sem_faixas_declaradas_fica_nos_literais_byte_a_byte(perfil) -> None:
+    """O BR nao declara `faixas_renda` -> as bands do PDF sao os literais de sempre.
+
+    E' a trava da regra "o registro entra primeiro": pais sem faixas no perfil nao pode
+    mudar de cor nem de corte por efeito colateral do caminho novo.
+    """
+    from motor_expansao.dashboard import constants as c
+
+    assert perfil.reguas.faixas_renda is None
+    assert c.RENDA_PER_CAPITA_BANDS == c._RENDA_PER_CAPITA_BANDS_BR
+    assert c.RENDA_MEDIA_DOMICILIAR_BANDS == c._RENDA_MEDIA_DOMICILIAR_BANDS_BR
+
+
+def test_ar_declara_seis_faixas_da_canasta_e_elas_produzem_bands() -> None:
+    """Contra o perfil AR REAL: 6 faixas por escala, topo aberto, e a rampa inteira.
+
+    O primeiro corte per capita e' a CBT por adulto equivalente do INDEC (US$ 341,
+    jul/2026) — mesma ancora das `metas_big_numbers` (Felipe, 2026-09-02).
+    """
+    from motor_expansao.dashboard.constants import _RAMPA_RENDA, _bands_de_faixas
+
+    perfil_ar = carregar_perfil(_RAIZ / "data" / "perfis" / "AR" / "perfil.json")
+    faixas = perfil_ar.reguas.faixas_renda
+    assert faixas is not None
+    assert len(faixas.per_capita) == 6
+    assert len(faixas.domiciliar) == 6
+    assert faixas.per_capita[0].ate == 341.0
+    assert faixas.domiciliar[0].ate == 880.0
+
+    bands = _bands_de_faixas(faixas.per_capita)
+    assert [cor for _t, _r, cor in bands] == _RAMPA_RENDA
+    assert bands[-1][0] == float("inf")
+    assert all(r.isascii() for _t, r, _c in bands)
+
+
+def test_rotulo_de_renda_dos_mapas_usa_o_simbolo_do_perfil(monkeypatch) -> None:
+    """`_format_valor_ponto_renda` rotula com `moeda.simbolo_renda()` — "R$" no Brasil
+    (byte a byte o de sempre), "USD" onde a renda chega em dolar. Rotulo, nunca caminho."""
+    from motor_expansao.dashboard import censo_map
+
+    assert censo_map._format_valor_ponto_renda(878.0) == f"{censo_map._SIMBOLO_RENDA} 878"
+    monkeypatch.setattr(censo_map, "_SIMBOLO_RENDA", "USD")
+    assert censo_map._format_valor_ponto_renda(1293.0) == "USD 1.293"
