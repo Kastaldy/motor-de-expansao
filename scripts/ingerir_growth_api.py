@@ -36,6 +36,7 @@ from motor_expansao.dimensionamento.ingestao import (
     concatenar_e_dedup,
     gerar_janelas_mensais,
     iter_janelas,
+    unidades_ausentes_do_view,
 )
 
 PERF_PARQUET = Path("data/staging/unidades_ultra_performance_hex.parquet")
@@ -142,6 +143,46 @@ def main(
     df = concatenar_e_dedup(blocos)
     if df.empty:
         raise click.ClickException("Ingestao retornou DataFrame vazio.")
+
+    # --- Completar o UNIVERSO pelo /historico-dash --------------------------
+    # O `view` foi adotado como fonte unica sob a premissa de ser "superset de
+    # /historico-dash" (config.py, decisao D7). A premissa vale para COLUNAS e nao para
+    # UNIDADES: medido ao vivo em 2026-09-09, dash=103 e view=99, e tres das quatro
+    # diferencas eram academias reais faturando ~R$ 593 mil/mes que nunca entraram na
+    # base -- e por isso nunca apareceram na Visao Executiva. A auditoria abaixo passa a
+    # ser gritada em toda execucao: se um dia o view voltar a cobrir tudo, o numero cai a
+    # zero sozinho e o passo fica inerte.
+    blocos_dash: list[list[dict]] = []
+    with click.progressbar(
+        iter_janelas(cliente, janelas, force_refresh=force_refresh, endpoint="dash"),
+        length=len(janelas),
+        label="historico-dash",
+    ) as barra:
+        for bloco in barra:
+            blocos_dash.append(bloco)
+    dash = concatenar_e_dedup(blocos_dash)
+
+    click.echo("")
+    click.echo("=== UNIVERSO: view x dash ===")
+    n_view = int(df["unidade"].nunique())
+    n_dash = int(dash["unidade"].nunique()) if len(dash) else 0
+    click.echo(f"unidades view={n_view} dash={n_dash}")
+    adotadas = unidades_ausentes_do_view(df, dash) if len(dash) else pd.DataFrame()
+    if len(adotadas):
+        # So' as colunas que o view ja' tem: o dash traz `acrescimo_dias` a mais, e deixar
+        # a coluna entrar mudaria o schema do parquet por efeito colateral deste passo.
+        adotadas = adotadas.reindex(columns=df.columns)
+        nomes = sorted(adotadas["unidade"].unique())
+        click.echo(f"ADOTADAS do /historico-dash ({len(nomes)}): {nomes}")
+        df = concatenar_e_dedup([df.to_dict("records"), adotadas.to_dict("records")])
+    else:
+        click.echo("nenhuma unidade a adotar (o view ja cobre o universo do dash)")
+    if n_dash > n_view and not len(adotadas):
+        click.echo(
+            f"AVISO: o dash tem {n_dash - n_view} unidade(s) que o view nao tem, e "
+            "nenhuma passou no criterio de operacao recente. Conferir se e' unidade "
+            "encerrada (esperado) ou dado faltando (nao esperado)."
+        )
 
     # Anti-PII OBRIGATORIO antes de persistir.
     assert_sem_pii(df)
