@@ -1518,7 +1518,10 @@ export default function HexMap({
           )}
 
           <Divisoria />
-          <Linha rotulo="Habitantes" valor={num(hover.h.pop)} />
+          <Linha
+            rotulo={hover.h.pop_municipal ? 'Habitantes (municipal)' : 'Habitantes'}
+            valor={num(hover.h.pop)}
+          />
           <Linha
             rotulo={hover.h.renda_municipal ? 'Renda per capita (municipal)' : 'Renda per capita'}
             valor={renda(hover.h.renda)}

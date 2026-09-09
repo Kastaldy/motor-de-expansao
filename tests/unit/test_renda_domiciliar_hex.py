@@ -414,6 +414,50 @@ def test_payload_sinaliza_fallback_municipal_da_renda(staging_sintetico: Path) -
     assert payload_municipal["renda"] is not None
 
 
+def test_payload_sinaliza_fallback_municipal_da_populacao(staging_sintetico: Path) -> None:
+    """`pop_municipal` avisa o operador quando a populacao exibida NAO e' do setor.
+
+    Mesma familia do teste de renda acima (pedido de Felipe, 2026-09-08): quando
+    `fonte_populacao_corte` (produzida por `pop_corte.derive_pop_cut_columns`) vem
+    "total_municipal", o `pop_leitura`/`pop` exibido e' o SIDRA da cidade inteira, o
+    MESMO numero repetido em todo hexagono -- sem o flag o operador nao tem como saber.
+    Ao contrario da renda, aqui o fallback ja' vem PRONTO do pipeline como uma coluna
+    de origem (`fonte_populacao_corte`), nao por presenca/ausencia de coluna.
+    """
+    granular = pd.DataFrame(
+        {
+            "hex_id": ["a"],
+            "lat": [-23.55],
+            "lng": [-46.63],
+            "uf": ["SP"],
+            "cod_municipio": ["3550308"],
+            "populacao_corte_hex": [1200.0],
+            "fonte_populacao_corte": ["setor_2022"],
+        }
+    )
+    municipal = pd.DataFrame(
+        {
+            "hex_id": ["b"],
+            "lat": [-23.55],
+            "lng": [-46.63],
+            "uf": ["SP"],
+            "cod_municipio": ["3550308"],
+            "populacao_corte_hex": [50000.0],
+            "fonte_populacao_corte": ["total_municipal"],
+        }
+    )
+
+    linha_granular = pilot._derivar(granular).loc[0]
+    payload_granular = pilot._hex_dict(linha_granular, None)
+    assert payload_granular["pop_municipal"] is False
+    assert payload_granular["pop"] == 1200
+
+    linha_municipal = pilot._derivar(municipal).loc[0]
+    payload_municipal = pilot._hex_dict(linha_municipal, None)
+    assert payload_municipal["pop_municipal"] is True
+    assert payload_municipal["pop"] == 50000
+
+
 def test_k_da_calibracao_le_o_carimbo_do_staging_hex(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

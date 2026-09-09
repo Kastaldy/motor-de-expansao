@@ -309,7 +309,10 @@ export default function FichaHex({
             border: '1px solid var(--line-soft)',
           }}
         >
-          <CelulaCenso valor={hex.pop == null ? '—' : num(hex.pop)} rotulo="População" />
+          <CelulaCenso
+            valor={hex.pop == null ? '—' : num(hex.pop)}
+            rotulo={hex.pop_municipal ? 'População (estimativa municipal)' : 'População'}
+          />
           <CelulaCenso
             valor={hex.renda == null ? '—' : renda(hex.renda)}
             rotulo={hex.renda_municipal ? 'Renda per capita (estimativa municipal)' : 'Renda per capita'}
