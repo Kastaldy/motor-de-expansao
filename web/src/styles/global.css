@@ -19,6 +19,39 @@ body,
   height: 100%;
 }
 
+/* ESCALA DO APP — 85% (Juan, 2026-09-09; PR #324).
+
+   O valor e' decisao de produto: substitui tanto o 0.69 do PR #301 (derivado do pior caso
+   medido do cabecalho do mapa) quanto a reversao total que este ramo carregou primeiro.
+   As medidas que justificavam 0.69 nao foram refeitas a 85% — consequencia aceita e
+   declarada: em notebook Full HD com 150% de escala do Windows, o cabecalho do mapa ainda
+   pode quebrar em duas linhas, e o operador ajusta o zoom do navegador (menos que a 100%).
+
+   A MEDIDA vem primeiro, a escala depois: `#root` e' dimensionado em 1/escala e so' entao
+   encolhido — o layout acontece numa janela virtual maior, e cada peca tem o espaco real.
+
+   `transform: scale()` e nao `zoom`. O `zoom` do Chrome deixa `getBoundingClientRect()`
+   nas coordenadas de LAYOUT enquanto `clientX/clientY` dos eventos chegam nas VISUAIS — e
+   o deck.gl e o MapLibre convertem o ponteiro em latitude subtraindo um do outro, entao o
+   clique cairia fora do hexagono sob o cursor. Com `transform` os dois vivem no mesmo
+   espaco e a conta fecha sem o mapa saber que existe escala.
+
+   `transform-origin: 0 0` ancora no canto superior esquerdo — sem isto a escala parte do
+   centro e sobra faixa vazia em cima e a' esquerda.
+
+   O `App` mede `height: 100%` e nao `100vh`: `100vh` e' a altura da JANELA, e dentro de um
+   `#root` maior ela cobriria so' parte dele. `lib/escala-app.test.ts` guarda este bloco. */
+:root {
+  --escala-app: 0.85;
+}
+
+#root {
+  width: calc(100% / var(--escala-app));
+  height: calc(100% / var(--escala-app));
+  transform: scale(var(--escala-app));
+  transform-origin: 0 0;
+}
+
 /* `color-scheme` no DOCUMENTO decide a cor do canvas do navegador (o que aparece no
    overscroll) e da barra de rolagem da pagina. As regras la' embaixo tratam o chrome
    nativo de `select`/`input`; estas duas tratam a moldura. */

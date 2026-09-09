@@ -1244,9 +1244,9 @@ export default function MapScreen({
             Ja se tentou enxugar o cabecalho (tirar este rotulo, o titulo, os rotulos dos
             seletores, e mudar os tres numeros de lugar) — o Juan recusou em 2026-09-02:
             "o residual, espaco para academias foi pra outra coluna q nao gostei". A
-            resposta seguinte foi uma ESCALA global de 69% (`--escala-app`, PR #301),
-            que o Juan tambem reverteu em 2026-09-08: em tela apertada o operador ajusta
-            o zoom do proprio navegador (lib/escala-app.test.ts guarda a reversao). */}
+            resposta passou a ser ESCALA global (`--escala-app` em `styles/global.css`):
+            69% no PR #301, revertida em 2026-09-08, e fixada em 85% pelo Juan em
+            2026-09-09 (PR #324; lib/escala-app.test.ts guarda o valor). */}
         <Botao
           variante="ghost"
           onClick={() => setMetodologiaAberta((v) => !v)}
