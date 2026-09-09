@@ -25,6 +25,9 @@ from motor_expansao.pipelines.agregar_censo_hex_da_malha import (
     DEFAULT_OUTPUT_PATH as MALHA_CENSO_PATH,
 )
 from motor_expansao.pipelines.agregar_censo_hex_da_malha import sobrepor_renda_da_malha
+from motor_expansao.pipelines.classe_join_municipio import (
+    calcular_notas as calcular_notas_municipio,
+)
 from motor_expansao.pipelines.m1.ibge_censo import carregar_lookup_municipios_ibge
 from motor_expansao.pipelines.m1.provenance import write_manifest
 
@@ -46,6 +49,8 @@ CENSO_NACIONAL_PATH = Path("data/staging/censo2022_setores_calibrado_nacional_co
 CENSO_VALIDATED_PATH = Path("data/staging/censo2022_setores_validado_v2.parquet")
 ESTRUTURAL_PATH = Path("data/staging/brasil_estrutural.parquet")
 ENRIQUECIDO_DIR = Path("data/outputs/hexagonos_dashboard_enriquecido")
+#: Malha de setores por municipio -- insumo da nota de join fina (BLK-JOINUF-01).
+CENSO_GEO_ROOT = Path("data/outputs/setores_censitarios_2022_geo")
 
 FAIXAS_OPORTUNIDADE = [
     "prioridade_maxima",
@@ -596,6 +601,11 @@ def build_enriched_dashboard_frame(dashboard_path: Path | str = DASHBOARD_PATH) 
         _read_hybrid_frame(),
         _read_censo_trace_frame(),
         estrutural_pop_df=_read_estrutural_pop_frame(),
+        # BLK-JOINUF-01: a nota fina e' lida AQUI, no produtor, e nao dentro de
+        # `enrich_dashboard_data` -- e' o unico ponto do fluxo que ja' faz I/O de artefato
+        # e sabe onde a malha mora. Artefato ausente devolve frame vazio e a promocao vira
+        # no-op, que e' o comportamento correto no CI (onde os 1,17 GB nao existem).
+        notas_municipio=calcular_notas_municipio(CENSO_GEO_ROOT),
     )
 
 
