@@ -15,6 +15,8 @@ import numpy as np
 import pandas as pd
 from sklearn.neighbors import BallTree
 
+from motor_expansao.pipelines.pressao_concorrencial_1km import anexar_pressao_1km_area
+
 ROOT = Path(__file__).resolve().parents[3]
 
 HIBRIDO_PATH = ROOT / "data" / "outputs" / "oportunidades_expansao_hibrido.parquet"
@@ -288,6 +290,8 @@ def validar(df: pd.DataFrame, n_orig: int) -> None:
         "dist_concorrente_mais_proximo_m",
         "n_unidades_ultra_1km", "n_unidades_ultra_2km",
         "dist_ultra_mais_proxima_m", "flag_canibalizacao_ultra_1km",
+        "oferta_efetiva_1km_area", "gap_competitivo_1km_area",
+        "consumo_concorrentes_1km_area", "n_concorrentes_influencia_1km",
     }
     faltam = required - set(df.columns)
     assert not faltam, f"Colunas faltando: {faltam}"
@@ -304,6 +308,8 @@ def validar(df: pd.DataFrame, n_orig: int) -> None:
     total = len(df)
     print(f"flag_canibalizacao_ultra_1km=True: {n_canibal:,} ({100*n_canibal/total:.1f}%)")
     print(f"flag_white_space_2km=True:         {n_white:,} ({100*n_white/total:.1f}%)")
+    n_tocados_1km = int((df["oferta_efetiva_1km_area"] > 0).sum())
+    print(f"oferta_efetiva_1km_area>0 (hexes tocados): {n_tocados_1km:,} ({100*n_tocados_1km/total:.1f}%)")
 
     print("\nAmostra manual (3 hexes com concorrentes):")
     sample_cols = [
@@ -368,6 +374,12 @@ def main():
     print("\n5. Montando DataFrame final...")
     for col, vals in {**comp_metrics, **ultra_metrics}.items():
         df_base[col] = vals
+
+    print("\n5b. Modelo de area de influencia (1 km por concorrente, DEC-051)...")
+    # Mesmo universo `cadeias` do passo 3 (cadastro + agregador, ja' deduplicado) -- os
+    # dois modelos (2km centroide e 1km area) tem de concordar sobre QUEM e' concorrente,
+    # senao uma exclusao futura (ex.: estudios boutique) precisaria ser aplicada duas vezes.
+    df_base = anexar_pressao_1km_area(df_base, cadeias)
 
     validar(df_base, n_orig)
 

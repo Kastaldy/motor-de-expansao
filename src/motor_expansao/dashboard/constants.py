@@ -89,6 +89,7 @@ CENSO_TRACE_LOAD_COLS = [
     "densidade_pop_setor_hab_km2",
     "coverage_pct_setor_2022",
     "qualidade_join_uf",
+    "classe_join_uf",
     "flag_join_uf_restrito",
     "flag_baixa_pop_setor",
     "flag_outlier_espacial",

@@ -37,6 +37,7 @@ import type {
   MunicipioItem,
   MunicipioPayload,
   Oportunidade,
+  SetoresHeatmapPayload,
 } from '../lib/types'
 
 /* A CAMADA em que o raio de 1 km vale. Camada 3 e' "Pressao concorrencial", e o modelo de
@@ -350,6 +351,50 @@ export default function MapScreen({
       vivo = false
     }
   }, [raio1km, uf, municipio])
+
+  /* Bloco D — mapa de calor de SETOR censitario (densidade/renda), SOB DEMANDA e so' no
+     drill-down de municipio (mesmo motivo do raio: Sao Paulo capital sozinha chega a
+     ~9 MB). As duas chaves sao MUTUAMENTE EXCLUSIVAS — sao duas leituras da MESMA malha
+     de poligonos, e mostrar as duas ao mesmo tempo so' decidiria por sorte qual cor
+     desenha por cima. Comeca desligado, como toda camada opcional do mapa. */
+  const [verCalorDensidade, setVerCalorDensidade] = useState(false)
+  const [verCalorRenda, setVerCalorRenda] = useState(false)
+  const [heatmap, setHeatmap] = useState<SetoresHeatmapPayload | null>(null)
+  const [carregandoCalor, setCarregandoCalor] = useState(false)
+  const calorLigado = verCalorDensidade || verCalorRenda
+
+  useEffect(() => {
+    // `dados?.nivel === 'uf'` direto (nao a const `nivelUf`, declarada mais abaixo neste
+    // componente) -- so' para nao introduzir uma dependencia de ordem de declaracao.
+    if (!calorLigado || !uf || !municipio || dados?.nivel === 'uf') {
+      setHeatmap(null)
+      return
+    }
+    let vivo = true
+    setCarregandoCalor(true)
+    api
+      .setoresHeatmap(uf, municipio)
+      .then((h) => {
+        if (vivo) setHeatmap(h)
+      })
+      .catch(() => {
+        // Sem poligono o mapa so' nao desenha o calor — nao derruba a tela.
+        if (vivo) setHeatmap(null)
+      })
+      .finally(() => {
+        if (vivo) setCarregandoCalor(false)
+      })
+    return () => {
+      vivo = false
+    }
+  }, [calorLigado, uf, municipio, dados?.nivel])
+
+  /* A chave morre com o recorte que a justificava — trocar de municipio com o calor
+     ligado nao pode deixar a tela mostrando o poligono da cidade ANTERIOR. */
+  useEffect(() => {
+    setVerCalorDensidade(false)
+    setVerCalorRenda(false)
+  }, [uf, municipio])
 
   // Camera do deck.gl em REF, nao em state, de proposito: o `onViewStateChange` do
   // deck dispara a cada quadro de um voo (centenas de vezes em 800 ms). Em state, cada
@@ -870,12 +915,56 @@ export default function MapScreen({
       })
     }
 
+    /* Bloco D — mapa de calor de setor censitario. So' no drill-down de municipio (mesmo
+       gate dos pins de concorrente): a malha de setor de uma UF inteira seria pesada
+       demais e nao e' o recorte em que o operador le densidade/renda de bairro. As duas
+       chaves sao mutuamente exclusivas (mesma malha, cor diferente) — ligar uma desliga
+       a outra, em vez de deixar as duas acesas decidindo por sorte qual pinta por cima. */
+    if (!nivelUf) {
+      const nSetoresCalor = heatmap?.setores.length ?? 0
+      const subCalor = (ligada: boolean) => {
+        if (carregandoCalor) return 'carregando…'
+        if (!ligada) return 'densidade/renda por setor'
+        return heatmap?.disponivel ? `${nSetoresCalor} setores · visível` : 'sem dado para este município'
+      }
+      lista.push({
+        id: 'calor-densidade',
+        titulo: 'Densidade demográfica',
+        sub: subCalor(verCalorDensidade),
+        ligado: verCalorDensidade,
+        onToggle: () => {
+          setVerCalorDensidade((v) => !v)
+          setVerCalorRenda(false)
+        },
+        cor: '#dc4141',
+        corTexto: 'var(--ac-chip)',
+        corRealce: 'rgba(220,65,65,.16)',
+      })
+      lista.push({
+        id: 'calor-renda',
+        titulo: 'Renda domiciliar',
+        sub: subCalor(verCalorRenda),
+        ligado: verCalorRenda,
+        onToggle: () => {
+          setVerCalorRenda((v) => !v)
+          setVerCalorDensidade(false)
+        },
+        cor: '#00a844',
+        corTexto: 'var(--ac-chip)',
+        corRealce: 'rgba(0,168,68,.16)',
+      })
+    }
+
     return lista
   }, [
     medindo,
     nivelUf,
     modoCenario,
     cenario.length,
+    heatmap,
+    carregandoCalor,
+    verCalorDensidade,
+    verCalorRenda,
     alternarCenario,
     temIndependentes,
     independentes,
@@ -958,6 +1047,8 @@ export default function MapScreen({
           imoveis={verImoveis ? imoveisNoMapa : undefined}
           onImovel={abrirImovel}
           cobertura1k={cobertura}
+          heatmapSetores={heatmap?.setores}
+          modoCalor={verCalorDensidade ? 'densidade' : verCalorRenda ? 'renda' : null}
           /* A foto CONGELA na montagem, e trocar de UF/municipio zera `cameraRef` mas
              nao tem como zerar `foto.camera`. Sem este portao: SP/Sao Paulo -> volta da
              Viabilidade (foto.camera = zoom 14 sobre SP) -> troca a UF -> a carga falha
