@@ -24,7 +24,10 @@ from motor_expansao.dashboard.data import (
 from motor_expansao.pipelines.agregar_censo_hex_da_malha import (
     DEFAULT_OUTPUT_PATH as MALHA_CENSO_PATH,
 )
-from motor_expansao.pipelines.agregar_censo_hex_da_malha import sobrepor_renda_da_malha
+from motor_expansao.pipelines.agregar_censo_hex_da_malha import (
+    admitir_orfaos_da_malha,
+    sobrepor_renda_da_malha,
+)
 from motor_expansao.pipelines.classe_join_municipio import (
     calcular_notas as calcular_notas_municipio,
 )
@@ -567,6 +570,11 @@ def _read_censo_trace_frame(malha_path: Path = MALHA_CENSO_PATH) -> pd.DataFrame
     # MESMA funcao — duas redacoes da mesma regra nao dao erro, desencontram em silencio
     # (a licao da DEC-044).
     censo = sobrepor_renda_da_malha(censo, malha_path=malha_path)
+    # E, DEPOIS de revalorar quem ja existe, ADMITIR quem nunca existiu (BLK-JOINUF-01,
+    # mecanismo 2): os hexagonos que a base H3 ganhou depois de 2026-05-15 e que a Fase A
+    # nunca viu. Duas funcoes separadas de proposito -- a de cima tem contrato de nao
+    # mexer em cobertura, e esta e' exatamente sobre cobertura.
+    censo = admitir_orfaos_da_malha(censo, malha_path=malha_path)
     validated = _prepare_censo_trace(_read_optional_parquet_subset(CENSO_VALIDATED_PATH, CENSO_TRACE_LOAD_COLS))
     if validated.empty:
         return censo
@@ -591,7 +599,11 @@ def _read_censo_trace_frame(malha_path: Path = MALHA_CENSO_PATH) -> pd.DataFrame
 
 
 def _read_estrutural_pop_frame(path: Path | str = ESTRUTURAL_PATH) -> pd.DataFrame:
-    return _read_optional_parquet_subset(Path(path), ["hex_id", "pop_total"])
+    # `cod_municipio` entra aqui (BLK-JOINUF-01, mecanismo 2): o estrutural o tem para os
+    # 1.542.531 hexagonos, e e' a unica fonte que alcanca os 9.886 ausentes do traco
+    # censitario. Coluna opcional -- `_read_optional_parquet_subset` devolve so' o que o
+    # parquet tiver, entao artefato legado sem ela continua funcionando.
+    return _read_optional_parquet_subset(Path(path), ["hex_id", "pop_total", "cod_municipio"])
 
 
 def build_enriched_dashboard_frame(dashboard_path: Path | str = DASHBOARD_PATH) -> pd.DataFrame:

@@ -488,6 +488,67 @@ def sobrepor_renda_da_malha(
     return out.drop(columns=["renda_malha", "score_malha", "k_malha"])
 
 
+#: Procedencia dos hexagonos ADMITIDOS (nao apenas revalorados) pela malha.
+FONTE_ORFAO_ADMITIDO = "malha_setorial_orfao_admitido"
+
+
+def admitir_orfaos_da_malha(
+    censo: pd.DataFrame,
+    malha_path: Path = DEFAULT_OUTPUT_PATH,
+) -> pd.DataFrame:
+    """Cria linha de censo para hexagono que a malha cobre e o traco NAO tem.
+
+    POR QUE. `sobrepor_renda_da_malha`, logo acima, tem contrato de "MUDA VALOR, NAO MUDA
+    COBERTURA" e continua tendo -- esta funcao e' a outra metade, separada de proposito.
+    A Fase A rodou em 2026-05-15 e nunca mais; a base H3 cresceu depois em tres eventos de
+    criterio geometrico de borda (+5.305 centroide, +474 DEC-002, +4.107 DEC-003 =
+    exatamente 9.886, batendo por UF em 27/27). Esses hexagonos nao tem LINHA nenhuma no
+    traco censitario -- nao e' que o join foi ruim, e' que eles nao existiam quando ele
+    rodou. Nenhuma regra de reclassificacao alcanca linha AUSENTE.
+
+    5.612 deles a malha ja cobre (6,25 milhoes de habitantes), incluindo 11 de 11 em
+    Fortaleza e 345 de 391 no Rio -- os casos que o operador reportou. Admiti-los aqui e'
+    o conserto barato: nenhum join espacial e' refeito, so' se usa o que a DEC-045 ja
+    calculou e materializou.
+
+    NAO define `qualidade_join_uf`: eles genuinamente nao tem medida de join. Quem os
+    promove a granular e' a nota de MUNICIPIO (BLK-JOINUF-01 mecanismo 1), pela mesma
+    regra de todo mundo -- sem regua especial.
+
+    Pura: nao muta `censo`. Sem o parquet da malha, devolve `censo` intacto.
+    """
+    if not Path(malha_path).exists() or "hex_id" not in censo.columns:
+        return censo
+
+    malha = pd.read_parquet(
+        malha_path, columns=["hex_id", "uf", "pop_malha", "renda_malha", "score_malha"]
+    )
+    faltantes = malha[~malha["hex_id"].isin(set(censo["hex_id"]))]
+    # So' entra quem a malha realmente mede: sem score nao ha sinal censitario, e admitir
+    # linha vazia trocaria "sem dado" por "dado nulo" -- pior, porque some do radar.
+    faltantes = faltantes[faltantes["score_malha"].notna()]
+    if faltantes.empty:
+        return censo
+
+    novos = pd.DataFrame(
+        {
+            "hex_id": faltantes["hex_id"].to_numpy(),
+            "uf": faltantes["uf"].to_numpy(),
+            COL_SCORE: pd.to_numeric(faltantes["score_malha"], errors="coerce").to_numpy(),
+            COL_RENDA: pd.to_numeric(faltantes["renda_malha"], errors="coerce").to_numpy(),
+            "pop_total_setor_2022": pd.to_numeric(
+                faltantes["pop_malha"], errors="coerce"
+            ).to_numpy(),
+            COL_FONTE: FONTE_ORFAO_ADMITIDO,
+        }
+    )
+    if COL_CARIMBO in censo.columns:
+        carimbo = censo[COL_CARIMBO].dropna()
+        if not carimbo.empty:
+            novos[COL_CARIMBO] = carimbo.iloc[0]
+    return pd.concat([censo, novos], ignore_index=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--geo-root", type=Path, default=DEFAULT_GEO_ROOT)
