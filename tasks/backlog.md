@@ -4680,7 +4680,7 @@ do §7.4.1.
 | **Criticidade** | **Crítica** — mexe em `qualidade_join_uf`/`confianca_geografica`, insumo da camada censitária PRIMÁRIA (§1) e do gate híbrido (DEC-040/045/050). Precisa de DEC própria. |
 | **Esteira** | `[GATE HUMANO]` — investigação + medição de impacto antes de qualquer PR. |
 | **Depende de** | DEC-050 (aprofunda o mesmo achado — a DEC-050 corrigiu o composto obsoleto vs. `classe_join_uf`, mas nem o `classe_join_uf` "corrigido" resolve os dois problemas abaixo) |
-| **Status** | **Mecanismo 1 FEITO** ([DEC-054](../docs/decisions/DEC-054.md), 2026-09-09): nota de cobertura por município, promoção-só — 13.147 hexágonos promovidos, zero rebaixados, Manaus 2.038/2.139 e Boa Vista 1.110/1.191. **Mecanismo 2 em aberto** (reclassificado, ver abaixo). |
+| **Status** | **Mecanismo 1 FEITO** ([DEC-054](../docs/decisions/DEC-054.md), 2026-09-09): nota de cobertura por município, promoção-só — 13.147 hexágonos promovidos, zero rebaixados, Manaus 2.038/2.139 e Boa Vista 1.110/1.191. **Mecanismo 2 FEITO** ([DEC-055](../docs/decisions/DEC-055.md), 2026-09-09): os orfaos entram pela malha e ganham `cod_municipio` do estrutural — 3.731 promovidos, Fortaleza 11/11, Rio 43/51. **Residuo**: 4.274 orfaos que a malha nao cobre (provavelmente sem setor povoado — nao investigado). |
 | **Autonomia** | **manual (NÃO loop-safe)** — toca score/confiança censitária, Crítica |
 
 > **⚠ CORREÇÃO DOS NÚMEROS DESTE BLOCO (2026-09-09).** A medição original abaixo saiu de um artefato
