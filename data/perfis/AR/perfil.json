@@ -323,8 +323,25 @@
       ]
     ],
     "_nota_faixas_mapa": "IDENTICAS ao Brasil (FAIXAS_MAPA_POTENCIAL / FAIXAS_MAPA_DEMANDA, src/motor_expansao/dashboard/constants.py:357-376) e isso esta CERTO: sao faixas de SCORE 0-100, nao de dinheiro. O score ja foi normalizado pelas ancoras acima, entao a regua de cor e neutra de pais por construcao. Ressalva de leitura: a faixa de DEMANDA foi escrita quando 100 significava 'uma unidade de 2.500 alunos livre'; na AR a capacidade de referencia e 1.070, logo o rotulo 'Livre' passa a significar uma academia argentina de porte local, nao uma Ultra. Rotulo a revisar quando a superficie de funil subir — nao no dia 1, porque `oportunidades` nao sobe.",
-    "faixas_renda": null,
-    "_nota_faixas_renda": "AUSENTE DE PROPOSITO, e o Brasil tambem nao tem. O §6.2 do plano lista `faixas_renda` no schema, mas nao existe choropleth de RENDA no codigo hoje: o mapa pinta score (as duas listas acima) e o relatorio pontual usa metas de semaforo (metas_big_numbers). Deixar null e honesto; inventar cinco faixas de renda em USD seria criar regua que ninguem pediu e que nada le. Se o campo for exigido pelo validador, ele deve aceitar null.",
+    "faixas_renda": {
+      "per_capita": [
+        { "ate": 341, "rotulo": "ate US$ 340" },
+        { "ate": 450, "rotulo": "US$ 341-450" },
+        { "ate": 560, "rotulo": "US$ 451-560" },
+        { "ate": 700, "rotulo": "US$ 561-700" },
+        { "ate": 850, "rotulo": "US$ 701-850" },
+        { "ate": null, "rotulo": ">US$ 850" }
+      ],
+      "domiciliar": [
+        { "ate": 880, "rotulo": "ate US$ 880" },
+        { "ate": 1200, "rotulo": "US$ 881-1.200" },
+        { "ate": 1500, "rotulo": "US$ 1.201-1.500" },
+        { "ate": 1900, "rotulo": "US$ 1.501-1.900" },
+        { "ate": 2400, "rotulo": "US$ 1.901-2.400" },
+        { "ate": null, "rotulo": ">US$ 2.400" }
+      ]
+    },
+    "_nota_faixas_renda": "DEIXOU DE SER NULL em 2026-09-08. A nota anterior dizia que 'nao existe choropleth de RENDA no codigo' — DEFASADA: os mapas de calor do PDF pontual pintam renda per capita e domiciliar pelas bands de dashboard/constants.py (censo_map.py:374 e :1771/:1777), e contra os cortes brasileiros em R$ a renda argentina em USD (pais inteiro US$ 246-1.114, mediana 486) poe 99,88% da populacao na PRIMEIRA faixa: mapa de uma cor so, legenda com cores que nunca ocorrem (relato do Juan, 2026-09-08). ANCORA E' A CANASTA, nao quantil — mesma decisao das metas_big_numbers (Felipe, 2026-09-02): o primeiro corte per capita e' a CBT por adulto equivalente (US$ 341/mes, jul/2026); o domiciliar ancora na CBT do domicilio medio argentino (2,57 moradores -> US$ 876, arredondado 880). Espalhamento medido nos 66.502 radios (ponderado por populacao): per capita 4,1/32,1/32,4/17,2/8,6/5,5%; domiciliar 5,4/21,2/43,8/25,8/3,6/0,2% — a faixa de topo domiciliar e' pequena DE PROPOSITO, separa o topo real (max US$ 3.342) da massa. SEIS faixas e nao cinco: com cinco a Comuna 1 (a area mais consultada) pintava inteira na faixa de topo. Rotulos em ASCII puro (excecao de RENDER do CLAUDE.md §2: a legenda rasteriza com fonte sem glifo acentuado). Medicoes originais no diff da safra 2026-08-31 (repo motor-argentina, piloto_rep/patches/).",
     "metas_big_numbers": {
       "_nota": "As sete metas do semaforo do Relatorio Pontual (dashboard/censo_report.py:141-152). DEIXARAM DE SER NULL em 2026-09-02: a leitura de que a superficie `ponto` estava bloqueada na Argentina pela decisao 0.6 ESTAVA ERRADA, e o Felipe corrigiu. O Relatorio Pontual entra na onda — e ja entrava por construcao: `/api/ponto`, `/api/resolver-ponto` e `/api/relatorio/pontual` moram sob as abas `mapa` e `viabilidade` (web/server/acesso.py:73,74,78), que sao exatamente as duas que este perfil habilita. Nao havia o que mudar em `superficies`; o que mudou foi o que vira BLOQUEADOR — com metas brasileiras contra renda em USD, os cards sairiam pintados por construcao.",
       "_decisao": "Felipe, 2026-09-02: populacao MANTIDA; renda per capita = 1,2 CANASTAS; renda domiciliar = o equivalente no cenario argentino. As outras quatro seguem os valores brasileiros, e cada uma tem a medicao que justifica isso.",
