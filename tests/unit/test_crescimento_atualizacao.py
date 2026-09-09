@@ -195,6 +195,28 @@ def test_aviso_falha_carrega_a_etapa_e_o_log():
     assert "O staging seguiu" not in texto  # a linha fixa contraditoria morreu
 
 
+def test_enviar_nao_vaza_token_em_excecao_do_requests(monkeypatch):
+    """ConnectionError/Timeout do requests embutem a URL (com o token) na mensagem
+    da excecao — e stderr de cron vai para log em disco. O `enviar` relanca so' a
+    classe do erro, com o encadeamento suprimido (`from None`)."""
+    import requests
+
+    from motor_expansao.api import relatorio_acessos
+
+    monkeypatch.setenv("API_TELEGRAM_TOKEN", "123:SEGREDO")
+    monkeypatch.setenv("MONITOR_TELEGRAM_CHAT_ID", "-100")
+
+    def explode(texto: str, token: str, chat_id: str) -> None:
+        raise requests.ConnectionError(f"https://api.telegram.org/bot{token}/sendMessage caiu")
+
+    monkeypatch.setattr(relatorio_acessos, "enviar_telegram", explode)
+    with pytest.raises(RuntimeError) as exc:
+        aviso.enviar("oi")
+    assert "SEGREDO" not in str(exc.value)
+    assert "ConnectionError" in str(exc.value)
+    assert exc.value.__suppress_context__  # o traceback original (com URL) nao segue junto
+
+
 def test_aviso_sem_credencial_falha_com_mensagem(monkeypatch):
     monkeypatch.delenv("API_TELEGRAM_TOKEN", raising=False)
     monkeypatch.delenv("MONITOR_TELEGRAM_CHAT_ID", raising=False)
@@ -297,6 +319,29 @@ def test_paridade_nome_consolidado_com_raizes():
     raizes = (DIR_CADEIA / "_raizes.py").read_text(encoding="utf-8")
     assert f'"{caged.NOME_CONSOLIDADO}"' in raizes
     assert f'"{caged.NOME_CONSOLIDADO_LEGADO}"' in raizes
+
+
+def test_serie_e_badge_terminam_no_mesmo_mes():
+    """O downsample da serie (`meses[1::2]`) derruba `meses[-1]` quando a lista tem
+    tamanho IMPAR — e a rodada trimestral acrescenta 3 meses, entao a paridade
+    alterna: em metade dos trimestres o badge da dimensao ("2022→set/2026") e o
+    ultimo rotulo do grafico divergiriam em um mes, no MESMO cartao da tela.
+    `serie_passos` garante que a ponta da serie e' sempre o ultimo mes do dado."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_raizes_teste2", DIR_CADEIA / "_raizes.py")
+    assert spec and spec.loader
+    raizes = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(raizes)
+
+    par = [f"2023{m:02d}" for m in range(1, 9)]        # 8 meses
+    impar = [f"2023{m:02d}" for m in range(1, 10)]     # 9 meses
+    for meses in (par, impar):
+        passo = raizes.serie_passos(meses)
+        assert passo[0] == "202212"
+        assert passo[-1] == meses[-1], f"ponta da serie != ultimo mes ({len(meses)} meses)"
+        assert passo == sorted(set(passo)), "passos duplicados ou fora de ordem"
+    assert raizes.serie_passos(["202301"]) == ["202212", "202301"]
 
 
 def test_cadeia_sem_rotulo_de_periodo_congelado():

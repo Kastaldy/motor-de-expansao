@@ -6,7 +6,7 @@
 import pandas as pd, numpy as np, sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
-from _raizes import artefato_municipal, caged_consolidado, competencia_legivel, raiz  # noqa: E402
+from _raizes import artefato_municipal, caged_consolidado, competencia_legivel, raiz, serie_passos  # noqa: E402
 ART = artefato_municipal()
 D = str(raiz("SOCIO"))
 c6 = lambda s: s.astype(str).str.replace(r"\D", "", regex=True).str.zfill(6).str[:6]
@@ -29,7 +29,8 @@ niv = acum.add(estoque.reindex(acum.index), axis=0).dropna()
 # ponto ZERO = estoque de dez/2022, para o primeiro ponto do grafico ser a base
 # do percentual. Sem ele o grafico media 8,5% e a dimensao 8,8%.
 niv.insert(0, "202212", estoque.reindex(niv.index))
-passo = ["202212"] + meses[1::2]
+# a ponta da serie tem que ser meses[-1], a mesma competencia do badge da dimensao
+passo = serie_passos(meses)
 emp_niv = niv[passo].round(0)
 
 PERIODO = {"Renda": "2020→2024", "População": "2016→2021", "Empresas": "2020–2025",

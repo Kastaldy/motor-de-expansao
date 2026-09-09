@@ -128,6 +128,21 @@ def competencia_legivel(comp: str) -> str:
     return f"{_MES_PT[int(comp[4:6]) - 1]}/{comp[:4]}"
 
 
+def serie_passos(meses: list[str]) -> list[str]:
+    """Competencias que viram pontos da serie de Emprego: base + meses alternados.
+
+    O downsample (`meses[1::2]`) derruba o ULTIMO mes quando a lista tem tamanho
+    impar — e como a rodada trimestral acrescenta 3 meses, a paridade alterna: em
+    metade dos trimestres o badge da dimensao ("2022→set/2026") e o ultimo rotulo
+    do grafico divergiriam em um mes, no mesmo cartao da tela. A ponta da serie
+    tem que ser sempre `meses[-1]`, a mesma competencia do badge.
+    """
+    passo = ["202212"] + meses[1::2]
+    if meses and passo[-1] != meses[-1]:
+        passo.append(meses[-1])
+    return passo
+
+
 def caged_consolidado() -> Path:
     """CSV consolidado do CAGED — canonico com fallback para o nome legado.
 

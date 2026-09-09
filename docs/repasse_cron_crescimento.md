@@ -12,9 +12,12 @@ reroda a cadeia de geração completa em área de rascunho, valida, publica por 
 atômico, reinicia o web e avisa no chat de ops do Telegram — sucesso ou falha. Falhou
 qualquer etapa: o staging fica intacto e a tela não muda.
 
-O trimestre atualiza o **Emprego** (CAGED é mensal). Renda, população e empresas são
-fontes anuais e os prédios (satélite) são 2016-2023 — o aviso do bot repete isso a
-cada rodada.
+O trimestre atualiza a **série de Emprego** (CAGED é mensal): o gráfico ganha os
+meses novos, o rótulo de período avança e o salário acompanha. O **percentual da
+dimensão Emprego e o veredito da cidade não mudam** — vêm do CSV anual do projeto
+TEC, copiado à mão no Passo 0, e só avançam com aquela safra. Renda, população e
+empresas são fontes anuais e os prédios (satélite) são 2016-2023 — o aviso do bot
+repete isso a cada rodada.
 
 ## Passo 0 — o que precisa existir antes (uma vez)
 
