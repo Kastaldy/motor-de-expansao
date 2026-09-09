@@ -1,4 +1,5 @@
 import type { PontoPayload, PontoVizinho } from './types'
+import { perfilDoCliente } from './perfil'
 
 /**
  * Regras do mapa do modo de ponto.
@@ -29,7 +30,11 @@ export interface Vista {
  * `lat/lng` indefinidos — e o que aparece e' um cinza sem explicacao, que se le como
  * defeito de carregamento.
  */
-export const VISTA_BRASIL: Vista = { longitude: -52.9, latitude: -14.5, zoom: 3.4 }
+export const VISTA_PADRAO: Vista = {
+  longitude: perfilDoCliente().vista_padrao.lng,
+  latitude: perfilDoCliente().vista_padrao.lat,
+  zoom: perfilDoCliente().vista_padrao.zoom,
+}
 
 /** Enquadramento do entorno — o mesmo do mini-mapa que esta tela substituiu. */
 export const ZOOM_PONTO = 12.4
@@ -46,7 +51,8 @@ export function vistaDoPonto(lat: number, lng: number): Vista {
  * referencia que o `score_oportunidade_residual` usa. Manter as duas iguais e' o que
  * permite a cor do mapa falar a mesma lingua do score, sem normalizacao inventada aqui.
  */
-export const CAPACIDADE_UNIDADE_ALUNOS = 2500
+export const CAPACIDADE_UNIDADE_ALUNOS =
+  perfilDoCliente().reguas.capacidade_unidade_alunos
 
 /**
  * Residual em ALUNOS -> posicao 0-100 na rampa de 10 faixas do produto.

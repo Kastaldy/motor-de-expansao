@@ -106,15 +106,24 @@ def test_corte_do_funil_bate_com_a_escala():
     Se alguem devolver o corte para 70 sem devolver a escala, a camada 1 do funil cai de
     11.255 para 148 hexes -- em silencio.
     """
-    # Le do FONTE em vez de importar: `web/server/app.py` puxa modulos que so' existem no
-    # sys.path do container do piloto (ex.: `acesso`), e o contrato aqui e' sobre o numero.
-    import re  # noqa: PLC0415
-    from pathlib import Path as _P  # noqa: PLC0415
+    # Le do PERFIL versionado, e nao do texto-fonte de `web/server/app.py`.
+    #
+    # Ate 2026-09-02 esta linha era um `re.search` de `^SCORE_CORTE_QUENTE\s*=\s*([0-9.]+)`
+    # sobre o fonte. O Bloco A (DEC-047) faz a constante virar
+    # `SCORE_CORTE_QUENTE = PERFIL.reguas.score_corte_quente`, e ai o `([0-9.]+)` deixa de
+    # casar: o teste morreria em `assert m` com "SCORE_CORTE_QUENTE nao encontrado" —
+    # mensagem que aponta para o lugar errado e faz perder uma hora longe da causa.
+    #
+    # O contrato fica MAIS forte, nao mais fraco: antes provava que o TEXTO de `app.py`
+    # diz 30; agora prova que o numero que o funil de fato APLICA diz 30, ja que a
+    # constante do `app.py` passou a ser derivada dele. Continua sem importar `app`, que
+    # puxa modulos que so existem no sys.path do container do piloto.
+    from motor_expansao.perfil import (  # noqa: PLC0415
+        PERFIL_BR_EMBARCADO,
+        carregar_perfil,
+    )
 
-    fonte = _P("web/server/app.py").read_text(encoding="utf-8")
-    m = re.search(r"^SCORE_CORTE_QUENTE\s*=\s*([0-9.]+)", fonte, re.M)
-    assert m, "SCORE_CORTE_QUENTE nao encontrado em web/server/app.py"
-    SCORE_CORTE_QUENTE = float(m.group(1))
+    SCORE_CORTE_QUENTE = carregar_perfil(PERFIL_BR_EMBARCADO).reguas.score_corte_quente
 
     assert SCORE_CORTE_QUENTE == 30.0
     # um perfil de praca real (renda mediana da rede, porte urbano) tem de passar o corte

@@ -176,6 +176,40 @@ def test_toda_rota_do_app_tem_regra_ou_e_livre_declarada() -> None:
     )
 
 
+def test_toda_rota_do_app_tem_superficie_ou_exige_malha_ou_e_livre() -> None:
+    """A MESMA garantia acima, para o gate de PAIS (Bloco C).
+
+    Rota nova em `REGRAS_DE_ACESSO` sem entrada em `SUPERFICIE_DA_ROTA` (nem em
+    `ROTAS_QUE_EXIGEM_MALHA_MUNICIPAL`) passaria despercebida em qualquer instancia
+    que nao declare a superficie dela — o mesmo esquecimento classico, um nivel acima.
+    """
+    rotas_api = {r.path for r in pilot_app.app.routes if getattr(r, "path", "").startswith("/api/")}
+    sem_decisao = {
+        p
+        for p in rotas_api
+        if acesso.superficie_necessaria(p) is None
+        and not acesso.rota_exige_malha_municipal(p)
+        and p not in acesso.ROTAS_LIVRES
+        and not p.startswith(acesso.PREFIXO_ROTAS_ACESSOS)
+    }
+    assert not sem_decisao, (
+        f"rotas sem gate de pais nem declaracao de rota livre: {sorted(sem_decisao)} — "
+        "adicione em SUPERFICIE_DA_ROTA, ROTAS_QUE_EXIGEM_MALHA_MUNICIPAL ou, se for "
+        "deliberadamente livre, em ROTAS_LIVRES (web/server/acesso.py)"
+    )
+
+
+def test_brasil_e_inerte_sob_o_gate_de_pais_para_TODA_rota_real() -> None:
+    """A garantia mais forte possivel: nao contra a tabela declarada, contra as rotas
+    que o `FastAPI` REGISTROU de fato. Se um dia uma rota nascer com prefixo que bate
+    em `SUPERFICIE_DA_ROTA` mas o Brasil nao tiver aquela superficie, e' aqui que
+    acende — antes de qualquer instancia real notar."""
+    rotas_api = {r.path for r in pilot_app.app.routes if getattr(r, "path", "").startswith("/api/")}
+    bloqueadas = {p: acesso.motivo_bloqueio_pais(p, pilot_app.PERFIL) for p in rotas_api}
+    bloqueadas = {p: d for p, d in bloqueadas.items() if d is not None}
+    assert not bloqueadas, f"o gate de pais bloqueou o Brasil: {bloqueadas}"
+
+
 # --- motivo_bloqueio (o que o middleware devolve) ------------------------------
 
 
@@ -227,6 +261,25 @@ def test_me_com_usuario_lista_as_abas_do_mapa(escrever_mapa) -> None:
     payload = pilot_app.me(remote_user="rodrigo_oliveira")
     assert payload["usuario"] == "rodrigo_oliveira"
     assert payload["abas"] == ["mapa", "oportunidades", "viabilidade"]
+
+
+def test_me_nao_concede_aba_que_a_INSTANCIA_nao_oferece(
+    escrever_mapa, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bloco C: o cadastro de abas e' arquivo OPERACIONAL, separado do perfil — nada
+    o impede de conceder "oportunidades" a um usuario argentino por copia-e-cola do
+    cadastro brasileiro. Sem a interseccao, a SPA mostraria um card cujo clique
+    morreria em 404 no gate de pais; com ela, o card simplesmente nao aparece.
+    """
+    from motor_expansao.perfil import PERFIL_BR_EMBARCADO, carregar_perfil
+
+    perfil_ar = carregar_perfil(PERFIL_BR_EMBARCADO.parents[1] / "AR" / "perfil.json")
+    monkeypatch.setattr(pilot_app, "PERFIL", perfil_ar)
+    # Cadastro concede as CINCO abas — como se fosse copiado do Brasil por engano.
+    escrever_mapa({"ana": ["mapa", "oportunidades", "imobiliaria", "executiva", "viabilidade"]})
+    payload = pilot_app.me(remote_user="ana")
+    # So' o que a Argentina de fato oferece (perfil.superficies = mapa, viabilidade).
+    assert payload["abas"] == ["mapa", "viabilidade"]
 
 
 # --- fail-CLOSED em producao (BLK-SEC-05) ------------------------------------

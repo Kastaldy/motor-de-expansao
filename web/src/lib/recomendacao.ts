@@ -1,3 +1,4 @@
+import { moeda } from './perfil'
 /**
  * O que fazer para o imovel fechar a conta — deterministico, e honesto sobre limites.
  *
@@ -203,5 +204,5 @@ function fmt(v: number): string {
 }
 
 function fmtBrl(v: number): string {
-  return `R$ ${fmt(v)}`
+  return `${moeda()} ${fmt(v)}`
 }

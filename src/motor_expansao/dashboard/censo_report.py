@@ -23,6 +23,7 @@ from motor_expansao.dashboard.censo_point import (
     RAIO_CENSITARIO_DEFAULT_KM,
 )
 from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
+from motor_expansao.perfil import resolver_perfil
 
 # Cabecalhos canonicos das 7 paginas do template Ultra. Renderizam em latin-1 (core font
 # Helvetica do fpdf2), que cobre integralmente os acentos portugueses -- o que e PROIBIDO e
@@ -138,18 +139,25 @@ _RAIO_LABEL = f"{_RAIO_TXT} km"
 #
 # As metas de MEDIA (renda per capita, renda domiciliar, score) sao escala-invariantes e nao
 # seriam afetadas de todo jeito. Idem SAM/Residual Fitness, que sao por hexagono H3.
-_META_POP_TOTAL_RAIO = 10_000.0
-_META_RENDA_PER_CAPITA_MEDIA_RAIO = 1_500.0
+# As sete metas vem do PERFIL do pais (Bloco B / DEC-047). No Brasil sao os mesmos numeros
+# de sempre — `data/perfis/BR/perfil.json` os transcreve e o teste de contrato trava a
+# igualdade. Quatro delas sao em MOEDA ou em escala do pais: contra renda em USD, as metas
+# brasileiras pintariam TODOS os cards de uma cor por construcao, que e a classe de defeito
+# que produz numero errado em vez de erro.
+_METAS = resolver_perfil().reguas.metas_big_numbers
+
+_META_POP_TOTAL_RAIO = _METAS.pop_total_raio
+_META_RENDA_PER_CAPITA_MEDIA_RAIO = _METAS.renda_per_capita_media_raio
 # Renda media domiciliar TOTAL (com uplift): verde a partir de 4.000 -- pedido de Felipe
 # (2026-07-23, "acima de R$ 4.000 o card NAO deve vir vermelho") e confirmado por Vinicius no
 # gate visual do BLK-RELPON-13 (2026-07-24); substitui o alvo anterior de 6.200 (~C1 GeoFusion).
 # Alinha com a 1a faixa "verde" das bandas.
-_META_RENDA_DOMICILIAR_TOTAL_RAIO = 4_000.0
-_META_DOMICILIOS_TOTAL_RAIO = 3_000.0  # mantido junto com a meta de populacao (decisao de Felipe,
+_META_RENDA_DOMICILIAR_TOTAL_RAIO = _METAS.renda_domiciliar_total_raio
+_META_DOMICILIOS_TOTAL_RAIO = _METAS.domicilios_total_raio  # mantido junto com a meta de populacao (decisao de Felipe,
 # 2026-07-30): manter uma reescalada e a outra nao deixaria o semaforo com duas filosofias.
-_META_SCORE_SETOR_MEDIO = 60.0
-_META_SAM_FITNESS_POTENCIAL = 2_000.0
-_META_RESIDUAL_FITNESS_DISPONIVEL = 2_000.0
+_META_SCORE_SETOR_MEDIO = _METAS.score_setor_medio
+_META_SAM_FITNESS_POTENCIAL = _METAS.sam_fitness_potencial
+_META_RESIDUAL_FITNESS_DISPONIVEL = _METAS.residual_fitness_disponivel
 
 # Geometria do grid 4x2 do Big Numbers (8 cards; o card "Score censitario medio" foi removido do
 # PDF por pedido de Felipe 2026-07-17 — segue em result/CSV). A pagina e' FIXA 960x540 com
@@ -528,6 +536,37 @@ def _draw_footer(pdf: _UltraPDF, *, with_attribution: bool = True) -> None:
     if with_attribution:
         text = f"{text}   |   {_ATRIBUICAO_TILES}"
     pdf.cell(_PAGE_W - 72, 12, _ascii(text))
+
+
+#: Corpos tentados no rodape de aviso, do preferido ao minimo legivel — mesma tecnica
+#: do `rodape()` de `pdf_base.py`: `cell` do fpdf2 NAO quebra nem avisa quando o texto
+#: nao cabe, ele simplesmente sai pela margem direita e some.
+_CORPOS_RODAPE_AVISO: tuple[float, ...] = (8.0, 7.5, 7.0, 6.5, 6.0)
+
+
+def _rodape_aviso(pdf: _UltraPDF, texto: str) -> None:
+    """Carimba um AVISO no rodape da pagina, EMPILHADO acima do credito Ultra.
+
+    Bloco C+ (decisao 0.7 do plano multi-pais): o aviso de provisoriedade declarado no
+    perfil da instancia tem de viajar no arquivo, nao so na tela. O credito de
+    `_draw_footer` (em `_PAGE_H - 22`) fica intacto — este texto entra numa linha
+    propria acima dele, em magenta e negrito para nao se confundir com o credito.
+    Encolhe ate caber numa linha; no limite, quebra em duas subindo o bloco.
+    """
+    largura = _PAGE_W - 72
+    limpo = _ascii(texto)
+    pdf.set_text_color(*ULTRA_MAGENTA)
+    for corpo in _CORPOS_RODAPE_AVISO:
+        pdf.set_font("Helvetica", "B", corpo)
+        if pdf.get_string_width(limpo) <= largura:
+            pdf.set_xy(36, _PAGE_H - 36)
+            pdf.cell(largura, 10, limpo)
+            return
+    # Nem no menor corpo coube numa linha: duas linhas, subindo para nao invadir o
+    # credito nem a borda inferior.
+    pdf.set_font("Helvetica", "B", _CORPOS_RODAPE_AVISO[-1])
+    pdf.set_xy(36, _PAGE_H - 46)
+    pdf.multi_cell(largura, 9, limpo, max_line_height=9)
 
 
 # ---------------------------------------------------------------------------
@@ -3066,7 +3105,15 @@ def _big_numbers_page(
             _format_number(oferta_disponivel, 0),
             _cor_por_meta(oferta_disponivel, _META_RESIDUAL_FITNESS_DISPONIVEL),
         ),
-        ("Concorrentes no raio", _format_number(result.get("n_concorrentes"), 0), cor_consumo),
+        # DEC-046: o numero passa a ser o TOTAL (cadeia + independente) e o rotulo diz isso.
+        # A cor continua ESPELHANDO o card de consumo, que e' calculado so' sobre cadeias --
+        # por isso o universo de cada um vai NOMEADO, senao a pagina mostraria "14 academias"
+        # em verde ao lado de um consumo estimado de 2,8 unidades sem explicar a diferenca.
+        (
+            "Academias no raio (todas)",
+            _format_number(result.get("n_concorrentes"), 0),
+            cor_consumo,
+        ),
         (
             "Consumo concorrentes (est.)",
             _format_number(residual.get("oferta_consumida_mercado_estimada"), 0),
@@ -3178,15 +3225,38 @@ def _redes_no_raio(result: dict[str, Any], *, max_nomes: int = 12) -> tuple[str,
     def _nomes(df: pd.DataFrame | None) -> list[str]:
         if df is None or df.empty:
             return []
-        col = next(
-            (c for c in ("rede", "nome_unidade", "nome", "brand") if c in df.columns), None
-        )
-        if col is None:
+        # DEC-046: a coluna `rede` traz SLUG para cadeia (`force_one`) e vazio para
+        # independente, que se identifica por `nome`. Sem resolver os dois, a faixa saia
+        # misturando snake_case com nome proprio ("force_one, allp_fit, Academia Pura Vida"),
+        # que le como defeito. A traducao e' feita ITEM A ITEM, e nao por substituicao no
+        # texto ja' montado: slugs curtos como `one` e `hi` casariam DENTRO do nome de uma
+        # independente.
+        from motor_expansao.dashboard.competitors import COMPETITOR_BRANDS
+
+        colunas = set(df.columns)
+        if not ({"rede", "nome", "nome_unidade", "brand"} & colunas):
             return []
+        def _txt(valor: Any) -> str:
+            """`str` seguro para celula de DataFrame.
+
+            NAO usar `valor or ""`: com `pd.NA` (dtype `string`, que e' o da uniao da
+            DEC-046) o `or` avalia o valor em contexto booleano e o pandas levanta
+            `TypeError: boolean value of NA is ambiguous`. `pd.isna` e' o unico teste que
+            cobre None, NaN e NA de uma vez.
+            """
+            if valor is None or pd.isna(valor):
+                return ""
+            texto = str(valor).strip()
+            return "" if texto.lower() in {"nan", "none", "<na>"} else texto
+
         vistos: set[str] = set()
         out: list[str] = []
-        for valor in df[col].astype(str):
-            nome = valor.strip()
+        for _, linha in df.iterrows():
+            slug = _txt(linha.get("rede"))
+            if slug:
+                nome = str(COMPETITOR_BRANDS.get(slug, {}).get("label", slug))
+            else:
+                nome = _txt(linha.get("nome")) or _txt(linha.get("nome_unidade"))
             if nome and nome.lower() not in vistos:
                 vistos.add(nome.lower())
                 out.append(nome)
@@ -3903,6 +3973,7 @@ def gerar_pdf_relatorio_pontual_classico(
     foto_satelite_grande: bool = False,
     origem_centroide_hex: bool = False,
     conclusao_so_estudo: bool = False,
+    aviso_rodape: str | None = None,
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
 
@@ -3938,6 +4009,15 @@ def gerar_pdf_relatorio_pontual_classico(
     pagina com `TEXTO_SEM_DADO` gracioso. `now` e injetavel para data determinista em teste. `solicitante`
     (BLK-EST-01) carimba a marca d'agua de rastreabilidade em TODAS as paginas: None -> so
     "Ultra Academia"; preenchido -> "Ultra Academia | {solicitante}". Geracao 100% offline, sem PII.
+
+    `aviso_rodape` (Bloco C+, decisao 0.7 do plano multi-pais) e o texto de AVISO a
+    carimbar via `_rodape_aviso` em TODAS as paginas de RESULTADO FINANCEIRO do
+    relatorio — as de `_viabilidade_page` (numeros e, se houver, graficos) e a de
+    `_conclusao_page` quando ela carrega o parecer financeiro. Quem decide o texto e o
+    PERFIL da instancia (o piloto web le `avisos.viabilidade_tributo_provisorio.
+    texto_rodape`); este modulo nao conhece pais nenhum (DEC-047). `None` (default) =
+    nenhum carimbo, saida identica a de antes do parametro. Sem payload de
+    `viabilidade` nao existe pagina financeira e nada e carimbado, mesmo com texto.
     """
     assets = _load_branding_assets(ultra_dir)
     layers = dict(_normalize_mapas_by_key(mapas))
@@ -3998,8 +4078,15 @@ def gerar_pdf_relatorio_pontual_classico(
     )
     _big_numbers_page(pdf, result, residual, assets, primary=p4, secondary=s4)
     _classico_banda_magenta_rodape(pdf)
+    # Paginas de RESULTADO FINANCEIRO (numeros de viabilidade, graficos e conclusao com
+    # parecer financeiro), anotadas POR NUMERO na ordem em que nascem: e nelas — e so
+    # nelas — que o `aviso_rodape` do Bloco C+ e carimbado, mais abaixo, pelo mesmo
+    # mecanismo de reabrir pagina da marca d'agua.
+    paginas_financeiras: list[int] = []
     if viabilidade:
+        antes = pdf.pages_count
         _viabilidade_page(pdf, viabilidade, assets, primary=p1, secondary=p2)
+        paginas_financeiras.extend(range(antes + 1, pdf.pages_count + 1))
     # CONCLUSAO: fecha o relatorio com o parecer do ponto, logo antes do credito.
     #
     # COM `viabilidade` -> parecer completo, como desde 2026-08-06.
@@ -4013,6 +4100,7 @@ def gerar_pdf_relatorio_pontual_classico(
     # -- ganharia a pagina junto, fora do escopo pedido. Default `False` = comportamento
     # historico intacto para todo chamador que nao se manifeste.
     if viabilidade or conclusao_so_estudo:
+        antes = pdf.pages_count
         _conclusao_page(
             pdf,
             result,
@@ -4024,9 +4112,22 @@ def gerar_pdf_relatorio_pontual_classico(
             secondary=s5,
             somente_estudo=not viabilidade,
         )
+        # No modo so-estudo a conclusao NAO tem eixo financeiro (nem cards de aluguel,
+        # nem selo) — nao e pagina de resultado financeiro e nao leva o carimbo.
+        if viabilidade:
+            paginas_financeiras.extend(range(antes + 1, pdf.pages_count + 1))
     _classico_credit_page(
         pdf, result, assets, rotulo=rotulo, now=now, origem_centroide_hex=origem_centroide_hex
     )
+
+    # Carimbo do aviso do perfil (Bloco C+, decisao 0.7) nas paginas financeiras —
+    # ANTES da marca d'agua, para ela continuar por cima de tudo. Mesmo mecanismo de
+    # reabrir pagina: `pdf.page = n` anexa ao stream daquela pagina.
+    if aviso_rodape and paginas_financeiras:
+        for page_number in paginas_financeiras:
+            pdf.page = page_number
+            _rodape_aviso(pdf, aviso_rodape)
+        pdf.page = pdf.pages_count
 
     # Marca d'agua POR CIMA do conteudo de cada pagina (BLK-EST-01, D2=todas as paginas).
     # Escrever na pagina `n` via `pdf.page = n` ANEXA ao stream dessa pagina -> sobreposicao.

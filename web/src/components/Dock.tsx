@@ -1,8 +1,8 @@
 import type { Tela } from '../App'
 import BotaoTema from './BotaoTema'
-import { telaLiberada, type Aba, type TelaControlada } from '../lib/acesso'
+import { telaLiberada, type Aba } from '../lib/acesso'
+import { ITENS_DOCK } from '../lib/dock-itens'
 import type { Tema } from '../lib/tema'
-import type { PaisDaBase } from '../lib/pais-da-base'
 
 /* Dock vertical fixo. No piloto so as duas telas do escopo estao ativas; as
    demais aparecem desabilitadas para o operador entender que o mapa e a
@@ -57,8 +57,10 @@ const BANDEIRAS: Record<'BR' | 'AR', { nome: string; svg: React.JSX.Element }> =
   },
 }
 
-function Carimbo({ pais }: { pais: PaisDaBase }) {
-  const bandeira = pais ? BANDEIRAS[pais] : undefined
+function Carimbo({ pais }: { pais?: string | null }) {
+  // Sigla sem bandeira desenhada (a Colombia, quando entrar) nao carimba nada — a
+  // tabela e dado, e acrescentar pais e acrescentar uma entrada.
+  const bandeira = pais && pais in BANDEIRAS ? BANDEIRAS[pais as keyof typeof BANDEIRAS] : undefined
   if (!bandeira) return null
   return (
   <div
@@ -113,20 +115,16 @@ function Carimbo({ pais }: { pais: PaisDaBase }) {
 }
 
 const ICONES: Record<string, React.JSX.Element> = {
+  /* Mapa dobrado — o atalho do Mapa Territorial (o "Explorar uma região" do Início). */
+  mapa: (
+    <>
+      <path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z" />
+      <path d="M9 4v14M15 6v14" />
+    </>
+  ),
   exec: (
     <>
       <path d="M4 19V9M10 19V5M16 19v-7M22 19H2" />
-    </>
-  ),
-  dom: (
-    <>
-      <circle cx="12" cy="12" r="8.5" />
-      <circle cx="12" cy="12" r="4" />
-    </>
-  ),
-  cart: (
-    <>
-      <path d="M4 6h16M4 12h16M4 18h10" />
     </>
   ),
   viab: (
@@ -149,28 +147,9 @@ const ICONES: Record<string, React.JSX.Element> = {
   ),
 }
 
-/**
- * O Dock NAO lista os MODOS DE ANALISE.
- *
- * "Análise de ponto" e "Explorar uma região" sairam daqui a pedido do Juan (2026-08-12):
- * eles sao escolha de PERGUNTA, e essa escolha se faz na tela de inicio, onde cada card
- * explica o que o modo responde e do que ele precisa. Repetidos como dois ícones sem
- * rótulo, viravam um segundo caminho mudo para a mesma decisão — e dois pinos quase
- * iguais, ainda por cima.
- *
- * O ícone de início tambem saiu: quem volta ao menu agora clica na LOGO, que ja estava
- * ali em cima e nao fazia nada.
- */
-const ITENS: { id: string; tela: Tela | null; titulo: string }[] = [
-  { id: 'exec', tela: 'executiva', titulo: 'Visão executiva' },
-  { id: 'dom', tela: null, titulo: 'Expansão de domínio (fora do piloto)' },
-  { id: 'cart', tela: null, titulo: 'Carteira e plano (fora do piloto)' },
-  { id: 'oport', tela: 'oportunidades-imob', titulo: 'Oportunidades imobiliárias' },
-  { id: 'viab', tela: 'viabilidade', titulo: 'Viabilidade do ponto' },
-  /* Aba restrita (emenda DEC-027): telaLiberada e deny-by-default — para quem não
-     está na allowlist o ícone simplesmente não existe, como toda tela vetada. */
-  { id: 'acessos', tela: 'acessos', titulo: 'Acessos e uso do piloto' },
-]
+/* A fila de destinos (que itens existem, em que ordem, para onde levam) vive em
+   `lib/dock-itens.ts`, testável sem DOM — este componente só desenha o que está
+   declarado lá, com os ícones daqui (SVG é desenho, não regra). */
 
 export default function Dock({
   tela,
@@ -187,14 +166,13 @@ export default function Dock({
   tema: Tema
   onTema: (t: Tema) => void
   /** País da base servida. `null` = ainda não dá para afirmar -> não carimba. */
-  pais?: PaisDaBase
+  pais?: string | null
 }) {
-  // Ícone de tela vetada SOME em vez de aparecer desabilitado: os desabilitados do
-  // Dock já significam "fora do piloto", e um terceiro estado ("existe mas não para
-  // você") só gastaria a paciência de quem não pode clicar de qualquer jeito.
-  const itens = ITENS.filter(
-    (it) => it.tela === null || telaLiberada(it.tela as TelaControlada, abas),
-  )
+  // Ícone de tela vetada SOME em vez de aparecer desabilitado: um ícone apagado não
+  // diz por que está apagado, e "existe mas não para você" só gastaria a paciência de
+  // quem não pode clicar de qualquer jeito. (Foi também o que condenou os dois itens
+  // "fora do piloto" que viviam aqui — ver ITENS_DOCK em lib/dock-itens.ts.)
+  const itens = ITENS_DOCK.filter((it) => it.tela === null || telaLiberada(it.tela, abas))
   return (
     <nav
       aria-label="Navegação principal"

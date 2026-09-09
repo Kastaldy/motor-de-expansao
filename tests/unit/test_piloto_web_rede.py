@@ -107,8 +107,16 @@ def rede(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             versao=1,
             atualizado_em="2026-08-04T00:00:00+00:00",
             unidades={
-                "botafogo-rj": {"consultor": "MARISE", "cidade": "Rio de Janeiro"},
-                "icarai-rj": {"consultor": "JAILSON", "cidade": "Niteroi"},
+                "botafogo-rj": {
+                    "consultor": "MARISE",
+                    "cidade": "Rio de Janeiro",
+                    "master_franquia": "Fernando Nero",
+                },
+                "icarai-rj": {
+                    "consultor": "JAILSON",
+                    "cidade": "Niteroi",
+                    "master_franquia": "Dalmo Ribeiro",
+                },
             },
         ),
         cadastro_dir,
@@ -118,6 +126,16 @@ def rede(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(pilot, "GROWTH_PARQUET", staging / "growth_api_historico.parquet")
     monkeypatch.setattr(pilot, "ULTRA_PERF_PARQUET", staging / "nao_existe.parquet")
     monkeypatch.setattr(pilot, "ULTRA_MAPEADAS_PARQUET", staging / "tambem_nao.parquet")
+    # A planilha financeira TAMBEM precisa ser declarada ausente, como as duas acima:
+    # `FATURAMENTO_FINANCEIRO_PARQUET` e constante de MODULO, resolvida no import a partir
+    # do `STAGING_DIR` de ENTAO — repontar `STAGING_DIR` aqui em cima nao a move. Sem esta
+    # linha, quem tiver `data/staging/faturamento_financeiro.parquet` no worktree le a
+    # planilha REAL. Passava por acidente ate 2026-09-02, quando `STAGING_DIR` derivava do
+    # `_DEFAULT_DATA` cravado no Downloads de UMA maquina: com a raiz quebrada, nenhum
+    # arquivo existia. O Bloco A (DEC-047) trocou a raiz pelo `data/` do repo.
+    monkeypatch.setattr(
+        pilot, "FATURAMENTO_FINANCEIRO_PARQUET", staging / "sem_planilha.parquet"
+    )
     monkeypatch.setattr(pilot, "CADASTRO_DIR", cadastro_dir)
     _limpar_caches()
     yield tmp_path
@@ -763,6 +781,16 @@ def rede_anual(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(pilot, "GROWTH_PARQUET", staging / "growth_api_historico.parquet")
     monkeypatch.setattr(pilot, "ULTRA_PERF_PARQUET", staging / "nao_existe.parquet")
     monkeypatch.setattr(pilot, "ULTRA_MAPEADAS_PARQUET", staging / "tambem_nao.parquet")
+    # A planilha financeira TAMBEM precisa ser declarada ausente, como as duas acima:
+    # `FATURAMENTO_FINANCEIRO_PARQUET` e constante de MODULO, resolvida no import a partir
+    # do `STAGING_DIR` de ENTAO — repontar `STAGING_DIR` aqui em cima nao a move. Sem esta
+    # linha, quem tiver `data/staging/faturamento_financeiro.parquet` no worktree le a
+    # planilha REAL. Passava por acidente ate 2026-09-02, quando `STAGING_DIR` derivava do
+    # `_DEFAULT_DATA` cravado no Downloads de UMA maquina: com a raiz quebrada, nenhum
+    # arquivo existia. O Bloco A (DEC-047) trocou a raiz pelo `data/` do repo.
+    monkeypatch.setattr(
+        pilot, "FATURAMENTO_FINANCEIRO_PARQUET", staging / "sem_planilha.parquet"
+    )
     monkeypatch.setattr(pilot, "CADASTRO_DIR", cadastro_dir)
     _limpar_caches()
     yield tmp_path
@@ -1119,3 +1147,38 @@ def test_origem_dominante_denuncia_recorte_misturado() -> None:
     discordam = pd.DataFrame({"origem_faturamento": ["financeiro", "ux"]})
     assert pilot._origem_dominante(discordam) == "misto"
 
+
+def test_filtro_de_master_casa_pelo_nome_do_franqueado_e_nao_pela_sigla(rede: Path) -> None:
+    """O recorte de master responde "as unidades de QUEM", nao "de que regiao".
+
+    Ate 2026-09-09 o filtro lia a coluna `master` da Growth, que e' sigla de REGIAO --
+    e uma regiao tem varios franqueados (medido na base real: `DF/GO` cobre 2 masters,
+    `RJ/SP 01` cobre 3, `ULTRA` cobre 3). Na fixture, BOTAFOGO e ICARAI dividem a mesma
+    sigla `RJ/SP 01` e tem masters DIFERENTES: e' exatamente o par que a regua antiga
+    nao conseguia separar, e por isso ele esta aqui.
+    """
+    filtros = pilot.rede_filtros()
+    assert "Fernando Nero" in filtros["masters"]
+    assert "Dalmo Ribeiro" in filtros["masters"]
+    # A sigla nao pode mais aparecer no vocabulario do filtro...
+    assert "RJ/SP 01" not in filtros["masters"]
+    # ...mas segue servida a parte, para quem precisar do recorte por regiao.
+    assert "RJ/SP 01" in filtros["masters_regiao"]
+
+    carteira = pilot.rede_carteira(master="Fernando Nero")
+    nomes = {u["nome"] for u in carteira["unidades"]}
+    assert nomes == {"BOTAFOGO - RJ"}, nomes
+
+    # Mesma sigla, outro master: a regua antiga devolveria as duas juntas.
+    outra = pilot.rede_carteira(master="Dalmo Ribeiro")
+    assert {u["nome"] for u in outra["unidades"]} == {"ICARAI - RJ"}
+
+
+def test_filtro_de_master_desconhecido_nao_derruba_a_rota(rede: Path) -> None:
+    """Master sem nenhuma unidade devolve carteira VAZIA, nunca a rede inteira.
+
+    Um filtro que nao casa com nada e' o caso em que um `if` mal escrito silenciosamente
+    NAO filtra -- e a tela mostraria a rede toda sob o nome de um franqueado.
+    """
+    carteira = pilot.rede_carteira(master="Quem Nao Existe")
+    assert carteira["unidades"] == []

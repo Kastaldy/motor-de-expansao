@@ -57,6 +57,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from motor_expansao.perfil import Ancoras
+
 # ---------------------------------------------------------------------------
 # Constantes
 # ---------------------------------------------------------------------------
@@ -91,6 +93,19 @@ RENDA_ABS_MAX = 4_000.0
 POP_ABS_MIN = 1_000.0
 POP_ABS_MAX = 100_000.0
 
+#: Ancoras do BRASIL — os MESMOS quatro numeros de :89-92, byte a byte. As constantes
+#: continuam existindo com o mesmo valor no mesmo lugar (NAO foram substituidas) por
+#: duas razoes: `tests/contracts/test_regua_absoluta_censitaria.py:22-25` as importa por
+#: nome, e este arquivo e CRITICO — um diff que MOVE numero e caro de revisar, um que so
+#: acrescenta um parametro com default e barato.
+#:
+#: `Ancoras` vem de `motor_expansao.perfil` e nao e redefinida aqui de proposito: e o
+#: MESMO tipo que `Perfil.ancoras()` devolve, entao o exportador do Bloco B passa
+#: `PERFIL.ancoras()` direto para `calcular_score_calibrado`, sem conversao. Dois
+#: dataclasses estruturalmente iguais mas distintos nesse ponto de costura seriam um
+#: defeito esperando a hora.
+ANCORAS_BR = Ancoras(RENDA_ABS_MIN, RENDA_ABS_MAX, POP_ABS_MIN, POP_ABS_MAX)
+
 UFS_PILOTO = ["GO", "SP", "RJ"]
 CAPITALS = {
     "GO": "5208707",  # Goiânia
@@ -115,17 +130,25 @@ def percentile_in_distribution(values: np.ndarray, reference: np.ndarray) -> np.
     return np.searchsorted(ref_sorted, values, side="left") / len(ref_sorted)
 
 
-def nota_renda_absoluta(renda: np.ndarray) -> np.ndarray:
-    """Renda per capita (R$) -> 0-100, linear entre RENDA_ABS_MIN e RENDA_ABS_MAX."""
+def nota_renda_absoluta(
+    renda: np.ndarray, *, ancoras: Ancoras = ANCORAS_BR
+) -> np.ndarray:
+    """Renda per capita -> 0-100, linear entre `ancoras.renda_min` e `.renda_max`.
+
+    `ancoras` e keyword-only de proposito: impede que alguem acrescente um terceiro
+    posicional e o passe onde `pop_abs` deveria ir. Num arquivo que produz o score
+    primario operacional do Brasil, isso nao e estilo.
+    """
     r = np.asarray(renda, dtype="float64")
-    return np.clip(100.0 * (r - RENDA_ABS_MIN) / (RENDA_ABS_MAX - RENDA_ABS_MIN), 0.0, 100.0)
+    escala = ancoras.renda_max - ancoras.renda_min
+    return np.clip(100.0 * (r - ancoras.renda_min) / escala, 0.0, 100.0)
 
 
-def nota_pop_absoluta(pop: np.ndarray) -> np.ndarray:
-    """Populacao do setor -> 0-100, LOG entre POP_ABS_MIN e POP_ABS_MAX."""
+def nota_pop_absoluta(pop: np.ndarray, *, ancoras: Ancoras = ANCORAS_BR) -> np.ndarray:
+    """Populacao do hexagono -> 0-100, LOG entre `ancoras.pop_min` e `.pop_max`."""
     p = np.clip(np.asarray(pop, dtype="float64"), 1.0, None)
-    escala = np.log(POP_ABS_MAX) - np.log(POP_ABS_MIN)
-    return np.clip(100.0 * (np.log(p) - np.log(POP_ABS_MIN)) / escala, 0.0, 100.0)
+    escala = np.log(ancoras.pop_max) - np.log(ancoras.pop_min)
+    return np.clip(100.0 * (np.log(p) - np.log(ancoras.pop_min)) / escala, 0.0, 100.0)
 
 
 def ajuste_executivo(renda_pct: np.ndarray, pop_pct: np.ndarray) -> np.ndarray:
@@ -148,15 +171,23 @@ def ajuste_executivo(renda_pct: np.ndarray, pop_pct: np.ndarray) -> np.ndarray:
 def calcular_score_calibrado(
     renda_abs: np.ndarray,
     pop_abs: np.ndarray,
+    *,
+    ancoras: Ancoras = ANCORAS_BR,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Calcula hex_score_calibrado, ajuste_calibrado e score_setor_2022_calibrado.
 
     ATENCAO -- mudanca de contrato em 2026-08-26: os argumentos passaram de PERCENTIS
     (renda_pct nacional, pop_pct municipal) para VALORES ABSOLUTOS (renda per capita em
     R$, populacao do setor). Ver o bloco de constantes RENDA_ABS_*/POP_ABS_* acima.
+
+    `ancoras` (2026-09-02, Bloco A / DEC-047): a regua absoluta deixa de ser propriedade
+    deste modulo e passa a ser propriedade do PAIS. O default `ANCORAS_BR` sao os quatro
+    numeros de sempre, entao os 5 chamadores de producao nao mudam uma linha e os
+    contratos brasileiros ficam byte a byte. Quem passa outra coisa e o exportador do
+    Bloco B, com `PERFIL.ancoras()`.
     """
-    nr = nota_renda_absoluta(renda_abs)
-    npop = nota_pop_absoluta(pop_abs)
+    nr = nota_renda_absoluta(renda_abs, ancoras=ancoras)
+    npop = nota_pop_absoluta(pop_abs, ancoras=ancoras)
     hex_score = 0.60 * nr + 0.40 * npop
     adj = ajuste_executivo(nr / 100.0, npop / 100.0)
     score = np.clip(hex_score + adj, 0.0, 100.0)

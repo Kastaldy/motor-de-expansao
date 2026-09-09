@@ -29,6 +29,17 @@ consumo Ultra nao puder ser reproduzido.
 
 CUSTO: a reparticao roda UMA vez por processo (~8 s para os 3.179 concorrentes validos
 do Brasil) e fica em cache. Sem isso, cada request de UF pagaria a conta de novo.
+
+RENORMALIZACAO CONTRA A BASE NACIONAL (mesmo fix de
+`pipelines/pressao_concorrencial_1km.py`, aplicado aqui em 2026-09-08). Sem isso, um
+concorrente cujo disco cai parcialmente fora do universo valido de hexagonos (litoral,
+fronteira, hexagono podado por `M1_HEX_LAND_FRACTION_MIN`) perdia parte da conta em
+silencio quando `anexar` fazia merge contra o `df` da UF — o mesmo defeito medido no
+modulo de pipeline (3,7% dos concorrentes, ~68 mil alunos, vies de SUPERESTIMAR residual
+em metropoles costeiras). `_reparticao` agora renormaliza contra o universo NACIONAL de
+hexagonos (nao contra o `df` da UF em exibicao): um concorrente perto da divisa pressiona
+hexes de outra UF, e restringir a renormalizacao a UF isolada inflaria artificialmente a
+pressao so' porque o vizinho nao esta na tela.
 """
 
 from __future__ import annotations
@@ -114,25 +125,45 @@ def disponivel_sem_concorrente(df: pd.DataFrame) -> pd.Series:
 
 
 @functools.lru_cache(maxsize=1)
-def _reparticao(caminho_conc: str) -> pd.DataFrame:
+def _universo_hex_valido(caminho_dashboard: str) -> frozenset[str]:
+    """Universo NACIONAL de hexagonos validos do M1. Cache por processo, so' `hex_id`.
+
+    Usado para renormalizar a massa do disco de 1 km que cai fora da base (ver
+    docstring do modulo). Sem o parquet (caminho ausente), devolve conjunto vazio e
+    `_reparticao` cai de volta no comportamento sem renormalizacao (nenhum hex e'
+    "valido" -> `repartir_concorrentes` trataria tudo como fora da base). Por isso
+    `disponivel()` exige os DOIS parquets antes de a chave aparecer no piloto.
+    """
+    caminho = Path(caminho_dashboard)
+    if not caminho.exists():
+        return frozenset()
+    ids = pd.read_parquet(caminho, columns=["hex_id"])["hex_id"]
+    return frozenset(ids.astype(str))
+
+
+@functools.lru_cache(maxsize=1)
+def _reparticao(caminho_conc: str, caminho_dashboard: str) -> pd.DataFrame:
     """Reparte TODOS os concorrentes validos do Brasil entre hexagonos. Cache por processo.
 
     Nacional de proposito: um concorrente do outro lado da divisa pressiona hexes desta
     UF, entao recortar por UF antes de repartir criaria uma borda artificial de pressao
-    exatamente onde ela costuma importar (regioes metropolitanas que cruzam divisa).
+    exatamente onde ela costuma importar (regioes metropolitanas que cruzam divisa). Pela
+    mesma razao a renormalizacao (ver docstring do modulo) usa o universo NACIONAL, nao o
+    `df` da UF em exibicao.
     """
     conc = pd.read_parquet(caminho_conc)
     if "status_registro" in conc.columns:
         conc = conc[conc["status_registro"] == "valido"]
-    return repartir_concorrentes(conc.reset_index(drop=True))
+    universo = _universo_hex_valido(caminho_dashboard)
+    return repartir_concorrentes(conc.reset_index(drop=True), hex_ids_validos=universo)
 
 
-def disponivel(caminho_conc: Path) -> bool:
-    """True se da' para servir o modelo novo. Sem o parquet, o piloto segue so' com 2 km."""
-    return Path(caminho_conc).exists()
+def disponivel(caminho_conc: Path, caminho_dashboard: Path) -> bool:
+    """True se da' para servir o modelo novo. Sem os parquets, o piloto segue so' com 2 km."""
+    return Path(caminho_conc).exists() and Path(caminho_dashboard).exists()
 
 
-def anexar(df: pd.DataFrame, caminho_conc: Path) -> pd.DataFrame:
+def anexar(df: pd.DataFrame, caminho_conc: Path, caminho_dashboard: Path) -> pd.DataFrame:
     """Anexa ao frame de hexes as duas colunas do modelo de 1 km + o residual derivado.
 
     Colunas adicionadas:
@@ -142,9 +173,12 @@ def anexar(df: pd.DataFrame, caminho_conc: Path) -> pd.DataFrame:
 
     Preserva cardinalidade e nao toca nenhuma coluna existente: o modelo de 2 km continua
     intacto no mesmo frame, que e' o que permite a chave alternar sem recarregar.
+
+    `caminho_dashboard`: parquet nacional do M1 (so' `hex_id` e' lido) usado para
+    renormalizar a massa perdida na borda da base — ver `_universo_hex_valido`.
     """
     n_orig = len(df)
-    agregado = _reparticao(str(caminho_conc))
+    agregado = _reparticao(str(caminho_conc), str(caminho_dashboard))
 
     out = df.drop(
         columns=[c for c in COLUNAS_SERVIDAS if c in df.columns], errors="ignore"

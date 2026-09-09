@@ -73,7 +73,12 @@ _DENY_CRITICO: list[tuple[str, str]] = [
     # Scores PARALELOS servidos em producao (DEC-006/DEC-007 gate do SAM, carteira, plano, residual).
     # O regex `*scoring*` acima NAO casa esses arquivos - eram o furo do guard.
     (
-        r"^src/motor_expansao/pipelines/(calcular_colunas_mercado|pop_corte|gerar_carteira|gerar_plano|enriquecer)",
+    # `enriquec` (e nao `enriquecer`): o prefixo antigo casava
+    # `enriquecer_outputs_residual_mercado.py` e NAO casava
+    # `enriquecimento_espacial_hexagonos.py` -- justamente quem materializa a oferta de
+    # 1,5 milhao de hexes, o insumo do consumo e do residual. Ele saia LIMPO, entao um PR
+    # "Media" auto-mergeavel podia reescrever a oferta do pais sem gate humano (DEC-048).
+        r"^src/motor_expansao/pipelines/(calcular_colunas_mercado|pop_corte|gerar_carteira|gerar_plano|enriquec)",
         "camada de mercado/residual servida em producao (flag_sam/carteira/plano - DEC-006/DEC-007)",
     ),
     # Insumos/scores PARALELOS que alimentam o que e servido em producao: o censitario calibrado
@@ -182,6 +187,11 @@ _DENY_GOVERNANCA: list[tuple[str, str]] = [
     # (web/server) calcula/exibe os numeros do comite e o frontend define o que o usuario
     # ve; nenhum dos dois entra por bloco "Media" auto-mergeavel sem olho humano.
     (r"^web/", "piloto web servido em producao (frontend + backend FastAPI)"),
+    # BLK-INTL-13 — as duas paginas estaticas que o Caddy serve na raiz (bind mount
+    # `./portal:/srv/portal:ro`). Nao decidem roteamento nem acesso (por isso nao e'
+    # CRITICO), mas sao conteudo servido em producao na porta de entrada: nao entram
+    # por bloco "Media" auto-mergeavel sem olho humano (spec docs/spec_portal_selecao_pais.md §8).
+    (r"^portal/", "portal de selecao de pais servido na raiz"),
     (
         r"^src/motor_expansao/dimensionamento/viabilidade_ponto\.py$",
         "motor de viabilidade (DEC-009)",

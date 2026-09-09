@@ -188,10 +188,24 @@ def test_prioridade_ordena_por_gravidade_antes_do_porte() -> None:
 def test_faixa_de_faturamento_e_a_do_time_de_campo() -> None:
     assert rd.faixa_faturamento(149_000)[1] == "Crítico"
     assert rd.faixa_faturamento(199_000)[1] == "Regular"
-    assert rd.faixa_faturamento(249_000)[1] == "Bom"
-    assert rd.faixa_faturamento(299_000)[1] == "Excelente"
+    assert rd.faixa_faturamento(299_000)[1] == "Bom"
+    assert rd.faixa_faturamento(399_000)[1] == "Excelente"
     assert rd.faixa_faturamento(500_000)[1] == "Excelente+"
     assert rd.faixa_faturamento(None)[0] == "sem_dado"
+
+
+def test_faixa_de_faturamento_trava_as_bordas() -> None:
+    """As bordas, e nao so' o meio de cada faixa.
+
+    O corpo de `faixa_faturamento` compara com `<`, entao o valor do teto pertence a
+    faixa SEGUINTE. So' um caso por faixa (149k, 199k...) passaria verde com o teto
+    deslocado em qualquer direcao -- foi assim que o alargamento de 2026-09-09 chegou
+    aqui sem nenhum teste vermelho para conferir.
+    """
+    assert rd.faixa_faturamento(150_000)[1] == "Regular"
+    assert rd.faixa_faturamento(200_000)[1] == "Bom"
+    assert rd.faixa_faturamento(300_000)[1] == "Excelente"
+    assert rd.faixa_faturamento(400_000)[1] == "Excelente+"
 
 
 # ---------------------------------------------------------------------------

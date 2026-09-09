@@ -41,6 +41,28 @@ RAIO_CENSITARIO_DEFAULT_KM = 1.0
 # (Metodo A, D3.5), com exclusao simetrica de setor com renda ou domicilios nulos/<=0.
 METODO_RENDA_PERFIL_BAIRRO = "renda_responsavel_media_ponderada_por_domicilios"
 
+# DEC-046: vocabulario da coluna `classe` da oferta. Mora AQUI, no motor, e nao na API, para
+# que o dashboard nao dependa de `motor_expansao.api` — a API produz o dado conforme este
+# vocabulario, nao o contrario. Identificadores CRUS, sem acento (CLAUDE.md secao 2).
+CLASSE_CADEIA_OFERTA = "cadeia"
+CLASSE_INDEPENDENTE_OFERTA = "independente"
+
+
+def _contar_classe(pontos, classe: str) -> int:
+    """Quantos pontos do recorte sao da `classe` pedida.
+
+    RETROCOMPATIVEL de proposito: um `competitors_df` SEM a coluna `classe` conta como se
+    fosse tudo cadeia. E' o que ele era antes da DEC-046, e e' o que todo teste do corpus
+    injeta (dezenas de fixtures sinteticas com `rede`/`lat`/`lng` e mais nada). Tratar a
+    ausencia como zero faria `n_concorrentes_cadeia` nascer 0 em todo esse corpus e o
+    criterio da ficha APROVARIA tudo -- a falha silenciosa que o D7 veio impedir.
+    """
+    if pontos is None or len(pontos) == 0:
+        return 0
+    if "classe" not in getattr(pontos, "columns", []):
+        return len(pontos) if classe == CLASSE_CADEIA_OFERTA else 0
+    return int((pontos["classe"].astype("string") == classe).sum())
+
 
 def _haversine_km(
     lat1: float,
@@ -257,7 +279,14 @@ def analisar_ponto_censitario_setores(
         "densidade_pop_raio_valida_hab_km2": None,
         "score_setor_medio": None,
         "score_setor_max": None,
+        # DEC-046: `n_concorrentes` mantem o NOME e passa a valer o TOTAL (cadeia +
+        # independente) -- e' o campo que a tela e o PDF ja' exibiam. Quem decide veredito
+        # le `n_concorrentes_cadeia`, porque o teto de 3 da ficha foi calibrado contra um
+        # universo so'-cadeia: aplicado ao total, ele reprovaria 70% das pracas onde a
+        # propria Ultra opera. Ver D2/D3 da DEC-046.
         "n_concorrentes": len(concorrentes_raio),
+        "n_concorrentes_cadeia": _contar_classe(concorrentes_raio, CLASSE_CADEIA_OFERTA),
+        "n_academias_total": len(concorrentes_raio),
         "n_ultra": len(ultra_raio),
         "concorrentes_raio": concorrentes_raio,
         "ultra_raio": ultra_raio,

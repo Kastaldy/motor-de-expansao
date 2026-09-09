@@ -1,21 +1,30 @@
 /* ---------------------------------------------------------------------------
    Parser de coordenada da barra de busca. Puro (sem rede): aceita `lat,lng` em
    ponto ou virgula decimal e links do Google Maps (`@lat,lng` ou `!3d..!4d`).
-   Valida o bounding box do Brasil, como o backend (api/coord.py).
+   Valida o bounding box do PAIS DA INSTANCIA, como o backend (api/coord.py).
    --------------------------------------------------------------------------- */
 
-// Mesmos limites do backend: lat -34..5.5, lng -74..-28.
-const BR = { latMin: -34.0, latMax: 5.5, lngMin: -74.0, lngMax: -28.0 }
+import { perfilDoCliente } from './perfil'
 
 export interface Coord {
   lat: number
   lng: number
 }
 
+/**
+ * Dentro do bbox do pais da instancia. O nome ficou `noBrasil` nesta onda: renomear
+ * custa os call sites e o `coord.test.ts` sem mudar comportamento nenhum.
+ *
+ * A leitura do perfil e no CORPO, e nao numa const de modulo, de proposito (classe (1)
+ * da spec §3.5): esta funcao so roda quando o operador DIGITA, sempre depois do
+ * bootstrap. O custo e um acesso a objeto; o ganho e validar contra o pais da instancia
+ * em vez de contra o Brasil de sempre, mesmo que alguem mude a ordem do bootstrap.
+ */
 function noBrasil(lat: number, lng: number): Coord | null {
   if (Number.isNaN(lat) || Number.isNaN(lng)) return null
-  if (lat < BR.latMin || lat > BR.latMax) return null
-  if (lng < BR.lngMin || lng > BR.lngMax) return null
+  const bb = perfilDoCliente().bbox
+  if (lat < bb.lat_min || lat > bb.lat_max) return null
+  if (lng < bb.lng_min || lng > bb.lng_max) return null
   return { lat, lng }
 }
 

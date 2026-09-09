@@ -323,7 +323,7 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
 }
 
 /* Escala de VALOR absoluto do time de campo, e não de risco: os limiares são de R$ por
-   mês inteiro (Crítico <150k … Excelente+ >=300k). Por isso ela NÃO usa `COR_SEVERIDADE`
+   mês inteiro (Crítico <150k … Excelente+ >=400k). Por isso ela NÃO usa `COR_SEVERIDADE`
    — pintar "Crítico" com o vermelho do semáforo faria a faixa de faturamento e o
    diagnóstico da unidade parecerem a mesma medida, e uma unidade nova cai em "Crítico"
    sem ter alerta nenhum. */

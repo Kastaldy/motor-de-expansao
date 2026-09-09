@@ -24,6 +24,7 @@ import pytest
 from motor_expansao.pipelines.pressao_concorrencial_1km import (
     CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS,
     COLUNAS_1KM_AREA,
+    GRID_DISK_K,
     H3_RESOLUTION,
     RAIO_INFLUENCIA_M,
     anexar_pressao_1km_area,
@@ -492,6 +493,77 @@ def test_anexar_sem_nenhum_concorrente_nao_quebra():
     assert linha["consumo_concorrentes_1km_area"] == 0.0
     assert linha["gap_competitivo_1km_area"] == pytest.approx(1.0)
     assert linha["pressao_concorrencial_score_1km_area"] == pytest.approx(0.0)
+
+
+# ── Renormalizacao contra a perda de massa na borda da base (fix pos-plano) ───
+
+
+def test_repartir_filtra_e_renormaliza_contra_hex_ids_validos():
+    """Concorrente cujo disco cobre hex fora da base: a massa perdida e' redistribuida."""
+    hex_id = _hex_de(*SP)
+    lat, lng = SP
+    shares_completos = shares_por_hex(lat, lng)
+    assert len(shares_completos) > 1, "escolher um ponto que realmente reparte"
+
+    out = repartir_concorrentes(_concorrentes((lat, lng)), hex_ids_validos={hex_id})
+    assert len(out) == 1, "hexes fora da base nao devem aparecer no agregado"
+    linha = out.iloc[0]
+    assert linha["hex_id"] == hex_id
+    assert linha["oferta_efetiva_1km_area"] == pytest.approx(1.0, abs=1e-9), (
+        "toda a massa do concorrente deveria ficar no unico hex valido, nao so' o "
+        "share bruto que ele tinha antes de saber que os outros hexes nao existem"
+    )
+
+
+def test_repartir_sem_hex_ids_validos_mantem_comportamento_antigo():
+    """Sem o parametro (default None), a funcao NAO filtra nem renormaliza -- compat."""
+    lat, lng = SP
+    sem_filtro = repartir_concorrentes(_concorrentes((lat, lng)))
+    assert sem_filtro["oferta_efetiva_1km_area"].sum() == pytest.approx(1.0, abs=1e-9)
+    assert len(sem_filtro) > 1, "sem filtro, o concorrente ainda aparece em varios hexes"
+
+
+def test_concorrente_totalmente_fora_da_base_nao_aparece_e_nao_quebra():
+    """Nenhum hex do disco esta na base -> concorrente contribui zero, sem erro."""
+    lat, lng = SP
+    hex_bem_longe = _hex_de(*BSB)
+    out = repartir_concorrentes(_concorrentes((lat, lng)), hex_ids_validos={hex_bem_longe})
+    assert out.empty
+
+
+def test_repartir_soma_conta_so_quem_alcanca_hex_valido():
+    """Com base restrita, a soma e' o numero de concorrentes com >=1 hex valido, nao N."""
+    hex_id = _hex_de(*SP)
+    lat, lng = SP
+    hex_bem_longe = _hex_de(*BSB)
+    pontos = [(lat, lng), BSB]  # 1 alcanca a base, o outro (proprio BSB) tambem alcanca
+    out = repartir_concorrentes(
+        _concorrentes(*pontos), hex_ids_validos={hex_id, hex_bem_longe}
+    )
+    assert out["oferta_efetiva_1km_area"].sum() == pytest.approx(2.0, abs=1e-9)
+
+
+def test_anexar_nao_perde_massa_quando_disco_extrapola_a_base():
+    """O bug original: base com 1 unico hexagono, concorrente perto mas nao no centroide.
+
+    Antes do fix, o merge descartava a fracao que caia fora do unico hex da base -- a
+    massa vista pelo hex ficava abaixo de 1,0 mesmo com o concorrente bem perto. Depois
+    do fix, com apenas 1 hex valido no universo, TODA a massa do concorrente pousa nele.
+    """
+    hex_id = _hex_de(*SP)
+    lat, lng = SP
+    df = _df_hex(hex_id)  # base com UM SO' hexagono
+    out = anexar_pressao_1km_area(df, _concorrentes((lat, lng)))
+    assert out["oferta_efetiva_1km_area"].iloc[0] == pytest.approx(1.0, abs=1e-9)
+
+
+def test_anexar_conserva_massa_total_quando_todos_os_vizinhos_estao_na_base():
+    """Com a base completa (mesmo anel k do modulo), a soma total ja fechava e continua."""
+    hex_central = _hex_de(*SP)
+    df = _df_hex(*h3.grid_disk(hex_central, GRID_DISK_K))
+    lat, lng = SP
+    out = anexar_pressao_1km_area(df, _concorrentes((lat, lng)))
+    assert out["oferta_efetiva_1km_area"].sum() == pytest.approx(1.0, abs=1e-9)
 
 
 def test_estado_vazio_do_mapa_nao_e_mutavel_por_engano():

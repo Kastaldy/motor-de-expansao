@@ -52,13 +52,16 @@ from motor_expansao.dashboard.censo_map import (
 from motor_expansao.dashboard.competitors import _render_square_logo_tile
 from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
 from motor_expansao.dashboard.utils import score_band_to_color
+from motor_expansao.perfil import resolver_perfil
 
 # ---------------------------------------------------------------------------
 # Constantes de DISPLAY do relatorio (DEC-011 parte 2). Locais a este modulo;
 # NAO mexem em flag_sam/DEC-006/DEC-007 (pipeline de mercado) nem no M1.
 # BLK-RELMUN-03 (DEC-011 emenda): criterio de destaque passou a ser SO Residual Fitness (>=2000).
 # ---------------------------------------------------------------------------
-OFERTA_DESTAQUE_MIN = 2000.0
+# SEGUNDA copia (a primeira e `web/server/app.py`) — e a que faz deste arquivo o
+# TERCEIRO CRITICO do Bloco A, que nenhum documento listava antes da spec §8.1.
+OFERTA_DESTAQUE_MIN = resolver_perfil().reguas.oferta_destaque_min
 CAPACIDADE_UNIDADE = 2500.0
 H3_RES = 7
 

@@ -67,3 +67,69 @@ def test_encoste_escolhe_o_municipio_MAIS_PROXIMO() -> None:
     assert malha.resolver(-8.0, -35.999) == ("PE", "2610707")
     # Levemente a oeste -> lado do VIZINHO.
     assert malha.resolver(-8.0, -36.001) == ("PE", "2600054")
+
+
+# ---------------------------------------------------------------------------
+# As mensagens de erro seguem o PERFIL da instancia (2026-09-03)
+#
+# Ate' aqui as duas mensagens cravavam "IBGE" e "Brasil" — verdade so' para uma
+# instancia. A Argentina nao materializa `ibge/municipios_*.geojson` ainda (o
+# Relatorio Pontual dela e' trabalho futuro), e o operador via um erro que citava o
+# instituto e o pais de OUTRO deploy.
+# ---------------------------------------------------------------------------
+
+
+def test_malha_vazia_nomeia_a_fonte_de_censo_do_PERFIL(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from motor_expansao.api import service
+    from motor_expansao.perfil import PERFIL_BR_EMBARCADO, carregar_perfil
+
+    perfil_ar = carregar_perfil(PERFIL_BR_EMBARCADO.parents[1] / "AR" / "perfil.json")
+    monkeypatch.setattr(service, "_PERFIL", perfil_ar)
+    service._carregar_malha.cache_clear()
+    try:
+        with pytest.raises(service.APIError) as erro:
+            service._carregar_malha(str(tmp_path))  # diretorio vazio: nenhum geojson
+        assert "INDEC" in str(erro.value)
+        assert "IBGE" not in str(erro.value)
+    finally:
+        service._carregar_malha.cache_clear()
+
+
+def test_coordenada_fora_da_malha_nomeia_pais_e_fonte_do_PERFIL(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_resolver_e_carregar` (o ramo 400 REAL, nao uma reimplementacao no teste).
+
+    O import de `dashboard.data` (cadeia que puxa h3) so' acontece DEPOIS deste ramo —
+    por isso o teste chega ate' aqui mesmo sem a base geo/censo materializada.
+    """
+    from motor_expansao.api import service
+    from motor_expansao.api.settings import Settings
+    from motor_expansao.perfil import PERFIL_BR_EMBARCADO, carregar_perfil
+
+    geojson_dir = tmp_path / "ibge"
+    geojson_dir.mkdir()
+    (geojson_dir / "municipios_PE.geojson").write_text(
+        '{"type": "FeatureCollection", "features": [{"type": "Feature", '
+        '"properties": {"codarea": "2610707"}, "geometry": {"type": "Polygon", '
+        '"coordinates": [[[-36.0, -8.5], [-35.0, -8.5], [-35.0, -7.5], '
+        '[-36.0, -7.5], [-36.0, -8.5]]]}}]}',
+        encoding="utf-8",
+    )
+    settings = Settings(ibge_dir=geojson_dir)
+
+    perfil_ar = carregar_perfil(PERFIL_BR_EMBARCADO.parents[1] / "AR" / "perfil.json")
+    monkeypatch.setattr(service, "_PERFIL", perfil_ar)
+    service._carregar_malha.cache_clear()
+    try:
+        with pytest.raises(service.APIError) as erro:
+            service._resolver_e_carregar(48.8566, 2.3522, settings)  # Paris: bem longe
+        assert erro.value.status_code == 400
+        assert "INDEC" in str(erro.value)
+        assert "Argentina" in str(erro.value)
+        assert "IBGE" not in str(erro.value)
+        assert "Brasil" not in str(erro.value)
+    finally:
+        service._carregar_malha.cache_clear()

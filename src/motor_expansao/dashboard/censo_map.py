@@ -28,7 +28,11 @@ from motor_expansao.dashboard.censo_point import (
     _transformer,
     analisar_ponto_censitario_setores,
 )
-from motor_expansao.dashboard.competitors import _render_square_logo_tile
+from motor_expansao.dashboard.competitors import (
+    CHAVE_AGREGADOR,
+    PIN_INDEPENDENTE_PX,
+    _render_square_logo_tile,
+)
 from motor_expansao.dashboard.constants import (
     DENSIDADE_POP_BANDS,
     OFERTA_DISPONIVEL_ALUNOS_BANDS,
@@ -38,6 +42,11 @@ from motor_expansao.dashboard.constants import (
     uplift_composicao_por_setor,
 )
 from motor_expansao.dashboard.utils import score_band_to_color
+from motor_expansao.perfil import resolver_perfil
+
+# Simbolo/codigo da moeda de RENDA da instancia ("R$" no Brasil, "USD" na Argentina).
+# Resolvido UMA vez, como todo o perfil (DEC-047); rotulo, nunca caminho de execucao.
+_SIMBOLO_RENDA = resolver_perfil().moeda.simbolo_renda()
 
 # Cache local de tiles do basemap (DEC-004). Nunca versionado (.gitignore: data/cache/).
 # Cada ponto cobre ~3 km de lado -> poucos tiles; dedup por-tile do contextily.
@@ -405,10 +414,15 @@ def _metric_label(metric_column: str) -> str:
 
 
 def _format_valor_ponto_renda(value: float | None) -> str:
-    """Renda per capita media do raio: moeda, separador de milhar '.', sem centavos."""
+    """Renda per capita media do raio: moeda, separador de milhar '.', sem centavos.
+
+    O simbolo vem do perfil (`moeda.simbolo_renda()`): no Brasil e "R$" como sempre; na
+    Argentina a renda chega em USD e sair "R$ 878" rotularia dolar com simbolo de real —
+    no PDF que vai ao locador. Mesma regra dos rotulos de legenda logo abaixo.
+    """
     if value is None or pd.isna(value):
         return TEXTO_SEM_DADO
-    return f"R$ {float(value):,.0f}".replace(",", ".")
+    return f"{_SIMBOLO_RENDA} {float(value):,.0f}".replace(",", ".")
 
 
 def _format_valor_ponto_densidade(value: float | None) -> str:
@@ -515,6 +529,13 @@ def _paste_logo_pin(
     segue marcado pelo pin vermelho central (`_draw_center_pin`, INALTERADO). Reusa a
     mascara alpha do tile RGBA. Logo real quando ha PNG no _ICON_CACHE; sigla no fallback.
     """
+    # DEC-046 (D6): linha SEM `rede` e' academia INDEPENDENTE — recebe o marcador comum do
+    # agregador, MENOR que a bandeira de cadeia. O ramo e' ADITIVO de proposito: so' e'
+    # alcancado quando a chave vem vazia, entao toda camada existente segue byte-identica
+    # (`test_camadas_existentes_ficam_byte_identicas_com_os_defaults_novos` e
+    # `test_shared_transformer_bytes_identicos` cobram exatamente isso).
+    if not key:
+        key, size = CHAVE_AGREGADOR, PIN_INDEPENDENTE_PX
     tile = cast(Image.Image, _render_square_logo_tile(key, size))
     image.paste(tile, (int(px) - size // 2, int(py) - size // 2), tile)
 
@@ -681,6 +702,12 @@ def _project_points(
         rede = row.get("rede")
         key = str(rede) if rede is not None and not pd.isna(rede) and str(rede).strip() else ""
         coords.append((x, y, key))
+    # DEC-046 (D6): independente (chave VAZIA) sai ANTES da cadeia, entao a bandeira da rede
+    # instalada fica POR CIMA na sobreposicao — a mesma precedencia que o Mapa Territorial
+    # do piloto aplica. `sort` e' ESTAVEL: dentro de cada grupo a ordem por distancia que
+    # `_points_in_radius` produziu e' preservada. Sem chave vazia no recorte (todo caminho
+    # anterior a DEC-046, e os pins da Ultra) a lista sai IDENTICA.
+    coords.sort(key=lambda ponto: bool(ponto[2]))
     return coords
 
 
@@ -1814,7 +1841,7 @@ def render_mapas_censitarios_combinados(
     )
     renda_png = _render_camada(
         titulo="Renda per capita",
-        legenda_titulo="Renda per capita (R$/pessoa)",
+        legenda_titulo=f"Renda per capita ({_SIMBOLO_RENDA}/pessoa)",
         legenda_entries=_bands_legend_entries(RENDA_PER_CAPITA_BANDS),
         color_fn=_renda_fn,
         source_values=renda_series,
@@ -1834,7 +1861,7 @@ def render_mapas_censitarios_combinados(
     )
     renda_domiciliar_png = _render_camada(
         titulo="Renda media domiciliar",
-        legenda_titulo="Renda domiciliar (R$/domicilio)",
+        legenda_titulo=f"Renda domiciliar ({_SIMBOLO_RENDA}/domicilio)",
         legenda_entries=_bands_legend_entries(RENDA_MEDIA_DOMICILIAR_BANDS),
         color_fn=_renda_dom_fn,
         source_values=renda_domiciliar_series,

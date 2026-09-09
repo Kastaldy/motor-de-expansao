@@ -124,8 +124,8 @@ export default function RankingHexagonosBrasil({
             comparação torta que esta tela existe para desfazer. */}
         <Chip>
           {porMunicipio
-            ? `${num(cobertura.hexes_no_recorte)} cidades · ${num(cobertura.hexes_acionaveis_brasil)} hexágonos acionáveis`
-            : `${num(cobertura.hexes_no_recorte)} de ${num(cobertura.hexes_acionaveis_brasil)} acionáveis`}
+            ? `${num(cobertura.hexes_no_recorte)} cidades · ${num(cobertura.hexes_acionaveis_pais)} hexágonos acionáveis`
+            : `${num(cobertura.hexes_no_recorte)} de ${num(cobertura.hexes_acionaveis_pais)} acionáveis`}
         </Chip>
         <Chip>
           {num(cobertura.ufs_no_recorte)}{' '}

@@ -21,6 +21,12 @@ from urllib.parse import quote, unquote, urlencode, urlsplit
 
 import requests
 
+from motor_expansao.perfil import resolver_perfil
+
+# Perfil do pais da INSTANCIA (Bloco A / DEC-047). Resolvido no import: um processo serve
+# um pais so. No perfil brasileiro todos os valores abaixo sao os literais de sempre.
+_PERFIL = resolver_perfil()
+
 # Padroes de coordenada nas variantes de URL do Maps. ORDEM importa: !2d/!3d/!4d
 # sao o PINO RESOLVIDO do place; @lat,lng e so o centro da camera (impreciso).
 EMBED_PIN = re.compile(r"!2d(-?\d+(?:\.\d+)?)!3d(-?\d+(?:\.\d+)?)")      # !2d=lng !3d=lat
@@ -28,8 +34,18 @@ DETAIL_PIN = re.compile(r"!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)")     # !3d=l
 REVERSED_PIN = re.compile(r"!1d(-?\d+(?:\.\d+)?)!2d(-?\d+(?:\.\d+)?)")   # !1d=lng !2d=lat
 CAMERA_AT = re.compile(r"@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)")          # centro da camera
 
-# CEP brasileiro: 8 digitos, com ou sem hifen.
-CEP_RE = re.compile(r"\b(\d{5})-?(\d{3})\b")
+# Codigo postal do pais da instancia, vindo do perfil. No Brasil e o CEP de sempre:
+# `\b(\d{5})-?(\d{3})\b`, 8 digitos com ou sem hifen.
+#
+# `None` = o pais NAO tem codigo postal de formato unico; ai `normalize_cep` devolve "" e
+# `split_address_cep` devolve o texto inteiro, que e degradacao correta e nao erro. E o
+# caso da Argentina hoje: o CPA (letra + 4 digitos + 3 letras) nao honra o contrato deste
+# sitio — `normalize_cep` faz `m.group(1)`/`m.group(2)`, entao a regex precisa de DOIS
+# grupos, e e usada com `.search()`/`.sub()` DENTRO de endereco livre, entao nao pode ser
+# ancorada em ^...$. Gravar uma regex ancorada e sem grupos entregaria um campo que
+# QUEBRA a rota no primeiro endereco com CPA embutido, em vez de nao fazer nada. A divida
+# esta declarada em `_divida_regex_cp`, em `data/perfis/AR/perfil.json`.
+CEP_RE = re.compile(_PERFIL.geocode.regex_cp) if _PERFIL.geocode.regex_cp else None
 
 # Plus Code / Open Location Code. Alfabeto OLC = "23456789CFGHJMPQRVWX" (sem 0/1 e sem
 # A/B/D/E/...). Codigo CURTO: 4 ou 6 chars antes do "+"; codigo COMPLETO: 8 antes. 2-3
@@ -111,7 +127,13 @@ def url_maps_segura(url: str) -> bool:
 
 
 def normalize_cep(cep: str) -> str:
-    """Normaliza um CEP para '00000-000'. Retorna '' se nao houver 8 digitos."""
+    """Normaliza o codigo postal para '00000-000'. Retorna '' quando nao houver.
+
+    Devolve '' tambem quando o pais da instancia nao declara `geocode.regex_cp` — a
+    busca segue pelo endereco, sem o codigo postal. E degradacao, nao erro.
+    """
+    if CEP_RE is None:
+        return ""
     m = CEP_RE.search(str(cep or ""))
     return f"{m.group(1)}-{m.group(2)}" if m else ""
 
@@ -128,9 +150,15 @@ def split_address_cep(linha: str) -> tuple[str, str]:
     if ";" in bruto:
         endereco, _, cep = bruto.partition(";")
         return endereco.strip(), normalize_cep(cep)
+    # Bind local: sem codigo postal declarado no perfil nao ha o que extrair do texto
+    # livre, e o endereco segue inteiro. Escrito como GUARDA e nao como comentario de
+    # invariante — o `.sub()` abaixo so existe sob um `padrao` provado nao-nulo.
+    padrao = CEP_RE
+    if padrao is None:
+        return bruto, ""
     cep = normalize_cep(bruto)
     if cep:
-        return CEP_RE.sub("", bruto).strip(" ,-").strip(), cep
+        return padrao.sub("", bruto).strip(" ,-").strip(), cep
     return bruto, ""
 
 
@@ -166,10 +194,14 @@ def build_search_url(query: str) -> str:
     return f"https://www.google.com/maps/search/?api=1&query={quote(normalized)}"
 
 
-# Bounding box do Brasil (mesmos limites de data._validate_brazil_bbox; duplicados aqui
-# para manter este modulo `api` sem depender da camada dashboard).
-_BR_LAT_MIN, _BR_LAT_MAX = -33.75, 5.27
-_BR_LNG_MIN, _BR_LNG_MAX = -73.99, -28.65
+# Bounding box do pais da instancia, do perfil. Ate 2026-09-02 estes quatro numeros eram
+# a caixa B2 (-33,75 / 5,27 / -73,99 / -28,65), a MAIS ESTREITA das tres que o repositorio
+# carregava — e ela ja estava errada: excluia Martin Vaz (-28,85). O perfil unifica na B1
+# (-34,0 / 5,5 / -74,0 / -28,0), que e a caixa que as tres copias de validacao de ENTRADA
+# do operador ja usavam. Efeito no Brasil: ALARGA. Ver spec §1.3 e a pendencia BR-P1.
+_BBOX = _PERFIL.bbox
+_BR_LAT_MIN, _BR_LAT_MAX = _BBOX.lat_min, _BBOX.lat_max
+_BR_LNG_MIN, _BR_LNG_MAX = _BBOX.lng_min, _BBOX.lng_max
 
 
 def _cache_key(query: str) -> str:
@@ -243,7 +275,7 @@ def resolve_endereco_http(
             "q": normalized,
             "format": "jsonv2",
             "limit": "1",
-            "countrycodes": "br",
+            "countrycodes": _PERFIL.geocode.countrycodes,
             "addressdetails": "0",
         }
     )
@@ -253,7 +285,7 @@ def resolve_endereco_http(
             headers={
                 "User-Agent": _GEOCODE_USER_AGENT,
                 "Accept": "application/json",
-                "Accept-Language": "pt-BR",
+                "Accept-Language": _PERFIL.geocode.idioma,
             },
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - URL fixa do Nominatim
@@ -377,7 +409,7 @@ def resolve_short_link(url: str, *, timeout: float = 6.0) -> str | None:
     headers = {
         "User-Agent": _GEOCODE_USER_AGENT,
         "Accept": "text/html,application/xhtml+xml",
-        "Accept-Language": "pt-BR",
+        "Accept-Language": _PERFIL.geocode.idioma,
     }
     atual = normalized
     try:

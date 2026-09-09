@@ -39,6 +39,7 @@ tmp_codex_runtime/
 # Configurações de deploy (montados via volume)
 Caddyfile
 authelia/
+portal/
 .env
 
 # Secrets não entram na imagem (são montados via volume ou desencriptados em runtime)

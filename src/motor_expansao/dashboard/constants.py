@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from motor_expansao.perfil import resolver_perfil
+
+# Reguas absolutas do pais da INSTANCIA (Bloco A / DEC-047). No perfil brasileiro sao
+# os mesmos numeros de sempre — `data/perfis/BR/perfil.json` os transcreve e
+# `tests/contracts/test_perfil_br_reproduz_as_constantes.py` trava a igualdade.
+_REGUAS = resolver_perfil().reguas
+
 # Texto exibido nos relatorios PDF quando a metrica nao existe para o recorte (nenhum setor
 # censitario intersectado, coluna ausente no parquet, valor NaN). Era a sigla "n/d", trocada
 # por extenso a pedido de Juan (2026-07-31): quem le o PDF nao e do time e nao decodificava a
@@ -82,6 +89,7 @@ CENSO_TRACE_LOAD_COLS = [
     "densidade_pop_setor_hab_km2",
     "coverage_pct_setor_2022",
     "qualidade_join_uf",
+    "classe_join_uf",
     "flag_join_uf_restrito",
     "flag_baixa_pop_setor",
     "flag_outlier_espacial",
@@ -141,7 +149,9 @@ COMPETITOR_CLUSTER_RES = 4            # resolucao H3 coarse (~22km/celula) p/ re
 COMPETITOR_CLUSTER_LIMIT = 2000      # cap duro de bolhas de cluster (garante payload << 3MB)
 COMPETITOR_CLUSTER_TOP_REDES = 4     # max redes no breakdown do tooltip antes de "+N redes"
 TABLE_ROW_LIMIT = 1000
-POP_MIN_ACIONAVEL = 5_000
+# SEGUNDA copia do piso de populacao (a primeira e `web/server/app.py`). Duas copias de
+# um numero so — exatamente o que o perfil existe para acabar.
+POP_MIN_ACIONAVEL = _REGUAS.pop_min_acionavel
 BRASIL_CENTER = {"lat": -14.235, "lon": -51.9253}
 FLOAT_COLUMNS = [
     "lat",
@@ -376,7 +386,7 @@ FAIXAS_MAPA_DEMANDA: list[tuple[int, int, str, str, str]] = [
 
 # Ancora da camada de demanda: score 100 <=> uma unidade cheia.
 # Espelha SCORE_RESIDUAL_CAPACIDADE_REFERENCIA de `pipelines/calcular_colunas_mercado`.
-CAPACIDADE_UNIDADE_ALUNOS = 2500
+CAPACIDADE_UNIDADE_ALUNOS = _REGUAS.capacidade_unidade_alunos
 
 
 def faixa_do_score(
@@ -426,13 +436,46 @@ DENSIDADE_POP_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
 # -> verde-claro -> verde solido (renda alta). Cores absolutas pedidas: #F7F48B / #FFFF00 /
 # #FFD21C / #A8FFA8 / #00CC00. alpha 150 = cor da LEGENDA; o FILL no mapa usa _CHOROPLETH_ALPHA.
 # Camada de VISUALIZACAO do Relatorio Pontual Censitario — NAO altera score/artefatos M1.
-RENDA_PER_CAPITA_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
+_RENDA_PER_CAPITA_BANDS_BR: list[tuple[float, str, tuple[int, int, int, int]]] = [
     (1_000.0,   "ate R$ 1.000",        (247, 244, 139, 150)),   # #F7F48B
     (2_000.0,   "R$ 1.001-2.000",      (255, 255, 0,   150)),   # #FFFF00
     (3_500.0,   "R$ 2.001-3.500",      (255, 210, 28,  150)),   # #FFD21C
     (5_000.0,   "R$ 3.501-5.000",      (168, 255, 168, 150)),   # #A8FFA8
     (float("inf"), ">R$ 5.000",        (0,   204, 0,   150)),   # #00CC00
 ]
+
+# A MESMA rampa dos literais acima, mais um verde-escuro de topo (o de OFERTA_*_BANDS).
+# Serve as faixas DECLARADAS NO PERFIL (`reguas.faixas_renda`): pais cujo choropleth de
+# renda nao e' legivel na regua brasileira declara os proprios cortes/rotulos no perfil,
+# e a COR vem daqui — regua e' dado de pais, paleta e' identidade da plataforma. Regra de
+# atribuicao: as N-1 primeiras faixas tomam as N-1 primeiras cores, a de topo toma SEMPRE
+# a ultima — com 6 faixas a rampa sai inteira; com 5, identica a brasileira.
+_RAMPA_RENDA: list[tuple[int, int, int, int]] = [
+    (247, 244, 139, 150),   # #F7F48B
+    (255, 255, 0,   150),   # #FFFF00
+    (255, 210, 28,  150),   # #FFD21C
+    (168, 255, 168, 150),   # #A8FFA8
+    (0,   204, 0,   150),   # #00CC00
+    (20,  170, 80,  150),   # verde-escuro de OFERTA_*_BANDS
+]
+
+
+def _bands_de_faixas(
+    faixas,  # tuple[perfil.FaixaRenda, ...]
+) -> list[tuple[float, str, tuple[int, int, int, int]]]:
+    """Faixas do perfil -> formato de bands dos mapas de calor (teto, rotulo, RGBA)."""
+    cores = list(_RAMPA_RENDA[: len(faixas) - 1]) + [_RAMPA_RENDA[-1]]
+    return [(f.ate, f.rotulo, cor) for f, cor in zip(faixas, cores, strict=True)]
+
+
+# Pais com `reguas.faixas_renda` declarado (a Argentina, ancorada na canasta do INDEC)
+# usa as faixas do perfil; sem o campo (o Brasil), os literais de sempre, byte a byte —
+# travado por tests/contracts/test_perfil_br_reproduz_as_constantes.py.
+RENDA_PER_CAPITA_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = (
+    _bands_de_faixas(_REGUAS.faixas_renda.per_capita)
+    if _REGUAS.faixas_renda is not None
+    else _RENDA_PER_CAPITA_BANDS_BR
+)
 
 # ── Renda media domiciliar (fase seguinte, portada do prototipo) ──────────────
 # renda_media_domiciliar = renda do responsavel (V06004) x uplift de composicao x fator temporal,
@@ -441,10 +484,15 @@ RENDA_PER_CAPITA_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
 # uplift de composicao: responsavel -> domicilio inteiro. Mediana nacional 1.632 (~61% da renda vem
 # do responsavel). Por MUNICIPIO (IBGE) e, quando disponivel, por SETOR (agregado de parentesco,
 # rakeado por municipio: a media ponderada dos setores reproduz o uplift municipal do IBGE).
-UPLIFT_COMPOSICAO_NACIONAL = 1.632
+# FALLBACK do pais da instancia (Bloco B / DEC-047). No Brasil e o 1,632 de sempre, e as
+# tabelas por municipio e por setor continuam tendo precedencia sobre ele. Num pais SEM
+# essas tabelas — a Argentina — este e o UNICO valor que responde, e e por isso que ele
+# precisa vir do perfil: la o exportador ja entrega a renda na escala domiciliar, entao o
+# multiplicador correto e 1,0. Sem isto a renda argentina sai 63% acima da real.
+UPLIFT_COMPOSICAO_NACIONAL = _REGUAS.uplift_composicao
 # Media nacional de moradores por domicilio (IBGE Censo 2022 ~2.79) — fallback quando o municipio
 # nao esta na tabela. Usado pela renda media domiciliar por hex (tooltip do Mapa Territorial).
-MORADORES_DOMICILIO_NACIONAL = 2.79
+MORADORES_DOMICILIO_NACIONAL = _REGUAS.moradores_por_domicilio
 UPLIFT_COMPOSICAO_PATH = Path("data/staging/uplift_renda_domiciliar_municipio.parquet")
 UPLIFT_COMPOSICAO_SETOR_PATH = Path("data/staging/uplift_composicao_setor.parquet")
 
@@ -626,13 +674,20 @@ def uplift_extrapolado(cod_setor: object) -> bool:
 # ("até" saia bugado; per capita ja usa "ate"). Faixas pedidas por Felipe (2026-07-17): 2.000 /
 # 4.000 / 8.000 / 14.000 (corte de 4.600 -> 4.000 a pedido de Felipe 2026-07-23). Camada de
 # VISUALIZACAO do Relatorio Pontual; NAO altera score/artefatos M1.
-RENDA_MEDIA_DOMICILIAR_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
+_RENDA_MEDIA_DOMICILIAR_BANDS_BR: list[tuple[float, str, tuple[int, int, int, int]]] = [
     (2_000.0,   "ate R$ 2.000",        (247, 244, 139, 150)),   # #F7F48B
     (4_000.0,   "R$ 2.001-4.000",      (255, 255, 0,   150)),   # #FFFF00
     (8_000.0,   "R$ 4.001-8.000",      (255, 210, 28,  150)),   # #FFD21C
     (14_000.0,  "R$ 8.001-14.000",     (168, 255, 168, 150)),   # #A8FFA8
     (float("inf"), ">R$ 14.000",       (0,   204, 0,   150)),   # #00CC00
 ]
+
+# Mesma regra da per capita: faixas declaradas no perfil vencem; sem elas, o literal BR.
+RENDA_MEDIA_DOMICILIAR_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = (
+    _bands_de_faixas(_REGUAS.faixas_renda.domiciliar)
+    if _REGUAS.faixas_renda is not None
+    else _RENDA_MEDIA_DOMICILIAR_BANDS_BR
+)
 
 # Faixas absolutas de RESIDUAL FITNESS DISPONIVEL (`oferta_efetiva_disponivel`), em ALUNOS —
 # NAO confundir com `RESIDUAL_SCORE_BANDS`, que e' score 0-100. Ancora: 2.500 alunos = capacidade

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { classificarEntrada, linkGoogleMaps } from './entrada-ponto'
+import { perfilDoCliente } from './perfil'
 
 /** Av. Paulista, 1000 — o ponto de referencia dos testes. */
 const LAT = -23.5613
@@ -94,7 +95,10 @@ describe('classificarEntrada — fora do Brasil', () => {
     expect(r.tipo).toBe('fora-do-brasil')
     expect(r.coord).toBeNull()
     expect(r.precisaServidor).toBe(false)
-    expect(r.aviso).toMatch(/fora do Brasil/i)
+    // Ancorado no PERFIL, nao no literal: a frase e `fora de ${nome}` desde o Bloco
+    // A, e numa instancia argentina ela diz "fora de Argentina". O VALOR do enum
+    // (`fora-do-brasil`) NAO muda — renomea-lo seria churn puro.
+    expect(r.aviso).toMatch(new RegExp(`fora de ${perfilDoCliente().nome}`, 'i'))
   })
 
   it('lat/lng trocadas (o erro comum) caem no mesmo aviso', () => {

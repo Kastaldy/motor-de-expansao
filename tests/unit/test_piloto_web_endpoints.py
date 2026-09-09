@@ -181,6 +181,7 @@ def test_todas_as_rotas_registradas() -> None:
         "/api/municipios/{uf}",
         "/api/uf/{uf}",
         "/api/municipio/{uf}/{municipio}",
+        "/api/municipio/{uf}/{municipio}/setores-heatmap",
         "/api/faixa-alunos",
         "/api/hexagonos",
         "/api/viabilidade",
@@ -218,6 +219,7 @@ def test_ufs_sem_base_levanta_500(empty_data: Path) -> None:
         lambda: pilot.municipios("SP"),
         lambda: pilot.uf_view("SP"),
         lambda: pilot.municipio("SP", "Qualquer"),
+        lambda: pilot.setores_heatmap("SP", "Qualquer"),
     ],
 )
 def test_rotas_uf_sem_particao_levantam_404(empty_data: Path, chamada) -> None:
@@ -644,6 +646,50 @@ def test_leituras_nao_mutam_artefatos(synth_data: Path) -> None:
 
     depois = _snapshot(synth_data)
     assert antes == depois, "backend escreveu/alterou artefato fora do cache durante leituras"
+
+
+def test_setores_heatmap_serve_poligonos_com_densidade_e_renda(synth_data: Path) -> None:
+    """Bloco D: o mapa de calor opcional serve poligonos de setor censitario, so' no
+    drill-down de municipio. Ate' este endpoint, essa geometria nunca saia do servidor
+    (o heatmap do Relatorio Pontual e' 100% PNG renderizado em Pillow).
+    """
+    from shapely.geometry import Polygon
+
+    def _quad(x: float) -> bytes:
+        return Polygon([(x, 0.0), (x + 0.01, 0.0), (x + 0.01, 0.01), (x, 0.01)]).wkb
+
+    geo_dir = synth_data / "outputs" / "setores_censitarios_2022_geo" / "uf=SP" / "cod_municipio=3550308"
+    geo_dir.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "cod_setor": ["A", "B"],
+            "geometry_wkb": [_quad(0.0), _quad(0.01)],
+            "densidade_pop_setor_hab_km2": [12000.0, 3000.0],
+            "renda_per_capita_setor_2022_calibrada": [4200.0, 1100.0],
+            "pop_total_setor_2022": [500.0, 800.0],
+        }
+    ).to_parquet(geo_dir / "part-000.parquet")
+    pilot.limpar_caches()
+
+    payload = pilot.setores_heatmap("SP", "Sao Paulo")
+
+    assert payload["disponivel"] is True
+    assert len(payload["setores"]) == 2
+    setor = next(s for s in payload["setores"] if s["setor"] == "A")
+    assert setor["densidade"] == pytest.approx(12000.0)
+    assert setor["renda"] == pytest.approx(4200.0)
+    assert setor["anel"], "poligono vazio — a simplificacao/serializacao engoliu a geometria"
+    # Formato deck.gl (mesmo de PecaCobertura): [anel_externo, buraco1, ...].
+    anel_externo = setor["anel"][0]
+    assert len(anel_externo) >= 4
+    json.dumps(payload, allow_nan=False)  # JSON-safe de ponta a ponta
+
+
+def test_setores_heatmap_sem_particao_geo_degrada_graciosamente(synth_data: Path) -> None:
+    """Municipio existe no enriquecido, mas sem particao geo (base parcial/em rollout):
+    `disponivel=False`, nunca 404 — o front so' esconde a chave da camada."""
+    payload = pilot.setores_heatmap("SP", "Sao Paulo")
+    assert payload == {"disponivel": False, "setores": []}
 
 
 def test_pins_ultra_das_rotas_incluem_o_cadastro_amplo(synth_data: Path) -> None:
@@ -1527,7 +1573,7 @@ def test_hexagonos_publica_as_reguas_e_o_denominador(nacional_data: Path) -> Non
         "conc_max": pilot.CONC_ADENSAR_MAX,
     }
     cob = body["cobertura"]
-    assert cob["hexes_acionaveis_brasil"] == 7  # 6 em SP + 1 em TO
+    assert cob["hexes_acionaveis_pais"] == 7  # 6 em SP + 1 em TO
     assert cob["ufs_no_recorte"] == 2
     # JSON-safe: o payload inteiro sobrevive ao serializador estrito.
     json.dumps(body, allow_nan=False)
@@ -1723,6 +1769,101 @@ def test_ranking_nacional_etiqueta_pelo_criterio_que_o_ordenou(nacional_data: Pa
     # A régua de concorrência é PUBLICADA, para o texto da tela derivar dela.
     assert payload["reguas"]["conc_max"] == pilot.CONC_ADENSAR_MAX
 
+
+# ---------------------------------------------------------------------------
+# `/api/estados`: os DOIS papeis da coluna de populacao (2026-09-02)
+#
+# A rota tratava como um so' o que sao dois: a coluna que o passo 1 CORTA em 5.000 e a
+# coluna que o payload SOMA para dizer o tamanho da UF. Enquanto o unico pacote era o
+# brasileiro isso nao aparecia — `pop_total_setor_2022` serve aos dois papeis la'. O
+# pacote argentino nao tem essa coluna, e a linha
+#
+#     col_pop = "pop_total_setor_2022" if ... else "pop_hex_base"
+#
+# escolhia um nome que ninguem verificava existir: `cols` filtrava fora, e a rota morria
+# em `KeyError: 'pop_hex_base'` na hora de somar. A tela de "por qual estado comecar"
+# respondia 500 na Argentina inteira.
+# ---------------------------------------------------------------------------
+
+
+def _enriquecido_sem(colunas: set[str]) -> pd.DataFrame:
+    """O sintetico, menos as colunas pedidas — para simular a forma de outro pacote."""
+    return _synthetic_enriched().drop(columns=[c for c in colunas if c])
+
+
+def _apontar_para(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, df: pd.DataFrame) -> None:
+    part = tmp_path / "outputs" / "hexagonos_dashboard_enriquecido" / "uf=SP"
+    part.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(part / "part-0.parquet")
+    _point_app_at(monkeypatch, tmp_path)
+
+
+def test_estados_sem_nenhuma_coluna_de_populacao_ACUSA(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Antes: `KeyError` cru. Agora: 500 que diz o que falta e quais colunas serviriam."""
+    _apontar_para(
+        tmp_path,
+        monkeypatch,
+        _enriquecido_sem({"pop_total_setor_2022", "populacao_corte_hex", "pop_total"}),
+    )
+    with pytest.raises(HTTPException) as erro:
+        pilot._ranking_estados()
+    assert erro.value.status_code == 500
+    assert "população por hexágono" in str(erro.value.detail)
+    _clear_caches()
+
+
+def test_estados_com_a_forma_do_pacote_ARGENTINO(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sem `pop_total_setor_2022` a rota nao pode quebrar — corta pela captacao e soma nada.
+
+    Esta e' a forma do pacote argentino ANTES do de-para de `montar_hexagonos`, e a forma
+    de qualquer pacote futuro que so' materialize a captacao. O total por UF sai `None`:
+    somar `populacao_corte_hex` double-conta (hexagono + 6 vizinhos), e no pacote real
+    argentino daria 288 milhoes para um pais de 46.
+    """
+    _apontar_para(
+        tmp_path, monkeypatch, _enriquecido_sem({"pop_total_setor_2022", "pop_total"})
+    )
+    ranking = pilot._ranking_estados()
+    assert ranking, "a rota devolveu vazio em vez do ranking"
+    assert all(r["pop_total"] is None for r in ranking), (
+        "somou uma coluna que se sobrepoe entre hexagonos"
+    )
+    assert any(r["hexes_elegiveis"] for r in ranking), "o corte nao caiu sobre a captacao"
+    _clear_caches()
+
+
+def test_estados_NAO_soma_pop_total_nem_quando_ela_e_a_unica(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O falso amigo nao vira fallback por desespero.
+
+    `pop_total` no pacote brasileiro e' a populacao do MUNICIPIO repetida em cada
+    hexagono dele — somada no pais da' 79,3 bilhoes. Um pacote que so' a tenha nao tem
+    populacao POR HEXAGONO, e a resposta certa e' acusar, nao estimar.
+    """
+    _apontar_para(
+        tmp_path,
+        monkeypatch,
+        _enriquecido_sem({"pop_total_setor_2022", "populacao_corte_hex"}),
+    )
+    with pytest.raises(HTTPException) as erro:
+        pilot._ranking_estados()
+    assert erro.value.status_code == 500
+    _clear_caches()
+
+
+def test_estados_no_pacote_brasileiro_segue_somando_o_setor(
+    synth_data: Path,
+) -> None:
+    """A UF brasileira nao muda: corta e soma na mesma coluna de sempre."""
+    ranking = pilot._ranking_estados()
+    assert ranking and ranking[0]["uf"] == "SP"
+    esperado = float(_synthetic_enriched()["pop_total_setor_2022"].sum())
+    assert ranking[0]["pop_total"] == pytest.approx(esperado)
 
 # ===========================================================================
 # 6) Guardrail READ-ONLY sobre o BANCO (F6.2) — o que o snapshot de FS não vê

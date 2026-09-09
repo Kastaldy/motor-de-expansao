@@ -160,7 +160,20 @@ def _load_m1_dashboard(dashboard_path: Path, structural_path: Path) -> pd.DataFr
 def _padronizar_censo(df: pd.DataFrame, *, fonte: str) -> pd.DataFrame:
     available = set(df.columns)
     rename_map = {}
-    if "classe_join_uf" in available and "qualidade_join_uf" not in available:
+    if "classe_join_uf" in available:
+        # `classe_join_uf` e' o join REAL (mismatch basico x renda, A/B/C) -- o unico
+        # sinal que `pop_corte.derive_confianca_geografica`/`JOIN_CLASSES_ELEGIVEIS`
+        # deveriam enxergar. A fonte nacional (`fase_a_nacional_completo.py`) grava
+        # TAMBEM um `qualidade_join_uf` proprio, mas ele e' um COMPOSTO (join E
+        # amplitude>50 E cobertura>=85) calculado uma vez em 2026-05-15 contra a escala
+        # ANTIGA do score. A DEC-040 (2026-08-26) recalibrou o score para regua absoluta
+        # e comprimiu a amplitude nacional inteira -- recalculado hoje, o gate de
+        # amplitude reprova as 21 UFs, sem excecao (Bloco A). Sem este fix, 12 UFs
+        # (todas Norte/Nordeste) ficavam presas em fallback municipal mesmo com join
+        # espacial excelente (7 das 9 UFs do NE tem classe A) e cobertura >=97%, porque
+        # o composto as marcava "C". Preferir o sinal puro sempre que ele existir.
+        if "qualidade_join_uf" in available:
+            df = df.drop(columns=["qualidade_join_uf"])
         rename_map["classe_join_uf"] = "qualidade_join_uf"
     if "status_espacial_piloto_expandido_uf" in available and "status_espacial_uf" not in available:
         rename_map["status_espacial_piloto_expandido_uf"] = "status_espacial_uf"

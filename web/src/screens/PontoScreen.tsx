@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useUfsDaBase } from '../lib/base-contexto'
 import { censoDaBase, institutoDoCenso } from '../lib/rodape-base'
 
 import type { PontoEscolhido } from '../App'
@@ -97,8 +96,7 @@ export default function PontoScreen({
   /** Captura do mapa, publicada pelo App. Ausente = o PDF sai sem mapas. */
   onCapturarMapas?: (alvos: AlvoCaptura[]) => Promise<string[]>
 }) {
-  const ufsDaBase = useUfsDaBase()
-  const institutoDaBase = institutoDoCenso(ufsDaBase)
+  const institutoDaBase = institutoDoCenso()
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   /**
@@ -511,7 +509,6 @@ function Ficha({
   ficha: PontoPayload
   onAnalisarPonto: (p: PontoEscolhido) => void
 }) {
-  const ufsDaBase = useUfsDaBase()
   const { local, censo, concorrencia, mercado } = ficha
 
   /* A viabilidade e as entradas sobem do bloco filho porque a RECOMENDACAO precisa
@@ -598,7 +595,7 @@ function Ficha({
       </Glass>
 
       {/* ---------------- Socioeconomia (sempre disponível) ---------------- */}
-      <Secao titulo="Quem mora em volta" nota={`${censoDaBase(ufsDaBase) ?? 'Censo 2022'} · raio de ${num(ficha.raio_km * 1000)} m`}>
+      <Secao titulo="Quem mora em volta" nota={`${censoDaBase() ?? 'Censo 2022'} · raio de ${num(ficha.raio_km * 1000)} m`}>
         {/* ---- O VISUAL VEM PRIMEIRO ----
             A hierarquia estava invertida: cinco cards de 24px dominavam o bloco e a barra
             aparecia como rodapé. Quem escolhe imóvel pergunta "isso é muito?", e essa

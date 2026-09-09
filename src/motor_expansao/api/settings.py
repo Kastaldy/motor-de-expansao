@@ -17,6 +17,8 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from motor_expansao.perfil import Perfil
+
 # .../src/motor_expansao/api/settings.py -> parents[3] = raiz do repo
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DATA_DIR = _REPO_ROOT / "data"
@@ -46,6 +48,21 @@ class Settings(BaseSettings):
     competitors_logos_dir: Path | None = None
     # Camada de mercado/SAM + concorrentes + unidades Ultra (opcional; enriquece o PDF).
     staging_dir: Path = _DATA_DIR / "staging"
+
+    # --- Perfil do pais da instancia (Bloco A / DEC-047) ---
+    # `None` = "quem construiu nao passou" -> o consumidor cai em `resolver_perfil()`.
+    # NAO e opcional por indecisao: e para os 4 sitios que constroem `Settings` no
+    # `web/server/app.py` poderem ser convertidos UM POR COMMIT, cada um verde sozinho.
+    # Sem o default, `pydantic-settings` levantaria nos quatro ao mesmo tempo.
+    #
+    # NAO e preenchivel por env, e isso e travado pelo validador abaixo — nao pela
+    # ausencia de suporte. MEDIDO em 2026-09-02: `API_PERFIL='{"pais": "AR", ...}'` E
+    # lido pelo `pydantic-settings`, que monta um `Perfil` do JSON. A spec §3.4 dizia o
+    # contrario ("um campo de tipo dataclass nao e preenchivel por env"), e estava
+    # errado. Sem o validador, uma env sobrescreveria bbox e regua de uma instancia em
+    # producao, contornando o arquivo montado no volume — exatamente o que a DEC-047
+    # proibe. O perfil e o ARQUIVO, e so.
+    perfil: Perfil | None = None
 
     # CORS. Em producao, restringir via env API_CORS_ORIGINS.
     cors_origins: list[str] = ["*"]
@@ -83,6 +100,22 @@ class Settings(BaseSettings):
     # time, entao NAO e' liberado pela senha compartilhada do bot: so este chat.
     # Vazio = comando desligado. Env: API_ACESSOS_ADMIN_CHAT_ID=...
     acessos_admin_chat_id: str = ""
+
+    @field_validator("perfil", mode="before")
+    @classmethod
+    def _perfil_so_por_objeto(cls, value: object) -> object:
+        # So aceita o objeto ja resolvido (ou None). Qualquer outra coisa — a string
+        # JSON que viria de `API_PERFIL`, ou um dict montado a mao — e recusada: o
+        # perfil se resolve UMA vez, a partir do arquivo, em `resolver_perfil()`.
+        # Aceitar um dict aqui criaria um segundo caminho de construcao que nao passa
+        # pela validacao fail-closed do loader.
+        if value is None or isinstance(value, Perfil):
+            return value
+        raise ValueError(
+            "`perfil` so aceita um objeto Perfil resolvido por "
+            "`motor_expansao.perfil.resolver_perfil()`; nao e configuravel por env "
+            "nem por dict (DEC-047: o pais da instancia e o arquivo montado no volume)"
+        )
 
     @field_validator("acesso_log_dir", mode="before")
     @classmethod

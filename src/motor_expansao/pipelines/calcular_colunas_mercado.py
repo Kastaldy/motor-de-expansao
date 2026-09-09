@@ -64,6 +64,12 @@ SOURCE_REQUIRED_COLS = {
     "oferta_efetiva_mapeada_2km",
     "gap_competitivo_2km",
     "pressao_concorrencial_score_2km",
+    # DEC-051: insumo OFICIAL do residual a partir daqui e' o modelo de area de
+    # influencia de 1km (interseccao geometrica), nao mais o decaimento linear ate 2km
+    # do centroide. As colunas _2km acima seguem exigidas -- pins, contagem de tela e
+    # rotulo Livre/Adensar/Disputa (DEC-041) continuam lendo delas.
+    "oferta_efetiva_1km_area",
+    "gap_competitivo_1km_area",
 }
 
 
@@ -338,25 +344,32 @@ def calcular(df: pd.DataFrame, n_redes: int | None = None) -> pd.DataFrame:
     )
 
     # 5.6 - Residual e SOM
-    df["residual_indice_mapeado"] = df["tam_indice_demanda"] * df["gap_competitivo_2km"]
+    # DEC-051: o insumo geometrico oficial passa do decaimento linear ate 2km do
+    # centroide (`gap_competitivo_2km`) para a interseccao de area do disco de 1km de
+    # cada concorrente (`gap_competitivo_1km_area`), que conserva massa (nenhum
+    # concorrente "vale" mais ou menos que 1 unidade conforme a posicao dele dentro do
+    # hexagono) e enxerga vizinho que a distancia ao centroide nao alcancava. As colunas
+    # `_2km` permanecem no artefato para pins/tela/DEC-041, so' NAO alimentam mais o
+    # residual/SAM/SOM oficiais.
+    df["residual_indice_mapeado"] = df["tam_indice_demanda"] * df["gap_competitivo_1km_area"]
     df["residual_populacao_mapeada"] = np.where(
         mask_hex_censo,
-        df["tam_populacao_base"] * df["gap_competitivo_2km"],
+        df["tam_populacao_base"] * df["gap_competitivo_1km_area"],
         np.nan,
     )
-    df["capacidade_captura_mapeada"] = (df["sam_indice_operavel"] / 100.0) * df["gap_competitivo_2km"]
+    df["capacidade_captura_mapeada"] = (df["sam_indice_operavel"] / 100.0) * df["gap_competitivo_1km_area"]
     df["som_indice_mapeado"] = 100.0 * df["capacidade_captura_mapeada"]
     df["som_populacao_mapeada"] = np.where(
         mask_hex_censo,
-        df["sam_populacao_base"] * df["gap_competitivo_2km"],
+        df["sam_populacao_base"] * df["gap_competitivo_1km_area"],
         np.nan,
     )
 
     oferta_mercado_ponderada = (
-        pd.to_numeric(df["oferta_efetiva_mapeada_2km"], errors="coerce").fillna(0.0).clip(lower=0)
+        pd.to_numeric(df["oferta_efetiva_1km_area"], errors="coerce").fillna(0.0).clip(lower=0)
     )
     df["capacidade_default_concorrente_alunos"] = CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS
-    # Concorrentes: oferta espacialmente ponderada (distancia-decaida ate 2km)
+    # Concorrentes: oferta espacialmente ponderada por interseccao de area (DEC-051, 1km)
     df["oferta_consumida_mercado_estimada"] = (
         oferta_mercado_ponderada * CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS
     )

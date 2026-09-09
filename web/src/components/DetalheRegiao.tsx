@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { useUfsDaBase } from '../lib/base-contexto'
 import { institutoDoCenso } from '../lib/rodape-base'
 
 import { num } from '../lib/format'
@@ -23,7 +22,7 @@ export default function DetalheRegiao({
   detalhe: PontoCensoDetalhe
   concorrencia: PontoConcorrencia
 }) {
-  const instituto = institutoDoCenso(useUfsDaBase())
+  const instituto = institutoDoCenso()
   const [aberto, setAberto] = useState(false)
   const sp = detalhe.setor_do_ponto
 

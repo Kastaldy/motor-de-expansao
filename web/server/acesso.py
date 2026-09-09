@@ -28,6 +28,10 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from motor_expansao.perfil import Perfil
 
 _LOG = logging.getLogger("piloto.acesso")
 
@@ -114,6 +118,115 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     # deixaria uma das duas portas mais larga que a outra sobre o mesmo dado.
     ("/api/pin-concorrente/", frozenset({"mapa", "oportunidades"})),
 )
+
+
+# ============================================================================
+# Gate de PAÍS (Bloco C / DEC-047) — "esta INSTÂNCIA oferece esta rota de verdade?"
+#
+# É uma pergunta DIFERENTE da que `REGRAS_DE_ACESSO` responde. Aquela e' sobre o
+# USUÁRIO ("este Remote-User pode?"), casada por UNIÃO (basta UMA aba da lista) e
+# fail-open por desenho — sem ela, o piloto trancaria por completo se o JSON de
+# cadastro sumisse. Esta e' sobre a INSTÂNCIA ("este deploy tem a superfície para
+# responder isto?"), casada por CONJUNÇÃO (a superfície exigida tem de estar em
+# `perfil.superficies`) e fail-CLOSED por desenho — sem ela, uma instância que nunca
+# declarou `oportunidades` serviria o funil inteiro para qualquer usuário com "mapa".
+#
+# Herdar `REGRAS_DE_ACESSO` para isto NÃO fecha nada, nas duas direções: `/api/uf/`
+# aceita `{"mapa", "oportunidades"}` (união), e a Argentina TEM "mapa" — passaria por
+# uma tabela que so' verificasse a interseção. O gate de país precisa da SUA PRÓPRIA
+# tabela, com sua própria semântica. Precedente já no repo: a DEC-037 deu à aba
+# `imobiliaria` um gate próprio em vez de esticar a tabela de união — mesmo
+# movimento, um nível acima.
+#
+# `ponto` e `municipal` NÃO SÃO ABAS (moram dentro de `mapa` — ver `ABA_DA_TELA` em
+# `web/src/lib/acesso.ts`), então não pertencem a este dicionário: elas dependem de
+# um recurso que `superficies` não modela (a malha adm2), e por isso têm tabela e
+# checagem PRÓPRIAS logo abaixo (`ROTAS_QUE_EXIGEM_MALHA_MUNICIPAL`).
+SUPERFICIE_DA_ROTA: tuple[tuple[str, frozenset[str]], ...] = (
+    ("/api/rede/", frozenset({"executiva"})),
+    ("/api/executiva/", frozenset({"executiva"})),
+    ("/api/geocode", frozenset({"mapa"})),
+    ("/api/cobertura/", frozenset({"mapa"})),
+    ("/api/relatorio/comparacao", frozenset({"mapa"})),
+    ("/api/viabilidade", frozenset({"viabilidade"})),
+    ("/api/faixa-alunos", frozenset({"viabilidade"})),
+    ("/api/simulador/", frozenset({"viabilidade"})),
+    ("/api/uf/", frozenset({"mapa"})),
+    ("/api/municipio/", frozenset({"mapa"})),
+    ("/api/municipios/", frozenset({"mapa"})),
+    # As DUAS leituras do Modo 3 (DEC-044) — ranking nacional por estado e por
+    # hexágono — são o FUNIL, servidas fora de qualquer UF escolhida. Diferente de
+    # `/api/uf/`: aqui não há "mapa" alternativo, porque não há mapa de uma UF por
+    # trás — é a mesma pergunta de `oportunidades`, so' que na escala do país.
+    ("/api/estados", frozenset({"oportunidades"})),
+    ("/api/hexagonos", frozenset({"oportunidades"})),
+    # O prefixo com barra vem ANTES, mesmo motivo de `REGRAS_DE_ACESSO`: o dossiê
+    # (PII de corretor) exige `imobiliaria`; a LISTA agregada, sem PII, alimenta os
+    # pins e a ficha do hexágono do Mapa Territorial e por isso basta "mapa".
+    ("/api/oportunidades/", frozenset({"imobiliaria"})),
+    ("/api/oportunidades", frozenset({"mapa"})),
+    ("/api/imobiliaria/evento/", frozenset({"mapa"})),
+    ("/api/foto-concorrente/", frozenset({"mapa"})),
+    ("/api/pin-concorrente/", frozenset({"mapa"})),
+)
+
+# `/api/ponto`, `/api/resolver-ponto`, `/api/relatorio/municipal` e
+# `/api/relatorio/pontual` NÃO estão em `SUPERFICIE_DA_ROTA`: elas resolvem
+# coordenada -> município via a malha adm2 (`api/service._carregar_malha`), um
+# recurso que `perfil.superficies` não modela (ver a nota do campo em
+# `motor_expansao.perfil.Perfil.malha_municipal_disponivel`). Sem a malha, o
+# resultado de HOJE não é degradação graciosa: `_carregar_malha` levanta 500
+# ("Malha ... ausente ou vazia") na primeira coordenada, e `/api/relatorio/pontual`
+# e `/api/ponto` propagam esse 500 sem capturar — a diferença exata entre "a
+# ferramenta quebrou" e "esta instância não tem isto ainda" que este gate existe
+# para fazer. `/api/viabilidade` e `/api/faixa-alunos` ficam DE FORA desta lista de
+# proposito: o catchment ali é CONTEXTO opcional (try/except -> None), nunca
+# propaga a falha — não há nada para este gate proteger.
+ROTAS_QUE_EXIGEM_MALHA_MUNICIPAL: frozenset[str] = frozenset(
+    {
+        "/api/ponto",
+        "/api/resolver-ponto",
+        "/api/relatorio/municipal",
+        "/api/relatorio/pontual",
+    }
+)
+
+
+def superficie_necessaria(path: str) -> frozenset[str] | None:
+    """Superfície(s) que esta rota exige da INSTÂNCIA; `None` = sem exigência própria."""
+    for prefixo, superficies in SUPERFICIE_DA_ROTA:
+        if path.startswith(prefixo):
+            return superficies
+    return None
+
+
+def rota_exige_malha_municipal(path: str) -> bool:
+    return any(path.startswith(prefixo) for prefixo in ROTAS_QUE_EXIGEM_MALHA_MUNICIPAL)
+
+
+def motivo_bloqueio_pais(path: str, perfil: Perfil) -> str | None:
+    """`None` = a INSTÂNCIA oferece esta rota; string = detail do 404 que a nega.
+
+    404, nunca 403: a pergunta aqui não é "este usuário pode" (isso é
+    `motivo_bloqueio`, que devolve 403) — é "este deploy tem isto de verdade". Fingir
+    que a rota existe e negar por permissão prometeria uma superfície que a instância
+    não tem; 404 é a resposta honesta, e é o que permite ao front simplesmente
+    ESCONDER o que não veio na lista, em vez de mostrar um botão que sempre falha.
+    """
+    exigidas = superficie_necessaria(path)
+    if exigidas is not None and not exigidas.issubset(perfil.superficies):
+        faltando = sorted(exigidas - set(perfil.superficies))
+        nomes = ", ".join(repr(f) for f in faltando)
+        return (
+            f"Esta instância ({perfil.nome}) não oferece "
+            f"{'a superfície' if len(faltando) == 1 else 'as superfícies'} {nomes}."
+        )
+    if rota_exige_malha_municipal(path) and not perfil.malha_municipal_disponivel:
+        return (
+            f"Esta instância ({perfil.nome}) ainda não tem a malha municipal "
+            "necessária para esta função."
+        )
+    return None
 
 # Rotas /api/* deliberadamente livres (qualquer usuario autenticado):
 #   /api/health      — healthcheck do container (curl interno, sem Remote-User)

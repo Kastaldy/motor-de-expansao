@@ -49,13 +49,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
-# Quantos Relatorios Pontuais podem ser gerados AO MESMO TEMPO. O gerador e pesado
-# (interseccao de setores, tiles de basemap/satelite, matplotlib, fpdf) e roda no
-# threadpool; sem teto, N pedidos simultaneos disputariam as 4 CPUs da VPS e inflariam
-# a memoria. 3 deixa folga para o event loop e para os demais apps do host.
-_PDF_CONCORRENCIA_MAX = 3
-_PDF_SEMAFORO = asyncio.Semaphore(_PDF_CONCORRENCIA_MAX)
-
 # Teto anti-DoS de memoria nos uploads de foto do Relatorio Pontual (BLK-SEC-05): o
 # PDF usa no maximo 2 fotos, entao lemos poucas e limitamos o tamanho de cada uma —
 # sem isso, N pedidos com arquivos grandes inflavam a RAM do unico worker ANTES do
@@ -95,11 +88,63 @@ from motor_expansao.dashboard import (  # noqa: E402
     rede_faturamento_financeiro,
     rede_metricas,
 )
+from motor_expansao.perfil import resolver_perfil  # noqa: E402
 
-_DEFAULT_DATA = Path(
-    r"C:\Users\Felipe Silva\Downloads\motor-de-expansao\motor-de-expansao\data"
+# --- Perfil do pais desta instancia (Bloco A / DEC-047) ----------------------
+# O pais e propriedade do DEPLOY, nao um `if` no codigo: um processo serve um pais so,
+# e qual pais e isso esta declarado no `perfil.json` que mora na RAIZ do MOTOR_DATA_DIR.
+# Resolvido UMA vez, aqui, no import — e por isso que os ~40 `lru_cache` deste modulo
+# continuam corretos sem chave de pais (`carregar_uf("SC")` so e inequivoco com um SC
+# por processo).
+#
+# `_DEFAULT_DATA` morreu aqui: era o Downloads de uma maquina especifica, que so nao
+# quebrava porque producao sempre passa MOTOR_DATA_DIR. O default agora e o `data/` do
+# repositorio, resolvido pelo loader, e em producao a ausencia do perfil DERRUBA o
+# processo com o campo nomeado, em vez de servir numero brasileiro em instancia
+# argentina. Ver docs/spec_bloco_a_perfil.md §3.2 e §6.1.
+PERFIL = resolver_perfil()
+DATA_DIR = PERFIL.raiz
+logging.getLogger("piloto.perfil").info(
+    "perfil: pais=%s nome=%s moeda=%s bbox=%s superficies=%s raiz=%s",
+    PERFIL.pais,
+    PERFIL.nome,
+    PERFIL.moeda.codigo,
+    PERFIL.bbox,
+    ",".join(PERFIL.superficies),
+    DATA_DIR,
 )
-DATA_DIR = Path(os.environ.get("MOTOR_DATA_DIR", str(_DEFAULT_DATA)))
+# Quantos Relatorios Pontuais podem ser gerados AO MESMO TEMPO. O gerador e pesado
+# (interseccao de setores, tiles de basemap/satelite, matplotlib, fpdf) e roda no
+# threadpool; sem teto, N pedidos simultaneos disputariam as 4 CPUs da VPS e inflariam
+# a memoria. O teto agora vem do PERFIL (`operacao.pdf_concorrencia_max` — Bloco C+,
+# decisao 0.5 do plano multi-pais): ele e por PROCESSO e cada instancia roda UM worker
+# uvicorn, entao duas instancias na mesma VPS somam os tetos — BR sobe com 3 (o valor
+# historico, que deixa folga para o event loop e os demais apps do host) e a AR com 1.
+_PDF_CONCORRENCIA_MAX = PERFIL.operacao.pdf_concorrencia_max
+_PDF_SEMAFORO = asyncio.Semaphore(_PDF_CONCORRENCIA_MAX)
+
+
+def _texto_do_aviso_de_viabilidade(onde: str, campo: str) -> str | None:
+    """Texto do aviso `viabilidade_tributo_provisorio` a carimbar no artefato `onde`.
+
+    Bloco C+ (decisao 0.7): o aviso viaja no PDF e no XLSX, nao so na tela. O PERFIL
+    declara (`avisos` no perfil.json) e o codigo obedece — nenhum `if pais` aqui
+    (DEC-047). No Brasil `avisos` e `{}` e esta funcao devolve `None` para qualquer
+    artefato: os exports brasileiros nao mudam um byte.
+
+    `onde` e um valor de `AVISO_ONDE_VALIDO` ("pdf"/"xlsx"); `campo` e qual texto do
+    aviso o artefato comporta ("texto_curto" na linha de nota do XLSX, "texto_rodape"
+    no rodape das paginas financeiras do PDF).
+    """
+    # A chave e CONTRATO entre plataforma e perfis: um pais que declare o aviso de
+    # viabilidade sob outro nome teria um aviso que nunca carimba, em silencio.
+    # Testado em tests/contracts/test_aviso_carimbado_no_perfil.py.
+    aviso = PERFIL.avisos.get("viabilidade_tributo_provisorio")
+    if aviso is None or not aviso.ativo or onde not in aviso.onde:
+        return None
+    return getattr(aviso, campo) or None
+
+
 OUTPUTS_DIR = DATA_DIR / "outputs"
 STAGING_DIR = DATA_DIR / "staging"
 IBGE_DIR = DATA_DIR / "ibge"
@@ -111,6 +156,10 @@ ENRICHED_DIR = OUTPUTS_DIR / "hexagonos_dashboard_enriquecido"
 # Receita). Nao prediz, nao ranqueia oportunidade, nao reconstroi nada.
 # Artefato PARALELO e OPCIONAL; NAO e escrito no enriquecido — M1 READ-ONLY.
 CONCORRENTES_PATH = STAGING_DIR / "concorrentes_mapeados.parquet"
+# Universo NACIONAL de hexagonos validos do M1 (so' `hex_id` e' lido). Usado por
+# `pressao_1km._universo_hex_valido` pra renormalizar a massa do disco de 1 km que cai
+# fora da base (litoral/fronteira/hex podado) — ver docstring de pressao_1km.py.
+DASHBOARD_NACIONAL_PATH = OUTPUTS_DIR / "hexagonos_brasil_dashboard.parquet"
 CRESCIMENTO_PATH = STAGING_DIR / "crescimento_municipal.parquet"
 # Taxa de crescimento da area construida POR HEXAGONO (satelite 2016-2023). E o
 # que colore o mapa no passo 4: quem decide olha taxa de crescimento, nao emprego
@@ -149,16 +198,22 @@ _COLS_CRESCIMENTO = [
     "v_frase",
 ]
 
-CAPACIDADE_CONCORRENTE_PADRAO = 2500.0
-OFERTA_DESTAQUE_MIN = 2000.0  # espelha relatorio_municipal (emenda BLK-RELMUN-03)
-POP_MIN_ACIONAVEL = 5000  # regua operacional do dashboard (<5k = descartado)
+# As reguas absolutas passam a vir do perfil do pais (Bloco A / DEC-047). Os NOMES de
+# modulo permanecem, e isso nao e preguica: quatro contratos os leem POR ATRIBUTO
+# (`test_metodologia_espelha_o_funil.py`, `test_faixas_mapa_espelho.py`,
+# `test_piloto_web_endpoints.py`, `test_piloto_web_ponto.py`), e e o que prova que o
+# painel publica o numero que o funil aplica. Substituir os usos por `PERFIL.reguas.*`
+# inline e apagar estes nomes trocaria quatro redes de protecao por nada.
+CAPACIDADE_CONCORRENTE_PADRAO = PERFIL.reguas.capacidade_concorrente
+OFERTA_DESTAQUE_MIN = PERFIL.reguas.oferta_destaque_min  # espelha relatorio_municipal
+POP_MIN_ACIONAVEL = PERFIL.reguas.pop_min_acionavel  # <5k = descartado
 
 # --- Reguas do funil e das etiquetas -----------------------------------------
 # Estavam como literais espalhados dentro de _etiqueta/_etiqueta_muni/montar_funil.
 # Subiram para ca' porque o painel de Metodologia (/api/metodologia) publica estes
 # MESMOS nomes na tela: com o numero escrito em dois lugares, ajustar um parametro
 # fazia a explicacao mentir sem ninguem perceber. Mudou aqui, muda no funil E no texto.
-SCORE_CORTE_QUENTE = 30.0  # piso do passo 1 (hexagono "quente")
+SCORE_CORTE_QUENTE = PERFIL.reguas.score_corte_quente  # piso do passo 1 ("quente")
 # 70,0 -> 30,0 em 2026-08-26, junto com a troca do score censitario para REGUA ABSOLUTA.
 # Na escala antiga (percentil nacional de renda + percentil MUNICIPAL de populacao) o corte
 # de 70 deixava passar 104.835 hexes cuja populacao MEDIANA era 9 habitantes -- Oriximina/PA
@@ -280,13 +335,22 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
     # ja nasca guardada (impossivel esquecer a dependencia).
     if acesso.bloqueio_acessos(request.url.path, remote_user):
         return JSONResponse({"detail": "Not Found"}, status_code=404)
-    # Com o banco configurado, quem manda e' o RBAC (capacidades por rota+METODO, D22);
-    # sem ele, segue o mapa `usuario -> [abas]` do JSON, sem nada mudar. A troca e' por
-    # ENV, e nao por deploy: `MOTOR_DATABASE_URL` liga, e tirar a var volta atras.
+    # Gate de PAIS (Bloco C): "esta INSTANCIA oferece isto?", ANTES de "este usuario
+    # pode?" — mais barato (sem I/O do JSON de cadastro) e mais fundamental: nao faz
+    # sentido perguntar se um usuario TEM uma aba que a propria instancia nao serve.
+    # 404 (nao 403): o recurso nao existe NESTE deploy, nao e' negado por permissao.
+    detalhe_pais = acesso.motivo_bloqueio_pais(request.url.path, PERFIL)
+    if detalhe_pais is not None:
+        return JSONResponse({"detail": detalhe_pais}, status_code=404)
+    # So' agora o gate de USUARIO. Com o banco configurado, quem manda e' o RBAC
+    # (capacidades por rota+METODO, D22); sem ele, segue o mapa `usuario -> [abas]` do
+    # JSON, sem nada mudar. A troca e' por ENV, e nao por deploy: `MOTOR_DATABASE_URL`
+    # liga, e tirar a var volta atras.
     #
-    # O `bloqueio_acessos` acima continua ANTES dos dois, e por cima dos dois: o painel de
-    # acessos tem allowlist propria de env, responde 404 (nao 403) e nao e' concedivel por
-    # nenhum dos dois mecanismos. Isso e' emenda da DEC-027 e nao muda com o banco.
+    # As tres camadas sao eixos DIFERENTES e a ordem e' significativa: `bloqueio_acessos`
+    # (allowlist do painel, emenda DEC-027) fica por cima de tudo; o gate de PAIS diz o
+    # que a instancia serve; o de USUARIO diz o que a pessoa pode. Nenhum e' concedivel
+    # pelos outros.
     if acesso.banco_no_comando():
         detalhe = acesso.motivo_bloqueio_por_banco(
             request.url.path, request.method, remote_user
@@ -407,6 +471,7 @@ _COLS_DESEJADAS = [
     "capacidade_default_concorrente_alunos",
     "sam_fitness_potencial",
     "populacao_corte_hex",
+    "fonte_populacao_corte",
     "pop_total",
     "pop_total_setor_2022",
     "renda_per_capita",
@@ -873,9 +938,9 @@ def _derivar(df: pd.DataFrame) -> pd.DataFrame:
     # tocar nenhuma coluna existente. Degrada em silencio se o parquet de concorrentes
     # nao estiver montado — o front nao recebe os campos e a chave nem aparece.
     # Ver web/server/pressao_1km.py.
-    if pressao_1km.disponivel(CONCORRENTES_PATH):
+    if pressao_1km.disponivel(CONCORRENTES_PATH, DASHBOARD_NACIONAL_PATH):
         try:
-            out = pressao_1km.anexar(out, CONCORRENTES_PATH)
+            out = pressao_1km.anexar(out, CONCORRENTES_PATH, DASHBOARD_NACIONAL_PATH)
         except Exception:  # pragma: no cover - experimento nao pode derrubar o piloto
             pass
 
@@ -3076,11 +3141,28 @@ def _hex_dict(
         "oferta": _num(r.get("oferta_efetiva_disponivel")),
         "sam": _num(r.get("sam_fitness_potencial")),
         "pop": _num(r.get("pop_leitura")),
+        # Fallback municipal (mesma familia da renda, abaixo): `fonte_populacao_corte` vem
+        # pronta do pipeline (`pop_corte.derive_pop_cut_columns`), que tenta
+        # `pop_total_setor_2022` (setor, granular) primeiro e so cai para `pop_total`
+        # (SIDRA municipal, o MESMO numero repetido em todo hexagono da cidade) quando o
+        # setor nao esta disponivel/confiavel para o hex (`confianca_geografica` !=
+        # "granular"). `pop_leitura`, acima, ja' embute essa escolha via
+        # `populacao_corte_hex` — sem este flag o operador nao tem como saber se o
+        # "Habitantes" que ve e' do bairro ou da cidade inteira.
+        "pop_municipal": r.get("fonte_populacao_corte") == "total_municipal",
         # `renda` e a renda DOMICILIAR per capita (conceito do IBGE), a mesma grandeza que o
         # Relatorio Pontual exibe — antes era a coluna calibrada crua, e as duas superficies
         # mostravam numeros diferentes para a mesma coordenada.
         "renda": _renda_per_capita_hex(r, fator_dom, dom=renda_dom),
         "renda_dom": renda_dom,
+        # Fallback municipal (Bloco A/DEC-050): `renda_origem` vem de `_derivar`, que
+        # tenta `renda_per_capita_setor_2022_calibrada` (setor, granular) primeiro e so
+        # cai para `renda_per_capita` (SIDRA municipal, o MESMO numero repetido em todo
+        # hexagono da cidade) quando o setor nao esta disponivel/confiavel para o hex. O
+        # operador via um numero com cara de precisao intraurbana sem saber que, ali, e
+        # so o municipio inteiro. `True` so quando a origem e' de fato a municipal —
+        # `None`/ausente (sem renda nenhuma) fica de fora de proposito.
+        "renda_municipal": r.get("renda_origem") == "renda_per_capita",
         "faixa": _faixa_label(r.get("faixa_oportunidade")),
         "conc": int(r.get("n_concorrentes_est") or 0),
         "ultra": int(r.get("n_ultra") or 0),
@@ -3173,6 +3255,11 @@ def _resumo(df: pd.DataFrame) -> dict[str, Any]:
     """KPIs de topo (residual, população, score médio, concorrentes, espaço)."""
     return {
         "residual_total": _num(df["oferta_efetiva_disponivel"].sum()),
+        # SEM fallback, e de proposito. E' uma SOMA, entao so' vale coluna que nao se
+        # sobrepoe entre hexagonos: `pop_total` e' o municipio repetido em cada hexagono
+        # (no Brasil) e `populacao_corte_hex` e' a captacao com os 6 vizinhos dentro —
+        # qualquer uma das duas devolveria um total inflado com cara de certo. Ver
+        # `_COLS_POP_SOMA_UF`. Campo vazio e' a resposta honesta quando a coluna falta.
         "pop_total": (
             _num(df["pop_total_setor_2022"].sum())
             if "pop_total_setor_2022" in df.columns
@@ -3350,22 +3437,82 @@ def me(
     rota so' informa.
     """
     usuario = acesso.normalizar_usuario(remote_user)
-    # Com o banco no comando, as abas saem das CAPACIDADES do RBAC; sem ele, do mapa
-    # `usuario -> [abas]`. O contrato da resposta nao muda nos dois casos -- a SPA
-    # (`web/src/lib/acesso.ts`) segue recebendo nomes de aba.
+    # A FONTE das abas depende do banco; o TETO da instancia vale nos dois casos.
     #
-    # Isto tem de acompanhar o middleware: enquanto a rota respondia so' pelo JSON e o
-    # gate ja' decidia pelo banco, a interface OFERECIA aba que o backend negava --
-    # a tela e o gate contando historias diferentes sobre a mesma pessoa.
+    # Fonte: com o banco no comando, as abas saem das CAPACIDADES do RBAC (D22); sem
+    # ele, do mapa `usuario -> [abas]` do JSON. Isto tem de acompanhar o middleware --
+    # enquanto a rota respondia so' pelo JSON e o gate ja' decidia pelo banco, a
+    # interface OFERECIA aba que o backend negava.
     if acesso.banco_no_comando():
         abas = set(acesso.abas_do_usuario_por_banco(remote_user))
     else:
         abas = set(acesso.abas_do_usuario(usuario))
+    # Teto (Bloco C): a INSTANCIA decide o que oferece; a fonte acima so' pode conceder
+    # DENTRO disso. Vale para os DOIS ramos de proposito -- o RBAC do banco nao tem eixo
+    # de pais, entao sem esta linha um usuario com `territorio.ranking_nacional` numa
+    # instancia sem `oportunidades` receberia o card e o clique morreria no 404 do
+    # `motivo_bloqueio_pais`. A interseccao fica FORA do if/else justamente para que
+    # acrescentar uma terceira fonte de abas amanha nao possa esquece-la.
+    abas &= set(PERFIL.superficies)
     # A aba Acessos NUNCA vem do JSON de abas nem do RBAC: so' da allowlist de env
-    # (emenda DEC-027). Entra aqui apenas para a SPA saber que pode mostrar o icone.
+    # (emenda DEC-027). Entra aqui apenas para a SPA saber que pode mostrar o icone, e
+    # fica DE FORA da interseccao acima de proposito: nao e' superficie de pais (nao
+    # esta em `ABAS_VALIDAS`/`PERFIL.superficies`), e' controle de equipe interna.
     if acesso.pode_ver_acessos(usuario):
         abas.add(acesso.ABA_ACESSOS)
-    return {"usuario": usuario, "abas": sorted(abas)}
+    return {"usuario": usuario, "abas": sorted(abas), "perfil": _perfil_do_cliente()}
+
+
+@functools.lru_cache(maxsize=1)
+def _perfil_do_cliente() -> dict[str, Any]:
+    """O recorte do perfil que o FRONT consome — e nada alem dele.
+
+    Por que sai por `/api/me` e nao por rota propria: a DEC-047 diz que o perfil "nao
+    entra requisicao". O front ja pede esta rota UMA vez na abertura, entao o pais chega
+    de carona, sem round trip novo e sem superficie nova para o gate de acesso cobrir.
+
+    A lista e curta de proposito. Cada campo aqui tem um leitor nomeado no front:
+      pais                       -> o carimbo de bandeira do Dock e os rotulos de
+                                    unidade federativa (`rodape-base.ts`)
+      nome                       -> a frase "fora de X" (`entrada-ponto.ts`)
+      locale                     -> `new Intl.NumberFormat(...)` (`format.ts`)
+      moeda                      -> os oito literais de `R$` (`format.ts`)
+      moeda.indicadores_renda    -> `moedaRenda()` (`perfil.ts`), o simbolo que
+                                    acompanha RENDA — diverge de `moeda.simbolo` na
+                                    Argentina (ARS oficial, renda reportada em USD)
+      bbox                       -> `coord.ts` e `entrada-ponto.ts`
+      vista_padrao               -> `mapa-ponto.ts` e o fallback de camera do `HexMap`
+      reguas.pop_min_acionavel   -> `colors.ts`
+      reguas.capacidade_unidade_alunos -> `faixas.ts` e `mapa-ponto.ts`
+
+    Nao mandar `superficies`, `fontes` nem `geocode`: sao do servidor. Campo sem leitor
+    no front seria numero que envelhece calado — a mesma regra da spec §1.1.
+    """
+    return {
+        "pais": PERFIL.pais,
+        "nome": PERFIL.nome,
+        "locale": PERFIL.locale,
+        "moeda": {
+            "codigo": PERFIL.moeda.codigo,
+            "simbolo": PERFIL.moeda.simbolo,
+            "indicadores_renda": PERFIL.moeda.indicadores_renda,
+        },
+        "bbox": {
+            "lat_min": PERFIL.bbox.lat_min,
+            "lat_max": PERFIL.bbox.lat_max,
+            "lng_min": PERFIL.bbox.lng_min,
+            "lng_max": PERFIL.bbox.lng_max,
+        },
+        "vista_padrao": {
+            "lat": PERFIL.vista_padrao.lat,
+            "lng": PERFIL.vista_padrao.lng,
+            "zoom": PERFIL.vista_padrao.zoom,
+        },
+        "reguas": {
+            "pop_min_acionavel": PERFIL.reguas.pop_min_acionavel,
+            "capacidade_unidade_alunos": PERFIL.reguas.capacidade_unidade_alunos,
+        },
+    }
 
 
 @app.post("/api/ciencia-confidencialidade")
@@ -3756,6 +3903,31 @@ def _mil(v: float) -> str:
     return f"{v:,.0f}".replace(",", ".")
 
 
+def _moeda(v: float) -> str:
+    """Valor com o simbolo do PAIS da instancia. "R$ 4.000" no Brasil.
+
+    Existe para o painel de Metodologia — rota LIVRE, fora do alcance do gate de
+    superficie do Bloco C — nao cravar "R$" numa instancia que serve outra moeda. A
+    separacao de milhar continua a de `_mil`: locale de NUMERO e o BLK-INTL-12, que
+    esta fora desta onda de proposito.
+
+    NAO usar para valor de RENDA — ver `_moeda_renda`.
+    """
+    return f"{PERFIL.moeda.simbolo} {_mil(v)}"
+
+
+def _moeda_renda(v: float) -> str:
+    """Valor de RENDA com o simbolo/codigo CERTO — nunca `PERFIL.moeda.simbolo` cru.
+
+    `PERFIL.reguas.renda_abs_min/max` estao na mesma escala da coluna de renda do
+    pacote (`moeda.indicadores_renda`), que diverge da moeda OFICIAL do pais na
+    Argentina: `moeda.simbolo` e' "$" (peso), mas a renda e' reportada em USD. `_moeda`
+    imprimiria "$ 350" para um numero que sao 350 DOLARES — a mesma leitura errada por
+    1.397x que motivou o de-para do exportador (ver `pipelines/exportar_piloto_ar.py`).
+    """
+    return f"{PERFIL.moeda.simbolo_renda()} {_mil(v)}"
+
+
 def _fx(
     etiqueta: str, condicao: str, tom: str, escopo: str = "", cor: str | None = None
 ) -> dict[str, Any]:
@@ -3839,7 +4011,11 @@ def _faixas_competitivas() -> list[dict[str, Any]]:
         return _fx(rotulo, condicao, tom or "gray", "municipio")
 
     return [
-        faixa(0, "nenhum concorrente mapeado em 2 km"),
+        # DEC-046: o calculo e' sobre `concorrentes_mapeados`, que e' cadastro de CADEIA.
+        # Sem o qualificador, o mapa afirma "nenhum concorrente" no mesmo hexagono em que a
+        # ficha do ponto passa a listar academias independentes -- duas verdades vizinhas.
+        # Mudanca de ROTULO, nao de calculo.
+        faixa(0, "nenhuma cadeia mapeada em 2 km"),
         faixa(CONC_ADENSAR_MAX, f"até {CONC_ADENSAR_MAX} concorrentes estimados"),
         faixa(CONC_ADENSAR_MAX + 1, f"mais de {CONC_ADENSAR_MAX} concorrentes estimados"),
     ] + _faixas_da_rampa(FAIXAS_MAPA_DEMANDA, "uf", em_alunos=True)
@@ -3980,10 +4156,14 @@ def montar_metodologia() -> dict[str, Any]:
     res = _mil(OFERTA_DESTAQUE_MIN)
     score = f"{SCORE_CORTE_QUENTE:.0f}"
 
-    F_CENSO = "Censo 2022 (IBGE)"
+    # Fontes do PERFIL (Bloco A / DEC-047). Esta rota e LIVRE (`acesso.py`,
+    # `ROTAS_LIVRES`), entao o gate de superficie do Bloco C nao a alcanca por
+    # construcao: se o texto nao sair do perfil, a instancia argentina publica
+    # "Censo 2022 (IBGE)" e "setor censitario" na tela. O conserto e aqui.
+    F_CENSO = PERFIL.fontes.censo.nome
     F_CONC = "Mapeamento de concorrentes"
     F_ULTRA = "Base de unidades Ultra"
-    F_CRES = "CAGED, RAIS, Receita Federal e satélite"
+    F_CRES = PERFIL.fontes.crescimento.nome
 
     return {
         "intro": (
@@ -4001,12 +4181,7 @@ def montar_metodologia() -> dict[str, Any]:
         "fontes": [
             {
                 "nome": F_CENSO,
-                "detalhe": (
-                    "Renda, domicílios e população por setor censitário — recortes de "
-                    "algumas centenas de domicílios cada. É a base de tudo que o funil "
-                    "chama de potencial: nenhuma estimativa de demanda é arbitrada, toda "
-                    "ela sai do setor onde o hexágono cai."
-                ),
+                "detalhe": PERFIL.fontes.censo.detalhe,
             },
             {
                 "nome": F_CONC,
@@ -4028,13 +4203,7 @@ def montar_metodologia() -> dict[str, Any]:
             },
             {
                 "nome": F_CRES,
-                "detalhe": (
-                    "As quatro leituras de movimento do município: emprego formal e salário "
-                    "de admissão (CAGED mensal, apoiado no estoque da RAIS), abertura e "
-                    "fechamento de empresas (Receita Federal), renda e população (IBGE) e a "
-                    "área construída medida por satélite entre 2016 e 2023. Não entra em "
-                    "nenhum corte do funil — é o retrato de para onde a cidade vem andando."
-                ),
+                "detalhe": PERFIL.fontes.crescimento.detalhe,
             },
         ],
         "camadas": [
@@ -4056,9 +4225,12 @@ def montar_metodologia() -> dict[str, Any]:
                         "regra": (
                             "Dois insumos do setor censitário, com pesos fixos e em régua "
                             "ABSOLUTA: a renda per capita calibrada (peso 0,60), numa escala "
-                            "linear em que R$ 300 vale 0 e R$ 4.000 vale 100; e a população do "
-                            "setor (peso 0,40), numa escala logarítmica em que 1.000 habitantes "
-                            "valem 0 e 100.000 valem 100. Absoluta quer dizer que o mesmo par "
+                            f"linear em que {_moeda_renda(PERFIL.reguas.renda_abs_min)} vale 0 e "
+                            f"{_moeda_renda(PERFIL.reguas.renda_abs_max)} vale 100; e a população do "
+                            "setor (peso 0,40), numa escala logarítmica em que "
+                            f"{_mil(PERFIL.reguas.pop_abs_min)} habitantes "
+                            f"valem 0 e {_mil(PERFIL.reguas.pop_abs_max)} valem 100. "
+                            "Absoluta quer dizer que o mesmo par "
                             "de renda e população dá a mesma nota em qualquer cidade do país — "
                             "é o que permite comparar praças entre municípios. Até agosto de "
                             "2026 os dois termos eram percentis (renda contra o Brasil, "
@@ -4385,11 +4557,14 @@ _GEOCODE_UA = "MotorExpansaoUltra-Piloto/1.0 (contato: felipe.silva@ultraacademi
 
 @app.get("/api/geocode")
 def geocode(q: str) -> dict[str, Any]:
-    """Resolve um ENDEREÇO livre -> lat/lng (Nominatim, restrito ao Brasil).
+    """Resolve um ENDEREÇO livre -> lat/lng (Nominatim, restrito ao país da instância).
 
     DEC-010: cache em disco por hash da consulta, timeout curto, fallback gracioso
     ({"found": false}) quando a rede/serviço falha. Não persiste PII; a consulta é
     uma localização (endereço de imóvel), não dado pessoal de aluno.
+
+    Bloco A / DEC-047: `countrycodes` e `Accept-Language` saem do perfil, e o resultado
+    passa a ser VALIDADO contra `perfil.bbox` — ver o comentário no ponto da validação.
     """
     termo = (q or "").strip()
     if len(termo) < 3:
@@ -4408,8 +4583,18 @@ def geocode(q: str) -> dict[str, Any]:
     try:
         resp = requests.get(
             _NOMINATIM_URL,
-            params={"q": termo, "format": "json", "limit": 1, "countrycodes": "br"},
-            headers={"User-Agent": _GEOCODE_UA},
+            params={
+                "q": termo,
+                "format": "json",
+                "limit": 1,
+                "countrycodes": PERFIL.geocode.countrycodes,
+            },
+            headers={
+                "User-Agent": _GEOCODE_UA,
+                # Nao havia `Accept-Language` aqui: o Nominatim respondia no idioma que
+                # quisesse. `maps_geocoder.py` sempre mandou; esta rota, nao.
+                "Accept-Language": PERFIL.geocode.idioma,
+            },
             timeout=10,
         )
         arr = resp.json() if resp.ok else []
@@ -4430,12 +4615,52 @@ def geocode(q: str) -> dict[str, Any]:
     except (KeyError, TypeError, ValueError):
         return {"found": False}
 
+    # Validação do RETORNO contra o bbox do país — não existia (BR-P2, fechada em
+    # 2026-09-02). Esta rota devolvia o top-1 CRU do Nominatim, e o `countrycodes` do
+    # Nominatim é uma DICA, não uma garantia: buscar "Buenos Aires" com `countrycodes=br`
+    # resolve para o município homônimo de Pernambuco e volta com `found: true` — um pin
+    # errado com cara de certo, que é pior do que não achar. Compare com
+    # `resolve_endereco_http` e `resolve_plus_code`, que já validavam.
+    #
+    # Fica FORA do `try` acima de propósito: dentro dele, um `KeyError` do bbox viraria
+    # "found: false" pelo motivo errado.
+    #
+    # A rejeição NÃO é cacheada. O cache é por hash do termo e sobreviveria a uma troca
+    # de perfil: um "Buenos Aires" recusado sob perfil BR não pode voltar recusado depois
+    # de a instância virar AR.
+    if not PERFIL.bbox.contem(out["lat"], out["lng"]):
+        return {"found": False, "motivo": "fora_do_pais"}
+
     try:  # cacheia só sucessos
         GEOCODE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         cache.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
     except Exception:  # noqa: BLE001
         pass
     return out
+
+
+#: Populacao por hexagono desta rota, em DOIS papeis que o codigo tratava como um so'.
+#:
+#: `pop_total` NAO aparece em nenhum dos dois, e a ausencia e' deliberada: ela e' um FALSO
+#: AMIGO entre os pacotes. No brasileiro e' a populacao do MUNICIPIO repetida em cada
+#: hexagono dele (medido em SP: 645/645 municipios com um unico valor distinto; somada no
+#: pais da' 79,3 bilhoes, 391x o Brasil). No argentino e' a populacao do HEXAGONO. Mesmo
+#: nome, unidades de observacao diferentes — quem soma recebe uma resposta plausivel e
+#: errada, e nada acusa. O exportador argentino passou a entregar a populacao do hexagono
+#: em `pop_total_setor_2022`, que e' a gaveta com essa semantica nos dois lados.
+#:
+#: CORTE: o passo 1 pergunta "cabe gente suficiente NESTE hexagono?" — vale qualquer
+#: coluna por hexagono, inclusive a de captacao, que se sobrepoe entre vizinhos.
+_COLS_POP_CORTE_UF: tuple[str, ...] = (
+    "pop_total_setor_2022",
+    "pop_hex_base",
+    "populacao_corte_hex",
+)
+#: SOMA: o `pop_total` do payload e' um TOTAL por UF — so' entra coluna que NAO se
+#: sobrepoe entre hexagonos. `populacao_corte_hex` fica de fora por isso: ela e' o
+#: hexagono mais os 6 vizinhos, e somada na Argentina da' 288 milhoes, 6,3x o pais.
+#: Sem nenhuma delas o total sai `None` — melhor um campo vazio que um numero inflado.
+_COLS_POP_SOMA_UF: tuple[str, ...] = ("pop_total_setor_2022", "pop_hex_base")
 
 
 @functools.lru_cache(maxsize=1)
@@ -4466,29 +4691,56 @@ def _ranking_estados() -> list[dict[str, Any]]:
 
     dset = ds.dataset(str(ENRICHED_DIR), partitioning="hive")
     disp = set(dset.schema.names)
-    col_pop = "pop_total_setor_2022" if "pop_total_setor_2022" in disp else "pop_hex_base"
-    cols = [
-        c
-        for c in (
-            "uf", "nome_municipio", "oferta_efetiva_disponivel",
-            "oferta_consumida_mercado_estimada", "score_setor_2022_calibrado", col_pop,
+    # Ate' 2026-09-02 esta linha era `... if "pop_total_setor_2022" in disp else
+    # "pop_hex_base"` — um fallback para uma coluna cuja existencia ninguem checava. No
+    # Brasil a primeira sempre esta la' e o ramo nunca rodava; no pacote argentino nenhuma
+    # das duas existe, `cols` filtrava o nome fora e a rota morria em `KeyError:
+    # 'pop_hex_base'` na hora de somar. A tela de "por qual estado comecar" respondia 500.
+    col_corte = next((c for c in _COLS_POP_CORTE_UF if c in disp), None)
+    col_soma = next((c for c in _COLS_POP_SOMA_UF if c in disp), None)
+    if col_corte is None:
+        raise HTTPException(
+            500,
+            "A base não traz nenhuma coluna de população por hexágono "
+            f"({', '.join(_COLS_POP_CORTE_UF)}); o ranking por UF não pode ser montado.",
         )
-        if c in disp
-    ]
+    # `dict.fromkeys` e' o dedup: quando as duas colunas resolvem para o MESMO nome (o
+    # caso normal, `pop_total_setor_2022` nos dois papeis), pedi-la duas vezes ao pyarrow
+    # devolve um frame com a coluna repetida, e `df[nome]` deixa de ser Series.
+    cols = list(
+        dict.fromkeys(
+            c
+            for c in (
+                "uf", "nome_municipio", "oferta_efetiva_disponivel",
+                "oferta_consumida_mercado_estimada", "score_setor_2022_calibrado",
+                col_corte, col_soma,
+            )
+            if c is not None and c in disp
+        )
+    )
     df = dset.to_table(columns=cols).to_pandas()
     if df.empty:
         return []
 
-    # A cascata vem da funcao compartilhada, com as DUAS divergencias historicas
+    # A cascata vem da funcao compartilhada, com as TRES divergencias historicas
     # desta rota declaradas como parametro em vez de reescritas na mao:
     #   - `residual_minimo=None`: o ranking de UF nunca aplicou o piso do passo 2;
-    #   - `capacidade_por_linha=False`: ele sempre dividiu pela capacidade CONSTANTE.
-    # Mudar qualquer um dos dois muda o numero que a tela mostra — sao decisoes de
+    #   - `capacidade_por_linha=False`: ele sempre dividiu pela capacidade CONSTANTE;
+    #   - `precedencia_pop=(col_corte,)`: o corte de populacao cai sobre a coluna do
+    #     SETOR, enquanto o funil municipal corta sobre `populacao_corte_hex` (a
+    #     captacao: hexagono + 6 vizinhos). Esta terceira divergencia NAO estava dita —
+    #     a rota promete "a mesma cascata do funil" e ha' uma decada de leitura em cima
+    #     dela. Medido em 2026-09-02, alinhar o corte ao funil daria:
+    #         Brasil     4.301 -> 7.610 hexes elegiveis (+77%), residual +0,30%,
+    #                    e as 27 UFs na MESMA posicao — o ranking nao se mexe;
+    #         Argentina    943 -> 1.438 hexes elegiveis (+52%), residual +9,2%.
+    #     Fica como esta' ate' decisao de produto: e' numero na tela, nao faxina.
+    # Mudar qualquer um dos tres muda o numero que a tela mostra — sao decisoes de
     # produto, nao detalhes de implementacao, e por isso ficam visiveis aqui.
     elegivel = df[
         mascara_acionavel(
             df,
-            precedencia_pop=(col_pop,),
+            precedencia_pop=(col_corte,),
             residual_minimo=None,
             capacidade_por_linha=False,
         )
@@ -4509,7 +4761,7 @@ def _ranking_estados() -> list[dict[str, Any]]:
                 # Contexto, para o operador ver o tamanho do estado por tras do numero.
                 "residual_total": _num(bloco["oferta_efetiva_disponivel"].sum()),
                 "hexes_total": int(len(bloco)),
-                "pop_total": _num(bloco[col_pop].sum()),
+                "pop_total": _num(bloco[col_soma].sum()) if col_soma else None,
             }
         )
 
@@ -4730,7 +4982,11 @@ def _ranking_hexagonos(
         "cobertura": {
             # Quantos hexagonos do PAIS sobrevivem a cascata, antes de qualquer filtro
             # ou corte de payload — o denominador honesto da lista.
-            "hexes_acionaveis_brasil": hexes_base,
+            # Ate' 2026-09-03: "hexes_acionaveis_brasil". A rota e' a varredura NACIONAL —
+            # o pais do payload e' o do PERFIL da instancia, e a Argentina serve este mesmo
+            # endpoint. Nome fixo de pais na chave e' o mesmo defeito que a DEC-047 ja'
+            # baniu do backend: contrato dependente de QUAL pais roda por baixo.
+            "hexes_acionaveis_pais": hexes_base,
             "hexes_no_recorte": int(len(base)),
             "ufs_no_recorte": int(base["uf"].nunique()) if len(base) else 0,
             # A CONTA QUE IMPEDE A LISTA DE MENTIR. `_sem_concorrente` trata consumo
@@ -4784,6 +5040,7 @@ def resolver_ponto(q: str) -> dict[str, Any]:
     """
     from motor_expansao.api.coord import (
         CoordenadaInvalidaError,
+        ForaDoPaisError,
         parse_maps_url,
         validar_brasil,
     )
@@ -4803,14 +5060,24 @@ def resolver_ponto(q: str) -> dict[str, Any]:
     try:
         lat, lng = validar_brasil(*parse_maps_url(termo))
         return _coord(lat, lng, "coordenada")
-    except CoordenadaInvalidaError as exc:
-        # "Fora do Brasil" é DIFERENTE de "não parseei": a coordenada foi lida, e
-        # dizer "não reconheci" mandaria o operador procurar erro de digitação.
-        if "fora do Brasil" in str(exc):
-            return {
-                "found": False,
-                "motivo": "Essa coordenada está fora do Brasil. Confira se a latitude e a longitude não vieram trocadas.",
-            }
+    except ForaDoPaisError:
+        # "Fora do país" é DIFERENTE de "não parseei": a coordenada foi lida, e dizer
+        # "não reconheci" mandaria o operador procurar erro de digitação.
+        #
+        # Discriminado pelo TIPO da exceção desde 2026-09-02. Antes era
+        # `if "fora do Brasil" in str(exc)` — controle de fluxo preso a uma string
+        # voltada ao usuário. Bastou a mensagem virar "fora de Brasil" no Bloco A para
+        # o ramo parar de casar, em silêncio, e o operador passar a ver "não reconheci
+        # esse link" para uma coordenada perfeitamente lida.
+        return {
+            "found": False,
+            "motivo": (
+                f"Essa coordenada está fora de {PERFIL.nome}. Confira se a latitude "
+                "e a longitude não vieram trocadas."
+            ),
+        }
+    except CoordenadaInvalidaError:
+        pass  # não parseei: segue para o link curto, abaixo
 
     # 2. Link curto: segue o redirect e tenta o parse de novo.
     expandida = expandir_link_curto(termo)
@@ -4902,10 +5169,25 @@ def _criterios_do_ponto(
         # do funil. Desde a DEC-041 as duas reguas so' diferem por um: o funil tolera ate'
         # 2 concorrentes na fila, a ficha ate' 3 — um imovel com tres concorrentes no raio
         # de 1 km nao esta descartado, esta disputado.
+        #
+        # DEC-046: o insumo passa a ser `n_concorrentes_cadeia`, NAO o total. O teto de 3
+        # foi calibrado contra um universo so'-cadeia de 4.499 pontos; contra as ~24 mil
+        # academias da uniao ele deixaria de significar "praca disputada" e passaria a
+        # significar "existe academia por perto" -- reprovaria 103 das 150 pracas onde a
+        # propria Ultra opera hoje. A regua NAO muda; muda quem a alimenta.
+        #
+        # D7: com fonte de oferta faltando, o valor vai `None` e `crit` devolve
+        # `passa=None` (indecidivel). E' deliberado que a ausencia NAO vire PASS: sem isto,
+        # um ponto saturado seria aprovado porque um parquet nao chegou na VPS.
         itens.append(
             crit(
-                "concorrentes", "Concorrentes no raio",
-                concorrencia.get("n_concorrentes"), CRIT_PONTO_CONC_MAX, "", False,
+                "concorrentes", "Concorrentes de rede no raio",
+                (
+                    concorrencia.get("n_concorrentes_cadeia")
+                    if concorrencia.get("completo")
+                    else None
+                ),
+                CRIT_PONTO_CONC_MAX, "", False,
             )
         )
     return itens
@@ -4941,6 +5223,7 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
     )
     from motor_expansao.api.settings import Settings
     from motor_expansao.dashboard.censo_point import (
+        CLASSE_CADEIA_OFERTA,
         RAIO_CENSITARIO_DEFAULT_KM,
         analisar_ponto_censitario_setores,
     )
@@ -4957,6 +5240,7 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         ibge_dir=IBGE_DIR,
         ultra_dir=ULTRA_DIR,
         staging_dir=STAGING_DIR,
+        perfil=PERFIL,
     )
 
     try:
@@ -5077,12 +5361,21 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
     # Concorrentes por distancia. `concorrentes_raio` e' DataFrame: serializar campo a
     # campo, nunca o objeto cru — ele nao e' JSON e derrubaria a rota.
     lista_conc: list[dict[str, Any]] = []
+    _n_lista_total = 0
     _cr = res.get("concorrentes_raio")
     if _cr is not None and getattr(_cr, "empty", True) is False:
+        _n_lista_total = len(_cr)
         for _, _linha in _cr.sort_values("dist_km").head(30).iterrows():
+            # DEC-046: independente nao tem `rede` — o campo passa a carregar o NOME dela.
+            # Deixar vazio faria 19 mil academias virarem a MESMA palavra generica na tela
+            # (`rotuloDaRede` troca vazio por rotulo padrao). `classe` viaja junto para a
+            # tela saber o que esta lendo sem inferir pelo formato da string.
+            _rede = _texto(_linha.get("rede"))
+            _classe = _texto(_linha.get("classe")) or CLASSE_CADEIA_OFERTA
             lista_conc.append(
                 {
-                    "rede": _texto(_linha.get("rede")),
+                    "rede": _rede or _texto(_linha.get("nome")),
+                    "classe": _classe,
                     "dist_km": _num(_linha.get("dist_km"), 2),
                 }
             )
@@ -5107,14 +5400,43 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         "detalhe": detalhe_censo,
     }
 
+    # DEC-046 (D7): a oferta vem de TRES fontes e a resposta declara quais entraram. Sem
+    # isto, fonte ausente vira contagem menor, contagem menor vira PASS no criterio de
+    # concorrencia, e um ponto saturado e' APROVADO por ausencia de dado -- com o PDF de
+    # aparencia normal. `completo` e' o que o criterio consulta antes de emitir veredito.
+    from motor_expansao.api.service import FONTES_OFERTA, fontes_oferta_presentes
+
+    _fontes = fontes_oferta_presentes(cfg) if tem_concorrentes else ()
+    _faltando = [f for f in FONTES_OFERTA if f not in _fontes]
+
     conc_bloco = {
         "disponivel": tem_concorrentes,
         "motivo": None if tem_concorrentes else (
             "Sem base de concorrentes montada (data/staging/concorrentes_mapeados.parquet)."
         ),
+        # NOME MANTIDO, SIGNIFICADO NOVO (DEC-046): passa a ser o total de academias no
+        # raio, cadeia + independente. E' o numero que a tela sempre exibiu.
         "n_concorrentes": _num(res.get("n_concorrentes")) if tem_concorrentes else None,
+        # Insumo do criterio PASS/FAIL. Separado porque o teto de 3 foi calibrado contra um
+        # universo so'-cadeia: contra o total ele reprovaria 103 das 150 pracas onde a
+        # propria Ultra opera hoje (medido em 2026-09-01).
+        "n_concorrentes_cadeia": (
+            _num(res.get("n_concorrentes_cadeia")) if tem_concorrentes else None
+        ),
+        "n_academias_total": (
+            _num(res.get("n_academias_total")) if tem_concorrentes else None
+        ),
         "n_ultra": _num(res.get("n_ultra")) if tem_concorrentes else None,
+        "fontes_unidas": list(_fontes),
+        "fontes_faltando": _faltando,
+        "completo": tem_concorrentes and not _faltando,
         "lista": lista_conc,
+        # DEC-046: a lista trunca em 30 e ate' aqui isso era MUDO. Com o universo antigo o
+        # cap nunca mordia (maximo medido: 19); com a uniao ele morde, e sem o carimbo a
+        # tela conta `lista.length` e afirma uma densidade que nao e' a real
+        # (`leituraDeAglomeracao` monta a partitiva sobre o total da lista).
+        "lista_truncada": _n_lista_total > len(lista_conc),
+        "lista_total": _n_lista_total,
     }
 
     mercado_bloco = {
@@ -5313,6 +5635,102 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
         # de semantica oposta (quem disputa x quem se compra), e a intersecao entre eles e' vazia.
         "independentes": _pins_independentes(sel),
     }
+
+
+# Tolerancia de simplificacao dos poligonos de setor para o mapa de calor (graus).
+# ~0,0001 grau ~= 11 m no equador -- preserva o contorno de quadra/bairro visivel no
+# zoom de municipio e corta a maior parte dos vertices originais (a malha do IBGE tem
+# resolucao muito mais fina do que o mapa consegue desenhar).
+#
+# LIMITE CONHECIDO, nao resolvido nesta rodada: o payload escala com o NUMERO de
+# setores, nao so' com o detalhe geometrico -- simplificar mais agressivo tem retorno
+# decrescente. Medido em Sao Paulo capital (27.301 setores, pior caso do pais):
+#   tol=0,00005 -> 10,3 MB | tol=0,0001 -> 8,8 MB | tol=0,0004 -> 6,5 MB
+# Cidades medias ficam bem menores (Sao Bernardo do Campo, 1.759 setores, ~1,2 MB). Se
+# Sao Paulo/Rio-escala precisar de carregamento mais leve, o caminho e' vetor-tile ou
+# recorte por viewport, nao mais simplificacao -- registrar como follow-up, nao
+# resolver aqui, dado que a chave e' opt-in (o operador so paga o custo se ligar).
+SETORES_HEATMAP_SIMPLIFY_GRAUS = 0.0001
+
+
+@functools.lru_cache(maxsize=8)
+def _setores_heatmap_features(uf: str, cod_municipio: str) -> list[dict[str, Any]]:
+    """Poligonos de setor simplificados para o mapa de calor opcional. Cache por município.
+
+    Mesma fonte do Relatório Pontual (`setores_censitarios_2022_geo`), mas aqui a
+    geometria é servida ao NAVEGADOR pela primeira vez — até este endpoint, o heatmap
+    era 100% renderizado em Pillow no servidor (`censo_map.py`), sem nenhuma rota
+    devolvendo `geometry_wkb` como JSON. `_aneis` (de `cobertura_1km`) já resolve os
+    dois problemas medidos naquele módulo — MultiPolygon com buracos, e auto-interseção
+    depois de simplificar/arredondar — em vez de reimplementar e repetir os mesmos bugs.
+    """
+    from shapely import from_wkb
+
+    from motor_expansao.dashboard.data import read_censo_geo_partition
+
+    df = read_censo_geo_partition(CENSO_GEO_DIR, uf, cod_municipio)
+    if df.empty:
+        return []
+
+    feats: list[dict[str, Any]] = []
+    for _, r in df.iterrows():
+        wkb = r.get("geometry_wkb")
+        if wkb is None:
+            continue
+        try:
+            geom = from_wkb(wkb)
+        except Exception:  # noqa: BLE001 — geometria corrompida não pode derrubar o municipio inteiro
+            continue
+        if geom is None or geom.is_empty:
+            continue
+        if not geom.is_valid:
+            geom = geom.buffer(0)
+        try:
+            geom = geom.simplify(SETORES_HEATMAP_SIMPLIFY_GRAUS, preserve_topology=True)
+        except Exception:  # noqa: BLE001
+            pass
+        # `_aneis` devolve uma PARTE por item ([anel_externo, buraco1, ...]) — o mesmo
+        # formato de `PecaCobertura.anel` no front. Um setor MultiPolygon (raro, mas
+        # existe: rio/rodovia cortando o poligono) vira mais de uma "peca" aqui, todas
+        # com os MESMOS atributos — o deck.gl PolygonLayer nao desenha corretamente um
+        # MultiPolygon dentro de uma unica entrada `getPolygon`.
+        for parte in cobertura_1km._aneis(geom):
+            feats.append(
+                {
+                    "setor": _texto(r.get("cod_setor")),
+                    "anel": parte,
+                    "densidade": _num(r.get("densidade_pop_setor_hab_km2")),
+                    "renda": _num(r.get("renda_per_capita_setor_2022_calibrada")),
+                    "pop": _num(r.get("pop_total_setor_2022")),
+                }
+            )
+    return feats
+
+
+@app.get("/api/municipio/{uf}/{municipio}/setores-heatmap")
+def setores_heatmap(uf: str, municipio: str) -> dict[str, Any]:
+    """Polígonos de setor censitário (densidade/renda) para o mapa de calor opcional.
+
+    PROTÓTIPO NOVO (Bloco D) — só ativa no drill-down de município, mesmo gate dos pins
+    de concorrente (nunca em escala nacional/UF: São Paulo capital sozinha tem 27.301
+    setores). `disponivel=False` quando não há partição geo para o município — o front
+    não mostra a chave de camada nesse caso, em vez de uma chave que nunca liga.
+    READ-ONLY sobre o M1: só leitura do artefato geo derivado, nenhum score recalculado.
+    """
+    df = carregar_uf(uf)
+    sel = df[df["nome_municipio"].str.casefold() == municipio.casefold()]
+    if sel.empty:
+        raise HTTPException(404, f"Município '{municipio}' não encontrado na UF {uf}.")
+    cod = (
+        sel["cod_municipio"].dropna().astype(str).iloc[0]
+        if "cod_municipio" in sel.columns and sel["cod_municipio"].notna().any()
+        else None
+    )
+    if not cod or not CENSO_GEO_DIR.exists():
+        return {"disponivel": False, "setores": []}
+
+    setores = _setores_heatmap_features(uf.upper(), cod)
+    return {"disponivel": bool(setores), "setores": setores}
 
 
 # ============================================================================
@@ -5659,6 +6077,7 @@ def _setores_para_catchment(lat: Any, lng: Any) -> pd.DataFrame | None:
             ibge_dir=IBGE_DIR,
             ultra_dir=ULTRA_DIR,
             staging_dir=STAGING_DIR,
+            perfil=PERFIL,
         )
         _uf, _cod, setores_df = _resolver_e_carregar(float(lat), float(lng), cfg)
         return setores_df
@@ -6830,7 +7249,7 @@ def _rede_faixas(recorte: pd.DataFrame, contexto: dict[str, Any]) -> dict[str, A
     """Quantas unidades do recorte em cada faixa ABSOLUTA de faturamento do time de campo.
 
     Roda sempre sobre o último mês FECHADO, nunca sobre a competência em curso. As faixas
-    (`Crítico <150k … Excelente+ ≥300k`) são limiares de MÊS INTEIRO: aplicá-las ao
+    (`Crítico <150k … Excelente+ ≥400k`) são limiares de MÊS INTEIRO: aplicá-las ao
     acumulado de três dias jogaria a rede inteira em "Crítico" — o mesmo motivo pelo qual
     o diagnóstico não roda sobre mês aberto.
     """
@@ -7348,7 +7767,16 @@ def _rede_filtrar(contexto: dict[str, Any], filtros: dict[str, str | None]) -> p
     if filtros.get("uf"):
         dados = dados[dados["uf"].astype(str).str.upper() == str(filtros["uf"]).upper()]
     if filtros.get("master"):
-        dados = dados[dados["master"].astype(str) == filtros["master"]]
+        # Casa pelo CADASTRO (`master_franquia`), como o `consultor` abaixo -- e nao pela
+        # coluna `master` da Growth, que e' sigla de regiao. Unidade sem cadastro nao entra
+        # em nenhum recorte de master; ela continua inteira na carteira sem o filtro.
+        alvo_master = str(filtros["master"])
+        ids_master = {
+            uid
+            for uid, registro in cadastro.unidades.items()
+            if str(registro.get("master_franquia") or "") == alvo_master
+        }
+        dados = dados[dados["unidade_id"].isin(ids_master)]
     if filtros.get("coorte"):
         dados = dados[dados["coorte"].astype(str) == filtros["coorte"]]
     if filtros.get("consultor"):
@@ -7398,7 +7826,16 @@ def rede_filtros(mes: str | None = None) -> dict[str, Any]:
         "meses": meses[:_REDE_MESES_NO_SELETOR],
         "mes_padrao": meses[0],
         "ufs": sorted({str(u) for u in atual["uf"].dropna().unique()}),
-        "masters": sorted({str(m) for m in atual["master"].dropna().unique() if str(m).strip()}),
+        # NOME do master franqueado (cadastro), nao a sigla de REGIAO que a Growth manda em
+        # `master`. A sigla nao identifica franqueado: medido em 2026-09-09, `DF/GO` cobre 2
+        # masters, `RJ/SP 01` cobre 3 e `ULTRA` cobre 3 -- filtrar por ela nunca respondeu
+        # "as unidades de quem". A ficha ja' exibia `master_franquia`; o filtro e' que lia
+        # outra coluna, entao a tela dizia um nome e filtrava por outro criterio.
+        "masters": rede_cadastro.valores_distintos(cadastro, "master_franquia"),
+        # Sigla de regiao da Growth, preservada para quem precisar do recorte antigo.
+        "masters_regiao": sorted(
+            {str(m) for m in atual["master"].dropna().unique() if str(m).strip()}
+        ),
         "consultores": rede_cadastro.valores_distintos(cadastro, "consultor"),
         "masters_franquia": rede_cadastro.valores_distintos(cadastro, "master_franquia"),
         "coortes": rede_coorte.resumo_coortes(atual),
@@ -8174,6 +8611,7 @@ def _gerar_relatorio_municipal_response(body: RelatorioMunicipalIn) -> Response:
         ibge_dir=IBGE_DIR,
         ultra_dir=ULTRA_DIR,
         staging_dir=STAGING_DIR,
+        perfil=PERFIL,
     )
     comp_df, ultra_df = _competitors_ultra(cfg)
 
@@ -8443,6 +8881,7 @@ def _gerar_relatorio_pontual_pdf(
         ibge_dir=IBGE_DIR,
         ultra_dir=ULTRA_DIR,
         staging_dir=STAGING_DIR,
+        perfil=PERFIL,
     )
 
     try:
@@ -8556,6 +8995,10 @@ def _gerar_relatorio_pontual_pdf(
         foto_satelite=foto_satelite,
         # Marcador EXPLICITO de origem (parametro proprio, nunca embutido no `rotulo`).
         origem_centroide_hex=origem_centroide_hex,
+        # Bloco C+ (decisao 0.7): se o perfil declara o aviso de viabilidade com "pdf"
+        # em `onde`, o `texto_rodape` e carimbado em todas as paginas de resultado
+        # financeiro. No Brasil (`avisos` = {}) isto e None e o PDF nao muda um byte.
+        aviso_rodape=_texto_do_aviso_de_viabilidade("pdf", "texto_rodape"),
     )
     return Response(
         content=pdf,
@@ -8654,7 +9097,17 @@ def _gerar_simulador_xlsx_response(body: ViabilidadeIn, rotulo: str | None) -> R
     gerar = _gerador_simulador_xlsx()
     premissas = _premissas_do_body(body)
     inv = _investimento(body)
-    extras = _kwargs_aceitos(gerar, rotulo=rotulo, m2=float(body.m2))
+    # Bloco C+ (decisao 0.7): se o perfil da instancia declara o aviso de viabilidade
+    # com "xlsx" em `onde`, o `texto_curto` entra como linha de nota com fundo de
+    # alerta na aba Premissas. No Brasil (`avisos` = {}) isto e `None` e a planilha
+    # nao muda um byte. Passa por `_kwargs_aceitos` como os demais opcionais: um
+    # gerador trocado em teste sem o parametro nao vira TypeError.
+    extras = _kwargs_aceitos(
+        gerar,
+        rotulo=rotulo,
+        m2=float(body.m2),
+        aviso_nota=_texto_do_aviso_de_viabilidade("xlsx", "texto_curto"),
+    )
 
     conteudo = gerar(float(body.demanda), premissas, inv, **extras)
 

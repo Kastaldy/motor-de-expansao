@@ -200,6 +200,8 @@ def test_canibalizacao_nao_bloqueia_mais_o_sam():
             "oferta_efetiva_mapeada_2km": [0.0, 0.5],
             "gap_competitivo_2km": [1.0, 0.5],
             "pressao_concorrencial_score_2km": [0.0, 50.0],
+            "oferta_efetiva_1km_area": [0.0, 0.5],
+            "gap_competitivo_1km_area": [1.0, 0.5],
         }
     )
 
@@ -252,6 +254,8 @@ def test_calcular_tam_sam_residual_absoluto_exemplo_manual():
             "oferta_efetiva_mapeada_2km": [0.1],
             "gap_competitivo_2km": [1.0 / 1.1],
             "pressao_concorrencial_score_2km": [100.0 * (1.0 - 1.0 / 1.1)],
+            "oferta_efetiva_1km_area": [0.1],
+            "gap_competitivo_1km_area": [1.0 / 1.1],
         }
     )
 
@@ -336,6 +340,8 @@ def test_bloco8_pop_hex_base_usa_censo_independente_de_flag_censo_elegivel():
         "oferta_efetiva_mapeada_2km": [0.0, 0.0, 0.0, 0.0],
         "gap_competitivo_2km": [1.0, 1.0, 1.0, 1.0],
         "pressao_concorrencial_score_2km": [0.0, 0.0, 0.0, 0.0],
+        "oferta_efetiva_1km_area": [0.0, 0.0, 0.0, 0.0],
+        "gap_competitivo_1km_area": [1.0, 1.0, 1.0, 1.0],
         "total_hex_municipio": [50, 50, 40, 30],
         "hex_id": ["h_a", "h_b", "h_c", "h_d"],
     }
@@ -382,6 +388,8 @@ def _gate_fixture_row(**overrides) -> pd.DataFrame:
         "oferta_efetiva_mapeada_2km": [0.0],
         "gap_competitivo_2km": [1.0],
         "pressao_concorrencial_score_2km": [0.0],
+        "oferta_efetiva_1km_area": [0.0],
+        "gap_competitivo_1km_area": [1.0],
     }
     base.update({k: [v] for k, v in overrides.items()})
     return pd.DataFrame(base)

@@ -213,10 +213,16 @@ def test_pdf_big_numbers_com_residual_e_nd():
         "Renda média domiciliar".encode("latin-1"),
         b"SAM Fitness",
         b"Residual Fitness",
-        b"Concorrentes no raio",
+        # DEC-046: o card conta o TOTAL (cadeia + independente) e o rotulo passa a nomear o
+        # universo. A cor segue espelhando o card de consumo, que e' calculado so' sobre
+        # cadeias -- por isso os dois precisam dizer de que universo falam.
+        b"Academias no raio",
         b"Consumo concorrentes",
     ):
         assert rotulo in pdf_com
+    # O rotulo antigo NAO pode voltar: ele prometia "concorrentes" para um numero que hoje
+    # inclui academia independente, que nao e' concorrente no mesmo sentido.
+    assert b"Concorrentes no raio" not in pdf_com
     # Score censitario medio REMOVIDO do PDF em 2026-07-17 (fica so em result/CSV) -> grade 4x2.
     assert "Score censitário médio".encode("latin-1") not in pdf_com
     # BLK-RELPON-08: o card "Score censitario maximo" foi REMOVIDO do PDF (fica so em result/CSV).

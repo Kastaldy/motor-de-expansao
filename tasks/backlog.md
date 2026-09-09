@@ -330,6 +330,91 @@ dispara o rebuild da imagem da API — republicar manualmente e conferir o smoke
 
 - BLK-RELMUN-04 (concluído 2026-07-02) — ver tasks/completed.md
 
+### BLK-RELMUN-07 — Levar ao ar o Relatório Municipal por bairro: o código está na `main`, o bot no ar é o antigo
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — troca a imagem dos serviços `api` + `telegram-bot` em produção, por digest. READ-ONLY sobre o M1: nenhum artefato oficial, score, peso ou `config.py` é tocado; o rollback é repontar `API_IMAGE` para o digest anterior e repetir `pull` + `up -d`. |
+| **Prioridade** | **Alta.** É a única coisa entre o #264 e o time de Expansão: o ciclo foi mergeado em 2026-08-26, a imagem foi publicada no GHCR no mesmo dia, e mesmo assim ninguém no Telegram consegue escolher a unidade do Relatório Municipal. |
+| **Esteira** | `[aplicação na VPS: passo MANUAL, comando a comando — §6]`. Não há código a escrever: o entregável deste bloco é a troca do digest e a verificação. |
+| **Status** | **AGUARDANDO APLICAÇÃO NA VPS.** Achado de 2026-08-31 (Juan, uso real): o menu do bot continua com um único botão "Relatorio Municipal". O rótulo antigo NÃO leva mais à escolha de UF no código da `main` — leva à mensagem "o Relatorio Municipal agora tem duas leituras". Se ele ainda vai direto para a lista de estados, a imagem em execução é anterior ao #264. |
+| **Depende de** | #264 (mergeado 2026-08-26, `8e24f08`) — é ele que cria os dois botões e o campo `unidade` no contrato. Nada mais. |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca produção. NUNCA marcar loop-safe. |
+
+**O defeito, medido.** O #264 partiu o botão único em dois (`Municipal (hexagonos)` e
+`Municipal (bairros)`) e passou a unidade escolhida no payload do `POST /analisar-municipio`:
+
+- `src/motor_expansao/api/telegram_bot.py:60` — `_KB_MENU` com os dois botões;
+- `src/motor_expansao/api/schemas/__init__.py:69` — `unidade: Literal["bairro", "hexagono"]`.
+
+O merge publicou a imagem: o job `publish-api` do run `32980523365` (2026-08-26) concluiu com
+sucesso, e o filtro de path casou (`src/motor_expansao/api/**`). Mas **publicar no GHCR não é
+subir na VPS** — o `API_IMAGE` do `/opt/motor-expansao/app/.env` nunca foi repontado. O container
+`motor_expansao_telegram_bot` segue rodando o digest anterior, com o menu de um botão só.
+
+**Por que passou despercebido.** O deploy é manual por digest (§6) e o auto-merge não deploya
+(DEC-016). Não existe nenhum sinal automático entre "a `main` mudou o bot" e "o bot no ar mudou":
+o `/health` da API responde igual nas duas imagens, e o teclado do Telegram fica em **cache no
+cliente**, então nem o usuário consegue distinguir "imagem velha" de "teclado velho desenhado na
+tela" sem tocar no botão. Mesmo defeito de processo do BLK-MA-19, em outra superfície.
+
+**O que vai ao ar.**
+
+| item | valor |
+|---|---|
+| imagem | `ghcr.io/kastaldy/motor-de-expansao/motor-expansao-api` |
+| digest | `sha256:3f8a2f87c0bed4eb677a6ae2dd157c4a73a51d1601b01627bb7c36a21ea37d65` |
+| commit | `2f25911` (#278) — cabeça da `main` em 2026-08-29 |
+| publicado por | run `33280217775`, job `publish-api`, 2026-08-29T23:26Z |
+| serviços | `api` + `telegram-bot` (mesma imagem). `web`, `caddy` e `authelia` **não** reiniciam |
+
+**Runbook (cada comando com confirmação, §6).**
+
+```bash
+cd /opt/motor-expansao/app
+grep API_IMAGE .env                      # 0. GUARDAR — é o rollback
+# 1. repontar API_IMAGE para o digest da tabela acima
+docker compose -f docker-compose.prod.yml pull api telegram-bot
+docker compose -f docker-compose.prod.yml up -d api telegram-bot
+```
+
+**Critério de aceite — o `/health` NÃO serve.** Ele responde `{"status":"ok"}` nas duas imagens.
+Os dois checks que de fato separam:
+
+```bash
+docker inspect motor_expansao_telegram_bot \
+  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'   # ≥ 8e24f08
+docker compose -f docker-compose.prod.yml exec -T telegram-bot \
+  python -c "from motor_expansao.api import telegram_bot as t; print(t._KB_MENU)"
+```
+
+O segundo tem de imprimir exatamente
+`[['Relatorio Pontual'], ['Municipal (hexagonos)'], ['Municipal (bairros)'], ['Ajuda']]`.
+Se vier `[['Relatorio Pontual'], ['Relatorio Municipal'], ['Ajuda']]`, o `pull` não pegou.
+
+Fechamento no Telegram: mandar `/start` (obrigatório — o teclado antigo fica em cache no cliente
+e não se atualiza sozinho), tocar em **Municipal (bairros)**, escolher UF e município, e conferir
+que o PDF chega com o nome `relatorio_municipal_bairro_<uf>.pdf`.
+
+**A carona: este digest é a `main` de 29/08, não só o #264.** Sobem junto, e o revisor precisa
+ver isso antes de aprovar:
+
+- `fix(renda)` (parte do próprio #264) — um `k` nacional único e o fim da dupla contagem na renda
+  exibida. **65% dos setores trocam de faixa de cor**; relatório gerado antes e depois deste deploy
+  **não é comparável**. Se há PDF em circulação com o time ou com locador, avisar.
+- #273 (camada 3 do funil deixa de vetar concorrência), #275 (gate de zona morta + corte de renda),
+  #271 (régua absoluta de renda/população no score censitário).
+
+**Pré-condição de dado que este bloco NÃO cobre.** O aviso de falha silenciosa do
+`docs/deploy_api_bot.md` continua valendo: sem `uplift_renda_domiciliar_municipio.parquet`,
+`uplift_composicao_setor.parquet` e `fator_temporal_renda.json` em `/opt/motor-expansao/data/staging/`,
+o PDF sai com renda domiciliar errada e **sem erro nenhum**. Conferir a presença dos três antes de
+dar o deploy por concluído.
+
+**Fora de escopo.** Imagem `web` (o piloto não muda de comportamento com este bloco); envio de
+dado novo por `scp`; qualquer recálculo do M1.
+
+
 
 
 ---
@@ -3666,6 +3751,114 @@ seguem em 1,5 km — são outro escopo.
 
 ---
 
+### BLK-RELPON-16 — O Relatório Pontual passa a enxergar as independentes, e o critério de concorrência se separa em dois
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (muda o significado de um campo do contrato da API e o insumo de um critério PASS/FAIL de decisão de imóvel; READ-ONLY sobre o M1) |
+| **Esteira** | Block Orchestrator → Planner → **[aprovação humana]** → Builder → QA |
+| **Depende de** | `BLK-MA-19` (aplicação dos 2 parquets na VPS) para o efeito NO AR; o código não depende |
+| **Status** | **Código pronto** (PR aberto): união + separação do critério + marcador + testes + contratos. Aguarda merge humano e, para o efeito NO AR, a aplicação do `BLK-MA-19` na VPS |
+| **Autonomia** | **NÃO loop-safe** — toca `src/motor_expansao/api/` e `web/`, servidos em produção (classe governança no `loop_guard`), e exige deploy de dado na VPS |
+| **Decisão** | [DEC-047](../docs/decisions/DEC-047.md) — APROVADA |
+
+#### Problema
+
+`_competitors_ultra` (`src/motor_expansao/api/service.py:171-179`) lê só
+`("rede","lat","lng")` de `concorrentes_mapeados.parquet` — cadastro de **cadeias**, zero
+independentes por construção. Medido: **53,46%** dos endereços urbanos do país devolvem ZERO
+concorrente em 1 km; 13 das 40 maiores cidades saem zeradas no centro, o Rio incluído. Em
+Londrina o relatório desenha 1 academia onde existem 9.
+
+Na mesma função, `status_registro` não é aplicado — enquanto `_carregar_concorrentes`
+(`web/server/app.py:1433`, filtro em `:1470`) aplica. Dois leitores do mesmo arquivo, regras
+diferentes, no mesmo processo: num ponto do Rio a API conta **77** onde há **11** válidos.
+
+#### Escopo
+
+Rota do **Relatório Pontual** (PDF do bot/API e PDF do piloto) e `/api/ponto`.
+A rota **municipal fica FORA** (`web/server/app.py:7854` intacto) — `relatorio_municipal.py`
+é classe CRÍTICO no guard e o defeito medido não é dele.
+
+#### Passos
+
+**P0 — Cobertura ANTES da mudança (obrigatório).**
+`grep -rn "_competitors_ultra" tests/` devolve 3 ocorrências: duas **desligam** a função por
+monkeypatch e uma é menção em docstring. **Nenhum teste trava o comportamento atual**, então
+quase nenhum quebraria — a união entraria nas rotas de produção sem que a suíte a enxergasse.
+Criar teste hermético com os 3 parquets sintéticos em `tmp_path`.
+
+**P1 — `_competitors_ultra` passa a unir as 3 fontes.**
+Lê `concorrentes_mapeados` (com `status_registro == "valido"`), `vulnerabilidade_ma_redes`
+(honrando `tem_pin_proprio`) e `vulnerabilidade_ma_nomeadas`. Acrescenta a coluna `classe`
+(`"cadeia"` / `"independente"`, cru, sem acento), derivada da origem. Dedup das independentes
+por distância pura ≤ 50 m (D5 da DEC-047). Devolve também quais fontes entraram.
+Custo medido: **42,0 ms a frio / 16,3 ms quente, 3,43 MB residentes** sob `lru_cache`, contra
+`mem_limit: 6g` — irrelevante.
+
+**P2 — Contagem separada.**
+`censo_point.analisar_ponto_censitario_setores` passa a expor `n_concorrentes_cadeia` e
+`n_academias_total` além de `n_concorrentes` (que mantém o nome e passa a valer o total).
+`web/server/app.py:4584` troca o insumo do `crit("concorrentes", ...)` para
+`n_concorrentes_cadeia`. **`CRIT_PONTO_CONC_MAX = 3` (`:188`) NÃO muda.**
+
+**P3 — Gate de procedência (D7).**
+O bloco de concorrência do payload carrega `fontes_unidas`. Faltando qualquer uma das três, o
+critério **não emite veredito** (marca provisório) em vez de PASSAR por ausência de dado.
+Sem isto, o estado ATUAL da VPS aprovaria pontos saturados em silêncio.
+
+**P4 — Marcador do independente (aditivo).**
+`_paste_logo_pin` (`censo_map.py:518`) ganha ramo alcançado **só quando `rede` está vazia**:
+marcador WellHub de 20 px, desenhado ANTES das cadeias. Registrar a chave `__wellhub__` fora
+do laço de `COMPETITOR_LOGO_FILES`; o arquivo `web/public/logo-wellhub.png` **já está na
+imagem da API** (o `.dockerignore` corta só `web/node_modules/` e `web/dist/`).
+Restrição: preservar a byte-identidade que `test_camadas_existentes_ficam_byte_identicas...`
+e `test_shared_transformer_bytes_identicos` cobram.
+
+**P5 — Rótulos que passariam a mentir.**
+(i) `web/server/app.py:3518` → "nenhuma **cadeia** mapeada em 2 km" (1.390 hexes densos
+marcados white space têm > 0 academia da união em 1 km).
+(ii) Os dois cards de `censo_report.py` ganham rótulo de universo — hoje "Concorrentes no raio"
+espelha a cor do card de consumo e imprimiria 14 em VERDE.
+(iii) A faixa "Redes no raio" traduz slug de cadeia para label de exibição — hoje sairia
+`force_one, allp_fit, Academia Pura Vida`, misturando snake_case com nome próprio.
+
+**P6 — Cap da lista.**
+`web/server/app.py:4758` (`head(30)`) ganha campo `truncado`. Hoje o máximo medido é 19; com a
+união, 2 das 150 sondas passam de 30. Sem o campo, `leituraDeAglomeracao` e `ReguaConcorrentes`
+afirmam a densidade errada.
+
+**P7 — Rótulo do independente no payload.**
+Independente tem `nome`, não `rede`. Decidir o que ocupa o campo, senão 19 mil academias viram
+a mesma palavra genérica na tela (`web/src/lib/concorrentes.test.ts:110/117` travam isto).
+
+**P8 — Contratos e deploy.**
+Emendar `docs/relatorio_pontual_censitario.md` (§6 l. 183 — a regra do marcador —, e §5, §7),
+`docs/api_geoespacial_contrato.md:193/202` e o OpenAPI. Acrescentar os 2 parquets à tabela de
+pré-condições de `docs/deploy_api_bot.md:37` e o **`docker restart` da `api` E do
+`telegram-bot`** (processos separados, cache próprio). Expor os 3 artefatos no `/health` da
+API (`src/motor_expansao/api/main.py:181-187`, hoje sem inventário nenhum), espelhando
+`_artefatos_observados` (`web/server/app.py:3236`).
+
+#### Aceite
+
+1. Ponto de Londrina (`-23.31896, -51.15666`): a união devolve **9** academias em 1 km, com
+   `classe` correta — 2 cadeia, 7 independente.
+2. Ponto do Rio (`-22.95020, -43.18846`): `n_concorrentes` cai de 77 para o número de válidos.
+3. `n_concorrentes_cadeia` das 150 sondas Ultra reproduz **27 reprovações** — o mesmo de hoje.
+   Este é o teste que prova que a régua não se moveu.
+4. Faltando um parquet, o critério de concorrência sai **sem veredito**, não PASS.
+5. Suíte verde com `PYTHONPATH` apontando para o worktree (senão testa o checkout principal).
+6. Os números do universo são medidos **na implementação**, não copiados desta página:
+   `tem_pin_proprio = True` são 851 no artefato de 18/08 contra 1.171 na DEC-034.
+
+#### Fora de escopo
+
+Recalcular SAM/residual com a união (a 2.500 alunos/unidade o residual vai a −73.411 em
+Augusta/SP); a rota municipal; mexer em `CRIT_PONTO_CONC_MAX`; qualquer artefato do M1.
+
+---
+
 ### BLK-EXEC-COORD-01 — Pins da Visão Executiva: a lista tinha 85 unidades e o mapa, 52
 
 | Campo | Valor |
@@ -3920,3 +4113,613 @@ reinicia nada e ninguém é avisado.
 (contagem de colunas esperada), com alerta no Telegram como os demais checks. Alternativa mais
 barata e sem tocar `web/**`: cron que roda a validação HTTP da §5 do
 `docs/camada_crescimento_municipal.md` e alerta em divergência.
+
+---
+
+## Epic BLK-INTL — Internacionalização do Motor de Expansão (instância por país; AR primeiro; READ-ONLY sobre o M1)
+
+> Aberta em **2026-08-31** a partir de `docs/plano_multipais.md` e de [DEC-047](../docs/decisions/DEC-047.md).
+> Leituras obrigatórias antes de pegar qualquer bloco: **§0** do plano (as 19 decisões do dono, que
+> **não se rediscutem** durante a subida da Argentina), **§1.1** (fronteira de repositório) e **§5.0**
+> (o caminho crítico). O **Bloco A** tem spec executável própria — `docs/spec_bloco_a_perfil.md`
+> (schema de 23 campos, **37 sítios** de substituição numerados, **10 commits** cada um verde sozinho,
+> 10 critérios de aceite por comando, e os 7 testes que quebram contra os 7 que não quebram).
+
+**A decisão de arquitetura (DEC-047).** **Instância por país, com o país DECLARADO num `perfil.json`
+que viaja dentro do `MOTOR_DATA_DIR` — nunca uma dimensão do domínio.** Um binário, N containers, um
+país por processo. O motivo #1 é **correção, não estilo**: há 35 `@functools.lru_cache` em
+`web/server/app.py` e 5 em `src/motor_expansao/api/service.py`; `carregar_uf(uf)` (`app.py:421`) é
+chaveado só pela sigla, e `limpar_caches()` (`app.py:3106-3117`) varre apenas os `globals()` do próprio
+`app.py` — ficam fora do alcance dele os 6 globais de renda de `dashboard/constants.py`
+(`:475-476`, `:520-521`, `:559-560`), que **não têm `cache_clear`**. Multiplexar países no mesmo
+processo sairia como fator de renda de um país no PDF do outro.
+
+**Regra de ID desta epic (fixada aqui para não colidir depois).**
+- Bloco **país-agnóstico** (código de plataforma que serve qualquer país) → **`BLK-INTL-*`**.
+- Bloco de **instância de país** → prefixo de **3 letras**: **`ARG`, `COL`, `MEX`, `PER`, `PRY`**
+  (`BLK-ARG-*`, `BLK-COL-*`, …). **Nunca `BLK-PE-*`** — colide por substring maximal com o
+  `BLK-PERF-*` já existente (`tasks/backlog.md:1315`) e deixaria o `review-gate` sem label de criticidade.
+- Os sufixos abaixo (`A1`, `B1`, `C1`, `C2`, `D1`, `E1`) são o caminho crítico da **§5.0** e **não**
+  se confundem com a numeração `BLK-INTL-00..12` do **§5** do plano (os blocos de plataforma que
+  ficaram **fora** do caminho crítico e que serão abertos quando entrarem na fila). Nenhum sufixo é
+  prefixo de outro — grep e label ficam inequívocos.
+
+**Fronteira de repositório (§1.1 do plano; DEC-047).** UM repositório de **PLATAFORMA** (este) — o
+único com código que serve tráfego. N repositórios de **PIPELINE** (do Juan, um por país) — o método
+do país (censo → malha H3 → renda → concorrência → score), que roda esporadicamente e **não serve
+requisição**. O **CONTRATO e o VALIDADOR ficam na plataforma** (quem quebra é quem manda) e rodam do
+lado do **produtor**, antes do `scp`. O **exportador (`exportar_piloto_rep.py`) vem para cá** — hoje
+não está neste repositório **nem** no pacote entregue, só no GitHub do Juan, e é ele que deriva
+`hex_id`, `lat`, `lng`, `cidade` e `cod_municipio`, ausentes do parquet.
+
+**FIO DE ALARME — regra escrita, com teste.** **Nenhum `if pais == '<sigla>'` no repositório da
+plataforma.** Medido hoje: **zero** ocorrências. Permitido ler o país para **rotular** (texto de tela,
+símbolo de moeda) e para **escolher a régua do perfil**; **proibido** usar o país para escolher
+**caminho de execução**. O mecanismo é o teste de contrato `tests/contracts/test_fio_de_alarme_pais.py`,
+entregue no **BLK-INTL-A1**, com lista de exceções **vazia**. A razão é operacional: no minuto em que o
+país virar `if`, existe um fork escondido dentro de um repositório só.
+
+**Ordem e paralelismo (§5.0.3).** **A → B são SERIAIS** (o de-para lê as réguas e as âncoras do perfil).
+**C, C+ e D paralelizam** com B. **C e C+ sobem juntos ou não sobem.** **E** depende de **A + B + C + C+ + D**;
+só a preparação de E (DNS, Caddy, `.env`) corre por fora. Prazo: **5 semanas de calendário com 2 devs**
+(6 a 8 com 1 dev) — e ele **não fica abaixo de 5**, porque o gargalo não é a soma dos dias: são as
+**três aprovações CRITICO** (A1, D1, E1), a decisão de âncoras do Felipe e o re-export do Juan.
+
+**Governança, em dois níveis (não é burocracia — é agenda do dono).** `^web/` é **GOVERNANCA**
+(`scripts/loop_guard.py:184`) e consome `aprovado-humano`: **nenhum bloco de front auto-mergeia**. E
+`docker-compose` (`:122`), `(^|/)Caddyfile` (`:123`), `^authelia/` (`:124`),
+`src/motor_expansao/(core|dashboard)/constants.py` (`:72`) e `pipelines/calibrar_renda_setor_2022.py`
+(`:82-85`) são **CRITICO**, avaliado **ANTES** de GOVERNANCA (`:229-239`), e só passam com
+**`critica-aprovada`** (DEC-016, emendada pela DEC-019). Agrupar o trabalho de `web/` em poucos PRs
+grandes. **Deploy sempre manual, por digest, pelo Felipe (`CLAUDE.md` §6) — auto-merge não deploya.**
+
+**Autonomia.** **Nenhum bloco desta epic entra marcado `loop-safe`**: todos tocam `web/` (nunca
+loop-safe, DEC-022) ou infra/VPS. A marcação seria pré-aprovação humana (§6.1) e ninguém a deu.
+
+**A ÚNICA decisão ainda aberta no caminho crítico — e ela NÃO trava o início.** As **âncoras
+argentinas de renda (USD) e de POPULAÇÃO (por hexágono)**. `data/perfis/AR/perfil.json` já sai com
+**default provisório declarado** — renda **350 / 1.000 USD**, população **1.000 / 100.000**,
+`score_corte_quente` **30,0** —, derivado aplicando à distribuição AR medida o critério literal de
+`pipelines/calibrar_renda_setor_2022.py:83-92`, e cada um aparece na lista `_pendencias` do próprio
+arquivo com dono nomeado. Trocar uma âncora depois é editar um JSON e reprocessar, não refazer código.
+**Achado CORRIGIDO em 2026-09-02 — a formulação anterior desta linha estava errada e chegou a circular
+como motivo para desconfiar da âncora:** a âncora de população **brasileira** é de **hexágono H3 res 7**,
+**não** de setor censitário. Está escrito no cabeçalho que define as âncoras —
+`pipelines/calibrar_renda_setor_2022.py:82`: `# Ancoras medidas no universo POVOADO (pop >= 1.000,
+21.107 hexes)` — e os seis números logo abaixo (`:83-88`; renda p05 296 / p95 1.889 / p99 3.123 / max
+8.756; pop p05 1.103 / p95 28.845 / p99 62.335 / max 141.507) foram reproduzidos **exatos** sobre
+hexágonos. `pop_col = "pop_total_setor_2022"` (`:309`) é **nome de coluna herdado**, não unidade de
+linha: o `df_ufs` em que ela é lida tem **uma linha por hexágono** — o merge de auditoria é
+`on="hex_id"` (`:317-320`) e o comentário da escolha do componente fala em "todos hexes" de SP
+capital (`:301-307`). **Consequência para o Bloco B:** manter `pop_abs_min/max = 1.000/100.000` na
+Argentina é o **casamento CORRETO de unidade**, e as distribuições coincidirem (BR p05 1.103 / p95
+28.845 contra AR p05 1.127 / p95 28.500) é comparação **hexágono contra hexágono**, não analogia
+entre unidades diferentes. Migrar a âncora AR para *radio censal* seria a **única** opção que
+**cria** descasamento com o Brasil — 66.502 radios não são 42.388 hexágonos.
+**`reguas.score_pesos` está DECIDIDA e NÃO é gate de bloco nenhum.** Decisão de 2026-09-02, registrada
+em `data/perfis/AR/perfil.json:401-411` (`"id": "P3"`, `"estado": "decidido"`): o mapa argentino pinta o
+score **RECOMPUTADO** pela plataforma com a **fórmula brasileira — `0,60·renda + 0,40·pop`**
+(`calibrar_renda_setor_2022.py:160`) — sobre as **âncoras AR**, e **não** o
+`hex_score_estrutural = 100 × (0,40·renda_pct + 0,60·pop_pct)` que vem no parquet do Juan com os pesos
+invertidos. O que ela decidia era o **esforço** do B1, e esse esforço agora está fixado: recompute
+dentro do exportador, não renomeação de coluna.
+
+**O que a Argentina entrega no dia 1 (§5.0.4) — e o que NÃO entrega (§5.0.5), com o mesmo destaque.**
+Superfícies: **`mapa` + `viabilidade`**, só. **NÃO** sobe `oportunidades` (o funil), nem `ponto`, nem
+`municipal`, nem `imobiliaria`, nem `executiva` — cada uma **declaradamente ausente**, com **404 e
+motivo nomeado**, nunca servida vazia. A **viabilidade sobe em REAIS com TRIBUTO BRASILEIRO**, como
+provisório declarado (0.6), e **serve para comparar praças e dimensionar — não para fechar contrato,
+definir aluguel, precificar mensalidade ou aprovar aporte**. Mapa **sem nome de rua** no dia 1
+(`.mbtiles` gerado de madrugada, fora do caminho crítico — 0.9), aceito por escrito. Isso **tem de ser
+dito ao time de Expansão Internacional na abertura, não descoberto por clique.**
+
+**Critério de aceite da onda — e ele NÃO é `/api/health` verde** (health verde é exatamente o que a
+instância vazia devolve): `/api/uf/<partição>` devolvendo o mapa com **`conc` derivado do pacote** e
+**`renda` rotulada em USD** (nunca `0` e nunca "R$"); um endereço argentino escrito por extenso
+resolvendo **dentro do bbox AR**; o painel de Metodologia **sem citar IBGE e sem citar R$**; e um XLSX
+de viabilidade argentino em que o aviso **`AR-VIAB-TRIB-PROVISORIO`** aparece em célula de alerta.
+
+**Guardrail de escopo.** §5 **READ-ONLY sobre o M1** em **todos** os blocos: nenhum recalcula
+`score_priorizacao`, `hex_score_estrutural`, pesos, carteira, plano ou artefatos oficiais **do Brasil**.
+O único recompute autorizado é o do score **argentino**, dentro do exportador, sobre o pacote do Juan
+(BLK-INTL-B1) — e ele não toca artefato brasileiro nenhum. **Se um item não está na coluna ESTÁ da §3
+do plano, ele não entra sem DEC nova.**
+
+---
+
+#### BLK-INTL-A1 — Bloco A: perfil do país (bbox, geocoder, réguas com âncoras, fontes, moeda/rótulos)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — **exige `critica-aprovada`**. Medido pela spec (§8.1), não estimado: **3 arquivos CRITICO** no `scripts/loop_guard.py` — `dashboard/constants.py` (`:72`), `pipelines/calibrar_renda_setor_2022.py` (`:82-85`) e **`dashboard/relatorio_municipal.py` (`:97-100`)**, este último que nenhum documento listava e que carrega a **segunda** cópia de `OFERTA_DESTAQUE_MIN` (`:61`). Mais `^web/` (GOVERNANCA, `:184`). **READ-ONLY sobre o M1.** |
+| **Prioridade** | **Máxima** — é a base de B e o primeiro item do caminho crítico da Argentina. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE HUMANO — critica-aprovada do Felipe]` → Builder → QA → Felipe. |
+| **Status** | Pendente. |
+| **Depende de** | — (primeiro bloco da onda). Consome a decisão de âncoras do Felipe, que **já tem default declarado** em `data/perfis/AR/perfil.json` e **não trava o início**. |
+| **Esforço** | **7-11 dias · 1 dev** (era 6-8 antes de A1, A2 e A3 entrarem). |
+| **Autonomia** | **manual (NÃO loop-safe)** — CRITICO + `^web/`. NÃO marcar loop-safe. |
+| **DEC / Spec** | [DEC-047](../docs/decisions/DEC-047.md) ✅ registrada · **`docs/spec_bloco_a_perfil.md`** ✅ (37 sítios, 10 commits, 10 aceites por comando) — **quem for codar lê os números de lá**, não do plano: as citações de `web/server/app.py` acima da linha ~3200 no plano estão **14 linhas defasadas**, e a tabela de conversão está no §0 da spec. |
+
+**Os quatro defeitos que este bloco conserta — nenhum é cosmético.**
+
+- **(A0) Buenos Aires é RECUSADA hoje.** `src/motor_expansao/api/coord.py:13` define `BRASIL_LAT_MIN = -34.0`;
+  Buenos Aires está em **-34,60**. `validar_brasil` é chamado em `web/server/app.py:4357`, `:4372`
+  (`/api/resolver-ponto`) e `:4504` (`/api/ponto`) — e em mais nenhum ponto. E o corte está **duplicado no
+  front**: `web/src/lib/coord.ts:8` e `web/src/lib/entrada-ponto.ts:44`, ambos `latMin: -34.0`, recusam
+  **antes de sair requisição**. Caem junto La Plata, Mar del Plata, Bahía Blanca e toda a Patagônia;
+  Córdoba (-31,4) e Rosário (-32,9) passam, o que faz a falha **parecer intermitente**. Decisão 0.8:
+  **é para resolver, não para contornar.**
+- **(A1) A busca por endereço resolve para o BRASIL — e não falha: ACERTA ERRADO.** `/api/geocode`
+  (`app.py:3939`) manda `"countrycodes": "br"` (`:3964`) e, diferente de `resolve_endereco_http`
+  (`maps_geocoder.py:272`, `:350`), **não valida bbox nenhum**: devolve o top-1 cru. É essa rota — não
+  `/api/resolver-ponto` — que a barra de busca do Mapa usa (`web/src/screens/MapScreen.tsx:647` →
+  `aplicarPonto`, `:626` → `latLngToCell(lat, lng, 7)`). Das quatro rotas de coordenada, **a única que
+  sobrevive ao gate do Bloco C na tela do dia 1 é justamente a que o bbox não cobre.**
+- **(A2) O painel que EXPLICA a régua continua dizendo IBGE e R$.** `/api/metodologia` é **rota livre**
+  (`web/server/acesso.py:115-117`) e **escapa por construção** do gate do Bloco C — `motivo_bloqueio`
+  (`acesso.py:275-283`) só consulta `REGRAS_DE_ACESSO`, e rota livre não tem linha em tabela nenhuma.
+  `montar_metodologia` (`app.py:3513`) diz na docstring que "nenhum numero e' escrito a mao" e mesmo
+  assim escreve `F_CENSO = "Censo 2022 (IBGE)"` (`:3536`), `F_CRES = "CAGED, RAIS, Receita Federal e
+  satélite"` (`:3539`) e "linear em que R$ 300 vale 0 e R$ 4.000 vale 100" (`:3612`). O painel abre **do
+  próprio Mapa** (`MapScreen.tsx:150` → `MethodologyPanel.tsx:317`), a única superfície do dia 1.
+- **(A3) As réguas são absolutas em reais e a função que as aplica NÃO ACEITA âncoras.**
+  `SCORE_CORTE_QUENTE = 30.0` (`app.py:161`) corta sobre régua ancorada em `RENDA_ABS_MIN/MAX = 300 / 4.000`
+  e `POP_ABS_MIN/MAX = 1.000 / 100.000` (`calibrar_renda_setor_2022.py:89-92`); `OFERTA_DESTAQUE_MIN = 2000.0`
+  (`app.py:153`) e `CAPACIDADE_UNIDADE_ALUNOS = 2500` (`dashboard/constants.py:379`) são escala **brasileira**
+  — o pacote AR diz `capacidade_concorrente_real = 400` e `calibrada = 1.070`. Sem declarar as réguas, o
+  funil AR **não erra: devolve uma lista plausível e errada.**
+
+**Entrega verificável.** `src/motor_expansao/perfil.py` — dataclass **congelada** + loader cacheado por
+processo + validação; `data/perfis/BR/perfil.json` reproduzindo as constantes de hoje **número a número**;
+`PERFIL = carregar_perfil(DATA_DIR)` ao lado de `web/server/app.py:99-108`, e a **morte do `_DEFAULT_DATA`**
+(`:99-101`), que hoje aponta para `C:\Users\Felipe Silva\Downloads\...` e faz um `MOTOR_DATA_DIR` esquecido
+apontar silenciosamente para lugar nenhum. As **seis cópias de bbox** (`api/coord.py:13-14`,
+`api/maps_geocoder.py:171-172`, `dashboard/data.py:624-627`, `dashboard/competitors.py:10-11`,
+`web/src/lib/coord.ts:8`, `web/src/lib/entrada-ponto.ts:44`) e a **sétima restrição** (`countrycodes`, com
+**segunda cópia** em `maps_geocoder.py:246`) passam a ler `perfil.bbox` / `perfil.geocode` — **e o resultado
+do geocoder passa a ser VALIDADO contra o bbox**, que hoje não acontece em `/api/geocode`. **A sétima cópia
+de bbox (`pipelines/normalizar_unidades_ultra.py:27-28`) fica FORA deste bloco**, registrada aqui só para a
+lista não mentir (spec §2.1 item 7 e §8.4): é pipeline de ingestão da base Ultra **brasileira**, não serve
+tráfego, e casa o padrão CRITICO de `scripts/loop_guard.py:82-85` — incluí-la levaria o diff de **3** para
+**4** arquivos CRITICO e derrubaria o **critério de aceite nº 10** da spec §7, que exige CRITICO *apenas*
+em `dashboard/constants.py`, `dashboard/relatorio_municipal.py` e `pipelines/calibrar_renda_setor_2022.py`
+("qualquer outro CRITICO é escopo que vazou"). Mesma razão para a oitava cópia,
+`vulnerabilidade/contrato.py:142-169` (spec §2.1 item 9). `perfil.fontes` alimenta
+`montar_metodologia` e a frase da âncora deriva de `perfil.reguas` + símbolo de moeda do perfil.
+`nota_renda_absoluta` / `nota_pop_absoluta` / `calcular_score_calibrado`
+(`calibrar_renda_setor_2022.py:118-163`) ganham **`(valores, *, ancoras=ANCORAS_BR)`** — default nas
+constantes de hoje, para o diff ser "acrescenta parâmetro", não "move número", num arquivo CRITICO.
+`Settings` (`api/settings.py`) ganha o campo — o ponto de injeção **já existe** nos 4 sítios de construção
+(`app.py:4522`, `:5224`, `:7739`, `:8008`; os números `4508/5210/7725/7994` que circulavam vêm da defasagem
+de 14 linhas que a spec §0 tabela — os conferidos são os da spec §3.4). **Boot fail-closed** — perfil ausente ou inválido derruba o
+container —, com a ressalva **não negociável**: fail-closed **só quando `MOTOR_DATA_DIR` estiver setado**,
+porque o loader avaliado no import derruba dezenas de módulos de teste na **COLETA** do pytest, sem relação
+aparente com a mudança (`grep -rn MOTOR_DATA_DIR tests/ .github/` não retorna nada hoje). O perfil BR
+embarcado é o default de dev/teste; a fixture em `tests/conftest.py` foi **recusada com razão material** —
+`conftest.py` e `pyproject.toml` são CRITICO e a fixture arrastaria `critica-aprovada` para dentro de um
+item de teste. Entrega também `tests/contracts/test_fio_de_alarme_pais.py` com **exceções vazias**.
+
+**Os testes que quebram são 7, conferidos, e a spec lista os 7 que NÃO quebram para não gastar tempo.**
+O mais caro não é o óbvio: `test_corte_do_funil_bate_com_a_escala`
+(`tests/contracts/test_regua_absoluta_censitaria.py:113-121`) **não importa a constante** — faz
+`Path("web/server/app.py").read_text()` e `re.search(r"^SCORE_CORTE_QUENTE\s*=\s*([0-9.]+)")`; no instante
+em que o literal virar leitura do perfil, ele quebra em `assert m` com "SCORE_CORTE_QUENTE nao encontrado",
+**longe da causa** — troca-se o regex por leitura do perfil BR **no mesmo commit**. O mais traiçoeiro é
+`tests/unit/test_coord_search.py:60`, onde `assert parse_coordinate_input("-34.0,-53.0") is None` passa a
+devolver coordenada porque a fronteira vira inclusiva. E `web/src/lib/colors.test.ts:52` / `faixas.test.ts:68`
+quebram **por `undefined`** se `web/src/lib/perfil.ts` não tiver default BR compilado. **Não-teste, mas
+pior:** `dashboard/competitors.py:469-470` **estreita** de bbox e **nenhum teste exercita `_coord_in_brazil`**.
+
+**Critério de aceite (os 10 da spec §7, todos por comando; nenhum exige env nova).**
+1. `python -m pytest --collect-only -q` → **zero erros sem `MOTOR_DATA_DIR`** (é o primeiro lugar onde o
+   fail-closed quebra; rodar **antes** de abrir o PR do A3).
+2. `python -m pytest tests/contracts tests/unit -q` → **mesma contagem de `passed`** de antes do bloco:
+   a suíte brasileira passa **sem um número se mover**.
+3. `tests/contracts/test_perfil_br_reproduz_as_constantes.py` verde.
+4. Os quatro `grep` de literal brasileiro de identidade (bbox, `countrycodes`, `R\$` em `format.ts`, e as
+   quatro constantes de `app.py`) **sem nenhuma linha de saída**.
+5. O estreitamento do bbox de concorrentes **não descarta um pin sequer** — `delta 0` no comando do §7.5.
+   Se não for zero, **pare** e reabra a §1.3 da spec antes do merge.
+6. `tests/contracts/test_fio_de_alarme_pais.py` verde **e** `grep -rn "pais ==\|pais==\|country =="` em
+   `src web scripts` **sem saída**.
+7. `MOTOR_DATA_DIR=/tmp/vazio python -c "...import app"` → `PerfilInvalidoError` **nomeando o caminho**, exit ≠ 0.
+8. `tests/contracts/test_geocode_valida_o_bbox.py` verde — a busca por endereço não devolve mais o homônimo brasileiro.
+9. `cd web && npm test -- --run` verde.
+10. `git diff --name-only origin/main... | python scripts/loop_guard.py --stdin` → **CRITICO apenas** em
+    `dashboard/constants.py`, `dashboard/relatorio_municipal.py` e `pipelines/calibrar_renda_setor_2022.py`.
+    **Qualquer outro CRITICO é escopo que vazou.**
+
+**Guardrail.** §5 READ-ONLY M1. **O que este bloco NÃO toca, por decisão e não por esquecimento:**
+`_UF_RE` (`app.py:412`, sink de path-traversal declarado — BLK-SEC-05), `paisDaBase`
+(`web/src/lib/pais-da-base.ts:46-47`) e o campo `pais` em `/api/ufs` — os três são §5.0.2, devidos **antes
+da Colômbia**, não antes da Argentina.
+
+---
+
+#### BLK-INTL-B1 — Bloco B: de-para de colunas na fronteira de `carregar_uf` + o exportador para dentro do repo
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (`^web/` é GOVERNANCA, `scripts/loop_guard.py:184` → consome `aprovado-humano`; o exportador entra como arquivo novo, fora dos padrões CRITICO). **READ-ONLY sobre o M1 brasileiro** — o único recompute é o do score **argentino**, sobre o pacote do Juan, dentro do exportador. |
+| **Prioridade** | **Máxima** — sem ele o mapa da AR **mente com número**. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — de-para e recompute de score]` → Builder → QA → Felipe. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-INTL-A1** (**SERIAL**: o de-para lê as réguas e as âncoras do perfil, e o recompute só é executável porque o A3 parametriza `calcular_score_calibrado`) **+ o re-export do Juan** (dependência de outra pessoa). **`reguas.score_pesos` NÃO é dependência**: foi decidida em 2026-09-02 (`data/perfis/AR/perfil.json:401-411`, `"estado": "decidido"`) e está registrada no corpo deste bloco — enquanto ficou listada aqui, era lida como **gate** e travava o Bloco B sem motivo. |
+| **Esforço** | **4-6 dias de código · 1 dev + 2-3 dias de ida-e-volta com o Juan** (era 5-7 antes de a decisão 0.6 tirar as camadas 2 e 3 do funil do bloqueio de subida; **a dependência externa não encolhe**). |
+| **Autonomia** | **manual (NÃO loop-safe)** — `^web/` nunca é loop-safe (DEC-022) e o de-para exige olho humano sobre semântica de coluna. NÃO marcar loop-safe. |
+
+**O defeito, medido.** `web/server/app.py:435` faz `cols = [c for c in _COLS_DESEJADAS if c in disponiveis]`:
+**descarta em silêncio o que não reconhece.** Confrontadas as **24** entradas de `_COLS_DESEJADAS`
+(`:376-405`) com as **86** colunas do pacote AR (`docs/dicionario_dados.md`), o parquet cru entrega **5**
+com o nome certo (`score_priorizacao`, `score_oportunidade_residual`, `pop_total`, `renda_per_capita`,
+`faixa_oportunidade`) — e **nenhuma** das quatro que o funil lê.
+
+**Os dois defeitos silenciosos moram no MAPA, e o MAPA SOBE — é por isso que a decisão 0.6 NÃO dispensa
+este bloco.** Quem ler "o funil não sobe no dia 1" e concluir "então o Bloco B pode escorregar" está lendo
+errado.
+- **(a) O mapa mostra ZERO concorrentes, com número, e o chip verde "Livre".** Sem
+  `oferta_consumida_mercado_estimada`, `_derivar` (`app.py:800-816`) grava `out['n_concorrentes_est'] = 0`;
+  isso vira `"conc": 0` no payload (`:2950`), que `web/src/components/HexMap.tsx:1421` exibe como
+  **"Concorrentes 2 km: 0"**, e `_etiqueta` (`app.py:1758-1761`) rotula **"Livre"** em verde. *Precisão:*
+  nada em `HexMap.tsx` **colore** o hexágono por `conc` — não é "a Argentina pintada de verde". O **0** na
+  ficha basta: é **dado falso apresentado como medição**, na superfície do dia 1.
+- **(b) Dólar formatado como real.** `HexMap.tsx:1416` formata `renda` com `brl()`
+  (`web/src/lib/format.ts:34`, literal `'R$'`), e o `renda_per_capita` da AR **é** `renda_estimada_usd`,
+  multiplicado por fatores domiciliares **brasileiros** de fallback nacional (`dashboard/constants.py:506-517`,
+  `:545-556`, que caem em `UPLIFT_COMPOSICAO_NACIONAL` / `MORADORES_DOMICILIO_NACIONAL` para qualquer código
+  não-IBGE). **Dólar × 2,79 moradores brasileiros, escrito "R$".**
+
+**UMA linha do de-para do Juan NÃO PODE ser honrada.** O `HANDOFF.md` §4 manda
+`score_setor_2022_calibrado ← score_priorizacao`, mas o score AR é **percentil**
+(100 × (0,40·renda_pct + 0,60·pop_pct)) e o corte de 30 é **absoluto**. Renomear ali é **trocar a pergunta
+em silêncio**. O correto e barato é **recomputar** com `calcular_score_calibrado` nas âncoras AR declaradas
+no perfil, **dentro do exportador**.
+
+**E isso já é DECISÃO TOMADA, não proposta — é o que destrava este bloco.** `reguas.score_pesos`
+(`data/perfis/AR/perfil.json:401-411`, `"id": "P3"`, `"estado": "decidido"`, `"decidido_em":
+"2026-09-02"`): **recomputar com a fórmula brasileira, `0,60·renda + 0,40·pop`**
+(`calibrar_renda_setor_2022.py:160`), **sobre as âncoras AR**. O parquet do Juan continua trazendo
+`hex_score_estrutural` com os pesos invertidos (0,40/0,60, em percentil nacional), e ele **não** é o
+que o mapa pinta — o que fazer com ele no payload é escopo do de-para, não decisão em aberto. As âncoras de população AR seguem
+`1.000/100.000` **por casar unidade com o Brasil**, cuja âncora é de **hexágono H3 res 7** — ver o
+achado corrigido na abertura da epic e `calibrar_renda_setor_2022.py:82`.
+
+**Entrega verificável.** (a) Mapa declarativo `nome_canônico → nome_de_origem` resolvido **na fronteira de
+leitura** de `carregar_uf` (`app.py:435`) — o padrão já existe e funciona no repo (`app.py:2051-2064`,
+`COLS_POP_LEITURA`/`_serie_pop`); **nada de protocolo `MalhaFina`**, que só se paga do 3º país em diante.
+(b) As colunas do **MAPA**, que são o escopo que sobrou no caminho crítico:
+`oferta_consumida_mercado`(122) → `oferta_consumida_mercado_estimada` → `n_concorrentes_est`,
+`capacidade_concorrente_calibrada`=1.070(117) → `capacidade_default_concorrente_alunos`,
+`densidade_hab_km2`(38), `nome_departamento`(25)/`cod_departamento`(23), `h3_id`(19) → `hex_id`; e a **renda
+em USD deixando de ser formatada com `brl()`** (símbolo do perfil). (c) O **score recomputado** nas âncoras
+AR, dentro do exportador. (d) **`exportar_piloto_rep.py` trazido do repositório do Juan para dentro deste,
+com teste de contrato** — hoje ele **não está aqui nem no pacote entregue**, e é quem deriva `hex_id`,
+`lat`, `lng`, `cidade` e `cod_municipio`, **ausentes do parquet**: enquanto ficar lá, a ponte entre o
+pacote e a instância no ar é **dependência de PESSOA, não de código** (§1.1, consequência 2). (e) Convenção
+de pasta `pais=XX/uf=YY` adotada **já no exportador** — custa nada agora (é nome de diretório) e transforma
+uma eventual migração futura em renomeação, não em migração de dado.
+
+**Fora deste bloco, e é preciso ser exato:** o de-para das **camadas 2 e 3 do funil**
+(`oferta_efetiva_disponivel` ← `residual_membros`(124), `sam_fitness_potencial` ← `sam_membros_potencial`(121))
+sai do **bloqueio de subida** pela decisão 0.6 e vira **contrato** do `BLK-INTL-07` do plano — **não é
+cancelado**, apenas não bloqueia a Argentina.
+
+**Critério de aceite.** Com `data/perfis/AR/perfil.json` e o pacote do Juan já passado pelo exportador,
+**`/api/uf/<partição>` devolve o mapa AR com `conc` DERIVADO do pacote e `renda` rotulada em USD — nunca
+`0`, nunca "R$"**. Teste de contrato do exportador: o pacote **cru** (sem `hex_id`/`lat`/`lng`/`cidade`/
+`cod_municipio`) é reprovado, a saída do exportador é aprovada. A suíte brasileira passa **sem um número se
+mover** e nenhuma coluna canônica do BR muda de nome ou de tipo.
+
+**Guardrail.** §5 READ-ONLY M1: nenhum artefato, score, peso, carteira ou plano **brasileiro** é
+regenerado. Se este bloco escorregar, a **única** saída é subir com `superficies: ["mapa"]` **e com os
+campos `conc` (`app.py:2950`) e `renda` (`:2947`) SUPRIMIDOS** quando o perfil não for BR — **nunca** com os
+valores de hoje. Subir com `["mapa"]` sem as supressões **é a instância mentindo**.
+
+---
+
+#### BLK-INTL-C1 — Bloco C: gate de superfície com tabela PRÓPRIA rota→superfície, semântica de CONJUNÇÃO
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (`web/server/acesso.py` + `^web/` é GOVERNANCA, `scripts/loop_guard.py:184` → `aprovado-humano`; é **controle de acesso**, então revisão humana obrigatória). **READ-ONLY sobre o M1.** |
+| **Prioridade** | Alta — sem ele a AR serve superfície que não pode servir. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — controle de acesso]` → Builder → QA → Felipe. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-INTL-A1**, e só para **ler `perfil.superficies`**. **Paraleliza com B1 e D1.** |
+| **Esforço** | **3-4 dias · 1 dev.** |
+| **Autonomia** | **manual (NÃO loop-safe)** — `^web/` + controle de acesso. NÃO marcar loop-safe. |
+| **Restrição de subida** | **NÃO PODE SUBIR SEM O `BLK-INTL-C2`.** Os dois vão no mesmo deploy ou nenhum sobe. |
+
+**Por que a tabela existente NÃO serve — e o argumento sobrevive à inversão da 0.6.**
+`web/server/acesso.py:69-105` é tabela de **UNIÃO**: `/api/viabilidade` e `/api/relatorio/pontual` aceitam
+`frozenset({'mapa','viabilidade'})`. A AR **tem** `mapa`, logo **passa** — herdar essa tabela para o gate de
+país **não fecha nada, em nenhuma das duas direções**. Com a lista invertida pela 0.6, o item que a união
+deixaria passar indevidamente é **`oportunidades`** (o funil), servido a partir das mesmas rotas de partição
+que o mapa consome. Logo o gate de país precisa da **sua própria** tabela rota→superfície, no **mesmo módulo
+e no mesmo chokepoint**, com semântica de **CONJUNÇÃO**. **O precedente já existe e não precisa ser
+inventado:** a **DEC-037** deu à aba `imobiliaria` um gate próprio em vez de esticar a tabela de união — é o
+mesmo movimento, um nível acima.
+
+**Entrega verificável.** (a) Tabela **própria** rota→superfície em `web/server/acesso.py`, com conjunção, e
+o gate de país aplicado no chokepoint existente. (b) **LIBERA `viabilidade`**: `/api/viabilidade`
+(`app.py:5524`) sobe **em reais, com tributo brasileiro**, como provisório declarado (0.6) — ela **não
+depende da malha municipal** (o catchment vai por `try/except → return None`, `app.py:5216-5219`), então o
+DRE sai completo sem malha argentina. (c) **BLOQUEIA**, no mesmo commit e pelo mesmo custo:
+`oportunidades`; `/api/ponto`, `/api/resolver-ponto` e `/api/relatorio/municipal` — sem a linha, a AR
+devolveria `APIError` **500** "Malha municipal IBGE ausente ou vazia" (`api/service.py:73-103`, D6 pendente),
+falha visível mas lida como **"a ferramenta quebrou"**; com a linha, é **404 com motivo nomeado**. Mais
+`imobiliaria` e `executiva`. (d) **Registrado por escrito no bloco:** `ROTAS_LIVRES` (`acesso.py:115-117`)
+fica **FORA do gate por desenho** — e é exatamente por isso que `/api/metodologia` é problema do
+**BLK-INTL-A1** (A2) e **não** deste.
+
+**Critério de aceite.** Com `superficies: ["mapa","viabilidade"]` no perfil AR: `/api/viabilidade` responde
+**200**; `/api/ponto`, `/api/resolver-ponto`, `/api/relatorio/municipal`, as rotas de `oportunidades`,
+`imobiliaria` e `executiva` respondem **404 com motivo nomeado** — **nenhuma responde 500 e nenhuma responde
+200 com conteúdo vazio**; a aba de oportunidades **some da tela**, não aparece vazia. O teste de cobertura de
+rotas (`tests/unit/test_piloto_web_acesso.py:155`) continua verde **e passa a cobrir a tabela nova** — ele
+vale de graça. Com o perfil BR, **nenhuma rota muda de comportamento**.
+
+**Guardrail.** §5 READ-ONLY M1. Este bloco **não herda** `REGRAS_DE_ACESSO` — herdar é o defeito, não a
+economia. E **liberar `viabilidade` sem o carimbo do C2 reintroduz o risco R2 com uma aba a mais**, agora
+com a chancela de estar declarado no perfil.
+
+---
+
+#### BLK-INTL-C2 — Bloco C+: o aviso carimbado no PDF e no XLSX + `_PDF_CONCORRENCIA_MAX` lido do perfil
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — é a **CONDIÇÃO DE ACEITE INEGOCIÁVEL** da decisão 0.7. Toca `src/motor_expansao/dimensionamento/simulador_xlsx.py` e `web/server/app.py:52-57` (`^web/` GOVERNANCA → `aprovado-humano`). **READ-ONLY sobre o M1.** |
+| **Prioridade** | **Máxima, colada ao C1** — não é polimento, é o que separa a superfície do defeito. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — texto do aviso e onde ele aparece]` → Builder → QA → Felipe. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-INTL-C1** (é o **mesmo deploy**). |
+| **Esforço** | **+1 dia · 1 dev.** |
+| **Autonomia** | **manual (NÃO loop-safe)** — `^web/`; e a checagem "o aviso viaja no arquivo" exige abrir o artefato. NÃO marcar loop-safe. |
+
+**Por que existe como BLOCO e não como linha do C1.** Porque **condição de aceite que vira sub-item de outro
+bloco é condição que escorrega**. **O PDF e o XLSX vão ao locador e ao comitê; a tela fica no escritório. Um
+aviso que não viaja no arquivo NÃO É AVISO.**
+
+**O mecanismo já existe — não inventar um segundo.** `_nota(ws, row, texto, n_cols, *, alerta=True)`
+(`src/motor_expansao/dimensionamento/simulador_xlsx.py:424`) escreve nota com fundo de alerta na planilha; e
+os impostos já saem de `Premissas` via `_bloco_impostos` (`:584`), **não** de literal espalhado — o rótulo do
+regime tributário tem **um** ponto de origem, e é dele que o aviso deriva. Os **três textos** (longo, curto e
+de rodapé) **já estão escritos** em `data/perfis/AR/perfil.json`, bloco
+`avisos.viabilidade_tributo_provisorio`, com `codigo: "AR-VIAB-TRIB-PROVISORIO"`,
+`onde: ["tela","pdf","xlsx"]` e `obrigatorio: true`. **O trabalho aqui é fazer o carimbo VIAJAR, não redigi-lo.**
+
+**No mesmo bloco, e pelo mesmo motivo de "uma linha que o perfil declara e o código obedece":**
+`_PDF_CONCORRENCIA_MAX` (`web/server/app.py:52-57`, hoje literal de módulo `= 3`) passa a ler
+`operacao.pdf_concorrencia_max`, e a AR sobe com **1** (decisão 0.5). O teto é **por PROCESSO** e cada
+instância roda **UM** worker uvicorn (`Dockerfile.web:94`, sem `--workers` — o `CMD` está em `:94`, não em
+`:93` como circulou): duas instâncias com viabilidade ligada seriam **até 6 jobs de PDF concorrentes em 4
+vCPU**. Este é o item de **CPU**, que é o risco real (0.5) — não RAM.
+
+**Critério de aceite, por comando.** Gerar o **XLSX** de viabilidade de um ponto argentino e **encontrar o
+texto de `avisos.viabilidade_tributo_provisorio` numa célula com `alerta=True`**; gerar o **PDF** do mesmo
+ponto e **encontrar o `texto_rodape` em TODAS as páginas de resultado financeiro**; e **o mesmo par de
+artefatos no Brasil não muda um byte**. Mais: com o perfil AR carregado, `_PDF_CONCORRENCIA_MAX` resolve para
+**1**; com o BR, para **3**.
+
+**Guardrail.** §5 READ-ONLY M1. **Se o carimbo cair do escopo, a superfície `viabilidade` cai junto** —
+está escrito assim na dívida 5-ter da §5.0.6 e não é figura de linguagem: a única coisa que separa a
+viabilidade argentina do defeito R2 é este bloco.
+
+---
+
+#### BLK-INTL-D1 — Bloco D: Authelia com uma regra por host **COM `subject`**, grupos `expansao_br` / `expansao_ar`
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — `^authelia/` é CRITICO (`scripts/loop_guard.py:124`), logo **exige `critica-aprovada`**. **Zero código de aplicação.** |
+| **Prioridade** | Alta — **tem de estar no ar ANTES de qualquer login internacional ser concedido.** |
+| **Esteira** | `[GATE HUMANO — critica-aprovada do Felipe]` → Builder → QA → Felipe (aplicação manual, VPS §6). |
+| **Status** | Feita em 2026-09-03 — aplicada na VPS (aprovacao comando a comando) e backups no PR #308 (`d3d173a`). |
+| **Depende de** | — . **Paraleliza com A1, B1 e C1.** |
+| **Esforço** | **1 dia · Felipe + 1 dev** (era 2-3 dias antes de se ver que a regra do host AR precisa existir de qualquer jeito e que o `subject` custa a mesma linha). |
+| **Autonomia** | **manual (NÃO loop-safe)** — infra de autenticação + VPS. NÃO marcar loop-safe. |
+
+**O defeito.** `authelia/configuration.yml:80-86` tem `default_policy: deny` (`:81`) e **duas regras `one_factor`
+SEM `subject`** (dashboard e piloto), com todos os usuários num grupo único: **quem autentica alcança
+qualquer host protegido.** O host AR precisa de regra de qualquer jeito (senão o `deny` fecha), e
+acrescentar `subject: - "group:expansao_ar"` custa a mesma linha.
+
+**O risco, dito CORRETAMENTE** (a primeira formulação errava num ponto verificável e não sobreviveria a quem
+fosse conferir): sem `subject`, o primeiro usuário argentino cadastrado alcança
+`piloto.ultra-expansao.tech` e vê **o mapa e o funil do BRASIL inteiro** — o que o curinga do
+`acesso_abas.json` conceder — mais as `ROTAS_LIVRES`. O financeiro **NÃO** vaza: `abas_do_usuario` devolve
+`mapa.get("*", frozenset()) - ABAS_SENSIVEIS` (`web/server/acesso.py:255-262`, pentest Onda B #14),
+`ABAS_SENSIVEIS` (`:50`) é `{executiva, imobiliaria, viabilidade}` e `/api/rede/` exige `executiva` (`:70`),
+concedida só **nominalmente**. **Mas isso é sorte de desenho de outro bloco, não segregação.**
+
+**Entrega verificável.** Grupos `expansao_br` / `expansao_ar` em `authelia/users_database.yml` e **uma regra
+`access_control` por subdomínio com `subject: - "group:expansao_<pais>"`** — o padrão **já está escrito** em
+`docs/deploy_piloto_web.md:314-322` e **nunca foi aplicado**: aplicar, não projetar. O `subject` nas **duas
+regras existentes** entra **NO MESMO COMMIT** da regra do host AR — é essa a parte que não pode ficar para depois.
+
+**Dono da regra do host AR, dito sem ambiguidade porque dois documentos já divergiram nisto:** a regra de
+`access_control` de `piloto-ar.ultra-expansao.tech` é **deste bloco** — o `BLK-INTL-05` (Bloco D) do plano —,
+**não** do `BLK-ARG-E1` (Bloco E). O E1 sobe o host no `Caddyfile`, no DNS e no compose; quem escreve em
+`authelia/configuration.yml` é aqui, e é aqui que a regra já nasce com `subject: - "group:expansao_ar"`.
+Deixá-la no E1 significaria abrir um arquivo **CRITICO** (`scripts/loop_guard.py:124`) duas vezes, a segunda
+só para acrescentar o `subject` que podia ter nascido junto. `docs/spec_portal_selecao_pais.md` §6.2 tem de
+apontar para este bloco.
+
+**Critério de aceite.** Usuário do grupo `expansao_ar` recebe **403** em `piloto.ultra-expansao.tech`;
+usuário do grupo `expansao_br` recebe **403** em `piloto-ar.ultra-expansao.tech`; cada um entra no seu.
+Nenhuma regra de **host de país** fica sem `subject` — e a **raiz** `ultra-expansao.tech` é a **exceção
+deliberada**, que continua **sem** `subject` (`docs/spec_portal_selecao_pais.md` §6.2, `authelia/configuration.yml:80-86`):
+com `subject`, quem ainda não tem nenhum grupo `expansao_*` toma **403** em vez de conseguir ler o
+`portal/sem-acesso.html`, que é exatamente a tela que o portal existe para dar. Nenhum usuário brasileiro
+existente perde acesso ao que já tinha.
+
+---
+
+#### BLK-ARG-E1 — Bloco E: stack AR na **MESMA VPS** (compose próprio) + Caddy + DNS + medição de RSS/CPU + deploy manual
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — `docker-compose` (`scripts/loop_guard.py:122`) e `(^|/)Caddyfile` (`:123`) são CRITICO, logo **exige `critica-aprovada`**, além do **deploy manual por digest pelo dono** (`CLAUDE.md` §6). |
+| **Prioridade** | Alta — é o bloco que fecha a onda; **sem ele não existe URL para o time acessar.** |
+| **Esteira** | Block Orchestrator → Planner → `[GATE HUMANO — critica-aprovada do Felipe]` → Builder → QA → Felipe (deploy manual + 24 h de observação). |
+| **Status** | Feita em 2026-09-03 — stack AR no ar (PRs #309-#312), piloto-ar.ultra-expansao.tech servindo. |
+| **Depende de** | **A1 + B1 + C1 + C2 + D1** para a **SUBIDA**. A **preparação** (DNS, bloco de Caddy, `.env`, `mem_limit` provisório) corre em paralelo a B1, C1 e C2. |
+| **Esforço** | **3-4 dias · 1 dev + Felipe no deploy + 24 h de observação de RSS e de CPU** (era 1-1,5 semana quando incluía parametrizar o compose brasileiro, que saiu — ver abaixo). |
+| **Autonomia** | **manual (NÃO loop-safe)** — VPS, compose, Caddy, DNS, deploy. **Nunca** loop-safe. |
+
+**Por que é indispensável.** Conferido por grep: **não há linha de Argentina em `docker-compose.prod.yml`,
+no `Caddyfile` nem no Authelia** — a instância AR de hoje **não está na stack de produção**.
+
+**UMA VPS, sem segunda caixa e sem upgrade de tier (decisão 0.4).** 16 GB RAM, 200 GB SSD, 4 vCPU. **"Compose
+próprio" é separação de ARQUIVO, nunca de MÁQUINA** — quem ler "stack separada" como "host separado" está
+lendo a versão do plano anterior a 0.4. **A conta de "~26 GB" do §4 somava `mem_limit` DECLARADOS, nunca
+medidos** — está errada como argumento e foi **corrigida no §4**, não repetida. **O risco real é CPU, não RAM.**
+
+**Inversão de método, feita em 2026-08-31 — compose NOVO, não parametrizado.** O plano dizia "compose
+parametrizado"; **não é o caminho mais curto e é o mais arriscado**:
+`tests/unit/test_piloto_web_rede.py:502-527` faz `compose.split('motor_expansao_web')` e casa linhas que
+começam com o **literal** `- /opt/motor-expansao`, comparando a lista de mounts `:rw` por **igualdade
+exata** — trocar por `${MOTOR_HOST_DIR}` **esvazia a lista e o assert falha longe da causa**. Logo:
+**`docker-compose.ar.yml` novo**, `container_name: motor_expansao_web_ar`, **sem api e sem bot**, entrando na
+rede do edge que já existe — `docker-compose.prod.yml:29,109,152,258,283` ficam **INTACTOS** e o Caddy segue
+único a bindar 80/443 (`:263-267`).
+
+**ARMADILHA DE AUTORIZAÇÃO que o compose novo cria, e que NENHUM teste hoje pega — obrigatória.**
+`_fail_closed_ativo()` (`web/server/acesso.py:229-231`) retorna `bool(os.environ.get("MOTOR_CADASTRO_DIR"))`
+na ausência de override. A AR **não tem volume de cadastro**, logo `_ler_mapa()` devolve `None` e
+`abas_do_usuario` (`:239-252`) cai no ramo **fail-OPEN**: retorna **`ABAS_VALIDAS` inteira** (`:39`) —
+`executiva`, `imobiliaria` e `viabilidade` incluídas — **para todo usuário autenticado**. Em produção BR a
+variável existe (`docker-compose.prod.yml:170`) e é travada por `test_piloto_web_rede.py:523`, **mas esse
+teste lê o caminho LITERAL** (`:509`), então um `docker-compose.ar.yml` novo **não é conferido por nada**.
+Efeito: o gate do C1 ficaria sendo a **ÚNICA** barreira sobre `/api/viabilidade`, sem defesa em profundidade.
+**Correção:** `MOTOR_CADASTRO_DIR` — ou, se a AR não tiver cadastro, `MOTOR_ACESSO_FAIL_CLOSED: "1"` — no
+`docker-compose.ar.yml`, **e o teste de compose parametrizado por ARQUIVO** em vez de literal. Meia hora de
+infra + meia hora de teste.
+
+**Entrega verificável.** `docker-compose.ar.yml` (com a env de fail-closed acima); bloco de Caddy de
+**template versionado**; DNS `piloto-ar.ultra-expansao.tech`; **uma linha** em `scripts/healthcheck_vps.sh:44-57`
+(array de 6 containers contado à mão) para o container AR entrar na vigilância; entrada em
+`docs/backup_restore.md`. A AR sobe com `superficies: ["mapa","viabilidade"]` (0.6),
+`operacao.pdf_concorrencia_max: 1` (0.5), **basemap CARTO no fundo e SEM `.mbtiles` — mapa sem nome de rua,
+aceito por escrito (0.9)**; `API_BASEMAP_LABELS_URL` **não tem fallback** (`dashboard/censo_map.py:729-738`
+devolve `None`), e a superfície `ponto` está desligada, então a ausência de rótulos ainda não morde. Idioma
+pt-BR. **`mem_limit` fixado por UMA medição, não por tamanho em disco:** `carregar_uf_completo`
+(`app.py:786-789`) faz `pd.read_parquet(part)` **sem projeção de colunas** e o parquet AR carrega
+`geometry_wkb` **por linha** — coluna que o enriquecido brasileiro não tem. Uma hora de medição, não um
+programa de baseline.
+
+**As três medições que substituem a conta de tetos morta (§4).** (i) **RSS** de uma partição AR **com
+`geometry_wkb`**, **antes** de fixar o `mem_limit`. (ii) **RSS em regime** nas primeiras **24 h**. (iii) o
+**p95 do Brasil com a AR gerando PDF ao mesmo tempo** — a medição de **CPU** que nunca foi feita.
+
+**Critério de aceite — e NÃO é `/api/health` verde** (health verde é exatamente o que a instância vazia
+devolve). É, item a item: **`/api/uf/<partição>` devolve o mapa AR com `conc` derivado do pacote e `renda`
+rotulada em USD** (nunca `0`, nunca "R$"); **Buenos Aires aceita** nas rotas de coordenada **e na barra de
+busca por endereço escrito**, resolvida contra a Argentina e não contra homônimo brasileiro; **o painel de
+Metodologia não cita IBGE nem R$**; **aba de `oportunidades` ausente da tela** e a rota respondendo **404 com
+motivo**; **`/api/viabilidade` responde 200 e o XLSX/PDF que ela gera carrega o aviso
+`AR-VIAB-TRIB-PROVISORIO`** — **sem o carimbo, o aceite FALHA e a superfície é desligada**; **RSS em regime
+abaixo de 70% do `mem_limit`** após 24 h; **p95 do Brasil sem degradação com a AR no ar**; **o Brasil não
+regride em nada**.
+
+**Gatilhos de reabertura, escritos agora para não virarem surpresa.** RSS em regime **acima de 70% do teto
+por mais de 24 h** → reabre o `BLK-INTL-06` do plano (cache orçado em bytes). **p95 do Brasil degradando com
+a AR no ar** → o `pdf_concorrencia_max = 1` foi **escolhido, não medido**, e precisa de medição.
+
+**Dívida assumida por este bloco (§5.0.6), declarada e não descoberta.** (1) `_UF_RE` continua
+`^[A-Za-z]{2}$` (`app.py:412`): a AR roda em **siglas de 2 letras FABRICADAS** pelo exportador, e o operador
+as lê como se fossem códigos INDEC — **tem de estar escrito na instância**; morre antes da Colômbia.
+(2) `paisDaBase` continua deduzindo por disjunção (`web/src/lib/pais-da-base.ts:46-47`) e `/api/ufs`
+continua sem o campo `pais` — certo para BR e AR, **a Colômbia receberia a bandeira argentina**; conserto
+obrigatório **antes do terceiro país**. (3) **Duas stacks de compose** em vez de uma parametrizada:
+**qualquer mudança de infra passa a ser feita duas vezes.** (4) `EDGE_URL` segue **escalar**
+(`scripts/healthcheck_vps.sh:28`), apontando só para o piloto brasileiro: uma queda do **edge** argentino
+não dispara alerta nomeando "AR" — o **container** entra no array, o **edge** não. (5-ter) **A viabilidade
+argentina sai em reais com tributo brasileiro**, substituída **integralmente** pelo `BLK-INTL-11` do plano
+quando existir pacote de premissas AR revisado por **assessor fiscal local**.
+
+**Guardrail.** §5 READ-ONLY M1. `docker-compose.prod.yml` e o Caddy do Brasil ficam **intactos**. Deploy
+**sempre manual, por digest, comando a comando** — auto-merge **não** deploya, em nenhum caso.
+
+---
+
+#### BLK-INTL-13 — Portal de seleção de país na raiz `ultra-expansao.tech`
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — toca `docker-compose.prod.yml` (`scripts/loop_guard.py:122`) e `.dockerignore` (`:121`), logo **exige `critica-aprovada`**; a metade Caddyfile/Authelia é gitignored e não chega ao guard (spec §7.3/§8). |
+| **Prioridade** | Alta — com os Blocos D e E no ar, é o que falta para o time ter **um** endereço de entrada em vez de decorar subdomínio por país. |
+| **Esteira** | `[GATE HUMANO — critica-aprovada do Felipe]` → Builder → QA → Felipe (aplicação do Caddyfile/Authelia + aceites na VPS, §6 do `CLAUDE.md`). |
+| **Status** | **Em andamento — metade versionada entregue** (PR deste bloco): `portal/*.html` revisados, mount `./portal:/srv/portal:ro` no caddy, `portal/` no `.dockerignore`, `tests/unit/test_portal_paises.py` (asserts 7/8/11/12 no CI), `scripts/aceite_portal_paises.sh` (asserts 1-6/9/10, roda na VPS), `^portal/` em `_DENY_GOVERNANCA`, runbook em `docs/infra_producao.md`. **Pendente (dono da sessão, na VPS):** bloco raiz do `Caddyfile` (spec §2.3), `default_redirection_url` + regra da raiz no Authelia (spec §6), aceites §7.1/§7.2/§7.4.2 com a saída colada no PR, aviso ao time (§4.1) no dia da virada. |
+| **Depende de** | **BLK-INTL-05 (Bloco D / BLK-INTL-D1)** — **FECHADA em 2026-09-03** (grupos `expansao_br`/`expansao_ar` aplicados no Authelia da VPS). BLK-INTL-08 (Bloco E) também fechada em 2026-09-03: o host AR existe no `Caddyfile` com TLS e `forward_auth` — a ordem do §9 da spec foi cumprida. |
+| **Esforço** | 1-2 dias, dos quais mais da metade é a migração de cache do 301 e o aviso ao time — não é código (spec, cabeçalho). |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca VPS/deploy (`CLAUDE.md:141`). NÃO marcar loop-safe. |
+
+**O que é.** A raiz deixa de ser atalho fixo para o piloto brasileiro e passa a rotear por
+`Remote-Groups`: um país → 302 direto; vários → seletor com **só** os países do usuário (filtragem por
+**renderização**, nunca CSS); nenhum → explicação em português com a quem pedir acesso. Spec com
+autoridade total: **`docs/spec_portal_selecao_pais.md`** (por que não contradiz a DEC-047: §1.2).
+
+**Verificação partida em dois porque o git parte em dois (spec §7.4):** os asserts que leem só arquivos
+rastreados rodam no CI (`test_portal_paises.py`); os que leem `Caddyfile`/`users_database.yml` — gitignored —
+rodam na VPS (`aceite_portal_paises.sh`), e a **saída colada no PR** é a única evidência revisável dessa
+metade. O teste de CI **não pode abrir** `Caddyfile` nem `authelia/` (nem em `skipif`) — regra de manutenção
+do §7.4.1.
+
+**Guardrail.** Deploy manual, comando a comando (`CLAUDE.md` §6). No **primeiro** deploy o caddy é
+**recriado** (`up -d caddy`, não `reload`) — o volume `./portal` só entra na recriação; ver
+`docs/infra_producao.md`, seção "Portal de seleção de país na raiz".
+
+---
+
+### BLK-JOINUF-01 — `qualidade_join_uf` é granularidade de ESTADO, não de município/hex; hexágono litorâneo quebra a classificação
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — mexe em `qualidade_join_uf`/`confianca_geografica`, insumo da camada censitária PRIMÁRIA (§1) e do gate híbrido (DEC-040/045/050). Precisa de DEC própria. |
+| **Esteira** | `[GATE HUMANO]` — investigação + medição de impacto antes de qualquer PR. |
+| **Depende de** | DEC-050 (aprofunda o mesmo achado — a DEC-050 corrigiu o composto obsoleto vs. `classe_join_uf`, mas nem o `classe_join_uf` "corrigido" resolve os dois problemas abaixo) |
+| **Status** | **Achado, não iniciado** — registrado em 2026-09-09 a pedido do Felipe, depois de reportar hexágonos com fallback municipal em Manaus/AM, Fortaleza/CE e litoral do RJ/SP mesmo com o mapa de calor mostrando setor censitário real na mesma área |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca score/confiança censitária, Crítica |
+
+**O que foi medido (comparando o parquet `hexagonos_dashboard_enriquecido` real da VPS pós-DEC-050
+contra o setor censitário bruto que alimenta o mapa de calor do BLK do dia):**
+
+**Mecanismo 1 — granularidade de UF inteira.** `qualidade_join_uf`/`classe_join_uf` é UM valor por
+ESTADO, não por município nem por hex: os 293.991 hexágonos do Amazonas inteiro — de Manaus (capital,
+com dado de setor real e denso) a municípios de floresta como Barcelos e Tapauá — têm o **mesmo**
+`C`. Isso significa que a nota agregada do interior rural do estado arrasta para baixo a nota da
+capital, mesmo onde a capital tem cobertura de setor excelente. Efeito prático: `população`
+(`confianca_geografica`) cai em fallback municipal (o total de Manaus, 2.063.689, repetido em TODO
+hexágono) mesmo em hexágonos centrais com dado real de setor de até 83 mil habitantes. **A renda não
+sofre esse gate hoje** (o `_derivar` do piloto usa a coluna sempre que ela existe, sem checar
+`qualidade_join_uf`) — o que evita esse sintoma na renda, mas por acidente, não por desenho: um valor
+de renda de um hex com join ruim é exibido sem nenhum aviso de baixa confiança.
+
+**Mecanismo 2 — hexágono na linha da costa quebra a classificação.** Em Fortaleza, 80% dos hexágonos
+têm ótima nota (`B`), mas os 11 problemáticos (`"Não informado"` → fallback municipal) se concentram
+exatamente na faixa de latitude mais ao norte, a costa da cidade — hexágono que cruza a linha d'água
+não tem setor censitário cobrindo o oceano, a métrica de mismatch degenera e a classificação nunca
+sai de `"Não informado"`. Mesmo padrão esperado no litoral do RJ e SP (medição em RJ é mais ruidosa
+por causa da baía/relevo, mas a mecânica geométrica é a mesma).
+
+**Por que isso não é bug do trabalho recém-entregue.** As flags `renda_municipal`/`pop_municipal`
+(fallback-legend) e o mapa de calor (Bloco D) estão corretos — eles só tornaram VISÍVEL um limite
+estrutural que já existia: o sinal de confiança é grosso demais (UF) para uma decisão que é fina
+(hex/setor), e a costa é um caso geométrico degenerado que a métrica atual não trata.
+
+**Escopo de investigação sugerido, quando priorizado:**
+1. Recalcular `classe_join_uf`/mismatch por MUNICÍPIO (ou cluster de hexes), não por UF — medir se
+   isso recupera capitais/cidades bem cobertas hoje presas atrás de estados ruins (Manaus é o caso
+   comprovado; medir Belém/PA, outras capitais de UF 100% `C`).
+2. Tratar hexágono de borda litorânea como classe própria (ex.: herdar a nota do hexágono terrestre
+   mais próximo, ou usar só a fração de área com setor real) em vez de `"Não informado"` automático.
+3. Decidir se a renda deveria respeitar o mesmo gate de confiança que a população (hoje não respeita)
+   — e se sim, medir quantos hexágonos perderiam renda granular ao ficarem consistentes.
+4. Medir o efeito nacional (UFs afetadas, % de população recuperada, hash do M1 intacto) antes de
+   qualquer PR, no mesmo padrão de rigor da DEC-050/045.
+
+**Guardrail.** §5 READ-ONLY M1. Qualquer mudança em `qualidade_join_uf`/`confianca_geografica`/
+`score_setor_2022_calibrado` exige DEC própria (Crítica) e medição antes/depois por UF, igual à
+DEC-050.

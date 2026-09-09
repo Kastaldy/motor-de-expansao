@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -177,14 +178,44 @@ def create_app() -> FastAPI:
         )
         return response
 
+    def _inventario_oferta() -> dict[str, bool]:
+        """Presenca dos artefatos que alimentam a oferta do Relatorio Pontual (DEC-046).
+
+        SO' booleano: sem caminho, sem contagem, sem nome de unidade -- o inventario
+        detalhado do piloto vive atras de allowlist de admin (DEC-037) e esta rota nao pode
+        ser mais generosa que ele.
+
+        Existe porque a falha e' SILENCIOSA e mudou de sinal com a DEC-046: `_carregar_pontos`
+        memoiza a AUSENCIA (`lru_cache`), entao um parquet que nao chegou na VPS nao gera erro
+        nenhum -- antes os pins so' sumiam; agora a contagem menor viraria PASS no criterio de
+        concorrencia. `docs/deploy_api_bot.md` usa este endpoint como verificacao de fim de
+        deploy, e ate' aqui ele nao checava arquivo nenhum.
+        """
+        from motor_expansao.api.service import FONTES_OFERTA
+
+        base = Path(settings.staging_dir)
+        return {nome: (base / f"{nome}.parquet").is_file() for nome in FONTES_OFERTA}
+
     @app.get("/health", tags=["infra"], summary="Liveness do servico")
-    async def health() -> dict[str, str]:
-        return {"status": "ok", "environment": settings.environment}
+    async def health() -> dict[str, object]:
+        inventario = _inventario_oferta()
+        return {
+            "status": "ok",
+            "environment": settings.environment,
+            "artefatos_oferta": inventario,
+            "oferta_completa": all(inventario.values()),
+        }
 
     # Espelha o /health sob o prefixo de versao (contrato §10).
     @app.get(f"{settings.api_prefix}/health", tags=["infra"], include_in_schema=False)
-    async def health_v1() -> dict[str, str]:
-        return {"status": "ok", "environment": settings.environment}
+    async def health_v1() -> dict[str, object]:
+        inventario = _inventario_oferta()
+        return {
+            "status": "ok",
+            "environment": settings.environment,
+            "artefatos_oferta": inventario,
+            "oferta_completa": all(inventario.values()),
+        }
 
     # BLK-API-03: POST /api/v1/analisar
     from motor_expansao.api.routes import analisar

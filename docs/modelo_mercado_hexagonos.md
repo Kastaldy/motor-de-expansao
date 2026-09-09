@@ -233,7 +233,7 @@ Leitura:
 - `gap_competitivo_2km` e o espaco residual frente aos players mapeados.
 - `pressao_concorrencial_score_2km` vai de `0` a perto de `100`; quanto maior, maior a pressao dos players mapeados.
 
-#### 5.3.1 Base ALTERNATIVA: 1 km repartido por area (colunas paralelas, NAO em producao)
+#### 5.3.1 Base oficial: 1 km repartido por area (DEC-051, 2026-09-08)
 
 Implementacao em `src/motor_expansao/pipelines/pressao_concorrencial_1km.py`
 (2026-08-05, a pedido de Felipe). Cada concorrente vira uma fonte com disco de
@@ -259,10 +259,27 @@ share que cai fora dela — ver **LIMITACAO CONHECIDA** abaixo.
 | `gap_competitivo_1km_area` | float | `1 / (1 + oferta_efetiva_1km_area)` |
 | `pressao_concorrencial_score_1km_area` | float | `100 * (1 - gap_competitivo_1km_area)` |
 
-**Status: PARALELO, nao consumido pelo residual.** Nenhuma coluna do bloco 2 km muda, e
-`oferta_consumida_mercado_estimada` continua lendo `oferta_efetiva_mapeada_2km`. Migrar
-o residual para esta base exige DEC (afeta `som_indice_mapeado`, `tese_entrada`,
-`prioridade_mercado_mapeado`, carteira e plano).
+**Status: OFICIAL desde a DEC-051 (2026-09-08).** `enriquecimento_espacial_hexagonos.py`
+(Bloco 3) agora chama `anexar_pressao_1km_area` sobre o MESMO universo `cadeias`
+(cadastro + agregador, ja deduplicado) usado por `calc_comp_metrics`, e
+`calcular_colunas_mercado.py` (Bloco 5) le `oferta_efetiva_1km_area`/
+`gap_competitivo_1km_area` em vez de `oferta_efetiva_mapeada_2km`/`gap_competitivo_2km`
+para `residual_indice_mapeado`, `capacidade_captura_mapeada`/`som_indice_mapeado`,
+`som_populacao_mapeada`, `residual_populacao_mapeada` e `oferta_consumida_mercado_estimada`
+(-> `oferta_efetiva_disponivel`, `score_oportunidade_residual`, `tese_entrada`,
+`prioridade_mercado_mapeado`). As colunas `_2km` permanecem no artefato, inalteradas,
+para pins/tela/DEC-041 — so deixaram de alimentar o residual oficial.
+
+A renormalizacao de borda (perda de massa em hexagono fora da base, litoral/fronteira/
+podado por `M1_HEX_LAND_FRACTION_MIN`) foi corrigida no mesmo ciclo: `repartir_concorrentes`
+aceita `hex_ids_validos` e `anexar_pressao_1km_area` sempre passa o universo real de
+hexagonos, fechando a conservacao de massa (medido: 3.178 de 3.163 esperados nacionalmente,
+contra ~99,1% antes do fix).
+
+Efeito nacional medido (`scripts/comparar_pressao_1km.py`, pos-fix, sem `--uf`): consumo
+atribuido a concorrentes sobe de 6.159.181 para 7.945.000 alunos (+29,0% — residual mais
+conservador), 3.361 hexagonos perdem residual e 80 ganham (concentrados no Sul, celula
+H3 menor). Comparativo completo em `data/reports/scratch/comparativo_1km_pos_dec050.csv`.
 
 Diferencas contra o modelo de 2 km. ATENCAO ao que o teste realmente trava: ele cobre a
 conservacao de massa do modelo novo, a contencao de alcance e a ordem `media_1km >
@@ -394,15 +411,22 @@ Leitura:
 
 ### 5.6 Residual mapeado e SOM
 
+> **DEC-051 (2026-09-08):** o insumo geometrico oficial desta secao passou de
+> `gap_competitivo_2km`/`oferta_efetiva_mapeada_2km` (decaimento linear ate 2km do
+> centroide) para `gap_competitivo_1km_area`/`oferta_efetiva_1km_area` (interseccao de
+> area do disco de 1km de cada concorrente, ver §5.3.1). As formulas abaixo ja refletem
+> o insumo atual; as colunas `_2km` seguem existindo no artefato, so nao alimentam mais
+> esta secao.
+
 | coluna | tipo | regra exata |
 | --- | --- | --- |
-| `residual_indice_mapeado` | float | `tam_indice_demanda * gap_competitivo_2km` |
-| `residual_populacao_mapeada` | float | `tam_populacao_base * gap_competitivo_2km` quando `demanda_granularidade='hex_censo'`; senao `null` |
-| `capacidade_captura_mapeada` | float | `(sam_indice_operavel / 100.0) * gap_competitivo_2km` |
+| `residual_indice_mapeado` | float | `tam_indice_demanda * gap_competitivo_1km_area` |
+| `residual_populacao_mapeada` | float | `tam_populacao_base * gap_competitivo_1km_area` quando `demanda_granularidade='hex_censo'`; senao `null` |
+| `capacidade_captura_mapeada` | float | `(sam_indice_operavel / 100.0) * gap_competitivo_1km_area` |
 | `som_indice_mapeado` | float | `100 * capacidade_captura_mapeada` |
-| `som_populacao_mapeada` | float | `sam_populacao_base * gap_competitivo_2km` quando `demanda_granularidade='hex_censo'`; senao `null` |
+| `som_populacao_mapeada` | float | `sam_populacao_base * gap_competitivo_1km_area` quando `demanda_granularidade='hex_censo'`; senao `null` |
 | `capacidade_default_concorrente_alunos` | float | `2500`; capacidade proxy por unidade grande mapeada ate existir calibracao por rede |
-| `oferta_consumida_mercado_estimada` | float | `oferta_efetiva_mapeada_2km * capacidade_default_concorrente_alunos` |
+| `oferta_consumida_mercado_estimada` | float | `oferta_efetiva_1km_area * capacidade_default_concorrente_alunos` |
 | `oferta_consumida_ultra_real` | float | soma de `alunos_total` das unidades Ultra reais no mesmo `hex_id`, quando disponivel em `unidades_ultra_performance_hex.parquet`; senao `0` |
 | `oferta_consumida_ultra_estimada` | float | `oferta_consumida_ultra_real` quando > 0; senao `n_unidades_ultra_2km * 2500` (proxy de capacidade Ultra) |
 | `oferta_consumida_total_estimada` | float | `oferta_consumida_mercado_estimada + oferta_consumida_ultra_estimada`; total de alunos estimados ja atendidos (concorrentes + Ultra) |

@@ -190,7 +190,17 @@ KPIs derivados do `result` de `analisar_ponto_censitario_setores` (READ-ONLY):
   "densidade_pop_raio_hab_km2": 5870.0,
   "score_setor_medio": 64.2,
   "score_setor_max": 91.0,
-  "n_concorrentes": 3,
+  // DEC-046 (emenda a DEC-005): `n_concorrentes` MANTEM o nome e passa a valer o TOTAL
+  // de academias no raio (cadeia + independente). O criterio PASS/FAIL da ficha le
+  // `n_concorrentes_cadeia`, porque o teto de 3 foi calibrado contra um universo
+  // so'-cadeia. `oferta_completa=false` significa que alguma das 3 fontes nao foi lida
+  // — e nesse caso o criterio de concorrencia NAO emite veredito.
+  "n_concorrentes": 9,
+  "n_concorrentes_cadeia": 2,
+  "n_academias_total": 9,
+  "fontes_oferta": ["concorrentes_mapeados", "vulnerabilidade_ma_redes",
+                    "vulnerabilidade_ma_nomeadas"],
+  "oferta_completa": true,
   "n_ultra": 1,
   // carimbo de versao/reprodutibilidade (Decisao 6):
   "versao_contrato": "api-geoespacial/v1",

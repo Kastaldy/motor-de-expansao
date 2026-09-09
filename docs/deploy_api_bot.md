@@ -35,6 +35,8 @@ telegram-bot ──HTTP interno──► api ──► volumes :ro (outputs + ib
 | `data/outputs/setores_censitarios_2022_geo/` | malha de setores 2022 (~1,2 GB) | **Sim** (o relatório) |
 | `data/ibge/municipios_*.geojson` | malha municipal (resolve lat,lng → município) | **Sim** (sem ela → 500) |
 | `data/staging/{concorrentes_mapeados,unidades_ultra_mapeadas,hexagonos_mercado_mapeado}.parquet` | mercado/SAM + concorrentes/Ultra | Não (enriquece o PDF) |
+| `data/staging/vulnerabilidade_ma_nomeadas.parquet` | academias INDEPENDENTES da oferta (DEC-046) | **Sim, na prática** — ver aviso abaixo |
+| `data/staging/vulnerabilidade_ma_redes.parquet` | unidades de rede vistas pelo agregador (DEC-046) | **Sim, na prática** — ver aviso abaixo |
 | `data/staging/uplift_renda_domiciliar_municipio.parquet` | uplift de composição + `moradores_por_domicilio_municipio`, por município | **Sim, na prática** — ver aviso abaixo |
 | `data/staging/uplift_composicao_setor.parquet` | uplift de composição por setor (choropleth `renda_domiciliar` do PDF) | **Sim, na prática** — ver aviso abaixo |
 | `data/staging/fator_temporal_renda.json` | fator temporal CAGED (renda jul/2022 → corrente) | **Sim, na prática** — ver aviso abaixo |
@@ -48,6 +50,20 @@ telegram-bot ──HTTP interno──► api ──► volumes :ro (outputs + ib
 > calado. **Conferir a presença dos três antes de dar o deploy por concluído.**
 > Regeneráveis por `pipelines/derivar_uplift_renda_domiciliar.py`, `pipelines/derivar_uplift_composicao_setor.py`
 > e `pipelines/derivar_fator_temporal_renda.py`.
+
+> **⚠ Falha SILENCIOSA que MUDOU DE SINAL (DEC-046).** Os dois parquets de M&A acima não
+> quebram nada quando faltam — mas desde a DEC-046 a ausência deixou de ser inofensiva. Antes,
+> sem eles os pins de academia independente apenas sumiam do mapa. Agora eles alimentam
+> `n_concorrentes_cadeia`, e uma contagem menor **passaria** no critério de concorrência da
+> ficha: um ponto saturado seria aprovado porque um arquivo não chegou. O gate `completo`
+> existe para recusar veredito nesse caso, e o `/health` passou a publicar
+> `artefatos_oferta` + `oferta_completa` justamente para isto ser verificável no fim do deploy.
+>
+> **`docker restart` é obrigatório depois do `scp`, e nos DOIS serviços** — `api` **e**
+> `telegram-bot`. São processos separados com `lru_cache` próprio (`_carregar_pontos` e
+> `_oferta_unida` memoizam a AUSÊNCIA), então sem restart o arquivo está no disco e o PDF
+> continua saindo com o universo antigo, sem erro nenhum. O runbook de M&A trata só do `web`;
+> este container não estava coberto.
 
 Subir os que faltam (do Windows, dev):
 ```powershell

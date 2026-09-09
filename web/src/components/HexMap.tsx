@@ -16,7 +16,7 @@ import {
   zoomQueEnquadra,
 } from '../lib/captura-mapa'
 import { CORES_IDENTIDADE, corDeIdentidadeRgb, rotuloDoHex } from '../lib/comparacao'
-import { alunos, brl, distanciaCurta, num } from '../lib/format'
+import { alunos, brl, distanciaCurta, num, renda } from '../lib/format'
 import {
   type AlvoMedicao,
   distanciaMetros,
@@ -27,15 +27,18 @@ import { corTipo, corTipoRgb, custoOcup, labelTipo, rsM2 } from '../lib/imovel'
 import { sinaisDoRegime } from '../lib/sinais'
 import {
   DISCARDED_FILL,
+  densidadeSetorToColor,
   faixaM1ToColor,
   HEX_FILL_ALPHA,
   NAN_SCORE_FILL,
   POP_MIN_ACIONAVEL,
   camadaCor,
+  rendaSetorToColor,
   scoreBandToColor,
   crescClasseToColor,
   type RGBA,
 } from '../lib/colors'
+import { perfilDoCliente } from '../lib/perfil'
 import type { Tema } from '../lib/tema'
 import type {
   Cobertura1k,
@@ -47,6 +50,7 @@ import type {
   Pin,
   PinIndependente,
   Pins,
+  SetorHeatmap,
 } from '../lib/types'
 
 /** Objeto de ícone do deck.gl a partir de um data URI (bandeira quadrada). */
@@ -213,11 +217,19 @@ const PASSO_POR_FAIXA_M1 = 5
  *  bordas azuis). Sem isso, as 10 aberturas do passo 5 sumiriam no meio do mapa. */
 const DIM_FORA_DO_PASSO = 0.5
 
-/* Onde a REGUA DO RESIDUAL vale: 2 (Demanda nao atendida) e 3 (Pressao concorrencial).
-   So' nestes passos o recorte livre/coberto pode ser pintado pelo score do modelo de 1 km
-   — nos demais o mapa mede outra coisa (1 = censo, 4 = crescimento, 5 = faixa do M1) e
-   duas reguas lado a lado dariam cores incongruentes, medindo grandezas diferentes. */
-const PASSOS_DA_PRESSAO = new Set([2, 3])
+/* Onde a REGUA DO RESIDUAL vale: SO' a camada 3 (Pressao concorrencial).
+
+   Era {2, 3} enquanto o raio de 1 km foi uma chave que o operador ligava. Desde que ele
+   virou o padrao da camada 3 (Juan, 2026-09-02), a camada 2 saiu daqui: "Demanda nao
+   atendida" mede o residual do modelo de 2 km, e pintar parte dela pelo modelo de 1 km
+   punha duas reguas no mesmo mapa medindo grandezas diferentes — que e' exatamente o
+   defeito que este conjunto existe para evitar nas camadas 1, 4 e 5.
+
+   O portao e' REDUNDANTE com o `raio1km` que o `MapScreen` calcula (la' ele ja' so' e'
+   `true` na camada 3), e continua aqui de proposito: o `HexMap` e' quem sabe que a cor de
+   um hexagono tem de sair de uma regua so', e essa invariante nao deve depender de quem
+   passa a prop. */
+const PASSOS_DA_PRESSAO = new Set([3])
 
 /* O alpha das pecas de cobertura e' o MESMO do hexagono normal (`pele.alphaHex`), e por
    isso deixou de ser constante de modulo quando o tema entrou: usar um alpha maior fazia
@@ -371,6 +383,10 @@ export interface HexMapProps {
   onImovel?: (o: Oportunidade) => void
   /** PROTOTIPO: area coberta pelo raio, ja recortada dentro dos hexagonos. */
   cobertura1k?: Cobertura1k | null
+  /** Bloco D — poligonos de setor censitario para o mapa de calor opcional. */
+  heatmapSetores?: SetorHeatmap[]
+  /** Qual leitura o calor pinta agora — `null` = camada desligada. */
+  modoCalor?: 'densidade' | 'renda' | null
   /** Tema do app: escolhe o basemap e as cores que o WebGL nao le' do CSS (ver `PELE`). */
   tema: Tema
   cameraInicial?: ViewState | null
@@ -435,6 +451,8 @@ export default function HexMap({
   imoveis,
   onImovel,
   cobertura1k,
+  heatmapSetores,
+  modoCalor = null,
   tema,
   cameraInicial,
   onCamera,
@@ -518,9 +536,15 @@ export default function HexMap({
         bearing: 0,
       }
     }
+    // Fallback de "centro ausente". Era Brasília cravada (-47,9 / -15,78) — e é leitura
+    // de PRIMEIRA RENDERIZAÇÃO (classe (2) da spec §3.5): inicializador de `useState`
+    // roda antes de qualquer efeito. É por isso que o perfil é resolvido no `main.tsx`
+    // ANTES de a árvore ser importada; aqui um getter tardio não salvaria, e o resultado
+    // seria a câmera nascendo no Brasil numa instância argentina.
+    const vista = perfilDoCliente().vista_padrao
     return {
-      longitude: centro.lng ?? -47.9,
-      latitude: centro.lat ?? -15.78,
+      longitude: centro.lng ?? vista.lng,
+      latitude: centro.lat ?? vista.lat,
       zoom: ZOOM_DO_MUNICIPIO,
       pitch: 0,
       bearing: 0,
@@ -966,6 +990,32 @@ export default function HexMap({
           ]
         : []),
 
+      /* Bloco D — mapa de calor de SETOR censitario (densidade/renda), opcional e so' no
+         drill-down de municipio. Poligono de setor e' MAIS FINO que o hexagono e cobre a
+         area inteira do municipio de proposito: a leitura que o operador pediu e' "me
+         mostre densidade/renda de bairro", nao um blend com o score do hexagono por
+         baixo — por isso, como a peca da cobertura de 1 km acima, ele pousa por cima do
+         H3HexagonLayer com `depthCompare: 'always'`, em vez de disputar o pixel com ele. */
+      ...(modoCalor && heatmapSetores?.length
+        ? [
+            new PolygonLayer<SetorHeatmap>({
+              id: 'calor-setor',
+              data: heatmapSetores,
+              getPolygon: (d) => d.anel,
+              positionFormat: 'XY', // mesma armadilha do anel da cobertura — ver comentario acima.
+              filled: true,
+              getFillColor: (d) =>
+                (modoCalor === 'densidade'
+                  ? densidadeSetorToColor(d.densidade)
+                  : rendaSetorToColor(d.renda)) ?? [120, 120, 140, 60],
+              stroked: false,
+              updateTriggers: { getFillColor: [modoCalor] },
+              pickable: false,
+              parameters: { depthCompare: 'always' as const },
+            }),
+          ]
+        : []),
+
       /* SOMBRA por concorrente: uma peca para CADA concorrente que toca o hexagono,
          preta e translucida, SEM contorno. Empilhadas, o alpha se acumula e a area fica
          mais escura quanto mais concorrentes a cobrem — a leitura de adensamento que a
@@ -978,7 +1028,7 @@ export default function HexMap({
          concorrentes nao pertence a regua nenhuma — ela responde "quantas me alcancam
          aqui?", que e' verdade em qualquer camada do funil. Quem depende da regua e' o
          recorte COLORIDO acima, nao esta tinta escura (pedido do Felipe, 2026-08-12). */
-      ...(raio1km && cobertura1k?.sombras?.length
+      ...(raio1km && PASSOS_DA_PRESSAO.has(passo.n) && cobertura1k?.sombras?.length
         ? [
             new PolygonLayer<number[][][]>({
               id: 'cobertura-sombra-1km',
@@ -1003,7 +1053,7 @@ export default function HexMap({
          Tambem em TODOS os passos: "ate onde a concorrencia chega" e' um fato geografico,
          nao uma leitura de regua. Enquanto estava preso aos passos 2 e 3, ligar a chave em
          qualquer outra camada nao desenhava nada e parecia defeito. */
-      ...(raio1km && cobertura1k?.contorno?.length
+      ...(raio1km && PASSOS_DA_PRESSAO.has(passo.n) && cobertura1k?.contorno?.length
         ? [
             new PolygonLayer<number[][][]>({
               id: 'conc-alcance-1km',
@@ -1336,6 +1386,8 @@ export default function HexMap({
     imoveis,
     onImovel,
     cobertura1k,
+    heatmapSetores,
+    modoCalor,
     hexesCobertos,
     hexPorId,
     // Mesmo motivo do bloco acima: o corpo LE as duas para montar (ou nao) a regua.
@@ -1466,10 +1518,19 @@ export default function HexMap({
           )}
 
           <Divisoria />
-          <Linha rotulo="Habitantes" valor={num(hover.h.pop)} />
-          <Linha rotulo="Renda per capita" valor={brl(hover.h.renda)} />
+          <Linha
+            rotulo={hover.h.pop_municipal ? 'Habitantes (municipal)' : 'Habitantes'}
+            valor={num(hover.h.pop)}
+          />
+          <Linha
+            rotulo={hover.h.renda_municipal ? 'Renda per capita (municipal)' : 'Renda per capita'}
+            valor={renda(hover.h.renda)}
+          />
           {hover.h.renda_dom !== null && (
-            <Linha rotulo="Renda domiciliar" valor={brl(hover.h.renda_dom)} />
+            <Linha
+              rotulo={hover.h.renda_municipal ? 'Renda domiciliar (municipal)' : 'Renda domiciliar'}
+              valor={renda(hover.h.renda_dom)}
+            />
           )}
           <Linha rotulo="Residual Fitness" valor={`${alunos(hover.h.oferta)} alunos`} />
           <Linha rotulo="Concorrentes 2 km" valor={num(hover.h.conc)} />

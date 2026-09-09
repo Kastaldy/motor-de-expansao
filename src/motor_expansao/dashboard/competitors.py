@@ -2,13 +2,25 @@ from __future__ import annotations
 
 import base64
 import re
+import unicodedata
 from functools import cache
 from pathlib import Path
 
 import pandas as pd
 
-LAT_MIN, LAT_MAX = -34.0, 6.0
-LNG_MIN, LNG_MAX = -75.0, -28.0
+from motor_expansao.perfil import resolver_perfil
+
+# Caixa do pais da instancia, do perfil (Bloco A / DEC-047). Era a B3 — a mais LARGA das
+# tres do repositorio (lat ate 6,0; lng ate -75,0), e larga justamente onde nao ha Brasil.
+# O perfil unifica na B1, o que AQUI ESTREITA. Medido ANTES de aplicar, sobre as 3.296
+# linhas de `data/staging/concorrentes_mapeados.parquet`: B3 = 3.269 e B1 = 3.269 —
+# **delta ZERO**, nenhum pin de concorrente e descartado. E o criterio de aceite nº 5 da
+# spec, e existe porque este e o unico sitio do bloco que estreita SEM nenhum teste que
+# pegue: `_coord_in_brazil` nao e exercitado diretamente em `tests/`. Se o parquet for
+# regenerado, rodar de novo.
+_BBOX_PAIS = resolver_perfil().bbox
+LAT_MIN, LAT_MAX = _BBOX_PAIS.lat_min, _BBOX_PAIS.lat_max
+LNG_MIN, LNG_MAX = _BBOX_PAIS.lng_min, _BBOX_PAIS.lng_max
 
 COMPETITOR_COLUMNS = [
     "rede",
@@ -384,7 +396,27 @@ COMPETITOR_LOGO_FILES: dict[str, str] = {
 
 ULTRA_LOGO_FILE = "logo_ultra.png"
 
-# cache de logos PNG: rede -> icon_data; "__ultra__" para Ultra
+# --- marcador da academia INDEPENDENTE (DEC-046, D6) -------------------------
+#
+# Independente nao tem marca, entao nao tem bandeira: todas recebem UM marcador comum,
+# menor que o das cadeias, na cor do agregador que as revelou. E' a mesma regra que o Mapa
+# Territorial do piloto ja' usa (`HexMap.tsx`, camada `independentes-pins`, BLK-MA-15).
+#
+# O PNG e' OPCIONAL de proposito. Ele vive no diretorio de logos montado em producao
+# (`concorrentes/`, o mesmo do `sync_concorrentes_dashboard`), e nao dentro do pacote: o
+# `motor_expansao` nao distribui asset binario nenhum hoje, e criar esse precedente por um
+# icone cobraria configuracao de package-data e um caminho novo no build. Sem o arquivo, o
+# marcador cai num ponto solido na cor da marca — que continua cumprindo o que o marcador
+# precisa cumprir (ser pequeno, uniforme e distinguivel da bandeira de cadeia).
+CHAVE_AGREGADOR = "__wellhub__"
+AGREGADOR_LOGO_FILE = "logo_wellhub.png"
+AGREGADOR_BRAND = {"label": "Independente", "short": "", "bg": "#F04E6E", "fg": "#FFFFFF"}
+# 20 px contra os 30 px da bandeira de cadeia (`_PIN_LOGO_PX`), na mesma proporcao que o
+# mapa usa (22 contra 30-38): a independente e' camada secundaria e nao pode competir com a
+# rede instalada na leitura.
+PIN_INDEPENDENTE_PX = 20
+
+# cache de logos PNG: rede -> icon_data; "__ultra__" para Ultra; "__wellhub__" p/ independente
 _ICON_CACHE: dict[str, dict] = {}
 
 
@@ -417,17 +449,67 @@ def _png_icon_data(path: Path, *, pin_bg: str = "#FFFFFF") -> dict[str, object] 
         return None
 
 
+def slug_rede(nome: str) -> str:
+    """`"Megatlón"` -> `megatlon`. A regra do nome de arquivo `logo_<slug>.png`.
+
+    E' a MESMA regra dos outros dois lados da fronteira: `exportar_piloto_rep._slug_rede`
+    (repo motor-argentina, que grava os PNGs) e o pino da tela, que a aplica desde
+    5c2f127. Tres copias da mesma regra e' o que ela e' hoje; unifica-las exigiria um
+    modulo compartilhado entre repositorios que nao existe.
+    """
+    puro = "".join(
+        c for c in unicodedata.normalize("NFD", str(nome or ""))
+        if unicodedata.category(c) != "Mn"
+    ).lower()
+    return re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", puro)).strip("_")
+
+
 def preload_logos(competitors_dir: Path, ultra_dir: Path | None = None) -> None:
-    """Le logos PNG locais e popula _ICON_CACHE. App funciona sem esses arquivos."""
+    """Le logos PNG locais e popula _ICON_CACHE. App funciona sem esses arquivos.
+
+    DUAS PASSADAS, e a segunda e' o que faz isto servir a Argentina (Juan, 2026-08-31:
+    "faltou subir as fotos das concorrentes no slide Concorrente").
+
+      1. o REGISTRO (`COMPETITOR_LOGO_FILES`): 107 redes BRASILEIRAS, nome a nome. Nenhuma
+         rede argentina esta nele — Megatlon, SportClub, Fiter, ON FIT, CORE, BIGG. Com
+         so' esta passada, todo pin do PDF caia no fallback de placa colorida com sigla,
+         mesmo havendo os logos argentinos no diretorio servido.
+      2. o DIRETORIO, por CONVENCAO: qualquer `logo_<slug>.png` que esteja la vira entrada
+         de cache sob `<slug>`. E' como o exportador argentino nomeia os arquivos; o PDF
+         era o unico consumidor que ainda dependia so' do registro.
+
+    A ordem importa: o registro entra primeiro e a convencao NAO o sobrescreve, para que
+    uma cor de marca declarada em `COMPETITOR_BRANDS` continue valendo no Brasil.
+    """
     for rede, filename in COMPETITOR_LOGO_FILES.items():
         pin_bg = COMPETITOR_BRANDS.get(rede, {}).get("bg", "#FFFFFF")
         icon = _png_icon_data(competitors_dir / filename, pin_bg=pin_bg)
         if icon is not None:
             _ICON_CACHE[rede] = icon
+
+    try:
+        arquivos = sorted(competitors_dir.glob("logo_*.png"))
+    except OSError:  # diretorio ausente/ilegivel -> so' o registro, como antes
+        arquivos = []
+    for arq in arquivos:
+        chave = arq.stem[len("logo_"):]
+        if not chave or chave in _ICON_CACHE:
+            continue
+        icon = _png_icon_data(arq, pin_bg=COMPETITOR_BRANDS.get(chave, {}).get("bg", "#FFFFFF"))
+        if icon is not None:
+            _ICON_CACHE[chave] = icon
+
     if ultra_dir is not None:
         icon = _png_icon_data(ultra_dir / ULTRA_LOGO_FILE, pin_bg=ULTRA_BRAND["bg"])
         if icon is not None:
             _ICON_CACHE["__ultra__"] = icon
+    # DEC-046: marcador do independente. Ausente -> `_render_marcador_independente` cai no
+    # ponto solido; nao ha erro nem pin faltando.
+    icon = _png_icon_data(
+        competitors_dir / AGREGADOR_LOGO_FILE, pin_bg=str(AGREGADOR_BRAND["bg"])
+    )
+    if icon is not None:
+        _ICON_CACHE[CHAVE_AGREGADOR] = icon
 
 
 # ── I/O ────────────────────────────────────────────────────────────────────────
@@ -577,9 +659,24 @@ def _competitor_icon_svg(rede: str) -> dict[str, object]:
     return {"url": f"data:image/svg+xml;base64,{encoded}", "width": 128, "height": 128, "anchorY": 122}
 
 
+def icone_da_rede(key: str) -> dict:
+    """Logo de `key`, aceitando NOME DE EXIBICAO ou slug. `{}` quando nao ha.
+
+    O cache e' indexado por SLUG (`megatlon`), mas quem pinta o pin recebe o valor da
+    coluna `rede`, que e' nome de exibicao (`Megatlon`, `ON FIT`, `SportClub`). No Brasil
+    isso nunca doeu porque as chaves do registro ja' sao slugs e o dado brasileiro chega
+    assim; a base argentina traz o nome bonito, e o PDF caia no fallback de sigla com a
+    logo certa parada no disco.
+    """
+    if key in _ICON_CACHE:
+        return _ICON_CACHE[key]
+    return _ICON_CACHE.get(slug_rede(key), {})
+
+
 def competitor_icon_data(rede: str) -> dict[str, object]:
-    if rede in _ICON_CACHE:
-        return _ICON_CACHE[rede]
+    icone = icone_da_rede(rede)
+    if icone:
+        return icone
     return _competitor_icon_svg(rede)
 
 
@@ -754,7 +851,7 @@ def _render_pin_tile(key: str) -> object:
     cx, cy, r = _ATLAS_CIRCLE_CX, _ATLAS_CIRCLE_CY, _ATLAS_CIRCLE_R
     draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="#FFFFFF")
 
-    logo_png = _extract_embedded_logo_png(str(_ICON_CACHE.get(key, {}).get("url", "")))
+    logo_png = _extract_embedded_logo_png(str(icone_da_rede(key).get("url", "")))
     if logo_png is not None:
         try:
             import io
@@ -878,6 +975,12 @@ def _render_square_logo_tile(
 
     if key == "__ultra__":
         brand: dict[str, str] = dict(ULTRA_BRAND)
+    elif key == CHAVE_AGREGADOR:
+        # DEC-046: independente. Com o PNG no `_ICON_CACHE` sai a marca do agregador; sem
+        # ele cai no fallback abaixo e vira uma placa SOLIDA na cor da marca — `short` e'
+        # vazio de proposito, porque sigla nenhuma distingue 19 mil academias sem marca
+        # (o piloto abandonou o "IND" pelo mesmo motivo, em 2026-08-26).
+        brand = dict(AGREGADOR_BRAND)
     else:
         brand = dict(
             COMPETITOR_BRANDS.get(
@@ -903,7 +1006,7 @@ def _render_square_logo_tile(
             fill=_SQUARE_LOGO_SHADOW_RGBA,
         )
 
-    logo_png = _extract_embedded_logo_png(str(_ICON_CACHE.get(key, {}).get("url", "")))
+    logo_png = _extract_embedded_logo_png(str(icone_da_rede(key).get("url", "")))
     if logo_png is not None:
         try:
             import io

@@ -50,14 +50,31 @@ def test_parse_none_retorna_none():
 
 
 def test_parse_limites_brasil():
-    # ponto extremo norte (RR)
-    assert parse_coordinate_input("5.0,-60.0") is not None
-    # ponto extremo sul (RS)
-    assert parse_coordinate_input("-33.0,-53.0") is not None
-    # fora do norte
-    assert parse_coordinate_input("6.0,-60.0") is None
-    # fora do sul
-    assert parse_coordinate_input("-34.0,-53.0") is None
+    """As fronteiras vem do PERFIL, nao de literal repetido no teste.
+
+    Ate 2026-09-02 a ultima linha era `assert parse_coordinate_input("-34.0,-53.0") is
+    None`, e passava porque `data.py` usava a caixa B2, cujo piso era -33,75. O Bloco A
+    (DEC-047) unifica as tres caixas do repositorio na B1, cujo piso e -34,0 — entao
+    -34,0 passa a estar DENTRO, inclusive. Nao e efeito colateral: e a decisao da spec
+    §1.3, e o Brasil ALARGA aqui (a B2 ate excluia Martin Vaz, -28,85).
+
+    Ancorar no perfil em vez de no numero e o que impede este teste de virar o proximo
+    literal brasileiro cravado: ele agora vale para qualquer pais que o perfil declare.
+    """
+    from motor_expansao.perfil import PERFIL_BR_EMBARCADO, carregar_perfil
+
+    bb = carregar_perfil(PERFIL_BR_EMBARCADO).bbox
+    # dentro, perto de cada fronteira
+    assert parse_coordinate_input(f"{bb.lat_max - 0.5},-60.0") is not None
+    assert parse_coordinate_input(f"{bb.lat_min + 0.5},-53.0") is not None
+    # as PROPRIAS fronteiras sao inclusivas
+    assert parse_coordinate_input(f"{bb.lat_min},-53.0") is not None
+    assert parse_coordinate_input(f"{bb.lat_max},-60.0") is not None
+    # fora, de cada lado
+    assert parse_coordinate_input(f"{bb.lat_max + 0.5},-60.0") is None
+    assert parse_coordinate_input(f"{bb.lat_min - 0.5},-53.0") is None
+    assert parse_coordinate_input(f"-23.55,{bb.lng_min - 0.5}") is None
+    assert parse_coordinate_input(f"-23.55,{bb.lng_max + 0.5}") is None
 
 
 # ── lookup_hex_by_coord ───────────────────────────────────────────────────────
