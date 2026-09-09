@@ -302,6 +302,42 @@ def test_load_censo_deriva_qualidade_join_quando_validado_traz_mismatch(local_tm
     assert resultado["qualidade_join_uf"].tolist() == ["A", "B", "C"]
 
 
+def test_load_censo_prefere_classe_join_uf_sobre_composto_obsoleto(local_tmp_dir):
+    """Regressao (Bloco A): o composto amplitude+cobertura+join nao pode vencer o join puro.
+
+    `fase_a_nacional_completo.py` grava DUAS colunas por UF: `classe_join_uf` (join real,
+    A/B/C por mismatch basico x renda) e `qualidade_join_uf` (composto: so' vira A/B se
+    join E amplitude>50 E cobertura>=85 passarem TODOS). A DEC-040 recalibrou a escala do
+    score e comprimiu a amplitude nacional -- recalculada hoje, ela reprova as 21 UFs sem
+    excecao (medido no Bloco A). Antes deste fix, `_padronizar_censo` so trocava
+    `classe_join_uf` por `qualidade_join_uf` quando esta ULTIMA estava AUSENTE -- como a
+    fonte nacional grava as duas, o composto (obsoleto) sempre vencia, prendendo UFs com
+    join excelente (classe A) em fallback municipal so' por causa da amplitude.
+    """
+    nacional = pd.DataFrame(
+        {
+            "hex_id": ["h1"],
+            "uf": ["PB"],
+            "score_setor_2022_calibrado": [55.0],
+            "coverage_pct_setor_2022": [99.0],
+            "classe_join_uf": ["A"],  # join real: excelente
+            "qualidade_join_uf": ["C"],  # composto obsoleto: reprovado por amplitude
+        }
+    )
+    core_path = local_tmp_dir / "core_classe_join.parquet"
+    expanded_path = local_tmp_dir / "expanded_classe_join.parquet"
+    nacional_path = local_tmp_dir / "nacional_classe_join.parquet"
+    nacional.iloc[0:0].to_parquet(core_path, index=False)
+    nacional.iloc[0:0].to_parquet(expanded_path, index=False)
+    nacional.to_parquet(nacional_path, index=False)
+
+    resultado = _load_censo(core_path, expanded_path, nacional_path, malha_path=_SEM_MALHA)
+
+    assert resultado["qualidade_join_uf"].tolist() == ["A"], (
+        "o join real (classe_join_uf) deveria vencer o composto obsoleto"
+    )
+
+
 def test_load_censo_sem_nacional_nao_falha(local_tmp_dir):
     """Se censo_nacional_path=None, _load_censo deve funcionar normalmente."""
     core = pd.DataFrame(
