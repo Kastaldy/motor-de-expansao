@@ -359,3 +359,53 @@ def test_render_pin_tile_geometria_128_preservada_blk_relpon_09():
     assert tile.mode == "RGBA"
     cores = {cor for _n, cor in tile.getcolors(maxcolors=1_000_000) or []}
     assert (200, 0, 30, 255) in cores  # balao na cor da marca Ultra (#C8001E)
+
+
+# ── logo por slug: a segunda passada do preload e o nome de exibicao ───────────
+#
+# O registro (`COMPETITOR_LOGO_FILES`) so' conhece as redes brasileiras, nome a nome.
+# A base argentina serve `logo_<slug>.png` num diretorio proprio e a coluna `rede` traz
+# o NOME DE EXIBICAO ("Megatlón", "ON FIT") — sem estas duas pontes, todo pin do PDF
+# caia no fallback de sigla "C" com a logo certa parada no disco (Juan, 2026-09-08).
+
+# PNG minimo valido (1x1 px) — mesmo fixture de tests/unit/test_api_skeleton.py
+_PNG_1PX = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00"
+    b"\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+def test_slug_rede_normaliza_nome_de_exibicao():
+    """A regra e' a MESMA do exportador argentino, que grava os arquivos."""
+    from motor_expansao.dashboard.competitors import slug_rede
+
+    assert slug_rede("Megatlón") == "megatlon"
+    assert slug_rede("ON FIT") == "on_fit"
+    assert slug_rede("SportClub (parceira)") == "sportclub_parceira"
+    assert slug_rede("") == ""
+
+
+def test_preload_descobre_logo_por_convencao_no_diretorio(tmp_path):
+    """`logo_<slug>.png` fora do registro vira entrada de cache sob o slug."""
+    (tmp_path / "logo_sportclub.png").write_bytes(_PNG_1PX)
+    _ICON_CACHE.pop("sportclub", None)
+    preload_logos(tmp_path)
+    assert "sportclub" in _ICON_CACHE
+
+
+def test_icone_da_rede_aceita_nome_de_exibicao(tmp_path):
+    """Quem pinta o pin recebe "SportClub"; o cache e' indexado por `sportclub`."""
+    from motor_expansao.dashboard.competitors import icone_da_rede
+
+    (tmp_path / "logo_sportclub.png").write_bytes(_PNG_1PX)
+    _ICON_CACHE.pop("sportclub", None)
+    preload_logos(tmp_path)
+    assert icone_da_rede("SportClub") == _ICON_CACHE["sportclub"]
+
+
+def test_rede_sem_logo_continua_no_fallback_de_sigla():
+    """Sem arquivo e fora do registro, nada muda: placa generica de sigla "C"."""
+    icon = competitor_icon_data("Academia Que Nao Existe")
+    assert icon  # o fallback SVG sempre desenha algo
+    assert "svg" in str(icon.get("url", ""))
