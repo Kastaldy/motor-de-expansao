@@ -4680,8 +4680,16 @@ do §7.4.1.
 | **Criticidade** | **Crítica** — mexe em `qualidade_join_uf`/`confianca_geografica`, insumo da camada censitária PRIMÁRIA (§1) e do gate híbrido (DEC-040/045/050). Precisa de DEC própria. |
 | **Esteira** | `[GATE HUMANO]` — investigação + medição de impacto antes de qualquer PR. |
 | **Depende de** | DEC-050 (aprofunda o mesmo achado — a DEC-050 corrigiu o composto obsoleto vs. `classe_join_uf`, mas nem o `classe_join_uf` "corrigido" resolve os dois problemas abaixo) |
-| **Status** | **Achado, não iniciado** — registrado em 2026-09-09 a pedido do Felipe, depois de reportar hexágonos com fallback municipal em Manaus/AM, Fortaleza/CE e litoral do RJ/SP mesmo com o mapa de calor mostrando setor censitário real na mesma área |
+| **Status** | **Mecanismo 1 FEITO** ([DEC-054](../docs/decisions/DEC-054.md), 2026-09-09): nota de cobertura por município, promoção-só — 13.147 hexágonos promovidos, zero rebaixados, Manaus 2.038/2.139 e Boa Vista 1.110/1.191. **Mecanismo 2 em aberto** (reclassificado, ver abaixo). |
 | **Autonomia** | **manual (NÃO loop-safe)** — toca score/confiança censitária, Crítica |
+
+> **⚠ CORREÇÃO DOS NÚMEROS DESTE BLOCO (2026-09-09).** A medição original abaixo saiu de um artefato
+> LOCAL defasado (31/08, anterior à regeneração da DEC-050), não da produção. Os números certos,
+> medidos contra o parquet real da VPS: **27,98% do país em fallback** (não 52%) e **duas UFs a 100%
+> — AM e RR** (não doze). O desperdício real — fallback com dado de setor disponível — era 192.486
+> hexágonos, **todos em AM e RR**. A regeneração da DEC-050 já havia consertado as outras dez UFs;
+> o artefato local é que não tinha sido atualizado (a regeneração rodou num worktree isolado, depois
+> apagado). Lição registrada: medir contra o que produção SERVE, não contra o disco de trabalho.
 
 **O que foi medido (comparando o parquet `hexagonos_dashboard_enriquecido` real da VPS pós-DEC-050
 contra o setor censitário bruto que alimenta o mapa de calor do BLK do dia):**
@@ -4697,12 +4705,18 @@ sofre esse gate hoje** (o `_derivar` do piloto usa a coluna sempre que ela exist
 `qualidade_join_uf`) — o que evita esse sintoma na renda, mas por acidente, não por desenho: um valor
 de renda de um hex com join ruim é exibido sem nenhum aviso de baixa confiança.
 
-**Mecanismo 2 — hexágono na linha da costa quebra a classificação.** Em Fortaleza, 80% dos hexágonos
-têm ótima nota (`B`), mas os 11 problemáticos (`"Não informado"` → fallback municipal) se concentram
-exatamente na faixa de latitude mais ao norte, a costa da cidade — hexágono que cruza a linha d'água
-não tem setor censitário cobrindo o oceano, a métrica de mismatch degenera e a classificação nunca
-sai de `"Não informado"`. Mesmo padrão esperado no litoral do RJ e SP (medição em RJ é mais ruidosa
-por causa da baía/relevo, mas a mecânica geométrica é a mesma).
+**Mecanismo 2 — ~~hexágono na linha da costa quebra a classificação~~ REFUTADO e reclassificado
+(2026-09-09): são hexágonos ÓRFÃOS da Fase A.** A hipótese do litoral (métrica degenerando sobre o
+oceano) foi medida e caiu: **41,2% dos 9.886 hexágonos `"Não informado"` estão em UF SEM COSTA**
+(fronteira internacional — São Gabriel da Cachoeira 425, Amajari 303, Corumbá 234). A causa real é
+outra e fecha por aritmética exata: a Fase A rodou em **2026-05-15 e nunca mais**, e a base H3 cresceu
+DEPOIS em três eventos de critério geométrico de borda — **+5.305** (centroide, 2026-05-26) **+474**
+(DEC-002) **+4.107** (DEC-003) = **exatamente 9.886**, batendo por UF em **27/27** (inclusive o zero
+de TO). Eles não têm linha nenhuma nas fontes da Fase A; nenhuma regra de reclassificação de join
+alcança linha AUSENTE. Casos do relato: Fortaleza 11, Rio 53, SP 5. **5.612 deles já têm dado em
+`censo2022_hex_da_malha.parquet`** (6.254.969 hab), incluindo 11/11 de Fortaleza e 345/391 do Rio —
+é o caminho barato de conserto (admitir na `sobrepor_renda_da_malha` o que hoje é `how="left"`
+value-preserving). Os 4.274 restantes não estão na malha e não foram investigados.
 
 **Por que isso não é bug do trabalho recém-entregue.** As flags `renda_municipal`/`pop_municipal`
 (fallback-legend) e o mapa de calor (Bloco D) estão corretos — eles só tornaram VISÍVEL um limite
