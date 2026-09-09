@@ -128,6 +128,12 @@ def test_gerir_usuario_e_capacidade_propria_e_vem_antes_da_generica() -> None:
     assert acesso.capacidade_necessaria("/api/acessos/usuarios/7", "PATCH") == (
         "acesso.usuario_gerir"
     )
+    # POST tambem, desde a D26 (criar usuario). A regra ja' listava o metodo antes de a
+    # rota existir, mas NENHUM teste fixava isso — uma reordenacao da tupla passaria
+    # calada, deixando CRIAR gente sob a chave de LEITURA do painel.
+    assert acesso.capacidade_necessaria("/api/acessos/usuarios", "POST") == (
+        "acesso.usuario_gerir"
+    )
     assert acesso.capacidade_necessaria("/api/acessos/resumo", "GET") == "acesso.painel_ver"
     # Mudar quem entra é tão sensível quanto o financeiro da rede: fail-closed nega em produção.
     assert "acesso.usuario_gerir" in acesso.CAPACIDADES_SENSIVEIS
@@ -336,3 +342,68 @@ def test_header_sempre_vence_a_env_de_dev(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv(rbac.ENV_DEV_USUARIO, "vinicius.teste")
     monkeypatch.setenv(acesso.ENV_ADMIN_ACESSOS, "vinicius.teste")
     assert acesso.pode_ver_acessos("outra_pessoa") is False
+
+
+# --------------------------------------------------------------------------------------
+# O teto da INSTANCIA vale tambem quando as abas vem do banco
+# --------------------------------------------------------------------------------------
+
+
+def test_me_pelo_banco_tambem_respeita_o_teto_da_instancia(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Espelho, no ramo do RBAC, do teste que a main escreveu para o ramo do JSON.
+
+    O `test_me_nao_concede_aba_que_a_INSTANCIA_nao_oferece` (test_piloto_web_acesso.py)
+    guarda a interseccao com `PERFIL.superficies` — mas roda SEM `MOTOR_DATABASE_URL`,
+    entao cai no ramo do `acesso_abas.json` e passaria verde mesmo que o ramo do banco
+    perdesse a interseccao. Era o ponto cego exato do merge de 09/09: o `me()` tem DUAS
+    fontes de aba, e so' uma delas estava coberta.
+
+    O RBAC do banco NAO tem eixo de pais — `territorio.ranking_nacional` e' a mesma
+    capacidade no Brasil e na Argentina. Quem decide o que a instancia serve e' o perfil.
+    """
+    # `app` entra aqui dentro de proposito: este arquivo testa o `acesso` em isolamento, e
+    # importa-lo no topo puxaria a arvore inteira do FastAPI para todos os casos.
+    import app as pilot_app
+
+    from motor_expansao.perfil import PERFIL_BR_EMBARCADO, carregar_perfil
+
+    perfil_ar = carregar_perfil(PERFIL_BR_EMBARCADO.parents[1] / "AR" / "perfil.json")
+    monkeypatch.setattr(pilot_app, "PERFIL", perfil_ar)
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    _identidade(
+        monkeypatch,
+        {"territorio.explorar", "territorio.ranking_nacional", "viabilidade.simular"},
+    )
+
+    payload = pilot_app.me(remote_user="ana")
+
+    # `oportunidades` cai: a Argentina nao a oferece (`superficies` = mapa, viabilidade).
+    assert payload["abas"] == ["mapa", "viabilidade"]
+
+
+def test_a_tela_nao_oferece_o_que_o_gate_de_pais_nega(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Os dois lados tem de contar a MESMA historia sobre a mesma pessoa.
+
+    Sem a interseccao, o `/api/me` anunciaria `oportunidades`, a SPA desenharia o card, e
+    o clique morreria em 404 no `motivo_bloqueio_pais`. Aqui se afirma a concordancia, e
+    nao so' o valor: a rota que aquela aba serviria e' justamente a que o gate nega.
+    """
+    import app as pilot_app
+
+    from motor_expansao.perfil import PERFIL_BR_EMBARCADO, carregar_perfil
+
+    perfil_ar = carregar_perfil(PERFIL_BR_EMBARCADO.parents[1] / "AR" / "perfil.json")
+    monkeypatch.setattr(pilot_app, "PERFIL", perfil_ar)
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    _identidade(
+        monkeypatch,
+        {"territorio.explorar", "territorio.ranking_nacional", "viabilidade.simular"},
+    )
+
+    abas = set(pilot_app.me(remote_user="ana")["abas"])
+    assert acesso.motivo_bloqueio_pais("/api/estados", perfil_ar) is not None
+    assert "oportunidades" not in abas
