@@ -4,7 +4,7 @@
 > Ligada em produção em 2026-08-07. READ-ONLY sobre o M1: não recalcula score, não toca
 > pesos nem artefato oficial.
 >
-> **Cadência (DEC-049):** desde 2026-09 a camada tem atualização TRIMESTRAL automática
+> **Cadência (DEC-052):** desde 2026-09 a camada tem atualização TRIMESTRAL automática
 > na VPS (cron dia 5 de fev/mai/ago/nov) — o job `motor_expansao.crescimento.atualizar`
 > baixa o CAGED novo, roda a cadeia inteira em rascunho, valida e publica pelos MESMOS
 > passos do runbook abaixo (rename atômico + restart), avisando no chat de ops. O

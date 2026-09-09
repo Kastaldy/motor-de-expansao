@@ -287,7 +287,15 @@ def _prepare_censo_trace(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     prepared = df.copy()
-    if "classe_join_uf" in prepared.columns and "qualidade_join_uf" not in prepared.columns:
+    if "classe_join_uf" in prepared.columns:
+        # Mesmo fix de `modelo_hibrido_expansao._padronizar_censo` (Bloco A): preferir
+        # SEMPRE o join real (`classe_join_uf`) sobre o composto obsoleto que a fonte
+        # nacional grava em `qualidade_join_uf` (join E amplitude E cobertura, calculado
+        # contra a escala do score pre-DEC-040). Sem isso, `_derive_hybrid_labels` e o
+        # `confianca_geografica` do piloto web liam o composto e prendiam 12 UFs (todas
+        # N/NE) em fallback municipal mesmo com join/cobertura bons.
+        if "qualidade_join_uf" in prepared.columns:
+            prepared = prepared.drop(columns=["qualidade_join_uf"])
         prepared = prepared.rename(columns={"classe_join_uf": "qualidade_join_uf"})
 
     for column in [

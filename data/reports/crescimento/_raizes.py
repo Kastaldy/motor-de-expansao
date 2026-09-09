@@ -118,7 +118,7 @@ _MES_PT = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out",
 def competencia_legivel(comp: str) -> str:
     """AAAAMM -> "jun/2026". Rotulo do fim MOVEL da serie CAGED.
 
-    Ate a DEC-049 os scripts 07/09/10 escreviam o rotulo LITERAL ("jun/2026"): o
+    Ate a DEC-052 os scripts 07/09/10 escreviam o rotulo LITERAL ("jun/2026"): o
     cron trimestral avancaria o dado e o tooltip continuaria dizendo o mes velho —
     contradicao publicada sem erro. O rotulo agora deriva da mesma competencia que
     delimita o dado. Ha um gemeo em `motor_expansao/crescimento/atualizar.py` (que
@@ -132,7 +132,7 @@ def caged_consolidado() -> Path:
     """CSV consolidado do CAGED — canonico com fallback para o nome legado.
 
     O nome antigo embutia o periodo (`_2020_2026`): quando o cron trimestral
-    (DEC-049) passasse de 2026, ele atualizaria um arquivo que a cadeia nao le.
+    (DEC-052) passasse de 2026, ele atualizaria um arquivo que a cadeia nao le.
     O canonico e' o `_consolidado`; o legado continua valendo onde a migracao
     ainda nao rodou (estacao do autor). Os DOIS nomes tambem vivem em
     `src/motor_expansao/crescimento/caged.py` (que nao pode ser importado daqui);

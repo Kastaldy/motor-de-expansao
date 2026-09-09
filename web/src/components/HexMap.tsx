@@ -27,11 +27,13 @@ import { corTipo, corTipoRgb, custoOcup, labelTipo, rsM2 } from '../lib/imovel'
 import { sinaisDoRegime } from '../lib/sinais'
 import {
   DISCARDED_FILL,
+  densidadeSetorToColor,
   faixaM1ToColor,
   HEX_FILL_ALPHA,
   NAN_SCORE_FILL,
   POP_MIN_ACIONAVEL,
   camadaCor,
+  rendaSetorToColor,
   scoreBandToColor,
   crescClasseToColor,
   type RGBA,
@@ -48,6 +50,7 @@ import type {
   Pin,
   PinIndependente,
   Pins,
+  SetorHeatmap,
 } from '../lib/types'
 
 /** Objeto de ícone do deck.gl a partir de um data URI (bandeira quadrada). */
@@ -380,6 +383,10 @@ export interface HexMapProps {
   onImovel?: (o: Oportunidade) => void
   /** PROTOTIPO: area coberta pelo raio, ja recortada dentro dos hexagonos. */
   cobertura1k?: Cobertura1k | null
+  /** Bloco D — poligonos de setor censitario para o mapa de calor opcional. */
+  heatmapSetores?: SetorHeatmap[]
+  /** Qual leitura o calor pinta agora — `null` = camada desligada. */
+  modoCalor?: 'densidade' | 'renda' | null
   /** Tema do app: escolhe o basemap e as cores que o WebGL nao le' do CSS (ver `PELE`). */
   tema: Tema
   cameraInicial?: ViewState | null
@@ -444,6 +451,8 @@ export default function HexMap({
   imoveis,
   onImovel,
   cobertura1k,
+  heatmapSetores,
+  modoCalor = null,
   tema,
   cameraInicial,
   onCamera,
@@ -981,6 +990,32 @@ export default function HexMap({
           ]
         : []),
 
+      /* Bloco D — mapa de calor de SETOR censitario (densidade/renda), opcional e so' no
+         drill-down de municipio. Poligono de setor e' MAIS FINO que o hexagono e cobre a
+         area inteira do municipio de proposito: a leitura que o operador pediu e' "me
+         mostre densidade/renda de bairro", nao um blend com o score do hexagono por
+         baixo — por isso, como a peca da cobertura de 1 km acima, ele pousa por cima do
+         H3HexagonLayer com `depthCompare: 'always'`, em vez de disputar o pixel com ele. */
+      ...(modoCalor && heatmapSetores?.length
+        ? [
+            new PolygonLayer<SetorHeatmap>({
+              id: 'calor-setor',
+              data: heatmapSetores,
+              getPolygon: (d) => d.anel,
+              positionFormat: 'XY', // mesma armadilha do anel da cobertura — ver comentario acima.
+              filled: true,
+              getFillColor: (d) =>
+                (modoCalor === 'densidade'
+                  ? densidadeSetorToColor(d.densidade)
+                  : rendaSetorToColor(d.renda)) ?? [120, 120, 140, 60],
+              stroked: false,
+              updateTriggers: { getFillColor: [modoCalor] },
+              pickable: false,
+              parameters: { depthCompare: 'always' as const },
+            }),
+          ]
+        : []),
+
       /* SOMBRA por concorrente: uma peca para CADA concorrente que toca o hexagono,
          preta e translucida, SEM contorno. Empilhadas, o alpha se acumula e a area fica
          mais escura quanto mais concorrentes a cobrem — a leitura de adensamento que a
@@ -1351,6 +1386,8 @@ export default function HexMap({
     imoveis,
     onImovel,
     cobertura1k,
+    heatmapSetores,
+    modoCalor,
     hexesCobertos,
     hexPorId,
     // Mesmo motivo do bloco acima: o corpo LE as duas para montar (ou nao) a regua.
@@ -1481,10 +1518,19 @@ export default function HexMap({
           )}
 
           <Divisoria />
-          <Linha rotulo="Habitantes" valor={num(hover.h.pop)} />
-          <Linha rotulo="Renda per capita" valor={renda(hover.h.renda)} />
+          <Linha
+            rotulo={hover.h.pop_municipal ? 'Habitantes (municipal)' : 'Habitantes'}
+            valor={num(hover.h.pop)}
+          />
+          <Linha
+            rotulo={hover.h.renda_municipal ? 'Renda per capita (municipal)' : 'Renda per capita'}
+            valor={renda(hover.h.renda)}
+          />
           {hover.h.renda_dom !== null && (
-            <Linha rotulo="Renda domiciliar" valor={renda(hover.h.renda_dom)} />
+            <Linha
+              rotulo={hover.h.renda_municipal ? 'Renda domiciliar (municipal)' : 'Renda domiciliar'}
+              valor={renda(hover.h.renda_dom)}
+            />
           )}
           <Linha rotulo="Residual Fitness" valor={`${alunos(hover.h.oferta)} alunos`} />
           <Linha rotulo="Concorrentes 2 km" valor={num(hover.h.conc)} />

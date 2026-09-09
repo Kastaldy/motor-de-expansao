@@ -40,10 +40,23 @@ export interface Hex {
   /** sam_fitness_potencial, em alunos */
   sam: number | null
   pop: number | null
+  /**
+   * `true` quando `pop` vem do FALLBACK municipal (SIDRA, o mesmo numero repetido em
+   * todo hexagono da cidade), nao do setor censitario 2022 (granular) — mesma familia
+   * de defeito da renda, abaixo. `false`/ausente = leitura de setor.
+   */
+  pop_municipal?: boolean | null
   /** renda per capita (R$/mes) */
   renda: number | null
   /** renda media domiciliar (R$/mes) = renda per capita x fator municipal */
   renda_dom: number | null
+  /**
+   * `true` quando `renda`/`renda_dom` vem do FALLBACK municipal (SIDRA, o mesmo
+   * numero repetido em todo hexagono da cidade), nao do setor censitario (granular).
+   * Sem isso o operador ve um numero com cara de leitura intraurbana que na verdade
+   * e' so' o municipio inteiro (Bloco A/DEC-050). `false`/ausente = leitura de setor.
+   */
+  renda_municipal?: boolean | null
   /** rotulo da faixa de oportunidade M1 (ex.: "Alta") */
   faixa: string | null
   /**
@@ -321,6 +334,29 @@ export interface Cobertura1k {
   contorno: number[][][][]
   n_discos: number
   truncado: boolean
+}
+
+/**
+ * Bloco D — um polígono de SETOR censitário para o mapa de calor opcional (densidade
+ * demográfica / renda per capita). Mesmo formato de `PecaCobertura.anel`
+ * ([anel_externo, buraco1, ...]) — um setor MultiPolygon vira mais de uma entrada aqui,
+ * todas com os MESMOS atributos.
+ */
+export interface SetorHeatmap {
+  setor: string
+  anel: number[][]
+  /** hab/km², já ponderado por área na malha do setor. `null` = sem leitura. */
+  densidade: number | null
+  /** R$/pessoa/mês (per capita, calibrada) — a MESMA régua do Relatório Pontual. */
+  renda: number | null
+  pop: number | null
+}
+
+/** `disponivel=false` = sem partição geo para o município (base parcial/em rollout);
+ *  o front esconde a chave da camada em vez de oferecer um toggle que nunca liga. */
+export interface SetoresHeatmapPayload {
+  disponivel: boolean
+  setores: SetorHeatmap[]
 }
 
 export interface Pins {

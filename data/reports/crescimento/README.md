@@ -78,7 +78,7 @@ Tudo fora do repositório, sob as raízes acima:
 - **CAGED** (`caged/caged_municipio_mensal_consolidado.csv`; fallback ao legado
   `_2020_2026.csv` via `_raizes.caged_consolidado()`) — saldo mensal por município.
   E' o único insumo com cadência própria: `motor_expansao.crescimento.caged` baixa os
-  meses novos do FTP do PDET e o atualiza (DEC-049)
+  meses novos do FTP do PDET e o atualiza (DEC-052)
 - **RAIS** (`rais/rais_municipio_{2020..2024}.csv`) — vínculos, massa salarial, remuneração
 - **CNPJ / Receita Federal** (`cnpj/agg/*.parquet`, `cnpj/Municipios.zip`) — abertura e fechamento de empresas por ano e setor
 - **IBGE** (`pib/populacao_6579_serie.csv`, `pib/pib_municipal_5938_2019_2023.csv`)
@@ -166,7 +166,7 @@ foi deflacionada para não introduzir um índice não auditável aqui; a compara
 a mediana nacional na barra faz o papel do deflator na leitura relativa.
 
 **Emprego é dez/2022 → o último mês incorporado do CAGED** (jun/2026 na foto de
-2026-08; o cron trimestral da DEC-049 move o fim da série a cada rodada — os
+2026-08; o cron trimestral da DEC-052 move o fim da série a cada rodada — os
 exemplos de `cres_dims`/`cres_series` acima são dessa foto). Saldo acumulado do
 CAGED sobre o estoque de
 vínculos da RAIS de 2022. O primeiro ponto da série é esse estoque, para a variação
@@ -178,7 +178,7 @@ demolição. Por isso é cinza, não vermelho.
 
 ## Rodar
 
-O caminho com rede de segurança é o ORQUESTRADOR (DEC-049) — ordem garantida, cadeia
+O caminho com rede de segurança é o ORQUESTRADOR (DEC-052) — ordem garantida, cadeia
 em `MOTOR_DATA_DIR` de rascunho (nunca sobre o staging vivo), validação do artefato e
 publicação por rename atômico; é ele que o cron trimestral da VPS executa:
 
@@ -194,7 +194,7 @@ cd data/reports/crescimento
 for f in 0*.py 10_*.py; do python "$f" || break; done
 ```
 
-> Desde a DEC-049 os caminhos internos usam `/` (funcionam em Windows E Linux — antes
+> Desde a DEC-052 os caminhos internos usam `/` (funcionam em Windows E Linux — antes
 > os literais `rf"...\..."` só abriam arquivo no Windows, e a VPS é Linux). Teste
 > `test_cadeia_sem_caminho_windows` impede a regressão.
 

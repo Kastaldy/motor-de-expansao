@@ -44,6 +44,8 @@ def _df(**kwargs) -> pd.DataFrame:
         "oferta_efetiva_mapeada_2km": 0.0,
         "gap_competitivo_2km": 1.0,
         "pressao_concorrencial_score_2km": 0.0,
+        "oferta_efetiva_1km_area": 0.0,
+        "gap_competitivo_1km_area": 1.0,
         "confianca_geografica": "municipal",
         "qualidade_join_uf": "C",
         "total_hex_municipio": 1.0,

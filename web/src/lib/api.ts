@@ -21,6 +21,7 @@ import type {
   RedeFicha,
   RedeFiltros,
   RedeQuery,
+  SetoresHeatmapPayload,
   ViabilidadeIn,
   ViabilidadeOut,
 } from './types'
@@ -407,6 +408,15 @@ export const api = {
   municipio: (uf: string, municipio: string) =>
     pedir<MunicipioPayload>(
       `/api/municipio/${encodeURIComponent(uf)}/${encodeURIComponent(municipio)}`,
+    ),
+
+  /** Bloco D — mapa de calor opcional (densidade/renda por SETOR censitário), SOB
+   *  DEMANDA. Fora do payload do mapa de propósito: São Paulo capital sozinha chega a
+   *  ~9 MB, e só quem liga a chave deve pagar. So' funciona no drill-down de município
+   *  (mesmo gate dos pins de concorrente) — nunca em escala nacional/UF. */
+  setoresHeatmap: (uf: string, municipio: string) =>
+    pedir<SetoresHeatmapPayload>(
+      `/api/municipio/${encodeURIComponent(uf)}/${encodeURIComponent(municipio)}/setores-heatmap`,
     ),
 
   faixaAlunos: (m2: number, formato?: string) => {

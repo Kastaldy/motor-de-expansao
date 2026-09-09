@@ -743,9 +743,9 @@ scp -i "$env:USERPROFILE\.ssh\id_ultra" -r data/ultra/ root@2.25.137.241:/opt/mo
 
 ---
 
-## Atualização trimestral da camada de crescimento municipal (DEC-049)
+## Atualização trimestral da camada de crescimento municipal (DEC-052)
 
-> Decisão em `docs/decisions/DEC-049.md`; contrato da camada em
+> Decisão em `docs/decisions/DEC-052.md`; contrato da camada em
 > `docs/camada_crescimento_municipal.md`; **pacote de repasse com os comandos um a um
 > em `docs/repasse_cron_crescimento.md`** — este bloco é o resumo de referência.
 
@@ -951,7 +951,7 @@ O que é vigiado e a cadência (crontab do root):
 0 11 * * *  /opt/motor-monitoring/healthcheck_vps.sh authelia    # resumo diário de falhas de login (08h BRT)
 0 18 * * 0  /opt/motor-monitoring/healthcheck_vps.sh coleta      # domingo 15h BRT: resumo/falha da coleta semanal
 0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh agregadores # quinta 09h BRT: idade da partição de cada agregador (BLK-MA-21)
-0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh crescimento # quinta 09h BRT: idade da camada de crescimento municipal (DEC-049; limiar 100 dias)
+0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh crescimento # quinta 09h BRT: idade da camada de crescimento municipal (DEC-052; limiar 100 dias)
 ```
 
 Comportamento anti-spam: alerta na transição OK→FAIL, lembrete a cada 1h enquanto durar,

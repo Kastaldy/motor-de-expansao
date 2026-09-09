@@ -1,4 +1,4 @@
-import { perfilDoCliente } from './perfil'
+import { moedaRenda, perfilDoCliente } from './perfil'
 /* ---------------------------------------------------------------------------
    Cores dos hexagonos — porte fiel do dashboard Streamlit.
 
@@ -340,4 +340,58 @@ export function conc1kmToColor(
     parseInt(hex.slice(5, 7), 16),
     alpha,
   ]
+}
+
+/* ---------------------------------------------------------------------------
+   Bloco D — mapa de calor de SETOR censitario (densidade / renda per capita).
+
+   Porte 1:1 de `dashboard/constants.py` (mesmos cortes e cores do Relatorio Pontual
+   Censitario, estilo GeoFusion) — a ideia e' que o operador reconheca a MESMA leitura
+   que ja ve no PDF, agora tambem no mapa principal. Camada de VISUALIZACAO opcional;
+   nao altera score/artefatos M1.
+   --------------------------------------------------------------------------- */
+
+/** Faixa: [corte_superior, rotulo, [r,g,b,alpha]]. Ultima faixa usa `Infinity`. */
+type FaixaAbsoluta = readonly [number, string, RGBA]
+
+/** DENSIDADE_POP_BANDS (dashboard/constants.py) — hab/km2, rampa de vermelhos. */
+export const DENSIDADE_BANDS: readonly FaixaAbsoluta[] = [
+  [1_000, 'até 1.000', [254, 229, 217, 150]],
+  [5_000, '1.001-5.000', [252, 174, 145, 150]],
+  [10_000, '5.001-10.000', [251, 106, 74, 150]],
+  [25_000, '10.001-25.000', [222, 45, 38, 150]],
+  [Infinity, '>25.000', [165, 15, 21, 150]],
+]
+
+/** RENDA_PER_CAPITA_BANDS (dashboard/constants.py) — moeda de renda/pessoa/mês,
+ *  amarelo->verde. O rótulo usa `moedaRenda()` (não `moeda()` cru — a Argentina serve
+ *  a coluna de renda em USD, diferente da moeda oficial) em vez do símbolo cravado;
+ *  cortes e cores são os mesmos números do núcleo, travados por
+ *  `tests/unit/test_paridade_paleta_web.py`. */
+export const RENDA_SETOR_BANDS: readonly FaixaAbsoluta[] = [
+  [1_000, `até ${moedaRenda()} 1.000`, [247, 244, 139, 150]],
+  [2_000, `${moedaRenda()} 1.001-2.000`, [255, 255, 0, 150]],
+  [3_500, `${moedaRenda()} 2.001-3.500`, [255, 210, 28, 150]],
+  [5_000, `${moedaRenda()} 3.501-5.000`, [168, 255, 168, 150]],
+  [Infinity, `>${moedaRenda()} 5.000`, [0, 204, 0, 150]],
+]
+
+function faixaAbsolutaToColor(
+  valor: number | null | undefined,
+  faixas: readonly FaixaAbsoluta[],
+  alpha: number,
+): RGBA | null {
+  if (valor == null || Number.isNaN(valor)) return null
+  const [, , [r, g, b]] = faixas.find(([corte]) => valor <= corte) ?? faixas[faixas.length - 1]
+  return [r, g, b, alpha]
+}
+
+/** Cor do polígono de setor pela densidade populacional (hab/km²). `null` = sem leitura. */
+export function densidadeSetorToColor(valor: number | null | undefined, alpha = 150): RGBA | null {
+  return faixaAbsolutaToColor(valor, DENSIDADE_BANDS, alpha)
+}
+
+/** Cor do polígono de setor pela renda per capita (R$/mês). `null` = sem leitura. */
+export function rendaSetorToColor(valor: number | null | undefined, alpha = 150): RGBA | null {
+  return faixaAbsolutaToColor(valor, RENDA_SETOR_BANDS, alpha)
 }

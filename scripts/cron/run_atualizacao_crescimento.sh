@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Atualizacao TRIMESTRAL da camada de crescimento municipal (DEC-049)
+# Atualizacao TRIMESTRAL da camada de crescimento municipal (DEC-052)
 #     CAGED novo -> cadeia 01..10 -> validacao -> publicacao atomica -> restart
 #     -> aviso no chat de ops do Telegram (bot "Paulo"), nos DOIS desfechos.
 #

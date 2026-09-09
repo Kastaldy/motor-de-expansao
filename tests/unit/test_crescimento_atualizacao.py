@@ -1,4 +1,4 @@
-"""Atualizacao trimestral da camada de crescimento (DEC-049).
+"""Atualizacao trimestral da camada de crescimento (DEC-052).
 
 O que se trava aqui, na ordem do risco:
 

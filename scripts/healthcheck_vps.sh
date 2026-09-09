@@ -10,7 +10,7 @@
 #   authelia    resumo diário de falhas de login (cron 1x/dia)
 #   coleta      domingo pós-coleta: resumo do relatório GymScraping ou alerta de falha
 #   agregadores idade da última partição de snapshot de cada agregador (cron semanal, BLK-MA-21)
-#   crescimento idade do artefato da camada de crescimento municipal (cron trimestral, DEC-049)
+#   crescimento idade do artefato da camada de crescimento municipal (cron trimestral, DEC-052)
 #   test        envia mensagem de teste ao chat de ops
 #
 # Anti-spam: alerta só na transição OK->FAIL, lembrete a cada REMIND_SECS enquanto
@@ -42,7 +42,7 @@ SNAPSHOTS_DIR="${MONITOR_SNAPSHOTS_DIR:-/opt/motor-expansao/data/staging/snapsho
 # perdidas antes do primeiro FAIL.
 AGREGADOR_MAX_DIAS="${MONITOR_AGREGADOR_MAX_DIAS:-9}"
 AGREGADORES=(wellhub totalpass)
-# Camada de crescimento municipal (DEC-049): cadencia TRIMESTRAL (dia 5 de
+# Camada de crescimento municipal (DEC-052): cadencia TRIMESTRAL (dia 5 de
 # fev/mai/ago/nov). 100 = um trimestre (~92 dias) + folga para retentativa manual;
 # com o check SEMANAL (quinta), uma rodada perdida dispara na 1a quinta depois de
 # a idade passar de 100 — ~1-2 semanas apos o cron falhar, nao um mes. A regua e'
@@ -262,7 +262,7 @@ check_agregadores() {
 }
 
 check_crescimento() {
-    # Idade do artefato da camada de crescimento municipal (DEC-049). Sem este
+    # Idade do artefato da camada de crescimento municipal (DEC-052). Sem este
     # check, um cron trimestral morto seria invisivel: a camada e' OPCIONAL por
     # desenho — o passo 4 degrada sem erro e sem log, e /api/health continua 200.
     local idade_seg idade_dias

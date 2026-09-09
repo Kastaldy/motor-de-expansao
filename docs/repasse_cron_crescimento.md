@@ -1,8 +1,8 @@
-# Repasse — ligar a atualização trimestral da camada de crescimento (DEC-049)
+# Repasse — ligar a atualização trimestral da camada de crescimento (DEC-052)
 
 > Para o dono executar na VPS, comando a comando, sem precisar abrir o repositório.
 > Nada disto roda sozinho: o PR só entrega o código; cada passo abaixo é seu.
-> Decisão: `docs/decisions/DEC-049.md` · detalhe de infra: `docs/infra_producao.md`.
+> Decisão: `docs/decisions/DEC-052.md` · detalhe de infra: `docs/infra_producao.md`.
 
 ## O que isto liga
 

@@ -1,7 +1,7 @@
-"""Atualizacao TRIMESTRAL da camada de crescimento municipal (BLK-TRAJ-02 / DEC-049).
+"""Atualizacao TRIMESTRAL da camada de crescimento municipal (BLK-TRAJ-02 / DEC-052).
 
 O que vive aqui e' o lado TESTADO e EMBARCAVEL (viaja na imagem da API) do ciclo de
-atualizacao que ate' a DEC-049 era 100% manual e sem cadencia:
+atualizacao que ate' a DEC-052 era 100% manual e sem cadencia:
 
     caged.py      baixa os meses NOVOS do Novo CAGED (FTP do PDET) e atualiza o CSV
                   consolidado que a cadeia 01..10 consome — sem meses hardcoded e

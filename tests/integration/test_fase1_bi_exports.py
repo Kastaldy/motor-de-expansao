@@ -341,6 +341,58 @@ def test_read_censo_trace_le_as_tres_fontes_incluindo_a_nacional(tmp_path, monke
     assert renda["h_core"] == 3100.0, "core deve vencer o nacional na deduplicacao"
 
 
+def test_read_censo_trace_prefere_classe_join_uf_sobre_composto_obsoleto(tmp_path, monkeypatch):
+    """Regressao (Bloco A): o dataset servido ao piloto web nao pode ler o composto.
+
+    Mesmo defeito de `test_load_censo_prefere_classe_join_uf_sobre_composto_obsoleto`
+    (modelo_hibrido_expansao), mas no caminho que `fase1_bi_exports` de fato usa:
+    `_prepare_censo_trace` (dashboard/data.py) + `CENSO_TRACE_LOAD_COLS`. Ate este fix,
+    `classe_join_uf` nem estava na lista de colunas lidas do parquet -- o fix ficaria
+    inerte mesmo corrigindo o rename, porque a coluna nunca chegava no frame.
+    """
+    from motor_expansao.pipelines.m1 import fase1_bi_exports as bi
+
+    def _fonte(hex_id: str, uf: str, classe_real: str, composto_obsoleto: str) -> pd.DataFrame:
+        return pd.DataFrame(
+            [{
+                "hex_id": hex_id,
+                "uf": uf,
+                "cod_municipio": "1",
+                "nome_municipio": "X",
+                "pop_total_setor_2022": 1000.0,
+                "score_setor_2022_calibrado": 55.0,
+                "renda_per_capita_setor_2022_calibrada": 950.0,
+                "coverage_pct_setor_2022": 99.0,
+                "classe_join_uf": classe_real,
+                "qualidade_join_uf": composto_obsoleto,
+            }]
+        )
+
+    core = tmp_path / "core.parquet"
+    expandido = tmp_path / "expandido.parquet"
+    nacional = tmp_path / "nacional.parquet"
+    validado = tmp_path / "validado.parquet"
+    _fonte("h_core", "SP", "A", "A").iloc[0:0].to_parquet(core, index=False)
+    _fonte("h_exp", "MG", "A", "A").iloc[0:0].to_parquet(expandido, index=False)
+    # join real excelente (A), composto obsoleto reprovado (C) por amplitude -- o real
+    # deve vencer.
+    _fonte("h_nac", "PB", "A", "C").to_parquet(nacional, index=False)
+    _fonte("h_core", "SP", "A", "A").iloc[0:0].to_parquet(validado, index=False)
+
+    monkeypatch.setattr(bi, "CENSO_CORE_PATH", core)
+    monkeypatch.setattr(bi, "CENSO_EXPANDED_PATH", expandido)
+    monkeypatch.setattr(bi, "CENSO_NACIONAL_PATH", nacional)
+    monkeypatch.setattr(bi, "CENSO_VALIDATED_PATH", validado)
+
+    _SEM_MALHA = Path("__sem_malha__.parquet")
+    trace = bi._read_censo_trace_frame(malha_path=_SEM_MALHA)
+
+    assert trace.set_index("hex_id").loc["h_nac", "qualidade_join_uf"] == "A", (
+        "o join real (classe_join_uf) deveria vencer o composto obsoleto, "
+        "mesmo no caminho servido ao piloto web"
+    )
+
+
 def test_materializacao_recusa_frame_sem_colunas_de_mercado():
     """O artefato mutilado de 2026-08-28 nao pode voltar em silencio.
 
