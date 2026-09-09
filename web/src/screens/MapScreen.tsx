@@ -1080,6 +1080,7 @@ export default function MapScreen({
 
       {/* ---------------- Header ---------------- */}
       <header
+        className="cromo-escuro"
         style={{
           position: 'relative',
           zIndex: 10,
@@ -1110,8 +1111,12 @@ export default function MapScreen({
 
         <Divisor />
 
+        {/* Os rotulos dos seletores chegaram a alternar as cores da marca (2026-09-09,
+            manha), mas o Juan reverteu no mesmo dia: "a barra de uf, municipio deixar
+            com uma cor que gere contraste (seja preto ou um cinza)". Ficou --tx-strong
+            — o neutro FORTE de cada tema — com o peso 600 da rodada colorida. */}
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span className="num" style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+          <span className="num" style={{ font: '600 11px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
             UF
           </span>
           <Select
@@ -1124,7 +1129,7 @@ export default function MapScreen({
         </label>
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-          <span className="num" style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+          <span className="num" style={{ font: '600 11px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
             MUNICÍPIO
           </span>
           <Select
@@ -1171,7 +1176,7 @@ export default function MapScreen({
             height="14"
             viewBox="0 0 24 24"
             fill="none"
-            stroke={buscando ? 'var(--ac)' : 'var(--tx-muted)'}
+            stroke={buscando ? 'var(--ac)' : 'var(--ac-text)'}
             strokeWidth="1.8"
             strokeLinecap="round"
             aria-hidden
@@ -1218,7 +1223,7 @@ export default function MapScreen({
         </div>
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span className="num" style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+          <span className="num" style={{ font: '600 11px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
             MELHORES
           </span>
           <Select

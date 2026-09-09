@@ -145,7 +145,7 @@ export function faixaM1ToColor(faixa: string | null | undefined, alpha = HEX_FIL
    estavel recebe verde, em queda recebe vermelho.
    --------------------------------------------------------------------------- */
 
-export const CRESC_ALTA_HEX = '#35C9D6'
+export const CRESC_ALTA_HEX = '#30CFC2'
 export const CRESC_ESTAVEL_HEX = '#19A832'
 export const CRESC_PARADO_HEX = '#6E7686'
 

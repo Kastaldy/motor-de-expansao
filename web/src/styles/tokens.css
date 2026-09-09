@@ -66,23 +66,36 @@
   --tx-off: #5a6675;
   --tx-rank: #4a5765;
 
-  /* --- Acento turquesa (identidade do produto) ----------------------------- */
-  --ac: #35c9d6;
-  --ac-text: #4fd3df;
-  --ac-chip: #7de3ec;
+  /* --- Acento turquesa (identidade do produto) -----------------------------
+     Desde 2026-09-09 a matiz e' a do turquesa Ultra #00A99E (~176°), aclarada para o
+     fundo escuro — era o ~186° do #35c9d6 herdado do prototipo. Pedido do Juan: "a
+     visao escura tambem deve seguir as cores padrao da ultra". O par do mapa
+     (CRESC_ALTA_HEX em lib/colors.ts) acompanhou. */
+  --ac: #30cfc2;
+  --ac-text: #4ad8cb;
+  --ac-chip: #82e6dc;
   --ac-on: #06232a; /* texto SOBRE o turquesa */
-  --ac-a08: rgba(53, 201, 214, 0.08);
-  --ac-a10: rgba(53, 201, 214, 0.1);
-  --ac-a12: rgba(53, 201, 214, 0.12);
-  --ac-a14: rgba(53, 201, 214, 0.14);
-  --ac-a16: rgba(53, 201, 214, 0.16);
-  --ac-a22: rgba(53, 201, 214, 0.22);
-  --ac-a24: rgba(53, 201, 214, 0.24);
-  --ac-a25: rgba(53, 201, 214, 0.25);
-  --ac-a30: rgba(53, 201, 214, 0.3);
-  --ac-a45: rgba(53, 201, 214, 0.45);
-  --ac-a60: rgba(53, 201, 214, 0.6);
-  --ac-glow: 0 6px 16px -4px rgba(53, 201, 214, 0.5);
+  --ac-a08: rgba(48, 207, 194, 0.08);
+  --ac-a10: rgba(48, 207, 194, 0.1);
+  --ac-a12: rgba(48, 207, 194, 0.12);
+  --ac-a14: rgba(48, 207, 194, 0.14);
+  --ac-a16: rgba(48, 207, 194, 0.16);
+  --ac-a22: rgba(48, 207, 194, 0.22);
+  --ac-a24: rgba(48, 207, 194, 0.24);
+  --ac-a25: rgba(48, 207, 194, 0.25);
+  --ac-a30: rgba(48, 207, 194, 0.3);
+  --ac-a45: rgba(48, 207, 194, 0.45);
+  --ac-a60: rgba(48, 207, 194, 0.6);
+  --ac-glow: 0 6px 16px -4px rgba(48, 207, 194, 0.5);
+
+  /* --- Lavagem do rail (Dock e trilho de camadas) ---------------------------
+     A "barra lateral" tem tinta PROPRIA por tema (Juan, 2026-09-09): aqui no escuro
+     e' o turquesa do acento ("ficou bom"); no claro e' o MAGENTA Ultra — sobre o gelo
+     ja' turquesa do fundo claro, a lavagem turquesa sumia (ver o bloco claro). */
+  --rail-a08: rgba(48, 207, 194, 0.08);
+  --rail-a12: rgba(48, 207, 194, 0.12);
+  --rail-a16: rgba(48, 207, 194, 0.16);
+  --rail-a24: rgba(48, 207, 194, 0.24);
 
   /* --- Marca Ultra --------------------------------------------------------- */
   --ultra: #c8001e;
@@ -152,14 +165,14 @@
      (CRESC_ALTA_HEX em lib/colors.ts): dar outra matiz ao cabecalho faria ele brigar
      com o hexagono logo ao lado.
 
-     E' o MESMO valor de --ac (#35c9d6), e isso e' deliberado, nao descuido: aqui a
+     E' o MESMO valor de --ac (#30cfc2), e isso e' deliberado, nao descuido: aqui a
      convergencia com a cor de acao e' aceita porque a camada ja' escolheu esse
      turquesa no mapa. Trocar --ac muda esta camada junto — se um dia isso incomodar,
      separe os dois valores em vez de reescrever a paleta da camada. */
-  --l4: #35c9d6;
-  --l4-a10: rgba(53, 201, 214, 0.1);
-  --l4-a24: rgba(53, 201, 214, 0.24);
-  --l4-a60: rgba(53, 201, 214, 0.6);
+  --l4: #30cfc2;
+  --l4-a10: rgba(48, 207, 194, 0.1);
+  --l4-a24: rgba(48, 207, 194, 0.24);
+  --l4-a60: rgba(48, 207, 194, 0.6);
 
   /* Camada 5 · "Para onde crescer" — a SINTESE, sem matiz.
      As quatro matizes livres ja' estao gastas (azul, violeta, ambar, turquesa) e
@@ -194,10 +207,14 @@
      As cores que distinguem SERIES (etapa do funil, fatia da rosca, churn da ficha).
      Nao confundir com --sev-*, que classifica GRAVIDADE, nem com --pos/--neg, que
      dizem se um numero e' boa ou ma noticia. Eram hex soltos nos componentes. */
+  /* Rosa e coral ancoram nas matizes de apoio da marca (magenta Ultra #C23C8E ~323°
+     e laranja Ultra #EF7F1F ~28°), aclaradas para o fundo escuro — desde 2026-09-09,
+     junto com o acento. O coral antigo (#ff8a99, ~352°) lia como VERMELHO e o rosa
+     (#d94a86, ~337°) como um tinto fora da marca. */
   --gr-azul: #6fa4f7;
-  --gr-rosa: #d94a86;
+  --gr-rosa: #e054a8;
   --gr-verde: #5fd08c;
-  --gr-coral: #ff8a99;
+  --gr-coral: #f9965a;
   /* Degrau NEUTRO da escala de faixa de faturamento ("Bom", entre o ambar do Regular e
      o turquesa do Excelente). Neutro quer dizer discreto: e' o degrau que nao deve
      chamar atencao. Tem token proprio porque um cinza de TEXTO nao serve — no escuro o
@@ -310,70 +327,91 @@
    ============================================================================ */
 [data-tema='claro'] {
   /* --- Fundos -------------------------------------------------------------- */
-  /* Cinza levemente azulado, nao branco puro: os cards SAO brancos e precisam de um
-     fundo do qual se destacar, senao a borda de 1 px vira a unica separacao da tela. */
-  --bg-base: #eef2f6;
-  --bg-lift: #e3eaf1;
-  --bg-knob: #ffffff;
+  /* Gelo TURQUESA, nao branco puro nem cinza neutro (Juan, 2026-09-08: "usar as cores
+     base da Ultra para nao deixar o site 100% branco"; terceira rodada em 2026-09-09,
+     "falta colorir mais" — a luminancia desceu mais um degrau e a TINTA neutra do bloco
+     inteiro trocou o azul-marinho pelo teal da mesma matiz): a matiz e' a do turquesa
+     Ultra #00A99E, com luminancia de fundo — os cards sao o gelo quase branco da mesma
+     matiz (ver superficies glass) e precisam de um fundo do qual se destacar, senao a
+     borda de 1 px vira a unica separacao da tela.
+     Matiz e contraste guardados por lib/tema-claro-ultra.test.ts. */
+  --bg-base: #e0f4f2;
+  --bg-lift: #d2eeec;
+  --bg-knob: #effaf9;
 
   /* --- Superficies glass --------------------------------------------------- */
-  --surf-panel: rgba(255, 255, 255, 0.94);
-  --surf-card: rgba(255, 255, 255, 0.82);
-  --surf-sidebar: rgba(255, 255, 255, 0.88);
-  --surf-verdict: rgba(255, 255, 255, 0.86);
-  --surf-chrome: rgba(255, 255, 255, 0.9);
-  --surf-bar: rgba(255, 255, 255, 0.92);
+  /* A base do vidro NAO e' o branco puro: e' #eaf7f5, o gelo da mesma matiz turquesa
+     do fundo (pedido do Juan em 2026-09-08, segunda rodada; aprofundado na terceira,
+     2026-09-09 — o #f2fbfa anterior ainda lia como branco). As reguas de texto
+     continuam passando sobre ela: --tx-muted 4,97:1 e --ac-text 4,74:1. */
+  --surf-panel: rgba(234, 247, 245, 0.94);
+  --surf-card: rgba(234, 247, 245, 0.82);
+  --surf-sidebar: rgba(234, 247, 245, 0.88);
+  --surf-verdict: rgba(234, 247, 245, 0.86);
+  --surf-chrome: rgba(234, 247, 245, 0.9);
+  --surf-bar: rgba(234, 247, 245, 0.92);
   /* Os tres "raised" invertem o SINAL do alfa: no escuro se ilumina com branco, no
      claro se sombreia com tinta. Manter branco aqui deixaria o elemento invisivel. */
-  --surf-raised: rgba(13, 27, 42, 0.06);
-  --surf-input: rgba(13, 27, 42, 0.04);
-  --surf-pending: rgba(13, 27, 42, 0.08);
-  --surf-select: #ffffff;
-  /* Branco chapado: mesma funcao do preto do escuro — tapar a legenda que passa por baixo. */
-  --surf-mapa: #ffffff;
+  --surf-raised: rgba(6, 45, 42, 0.06);
+  --surf-input: rgba(6, 45, 42, 0.04);
+  --surf-pending: rgba(6, 45, 42, 0.08);
+  --surf-select: #eaf7f5;
+  /* Chapado (mesma funcao do preto do escuro — tapar a legenda que passa por baixo),
+     no gelo turquesa das superficies em vez do branco puro. */
+  --surf-mapa: #eaf7f5;
 
   /* --- Hairlines ----------------------------------------------------------- */
-  --line: rgba(13, 27, 42, 0.13);
-  --line-soft: rgba(13, 27, 42, 0.1);
-  --line-mid: rgba(13, 27, 42, 0.16);
-  --line-strong: rgba(13, 27, 42, 0.2);
-  --line-dashed: rgba(13, 27, 42, 0.26);
+  /* A tinta e' o teal-escuro #062d2a (matiz do turquesa Ultra), nao mais o azul-marinho
+     #0d1b2a: mesma luminancia, mas a hairline, o input e a sombra carregam a marca. */
+  --line: rgba(6, 45, 42, 0.13);
+  --line-soft: rgba(6, 45, 42, 0.1);
+  --line-mid: rgba(6, 45, 42, 0.16);
+  --line-strong: rgba(6, 45, 42, 0.2);
+  --line-dashed: rgba(6, 45, 42, 0.26);
 
   /* --- Texto (os mesmos 6 papeis, do mais forte ao mais apagado) ------------ */
-  --tx-max: #0b1219;
-  --tx-strong: #16202b;
-  --tx-soft: #29394a;
-  --tx-narrative: #45566a;
-  --tx-label: #52657a;
-  --tx-muted: #5d7085;
-  /* 4,54:1 sobre o painel claro. Era #66798e = 4,24:1 — o tema claro tinha a MESMA
-     reprovacao do escuro, pelo mesmo motivo (legenda de 10,5px). Ver a nota no bloco
-     escuro; o ajuste aqui e' na direcao oposta, escurecendo. */
-  --tx-sub: #627489;
-  /* 3,11:1 — de-enfase deliberada, espelhando o --tx-off do escuro. Mesma regra: texto
+  /* Terceira rodada (2026-09-09): a escala inteira sai do cinza-azulado para o
+     cinza-TEAL da matiz Ultra — e' o que tinge o "miolo" da tela sem mexer em layout.
+     As reguas se mantem: --tx-muted 4,97:1 e --tx-sub 4,68:1 sobre o vidro. */
+  --tx-max: #06171a;
+  --tx-strong: #0f272c;
+  --tx-soft: #21424a;
+  --tx-narrative: #33545c;
+  --tx-label: #3f626a;
+  --tx-muted: #4d6f76;
+  /* 4,68:1 sobre o painel claro — mesma folga da rodada anterior, na matiz nova. */
+  --tx-sub: #527379;
+  /* 3,38:1 — de-enfase deliberada, espelhando o --tx-off do escuro. Mesma regra: texto
      com significado nao usa este token. */
-  --tx-off: #7d90a4;
-  --tx-rank: #93a3b5;
+  --tx-off: #6b8a90;
+  --tx-rank: #84a0a5;
 
   /* --- Acento turquesa ------------------------------------------------------
-     Mesma matiz (~186°) do #35c9d6, luminancia derrubada ate' o texto passar. O
-     --ac-on inverte: sobre o turquesa escuro, quem le' e' o branco. */
-  --ac: #0e8e9c;
-  --ac-text: #0a7180;
-  --ac-chip: #075c6b;
+     A matiz e' a do turquesa Ultra #00A99E (~176°; era a ~186° herdada do #35c9d6 do
+     escuro), luminancia derrubada ate' o texto passar (--ac-text 4,74:1 sobre o vidro
+     #eaf7f5, que na terceira rodada ficou mais fundo e exigiu descer o texto junto).
+     O --ac-on inverte: sobre o turquesa escuro, quem le' e' o branco. */
+  --ac: #0e9c93;
+  --ac-text: #087a72;
+  --ac-chip: #076b64;
   --ac-on: #ffffff;
-  --ac-a08: rgba(14, 142, 156, 0.08);
-  --ac-a10: rgba(14, 142, 156, 0.1);
-  --ac-a12: rgba(14, 142, 156, 0.12);
-  --ac-a14: rgba(14, 142, 156, 0.14);
-  --ac-a16: rgba(14, 142, 156, 0.16);
-  --ac-a22: rgba(14, 142, 156, 0.22);
-  --ac-a24: rgba(14, 142, 156, 0.24);
-  --ac-a25: rgba(14, 142, 156, 0.25);
-  --ac-a30: rgba(14, 142, 156, 0.3);
-  --ac-a45: rgba(14, 142, 156, 0.45);
-  --ac-a60: rgba(14, 142, 156, 0.6);
-  --ac-glow: 0 6px 16px -6px rgba(14, 142, 156, 0.4);
+  --ac-a08: rgba(14, 156, 147, 0.08);
+  --ac-a10: rgba(14, 156, 147, 0.1);
+  --ac-a12: rgba(14, 156, 147, 0.12);
+  --ac-a14: rgba(14, 156, 147, 0.14);
+  --ac-a16: rgba(14, 156, 147, 0.16);
+  --ac-a22: rgba(14, 156, 147, 0.22);
+  --ac-a24: rgba(14, 156, 147, 0.24);
+  --ac-a25: rgba(14, 156, 147, 0.25);
+  --ac-a30: rgba(14, 156, 147, 0.3);
+  --ac-a45: rgba(14, 156, 147, 0.45);
+  --ac-a60: rgba(14, 156, 147, 0.6);
+  --ac-glow: 0 6px 16px -6px rgba(14, 156, 147, 0.4);
+
+  /* A lavagem do rail NAO tem par claro: o rail vive dentro do escopo `.cromo-escuro`
+     (ver o bloco no fim do arquivo), onde valem os --rail-a* turquesa do :root.
+     Turquesa e magenta chegaram a ser testados como lavagem sobre o fundo claro em
+     2026-09-09 e os dois cairam — a resposta do Juan foi escurecer a CAIXA. */
 
   /* --- Marca Ultra ---------------------------------------------------------- */
   /* O #c8001e sobre branco ja' passa como elemento grafico; escurece um tom so' para
@@ -417,16 +455,16 @@
   --l3-a60: rgba(138, 97, 16, 0.6);
 
   /* Camada 4 · turquesa — o MESMO valor de --ac neste tema, por desenho (ver acima). */
-  --l4: #0e8e9c;
-  --l4-a10: rgba(14, 142, 156, 0.1);
-  --l4-a24: rgba(14, 142, 156, 0.24);
-  --l4-a60: rgba(14, 142, 156, 0.6);
+  --l4: #0e9c93;
+  --l4-a10: rgba(14, 156, 147, 0.1);
+  --l4-a24: rgba(14, 156, 147, 0.24);
+  --l4-a60: rgba(14, 156, 147, 0.6);
 
   /* Camada 5 · a sintese, sem matiz — o MESMO valor de --tx-max neste tema. */
-  --l5: #0b1219;
-  --l5-a10: rgba(11, 18, 25, 0.1);
-  --l5-a24: rgba(11, 18, 25, 0.24);
-  --l5-a60: rgba(11, 18, 25, 0.6);
+  --l5: #06171a;
+  --l5-a10: rgba(6, 23, 26, 0.1);
+  --l5-a24: rgba(6, 23, 26, 0.24);
+  --l5-a60: rgba(6, 23, 26, 0.6);
 
   /* --- Semantica ----------------------------------------------------------- */
   --pos: #0f9d55;
@@ -445,14 +483,18 @@
   --sev-alta: #d32d4d;
   --sev-media: #a9770f;
   --sev-ok: #0f9d55;
-  --sev-sem-base: #64748b;
+  --sev-sem-base: #5b7a80;
 
   /* --- Paleta de serie ----------------------------------------------------- */
+  /* Rosa e coral ancoram nas matizes de apoio da marca (magenta Ultra #C23C8E e
+     laranja Ultra #EF7F1F), luminancia derrubada ate' o preenchimento passar 3:1
+     sobre branco (o laranja cru da' 2,6:1). */
   --gr-azul: #2f6bc9;
-  --gr-rosa: #c02a68;
+  --gr-rosa: #c02a86;
   --gr-verde: #0f9d55;
-  --gr-coral: #d1495e;
-  --faixa-neutra: #94a3b3;
+  /* Desceu com o vidro da terceira rodada: #cd7c37 dava 2,93:1 sobre #eaf7f5. */
+  --gr-coral: #c1732f;
+  --faixa-neutra: #8ba4a3;
 
   /* --- Os seis que eram valor cravado (ver o bloco gemeo no :root) ---------
      Aqui eles ganham o par que nunca existiu. Os tres brancos com alfa INVERTEM o
@@ -460,23 +502,120 @@
      sobreviver ao branco, e a sombra troca o preto por azul-tinta com menos alfa —
      preto sobre branco suja, nao separa. */
   --carga: #a9770f;
-  --sinal-off: #7d90a4;
-  --linha-mapa: rgba(13, 27, 42, 0.2);
-  --surf-chip: rgba(13, 27, 42, 0.08);
-  --linha-eixo: rgba(13, 27, 42, 0.3);
-  --sh-ponto: 0 3px 10px rgba(13, 27, 42, 0.18);
-  --anel-mapa: rgba(13, 27, 42, 0.28);
+  --sinal-off: #6b8a90;
+  --linha-mapa: rgba(6, 45, 42, 0.2);
+  --surf-chip: rgba(6, 45, 42, 0.08);
+  --linha-eixo: rgba(6, 45, 42, 0.3);
+  --sh-ponto: 0 3px 10px rgba(6, 45, 42, 0.18);
+  --anel-mapa: rgba(6, 45, 42, 0.28);
   /* Mesma MATIZ dos pares escuros (~17 graus e ~327 graus), luminancia derrubada ate' o
      texto passar sobre o branco da pilula. */
   --indep-tx: #b04a22;
   --imovel-tx: #a81b6b;
 
   /* --- Sombras ------------------------------------------------------------- */
-  /* Sombra no claro e' separacao, nao vedacao: preta demais suja o branco. */
-  --sh-pin: 0 5px 12px rgba(13, 27, 42, 0.18);
-  --sh-frame: 0 30px 70px -30px rgba(13, 27, 42, 0.3);
-  --sh-pop: 0 10px 26px -10px rgba(13, 27, 42, 0.35);
-  --sh-menu: 0 14px 30px -12px rgba(13, 27, 42, 0.4);
+  /* Sombra no claro e' separacao, nao vedacao: preta demais suja o branco. A tinta e'
+     o mesmo teal #062d2a das hairlines — sombra fria da matiz da marca. */
+  --sh-pin: 0 5px 12px rgba(6, 45, 42, 0.18);
+  --sh-frame: 0 30px 70px -30px rgba(6, 45, 42, 0.3);
+  --sh-pop: 0 10px 26px -10px rgba(6, 45, 42, 0.35);
+  --sh-menu: 0 14px 30px -12px rgba(6, 45, 42, 0.4);
+}
+
+/* ============================================================================
+   CROMO ESCURO DENTRO DO TEMA CLARO — escopo `.cromo-escuro`.
+
+   Pedido do Juan (2026-09-09): a barra lateral e as CAIXAS dos cabecalhos
+   ("Inteligência de Expansão", a barra da Rede Ultra, a faixa "Carteira") ficam
+   escuras MESMO no tema claro — cromo escuro emoldurando conteudo claro. Antes
+   disso foram testadas tres lavagens de cor sobre a caixa clara (turquesa,
+   magenta, laranja) e todas cairam; a resposta certa era escurecer a caixa.
+
+   O mecanismo e' o mesmo que promoveu o tema ao app inteiro: token herda. Este
+   bloco re-declara no ESCOPO os valores do bloco escuro, entao todo controle ali
+   dentro (Select, busca, chips, pilulas) se repinta sozinho, sem prop de tema e
+   sem classe por componente. Os valores sao ESPELHO do :root la' de cima — quem
+   mudar la', muda aqui. No tema escuro o seletor nao casa e o escopo e' inocuo. */
+[data-tema='claro'] .cromo-escuro {
+  --surf-chrome: rgba(15, 26, 32, 0.95);
+  --surf-bar: rgba(16, 24, 34, 0.86);
+  --surf-raised: rgba(255, 255, 255, 0.05);
+  --surf-input: rgba(255, 255, 255, 0.06);
+  --surf-pending: rgba(255, 255, 255, 0.08);
+  --surf-select: #101a26;
+  /* No :root o --surf-mapa e' #000 (pedido do Felipe, para a pilula sobre o mapa);
+     aqui o preto chapado seria a unica mancha da tela clara — fica o azul-tinta. */
+  --surf-mapa: #101a26;
+  --line: rgba(255, 255, 255, 0.1);
+  --line-soft: rgba(255, 255, 255, 0.09);
+  --line-mid: rgba(255, 255, 255, 0.12);
+  --line-strong: rgba(255, 255, 255, 0.15);
+  --line-dashed: rgba(255, 255, 255, 0.2);
+  --tx-max: #eef3f8;
+  --tx-strong: #e6edf3;
+  --tx-soft: #cdd8e2;
+  --tx-narrative: #9aa7b5;
+  --tx-label: #8b97a5;
+  --tx-muted: #7b8794;
+  --tx-sub: #727f8d;
+  --tx-off: #5a6675;
+  --tx-rank: #4a5765;
+  --ac: #30cfc2;
+  --ac-text: #4ad8cb;
+  --ac-chip: #82e6dc;
+  --ac-on: #06232a;
+  --ac-a08: rgba(48, 207, 194, 0.08);
+  --ac-a10: rgba(48, 207, 194, 0.1);
+  --ac-a12: rgba(48, 207, 194, 0.12);
+  --ac-a14: rgba(48, 207, 194, 0.14);
+  --ac-a16: rgba(48, 207, 194, 0.16);
+  --ac-a22: rgba(48, 207, 194, 0.22);
+  --ac-a24: rgba(48, 207, 194, 0.24);
+  --ac-a25: rgba(48, 207, 194, 0.25);
+  --ac-a30: rgba(48, 207, 194, 0.3);
+  --ac-a45: rgba(48, 207, 194, 0.45);
+  --ac-a60: rgba(48, 207, 194, 0.6);
+  --l1: #6fa4f7;
+  --l1-a10: rgba(111, 164, 247, 0.1);
+  --l1-a24: rgba(111, 164, 247, 0.24);
+  --l1-a60: rgba(111, 164, 247, 0.6);
+  --l2: #a98cf0;
+  --l2-a10: rgba(169, 140, 240, 0.1);
+  --l2-a24: rgba(169, 140, 240, 0.24);
+  --l2-a60: rgba(169, 140, 240, 0.6);
+  --l3: #e9c07a;
+  --l3-a10: rgba(233, 192, 122, 0.1);
+  --l3-a24: rgba(233, 192, 122, 0.24);
+  --l3-a60: rgba(233, 192, 122, 0.6);
+  --l4: #30cfc2;
+  --l4-a10: rgba(48, 207, 194, 0.1);
+  --l4-a24: rgba(48, 207, 194, 0.24);
+  --l4-a60: rgba(48, 207, 194, 0.6);
+  --l5: #eef3f8;
+  --l5-a10: rgba(238, 243, 248, 0.1);
+  --l5-a24: rgba(238, 243, 248, 0.24);
+  --l5-a60: rgba(238, 243, 248, 0.6);
+  --sev-alta: #ff5a6e;
+  --sev-media: #e0b25a;
+  --sev-ok: #3cc878;
+  --sev-sem-base: #7c8798;
+  --gr-azul: #6fa4f7;
+  --gr-rosa: #e054a8;
+  --gr-verde: #5fd08c;
+  --gr-coral: #f9965a;
+  --faixa-neutra: #cdd8e2;
+  --pos: #2ec86e;
+  --pos-text: #4fe08a;
+  --pos-pill: #7fe6a6;
+  --neg: #ff7a8a;
+  --neg-bar: #d9556a;
+  --warn: #d9a441;
+  --warn-text: #e9c07a;
+  --carga: #f2c230;
+  --sinal-off: #5a6472;
+  --surf-chip: rgba(255, 255, 255, 0.08);
+  --sh-pop: 0 10px 30px -8px rgba(0, 0, 0, 0.7);
+  --sh-menu: 0 14px 34px -10px rgba(0, 0, 0, 0.75);
 }
 
 /* As rampas --ramp-indigo-* / --ramp-green-*, herdadas do prototipo standalone,
