@@ -59,7 +59,10 @@ MESES_MADURA = 8
 RAIO_CATCHMENT_KM = 1.5
 
 # --- Endpoint (decisao D7) --------------------------------------------------
-# Ingerir SO `/historico-dash-view` (superset de `/historico-dash`).
+# O `view` e' a BASE da ingestao; o `/historico-dash` COMPLETA o universo de unidades.
+# Ate 2026-09-09 esta linha afirmava que o view era "superset de /historico-dash": e'
+# superset em COLUNAS, nao em UNIDADES (medido ao vivo: 103 x 99). Ver
+# `ingestao.unidades_ausentes_do_view`, que documenta a medicao e as regras.
 ENDPOINT_HISTORICO_VIEW = "/historico-dash-view"
 ENDPOINT_HISTORICO = "/historico-dash"
 ENDPOINT_LOGIN = "/auth/login"
