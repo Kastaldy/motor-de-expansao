@@ -33,7 +33,7 @@ restore — roda inteiro no PostgreSQL nativo desta máquina, sem Docker.
 
 | Cobre | Como |
 |---|---|
-| Migrations `000→013` num banco vazio | runner nativo, sem container |
+| Migrations `000→016` num banco vazio | runner nativo, sem container |
 | O script do D20 (papéis, `GRANT`, `ENABLE ALWAYS TRIGGER`) | `psql` local |
 | A ordem do §0 — ligar a URL com `usuarios` vazia trancar todo mundo | backend local + `MOTOR_DEV_USUARIO` |
 | RBAC por perfil: abas que aparecem e somem | mesma coisa |
@@ -138,6 +138,18 @@ $env:PYTHONPATH = "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\.
 # Ler o diretorio do checkout principal e' seguro: o piloto e' READ-ONLY sobre os
 # artefatos, e ha teste que trava isso (`test_leituras_nao_mutam_artefatos`).
 $env:MOTOR_DATA_DIR = "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\data"
+
+# OBRIGATORIO desde o merge da main (Bloco A / DEC-047): com MOTOR_DATA_DIR definida,
+# `resolver_perfil()` e FAIL-CLOSED e exige um `perfil.json` na RAIZ dela. O checkout
+# principal NAO tem esse arquivo, e o sintoma nao e' tela vazia -- e' o `app.py` nao
+# IMPORTAR, com `PerfilInvalidoError: perfil.json ausente em ...`, porque o perfil e'
+# resolvido no import, uma vez por processo.
+#
+# ATENCAO: `data/perfil.json` NAO e' gitignored. Ele vai aparecer no `git status` do
+# CHECKOUT PRINCIPAL (que esta noutra branch) -- e' passo de maquina, nao de repositorio,
+# entao nao commite. Os perfis versionados vivem em `data/perfis/<PAIS>/perfil.json`.
+Copy-Item "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\.claude\worktrees\wt-db\data\perfis\BR\perfil.json" `
+          "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\data\perfil.json"
 
 # NAO defina o MOTOR_CADASTRO_DIR: ele e' o SINAL DE PRODUCAO, e a presenca dele
 # desliga a identidade de dev -- voce ficaria sem `Remote-User` e sem
