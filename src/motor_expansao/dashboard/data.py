@@ -25,6 +25,9 @@ from motor_expansao.dashboard.constants import (
 )
 from motor_expansao.dashboard.schemas import validate_dashboard_frame
 from motor_expansao.perfil import resolver_perfil
+from motor_expansao.pipelines.classe_join_municipio import (
+    anexar_nota_municipal as _anexar_nota_municipal_impl,
+)
 from motor_expansao.pipelines.pop_corte import (
     derive_confianca_geografica as _derive_confianca_geografica_impl,
 )
@@ -216,6 +219,11 @@ def _derive_confianca_geografica(df: pd.DataFrame) -> pd.Series:
     return _derive_confianca_geografica_impl(df)
 
 
+def _anexar_nota_municipal(df: pd.DataFrame, notas: pd.DataFrame) -> pd.DataFrame:
+    # Delega ao helper compartilhado (fonte unica em pipelines/classe_join_municipio.py).
+    return _anexar_nota_municipal_impl(df, notas)
+
+
 def _prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     prepared = df.copy()
     for column in FLOAT_COLUMNS:
@@ -367,7 +375,15 @@ def enrich_dashboard_data(
     hybrid_df: pd.DataFrame | None = None,
     censo_df: pd.DataFrame | None = None,
     estrutural_pop_df: pd.DataFrame | None = None,
+    notas_municipio: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
+    """`notas_municipio` e' a nota de join por MUNICIPIO (BLK-JOINUF-01), INJETADA.
+
+    Fica como parametro, e nao como leitura interna, por dois motivos: mantem esta funcao
+    sem I/O (testavel sem os 1,17 GB da malha) e deixa o produtor
+    (`m1/fase1_bi_exports`) dono da decisao de ler o artefato. `None` = sem promocao, que
+    reproduz byte a byte o comportamento anterior ao bloco.
+    """
     enriched = base_df.copy()
     hybrid_df = hybrid_df if hybrid_df is not None else pd.DataFrame()
     censo_df = censo_df if censo_df is not None else pd.DataFrame()
@@ -498,6 +514,14 @@ def enrich_dashboard_data(
         .fillna(enriched["cidade"])
         .replace({"": pd.NA})
         .fillna(enriched["cidade"])
+    )
+    # Nota de join por MUNICIPIO (BLK-JOINUF-01) ANTES de derivar a confianca: ela e' a
+    # segunda perna da disjuncao em `derive_confianca_geografica` e so' PROMOVE. Anexar
+    # depois nao teria efeito nenhum -- e' um erro que passaria silencioso, entao a ordem
+    # aqui e' load-bearing.
+    enriched = _anexar_nota_municipal(
+        enriched,
+        notas_municipio if notas_municipio is not None else pd.DataFrame(),
     )
     enriched["confianca_geografica"] = _derive_confianca_geografica(enriched)
     enriched = _derive_hybrid_labels(enriched)
