@@ -15,13 +15,13 @@ UFS = ["SP","MG","RJ","ES","PR","SC","RS","BA","PE","CE","GO","DF"]
 # zfill(7)+[:6] quebrava o de 6 ("110001" virava "011000").
 c6 = lambda s: s.astype(str).str.replace(r"\D", "", regex=True).str.zfill(6).str[:6]
 
-base = pd.read_csv(rf"{C}\indices_crescimento_municipal.csv", low_memory=False,
+base = pd.read_csv(f"{C}/indices_crescimento_municipal.csv", low_memory=False,
                    usecols=["cod6","cidade","uf","pop_2024","confiabilidade"])
 base["cod6"] = base.cod6.astype(str).str.zfill(6)
 
 # ---- 1. RENDA: remuneracao media RAIS 2020 -> 2024 --------------------------
-r20 = pd.read_csv(rf"{D}\rais\rais_municipio_2020.csv", dtype={"cod_municipio": str})
-r24 = pd.read_csv(rf"{D}\rais\rais_municipio_2024.csv", dtype={"cod_municipio": str})
+r20 = pd.read_csv(f"{D}/rais/rais_municipio_2020.csv", dtype={"cod_municipio": str})
+r24 = pd.read_csv(f"{D}/rais/rais_municipio_2024.csv", dtype={"cod_municipio": str})
 for r in (r20, r24): r["cod6"] = c6(r.cod_municipio)
 a = r20.groupby("cod6").agg(v0=("vinculos_ativos","sum"), m0=("massa_salarial_mensal","sum"))
 b = r24.groupby("cod6").agg(v1=("vinculos_ativos","sum"), m1=("massa_salarial_mensal","sum"))
@@ -33,7 +33,7 @@ rn["dim_renda_valor"] = rn.rem1.round(0)
 print(f"renda: {len(rn):,} municipios | mediana {rn.dim_renda_pct.median():+.1f}% nominal 2020->2024")
 
 # ---- 2. POPULACAO: serie longa ---------------------------------------------
-po = pd.read_csv(rf"{D}\pib\populacao_6579_serie.csv", dtype={"cod6": str})
+po = pd.read_csv(f"{D}/pib/populacao_6579_serie.csv", dtype={"cod6": str})
 po["cod6"] = po.cod6.astype(str).str.zfill(6)
 pv = po.pivot_table(index="cod6", columns="ano", values="populacao", aggfunc="first")
 A0, A1 = 2016, int(max(pv.columns))
@@ -44,7 +44,7 @@ pop["dim_pop_valor"] = pop.p1.round(0)
 print(f"populacao: {len(pop):,} municipios | {A0}->{A1} | mediana {pop.dim_pop_pct.median():+.1f}%")
 
 # ---- 3. EMPRESAS: saldo CNPJ por 1.000 habitantes ---------------------------
-cn = pd.read_csv(rf"{C}\indices_desenvolvimento_municipal.csv", low_memory=False,
+cn = pd.read_csv(f"{C}/indices_desenvolvimento_municipal.csv", low_memory=False,
                  usecols=["cod6","saldo","pop"])
 cn["cod6"] = cn.cod6.astype(str).str.zfill(6)
 cn = cn[cn["pop"] > 0].set_index("cod6")
@@ -60,7 +60,7 @@ eixo["a16"] = eixo.p2016 * eixo.n_pixels; eixo["a23"] = eixo.p2023 * eixo.n_pixe
 alt = []
 for uf in UFS:
     for ano in (2016, 2023):
-        f = rf"{POC}\data\uf={uf}\hex_google_temporal_{ano}.parquet"
+        f = f"{POC}/data/uf={uf}/hex_google_temporal_{ano}.parquet"
         d = pd.read_parquet(f, columns=["hex_id","altura_media","presenca_media","n_pixels"])
         d["ano"] = ano; alt.append(d)
 alt = pd.concat(alt, ignore_index=True)
@@ -88,7 +88,7 @@ d = (base.set_index("cod6")
      .join(pop[["dim_pop_pct","dim_pop_valor"]])
      .join(cn[["dim_empresas_por1k","dim_empresas_valor"]])
      .join(pred[["dim_predios_pct","dim_altura_pct","dim_altura_valor"]]))
-cm = pd.read_csv(rf"{C}\crescimento_municipio.csv", dtype={"cod6": str})
+cm = pd.read_csv(f"{C}/crescimento_municipio.csv", dtype={"cod6": str})
 cm["cod6"] = cm.cod6.astype(str).str.zfill(6)
 d = d.join(cm.set_index("cod6")[["emp_cresc_pct","mat_label"]])
 d = d.rename(columns={"emp_cresc_pct": "dim_emprego_pct"})

@@ -18,6 +18,12 @@ import pandas as pd
 from motor_expansao.pipelines.agregar_censo_hex_da_malha import (
     sobrepor_renda_da_malha,
 )
+from motor_expansao.pipelines.classe_join_municipio import (
+    anexar_nota_municipal,
+)
+from motor_expansao.pipelines.classe_join_municipio import (
+    calcular_notas as calcular_notas_municipio,
+)
 from motor_expansao.pipelines.pop_corte import (
     derive_confianca_geografica,
     derive_pop_cut_columns,
@@ -27,6 +33,8 @@ ROOT = Path(__file__).resolve().parents[3]
 
 MERCADO_PATH = ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"
 CENSO_PATH = ROOT / "data" / "staging" / "censo2022_setores_calibrado.parquet"
+#: Malha de setores por municipio -- insumo da nota de join fina (BLK-JOINUF-01).
+CENSO_GEO_ROOT = ROOT / "data" / "outputs" / "setores_censitarios_2022_geo"
 PERFORMANCE_HEX_PATH = ROOT / "data" / "staging" / "unidades_ultra_performance_hex.parquet"
 CONCORRENTES_PATH = ROOT / "data" / "staging" / "concorrentes_mapeados.parquet"
 OUT_PATH = ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"
@@ -296,6 +304,11 @@ def calcular(df: pd.DataFrame, n_redes: int | None = None) -> pd.DataFrame:
     # compartilhado (setor 2022 quando o hex e granular, fallback pop_total municipal).
     # granular = qualidade_join_uf in {A,B} AND (flag_censo_disponivel OR score_setor_2022_calibrado notna),
     # NAO e flag_censo_elegivel/mask_hex_censo.
+    # BLK-JOINUF-01: a nota de join por MUNICIPIO entra ANTES, como segunda perna da
+    # disjuncao de `derive_confianca_geografica` (so' promove, nunca rebaixa). Sem ela
+    # aqui, o GATE do SAM leria uma regua e a EXIBICAO do piloto leria outra -- a mesma
+    # divergencia de redacoes que a DEC-044 pagou para eliminar no funil.
+    df = anexar_nota_municipal(df, calcular_notas_municipio(CENSO_GEO_ROOT))
     df["confianca_geografica"] = derive_confianca_geografica(df)
     df = derive_pop_cut_columns(df, pop_min=POP_MIN_SAM_GATE)
 

@@ -3,6 +3,15 @@
 > Contrato de dados e runbook de publicação da camada "Como as cidades estão indo".
 > Ligada em produção em 2026-08-07. READ-ONLY sobre o M1: não recalcula score, não toca
 > pesos nem artefato oficial.
+>
+> **Cadência (DEC-052):** desde 2026-09 a camada tem atualização TRIMESTRAL automática
+> na VPS (cron dia 5 de fev/mai/ago/nov) — o job `motor_expansao.crescimento.atualizar`
+> baixa o CAGED novo, roda a cadeia inteira em rascunho, valida e publica pelos MESMOS
+> passos do runbook abaixo (rename atômico + restart), avisando no chat de ops. O
+> trimestre atualiza o EMPREGO; renda/população/empresas avançam nas safras anuais
+> das fontes e o satélite é 2016-2023. O runbook manual abaixo continua valendo para
+> publicações fora da cadência. Monitor de idade: `healthcheck_vps.sh crescimento`
+> (limiar 100 dias). Infra: `docs/infra_producao.md`, seção da atualização trimestral.
 
 ## 1. O que é
 

@@ -743,6 +743,52 @@ scp -i "$env:USERPROFILE\.ssh\id_ultra" -r data/ultra/ root@2.25.137.241:/opt/mo
 
 ---
 
+## Atualização trimestral da camada de crescimento municipal (DEC-052)
+
+> Decisão em `docs/decisions/DEC-052.md`; contrato da camada em
+> `docs/camada_crescimento_municipal.md`; **pacote de repasse com os comandos um a um
+> em `docs/repasse_cron_crescimento.md`** — este bloco é o resumo de referência.
+
+O cron trimestral roda o job versionado no repo (imagem da api/bot, container efêmero):
+CAGED novo do FTP do PDET → cadeia `01..10` em `MOTOR_DATA_DIR` de rascunho → validação
+→ publicação por rename atômico em `data/staging/` → restart do `motor_expansao_web`
+(`lru_cache`) → aviso no chat de ops do Telegram, nos dois desfechos.
+
+**Script versionado:** `scripts/cron/run_atualizacao_crescimento.sh` (mesmo molde do
+wrapper dos agregadores: log antes do lock, `flock`, credenciais por `-e NOME` sem
+valor). O cabeçalho do script é o runbook detalhado — inclusive o modo seco
+(`DRY_RUN=1`), obrigatório antes de agendar.
+
+**Insumos (repasse inicial, uma vez):** `/opt/motor-expansao/data/insumos_crescimento/`
+com `socioeconomico/{caged,rais,cnpj,pib}` (~90 MB de agregados), `crescimento_tec/`
+(3 CSVs do projeto TEC), `poc_satelite/data/uf=XX/` (mosaicos das 12 UFs) e
+`eixo/_eixo_trajetoria.parquet`. **Todos os insumos estão na estação do Juan** (foi ele
+quem gerou a camada em agosto) — caminhos exatos e a regeneração do
+`_eixo_trajetoria.parquet` estão no pacote de repasse. O CSV do CAGED entra com o nome
+canônico `caged_municipio_mensal_consolidado.csv` (o job o atualiza sozinho dali em
+diante).
+
+**Linha de crontab (dia 5 de fev/mai/ago/nov, 03:00 UTC = 00:00 BRT):**
+
+```cron
+0 3 5 2,5,8,11 * /opt/motor-expansao-infra/run_atualizacao_crescimento.sh
+```
+
+**Requisito de imagem:** a imagem da api/bot precisa ter o módulo
+`motor_expansao.crescimento` e o `py7zr` (extra `[crescimento]`, `Dockerfile.api`) —
+o wrapper checa e recusa imagem antiga com mensagem clara. Aplique a imagem nova
+(deploy manual por digest, como sempre) ANTES de agendar.
+
+**O que o job NUNCA faz:** escrever em `data/outputs/` (montado `:ro`), rodar a cadeia
+sobre o staging vivo, deploy de imagem, ou qualquer coisa fora dos dois parquets de
+crescimento + consolidado do CAGED. Falhou qualquer etapa: staging intacto, aviso de
+falha no chat, `exit != 0` no log (`/var/log/motor-snapshots/atualizacao_crescimento_*.log`).
+
+**Monitor:** subcomando `crescimento` do healthcheck (limiar
+`MONITOR_CRESCIMENTO_MAX_DIAS=100`; arquivo que nunca existiu também é FAIL — é o
+estado real enquanto o repasse não acontecer). A linha de cron dele está no bloco da
+seção "Alertas automáticos (BLK-SEC-05)", mais abaixo.
+
 ## Portal de seleção de país na raiz (BLK-INTL-13)
 
 A raiz `ultra-expansao.tech` é o portal de seleção de país (spec e roteamento:
@@ -905,6 +951,7 @@ O que é vigiado e a cadência (crontab do root):
 0 11 * * *  /opt/motor-monitoring/healthcheck_vps.sh authelia    # resumo diário de falhas de login (08h BRT)
 0 18 * * 0  /opt/motor-monitoring/healthcheck_vps.sh coleta      # domingo 15h BRT: resumo/falha da coleta semanal
 0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh agregadores # quinta 09h BRT: idade da partição de cada agregador (BLK-MA-21)
+0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh crescimento # quinta 09h BRT: idade da camada de crescimento municipal (DEC-052; limiar 100 dias)
 ```
 
 Comportamento anti-spam: alerta na transição OK→FAIL, lembrete a cada 1h enquanto durar,

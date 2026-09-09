@@ -10,6 +10,7 @@
 #   authelia    resumo diário de falhas de login (cron 1x/dia)
 #   coleta      domingo pós-coleta: resumo do relatório GymScraping ou alerta de falha
 #   agregadores idade da última partição de snapshot de cada agregador (cron semanal, BLK-MA-21)
+#   crescimento idade do artefato da camada de crescimento municipal (cron trimestral, DEC-052)
 #   test        envia mensagem de teste ao chat de ops
 #
 # Anti-spam: alerta só na transição OK->FAIL, lembrete a cada REMIND_SECS enquanto
@@ -41,6 +42,17 @@ SNAPSHOTS_DIR="${MONITOR_SNAPSHOTS_DIR:-/opt/motor-expansao/data/staging/snapsho
 # perdidas antes do primeiro FAIL.
 AGREGADOR_MAX_DIAS="${MONITOR_AGREGADOR_MAX_DIAS:-9}"
 AGREGADORES=(wellhub totalpass)
+# Camada de crescimento municipal (DEC-052): cadencia TRIMESTRAL (dia 5 de
+# fev/mai/ago/nov). 100 = um trimestre (~92 dias) + folga para retentativa manual;
+# com o check SEMANAL (quinta), uma rodada perdida dispara na 1a quinta depois de
+# a idade passar de 100 — ~1-2 semanas apos o cron falhar, nao um mes. A regua e'
+# o MTIME do parquet publicado — aqui ele e' confiavel porque o unico produtor e' o
+# rename atomico do proprio job (nao ha rsync/migracao rejuvenescendo a folha, o
+# defeito que tirou o mtime da regua dos agregadores). Arquivo que NUNCA existiu
+# tambem e' FAIL: e' o estado real enquanto o repasse de insumos nao acontecer.
+# O default 100 tem PARIDADE com `crescimento/constantes.py` (teste trava os dois).
+CRESCIMENTO_MAX_DIAS="${MONITOR_CRESCIMENTO_MAX_DIAS:-100}"
+CRESCIMENTO_PARQUET="${MONITOR_CRESCIMENTO_PARQUET:-/opt/motor-expansao/data/staging/crescimento_municipal.parquet}"
 CONTAINERS=(
     motor_expansao_caddy
     motor_expansao_authelia
@@ -249,18 +261,38 @@ check_agregadores() {
     done
 }
 
+check_crescimento() {
+    # Idade do artefato da camada de crescimento municipal (DEC-052). Sem este
+    # check, um cron trimestral morto seria invisivel: a camada e' OPCIONAL por
+    # desenho — o passo 4 degrada sem erro e sem log, e /api/health continua 200.
+    local idade_seg idade_dias
+    if [[ ! -f "$CRESCIMENTO_PARQUET" ]]; then
+        report crescimento FAIL "Camada de crescimento municipal NUNCA publicada (${CRESCIMENTO_PARQUET} ausente). O repasse de insumos e o cron trimestral foram instalados?"
+        return
+    fi
+    idade_seg=$(($(date +%s) - $(stat -c %Y "$CRESCIMENTO_PARQUET")))
+    idade_dias=$((idade_seg / 86400))
+    if ((idade_dias > CRESCIMENTO_MAX_DIAS)); then
+        report crescimento FAIL "Camada de crescimento municipal com ${idade_dias} dias (limiar ${CRESCIMENTO_MAX_DIAS}). O cron trimestral rodou? Ver /var/log/motor-snapshots/atualizacao_crescimento_latest.log"
+    else
+        log "crescimento: OK (${idade_dias}d)"
+        report crescimento OK ""
+    fi
+}
+
 case "${1:-}" in
 containers) check_containers ;;
 host) check_host ;;
 authelia) check_authelia ;;
 coleta) check_coleta ;;
 agregadores) check_agregadores ;;
+crescimento) check_crescimento ;;
 test)
     send_telegram "✅ [VPS Ultra] Monitoramento ativo — mensagem de teste"
     echo "mensagem de teste enviada"
     ;;
 *)
-    echo "uso: $0 {containers|host|authelia|coleta|agregadores|test}" >&2
+    echo "uso: $0 {containers|host|authelia|coleta|agregadores|crescimento|test}" >&2
     exit 2
     ;;
 esac
