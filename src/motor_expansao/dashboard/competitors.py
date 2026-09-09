@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import re
+import unicodedata
 from functools import cache
 from pathlib import Path
 
@@ -448,13 +449,56 @@ def _png_icon_data(path: Path, *, pin_bg: str = "#FFFFFF") -> dict[str, object] 
         return None
 
 
+def slug_rede(nome: str) -> str:
+    """`"Megatlón"` -> `megatlon`. A regra do nome de arquivo `logo_<slug>.png`.
+
+    E' a MESMA regra dos outros dois lados da fronteira: `exportar_piloto_rep._slug_rede`
+    (repo motor-argentina, que grava os PNGs) e o pino da tela, que a aplica desde
+    5c2f127. Tres copias da mesma regra e' o que ela e' hoje; unifica-las exigiria um
+    modulo compartilhado entre repositorios que nao existe.
+    """
+    puro = "".join(
+        c for c in unicodedata.normalize("NFD", str(nome or ""))
+        if unicodedata.category(c) != "Mn"
+    ).lower()
+    return re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", puro)).strip("_")
+
+
 def preload_logos(competitors_dir: Path, ultra_dir: Path | None = None) -> None:
-    """Le logos PNG locais e popula _ICON_CACHE. App funciona sem esses arquivos."""
+    """Le logos PNG locais e popula _ICON_CACHE. App funciona sem esses arquivos.
+
+    DUAS PASSADAS, e a segunda e' o que faz isto servir a Argentina (Juan, 2026-08-31:
+    "faltou subir as fotos das concorrentes no slide Concorrente").
+
+      1. o REGISTRO (`COMPETITOR_LOGO_FILES`): 107 redes BRASILEIRAS, nome a nome. Nenhuma
+         rede argentina esta nele — Megatlon, SportClub, Fiter, ON FIT, CORE, BIGG. Com
+         so' esta passada, todo pin do PDF caia no fallback de placa colorida com sigla,
+         mesmo havendo os logos argentinos no diretorio servido.
+      2. o DIRETORIO, por CONVENCAO: qualquer `logo_<slug>.png` que esteja la vira entrada
+         de cache sob `<slug>`. E' como o exportador argentino nomeia os arquivos; o PDF
+         era o unico consumidor que ainda dependia so' do registro.
+
+    A ordem importa: o registro entra primeiro e a convencao NAO o sobrescreve, para que
+    uma cor de marca declarada em `COMPETITOR_BRANDS` continue valendo no Brasil.
+    """
     for rede, filename in COMPETITOR_LOGO_FILES.items():
         pin_bg = COMPETITOR_BRANDS.get(rede, {}).get("bg", "#FFFFFF")
         icon = _png_icon_data(competitors_dir / filename, pin_bg=pin_bg)
         if icon is not None:
             _ICON_CACHE[rede] = icon
+
+    try:
+        arquivos = sorted(competitors_dir.glob("logo_*.png"))
+    except OSError:  # diretorio ausente/ilegivel -> so' o registro, como antes
+        arquivos = []
+    for arq in arquivos:
+        chave = arq.stem[len("logo_"):]
+        if not chave or chave in _ICON_CACHE:
+            continue
+        icon = _png_icon_data(arq, pin_bg=COMPETITOR_BRANDS.get(chave, {}).get("bg", "#FFFFFF"))
+        if icon is not None:
+            _ICON_CACHE[chave] = icon
+
     if ultra_dir is not None:
         icon = _png_icon_data(ultra_dir / ULTRA_LOGO_FILE, pin_bg=ULTRA_BRAND["bg"])
         if icon is not None:
@@ -615,9 +659,24 @@ def _competitor_icon_svg(rede: str) -> dict[str, object]:
     return {"url": f"data:image/svg+xml;base64,{encoded}", "width": 128, "height": 128, "anchorY": 122}
 
 
+def icone_da_rede(key: str) -> dict:
+    """Logo de `key`, aceitando NOME DE EXIBICAO ou slug. `{}` quando nao ha.
+
+    O cache e' indexado por SLUG (`megatlon`), mas quem pinta o pin recebe o valor da
+    coluna `rede`, que e' nome de exibicao (`Megatlon`, `ON FIT`, `SportClub`). No Brasil
+    isso nunca doeu porque as chaves do registro ja' sao slugs e o dado brasileiro chega
+    assim; a base argentina traz o nome bonito, e o PDF caia no fallback de sigla com a
+    logo certa parada no disco.
+    """
+    if key in _ICON_CACHE:
+        return _ICON_CACHE[key]
+    return _ICON_CACHE.get(slug_rede(key), {})
+
+
 def competitor_icon_data(rede: str) -> dict[str, object]:
-    if rede in _ICON_CACHE:
-        return _ICON_CACHE[rede]
+    icone = icone_da_rede(rede)
+    if icone:
+        return icone
     return _competitor_icon_svg(rede)
 
 
@@ -792,7 +851,7 @@ def _render_pin_tile(key: str) -> object:
     cx, cy, r = _ATLAS_CIRCLE_CX, _ATLAS_CIRCLE_CY, _ATLAS_CIRCLE_R
     draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="#FFFFFF")
 
-    logo_png = _extract_embedded_logo_png(str(_ICON_CACHE.get(key, {}).get("url", "")))
+    logo_png = _extract_embedded_logo_png(str(icone_da_rede(key).get("url", "")))
     if logo_png is not None:
         try:
             import io
@@ -947,7 +1006,7 @@ def _render_square_logo_tile(
             fill=_SQUARE_LOGO_SHADOW_RGBA,
         )
 
-    logo_png = _extract_embedded_logo_png(str(_ICON_CACHE.get(key, {}).get("url", "")))
+    logo_png = _extract_embedded_logo_png(str(icone_da_rede(key).get("url", "")))
     if logo_png is not None:
         try:
             import io
