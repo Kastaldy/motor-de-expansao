@@ -149,7 +149,7 @@ export const CRESC_ALTA_HEX = '#30CFC2'
 export const CRESC_ESTAVEL_HEX = '#19A832'
 export const CRESC_PARADO_HEX = '#6E7686'
 
-const CRESC_ALTA: RGBA = [53, 201, 214, 150]
+const CRESC_ALTA: RGBA = [48, 207, 194, 150]
 const CRESC_ESTAVEL: RGBA = [25, 168, 50, 120]
 /* "Sem obra nova" e cinza, nao vermelho. O vermelho fazia o leitor entender que
    os predios foram DERRUBADOS; o que a medida diz e outra coisa — a area
@@ -232,7 +232,7 @@ const CAMADA_CORES: Record<1 | 2 | 3 | 4 | 5, CamadaCor> = {
     bg: 'var(--l4-a10)',
     borda: 'var(--l4-a24)',
     conector: 'var(--l4-a60)',
-    rgb: [53, 201, 214],
+    rgb: [48, 207, 194],
   },
   // Camada 5 = "Para onde crescer", a SINTESE. Fica sem matiz, em claro neutro,
   // pela mesma razao do KPI em destaque do header: as quatro matizes livres ja'
