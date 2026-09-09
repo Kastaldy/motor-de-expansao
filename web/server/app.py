@@ -457,6 +457,7 @@ _COLS_DESEJADAS = [
     "capacidade_default_concorrente_alunos",
     "sam_fitness_potencial",
     "populacao_corte_hex",
+    "fonte_populacao_corte",
     "pop_total",
     "pop_total_setor_2022",
     "renda_per_capita",
@@ -3126,6 +3127,15 @@ def _hex_dict(
         "oferta": _num(r.get("oferta_efetiva_disponivel")),
         "sam": _num(r.get("sam_fitness_potencial")),
         "pop": _num(r.get("pop_leitura")),
+        # Fallback municipal (mesma familia da renda, abaixo): `fonte_populacao_corte` vem
+        # pronta do pipeline (`pop_corte.derive_pop_cut_columns`), que tenta
+        # `pop_total_setor_2022` (setor, granular) primeiro e so cai para `pop_total`
+        # (SIDRA municipal, o MESMO numero repetido em todo hexagono da cidade) quando o
+        # setor nao esta disponivel/confiavel para o hex (`confianca_geografica` !=
+        # "granular"). `pop_leitura`, acima, ja' embute essa escolha via
+        # `populacao_corte_hex` — sem este flag o operador nao tem como saber se o
+        # "Habitantes" que ve e' do bairro ou da cidade inteira.
+        "pop_municipal": r.get("fonte_populacao_corte") == "total_municipal",
         # `renda` e a renda DOMICILIAR per capita (conceito do IBGE), a mesma grandeza que o
         # Relatorio Pontual exibe — antes era a coluna calibrada crua, e as duas superficies
         # mostravam numeros diferentes para a mesma coordenada.

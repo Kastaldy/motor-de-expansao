@@ -40,6 +40,12 @@ export interface Hex {
   /** sam_fitness_potencial, em alunos */
   sam: number | null
   pop: number | null
+  /**
+   * `true` quando `pop` vem do FALLBACK municipal (SIDRA, o mesmo numero repetido em
+   * todo hexagono da cidade), nao do setor censitario 2022 (granular) — mesma familia
+   * de defeito da renda, abaixo. `false`/ausente = leitura de setor.
+   */
+  pop_municipal?: boolean | null
   /** renda per capita (R$/mes) */
   renda: number | null
   /** renda media domiciliar (R$/mes) = renda per capita x fator municipal */
