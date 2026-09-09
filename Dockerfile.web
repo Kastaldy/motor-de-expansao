@@ -47,7 +47,7 @@ RUN apt-get update \
 # que ja' estava no codigo antes de o volume :rw existir.
 COPY . .
 RUN python -m pip install --upgrade pip \
-    && python -m pip install ".[basemap,api_mvp,simulador_cache,db]" -c constraints.txt
+    && python -m pip install ".[basemap,api_mvp,simulador_cache,db,auth]" -c constraints.txt
 
 # dist/ vem do estagio Node (o COPY . . nao o traz, por causa do .dockerignore)
 COPY --from=frontend /web/dist ./web/dist

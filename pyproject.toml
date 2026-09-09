@@ -101,6 +101,17 @@ api_mvp = [
 db = [
     "psycopg[binary,pool]>=3.2,<4",
 ]
+# Hash de senha (D26). Extra PROPRIO, e NAO o `api` legado: aquele bloco arrasta
+# `passlib[bcrypt]`, `python-jose`, `sqlalchemy`, `psycopg2-binary` e `prefect`, e nenhum
+# Dockerfile o instala -- reusa-lo para pegar `passlib` traria a cascata inteira para a
+# imagem do piloto pela porta de tras. Mesma disciplina do `db` acima.
+#
+# Argon2id, e nao bcrypt, por compatibilidade com o Authelia: o `users_database.yml` dele
+# ja' guarda `argon2id`, entao o corte do P19 pode IMPORTAR os hashes existentes em vez de
+# obrigar todo mundo a redefinir senha no mesmo dia. Parametros em `db/senhas.py`.
+auth = [
+    "argon2-cffi>=23.1,<26",
+]
 # (O extra do geocoder do bot — selenium/webdriver-manager — e o `geocoder`,
 # definido abaixo junto de [basemap]; a imagem do bot usa .[basemap,api_mvp,geocoder].)
 # Legado / fora do deploy Streamlit inicial

@@ -123,8 +123,26 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
 # `/api/ciencia-confidencialidade` e' livre de proposito: TODO usuario autenticado ve o
 # pop-up de entrada e o clique no OK precisa virar linha da trilha (DEC-027) — restringir
 # por aba deixaria usuarios sem aba nenhuma fora do registro de ciencia.
+#
+# `/api/me/senha` (D26) e' livre pelo mesmo tipo de razao, e vale dizer por que ela NAO tem
+# capacidade: trocar a propria senha e' a unica coisa que so' a propria pessoa deveria poder
+# fazer, e exigir capacidade para isso obrigaria a promover todo mundo a Growth para depois
+# rebaixar. Ela tambem fica FORA do `PREFIXO_ROTAS_ACESSOS` de proposito: sob `/api/acessos/`
+# ela levaria 404 seco de quem nao administra o painel, e definir a propria senha nao e' ato
+# de administracao.
+#
+# A ausencia de gate nao afrouxa nada, porque o ALVO NAO E' PARAMETRO: a rota resolve a
+# identidade de quem pediu e `trocar_a_propria_senha` so' aceita `autor`, escrevendo so' na
+# linha dele. Nao existe forma de chamar isso para outra pessoa -- nem por id, nem por login.
 ROTAS_LIVRES = frozenset(
-    {"/api/health", "/api/ufs", "/api/metodologia", "/api/me", "/api/ciencia-confidencialidade"}
+    {
+        "/api/health",
+        "/api/ufs",
+        "/api/metodologia",
+        "/api/me",
+        "/api/me/senha",
+        "/api/ciencia-confidencialidade",
+    }
 )
 
 # --- Aba Acessos (emenda DEC-027, 2026-08-19): controle PROPRIO, mais forte ------

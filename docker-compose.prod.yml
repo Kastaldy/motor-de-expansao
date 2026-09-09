@@ -273,6 +273,12 @@ services:
       # NAO olha o banco de proposito — amarrar os dois faria o healthcheck derrubar o
       # container a cada piscada do Postgres, levando junto tudo que nao depende dele.
       MOTOR_DATABASE_URL: ${MOTOR_DATABASE_URL:-}
+      # Senha INICIAL de quem e' criado pela tela de administracao (D26). `:-` e nao `:?`
+      # de proposito: ela e' necessaria para CRIAR usuario, nao para o piloto SUBIR — e
+      # amarrar a subida a ela transformaria uma funcao da aba Acessos em pre-requisito de
+      # deploy. Ausente, criar usuario responde 503 com mensagem explicita e todo o resto
+      # do piloto segue servindo. Ver o bloco dela no `.env.example`.
+      MOTOR_SENHA_INICIAL: ${MOTOR_SENHA_INICIAL:-}
       # BLK-SAT-01: chave do ArcGIS Location Platform p/ a vista aerea (satelite) do
       # Relatorio Pontual. Sem a var -> render devolve None -> pagina omitida (PDF sai igual).
       API_ARCGIS_API_KEY: ${API_ARCGIS_API_KEY:-}

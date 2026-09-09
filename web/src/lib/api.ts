@@ -5,12 +5,15 @@ import type {
   AcessosFicha,
   AcessosResumo,
   AdminAlteracao,
+  AdminCriacao,
+  AdminUsuarioNovo,
   AdminUsuariosPayload,
   AlvoEvento,
   ExecutivaPayload,
   FaixaAlunos,
   MePayload,
   MetodologiaPayload,
+  MinhaSenhaTrocada,
   MunicipioItem,
   OportunidadesPayload,
   Cobertura1k,
@@ -268,6 +271,50 @@ export const api = {
   /** Quem existe, com que perfil, e as opções do seletor. Traz inativos. */
   adminUsuarios: () =>
     pedir<AdminUsuariosPayload>('/api/acessos/usuarios', {}, 15_000),
+
+  /**
+   * Cria uma pessoa (D26). O path é sem barra final: é ele que o mapa de acesso casa.
+   *
+   * Não há campo de senha — quem nasce aqui recebe a senha inicial compartilhada
+   * (`MOTOR_SENHA_INICIAL` no servidor) e troca no primeiro acesso.
+   *
+   * Erros que a tela precisa distinguir: **409** é login ou e-mail já em uso por
+   * alguém ATIVO (e a saída costuma ser reativar quem saiu, não criar outro), **422**
+   * é perfil inexistente ou campo malformado, e **503** é o servidor sem
+   * `MOTOR_SENHA_INICIAL` ou sem o extra `auth` — nos dois casos, nada foi criado.
+   */
+  adminCriarUsuario: (novo: AdminUsuarioNovo) =>
+    pedir<AdminCriacao>(
+      '/api/acessos/usuarios',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(novo),
+      },
+      15_000,
+    ),
+
+  /**
+   * Troca a PRÓPRIA senha (D26). Fora de `/api/acessos/` de propósito: não é ato de
+   * administração, e sob aquele prefixo levaria 404 de quem não administra o painel.
+   *
+   * O alvo não é parâmetro em lugar nenhum — o servidor resolve a identidade de quem
+   * pediu e escreve só na linha dele.
+   *
+   * Erros: **403** é senha atual errada, **422** é a nova reprovada pela política
+   * (mínimo de 12 caracteres, e não pode ser a inicial compartilhada), **409** é não
+   * ter cadastro no banco.
+   */
+  trocarMinhaSenha: (senhaAtual: string, novaSenha: string) =>
+    pedir<MinhaSenhaTrocada>(
+      '/api/me/senha',
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ senha_atual: senhaAtual, nova_senha: novaSenha }),
+      },
+      15_000,
+    ),
 
   /**
    * Muda perfil e/ou status de UMA pessoa.

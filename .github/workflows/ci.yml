@@ -272,7 +272,14 @@ jobs:
           if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE" 2>/dev/null; then
             echo "changed=true" >> "$GITHUB_OUTPUT"; echo "sem base comparavel -> publica"; exit 0
           fi
-          if git diff --name-only "$BASE" "${{ github.sha }}" | grep -qE '^(Dockerfile\.web|web/|src/motor_expansao/(dashboard|dimensionamento|api)/|pyproject\.toml$)'; then
+          # `db/` entra no filtro porque a imagem do web INSTALA o extra `db` (e o `auth`,
+          # desde a D26) e o `web/server/acesso.py` importa `motor_expansao.db` e
+          # `motor_expansao.db.rbac` em tres funcoes do caminho de autorizacao. Sem esta
+          # alternativa, uma mudanca so' em `db/` -- inclusive no RBAC ou no hash de senha --
+          # nao republicaria a imagem, e a VPS seguiria com o codigo antigo em silencio.
+          # NAO acrescentar ao filtro do `publish-api`: aquela imagem nao instala nem importa
+          # o pacote (`Dockerfile.api` usa `.[basemap,api_mvp,geocoder]`).
+          if git diff --name-only "$BASE" "${{ github.sha }}" | grep -qE '^(Dockerfile\.web|web/|src/motor_expansao/(dashboard|dimensionamento|api|db)/|pyproject\.toml$)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"; echo "arquivos do web mudaram -> publica"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"; echo "nada do web mudou -> pula build"

@@ -21,8 +21,10 @@ from motor_expansao import db
 from motor_expansao.db import postgres
 from motor_expansao.db import usuarios as mod
 
-#: (id, login, nome, email, perfil, ativo, criado, atualizado)
-LINHA_LISTA = (7, "vinicius", "Vinícius Cruz", "v@ultra.com", "growth", True, None, None)
+#: (id, login, nome, email, perfil, ativo, criado, atualizado, senha_propria, deve_trocar_senha)
+# As duas ultimas vem da 016. O Vinícius ja' definiu a dele; o `inativo` do teste abaixo nunca
+# definiu — e' o par que a tela precisa distinguir.
+LINHA_LISTA = (7, "vinicius", "Vinícius Cruz", "v@ultra.com", "growth", True, None, None, True, False)
 
 
 class FakeConexao:
@@ -108,13 +110,41 @@ def _con_padrao(monkeypatch: pytest.MonkeyPatch, *, perfil: str, ativo: bool) ->
 
 def test_listar_traz_inativos(monkeypatch: pytest.MonkeyPatch) -> None:
     """Esconder quem foi desativado tornaria a REATIVAÇÃO impossível pela tela."""
-    inativo = (8, "quem_saiu", "Quem Saiu", "q@ultra.com", "expansao", False, None, None)
+    inativo = (8, "quem_saiu", "Quem Saiu", "q@ultra.com", "expansao", False, None, None, False, True)
     con = _instalar(monkeypatch, {"FROM usuarios u": [LINHA_LISTA, inativo]})
     lista = mod.listar()
     assert [u.ativo for u in lista] == [True, False]
     assert lista[1].login == "quem_saiu"
     # Leitura entra pelo `conexao()`, que abre a transação READ ONLY.
     assert con.sql_que_contem("READ ONLY")
+
+
+def test_listar_traz_o_estado_da_senha_de_cada_um(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A tela precisa das duas colunas da 016 separadas, e não de uma derivada da outra.
+
+    `senha_propria` responde "já definiu alguma vez?" e `deve_trocar_senha` responde "precisa
+    definir agora?". Um admin pode forçar troca de quem já definiu, e nesse caso as duas são
+    verdadeiras ao mesmo tempo — colapsá-las numa só perderia justamente esse caso.
+    """
+    inativo = (8, "quem_saiu", "Quem Saiu", "q@ultra.com", "expansao", False, None, None, False, True)
+    _instalar(monkeypatch, {"FROM usuarios u": [LINHA_LISTA, inativo]})
+    lista = mod.listar()
+    assert [u.senha_propria for u in lista] == [True, False]
+    assert [u.deve_trocar_senha for u in lista] == [False, True]
+
+
+def test_o_payload_da_tela_nunca_carrega_o_hash(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`senha_hash` não sai do banco — nem inteiro, nem mascarado, nem sob outro nome.
+
+    O `como_json` vai para o navegador de quem administra. A tela precisa saber SE a pessoa já
+    definiu a senha dela, e isso é um booleano; o hash não tem por que atravessar a rede.
+    """
+    _instalar(monkeypatch, {"FROM usuarios u": [LINHA_LISTA]})
+    payload = mod.listar()[0].como_json()
+    assert "senha_hash" not in payload
+    assert not any("hash" in chave for chave in payload)
+    assert not any(isinstance(v, str) and v.startswith("$argon2") for v in payload.values())
+    assert "senha_hash" not in mod.SQL_LISTAR
 
 
 def test_listar_nao_filtra_por_ativo_no_sql() -> None:
@@ -269,4 +299,300 @@ def test_o_vocabulario_de_tipo_e_o_do_contrato() -> None:
     assert mod.EVENTO_PERFIL_ALTERADO == "usuario.perfil_alterado"
     assert mod.EVENTO_DESATIVADO == "usuario.desativado"
     assert mod.EVENTO_REATIVADO == "usuario.reativado"
+    assert mod.EVENTO_CRIADO == "usuario.criado"
+    assert mod.EVENTO_SENHA_DEFINIDA == "usuario.senha_definida"
     assert mod.ENTIDADE_USUARIO == "usuario"
+
+
+# --------------------------------------------------------------------------------------
+# Criação (D26)
+# --------------------------------------------------------------------------------------
+
+
+HASH_FALSO = "$argon2id$v=19$m=65536,t=3,p=4$c2Fs$aGFzaA"
+
+
+@pytest.fixture
+def _sem_argon2(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Neutraliza o custo do Argon2 nestes testes, que são sobre a TRILHA e não sobre o hash.
+
+    O hash de verdade tem teste próprio em `test_db_senhas.py`, que faz `importorskip` porque
+    `argon2-cffi` entra pelo extra novo `auth` e pode não estar instalado. Aqui, pagar 64 MB e
+    ~100 ms por caso tornaria esta suíte lenta sem exercitar nada que ela guarda.
+    """
+    from motor_expansao.db import senhas
+
+    monkeypatch.setattr(senhas, "hash_da_senha_inicial", lambda: HASH_FALSO)
+    monkeypatch.setattr(senhas, "gerar", lambda _s: HASH_FALSO)
+
+
+def _con_criacao(monkeypatch: pytest.MonkeyPatch, id_novo: int = 42) -> FakeConexao:
+    return _instalar(
+        monkeypatch,
+        {
+            "FROM perfis WHERE nome_perfil": [(3,)],
+            "INSERT INTO usuarios": [(id_novo,)],
+        },
+    )
+
+
+def test_criar_grava_usuario_e_evento_na_mesma_transacao(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """Uma unidade de trabalho: a linha e o evento, ou nenhum dos dois."""
+    con = _con_criacao(monkeypatch)
+    mod.criar(login="ana", nome="Ana Ribeiro", email="ana@ultra.com", perfil="expansao", autor=7)
+
+    # O autor é o PRIMEIRO comando da transação — sem ele as triggers do D19 gravam autoria nula.
+    assert con.executados[0][0] == postgres.SQL_DEFINIR_AUTOR
+    assert con.executados[0][1] == ("7",)
+    assert len(con.sql_que_contem("INSERT INTO usuarios")) == 1
+    assert len(con.eventos) == 1
+    assert con.eventos[0][1] == mod.EVENTO_CRIADO
+
+
+def test_as_duas_pessoas_da_criacao_nao_se_invertem(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """`id_usuario` é quem CRIOU; `entidade_id` é quem foi criado — e é o id do `RETURNING`.
+
+    É o único caso em que o alvo não existia antes da chamada, então trocar os dois de lugar
+    produziria um evento apontando para o admin como se ELE tivesse sido criado.
+    """
+    con = _con_criacao(monkeypatch, id_novo=42)
+    mod.criar(login="ana", nome="Ana", email="ana@ultra.com", perfil="expansao", autor=7)
+
+    autor, tipo, entidade, entidade_id, _metadados = con.eventos[0]
+    assert autor == 7, "o autor virou o alvo"
+    assert entidade_id == 42, "o alvo virou o autor"
+    assert entidade == mod.ENTIDADE_USUARIO
+    assert tipo == mod.EVENTO_CRIADO
+
+
+def test_criar_devolve_o_id_novo_e_avisa_do_authelia(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """A tela precisa do id, e precisa do recado: a pessoa ainda não entra."""
+    _con_criacao(monkeypatch, id_novo=42)
+    saida = mod.criar(login="ana", nome="Ana", email="ana@ultra.com", perfil="growth", autor=7)
+    assert saida["id_usuario"] == 42
+    assert saida["falta_cadastrar_no_authelia"] is True
+
+
+def test_metadados_da_criacao_nao_carregam_pii(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """Só o perfil. Nunca login, nome ou e-mail — convenções §5 e contrato §4."""
+    con = _con_criacao(monkeypatch)
+    mod.criar(login="ana", nome="Ana Ribeiro", email="ana@ultra.com", perfil="expansao", autor=7)
+    metadados = con.eventos[0][4].obj
+    assert metadados == {"perfil": "expansao"}
+
+
+def test_criar_grava_exatamente_o_que_o_modulo_de_senha_produziu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O que vai para `senha_hash` é a saída de `senhas.hash_da_senha_inicial()`, e nada mais.
+
+    Este teste guarda a LIGAÇÃO, não o algoritmo: a força do hash tem teste próprio em
+    `test_db_senhas.py`. O que se impede aqui é a regressão que a `015` descreveu — enquanto a
+    coluna não tinha consumidor, qualquer string passava, e as fixtures gravaram
+    `hash_de_teste_*`. Por isso a asserção é de identidade com o valor produzido, e o `sentinela`
+    é reconhecível: se alguém interpolar a senha, montar um placeholder ou passar `None`, o valor
+    gravado deixa de ser este.
+    """
+    from motor_expansao.db import senhas
+
+    sentinela = "$argon2id$v=19$m=65536,t=3,p=4$U0VOVElORUxB$dmluZG9kb21vZHVsbw"
+    monkeypatch.setattr(senhas, "hash_da_senha_inicial", lambda: sentinela)
+    monkeypatch.setenv("MOTOR_SENHA_INICIAL", "senha-inicial-do-piloto")
+
+    con = _con_criacao(monkeypatch)
+    mod.criar(login="ana", nome="Ana", email="ana@ultra.com", perfil="expansao", autor=7)
+
+    _sql, params = con.sql_que_contem("INSERT INTO usuarios")[0]
+    gravado = params[3]
+    assert gravado == sentinela, "o hash gravado não é o que o módulo de senha produziu"
+    assert "senha-inicial-do-piloto" not in gravado, "a senha em claro vazou para a coluna"
+
+
+def test_criar_recusa_quando_a_senha_inicial_nao_esta_configurada(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sem `MOTOR_SENHA_INICIAL`, criar é RECUSADO — e antes de abrir transação.
+
+    Criar alguém com uma senha que ninguém sabe qual é seria pior que não criar: a pessoa
+    apareceria na lista, não entraria, e não haveria como descobrir o porquê pela tela.
+    """
+    from motor_expansao.db import senhas
+
+    monkeypatch.delenv(senhas.ENV_SENHA_INICIAL, raising=False)
+    con = _con_criacao(monkeypatch)
+    with pytest.raises(senhas.SenhaInicialNaoConfigurada):
+        mod.criar(login="ana", nome="Ana", email="ana@ultra.com", perfil="expansao", autor=7)
+    assert con.executados == []
+
+
+def test_criar_com_perfil_inexistente_nao_escreve(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """A recusa vem do lookup por NOME, antes de qualquer INSERT — como no `alterar_perfil`."""
+    con = _instalar(monkeypatch, {"INSERT INTO usuarios": [(42,)]})  # perfis não responde
+    with pytest.raises(mod.PerfilDesconhecido):
+        mod.criar(login="ana", nome="Ana", email="ana@ultra.com", perfil="inexistente", autor=7)
+    assert con.sql_que_contem("INSERT INTO usuarios") == []
+    assert con.eventos == []
+
+
+@pytest.mark.parametrize(
+    ("login", "nome", "email"),
+    [("", "Ana", "ana@ultra.com"), ("ana", "", "ana@ultra.com"), ("ana", "Ana", ""),
+     ("ana", "Ana", "sem-arroba")],
+)
+def test_criar_recusa_campo_vazio_ou_email_invalido(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None, login: str, nome: str, email: str
+) -> None:
+    """Recusa ANTES de abrir transação: campo vazio é erro de quem digitou."""
+    con = _con_criacao(monkeypatch)
+    with pytest.raises(ValueError):
+        mod.criar(login=login, nome=nome, email=email, perfil="expansao", autor=7)
+    assert con.executados == []
+
+
+def test_criar_nao_trava_o_auto_alvo(monkeypatch: pytest.MonkeyPatch, _sem_argon2: None) -> None:
+    """Criar não tem alvo preexistente, então `_recusar_auto_alvo` não se aplica.
+
+    Sem este teste, alguém copiaria `alterar_perfil` inteiro por reflexo e travaria a criação
+    sem motivo — e também não há `FOR UPDATE`, porque não há linha anterior para travar.
+    """
+    con = _con_criacao(monkeypatch)
+    mod.criar(login="ana", nome="Ana", email="ana@ultra.com", perfil="expansao", autor=7)
+    assert con.sql_que_contem("FOR UPDATE OF u") == []
+
+
+@pytest.mark.parametrize(
+    ("indice", "esperada"),
+    [("idx_usuarios_login_ativo", "LoginEmUso"), ("idx_usuarios_email_ativo", "EmailEmUso")],
+)
+def test_conflito_de_indice_unico_vira_erro_de_dominio(indice: str, esperada: str) -> None:
+    """A `UniqueViolation` é traduzida pelo NOME do índice, não pela mensagem.
+
+    Pela mensagem seria frágil: o cluster do Vinícius responde em português, e a rota devolveria
+    500 para um conflito que a tela sabe explicar.
+    """
+
+    class _Diag:
+        constraint_name = indice
+
+    class _Violacao(Exception):
+        diag = _Diag()
+
+    traduzido = mod._traduzir_conflito(_Violacao("duplicate key"))
+    assert type(traduzido).__name__ == esperada
+
+
+def test_conflito_desconhecido_nao_e_traduzido() -> None:
+    """Violação que não é dos dois índices sobe como está — inventar 409 esconderia defeito."""
+
+    class _Outra(Exception):
+        diag = None
+
+    erro = _Outra("algo mais")
+    assert mod._traduzir_conflito(erro) is erro
+
+
+# --------------------------------------------------------------------------------------
+# Senha própria (D26)
+# --------------------------------------------------------------------------------------
+
+
+def _con_senha(monkeypatch: pytest.MonkeyPatch, *, ja_definiu: bool) -> FakeConexao:
+    return _instalar(
+        monkeypatch,
+        {"FOR UPDATE OF u": [(7, HASH_FALSO, ja_definiu, True)]},
+    )
+
+
+def test_trocar_a_propria_senha_grava_e_registra(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """O UPDATE e o evento na mesma transação, com o autor carimbado primeiro."""
+    from motor_expansao.db import senhas
+
+    monkeypatch.setattr(senhas, "verificar", lambda _s, _h: True)
+    con = _con_senha(monkeypatch, ja_definiu=False)
+    saida = mod.trocar_a_propria_senha(autor=7, senha_atual="a-inicial", nova_senha="uma frase longa")
+
+    assert con.executados[0][0] == postgres.SQL_DEFINIR_AUTOR
+    assert len(con.sql_que_contem("SET senha_hash")) == 1
+    assert con.eventos[0][1] == mod.EVENTO_SENHA_DEFINIDA
+    assert saida["primeira_vez"] is True
+
+
+def test_a_troca_carimba_a_data_e_limpa_a_marca_no_mesmo_update(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """Os três campos andam juntos: gravar o hash sem a data deixaria a 016 mentindo."""
+    from motor_expansao.db import senhas
+
+    monkeypatch.setattr(senhas, "verificar", lambda _s, _h: True)
+    con = _con_senha(monkeypatch, ja_definiu=False)
+    mod.trocar_a_propria_senha(autor=7, senha_atual="x", nova_senha="uma frase longa")
+
+    sql, _params = con.sql_que_contem("SET senha_hash")[0]
+    assert "senha_definida_em_usuario = now()" in sql
+    assert "deve_trocar_senha_usuario = FALSE" in sql
+
+
+def test_a_troca_e_o_unico_caso_em_que_autor_e_alvo_coincidem(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """Aqui autor == alvo de propósito — é a inversão do `_recusar_auto_alvo`.
+
+    Mudar o próprio PERFIL é o que aquela guarda impede; trocar a própria SENHA é a única coisa
+    que só a própria pessoa deveria poder fazer.
+    """
+    from motor_expansao.db import senhas
+
+    monkeypatch.setattr(senhas, "verificar", lambda _s, _h: True)
+    con = _con_senha(monkeypatch, ja_definiu=True)
+    mod.trocar_a_propria_senha(autor=7, senha_atual="x", nova_senha="uma frase longa")
+
+    autor, _tipo, _ent, entidade_id, _meta = con.eventos[0]
+    assert autor == entidade_id == 7
+
+
+def test_senha_atual_errada_nao_escreve_nada(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """Sem a conferência, qualquer requisição com o header de alguém trocaria a senha dele."""
+    from motor_expansao.db import senhas
+
+    monkeypatch.setattr(senhas, "verificar", lambda _s, _h: False)
+    con = _con_senha(monkeypatch, ja_definiu=True)
+    with pytest.raises(mod.SenhaAtualIncorreta):
+        mod.trocar_a_propria_senha(autor=7, senha_atual="errada", nova_senha="uma frase longa")
+    assert con.sql_que_contem("SET senha_hash") == []
+    assert con.eventos == []
+
+
+def test_a_politica_roda_antes_de_abrir_transacao(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Senha curta é erro de quem digitou — não há por que travar linha para descobrir."""
+    con = _con_senha(monkeypatch, ja_definiu=False)
+    with pytest.raises(Exception) as capturado:
+        mod.trocar_a_propria_senha(autor=7, senha_atual="x", nova_senha="curta")
+    assert type(capturado.value).__name__ == "SenhaFraca"
+    assert con.executados == []
+
+
+def test_metadados_da_senha_nunca_carregam_a_senha(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """Só `primeira_vez`. Nem a senha, nem o hash, nem parte de nenhum dos dois."""
+    from motor_expansao.db import senhas
+
+    monkeypatch.setattr(senhas, "verificar", lambda _s, _h: True)
+    con = _con_senha(monkeypatch, ja_definiu=False)
+    mod.trocar_a_propria_senha(autor=7, senha_atual="a-inicial", nova_senha="uma frase bem longa")
+    metadados = con.eventos[0][4].obj
+    assert metadados == {"primeira_vez": True}

@@ -1635,6 +1635,12 @@ export interface AdminUsuario {
   email: string
   perfil: string
   ativo: boolean
+  /** Se a pessoa já definiu a senha dela alguma vez (016). `false` = ainda na inicial
+   *  compartilhada. Nunca vem hash nenhum no payload — só este booleano. */
+  senha_propria: boolean
+  /** Se a próxima entrada dela deve pedir troca (016). Não é o inverso do de cima: um
+   *  admin pode forçar troca de quem já definiu, e aí os dois são verdadeiros. */
+  deve_trocar_senha: boolean
 }
 
 /** Opção do seletor de perfil. A ordem vem do backend e é a hierarquia da D22
@@ -1659,4 +1665,33 @@ export interface AdminAlteracao {
   id_usuario: number
   perfil?: { id_usuario: number; de: string; para: string; mudou: boolean }
   status?: { id_usuario: number; ativo: boolean; mudou: boolean }
+}
+
+/** Corpo do POST de criação (D26). Sem campo de senha DE PROPÓSITO: quem nasce pela
+ *  tela recebe a senha inicial compartilhada e troca no primeiro acesso. Um campo de
+ *  senha aqui faria o admin conhecer a senha de outra pessoa, e qualquer ação daquela
+ *  conta ficaria contestável — o oposto do que o D17 sustenta. */
+export interface AdminUsuarioNovo {
+  login: string
+  nome: string
+  email: string
+  perfil: string
+}
+
+/** Resposta do POST. `falta_cadastrar_no_authelia` é sempre `true` enquanto o P19 não
+ *  for executado, e a tela PRECISA mostrá-lo: uma linha em `usuarios` sem a entrada no
+ *  `users_database.yml` não deixa a pessoa entrar, e sem esse recado criar usuário
+ *  viraria uma armadilha silenciosa. */
+export interface AdminCriacao {
+  id_usuario: number
+  login: string
+  perfil: string
+  falta_cadastrar_no_authelia: boolean
+}
+
+/** Resposta da troca da própria senha (D26). `primeira_vez` distingue "saiu da senha
+ *  inicial" de "trocou de novo" — é o que a tela usa para o recado certo. */
+export interface MinhaSenhaTrocada {
+  id_usuario: number
+  primeira_vez: boolean
 }

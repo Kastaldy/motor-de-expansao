@@ -388,11 +388,30 @@ a pessoa autenticada com a linha do banco (D23). Confira contra o
 Deixe **pelo menos um** usuário do perfil Growth pronto antes do passo 8: é o único que enxerga o
 painel de Acessos, e é por ele que você verifica que o RBAC subiu certo.
 
-**Só o primeiro precisa de SQL.** A partir dele, a aba de Acessos administra os demais — trocar
-perfil e ativar/desativar, com autor e de-para registrados em `eventos` (D25). O que a tela **não**
-faz é criar pessoa: quem entra nasce no `authelia/users_database.yml`, e a linha em `usuarios` vem
-depois. Enquanto o Authelia autenticar (P19), os dois cadastros andam juntos e é preciso lembrar
-dos dois.
+**Só o primeiro precisa de SQL.** A partir dele, a aba de Acessos faz o resto — **criar** (D26),
+trocar perfil e ativar/desativar, com autor e de-para registrados em `eventos`. O primeiro é
+manual porque criar exige autor, e autor exige alguém já cadastrado; do segundo em diante a tela
+resolve.
+
+**Mas a tela grava só no banco.** Quem entra também precisa nascer no
+`authelia/users_database.yml`, que é quem autentica até o **P19** ser executado — a tela avisa isso
+depois de criar, com o login a cadastrar. Enquanto o Authelia autenticar, os dois cadastros andam
+juntos e é preciso lembrar dos dois; uma linha em `usuarios` sem a entrada de lá aparece na lista e
+não entra.
+
+**A senha de quem é criado pela tela vem de `MOTOR_SENHA_INICIAL`,** e ela precisa estar no `.env`
+antes do primeiro `Criar usuário` — sem ela a rota responde 503 com mensagem explícita, em vez de
+criar alguém com uma senha que ninguém sabe qual é. Cada pessoa recebe o hash Argon2id dela com sal
+próprio e nasce marcada para trocar; a troca é em `PATCH /api/me/senha`, que **não** exige a
+allowlist do painel — trocar a própria senha não é ato de administração. A coluna `Senha` da tela
+diz quem já saiu da inicial, e é a fila que o corte do P19 precisa zerar.
+
+> Se você estiver semeando a mão (o primeiro, ou o `dados-ficticios.md` num banco de ensaio), o
+> `senha_hash` que você inserir **não** vai autenticar nada — e desde a 016 isso fica visível:
+> `senha_definida_em_usuario` nasce nulo e `deve_trocar_senha_usuario` nasce `TRUE`, o que é a
+> verdade sobre uma linha semeada. Para gerar um hash de verdade fora da tela:
+> `python -c "from motor_expansao.db import senhas; print(senhas.gerar('<a senha>'))"` (exige o
+> extra `auth`).
 
 ## 8. Ligar — e o que fazer se der errado
 

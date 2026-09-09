@@ -3509,6 +3509,28 @@ class UsuarioAdminIn(BaseModel):
     ativo: bool | None = None
 
 
+class UsuarioNovoIn(BaseModel):
+    """Pessoa nova (D26). Os quatro campos sao OBRIGATORIOS, ao contrario dos de alteracao.
+
+    Nao ha campo `senha` de proposito: quem nasce pela tela recebe a senha INICIAL
+    compartilhada (`MOTOR_SENHA_INICIAL`) e troca no primeiro acesso. Um campo de senha aqui
+    faria o admin conhecer a senha de outra pessoa, e qualquer acao daquela conta viraria
+    contestavel -- o oposto do que o D17 existe para sustentar.
+    """
+
+    login: str
+    nome: str
+    email: str
+    perfil: str
+
+
+class MinhaSenhaIn(BaseModel):
+    """Troca da PROPRIA senha. Exige a atual, que no primeiro acesso e' a inicial."""
+
+    senha_atual: str
+    nova_senha: str
+
+
 def _identidade_do_admin(remote_user: str | None) -> Any:
     """Quem esta pedindo. Levanta 503 se o banco nao responder.
 
@@ -3533,9 +3555,39 @@ def _identidade_do_admin(remote_user: str | None) -> Any:
     return eu
 
 
+def _minha_identidade(remote_user: str | None) -> Any:
+    """Quem esta pedindo, para rotas que NAO sao de administracao (`/api/me/...`).
+
+    Existe separada do `_identidade_do_admin` por causa da mensagem: lá, a ausencia de linha em
+    `usuarios` significa "a allowlist do painel e o banco divergiram", que e' um problema de
+    configuracao do operador. Aqui significa "voce nao tem cadastro", que e' outra conversa e
+    outro recado -- reaproveitar a mensagem do painel mandaria a pessoa procurar uma allowlist
+    em que ela nunca esteve.
+    """
+    from motor_expansao.db import BancoIndisponivel, rbac
+
+    try:
+        eu = rbac.identidade(remote_user)
+    except BancoIndisponivel as erro:
+        raise HTTPException(503, f"Banco indisponível: {erro}") from erro
+    if eu is None:
+        raise HTTPException(
+            409,
+            "Você não tem cadastro no banco, então não há senha sua para trocar. "
+            "Peça a alguém do perfil Growth para criar o seu acesso.",
+        )
+    return eu
+
+
 def _erro_de_usuarios(erro: Exception) -> HTTPException:
-    """Traduz as excecoes do modulo de dados para o status certo."""
+    """Traduz as excecoes do modulo de dados para o status certo.
+
+    A ORDEM importa: `LoginEmUso`, `EmailEmUso` e `SenhaFraca` sao todos `ValueError`, entao os
+    especificos vem antes do generico -- senao um conflito de login (409, acionavel) sairia como
+    422 e a tela mostraria o recado errado.
+    """
     from motor_expansao.db import BancoIndisponivel
+    from motor_expansao.db import senhas as db_senhas
     from motor_expansao.db import usuarios as db_usuarios
 
     if isinstance(erro, db_usuarios.UsuarioDesconhecido):
@@ -3544,8 +3596,25 @@ def _erro_de_usuarios(erro: Exception) -> HTTPException:
         return HTTPException(422, str(erro))
     if isinstance(erro, db_usuarios.AlvoEhOAutor):
         return HTTPException(403, str(erro))
+    if isinstance(erro, db_usuarios.SenhaAtualIncorreta):
+        return HTTPException(403, str(erro))
+    if isinstance(erro, (db_usuarios.LoginEmUso, db_usuarios.EmailEmUso)):
+        # 409 e nao 422: o corpo esta bem formado, o conflito e' com o ESTADO -- e a tela tem
+        # uma saida concreta a oferecer (reativar quem saiu, em vez de criar outro cadastro).
+        return HTTPException(409, str(erro))
+    if isinstance(erro, db_senhas.SenhaFraca):
+        return HTTPException(422, str(erro))
+    if isinstance(erro, db_senhas.SenhaInicialNaoConfigurada):
+        # Falta de configuracao do deploy, no molde do `BancoIndisponivel`: nao e' erro de quem
+        # clicou, e a mensagem tem de dizer o que o OPERADOR precisa fazer.
+        return HTTPException(503, str(erro))
+    if isinstance(erro, db_senhas.HashIndisponivel):
+        return HTTPException(503, str(erro))
     if isinstance(erro, BancoIndisponivel):
         return HTTPException(503, f"Banco indisponível: {erro}")
+    if isinstance(erro, ValueError):
+        # `criar` recusa campo vazio e e-mail sem `@` por aqui.
+        return HTTPException(422, str(erro))
     raise erro
 
 
@@ -3608,6 +3677,71 @@ def acessos_usuarios_alterar(
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
         raise _erro_de_usuarios(erro) from erro
     return resultado
+
+
+@app.post("/api/acessos/usuarios", include_in_schema=False)
+def acessos_usuarios_criar(
+    body: UsuarioNovoIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Cria a pessoa e grava `usuario.criado` na MESMA transacao (D26).
+
+    O path e' exatamente `/api/acessos/usuarios`, sem barra final, porque e' esse que o mapa
+    de acesso casa: `acesso.py` reserva `POST` ali para `acesso.usuario_gerir`, antes da regra
+    generica de `acesso.painel_ver`. Ver a pessoa e criar pessoa sao capacidades diferentes.
+
+    A senha entregue e' a INICIAL compartilhada, e a resposta traz `falta_cadastrar_no_authelia`
+    para a tela poder dizer o passo que ainda e' manual: enquanto o Authelia autenticar, uma
+    linha em `usuarios` sem a entrada no `users_database.yml` nao deixa a pessoa entrar.
+    """
+    _exigir_admin_acessos(remote_user)
+    from motor_expansao.db import usuarios as db_usuarios
+
+    eu = _identidade_do_admin(remote_user)
+    try:
+        return db_usuarios.criar(
+            login=body.login,
+            nome=body.nome,
+            email=body.email,
+            perfil=body.perfil,
+            autor=eu.id_usuario,
+        )
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_usuarios(erro) from erro
+
+
+@app.patch("/api/me/senha", include_in_schema=False)
+def me_trocar_senha(
+    body: MinhaSenhaIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """A pessoa troca a SENHA DELA. Nao passa pela allowlist do painel, e nao deve.
+
+    Esta rota fica FORA de `/api/acessos/` de proposito, por duas razoes. A primeira e' que
+    `bloqueio_acessos` devolve 404 seco para todo aquele prefixo a quem nao esta na allowlist de
+    administracao -- e trocar a propria senha nao e' ato de administracao. A segunda e' que
+    `capacidade_necessaria` nao tem regra para `/api/me`, entao a rota e' livre para quem tem
+    identidade: exatamente o publico certo, porque toda pessoa deve poder trocar a propria senha.
+
+    A ausencia de gate nao afrouxa nada, porque o alvo nao e' parametro: `trocar_a_propria_senha`
+    so' aceita `autor`, e escreve so' na linha dele. Nao existe forma de chamar isto para outra
+    pessoa, nem passando id, nem passando login.
+
+    ENQUANTO O AUTHELIA AUTENTICAR, esta rota nao muda como ninguem entra: ela prepara a coluna
+    para o dia da virada do P19. E' o que permite as pessoas irem definindo senha propria ANTES
+    do corte, em vez de todo mundo redefinir no mesmo dia.
+    """
+    from motor_expansao.db import usuarios as db_usuarios
+
+    eu = _minha_identidade(remote_user)
+    try:
+        return db_usuarios.trocar_a_propria_senha(
+            autor=eu.id_usuario,
+            senha_atual=body.senha_atual,
+            nova_senha=body.nova_senha,
+        )
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_usuarios(erro) from erro
 
 
 # ============================================================================

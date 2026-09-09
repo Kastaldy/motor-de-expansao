@@ -212,3 +212,268 @@ def test_banco_fora_do_ar_na_identidade_e_503(monkeypatch: pytest.MonkeyPatch) -
     with pytest.raises(HTTPException) as caiu:
         pilot_app.acessos_usuarios_listar(remote_user=ADMIN)
     assert caiu.value.status_code == 503
+
+
+# --------------------------------------------------------------------------------------
+# Criação (D26)
+# --------------------------------------------------------------------------------------
+
+
+def _corpo_novo(**troca: Any) -> Any:
+    campos: dict[str, Any] = {
+        "login": "ana",
+        "nome": "Ana Ribeiro",
+        "email": "ana@ultraacademia.com.br",
+        "perfil": "expansao",
+    }
+    campos.update(troca)
+    return pilot_app.UsuarioNovoIn(**campos)
+
+
+def test_fora_da_allowlist_a_criacao_nao_existe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """404, e não 403 — a rota de criação segue a mesma regra das outras duas."""
+    monkeypatch.setattr(pilot_app.acesso, "pode_ver_acessos", lambda _u: False)
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.acessos_usuarios_criar(_corpo_novo(), remote_user="qualquer")
+    assert caiu.value.status_code == 404
+
+
+def test_o_gate_da_criacao_e_checado_antes_de_tocar_o_banco(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Negado não cria, não consulta e não hasheia — o Argon2 custa 64 MB por chamada."""
+    monkeypatch.setattr(pilot_app.acesso, "pode_ver_acessos", lambda _u: False)
+
+    def _explode(**_k: Any) -> None:
+        raise AssertionError("o banco foi tocado antes do gate")
+
+    monkeypatch.setattr(db_usuarios, "criar", _explode)
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.acessos_usuarios_criar(_corpo_novo(), remote_user="qualquer")
+    assert caiu.value.status_code == 404
+
+
+def test_a_criacao_passa_o_autor_e_devolve_o_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O autor vem da identidade de quem pediu, nunca do corpo da requisição."""
+    _identidade(monkeypatch, _Eu())
+    visto: dict[str, Any] = {}
+
+    def _criar(**kwargs: Any) -> dict[str, Any]:
+        visto.update(kwargs)
+        return {"id_usuario": 42, "login": "ana", "perfil": "expansao",
+                "falta_cadastrar_no_authelia": True}
+
+    monkeypatch.setattr(db_usuarios, "criar", _criar)
+    saida = pilot_app.acessos_usuarios_criar(_corpo_novo(), remote_user=ADMIN)
+
+    assert visto["autor"] == 7
+    assert visto["login"] == "ana"
+    assert saida["id_usuario"] == 42
+    assert saida["falta_cadastrar_no_authelia"] is True
+
+
+def test_o_corpo_da_criacao_nao_aceita_senha() -> None:
+    """Sem campo de senha, de propósito: o admin não deve conhecer a senha de outra pessoa.
+
+    Se um campo `senha` aparecer aqui, qualquer ação daquela conta fica contestável — o oposto
+    do que o D17 existe para sustentar. Pydantic ignora extra por padrão, então o que se guarda
+    é que o modelo NÃO declara o campo.
+    """
+    assert "senha" not in pilot_app.UsuarioNovoIn.model_fields
+    assert set(pilot_app.UsuarioNovoIn.model_fields) == {"login", "nome", "email", "perfil"}
+
+
+@pytest.mark.parametrize("faltando", ["login", "nome", "email", "perfil"])
+def test_criacao_com_campo_faltando_nao_monta(faltando: str) -> None:
+    """Os quatro são obrigatórios — ao contrário dos dois de alteração, opcionais de propósito."""
+    from pydantic import ValidationError
+
+    campos = {"login": "ana", "nome": "Ana", "email": "a@u.com", "perfil": "expansao"}
+    del campos[faltando]
+    with pytest.raises(ValidationError):
+        pilot_app.UsuarioNovoIn(**campos)
+
+
+@pytest.mark.parametrize(
+    ("erro", "status"),
+    [
+        ("PerfilDesconhecido", 422),
+        ("LoginEmUso", 409),
+        ("EmailEmUso", 409),
+    ],
+)
+def test_cada_recusa_da_criacao_tem_seu_status(
+    monkeypatch: pytest.MonkeyPatch, erro: str, status: int
+) -> None:
+    """409 para conflito de estado, 422 para corpo que o banco não aceita. Nunca 500."""
+    _identidade(monkeypatch, _Eu())
+    classe = getattr(db_usuarios, erro)
+
+    def _criar(**_k: Any) -> None:
+        raise classe("não")
+
+    monkeypatch.setattr(db_usuarios, "criar", _criar)
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.acessos_usuarios_criar(_corpo_novo(), remote_user=ADMIN)
+    assert caiu.value.status_code == status
+
+
+def test_senha_inicial_nao_configurada_e_503_e_nao_500(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Falta de configuração do deploy, no molde do banco indisponível.
+
+    A mensagem tem de dizer o que o OPERADOR precisa fazer — quem está na tela não tem como
+    consertar o `.env`.
+    """
+    from motor_expansao.db import senhas
+
+    _identidade(monkeypatch, _Eu())
+
+    def _criar(**_k: Any) -> None:
+        raise senhas.SenhaInicialNaoConfigurada("MOTOR_SENHA_INICIAL não está definida.")
+
+    monkeypatch.setattr(db_usuarios, "criar", _criar)
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.acessos_usuarios_criar(_corpo_novo(), remote_user=ADMIN)
+    assert caiu.value.status_code == 503
+    assert "MOTOR_SENHA_INICIAL" in str(caiu.value.detail)
+
+
+def test_extra_auth_ausente_e_503(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`argon2-cffi` faltando é 503, como driver de banco faltando — não é erro de quem clicou."""
+    from motor_expansao.db import senhas
+
+    _identidade(monkeypatch, _Eu())
+
+    def _criar(**_k: Any) -> None:
+        raise senhas.HashIndisponivel("argon2-cffi nao esta instalado")
+
+    monkeypatch.setattr(db_usuarios, "criar", _criar)
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.acessos_usuarios_criar(_corpo_novo(), remote_user=ADMIN)
+    assert caiu.value.status_code == 503
+
+
+# --------------------------------------------------------------------------------------
+# Senha própria (D26)
+# --------------------------------------------------------------------------------------
+
+
+def test_trocar_a_propria_senha_nao_exige_a_allowlist_do_painel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Trocar a própria senha não é ato de administração, e não pode depender da allowlist.
+
+    Se dependesse, só quem administra o painel poderia definir senha — e a preparação do P19
+    exigiria promover todo mundo a Growth para depois rebaixar.
+    """
+    monkeypatch.setattr(pilot_app.acesso, "pode_ver_acessos", lambda _u: False)
+    monkeypatch.setattr(pilot_app, "_minha_identidade", lambda _u: _Eu())
+    monkeypatch.setattr(
+        db_usuarios, "trocar_a_propria_senha", lambda **_k: {"id_usuario": 7, "primeira_vez": True}
+    )
+    saida = pilot_app.me_trocar_senha(
+        pilot_app.MinhaSenhaIn(senha_atual="a-inicial", nova_senha="uma frase bem longa"),
+        remote_user="qualquer",
+    )
+    assert saida["primeira_vez"] is True
+
+
+def test_a_rota_de_senha_nao_aceita_alvo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O alvo não é parâmetro em lugar nenhum do caminho — nem no path, nem no corpo.
+
+    É o que torna a ausência de gate inofensiva: não existe forma de chamar isto para outra
+    pessoa, nem passando id, nem passando login.
+    """
+    assert set(pilot_app.MinhaSenhaIn.model_fields) == {"senha_atual", "nova_senha"}
+
+    visto: dict[str, Any] = {}
+    monkeypatch.setattr(pilot_app, "_minha_identidade", lambda _u: _Eu())
+    monkeypatch.setattr(
+        db_usuarios,
+        "trocar_a_propria_senha",
+        lambda **k: visto.update(k) or {"id_usuario": 7, "primeira_vez": False},
+    )
+    pilot_app.me_trocar_senha(
+        pilot_app.MinhaSenhaIn(senha_atual="x", nova_senha="uma frase bem longa"),
+        remote_user=ADMIN,
+    )
+    assert set(visto) == {"autor", "senha_atual", "nova_senha"}
+    assert visto["autor"] == 7
+
+
+def test_a_rota_de_senha_esta_fora_do_prefixo_de_acessos() -> None:
+    """Sob `/api/acessos/` ela levaria 404 seco de quem não administra o painel.
+
+    E o mapa de capacidade não tem regra para `/api/me`, então a rota é livre para quem tem
+    identidade — exatamente o público certo.
+    """
+    from motor_expansao.db import rbac  # noqa: F401  (garante que o pacote carrega)
+
+    caminhos = [r.path for r in pilot_app.app.routes if getattr(r, "path", "").endswith("/senha")]
+    assert "/api/me/senha" in caminhos
+    assert not any(c.startswith("/api/acessos/") for c in caminhos)
+    assert pilot_app.acesso.capacidade_necessaria("/api/me/senha", "PATCH") is None
+    # `bloqueio_acessos` devolve falsy para "não bloqueado". O lado do bloqueio tem cobertura
+    # própria em `test_fora_da_allowlist_a_rota_nao_existe` — aqui a fixture autouse já liberou
+    # a allowlist, então afirmar o contrário neste teste brigaria com ela.
+    assert not pilot_app.acesso.bloqueio_acessos("/api/me/senha", "ninguem")
+
+
+@pytest.mark.parametrize(
+    ("erro", "status"),
+    [("SenhaAtualIncorreta", 403), ("UsuarioDesconhecido", 404)],
+)
+def test_cada_recusa_da_troca_tem_seu_status(
+    monkeypatch: pytest.MonkeyPatch, erro: str, status: int
+) -> None:
+    monkeypatch.setattr(pilot_app, "_minha_identidade", lambda _u: _Eu())
+    classe = getattr(db_usuarios, erro)
+
+    def _trocar(**_k: Any) -> None:
+        raise classe("não")
+
+    monkeypatch.setattr(db_usuarios, "trocar_a_propria_senha", _trocar)
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.me_trocar_senha(
+            pilot_app.MinhaSenhaIn(senha_atual="x", nova_senha="uma frase bem longa"),
+            remote_user=ADMIN,
+        )
+    assert caiu.value.status_code == status
+
+
+def test_senha_fraca_e_422(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A mensagem da política vai para a tela — ela é escrita para a pessoa, não para o log."""
+    from motor_expansao.db import senhas
+
+    monkeypatch.setattr(pilot_app, "_minha_identidade", lambda _u: _Eu())
+
+    def _trocar(**_k: Any) -> None:
+        raise senhas.SenhaFraca("A senha precisa de pelo menos 12 caracteres.")
+
+    monkeypatch.setattr(db_usuarios, "trocar_a_propria_senha", _trocar)
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.me_trocar_senha(
+            pilot_app.MinhaSenhaIn(senha_atual="x", nova_senha="curta"), remote_user=ADMIN
+        )
+    assert caiu.value.status_code == 422
+    assert "12 caracteres" in str(caiu.value.detail)
+
+
+def test_sem_cadastro_no_banco_a_mensagem_nao_fala_da_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Aqui 409 significa "você não tem cadastro", não "a allowlist divergiu".
+
+    Reaproveitar a mensagem do painel mandaria a pessoa procurar uma allowlist em que ela nunca
+    esteve — por isso `_minha_identidade` existe separada de `_identidade_do_admin`.
+    """
+    from motor_expansao.db import rbac
+
+    monkeypatch.setattr(rbac, "identidade", lambda _u: None)
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.me_trocar_senha(
+            pilot_app.MinhaSenhaIn(senha_atual="x", nova_senha="uma frase bem longa"),
+            remote_user="ninguem",
+        )
+    assert caiu.value.status_code == 409
+    assert "allowlist" not in str(caiu.value.detail).lower()

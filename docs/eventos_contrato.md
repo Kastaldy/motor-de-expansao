@@ -104,7 +104,8 @@ O usuário digita premissas e recebe break-even — é decisão de análise, nã
 |---|---|---|---|---|
 | `usuario.perfil_alterado` | `usuario` | id do alvo | `de`, `para` | **sim** |
 | `usuario.desativado` / `usuario.reativado` | `usuario` | id do alvo | — | **sim** |
-| `usuario.criado` | `usuario` | id do alvo | `perfil` | não — ver abaixo |
+| `usuario.criado` | `usuario` | id do **criado** | `perfil` | **sim** (desde a D26) |
+| `usuario.senha_definida` | `usuario` | id de quem trocou | `primeira_vez` | **sim** (desde a D26) |
 
 **Aqui são duas pessoas por linha, e elas não podem se confundir.** `id_usuario` é **quem fez** —
 chega por `app.id_usuario`, como em todo evento. `entidade_id` é **quem sofreu**. Foi para isso que a
@@ -115,10 +116,26 @@ fizeram com esta pessoa"* — a pergunta de auditoria da tela de administração
 **Nunca o login nem o e-mail do alvo em `metadados`** — é PII, e a §4 vale aqui como em todo lugar.
 O id basta: quem tem acesso a `eventos` resolve o nome em `usuarios`.
 
-> **`usuario.criado` ainda não tem produtor**, e a razão não é preguiça: criar linha em `usuarios`
-> não cria a pessoa no Authelia, que autentica até o **P19** ser executado, e `senha_hash` é
-> `NOT NULL` sem consumidor. A tela de administração nasce com trocar perfil e ativar/desativar; a
-> criação segue manual até a epic de autenticação fechar esse buraco.
+**`usuario.criado` é o único caso em que o alvo não existia antes da ação**, e por isso o
+`entidade_id` só pode ser preenchido depois do `RETURNING id_usuario` do próprio `INSERT`. Trocar as
+duas pessoas de lugar aqui produziria um evento afirmando que **o admin** foi criado — a inversão
+mais fácil de cometer e a mais difícil de notar depois.
+
+**`usuario.senha_definida` é o único caso em que autor e alvo coincidem de propósito.** Em todo o
+resto desta seção eles são pessoas diferentes, e `_recusar_auto_alvo` existe justamente para impedir
+que alguém mude o próprio acesso pela tela. Trocar a própria senha é o oposto: é a única coisa que
+**só** a própria pessoa deveria poder fazer. `metadados` leva apenas `primeira_vez` (booleano) —
+nunca a senha, nunca o hash, nunca parte de nenhum dos dois.
+
+> **O que a criação NÃO resolve, e continua valendo.** Criar linha em `usuarios` **não** cria a
+> pessoa no `authelia/users_database.yml`, que é quem autentica até o **P19** ser executado. A tela
+> avisa isso em voz alta depois de criar, com o login a cadastrar; sem esse aviso a criação seria uma
+> armadilha silenciosa — a pessoa apareceria na lista e não entraria, sem pista do porquê.
+>
+> `senha_hash` deixou de ser coluna sem consumidor: desde a D26 ela guarda um PHC Argon2id de
+> verdade, produzido só por `motor_expansao.db.senhas.gerar`. O que ela ainda **não** faz é
+> autenticar — a senha existe, é verificável e tem ciclo de vida, mas o caminho do login segue no
+> Authelia. É preparação para o corte do P19, não o corte.
 
 ## 3. O que o esquema precisa acomodar
 
@@ -198,13 +215,19 @@ recomendação que este contrato pressupõe.
 
 ## 5. O que já grava, e o que não
 
-**Grava (desde 02/09/2026):** os três da §2.7 — `usuario.perfil_alterado`, `usuario.desativado` e
-`usuario.reativado` —, escritos pela tela de administração de usuários. São os primeiros eventos do
+**Grava (desde 02/09/2026):** `usuario.perfil_alterado`, `usuario.desativado` e
+`usuario.reativado`, escritos pela tela de administração de usuários. São os primeiros eventos do
 sistema, e cada um sai na **mesma transação** da mudança que descreve
 (`motor_expansao.db.usuarios`).
 
+**Grava (desde a D26):** `usuario.criado` e `usuario.senha_definida`, pela mesma tela e pela mesma
+regra de unidade de trabalho. Com eles, os **cinco** tipos da §2.7 têm produtor — a §2.7 é a única
+seção deste contrato inteiramente implementada.
+
 **Não grava:** todo o resto. As famílias §2.1 a §2.6 são contrato para implementação futura, e as
-da §2.6 dependem da F5.4 existir.
+da §2.6 dependem da F5.4 existir. `login` (§1) segue sem produtor por outro motivo, e não por
+falta de coluna: enquanto o Authelia autenticar, a entrada não passa pelo motor — é o P19 que
+destrava esse, não a D26.
 
 **O esquema comporta tudo isto.** A D24 fechou a última pendência de modelo e a `014` criou os
 índices que faltavam; a `015` acrescentou a capacidade que separa ver o painel de mudar quem entra.
