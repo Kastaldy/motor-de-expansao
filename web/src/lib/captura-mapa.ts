@@ -19,6 +19,8 @@
 
 import { cellToBoundary, cellToLatLng, isValidCell } from 'h3-js'
 
+import type { Pins } from './types'
+
 /**
  * Um quadro a capturar: o hexagono a enquadrar e, no modo de imovel, ONDE ele esta'.
  *
@@ -212,6 +214,24 @@ export function larguraDoAnel(anel: readonly (readonly [number, number])[]): num
  * enquadramento e `areTilesLoaded()` responderia `true` sobre o quadro VELHO.
  */
 export const ESPERA_APOS_SALTO_MS = 300
+
+/**
+ * A camada de pins que a foto DESTE alvo deve usar.
+ *
+ * `null` significa "nao sobrepoe" — o alvo e' da cidade que o mapa ja' tem aberta, entao os
+ * pins da tela ja' sao os dele.
+ *
+ * O ponto delicado e' a busca que FALHOU. Ela devolvia `null`, e o consumidor faz
+ * `pinsDaCaptura ?? pins`: o `null` caia de volta nos pins do municipio CARREGADO, ou seja,
+ * uma falha de rede reintroduzia o defeito que este ciclo consertou — concorrente da cidade
+ * errada sob o nome certo, que e' pior que concorrente nenhum, porque parece resposta.
+ * Agora falha vira camada VAZIA: a foto sai sem pin, e sem pin nao afirma nada.
+ * (Achado da revisao automatica do PR #345.)
+ */
+export function pinsDoAlvo(buscados: Pins | null, mesmaCidade: boolean): Pins | null {
+  if (mesmaCidade) return null
+  return buscados ?? { concorrentes: [], ultra: [], icones: {} }
+}
 
 /** Piso e teto do zoom de captura: fora disto o basemap perde tile ou vira textura. */
 export const ZOOM_CAPTURA_MIN = 10

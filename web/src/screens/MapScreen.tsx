@@ -28,7 +28,7 @@ const ACC_16 = 'rgba(221,61,151,.16)'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import { rodapeDaBase, tituloEscolhaUnidade } from '../lib/rodape-base'
-import type { AlvoCaptura } from '../lib/captura-mapa'
+import { type AlvoCaptura, pinsDoAlvo } from '../lib/captura-mapa'
 import { DIMENSOES, rotuloDoHex, rotulosDosHexes } from '../lib/comparacao'
 import type { Tema } from '../lib/tema'
 import type {
@@ -636,20 +636,26 @@ export default function MapScreen({
       const atual = chaveContexto(dados?.uf ?? '', dados?.municipio ?? '')
       const comCamadas: AlvoDaCaptura[] = []
       for (const alvo of alvos) {
-        let pinsDoAlvo: Pins | null = null
-        if (alvo.uf && alvo.municipio && chaveContexto(alvo.uf, alvo.municipio) !== atual) {
-          const chave = chaveContexto(alvo.uf, alvo.municipio)
+        const chave =
+          alvo.uf && alvo.municipio ? chaveContexto(alvo.uf, alvo.municipio) : atual
+        const mesmaCidade = chave === atual
+        let buscados: Pins | null = null
+        if (!mesmaCidade && alvo.uf && alvo.municipio) {
           if (!pinsPorContexto.current.has(chave)) {
             try {
               const payload = await api.municipio(alvo.uf, alvo.municipio)
               pinsPorContexto.current.set(chave, payload.pins ?? null)
             } catch {
+              // Falha fica MEMOIZADA: cinco pontos da mesma cidade nao repetem a espera.
               pinsPorContexto.current.set(chave, null)
             }
           }
-          pinsDoAlvo = pinsPorContexto.current.get(chave) ?? null
+          buscados = pinsPorContexto.current.get(chave) ?? null
         }
-        comCamadas.push({ ...alvo, pins: pinsDoAlvo })
+        /* Quem decide e' `pinsDoAlvo`: busca que falhou vira camada VAZIA, nunca a da
+           cidade aberta — o consumidor faz `pinsDaCaptura ?? pins`, e um `null` aqui
+           reintroduziria os concorrentes da cidade errada sob o nome certo. */
+        comCamadas.push({ ...alvo, pins: pinsDoAlvo(buscados, mesmaCidade) })
       }
       return new Promise<string[]>((resolve) => {
         resolveCaptura.current = resolve

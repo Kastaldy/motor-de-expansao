@@ -1,4 +1,6 @@
 import { cellToBoundary, cellToLatLng } from 'h3-js'
+
+import type { Pins } from './types'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -15,6 +17,7 @@ import {
   mapaPronto,
   metrosPorPixel,
   ordemDeVoo,
+  pinsDoAlvo,
   ordenarParaEmpilhar,
   quadroDaCaptura,
   recorteCentral,
@@ -450,5 +453,29 @@ describe('ordemDeVoo', () => {
   it('sem partida, mantem a ordem recebida como ponto de saida', () => {
     // Sem camera conhecida, o primeiro colado abre a rota — decisao, nao acaso.
     expect(ordemDeVoo([jataiA, posseA, posseB], null)[0]).toBe(0)
+  })
+})
+
+describe('pinsDoAlvo', () => {
+  const doMunicipio = { concorrentes: [], ultra: [], icones: { smart: 'x.png' } } as Pins
+
+  it('alvo da cidade ABERTA nao sobrepoe nada: o mapa ja tem os pins dele', () => {
+    expect(pinsDoAlvo(doMunicipio, true)).toBeNull()
+  })
+
+  it('alvo de outra cidade usa os pins buscados para ELA', () => {
+    expect(pinsDoAlvo(doMunicipio, false)).toBe(doMunicipio)
+  })
+
+  it('busca que FALHOU vira camada vazia, nunca a da cidade aberta', () => {
+    /* Era `null`, e o consumidor faz `pinsDaCaptura ?? pins` — entao o `null` caia de volta
+       nos pins do municipio CARREGADO. Uma falha de rede reintroduzia exatamente o defeito
+       que este ciclo consertou: concorrente da cidade errada sob o nome certo, que e' pior
+       que concorrente nenhum, porque parece resposta. Achado da revisao automatica do
+       PR #345. */
+    const vazio = pinsDoAlvo(null, false)
+    expect(vazio).not.toBeNull()
+    expect(vazio!.concorrentes).toEqual([])
+    expect(vazio!.ultra).toEqual([])
   })
 })
