@@ -7,7 +7,7 @@ import BarraCamadas, { type ChaveDeCamada } from '../components/BarraCamadas'
 import BotaoInicio from '../components/BotaoInicio'
 import FichaHex from '../components/FichaHex'
 import FichaImovel from '../components/FichaImovel'
-import HexMap, { type SearchPin, type ViewState } from '../components/HexMap'
+import HexMap, { type AlvoDaCaptura, type SearchPin, type ViewState } from '../components/HexMap'
 import JanelaFicha from '../components/JanelaFicha'
 import MethodologyPanel from '../components/MethodologyPanel'
 import NarrativePanel from '../components/NarrativePanel'
@@ -29,7 +29,7 @@ import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estad
 import { temAlunos } from '../lib/pins'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import { rodapeDaBase, tituloEscolhaUnidade } from '../lib/rodape-base'
-import type { AlvoCaptura } from '../lib/captura-mapa'
+import { type AlvoCaptura, pinsDoAlvo } from '../lib/captura-mapa'
 import { DIMENSOES, rotuloDoHex, rotulosDosHexes } from '../lib/comparacao'
 import type { Tema } from '../lib/tema'
 import type {
@@ -38,6 +38,7 @@ import type {
   MunicipioItem,
   MunicipioPayload,
   Oportunidade,
+  Pins,
   SetoresHeatmapPayload,
 } from '../lib/types'
 
@@ -608,7 +609,7 @@ export default function MapScreen({
      mesmo `ranquear` que a tela usa, e viaja pronto — o servidor so' desenha, para nao
      existir uma segunda regra de "quem vence" que possa divergir da tela. */
   const [pedidoCaptura, setPedidoCaptura] = useState<{
-    alvos: AlvoCaptura[]
+    alvos: AlvoDaCaptura[]
     n: number
   } | null>(null)
   const [gerandoDeck, setGerandoDeck] = useState(false)
@@ -621,13 +622,48 @@ export default function MapScreen({
      reparte. */
   const resolveCaptura = useRef<((imagens: string[]) => void) | null>(null)
 
+  /* Pins ja' buscados, por contexto. A captura de um deck de 5 pontos pode repetir
+     cidade, e o payload do municipio nao e' barato — buscar duas vezes a mesma coisa no
+     meio da geracao atrasaria o voo e nao mudaria a foto. */
+  const pinsPorContexto = useRef(new Map<string, Pins | null>())
+
   const capturar = useCallback(
-    (alvos: AlvoCaptura[]) =>
-      new Promise<string[]>((resolve) => {
+    async (alvos: AlvoCaptura[]) => {
+      /* CAMADAS ANTES DO VOO. O mapa carrega um municipio por vez, entao um alvo de
+         outra cidade seria fotografado com os pins da cidade aberta — o rodape do slide
+         promete "concorrentes mapeados e unidades Ultra" do entorno DAQUELE ponto.
+         Falha na busca vira `null` de proposito: camada nenhuma e' honesta, camada de
+         outra cidade e' mentira com cara de dado. */
+      const atual = chaveContexto(dados?.uf ?? '', dados?.municipio ?? '')
+      const comCamadas: AlvoDaCaptura[] = []
+      for (const alvo of alvos) {
+        const chave =
+          alvo.uf && alvo.municipio ? chaveContexto(alvo.uf, alvo.municipio) : atual
+        const mesmaCidade = chave === atual
+        let buscados: Pins | null = null
+        if (!mesmaCidade && alvo.uf && alvo.municipio) {
+          if (!pinsPorContexto.current.has(chave)) {
+            try {
+              const payload = await api.municipio(alvo.uf, alvo.municipio)
+              pinsPorContexto.current.set(chave, payload.pins ?? null)
+            } catch {
+              // Falha fica MEMOIZADA: cinco pontos da mesma cidade nao repetem a espera.
+              pinsPorContexto.current.set(chave, null)
+            }
+          }
+          buscados = pinsPorContexto.current.get(chave) ?? null
+        }
+        /* Quem decide e' `pinsDoAlvo`: busca que falhou vira camada VAZIA, nunca a da
+           cidade aberta — o consumidor faz `pinsDaCaptura ?? pins`, e um `null` aqui
+           reintroduziria os concorrentes da cidade errada sob o nome certo. */
+        comCamadas.push({ ...alvo, pins: pinsDoAlvo(buscados, mesmaCidade) })
+      }
+      return new Promise<string[]>((resolve) => {
         resolveCaptura.current = resolve
-        setPedidoCaptura((p) => ({ alvos, n: (p?.n ?? 0) + 1 }))
-      }),
-    [],
+        setPedidoCaptura((p) => ({ alvos: comCamadas, n: (p?.n ?? 0) + 1 }))
+      })
+    },
+    [dados?.uf, dados?.municipio],
   )
 
   const aoCapturarMapas = useCallback((imagens: string[]) => {
