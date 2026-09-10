@@ -38,6 +38,13 @@ concorrentes/
 *.parquet
 *.csv
 *.xlsx
+# Fontes de validacao entregues como IMAGEM (print de planilha do parceiro). Mesma politica
+# dos .xlsx da mesma pasta: e' dado real de concorrente, nunca versionado. Sem esta linha
+# eles ficam untracked e um `git add -A` distraido os commita -- ja apareceram assim em
+# 2026-09-09.
+data/validacao/*.jpeg
+data/validacao/*.jpg
+data/validacao/*.png
 *.tmp.md
 data/outputs/_manifest.json
 # Malha geo de setores censitarios 2022 (artefato pesado ~1.2 GB; vai por scp, nao por git).
