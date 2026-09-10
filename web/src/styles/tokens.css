@@ -18,6 +18,13 @@
   --surf-card: rgba(14, 21, 30, 0.7);
   --surf-sidebar: rgba(14, 21, 30, 0.8);
   --surf-verdict: rgba(14, 21, 30, 0.72);
+  /* O CARTAO DE VEREDITO da ficha do hexagono (`FichaHex.tsx`). O gradiente morava
+     CRAVADO no componente, e cor cravada nao tem par no claro: os tokens de texto do
+     cartao escureciam com o tema e o fundo continuava este teal quase preto — o
+     retangulo ilegivel que o Juan viu na analise pontual de Brasilia (2026-09-10).
+     Os valores do escuro sao os mesmos de sempre, digito por digito. */
+  --grad-verdict: linear-gradient(120deg, #11282a, #0d1a1e 70%);
+  --line-verdict: #24474a;
   --surf-chrome: rgba(16, 24, 34, 0.8);
   --surf-bar: rgba(16, 24, 34, 0.86);
   --surf-raised: rgba(255, 255, 255, 0.03);
@@ -367,6 +374,13 @@
   --surf-card: rgba(234, 247, 245, 0.82);
   --surf-sidebar: rgba(234, 247, 245, 0.88);
   --surf-verdict: rgba(234, 247, 245, 0.86);
+  /* O gelo do cartao de veredito, um degrau mais fundo que o vidro dos outros cards —
+     no escuro ele tambem e' mais fundo que o painel, e e' assim que a peca se destaca
+     sem virar caixa de outra cor. A parada MAIS ESCURA e' o piso: ela carrega a nota do
+     cartao (--tx-sub, 10,5px), e um teal mais saturado a derruba (#dff2ef da' 4,43:1 e
+     reprova). Guardado por lib/tema-claro-ultra.test.ts, que mede as duas paradas. */
+  --grad-verdict: linear-gradient(120deg, #e6f5f2, #f0faf8 70%);
+  --line-verdict: #9fd0ca;
   --surf-chrome: rgba(234, 247, 245, 0.9);
   --surf-bar: rgba(234, 247, 245, 0.92);
   /* Os tres "raised" invertem o SINAL do alfa: no escuro se ilumina com branco, no
@@ -597,6 +611,8 @@
   --surf-card: rgba(14, 21, 30, 0.7);
   --surf-sidebar: rgba(14, 21, 30, 0.8);
   --surf-verdict: rgba(14, 21, 30, 0.72);
+  --grad-verdict: linear-gradient(120deg, #11282a, #0d1a1e 70%);
+  --line-verdict: #24474a;
   --surf-chrome: #0d141d;
   --surf-bar: rgba(16, 24, 34, 0.86);
   --surf-raised: rgba(255, 255, 255, 0.05);
