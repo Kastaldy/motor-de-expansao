@@ -252,3 +252,77 @@ describe('tema escuro nas mesmas cores base da Ultra', () => {
     }
   })
 })
+
+/* ---------------------------------------------------------------------------------
+   O CARTAO DE VEREDITO DA FICHA DO HEXAGONO.
+
+   Ele era a unica peca da janela com a cor CRAVADA no componente
+   (`FichaHex.tsx`, `FUNDO_VEREDITO` = um gradiente teal quase preto). Todo o interior
+   ja' era token — `--tx-strong` na frase, `--tx-sub` na nota, `--line-soft` no rodape.
+   No claro os tokens de TEXTO viram escuros e o fundo cravado NAO virava nada: texto
+   escuro sobre fundo escuro, o retangulo preto que o Juan viu na analise pontual de
+   Brasilia (2026-09-10, hexagono do Guara).
+
+   A trava e' de CONTRASTE, nao de valor: quem trocar o gelo do cartao por um teal mais
+   saturado ve' a regua do --tx-sub cair (o #dff2ef que parecia bonito da' 4,43:1) e o
+   teste reprova antes do print.
+   --------------------------------------------------------------------------------- */
+describe('o cartao de veredito da ficha segue o tema', () => {
+  const claro = blocoClaro()
+  const escuro = blocoEscuro()
+  const cromo = blocoCromo()
+
+  /* As paradas de cor de um `linear-gradient(...)`, na ordem em que aparecem. */
+  const paradas = (grad: string) => grad.match(/#[0-9a-fA-F]{6}/g) ?? []
+
+  it('os dois temas declaram o par --grad-verdict / --line-verdict', () => {
+    for (const [nome, bloco] of [
+      ['escuro', escuro],
+      ['claro', claro],
+      ['cromo', cromo],
+    ] as const) {
+      expect(bloco['--grad-verdict'], `--grad-verdict no ${nome}`).toBeTruthy()
+      expect(bloco['--line-verdict'], `--line-verdict no ${nome}`).toBeTruthy()
+    }
+  })
+
+  it('no claro, a nota e a frase do cartao se leem sobre TODAS as paradas do gradiente', () => {
+    const stops = paradas(claro['--grad-verdict'])
+    expect(stops.length).toBeGreaterThanOrEqual(2)
+    for (const parada of stops) {
+      for (const nome of ['--tx-sub', '--tx-strong', '--ac-text']) {
+        expect(contraste(claro[nome], parada), `${nome} sobre ${parada}`).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+  })
+
+  it('no claro, o cartao e gelo turquesa como o resto do tema', () => {
+    for (const parada of paradas(claro['--grad-verdict'])) {
+      const [h, s, l] = hsl(parada)
+      expect(difMatiz(h, H_TURQUESA), parada).toBeLessThanOrEqual(12)
+      expect(s, parada).toBeGreaterThan(0)
+      expect(l, parada).toBeGreaterThan(0.5) // e' um cartao CLARO
+    }
+  })
+
+  /* O escuro e' o tema padrao do produto: esta mudanca nao pode mexer num pixel dele. */
+  it('o escuro mantem exatamente o gradiente que ja tinha', () => {
+    expect(escuro['--grad-verdict']).toBe('linear-gradient(120deg, #11282a, #0d1a1e 70%)')
+    expect(escuro['--line-verdict']).toBe('#24474a')
+    expect(cromo['--grad-verdict']).toBe(escuro['--grad-verdict'])
+    expect(cromo['--line-verdict']).toBe(escuro['--line-verdict'])
+  })
+
+  it('FichaHex nao crava mais cor nenhuma no cartao', () => {
+    const tsx = readFileSync(fileURLToPath(new URL('../components/FichaHex.tsx', import.meta.url)), 'utf-8')
+    const cartao = tsx.slice(tsx.indexOf('<CardPainel'), tsx.indexOf('<CardPainel') + 200)
+    expect(cartao).toContain('var(--grad-verdict)')
+    expect(cartao).toContain('var(--line-verdict)')
+    /* Fora de comentario: o literal nao pode voltar por uma constante nova no topo. */
+    const codigo = tsx.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '')
+    expect(codigo).not.toContain('linear-gradient(')
+    expect(codigo).not.toContain('#11282a')
+    expect(codigo).not.toContain('#0d1a1e')
+    expect(codigo).not.toContain('#24474a')
+  })
+})

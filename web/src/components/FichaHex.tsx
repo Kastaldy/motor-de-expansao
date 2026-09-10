@@ -11,14 +11,14 @@ import { CardPainel, LinhaTabela, Ticks, TituloSecao } from './PecasPainel'
 
 /* Cores do design "Paineis do Hexagono" aplicadas por pedido do Felipe (2026-08-21):
    identidade FIXA por score (verde/turquesa/claro — a cor identifica O QUAL score, nao
-   o valor dele) e o fundo/borda do card de veredito. Hex direto: tela so-escura, como a
-   aba imobiliaria. O veredito por VALOR continua nas notas (nome da faixa publicada). */
+   o valor dele). O veredito por VALOR continua nas notas (nome da faixa publicada).
+   O fundo e a borda do card de veredito moravam AQUI, pelo mesmo motivo ("tela
+   so-escura"): premissa que morreu quando o tema claro subiu para o <html> em
+   2026-08-25. Viraram --grad-verdict / --line-verdict em styles/tokens.css. */
 const COR_SCORE_CENSO = '#5ee6a8'
 const COR_SCORE_RESIDUAL = '#22d3e0'
 const COR_SCORE_HIBRIDO = '#eef6f7'
 const COR_TICKS_HIBRIDO = '#cfdfe3'
-const FUNDO_VEREDITO = 'linear-gradient(120deg, #11282a, #0d1a1e 70%)'
-const BORDA_VEREDITO = '#24474a'
 
 /* QUAIS FAIXAS GANHAM O PREFIXO "Prioridade" NO SELO.
    Tabela explicita, e nao uma regra sobre o texto. A lista de faixas e' FECHADA e vive em
@@ -126,10 +126,11 @@ export default function FichaHex({
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       {/* ---- Veredito: a frase que resume, com a faixa M1 e os numeros-chave ---- */}
-      <CardPainel style={{ background: FUNDO_VEREDITO, border: `1px solid ${BORDA_VEREDITO}` }}>
+      <CardPainel style={{ background: 'var(--grad-verdict)', border: '1px solid var(--line-verdict)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 9 }}>
           {/* Texto NEUTRO + swatch na cor da faixa — não a cor como texto: 'Inviável' é
-              #2E3040 e como texto sobre o card escuro dava ~1,4:1, ilegível. */}
+              #2E3040 e como texto dava ~1,4:1 sobre o card escuro, ilegível. O swatch
+              sobrevive aos dois temas porque é FORMA, não texto: 3:1 basta. */}
           {hex.faixa && (
             <span
               className="num"
