@@ -410,7 +410,15 @@ def _registrar_acesso(request: Request, *, status: int, inicio: float, tamanho: 
         xff = request.headers.get("x-forwarded-for")
         cliente = request.client.host if request.client else None
         evento = acesso_log.montar_evento(
-            usuario=request.headers.get("remote-user") or request.headers.get("remote-email"),
+            # MESMA resolucao que a allowlist e o RBAC usam. Ler o header cru aqui fazia
+            # toda requisicao de DESENVOLVIMENTO cair em "desconhecido": nao ha Authelia
+            # local, entao nao ha `Remote-User`, e a trilha ficava sem dono justamente na
+            # maquina onde ela e' exercitada. Em producao nada muda -- o header sempre
+            # existe e vence sempre; e a identidade de dev tem as travas do
+            # `rbac.login_efetivo` (override explicito, e o sinal de producao mandando).
+            usuario=acesso.login_da_requisicao(
+                request.headers.get("remote-user") or request.headers.get("remote-email")
+            ),
             ip=_ip_real_do_xff(xff, cliente),
             metodo=request.method,
             rota=caminho,

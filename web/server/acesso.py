@@ -278,8 +278,14 @@ def usuarios_admin_acessos() -> frozenset[str]:
     return frozenset(u.strip().casefold() for u in bruto.split(",") if u.strip())
 
 
-def _login_para_allowlist(usuario: object) -> str | None:
-    """O login a comparar com a allowlist: o header, ou a identidade de DEV sem ele.
+def login_da_requisicao(usuario: object) -> str | None:
+    """QUEM esta pedindo: o header, ou a identidade de DEV quando nao ha header.
+
+    E' a UNICA resolucao de identidade do piloto, e ela precisa ser unica. Chamava-se
+    `_login_para_allowlist` e servia so' a allowlist do painel; virou publica em 10/09
+    porque a TRILHA (DEC-027) lia o header cru e caia em "desconhecido" em toda
+    requisicao de desenvolvimento -- o mesmo defeito que o `d2e4264` ja' tinha
+    consertado aqui, reaparecendo na camada vizinha.
 
     Sem isto o painel era INALCANCAVEL na maquina de quem desenvolve. Nao ha Authelia
     local, entao nao ha `Remote-User`; a identidade vem do `MOTOR_DEV_USUARIO`, que o
@@ -303,7 +309,7 @@ def _login_para_allowlist(usuario: object) -> str | None:
 
 def pode_ver_acessos(usuario: object) -> bool:
     """Se este Remote-User pode usar o painel de acessos (deny-by-default)."""
-    nome = _login_para_allowlist(usuario)
+    nome = login_da_requisicao(usuario)
     if nome is None:
         return False
     return nome.casefold() in usuarios_admin_acessos()
