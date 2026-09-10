@@ -1,4 +1,5 @@
 import type { Tela } from '../App'
+import BotaoSair from './BotaoSair'
 import BotaoTema from './BotaoTema'
 import { telaLiberada, type Aba } from '../lib/acesso'
 import { ITENS_DOCK } from '../lib/dock-itens'
@@ -301,10 +302,14 @@ export default function Dock({
         )
       })}
 
-      {/* `marginTop: auto` empurra o alternador para o pé do rail: ele fica longe da
-          fila de destinos, que é o que o separa de uma sexta tela. */}
-      <div style={{ marginTop: 'auto' }}>
+      {/* `marginTop: auto` empurra a dupla do pé do rail para baixo: ela fica longe da
+          fila de destinos, que é o que a separa de uma sexta tela. São os dois controles
+          que valem para o app inteiro — o tema, e a saída da conta (2026-09-10, pedido do
+          Felipe). O SAIR fica ABAIXO do tema, na ordem em que foi pedido e na única que
+          faz sentido: o item mais definitivo é o último, no canto, longe da navegação. */}
+      <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
         <BotaoTema tema={tema} onTema={onTema} />
+        <BotaoSair />
       </div>
     </nav>
   )
