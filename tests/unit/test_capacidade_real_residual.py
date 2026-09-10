@@ -16,6 +16,8 @@ alunos apareceria como "2 concorrentes" e mandaria o hexagono de `Adensar` para
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -194,3 +196,62 @@ def test_unir_cadeias_carrega_o_concorrente_id() -> None:
     assert set(unido["concorrente_id"].dropna()) == {"c1"}
     # A do agregador entra sem id -- ela nao tem, e fingir que tem casaria errado.
     assert unido["concorrente_id"].isna().sum() == 1
+
+
+# --------------------------------------------------------------------------- #
+# A coluna tem de CHEGAR — as duas projeções                                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_contagem_esta_nas_DUAS_listas_de_projecao() -> None:
+    """O defeito da família DEC-038 na forma mais pura, e ele aconteceu neste bloco.
+
+    `n_concorrentes_influencia_1km` nasce em `hexagonos_mercado_mapeado`, precisa ser
+    materializada no enriquecido (`RESIDUAL_MERCADO_COLS`) e depois LIDA pelo piloto
+    (`_COLS_DESEJADAS`). Esquecer o nome em qualquer uma das duas devolve campo vazio sem
+    erro: o pipeline roda verde, o artefato sai sem a coluna e a tela cai no ramo antigo
+    (`oferta_consumida / capacidade`) — que, com capacidade real por unidade, deixa de
+    contar academias.
+
+    Na primeira regeneração deste bloco a coluna faltou na primeira lista, e só apareceu
+    ao conferir o schema do enriquecido à mão antes do deploy. Este teste existe para essa
+    conferência não depender de alguém lembrar de fazê-la.
+    """
+    from motor_expansao.dashboard.constants import RESIDUAL_MERCADO_COLS
+
+    assert "n_concorrentes_influencia_1km" in RESIDUAL_MERCADO_COLS
+
+    app_py = (
+        Path(__file__).resolve().parents[2] / "web" / "server" / "app.py"
+    ).read_text(encoding="utf-8")
+    inicio = app_py.index("_COLS_DESEJADAS = [")
+    bloco = app_py[inicio : app_py.index("]", inicio)]
+    assert '"n_concorrentes_influencia_1km"' in bloco, (
+        "a coluna sumiu da projecao que o piloto le"
+    )
+
+
+def test_as_duas_listas_gemeas_de_RESIDUAL_MERCADO_COLS_nao_divergem() -> None:
+    """Existem DUAS listas com esse nome, e elas nao se enxergam.
+
+    `dashboard/constants.py` serve a leitura do dashboard; `gerar_carteira_acionavel.py` e
+    a que `enriquecer_outputs_residual_mercado` usa para levar as colunas ao artefato
+    enriquecido. Acrescentar coluna em uma so' e um no-op SILENCIOSO — foi exatamente o que
+    aconteceu neste bloco: a coluna entrou na de `constants.py`, o pipeline rodou verde e o
+    enriquecido saiu sem ela.
+
+    Unificar as duas e divida propria. Ate la, este teste garante que ninguem mexa numa e
+    esqueca a outra — que e a unica forma de o defeito voltar.
+    """
+    from motor_expansao.dashboard.constants import (
+        RESIDUAL_MERCADO_COLS as DO_DASHBOARD,
+    )
+    from motor_expansao.pipelines.gerar_carteira_acionavel import (
+        RESIDUAL_MERCADO_COLS as DO_PIPELINE,
+    )
+
+    assert set(DO_DASHBOARD) == set(DO_PIPELINE), (
+        "as duas listas divergiram: "
+        f"so no dashboard={sorted(set(DO_DASHBOARD) - set(DO_PIPELINE))}, "
+        f"so no pipeline={sorted(set(DO_PIPELINE) - set(DO_DASHBOARD))}"
+    )

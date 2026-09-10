@@ -39,6 +39,13 @@ TOP_N_HEX_POR_MUNICIPIO = 5
 PRIORIDADE_ALTA_RANK_UF = 5
 PRIORIDADE_ALTA_RANK_BRASIL = 50
 
+#: ATENCAO: esta lista tem uma GEMEA em `dashboard/constants.py`, com o mesmo nome e o
+#: mesmo conteudo, e as duas nao se enxergam. Esta aqui e' a que
+#: `enriquecer_outputs_residual_mercado` usa para levar as colunas de mercado ao artefato
+#: enriquecido; a de la' serve a leitura do dashboard. Acrescentar coluna em uma so' e' um
+#: no-op SILENCIOSO -- foi o que aconteceu no BLK-CAPACIDADE-01: a coluna entrou na de
+#: `constants.py`, o pipeline rodou verde e o enriquecido saiu sem ela. Unificar as duas e'
+#: divida propria; enquanto nao for feito, MEXER NAS DUAS.
 RESIDUAL_MERCADO_COLS = [
     "pop_hex_base",
     "fonte_pop_hex_base",
@@ -48,6 +55,10 @@ RESIDUAL_MERCADO_COLS = [
     "sam_fitness_potencial",
     "capacidade_default_concorrente_alunos",
     "oferta_consumida_mercado_estimada",
+    # A CONTAGEM de concorrentes que alcancam o hexagono (BLK-CAPACIDADE-01). Sem ela no
+    # enriquecido, o piloto deriva a contagem de `oferta_consumida / capacidade` -- que com
+    # capacidade REAL por unidade deixa de contar academias.
+    "n_concorrentes_influencia_1km",
     "oferta_consumida_ultra_real",
     "n_unidades_ultra_performance_hex",
     "oferta_efetiva_disponivel",

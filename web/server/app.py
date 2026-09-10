@@ -483,6 +483,13 @@ _COLS_DESEJADAS = [
     # coluna, `pressao_1km` devolve NaN ali em vez de um numero inflado.
     "n_unidades_ultra_2km",
     "capacidade_default_concorrente_alunos",
+    # A CONTAGEM de concorrentes que alcancam o hexagono (BLK-CAPACIDADE-01). E' a fonte
+    # de `n_concorrentes_est` em `_derivar`, e sem ela aqui a leitura cai no ramo antigo
+    # (`oferta_consumida / capacidade`) — que com capacidade REAL por unidade deixa de
+    # contar academias. Duas listas de projecao tem de mencionar o nome, esta e a
+    # `RESIDUAL_MERCADO_COLS` que materializa o artefato; esquecer QUALQUER uma das duas
+    # devolve um campo vazio sem erro nenhum (familia DEC-038).
+    "n_concorrentes_influencia_1km",
     "sam_fitness_potencial",
     "populacao_corte_hex",
     "fonte_populacao_corte",
