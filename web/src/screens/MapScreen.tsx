@@ -26,6 +26,7 @@ import { ACC } from '../lib/imovel'
    foi montada para a ABA; este e' o realce da LINHA do painel de camadas do mapa. */
 const ACC_16 = 'rgba(221,61,151,.16)'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
+import { temAlunos } from '../lib/pins'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import { rodapeDaBase, tituloEscolhaUnidade } from '../lib/rodape-base'
 import type { AlvoCaptura } from '../lib/captura-mapa'
@@ -1415,7 +1416,15 @@ export default function MapScreen({
                 aviso={carregandoRaio ? 'Carregando o raio de 1 km das concorrentes…' : null}
               />
 
-              {legendaVisivel && <ScoreLegend passoN={passo.n} />}
+              {legendaVisivel && (
+                <ScoreLegend
+                  passoN={passo.n}
+                  /* Explica o aro indigo SO' quando ele esta desenhado. Legenda que
+                     nomeia simbolo ausente ensina o operador a procurar o que nao
+                     existe naquele recorte. */
+                  comAlunos={(dados?.pins?.concorrentes ?? []).some(temAlunos)}
+                />
+              )}
             </div>
 
           </div>

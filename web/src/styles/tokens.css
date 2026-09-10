@@ -286,6 +286,16 @@
   --indep-tx: #f2a488;
   --imovel-tx: #f06fb6;
 
+  /* Moldura que marca a academia sobre a qual TEMOS INFORMACAO (BLK-ALUNOS-01).
+     Espelho em CSS do `PELE.*.aroAlunos` de `HexMap.tsx`, que e' quem pinta no
+     mapa — o deck.gl nao le `var()`, entao a cor vive nos dois lugares e mexer
+     num pede mexer no outro, senao a legenda nomeia uma cor que o mapa nao usa.
+     BRANCA nos dois temas por decisao do dono: ela e o halo do agregador dizem a
+     mesma frase, e um simbolo so' vale mais que separar as origens do dado. O
+     contraste sobre fundo claro vem do `--aro-alunos-keyline`, nao da cor. */
+  --aro-alunos: #ffffff;
+  --aro-alunos-keyline: rgba(10, 16, 24, 0.34);
+
   /* --- Tipografia ---------------------------------------------------------- */
   --f-ui: 'Instrument Sans Variable', 'Instrument Sans', system-ui, sans-serif;
   --f-story: 'Instrument Serif', Georgia, serif;
@@ -527,6 +537,10 @@
      texto passar sobre o branco da pilula. */
   --indep-tx: #b04a22;
   --imovel-tx: #a81b6b;
+  /* Segue BRANCA, como no escuro. Sobre o papel do Positron quem a separa do
+     fundo e' a keyline, que aqui precisa de mais peso que no tema escuro. */
+  --aro-alunos: #ffffff;
+  --aro-alunos-keyline: rgba(10, 16, 24, 0.45);
 
   /* --- Sombras ------------------------------------------------------------- */
   /* Sombra no claro e' separacao, nao vedacao: preta demais suja o branco. A tinta e'
@@ -669,6 +683,10 @@
   --anel-mapa: rgba(255, 255, 255, 0.18);
   --indep-tx: #f2a488;
   --imovel-tx: #f06fb6;
+  /* Branca como em todo lugar; a keyline volta ao peso do :root porque dentro
+     deste escopo a caixa e' escura de novo. */
+  --aro-alunos: #ffffff;
+  --aro-alunos-keyline: rgba(10, 16, 24, 0.34);
   /* Sombras: as do bloco claro sao teal com pouco alfa, para SEPARAR sobre papel; aqui
      dentro a caixa e' escura de novo e a sombra volta a ser preta, a VEDACAO do :root. */
   --sh-pin: 0 5px 12px rgba(0, 0, 0, 0.5);
