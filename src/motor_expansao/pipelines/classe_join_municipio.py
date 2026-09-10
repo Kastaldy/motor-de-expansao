@@ -15,15 +15,31 @@ populacao municipal. Manaus perdia 2.038 dos 2.139 -- exibindo os 2.063.689 habi
 municipio inteiro repetidos em cada hexagono -- embora 97,50% dos seus 3.281 setores
 tenham renda publicada.
 
-O QUE A NOTA MEDE, COM PRECISAO. E' a fracao de setores do municipio com renda publicada
-(`flag_renda_disponivel = renda_per_capita_setor_2022.notna()`,
-`materializar_setores_censitarios_geo.py:637`). Isso e' COBERTURA, nao CORRECAO de join:
-ela responde "o IBGE publicou renda para os setores deste municipio?" e NAO "a renda foi
-colada no setor certo?" -- distincao que este repo pagou caro para aprender na DEC-045
-(cobertura cheia com a renda no setor errado). A chave `cod_setor` do artefato GEO, alem
-disso, e' recuperada POSICIONALMENTE de um agregado irmao
-(`materializar_setores_censitarios_geo.py:196-300`), entao nem a cobertura e' imune ao
-mesmo modo de falha.
+O QUE A NOTA MEDE, COM PRECISAO. E' a fracao da POPULACAO do municipio que mora em setor
+com renda publicada (`flag_renda_disponivel = renda_per_capita_setor_2022.notna()`,
+`materializar_setores_censitarios_geo.py:637`), ponderada por `pop_total_setor_2022`.
+Isso e' COBERTURA, nao CORRECAO de join: ela responde "o IBGE publicou renda para onde
+essa gente mora?" e NAO "a renda foi colada no setor certo?" -- distincao que este repo
+pagou caro para aprender na DEC-045 (cobertura cheia com a renda no setor errado). A chave
+`cod_setor` do artefato GEO, alem disso, e' recuperada POSICIONALMENTE de um agregado
+irmao (`materializar_setores_censitarios_geo.py:196-300`), entao nem a cobertura e' imune
+ao mesmo modo de falha.
+
+POR QUE O DENOMINADOR E' POPULACAO E NAO CONTAGEM DE SETORES (DEC-058, emenda a DEC-054).
+Ate' 2026-09-10 a nota era `flag_renda_disponivel.mean()` -- um setor de 3 moradores
+pesava o mesmo que um de 3.000. Isso REPROVAVA cidade de praia inteira, porque o litoral
+tem uma cauda longa de setores de veraneio quase vazios sem renda publicada, e a populacao
+mora concentrada em poucos setores urbanos QUE TEM renda. Medido no artefato de producao:
+Angra dos Reis 0,84392 (classe C) na contagem e 0,998752 (classe A) na populacao; Paraty
+0,805714 -> 0,997038; Bertioga 0,816993 -> 0,997710; Ilhabela 0,846154 -> 0,998368;
+Ubatuba 0,880184 -> 0,998311; Sao Sebastiao 0,888136 -> 0,999706; Imbituba 0,881119 ->
+0,997585; Buzios 0,879310 -> 0,998500; Ilha Comprida 0,892308 -> 0,998361. As nove eram
+classe C pela contagem e sao classe A pela populacao. A DEC-054 nao viu isso porque mediu
+o denominador so' contra Manaus e Boa Vista, que EMPATAM nas duas reguas.
+
+A nota nova NAO e' so' mais generosa: 13 municipios CAEM de A/B para C, e a queda e'
+honesta -- neles a renda falta exatamente onde a populacao esta' (Ilha de Itamaraca/PE:
+0,932692 na contagem, 0,880399 na populacao).
 
 Por que ela ainda serve, apesar disso: o que ela LIBERA e' a leitura de POPULACAO do setor
 (`pop_total_setor_2022`), que vem do Basico com contagem validada exata e mede Pearson
@@ -60,13 +76,28 @@ FONTE_CALCULADA = "geo_setor_cobertura"
 FONTE_AUSENTE = "ausente"
 FONTE_PRESERVADA = "preservada"
 
-#: Contrato de `calcular_notas`. `anexar_nota_municipal` trata frame sem estas colunas
-#: como ausencia, em vez de estourar KeyError no meio de um pipeline de 4 horas.
+#: Contrato de SAIDA de `calcular_notas`.
+#: `pop_municipio_malha` e `n_setores_municipio` sao AUDITORIA: com as duas lado a lado da'
+#: para separar municipio promovido porque a populacao esta' concentrada em setor coberto
+#: (pop alta, poucos setores descobertos) de municipio promovido por RUIDO (malha de dois
+#: setores, um deles com um morador). Sem o par, a nota nova seria um numero sem recurso.
 COLUNAS_NOTA = (
     "cod_municipio",
     "classe_join_municipio",
     "taxa_match_municipio",
     "n_setores_municipio",
+    "pop_municipio_malha",
+)
+
+#: O que `anexar_nota_municipal` de fato CONSOME. Deliberadamente menor que `COLUNAS_NOTA`:
+#: exigir a coluna de auditoria aqui faria um produtor desatualizado virar no-op SILENCIOSO
+#: -- promocao que nao acontece, sem erro nenhum, que e' o defeito que este modulo existe
+#: para consertar. Frame sem estas colunas e' tratado como ausencia, em vez de estourar
+#: KeyError no meio de um pipeline de 4 horas.
+COLUNAS_ANEXACAO = (
+    "cod_municipio",
+    "classe_join_municipio",
+    "taxa_match_municipio",
 )
 
 
@@ -80,8 +111,16 @@ def _normalizar_cod_municipio(serie: pd.Series) -> pd.Series:
     return serie.astype(str).str.extract(r"(\d{7})")[0]
 
 
-def classificar_taxa(taxa: float) -> str:
-    """Taxa de cobertura de renda por setor -> classe {A,B,C}."""
+def classificar_taxa(taxa: float | None) -> str | None:
+    """Taxa de cobertura de renda (ponderada por populacao) -> classe {A,B,C}.
+
+    NA entra e NA sai. Sem esta guarda, `NaN >= 0.95` e' `False` e o municipio sem
+    populacao na malha viraria classe "C" -- afirmando "medi e o join e' ruim" onde a
+    verdade e' "nao ha o que medir". Distinguir nota AUSENTE de nota RUIM e' o mesmo
+    cuidado que os carimbos `FONTE_*` abaixo existem para dar.
+    """
+    if taxa is None or pd.isna(taxa):
+        return None
     if taxa >= CORTE_CLASSE_A:
         return "A"
     if taxa >= CORTE_CLASSE_B:
@@ -96,6 +135,7 @@ def _frame_vazio() -> pd.DataFrame:
             "classe_join_municipio": pd.Series(dtype="object"),
             "taxa_match_municipio": pd.Series(dtype="float64"),
             "n_setores_municipio": pd.Series(dtype="int64"),
+            "pop_municipio_malha": pd.Series(dtype="float64"),
         }
     )
 
@@ -119,16 +159,21 @@ def calcular_notas(geo_root: Path) -> pd.DataFrame:
     for caminho in arquivos:
         try:
             partes.append(
-                pd.read_parquet(caminho, columns=["cod_municipio", "flag_renda_disponivel"])
+                pd.read_parquet(
+                    caminho,
+                    columns=["cod_municipio", "flag_renda_disponivel", "pop_total_setor_2022"],
+                )
             )
         except Exception:
-            # Particao corrompida/sem a coluna nao pode derrubar a nota do pais inteiro --
-            # o custo de pular e' so' nao promover aquele municipio. Mas CONTA, porque
-            # pular 5.000 em silencio e pular 1 sao problemas diferentes.
+            # Particao corrompida/sem alguma das colunas nao pode derrubar a nota do pais
+            # inteiro -- o custo de pular e' so' nao promover aquele municipio, e a direcao
+            # e' segura (a nota so' entra como perna de OR). Mas CONTA, porque pular 5.000
+            # em silencio e pular 1 sao problemas diferentes.
             ilegiveis += 1
     if ilegiveis:
         log.warning(
-            "classe_join_municipio: %d de %d particoes ilegiveis, ignoradas",
+            "classe_join_municipio: %d de %d particoes ilegiveis (faltam "
+            "cod_municipio/flag_renda_disponivel/pop_total_setor_2022?), ignoradas",
             ilegiveis,
             len(arquivos),
         )
@@ -138,15 +183,37 @@ def calcular_notas(geo_root: Path) -> pd.DataFrame:
     setores = pd.concat(partes, ignore_index=True)
     setores["flag_renda_disponivel"] = setores["flag_renda_disponivel"].fillna(False).astype(bool)
     setores["cod_municipio"] = _normalizar_cod_municipio(setores["cod_municipio"])
-    setores = setores[setores["cod_municipio"].notna()]
+    # `.copy()` porque abaixo se ESCREVEM colunas neste frame, e ele acabou de virar uma
+    # fatia. Sob copy-on-write a escrita numa fatia nao levanta erro: ela nao acontece --
+    # e a nota do pais inteiro sairia de colunas que nunca existiram.
+    setores = setores[setores["cod_municipio"].notna()].copy()
     if setores.empty:
         return _frame_vazio()
 
-    notas = (
-        setores.groupby("cod_municipio")["flag_renda_disponivel"]
-        .agg(taxa_match_municipio="mean", n_setores_municipio="size")
-        .reset_index()
+    # PESO = populacao do setor. `fillna(0)` e `clip(lower=0)` porque um setor sem
+    # populacao publicada (ou com valor absurdo) nao pode inventar peso: ele conta zero nos
+    # DOIS lados da fracao, o que e' o mesmo que nao existir para a nota.
+    pop = (
+        pd.to_numeric(setores["pop_total_setor_2022"], errors="coerce")
+        .fillna(0.0)
+        .clip(lower=0.0)
     )
+    setores["_pop_setor"] = pop
+    setores["_pop_com_renda"] = pop.where(setores["flag_renda_disponivel"], 0.0)
+
+    agregado = setores.groupby("cod_municipio").agg(
+        pop_municipio_malha=("_pop_setor", "sum"),
+        _pop_com_renda=("_pop_com_renda", "sum"),
+        n_setores_municipio=("_pop_setor", "size"),
+    )
+    # GUARDA DE DENOMINADOR ZERO: municipio cuja malha soma 0 habitante devolve NA, NUNCA
+    # 0,0. Com 0,0 a divisao daria 0,0, `classificar_taxa` responderia "C" e o municipio
+    # seria REPROVADO em silencio por uma medicao que nunca existiu -- a familia de defeito
+    # do "valor legitimo no lugar errado" (DEC-038/DEC-042).
+    denominador = agregado["pop_municipio_malha"].where(agregado["pop_municipio_malha"] > 0)
+    agregado["taxa_match_municipio"] = agregado["_pop_com_renda"] / denominador
+
+    notas = agregado.reset_index()
     notas["classe_join_municipio"] = notas["taxa_match_municipio"].map(classificar_taxa)
     return notas[list(COLUNAS_NOTA)]
 
@@ -155,7 +222,7 @@ def _notas_utilizaveis(notas: pd.DataFrame | None) -> bool:
     return (
         notas is not None
         and not notas.empty
-        and all(coluna in notas.columns for coluna in COLUNAS_NOTA)
+        and all(coluna in notas.columns for coluna in COLUNAS_ANEXACAO)
     )
 
 

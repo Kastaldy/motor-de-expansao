@@ -10,10 +10,10 @@ READ-ONLY sobre o M1 e HERMETICO: os artefatos de staging (tabela municipal de
 uplift/moradores + fator temporal) sao SINTETICOS em tmp_path — nenhum `data/` em
 disco. Formula (corrigida em 2026-08-13): BASE x moradores_muni x uplift_muni x fator_temporal,
 onde BASE desfaz a escala da coluna de origem (calibrada / k; renda_per_capita / uplift).
-Demais invariantes preservados: fallback calibrada -> renda_per_capita (por COLUNA no
-piloto; ver nota no teste), cod_municipio ausente/NaN -> vazio (sem estimativa de
-nivel UF) e cascata municipio -> mediana UF -> nacional dos fatores. No piloto o
-"NaN" do tooltip e servido como None (payload JSON-safe via `_num`).
+Demais invariantes preservados: fallback calibrada -> renda_per_capita (por LINHA desde a
+DEC-058; era por COLUNA ate' 2026-09-10), cod_municipio ausente/NaN -> vazio (sem
+estimativa de nivel UF) e cascata municipio -> mediana UF -> nacional dos fatores. No
+piloto o "NaN" do tooltip e servido como None (payload JSON-safe via `_num`).
 """
 
 from __future__ import annotations
@@ -208,17 +208,72 @@ def test_fallback_para_renda_per_capita_quando_coluna_calibrada_ausente(
     assert r.loc[2] == round(1700 / 1.8 * 4.5)   # RJ/3304557, uplift 1.8
 
 
-def test_calibrada_nan_por_linha_vira_none_sem_fallback_por_linha(
+def test_calibrada_nula_por_linha_cai_para_a_municipal_daquela_linha(
     staging_sintetico: Path,
 ) -> None:
-    """CONTRATO DO PILOTO (difere do Streamlit aposentado): a precedencia
-    calibrada -> renda_per_capita e por COLUNA (`_derivar` escolhe UMA origem para a
-    `renda_leitura`), nao por linha. Linha com calibrada NaN -> tooltip vazio (None),
-    e NAO o `renda_per_capita` daquela linha."""
+    """DEC-058: a precedencia da renda e' por LINHA, nao por COLUNA.
+
+    Ate' 2026-09-10 `_derivar` escolhia UMA coluna de origem para o frame inteiro e a linha
+    com a calibrada NULA saia sem renda nenhuma -- mesmo tendo a municipal ao lado. Medido
+    no artefato de producao: 234.147 hexagonos (15,18%) nesse estado (AM 129.823, PA 45.941,
+    RR 15.562, MT 11.091), todos exibindo tooltip vazio.
+
+    Note a FORMA do caso: a coluna do setor esta' PRESENTE e nula NAQUELA linha. E' o estado
+    real de producao -- e era justamente o que o teste antigo (coluna ausente) nao cobria.
+    """
     derivado = pilot._derivar(_frame())
-    assert np.isnan(derivado.loc[2, "renda_leitura"])  # nao caiu para 1700
+    # linhas 0 e 1: setor tem valor -> setor vence
+    assert derivado.loc[0, "renda_leitura"] == approx(1500.0)
+    assert derivado.loc[0, "renda_origem"] == "renda_per_capita_setor_2022_calibrada"
+    # linha 2: setor PRESENTE e NULO -> cai para a municipal DAQUELA linha
+    assert derivado.loc[2, "renda_leitura"] == approx(1700.0)
+    assert derivado.loc[2, "renda_origem"] == "renda_per_capita"
+
     r = _serie_renda_dom(_frame())
-    assert r.loc[2] is None
+    # E a escala e' desfeita pelo ramo CERTO: municipal divide pelo uplift (1.8), nao pelo k.
+    assert r.loc[2] == round(1700 / 1.8 * 4.5)
+
+
+def test_renda_origem_e_serie_por_linha_e_nunca_escalar(staging_sintetico: Path) -> None:
+    """CONTRATO DE FORMA (DEC-058): `renda_origem` e' uma coluna, com um valor por linha.
+
+    Trava a regressao exata que o PR #327 sofreu: com a origem ESCALAR o aviso
+    `renda_municipal` do payload nascia constante `False` em 1.542.531 de 1.542.531
+    hexagonos, e quatro ramos de rotulo do front ficavam inalcancaveis. O que este teste
+    acrescenta ao de cima e' a FORMA: exige origem DIFERENTE entre duas linhas do MESMO
+    frame, entao nenhuma redacao que devolva um valor unico para o frame inteiro passa --
+    nem mesmo uma que, por acaso, escolha a coluna certa.
+    """
+    derivado = pilot._derivar(_frame())
+    origens = derivado["renda_origem"]
+    assert isinstance(origens, pd.Series)
+    assert len(origens) == len(derivado)
+    assert origens.nunique() > 1, "renda_origem ficou constante: voltou a ser escolha por COLUNA"
+    assert set(origens.dropna()) == {
+        "renda_per_capita_setor_2022_calibrada",
+        "renda_per_capita",
+    }
+
+
+def test_sem_renda_em_nenhuma_das_colunas_a_origem_e_nula(staging_sintetico: Path) -> None:
+    """Linha sem valor em NENHUMA das origens: renda NaN e origem None -- nao "municipal".
+
+    `renda_municipal` do payload le' `renda_origem == "renda_per_capita"`; se a ausencia
+    total virasse essa string, o front afirmaria "estimativa municipal" para um tooltip
+    vazio.
+    """
+    df = pd.DataFrame(
+        {
+            "hex_id": ["a"],
+            "uf": ["SP"],
+            "cod_municipio": ["3550308"],
+            "renda_per_capita_setor_2022_calibrada": [np.nan],
+            "renda_per_capita": [np.nan],
+        }
+    )
+    derivado = pilot._derivar(df)
+    assert np.isnan(derivado.loc[0, "renda_leitura"])
+    assert derivado.loc[0, "renda_origem"] is None
 
 
 def test_sem_nenhuma_renda_retorna_none(staging_sintetico: Path) -> None:
@@ -375,42 +430,38 @@ def test_payload_do_hex_serve_a_per_capita_domiciliar(staging_sintetico: Path) -
 def test_payload_sinaliza_fallback_municipal_da_renda(staging_sintetico: Path) -> None:
     """`renda_municipal` avisa o operador quando a renda exibida NAO e' do setor.
 
-    Regressao (pedido de Felipe, 2026-09-08): o hex sem `renda_per_capita_setor_2022_calibrada`
-    cai para `renda_per_capita` (SIDRA municipal, o MESMO numero repetido em toda a cidade) e
-    o tooltip/ficha mostravam um numero com cara de precisao intraurbana sem avisar a origem.
+    Regressao (pedido de Felipe, 2026-09-08): o hex sem renda de setor cai para
+    `renda_per_capita` (SIDRA municipal, o MESMO numero repetido em toda a cidade) e o
+    tooltip/ficha mostravam um numero com cara de precisao intraurbana sem avisar a origem.
+
+    A FORMA DO CASO E' O PONTO (DEC-058). Ate' 2026-09-10 este teste montava o hex de
+    fallback OMITINDO a coluna do setor -- estado que NAO existe em producao, onde o
+    artefato nacional tem a coluna no schema para todos os 1.542.531 hexagonos. Por isso
+    ele passava enquanto o aviso era constante `False` nos 1.542.531. Aqui os DOIS hexes
+    vivem no MESMO frame, com a coluna PRESENTE, e o segundo tem valor NULO -- a forma real
+    dos 234.147 (15,18%) medidos em producao.
     """
-    com_setor = pd.DataFrame(
+    frame = pd.DataFrame(
         {
-            "hex_id": ["a"],
-            "lat": [-23.55],
-            "lng": [-46.63],
-            "uf": ["SP"],
-            "cod_municipio": ["3550308"],
-            "renda_per_capita_setor_2022_calibrada": [1500.0],
-        }
-    )
-    sem_setor = pd.DataFrame(
-        {
-            "hex_id": ["b"],
-            "lat": [-23.55],
-            "lng": [-46.63],
-            "uf": ["SP"],
-            "cod_municipio": ["3550308"],
-            # A coluna do setor fica de fora DE PROPOSITO (nao so' None): a precedencia
-            # de `_derivar` e' por COLUNA presente, nao por valor (mesma familia da
-            # DEC-038) -- so' cai pra `renda_per_capita` quando a outra nem existe.
-            "renda_per_capita": [1800.0],
+            "hex_id": ["a", "b"],
+            "lat": [-23.55, -23.55],
+            "lng": [-46.63, -46.63],
+            "uf": ["SP", "SP"],
+            "cod_municipio": ["3550308", "3550308"],
+            "renda_per_capita_setor_2022_calibrada": [1500.0, np.nan],
+            "renda_per_capita": [1400.0, 1800.0],
         }
     )
     fator = pilot._fator_domiciliar("SP", "3550308")
+    derivado = pilot._derivar(frame)
 
-    linha_setor = pilot._derivar(com_setor).loc[0]
-    payload_setor = pilot._hex_dict(linha_setor, fator)
+    payload_setor = pilot._hex_dict(derivado.loc[0], fator)
     assert payload_setor["renda_municipal"] is False
+    assert payload_setor["renda"] is not None
 
-    linha_municipal = pilot._derivar(sem_setor).loc[0]
-    payload_municipal = pilot._hex_dict(linha_municipal, fator)
+    payload_municipal = pilot._hex_dict(derivado.loc[1], fator)
     assert payload_municipal["renda_municipal"] is True
+    # E o numero aparece: antes da DEC-058 esta linha nao exibia renda NENHUMA.
     assert payload_municipal["renda"] is not None
 
 

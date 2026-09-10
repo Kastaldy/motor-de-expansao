@@ -4721,13 +4721,20 @@ o molde de `tests/unit/test_paridade_paleta_web.py`.
 ---
 
 ### BLK-JOINUF-01 — `qualidade_join_uf` é granularidade de ESTADO, não de município/hex; hexágono litorâneo quebra a classificação
+### BLK-JOINUF-01 — A nota de join é grossa demais para a decisão que ela gateia: grão de ESTADO (fechado), linha AUSENTE na Fase A (fechado) e o DENOMINADOR da nota municipal
+
+> **Título renomeado em 2026-09-10.** Até aqui ele dizia "hexágono litorâneo quebra a classificação",
+> hipótese que a **DEC-055 REFUTOU por medição**: 41,2% dos 9.886 órfãos estão em UF **sem costa**
+> (São Gabriel da Cachoeira 425, Amajari 303, Corumbá 234). Não era geometria da costa — era **linha
+> ausente** nas fontes da Fase A, que rodou em 2026-05-15 e nunca mais. O título agora nomeia os três
+> mecanismos REAIS, e não o sintoma que se supôs.
 
 | Campo | Valor |
 |---|---|
 | **Criticidade** | **Crítica** — mexe em `qualidade_join_uf`/`confianca_geografica`, insumo da camada censitária PRIMÁRIA (§1) e do gate híbrido (DEC-040/045/050). Precisa de DEC própria. |
 | **Esteira** | `[GATE HUMANO]` — investigação + medição de impacto antes de qualquer PR. |
-| **Depende de** | DEC-050 (aprofunda o mesmo achado — a DEC-050 corrigiu o composto obsoleto vs. `classe_join_uf`, mas nem o `classe_join_uf` "corrigido" resolve os dois problemas abaixo) |
-| **Status** | **Mecanismo 1 FEITO** ([DEC-054](../docs/decisions/DEC-054.md), 2026-09-09): nota de cobertura por município, promoção-só — 13.147 hexágonos promovidos, zero rebaixados, Manaus 2.038/2.139 e Boa Vista 1.110/1.191. **Mecanismo 2 FEITO** ([DEC-055](../docs/decisions/DEC-055.md), 2026-09-09): os orfaos entram pela malha e ganham `cod_municipio` do estrutural — 3.731 promovidos, Fortaleza 11/11, Rio 43/51. **Residuo**: 4.916 orfaos (642 na malha sem `score_malha` + 4.274 fora dela) — MEDIDOS em 2026-09-10, veredito NAO PROMOVER e rotulo entregue; ver `BLK-ORFAOS-01`. |
+| **Depende de** | DEC-050 (aprofunda o mesmo achado — a DEC-050 corrigiu o composto obsoleto vs. `classe_join_uf`, mas nem o `classe_join_uf` "corrigido" resolve os três mecanismos abaixo) |
+| **Status** | **Mecanismo 1 FECHADO** ([DEC-054](../docs/decisions/DEC-054.md), 2026-09-09): nota de cobertura por município, promoção-só — 13.147 hexágonos promovidos, zero rebaixados, Manaus 2.038/2.139 e Boa Vista 1.110/1.191. **Mecanismo 2 FECHADO** ([DEC-055](../docs/decisions/DEC-055.md), 2026-09-09), e a hipótese do litoral que dava nome a ele foi **REFUTADA**: os órfãos entram pela malha e ganham `cod_municipio` do estrutural — 3.731 promovidos, Fortaleza 11/11, Rio 43/51. **Mecanismo 3 EM APROVAÇÃO** ([DEC-058](../docs/decisions/DEC-058.md), 2026-09-10, **PROPOSTA**): o DENOMINADOR da nota do Mecanismo 1 era contagem de setores, e por isso reprovava as cidades de praia do relato original. **Resíduo**: 4.916 órfãos visíveis (642 na malha sem `score_malha` + 4.274 fora dela) — MEDIDOS em 2026-09-10, veredito **NÃO PROMOVER** (teto de 6.532 habitantes no país, zero hexágonos na fila) e rótulo entregue; ver `BLK-ORFAOS-01`. |
 | **Autonomia** | **manual (NÃO loop-safe)** — toca score/confiança censitária, Crítica |
 
 > **⚠ CORREÇÃO DOS NÚMEROS DESTE BLOCO (2026-09-09).** A medição original abaixo saiu de um artefato
@@ -4741,7 +4748,8 @@ o molde de `tests/unit/test_paridade_paleta_web.py`.
 **O que foi medido (comparando o parquet `hexagonos_dashboard_enriquecido` real da VPS pós-DEC-050
 contra o setor censitário bruto que alimenta o mapa de calor do BLK do dia):**
 
-**Mecanismo 1 — granularidade de UF inteira.** `qualidade_join_uf`/`classe_join_uf` é UM valor por
+**Mecanismo 1 — granularidade de UF inteira. FECHADO pela DEC-054 (2026-09-09).**
+`qualidade_join_uf`/`classe_join_uf` é UM valor por
 ESTADO, não por município nem por hex: os 293.991 hexágonos do Amazonas inteiro — de Manaus (capital,
 com dado de setor real e denso) a municípios de floresta como Barcelos e Tapauá — têm o **mesmo**
 `C`. Isso significa que a nota agregada do interior rural do estado arrasta para baixo a nota da
@@ -4751,9 +4759,12 @@ hexágono) mesmo em hexágonos centrais com dado real de setor de até 83 mil ha
 sofre esse gate hoje** (o `_derivar` do piloto usa a coluna sempre que ela existe, sem checar
 `qualidade_join_uf`) — o que evita esse sintoma na renda, mas por acidente, não por desenho: um valor
 de renda de um hex com join ruim é exibido sem nenhum aviso de baixa confiança.
+*(Atualização 2026-09-10, DEC-058: o aviso de fallback da renda — `renda_municipal` — existia mas
+**nunca disparava**, porque a precedência era por COLUNA e a origem saía escalar; agora é por LINHA.
+O desacoplamento entre renda e gate de confiança segue sendo DELIBERADO — ver item 3 abaixo.)*
 
 **Mecanismo 2 — ~~hexágono na linha da costa quebra a classificação~~ REFUTADO e reclassificado
-(2026-09-09): são hexágonos ÓRFÃOS da Fase A.** A hipótese do litoral (métrica degenerando sobre o
+(2026-09-09); FECHADO pela DEC-055: são hexágonos ÓRFÃOS da Fase A.** A hipótese do litoral (métrica degenerando sobre o
 oceano) foi medida e caiu: **41,2% dos 9.886 hexágonos `"Não informado"` estão em UF SEM COSTA**
 (fronteira internacional — São Gabriel da Cachoeira 425, Amajari 303, Corumbá 234). A causa real é
 outra e fecha por aritmética exata: a Fase A rodou em **2026-05-15 e nunca mais**, e a base H3 cresceu
@@ -4765,21 +4776,38 @@ alcança linha AUSENTE. Casos do relato: Fortaleza 11, Rio 53, SP 5. **5.612 del
 é o caminho barato de conserto (admitir na `sobrepor_renda_da_malha` o que hoje é `how="left"`
 value-preserving). Os 4.274 restantes não estão na malha e não foram investigados.
 
+**Mecanismo 3 — o DENOMINADOR da nota do Mecanismo 1. EM APROVAÇÃO ([DEC-058](../docs/decisions/DEC-058.md),
+PROPOSTA, 2026-09-10).** A nota municipal da DEC-054 é `flag_renda_disponivel.mean()` — média sobre
+SETORES, então um setor de 3 moradores pesa o mesmo que um de 3.000. Cidade de praia é o pior caso
+dessa régua (cauda longa de setores de veraneio quase vazios sem renda, população concentrada em
+poucos setores urbanos que têm), e por isso **o litoral de RJ/SP — que estava no MESMO relato do
+Felipe que originou este bloco — continuou em fallback depois da DEC-054**. Medido: **nove de nove**
+cidades do litoral são classe **C** na contagem e **A** na população (Angra dos Reis 0,84392 →
+0,998752; São Sebastião 0,888136 → 0,999706; Búzios 0,87931 → 0,998500). A DEC-054 **considerou** a
+troca de denominador e a rejeitou, mas a tabela de comparação dela tem duas linhas de cidade —
+Manaus e Boa Vista —, e as duas **empatam nas duas réguas**. Custo declarado e ainda em decisão do
+dono: 173.256 hexágonos ganham granular, **99,4% em AM/RR**, a régua passa a aprovar 99,0% dos
+municípios e o `flag_pop_min_5k` cai 172.718 — mas **a fila do funil não se move (2.924 → 2.924)**.
+
 **Por que isso não é bug do trabalho recém-entregue.** As flags `renda_municipal`/`pop_municipal`
 (fallback-legend) e o mapa de calor (Bloco D) estão corretos — eles só tornaram VISÍVEL um limite
 estrutural que já existia: o sinal de confiança é grosso demais (UF) para uma decisão que é fina
-(hex/setor), e a costa é um caso geométrico degenerado que a métrica atual não trata.
+(hex/setor). ~~e a costa é um caso geométrico degenerado que a métrica atual não trata~~ — a parte
+da costa caiu com a DEC-055 (Mecanismo 2) e não era geometria; o litoral só reaparece no Mecanismo 3,
+por outro motivo (o denominador da nota), e lá é demografia, não geometria.
 
-**Escopo de investigação sugerido, quando priorizado:**
-1. Recalcular `classe_join_uf`/mismatch por MUNICÍPIO (ou cluster de hexes), não por UF — medir se
-   isso recupera capitais/cidades bem cobertas hoje presas atrás de estados ruins (Manaus é o caso
-   comprovado; medir Belém/PA, outras capitais de UF 100% `C`).
-2. Tratar hexágono de borda litorânea como classe própria (ex.: herdar a nota do hexágono terrestre
-   mais próximo, ou usar só a fração de área com setor real) em vez de `"Não informado"` automático.
-3. Decidir se a renda deveria respeitar o mesmo gate de confiança que a população (hoje não respeita)
-   — e se sim, medir quantos hexágonos perderiam renda granular ao ficarem consistentes.
-4. Medir o efeito nacional (UFs afetadas, % de população recuperada, hash do M1 intacto) antes de
-   qualquer PR, no mesmo padrão de rigor da DEC-050/045.
+**Escopo de investigação sugerido, quando priorizado** (estado em 2026-09-10):
+1. ~~Recalcular `classe_join_uf`/mismatch por MUNICÍPIO (ou cluster de hexes), não por UF~~ — **FEITO**
+   (DEC-054 como nota de cobertura por município; DEC-058 corrige o denominador dela).
+2. ~~Tratar hexágono de borda litorânea como classe própria~~ — **SEM OBJETO**: a hipótese do litoral
+   foi refutada pela DEC-055 (41,2% dos órfãos em UF sem costa). Não havia classe geométrica a criar;
+   havia linha ausente a admitir, e ela é admitida pela malha.
+3. **EM ABERTO** — decidir se a renda deveria respeitar o mesmo gate de confiança que a população
+   (hoje não respeita). A DEC-058 mantém deliberadamente o desacoplamento: desde a DEC-045 a renda
+   vem da malha por chave, e submetê-la ao gate de população acoplaria duas coisas hoje independentes.
+   Se for reaberto, medir quantos hexágonos perderiam renda granular ao ficarem consistentes.
+4. ~~Medir o efeito nacional antes de qualquer PR~~ — **FEITO** nas três DECs (054, 055, 058), sempre
+   contra o parquet real, com "ganham/perdem" separados e M1 verificado.
 
 **Guardrail.** §5 READ-ONLY M1. Qualquer mudança em `qualidade_join_uf`/`confianca_geografica`/
 `score_setor_2022_calibrado` exige DEC própria (Crítica) e medição antes/depois por UF, igual à

@@ -957,18 +957,12 @@ def _derivar(df: pd.DataFrame) -> pd.DataFrame:
     else:
         out["pop_leitura"] = float("nan")
 
-    for origem in ("renda_per_capita_setor_2022_calibrada", "renda_per_capita"):
-        if origem in out.columns:
-            out["renda_leitura"] = pd.to_numeric(out[origem], errors="coerce")
-            # A ORIGEM importa: as duas colunas estao em escalas diferentes, e sem saber de qual
-            # delas o valor veio nao da para desfazer a escala na hora de montar a renda
-            # domiciliar (ver `_base_renda_domiciliar`). A precedencia e por COLUNA, entao a
-            # origem e a mesma para o frame inteiro.
-            out["renda_origem"] = origem
-            break
-    else:
-        out["renda_leitura"] = float("nan")
-        out["renda_origem"] = None
+    # A ORIGEM importa: as duas colunas estao em escalas diferentes, e sem saber de qual
+    # delas o valor veio nao da para desfazer a escala na hora de montar a renda domiciliar
+    # (ver `_base_renda_domiciliar`). Ate' 2026-09-10 a precedencia era por COLUNA e a
+    # origem saia ESCALAR para o frame inteiro -- ver `_serie_renda`, onde o defeito e a
+    # medicao estao escritos.
+    out["renda_leitura"], out["renda_origem"] = _serie_renda(out)
 
     # PROTOTIPO (chave de raio): anexa o modelo de 1 km por AREA ao lado do de 2 km, sem
     # tocar nenhuma coluna existente. Degrada em silencio se o parquet de concorrentes
@@ -2332,6 +2326,55 @@ def _serie_pop(df: pd.DataFrame, precedencia: Sequence[str] = COLS_POP_LEITURA) 
         if origem in df.columns:
             return pd.to_numeric(df[origem], errors="coerce")
     return pd.Series(float("nan"), index=df.index, dtype="float64")
+
+
+#: Precedencia da renda do hexagono: setor (granular) primeiro, municipio (SIDRA, o MESMO
+#: numero repetido em toda a cidade) como fallback.
+COLS_RENDA_LEITURA: tuple[str, ...] = (
+    "renda_per_capita_setor_2022_calibrada",
+    "renda_per_capita",
+)
+
+
+def _serie_renda(
+    df: pd.DataFrame, precedencia: Sequence[str] = COLS_RENDA_LEITURA
+) -> tuple[pd.Series, pd.Series]:
+    """Renda de leitura POR LINHA, mais a origem de CADA valor.
+
+    A escolha e' por LINHA e nao por COLUNA. A redacao anterior parava na primeira coluna
+    PRESENTE e usava so' ela para o frame inteiro, o que produzia dois defeitos de uma vez:
+
+      1. `renda_origem` saia ESCALAR. Como o artefato nacional tem a coluna de setor no
+         schema, a origem era `renda_per_capita_setor_2022_calibrada` em 1.542.531 de
+         1.542.531 hexagonos -- e o aviso `renda_municipal` do payload, criado justamente
+         para dizer ao operador quando o numero e' da cidade inteira, nascia constante
+         `False`. Quatro ramos de rotulo do front ficavam inalcancaveis.
+      2. 234.147 hexagonos (15,18%) tem a coluna de setor PRESENTE e NULA naquela linha,
+         com a municipal disponivel -- AM 129.823, PA 45.941, RR 15.562, MT 11.091. Eles
+         nao exibiam renda NENHUMA, tendo um numero legitimo (ainda que municipal) ao lado.
+
+    E' a mesma familia da DEC-038: a precedencia por COLUNA trata "a coluna existe" como
+    "o valor existe". Aqui a coluna existe e o valor, naquela linha, nao.
+
+    Devolve `(valor, origem)`; `origem` e' o NOME DA COLUNA de onde cada valor veio (`None`
+    onde nenhuma tinha valor) -- identificador, nao rotulo: quem exibe traduz.
+    """
+    valor = pd.Series(float("nan"), index=df.index, dtype="float64")
+    # `[None] * n` e nao o escalar `None`: com o escalar o pandas materializa NaN, e o
+    # consumidor teria de distinguir "sem origem" de "origem NaN" -- duas grafias da mesma
+    # ausencia, que e' como ausencia vira ramo esquecido.
+    origem = pd.Series([None] * len(df), index=df.index, dtype="object")
+    for coluna in precedencia:
+        if coluna not in df.columns:
+            continue
+        candidato = pd.to_numeric(df[coluna], errors="coerce")
+        # So' preenche o que ainda esta' vazio: a precedencia se mantem, agora por linha.
+        preencher = valor.isna() & candidato.notna()
+        if not preencher.any():
+            continue
+        valor = valor.where(~preencher, candidato)
+        origem = origem.where(~preencher, coluna)
+    return valor, origem
 
 
 def _quente(df: pd.DataFrame) -> pd.Series:
@@ -4659,12 +4702,13 @@ def _hexagonos_acionaveis_brasil() -> pd.DataFrame:
     # `pop_leitura`/`renda_leitura` com a MESMA precedencia de `_derivar`: a varredura
     # nao passa por `carregar_uf`, entao as derivadas nao vem prontas.
     eleg["pop_leitura"] = _serie_pop(eleg)
-    for origem in ("renda_per_capita_setor_2022_calibrada", "renda_per_capita"):
-        if origem in eleg.columns:
-            eleg["renda_leitura"] = pd.to_numeric(eleg[origem], errors="coerce")
-            break
-    else:
-        eleg["renda_leitura"] = float("nan")
+    # MESMA redacao de `_derivar`, pela mesma funcao -- nao uma segunda copia da regra.
+    # Duas redacoes da precedencia da renda e' exatamente o defeito que a DEC-044 nomeou:
+    # elas nao dao erro, desencontram em silencio. Hoje o conserto por linha e' INERTE aqui
+    # (medido: ZERO hexagono acionavel tem renda de setor nula, e continua zero sob a regua
+    # da DEC-058), e e' por isso que ele entra agora, junto: quem chega a este universo
+    # depende da nota municipal, que a DEC-058 move.
+    eleg["renda_leitura"], eleg["renda_origem"] = _serie_renda(eleg)
     # `n_concorrentes_est` REAL, nao zero. Sob a regra antiga (zero concorrente) a
     # constante era verdadeira por construcao; desde a DEC-041 a cascata admite ate'
     # `CONC_ADENSAR_MAX`, e cravar 0 faria o chip da tela AFIRMAR "Livre" para um
