@@ -9,8 +9,9 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 
 import {
   type AlvoCaptura,
-  ESPERA_VOO_MS,
+  ESPERA_APOS_SALTO_MS,
   TETO_PRONTIDAO_MS,
+  chegouNoAlvo,
   comporCanvas,
   mapaPronto,
   ordemDeVoo,
@@ -708,28 +709,38 @@ export default function HexMap({
     /* Pergunta ao mapa, em vez de contar no relogio. Devolve `false` se o teto estourar
        — e ai a coluna declara a ausencia, porque foto da area errada sob o nome certo e'
        pior que foto nenhuma. Ver `mapaPronto`. */
-    const esperarPronto = async (alvo: { lat: number; lng: number } | null) => {
+    const esperarPronto = async (alvo: { lat: number; lng: number } | null, rotulo: string) => {
       const inicio = Date.now()
+      let ultimo = { estiloCarregado: false, tilesCarregados: false, centro: null } as {
+        estiloCarregado: boolean
+        tilesCarregados: boolean
+        centro: { lat: number; lng: number } | null
+      }
       while (Date.now() - inicio < TETO_PRONTIDAO_MS) {
         if (cancelado) return false
         const m = mapaRef.current?.getMap?.()
         if (m) {
           const c = m.getCenter?.()
-          if (
-            mapaPronto(
-              {
-                estiloCarregado: m.isStyleLoaded?.() ?? false,
-                tilesCarregados: m.areTilesLoaded?.() ?? false,
-                centro: c ? { lat: c.lat, lng: c.lng } : null,
-              },
-              alvo,
-            )
-          ) {
-            return true
+          ultimo = {
+            estiloCarregado: m.isStyleLoaded?.() ?? false,
+            tilesCarregados: m.areTilesLoaded?.() ?? false,
+            centro: c ? { lat: c.lat, lng: c.lng } : null,
           }
+          if (mapaPronto(ultimo, alvo)) return true
         }
         await pausa(80)
       }
+      /* DIZ POR QUE desistiu. Coluna que some em silencio foi a origem de todo este
+         ciclo: o operador via "Mapa nao capturado para esta area." e nao tinha como
+         saber se faltou dado, faltou tempo ou faltou tile. */
+      const c = ultimo.centro
+      console.warn(
+        `[captura] desisti de ${rotulo} apos ${Date.now() - inicio} ms` +
+          ` | estilo=${ultimo.estiloCarregado} tiles=${ultimo.tilesCarregados}` +
+          ` chegou=${alvo ? chegouNoAlvo(c, alvo) : true}` +
+          ` | centro=${c ? `${c.lat.toFixed(4)},${c.lng.toFixed(4)}` : 'nulo'}` +
+          ` alvo=${alvo ? `${alvo.lat.toFixed(4)},${alvo.lng.toFixed(4)}` : 'nenhum'}`,
+      )
       return false
     }
 
@@ -740,7 +751,7 @@ export default function HexMap({
          10/09/2026, a captura 0 entrou na composicao com o canvas do basemap em 0% de
          tinta e a coluna saiu sem ruas. O piso continua, o resto e' prontidao. */
       await pausa(500)
-      await esperarPronto(null)
+      await esperarPronto(null, 'remount do basemap')
 
       /* Os quadros de TODOS os alvos primeiro, porque a rota se decide sobre eles. O
          quadro sai do PROPRIO hexId, nao do que o mapa carregou: ate' 10/09/2026 isto era
@@ -780,19 +791,23 @@ export default function HexMap({
             ? { lat: pedido.lat, lng: pedido.lng, hexId: pedido.hexId }
             : null,
         )
+        /* SALTA, nao voa. A animacao e' para quem esta' olhando a tela, e durante a
+           geracao ninguem esta'. Pior: com a instancia unica de `FlyToInterpolator`
+           reaproveitada em sequencia, a transicao entre dois alvos vizinhos virava no-op
+           e a camera nao saia do lugar — medido em 10/09/2026, `chegou=false` com o
+           centro parado no alvo anterior e 12 s ate' o teto. Sem transicao, o `setView`
+           e' um fato. */
         setView((v) => ({
           ...v,
           longitude: quadro.lng,
           latitude: quadro.lat,
           zoom: quadro.zoom,
-          transitionDuration: ESPERA_VOO_MS,
-          transitionInterpolator: FLY,
+          transitionDuration: 0,
+          transitionInterpolator: undefined,
         }))
-        /* Piso do VOO: antes disto o mapa nem comecou a pedir os tiles do novo
-           enquadramento, e `areTilesLoaded()` responderia `true` sobre o quadro velho. */
-        await pausa(ESPERA_VOO_MS)
+        await pausa(ESPERA_APOS_SALTO_MS)
         if (cancelado) return
-        if (!(await esperarPronto({ lat: quadro.lat, lng: quadro.lng }))) {
+        if (!(await esperarPronto({ lat: quadro.lat, lng: quadro.lng }, `alvo ${i} (${pedido.hexId})`))) {
           // Nao chegou dentro do teto: declara a ausencia em vez de fotografar o quadro
           // anterior, que sairia sob o nome desta area. A posicao ja' esta' vazia.
           continue
@@ -936,7 +951,14 @@ export default function HexMap({
     const base: Layer[] = [
       new H3HexagonLayer<Hex>({
         id: `hex-${passo.n}`,
-        data: hexes,
+        /* VAZIA durante a captura. A coropleta e' do municipio CARREGADO, e desde que a
+           camera passou a fotografar ponto de fora dele o deck saia com duas colunas de
+           fundo verde e duas sem — o que se le como diferenca de DADO, quando e' so'
+           diferenca do que estava aberto na tela (Juan, 10/09/2026: "tem como deixar
+           todos em um padrao so'?"). O assunto do slide e' quem disputa o aluno ali; o
+           contorno do hexagono e a marca do imovel vem da camada `search-hex`, que sai do
+           proprio hexId do ponto, entao continuam em TODAS as colunas. */
+        data: capturando ? [] : hexes,
         getHexagon: (d) => d.id,
         extruded: false,
         filled: true,
@@ -1458,6 +1480,7 @@ export default function HexMap({
     cenarioSet,
     cenarioKey,
     onSelecionar,
+    capturando,
     pinNoMapa,
     pinsEfetivos,
     iconObjs,

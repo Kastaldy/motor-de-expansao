@@ -198,6 +198,21 @@ export function larguraDoAnel(anel: readonly (readonly [number, number])[]): num
   return Math.max(alturaM, larguraM)
 }
 
+/**
+ * Quanto esperar depois do SALTO, antes de comecar a perguntar se o mapa esta' pronto.
+ *
+ * A captura NAO anima a camera: ela salta. O voo com `FlyToInterpolator` existe para o
+ * operador que esta' olhando a tela, e durante a geracao ninguem esta' — pior, ele
+ * introduziu o defeito que custou este ciclo: com a instancia unica de interpolador
+ * reaproveitada em sequencia, a transicao entre dois alvos vizinhos virava no-op e a
+ * camera NAO SAIA DO LUGAR. Medido em 10/09/2026: `estilo=true tiles=true chegou=false`,
+ * com o centro parado no centroide do alvo anterior, 12 s ate' o teto.
+ *
+ * O piso existe porque, no instante seguinte ao salto, o mapa ainda nao registrou o novo
+ * enquadramento e `areTilesLoaded()` responderia `true` sobre o quadro VELHO.
+ */
+export const ESPERA_APOS_SALTO_MS = 300
+
 /** Piso e teto do zoom de captura: fora disto o basemap perde tile ou vira textura. */
 export const ZOOM_CAPTURA_MIN = 10
 export const ZOOM_CAPTURA_MAX = 16.5
