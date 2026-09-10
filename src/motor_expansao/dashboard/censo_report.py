@@ -401,7 +401,9 @@ def _nome_exibicao(usuario: str) -> str:
     usuario segue intacto em trilha/log/payload — aqui muda so' como ele aparece no PDF,
     para o nome sair consistente em qualquer pagina que o exiba.
     """
-    partes = [p for p in str(usuario).replace("_", " ").split() if p]
+    # O PONTO entra junto do underscore: o cadastro tem as DUAS convencoes de login
+    # ("felipe_castaldi" e "will.lindo"), e sem isto a marca-d'agua sairia "Will.lindo".
+    partes = [p for p in str(usuario).replace("_", " ").replace(".", " ").split() if p]
     if not partes:
         return str(usuario).strip()
     return " ".join(p[:1].upper() + p[1:] for p in partes)

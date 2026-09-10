@@ -8884,6 +8884,15 @@ async def relatorio_pontual(
     # `_registrar_relatorio_gerado`.
     report_id = _registrar_relatorio_gerado(remote_user, relatorio="pontual", formato="pdf")
 
+    # A marca-d'agua passa a dizer QUEM gerou, e nao so' "Ultra Academia".
+    #
+    # O `solicitante` e' parametro de query desde sempre, mas o front NUNCA o preenche --
+    # os dois chamadores do Pontual o omitem. Resultado: todo PDF saia com a base sozinha,
+    # e o D17 dependia inteiramente do `report_id`. Agora a identidade REAL (a mesma que
+    # grava o evento) entra como fallback; um `solicitante` explicito, se algum dia vier,
+    # continua vencendo, porque e' o unico caso em que quem pede diz o nome de proposito.
+    solicitante = solicitante or acesso.login_da_requisicao(remote_user)
+
     async with _PDF_SEMAFORO:
         return await run_in_threadpool(
             _gerar_relatorio_pontual_pdf,
