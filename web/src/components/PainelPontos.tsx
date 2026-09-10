@@ -101,7 +101,15 @@ export default function PainelPontos({
          declara a ausência em vez de sumir. */
       const imagens = onCapturarMapas
         ? await onCapturarMapas(
-            fichas.map((f) => ({ hexId: String(f.hex_id ?? ''), lat: f.lat, lng: f.lng })),
+            fichas.map((f) => ({
+              hexId: String(f.hex_id ?? ''),
+              lat: f.lat,
+              lng: f.lng,
+              // Sem isto a foto de um ponto de outra cidade sai com os concorrentes da
+              // cidade aberta — ou com nenhum. Ver `AlvoCaptura`.
+              uf: f.local?.uf ?? null,
+              municipio: f.local?.municipio ?? null,
+            })),
           )
         : []
       const resposta = await fetch('/api/relatorio/comparacao', {

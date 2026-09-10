@@ -4,14 +4,15 @@ import { IconLayer, LineLayer, PolygonLayer, ScatterplotLayer, TextLayer } from 
 import DeckGL from '@deck.gl/react'
 import { cellToLatLng } from 'h3-js'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Map } from 'react-map-gl/maplibre'
+import { Map, type MapRef } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 import {
   type AlvoCaptura,
   ESPERA_VOO_MS,
+  TETO_PRONTIDAO_MS,
   comporCanvas,
-  esperaDeCaptura,
+  mapaPronto,
   ordenarParaEmpilhar,
   quadroDaCaptura,
 } from '../lib/captura-mapa'
@@ -327,6 +328,17 @@ function BlocoMunicipal({ c }: { c: CrescimentoMunicipal }) {
   )
 }
 
+/**
+ * Um alvo da captura, com as CAMADAS do municipio dele quando ele nao e' o carregado.
+ *
+ * O mapa serve um municipio por vez, e desde que a camera voa para hexagono fora dele
+ * (ver `quadroDaCaptura`) a foto precisava trazer os concorrentes DAQUELE entorno, e nao
+ * os do municipio aberto. Quem busca e' o `MapScreen` — o dono do cliente da API.
+ */
+export interface AlvoDaCaptura extends AlvoCaptura {
+  pins?: Pins | null
+}
+
 export interface HexMapProps {
   hexes: Hex[]
   passo: Passo
@@ -360,7 +372,7 @@ export interface HexMapProps {
    * Pedido de CAPTURA: voa até cada hexágono da lista, na ordem, e devolve uma imagem por
    * enquadramento. O `n` que só cresce segue a mesma razão do `voarPara`.
    */
-  pedidoCaptura?: { alvos: AlvoCaptura[]; n: number } | null
+  pedidoCaptura?: { alvos: AlvoDaCaptura[]; n: number } | null
   /** As imagens, na ordem pedida. Entrada vazia = aquele hexágono não estava carregado. */
   onCapturas?: (imagens: string[]) => void
   searchPin: SearchPin | null
@@ -463,6 +475,9 @@ export default function HexMap({
   // cortado quando o cursor estava na parte de baixo ou na direita do mapa. Medimos
   // a caixa do mapa e viramos o balao para o lado que tem espaco.
   const caixaRef = useRef<HTMLDivElement>(null)
+  /* O basemap em si, para a captura PERGUNTAR se ele terminou em vez de contar no
+     relogio. Ver `mapaPronto`. */
+  const mapaRef = useRef<MapRef | null>(null)
   /** Leitura da cidade do hexagono sob o cursor — `undefined` se ela nao tem leitura. */
   const cresDoHex = (h: Hex) => (h.mun ? cresMun?.[h.mun] : undefined)
   function ancora(x: number, y: number, altura = 360, largura = 240) {
@@ -475,6 +490,19 @@ export default function HexMap({
       transform: `translate(${viraX ? '-100%' : '0'}, ${viraY ? '-100%' : '0'})`,
     }
   }
+
+  /**
+   * Os pins do municipio que esta' sendo fotografado AGORA.
+   *
+   * `pins` (a prop) sao do municipio CARREGADO — um por vez. Desde que a camera passou a
+   * voar para hexagono fora dele (ver `quadroDaCaptura`), a foto saia com as ruas certas
+   * e os concorrentes de OUTRA cidade, ou nenhum: o rodape do slide promete "concorrentes
+   * mapeados e unidades Ultra" e entregava o entorno de quem nao esta' na foto. Quem
+   * carrega e' o `MapScreen`, que tem o cliente da API; aqui so' se pinta.
+   */
+  const [pinsDaCaptura, setPinsDaCaptura] = useState<Pins | null>(null)
+  const pinsEfetivos = pinsDaCaptura ?? pins
+
 
   const [hover, setHover] = useState<{ h: Hex; x: number; y: number } | null>(null)
   const [pinHover, setPinHover] = useState<{
@@ -502,9 +530,9 @@ export default function HexMap({
   // Ícones deck.gl memoizados por rede (identidade estável evita re-pack do atlas).
   const iconObjs = useMemo(() => {
     const m: Record<string, IconeDeck> = {}
-    for (const [rede, url] of Object.entries(pins?.icones ?? {})) m[rede] = iconeDeck(url)
+    for (const [rede, url] of Object.entries(pinsEfetivos?.icones ?? {})) m[rede] = iconeDeck(url)
     return m
-  }, [pins?.icones])
+  }, [pinsEfetivos?.icones])
 
   /**
    * O ENQUADRAMENTO INICIAL, em ordem de precedencia.
@@ -668,6 +696,7 @@ export default function HexMap({
    * pin nenhum: um pin de busca antigo no meio do deck se le como "o ponto e' aqui".
    */
   const [marcaCaptura, setMarcaCaptura] = useState<SearchPin | null>(null)
+
   const capturaAnterior = useRef(pedidoCaptura?.n ?? 0)
   useEffect(() => {
     if (!pedidoCaptura || pedidoCaptura.n === capturaAnterior.current) return
@@ -675,12 +704,42 @@ export default function HexMap({
     let cancelado = false
     const pausa = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+    /* Pergunta ao mapa, em vez de contar no relogio. Devolve `false` se o teto estourar
+       — e ai a coluna declara a ausencia, porque foto da area errada sob o nome certo e'
+       pior que foto nenhuma. Ver `mapaPronto`. */
+    const esperarPronto = async (alvo: { lat: number; lng: number } | null) => {
+      const inicio = Date.now()
+      while (Date.now() - inicio < TETO_PRONTIDAO_MS) {
+        if (cancelado) return false
+        const m = mapaRef.current?.getMap?.()
+        if (m) {
+          const c = m.getCenter?.()
+          if (
+            mapaPronto(
+              {
+                estiloCarregado: m.isStyleLoaded?.() ?? false,
+                tilesCarregados: m.areTilesLoaded?.() ?? false,
+                centro: c ? { lat: c.lat, lng: c.lng } : null,
+              },
+              alvo,
+            )
+          ) {
+            return true
+          }
+        }
+        await pausa(80)
+      }
+      return false
+    }
+
     void (async () => {
       setCapturando(true)
-      // Espera o remount COM o buffer preservado antes do primeiro voo; sem isto a
-      // primeira imagem sairia branca e as outras quatro certas, que é o pior dos mundos
-      // (parece defeito do hexágono, não da captura).
+      /* O remount que liga o `preserveDrawingBuffer` recria o basemap, e ele precisa
+         PINTAR antes da primeira foto. Eram 500 ms fixos, e nao bastavam: medido em
+         10/09/2026, a captura 0 entrou na composicao com o canvas do basemap em 0% de
+         tinta e a coluna saiu sem ruas. O piso continua, o resto e' prontidao. */
       await pausa(500)
+      await esperarPronto(null)
 
       const imagens: string[] = []
       for (const pedido of pedidoCaptura.alvos) {
@@ -700,6 +759,9 @@ export default function HexMap({
           imagens.push('')
           continue
         }
+        /* As camadas do municipio DESTE alvo entram ANTES do voo, junto com a marca: o
+           deck precisa ja' estar pintando os pins certos quando o quadro parar. */
+        setPinsDaCaptura(pedido.pins ?? null)
         // A marca do imovel entra ANTES do voo, para estar pintada quando o quadro parar.
         setMarcaCaptura(
           pedido.lat != null && pedido.lng != null
@@ -714,7 +776,16 @@ export default function HexMap({
           transitionDuration: ESPERA_VOO_MS,
           transitionInterpolator: FLY,
         }))
-        await pausa(esperaDeCaptura())
+        /* Piso do VOO: antes disto o mapa nem comecou a pedir os tiles do novo
+           enquadramento, e `areTilesLoaded()` responderia `true` sobre o quadro velho. */
+        await pausa(ESPERA_VOO_MS)
+        if (cancelado) return
+        if (!(await esperarPronto({ lat: quadro.lat, lng: quadro.lng }))) {
+          // Nao chegou dentro do teto: declara a ausencia em vez de fotografar o quadro
+          // anterior, que sairia sob o nome desta area.
+          imagens.push('')
+          continue
+        }
         if (cancelado) return
         /* ORDENADOS antes de empilhar: o `querySelectorAll` entrega o canvas do deck
            ANTES do basemap (o `<DeckGL>` e' o pai do `<Map/>`), e empilhar assim pintava
@@ -728,6 +799,7 @@ export default function HexMap({
       }
 
       setMarcaCaptura(null)
+      setPinsDaCaptura(null)
       setCapturando(false)
       if (!cancelado) onCapturas?.(imagens)
     })()
@@ -735,6 +807,7 @@ export default function HexMap({
     return () => {
       cancelado = true
       setMarcaCaptura(null)
+      setPinsDaCaptura(null)
     }
   }, [pedidoCaptura, hexes, onCapturas])
 
@@ -815,14 +888,14 @@ export default function HexMap({
         tipo: 'ponto',
       })
     }
-    for (const p of pins?.concorrentes ?? []) {
+    for (const p of pinsEfetivos?.concorrentes ?? []) {
       lista.push({ lat: p.lat, lng: p.lng, rotulo: p.nome || p.label || 'Concorrente', tipo: 'concorrente' })
     }
-    for (const p of pins?.ultra ?? []) {
+    for (const p of pinsEfetivos?.ultra ?? []) {
       lista.push({ lat: p.lat, lng: p.lng, rotulo: p.nome || 'Ultra Academia', tipo: 'ultra' })
     }
     return lista
-  }, [pins, searchPin])
+  }, [pinsEfetivos, searchPin])
 
   /* Desligar a regua limpa a medicao: deixar a linha na tela depois da chave desligada
      faria o mapa afirmar uma medicao que o operador nao consegue mais mexer. */
@@ -1148,7 +1221,7 @@ export default function HexMap({
       // enxuta (pedido do Felipe). Ultra vem por cima, um pouco maior.
       new IconLayer<Pin>({
         id: 'conc-pins',
-        data: pins?.concorrentes ?? [],
+        data: pinsEfetivos?.concorrentes ?? [],
         getPosition: (d) => [d.lng, d.lat],
         // Unidade com diagnostico usa a variante com HALO. O fallback para o icone normal importa:
         // se o backend nao mandou a variante, o pin aparece igual aos outros em vez de sumir.
@@ -1198,7 +1271,7 @@ export default function HexMap({
 
       new IconLayer<Pin>({
         id: 'ultra-pins',
-        data: pins?.ultra ?? [],
+        data: pinsEfetivos?.ultra ?? [],
         getPosition: (d) => [d.lng, d.lat],
         getIcon: () => iconObjs.__ultra__,
         // Ultra segue um degrau acima do concorrente (PNG de origem 426x426; mesma folga
@@ -1376,7 +1449,7 @@ export default function HexMap({
     cenarioKey,
     onSelecionar,
     pinNoMapa,
-    pins,
+    pinsEfetivos,
     iconObjs,
     rotulosRank,
     // PRECISAM estar aqui: o corpo do memo LE as duas para decidir se monta a camada de
@@ -1445,6 +1518,7 @@ export default function HexMap({
             terminar de carregar, e as duas peles aparecem sobrepostas (mesma solução do
             `ExecMap`). */}
         <Map
+        ref={mapaRef}
           key={`${tema}|${capturando ? 'captura' : 'normal'}`}
           mapStyle={pele.basemap}
           attributionControl={{ compact: true }}

@@ -10,7 +10,9 @@ import {
   ZOOM_CAPTURA_MIN,
   comporCanvas,
   esperaDeCaptura,
+  chegouNoAlvo,
   larguraDoAnel,
+  mapaPronto,
   metrosPorPixel,
   ordenarParaEmpilhar,
   quadroDaCaptura,
@@ -331,5 +333,62 @@ describe('ordenarParaEmpilhar', () => {
     const a = falso('camada-a')
     expect(ordenarParaEmpilhar([a])).toEqual([a])
     expect(ordenarParaEmpilhar([])).toEqual([])
+  })
+})
+
+describe('chegouNoAlvo', () => {
+  const jatai = { lat: -17.857641, lng: -51.728483 }
+
+  it('reconhece a camera parada em cima do alvo', () => {
+    expect(chegouNoAlvo(jatai, jatai)).toBe(true)
+  })
+
+  it('recusa o quadro ANTERIOR, que e o defeito que isto existe para pegar', () => {
+    /* Posse fica a ~500 km de Jatai. Ate' 10/09/2026 a captura esperava 900 ms de voo e
+       700 ms de tiles NO RELOGIO e fotografava o que estivesse na tela: com a aba
+       estrangulada, tres das quatro colunas do deck sairam com o MESMO quadro de Posse,
+       cada uma sob o nome de outra area. Foto do lugar errado sob o nome certo e' pior
+       que foto nenhuma — por isso a checagem, e por isso ela reprova. */
+    expect(chegouNoAlvo({ lat: -14.075941, lng: -46.344974 }, jatai)).toBe(false)
+  })
+
+  it('tolera o erro de arredondamento do fim do voo', () => {
+    expect(chegouNoAlvo({ lat: jatai.lat + 0.0005, lng: jatai.lng - 0.0005 }, jatai)).toBe(true)
+  })
+
+  it('sem centro nao ha chegada', () => {
+    expect(chegouNoAlvo(null, jatai)).toBe(false)
+    expect(chegouNoAlvo(undefined, jatai)).toBe(false)
+  })
+})
+
+describe('mapaPronto', () => {
+  const alvo = { lat: -17.857641, lng: -51.728483 }
+  const pronto = { estiloCarregado: true, tilesCarregados: true, centro: alvo }
+
+  it('pronto e as tres coisas juntas', () => {
+    expect(mapaPronto(pronto, alvo)).toBe(true)
+  })
+
+  it('estilo nao carregado reprova — e o caso da PRIMEIRA captura', () => {
+    /* Medido em 10/09/2026: na captura 0 o canvas do basemap entrou na composicao com
+       0% de tinta. O `<Map/>` acabara de ser remontado para ligar o `preserveDrawingBuffer`
+       e ainda nao pintara — a espera era de 500 ms fixos. A coluna saiu sem ruas, com
+       cara de outro relatorio. */
+    expect(mapaPronto({ ...pronto, estiloCarregado: false }, alvo)).toBe(false)
+  })
+
+  it('tiles pendentes reprovam: quadro borrado nao e' + ' quadro', () => {
+    expect(mapaPronto({ ...pronto, tilesCarregados: false }, alvo)).toBe(false)
+  })
+
+  it('camera ainda a caminho reprova', () => {
+    expect(mapaPronto({ ...pronto, centro: { lat: -14.07, lng: -46.34 } }, alvo)).toBe(false)
+  })
+
+  it('sem alvo, basta o mapa estar pintado', () => {
+    // A comparacao de HEXAGONOS nao marca imovel; ali so' importa que o quadro exista.
+    expect(mapaPronto(pronto, null)).toBe(true)
+    expect(mapaPronto({ ...pronto, estiloCarregado: false }, null)).toBe(false)
   })
 })

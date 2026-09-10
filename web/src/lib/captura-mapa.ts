@@ -30,6 +30,16 @@ export interface AlvoCaptura {
   hexId: string
   lat?: number | null
   lng?: number | null
+  /**
+   * De que cidade e' este alvo.
+   *
+   * O mapa serve UM municipio por vez. Enquanto a captura so' enquadrava hexagono ja'
+   * carregado, isto era redundante; desde que a camera voa para fora dele
+   * (`quadroDaCaptura`), e' o que permite trazer os concorrentes do entorno CERTO em vez
+   * dos da cidade que estava aberta.
+   */
+  uf?: string | null
+  municipio?: string | null
 }
 
 /**
@@ -260,6 +270,61 @@ export function quadroDaCaptura(
     return null
   }
 }
+
+/**
+ * Tolerancia, em GRAUS, para dizer que a camera chegou no alvo.
+ *
+ * ~0,002 grau e' da ordem de 200 m — folga para o arredondamento do fim do voo, e uma
+ * ordem de grandeza menor que a travessia de um hexagono res-7 (~2,9 km), que e' o que a
+ * foto enquadra. Serve para aceitar "chegou" sem aceitar "ainda esta' na cidade
+ * anterior".
+ */
+export const TOLERANCIA_ALVO_GRAUS = 0.002
+
+/** A camera esta' parada em cima do alvo? Ver `TOLERANCIA_ALVO_GRAUS`. */
+export function chegouNoAlvo(
+  centro: { lat: number; lng: number } | null | undefined,
+  alvo: { lat: number; lng: number },
+  tolerancia: number = TOLERANCIA_ALVO_GRAUS,
+): boolean {
+  if (!centro) return false
+  return (
+    Math.abs(centro.lat - alvo.lat) <= tolerancia &&
+    Math.abs(centro.lng - alvo.lng) <= tolerancia
+  )
+}
+
+/** O que se pergunta ao mapa antes de apertar o obturador. */
+export interface EstadoDoMapa {
+  estiloCarregado: boolean
+  tilesCarregados: boolean
+  centro: { lat: number; lng: number } | null
+}
+
+/**
+ * O mapa esta' PRONTO para ser fotografado?
+ *
+ * Substitui a espera por RELOGIO (900 ms de voo + 700 ms de tiles) que estava aqui. O
+ * relogio nao sabe se o mapa acompanhou: medido em 10/09/2026, com a aba estrangulada
+ * saiu UMA imagem distinta em quatro — tres colunas do deck com o mesmo quadro de Posse,
+ * cada uma sob o nome de outra area —, e na captura 0 o basemap entrou na composicao com
+ * 0% de tinta, recem-remontado. Foto do lugar errado SOB O NOME CERTO e' pior que foto
+ * nenhuma, e foi por isso que a espera fixa saiu.
+ *
+ * `alvo` nulo e' a comparacao de HEXAGONOS, que nao marca imovel: ali basta o mapa ter
+ * pintado.
+ */
+export function mapaPronto(
+  estado: EstadoDoMapa,
+  alvo: { lat: number; lng: number } | null,
+  tolerancia: number = TOLERANCIA_ALVO_GRAUS,
+): boolean {
+  if (!estado.estiloCarregado || !estado.tilesCarregados) return false
+  return alvo ? chegouNoAlvo(estado.centro, alvo, tolerancia) : true
+}
+
+/** Teto de espera pela prontidao, por captura. Estourou, a coluna declara a ausencia. */
+export const TETO_PRONTIDAO_MS = 6000
 
 /**
  * Quanto esperar depois de mandar o mapa voar, antes de capturar.
