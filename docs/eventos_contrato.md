@@ -48,12 +48,28 @@ um valor é editar esta tabela primeiro.
 
 | `tipo` | Quando | `entidade` | `metadados` |
 |---|---|---|---|
-| `relatorio.gerado` | Pontual, Municipal, Comparação ou Simulador XLSX | — (ver D24) | **`report_id` (UUID, obrigatório)**, o alvo (`hex_id`/`imovel_id`/`unidade_id`), `formato`, `origem` |
+| `relatorio.gerado` | Pontual, Municipal, Comparação ou Simulador XLSX | — (ver D24) | **`report_id` (UUID, obrigatório)**, `relatorio`, `formato`, `origem`, e o alvo (`hex_id`/`imovel_id`/`unidade_id`) quando houver | **Pontual desde 10/09**; os outros três, não |
 | `dossie.baixado` | `GET /api/oportunidades/{id}/dossie` | — | `imovel_id` |
 
 **`report_id` é obrigatório em todo `relatorio.gerado`.** É o que o D17 embute no PDF e o que
 permite, dado um arquivo vazado, chegar ao evento e daí a quem o gerou — o `idx_eventos_metadados_report_id`
 existe para esse lookup. Um `relatorio.gerado` sem `report_id` não cumpre o D17 e não deve ser gravado.
+
+> **`relatorio` é chave nova (10/09), e ela faltava.** A linha acima põe os QUATRO relatórios sob o
+> mesmo `tipo`, e `formato` sozinho não os separa — Pontual e Municipal são ambos `pdf`. Sem uma
+> chave dizendo qual é qual, o lookup do D17 devolveria "um PDF" em vez de "o Relatório Pontual de
+> tal ponto". Produtor em `motor_expansao.db.eventos.registrar_relatorio`.
+
+> **O que o Pontual ainda NÃO grava: o alvo.** A rota recebe `lat`/`lng` e um rótulo de texto livre
+> — não recebe `hex_id` nem `imovel_id`. Derivar o hexágono da coordenada seria possível (H3 res 7),
+> mas afirmaria um alvo que o pedido não declarou. Enquanto o front não enviar a chave, o evento sai
+> sem alvo: o `report_id` sozinho já cumpre o D17, e o alvo é refinamento de consulta.
+
+> **Estado por superfície (10/09).** Pontual: produtor ligado, `report_id` na marca-d'água (todas as
+> páginas) e nos metadados `/Info` do PDF. Municipal: marca-d'água existe, produtor não. Comparação:
+> **não tem marca-d'água nenhuma** — é a superfície mais exposta, um deck vazado hoje não tem nada
+> apontando para pessoa. Simulador XLSX: entra por contrato, mas planilha não tem content stream, e
+> o carimbo precisa de decisão nova. Exports da Rede (ficha, carteira): fora do contrato.
 
 **`dossie.baixado` tem linha própria** porque é o único artefato que carrega **contato de corretor**
 e o único que o motor não gera: vem do coletor imobiliário. É o mesmo problema do D17 com outra fonte.

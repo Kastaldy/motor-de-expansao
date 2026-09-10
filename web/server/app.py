@@ -401,6 +401,65 @@ def _ip_real_do_xff(xff: str | None, fallback: str | None) -> str | None:
     return fallback
 
 
+#: Log do D17. Nome proprio, no padrao `piloto.<assunto>` do arquivo: quando um
+#: identificador nasce orfao, o operador precisa achar a linha por assunto, nao caçá-la
+#: no meio do log de requisicao.
+_LOG_D17 = logging.getLogger("piloto.d17")
+
+
+def _registrar_relatorio_gerado(
+    remote_user: str | None,
+    *,
+    relatorio: str,
+    formato: str,
+    alvo: dict[str, str] | None = None,
+) -> str:
+    """Cunha o `report_id`, tenta gravar `relatorio.gerado`, e devolve o id SEMPRE (D17).
+
+    A POLITICA e' de produto, decidida em 10/09: **carimba sempre, grava quando da'**.
+    O PDF leva o identificador mesmo que o banco esteja fora, e o relatorio nunca falha
+    por causa da trilha -- mesmo principio do `_registrar_acesso` logo abaixo.
+
+    O CUSTO dessa escolha, e ele e' real: um id carimbado sem linha no banco e' um
+    identificador ORFAO. Quem achar o arquivo vazado le' o codigo, consulta o banco e nao
+    encontra nada. Por isso a falha e' LOGADA como ERRO, e nao engolida: sem o log, a
+    unica pista de que o rastreio nao existe para aquele arquivo seria a ausencia de uma
+    linha que ninguem sabe procurar.
+
+    Quando o P19 for executado e o login passar a depender do banco, a janela quase
+    fecha sozinha: sem banco nao ha sessao, e sem sessao ninguem gera relatorio. Ate' la',
+    a janela e' real -- o Authelia autentica por fora, e o proprio runbook manda esvaziar
+    `MOTOR_DATABASE_URL` como interruptor de incidente.
+
+    A identidade vem da MESMA resolucao de todo o resto (`acesso.login_da_requisicao`),
+    e o `id_usuario` sai do RBAC. Sem cadastro no banco, o evento sai com autor nulo em
+    vez de nao sair: o D19 preve acao de autoria nula, e meio evento vale mais que nenhum.
+    """
+    from motor_expansao.db import eventos as db_eventos
+
+    report_id = db_eventos.novo_report_id()
+    try:
+        from motor_expansao.db import rbac
+
+        quem = rbac.identidade(acesso.login_da_requisicao(remote_user))
+        db_eventos.registrar_relatorio(
+            autor=quem.id_usuario if quem is not None else None,
+            relatorio=relatorio,
+            formato=formato,
+            origem="web",
+            alvo=alvo,
+            report_id=report_id,
+        )
+    except Exception:  # noqa: BLE001 — a trilha nunca derruba o relatorio
+        _LOG_D17.exception(
+            "D17: relatorio %s gerado com report_id=%s SEM evento no banco — "
+            "o identificador do arquivo esta ORFAO e o rastreio nao vai resolver",
+            relatorio,
+            report_id,
+        )
+    return report_id
+
+
 def _registrar_acesso(request: Request, *, status: int, inicio: float, tamanho: str | None) -> None:
     """Monta e grava a linha da trilha. Rastro, nao transacao: falha morre aqui."""
     try:
@@ -8782,6 +8841,7 @@ async def relatorio_pontual(
     viabilidade_inputs_json: str | None = None,
     origem_centroide_hex: bool = False,
     fotos: list[UploadFile] | None = None,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> Response:
     """Relatorio Pontual Censitario 1,0 km (DEC-021) — fotos, dados do imovel e viabilidade.
 
@@ -8819,6 +8879,11 @@ async def relatorio_pontual(
     # relatorios simultaneos serializaram em 12/21/31 s e um /api/health levou 29 s).
     # Era isso que aparecia como "o relatorio carrega para sempre" na aba Viabilidade.
     # No threadpool o event loop segue livre e os pedidos rodam de fato em paralelo.
+    # D17: o `report_id` nasce ANTES do PDF, porque ele precisa ser carimbado nos bytes.
+    # A gravacao do evento e' tentada aqui e pode falhar sem derrubar o relatorio -- ver
+    # `_registrar_relatorio_gerado`.
+    report_id = _registrar_relatorio_gerado(remote_user, relatorio="pontual", formato="pdf")
+
     async with _PDF_SEMAFORO:
         return await run_in_threadpool(
             _gerar_relatorio_pontual_pdf,
@@ -8831,6 +8896,7 @@ async def relatorio_pontual(
             viabilidade_inputs_json,
             fotos_bytes,
             origem_centroide_hex,
+            report_id,
         )
 
 
@@ -8844,6 +8910,7 @@ def _gerar_relatorio_pontual_pdf(
     viabilidade_inputs_json: str | None,
     fotos_bytes: list[bytes],
     origem_centroide_hex: bool = False,
+    report_id: str | None = None,
 ) -> Response:
     """Corpo SINCRONO do Relatorio Pontual — roda no threadpool, nunca no event loop.
 
@@ -8996,6 +9063,7 @@ def _gerar_relatorio_pontual_pdf(
         perfil_bairro=perfil_bairro,
         ultra_dir=ultra_dir,
         solicitante=solicitante,
+        report_id=report_id,
         rotulo=rotulo,
         fotos=fotos_bytes[:2] or None,
         info_imovel=json.loads(info_imovel) if info_imovel else None,

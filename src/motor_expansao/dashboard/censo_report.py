@@ -407,14 +407,27 @@ def _nome_exibicao(usuario: str) -> str:
     return " ".join(p[:1].upper() + p[1:] for p in partes)
 
 
-def _watermark_text(solicitante: str | None) -> str:
-    """Texto da marca d'agua: "Ultra Academia" ou "Ultra Academia | {solicitante}".
+def _watermark_text(solicitante: str | None, report_id: str | None = None) -> str:
+    """Texto da marca d'agua: base, mais o solicitante e o `report_id` quando existirem.
 
     `solicitante` None/vazio -> so a base (default seguro, sem PII). ASCII-safe.
+
+    O `report_id` (D17) e' o que permite, dado um arquivo vazado, chegar ao evento
+    `relatorio.gerado` e dai' a quem o gerou -- e' ele que amarra ARQUIVO a pessoa, o que
+    a trilha da DEC-027 nao faz (ela amarra REQUISICAO a pessoa; dois PDFs do mesmo ponto
+    gerados no mesmo minuto produzem duas linhas indistinguiveis).
+
+    CABE, e foi medido: com Helvetica a `_WATERMARK_FONT_PT` (10 pt) numa pagina de 960 pt,
+    o caso completo (base + nome + UUID de 36 caracteres) mede ~335 pt e comeca em x~605 --
+    ainda na metade direita. O rodape (`_draw_footer`) e' ancorado em x=36 e termina em
+    x~373, entao nao ha colisao. Um UUID e' ASCII puro, entao o `_ascii` nao o mutila.
     """
-    if solicitante is None or not solicitante.strip():
-        return _ascii(_WATERMARK_BASE)
-    return _ascii(f"{_WATERMARK_BASE} | {_nome_exibicao(solicitante)}")
+    partes = [_WATERMARK_BASE]
+    if solicitante is not None and solicitante.strip():
+        partes.append(_nome_exibicao(solicitante))
+    if report_id is not None and report_id.strip():
+        partes.append(report_id.strip())
+    return _ascii(" | ".join(partes))
 
 
 # ---------------------------------------------------------------------------
@@ -3964,6 +3977,7 @@ def gerar_pdf_relatorio_pontual_classico(
     perfil_bairro: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
+    report_id: str | None = None,
     rotulo: str | None = None,
     now: datetime | None = None,
     fotos: list[bytes] | None = None,
@@ -4043,6 +4057,16 @@ def gerar_pdf_relatorio_pontual_classico(
     p5, s5 = _tema_bicolor(5)
 
     pdf = _UltraPDF()
+    if report_id:
+        # SEGUNDA camada do carimbo, e ela cobre o que a marca-d'agua nao cobre: o `/Info`
+        # sobrevive a RECORTE de pagina e a extracao de texto. Morre em screenshot e em
+        # reimpressao -- que e' justamente onde a marca-d'agua sobrevive. As duas juntas
+        # cobrem os dois modos de vazamento; nenhuma sozinha cobre.
+        #
+        # O `/Info` NAO e' comprimido (a classe ja' desliga a compressao por outro motivo),
+        # entao o UUID fica legivel em texto puro no arquivo -- e testavel por substring.
+        pdf.set_subject(f"report_id {report_id}")
+        pdf.set_keywords(f"report_id={report_id}")
     _classico_cover_page(
         pdf, result, assets, rotulo=rotulo, now=now, origem_centroide_hex=origem_centroide_hex
     )
@@ -4132,7 +4156,7 @@ def gerar_pdf_relatorio_pontual_classico(
     # Marca d'agua POR CIMA do conteudo de cada pagina (BLK-EST-01, D2=todas as paginas).
     # Escrever na pagina `n` via `pdf.page = n` ANEXA ao stream dessa pagina -> sobreposicao.
     # Capa em branco (fundo turquesa), demais em cinza.
-    wm_text = _watermark_text(solicitante)
+    wm_text = _watermark_text(solicitante, report_id)
     for page_number in range(1, pdf.pages_count + 1):
         pdf.page = page_number
         rgb = _WATERMARK_RGB_COVER if page_number == 1 else _WATERMARK_RGB
