@@ -323,8 +323,17 @@ export function mapaPronto(
   return alvo ? chegouNoAlvo(estado.centro, alvo, tolerancia) : true
 }
 
-/** Teto de espera pela prontidao, por captura. Estourou, a coluna declara a ausencia. */
-export const TETO_PRONTIDAO_MS = 6000
+/**
+ * Teto de espera pela prontidao, por captura. Estourou, a coluna declara a ausencia.
+ *
+ * 12 s, e nao os 6 s do primeiro corte: no deck de 10/09/2026 os quatro pontos cruzavam
+ * ~500 km entre Posse/GO e Jatai/GO, e a PRIMEIRA captura da segunda cidade — voo longo
+ * mais tiles de uma praca que o mapa nunca tinha desenhado — nao ficou pronta a tempo. A
+ * coluna saiu declarando a ausencia, que e' o comportamento certo com o teto errado. O
+ * teto so' custa tempo quando a captura ja' esta' falhando; apertado, ele TRANSFORMA
+ * espera em ausencia.
+ */
+export const TETO_PRONTIDAO_MS = 12_000
 
 /**
  * Quanto esperar depois de mandar o mapa voar, antes de capturar.
