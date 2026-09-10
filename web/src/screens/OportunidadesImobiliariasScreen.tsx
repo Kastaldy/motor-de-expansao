@@ -587,7 +587,7 @@ function Ficha({
               {op.residual != null ? num(op.residual, 0) : '—'}
             </span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
             {op.faixa && <FaixaPill faixa={op.faixa} />}
             <span className="num" style={{ font: '400 10.5px/1 var(--f-num)', color: 'var(--tx-sub)' }}>{op.hex_id}{op.first_seen ? ` · desde ${op.first_seen}` : ''}</span>
           </div>
@@ -601,7 +601,19 @@ function Ficha({
           </div>
         </Glass>
       ) : (
-        <article style={{ borderRadius: 'var(--r-2xl)', overflow: 'hidden', background: 'var(--surf-card)', border: '1px solid var(--line)', display: 'flex', flexWrap: 'wrap' }}>
+        /* `flexShrink: 0` nao e' enfeite. Este <article> e' filho DIRETO de um flex
+           column (a <section> logo acima, que ja' rola sozinha), e o `overflow: hidden`
+           — que o border-radius exige para recortar o fundo dos dois paineis — ZERA o
+           minimo automatico do item: pela regra do flexbox, `min-height: auto` so' vale
+           enquanto o overflow e' visible. Sem a trava, o hero era o UNICO item da coluna
+           capaz de ceder altura, e toda falta de espaco vertical — e' o que o zoom da
+           pagina provoca, ao encolher o viewport em pixels CSS — era cobrada inteira
+           dele: ja' a 100% ficava com 99px cortados e, de 125% em diante, achatava para
+           ~2px e sumia da tela. Os irmaos escapam por terem tamanho definido pelo
+           conteudo; o outro `overflow: hidden` desta coluna (o card "Localizacao") nao
+           herda a valvula porque o MiniMapa dentro dele tem `height: 320` fixa — medido
+           em Chrome headless de 100% a 300%, fica cravado em 327px. */
+        <article style={{ borderRadius: 'var(--r-2xl)', overflow: 'hidden', background: 'var(--surf-card)', border: '1px solid var(--line)', display: 'flex', flexWrap: 'wrap', flexShrink: 0 }}>
           <div style={{ flex: '1 1 220px', maxWidth: 300, minHeight: 260, position: 'relative', display: 'grid', placeItems: 'center', background: `radial-gradient(120% 90% at 30% 15%, ${tint}22 0%, transparent 70%)`, color: tint }}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
               <IconeTipo tipo={op.tipo} tamanho={62} />

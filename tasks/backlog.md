@@ -4737,3 +4737,138 @@ estrutural que já existia: o sinal de confiança é grosso demais (UF) para uma
 **Guardrail.** §5 READ-ONLY M1. Qualquer mudança em `qualidade_join_uf`/`confianca_geografica`/
 `score_setor_2022_calibrado` exige DEC própria (Crítica) e medição antes/depois por UF, igual à
 DEC-050.
+---
+
+### BLK-ORFAOS-01 — Os 4.274 órfãos que a malha da DEC-045 não cobre
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — muda `confianca_geografica`/`populacao_corte_hex` de hexágonos reais; se o conserto tocar `score_setor_2022_calibrado`, sobe para Crítica e exige DEC. |
+| **Esteira** | `[GATE HUMANO]` — medir a natureza deles ANTES de propor conserto. |
+| **Depende de** | [DEC-055](../docs/decisions/DEC-055.md) (resolveu 5.612 dos 9.886; estes são o resíduo declarado) |
+| **Status** | **ABERTO** — resíduo declarado na DEC-055, ainda **não investigado**. |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca a camada censitária. |
+
+**O que é.** A DEC-055 provou que os 9.886 hexágonos `"Não informado"` são **órfãos da Fase A**:
+ela rodou em 2026-05-15 e nunca mais, e a base H3 cresceu depois em três eventos de borda
+(+5.305 centroide + 474 DEC-002 + 4.107 DEC-003 = exatamente 9.886, batendo por UF em 27/27).
+`admitir_orfaos_da_malha` recuperou **5.612** deles pela malha da DEC-045 (3.731 promovidos a
+granular; Fortaleza 11/11, Niterói 13/13, Salvador 9/9, Recife 5/5, Rio 43/51). Sobram **4.274**
+que a malha **também** não cobre — nem admitidos, nem promovidos, nem investigados.
+
+**A hipótese de trabalho (NÃO medida — é o item 1 do escopo).** Se a malha da DEC-045 não os
+cobre, é porque nenhum setor censitário do IBGE intersecta aquela geometria. O candidato natural
+é que sejam hexágonos **sem setor povoado**: oceano dentro do critério híbrido do litoral
+(`M1_HEX_LAND_FRACTION_MIN = 0,05`, §3), floresta, faixa de fronteira. Se for isso, o conserto
+certo é **rotular**, não promover: `"sem setor censitário"` é uma resposta correta e diferente de
+`"Não informado"`, que hoje o operador lê como falha do motor. **Cuidado com o precedente da
+própria DEC-055**: a hipótese "é o litoral" já foi formulada com confiança e **refutada por
+medição** (41,2% dos órfãos estavam em UF sem costa). Não repetir o erro — medir antes de afirmar.
+
+**Por que não é urgente, e por que também não pode ser esquecido.** Nenhum dos casos que o
+operador reportou (Manaus, Fortaleza, Juiz de Fora, litoral RJ/SP) está neste resíduo — todos
+foram fechados pela DEC-054/055. Mas 4.274 hexágonos continuam exibindo `"Não informado"` sem
+que ninguém saiba se isso é verdade ou defeito, e essa é exatamente a **forma** do defeito
+recorrente do repo (DEC-038/045/050/054): um valor legítimo que, no lugar errado, apaga uma
+superfície inteira em silêncio.
+
+**Escopo de investigação, quando priorizado:**
+1. **Caracterizar antes de consertar.** Para os 4.274: distribuição por UF, `land_fraction`,
+   `pop_total`/`populacao_proxy` do estrutural (que **existe** para os 1.542.531), distância ao
+   setor censitário mais próximo e quantos caem sobre água/unidade de conservação. A pergunta
+   binária: **quantos têm população estrutural > 0?**
+2. **Se forem majoritariamente vazios** → rotular (`sem_setor_censitario`) e ajustar a legenda do
+   piloto para distinguir "não há dado" de "há dado e não confiamos nele". Custo baixo, sem DEC
+   de score.
+3. **Se houver povoados relevantes** → medir se o vizinho H3 imediato (`k_ring=1`) tem setor e se
+   herdar dele é defensável — e aí sim DEC própria (Crítica), com antes/depois por UF e hash do M1.
+4. Fechar o número: 9.886 = 5.612 admitidos + 4.274 residuais. Qualquer conserto tem de manter
+   essa aritmética explícita, como a DEC-055 manteve a dos três eventos de borda.
+
+**Guardrail.** §5 READ-ONLY M1. Rotular não exige DEC; promover a granular exige DEC Crítica com
+medição antes/depois, no padrão DEC-050/054/055.
+---
+
+### BLK-ALUNOS-01 — Alunos reais por unidade de concorrente: crosswalk + número no tooltip do pino
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — camada nova, READ-ONLY sobre o M1 e sobre o residual. Não muda score, fórmula nem artefato oficial: o artefato nasce e o único consumo é EXIBIÇÃO. Vira **Crítica** no passo seguinte, quando substituir a capacidade proxy de 2.500 no residual. |
+| **Esteira** | Normal (DEC-016): não toca M1/VPS/segredos. |
+| **Depende de** | `concorrentes_mapeados` (cron semanal) e `vulnerabilidade_ma_redes` (DEC-034/048) |
+| **Status** | **FEITO** (2026-09-10) — `pipelines/alunos_reais.py` + `alunos_reais_por_unidade.parquet` + linha "Alunos" no balão do pino. |
+| **Autonomia** | **manual (NÃO loop-safe)** — consome fonte gitignored que o container do loop não tem. |
+
+**O que existia e por que não servia.** O join já tinha sido escrito em
+`dimensionamento/base_multirede.py` (BLK-DIM-07, jun/2026), e três coisas o inutilizaram:
+(a) ele lê `concorrentes/Unidades/*.csv`, diretório que **não viaja no repo** — `carregar_skyfit`
+e `carregar_engenharia` levantam `FileNotFoundError` hoje, e ninguém tinha percebido; (b) conhece
+3 redes e nenhuma delas é a Smart Fit, que é de longe o maior dado; (c) casa a Skyfit por
+**CIDADE**, jogando fora a coluna de nome de unidade que a planilha tem — cidade com mais de uma
+unidade vira `ambiguo` e é descartada. Medido: **39,2% pela cidade contra 86,8% pelo nome**.
+
+**O que mudou de fonte.** A coordenada passa a vir de `concorrentes_mapeados.parquet` (o artefato
+que a PRODUÇÃO serve, atualizado pelo cron de terça) unido a `vulnerabilidade_ma_redes.parquet`
+(feed WellHub). Não é preferência de estilo: **o pino que o operador vê nasce desse artefato**, e o
+número de alunos precisa pousar na mesma linha para chegar ao tooltip. A Smart Fit não está no
+WellHub (zero unidades) — a coordenada dela vem só do coletor próprio, mais a planilha externa
+opcional de `NAO_ABRA/01_SmartFit.xlsx`, usada como PONTE por coordenada.
+
+**O que derruba a taxa de match é ORTOGRÁFICO, não semântico.** Cada coletor carimba o rótulo de um
+jeito: sufixo de UF (`Vila Granada - SP`), prefixo de rede (`PACER Ribeirânia`), sequência em
+romano de um lado e arábica do outro (`Bonfim I` × `Bonfim 1`), bairro colado na cidade
+(`Desvio Rizzo Caxias do Sul`). São normalizações baratas que valem mais que afrouxar corte — por
+isso o corte fica **alto (0,95)** e o trabalho é feito antes de comparar. A Pacer casava **0 de 13**
+só por causa do prefixo.
+
+**Resultado medido (2026-09-10):**
+
+| Rede | com alunos | no pool | casadas | taxa |
+|---|---:|---:|---:|---:|
+| Smart Fit | 952 | 999 | 878 | 92,2% |
+| Skyfit | 311 | 798 | 290 | 93,3% |
+| Engenharia do Corpo | 61 | 110 | 42 | 68,9% |
+| RedFit | 21 | 56 | 17 | 81,0% |
+| Grupo Pacer | 13 | 12 | 11 | 84,6% |
+
+**1.238 unidades no artefato, 1.202 chegam ao tooltip** — contra 275 que a base de junho tinha, das
+quais 53 eram a própria Ultra. Verificado ponta a ponta no navegador: `Pacer Sertãozinho 2` desenha
+**1.248** e a imagem-fonte diz 1.248; `Smart Fit Mall Dom Pedro I` desenha **1.875** e o painel diz
+1.875.
+
+**Dois defeitos meus que os testes pegaram, e valem como padrão:**
+1. **Recorte de UF fail-OPEN.** Quando não havia candidato na UF do alvo, o código caía no pool
+   NACIONAL — e um `Centro` do Amazonas casava com um `Centro` do Rio Grande do Sul com score
+   **1,000**. Match perfeito, errado, e sem nada no número que denuncie a troca. Mesmo fail-open que
+   a emenda E3 da DEC-039 teve de fechar. Agora UF conhecida e diferente **exclui**; UF nula segue
+   elegível, porque é ausência de informação e não um estado diferente.
+2. **Candidato reatribuído entre rotas.** Cada uma das três rotas (nome, contenção, ponte) começava
+   com o pool limpo, então um pino já tomado podia ser reatribuído: **9 pinos saíam com duas
+   contagens de alunos**, e uma vencia em silêncio no merge.
+
+**Onde ficou a linha do que se mostra.** A rota de CONTENÇÃO (o rótulo da fonte é um pedaço do
+rótulo do coletor) é inferência, e quem lê "Vila Nova Cachoeirinha — 2.400 alunos" não tem como
+saber que a linha de origem dizia só "Cachoeirinha". Ela entra no artefato com
+`confianca_match="media"` e **não** chega à tela. Zero também não chega: unidade recém-aberta ou
+lacuna de coleta desenharia "0 alunos" numa academia que existe.
+
+**ACOPLAMENTO OPERACIONAL — o artefato ENVELHECE com o cron.** `concorrente_id` é
+`sha1(rede, nome_unidade, lat, lng)` (`normalizar_concorrentes.py:98-103`), ou seja,
+**endereçado pelo conteúdo**. O cron de terça que atualiza `concorrentes_mapeados`
+muda o id de qualquer unidade que trocar de nome ou de coordenada, e a linha
+correspondente do crosswalk deixa de casar. **Regenerar
+(`python -m motor_expansao.pipelines.alunos_reais`) depois de cada refresh do coletor**,
+e subir o parquet junto.
+
+A falha é benigna por construção — a chave que não casa simplesmente não aparece, então
+o pino perde o número mas **nunca exibe o número de outra academia**. Benigna, porém
+**silenciosa**: nada fica vermelho, e a única evidência é a contagem caindo. A auditoria
+por rede que `montar_crosswalk` devolve é o lugar de olhar (`n_casadas` por rede); uma
+queda brusca ali é o sintoma.
+
+**Próximo passo (bloco à parte, Crítico).** Trocar `capacidade_default_concorrente_alunos = 2.500`
+pela capacidade real onde ela existe, no residual. Isso muda `oferta_efetiva_disponivel` →
+`score_oportunidade_residual` → `tese_entrada`/`prioridade_mercado_mapeado` e exige DEC própria com
+antes/depois nacional. **Atenção à dívida registrada na DEC-048**: a taxa de penetração é
+calibrada em runtime a partir das academias mapeadas, então mexer na oferta move o TAM/SAM junto —
+medir os dois efeitos separados, não o líquido.

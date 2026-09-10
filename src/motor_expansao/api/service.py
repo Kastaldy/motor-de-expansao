@@ -19,6 +19,7 @@ import unicodedata
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from shapely import STRtree
 from shapely.geometry import Point, shape
@@ -26,6 +27,7 @@ from shapely.geometry import Point, shape
 from motor_expansao.api import __version__
 from motor_expansao.api.errors import APIError
 from motor_expansao.api.settings import Settings
+from motor_expansao.dimensionamento.payload_viabilidade import ViabilidadeInputs
 from motor_expansao.perfil import resolver_perfil
 
 # Nome da coluna de score setorial usada nos KPIs (carimbo `versao_score`).
@@ -572,6 +574,9 @@ def gerar_pdf_ponto(
     settings: Settings,
     *,
     rotulo: str | None = None,
+    viabilidade_inputs: ViabilidadeInputs | None = None,
+    info_imovel: dict[str, Any] | None = None,
+    solicitante: str | None = None,
 ) -> bytes:
     """Gera o PDF de 8 paginas do Relatorio Pontual Censitario (BLK-API-04).
 
@@ -673,31 +678,50 @@ def gerar_pdf_ponto(
     # do Pontual (a `_censitario` e so um wrapper deprecado) — esta chamada ja
     # aponta para o lugar certo e NAO deve migrar.
     #
-    # PAGINAS OPCIONAIS QUE FICAM DE FORA AQUI (`viabilidade`, `info_imovel`, `fotos`):
-    # os insumos NAO existem neste escopo, entao nao ha o que repassar — e fabricar
-    # valores falsearia o relatorio. O que faltaria para habilita-las:
-    #   - `viabilidade`: exige metragem/aluguel/ticket do imovel + `gerar_serie_mensal`
-    #     e `montar_payload_viabilidade` (fluxo da aba Viabilidade do dashboard, que
-    #     guarda `viab_relatorio_ctx` em `session_state`). Nada disso chega na rota.
-    #   - `info_imovel`: mesma origem (formulario de endereco/valor/pe-direito/vagas).
-    #   - `fotos`: upload de arquivo; o request da API e JSON e nao carrega binario.
-    # Habilitar exigiria ESTENDER `AnalisarRequest` (campos do imovel + fotos em
-    # base64/multipart) e propagar por `routes/analisar.py` -> `gerar_pdf_ponto`.
-    # Decisao: fora do escopo do BLK-RELPON-14; o PDF do bot segue com as 8 paginas
-    # base + a vista aerea.
+    # PAGINAS OPCIONAIS: `viabilidade` e `info_imovel` passaram a CHEGAR pelo contrato
+    # publico — `AnalisarRequest` recebe os inputs e a rota os repassa. Ate' aqui elas
+    # ficavam de fora porque os insumos nao existiam neste escopo; o gerador sempre teve
+    # os kwargs. `fotos` continua fora: o corpo da API e' JSON e nao carrega binario.
+    #
+    # A montagem do payload NAO e' feita aqui: e' a MESMA funcao que o piloto usa
+    # (`montar_payload_para_pdf`), com o staging deste deploy e o `setores_df` que o
+    # `_resolver_e_carregar` acima ja' carregou. Refazer a montagem seria a segunda
+    # regua que o FIN-VIAB-01 existe para matar.
+    #
+    # O `setores_df` NAO e' cortesia: sem ele o catchment nao roda, `flag_zona_morta`
+    # sai `None` em 100% das chamadas e o gate E4 da Conclusao some em silencio — foi
+    # exatamente o defeito que a DEC-042 encontrou em producao, e ele reapareceria aqui
+    # numa superficie nova.
     #
     # BLK-CONC-ESTUDO: a pagina de CONCLUSAO passou a sair TAMBEM sem `viabilidade`, em
     # modo so-estudo -- metas censitarias do raio e leitura de mercado do hexagono, SEM os
     # gates de imovel e de retorno. Este e' o UNICO ponto do sistema que liga o flag: o
     # piloto web chama a mesma funcao sem ele e segue com as 7 paginas de antes quando o
     # operador nao preenche a Viabilidade (escopo fechado por Juan em 2026-08-12).
+    viabilidade_pdf = None
+    if viabilidade_inputs is not None:
+        from motor_expansao.dimensionamento.payload_viabilidade import (
+            ViabilidadeIn,
+            montar_payload_para_pdf,
+        )
+
+        cenario = ViabilidadeIn(lat=lat, lng=lng, **viabilidade_inputs.model_dump(exclude_none=True))
+        viabilidade_pdf = montar_payload_para_pdf(
+            cenario, staging_dir=settings.staging_dir, setores_df=setores_df
+        )
+
     return gerar_pdf_relatorio_pontual_classico(
         result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
-        solicitante=consumidor, rotulo=rotulo, foto_satelite=foto_sat,
+        solicitante=solicitante or consumidor, rotulo=rotulo, foto_satelite=foto_sat,
+        viabilidade=viabilidade_pdf,
+        info_imovel=info_imovel,
         # API/bot nao tem upload de fotos do imovel -> a vista aerea e a unica imagem
         # da pagina e usa a area de conteudo inteira (no dashboard fica no tamanho padrao).
         foto_satelite_grande=True,
-        conclusao_so_estudo=True,
+        # So-estudo e' o modo SEM viabilidade (BLK-CONC-ESTUDO). Com o cenario
+        # financeiro na mao, a Conclusao volta a carimbar os DOIS selos da DEC-030 —
+        # deixar `True` aqui manteria o relatorio completo com meia conclusao.
+        conclusao_so_estudo=viabilidade_pdf is None,
     )
 
 
