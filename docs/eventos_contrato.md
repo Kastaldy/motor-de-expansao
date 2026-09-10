@@ -65,11 +65,18 @@ existe para esse lookup. Um `relatorio.gerado` sem `report_id` não cumpre o D17
 > mas afirmaria um alvo que o pedido não declarou. Enquanto o front não enviar a chave, o evento sai
 > sem alvo: o `report_id` sozinho já cumpre o D17, e o alvo é refinamento de consulta.
 
-> **Estado por superfície (10/09).** Pontual: produtor ligado, `report_id` na marca-d'água (todas as
-> páginas) e nos metadados `/Info` do PDF. Municipal: marca-d'água existe, produtor não. Comparação:
-> **não tem marca-d'água nenhuma** — é a superfície mais exposta, um deck vazado hoje não tem nada
-> apontando para pessoa. Simulador XLSX: entra por contrato, mas planilha não tem content stream, e
-> o carimbo precisa de decisão nova. Exports da Rede (ficha, carteira): fora do contrato.
+> **Estado por superfície (10/09).** **Pontual** e **Comparação**: produtor ligado, com quem gerou e o
+> `report_id` na marca-d'água de todas as páginas e nos metadados `/Info`. O deck da Comparação **não
+> tinha marca-d'água nenhuma** até aqui — era a superfície mais exposta do piloto, e um deck vazado
+> não carregava nada apontando para pessoa, só um `set_author` fixo igual para todo mundo.
+> **Municipal**: marca-d'água existe, produtor não. **Simulador XLSX**: entra por contrato, mas
+> planilha não tem content stream — o carimbo pede decisão nova (célula fixa ou `docProps`).
+> **Exports da Rede** (ficha, carteira): fora do contrato de eventos.
+>
+> A marca-d'água compartilhada vive em `dashboard/pdf_base.py`, junto do `UltraPDF`. Os dois
+> geradores legados seguem com a cópia deles, pela razão escrita no cabeçalho daquele módulo — e o
+> `test_a_marca_dagua_dos_tres_parte_da_mesma_base` é o que impede a triplicação de virar
+> quadruplicação em silêncio.
 
 **`dossie.baixado` tem linha própria** porque é o único artefato que carrega **contato de corretor**
 e o único que o motor não gera: vem do coletor imobiliário. É o mesmo problema do D17 com outra fonte.

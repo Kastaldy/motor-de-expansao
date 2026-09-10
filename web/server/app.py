@@ -9228,12 +9228,22 @@ def _png_de_data_url(valor: object) -> bytes | None:
         return None
 
 
-def _gerar_comparacao_pdf(payload: dict[str, Any]) -> bytes:
+def _gerar_comparacao_pdf(
+    payload: dict[str, Any],
+    solicitante: str | None = None,
+    report_id: str | None = None,
+) -> bytes:
     """Corpo SINCRONO do deck — roda no threadpool, nunca no event loop."""
     from motor_expansao.dashboard.relatorio_comparacao import gerar_pdf_comparacao
 
     imagens = [_png_de_data_url(v) for v in (payload.get("imagens") or [])]
-    return gerar_pdf_comparacao(payload, mapas=imagens, ultra_dir=ULTRA_DIR)
+    return gerar_pdf_comparacao(
+        payload,
+        mapas=imagens,
+        ultra_dir=ULTRA_DIR,
+        solicitante=solicitante,
+        report_id=report_id,
+    )
 
 
 class ComparacaoItemIn(BaseModel):
@@ -9263,7 +9273,10 @@ class ComparacaoIn(BaseModel):
 
 
 @app.post("/api/relatorio/comparacao")
-async def relatorio_comparacao(body: ComparacaoIn) -> Response:
+async def relatorio_comparacao(
+    body: ComparacaoIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> Response:
     """Deck de 6-7 slides da comparacao de areas.
 
     O CORPO TRAZ O RANKING JA CALCULADO, e isso e' deliberado. A regra de comparacao —
@@ -9284,9 +9297,17 @@ async def relatorio_comparacao(body: ComparacaoIn) -> Response:
     `dict[str, Any]` cru: type-confusion virava 500 opaco (poluia a trilha) e listas sem
     teto alimentavam o gerador sincrono.
     """
+    # D17: o deck era a superficie mais exposta do piloto -- nao tinha marca-d'agua
+    # nenhuma, so' um `set_author` fixo igual para todo mundo. Agora nasce com quem pediu
+    # e com o identificador, como o Pontual.
+    report_id = _registrar_relatorio_gerado(remote_user, relatorio="comparacao", formato="pdf")
+    solicitante = acesso.login_da_requisicao(remote_user)
+
     async with _PDF_SEMAFORO:
         try:
-            pdf = await run_in_threadpool(_gerar_comparacao_pdf, body.model_dump())
+            pdf = await run_in_threadpool(
+                _gerar_comparacao_pdf, body.model_dump(), solicitante, report_id
+            )
         except HTTPException:
             raise
         except Exception as exc:  # noqa: BLE001 — corpo malformado nao pode virar 500 opaco
