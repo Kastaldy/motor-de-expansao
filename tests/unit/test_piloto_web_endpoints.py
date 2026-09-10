@@ -92,6 +92,12 @@ def _point_app_at(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
     # de quem roda, e os pins apareceriam (ou nao) conforme a maquina.
     monkeypatch.setattr(pilot, "NOMEADAS_PATH", staging / "vulnerabilidade_ma_nomeadas.parquet")
     monkeypatch.setattr(pilot, "REDES_PATH", staging / "vulnerabilidade_ma_redes.parquet")
+    # Mesma razao das duas acima, e a linha FALTAVA desde que o campo `alunos` nasceu
+    # (BLK-ALUNOS-01): sem ela a suite le o crosswalk REAL da maquina de quem roda. Hoje
+    # isso passa despercebido porque o CI nao tem o parquet (gitignored) e a fixture nao
+    # traz `concorrente_id`, entao o lookup nao casa nada — mas e' o mesmo defeito de
+    # "depende da maquina" que este bloco existe para impedir, esperando a fixture certa.
+    monkeypatch.setattr(pilot, "ALUNOS_REAIS_PARQUET", staging / "alunos_reais_por_unidade.parquet")
     monkeypatch.setattr(pilot, "GEOCODE_CACHE_DIR", data_dir / "cache" / "geocode")
     _clear_caches()
 

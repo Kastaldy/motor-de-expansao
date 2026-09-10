@@ -42,6 +42,7 @@ import {
   type RGBA,
 } from '../lib/colors'
 import { perfilDoCliente } from '../lib/perfil'
+import { svgMolduraAlunos, tamanhoMolduraAlunos, temAlunos } from '../lib/pins'
 import type { Tema } from '../lib/tema'
 import type {
   Cobertura1k,
@@ -90,6 +91,23 @@ function iconeDaFoto(arquivo: string): IconeDeck {
   return ic
 }
 
+/* Moldura de destaque das unidades com alunos reais — UM ícone para as 107 redes.
+
+   Memoizada por COR, e sao duas na vida do processo (um tema cada). A memoizacao
+   nao e' micro-otimizacao: devolver um literal novo a cada `getIcon` faz o
+   deck.gl reempacotar o atlas de textura a cada quadro — a mesma armadilha que o
+   comentario de `iconeDaFoto` acima ja' registra.
+
+   A cor vem da tabela `PELE` e nao de `var()`, porque o deck.gl nao le CSS; o
+   alfa vira `stroke-opacity` para a moldura nao competir com a marca da bandeira. */
+const _molduras: Record<string, IconeDeck> = {}
+function iconeMolduraAlunos(cor: RGBA): IconeDeck {
+  const chave = cor.join(',')
+  return (_molduras[chave] ??= iconeDeck(
+    svgMolduraAlunos(`rgb(${cor[0]},${cor[1]},${cor[2]})`, (cor[3] ?? 255) / 255),
+  ))
+}
+
 /* ---------------------------------------------------------------------------
    Mapa de hexagonos H3 res-7 sobre basemap MapLibre.
 
@@ -134,6 +152,23 @@ interface PeleDoMapa {
   pinAnel: RGBA
   pinMiolo: RGBA
   /**
+   * Moldura que marca a academia sobre a qual TEMOS INFORMACAO — hoje, o numero
+   * de alunos que a propria rede informou.
+   *
+   * BRANCA, e igual nos dois temas, por decisao do dono (2026-09-10). A primeira
+   * versao era indigo, escolhido por eliminacao justamente para NAO parecer com o
+   * halo claro do agregador; o dono inverteu a premissa: os dois dizem a mesma
+   * frase — "temos informacao sobre esta academia" — e ter um simbolo so' vale
+   * mais que separar as duas origens do dado. E' escolha de produto, e ela
+   * RESOLVE a colisao semantica em vez de contorna-la.
+   *
+   * O contraste no tema claro nao vem da cor, vem da linha escura que
+   * `svgMolduraAlunos` desenha por baixo — branco puro sobre o Positron
+   * desapareceria, que e' o defeito que o `HALO_DIAGNOSTICO` (#E8EEF5) tem hoje
+   * por ter sido calibrado so' contra o Dark Matter.
+   */
+  aroAlunos: RGBA
+  /**
    * Alpha do preenchimento dos hexes.
    *
    * No escuro sao 115, mais baixo que os 170 do dashboard, para as ruas do Dark Matter
@@ -154,6 +189,7 @@ const PELE: Record<Tema, PeleDoMapa> = {
     selecaoTenue: [238, 243, 248, 45],
     pinAnel: [255, 255, 255, 240],
     pinMiolo: [8, 11, 16, 255],
+    aroAlunos: [255, 255, 255, 250],
     alphaHex: HEX_FILL_ALPHA,
   },
   claro: {
@@ -166,6 +202,9 @@ const PELE: Record<Tema, PeleDoMapa> = {
     selecaoTenue: [11, 18, 25, 45],
     pinAnel: [11, 18, 25, 240],
     pinMiolo: [255, 255, 255, 255],
+    // A MESMA branca do tema escuro: quem segura o contraste sobre o Positron
+    // e' a linha escura que `svgMolduraAlunos` desenha por baixo, nao a cor.
+    aroAlunos: [255, 255, 255, 250],
     alphaHex: 170,
   },
 }
@@ -473,6 +512,10 @@ export default function HexMap({
   medindo = false,
 }: HexMapProps) {
   const pele = PELE[tema]
+  // Identidade ESTAVEL por tema (memoizada em `_molduras`): entra no
+  // `updateTriggers` do `getIcon`, entao um objeto novo por render reempacotaria
+  // o atlas de textura a cada quadro.
+  const molduraAlunos = iconeMolduraAlunos(pele.aroAlunos)
   // O tooltip do passo 4 ficou alto (porte, obra, setor, salario, empresas) e era
   // cortado quando o cursor estava na parte de baixo ou na direita do mapa. Medimos
   // a caixa do mapa e viramos o balao para o lado que tem espaco.
@@ -1246,6 +1289,43 @@ export default function HexMap({
                 setImovelHover(d ? { d, x: info.x, y: info.y } : null)
               },
             }) as unknown as ScatterplotLayer<Hex>,
+          ]
+        : []),
+
+      /* MOLDURA DE ALUNOS REAIS — desenhada ANTES das bandeiras, de proposito.
+         A precedencia de desenho e' regra neste mapa ("onde houver sobreposicao,
+         quem manda na leitura e' a rede instalada"), entao o destaque passa por
+         tras e a bandeira continua inteira por cima.
+
+         E' um quadrado arredondado COLADO na bandeira, no molde do halo do
+         agregador — e nao um aro solto. A primeira versao era um circulo a 8 px
+         da aresta e o dono reprovou olhando a tela: na camada 3, que pinta os
+         hexagonos de pressao, o circulo sumia no fundo porque lia como mais um
+         PONTO no mapa em vez de como a borda daquela bandeira.
+
+         E' CAMADA, e nao variante de icone por rede, por tres motivos medidos:
+           1. o caminho da FOTO vence a cascata do `getIcon`, entao um icone novo
+              sumiria em silencio em toda unidade que virou foto — a familia de
+              defeito que este repo ja' pagou caro;
+           2. cada variante por rede RE-EMBUTE o PNG da marca em base64 duas vezes
+              (~16/9 dos bytes), e as variantes de halo ja' custam ~1,44 MB em Sao
+              Paulo (BLK-WEB-23). Aqui a moldura e' UM svg generico: uma entrada de
+              atlas no mapa inteiro, e ZERO de payload — `alunos` ja' viaja no pino;
+           3. um SVG gerado no Python nao sabe o tema, e a moldura precisa saber. */
+      ...(pins?.concorrentes?.some(temAlunos)
+        ? [
+            new IconLayer<Pin>({
+              id: 'conc-alunos-moldura',
+              data: (pins?.concorrentes ?? []).filter(temAlunos),
+              getPosition: (d) => [d.lng, d.lat],
+              getIcon: () => molduraAlunos,
+              getSize: tamanhoMolduraAlunos,
+              sizeUnits: 'pixels',
+              // Nao pode roubar o hover da bandeira: quem responde ao mouse e' o
+              // pino, que e' quem tem o balao com o numero.
+              pickable: false,
+              updateTriggers: { getIcon: [molduraAlunos] },
+            }) as unknown as IconLayer<Pin>,
           ]
         : []),
 
