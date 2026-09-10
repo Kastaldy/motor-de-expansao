@@ -47,6 +47,17 @@ RESIDUAL_MERCADO_COLS = [
     "sam_fitness_potencial",
     "capacidade_default_concorrente_alunos",
     "oferta_consumida_mercado_estimada",
+    # CONTAGEM de concorrentes que alcancam o hexagono, e ela precisa CHEGAR (BLK-CAPACIDADE-01).
+    # Ate' aqui a tela derivava a contagem de `oferta_consumida / capacidade`, o que so' valia
+    # enquanto toda academia consumia os mesmos 2.500 alunos. Com capacidade REAL por unidade a
+    # divisao deixa de contar academias -- um Smart Fit de 5.000 vira "2 concorrentes" e desloca
+    # o rotulo Livre/Adensar/Disputa por TAMANHO, nao por vizinhanca.
+    #
+    # Esquecer o nome NESTA lista e' o defeito da familia DEC-038 na forma mais pura: a coluna
+    # existe em `hexagonos_mercado_mapeado`, o pipeline roda verde, o artefato sai sem ela e o
+    # piloto cai no ramo antigo em silencio. Foi o que aconteceu na primeira regeneracao deste
+    # bloco; so' apareceu ao conferir o schema do enriquecido ANTES do deploy.
+    "n_concorrentes_influencia_1km",
     "oferta_consumida_ultra_real",
     "n_unidades_ultra_performance_hex",
     "oferta_efetiva_disponivel",
