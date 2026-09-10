@@ -1,12 +1,15 @@
 import { type CSSProperties, useCallback, useEffect, useState } from 'react'
 
 import { api, ApiError } from '../lib/api'
+import type { AcaoAdmin } from '../lib/confirmacao-admin'
+import { montarConfirmacao, rotuloPerfil } from '../lib/confirmacao-admin'
 import type {
   AdminPerfil,
   AdminUsuario,
   AdminUsuarioNovo,
   AdminUsuariosPayload,
 } from '../lib/types'
+import Confirmacao from './Confirmacao'
 import { Aviso, Botao, Chip, Spinner } from './primitives'
 
 /* ---------------------------------------------------------------------------
@@ -48,15 +51,9 @@ const TOM_DO_PERFIL: Record<string, 'blue' | 'green' | 'amber' | 'gray'> = {
   growth: 'amber',
 }
 
-function rotuloPerfil(perfil: string): string {
-  const nomes: Record<string, string> = {
-    consultoria: 'Consultoria',
-    expansao: 'Expansão',
-    lideres: 'Líderes',
-    growth: 'Growth',
-  }
-  return nomes[perfil] ?? perfil
-}
+/* `rotuloPerfil` mudou-se para `lib/confirmacao-admin.ts`: o pop-up e a tabela têm de
+   escrever o MESMO nome para a mesma pessoa, e lá ele ganhou teste e o fallback para a
+   descrição do banco (um quinto perfil não pode sair como slug cru num texto de usuário). */
 
 /** Mensagem por status. O backend já manda texto útil; aqui só os casos que a tela
  *  precisa enquadrar de outro jeito. */
@@ -90,6 +87,12 @@ const ESTILO_ROTULO: CSSProperties = {
   display: 'block',
 }
 
+/** A escrita à espera de confirmação. Só o essencial — ver o comentário do estado. */
+type Pendente =
+  | { tipo: 'trocar-perfil'; id_usuario: number; para: string }
+  | { tipo: 'definir-ativo'; id_usuario: number; ativo: boolean }
+  | { tipo: 'criar' }
+
 export default function PainelUsuarios() {
   const [dados, setDados] = useState<AdminUsuariosPayload | null>(null)
   const [carregando, setCarregando] = useState(true)
@@ -103,6 +106,16 @@ export default function PainelUsuarios() {
   /** Login de quem acabou de ser criado, para o recado do Authelia ficar na tela até
    *  ser fechado à mão. Some junto com um novo `criar`, não com o próximo clique. */
   const [criado, setCriado] = useState<string | null>(null)
+  /**
+   * A escrita que está esperando confirmação. `null` = nenhum pop-up aberto.
+   *
+   * Guarda o MÍNIMO — id e o valor novo —, nunca a linha inteira. A linha é
+   * re-derivada de `dados` a cada render, então uma recarga concorrente (outro admin
+   * mexendo na mesma pessoa) ATUALIZA o texto do pop-up em vez de congelá-lo. E se a
+   * pessoa sumir da lista, o pop-up fecha sozinho em vez de disparar um PATCH contra
+   * alguém que não está mais ali — o PATCH não tem trava de versão para nos defender.
+   */
+  const [pendente, setPendente] = useState<Pendente | null>(null)
 
   const carregar = useCallback(() => {
     setCarregando(true)
@@ -134,6 +147,9 @@ export default function PainelUsuarios() {
     async (alvo: AdminUsuario, mudanca: { perfil?: string; ativo?: boolean }) => {
       setSalvando(alvo.id_usuario)
       setRecado(null)
+      // `criar` ja' limpava; aqui nao limpava, e um erro velho ficava na tela POR CIMA
+      // de uma troca de perfil bem-sucedida.
+      setErro(null)
       try {
         const r = await api.adminAlterarUsuario(alvo.id_usuario, mudanca)
         await carregar()
@@ -192,6 +208,31 @@ export default function PainelUsuarios() {
     }
   }, [novo, carregar])
 
+  /**
+   * Executa o que estava pendente e fecha o pop-up.
+   *
+   * Fecha ANTES de esperar a resposta nos casos de linha (`aplicar` já tranca a linha
+   * pelo `salvando`), e no caso de criar espera, porque o `criar` precisa do formulário
+   * intacto se der erro. Em nenhum caminho o pop-up fica aberto no sucesso: ele cobriria
+   * justamente o aviso do Authelia, que é a coisa mais importante da tela depois de criar.
+   */
+  const confirmar = useCallback(async () => {
+    if (!pendente) return
+    if (pendente.tipo === 'criar') {
+      await criar()
+      setPendente(null)
+      return
+    }
+    const linha = dados?.usuarios.find((u) => u.id_usuario === pendente.id_usuario)
+    setPendente(null)
+    if (!linha) return // sumiu da lista enquanto o pop-up estava aberto
+    if (pendente.tipo === 'trocar-perfil') {
+      await aplicar(linha, { perfil: pendente.para })
+    } else {
+      await aplicar(linha, { ativo: pendente.ativo })
+    }
+  }, [pendente, dados, criar, aplicar])
+
   if (carregando && !dados) {
     return (
       <div
@@ -227,8 +268,56 @@ export default function PainelUsuarios() {
 
   const { usuarios, perfis, eu } = dados
 
+  /* A ação em texto, montada AGORA a partir de `dados` — nunca congelada quando o
+     pop-up abriu. Se a linha sumir da lista no meio, isto vira `null` e o pop-up
+     desaparece, em vez de descrever alguém que não está mais ali. */
+  const capacidadesDe = (perfil: string) =>
+    perfis.find((p) => p.perfil === perfil)?.capacidades
+  const descricoes = Object.fromEntries(perfis.map((p) => [p.perfil, p.descricao]))
+
+  let acao: AcaoAdmin | null = null
+  if (pendente?.tipo === 'criar' && novo) {
+    acao = {
+      tipo: 'criar',
+      nome: novo.nome.trim(),
+      login: novo.login.trim(),
+      email: novo.email.trim(),
+      perfil: novo.perfil,
+      capacidades: capacidadesDe(novo.perfil),
+    }
+  } else if (pendente && pendente.tipo !== 'criar') {
+    const alvo = usuarios.find((u) => u.id_usuario === pendente.id_usuario)
+    if (alvo && pendente.tipo === 'trocar-perfil') {
+      acao = {
+        tipo: 'trocar-perfil',
+        nome: alvo.nome,
+        login: alvo.login,
+        de: alvo.perfil,
+        para: pendente.para,
+        capacidadesDe: capacidadesDe(alvo.perfil),
+        capacidadesPara: capacidadesDe(pendente.para),
+      }
+    } else if (alvo && pendente.tipo === 'definir-ativo') {
+      acao = {
+        tipo: 'definir-ativo',
+        nome: alvo.nome,
+        login: alvo.login,
+        perfil: alvo.perfil,
+        ativo: pendente.ativo,
+      }
+    }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {acao && (
+        <Confirmacao
+          dados={montarConfirmacao(acao, descricoes)}
+          salvando={criando || salvando !== null}
+          onCancelar={() => setPendente(null)}
+          onConfirmar={() => void confirmar()}
+        />
+      )}
       {erro && (
         <div
           style={{
@@ -380,7 +469,7 @@ export default function PainelUsuarios() {
             }}
           >
             <Botao
-              onClick={() => void criar()}
+              onClick={() => setPendente({ tipo: 'criar' })}
               disabled={
                 criando ||
                 !novo.nome.trim() ||
@@ -477,10 +566,29 @@ export default function PainelUsuarios() {
                   </td>
                   <td style={{ padding: '9px 10px' }}>
                     <select
-                      value={u.perfil}
+                      /* O valor mostrado e' o PENDENTE enquanto o pop-up esta aberto para
+                         esta linha, e o do servidor no resto do tempo. E' isto que faz o
+                         Cancelar devolver o seletor ao perfil real: a tela nao tem estado
+                         otimista, entao sem esta linha o <select> ficaria exibindo o perfil
+                         novo com o banco ainda no antigo -- a tabela mentindo. */
+                      value={
+                        pendente?.tipo === 'trocar-perfil' && pendente.id_usuario === u.id_usuario
+                          ? pendente.para
+                          : u.perfil
+                      }
                       disabled={travado}
                       aria-label={`Perfil de ${u.nome}`}
-                      onChange={(ev) => void aplicar(u, { perfil: ev.target.value })}
+                      /* Escolher a opcao deixou de ser a escrita: agora ela so' ABRE a
+                         confirmacao. Antes, um clique errado -- ou uma seta do teclado num
+                         select fechado, que dispara `change` por opcao percorrida -- mudava
+                         o acesso da pessoa na hora, sem volta e sem aviso. */
+                      onChange={(ev) =>
+                        setPendente({
+                          tipo: 'trocar-perfil',
+                          id_usuario: u.id_usuario,
+                          para: ev.target.value,
+                        })
+                      }
                       style={{
                         padding: '5px 8px',
                         borderRadius: 'var(--r-sm)',
@@ -534,7 +642,13 @@ export default function PainelUsuarios() {
                             ? 'Tira o acesso, preservando o histórico da pessoa.'
                             : 'Devolve o acesso com o perfil que estiver selecionado.'
                       }
-                      onClick={() => void aplicar(u, { ativo: !u.ativo })}
+                      onClick={() =>
+                        setPendente({
+                          tipo: 'definir-ativo',
+                          id_usuario: u.id_usuario,
+                          ativo: !u.ativo,
+                        })
+                      }
                     >
                       {salvando === u.id_usuario ? '…' : u.ativo ? 'Desativar' : 'Reativar'}
                     </Botao>
