@@ -12,6 +12,7 @@ from motor_expansao.dashboard.constants import (
     CENSO_TRACE_LOAD_COLS,
     HYBRID_LOAD_COLS,
     REQUIRED_COLUMNS,
+    RESIDUAL_MERCADO_COLS,
 )
 from motor_expansao.dashboard.data import (
     _coalesce_columns,
@@ -661,8 +662,18 @@ def read_enriched_dashboard(
 #:   `oferta_efetiva_disponivel`          -> camadas 2, 3 e 5 do funil (a recomendacao)
 #:   `score_setor_2022_calibrado`         -> camada 1 e a paleta do mapa censitario
 #:   `oferta_consumida_mercado_estimada`  -> `n_concorrentes_est`, a leitura de pressao
+#:                                           (ramo LEGADO, artefato anterior a DEC-057)
+#:   `n_concorrentes_influencia_1km`      -> `n_concorrentes_est`, a leitura de pressao HOJE
 #:   `populacao_corte_hex`                -> `pop_leitura`, o gate de populacao do funil
 #:   `renda_per_capita_setor_2022_calibrada` -> renda intraurbana (DEC-038)
+#:
+#: `n_concorrentes_influencia_1km` entrou em 2026-09-10, e ela e' a razao de esta rede
+#: existir do jeito que existe: no BLK-CAPACIDADE-01 a coluna ficou de fora de uma das
+#: DUAS listas gemeas de `RESIDUAL_MERCADO_COLS` (hoje unificadas) e o artefato saiu sem
+#: ela TRES regeneracoes seguidas, todas VERDES. Sem ela no enriquecido o piloto cai no
+#: ramo legado (`oferta_consumida / capacidade`) que, com capacidade REAL por unidade
+#: (DEC-057), le academia GRANDE como DUAS -- e desloca o rotulo Livre/Adensar/Disputa
+#: por TAMANHO, nao por vizinhanca. Degradacao silenciosa, exatamente o que a lista veta.
 #:
 #: POR QUE ISTO EXISTE: em 2026-08-28 uma rematerializacao rodou SEM o passo anterior
 #: (`enriquecer_outputs_residual_mercado`, que devolve as colunas de mercado ao hibrido)
@@ -678,6 +689,7 @@ COLUNAS_CRITICAS_ENRIQUECIDO = (
     "score_setor_2022_calibrado",
     "oferta_efetiva_disponivel",
     "oferta_consumida_mercado_estimada",
+    "n_concorrentes_influencia_1km",
     "populacao_corte_hex",
     "renda_per_capita_setor_2022_calibrada",
 )
@@ -693,7 +705,12 @@ def verificar_colunas_criticas(df: pd.DataFrame) -> None:
     if not faltam:
         return
     dica = ""
-    if any(c.startswith("oferta_") or c == "sam_fitness_potencial" for c in faltam):
+    # A condicao DERIVA da fonte unica em vez de repetir prefixos a mao. A versao antiga
+    # (`c.startswith("oferta_") or c == "sam_fitness_potencial"`) so' acertava por
+    # coincidencia de nome: `sam_fitness_potencial` nunca esteve na lista critica, entao
+    # aquele ramo era MORTO, e `n_concorrentes_influencia_1km` -- que vem exatamente do
+    # mesmo passo -- sairia sem a dica que aponta o passo que faltou rodar.
+    if any(c in RESIDUAL_MERCADO_COLS for c in faltam):
         dica = (
             " As colunas de mercado chegam ao hibrido pelo passo "
             "`python -m motor_expansao.pipelines.enriquecer_outputs_residual_mercado`, "

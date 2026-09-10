@@ -38,6 +38,24 @@ REQUIRED_COLUMNS = [
 ]
 OPTIONAL_DATASET_COLUMNS = ["confianca_geografica", "cod_municipio"]
 
+#: FONTE UNICA das colunas da camada de mercado/residual por hexagono. Nao existe copia:
+#: quem precisa da lista IMPORTA daqui. Os tres consumidores sao
+#:   1. `dashboard/constants.HYBRID_LOAD_COLS` (logo abaixo) -> projecao de leitura do
+#:      artefato hibrido/enriquecido;
+#:   2. `pipelines/gerar_carteira_acionavel.py` -> `LOAD_COLS` e
+#:      `carregar_colunas_residual_mercado`, que levam as colunas ao artefato enriquecido;
+#:   3. `pipelines/enriquecer_outputs_residual_mercado.py`, que re-importa o nome de (2).
+#:
+#: Ate' 2026-09-10 (2) tinha um literal PROPRIO com o mesmo nome e o mesmo conteudo, e os
+#: dois nao se enxergavam: acrescentar coluna em um so' era no-op SILENCIOSO. Foi o que
+#: aconteceu no BLK-CAPACIDADE-01 -- ver o comentario de `n_concorrentes_influencia_1km`
+#: mais abaixo. A identidade de objeto entre (1) e (2) e' travada por
+#: `tests/unit/test_capacidade_real_residual.py` (identidade, nao igualdade: duas copias
+#: iguais passariam num teste de conjunto).
+#:
+#: Mexer aqui e' mudanca CRITICA pelo `scripts/loop_guard.py`, e e' de proposito: este
+#: contrato define a projecao de mercado servida em producao. Mover a lista para um modulo
+#: "neutro" a tiraria do gate critico -- o furo que a DEC-048 fechou.
 RESIDUAL_MERCADO_COLS = [
     "pop_hex_base",
     "fonte_pop_hex_base",
