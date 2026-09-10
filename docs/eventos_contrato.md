@@ -48,7 +48,7 @@ um valor é editar esta tabela primeiro.
 
 | `tipo` | Quando | `entidade` | `metadados` |
 |---|---|---|---|
-| `relatorio.gerado` | Pontual, Municipal, Comparação ou Simulador XLSX | — (ver D24) | **`report_id` (UUID, obrigatório)**, `relatorio`, `formato`, `origem`, e o alvo (`hex_id`/`imovel_id`/`unidade_id`) quando houver | **Pontual desde 10/09**; os outros três, não |
+| `relatorio.gerado` | Pontual, Municipal, Comparação ou Simulador XLSX | — (ver D24) | **`report_id` (UUID, obrigatório)**, `relatorio`, `formato`, `origem`, e o alvo (`hex_id`/`imovel_id`/`unidade_id`) quando houver |
 | `dossie.baixado` | `GET /api/oportunidades/{id}/dossie` | — | `imovel_id` |
 
 **`report_id` é obrigatório em todo `relatorio.gerado`.** É o que o D17 embute no PDF e o que
