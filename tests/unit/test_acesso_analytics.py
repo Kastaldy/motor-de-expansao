@@ -387,6 +387,59 @@ def test_toda_acao_imobiliaria_tem_rotulo_proprio() -> None:
         )
 
 
+def test_toda_escrita_de_acesso_tem_rotulo_PROPRIO() -> None:
+    """Anti-drift da gestão de acesso, e o mais importante dos três.
+
+    `/api/acessos/` tem rede de segurança de prefixo, então o teste de cobertura
+    passaria mesmo com CRIAR USUÁRIO caindo no balde genérico. Até 10/09 era pior:
+    as três escritas caíam em "Outras ações" — a trilha descrevia com precisão quem
+    olhou um imóvel e resumia quem criou um administrador.
+    """
+    escritas = [
+        ("POST", "/api/acessos/usuarios"),
+        ("PATCH", "/api/acessos/usuarios/7"),
+    ]
+    for metodo, rota in escritas:
+        rotulo = aa._feature_do_evento({"metodo": metodo, "rota": rota})
+        assert rotulo not in ("Outras ações", "Ação no painel de acessos"), (
+            f"escrita de acesso sem rótulo próprio: {metodo} {rota}"
+        )
+
+
+def test_a_ordem_separa_escrita_de_leitura_no_mesmo_caminho() -> None:
+    """`/api/acessos/usuarios/5` COMEÇA COM `/api/acessos/usuarios`, então o que
+    separa a escrita da leitura é o MÉTODO — e a regra do PATCH tem de vir antes.
+    Reordenar a tupla faria desativar alguém aparecer como "Abriu a administração"."""
+    assert aa._feature_do_evento({"metodo": "POST", "rota": "/api/acessos/usuarios"}) == (
+        "Criou um usuário"
+    )
+    assert aa._feature_do_evento({"metodo": "PATCH", "rota": "/api/acessos/usuarios/5"}) == (
+        "Alterou o acesso de alguém"
+    )
+    assert aa._feature_do_evento({"metodo": "GET", "rota": "/api/acessos/usuarios"}) == (
+        "Abriu a administração de usuários"
+    )
+
+
+def test_o_rotulo_da_ficha_nao_ecoa_o_login() -> None:
+    """O login vai no PATH desta rota. Repeti-lo no RÓTULO espalharia PII para o
+    resumo agregado, que a emenda da DEC-027 existe para manter sem dado pessoal."""
+    rotulo = aa._feature_do_evento(
+        {"metodo": "GET", "rota": "/api/acessos/usuario/ana.ribeiro"}
+    )
+    assert "ana" not in rotulo.lower()
+    assert rotulo == "Abriu a ficha de um usuário"
+
+
+def test_um_PATCH_so_para_trocar_perfil_e_desativar_e_deliberado() -> None:
+    """Os dois usam o mesmo verbo e a mesma rota; o que os distingue vai no CORPO,
+    que a trilha não guarda. O rótulo é honesto sobre isso — quem quer o de-para vai
+    à tabela `eventos`, que separa os tipos e ainda diz quem sofreu."""
+    trocar = aa._feature_do_evento({"metodo": "PATCH", "rota": "/api/acessos/usuarios/5"})
+    desativar = aa._feature_do_evento({"metodo": "PATCH", "rota": "/api/acessos/usuarios/9"})
+    assert trocar == desativar == "Alterou o acesso de alguém"
+
+
 def test_saude_conta_erros_e_p95(tmp_path: Path) -> None:
     for i in range(6):
         _gravar(tmp_path, AGORA, rota="/api/ponto", duracao_ms=100 + i * 100)

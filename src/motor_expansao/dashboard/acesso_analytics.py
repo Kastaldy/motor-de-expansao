@@ -116,6 +116,32 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
     # Juntar os dois na mesma linha faria a trilha somar desenho de tela com interesse
     # declarado, que é exatamente a diferença que se quer enxergar.
     (None, "/api/pin-concorrente/", "Carregou pinos com foto no mapa"),
+    # --- Gestão de acesso (D25/D26) -----------------------------------------
+    # Entravam TODAS em "Outras ações", e a assimetria era gritante: a trilha
+    # descrevia com precisão quem olhou um imóvel, e resumia a "Outras ações" quem
+    # CRIOU UM ADMINISTRADOR. Medido em 10/09: das 91 linhas do balde, três eram
+    # criar usuário, trocar perfil e desativar — as ações mais sensíveis do sistema.
+    #
+    # A ORDEM é significativa (first-match): as ESCRITAS vêm antes da leitura da
+    # lista, porque `"/api/acessos/usuarios/5".startswith("/api/acessos/usuarios")`
+    # é verdadeiro. Elas se distinguem por MÉTODO, não por caminho.
+    ("POST", "/api/acessos/usuarios", "Criou um usuário"),
+    # Um rótulo só para o PATCH, e é o rótulo honesto: trocar perfil e
+    # desativar/reativar usam o MESMO verbo e a MESMA rota, e o que as distingue vai
+    # no corpo — que a trilha não guarda, e não deve guardar. Quem precisa do de-para
+    # vai à tabela `eventos`, que separa `usuario.perfil_alterado` de
+    # `usuario.desativado`/`usuario.reativado` e ainda diz quem sofreu.
+    ("PATCH", "/api/acessos/usuarios/", "Alterou o acesso de alguém"),
+    ("GET", "/api/acessos/usuarios", "Abriu a administração de usuários"),
+    # O login vai no PATH desta rota, e o rótulo NÃO o ecoa: a trilha já guarda a
+    # rota crua num campo próprio, e repetir a pessoa no texto do rótulo espalharia
+    # PII para o resumo agregado, que é justamente o que a emenda da DEC-027 evita.
+    ("GET", "/api/acessos/usuario/", "Abriu a ficha de um usuário"),
+    ("GET", "/api/acessos/resumo", "Abriu o painel de acessos"),
+    ("GET", "/api/acessos/saude-artefatos", "Conferiu a saúde dos artefatos"),
+    # Rede de segurança do prefixo, no molde da camada imobiliária: rota nova sob
+    # `/api/acessos/` cai num balde da camada certa em vez de "Outras ações".
+    (None, "/api/acessos/", "Ação no painel de acessos"),
 )
 _FEATURE_OUTRAS = "Outras ações"
 
