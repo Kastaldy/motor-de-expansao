@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import AvisoConfidencialidade from './components/AvisoConfidencialidade'
+import AvisoSessao from './components/AvisoSessao'
 import Dock from './components/Dock'
 import type { SearchPin } from './components/HexMap'
 import AcessosScreen from './screens/AcessosScreen'
@@ -13,6 +14,7 @@ import PontoScreen from './screens/PontoScreen'
 import ViabilityScreen from './screens/ViabilityScreen'
 import { abasDoPayload, modosLiberados, telaInicial, telaLiberada, type Aba } from './lib/acesso'
 import { api, ApiError } from './lib/api'
+import { assinarQuedaDeSessao, entrarNovamente } from './lib/sessao'
 import type { AlvoCaptura } from './lib/captura-mapa'
 import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
 import { BaseProvider } from './lib/base-contexto'
@@ -57,6 +59,17 @@ export default function App() {
   const [tela, setTela] = useState<Tela>('inicio')
   // Ciencia do aviso de confidencialidade — nasce false a CADA carga do app.
   const [cienteConfidencialidade, setCienteConfidencialidade] = useState(false)
+
+  /**
+   * Sessao do Authelia caiu -> pop-up bloqueante com o botao de relogar.
+   *
+   * Quem decide NAO e' o App: `lib/sessao.ts` so' anuncia depois que a sonda dele
+   * confirmou que a borda respondeu mandando para o login. Erro de rede generico e
+   * backend fora do ar nao chegam aqui de proposito — continuam na mensagem inline
+   * de cada tela. So' entra, nunca sai: a partir da queda, tudo que resta e' relogar.
+   */
+  const [sessaoCaiu, setSessaoCaiu] = useState(false)
+  useEffect(() => assinarQuedaDeSessao(() => setSessaoCaiu(true)), [])
 
   /**
    * Abas que o usuário logado pode usar (controle temporário, /api/me).
@@ -582,6 +595,7 @@ export default function App() {
           }}
         />
       )}
+      {sessaoCaiu && <AvisoSessao onEntrar={entrarNovamente} />}
     </div>
     </BaseProvider>
   )

@@ -1478,8 +1478,11 @@ export default function MapScreen({
             <PainelMensagem>
               {erro}
               <br />
-              <br />O backend do piloto responde na porta 8899. Se você abriu o app sem ele, feche e
-              use o <code>iniciar-piloto-web.cmd</code>.
+              {/* A porta 8899 nao lidera mais a frase: em producao ela nao diz nada ao
+                  operador e fazia a tela parecer "sistema caiu" (era o sintoma do pedido
+                  do Felipe). Sessao vencida agora tem pop-up proprio — `lib/sessao.ts`. */}
+              <br />Se você estiver rodando o piloto na sua própria máquina, confira se o
+              backend subiu: é o <code>iniciar-piloto-web.cmd</code> que o liga (porta 8899).
             </PainelMensagem>
           ) : dados && passo ? (
             <NarrativePanel
