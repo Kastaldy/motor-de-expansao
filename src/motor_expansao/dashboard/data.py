@@ -515,6 +515,26 @@ def enrich_dashboard_data(
         .replace({"": pd.NA})
         .fillna(enriched["cidade"])
     )
+    # `cod_municipio` do parquet ESTRUTURAL, so' onde o traco censitario nao trouxe
+    # (BLK-JOINUF-01, mecanismo 2). O codigo chegava SO' pelo censo, entao os 9.886
+    # hexagonos ausentes do traco -- as UNICAS linhas do artefato sem codigo, contra ZERO
+    # nulos nas outras 1.532.645 -- ficavam sem municipio e, por tabela, fora de qualquer
+    # regra municipal, inclusive a nota do mecanismo 1. O estrutural sempre teve o codigo
+    # para os 1.542.531: e' a familia de defeito da DEC-038, valor legitimo lido da fonte
+    # errada. Preenche LACUNA e roda DEPOIS do merge censitario de proposito -- o censo
+    # segue sendo a fonte primaria, e nenhuma das 1.532.645 linhas ja preenchidas muda.
+    if estrutural_pop_df is not None and not estrutural_pop_df.empty:
+        if {"cod_municipio", "hex_id"} <= set(estrutural_pop_df.columns):
+            do_estrutural = enriched["hex_id"].map(
+                estrutural_pop_df.set_index("hex_id")["cod_municipio"]
+            )
+            if "cod_municipio" in enriched.columns:
+                enriched["cod_municipio"] = enriched["cod_municipio"].where(
+                    enriched["cod_municipio"].notna(), do_estrutural
+                )
+            else:
+                enriched["cod_municipio"] = do_estrutural
+
     # Nota de join por MUNICIPIO (BLK-JOINUF-01) ANTES de derivar a confianca: ela e' a
     # segunda perna da disjuncao em `derive_confianca_geografica` e so' PROMOVE. Anexar
     # depois nao teria efeito nenhum -- e' um erro que passaria silencioso, entao a ordem
