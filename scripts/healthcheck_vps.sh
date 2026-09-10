@@ -11,6 +11,7 @@
 #   coleta      domingo pós-coleta: resumo do relatório GymScraping ou alerta de falha
 #   agregadores idade da última partição de snapshot de cada agregador (cron semanal, BLK-MA-21)
 #   crescimento idade do artefato da camada de crescimento municipal (cron trimestral, DEC-052)
+#   mercado     coerência da camada de mercado com o cadastro de concorrentes (cron semanal, DEC-059)
 #   test        envia mensagem de teste ao chat de ops
 #
 # Anti-spam: alerta só na transição OK->FAIL, lembrete a cada REMIND_SECS enquanto
@@ -53,6 +54,18 @@ AGREGADORES=(wellhub totalpass)
 # O default 100 tem PARIDADE com `crescimento/constantes.py` (teste trava os dois).
 CRESCIMENTO_MAX_DIAS="${MONITOR_CRESCIMENTO_MAX_DIAS:-100}"
 CRESCIMENTO_PARQUET="${MONITOR_CRESCIMENTO_PARQUET:-/opt/motor-expansao/data/staging/crescimento_municipal.parquet}"
+# Camada de mercado/residual (DEC-059): cron SEMANAL, dentro da janela de domingo.
+#
+# 9 dias pelo mesmo raciocínio do limiar dos agregadores: a rodada da própria semana
+# dá até 7 dias de idade no pior caso (check na quinta, rodada no domingo anterior =
+# 4 dias; um domingo perdido = 11). A faixa que separa é [7, 10] e o 9 fica no meio,
+# com paridade de valor com `AGREGADOR_MAX_DIAS` de propósito — dois limiares
+# semanais diferentes seriam duas coisas para manter.
+MERCADO_MAX_DIAS="${MONITOR_MERCADO_MAX_DIAS:-9}"
+MERCADO_LOG="${MONITOR_MERCADO_LOG:-/var/log/motor-snapshots/regen_mercado_latest.log}"
+# O container que já monta os dois parquets `:ro` — é dentro dele que a régua de
+# CONTEÚDO é medida (o host não tem Python com pyarrow).
+MERCADO_CONTAINER="${MONITOR_MERCADO_CONTAINER:-motor_expansao_web}"
 CONTAINERS=(
     motor_expansao_caddy
     motor_expansao_authelia
@@ -280,6 +293,51 @@ check_crescimento() {
     fi
 }
 
+check_mercado() {
+    # Coerência da camada de mercado com o cadastro de concorrentes (DEC-059).
+    #
+    # A régua é de CONTEÚDO, e não de mtime, porque **o mtime MENTE aqui**: a etapa 4
+    # do lote semanal reescreve `hexagonos_mercado_mapeado.parquet` toda semana, então
+    # o arquivo parece sempre fresco — inclusive no regime antigo, em que as colunas
+    # espaciais de 1 km ficavam estagnadas por nove domingos seguidos (DEC-048: 60,46%
+    # dos hexágonos se moveram quando alguém finalmente rodou o Bloco 3 à mão). Um
+    # monitor por data teria ficado VERDE o tempo todo.
+    #
+    # O que se compara é o carimbo de auditoria `n_redes_mapeadas` (gravado pelo
+    # `calcular_colunas_mercado` no momento em que a camada foi gerada) contra o
+    # `rede.nunique()` do cadastro de concorrentes que está no disco AGORA. Divergiu:
+    # o cadastro andou e a camada não — que é exatamente a dívida que o cron fecha.
+    local saida carimbado atual idade_dias
+    if [[ ! -f "$MERCADO_LOG" ]]; then
+        report mercado FAIL "Regeneração semanal da camada de mercado NUNCA rodou (${MERCADO_LOG} ausente). O wrapper run_regen_mercado.sh foi instalado no run_weekly_90.sh?"
+        return
+    fi
+    idade_dias=$((($(date +%s) - $(stat -c %Y "$MERCADO_LOG")) / 86400))
+    if ((idade_dias > MERCADO_MAX_DIAS)); then
+        report mercado FAIL "Regeneração da camada de mercado com ${idade_dias} dias sem rodar (limiar ${MERCADO_MAX_DIAS}). Ver ${MERCADO_LOG}"
+        return
+    fi
+    # Medido DENTRO do container, que já monta os dois parquets `:ro`. Não medir é
+    # FAIL: um monitor cego não pode ser lido como "está tudo bem".
+    saida=$(docker exec "$MERCADO_CONTAINER" python -c '
+import pandas as pd
+m = pd.read_parquet("/app/data/staging/hexagonos_mercado_mapeado.parquet", columns=["n_redes_mapeadas"])
+c = pd.read_parquet("/app/data/staging/concorrentes_mapeados.parquet", columns=["rede", "status_registro"])
+print(int(m["n_redes_mapeadas"].dropna().iloc[0]), int(c.loc[c["status_registro"] == "valido", "rede"].nunique()))
+' 2>/dev/null) || {
+        report mercado FAIL "Não foi possível medir a camada de mercado (docker exec em ${MERCADO_CONTAINER} falhou). Monitor cego conta como falha."
+        return
+    }
+    carimbado=$(echo "$saida" | awk '{print $1}')
+    atual=$(echo "$saida" | awk '{print $2}')
+    if [[ "$carimbado" != "$atual" ]]; then
+        report mercado FAIL "Camada de mercado DESSINCRONIZADA do cadastro: carimbo n_redes_mapeadas=${carimbado}, cadastro atual=${atual} redes. A coleta andou e a oferta espacial de 1 km não. Ver ${MERCADO_LOG}"
+    else
+        log "mercado: OK (${carimbado} redes, regen há ${idade_dias}d)"
+        report mercado OK ""
+    fi
+}
+
 case "${1:-}" in
 containers) check_containers ;;
 host) check_host ;;
@@ -287,12 +345,13 @@ authelia) check_authelia ;;
 coleta) check_coleta ;;
 agregadores) check_agregadores ;;
 crescimento) check_crescimento ;;
+mercado) check_mercado ;;
 test)
     send_telegram "✅ [VPS Ultra] Monitoramento ativo — mensagem de teste"
     echo "mensagem de teste enviada"
     ;;
 *)
-    echo "uso: $0 {containers|host|authelia|coleta|agregadores|crescimento|test}" >&2
+    echo "uso: $0 {containers|host|authelia|coleta|agregadores|crescimento|mercado|test}" >&2
     exit 2
     ;;
 esac
