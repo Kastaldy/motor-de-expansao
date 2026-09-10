@@ -4872,3 +4872,91 @@ pela capacidade real onde ela existe, no residual. Isso muda `oferta_efetiva_dis
 antes/depois nacional. **Atenção à dívida registrada na DEC-048**: a taxa de penetração é
 calibrada em runtime a partir das academias mapeadas, então mexer na oferta move o TAM/SAM junto —
 medir os dois efeitos separados, não o líquido.
+---
+
+### BLK-ESTUDIO-01 — Estúdios boutique saem do universo de OFERTA do residual
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — muda `oferta_efetiva_1km_area` → `score_oportunidade_residual` → `prioridade_mercado_mapeado`, e o rótulo Livre/Adensar/Disputa da tela. [DEC-056](../docs/decisions/DEC-056.md). |
+| **Esteira** | `[GATE HUMANO]` — a lista de redes é classificação do dono, não leitura de código. |
+| **Depende de** | DEC-048 (universo de cadeia com o feed do agregador), DEC-051 (modelo de 1 km) |
+| **Status** | **FEITO** (2026-09-10, DEC-056) |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca o residual, Crítica |
+
+**O defeito.** Um estúdio de pilates consumia os MESMOS 2.500 alunos de capacidade que um
+Smart Fit. A Ultra lia como saturada uma praça onde há três estúdios e nenhuma academia
+full-service. São 435 de 5.386 unidades do universo de oferta (8,1%), concentradas onde a
+rede mais olha: São Paulo 86, Brasília 22, Rio 18.
+
+**As 9 redes**, classificadas por Felipe: `velocity` (125), `my_box` (89), `vidya_studio`
+(66), `tonus_gym` (49), `aera_pilates` (41), `race_bootcamp` (31), `kore` (22), `nadarte`
+(5), `jab_house` (4).
+
+**As 11 ambíguas ficaram DENTRO** (Allp Fit, 26Fit, Contorno do Corpo, Corpo e Saúde, Usina
+do Corpo, Wellness Club, Evolve, Motion Fit, Marra Fit, Match Fit, Uplay). A assimetria é
+deliberada: excluir academia de verdade faz a Ultra ver mercado livre onde há concorrente —
+o erro caro. Incluir um estúdio a mais só deixa o residual conservador.
+
+**Onde o filtro entrou, e por que não nos dois lugares.** UMA vez, sobre o universo já unido
+com o feed do agregador, acima dos dois modelos. O primeiro desenho — filtrar só o de 1 km e
+preservar a tela — **inverte o sinal**: `calibrar_taxa_fitness_mercado` lê
+`n_concorrentes_mapeados_2km` (universo sem filtro) para estimar penetração → TAM → SAM →
+residual. Filtrando só a oferta, os estúdios continuariam inflando o mercado e parariam de
+descontar a oferta. O comentário do passo 5b já exigia que os dois modelos concordassem, e
+citava "estúdios boutique" pelo nome como o caso a evitar.
+
+**O que se move na tela, e o dono aceitou.** Pins e a contagem do Relatório Pontual (DEC-046)
+seguem intocados — leem `concorrentes_mapeados.parquet` direto. Mas o rótulo Livre/Adensar/
+Disputa e a camada 3 do funil mudam, porque `n_concorrentes_est` deriva da oferta do residual
+desde a DEC-051. Medido: **194 hexágonos** (115 Adensar→Livre, 77 Disputa→Adensar, 2
+Disputa→Livre). Decisão: uma régua só na tela.
+
+**Efeito**: consumo nacional 13.462.500 → 12.375.000 (−8,1%); residual +1,6%.
+
+**Fragilidade com tripwire.** O slug `rede` é derivado do NOME DO ARQUIVO CSV da coleta
+(`normalizar_concorrentes.py`). Um rename lá apaga a exclusão em silêncio, com o pipeline
+verde. `excluir_estudios_boutique` avisa quando um slug declarado não casa nenhuma unidade.
+
+---
+
+### BLK-CAPACIDADE-01 — Capacidade real por unidade no residual
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — muda `consumo_concorrentes_1km_area` → `score_oportunidade_residual`, e troca a FONTE de `n_concorrentes_est`. [DEC-057](../docs/decisions/DEC-057.md). |
+| **Esteira** | `[GATE HUMANO]` |
+| **Depende de** | BLK-ALUNOS-01 (o crosswalk), BLK-ESTUDIO-01 (medido depois dele, em separado) |
+| **Status** | **FEITO** (2026-09-10, DEC-057) |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca o residual, Crítica |
+
+**O que muda.** Onde há aluno real medido, a academia consome a capacidade DELA e não o proxy
+de 2.500 — 1.202 de 4.951 unidades (24,3%), só `confianca_match = "alta"`.
+
+**O achado, e não é o esperado.** O proxy estava **certo na média e errado em quase toda
+unidade**: mediana real 2.326 (−7%), mas erro absoluto mediano de **546 alunos, 22%**. 60%
+abaixo de 2.500, 40% acima, intervalo de 2 a 5.626. Por rede: Engenharia do Corpo 3.124
+(+25%), Smart Fit 2.348 (−6%), SkyFit 2.262 (−10%), RedFit 1.447 (−42%), Pacer 1.323 (−47%).
+
+**Por isso o nacional quase não anda (+0,4%), e isso não torna o bloco inútil.** Os erros do
+proxy se cancelam no agregado; o ganho é LOCAL. Em Ribeirão Preto o motor parava de cobrar
+2.500 alunos por uma Pacer de 613. Quem ler o +0,4% sozinho vai concluir errado — está escrito
+assim na DEC de propósito.
+
+**A metade não óbvia: a contagem teve de mudar de fonte.** Com capacidade variável,
+`oferta_consumida ÷ 2.500` **deixa de contar academias** — um Smart Fit de 5.000 apareceria
+como "2 concorrentes" e mandaria o hexágono de Adensar para Disputa por ser GRANDE, não por
+ter vizinho. `n_concorrentes_est` passa a ler `n_concorrentes_influencia_1km`, que é contagem
+de verdade. Medido: **zero hexágonos mudam de rótulo** entre proxy e capacidade real — a
+separação funciona.
+
+**Ressalva de reprodutibilidade.** A conta saiu de `soma(shares) × 2.500` para
+`soma(share × capacidade)`. A ordem em ponto flutuante mudou: mesmo sem capacidade real, um
+caso de uma academia dá 2499,999999999998. Erro ~1e-12, registrado para ninguém diagnosticar
+diferença de última casa como sintoma de outra coisa.
+
+**Dívida que fica aberta.** A taxa de penetração segue calibrada pela CONTAGEM de academias
+(`CAPACIDADE_MIN_ACADEMIA_ALUNOS`, premissa de 2.000) e não pela capacidade real agora
+disponível — o TAM ainda usa um proxy que o lado da oferta abandonou. Ligar os dois é bloco
+próprio, com medição própria: fazer junto esconderia qual efeito moveu o residual (é a mesma
+exigência que a DEC-048 registrou).
