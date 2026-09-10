@@ -183,6 +183,24 @@ export function rotuloDoPonto(p: PontoPayload): string {
 }
 
 /**
+ * O subtitulo do deck de pontos: a cidade, quando ela vale para TODOS, e a contagem.
+ *
+ * A capa afirmava a cidade do PRIMEIRO ponto (`fichas[0].local.municipio`). No deck de
+ * 10/09/2026 os quatro pontos eram dois de Posse/GO e dois de Jatai/GO, e a peca inteira
+ * saiu "Posse - 4 pontos" — metade dela falando de outra cidade. E' a MESMA regra que o
+ * deck de hexagonos ja' aplica (`MapScreen`, com o mesmo relato: "usar o municipio do
+ * primeiro fazia a capa afirmar Sao Paulo"), agora tambem do lado dos pontos.
+ *
+ * Municipio nao resolvido nao concorda com ninguem: nao se sabe de onde o ponto e',
+ * entao a capa se cala em vez de deixar a cidade dos outros afirmar pelo conjunto.
+ */
+export function subtituloDoDeckDePontos(fichas: readonly PontoPayload[]): string {
+  const cidades = new Set(fichas.map((f) => f.local?.municipio ?? null))
+  const unica = cidades.size === 1 ? [...cidades][0] : null
+  return unica ? `${unica} - ${fichas.length} pontos` : `${fichas.length} pontos`
+}
+
+/**
  * Rotulos de uma LISTA de pontos, garantidamente distinguiveis entre si.
  *
  * POR QUE NAO BASTA O `rotuloDoPonto`. Ele olha um ponto por vez, e o nome de um ponto

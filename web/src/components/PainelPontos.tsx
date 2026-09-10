@@ -14,6 +14,7 @@ import {
   passaNoEstudo,
   resumoDoEstudo,
   rotulosDosPontos,
+  subtituloDoDeckDePontos,
 } from '../lib/comparacao-pontos'
 import { ranquear } from '../lib/ranking-comparacao'
 import { alunos, num } from '../lib/format'
@@ -103,7 +104,6 @@ export default function PainelPontos({
             fichas.map((f) => ({ hexId: String(f.hex_id ?? ''), lat: f.lat, lng: f.lng })),
           )
         : []
-      const cidade = fichas[0]?.local?.municipio ? `${fichas[0].local.municipio} - ` : ''
       const resposta = await fetch('/api/relatorio/comparacao', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -111,7 +111,7 @@ export default function PainelPontos({
           ...ranking,
           itens,
           titulo: 'Comparação de pontos',
-          subtitulo: `${cidade}${fichas.length} pontos`,
+          subtitulo: subtituloDoDeckDePontos(fichas),
           dePontos: true,
           imagens,
         }),

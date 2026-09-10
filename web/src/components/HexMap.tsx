@@ -2,7 +2,7 @@ import { FlyToInterpolator, type Layer } from '@deck.gl/core'
 import { H3HexagonLayer } from '@deck.gl/geo-layers'
 import { IconLayer, LineLayer, PolygonLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
-import { cellToBoundary, cellToLatLng } from 'h3-js'
+import { cellToLatLng } from 'h3-js'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -12,8 +12,8 @@ import {
   ESPERA_VOO_MS,
   comporCanvas,
   esperaDeCaptura,
-  larguraDoAnel,
-  zoomQueEnquadra,
+  ordenarParaEmpilhar,
+  quadroDaCaptura,
 } from '../lib/captura-mapa'
 import { CORES_IDENTIDADE, corDeIdentidadeRgb, rotuloDoHex } from '../lib/comparacao'
 import { alunos, brl, distanciaCurta, num, renda } from '../lib/format'
@@ -685,24 +685,21 @@ export default function HexMap({
       const imagens: string[] = []
       for (const pedido of pedidoCaptura.alvos) {
         if (cancelado) return
-        const alvo = hexes.find((h) => h.id === pedido.hexId)
-        if (!alvo) {
-          imagens.push('')
-          continue
-        }
-
-        /* ZOOM DERIVADO DO HEXAGONO, e nao os 13,2 fixos de antes. Em zoom fixo o
-           enquadramento dependia do tamanho da janela: numa tela larga a celula res-7
-           saia como um miolo de ~10% da foto e o resto era territorio que ninguem esta'
-           comparando ("a print do hexagono que ele esta', nao do mapa todo" — Juan,
-           2026-08-19). O recorte quadrado do `comporCanvas` fecha o resto. */
+        /* O quadro sai do PROPRIO hexId, nao do que o mapa carregou. Ate' 10/09/2026
+           esta linha era `hexes.find(h => h.id === pedido.hexId)` e, sem achar, empurrava
+           foto vazia: como o mapa serve UM municipio por vez, comparar pontos de duas
+           cidades so' rendia mapa para os da cidade aberta (medido no deck de Posse/GO +
+           Jatai/GO). O zoom continua DERIVADO do hexagono — ver `quadroDaCaptura`. */
         const caixa = caixaRef.current?.getBoundingClientRect()
-        const zoom = zoomQueEnquadra(
-          larguraDoAnel(cellToBoundary(pedido.hexId) as [number, number][]),
-          alvo.lat,
+        const quadro = quadroDaCaptura(
+          pedido.hexId,
           caixa?.width || 1200,
           caixa?.height || 800,
         )
+        if (!quadro) {
+          imagens.push('')
+          continue
+        }
         // A marca do imovel entra ANTES do voo, para estar pintada quando o quadro parar.
         setMarcaCaptura(
           pedido.lat != null && pedido.lng != null
@@ -711,15 +708,20 @@ export default function HexMap({
         )
         setView((v) => ({
           ...v,
-          longitude: alvo.lng,
-          latitude: alvo.lat,
-          zoom,
+          longitude: quadro.lng,
+          latitude: quadro.lat,
+          zoom: quadro.zoom,
           transitionDuration: ESPERA_VOO_MS,
           transitionInterpolator: FLY,
         }))
         await pausa(esperaDeCaptura())
         if (cancelado) return
-        const canvases = Array.from(caixaRef.current?.querySelectorAll('canvas') ?? [])
+        /* ORDENADOS antes de empilhar: o `querySelectorAll` entrega o canvas do deck
+           ANTES do basemap (o `<DeckGL>` e' o pai do `<Map/>`), e empilhar assim pintava
+           as ruas por cima do hexagono e dos pins. Ver `ordenarParaEmpilhar`. */
+        const canvases = ordenarParaEmpilhar(
+          Array.from(caixaRef.current?.querySelectorAll('canvas') ?? []),
+        )
         imagens.push(
           comporCanvas(canvases, document.createElement('canvas'), { recortar: true }) ?? '',
         )

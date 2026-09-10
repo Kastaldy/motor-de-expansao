@@ -12,7 +12,12 @@
  * DOIS CANVAS, NAO UM. O mapa e' `<DeckGL><Map/></DeckGL>`: o basemap do MapLibre pinta
  * num canvas e as camadas do deck.gl noutro, empilhados. Capturar so' um devolve ou ruas
  * sem hexagono, ou hexagono flutuando no vazio.
+ *
+ * E A ORDEM DO DOM NAO E' A ORDEM DE PINTURA. O `<DeckGL>` e' o PAI, entao o canvas dele
+ * vem ANTES do canvas do `<Map/>` que ele embrulha — `ordenarParaEmpilhar` desfaz isso.
  */
+
+import { cellToBoundary, cellToLatLng, isValidCell } from 'h3-js'
 
 /**
  * Um quadro a capturar: o hexagono a enquadrar e, no modo de imovel, ONDE ele esta'.
@@ -28,10 +33,11 @@ export interface AlvoCaptura {
 }
 
 /**
- * Empilha os canvas do mapa num so', na ORDEM EM QUE APARECEM.
+ * Empilha os canvas do mapa num so', na ORDEM RECEBIDA.
  *
- * A ordem e' a do DOM, que e' a ordem de pintura: basemap primeiro, camadas por cima.
- * Inverte-la esconderia o mapa sob as ruas.
+ * Quem chama e' responsavel pela ordem, e ela e' a de PINTURA: basemap primeiro, camadas
+ * por cima. Ate' 10/09/2026 esta nota dizia que a ordem do DOM ja' era essa — nao e', e o
+ * modulo passava a lista crua do `querySelectorAll`. Use `ordenarParaEmpilhar`.
  *
  * Canvas de tamanho zero e' PULADO em vez de derrubar a captura: durante o remount que
  * liga o `preserveDrawingBuffer` um dos dois pode ser medido antes de existir de fato.
@@ -90,6 +96,30 @@ export function comporCanvas(
     }
   }
   return destino.toDataURL(tipo, qualidade)
+}
+
+/** Como o canvas do basemap se identifica no DOM. O MapLibre carimba esta classe nele. */
+const CLASSE_DO_BASEMAP = 'maplibregl-canvas'
+
+/**
+ * Poe os canvas na ordem de PINTURA: basemap embaixo, camadas do deck.gl por cima.
+ *
+ * A ordem do DOM e' a INVERSA disso, e foi o que estragou as capturas ate' 10/09/2026. O
+ * mapa e' `<DeckGL><Map/></DeckGL>`, entao o canvas do deck (o pai) aparece ANTES do
+ * canvas do MapLibre (o filho) no `querySelectorAll` — medido no piloto rodando, com o
+ * deck em `deck-events-root` na posicao 0 e o `maplibregl-canvas` na 1. Empilhando nessa
+ * ordem, o basemap OPACO era desenhado por ultimo, em cima de tudo: as camadas do deck
+ * (alfa medio medido 59,4 de 255) sumiam sob as ruas. O slide "Quem ja disputa o aluno
+ * ali" saia com malha viaria e zero pins — a foto negava o proprio assunto dela.
+ *
+ * A ordem RELATIVA das camadas e' preservada: so' o basemap muda de lugar.
+ */
+export function ordenarParaEmpilhar(
+  canvases: readonly HTMLCanvasElement[],
+): HTMLCanvasElement[] {
+  const base = canvases.filter((c) => c.className?.includes(CLASSE_DO_BASEMAP))
+  const camadas = canvases.filter((c) => !c.className?.includes(CLASSE_DO_BASEMAP))
+  return [...base, ...camadas]
 }
 
 /**
@@ -190,6 +220,45 @@ export function zoomQueEnquadra(
   const zoom = Math.log2(metrosPorPixel(latitude, 0) / mpp)
   if (!Number.isFinite(zoom)) return ZOOM_CAPTURA_MIN
   return Math.min(ZOOM_CAPTURA_MAX, Math.max(ZOOM_CAPTURA_MIN, zoom))
+}
+
+/**
+ * O quadro de UMA captura: onde a camera pousa, e em que zoom.
+ *
+ * NAO CONSULTA O QUE O MAPA CARREGOU, e e' esse o ponto. Ate' 10/09/2026 o loop de
+ * captura achava o centro por `hexes.find(h => h.id === hexId)` sobre a lista que o mapa
+ * serve — que e' de UM municipio por vez — e, nao achando, empurrava foto vazia em
+ * silencio. Um deck de quatro pontos, dois em Posse/GO e dois em Jatai/GO, saia com mapa
+ * so' dos dois do municipio aberto e "Mapa nao capturado para esta area." nos outros
+ * dois, como se ninguem disputasse o aluno la'. Centro e travessia saem do PROPRIO id:
+ * um hexagono H3 sabe onde fica sem precisar que alguem o tenha carregado.
+ *
+ * `null` e' "nao ha' o que enquadrar" — id vazio ou malformado —, nunca "o mapa nao
+ * tinha esse hexagono".
+ *
+ * O `isValidCell` NAO e' zelo: o h3-js NAO lanca em id invalido. Medido em 10/09/2026,
+ * `cellToLatLng('nao-e-um-hexagono')` devolve 79,24 N / 38,02 E — mar do Artico. Sem a
+ * validacao, um `hex_id` corrompido mandaria a camera para la' e o slide traria uma foto
+ * de agua vazia, que e' pior que declarar a ausencia: agua vazia parece resposta.
+ */
+export function quadroDaCaptura(
+  hexId: string,
+  larguraPx: number,
+  alturaPx: number,
+): { lat: number; lng: number; zoom: number } | null {
+  if (!hexId || !isValidCell(hexId)) return null
+  try {
+    const [lat, lng] = cellToLatLng(hexId)
+    const anel = cellToBoundary(hexId) as [number, number][]
+    return {
+      lat,
+      lng,
+      zoom: zoomQueEnquadra(larguraDoAnel(anel), lat, larguraPx, alturaPx),
+    }
+  } catch {
+    // O h3-js lanca em id malformado. Quem nao e' hexagono nao vira quadro.
+    return null
+  }
 }
 
 /**

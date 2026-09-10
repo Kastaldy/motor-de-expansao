@@ -1,3 +1,4 @@
+import { cellToBoundary, cellToLatLng } from 'h3-js'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -11,6 +12,8 @@ import {
   esperaDeCaptura,
   larguraDoAnel,
   metrosPorPixel,
+  ordenarParaEmpilhar,
+  quadroDaCaptura,
   recorteCentral,
   zoomQueEnquadra,
 } from './captura-mapa'
@@ -247,5 +250,86 @@ describe('comporCanvas com recorte', () => {
     const d = destino()
     comporCanvas([canvas(800, 600)], comoDestino(d))
     expect(d.desenhos[0].origem).toBeUndefined()
+  })
+})
+
+describe('quadroDaCaptura', () => {
+  /* Os hexagonos do deck que expos o bug (comparacao-pontos.pdf, 10/09/2026): quatro
+     pontos, dois em Posse/GO e dois em Jatai/GO. O mapa carrega hexagono de UM municipio
+     por vez, entao so' os de Posse estavam na lista servida — e as duas colunas de Jatai
+     sairam com "Mapa nao capturado para esta area." */
+  const POSSE = '87812d89cffffff'
+  const JATAI = '87a8ee815ffffff'
+
+  it('enquadra um hexagono que o mapa NAO tem carregado', () => {
+    /* O caso do bug: nenhuma lista de hexes entra aqui. O quadro sai do proprio id — se
+       dependesse do que o mapa carregou, a coluna de Jatai voltaria vazia de novo. */
+    const q = quadroDaCaptura(JATAI, 1200, 800)
+    expect(q).not.toBeNull()
+    const [lat, lng] = cellToLatLng(JATAI)
+    expect(q!.lat).toBeCloseTo(lat, 10)
+    expect(q!.lng).toBeCloseTo(lng, 10)
+  })
+
+  it('o zoom e o mesmo que `zoomQueEnquadra` daria para o anel do hexagono', () => {
+    // Uma fonte so' para o enquadramento: o quadro nao pode ter uma segunda conta de zoom.
+    const [lat] = cellToLatLng(POSSE)
+    const esperado = zoomQueEnquadra(
+      larguraDoAnel(cellToBoundary(POSSE) as [number, number][]),
+      lat,
+      1200,
+      800,
+    )
+    expect(quadroDaCaptura(POSSE, 1200, 800)!.zoom).toBeCloseTo(esperado, 10)
+  })
+
+  it('respeita o piso e o teto de zoom da captura', () => {
+    const q = quadroDaCaptura(POSSE, 1200, 800)!
+    expect(q.zoom).toBeGreaterThanOrEqual(ZOOM_CAPTURA_MIN)
+    expect(q.zoom).toBeLessThanOrEqual(ZOOM_CAPTURA_MAX)
+  })
+
+  it('hexId ausente ou invalido nao vira quadro', () => {
+    // `null` aqui e' "nao ha' o que enquadrar", que e' diferente de "o mapa nao tinha".
+    expect(quadroDaCaptura('', 1200, 800)).toBeNull()
+    expect(quadroDaCaptura('nao-e-um-hexagono', 1200, 800)).toBeNull()
+  })
+})
+
+describe('ordenarParaEmpilhar', () => {
+  /* MEDIDO no piloto rodando, 10/09/2026: `document.querySelectorAll('canvas')` devolve o
+     canvas do deck.gl PRIMEIRO (pai `deck-events-root`) e o `maplibregl-canvas` DEPOIS —
+     o inverso do que este modulo assumia. Como o basemap e' opaco e as camadas do deck
+     sao semitransparentes (alfa medio medido 59,4 de 255, so' 0,4% dos pixels em 255),
+     empilhar na ordem do DOM pintava as ruas EM CIMA do hexagono e dos pins. Era o
+     defeito das duas capturas de Posse do deck de 10/09: malha viaria e nada mais, num
+     slide cujo assunto e' quem disputa o aluno ali. */
+  const falso = (className: string) =>
+    ({ width: 800, height: 600, className }) as unknown as HTMLCanvasElement
+
+  it('poe o basemap embaixo mesmo quando o DOM entrega o deck primeiro', () => {
+    const deck = falso('')
+    const base = falso('maplibregl-canvas')
+    expect(ordenarParaEmpilhar([deck, base])).toEqual([base, deck])
+  })
+
+  it('nao mexe no que ja esta na ordem de pintura', () => {
+    const base = falso('maplibregl-canvas')
+    const deck = falso('')
+    expect(ordenarParaEmpilhar([base, deck])).toEqual([base, deck])
+  })
+
+  it('preserva a ordem relativa entre os canvas de camada', () => {
+    // Se um dia houver mais de uma camada empilhada, elas mantem a ordem em que vieram.
+    const base = falso('maplibregl-canvas')
+    const a = falso('camada-a')
+    const b = falso('camada-b')
+    expect(ordenarParaEmpilhar([a, b, base])).toEqual([base, a, b])
+  })
+
+  it('lista sem basemap segue intacta', () => {
+    const a = falso('camada-a')
+    expect(ordenarParaEmpilhar([a])).toEqual([a])
+    expect(ordenarParaEmpilhar([])).toEqual([])
   })
 })
