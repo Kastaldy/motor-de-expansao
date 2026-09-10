@@ -4852,6 +4852,20 @@ saber que a linha de origem dizia só "Cachoeirinha". Ela entra no artefato com
 `confianca_match="media"` e **não** chega à tela. Zero também não chega: unidade recém-aberta ou
 lacuna de coleta desenharia "0 alunos" numa academia que existe.
 
+**ACOPLAMENTO OPERACIONAL — o artefato ENVELHECE com o cron.** `concorrente_id` é
+`sha1(rede, nome_unidade, lat, lng)` (`normalizar_concorrentes.py:98-103`), ou seja,
+**endereçado pelo conteúdo**. O cron de terça que atualiza `concorrentes_mapeados`
+muda o id de qualquer unidade que trocar de nome ou de coordenada, e a linha
+correspondente do crosswalk deixa de casar. **Regenerar
+(`python -m motor_expansao.pipelines.alunos_reais`) depois de cada refresh do coletor**,
+e subir o parquet junto.
+
+A falha é benigna por construção — a chave que não casa simplesmente não aparece, então
+o pino perde o número mas **nunca exibe o número de outra academia**. Benigna, porém
+**silenciosa**: nada fica vermelho, e a única evidência é a contagem caindo. A auditoria
+por rede que `montar_crosswalk` devolve é o lugar de olhar (`n_casadas` por rede); uma
+queda brusca ali é o sintoma.
+
 **Próximo passo (bloco à parte, Crítico).** Trocar `capacidade_default_concorrente_alunos = 2.500`
 pela capacidade real onde ela existe, no residual. Isso muda `oferta_efetiva_disponivel` →
 `score_oportunidade_residual` → `tese_entrada`/`prioridade_mercado_mapeado` e exige DEC própria com
