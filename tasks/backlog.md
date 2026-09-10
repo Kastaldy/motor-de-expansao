@@ -4673,6 +4673,53 @@ do §7.4.1.
 
 ---
 
+#### BLK-INTL-14 — `CONSUMO_1KM_CORTES`: a régua de consumo do mapa está ancorada em 2.500 alunos, que é um número brasileiro
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** — camada de VISUALIZAÇÃO (cor do hexágono e legenda), READ-ONLY sobre o M1: não toca score, residual, funil nem artefato. Erra a COR e o rótulo, não o número que o motor calcula. |
+| **Prioridade** | Média — a instância AR já está no ar e já pinta esta camada com a régua errada; a dor é de leitura, não de decisão. |
+| **Esteira** | Builder → QA. Sem DEC: é implementação da **DEC-047**, mesmo molde do PR das bandas de renda/densidade. |
+| **Depende de** | O PR que serve `reguas.bandas_renda_setor`/`bandas_densidade_setor` em `/api/me` (2026-09-10) — este bloco é o **irmão** dele, separado de propósito (ver abaixo). |
+| **Esforço** | Meio dia. O grosso é decidir a forma da régua, não escrevê-la. |
+| **Autonomia** | **sem marcador** — o bloco **atende** aos critérios do `CLAUDE.md` §6.1 (READ-ONLY sobre o M1, não toca VPS/deploy/segredos, consome só o que já está em `data/`), mas o opt-in `loop-safe` é a pré-aprovação **humana** que substitui o gate interativo: quem escreveu este bloco não pode se auto-aprovar. Felipe marca se quiser que o loop o pegue. |
+
+**O defeito.** `web/src/lib/colors.ts:293` traz `CONSUMO_1KM_CORTES = [625, 1250, 2500, 5000]`, e o
+próprio comentário acima da linha declara a âncora: "ancoradas na capacidade de 2.500 de uma unidade:
+até 1/4 de unidade, até 1/2, até 1, até 2". Os rótulos de `CONSUMO_1KM_ROTULOS` repetem os mesmos
+números em texto. **2.500 é `reguas.capacidade_concorrente`, e na Argentina ela vale `1070,0`** — lá
+"1 unidade" são 1.070 alunos, então a faixa que o operador lê como "até 1 unidade" cobre 2,34
+unidades de verdade, e a legenda mente em todas as cinco faixas. É a mesma classe de defeito que as
+bandas de renda/densidade tinham: literal brasileiro em TypeScript num binário que serve N países.
+
+**Por que ficou FORA do PR das bandas de renda/densidade** (e não deve ser feito de carona):
+
+1. **O insumo não está no payload.** `/api/me` serve `pop_min_acionavel` e
+   `capacidade_unidade_alunos` (a capacidade de uma unidade **ULTRA**), não
+   `capacidade_concorrente` — que é a âncora certa aqui, e que na AR **diverge** da outra (1.070
+   contra 2.500; no Brasil as duas coincidem, e foi por isso que a duplicação passou despercebida).
+   Levar esta régua exige acrescentar campo ao payload, ao `perfil-br.ts` e à lista
+   `CAMPOS_DO_FRONT` do contrato — decisão própria, revisão própria.
+2. **Não há par no Python.** As bandas de renda e densidade existem dos DOIS lados
+   (`dashboard/constants.py` pinta o PDF, `colors.ts` pinta o mapa), e é essa duplicação que o PR
+   irmão elimina servindo um objeto já resolvido. `CONSUMO_1KM_CORTES` só existe no `.ts`: não há
+   constante equivalente em Python (a `OFERTA_DISPONIVEL_ALUNOS_BANDS` mede residual DISPONÍVEL, não
+   consumo, e tem outros cortes). Misturar as duas coisas no mesmo diff faria o PR perder a forma
+   "literal → leitura de objeto congelado" que a DEC-047 exige, e um revisor deixaria de enxergar
+   qual metade prova o quê.
+
+**Decisão que este bloco tem de tomar antes de escrever código:** os cortes são *derivados* da
+capacidade (¼, ½, 1, 2 unidades, calculados no front a partir do número do perfil) ou são régua
+DECLARADA no perfil, como `faixas_renda`? Derivar mantém uma régua só e traduz sozinha para
+qualquer país; declarar permite um país escolher cortes que não são frações redondas. As duas
+respostas são defensáveis — o que não é defensável é o literal de hoje.
+
+**Aceite.** Nenhum pixel muda no Brasil (2.500 continua sendo 2.500) e a instância AR passa a pintar
+com a própria capacidade, com teste que compara os cortes servidos contra o perfil nos DOIS países —
+o molde de `tests/unit/test_paridade_paleta_web.py`.
+
+---
+
 ### BLK-JOINUF-01 — `qualidade_join_uf` é granularidade de ESTADO, não de município/hex; hexágono litorâneo quebra a classificação
 
 | Campo | Valor |

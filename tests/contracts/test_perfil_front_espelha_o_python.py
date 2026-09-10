@@ -73,6 +73,23 @@ CAMPOS_DO_FRONT = [
     "reguas.capacidade_unidade_alunos",
 ]
 
+#: Campos que o payload SERVE mas que não são transcrição de campo do perfil: são
+#: RESOLVIDOS pelo Python antes de sair (`_bandas_para_o_cliente` sobre
+#: `RENDA_PER_CAPITA_BANDS` / `DENSIDADE_POP_BANDS`). Ficam FORA de `CAMPOS_DO_FRONT`
+#: por construção, e não por esquecimento: `perfil.json` declara `reguas.faixas_renda`
+#: e `reguas.faixas_densidade` — cortes e rótulos, sem cor —, e a cor vem da rampa da
+#: plataforma. Comparar um contra o outro campo a campo compararia coisas diferentes.
+#: Quem trava o VALOR deles é `tests/unit/test_paridade_paleta_web.py`, contra as
+#: constantes do núcleo, nos dois perfis.
+#: O `perfil-br.ts` compilado ainda NÃO os traz, e é por isso que eles ficam fora do
+#: espelho TS↔JSON acima: quem os lê no front é `colors.ts`, no PR seguinte. Até lá o
+#: campo viaja e ninguém o consome — o inverso do "campo sem leitor", e um estado
+#: transitório declarado, não uma lacuna.
+CAMPOS_RESOLVIDOS_NO_PAYLOAD = [
+    "reguas.bandas_renda_setor",
+    "reguas.bandas_densidade_setor",
+]
+
 
 def _ler(dados: dict[str, Any], caminho: str) -> Any:
     alvo: Any = dados
@@ -121,7 +138,7 @@ def test_o_payload_de_api_me_traz_exatamente_esses_campos() -> None:
     import app as pilot  # noqa: PLC0415
 
     payload = pilot._perfil_do_cliente()
-    for campo in CAMPOS_DO_FRONT:
+    for campo in CAMPOS_DO_FRONT + CAMPOS_RESOLVIDOS_NO_PAYLOAD:
         _ler(payload, campo)  # levanta nomeando o campo se faltar
 
     achados: list[str] = []
@@ -134,7 +151,7 @@ def test_o_payload_de_api_me_traz_exatamente_esses_campos() -> None:
             achados.append(prefixo.rstrip("."))
 
     _andar(payload)
-    assert sorted(achados) == sorted(CAMPOS_DO_FRONT), (
+    assert sorted(achados) == sorted(CAMPOS_DO_FRONT + CAMPOS_RESOLVIDOS_NO_PAYLOAD), (
         "o payload de /api/me divergiu da lista que o front consome"
     )
 
