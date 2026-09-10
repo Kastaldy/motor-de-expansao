@@ -1,3 +1,6 @@
+import { cellToBoundary, cellToLatLng } from 'h3-js'
+
+import type { Pins } from './types'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -9,8 +12,14 @@ import {
   ZOOM_CAPTURA_MIN,
   comporCanvas,
   esperaDeCaptura,
+  chegouNoAlvo,
   larguraDoAnel,
+  mapaPronto,
   metrosPorPixel,
+  ordemDeVoo,
+  pinsDoAlvo,
+  ordenarParaEmpilhar,
+  quadroDaCaptura,
   recorteCentral,
   zoomQueEnquadra,
 } from './captura-mapa'
@@ -247,5 +256,226 @@ describe('comporCanvas com recorte', () => {
     const d = destino()
     comporCanvas([canvas(800, 600)], comoDestino(d))
     expect(d.desenhos[0].origem).toBeUndefined()
+  })
+})
+
+describe('quadroDaCaptura', () => {
+  /* Os hexagonos do deck que expos o bug (comparacao-pontos.pdf, 10/09/2026): quatro
+     pontos, dois em Posse/GO e dois em Jatai/GO. O mapa carrega hexagono de UM municipio
+     por vez, entao so' os de Posse estavam na lista servida — e as duas colunas de Jatai
+     sairam com "Mapa nao capturado para esta area." */
+  const POSSE = '87812d89cffffff'
+  const JATAI = '87a8ee815ffffff'
+
+  it('enquadra um hexagono que o mapa NAO tem carregado', () => {
+    /* O caso do bug: nenhuma lista de hexes entra aqui. O quadro sai do proprio id — se
+       dependesse do que o mapa carregou, a coluna de Jatai voltaria vazia de novo. */
+    const q = quadroDaCaptura(JATAI, 1200, 800)
+    expect(q).not.toBeNull()
+    const [lat, lng] = cellToLatLng(JATAI)
+    expect(q!.lat).toBeCloseTo(lat, 10)
+    expect(q!.lng).toBeCloseTo(lng, 10)
+  })
+
+  it('o zoom e o mesmo que `zoomQueEnquadra` daria para o anel do hexagono', () => {
+    // Uma fonte so' para o enquadramento: o quadro nao pode ter uma segunda conta de zoom.
+    const [lat] = cellToLatLng(POSSE)
+    const esperado = zoomQueEnquadra(
+      larguraDoAnel(cellToBoundary(POSSE) as [number, number][]),
+      lat,
+      1200,
+      800,
+    )
+    expect(quadroDaCaptura(POSSE, 1200, 800)!.zoom).toBeCloseTo(esperado, 10)
+  })
+
+  it('respeita o piso e o teto de zoom da captura', () => {
+    const q = quadroDaCaptura(POSSE, 1200, 800)!
+    expect(q.zoom).toBeGreaterThanOrEqual(ZOOM_CAPTURA_MIN)
+    expect(q.zoom).toBeLessThanOrEqual(ZOOM_CAPTURA_MAX)
+  })
+
+  it('hexId ausente ou invalido nao vira quadro', () => {
+    // `null` aqui e' "nao ha' o que enquadrar", que e' diferente de "o mapa nao tinha".
+    expect(quadroDaCaptura('', 1200, 800)).toBeNull()
+    expect(quadroDaCaptura('nao-e-um-hexagono', 1200, 800)).toBeNull()
+  })
+})
+
+describe('ordenarParaEmpilhar', () => {
+  /* MEDIDO no piloto rodando, 10/09/2026: `document.querySelectorAll('canvas')` devolve o
+     canvas do deck.gl PRIMEIRO (pai `deck-events-root`) e o `maplibregl-canvas` DEPOIS —
+     o inverso do que este modulo assumia. Como o basemap e' opaco e as camadas do deck
+     sao semitransparentes (alfa medio medido 59,4 de 255, so' 0,4% dos pixels em 255),
+     empilhar na ordem do DOM pintava as ruas EM CIMA do hexagono e dos pins. Era o
+     defeito das duas capturas de Posse do deck de 10/09: malha viaria e nada mais, num
+     slide cujo assunto e' quem disputa o aluno ali. */
+  const falso = (className: string) =>
+    ({ width: 800, height: 600, className }) as unknown as HTMLCanvasElement
+
+  it('poe o basemap embaixo mesmo quando o DOM entrega o deck primeiro', () => {
+    const deck = falso('')
+    const base = falso('maplibregl-canvas')
+    expect(ordenarParaEmpilhar([deck, base])).toEqual([base, deck])
+  })
+
+  it('nao mexe no que ja esta na ordem de pintura', () => {
+    const base = falso('maplibregl-canvas')
+    const deck = falso('')
+    expect(ordenarParaEmpilhar([base, deck])).toEqual([base, deck])
+  })
+
+  it('preserva a ordem relativa entre os canvas de camada', () => {
+    // Se um dia houver mais de uma camada empilhada, elas mantem a ordem em que vieram.
+    const base = falso('maplibregl-canvas')
+    const a = falso('camada-a')
+    const b = falso('camada-b')
+    expect(ordenarParaEmpilhar([a, b, base])).toEqual([base, a, b])
+  })
+
+  it('lista sem basemap segue intacta', () => {
+    const a = falso('camada-a')
+    expect(ordenarParaEmpilhar([a])).toEqual([a])
+    expect(ordenarParaEmpilhar([])).toEqual([])
+  })
+})
+
+describe('chegouNoAlvo', () => {
+  const jatai = { lat: -17.857641, lng: -51.728483 }
+
+  it('reconhece a camera parada em cima do alvo', () => {
+    expect(chegouNoAlvo(jatai, jatai)).toBe(true)
+  })
+
+  it('recusa o quadro ANTERIOR, que e o defeito que isto existe para pegar', () => {
+    /* Posse fica a ~500 km de Jatai. Ate' 10/09/2026 a captura esperava 900 ms de voo e
+       700 ms de tiles NO RELOGIO e fotografava o que estivesse na tela: com a aba
+       estrangulada, tres das quatro colunas do deck sairam com o MESMO quadro de Posse,
+       cada uma sob o nome de outra area. Foto do lugar errado sob o nome certo e' pior
+       que foto nenhuma — por isso a checagem, e por isso ela reprova. */
+    expect(chegouNoAlvo({ lat: -14.075941, lng: -46.344974 }, jatai)).toBe(false)
+  })
+
+  it('tolera o erro de arredondamento do fim do voo', () => {
+    expect(chegouNoAlvo({ lat: jatai.lat + 0.0005, lng: jatai.lng - 0.0005 }, jatai)).toBe(true)
+  })
+
+  it('sem centro nao ha chegada', () => {
+    expect(chegouNoAlvo(null, jatai)).toBe(false)
+    expect(chegouNoAlvo(undefined, jatai)).toBe(false)
+  })
+})
+
+describe('mapaPronto', () => {
+  const alvo = { lat: -17.857641, lng: -51.728483 }
+  const pronto = { estiloCarregado: true, tilesCarregados: true, centro: alvo }
+
+  it('pronto e as tres coisas juntas', () => {
+    expect(mapaPronto(pronto, alvo)).toBe(true)
+  })
+
+  it('estilo nao carregado reprova — e o caso da PRIMEIRA captura', () => {
+    /* Medido em 10/09/2026: na captura 0 o canvas do basemap entrou na composicao com
+       0% de tinta. O `<Map/>` acabara de ser remontado para ligar o `preserveDrawingBuffer`
+       e ainda nao pintara — a espera era de 500 ms fixos. A coluna saiu sem ruas, com
+       cara de outro relatorio. */
+    expect(mapaPronto({ ...pronto, estiloCarregado: false }, alvo)).toBe(false)
+  })
+
+  it('tiles pendentes reprovam: quadro borrado nao e' + ' quadro', () => {
+    expect(mapaPronto({ ...pronto, tilesCarregados: false }, alvo)).toBe(false)
+  })
+
+  it('camera ainda a caminho reprova', () => {
+    expect(mapaPronto({ ...pronto, centro: { lat: -14.07, lng: -46.34 } }, alvo)).toBe(false)
+  })
+
+  it('sem alvo, basta o mapa estar pintado', () => {
+    // A comparacao de HEXAGONOS nao marca imovel; ali so' importa que o quadro exista.
+    expect(mapaPronto(pronto, null)).toBe(true)
+    expect(mapaPronto({ ...pronto, estiloCarregado: false }, null)).toBe(false)
+  })
+})
+
+describe('ordemDeVoo', () => {
+  // Os quatro pontos do deck de 10/09/2026. Posse/GO e Jatai/GO estao a ~500 km.
+  const posseA = { lat: -14.0759, lng: -46.3450 }
+  const posseB = { lat: -14.0869, lng: -46.3664 }
+  const jataiA = { lat: -17.8576, lng: -51.7285 }
+  const jataiB = { lat: -17.8801, lng: -51.7293 }
+
+  /** Quantas vezes a rota pula mais de 1 grau — o salto caro. */
+  const saltosLongos = (ordem: number[], pts: ({ lat: number; lng: number } | null)[]) => {
+    let n = 0
+    for (let i = 1; i < ordem.length; i++) {
+      const a = pts[ordem[i - 1]]
+      const b = pts[ordem[i]]
+      if (a && b && Math.hypot(a.lat - b.lat, a.lng - b.lng) > 1) n++
+    }
+    return n
+  }
+
+  it('agrupa as cidades mesmo com a colagem alternando entre elas', () => {
+    /* A ordem de captura era a de COLAGEM. Colando Posse, Jatai, Posse, Jatai, a camera
+       atravessava o pais TRES vezes, e cada travessia e' um voo que pode nao chegar
+       dentro do teto — foi assim que a coluna "3 - Jatai" saiu vazia no deck das 14:10,
+       no unico salto longo que aquela colagem tinha. Por proximidade, o salto longo e'
+       sempre UM so'. */
+    const pts = [posseA, jataiA, posseB, jataiB]
+    expect(saltosLongos([0, 1, 2, 3], pts)).toBe(3)
+    expect(saltosLongos(ordemDeVoo(pts, posseA), pts)).toBe(1)
+  })
+
+  it('visita todos os alvos, uma vez cada', () => {
+    const pts = [posseA, jataiA, posseB, jataiB]
+    expect([...ordemDeVoo(pts, posseA)].sort()).toEqual([0, 1, 2, 3])
+  })
+
+  it('comeca pelo mais PROXIMO de onde a camera ja esta', () => {
+    const pts = [jataiA, posseA]
+    expect(ordemDeVoo(pts, posseB)[0]).toBe(1)
+    expect(ordemDeVoo(pts, jataiB)[0]).toBe(0)
+  })
+
+  it('alvo sem quadro vai para o fim, e nao arrasta a rota', () => {
+    // `null` e' hexId invalido: nao se voa ate' ele, e ele nao pode puxar a ordem.
+    const pts = [null, posseA, jataiA]
+    const ordem = ordemDeVoo(pts, posseB)
+    expect(ordem[ordem.length - 1]).toBe(0)
+    expect(ordem.slice(0, 2)).toEqual([1, 2])
+  })
+
+  it('lista vazia e lista de um seguem triviais', () => {
+    expect(ordemDeVoo([], posseA)).toEqual([])
+    expect(ordemDeVoo([jataiA], posseA)).toEqual([0])
+  })
+
+  it('sem partida, mantem a ordem recebida como ponto de saida', () => {
+    // Sem camera conhecida, o primeiro colado abre a rota — decisao, nao acaso.
+    expect(ordemDeVoo([jataiA, posseA, posseB], null)[0]).toBe(0)
+  })
+})
+
+describe('pinsDoAlvo', () => {
+  const doMunicipio = { concorrentes: [], ultra: [], icones: { smart: 'x.png' } } as Pins
+
+  it('alvo da cidade ABERTA nao sobrepoe nada: o mapa ja tem os pins dele', () => {
+    expect(pinsDoAlvo(doMunicipio, true)).toBeNull()
+  })
+
+  it('alvo de outra cidade usa os pins buscados para ELA', () => {
+    expect(pinsDoAlvo(doMunicipio, false)).toBe(doMunicipio)
+  })
+
+  it('busca que FALHOU vira camada vazia, nunca a da cidade aberta', () => {
+    /* Era `null`, e o consumidor faz `pinsDaCaptura ?? pins` — entao o `null` caia de volta
+       nos pins do municipio CARREGADO. Uma falha de rede reintroduzia exatamente o defeito
+       que este ciclo consertou: concorrente da cidade errada sob o nome certo, que e' pior
+       que concorrente nenhum, porque parece resposta. Achado da revisao automatica do
+       PR #345. */
+    const vazio = pinsDoAlvo(null, false)
+    expect(vazio).not.toBeNull()
+    expect(vazio!.concorrentes).toEqual([])
+    expect(vazio!.ultra).toEqual([])
   })
 })
