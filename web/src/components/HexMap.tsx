@@ -1912,6 +1912,30 @@ export default function HexMap({
             </div>
           )}
 
+          {/* ALUNOS REAIS — o número que a própria rede informou, não estimativa nossa.
+              Soma plano + agregador (WellHub/TotalPass), que é como as próprias fontes
+              publicam (`Alunos Totais = EVO + Gympass + TotalPass`, na planilha da SkyFit).
+
+              `!= null` e não um teste de verdade: o servidor já removeu os zeros, e um
+              `&&` aqui esconderia um zero legítimo se essa regra mudasse do outro lado.
+              A maioria dos pinos não tem o número, e a linha simplesmente não aparece —
+              ausência é "não temos a planilha desta rede", nunca "academia vazia". */}
+          {pinHover.d?.alunos != null && (
+            <>
+              <Divisoria />
+              <Linha rotulo="Alunos" valor={num(pinHover.d.alunos)} forte />
+              <div
+                style={{
+                  font: '400 9px/1.3 var(--f-ui)',
+                  color: 'var(--tx-label)',
+                  marginTop: 3,
+                }}
+              >
+                Informado pela rede · planos + agregadores
+              </div>
+            </>
+          )}
+
           {/* O QUE O HALO PROMETE. A bandeira com halo diz "temos dado extra sobre esta unidade";
               se o balao nao entregasse, o halo seria enfeite. Aqui vem a pressao medida da
               coordenada DELA e a conta por tras do numero.

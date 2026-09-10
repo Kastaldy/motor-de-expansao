@@ -283,6 +283,19 @@ export interface Pin {
    */
   icone_foto?: boolean
   /**
+   * Alunos REAIS desta unidade — planos próprios MAIS usuários de agregador (WellHub,
+   * TotalPass), somados, quando a fonte publica os dois.
+   *
+   * Vem das planilhas que as próprias redes entregaram (Smart Fit, SkyFit, Engenharia do
+   * Corpo, RedFit, Grupo Pacer), casadas com este pino em `pipelines/alunos_reais.py`. Não
+   * é estimativa nem capacidade: é o número que a rede informou.
+   *
+   * Ausente na maioria dos pinos — só ~1.200 de 4.589 unidades têm planilha e casamento de
+   * confiança alta. Ausente NÃO é zero: uma academia sem número aqui continua existindo, e
+   * desenhar "0 alunos" afirmaria o contrário.
+   */
+  alunos?: number | null
+  /**
    * `true` quando esta unidade veio do feed de um agregador (WellHub/TotalPass) e por isso temos
    * DADOS EXTRAS sobre ela — pressão medida da coordenada dela, nota, presença na série.
    *

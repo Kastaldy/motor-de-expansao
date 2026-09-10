@@ -1268,6 +1268,9 @@ def _faixa_label(v: Any) -> str | None:
 
 COMPETITOR_PIN_LIMIT = 6000  # espelha constants.COMPETITOR_PIN_LIMIT
 CONCORRENTES_PARQUET = STAGING_DIR / "concorrentes_mapeados.parquet"
+#: Alunos REAIS por unidade (BLK-ALUNOS-01), casados com o pino por `concorrente_id`.
+#: OPCIONAL: sem ele o pino desenha igual, so' sem a linha de alunos no balao.
+ALUNOS_REAIS_PARQUET = STAGING_DIR / "alunos_reais_por_unidade.parquet"
 ULTRA_PERF_PARQUET = STAGING_DIR / "unidades_ultra_performance_hex.parquet"
 # Cadastro AMPLO das unidades Ultra (169 linhas em 2026-08-07, com `uf`/`cidade`/
 # `flag_coord_valida`). O `ULTRA_PERF_PARQUET` acima so tem as 54 unidades da planilha
@@ -1493,6 +1496,42 @@ def _icone_ultra() -> str:
 
 
 @functools.lru_cache(maxsize=1)
+def _alunos_reais_por_id() -> dict[str, int]:
+    """`concorrente_id` -> alunos reais da unidade (planos + agregadores).
+
+    Fonte: planilhas que as proprias redes entregaram, casadas com o pino em
+    `pipelines/alunos_reais.py`. Aqui entra so' o que o operador consegue AUDITAR na tela:
+
+    - `confianca_match == "alta"` — o rotulo da planilha e o do coletor sao equivalentes,
+      ou a unidade foi confirmada por coordenada. A rota de CONTENCAO (o rotulo da fonte
+      e' um pedaco do rotulo do coletor) fica de fora: ela e' inferencia, e quem le
+      "Vila Nova Cachoeirinha - 2.400 alunos" nao tem como saber que a linha de origem
+      dizia so' "Cachoeirinha". Numero errado no tooltip e' pior que numero ausente.
+    - `alunos_total > 0` — zero e' unidade recem-aberta ou lacuna de coleta, e desenhar
+      "0 alunos" numa academia que existe afirma algo falso.
+
+    Ausencia do artefato e' caminho NORMAL (ele nao e' versionado): devolve `{}` e o
+    balao simplesmente sai sem a linha.
+    """
+    if not ALUNOS_REAIS_PARQUET.exists():
+        return {}
+    try:
+        df = pd.read_parquet(
+            ALUNOS_REAIS_PARQUET,
+            columns=["concorrente_id", "alunos_total", "confianca_match"],
+        )
+    except Exception:  # pragma: no cover - artefato de contrato antigo
+        return {}
+    df = df[
+        df["concorrente_id"].notna()
+        & df["confianca_match"].astype(str).eq("alta")
+        & (pd.to_numeric(df["alunos_total"], errors="coerce") > 0)
+    ]
+    serie = df.set_index(df["concorrente_id"].astype(str))["alunos_total"]
+    return {str(k): int(v) for k, v in serie.items()}
+
+
+@functools.lru_cache(maxsize=1)
 def _carregar_concorrentes() -> pd.DataFrame:
     """Pontos individuais de concorrentes (READ-ONLY). Vazio se o parquet faltar."""
     cols = ["rede", "nome_unidade", "lat", "lng", "hex_id_res7"]
@@ -1506,7 +1545,9 @@ def _carregar_concorrentes() -> pd.DataFrame:
     # caro — a coluna EXISTE no artefato, so' nao chega, e o sintoma e' um campo vazio sem
     # erro nenhum. Foi o que aconteceu aqui na primeira tentativa.
     extras = [
-        c for c in ("flag_coord_valida", "status_registro", "foto") if c in disponiveis
+        c
+        for c in ("flag_coord_valida", "status_registro", "foto", "concorrente_id")
+        if c in disponiveis
     ]
     df = pd.read_parquet(CONCORRENTES_PARQUET, columns=[*cols, *extras])
     if "flag_coord_valida" in df.columns:
@@ -1537,7 +1578,14 @@ def _carregar_concorrentes() -> pd.DataFrame:
     # FILTRAR linhas e podem cair aqui; a foto precisa CHEGAR ao payload do pino. Sem esta
     # linha ela era lida do parquet e descartada na saida — coluna presente, campo vazio,
     # zero erro. Exatamente a forma do defeito da DEC-038, agora numa TERCEIRA lista.
-    saida = [*cols, *(c for c in ("foto",) if c in df.columns)]
+    # ALUNOS REAIS entram aqui, e nao no `_linha_conc`: o lookup e' por `concorrente_id`,
+    # que existe no artefato mas NAO estava na projecao — mesma armadilha da `foto` logo
+    # acima, e da DEC-038 antes dela. `alunos` vira coluna do frame para que a projecao
+    # final tenha de mencionar o nome, em vez de o campo sumir em silencio.
+    alunos = _alunos_reais_por_id()
+    if alunos and "concorrente_id" in df.columns:
+        df["alunos"] = df["concorrente_id"].astype(str).map(alunos)
+    saida = [*cols, *(c for c in ("foto", "alunos") if c in df.columns)]
     return df[saida].reset_index(drop=True)
 
 
@@ -1808,6 +1856,11 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
             # mapa vale mais que ver a fachada daquela unidade, e a foto continua no
             # balao para as duas. O teto e' aplicado depois, sobre a lista montada.
             "icone_foto": bool(foto and not _rede_tem_logo(str(t.rede))),
+            # Alunos REAIS da unidade (planos + agregadores), quando a rede entregou a
+            # planilha e o casamento com este pino e' de confianca alta. Ausente na
+            # imensa maioria dos pinos, e a tela desenha sem a linha — nao inventar
+            # zero, que afirmaria academia vazia.
+            "alunos": _inteiro_ou_nulo(getattr(t, "alunos", None)),
         }
 
     return {
