@@ -4737,3 +4737,53 @@ estrutural que já existia: o sinal de confiança é grosso demais (UF) para uma
 **Guardrail.** §5 READ-ONLY M1. Qualquer mudança em `qualidade_join_uf`/`confianca_geografica`/
 `score_setor_2022_calibrado` exige DEC própria (Crítica) e medição antes/depois por UF, igual à
 DEC-050.
+---
+
+### BLK-ORFAOS-01 — Os 4.274 órfãos que a malha da DEC-045 não cobre
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — muda `confianca_geografica`/`populacao_corte_hex` de hexágonos reais; se o conserto tocar `score_setor_2022_calibrado`, sobe para Crítica e exige DEC. |
+| **Esteira** | `[GATE HUMANO]` — medir a natureza deles ANTES de propor conserto. |
+| **Depende de** | [DEC-055](../docs/decisions/DEC-055.md) (resolveu 5.612 dos 9.886; estes são o resíduo declarado) |
+| **Status** | **ABERTO** — resíduo declarado na DEC-055, ainda **não investigado**. |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca a camada censitária. |
+
+**O que é.** A DEC-055 provou que os 9.886 hexágonos `"Não informado"` são **órfãos da Fase A**:
+ela rodou em 2026-05-15 e nunca mais, e a base H3 cresceu depois em três eventos de borda
+(+5.305 centroide + 474 DEC-002 + 4.107 DEC-003 = exatamente 9.886, batendo por UF em 27/27).
+`admitir_orfaos_da_malha` recuperou **5.612** deles pela malha da DEC-045 (3.731 promovidos a
+granular; Fortaleza 11/11, Niterói 13/13, Salvador 9/9, Recife 5/5, Rio 43/51). Sobram **4.274**
+que a malha **também** não cobre — nem admitidos, nem promovidos, nem investigados.
+
+**A hipótese de trabalho (NÃO medida — é o item 1 do escopo).** Se a malha da DEC-045 não os
+cobre, é porque nenhum setor censitário do IBGE intersecta aquela geometria. O candidato natural
+é que sejam hexágonos **sem setor povoado**: oceano dentro do critério híbrido do litoral
+(`M1_HEX_LAND_FRACTION_MIN = 0,05`, §3), floresta, faixa de fronteira. Se for isso, o conserto
+certo é **rotular**, não promover: `"sem setor censitário"` é uma resposta correta e diferente de
+`"Não informado"`, que hoje o operador lê como falha do motor. **Cuidado com o precedente da
+própria DEC-055**: a hipótese "é o litoral" já foi formulada com confiança e **refutada por
+medição** (41,2% dos órfãos estavam em UF sem costa). Não repetir o erro — medir antes de afirmar.
+
+**Por que não é urgente, e por que também não pode ser esquecido.** Nenhum dos casos que o
+operador reportou (Manaus, Fortaleza, Juiz de Fora, litoral RJ/SP) está neste resíduo — todos
+foram fechados pela DEC-054/055. Mas 4.274 hexágonos continuam exibindo `"Não informado"` sem
+que ninguém saiba se isso é verdade ou defeito, e essa é exatamente a **forma** do defeito
+recorrente do repo (DEC-038/045/050/054): um valor legítimo que, no lugar errado, apaga uma
+superfície inteira em silêncio.
+
+**Escopo de investigação, quando priorizado:**
+1. **Caracterizar antes de consertar.** Para os 4.274: distribuição por UF, `land_fraction`,
+   `pop_total`/`populacao_proxy` do estrutural (que **existe** para os 1.542.531), distância ao
+   setor censitário mais próximo e quantos caem sobre água/unidade de conservação. A pergunta
+   binária: **quantos têm população estrutural > 0?**
+2. **Se forem majoritariamente vazios** → rotular (`sem_setor_censitario`) e ajustar a legenda do
+   piloto para distinguir "não há dado" de "há dado e não confiamos nele". Custo baixo, sem DEC
+   de score.
+3. **Se houver povoados relevantes** → medir se o vizinho H3 imediato (`k_ring=1`) tem setor e se
+   herdar dele é defensável — e aí sim DEC própria (Crítica), com antes/depois por UF e hash do M1.
+4. Fechar o número: 9.886 = 5.612 admitidos + 4.274 residuais. Qualquer conserto tem de manter
+   essa aritmética explícita, como a DEC-055 manteve a dos três eventos de borda.
+
+**Guardrail.** §5 READ-ONLY M1. Rotular não exige DEC; promover a granular exige DEC Crítica com
+medição antes/depois, no padrão DEC-050/054/055.
