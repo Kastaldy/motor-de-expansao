@@ -155,6 +155,35 @@ def test_estrutural_nao_sobrescreve_o_codigo_que_o_censo_ja_trouxe() -> None:
     assert enriquecido["cod_municipio"].iloc[0] == "3304557"
 
 
+def test_populacao_do_censo_preenche_lacuna_do_hibrido() -> None:
+    """`pop_total_setor_2022` FALTAVA na lista de coalescência do merge censitário.
+
+    O merge do híbrido traz a coluna primeiro, então a do censo chegava como
+    `pop_total_setor_2022_censo` por sufixo e era DESCARTADA. Nas 1.532.645 linhas
+    normais isso nunca apareceu (o híbrido tem o valor); no órfão ADMITIDO pela malha o
+    híbrido traz NaN, e a população morria ali — o hexágono virava `granular` (o score
+    coalescia, estava na lista) e mesmo assim exibia o total do MUNICÍPIO.
+
+    Fortaleza mostrava 2.428.708 nos 11 hexágonos costeiros mesmo depois de promovidos.
+    """
+    enriquecido = enrich_dashboard_data(
+        pd.DataFrame([_base("orfao")]),
+        hybrid_df=pd.DataFrame({"hex_id": ["orfao"], "pop_total_setor_2022": [None]}),
+        censo_df=pd.DataFrame({"hex_id": ["orfao"], "pop_total_setor_2022": [75342.0]}),
+    )
+    assert enriquecido["pop_total_setor_2022"].iloc[0] == 75342.0
+
+
+def test_coalescencia_nao_sobrescreve_a_populacao_do_hibrido() -> None:
+    """Coalescer PRESERVA o híbrido onde ele tem valor — é preenchimento de lacuna."""
+    enriquecido = enrich_dashboard_data(
+        pd.DataFrame([_base("normal")]),
+        hybrid_df=pd.DataFrame({"hex_id": ["normal"], "pop_total_setor_2022": [1234.0]}),
+        censo_df=pd.DataFrame({"hex_id": ["normal"], "pop_total_setor_2022": [99999.0]}),
+    )
+    assert enriquecido["pop_total_setor_2022"].iloc[0] == 1234.0
+
+
 def test_orfao_com_municipio_bom_vira_granular_de_ponta_a_ponta() -> None:
     """O caso Fortaleza: sem linha no traço, mas o município é classe A.
 

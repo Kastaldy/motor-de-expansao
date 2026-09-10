@@ -467,6 +467,17 @@ def enrich_dashboard_data(
             "flag_join_uf_restrito",
             "flag_baixa_pop_setor",
             "flag_outlier_espacial",
+            # `pop_total_setor_2022` FALTAVA nesta lista, e a ausencia era invisivel ate o
+            # BLK-JOINUF-01 (mecanismo 2). O merge do HIBRIDO, logo acima, ja traz a coluna
+            # -- entao a do censo chega como `_censo` por sufixo e, sem coalescer, era
+            # DESCARTADA. Para os 1.532.645 hexagonos normais isso nunca apareceu (o
+            # hibrido tem o valor); para os orfaos ADMITIDOS pela malha, o hibrido traz
+            # NaN e a populacao vinha morrendo aqui: eles viravam `granular` (o score
+            # coalescia, esta' na lista) e mesmo assim exibiam o total do MUNICIPIO,
+            # porque `derive_pop_cut_columns` so' usa o setor quando ele e' nao-nulo.
+            # Fortaleza mostrava 2.428.708 nos seus 11 hexagonos costeiros mesmo depois
+            # de promovidos. Coalescer PRESERVA o hibrido onde ele tem valor.
+            "pop_total_setor_2022",
         ]:
             censo_column = f"{column}_censo"
             enriched = _coalesce_columns(enriched, column, censo_column)
