@@ -99,11 +99,21 @@ let jaAnunciado = false
 
 /**
  * Assina o aviso de sessão caída. Devolve a função de cancelar (molde de `useEffect`).
- * O aviso é disparado NO MÁXIMO uma vez por carga de página: com o pop-up já na tela,
- * as outras requisições que falharem junto não têm o que anunciar.
+ * O aviso é entregue NO MÁXIMO uma vez a cada assinante: com o pop-up já na tela, as
+ * outras requisições que falharem junto não têm o que anunciar.
+ *
+ * A queda fica TRAVADA: quem assina depois do anúncio recebe na hora da assinatura. Não
+ * é detalhe — na carga inicial é a regra, não a exceção. No React os efeitos dos FILHOS
+ * rodam antes dos do pai, e são as telas que disparam os fetches; com a sessão morta
+ * desde o começo, a falha (e o anúncio) chega antes de o `App` conseguir assinar. Sem a
+ * trava, o anúncio cai num conjunto vazio, `jaAnunciado` sela o silêncio para o resto da
+ * carga e o operador fica com a tela sem dado NENHUM e sem aviso nenhum — que foi
+ * exatamente o defeito relatado, e reproduzido em Chrome com a sessão expirada antes do
+ * load.
  */
 export function assinarQuedaDeSessao(ouvinte: Ouvinte): () => void {
   ouvintes.add(ouvinte)
+  if (jaAnunciado) ouvinte()
   return () => {
     ouvintes.delete(ouvinte)
   }

@@ -128,6 +128,30 @@ describe('relatarFalhaDeRede — quem avisa o App', () => {
     expect(avisado).toHaveBeenCalledTimes(1)
   })
 
+  it('quem assina DEPOIS do anúncio recebe assim mesmo (sessão morta desde o load)', async () => {
+    /* O caso que passou batido e chegou ao usuário: com a sessão já vencida quando a
+       página carrega, a tela dispara o fetch — e falha — ANTES de o `App` assinar,
+       porque no React os efeitos dos filhos rodam antes dos do pai. Sem a trava, o
+       anúncio caía num conjunto vazio e o `jaAnunciado` selava o silêncio: nenhum dado
+       na tela e nenhum aviso. Todos os outros casos deste arquivo assinam ANTES da
+       falha, que é justamente por isso que nenhum deles pegava o defeito. */
+    vi.stubGlobal('fetch', vi.fn(async () => REDIRECT_OPACO))
+    await relatarFalhaDeRede()
+
+    const avisado = vi.fn()
+    assinarQuedaDeSessao(avisado)
+    expect(avisado).toHaveBeenCalledTimes(1)
+  })
+
+  it('a trava não faz o assinante tardio receber DUAS vezes', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => REDIRECT_OPACO))
+    const avisado = vi.fn()
+    assinarQuedaDeSessao(avisado)
+    await relatarFalhaDeRede()
+    await relatarFalhaDeRede()
+    expect(avisado).toHaveBeenCalledTimes(1)
+  })
+
   it('cancelar a assinatura para de avisar', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => REDIRECT_OPACO))
     const avisado = vi.fn()
