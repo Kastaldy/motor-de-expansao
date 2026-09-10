@@ -324,6 +324,52 @@ export function mapaPronto(
 }
 
 /**
+ * A ORDEM em que a camera visita os alvos: sempre o mais proximo do ultimo visitado.
+ *
+ * A ordem de captura era a de COLAGEM, e isso e' geografia por acaso. Colar Posse,
+ * Jatai, Posse, Jatai fazia a camera atravessar 500 km TRES vezes; por proximidade, o
+ * salto longo e' um so'. Cada travessia e' um voo que pode nao chegar dentro do
+ * `TETO_PRONTIDAO_MS` — e alvo que nao chega vira coluna sem mapa (medido no deck de
+ * 10/09/2026 as 14:10, onde a unica coluna vazia foi justamente a primeira da segunda
+ * cidade). Menos travessia, menos chance de perder coluna, e menos segundos de geracao.
+ *
+ * Devolve INDICES da lista recebida, e nao os alvos reordenados: a imagem de cada area
+ * tem de voltar para a posicao dela, que e' por onde o servidor pareia nome e foto.
+ *
+ * Guloso, e nao a rota otima: com no maximo 5 pontos a diferenca e' nula, e o caixeiro
+ * viajante nao paga o proprio custo aqui. Alvo sem quadro (`null`) vai para o fim, sem
+ * puxar a rota — nao se voa ate' quem nao tem para onde.
+ */
+export function ordemDeVoo(
+  pontos: readonly ({ lat: number; lng: number } | null)[],
+  partida: { lat: number; lng: number } | null,
+): number[] {
+  const pendentes = pontos.map((_, i) => i).filter((i) => pontos[i] != null)
+  const semQuadro = pontos.map((_, i) => i).filter((i) => pontos[i] == null)
+  const ordem: number[] = []
+  let de = partida
+  while (pendentes.length) {
+    let melhor = 0
+    if (de) {
+      let menor = Infinity
+      for (let k = 0; k < pendentes.length; k++) {
+        const p = pontos[pendentes[k]]!
+        // Distancia em graus, sem projecao: aqui so' se COMPARA, nunca se reporta.
+        const d = Math.hypot(p.lat - de.lat, p.lng - de.lng)
+        if (d < menor) {
+          menor = d
+          melhor = k
+        }
+      }
+    }
+    const i = pendentes.splice(melhor, 1)[0]
+    ordem.push(i)
+    de = pontos[i]
+  }
+  return [...ordem, ...semQuadro]
+}
+
+/**
  * Teto de espera pela prontidao, por captura. Estourou, a coluna declara a ausencia.
  *
  * 12 s, e nao os 6 s do primeiro corte: no deck de 10/09/2026 os quatro pontos cruzavam

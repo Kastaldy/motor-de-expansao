@@ -13,6 +13,7 @@ import {
   TETO_PRONTIDAO_MS,
   comporCanvas,
   mapaPronto,
+  ordemDeVoo,
   ordenarParaEmpilhar,
   quadroDaCaptura,
 } from '../lib/captura-mapa'
@@ -741,24 +742,35 @@ export default function HexMap({
       await pausa(500)
       await esperarPronto(null)
 
-      const imagens: string[] = []
-      for (const pedido of pedidoCaptura.alvos) {
+      /* Os quadros de TODOS os alvos primeiro, porque a rota se decide sobre eles. O
+         quadro sai do PROPRIO hexId, nao do que o mapa carregou: ate' 10/09/2026 isto era
+         `hexes.find(h => h.id === pedido.hexId)` e, sem achar, empurrava foto vazia —
+         como o mapa serve UM municipio por vez, comparar pontos de duas cidades so'
+         rendia mapa para os da cidade aberta. O zoom continua DERIVADO do hexagono. */
+      const caixa = caixaRef.current?.getBoundingClientRect()
+      const quadros = pedidoCaptura.alvos.map((a) =>
+        quadroDaCaptura(a.hexId, caixa?.width || 1200, caixa?.height || 800),
+      )
+
+      /* VOA POR PROXIMIDADE, mas guarda POR POSICAO. A ordem de captura era a de
+         colagem, que e' geografia por acaso: Posse, Jatai, Posse, Jatai atravessava 500
+         km tres vezes, e cada travessia e' um voo que pode nao chegar dentro do teto.
+         O indice de origem e' preservado porque e' por ele que o servidor pareia nome e
+         foto. */
+      const imagens: string[] = pedidoCaptura.alvos.map(() => '')
+      const rota = ordemDeVoo(
+        quadros.map((q) => (q ? { lat: q.lat, lng: q.lng } : null)),
+        view.latitude != null && view.longitude != null
+          ? { lat: view.latitude, lng: view.longitude }
+          : null,
+      )
+
+      for (const i of rota) {
         if (cancelado) return
-        /* O quadro sai do PROPRIO hexId, nao do que o mapa carregou. Ate' 10/09/2026
-           esta linha era `hexes.find(h => h.id === pedido.hexId)` e, sem achar, empurrava
-           foto vazia: como o mapa serve UM municipio por vez, comparar pontos de duas
-           cidades so' rendia mapa para os da cidade aberta (medido no deck de Posse/GO +
-           Jatai/GO). O zoom continua DERIVADO do hexagono — ver `quadroDaCaptura`. */
-        const caixa = caixaRef.current?.getBoundingClientRect()
-        const quadro = quadroDaCaptura(
-          pedido.hexId,
-          caixa?.width || 1200,
-          caixa?.height || 800,
-        )
-        if (!quadro) {
-          imagens.push('')
-          continue
-        }
+        const pedido = pedidoCaptura.alvos[i]
+        const quadro = quadros[i]
+        // Sem quadro a coluna ja' nasce declarando a ausencia: nada a fotografar.
+        if (!quadro) continue
         /* As camadas do municipio DESTE alvo entram ANTES do voo, junto com a marca: o
            deck precisa ja' estar pintando os pins certos quando o quadro parar. */
         setPinsDaCaptura(pedido.pins ?? null)
@@ -782,8 +794,7 @@ export default function HexMap({
         if (cancelado) return
         if (!(await esperarPronto({ lat: quadro.lat, lng: quadro.lng }))) {
           // Nao chegou dentro do teto: declara a ausencia em vez de fotografar o quadro
-          // anterior, que sairia sob o nome desta area.
-          imagens.push('')
+          // anterior, que sairia sob o nome desta area. A posicao ja' esta' vazia.
           continue
         }
         if (cancelado) return
@@ -793,9 +804,8 @@ export default function HexMap({
         const canvases = ordenarParaEmpilhar(
           Array.from(caixaRef.current?.querySelectorAll('canvas') ?? []),
         )
-        imagens.push(
-          comporCanvas(canvases, document.createElement('canvas'), { recortar: true }) ?? '',
-        )
+        imagens[i] =
+          comporCanvas(canvases, document.createElement('canvas'), { recortar: true }) ?? ''
       }
 
       setMarcaCaptura(null)

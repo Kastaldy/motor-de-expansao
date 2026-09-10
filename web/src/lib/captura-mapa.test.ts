@@ -14,6 +14,7 @@ import {
   larguraDoAnel,
   mapaPronto,
   metrosPorPixel,
+  ordemDeVoo,
   ordenarParaEmpilhar,
   quadroDaCaptura,
   recorteCentral,
@@ -390,5 +391,64 @@ describe('mapaPronto', () => {
     // A comparacao de HEXAGONOS nao marca imovel; ali so' importa que o quadro exista.
     expect(mapaPronto(pronto, null)).toBe(true)
     expect(mapaPronto({ ...pronto, estiloCarregado: false }, null)).toBe(false)
+  })
+})
+
+describe('ordemDeVoo', () => {
+  // Os quatro pontos do deck de 10/09/2026. Posse/GO e Jatai/GO estao a ~500 km.
+  const posseA = { lat: -14.0759, lng: -46.3450 }
+  const posseB = { lat: -14.0869, lng: -46.3664 }
+  const jataiA = { lat: -17.8576, lng: -51.7285 }
+  const jataiB = { lat: -17.8801, lng: -51.7293 }
+
+  /** Quantas vezes a rota pula mais de 1 grau — o salto caro. */
+  const saltosLongos = (ordem: number[], pts: ({ lat: number; lng: number } | null)[]) => {
+    let n = 0
+    for (let i = 1; i < ordem.length; i++) {
+      const a = pts[ordem[i - 1]]
+      const b = pts[ordem[i]]
+      if (a && b && Math.hypot(a.lat - b.lat, a.lng - b.lng) > 1) n++
+    }
+    return n
+  }
+
+  it('agrupa as cidades mesmo com a colagem alternando entre elas', () => {
+    /* A ordem de captura era a de COLAGEM. Colando Posse, Jatai, Posse, Jatai, a camera
+       atravessava o pais TRES vezes, e cada travessia e' um voo que pode nao chegar
+       dentro do teto — foi assim que a coluna "3 - Jatai" saiu vazia no deck das 14:10,
+       no unico salto longo que aquela colagem tinha. Por proximidade, o salto longo e'
+       sempre UM so'. */
+    const pts = [posseA, jataiA, posseB, jataiB]
+    expect(saltosLongos([0, 1, 2, 3], pts)).toBe(3)
+    expect(saltosLongos(ordemDeVoo(pts, posseA), pts)).toBe(1)
+  })
+
+  it('visita todos os alvos, uma vez cada', () => {
+    const pts = [posseA, jataiA, posseB, jataiB]
+    expect([...ordemDeVoo(pts, posseA)].sort()).toEqual([0, 1, 2, 3])
+  })
+
+  it('comeca pelo mais PROXIMO de onde a camera ja esta', () => {
+    const pts = [jataiA, posseA]
+    expect(ordemDeVoo(pts, posseB)[0]).toBe(1)
+    expect(ordemDeVoo(pts, jataiB)[0]).toBe(0)
+  })
+
+  it('alvo sem quadro vai para o fim, e nao arrasta a rota', () => {
+    // `null` e' hexId invalido: nao se voa ate' ele, e ele nao pode puxar a ordem.
+    const pts = [null, posseA, jataiA]
+    const ordem = ordemDeVoo(pts, posseB)
+    expect(ordem[ordem.length - 1]).toBe(0)
+    expect(ordem.slice(0, 2)).toEqual([1, 2])
+  })
+
+  it('lista vazia e lista de um seguem triviais', () => {
+    expect(ordemDeVoo([], posseA)).toEqual([])
+    expect(ordemDeVoo([jataiA], posseA)).toEqual([0])
+  })
+
+  it('sem partida, mantem a ordem recebida como ponto de saida', () => {
+    // Sem camera conhecida, o primeiro colado abre a rota — decisao, nao acaso.
+    expect(ordemDeVoo([jataiA, posseA, posseB], null)[0]).toBe(0)
   })
 })
