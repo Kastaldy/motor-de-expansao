@@ -887,15 +887,30 @@ def _derivar(df: pd.DataFrame) -> pd.DataFrame:
     if "nome_municipio" not in out.columns and "cidade" in out.columns:
         out["nome_municipio"] = out["cidade"]
 
-    # Contagem estimada de concorrentes: o enriquecido nao traz a contagem, so a
-    # oferta consumida. Divide-se pela capacidade default (2.500 alunos/unidade).
+    # CONTAGEM de concorrentes que alcancam o hexagono.
+    #
+    # `n_concorrentes_influencia_1km` e' contagem DE VERDADE -- quantas academias distintas
+    # tem o disco de 1 km cruzando esta celula (`pressao_concorrencial_1km`). Ela passa a
+    # ser a fonte, e nao mais a divisao abaixo, por uma razao de CORRECAO: desde o
+    # BLK-CAPACIDADE-01 cada unidade consome a capacidade REAL dela, entao
+    # `oferta_consumida / 2.500` deixou de contar academias -- um Smart Fit de 5.000 alunos
+    # apareceria como "2 concorrentes" e mandaria o hexagono de "Adensar" para "Disputa"
+    # por ser GRANDE, nao por ter vizinho.
+    #
+    # O ramo antigo fica para artefato ANTERIOR ao bloco, onde a capacidade ainda era
+    # uniforme e a divisao era, de fato, uma contagem.
+    influencia = out.get("n_concorrentes_influencia_1km")
     cap = (
         out["capacidade_default_concorrente_alunos"]
         if "capacidade_default_concorrente_alunos" in out.columns
         else CAPACIDADE_CONCORRENTE_PADRAO
     )
     consumo = out.get("oferta_consumida_mercado_estimada")
-    if consumo is not None:
+    if influencia is not None:
+        out["n_concorrentes_est"] = (
+            pd.to_numeric(influencia, errors="coerce").fillna(0).round().astype("int64")
+        )
+    elif consumo is not None:
         divisor = pd.to_numeric(cap, errors="coerce")
         divisor = divisor.replace(0, float("nan")) if hasattr(divisor, "replace") else divisor
         n = pd.to_numeric(consumo, errors="coerce") / divisor
@@ -2143,10 +2158,16 @@ def _narrativa_concorrencia(n_residual: int, n_livre: int, n_adensar: int, n_dis
     duas vezes. Agora so' sai a saturacao extrema (mais de `CONC_ADENSAR_MAX`), e o
     resto e' LEITURA.
 
-    RAIO, NAO HEXAGONO: `n_concorrentes_est` deriva de `oferta_efetiva_mapeada_2km`
-    (`calcular_colunas_mercado`), que soma os concorrentes ate 2 km ponderados por
-    distancia — o proprio cabecalho do passo ja exibe "conc. 2 km". Um concorrente a
-    1,8 km do centroide conta aqui e nao esta "dentro do hexagono".
+    RAIO, NAO HEXAGONO: `n_concorrentes_est` nao e' uma contagem de cabecas — e' a
+    oferta consumida dividida pela capacidade por unidade (`_derivar`). Um concorrente
+    que alcanca o hexagono sem estar dentro dele conta aqui.
+
+    A FONTE MUDOU e este comentario dizia o contrario ate 2026-09-10: desde a DEC-051 a
+    `oferta_consumida_mercado_estimada` vem de `oferta_efetiva_1km_area` (interseccao de
+    area do disco de 1 km), e nao mais de `oferta_efetiva_mapeada_2km` (decaimento ate 2
+    km do centroide). O rotulo do passo ainda diz "conc. 2 km" por heranca. Consequencia
+    pratica, e por isso vale corrigir: quem le este bloco para saber onde mexer numa
+    exclusao de universo iria ao arquivo errado.
     """
     if n_residual == 0:
         return (

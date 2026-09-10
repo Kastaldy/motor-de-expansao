@@ -25,6 +25,9 @@ CONCORRENTES_PATH = ROOT / "data" / "staging" / "concorrentes_mapeados.parquet"
 # DEC-048: unidades de REDE vistas pelo agregador. OPCIONAL — ausente, o universo de cadeia
 # fica so' com o cadastro e o artefato sai IDENTICO ao de antes.
 REDES_AGREGADOR_PATH = ROOT / "data" / "staging" / "vulnerabilidade_ma_redes.parquet"
+# BLK-CAPACIDADE-01: alunos REAIS por unidade. OPCIONAL -- ausente, toda academia cai no
+# proxy de 2.500 e o artefato sai identico ao de antes.
+ALUNOS_REAIS_PATH = ROOT / "data" / "staging" / "alunos_reais_por_unidade.parquet"
 ULTRA_PATH = ROOT / "data" / "staging" / "unidades_ultra_mapeadas.parquet"
 OUT_PATH = ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"
 
@@ -32,6 +35,32 @@ EARTH_RADIUS_M = 6_371_000.0
 RADIUS_1KM_RAD = 1_000.0 / EARTH_RADIUS_M
 RADIUS_2KM_RAD = 2_000.0 / EARTH_RADIUS_M
 CHUNK_SIZE = 100_000
+
+#: Redes de ESTUDIO BOUTIQUE, fora do universo de oferta (BLK-ESTUDIO-01).
+#:
+#: Elas nao disputam o mesmo aluno de uma academia full-service low-cost (§1): sao aula em
+#: horario marcado, turma pequena, ticket e proposta diferentes. Contadas como concorrente,
+#: cada uma consumia os MESMOS 2.500 alunos de um Smart Fit -- e a Ultra lia como saturada
+#: uma praca onde ha' tres estudios de pilates e nenhuma academia.
+#:
+#: A LISTA E' DO DONO, nao minha. Classificar academia x estudio e' juizo de mercado, e o
+#: custo de errar e' assimetrico: excluir uma academia de verdade faz a Ultra ver mercado
+#: livre onde ha' concorrente, que e' o erro caro. Por isso as 11 redes ambiguas que ele
+#: nao reconheceu (Allp Fit, 26Fit, Contorno do Corpo, Corpo e Saude, Usina do Corpo,
+#: Wellness Club, Evolve, Motion Fit, Marra Fit, Match Fit, Uplay) ficaram DENTRO.
+REDES_ESTUDIO_BOUTIQUE = frozenset(
+    {
+        "velocity",
+        "my_box",
+        "vidya_studio",
+        "tonus_gym",
+        "aera_pilates",
+        "race_bootcamp",
+        "kore",
+        "nadarte",
+        "jab_house",
+    }
+)
 
 
 def _knn_dist_m(
@@ -61,8 +90,13 @@ def unir_cadeias(df_comp: pd.DataFrame, df_redes: pd.DataFrame | None) -> pd.Dat
     Elas entram no MESMO universo, e nao num termo paralelo, porque sao a mesma coisa: unidade
     de rede, com a mesma capacidade de clube. Fosse um termo separado, `flag_white_space_2km`,
     `gap_competitivo_2km` e a contagem exibida continuariam mentindo -- so' o residual ficaria
-    certo. Como a capacidade e' identica, `oferta_consumida_mercado_estimada / 2500` segue
-    devolvendo a CONTAGEM correta; nao ha unidade mista aqui.
+    certo.
+
+    A ULTIMA FRASE DESTE PARAGRAFO CAIU no BLK-CAPACIDADE-01. Ela dizia: "como a capacidade
+    e' identica, `oferta_consumida_mercado_estimada / 2500` segue devolvendo a CONTAGEM
+    correta". Deixou de ser verdade no dia em que a capacidade passou a ser a REAL de cada
+    unidade -- um Smart Fit de 5.000 alunos daria "2 concorrentes" nessa divisao. Quem
+    precisa contar academia le `n_concorrentes_influencia_1km`, que e' contagem de verdade.
 
     A DEDUP REUSA `tem_pin_proprio`, ja' calculada em `redes_nomeadas.py` via
     `dedup_cadeias_do_feed` (pressao_competitiva.py) -- a MESMA funcao que serve o sinal 6 e o
@@ -97,7 +131,16 @@ def unir_cadeias(df_comp: pd.DataFrame, df_redes: pd.DataFrame | None) -> pd.Dat
 
     novas = redes.copy()
     novas["status_registro"] = "valido"
+    # `concorrente_id` viaja junto (NULO nas do agregador, que nao o tem) porque e' a
+    # chave do crosswalk de alunos reais -- ver `anexar_capacidade_real`. Sem ele aqui, a
+    # capacidade por unidade nao teria por onde casar: depois desta funcao so' existem
+    # agregados por hexagono.
     colunas = ["rede", "lat", "lng", "status_registro"]
+    if "concorrente_id" in comp_ok.columns:
+        comp_ok = comp_ok.copy()
+        novas = novas.copy()
+        novas["concorrente_id"] = pd.NA
+        colunas = [*colunas, "concorrente_id"]
     unido = pd.concat([comp_ok[colunas], novas[colunas]], ignore_index=True)
     # float64 PURO na saida, e nao `Float64` nullable. O cadastro guarda float64 e o feed do
     # agregador guarda nullable; o `concat` dos dois promove a coluna para nullable, e
@@ -109,6 +152,92 @@ def unir_cadeias(df_comp: pd.DataFrame, df_redes: pd.DataFrame | None) -> pd.Dat
     for col in ("lat", "lng"):
         unido[col] = unido[col].astype("float64")
     return unido.reset_index(drop=True)
+
+
+def excluir_estudios_boutique(
+    cadeias: pd.DataFrame, *, redes: frozenset[str] = REDES_ESTUDIO_BOUTIQUE
+) -> pd.DataFrame:
+    """Tira os estudios boutique do universo de OFERTA (BLK-ESTUDIO-01).
+
+    Funcao SEPARADA de `unir_cadeias` de proposito, no molde de
+    `admitir_orfaos_da_malha` x `sobrepor_renda_da_malha` (DEC-055): aquela responde
+    "quem existe", esta responde "quem CONTA como concorrente". Sao duas perguntas, e
+    juntar as duas numa funcao so' faria a segunda mudar de resposta sempre que a
+    primeira mudasse de fonte.
+
+    APLICADA UMA VEZ, ANTES dos dois modelos. Nao e' economia de linhas: o comentario
+    do passo 5b ja' exigia que o modelo de 2 km e o de 1 km concordassem sobre QUEM e'
+    concorrente. Filtrar so' o de 1 km (a oferta do residual) deixaria os estudios
+    INFLANDO o mercado por `calibrar_taxa_fitness_mercado`, que le
+    `n_concorrentes_mapeados_2km` para estimar a penetracao -- o residual subiria pelas
+    duas pontas, e nao por uma. Um universo, uma resposta.
+
+    O QUE ESTA FUNCAO NAO ALCANCA, e e' por desenho: os pins do mapa e a contagem do
+    Relatorio Pontual (DEC-046) leem `concorrentes_mapeados.parquet` direto, na camada
+    web/relatorio, sem passar por aqui. O operador continua VENDO o estudio no mapa.
+
+    O QUE ELA ALCANCA E O DONO ACEITOU: o rotulo Livre/Adensar/Disputa (DEC-041) e a
+    camada 3 do funil derivam de `n_concorrentes_est`, que desde a DEC-051 e' a oferta
+    do residual dividida pela capacidade (`web/server/app.py`) -- nao uma contagem de
+    cabecas. Medido: 135 hexagonos mudam de rotulo (73 Adensar->Livre, 62
+    Disputa->Adensar). Decisao dele em 2026-09-10: uma regua so' na tela.
+    """
+    if "rede" not in cadeias.columns or cadeias.empty:
+        return cadeias
+
+    slug = cadeias["rede"].astype(str)
+    fora = slug.isin(redes)
+
+    # TRIPWIRE. O slug de `rede` nao vem de cadastro nenhum: `normalizar_concorrentes`
+    # o deriva do NOME DO ARQUIVO CSV coletado. Renomear um arquivo la' na coleta apaga
+    # esta exclusao em SILENCIO -- o pipeline seguiria verde com o estudio de volta na
+    # oferta. Um slug declarado que nao casa NADA e' sinal disso, e tem de falar.
+    vazios = sorted(r for r in redes if not slug.eq(r).any())
+    if vazios:
+        print(f"   AVISO: rede(s) de estudio sem nenhuma unidade no universo: {', '.join(vazios)}")
+        print("          o slug vem do nome do CSV da coleta -- conferir se foi renomeado.")
+
+    return cadeias[~fora].reset_index(drop=True)
+
+
+def anexar_capacidade_real(
+    cadeias: pd.DataFrame, *, crosswalk_path: Path = ALUNOS_REAIS_PATH
+) -> pd.DataFrame:
+    """Anexa `capacidade_alunos` por unidade a partir dos alunos REAIS (BLK-CAPACIDADE-01).
+
+    Ate' aqui toda academia do pais consumia os mesmos 2.500 alunos -- um proxy, e o
+    proprio nome da constante dizia isso (`CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS`). O
+    crosswalk do BLK-ALUNOS-01 casou 1.202 unidades com o numero que a propria rede
+    informou; onde ele existe, deixa de haver motivo para usar o proxy.
+
+    QUEM NAO TEM CONTINUA COM O PROXY, e a coluna sai NULA para essas linhas em vez de
+    2.500 -- quem consome decide o default. Preencher aqui esconderia do artefato quantas
+    unidades sao medidas e quantas sao estimadas, que e' a pergunta que a auditoria faz.
+
+    So' entra `confianca_match == "alta"`, a mesma regua que o tooltip usa: a rota de
+    contencao e' inferencia, e um numero inferido virando CAPACIDADE mexe no residual de
+    todo mundo em volta, nao so' na linha dele.
+
+    Ausencia do crosswalk e' caminho NORMAL (o parquet nao e' versionado): devolve o
+    frame sem a coluna, e o modelo cai inteiro no proxy -- exatamente o de hoje.
+    """
+    if not crosswalk_path.is_file() or "concorrente_id" not in cadeias.columns:
+        print("   capacidade real: crosswalk ausente - todo mundo no proxy de 2.500")
+        return cadeias
+
+    cw = pd.read_parquet(crosswalk_path, columns=["concorrente_id", "alunos_total", "confianca_match"])
+    cw = cw[
+        cw["concorrente_id"].notna()
+        & cw["confianca_match"].astype(str).eq("alta")
+        & (pd.to_numeric(cw["alunos_total"], errors="coerce") > 0)
+    ]
+    mapa = cw.set_index(cw["concorrente_id"].astype(str))["alunos_total"].astype(float)
+
+    out = cadeias.copy()
+    out["capacidade_alunos"] = out["concorrente_id"].astype(str).map(mapa)
+    n = int(out["capacidade_alunos"].notna().sum())
+    print(f"   capacidade real: {n:,} de {len(out):,} unidades ({n/max(len(out),1):.1%}); resto no proxy")
+    return out
 
 
 def calc_comp_metrics(
@@ -366,6 +495,17 @@ def main():
     else:
         print(f"   AUSENTE: {REDES_AGREGADOR_PATH.name} - so' o cadastro; a oferta de cadeia segue subestimada.")
         cadeias = unir_cadeias(df_comp, None)
+
+    # BLK-ESTUDIO-01: os estudios boutique saem do universo de OFERTA aqui, UMA vez,
+    # antes dos dois modelos -- ver `excluir_estudios_boutique`. Pins e Relatorio
+    # Pontual leem o parquet direto e seguem enxergando todo mundo.
+    n_antes = len(cadeias)
+    cadeias = excluir_estudios_boutique(cadeias)
+    print(f"   estudios boutique fora da oferta: {n_antes - len(cadeias):,} de {n_antes:,}")
+
+    # BLK-CAPACIDADE-01: quem tem aluno real medido para de valer o proxy de 2.500.
+    cadeias = anexar_capacidade_real(cadeias)
+
     comp_metrics = calc_comp_metrics(hex_coords_rad, cadeias)
 
     print("\n4. Metricas Ultra...")
@@ -376,10 +516,11 @@ def main():
         df_base[col] = vals
 
     print("\n5b. Modelo de area de influencia (1 km por concorrente, DEC-051)...")
-    # Mesmo universo `cadeias` do passo 3 (cadastro + agregador, ja' deduplicado) -- os
-    # dois modelos (2km centroide e 1km area) tem de concordar sobre QUEM e' concorrente,
-    # senao uma exclusao futura (ex.: estudios boutique) precisaria ser aplicada duas vezes.
-    df_base = anexar_pressao_1km_area(df_base, cadeias)
+    # Mesmo universo `cadeias` do passo 3 (cadastro + agregador, deduplicado e JA' SEM os
+    # estudios boutique) -- os dois modelos (2km centroide e 1km area) tem de concordar
+    # sobre QUEM e' concorrente. A "exclusao futura" que este comentario previa chegou no
+    # BLK-ESTUDIO-01, e entrou onde ele mandava: uma vez, acima dos dois.
+    df_base = anexar_pressao_1km_area(df_base, cadeias, coluna_capacidade="capacidade_alunos")
 
     validar(df_base, n_orig)
 
