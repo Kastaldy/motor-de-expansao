@@ -91,32 +91,31 @@ from motor_expansao.dashboard import (  # noqa: E402
 
 # Contrato financeiro do ponto — REGUA UNICA (FIN-VIAB-01). Estas funcoes moravam aqui
 # dentro; foram para o `src/` para que a API GeoEspacial as use SEM importar esta app.
-# `num_json_safe` chega como `_num` porque e o nome que as ~100 chamadas deste arquivo ja
-# usam: renomear tudo seria diff sem ganho.
-#
-# `FONTE_BASE_INDISPONIVEL`, `VIABILIDADE_PAYLOAD_VERSAO` e `_motivo_zona_morta_legivel`
-# sao RE-EXPORTS deliberados: fazem parte da superficie que os testes do piloto leem por
-# `app.<nome>`. O `noqa: F401` existe porque, sem ele, o autofix do ruff os apagaria e a
-# suite quebraria por AttributeError — "nao usado neste arquivo" nao e o mesmo que
-# "nao usado".
+from motor_expansao.dimensionamento import payload_viabilidade as _viab  # noqa: E402
 from motor_expansao.dimensionamento.payload_viabilidade import (  # noqa: E402
-    FONTE_BASE_INDISPONIVEL,  # noqa: F401
-    VIABILIDADE_PAYLOAD_VERSAO,  # noqa: F401
     ViabilidadeIn,
-    _motivo_zona_morta_legivel,  # noqa: F401
     base_calibracao,
     montar_payload_para_pdf,
     montar_payload_viabilidade,
 )
-from motor_expansao.dimensionamento.payload_viabilidade import (  # noqa: E402
-    investimento_do_body as _investimento,
-)
-from motor_expansao.dimensionamento.payload_viabilidade import (  # noqa: E402
-    num_json_safe as _num,
-)
-from motor_expansao.dimensionamento.payload_viabilidade import (  # noqa: E402
-    premissas_do_body as _premissas_do_body,
-)
+
+# --- Superficie que este modulo continua expondo, por ATRIBUICAO ------------------
+# Os nomes abaixo nao sao usados AQUI DENTRO — sao lidos de fora, por `app.<nome>`
+# (os testes do piloto fazem isso) ou sao apelidos locais que as ~100 chamadas deste
+# arquivo ja usam. Como IMPORT eles apareciam para o ruff como `F401 imported but
+# unused`, e o autofix os apagaria deixando ruff e mypy VERDES: a quebra so aparecia
+# depois, como AttributeError. "Nao usado neste arquivo" nao e o mesmo que "nao usado".
+#
+# Atribuicao em vez de import + `noqa` porque o vinculo passa a ser CODIGO, nao
+# configuracao de linter: nenhum autofix pode remove-lo, e quem le entende por que
+# estao aqui sem precisar decifrar um `noqa`.
+FONTE_BASE_INDISPONIVEL = _viab.FONTE_BASE_INDISPONIVEL
+VIABILIDADE_PAYLOAD_VERSAO = _viab.VIABILIDADE_PAYLOAD_VERSAO
+_motivo_zona_morta_legivel = _viab._motivo_zona_morta_legivel
+_num = _viab.num_json_safe
+_investimento = _viab.investimento_do_body
+_premissas_do_body = _viab.premissas_do_body
+
 from motor_expansao.perfil import resolver_perfil  # noqa: E402
 
 # --- Perfil do pais desta instancia (Bloco A / DEC-047) ----------------------
