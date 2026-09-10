@@ -8633,7 +8633,10 @@ class RelatorioMunicipalIn(BaseModel):
 
 
 @app.post("/api/relatorio/municipal")
-async def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
+async def relatorio_municipal(
+    body: RelatorioMunicipalIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> Response:
     """Rota fina: gate de concorrencia `_PDF_SEMAFORO` + threadpool, igual a
     /api/relatorio/pontual, /comparacao e /simulador/xlsx.
 
@@ -8642,11 +8645,23 @@ async def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
     do uvicorn e derrubavam ate' o /api/health. O corpo pesado agora vive no helper
     sincrono `_gerar_relatorio_municipal_response`, chamado sob o teto de concorrencia.
     """
+    # D17: a marca-d'agua deste gerador ja' existia, mas o `solicitante` que ela usa
+    # nunca chegava preenchido -- o front nao o envia. Agora ela recebe quem pediu de
+    # verdade, e o identificador que amarra o arquivo ao evento.
+    report_id = _registrar_relatorio_gerado(remote_user, relatorio="municipal", formato="pdf")
+    solicitante = body.solicitante or acesso.login_da_requisicao(remote_user)
+
     async with _PDF_SEMAFORO:
-        return await run_in_threadpool(_gerar_relatorio_municipal_response, body)
+        return await run_in_threadpool(
+            _gerar_relatorio_municipal_response, body, solicitante, report_id
+        )
 
 
-def _gerar_relatorio_municipal_response(body: RelatorioMunicipalIn) -> Response:
+def _gerar_relatorio_municipal_response(
+    body: RelatorioMunicipalIn,
+    solicitante: str | None = None,
+    report_id: str | None = None,
+) -> Response:
     """Relatorio Municipal (9 paginas). Acionado pelo 4o passo do mapa.
 
     Renderiza as 5 camadas de mapa (`render_mapas_municipio`) e AS PASSA ao gerador —
@@ -8741,7 +8756,8 @@ def _gerar_relatorio_municipal_response(body: RelatorioMunicipalIn) -> Response:
         result,
         mapas,
         ultra_dir=ULTRA_DIR if ULTRA_DIR.exists() else None,
-        solicitante=body.solicitante,
+        solicitante=solicitante,
+        report_id=report_id,
     )
     return Response(
         content=payloads.pdf_bytes,

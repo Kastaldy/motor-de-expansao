@@ -69,7 +69,8 @@ existe para esse lookup. Um `relatorio.gerado` sem `report_id` não cumpre o D17
 > `report_id` na marca-d'água de todas as páginas e nos metadados `/Info`. O deck da Comparação **não
 > tinha marca-d'água nenhuma** até aqui — era a superfície mais exposta do piloto, e um deck vazado
 > não carregava nada apontando para pessoa, só um `set_author` fixo igual para todo mundo.
-> **Municipal**: marca-d'água existe, produtor não. **Simulador XLSX**: entra por contrato, mas
+> **Municipal**: produtor ligado desde 10/09 — a marca-d'água dele já existia, mas o `solicitante`
+> que ela usa nunca chegava preenchido, então saía só a base. **Simulador XLSX**: entra por contrato, mas
 > planilha não tem content stream — o carimbo pede decisão nova (célula fixa ou `docProps`).
 > **Exports da Rede** (ficha, carteira): fora do contrato de eventos.
 >
