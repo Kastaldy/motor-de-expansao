@@ -9169,7 +9169,11 @@ def _kwargs_aceitos(fn: Callable[..., Any], **candidatos: Any) -> dict[str, Any]
 
 
 @app.post("/api/simulador/xlsx")
-async def simulador_xlsx(body: ViabilidadeIn, rotulo: str | None = None) -> Response:
+async def simulador_xlsx(
+    body: ViabilidadeIn,
+    rotulo: str | None = None,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> Response:
     """Simulador financeiro completo em XLSX, com formulas vivas.
 
     Mesmo corpo do /api/viabilidade (`ViabilidadeIn`); `rotulo` (query) so nomeia o
@@ -9185,11 +9189,23 @@ async def simulador_xlsx(body: ViabilidadeIn, rotulo: str | None = None) -> Resp
     CPU; sem o teto, N requisicoes concorrentes saturavam o threadpool do uvicorn e
     derrubavam ate' o /api/health. Mesmo padrao de /api/relatorio/pontual e /comparacao.
     """
+    # D17: a planilha nao tem content stream onde desenhar marca-d'agua, entao o carimbo
+    # e' o par bloco-visivel + `docProps` -- ver "Rastreio do arquivo" no gerador.
+    report_id = _registrar_relatorio_gerado(remote_user, relatorio="simulador", formato="xlsx")
+    solicitante = acesso.login_da_requisicao(remote_user)
+
     async with _PDF_SEMAFORO:
-        return await run_in_threadpool(_gerar_simulador_xlsx_response, body, rotulo)
+        return await run_in_threadpool(
+            _gerar_simulador_xlsx_response, body, rotulo, solicitante, report_id
+        )
 
 
-def _gerar_simulador_xlsx_response(body: ViabilidadeIn, rotulo: str | None) -> Response:
+def _gerar_simulador_xlsx_response(
+    body: ViabilidadeIn,
+    rotulo: str | None,
+    solicitante: str | None = None,
+    report_id: str | None = None,
+) -> Response:
     """Corpo SINCRONO da rota do XLSX — roda no threadpool, nunca no event loop.
 
     Deliberadamente `def`, nao `async def`: e o que mantem o servidor respondendo
@@ -9208,6 +9224,8 @@ def _gerar_simulador_xlsx_response(body: ViabilidadeIn, rotulo: str | None) -> R
         rotulo=rotulo,
         m2=float(body.m2),
         aviso_nota=_texto_do_aviso_de_viabilidade("xlsx", "texto_curto"),
+        solicitante=solicitante,
+        report_id=report_id,
     )
 
     conteudo = gerar(float(body.demanda), premissas, inv, **extras)

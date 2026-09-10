@@ -70,9 +70,13 @@ existe para esse lookup. Um `relatorio.gerado` sem `report_id` não cumpre o D17
 > tinha marca-d'água nenhuma** até aqui — era a superfície mais exposta do piloto, e um deck vazado
 > não carregava nada apontando para pessoa, só um `set_author` fixo igual para todo mundo.
 > **Municipal**: produtor ligado desde 10/09 — a marca-d'água dele já existia, mas o `solicitante`
-> que ela usa nunca chegava preenchido, então saía só a base. **Simulador XLSX**: entra por contrato, mas
-> planilha não tem content stream — o carimbo pede decisão nova (célula fixa ou `docProps`).
-> **Exports da Rede** (ficha, carteira): fora do contrato de eventos.
+> que ela usa nunca chegava preenchido, então saía só a base. **Simulador XLSX**: ligado em 10/09 com
+> um carimbo PRÓPRIO, porque planilha não tem content stream onde desenhar marca-d'água — um bloco
+> **visível** no fim da aba `Afericao` e as propriedades do documento (`docProps/core.xml` +
+> `docProps/custom.xml`), invisíveis, dentro do ZIP que todo `.xlsx` é. As duas camadas são
+> complementares e as duas falham: a visível morre se apagarem as linhas, a invisível morre no
+> copy-paste de células para uma pasta nova, no "salvar como CSV" e no Inspetor de Documento do
+> Excel. **Exports da Rede** (ficha, carteira): fora do contrato de eventos.
 >
 > A marca-d'água compartilhada vive em `dashboard/pdf_base.py`, junto do `UltraPDF`. Os dois
 > geradores legados seguem com a cópia deles, pela razão escrita no cabeçalho daquele módulo — e o
