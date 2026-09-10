@@ -4912,7 +4912,15 @@ Disputa e a camada 3 do funil mudam, porque `n_concorrentes_est` deriva da ofert
 desde a DEC-051. Medido: **194 hexágonos** (115 Adensar→Livre, 77 Disputa→Adensar, 2
 Disputa→Livre). Decisão: uma régua só na tela.
 
-**Efeito**: consumo nacional 13.462.500 → 12.375.000 (−8,1%); residual +1,6%.
+**Efeito medido na regeneração real**: consumo de concorrente 13.462.500 → 12.375.000 (−8,1%),
+`n_concorrentes_mapeados_2km` 12.544 → 11.515 (−8,2%), TAM/SAM **−3,2%**, residual **−2,5%**.
+
+> **Correção de uma medição minha, e ela invertia o sinal.** A primeira estimativa dizia residual
+> **+1,6%** porque segurou o SAM fixo, tirando os estúdios só da oferta. Na cadeia de verdade o SAM
+> cai junto — `calibrar_taxa_fitness_mercado` estima a penetração pela CONTAGEM de academias, e os
+> estúdios saíram dela também. O mercado encolhe mais (−1,35 mi) que a oferta (−1,09 mi), então o
+> residual **cai**. É coerente com a premissa: se o estúdio não é concorrente, também não é
+> evidência de demanda. O residual fica mais conservador, não mais generoso.
 
 **Fragilidade com tripwire.** O slug `rede` é derivado do NOME DO ARQUIVO CSV da coleta
 (`normalizar_concorrentes.py`). Um rename lá apaga a exclusão em silêncio, com o pipeline
@@ -4938,8 +4946,10 @@ unidade**: mediana real 2.326 (−7%), mas erro absoluto mediano de **546 alunos
 abaixo de 2.500, 40% acima, intervalo de 2 a 5.626. Por rede: Engenharia do Corpo 3.124
 (+25%), Smart Fit 2.348 (−6%), SkyFit 2.262 (−10%), RedFit 1.447 (−42%), Pacer 1.323 (−47%).
 
-**Por isso o nacional quase não anda (+0,4%), e isso não torna o bloco inútil.** Os erros do
-proxy se cancelam no agregado; o ganho é LOCAL. Em Ribeirão Preto o motor parava de cobrar
+**Por isso o nacional quase não anda (+0,4% sobre a base já sem estúdios), e isso não torna o
+bloco inútil.** Os erros do proxy se cancelam no agregado; o ganho é LOCAL. Este é o único dos
+dois blocos que **não mexe no mercado**: capacidade altera o consumo, não a CONTAGEM que calibra
+o TAM/SAM — por isso o +0,4% daqui é limpo. Em Ribeirão Preto o motor parava de cobrar
 2.500 alunos por uma Pacer de 613. Quem ler o +0,4% sozinho vai concluir errado — está escrito
 assim na DEC de propósito.
 
