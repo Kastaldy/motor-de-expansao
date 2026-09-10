@@ -4787,3 +4787,74 @@ superfície inteira em silêncio.
 
 **Guardrail.** §5 READ-ONLY M1. Rotular não exige DEC; promover a granular exige DEC Crítica com
 medição antes/depois, no padrão DEC-050/054/055.
+---
+
+### BLK-ALUNOS-01 — Alunos reais por unidade de concorrente: crosswalk + número no tooltip do pino
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — camada nova, READ-ONLY sobre o M1 e sobre o residual. Não muda score, fórmula nem artefato oficial: o artefato nasce e o único consumo é EXIBIÇÃO. Vira **Crítica** no passo seguinte, quando substituir a capacidade proxy de 2.500 no residual. |
+| **Esteira** | Normal (DEC-016): não toca M1/VPS/segredos. |
+| **Depende de** | `concorrentes_mapeados` (cron semanal) e `vulnerabilidade_ma_redes` (DEC-034/048) |
+| **Status** | **FEITO** (2026-09-10) — `pipelines/alunos_reais.py` + `alunos_reais_por_unidade.parquet` + linha "Alunos" no balão do pino. |
+| **Autonomia** | **manual (NÃO loop-safe)** — consome fonte gitignored que o container do loop não tem. |
+
+**O que existia e por que não servia.** O join já tinha sido escrito em
+`dimensionamento/base_multirede.py` (BLK-DIM-07, jun/2026), e três coisas o inutilizaram:
+(a) ele lê `concorrentes/Unidades/*.csv`, diretório que **não viaja no repo** — `carregar_skyfit`
+e `carregar_engenharia` levantam `FileNotFoundError` hoje, e ninguém tinha percebido; (b) conhece
+3 redes e nenhuma delas é a Smart Fit, que é de longe o maior dado; (c) casa a Skyfit por
+**CIDADE**, jogando fora a coluna de nome de unidade que a planilha tem — cidade com mais de uma
+unidade vira `ambiguo` e é descartada. Medido: **39,2% pela cidade contra 86,8% pelo nome**.
+
+**O que mudou de fonte.** A coordenada passa a vir de `concorrentes_mapeados.parquet` (o artefato
+que a PRODUÇÃO serve, atualizado pelo cron de terça) unido a `vulnerabilidade_ma_redes.parquet`
+(feed WellHub). Não é preferência de estilo: **o pino que o operador vê nasce desse artefato**, e o
+número de alunos precisa pousar na mesma linha para chegar ao tooltip. A Smart Fit não está no
+WellHub (zero unidades) — a coordenada dela vem só do coletor próprio, mais a planilha externa
+opcional de `NAO_ABRA/01_SmartFit.xlsx`, usada como PONTE por coordenada.
+
+**O que derruba a taxa de match é ORTOGRÁFICO, não semântico.** Cada coletor carimba o rótulo de um
+jeito: sufixo de UF (`Vila Granada - SP`), prefixo de rede (`PACER Ribeirânia`), sequência em
+romano de um lado e arábica do outro (`Bonfim I` × `Bonfim 1`), bairro colado na cidade
+(`Desvio Rizzo Caxias do Sul`). São normalizações baratas que valem mais que afrouxar corte — por
+isso o corte fica **alto (0,95)** e o trabalho é feito antes de comparar. A Pacer casava **0 de 13**
+só por causa do prefixo.
+
+**Resultado medido (2026-09-10):**
+
+| Rede | com alunos | no pool | casadas | taxa |
+|---|---:|---:|---:|---:|
+| Smart Fit | 952 | 999 | 878 | 92,2% |
+| Skyfit | 311 | 798 | 290 | 93,3% |
+| Engenharia do Corpo | 61 | 110 | 42 | 68,9% |
+| RedFit | 21 | 56 | 17 | 81,0% |
+| Grupo Pacer | 13 | 12 | 11 | 84,6% |
+
+**1.238 unidades no artefato, 1.202 chegam ao tooltip** — contra 275 que a base de junho tinha, das
+quais 53 eram a própria Ultra. Verificado ponta a ponta no navegador: `Pacer Sertãozinho 2` desenha
+**1.248** e a imagem-fonte diz 1.248; `Smart Fit Mall Dom Pedro I` desenha **1.875** e o painel diz
+1.875.
+
+**Dois defeitos meus que os testes pegaram, e valem como padrão:**
+1. **Recorte de UF fail-OPEN.** Quando não havia candidato na UF do alvo, o código caía no pool
+   NACIONAL — e um `Centro` do Amazonas casava com um `Centro` do Rio Grande do Sul com score
+   **1,000**. Match perfeito, errado, e sem nada no número que denuncie a troca. Mesmo fail-open que
+   a emenda E3 da DEC-039 teve de fechar. Agora UF conhecida e diferente **exclui**; UF nula segue
+   elegível, porque é ausência de informação e não um estado diferente.
+2. **Candidato reatribuído entre rotas.** Cada uma das três rotas (nome, contenção, ponte) começava
+   com o pool limpo, então um pino já tomado podia ser reatribuído: **9 pinos saíam com duas
+   contagens de alunos**, e uma vencia em silêncio no merge.
+
+**Onde ficou a linha do que se mostra.** A rota de CONTENÇÃO (o rótulo da fonte é um pedaço do
+rótulo do coletor) é inferência, e quem lê "Vila Nova Cachoeirinha — 2.400 alunos" não tem como
+saber que a linha de origem dizia só "Cachoeirinha". Ela entra no artefato com
+`confianca_match="media"` e **não** chega à tela. Zero também não chega: unidade recém-aberta ou
+lacuna de coleta desenharia "0 alunos" numa academia que existe.
+
+**Próximo passo (bloco à parte, Crítico).** Trocar `capacidade_default_concorrente_alunos = 2.500`
+pela capacidade real onde ela existe, no residual. Isso muda `oferta_efetiva_disponivel` →
+`score_oportunidade_residual` → `tese_entrada`/`prioridade_mercado_mapeado` e exige DEC própria com
+antes/depois nacional. **Atenção à dívida registrada na DEC-048**: a taxa de penetração é
+calibrada em runtime a partir das academias mapeadas, então mexer na oferta move o TAM/SAM junto —
+medir os dois efeitos separados, não o líquido.
