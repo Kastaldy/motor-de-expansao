@@ -382,10 +382,25 @@ def calcular(df: pd.DataFrame, n_redes: int | None = None) -> pd.DataFrame:
         pd.to_numeric(df["oferta_efetiva_1km_area"], errors="coerce").fillna(0.0).clip(lower=0)
     )
     df["capacidade_default_concorrente_alunos"] = CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS
-    # Concorrentes: oferta espacialmente ponderada por interseccao de area (DEC-051, 1km)
-    df["oferta_consumida_mercado_estimada"] = (
-        oferta_mercado_ponderada * CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS
-    )
+    # Concorrentes: oferta espacialmente ponderada por interseccao de area (DEC-051, 1km).
+    #
+    # BLK-CAPACIDADE-01: o consumo passa a vir PRONTO de `consumo_concorrentes_1km_area`,
+    # que o modelo de 1 km soma unidade a unidade com a capacidade REAL de cada uma (a que
+    # a rede informou, onde existe; o proxy de 2.500 no resto). Multiplicar aqui por um
+    # escalar unico desfaria isso -- e' por essa razao que a conta saiu deste arquivo.
+    #
+    # O ramo de tras continua porque o artefato pode ser ANTERIOR ao bloco: sem a coluna,
+    # reproduz bit a bit o comportamento de antes.
+    if "consumo_concorrentes_1km_area" in df.columns:
+        df["oferta_consumida_mercado_estimada"] = (
+            pd.to_numeric(df["consumo_concorrentes_1km_area"], errors="coerce")
+            .fillna(0.0)
+            .clip(lower=0)
+        )
+    else:
+        df["oferta_consumida_mercado_estimada"] = (
+            oferta_mercado_ponderada * CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS
+        )
     if "oferta_consumida_ultra_real" not in df.columns:
         df["oferta_consumida_ultra_real"] = 0.0
     df["oferta_consumida_ultra_real"] = (

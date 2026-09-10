@@ -259,6 +259,7 @@ def repartir_concorrentes(
     capacidade_alunos: float = CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS,
     coluna_lat: str = "lat",
     coluna_lng: str = "lng",
+    coluna_capacidade: str | None = None,
     hex_ids_validos: set[str] | None = None,
 ) -> pd.DataFrame:
     """Agrega os shares de TODOS os concorrentes por hexagono.
@@ -282,14 +283,37 @@ def repartir_concorrentes(
     de concorrentes de entrada com coordenada. Quando `hex_ids_validos` e' informado, a
     soma e' o numero de concorrentes que alcancam PELO MENOS UM hexagono valido (pode ser
     menor que o total de concorrentes, se algum estiver inteiramente fora da base).
+
+    `coluna_capacidade` (BLK-CAPACIDADE-01): quando informada, o consumo deixa de ser
+    `oferta x escalar` e passa a ser somado POR UNIDADE -- cada academia derrama no
+    hexagono a fracao de area vezes a capacidade DELA. Linha sem valor cai no
+    `capacidade_alunos` default, entao a rede sem planilha continua valendo o proxy.
+
+    As DUAS colunas de saida deixam de ser proporcionais quando isso acontece, e essa
+    separacao e' o ponto: `oferta_efetiva_1km_area` continua em UNIDADES-EQUIVALENTES
+    (e' o que alimenta `gap_competitivo` e a pressao, que perguntam "quantos me cercam")
+    e `consumo_concorrentes_1km_area` passa a ser ALUNOS DE VERDADE (e' o que o residual
+    subtrai do mercado). Antes, dividir uma pela outra devolvia sempre 2.500; agora nao
+    devolve, e por isso quem quiser CONTAR concorrente tem de ler
+    `n_concorrentes_influencia_1km`, nunca o consumo dividido pela capacidade.
     """
     lats = pd.to_numeric(df_concorrentes[coluna_lat], errors="coerce")
     lngs = pd.to_numeric(df_concorrentes[coluna_lng], errors="coerce")
     validos = lats.notna() & lngs.notna()
 
+    if coluna_capacidade and coluna_capacidade in df_concorrentes.columns:
+        caps = (
+            pd.to_numeric(df_concorrentes[coluna_capacidade], errors="coerce")
+            .fillna(float(capacidade_alunos))
+            .clip(lower=0.0)
+        )
+    else:
+        caps = pd.Series(float(capacidade_alunos), index=df_concorrentes.index)
+
     acumulado: dict[str, float] = {}
     contagem: dict[str, int] = {}
-    for lat, lng in zip(lats[validos], lngs[validos], strict=True):
+    alunos: dict[str, float] = {}
+    for lat, lng, cap in zip(lats[validos], lngs[validos], caps[validos], strict=True):
         shares = shares_por_hex(float(lat), float(lng), raio_m=raio_m, h3_res=h3_res)
         if hex_ids_validos is not None:
             shares = {h: s for h, s in shares.items() if h in hex_ids_validos}
@@ -300,6 +324,7 @@ def repartir_concorrentes(
         for hex_id, share in shares.items():
             acumulado[hex_id] = acumulado.get(hex_id, 0.0) + share
             contagem[hex_id] = contagem.get(hex_id, 0) + 1
+            alunos[hex_id] = alunos.get(hex_id, 0.0) + share * float(cap)
 
     if not acumulado:
         return pd.DataFrame(
@@ -318,9 +343,7 @@ def repartir_concorrentes(
             "n_concorrentes_influencia_1km": [contagem[h] for h in acumulado],
         }
     )
-    out["consumo_concorrentes_1km_area"] = (
-        out["oferta_efetiva_1km_area"] * float(capacidade_alunos)
-    )
+    out["consumo_concorrentes_1km_area"] = [alunos[h] for h in acumulado]
     return out.sort_values("hex_id", ignore_index=True)
 
 
@@ -331,6 +354,7 @@ def anexar_pressao_1km_area(
     raio_m: float = RAIO_INFLUENCIA_M,
     h3_res: int = H3_RESOLUTION,
     capacidade_alunos: float = CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS,
+    coluna_capacidade: str | None = None,
 ) -> pd.DataFrame:
     """Anexa as colunas `*_1km_area` ao DataFrame de hexagonos, sem tocar as de 2 km.
 
@@ -353,6 +377,7 @@ def anexar_pressao_1km_area(
         raio_m=raio_m,
         h3_res=h3_res,
         capacidade_alunos=capacidade_alunos,
+        coluna_capacidade=coluna_capacidade,
         hex_ids_validos=set(df_hex["hex_id"]),
     )
 
