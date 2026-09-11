@@ -35,6 +35,11 @@ import app as pilot  # noqa: E402  (backend do piloto; web/server no sys.path ac
 #: Os dois consumidores da regra. Se nascer um terceiro, ele entra aqui.
 CONSUMIDORES = ("_derivar", "_hexagonos_acionaveis_brasil")
 
+#: As projecoes de leitura que alimentam esses consumidores — e SO' elas. As demais listas
+#: `_COLS_*` de `app.py` (crescimento, nomeadas, redes, pop por UF) leem OUTROS artefatos e
+#: nao chegam perto da contagem de concorrentes; incluí-las aqui seria ruído, nao rigor.
+PROJECOES_DA_CONTAGEM = ("_COLS_DESEJADAS", "_COLS_NACIONAL")
+
 
 def _frame_onde_as_duas_fontes_DISCORDAM() -> pd.DataFrame:
     """Um hexagono com uma academia GRANDE e outro com duas pequenas.
@@ -107,6 +112,31 @@ def _fonte_de(nome: str) -> str:
         if isinstance(no, ast.FunctionDef) and no.name == nome:
             return ast.get_source_segment(Path(pilot.__file__).read_text(encoding="utf-8"), no) or ""
     raise AssertionError(f"funcao {nome} nao encontrada em app.py")
+
+
+def test_toda_projecao_de_leitura_carrega_a_fonte_PREFERIDA() -> None:
+    """Chamar a funcao unica nao basta: o INSUMO dela tem de chegar junto.
+
+    Este teste existe porque o conserto anterior (PR #355) foi COSMETICO. Ele unificou a
+    REDACAO -- os dois consumidores passaram a chamar `_serie_n_concorrentes` -- e nao
+    percebeu que `_COLS_NACIONAL` nao projetava `n_concorrentes_influencia_1km`. Sem a
+    coluna no frame, a funcao unica cai no ramo de TRAS (consumo / capacidade), que e'
+    exatamente o ramo que a DEC-057 declarou errado, e as duas rotas voltaram a discordar
+    pela porta dos fundos: **1.997 hexagonos acionaveis no funil municipal contra 2.719 na
+    varredura nacional, 36% de divergencia, em producao.**
+
+    O teste anterior passava verde o tempo todo. Dois testes de forma sao necessarios
+    porque sao dois defeitos diferentes: um sobre QUEM CALCULA, outro sobre O QUE CHEGA.
+    """
+    preferida = "n_concorrentes_influencia_1km"
+    for nome in PROJECOES_DA_CONTAGEM:
+        cols = getattr(pilot, nome, None)
+        assert cols is not None, f"{nome} sumiu de app.py — o teste perdeu o objeto"
+        assert preferida in cols, (
+            f"{nome} nao projeta {preferida!r}. Quem le o dataset cru e depois chama "
+            "_serie_n_concorrentes SEM essa coluna cai no ramo de tras em silencio e passa "
+            "a contar ALUNOS no lugar de ACADEMIAS (DEC-057)."
+        )
 
 
 def test_os_dois_consumidores_chamam_a_redacao_unica() -> None:
