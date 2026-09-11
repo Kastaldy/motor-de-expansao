@@ -4669,6 +4669,11 @@ _COLS_NACIONAL: tuple[str, ...] = (
     "oferta_efetiva_disponivel",
     "oferta_consumida_mercado_estimada",
     "capacidade_default_concorrente_alunos",
+    # FONTE PREFERIDA de `_serie_n_concorrentes` (DEC-057). Sem ela projetada aqui, a
+    # funcao unica cai no ramo de TRAS -- consumo/capacidade -- e esta rota volta a
+    # discordar do funil municipal: 1.997 acionaveis contra 2.719, medido. O PR #355
+    # unificou a REDACAO e nao o INSUMO, e a divergencia sobreviveu por outra porta.
+    "n_concorrentes_influencia_1km",
     "faixa_oportunidade",
     "populacao_corte_hex",
     "pop_total_setor_2022",
