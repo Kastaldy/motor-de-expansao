@@ -152,6 +152,7 @@ COLUNAS_1KM_AREA = [
     "consumo_concorrentes_1km_area",
     "gap_competitivo_1km_area",
     "pressao_concorrencial_score_1km_area",
+    "n_concorrentes_no_hex",
 ]
 
 
@@ -347,6 +348,49 @@ def repartir_concorrentes(
     return out.sort_values("hex_id", ignore_index=True)
 
 
+def _contagem_no_hex(
+    df_concorrentes: pd.DataFrame,
+    *,
+    h3_res: int = H3_RESOLUTION,
+    coluna_lat: str = "lat",
+    coluna_lng: str = "lng",
+) -> pd.DataFrame:
+    """Quantas unidades CAEM DENTRO de cada hexagono (a coordenada, nao o disco).
+
+    E' uma pergunta diferente de `n_concorrentes_influencia_1km`, que conta quem ALCANCA o
+    hexagono com o disco de 1 km. Aqui conta-se quem esta' fisicamente ali.
+
+    POR QUE ELA EXISTE. A calibracao da taxa de penetracao precisa escolher em QUE lugares
+    ela observa a demanda revelada, e "tem academia num raio" nao serve: com o numerador de
+    1 km, entram hexagonos que o disco de uma academia apenas ENCOSTA -- eles recebem uma
+    fatia minima dos alunos e a populacao INTEIRA, entao medem penetracao proxima de zero
+    por dilucao geometrica, nao por escassez de oferta. Medido: 29% da amostra, e o piso de
+    5% os censurava em silencio. Com a mascara larga a taxa sai 10,6%; com esta, 17,3%.
+
+    A alternativa barata -- reusar `n_concorrentes_mapeados_1km > 0` -- foi MEDIDA e
+    rejeitada: ela devolve 1.695 hexagonos contra 2.451, perdendo 31% deles, e nao e' um
+    recorte aleatorio (o raio de 1 km do centroide nao alcanca as bordas do hexagono, cujo
+    circunraio e' 1,41 km). A taxa resultante seria 19,45% em vez de 17,31%.
+    """
+    lat = pd.to_numeric(df_concorrentes.get(coluna_lat), errors="coerce")
+    lng = pd.to_numeric(df_concorrentes.get(coluna_lng), errors="coerce")
+    validos = lat.notna() & lng.notna()
+    if not validos.any():
+        return pd.DataFrame({"hex_id": pd.Series(dtype="object"),
+                             "n_concorrentes_no_hex": pd.Series(dtype="int64")})
+
+    celulas = [
+        h3.latlng_to_cell(float(a), float(b), h3_res)
+        for a, b in zip(lat[validos], lng[validos], strict=True)
+    ]
+    return (
+        pd.Series(celulas, name="hex_id")
+        .value_counts()
+        .rename_axis("hex_id")
+        .reset_index(name="n_concorrentes_no_hex")
+    )
+
+
 def anexar_pressao_1km_area(
     df_hex: pd.DataFrame,
     df_concorrentes: pd.DataFrame,
@@ -384,6 +428,16 @@ def anexar_pressao_1km_area(
     out = df_hex.drop(
         columns=[c for c in COLUNAS_1KM_AREA if c in df_hex.columns]
     ).merge(agregado, on="hex_id", how="left", validate="one_to_one")
+
+    out = out.merge(
+        _contagem_no_hex(df_concorrentes, h3_res=h3_res),
+        on="hex_id",
+        how="left",
+        validate="one_to_one",
+    )
+    out["n_concorrentes_no_hex"] = (
+        pd.to_numeric(out["n_concorrentes_no_hex"], errors="coerce").fillna(0).astype("int64")
+    )
 
     out["oferta_efetiva_1km_area"] = (
         pd.to_numeric(out["oferta_efetiva_1km_area"], errors="coerce").fillna(0.0)

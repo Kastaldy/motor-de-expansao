@@ -119,32 +119,95 @@ def anexar_colunas_censo(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def calibrar_taxa_fitness_mercado(df: pd.DataFrame) -> float:
-    """Calcula taxa de penetracao fitness a partir de todas as academias mapeadas no dataset.
+    """Calcula a taxa de penetracao fitness por DEMANDA REVELADA.
 
-    Logica: para cada hex com pelo menos uma academia (concorrente OU Ultra) e populacao
-    conhecida, calcula a penetracao minima implicita assumindo CAPACIDADE_MIN_ACADEMIA_ALUNOS
-    por unidade. A mediana dessa distribuicao vira a taxa de mercado aplicada ao TAM.
+    O CONCEITO (nao e' previsao). Se academias sobrevivem numa praca, os alunos delas
+    existem ali. Entao, onde ha' oferta instalada, `alunos / populacao` e' um PISO da
+    penetracao daquela praca. A mediana desses pisos vira a taxa aplicada ao TAM.
 
-    Requer min. 10 hexes com academia e populacao valida; caso contrario retorna o fallback.
+    AS TRES CORRECOES (DEC-060), medidas em separado a partir de 28,52%:
+
+      1. TERRITORIO (-19,79 pp). O numerador contava academias num disco de 2 km do
+         CENTROIDE (12,57 km2) e dividia pela populacao de UM hexagono res-7 (5,16 km2).
+         Cada academia era contada em 2,33 hexagonos ao mesmo tempo (medido: 11.515
+         incidencias para 4.951 unidades). Agora usa `consumo_concorrentes_1km_area`, que
+         reparte cada unidade entre os hexagonos que o disco de 1 km cobre, proporcional a
+         area, CONSERVANDO MASSA -- o numerador passa a responder "quantos alunos pertencem
+         a ESTE hexagono", que e' a mesma pergunta do denominador.
+
+      2. MASCARA (+6,77 pp sobre o territorio ja' corrigido). O recorte era "tem academia
+         num raio de 2 km". Com o numerador de 1 km isso passa a incluir hexagonos que o
+         disco apenas ENCOSTA: recebem uma fatia minima dos alunos e a populacao INTEIRA,
+         medindo ~1% de penetracao por dilucao geometrica, nao por escassez. Eram 29% da
+         amostra, e o clip de 5% os censurava em SILENCIO. Agora o recorte e' o hexagono
+         que CONTEM academia (`n_concorrentes_no_hex`).
+
+      3. CAPACIDADE. Entra implicita, pela capacidade REAL por unidade que a DEC-057 ja'
+         poe em `consumo_concorrentes_1km_area` (1.202 de 4.951 unidades medidas; mediana
+         2.325 alunos, contra o proxy de 2.000 desta funcao e o de 2.500 do CLAUDE.md).
+
+    O termo Ultra entra por `oferta_consumida_ultra_real` -- alunos REAIS das 53 unidades
+    com performance. NAO se usa `oferta_consumida_ultra_estimada`: 86% dela (792.500 de
+    922.307 alunos) vem do fallback `n_unidades_ultra_2km x 2.500` espalhado por 290
+    hexagonos, que e' a MESMA dupla contagem que a correcao 1 elimina. Ressalva declarada:
+    o termo Ultra fica cravado no hexagono da unidade, sem reparticao por area -- move a
+    taxa em +0,03 pp (17,3139% -> 17,3477%) e envolve 53 de 4.951 unidades.
+
+    Resultado: 17,35%, contra 28,52% da formula antiga. Confirmado por um estimador
+    INDEPENDENTE, que nao usa hexagono como unidade: a penetracao de cada academia sobre a
+    populacao do proprio catchment de 1 km da 16,55% (N=4.950).
+
+    RAMO DE TRAS: sem as colunas novas (artefato anterior a esta DEC), cai na formula
+    antiga e AVISA. Nunca em silencio.
     """
     pop = pd.to_numeric(df["pop_hex_base"], errors="coerce")
-    n_conc = pd.to_numeric(
-        df["n_concorrentes_mapeados_2km"] if "n_concorrentes_mapeados_2km" in df.columns
-        else pd.Series(0, index=df.index),
-        errors="coerce",
-    ).fillna(0)
-    n_ultra = pd.to_numeric(
-        df["n_unidades_ultra_2km"] if "n_unidades_ultra_2km" in df.columns
-        else pd.Series(0, index=df.index),
-        errors="coerce",
-    ).fillna(0)
-    n_total = n_conc + n_ultra
-    mask = n_total.gt(0) & pop.gt(0)
+
+    tem_consumo = "consumo_concorrentes_1km_area" in df.columns
+    tem_mascara = "n_concorrentes_no_hex" in df.columns
+
+    if tem_consumo and tem_mascara:
+        numerador = pd.to_numeric(
+            df["consumo_concorrentes_1km_area"], errors="coerce"
+        ).fillna(0.0)
+        if "oferta_consumida_ultra_real" in df.columns:
+            numerador = numerador + pd.to_numeric(
+                df["oferta_consumida_ultra_real"], errors="coerce"
+            ).fillna(0.0)
+        mask = (
+            pd.to_numeric(df["n_concorrentes_no_hex"], errors="coerce").fillna(0).gt(0)
+            & pop.gt(0)
+        )
+    else:
+        faltam = [
+            c
+            for c, ok in (
+                ("consumo_concorrentes_1km_area", tem_consumo),
+                ("n_concorrentes_no_hex", tem_mascara),
+            )
+            if not ok
+        ]
+        print(
+            f"   AVISO: {', '.join(faltam)} ausente(s) -- calibracao caiu no ramo ANTIGO "
+            "(2 km do centroide), que superestima a taxa em ~1,6x. Rode o Bloco 3 "
+            "(enriquecimento_espacial_hexagonos) antes deste passo."
+        )
+        n_conc = pd.to_numeric(
+            df["n_concorrentes_mapeados_2km"] if "n_concorrentes_mapeados_2km" in df.columns
+            else pd.Series(0, index=df.index),
+            errors="coerce",
+        ).fillna(0)
+        n_ultra = pd.to_numeric(
+            df["n_unidades_ultra_2km"] if "n_unidades_ultra_2km" in df.columns
+            else pd.Series(0, index=df.index),
+            errors="coerce",
+        ).fillna(0)
+        numerador = (n_conc + n_ultra) * CAPACIDADE_MIN_ACADEMIA_ALUNOS
+        mask = (n_conc + n_ultra).gt(0) & pop.gt(0)
 
     if int(mask.sum()) < 10:
         return TAXA_FITNESS_MERCADO_FALLBACK
 
-    penetracao = (n_total[mask] * CAPACIDADE_MIN_ACADEMIA_ALUNOS) / pop[mask]
+    penetracao = numerador[mask] / pop[mask]
     # Clip: piso de 5% (academias em hexes muito populosos) e teto de 50% (outlier)
     taxa = float(penetracao.clip(lower=0.05, upper=0.50).median())
     return taxa
