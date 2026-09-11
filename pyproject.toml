@@ -55,6 +55,14 @@ dev = [
     "pytest-xdist>=3.6.0,<4",
     "ruff>=0.15,<0.16",
     "mypy>=1.10.0,<2",
+    # Stubs de `requests`, so' para o mypy (pacote de tipos: zero codigo em runtime).
+    # Sem eles o gate BLOQUEANTE `mypy src/` (ci.yml) acusa 6 erros `import-untyped` em
+    # 6 modulos que importam `requests` -- e o `ignore_missing_imports = true` da
+    # [tool.mypy] NAO os suprime, porque `import-untyped` e' o caso "existe stub no PyPI,
+    # instale-o", diferente de `import-not-found`. Medido com mypy 1.20.2, que e' o pin
+    # do `constraints.txt`. Instalar os stubs e' melhor que silenciar o codigo de erro:
+    # o uso de `requests` passa a ser CONFERIDO em vez de ignorado.
+    "types-requests>=2.32,<3",
     # FIN-VIAB-01 (decisao de Felipe, 2026-07-24): RECALCULA de verdade as formulas
     # vivas do simulador XLSX nos testes. `openpyxl` nunca calcula nada, entao sem
     # este pacote o nivel 2 de `tests/unit/dimensionamento/test_simulador_xlsx.py`
