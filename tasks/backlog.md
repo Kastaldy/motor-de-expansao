@@ -5068,3 +5068,20 @@ diferença de última casa como sintoma de outra coisa.
 disponível — o TAM ainda usa um proxy que o lado da oferta abandonou. Ligar os dois é bloco
 próprio, com medição própria: fazer junto esconderia qual efeito moveu o residual (é a mesma
 exigência que a DEC-048 registrou).
+
+> **FECHADA em 2026-09-11 pela [DEC-060](../docs/decisions/DEC-060.md) — e o defeito
+> dominante era OUTRO.** Esta dívida apontava para a capacidade (2.000 contra 2.325 medidos),
+> que vale **+4,63 pp** e move a taxa para CIMA. O defeito maior é geométrico: o numerador
+> contava academias num disco de 2 km do centroide (12,57 km²) contra a população de UM
+> hexágono (5,16 km²), cada academia entrando **2,33x** — **−19,79 pp**. E apareceu um
+> terceiro que ninguém tinha visto, a MÁSCARA (**+6,77 pp**): 29% da amostra era só borda de
+> catchment, recebendo fatia mínima de alunos e população inteira, com o clip de 5% os
+> censurando em silêncio. **28,52% → 17,35%**, confirmado por estimador independente em
+> 16,55%. Quem lesse só esta dívida e "consertasse a capacidade" teria piorado a taxa.
+>
+> **Continua aberto:** (a) `OFERTA_DESTAQUE_MIN` = 2.000 é parâmetro acoplado à escala da
+> taxa e não está declarado como tal — a fila cai 40,7% e os 829 perdidos morrem TODOS em
+> `_com_residual`; (b) a endogeneidade da DEC-048 (elasticidade +0,68 à cobertura de
+> cadastro) permanece; (c) o termo Ultra entra sem repartição por área (+0,03 pp);
+> (d) `CAPACIDADE_MIN_ACADEMIA_ALUNOS` fica órfã e o `CLAUDE.md` §4 ainda declara 2.500,
+> contra 2.325 medidos.
