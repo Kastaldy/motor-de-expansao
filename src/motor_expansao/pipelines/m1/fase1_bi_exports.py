@@ -27,6 +27,7 @@ from motor_expansao.pipelines.agregar_censo_hex_da_malha import (
 )
 from motor_expansao.pipelines.agregar_censo_hex_da_malha import (
     admitir_orfaos_da_malha,
+    rotular_orfaos_sem_censo,
     sobrepor_renda_da_malha,
 )
 from motor_expansao.pipelines.classe_join_municipio import (
@@ -551,7 +552,16 @@ def _read_hybrid_frame(path: Path | str = HYBRID_PATH) -> pd.DataFrame:
     return _prepare_dataframe(_read_optional_parquet_subset(Path(path), HYBRID_LOAD_COLS))
 
 
-def _read_censo_trace_frame(malha_path: Path = MALHA_CENSO_PATH) -> pd.DataFrame:
+def _read_censo_trace_frame(
+    malha_path: Path = MALHA_CENSO_PATH,
+    universo: pd.Series | None = None,
+) -> pd.DataFrame:
+    """`universo` sao os `hex_id` da base M1, e serve SO' ao rotulo do orfao residual.
+
+    Ele nao pode sair do proprio traco: quem se quer rotular e' exatamente quem NAO tem
+    linha nele (BLK-ORFAOS-01). `None` = sem rotulo, que reproduz o comportamento
+    anterior ao bloco -- e e' o que os testes de precedencia entre as tres fontes usam.
+    """
     frames: list[pd.DataFrame] = []
     # Ordem = precedencia da deduplicacao (drop_duplicates keep="first"), a mesma de
     # modelo_hibrido_expansao._load_censo: core > expandido > nacional. O nacional
@@ -576,6 +586,12 @@ def _read_censo_trace_frame(malha_path: Path = MALHA_CENSO_PATH) -> pd.DataFrame
     # nunca viu. Duas funcoes separadas de proposito -- a de cima tem contrato de nao
     # mexer em cobertura, e esta e' exatamente sobre cobertura.
     censo = admitir_orfaos_da_malha(censo, malha_path=malha_path)
+    # E, para quem a malha NAO consegue admitir, ROTULAR o porque (BLK-ORFAOS-01). Sao
+    # 4.916 hexagonos com dois motivos distintos e medidos; ate aqui todos liam
+    # "Nao informado", que o operador interpreta como falha do motor. Terceira funcao
+    # separada pela mesma razao das duas de cima: esta nao escreve score, renda nem
+    # populacao -- so' procedencia.
+    censo = rotular_orfaos_sem_censo(censo, universo, malha_path=malha_path)
     validated = _prepare_censo_trace(_read_optional_parquet_subset(CENSO_VALIDATED_PATH, CENSO_TRACE_LOAD_COLS))
     if validated.empty:
         return censo
@@ -609,10 +625,15 @@ def _read_estrutural_pop_frame(path: Path | str = ESTRUTURAL_PATH) -> pd.DataFra
 
 def build_enriched_dashboard_frame(dashboard_path: Path | str = DASHBOARD_PATH) -> pd.DataFrame:
     """Reproduz offline o frame que streamlit_app monta em runtime via enrich_dashboard_data."""
+    m1 = _read_m1_dashboard_frame(dashboard_path)
     return enrich_dashboard_data(
-        _read_m1_dashboard_frame(dashboard_path),
+        m1,
         _read_hybrid_frame(),
-        _read_censo_trace_frame(),
+        # O `universo` de hex_id sai do frame M1, e nao do traco: o rotulo do orfao
+        # residual e' justamente sobre quem NAO tem linha no traco (BLK-ORFAOS-01).
+        # Frame vazio (ou sem a coluna) devolve `None` = sem rotulo, o comportamento
+        # anterior ao bloco -- rotular sem universo nao teria o que rotular.
+        _read_censo_trace_frame(universo=m1["hex_id"] if "hex_id" in m1.columns else None),
         estrutural_pop_df=_read_estrutural_pop_frame(),
         # BLK-JOINUF-01: a nota fina e' lida AQUI, no produtor, e nao dentro de
         # `enrich_dashboard_data` -- e' o unico ponto do fluxo que ja' faz I/O de artefato

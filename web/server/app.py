@@ -3233,6 +3233,16 @@ def _hex_dict(
         # so o municipio inteiro. `True` so quando a origem e' de fato a municipal —
         # `None`/ausente (sem renda nenhuma) fica de fora de proposito.
         "renda_municipal": r.get("renda_origem") == "renda_per_capita",
+        # Terceiro membro da familia acima (procedencia da leitura censitaria), so' que
+        # este responde pela AUSENCIA dela: 4.916 hexagonos nao tem linha no traco e
+        # ate' aqui exibiam "Nao informado", que o operador le como falha do motor
+        # (BLK-ORFAOS-01). Vocabulario FECHADO de dois valores, sem acento por serem
+        # identificadores -- o rotulo acentuado e' camada de LABEL, do lado da tela.
+        #
+        # `_texto` devolve None (nunca `""`) quando a coluna falta ou vem nula: string
+        # vazia seria lida pelo front como VALOR, e desenharia um aviso em branco nos
+        # 99,7% de hexagonos que nao tem motivo nenhum.
+        "motivo_sem_censo": _texto(r.get("motivo_sem_censo")),
         "faixa": _faixa_label(r.get("faixa_oportunidade")),
         "conc": int(r.get("n_concorrentes_est") or 0),
         "ultra": int(r.get("n_ultra") or 0),

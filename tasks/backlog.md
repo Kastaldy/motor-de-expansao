@@ -4680,7 +4680,7 @@ do §7.4.1.
 | **Criticidade** | **Crítica** — mexe em `qualidade_join_uf`/`confianca_geografica`, insumo da camada censitária PRIMÁRIA (§1) e do gate híbrido (DEC-040/045/050). Precisa de DEC própria. |
 | **Esteira** | `[GATE HUMANO]` — investigação + medição de impacto antes de qualquer PR. |
 | **Depende de** | DEC-050 (aprofunda o mesmo achado — a DEC-050 corrigiu o composto obsoleto vs. `classe_join_uf`, mas nem o `classe_join_uf` "corrigido" resolve os dois problemas abaixo) |
-| **Status** | **Mecanismo 1 FEITO** ([DEC-054](../docs/decisions/DEC-054.md), 2026-09-09): nota de cobertura por município, promoção-só — 13.147 hexágonos promovidos, zero rebaixados, Manaus 2.038/2.139 e Boa Vista 1.110/1.191. **Mecanismo 2 FEITO** ([DEC-055](../docs/decisions/DEC-055.md), 2026-09-09): os orfaos entram pela malha e ganham `cod_municipio` do estrutural — 3.731 promovidos, Fortaleza 11/11, Rio 43/51. **Residuo**: 4.274 orfaos que a malha nao cobre (provavelmente sem setor povoado — nao investigado). |
+| **Status** | **Mecanismo 1 FEITO** ([DEC-054](../docs/decisions/DEC-054.md), 2026-09-09): nota de cobertura por município, promoção-só — 13.147 hexágonos promovidos, zero rebaixados, Manaus 2.038/2.139 e Boa Vista 1.110/1.191. **Mecanismo 2 FEITO** ([DEC-055](../docs/decisions/DEC-055.md), 2026-09-09): os orfaos entram pela malha e ganham `cod_municipio` do estrutural — 3.731 promovidos, Fortaleza 11/11, Rio 43/51. **Residuo**: 4.916 orfaos (642 na malha sem `score_malha` + 4.274 fora dela) — MEDIDOS em 2026-09-10, veredito NAO PROMOVER e rotulo entregue; ver `BLK-ORFAOS-01`. |
 | **Autonomia** | **manual (NÃO loop-safe)** — toca score/confiança censitária, Crítica |
 
 > **⚠ CORREÇÃO DOS NÚMEROS DESTE BLOCO (2026-09-09).** A medição original abaixo saiu de um artefato
@@ -4739,51 +4739,74 @@ estrutural que já existia: o sinal de confiança é grosso demais (UF) para uma
 DEC-050.
 ---
 
-### BLK-ORFAOS-01 — Os 4.274 órfãos que a malha da DEC-045 não cobre
+### BLK-ORFAOS-01 — Os 4.916 órfãos que a malha da DEC-045 não cobre
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **Alta** — muda `confianca_geografica`/`populacao_corte_hex` de hexágonos reais; se o conserto tocar `score_setor_2022_calibrado`, sobe para Crítica e exige DEC. |
-| **Esteira** | `[GATE HUMANO]` — medir a natureza deles ANTES de propor conserto. |
-| **Depende de** | [DEC-055](../docs/decisions/DEC-055.md) (resolveu 5.612 dos 9.886; estes são o resíduo declarado) |
-| **Status** | **ABERTO** — resíduo declarado na DEC-055, ainda **não investigado**. |
+| **Criticidade** | **Baixa** — MEDIDO e rebaixado de Alta em 2026-09-10: **nada operacional se move**. Os 4.916 já falham a camada 1 do funil por `score_setor_2022_calibrado` NaN, e falhariam `_povoado` mesmo depois de um conserto perfeito (população granular com **máximo 216 hab** contra piso de 5.000). O teto do conserto é **6.532 habitantes** no país inteiro, **0,51%** do SAM nacional. Sobe de novo para Crítica **se** alguém propuser tocar `score_setor_2022_calibrado` — e a rota óbvia toca (ver "Rejeitado", abaixo). |
+| **Esteira** | Normal — o que restou é rótulo/legenda, READ-ONLY sobre o M1. |
+| **Depende de** | [DEC-055](../docs/decisions/DEC-055.md) (resolveu 4.970 dos 9.886; estes são o resíduo declarado) |
+| **Status** | **MEDIDO — veredito NÃO PROMOVER** (2026-09-10). O rótulo (`motivo_sem_censo`, vocabulário fechado de dois valores) e o carimbo de procedência (`fonte_renda_censo_hex`) entraram no artefato; a aritmética está corrigida aqui e na emenda de 2026-09-10 da DEC-055. **Falta**: renderizar o motivo no balão do hexágono (`web/src/`, PR próprio). |
 | **Autonomia** | **manual (NÃO loop-safe)** — toca a camada censitária. |
 
 **O que é.** A DEC-055 provou que os 9.886 hexágonos `"Não informado"` são **órfãos da Fase A**:
 ela rodou em 2026-05-15 e nunca mais, e a base H3 cresceu depois em três eventos de borda
 (+5.305 centroide + 474 DEC-002 + 4.107 DEC-003 = exatamente 9.886, batendo por UF em 27/27).
-`admitir_orfaos_da_malha` recuperou **5.612** deles pela malha da DEC-045 (3.731 promovidos a
-granular; Fortaleza 11/11, Niterói 13/13, Salvador 9/9, Recife 5/5, Rio 43/51). Sobram **4.274**
-que a malha **também** não cobre — nem admitidos, nem promovidos, nem investigados.
 
-**A hipótese de trabalho (NÃO medida — é o item 1 do escopo).** Se a malha da DEC-045 não os
-cobre, é porque nenhum setor censitário do IBGE intersecta aquela geometria. O candidato natural
-é que sejam hexágonos **sem setor povoado**: oceano dentro do critério híbrido do litoral
-(`M1_HEX_LAND_FRACTION_MIN = 0,05`, §3), floresta, faixa de fronteira. Se for isso, o conserto
-certo é **rotular**, não promover: `"sem setor censitário"` é uma resposta correta e diferente de
-`"Não informado"`, que hoje o operador lê como falha do motor. **Cuidado com o precedente da
-própria DEC-055**: a hipótese "é o litoral" já foi formulada com confiança e **refutada por
-medição** (41,2% dos órfãos estavam em UF sem costa). Não repetir o erro — medir antes de afirmar.
+**A aritmética, corrigida (2026-09-10).** O resíduo tem **três** partes, não duas — e o grupo
+do meio nunca tinha sido contado por ninguém:
 
-**Por que não é urgente, e por que também não pode ser esquecido.** Nenhum dos casos que o
-operador reportou (Manaus, Fortaleza, Juiz de Fora, litoral RJ/SP) está neste resíduo — todos
-foram fechados pela DEC-054/055. Mas 4.274 hexágonos continuam exibindo `"Não informado"` sem
-que ninguém saiba se isso é verdade ou defeito, e essa é exatamente a **forma** do defeito
-recorrente do repo (DEC-038/045/050/054): um valor legítimo que, no lugar errado, apaga uma
-superfície inteira em silêncio.
+| Grupo | Hexágonos | O que é |
+|---|---|---|
+| Admitidos que **sobrevivem** ao merge | **4.970** | têm `score_malha` e existem na base M1 |
+| Na malha, **sem** `score_malha` | **642** | o setor por baixo não tem renda publicada pelo IBGE; a admissão os recusa de propósito |
+| **Fora** da malha | **4.274** | nenhum setor POVOADO cai no centro da lasca de borda |
+| **Total** | **9.886** | |
 
-**Escopo de investigação, quando priorizado:**
-1. **Caracterizar antes de consertar.** Para os 4.274: distribuição por UF, `land_fraction`,
-   `pop_total`/`populacao_proxy` do estrutural (que **existe** para os 1.542.531), distância ao
-   setor censitário mais próximo e quantos caem sobre água/unidade de conservação. A pergunta
-   binária: **quantos têm população estrutural > 0?**
-2. **Se forem majoritariamente vazios** → rotular (`sem_setor_censitario`) e ajustar a legenda do
-   piloto para distinguir "não há dado" de "há dado e não confiamos nele". Custo baixo, sem DEC
-   de score.
-3. **Se houver povoados relevantes** → medir se o vizinho H3 imediato (`k_ring=1`) tem setor e se
-   herdar dele é defensável — e aí sim DEC própria (Crítica), com antes/depois por UF e hash do M1.
-4. Fechar o número: 9.886 = 5.612 admitidos + 4.274 residuais. Qualquer conserto tem de manter
-   essa aritmética explícita, como a DEC-055 manteve a dos três eventos de borda.
+`admitir_orfaos_da_malha` cria **5.600 linhas no TRAÇO**, das quais **630** são hexágonos que nem
+estão na base M1 e **morrem no merge** — por isso os admitidos de fato são 4.970, e não 5.600
+nem os 5.612 que este bloco registrava. **O resíduo VISÍVEL é 4.916** (642 + 4.274).
+
+Predicado que os isola no artefato vivo (verificado coextensivo, zero falso-positivo), sobre
+`data/outputs/hexagonos_dashboard_enriquecido/uf=*/parte-*.parquet`:
+
+```python
+df[df.qualidade_join_uf.eq("Nao informado") & df.score_setor_2022_calibrado.isna()]
+```
+
+**Natureza MEDIDA (a hipótese de trabalho abaixo fica refutada como explicação geral).** Eles
+**não estão no mar** — só **6 de 4.916** não têm setor algum por baixo — e **não** estão em
+município sem partição GEO (**0 de 4.916**). São lascas de borda cujo centro não cai em nenhum
+setor povoado. É a **segunda** hipótese geométrica confiante a cair neste bloco; o precedente
+da DEC-055 ("é o litoral", 41,2% em UF sem costa) valeu.
+
+**Veredito: ROTULAR, não promover.** Teto de um conserto perfeito: **6.532 habitantes** no país
+inteiro, p50 de **0,02 hab** por hexágono, **0,51%** do SAM nacional. **ZERO** hexágonos entrariam
+na fila do funil — score p90 **17,5**, máximo **59,0**, e mesmo os 59 que passariam do piso 30
+falhariam em `_povoado` (população granular com máximo **216 hab** contra piso de 5.000).
+
+**Rejeitado, e por quê.** A rota "óbvia" seria completar `_candidatos` em `agregar_setores` para
+a malha alcançá-los. Ela **RENORMALIZA** a fração de área de cada setor para somar 1
+(`agregar_setores` ~171-183), então acrescentar candidato de borda **redistribui população para
+fora dos hexágonos interiores** — mexeria em `score_setor_2022_calibrado` **NACIONALMENTE**, por
+6.532 habitantes. Não fazer.
+
+**O que foi entregue no lugar (2026-09-10), sem tocar score algum:**
+- `rotular_orfaos_sem_censo` (`pipelines/agregar_censo_hex_da_malha.py`) carimba `motivo_sem_censo`
+  com vocabulário **fechado** de dois valores, sem acento por serem identificadores:
+  `setor_sem_renda_publicada` (642) e `sem_setor_povoado_no_hex` (4.274). Terceira função separada,
+  pelo mesmo motivo das outras duas: uma muda VALOR, outra muda COBERTURA, esta só carimba
+  PROCEDÊNCIA.
+- `fonte_renda_censo_hex` — carimbo que a DEC-055 já declarava obrigatório — passa a chegar ao
+  artefato que o piloto SERVE (existia só no traço).
+- Chave `motivo_sem_censo` publicada no payload do hexágono (`_hex_dict`), `None` quando ausente.
+
+**O que falta.** Renderizar o motivo no balão do hexágono e distinguir na legenda "não há dado" de
+"há dado e não confiamos nele" — `web/src/`, em PR próprio.
+
+**Hipótese de trabalho original (mantida para registro; refutada acima).** Seriam hexágonos sem
+setor povoado por serem oceano dentro do critério híbrido do litoral
+(`M1_HEX_LAND_FRACTION_MIN = 0,05`, §3), floresta ou faixa de fronteira.
 
 **Guardrail.** §5 READ-ONLY M1. Rotular não exige DEC; promover a granular exige DEC Crítica com
 medição antes/depois, no padrão DEC-050/054/055.

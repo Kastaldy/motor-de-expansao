@@ -19,16 +19,32 @@ Duas consequências, e cada uma tem um teste aqui:
 
 from __future__ import annotations
 
+import sys
+import unicodedata
+from pathlib import Path
+
 import pandas as pd
 
 from motor_expansao.dashboard.data import enrich_dashboard_data
 from motor_expansao.pipelines.agregar_censo_hex_da_malha import (
     COL_CARIMBO,
+    COL_MOTIVO_SEM_CENSO,
     COL_RENDA,
     COL_SCORE,
     FONTE_ORFAO_ADMITIDO,
+    MOTIVO_SEM_SETOR_POVOADO,
+    MOTIVO_SETOR_SEM_RENDA,
+    MOTIVOS_SEM_CENSO,
     admitir_orfaos_da_malha,
+    rotular_orfaos_sem_censo,
 )
+
+_REPO = Path(__file__).resolve().parents[2]  # tests/unit/ -> raiz do worktree
+_SERVER = _REPO / "web" / "server"
+if str(_SERVER) not in sys.path:
+    sys.path.insert(0, str(_SERVER))
+
+import app as pilot  # noqa: E402  (backend do piloto; web/server no sys.path acima)
 
 
 def _malha(tmp_path, linhas: list[dict]):
@@ -211,3 +227,158 @@ def test_orfao_com_municipio_bom_vira_granular_de_ponta_a_ponta() -> None:
     assert enriquecido["confianca_geografica"].iloc[0] == "granular"
     # E a população exibida deixa de ser a do município inteiro.
     assert enriquecido["populacao_corte_hex"].iloc[0] == 75342.0
+
+
+# ---------------------------------------------------------------------------
+# Rótulo do órfão que a malha NÃO admite (BLK-ORFAOS-01)
+#
+# O resíduo tem TRÊS partes, não duas: 9.886 = 4.970 admitidos (de 5.600 linhas
+# criadas no traço, 630 morrem no merge com a base M1) + 642 na malha sem
+# `score_malha` + 4.274 fora da malha. O resíduo VISÍVEL é 4.916, e o grupo de 642
+# nunca tinha sido contado por ninguém.
+#
+# O veredito medido é NÃO PROMOVER: teto de 6.532 habitantes no país inteiro, p50 de
+# 0,02 hab por hexágono, ZERO entrariam na fila do funil. Estes testes travam o que
+# entrou no lugar — um RÓTULO, que não escreve score, renda nem população.
+# ---------------------------------------------------------------------------
+
+
+def _malha_dois_motivos(tmp_path):
+    """Uma linha de cada grupo do resíduo, mais uma que a malha MEDE."""
+    return _malha(
+        tmp_path,
+        [
+            # a malha mede: caso de ADMISSÃO, não de rótulo
+            {"hex_id": "medido", "uf": "SP", "pop_malha": 900.0, "renda_malha": 1200.0, "score_malha": 40.0},
+            # na malha, sem renda publicada pelo IBGE -> `score_malha` nulo
+            {"hex_id": "sem_renda", "uf": "SP", "pop_malha": 12.0, "renda_malha": None, "score_malha": None},
+        ],
+    )
+
+
+def test_vocabulario_de_motivo_e_fechado_e_sem_acento(tmp_path) -> None:
+    """Dois valores, e nada além deles. E sem acento por serem IDENTIFICADORES.
+
+    Eles viajam no parquet e no payload e são comparados por literal; o texto acentuado
+    é camada de LABEL, do lado da tela (CLAUDE.md §2). Acentuar aqui é o defeito que
+    pintou o mapa inteiro de cinza no BLK-TRAJ-01.
+    """
+    assert MOTIVOS_SEM_CENSO == ("setor_sem_renda_publicada", "sem_setor_povoado_no_hex")
+    for valor in MOTIVOS_SEM_CENSO:
+        assert valor == unicodedata.normalize("NFKD", valor).encode("ascii", "ignore").decode()
+        assert valor == valor.lower()
+
+    out = rotular_orfaos_sem_censo(
+        pd.DataFrame({"hex_id": ["ja_tem"]}),
+        universo=["ja_tem", "sem_renda", "fora_da_malha"],
+        malha_path=_malha_dois_motivos(tmp_path),
+    )
+    rotulos = out.set_index("hex_id")[COL_MOTIVO_SEM_CENSO]
+    # cada motivo no seu grupo, e o universo de valores emitidos é o fechado
+    assert rotulos["sem_renda"] == MOTIVO_SETOR_SEM_RENDA
+    assert rotulos["fora_da_malha"] == MOTIVO_SEM_SETOR_POVOADO
+    assert set(rotulos.dropna()) <= set(MOTIVOS_SEM_CENSO)
+    # quem já tem linha no traço não recebe rótulo nenhum
+    assert pd.isna(rotulos["ja_tem"])
+
+
+def test_hexagono_que_a_malha_mede_nao_recebe_rotulo(tmp_path) -> None:
+    """Ele é caso de ADMISSÃO. Carimbá-lo de "sem setor" afirmaria o oposto da malha.
+
+    O vocabulário é fechado e não tem valor para "não sei" — então a resposta certa é
+    ficar de fora, não inventar um terceiro motivo.
+    """
+    out = rotular_orfaos_sem_censo(
+        pd.DataFrame({"hex_id": ["x"]}),
+        universo=["x", "medido"],
+        malha_path=_malha_dois_motivos(tmp_path),
+    )
+    assert list(out["hex_id"]) == ["x"]
+
+
+def test_rotulo_e_puro_e_nao_muta_o_frame_recebido(tmp_path) -> None:
+    """Molde de `admitir_orfaos_da_malha` x `sobrepor_renda_da_malha`: função pura.
+
+    `_read_censo_trace_frame` encadeia as três sobre o MESMO frame; uma delas mutando o
+    argumento faria a ordem das chamadas virar um acoplamento invisível.
+    """
+    censo = pd.DataFrame({"hex_id": ["ja_tem"], COL_SCORE: [55.0]})
+    antes = censo.copy(deep=True)
+
+    out = rotular_orfaos_sem_censo(
+        censo,
+        universo=["ja_tem", "fora_da_malha"],
+        malha_path=_malha_dois_motivos(tmp_path),
+    )
+
+    pd.testing.assert_frame_equal(censo, antes)
+    assert COL_MOTIVO_SEM_CENSO not in censo.columns
+    assert len(out) == 2
+    # e a linha que já existia continua intacta no resultado
+    assert out[out["hex_id"].eq("ja_tem")].iloc[0][COL_SCORE] == 55.0
+
+
+def test_rotulo_nao_escreve_score_renda_nem_populacao(tmp_path) -> None:
+    """A terceira função carimba PROCEDÊNCIA e só. Escrever número aqui seria promover."""
+    out = rotular_orfaos_sem_censo(
+        pd.DataFrame({"hex_id": ["x"], COL_SCORE: [55.0]}),
+        universo=["x", "fora_da_malha"],
+        malha_path=_malha_dois_motivos(tmp_path),
+    )
+    novo = out[out["hex_id"].eq("fora_da_malha")].iloc[0]
+    assert pd.isna(novo[COL_SCORE])
+    for coluna in (COL_RENDA, "pop_total_setor_2022"):
+        assert coluna not in out.columns or pd.isna(novo[coluna])
+
+
+def test_rotulo_e_idempotente_e_no_op_sem_universo_ou_sem_malha(tmp_path) -> None:
+    """Sem a malha não dá para distinguir os dois motivos — e inventar um seria o
+    defeito que este rótulo existe para consertar."""
+    caminho = _malha_dois_motivos(tmp_path)
+    censo = pd.DataFrame({"hex_id": ["x"]})
+
+    uma = rotular_orfaos_sem_censo(censo, universo=["x", "fora_da_malha"], malha_path=caminho)
+    duas = rotular_orfaos_sem_censo(uma, universo=["x", "fora_da_malha"], malha_path=caminho)
+    pd.testing.assert_frame_equal(uma, duas)
+
+    assert len(rotular_orfaos_sem_censo(censo, universo=None, malha_path=caminho)) == 1
+    assert len(rotular_orfaos_sem_censo(censo, universo=["x", "y"], malha_path=tmp_path / "nao_ha.parquet")) == 1
+
+
+def test_procedencia_e_motivo_chegam_ao_artefato_que_o_piloto_serve() -> None:
+    """`censo_extra_cols` é o funil: coluna fora da lista é DESCARTADA no merge.
+
+    É a família de defeito DEC-038 na forma mais pura — o carimbo existe no traço, o
+    pipeline roda verde, e o artefato que o piloto lê sai sem ele. Sem `fonte_renda_censo_hex`
+    lá, o guardrail de procedência que a DEC-055 declara obrigatório não existe onde importa.
+    """
+    enriquecido = enrich_dashboard_data(
+        pd.DataFrame([_base("admitido"), _base("orfao")]),
+        censo_df=pd.DataFrame(
+            {
+                "hex_id": ["admitido", "orfao"],
+                "fonte_renda_censo_hex": [FONTE_ORFAO_ADMITIDO, None],
+                COL_MOTIVO_SEM_CENSO: [None, MOTIVO_SEM_SETOR_POVOADO],
+            }
+        ),
+    )
+    por_hex = enriquecido.set_index("hex_id")
+    assert por_hex.loc["admitido", "fonte_renda_censo_hex"] == FONTE_ORFAO_ADMITIDO
+    assert por_hex.loc["orfao", COL_MOTIVO_SEM_CENSO] == MOTIVO_SEM_SETOR_POVOADO
+
+
+def test_payload_do_hexagono_devolve_None_e_nunca_string_vazia() -> None:
+    """`""` seria lido pelo front como VALOR e desenharia um aviso em branco.
+
+    São 99,7% dos hexágonos do país sem motivo nenhum — a ausência precisa ser `None`.
+    """
+    linha = pd.Series({"hex_id": "orfao", "lat": -22.9, "lng": -43.2})
+    assert pilot._hex_dict(linha, None)["motivo_sem_censo"] is None
+
+    vazio = pd.Series({"hex_id": "orfao", "lat": -22.9, "lng": -43.2, "motivo_sem_censo": "   "})
+    assert pilot._hex_dict(vazio, None)["motivo_sem_censo"] is None
+
+    com = pd.Series(
+        {"hex_id": "orfao", "lat": -22.9, "lng": -43.2, "motivo_sem_censo": MOTIVO_SETOR_SEM_RENDA}
+    )
+    assert pilot._hex_dict(com, None)["motivo_sem_censo"] == MOTIVO_SETOR_SEM_RENDA

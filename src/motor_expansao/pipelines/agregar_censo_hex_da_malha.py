@@ -549,6 +549,88 @@ def admitir_orfaos_da_malha(
     return pd.concat([censo, novos], ignore_index=True)
 
 
+#: Coluna de rotulo do orfao que NAO foi admitido -- o residuo declarado da DEC-055.
+COL_MOTIVO_SEM_CENSO = "motivo_sem_censo"
+
+#: Vocabulario FECHADO, de dois valores. SEM ACENTO por serem IDENTIFICADORES (CLAUDE.md
+#: §2): o valor bruto viaja no parquet e no payload, e a versao acentuada e' camada de
+#: LABEL de exibicao, do lado da tela. Acentuar aqui quebraria a comparacao por literal.
+MOTIVO_SETOR_SEM_RENDA = "setor_sem_renda_publicada"
+MOTIVO_SEM_SETOR_POVOADO = "sem_setor_povoado_no_hex"
+MOTIVOS_SEM_CENSO = (MOTIVO_SETOR_SEM_RENDA, MOTIVO_SEM_SETOR_POVOADO)
+
+
+def rotular_orfaos_sem_censo(
+    censo: pd.DataFrame,
+    universo: pd.Series | list[str] | None,
+    malha_path: Path = DEFAULT_OUTPUT_PATH,
+) -> pd.DataFrame:
+    """Carimba `motivo_sem_censo` no orfao que a malha NAO consegue admitir.
+
+    POR QUE. `admitir_orfaos_da_malha`, logo acima, recupera 5.600 linhas dos 9.886
+    orfaos (4.970 sobrevivem ao merge com a base M1; 630 sao hexagonos que nem estao
+    nela). Sobra um residuo VISIVEL de 4.916 hexagonos, e ate aqui o operador lia neles
+    `"Nao informado"` -- que ele interpreta como falha do motor. Sao duas coisas
+    diferentes, e ambas foram MEDIDAS no artefato vivo:
+
+    - **642** tem hexagono na malha, mas o setor por baixo nao tem renda publicada pelo
+      IBGE -- `score_malha` nulo, e por isso a admissao os recusa de proposito (linha
+      sem score trocaria "sem dado" por "dado nulo"). Este grupo nunca tinha sido
+      contado por ninguem: o backlog registrava o residuo como 4.274.
+    - **4.274** nao tem hexagono nenhum na malha: nenhum setor POVOADO cai no centro
+      da lasca de borda. Medido: eles NAO estao no mar (so' 6 de 4.916 sem setor
+      algum embaixo) e NAO estao em municipio sem particao GEO (0 de 4.916).
+
+    ROTULAR, NAO PROMOVER. A medicao do BLK-ORFAOS-01 fechou o veredito: o teto de um
+    conserto perfeito e' 6.532 habitantes no pais inteiro (p50 de 0,02 hab por
+    hexagono) e ZERO deles entraria na fila do funil. Completar `_candidatos` em
+    `agregar_setores` para alcanca-los RENORMALIZARIA a fracao de area de cada setor e
+    redistribuiria populacao para fora dos hexagonos interiores -- mexeria em
+    `score_setor_2022_calibrado` NACIONALMENTE por 6.532 habitantes. Rejeitado.
+
+    Funcao SEPARADA das outras duas de proposito, mesmo molde da DEC-055:
+    `sobrepor_renda_da_malha` muda VALOR, `admitir_orfaos_da_malha` muda COBERTURA e
+    esta so' carimba PROCEDENCIA -- nao escreve score, renda nem populacao em linha
+    nenhuma.
+
+    `universo` sao os `hex_id` da base M1 (o traco censitario, por construcao, NAO tem
+    linha para quem se quer rotular). Sem ele, ou sem o parquet da malha no disco, a
+    funcao e' no-op: rotular sem a malha nao teria como distinguir os dois motivos, e
+    inventar um seria o defeito que este rotulo existe para consertar.
+
+    Pura: nao muta `censo`, nao toca as linhas que ja existem. Idempotente -- na segunda
+    passada os rotulados ja estao em `censo` e nada e' acrescentado.
+    """
+    if universo is None or "hex_id" not in censo.columns or not Path(malha_path).exists():
+        return censo
+
+    faltam = pd.Index(pd.Series(universo, dtype="object").dropna().astype(str).unique())
+    faltam = faltam.difference(pd.Index(censo["hex_id"].dropna().astype(str).unique()))
+    if faltam.empty:
+        return censo
+
+    malha = pd.read_parquet(malha_path, columns=["hex_id", "score_malha"])
+    na_malha = pd.Index(malha["hex_id"].dropna().astype(str).unique())
+    # Hexagono que a malha MEDE (score presente) e que mesmo assim nao esta no traco e'
+    # caso de ADMISSAO, nao de rotulo -- provavelmente a admissao nem rodou. Carimba-lo
+    # de "sem setor" seria afirmar o oposto do que a malha mostra, entao ele fica sem
+    # rotulo: o vocabulario e' fechado e nao tem valor para "nao sei".
+    medidos = pd.Index(malha.loc[malha["score_malha"].notna(), "hex_id"].dropna().astype(str).unique())
+    faltam = faltam.difference(medidos)
+    if faltam.empty:
+        return censo
+
+    novos = pd.DataFrame(
+        {
+            "hex_id": faltam.to_numpy(),
+            COL_MOTIVO_SEM_CENSO: np.where(
+                faltam.isin(na_malha), MOTIVO_SETOR_SEM_RENDA, MOTIVO_SEM_SETOR_POVOADO
+            ),
+        }
+    )
+    return pd.concat([censo, novos], ignore_index=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--geo-root", type=Path, default=DEFAULT_GEO_ROOT)

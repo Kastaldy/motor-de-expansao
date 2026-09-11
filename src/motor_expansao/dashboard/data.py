@@ -453,6 +453,16 @@ def enrich_dashboard_data(
         "motivo_fallback_setor_2022",
         "renda_per_capita_setor_2022_calibrada",
         "pop_total_setor_2022",
+        # PROCEDENCIA da camada censitaria do hexagono, as duas metades da mesma
+        # pergunta ("de onde veio, ou por que nao veio"):
+        # - `fonte_renda_censo_hex` distingue malha x reescalado x orfao ADMITIDO. A
+        #   DEC-055 declara esse carimbo como guardrail obrigatorio, e ele ficava so'
+        #   no traco: o artefato que o piloto SERVE nao o tinha, entao a auditoria da
+        #   admissao era impossivel exatamente onde ela importa.
+        # - `motivo_sem_censo` e' o rotulo dos 4.916 orfaos que a malha nao admite
+        #   (BLK-ORFAOS-01), com vocabulario fechado de dois valores.
+        "fonte_renda_censo_hex",
+        "motivo_sem_censo",
     ]
     if not censo_df.empty:
         censo_subset = censo_df[[column for column in censo_extra_cols if column in censo_df.columns]]
