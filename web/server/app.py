@@ -3542,23 +3542,38 @@ def _perfil_do_cliente() -> dict[str, Any]:
     entra requisicao". O front ja pede esta rota UMA vez na abertura, entao o pais chega
     de carona, sem round trip novo e sem superficie nova para o gate de acesso cobrir.
 
-    A lista e curta de proposito. Cada campo aqui tem um leitor nomeado no front:
-      pais                       -> o carimbo de bandeira do Dock e os rotulos de
-                                    unidade federativa (`rodape-base.ts`)
-      nome                       -> a frase "fora de X" (`entrada-ponto.ts`)
-      locale                     -> `new Intl.NumberFormat(...)` (`format.ts`)
-      moeda                      -> os oito literais de `R$` (`format.ts`)
-      moeda.indicadores_renda    -> `moedaRenda()` (`perfil.ts`), o simbolo que
-                                    acompanha RENDA — diverge de `moeda.simbolo` na
-                                    Argentina (ARS oficial, renda reportada em USD)
-      bbox                       -> `coord.ts` e `entrada-ponto.ts`
-      vista_padrao               -> `mapa-ponto.ts` e o fallback de camera do `HexMap`
-      reguas.pop_min_acionavel   -> `colors.ts`
-      reguas.capacidade_unidade_alunos -> `faixas.ts` e `mapa-ponto.ts`
+    A lista e curta de proposito, e cada campo tem um leitor nomeado no front — de
+    `pais` (a bandeira do Dock, os rotulos de unidade federativa) a `bbox` (`coord.ts`)
+    e `vista_padrao` (`mapa-ponto.ts` e o fallback de camera do `HexMap`). A lista
+    NOMINAL vive num lugar so, e nao aqui: `CAMPOS_DO_FRONT` em
+    `tests/contracts/test_perfil_front_espelha_o_python.py`, que compara os TRES lados
+    (perfil.json, `perfil-br.ts` compilado e este payload) e falha nomeando o campo.
+    Repeti-la aqui era uma quarta copia, que envelhece calada como qualquer outra.
+
+    As duas RESOLVIDAS, que nao sao transcricao de campo do perfil:
+      reguas.bandas_renda_setor     -> as faixas do choropleth de renda por setor
+      reguas.bandas_densidade_setor -> idem, densidade populacional
+
+    Elas saem daqui JA RESOLVIDAS pelo Python (`RENDA_PER_CAPITA_BANDS` /
+    `DENSIDADE_POP_BANDS`), e nao como o campo cru `reguas.faixas_*` do perfil. E'
+    deliberado: a regua (cortes e rotulos) e' dado de pais e mora no perfil, mas a
+    PALETA e' identidade da plataforma e mora na rampa de `dashboard/constants.py`.
+    Servir o campo cru obrigaria o front a repetir a regra de atribuicao de cor —
+    dois pontos de resolucao para uma regra so, que e' exatamente a duplicacao que
+    esta rota existe para acabar. O PDF e o mapa web passam a ler o MESMO objeto.
+
+    `float('inf')` do topo aberto vira `null`: `inf` nao e' JSON valido e o FastAPI
+    levanta "ValueError: Out of range float values are not JSON compliant" — a rota
+    inteira morreria, nao so' o campo.
 
     Nao mandar `superficies`, `fontes` nem `geocode`: sao do servidor. Campo sem leitor
     no front seria numero que envelhece calado — a mesma regra da spec §1.1.
     """
+    from motor_expansao.dashboard.constants import (  # noqa: PLC0415
+        DENSIDADE_POP_BANDS,
+        RENDA_PER_CAPITA_BANDS,
+    )
+
     return {
         "pais": PERFIL.pais,
         "nome": PERFIL.nome,
@@ -3582,8 +3597,25 @@ def _perfil_do_cliente() -> dict[str, Any]:
         "reguas": {
             "pop_min_acionavel": PERFIL.reguas.pop_min_acionavel,
             "capacidade_unidade_alunos": PERFIL.reguas.capacidade_unidade_alunos,
+            "bandas_renda_setor": _bandas_para_o_cliente(RENDA_PER_CAPITA_BANDS),
+            "bandas_densidade_setor": _bandas_para_o_cliente(DENSIDADE_POP_BANDS),
         },
     }
+
+
+def _bandas_para_o_cliente(
+    bands: list[tuple[float, str, tuple[int, int, int, int]]],
+) -> list[list[Any]]:
+    """Bands do nucleo -> JSON: `[corte_ou_null, rotulo, [r, g, b, a]]`.
+
+    `corte` e' o teto INCLUSIVO da faixa, na unidade da escala; `null` marca a faixa de
+    topo aberta. Sem essa troca a rota morre inteira: `float('inf')` faz o serializador
+    do FastAPI levantar "Out of range float values are not JSON compliant".
+    """
+    return [
+        [None if math.isinf(corte) else corte, rotulo, list(rgba)]
+        for corte, rotulo, rgba in bands
+    ]
 
 
 @app.post("/api/ciencia-confidencialidade")

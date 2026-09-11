@@ -448,7 +448,7 @@ RESIDUAL_SCORE_BANDS: list[tuple[str, str]] = [
 # alpha 150 (transparente) p/ as ruas do basemap claro aparecerem por baixo. Cortes (limites
 # superiores, hab/km2): 1000 / 5000 / 10000 / 25000 / inf. Paleta = ColorBrewer Reds-5.
 # Camada de VISUALIZACAO do Relatorio Pontual Censitario — NAO altera score/artefatos M1.
-DENSIDADE_POP_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
+_DENSIDADE_POP_BANDS_BR: list[tuple[float, str, tuple[int, int, int, int]]] = [
     (1_000.0,   "ate 1.000",         (254, 229, 217, 150)),
     (5_000.0,   "1.001-5.000",       (252, 174, 145, 150)),
     (10_000.0,  "5.001-10.000",      (251, 106, 74,  150)),
@@ -473,12 +473,13 @@ _RENDA_PER_CAPITA_BANDS_BR: list[tuple[float, str, tuple[int, int, int, int]]] =
     (float("inf"), ">R$ 5.000",        (0,   204, 0,   150)),   # #00CC00
 ]
 
-# A MESMA rampa dos literais acima, mais um verde-escuro de topo (o de OFERTA_*_BANDS).
-# Serve as faixas DECLARADAS NO PERFIL (`reguas.faixas_renda`): pais cujo choropleth de
-# renda nao e' legivel na regua brasileira declara os proprios cortes/rotulos no perfil,
-# e a COR vem daqui — regua e' dado de pais, paleta e' identidade da plataforma. Regra de
-# atribuicao: as N-1 primeiras faixas tomam as N-1 primeiras cores, a de topo toma SEMPRE
-# a ultima — com 6 faixas a rampa sai inteira; com 5, identica a brasileira.
+# As rampas de COR das faixas declaradas no perfil. A regua (cortes e rotulos) e' dado de
+# PAIS; a paleta e' identidade da plataforma e nao viaja no perfil — pais cujo choropleth
+# nao e' legivel na regua brasileira declara os proprios cortes, e a cor vem daqui.
+#
+# Cada rampa e' a rampa BRASILEIRA de 5 degraus MAIS um degrau escuro de topo, nesta
+# ordem. Isso e' o que torna a regra de atribuicao de `_bands_de_faixas` (prefixo) capaz
+# de reproduzir o literal BR byte a byte quando o pais declara 5 faixas.
 _RAMPA_RENDA: list[tuple[int, int, int, int]] = [
     (247, 244, 139, 150),   # #F7F48B
     (255, 255, 0,   150),   # #FFFF00
@@ -488,12 +489,36 @@ _RAMPA_RENDA: list[tuple[int, int, int, int]] = [
     (20,  170, 80,  150),   # verde-escuro de OFERTA_*_BANDS
 ]
 
+# Reds do ColorBrewer, como o literal BR, mais o Reds-9 mais escuro (#67000D) no topo.
+_RAMPA_DENSIDADE: list[tuple[int, int, int, int]] = [
+    (254, 229, 217, 150),
+    (252, 174, 145, 150),
+    (251, 106, 74,  150),
+    (222, 45,  38,  150),
+    (165, 15,  21,  150),
+    (103, 0,   13,  150),   # #67000D, o Reds mais escuro
+]
+
 
 def _bands_de_faixas(
-    faixas,  # tuple[perfil.FaixaRenda, ...]
+    faixas,  # tuple[perfil.Faixa, ...]
+    rampa: list[tuple[int, int, int, int]] | None = None,
 ) -> list[tuple[float, str, tuple[int, int, int, int]]]:
-    """Faixas do perfil -> formato de bands dos mapas de calor (teto, rotulo, RGBA)."""
-    cores = list(_RAMPA_RENDA[: len(faixas) - 1]) + [_RAMPA_RENDA[-1]]
+    """Faixas do perfil -> formato de bands dos mapas de calor (teto, rotulo, RGBA).
+
+    Atribuicao de cor: as N faixas tomam as N PRIMEIRAS cores da rampa, em ordem. Com 6
+    faixas a rampa sai inteira; com 5, identica a brasileira — e e' esse o ponto, porque
+    a rampa E' o literal BR mais um degrau de topo.
+
+    ARMADILHA (corrigida em 2026-09-10): a regra anterior era "as N-1 primeiras cores
+    mais a ULTIMA", e com N=5 ela PULAVA o 5o degrau — o topo brasileiro (#00CC00) saia
+    trocado pelo verde-escuro que so' deveria aparecer com 6 faixas. Um pais que
+    declarasse 5 faixas de renda nao reproduziria a rampa BR, contra o que o proprio
+    comentario prometia. Medido no artefato de Sao Paulo capital: a faixa de topo pega
+    4.659 dos 26.672 setores (17,47%), entao a cor errada nao seria um detalhe de borda.
+    Travado por `tests/unit/test_paridade_paleta_web.py`.
+    """
+    cores = (rampa if rampa is not None else _RAMPA_RENDA)[: len(faixas)]
     return [(f.ate, f.rotulo, cor) for f, cor in zip(faixas, cores, strict=True)]
 
 
@@ -504,6 +529,13 @@ RENDA_PER_CAPITA_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = (
     _bands_de_faixas(_REGUAS.faixas_renda.per_capita)
     if _REGUAS.faixas_renda is not None
     else _RENDA_PER_CAPITA_BANDS_BR
+)
+
+# Mesma regra da renda, para o choropleth de DENSIDADE (`reguas.faixas_densidade`).
+DENSIDADE_POP_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = (
+    _bands_de_faixas(_REGUAS.faixas_densidade, _RAMPA_DENSIDADE)
+    if _REGUAS.faixas_densidade is not None
+    else _DENSIDADE_POP_BANDS_BR
 )
 
 # ── Renda media domiciliar (fase seguinte, portada do prototipo) ──────────────
