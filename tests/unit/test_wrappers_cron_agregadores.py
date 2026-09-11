@@ -215,9 +215,14 @@ def test_healthcheck_expoe_subcomando_agregadores() -> None:
     texto = HEALTHCHECK.read_text(encoding="utf-8")
     assert "check_agregadores()" in texto, "a função do subcomando não existe"
     assert "agregadores) check_agregadores ;;" in texto, "o `case` não roteia o subcomando"
-    assert "{containers|host|authelia|coleta|agregadores|crescimento|test}" in texto, (
+    # A string de uso cresce a cada subcomando novo (`mercado` entrou com a DEC-059).
+    # O que este assert trava é que `agregadores` continue LISTADO nela, não a lista
+    # inteira congelada — travar a lista faria todo subcomando futuro quebrar um teste
+    # que não é sobre ele.
+    assert "agregadores|" in texto, (
         "a string de uso não lista o subcomando: ele existiria sem ser descobrível"
     )
+    assert "uso: $0 {containers|host|authelia|coleta|agregadores|" in texto
 
 
 def test_healthcheck_agregadores_tem_limiar_configuravel() -> None:
