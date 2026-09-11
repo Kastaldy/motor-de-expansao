@@ -906,25 +906,7 @@ def _derivar(df: pd.DataFrame) -> pd.DataFrame:
     #
     # O ramo antigo fica para artefato ANTERIOR ao bloco, onde a capacidade ainda era
     # uniforme e a divisao era, de fato, uma contagem.
-    influencia = out.get("n_concorrentes_influencia_1km")
-    cap = (
-        out["capacidade_default_concorrente_alunos"]
-        if "capacidade_default_concorrente_alunos" in out.columns
-        else CAPACIDADE_CONCORRENTE_PADRAO
-    )
-    consumo = out.get("oferta_consumida_mercado_estimada")
-    if influencia is not None:
-        out["n_concorrentes_est"] = (
-            pd.to_numeric(influencia, errors="coerce").fillna(0).round().astype("int64")
-        )
-    elif consumo is not None:
-        divisor = pd.to_numeric(cap, errors="coerce")
-        divisor = divisor.replace(0, float("nan")) if hasattr(divisor, "replace") else divisor
-        n = pd.to_numeric(consumo, errors="coerce") / divisor
-        n = n.replace([float("inf"), float("-inf")], float("nan"))
-        out["n_concorrentes_est"] = n.fillna(0).round().astype("int64")
-    else:
-        out["n_concorrentes_est"] = 0
+    out["n_concorrentes_est"] = _serie_n_concorrentes(out)
 
     ultra = out.get("n_unidades_ultra_performance_hex")
     out["n_ultra"] = (
@@ -2375,6 +2357,40 @@ def _serie_renda(
         valor = valor.where(~preencher, candidato)
         origem = origem.where(~preencher, coluna)
     return valor, origem
+
+def _serie_n_concorrentes(df: pd.DataFrame) -> pd.Series:
+    """Quantos concorrentes alcancam esta celula. UMA redacao, dois leitores.
+
+    Fonte preferida: `n_concorrentes_influencia_1km` — quantas unidades tem o disco de 1 km
+    cruzando a celula (`pressao_concorrencial_1km`). O ramo de divisao so' vale para artefato
+    ANTERIOR ao BLK-CAPACIDADE-01, quando a capacidade ainda era uniforme e `consumo / 2.500`
+    era, de fato, uma contagem. Depois da DEC-057 cada unidade consome a capacidade REAL dela,
+    entao a divisao passou a contar ALUNOS: um Smart Fit de 5.000 apareceria como "2
+    concorrentes" e mandaria o hexagono de "Adensar" para "Disputa" por ser GRANDE, nao por
+    ter vizinho.
+
+    POR QUE ELA MORA AQUI. A DEC-057 trocou a fonte em `_derivar` e NAO em
+    `_hexagonos_acionaveis_brasil`, e as duas redacoes passaram a discordar em producao:
+    2.036 hexagonos acionaveis pela primeira contra 2.764 pela segunda, sobre a MESMA base.
+    E' o desencontro silencioso que o comentario no topo deste bloco descreve e que a DEC-044
+    pagou para eliminar — reintroduzido por atualizacao parcial. A regra e' escrita uma vez.
+    """
+    influencia = df.get("n_concorrentes_influencia_1km")
+    if influencia is not None:
+        return pd.to_numeric(influencia, errors="coerce").fillna(0).round().astype("int64")
+
+    consumo = df.get("oferta_consumida_mercado_estimada")
+    if consumo is None:
+        return pd.Series(0, index=df.index, dtype="int64")
+
+    cap = (
+        pd.to_numeric(df["capacidade_default_concorrente_alunos"], errors="coerce")
+        if "capacidade_default_concorrente_alunos" in df.columns
+        else pd.Series(CAPACIDADE_CONCORRENTE_PADRAO, index=df.index, dtype="float64")
+    )
+    n = pd.to_numeric(consumo, errors="coerce") / cap.replace(0, float("nan"))
+    n = n.replace([float("inf"), float("-inf")], float("nan"))
+    return n.fillna(0).round().astype("int64")
 
 
 def _quente(df: pd.DataFrame) -> pd.Series:
@@ -4712,22 +4728,10 @@ def _hexagonos_acionaveis_brasil() -> pd.DataFrame:
     # `n_concorrentes_est` REAL, nao zero. Sob a regra antiga (zero concorrente) a
     # constante era verdadeira por construcao; desde a DEC-041 a cascata admite ate'
     # `CONC_ADENSAR_MAX`, e cravar 0 faria o chip da tela AFIRMAR "Livre" para um
-    # hexagono com dois concorrentes mapeados. Refeita aqui na origem, pela mesma conta
-    # de `_derivar`, porque esta rota le o dataset cru e nao passa por `carregar_uf`.
-    consumida = pd.to_numeric(
-        eleg.get("oferta_consumida_mercado_estimada"), errors="coerce"
-    ).fillna(0) if "oferta_consumida_mercado_estimada" in eleg.columns else pd.Series(
-        0.0, index=eleg.index
-    )
-    cap = (
-        pd.to_numeric(eleg["capacidade_default_concorrente_alunos"], errors="coerce")
-        if "capacidade_default_concorrente_alunos" in eleg.columns
-        else pd.Series(CAPACIDADE_CONCORRENTE_PADRAO, index=eleg.index, dtype="float64")
-    )
-    n_conc = (consumida / cap.replace(0, float("nan"))).replace(
-        [float("inf"), float("-inf")], float("nan")
-    )
-    eleg["n_concorrentes_est"] = n_conc.fillna(0).round().astype("int64")
+    # hexagono com dois concorrentes mapeados. Pela MESMA redacao de `_derivar` — esta rota
+    # le o dataset cru e nao passa por `carregar_uf`, mas a regra e' a mesma e mora num
+    # lugar so'.
+    eleg["n_concorrentes_est"] = _serie_n_concorrentes(eleg)
 
     # ORDENA PELO INDICE DE PRACA (DEC-041), nao pelo residual puro. Ordenar por
     # `oferta_efetiva_disponivel` e' ordenar por populacao (Spearman 0,995), e num
