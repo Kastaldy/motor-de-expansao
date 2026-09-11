@@ -231,27 +231,231 @@ def test_a_contagem_esta_nas_DUAS_listas_de_projecao() -> None:
     )
 
 
-def test_as_duas_listas_gemeas_de_RESIDUAL_MERCADO_COLS_nao_divergem() -> None:
-    """Existem DUAS listas com esse nome, e elas nao se enxergam.
+def test_RESIDUAL_MERCADO_COLS_e_UM_OBJETO_SO() -> None:
+    """Identidade, nao igualdade — e a diferenca e o bloco inteiro.
 
-    `dashboard/constants.py` serve a leitura do dashboard; `gerar_carteira_acionavel.py` e
-    a que `enriquecer_outputs_residual_mercado` usa para levar as colunas ao artefato
-    enriquecido. Acrescentar coluna em uma so' e um no-op SILENCIOSO — foi exatamente o que
-    aconteceu neste bloco: a coluna entrou na de `constants.py`, o pipeline rodou verde e o
-    enriquecido saiu sem ela.
+    Ate' 2026-09-10 existiam DUAS listas com esse nome, uma em `dashboard/constants.py` e
+    outra em `gerar_carteira_acionavel.py`, e elas nao se enxergavam: acrescentar coluna
+    numa so' era no-op SILENCIOSO. O teste que existia aqui comparava
+    `set(A) == set(B)` — e um teste de conjunto continua PASSANDO com duas copias, entao
+    ele travava a divergencia de hoje sem impedir que a divergencia de amanha nascesse.
 
-    Unificar as duas e divida propria. Ate la, este teste garante que ninguem mexa numa e
-    esqueca a outra — que e a unica forma de o defeito voltar.
+    Agora ha' uma fonte unica em `constants.py` e o pipeline RE-EXPORTA o nome. `is` e' o
+    unico assert que constata isso: se alguem redigitar o literal, o conteudo pode ate'
+    coincidir, mas o objeto nao.
+    """
+    from motor_expansao.dashboard import constants
+    from motor_expansao.pipelines import gerar_carteira_acionavel
+
+    assert constants.RESIDUAL_MERCADO_COLS is gerar_carteira_acionavel.RESIDUAL_MERCADO_COLS, (
+        "o pipeline deixou de RE-EXPORTAR a fonte unica e voltou a ter lista propria"
+    )
+
+    # O terceiro consumidor importa o nome do pipeline (e nao de `constants`); a cadeia
+    # inteira tem de pousar no mesmo objeto, senao a unificacao vale so' para dois tercos.
+    from motor_expansao.pipelines import enriquecer_outputs_residual_mercado as enriquecer
+
+    assert enriquecer.RESIDUAL_MERCADO_COLS is constants.RESIDUAL_MERCADO_COLS
+
+
+# --------------------------------------------------------------------------- #
+# Injecao: a fonte unica realmente MANDA nas projecoes derivadas               #
+# --------------------------------------------------------------------------- #
+
+
+COLUNA_SINTETICA = "coluna_sintetica_so_de_teste"
+
+
+def test_injetar_coluna_na_fonte_unica_chega_a_LOAD_COLS() -> None:
+    """Injecao de verdade: mexer na fonte unica muda a projecao do pipeline.
+
+    Containment (`set(fonte) <= set(LOAD_COLS)`) passaria mesmo se alguem trocasse o
+    `*RESIDUAL_MERCADO_COLS` por uma copia literal dos 18 nomes. Este teste falsifica isso:
+    poe uma coluna que NAO existe em lugar nenhum e exige que ela apareca.
+
+    `LOAD_COLS` e' montada por unpacking no IMPORT, entao a injecao precisa do `reload` —
+    e' a arquitetura, nao uma escolha do teste. Sem monkeypatch de proposito: o `finally`
+    tem de rodar DEPOIS do reload de restauracao, e a ordem de teardown do monkeypatch nao
+    garante isso.
+    """
+    import importlib
+
+    from motor_expansao.dashboard import constants
+    from motor_expansao.pipelines import gerar_carteira_acionavel
+
+    original = constants.RESIDUAL_MERCADO_COLS
+    try:
+        constants.RESIDUAL_MERCADO_COLS = [*original, COLUNA_SINTETICA]
+        recarregado = importlib.reload(gerar_carteira_acionavel)
+        assert COLUNA_SINTETICA in recarregado.RESIDUAL_MERCADO_COLS
+        assert COLUNA_SINTETICA in recarregado.LOAD_COLS, (
+            "LOAD_COLS parou de derivar da fonte unica"
+        )
+    finally:
+        constants.RESIDUAL_MERCADO_COLS = original
+        importlib.reload(gerar_carteira_acionavel)
+
+    assert COLUNA_SINTETICA not in gerar_carteira_acionavel.LOAD_COLS
+
+
+def test_injetar_coluna_na_fonte_unica_chega_a_carregar_colunas_residual_mercado(
+    tmp_path, monkeypatch
+) -> None:
+    """A leitura do parquet de mercado pede as colunas pela lista, em tempo de CHAMADA.
+
+    Aqui o monkeypatch basta (a funcao le' o global a cada chamada), entao da' para provar
+    o caminho ponta a ponta: coluna sintetica na lista -> coluna sintetica no frame lido.
+    """
+    from motor_expansao.pipelines import gerar_carteira_acionavel as gca
+
+    mercado = tmp_path / "mercado.parquet"
+    pd.DataFrame(
+        {
+            "hex_id": ["87a8100efffffff", "87a8100e0ffffff"],
+            "oferta_efetiva_disponivel": [10.0, 20.0],
+            COLUNA_SINTETICA: [1, 2],
+        }
+    ).to_parquet(mercado)
+
+    monkeypatch.setattr(
+        gca,
+        "RESIDUAL_MERCADO_COLS",
+        [*gca.RESIDUAL_MERCADO_COLS, COLUNA_SINTETICA],
+    )
+    lido = gca.carregar_colunas_residual_mercado(mercado)
+    assert COLUNA_SINTETICA in lido.columns, (
+        "a projecao de leitura do mercado nao pergunta a fonte unica"
+    )
+
+
+def test_HYBRID_LOAD_COLS_deriva_da_fonte_unica() -> None:
+    """O mais proximo possivel para `HYBRID_LOAD_COLS` — e por que nao da' para mais.
+
+    Ela vive no MESMO modulo que a fonte unica e e' montada por unpacking no import.
+    Injetar exigiria recarregar `constants`, o que reconstroi a propria lista a partir do
+    literal e apaga a injecao — circular por construcao. O que resta e' containment: se
+    alguem acrescentar a 19a coluna a fonte unica e `HYBRID_LOAD_COLS` tiver virado copia
+    literal, este assert fica vermelho, que e' exatamente o cenario do incidente.
     """
     from motor_expansao.dashboard.constants import (
-        RESIDUAL_MERCADO_COLS as DO_DASHBOARD,
-    )
-    from motor_expansao.pipelines.gerar_carteira_acionavel import (
-        RESIDUAL_MERCADO_COLS as DO_PIPELINE,
+        HYBRID_LOAD_COLS,
+        RESIDUAL_MERCADO_COLS,
     )
 
-    assert set(DO_DASHBOARD) == set(DO_PIPELINE), (
-        "as duas listas divergiram: "
-        f"so no dashboard={sorted(set(DO_DASHBOARD) - set(DO_PIPELINE))}, "
-        f"so no pipeline={sorted(set(DO_PIPELINE) - set(DO_DASHBOARD))}"
+    faltam = [c for c in RESIDUAL_MERCADO_COLS if c not in HYBRID_LOAD_COLS]
+    assert not faltam, f"HYBRID_LOAD_COLS parou de derivar da fonte unica: {faltam}"
+
+
+# --------------------------------------------------------------------------- #
+# Tipagem declarada dos dois lados                                             #
+# --------------------------------------------------------------------------- #
+
+
+#: Colunas de `RESIDUAL_MERCADO_COLS` que NAO recebem tipagem no lado do dashboard, com a
+#: razao medida. Lista de excecoes e' divida declarada, nao permissao: qualquer nome novo
+#: aqui precisa vir com a medicao ao lado.
+SEM_TIPAGEM_NO_DASHBOARD = {
+    # E' uma CONTAGEM inteira. `FLOAT_COLUMNS` coage com `.astype("Float32")` e mudaria o
+    # schema do artefato enriquecido -- medido em `uf=SP/parte-0.parquet` (2026-09-10):
+    # a coluna sai `int64` hoje e viraria `float`. Nao existe lista de inteiros no
+    # dashboard; criar uma mexe em `_prepare_dataframe` e no schema, e isso e' PR proprio.
+    "n_concorrentes_influencia_1km": "contagem int64; Float32 mudaria o schema do artefato",
+}
+
+#: Do lado do PIPELINE nao existe coercao de texto -- `_coerce_types` so' tem
+#: NUMERIC_COLUMNS e BOOL_COLUMNS. As colunas de texto sao declaradas so' no dashboard, e
+#: isso e' desenho, nao esquecimento.
+SEM_TIPAGEM_NO_PIPELINE = {"fonte_pop_hex_base", "quartil_oportunidade_residual",
+                           "prioridade_mercado_mapeado", "tese_entrada"}
+
+
+def test_toda_coluna_de_mercado_tem_tipagem_declarada_no_dashboard() -> None:
+    """Coluna sem tipagem chega ao piloto com o dtype que o parquet der — inclusive `object`.
+
+    Foi assim que a familia DEC-038 machucou: o valor existe, o tipo esta errado e nada
+    grita. Este teste exige declaracao EXPLICITA (uma lista, exatamente uma) ou entrada na
+    lista de excecoes com a razao escrita.
+    """
+    from motor_expansao.dashboard.constants import (
+        BOOL_COLUMNS,
+        FLOAT_COLUMNS,
+        RESIDUAL_MERCADO_COLS,
+        TEXT_COLUMNS,
     )
+
+    listas = {"FLOAT_COLUMNS": FLOAT_COLUMNS, "BOOL_COLUMNS": BOOL_COLUMNS,
+              "TEXT_COLUMNS": TEXT_COLUMNS}
+    for coluna in RESIDUAL_MERCADO_COLS:
+        onde = [nome for nome, lista in listas.items() if coluna in lista]
+        if coluna in SEM_TIPAGEM_NO_DASHBOARD:
+            assert not onde, (
+                f"{coluna} esta' na excecao de tipagem mas foi declarada em {onde}; "
+                "tirar da excecao e medir o efeito no schema"
+            )
+            continue
+        assert len(onde) == 1, f"{coluna} deveria estar em UMA lista de tipagem, esta' em {onde}"
+
+
+def test_toda_coluna_de_mercado_tem_tipagem_coerente_no_pipeline() -> None:
+    """As duas coercoes tem de concordar: float la', numerico aqui; bool la', bool aqui.
+
+    Uma coluna declarada FLOAT no dashboard e ausente do `NUMERIC_COLUMNS` do pipeline sai
+    do `gerar_carteira_acionavel` com o dtype cru do parquet e so' e' consertada na leitura
+    — quem consumir o CSV/parquet da carteira le' o tipo errado.
+    """
+    from motor_expansao.dashboard.constants import (
+        BOOL_COLUMNS as DASH_BOOL,
+    )
+    from motor_expansao.dashboard.constants import (
+        FLOAT_COLUMNS as DASH_FLOAT,
+    )
+    from motor_expansao.dashboard.constants import (
+        RESIDUAL_MERCADO_COLS,
+    )
+    from motor_expansao.pipelines.gerar_carteira_acionavel import (
+        BOOL_COLUMNS as PIPE_BOOL,
+    )
+    from motor_expansao.pipelines.gerar_carteira_acionavel import (
+        NUMERIC_COLUMNS as PIPE_NUMERIC,
+    )
+
+    for coluna in RESIDUAL_MERCADO_COLS:
+        if coluna in SEM_TIPAGEM_NO_PIPELINE:
+            assert coluna not in PIPE_NUMERIC and coluna not in PIPE_BOOL
+            continue
+        if coluna in DASH_FLOAT:
+            assert coluna in PIPE_NUMERIC, f"{coluna} e' FLOAT no dashboard e nao e' numerica no pipeline"
+            assert coluna not in PIPE_BOOL
+        elif coluna in DASH_BOOL:
+            assert coluna in PIPE_BOOL, f"{coluna} e' BOOL no dashboard e nao e' bool no pipeline"
+            assert coluna not in PIPE_NUMERIC
+        else:
+            # Sobra so' a excecao do dashboard; ela ainda precisa de tipagem no pipeline,
+            # onde `pd.to_numeric` preserva o int64 e nao mexe no schema.
+            assert coluna in SEM_TIPAGEM_NO_DASHBOARD
+            assert coluna in PIPE_NUMERIC, f"{coluna} nao tem tipagem em nenhum dos dois lados"
+
+
+def test_a_contagem_esta_na_rede_que_recusa_artefato_mutilado() -> None:
+    """`COLUNAS_CRITICAS_ENRIQUECIDO` e' a rede que RECUSA escrever o enriquecido sem a coluna.
+
+    Ela existia e nao cobria justamente a coluna do incidente: o pipeline rodou verde tres
+    vezes e o artefato saiu mutilado. Sem ela, `n_concorrentes_est` cai no ramo legado
+    (`oferta_consumida / capacidade`) que, com capacidade REAL por unidade (DEC-057), le'
+    academia GRANDE como DUAS.
+    """
+    from motor_expansao.pipelines.m1.fase1_bi_exports import (
+        COLUNAS_CRITICAS_ENRIQUECIDO,
+        verificar_colunas_criticas,
+    )
+
+    assert "n_concorrentes_influencia_1km" in COLUNAS_CRITICAS_ENRIQUECIDO
+
+    frame = pd.DataFrame({c: [1.0] for c in COLUNAS_CRITICAS_ENRIQUECIDO})
+    verificar_colunas_criticas(frame)  # completo: nao levanta
+
+    with pytest.raises(ValueError) as erro:
+        verificar_colunas_criticas(frame.drop(columns=["n_concorrentes_influencia_1km"]))
+    # A dica tem de apontar o passo que faltou rodar -- antes ela so' disparava para
+    # colunas com prefixo `oferta_`, e esta nao tem.
+    assert "enriquecer_outputs_residual_mercado" in str(erro.value)

@@ -29,6 +29,26 @@ from pathlib import Path
 import pandas as pd
 import pyarrow.parquet as pq
 
+#: A FONTE UNICA de `RESIDUAL_MERCADO_COLS` mora em `dashboard/constants.py`; este modulo
+#: apenas RE-EXPORTA o nome para `enriquecer_outputs_residual_mercado`, que o importa daqui
+#: (e continua podendo faze-lo sem mudar uma linha).
+#:
+#: Ate' 2026-09-10 havia aqui um SEGUNDO literal com o mesmo nome e o mesmo conteudo, e os
+#: dois nao se enxergavam. Acrescentar coluna em um so' era um no-op SILENCIOSO -- foi o que
+#: aconteceu no BLK-CAPACIDADE-01: `n_concorrentes_influencia_1km` entrou na lista de
+#: `constants.py`, o pipeline rodou VERDE tres vezes e o artefato enriquecido saiu sem a
+#: coluna; so' apareceu ao conferir o schema a mao antes do deploy. Agora ha' um objeto so'
+#: (`tests/unit/test_capacidade_real_residual.py` trava a IDENTIDADE, nao a igualdade --
+#: igualdade de conjunto continuaria passando com duas copias).
+#:
+#: POR QUE EM `dashboard/constants.py` E NAO NUM MODULO NEUTRO NOVO: os tres arquivos que
+#: participam deste contrato (`dashboard/constants.py`, `gerar_carteira_acionavel.py` e
+#: `enriquecer_outputs_residual_mercado.py`) sao classificados CRITICOS por
+#: `scripts/loop_guard.py`. Um modulo neutro tiraria a projecao de mercado servida em
+#: producao do gate critico e deixaria um PR "Media" auto-mergeavel reescreve-la -- o furo
+#: que a DEC-048 fechou. Mover daqui exige uma linha nova em `_DENY_CRITICO` no MESMO commit.
+from motor_expansao.dashboard.constants import RESIDUAL_MERCADO_COLS
+
 ROOT = Path(__file__).resolve().parents[3]
 INPUT_PATH = ROOT / "data" / "outputs" / "oportunidades_expansao_hibrido.parquet"
 MERCADO_PATH = ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"
@@ -38,37 +58,6 @@ OUTPUT_CSV = ROOT / "data" / "outputs" / "carteira_expansao_acionavel.csv"
 TOP_N_HEX_POR_MUNICIPIO = 5
 PRIORIDADE_ALTA_RANK_UF = 5
 PRIORIDADE_ALTA_RANK_BRASIL = 50
-
-#: ATENCAO: esta lista tem uma GEMEA em `dashboard/constants.py`, com o mesmo nome e o
-#: mesmo conteudo, e as duas nao se enxergam. Esta aqui e' a que
-#: `enriquecer_outputs_residual_mercado` usa para levar as colunas de mercado ao artefato
-#: enriquecido; a de la' serve a leitura do dashboard. Acrescentar coluna em uma so' e' um
-#: no-op SILENCIOSO -- foi o que aconteceu no BLK-CAPACIDADE-01: a coluna entrou na de
-#: `constants.py`, o pipeline rodou verde e o enriquecido saiu sem ela. Unificar as duas e'
-#: divida propria; enquanto nao for feito, MEXER NAS DUAS.
-RESIDUAL_MERCADO_COLS = [
-    "pop_hex_base",
-    "fonte_pop_hex_base",
-    "tam_populacao_hex",
-    "tam_fitness_potencial",
-    "flag_sam_fitness",
-    "sam_fitness_potencial",
-    "capacidade_default_concorrente_alunos",
-    "oferta_consumida_mercado_estimada",
-    # A CONTAGEM de concorrentes que alcancam o hexagono (BLK-CAPACIDADE-01). Sem ela no
-    # enriquecido, o piloto deriva a contagem de `oferta_consumida / capacidade` -- que com
-    # capacidade REAL por unidade deixa de contar academias.
-    "n_concorrentes_influencia_1km",
-    "oferta_consumida_ultra_real",
-    "n_unidades_ultra_performance_hex",
-    "oferta_efetiva_disponivel",
-    "penetracao_fitness_mercado_estimada",
-    "share_ultra_estimado_hex",
-    "score_oportunidade_residual",
-    "quartil_oportunidade_residual",
-    "prioridade_mercado_mapeado",
-    "tese_entrada",
-]
 
 LOAD_COLS = [
     "hex_id",
@@ -131,6 +120,12 @@ NUMERIC_COLUMNS = [
     "sam_fitness_potencial",
     "capacidade_default_concorrente_alunos",
     "oferta_consumida_mercado_estimada",
+    # CONTAGEM (int). `pd.to_numeric` preserva o int64 que vem do parquet -- entrar aqui
+    # nao muda dtype, so' garante que texto/None viram numero como nas irmas. A lista
+    # equivalente do lado do dashboard (`constants.FLOAT_COLUMNS`) NAO a recebe, de
+    # proposito: la' a coercao e' `.astype("Float32")` e transformaria a contagem em float
+    # no schema do artefato enriquecido (medido em `uf=SP/parte-0.parquet`: sai `int64`).
+    "n_concorrentes_influencia_1km",
     "oferta_consumida_ultra_real",
     "n_unidades_ultra_performance_hex",
     "oferta_efetiva_disponivel",
