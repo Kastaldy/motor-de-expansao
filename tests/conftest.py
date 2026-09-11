@@ -25,6 +25,7 @@ o teste pretende verificar. Producao (`censo_report.py`) fica INTOCADA.
 from __future__ import annotations
 
 import os
+import sys
 from datetime import UTC, datetime
 
 import pytest
@@ -83,6 +84,46 @@ def _simulador_xlsx_sem_cache(monkeypatch):
     """
     monkeypatch.setenv("MOTOR_SIMULADOR_XLSX_SEM_CACHE", "1")
 
+
+@pytest.fixture(autouse=True)
+def _limpar_cache_do_perfil_do_cliente():
+    """Devolve o `_perfil_do_cliente` do piloto ao estado limpo depois de CADA teste.
+
+    ## O defeito que isto fecha
+
+    O pais e' resolvido UMA vez por processo (DEC-047: "um binario, N containers, um pais
+    por processo"), e `web/server/app.py::_perfil_do_cliente` e' `lru_cache(maxsize=1)`
+    justamente porque essa premissa vale em producao.
+
+    Em TESTE a premissa e' quebrada de proposito: cinco casos trocam `app.PERFIL` para o
+    perfil da Argentina com `monkeypatch.setattr`. Se, com o perfil trocado, qualquer
+    requisicao chamar `_perfil_do_cliente()`, o payload ARGENTINO fica cacheado para o
+    resto do processo -- e o `monkeypatch` devolve o atributo sem ter como devolver o
+    cache. Todo teste seguinte que leia `/api/me` recebe Argentina.
+
+    Isso ja' acontecia: `tests/contracts/test_perfil_front_espelha_o_python.py`
+    ("o payload bate com o perfil carregado") passava sozinho e FALHAVA depois de
+    `tests/unit/test_piloto_web_acesso_banco.py`, com `'Argentina' == 'Brasil'`. Ficou
+    invisivel porque, na ordem padrao de coleta, `tests/contracts` roda ANTES de
+    `tests/unit` -- o contrato passava por acidente de ordem alfabetica.
+
+    ## Por que autouse, e por que no teardown
+
+    Autouse porque o envenenador e o envenenado estao em ARQUIVOS diferentes: consertar
+    os cinco sitios deixaria o sexto a nascer. O `sys.modules.get` mantem o custo em zero
+    para quem nunca importou o piloto -- a fixture nao FORCA o import, so' limpa se ele
+    ja' estiver de pe'.
+
+    `tests/contracts/test_cache_de_perfil_nao_escapa.py` garante que `_perfil_do_cliente`
+    segue sendo a UNICA funcao cacheada do `app.py` que alcanca `PERFIL`; se nascer outra,
+    aquele teste falha pedindo que ela entre aqui.
+    """
+    yield
+    modulo = sys.modules.get("app")
+    alvo = getattr(modulo, "_perfil_do_cliente", None) if modulo is not None else None
+    limpar = getattr(alvo, "cache_clear", None)
+    if limpar is not None:
+        limpar()
 
 @pytest.fixture(autouse=True)
 def _isolar_trilha_acesso(monkeypatch, tmp_path):

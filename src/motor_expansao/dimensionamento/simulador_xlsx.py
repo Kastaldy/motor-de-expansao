@@ -2312,7 +2312,12 @@ def _carimbar_docprops(
     """
     from motor_expansao.dashboard.pdf_base import nome_exibicao, texto_da_marca
 
-    quem = nome_exibicao(solicitante) if (solicitante or "").strip() else ""
+    # O `strip()` entra numa VARIAVEL, e nao no meio do `if`: o guarda provava nao-nulo
+    # em runtime e o mypy nao estreitava atraves dele (gate bloqueante do CI). De quebra,
+    # `nome_exibicao` passa a receber o valor APARADO -- antes o guarda testava o aparado
+    # e a chamada usava o cru.
+    quem_bruto = (solicitante or "").strip()
+    quem = nome_exibicao(quem_bruto) if quem_bruto else ""
     wb.properties.title = "Simulador de viabilidade - Ultra Academia"
     wb.properties.subject = texto_da_marca(solicitante, report_id)
     if quem:
@@ -2337,8 +2342,9 @@ def _write_bloco_rastreio(
     row = ws.max_row + 2
     _cabecalho_tabela(ws, row, [_RASTREIO_TITULO, "", "", "", ""])
 
+    quem_bruto = (solicitante or "").strip()
     linhas = (
-        (_RASTREIO_LABEL_QUEM, nome_exibicao(solicitante) if (solicitante or "").strip() else "—"),
+        (_RASTREIO_LABEL_QUEM, nome_exibicao(quem_bruto) if quem_bruto else "—"),
         (_RASTREIO_LABEL_ID, (report_id or "—").strip()),
     )
     for i, (label, valor) in enumerate(linhas, start=1):

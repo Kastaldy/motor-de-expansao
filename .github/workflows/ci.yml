@@ -39,11 +39,23 @@ jobs:
       - name: Instalar dependencias
         # inclui [api_mvp] (fastapi/uvicorn/pydantic) p/ a suite da API GeoEspacial
         # rodar no CI. NAO arrasta p/ as imagens: Dockerfile.web/.api instalam so seus extras.
+        #
+        # [db] e [auth] entraram em 11/09. Ate' aqui o CI instalava so' [dev,api_mvp] e
+        # 222 testes NAO RODAVAM nele -- toda a camada de banco (usuarios, senhas, RBAC,
+        # eventos, CLI, as duas suites de acesso) passava verde so' na maquina de quem
+        # escreveu. Nao havia skip anunciando isso: sem `psycopg`/`argon2-cffi` os modulos
+        # nem importam, e o que o CI nao coleta ele nao reporta como pulado.
+        # O custo e' uma roda binaria de cada (`psycopg[binary]`, `argon2-cffi`), e o ganho
+        # colateral e' que o pip-audit abaixo passa a AUDITAR as duas.
+        #
         # BLK-OPS-12: -c constraints.txt PINA todas as deps transitivas (lockfile
         # universal gerado por uv p/ >=3.11; mesmo arquivo usado nos Dockerfiles) ->
         # CI, imagens e local instalam as MESMAS versoes. Refresh do lock:
         #   uv pip compile pyproject.toml --all-extras --universal --python-version 3.11 -o constraints.txt
-        run: pip install -e ".[dev,api_mvp]" -c constraints.txt
+        # ATENCAO: `argon2-cffi` ainda NAO esta no lock (BLK-OPS-12 em aberto), entao ele
+        # instala na ultima versao que o range do pyproject aceitar -- aqui e na imagem de
+        # producao, que roda o mesmo `-c`. Fechar isso e' o refresh do lock acima.
+        run: pip install -e ".[dev,api_mvp,db,auth]" -c constraints.txt
 
       # ruff/mypy sao steps de qualidade BLOQUEANTES desde BLK-OPS-02b: a divida
       # latente de lint/tipos (286 ruff + 23 mypy) foi zerada naquele ciclo, sem
