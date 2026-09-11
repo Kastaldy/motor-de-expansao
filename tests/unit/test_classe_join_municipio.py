@@ -75,6 +75,7 @@ def _notas(cod: str = "1302603", classe: str = "A", taxa: float = 0.975) -> pd.D
             "classe_join_municipio": [classe],
             "taxa_match_municipio": [taxa],
             "n_setores_municipio": [3281],
+            "pop_municipio_malha": [2_063_689.0],
         }
     )
 
@@ -173,6 +174,54 @@ def test_municipio_bom_promove_hexagono_preso_em_estado_ruim() -> None:
     assert list(derive_confianca_geografica(df)) == ["granular", "granular", "municipal"]
 
 
+def test_regua_ponderada_continua_sendo_perna_de_or_e_nao_rebaixa(tmp_path) -> None:
+    """DEC-058 nao mexe na ARITMETICA da DEC-054: a nota nova entra no MESMO OR.
+
+    Este e' o teste que o pedido de mudanca exige, e ele precisa ser especifico. A
+    propriedade "so promove" e' sobre o comportamento PRE-BLOCO (a nota de UF sozinha):
+    trocar o denominador da nota municipal nao pode fazer hexagono nenhum ficar ABAIXO do
+    que a nota de UF ja' garantia.
+
+    O caso decisivo esta' na PIOR direcao possivel para a mudanca: um municipio que a regua
+    de CONTAGEM aprovava e a de POPULACAO reprova (o caso Ilha de Itamaraca/PE, 13
+    municipios na producao). Mesmo ali, o hexagono cujo ESTADO e' classe A/B continua
+    granular -- porque a perna de UF nunca foi tocada.
+    """
+    part = tmp_path / "uf=PE" / "cod_municipio=2607604"
+    part.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "cod_municipio": ["2607604"] * 2,
+            "flag_renda_disponivel": [False, True],
+            "pop_total_setor_2022": [9000.0, 1000.0],  # 0,10 na populacao; 0,50 na contagem
+        }
+    ).to_parquet(part / "part-000.parquet")
+    notas = calcular_notas(tmp_path)
+    assert notas["classe_join_municipio"].iloc[0] == "C"
+
+    df = pd.DataFrame(
+        {
+            "hex_id": ["estado_bom", "estado_ruim"],
+            "cod_municipio": ["2607604", "2607604"],
+            "qualidade_join_uf": ["B", "C"],
+            "flag_censo_disponivel": [True, True],
+        }
+    )
+    out = anexar_nota_municipal(df, notas)
+    antes = _confianca_pre_bloco(out)
+    depois = derive_confianca_geografica(out)
+
+    # 1. Ninguem cai abaixo do que a nota de UF ja' dava -- a propriedade da DEC-054.
+    assert not (antes.eq("granular") & ~depois.eq("granular")).any()
+    # 2. E o caso concreto: o estado classe B segue granular apesar do municipio C.
+    assert depois.iloc[0] == "granular"
+    # 3. O custo declarado da DEC-058: com o estado tambem ruim, a perna municipal era a
+    #    unica -- e a regua ponderada a retira, de proposito (la' a renda falta onde a
+    #    populacao esta'). Isso NAO e' rebaixamento contra o pre-bloco: era municipal antes.
+    assert depois.iloc[1] == "municipal"
+    assert antes.iloc[1] == "municipal"
+
+
 def test_sem_sinal_censitario_a_nota_municipal_nao_promove() -> None:
     """A nota afrouxa o gate de JOIN, nao o de EXISTENCIA de dado."""
     df = pd.DataFrame(
@@ -191,23 +240,96 @@ def test_sem_sinal_censitario_a_nota_municipal_nao_promove() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_calcular_notas_agrega_por_municipio(tmp_path) -> None:
-    part = tmp_path / "uf=AM" / "cod_municipio=1302603"
+def test_calcular_notas_pondera_por_populacao_e_nao_por_contagem(tmp_path) -> None:
+    """DEC-058: o denominador e' POPULACAO, nao contagem de setores.
+
+    O caso e' o das cidades de praia, reduzido a quatro setores: tres setores de veraneio
+    quase vazios sem renda publicada e um setor urbano onde mora quase todo mundo. Pela
+    CONTAGEM a cidade mede 0,25 (classe C) e perde a leitura granular; pela POPULACAO mede
+    0,97 (classe A), que e' a fracao de gente cuja renda o IBGE de fato publicou.
+
+    Medido no artefato de producao antes de mudar: Angra dos Reis 0,84392 -> 0,998752,
+    Paraty 0,805714 -> 0,997038, Bertioga 0,816993 -> 0,997710 -- nove cidades de praia,
+    todas C na contagem e todas A na populacao.
+    """
+    part = tmp_path / "uf=RJ" / "cod_municipio=3300100"
     part.mkdir(parents=True)
     pd.DataFrame(
         {
             "cod_setor": ["1", "2", "3", "4"],
-            "cod_municipio": ["1302603"] * 4,
-            "flag_renda_disponivel": [True, True, True, False],  # 0,75 -> C
+            "cod_municipio": ["3300100"] * 4,
+            "flag_renda_disponivel": [True, False, False, False],
+            "pop_total_setor_2022": [9700.0, 100.0, 100.0, 100.0],
         }
     ).to_parquet(part / "part-000.parquet")
 
-    notas = calcular_notas(tmp_path)
-    linha = notas.iloc[0]
-    assert linha["cod_municipio"] == "1302603"
-    assert linha["taxa_match_municipio"] == pytest.approx(0.75)
+    linha = calcular_notas(tmp_path).iloc[0]
+    assert linha["cod_municipio"] == "3300100"
+    assert linha["taxa_match_municipio"] == pytest.approx(0.97)
+    assert linha["classe_join_municipio"] == "A"
+    # A contagem crua daria 0,25 -> "C". Se este assert cair, o denominador voltou a ser
+    # o numero de setores.
+    assert linha["taxa_match_municipio"] != pytest.approx(0.25)
     assert linha["n_setores_municipio"] == 4
+    assert linha["pop_municipio_malha"] == pytest.approx(10_000.0)
+
+
+def test_calcular_notas_pondera_tambem_para_baixo(tmp_path) -> None:
+    """A regua nova NAO e' so' mais generosa -- e' o caso Ilha de Itamaraca/PE.
+
+    Quando a renda falta exatamente onde a populacao esta', a nota CAI (na producao, 13
+    municipios saem de A/B para C: Itamaraca mede 0,932692 na contagem e 0,880399 na
+    populacao). Sem este teste, um mutante que devolvesse sempre 1,0 passaria pelo teste
+    de cima.
+    """
+    part = tmp_path / "uf=PE" / "cod_municipio=2607604"
+    part.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "cod_municipio": ["2607604"] * 4,
+            "flag_renda_disponivel": [False, True, True, True],
+            "pop_total_setor_2022": [9000.0, 400.0, 300.0, 300.0],
+        }
+    ).to_parquet(part / "part-000.parquet")
+
+    linha = calcular_notas(tmp_path).iloc[0]
+    assert linha["taxa_match_municipio"] == pytest.approx(0.10)
     assert linha["classe_join_municipio"] == "C"
+
+
+def test_calcular_notas_municipio_sem_populacao_devolve_na_e_nunca_zero(tmp_path) -> None:
+    """GUARDA DE DENOMINADOR ZERO (DEC-058): malha com 0 habitante -> NA, jamais 0,0.
+
+    Com 0,0 a nota viraria classe "C" -- o municipio seria REPROVADO em silencio por uma
+    medicao que nunca existiu. Mesma familia do "valor legitimo no lugar errado"
+    (DEC-038/DEC-042): NA nao promove nem rebaixa; 0,0 afirma.
+    """
+    part = tmp_path / "uf=AM" / "cod_municipio=1300029"
+    part.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "cod_municipio": ["1300029"] * 2,
+            "flag_renda_disponivel": [True, False],
+            "pop_total_setor_2022": [0.0, None],
+        }
+    ).to_parquet(part / "part-000.parquet")
+
+    linha = calcular_notas(tmp_path).iloc[0]
+    assert pd.isna(linha["taxa_match_municipio"])
+    assert linha["classe_join_municipio"] is None or pd.isna(linha["classe_join_municipio"])
+    assert linha["pop_municipio_malha"] == pytest.approx(0.0)
+
+    # E a nota NA e' INERTE na anexacao: nao promove (nem rebaixa) hexagono nenhum.
+    df = pd.DataFrame({"hex_id": ["a"], "cod_municipio": ["1300029"]})
+    out = anexar_nota_municipal(df, calcular_notas(tmp_path))
+    assert pd.isna(out["classe_join_municipio"].iloc[0])
+    assert out["fonte_classe_join_municipio"].iloc[0] == FONTE_AUSENTE
+
+
+def test_classificar_taxa_com_na_devolve_na(tmp_path) -> None:
+    """NA entra, NA sai -- e nao "C". `NaN >= 0.95` e' False e cairia direto em "C"."""
+    assert classificar_taxa(float("nan")) is None
+    assert classificar_taxa(None) is None
 
 
 def test_calcular_notas_normaliza_chave_vinda_como_float(tmp_path) -> None:
@@ -219,11 +341,32 @@ def test_calcular_notas_normaliza_chave_vinda_como_float(tmp_path) -> None:
     part = tmp_path / "uf=AM" / "cod_municipio=1302603"
     part.mkdir(parents=True)
     pd.DataFrame(
-        {"cod_municipio": [1302603.0, 1302603.0], "flag_renda_disponivel": [True, True]}
+        {
+            "cod_municipio": [1302603.0, 1302603.0],
+            "flag_renda_disponivel": [True, True],
+            "pop_total_setor_2022": [100.0, 100.0],
+        }
     ).to_parquet(part / "part-000.parquet")
 
     notas = calcular_notas(tmp_path)
     assert list(notas["cod_municipio"]) == ["1302603"]
+
+
+def test_calcular_notas_sem_a_coluna_de_populacao_nao_promove_ninguem(tmp_path) -> None:
+    """FAIL-CLOSED: particao sem `pop_total_setor_2022` e' ilegivel, nao "conta setores".
+
+    Cair de volta para a contagem quando a populacao falta reintroduziria a regua antiga
+    em SILENCIO, para um subconjunto arbitrario de municipios -- duas reguas na mesma
+    coluna. A direcao segura e' nao promover: a nota so' entra como perna de um OR.
+    """
+    part = tmp_path / "uf=AM" / "cod_municipio=1302603"
+    part.mkdir(parents=True)
+    pd.DataFrame(
+        {"cod_municipio": ["1302603"] * 4, "flag_renda_disponivel": [True] * 4}
+    ).to_parquet(part / "part-000.parquet")
+
+    notas = calcular_notas(tmp_path)
+    assert notas.empty
 
 
 def test_calcular_notas_sem_artefato_devolve_frame_vazio(tmp_path) -> None:
@@ -234,6 +377,7 @@ def test_calcular_notas_sem_artefato_devolve_frame_vazio(tmp_path) -> None:
         "classe_join_municipio",
         "taxa_match_municipio",
         "n_setores_municipio",
+        "pop_municipio_malha",
     ]
 
 
@@ -352,7 +496,11 @@ def test_fiacao_produtor_le_a_malha_e_repassa_a_nota(monkeypatch, tmp_path) -> N
     part = tmp_path / "uf=AM" / "cod_municipio=1302603"
     part.mkdir(parents=True)
     pd.DataFrame(
-        {"cod_municipio": ["1302603"] * 4, "flag_renda_disponivel": [True, True, True, True]}
+        {
+            "cod_municipio": ["1302603"] * 4,
+            "flag_renda_disponivel": [True, True, True, True],
+            "pop_total_setor_2022": [100.0] * 4,
+        }
     ).to_parquet(part / "part-000.parquet")
 
     capturado: dict[str, pd.DataFrame | None] = {}
@@ -383,7 +531,11 @@ def test_fiacao_mercado_anexa_a_nota_antes_do_gate(monkeypatch, tmp_path) -> Non
     part = tmp_path / "uf=AM" / "cod_municipio=1302603"
     part.mkdir(parents=True)
     pd.DataFrame(
-        {"cod_municipio": ["1302603"] * 4, "flag_renda_disponivel": [True] * 4}
+        {
+            "cod_municipio": ["1302603"] * 4,
+            "flag_renda_disponivel": [True] * 4,
+            "pop_total_setor_2022": [100.0] * 4,
+        }
     ).to_parquet(part / "part-000.parquet")
     monkeypatch.setattr(ccm, "CENSO_GEO_ROOT", tmp_path)
 
