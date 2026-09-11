@@ -407,3 +407,88 @@ def test_a_tela_nao_oferece_o_que_o_gate_de_pais_nega(
     abas = set(pilot_app.me(remote_user="ana")["abas"])
     assert acesso.motivo_bloqueio_pais("/api/estados", perfil_ar) is not None
     assert "oportunidades" not in abas
+
+
+# --------------------------------------------------------------------------------------
+# O estado da senha no payload de /api/me (D26, 11/09)
+# --------------------------------------------------------------------------------------
+
+
+def test_me_leva_o_estado_da_senha_quando_o_banco_responde(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sem este campo a tela nao tem como saber a quem OFERECER a troca.
+
+    Ate' 11/09 o payload trazia usuario, abas e perfil -- e nada dizia que a pessoa ainda
+    esta' na senha inicial COMPARTILHADA. A coluna `deve_trocar_senha_usuario` da migration
+    016 existia desde entao sem nenhum leitor.
+    """
+    import app as pilot_app
+
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    monkeypatch.setattr(acesso, "abas_do_usuario_por_banco", lambda _u: ["mapa"])
+    monkeypatch.setattr(
+        pilot_app, "_estado_da_minha_senha", lambda _u: {"deve_trocar": True, "propria": False}
+    )
+    payload = pilot_app.me(remote_user="ana")
+    assert payload["senha"] == {"deve_trocar": True, "propria": False}
+
+
+def test_me_OMITE_a_chave_quando_nao_da_para_saber(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AUSENTE, e nao `false`. A distincao e' o contrato inteiro deste campo.
+
+    `false` significaria "nao precisa trocar" e esconderia a oferta de todo mundo no dia em
+    que o banco piscasse. Ausente significa "nao sei", e o front (`estadoDaSenhaDoPayload`)
+    devolve `null` -- que nao oferece nada, mas tambem nao afirma nada.
+    """
+    import app as pilot_app
+
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    monkeypatch.setattr(acesso, "abas_do_usuario_por_banco", lambda _u: ["mapa"])
+    monkeypatch.setattr(pilot_app, "_estado_da_minha_senha", lambda _u: None)
+    assert "senha" not in pilot_app.me(remote_user="ana")
+
+
+def test_o_estado_da_senha_NUNCA_derruba_o_me(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`/api/me` e' a PRIMEIRA chamada da SPA: dela saem as abas e o perfil do pais.
+
+    Deixar uma consulta acessoria derrubar essa rota apagaria o piloto inteiro por causa de
+    um campo que so' serve para oferecer a troca de senha. O `except Exception` do helper
+    cobre tres casos com a mesma resposta: banco fora, banco nao configurado, e banco que
+    respondeu mas ainda nao tem a coluna da 016.
+    """
+    import app as pilot_app
+
+    from motor_expansao.db import usuarios as db_usuarios
+
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    monkeypatch.setattr(acesso, "abas_do_usuario_por_banco", lambda _u: ["mapa"])
+
+    for explosao in (
+        RuntimeError("banco fora"),
+        Exception('column "deve_trocar_senha_usuario" does not exist'),
+    ):
+
+        def _explode(_login: str, _erro: Exception = explosao) -> None:
+            raise _erro
+
+        monkeypatch.setattr(db_usuarios, "estado_da_senha", _explode)
+        payload = pilot_app.me(remote_user="ana")
+        assert "senha" not in payload
+        assert payload["abas"] == ["mapa"], "as abas tem de sair intactas"
+
+
+def test_sem_banco_no_comando_nem_consulta_o_estado(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Uma ida ao banco a menos por abertura de app, no ramo em que ela seria inutil."""
+    import app as pilot_app
+
+    from motor_expansao.db import usuarios as db_usuarios
+
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: False)
+    monkeypatch.setattr(acesso, "abas_do_usuario", lambda _u: ["mapa"])
+
+    def _nao_deveria(_login: str) -> None:
+        raise AssertionError("consultou o banco com `banco_no_comando()` falso")
+
+    monkeypatch.setattr(db_usuarios, "estado_da_senha", _nao_deveria)
+    assert "senha" not in pilot_app.me(remote_user="ana")

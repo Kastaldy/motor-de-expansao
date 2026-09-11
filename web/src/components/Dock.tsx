@@ -158,6 +158,7 @@ export default function Dock({
   tema,
   onTema,
   pais = null,
+  onSenha,
 }: {
   tela: Tela
   onTela: (t: Tela) => void
@@ -167,6 +168,10 @@ export default function Dock({
   onTema: (t: Tema) => void
   /** País da base servida. `null` = ainda não dá para afirmar -> não carimba. */
   pais?: string | null
+  /** Abre a troca da própria senha. AUSENTE = o botão não existe — é o que acontece
+   *  quando o banco não respondeu ou a pessoa não tem cadastro: um atalho que abre um
+   *  formulário fadado a 409 seria pior que atalho nenhum. */
+  onSenha?: () => void
 }) {
   // Ícone de tela vetada SOME em vez de aparecer desabilitado: um ícone apagado não
   // diz por que está apagado, e "existe mas não para você" só gastaria a paciência de
@@ -273,9 +278,56 @@ export default function Dock({
 
       {/* `marginTop: auto` empurra o alternador para o pé do rail: ele fica longe da
           fila de destinos, que é o que o separa de uma sexta tela. */}
-      <div style={{ marginTop: 'auto' }}>
+      <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {onSenha && (
+          <button
+            type="button"
+            title="Trocar a minha senha"
+            aria-label="Trocar a minha senha"
+            onClick={onSenha}
+            style={{
+              /* Mesma métrica do BotaoTema (42 / raio 11): são vizinhos no rodapé, e um
+                 botão de outro tamanho ali leria como controle de outra ordem. */
+              width: 42,
+              height: 42,
+              flexShrink: 0,
+              display: 'grid',
+              placeItems: 'center',
+              borderRadius: 11,
+              border: '1px solid var(--line-soft)',
+              background: 'var(--surf-raised)',
+              color: 'var(--tx-muted)',
+              cursor: 'pointer',
+              transition: 'background .15s ease, color .15s ease',
+            }}
+          >
+            <Cadeado />
+          </button>
+        )}
         <BotaoTema tema={tema} onTema={onTema} />
       </div>
     </nav>
+  )
+}
+
+/* Cadeado em `currentColor` e `stroke`, sem preenchimento — herda a cor do botão e
+   dispensa variante por tema, igual ao Sol/Lua do BotaoTema. */
+function Cadeado() {
+  return (
+    <svg
+      width={18}
+      height={18}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.9}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x={4.5} y={10.5} width={15} height={9.5} rx={2.2} />
+      <path d="M8 10.5V7.6a4 4 0 0 1 8 0v2.9" />
+      <circle cx={12} cy={15.2} r={1.35} />
+    </svg>
   )
 }

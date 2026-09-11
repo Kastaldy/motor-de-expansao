@@ -3527,7 +3527,43 @@ def me(
     # esta em `ABAS_VALIDAS`/`PERFIL.superficies`), e' controle de equipe interna.
     if acesso.pode_ver_acessos(usuario):
         abas.add(acesso.ABA_ACESSOS)
-    return {"usuario": usuario, "abas": sorted(abas), "perfil": _perfil_do_cliente()}
+    resposta: dict[str, Any] = {
+        "usuario": usuario,
+        "abas": sorted(abas),
+        "perfil": _perfil_do_cliente(),
+    }
+    # A chave `senha` so' aparece quando o banco responde E a pessoa tem linha. AUSENTE em vez de
+    # nula: o front ja' trata `perfil?` assim (um backend anterior ao Bloco C nao manda o campo e
+    # a SPA abre igual), e o mesmo vale aqui -- ausencia significa "nao sei", que e' diferente de
+    # "nao precisa trocar". Um `false` inventado esconderia a oferta de troca de todo mundo no dia
+    # em que o banco piscasse.
+    estado = _estado_da_minha_senha(usuario)
+    if estado is not None:
+        resposta["senha"] = estado
+    return resposta
+
+
+def _estado_da_minha_senha(usuario: str | None) -> dict[str, bool] | None:
+    """`{"deve_trocar", "propria"}` de quem esta' logado, ou `None` quando nao da' para saber.
+
+    ENGOLE A FALHA DE PROPOSITO, e este e' o ponto do helper. `/api/me` e' a PRIMEIRA chamada da
+    SPA: e' dela que saem as abas e o perfil do pais. Deixar uma consulta acessoria derrubar essa
+    rota apagaria o piloto inteiro por causa de um campo que so' serve para OFERECER a troca de
+    senha -- trocar uma inconveniencia por um apagao.
+
+    Por isso o `except Exception`: alem de banco fora e banco nao configurado, cabe aqui o banco
+    que respondeu e ainda nao tem a coluna da 016 (migration nao aplicada). Nos tres casos a
+    resposta certa e' a mesma -- nao sei -- e a SPA simplesmente nao oferece a troca.
+    """
+    if not usuario or not acesso.banco_no_comando():
+        return None
+    try:
+        from motor_expansao.db import usuarios as db_usuarios
+
+        return db_usuarios.estado_da_senha(usuario)
+    except Exception:  # noqa: BLE001 - ver o docstring: nada aqui pode derrubar o /api/me
+        _LOG_D17.debug("estado da senha indisponivel para %s", usuario, exc_info=True)
+        return None
 
 
 @functools.lru_cache(maxsize=1)

@@ -156,6 +156,21 @@ WHERE u.id_usuario = %s
 FOR UPDATE OF u
 """
 
+# LEITURA do estado da senha, para a tela saber se deve oferecer a troca. Separado do
+# `SQL_ESTADO_DA_SENHA` acima de proposito: aquele tem `FOR UPDATE` e e' o caminho de ESCRITA --
+# `conexao()` abre READ ONLY e o servidor recusaria o `FOR UPDATE` ali dentro.
+#
+# Chaveia por LOGIN e nao por id porque quem chama e' o `/api/me`, que so' tem o header de
+# identidade na mao; resolver o id antes seria uma ida a mais ao banco para o mesmo fim.
+#
+# `AND u.ativo` espelha o `SQL_IDENTIDADE` do rbac: pessoa inativa nao tem estado de senha a
+# exibir, porque nao tem tela onde exibir.
+SQL_ESTADO_DA_SENHA_POR_LOGIN = """
+SELECT u.deve_trocar_senha_usuario, u.senha_definida_em_usuario IS NOT NULL
+FROM usuarios u
+WHERE u.login_usuario = %s AND u.ativo
+"""
+
 # Os tres campos andam juntos e por isso vao no MESMO UPDATE: gravar o hash sem carimbar a data
 # deixaria a coluna da 016 mentindo, e limpar `deve_trocar` sem gravar o hash liberaria a pessoa
 # de uma troca que nao aconteceu.
@@ -427,6 +442,30 @@ def criar(*, login: str, nome: str, email: str, perfil: str, autor: int) -> dict
         # A tela usa isto para mostrar o recado do Authelia, que e' o passo que falta.
         "falta_cadastrar_no_authelia": True,
     }
+
+
+def estado_da_senha(login: str) -> dict[str, bool] | None:
+    """`{"deve_trocar": bool, "propria": bool}` de quem esta' logado. `None` se nao ha' linha.
+
+    E' o que falta ao `/api/me` para a tela poder OFERECER a troca: ate' 11/09 o payload trazia
+    usuario, abas e perfil, e nada dizia que a pessoa ainda esta' na senha inicial compartilhada.
+    Sem este campo a tela nao tem como saber a quem oferecer, e o `deve_trocar_senha_usuario` da
+    016 ficava sendo uma coluna que ninguem le'.
+
+    Os DOIS campos, e nao so' o primeiro: `deve_trocar` e' a INTENCAO (o admin pode forca-la de
+    novo um dia) e `propria` e' o FATO (a pessoa ja' definiu senha alguma vez). Eles se separam
+    no dia em que o admin forcar troca de quem ja' tinha senha propria -- ai' os dois sao `True`,
+    e a tela precisa dizer "troque de novo", nao "defina a primeira".
+
+    LEITURA PURA: `conexao()` e' READ ONLY e esta funcao nao escreve nada. Nao levanta se a
+    pessoa nao existe -- devolve `None`, porque "sem cadastro no banco" e' estado legitimo
+    enquanto o Authelia autentica (P19) e nao pode derrubar a abertura do app.
+    """
+    with conexao() as con:
+        linha = con.execute(SQL_ESTADO_DA_SENHA_POR_LOGIN, (login,)).fetchone()
+    if linha is None:
+        return None
+    return {"deve_trocar": bool(linha[0]), "propria": bool(linha[1])}
 
 
 def trocar_a_propria_senha(*, autor: int, senha_atual: str, nova_senha: str) -> dict[str, Any]:
