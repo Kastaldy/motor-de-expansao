@@ -13,6 +13,11 @@ import {
   SparklineSvg,
   Spinner,
 } from '../components/primitives'
+import {
+  ordenarUsuariosAcessos,
+  proximaOrdem,
+  type OrdemAcessos,
+} from '../lib/acessos-ordem'
 import { api, ApiError } from '../lib/api'
 import { normalizar } from '../lib/exec'
 import type {
@@ -712,6 +717,11 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
   const [erro, setErro] = useState<string | null>(null)
   const [aberta, setAberta] = useState<string | null>(null)
   const [filtroUsuario, setFiltroUsuario] = useState('')
+  // Ordenação da tabela de usuários: `null` = desligada, e a tela mostra a ordem
+  // em que o backend entregou (ações desc, nome asc). Cada cabeçalho cicla em três
+  // estados — desligado -> decrescente -> crescente -> desligado —, que é como o
+  // "ativar/desativar" pedido e o "crescente/decrescente" cabem no mesmo gesto.
+  const [ordem, setOrdem] = useState<OrdemAcessos | null>(null)
 
   useEffect(() => {
     let vivo = true
@@ -742,6 +752,7 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
     {
       chave: 'nome',
       rotulo: 'Usuário',
+      ajuda: 'Nome do usuário — ordena em A-Z / Z-A',
       render: (u) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
           <Avatar nome={u.nome} tamanho={26} />
@@ -755,14 +766,19 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
       chave: 'serie14',
       rotulo: 'Ritmo diário',
       largura: 100,
-      ordenavel: false,
-      ajuda: 'Ações por dia (série da janela, até 14 dias)',
+      // Ordenar uma LISTA não significa nada sozinho: o escalar é a MÉDIA de ações
+      // por dia da série desenhada (`ritmoDiario`), que é o que o rótulo promete e a
+      // única leitura que não muda de sentido quando a janela vai de 7 a 90 dias.
+      ajuda:
+        'Ações por dia (série da janela, até 14 dias) — ordena pela média diária da série',
       render: (u) => <SparklineSvg valores={u.serie14 ?? []} largura={84} altura={20} />,
     },
     {
       chave: 'ultimo',
       rotulo: 'Último acesso',
       largura: 116,
+      ajuda:
+        'Dia e hora do último acesso — ordena pelo instante; quem não acessou fica no fim',
       render: (u) => (
         <span className="num">
           {diaCurto(u.ultimo_dia)}
@@ -775,6 +791,7 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
       rotulo: 'Dias ativos',
       alinhamento: 'right',
       largura: 86,
+      ajuda: 'Dias distintos com pelo menos uma ação na janela',
       render: (u) => <span className="num">{u.dias_ativos}</span>,
     },
     {
@@ -782,6 +799,7 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
       rotulo: 'Ações',
       alinhamento: 'right',
       largura: 70,
+      ajuda: 'Total de ações na janela inteira',
       render: (u) => (
         <span className="num" style={{ color: 'var(--tx-max)', fontWeight: 600 }}>{u.acoes}</span>
       ),
@@ -789,6 +807,7 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
     {
       chave: 'abas',
       rotulo: 'Abas',
+      ajuda: 'Abas visitadas na janela — a ordenação usa a quantidade delas',
       render: (u) => (
         <span style={{ display: 'inline-flex', gap: 10 }}>
           {u.abas.map((a) => (
@@ -813,6 +832,12 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
   const usuariosFiltrados = resumo
     ? resumo.usuarios.filter((u) => !alvoFiltro || normalizar(u.nome).includes(alvoFiltro))
     : []
+  // Ordenar é VISUAL: reordena o que já está no cliente, sem refetch e sem tocar no
+  // que o backend devolveu. Com `ordem === null` a sequência do payload sai intacta.
+  const usuariosVisiveis = ordenarUsuariosAcessos(usuariosFiltrados, ordem)
+  const rotuloOrdenado = ordem
+    ? (colunas.find((c) => c.chave === ordem.chave)?.rotulo ?? ordem.chave)
+    : null
 
   return (
     <div
@@ -996,6 +1021,37 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
                 titulo={`Usuários — ${resumo.janela_dias} dias`}
                 acao={
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 12 }}>
+                    {ordem ? (
+                      <button
+                        type="button"
+                        onClick={() => setOrdem(null)}
+                        title="Voltar à ordem padrão (mais ações primeiro)"
+                        aria-label={`Desativar a ordenação por ${rotuloOrdenado}`}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '5px 9px',
+                          borderRadius: 'var(--r-md)',
+                          border: '1px solid var(--ac)',
+                          background: 'var(--ac-a16)',
+                          color: 'var(--ac-text)',
+                          font: '600 10.5px/1 var(--f-ui)',
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {rotuloOrdenado}{' '}
+                        {ordem.direcao === 'asc' ? '▲ crescente' : '▼ decrescente'}
+                        <span aria-hidden style={{ opacity: 0.75 }}>
+                          ✕
+                        </span>
+                      </button>
+                    ) : (
+                      <span style={{ font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>
+                        clique num cabeçalho para ordenar
+                      </span>
+                    )}
                     <span style={{ font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>
                       clique numa linha para abrir a ficha
                     </span>
@@ -1011,8 +1067,11 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
               >
                 <Tabela
                   colunas={colunas}
-                  dados={usuariosFiltrados}
+                  dados={usuariosVisiveis}
                   chaveDe={(u) => u.nome}
+                  ordenarPor={ordem?.chave}
+                  direcao={ordem?.direcao}
+                  onOrdenar={(chave) => setOrdem((atual) => proximaOrdem(atual, chave))}
                   onLinha={(u) => setAberta(u.nome)}
                   vazio={
                     filtroUsuario.trim()
