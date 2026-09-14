@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import AvisoConfidencialidade from './components/AvisoConfidencialidade'
+import AvisoSessao from './components/AvisoSessao'
 import TrocaDeSenha from './components/TrocaDeSenha'
 import Dock from './components/Dock'
 import type { SearchPin } from './components/HexMap'
@@ -20,6 +21,7 @@ import {
   type EstadoDaSenha,
 } from './lib/troca-de-senha'
 import { api, ApiError } from './lib/api'
+import { assinarQuedaDeSessao, entrarNovamente } from './lib/sessao'
 import type { AlvoCaptura } from './lib/captura-mapa'
 import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
 import { BaseProvider } from './lib/base-contexto'
@@ -75,6 +77,17 @@ export default function App() {
   const [estadoSenha, setEstadoSenha] = useState<EstadoDaSenha | null>(null)
   const [senhaDispensada, setSenhaDispensada] = useState(false)
   const [senhaAberta, setSenhaAberta] = useState(false)
+
+  /**
+   * Sessao do Authelia caiu -> pop-up bloqueante com o botao de relogar.
+   *
+   * Quem decide NAO e' o App: `lib/sessao.ts` so' anuncia depois que a sonda dele
+   * confirmou que a borda respondeu mandando para o login. Erro de rede generico e
+   * backend fora do ar nao chegam aqui de proposito — continuam na mensagem inline
+   * de cada tela. So' entra, nunca sai: a partir da queda, tudo que resta e' relogar.
+   */
+  const [sessaoCaiu, setSessaoCaiu] = useState(false)
+  useEffect(() => assinarQuedaDeSessao(() => setSessaoCaiu(true)), [])
 
   /**
    * Abas que o usuário logado pode usar (controle temporário, /api/me).
@@ -642,6 +655,13 @@ export default function App() {
             }}
           />
         )}
+
+      {/* POR ÚLTIMO de propósito, e não por acaso da resolução do merge: com o mesmo
+          `zIndex` dos outros dois, quem é o último filho fica por cima. Sessão caída tem
+          de cobrir a troca de senha — sem sessão a chamada morre em 401 de qualquer
+          jeito, e deixar a pessoa digitando senha por cima de um aviso de que precisa
+          entrar de novo seria trabalho jogado fora. */}
+      {sessaoCaiu && <AvisoSessao onEntrar={entrarNovamente} />}
     </div>
     </BaseProvider>
   )

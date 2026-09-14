@@ -38,6 +38,24 @@ REQUIRED_COLUMNS = [
 ]
 OPTIONAL_DATASET_COLUMNS = ["confianca_geografica", "cod_municipio"]
 
+#: FONTE UNICA das colunas da camada de mercado/residual por hexagono. Nao existe copia:
+#: quem precisa da lista IMPORTA daqui. Os tres consumidores sao
+#:   1. `dashboard/constants.HYBRID_LOAD_COLS` (logo abaixo) -> projecao de leitura do
+#:      artefato hibrido/enriquecido;
+#:   2. `pipelines/gerar_carteira_acionavel.py` -> `LOAD_COLS` e
+#:      `carregar_colunas_residual_mercado`, que levam as colunas ao artefato enriquecido;
+#:   3. `pipelines/enriquecer_outputs_residual_mercado.py`, que re-importa o nome de (2).
+#:
+#: Ate' 2026-09-10 (2) tinha um literal PROPRIO com o mesmo nome e o mesmo conteudo, e os
+#: dois nao se enxergavam: acrescentar coluna em um so' era no-op SILENCIOSO. Foi o que
+#: aconteceu no BLK-CAPACIDADE-01 -- ver o comentario de `n_concorrentes_influencia_1km`
+#: mais abaixo. A identidade de objeto entre (1) e (2) e' travada por
+#: `tests/unit/test_capacidade_real_residual.py` (identidade, nao igualdade: duas copias
+#: iguais passariam num teste de conjunto).
+#:
+#: Mexer aqui e' mudanca CRITICA pelo `scripts/loop_guard.py`, e e' de proposito: este
+#: contrato define a projecao de mercado servida em producao. Mover a lista para um modulo
+#: "neutro" a tiraria do gate critico -- o furo que a DEC-048 fechou.
 RESIDUAL_MERCADO_COLS = [
     "pop_hex_base",
     "fonte_pop_hex_base",
@@ -47,6 +65,17 @@ RESIDUAL_MERCADO_COLS = [
     "sam_fitness_potencial",
     "capacidade_default_concorrente_alunos",
     "oferta_consumida_mercado_estimada",
+    # CONTAGEM de concorrentes que alcancam o hexagono, e ela precisa CHEGAR (BLK-CAPACIDADE-01).
+    # Ate' aqui a tela derivava a contagem de `oferta_consumida / capacidade`, o que so' valia
+    # enquanto toda academia consumia os mesmos 2.500 alunos. Com capacidade REAL por unidade a
+    # divisao deixa de contar academias -- um Smart Fit de 5.000 vira "2 concorrentes" e desloca
+    # o rotulo Livre/Adensar/Disputa por TAMANHO, nao por vizinhanca.
+    #
+    # Esquecer o nome NESTA lista e' o defeito da familia DEC-038 na forma mais pura: a coluna
+    # existe em `hexagonos_mercado_mapeado`, o pipeline roda verde, o artefato sai sem ela e o
+    # piloto cai no ramo antigo em silencio. Foi o que aconteceu na primeira regeneracao deste
+    # bloco; so' apareceu ao conferir o schema do enriquecido ANTES do deploy.
+    "n_concorrentes_influencia_1km",
     "oferta_consumida_ultra_real",
     "n_unidades_ultra_performance_hex",
     "oferta_efetiva_disponivel",
@@ -419,7 +448,7 @@ RESIDUAL_SCORE_BANDS: list[tuple[str, str]] = [
 # alpha 150 (transparente) p/ as ruas do basemap claro aparecerem por baixo. Cortes (limites
 # superiores, hab/km2): 1000 / 5000 / 10000 / 25000 / inf. Paleta = ColorBrewer Reds-5.
 # Camada de VISUALIZACAO do Relatorio Pontual Censitario — NAO altera score/artefatos M1.
-DENSIDADE_POP_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
+_DENSIDADE_POP_BANDS_BR: list[tuple[float, str, tuple[int, int, int, int]]] = [
     (1_000.0,   "ate 1.000",         (254, 229, 217, 150)),
     (5_000.0,   "1.001-5.000",       (252, 174, 145, 150)),
     (10_000.0,  "5.001-10.000",      (251, 106, 74,  150)),
@@ -444,12 +473,13 @@ _RENDA_PER_CAPITA_BANDS_BR: list[tuple[float, str, tuple[int, int, int, int]]] =
     (float("inf"), ">R$ 5.000",        (0,   204, 0,   150)),   # #00CC00
 ]
 
-# A MESMA rampa dos literais acima, mais um verde-escuro de topo (o de OFERTA_*_BANDS).
-# Serve as faixas DECLARADAS NO PERFIL (`reguas.faixas_renda`): pais cujo choropleth de
-# renda nao e' legivel na regua brasileira declara os proprios cortes/rotulos no perfil,
-# e a COR vem daqui — regua e' dado de pais, paleta e' identidade da plataforma. Regra de
-# atribuicao: as N-1 primeiras faixas tomam as N-1 primeiras cores, a de topo toma SEMPRE
-# a ultima — com 6 faixas a rampa sai inteira; com 5, identica a brasileira.
+# As rampas de COR das faixas declaradas no perfil. A regua (cortes e rotulos) e' dado de
+# PAIS; a paleta e' identidade da plataforma e nao viaja no perfil — pais cujo choropleth
+# nao e' legivel na regua brasileira declara os proprios cortes, e a cor vem daqui.
+#
+# Cada rampa e' a rampa BRASILEIRA de 5 degraus MAIS um degrau escuro de topo, nesta
+# ordem. Isso e' o que torna a regra de atribuicao de `_bands_de_faixas` (prefixo) capaz
+# de reproduzir o literal BR byte a byte quando o pais declara 5 faixas.
 _RAMPA_RENDA: list[tuple[int, int, int, int]] = [
     (247, 244, 139, 150),   # #F7F48B
     (255, 255, 0,   150),   # #FFFF00
@@ -459,12 +489,36 @@ _RAMPA_RENDA: list[tuple[int, int, int, int]] = [
     (20,  170, 80,  150),   # verde-escuro de OFERTA_*_BANDS
 ]
 
+# Reds do ColorBrewer, como o literal BR, mais o Reds-9 mais escuro (#67000D) no topo.
+_RAMPA_DENSIDADE: list[tuple[int, int, int, int]] = [
+    (254, 229, 217, 150),
+    (252, 174, 145, 150),
+    (251, 106, 74,  150),
+    (222, 45,  38,  150),
+    (165, 15,  21,  150),
+    (103, 0,   13,  150),   # #67000D, o Reds mais escuro
+]
+
 
 def _bands_de_faixas(
-    faixas,  # tuple[perfil.FaixaRenda, ...]
+    faixas,  # tuple[perfil.Faixa, ...]
+    rampa: list[tuple[int, int, int, int]] | None = None,
 ) -> list[tuple[float, str, tuple[int, int, int, int]]]:
-    """Faixas do perfil -> formato de bands dos mapas de calor (teto, rotulo, RGBA)."""
-    cores = list(_RAMPA_RENDA[: len(faixas) - 1]) + [_RAMPA_RENDA[-1]]
+    """Faixas do perfil -> formato de bands dos mapas de calor (teto, rotulo, RGBA).
+
+    Atribuicao de cor: as N faixas tomam as N PRIMEIRAS cores da rampa, em ordem. Com 6
+    faixas a rampa sai inteira; com 5, identica a brasileira — e e' esse o ponto, porque
+    a rampa E' o literal BR mais um degrau de topo.
+
+    ARMADILHA (corrigida em 2026-09-10): a regra anterior era "as N-1 primeiras cores
+    mais a ULTIMA", e com N=5 ela PULAVA o 5o degrau — o topo brasileiro (#00CC00) saia
+    trocado pelo verde-escuro que so' deveria aparecer com 6 faixas. Um pais que
+    declarasse 5 faixas de renda nao reproduziria a rampa BR, contra o que o proprio
+    comentario prometia. Medido no artefato de Sao Paulo capital: a faixa de topo pega
+    4.659 dos 26.672 setores (17,47%), entao a cor errada nao seria um detalhe de borda.
+    Travado por `tests/unit/test_paridade_paleta_web.py`.
+    """
+    cores = (rampa if rampa is not None else _RAMPA_RENDA)[: len(faixas)]
     return [(f.ate, f.rotulo, cor) for f, cor in zip(faixas, cores, strict=True)]
 
 
@@ -475,6 +529,13 @@ RENDA_PER_CAPITA_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = (
     _bands_de_faixas(_REGUAS.faixas_renda.per_capita)
     if _REGUAS.faixas_renda is not None
     else _RENDA_PER_CAPITA_BANDS_BR
+)
+
+# Mesma regra da renda, para o choropleth de DENSIDADE (`reguas.faixas_densidade`).
+DENSIDADE_POP_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = (
+    _bands_de_faixas(_REGUAS.faixas_densidade, _RAMPA_DENSIDADE)
+    if _REGUAS.faixas_densidade is not None
+    else _DENSIDADE_POP_BANDS_BR
 )
 
 # ── Renda media domiciliar (fase seguinte, portada do prototipo) ──────────────

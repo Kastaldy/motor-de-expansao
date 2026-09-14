@@ -55,7 +55,10 @@ paths:
               $ref: "#/components/schemas/AnalisarRequest"
       responses:
         "200":
-          description: Estudo do ponto (JSON com KPIs ou PDF de 7 paginas).
+          description: >
+            Estudo do ponto: JSON com KPIs, ou PDF. Sem `viabilidade` o PDF traz as 7
+            paginas base mais a Conclusao em modo so-estudo; com `viabilidade` e
+            `info_imovel` entram tambem a pagina do imovel e as duas de Viabilidade.
           content:
             application/json:
               schema:
@@ -156,9 +159,95 @@ components:
             Nome do endereco/estabelecimento (opcional). Quando presente e nao for
             apenas "lat,lng", aparece na capa do PDF no lugar de "Coordenada: ...".
           example: "Pastel da Sueli - Av. Nossa Sra. do Loreto, 927"
+        solicitante:
+          type: [string, "null"]
+          description: >
+            Nome de quem pediu; carimba a marca d'agua do PDF. Omitido, vale o
+            consumidor do token.
+          example: "Juan"
+        info_imovel:
+          type: [object, "null"]
+          description: >
+            Dados do imovel para a pagina "Imovel - Informacoes" (metragem_m2,
+            aluguel_pedido, valor_venda, pe_direito_m, vagas, tipo_imovel, endereco,
+            observacoes). Omitido, a pagina nao entra.
+        viabilidade:
+          description: >
+            Cenario financeiro do imovel. NAO repete lat/lng: a coordenada e a do
+            proprio request. Presente, o PDF ganha as paginas de Viabilidade e a
+            Conclusao passa a carimbar tambem o selo financeiro; ausente, o relatorio
+            sai exatamente como antes. `demanda` e PREMISSA de quem pede (DEC-009): a
+            API nunca a deriva da geografia.
+          oneOf:
+            - $ref: "#/components/schemas/ViabilidadeInputs"
+            - type: "null"
       anyOf:
         - required: [lat, lng]
         - required: [maps_url]
+
+    ViabilidadeInputs:
+      type: object
+      description: >
+        Inputs financeiros do cenario, sem a coordenada. Os tres primeiros sao
+        obrigatorios quando o objeto e enviado; o resto sobrescreve default do motor.
+      required: [m2, aluguel, demanda]
+      properties:
+        m2:
+          type: number
+          description: Area util do imovel (> 0).
+          example: 1500
+        aluguel:
+          type: number
+          description: Aluguel pedido, R$/mes (>= 0).
+          example: 30000
+        demanda:
+          type: number
+          description: >
+            Alunos totais assumidos em regime pleno. PREMISSA EXPLICITA do operador
+            (DEC-009) — nunca prevista pela geografia.
+          example: 1600
+        ticket:
+          type: [number, "null"]
+        formato:
+          type: [string, "null"]
+          description: Formato da unidade (usado na curva tamanho->densidade).
+        n_studios:
+          type: [integer, "null"]
+          description: Studios extras (0..3); cada um soma fopag aos custos fixos.
+        obra:
+          type: [number, "null"]
+        parcelas_obra:
+          type: [integer, "null"]
+        parcelas_franquia:
+          type: [integer, "null"]
+        equipamentos:
+          type: [number, "null"]
+        prazo_equipamentos:
+          type: [integer, "null"]
+        juros_equipamentos_am:
+          type: [number, "null"]
+        carencia_aluguel_meses:
+          type: [integer, "null"]
+        rampa_meses:
+          type: [integer, "null"]
+        taxa_franquia:
+          type: [number, "null"]
+        deducoes_pct:
+          type: [number, "null"]
+        reajuste_ticket_aa:
+          type: [number, "null"]
+        reajuste_aluguel_aa:
+          type: [number, "null"]
+        reajuste_custos_aa:
+          type: [number, "null"]
+        taxa_minima_negocio_aa:
+          type: [number, "null"]
+        custo_pre_operacional_mes:
+          type: [number, "null"]
+        valor_residual_mes_60:
+          type: [number, "null"]
+        capex_renovacao:
+          type: [number, "null"]
 
     AnalisarResponseJSON:
       type: object

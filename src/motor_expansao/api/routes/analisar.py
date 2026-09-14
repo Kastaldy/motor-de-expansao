@@ -53,7 +53,18 @@ async def analisar(
     fmt = "pdf" if (aceita_pdf or "pdf" in (formato, payload.formato)) else "json"
 
     if fmt == "pdf":
-        pdf_bytes = gerar_pdf_ponto(lat, lng, consumidor, settings, rotulo=payload.rotulo)
+        # Repasse PURO: a rota nao decide nada sobre viabilidade — quem monta o payload
+        # e' a funcao unica (FIN-VIAB-01), e quem decide se ele existe e' quem chamou.
+        pdf_bytes = gerar_pdf_ponto(
+            lat,
+            lng,
+            consumidor,
+            settings,
+            rotulo=payload.rotulo,
+            viabilidade_inputs=payload.viabilidade,
+            info_imovel=payload.info_imovel,
+            solicitante=payload.solicitante,
+        )
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",

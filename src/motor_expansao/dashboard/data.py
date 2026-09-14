@@ -25,6 +25,9 @@ from motor_expansao.dashboard.constants import (
 )
 from motor_expansao.dashboard.schemas import validate_dashboard_frame
 from motor_expansao.perfil import resolver_perfil
+from motor_expansao.pipelines.classe_join_municipio import (
+    anexar_nota_municipal as _anexar_nota_municipal_impl,
+)
 from motor_expansao.pipelines.pop_corte import (
     derive_confianca_geografica as _derive_confianca_geografica_impl,
 )
@@ -216,6 +219,11 @@ def _derive_confianca_geografica(df: pd.DataFrame) -> pd.Series:
     return _derive_confianca_geografica_impl(df)
 
 
+def _anexar_nota_municipal(df: pd.DataFrame, notas: pd.DataFrame) -> pd.DataFrame:
+    # Delega ao helper compartilhado (fonte unica em pipelines/classe_join_municipio.py).
+    return _anexar_nota_municipal_impl(df, notas)
+
+
 def _prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     prepared = df.copy()
     for column in FLOAT_COLUMNS:
@@ -367,7 +375,15 @@ def enrich_dashboard_data(
     hybrid_df: pd.DataFrame | None = None,
     censo_df: pd.DataFrame | None = None,
     estrutural_pop_df: pd.DataFrame | None = None,
+    notas_municipio: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
+    """`notas_municipio` e' a nota de join por MUNICIPIO (BLK-JOINUF-01), INJETADA.
+
+    Fica como parametro, e nao como leitura interna, por dois motivos: mantem esta funcao
+    sem I/O (testavel sem os 1,17 GB da malha) e deixa o produtor
+    (`m1/fase1_bi_exports`) dono da decisao de ler o artefato. `None` = sem promocao, que
+    reproduz byte a byte o comportamento anterior ao bloco.
+    """
     enriched = base_df.copy()
     hybrid_df = hybrid_df if hybrid_df is not None else pd.DataFrame()
     censo_df = censo_df if censo_df is not None else pd.DataFrame()
@@ -437,6 +453,16 @@ def enrich_dashboard_data(
         "motivo_fallback_setor_2022",
         "renda_per_capita_setor_2022_calibrada",
         "pop_total_setor_2022",
+        # PROCEDENCIA da camada censitaria do hexagono, as duas metades da mesma
+        # pergunta ("de onde veio, ou por que nao veio"):
+        # - `fonte_renda_censo_hex` distingue malha x reescalado x orfao ADMITIDO. A
+        #   DEC-055 declara esse carimbo como guardrail obrigatorio, e ele ficava so'
+        #   no traco: o artefato que o piloto SERVE nao o tinha, entao a auditoria da
+        #   admissao era impossivel exatamente onde ela importa.
+        # - `motivo_sem_censo` e' o rotulo dos 4.916 orfaos que a malha nao admite
+        #   (BLK-ORFAOS-01), com vocabulario fechado de dois valores.
+        "fonte_renda_censo_hex",
+        "motivo_sem_censo",
     ]
     if not censo_df.empty:
         censo_subset = censo_df[[column for column in censo_extra_cols if column in censo_df.columns]]
@@ -451,6 +477,17 @@ def enrich_dashboard_data(
             "flag_join_uf_restrito",
             "flag_baixa_pop_setor",
             "flag_outlier_espacial",
+            # `pop_total_setor_2022` FALTAVA nesta lista, e a ausencia era invisivel ate o
+            # BLK-JOINUF-01 (mecanismo 2). O merge do HIBRIDO, logo acima, ja traz a coluna
+            # -- entao a do censo chega como `_censo` por sufixo e, sem coalescer, era
+            # DESCARTADA. Para os 1.532.645 hexagonos normais isso nunca apareceu (o
+            # hibrido tem o valor); para os orfaos ADMITIDOS pela malha, o hibrido traz
+            # NaN e a populacao vinha morrendo aqui: eles viravam `granular` (o score
+            # coalescia, esta' na lista) e mesmo assim exibiam o total do MUNICIPIO,
+            # porque `derive_pop_cut_columns` so' usa o setor quando ele e' nao-nulo.
+            # Fortaleza mostrava 2.428.708 nos seus 11 hexagonos costeiros mesmo depois
+            # de promovidos. Coalescer PRESERVA o hibrido onde ele tem valor.
+            "pop_total_setor_2022",
         ]:
             censo_column = f"{column}_censo"
             enriched = _coalesce_columns(enriched, column, censo_column)
@@ -498,6 +535,34 @@ def enrich_dashboard_data(
         .fillna(enriched["cidade"])
         .replace({"": pd.NA})
         .fillna(enriched["cidade"])
+    )
+    # `cod_municipio` do parquet ESTRUTURAL, so' onde o traco censitario nao trouxe
+    # (BLK-JOINUF-01, mecanismo 2). O codigo chegava SO' pelo censo, entao os 9.886
+    # hexagonos ausentes do traco -- as UNICAS linhas do artefato sem codigo, contra ZERO
+    # nulos nas outras 1.532.645 -- ficavam sem municipio e, por tabela, fora de qualquer
+    # regra municipal, inclusive a nota do mecanismo 1. O estrutural sempre teve o codigo
+    # para os 1.542.531: e' a familia de defeito da DEC-038, valor legitimo lido da fonte
+    # errada. Preenche LACUNA e roda DEPOIS do merge censitario de proposito -- o censo
+    # segue sendo a fonte primaria, e nenhuma das 1.532.645 linhas ja preenchidas muda.
+    if estrutural_pop_df is not None and not estrutural_pop_df.empty:
+        if {"cod_municipio", "hex_id"} <= set(estrutural_pop_df.columns):
+            do_estrutural = enriched["hex_id"].map(
+                estrutural_pop_df.set_index("hex_id")["cod_municipio"]
+            )
+            if "cod_municipio" in enriched.columns:
+                enriched["cod_municipio"] = enriched["cod_municipio"].where(
+                    enriched["cod_municipio"].notna(), do_estrutural
+                )
+            else:
+                enriched["cod_municipio"] = do_estrutural
+
+    # Nota de join por MUNICIPIO (BLK-JOINUF-01) ANTES de derivar a confianca: ela e' a
+    # segunda perna da disjuncao em `derive_confianca_geografica` e so' PROMOVE. Anexar
+    # depois nao teria efeito nenhum -- e' um erro que passaria silencioso, entao a ordem
+    # aqui e' load-bearing.
+    enriched = _anexar_nota_municipal(
+        enriched,
+        notas_municipio if notas_municipio is not None else pd.DataFrame(),
     )
     enriched["confianca_geografica"] = _derive_confianca_geografica(enriched)
     enriched = _derive_hybrid_labels(enriched)

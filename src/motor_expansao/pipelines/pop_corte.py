@@ -7,7 +7,16 @@ que o gate do SAM e a regua do dashboard nunca divirjam, sem criar dependencia
 arquitetural invertida (pipeline -> dashboard).
 
 Definicao canonica de `granular` (NAO e `flag_censo_elegivel` nem `mask_hex_censo`):
-`qualidade_join_uf in {A,B}` AND (`flag_censo_disponivel` OR `score_setor_2022_calibrado` notna).
+(`qualidade_join_uf in {A,B}` OU `classe_join_municipio in {A,B}`)
+AND (`flag_censo_disponivel` OR `score_setor_2022_calibrado` notna).
+
+A segunda perna da disjuncao e a nota de MUNICIPIO (BLK-JOINUF-01): `qualidade_join_uf`
+e' UM VALOR POR ESTADO, entao um interior rural mal casado arrasta a capital junto --
+Manaus mede 0,975 de match por chave (classe A) dentro de um AM que agrega 0,787 (C), e
+perdia 2.038 dos seus 2.139 hexagonos por isso. A nota fina entra como DISJUNCAO, nunca
+como substituicao: por construcao ela so pode PROMOVER (adicionar um caminho para
+`granular`), jamais rebaixar quem o estado ja aprovou. Trocar uma nota pela outra seria
+regressao liquida de 231.891 hexagonos -- medido, nao suposto.
 
 Nao altera score_priorizacao nem qualquer artefato oficial do M1.
 """
@@ -25,6 +34,30 @@ def normalized_join_quality(df: pd.DataFrame) -> pd.Series:
         df["qualidade_join_uf"]
         .astype(object)
         .where(df["qualidade_join_uf"].notna(), "")
+        .astype(str)
+        .str.upper()
+    )
+
+
+#: Classes de join que liberam leitura granular. Vale para a nota de UF e para a de
+#: municipio -- as duas usam o mesmo vocabulario {A,B,C}.
+CLASSES_GRANULARES = ("A", "B")
+
+
+def normalized_municipal_quality(df: pd.DataFrame) -> pd.Series:
+    """Nota de join do MUNICIPIO, normalizada. Ausente = string vazia (inerte).
+
+    Ausencia da coluna NAO e erro: artefato materializado antes do BLK-JOINUF-01 nao a
+    tem, e a promocao simplesmente nao acontece -- o comportamento cai, byte a byte, no
+    de antes. Isso e seguro justamente PORQUE a nota so promove: uma coluna faltando
+    nunca pode rebaixar hexagono nenhum.
+    """
+    if "classe_join_municipio" not in df.columns:
+        return pd.Series("", index=df.index, dtype="object")
+    return (
+        df["classe_join_municipio"]
+        .astype(object)
+        .where(df["classe_join_municipio"].notna(), "")
         .astype(str)
         .str.upper()
     )
@@ -52,7 +85,14 @@ def derive_confianca_geografica(df: pd.DataFrame) -> pd.Series:
     else:
         base = pd.Series("municipal", index=df.index, dtype="object")
 
-    granular_mask = normalized_join_quality(df).isin(["A", "B"]) & has_censo_signal(df)
+    # DISJUNCAO, nao substituicao: a nota do municipio SOMA um caminho para `granular`.
+    # Escrito como `|` de proposito -- e' o que torna "so promove" uma propriedade
+    # ARITMETICA (adicionar termo a um OR nunca remove elemento do conjunto), e nao uma
+    # convencao que um refactor futuro possa quebrar sem o teste perceber.
+    aprovado = normalized_join_quality(df).isin(CLASSES_GRANULARES) | normalized_municipal_quality(
+        df
+    ).isin(CLASSES_GRANULARES)
+    granular_mask = aprovado & has_censo_signal(df)
     return pd.Series(
         np.where(granular_mask, "granular", base),
         index=df.index,

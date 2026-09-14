@@ -488,6 +488,149 @@ def sobrepor_renda_da_malha(
     return out.drop(columns=["renda_malha", "score_malha", "k_malha"])
 
 
+#: Procedencia dos hexagonos ADMITIDOS (nao apenas revalorados) pela malha.
+FONTE_ORFAO_ADMITIDO = "malha_setorial_orfao_admitido"
+
+
+def admitir_orfaos_da_malha(
+    censo: pd.DataFrame,
+    malha_path: Path = DEFAULT_OUTPUT_PATH,
+) -> pd.DataFrame:
+    """Cria linha de censo para hexagono que a malha cobre e o traco NAO tem.
+
+    POR QUE. `sobrepor_renda_da_malha`, logo acima, tem contrato de "MUDA VALOR, NAO MUDA
+    COBERTURA" e continua tendo -- esta funcao e' a outra metade, separada de proposito.
+    A Fase A rodou em 2026-05-15 e nunca mais; a base H3 cresceu depois em tres eventos de
+    criterio geometrico de borda (+5.305 centroide, +474 DEC-002, +4.107 DEC-003 =
+    exatamente 9.886, batendo por UF em 27/27). Esses hexagonos nao tem LINHA nenhuma no
+    traco censitario -- nao e' que o join foi ruim, e' que eles nao existiam quando ele
+    rodou. Nenhuma regra de reclassificacao alcanca linha AUSENTE.
+
+    5.612 deles a malha ja cobre (6,25 milhoes de habitantes), incluindo 11 de 11 em
+    Fortaleza e 345 de 391 no Rio -- os casos que o operador reportou. Admiti-los aqui e'
+    o conserto barato: nenhum join espacial e' refeito, so' se usa o que a DEC-045 ja
+    calculou e materializou.
+
+    NAO define `qualidade_join_uf`: eles genuinamente nao tem medida de join. Quem os
+    promove a granular e' a nota de MUNICIPIO (BLK-JOINUF-01 mecanismo 1), pela mesma
+    regra de todo mundo -- sem regua especial.
+
+    Pura: nao muta `censo`. Sem o parquet da malha, devolve `censo` intacto.
+    """
+    if not Path(malha_path).exists() or "hex_id" not in censo.columns:
+        return censo
+
+    malha = pd.read_parquet(
+        malha_path, columns=["hex_id", "uf", "pop_malha", "renda_malha", "score_malha"]
+    )
+    faltantes = malha[~malha["hex_id"].isin(set(censo["hex_id"]))]
+    # So' entra quem a malha realmente mede: sem score nao ha sinal censitario, e admitir
+    # linha vazia trocaria "sem dado" por "dado nulo" -- pior, porque some do radar.
+    faltantes = faltantes[faltantes["score_malha"].notna()]
+    if faltantes.empty:
+        return censo
+
+    novos = pd.DataFrame(
+        {
+            "hex_id": faltantes["hex_id"].to_numpy(),
+            "uf": faltantes["uf"].to_numpy(),
+            COL_SCORE: pd.to_numeric(faltantes["score_malha"], errors="coerce").to_numpy(),
+            COL_RENDA: pd.to_numeric(faltantes["renda_malha"], errors="coerce").to_numpy(),
+            "pop_total_setor_2022": pd.to_numeric(
+                faltantes["pop_malha"], errors="coerce"
+            ).to_numpy(),
+            COL_FONTE: FONTE_ORFAO_ADMITIDO,
+        }
+    )
+    if COL_CARIMBO in censo.columns:
+        carimbo = censo[COL_CARIMBO].dropna()
+        if not carimbo.empty:
+            novos[COL_CARIMBO] = carimbo.iloc[0]
+    return pd.concat([censo, novos], ignore_index=True)
+
+
+#: Coluna de rotulo do orfao que NAO foi admitido -- o residuo declarado da DEC-055.
+COL_MOTIVO_SEM_CENSO = "motivo_sem_censo"
+
+#: Vocabulario FECHADO, de dois valores. SEM ACENTO por serem IDENTIFICADORES (CLAUDE.md
+#: §2): o valor bruto viaja no parquet e no payload, e a versao acentuada e' camada de
+#: LABEL de exibicao, do lado da tela. Acentuar aqui quebraria a comparacao por literal.
+MOTIVO_SETOR_SEM_RENDA = "setor_sem_renda_publicada"
+MOTIVO_SEM_SETOR_POVOADO = "sem_setor_povoado_no_hex"
+MOTIVOS_SEM_CENSO = (MOTIVO_SETOR_SEM_RENDA, MOTIVO_SEM_SETOR_POVOADO)
+
+
+def rotular_orfaos_sem_censo(
+    censo: pd.DataFrame,
+    universo: pd.Series | list[str] | None,
+    malha_path: Path = DEFAULT_OUTPUT_PATH,
+) -> pd.DataFrame:
+    """Carimba `motivo_sem_censo` no orfao que a malha NAO consegue admitir.
+
+    POR QUE. `admitir_orfaos_da_malha`, logo acima, recupera 5.600 linhas dos 9.886
+    orfaos (4.970 sobrevivem ao merge com a base M1; 630 sao hexagonos que nem estao
+    nela). Sobra um residuo VISIVEL de 4.916 hexagonos, e ate aqui o operador lia neles
+    `"Nao informado"` -- que ele interpreta como falha do motor. Sao duas coisas
+    diferentes, e ambas foram MEDIDAS no artefato vivo:
+
+    - **642** tem hexagono na malha, mas o setor por baixo nao tem renda publicada pelo
+      IBGE -- `score_malha` nulo, e por isso a admissao os recusa de proposito (linha
+      sem score trocaria "sem dado" por "dado nulo"). Este grupo nunca tinha sido
+      contado por ninguem: o backlog registrava o residuo como 4.274.
+    - **4.274** nao tem hexagono nenhum na malha: nenhum setor POVOADO cai no centro
+      da lasca de borda. Medido: eles NAO estao no mar (so' 6 de 4.916 sem setor
+      algum embaixo) e NAO estao em municipio sem particao GEO (0 de 4.916).
+
+    ROTULAR, NAO PROMOVER. A medicao do BLK-ORFAOS-01 fechou o veredito: o teto de um
+    conserto perfeito e' 6.532 habitantes no pais inteiro (p50 de 0,02 hab por
+    hexagono) e ZERO deles entraria na fila do funil. Completar `_candidatos` em
+    `agregar_setores` para alcanca-los RENORMALIZARIA a fracao de area de cada setor e
+    redistribuiria populacao para fora dos hexagonos interiores -- mexeria em
+    `score_setor_2022_calibrado` NACIONALMENTE por 6.532 habitantes. Rejeitado.
+
+    Funcao SEPARADA das outras duas de proposito, mesmo molde da DEC-055:
+    `sobrepor_renda_da_malha` muda VALOR, `admitir_orfaos_da_malha` muda COBERTURA e
+    esta so' carimba PROCEDENCIA -- nao escreve score, renda nem populacao em linha
+    nenhuma.
+
+    `universo` sao os `hex_id` da base M1 (o traco censitario, por construcao, NAO tem
+    linha para quem se quer rotular). Sem ele, ou sem o parquet da malha no disco, a
+    funcao e' no-op: rotular sem a malha nao teria como distinguir os dois motivos, e
+    inventar um seria o defeito que este rotulo existe para consertar.
+
+    Pura: nao muta `censo`, nao toca as linhas que ja existem. Idempotente -- na segunda
+    passada os rotulados ja estao em `censo` e nada e' acrescentado.
+    """
+    if universo is None or "hex_id" not in censo.columns or not Path(malha_path).exists():
+        return censo
+
+    faltam = pd.Index(pd.Series(universo, dtype="object").dropna().astype(str).unique())
+    faltam = faltam.difference(pd.Index(censo["hex_id"].dropna().astype(str).unique()))
+    if faltam.empty:
+        return censo
+
+    malha = pd.read_parquet(malha_path, columns=["hex_id", "score_malha"])
+    na_malha = pd.Index(malha["hex_id"].dropna().astype(str).unique())
+    # Hexagono que a malha MEDE (score presente) e que mesmo assim nao esta no traco e'
+    # caso de ADMISSAO, nao de rotulo -- provavelmente a admissao nem rodou. Carimba-lo
+    # de "sem setor" seria afirmar o oposto do que a malha mostra, entao ele fica sem
+    # rotulo: o vocabulario e' fechado e nao tem valor para "nao sei".
+    medidos = pd.Index(malha.loc[malha["score_malha"].notna(), "hex_id"].dropna().astype(str).unique())
+    faltam = faltam.difference(medidos)
+    if faltam.empty:
+        return censo
+
+    novos = pd.DataFrame(
+        {
+            "hex_id": faltam.to_numpy(),
+            COL_MOTIVO_SEM_CENSO: np.where(
+                faltam.isin(na_malha), MOTIVO_SETOR_SEM_RENDA, MOTIVO_SEM_SETOR_POVOADO
+            ),
+        }
+    )
+    return pd.concat([censo, novos], ignore_index=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--geo-root", type=Path, default=DEFAULT_GEO_ROOT)

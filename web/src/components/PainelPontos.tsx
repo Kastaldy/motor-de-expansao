@@ -14,8 +14,10 @@ import {
   passaNoEstudo,
   resumoDoEstudo,
   rotulosDosPontos,
+  subtituloDoDeckDePontos,
 } from '../lib/comparacao-pontos'
 import { ranquear } from '../lib/ranking-comparacao'
+import { relatarAcessoNegado, relatarFalhaDeRede } from '../lib/sessao'
 import { alunos, num } from '../lib/format'
 import type { PontoPayload } from '../lib/types'
 
@@ -100,10 +102,22 @@ export default function PainelPontos({
          declara a ausência em vez de sumir. */
       const imagens = onCapturarMapas
         ? await onCapturarMapas(
-            fichas.map((f) => ({ hexId: String(f.hex_id ?? ''), lat: f.lat, lng: f.lng })),
+            fichas.map((f) => ({
+              hexId: String(f.hex_id ?? ''),
+              lat: f.lat,
+              lng: f.lng,
+              // Sem isto a foto de um ponto de outra cidade sai com os concorrentes da
+              // cidade aberta — ou com nenhum. Ver `AlvoCaptura`.
+              uf: f.local?.uf ?? null,
+              municipio: f.local?.municipio ?? null,
+            })),
           )
         : []
-      const cidade = fichas[0]?.local?.municipio ? `${fichas[0].local.municipio} - ` : ''
+      /* Como no deck de hexágonos (`MapScreen`), este POST não passa por `lib/api.ts` e
+         precisa ligar o aviso de sessão na mão: senão, com a sessão vencida, o 302 do
+         Authelia vira erro de CORS e o operador lê só "tente de novo", sem saber que o
+         login caiu. Migrar a chamada para `pedirArquivo` é o conserto de raiz, em PR
+         próprio. */
       const resposta = await fetch('/api/relatorio/comparacao', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -111,11 +125,16 @@ export default function PainelPontos({
           ...ranking,
           itens,
           titulo: 'Comparação de pontos',
-          subtitulo: `${cidade}${fichas.length} pontos`,
+          subtitulo: subtituloDoDeckDePontos(fichas),
           dePontos: true,
           imagens,
         }),
+      }).catch((erro: unknown) => {
+        void relatarFalhaDeRede()
+        throw erro
       })
+      // 401 = o Authelia negou; o status já é prova, dispensa sonda.
+      if (resposta.status === 401) relatarAcessoNegado()
       if (!resposta.ok) throw new Error(`HTTP ${resposta.status}`)
       const blob = await resposta.blob()
       const url = URL.createObjectURL(blob)

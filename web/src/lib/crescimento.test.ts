@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { parseDims, parseSeries } from './crescimento'
+import { detalhesAbertoPorPadrao, parseDims, parseSeries } from './crescimento'
 
 /* Parser dos campos codificados do passo 4. E' a unica peca entre o payload e o
    grafico na tela, e vivia dentro do `NarrativePanel` sem teste nenhum.
@@ -80,5 +80,25 @@ describe('parseSeries', () => {
 
   it('string vazia devolve lista vazia, não estoura', () => {
     expect(parseSeries('')).toEqual([])
+  })
+})
+
+/* O estado inicial do bloco "Detalhes" do passo 4 e' decisao de PRODUTO, nao detalhe
+   de render: com um municipio na tela ha UM bloco e o veredito passava batido fechado;
+   na visao de UF ha um por cidade, e abrir todos vira parede de graficos. Mora aqui
+   porque o `NarrativePanel` nao tem teste de componente — a decisao sem teste voltaria
+   a ser um `useState(false)` que ninguem defende. */
+describe('detalhesAbertoPorPadrao', () => {
+  it('abre no município: é um bloco só, e fechado o veredito passa batido', () => {
+    expect(detalhesAbertoPorPadrao('municipio')).toBe(true)
+  })
+
+  it('continua fechado na UF: um por cidade aberto vira parede de gráficos', () => {
+    expect(detalhesAbertoPorPadrao('uf')).toBe(false)
+  })
+
+  it('sem nível declarado mantém o de hoje (fechado) — a prop é opcional', () => {
+    expect(detalhesAbertoPorPadrao(null)).toBe(false)
+    expect(detalhesAbertoPorPadrao(undefined)).toBe(false)
   })
 })

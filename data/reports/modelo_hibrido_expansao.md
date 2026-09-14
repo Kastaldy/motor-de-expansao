@@ -1,6 +1,6 @@
 # Modelo Hibrido de Expansao
 
-> Data: 2026-08-31
+> Data: 2026-09-10
 > Status: GO para uso pratico controlado como camada complementar ao M1
 
 ## Regra final do modelo
@@ -15,9 +15,9 @@
 
 - UFs com camada censitaria disponivel: AC, AL, AM, AP, BA, CE, DF, ES, GO, MA, MG, MS, MT, PA, PB, PE, PI, PR, RJ, RN, RO, RR, RS, SC, SE, SP, TO
 - Hexes com score censitario disponivel: 1,303,414
-- Hexes elegiveis no fluxo hibrido: 780
-- Municipios top M1 com camada local utilizavel: 159
-- Registros priorizados para monitoramento futuro: 550
+- Hexes elegiveis no fluxo hibrido: 1,032
+- Municipios top M1 com camada local utilizavel: 220
+- Registros priorizados para monitoramento futuro: 785
 
 ## Como usar na pratica
 
@@ -33,16 +33,26 @@
 | SP | 49 | 98.08 |
 | MG | 31 | 94.92 |
 | BA | 18 | 84.15 |
+| PE | 18 | 80.24 |
 | RJ | 11 | 97.38 |
 | RS | 10 | 98.45 |
+| CE | 9 | 79.68 |
 | SC | 8 | 100.00 |
 | GO | 8 | 90.74 |
+| PA | 8 | 83.00 |
+| PB | 8 | 79.53 |
 | PR | 7 | 98.48 |
+| MA | 7 | 82.61 |
 | ES | 6 | 95.93 |
 | RN | 4 | 91.59 |
+| SE | 4 | 83.62 |
 | MT | 3 | 99.23 |
+| AL | 2 | 91.42 |
+| PI | 2 | 90.79 |
+| AP | 2 | 83.70 |
 | DF | 1 | 100.00 |
 | MS | 1 | 100.00 |
+| RO | 1 | 96.10 |
 | AC | 1 | 94.92 |
 | TO | 1 | 94.35 |
 
@@ -60,16 +70,16 @@
 | 8 | DF | Brasília | 87a8c241bffffff | 100.00 | 100.00 | 100.00100 | 2 |
 | 9 | SP | São Paulo | 87a8100c5ffffff | 100.00 | 100.00 | 100.00100 | 6 |
 | 10 | MG | Belo Horizonte | 87a88cdb0ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 11 | SP | São Paulo | 87a8100e2ffffff | 100.00 | 100.00 | 100.00100 | 7 |
-| 12 | SP | São Paulo | 87a8100d9ffffff | 100.00 | 100.00 | 100.00100 | 8 |
-| 13 | SP | São Paulo | 87a810055ffffff | 100.00 | 100.00 | 100.00100 | 9 |
-| 14 | SP | São Paulo | 87a8100d0ffffff | 100.00 | 100.00 | 100.00100 | 10 |
-| 15 | SP | São Paulo | 87a8100cdffffff | 100.00 | 100.00 | 100.00100 | 11 |
-| 16 | SP | São Paulo | 87a8100ccffffff | 100.00 | 100.00 | 100.00100 | 12 |
-| 17 | SP | São Paulo | 87a8100e6ffffff | 100.00 | 100.00 | 100.00100 | 13 |
-| 18 | RJ | Rio de Janeiro | 87a8a0616ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 19 | SP | São Paulo | 87a8100eaffffff | 100.00 | 99.99 | 100.00100 | 14 |
-| 20 | RS | Porto Alegre | 87a90128effffff | 100.00 | 99.77 | 100.00100 | 1 |
+| 11 | PE | Recife | 878183983ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 12 | SP | São Paulo | 87a8100e2ffffff | 100.00 | 100.00 | 100.00100 | 7 |
+| 13 | SP | São Paulo | 87a8100d9ffffff | 100.00 | 100.00 | 100.00100 | 8 |
+| 14 | SP | São Paulo | 87a810055ffffff | 100.00 | 100.00 | 100.00100 | 9 |
+| 15 | SP | São Paulo | 87a8100d0ffffff | 100.00 | 100.00 | 100.00100 | 10 |
+| 16 | SP | São Paulo | 87a8100cdffffff | 100.00 | 100.00 | 100.00100 | 11 |
+| 17 | SP | São Paulo | 87a8100ccffffff | 100.00 | 100.00 | 100.00100 | 12 |
+| 18 | SP | São Paulo | 87a8100e6ffffff | 100.00 | 100.00 | 100.00100 | 13 |
+| 19 | RJ | Rio de Janeiro | 87a8a0616ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 20 | SP | São Paulo | 87a8100eaffffff | 100.00 | 99.99 | 100.00100 | 14 |
 
 ## Monitoramento futuro (6-12 meses)
 

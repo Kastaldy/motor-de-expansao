@@ -189,3 +189,93 @@ def test_analisar_pdf_passa_perfil_bairro(monkeypatch) -> None:
     # Rotulos do painel resolvidos a partir do proprio setores_df (a API nao tem `context`).
     assert perfil["municipio_nome"] is not None
     assert perfil["uf"] == "SP"
+
+
+# --------------------------------------------------------------------------- #
+# Viabilidade no contrato publico (paginas OPCIONAIS)                          #
+#                                                                              #
+# Antes destes testes o PDF da API saia SEMPRE com as 7 paginas base: o gerador
+# tinha os kwargs `viabilidade`/`info_imovel`, mas o contrato nao tinha por onde
+# receber os insumos. Aqui os dois lados sao exercidos com dado REAL — a
+# ausencia (que nao pode mudar) e a presenca (que e' o novo).
+# --------------------------------------------------------------------------- #
+
+_CENARIO = {"m2": 1500, "aluguel": 30000, "demanda": 1600}
+
+
+def test_pdf_sem_viabilidade_nao_muda(client: TestClient) -> None:
+    """A garantia de nao-regressao do bot: quem nao manda cenario recebe o de sempre.
+
+    Sao **8** paginas, nao 7: as 7 base MAIS a Conclusao, que a API ja' emitia em modo
+    so-estudo (`conclusao_so_estudo=True`, BLK-CONC-ESTUDO). O "PDF de 7 paginas" do
+    contrato conta as paginas BASE — este teste conta as que saem de fato, que e' o que
+    o consumidor recebe.
+    """
+    resp = client.post(
+        "/api/v1/analisar", json={**AGUAS_DA_PRATA, "formato": "pdf"}, headers=AUTH
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"] == "application/pdf"
+    assert b"/Count 8" in resp.content
+
+
+def test_pdf_com_viabilidade_traz_os_slides_e_a_conclusao(client: TestClient) -> None:
+    """7 base + Imovel + Viabilidade (numeros + grade) + Conclusao = 11.
+
+    Sao TRES paginas novas alem da Conclusao que ja' existia: a de dados do imovel
+    (`info_imovel`) e as duas de viabilidade — a ponte do PDF monta os graficos, entao
+    vem numeros E grade, exatamente como no piloto.
+
+    A Conclusao muda de NATUREZA, nao de existencia: `conclusao_so_estudo` deixou de ser
+    `True` fixo, entao com cenario na mao ela volta a carimbar o selo financeiro da
+    DEC-030 em vez de so' o demografico.
+    """
+    resp = client.post(
+        "/api/v1/analisar",
+        json={
+            **AGUAS_DA_PRATA,
+            "formato": "pdf",
+            "viabilidade": _CENARIO,
+            "info_imovel": {"endereco": "Ponto de teste", "vagas": 10},
+            "solicitante": "teste",
+        },
+        headers=AUTH,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"] == "application/pdf"
+    assert b"/Count 11" in resp.content
+    # A contagem e' a observavel aqui: os streams de texto do PDF saem COMPRIMIDOS
+    # quando o relatorio traz mapas, entao procurar o titulo da pagina em bytes crus
+    # falharia mesmo com a pagina presente (os testes unitarios do gerador conseguem
+    # porque montam o PDF sem mapas). 8 -> 11 e' a prova de que as tres paginas
+    # opcionais entraram.
+
+
+def test_viabilidade_da_api_liga_o_catchment() -> None:
+    """DEC-042 numa superficie nova: o gate de zona morta so' existe se a malha chegar.
+
+    Este e' o teste que impede a regressao mais cara do move — a que NAO quebra nada.
+    Sem `setores_df`, `flag_zona_morta` sai `None` em 100% das chamadas, o aviso da tela
+    e o gate E4 da Conclusao somem, e todo o resto do PDF continua saindo perfeito.
+    """
+    from motor_expansao.api.service import _resolver_e_carregar
+    from motor_expansao.dimensionamento.payload_viabilidade import (
+        ViabilidadeIn,
+        montar_payload_viabilidade,
+    )
+
+    s = get_settings()
+    _uf, _cod, setores_df = _resolver_e_carregar(
+        AGUAS_DA_PRATA["lat"], AGUAS_DA_PRATA["lng"], s
+    )
+    cenario = ViabilidadeIn(**AGUAS_DA_PRATA, **_CENARIO)
+
+    com_malha = montar_payload_viabilidade(
+        cenario, staging_dir=s.staging_dir, setores_df=setores_df
+    )
+    sem_malha = montar_payload_viabilidade(
+        cenario, staging_dir=s.staging_dir, setores_df=None
+    )
+
+    assert com_malha["flag_zona_morta"] is not None, "o catchment nao rodou com a malha"
+    assert sem_malha["flag_zona_morta"] is None, "sem malha a flag tem que ser indecidivel"

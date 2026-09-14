@@ -82,7 +82,47 @@ const CLASSES_CRESCIMENTO: [string, string][] = [
   ['rgba(120,120,140,.45)', 'sem medição'],
 ]
 
-function LegendaCrescimento() {
+/* O aro indigo que marca a academia com número de alunos informado pela rede.
+
+   É a PRIMEIRA entrada de PINO desta legenda — até aqui ela só falava de hexágono
+   (rampa de score, faixa M1, crescimento, corte de 5k hab). Entra porque o aro
+   existe justamente para ler o mapa SEM passar o mouse; um símbolo novo que só se
+   explica no hover não cumpriria o que foi pedido.
+
+   O swatch é um QUADRADO ARREDONDADO vazado, e não um círculo: ele tem de ser o
+   mesmo desenho da moldura no mapa, que é colada na bandeira. Um círculo aqui
+   mandaria o operador procurar outra forma. A cor acompanha o tema pelo token, e
+   não pelo array RGBA do deck.gl — aqui quem pinta é o CSS. */
+function MarcaAlunos() {
+  return (
+    <span
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 4,
+        paddingLeft: 7,
+        borderLeft: '1px solid var(--line-mid)',
+      }}
+    >
+      <span
+        style={{
+          width: 10,
+          height: 10,
+          borderRadius: 3,
+          border: '1.5px solid var(--aro-alunos)',
+          /* A MESMA keyline que o SVG desenha por baixo do branco no mapa. Sem
+             ela o swatch branco desaparece na caixa clara da legenda — e o
+             símbolo que explica o mapa some antes do que ele explica. */
+          boxShadow: '0 0 0 1px var(--aro-alunos-keyline)',
+          flexShrink: 0,
+        }}
+      />
+      <span style={NOME}>nº de alunos</span>
+    </span>
+  )
+}
+
+function LegendaCrescimento({ comAlunos }: { comAlunos?: boolean }) {
   return (
     <div style={CAIXA}>
       <div style={TITULO}>Área construída 2016–2023</div>
@@ -95,14 +135,23 @@ function LegendaCrescimento() {
             </span>
           </span>
         ))}
+        {comAlunos ? <MarcaAlunos /> : null}
       </div>
     </div>
   )
 }
 
-export default function ScoreLegend({ passoN }: { passoN: number }) {
+export default function ScoreLegend({
+  passoN,
+  comAlunos,
+}: {
+  passoN: number
+  /** Há pino com número de alunos no recorte? Vem do payload, não de config. */
+  comAlunos?: boolean
+}) {
   // O passo 4 tem escala propria e categorica; os demais seguem pela rampa.
-  if (passoN === 4) return <LegendaCrescimento />
+  // O aro de alunos atravessa TODOS os passos, porque os pinos atravessam.
+  if (passoN === 4) return <LegendaCrescimento comAlunos={comAlunos} />
   const faixas = faixasDoPasso(passoN)
 
   return (
@@ -140,6 +189,8 @@ export default function ScoreLegend({ passoN }: { passoN: number }) {
           <span style={{ width: 14, height: 9, borderRadius: 2, background: 'rgb(150,150,170)' }} />
           <span style={NOME}>&lt; 5k hab</span>
         </span>
+
+        {comAlunos ? <MarcaAlunos /> : null}
       </div>
     </div>
   )

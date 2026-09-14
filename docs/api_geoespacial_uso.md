@@ -12,7 +12,7 @@
 
 A API GeoEspacial é uma camada de consumo **on-demand** do Motor de Expansão, complementar ao
 piloto web (o app de produção — DEC-022). Ela expõe o **Relatório Pontual Censitário 1,0 km** (KPIs em JSON e PDF de
-7 páginas) e o **Relatório Municipal** (PDF) para qualquer cliente HTTP com token — incluindo o
+7 páginas base, ou até 11 com viabilidade e dados do imóvel) e o **Relatório Municipal** (PDF) para qualquer cliente HTTP com token — incluindo o
 bot Telegram "Paulo".
 
 **Dois serviços independentes** (desacoplados; o bot consome a API por HTTP):
@@ -129,6 +129,20 @@ ou **PDF** (7 páginas).
 | `maps_url` | `string` | Alternativa a `lat`/`lng` | Link do Google Maps; parser puro, sem rede |
 | `formato` | `"json"` / `"pdf"` | Não (default `"json"`) | Atalho de negociação no body |
 | `rotulo` | `string` / `null` | Não | Nome do endereço/estabelecimento na capa do PDF |
+| `solicitante` | `string` / `null` | Não | Nome de quem pediu; carimba a marca d'água. Omitido, vale o consumidor do token |
+| `info_imovel` | `object` / `null` | Não | Dados do imóvel (`metragem_m2`, `aluguel_pedido`, `valor_venda`, `pe_direito_m`, `vagas`, `tipo_imovel`, `endereco`, `observacoes`) → página "Imóvel · Informações" |
+| `viabilidade` | `object` / `null` | Não | Cenário financeiro (`m2`, `aluguel`, `demanda` obrigatórios) → páginas de Viabilidade + Conclusão com selo financeiro |
+
+**`viabilidade` não repete `lat`/`lng`** — a coordenada é a do próprio request (ou a resolvida
+do `maps_url`). Dois lugares para o mesmo ponto seria um lugar para eles discordarem.
+
+**`demanda` é premissa de quem pede, nunca previsão** (DEC-009). A API não deriva demanda da
+geografia: sem o objeto `viabilidade`, o relatório sai sem as páginas financeiras — não sai com
+uma demanda arbitrada.
+
+O payload de viabilidade é montado pela **mesma função que o piloto web usa**
+(`motor_expansao.dimensionamento.payload_viabilidade`), com a mesma malha de catchment que a
+própria rota já carregou — não há segunda régua (FIN-VIAB-01).
 
 **Regra:** fornecer `{lat, lng}` **OU** `maps_url` — ambos ausentes → `422`.
 
@@ -182,15 +196,25 @@ Content-Type: application/pdf
 Content-Disposition: inline; filename="relatorio_pontual_censitario.pdf"
 ```
 
-PDF de 7 páginas: Capa → Socioeconomia e Residual Fitness → Mapas de calor
+PDF de 7 páginas **base**: Capa → Socioeconomia e Residual Fitness → Mapas de calor
 (grid 2×2: densidade, renda, score censitário, renda média domiciliar) → Concorrentes →
 Perfil do Bairro/Distrito → Big Numbers → Realização/Crédito. A página "Imagem do Entorno"
 (mapa de quadra) saiu no **BLK-RELPON-14** — eram 8.
 
+**O que sai de fato**, medido contra a base real:
+
+| Request | Páginas | Composição |
+|---|---|---|
+| sem `viabilidade` | **8** | 7 base + Conclusão em modo só-estudo (`conclusao_so_estudo`, BLK-CONC-ESTUDO) |
+| com `viabilidade` + `info_imovel` | **11** | as 8 acima + Imóvel · Informações + Viabilidade (números) + Viabilidade (grade) |
+
+Com o cenário financeiro presente, a Conclusão deixa o modo só-estudo e volta a carimbar os
+**dois selos** da DEC-030 (demográfico e financeiro) em vez de apenas o demográfico.
+
 É a variante "Apresentação Clássica Ultra" (`gerar_pdf_relatorio_pontual_classico`), a mesma que o
-dashboard entrega e, desde o BLK-RELPON-14, o **gerador único** do relatório pontual. A API não usa
-as páginas **opcionais** do gerador (fotos do imóvel, dados do imóvel, viabilidade) — pelo endpoint
-saem sempre exatamente estas 7.
+dashboard entrega e, desde o BLK-RELPON-14, o **gerador único** do relatório pontual. Das páginas
+**opcionais** do gerador, o endpoint agora usa duas — **dados do imóvel** e **viabilidade**. As
+**fotos do imóvel** continuam fora: o corpo da API é JSON e não carrega binário.
 
 **Performance:** a primeira chamada pode levar de 10 a 30 s (cold load dos Parquets +
 busca de tiles de mapa). Chamadas subsequentes ao mesmo município são mais rápidas

@@ -67,3 +67,21 @@ export function parseSeries(s: string): Serie[] {
     }))
     .filter((s) => s.valores.length >= 3)
 }
+
+/* ---------------------------------------------------------------------------
+   Estado INICIAL do bloco "Detalhes" do passo 4.
+
+   Nao e simetrico de proposito. Com um municipio selecionado existe UM bloco na
+   tela, e nascer fechado fazia o veredito da cidade passar batido — o leitor via
+   so a frase e nunca as cinco dimensoes. Na visao de UF a lista e de cidades e
+   cada item traz o SEU bloco: abrir todos empilha um grafico por municipio e
+   piora exatamente a leitura que o passo existe para dar.
+
+   `nivel` e opcional no contrato do painel; ausencia cai no comportamento de
+   hoje (fechado), nunca em abrir por omissao.
+   --------------------------------------------------------------------------- */
+
+/** `true` so' quando ha um municipio selecionado. Ver o bloco acima. */
+export function detalhesAbertoPorPadrao(nivel: 'uf' | 'municipio' | null | undefined): boolean {
+  return nivel === 'municipio'
+}

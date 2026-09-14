@@ -2,18 +2,21 @@ import { FlyToInterpolator, type Layer } from '@deck.gl/core'
 import { H3HexagonLayer } from '@deck.gl/geo-layers'
 import { IconLayer, LineLayer, PolygonLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
-import { cellToBoundary, cellToLatLng } from 'h3-js'
+import { cellToLatLng } from 'h3-js'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Map } from 'react-map-gl/maplibre'
+import { Map, type MapRef } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 import {
   type AlvoCaptura,
-  ESPERA_VOO_MS,
+  ESPERA_APOS_SALTO_MS,
+  TETO_PRONTIDAO_MS,
+  chegouNoAlvo,
   comporCanvas,
-  esperaDeCaptura,
-  larguraDoAnel,
-  zoomQueEnquadra,
+  mapaPronto,
+  ordemDeVoo,
+  ordenarParaEmpilhar,
+  quadroDaCaptura,
 } from '../lib/captura-mapa'
 import { CORES_IDENTIDADE, corDeIdentidadeRgb, rotuloDoHex } from '../lib/comparacao'
 import { alunos, brl, distanciaCurta, num, renda } from '../lib/format'
@@ -39,6 +42,7 @@ import {
   type RGBA,
 } from '../lib/colors'
 import { perfilDoCliente } from '../lib/perfil'
+import { svgMolduraAlunos, tamanhoMolduraAlunos, temAlunos } from '../lib/pins'
 import type { Tema } from '../lib/tema'
 import type {
   Cobertura1k,
@@ -87,6 +91,23 @@ function iconeDaFoto(arquivo: string): IconeDeck {
   return ic
 }
 
+/* Moldura de destaque das unidades com alunos reais — UM ícone para as 107 redes.
+
+   Memoizada por COR, e sao duas na vida do processo (um tema cada). A memoizacao
+   nao e' micro-otimizacao: devolver um literal novo a cada `getIcon` faz o
+   deck.gl reempacotar o atlas de textura a cada quadro — a mesma armadilha que o
+   comentario de `iconeDaFoto` acima ja' registra.
+
+   A cor vem da tabela `PELE` e nao de `var()`, porque o deck.gl nao le CSS; o
+   alfa vira `stroke-opacity` para a moldura nao competir com a marca da bandeira. */
+const _molduras: Record<string, IconeDeck> = {}
+function iconeMolduraAlunos(cor: RGBA): IconeDeck {
+  const chave = cor.join(',')
+  return (_molduras[chave] ??= iconeDeck(
+    svgMolduraAlunos(`rgb(${cor[0]},${cor[1]},${cor[2]})`, (cor[3] ?? 255) / 255),
+  ))
+}
+
 /* ---------------------------------------------------------------------------
    Mapa de hexagonos H3 res-7 sobre basemap MapLibre.
 
@@ -131,6 +152,23 @@ interface PeleDoMapa {
   pinAnel: RGBA
   pinMiolo: RGBA
   /**
+   * Moldura que marca a academia sobre a qual TEMOS INFORMACAO — hoje, o numero
+   * de alunos que a propria rede informou.
+   *
+   * BRANCA, e igual nos dois temas, por decisao do dono (2026-09-10). A primeira
+   * versao era indigo, escolhido por eliminacao justamente para NAO parecer com o
+   * halo claro do agregador; o dono inverteu a premissa: os dois dizem a mesma
+   * frase — "temos informacao sobre esta academia" — e ter um simbolo so' vale
+   * mais que separar as duas origens do dado. E' escolha de produto, e ela
+   * RESOLVE a colisao semantica em vez de contorna-la.
+   *
+   * O contraste no tema claro nao vem da cor, vem da linha escura que
+   * `svgMolduraAlunos` desenha por baixo — branco puro sobre o Positron
+   * desapareceria, que e' o defeito que o `HALO_DIAGNOSTICO` (#E8EEF5) tem hoje
+   * por ter sido calibrado so' contra o Dark Matter.
+   */
+  aroAlunos: RGBA
+  /**
    * Alpha do preenchimento dos hexes.
    *
    * No escuro sao 115, mais baixo que os 170 do dashboard, para as ruas do Dark Matter
@@ -151,6 +189,7 @@ const PELE: Record<Tema, PeleDoMapa> = {
     selecaoTenue: [238, 243, 248, 45],
     pinAnel: [255, 255, 255, 240],
     pinMiolo: [8, 11, 16, 255],
+    aroAlunos: [255, 255, 255, 250],
     alphaHex: HEX_FILL_ALPHA,
   },
   claro: {
@@ -163,6 +202,9 @@ const PELE: Record<Tema, PeleDoMapa> = {
     selecaoTenue: [11, 18, 25, 45],
     pinAnel: [11, 18, 25, 240],
     pinMiolo: [255, 255, 255, 255],
+    // A MESMA branca do tema escuro: quem segura o contraste sobre o Positron
+    // e' a linha escura que `svgMolduraAlunos` desenha por baixo, nao a cor.
+    aroAlunos: [255, 255, 255, 250],
     alphaHex: 170,
   },
 }
@@ -327,6 +369,17 @@ function BlocoMunicipal({ c }: { c: CrescimentoMunicipal }) {
   )
 }
 
+/**
+ * Um alvo da captura, com as CAMADAS do municipio dele quando ele nao e' o carregado.
+ *
+ * O mapa serve um municipio por vez, e desde que a camera voa para hexagono fora dele
+ * (ver `quadroDaCaptura`) a foto precisava trazer os concorrentes DAQUELE entorno, e nao
+ * os do municipio aberto. Quem busca e' o `MapScreen` — o dono do cliente da API.
+ */
+export interface AlvoDaCaptura extends AlvoCaptura {
+  pins?: Pins | null
+}
+
 export interface HexMapProps {
   hexes: Hex[]
   passo: Passo
@@ -360,7 +413,7 @@ export interface HexMapProps {
    * Pedido de CAPTURA: voa até cada hexágono da lista, na ordem, e devolve uma imagem por
    * enquadramento. O `n` que só cresce segue a mesma razão do `voarPara`.
    */
-  pedidoCaptura?: { alvos: AlvoCaptura[]; n: number } | null
+  pedidoCaptura?: { alvos: AlvoDaCaptura[]; n: number } | null
   /** As imagens, na ordem pedida. Entrada vazia = aquele hexágono não estava carregado. */
   onCapturas?: (imagens: string[]) => void
   searchPin: SearchPin | null
@@ -459,10 +512,17 @@ export default function HexMap({
   medindo = false,
 }: HexMapProps) {
   const pele = PELE[tema]
+  // Identidade ESTAVEL por tema (memoizada em `_molduras`): entra no
+  // `updateTriggers` do `getIcon`, entao um objeto novo por render reempacotaria
+  // o atlas de textura a cada quadro.
+  const molduraAlunos = iconeMolduraAlunos(pele.aroAlunos)
   // O tooltip do passo 4 ficou alto (porte, obra, setor, salario, empresas) e era
   // cortado quando o cursor estava na parte de baixo ou na direita do mapa. Medimos
   // a caixa do mapa e viramos o balao para o lado que tem espaco.
   const caixaRef = useRef<HTMLDivElement>(null)
+  /* O basemap em si, para a captura PERGUNTAR se ele terminou em vez de contar no
+     relogio. Ver `mapaPronto`. */
+  const mapaRef = useRef<MapRef | null>(null)
   /** Leitura da cidade do hexagono sob o cursor — `undefined` se ela nao tem leitura. */
   const cresDoHex = (h: Hex) => (h.mun ? cresMun?.[h.mun] : undefined)
   function ancora(x: number, y: number, altura = 360, largura = 240) {
@@ -475,6 +535,19 @@ export default function HexMap({
       transform: `translate(${viraX ? '-100%' : '0'}, ${viraY ? '-100%' : '0'})`,
     }
   }
+
+  /**
+   * Os pins do municipio que esta' sendo fotografado AGORA.
+   *
+   * `pins` (a prop) sao do municipio CARREGADO — um por vez. Desde que a camera passou a
+   * voar para hexagono fora dele (ver `quadroDaCaptura`), a foto saia com as ruas certas
+   * e os concorrentes de OUTRA cidade, ou nenhum: o rodape do slide promete "concorrentes
+   * mapeados e unidades Ultra" e entregava o entorno de quem nao esta' na foto. Quem
+   * carrega e' o `MapScreen`, que tem o cliente da API; aqui so' se pinta.
+   */
+  const [pinsDaCaptura, setPinsDaCaptura] = useState<Pins | null>(null)
+  const pinsEfetivos = pinsDaCaptura ?? pins
+
 
   const [hover, setHover] = useState<{ h: Hex; x: number; y: number } | null>(null)
   const [pinHover, setPinHover] = useState<{
@@ -502,9 +575,9 @@ export default function HexMap({
   // Ícones deck.gl memoizados por rede (identidade estável evita re-pack do atlas).
   const iconObjs = useMemo(() => {
     const m: Record<string, IconeDeck> = {}
-    for (const [rede, url] of Object.entries(pins?.icones ?? {})) m[rede] = iconeDeck(url)
+    for (const [rede, url] of Object.entries(pinsEfetivos?.icones ?? {})) m[rede] = iconeDeck(url)
     return m
-  }, [pins?.icones])
+  }, [pinsEfetivos?.icones])
 
   /**
    * O ENQUADRAMENTO INICIAL, em ordem de precedencia.
@@ -668,6 +741,7 @@ export default function HexMap({
    * pin nenhum: um pin de busca antigo no meio do deck se le como "o ponto e' aqui".
    */
   const [marcaCaptura, setMarcaCaptura] = useState<SearchPin | null>(null)
+
   const capturaAnterior = useRef(pedidoCaptura?.n ?? 0)
   useEffect(() => {
     if (!pedidoCaptura || pedidoCaptura.n === capturaAnterior.current) return
@@ -675,57 +749,125 @@ export default function HexMap({
     let cancelado = false
     const pausa = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+    /* Pergunta ao mapa, em vez de contar no relogio. Devolve `false` se o teto estourar
+       — e ai a coluna declara a ausencia, porque foto da area errada sob o nome certo e'
+       pior que foto nenhuma. Ver `mapaPronto`. */
+    const esperarPronto = async (alvo: { lat: number; lng: number } | null, rotulo: string) => {
+      const inicio = Date.now()
+      let ultimo = { estiloCarregado: false, tilesCarregados: false, centro: null } as {
+        estiloCarregado: boolean
+        tilesCarregados: boolean
+        centro: { lat: number; lng: number } | null
+      }
+      while (Date.now() - inicio < TETO_PRONTIDAO_MS) {
+        if (cancelado) return false
+        const m = mapaRef.current?.getMap?.()
+        if (m) {
+          const c = m.getCenter?.()
+          ultimo = {
+            estiloCarregado: m.isStyleLoaded?.() ?? false,
+            tilesCarregados: m.areTilesLoaded?.() ?? false,
+            centro: c ? { lat: c.lat, lng: c.lng } : null,
+          }
+          if (mapaPronto(ultimo, alvo)) return true
+        }
+        await pausa(80)
+      }
+      /* DIZ POR QUE desistiu. Coluna que some em silencio foi a origem de todo este
+         ciclo: o operador via "Mapa nao capturado para esta area." e nao tinha como
+         saber se faltou dado, faltou tempo ou faltou tile. */
+      const c = ultimo.centro
+      console.warn(
+        `[captura] desisti de ${rotulo} apos ${Date.now() - inicio} ms` +
+          ` | estilo=${ultimo.estiloCarregado} tiles=${ultimo.tilesCarregados}` +
+          ` chegou=${alvo ? chegouNoAlvo(c, alvo) : true}` +
+          ` | centro=${c ? `${c.lat.toFixed(4)},${c.lng.toFixed(4)}` : 'nulo'}` +
+          ` alvo=${alvo ? `${alvo.lat.toFixed(4)},${alvo.lng.toFixed(4)}` : 'nenhum'}`,
+      )
+      return false
+    }
+
     void (async () => {
       setCapturando(true)
-      // Espera o remount COM o buffer preservado antes do primeiro voo; sem isto a
-      // primeira imagem sairia branca e as outras quatro certas, que é o pior dos mundos
-      // (parece defeito do hexágono, não da captura).
+      /* O remount que liga o `preserveDrawingBuffer` recria o basemap, e ele precisa
+         PINTAR antes da primeira foto. Eram 500 ms fixos, e nao bastavam: medido em
+         10/09/2026, a captura 0 entrou na composicao com o canvas do basemap em 0% de
+         tinta e a coluna saiu sem ruas. O piso continua, o resto e' prontidao. */
       await pausa(500)
+      await esperarPronto(null, 'remount do basemap')
 
-      const imagens: string[] = []
-      for (const pedido of pedidoCaptura.alvos) {
+      /* Os quadros de TODOS os alvos primeiro, porque a rota se decide sobre eles. O
+         quadro sai do PROPRIO hexId, nao do que o mapa carregou: ate' 10/09/2026 isto era
+         `hexes.find(h => h.id === pedido.hexId)` e, sem achar, empurrava foto vazia —
+         como o mapa serve UM municipio por vez, comparar pontos de duas cidades so'
+         rendia mapa para os da cidade aberta. O zoom continua DERIVADO do hexagono. */
+      const caixa = caixaRef.current?.getBoundingClientRect()
+      const quadros = pedidoCaptura.alvos.map((a) =>
+        quadroDaCaptura(a.hexId, caixa?.width || 1200, caixa?.height || 800),
+      )
+
+      /* VOA POR PROXIMIDADE, mas guarda POR POSICAO. A ordem de captura era a de
+         colagem, que e' geografia por acaso: Posse, Jatai, Posse, Jatai atravessava 500
+         km tres vezes, e cada travessia e' um voo que pode nao chegar dentro do teto.
+         O indice de origem e' preservado porque e' por ele que o servidor pareia nome e
+         foto. */
+      const imagens: string[] = pedidoCaptura.alvos.map(() => '')
+      const rota = ordemDeVoo(
+        quadros.map((q) => (q ? { lat: q.lat, lng: q.lng } : null)),
+        view.latitude != null && view.longitude != null
+          ? { lat: view.latitude, lng: view.longitude }
+          : null,
+      )
+
+      for (const i of rota) {
         if (cancelado) return
-        const alvo = hexes.find((h) => h.id === pedido.hexId)
-        if (!alvo) {
-          imagens.push('')
-          continue
-        }
-
-        /* ZOOM DERIVADO DO HEXAGONO, e nao os 13,2 fixos de antes. Em zoom fixo o
-           enquadramento dependia do tamanho da janela: numa tela larga a celula res-7
-           saia como um miolo de ~10% da foto e o resto era territorio que ninguem esta'
-           comparando ("a print do hexagono que ele esta', nao do mapa todo" — Juan,
-           2026-08-19). O recorte quadrado do `comporCanvas` fecha o resto. */
-        const caixa = caixaRef.current?.getBoundingClientRect()
-        const zoom = zoomQueEnquadra(
-          larguraDoAnel(cellToBoundary(pedido.hexId) as [number, number][]),
-          alvo.lat,
-          caixa?.width || 1200,
-          caixa?.height || 800,
-        )
+        const pedido = pedidoCaptura.alvos[i]
+        const quadro = quadros[i]
+        // Sem quadro a coluna ja' nasce declarando a ausencia: nada a fotografar.
+        if (!quadro) continue
+        /* As camadas do municipio DESTE alvo entram ANTES do voo, junto com a marca: o
+           deck precisa ja' estar pintando os pins certos quando o quadro parar. */
+        setPinsDaCaptura(pedido.pins ?? null)
         // A marca do imovel entra ANTES do voo, para estar pintada quando o quadro parar.
         setMarcaCaptura(
           pedido.lat != null && pedido.lng != null
             ? { lat: pedido.lat, lng: pedido.lng, hexId: pedido.hexId }
             : null,
         )
+        /* SALTA, nao voa. A animacao e' para quem esta' olhando a tela, e durante a
+           geracao ninguem esta'. Pior: com a instancia unica de `FlyToInterpolator`
+           reaproveitada em sequencia, a transicao entre dois alvos vizinhos virava no-op
+           e a camera nao saia do lugar — medido em 10/09/2026, `chegou=false` com o
+           centro parado no alvo anterior e 12 s ate' o teto. Sem transicao, o `setView`
+           e' um fato. */
         setView((v) => ({
           ...v,
-          longitude: alvo.lng,
-          latitude: alvo.lat,
-          zoom,
-          transitionDuration: ESPERA_VOO_MS,
-          transitionInterpolator: FLY,
+          longitude: quadro.lng,
+          latitude: quadro.lat,
+          zoom: quadro.zoom,
+          transitionDuration: 0,
+          transitionInterpolator: undefined,
         }))
-        await pausa(esperaDeCaptura())
+        await pausa(ESPERA_APOS_SALTO_MS)
         if (cancelado) return
-        const canvases = Array.from(caixaRef.current?.querySelectorAll('canvas') ?? [])
-        imagens.push(
-          comporCanvas(canvases, document.createElement('canvas'), { recortar: true }) ?? '',
+        if (!(await esperarPronto({ lat: quadro.lat, lng: quadro.lng }, `alvo ${i} (${pedido.hexId})`))) {
+          // Nao chegou dentro do teto: declara a ausencia em vez de fotografar o quadro
+          // anterior, que sairia sob o nome desta area. A posicao ja' esta' vazia.
+          continue
+        }
+        if (cancelado) return
+        /* ORDENADOS antes de empilhar: o `querySelectorAll` entrega o canvas do deck
+           ANTES do basemap (o `<DeckGL>` e' o pai do `<Map/>`), e empilhar assim pintava
+           as ruas por cima do hexagono e dos pins. Ver `ordenarParaEmpilhar`. */
+        const canvases = ordenarParaEmpilhar(
+          Array.from(caixaRef.current?.querySelectorAll('canvas') ?? []),
         )
+        imagens[i] =
+          comporCanvas(canvases, document.createElement('canvas'), { recortar: true }) ?? ''
       }
 
       setMarcaCaptura(null)
+      setPinsDaCaptura(null)
       setCapturando(false)
       if (!cancelado) onCapturas?.(imagens)
     })()
@@ -733,6 +875,7 @@ export default function HexMap({
     return () => {
       cancelado = true
       setMarcaCaptura(null)
+      setPinsDaCaptura(null)
     }
   }, [pedidoCaptura, hexes, onCapturas])
 
@@ -813,14 +956,14 @@ export default function HexMap({
         tipo: 'ponto',
       })
     }
-    for (const p of pins?.concorrentes ?? []) {
+    for (const p of pinsEfetivos?.concorrentes ?? []) {
       lista.push({ lat: p.lat, lng: p.lng, rotulo: p.nome || p.label || 'Concorrente', tipo: 'concorrente' })
     }
-    for (const p of pins?.ultra ?? []) {
+    for (const p of pinsEfetivos?.ultra ?? []) {
       lista.push({ lat: p.lat, lng: p.lng, rotulo: p.nome || 'Ultra Academia', tipo: 'ultra' })
     }
     return lista
-  }, [pins, searchPin])
+  }, [pinsEfetivos, searchPin])
 
   /* Desligar a regua limpa a medicao: deixar a linha na tela depois da chave desligada
      faria o mapa afirmar uma medicao que o operador nao consegue mais mexer. */
@@ -851,7 +994,14 @@ export default function HexMap({
     const base: Layer[] = [
       new H3HexagonLayer<Hex>({
         id: `hex-${passo.n}`,
-        data: hexes,
+        /* VAZIA durante a captura. A coropleta e' do municipio CARREGADO, e desde que a
+           camera passou a fotografar ponto de fora dele o deck saia com duas colunas de
+           fundo verde e duas sem — o que se le como diferenca de DADO, quando e' so'
+           diferenca do que estava aberto na tela (Juan, 10/09/2026: "tem como deixar
+           todos em um padrao so'?"). O assunto do slide e' quem disputa o aluno ali; o
+           contorno do hexagono e a marca do imovel vem da camada `search-hex`, que sai do
+           proprio hexId do ponto, entao continuam em TODAS as colunas. */
+        data: capturando ? [] : hexes,
         getHexagon: (d) => d.id,
         extruded: false,
         filled: true,
@@ -1142,11 +1292,48 @@ export default function HexMap({
           ]
         : []),
 
+      /* MOLDURA DE ALUNOS REAIS — desenhada ANTES das bandeiras, de proposito.
+         A precedencia de desenho e' regra neste mapa ("onde houver sobreposicao,
+         quem manda na leitura e' a rede instalada"), entao o destaque passa por
+         tras e a bandeira continua inteira por cima.
+
+         E' um quadrado arredondado COLADO na bandeira, no molde do halo do
+         agregador — e nao um aro solto. A primeira versao era um circulo a 8 px
+         da aresta e o dono reprovou olhando a tela: na camada 3, que pinta os
+         hexagonos de pressao, o circulo sumia no fundo porque lia como mais um
+         PONTO no mapa em vez de como a borda daquela bandeira.
+
+         E' CAMADA, e nao variante de icone por rede, por tres motivos medidos:
+           1. o caminho da FOTO vence a cascata do `getIcon`, entao um icone novo
+              sumiria em silencio em toda unidade que virou foto — a familia de
+              defeito que este repo ja' pagou caro;
+           2. cada variante por rede RE-EMBUTE o PNG da marca em base64 duas vezes
+              (~16/9 dos bytes), e as variantes de halo ja' custam ~1,44 MB em Sao
+              Paulo (BLK-WEB-23). Aqui a moldura e' UM svg generico: uma entrada de
+              atlas no mapa inteiro, e ZERO de payload — `alunos` ja' viaja no pino;
+           3. um SVG gerado no Python nao sabe o tema, e a moldura precisa saber. */
+      ...(pins?.concorrentes?.some(temAlunos)
+        ? [
+            new IconLayer<Pin>({
+              id: 'conc-alunos-moldura',
+              data: (pins?.concorrentes ?? []).filter(temAlunos),
+              getPosition: (d) => [d.lng, d.lat],
+              getIcon: () => molduraAlunos,
+              getSize: tamanhoMolduraAlunos,
+              sizeUnits: 'pixels',
+              // Nao pode roubar o hover da bandeira: quem responde ao mouse e' o
+              // pino, que e' quem tem o balao com o numero.
+              pickable: false,
+              updateTriggers: { getIcon: [molduraAlunos] },
+            }) as unknown as IconLayer<Pin>,
+          ]
+        : []),
+
       // Concorrentes: bandeira QUADRADA com a logo da rede (fallback cor+sigla),
       // enxuta (pedido do Felipe). Ultra vem por cima, um pouco maior.
       new IconLayer<Pin>({
         id: 'conc-pins',
-        data: pins?.concorrentes ?? [],
+        data: pinsEfetivos?.concorrentes ?? [],
         getPosition: (d) => [d.lng, d.lat],
         // Unidade com diagnostico usa a variante com HALO. O fallback para o icone normal importa:
         // se o backend nao mandou a variante, o pin aparece igual aos outros em vez de sumir.
@@ -1196,7 +1383,7 @@ export default function HexMap({
 
       new IconLayer<Pin>({
         id: 'ultra-pins',
-        data: pins?.ultra ?? [],
+        data: pinsEfetivos?.ultra ?? [],
         getPosition: (d) => [d.lng, d.lat],
         getIcon: () => iconObjs.__ultra__,
         // Ultra segue um degrau acima do concorrente (PNG de origem 426x426; mesma folga
@@ -1373,8 +1560,9 @@ export default function HexMap({
     cenarioSet,
     cenarioKey,
     onSelecionar,
+    capturando,
     pinNoMapa,
-    pins,
+    pinsEfetivos,
     iconObjs,
     rotulosRank,
     // PRECISAM estar aqui: o corpo do memo LE as duas para decidir se monta a camada de
@@ -1443,6 +1631,7 @@ export default function HexMap({
             terminar de carregar, e as duas peles aparecem sobrepostas (mesma solução do
             `ExecMap`). */}
         <Map
+        ref={mapaRef}
           key={`${tema}|${capturando ? 'captura' : 'normal'}`}
           mapStyle={pele.basemap}
           attributionControl={{ compact: true }}
@@ -1910,6 +2099,30 @@ export default function HexMap({
             >
               {pinHover.sub}
             </div>
+          )}
+
+          {/* ALUNOS REAIS — o número que a própria rede informou, não estimativa nossa.
+              Soma plano + agregador (WellHub/TotalPass), que é como as próprias fontes
+              publicam (`Alunos Totais = EVO + Gympass + TotalPass`, na planilha da SkyFit).
+
+              `!= null` e não um teste de verdade: o servidor já removeu os zeros, e um
+              `&&` aqui esconderia um zero legítimo se essa regra mudasse do outro lado.
+              A maioria dos pinos não tem o número, e a linha simplesmente não aparece —
+              ausência é "não temos a planilha desta rede", nunca "academia vazia". */}
+          {pinHover.d?.alunos != null && (
+            <>
+              <Divisoria />
+              <Linha rotulo="Alunos" valor={num(pinHover.d.alunos)} forte />
+              <div
+                style={{
+                  font: '400 9px/1.3 var(--f-ui)',
+                  color: 'var(--tx-label)',
+                  marginTop: 3,
+                }}
+              >
+                Informado pela rede · planos + agregadores
+              </div>
+            </>
           )}
 
           {/* O QUE O HALO PROMETE. A bandeira com halo diz "temos dado extra sobre esta unidade";

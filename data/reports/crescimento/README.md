@@ -75,7 +75,10 @@ corta `data/` da imagem. Em produção chegam **só** pelo bind mount declarado 
 
 Tudo fora do repositório, sob as raízes acima:
 
-- **CAGED** (`caged/caged_municipio_mensal_2020_2026.csv`) — saldo mensal por município, até jun/2026
+- **CAGED** (`caged/caged_municipio_mensal_consolidado.csv`; fallback ao legado
+  `_2020_2026.csv` via `_raizes.caged_consolidado()`) — saldo mensal por município.
+  E' o único insumo com cadência própria: `motor_expansao.crescimento.caged` baixa os
+  meses novos do FTP do PDET e o atualiza (DEC-052)
 - **RAIS** (`rais/rais_municipio_{2020..2024}.csv`) — vínculos, massa salarial, remuneração
 - **CNPJ / Receita Federal** (`cnpj/agg/*.parquet`, `cnpj/Municipios.zip`) — abertura e fechamento de empresas por ano e setor
 - **IBGE** (`pib/populacao_6579_serie.csv`, `pib/pib_municipal_5938_2019_2023.csv`)
@@ -162,7 +165,10 @@ metodologias. Ver `08_populacao_e_hex.py`.
 foi deflacionada para não introduzir um índice não auditável aqui; a comparação com
 a mediana nacional na barra faz o papel do deflator na leitura relativa.
 
-**Emprego é dez/2022 → jun/2026.** Saldo acumulado do CAGED sobre o estoque de
+**Emprego é dez/2022 → o último mês incorporado do CAGED** (jun/2026 na foto de
+2026-08; o cron trimestral da DEC-052 move o fim da série a cada rodada — os
+exemplos de `cres_dims`/`cres_series` acima são dessa foto). Saldo acumulado do
+CAGED sobre o estoque de
 vínculos da RAIS de 2022. O primeiro ponto da série é esse estoque, para a variação
 do gráfico bater exatamente com o percentual da dimensão.
 
@@ -172,10 +178,25 @@ demolição. Por isso é cinza, não vermelho.
 
 ## Rodar
 
+O caminho com rede de segurança é o ORQUESTRADOR (DEC-052) — ordem garantida, cadeia
+em `MOTOR_DATA_DIR` de rascunho (nunca sobre o staging vivo), validação do artefato e
+publicação por rename atômico; é ele que o cron trimestral da VPS executa:
+
+```bash
+python -m motor_expansao.crescimento.atualizar --scripts-dir data/reports/crescimento
+```
+
+Rodar na mão continua possível (e é o único jeito de rodar um passo isolado ao
+depurar — sabendo dos quatro gotchas acima):
+
 ```bash
 cd data/reports/crescimento
 for f in 0*.py 10_*.py; do python "$f" || break; done
 ```
+
+> Desde a DEC-052 os caminhos internos usam `/` (funcionam em Windows E Linux — antes
+> os literais `rf"...\..."` só abriam arquivo no Windows, e a VPS é Linux). Teste
+> `test_cadeia_sem_caminho_windows` impede a regressão.
 
 Os caminhos de entrada estão no topo de cada script. Fora do gate de lint por
 `pyproject.toml` (`extend-exclude = ["data"]`), como os demais estudos de

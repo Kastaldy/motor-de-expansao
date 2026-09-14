@@ -178,10 +178,17 @@ completo — desde a DEC-022; antes rodava na imagem do `streamlit` —, `PYTHON
 `ROOT=/app`, dados em `/app/data`):
 
 ```
-normalizar_concorrentes → calcular_colunas_mercado → gerar_carteira_acionavel →
-gerar_plano_expansao_curto_prazo → gerar_plano_expansao_dominio →
+normalizar_concorrentes → enriquecimento_espacial_hexagonos → calcular_colunas_mercado →
+gerar_carteira_acionavel → gerar_plano_expansao_curto_prazo → gerar_plano_expansao_dominio →
 enriquecer_outputs_residual_mercado → fase1_bi_exports.materialize_enriched_dashboard()
 ```
+
+> **`enriquecimento_espacial_hexagonos` (o "Bloco 3") entrou nessa lista com a DEC-059**, e é a razão de
+> a etapa 4 ter virado um wrapper versionado (subseção abaixo). Antes dele a cadeia começava no
+> `calcular_colunas_mercado`: a academia coletada no domingo entrava no cadastro e **não pressionava
+> ninguém**, porque a oferta espacial de 1 km continuava a da última vez que alguém rodou o Bloco 3 à
+> mão. Custo medido do atraso (DEC-048): nove domingos sem propagar moveram **5.105 hexágonos (60,46%)**
+> e tiraram o white space de **808** — mais que o efeito da própria DEC-048.
 
 Usa-se **`materialize_enriched_dashboard()`** (só o artefato enriquecido derivado), **não** o `main()` do
 `fase1_bi_exports` — assim **não recompõe** os artefatos oficiais do M1 (`hexagonos_brasil_dashboard.parquet`
@@ -191,6 +198,136 @@ para `/opt/motor-expansao/data/staging/` (`censo2022_setores_calibrado` + varian
 
 **Gotcha de permissão:** os containers de coleta/regen rodam como **`--user 0:0` (root)** — os CSVs/parquets no
 host são de root e o usuário não-root da imagem não consegue sobrescrevê-los; o Chrome já usa `--no-sandbox`.
+
+### Regeneração semanal da camada de mercado (DEC-059 — o wrapper que assume a etapa 4)
+
+**O que mudou.** A etapa 4 deixa de ser um bloco de comandos dentro do `run_weekly_90.sh` e passa a ser
+**`scripts/cron/run_regen_mercado.sh`**, versionado neste repo. Duas mudanças, e a segunda é
+pré-requisito da primeira:
+
+1. **O Bloco 3 entra na cadeia** (ver o aviso da subseção anterior).
+2. **O regime de escrita muda.** A etapa 4 escrevia **direto no staging vivo**, com `||` tolerante entre
+   os passos: um passo que morria no meio deixava a camada em estado **misto** (mercado novo + carteira
+   velha) e o lote seguia com `exit 0`. Ligar o Bloco 3 — que reescreve a oferta de 1,5 milhão de
+   hexágonos — nesse regime seria irresponsável. Agora: **rascunho → cadeia com `&&` → validação →
+   publicação por rename atômico → restart → aviso no Telegram nos dois desfechos**. Reprovou em
+   qualquer ponto: **nada publicado, staging vivo intacto**, `exit != 0`.
+
+**O rascunho é por MOUNT, não por `MOTOR_DATA_DIR`.** Nenhum pipeline da cadeia lê `MOTOR_DATA_DIR` —
+todos derivam `ROOT = Path(__file__).resolve().parents[3]` com `data/staging` fixo. Como a imagem faz
+`COPY . .` para `/app` e o job roda com `PYTHONPATH=/app/src`, `ROOT` é sempre `/app`: montar o rascunho
+do host em `/app/data` faz a cadeia inteira escrever no rascunho **sem uma linha de Python mudar** (é
+também o que mantém `enriquecimento_espacial_hexagonos.py`, CRÍTICO no guard desde a DEC-048, com zero
+diff). O espelho usa **hardlink** (`cp -al`, custo ~0) para o que a cadeia só lê e **cópia real**
+(`cp -p`, ~550 MB) para o que ela sobrescreve — hardlink ali vazaria para o arquivo vivo, porque
+`to_parquet` trunca o inode.
+
+> **A malha de setores entra por bind `:ro` e é pré-checada.** `data/outputs/setores_censitarios_2022_geo/`
+> (1,17 GB) alimenta `calcular_notas_municipio` em **dois** passos da cadeia, e o contrato dessa função é
+> *artefato ausente devolve frame vazio e a promoção vira no-op* — sem erro e sem log. Esquecê-la
+> regrediria em silêncio os 13.147 hexágonos que a DEC-054 promoveu. Por isso o wrapper **aborta** se ela
+> não estiver lá, em vez de rodar verde.
+
+#### Instalação na VPS — manual, comando a comando
+
+> Cada comando abaixo é executado **um de cada vez, com confirmação** (CLAUDE.md §6). O que vem por PR é
+> **código** (`scripts/cron/run_regen_mercado.sh`, `scripts/healthcheck_vps.sh`, docs e testes); o que
+> está aqui é **instalação**, e não acontece sozinha — o checkout em `/opt/motor-expansao/app` não é
+> atualizado por ninguém automaticamente.
+
+**1. Sincronizar o checkout** (ou enviar o arquivo por `scp` da estação, conferindo que foi com **LF**):
+
+```bash
+ls -l /opt/motor-expansao/app/scripts/cron/run_regen_mercado.sh
+```
+
+**2. Instalar o wrapper** (`install -d` é idempotente):
+
+```bash
+install -d -m 0755 /opt/motor-expansao-infra
+```
+
+```bash
+cp /opt/motor-expansao/app/scripts/cron/run_regen_mercado.sh /opt/motor-expansao-infra/
+```
+
+```bash
+chmod +x /opt/motor-expansao-infra/run_regen_mercado.sh
+```
+
+**3. Conferir os insumos que o wrapper exige** (ele aborta se faltar algum, mas é melhor saber antes):
+
+```bash
+ls -l /opt/motor-expansao/data/staging/vulnerabilidade_ma_redes.parquet \
+      /opt/motor-expansao/data/staging/alunos_reais_por_unidade.parquet \
+      /opt/motor-expansao/data/staging/unidades_ultra_mapeadas.parquet \
+      /opt/motor-expansao/data/perfil.json
+```
+
+```bash
+ls -d /opt/motor-expansao/data/outputs/setores_censitarios_2022_geo/uf=* | head -3
+```
+
+**4. Rodar o modo seco — passo OBRIGATÓRIO antes de agendar.** Ele monta o rascunho, roda a cadeia
+inteira e valida, mas **não publica, não reinicia container e não manda Telegram**; imprime no stdout o
+aviso que mandaria. É a única forma de ver os números do antes→depois sem tocar produção:
+
+```bash
+DRY_RUN=1 /opt/motor-expansao-infra/run_regen_mercado.sh
+```
+
+Confira na saída, antes de seguir:
+
+| O que olhar | Tem de ser |
+|---|---|
+| `Validacao OK` | presente — qualquer reprovação lista o motivo e sai com `rc=4` |
+| `concorrentes_desenhaveis` | **não pode ser menor** que `concorrentes_desenhaveis_publicado` |
+| `n_redes_mapeadas` | igual a `redes` (o carimbo bate com o cadastro que o gerou) |
+| `oferta_var_pct` | dentro de ±15% — fora disso é coleta parcial ou universo trocado |
+| `hexes` | igual a `hexes_publicado` (a cadeia não pode perder hexágono) |
+
+**5. Trocar a etapa 4 do lote semanal.** No `/opt/gymscraping-infra/run_weekly_90.sh`, o bloco inteiro da
+etapa 4 vira **uma linha**:
+
+```bash
+/opt/motor-expansao-infra/run_regen_mercado.sh || echo "regen falhou (nada publicado; ver log)"
+```
+
+> O `||` **aqui**, na fronteira, é deliberado e não é o `||` que este bloco veio matar: uma falha do
+> regen não pode abortar a coleta nem os passos 5/6 do lote. O que acabou foi o `||` **entre** os passos
+> da cadeia, que publicava estado misto. O wrapper tem `flock` próprio
+> (`/var/lock/motor-regen-mercado.lock`), então uma segunda invocação sai `0` sem atropelar a primeira.
+
+**6. Agendar o monitor** (linha do `crontab -l` do root — ver "Alertas automáticos"):
+
+```bash
+0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh mercado
+```
+
+#### Operação e troubleshooting
+
+```bash
+# acompanhar a rodada da semana
+tail -f /var/log/motor-snapshots/regen_mercado_latest.log
+
+# o que a validação mediu (fica no rascunho, sobrevive à rodada)
+cat /opt/motor-expansao/regen_run/resumo.json
+
+# por que reprovou
+cat /opt/motor-expansao/regen_run/falhas.txt
+
+# medir a sincronia à mão (é o que o healthcheck faz)
+/opt/motor-monitoring/healthcheck_vps.sh mercado
+```
+
+Códigos de saída: `1` insumo/ambiente (nada rodou), `3` cadeia falhou (rascunho pela metade, vivo
+intacto), `4` validação reprovou (nada publicado), `5` restart falhou (**dado novo publicado, apps ainda
+no cache antigo** — reinicie à mão: `docker compose -f docker-compose.prod.yml restart web api telegram-bot`).
+
+**Rollback do diretório enriquecido:** a geração anterior fica em
+`/opt/motor-expansao/data/outputs/hexagonos_dashboard_enriquecido.old-<TS>` até a rodada seguinte. Para
+voltar, mova-a de volta por cima e reinicie o `web`. Os parquets soltos **não** têm cópia de rollback —
+a defesa deles é a validação, que impede a publicação ruim em vez de desfazê-la.
 
 ### Sync do diretório de concorrentes dos apps (BLK-CONC-SYNC-01)
 
@@ -743,6 +880,52 @@ scp -i "$env:USERPROFILE\.ssh\id_ultra" -r data/ultra/ root@2.25.137.241:/opt/mo
 
 ---
 
+## Atualização trimestral da camada de crescimento municipal (DEC-052)
+
+> Decisão em `docs/decisions/DEC-052.md`; contrato da camada em
+> `docs/camada_crescimento_municipal.md`; **pacote de repasse com os comandos um a um
+> em `docs/repasse_cron_crescimento.md`** — este bloco é o resumo de referência.
+
+O cron trimestral roda o job versionado no repo (imagem da api/bot, container efêmero):
+CAGED novo do FTP do PDET → cadeia `01..10` em `MOTOR_DATA_DIR` de rascunho → validação
+→ publicação por rename atômico em `data/staging/` → restart do `motor_expansao_web`
+(`lru_cache`) → aviso no chat de ops do Telegram, nos dois desfechos.
+
+**Script versionado:** `scripts/cron/run_atualizacao_crescimento.sh` (mesmo molde do
+wrapper dos agregadores: log antes do lock, `flock`, credenciais por `-e NOME` sem
+valor). O cabeçalho do script é o runbook detalhado — inclusive o modo seco
+(`DRY_RUN=1`), obrigatório antes de agendar.
+
+**Insumos (repasse inicial, uma vez):** `/opt/motor-expansao/data/insumos_crescimento/`
+com `socioeconomico/{caged,rais,cnpj,pib}` (~90 MB de agregados), `crescimento_tec/`
+(3 CSVs do projeto TEC), `poc_satelite/data/uf=XX/` (mosaicos das 12 UFs) e
+`eixo/_eixo_trajetoria.parquet`. **Todos os insumos estão na estação do Juan** (foi ele
+quem gerou a camada em agosto) — caminhos exatos e a regeneração do
+`_eixo_trajetoria.parquet` estão no pacote de repasse. O CSV do CAGED entra com o nome
+canônico `caged_municipio_mensal_consolidado.csv` (o job o atualiza sozinho dali em
+diante).
+
+**Linha de crontab (dia 5 de fev/mai/ago/nov, 03:00 UTC = 00:00 BRT):**
+
+```cron
+0 3 5 2,5,8,11 * /opt/motor-expansao-infra/run_atualizacao_crescimento.sh
+```
+
+**Requisito de imagem:** a imagem da api/bot precisa ter o módulo
+`motor_expansao.crescimento` e o `py7zr` (extra `[crescimento]`, `Dockerfile.api`) —
+o wrapper checa e recusa imagem antiga com mensagem clara. Aplique a imagem nova
+(deploy manual por digest, como sempre) ANTES de agendar.
+
+**O que o job NUNCA faz:** escrever em `data/outputs/` (montado `:ro`), rodar a cadeia
+sobre o staging vivo, deploy de imagem, ou qualquer coisa fora dos dois parquets de
+crescimento + consolidado do CAGED. Falhou qualquer etapa: staging intacto, aviso de
+falha no chat, `exit != 0` no log (`/var/log/motor-snapshots/atualizacao_crescimento_*.log`).
+
+**Monitor:** subcomando `crescimento` do healthcheck (limiar
+`MONITOR_CRESCIMENTO_MAX_DIAS=100`; arquivo que nunca existiu também é FAIL — é o
+estado real enquanto o repasse não acontecer). A linha de cron dele está no bloco da
+seção "Alertas automáticos (BLK-SEC-05)", mais abaixo.
+
 ## Portal de seleção de país na raiz (BLK-INTL-13)
 
 A raiz `ultra-expansao.tech` é o portal de seleção de país (spec e roteamento:
@@ -905,6 +1088,8 @@ O que é vigiado e a cadência (crontab do root):
 0 11 * * *  /opt/motor-monitoring/healthcheck_vps.sh authelia    # resumo diário de falhas de login (08h BRT)
 0 18 * * 0  /opt/motor-monitoring/healthcheck_vps.sh coleta      # domingo 15h BRT: resumo/falha da coleta semanal
 0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh agregadores # quinta 09h BRT: idade da partição de cada agregador (BLK-MA-21)
+0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh crescimento # quinta 09h BRT: idade da camada de crescimento municipal (DEC-052; limiar 100 dias)
+0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh mercado     # quinta 09h BRT: camada de mercado x cadastro de concorrentes (DEC-059; limiar 9 dias)
 ```
 
 Comportamento anti-spam: alerta na transição OK→FAIL, lembrete a cada 1h enquanto durar,

@@ -78,7 +78,7 @@ scp -i "$env:USERPROFILE\.ssh\id_ultra_mcp" data/staging/uplift_renda_domiciliar
 ```
 
 Verificar que chegaram íntegros — `md5sum` na VPS contra o local (`Get-FileHash -Algorithm MD5`).
-`scp` para a VPS funciona; `ssh` remoto interativo é bloqueado pelo classificador do harness (CLAUDE.md §2).
+`scp` **e** `ssh` remoto para a VPS funcionam, via `~/.ssh/id_ultra_mcp` (a chave de automação). A afirmação anterior — "`ssh` remoto é bloqueado pelo classificador" — era FALSA e fazia o agente terceirizar ao Felipe comandos que ele mesmo podia rodar; o CLAUDE.md §2 corrigiu isso em 2026-08-29. O que continua valendo é o §6: cada comando na VPS exige confirmação explícita, um a um. Capacidade e autorização são coisas diferentes.
 
 ## Segredos (`.env` na VPS, gitignored)
 

@@ -12,6 +12,7 @@ from motor_expansao.dashboard.constants import (
     CENSO_TRACE_LOAD_COLS,
     HYBRID_LOAD_COLS,
     REQUIRED_COLUMNS,
+    RESIDUAL_MERCADO_COLS,
 )
 from motor_expansao.dashboard.data import (
     _coalesce_columns,
@@ -24,7 +25,14 @@ from motor_expansao.dashboard.data import (
 from motor_expansao.pipelines.agregar_censo_hex_da_malha import (
     DEFAULT_OUTPUT_PATH as MALHA_CENSO_PATH,
 )
-from motor_expansao.pipelines.agregar_censo_hex_da_malha import sobrepor_renda_da_malha
+from motor_expansao.pipelines.agregar_censo_hex_da_malha import (
+    admitir_orfaos_da_malha,
+    rotular_orfaos_sem_censo,
+    sobrepor_renda_da_malha,
+)
+from motor_expansao.pipelines.classe_join_municipio import (
+    calcular_notas as calcular_notas_municipio,
+)
 from motor_expansao.pipelines.m1.ibge_censo import carregar_lookup_municipios_ibge
 from motor_expansao.pipelines.m1.provenance import write_manifest
 
@@ -46,6 +54,8 @@ CENSO_NACIONAL_PATH = Path("data/staging/censo2022_setores_calibrado_nacional_co
 CENSO_VALIDATED_PATH = Path("data/staging/censo2022_setores_validado_v2.parquet")
 ESTRUTURAL_PATH = Path("data/staging/brasil_estrutural.parquet")
 ENRIQUECIDO_DIR = Path("data/outputs/hexagonos_dashboard_enriquecido")
+#: Malha de setores por municipio -- insumo da nota de join fina (BLK-JOINUF-01).
+CENSO_GEO_ROOT = Path("data/outputs/setores_censitarios_2022_geo")
 
 FAIXAS_OPORTUNIDADE = [
     "prioridade_maxima",
@@ -542,7 +552,16 @@ def _read_hybrid_frame(path: Path | str = HYBRID_PATH) -> pd.DataFrame:
     return _prepare_dataframe(_read_optional_parquet_subset(Path(path), HYBRID_LOAD_COLS))
 
 
-def _read_censo_trace_frame(malha_path: Path = MALHA_CENSO_PATH) -> pd.DataFrame:
+def _read_censo_trace_frame(
+    malha_path: Path = MALHA_CENSO_PATH,
+    universo: pd.Series | None = None,
+) -> pd.DataFrame:
+    """`universo` sao os `hex_id` da base M1, e serve SO' ao rotulo do orfao residual.
+
+    Ele nao pode sair do proprio traco: quem se quer rotular e' exatamente quem NAO tem
+    linha nele (BLK-ORFAOS-01). `None` = sem rotulo, que reproduz o comportamento
+    anterior ao bloco -- e e' o que os testes de precedencia entre as tres fontes usam.
+    """
     frames: list[pd.DataFrame] = []
     # Ordem = precedencia da deduplicacao (drop_duplicates keep="first"), a mesma de
     # modelo_hibrido_expansao._load_censo: core > expandido > nacional. O nacional
@@ -562,6 +581,17 @@ def _read_censo_trace_frame(malha_path: Path = MALHA_CENSO_PATH) -> pd.DataFrame
     # MESMA funcao — duas redacoes da mesma regra nao dao erro, desencontram em silencio
     # (a licao da DEC-044).
     censo = sobrepor_renda_da_malha(censo, malha_path=malha_path)
+    # E, DEPOIS de revalorar quem ja existe, ADMITIR quem nunca existiu (BLK-JOINUF-01,
+    # mecanismo 2): os hexagonos que a base H3 ganhou depois de 2026-05-15 e que a Fase A
+    # nunca viu. Duas funcoes separadas de proposito -- a de cima tem contrato de nao
+    # mexer em cobertura, e esta e' exatamente sobre cobertura.
+    censo = admitir_orfaos_da_malha(censo, malha_path=malha_path)
+    # E, para quem a malha NAO consegue admitir, ROTULAR o porque (BLK-ORFAOS-01). Sao
+    # 4.916 hexagonos com dois motivos distintos e medidos; ate aqui todos liam
+    # "Nao informado", que o operador interpreta como falha do motor. Terceira funcao
+    # separada pela mesma razao das duas de cima: esta nao escreve score, renda nem
+    # populacao -- so' procedencia.
+    censo = rotular_orfaos_sem_censo(censo, universo, malha_path=malha_path)
     validated = _prepare_censo_trace(_read_optional_parquet_subset(CENSO_VALIDATED_PATH, CENSO_TRACE_LOAD_COLS))
     if validated.empty:
         return censo
@@ -586,16 +616,30 @@ def _read_censo_trace_frame(malha_path: Path = MALHA_CENSO_PATH) -> pd.DataFrame
 
 
 def _read_estrutural_pop_frame(path: Path | str = ESTRUTURAL_PATH) -> pd.DataFrame:
-    return _read_optional_parquet_subset(Path(path), ["hex_id", "pop_total"])
+    # `cod_municipio` entra aqui (BLK-JOINUF-01, mecanismo 2): o estrutural o tem para os
+    # 1.542.531 hexagonos, e e' a unica fonte que alcanca os 9.886 ausentes do traco
+    # censitario. Coluna opcional -- `_read_optional_parquet_subset` devolve so' o que o
+    # parquet tiver, entao artefato legado sem ela continua funcionando.
+    return _read_optional_parquet_subset(Path(path), ["hex_id", "pop_total", "cod_municipio"])
 
 
 def build_enriched_dashboard_frame(dashboard_path: Path | str = DASHBOARD_PATH) -> pd.DataFrame:
     """Reproduz offline o frame que streamlit_app monta em runtime via enrich_dashboard_data."""
+    m1 = _read_m1_dashboard_frame(dashboard_path)
     return enrich_dashboard_data(
-        _read_m1_dashboard_frame(dashboard_path),
+        m1,
         _read_hybrid_frame(),
-        _read_censo_trace_frame(),
+        # O `universo` de hex_id sai do frame M1, e nao do traco: o rotulo do orfao
+        # residual e' justamente sobre quem NAO tem linha no traco (BLK-ORFAOS-01).
+        # Frame vazio (ou sem a coluna) devolve `None` = sem rotulo, o comportamento
+        # anterior ao bloco -- rotular sem universo nao teria o que rotular.
+        _read_censo_trace_frame(universo=m1["hex_id"] if "hex_id" in m1.columns else None),
         estrutural_pop_df=_read_estrutural_pop_frame(),
+        # BLK-JOINUF-01: a nota fina e' lida AQUI, no produtor, e nao dentro de
+        # `enrich_dashboard_data` -- e' o unico ponto do fluxo que ja' faz I/O de artefato
+        # e sabe onde a malha mora. Artefato ausente devolve frame vazio e a promocao vira
+        # no-op, que e' o comportamento correto no CI (onde os 1,17 GB nao existem).
+        notas_municipio=calcular_notas_municipio(CENSO_GEO_ROOT),
     )
 
 
@@ -639,8 +683,18 @@ def read_enriched_dashboard(
 #:   `oferta_efetiva_disponivel`          -> camadas 2, 3 e 5 do funil (a recomendacao)
 #:   `score_setor_2022_calibrado`         -> camada 1 e a paleta do mapa censitario
 #:   `oferta_consumida_mercado_estimada`  -> `n_concorrentes_est`, a leitura de pressao
+#:                                           (ramo LEGADO, artefato anterior a DEC-057)
+#:   `n_concorrentes_influencia_1km`      -> `n_concorrentes_est`, a leitura de pressao HOJE
 #:   `populacao_corte_hex`                -> `pop_leitura`, o gate de populacao do funil
 #:   `renda_per_capita_setor_2022_calibrada` -> renda intraurbana (DEC-038)
+#:
+#: `n_concorrentes_influencia_1km` entrou em 2026-09-10, e ela e' a razao de esta rede
+#: existir do jeito que existe: no BLK-CAPACIDADE-01 a coluna ficou de fora de uma das
+#: DUAS listas gemeas de `RESIDUAL_MERCADO_COLS` (hoje unificadas) e o artefato saiu sem
+#: ela TRES regeneracoes seguidas, todas VERDES. Sem ela no enriquecido o piloto cai no
+#: ramo legado (`oferta_consumida / capacidade`) que, com capacidade REAL por unidade
+#: (DEC-057), le academia GRANDE como DUAS -- e desloca o rotulo Livre/Adensar/Disputa
+#: por TAMANHO, nao por vizinhanca. Degradacao silenciosa, exatamente o que a lista veta.
 #:
 #: POR QUE ISTO EXISTE: em 2026-08-28 uma rematerializacao rodou SEM o passo anterior
 #: (`enriquecer_outputs_residual_mercado`, que devolve as colunas de mercado ao hibrido)
@@ -656,6 +710,7 @@ COLUNAS_CRITICAS_ENRIQUECIDO = (
     "score_setor_2022_calibrado",
     "oferta_efetiva_disponivel",
     "oferta_consumida_mercado_estimada",
+    "n_concorrentes_influencia_1km",
     "populacao_corte_hex",
     "renda_per_capita_setor_2022_calibrada",
 )
@@ -671,7 +726,12 @@ def verificar_colunas_criticas(df: pd.DataFrame) -> None:
     if not faltam:
         return
     dica = ""
-    if any(c.startswith("oferta_") or c == "sam_fitness_potencial" for c in faltam):
+    # A condicao DERIVA da fonte unica em vez de repetir prefixos a mao. A versao antiga
+    # (`c.startswith("oferta_") or c == "sam_fitness_potencial"`) so' acertava por
+    # coincidencia de nome: `sam_fitness_potencial` nunca esteve na lista critica, entao
+    # aquele ramo era MORTO, e `n_concorrentes_influencia_1km` -- que vem exatamente do
+    # mesmo passo -- sairia sem a dica que aponta o passo que faltou rodar.
+    if any(c in RESIDUAL_MERCADO_COLS for c in faltam):
         dica = (
             " As colunas de mercado chegam ao hibrido pelo passo "
             "`python -m motor_expansao.pipelines.enriquecer_outputs_residual_mercado`, "

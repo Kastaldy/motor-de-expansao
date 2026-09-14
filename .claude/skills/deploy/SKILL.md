@@ -31,7 +31,7 @@ gh workflow run ci.yml --ref main -f publish_api=true -f dispatch_build_sanity=f
 
 ## Matriz de capacidade da VPS (consulte ANTES de dizer "não consigo")
 - `scp` para a VPS = **SIM**, via `~/.ssh/id_ultra_mcp` (o classificador bloqueia `ssh` remoto, não `scp`; memória `deploy-vps-scp-arquivos`). Validar por `md5sum` na VPS.
-- `ssh` remoto interativo = **NÃO** (bloqueado). Use o MCP `ssh-vps-ultra` (read/edit) para inspeção.
+- `ssh` remoto = **SIM**, mesma chave. A linha antiga dizia "bloqueado pelo classificador" e era FALSA — confundia proibição com impossibilidade (corrigido no CLAUDE.md §2 em 2026-08-29). O MCP `ssh-vps-ultra` também serve para inspeção. **Capacidade não é autorização:** o §6 continua exigindo confirmação explícita para cada comando, um a um.
 - Nunca declarar incapacidade de enviar arquivo à VPS sem antes **testar** o `scp`.
 
 ## Passos
@@ -41,6 +41,16 @@ gh workflow run ci.yml --ref main -f publish_api=true -f dispatch_build_sanity=f
    a `api`/bot NÃO (gotcha acima) — decide se precisa do `publish_api=true`.
 2. **Confirmar CI verde + imagem publicada no GHCR** (deploy só por digest de imagem que passou CI). Se faltar imagem → disparar o dispatch correspondente (comandos acima) e **aguardar** (prometa "te aviso quando publicar" + PushNotification).
 3. **Na VPS (cada comando com confirmação do Felipe, §6):** pinar `WEB_IMAGE`/`API_IMAGE` por **digest** no `.env` → `pull` → `up -d`/`restart` dos serviços afetados (`web`, `api`, `telegram-bot`) → healthcheck.
+3b. **CONFERIR O `revision` DA IMAGEM, e não só o digest.** Puxe a tag e leia o label:
+   `docker inspect --format='{{index .Config.Labels "org.opencontainers.image.revision"}}' <ref>`
+   — ele tem de bater com `git rev-parse origin/main`. **Por que este passo existe:** em 2026-09-11
+   o commit da calibração (DEC-060) tocou só `pipelines/`, `docs/` e testes, ficando FORA dos
+   path-filters dos dois `publish`. Os jobs reportaram `success` **sem publicar nada**, e o `latest`
+   continuou apontando para commits anteriores. O deploy teria parecido perfeito — dado novo,
+   containers recriados, tudo healthy — com a imagem velha rodando. O sintoma só apareceria quando
+   o cron da DEC-059 rodasse o pipeline DENTRO da imagem api e republicasse o número errado por
+   cima. Se o `revision` divergir, force o republish (comandos acima) antes de pinar o digest.
+
 4. **Healthcheck:** `piloto.ultra-expansao.tech` (`/api/health` no container `web`) + `api.ultra-expansao.tech` respondendo; conferir os **digests** dos serviços.
 5. **Reportar** os digests + tag ao Felipe (ele valida de relance). Nunca deployar sem CI verde; nunca usar `ssh` remoto.
 

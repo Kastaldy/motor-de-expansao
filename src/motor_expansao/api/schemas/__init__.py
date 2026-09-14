@@ -7,14 +7,17 @@ versao/reprodutibilidade (Decisao 6).
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+from motor_expansao.dimensionamento.payload_viabilidade import ViabilidadeInputs
 
 __all__ = [
     "HealthResponse",
     "ErrorResponse",
     "AnalisarRequest",
+    "ViabilidadeInputs",
     "AnalisarResponseJSON",
     "AnalisarMunicipioRequest",
     "MunicipiosResponse",
@@ -48,6 +51,40 @@ class AnalisarRequest(BaseModel):
         default=None,
         description="Nome do endereco/estabelecimento; aparece na capa do PDF no lugar da coordenada.",
         examples=["Pastel da Sueli - Av. Nossa Sra. do Loreto, 927"],
+    )
+    # --- Paginas OPCIONAIS do relatorio (viabilidade e dados do imovel) ----------
+    # Ate' aqui o PDF da API saia SEMPRE com as 7 paginas base: o gerador tinha os
+    # kwargs, mas o contrato publico nao tinha por onde receber os insumos. Tudo abaixo
+    # e' OPCIONAL — omitido, a resposta e' byte a byte a de antes, e o bot do Telegram
+    # nao muda.
+    #
+    # `viabilidade` NAO repete lat/lng: a coordenada e' a do proprio request (ou a
+    # resolvida do `maps_url`), e dois lugares para o mesmo ponto e' um lugar para eles
+    # discordarem.
+    #
+    # GUARDRAIL (DEC-009): `demanda` e' PREMISSA EXPLICITA de quem pede — o motor nunca
+    # a deriva da geografia. Sem o objeto, o relatorio sai como sempre saiu; o que NAO
+    # existe e' um caminho em que a API invente a demanda.
+    viabilidade: ViabilidadeInputs | None = Field(
+        default=None,
+        description=(
+            "Cenario financeiro do imovel (m2, aluguel, demanda premissa e afins). "
+            "Presente, o PDF ganha as paginas de Viabilidade e a Conclusao com selo "
+            "financeiro; ausente, saem as 7 paginas de sempre."
+        ),
+    )
+    info_imovel: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Dados do imovel para a pagina 'Imovel - Informacoes' "
+            "(metragem_m2, aluguel_pedido, valor_venda, pe_direito_m, vagas, "
+            "tipo_imovel, endereco, observacoes)."
+        ),
+    )
+    solicitante: str | None = Field(
+        default=None,
+        description="Nome de quem pediu; carimba a marca d'agua do PDF. Omitido, vale o consumidor do token.",
+        examples=["Juan"],
     )
 
     @model_validator(mode="after")

@@ -12,6 +12,7 @@ import {
   resumoDoEstudo,
   rotuloDoPonto,
   rotulosDosPontos,
+  subtituloDoDeckDePontos,
 } from './comparacao-pontos'
 import type { PontoPayload } from './types'
 
@@ -320,5 +321,37 @@ describe('resumoDoEstudo — a leitura ABSOLUTA, ao lado da relativa', () => {
     expect(passaNoEstudo(comCriterios([true, true, true]))).toBe(true)
     expect(passaNoEstudo(comCriterios([true, false, true]))).toBe(false)
     expect(passaNoEstudo(comCriterios([null]))).toBeNull()
+  })
+})
+
+describe('subtituloDoDeckDePontos', () => {
+  /* A capa afirmava a cidade do PRIMEIRO ponto. No deck de 10/09/2026 os quatro pontos
+     eram dois de Posse/GO e dois de Jatai/GO, e a peca inteira saiu "Posse - 4 pontos".
+     E' a mesma regra que o deck de HEXAGONOS ja' aplica no MapScreen: a cidade so' entra
+     quando ela vale para TODOS. */
+  it('nao nomeia cidade nenhuma quando os pontos misturam municipios', () => {
+    const fichas = [
+      ponto({ municipio: 'Posse' }),
+      ponto({ municipio: 'Posse' }),
+      ponto({ municipio: 'Jataí' }),
+      ponto({ municipio: 'Jataí' }),
+    ]
+    expect(subtituloDoDeckDePontos(fichas)).toBe('4 pontos')
+  })
+
+  it('nomeia a cidade quando TODOS os pontos sao dela', () => {
+    expect(subtituloDoDeckDePontos([ponto({ municipio: 'Posse' }), ponto({ municipio: 'Posse' })]))
+      .toBe('Posse - 2 pontos')
+  })
+
+  it('ponto sem municipio resolvido nao deixa a cidade dos outros afirmar pelo conjunto', () => {
+    // Ausencia nao e' concordancia: nao se sabe de onde o ponto e', entao a capa se cala.
+    expect(subtituloDoDeckDePontos([ponto({ municipio: 'Posse' }), ponto({ municipio: null })]))
+      .toBe('2 pontos')
+  })
+
+  it('um ponto so, e a lista vazia, seguem legiveis', () => {
+    expect(subtituloDoDeckDePontos([ponto({ municipio: 'Posse' })])).toBe('Posse - 1 pontos')
+    expect(subtituloDoDeckDePontos([])).toBe('0 pontos')
   })
 })

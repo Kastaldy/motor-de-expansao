@@ -4673,20 +4673,83 @@ do §7.4.1.
 
 ---
 
+#### BLK-INTL-14 — `CONSUMO_1KM_CORTES`: a régua de consumo do mapa está ancorada em 2.500 alunos, que é um número brasileiro
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** — camada de VISUALIZAÇÃO (cor do hexágono e legenda), READ-ONLY sobre o M1: não toca score, residual, funil nem artefato. Erra a COR e o rótulo, não o número que o motor calcula. |
+| **Prioridade** | Média — a instância AR já está no ar e já pinta esta camada com a régua errada; a dor é de leitura, não de decisão. |
+| **Esteira** | Builder → QA. Sem DEC: é implementação da **DEC-047**, mesmo molde do PR das bandas de renda/densidade. |
+| **Depende de** | O PR que serve `reguas.bandas_renda_setor`/`bandas_densidade_setor` em `/api/me` (2026-09-10) — este bloco é o **irmão** dele, separado de propósito (ver abaixo). |
+| **Esforço** | Meio dia. O grosso é decidir a forma da régua, não escrevê-la. |
+| **Autonomia** | **sem marcador** — o bloco **atende** aos critérios do `CLAUDE.md` §6.1 (READ-ONLY sobre o M1, não toca VPS/deploy/segredos, consome só o que já está em `data/`), mas o opt-in `loop-safe` é a pré-aprovação **humana** que substitui o gate interativo: quem escreveu este bloco não pode se auto-aprovar. Felipe marca se quiser que o loop o pegue. |
+
+**O defeito.** `web/src/lib/colors.ts:293` traz `CONSUMO_1KM_CORTES = [625, 1250, 2500, 5000]`, e o
+próprio comentário acima da linha declara a âncora: "ancoradas na capacidade de 2.500 de uma unidade:
+até 1/4 de unidade, até 1/2, até 1, até 2". Os rótulos de `CONSUMO_1KM_ROTULOS` repetem os mesmos
+números em texto. **2.500 é `reguas.capacidade_concorrente`, e na Argentina ela vale `1070,0`** — lá
+"1 unidade" são 1.070 alunos, então a faixa que o operador lê como "até 1 unidade" cobre 2,34
+unidades de verdade, e a legenda mente em todas as cinco faixas. É a mesma classe de defeito que as
+bandas de renda/densidade tinham: literal brasileiro em TypeScript num binário que serve N países.
+
+**Por que ficou FORA do PR das bandas de renda/densidade** (e não deve ser feito de carona):
+
+1. **O insumo não está no payload.** `/api/me` serve `pop_min_acionavel` e
+   `capacidade_unidade_alunos` (a capacidade de uma unidade **ULTRA**), não
+   `capacidade_concorrente` — que é a âncora certa aqui, e que na AR **diverge** da outra (1.070
+   contra 2.500; no Brasil as duas coincidem, e foi por isso que a duplicação passou despercebida).
+   Levar esta régua exige acrescentar campo ao payload, ao `perfil-br.ts` e à lista
+   `CAMPOS_DO_FRONT` do contrato — decisão própria, revisão própria.
+2. **Não há par no Python.** As bandas de renda e densidade existem dos DOIS lados
+   (`dashboard/constants.py` pinta o PDF, `colors.ts` pinta o mapa), e é essa duplicação que o PR
+   irmão elimina servindo um objeto já resolvido. `CONSUMO_1KM_CORTES` só existe no `.ts`: não há
+   constante equivalente em Python (a `OFERTA_DISPONIVEL_ALUNOS_BANDS` mede residual DISPONÍVEL, não
+   consumo, e tem outros cortes). Misturar as duas coisas no mesmo diff faria o PR perder a forma
+   "literal → leitura de objeto congelado" que a DEC-047 exige, e um revisor deixaria de enxergar
+   qual metade prova o quê.
+
+**Decisão que este bloco tem de tomar antes de escrever código:** os cortes são *derivados* da
+capacidade (¼, ½, 1, 2 unidades, calculados no front a partir do número do perfil) ou são régua
+DECLARADA no perfil, como `faixas_renda`? Derivar mantém uma régua só e traduz sozinha para
+qualquer país; declarar permite um país escolher cortes que não são frações redondas. As duas
+respostas são defensáveis — o que não é defensável é o literal de hoje.
+
+**Aceite.** Nenhum pixel muda no Brasil (2.500 continua sendo 2.500) e a instância AR passa a pintar
+com a própria capacidade, com teste que compara os cortes servidos contra o perfil nos DOIS países —
+o molde de `tests/unit/test_paridade_paleta_web.py`.
+
+---
+
 ### BLK-JOINUF-01 — `qualidade_join_uf` é granularidade de ESTADO, não de município/hex; hexágono litorâneo quebra a classificação
+### BLK-JOINUF-01 — A nota de join é grossa demais para a decisão que ela gateia: grão de ESTADO (fechado), linha AUSENTE na Fase A (fechado) e o DENOMINADOR da nota municipal
+
+> **Título renomeado em 2026-09-10.** Até aqui ele dizia "hexágono litorâneo quebra a classificação",
+> hipótese que a **DEC-055 REFUTOU por medição**: 41,2% dos 9.886 órfãos estão em UF **sem costa**
+> (São Gabriel da Cachoeira 425, Amajari 303, Corumbá 234). Não era geometria da costa — era **linha
+> ausente** nas fontes da Fase A, que rodou em 2026-05-15 e nunca mais. O título agora nomeia os três
+> mecanismos REAIS, e não o sintoma que se supôs.
 
 | Campo | Valor |
 |---|---|
 | **Criticidade** | **Crítica** — mexe em `qualidade_join_uf`/`confianca_geografica`, insumo da camada censitária PRIMÁRIA (§1) e do gate híbrido (DEC-040/045/050). Precisa de DEC própria. |
 | **Esteira** | `[GATE HUMANO]` — investigação + medição de impacto antes de qualquer PR. |
-| **Depende de** | DEC-050 (aprofunda o mesmo achado — a DEC-050 corrigiu o composto obsoleto vs. `classe_join_uf`, mas nem o `classe_join_uf` "corrigido" resolve os dois problemas abaixo) |
-| **Status** | **Achado, não iniciado** — registrado em 2026-09-09 a pedido do Felipe, depois de reportar hexágonos com fallback municipal em Manaus/AM, Fortaleza/CE e litoral do RJ/SP mesmo com o mapa de calor mostrando setor censitário real na mesma área |
+| **Depende de** | DEC-050 (aprofunda o mesmo achado — a DEC-050 corrigiu o composto obsoleto vs. `classe_join_uf`, mas nem o `classe_join_uf` "corrigido" resolve os três mecanismos abaixo) |
+| **Status** | **Mecanismo 1 FECHADO** ([DEC-054](../docs/decisions/DEC-054.md), 2026-09-09): nota de cobertura por município, promoção-só — 13.147 hexágonos promovidos, zero rebaixados, Manaus 2.038/2.139 e Boa Vista 1.110/1.191. **Mecanismo 2 FECHADO** ([DEC-055](../docs/decisions/DEC-055.md), 2026-09-09), e a hipótese do litoral que dava nome a ele foi **REFUTADA**: os órfãos entram pela malha e ganham `cod_municipio` do estrutural — 3.731 promovidos, Fortaleza 11/11, Rio 43/51. **Mecanismo 3 EM APROVAÇÃO** ([DEC-058](../docs/decisions/DEC-058.md), 2026-09-10, **PROPOSTA**): o DENOMINADOR da nota do Mecanismo 1 era contagem de setores, e por isso reprovava as cidades de praia do relato original. **Resíduo**: 4.916 órfãos visíveis (642 na malha sem `score_malha` + 4.274 fora dela) — MEDIDOS em 2026-09-10, veredito **NÃO PROMOVER** (teto de 6.532 habitantes no país, zero hexágonos na fila) e rótulo entregue; ver `BLK-ORFAOS-01`. |
 | **Autonomia** | **manual (NÃO loop-safe)** — toca score/confiança censitária, Crítica |
+
+> **⚠ CORREÇÃO DOS NÚMEROS DESTE BLOCO (2026-09-09).** A medição original abaixo saiu de um artefato
+> LOCAL defasado (31/08, anterior à regeneração da DEC-050), não da produção. Os números certos,
+> medidos contra o parquet real da VPS: **27,98% do país em fallback** (não 52%) e **duas UFs a 100%
+> — AM e RR** (não doze). O desperdício real — fallback com dado de setor disponível — era 192.486
+> hexágonos, **todos em AM e RR**. A regeneração da DEC-050 já havia consertado as outras dez UFs;
+> o artefato local é que não tinha sido atualizado (a regeneração rodou num worktree isolado, depois
+> apagado). Lição registrada: medir contra o que produção SERVE, não contra o disco de trabalho.
 
 **O que foi medido (comparando o parquet `hexagonos_dashboard_enriquecido` real da VPS pós-DEC-050
 contra o setor censitário bruto que alimenta o mapa de calor do BLK do dia):**
 
-**Mecanismo 1 — granularidade de UF inteira.** `qualidade_join_uf`/`classe_join_uf` é UM valor por
+**Mecanismo 1 — granularidade de UF inteira. FECHADO pela DEC-054 (2026-09-09).**
+`qualidade_join_uf`/`classe_join_uf` é UM valor por
 ESTADO, não por município nem por hex: os 293.991 hexágonos do Amazonas inteiro — de Manaus (capital,
 com dado de setor real e denso) a municípios de floresta como Barcelos e Tapauá — têm o **mesmo**
 `C`. Isso significa que a nota agregada do interior rural do estado arrasta para baixo a nota da
@@ -4696,30 +4759,329 @@ hexágono) mesmo em hexágonos centrais com dado real de setor de até 83 mil ha
 sofre esse gate hoje** (o `_derivar` do piloto usa a coluna sempre que ela existe, sem checar
 `qualidade_join_uf`) — o que evita esse sintoma na renda, mas por acidente, não por desenho: um valor
 de renda de um hex com join ruim é exibido sem nenhum aviso de baixa confiança.
+*(Atualização 2026-09-10, DEC-058: o aviso de fallback da renda — `renda_municipal` — existia mas
+**nunca disparava**, porque a precedência era por COLUNA e a origem saía escalar; agora é por LINHA.
+O desacoplamento entre renda e gate de confiança segue sendo DELIBERADO — ver item 3 abaixo.)*
 
-**Mecanismo 2 — hexágono na linha da costa quebra a classificação.** Em Fortaleza, 80% dos hexágonos
-têm ótima nota (`B`), mas os 11 problemáticos (`"Não informado"` → fallback municipal) se concentram
-exatamente na faixa de latitude mais ao norte, a costa da cidade — hexágono que cruza a linha d'água
-não tem setor censitário cobrindo o oceano, a métrica de mismatch degenera e a classificação nunca
-sai de `"Não informado"`. Mesmo padrão esperado no litoral do RJ e SP (medição em RJ é mais ruidosa
-por causa da baía/relevo, mas a mecânica geométrica é a mesma).
+**Mecanismo 2 — ~~hexágono na linha da costa quebra a classificação~~ REFUTADO e reclassificado
+(2026-09-09); FECHADO pela DEC-055: são hexágonos ÓRFÃOS da Fase A.** A hipótese do litoral (métrica degenerando sobre o
+oceano) foi medida e caiu: **41,2% dos 9.886 hexágonos `"Não informado"` estão em UF SEM COSTA**
+(fronteira internacional — São Gabriel da Cachoeira 425, Amajari 303, Corumbá 234). A causa real é
+outra e fecha por aritmética exata: a Fase A rodou em **2026-05-15 e nunca mais**, e a base H3 cresceu
+DEPOIS em três eventos de critério geométrico de borda — **+5.305** (centroide, 2026-05-26) **+474**
+(DEC-002) **+4.107** (DEC-003) = **exatamente 9.886**, batendo por UF em **27/27** (inclusive o zero
+de TO). Eles não têm linha nenhuma nas fontes da Fase A; nenhuma regra de reclassificação de join
+alcança linha AUSENTE. Casos do relato: Fortaleza 11, Rio 53, SP 5. **5.612 deles já têm dado em
+`censo2022_hex_da_malha.parquet`** (6.254.969 hab), incluindo 11/11 de Fortaleza e 345/391 do Rio —
+é o caminho barato de conserto (admitir na `sobrepor_renda_da_malha` o que hoje é `how="left"`
+value-preserving). Os 4.274 restantes não estão na malha e não foram investigados.
+
+**Mecanismo 3 — o DENOMINADOR da nota do Mecanismo 1. EM APROVAÇÃO ([DEC-058](../docs/decisions/DEC-058.md),
+PROPOSTA, 2026-09-10).** A nota municipal da DEC-054 é `flag_renda_disponivel.mean()` — média sobre
+SETORES, então um setor de 3 moradores pesa o mesmo que um de 3.000. Cidade de praia é o pior caso
+dessa régua (cauda longa de setores de veraneio quase vazios sem renda, população concentrada em
+poucos setores urbanos que têm), e por isso **o litoral de RJ/SP — que estava no MESMO relato do
+Felipe que originou este bloco — continuou em fallback depois da DEC-054**. Medido: **nove de nove**
+cidades do litoral são classe **C** na contagem e **A** na população (Angra dos Reis 0,84392 →
+0,998752; São Sebastião 0,888136 → 0,999706; Búzios 0,87931 → 0,998500). A DEC-054 **considerou** a
+troca de denominador e a rejeitou, mas a tabela de comparação dela tem duas linhas de cidade —
+Manaus e Boa Vista —, e as duas **empatam nas duas réguas**. Custo declarado e ainda em decisão do
+dono: 173.256 hexágonos ganham granular, **99,4% em AM/RR**, a régua passa a aprovar 99,0% dos
+municípios e o `flag_pop_min_5k` cai 172.718 — mas **a fila do funil não se move (2.924 → 2.924)**.
 
 **Por que isso não é bug do trabalho recém-entregue.** As flags `renda_municipal`/`pop_municipal`
 (fallback-legend) e o mapa de calor (Bloco D) estão corretos — eles só tornaram VISÍVEL um limite
 estrutural que já existia: o sinal de confiança é grosso demais (UF) para uma decisão que é fina
-(hex/setor), e a costa é um caso geométrico degenerado que a métrica atual não trata.
+(hex/setor). ~~e a costa é um caso geométrico degenerado que a métrica atual não trata~~ — a parte
+da costa caiu com a DEC-055 (Mecanismo 2) e não era geometria; o litoral só reaparece no Mecanismo 3,
+por outro motivo (o denominador da nota), e lá é demografia, não geometria.
 
-**Escopo de investigação sugerido, quando priorizado:**
-1. Recalcular `classe_join_uf`/mismatch por MUNICÍPIO (ou cluster de hexes), não por UF — medir se
-   isso recupera capitais/cidades bem cobertas hoje presas atrás de estados ruins (Manaus é o caso
-   comprovado; medir Belém/PA, outras capitais de UF 100% `C`).
-2. Tratar hexágono de borda litorânea como classe própria (ex.: herdar a nota do hexágono terrestre
-   mais próximo, ou usar só a fração de área com setor real) em vez de `"Não informado"` automático.
-3. Decidir se a renda deveria respeitar o mesmo gate de confiança que a população (hoje não respeita)
-   — e se sim, medir quantos hexágonos perderiam renda granular ao ficarem consistentes.
-4. Medir o efeito nacional (UFs afetadas, % de população recuperada, hash do M1 intacto) antes de
-   qualquer PR, no mesmo padrão de rigor da DEC-050/045.
+**Escopo de investigação sugerido, quando priorizado** (estado em 2026-09-10):
+1. ~~Recalcular `classe_join_uf`/mismatch por MUNICÍPIO (ou cluster de hexes), não por UF~~ — **FEITO**
+   (DEC-054 como nota de cobertura por município; DEC-058 corrige o denominador dela).
+2. ~~Tratar hexágono de borda litorânea como classe própria~~ — **SEM OBJETO**: a hipótese do litoral
+   foi refutada pela DEC-055 (41,2% dos órfãos em UF sem costa). Não havia classe geométrica a criar;
+   havia linha ausente a admitir, e ela é admitida pela malha.
+3. **EM ABERTO** — decidir se a renda deveria respeitar o mesmo gate de confiança que a população
+   (hoje não respeita). A DEC-058 mantém deliberadamente o desacoplamento: desde a DEC-045 a renda
+   vem da malha por chave, e submetê-la ao gate de população acoplaria duas coisas hoje independentes.
+   Se for reaberto, medir quantos hexágonos perderiam renda granular ao ficarem consistentes.
+4. ~~Medir o efeito nacional antes de qualquer PR~~ — **FEITO** nas três DECs (054, 055, 058), sempre
+   contra o parquet real, com "ganham/perdem" separados e M1 verificado.
 
 **Guardrail.** §5 READ-ONLY M1. Qualquer mudança em `qualidade_join_uf`/`confianca_geografica`/
 `score_setor_2022_calibrado` exige DEC própria (Crítica) e medição antes/depois por UF, igual à
 DEC-050.
+---
+
+### BLK-ORFAOS-01 — Os 4.916 órfãos que a malha da DEC-045 não cobre
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** — MEDIDO e rebaixado de Alta em 2026-09-10: **nada operacional se move**. Os 4.916 já falham a camada 1 do funil por `score_setor_2022_calibrado` NaN, e falhariam `_povoado` mesmo depois de um conserto perfeito (população granular com **máximo 216 hab** contra piso de 5.000). O teto do conserto é **6.532 habitantes** no país inteiro, **0,51%** do SAM nacional. Sobe de novo para Crítica **se** alguém propuser tocar `score_setor_2022_calibrado` — e a rota óbvia toca (ver "Rejeitado", abaixo). |
+| **Esteira** | Normal — o que restou é rótulo/legenda, READ-ONLY sobre o M1. |
+| **Depende de** | [DEC-055](../docs/decisions/DEC-055.md) (resolveu 4.970 dos 9.886; estes são o resíduo declarado) |
+| **Status** | **MEDIDO — veredito NÃO PROMOVER** (2026-09-10). O rótulo (`motivo_sem_censo`, vocabulário fechado de dois valores) e o carimbo de procedência (`fonte_renda_censo_hex`) entraram no artefato; a aritmética está corrigida aqui e na emenda de 2026-09-10 da DEC-055. **Falta**: renderizar o motivo no balão do hexágono (`web/src/`, PR próprio). |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca a camada censitária. |
+
+**O que é.** A DEC-055 provou que os 9.886 hexágonos `"Não informado"` são **órfãos da Fase A**:
+ela rodou em 2026-05-15 e nunca mais, e a base H3 cresceu depois em três eventos de borda
+(+5.305 centroide + 474 DEC-002 + 4.107 DEC-003 = exatamente 9.886, batendo por UF em 27/27).
+
+**A aritmética, corrigida (2026-09-10).** O resíduo tem **três** partes, não duas — e o grupo
+do meio nunca tinha sido contado por ninguém:
+
+| Grupo | Hexágonos | O que é |
+|---|---|---|
+| Admitidos que **sobrevivem** ao merge | **4.970** | têm `score_malha` e existem na base M1 |
+| Na malha, **sem** `score_malha` | **642** | o setor por baixo não tem renda publicada pelo IBGE; a admissão os recusa de propósito |
+| **Fora** da malha | **4.274** | nenhum setor POVOADO cai no centro da lasca de borda |
+| **Total** | **9.886** | |
+
+`admitir_orfaos_da_malha` cria **5.600 linhas no TRAÇO**, das quais **630** são hexágonos que nem
+estão na base M1 e **morrem no merge** — por isso os admitidos de fato são 4.970, e não 5.600
+nem os 5.612 que este bloco registrava. **O resíduo VISÍVEL é 4.916** (642 + 4.274).
+
+Predicado que os isola no artefato vivo (verificado coextensivo, zero falso-positivo), sobre
+`data/outputs/hexagonos_dashboard_enriquecido/uf=*/parte-*.parquet`:
+
+```python
+df[df.qualidade_join_uf.eq("Nao informado") & df.score_setor_2022_calibrado.isna()]
+```
+
+**Natureza MEDIDA (a hipótese de trabalho abaixo fica refutada como explicação geral).** Eles
+**não estão no mar** — só **6 de 4.916** não têm setor algum por baixo — e **não** estão em
+município sem partição GEO (**0 de 4.916**). São lascas de borda cujo centro não cai em nenhum
+setor povoado. É a **segunda** hipótese geométrica confiante a cair neste bloco; o precedente
+da DEC-055 ("é o litoral", 41,2% em UF sem costa) valeu.
+
+**Veredito: ROTULAR, não promover.** Teto de um conserto perfeito: **6.532 habitantes** no país
+inteiro, p50 de **0,02 hab** por hexágono, **0,51%** do SAM nacional. **ZERO** hexágonos entrariam
+na fila do funil — score p90 **17,5**, máximo **59,0**, e mesmo os 59 que passariam do piso 30
+falhariam em `_povoado` (população granular com máximo **216 hab** contra piso de 5.000).
+
+**Rejeitado, e por quê.** A rota "óbvia" seria completar `_candidatos` em `agregar_setores` para
+a malha alcançá-los. Ela **RENORMALIZA** a fração de área de cada setor para somar 1
+(`agregar_setores` ~171-183), então acrescentar candidato de borda **redistribui população para
+fora dos hexágonos interiores** — mexeria em `score_setor_2022_calibrado` **NACIONALMENTE**, por
+6.532 habitantes. Não fazer.
+
+**O que foi entregue no lugar (2026-09-10), sem tocar score algum:**
+- `rotular_orfaos_sem_censo` (`pipelines/agregar_censo_hex_da_malha.py`) carimba `motivo_sem_censo`
+  com vocabulário **fechado** de dois valores, sem acento por serem identificadores:
+  `setor_sem_renda_publicada` (642) e `sem_setor_povoado_no_hex` (4.274). Terceira função separada,
+  pelo mesmo motivo das outras duas: uma muda VALOR, outra muda COBERTURA, esta só carimba
+  PROCEDÊNCIA.
+- `fonte_renda_censo_hex` — carimbo que a DEC-055 já declarava obrigatório — passa a chegar ao
+  artefato que o piloto SERVE (existia só no traço).
+- Chave `motivo_sem_censo` publicada no payload do hexágono (`_hex_dict`), `None` quando ausente.
+
+**O que falta.** Renderizar o motivo no balão do hexágono e distinguir na legenda "não há dado" de
+"há dado e não confiamos nele" — `web/src/`, em PR próprio.
+
+**Hipótese de trabalho original (mantida para registro; refutada acima).** Seriam hexágonos sem
+setor povoado por serem oceano dentro do critério híbrido do litoral
+(`M1_HEX_LAND_FRACTION_MIN = 0,05`, §3), floresta ou faixa de fronteira.
+
+**Guardrail.** §5 READ-ONLY M1. Rotular não exige DEC; promover a granular exige DEC Crítica com
+medição antes/depois, no padrão DEC-050/054/055.
+---
+
+### BLK-ALUNOS-01 — Alunos reais por unidade de concorrente: crosswalk + número no tooltip do pino
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — camada nova, READ-ONLY sobre o M1 e sobre o residual. Não muda score, fórmula nem artefato oficial: o artefato nasce e o único consumo é EXIBIÇÃO. Vira **Crítica** no passo seguinte, quando substituir a capacidade proxy de 2.500 no residual. |
+| **Esteira** | Normal (DEC-016): não toca M1/VPS/segredos. |
+| **Depende de** | `concorrentes_mapeados` (cron semanal) e `vulnerabilidade_ma_redes` (DEC-034/048) |
+| **Status** | **FEITO** (2026-09-10) — `pipelines/alunos_reais.py` + `alunos_reais_por_unidade.parquet` + linha "Alunos" no balão do pino. |
+| **Autonomia** | **manual (NÃO loop-safe)** — consome fonte gitignored que o container do loop não tem. |
+
+**O que existia e por que não servia.** O join já tinha sido escrito em
+`dimensionamento/base_multirede.py` (BLK-DIM-07, jun/2026), e três coisas o inutilizaram:
+(a) ele lê `concorrentes/Unidades/*.csv`, diretório que **não viaja no repo** — `carregar_skyfit`
+e `carregar_engenharia` levantam `FileNotFoundError` hoje, e ninguém tinha percebido; (b) conhece
+3 redes e nenhuma delas é a Smart Fit, que é de longe o maior dado; (c) casa a Skyfit por
+**CIDADE**, jogando fora a coluna de nome de unidade que a planilha tem — cidade com mais de uma
+unidade vira `ambiguo` e é descartada. Medido: **39,2% pela cidade contra 86,8% pelo nome**.
+
+**O que mudou de fonte.** A coordenada passa a vir de `concorrentes_mapeados.parquet` (o artefato
+que a PRODUÇÃO serve, atualizado pelo cron de terça) unido a `vulnerabilidade_ma_redes.parquet`
+(feed WellHub). Não é preferência de estilo: **o pino que o operador vê nasce desse artefato**, e o
+número de alunos precisa pousar na mesma linha para chegar ao tooltip. A Smart Fit não está no
+WellHub (zero unidades) — a coordenada dela vem só do coletor próprio, mais a planilha externa
+opcional de `NAO_ABRA/01_SmartFit.xlsx`, usada como PONTE por coordenada.
+
+**O que derruba a taxa de match é ORTOGRÁFICO, não semântico.** Cada coletor carimba o rótulo de um
+jeito: sufixo de UF (`Vila Granada - SP`), prefixo de rede (`PACER Ribeirânia`), sequência em
+romano de um lado e arábica do outro (`Bonfim I` × `Bonfim 1`), bairro colado na cidade
+(`Desvio Rizzo Caxias do Sul`). São normalizações baratas que valem mais que afrouxar corte — por
+isso o corte fica **alto (0,95)** e o trabalho é feito antes de comparar. A Pacer casava **0 de 13**
+só por causa do prefixo.
+
+**Resultado medido (2026-09-10):**
+
+| Rede | com alunos | no pool | casadas | taxa |
+|---|---:|---:|---:|---:|
+| Smart Fit | 952 | 999 | 878 | 92,2% |
+| Skyfit | 311 | 798 | 290 | 93,3% |
+| Engenharia do Corpo | 61 | 110 | 42 | 68,9% |
+| RedFit | 21 | 56 | 17 | 81,0% |
+| Grupo Pacer | 13 | 12 | 11 | 84,6% |
+
+**1.238 unidades no artefato, 1.202 chegam ao tooltip** — contra 275 que a base de junho tinha, das
+quais 53 eram a própria Ultra. Verificado ponta a ponta no navegador: `Pacer Sertãozinho 2` desenha
+**1.248** e a imagem-fonte diz 1.248; `Smart Fit Mall Dom Pedro I` desenha **1.875** e o painel diz
+1.875.
+
+**Dois defeitos meus que os testes pegaram, e valem como padrão:**
+1. **Recorte de UF fail-OPEN.** Quando não havia candidato na UF do alvo, o código caía no pool
+   NACIONAL — e um `Centro` do Amazonas casava com um `Centro` do Rio Grande do Sul com score
+   **1,000**. Match perfeito, errado, e sem nada no número que denuncie a troca. Mesmo fail-open que
+   a emenda E3 da DEC-039 teve de fechar. Agora UF conhecida e diferente **exclui**; UF nula segue
+   elegível, porque é ausência de informação e não um estado diferente.
+2. **Candidato reatribuído entre rotas.** Cada uma das três rotas (nome, contenção, ponte) começava
+   com o pool limpo, então um pino já tomado podia ser reatribuído: **9 pinos saíam com duas
+   contagens de alunos**, e uma vencia em silêncio no merge.
+
+**Onde ficou a linha do que se mostra.** A rota de CONTENÇÃO (o rótulo da fonte é um pedaço do
+rótulo do coletor) é inferência, e quem lê "Vila Nova Cachoeirinha — 2.400 alunos" não tem como
+saber que a linha de origem dizia só "Cachoeirinha". Ela entra no artefato com
+`confianca_match="media"` e **não** chega à tela. Zero também não chega: unidade recém-aberta ou
+lacuna de coleta desenharia "0 alunos" numa academia que existe.
+
+**ACOPLAMENTO OPERACIONAL — o artefato ENVELHECE com o cron.** `concorrente_id` é
+`sha1(rede, nome_unidade, lat, lng)` (`normalizar_concorrentes.py:98-103`), ou seja,
+**endereçado pelo conteúdo**. O cron de terça que atualiza `concorrentes_mapeados`
+muda o id de qualquer unidade que trocar de nome ou de coordenada, e a linha
+correspondente do crosswalk deixa de casar. **Regenerar
+(`python -m motor_expansao.pipelines.alunos_reais`) depois de cada refresh do coletor**,
+e subir o parquet junto.
+
+A falha é benigna por construção — a chave que não casa simplesmente não aparece, então
+o pino perde o número mas **nunca exibe o número de outra academia**. Benigna, porém
+**silenciosa**: nada fica vermelho, e a única evidência é a contagem caindo. A auditoria
+por rede que `montar_crosswalk` devolve é o lugar de olhar (`n_casadas` por rede); uma
+queda brusca ali é o sintoma.
+
+**Próximo passo (bloco à parte, Crítico).** Trocar `capacidade_default_concorrente_alunos = 2.500`
+pela capacidade real onde ela existe, no residual. Isso muda `oferta_efetiva_disponivel` →
+`score_oportunidade_residual` → `tese_entrada`/`prioridade_mercado_mapeado` e exige DEC própria com
+antes/depois nacional. **Atenção à dívida registrada na DEC-048**: a taxa de penetração é
+calibrada em runtime a partir das academias mapeadas, então mexer na oferta move o TAM/SAM junto —
+medir os dois efeitos separados, não o líquido.
+---
+
+### BLK-ESTUDIO-01 — Estúdios boutique saem do universo de OFERTA do residual
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — muda `oferta_efetiva_1km_area` → `score_oportunidade_residual` → `prioridade_mercado_mapeado`, e o rótulo Livre/Adensar/Disputa da tela. [DEC-056](../docs/decisions/DEC-056.md). |
+| **Esteira** | `[GATE HUMANO]` — a lista de redes é classificação do dono, não leitura de código. |
+| **Depende de** | DEC-048 (universo de cadeia com o feed do agregador), DEC-051 (modelo de 1 km) |
+| **Status** | **FEITO** (2026-09-10, DEC-056) |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca o residual, Crítica |
+
+**O defeito.** Um estúdio de pilates consumia os MESMOS 2.500 alunos de capacidade que um
+Smart Fit. A Ultra lia como saturada uma praça onde há três estúdios e nenhuma academia
+full-service. São 435 de 5.386 unidades do universo de oferta (8,1%), concentradas onde a
+rede mais olha: São Paulo 86, Brasília 22, Rio 18.
+
+**As 9 redes**, classificadas por Felipe: `velocity` (125), `my_box` (89), `vidya_studio`
+(66), `tonus_gym` (49), `aera_pilates` (41), `race_bootcamp` (31), `kore` (22), `nadarte`
+(5), `jab_house` (4).
+
+**As 11 ambíguas ficaram DENTRO** (Allp Fit, 26Fit, Contorno do Corpo, Corpo e Saúde, Usina
+do Corpo, Wellness Club, Evolve, Motion Fit, Marra Fit, Match Fit, Uplay). A assimetria é
+deliberada: excluir academia de verdade faz a Ultra ver mercado livre onde há concorrente —
+o erro caro. Incluir um estúdio a mais só deixa o residual conservador.
+
+**Onde o filtro entrou, e por que não nos dois lugares.** UMA vez, sobre o universo já unido
+com o feed do agregador, acima dos dois modelos. O primeiro desenho — filtrar só o de 1 km e
+preservar a tela — **inverte o sinal**: `calibrar_taxa_fitness_mercado` lê
+`n_concorrentes_mapeados_2km` (universo sem filtro) para estimar penetração → TAM → SAM →
+residual. Filtrando só a oferta, os estúdios continuariam inflando o mercado e parariam de
+descontar a oferta. O comentário do passo 5b já exigia que os dois modelos concordassem, e
+citava "estúdios boutique" pelo nome como o caso a evitar.
+
+**O que se move na tela, e o dono aceitou.** Pins e a contagem do Relatório Pontual (DEC-046)
+seguem intocados — leem `concorrentes_mapeados.parquet` direto. Mas o rótulo Livre/Adensar/
+Disputa e a camada 3 do funil mudam, porque `n_concorrentes_est` deriva da oferta do residual
+desde a DEC-051. Medido: **194 hexágonos** (115 Adensar→Livre, 77 Disputa→Adensar, 2
+Disputa→Livre). Decisão: uma régua só na tela.
+
+**Efeito medido na regeneração real**: consumo de concorrente 13.462.500 → 12.375.000 (−8,1%),
+`n_concorrentes_mapeados_2km` 12.544 → 11.515 (−8,2%), TAM/SAM **−3,2%**, residual **−2,5%**.
+
+> **Correção de uma medição minha, e ela invertia o sinal.** A primeira estimativa dizia residual
+> **+1,6%** porque segurou o SAM fixo, tirando os estúdios só da oferta. Na cadeia de verdade o SAM
+> cai junto — `calibrar_taxa_fitness_mercado` estima a penetração pela CONTAGEM de academias, e os
+> estúdios saíram dela também. O mercado encolhe mais (−1,35 mi) que a oferta (−1,09 mi), então o
+> residual **cai**. É coerente com a premissa: se o estúdio não é concorrente, também não é
+> evidência de demanda. O residual fica mais conservador, não mais generoso.
+
+**Fragilidade com tripwire.** O slug `rede` é derivado do NOME DO ARQUIVO CSV da coleta
+(`normalizar_concorrentes.py`). Um rename lá apaga a exclusão em silêncio, com o pipeline
+verde. `excluir_estudios_boutique` avisa quando um slug declarado não casa nenhuma unidade.
+
+---
+
+### BLK-CAPACIDADE-01 — Capacidade real por unidade no residual
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — muda `consumo_concorrentes_1km_area` → `score_oportunidade_residual`, e troca a FONTE de `n_concorrentes_est`. [DEC-057](../docs/decisions/DEC-057.md). |
+| **Esteira** | `[GATE HUMANO]` |
+| **Depende de** | BLK-ALUNOS-01 (o crosswalk), BLK-ESTUDIO-01 (medido depois dele, em separado) |
+| **Status** | **FEITO** (2026-09-10, DEC-057) |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca o residual, Crítica |
+
+**O que muda.** Onde há aluno real medido, a academia consome a capacidade DELA e não o proxy
+de 2.500 — 1.202 de 4.951 unidades (24,3%), só `confianca_match = "alta"`.
+
+**O achado, e não é o esperado.** O proxy estava **certo na média e errado em quase toda
+unidade**: mediana real 2.326 (−7%), mas erro absoluto mediano de **546 alunos, 22%**. 60%
+abaixo de 2.500, 40% acima, intervalo de 2 a 5.626. Por rede: Engenharia do Corpo 3.124
+(+25%), Smart Fit 2.348 (−6%), SkyFit 2.262 (−10%), RedFit 1.447 (−42%), Pacer 1.323 (−47%).
+
+**Por isso o nacional quase não anda (+0,4% sobre a base já sem estúdios), e isso não torna o
+bloco inútil.** Os erros do proxy se cancelam no agregado; o ganho é LOCAL. Este é o único dos
+dois blocos que **não mexe no mercado**: capacidade altera o consumo, não a CONTAGEM que calibra
+o TAM/SAM — por isso o +0,4% daqui é limpo. Em Ribeirão Preto o motor parava de cobrar
+2.500 alunos por uma Pacer de 613. Quem ler o +0,4% sozinho vai concluir errado — está escrito
+assim na DEC de propósito.
+
+**A metade não óbvia: a contagem teve de mudar de fonte.** Com capacidade variável,
+`oferta_consumida ÷ 2.500` **deixa de contar academias** — um Smart Fit de 5.000 apareceria
+como "2 concorrentes" e mandaria o hexágono de Adensar para Disputa por ser GRANDE, não por
+ter vizinho. `n_concorrentes_est` passa a ler `n_concorrentes_influencia_1km`, que é contagem
+de verdade. Medido: **zero hexágonos mudam de rótulo** entre proxy e capacidade real — a
+separação funciona.
+
+**Ressalva de reprodutibilidade.** A conta saiu de `soma(shares) × 2.500` para
+`soma(share × capacidade)`. A ordem em ponto flutuante mudou: mesmo sem capacidade real, um
+caso de uma academia dá 2499,999999999998. Erro ~1e-12, registrado para ninguém diagnosticar
+diferença de última casa como sintoma de outra coisa.
+
+**Dívida que fica aberta.** A taxa de penetração segue calibrada pela CONTAGEM de academias
+(`CAPACIDADE_MIN_ACADEMIA_ALUNOS`, premissa de 2.000) e não pela capacidade real agora
+disponível — o TAM ainda usa um proxy que o lado da oferta abandonou. Ligar os dois é bloco
+próprio, com medição própria: fazer junto esconderia qual efeito moveu o residual (é a mesma
+exigência que a DEC-048 registrou).
+
+> **FECHADA em 2026-09-11 pela [DEC-060](../docs/decisions/DEC-060.md) — e o defeito
+> dominante era OUTRO.** Esta dívida apontava para a capacidade (2.000 contra 2.325 medidos),
+> que vale **+4,63 pp** e move a taxa para CIMA. O defeito maior é geométrico: o numerador
+> contava academias num disco de 2 km do centroide (12,57 km²) contra a população de UM
+> hexágono (5,16 km²), cada academia entrando **2,33x** — **−19,79 pp**. E apareceu um
+> terceiro que ninguém tinha visto, a MÁSCARA (**+6,77 pp**): 29% da amostra era só borda de
+> catchment, recebendo fatia mínima de alunos e população inteira, com o clip de 5% os
+> censurando em silêncio. **28,52% → 17,35%**, confirmado por estimador independente em
+> 16,55%. Quem lesse só esta dívida e "consertasse a capacidade" teria piorado a taxa.
+>
+> **Continua aberto:** (a) `OFERTA_DESTAQUE_MIN` = 2.000 é parâmetro acoplado à escala da
+> taxa e não está declarado como tal — a fila cai 40,7% e os 829 perdidos morrem TODOS em
+> `_com_residual`; (b) a endogeneidade da DEC-048 (elasticidade +0,68 à cobertura de
+> cadastro) permanece; (c) o termo Ultra entra sem repartição por área (+0,03 pp);
+> (d) `CAPACIDADE_MIN_ACADEMIA_ALUNOS` fica órfã e o `CLAUDE.md` §4 ainda declara 2.500,
+> contra 2.325 medidos.

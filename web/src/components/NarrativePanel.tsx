@@ -3,7 +3,13 @@ import { useState } from 'react'
 import ComparadorCidades from './ComparadorCidades'
 import CrescimentoDoEstado from './CrescimentoDoEstado'
 import { camadaCor } from '../lib/colors'
-import { type Linha, type Serie, parseDims, parseSeries } from '../lib/crescimento'
+import {
+  type Linha,
+  type Serie,
+  detalhesAbertoPorPadrao,
+  parseDims,
+  parseSeries,
+} from '../lib/crescimento'
 import { alunos, num } from '../lib/format'
 import {
   filtrarPorCrescimento,
@@ -69,7 +75,8 @@ export interface NarrativePanelProps {
 }
 
 /* ---------------------------------------------------------------------------
-   Passo 4 — bloco "Detalhes", recolhido por padrao.
+   Passo 4 — bloco "Detalhes". Recolhido por padrao na visao de UF; ABERTO quando ha
+   um municipio selecionado (`detalhesAbertoPorPadrao`, em lib/crescimento.ts).
 
    O veredito de uma frase resolve a leitura rapida; quem quiser o porque abre e
    ve as cinco dimensoes e o grafico. Cada dimensao e um botao: clicar troca a
@@ -291,6 +298,7 @@ function Detalhes({
   dims,
   series,
   de,
+  inicialAberto = false,
 }: {
   dims: string | null
   series: string | null
@@ -298,8 +306,12 @@ function Detalhes({
    *  botoes "Detalhes" na mesma tela; sem isso o leitor de tela ouve dez vezes
    *  o mesmo rotulo sem saber de qual cidade. */
   de?: string
+  /** Estado INICIAL, so' isso: o botao continua alternando e a escolha do leitor
+   *  nao e' lembrada. Quem decide e' `detalhesAbertoPorPadrao`, testada; o default
+   *  `false` mantem o comportamento antigo em quem nao passa nada. */
+  inicialAberto?: boolean
 }) {
-  const [aberto, setAberto] = useState(false)
+  const [aberto, setAberto] = useState(inicialAberto)
   const lista = series ? parseSeries(series) : []
   const porNome = new Map(lista.map((s) => [s.nome, s]))
   const [sel, setSel] = useState<string | null>(null)
@@ -497,7 +509,11 @@ export default function NarrativePanel({
             porque o header nao rola. Na visao de UF cada item traz o seu, entao
             aqui so aparece quando a lista nao tem detalhe proprio. */}
         {passo.n === 4 && !passo.itens.some((it) => it.dims || it.series) && (
-          <Detalhes dims={dims} series={series} />
+          <Detalhes
+            dims={dims}
+            series={series}
+            inicialAberto={detalhesAbertoPorPadrao(nivel)}
+          />
         )}
 
         {nivel === 'uf' && crescimentoEstado && (

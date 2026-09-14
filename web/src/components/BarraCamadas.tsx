@@ -114,8 +114,11 @@ function BotaoTrilho({
         placeItems: 'center',
         borderRadius: 8,
         border: 'none',
-        background: aceso ? 'var(--ac-a16)' : 'transparent',
-        color: desabilitado ? 'var(--sinal-off)' : aceso ? cor : 'var(--tx-narrative)',
+        /* O icone carrega a `cor` SEMPRE (nao so' aceso) desde 2026-09-09 — o trilho
+           alterna as cores padrao da Ultra como o Dock, e o aceso passou a se marcar
+           pelo fundo tingido da propria cor. */
+        background: aceso ? `color-mix(in srgb, ${cor} 16%, transparent)` : 'transparent',
+        color: desabilitado ? 'var(--sinal-off)' : cor,
         opacity: desabilitado ? 0.45 : 1,
         cursor: desabilitado ? 'not-allowed' : 'pointer',
         transition: 'background .15s ease, color .15s ease',
@@ -261,7 +264,10 @@ export default function BarraCamadas({
   const [aberto, setAberto] = useState(false)
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, pointerEvents: 'auto' }}>
-      {/* TRILHO — altura constante, quatro icones, sempre os mesmos quatro. */}
+      {/* TRILHO — altura constante, quatro icones, sempre os mesmos quatro.
+          A caixa segue a superficie do TEMA: chegou a ficar escura no claro junto com
+          o Dock (2026-09-09) e o Juan reverteu no mesmo dia — "na visão branca ele
+          está preto, deixar branco". Quem carrega a cor aqui sao os ICONES. */}
       <div
         style={{
           display: 'flex',
@@ -288,6 +294,7 @@ export default function BarraCamadas({
               : 'Medir a distância entre dois pontos do mapa'
           }
           aceso={regua.ligado}
+          cor="var(--gr-rosa)"
           onClick={regua.onToggle}
         />
         <BotaoTrilho
@@ -301,6 +308,7 @@ export default function BarraCamadas({
           }
           aceso={comparar?.ligado ?? false}
           desabilitado={!comparar}
+          cor="var(--gr-coral)"
           onClick={() => comparar?.onToggle()}
         />
         <BotaoTrilho
@@ -341,10 +349,10 @@ export default function BarraCamadas({
             <span
               className="num"
               style={{
-                font: '500 10.5px/1 var(--f-num)',
+                font: '600 10.5px/1 var(--f-num)',
                 letterSpacing: '.12em',
                 textTransform: 'uppercase',
-                color: 'var(--tx-muted)',
+                color: 'var(--ac-text)',
               }}
             >
               Camadas do mapa

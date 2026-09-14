@@ -184,12 +184,20 @@ class Metas:
 
 
 @dataclass(frozen=True, slots=True)
-class FaixaRenda:
-    """Uma faixa do mapa de calor de renda: teto (exclusivo) + rotulo da legenda.
+class Faixa:
+    """Uma faixa de mapa de calor: teto + rotulo da legenda.
+
+    O teto e' INCLUSIVO — os dois consumidores comparam `valor <= ate`
+    (`censo_map._color_for_bands` no Python, `faixaAbsolutaToColor` no `.ts`). Ate
+    2026-09-10 esta linha dizia "exclusivo", contra o codigo dos dois lados.
 
     `ate = inf` marca a faixa de topo aberta ("> US$ 850"). O rotulo viaja pronto do
     perfil porque carrega MOEDA e formatacao do pais — e vai rasterizado num PNG cuja
     fonte nao tem glifo acentuado, entao ASCII puro (excecao de RENDER do CLAUDE.md §2).
+
+    A forma e a MESMA nas duas escalas que hoje a usam (renda e densidade), e por isso
+    a classe nao carrega o nome de nenhuma delas: o que muda entre elas e a UNIDADE do
+    `ate` e a rampa de cor que a plataforma casa com a faixa, nunca o formato.
     """
 
     ate: float
@@ -209,8 +217,8 @@ class FaixasRenda:
     `dashboard/constants.py`, que sao o fallback e continuam byte a byte identicas).
     """
 
-    per_capita: tuple[FaixaRenda, ...]
-    domiciliar: tuple[FaixaRenda, ...]
+    per_capita: tuple[Faixa, ...]
+    domiciliar: tuple[Faixa, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +242,16 @@ class Reguas:
     metas_big_numbers: Metas
     #: Faixas dos mapas de calor de renda (ver `FaixasRenda`). `None` = literais BR.
     faixas_renda: FaixasRenda | None = None
+    #: Faixas do mapa de calor de DENSIDADE populacional (hab/km2). Mesmo papel e mesmo
+    #: fail-closed de `faixas_renda`, com UMA escala em vez de duas — e por isso e uma
+    #: lista direta no JSON, nao um objeto `{per_capita, domiciliar}`: nao existe uma
+    #: segunda densidade a nomear, e um envelope de um campo so seria estrutura vazia.
+    #: A unidade (hab/km2) nao e de moeda, mas a regua tambem nao viaja de pais para
+    #: pais: os cortes brasileiros (1k/5k/10k/25k) sao de um pais cujas capitais passam
+    #: de 25.000 hab/km2, e num pais mais rarefeito eles pintam o mapa de uma cor so —
+    #: a mesma falha que a `faixas_renda` corrige, pelo mesmo mecanismo.
+    #: `None` = pais usa os literais de `dashboard/constants.py`.
+    faixas_densidade: tuple[Faixa, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -532,12 +550,17 @@ def _ler_metas(reguas: dict[str, Any], caminho: Path) -> Metas:
 
 def _ler_uma_escala_de_faixas(
     bruto: Any, caminho: Path, nome: str
-) -> tuple[FaixaRenda, ...]:
-    """Uma lista de faixas de renda, validada fail-closed (ver `FaixasRenda`).
+) -> tuple[Faixa, ...]:
+    """Uma lista de faixas de mapa de calor, validada fail-closed (ver `FaixasRenda`).
+
+    Serve as DUAS escalas que declaram faixas no perfil — renda e densidade: a validacao
+    e a mesma porque a FORMA e a mesma (`Faixa`); so a unidade do `ate` e a rampa de cor
+    mudam, e nenhuma das duas e assunto do loader.
 
     Regras que derrubam o boot, cada uma com o campo no erro: lista com menos de 2 ou
-    mais de 6 faixas (a rampa de cores da plataforma tem 6 degraus — `_RAMPA_RENDA` em
-    `dashboard/constants.py` — e faixa sem cor seria atribuicao silenciosa); item que nao e objeto; `rotulo` vazio ou nao-ASCII (a legenda e
+    mais de 6 faixas (as rampas de cor da plataforma tem 6 degraus — `_RAMPA_RENDA` e
+    `_RAMPA_DENSIDADE` em `dashboard/constants.py` — e faixa sem cor seria atribuicao
+    silenciosa); item que nao e objeto; `rotulo` vazio ou nao-ASCII (a legenda e
     rasterizada com fonte sem glifo acentuado — viraria tofu calado); `ate` que nao e
     numero positivo (exceto o `null` do topo); topo que NAO e aberto (`ate` da ultima
     faixa deve ser `null`); tetos fora de ordem estrita (duas faixas com o mesmo teto
@@ -545,7 +568,7 @@ def _ler_uma_escala_de_faixas(
     """
     if not isinstance(bruto, list) or not 2 <= len(bruto) <= 6:
         raise _erro(caminho, nome, "deveria ser lista de 2 a 6 faixas")
-    faixas: list[FaixaRenda] = []
+    faixas: list[Faixa] = []
     anterior = 0.0
     for i, item in enumerate(bruto):
         campo = f"{nome}[{i}]"
@@ -572,7 +595,7 @@ def _ler_uma_escala_de_faixas(
             if teto <= anterior:
                 raise _erro(caminho, f"{campo}.ate", "tetos devem ser estritamente crescentes")
             anterior = teto
-        faixas.append(FaixaRenda(ate=teto, rotulo=rotulo.strip()))
+        faixas.append(Faixa(ate=teto, rotulo=rotulo.strip()))
     return tuple(faixas)
 
 
@@ -590,6 +613,20 @@ def _ler_faixas_renda(bruto: dict[str, Any], caminho: Path) -> FaixasRenda | Non
             obj.get("domiciliar"), caminho, "reguas.faixas_renda.domiciliar"
         ),
     )
+
+
+def _ler_faixas_densidade(
+    bruto: dict[str, Any], caminho: Path
+) -> tuple[Faixa, ...] | None:
+    """`reguas.faixas_densidade`: ausente ou `null` = pais usa as faixas brasileiras.
+
+    Uma LISTA direta, nao um objeto por escala: a densidade tem uma escala so (ver o
+    campo em `Reguas`). A validacao e a mesma de `faixas_renda`, pela mesma funcao.
+    """
+    valor = bruto.get("faixas_densidade")
+    if valor is None:
+        return None
+    return _ler_uma_escala_de_faixas(valor, caminho, "reguas.faixas_densidade")
 
 
 def _ler_reguas(dados: dict[str, Any], caminho: Path) -> Reguas:
@@ -615,6 +652,7 @@ def _ler_reguas(dados: dict[str, Any], caminho: Path) -> Reguas:
         ),
         metas_big_numbers=_ler_metas(bruto, caminho),
         faixas_renda=_ler_faixas_renda(bruto, caminho),
+        faixas_densidade=_ler_faixas_densidade(bruto, caminho),
     )
     # Regua degenerada nao levanta na leitura: levanta uma divisao por zero LA na
     # frente, dentro de `nota_renda_absoluta`, com traceback que nao menciona perfil.

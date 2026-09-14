@@ -7,7 +7,7 @@ import BarraCamadas, { type ChaveDeCamada } from '../components/BarraCamadas'
 import BotaoInicio from '../components/BotaoInicio'
 import FichaHex from '../components/FichaHex'
 import FichaImovel from '../components/FichaImovel'
-import HexMap, { type SearchPin, type ViewState } from '../components/HexMap'
+import HexMap, { type AlvoDaCaptura, type SearchPin, type ViewState } from '../components/HexMap'
 import JanelaFicha from '../components/JanelaFicha'
 import MethodologyPanel from '../components/MethodologyPanel'
 import NarrativePanel from '../components/NarrativePanel'
@@ -17,6 +17,7 @@ import Select from '../components/Select'
 import StepperBar from '../components/StepperBar'
 import { Botao } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
+import { relatarAcessoNegado, relatarFalhaDeRede } from '../lib/sessao'
 import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
 import { ACC } from '../lib/imovel'
@@ -26,9 +27,10 @@ import { ACC } from '../lib/imovel'
    foi montada para a ABA; este e' o realce da LINHA do painel de camadas do mapa. */
 const ACC_16 = 'rgba(221,61,151,.16)'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
+import { temAlunos } from '../lib/pins'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import { rodapeDaBase, tituloEscolhaUnidade } from '../lib/rodape-base'
-import type { AlvoCaptura } from '../lib/captura-mapa'
+import { type AlvoCaptura, pinsDoAlvo } from '../lib/captura-mapa'
 import { DIMENSOES, rotuloDoHex, rotulosDosHexes } from '../lib/comparacao'
 import type { Tema } from '../lib/tema'
 import type {
@@ -37,6 +39,7 @@ import type {
   MunicipioItem,
   MunicipioPayload,
   Oportunidade,
+  Pins,
   SetoresHeatmapPayload,
 } from '../lib/types'
 
@@ -607,7 +610,7 @@ export default function MapScreen({
      mesmo `ranquear` que a tela usa, e viaja pronto — o servidor so' desenha, para nao
      existir uma segunda regra de "quem vence" que possa divergir da tela. */
   const [pedidoCaptura, setPedidoCaptura] = useState<{
-    alvos: AlvoCaptura[]
+    alvos: AlvoDaCaptura[]
     n: number
   } | null>(null)
   const [gerandoDeck, setGerandoDeck] = useState(false)
@@ -620,13 +623,48 @@ export default function MapScreen({
      reparte. */
   const resolveCaptura = useRef<((imagens: string[]) => void) | null>(null)
 
+  /* Pins ja' buscados, por contexto. A captura de um deck de 5 pontos pode repetir
+     cidade, e o payload do municipio nao e' barato — buscar duas vezes a mesma coisa no
+     meio da geracao atrasaria o voo e nao mudaria a foto. */
+  const pinsPorContexto = useRef(new Map<string, Pins | null>())
+
   const capturar = useCallback(
-    (alvos: AlvoCaptura[]) =>
-      new Promise<string[]>((resolve) => {
+    async (alvos: AlvoCaptura[]) => {
+      /* CAMADAS ANTES DO VOO. O mapa carrega um municipio por vez, entao um alvo de
+         outra cidade seria fotografado com os pins da cidade aberta — o rodape do slide
+         promete "concorrentes mapeados e unidades Ultra" do entorno DAQUELE ponto.
+         Falha na busca vira `null` de proposito: camada nenhuma e' honesta, camada de
+         outra cidade e' mentira com cara de dado. */
+      const atual = chaveContexto(dados?.uf ?? '', dados?.municipio ?? '')
+      const comCamadas: AlvoDaCaptura[] = []
+      for (const alvo of alvos) {
+        const chave =
+          alvo.uf && alvo.municipio ? chaveContexto(alvo.uf, alvo.municipio) : atual
+        const mesmaCidade = chave === atual
+        let buscados: Pins | null = null
+        if (!mesmaCidade && alvo.uf && alvo.municipio) {
+          if (!pinsPorContexto.current.has(chave)) {
+            try {
+              const payload = await api.municipio(alvo.uf, alvo.municipio)
+              pinsPorContexto.current.set(chave, payload.pins ?? null)
+            } catch {
+              // Falha fica MEMOIZADA: cinco pontos da mesma cidade nao repetem a espera.
+              pinsPorContexto.current.set(chave, null)
+            }
+          }
+          buscados = pinsPorContexto.current.get(chave) ?? null
+        }
+        /* Quem decide e' `pinsDoAlvo`: busca que falhou vira camada VAZIA, nunca a da
+           cidade aberta — o consumidor faz `pinsDaCaptura ?? pins`, e um `null` aqui
+           reintroduziria os concorrentes da cidade errada sob o nome certo. */
+        comCamadas.push({ ...alvo, pins: pinsDoAlvo(buscados, mesmaCidade) })
+      }
+      return new Promise<string[]>((resolve) => {
         resolveCaptura.current = resolve
-        setPedidoCaptura((p) => ({ alvos, n: (p?.n ?? 0) + 1 }))
-      }),
-    [],
+        setPedidoCaptura((p) => ({ alvos: comCamadas, n: (p?.n ?? 0) + 1 }))
+      })
+    },
+    [dados?.uf, dados?.municipio],
   )
 
   const aoCapturarMapas = useCallback((imagens: string[]) => {
@@ -666,6 +704,11 @@ export default function MapScreen({
             : cidades.length > 1
               ? `${cidades.length} municípios - `
               : ''
+        /* Este POST não passa por `lib/api.ts` — o deck monta o próprio download —, então
+           o aviso de sessão precisa ser ligado aqui na mão. Sem isto, com a sessão vencida
+           o Authelia responde 302, o `fetch` morre por CORS como `TypeError` e o deck falha
+           MUDO, sem pop-up nenhum. O conserto de raiz é a chamada migrar para
+           `pedirArquivo`, que já faz isto; fica para um PR próprio, para não alargar este. */
         const resposta = await fetch('/api/relatorio/comparacao', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -675,7 +718,14 @@ export default function MapScreen({
             subtitulo: `${cidade}${hs.length} áreas`,
             imagens,
           }),
+        }).catch((erro: unknown) => {
+          // Falha de REDE: quem separa sessão vencida de servidor fora do ar é a sonda de
+          // `lib/sessao`. O erro segue subindo para o `catch` de baixo, intacto.
+          void relatarFalhaDeRede()
+          throw erro
         })
+        // 401 = o Authelia negou; o status já é prova, dispensa sonda.
+        if (resposta.status === 401) relatarAcessoNegado()
         if (!resposta.ok) throw new Error(`HTTP ${resposta.status}`)
         const blob = await resposta.blob()
         // Baixa pelo link temporario e REVOGA a URL: sem o revoke o blob fica retido pela
@@ -1080,6 +1130,7 @@ export default function MapScreen({
 
       {/* ---------------- Header ---------------- */}
       <header
+        className="cromo-escuro"
         style={{
           position: 'relative',
           zIndex: 10,
@@ -1110,8 +1161,12 @@ export default function MapScreen({
 
         <Divisor />
 
+        {/* Os rotulos dos seletores chegaram a alternar as cores da marca (2026-09-09,
+            manha), mas o Juan reverteu no mesmo dia: "a barra de uf, municipio deixar
+            com uma cor que gere contraste (seja preto ou um cinza)". Ficou --tx-strong
+            — o neutro FORTE de cada tema — com o peso 600 da rodada colorida. */}
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span className="num" style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+          <span className="num" style={{ font: '600 11px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
             UF
           </span>
           <Select
@@ -1124,7 +1179,7 @@ export default function MapScreen({
         </label>
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-          <span className="num" style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+          <span className="num" style={{ font: '600 11px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
             MUNICÍPIO
           </span>
           <Select
@@ -1171,7 +1226,7 @@ export default function MapScreen({
             height="14"
             viewBox="0 0 24 24"
             fill="none"
-            stroke={buscando ? 'var(--ac)' : 'var(--tx-muted)'}
+            stroke={buscando ? 'var(--ac)' : 'var(--ac-text)'}
             strokeWidth="1.8"
             strokeLinecap="round"
             aria-hidden
@@ -1218,7 +1273,7 @@ export default function MapScreen({
         </div>
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span className="num" style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+          <span className="num" style={{ font: '600 11px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
             MELHORES
           </span>
           <Select
@@ -1410,7 +1465,15 @@ export default function MapScreen({
                 aviso={carregandoRaio ? 'Carregando o raio de 1 km das concorrentes…' : null}
               />
 
-              {legendaVisivel && <ScoreLegend passoN={passo.n} />}
+              {legendaVisivel && (
+                <ScoreLegend
+                  passoN={passo.n}
+                  /* Explica o aro indigo SO' quando ele esta desenhado. Legenda que
+                     nomeia simbolo ausente ensina o operador a procurar o que nao
+                     existe naquele recorte. */
+                  comAlunos={(dados?.pins?.concorrentes ?? []).some(temAlunos)}
+                />
+              )}
             </div>
 
           </div>
@@ -1428,8 +1491,11 @@ export default function MapScreen({
             <PainelMensagem>
               {erro}
               <br />
-              <br />O backend do piloto responde na porta 8899. Se você abriu o app sem ele, feche e
-              use o <code>iniciar-piloto-web.cmd</code>.
+              {/* A porta 8899 nao lidera mais a frase: em producao ela nao diz nada ao
+                  operador e fazia a tela parecer "sistema caiu" (era o sintoma do pedido
+                  do Felipe). Sessao vencida agora tem pop-up proprio — `lib/sessao.ts`. */}
+              <br />Se você estiver rodando o piloto na sua própria máquina, confira se o
+              backend subiu: é o <code>iniciar-piloto-web.cmd</code> que o liga (porta 8899).
             </PainelMensagem>
           ) : dados && passo ? (
             <NarrativePanel
