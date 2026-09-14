@@ -3537,13 +3537,15 @@ def me(
     # a SPA abre igual), e o mesmo vale aqui -- ausencia significa "nao sei", que e' diferente de
     # "nao precisa trocar". Um `false` inventado esconderia a oferta de troca de todo mundo no dia
     # em que o banco piscasse.
-    estado = _estado_da_minha_senha(usuario)
+    # Passa o HEADER CRU, e nao o `usuario` normalizado acima: quem resolve a identidade aqui e'
+    # `login_da_requisicao`, que em desenvolvimento honra o `MOTOR_DEV_USUARIO`. Ver o helper.
+    estado = _estado_da_minha_senha(remote_user)
     if estado is not None:
         resposta["senha"] = estado
     return resposta
 
 
-def _estado_da_minha_senha(usuario: str | None) -> dict[str, bool] | None:
+def _estado_da_minha_senha(remote_user: object) -> dict[str, bool] | None:
     """`{"deve_trocar", "propria"}` de quem esta' logado, ou `None` quando nao da' para saber.
 
     ENGOLE A FALHA DE PROPOSITO, e este e' o ponto do helper. `/api/me` e' a PRIMEIRA chamada da
@@ -3554,15 +3556,28 @@ def _estado_da_minha_senha(usuario: str | None) -> dict[str, bool] | None:
     Por isso o `except Exception`: alem de banco fora e banco nao configurado, cabe aqui o banco
     que respondeu e ainda nao tem a coluna da 016 (migration nao aplicada). Nos tres casos a
     resposta certa e' a mesma -- nao sei -- e a SPA simplesmente nao oferece a troca.
+
+    A IDENTIDADE VEM DE `login_da_requisicao`, e nao do header cru -- corrigido em 14/09, depois
+    de a tela nao aparecer em desenvolvimento nenhuma vez. E' o mesmo defeito que o docstring
+    daquela funcao descreve: duas camadas lendo a MESMA pessoa de fontes diferentes. A rota de
+    ESCRITA (`PATCH /api/me/senha`) sempre resolveu por `rbac.identidade`, que honra o
+    `MOTOR_DEV_USUARIO`; so' esta leitura exigia `Remote-User`, entao na maquina de quem
+    desenvolve -- onde nao ha Authelia para injetar o header -- a SPA nunca recebia o campo e
+    nunca oferecia a troca, enquanto o endpoint por tras dela funcionava.
     """
-    if not usuario or not acesso.banco_no_comando():
+    # A ordem e' de proposito: `banco_no_comando()` nao importa nada, e `login_da_requisicao`
+    # importa o `rbac`. Sem banco no comando, a identidade nem precisa ser resolvida.
+    if not acesso.banco_no_comando():
+        return None
+    login = acesso.login_da_requisicao(remote_user)
+    if not login:
         return None
     try:
         from motor_expansao.db import usuarios as db_usuarios
 
-        return db_usuarios.estado_da_senha(usuario)
+        return db_usuarios.estado_da_senha(login)
     except Exception:  # noqa: BLE001 - ver o docstring: nada aqui pode derrubar o /api/me
-        _LOG_D17.debug("estado da senha indisponivel para %s", usuario, exc_info=True)
+        _LOG_D17.debug("estado da senha indisponivel para %s", login, exc_info=True)
         return None
 
 

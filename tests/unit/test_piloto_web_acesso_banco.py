@@ -492,3 +492,58 @@ def test_sem_banco_no_comando_nem_consulta_o_estado(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(db_usuarios, "estado_da_senha", _nao_deveria)
     assert "senha" not in pilot_app.me(remote_user="ana")
+
+
+def test_em_DEV_o_estado_da_senha_sai_sem_Remote_User(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O defeito que manteve a tela invisivel por tres dias (14/09).
+
+    Na maquina de quem desenvolve nao ha Authelia, entao nao ha `Remote-User` -- e o campo
+    `senha` saia do header CRU, enquanto a rota de ESCRITA (`PATCH /api/me/senha`) resolvia
+    por `rbac.identidade`, que honra o `MOTOR_DEV_USUARIO`. As duas camadas liam a MESMA
+    pessoa de fontes diferentes: o endpoint funcionava e a tela que o chama nunca aparecia.
+    """
+    import app as pilot_app
+
+    from motor_expansao.db import usuarios as db_usuarios
+
+    monkeypatch.setenv(rbac.ENV_DEV_USUARIO, "vinicius.teste")
+    monkeypatch.delenv(rbac.ENV_SINAL_PRODUCAO, raising=False)
+    monkeypatch.delenv(rbac.ENV_DEV_IDENTIDADE, raising=False)
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    monkeypatch.setattr(acesso, "abas_do_usuario_por_banco", lambda _u: ["mapa"])
+    vistos: list[str] = []
+
+    def _estado(login: str) -> dict[str, bool]:
+        vistos.append(login)
+        return {"deve_trocar": True, "propria": False}
+
+    monkeypatch.setattr(db_usuarios, "estado_da_senha", _estado)
+
+    payload = pilot_app.me(remote_user=None)
+    assert payload["senha"] == {"deve_trocar": True, "propria": False}
+    assert vistos == ["vinicius.teste"], "consultou o banco por outra identidade"
+
+
+def test_o_header_VENCE_a_env_de_dev(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A env so' preenche o VAZIO. Havendo header, e' ele -- em dev tambem.
+
+    Inverter isto seria deixar uma env de desenvolvimento decidir de quem e' a senha que a
+    tela oferece trocar, mesmo com uma identidade real na requisicao.
+    """
+    import app as pilot_app
+
+    from motor_expansao.db import usuarios as db_usuarios
+
+    monkeypatch.setenv(rbac.ENV_DEV_USUARIO, "vinicius.teste")
+    monkeypatch.delenv(rbac.ENV_SINAL_PRODUCAO, raising=False)
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    monkeypatch.setattr(acesso, "abas_do_usuario_por_banco", lambda _u: ["mapa"])
+    vistos: list[str] = []
+
+    def _estado(login: str) -> None:
+        vistos.append(login)
+
+    monkeypatch.setattr(db_usuarios, "estado_da_senha", _estado)
+
+    pilot_app.me(remote_user="will.lindo")
+    assert vistos == ["will.lindo"]
