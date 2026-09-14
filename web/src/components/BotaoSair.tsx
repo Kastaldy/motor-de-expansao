@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 
-import { Botao, Glass } from './primitives'
+import { Botao, Modal } from './primitives'
 import { urlDeLogoff } from '../lib/logoff'
 
 /* ---------------------------------------------------------------------------
@@ -31,22 +31,36 @@ import { urlDeLogoff } from '../lib/logoff'
    O preço da confirmação é um clique a mais numa ação feita no máximo uma vez por
    dia; o preço de não confirmar é meio dia de trabalho de alguém. Confirma.
 
-   Cancelar é o caminho seguro, então TUDO cancela: Esc, clique no fundo e o botão
-   Cancelar (à esquerda, o primeiro na ordem de foco). Diferente do aviso de
-   confidencialidade, que é bloqueante de propósito por ser o oposto — lá o único
-   caminho possível é seguir.
+   Cancelar é o caminho seguro, então TUDO cancela: Esc, clique no fundo (o `onFundo`
+   do `Modal`) e o botão Cancelar (à esquerda, o primeiro na ordem de foco). Diferente
+   do aviso de confidencialidade, que é bloqueante de propósito por ser o oposto — lá o
+   único caminho possível é seguir.
 
    DEV SEM AUTHELIA. Em `localhost` não há portal, e navegar daria um 404 mudo. O botão
    não some (senão ninguém o vê em dev, e o que não se vê não se revisa): ele abre o
    MESMO diálogo, dizendo que não há sessão a encerrar aqui e oferecendo só o
    "Entendi". `urlDeLogoff` devolvendo `null` é o que separa os dois casos.
 
-   O diálogo sai por `createPortal` para o `body`, e isso não é preferência: o Dock tem
-   `backdrop-filter`, que torna o rail o bloco de contenção de qualquer descendente
-   `position: fixed` — dentro dele, o diálogo cobriria 70 px de tela em vez da tela.
+   POR QUE O PORTAL VAI PARA O `#root`, E NÃO PARA O `body`. Sair do Dock é obrigatório:
+   o rail tem `backdrop-filter`, que o torna o bloco de contenção de qualquer descendente
+   `position: fixed` — dentro dele, o diálogo cobriria 70 px de tela em vez da tela. Mas o
+   destino também não pode ser o `body`: o app inteiro é desenhado a 85% por um
+   `transform: scale(var(--escala-app))` aplicado no `#root` (`styles/global.css`), e o
+   `body` está FORA dessa escala. Portado para o `body`, este diálogo era o único pedaço
+   do piloto em tamanho real — pedia `min(460px, ...)` e desenhava 460 px, enquanto o
+   cartão de sessão pedia 520 e pousava em 442: DECLARAVA menos e DESENHAVA mais. O
+   `#root` carrega o `transform`, então segue sendo bloco de contenção de `position:
+   fixed` (é o `transform` que cria a contenção, não o `backdrop-filter`) e o diálogo
+   volta para a escala do resto do app.
    --------------------------------------------------------------------------- */
 
 export const TITULO_SAIR = 'Sair da conta'
+
+/* O alvo do portal — ver o cabeçalho. O `body` fica só como último recurso, para um DOM
+   sem a raiz do app: sem ele, `createPortal` receberia `null` e quebraria. */
+function alvoDoPortal(): HTMLElement {
+  return document.getElementById('root') ?? document.body
+}
 
 export default function BotaoSair() {
   const [perguntando, setPerguntando] = useState(false)
@@ -101,7 +115,7 @@ export default function BotaoSair() {
                 if (destino !== null) window.location.assign(destino)
               }}
             />,
-            document.body,
+            alvoDoPortal(),
           )
         : null}
     </>
@@ -142,60 +156,32 @@ function DialogoSair({
 }) {
   const semPortal = destino === null
   const titulo = semPortal ? 'Não há sessão para encerrar' : 'Sair da conta?'
+  const corpo = semPortal
+    ? 'Este ambiente local não tem o portal de autenticação na frente, então ' +
+      'não há sessão a encerrar. Em produção, este botão encerra sua sessão e ' +
+      'leva de volta à tela de login.'
+    : 'Você será levado à tela de login, e a análise aberta agora será perdida — ' +
+      'o recorte do mapa, a ficha e as premissas digitadas não ficam salvas. ' +
+      'Para voltar, será preciso entrar de novo.'
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={titulo}
-      onClick={onCancelar}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 120,
-        display: 'grid',
-        placeItems: 'center',
-        background: 'color-mix(in srgb, var(--bg-base) 68%, transparent)',
-        backdropFilter: 'blur(7px)',
-      }}
-    >
-      {/* O clique no cartão não pode fechar junto com o do fundo. */}
-      <div onClick={(e) => e.stopPropagation()}>
-        <Glass
-          style={{
-            width: 'min(460px, calc(100vw - 48px))',
-            padding: '24px 26px 22px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 14,
-            boxShadow: 'var(--sh-pop)',
-          }}
-        >
-          <h2 style={{ font: '700 19px/1.25 var(--f-ui)', color: 'var(--tx-max)', margin: 0 }}>
-            {titulo}
-          </h2>
-          <p style={{ font: '400 13px/1.55 var(--f-ui)', color: 'var(--tx-soft)', margin: 0 }}>
-            {semPortal
-              ? 'Este ambiente local não tem o portal de autenticação na frente, então ' +
-                'não há sessão a encerrar. Em produção, este botão encerra sua sessão e ' +
-                'leva de volta à tela de login.'
-              : 'Você será levado à tela de login, e a análise aberta agora será perdida — ' +
-                'o recorte do mapa, a ficha e as premissas digitadas não ficam salvas. ' +
-                'Para voltar, será preciso entrar de novo.'}
-          </p>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4 }}>
-            {semPortal ? (
-              <Botao onClick={onCancelar}>Entendi</Botao>
-            ) : (
-              <>
-                <Botao variante="ghost" onClick={onCancelar}>
-                  Cancelar
-                </Botao>
-                <Botao onClick={onSair}>Sair</Botao>
-              </>
-            )}
-          </div>
-        </Glass>
-      </div>
-    </div>
+    <Modal
+      titulo={titulo}
+      largura={460}
+      zIndex={120}
+      paragrafos={[corpo]}
+      onFundo={onCancelar}
+      acoes={
+        semPortal ? (
+          <Botao onClick={onCancelar}>Entendi</Botao>
+        ) : (
+          <>
+            <Botao variante="ghost" onClick={onCancelar}>
+              Cancelar
+            </Botao>
+            <Botao onClick={onSair}>Sair</Botao>
+          </>
+        )
+      }
+    />
   )
 }

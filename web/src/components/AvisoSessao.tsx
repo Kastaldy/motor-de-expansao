@@ -1,4 +1,4 @@
-import { Botao, Glass } from './primitives'
+import { Botao, Modal } from './primitives'
 
 /* ---------------------------------------------------------------------------
    Pop-up de SESSÃO ENCERRADA.
@@ -15,12 +15,16 @@ import { Botao, Glass } from './primitives'
    inline de sempre, e é isso que impede o operador de perder tempo relogando num
    sistema que não vai responder.
 
-   Bloqueante, como o AvisoConfidencialidade: sem fechar por Esc nem por clique fora,
-   porque não há nada de útil a fazer na tela atrás dele — toda requisição a partir
-   daqui volta para o login. Fica em `zIndex` MAIOR que o do aviso de confidencialidade
-   (100): se a sessão já estiver vencida na abertura do app, quem falha primeiro é o
-   `/api/me`, os dois pop-ups existem ao mesmo tempo e o de sessão é o que precisa ser
-   lido.
+   Bloqueante, como o AvisoConfidencialidade: sem fechar por Esc nem por clique fora
+   (nenhum dos dois passa `onFundo` ao `Modal`), porque não há nada de útil a fazer na
+   tela atrás dele — toda requisição a partir daqui volta para o login. Fica em `zIndex`
+   MAIOR que o do aviso de confidencialidade (100): se a sessão já estiver vencida na
+   abertura do app, quem falha primeiro é o `/api/me`, os dois pop-ups existem ao mesmo
+   tempo e o de sessão é o que precisa ser lido.
+
+   A casca (véu, cartão, tipografia) vive no `Modal` de `primitives.tsx`. O mount deste
+   componente no `App` é guardado por `components/aviso-sessao.test.ts`: sem essa
+   asserção, o pop-up podia sumir inteiro com a suíte verde.
    --------------------------------------------------------------------------- */
 
 export const TITULO_SESSAO = 'Sessão encerrada'
@@ -37,59 +41,13 @@ export const ROTULO_BOTAO_SESSAO = 'Entrar novamente'
 
 export default function AvisoSessao({ onEntrar }: { onEntrar: () => void }) {
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={TITULO_SESSAO}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 120,
-        display: 'grid',
-        placeItems: 'center',
-        background: 'color-mix(in srgb, var(--bg-base) 68%, transparent)',
-        backdropFilter: 'blur(7px)',
-      }}
-    >
-      <Glass
-        style={{
-          width: 'min(520px, calc(100vw - 48px))',
-          padding: '26px 28px 24px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 14,
-          boxShadow: 'var(--sh-pop)',
-        }}
-      >
-        <h2
-          style={{
-            font: '700 19px/1.25 var(--f-ui)',
-            color: 'var(--tx-max)',
-            margin: 0,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-          }}
-        >
-          {TITULO_SESSAO}
-          <span aria-hidden style={{ fontSize: 24, lineHeight: 1 }}>
-            🔑
-          </span>
-        </h2>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {PARAGRAFOS_SESSAO.map((p) => (
-            <p
-              key={p.slice(0, 24)}
-              style={{ font: '400 13px/1.55 var(--f-ui)', color: 'var(--tx-soft)', margin: 0 }}
-            >
-              {p}
-            </p>
-          ))}
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
-          <Botao onClick={onEntrar}>{ROTULO_BOTAO_SESSAO}</Botao>
-        </div>
-      </Glass>
-    </div>
+    <Modal
+      titulo={TITULO_SESSAO}
+      emoji="🔑"
+      largura={520}
+      zIndex={120}
+      paragrafos={PARAGRAFOS_SESSAO}
+      acoes={<Botao onClick={onEntrar}>{ROTULO_BOTAO_SESSAO}</Botao>}
+    />
   )
 }

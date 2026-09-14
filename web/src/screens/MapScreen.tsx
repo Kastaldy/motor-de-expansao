@@ -17,6 +17,7 @@ import Select from '../components/Select'
 import StepperBar from '../components/StepperBar'
 import { Botao } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
+import { relatarAcessoNegado, relatarFalhaDeRede } from '../lib/sessao'
 import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
 import { ACC } from '../lib/imovel'
@@ -703,6 +704,11 @@ export default function MapScreen({
             : cidades.length > 1
               ? `${cidades.length} municípios - `
               : ''
+        /* Este POST não passa por `lib/api.ts` — o deck monta o próprio download —, então
+           o aviso de sessão precisa ser ligado aqui na mão. Sem isto, com a sessão vencida
+           o Authelia responde 302, o `fetch` morre por CORS como `TypeError` e o deck falha
+           MUDO, sem pop-up nenhum. O conserto de raiz é a chamada migrar para
+           `pedirArquivo`, que já faz isto; fica para um PR próprio, para não alargar este. */
         const resposta = await fetch('/api/relatorio/comparacao', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -712,7 +718,14 @@ export default function MapScreen({
             subtitulo: `${cidade}${hs.length} áreas`,
             imagens,
           }),
+        }).catch((erro: unknown) => {
+          // Falha de REDE: quem separa sessão vencida de servidor fora do ar é a sonda de
+          // `lib/sessao`. O erro segue subindo para o `catch` de baixo, intacto.
+          void relatarFalhaDeRede()
+          throw erro
         })
+        // 401 = o Authelia negou; o status já é prova, dispensa sonda.
+        if (resposta.status === 401) relatarAcessoNegado()
         if (!resposta.ok) throw new Error(`HTTP ${resposta.status}`)
         const blob = await resposta.blob()
         // Baixa pelo link temporario e REVOGA a URL: sem o revoke o blob fica retido pela

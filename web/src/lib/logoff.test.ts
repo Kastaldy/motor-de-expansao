@@ -65,9 +65,16 @@ describe('URL de logoff — derivada do host, nunca cravada', () => {
 describe('botão de sair — guarda por texto-fonte (não há jsdom)', () => {
   const dock = ler('../components/Dock.tsx')
   const botao = ler('../components/BotaoSair.tsx')
+  const primitivas = ler('../components/primitives.tsx')
+
+  /* O PÉ do rail — o bloco `marginTop: 'auto'` que empurra os controles de sessão para
+     baixo. É o recorte certo para as duas asserções abaixo: o `Dock.tsx` inteiro tem
+     quase 300 linhas de navegação, e varrê-lo atrás de um host faria o teste reprovar
+     porque alguém CITOU o domínio num comentário de outro assunto. */
+  const peDoRail = () => dock.match(/marginTop: 'auto'[\s\S]*?<\/div>/)?.[0] ?? ''
 
   it('mora no Dock, LOGO ABAIXO do alternador de tema (o pedido literal)', () => {
-    const pe = dock.match(/marginTop: 'auto'[\s\S]*?<\/div>/)?.[0] ?? ''
+    const pe = peDoRail()
     const tema = pe.indexOf('<BotaoTema')
     const sair = pe.indexOf('<BotaoSair')
     expect(tema).toBeGreaterThanOrEqual(0)
@@ -75,7 +82,12 @@ describe('botão de sair — guarda por texto-fonte (não há jsdom)', () => {
   })
 
   it('nenhum domínio cravado — a URL sai do host da página', () => {
-    for (const fonte of [botao, dock]) {
+    /* `botao` inteiro (é o arquivo que monta a URL) e, do Dock, SÓ o pé do rail, que é
+       onde o botão vive: a asserção negativa precisa ser tão estreita quanto o que ela
+       protege. */
+    const pe = peDoRail()
+    expect(pe).toContain('<BotaoSair')
+    for (const fonte of [botao, pe]) {
       expect(fonte).not.toMatch(/ultra-expansao\.tech/)
       expect(fonte).not.toMatch(/https:\/\/auth\./)
     }
@@ -93,12 +105,25 @@ describe('botão de sair — guarda por texto-fonte (não há jsdom)', () => {
     // colado no alternador de tema, e o erro custa a análise inteira em tela.
     expect(botao).toContain('onClick={() => setPerguntando(true)}')
     expect(botao).toContain('Cancelar')
-    expect(botao).toContain('role="dialog"')
+    // A casca (véu + cartão + `role="dialog"`) mudou de casa na unificação dos três
+    // modais: ela mora no `Modal` de `primitives.tsx`, e é lá que a semântica é medida.
+    expect(botao).toContain('<Modal')
+    expect(primitivas).toContain('role="dialog"')
+    expect(primitivas).toContain('aria-modal="true"')
   })
 
-  it('o diálogo sai por portal — o Dock tem backdrop-filter e prenderia um fixed', () => {
+  it('o diálogo sai por portal para o #root — nem preso no Dock, nem fora da escala', () => {
+    /* Duas restrições ao mesmo tempo. (1) Não pode ficar dentro do Dock: o rail tem
+       `backdrop-filter`, que prende qualquer `position: fixed` descendente. (2) Não pode
+       ir para o `body`: o app é desenhado a 85% por um `transform: scale()` no `#root`
+       (`styles/global.css`), e o `body` está fora dessa escala — portado para lá, este
+       era o único diálogo em tamanho real, pedindo 460 px e desenhando 460 enquanto o
+       cartão de sessão pedia 520 e pousava em 442. O `#root` satisfaz as duas: tem
+       `transform`, logo também contém `fixed`. */
     expect(botao).toContain('createPortal(')
-    expect(botao).toContain('document.body')
+    expect(botao).toContain("document.getElementById('root') ?? document.body")
+    // O `body` só pode aparecer como fallback da linha acima, nunca como alvo.
+    expect(botao.match(/document\.body/g)).toHaveLength(1)
   })
 
   it('texto de usuário acentuado (CLAUDE.md §2)', () => {

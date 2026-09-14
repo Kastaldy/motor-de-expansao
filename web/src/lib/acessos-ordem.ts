@@ -1,3 +1,4 @@
+import { ordenarPorEscalar, type DirecaoOrdem } from './ordenacao'
 import type { AcessosUsuarioLinha } from './types'
 
 /* ---------------------------------------------------------------------------
@@ -17,33 +18,79 @@ import type { AcessosUsuarioLinha } from './types'
    Ordenar aqui é VISUAL: nada disto refaz fetch nem muda o que o backend devolve.
    --------------------------------------------------------------------------- */
 
-export type DirecaoOrdem = 'asc' | 'desc'
+export type { DirecaoOrdem }
+
+/**
+ * FONTE ÚNICA das colunas ordenáveis: `chave -> escalar comparável`.
+ *
+ * As mesmas 7 chaves viviam em TRÊS listas que nada amarrava — esta allowlist, o
+ * array `colunas` da tela e um `switch` de escalares —, e cada par que saísse de
+ * sincronia falhava em silêncio, verde no `tsc` e na suíte:
+ *
+ *   (i)  chave viva em `colunas` e fora da allowlist -> `proximaOrdem` devolve o
+ *        próprio estado atual e o cabeçalho para de responder ao clique;
+ *   (ii) chave na allowlist sem escalar -> `asc` e `desc` devolvem a MESMA ordem
+ *        A-Z, que o operador lê como "ordenou errado".
+ *
+ * Agora as três saem daqui: `CHAVES_ORDENAVEIS` é o `Object.keys` deste mapa e
+ * `ChaveAcessos` é o `keyof` dele — o tipo com que a tela declara as colunas
+ * (`Record<ChaveAcessos, ...>` em `AcessosScreen`, no molde do `COLUNAS_METRICA`
+ * da Executiva). Acrescentar uma coluna aqui SEM desenhá-la lá, ou o contrário,
+ * passa a ser erro de compilação — não mais um defeito mudo em produção.
+ *
+ * A ORDEM das chaves é a ordem das colunas na tela: a tabela é montada por esta
+ * lista, então mexer aqui move a coluna.
+ */
+const ESCALARES = {
+  /**
+   * `nome` ordena pelo RÓTULO (A-Z / Z-A), não por escalar: `ordenarPorEscalar`
+   * desvia para a colação pt-BR antes de chamar esta função, que existe para o
+   * `Object.keys` enxergar a coluna.
+   */
+  nome: () => null,
+  serie14: (u: AcessosUsuarioLinha) => ritmoDiario(u.serie14),
+  ultimo: (u: AcessosUsuarioLinha) => instanteUltimoAcesso(u),
+  dias_ativos: (u: AcessosUsuarioLinha) => (Number.isFinite(u.dias_ativos) ? u.dias_ativos : null),
+  acoes: (u: AcessosUsuarioLinha) => (Number.isFinite(u.acoes) ? u.acoes : null),
+  // A coluna desenha bolinhas; o que se ordena é QUANTAS abas a pessoa tocou.
+  abas: (u: AcessosUsuarioLinha) => (u.abas ? u.abas.length : null),
+  ips: (u: AcessosUsuarioLinha) => (Number.isFinite(u.ips) ? u.ips : null),
+} satisfies Record<string, (u: AcessosUsuarioLinha) => number | null>
+
+/** Chave de coluna que a tabela de usuários sabe ordenar. */
+export type ChaveAcessos = keyof typeof ESCALARES
+
+/** Colunas ordenáveis, na ordem em que aparecem — derivadas de `ESCALARES`. */
+export const CHAVES_ORDENAVEIS: readonly ChaveAcessos[] = Object.freeze(
+  Object.keys(ESCALARES) as ChaveAcessos[],
+)
+
+/**
+ * Guarda da fronteira NÃO tipada: `Tabela` entrega a chave clicada como `string`
+ * (`Coluna<T>.chave` é `string` para toda tabela do produto), então o estreitamento
+ * acontece aqui, uma vez, na entrada.
+ *
+ * `includes` no array e não `chave in ESCALARES`: o `in` anda pela cadeia de
+ * protótipos e daria `true` para `toString`, `constructor` e companhia.
+ */
+export function ehChaveOrdenavel(chave: string): chave is ChaveAcessos {
+  return (CHAVES_ORDENAVEIS as readonly string[]).includes(chave)
+}
 
 export interface OrdemAcessos {
   /** Chave da coluna (identificador sem acento, regra do CLAUDE.md §2). */
-  chave: string
+  chave: ChaveAcessos
   direcao: DirecaoOrdem
 }
-
-/** Colunas que a tabela de usuários sabe ordenar — 1:1 com as chaves de `colunas`. */
-export const CHAVES_ORDENAVEIS: readonly string[] = Object.freeze([
-  'nome',
-  'serie14',
-  'ultimo',
-  'dias_ativos',
-  'acoes',
-  'abas',
-  'ips',
-])
 
 /**
  * Direção do PRIMEIRO clique, por natureza da coluna: nome abre A->Z, e todo o
  * resto abre do maior para o menor (mais recente, mais ações, mais dias) — que é
  * o que o operador procura quando clica. Mesmo critério do `aoOrdenar` da Executiva.
  */
-const PRIMEIRA_DIRECAO: Record<string, DirecaoOrdem> = { nome: 'asc' }
+const PRIMEIRA_DIRECAO: Partial<Record<ChaveAcessos, DirecaoOrdem>> = { nome: 'asc' }
 
-function primeiraDirecao(chave: string): DirecaoOrdem {
+function primeiraDirecao(chave: ChaveAcessos): DirecaoOrdem {
   return PRIMEIRA_DIRECAO[chave] ?? 'desc'
 }
 
@@ -53,7 +100,7 @@ function primeiraDirecao(chave: string): DirecaoOrdem {
  * ordem do payload.
  */
 export function proximaOrdem(atual: OrdemAcessos | null, chave: string): OrdemAcessos | null {
-  if (!CHAVES_ORDENAVEIS.includes(chave)) return atual
+  if (!ehChaveOrdenavel(chave)) return atual
   if (!atual || atual.chave !== chave) return { chave, direcao: primeiraDirecao(chave) }
   if (atual.direcao === primeiraDirecao(chave)) {
     return { chave, direcao: atual.direcao === 'asc' ? 'desc' : 'asc' }
@@ -99,53 +146,20 @@ export function instanteUltimoAcesso(
   return Date.UTC(ano, mes - 1, dia, hora, minuto)
 }
 
-/** Valor numérico comparável de cada coluna. `null` = sem dado. */
-function escalar(u: AcessosUsuarioLinha, chave: string): number | null {
-  switch (chave) {
-    case 'serie14':
-      return ritmoDiario(u.serie14)
-    case 'ultimo':
-      return instanteUltimoAcesso(u)
-    case 'dias_ativos':
-      return Number.isFinite(u.dias_ativos) ? u.dias_ativos : null
-    case 'acoes':
-      return Number.isFinite(u.acoes) ? u.acoes : null
-    case 'abas':
-      // A coluna desenha bolinhas; o que se ordena é QUANTAS abas a pessoa tocou.
-      return u.abas ? u.abas.length : null
-    case 'ips':
-      return Number.isFinite(u.ips) ? u.ips : null
-    default:
-      return null
-  }
-}
-
-const porNome = (a: AcessosUsuarioLinha, b: AcessosUsuarioLinha): number =>
-  a.nome.localeCompare(b.nome, 'pt-BR')
-
 /**
- * Aplica a ordem escolhida. Sempre devolve um array NOVO — a lista de origem é o
- * payload memoizado no estado da tela e não pode ser mutada no lugar.
- *
- * NULO SEMPRE NO FIM, nas duas direções (mesma convenção do `ordenarUnidades` da
- * Executiva): "nunca acessou" não é um extremo de recência, é ausência de dado, e
- * jogá-lo para o topo no `asc` empurraria a informação útil para fora da tela.
- * Empate cai no nome, para a ordem não dançar entre renders.
+ * Aplica a ordem escolhida com a política de `lib/ordenacao.ts` — a MESMA do
+ * `ordenarUnidades` da Executiva, agora escrita num lugar só: nulo sempre no fim
+ * nas duas direções ("nunca acessou" é ausência de dado, não um extremo de
+ * recência), empate no nome e array novo a cada chamada (a lista de origem é o
+ * payload memoizado no estado da tela e não pode ser mutada no lugar).
  */
 export function ordenarUsuariosAcessos(
   linhas: readonly AcessosUsuarioLinha[],
   ordem: OrdemAcessos | null,
 ): AcessosUsuarioLinha[] {
-  if (!ordem || !CHAVES_ORDENAVEIS.includes(ordem.chave)) return [...linhas]
-  const sinal = ordem.direcao === 'asc' ? 1 : -1
-  return [...linhas].sort((a, b) => {
-    if (ordem.chave === 'nome') return sinal * porNome(a, b)
-    const va = escalar(a, ordem.chave)
-    const vb = escalar(b, ordem.chave)
-    if (va === null && vb === null) return porNome(a, b)
-    if (va === null) return 1
-    if (vb === null) return -1
-    if (va === vb) return porNome(a, b)
-    return sinal * (va - vb)
+  if (!ordem || !ehChaveOrdenavel(ordem.chave)) return [...linhas]
+  return ordenarPorEscalar(linhas, ordem.chave, ordem.direcao, {
+    escalar: (u, chave) => ESCALARES[chave as ChaveAcessos](u),
+    rotulo: (u) => u.nome,
   })
 }

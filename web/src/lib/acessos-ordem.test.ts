@@ -9,6 +9,7 @@ import {
   type OrdemAcessos,
 } from './acessos-ordem'
 import type { AcessosUsuarioLinha } from './types'
+import { COLUNAS_ACESSOS } from '../screens/AcessosScreen'
 
 function linha(over: Partial<AcessosUsuarioLinha> & { nome: string }): AcessosUsuarioLinha {
   return {
@@ -221,6 +222,53 @@ describe('colunas numéricas e nome', () => {
       expect(nomes(ordenarUsuariosAcessos([x, y], { chave: 'acoes', direcao }))).toEqual([
         'ana',
         'zeca',
+      ])
+    }
+  })
+})
+
+/* ---------------------------------------------------------------------------------
+   A FONTE ÚNICA das colunas ordenáveis.
+
+   As mesmas 7 chaves viviam em TRÊS listas que nada amarrava — a allowlist daqui, o
+   array `colunas` da tela e um `switch` de escalares — e as duas divergências possíveis
+   eram MUDAS: verdes no `tsc` e na suíte inteira, visíveis só para quem clicasse.
+
+   Hoje as três saem do mesmo mapa, então a divergência (i) — chave na tela e fora da
+   allowlist — é erro de compilação. O que continua precisando de teste é a (ii), que é
+   de COMPORTAMENTO: chave declarada sem escalar não quebra nada, só devolve a mesma
+   ordem nas duas direções.
+   --------------------------------------------------------------------------------- */
+describe('as três listas de colunas viraram uma', () => {
+  it('as colunas da tela são exatamente as chaves ordenáveis, na mesma ordem', () => {
+    expect(COLUNAS_ACESSOS.map((c) => c.chave)).toEqual([...CHAVES_ORDENAVEIS])
+  })
+
+  it('toda coluna da tela desenha a própria célula', () => {
+    for (const c of COLUNAS_ACESSOS) expect(typeof c.render, c.chave).toBe('function')
+  })
+
+  it('toda chave ordenável tem escalar: asc e desc NUNCA devolvem a mesma ordem', () => {
+    // A falha (ii) do acoplamento antigo: chave na allowlist sem `case` no switch dava
+    // escalar nulo em TODAS as linhas, as duas direções caíam no desempate por nome e
+    // saíam A-Z nas duas — o que o operador lê como "ordenou errado".
+    // O trio é construído para que TODA coluna concorde com a ordem alfabética: se uma
+    // delas parar de ordenar, o `desc` volta a sair A-Z e o caso reprova nela.
+    const trio = [
+      linha({ nome: 'ana', ultimo_dia: '2026-09-01', dias_ativos: 1, acoes: 1, ips: 1, abas: [], serie14: [1] }),
+      linha({ nome: 'bruno', ultimo_dia: '2026-09-02', dias_ativos: 2, acoes: 2, ips: 2, abas: ['Mapa'], serie14: [2] }),
+      linha({ nome: 'carla', ultimo_dia: '2026-09-03', dias_ativos: 3, acoes: 3, ips: 3, abas: ['Mapa', 'Executiva'], serie14: [3] }),
+    ]
+    for (const chave of CHAVES_ORDENAVEIS) {
+      expect(nomes(ordenarUsuariosAcessos(trio, { chave, direcao: 'asc' })), chave).toEqual([
+        'ana',
+        'bruno',
+        'carla',
+      ])
+      expect(nomes(ordenarUsuariosAcessos(trio, { chave, direcao: 'desc' })), chave).toEqual([
+        'carla',
+        'bruno',
+        'ana',
       ])
     }
   })

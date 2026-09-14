@@ -1,3 +1,7 @@
+import { readFileSync, readdirSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api, ApiError } from './api'
@@ -236,5 +240,54 @@ describe('api.pedir — o caminho por onde a falha real chega', () => {
     vi.stubGlobal('fetch', vi.fn(async () => resposta(403, { detail: 'sem acesso' })))
     await expect(api.ufs()).rejects.toBeInstanceOf(ApiError)
     expect(avisado).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Censo de `fetch(` fora de `lib/api.ts` — o buraco por onde o aviso escapava.
+ *
+ * Este mecanismo só existe onde alguém o chama: uma requisição que não passe por
+ * `pedir`/`pedirArquivo` falha MUDA com a sessão vencida. Foi o caso dos dois POST de
+ * `/api/relatorio/comparacao` — o deck de hexágonos (`screens/MapScreen.tsx`) e o deck
+ * de pontos (`components/PainelPontos.tsx`) —, que montam o próprio download com
+ * `createObjectURL` e ficaram de fora quando o aviso entrou: no mapa, o deck morria sem
+ * mensagem nenhuma, que é exatamente o sintoma que o aviso veio acabar.
+ *
+ * Montar os componentes aqui não dá (o ambiente do Vitest é `node`, sem DOM), então a
+ * guarda é sobre o FONTE: todo arquivo de `src/` que chame `fetch(` por conta própria
+ * tem de acionar OS DOIS relatores. Apagar qualquer uma das duas chamadas, em qualquer
+ * um dos dois arquivos, derruba este teste — e um `fetch` novo em arquivo novo também
+ * cai aqui, que é o ponto.
+ */
+const RAIZ_SRC = fileURLToPath(new URL('..', import.meta.url))
+
+/** Os donos do mecanismo: `api.ts` já relata, e `sessao.ts` é a própria sonda. */
+const DONOS_DO_MECANISMO = /[\\/]lib[\\/](api|sessao)\.ts$/
+
+function fontesDe(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const alvo = join(dir, e.name)
+    if (e.isDirectory()) return fontesDe(alvo)
+    if (!/\.tsx?$/.test(e.name) || e.name.includes('.test.')) return []
+    return [alvo]
+  })
+}
+
+const chamadoresProprios = fontesDe(RAIZ_SRC)
+  .filter((f) => !DONOS_DO_MECANISMO.test(f))
+  .filter((f) => readFileSync(f, 'utf8').includes('fetch('))
+  .map((f) => relative(RAIZ_SRC, f).replace(/\\/g, '/'))
+
+describe('quem chama `fetch` na mão também avisa a sessão', () => {
+  it('o censo enxerga os dois decks — sem isto a guarda abaixo passaria vazia', () => {
+    expect(chamadoresProprios).toContain('screens/MapScreen.tsx')
+    expect(chamadoresProprios).toContain('components/PainelPontos.tsx')
+  })
+
+  it.each(chamadoresProprios)('%s aciona os dois relatores de sessão', (rel) => {
+    const fonte = readFileSync(join(RAIZ_SRC, rel), 'utf8')
+    // Com o parêntese de propósito: o nome sozinho apareceria só na linha do `import`.
+    expect(fonte).toContain('relatarAcessoNegado(')
+    expect(fonte).toContain('relatarFalhaDeRede(')
   })
 })
