@@ -25,6 +25,7 @@ import type {
   ViabilidadeIn,
   ViabilidadeOut,
 } from './types'
+import { relatarAcessoNegado, relatarFalhaDeRede } from './sessao'
 
 /** Query string da rede, omitindo o que esta vazio. */
 function queryRede(q: RedeQuery = {}): string {
@@ -65,6 +66,10 @@ async function pedir<T>(
   try {
     const r = await fetch(url, { ...init, signal: ctrl.signal })
     if (!r.ok) {
+      // 401 atras do Caddy = o Authelia negou o acesso (sessao vencida). Ver
+      // `lib/sessao.ts`: o caminho COMUM e' o 302, que nem chega aqui — este ramo
+      // cobre a variante em que o Authelia responde 401 em vez de redirecionar.
+      if (r.status === 401) relatarAcessoNegado()
       let detalhe = `${r.status}`
       try {
         const j = await r.json()
@@ -80,8 +85,15 @@ async function pedir<T>(
     if (e instanceof DOMException && e.name === 'AbortError') {
       throw new ApiError('A leitura demorou demais e foi cancelada.', 408)
     }
+    // Falha de REDE. Pode ser servidor fora do ar OU sessao vencida (o 302 do
+    // Authelia para outra origem rejeita o fetch por CORS e chega aqui como
+    // `TypeError`, indistinguivel). Quem separa os dois e' a sonda, em segundo
+    // plano: se ela concluir `sessao`, o App monta o pop-up de login. A mensagem
+    // abaixo continua sendo a do caso `servidor` — e por isso deixou de citar a
+    // porta 8899, que so' diz algo a quem roda o piloto na propria maquina.
+    void relatarFalhaDeRede()
     throw new ApiError(
-      'Não foi possível falar com o servidor. Ele está rodando na porta 8899?',
+      'Não foi possível falar com o servidor. Ele pode estar reiniciando ou fora do ar.',
       0,
     )
   } finally {
@@ -112,6 +124,7 @@ async function pedirArquivo(
   try {
     const r = await fetch(url, { ...init, signal: ctrl.signal })
     if (!r.ok) {
+      if (r.status === 401) relatarAcessoNegado()
       let detalhe = `${textos.falha ?? 'Falha ao gerar o PDF'} (${r.status})`
       try {
         const j = await r.json()
@@ -134,6 +147,7 @@ async function pedirArquivo(
         408,
       )
     }
+    void relatarFalhaDeRede()
     throw new ApiError(textos.rede ?? 'Não foi possível gerar o relatório.', 0)
   } finally {
     clearTimeout(t)

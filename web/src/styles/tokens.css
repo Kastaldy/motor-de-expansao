@@ -43,6 +43,23 @@
      precisa cobri-lo. Era o hex #101a26 repetido em `Select.tsx` e no `global.css`. */
   --surf-select: #101a26;
 
+  /* --- Veu do modal -------------------------------------------------------- */
+  /* O par que fica ATRAS de todo dialogo bloqueante (o `Modal` de components/primitives).
+     Estava escrito literalmente nos TRES dialogos do piloto — confidencialidade, sessao
+     encerrada e sair da conta —, e veu repetido e' veu que diverge em silencio: bastava
+     alguem ajustar um blur para os tres deixarem de ser o mesmo fundo.
+
+     NAO ha par no bloco [data-tema='claro'], e isso nao e' esquecimento: o veu e' COMPOSTO
+     de --bg-base, que ja' troca por tema, entao a mesma declaracao vira gelo turquesa no
+     claro sem uma segunda linha. O 68% tambem nao pede valor proprio la': o que o veu faz
+     e' deixar passar 0,32 do que esta' por baixo, e essa RAZAO independe de o fundo ser
+     claro ou escuro (medido nos dois temas: o texto que sobrevive ao veu fica em ~2,0:1
+     contra o fundo velado no claro e ~2,4:1 no escuro — atenuado nos dois, ilegivel em
+     nenhum). Se um dia o claro pedir outro valor, ele entra no bloco claro E no espelho
+     .cromo-escuro, que `lib/tema-claro-ultra.test.ts` fecha. */
+  --scrim: color-mix(in srgb, var(--bg-base) 68%, transparent);
+  --scrim-blur: blur(7px);
+
   /* --- Hairlines ----------------------------------------------------------- */
   --line: rgba(255, 255, 255, 0.08);
   --line-soft: rgba(255, 255, 255, 0.07);

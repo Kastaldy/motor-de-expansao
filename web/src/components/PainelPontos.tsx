@@ -17,6 +17,7 @@ import {
   subtituloDoDeckDePontos,
 } from '../lib/comparacao-pontos'
 import { ranquear } from '../lib/ranking-comparacao'
+import { relatarAcessoNegado, relatarFalhaDeRede } from '../lib/sessao'
 import { alunos, num } from '../lib/format'
 import type { PontoPayload } from '../lib/types'
 
@@ -112,6 +113,11 @@ export default function PainelPontos({
             })),
           )
         : []
+      /* Como no deck de hexágonos (`MapScreen`), este POST não passa por `lib/api.ts` e
+         precisa ligar o aviso de sessão na mão: senão, com a sessão vencida, o 302 do
+         Authelia vira erro de CORS e o operador lê só "tente de novo", sem saber que o
+         login caiu. Migrar a chamada para `pedirArquivo` é o conserto de raiz, em PR
+         próprio. */
       const resposta = await fetch('/api/relatorio/comparacao', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -123,7 +129,12 @@ export default function PainelPontos({
           dePontos: true,
           imagens,
         }),
+      }).catch((erro: unknown) => {
+        void relatarFalhaDeRede()
+        throw erro
       })
+      // 401 = o Authelia negou; o status já é prova, dispensa sonda.
+      if (resposta.status === 401) relatarAcessoNegado()
       if (!resposta.ok) throw new Error(`HTTP ${resposta.status}`)
       const blob = await resposta.blob()
       const url = URL.createObjectURL(blob)
