@@ -326,3 +326,50 @@ describe('o cartao de veredito da ficha segue o tema', () => {
     expect(codigo).not.toContain('#24474a')
   })
 })
+
+/* ---------------------------------------------------------------------------------
+   TINTA DE ACENTO SOBRE LAVAGEM DE ACENTO.
+
+   Todas as reguas acima medem texto sobre SUPERFICIE (card, painel, cabecalho, parada
+   de gradiente). Faltava o caso em que o proprio acento entra ATRAS do texto: chip de
+   filtro ativo, botao selecionado, pilula de estado — todos pintam --ac-a16 de fundo, e
+   um alfa de 0,16 clareia a superficie o bastante para derrubar a tinta que passava
+   sobre ela nua. E' a regua do USO, nao a do token, a mesma licao do --gr-coral.
+
+   Medido em 2026-09-14 na aba Acessos, onde os dois pontos moravam: --ac-text sobre
+   --ac-a16/--surf-card/--bg-base (#c5e8e4) da 3,97:1 e sobre --ac-a16/--surf-chrome
+   (#c6e8e5) da 3,98:1 — os dois abaixo do piso de 4,5:1 que o Dock ja cobra (ele
+   recusou tokens por 3,06 e 4,37). --ac-chip da 4,87 e 4,88 no claro e 9,53 e 9,18 no
+   escuro, e e' o token que o produto ja usa por cima de acento em 6 telas.
+   --------------------------------------------------------------------------------- */
+describe('tinta de acento sobre lavagem de acento', () => {
+  const claro = blocoClaro()
+  const escuro = blocoEscuro()
+
+  /* A composicao INTEIRA, que e' o que o olho recebe: a lavagem de acento sobre a
+     superficie translucida, e a superficie sobre o fundo da tela. Medir --ac-a16 contra
+     a superficie nua (ou pior, contra o token declarado) e' o que deixa o buraco passar. */
+  const lavagem = (t: Record<string, string>, superficie: string) =>
+    compor(t['--ac-a16'], compor(t[superficie], t['--bg-base']))
+
+  const SUPERFICIES = ['--surf-card', '--surf-chrome']
+
+  it('no claro, --ac-chip se le sobre a lavagem nas duas superficies', () => {
+    for (const sup of SUPERFICIES) {
+      expect(contraste(claro['--ac-chip'], lavagem(claro, sup)), sup).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  it('no escuro, a mesma escolha continua valendo', () => {
+    for (const sup of SUPERFICIES) {
+      expect(contraste(escuro['--ac-chip'], lavagem(escuro, sup)), sup).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  /* Se um dia --ac-chip e --ac-text convergirem, a distincao sumiu e alguem precisa
+     reabrir a escolha em vez de herdar um par que nao separa mais nada. */
+  it('a tinta do chip e a tinta de texto continuam sendo cores diferentes', () => {
+    expect(claro['--ac-chip']).not.toBe(claro['--ac-text'])
+    expect(escuro['--ac-chip']).not.toBe(escuro['--ac-text'])
+  })
+})
