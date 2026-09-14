@@ -41,8 +41,6 @@ paths:
         ancorar a premissa `viabilidade.demanda` do POST /analisar, que e obrigatoria e e
         do operador. `n_comparaveis` e `fonte` dizem o quanto a faixa vale: janela alargada
         por falta de comparaveis, ou base de fallback, mudam o significado do numero.
-      security:
-        - bearerAuth: []
       parameters:
         - name: m2
           in: query
