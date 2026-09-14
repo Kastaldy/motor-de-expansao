@@ -165,6 +165,40 @@ nunca a senha, nunca o hash, nunca parte de nenhum dos dois.
 > autenticar — a senha existe, é verificável e tem ciclo de vida, mas o caminho do login segue no
 > Authelia. É preparação para o corte do P19, não o corte.
 
+**DÍVIDA ABERTA (14/09/2026) — o ato de mexer na senha DE OUTRA PESSOA não tem tipo.** Os cinco
+tipos acima cobrem o que a tela faz hoje, e a §5 chama esta seção de inteiramente implementada; isso
+vale para a tela, não para a tabela `usuarios`. Falta o caso em que alguém **que não é o dono da
+senha** mexe na credencial dela. Ele já aconteceu uma vez: em 14/09/2026 as quatro linhas semeadas
+(`hash_de_teste_1..4`, que não são PHC e por isso não autenticavam nada) receberam hash de verdade
+por reparo de manutenção, e **esse `UPDATE` não deixou evento nenhum**.
+
+Não deixou por decisão, e as duas alternativas eram piores. Reaproveitar `usuario.senha_definida`
+mentiria em três frentes de uma vez: ele é o único tipo em que autor e alvo coincidem de propósito
+(aqui não coincidem), e `metadados.primeira_vez` deriva de `senha_definida_em_usuario IS NOT NULL` —
+coluna que o reparo deixa **nula** de propósito, porque aquelas pessoas não definiram nada. O evento
+afirmaria, na mesma transação, o que a coluna nega. E criar um tipo de passagem viola a regra da §2,
+que manda editar esta tabela **antes**.
+
+O que sobrou é um rastro anônimo: só `atualizado_em_usuario` se move, ele não diz qual coluna mudou
+nem por quem, `listar()` o descarta e nenhuma tela o exibe. Nada no banco supre o evento ausente — a
+auditoria do D19 é sobre `perfil_permissoes`, e a única *trigger* em `usuarios` é a de
+`atualizado_em`. O que existe hoje é a saída impressa do reparo, arquivada à mão pelo operador.
+
+**Duas faltas da mesma família, e é o P19 que decide as duas:**
+
+1. **Operador regrava `senha_hash` de terceiro.** É o reparo acima, e será também a tela de
+   *redefinir senha* que o P19 vai exigir quando alguém esquecer a sua. Forma sugerida, a validar
+   quando houver produtor: `entidade` = `usuario`, `entidade_id` = **o alvo**, `id_usuario` = **o
+   operador** (ou `NULL` para ação de sistema, como no reparo), `metadados` sem senha, sem hash e
+   sem parte de nenhum dos dois.
+2. **Admin força `deve_trocar_senha_usuario` de volta a `TRUE`.** A migration `016` prevê esse gesto
+   e o código não existe — hoje a coluna só anda numa direção. Ele precisa de tipo próprio pelo
+   mesmo motivo: quem exige a troca não é quem troca.
+
+Enquanto os dois não tiverem produtor, o `UPDATE` direto continua sendo o caminho — e ele é,
+literalmente, a hipótese que a §3.2 já admite: *"a aplicação esquece, o SQL manual não passa por
+ela"*.
+
 ## 3. O que o esquema precisa acomodar
 
 Duas questões de modelo. A primeira está **resolvida** (D24, migration `014`); a segunda segue
@@ -250,7 +284,11 @@ sistema, e cada um sai na **mesma transação** da mudança que descreve
 
 **Grava (desde a D26):** `usuario.criado` e `usuario.senha_definida`, pela mesma tela e pela mesma
 regra de unidade de trabalho. Com eles, os **cinco** tipos da §2.7 têm produtor — a §2.7 é a única
-seção deste contrato inteiramente implementada.
+seção deste contrato cujo vocabulário está inteiramente implementado.
+
+**Cuidado com a frase acima:** ela diz que os cinco tipos *declarados* têm produtor, não que tudo o
+que acontece com `usuarios` vira evento. Mexer na senha **de outra pessoa** não tem tipo nenhum, e
+já aconteceu sem deixar rastro em `eventos` — ver a **dívida aberta** no fim da §2.7.
 
 **Não grava:** todo o resto. As famílias §2.1 a §2.6 são contrato para implementação futura, e as
 da §2.6 dependem da F5.4 existir. `login` (§1) segue sem produtor por outro motivo, e não por
