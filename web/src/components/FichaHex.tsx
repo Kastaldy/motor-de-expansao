@@ -1,11 +1,12 @@
 import type { CrescimentoMunicipio } from '../lib/oportunidades'
 import { censoDaBase } from '../lib/rodape-base'
+import { leiturasDoContexto } from '../lib/contexto'
 import { alunos, brl, num, pctVar, renda } from '../lib/format'
 import { FAIXA_M1_HEX } from '../lib/colors'
 import { CAPACIDADE_UNIDADE_ALUNOS, FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from '../lib/faixas'
 import { classeAluguelFat, corTipo, custoOcup, labelTipo, pctAluguelFat } from '../lib/imovel'
 import { composicaoMercado, faixaDoValor, leituraDeSaturacao } from '../lib/medidor'
-import type { Hex, Oportunidade } from '../lib/types'
+import type { ContextoMunicipio, Hex, Oportunidade } from '../lib/types'
 import IconeTipo from './IconeTipo'
 import { CardPainel, LinhaTabela, Ticks, TituloSecao } from './PecasPainel'
 
@@ -66,6 +67,7 @@ const FAIXAS_M1_COM_PREFIXO = new Set(['Alta', 'Média', 'Baixa'])
 export default function FichaHex({
   hex,
   cres,
+  ctx,
   onComparar,
   imoveis,
   onVerImovel,
@@ -73,6 +75,14 @@ export default function FichaHex({
   hex: Hex
   /** Crescimento do MUNICÍPIO do hexágono (`MapaResposta.cres_mun`), quando houver. */
   cres?: CrescimentoMunicipio | null
+  /**
+   * Camadas de leitura do pacote ARGENTINO para o município (`MapaResposta.ctx_mun`).
+   *
+   * Ausente no Brasil, e é assim que a seção não aparece lá: nenhuma bandeira de país
+   * neste componente — o que decide é o dado ter chegado ou não, a mesma regra que já
+   * governa `cres`, os imóveis e o botão de comparar.
+   */
+  ctx?: ContextoMunicipio | null
   /**
    * Põe ESTE hexágono na comparação e liga o modo cenário. Ausente = o botão não aparece.
    *
@@ -96,6 +106,9 @@ export default function FichaHex({
   const fxResidual = faixaDoValor(hex.res, FAIXAS_DEMANDA)
   const mercado = composicaoMercado(hex.sam, hex.oferta)
   const saturacao = leituraDeSaturacao(hex.sam, hex.oferta)
+  /* Já filtrado: campo ausente não gera cartão (nem gera cartão com "0"). A lista vazia
+     é o que apaga a seção inteira — ver `leiturasDoContexto`. */
+  const leiturasCtx = leiturasDoContexto(ctx)
   const ocupacaoAbertura =
     hex.oferta == null
       ? null
@@ -431,6 +444,28 @@ export default function FichaHex({
                   : `mediana da UF: ${pctVar(cres.uf_mediana)}`
               }
             />
+          </div>
+        </CardPainel>
+      )}
+
+      {/* ---- O que a região registra (camadas do pacote argentino) ----
+              Fica DEPOIS de "Como a região vem indo" e separado dele de propósito: aquele
+              cartão mistura obra DESTE hexágono com emprego do município; este é inteiro
+              do PARTIDO/DEPARTAMENTO, e juntá-los faria o operador ler como intraurbano
+              um número que é da cidade toda.
+
+              O cartão inteiro some quando não há leitura nenhuma — o que é o caso do
+              Brasil, onde `ctx` nunca chega. Nenhum `if (país)` aqui. */}
+      {leiturasCtx.length > 0 && (
+        <CardPainel>
+          <TituloSecao
+            titulo="O que a região registra"
+            nota={hex.mun ? `${hex.mun} · fontes públicas` : 'fontes públicas'}
+          />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 14px' }}>
+            {leiturasCtx.map((l) => (
+              <MiniLeitura key={l.chave} valor={l.valor} rotulo={l.rotulo} nota={l.nota} />
+            ))}
           </div>
         </CardPainel>
       )}
