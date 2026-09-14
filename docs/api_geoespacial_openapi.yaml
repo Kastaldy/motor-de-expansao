@@ -30,6 +30,56 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
 
+  /faixa-alunos:
+    get:
+      operationId: faixaAlunos
+      tags: [analise]
+      summary: Faixa plausivel de alunos por metragem (NAO e previsao de demanda)
+      description: >
+        Curva tamanho->densidade dos comparaveis Ultra. Depende SO de m2 e da base de
+        comparaveis: nao recebe lat/lng e nao sabe nada da praca (DEC-009). Serve para
+        ancorar a premissa `viabilidade.demanda` do POST /analisar, que e obrigatoria e e
+        do operador. `n_comparaveis` e `fonte` dizem o quanto a faixa vale: janela alargada
+        por falta de comparaveis, ou base de fallback, mudam o significado do numero.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: m2
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+            exclusiveMinimum: 0
+          example: 1500
+        - name: formato
+          in: query
+          required: false
+          schema:
+            type: [string, "null"]
+          description: Restringe os comparaveis ao mesmo formato de operacao.
+      responses:
+        "200":
+          description: >
+            Faixa de alunos. Sem base de calibracao os percentis voltam null, com
+            n_comparaveis 0 e a fonte declarando a indisponibilidade — nao e erro.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaixaAlunosResponse"
+        "401":
+          description: Token ausente ou invalido.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: m2 ausente ou <= 0.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /analisar:
     post:
       summary: Analisa um ponto (Relatorio Pontual Censitario 1.0 km)
@@ -248,6 +298,37 @@ components:
           type: [number, "null"]
         capex_renovacao:
           type: [number, "null"]
+
+    FaixaAlunosResponse:
+      type: object
+      description: >
+        Faixa plausivel de alunos para uma metragem. NAO e previsao de demanda (DEC-009).
+      required: [m2, n_comparaveis, fonte]
+      properties:
+        m2:
+          type: number
+          format: double
+          example: 1500
+        p10:
+          type: [number, "null"]
+          example: 620
+        p50:
+          type: [number, "null"]
+          description: Mediana. E o valor que a tela do piloto usa para semear a demanda assumida.
+          example: 980
+        p90:
+          type: [number, "null"]
+          example: 1420
+        n_comparaveis:
+          type: integer
+          description: Unidades na janela. Zero = faixa nao calculada.
+          example: 23
+        fonte:
+          type: string
+          description: >
+            Arquivo que alimentou a curva. Viaja junto com os numeros porque o fallback
+            muda o SIGNIFICADO da faixa sem mudar a escala.
+          example: "base_calibracao_maduras.parquet (oficial)"
 
     AnalisarResponseJSON:
       type: object

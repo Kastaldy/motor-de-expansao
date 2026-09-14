@@ -19,7 +19,7 @@ bot Telegram "Paulo".
 
 | Serviço | O que é | Porta |
 |---|---|---|
-| **API** | FastAPI/uvicorn — `GET /health`, `POST /api/v1/analisar` (JSON/PDF) e as rotas do Relatório Municipal (`GET /api/v1/ufs`, `GET /api/v1/municipios/{uf}`, `POST /api/v1/analisar-municipio`) | 8077 (interna) |
+| **API** | FastAPI/uvicorn — `GET /health`, `POST /api/v1/analisar` (JSON/PDF), `GET /api/v1/faixa-alunos` e as rotas do Relatório Municipal (`GET /api/v1/ufs`, `GET /api/v1/municipios/{uf}`, `POST /api/v1/analisar-municipio`) | 8077 (interna) |
 | **Bot** | Long-polling Telegram 24/7 que consome a API | — |
 
 **Diagrama simplificado:**
@@ -219,6 +219,48 @@ dashboard entrega e, desde o BLK-RELPON-14, o **gerador único** do relatório p
 **Performance:** a primeira chamada pode levar de 10 a 30 s (cold load dos Parquets +
 busca de tiles de mapa). Chamadas subsequentes ao mesmo município são mais rápidas
 (cache em memória). Timeout do bot: 240 s.
+
+---
+
+### 3bb. `GET /api/v1/faixa-alunos`
+
+Faixa plausível de alunos para uma metragem, da curva tamanho→densidade dos comparáveis Ultra.
+
+**Não é previsão de demanda** (DEC-009). Ela depende **só** de `m2` e da base de comparáveis —
+não recebe `lat`/`lng` e não sabe nada da praça. Dois imóveis do mesmo tamanho em cidades opostas
+recebem a mesma faixa.
+
+Existe porque `viabilidade.demanda` é obrigatório no `POST /api/v1/analisar` e é **premissa de
+quem pede**. Sem esta rota, o consumidor precisa cravar um número fixo — o mesmo para um imóvel
+de 600 m² e um de 10.000 m².
+
+| Parâmetro | Tipo | Obrigatório | Descrição |
+|---|---|---|---|
+| `m2` | `float` (> 0) | Sim | Área útil do imóvel |
+| `formato` | `string` / `null` | Não | Restringe os comparáveis ao mesmo formato de operação |
+
+```bash
+curl -s "https://api.ultra-expansao.tech/api/v1/faixa-alunos?m2=1500"   -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{
+  "m2": 1500.0,
+  "p10": 620.0,
+  "p50": 980.0,
+  "p90": 1420.0,
+  "n_comparaveis": 23,
+  "fonte": "base_calibracao_maduras.parquet (oficial)"
+}
+```
+
+**`n_comparaveis` e `fonte` não são acessórios.** A janela de metragem alarga sozinha quando há
+poucos comparáveis (±20% → ±50% → base inteira), então um `n` baixo significa faixa menos
+recortada. E `fonte` denuncia a degradação silenciosa: sem `base_calibracao_maduras.parquet` o
+motor cai num fallback, e a mesma faixa passa a descrever **outra** população de comparáveis.
+
+Sem base nenhuma, a resposta é `200` com os percentis `null`, `n_comparaveis: 0` e a `fonte`
+dizendo que está indisponível — ausência de base é resposta prevista pelo contrato, não erro.
 
 ---
 
