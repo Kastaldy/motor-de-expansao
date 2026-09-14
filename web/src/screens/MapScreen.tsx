@@ -517,6 +517,10 @@ export default function MapScreen({
      divergirem depois de uma troca de município. */
   const hexSelecionado = selecionado ? (porId.get(selecionado) ?? null) : null
   const cresMunDoHex = hexSelecionado?.mun ? (dados?.cres_mun?.[hexSelecionado.mun] ?? null) : null
+  /* Camadas de leitura do pacote argentino, pela MESMA chave (`Hex.mun`) e com o mesmo
+     `?? null`: no Brasil `ctx_mun` vem `{}`, o hexágono não acha entrada e a ficha não
+     desenha a seção. É a ausência que decide, não uma bandeira de país. */
+  const ctxMunDoHex = hexSelecionado?.mun ? (dados?.ctx_mun?.[hexSelecionado.mun] ?? null) : null
 
   /* Os imoveis DESTE hexagono, para a secao da ficha. Casa por `hex_id` (H3 res-7,
      a MESMA malha do M1) sobre o conjunto da UF inteira — independe da chave da
@@ -1582,6 +1586,7 @@ export default function MapScreen({
           <FichaHex
             hex={hexSelecionado}
             cres={cresMunDoHex}
+            ctx={ctxMunDoHex}
             /* `comparar` já põe na lista E liga o modo cenário — sem isso o hexágono
                entraria marcado e o painel de comparação ficaria escondido. */
             onComparar={() => comparar(hexSelecionado.id)}
