@@ -426,7 +426,15 @@ def abas_do_usuario(usuario: str | None) -> frozenset[str]:
             return ABAS_VALIDAS - ABAS_SENSIVEIS
         return ABAS_VALIDAS  # dev/local: fail-open historico
     _fail_closed_logado = False  # controle voltou -> permite logar de novo no proximo episodio
-    if usuario is not None and usuario in mapa:
+    if usuario is None:
+        # Sem identidade NAO ha curinga. "*" quer dizer "qualquer usuario AUTENTICADO", e quem
+        # chega sem `Remote-User` nem identidade de dev nao e' usuario nenhum. Ate' 15/09 este
+        # ramo nao existia e o curinga caia tambem sobre `None`: com `{"*": ["mapa",
+        # "oportunidades"]}` no JSON, 18 rotas atendiam requisicao ANONIMA (medido). Nao vazava
+        # porque o Authelia injeta o header em toda requisicao -- mas e' a porta que abre no dia
+        # em que ele sair (P19), e a unica defesa da instancia AR, que roda so' com o JSON.
+        return frozenset()
+    if usuario in mapa:
         return mapa[usuario]
     # Curinga NUNCA concede aba sensivel (pentest Onda B #14): executiva/imobiliaria/
     # viabilidade (financeiro da rede + PII + escrita) exigem concessao NOMINAL no JSON,
@@ -444,11 +452,19 @@ def abas_necessarias(path: str) -> frozenset[str] | None:
 
 
 def motivo_bloqueio(path: str, usuario: object) -> str | None:
-    """`None` = pode passar; string = detail do 403 que o middleware devolve."""
+    """`None` = pode passar; string = detail do 403 que o middleware devolve.
+
+    A identidade sai de `login_da_requisicao`, como em todo o resto -- e nao do header cru, que
+    era o que esta funcao lia ate' 15/09. Com o JSON no comando e sem Authelia na frente
+    (desenvolvimento), o header cru e' sempre vazio: a pessoa de `MOTOR_DEV_USUARIO` nunca recebia
+    as abas NOMINAIS dela, so' o curinga -- e, com o curinga fechado para quem nao tem identidade,
+    passaria a nao receber nada. Em producao nada muda: havendo header, e' ele; e o sinal de
+    producao desliga a identidade de dev.
+    """
     necessarias = abas_necessarias(path)
     if necessarias is None:
         return None
-    if necessarias & abas_do_usuario(normalizar_usuario(usuario)):
+    if necessarias & abas_do_usuario(login_da_requisicao(usuario)):
         return None
     return "Seu usuário não tem acesso a esta área do piloto. Fale com o Felipe."
 

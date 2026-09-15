@@ -32,8 +32,9 @@ import { Aviso, Botao, Chip, Spinner } from './primitives'
    — a pessoa apareceria na lista e não entraria, sem pista do porquê.
 
    CADA MUDANÇA É UM EVENTO. O backend grava `usuario.criado`,
-   `usuario.perfil_alterado`, `usuario.desativado`, `usuario.reativado` e
-   `usuario.senha_definida` na MESMA transação da mudança, com `id_usuario` = quem fez
+   `usuario.perfil_alterado`, `usuario.desativado`, `usuario.reativado`,
+   `usuario.senha_definida` e, desde 15/09, `usuario.senha_redefinida` e
+   `usuario.troca_exigida` na MESMA transação da mudança, com `id_usuario` = quem fez
    e `entidade_id` = quem sofreu (D24). A tela não precisa fazer nada para isso
    acontecer — mas precisa não mentir sobre o que aconteceu, e é por isso que ela
    recarrega do servidor depois de cada ação em vez de adivinhar o novo estado.
@@ -91,6 +92,8 @@ const ESTILO_ROTULO: CSSProperties = {
 type Pendente =
   | { tipo: 'trocar-perfil'; id_usuario: number; para: string }
   | { tipo: 'definir-ativo'; id_usuario: number; ativo: boolean }
+  | { tipo: 'redefinir-senha'; id_usuario: number }
+  | { tipo: 'exigir-troca'; id_usuario: number }
   | { tipo: 'criar' }
 
 export default function PainelUsuarios() {
@@ -176,6 +179,43 @@ export default function PainelUsuarios() {
   )
 
   /**
+   * Os dois gestos sobre a senha de outra pessoa (15/09). Mesmo contrato do `aplicar`:
+   * recarrega do servidor em vez de adivinhar, e o recado sai da RESPOSTA — um
+   * `mudou: false` na exigência não pode virar "troca pedida".
+   */
+  const aplicarSenha = useCallback(
+    async (alvo: AdminUsuario, gesto: 'redefinir-senha' | 'exigir-troca') => {
+      setSalvando(alvo.id_usuario)
+      setRecado(null)
+      setErro(null)
+      try {
+        if (gesto === 'redefinir-senha') {
+          const r = await api.adminRedefinirSenha(alvo.id_usuario)
+          await carregar()
+          setRecado(
+            r.tinha_senha_propria
+              ? `${alvo.login}: a senha escolhida foi apagada e voltou para a inicial, com troca pedida.`
+              : `${alvo.login}: a senha inicial foi regravada, com troca pedida.`,
+          )
+        } else {
+          const r = await api.adminExigirTroca(alvo.id_usuario)
+          await carregar()
+          setRecado(
+            r.mudou
+              ? `${alvo.login}: a troca de senha será pedida na próxima entrada.`
+              : `${alvo.login}: a troca de senha já estava pedida — nada foi alterado.`,
+          )
+        }
+      } catch (e) {
+        setErro(e instanceof ApiError ? mensagemDeErro(e) : String(e))
+      } finally {
+        setSalvando(null)
+      }
+    },
+    [carregar],
+  )
+
+  /**
    * Cria a pessoa e RECARREGA, como o `aplicar`.
    *
    * O recado de sucesso não é decorativo: ele diz o passo que a tela não fez — cadastrar
@@ -228,10 +268,12 @@ export default function PainelUsuarios() {
     if (!linha) return // sumiu da lista enquanto o pop-up estava aberto
     if (pendente.tipo === 'trocar-perfil') {
       await aplicar(linha, { perfil: pendente.para })
-    } else {
+    } else if (pendente.tipo === 'definir-ativo') {
       await aplicar(linha, { ativo: pendente.ativo })
+    } else {
+      await aplicarSenha(linha, pendente.tipo)
     }
-  }, [pendente, dados, criar, aplicar])
+  }, [pendente, dados, criar, aplicar, aplicarSenha])
 
   if (carregando && !dados) {
     return (
@@ -305,6 +347,15 @@ export default function PainelUsuarios() {
         perfil: alvo.perfil,
         ativo: pendente.ativo,
       }
+    } else if (alvo && pendente.tipo === 'redefinir-senha') {
+      acao = {
+        tipo: 'redefinir-senha',
+        nome: alvo.nome,
+        login: alvo.login,
+        senhaPropria: alvo.senha_propria,
+      }
+    } else if (alvo && pendente.tipo === 'exigir-troca') {
+      acao = { tipo: 'exigir-troca', nome: alvo.nome, login: alvo.login }
     }
   }
 
@@ -493,7 +544,7 @@ export default function PainelUsuarios() {
       )}
 
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
           <thead>
             <tr>
               {['Pessoa', 'Login', 'Perfil', 'Situação', 'Senha', ''].map((h) => (
@@ -632,26 +683,65 @@ export default function PainelUsuarios() {
                     )}
                   </td>
                   <td style={{ padding: '9px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                    <Botao
-                      variante="ghost"
-                      disabled={travado}
-                      title={
-                        souEu
-                          ? 'Você não pode alterar o seu próprio acesso por aqui.'
-                          : u.ativo
-                            ? 'Tira o acesso, preservando o histórico da pessoa.'
-                            : 'Devolve o acesso com o perfil que estiver selecionado.'
-                      }
-                      onClick={() =>
-                        setPendente({
-                          tipo: 'definir-ativo',
-                          id_usuario: u.id_usuario,
-                          ativo: !u.ativo,
-                        })
-                      }
-                    >
-                      {salvando === u.id_usuario ? '…' : u.ativo ? 'Desativar' : 'Reativar'}
-                    </Botao>
+                    <div style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end' }}>
+                      {/* Os gestos de senha aparecem só para quem está ATIVO: em quem saiu não há
+                          entrada a preparar. O backend aceita os dois em inativos — esconder aqui
+                          é para a linha apagada não oferecer o que não serve. */}
+                      {u.ativo && (
+                        <>
+                          <Botao
+                            variante="ghost"
+                            disabled={travado || u.deve_trocar_senha}
+                            title={
+                              souEu
+                                ? 'A sua própria senha se troca pelo cadeado, no rodapé do menu.'
+                                : u.deve_trocar_senha
+                                  ? 'A troca de senha já está pedida para esta pessoa.'
+                                  : 'A senha atual continua valendo; a troca é pedida na próxima entrada.'
+                            }
+                            onClick={() =>
+                              setPendente({ tipo: 'exigir-troca', id_usuario: u.id_usuario })
+                            }
+                          >
+                            Exigir troca
+                          </Botao>
+                          <Botao
+                            variante="ghost"
+                            disabled={travado}
+                            title={
+                              souEu
+                                ? 'A sua própria senha se troca pelo cadeado, no rodapé do menu.'
+                                : 'Devolve a pessoa à senha inicial compartilhada, com troca pedida.'
+                            }
+                            onClick={() =>
+                              setPendente({ tipo: 'redefinir-senha', id_usuario: u.id_usuario })
+                            }
+                          >
+                            Redefinir senha
+                          </Botao>
+                        </>
+                      )}
+                      <Botao
+                        variante="ghost"
+                        disabled={travado}
+                        title={
+                          souEu
+                            ? 'Você não pode alterar o seu próprio acesso por aqui.'
+                            : u.ativo
+                              ? 'Tira o acesso, preservando o histórico da pessoa.'
+                              : 'Devolve o acesso com o perfil que estiver selecionado.'
+                        }
+                        onClick={() =>
+                          setPendente({
+                            tipo: 'definir-ativo',
+                            id_usuario: u.id_usuario,
+                            ativo: !u.ativo,
+                          })
+                        }
+                      >
+                        {salvando === u.id_usuario ? '…' : u.ativo ? 'Desativar' : 'Reativar'}
+                      </Botao>
+                    </div>
                   </td>
                 </tr>
               )
@@ -666,7 +756,9 @@ export default function PainelUsuarios() {
         <strong>Criar usuário grava só no banco:</strong> a pessoa também precisa ser cadastrada
         no Authelia, no servidor, senão ela aparece nesta lista e não consegue entrar. A coluna{' '}
         <strong>Senha</strong> diz quem já saiu da senha inicial compartilhada — nenhum hash sai
-        do banco para esta tela. O número ao lado de cada perfil é quantas coisas ele libera.
+        do banco para esta tela. <strong>Redefinir senha</strong> devolve a pessoa à senha inicial
+        compartilhada — você não passa a conhecer a senha de ninguém. O número ao lado de cada
+        perfil é quantas coisas ele libera.
       </div>
     </div>
   )

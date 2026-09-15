@@ -6,6 +6,8 @@ import type {
   AcessosResumo,
   AdminAlteracao,
   AdminCriacao,
+  AdminSenhaRedefinida,
+  AdminTrocaExigida,
   AdminUsuarioNovo,
   AdminUsuariosPayload,
   AlvoEvento,
@@ -367,6 +369,32 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(mudanca),
       },
+      15_000,
+    ),
+
+  /**
+   * Devolve UMA pessoa à senha inicial compartilhada e liga a marca de troca (15/09).
+   *
+   * Sem corpo de propósito: o admin não escolhe nem conhece a senha nova de ninguém.
+   * Erros: **403** é a trava de auto-alvo (a própria senha se troca em `/api/me/senha`),
+   * **404** é gente que não existe, **503** é banco fora do ar ou o servidor sem
+   * `MOTOR_SENHA_INICIAL` — nos dois casos, nada foi alterado.
+   */
+  adminRedefinirSenha: (idUsuario: number) =>
+    pedir<AdminSenhaRedefinida>(
+      `/api/acessos/usuarios/${idUsuario}/redefinir-senha`,
+      { method: 'POST' },
+      15_000,
+    ),
+
+  /**
+   * Liga a marca de troca de UMA pessoa sem mexer na senha dela (15/09). `mudou: false`
+   * quando a troca já estava pedida. Mesmos erros de auto-alvo e de banco do redefinir.
+   */
+  adminExigirTroca: (idUsuario: number) =>
+    pedir<AdminTrocaExigida>(
+      `/api/acessos/usuarios/${idUsuario}/exigir-troca`,
+      { method: 'POST' },
       15_000,
     ),
 

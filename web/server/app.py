@@ -3666,7 +3666,10 @@ def me(
     if acesso.banco_no_comando():
         abas = set(acesso.abas_do_usuario_por_banco(remote_user))
     else:
-        abas = set(acesso.abas_do_usuario(usuario))
+        # A MESMA resolucao do gate (`motivo_bloqueio`): header, ou identidade de dev no vazio.
+        # Com o header cru aqui e `login_da_requisicao` la', a tela e o portao voltariam a ler a
+        # mesma pessoa de fontes diferentes.
+        abas = set(acesso.abas_do_usuario(acesso.login_da_requisicao(remote_user)))
     # Teto (Bloco C): a INSTANCIA decide o que oferece; a fonte acima so' pode conceder
     # DENTRO disso. Vale para os DOIS ramos de proposito -- o RBAC do banco nao tem eixo
     # de pais, entao sem esta linha um usuario com `territorio.ranking_nacional` numa
@@ -4156,6 +4159,54 @@ def acessos_usuarios_criar(
             perfil=body.perfil,
             autor=eu.id_usuario,
         )
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_usuarios(erro) from erro
+
+
+@app.post("/api/acessos/usuarios/{id_usuario}/redefinir-senha", include_in_schema=False)
+def acessos_usuarios_redefinir_senha(
+    id_usuario: int,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Devolve a pessoa a senha INICIAL e liga a marca de troca. Grava `usuario.senha_redefinida`.
+
+    E' o caminho de quem esqueceu a senha, e ate' 15/09 ele nao existia: a unica saida era `UPDATE`
+    direto no banco, sem autor e sem evento. Sem corpo de proposito, pelo motivo da criacao: o
+    admin nao escolhe nem conhece a senha nova de ninguem -- a inicial compartilhada e' a mesma
+    entregue a quem nasce pela tela.
+
+    Mesmo portao das outras escritas daqui: a allowlist do painel no middleware e na rota, e
+    `acesso.usuario_gerir` pela regra de `POST` em `/api/acessos/usuarios`, que casa por prefixo e
+    por isso ja' cobre este caminho.
+    """
+    _exigir_admin_acessos(remote_user)
+    from motor_expansao.db import usuarios as db_usuarios
+
+    eu = _identidade_do_admin(remote_user)
+    try:
+        return db_usuarios.redefinir_senha(id_usuario, autor=eu.id_usuario)
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_usuarios(erro) from erro
+
+
+@app.post("/api/acessos/usuarios/{id_usuario}/exigir-troca", include_in_schema=False)
+def acessos_usuarios_exigir_troca(
+    id_usuario: int,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Liga a marca de troca sem mexer na senha. Grava `usuario.troca_exigida`.
+
+    A migration 016 previa o gesto e o codigo nao existia: `deve_trocar_senha_usuario` so' andava
+    de `TRUE` para `FALSE`. Serve depois de uma suspeita de vazamento, ou quando alguem conta ter
+    compartilhado a senha. `mudou: false` quando a troca ja' estava pedida -- sucesso sem evento,
+    como nas outras escritas desta tela.
+    """
+    _exigir_admin_acessos(remote_user)
+    from motor_expansao.db import usuarios as db_usuarios
+
+    eu = _identidade_do_admin(remote_user)
+    try:
+        return db_usuarios.exigir_troca(id_usuario, autor=eu.id_usuario)
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
         raise _erro_de_usuarios(erro) from erro
 

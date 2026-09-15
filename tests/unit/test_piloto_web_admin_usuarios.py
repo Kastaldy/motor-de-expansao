@@ -477,3 +477,97 @@ def test_sem_cadastro_no_banco_a_mensagem_nao_fala_da_allowlist(
         )
     assert caiu.value.status_code == 409
     assert "allowlist" not in str(caiu.value.detail).lower()
+
+
+# --------------------------------------------------------------------------------------
+# A senha DE OUTRA PESSOA (15/09)
+# --------------------------------------------------------------------------------------
+
+_ROTAS_DE_SENHA_ALHEIA = (
+    ("acessos_usuarios_redefinir_senha", "redefinir_senha"),
+    ("acessos_usuarios_exigir_troca", "exigir_troca"),
+)
+
+
+@pytest.mark.parametrize(("rota", "_funcao"), _ROTAS_DE_SENHA_ALHEIA)
+def test_fora_da_allowlist_as_rotas_de_senha_alheia_nao_existem(
+    monkeypatch: pytest.MonkeyPatch, rota: str, _funcao: str
+) -> None:
+    """Sob `/api/acessos/`: 404 que nao anuncia existencia, antes de resolver identidade."""
+    monkeypatch.setattr(pilot_app.acesso, "pode_ver_acessos", lambda _u: False)
+
+    def _nao_deveria(_u: Any) -> None:
+        raise AssertionError("resolveu identidade fora da allowlist")
+
+    monkeypatch.setattr(pilot_app, "_identidade_do_admin", _nao_deveria)
+    with pytest.raises(HTTPException) as caiu:
+        getattr(pilot_app, rota)(9, remote_user="qualquer")
+    assert caiu.value.status_code == 404
+
+
+@pytest.mark.parametrize(("rota", "funcao"), _ROTAS_DE_SENHA_ALHEIA)
+def test_as_rotas_de_senha_alheia_passam_o_alvo_e_o_autor(
+    monkeypatch: pytest.MonkeyPatch, rota: str, funcao: str
+) -> None:
+    _identidade(monkeypatch, _Eu())
+    visto: dict[str, Any] = {}
+    monkeypatch.setattr(
+        db_usuarios,
+        funcao,
+        lambda i, *, autor: visto.update(alvo=i, autor=autor) or {"id_usuario": i},
+    )
+    getattr(pilot_app, rota)(9, remote_user=ADMIN)
+    assert visto == {"alvo": 9, "autor": 7}
+
+
+@pytest.mark.parametrize(("rota", "funcao"), _ROTAS_DE_SENHA_ALHEIA)
+@pytest.mark.parametrize(("erro", "status"), [("UsuarioDesconhecido", 404), ("AlvoEhOAutor", 403)])
+def test_cada_recusa_da_senha_alheia_tem_seu_status(
+    monkeypatch: pytest.MonkeyPatch, rota: str, funcao: str, erro: str, status: int
+) -> None:
+    _identidade(monkeypatch, _Eu())
+    classe = getattr(db_usuarios, erro)
+
+    def _falha(*_a: Any, **_k: Any) -> None:
+        raise classe("não")
+
+    monkeypatch.setattr(db_usuarios, funcao, _falha)
+    with pytest.raises(HTTPException) as caiu:
+        getattr(pilot_app, rota)(9, remote_user=ADMIN)
+    assert caiu.value.status_code == status
+
+
+def test_redefinir_sem_senha_inicial_e_503_com_o_recado_do_operador(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from motor_expansao.db import senhas
+
+    _identidade(monkeypatch, _Eu())
+
+    def _falha(*_a: Any, **_k: Any) -> None:
+        raise senhas.SenhaInicialNaoConfigurada("MOTOR_SENHA_INICIAL não está definida.")
+
+    monkeypatch.setattr(db_usuarios, "redefinir_senha", _falha)
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.acessos_usuarios_redefinir_senha(9, remote_user=ADMIN)
+    assert caiu.value.status_code == 503
+    assert "MOTOR_SENHA_INICIAL" in str(caiu.value.detail)
+
+
+@pytest.mark.parametrize("gesto", ["redefinir-senha", "exigir-troca"])
+def test_as_rotas_de_senha_alheia_nao_recebem_corpo_e_exigem_gerir(gesto: str) -> None:
+    """Sem corpo: o admin nao escolhe nem conhece a senha de ninguem. E a capacidade e' a de
+    GERIR, nao a de ver o painel -- a regra de `POST` em `/api/acessos/usuarios` casa por prefixo."""
+    import inspect
+
+    molde = f"/api/acessos/usuarios/{{id_usuario}}/{gesto}"
+    registradas = {r.path: r for r in pilot_app.app.routes if getattr(r, "path", "") == molde}
+    assert molde in registradas, f"rota {molde} nao registrada"
+    rota = registradas[molde]
+    assert rota.methods == {"POST"}
+    assert set(inspect.signature(rota.endpoint).parameters) == {"id_usuario", "remote_user"}
+
+    concreto = f"/api/acessos/usuarios/9/{gesto}"
+    capacidade = pilot_app.acesso.capacidade_necessaria
+    assert capacidade(concreto, "POST") == "acesso.usuario_gerir"
+    assert capacidade(concreto, "GET") == "acesso.painel_ver"

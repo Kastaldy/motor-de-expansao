@@ -97,6 +97,8 @@ export type AcaoAdmin =
       capacidadesPara?: number
     }
   | { tipo: 'definir-ativo'; nome: string; login: string; perfil: string; ativo: boolean }
+  | { tipo: 'redefinir-senha'; nome: string; login: string; senhaPropria: boolean }
+  | { tipo: 'exigir-troca'; nome: string; login: string }
 
 export interface Confirmacao {
   /** Tarja curta acima do título. Caixa alta no componente. */
@@ -200,6 +202,47 @@ export function montarConfirmacao(
       rotuloConfirmar: `Passar ${acao.nome} para ${rot(acao.para)}`,
       gravidade: viraAdmin || rel === 'desce' ? 'alta' : 'media',
       loginParaDigitar: viraAdmin ? acao.login : null,
+    }
+  }
+
+  if (acao.tipo === 'redefinir-senha') {
+    return {
+      eyebrow: 'Redefinir a senha de alguém',
+      titulo: `${acao.nome} volta para a senha inicial`,
+      apoio: [
+        `Login ${acao.login}.`,
+        acao.senhaPropria
+          ? 'A senha escolhida pela pessoa deixa de valer agora: a entrada volta a ser pela ' +
+            'senha inicial compartilhada, com a troca pedida em seguida.'
+          : 'A pessoa ainda não tinha definido a própria senha: a inicial é regravada e a troca ' +
+            'continua pendente.',
+        'Você não passa a conhecer a senha de ninguém — é a mesma senha inicial entregue a ' +
+          'quem é criado aqui. Fica registrado com o seu nome e a data.',
+        'Enquanto o Authelia autenticar, isto não muda como a pessoa entra hoje — prepara o dia ' +
+          'em que o próprio sistema autenticar.',
+      ],
+      rotuloConfirmar: `Redefinir a senha de ${acao.nome}`,
+      // Apagar uma senha escolhida é o caminho destrutivo; regravar a inicial de quem nunca
+      // saiu dela não é.
+      gravidade: acao.senhaPropria ? 'alta' : 'media',
+      loginParaDigitar: null,
+    }
+  }
+
+  if (acao.tipo === 'exigir-troca') {
+    return {
+      eyebrow: 'Exigir nova senha',
+      titulo: `${acao.nome} vai ter de trocar a senha`,
+      apoio: [
+        `Login ${acao.login}.`,
+        'A senha atual continua valendo. Na próxima entrada, a tela de troca volta a aparecer ' +
+          'para a pessoa.',
+        'Use depois de uma suspeita de vazamento, ou quando a senha foi compartilhada. Fica ' +
+          'registrado com o seu nome e a data.',
+      ],
+      rotuloConfirmar: `Exigir troca de ${acao.nome}`,
+      gravidade: 'media',
+      loginParaDigitar: null,
     }
   }
 

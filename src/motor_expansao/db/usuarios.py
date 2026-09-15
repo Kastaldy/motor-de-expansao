@@ -51,6 +51,10 @@ EVENTO_DESATIVADO = "usuario.desativado"
 EVENTO_REATIVADO = "usuario.reativado"
 EVENTO_CRIADO = "usuario.criado"
 EVENTO_SENHA_DEFINIDA = "usuario.senha_definida"
+#: Os dois gestos sobre a senha DE OUTRA PESSOA (15/09). Antes deles o `UPDATE` direto era o unico
+#: caminho, e nao deixava evento -- ver o fim da §2.7 do contrato.
+EVENTO_SENHA_REDEFINIDA = "usuario.senha_redefinida"
+EVENTO_TROCA_EXIGIDA = "usuario.troca_exigida"
 
 #: Valor de `entidade` para os eventos daqui (D24).
 ENTIDADE_USUARIO = "usuario"
@@ -180,6 +184,33 @@ SET senha_hash = %s,
     senha_definida_em_usuario = now(),
     deve_trocar_senha_usuario = FALSE
 WHERE id_usuario = %s
+"""
+
+# O estado da senha visto por QUEM ADMINISTRA, com a linha travada. Separado do
+# `SQL_ESTADO_DA_SENHA` de proposito: aquele devolve o hash para conferir a senha atual, e o admin
+# nunca confere senha de ninguem -- ler um hash que nao sera' usado e' tirar o hash do banco a toa.
+SQL_ESTADO_DA_SENHA_PARA_ADMIN = """
+SELECT u.id_usuario, u.senha_definida_em_usuario IS NOT NULL, u.deve_trocar_senha_usuario
+FROM usuarios u
+WHERE u.id_usuario = %s
+FOR UPDATE OF u
+"""
+
+# O espelho de uma linha nascida por `criar` nas tres colunas do ciclo da senha: hash da inicial,
+# data NULA (a pessoa nao definiu nada) e a marca ligada. Os tres no MESMO UPDATE pelo motivo do
+# `SQL_DEFINIR_SENHA` -- separados, a 016 mentiria no intervalo.
+SQL_REDEFINIR_SENHA = """
+UPDATE usuarios
+SET senha_hash = %s,
+    senha_definida_em_usuario = NULL,
+    deve_trocar_senha_usuario = TRUE
+WHERE id_usuario = %s
+"""
+
+# So' a marca. A senha que a pessoa tem continua valendo ate' ela trocar -- e por isso
+# `senha_definida_em_usuario` nao entra: ela DEFINIU a dela, e a coluna tem de continuar dizendo.
+SQL_EXIGIR_TROCA = """
+UPDATE usuarios SET deve_trocar_senha_usuario = TRUE WHERE id_usuario = %s
 """
 
 # `entidade`/`entidade_id` = quem SOFREU (D24); `id_usuario` = quem FEZ. Sem PII em `metadados`
@@ -512,3 +543,82 @@ def trocar_a_propria_senha(*, autor: int, senha_atual: str, nova_senha: str) -> 
         )
 
     return {"id_usuario": autor, "primeira_vez": primeira_vez}
+
+
+def redefinir_senha(id_alvo: int, *, autor: int) -> dict[str, Any]:
+    """Devolve o alvo a senha INICIAL e liga a marca de troca. Registra `usuario.senha_redefinida`.
+
+    O caminho de quem esqueceu a propria senha. O estado final e' o de uma linha nascida por
+    `criar` nas tres colunas do ciclo da senha -- hash da inicial com sal proprio, data nula, marca
+    ligada --, e nao "identico" a ela: `trg_usuarios_upd` move `atualizado_em_usuario`, que e' o
+    rastro esperado de toda escrita nesta tabela.
+
+    Ninguem redefine a PROPRIA senha por aqui (`_recusar_auto_alvo`): quem sabe a sua troca em
+    `trocar_a_propria_senha`, e quem nao sabe precisa de outra pessoa -- que e' justamente o que
+    deixa o gesto com dois nomes na trilha.
+
+    Sempre escreve e sempre registra, mesmo quando a pessoa ja' estava na inicial. Ao contrario de
+    trocar perfil, aqui o "ja' estava assim" nao e' verificavel: o hash guardado pode ser de
+    qualquer coisa -- ate' 14/09 quatro linhas guardavam `hash_de_teste_*` e nao autenticavam nada.
+    Redefinir e' o botao que conserta, e o clique e' ato deliberado de quem administra.
+
+    `metadados.tinha_senha_propria` diz se o gesto APAGOU uma senha que a pessoa escolheu -- a
+    diferenca entre arrumar o acesso de quem nunca entrou e derrubar a senha de alguem. Nunca a
+    senha, nunca o hash, nunca parte de nenhum dos dois.
+    """
+    from . import senhas
+
+    _recusar_auto_alvo(id_alvo, autor)
+
+    # Hashear FORA da transacao, como `criar`: ~64 MB e ~100 ms, e segurar a linha travada durante
+    # isso nao protege nada. E' tambem aqui que a falta de `MOTOR_SENHA_INICIAL` aparece, antes de
+    # qualquer escrita.
+    hash_inicial = senhas.hash_da_senha_inicial()
+
+    with transacao(id_usuario=autor) as con:
+        linha = con.execute(SQL_ESTADO_DA_SENHA_PARA_ADMIN, (id_alvo,)).fetchone()
+        if linha is None:
+            raise UsuarioDesconhecido(f"usuário {id_alvo} não existe")
+        tinha_senha_propria = bool(linha[1])
+
+        con.execute(SQL_REDEFINIR_SENHA, (hash_inicial, id_alvo))
+        _registrar(
+            con,
+            autor=autor,
+            tipo=EVENTO_SENHA_REDEFINIDA,
+            id_alvo=id_alvo,
+            metadados={"tinha_senha_propria": tinha_senha_propria},
+        )
+
+    return {"id_usuario": id_alvo, "tinha_senha_propria": tinha_senha_propria}
+
+
+def exigir_troca(id_alvo: int, *, autor: int) -> dict[str, Any]:
+    """Liga a marca de troca sem mexer na senha. Registra `usuario.troca_exigida`.
+
+    A migration 016 previa este gesto e ele nao existia: a marca so' andava de `TRUE` para `FALSE`,
+    na troca da propria senha. Serve depois de uma suspeita de vazamento, ou quando alguem conta ter
+    compartilhado a senha.
+
+    Diferente do `redefinir_senha`, aqui o "ja' estava assim" E' verificavel -- e' uma coluna
+    booleana --, entao vale a regra das outras escritas desta tela: sem mudanca, sem evento.
+    """
+    _recusar_auto_alvo(id_alvo, autor)
+
+    with transacao(id_usuario=autor) as con:
+        linha = con.execute(SQL_ESTADO_DA_SENHA_PARA_ADMIN, (id_alvo,)).fetchone()
+        if linha is None:
+            raise UsuarioDesconhecido(f"usuário {id_alvo} não existe")
+        if bool(linha[2]):
+            return {"id_usuario": id_alvo, "mudou": False}
+
+        con.execute(SQL_EXIGIR_TROCA, (id_alvo,))
+        _registrar(
+            con,
+            autor=autor,
+            tipo=EVENTO_TROCA_EXIGIDA,
+            id_alvo=id_alvo,
+            metadados=None,
+        )
+
+    return {"id_usuario": id_alvo, "mudou": True}

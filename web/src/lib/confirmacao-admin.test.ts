@@ -260,6 +260,8 @@ describe('o botao nunca diz so "Confirmar"', () => {
         perfil: 'expansao',
         ativo: false,
       }),
+      montarConfirmacao({ tipo: 'redefinir-senha', nome: 'Ana', login: 'ana', senhaPropria: true }),
+      montarConfirmacao({ tipo: 'exigir-troca', nome: 'Ana', login: 'ana' }),
     ]
     for (const c of casos) {
       expect(c.rotuloConfirmar).toContain('Ana')
@@ -267,5 +269,50 @@ describe('o botao nunca diz so "Confirmar"', () => {
       expect(c.titulo.length).toBeGreaterThan(12)
       expect(c.apoio.length).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('redefinir a senha de alguem (15/09)', () => {
+  const alvo = { tipo: 'redefinir-senha' as const, nome: 'Bruno Teste', login: 'bruno.teste' }
+
+  it('quando apaga uma senha escolhida, diz isso e pinta de perigo', () => {
+    const c = montarConfirmacao({ ...alvo, senhaPropria: true })
+    expect(c.titulo).toBe('Bruno Teste volta para a senha inicial')
+    expect(c.apoio.join(' ')).toContain('deixa de valer agora')
+    expect(c.gravidade).toBe('alta')
+  })
+
+  it('quando a pessoa nunca definiu senha, e o caminho leve', () => {
+    const c = montarConfirmacao({ ...alvo, senhaPropria: false })
+    expect(c.apoio.join(' ')).toContain('ainda não tinha definido')
+    expect(c.gravidade).toBe('media')
+  })
+
+  it('deixa claro que o admin nao passa a conhecer a senha de ninguem', () => {
+    const texto = montarConfirmacao({ ...alvo, senhaPropria: true }).apoio.join(' ')
+    expect(texto).toContain('não passa a conhecer a senha de ninguém')
+    expect(texto).toContain('senha inicial')
+  })
+
+  it('nao promete o que ainda nao vale: o Authelia segue autenticando', () => {
+    expect(montarConfirmacao({ ...alvo, senhaPropria: true }).apoio.join(' ')).toContain(
+      'Authelia',
+    )
+  })
+
+  it('nao exige digitar o login — esse atrito e so para conceder poder de administrador', () => {
+    expect(montarConfirmacao({ ...alvo, senhaPropria: true }).loginParaDigitar).toBeNull()
+  })
+})
+
+describe('exigir nova senha (15/09)', () => {
+  const alvo = { tipo: 'exigir-troca' as const, nome: 'Bruno Teste', login: 'bruno.teste' }
+
+  it('diz que a senha atual continua valendo ate a troca', () => {
+    const c = montarConfirmacao(alvo)
+    expect(c.titulo).toBe('Bruno Teste vai ter de trocar a senha')
+    expect(c.apoio.join(' ')).toContain('continua valendo')
+    expect(c.gravidade).toBe('media')
+    expect(c.loginParaDigitar).toBeNull()
   })
 })

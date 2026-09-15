@@ -1754,3 +1754,17 @@ export interface MinhaSenhaTrocada {
   id_usuario: number
   primeira_vez: boolean
 }
+
+/** Resposta de `POST .../redefinir-senha` (15/09). `tinha_senha_propria` diz se o gesto
+ *  apagou uma senha que a pessoa escolheu — é o que a tela usa para o recado certo. */
+export interface AdminSenhaRedefinida {
+  id_usuario: number
+  tinha_senha_propria: boolean
+}
+
+/** Resposta de `POST .../exigir-troca` (15/09). `mudou: false` = a troca já estava pedida —
+ *  sucesso sem evento gravado, como nas outras escritas da tela. */
+export interface AdminTrocaExigida {
+  id_usuario: number
+  mudou: boolean
+}

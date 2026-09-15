@@ -297,6 +297,8 @@ def test_metadados_nao_carregam_pii(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_o_vocabulario_de_tipo_e_o_do_contrato() -> None:
     """`tipo` fora do `docs/eventos_contrato.md` §2.7 é defeito, não estilo (D11)."""
     assert mod.EVENTO_PERFIL_ALTERADO == "usuario.perfil_alterado"
+    assert mod.EVENTO_SENHA_REDEFINIDA == "usuario.senha_redefinida"
+    assert mod.EVENTO_TROCA_EXIGIDA == "usuario.troca_exigida"
     assert mod.EVENTO_DESATIVADO == "usuario.desativado"
     assert mod.EVENTO_REATIVADO == "usuario.reativado"
     assert mod.EVENTO_CRIADO == "usuario.criado"
@@ -596,3 +598,151 @@ def test_metadados_da_senha_nunca_carregam_a_senha(
     mod.trocar_a_propria_senha(autor=7, senha_atual="a-inicial", nova_senha="uma frase bem longa")
     metadados = con.eventos[0][4].obj
     assert metadados == {"primeira_vez": True}
+
+
+# --------------------------------------------------------------------------------------
+# A senha DE OUTRA PESSOA (15/09): redefinir e exigir troca
+# --------------------------------------------------------------------------------------
+
+#: Marca unica do `SQL_ESTADO_DA_SENHA_PARA_ADMIN` -- "FOR UPDATE OF u" casaria tambem com os outros
+#: dois SELECTs travados deste modulo.
+_MARCA_ESTADO_ADMIN = "u.senha_definida_em_usuario IS NOT NULL, u.deve_trocar_senha_usuario"
+
+
+def _con_senha_admin(
+    monkeypatch: pytest.MonkeyPatch, *, propria: bool, deve_trocar: bool
+) -> FakeConexao:
+    return _instalar(monkeypatch, {_MARCA_ESTADO_ADMIN: [(9, propria, deve_trocar)]})
+
+
+def test_redefinir_grava_o_espelho_de_quem_nasce_pela_tela(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """Hash da inicial, data NULA e marca ligada -- as tres colunas da 016, no mesmo UPDATE."""
+    con = _con_senha_admin(monkeypatch, propria=True, deve_trocar=False)
+    mod.redefinir_senha(9, autor=7)
+
+    sql, params = con.sql_que_contem("SET senha_hash")[0]
+    assert "senha_definida_em_usuario = NULL" in sql
+    assert "deve_trocar_senha_usuario = TRUE" in sql
+    assert params == (HASH_FALSO, 9)
+
+
+def test_redefinir_grava_o_que_o_modulo_de_senha_produziu(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ligacao, nao o algoritmo -- mesmo desenho do teste da criacao."""
+    from motor_expansao.db import senhas
+
+    sentinela = "$argon2id$v=19$m=65536,t=3,p=4$UkVERUZJTklS$c2VudGluZWxh"
+    monkeypatch.setattr(senhas, "hash_da_senha_inicial", lambda: sentinela)
+    con = _con_senha_admin(monkeypatch, propria=False, deve_trocar=True)
+    mod.redefinir_senha(9, autor=7)
+    assert con.sql_que_contem("SET senha_hash")[0][1][0] == sentinela
+
+
+def test_redefinir_registra_com_as_duas_pessoas_nos_lugares_certos(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """Quem redefiniu e' `id_usuario`; de quem era a senha e' `entidade_id` (D24)."""
+    con = _con_senha_admin(monkeypatch, propria=True, deve_trocar=False)
+    mod.redefinir_senha(9, autor=7)
+
+    assert con.executados[0][0] == postgres.SQL_DEFINIR_AUTOR
+    autor, tipo, entidade, entidade_id, _meta = con.eventos[0]
+    assert (autor, entidade_id) == (7, 9)
+    assert entidade == mod.ENTIDADE_USUARIO
+    assert tipo == mod.EVENTO_SENHA_REDEFINIDA
+
+
+@pytest.mark.parametrize("propria", [True, False])
+def test_redefinir_diz_se_apagou_uma_senha_escolhida(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None, propria: bool
+) -> None:
+    """A diferenca entre arrumar o acesso de quem nunca entrou e derrubar a senha de alguem.
+
+    E so' isso: nem a senha, nem o hash, nem parte de nenhum dos dois.
+    """
+    con = _con_senha_admin(monkeypatch, propria=propria, deve_trocar=not propria)
+    saida = mod.redefinir_senha(9, autor=7)
+    assert con.eventos[0][4].obj == {"tinha_senha_propria": propria}
+    assert saida["tinha_senha_propria"] is propria
+
+
+def test_redefinir_registra_mesmo_quando_ja_estava_na_inicial(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """O "ja' estava assim" nao e' verificavel pelo hash -- ate' 14/09 havia `hash_de_teste_*`."""
+    con = _con_senha_admin(monkeypatch, propria=False, deve_trocar=True)
+    mod.redefinir_senha(9, autor=7)
+    assert len(con.sql_que_contem("SET senha_hash")) == 1
+    assert len(con.eventos) == 1
+
+
+def test_ninguem_redefine_a_propria_senha_por_aqui(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """Quem sabe a sua troca em `/api/me/senha` -- e a recusa vem antes de abrir transacao."""
+    con = _con_senha_admin(monkeypatch, propria=True, deve_trocar=False)
+    with pytest.raises(mod.AlvoEhOAutor):
+        mod.redefinir_senha(7, autor=7)
+    assert con.executados == []
+
+
+def test_redefinir_sem_senha_inicial_nao_escreve_nada(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A falta da env aparece ANTES da transacao -- nada fica meio feito."""
+    from motor_expansao.db import senhas
+
+    def _sem_env() -> str:
+        raise senhas.SenhaInicialNaoConfigurada("MOTOR_SENHA_INICIAL não está definida.")
+
+    monkeypatch.setattr(senhas, "hash_da_senha_inicial", _sem_env)
+    con = _con_senha_admin(monkeypatch, propria=True, deve_trocar=False)
+    with pytest.raises(senhas.SenhaInicialNaoConfigurada):
+        mod.redefinir_senha(9, autor=7)
+    assert con.executados == []
+
+
+def test_redefinir_alvo_inexistente_e_desconhecido(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    con = _instalar(monkeypatch, {_MARCA_ESTADO_ADMIN: []})
+    with pytest.raises(mod.UsuarioDesconhecido):
+        mod.redefinir_senha(404, autor=7)
+    assert con.sql_que_contem("SET senha_hash") == []
+    assert con.eventos == []
+
+
+def test_o_admin_nunca_le_o_hash_de_ninguem() -> None:
+    """O SELECT do admin nao traz `senha_hash`: o admin nao confere senha de ninguem."""
+    assert "senha_hash" not in mod.SQL_ESTADO_DA_SENHA_PARA_ADMIN
+
+
+def test_exigir_troca_liga_so_a_marca(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A senha que a pessoa tem continua valendo -- e a data de quando ela a definiu, tambem."""
+    con = _con_senha_admin(monkeypatch, propria=True, deve_trocar=False)
+    saida = mod.exigir_troca(9, autor=7)
+
+    sql, params = con.sql_que_contem("SET deve_trocar_senha_usuario")[0]
+    assert "senha_hash" not in sql
+    assert "senha_definida_em_usuario" not in sql
+    assert params == (9,)
+    assert saida["mudou"] is True
+    autor, tipo, _ent, entidade_id, meta = con.eventos[0]
+    assert (autor, entidade_id, tipo) == (7, 9, mod.EVENTO_TROCA_EXIGIDA)
+    assert meta is None
+
+
+def test_exigir_troca_de_quem_ja_esta_marcado_nao_gera_evento(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Coluna booleana: aqui o "ja' estava assim" e' verificavel, entao vale a regra da tela."""
+    con = _con_senha_admin(monkeypatch, propria=True, deve_trocar=True)
+    assert mod.exigir_troca(9, autor=7)["mudou"] is False
+    assert con.sql_que_contem("SET deve_trocar_senha_usuario") == []
+    assert con.eventos == []
+
+
+def test_ninguem_exige_troca_de_si_mesmo(monkeypatch: pytest.MonkeyPatch) -> None:
+    con = _con_senha_admin(monkeypatch, propria=True, deve_trocar=False)
+    with pytest.raises(mod.AlvoEhOAutor):
+        mod.exigir_troca(7, autor=7)
+    assert con.executados == []
