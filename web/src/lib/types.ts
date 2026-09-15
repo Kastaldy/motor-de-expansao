@@ -1487,10 +1487,60 @@ export interface RedeInteligencia {
     ultima_semana: string | null
     unidades_afetadas: number
   }
+  movimentacao?: {
+    disponivel: boolean
+    periodos: RedeMovimentoPeriodo[]
+    data_contagem?: string | null
+    redes: RedeCrescimentoRede[]
+    agregadores: RedeCrescimentoAgregador[]
+  }
   canibalizacao: { id: string; nome: string; vizinha: string | null; distancia_m: number | null }[]
   mudancas: RedeMudanca[]
   fontes_oferta: string[]
   notas: string[]
+}
+
+/** Movimentação da concorrência (pacote garimpado da VPS, 15/09). `cautela` = foto não validada. */
+export type RedeMovimentoTipo = 'abertura' | 'inauguracao' | 'em_breve' | 'fechamento' | 'entrou_agregador' | 'saiu_agregador'
+export type RedeMovimentoContagem = Record<RedeMovimentoTipo, number>
+export interface RedeMovimentoEvento {
+  fonte: 'cadastro' | 'em_breve' | 'wellhub'
+  tipo: RedeMovimentoTipo
+  confianca: 'alta' | 'cautela'
+  rede: string | null
+  nome: string | null
+  distancia_m: number
+  de: string | null
+  ate: string | null
+}
+export interface RedeCrescimentoRede {
+  rede: string
+  aberturas: number
+  /** das fotos validadas (02/08 a 06/09); o resto é da foto não validada */
+  aberturas_conferidas: number
+  fechamentos: number
+  fechamentos_conferidos: number
+  em_breve: number
+  saldo: number
+  logo?: string | null
+  /** total na contagem oficial do fim do período validado; `null` = rede fora da contagem */
+  unidades?: number | null
+}
+export interface RedeCrescimentoAgregador {
+  agregador: string
+  grupo: 'independentes' | 'redes'
+  entradas: number
+  saidas: number
+  saldo: number
+  de: string | null
+  ate: string | null
+}
+export interface RedeMovimentoPeriodo {
+  fonte: string
+  confianca: string
+  de: string | null
+  ate: string | null
+  n: number
 }
 
 export interface RedeMapaConcorrente {
@@ -1561,6 +1611,14 @@ export interface RedeUnidadeInteligencia {
   mapa: RedeUnidadeMapa | null
   planos: RedePlanosEntorno
   planos_wellhub?: RedePlanosEntorno
+  movimentacao?: {
+    disponivel: boolean
+    sem_coordenada?: boolean
+    periodos: RedeMovimentoPeriodo[]
+    contagem: RedeMovimentoContagem
+    eventos: RedeMovimentoEvento[]
+    logos?: Record<string, string | null>
+  }
   unidade_id: string
   competencia: string | null
   territorio: RedeTerritorio | null

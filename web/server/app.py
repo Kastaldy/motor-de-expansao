@@ -83,6 +83,7 @@ import rede_inteligencia  # noqa: E402  (territorio, retencao, rampa e sinais da
 from motor_expansao.dashboard import (  # noqa: E402
     acesso_analytics,
     acesso_log,
+    movimentacao_concorrencia,
     planos_agregador,
     rede_cadastro,
     rede_coorte,
@@ -8058,6 +8059,73 @@ def _rede_concorrencia_nova() -> dict[str, Any]:
     return rede_inteligencia.concorrentes_novos(snapshots, coordenadas, _rede_pontos())
 
 
+@functools.lru_cache(maxsize=1)
+def _rede_movimentacao() -> pd.DataFrame | None:
+    """Eventos de movimentação da concorrência, sem a Ultra e sem estúdios (DEC-056). Opcional.
+
+    Vem de `scripts/ingerir_movimentacao_concorrencia.py` (pacote garimpado da VPS em 15/09).
+    Ausente, a tela diz que não há histórico — nunca "nenhuma abertura".
+    """
+    tabela = _rede_ler_opcional(STAGING_DIR / movimentacao_concorrencia.ARQUIVO_STAGING)
+    if tabela is None:
+        return None
+    return movimentacao_concorrencia.filtrar_concorrencia(tabela, _rede_redes_estudio())
+
+
+def _rede_movimentacao_unidade(unidade_id: str) -> dict[str, Any]:
+    eventos = _rede_movimentacao()
+    if eventos is None:
+        return {
+            "disponivel": False,
+            "periodos": [],
+            "contagem": movimentacao_concorrencia.contagem_vazia(),
+            "eventos": [],
+            "logos": {},
+        }
+    pontos = _rede_pontos()
+    linha = pontos[pontos["unidade_id"] == unidade_id]
+    itens = (
+        movimentacao_concorrencia.eventos_no_entorno(float(linha["lat"].iloc[0]), float(linha["lng"].iloc[0]), eventos)
+        if len(linha)
+        else []
+    )
+    return {
+        "disponivel": True,
+        "sem_coordenada": not len(linha),
+        "periodos": movimentacao_concorrencia.periodos(eventos),
+        "contagem": movimentacao_concorrencia.contar(itens),
+        "eventos": itens,
+        # Logo miúda ao lado do nome, uma vez por rede (a lista pode repetir a mesma rede).
+        "logos": {rede: _icone_rede(rede) for rede in sorted({i["rede"] for i in itens if i["rede"]})},
+    }
+
+
+@functools.lru_cache(maxsize=1)
+def _rede_movimentacao_redes() -> dict[str, Any]:
+    """Crescimento por REDE e por agregador no pacote inteiro (não depende do recorte).
+
+    A pergunta aqui é "quem está crescendo", e ela é da rede concorrente, não da unidade Ultra:
+    uma abertura da Panobianco em Ribeirão Preto conta mesmo sem Ultra por perto.
+    """
+    eventos = _rede_movimentacao()
+    if eventos is None:
+        return {"disponivel": False, "periodos": [], "data_contagem": None, "redes": [], "agregadores": []}
+    redes = movimentacao_concorrencia.resumo_por_rede(eventos)
+    contagem = _rede_ler_opcional(STAGING_DIR / movimentacao_concorrencia.ARQUIVO_CONTAGEM_STAGING)
+    totais = dict(zip(contagem["rede"], contagem["unidades"], strict=True)) if contagem is not None else {}
+    data_contagem = str(contagem["data"].iloc[0]) if contagem is not None and len(contagem) else None
+    for linha in redes:
+        linha["logo"] = _icone_rede(linha["rede"])
+        linha["unidades"] = int(totais[linha["rede"]]) if linha["rede"] in totais else None
+    return {
+        "disponivel": True,
+        "periodos": movimentacao_concorrencia.periodos(eventos),
+        "data_contagem": data_contagem,
+        "redes": redes,
+        "agregadores": movimentacao_concorrencia.resumo_agregadores(eventos),
+    }
+
+
 @functools.lru_cache(maxsize=4)
 def _rede_sinais(competencia: str | None) -> dict[str, dict[str, Any]]:
     return rede_inteligencia.sinais_antecedentes(_rede_fechamento(), _rede_base(), competencia)
@@ -8248,6 +8316,7 @@ def rede_inteligencia_recorte(
             "ultima_semana": concorrencia["ultima_semana"],
             "unidades_afetadas": sum(1 for uid in ids if concorrencia["por_unidade"].get(uid)),
         },
+        "movimentacao": _rede_movimentacao_redes(),
         "canibalizacao": [
             {
                 "id": uid,
@@ -8349,6 +8418,7 @@ def rede_unidade_inteligencia(unidade_id: str, mes: str | None = None) -> dict[s
         "mapa": _rede_mapa_unidade(unidade_id),
         "planos": _rede_planos_unidade(unidade_id),
         "planos_wellhub": _rede_planos_unidade(unidade_id, "wellhub"),
+        "movimentacao": _rede_movimentacao_unidade(unidade_id),
         "notas": [_NOTA_NAO_E_PREVISAO],
     }
 

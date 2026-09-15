@@ -158,6 +158,7 @@ export function PorTrasDosNumeros({
       <Rampa dados={dados} onUnidade={onUnidade} />
       <SinaisAntecedentes dados={dados} onUnidade={onUnidade} />
       <RiscoRetencao dados={dados} onUnidade={onUnidade} />
+      <MovimentacaoConcorrencia dados={dados} />
     </>
   )
 }
@@ -709,6 +710,119 @@ function RiscoRetencao({ dados, onUnidade }: { dados: RedeInteligencia; onUnidad
       <Rodape>
         A chance em 90 dias só aparece onde o modelo diz que ela é confiável; nas demais, a posição na rede. A barra mostra
         como a base de alunos se divide pela durabilidade prevista.{r.data_artefato ? ` Modelo de ${r.data_artefato}.` : ''}
+      </Rodape>
+    </Glass>
+  )
+}
+
+/* ======================= MOVIMENTAÇÃO DA CONCORRÊNCIA ======================= */
+
+function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
+  const m = dados.movimentacao
+  const [todas, setTodas] = useState(false)
+  // Padrão = só as fotos VALIDADAS (02/08 a 06/09). A foto de 28/05 a 02/08 teve troca de
+  // coletor em várias redes: com ela, a SkyFit lia +207 com UMA abertura conferida.
+  const [comCautela, setComCautela] = useState(false)
+  const redes = (m?.redes ?? [])
+    .map((r) => {
+      const aberturas = comCautela ? r.aberturas : r.aberturas_conferidas
+      const fechamentos = comCautela ? r.fechamentos : r.fechamentos_conferidos
+      return { ...r, aberturas, fechamentos, saldo: aberturas - fechamentos }
+    })
+    .filter((r) => r.aberturas || r.fechamentos || r.em_breve)
+    .sort((a, b) => b.saldo - a.saldo || b.aberturas - a.aberturas || b.em_breve - a.em_breve)
+  const visiveis = todas ? redes : redes.slice(0, 12)
+  const wellhub = (m?.agregadores ?? []).filter((a) => a.agregador === 'wellhub')
+  const celula = { padding: '0 8px', borderBottom: '1px solid var(--line-soft)', textAlign: 'right' as const, whiteSpace: 'nowrap' as const }
+  const titulo = { ...celula, padding: '0 8px 7px', font: '600 9.5px/1.2 var(--f-ui)', letterSpacing: '.05em', textTransform: 'uppercase' as const, color: 'var(--tx-muted)', borderBottom: '1px solid var(--line-mid)' }
+  const saldo = (v: number) => (
+    <span style={{ color: v > 0 ? 'var(--gr-coral)' : v < 0 ? 'var(--pos)' : 'var(--tx-off)', fontWeight: 700 }}>
+      {v > 0 ? `+${num(v)}` : num(v)}
+    </span>
+  )
+  return (
+    <Glass style={CARD}>
+      <Titulo
+        extra={
+          <Chip ativo={comCautela} onClick={() => setComCautela(!comCautela)}>
+            Incluir 28/05 a 02/08 (não validado)
+          </Chip>
+        }
+      >
+        Crescimento da concorrência
+      </Titulo>
+      {!m?.disponivel ? (
+        <Lide>Histórico de movimentação da concorrência ausente neste ambiente.</Lide>
+      ) : (
+        <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          <div style={{ flex: '3 1 520px', minWidth: 0, overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', font: '500 11.5px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
+              <thead>
+                <tr>
+                  <th style={{ ...titulo, textAlign: 'left' }}>Rede</th>
+                  <th style={titulo}>Unidades</th>
+                  <th style={titulo}>Aberturas</th>
+                  <th style={titulo}>Fechamentos</th>
+                  <th style={titulo}>Saldo</th>
+                  <th style={titulo}>Em breve</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visiveis.map((r) => (
+                  <tr key={r.rede} style={{ height: 30 }}>
+                    <td style={{ ...celula, textAlign: 'left' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, font: '500 12px/1 var(--f-ui)', color: 'var(--tx-strong)' }}>
+                        {r.logo ? (
+                          <img src={r.logo} alt="" width={18} height={18} style={{ display: 'block', flexShrink: 0 }} />
+                        ) : (
+                          <span style={{ width: 18, height: 18, borderRadius: 4, background: 'var(--ac-a12)', flexShrink: 0 }} />
+                        )}
+                        {nomeRede(r.rede)}
+                      </span>
+                    </td>
+                    <td className="num" style={{ ...celula, color: 'var(--tx-strong)' }}>{r.unidades != null ? num(r.unidades) : '—'}</td>
+                    <td className="num" style={celula}>{r.aberturas ? num(r.aberturas) : <span style={{ color: 'var(--tx-off)' }}>0</span>}</td>
+                    <td className="num" style={celula}>{r.fechamentos ? num(r.fechamentos) : <span style={{ color: 'var(--tx-off)' }}>0</span>}</td>
+                    <td className="num" style={celula}>{saldo(r.saldo)}</td>
+                    <td className="num" style={celula}>{r.em_breve ? num(r.em_breve) : <span style={{ color: 'var(--tx-off)' }}>0</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {redes.length > 12 && (
+              <div style={{ marginTop: 8 }}>
+                <Chip ativo={todas} onClick={() => setTodas(!todas)}>
+                  {todas ? 'Mostrar menos' : `Ver as ${num(redes.length)} redes`}
+                </Chip>
+              </div>
+            )}
+          </div>
+
+          <div style={{ flex: '1 1 240px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ font: '600 9.5px/1.2 var(--f-ui)', letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--tx-muted)' }}>
+              Agregadores
+            </div>
+            {wellhub.map((a) => (
+              <div key={a.grupo} style={{ padding: '10px 12px', border: '1px solid var(--line-soft)', borderRadius: 'var(--r-md)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, font: '600 12px/1.2 var(--f-ui)', color: 'var(--tx-strong)' }}>
+                  <img src="/logo-wellhub.png" alt="" width={16} height={16} style={{ display: 'block' }} />
+                  Wellhub · {a.grupo === 'independentes' ? 'independentes' : 'unidades de rede'}
+                </div>
+                <div className="num" style={{ marginTop: 6, font: '400 11.5px/1.5 var(--f-num)', color: 'var(--tx-sub)' }}>
+                  {num(a.entradas)} entraram · {num(a.saidas)} saíram · saldo {saldo(a.saldo)}
+                </div>
+              </div>
+            ))}
+            <div style={{ padding: '10px 12px', border: '1px dashed var(--line-soft)', borderRadius: 'var(--r-md)', font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
+              TotalPass · sem histórico de entradas e saídas ainda
+            </div>
+          </div>
+        </div>
+      )}
+      <Rodape>
+        Redes: fotos do cadastro de 02/08 a 06/09, validadas contra a contagem oficial (a foto anterior entra só pelo botão);
+        unidades = contagem oficial{m?.data_contagem ? ` de ${m.data_contagem.slice(8, 10)}/${m.data_contagem.slice(5, 7)}` : ''}.
+        &quot;Em breve&quot;: anúncios ainda não inaugurados. Wellhub: 31/08 a 12/09. Sem Smart Fit (teto do coletor) e sem estúdios; saída do site nem sempre é fechamento.
       </Rodape>
     </Glass>
   )
