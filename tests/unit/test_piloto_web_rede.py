@@ -677,7 +677,7 @@ def test_pdf_traz_os_graficos_do_dashboard(rede: Path) -> None:
 
     ficha = pilot.rede_unidade_pdf("botafogo-rj", mes="2026-07").body
     for marcador in (
-        b"Faturamento nos 12 meses fechados",
+        b"Faturamento nos 13 meses fechados",
         b"Alunos ativos",
         b"Funil comercial",
         b"NPS contra a meta",

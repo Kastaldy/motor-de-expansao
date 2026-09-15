@@ -440,23 +440,46 @@ export function BarraMeta({
   minimo = 0,
   maximo = 100,
   altura = 8,
+  limiarAlerta,
 }: {
   valor: number | null
   meta: number
   minimo?: number
   maximo?: number
   altura?: number
+  /** Com ele, a barra ganha semáforo: vermelho até o limiar (inclusive), amarelo até a meta,
+   *  verde a partir da meta. Sem ele, verde na meta e turquesa abaixo (comportamento antigo). */
+  limiarAlerta?: number
 }) {
+  const corDoValor = (v: number) =>
+    limiarAlerta === undefined
+      ? v >= meta
+        ? 'var(--pos, #37b26b)'
+        : 'var(--ac)'
+      : v <= limiarAlerta
+        ? 'var(--sev-alta)'
+        : v < meta
+          ? 'var(--sev-media)'
+          : 'var(--sev-ok)'
   const fatia = (v: number) => Math.min(100, Math.max(0, (100 * (v - minimo)) / (maximo - minimo)))
   return (
     <div style={{ position: 'relative', height: altura, background: 'var(--surf-raised)', borderRadius: altura / 2 }}>
-      {valor !== null && (
+      {/* Abaixo do mínimo da régua (NPS negativo numa régua de 0 a 100) a barra não preenche
+          nada — e um marcador vermelho no início diz que o valor ESTÁ lá, abaixo de zero, em vez
+          de parecer ausência de dado. */}
+      {valor !== null && valor < minimo && (
+        <div
+          title={`Abaixo de ${minimo}`}
+          style={{ position: 'absolute', left: 0, top: 0, width: altura, height: '100%', borderRadius: altura / 2, background: 'var(--neg, #ff5a6e)' }}
+        />
+      )}
+      {valor !== null && valor >= minimo && (
         <div
           style={{
             width: `${fatia(valor)}%`,
             height: '100%',
             borderRadius: altura / 2,
-            background: valor >= meta ? 'var(--pos, #37b26b)' : 'var(--ac)',
+            background: corDoValor(valor),
           }}
         />
       )}

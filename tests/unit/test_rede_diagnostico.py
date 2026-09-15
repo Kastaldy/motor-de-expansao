@@ -132,6 +132,27 @@ def test_metricas_a_validar_nunca_alertam() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_faturamento_critico_medio_abaixo_de_150_mil_e_grave_abaixo_de_100_mil() -> None:
+    """A faixa Crítico existia só como rótulo: a unidade podia faturar R$ 90 mil e sair "Sem
+    alerta" na carteira. Agora abaixo do teto da faixa o alerta acende SEMPRE — médio até
+    R$ 100 mil (atenção) e grave abaixo disso (prioridade alta), para a fila caber na banda."""
+    critica = rd.diagnosticar(_linha(faturamento=149_999.0), "2026-07")["u1"]
+    alerta = next(a for a in critica.alertas if a.codigo == "faturamento_critico")
+    assert alerta.nivel == "medio" and critica.severidade == "media"
+    assert critica.recomendacoes[0].codigo == "faturamento_critico"
+
+    funda = rd.diagnosticar(_linha(faturamento=99_999.0), "2026-07")["u1"]
+    assert next(a for a in funda.alertas if a.codigo == "faturamento_critico").nivel == "grave"
+    assert funda.severidade == "alta"
+    # na régua grave, o alerta é médio: o corte é estrito, como nas outras réguas
+    assert rd.diagnosticar(_linha(faturamento=100_000.0), "2026-07")["u1"].severidade == "media"
+    # na régua não acende: o teto pertence à faixa Regular, como em `faixa_faturamento`
+    assert "faturamento_critico" not in _codigos(_linha(faturamento=150_000.0))
+    assert "faturamento_critico" not in _codigos(_linha(faturamento=None))
+    # régua e faixa são o MESMO número, por construção
+    assert rd.REGUA_FATURAMENTO_CRITICO == rd.FAIXAS_FATURAMENTO[0][0]
+
+
 def test_severidade_um_grave_ou_tres_medios() -> None:
     assert rd.diagnosticar(_linha(), "2026-07")["u1"].severidade == "ok"
     assert rd.diagnosticar(_linha(churn_pct=8.5), "2026-07")["u1"].severidade == "media"

@@ -1141,6 +1141,9 @@ export interface RedeFaixa {
   rotulo: string
   n: number
   faturamento: number | null
+  /** limites da faixa em R$ do mês: vale `de <= faturamento < ate`; `null` = sem limite */
+  de?: number | null
+  ate?: number | null
 }
 
 /** Distribuição do recorte pelas faixas absolutas de faturamento do time de campo.
@@ -1325,6 +1328,269 @@ export interface RedeFicha {
   notas: string[]
 }
 
+/* ---- Inteligência da rede: território, retenção, rampa, sinais ---- */
+
+export interface RedeTerritorio {
+  lat: number | null
+  lng: number | null
+  /** `null` = base de concorrentes ausente — nunca "zero concorrente" */
+  concorrentes_1km: number | null
+  concorrentes_2km: number | null
+  cadeias_1km: number | null
+  cadeias_2km: number | null
+  independentes_1km: number | null
+  cadeia_mais_proxima_m: number | null
+  cadeia_mais_proxima_rede: string | null
+  /** `logo` = data URI do quadrado com a marca (ou a sigla, quando não há arquivo) */
+  redes_no_entorno: { rede: string; n: number; logo?: string | null }[]
+  ultra_2km: number | null
+  ultra_mais_proxima_m: number | null
+  ultra_mais_proxima_nome: string | null
+  canibalizacao: boolean | null
+  hex_id: string | null
+  municipio: string | null
+  /** régua absoluta da DEC-040, ponderada por população no disco (hexágono + 6 vizinhos) */
+  score_praca: number | null
+  renda_per_capita: number | null
+  /** renda média domiciliar do disco, na MESMA cadeia do tooltip do hexágono */
+  renda_domiciliar: number | null
+  populacao_entorno: number | null
+  /** ENDÓGENO para unidade existente (já desconta a própria Ultra): só contexto */
+  residual_entorno: number | null
+  hexes_lidos: number
+}
+
+export type RedeQuadranteChave = 'referencia' | 'execucao' | 'supera' | 'limite'
+
+export interface RedeQuadrantePonto {
+  id: string
+  nome: string
+  uf: string
+  coorte_rotulo: string
+  meses_operacao: number | null
+  faturamento: number
+  score_praca: number
+  concorrentes_1km: number | null
+  canibalizacao: boolean | null
+  severidade: RedeSeveridade
+  quadrante?: RedeQuadranteChave
+  quadrante_rotulo?: string
+}
+
+export interface RedeRetencao {
+  /** o próprio modelo se declara confiável para esta unidade ("Absoluto OK" / "Apenas Ranking") */
+  utilizavel: boolean
+  alunos_modelados: number | null
+  /** só existe onde o próprio modelo diz que a probabilidade absoluta vale */
+  prob_cancel_90d_pct: number | null
+  risco_percentil: number | null
+  ltv_12m_mediano: number | null
+  meses_ativos_12m: number | null
+  ltv_fragil_pct: number | null
+  ltv_em_risco_pct: number | null
+  ltv_duravel_pct: number | null
+  ltv_alta_durabilidade_pct: number | null
+  confiabilidade: string | null
+  probabilidade_absoluta_valida: boolean
+}
+
+export interface RedeRampaPonto {
+  mes: number
+  p25: number | null
+  p50: number | null
+  p75: number | null
+  n: number
+}
+
+export interface RedeRampaUnidade {
+  id: string
+  nome: string
+  uf: string
+  meses_operacao: number
+  valor: number | null
+  p25: number | null
+  p50: number | null
+  p75: number | null
+  desvio_pct: number | null
+  faixa: 'abaixo' | 'na_curva' | 'acima'
+}
+
+export interface RedeSinal {
+  chave: string
+  rotulo: string
+  detalhe: string
+  valor: number | null
+  limiar_quartil: number | null
+  aceso: boolean
+}
+
+export interface RedeSinaisUnidade {
+  cancelamento_solicitado: number | null
+  sinais: RedeSinal[]
+  acesos: number
+}
+
+export interface RedeMudanca {
+  tipo: string
+  unidade_id: string
+  nome: string
+  tom: 'neg' | 'pos' | 'neutro'
+  texto: string
+  competencia: string | null
+  /** severidade/faixa: de onde para onde */
+  de?: string
+  para?: string
+  /** alerta_novo: título do alerta */
+  alerta?: string
+  /** severidade: alertas de agora (piorou) ou os que sumiram (melhorou) */
+  motivos?: string[]
+}
+
+export interface RedeConcorrenteNovo {
+  nome: string | null
+  rede: string | null
+  fonte: string
+  primeira_semana: string
+  distancia_m: number | null
+}
+
+export interface RedeInteligencia {
+  competencia: string | null
+  quadrante: {
+    pontos: RedeQuadrantePonto[]
+    corte_praca: number | null
+    corte_desempenho: number | null
+    contagem: Record<RedeQuadranteChave, number>
+    n: number
+    somente_maduras: boolean
+    meses_madura: number
+    rotulos: Record<RedeQuadranteChave, string>
+    explicacao: Record<RedeQuadranteChave, string>
+  }
+  rampa: { curva: RedeRampaPonto[]; unidades: RedeRampaUnidade[]; janela: [number, number] }
+  sinais: {
+    unidades: ({ id: string; nome: string } & RedeSinaisUnidade)[]
+    avaliadas: number
+    definicoes: Record<string, { rotulo: string; detalhe: string; pior: 'alto' | 'baixo' }>
+  }
+  retencao: {
+    data_artefato: string | null
+    cobertas: number
+    /** unidades com leitura do modelo, mas em que ele se declara instável/descalibrado */
+    fora_do_modelo: number
+    no_recorte: number
+    unidades: ({ id: string; nome: string } & RedeRetencao)[]
+  }
+  concorrencia_nova: {
+    disponivel: boolean
+    semanas_na_serie: number
+    ultima_semana: string | null
+    unidades_afetadas: number
+  }
+  canibalizacao: { id: string; nome: string; vizinha: string | null; distancia_m: number | null }[]
+  mudancas: RedeMudanca[]
+  fontes_oferta: string[]
+  notas: string[]
+}
+
+export interface RedeMapaConcorrente {
+  lat: number
+  lng: number
+  nome: string | null
+  rede: string | null
+  classe: string
+  distancia_m: number | null
+  nota_wellhub: number | null
+  avaliacoes: number | null
+  /** score de vulnerabilidade de M&A (0–100); só independentes têm (DEC-035) */
+  vulnerabilidade: number | null
+  /** plano do TotalPass exigido para frequentar (posicionamento, não ticket de balcão) */
+  plano?: string | null
+  preco_plano?: number | null
+  /** plano do Wellhub (tier) que dá acesso — outra régua, não se compara com o TotalPass */
+  plano_wellhub?: string | null
+  preco_plano_wellhub?: number | null
+  /** estúdio boutique (DEC-056): desenhado no mapa, fora das contas de concorrência */
+  estudio?: boolean
+}
+
+export interface RedePlanosEntorno {
+  disponivel: boolean
+  data_coleta?: string | null
+  sem_coordenada?: boolean
+  ultra?: { nome: string; plano: string; preco: number | null } | null
+  academias?: { nome: string; plano: string; preco: number | null; distancia_m: number | null; musculacao: boolean }[]
+  distribuicao?: { plano: string; preco: number | null; n: number }[]
+  total?: number
+  mais_baratas?: number | null
+  mesmo_nivel?: number | null
+  mais_caras?: number | null
+  mediana_preco?: number | null
+  /** média simples do preço do plano entre as concorrentes com preço (sem estúdios) */
+  media_preco?: number | null
+  n_com_preco?: number
+}
+
+export interface RedeUnidadeMapa {
+  lat: number
+  lng: number
+  raio_m: number
+  concorrentes: RedeMapaConcorrente[]
+  ultra: { lat: number; lng: number; nome: string; distancia_m: number | null }[]
+  /** uma logo por rede (data URI), não por pino */
+  logos: Record<string, string>
+  icone_ultra: string | null
+}
+
+export interface RedeFaixaCamada {
+  /** teto da faixa; `null` = última faixa, aberta */
+  ate: number | null
+  rotulo: string
+  cor: number[]
+}
+
+export type RedeCamadaSetor = 'renda_domiciliar' | 'densidade'
+
+export interface RedeSetoresEntorno {
+  disponivel: boolean
+  setores: { anel: number[][][]; renda_domiciliar: number | null; densidade: number | null }[]
+  faixas: Record<RedeCamadaSetor, RedeFaixaCamada[]>
+}
+
+export interface RedeUnidadeInteligencia {
+  mapa: RedeUnidadeMapa | null
+  planos: RedePlanosEntorno
+  planos_wellhub?: RedePlanosEntorno
+  unidade_id: string
+  competencia: string | null
+  territorio: RedeTerritorio | null
+  quadrante: {
+    ponto: RedeQuadrantePonto | null
+    corte_praca: number | null
+    corte_desempenho: number | null
+    n: number
+    meses_madura: number
+    explicacao: Record<RedeQuadranteChave, string>
+  }
+  retencao: ({ data_artefato: string | null } & Partial<RedeRetencao>)
+  rampa: {
+    faturamento: { curva: RedeRampaPonto[]; unidade: { mes: number; valor: number | null; competencia: string }[] }
+    ativos: { curva: RedeRampaPonto[]; unidade: { mes: number; valor: number | null; competencia: string }[] }
+    pagantes: { curva: RedeRampaPonto[]; unidade: { mes: number; valor: number | null; competencia: string }[] }
+    agregadores: { curva: RedeRampaPonto[]; unidade: { mes: number; valor: number | null; competencia: string }[] }
+    posicao: RedeRampaUnidade | null
+  }
+  sinais: RedeSinaisUnidade | null
+  agregadores: { wellhub: number | null; totalpass: number | null } | null
+  concorrencia_nova: {
+    disponivel: boolean
+    semanas_na_serie: number
+    ultima_semana: string | null
+    itens: RedeConcorrenteNovo[]
+  }
+  notas: string[]
+}
+
 /** Query da carteira. Tudo opcional: sem filtro nenhum, vem a rede do Brasil inteiro. */
 export interface RedeQuery {
   /** competência (AAAA-MM). Continua aceita: é o que mantém os links antigos e o
@@ -1341,6 +1607,8 @@ export interface RedeQuery {
   busca?: string
   ordenar?: string
   direcao?: 'asc' | 'desc'
+  /** só na inteligência: `'false'` inclui as unidades não maduras no quadrante */
+  maduras?: string
 }
 
 /* ------------------------------------------------------------------------- *

@@ -685,7 +685,7 @@ def _pagina_de_graficos_da_rede(
 
 
 def _pagina_de_graficos_da_ficha(pdf: UltraPDF, payload: Mapping[str, Any]) -> None:
-    """Serie de 12 meses, base de alunos, funil, NPS contra a meta e a coorte."""
+    """Serie de 13 meses, base de alunos, funil, NPS contra a meta e a coorte."""
     unidade = payload.get("unidade", {})
     serie = payload.get("serie") or {}
     meses = [_mes_curto(m) for m in (serie.get("meses") or [])]
@@ -700,7 +700,7 @@ def _pagina_de_graficos_da_ficha(pdf: UltraPDF, payload: Mapping[str, Any]) -> N
         rgb=ULTRA_MAGENTA,
     )
 
-    titulo_de_grafico(pdf, 36, 76, "Faturamento nos 12 meses fechados")
+    titulo_de_grafico(pdf, 36, 76, "Faturamento nos 13 meses fechados")
     barras(pdf, 36, 118, 430, 108, meses, serie.get("faturamento") or [], formatar=_brl_da_barra)
 
     titulo_de_grafico(pdf, 520, 76, "Alunos ativos")
@@ -783,7 +783,14 @@ def _pagina_de_graficos_da_ficha(pdf: UltraPDF, payload: Mapping[str, Any]) -> N
         f"Meta oficial {meta:.0f}. O alerta só dispara bem abaixo dela: meta não é alerta.",
         largura=PAGINA_LARGURA - 556,
     )
-    barra_de_meta(pdf, 520, 316, PAGINA_LARGURA - 556, valor=nps, meta=meta)
+    # Regua ABSOLUTA de 0 a 100, a mesma da tela: com minimo em -100 a escala comprimia tudo
+    # (NPS -21 preenchia 40% e NPS 40 preenchia 70%). NPS negativo ganha o marcador vermelho.
+    # Semaforo igual ao da tela: vermelho com NPS 40 ou abaixo, amarelo ate 59, verde na meta.
+    limiar_nps = float(((payload.get("reguas") or {}).get("nps") or {}).get("limiar") or 40)
+    barra_de_meta(
+        pdf, 520, 316, PAGINA_LARGURA - 556,
+        valor=nps, meta=meta, minimo=0.0, maximo=100.0, limiar_alerta=limiar_nps,
+    )
     pdf.set_text_color(*CINZA_TEXTO)
     pdf.set_font("Helvetica", "B", 15)
     pdf.set_xy(520, 332)
