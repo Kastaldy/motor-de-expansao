@@ -639,10 +639,16 @@ def dedup_cadeias_do_feed(
     dividindo prédio.
 
     **TRAVA DE MUNICÍPIO** (`municipio_por_hex`, opt-in — `None`, o default, é o comportamento de
-    hoje byte a byte). Com o mapa `hex_id_res7 -> município`, uma TERCEIRA passagem colapsa
-    `mesma rede + nome que casa + MESMO MUNICÍPIO`, **sem teto de distância**. Ela é
-    estritamente ADITIVA: nenhum colapso de hoje deixa de acontecer, e o município nunca
-    RECUSA um par que o critério atual aceita.
+    hoje byte a byte). Com o mapa `hex_id_res7 -> código do município`, uma TERCEIRA passagem
+    colapsa `mesma rede + nome que casa + MESMO MUNICÍPIO`, **sem teto de distância**. Ela é
+    ADITIVA no insumo de hoje (a ressalva do caso geral, que vale para as quatro passagens, está no
+    parágrafo do RAIO AMPLIADO), e o município nunca RECUSA um par que o critério atual aceita.
+
+    O VALOR do mapa tem de identificar o município sem ambiguidade — o **código IBGE**, não o nome.
+    **232 nomes de município existem em mais de uma UF** (medido em 2026-09-15), e com o nome como
+    valor dois homônimos de estados diferentes cairiam no mesmo balde `(rede, município)`: seria o
+    `ITABAIANA` abaixo entrando pela porta da própria trava. O chamador de produção
+    (`alvos_ma.resolver_regua_dedup_cadeias`) monta o mapa com `cod_municipio`.
 
     Por que o teto tinha de cair, medido em 2026-09-11 sobre a semana `2026-33`: rodando
     `mesma_unidade` entre o feed e o cadastro dentro da mesma rede, sobram **98 pares** que são a
@@ -1110,13 +1116,16 @@ def calcular_pressao_por_academia(
     medida está nas tabelas de `DEDUP_CADEIA_FEED_M` e `DEDUP_INDEPENDENTES_NOME_M`:
 
       - `dedup_cadeia_feed_m` (default `150`): raio do casamento por rede contra o insumo mapeado.
-        Subi-lo para `300` colapsa 58 pontos a mais e **não reduz duplicata** — a residual já é
-        zero, quem a zerou foi o nome. Mexer aqui muda `pressao_competitiva` -> DEC + bump.
+        Subi-lo para `300` alcança os mesmos 58 pontos que o raio ampliado, mas SEM as guardas —
+        que barram 4 deles (3 por ordinal, 1 por ambiguidade) e escolhem o representante pelo nome,
+        não pela distância (DEC-061). O caminho para eles é `dedup_cadeia_feed_raio_ampliado_m`, não
+        este. Mexer aqui muda `pressao_competitiva` -> DEC + bump.
       - `dedup_independentes_nome_m` (default `None` = desligado): liga a passagem por NOME entre
         independentes da MESMA fonte, a única que alcança a duplicata que sobra hoje (com só o
         WellHub no ar, a guarda de fonte zera a dedup de independentes inteira).
       - `dedup_cadeia_feed_municipio_por_hex` (default `None` = desligado): mapa
-        `hex_id_res7 -> município` que liga a TRAVA DE MUNICÍPIO na dedup de cadeias — mesma rede
+        `hex_id_res7 -> código do município` (IBGE; o nome não serve, há 232 homônimos entre UFs) que
+        liga a TRAVA DE MUNICÍPIO na dedup de cadeias — mesma rede
         + nome que casa + mesmo município colapsam SEM teto de distância. É o único caminho que
         alcança as **84 duplicatas** medidas em 2026-09-11, todas acima dos 1.200 m do teto. O
         mapa entra por parâmetro, e não por leitura de arquivo aqui dentro, para a função

@@ -47,7 +47,7 @@ from datetime import date
 VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v4"
 VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
-VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v7"
+VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v8"  # v8: DEC-061
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
 H3_RES_CONTRATO = 7
@@ -460,7 +460,7 @@ CONTRATO_COLUNAS_SCORE: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Sinal 6 — pressão competitiva com decaimento por distância (BLK-MA-12)
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v4"
+VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v5"  # v5: DEC-061
 
 # Raio de TRUNCAMENTO, não de alcance: quem define o alcance efetivo é a forma do kernel. 2.000 m
 # é o mesmo do `pressao_concorrencial_score_2km` da camada de mercado — manter o número igual é o
@@ -674,9 +674,12 @@ DEDUP_CADEIA_FEED_COLUNA_NOME_MAPEADO = "nome_unidade"
 # academia REAL, que e' o falso zero que a DEC-033 existe para matar. Por isso as tres guardas:
 #
 #   - **VETO DE ORDINAL** (`identidade.ordinal_da_unidade`): ordinais diferentes = unidades
-#     diferentes, por mais parecido que seja o resto. Derruba **3 dos 58**, os tres certos --
-#     `Corpo e Saude - Guara QE 56` x `Corpo e Saude - Guara II QE 56`, `Pratique Criciuma 2` x
-#     `CENTRO CRICIUMA`, `CONTORNO DO CORPO - CASTELO 3` x `CASTELO-II`.
+#     diferentes, por mais parecido que seja o resto. Derruba **3 dos 58**: dois certos --
+#     `Pratique Criciuma 2` x `CENTRO CRICIUMA` e `CONTORNO DO CORPO - CASTELO 3` x `CASTELO-II` --
+#     e UM ERRADO: `Corpo e Saude - Guara QE 56` x `Corpo e Saude - Guara II QE 56` e' a MESMA
+#     academia, porque `Guara II` e' regiao administrativa do DF e nao a segunda unidade. E' a causa
+#     (c) do BLK-MA-17-FU5 (ordinal que e' TOPONIMO), medida em 2026-08-19; a duplicata segue
+#     aberta, e separar os dois papeis do token exige outra regua.
 #   - **DESEMPATE POR NOME, e nao por distancia** -- o achado decisivo. `BlueFit 24h - Frei Caneca`
 #     tem DOIS candidatos a <= 300 m, porque o cadastro tem `Frei Caneca` e `Consolacao` a 269 m um
 #     do outro. Pelo mais PROXIMO ele casaria com o `Consolacao` (171 m), que e' errado; ordenando
@@ -769,7 +772,7 @@ CONTRATO_COLUNAS_PRESSAO: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Lista priorizada de alvos de M&A (D5/D6) — BLK-MA-05
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v4"
+VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v5"  # v5: DEC-061
 
 # Gate D5 (ratificado em 2026-07-23; reabrir exige DEC). A INVERSÃO do §2 mora aqui: comprar quer
 # demanda ALTA + residual BAIXO, o OPOSTO de `abrir_agora`.
@@ -865,7 +868,7 @@ CONTRATO_COLUNAS_ALVOS_MA: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Variante NOMEADA (D1-B) — BLK-MA-15
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v5"
+VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v6"  # v6: DEC-061
 
 # O UNICO contrato desta camada que carrega IDENTIDADE e COORDENADA, autorizado pela emenda de
 # 2026-08-14 a DEC-028 (decidida por Vinicius). Grao: uma linha por academia.
@@ -929,7 +932,7 @@ CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
 # no mesmo dia e o score leria um evento de negociacao como 440 alvos. O S6 nao tem esse defeito: e'
 # geografico e nao sabe se a academia e' de rede. Molde do G-D2 e da DEC-026 — o fato entra antes do
 # peso.
-VERSAO_CONTRATO_REDES_NOMEADAS = "redes_ma_nomeadas_v2"
+VERSAO_CONTRATO_REDES_NOMEADAS = "redes_ma_nomeadas_v3"  # v3: DEC-061
 
 CONTRATO_COLUNAS_REDES_NOMEADAS: dict[str, str] = {
     "fonte": "string",
