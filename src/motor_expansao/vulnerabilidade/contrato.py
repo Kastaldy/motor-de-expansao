@@ -47,7 +47,7 @@ from datetime import date
 VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v4"
 VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
-VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v7"
+VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v8"  # v8: DEC-061
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
 H3_RES_CONTRATO = 7
@@ -460,7 +460,7 @@ CONTRATO_COLUNAS_SCORE: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Sinal 6 — pressão competitiva com decaimento por distância (BLK-MA-12)
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v4"
+VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v5"  # v5: DEC-061
 
 # Raio de TRUNCAMENTO, não de alcance: quem define o alcance efetivo é a forma do kernel. 2.000 m
 # é o mesmo do `pressao_concorrencial_score_2km` da camada de mercado — manter o número igual é o
@@ -540,6 +540,28 @@ PESO_OFERTA_INDEPENDENTE = 0.5
 # como "Academia X" num feed e "X Fitness" no outro.
 DEDUP_INDEPENDENTES_M = 50.0
 
+# `[dedup por nome, 2026-09-10]` Alcance da passagem por NOME entre independentes da MESMA fonte.
+#
+# **O que ela abre, e por que o raio sozinho nao abre.** `dedup_independentes` so' colapsa entre
+# fontes DIFERENTES, e nesta estacao so' ha' WellHub -- logo NENHUMA das 19.329 independentes e'
+# deduplicada hoje. Medido em 2026-09-10 sobre a semana `2026-33`, contando os pares de
+# independentes a uma dada distancia e quantos deles sao de fato o MESMO estabelecimento (nome
+# identico normalizado OU `mesma_unidade`):
+#
+#   | raio  | pares proximos | mesmo estabelecimento | academias DISTINTAS que um raio PURO apagaria |
+#   |-------|----------------|-----------------------|-----------------------------------------------|
+#   |  50 m |   543          |  64 (11,79%)          |   479                                         |
+#   | 150 m | 1.878          |  70 ( 3,73%)          | 1.808                                         |
+#   | 300 m | 5.239          |  81 ( 1,55%)          | 5.158                                         |
+#
+# A leitura e' inequivoca: **subir o raio piora**. A 300 m, 98,45% dos pares proximos sao academias
+# distintas -- e apagar concorrente real e' a direcao exata do falso zero que a DEC-033 existe para
+# matar. Quem separa os dois casos e' o NOME, e o ganho dele nao depende de raio grande: 64 dos 81
+# pares ja' estao a menos de 50 m.
+#
+# O default e' `None` = comportamento de HOJE, byte a byte (nenhuma dedup dentro da mesma fonte).
+DEDUP_INDEPENDENTES_NOME_M = 150.0
+
 # Resolução H3 do bucket espacial da dedup (aresta ~29 m). Serve só para não comparar todos os
 # pares (19.329² = 373 M): o candidato é buscado na própria célula + um `grid_disk` de raio
 # DERIVADO do limiar, e a distância real decide. É detalhe de PERFORMANCE, não de contrato —
@@ -589,8 +611,96 @@ DEDUP_K_MARGEM_ANEIS = 1
 # O critério final — `(rede igual E d <= 150 m) OU (d <= 50 m)` — é estritamente mais conservador
 # que qualquer das duas variantes isoladas: a escolha NÃO é cosmética, e a coluna do meio da tabela
 # (a variante SEM o piso) é a que o handoff do Planner citou como `1.179`.
+# [2026-09-10] Este raio foi REMEDIDO com a regua de hoje (que ja' inclui o casamento por
+# nome). A tabela nova esta logo abaixo, junto de DEDUP_CADEIA_FEED_COLUNA_NOME_MAPEADO --
+# leia ELA antes de mexer aqui: a tabela de 2026-08-15 acima e' de uma regua SEM nome e
+# sugere um ganho a 300 m que a remedicao nao confirma.
 DEDUP_CADEIA_FEED_M = 150.0
 DEDUP_CADEIA_FEED_PISO_M = 50.0
+
+# `[medicao de 2026-09-10]` SENSIBILIDADE do raio, REMEDIDA sobre o caminho de producao.
+#
+# A tabela acima (2026-08-15) foi levantada com dedup por DISTANCIA apenas -- o casamento por NOME
+# (BLK-MA-17-FU4) ainda nao existia. Com ele ligado, que e' o que roda hoje (`_pontos_validos_frame`
+# mapeia `nome_unidade` -> `nome` antes de chamar a dedup), o ponto de partida mudou e a pergunta
+# "e se o raio fosse 300 m?" tem outra resposta. Semana `2026-33`, 2.844 unidades de rede contra
+# 4.366 pontos validos:
+#
+#   | criterio                                   | entram na oferta | duplicatas RESIDUAIS |
+#   |--------------------------------------------|------------------|----------------------|
+#   | 150 m + rede | piso 50 | nome OFF (2026-08) |  1.171           | 320                  |
+#   | **HOJE** 150 m + rede | piso 50 | nome ON   | **851**          | **0**                |
+#   | 300 m PURO (qualquer rede)                  |    834           | 126                  |
+#   | 300 m + rede | piso 50 | nome OFF           |    938           | 145                  |
+#   | 300 m + rede | piso 50 | nome ON            |    793           | 0                    |
+#
+# `duplicata RESIDUAL` = sobrevivente do feed que ainda tem, a <= 1.200 m, um ponto mapeado da
+# MESMA rede cujo nome `mesma_unidade` casa. **Hoje ela ja' e' ZERO**: quem a zerou foi o nome, nao
+# o raio, e nenhum raio a reduz abaixo de zero. Subir para 300 m nao corrige duplicata -- ele
+# colapsa 58 pontos A MAIS, e o nome RECUSA os 58 (chegam pela regra de distancia, nao pela de
+# identidade). Inspecao manual dos 58, feita uma a uma: ~46 sao a MESMA unidade (falso negativo do
+# Jaccard -- `Bodytech - Vila Romana Shopping` x `Bodytech Villa Romana Shopping` a 190,9 m), ~4 sao
+# academias DISTINTAS que seriam apagadas (`Selfit - Tamarineira` x `CASA-AMARELA` a 235,5 m;
+# `CONTORNO DO CORPO - CASTELO 3` x `CASTELO-II` a 281,3 m) e ~8 sao indeterminaveis pelo nome.
+#
+# E a variante de 300 m PURO e' a pior de todas: dos 143 colapsos extras, **91 sao contra outra
+# rede** -- `Force One - Joao Colin` colapsando contra `Smart Fit Saguacu` a 51,8 m. E' o falso zero
+# que a DEC-033 existe para matar, e por isso ela nao esta' na mesa.
+DEDUP_CADEIA_FEED_COLUNA_NOME_MAPEADO = "nome_unidade"
+
+# `[raio ampliado, 2026-09-14]` Alcance da QUARTA passagem da dedup de cadeias: mesma rede, DENTRO
+# do raio, com o NOME entrando como VETO e como DESEMPATADOR -- nunca como exigencia.
+#
+# **O buraco, medido sobre as 851 SOBREVIVENTES da regua de hoje (semana `2026-33`).** Cruzando-as
+# contra `concorrentes_mapeados`, **58** tem um ponto da MESMA rede a <= 300 m e mesmo assim nao
+# colapsam -- sao exatamente os `851 - 793` da linha `300 m + rede | piso 50 | nome ON` da tabela
+# acima. Estao TODAS na faixa 150-300 m (abaixo de 150 a passagem por DISTANCIA ja' pegou) e em
+# NENHUMA delas o `mesma_unidade` casa: as duas fontes escrevem o nome de formas que o matcher nao
+# concilia.
+#
+#     `CT Greenlife`                 x `CT-GREENLIFE`               286 m   Fortaleza
+#     `PowerFit - Industriario`      x `POWER FIT INDUSTRIARIO`      251 m
+#     `Premium Academia`             x `Academia Premium`            249 m
+#     `Marrafit - Parque Cecap`      x `Marra Fit - Unidade Cecap`   187 m
+#     `Evoque Academia Campo Grande` x `2939`                        181 m   (cadastro nomeia por NUMERO)
+#
+# Exigir que o nome CASE mataria as 58 -- e' essa a diferenca desta passagem para a de
+# `mesma_unidade`, e nao o raio.
+#
+# **Raio puro NAO serve, e o custo esta medido no mesmo dado:** dentro do proprio cadastro ha' **33
+# pares da mesma rede entre 150 e 300 m que sao unidades REAIS distintas** (`Bodytech Leblon - Gal
+# Urquiza` x `Bodytech Leblon - Ataulfo 1100` a 259 m; `Smart Fit Club Homs` x `Paulista` a 162 m;
+# `selfit BAIRRO-DE-FATIMA` x `BAIRRO-DE-FATIMA-II` a 275 m). Um raio de 300 m sem guarda funde
+# academia REAL, que e' o falso zero que a DEC-033 existe para matar. Por isso as tres guardas:
+#
+#   - **VETO DE ORDINAL** (`identidade.ordinal_da_unidade`): ordinais diferentes = unidades
+#     diferentes, por mais parecido que seja o resto. Derruba **3 dos 58**: dois certos --
+#     `Pratique Criciuma 2` x `CENTRO CRICIUMA` e `CONTORNO DO CORPO - CASTELO 3` x `CASTELO-II` --
+#     e UM ERRADO: `Corpo e Saude - Guara QE 56` x `Corpo e Saude - Guara II QE 56` e' a MESMA
+#     academia, porque `Guara II` e' regiao administrativa do DF e nao a segunda unidade. E' a causa
+#     (c) do BLK-MA-17-FU5 (ordinal que e' TOPONIMO), medida em 2026-08-19; a duplicata segue
+#     aberta, e separar os dois papeis do token exige outra regua.
+#   - **DESEMPATE POR NOME, e nao por distancia** -- o achado decisivo. `BlueFit 24h - Frei Caneca`
+#     tem DOIS candidatos a <= 300 m, porque o cadastro tem `Frei Caneca` e `Consolacao` a 269 m um
+#     do outro. Pelo mais PROXIMO ele casaria com o `Consolacao` (171 m), que e' errado; ordenando
+#     por `similaridade_nome` DECRESCENTE e so' depois por distancia, casa com o `Frei Caneca`
+#     (223 m), que e' o certo. Ordenar por distancia primeiro produz falso positivo SILENCIOSO.
+#   - **VETO DE AMBIGUIDADE**: mais de um candidato viavel e o melhor com `similaridade_nome` de
+#     `0,0` significa que nao ha' nome para desempatar -- escolher ali seria escolher por distancia,
+#     que e' justamente o modo de falha acima. Derruba **1 dos 58** (`Contorno do Corpo Centro` x
+#     `CENTRO`, 2 candidatos). Falso negativo conservador, de proposito.
+#
+# **Resultado da regua composta: 58 -> 54 colapsos** (as sobreviventes vao de 851 para 797, contra
+# as 793 do raio de 300 m cru).
+#
+# CUSTO RESIDUAL, declarado porque foi medido: candidato UNICO com similaridade `0,0` colapsa -- o
+# veto de ambiguidade so' dispara com mais de um. E' o regime em que cai `Selfit - Tamarineira` x
+# `CASA-AMARELA` (235,5 m), um dos ~4 pares DISTINTOS da inspecao manual dos 58. Aceito porque ~46
+# dos 58 sao a MESMA unidade: fechar esse regime zeraria o ganho inteiro para salvar um punhado.
+#
+# Default `None` = DESLIGADO em `dedup_cadeias_do_feed`: nenhuma rodada muda de regua sem o
+# chamador pedir, e mexer aqui muda `pressao_competitiva` -> DEC + bump de serie.
+DEDUP_CADEIA_FEED_RAIO_AMPLIADO_M = 300.0
 
 # Frame de pressão POR ACADEMIA: 15 colunas, nesta ORDEM. É o insumo do `v6` desde o BLK-MA-14.
 #
@@ -662,7 +772,7 @@ CONTRATO_COLUNAS_PRESSAO: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Lista priorizada de alvos de M&A (D5/D6) — BLK-MA-05
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v4"
+VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v5"  # v5: DEC-061
 
 # Gate D5 (ratificado em 2026-07-23; reabrir exige DEC). A INVERSÃO do §2 mora aqui: comprar quer
 # demanda ALTA + residual BAIXO, o OPOSTO de `abrir_agora`.
@@ -758,7 +868,7 @@ CONTRATO_COLUNAS_ALVOS_MA: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Variante NOMEADA (D1-B) — BLK-MA-15
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v5"
+VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v6"  # v6: DEC-061
 
 # O UNICO contrato desta camada que carrega IDENTIDADE e COORDENADA, autorizado pela emenda de
 # 2026-08-14 a DEC-028 (decidida por Vinicius). Grao: uma linha por academia.
@@ -822,7 +932,7 @@ CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
 # no mesmo dia e o score leria um evento de negociacao como 440 alvos. O S6 nao tem esse defeito: e'
 # geografico e nao sabe se a academia e' de rede. Molde do G-D2 e da DEC-026 — o fato entra antes do
 # peso.
-VERSAO_CONTRATO_REDES_NOMEADAS = "redes_ma_nomeadas_v2"
+VERSAO_CONTRATO_REDES_NOMEADAS = "redes_ma_nomeadas_v3"  # v3: DEC-061
 
 CONTRATO_COLUNAS_REDES_NOMEADAS: dict[str, str] = {
     "fonte": "string",
@@ -1184,12 +1294,15 @@ __all__ = [
     "UNIVERSO_OFERTA_COM_INDEPENDENTES",
     "PESO_OFERTA_CADEIA",
     "PESO_OFERTA_INDEPENDENTE",
+    "DEDUP_CADEIA_FEED_COLUNA_NOME_MAPEADO",
     "DEDUP_INDEPENDENTES_M",
+    "DEDUP_INDEPENDENTES_NOME_M",
     "DEDUP_H3_RES",
     "DEDUP_NOME_H3_RES",
     "DEDUP_K_MARGEM_ANEIS",
     "DEDUP_CADEIA_FEED_M",
     "DEDUP_CADEIA_FEED_PISO_M",
+    "DEDUP_CADEIA_FEED_RAIO_AMPLIADO_M",
     "VERSAO_CONTRATO_ALVOS_MA",
     "QUANTIL_SAM_QUENTE",
     "LIMIAR_RESIDUAL_SATURADO",

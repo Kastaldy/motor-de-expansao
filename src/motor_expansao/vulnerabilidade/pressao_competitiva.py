@@ -87,7 +87,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import NamedTuple
 
@@ -98,12 +98,14 @@ import pandas as pd
 from .contrato import (
     CONTRATO_COLUNAS_PRESSAO,
     CONTRATO_COLUNAS_PRESSAO_ACADEMIA,
+    DEDUP_CADEIA_FEED_COLUNA_NOME_MAPEADO,
     DEDUP_CADEIA_FEED_M,
     DEDUP_CADEIA_FEED_PISO_M,
     DEDUP_H3_RES,
     DEDUP_INDEPENDENTES_M,
     DEDUP_K_MARGEM_ANEIS,
     DEDUP_NOME_H3_RES,
+    H3_RES_CONTRATO,
     KERNEIS_PRESSAO,
     PESO_OFERTA_CADEIA,
     PESO_OFERTA_INDEPENDENTE,
@@ -116,7 +118,13 @@ from .contrato import (
     UNIVERSOS_OFERTA,
     VERSAO_CONTRATO_PRESSAO,
 )
-from .identidade import DIST_MAX_MESMO_NOME_M, mesma_unidade
+from .identidade import (
+    DIST_MAX_MESMO_NOME_M,
+    mesma_unidade,
+    mesmo_estabelecimento,
+    ordinal_da_unidade,
+    similaridade_nome,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -223,8 +231,8 @@ def _pontos_validos_frame(concorrentes: pd.DataFrame) -> pd.DataFrame:
     # `nome` (BLK-MA-17-FU4): a dedup por distancia pura deixava passar 407 duplicatas entre 150 m
     # e 1 km -- a mesma academia geocodificada diferente pelas duas fontes. Quem as separa de uma
     # academia irma de verdade e' o NOME, e para compara-lo ele precisa chegar ate' aqui.
-    if "nome_unidade" in pontos.columns:
-        nome = pontos["nome_unidade"].astype("string").to_numpy()
+    if DEDUP_CADEIA_FEED_COLUNA_NOME_MAPEADO in pontos.columns:
+        nome = pontos[DEDUP_CADEIA_FEED_COLUNA_NOME_MAPEADO].astype("string").to_numpy()
     elif "nome" in pontos.columns:
         nome = pontos["nome"].astype("string").to_numpy()
     else:
@@ -424,7 +432,10 @@ def _saturar(oferta: np.ndarray) -> np.ndarray:
 
 
 def dedup_independentes(
-    independentes: pd.DataFrame, *, distancia_m: float = DEDUP_INDEPENDENTES_M
+    independentes: pd.DataFrame,
+    *,
+    distancia_m: float = DEDUP_INDEPENDENTES_M,
+    nome_mesma_fonte_m: float | None = None,
 ) -> tuple[pd.DataFrame, dict[tuple[str, str], int]]:
     """Colapsa a MESMA academia listada em fontes diferentes. Devolve `(pontos, posicao_por_chave)`.
 
@@ -446,8 +457,33 @@ def dedup_independentes(
     O segundo elemento do retorno mapeia **toda** chave de entrada (inclusive as colapsadas) para a
     posição do seu representante no frame devolvido. É ele que permite ao chamador excluir a
     própria academia da própria oferta mesmo quando ela foi a linha absorvida.
+
+    `nome_mesma_fonte_m` **abre a única porta que o critério acima fecha**, e por isso é opt-in
+    explícito: `None` (o default) reproduz o comportamento de hoje byte a byte. Com um número, uma
+    SEGUNDA passagem colapsa duas independentes da **MESMA fonte** dentro daquele raio **se, e só
+    se, o nome disser que são o mesmo estabelecimento** (`mesma_unidade`, ou nome normalizado
+    idêntico) — exige a coluna `nome`, e sem ela a passagem simplesmente não roda.
+
+    Por que ela precisa do nome e não do raio: nesta estação só há WellHub, então a guarda de fonte
+    zera a dedup inteira, e **nenhuma** das 19.329 independentes é deduplicada. Mas o raio sozinho
+    não substitui a guarda — a 300 m há 5.239 pares de independentes próximas e apenas **81 (1,55%)**
+    são o mesmo estabelecimento. Ver a tabela em `DEDUP_INDEPENDENTES_NOME_M` (`contrato.py`).
     """
     colunas = ["fonte", "chave_snapshot", "lat", "lng"]
+    # `nome` e' OPCIONAL, mesmo molde de `dedup_cadeias_do_feed`: sem ele a passagem por nome nao
+    # roda e nenhum chamador antigo quebra.
+    # O raio e' amarrado UMA vez, num `float | None`, e todo estreitamento passa por ele.
+    # Guardar por um bool paralelo (`usa_nome`) e' invisivel para o verificador de tipos: ele
+    # nao liga o bool ao Optional, e cada `float(nome_mesma_fonte_m)` vira erro de tipo --
+    # com `mypy src/` sendo gate BLOQUEANTE do CI, isso reprovaria o PR.
+    raio_nome: float | None = (
+        float(nome_mesma_fonte_m)
+        if nome_mesma_fonte_m is not None and "nome" in independentes.columns
+        else None
+    )
+    usa_nome = raio_nome is not None
+    if usa_nome:
+        colunas = [*colunas, "nome"]
     faltando = [c for c in colunas if c not in independentes.columns]
     if faltando:
         raise ValueError(f"frame de independentes sem coluna(s) obrigatoria(s): {faltando}")
@@ -467,6 +503,11 @@ def dedup_independentes(
 
     fontes = base["fonte"].astype(str).to_numpy()
     chaves = base["chave_snapshot"].astype(str).to_numpy()
+    nomes = (
+        base["nome"].astype("string").fillna("").astype(str).to_numpy()
+        if usa_nome
+        else np.full(len(base), "", dtype=object)
+    )
     lat = base["lat"].to_numpy(dtype="float64")
     lng = base["lng"].to_numpy(dtype="float64")
     celulas = [
@@ -481,11 +522,16 @@ def dedup_independentes(
     # "nenhum colapso", que é exatamente o que uma dedup correta devolve quando não há
     # duplicata, e o defeito só aparece contra varredura completa (`test_equivalencia`).
     k = _k_do_bucket(distancia_m)
+    # A passagem por nome tem alcance PROPRIO e maior, entao precisa do proprio anel: reusar o `k`
+    # da distancia deixaria de deduplicar EM SILENCIO fora dele -- o mesmo modo de falha que o
+    # `DEDUP_K_MARGEM_ANEIS` existe para evitar.
+    k_nome = _k_do_bucket(raio_nome) if raio_nome is not None else k
     ocupantes: dict[str, list[int]] = {}
     mantidos: list[int] = []
     pos_de: dict[int, int] = {}
     posicao_por_chave: dict[tuple[str, str], int] = {}
     colapsadas = 0
+    colapsadas_por_nome = 0
 
     for i in range(len(base)):
         representante: int | None = None
@@ -504,6 +550,32 @@ def dedup_independentes(
             if representante is not None:
                 break
 
+        # PASSAGEM POR NOME, dentro da MESMA fonte (opt-in). Ela e' a unica que alcanca a duplicata
+        # real desta estacao: com so' o WellHub no ar, a guarda de fonte acima zera a dedup inteira.
+        # O criterio e' o nome, NAO o raio -- a 300 m, 98,45% dos pares de independentes proximas
+        # sao academias distintas (tabela em `DEDUP_INDEPENDENTES_NOME_M`).
+        if representante is None and raio_nome is not None and nomes[i]:
+            melhor_n = float("inf")
+            for vizinha in h3.grid_disk(celulas[i], k_nome):
+                for j in ocupantes.get(vizinha, ()):
+                    if fontes[j] != fontes[i] or not nomes[j]:
+                        continue
+                    d = float(
+                        _haversine_m(
+                            np.array([lat[i]]),
+                            np.array([lng[i]]),
+                            np.array([lat[j]]),
+                            np.array([lng[j]]),
+                        )[0]
+                    )
+                    if d > raio_nome or d >= melhor_n:
+                        continue
+                    if mesmo_estabelecimento(nomes[i], nomes[j]):
+                        melhor_n = d
+                        representante = j
+            if representante is not None:
+                colapsadas_por_nome += 1
+
         if representante is None:
             pos_de[i] = len(mantidos)
             mantidos.append(i)
@@ -513,14 +585,16 @@ def dedup_independentes(
             colapsadas += 1
         posicao_por_chave[(fontes[i], chaves[i])] = pos_de[i]
 
-    if colapsadas:
+    if colapsadas or colapsadas_por_nome:
         _logger.info(
-            "dedup de independentes entre fontes: %d linha(s) colapsada(s) de %d "
-            "(raio %.0f m; grid_disk k=%d)",
-            colapsadas,
+            "dedup de independentes: %d linha(s) colapsada(s) de %d entre FONTES por distancia "
+            "(raio %.0f m; grid_disk k=%d) e %d por NOME dentro da mesma fonte (ate' %s)",
+            colapsadas - colapsadas_por_nome,
             len(base),
             float(distancia_m),
             k,
+            colapsadas_por_nome,
+            "desligado" if raio_nome is None else f"{raio_nome:.0f} m",
         )
     return base.iloc[mantidos].reset_index(drop=True), posicao_por_chave
 
@@ -531,6 +605,8 @@ def dedup_cadeias_do_feed(
     *,
     distancia_m: float = DEDUP_CADEIA_FEED_M,
     piso_m: float = DEDUP_CADEIA_FEED_PISO_M,
+    municipio_por_hex: Mapping[str, str] | None = None,
+    raio_ampliado_m: float | None = None,
 ) -> tuple[pd.DataFrame, dict[tuple[str, str], int]]:
     """Colapsa a unidade de REDE do agregador contra o pin de cadeia do funil. Devolve
     `(sobreviventes, posicao_por_chave)`.
@@ -561,6 +637,71 @@ def dedup_cadeias_do_feed(
     posição do próprio observador. Colapsar dentro da MESMA fonte está proibido e foi medido: dos 5
     pares de cadeias a `<= 50 m`, os cinco são `wellhub x wellhub` e três são redes distintas
     dividindo prédio.
+
+    **TRAVA DE MUNICÍPIO** (`municipio_por_hex`, opt-in — `None`, o default, é o comportamento de
+    hoje byte a byte). Com o mapa `hex_id_res7 -> código do município`, uma TERCEIRA passagem
+    colapsa `mesma rede + nome que casa + MESMO MUNICÍPIO`, **sem teto de distância**. Ela é
+    ADITIVA no insumo de hoje (a ressalva do caso geral, que vale para as quatro passagens, está no
+    parágrafo do RAIO AMPLIADO), e o município nunca RECUSA um par que o critério atual aceita.
+
+    O VALOR do mapa tem de identificar o município sem ambiguidade — o **código IBGE**, não o nome.
+    **232 nomes de município existem em mais de uma UF** (medido em 2026-09-15), e com o nome como
+    valor dois homônimos de estados diferentes cairiam no mesmo balde `(rede, município)`: seria o
+    `ITABAIANA` abaixo entrando pela porta da própria trava. O chamador de produção
+    (`alvos_ma.resolver_regua_dedup_cadeias`) monta o mapa com `cod_municipio`.
+
+    Por que o teto tinha de cair, medido em 2026-09-11 sobre a semana `2026-33`: rodando
+    `mesma_unidade` entre o feed e o cadastro dentro da mesma rede, sobram **98 pares** que são a
+    mesma unidade e **84 deles estão no MESMO município** — todos os 84 **acima de 1.200 m** (72
+    entre 1,2 e 5 km, 12 acima de 5 km), nenhum abaixo. Não é o mundo sendo assim: é a régua de
+    hoje já ter colapsado tudo que cabia sob o próprio teto, e o resto ser divergência de
+    geocodificação grande demais (`Bodytech - Recreio Shopping` × `Bodytech Recreio Shopping` a
+    **11.373 m** no Rio; `Panobianco Vera Cruz` × `VERA CRUZ` a **21.152 m** em São Paulo).
+
+    E por que o município é OBRIGATÓRIO e não um detalhe: tirar o teto sem ele funde academias
+    REAIS. No mesmo dado, `Selfit Itabaiana` (Itabaiana/SE) casa o nome com `ITABAIANA` a
+    **1.740 km**, e `Panobianco Cianortinho` (Cianorte/PR) com `CIANORTINHO` a **2.642 km**. O
+    município é o que separa duplicata de homônimo — e é por isso que esta passagem tem índice
+    PRÓPRIO por `(rede, município)` em vez de anel de `grid_disk`: sem teto, bucket espacial
+    nenhum cobriria a busca, e ele deixaria de deduplicar **em silêncio**.
+
+    Município DESCONHECIDO de qualquer um dos lados (hex fora do mapa) **não** casa: a passagem
+    simplesmente não dispara e o teto de 1.200 m segue sendo a única régua. É a direção
+    conservadora — afirmar identidade sem saber o município é o que produziria o `ITABAIANA`.
+
+    **RAIO AMPLIADO** (`raio_ampliado_m`, opt-in — `None`, o default, é o comportamento de hoje
+    byte a byte). É a QUARTA passagem e a **ÚLTIMA de todas**, depois inclusive da gêmea de outra
+    fonte: colapsa mesma rede DENTRO do raio, com o nome entrando como **veto e desempate** em vez
+    de exigência. Ser a última é o que a torna ADITIVA **no insumo de hoje** — ela só vê o que
+    sobreviveu a todas as regras anteriores —, e é também o recorte exato em que ela foi MEDIDA:
+    verificado sobre a semana `2026-33`, os 851 sobreviventes caem para 797 e **nenhum** dos 2.844
+    representantes de hoje muda.
+
+    **A aditividade NÃO é estrita no caso geral, e a ressalva é do algoritmo inteiro, não desta
+    passagem.** Toda passagem que colapsa dá `continue` ANTES de registrar a unidade em
+    `ocupantes_feed` — as três anteriores inclusive. Então uma unidade colapsada deixa de estar
+    disponível como GÊMEA para uma unidade posterior de outra fonte, e um colapso que hoje
+    acontece pode deixar de acontecer. Construído e rodado: com um mapeado `M`, uma `A` a 251 m de
+    `M` e uma `B` a 351 m de `M` e 100 m de `A`, a régua de hoje devolve `{M, A}` (B colapsa contra
+    a gêmea A) e com o raio ligado devolve `{M, B}` (A colapsa contra M, e B deixa de ter gêmea).
+    Hoje é INOBSERVÁVEL — `colapsadas_entre_fontes = 0`, porque só o WellHub alimenta o feed —,
+    mas passa a importar no dia em que o TotalPass entrar. O conserto seria encadear o colapso
+    (registrar `posicao_do_sobrevivente` da colapsada e deixá-la no bucket de gêmeas, para `B`
+    herdar `M`); ele muda as QUATRO passagens e é decisão de contrato, não conserto local.
+
+    Medido em 2026-09-14 sobre a semana `2026-33`: das **851 sobreviventes** da régua completa,
+    **58** têm um ponto da MESMA rede a `<= 300 m` e mesmo assim não colapsam. Estão todas na faixa
+    150-300 m (abaixo de 150 a primeira passagem já pegou) e em NENHUMA delas o `mesma_unidade`
+    casa — as duas fontes escrevem o nome de formas que o matcher não concilia (`CT Greenlife` ×
+    `CT-GREENLIFE` a 286 m; `Evoque Academia Campo Grande` × `2939` a 181 m, onde o cadastro nomeia
+    a unidade por um NÚMERO). Exigir que o nome case mataria as 58; por isso ele veta em vez de
+    exigir.
+
+    Raio puro não serviria, e o custo está medido: dentro do próprio cadastro há **33 pares da mesma
+    rede entre 150 e 300 m que são unidades REAIS distintas** (`Bodytech Leblon - Gal Urquiza` ×
+    `Bodytech Leblon - Ataulfo 1100` a 259 m). As três guardas — veto de ordinal, desempate pelo
+    NOME e não pela distância, e veto de ambiguidade — levam a régua de **58 para 54 colapsos**. Os
+    casos um a um estão em `DEDUP_CADEIA_FEED_RAIO_AMPLIADO_M` (`contrato.py`).
 
     O REPRESENTANTE é o ponto QUALIFICADO MAIS PRÓXIMO (desempate pelo menor índice), e o
     sobrevivente entra na ordem estável `(fonte, chave_snapshot)`: as duas escolhas existem para o
@@ -649,6 +790,58 @@ def dedup_cadeias_do_feed(
     lat = base["lat"].to_numpy(dtype="float64")
     lng = base["lng"].to_numpy(dtype="float64")
 
+    # ---- TRAVA DE MUNICIPIO (opt-in): indice proprio por (rede, municipio) ----
+    # Sem teto de distancia, `grid_disk` deixa de servir de bucket -- a busca teria de cobrir o
+    # pais inteiro. O indice por (rede, municipio) e' o bucket CERTO para esta regra: cobre por
+    # CONSTRUCAO todo par do mesmo municipio, esteja ele a 200 m ou a 21 km, e e' pequeno (uma
+    # rede tem poucas unidades no mesmo municipio). Reusar o anel do nome aqui seria o modo de
+    # falha que o `DEDUP_K_MARGEM_ANEIS` existe para evitar: deixar de deduplicar EM SILENCIO.
+    #
+    # O `municipio_por_hex or None` amarra o Optional numa variavel so'. Guardar por um bool
+    # paralelo e' invisivel para o verificador de tipos, e `mypy src/` e' gate BLOQUEANTE do CI --
+    # mesma pegadinha ja' documentada no `raio_nome` de `dedup_independentes`.
+    mapa_municipio: Mapping[str, str] | None = municipio_por_hex or None
+    indice_rede_municipio: dict[tuple[str, str], list[int]] = {}
+    mun_feed = np.full(len(base), "", dtype=object)
+    if mapa_municipio is not None:
+        for j in range(offset):
+            if not (np.isfinite(lat_m[j]) and np.isfinite(lng_m[j])) or not rede_m[j]:
+                continue
+            mun_mapeado = str(
+                mapa_municipio.get(
+                    h3.latlng_to_cell(float(lat_m[j]), float(lng_m[j]), H3_RES_CONTRATO), ""
+                )
+                or ""
+            )
+            if mun_mapeado:
+                indice_rede_municipio.setdefault((rede_m[j], mun_mapeado), []).append(j)
+        for i in range(len(base)):
+            mun_feed[i] = str(
+                mapa_municipio.get(
+                    h3.latlng_to_cell(float(lat[i]), float(lng[i]), H3_RES_CONTRATO), ""
+                )
+                or ""
+            )
+
+    # ---- RAIO AMPLIADO (opt-in): mesmo bucket `ocupantes`, anel PROPRIO ----
+    # O raio e' amarrado UMA vez, num `float | None`, e todo estreitamento passa por ele -- mesma
+    # pegadinha ja' documentada no `mapa_municipio` acima e no `raio_nome` de
+    # `dedup_independentes`: um bool paralelo nao liga o Optional para o verificador de tipos, e
+    # `mypy src/` e' gate BLOQUEANTE do CI.
+    #
+    # `usa_nome` entra na amarracao porque esta passagem NAO EXISTE sem nome dos dois lados: sem
+    # ele nao ha' veto de ordinal nem desempate, e o que sobraria seria raio PURO -- a variante que
+    # funde os 33 pares de unidades REAIS medidos na faixa 150-300 m.
+    raio_ampliado: float | None = (
+        float(raio_ampliado_m) if raio_ampliado_m is not None and usa_nome else None
+    )
+    # O `k` sai de `_k_do_bucket`, nunca de literal, e e' PROPRIO desta passagem. Reusar o `k` da
+    # passagem 1 (derivado de 150 m) varreria menos que os 300 m e a dedup deixaria de achar o
+    # vizinho EM SILENCIO -- o modo de falha que o docstring de `_k_do_bucket` chama de "o erro
+    # silencioso mais provavel". E alargar aquele `k` esta fora de questao pelo motivo oposto: ele
+    # define o conjunto varrido pela regra que tem de ficar intacta byte a byte.
+    k_raio = _k_do_bucket(raio_ampliado) if raio_ampliado is not None else k
+
     mantidos: list[int] = []
     posicao_por_chave: dict[tuple[str, str], int] = {}
     # Bucket dos SOBREVIVENTES do proprio feed (BLK-MA-17-FU2). Cresce durante o laco: a mesma
@@ -658,6 +851,8 @@ def dedup_cadeias_do_feed(
     colapsadas = 0
     colapsadas_entre_fontes = 0
     colapsadas_por_nome = 0
+    colapsadas_por_municipio = 0
+    colapsadas_por_raio = 0
 
     for i in range(len(base)):
         celula = h3.latlng_to_cell(float(lat[i]), float(lng[i]), DEDUP_H3_RES)
@@ -716,6 +911,46 @@ def dedup_cadeias_do_feed(
                 colapsadas_por_nome += 1
                 continue
 
+        # TRAVA DE MUNICIPIO (opt-in, `municipio_por_hex`). O teto de 1.200 m protege contra
+        # HOMONIMO de outra praca, nao contra distancia: quando o municipio bate dos dois lados e o
+        # nome casa dentro da mesma rede, nao sobra nada para ele proteger. Medido em 2026-09-11:
+        # as 84 duplicatas de mesmo municipio estao TODAS acima do teto (`Bodytech - Recreio
+        # Shopping` x `Bodytech Recreio Shopping` a 11.373 m no Rio), e nenhuma abaixo -- a regua
+        # de hoje ja' colapsou tudo que cabia sob ele.
+        #
+        # O municipio e' a guarda que torna a remocao do teto segura, e nao um detalhe: sem ele,
+        # `Selfit Itabaiana` (Itabaiana/SE) casa com `ITABAIANA` a 1.740 km e `Panobianco
+        # Cianortinho` (Cianorte/PR) com `CIANORTINHO` a 2.642 km -- academias REAIS apagadas, que
+        # e' o falso zero que a DEC-033 existe para matar.
+        #
+        # Municipio DESCONHECIDO de qualquer lado nao casa: a passagem nao dispara e o teto segue
+        # sendo a unica regua. Afirmar identidade sem saber o municipio e' exatamente o `ITABAIANA`.
+        if mapa_municipio is not None and usa_nome and nomes[i] and mun_feed[i] and redes[i]:
+            rep_municipio: int | None = None
+            melhor_municipio = float("inf")
+            for j in indice_rede_municipio.get((redes[i], mun_feed[i]), ()):
+                if not nome_m[j]:
+                    continue
+                d = float(
+                    _haversine_m(
+                        np.array([lat[i]]),
+                        np.array([lng[i]]),
+                        np.array([lat_m[j]]),
+                        np.array([lng_m[j]]),
+                    )[0]
+                )
+                # `>=` mantem o MENOR indice no empate, como as outras passagens: o artefato tem de
+                # ser o mesmo em qualquer maquina.
+                if d >= melhor_municipio:
+                    continue
+                if mesma_unidade(nomes[i], nome_m[j], redes[i]):
+                    melhor_municipio = d
+                    rep_municipio = j
+            if rep_municipio is not None:
+                posicao_por_chave[(fontes[i], chaves[i])] = rep_municipio
+                colapsadas_por_municipio += 1
+                continue
+
         # SEGUNDA PASSAGEM (BLK-MA-17-FU2): contra os sobreviventes do proprio feed, e so' entre
         # `fonte` DIFERENTES -- o mesmo recorte que `dedup_independentes` usa, e pela mesma razao.
         # Sem ela, a mesma unidade de rede listada por TotalPass e WellHub vira DUAS linhas de
@@ -750,25 +985,93 @@ def dedup_cadeias_do_feed(
             colapsadas_entre_fontes += 1
             continue
 
+        # PASSAGEM DE RAIO AMPLIADO (opt-in, `raio_ampliado_m`). E' a ULTIMA de todas: ela so' ve'
+        # o que sobreviveu a distancia, ao nome, ao municipio e a gemea de outra fonte. E' tambem o
+        # recorte em que ela foi MEDIDA -- os 58 pares sao das 851 SOBREVIVENTES da regua completa,
+        # nao do feed cru. Aditiva no insumo de hoje (medido: 851 -> 797, 0 representantes trocados);
+        # a ressalva do caso geral, que vale para as QUATRO passagens, esta no docstring.
+        #
+        # Aqui o nome NAO exige, ele VETA e DESEMPATA. Nos 58 o `mesma_unidade` recusa todos
+        # (`CT Greenlife` x `CT-GREENLIFE` a 286 m), entao exigi-lo zeraria a passagem inteira; e
+        # raio puro funde academia real (33 pares de unidades distintas da mesma rede entre 150 e
+        # 300 m dentro do proprio cadastro). Numeros e casos em
+        # `DEDUP_CADEIA_FEED_RAIO_AMPLIADO_M`.
+        if raio_ampliado is not None and nomes[i] and redes[i]:
+            ordinal_feed = ordinal_da_unidade(nomes[i])
+            # A ordem e' `(-similaridade, distancia, indice)`: o NOME decide primeiro, a distancia
+            # so' desempata dentro do mesmo nome e o indice fecha o empate -- o artefato tem de ser
+            # igual em qualquer maquina. Ordenar por distancia primeiro casaria
+            # `BlueFit 24h - Frei Caneca` com o `Consolacao` a 171 m em vez do `Frei Caneca` a
+            # 223 m: falso positivo SILENCIOSO, e foi o achado que definiu esta regra.
+            candidatos_raio: list[tuple[float, float, int]] = []
+            for vizinha in h3.grid_disk(celula, k_raio):
+                for j in ocupantes.get(vizinha, ()):
+                    if redes[i] != rede_m[j] or not nome_m[j]:
+                        continue
+                    # VETO DE ORDINAL, e ele filtra candidato a candidato em vez de so' julgar o
+                    # vencedor: ordinal diferente e' NEGACAO de identidade (`identidade.py`), entao
+                    # aquele ponto nao e' candidato -- deixar outro do raio ganhar e' o certo.
+                    # Derruba 3 dos 58, entre eles `CONTORNO DO CORPO - CASTELO 3` x `CASTELO-II`.
+                    if ordinal_da_unidade(nome_m[j]) != ordinal_feed:
+                        continue
+                    d = float(
+                        _haversine_m(
+                            np.array([lat[i]]),
+                            np.array([lng[i]]),
+                            np.array([lat_m[j]]),
+                            np.array([lng_m[j]]),
+                        )[0]
+                    )
+                    if d > raio_ampliado:
+                        continue
+                    candidatos_raio.append(
+                        (-similaridade_nome(nomes[i], nome_m[j], redes[i]), d, j)
+                    )
+            if candidatos_raio:
+                similaridade_negativa, _d_raio, rep_raio = min(candidatos_raio)
+                # VETO DE AMBIGUIDADE: mais de um candidato viavel e o melhor com similaridade
+                # `0,0` = nao ha' nome que desempate, e escolher ali seria escolher por DISTANCIA
+                # -- o modo de falha que o desempate acima existe para recusar. Derruba 1 dos 58
+                # (`Contorno do Corpo Centro` x `CENTRO`, 2 candidatos): falso negativo
+                # conservador, de proposito. Com candidato UNICO a similaridade `0,0` colapsa, e
+                # esse custo residual esta declarado na constante (`Selfit - Tamarineira` x
+                # `CASA-AMARELA`, 235,5 m).
+                if not (len(candidatos_raio) > 1 and similaridade_negativa == 0.0):
+                    posicao_por_chave[(fontes[i], chaves[i])] = rep_raio
+                    colapsadas_por_raio += 1
+                    continue
+
         posicao = offset + len(mantidos)
         posicao_por_chave[(fontes[i], chaves[i])] = posicao
         posicao_do_sobrevivente[i] = posicao
         mantidos.append(i)
         ocupantes_feed.setdefault(celula, []).append(i)
 
-    if colapsadas or colapsadas_entre_fontes or colapsadas_por_nome:
+    if (
+        colapsadas
+        or colapsadas_entre_fontes
+        or colapsadas_por_nome
+        or colapsadas_por_municipio
+        or colapsadas_por_raio
+    ):
         _logger.info(
             "dedup de cadeias do feed: %d de %d colapsada(s) por DISTANCIA contra o insumo "
-            "mapeado, %d por NOME (ate' %.0f m) e %d contra outra fonte do proprio feed "
-            "(mesma rede a %.0f m ou qualquer rede a %.0f m; grid_disk k=%d)",
+            "mapeado, %d por NOME (ate' %.0f m), %d por NOME no MESMO MUNICIPIO (sem teto), %d por "
+            "RAIO AMPLIADO (%s, nome como veto/desempate) e %d "
+            "contra outra fonte do proprio feed "
+            "(mesma rede a %.0f m ou qualquer rede a %.0f m; grid_disk k=%d, k_raio=%d)",
             colapsadas,
             len(base),
             colapsadas_por_nome,
             float(DIST_MAX_MESMO_NOME_M),
+            colapsadas_por_municipio,
+            colapsadas_por_raio,
+            "desligado" if raio_ampliado is None else f"ate' {raio_ampliado:.0f} m",
             colapsadas_entre_fontes,
             float(distancia_m),
             float(piso_m),
             k,
+            k_raio,
         )
     return base.iloc[mantidos].reset_index(drop=True), posicao_por_chave
 
@@ -783,6 +1086,10 @@ def calcular_pressao_por_academia(
     kernel: str = PRESSAO_KERNEL_DEFAULT,
     raio_m: float = PRESSAO_RAIO_M,
     beta: float = PRESSAO_BETA_POTENCIA,
+    dedup_cadeia_feed_m: float = DEDUP_CADEIA_FEED_M,
+    dedup_independentes_nome_m: float | None = None,
+    dedup_cadeia_feed_municipio_por_hex: Mapping[str, str] | None = None,
+    dedup_cadeia_feed_raio_ampliado_m: float | None = None,
 ) -> pd.DataFrame:
     """Academias com coordenada + pontos de concorrentes -> pressão POR UNIDADE. Função **pura**.
 
@@ -802,6 +1109,33 @@ def calcular_pressao_por_academia(
 
     A fórmula é a MESMA do grão hex (`_oferta_por_origem` + `_saturar`); o que muda é a ORIGEM da
     medição. Isso é deliberado: os dois números continuam na mesma régua e comparáveis.
+
+    OS QUATRO PARÂMETROS DE DEDUP são explícitos e o default reproduz o número de HOJE byte a byte —
+    ninguém que rode o pipeline vê o número mudar sozinho. Eles existem porque a pergunta "e se o
+    raio fosse maior / e se casasse por nome?" precisa ser RODÁVEL sem monkeypatch, e a resposta
+    medida está nas tabelas de `DEDUP_CADEIA_FEED_M` e `DEDUP_INDEPENDENTES_NOME_M`:
+
+      - `dedup_cadeia_feed_m` (default `150`): raio do casamento por rede contra o insumo mapeado.
+        Subi-lo para `300` alcança os mesmos 58 pontos que o raio ampliado, mas SEM as guardas —
+        que barram 4 deles (3 por ordinal, 1 por ambiguidade) e escolhem o representante pelo nome,
+        não pela distância (DEC-061). O caminho para eles é `dedup_cadeia_feed_raio_ampliado_m`, não
+        este. Mexer aqui muda `pressao_competitiva` -> DEC + bump.
+      - `dedup_independentes_nome_m` (default `None` = desligado): liga a passagem por NOME entre
+        independentes da MESMA fonte, a única que alcança a duplicata que sobra hoje (com só o
+        WellHub no ar, a guarda de fonte zera a dedup de independentes inteira).
+      - `dedup_cadeia_feed_municipio_por_hex` (default `None` = desligado): mapa
+        `hex_id_res7 -> código do município` (IBGE; o nome não serve, há 232 homônimos entre UFs) que
+        liga a TRAVA DE MUNICÍPIO na dedup de cadeias — mesma rede
+        + nome que casa + mesmo município colapsam SEM teto de distância. É o único caminho que
+        alcança as **84 duplicatas** medidas em 2026-09-11, todas acima dos 1.200 m do teto. O
+        mapa entra por parâmetro, e não por leitura de arquivo aqui dentro, para a função
+        continuar **pura**: mesmo insumo, mesmo resultado, sem tocar disco.
+      - `dedup_cadeia_feed_raio_ampliado_m` (default `None` = desligado): liga a QUARTA passagem
+        da dedup de cadeias — mesma rede dentro do raio, com o nome como **veto e desempate** em
+        vez de exigência. É o único caminho até as **58** unidades que têm ponto da mesma rede a
+        `<= 300 m` e não colapsam porque o `mesma_unidade` não concilia a grafia (`CT Greenlife` ×
+        `CT-GREENLIFE` a 286 m). Com as três guardas, **54 das 58** colapsam. Mexer aqui muda
+        `pressao_competitiva` -> DEC + bump.
 
     UNIVERSO DE OFERTA (BLK-MA-16). Sem `independentes`, só as cadeias contam e o resultado é o
     histórico — `universo_oferta = "cadeias"`. Com `independentes`, elas entram com metade do peso
@@ -868,7 +1202,13 @@ def calcular_pressao_por_academia(
 
     if cadeias_do_feed is not None:
         universo = UNIVERSO_OFERTA_COM_INDEPENDENTES
-        sobreviventes, posicao_cadeia = dedup_cadeias_do_feed(cadeias_do_feed, pontos_c)
+        sobreviventes, posicao_cadeia = dedup_cadeias_do_feed(
+            cadeias_do_feed,
+            pontos_c,
+            distancia_m=dedup_cadeia_feed_m,
+            municipio_por_hex=dedup_cadeia_feed_municipio_por_hex,
+            raio_ampliado_m=dedup_cadeia_feed_raio_ampliado_m,
+        )
         lat_c = np.concatenate([lat_c, sobreviventes["lat"].to_numpy(dtype="float64")])
         lng_c = np.concatenate([lng_c, sobreviventes["lng"].to_numpy(dtype="float64")])
         # A máscara SÓ decompõe a saída: o peso é o mesmo nos dois lados do bloco de cadeias.
@@ -886,7 +1226,9 @@ def calcular_pressao_por_academia(
 
     if independentes is not None:
         universo = UNIVERSO_OFERTA_COM_INDEPENDENTES
-        pontos_i, posicao_por_chave = dedup_independentes(independentes)
+        pontos_i, posicao_por_chave = dedup_independentes(
+            independentes, nome_mesma_fonte_m=dedup_independentes_nome_m
+        )
         lat_i = pontos_i["lat"].to_numpy(dtype="float64")
         lng_i = pontos_i["lng"].to_numpy(dtype="float64")
         # A auto-exclusão é resolvida pela CHAVE, e pelo mapa da dedup em vez do índice cru: se a
@@ -1047,8 +1389,20 @@ def calcular_pressao_por_hex(
     kernel: str = PRESSAO_KERNEL_DEFAULT,
     raio_m: float = PRESSAO_RAIO_M,
     beta: float = PRESSAO_BETA_POTENCIA,
+    dedup_cadeia_feed_m: float = DEDUP_CADEIA_FEED_M,
+    dedup_independentes_nome_m: float | None = None,
+    dedup_cadeia_feed_municipio_por_hex: Mapping[str, str] | None = None,
+    dedup_cadeia_feed_raio_ampliado_m: float | None = None,
 ) -> pd.DataFrame:
     """Hexes + pontos de concorrentes -> pressão competitiva por hex. Função **pura**.
+
+    **OS QUATRO PARÂMETROS DE DEDUP são os MESMOS de `calcular_pressao_por_academia`, com os
+    mesmos defaults, e isso não é simetria decorativa.** Os dois grãos coexistem carimbados por
+    `pressao_grao` (DEC-029) exatamente para serem lidos lado a lado; se o grão academia deduplica
+    por uma régua e o grão hex por outra sobre o MESMO insumo, a diferença entre os dois deixa de
+    ser o grão e passa a ser a dedup — e a comparação que a DEC-029 existe para permitir mente.
+    Até 2026-09-14 esta função chamava `dedup_cadeias_do_feed(cadeias_do_feed, pontos_c)` cru, então
+    ligar a trava de município ou o raio ampliado moveria um grão e não o outro, em silêncio.
 
     A saturação é a MESMA do contrato de mercado, para o número ficar comparável:
 
@@ -1079,7 +1433,13 @@ def calcular_pressao_por_hex(
     universo = UNIVERSO_OFERTA_CADEIAS
     if cadeias_do_feed is not None:
         universo = UNIVERSO_OFERTA_COM_INDEPENDENTES
-        sobreviventes, _posicoes_cadeia = dedup_cadeias_do_feed(cadeias_do_feed, pontos_c)
+        sobreviventes, _posicoes_cadeia = dedup_cadeias_do_feed(
+            cadeias_do_feed,
+            pontos_c,
+            distancia_m=dedup_cadeia_feed_m,
+            municipio_por_hex=dedup_cadeia_feed_municipio_por_hex,
+            raio_ampliado_m=dedup_cadeia_feed_raio_ampliado_m,
+        )
         lat_c = np.concatenate([lat_c, sobreviventes["lat"].to_numpy(dtype="float64")])
         lng_c = np.concatenate([lng_c, sobreviventes["lng"].to_numpy(dtype="float64")])
         mascara_feed = np.concatenate(
@@ -1087,7 +1447,9 @@ def calcular_pressao_por_hex(
         )
     if independentes is not None:
         universo = UNIVERSO_OFERTA_COM_INDEPENDENTES
-        pontos_i, _posicoes = dedup_independentes(independentes)
+        pontos_i, _posicoes = dedup_independentes(
+            independentes, nome_mesma_fonte_m=dedup_independentes_nome_m
+        )
         lat_i = pontos_i["lat"].to_numpy(dtype="float64")
         lng_i = pontos_i["lng"].to_numpy(dtype="float64")
     # Sem `auto_pos` nem `auto_pos_cadeia`: a origem aqui é o CENTROIDE do território, não uma
