@@ -56,6 +56,12 @@ services:
       # Trilha de acesso (DEC-027): mesmo desenho do BR — fora do MOTOR_DATA_DIR para
       # nenhum artefato ficar sob mount de escrita. Sem o volume, degrada em silencio.
       MOTOR_ACESSO_LOG_DIR: "/app/logs/acesso"
+      # Aba "Acessos e uso do piloto" (emenda da DEC-027): allowlist PROPRIA da AR.
+      # Os dois composes leem o MESMO .env da VPS — reusar MOTOR_ACESSOS_ADMIN_USUARIOS
+      # prenderia quem ve o painel AR a quem ve o BR; NAO unificar. Vazia = painel
+      # DESLIGADO (404), igual ao BR. Quem entra na lista tambem precisa do grupo
+      # expansao_ar no Authelia, senao nem chega ao container.
+      MOTOR_ACESSOS_ADMIN_USUARIOS: ${MOTOR_ACESSOS_ADMIN_USUARIOS_AR:-}
       # ── O que NAO entra, e por que ─────────────────────────────────────────────
       # API_BASEMAP_LABELS_URL / API_BASEMAP_TILES_URL: decisao 0.9 — o perfil AR
       #   declara basemap_labels_url_obrigatoria=false (mapa sem toponimo, com aviso
@@ -64,7 +70,6 @@ services:
       # MOTOR_OPORTUNIDADES_PATH / MOTOR_DOSSIES_DIR: superficie `oportunidades`
       #   fora de perfil.superficies — bloqueada pelo gate de pais do Bloco C (404).
       # API_ARCGIS_API_KEY: relatorio pontual bloqueado por malha ate' o P7.
-      # MOTOR_ACESSOS_ADMIN_USUARIOS: ausente = painel de acessos DESLIGADO (404).
     volumes:
       # O perfil do pais (Bloco A / DEC-047) — data/perfis/AR/perfil.json do repo.
       # Bind de ARQUIVO, mesma pre-condicao do BR: o arquivo tem de EXISTIR no host
