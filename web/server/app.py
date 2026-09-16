@@ -523,6 +523,49 @@ def _registrar_dossie_baixado(remote_user: str | None, *, imovel_id: str) -> Non
         )
 
 
+def _registrar_visita_imovel(remote_user: str | None, *, acao: str, imovel: str | None) -> None:
+    """Grava `imovel.visita_marcada`/`_desmarcada`, e NUNCA deixa a trilha derrubar o gesto.
+
+    SEM IMOVEL NAO HA EVENTO, e esta e' a diferenca em relacao ao dossie e ao relatorio. La'
+    vale "meio evento vale mais que nenhum" -- um `relatorio.gerado` anonimo ainda diz que o
+    arquivo existiu. Aqui o valor INTEIRO do evento e' o alvo: um `visita_marcada` sem
+    `imovel_id` cai fora do indice parcial da 014 e nao responde a pergunta que ele existe
+    para responder (quais imoveis entraram na fila de visita). Entao registra-se nada, e a
+    ausencia vira log -- o gesto segue na trilha da DEC-027, que grava a query inteira.
+
+    A tela manda o alvo como `imovel`; o contrato pede `imovel_id` em `metadados`, que e' uma
+    das tres `CHAVES_DE_ALVO` que os indices conhecem. A traducao acontece aqui, e tem teste:
+    errar a chave e' defeito SILENCIOSO -- a escrita passa e o evento some das consultas.
+    """
+    if not (imovel or "").strip():
+        _LOG_D17.error(
+            "gesto %s sem `imovel` na query — evento NAO gravado (sem alvo ele fica fora do "
+            "indice e nao responde nada); o gesto segue na trilha",
+            acao,
+        )
+        return
+
+    from motor_expansao.db import eventos as db_eventos
+
+    try:
+        from motor_expansao.db import rbac
+
+        quem = rbac.identidade(acesso.login_da_requisicao(remote_user))
+        db_eventos.registrar_visita(
+            autor=quem.id_usuario if quem is not None else None,
+            imovel_id=imovel.strip(),
+            marcada=acao == "marcar-visita",
+            origem="web",
+        )
+    except Exception:  # noqa: BLE001 — a trilha nunca derruba o gesto
+        _LOG_D17.exception(
+            "gesto %s no imovel %s SEM evento no banco — a decisao de visita ficou so' na "
+            "trilha de 90 dias",
+            acao,
+            imovel,
+        )
+
+
 def _registrar_acesso(request: Request, *, status: int, inicio: float, tamanho: str | None) -> None:
     """Monta e grava a linha da trilha. Rastro, nao transacao: falha morre aqui."""
     try:
@@ -9391,20 +9434,36 @@ ACOES_IMOBILIARIA: frozenset[str] = frozenset(
     }
 )
 
+#: Os DOIS que sobem para `eventos` (contrato §2.4). Os outros cinco sao uso de tela e ficam
+#: so' na trilha de 90 dias -- e `abrir-dossie` nao entra aqui de proposito: quem grava o
+#: download e' o GET do PDF, senao o mesmo clique contaria duas vezes (correcao de 16/09).
+GESTOS_QUE_VIRAM_EVENTO: frozenset[str] = frozenset({"marcar-visita", "desmarcar-visita"})
+
 
 @app.post("/api/imobiliaria/evento/{acao}")
-def api_imobiliaria_evento(acao: str) -> dict[str, Any]:
+def api_imobiliaria_evento(
+    acao: str,
+    imovel: str | None = None,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
     """Registra um gesto da camada imobiliaria na trilha de acesso (DEC-027).
 
     Corpo vazio de proposito. O alvo do gesto viaja na QUERY (`imovel`, `uf`,
-    `municipio`, `origem`) e nao e' declarado aqui: quem grava e' o middleware da
-    trilha, que ja' persiste `request.url.query` inteira. Acao desconhecida devolve
-    404 para o vocabulario nao virar lixo no painel de Acessos.
+    `municipio`, `origem`): quem grava a linha da trilha e' o middleware, que ja' persiste
+    `request.url.query` inteira. Acao desconhecida devolve 404 para o vocabulario nao virar
+    lixo no painel de Acessos.
+
+    DOIS dos sete tambem sobem para `eventos` (contrato §2.4) -- marcar e desmarcar visita
+    sao decisao de NEGOCIO sobre um imovel, e por isso `imovel` passou a ser declarado aqui.
+    O resto continua so' na trilha. A resposta nao muda: o gesto responde `ok` mesmo quando o
+    evento nao pode ser gravado.
     """
     from fastapi import HTTPException
 
     if acao not in ACOES_IMOBILIARIA:
         raise HTTPException(status_code=404, detail="Acao desconhecida.")
+    if acao in GESTOS_QUE_VIRAM_EVENTO:
+        _registrar_visita_imovel(remote_user, acao=acao, imovel=imovel)
     return {"ok": True}
 
 

@@ -299,8 +299,19 @@ deste contrato cujo vocabulário está inteiramente implementado.
 que acontece com `usuarios` vira evento. Um `UPDATE` feito à mão, fora da tela, continua sem deixar
 rastro — ver *"O que continua descoberto"* no fim da §2.7.
 
-**Não grava:** todo o resto. As famílias §2.1 a §2.6 são contrato para implementação futura, e as
-da §2.6 dependem da F5.4 existir. `login` (§1) segue sem produtor por outro motivo, e não por
+**Grava (desde 16/09):** `dossie.baixado` (§2.2), pelo **`GET` do PDF** — e não pelo gesto
+`abrir-dossie`, que dispara mesmo quando o imóvel não tem dossiê (ver a correção no fim da §2.4).
+E `imovel.visita_marcada` / `imovel.visita_desmarcada` (§2.4), pelos dois gestos que aquela seção
+manda subir; os outros cinco continuam só na trilha de 90 dias.
+
+> **Esta seção ficou desatualizada por um dia, e vale registrar.** A frase abaixo dizia "todo o
+> resto", e ela passou a ser falsa no mesmo commit que criou o produtor do dossiê — a §2.2 ganhou
+> produtor e a §5 continuou anunciando que nada fora da §2.7 gravava. Contrato e implementação
+> andam juntos: quem acrescenta produtor edita as duas seções.
+
+**Não grava:** o que resta das famílias §2.1 a §2.6 — `login`, `logout`, `ciencia.confidencialidade`
+e `bot.autorizado` (§2.1), `cadastro.editado` (§2.3), `viabilidade.calculada` (§2.5) e a família
+inteira da §2.6, que depende da F5.4 existir. `login` segue sem produtor por outro motivo, e não por
 falta de coluna: enquanto o Authelia autenticar, a entrada não passa pelo motor — é o P19 que
 destrava esse, não a D26.
 

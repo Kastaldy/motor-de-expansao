@@ -41,6 +41,11 @@ from .postgres import transacao
 EVENTO_RELATORIO_GERADO = "relatorio.gerado"
 EVENTO_DOSSIE_BAIXADO = "dossie.baixado"
 
+#: Os dois gestos da §2.4 que sobem para `eventos`. Os outros cinco ficam so' na trilha de 90
+#: dias: marcar visita e' DECISAO DE NEGOCIO sobre um imovel, abrir uma aba nao e'.
+EVENTO_VISITA_MARCADA = "imovel.visita_marcada"
+EVENTO_VISITA_DESMARCADA = "imovel.visita_desmarcada"
+
 #: As chaves de alvo sao CONTRATO, e o defeito de errar uma e' SILENCIOSO: a escrita passa,
 #: o evento cai fora do indice parcial, e ninguem descobre ate' a tabela crescer. O contrato
 #: diz, com todas as letras: "Gravar `id_imovel` ou `imovel` poe o evento fora dos indices".
@@ -60,6 +65,12 @@ VALUES (%s, %s, NULL, NULL, %s)
 # nome mentir sobre o que a instrucao grava, e as duas podem divergir amanha (o dossie nao tem
 # `report_id` -- ele nao e' gerado pelo motor, vem pronto do coletor).
 SQL_REGISTRAR_DOSSIE = """
+INSERT INTO eventos (id_usuario, tipo, entidade, entidade_id, metadados)
+VALUES (%s, %s, NULL, NULL, %s)
+"""
+
+# Idem, e pela mesma razao de nome: o que se grava aqui e' gesto sobre imovel, nao artefato.
+SQL_REGISTRAR_VISITA = """
 INSERT INTO eventos (id_usuario, tipo, entidade, entidade_id, metadados)
 VALUES (%s, %s, NULL, NULL, %s)
 """
@@ -154,3 +165,27 @@ def registrar_dossie_baixado(*, autor: int | None, imovel_id: str, origem: str =
             SQL_REGISTRAR_DOSSIE,
             (autor, EVENTO_DOSSIE_BAIXADO, Jsonb(metadados)),
         )
+
+
+def registrar_visita(
+    *, autor: int | None, imovel_id: str, marcada: bool, origem: str = "web"
+) -> None:
+    """Grava `imovel.visita_marcada` ou `_desmarcada` -- decisao de negocio sobre um imovel.
+
+    UMA funcao com o estado no parametro, e nao duas quase iguais: os dois eventos tem a mesma
+    forma e a mesma chave de alvo, e o que muda e' so' o `tipo`. Duas copias divergiriam no dia
+    em que uma ganhasse campo e a outra nao.
+
+    `marcada` e' o estado RESULTANTE do gesto, como a tela ja' carimba -- "marcou" e "desmarcou"
+    respondem perguntas diferentes na auditoria (quantos imoveis entraram na fila de visita, e
+    quantos sairam), e colapsar os dois num `visita_alternada` perderia a direcao.
+
+    `imovel_id` e' obrigatorio: sem alvo, o evento fica FORA do indice parcial da 014 e nao
+    responde nada. Quem chama decide o que fazer sem ele -- ver a nota no `app.py`.
+    """
+    from psycopg.types.json import Jsonb  # import tardio: so' quem escreve paga
+
+    metadados: dict[str, Any] = {"imovel_id": imovel_id, "origem": origem}
+    tipo = EVENTO_VISITA_MARCADA if marcada else EVENTO_VISITA_DESMARCADA
+    with transacao(id_usuario=autor) as con:
+        con.execute(SQL_REGISTRAR_VISITA, (autor, tipo, Jsonb(metadados)))

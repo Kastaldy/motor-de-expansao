@@ -256,3 +256,45 @@ def test_metadados_do_dossie_nao_carregam_PII(con: FakeConexao) -> None:
     achatado = " ".join(str(v) for v in con.eventos[0][2].obj.values()).lower()
     for pii in ("@", "rua ", "avenida", "telefone", "cpf", "creci"):
         assert pii not in achatado, f"PII em metadados: {achatado}"
+
+
+# --------------------------------------------------------------------------------------
+# `imovel.visita_marcada` / `_desmarcada` — os dois gestos que sobem (16/09)
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("marcada", "tipo_esperado"),
+    [(True, "imovel.visita_marcada"), (False, "imovel.visita_desmarcada")],
+)
+def test_o_estado_do_gesto_escolhe_o_tipo(
+    con: FakeConexao, marcada: bool, tipo_esperado: str
+) -> None:
+    """"Marcou" e "desmarcou" respondem perguntas diferentes: quantos imoveis entraram na fila
+    de visita, e quantos sairam. Colapsar num `visita_alternada` perderia a direcao."""
+    mod.registrar_visita(autor=7, imovel_id="im_3f2a9b", marcada=marcada)
+    assert con.eventos[0][1] == tipo_esperado
+
+
+def test_os_dois_tipos_sao_os_do_contrato() -> None:
+    assert mod.EVENTO_VISITA_MARCADA == "imovel.visita_marcada"
+    assert mod.EVENTO_VISITA_DESMARCADA == "imovel.visita_desmarcada"
+
+
+def test_a_visita_usa_a_chave_de_alvo_do_contrato(con: FakeConexao) -> None:
+    """`imovel_id`, a mesma chave do dossie -- e' o que o indice parcial da 014 conhece."""
+    mod.registrar_visita(autor=7, imovel_id="im_3f2a9b", marcada=True)
+    metadados = con.eventos[0][2].obj
+    assert metadados == {"imovel_id": "im_3f2a9b", "origem": "web"}
+    assert "imovel_id" in mod.CHAVES_DE_ALVO
+
+
+def test_a_visita_carimba_o_autor_como_PRIMEIRO_comando(con: FakeConexao) -> None:
+    mod.registrar_visita(autor=7, imovel_id="im_3f2a9b", marcada=True)
+    assert con.executados[0][0] == postgres.SQL_DEFINIR_AUTOR
+    assert con.eventos[0][0] == 7
+
+
+def test_a_visita_nao_grava_entidade() -> None:
+    """Emenda do D24: o id do imovel e' TEXTUAL e `entidade_id` e' BIGINT."""
+    assert "NULL, NULL" in mod.SQL_REGISTRAR_VISITA
