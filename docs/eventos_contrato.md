@@ -298,7 +298,13 @@ recomendação que este contrato pressupõe.
 - **Sem PII em `metadados`** (convenções §5): nada de nome, CPF, e-mail. Só parâmetros técnicos,
   ids e valores de campo. O `solicitante` de um relatório é **texto digitado pelo usuário** e não
   deve ser copiado para cá.
-- **`ip` é PII retida por prazo indeterminado** — base legal e retenção seguem abertas no **P15**.
+- **Ninguém escreve `ip`, e passar a escrever exige fechar o **P15** antes.** A coluna existe na
+  `005` para segurança/auditoria e **nunca teve produtor**: todo `INSERT` deste contrato lista
+  `id_usuario, tipo, entidade, entidade_id, metadados`, e toda linha tem `ip` nulo. Até 16/09 esta
+  linha dizia "`ip` é PII retida por prazo indeterminado", afirmando uma exposição que não existe —
+  o que é pior que o silêncio, porque manda a auditoria procurar dado que nunca foi gravado. Base
+  legal e prazo seguem abertos, e `tests/contracts/test_ip_nao_entra_em_eventos.py` barra o
+  `INSERT` enquanto isso.
 - **Append-only**: `eventos` não tem `atualizado_em` e nunca é atualizado (§4).
 - **Todo `relatorio.gerado` carrega `report_id`.** Sem ele, o D17 não fecha.
 - **`tipo` fora deste documento é defeito**, não estilo — o D11 alerta que texto livre fragmenta
