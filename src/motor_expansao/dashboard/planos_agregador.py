@@ -253,12 +253,17 @@ def anexar_planos(
     sufixo = "" if fonte == "totalpass" else f"_{fonte}"
     chave_plano, chave_preco = f"plano{sufixo}", f"preco_plano{sufixo}"
     base = planos.dropna(subset=["lat", "lng"]) if planos is not None else None
-    lats = base["lat"].to_numpy() if base is not None and len(base) else None
-    lngs = base["lng"].to_numpy() if base is not None and len(base) else None
+    # As chaves nascem nulas em TODO pino, mesmo sem base: a tela distingue "sem plano" de
+    # "campo ausente". A saída antecipada vem depois disso, e é ela que deixa `base`/`lats`/
+    # `lngs` não-nulos no laço de casamento (sem ela o mypy não consegue estreitar os tipos).
     for pino in pinos:
         pino[chave_plano] = None
         pino[chave_preco] = None
-        if lats is None or pino.get("lat") is None or pino.get("lng") is None:
+    if base is None or not len(base):
+        return pinos
+    lats, lngs = base["lat"].to_numpy(), base["lng"].to_numpy()
+    for pino in pinos:
+        if pino.get("lat") is None or pino.get("lng") is None:
             continue
         d = _distancias_m(float(pino["lat"]), float(pino["lng"]), lats, lngs)
         i = int(np.argmin(d))
