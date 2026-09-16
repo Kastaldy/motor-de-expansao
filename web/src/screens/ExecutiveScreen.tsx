@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import BotaoInicio from '../components/BotaoInicio'
 import ExecMap from '../components/ExecMap'
@@ -14,6 +14,8 @@ import {
   EvolucaoRecorte,
   Maturidade,
 } from '../components/exec/PainelRede'
+import { PorTrasDosNumeros } from '../components/exec/Inteligencia'
+import type { RedeInteligencia } from '../lib/types'
 import {
   Aviso,
   BarraSegmentada,
@@ -24,7 +26,7 @@ import {
   SparklineSvg,
   Spinner,
 } from '../components/primitives'
-import { api, ApiError, baixar } from '../lib/api'
+import { api, ApiError, baixar, EXPORTS_REDE_ATIVOS, MOTIVO_EXPORTS_DESLIGADOS } from '../lib/api'
 import type { BaseDoDestaque } from '../lib/exec'
 import {
   COR_SEVERIDADE,
@@ -45,7 +47,7 @@ import { brlCurto, num, pct } from '../lib/format'
 import type { Periodo } from '../lib/periodo'
 import { rotuloDoPeriodo } from '../lib/periodo'
 import type { Tema } from '../lib/tema'
-import type { RedeCarteira, RedeFiltros, RedeSeveridade, RedeUnidade } from '../lib/types'
+import type { RedeAlerta, RedeCarteira, RedeFiltros, RedeSeveridade, RedeUnidade } from '../lib/types'
 
 /* ---------------------------------------------------------------------------
    Visão Executiva 2.0 — a rede Ultra como CARTEIRA acionável (DEC-023).
@@ -116,6 +118,13 @@ const LARGURA_CARTEIRA_FOLGADA = 1060
    cada faixa escolhendo a sua própria divisão, nenhuma aresta batia com a de cima. */
 const COLUNA_PRINCIPAL = { flex: '3 1 640px', minWidth: 0 } as const
 const COLUNA_TRILHO = { flex: '1 1 330px', minWidth: 0, maxWidth: 430 } as const
+
+/* As três faixas do panorama (Evolução/SSS, Funil/Faixas, Destaques/Maturidade) têm divisão
+   PRÓPRIA (pedido do Felipe, 15/09): 10% da largura sai do bloco da esquerda e vai para o
+   trilho — de 75/25 para 67,5/32,5. Grow e base na mesma razão (27:13) mantêm a proporção
+   exata enquanto as duas colunas cabem lado a lado; o trilho perde o teto de 430 px. */
+const COLUNA_PAINEL = { flex: '27 1 685px', minWidth: 0 } as const
+const TRILHO_PAINEL = { flex: '13 1 330px', minWidth: 0 } as const
 
 const TODOS = '__todos__'
 
@@ -225,6 +234,24 @@ export default function ExecutiveScreen({
     }
   }, [query])
 
+  // Por trás dos números: o que mudou, praça, rampa, retenção e sinais. Busca PRÓPRIA e
+  // em paralelo à carteira — a tabela não espera por ela.
+  const [inteligencia, setInteligencia] = useState<RedeInteligencia | null>(null)
+  const [somenteMaduras, setSomenteMaduras] = useState(true)
+
+  useEffect(() => {
+    let vivo = true
+    // Sem zerar o estado: os cards seguem com o recorte anterior até a resposta nova
+    // chegar. Zerar colapsava os cinco num card de "carregando" e a página pulava.
+    api
+      .redeInteligencia({ ...query, maduras: somenteMaduras ? undefined : 'false' })
+      .then((d) => vivo && setInteligencia(d))
+      .catch(() => vivo && setInteligencia(null))
+    return () => {
+      vivo = false
+    }
+  }, [query, somenteMaduras])
+
   // Voltar do browser e Esc fecham a ficha — é o gesto natural de quem abriu uma.
   useEffect(() => {
     const aoVoltar = () => setAberta(null)
@@ -245,6 +272,12 @@ export default function ExecutiveScreen({
   const abrirFicha = useCallback((u: RedeUnidade) => {
     window.history.pushState({ unidade: u.id }, '', '')
     setAberta(u.id)
+  }, [])
+
+  // Os painéis de inteligência só conhecem o id: a ficha também só precisa dele.
+  const abrirFichaPorId = useCallback((id: string) => {
+    window.history.pushState({ unidade: id }, '', '')
+    setAberta(id)
   }, [])
 
   function fecharFicha() {
@@ -345,10 +378,10 @@ export default function ExecutiveScreen({
         // "12 meses" saía como "12 M…" depois que a coluna cedeu espaço para o
         // faturamento por extenso. Cabeçalho cortado no meio da palavra parece defeito;
         // a explicação inteira já está no `ajuda`, que vira o `title` da coluna.
-        rotulo: '12M',
+        rotulo: '13M',
         largura: carteiraFolgada ? 72 : 56,
         ordenavel: false,
-        ajuda: 'Faturamento dos 12 meses fechados',
+        ajuda: 'Faturamento dos 13 meses fechados (inclui o mesmo mês do ano anterior)',
         render: (u) => <SparklineSvg valores={u.sparkline} largura={carteiraFolgada ? 62 : 40} />,
       },
       ...COLUNAS_METRICA.map<Coluna<RedeUnidade>>((c) => ({
@@ -388,41 +421,7 @@ export default function ExecutiveScreen({
         ordenavel: false,
         render: (u) =>
           u.alertas.length ? (
-            <span style={{ display: 'flex', gap: 5, flexWrap: 'nowrap', overflow: 'hidden' }}>
-              {/* Quantos chips cabem depende da largura MEDIDA, não de um número fixo: com o
-                  mapa de volta ao lado, o corte antigo de três deixava o último cortado no
-                  meio da palavra, e chip pela metade parece defeito. O contador "+N" diz a
-                  mesma coisa e cabe; o resto está no `title` dele, na ficha e no PDF. */}
-              {u.alertas.slice(0, carteiraFolgada ? 2 : 1).map((a) => (
-                <span
-                  key={a.codigo}
-                  title={a.detalhe}
-                  style={{
-                    font: '600 9.5px/1 var(--f-ui)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '.04em',
-                    padding: '4px 7px',
-                    borderRadius: 'var(--r-sm)',
-                    color: a.nivel === 'grave' ? COR_SEVERIDADE.alta : COR_SEVERIDADE.media,
-                    background: corComAlfa(
-                      a.nivel === 'grave' ? COR_SEVERIDADE.alta : COR_SEVERIDADE.media,
-                      12,
-                    ),
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {a.titulo}
-                </span>
-              ))}
-              {u.alertas.length > (carteiraFolgada ? 2 : 1) && (
-                <span
-                  title={u.alertas.slice(carteiraFolgada ? 2 : 1).map((a) => a.titulo).join(' · ')}
-                  style={{ font: '500 10px/1 var(--f-ui)', color: 'var(--tx-muted)', alignSelf: 'center' }}
-                >
-                  +{u.alertas.length - (carteiraFolgada ? 2 : 1)}
-                </span>
-              )}
-            </span>
+            <TagsQueCabem alertas={u.alertas} />
           ) : (
             <span style={{ font: '400 11px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>
               {u.comparavel ? 'sem alerta' : 'unidade nova'}
@@ -625,7 +624,8 @@ export default function ExecutiveScreen({
                   key={f}
                   variante="ghost"
                   onClick={() => baixarArquivo(f)}
-                  disabled={baixando !== null}
+                  disabled={!EXPORTS_REDE_ATIVOS || baixando !== null}
+                  title={EXPORTS_REDE_ATIVOS ? undefined : MOTIVO_EXPORTS_DESLIGADOS}
                   style={{ padding: '5px 9px', font: '600 10.5px/1 var(--f-ui)' }}
                 >
                   {baixando === f ? <Spinner tamanho={10} /> : '↓'} {f.toUpperCase()}
@@ -653,7 +653,7 @@ export default function ExecutiveScreen({
             <Spinner /> Lendo a rede Ultra…
           </div>
         ) : !carteira ? null : aberta ? (
-          <FichaUnidade unidadeId={aberta} mes={carteira.mes} onVoltar={fecharFicha} />
+          <FichaUnidade unidadeId={aberta} mes={carteira.mes} onVoltar={fecharFicha} tema={tema} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -905,7 +905,7 @@ export default function ExecutiveScreen({
             </Glass>
 
             <div style={{ display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
-              <div style={{ ...COLUNA_PRINCIPAL, display: 'grid' }}>
+              <div style={{ ...COLUNA_PAINEL, display: 'grid' }}>
                 <EvolucaoRecorte
                   meses={carteira.serie_meses}
                   series={carteira.series}
@@ -914,15 +914,18 @@ export default function ExecutiveScreen({
                   fonte={carteira.fonte_faturamento}
                 />
               </div>
-              <div style={{ ...COLUNA_TRILHO, display: 'grid' }}>
+              <div style={{ ...TRILHO_PAINEL, display: 'grid' }}>
                 <CrescimentoComparavel sss={carteira.sss} />
               </div>
             </div>
 
             <div style={{ display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
-              <Glass style={{ ...COLUNA_PRINCIPAL, padding: '15px 17px' }}>
+              {/* +5 px em cima e embaixo (pedido do Felipe, 15/09): a linha ganha ~10 px de
+                  altura; o card das faixas ao lado recebe o mesmo acréscimo. */}
+              <Glass style={{ ...COLUNA_PAINEL, padding: '20px 17px', display: 'flex', flexDirection: 'column' }}>
                 <Rotulo>Funil comercial do recorte</Rotulo>
                 <FunilComercial
+                  funil
                   visitas={carteira.funil.visitas}
                   convertidos={carteira.funil.convertidos}
                   vendas={carteira.funil.vendas}
@@ -943,13 +946,13 @@ export default function ExecutiveScreen({
                   dois empilhados aqui somavam mais altura que o funil ao lado, e o card
                   do funil — que tem quatro barras e nada mais — esticava com um vão de
                   quase 200 px no pé. Um card por trilho deixa as duas faixas em esquadro. */}
-              <div style={{ ...COLUNA_TRILHO, display: 'grid' }}>
+              <div style={{ ...TRILHO_PAINEL, display: 'grid' }}>
                 <DistribuicaoFaixas faixas={carteira.faixas} />
               </div>
             </div>
 
             <div style={{ display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
-              <div style={{ ...COLUNA_PRINCIPAL, display: 'grid' }}>
+              <div style={{ ...COLUNA_PAINEL, display: 'grid' }}>
                 <Destaques
                   destaques={destaques}
                   base={baseDestaque}
@@ -959,10 +962,20 @@ export default function ExecutiveScreen({
                   onUnidade={abrirFicha}
                 />
               </div>
-              <div style={{ ...COLUNA_TRILHO, display: 'grid' }}>
+              <div style={{ ...TRILHO_PAINEL, display: 'grid' }}>
                 <Maturidade coortes={carteira.coortes} />
               </div>
             </div>
+
+            {/* POR TRÁS DOS NÚMEROS — um card só, com abas internas: o panorama acima já é
+                longo, e cinco painéis lado a lado competiam pela leitura. Mesmos filtros do
+                cabeçalho; clicar numa unidade abre a ficha. */}
+            <PorTrasDosNumeros
+              dados={inteligencia}
+              maduras={somenteMaduras}
+              onMaduras={setSomenteMaduras}
+              onUnidade={abrirFichaPorId}
+            />
 
             <div style={{ display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
               <Glass style={{ ...COLUNA_PRINCIPAL, padding: '14px 18px' }}>
@@ -1002,6 +1015,98 @@ export default function ExecutiveScreen({
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * Tags do diagnóstico: TODAS as que couberem na célula, e o resto vira "+N".
+ *
+ * O corte era fixo (2 tags com a tabela folgada, 1 apertada), então uma célula larga
+ * mostrava 2 tags e sobra, e uma estreita cortava a segunda no meio da palavra. Agora a
+ * largura de cada tag é MEDIDA numa fileira invisível e a célula mostra quantas cabem —
+ * reservando o espaço do "+N" quando sobra alguma. Recalcula quando a coluna muda de largura.
+ */
+function TagsQueCabem({ alertas }: { alertas: RedeAlerta[] }) {
+  const caixa = useRef<HTMLSpanElement>(null)
+  const regua = useRef<HTMLSpanElement>(null)
+  const [quantas, setQuantas] = useState(alertas.length)
+
+  useLayoutEffect(() => {
+    // O limite é o que se VÊ, e não a largura da célula: a tabela da carteira passa da borda
+    // do card, e a célula "cabia" duas tags com metade da segunda escondida pelo card.
+    const recorte = (() => {
+      let el = caixa.current?.closest('table')?.parentElement ?? null
+      while (el) {
+        if (/(hidden|auto|scroll|clip)/.test(getComputedStyle(el).overflowX)) return el
+        el = el.parentElement
+      }
+      return null
+    })()
+    const calcular = () => {
+      const c = caixa.current
+      const r = regua.current
+      if (!c || !r) return
+      const rc = c.getBoundingClientRect()
+      const direita = Math.min(rc.right, recorte ? recorte.getBoundingClientRect().right - 8 : rc.right)
+      const disponivel = Math.max(0, direita - rc.left)
+      const larguras = Array.from(r.children).map((el) => (el as HTMLElement).offsetWidth)
+      const GAP = 5
+      const MAIS = 26 // largura do "+N"
+      let usado = 0
+      let cabem = 0
+      for (let i = 0; i < larguras.length; i++) {
+        const comEsta = usado + (i ? GAP : 0) + larguras[i]
+        const sobram = larguras.length - (i + 1)
+        if (comEsta + (sobram > 0 ? GAP + MAIS : 0) > disponivel) break
+        usado = comEsta
+        cabem = i + 1
+      }
+      setQuantas(cabem)
+    }
+    calcular()
+    if (typeof ResizeObserver === 'undefined' || !caixa.current) return
+    const obs = new ResizeObserver(calcular)
+    obs.observe(caixa.current)
+    if (recorte) obs.observe(recorte)
+    return () => obs.disconnect()
+  }, [alertas])
+
+  const tag = (a: RedeAlerta) => (
+    <span
+      key={a.codigo}
+      title={a.detalhe}
+      style={{
+        font: '600 9.5px/1 var(--f-ui)',
+        textTransform: 'uppercase',
+        letterSpacing: '.04em',
+        padding: '4px 7px',
+        borderRadius: 'var(--r-sm)',
+        color: a.nivel === 'grave' ? COR_SEVERIDADE.alta : COR_SEVERIDADE.media,
+        background: corComAlfa(a.nivel === 'grave' ? COR_SEVERIDADE.alta : COR_SEVERIDADE.media, 12),
+        whiteSpace: 'nowrap',
+        flexShrink: 0,
+      }}
+    >
+      {a.titulo}
+    </span>
+  )
+
+  return (
+    <span ref={caixa} style={{ position: 'relative', display: 'flex', gap: 5, flexWrap: 'nowrap', overflow: 'hidden', width: '100%' }}>
+      {/* Fileira de MEDIÇÃO: invisível e fora do fluxo, só para ler a largura de cada tag. */}
+      <span ref={regua} aria-hidden style={{ position: 'absolute', visibility: 'hidden', display: 'flex', gap: 5, whiteSpace: 'nowrap', pointerEvents: 'none' }}>
+        {alertas.map(tag)}
+      </span>
+      {alertas.slice(0, quantas).map(tag)}
+      {alertas.length > quantas && (
+        <span
+          title={alertas.slice(quantas).map((a) => a.titulo).join(' · ')}
+          style={{ font: '500 10px/1 var(--f-ui)', color: 'var(--tx-muted)', alignSelf: 'center', flexShrink: 0 }}
+        >
+          +{alertas.length - quantas}
+        </span>
+      )}
+    </span>
   )
 }
 

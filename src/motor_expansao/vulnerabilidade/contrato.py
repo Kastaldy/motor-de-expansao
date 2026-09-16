@@ -47,7 +47,7 @@ from datetime import date
 VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v4"
 VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
-VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v8"  # v8: DEC-061
+VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v8"  # v8: DEC-062
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
 H3_RES_CONTRATO = 7
@@ -98,6 +98,27 @@ LIMIAR_SLUG_ESTAVEL = 0.90
 
 # Folga (~55 km) sobre o bbox da UF, para não descartar academia legítima junto a divisa.
 TOLERANCIA_BBOX_UF_GRAUS = 0.5
+
+# Guarda de coleta PARCIAL do snapshot (DEC-062). A régua PRINCIPAL é POR REDE, não no total, e
+# isso saiu de medição: em 2026-09-13 o lote morreu no coletor #28 de 90 e as redes não recoletadas
+# voltaram ao baseline do repositório — a Selfit caiu de 231 para 119 (**-48,5%**), mas o TOTAL caiu
+# só de 4.610 para 4.494 (**-2,5%**). Um limiar de total capaz de pegar aquele domingo reprovaria
+# também o fechamento real de uma unidade numa rede pequena; o colapso POR REDE é a assinatura do
+# defeito, e é ela que se mede.
+#
+# `..._REDE_PCT` só vale para rede com pelo menos `MIN_UNIDADES_GUARDA_REDE` na semana anterior:
+# abaixo disso uma unidade a menos já passa de 30% e a guarda viraria ruído.
+# `..._TOTAL_PCT` é rede de segurança para a queda difusa (muitas redes perdendo pouco), que a régua
+# por rede não veria.
+TOLERANCIA_QUEDA_REDE_PCT = 30.0
+TOLERANCIA_QUEDA_TOTAL_PCT = 10.0
+MIN_UNIDADES_GUARDA_REDE = 5
+
+# Piso ABSOLUTO da régua de total. Percentual sobre N pequeno não mede coleta parcial: numa série de
+# 2 unidades, uma academia que fecha de verdade já é -50%. O feed `unidades` em produção tem ~4.600
+# linhas, então o piso é inócuo lá e impede que a guarda vire ruído em base pequena (fixture, UF
+# isolada, primeira semana de um país novo — DEC-047).
+MIN_UNIDADES_GUARDA_TOTAL = 50
 
 # Chaves de partição hive do snapshot (não são colunas do arquivo: vivem no caminho). A ORDEM é a
 # ordem das chaves hive no caminho — `semana=AAAA-SS/fonte=<fonte>/parte-*.parquet`.
@@ -460,7 +481,7 @@ CONTRATO_COLUNAS_SCORE: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Sinal 6 — pressão competitiva com decaimento por distância (BLK-MA-12)
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v5"  # v5: DEC-061
+VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v5"  # v5: DEC-062
 
 # Raio de TRUNCAMENTO, não de alcance: quem define o alcance efetivo é a forma do kernel. 2.000 m
 # é o mesmo do `pressao_concorrencial_score_2km` da camada de mercado — manter o número igual é o
@@ -772,7 +793,7 @@ CONTRATO_COLUNAS_PRESSAO: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Lista priorizada de alvos de M&A (D5/D6) — BLK-MA-05
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v5"  # v5: DEC-061
+VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v5"  # v5: DEC-062
 
 # Gate D5 (ratificado em 2026-07-23; reabrir exige DEC). A INVERSÃO do §2 mora aqui: comprar quer
 # demanda ALTA + residual BAIXO, o OPOSTO de `abrir_agora`.
@@ -868,7 +889,7 @@ CONTRATO_COLUNAS_ALVOS_MA: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Variante NOMEADA (D1-B) — BLK-MA-15
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v6"  # v6: DEC-061
+VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v6"  # v6: DEC-062
 
 # O UNICO contrato desta camada que carrega IDENTIDADE e COORDENADA, autorizado pela emenda de
 # 2026-08-14 a DEC-028 (decidida por Vinicius). Grao: uma linha por academia.
@@ -932,7 +953,7 @@ CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
 # no mesmo dia e o score leria um evento de negociacao como 440 alvos. O S6 nao tem esse defeito: e'
 # geografico e nao sabe se a academia e' de rede. Molde do G-D2 e da DEC-026 — o fato entra antes do
 # peso.
-VERSAO_CONTRATO_REDES_NOMEADAS = "redes_ma_nomeadas_v3"  # v3: DEC-061
+VERSAO_CONTRATO_REDES_NOMEADAS = "redes_ma_nomeadas_v3"  # v3: DEC-062
 
 CONTRATO_COLUNAS_REDES_NOMEADAS: dict[str, str] = {
     "fonte": "string",

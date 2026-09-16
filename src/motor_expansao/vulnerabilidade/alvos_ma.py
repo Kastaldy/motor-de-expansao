@@ -80,7 +80,7 @@ ROOT = Path(__file__).resolve().parents[3]
 CARTEIRA_PATH_DEFAULT = ROOT / "data" / "outputs" / "carteira_expansao_acionavel.parquet"
 ACADEMIAS_PATH_DEFAULT = ROOT / "data" / "staging" / "vulnerabilidade_ma_academias.parquet"
 ALVOS_CSV_DEFAULT = ROOT / "data" / "outputs" / "alvos_ma_priorizados.csv"
-# `[DEC-061]` Fonte do mapa `hex_id_res7 -> cod_municipio` da TRAVA DE MUNICIPIO. Artefato oficial
+# `[DEC-062]` Fonte do mapa `hex_id_res7 -> cod_municipio` da TRAVA DE MUNICIPIO. Artefato oficial
 # do M1, lido SOMENTE (duas colunas). A chave e' o CODIGO IBGE e nao o nome -- ver
 # `mapa_municipio_por_hex`.
 ESTRUTURAL_PATH_DEFAULT = ROOT / "data" / "staging" / "brasil_estrutural.parquet"
@@ -556,10 +556,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--sem-dedup-dec061",
+        "--dedup-cadeias-legado",
         action="store_true",
         help=(
-            "volta a dedup de CADEIAS do feed a regua ANTERIOR a DEC-061: sem a trava de municipio "
+            "volta a dedup de CADEIAS do feed a regua ANTERIOR a DEC-062: sem a trava de municipio "
             "e sem o raio ampliado de 300 m. Existe para reproduzir numero antigo e para reverter "
             "sem mexer em codigo; a mesma regua vale para a pressao e para o pin proprio"
         ),
@@ -569,7 +569,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=None,
         help=(
-            "fonte do mapa `hex_id -> cod_municipio` da trava de municipio (DEC-061). Default: "
+            "fonte do mapa `hex_id -> cod_municipio` da trava de municipio (DEC-062). Default: "
             "`data/staging/brasil_estrutural.parquet`, lido somente. Ausente, a trava DESLIGA e o "
             "log sai em WARNING"
         ),
@@ -640,7 +640,7 @@ def resolver_fontes(args: argparse.Namespace) -> tuple[str, ...] | None:
 
 
 class ReguaDedupCadeias(NamedTuple):
-    """A régua de dedup de CADEIAS do feed que o entregável aplica (DEC-061).
+    """A régua de dedup de CADEIAS do feed que o entregável aplica (DEC-062).
 
     `municipio_por_hex` liga a TRAVA DE MUNICÍPIO e `raio_ampliado_m` liga o RAIO AMPLIADO; `None` em
     qualquer um dos dois é a passagem desligada, exatamente como na função pura. `motivo` vai para o
@@ -672,17 +672,17 @@ def mapa_municipio_por_hex(caminho: Path | None = None) -> dict[str, str] | None
 
 
 def resolver_regua_dedup_cadeias(args: argparse.Namespace) -> ReguaDedupCadeias:
-    """A régua de dedup de cadeias EFETIVA, resolvida UMA vez para os dois consumidores (DEC-061).
+    """A régua de dedup de cadeias EFETIVA, resolvida UMA vez para os dois consumidores (DEC-062).
 
-    Ligada por padrão: trava de município + raio ampliado. `--sem-dedup-dec061` volta à régua
+    Ligada por padrão: trava de município + raio ampliado. `--dedup-cadeias-legado` volta à régua
     anterior sem mexer em código. Sem o mapa de município a trava DESLIGA e o raio segue ligado — e o
     motivo diz, porque as sobreviventes deixam de bater com as 714 medidas na DEC.
     """
     from .contrato import DEDUP_CADEIA_FEED_RAIO_AMPLIADO_M
 
-    if getattr(args, "sem_dedup_dec061", False):
+    if getattr(args, "dedup_cadeias_legado", False):
         return ReguaDedupCadeias(
-            None, None, "`--sem-dedup-dec061`: regua ANTERIOR a DEC-061 (sem trava, sem raio)"
+            None, None, "`--dedup-cadeias-legado`: regua ANTERIOR a DEC-062 (sem trava, sem raio)"
         )
     caminho = getattr(args, "estrutural", None)
     mapa = mapa_municipio_por_hex(caminho)
@@ -691,12 +691,12 @@ def resolver_regua_dedup_cadeias(args: argparse.Namespace) -> ReguaDedupCadeias:
         return ReguaDedupCadeias(
             None,
             raio,
-            f"DEC-061 PARCIAL: trava de municipio DESLIGADA, insumo ausente "
+            f"DEC-062 PARCIAL: trava de municipio DESLIGADA, insumo ausente "
             f"({caminho or ESTRUTURAL_PATH_DEFAULT}); raio ampliado {raio:g} m ligado. As "
             f"sobreviventes saem ACIMA das 714 medidas na DEC",
         )
     return ReguaDedupCadeias(
-        mapa, raio, f"DEC-061: trava de municipio ({len(mapa)} hexes) + raio ampliado {raio:g} m"
+        mapa, raio, f"DEC-062: trava de municipio ({len(mapa)} hexes) + raio ampliado {raio:g} m"
     )
 
 
@@ -804,7 +804,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # vezes custaria o dobro e abriria a chance de os dois verem feeds diferentes.
     coordenadas = coordenadas_por_chave(fontes=fontes)
 
-    # `[DEC-061]` A regua de dedup de CADEIAS e' resolvida UMA vez e servida aos DOIS consumidores
+    # `[DEC-062]` A regua de dedup de CADEIAS e' resolvida UMA vez e servida aos DOIS consumidores
     # -- a pressao (oferta do s6) e o pin proprio (`--saida-redes`). Resolver em cada um abriria a
     # chance de o pin e a oferta verem reguas diferentes: a duplicata visivel e a oferta fantasma
     # sao o mesmo defeito, por duas portas. O log sai SEMPRE, e em WARNING quando a regua sai

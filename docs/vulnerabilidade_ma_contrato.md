@@ -153,7 +153,7 @@ tem demanda e interesse de presença). É um funil comercial, não uma decisão 
   > `tem_pin_proprio`, das 2.844 linhas. É esse `851` que o backend desenha (`carregar_redes` filtra
   > por `tem_pin_proprio`), e é ele que a auditoria do pin tem de usar como expectativa.
   >
-  > **[DEC-061, 2026-09-15] O split muda de novo.** Com a trava de município e o raio ampliado
+  > **[DEC-062, 2026-09-15] O split muda de novo.** Com a trava de município e o raio ampliado
   > ligados no entregável, ele passa a **714 com pin próprio / 2.130 já cobertas**
   > (`redes_ma_nomeadas_v3`). A expectativa da auditoria do pin acompanha o artefato regenerado.
 
@@ -602,7 +602,7 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 > declarado: ~87 duplicatas que o nome não casa, quase todas porque o insumo mapeado tem nome não
 > informativo (ex.: `'2939'`) — é qualidade de coletor, não de algoritmo.
 >
-> **[DEC-061, 2026-09-15] Duas portas novas no mesmo critério, ligadas no entregável.** Das 851
+> **[DEC-062, 2026-09-15] Duas portas novas no mesmo critério, ligadas no entregável.** Das 851
 > sobreviventes, **137 são a mesma academia** que o cadastro já tem, e escapavam por portas
 > disjuntas: **83** do MESMO município, todas acima do teto de 1.200 m (máx. 21.151,5 m), e **53**
 > entre 150,7 e 298,8 m cujos nomes o `mesma_unidade` não concilia (`CT Greenlife` × `CT-GREENLIFE`;
@@ -612,9 +612,9 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 > nome como DESEMPATE). Efeito: sobreviventes `851 -> 714` e pins `-137`; pela união da DEC-048,
 > oferta de mercado `-135` unidades (2 são `my_box`, já fora pela DEC-056). O mapa usa o **código**
 > do município e não o nome, porque 232 nomes existem em mais de uma UF. Reversão sem código:
-> `--sem-dedup-dec061`. Custo declarado: pelo menos 4 prováveis falsos positivos em 137, e o veto
+> `--dedup-cadeias-legado`. Custo declarado: pelo menos 4 prováveis falsos positivos em 137, e o veto
 > de ordinal segue errando o topônimo `Guará II` (causa (c) do BLK-MA-17-FU5). **Cinco bumps de
-> série.** Medição completa em `docs/decisions/DEC-061.md`.
+> série.** Medição completa em `docs/decisions/DEC-062.md`.
 >
 > **QUEBRA DE COMPARABILIDADE COM A SÉRIE `v5`, anunciada.** Diferente da emenda anterior — onde
 > `Spearman(pressão, oferta) = 1,000000` permitiu dizer "não embaralha o ranking" —, **aqui a ordem

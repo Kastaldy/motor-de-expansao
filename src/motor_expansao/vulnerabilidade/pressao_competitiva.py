@@ -1118,7 +1118,7 @@ def calcular_pressao_por_academia(
       - `dedup_cadeia_feed_m` (default `150`): raio do casamento por rede contra o insumo mapeado.
         Subi-lo para `300` alcança os mesmos 58 pontos que o raio ampliado, mas SEM as guardas —
         que barram 4 deles (3 por ordinal, 1 por ambiguidade) e escolhem o representante pelo nome,
-        não pela distância (DEC-061). O caminho para eles é `dedup_cadeia_feed_raio_ampliado_m`, não
+        não pela distância (DEC-062). O caminho para eles é `dedup_cadeia_feed_raio_ampliado_m`, não
         este. Mexer aqui muda `pressao_competitiva` -> DEC + bump.
       - `dedup_independentes_nome_m` (default `None` = desligado): liga a passagem por NOME entre
         independentes da MESMA fonte, a única que alcança a duplicata que sobra hoje (com só o

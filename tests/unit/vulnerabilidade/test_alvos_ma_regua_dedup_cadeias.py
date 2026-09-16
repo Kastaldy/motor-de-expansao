@@ -1,11 +1,11 @@
-"""A regua da DEC-061 LIGADA no entregavel -- o unico chamador da dedup de cadeias.
+"""A regua da DEC-062 LIGADA no entregavel -- o unico chamador da dedup de cadeias.
 
-Ate' a DEC-061 as duas reguas (trava de municipio e raio ampliado) existiam so' como opt-in na funcao
+Ate' a DEC-062 as duas reguas (trava de municipio e raio ampliado) existiam so' como opt-in na funcao
 pura, e NENHUM chamador as ligava: aprovar a DEC nao mudaria um pin. `alvos_ma.py` e' quem grava
 `vulnerabilidade_ma_redes.parquet` (o pin e, por `unir_cadeias`, a oferta de mercado) e quem calcula
 a pressao por academia (a oferta do s6). Estes testes protegem:
 
-  1. **Ligada por padrao, reversivel por flag** -- `--sem-dedup-dec061` volta a regua anterior.
+  1. **Ligada por padrao, reversivel por flag** -- `--dedup-cadeias-legado` volta a regua anterior.
   2. **A chave do mapa e' o CODIGO IBGE, nao o nome** -- 232 nomes de municipio existem em mais de
      uma UF, e com o nome como chave a propria trava fundiria homonimos de estados diferentes.
   3. **Sem o insumo, a trava desliga e AVISA** -- o raio segue ligado e o motivo diz que as
@@ -55,13 +55,13 @@ def _estrutural(caminho: Path, linhas: list[tuple[str, str | None, str]]) -> Pat
 def test_cli_liga_a_regua_por_padrao() -> None:
     """Omitir o flag e' LIGAR: e' o que a DEC decide, e o que a receita copiavel do runbook roda."""
     args = m._parse_args(["--base-dir", "x"])
-    assert args.sem_dedup_dec061 is False
+    assert args.dedup_cadeias_legado is False
     assert args.estrutural is None
 
 
 def test_a_flag_volta_a_regua_anterior_nas_duas_passagens() -> None:
     regua = m.resolver_regua_dedup_cadeias(
-        m._parse_args(["--base-dir", "x", "--sem-dedup-dec061"])
+        m._parse_args(["--base-dir", "x", "--dedup-cadeias-legado"])
     )
     assert regua.municipio_por_hex is None
     assert regua.raio_ampliado_m is None
@@ -75,7 +75,7 @@ def test_com_o_insumo_as_duas_passagens_ligam(tmp_path: Path) -> None:
     )
     assert regua.municipio_por_hex == {"hex-rio": "3304557"}
     assert regua.raio_ampliado_m == DEDUP_CADEIA_FEED_RAIO_AMPLIADO_M == 300.0
-    assert regua.motivo.startswith("DEC-061:")
+    assert regua.motivo.startswith("DEC-062:")
 
 
 # --------------------------------------------------------------------------- #
@@ -195,7 +195,7 @@ def test_a_auditoria_do_main_diz_qual_regua_valeu(
         "PARCIAL" in r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
     ), "a regua parcial tem de sair em WARNING, nao so' na auditoria"
 
-    assert m.main([*comum, "--sem-dedup-dec061"]) == 0
+    assert m.main([*comum, "--dedup-cadeias-legado"]) == 0
     assert "ANTERIOR" in capsys.readouterr().out
 
 

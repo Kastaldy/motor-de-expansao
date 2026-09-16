@@ -447,7 +447,7 @@ def test_15_contratos_e_as_quatro_versoes_bumpadas() -> None:
     assert len(c.CONTRATO_COLUNAS_ALVOS_MA) == 18
     assert len(c.CONTRATO_COLUNAS_ACADEMIAS_MA) == 26
 
-    # `[DEC-061]` os quatro sobem de novo: ligar a trava de municipio e o raio ampliado muda a
+    # `[DEC-062]` os quatro sobem de novo: ligar a trava de municipio e o raio ampliado muda a
     # oferta do s6 (137 pontos a menos), e com ela os tres artefatos que carimbam valor.
     assert c.VERSAO_CONTRATO_PRESSAO == "pressao_competitiva_v5"
     assert c.VERSAO_CONTRATO_SCORE == "score_vulnerabilidade_v8"

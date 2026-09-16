@@ -2295,7 +2295,7 @@ definido antes de qualquer código; validação com fixtures sintéticas; READ-O
 
 | | |
 |---|---|
-| **Criticidade** | **Crítica** — elevada em 2026-09-15 pela DEC-061: desde a DEC-048, a coluna `tem_pin_proprio` que esta dedup produz alimenta `unir_cadeias` e, por ela, a oferta, o consumo e o residual de mercado. A leitura original (o FU4 já tinha derrubado 320 das ~407 duplicatas e o resto só inflava a pressão de um punhado de academias) valia apenas para o sinal 6. READ-ONLY sobre o M1. |
+| **Criticidade** | **Crítica** — elevada em 2026-09-15 pela DEC-062: desde a DEC-048, a coluna `tem_pin_proprio` que esta dedup produz alimenta `unir_cadeias` e, por ela, a oferta, o consumo e o residual de mercado. A leitura original (o FU4 já tinha derrubado 320 das ~407 duplicatas e o resto só inflava a pressão de um punhado de academias) valia apenas para o sinal 6. READ-ONLY sobre o M1. |
 | **Prioridade** | Baixa — **não** bloqueia o BLK-MA-06. O gatilho do FU1/FU2/FU4 era a segunda fonte; este é qualidade de coletor, e piora devagar. |
 | **Esteira** | Planner → Builder → QA **com gate humano e DEC** (elevada em 2026-09-15: mudar esta dedup muda o universo de oferta de mercado — ver a criticidade). |
 | **Status** | Pendente — **resíduo declarado do BLK-MA-17-FU4 (2026-08-18)**. |
@@ -2362,16 +2362,16 @@ exatamente os falsos positivos que a regra de ordinal eliminou (`Carpina` × `Ca
 que o custo dispara); mexer em `dedup_independentes` (é o FU1, concluído); qualquer
 artefato/peso/score do M1.
 
-> ### [ampliado em 2026-09-15 pela DEC-061] Parte do resíduo foi fechada, e o bloco sobe para Crítica
+> ### [ampliado em 2026-09-15 pela DEC-062] Parte do resíduo foi fechada, e o bloco sobe para Crítica
 >
-> A DEC-061 liga duas passagens na dedup de cadeias (trava de município por `cod_municipio` e raio de
+> A DEC-062 liga duas passagens na dedup de cadeias (trava de município por `cod_municipio` e raio de
 > 300 m com o ordinal como veto) e, pelo raio, fecha os casos nominais das causas **(a)** e **(b)**:
 > `Evoque Academia Campo Grande` × `2939` (181 m), `BlueFit 24h - Frei Caneca` × `Frei Caneca`
 > (223 m), `SKYFIT ACADEMIA CAMPO BELO` × `Campo Belo – Campinas (SP)` (162 m) e `PANOBIANCO EUTERPE -
 > Nova Friburgo` × `NOVA FRIBURGO` (177 m). A causa **(c)** segue aberta: o veto de ordinal do raio
 > recusa `Guará QE 56` × `Guará II QE 56` pelo motivo descrito acima.
 >
-> **Duas premissas deste bloco envelheceram, e a DEC-061 as emenda.** (1) "Fora de escopo: afrouxar
+> **Duas premissas deste bloco envelheceram, e a DEC-062 as emenda.** (1) "Fora de escopo: afrouxar
 > `DIST_MAX_MESMO_NOME_M`" — a trava de município o afrouxa, mas só quando o `cod_municipio` bate
 > dos dois lados, com o custo medido e declarado na DEC. (2) "Baixa, sem gate" — desde a DEC-048 a
 > coluna `tem_pin_proprio` que esta dedup produz alimenta `unir_cadeias` e, por ela, a oferta, o

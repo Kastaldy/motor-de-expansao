@@ -65,6 +65,23 @@
 # (passo 4) -- a ordem entre eles e' indiferente, porque o snapshot le os CSVs e
 # o regen le/escreve a camada de mercado.
 #
+# ---------------------------------------------------------------------------
+# CODIGO DE SAIDA 4 = COLETA PARCIAL RECUSADA (DEC-061)
+#
+# Desde 2026-09-16 o materializador compara a foto com a ultima semana da MESMA
+# fonte e RECUSA gravar se uma rede desabou (> 30%) ou se o total caiu > 10%.
+# Nesse caso NADA e' gravado, a serie anterior fica intacta, a retencao nao roda
+# e o `python -m` sai com **4**.
+#
+# O `|| echo` na linha do `run_weekly_90.sh` continua certo (uma falha aqui nao
+# pode abortar a coleta nem o regen), mas ele ENGOLE o codigo de saida: quem for
+# diagnosticar um domingo tem de ler o LOG, nao o status do lote. Procure por
+# `REPROVADO — semana ... NAO sera gravada`.
+#
+# Se a queda for REAL (rede fechou unidades de verdade, conferido a mao), repita
+# com `--forcar` -- a auditoria sai com `forcado: true`. Rodar `DRY_RUN=1` ANTES
+# ja' antecipa a reprovacao: a guarda e' avaliada tambem em modo seco.
+#
 # INSTALACAO (uma vez):
 #     install -d -m 0755 /opt/motor-expansao-infra     # idempotente; nada no repo cria este dir
 #     cp scripts/cron/run_snapshot_concorrentes.sh /opt/motor-expansao-infra/
