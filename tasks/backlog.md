@@ -916,25 +916,64 @@ exige decisão humana sobre quais fontes baixar e validação de licença/LGPD.*
 
 ---
 
-### BLK-SEC-03-FU1 — Forçar 2FA no Authelia + revisão de acesso do dashboard (P4 do SEC-03)
+### BLK-SEC-03-FU1 — Forçar 2FA no Authelia (P4 do SEC-03)
 
 | Campo | Valor |
 |---|---|
 | **Criticidade** | **Média** (acesso ao dashboard; não toca M1/score) |
 | **Prioridade** | Média |
 | **Esteira** | interativa com gate humano (VPS §6) — **agendar com o TIME AVISADO** |
-| **Status** | Pendente |
+| **Status** | **ADIADO (16/09/2026)** — ver a nota de sobreposição abaixo |
 | **Origem** | P4 do BLK-SEC-03 (concluído 2026-07-13), adiado por decisão de Felipe para não trancar o time |
 | **Autonomia** | **manual (NÃO loop-safe)** — VPS + coordenação de pessoas |
 
-**Escopo:** (1) avaliar/forçar `two_factor` para o grupo `ultra_team` no Authelia
+**Escopo:** avaliar/forçar `two_factor` para o grupo `ultra_team` no Authelia
 (`authelia/configuration.yml`), com prazo prévio para o time cadastrar TOTP e virada em horário
-combinado com todos disponíveis; rollback = voltar a policy a `one_factor` (1 edit). (2) Revisão de
-acesso em `authelia/users_database.yml`: remover usuários obsoletos, definir offboarding (revogar ao
-sair) e periodicidade da revisão. Documentar em `docs/infra_producao.md`.
+combinado com todos disponíveis; rollback = voltar a policy a `one_factor` (1 edit).
 
 **Risco:** trancar o time fora do dashboard se virar sem aviso — mitigado por agendamento + rollback
 de 1 edit.
+
+> **Por que adiado, e não cancelado (decisão de Felipe, 16/09/2026).** Este bloco configura 2FA
+> **no Authelia** — o componente que o **P19** do `banco-de-reservas` decidiu **remover**: lá o motor
+> passa a autenticar e o Authelia sai. Forçar TOTP aqui custa janela agendada e todo o time
+> cadastrando, e esse trabalho **evapora no corte**. Até 16/09 nenhum dos dois textos sabia do outro:
+> o P19 cita este bloco como quem "quer forçar" TOTP, e este bloco não sabia que o Authelia sairia.
+>
+> Não é cancelado porque a epic **não tem data**: se ela demorar, o acesso segue em fator único, e
+> aí este bloco volta a ser o seguro certo. A decisão é de SEQUÊNCIA, não de mérito — e quando a
+> epic tiver cronograma, esta linha se resolve sozinha num dos dois sentidos.
+>
+> A outra metade do escopo original (revisão de acesso e offboarding) **saiu deste bloco** e virou o
+> **BLK-SEC-03-FU2**, logo abaixo: aquela metade a epic precisa de qualquer jeito, então ela anda
+> agora. O número menor aqui é histórico, não ordem de execução.
+
+---
+
+### BLK-SEC-03-FU2 — Revisão de acesso e offboarding no Authelia (metade do FU1)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (acesso ao piloto; não toca M1/score) |
+| **Prioridade** | Média |
+| **Esteira** | interativa com gate humano (VPS §6) — cada comando confirmado |
+| **Status** | Pendente — **esta é a metade que anda agora** |
+| **Origem** | metade (2) do BLK-SEC-03-FU1, separada em 16/09/2026 por decisão de Felipe |
+| **Autonomia** | **manual (NÃO loop-safe)** — VPS + dado de pessoas |
+
+**Escopo:** revisão de acesso em `authelia/users_database.yml` — remover usuários obsoletos, definir
+**offboarding** (revogar ao sair) e a **periodicidade** da revisão. Documentar em
+`docs/infra_producao.md`.
+
+**Por que esta metade não espera a epic.** Ela **sobrevive ao corte**: o P19 troca quem autentica,
+não quem tem direito de entrar. A lista de quem está dentro, a regra de revogar na saída e a
+cadência de revisão valem igual no Authelia de hoje e no motor de amanhã — e o corte ainda vai
+**precisar** dessa conciliação de elenco para saber quais linhas de `usuarios` correspondem a gente
+de verdade. Fazer agora é trabalho que conta duas vezes; adiar é deixar parada a única metade que
+não depende de cronograma nenhum.
+
+**Risco:** baixo e de outra natureza que o FU1 — não vira policy nem tranca ninguém; o erro possível
+é remover acesso de quem ainda precisa, que se desfaz com um `INSERT` de volta.
 
 ---
 
