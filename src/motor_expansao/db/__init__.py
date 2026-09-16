@@ -26,9 +26,16 @@ da FUNCAO publica acima, e um submodulo homonimo seria sombreado por ela neste
 namespace -- `from motor_expansao.db import conexao` devolveria a funcao, e o modulo
 ficaria inalcancavel por esse caminho.
 
-O contrato do `app.id_usuario` e' de TODO caminho de escrita, nao de uma funcao;
-por isso ele mora no gerenciador de contexto, e nao numa chamada que alguem possa
-esquecer de fazer.
+O contrato do `app.id_usuario` e' de todo caminho de escrita que age EM NOME DE ALGUEM,
+nao de uma funcao; por isso ele mora no gerenciador de contexto, e nao numa chamada que
+alguem possa esquecer de fazer. Contrato completo: `esquema-do-banco.md` §3.7 (D28).
+
+A EXCECAO TEM NOME, e ate' 16/09/2026 esta frase dizia "TODO caminho de escrita" sem
+menciona-la -- ou seja, nascia falsa. `db/cli.py` abre conexao propria e escreve sem
+carimbo, de proposito: ele roda como DONO (runner de migration e verificador de
+privilegio), e migration nao e' ato de RBAC de um usuario -- nao ha' autor a carimbar.
+Qualquer OUTRA conexao fora deste modulo e' defeito, e ha' teste de contrato que a recusa
+(`tests/contracts/test_conexao_por_uma_porta_so.py`).
 """
 
 from __future__ import annotations
