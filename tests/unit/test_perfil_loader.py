@@ -767,3 +767,32 @@ def test_faixas_renda_rotulo_acentuado_levanta(tmp_path: Path) -> None:
     ruins["per_capita"][0]["rotulo"] = "até US$ 340"
     with pytest.raises(PerfilInvalidoError, match=r"per_capita\[0\]\.rotulo"):
         carregar_perfil(_gravar(tmp_path, _perfil_com_faixas(ruins)))
+
+
+# --------------------------------------------------------------------------------
+# reguas.pin_margem_m — margem do recorte de pins do mapa (emenda a DEC-035)
+# --------------------------------------------------------------------------------
+
+_REPO = Path(__file__).resolve().parents[2]
+
+
+def test_pin_margem_ausente_e_o_raio_da_pressao(tmp_path: Path) -> None:
+    """Sem o campo, vale 2000 m: e' o que mantem o Brasil sem tocar o perfil BR."""
+    perfil = carregar_perfil(_gravar(tmp_path, _copia_profunda(PERFIL_MINIMO)))
+    assert perfil.reguas.pin_margem_m == 2000.0
+    br = carregar_perfil(_REPO / "data" / "perfis" / "BR" / "perfil.json")
+    assert br.reguas.pin_margem_m == 2000.0
+
+
+def test_pin_margem_do_perfil_ar_e_zero() -> None:
+    """Comunas pequenas e coladas: o mapa do municipio mostra so' o que e' dele."""
+    ar = carregar_perfil(_REPO / "data" / "perfis" / "AR" / "perfil.json")
+    assert ar.reguas.pin_margem_m == 0.0
+
+
+@pytest.mark.parametrize("valor", [-1, "2000", True])
+def test_pin_margem_invalida_levanta_nomeando_o_campo(tmp_path: Path, valor: object) -> None:
+    dados = _copia_profunda(PERFIL_MINIMO)
+    dados["reguas"]["pin_margem_m"] = valor
+    with pytest.raises(PerfilInvalidoError, match=r"reguas\.pin_margem_m"):
+        carregar_perfil(_gravar(tmp_path, dados))
