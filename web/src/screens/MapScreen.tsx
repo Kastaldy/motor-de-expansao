@@ -30,7 +30,7 @@ import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estad
 import { temAlunos } from '../lib/pins'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import { rodapeDaBase, tituloEscolhaUnidade } from '../lib/rodape-base'
-import { type AlvoCaptura, pinsDoAlvo } from '../lib/captura-mapa'
+import { type AlvoCaptura, alvoDoHex, pinsDoAlvo } from '../lib/captura-mapa'
 import { DIMENSOES, rotuloDoHex, rotulosDosHexes } from '../lib/comparacao'
 import type { Tema } from '../lib/tema'
 import type {
@@ -692,9 +692,9 @@ export default function MapScreen({
       if (!hs?.length || gerandoDeck) return
       setGerandoDeck(true)
       try {
-        // Sem coordenada: a comparacao de hexagonos nao tem imovel para marcar — o
-        // assunto de cada foto e' a celula inteira.
-        const imagens = await capturar(hs.map((h) => ({ hexId: h.id })))
+        // Mesmo molde do deck de pontos: cidade do proprio hexagono e pin no centro dele.
+        const alvos = hs.map((h) => alvoDoHex(h, dados?.uf ?? null))
+        const imagens = await capturar(alvos)
         const rotulos = rotulosComparacao(hs)
         const ranking = ranquear(DIMENSOES, hs, rotulos)
         /* O subtítulo nomeia a cidade só quando TODAS são da mesma. Na visão de UF o mapa
@@ -721,6 +721,9 @@ export default function MapScreen({
             titulo: 'Comparação de hexágonos',
             subtitulo: `${cidade}${hs.length} áreas`,
             imagens,
+            // Na ordem de COLAGEM, como `imagens`: o PDF imprime o centro sob cada foto
+            // para o operador voltar ao hexagono escolhido colando-o na busca.
+            coordenadas: alvos.map((a) => ({ lat: a.lat, lng: a.lng })),
           }),
         }).catch((erro: unknown) => {
           // Falha de REDE: quem separa sessão vencida de servidor fora do ar é a sonda de
@@ -746,7 +749,7 @@ export default function MapScreen({
         setGerandoDeck(false)
       }
     },
-    [hexesComparacao, rotulosComparacao, capturar, gerandoDeck],
+    [hexesComparacao, rotulosComparacao, capturar, gerandoDeck, dados?.uf],
   )
 
   /**

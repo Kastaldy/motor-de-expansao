@@ -10,11 +10,13 @@ import {
   OCUPACAO_DO_HEXAGONO,
   ZOOM_CAPTURA_MAX,
   ZOOM_CAPTURA_MIN,
+  alvoDoHex,
   comporCanvas,
   esperaDeCaptura,
   chegouNoAlvo,
   larguraDoAnel,
   mapaPronto,
+  marcaDoAlvo,
   metrosPorPixel,
   ordemDeVoo,
   pinsDoAlvo,
@@ -477,5 +479,54 @@ describe('pinsDoAlvo', () => {
     expect(vazio).not.toBeNull()
     expect(vazio!.concorrentes).toEqual([])
     expect(vazio!.ultra).toEqual([])
+  })
+})
+
+describe('marcaDoAlvo', () => {
+  const HEX = '87a8100c9ffffff'
+
+  it('alvo so com hexId (deck de hexagonos) ainda marca o hexagono, sem pin', () => {
+    // Era o defeito: sem lat/lng nao nascia marca, e a foto saia sem contorno nenhum.
+    expect(marcaDoAlvo({ hexId: HEX })).toEqual({ hexId: HEX, pin: null })
+  })
+
+  it('alvo com coordenada (deck de pontos) marca o hexagono e o pin', () => {
+    expect(marcaDoAlvo({ hexId: HEX, lat: -23.55, lng: -46.63 })).toEqual({
+      hexId: HEX,
+      pin: { lat: -23.55, lng: -46.63 },
+    })
+  })
+
+  it('coordenada incompleta tira o pin, mas nao o hexagono', () => {
+    expect(marcaDoAlvo({ hexId: HEX, lat: null, lng: -46.63 })).toEqual({ hexId: HEX, pin: null })
+    expect(marcaDoAlvo({ hexId: HEX, lat: -23.55 })).toEqual({ hexId: HEX, pin: null })
+  })
+})
+
+describe('alvoDoHex', () => {
+  const HEX = '87a8100c9ffffff'
+  const [latC, lngC] = cellToLatLng(HEX)
+
+  it('segue o molde do ponto: cidade do proprio hexagono e pin no centro da celula', () => {
+    // Sem uf/municipio a captura tratava todo hexagono como da cidade ABERTA: longe dela,
+    // a foto saia com os pins do lugar errado.
+    expect(alvoDoHex({ id: HEX, lat: 0, lng: 0, mun: 'Jataí' }, 'GO')).toEqual({
+      hexId: HEX,
+      lat: latC,
+      lng: lngC,
+      uf: 'GO',
+      municipio: 'Jataí',
+    })
+  })
+
+  it('sem municipio, cai no contexto da cidade aberta, como o ponto sem local', () => {
+    expect(alvoDoHex({ id: HEX, lat: 0, lng: 0, mun: null }, 'GO').municipio).toBeNull()
+  })
+
+  it('id que nao e celula valida usa a coordenada servida', () => {
+    expect(alvoDoHex({ id: 'x', lat: -16.1, lng: -47.2, mun: 'Posse' }, 'GO')).toMatchObject({
+      lat: -16.1,
+      lng: -47.2,
+    })
   })
 })
