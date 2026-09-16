@@ -221,6 +221,10 @@ class FaixasRenda:
     domiciliar: tuple[Faixa, ...]
 
 
+#: Raio da pressao competitiva; ver `Reguas.pin_margem_m`.
+PIN_MARGEM_PADRAO_M = 2000.0
+
+
 @dataclass(frozen=True, slots=True)
 class Reguas:
     renda_abs_min: float
@@ -252,6 +256,12 @@ class Reguas:
     #: a mesma falha que a `faixas_renda` corrige, pelo mesmo mecanismo.
     #: `None` = pais usa os literais de `dashboard/constants.py`.
     faixas_densidade: tuple[Faixa, ...] | None = None
+    #: Margem, em metros, do recorte de PINS do mapa do municipio (DEC-035): alem dos
+    #: hexagonos do municipio, entra o que cai no bbox dos centroides + esta margem. O
+    #: padrao e' o raio de 2 km da pressao, para quem conta na pressao ser desenhavel. `0`
+    #: prende os pins aos hexagonos do municipio — a escolha da AR, onde as comunas de
+    #: CABA sao pequenas e coladas e a margem desenhava as vizinhas.
+    pin_margem_m: float = PIN_MARGEM_PADRAO_M
 
 
 @dataclass(frozen=True, slots=True)
@@ -653,6 +663,11 @@ def _ler_reguas(dados: dict[str, Any], caminho: Path) -> Reguas:
         metas_big_numbers=_ler_metas(bruto, caminho),
         faixas_renda=_ler_faixas_renda(bruto, caminho),
         faixas_densidade=_ler_faixas_densidade(bruto, caminho),
+        pin_margem_m=(
+            _numero(bruto, "pin_margem_m", caminho, prefixo=p)
+            if "pin_margem_m" in bruto
+            else PIN_MARGEM_PADRAO_M
+        ),
     )
     # Regua degenerada nao levanta na leitura: levanta uma divisao por zero LA na
     # frente, dentro de `nota_renda_absoluta`, com traceback que nao menciona perfil.
@@ -670,6 +685,10 @@ def _ler_reguas(dados: dict[str, Any], caminho: Path) -> Reguas:
         raise _erro(caminho, "reguas.uplift_composicao", "deveria ser > 0")
     if reguas.moradores_por_domicilio <= 0:
         raise _erro(caminho, "reguas.moradores_por_domicilio", "deveria ser > 0")
+    # Negativo encolheria o bbox para DENTRO dos centroides: some pin do proprio
+    # municipio, sem erro nenhum.
+    if reguas.pin_margem_m < 0:
+        raise _erro(caminho, "reguas.pin_margem_m", "deveria ser >= 0")
     return reguas
 
 

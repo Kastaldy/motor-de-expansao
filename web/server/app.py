@@ -791,11 +791,29 @@ def carregar_independentes() -> pd.DataFrame | None:
 #
 # A margem e' o proprio raio da pressao: qualquer ponto que possa entrar na conta de alguem do
 # recorte tem de ser desenhavel. Maior que isso so' adicionaria pins que nao entram em conta nenhuma.
-PIN_MARGEM_M = 2000.0
+#
+# Emenda (2026-09-16): o valor vem do PERFIL (`reguas.pin_margem_m`, padrao 2000). A AR declara 0 —
+# as comunas de CABA sao pequenas e coladas, e a margem desenhava as vizinhas ao abrir uma delas.
+# Com 0 o recorte e' so' `hex ∈ sel`; o custo aceito e' o vizinho que conta na pressao de um hex de
+# borda nao aparecer no mapa.
+PIN_MARGEM_M = PERFIL.reguas.pin_margem_m
 _GRAU_LAT_M = 111_320.0
 
 
-def _bbox_com_margem(sel: pd.DataFrame, metros: float = PIN_MARGEM_M) -> tuple[float, float, float, float]:
+def _no_recorte(base: pd.DataFrame, sel: pd.DataFrame, hex_ids: set[str]) -> pd.Series:
+    """Mascara do recorte de pins: hexagono do municipio OU dentro da margem (`PIN_MARGEM_M`).
+
+    A margem e' lida AQUI, na chamada, e nao num default de argumento: congelada no `def`, ela
+    ignoraria o perfil sem erro nenhum.
+    """
+    no_muni = base["hex_id_res7"].astype(str).isin(hex_ids)
+    if PIN_MARGEM_M <= 0:
+        return no_muni
+    lat_min, lat_max, lng_min, lng_max = _bbox_com_margem(sel, PIN_MARGEM_M)
+    return no_muni | (base["lat"].between(lat_min, lat_max) & base["lng"].between(lng_min, lng_max))
+
+
+def _bbox_com_margem(sel: pd.DataFrame, metros: float) -> tuple[float, float, float, float]:
     """Bbox do recorte expandido por `metros`. Devolve `(lat_min, lat_max, lng_min, lng_max)`."""
     lat_min, lat_max = float(sel["lat"].min()), float(sel["lat"].max())
     lng_min, lng_max = float(sel["lng"].min()), float(sel["lng"].max())
@@ -820,9 +838,7 @@ def _pins_independentes(sel: pd.DataFrame) -> dict[str, Any]:
     hexes = set(sel["hex_id"].astype(str))
     # Recorte = hexes do municipio UNIAO o que cai na margem do raio (ver `PIN_MARGEM_M`): sem a
     # segunda parte, quem esta' do outro lado da divisa conta na pressao e nao aparece no mapa.
-    lat_min, lat_max, lng_min, lng_max = _bbox_com_margem(sel)
-    na_margem = base["lat"].between(lat_min, lat_max) & base["lng"].between(lng_min, lng_max)
-    no_recorte = base[base["hex_id_res7"].isin(hexes) | na_margem]
+    no_recorte = base[_no_recorte(base, sel, hexes)]
     total = int(len(no_recorte))
     recorte = no_recorte.head(COMPETITOR_PIN_LIMIT)
 
@@ -1782,11 +1798,7 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
         # cruza divisa municipal, e antes desta uniao o concorrente do outro lado contava sem ser
         # desenhado — uma das tres causas da auditoria do pin nao fechar (DEC-035).
         chaves = conc["hex_id_res7"].astype(str)
-        m_lat_min, m_lat_max, m_lng_min, m_lng_max = _bbox_com_margem(sel)
-        na_margem = conc["lat"].between(m_lat_min, m_lat_max) & conc["lng"].between(
-            m_lng_min, m_lng_max
-        )
-        no_muni = conc[chaves.isin(hex_ids) | na_margem]
+        no_muni = conc[_no_recorte(conc, sel, hex_ids)]
         # O fallback e' para BASE ANTIGA sem hex casavel — nao para "este municipio nao tem
         # concorrente". Antes ele disparava sempre que `no_muni` vinha vazio, e ai plotava,
         # pelo bbox de centroides, o pin da cidade vizinha num municipio onde toda ficha diz
@@ -1821,14 +1833,7 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
     diag = carregar_redes()
     linhas_diag: list[dict[str, Any]] = []
     if diag is not None and len(diag):
-        d_lat_min, d_lat_max, d_lng_min, d_lng_max = _bbox_com_margem(sel)
-        no_recorte = diag[
-            diag["hex_id_res7"].isin(hex_ids)
-            | (
-                diag["lat"].between(d_lat_min, d_lat_max)
-                & diag["lng"].between(d_lng_min, d_lng_max)
-            )
-        ].head(COMPETITOR_PIN_LIMIT)
+        no_recorte = diag[_no_recorte(diag, sel, hex_ids)].head(COMPETITOR_PIN_LIMIT)
         linhas_diag = [
             {
                 "lat": _num(t.lat, 6),
