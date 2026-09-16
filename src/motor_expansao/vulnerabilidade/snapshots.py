@@ -69,12 +69,16 @@ from .contrato import (
     FONTES_VALIDAS,
     H3_RES_CONTRATO,
     LIMIAR_SLUG_ESTAVEL,
+    MIN_UNIDADES_GUARDA_REDE,
+    MIN_UNIDADES_GUARDA_TOTAL,
     MOTIVOS_DESCARTE,
     NOTA_WELLHUB_MAX,
     NOTA_WELLHUB_MIN,
     RE_SEMANA,
     RE_UUID,
     RETENCAO_SEMANAS,
+    TOLERANCIA_QUEDA_REDE_PCT,
+    TOLERANCIA_QUEDA_TOTAL_PCT,
     VERSAO_CONTRATO_SNAPSHOT,
     chave_do_slug,
     chave_hash_estavel,
@@ -1197,6 +1201,106 @@ def migrar_layout_particoes(
 
 
 # --------------------------------------------------------------------------- #
+# 6.1 Guarda de coleta PARCIAL (fronteira de publicação)
+# --------------------------------------------------------------------------- #
+def avaliar_coleta_parcial(
+    snapshot: pd.DataFrame,
+    base_dir: Path = SNAPSHOTS_DIR_DEFAULT,
+    *,
+    semana: str,
+    tolerancia_rede_pct: float = TOLERANCIA_QUEDA_REDE_PCT,
+    tolerancia_total_pct: float = TOLERANCIA_QUEDA_TOTAL_PCT,
+) -> dict[str, object]:
+    """A semana candidata veio de uma coleta COMPLETA? Compara com a última semana da MESMA fonte.
+
+    **O incidente (2026-09-13).** Um coletor travou, o tratador de timeout do repo irmão quebrou e o
+    lote morreu no #28 de 90. O `run_weekly_90.sh` abre com `git checkout -- Unidades/`, então as 56
+    redes que não rodaram ficaram com o CSV commitado no repositório: a Selfit caiu de 231 para 119.
+    O regen de mercado REPROVOU (guarda de desenhabilidade, DEC-059) e não publicou nada — mas o
+    snapshot não tinha guarda nenhuma e gravou a foto quebrada. Como a série é o insumo de S3/S4, as
+    112 unidades "sumidas" virariam `sumiu_recente`: falso positivo em massa no sinal de maior peso.
+
+    **Por REDE, não no total** (ver `TOLERANCIA_QUEDA_REDE_PCT`): naquele domingo o total caiu só
+    2,5% e a Selfit, 48,5%. O colapso por rede é a assinatura; o total é rede de segurança para a
+    queda difusa.
+
+    **Compara fonte com ela mesma.** `unidades` (domingo) e os agregadores (sábado/terça) têm
+    cadências próprias e universos de tamanho diferente; cruzar fontes inventaria queda onde só há
+    calendário. Fonte que estreia não tem referência e **passa** — a guarda mede queda, não tamanho.
+
+    É a ÚNICA leitura de semanas anteriores fora da poda, e ela é deliberada: a fronteira declarada
+    no topo do módulo ("o materializador nunca olha semanas anteriores") existia para o CÁLCULO do
+    snapshot, que segue intacto — aqui não se deriva nada, só se decide publicar.
+
+    Devolve sempre o laudo (nunca levanta): quem decide gravar é `materializar`.
+    """
+    # A guarda NUNCA pode ser o motivo de a semana não ser gravada por um problema de LEITURA: parte
+    # corrompida, layout legado ou arquivo estranho na árvore fariam `ler_snapshots` levantar, e o
+    # snapshot inteiro morreria — o oposto do que esta função existe para proteger. Sem referência
+    # legível ela APROVA e carimba o erro, que é a direção segura: perder a checagem de uma semana
+    # custa menos que perder a semana.
+    try:
+        serie = ler_snapshots(base_dir)
+        erro_leitura: str | None = None
+    except Exception as exc:  # noqa: BLE001 — qualquer falha de leitura degrada, nunca bloqueia
+        serie = _frame_snapshot_vazio()
+        erro_leitura = f"{type(exc).__name__}: {exc}"
+        _logger.error("guarda de coleta parcial sem referencia (serie ilegivel): %s", erro_leitura)
+
+    por_fonte: dict[str, object] = {}
+    motivos: list[str] = []
+
+    for fonte in sorted(set(snapshot["fonte"].astype(str))) if not snapshot.empty else []:
+        atual = snapshot[snapshot["fonte"].astype(str) == fonte]
+        anteriores = (
+            sorted({s for s in serie.loc[serie["fonte"].astype(str) == fonte, "semana"].astype(str) if s < semana})
+            if not serie.empty
+            else []
+        )
+        if not anteriores:
+            por_fonte[fonte] = {"semana_anterior": None, "unidades_antes": None,
+                                "unidades_agora": int(len(atual)), "queda_pct": None, "redes_que_desabaram": []}
+            continue
+
+        ref = anteriores[-1]
+        antes = serie[(serie["fonte"].astype(str) == fonte) & (serie["semana"].astype(str) == ref)]
+        n_antes, n_agora = int(len(antes)), int(len(atual))
+        queda_pct = 100.0 * (n_antes - n_agora) / n_antes if n_antes else 0.0
+
+        c_antes = antes["rede"].astype(str).value_counts()
+        c_agora = atual["rede"].astype(str).value_counts()
+        desabaram = []
+        for rede, qtd_antes in c_antes.items():
+            if int(qtd_antes) < MIN_UNIDADES_GUARDA_REDE:
+                continue
+            qtd_agora = int(c_agora.get(rede, 0))
+            perda = 100.0 * (int(qtd_antes) - qtd_agora) / int(qtd_antes)
+            if perda > tolerancia_rede_pct:
+                desabaram.append({"rede": str(rede), "antes": int(qtd_antes), "agora": qtd_agora,
+                                  "queda_pct": round(perda, 1)})
+
+        por_fonte[fonte] = {"semana_anterior": ref, "unidades_antes": n_antes, "unidades_agora": n_agora,
+                            "queda_pct": round(queda_pct, 2), "redes_que_desabaram": desabaram}
+        for d in desabaram:
+            motivos.append(
+                f"fonte={fonte}: rede {d['rede']} caiu {d['antes']} -> {d['agora']} "
+                f"({d['queda_pct']:.1f}%) contra a semana {ref} — coleta parcial?"
+            )
+        if n_antes >= MIN_UNIDADES_GUARDA_TOTAL and queda_pct > tolerancia_total_pct:
+            motivos.append(
+                f"fonte={fonte}: total caiu {n_antes} -> {n_agora} ({queda_pct:.1f}%) "
+                f"contra a semana {ref}, acima do limite de {tolerancia_total_pct:.0f}%"
+            )
+
+    return {
+        "aprovado": not motivos,
+        "motivos": motivos,
+        "por_fonte": por_fonte,
+        "erro_leitura_serie": erro_leitura,
+    }
+
+
+# --------------------------------------------------------------------------- #
 # 7. Orquestração
 # --------------------------------------------------------------------------- #
 def materializar(
@@ -1210,6 +1314,7 @@ def materializar(
     taxa_slug_persistente: float | None = None,
     politica_chave: str = "auto",
     fontes: Sequence[str] | None = None,
+    forcar: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     """CSV cru -> limpeza -> hash -> chave -> snapshot da semana (e, opcionalmente, a partição).
 
@@ -1243,7 +1348,25 @@ def materializar(
         **auditoria_limpeza,
         **auditoria_snapshot,
     }
-    if escrever:
+    # Guarda de coleta PARCIAL (DEC-061). Avaliada TAMBEM em dry-run: o modo seco da VPS existe
+    # para antecipar o domingo, e um laudo que so' aparecesse na hora de gravar nao anteciparia nada.
+    guarda = avaliar_coleta_parcial(snapshot, base_dir, semana=semana)
+    auditoria["coleta_parcial"] = guarda
+    auditoria["forcado"] = bool(forcar)
+
+    if not guarda["aprovado"]:
+        for motivo in guarda["motivos"]:
+            _logger.error("coleta parcial: %s", motivo)
+
+    publicar = escrever and (guarda["aprovado"] or forcar)
+    if escrever and not publicar:
+        _logger.error(
+            "REPROVADO — semana %s NAO sera gravada (coleta parcial). A serie anterior fica "
+            "intacta. Se a queda for real, repita com --forcar.",
+            semana,
+        )
+    auditoria["publicado"] = bool(publicar)
+    if publicar:
         destino = escrever_particao_semana(snapshot, base_dir, semana=semana)
         _logger.info("snapshot semanal escrito: %s (%d linhas)", destino, len(snapshot))
     return snapshot, auditoria
@@ -1258,6 +1381,7 @@ def executar(
     retencao_semanas: int = RETENCAO_SEMANAS,
     dry_run: bool = False,
     fontes: Sequence[str] | None = None,
+    forcar: bool = False,
 ) -> dict[str, object]:
     """Orquestrador de disco: materializa a semana corrente e aplica a retenção rolante.
 
@@ -1283,6 +1407,7 @@ def executar(
         data_referencia,
         escrever=not dry_run,
         fontes=fontes,
+        forcar=forcar,
     )
     auditoria["retencao_semanas"] = int(retencao_semanas)
     auditoria["versao_contrato"] = VERSAO_CONTRATO_SNAPSHOT
@@ -1293,6 +1418,11 @@ def executar(
         _logger.info("dry-run: nada gravado, nenhuma semana podada")
         return auditoria
     auditoria["dry_run"] = False
+    if not auditoria.get("publicado", True):
+        # Nada foi gravado: podar aqui encurtaria a serie BOA por causa de uma semana que nem entrou.
+        auditoria["semanas_removidas"] = 0
+        _logger.error("nada publicado (coleta parcial): retencao NAO aplicada")
+        return auditoria
     removidas = podar_snapshots(base_dir, retencao_semanas)
     auditoria["semanas_removidas"] = len(removidas)
     _logger.info("retencao aplicada: %d semana(s) removida(s)", len(removidas))
@@ -1344,6 +1474,14 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--forcar",
+        action="store_true",
+        help=(
+            "grava mesmo com a guarda de coleta parcial REPROVANDO. So' para queda REAL de mercado, "
+            "conferida a mao: a auditoria sai com `forcado: true`"
+        ),
+    )
+    p.add_argument(
         "--fontes",
         nargs="+",
         choices=sorted(FONTES_VALIDAS),
@@ -1388,8 +1526,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         retencao_semanas=args.retencao_semanas,
         dry_run=args.dry_run,
         fontes=args.fontes,
+        forcar=args.forcar,
     )
     print(auditoria)
+    # O wrapper da VPS roda com `|| echo` (falha no snapshot nao aborta o lote): sem codigo de saida
+    # proprio, uma semana RECUSADA sairia no log como sucesso, que e' a leitura oposta da verdade.
+    # 4 e' o mesmo codigo que o regen usa para "validacao de publicacao reprovou" (DEC-059).
+    if not auditoria.get("coleta_parcial", {}).get("aprovado", True) and not auditoria.get("forcado"):
+        return 4
     return 0
 
 
@@ -1404,6 +1548,7 @@ __all__ = [
     "derivar_chave",
     "avaliar_estabilidade_slug",
     "montar_snapshot",
+    "avaliar_coleta_parcial",
     "escrever_particao_semana",
     "ler_snapshots",
     "podar_snapshots",
