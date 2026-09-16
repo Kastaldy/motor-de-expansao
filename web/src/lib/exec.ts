@@ -6,6 +6,7 @@
  * componente. Nada aqui toca React.
  */
 
+import { ordenarPorEscalar, type DirecaoOrdem } from './ordenacao'
 import { rotuloDoPeriodo } from './periodo'
 import type {
   RedeCarteira,
@@ -210,27 +211,18 @@ export const METRICAS_EM_PONTOS = new Set([
  *
  * O `?? -Infinity` da v1 só funcionava em `desc`: em `asc`, quem não tinha o número subia
  * para o topo da lista de trabalho — o pior lugar possível para um dado ausente.
+ *
+ * A política (nulo no fim, empate no nome, colação pt-BR) vive em `lib/ordenacao.ts`, num
+ * lugar só: aqui ficam apenas os ACESSORES da carteira. Comportamento inalterado.
  */
 export function ordenarUnidades(
   unidades: RedeUnidade[],
   chave: string,
-  direcao: 'asc' | 'desc',
+  direcao: DirecaoOrdem,
 ): RedeUnidade[] {
-  const sinal = direcao === 'asc' ? 1 : -1
-  const valorDe = (u: RedeUnidade): number | null => {
-    if (chave === 'prioridade') return u.prioridade
-    if (chave === 'nome') return null
-    return u.metricas[chave]?.atual ?? null
-  }
-  return [...unidades].sort((a, b) => {
-    if (chave === 'nome') return sinal * a.nome.localeCompare(b.nome, 'pt-BR')
-    const va = valorDe(a)
-    const vb = valorDe(b)
-    if (va === null && vb === null) return a.nome.localeCompare(b.nome, 'pt-BR')
-    if (va === null) return 1
-    if (vb === null) return -1
-    if (va === vb) return a.nome.localeCompare(b.nome, 'pt-BR')
-    return sinal * (va - vb)
+  return ordenarPorEscalar(unidades, chave, direcao, {
+    escalar: (u, k) => (k === 'prioridade' ? u.prioridade : (u.metricas[k]?.atual ?? null)),
+    rotulo: (u) => u.nome,
   })
 }
 

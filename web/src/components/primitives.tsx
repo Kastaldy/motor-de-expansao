@@ -307,6 +307,104 @@ export function Aviso({
 }
 
 /* ---------------------------------------------------------------------------
+   Casca de MODAL — véu, cartão e tipografia num lugar só.
+
+   Os três diálogos bloqueantes do piloto (`AvisoConfidencialidade`, `AvisoSessao` e
+   o de sair da conta, dentro de `BotaoSair`) repetiam LITERALMENTE as sete
+   propriedades do véu, as cinco do cartão e a tipografia do título e do corpo. Três
+   cópias da mesma casca não dão erro: elas divergem em silêncio — foi assim que o
+   diálogo de sair passou a DECLARAR `min(460px, ...)` e a DESENHAR mais que o cartão
+   de sessão, que declara 520 px (ele era o único fora da escala do app, portado para
+   o `body`; ver o cabeçalho de `BotaoSair.tsx`).
+
+   O que continua sendo de cada diálogo — e por isso é parâmetro, não valor fixo: o
+   TEXTO, a LARGURA lógica, o Z-INDEX (o de sessão fica acima do de confidencialidade,
+   ver `AvisoSessao.tsx`) e as AÇÕES. `onFundo` é o que separa o diálogo que se pode
+   cancelar clicando fora (sair) dos dois que são bloqueantes de propósito: sem ele o
+   fundo não escuta clique nenhum.
+   --------------------------------------------------------------------------- */
+export function Modal({
+  titulo,
+  emoji,
+  largura,
+  zIndex,
+  paragrafos,
+  acoes,
+  onFundo,
+}: {
+  titulo: string
+  emoji?: string
+  largura: number
+  zIndex: number
+  paragrafos: readonly string[]
+  acoes: ReactNode
+  onFundo?: () => void
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={titulo}
+      onClick={onFundo}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex,
+        display: 'grid',
+        placeItems: 'center',
+        background: 'var(--scrim)',
+        backdropFilter: 'var(--scrim-blur)',
+      }}
+    >
+      {/* O clique no cartão não pode fechar junto com o do fundo. */}
+      <div onClick={(e) => e.stopPropagation()}>
+        <Glass
+          style={{
+            width: `min(${largura}px, calc(100vw - 48px))`,
+            padding: '26px 28px 24px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 14,
+            boxShadow: 'var(--sh-pop)',
+          }}
+        >
+          <h2
+            style={{
+              font: '700 19px/1.25 var(--f-ui)',
+              color: 'var(--tx-max)',
+              margin: 0,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+            }}
+          >
+            {titulo}
+            {emoji && (
+              <span aria-hidden style={{ fontSize: 24, lineHeight: 1 }}>
+                {emoji}
+              </span>
+            )}
+          </h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {paragrafos.map((p) => (
+              <p
+                key={p.slice(0, 24)}
+                style={{ font: '400 13px/1.55 var(--f-ui)', color: 'var(--tx-soft)', margin: 0 }}
+              >
+                {p}
+              </p>
+            ))}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4 }}>
+            {acoes}
+          </div>
+        </Glass>
+      </div>
+    </div>
+  )
+}
+
+/* ---------------------------------------------------------------------------
    Primitivas da Visão Executiva 2.0 (DEC-023).
 
    Vivem AQUI, e não dentro de `screens/`, por uma razão medida: a

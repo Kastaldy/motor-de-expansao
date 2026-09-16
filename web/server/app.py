@@ -464,6 +464,46 @@ async def _trilha_acesso(request: Request, call_next: Callable[..., Any]) -> Any
 # Carga de dados (lazy, cacheada por UF)
 # ============================================================================
 
+#: As camadas de leitura do pacote argentino, na ordem em que a ficha as mostra.
+#:
+#: `(chave no payload, coluna no parquet, casas decimais, escala)` — `casas=None` marca
+#: TEXTO, que aqui e sempre um PERIODO. Periodo nao e enfeite: "34.900 m2 autorizados" sem
+#: o intervalo nao diz se descreve 2019 ou o ultimo ano, e as cinco camadas tem janelas
+#: diferentes por vir de cinco fontes diferentes. Numero e periodo nascem e morrem
+#: juntos — inclusive na ausencia.
+#:
+#: A `escala` existe por UMA coluna: `oede_constr_share` vem do produtor como FRACAO
+#: (0..1), e as outras duas colunas de percentual do bloco (`*_cresc_pct`) ja vem em
+#: pontos percentuais. Sem a conversao aqui, `_num(0,0457; casas=1)` devolveria `0,0` e a
+#: tela publicaria "0,0 %" onde sao 4,6 % — numero errado, arredondado em silencio, e
+#: nenhum tipo reclamaria. Medido no pacote: mediana 0,0457 e maximo 0,6209 (Anelo/NQ,
+#: que e' 62 % de construcao, nao 0,6 %).
+#:
+#: FORA daqui de proposito: `viirs_luz_media` e `viirs_periodo`. A coluna existe no
+#: pacote (cobertura de 100%, unica que alcanca todo hexagono) e continua disponivel
+#: para quem for usa-la, mas radiancia crua nao tem regua que o operador saiba ler —
+#: "2,4" nao se compara com nada na tela —, e o backtest do proprio produtor mediu o
+#: ganho dela sobre o score em +0,0030 de AUC, abaixo do piso de 0,01 que ele mesmo
+#: declarou. Publicar um numero ilegivel que nao decide nada e ruido com aparencia de
+#: informacao. Entra no dia em que houver regua publicada para le-lo.
+_CAMADAS_AR: tuple[tuple[str, str, int | None, float], ...] = (
+    ("obras_m2", "mun_permisos_m2_12m", 0, 1.0),
+    ("obras_var", "mun_permisos_cresc_pct", 1, 1.0),
+    ("obras_periodo", "mun_permisos_periodo", None, 1.0),
+    ("soc_n", "soc_hex_n_3a", 0, 1.0),
+    ("soc_var", "soc_hex_cresc_partido_pct", 1, 1.0),
+    ("soc_janela", "soc_hex_janela_3a", None, 1.0),
+    ("emp_estoque", "oede_emp_estoque", 0, 1.0),
+    ("emp_salario", "oede_sal_medio_usd", 0, 1.0),
+    ("emp_constr", "oede_constr_share", 1, 100.0),
+    ("emp_periodo", "oede_periodo", None, 1.0),
+    ("fluxo_dia", "sube_usos_dia", 0, 1.0),
+    ("fluxo_periodo", "sube_periodo", None, 1.0),
+)
+
+_COLS_CAMADAS_AR: tuple[str, ...] = tuple(coluna for _, coluna, _, _ in _CAMADAS_AR)
+
+
 # Colunas que o mapa e o funil consomem. Lidas de forma defensiva: o parquet tem
 # 82 colunas e nem toda UF materializa todas.
 _COLS_DESEJADAS = [
@@ -503,6 +543,16 @@ _COLS_DESEJADAS = [
     "densidade_pop_setor_hab_km2",
     "faixa_oportunidade",
     "n_unidades_ultra_performance_hex",
+    # Camadas de leitura do pacote ARGENTINO (fases 12-17 do motor-argentina). Cada uma
+    # e um atributo do PARTIDO/DEPARTAMENTO repetido em todos os hexagonos dele — nunca
+    # uma medida do hexagono. Por isso NAO entram no `_hex_dict`: viajam uma vez por
+    # cidade em `_bloco_camadas_leitura`, pelo mesmo motivo medido em `_bloco_municipal`
+    # (os seis campos municipais do crescimento custavam 1,9 MB de repeticao em /api/uf).
+    #
+    # Ausentes no pacote BRASILEIRO, e a leitura por intersecao (`carregar_uf`) as
+    # descarta la sem ruido — e o mesmo caminho que as 82 colunas do artefato BR ja
+    # exercitam quando uma UF nao materializa alguma.
+    *_COLS_CAMADAS_AR,
 ]
 
 
@@ -3393,6 +3443,60 @@ def _bloco_municipal(vis: pd.DataFrame) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _escalar(valor: Any, escala: float) -> Any:
+    """Multiplica sem transformar ausencia em numero — `None`/NaN saem intactos."""
+    if escala == 1.0:
+        return valor
+    try:
+        bruto = float(valor)
+    except (TypeError, ValueError):
+        return valor
+    return valor if bruto != bruto else bruto * escala  # NaN != NaN
+
+
+def _bloco_camadas_leitura(vis: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    """As camadas de leitura argentinas, UMA vez por cidade — nunca por hexagono.
+
+    Mesma forma e mesmo motivo de `_bloco_municipal`: sao todas atributo do
+    PARTIDO/DEPARTAMENTO, entao os N hexagonos da cidade carregam o valor identico.
+    Medido em /api/uf/BS: 36,9 KB por cidade (135) contra 0,89 MB por hexagono (3.554) —
+    23x, ou +52 % sobre um payload de 1,71 MB.
+
+    ESPARSO por construcao, em dois niveis, e os dois importam:
+
+    - **cidade sem nenhuma leitura nao entra no dict.** Fora da RMBA nao ha recorrido de
+      linha publicado, e a IGJ so alcanca o GBA ampliado — a maioria das cidades tem
+      algumas camadas e nao tem outras;
+    - **pacote sem as colunas devolve `{}`.** E o caso do BRASIL, onde nenhuma delas
+      existe: `carregar_uf` ja as descartou na intersecao, a guarda abaixo ve o conjunto
+      vazio e a secao inteira some da tela sem um cartao em branco.
+
+    NaN NAO VIRA ZERO — `_num` devolve `None`, e `None` faz o campo sumir. Aqui vazio
+    significa partido sem pesquisa do INDEC, celula suprimida por sigilo estatistico ou
+    fonte que nao alcanca aquele lugar; zero significa medimos e deu zero (La Paz
+    autorizou 84 m2 em 2022 e 0 em 2025 — o zero e o dado). Preencher um com o outro e o
+    unico jeito de esta camada mentir sem errar nenhum tipo.
+    """
+    presentes = [c for c in _COLS_CAMADAS_AR if c in vis.columns]
+    if "nome_municipio" not in vis.columns or not presentes:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for muni, bloco in vis.groupby("nome_municipio", observed=True):
+        r = bloco.iloc[0]
+        item = {
+            chave: (
+                _texto(r.get(coluna))
+                if casas is None
+                else _num(_escalar(r.get(coluna), escala), casas)
+            )
+            for chave, coluna, casas, escala in _CAMADAS_AR
+            if coluna in presentes
+        }
+        if any(v is not None for v in item.values()):
+            out[str(muni)] = item
+    return out
+
+
 def _resumo(df: pd.DataFrame) -> dict[str, Any]:
     """KPIs de topo (residual, população, score médio, concorrentes, espaço)."""
     return {
@@ -5431,6 +5535,7 @@ def uf_view(uf: str, limite: int = 15000) -> dict[str, Any]:
         "crescimento_estado": montar_crescimento_estado(df),
         "hexes": hexes,
         "cres_mun": _bloco_municipal(vis),
+        "ctx_mun": _bloco_camadas_leitura(vis),
         "pins": _pins_ultra_bbox(df),
     }
 
@@ -5487,6 +5592,7 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
         "passos": passos,
         "hexes": hexes,
         "cres_mun": _bloco_municipal(vis),
+        "ctx_mun": _bloco_camadas_leitura(vis),
         "pins": _montar_pins(sel),
         # Lista PROPRIA, nunca misturada a `pins.concorrentes`: cadeia e independente sao universos
         # de semantica oposta (quem disputa x quem se compra), e a intersecao entre eles e' vazia.

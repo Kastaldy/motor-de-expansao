@@ -527,4 +527,28 @@ ordem:
 > **Dívida declarada (até o BLK-INTL-09, operação em matriz):** o relatório periódico
 > de acessos (`scripts/cron/run_relatorio_acessos.sh`) e o `/acessos` do bot leem
 > **só a trilha BR**. A trilha AR (`/opt/motor-expansao-ar/logs/acesso`) é escrita
-> desde o dia 1, mas só é lida **manualmente** na VPS.
+> desde o dia 1; fora do bot, quem a lê é a aba **Acessos e uso do piloto** da própria
+> instância AR (abaixo).
+
+**Aba "Acessos e uso do piloto" na AR.** Mesma tela, mesmas rotas (`/api/acessos/*`) e
+mesma trilha do BR, lendo o `MOTOR_ACESSO_LOG_DIR` do `web_ar`. A allowlist é
+**própria**: o `docker-compose.ar.yml` injeta `MOTOR_ACESSOS_ADMIN_USUARIOS` a partir de
+`MOTOR_ACESSOS_ADMIN_USUARIOS_AR` do `.env` — os dois composes leem o mesmo `.env`, e a
+variável do BR não liga o painel AR. Vazia ou ausente, o painel fica desligado (404).
+Para ligar *(na VPS, com aprovação do Felipe, comando a comando)*:
+
+1. Conferir que a trilha já grava: `ls -l /opt/motor-expansao-ar/logs/acesso` — dono
+   `1000:1000` e arquivos `acesso-AAAA-MM-DD.jsonl` recentes. Sem arquivo, o painel liga
+   vazio: rever o `chown` do passo 3 antes de seguir.
+2. **Acrescentar** a linha ao `.env` sem redigitar o arquivo (usuários separados por
+   vírgula, nomes do Authelia): `grep -c '^MOTOR_ACESSOS_ADMIN_USUARIOS' .env` antes,
+   `echo 'MOTOR_ACESSOS_ADMIN_USUARIOS_AR=<usuario>' >> .env`, o mesmo `grep` depois — a
+   contagem sobe em **exatamente 1** e a linha do BR segue igual.
+3. Os usuários da lista precisam estar no grupo `expansao_ar` do `users_database.yml`
+   (passo 6); sem ele o Authelia barra antes do container.
+4. Recriar só o `web_ar`, sem trocar digest:
+   `docker compose -f docker-compose.ar.yml up -d web_ar`.
+5. Conferir o efeito, não o container: `docker compose -f docker-compose.ar.yml exec
+   web_ar printenv MOTOR_ACESSOS_ADMIN_USUARIOS` devolve a lista; no navegador, o admin vê
+   o ícone "Acessos e uso do piloto" em `https://piloto-ar.ultra-expansao.tech` e um
+   usuário fora da lista recebe 404 em `/api/acessos/resumo`.

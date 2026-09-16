@@ -124,6 +124,46 @@ export interface CrescimentoMunicipal {
   uf_mediana: number | null
 }
 
+/**
+ * As camadas de leitura do pacote ARGENTINO, por cidade — obra autorizada, sociedades
+ * novas, emprego e fluxo de transporte. Ausente no pacote brasileiro, onde o objeto
+ * inteiro vem vazio e a seção some da ficha.
+ *
+ * TODO campo é opcional, e isso é o desenho, não frouxidão de tipo: as cinco fontes têm
+ * alcances diferentes (o INDEC pesquisa parte dos municípios, a IGJ cobre o GBA
+ * ampliado, só a RMBA tem recorrido de linha publicado), então a cidade típica traz
+ * algumas leituras e não traz outras. Ausência é ausência de FONTE, nunca zero medido.
+ *
+ * Cada número anda com o seu período porque as janelas não coincidem — 12 meses do
+ * INDEC, três anos da IGJ, seis anos do OEDE, o ano corrente do SUBE.
+ */
+export interface ContextoMunicipio {
+  /** m² autorizados nos últimos 12 meses (permisos de edificación, INDEC) */
+  obras_m2?: number | null
+  /** variação % contra os 12 meses anteriores */
+  obras_var?: number | null
+  /** ex.: "2025-07..2026-06" */
+  obras_periodo?: string | null
+  /** sociedades abertas na janela (IGJ) */
+  soc_n?: number | null
+  /** variação % no partido contra a janela anterior */
+  soc_var?: number | null
+  /** ex.: "2023..2025" */
+  soc_janela?: string | null
+  /** empresas empregadoras no departamento (OEDE) */
+  emp_estoque?: number | null
+  /** salário médio em USD */
+  emp_salario?: number | null
+  /** peso da construção no emprego do departamento, em % */
+  emp_constr?: number | null
+  /** ex.: "2019-11..2025-11" */
+  emp_periodo?: string | null
+  /** usos de transporte por dia atribuídos à célula (SUBE) */
+  fluxo_dia?: number | null
+  /** ex.: "2026-01-01..2026-09-08" */
+  fluxo_periodo?: string | null
+}
+
 export interface RankItem {
   rank: number
   hex_id: string
@@ -463,6 +503,9 @@ export interface MunicipioPayload {
   hexes: Hex[]
   /** Passo 4, uma entrada por cidade. Esparso: cidade sem leitura não aparece. */
   cres_mun: Record<string, CrescimentoMunicipal>
+  /** Camadas de leitura do pacote argentino, por cidade. `{}` no Brasil e em payload
+   *  antigo — esparso pela mesma regra do `cres_mun`. */
+  ctx_mun?: Record<string, ContextoMunicipio>
   pins: Pins
   /** Academias independentes com score (BLK-MA-15). Ausente em payload antigo. */
   independentes?: Independentes

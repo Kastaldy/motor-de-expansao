@@ -58,6 +58,23 @@ def test_compose_ar_monta_somente_cadastro_e_trilha_como_volumes_de_escrita() ->
     )
 
 
+def test_compose_ar_liga_painel_de_acessos_por_allowlist_propria() -> None:
+    """A trilha da AR ja' grava (MOTOR_ACESSO_LOG_DIR + mount :rw), mas sem a allowlist
+    `pode_ver_acessos` (`web/server/acesso.py:243-275`) e' falso para todos: a aba
+    some do /api/me e /api/acessos/* responde 404.
+
+    A lista e' PROPRIA da AR (`MOTOR_ACESSOS_ADMIN_USUARIOS_AR`): os dois composes leem o
+    mesmo .env da VPS, e reusar a variavel do BR prenderia quem ve o painel de um pais
+    a quem ve o do outro. Vazia = painel desligado, igual ao BR.
+    """
+    env = _web_ar()["environment"]
+    valor = str(env["MOTOR_ACESSOS_ADMIN_USUARIOS"])
+    assert valor == "${MOTOR_ACESSOS_ADMIN_USUARIOS_AR:-}"
+    assert "MOTOR_ACESSOS_ADMIN_USUARIOS}" not in valor
+    assert "MOTOR_ACESSOS_ADMIN_USUARIOS:-}" not in valor
+    assert env["MOTOR_ACESSO_LOG_DIR"] == "/app/logs/acesso"
+
+
 def test_compose_ar_com_ibge_e_sem_oportunidades() -> None:
     """A malha adm2 chegou (P7 fechada em 2026-09-03): o mount de ibge e' OBRIGATORIO
     e :ro, no mesmo commit em que o perfil virou malha_municipal_disponivel=true —

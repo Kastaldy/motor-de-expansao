@@ -13,6 +13,13 @@ import {
   SparklineSvg,
   Spinner,
 } from '../components/primitives'
+import {
+  CHAVES_ORDENAVEIS,
+  ordenarUsuariosAcessos,
+  proximaOrdem,
+  type ChaveAcessos,
+  type OrdemAcessos,
+} from '../lib/acessos-ordem'
 import { api, ApiError } from '../lib/api'
 import { normalizar } from '../lib/exec'
 import type {
@@ -701,6 +708,91 @@ function FichaUsuarioAcessos({
   )
 }
 
+/**
+ * As colunas da tabela de usuários, indexadas pela chave ordenável.
+ *
+ * `Record<ChaveAcessos, ...>` é o que amarra esta lista à de `lib/acessos-ordem.ts`:
+ * coluna desenhada aqui e ausente do mapa de escalares de lá — ou o contrário — deixa
+ * de compilar, e era justamente esse par que falhava em SILÊNCIO (cabeçalho que não
+ * responde ao clique; `asc` e `desc` devolvendo a mesma ordem A-Z). Molde do
+ * `COLUNAS_METRICA` da Executiva, que já deriva as colunas de uma lista única.
+ */
+const COLUNAS_USUARIO: Record<ChaveAcessos, Omit<Coluna<AcessosUsuarioLinha>, 'chave'>> = {
+  nome: {
+    rotulo: 'Usuário',
+    ajuda: 'Nome do usuário — ordena em A-Z / Z-A',
+    render: (u) => (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
+        <Avatar nome={u.nome} tamanho={26} />
+        <span style={{ font: '600 12px/1.2 var(--f-ui)', color: 'var(--tx-max)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {u.nome}
+        </span>
+      </span>
+    ),
+  },
+  serie14: {
+    rotulo: 'Ritmo diário',
+    largura: 100,
+    // Ordenar uma LISTA não significa nada sozinho: o escalar é a MÉDIA de ações
+    // por dia da série desenhada (`ritmoDiario`), que é o que o rótulo promete e a
+    // única leitura que não muda de sentido quando a janela vai de 7 a 90 dias.
+    ajuda:
+      'Ações por dia (série da janela, até 14 dias) — ordena pela média diária da série',
+    render: (u) => <SparklineSvg valores={u.serie14 ?? []} largura={84} altura={20} />,
+  },
+  ultimo: {
+    rotulo: 'Último acesso',
+    largura: 116,
+    ajuda:
+      'Dia e hora do último acesso — ordena pelo instante; quem não acessou fica no fim',
+    render: (u) => (
+      <span className="num">
+        {diaCurto(u.ultimo_dia)}
+        {u.ultimo_hora ? ` ${u.ultimo_hora}` : ''}
+      </span>
+    ),
+  },
+  dias_ativos: {
+    rotulo: 'Dias ativos',
+    alinhamento: 'right',
+    largura: 86,
+    ajuda: 'Dias distintos com pelo menos uma ação na janela',
+    render: (u) => <span className="num">{u.dias_ativos}</span>,
+  },
+  acoes: {
+    rotulo: 'Ações',
+    alinhamento: 'right',
+    largura: 70,
+    ajuda: 'Total de ações na janela inteira',
+    render: (u) => (
+      <span className="num" style={{ color: 'var(--tx-max)', fontWeight: 600 }}>{u.acoes}</span>
+    ),
+  },
+  abas: {
+    rotulo: 'Abas',
+    ajuda: 'Abas visitadas na janela — a ordenação usa a quantidade delas',
+    render: (u) => (
+      <span style={{ display: 'inline-flex', gap: 10 }}>
+        {u.abas.map((a) => (
+          <PontoAba key={a} aba={a} />
+        ))}
+      </span>
+    ),
+  },
+  ips: {
+    rotulo: 'IPs',
+    alinhamento: 'right',
+    largura: 56,
+    ajuda: 'Nº de IPs distintos na janela — o IP em si não é exibido',
+    render: (u) => <span className="num">{u.ips}</span>,
+  },
+}
+
+/** A tabela montada na ORDEM de `CHAVES_ORDENAVEIS` — mexer lá move a coluna aqui. */
+export const COLUNAS_ACESSOS: Coluna<AcessosUsuarioLinha>[] = CHAVES_ORDENAVEIS.map<
+  Coluna<AcessosUsuarioLinha>
+>((chave) => ({ chave, ...COLUNAS_USUARIO[chave] }))
+
 /* ---------------------------------------------------------------------------
    Nível 1 — o painel.
    --------------------------------------------------------------------------- */
@@ -712,6 +804,11 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
   const [erro, setErro] = useState<string | null>(null)
   const [aberta, setAberta] = useState<string | null>(null)
   const [filtroUsuario, setFiltroUsuario] = useState('')
+  // Ordenação da tabela de usuários: `null` = desligada, e a tela mostra a ordem
+  // em que o backend entregou (ações desc, nome asc). Cada cabeçalho cicla em três
+  // estados — desligado -> decrescente -> crescente -> desligado —, que é como o
+  // "ativar/desativar" pedido e o "crescente/decrescente" cabem no mesmo gesto.
+  const [ordem, setOrdem] = useState<OrdemAcessos | null>(null)
 
   useEffect(() => {
     let vivo = true
@@ -738,81 +835,18 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
     }
   }, [dias])
 
-  const colunas: Coluna<AcessosUsuarioLinha>[] = [
-    {
-      chave: 'nome',
-      rotulo: 'Usuário',
-      render: (u) => (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
-          <Avatar nome={u.nome} tamanho={26} />
-          <span style={{ font: '600 12px/1.2 var(--f-ui)', color: 'var(--tx-max)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {u.nome}
-          </span>
-        </span>
-      ),
-    },
-    {
-      chave: 'serie14',
-      rotulo: 'Ritmo diário',
-      largura: 100,
-      ordenavel: false,
-      ajuda: 'Ações por dia (série da janela, até 14 dias)',
-      render: (u) => <SparklineSvg valores={u.serie14 ?? []} largura={84} altura={20} />,
-    },
-    {
-      chave: 'ultimo',
-      rotulo: 'Último acesso',
-      largura: 116,
-      render: (u) => (
-        <span className="num">
-          {diaCurto(u.ultimo_dia)}
-          {u.ultimo_hora ? ` ${u.ultimo_hora}` : ''}
-        </span>
-      ),
-    },
-    {
-      chave: 'dias_ativos',
-      rotulo: 'Dias ativos',
-      alinhamento: 'right',
-      largura: 86,
-      render: (u) => <span className="num">{u.dias_ativos}</span>,
-    },
-    {
-      chave: 'acoes',
-      rotulo: 'Ações',
-      alinhamento: 'right',
-      largura: 70,
-      render: (u) => (
-        <span className="num" style={{ color: 'var(--tx-max)', fontWeight: 600 }}>{u.acoes}</span>
-      ),
-    },
-    {
-      chave: 'abas',
-      rotulo: 'Abas',
-      render: (u) => (
-        <span style={{ display: 'inline-flex', gap: 10 }}>
-          {u.abas.map((a) => (
-            <PontoAba key={a} aba={a} />
-          ))}
-        </span>
-      ),
-    },
-    {
-      chave: 'ips',
-      rotulo: 'IPs',
-      alinhamento: 'right',
-      largura: 56,
-      ajuda: 'Nº de IPs distintos na janela — o IP em si não é exibido',
-      render: (u) => <span className="num">{u.ips}</span>,
-    },
-  ]
-
   // Filtro local da tabela: o payload inteiro já está no cliente (mesma razão do
   // `filtrarUnidades` da Executiva) — digitar não pode custar um round-trip.
   const alvoFiltro = normalizar(filtroUsuario)
   const usuariosFiltrados = resumo
     ? resumo.usuarios.filter((u) => !alvoFiltro || normalizar(u.nome).includes(alvoFiltro))
     : []
+  // Ordenar é VISUAL: reordena o que já está no cliente, sem refetch e sem tocar no
+  // que o backend devolveu. Com `ordem === null` a sequência do payload sai intacta.
+  const usuariosVisiveis = ordenarUsuariosAcessos(usuariosFiltrados, ordem)
+  const rotuloOrdenado = ordem
+    ? (COLUNAS_ACESSOS.find((c) => c.chave === ordem.chave)?.rotulo ?? ordem.chave)
+    : null
 
   return (
     <div
@@ -855,7 +889,13 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
                 border: '1px solid',
                 borderColor: dias === j ? 'var(--ac)' : 'var(--line-strong)',
                 background: dias === j ? 'var(--ac-a16)' : 'transparent',
-                color: dias === j ? 'var(--ac-text)' : 'var(--tx-soft)',
+                /* `--ac-chip`, e não `--ac-text`: a tinta cai sobre a LAVAGEM de acento,
+                   não sobre a superfície nua. No claro, --ac-a16 sobre --surf-chrome sobre
+                   --bg-base compõe #c6e8e5, e ali --ac-text dá 3,98:1 — abaixo do piso de
+                   4,5:1 que o próprio repo cobra (ver Dock.tsx, que recusou tokens por 3,06
+                   e 4,37). --ac-chip dá 4,88:1 no claro e 9,18:1 no escuro, e é o token que
+                   o produto já usa por cima de acento. Travado por tema-claro-ultra.test.ts. */
+                color: dias === j ? 'var(--ac-chip)' : 'var(--tx-soft)',
                 font: '600 11.5px/1 var(--f-ui)',
                 cursor: 'pointer',
               }}
@@ -996,6 +1036,40 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
                 titulo={`Usuários — ${resumo.janela_dias} dias`}
                 acao={
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 12 }}>
+                    {ordem ? (
+                      <button
+                        type="button"
+                        onClick={() => setOrdem(null)}
+                        title="Voltar à ordem padrão (mais ações primeiro)"
+                        aria-label={`Desativar a ordenação por ${rotuloOrdenado}`}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '5px 9px',
+                          borderRadius: 'var(--r-md)',
+                          border: '1px solid var(--ac)',
+                          background: 'var(--ac-a16)',
+                          /* Mesma régua do seletor de janela, e aqui a letra é menor ainda
+                             (10,5px): --ac-a16 sobre --surf-card sobre --bg-base compõe
+                             #c5e8e4, onde --ac-text dá 3,97:1 e --ac-chip dá 4,87:1. */
+                          color: 'var(--ac-chip)',
+                          font: '600 10.5px/1 var(--f-ui)',
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {rotuloOrdenado}{' '}
+                        {ordem.direcao === 'asc' ? '▲ crescente' : '▼ decrescente'}
+                        <span aria-hidden style={{ opacity: 0.75 }}>
+                          ✕
+                        </span>
+                      </button>
+                    ) : (
+                      <span style={{ font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>
+                        clique num cabeçalho para ordenar
+                      </span>
+                    )}
                     <span style={{ font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>
                       clique numa linha para abrir a ficha
                     </span>
@@ -1010,9 +1084,12 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
                 }
               >
                 <Tabela
-                  colunas={colunas}
-                  dados={usuariosFiltrados}
+                  colunas={COLUNAS_ACESSOS}
+                  dados={usuariosVisiveis}
                   chaveDe={(u) => u.nome}
+                  ordenarPor={ordem?.chave}
+                  direcao={ordem?.direcao}
+                  onOrdenar={(chave) => setOrdem((atual) => proximaOrdem(atual, chave))}
                   onLinha={(u) => setAberta(u.nome)}
                   vazio={
                     filtroUsuario.trim()

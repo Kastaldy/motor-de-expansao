@@ -227,6 +227,11 @@ def create_app() -> FastAPI:
 
     app.include_router(analisar_municipio.router, prefix=settings.api_prefix)
 
+    # GET /faixa-alunos — a faixa por metragem que ancora a premissa de demanda.
+    from motor_expansao.api.routes import faixa_alunos
+
+    app.include_router(faixa_alunos.router, prefix=settings.api_prefix)
+
     return app
 
 
