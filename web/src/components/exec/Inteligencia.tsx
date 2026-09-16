@@ -636,11 +636,16 @@ export function BarraLtv({
   risco,
   duravel,
   alta,
+  altura = 8,
+  arredondada = true,
 }: {
   fragil: number | null | undefined
   risco: number | null | undefined
   duravel: number | null | undefined
   alta: number | null | undefined
+  /** a barra da REDE é mais alta e de canto reto: ela é o gráfico do card, não um detalhe de linha */
+  altura?: number
+  arredondada?: boolean
 }) {
   const partes = [
     { v: fragil ?? 0, cor: 'var(--neg)', rotulo: 'Frágil' },
@@ -650,7 +655,7 @@ export function BarraLtv({
   ]
   const total = partes.reduce((s, p) => s + p.v, 0) || 1
   return (
-    <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', background: 'var(--line-soft)' }}>
+    <div style={{ display: 'flex', height: altura, borderRadius: arredondada ? altura / 2 : 0, overflow: 'hidden', background: 'var(--line-soft)' }}>
       {partes.map((p) => (
         <div key={p.rotulo} title={`${p.rotulo}: ${pct(p.v, 1)}`} style={{ width: `${(100 * p.v) / total}%`, background: p.cor }} />
       ))}
@@ -658,58 +663,172 @@ export function BarraLtv({
   )
 }
 
+/** Faixas de risco do mapa de calor: percentil na rede, que é como o modelo se declara. */
+const FAIXAS_RISCO: { ate: number; cor: string; rotulo: string }[] = [
+  { ate: 25, cor: 'var(--pos)', rotulo: 'baixo' },
+  { ate: 50, cor: 'var(--gr-azul)', rotulo: 'moderado' },
+  { ate: 75, cor: 'var(--warn)', rotulo: 'alto' },
+  { ate: 101, cor: 'var(--neg)', rotulo: 'crítico' },
+]
+
+const corDoRisco = (percentil: number | null | undefined) =>
+  FAIXAS_RISCO.find((f) => (percentil ?? 0) < f.ate)?.cor ?? 'var(--tx-off)'
+
+/**
+ * Retenção prevista em DUAS leituras (pedido do Felipe, 15/09), no lugar das 16 barras de
+ * LTV repetidas: um RANKING com barra única (quem cancela primeiro) e um MAPA DE CALOR por
+ * consultor (onde o risco está concentrado na carteira de cada um). A composição de LTV
+ * vira UMA barra da rede — ela dizia a mesma coisa 16 vezes.
+ */
 function RiscoRetencao({ dados, onUnidade }: { dados: RedeInteligencia; onUnidade: (id: string) => void }) {
   const r = dados.retencao
+  const [vista, setVista] = useState<'ranking' | 'calor'>('ranking')
+  const [todas, setTodas] = useState(false)
+  const unidades = r.unidades ?? []
+  const visiveis = todas ? unidades : unidades.slice(0, 12)
+
+  // Composição média da rede: uma barra só, no lugar de uma por unidade.
+  const media = (campo: (u: (typeof unidades)[number]) => number | null | undefined) => {
+    const vs = unidades.map(campo).filter((v): v is number => v !== null && v !== undefined)
+    return vs.length ? vs.reduce((a, b) => a + b, 0) / vs.length : null
+  }
+  const composicao = {
+    fragil: media((u) => u.ltv_fragil_pct),
+    risco: media((u) => u.ltv_em_risco_pct),
+    duravel: media((u) => u.ltv_duravel_pct),
+    alta: media((u) => u.ltv_alta_durabilidade_pct),
+  }
+
+  const porConsultor = [...unidades.reduce((mapa, u) => {
+    const chave = u.consultor ?? 'sem consultor'
+    mapa.set(chave, [...(mapa.get(chave) ?? []), u])
+    return mapa
+  }, new Map<string, typeof unidades>())]
+    .map(([consultor, us]) => ({
+      consultor,
+      us: [...us].sort((a, b) => (b.risco_percentil ?? 0) - (a.risco_percentil ?? 0)),
+      criticas: us.filter((u) => (u.risco_percentil ?? 0) >= 75).length,
+    }))
+    .sort((a, b) => b.criticas - a.criticas || b.us.length - a.us.length)
+
   return (
     <Glass style={CARD}>
-      <Titulo>Retenção prevista</Titulo>
+      <Titulo
+        extra={
+          <span style={{ display: 'flex', gap: 6 }}>
+            <Chip ativo={vista === 'ranking'} onClick={() => setVista('ranking')}>Ranking</Chip>
+            <Chip ativo={vista === 'calor'} onClick={() => setVista('calor')}>Por consultor</Chip>
+          </span>
+        }
+      >
+        Retenção prevista
+      </Titulo>
       {r.data_artefato === null ? (
         <Lide>Modelo de retenção indisponível neste ambiente.</Lide>
       ) : (
         <>
           <Lide>
             Unidades com <strong style={{ color: 'var(--tx-strong)' }}>maior risco de cancelamento</strong> nos próximos 90
-            dias, pelo modelo de retenção. Cobre {r.cobertas} de {r.no_recorte} unidades do recorte
+            dias. Cobre {r.cobertas} de {r.no_recorte} unidades do recorte
             {r.fora_do_modelo
               ? `; ${r.fora_do_modelo} ficam de fora porque o próprio modelo não é confiável para elas (unidade nova, poucos alunos ou poucos cancelamentos)`
               : ''}
             .
           </Lide>
-          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 10, font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>
-            {[
-              ['var(--neg)', 'Base frágil'],
-              ['var(--gr-coral)', 'Em risco'],
-              ['var(--gr-azul)', 'Durável'],
-              ['var(--pos)', 'Alta durabilidade'],
-            ].map(([cor, rotulo]) => (
-              <span key={rotulo} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                <span style={{ width: 9, height: 9, borderRadius: 2, background: cor }} /> {rotulo}
-              </span>
-            ))}
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', columnGap: 24 }}>
-            {r.unidades.slice(0, 16).map((u) => (
-              <button
-                key={u.id}
-                type="button"
-                onClick={() => onUnidade(u.id)}
-                style={{ width: '100%', padding: '7px 0', border: 0, borderBottom: '1px solid var(--line-soft)', background: 'transparent', cursor: 'pointer', textAlign: 'left' }}
-              >
-                <span style={{ display: 'flex', justifyContent: 'space-between', gap: 8, font: '500 12px/1.3 var(--f-ui)', color: 'var(--tx-strong)', marginBottom: 5 }}>
-                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.nome}</span>
-                  <span className="num" style={{ font: '600 11px/1 var(--f-num)', color: (u.risco_percentil ?? 0) >= 75 ? 'var(--neg)' : 'var(--tx-sub)', whiteSpace: 'nowrap' }}>
-                    {u.prob_cancel_90d_pct !== null ? `${pct(u.prob_cancel_90d_pct, 1)} em 90 dias` : `mais arriscada que ${num(u.risco_percentil)}% da rede`}
+
+          {composicao.fragil !== null && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', font: '500 10px/1.2 var(--f-ui)', color: 'var(--tx-label)', marginBottom: 5 }}>
+                <span>Base da rede por durabilidade prevista</span>
+                <span className="num" style={{ color: 'var(--tx-muted)' }}>{pct(composicao.fragil, 0)} frágil</span>
+              </div>
+              <BarraLtv
+                fragil={composicao.fragil}
+                risco={composicao.risco}
+                duravel={composicao.duravel}
+                alta={composicao.alta}
+                altura={18}
+                arredondada={false}
+              />
+            </div>
+          )}
+
+          {vista === 'ranking' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))', columnGap: 24 }}>
+              {visiveis.map((u) => (
+                <button
+                  key={u.id}
+                  type="button"
+                  onClick={() => onUnidade(u.id)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '6px 0', border: 0, borderBottom: '1px solid var(--line-soft)', background: 'transparent', cursor: 'pointer', textAlign: 'left' }}
+                >
+                  <span style={{ flex: 1, minWidth: 0, font: '500 12px/1.3 var(--f-ui)', color: 'var(--tx-strong)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {u.nome}
                   </span>
-                </span>
-                <BarraLtv fragil={u.ltv_fragil_pct} risco={u.ltv_em_risco_pct} duravel={u.ltv_duravel_pct} alta={u.ltv_alta_durabilidade_pct} />
-              </button>
-            ))}
-          </div>
+                  <span style={{ width: 96, height: 7, borderRadius: 4, background: 'var(--surf-raised)', flexShrink: 0 }}>
+                    <span
+                      style={{
+                        display: 'block',
+                        width: `${Math.max(u.risco_percentil ?? 0, 2)}%`,
+                        height: '100%',
+                        borderRadius: 4,
+                        background: corDoRisco(u.risco_percentil),
+                      }}
+                    />
+                  </span>
+                  <span className="num" style={{ width: 92, textAlign: 'right', font: '600 11px/1 var(--f-num)', color: (u.risco_percentil ?? 0) >= 75 ? 'var(--neg)' : 'var(--tx-sub)' }}>
+                    {u.prob_cancel_90d_pct !== null ? `${pct(u.prob_cancel_90d_pct, 1)} em 90d` : `p${num(u.risco_percentil)}`}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {porConsultor.map((linha) => (
+                <div key={linha.consultor} style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                  <span style={{ width: 150, flexShrink: 0, font: '500 11.5px/1.3 var(--f-ui)', color: 'var(--tx-label)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {linha.consultor}
+                  </span>
+                  <span style={{ display: 'flex', gap: 3, flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+                    {linha.us.map((u) => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => onUnidade(u.id)}
+                        title={`${u.nome} — ${u.prob_cancel_90d_pct !== null ? `${pct(u.prob_cancel_90d_pct, 1)} em 90 dias` : `mais arriscada que ${num(u.risco_percentil)}% da rede`}`}
+                        aria-label={u.nome}
+                        style={{ width: 15, height: 15, borderRadius: 3, border: 0, padding: 0, cursor: 'pointer', background: corDoRisco(u.risco_percentil) }}
+                      />
+                    ))}
+                  </span>
+                  <span className="num" style={{ width: 62, textAlign: 'right', font: '500 10.5px/1 var(--f-num)', color: linha.criticas ? 'var(--neg)' : 'var(--tx-muted)' }}>
+                    {linha.criticas ? `${num(linha.criticas)} crítica${linha.criticas > 1 ? 's' : ''}` : '—'}
+                  </span>
+                </div>
+              ))}
+              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 2, font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>
+                {FAIXAS_RISCO.map((f) => (
+                  <span key={f.rotulo} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                    <span style={{ width: 9, height: 9, borderRadius: 2, background: f.cor }} /> risco {f.rotulo}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {vista === 'ranking' && unidades.length > 12 && (
+            <div style={{ marginTop: 8 }}>
+              <Chip ativo={todas} onClick={() => setTodas(!todas)}>
+                {todas ? 'Mostrar menos' : `Ver as ${num(unidades.length)} unidades`}
+              </Chip>
+            </div>
+          )}
         </>
       )}
       <Rodape>
-        A chance em 90 dias só aparece onde o modelo diz que ela é confiável; nas demais, a posição na rede. A barra mostra
-        como a base de alunos se divide pela durabilidade prevista.{r.data_artefato ? ` Modelo de ${r.data_artefato}.` : ''}
+        A chance em 90 dias só aparece onde o modelo diz que ela é confiável; nas demais, a posição na rede. O mapa por
+        consultor mostra onde o risco se concentra — cada quadrado é uma unidade e abre a ficha.
+        {r.data_artefato ? ` Modelo de ${r.data_artefato}.` : ''}
       </Rodape>
     </Glass>
   )

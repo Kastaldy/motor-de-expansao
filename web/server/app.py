@@ -8241,9 +8241,14 @@ def rede_inteligencia_recorte(
     )
 
     retencao, data_retencao = _rede_retencao()
+    cadastro_rede = _rede_cadastro()
+
+    def _consultor(uid: str) -> str | None:
+        return str(cadastro_rede.de(uid).get("consultor") or "").strip() or None
+
     risco = sorted(
         (
-            {"id": uid, "nome": nomes[uid], **retencao[uid]}
+            {"id": uid, "nome": nomes[uid], "consultor": _consultor(uid), **retencao[uid]}
             for uid in ids
             if uid in retencao and retencao[uid]["utilizavel"]
         ),
@@ -8333,6 +8338,34 @@ def rede_inteligencia_recorte(
     }
 
 
+def _rede_pares_de_praca(
+    pontos: Sequence[dict[str, Any]], ponto: dict[str, Any] | None, vizinhos: int = 4
+) -> list[dict[str, Any]]:
+    """As unidades de praça MAIS PARECIDA, com o faturamento de cada uma.
+
+    "Praça boa, faturamento abaixo da mediana" diz o quadrante, mas não contra quem. Estas
+    são as unidades que operam no mesmo tipo de chão (score de praça mais próximo), e é
+    delas que sai a conversa de execução. Só maduras, porque é o conjunto do quadrante.
+    """
+    if ponto is None:
+        return []
+    alvo = float(ponto["score_praca"])
+    perto = sorted(
+        (p for p in pontos if p["id"] != ponto["id"]),
+        key=lambda p: (abs(float(p["score_praca"]) - alvo), -float(p["faturamento"])),
+    )[:vizinhos]
+    return [
+        {
+            "id": p["id"],
+            "nome": p["nome"],
+            "score_praca": p["score_praca"],
+            "faturamento": p["faturamento"],
+            "esta_unidade": p["id"] == ponto["id"],
+        }
+        for p in sorted([ponto, *perto], key=lambda p: -float(p["score_praca"]))
+    ]
+
+
 @app.get("/api/rede/unidade/{unidade_id}/inteligencia")
 def rede_unidade_inteligencia(unidade_id: str, mes: str | None = None) -> dict[str, Any]:
     """Território, retenção, rampa, sinais e concorrência nova de UMA unidade."""
@@ -8357,6 +8390,7 @@ def rede_unidade_inteligencia(unidade_id: str, mes: str | None = None) -> dict[s
         _rede_pontos_quadrante(ids, atual, _rede_mes_base(cheio, competencia), territorio, contexto["diagnosticos"])
     )
     ponto = next((p for p in quadrante["pontos"] if p["id"] == unidade_id), None)
+    pares = _rede_pares_de_praca(quadrante["pontos"], ponto)
     posicao = rede_inteligencia.posicao_na_rampa(cheio, competencia, [unidade_id])
 
     mes_base = _rede_mes_base(cheio, competencia)
@@ -8374,6 +8408,7 @@ def rede_unidade_inteligencia(unidade_id: str, mes: str | None = None) -> dict[s
         "territorio": territorio.get(unidade_id),
         "quadrante": {
             "ponto": ponto,
+            "pares": pares,
             "corte_praca": quadrante["corte_praca"],
             "corte_desempenho": quadrante["corte_desempenho"],
             "n": quadrante["n"],

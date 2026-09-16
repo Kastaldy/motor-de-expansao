@@ -1360,6 +1360,15 @@ export interface RedeTerritorio {
   hexes_lidos: number
 }
 
+/** Unidade de praça parecida, para comparar execução no mesmo tipo de chão. */
+export interface RedeParDePraca {
+  id: string
+  nome: string
+  score_praca: number
+  faturamento: number
+  esta_unidade: boolean
+}
+
 export type RedeQuadranteChave = 'referencia' | 'execucao' | 'supera' | 'limite'
 
 export interface RedeQuadrantePonto {
@@ -1479,7 +1488,7 @@ export interface RedeInteligencia {
     /** unidades com leitura do modelo, mas em que ele se declara instável/descalibrado */
     fora_do_modelo: number
     no_recorte: number
-    unidades: ({ id: string; nome: string } & RedeRetencao)[]
+    unidades: ({ id: string; nome: string; consultor: string | null } & RedeRetencao)[]
   }
   concorrencia_nova: {
     disponivel: boolean
@@ -1624,6 +1633,7 @@ export interface RedeUnidadeInteligencia {
   territorio: RedeTerritorio | null
   quadrante: {
     ponto: RedeQuadrantePonto | null
+    pares?: RedeParDePraca[]
     corte_praca: number | null
     corte_desempenho: number | null
     n: number

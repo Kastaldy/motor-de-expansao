@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { brl, num, pct, pctVar } from '../../lib/format'
 import type {
   RedeMapaConcorrente,
+  RedeParDePraca,
   RedeMovimentoEvento,
   RedeMovimentoTipo,
   RedePlanosEntorno,
@@ -264,6 +265,7 @@ export default function FichaInteligencia({
                 corte={brl(q.corte_desempenho)}
                 acima={q.corte_desempenho !== null && q.ponto.faturamento >= q.corte_desempenho}
               />
+              {(q.pares?.length ?? 0) > 1 && <UnidadesPares pares={q.pares as RedeParDePraca[]} mediana={q.corte_desempenho} />}
             </>
           ) : (
             <div style={{ font: '400 12px/1.5 var(--f-ui)', color: 'var(--tx-sub)' }}>
@@ -677,6 +679,95 @@ function MovimentacaoEntorno({ eventos, logos }: { eventos: RedeMovimentoEvento[
             )}
           </div>
         ))}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Unidades de praça MAIS PARECIDA, com o faturamento de cada uma.
+ *
+ * O quadrante diz "praça boa, faturamento abaixo da mediana", mas não contra quem. Aqui
+ * estão as que operam no mesmo tipo de chão — é a conversa de execução, não de mercado.
+ */
+function UnidadesPares({ pares, mediana }: { pares: RedeParDePraca[]; mediana: number | null }) {
+  // Barras EM PÉ, canto reto, a unidade aberta em verde. A área do gráfico é UMA célula que
+  // atravessa as colunas: é ela que permite a linha tracejada da mediana correr por cima de
+  // todas as barras. Os rótulos ficam em linhas próprias da grade, então nada se sobrepõe.
+  const esta = pares.find((p) => p.esta_unidade)
+  const base = esta?.faturamento ?? 0
+  const teto = Math.max(...pares.map((p) => p.faturamento), mediana ?? 0, 1)
+  const alturaDe = (v: number) => `${Math.max((100 * v) / teto, 4)}%`
+  const colunas = `repeat(${pares.length}, minmax(0, 1fr))`
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div style={{ font: '600 9.5px/1 var(--f-ui)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--tx-muted)', marginBottom: 10 }}>
+        Unidades de praça parecida
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: colunas, gridTemplateRows: 'auto minmax(190px, 1fr) auto auto', columnGap: 8, rowGap: 4 }}>
+        {pares.map((p) => (
+          <span key={`v-${p.id}`} className="num" style={{ font: '600 10px/1 var(--f-num)', color: p.esta_unidade ? 'var(--tx-max)' : 'var(--tx-sub)', textAlign: 'center' }}>
+            {brl(p.faturamento, true, 0)}
+          </span>
+        ))}
+
+        <div style={{ gridColumn: '1 / -1', position: 'relative', display: 'grid', gridTemplateColumns: colunas, columnGap: 8, alignItems: 'end' }}>
+          {pares.map((p) => {
+            const delta = base > 0 && !p.esta_unidade ? (100 * (p.faturamento - base)) / base : null
+            return (
+              <div
+                key={`b-${p.id}`}
+                title={`${p.nome} — praça ${num(p.score_praca, 0)} · ${brl(p.faturamento)}${delta === null ? '' : ` (${pctVar(delta, 0)} contra esta unidade)`}`}
+                style={{ height: alturaDe(p.faturamento), background: p.esta_unidade ? 'var(--pos)' : 'var(--line-mid)' }}
+              />
+            )
+          })}
+          {mediana !== null && (
+            <div
+              aria-hidden
+              title={`Mediana de faturamento das maduras da rede: ${brl(mediana)}`}
+              style={{ position: 'absolute', left: 0, right: 0, bottom: alturaDe(mediana), borderTop: '1px dashed var(--tx-muted)', pointerEvents: 'none' }}
+            >
+              <span
+                className="num"
+                style={{ position: 'absolute', right: 0, bottom: 2, font: '500 9px/1 var(--f-num)', color: 'var(--tx-muted)', background: 'var(--surf-card)', padding: '0 3px' }}
+              >
+                mediana da rede {brl(mediana, true, 0)}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {pares.map((p) => (
+          <span
+            key={`n-${p.id}`}
+            style={{
+              font: p.esta_unidade ? '600 9.5px/1.25 var(--f-ui)' : '400 9.5px/1.25 var(--f-ui)',
+              color: p.esta_unidade ? 'var(--pos)' : 'var(--tx-label)',
+              textAlign: 'center',
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+              minHeight: 24,
+            }}
+          >
+            {p.nome}
+          </span>
+        ))}
+
+        {pares.map((p) => {
+          const delta = base > 0 && !p.esta_unidade ? (100 * (p.faturamento - base)) / base : null
+          return (
+            <span
+              key={`d-${p.id}`}
+              className="num"
+              style={{ font: '600 9px/1 var(--f-num)', textAlign: 'center', color: delta === null ? 'var(--tx-off)' : delta > 0 ? 'var(--pos)' : 'var(--neg)' }}
+            >
+              {delta === null ? 'esta' : pctVar(delta, 0)}
+            </span>
+          )
+        })}
       </div>
     </div>
   )
