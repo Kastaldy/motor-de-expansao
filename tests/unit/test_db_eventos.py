@@ -198,3 +198,61 @@ def test_escrita_passa_pela_transacao_e_nunca_pela_conexao() -> None:
     fonte = Path(mod.__file__).read_text(encoding="utf-8")
     assert "from .postgres import transacao" in fonte
     assert "conexao(" not in fonte
+
+
+# --------------------------------------------------------------------------------------
+# `dossie.baixado` — o artefato que o motor NAO gera (16/09)
+# --------------------------------------------------------------------------------------
+
+
+def test_o_dossie_tem_tipo_proprio_e_nao_e_um_relatorio(con: FakeConexao) -> None:
+    """Linha propria no contrato: o motor nao o gera (vem do coletor) e ele carrega PII de
+    corretor. Colapsar em `relatorio.gerado` perderia as duas distincoes de uma vez."""
+    mod.registrar_dossie_baixado(autor=7, imovel_id="im_3f2a9b")
+    assert con.eventos[0][1] == mod.EVENTO_DOSSIE_BAIXADO
+    assert mod.EVENTO_DOSSIE_BAIXADO == "dossie.baixado"
+
+
+def test_o_alvo_vai_com_a_chave_que_o_indice_conhece(con: FakeConexao) -> None:
+    """`imovel_id`, e nao `id_imovel` nem `imovel` -- o defeito da chave errada e' silencioso."""
+    mod.registrar_dossie_baixado(autor=7, imovel_id="im_3f2a9b")
+    metadados = con.eventos[0][2].obj
+    assert metadados["imovel_id"] == "im_3f2a9b"
+    assert metadados["origem"] == "web"
+    assert "imovel_id" in mod.CHAVES_DE_ALVO
+
+
+def test_o_dossie_nao_carimba_report_id(con: FakeConexao) -> None:
+    """Nao ha o que carimbar: o PDF vem pronto do coletor e nunca passou pela geracao do
+    motor. Inventar um id aqui prometeria um rastreio que o arquivo nao carrega."""
+    mod.registrar_dossie_baixado(autor=7, imovel_id="im_3f2a9b")
+    assert "report_id" not in con.eventos[0][2].obj
+    import inspect
+
+    assert "report_id" not in inspect.signature(mod.registrar_dossie_baixado).parameters
+
+
+def test_autor_nulo_e_permitido_no_dossie(con: FakeConexao) -> None:
+    """Meio evento vale mais que nenhum -- "este dossie foi baixado" ja' e' informacao."""
+    mod.registrar_dossie_baixado(autor=None, imovel_id="im_3f2a9b")
+    assert con.eventos[0][0] is None
+    assert len(con.eventos) == 1
+
+
+def test_o_autor_do_dossie_e_carimbado_como_PRIMEIRO_comando(con: FakeConexao) -> None:
+    """Sem `app.id_usuario` antes da escrita, as triggers do D19 gravam autoria nula."""
+    mod.registrar_dossie_baixado(autor=7, imovel_id="im_3f2a9b")
+    assert con.executados[0][0] == postgres.SQL_DEFINIR_AUTOR
+
+
+def test_o_dossie_nao_grava_entidade(con: FakeConexao) -> None:
+    """Emenda do D24: o id do imovel e' TEXTUAL e `entidade_id` e' BIGINT."""
+    assert "NULL, NULL" in mod.SQL_REGISTRAR_DOSSIE
+
+
+def test_metadados_do_dossie_nao_carregam_PII(con: FakeConexao) -> None:
+    """O evento aponta para o arquivo; o contato do corretor fica DENTRO do PDF e nunca aqui."""
+    mod.registrar_dossie_baixado(autor=7, imovel_id="im_3f2a9b")
+    achatado = " ".join(str(v) for v in con.eventos[0][2].obj.values()).lower()
+    for pii in ("@", "rua ", "avenida", "telefone", "cpf", "creci"):
+        assert pii not in achatado, f"PII em metadados: {achatado}"

@@ -56,6 +56,15 @@ VALUES (%s, %s, NULL, NULL, %s)
 """
 
 
+# Mesma forma do INSERT acima, e constante PROPRIA de proposito: reusar a do relatorio faria o
+# nome mentir sobre o que a instrucao grava, e as duas podem divergir amanha (o dossie nao tem
+# `report_id` -- ele nao e' gerado pelo motor, vem pronto do coletor).
+SQL_REGISTRAR_DOSSIE = """
+INSERT INTO eventos (id_usuario, tipo, entidade, entidade_id, metadados)
+VALUES (%s, %s, NULL, NULL, %s)
+"""
+
+
 class AlvoForaDoContrato(ValueError):
     """Chave de alvo que os indices parciais nao conhecem. Ver `CHAVES_DE_ALVO`."""
 
@@ -120,3 +129,28 @@ def registrar_relatorio(
             (autor, EVENTO_RELATORIO_GERADO, Jsonb(metadados)),
         )
     return identificador
+
+
+def registrar_dossie_baixado(*, autor: int | None, imovel_id: str, origem: str = "web") -> None:
+    """Grava `dossie.baixado` -- o PDF do coletor, o unico artefato com PII de corretor.
+
+    Linha propria no contrato (§2.2), e nao um `relatorio.gerado` a mais, por duas razoes que
+    andam juntas: o motor NAO o gera (vem pronto do coletor imobiliario, DEC-037) e ele carrega
+    contato de corretor. Nao ha `report_id` para carimbar -- o arquivo nao passa pela nossa
+    geracao --, entao o rastreio possivel e' pelo par (quem, quando), e o alvo em `metadados`.
+
+    `imovel_id` e' a chave que o contrato fecha (`CHAVES_DE_ALVO`) e que o indice parcial da 014
+    conhece. `entidade`/`entidade_id` ficam nulos pela emenda do D24: o id do imovel e' TEXTUAL
+    (`im_3f2a9b`) e `entidade_id` e' BIGINT.
+
+    `autor` pode ser `None` pelo mesmo motivo do `registrar_relatorio`: o D19 preve acao de
+    autoria nula, e meio evento -- "este dossie foi baixado" -- vale mais que evento nenhum.
+    """
+    from psycopg.types.json import Jsonb  # import tardio: so' quem escreve paga
+
+    metadados: dict[str, Any] = {"imovel_id": imovel_id, "origem": origem}
+    with transacao(id_usuario=autor) as con:
+        con.execute(
+            SQL_REGISTRAR_DOSSIE,
+            (autor, EVENTO_DOSSIE_BAIXADO, Jsonb(metadados)),
+        )

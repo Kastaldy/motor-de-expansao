@@ -98,13 +98,24 @@ Duplicar em `eventos` só se justifica quando o log em arquivo sair — não ant
 ### 2.4 Gestos da aba imobiliária
 
 O `POST /api/imobiliaria/evento/{acao}` já tem vocabulário fechado (`ACOES_IMOBILIARIA`), com 404
-fora dele. **Nem todos são ação no mesmo grau**, e por isso só três sobem para `eventos`:
+fora dele. **Nem todos são ação no mesmo grau**, e por isso só dois sobem para `eventos`:
 
 | Gesto | Vai para `eventos`? | Por quê |
 |---|---|---|
 | `marcar-visita` / `desmarcar-visita` | **sim** — `imovel.visita_marcada` / `_desmarcada`, com `imovel_id` em `metadados` | decisão de negócio sobre um imóvel |
-| `abrir-dossie` | **sim** — vira `dossie.baixado` | é o pedido do PDF com PII |
+| `abrir-dossie` | **não** — quem grava é o `GET` do PDF (§2.2) | o gesto dispara mesmo quando não há dossiê |
 | `abrir-aba`, `abrir-imovel`, `ver-no-mapa`, `filtrar` | não | uso de tela; a trilha da DEC-027 já os tem |
+
+> **Correção de 16/09, antes de existir produtor.** Até aqui esta tabela dizia que `abrir-dossie`
+> "vira `dossie.baixado`" — e a §2.2 diz que quem o produz é o `GET /api/oportunidades/{id}/dossie`.
+> Seguir as duas ao pé da letra daria **dois eventos por clique** no único artefato que carrega
+> contato de corretor.
+>
+> O desempate não é de gosto, é de fato medido na tela: o front dispara o gesto **sempre** — inclusive
+> quando o imóvel não tem dossiê, caso em que ele manda `detalhe: relatorio-pontual` — e só busca o
+> PDF quando `tem_dossie`. Produzir no gesto registraria "dossiê baixado" em downloads que não
+> aconteceram; produzir nos dois contaria cada um duas vezes. O evento nasce onde o arquivo é
+> entregue, e o gesto continua no rastro de 90 dias da DEC-027, como os outros quatro.
 
 ### 2.5 Análise pedida
 

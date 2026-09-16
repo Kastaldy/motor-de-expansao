@@ -479,7 +479,15 @@ def test_o_estado_da_senha_NUNCA_derruba_o_me(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_sem_banco_no_comando_nem_consulta_o_estado(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Uma ida ao banco a menos por abertura de app, no ramo em que ela seria inutil."""
+    """Uma ida ao banco a menos por abertura de app, no ramo em que ela seria inutil.
+
+    O duble REGISTRA a chamada em vez de levantar, e a diferenca decide se este teste vale
+    alguma coisa. Ate' 16/09 ele levantava `AssertionError` -- que e' subclasse de `Exception`
+    e portanto cai no `except Exception` do `_estado_da_minha_senha`, que existe para a
+    consulta acessoria nunca derrubar o `/api/me`. Com a guarda removida, a chamada
+    aconteceria, a excecao seria engolida, o helper devolveria `None` e a chave `senha`
+    continuaria ausente: o teste passava exatamente no caso que ele deveria denunciar.
+    """
     import app as pilot_app
 
     from motor_expansao.db import usuarios as db_usuarios
@@ -487,11 +495,11 @@ def test_sem_banco_no_comando_nem_consulta_o_estado(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(acesso, "banco_no_comando", lambda: False)
     monkeypatch.setattr(acesso, "abas_do_usuario", lambda _u: ["mapa"])
 
-    def _nao_deveria(_login: str) -> None:
-        raise AssertionError("consultou o banco com `banco_no_comando()` falso")
+    consultas: list[str] = []
+    monkeypatch.setattr(db_usuarios, "estado_da_senha", lambda login: consultas.append(login))
 
-    monkeypatch.setattr(db_usuarios, "estado_da_senha", _nao_deveria)
     assert "senha" not in pilot_app.me(remote_user="ana")
+    assert consultas == [], "consultou o banco com `banco_no_comando()` falso"
 
 
 def test_em_DEV_o_estado_da_senha_sai_sem_Remote_User(monkeypatch: pytest.MonkeyPatch) -> None:

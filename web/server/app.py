@@ -488,6 +488,41 @@ def _registrar_relatorio_gerado(
     return report_id
 
 
+def _registrar_dossie_baixado(remote_user: str | None, *, imovel_id: str) -> None:
+    """Grava `dossie.baixado`, e NUNCA deixa a trilha impedir a entrega do PDF.
+
+    Mesma politica do `_registrar_relatorio_gerado` logo acima, e pela mesma razao: o
+    arquivo sai mesmo com o banco fora. A diferenca e' que aqui nao ha id a devolver -- o
+    dossie vem pronto do coletor e nao tem `report_id` --, entao o rastro possivel e' o par
+    (quem, quando) com o `imovel_id` em `metadados`.
+
+    A falha e' LOGADA como erro pelo mesmo motivo de la': em silencio, um dossie baixado
+    sem evento e' indistinguivel de um dossie que ninguem baixou, e este e' o unico artefato
+    do piloto que carrega contato de corretor.
+
+    O GESTO da tela (`POST /api/imobiliaria/evento/abrir-dossie`) NAO grava: ele dispara
+    tambem quando o imovel nao tem dossie, e registrar la' contaria download que nao houve.
+    Ver a correcao de 16/09 na §2.4 do contrato.
+    """
+    from motor_expansao.db import eventos as db_eventos
+
+    try:
+        from motor_expansao.db import rbac
+
+        quem = rbac.identidade(acesso.login_da_requisicao(remote_user))
+        db_eventos.registrar_dossie_baixado(
+            autor=quem.id_usuario if quem is not None else None,
+            imovel_id=imovel_id,
+            origem="web",
+        )
+    except Exception:  # noqa: BLE001 — a trilha nunca derruba a entrega do arquivo
+        _LOG_D17.exception(
+            "D17: dossie do imovel %s entregue SEM evento no banco — o download do unico "
+            "artefato com PII de corretor ficou sem rastro",
+            imovel_id,
+        )
+
+
 def _registrar_acesso(request: Request, *, status: int, inicio: float, tamanho: str | None) -> None:
     """Monta e grava a linha da trilha. Rastro, nao transacao: falha morre aqui."""
     try:
@@ -9308,15 +9343,23 @@ def api_oportunidades(uf: str | None = None, limite: int = 500) -> dict[str, Any
 
 
 @app.get("/api/oportunidades/{imovel_id}/dossie")
-def api_oportunidade_dossie(imovel_id: str) -> Any:
+def api_oportunidade_dossie(
+    imovel_id: str,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> Any:
     """Serve o dossie PDF do coletor para um imovel, quando existe (senao 404 — o front
-    cai no Relatorio Pontual). SEM PII na rota: o PDF ja e' o artefato do coletor."""
+    cai no Relatorio Pontual). SEM PII na rota: o PDF ja e' o artefato do coletor.
+
+    Registra `dossie.baixado` DEPOIS de saber que o arquivo existe: gravar antes do 404
+    contaria como baixado um dossie que ninguem recebeu.
+    """
     from fastapi import HTTPException
     from fastapi.responses import FileResponse
 
     pdf = _dossie_index().get(imovel_id)
     if pdf is None or not Path(pdf).exists():
         raise HTTPException(status_code=404, detail="Dossie nao disponivel para este imovel.")
+    _registrar_dossie_baixado(remote_user, imovel_id=imovel_id)
     return FileResponse(str(pdf), media_type="application/pdf", filename=Path(pdf).name)
 
 

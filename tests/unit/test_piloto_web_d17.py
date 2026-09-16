@@ -199,3 +199,83 @@ def test_as_quatro_rotas_usam_os_rotulos_do_contrato() -> None:
     assert len(chamadas) == 4, f"esperava as quatro superficies, achei {chamadas}"
     assert {r for r, _f in chamadas} == {"municipal", "pontual", "simulador", "comparacao"}
     assert {f for _r, f in chamadas} == {"pdf", "xlsx"}
+
+
+# --------------------------------------------------------------------------------------
+# `dossie.baixado` — mesma politica, outro artefato (16/09)
+# --------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def dossies(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Captura o que chegaria em `registrar_dossie_baixado`."""
+    capturados: list[dict[str, Any]] = []
+    monkeypatch.setattr(db_eventos, "registrar_dossie_baixado", lambda **kw: capturados.append(kw))
+    monkeypatch.setattr(rbac, "identidade", lambda _login: _Quem(7))
+    return capturados
+
+
+def test_o_dossie_registra_quem_baixou(dossies: list[dict[str, Any]]) -> None:
+    pilot_app._registrar_dossie_baixado("ana", imovel_id="im_3f2a9b")
+    assert dossies == [{"autor": 7, "imovel_id": "im_3f2a9b", "origem": "web"}]
+
+
+def test_a_entrega_do_pdf_nao_depende_da_trilha(
+    monkeypatch: pytest.MonkeyPatch, dossies: list[dict[str, Any]], caplog: pytest.LogCaptureFixture
+) -> None:
+    """O arquivo sai com o banco fora -- e a falha vira log de ERRO, nunca silencio: um
+    dossie baixado sem evento e' indistinguivel de um que ninguem baixou."""
+
+    def _explode(**_kw: Any) -> None:
+        raise RuntimeError("banco fora")
+
+    monkeypatch.setattr(db_eventos, "registrar_dossie_baixado", _explode)
+    with caplog.at_level(logging.ERROR, logger="piloto.d17"):
+        pilot_app._registrar_dossie_baixado("ana", imovel_id="im_3f2a9b")
+
+    registros = [r for r in caplog.records if r.name == "piloto.d17"]
+    assert registros, "o dossie sem evento passou em silencio"
+    assert "im_3f2a9b" in registros[0].getMessage()
+
+
+def test_sem_cadastro_o_dossie_sai_com_autor_nulo(
+    monkeypatch: pytest.MonkeyPatch, dossies: list[dict[str, Any]]
+) -> None:
+    monkeypatch.setattr(rbac, "identidade", lambda _login: None)
+    pilot_app._registrar_dossie_baixado("fantasma", imovel_id="im_3f2a9b")
+    assert dossies[0]["autor"] is None
+
+
+def test_a_rota_do_dossie_so_registra_o_que_ENTREGOU(
+    monkeypatch: pytest.MonkeyPatch, dossies: list[dict[str, Any]]
+) -> None:
+    """Registrar antes do 404 contaria como baixado um dossie que ninguem recebeu."""
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(pilot_app, "_dossie_index", dict)
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.api_oportunidade_dossie("im_inexistente", remote_user="ana")
+
+    assert caiu.value.status_code == 404
+    assert dossies == [], "gravou download de um dossie que nao existe"
+
+
+def test_o_gesto_da_tela_nao_grava_evento(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`abrir-dossie` dispara TAMBEM quando o imovel nao tem dossie (o front manda
+    `detalhe: relatorio-pontual`). Gravar la' contaria download que nao houve, e gravar nos
+    dois contaria cada um duas vezes -- ver a correcao de 16/09 na §2.4 do contrato.
+
+    O duble REGISTRA a chamada em vez de levantar, e isso nao e' estilo. A primeira versao
+    deste teste levantava `AssertionError` -- que e' subclasse de `Exception` e portanto seria
+    ENGOLIDA pelo `except Exception` do `_registrar_dossie_baixado`, que existe para a trilha
+    nunca derrubar a entrega. Sabotado (o gesto passando a gravar), aquele teste PASSAVA: a
+    garantia era falsa. Contar chamadas nao depende de a excecao subir.
+    """
+    chamadas: list[Any] = []
+    monkeypatch.setattr(
+        pilot_app, "_registrar_dossie_baixado", lambda *a, **kw: chamadas.append((a, kw))
+    )
+    monkeypatch.setattr(db_eventos, "registrar_dossie_baixado", lambda **kw: chamadas.append(kw))
+
+    assert pilot_app.api_imobiliaria_evento("abrir-dossie") == {"ok": True}
+    assert chamadas == [], "o gesto gravou evento -- o download seria contado duas vezes"
