@@ -52,6 +52,7 @@ import tempfile
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
+from typing import TypedDict
 
 import h3
 import pandas as pd
@@ -1203,6 +1204,17 @@ def migrar_layout_particoes(
 # --------------------------------------------------------------------------- #
 # 6.1 Guarda de coleta PARCIAL (fronteira de publicação)
 # --------------------------------------------------------------------------- #
+class LaudoColetaParcial(TypedDict):
+    """Laudo da guarda. TIPADO de proposito: como `dict[str, object]`, `laudo["motivos"]` sai como
+    `object` e nem iterar sobre ele o mypy aceita — e o consumidor acabaria fazendo `cast`, que é
+    justamente onde um erro de chave passa despercebido."""
+
+    aprovado: bool
+    motivos: list[str]
+    por_fonte: dict[str, object]
+    erro_leitura_serie: str | None
+
+
 def avaliar_coleta_parcial(
     snapshot: pd.DataFrame,
     base_dir: Path = SNAPSHOTS_DIR_DEFAULT,
@@ -1210,7 +1222,7 @@ def avaliar_coleta_parcial(
     semana: str,
     tolerancia_rede_pct: float = TOLERANCIA_QUEDA_REDE_PCT,
     tolerancia_total_pct: float = TOLERANCIA_QUEDA_TOTAL_PCT,
-) -> dict[str, object]:
+) -> LaudoColetaParcial:
     """A semana candidata veio de uma coleta COMPLETA? Compara com a última semana da MESMA fonte.
 
     **O incidente (2026-09-13).** Um coletor travou, o tratador de timeout do repo irmão quebrou e o
@@ -1292,12 +1304,12 @@ def avaliar_coleta_parcial(
                 f"contra a semana {ref}, acima do limite de {tolerancia_total_pct:.0f}%"
             )
 
-    return {
-        "aprovado": not motivos,
-        "motivos": motivos,
-        "por_fonte": por_fonte,
-        "erro_leitura_serie": erro_leitura,
-    }
+    return LaudoColetaParcial(
+        aprovado=not motivos,
+        motivos=motivos,
+        por_fonte=por_fonte,
+        erro_leitura_serie=erro_leitura,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1532,7 +1544,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     # O wrapper da VPS roda com `|| echo` (falha no snapshot nao aborta o lote): sem codigo de saida
     # proprio, uma semana RECUSADA sairia no log como sucesso, que e' a leitura oposta da verdade.
     # 4 e' o mesmo codigo que o regen usa para "validacao de publicacao reprovou" (DEC-059).
-    if not auditoria.get("coleta_parcial", {}).get("aprovado", True) and not auditoria.get("forcado"):
+    laudo = auditoria.get("coleta_parcial")
+    reprovou = isinstance(laudo, dict) and not laudo.get("aprovado", True)
+    if reprovou and not auditoria.get("forcado"):
         return 4
     return 0
 
