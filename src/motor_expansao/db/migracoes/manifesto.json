@@ -120,6 +120,13 @@
       "documento": "016-ciclo-da-senha.md",
       "sha256_bloco": "35289d2ff0aa9b3333dbd9e18da85ef3af27c419ea743d0468b96c735dcb2e63",
       "sha256_arquivo": "9ac209a83ba73217fb05524d83b00dde69d53010b6aa961a7839cbbee5d95eec"
+    },
+    {
+      "versao": "017",
+      "arquivo": "017-coerencia-entre-parametros-e-geom.sql",
+      "documento": "017-coerencia-entre-parametros-e-geom.md",
+      "sha256_bloco": "e5f12fd040e8f2dc89defe912070c3b2fb2113bf7cb9c986552cdaee10c88aea",
+      "sha256_arquivo": "b712ec6cef9e872966fe7470a5932d0067cd3b37d97d7e43c0a6dd88af59601a"
     }
   ]
 }

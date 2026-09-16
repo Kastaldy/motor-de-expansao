@@ -58,10 +58,10 @@ NUMEROS_DA_SECAO_ZERO = {
     "indices": 46,   # 33 explicitos + 11 de PK + 2 de UNIQUE (D24 somou os 3 de metadados)
     "constraints CHECK": 12,
     "chaves estrangeiras": 11,
-    "triggers": 5,
+    "triggers": 7,   # 5 ate' a 016; a 017 (D29) somou a guarda de coerencia nas duas regioes
     "colunas geometricas": 7,
 }
-#: `prosecdef` e `proconfig` esperados por funcao, apos a migration 011 (D21).
+#: `prosecdef` e `proconfig` esperados por funcao, apos a migration 011 (D21) e a 017 (D29).
 FUNCOES_ESPERADAS = {
     "registra_perfil_permissoes_historico": (True, "pg_catalog, public, pg_temp"),
     "registra_perfil_permissoes_truncate": (True, "pg_catalog, public, pg_temp"),
@@ -70,6 +70,9 @@ FUNCOES_ESPERADAS = {
     "set_atualizado_em_usuario": (False, "pg_catalog, pg_temp"),
     "set_atualizado_em_area_estudo": (False, "pg_catalog, pg_temp"),
     "set_atualizado_em_contrato": (False, "pg_catalog, pg_temp"),
+    # D29: recusa UPDATE que muda a definicao da regiao sem gravar a forma nova. NAO e'
+    # SECURITY DEFINER de proposito -- ela so' levanta excecao, nao escreve nada.
+    "exige_geom_coerente": (False, "pg_catalog, pg_temp"),
 }
 
 SQL_CONTAGENS = """

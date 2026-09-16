@@ -29,15 +29,16 @@ MANIFESTO = MIGRACOES / "manifesto.json"
 
 #: Contagem conferida contra o DUMP do cluster real (`pg_dump --schema-only`, 26/08/2026),
 #: que fechou os seis numeros da §0 da `verificacao.md` em 11/42/12/11/5/7 -- indices foram a 43
-#: na D23 (`idx_usuarios_login_ativo`) e a 46 na D24 (os tres de `metadados`). Sao estes os
-#: objetos que as migrations tem de criar -- se um sumir daqui, o banco novo nasce
-#: diferente do que ja' esta no ar, e nenhum teste de sintaxe pegaria isso.
+#: na D23 (`idx_usuarios_login_ativo`) e a 46 na D24 (os tres de `metadados`); TRIGGERS foram a 7
+#: na D29 (a guarda de coerencia em `areas_estudo` e `contratos`, migration 017), que tambem
+#: levou as FUNCOES de 7 a 8. Sao estes os objetos que as migrations tem de criar -- se um sumir
+#: daqui, o banco novo nasce diferente do que ja' esta no ar, e nenhum teste de sintaxe pegaria.
 OBJETOS_ESPERADOS = {
     "CREATE TABLE": 11,
-    "CREATE TRIGGER": 5,
+    "CREATE TRIGGER": 7,
 }
 INDICES_ESPERADOS = 33   # +1 na D23 (login) e +3 na D24 (metadados: imovel/unidade/hex)
-FUNCOES_ESPERADAS = 7
+FUNCOES_ESPERADAS = 8    # +1 na D29 (`exige_geom_coerente`, uma so' para as duas tabelas)
 
 
 def _sql() -> list[Path]:

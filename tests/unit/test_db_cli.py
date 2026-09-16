@@ -96,9 +96,18 @@ def test_o_contrato_conferido_cobre_as_11_tabelas_do_modelo() -> None:
     )
 
 
-def test_endurecimento_esperado_cobre_as_7_funcoes() -> None:
-    """Sete funcoes, e as DUAS gravadoras do D19 sao as unicas `SECURITY DEFINER`."""
-    assert len(cli.FUNCOES_ESPERADAS) == 7
+def test_endurecimento_esperado_cobre_as_8_funcoes() -> None:
+    """Oito funcoes, e as DUAS gravadoras do D19 seguem as unicas `SECURITY DEFINER`.
+
+    Eram sete ate' a D29, que somou `exige_geom_coerente` (migration 017). O nome deste teste
+    carrega o numero de proposito: um teste batizado com um numero que deixou de ser o numero e'
+    a mesma deriva doc-contra-codigo que a suite existe para pegar.
+
+    A segunda asserçao passa a valer DE GRAÇA para a funcao nova: ela NAO e' `SECURITY DEFINER`
+    -- so' levanta excecao, nao escreve nada --, e se alguem a promover a definer sem pensar,
+    este teste acusa.
+    """
+    assert len(cli.FUNCOES_ESPERADAS) == 8
     definers = [nome for nome, (secdef, _) in cli.FUNCOES_ESPERADAS.items() if secdef]
     assert sorted(definers) == [
         "registra_perfil_permissoes_historico",
@@ -134,7 +143,10 @@ def test_contagens_conferem_com_os_seis_numeros_da_secao_zero() -> None:
         "indices": 46,
         "constraints CHECK": 12,
         "chaves estrangeiras": 11,
-        "triggers": 5,
+        # 7 desde a D29: a guarda de coerencia (migration 017) poe uma trigger em
+        # `areas_estudo` e outra em `contratos`. Mesma regra do numero acima -- este e o da
+        # §0 da `verificacao.md` andam JUNTOS, senao um banco correto acusa DIVERGENTE.
+        "triggers": 7,
         "colunas geometricas": 7,
     }
 
