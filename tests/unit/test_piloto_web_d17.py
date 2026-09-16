@@ -99,6 +99,34 @@ def test_o_id_devolvido_e_o_MESMO_que_foi_para_o_evento(gravacoes: list[dict[str
     assert gravacoes[0]["report_id"] == devolvido
 
 
+def test_deploy_sem_banco_loga_DEBUG_e_nao_ERRO(
+    monkeypatch: pytest.MonkeyPatch,
+    gravacoes: list[dict[str, Any]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Sem banco CONFIGURADO a ausencia de evento e' esperada, e nao incidente.
+
+    Um traceback por relatorio num deploy sem banco treinaria o operador a ignorar o ERROR do
+    teste logo abaixo -- que e' justamente o que denuncia incidente de verdade.
+
+    AS DUAS METADES IMPORTAM. So' exigir "nenhum ERRO" deixaria passar um helper que engolisse
+    tudo em silencio, e silencio aqui e' o defeito original que o D17 existe para fechar.
+    """
+    from motor_expansao.db import BancoNaoConfigurado
+
+    def _sem_banco(**_kw: Any) -> None:
+        raise BancoNaoConfigurado("sem MOTOR_DATABASE_URL")
+
+    monkeypatch.setattr(db_eventos, "registrar_relatorio", _sem_banco)
+    with caplog.at_level(logging.DEBUG, logger="piloto.d17"):
+        devolvido = pilot_app._registrar_relatorio_gerado("ana", relatorio="pontual", formato="pdf")
+
+    assert devolvido == _ID_CARIMBADO, "o relatorio sai igual, com ou sem banco"
+    nossos = [r for r in caplog.records if r.name == "piloto.d17"]
+    assert [r for r in nossos if r.levelno == logging.DEBUG], "a ausencia passou em silencio"
+    assert not [r for r in nossos if r.levelno >= logging.ERROR], "ruido de ERRO sem incidente"
+
+
 def test_a_falha_vira_LOG_DE_ERRO_com_o_report_id(
     monkeypatch: pytest.MonkeyPatch,
     gravacoes: list[dict[str, Any]],
@@ -218,6 +246,31 @@ def dossies(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 def test_o_dossie_registra_quem_baixou(dossies: list[dict[str, Any]]) -> None:
     pilot_app._registrar_dossie_baixado("ana", imovel_id="im_3f2a9b")
     assert dossies == [{"autor": 7, "imovel_id": "im_3f2a9b", "origem": "web"}]
+
+
+def test_deploy_sem_banco_loga_DEBUG_e_nao_ERRO_no_dossie(
+    monkeypatch: pytest.MonkeyPatch, dossies: list[dict[str, Any]], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Mesma politica do relatorio, no artefato em que errar custa mais caro: o dossie e' o
+    unico do piloto que carrega contato de corretor.
+
+    Ainda assim, num deploy SEM banco a ausencia de evento e' CONFIGURACAO, nao incidente -- e
+    o ERROR fica reservado ao banco que caiu, que e' o teste logo abaixo. O sufixo `_no_dossie`
+    no nome nao e' enfeite: ha um teste homonimo para o relatorio neste mesmo modulo, e nomes
+    iguais fariam o segundo apagar o primeiro SEM nenhum vermelho.
+    """
+    from motor_expansao.db import BancoNaoConfigurado
+
+    def _sem_banco(**_kw: Any) -> None:
+        raise BancoNaoConfigurado("sem MOTOR_DATABASE_URL")
+
+    monkeypatch.setattr(db_eventos, "registrar_dossie_baixado", _sem_banco)
+    with caplog.at_level(logging.DEBUG, logger="piloto.d17"):
+        pilot_app._registrar_dossie_baixado("ana", imovel_id="im_3f2a9b")
+
+    nossos = [r for r in caplog.records if r.name == "piloto.d17"]
+    assert [r for r in nossos if r.levelno == logging.DEBUG], "a ausencia passou em silencio"
+    assert not [r for r in nossos if r.levelno >= logging.ERROR], "ruido de ERRO sem incidente"
 
 
 def test_a_entrega_do_pdf_nao_depende_da_trilha(

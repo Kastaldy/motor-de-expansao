@@ -182,6 +182,33 @@ def test_banco_fora_do_ar_e_503(monkeypatch: pytest.MonkeyPatch) -> None:
     assert caiu.value.status_code == 503
 
 
+def test_deploy_sem_banco_e_503_e_nao_500(monkeypatch: pytest.MonkeyPatch) -> None:
+    """IRMAO do teste acima, e a diferenca entre os dois e' a razao deste ramo existir.
+
+    `BancoIndisponivel` e `BancoNaoConfigurado` sao irmaos -- nenhum herda do outro --, entao o
+    ramo do primeiro NAO pegava o segundo: a excecao chegava ao `raise erro` do fim de
+    `_erro_de_usuarios` e virava 500 CRU. E deploy sem banco nao e' caso de borda: e' o estado
+    PADRAO do compose (`MOTOR_DATABASE_URL: ${MOTOR_DATABASE_URL:-}`), entao o card
+    "Administracao de usuarios" mostrava um 500 em toda instalacao que ainda nao ligou o banco.
+    """
+    from motor_expansao.db import BancoNaoConfigurado
+
+    _identidade(monkeypatch, _Eu())
+
+    def _falha(*_a: Any, **_k: Any) -> None:
+        raise BancoNaoConfigurado("sem MOTOR_DATABASE_URL")
+
+    monkeypatch.setattr(db_usuarios, "alterar_perfil", _falha)
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.acessos_usuarios_alterar(
+            9, pilot_app.UsuarioAdminIn(perfil="x"), remote_user=ADMIN
+        )
+    assert caiu.value.status_code == 503
+    # A MENSAGEM tambem, e nao so' o status: o 503 sozinho nao diz ao operador o que fazer, e a
+    # tela so' tem o que mostrar se o texto disser qual e' a falta.
+    assert "banco" in str(caiu.value.detail).lower()
+
+
 # --------------------------------------------------------------------------------------
 # O autor
 # --------------------------------------------------------------------------------------

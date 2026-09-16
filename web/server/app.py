@@ -463,6 +463,7 @@ def _registrar_relatorio_gerado(
     e o `id_usuario` sai do RBAC. Sem cadastro no banco, o evento sai com autor nulo em
     vez de nao sair: o D19 preve acao de autoria nula, e meio evento vale mais que nenhum.
     """
+    from motor_expansao.db import BancoNaoConfigurado
     from motor_expansao.db import eventos as db_eventos
 
     report_id = db_eventos.novo_report_id()
@@ -477,6 +478,18 @@ def _registrar_relatorio_gerado(
             origem="web",
             alvo=alvo,
             report_id=report_id,
+        )
+    except BancoNaoConfigurado:
+        # Deploy SEM banco nao e' incidente: e' configuracao declarada. Um traceback por
+        # relatorio aqui treinaria o operador a ignorar justamente o log que existe para
+        # denunciar rastro perdido -- e no dia em que o banco REALMENTE cair, o ERROR abaixo
+        # chegaria no meio de milhares de iguais. O `postgres.py` ja' separa os dois casos em
+        # classes distintas; este ramo so' honra a separacao que ele fez.
+        _LOG_D17.debug(
+            "D17: deploy sem banco — relatorio %s saiu com report_id=%s e SEM evento; "
+            "neste deploy o id nasce ORFAO por construcao",
+            relatorio,
+            report_id,
         )
     except Exception:  # noqa: BLE001 — a trilha nunca derruba o relatorio
         _LOG_D17.exception(
@@ -504,6 +517,7 @@ def _registrar_dossie_baixado(remote_user: str | None, *, imovel_id: str) -> Non
     tambem quando o imovel nao tem dossie, e registrar la' contaria download que nao houve.
     Ver a correcao de 16/09 na §2.4 do contrato.
     """
+    from motor_expansao.db import BancoNaoConfigurado
     from motor_expansao.db import eventos as db_eventos
 
     try:
@@ -515,6 +529,10 @@ def _registrar_dossie_baixado(remote_user: str | None, *, imovel_id: str) -> Non
             imovel_id=imovel_id,
             origem="web",
         )
+    except BancoNaoConfigurado:
+        # Mesma razao do relatorio acima: sem banco configurado, a ausencia de evento e' o
+        # comportamento declarado do deploy, e nao uma falha a investigar.
+        _LOG_D17.debug("D17: deploy sem banco — dossie do imovel %s entregue sem evento", imovel_id)
     except Exception:  # noqa: BLE001 — a trilha nunca derruba a entrega do arquivo
         _LOG_D17.exception(
             "D17: dossie do imovel %s entregue SEM evento no banco — o download do unico "
@@ -545,6 +563,7 @@ def _registrar_visita_imovel(remote_user: str | None, *, acao: str, imovel: str 
         )
         return
 
+    from motor_expansao.db import BancoNaoConfigurado
     from motor_expansao.db import eventos as db_eventos
 
     try:
@@ -557,6 +576,11 @@ def _registrar_visita_imovel(remote_user: str | None, *, acao: str, imovel: str 
             marcada=acao == "marcar-visita",
             origem="web",
         )
+    except BancoNaoConfigurado:
+        # Sem banco configurado a decisao de visita fica so' na trilha de 90 dias, e isso e' o
+        # esperado deste deploy. A guarda de ALVO AUSENTE, logo acima, segue sendo ERRO: la' o
+        # gesto chegou incompleto, que e' defeito, e nao configuracao.
+        _LOG_D17.debug("deploy sem banco — gesto %s no imovel %s sem evento", acao, imovel)
     except Exception:  # noqa: BLE001 — a trilha nunca derruba o gesto
         _LOG_D17.exception(
             "gesto %s no imovel %s SEM evento no banco — a decisao de visita ficou so' na "
@@ -578,6 +602,7 @@ def _registrar_viabilidade_calculada(remote_user: str | None, *, body: Any) -> N
     numero de SAIDA, tambem: break-even e payback sao resposta do motor, e `eventos` registra
     o que a pessoa PEDIU. Ver a correcao de 16/09 na §2.5.
     """
+    from motor_expansao.db import BancoNaoConfigurado
     from motor_expansao.db import eventos as db_eventos
 
     try:
@@ -591,6 +616,10 @@ def _registrar_viabilidade_calculada(remote_user: str | None, *, body: Any) -> N
             demanda=body.demanda,
             origem="web",
         )
+    except BancoNaoConfigurado:
+        # A tela de Viabilidade e' a mais quente das quatro: sem este ramo, um deploy sem banco
+        # escrevia um traceback por CALCULO.
+        _LOG_D17.debug("deploy sem banco — viabilidade calculada sem evento")
     except Exception:  # noqa: BLE001 — a trilha nunca derruba o calculo
         _LOG_D17.exception(
             "viabilidade calculada SEM evento no banco — a analise saiu para a tela e nao "
@@ -4149,7 +4178,7 @@ def _erro_de_usuarios(erro: Exception) -> HTTPException:
     especificos vem antes do generico -- senao um conflito de login (409, acionavel) sairia como
     422 e a tela mostraria o recado errado.
     """
-    from motor_expansao.db import BancoIndisponivel
+    from motor_expansao.db import BancoIndisponivel, BancoNaoConfigurado
     from motor_expansao.db import senhas as db_senhas
     from motor_expansao.db import usuarios as db_usuarios
 
@@ -4173,6 +4202,18 @@ def _erro_de_usuarios(erro: Exception) -> HTTPException:
         return HTTPException(503, str(erro))
     if isinstance(erro, db_senhas.HashIndisponivel):
         return HTTPException(503, str(erro))
+    if isinstance(erro, BancoNaoConfigurado):
+        # IRMAO do `BancoIndisponivel` abaixo, e a distincao e' a razao deste ramo existir: la'
+        # e' INCIDENTE (o banco existe e nao respondeu), aqui e' ESCOLHA DE OPERACAO declarada
+        # (`MOTOR_DATABASE_URL` vazia devolve o piloto ao comportamento pre-banco -- §4). Sem
+        # este ramo a excecao chegava ao `raise erro` do fim e o card "Administracao de
+        # usuarios" mostrava um 500 CRU num deploy sem banco, que e' o estado PADRAO do
+        # compose. A tela ja' sabe dizer "Indisponivel — nada foi alterado" quando recebe 503
+        # (`PainelUsuarios.tsx`); faltava mandar o 503.
+        return HTTPException(
+            503,
+            "Administração de usuários indisponível: este deploy está sem banco configurado.",
+        )
     if isinstance(erro, BancoIndisponivel):
         return HTTPException(503, f"Banco indisponível: {erro}")
     if isinstance(erro, ValueError):

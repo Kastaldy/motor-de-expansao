@@ -154,6 +154,30 @@ def test_banco_fora_nao_derruba_o_gesto(
     assert "im_3f2a9b" in registros[0].getMessage()
 
 
+def test_deploy_sem_banco_loga_DEBUG_e_nao_ERRO(
+    monkeypatch: pytest.MonkeyPatch, visitas: list[dict[str, Any]], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Sem banco configurado a visita fica so' na trilha de 90 dias -- desenho, nao incidente.
+
+    A guarda de ALVO AUSENTE (mais acima) segue sendo ERRO de proposito: la' o gesto chegou
+    incompleto, que e' defeito; aqui o deploy e' que nao tem banco, que e' configuracao.
+    """
+    from motor_expansao.db import BancoNaoConfigurado
+
+    def _sem_banco(**_kw: Any) -> None:
+        raise BancoNaoConfigurado("sem MOTOR_DATABASE_URL")
+
+    monkeypatch.setattr(db_eventos, "registrar_visita", _sem_banco)
+    with caplog.at_level(logging.DEBUG, logger="piloto.d17"):
+        assert pilot_app.api_imobiliaria_evento(
+            "marcar-visita", imovel="im_3f2a9b", remote_user="ana"
+        ) == {"ok": True}
+
+    nossos = [r for r in caplog.records if r.name == "piloto.d17"]
+    assert [r for r in nossos if r.levelno == logging.DEBUG], "a ausencia passou em silencio"
+    assert not [r for r in nossos if r.levelno >= logging.ERROR], "ruido de ERRO sem incidente"
+
+
 def test_sem_cadastro_no_banco_a_visita_sai_com_autor_nulo(
     monkeypatch: pytest.MonkeyPatch, visitas: list[dict[str, Any]]
 ) -> None:

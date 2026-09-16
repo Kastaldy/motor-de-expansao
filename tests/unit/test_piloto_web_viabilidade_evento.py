@@ -122,6 +122,28 @@ def test_o_calculo_nao_cai_quando_o_banco_cai(
     assert [r for r in caplog.records if r.name == "piloto.d17"], "a falha passou em silencio"
 
 
+def test_deploy_sem_banco_loga_DEBUG_e_nao_ERRO(
+    monkeypatch: pytest.MonkeyPatch,
+    analises: list[dict[str, Any]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A tela mais quente das quatro: sem este ramo, um deploy sem banco escrevia um traceback
+    a cada CALCULO de viabilidade. O teste acima cobre o banco que CAIU, que continua ERRO."""
+    from motor_expansao.db import BancoNaoConfigurado
+
+    def _sem_banco(**_kw: Any) -> None:
+        raise BancoNaoConfigurado("sem MOTOR_DATABASE_URL")
+
+    monkeypatch.setattr(db_eventos, "registrar_viabilidade", _sem_banco)
+    with caplog.at_level(logging.DEBUG, logger="piloto.d17"):
+        saida = pilot_app.viabilidade(pilot_app.ViabilidadeIn(**_CENARIO), remote_user="ana")
+
+    assert saida == {"ok": True}
+    nossos = [r for r in caplog.records if r.name == "piloto.d17"]
+    assert [r for r in nossos if r.levelno == logging.DEBUG], "a ausencia passou em silencio"
+    assert not [r for r in nossos if r.levelno >= logging.ERROR], "ruido de ERRO sem incidente"
+
+
 def test_sem_cadastro_no_banco_a_analise_sai_com_autor_nulo(
     monkeypatch: pytest.MonkeyPatch, analises: list[dict[str, Any]]
 ) -> None:
