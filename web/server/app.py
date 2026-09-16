@@ -9386,6 +9386,12 @@ class ComparacaoItemIn(BaseModel):
     porDimensao: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
 
 
+class ComparacaoCoordIn(BaseModel):
+    # Centro da area fotografada, impresso sob a foto para o operador VOLTAR a ela no mapa.
+    lat: float = Field(allow_inf_nan=False)
+    lng: float = Field(allow_inf_nan=False)
+
+
 class ComparacaoIn(BaseModel):
     """Corpo do deck de comparacao (pentest Onda B #10): fecha o type-confusion que
     virava 500 opaco (`{"itens": ["a"]}`) e poe teto em itens/imagens/porDimensao."""
@@ -9393,6 +9399,10 @@ class ComparacaoIn(BaseModel):
     model_config = ConfigDict(extra="allow")
     itens: list[ComparacaoItemIn] = Field(default_factory=list, max_length=_COMPARACAO_ITENS_MAX)
     imagens: list[str] = Field(default_factory=list, max_length=_COMPARACAO_ITENS_MAX)
+    # Na ORDEM DE COLAGEM, como `imagens`. Ausente = nenhuma linha "Centro:" (deck de pontos).
+    coordenadas: list[ComparacaoCoordIn | None] = Field(
+        default_factory=list, max_length=_COMPARACAO_ITENS_MAX
+    )
 
     @field_validator("imagens")
     @classmethod
