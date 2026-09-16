@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 from PIL import Image
 from pydantic import ValidationError
-from pypdf import PdfReader
 
 from motor_expansao.dashboard.relatorio_comparacao import gerar_pdf_comparacao
 
@@ -47,12 +46,16 @@ _JATAI = {"lat": -17.8812345, "lng": -51.7145678}
 
 
 def _texto_dos_mapas(dados: dict) -> str:
-    pdf = gerar_pdf_comparacao(dados, mapas=[_png(), _png()])
-    for pagina in PdfReader(io.BytesIO(pdf)).pages:
-        texto = pagina.extract_text()
-        if "disputa o aluno" in texto:
-            return texto
-    raise AssertionError("slide de mapas ausente")
+    """Texto cru do slide de mapas em diante (molde de `test_pdf_base._texto_cru_do_pdf`).
+
+    Funciona porque o `UltraPDF` desliga a compressao. Os nomes das areas tambem saem nos
+    slides ANTERIORES, entao o recorte comeca no titulo do slide de mapas e termina no
+    rodape dele — as asercoes de ordem ficam dentro da pagina certa.
+    """
+    cru = bytes(gerar_pdf_comparacao(dados, mapas=[_png(), _png()])).decode("latin-1")
+    inicio = cru.index("disputa o aluno")
+    fim = cru.index("Imagens capturadas", inicio)
+    return cru[inicio:fim]
 
 
 def test_coordenada_sai_sob_a_foto_da_area_certa() -> None:
