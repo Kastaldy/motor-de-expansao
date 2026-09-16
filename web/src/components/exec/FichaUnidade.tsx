@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import { api, ApiError, baixar } from '../../lib/api'
+import { api, ApiError, baixar, EXPORTS_REDE_ATIVOS, MOTIVO_EXPORTS_DESLIGADOS } from '../../lib/api'
 import {
   METRICAS_EM_PONTOS,
   formatarMetrica,
@@ -9,16 +9,18 @@ import {
   rotuloVsMedia,
 } from '../../lib/exec'
 import { brl, num, pct, pctVar } from '../../lib/format'
-import type { RedeFicha } from '../../lib/types'
+import type { Tema } from '../../lib/tema'
+import type { RedeFicha, RedeUnidadeInteligencia } from '../../lib/types'
 import { Aviso, BarraMeta, Botao, Delta, Glass, Semaforo, Spinner } from '../primitives'
 import {
   BannerRecomendacao,
   BarrasPeriodo,
-  ComparativoCoorte,
   FunilComercial,
   LinhaPeriodo,
   Rosca,
 } from './ExecCharts'
+import FichaInteligencia from './FichaInteligencia'
+import FichaMapa from './FichaMapa'
 
 /* ---------------------------------------------------------------------------
    Nível 2 — a ficha da unidade.
@@ -61,35 +63,15 @@ const METRICAS_A_VALIDAR: { chave: string; rotulo: string }[] = [
   { chave: 'treino_ativo', rotulo: 'Treino ativo' },
 ]
 
-/** Rótulos do comparativo de coorte.
- *
- *  Onde MENOS é melhor, a direção vai escrita: "Churn — percentil 92" lê como elogio e é
- *  o oposto (92% dos pares têm churn menor). Inverter o percentil em silêncio seria pior
- *  que não mostrá-lo. */
-const ROTULOS_COORTE_GRAFICO: Record<string, string> = {
-  faturamento: 'Faturamento',
-  receita_por_recorrente: 'Receita por recorrente',
-  ativos: 'Alunos ativos',
-  churn_pct: 'Churn (menor é melhor)',
-  conversao_pct: 'Conversão',
-  nps: 'NPS',
-}
-const FORMATO_COORTE: Record<string, 'brl' | 'int' | 'pct' | 'nota'> = {
-  faturamento: 'brl',
-  receita_por_recorrente: 'brl',
-  ativos: 'int',
-  churn_pct: 'pct',
-  conversao_pct: 'pct',
-  nps: 'nota',
-}
-
 export interface FichaUnidadeProps {
   unidadeId: string
   mes: string
   onVoltar: () => void
+  /** Tema da aba: o mapa da ficha precisa dele para trocar de basemap junto com a tela. */
+  tema: Tema
 }
 
-export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeProps) {
+export default function FichaUnidade({ unidadeId, mes, onVoltar, tema }: FichaUnidadeProps) {
   const [ficha, setFicha] = useState<RedeFicha | null>(null)
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState<string | null>(null)
@@ -98,6 +80,23 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
   // ficha inteira da tela — inclusive o que a pessoa já tinha digitado no formulário de
   // atribuição.
   const [erroPdf, setErroPdf] = useState<string | null>(null)
+  // Território, retenção, rampa e o mapa vêm de UMA busca, separada da ficha: a ficha abre
+  // sem esperar, e o mapa e os blocos de território não pedem o mesmo payload duas vezes.
+  const [inteligencia, setInteligencia] = useState<RedeUnidadeInteligencia | null>(null)
+  const [erroInteligencia, setErroInteligencia] = useState<string | null>(null)
+
+  useEffect(() => {
+    let vivo = true
+    setInteligencia(null)
+    setErroInteligencia(null)
+    api
+      .redeUnidadeInteligencia(unidadeId, mes)
+      .then((d) => vivo && setInteligencia(d))
+      .catch((e: ApiError) => vivo && setErroInteligencia(e.message))
+    return () => {
+      vivo = false
+    }
+  }, [unidadeId, mes])
 
   useEffect(() => {
     let vivo = true
@@ -173,7 +172,12 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
-          <Botao variante="ghost" onClick={baixarPdf} disabled={baixando}>
+          <Botao
+            variante="ghost"
+            onClick={baixarPdf}
+            disabled={!EXPORTS_REDE_ATIVOS || baixando}
+            title={EXPORTS_REDE_ATIVOS ? undefined : MOTIVO_EXPORTS_DESLIGADOS}
+          >
             {baixando ? <Spinner /> : '↓'} Ficha em PDF
           </Botao>
           {erroPdf && (
@@ -192,7 +196,121 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
         competencia={d.competencia}
       />
 
-      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+
+      {/* Gráficos principais em DUAS colunas iguais. Com três por linha e 13 meses no eixo,
+          cada barra e cada ponto ficavam estreitos demais (pedido do Felipe, 15/09). Funil e
+          composição ficam no meio, entre as séries de faturamento/base e as de NPS/novos alunos; as colunas continuam alinhadas
+          entre as linhas e com o quarteto + mapa logo abaixo. */}
+      <div style={GRADE_GRAFICOS}>
+        <Glass style={CARD_GRAFICO}>
+          <Titulo>Faturamento nos 13 meses fechados</Titulo>
+          <BarrasPeriodo meses={ficha.serie.meses} valores={ficha.serie.faturamento} formato="brl" altura={250} />
+        </Glass>
+        <Glass style={CARD_GRAFICO}>
+          <Titulo>Base de alunos</Titulo>
+          <LinhaPeriodo
+            meses={ficha.serie.meses}
+            valores={ficha.serie.ativos}
+            titulo="Alunos ativos"
+            formato="int"
+          />
+          <div style={{ marginTop: 12 }}>
+            <LinhaPeriodo
+              meses={ficha.serie.meses}
+              valores={ficha.serie.churn_pct}
+              titulo="Churn (%)"
+              cor="var(--gr-coral)"
+              formato="pct"
+            />
+          </div>
+        </Glass>
+        <Glass style={CARD_GRAFICO}>
+          <Titulo>Funil comercial do período</Titulo>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <FunilComercial
+            visitas={ficha.funil.visitas}
+            convertidos={ficha.funil.convertidos}
+            vendas={ficha.funil.vendas}
+            novosAlunos={ficha.funil.novos_alunos}
+            conversao={ficha.funil.conversao_pct}
+            aviso={ficha.funil.aviso}
+          />
+          </div>
+        </Glass>
+        <Glass style={CARD_GRAFICO}>
+          <Titulo>Composição da base</Titulo>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Rosca
+            tamanho={176}
+            espessura={24}
+            partes={[
+              {
+                rotulo: 'Recorrentes',
+                valor: ficha.metricas.pagantes?.atual ?? 0,
+                cor: 'var(--ac)',
+              },
+              {
+                rotulo: 'Agregadores',
+                valor: ficha.metricas.agregadores?.atual ?? 0,
+                cor: 'var(--gr-rosa)',
+              },
+            ]}
+            centroValor={pct(ficha.metricas.pct_agregador_alunos?.atual ?? null, 0)}
+            centroRotulo="agregadores"
+          />
+          </div>
+          <div style={{ marginTop: 'auto', paddingTop: 12, font: '400 10.5px/1.55 var(--f-ui)', color: 'var(--tx-muted)' }}>
+            Aluno de agregador paga menos e pode sair em bloco por decisão do parceiro. A
+            régua de alerta está em {ficha.reguas.agregador?.limiar ?? 70}% da base.
+          </div>
+        </Glass>
+        <Glass style={CARD_GRAFICO}>
+          <Titulo>NPS e a meta da rede</Titulo>
+          <div className="num" style={{ font: '700 30px/1 var(--f-num)', color: 'var(--tx-max)' }}>
+            {num(ficha.metricas.nps?.atual, 1)}
+          </div>
+          <div style={{ margin: '12px 0 6px' }}>
+            {/* Régua ABSOLUTA de 0 a 100: com mínimo em -100 a escala comprimia tudo — NPS -21
+                preenchia 40% e NPS 40 preenchia 70%, lado a lado. Agora 40 preenche 40% e a
+                meta (60) fica em 60%; NPS negativo não preenche e ganha o marcador vermelho. */}
+            {/* Semáforo (pedido do Felipe, 15/09): vermelho com NPS 40 ou abaixo, amarelo até 59,
+                verde a partir da meta (60). O 40 é a régua de alerta do diagnóstico, lida do servidor. */}
+            <BarraMeta
+              valor={ficha.metricas.nps?.atual ?? null}
+              meta={ficha.meta_nps}
+              minimo={0}
+              maximo={100}
+              limiarAlerta={ficha.reguas.nps?.limiar ?? 40}
+            />
+          </div>
+          <div style={{ font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-sub)' }}>
+            Meta oficial da rede: {ficha.meta_nps}. O alerta só dispara em{' '}
+            {ficha.reguas.nps?.limiar ?? 40} — meta não é alerta.
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <LinhaPeriodo meses={ficha.serie.meses} valores={ficha.serie.nps} titulo="NPS por mês" cor="var(--gr-azul)" />
+          </div>
+        </Glass>
+        <Glass style={CARD_GRAFICO}>
+          <Titulo>Novos alunos, dia a dia</Titulo>
+          <BarrasPeriodo
+            meses={ficha.serie_diaria.datas}
+            valores={ficha.serie_diaria.novos_alunos}
+            altura={170}
+            formato="int"
+            cor="var(--gr-verde)"
+          />
+          <div style={{ marginTop: 'auto', paddingTop: 8, font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
+            Derivado da série cumulativa da API — é o bloco que hoje é colado à mão na planilha.
+          </div>
+        </Glass>
+      </div>
+
+      {/* Quarteto e mapa DEPOIS dos graficos: o dash e' a leitura principal da ficha,
+          a tabela e' a consulta (pedido do Felipe, 14/09). */}
+      {/* Mesma grade de duas colunas dos gráficos acima: a borda entre o quarteto e o mapa
+          corre na mesma linha vertical que a dos gráficos. */}
+      <div style={GRADE_GRAFICOS}>
         <Glass style={{ flex: '1 1 520px', padding: '16px 18px', minWidth: 0 }}>
           <Titulo>O quarteto de contexto</Titulo>
           <table style={{ width: '100%', borderCollapse: 'collapse', font: '400 12px/1.2 var(--f-ui)' }}>
@@ -274,108 +392,29 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
           </div>
         </Glass>
 
-        <Glass style={{ flex: '1 1 330px', padding: '16px 18px', minWidth: 0 }}>
-          <Titulo>Contra os pares de mesma maturidade</Titulo>
-          <ComparativoCoorte
-            comparacao={ficha.coorte}
-            metricas={Object.keys(ROTULOS_COORTE_GRAFICO)}
-            rotulos={ROTULOS_COORTE_GRAFICO}
-            formato={FORMATO_COORTE}
-          />
-        </Glass>
-      </div>
-
-      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-        <Glass style={{ flex: '1 1 420px', padding: '16px 18px', minWidth: 0 }}>
-          <Titulo>Faturamento nos 12 meses fechados</Titulo>
-          <BarrasPeriodo meses={ficha.serie.meses} valores={ficha.serie.faturamento} formato="brl" />
-        </Glass>
-        <Glass style={{ flex: '1 1 300px', padding: '16px 18px', minWidth: 0 }}>
-          <Titulo>Base de alunos</Titulo>
-          <LinhaPeriodo
-            meses={ficha.serie.meses}
-            valores={ficha.serie.ativos}
-            titulo="Alunos ativos"
-            formato="int"
-          />
-          <div style={{ marginTop: 12 }}>
-            <LinhaPeriodo
-              meses={ficha.serie.meses}
-              valores={ficha.serie.churn_pct}
-              titulo="Churn (%)"
-              cor="var(--gr-coral)"
-              formato="pct"
-            />
-          </div>
-        </Glass>
-
-        <Glass style={{ flex: '1 1 300px', padding: '16px 18px', minWidth: 0 }}>
-          <Titulo>Composição da base</Titulo>
-          <Rosca
-            partes={[
-              {
-                rotulo: 'Recorrentes',
-                valor: ficha.metricas.pagantes?.atual ?? 0,
-                cor: 'var(--ac)',
-              },
-              {
-                rotulo: 'Agregadores',
-                valor: ficha.metricas.agregadores?.atual ?? 0,
-                cor: 'var(--gr-rosa)',
-              },
-            ]}
-            centroValor={pct(ficha.metricas.pct_agregador_alunos?.atual ?? null, 0)}
-            centroRotulo="agregadores"
-          />
-          <div style={{ marginTop: 12, font: '400 10.5px/1.55 var(--f-ui)', color: 'var(--tx-muted)' }}>
-            Aluno de agregador paga menos e pode sair em bloco por decisão do parceiro. A
-            régua de alerta está em {ficha.reguas.agregador?.limiar ?? 70}% da base.
+        <Glass style={{ flex: '1 1 440px', padding: '16px 18px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          <Titulo>Concorrência no mapa</Titulo>
+          <div style={{ position: 'relative', flex: 1, minHeight: 480, borderRadius: 'var(--r-sm)', overflow: 'hidden' }}>
+            {inteligencia?.mapa ? (
+              <FichaMapa mapa={inteligencia.mapa} nome={u.nome} unidadeId={unidadeId} tema={tema} />
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 16, font: '400 12px/1.5 var(--f-ui)', color: 'var(--tx-sub)' }}>
+                {erroInteligencia ? (
+                  erroInteligencia
+                ) : inteligencia ? (
+                  'Unidade sem coordenada no cadastro: não há como desenhar o entorno.'
+                ) : (
+                  <>
+                    <Spinner /> Lendo as academias do entorno…
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </Glass>
       </div>
 
-      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-        <Glass style={{ flex: '1 1 360px', padding: '16px 18px', minWidth: 0 }}>
-          <Titulo>Funil comercial do período</Titulo>
-          <FunilComercial
-            visitas={ficha.funil.visitas}
-            convertidos={ficha.funil.convertidos}
-            vendas={ficha.funil.vendas}
-            novosAlunos={ficha.funil.novos_alunos}
-            conversao={ficha.funil.conversao_pct}
-            aviso={ficha.funil.aviso}
-          />
-        </Glass>
-        <Glass style={{ flex: '1 1 300px', padding: '16px 18px', minWidth: 0 }}>
-          <Titulo>NPS e a meta da rede</Titulo>
-          <div className="num" style={{ font: '700 30px/1 var(--f-num)', color: 'var(--tx-max)' }}>
-            {num(ficha.metricas.nps?.atual, 1)}
-          </div>
-          <div style={{ margin: '12px 0 6px' }}>
-            <BarraMeta valor={ficha.metricas.nps?.atual ?? null} meta={ficha.meta_nps} minimo={-100} />
-          </div>
-          <div style={{ font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-sub)' }}>
-            Meta oficial da rede: {ficha.meta_nps}. O alerta só dispara em{' '}
-            {ficha.reguas.nps?.limiar ?? 40} — meta não é alerta.
-          </div>
-          <div style={{ marginTop: 12 }}>
-            <LinhaPeriodo meses={ficha.serie.meses} valores={ficha.serie.nps} titulo="NPS por mês" cor="var(--gr-azul)" />
-          </div>
-        </Glass>
-        <Glass style={{ flex: '1 1 280px', padding: '16px 18px', minWidth: 0 }}>
-          <Titulo>Novos alunos, dia a dia</Titulo>
-          <BarrasPeriodo
-            meses={ficha.serie_diaria.datas}
-            valores={ficha.serie_diaria.novos_alunos}
-            altura={104}
-            formato="int"
-            cor="var(--gr-verde)"
-          />
-          <div style={{ marginTop: 8, font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
-            Derivado da série cumulativa da API — é o bloco que hoje é colado à mão na planilha.
-          </div>
-        </Glass>
-      </div>
+      <FichaInteligencia dados={inteligencia} erro={erroInteligencia} />
 
       <CadastroDaUnidade ficha={ficha} onAtualizar={setFicha} />
 
@@ -498,6 +537,22 @@ function corDoDesvio(desvio: number | null, bomSubindo: boolean): string {
   if (desvio === null || Math.abs(desvio) < 0.05) return 'var(--tx-muted)'
   return desvio > 0 === bomSubindo ? 'var(--pos, #37b26b)' : 'var(--neg, #ff5a6e)'
 }
+
+/** Duas colunas IGUAIS em todas as linhas de gráficos: é o que alinha as bordas entre elas. */
+const GRADE_GRAFICOS = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+  gap: 14,
+  alignItems: 'stretch',
+} as const
+
+/** O card vira coluna flexível: o gráfico ocupa a altura, a nota de rodapé desce para o pé. */
+const CARD_GRAFICO = {
+  padding: '16px 18px',
+  minWidth: 0,
+  display: 'flex',
+  flexDirection: 'column',
+} as const
 
 const celulaNum = {
   padding: '0 6px',

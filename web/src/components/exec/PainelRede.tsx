@@ -10,7 +10,8 @@ import type {
   RedeSss,
   RedeUnidade,
 } from '../../lib/types'
-import { BarraSegmentada, Glass, Semaforo } from '../primitives'
+import { fatiasDeRosca, percentualDaFatia } from '../../lib/sparkline'
+import { Glass, Semaforo } from '../primitives'
 import { BarrasPeriodo, LinhaPeriodo } from './ExecCharts'
 
 /* ---------------------------------------------------------------------------
@@ -336,12 +337,63 @@ const COR_FAIXA: Record<string, string> = {
   sem_dado: 'var(--tx-off)',
 }
 
+/* Os tokens da escala são tons claros, feitos para barra fina e texto; em área cheia
+   de pizza eles ficam pastel. O filtro realça saturação e contraste SÓ aqui, sem mudar
+   a paleta nem os tokens (que servem o resto do produto). Legenda leva o mesmo filtro,
+   senão o quadradinho não bateria com a fatia. */
+const FILTRO_FAIXA = 'saturate(1.7) contrast(1.2)'
+
+/**
+ * Pizza das faixas: a mesma conta de fatias da `Rosca` (`fatiasDeRosca`), com o traço
+ * da largura do raio inteiro — o anel fecha no centro e vira pizza. Pedido do Felipe
+ * (15/09) no lugar da barra segmentada; a legenda com contagem, % e faturamento fica ao lado.
+ */
+function PizzaFaixas({ partes, tamanho = 150 }: { partes: { rotulo: string; valor: number; cor: string }[]; tamanho?: number }) {
+  const centro = tamanho / 2
+  const raio = tamanho / 4
+  const { fatias, total } = fatiasDeRosca(partes, raio)
+  return (
+    <svg width={tamanho} height={tamanho} role="img" aria-label="Unidades por faixa de faturamento" style={{ flexShrink: 0 }}>
+      <circle cx={centro} cy={centro} r={raio} fill="none" stroke="var(--surf-raised)" strokeWidth={tamanho / 2} />
+      <g style={{ filter: FILTRO_FAIXA }}>
+      {total > 0 &&
+        fatias
+          .filter((f) => f.fracao > 0)
+          .map((f) => (
+            <circle
+              key={f.rotulo}
+              cx={centro}
+              cy={centro}
+              r={raio}
+              fill="none"
+              stroke={f.cor}
+              strokeWidth={tamanho / 2}
+              strokeDasharray={f.traco}
+              strokeDashoffset={f.deslocamento}
+              transform={`rotate(-90 ${centro} ${centro})`}
+            >
+              <title>{`${f.rotulo}: ${num(f.valor)} (${pct(percentualDaFatia(f.valor, total) ?? 0, 0)})`}</title>
+            </circle>
+          ))}
+      </g>
+    </svg>
+  )
+}
+
+/** "até 150k" / "acima de 400k"; faixa sem limite nenhum (sem dado) não leva rótulo. */
+function limiteDaFaixa(de: number | null | undefined, ate: number | null | undefined): string | null {
+  // Sem o "R$": a legenda inteira já é de faturamento, e o prefixo era o que empurrava a linha.
+  if (ate != null) return `até ${brlCurto(ate).replace(/^\S+\s/, '')}`
+  if (de != null) return `acima de ${brlCurto(de).replace(/^\S+\s/, '')}`
+  return null
+}
+
 export function DistribuicaoFaixas({ faixas }: { faixas: RedeFaixas }) {
   const linhas = faixas.faixas.filter((f) => f.n > 0)
   const total = linhas.reduce((s, f) => s + f.n, 0)
 
   return (
-    <Glass style={{ padding: '15px 17px', minWidth: 0 }}>
+    <Glass style={{ padding: '20px 17px', minWidth: 0 }}>
       <Rotulo>Onde a massa do recorte está</Rotulo>
       {linhas.length === 0 ? (
         <div style={{ font: '400 11.5px/1.65 var(--f-ui)', color: 'var(--tx-narrative)' }}>
@@ -349,18 +401,14 @@ export function DistribuicaoFaixas({ faixas }: { faixas: RedeFaixas }) {
           INTEIRO: aplicá-las a uma competência em curso jogaria a rede toda em "Crítico".
         </div>
       ) : (
-        <>
-          <BarraSegmentada
-            partes={linhas.map((f) => ({
-              chave: f.chave,
-              valor: f.n,
-              cor: COR_FAIXA[f.chave] ?? 'var(--tx-off)',
-              rotulo: f.rotulo,
-            }))}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, flexWrap: 'wrap' }}>
+          <PizzaFaixas
+            partes={linhas.map((f) => ({ rotulo: f.rotulo, valor: f.n, cor: COR_FAIXA[f.chave] ?? 'var(--tx-off)' }))}
           />
-          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 7 }}>
+          {/* Base de 270 px: abaixo disso a legenda desce para baixo da pizza em vez de quebrar o rótulo. */}
+          <div style={{ flex: '1 1 270px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 7 }}>
             {linhas.map((f) => (
-              <div key={f.chave} style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <div key={f.chave} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                 <span
                   aria-hidden
                   style={{
@@ -368,31 +416,46 @@ export function DistribuicaoFaixas({ faixas }: { faixas: RedeFaixas }) {
                     height: 9,
                     borderRadius: 2,
                     background: COR_FAIXA[f.chave] ?? 'var(--tx-off)',
+                    filter: FILTRO_FAIXA,
                     flexShrink: 0,
                   }}
                 />
-                <span style={{ flex: 1, minWidth: 0, font: '400 11.5px/1.3 var(--f-ui)', color: 'var(--tx-label)' }}>
+                <span
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    font: '400 11.5px/1.3 var(--f-ui)',
+                    color: 'var(--tx-label)',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                  title={limiteDaFaixa(f.de, f.ate) ? `${f.rotulo} (${limiteDaFaixa(f.de, f.ate)})` : f.rotulo}
+                >
                   {f.rotulo}
+                  {limiteDaFaixa(f.de, f.ate) && (
+                    <span style={{ color: 'var(--tx-muted)', fontSize: 10.5 }}> ({limiteDaFaixa(f.de, f.ate)})</span>
+                  )}
                 </span>
                 <span className="num" style={{ font: '600 12px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
                   {num(f.n)}
                 </span>
                 <span
                   className="num"
-                  style={{ font: '500 10px/1 var(--f-num)', color: 'var(--tx-muted)', width: 40, textAlign: 'right' }}
+                  style={{ font: '500 10px/1 var(--f-num)', color: 'var(--tx-muted)', width: 32, textAlign: 'right' }}
                 >
                   {pct(total > 0 ? (100 * f.n) / total : null, 0)}
                 </span>
                 <span
                   className="num"
-                  style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-sub)', width: 64, textAlign: 'right' }}
+                  style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-sub)', width: 56, textAlign: 'right' }}
                 >
                   {brlCurto(f.faturamento)}
                 </span>
               </div>
             ))}
           </div>
-        </>
+        </div>
       )}
       <div style={{ marginTop: 11, font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
         {faixas.competencia

@@ -20,7 +20,10 @@ import type {
   RedeCarteira,
   RedeFicha,
   RedeFiltros,
+  RedeInteligencia,
   RedeQuery,
+  RedeSetoresEntorno,
+  RedeUnidadeInteligencia,
   SetoresHeatmapPayload,
   ViabilidadeIn,
   ViabilidadeOut,
@@ -187,6 +190,14 @@ export const VIDA_DA_BLOB_URL_MS = 60_000
  * do browser por um minuto; o benefício é o download funcionar em celular, que é onde
  * o time de campo abre isto.
  */
+/**
+ * Exports da Visão Executiva (CSV/XLSX/PDF da carteira e PDF da ficha) DESLIGADOS
+ * temporariamente a pedido do Felipe (15/09). Os botões seguem visíveis e desabilitados;
+ * religar é trocar para `true`. As rotas do backend continuam de pé.
+ */
+export const EXPORTS_REDE_ATIVOS = false
+export const MOTIVO_EXPORTS_DESLIGADOS = 'Exportação temporariamente desativada'
+
 export function baixar(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -405,6 +416,21 @@ export const api = {
         rede: 'Não foi possível gerar a ficha em PDF.',
       },
     ),
+
+  /** Inteligência do RECORTE: praça × execução, rampa, sinais, retenção e o que mudou.
+   *  Mesmos filtros e mesmo período da carteira. */
+  redeInteligencia: (q: RedeQuery = {}) =>
+    pedir<RedeInteligencia>(`/api/rede/inteligencia${queryRede(q)}`),
+
+  /** Território, retenção, rampa e sinais de UMA unidade. */
+  redeUnidadeInteligencia: (id: string, mes?: string) =>
+    pedir<RedeUnidadeInteligencia>(
+      `/api/rede/unidade/${encodeURIComponent(id)}/inteligencia${mes ? `?mes=${encodeURIComponent(mes)}` : ''}`,
+    ),
+
+  /** Setores a ~2 km da unidade com renda domiciliar e densidade (camadas do mapa da ficha). */
+  redeUnidadeSetores: (id: string) =>
+    pedir<RedeSetoresEntorno>(`/api/rede/unidade/${encodeURIComponent(id)}/setores`),
 
   /** Geocoding de endereço livre -> lat/lng (Nominatim, DEC-010). */
   geocode: (q: string) =>
