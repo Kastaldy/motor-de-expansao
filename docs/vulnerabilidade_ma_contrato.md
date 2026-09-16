@@ -137,7 +137,7 @@ tem demanda e interesse de presença). É um funil comercial, não uma decisão 
   `sumiu_recente` no mesmo dia, e o composto leria um evento de negociação como 440 alvos. Molde do
   G-D2 e da DEC-026: o fato entra antes do peso.
 
-  Artefato próprio, **`redes_ma_nomeadas_v2`** (20 colunas, gitignored, opt-in por `--saida-redes`),
+  Artefato próprio, **`redes_ma_nomeadas_v3`** (20 colunas, gitignored, opt-in por `--saida-redes`),
   com guard que levanta se qualquer coluna `score_*`/`v6` aparecer nele. **A pressão dessas unidades
   já era calculada e descartada** — o cálculo roda sobre o feed inteiro (22.173 linhas) e é o join do
   score que as filtra —, então esta metade não recalcula nada: materializa o que era jogado fora.
@@ -152,6 +152,10 @@ tem demanda e interesse de presença). É um funil comercial, não uma decisão 
   > (`redes_ma_nomeadas_v2`) o split é **851 com pin próprio / 1.993 já cobertas** — conferível em
   > `tem_pin_proprio`, das 2.844 linhas. É esse `851` que o backend desenha (`carregar_redes` filtra
   > por `tem_pin_proprio`), e é ele que a auditoria do pin tem de usar como expectativa.
+  >
+  > **[DEC-062, 2026-09-15] O split muda de novo.** Com a trava de município e o raio ampliado
+  > ligados no entregável, ele passa a **714 com pin próprio / 2.130 já cobertas**
+  > (`redes_ma_nomeadas_v3`). A expectativa da auditoria do pin acompanha o artefato regenerado.
 
 ---
 
@@ -597,6 +601,20 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 > mudam de valor, delta máximo `-20,82`; `Spearman = 0,9980718`. **Cinco bumps de série.** Resíduo
 > declarado: ~87 duplicatas que o nome não casa, quase todas porque o insumo mapeado tem nome não
 > informativo (ex.: `'2939'`) — é qualidade de coletor, não de algoritmo.
+>
+> **[DEC-062, 2026-09-15] Duas portas novas no mesmo critério, ligadas no entregável.** Das 851
+> sobreviventes, **137 são a mesma academia** que o cadastro já tem, e escapavam por portas
+> disjuntas: **83** do MESMO município, todas acima do teto de 1.200 m (máx. 21.151,5 m), e **53**
+> entre 150,7 e 298,8 m cujos nomes o `mesma_unidade` não concilia (`CT Greenlife` × `CT-GREENLIFE`;
+> `Evoque Academia Campo Grande` × `2939`); 1 par nas duas. Duas passagens, depois das de hoje:
+> **trava de município** (mesma rede + `mesma_unidade` + mesmo `cod_municipio`, sem teto) e **raio
+> ampliado** (`DEDUP_CADEIA_FEED_RAIO_AMPLIADO_M = 300`, com o ordinal como VETO e a similaridade de
+> nome como DESEMPATE). Efeito: sobreviventes `851 -> 714` e pins `-137`; pela união da DEC-048,
+> oferta de mercado `-135` unidades (2 são `my_box`, já fora pela DEC-056). O mapa usa o **código**
+> do município e não o nome, porque 232 nomes existem em mais de uma UF. Reversão sem código:
+> `--dedup-cadeias-legado`. Custo declarado: pelo menos 4 prováveis falsos positivos em 137, e o veto
+> de ordinal segue errando o topônimo `Guará II` (causa (c) do BLK-MA-17-FU5). **Cinco bumps de
+> série.** Medição completa em `docs/decisions/DEC-062.md`.
 >
 > **QUEBRA DE COMPARABILIDADE COM A SÉRIE `v5`, anunciada.** Diferente da emenda anterior — onde
 > `Spearman(pressão, oferta) = 1,000000` permitiu dizer "não embaralha o ranking" —, **aqui a ordem
@@ -1063,11 +1081,11 @@ Estado em **2026-08-25**:
 | `VERSAO_CONTRATO_SNAPSHOT` | `snapshots_concorrentes_v4` |
 | `VERSAO_CONTRATO_CHURN` | `churn_staleness_v2` |
 | `VERSAO_CONTRATO_PRESENCA_AGREGADOR` | `presenca_agregador_v1` |
-| `VERSAO_CONTRATO_SCORE` | `score_vulnerabilidade_v7` |
-| `VERSAO_CONTRATO_PRESSAO` | `pressao_competitiva_v4` |
-| `VERSAO_CONTRATO_ALVOS_MA` | `alvos_ma_v4` |
-| `VERSAO_CONTRATO_ALVOS_NOMEADOS` | `alvos_ma_nomeados_v5` |
-| `VERSAO_CONTRATO_REDES_NOMEADAS` | `redes_ma_nomeadas_v2` |
+| `VERSAO_CONTRATO_SCORE` | `score_vulnerabilidade_v8` |
+| `VERSAO_CONTRATO_PRESSAO` | `pressao_competitiva_v5` |
+| `VERSAO_CONTRATO_ALVOS_MA` | `alvos_ma_v5` |
+| `VERSAO_CONTRATO_ALVOS_NOMEADOS` | `alvos_ma_nomeados_v6` |
+| `VERSAO_CONTRATO_REDES_NOMEADAS` | `redes_ma_nomeadas_v3` |
 
 Cada artefato carrega a sua na coluna `versao_contrato` — é assim que se descobre, sem adivinhação,
 se um parquet em produção é da safra corrente.

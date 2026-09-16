@@ -31,6 +31,7 @@ READ-ONLY sobre o M1.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 
 import pandas as pd
@@ -85,7 +86,11 @@ def filtrar_universo_exibicao_redes(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def chaves_com_pin_proprio(
-    cadeias_do_feed: pd.DataFrame, pontos_mapeados: pd.DataFrame
+    cadeias_do_feed: pd.DataFrame,
+    pontos_mapeados: pd.DataFrame,
+    *,
+    municipio_por_hex: Mapping[str, str] | None = None,
+    raio_ampliado_m: float | None = None,
 ) -> set[tuple[str, str]]:
     """Chaves que devem ganhar pin PRÓPRIO — as sobreviventes da dedup da DEC-034.
 
@@ -93,12 +98,29 @@ def chaves_com_pin_proprio(
     as sobreviventes são, por construção, exatamente as unidades sem ponto equivalente em
     `concorrentes_mapeados`, logo as únicas sem pin já desenhado no funil. As colapsadas têm o pin
     do funil no mesmo endereço, e desenhar outro criaria dois pins no mesmo lugar.
+
+    `municipio_por_hex` repassa a TRAVA DE MUNICÍPIO à dedup (default `None` = desligada, o
+    comportamento de hoje). O parâmetro existe aqui porque a precedência de pin é a MESMA dedup:
+    ligar a trava só no cálculo de oferta e não aqui deixaria na tela justamente os pins em dobro
+    que ela colapsa — a duplicata visível e a oferta fantasma são o mesmo defeito, por duas portas.
+
+    `raio_ampliado_m` repassa a QUARTA passagem pela MESMA razão, e ela não é opcional aqui: a
+    regra de precedência é "sobrevivente = sem ponto equivalente no funil", então quem decide o pin
+    é, por construção, quem decide a oferta. Ligar o raio só num dos dois lados desenharia pin
+    próprio para as **54** unidades cuja oferta acabou de ser contada no pin do funil — e a
+    promessa auditada em 2026-08-17 ("o operador conta os pins e o número fecha") passaria a falhar
+    justamente nelas.
     """
     from .pressao_competitiva import dedup_cadeias_do_feed
 
     if cadeias_do_feed.empty:
         return set()
-    sobreviventes, _posicoes = dedup_cadeias_do_feed(cadeias_do_feed, pontos_mapeados)
+    sobreviventes, _posicoes = dedup_cadeias_do_feed(
+        cadeias_do_feed,
+        pontos_mapeados,
+        municipio_por_hex=municipio_por_hex,
+        raio_ampliado_m=raio_ampliado_m,
+    )
     if sobreviventes.empty:
         return set()
     return set(

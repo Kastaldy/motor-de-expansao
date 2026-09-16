@@ -447,10 +447,12 @@ def test_15_contratos_e_as_quatro_versoes_bumpadas() -> None:
     assert len(c.CONTRATO_COLUNAS_ALVOS_MA) == 18
     assert len(c.CONTRATO_COLUNAS_ACADEMIAS_MA) == 26
 
-    assert c.VERSAO_CONTRATO_PRESSAO == "pressao_competitiva_v4"
-    assert c.VERSAO_CONTRATO_SCORE == "score_vulnerabilidade_v7"
-    assert c.VERSAO_CONTRATO_ALVOS_MA == "alvos_ma_v4"
-    assert c.VERSAO_CONTRATO_ALVOS_NOMEADOS == "alvos_ma_nomeados_v5"
+    # `[DEC-062]` os quatro sobem de novo: ligar a trava de municipio e o raio ampliado muda a
+    # oferta do s6 (137 pontos a menos), e com ela os tres artefatos que carimbam valor.
+    assert c.VERSAO_CONTRATO_PRESSAO == "pressao_competitiva_v5"
+    assert c.VERSAO_CONTRATO_SCORE == "score_vulnerabilidade_v8"
+    assert c.VERSAO_CONTRATO_ALVOS_MA == "alvos_ma_v5"
+    assert c.VERSAO_CONTRATO_ALVOS_NOMEADOS == "alvos_ma_nomeados_v6"
 
     # Sem terceiro valor de enum: o rótulo classifica CATEGORIA, e a categoria não mudou.
     assert c.UNIVERSOS_OFERTA == (

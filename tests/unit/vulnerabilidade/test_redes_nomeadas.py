@@ -290,7 +290,8 @@ def test_o_contrato_tem_as_20_colunas_na_ordem() -> None:
     )
     assert list(out.columns) == list(c.CONTRATO_COLUNAS_REDES_NOMEADAS.keys())
     assert len(out.columns) == 20
-    assert c.VERSAO_CONTRATO_REDES_NOMEADAS == "redes_ma_nomeadas_v2"
+    # `v3` pela DEC-062: `tem_pin_proprio` muda em 137 linhas com a regua de dedup nova.
+    assert c.VERSAO_CONTRATO_REDES_NOMEADAS == "redes_ma_nomeadas_v3"
 
 
 def test_campo_de_PESSOA_derruba_o_guard() -> None:
