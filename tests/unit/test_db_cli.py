@@ -290,3 +290,271 @@ def test_falha_de_conexao_no_privilegios_vira_mensagem(monkeypatch: pytest.Monke
     texto = str(caiu.value)
     assert "nao consegui conectar" in texto
     assert "PGPASSWORD" in texto, "a dica do caractere especial na URL precisa aparecer"
+
+
+# --------------------------------------------------------------------------------------
+# `estado`, `aplicar`, `registrar` e `conferir` — a ORQUESTRACAO (16/09)
+#
+# Ate' aqui o arquivo provava a DECISAO (de onde vem a credencial, o que conta como
+# pendente, como a alteracao e' denunciada) e exercitava um unico comando, o `privilegios`.
+# O que faltava era o corpo dos outros quatro -- e entre eles esta' o `aplicar`, que executa
+# DDL. Era o comando mais perigoso do conjunto e o menos coberto.
+#
+# Continua sem banco: o duble responde por IGUALDADE com as constantes de SQL do modulo, e
+# o que se afirma e' o par (o que foi executado, o que foi commitado).
+# --------------------------------------------------------------------------------------
+
+
+class _ConMigracoes:
+    """Duble da conexao de DDL: responde as consultas de controle e REGISTRA o que rodou.
+
+    O `_ConPrivilegios` acima nao serve: ele devolve um escalar por consulta e nao tem
+    `fetchall` nem `commit` -- e e' justamente o par (executou, commitou) que decide se o
+    `aplicar` respeita uma transacao POR MIGRATION.
+    """
+
+    def __init__(self, registradas: dict[str, str] | None = None, tem_tabela: bool = True) -> None:
+        self.registradas = dict(registradas or {})
+        self.tem_tabela = tem_tabela
+        self.respostas: dict[str, list[tuple[Any, ...]]] = {}
+        self.executados: list[tuple[str, Any]] = []
+        self.commits = 0
+        self._valor: list[tuple[Any, ...]] = []
+
+    def execute(self, sql: str, params: Any = None) -> _ConMigracoes:
+        self.executados.append((sql, params))
+        if sql == cli.SQL_TEM_TABELA_DE_CONTROLE:
+            self._valor = [(self.tem_tabela,)]
+        elif sql == cli.SQL_JA_APLICADAS:
+            self._valor = [(v, h) for v, h in self.registradas.items()]
+        else:
+            self._valor = self.respostas.get(sql, [])
+        return self
+
+    def fetchone(self) -> tuple[Any, ...] | None:
+        return self._valor[0] if self._valor else None
+
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        return list(self._valor)
+
+    def commit(self) -> None:
+        self.commits += 1
+
+    def __enter__(self) -> _ConMigracoes:
+        return self
+
+    def __exit__(self, *_a: Any) -> None:
+        return None
+
+    # -- leitura para os testes ---------------------------------------------
+    @property
+    def corpos_de_migration(self) -> list[str]:
+        """O SQL que NAO e' consulta de controle: o conteudo dos arquivos `.sql`."""
+        conhecidos = {
+            cli.SQL_JA_APLICADAS,
+            cli.SQL_TEM_TABELA_DE_CONTROLE,
+            cli.SQL_REGISTRAR,
+            cli.SQL_EXTENSOES,
+            cli.SQL_CONTAGENS,
+            cli.SQL_FUNCOES,
+        }
+        return [sql for sql, _p in self.executados if sql not in conhecidos]
+
+    @property
+    def registros(self) -> list[Any]:
+        return [params for sql, params in self.executados if sql == cli.SQL_REGISTRAR]
+
+
+def _rodar(monkeypatch: pytest.MonkeyPatch, con: _ConMigracoes, funcao: Any, args: Any) -> int:
+    """Troca o modulo `psycopg` inteiro, no molde do `_rodar_privilegios`."""
+    monkeypatch.setitem(sys.modules, "psycopg", types.SimpleNamespace(connect=lambda _url: con))
+    monkeypatch.setenv(postgres.ENV_URL, "postgresql://fake/motor")
+    return int(funcao(args))
+
+
+def _tudo_registrado() -> dict[str, str]:
+    """Manifesto inteiro, com o hash CERTO de cada arquivo -- nada pendente, nada alterado."""
+    return {m["versao"]: cli._sha256_do_arquivo(m["arquivo"]) for m in cli._manifesto()}
+
+
+# --- aplicar ---------------------------------------------------------------------------
+
+
+def test_simular_nao_executa_nem_commita_nada(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A flag existe para o operador VER o que aconteceria. Se ela executasse, seria a pior
+    das regressoes possiveis nesta ferramenta -- e nada no codigo a impedia de virar no-op."""
+    con = _ConMigracoes()
+    codigo = _rodar(monkeypatch, con, cli.cmd_aplicar, argparse.Namespace(simular=True))
+
+    assert codigo == 0
+    assert con.corpos_de_migration == [], "simular executou migration"
+    assert con.registros == [], "simular registrou migration"
+    assert con.commits == 0
+    assert "--simular" in capsys.readouterr().out
+
+
+def test_aplicar_faz_uma_transacao_por_migration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Uma por migration, e nao uma para o lote: se a setima falhar, as seis anteriores
+    ficam aplicadas E registradas, e reexecutar retoma de onde parou."""
+    manifesto = cli._manifesto()
+    con = _ConMigracoes()
+    codigo = _rodar(monkeypatch, con, cli.cmd_aplicar, argparse.Namespace(simular=False))
+
+    assert codigo == 0
+    assert con.commits == len(manifesto), "commit por lote, nao por migration"
+    assert len(con.corpos_de_migration) == len(manifesto)
+    assert len(con.registros) == len(manifesto)
+
+
+def test_aplicar_registra_o_hash_do_arquivo_que_aplicou(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Registrar outro hash faria o proprio comando acusar "alterada" na proxima corrida."""
+    con = _ConMigracoes()
+    _rodar(monkeypatch, con, cli.cmd_aplicar, argparse.Namespace(simular=False))
+
+    esperado = [
+        (m["versao"], m["arquivo"], cli._sha256_do_arquivo(m["arquivo"])) for m in cli._manifesto()
+    ]
+    assert con.registros == esperado
+
+
+def test_nada_pendente_nao_escreve_nada(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    con = _ConMigracoes(registradas=_tudo_registrado())
+    codigo = _rodar(monkeypatch, con, cli.cmd_aplicar, argparse.Namespace(simular=False))
+
+    assert codigo == 0
+    assert con.commits == 0
+    assert con.registros == []
+    assert "nada a aplicar" in capsys.readouterr().out
+
+
+def test_aplicar_denuncia_migration_alterada_antes_de_aplicar(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Editar migration ja' aplicada deixa o banco num estado que nenhum arquivo descreve.
+    O aviso tem de sair ANTES, senao o operador so' descobre depois de escrever."""
+    registradas = _tudo_registrado()
+    alvo = cli._manifesto()[1]["versao"]
+    registradas[alvo] = "0" * 64
+
+    con = _ConMigracoes(registradas=registradas)
+    _rodar(monkeypatch, con, cli.cmd_aplicar, argparse.Namespace(simular=True))
+
+    saida = capsys.readouterr().out
+    assert "ATENCAO" in saida
+    assert alvo in saida
+
+
+# --- registrar -------------------------------------------------------------------------
+
+
+def test_registrar_recusa_sem_a_tabela_de_controle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sem a 000 nao ha onde registrar. Recusar com instrucao, nunca gravar no vazio."""
+    con = _ConMigracoes(tem_tabela=False)
+    with pytest.raises(SystemExit) as caiu:
+        _rodar(monkeypatch, con, cli.cmd_registrar, argparse.Namespace(ate="016"))
+
+    assert postgres.TABELA_MIGRACOES in str(caiu.value)
+    assert con.registros == []
+    assert con.commits == 0
+
+
+def test_registrar_nunca_executa_corpo_de_migration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """E' o ponto INTEIRO do comando: o efeito ja' esta' no banco, so' falta o registro.
+    Executar aqui reaplicaria DDL sobre um esquema que ja' o tem."""
+    con = _ConMigracoes()
+    codigo = _rodar(monkeypatch, con, cli.cmd_registrar, argparse.Namespace(ate="016"))
+
+    assert codigo == 0
+    assert con.corpos_de_migration == []
+    assert con.commits == 1, "registrar e' UMA unidade de trabalho"
+
+
+def test_registrar_ate_para_na_versao_pedida(monkeypatch: pytest.MonkeyPatch) -> None:
+    con = _ConMigracoes()
+    _rodar(monkeypatch, con, cli.cmd_registrar, argparse.Namespace(ate="003"))
+
+    versoes = [params[0] for params in con.registros]
+    assert versoes == ["000", "001", "002", "003"]
+
+
+def test_registrar_sem_alvo_nenhum_falha_com_instrucao(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`--ate 00` nao alcanca nem a 000 (comparacao de TEXTO: "000" > "00")."""
+    con = _ConMigracoes()
+    with pytest.raises(SystemExit) as caiu:
+        _rodar(monkeypatch, con, cli.cmd_registrar, argparse.Namespace(ate="00"))
+    assert "nenhuma migration" in str(caiu.value)
+    assert con.executados == [], "recusou depois de abrir conexao"
+
+
+# --- conferir e estado -----------------------------------------------------------------
+
+
+def _con_conferencia(**trocas: Any) -> _ConMigracoes:
+    """Um cluster que bate com o contrato, salvo o que o teste trocar."""
+    contagens = {"tabelas": len(cli.TABELAS_DO_MODELO), **cli.NUMEROS_DA_SECAO_ZERO, **trocas}
+    con = _ConMigracoes(registradas=_tudo_registrado())
+    con.respostas = {
+        cli.SQL_EXTENSOES: [("postgis",), ("citext",)],
+        cli.SQL_CONTAGENS: list(contagens.items()),
+        cli.SQL_FUNCOES: [
+            (nome, secdef, [f"search_path={caminho}"])
+            for nome, (secdef, caminho) in cli.FUNCOES_ESPERADAS.items()
+        ],
+    }
+    return con
+
+
+def _sem_provisionamento(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        postgres,
+        "_provisionamento",
+        lambda _con: {
+            "usuario": "app",
+            "pode_escrever_no_historico": False,
+            "trigger_auditoria": "A",
+        },
+    )
+
+
+def test_conferir_devolve_zero_quando_o_banco_bate(monkeypatch: pytest.MonkeyPatch) -> None:
+    _sem_provisionamento(monkeypatch)
+    con = _con_conferencia()
+    assert _rodar(monkeypatch, con, cli.cmd_conferir, argparse.Namespace()) == 0
+
+
+def test_conferir_devolve_um_quando_um_numero_diverge(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Um indice a menos e' exatamente o sintoma de migration nao aplicada -- e o codigo de
+    saida e' o que um cron ou um runbook consegue ler."""
+    _sem_provisionamento(monkeypatch)
+    con = _con_conferencia(indices=cli.NUMEROS_DA_SECAO_ZERO["indices"] - 1)
+    codigo = _rodar(monkeypatch, con, cli.cmd_conferir, argparse.Namespace())
+
+    assert codigo == 1
+    assert "DIVERGE" in capsys.readouterr().out
+
+
+def test_conferir_nao_escreve_nada(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Le CATALOGO, nunca dado -- e nunca escreve."""
+    _sem_provisionamento(monkeypatch)
+    con = _con_conferencia()
+    _rodar(monkeypatch, con, cli.cmd_conferir, argparse.Namespace())
+
+    assert con.registros == []
+    assert con.commits == 0
+    assert not any("INSERT" in sql.upper() or "UPDATE" in sql.upper() for sql, _ in con.executados)
+
+
+def test_estado_so_le(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    con = _ConMigracoes(registradas=_tudo_registrado())
+    codigo = _rodar(monkeypatch, con, cli.cmd_estado, argparse.Namespace())
+
+    assert codigo == 0
+    assert con.commits == 0
+    assert con.corpos_de_migration == []
+    assert "migrations no manifesto" in capsys.readouterr().out
