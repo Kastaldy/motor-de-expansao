@@ -566,6 +566,38 @@ def _registrar_visita_imovel(remote_user: str | None, *, acao: str, imovel: str 
         )
 
 
+def _registrar_viabilidade_calculada(remote_user: str | None, *, body: Any) -> None:
+    """Grava `viabilidade.calculada`, e NUNCA deixa a trilha derrubar o calculo.
+
+    Chamado DEPOIS de o motor responder, pela mesma razao do dossie: registrar antes
+    contaria uma analise que pode nao ter terminado.
+
+    So' as PREMISSAS vao para `metadados` -- `m2`, `aluguel` e `demanda`. Nada de `lat`/`lng`
+    (a §4 mantem coordenada fora) e nada de alvo: nem o pedido nem o backend conhecem
+    `hex_id`/`imovel_id`, e derivar o hexagono da coordenada e' o que a §2.2 recusa. Nada de
+    numero de SAIDA, tambem: break-even e payback sao resposta do motor, e `eventos` registra
+    o que a pessoa PEDIU. Ver a correcao de 16/09 na §2.5.
+    """
+    from motor_expansao.db import eventos as db_eventos
+
+    try:
+        from motor_expansao.db import rbac
+
+        quem = rbac.identidade(acesso.login_da_requisicao(remote_user))
+        db_eventos.registrar_viabilidade(
+            autor=quem.id_usuario if quem is not None else None,
+            m2=body.m2,
+            aluguel=body.aluguel,
+            demanda=body.demanda,
+            origem="web",
+        )
+    except Exception:  # noqa: BLE001 — a trilha nunca derruba o calculo
+        _LOG_D17.exception(
+            "viabilidade calculada SEM evento no banco — a analise saiu para a tela e nao "
+            "deixou rastro de quem a pediu"
+        )
+
+
 def _registrar_acesso(request: Request, *, status: int, inicio: float, tamanho: str | None) -> None:
     """Monta e grava a linha da trilha. Rastro, nao transacao: falha morre aqui."""
     try:
@@ -6325,13 +6357,21 @@ def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
 
 
 @app.post("/api/viabilidade")
-def viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
+def viabilidade(
+    body: ViabilidadeIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
     """Viabilidade do ponto — devolve o `viabilidade_payload_v1` (contrato unico).
 
     GUARDRAIL: a demanda e PREMISSA EXPLICITA do operador (DEC-009), nunca derivada
     de lat/lng. READ-ONLY sobre o M1.
+
+    Registra `viabilidade.calculada` DEPOIS de o motor responder: gravar antes contaria uma
+    analise que pode nao ter terminado. O calculo nunca falha por causa da trilha.
     """
-    return _payload_viabilidade(body)
+    payload = _payload_viabilidade(body)
+    _registrar_viabilidade_calculada(remote_user, body=body)
+    return payload
 
 
 

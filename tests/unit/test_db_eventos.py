@@ -298,3 +298,61 @@ def test_a_visita_carimba_o_autor_como_PRIMEIRO_comando(con: FakeConexao) -> Non
 def test_a_visita_nao_grava_entidade() -> None:
     """Emenda do D24: o id do imovel e' TEXTUAL e `entidade_id` e' BIGINT."""
     assert "NULL, NULL" in mod.SQL_REGISTRAR_VISITA
+
+
+# --------------------------------------------------------------------------------------
+# `viabilidade.calculada` — as premissas, SEM alvo (16/09)
+# --------------------------------------------------------------------------------------
+
+
+def test_a_viabilidade_grava_as_premissas(con: FakeConexao) -> None:
+    """O conteudo do evento e' o que a pessoa PEDIU: metragem, aluguel e demanda."""
+    mod.registrar_viabilidade(autor=7, m2=1500.0, aluguel=20000.0, demanda=900.0)
+    assert con.eventos[0][1] == mod.EVENTO_VIABILIDADE_CALCULADA
+    assert con.eventos[0][2].obj == {
+        "m2": 1500.0,
+        "aluguel": 20000.0,
+        "demanda": 900.0,
+        "origem": "web",
+    }
+
+
+def test_a_viabilidade_nao_grava_alvo_nenhum(con: FakeConexao) -> None:
+    """Medido: nem o pedido nem o backend conhecem `hex_id`/`imovel_id`. Derivar o hexagono da
+    coordenada e' o que a §2.2 recusa -- entao o evento nao promete alvo que nao tem."""
+    import inspect
+
+    mod.registrar_viabilidade(autor=7, m2=1500.0, aluguel=20000.0, demanda=900.0)
+    metadados = con.eventos[0][2].obj
+    for chave in mod.CHAVES_DE_ALVO:
+        assert chave not in metadados
+    assert not set(inspect.signature(mod.registrar_viabilidade).parameters) & set(
+        mod.CHAVES_DE_ALVO
+    )
+
+
+def test_a_viabilidade_nunca_grava_a_coordenada(con: FakeConexao) -> None:
+    """§4: `lat`/`lng` ficam FORA de `metadados` -- e a assinatura nem os aceita."""
+    import inspect
+
+    mod.registrar_viabilidade(autor=7, m2=1500.0, aluguel=20000.0, demanda=900.0)
+    achatado = " ".join(f"{k}={v}" for k, v in con.eventos[0][2].obj.items()).lower()
+    for proibido in ("lat", "lng"):
+        assert proibido not in achatado
+        assert proibido not in inspect.signature(mod.registrar_viabilidade).parameters
+
+
+def test_a_viabilidade_nao_grava_numero_de_SAIDA(con: FakeConexao) -> None:
+    """Break-even, payback e aluguel-teto sao resposta do motor. `eventos` registra o PEDIDO --
+    guardar a saida aqui criaria uma segunda fonte de verdade financeira."""
+    import inspect
+
+    assinatura = set(inspect.signature(mod.registrar_viabilidade).parameters)
+    for saida in ("payback", "break_even", "aluguel_teto", "tir", "vpl", "ebitda"):
+        assert saida not in assinatura
+
+
+def test_autor_nulo_e_permitido_na_viabilidade(con: FakeConexao) -> None:
+    mod.registrar_viabilidade(autor=None, m2=1500.0, aluguel=20000.0, demanda=900.0)
+    assert con.eventos[0][0] is None
+    assert con.executados[0][0] == postgres.SQL_DEFINIR_AUTOR

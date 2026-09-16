@@ -121,9 +121,30 @@ fora dele. **Nem todos são ação no mesmo grau**, e por isso só dois sobem pa
 
 | `tipo` | Quando | `entidade` | `metadados` |
 |---|---|---|---|
-| `viabilidade.calculada` | `POST /api/viabilidade` | — | `hex_id` e/ou `imovel_id`, metragem, aluguel pedido |
+| `viabilidade.calculada` | `POST /api/viabilidade` | — | `m2`, `aluguel`, `demanda`, `origem` |
 
 O usuário digita premissas e recebe break-even — é decisão de análise, não leitura passiva.
+
+> **Correção de 16/09: o alvo saiu, porque ele nunca existiu no pedido.** Esta linha pedia
+> `hex_id` e/ou `imovel_id`, e **nenhum dos dois chega à rota**: `ViabilidadeIn` carrega
+> `lat`/`lng` e as premissas financeiras, e as duas telas que a chamam — o bloco da tela de Ponto
+> e a tela de Viabilidade — só têm a coordenada (medido nas duas chamadas do front). O backend
+> também não deriva alvo: usa `lat`/`lng` apenas para escolher a malha do catchment.
+>
+> As duas saídas aparentes estão fechadas pelo próprio contrato. Derivar o hexágono da coordenada
+> (H3 res 7) é o que a §2.2 já recusou para o Pontual — *"afirmaria um alvo que o pedido não
+> declarou"*. E gravar a coordenada esbarra na §4: `lat`/`lng` são exatamente o que a regra de PII
+> mantém fora de `metadados`. Especificar um alvo que o produtor não pode preencher só garantiria
+> que ele nascesse mentindo ou vazio.
+>
+> Ficam as PREMISSAS, que são o conteúdo real do ato: metragem (`m2`), aluguel pedido (`aluguel`) e
+> a demanda — que a DEC-009 define como premissa explícita do operador, nunca prevista, e é ela que
+> governa o cálculo inteiro. O evento responde *"fulano rodou viabilidade com estas premissas, e
+> quando"*, que é a pergunta de auditoria que esta seção existe para responder.
+>
+> **Sem alvo, o evento continua valendo — e isso é o oposto da §2.4, de propósito.** Lá, um
+> `imovel.visita_marcada` sem `imovel_id` não responde nada: o alvo é o conteúdo inteiro. Aqui o
+> conteúdo é a premissa, e o ato é a análise.
 
 ### 2.6 Áreas de estudo e contratos (domínio da F5.4, ainda não construído)
 
@@ -302,7 +323,9 @@ rastro — ver *"O que continua descoberto"* no fim da §2.7.
 **Grava (desde 16/09):** `dossie.baixado` (§2.2), pelo **`GET` do PDF** — e não pelo gesto
 `abrir-dossie`, que dispara mesmo quando o imóvel não tem dossiê (ver a correção no fim da §2.4).
 E `imovel.visita_marcada` / `imovel.visita_desmarcada` (§2.4), pelos dois gestos que aquela seção
-manda subir; os outros cinco continuam só na trilha de 90 dias.
+manda subir; os outros cinco continuam só na trilha de 90 dias. E `viabilidade.calculada` (§2.5),
+pela rota que devolve o payload — com as PREMISSAS, sem alvo, pela razão medida que está no fim
+daquela seção.
 
 > **Esta seção ficou desatualizada por um dia, e vale registrar.** A frase abaixo dizia "todo o
 > resto", e ela passou a ser falsa no mesmo commit que criou o produtor do dossiê — a §2.2 ganhou
@@ -310,8 +333,8 @@ manda subir; os outros cinco continuam só na trilha de 90 dias.
 > andam juntos: quem acrescenta produtor edita as duas seções.
 
 **Não grava:** o que resta das famílias §2.1 a §2.6 — `login`, `logout`, `ciencia.confidencialidade`
-e `bot.autorizado` (§2.1), `cadastro.editado` (§2.3), `viabilidade.calculada` (§2.5) e a família
-inteira da §2.6, que depende da F5.4 existir. `login` segue sem produtor por outro motivo, e não por
+e `bot.autorizado` (§2.1), `cadastro.editado` (§2.3) — que a própria §2.3 manda **não** duplicar
+enquanto o log em arquivo existir — e a família inteira da §2.6, que depende da F5.4 existir. `login` segue sem produtor por outro motivo, e não por
 falta de coluna: enquanto o Authelia autenticar, a entrada não passa pelo motor — é o P19 que
 destrava esse, não a D26.
 

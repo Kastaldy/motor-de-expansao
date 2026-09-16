@@ -46,6 +46,10 @@ EVENTO_DOSSIE_BAIXADO = "dossie.baixado"
 EVENTO_VISITA_MARCADA = "imovel.visita_marcada"
 EVENTO_VISITA_DESMARCADA = "imovel.visita_desmarcada"
 
+#: §2.5. SEM alvo de proposito -- ver a correcao de 16/09 naquela secao: nem o pedido nem o
+#: backend conhecem `hex_id`/`imovel_id`, e derivar da coordenada e' o que a §2.2 recusa.
+EVENTO_VIABILIDADE_CALCULADA = "viabilidade.calculada"
+
 #: As chaves de alvo sao CONTRATO, e o defeito de errar uma e' SILENCIOSO: a escrita passa,
 #: o evento cai fora do indice parcial, e ninguem descobre ate' a tabela crescer. O contrato
 #: diz, com todas as letras: "Gravar `id_imovel` ou `imovel` poe o evento fora dos indices".
@@ -71,6 +75,12 @@ VALUES (%s, %s, NULL, NULL, %s)
 
 # Idem, e pela mesma razao de nome: o que se grava aqui e' gesto sobre imovel, nao artefato.
 SQL_REGISTRAR_VISITA = """
+INSERT INTO eventos (id_usuario, tipo, entidade, entidade_id, metadados)
+VALUES (%s, %s, NULL, NULL, %s)
+"""
+
+# Idem. Aqui `entidade` nula nao e' emenda do D24 e sim ausencia real: a analise nao declara alvo.
+SQL_REGISTRAR_VIABILIDADE = """
 INSERT INTO eventos (id_usuario, tipo, entidade, entidade_id, metadados)
 VALUES (%s, %s, NULL, NULL, %s)
 """
@@ -189,3 +199,36 @@ def registrar_visita(
     tipo = EVENTO_VISITA_MARCADA if marcada else EVENTO_VISITA_DESMARCADA
     with transacao(id_usuario=autor) as con:
         con.execute(SQL_REGISTRAR_VISITA, (autor, tipo, Jsonb(metadados)))
+
+
+def registrar_viabilidade(
+    *, autor: int | None, m2: float, aluguel: float, demanda: float, origem: str = "web"
+) -> None:
+    """Grava `viabilidade.calculada` -- as PREMISSAS da analise, sem alvo.
+
+    SEM ALVO, e isso e' medido, nao esquecido: `ViabilidadeIn` carrega `lat`/`lng` e as
+    premissas, e nenhuma das duas telas que chamam a rota conhece `hex_id` ou `imovel_id`.
+    Derivar o hexagono da coordenada e' o que a §2.2 recusa ("afirmaria um alvo que o pedido
+    nao declarou") e gravar a coordenada e' o que a §4 proibe. Ver a correcao de 16/09 na §2.5.
+
+    O evento vale assim -- e' o OPOSTO da regra da visita, de proposito. La' o alvo e' o
+    conteudo inteiro e sem ele nao se grava; aqui o conteudo e' a premissa e o ato e' a
+    analise. `demanda` entra porque a DEC-009 a define como premissa explicita do operador,
+    nunca prevista, e e' ela que governa o calculo.
+
+    Nenhum numero derivado entra: break-even, payback e aluguel-teto sao SAIDA do motor, e
+    `eventos` registra o que a pessoa pediu, nao o que o motor respondeu.
+    """
+    from psycopg.types.json import Jsonb  # import tardio: so' quem escreve paga
+
+    metadados: dict[str, Any] = {
+        "m2": m2,
+        "aluguel": aluguel,
+        "demanda": demanda,
+        "origem": origem,
+    }
+    with transacao(id_usuario=autor) as con:
+        con.execute(
+            SQL_REGISTRAR_VIABILIDADE,
+            (autor, EVENTO_VIABILIDADE_CALCULADA, Jsonb(metadados)),
+        )
