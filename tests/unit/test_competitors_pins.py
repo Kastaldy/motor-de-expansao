@@ -199,6 +199,50 @@ def test_preload_logos_carrega_logo_png_de_concorrente(tmp_path):
     _ICON_CACHE.pop("smart_fit", None)
 
 
+def _tile_tem_logo(key: str) -> bool:
+    """O tile quadrado leva a logo (placa branca) e nao a placa solida do fallback."""
+    tile = _render_square_logo_tile(key, 64, border=False, shadow=False)
+    cores = {px[:3] for px in tile.getdata() if px[3] == 255}
+    return len(cores) > 2
+
+
+def test_marcador_independente_tem_a_logo_do_wellhub_sem_o_png_no_diretorio(tmp_path):
+    """Relato do Juan (2026-09-17): no PDF pontual as independentes saiam sem a logo do
+    Wellhub. O `logo_wellhub.png` nao chega ao diretorio montado em producao (o sync so
+    copia as redes do registro) — a arte do pacote cobre essa ausencia."""
+    from motor_expansao.dashboard.competitors import CHAVE_AGREGADOR
+
+    concorrentes_dir = tmp_path / "concorrentes"
+    concorrentes_dir.mkdir()
+    (concorrentes_dir / "logo_smart_fit.png").write_bytes(_MINIMAL_PNG)
+    _ICON_CACHE.pop(CHAVE_AGREGADOR, None)
+    preload_logos(concorrentes_dir)
+    assert CHAVE_AGREGADOR in _ICON_CACHE
+    assert _tile_tem_logo(CHAVE_AGREGADOR)
+
+
+def test_logo_wellhub_do_diretorio_vence_a_do_pacote(tmp_path):
+    import base64
+
+    from motor_expansao.dashboard.competitors import AGREGADOR_LOGO_FILE, CHAVE_AGREGADOR
+
+    concorrentes_dir = tmp_path / "concorrentes"
+    concorrentes_dir.mkdir()
+    (concorrentes_dir / AGREGADOR_LOGO_FILE).write_bytes(_MINIMAL_PNG)
+    _ICON_CACHE.pop(CHAVE_AGREGADOR, None)
+    preload_logos(concorrentes_dir)
+    url = str(_ICON_CACHE[CHAVE_AGREGADOR]["url"])
+    svg = base64.b64decode(url.split("base64,", 1)[1]).decode("utf-8")
+    assert base64.b64encode(_MINIMAL_PNG).decode("ascii") in svg
+
+
+def test_arte_do_wellhub_do_pacote_e_a_mesma_do_piloto():
+    from motor_expansao.dashboard.competitors import AGREGADOR_LOGO_PACOTE
+
+    piloto = Path(__file__).resolve().parents[2] / "web" / "public" / "logo-wellhub.png"
+    assert AGREGADOR_LOGO_PACOTE.read_bytes() == piloto.read_bytes()
+
+
 def test_preload_logos_sem_arquivos_nao_quebra_o_app(tmp_path):
     concorrentes_dir = tmp_path / "sem_logos"
     concorrentes_dir.mkdir()
