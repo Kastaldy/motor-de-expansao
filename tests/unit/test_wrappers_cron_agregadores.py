@@ -195,7 +195,7 @@ def test_wrapper_semanal_nao_manda_rodar_a_cadencia_dos_agregadores_por_ele() ->
     assert "NAO** PASSA POR AQUI" in texto or "**NAO** PASSA POR AQUI" in texto
     # E o layout documentado é o de DUAS chaves, não o de uma.
     assert "semana=AAAA-SS/fonte=<fonte>/parte-*.parquet" in texto
-    assert "snapshots_concorrentes_v4" in texto, "não avisa do risco da imagem antiga"
+    assert "snapshots_concorrentes_v5" in texto, "não avisa do risco da imagem antiga"
 
 
 def test_wrapper_agregadores_le_do_destino_curado_nao_do_clone() -> None:

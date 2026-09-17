@@ -81,8 +81,10 @@ from .contrato import (
     TOLERANCIA_QUEDA_REDE_PCT,
     TOLERANCIA_QUEDA_TOTAL_PCT,
     VERSAO_CONTRATO_SNAPSHOT,
+    VERSAO_CONTRATO_SNAPSHOT_V4,
     chave_do_slug,
     chave_hash_estavel,
+    chave_hash_estavel_v4,
     concorrente_id_producao,
     coord_no_bbox_uf,
     coord_no_envelope,
@@ -1201,6 +1203,128 @@ def migrar_layout_particoes(
     return migradas
 
 
+def migrar_chave_churn(
+    base_dir: Path = SNAPSHOTS_DIR_DEFAULT,
+    *,
+    semana: str,
+    dir_unidades: Path = DIR_UNIDADES_DEFAULT,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Re-chaveia a folha `semana=<S>/fonte=unidades` do `v4` para o `v5` `[DEC-063]`.
+
+    **Por que uma migração, e não simplesmente deixar a chave nova entrar na próxima semana.** A
+    chave é a identidade da academia na série: trocá-la sem migrar dá chave NOVA a todas as
+    unidades de cadeia, e `concorrentes_novos` (`web/server/rede_inteligencia.py`) define "nova"
+    como *primeira semana da chave != primeira semana da série*. Como a primeira semana das chaves
+    novas seria a da troca, **toda academia de cadeia do país apareceria como "concorrente novo"**
+    no pin da Visão Executiva, por `SEMANAS_CONCORRENTE_NOVO = 8` semanas. O relógio de maturidade
+    (`MIN_SEMANAS`, contado POR CHAVE) também reiniciaria.
+
+    **O preimage existe porque o feed guarda o que o snapshot não guarda.** O snapshot não persiste
+    `nome` (anti-PII, DEC-012), então a chave `v4` de uma partição gravada não é recomputável a
+    partir dela mesma. É recomputável a partir do CSV que a gerou: esta função refaz
+    `ler_feeds -> limpar_ruido -> derivar_chave` (o mesmo caminho de `coordenadas_por_chave`, nunca
+    uma segunda redação dele), obtém a chave `v5` e calcula a `v4` com `chave_hash_estavel_v4`
+    sobre as MESMAS linhas sobreviventes. Medido antes de escrever uma linha: a `v4` recomputada
+    reproduz **4.495 de 4.495** chaves em `2026-31` e **4.610 de 4.610** em `2026-36`, com zero
+    órfãs dos dois lados.
+
+    **FALHA FECHADO.** Se qualquer chave da partição não casar com o feed — ou vice-versa —, nada é
+    gravado. Um mapa parcial é pior que nenhum: as linhas não mapeadas ficariam com a chave antiga
+    ao lado das novas, que é o defeito de identidade em massa que a migração existe para evitar.
+    Partição que já está em `v5` é **no-op** (idempotente); versão desconhecida **aborta**.
+
+    Só a folha `fonte=unidades` é tocada. As outras fontes usam `chave_do_slug`, que a DEC-063 não
+    muda, e `escrever_particao_semana` substitui apenas as folhas presentes no frame.
+
+    `dry_run=True` não toca o disco: devolve as contagens do cruzamento para conferência.
+    """
+    if not isinstance(semana, str) or not RE_SEMANA.match(semana):
+        raise ValueError("migrar_chave_churn exige `semana` no formato ISO AAAA-SS")
+
+    persistido = ler_snapshots(base_dir, semanas=[semana], fontes=["unidades"])
+    if persistido.empty:
+        _logger.warning("semana=%s nao tem folha `fonte=unidades`: nada a migrar", semana)
+        return {"semana": semana, "linhas": 0, "migradas": 0, "dry_run": bool(dry_run)}
+
+    versoes = sorted({str(v) for v in persistido["versao_contrato"]})
+    if versoes == [VERSAO_CONTRATO_SNAPSHOT]:
+        _logger.info("semana=%s ja' esta em %s: no-op", semana, VERSAO_CONTRATO_SNAPSHOT)
+        return {
+            "semana": semana,
+            "linhas": int(len(persistido)),
+            "migradas": 0,
+            "ja_migrada": True,
+            "dry_run": bool(dry_run),
+        }
+    if versoes != [VERSAO_CONTRATO_SNAPSHOT_V4]:
+        raise ValueError(
+            f"semana={semana} tem versao_contrato {versoes}; esta migracao so' converte "
+            f"{VERSAO_CONTRATO_SNAPSHOT_V4} -> {VERSAO_CONTRATO_SNAPSHOT}"
+        )
+
+    # O MESMO caminho de `coordenadas_por_chave`: ler -> limpar -> derivar. Reusar (em vez de
+    # reimplementar) e' o que garante que as linhas sobreviventes aqui sejam as mesmas que
+    # `materializar` gravou — qualquer divergencia de filtro apareceria como orfa no cruzamento
+    # abaixo, e a guarda de fail-closed a transformaria em recusa, nunca em mapa parcial.
+    bruto = ler_feeds(dir_unidades=dir_unidades, fontes=["unidades"])
+    if bruto.empty:
+        raise ValueError(
+            f"o feed em {dir_unidades} nao tem linha nenhuma: sem ele nao ha como recomputar a "
+            "chave v4 (o snapshot nao guarda `nome`)"
+        )
+    limpo, _auditoria = limpar_ruido(bruto)
+    com_chave = derivar_chave(limpo)
+
+    de_para: dict[str, str] = {}
+    for fonte, rede, nome, hex7, nova in zip(
+        com_chave["fonte"],
+        com_chave["rede"],
+        com_chave["nome"],
+        com_chave["hex_id_res7"],
+        com_chave["chave_snapshot"],
+        strict=False,
+    ):
+        de_para[chave_hash_estavel_v4(fonte, rede, nome, hex7)] = str(nova)
+
+    no_disco = {str(k) for k in persistido["chave_snapshot"]}
+    sem_origem = sorted(no_disco - set(de_para))
+    if sem_origem:
+        raise ValueError(
+            f"semana={semana}: {len(sem_origem)} chave(s) do disco NAO foram reproduzidas pelo "
+            f"feed em {dir_unidades} (amostra: {sem_origem[:5]}). O feed nao e' o que gerou esta "
+            "particao; nada foi gravado (um mapa parcial deixaria chaves antigas e novas lado a "
+            "lado, que e' o dano que esta migracao existe para evitar)"
+        )
+
+    destinos = [de_para[str(k)] for k in persistido["chave_snapshot"]]
+    if len(set(destinos)) != len(destinos):
+        raise ValueError(
+            f"semana={semana}: a chave v5 COLAPSARIA linhas distintas desta particao "
+            f"({len(destinos) - len(set(destinos))} colisao(oes)); nada foi gravado"
+        )
+
+    resultado: dict[str, object] = {
+        "semana": semana,
+        "linhas": int(len(persistido)),
+        "migradas": int(len(destinos)),
+        "chaves_no_feed": int(len(de_para)),
+        "dry_run": bool(dry_run),
+    }
+    if dry_run:
+        _logger.info("DRY-RUN da migracao de chave: %s", resultado)
+        return resultado
+
+    novo = persistido.copy()
+    novo["chave_snapshot"] = pd.Series(destinos, index=novo.index, dtype="string")
+    novo["versao_contrato"] = pd.Series(
+        [VERSAO_CONTRATO_SNAPSHOT] * len(novo), index=novo.index, dtype="string"
+    )
+    escrever_particao_semana(novo, base_dir, semana=semana)
+    _logger.info("chave migrada v4 -> v5: %s", resultado)
+    return resultado
+
+
 # --------------------------------------------------------------------------- #
 # 6.1 Guarda de coleta PARCIAL (fronteira de publicação)
 # --------------------------------------------------------------------------- #
@@ -1486,6 +1610,21 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--migrar-chave-v5",
+        action="store_true",
+        help=(
+            "re-chaveia a folha `fonte=unidades` de UMA semana do contrato v4 para o v5 (DEC-063) "
+            "e SAI, sem materializar nada. Exige `--semana` e um `--dir-unidades` que seja o feed "
+            "QUE GEROU aquela semana. Falha FECHADO: chave do disco que o feed nao reproduza "
+            "aborta a migracao sem gravar. Com `--dry-run`, so' cruza e reporta"
+        ),
+    )
+    p.add_argument(
+        "--semana",
+        default=None,
+        help="semana ISO AAAA-SS alvo de `--migrar-chave-v5` (uma por execucao)",
+    )
+    p.add_argument(
         "--forcar",
         action="store_true",
         help=(
@@ -1528,6 +1667,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         migradas = migrar_layout_particoes(args.base_dir)
         print({"migrar_layout": migradas, "ambiguas": [], "dry_run": False})
+        return 0
+    if args.migrar_chave_v5:
+        # Mesmo princípio do `--migrar-layout`: ANTES de `executar()` e sem materializar nada. A
+        # migração é um ato próprio; misturá-la a uma coleta faria a reescrita da série viajar de
+        # carona numa execução de rotina.
+        if not args.semana:
+            print({"erro": "--migrar-chave-v5 exige --semana AAAA-SS"})
+            return 2
+        resultado = migrar_chave_churn(
+            args.base_dir,
+            semana=args.semana,
+            dir_unidades=args.dir_unidades,
+            dry_run=bool(args.dry_run),
+        )
+        print(resultado)
         return 0
     auditoria = executar(
         dir_totalpass=args.dir_totalpass,

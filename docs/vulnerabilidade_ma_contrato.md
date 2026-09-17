@@ -207,7 +207,8 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
   (`sha1(rede|nome|lat|lng)`, `normalizar_concorrentes.py:29`) foi **descartado como chave de
   churn**: a coordenada entra com `:.6f` (~**11 cm**), então qualquer re-geocodificação produziria
   1 falso `sumiu_recente` + 1 falso `novo` no sinal de maior peso. A chave passa a ser
-  `sha1("hash_estavel|<fonte>|<rede>|<nome_normalizado>|<hex_id_res7>")` e, quando o `slug` é
+  `sha1("hash_estavel|<fonte>|<rede>|<nome_base>|<hex_id_res5>")` **`[âncora emendada pela
+  DEC-063]`** e, quando o `slug` é
   confiável, `sha1("slug|<fonte>|<slug_normalizado>")` — **sempre sha1 hex de 40** nos dois casos,
   com o valor de `chave_origem` registrando qual foi usada (`slug` | `hash_estavel`). Colisões de
   chave são **COLAPSADAS**, nunca desambiguadas por ordinal (ordinal depende da ordem de leitura do
@@ -1078,7 +1079,7 @@ Estado em **2026-08-25**:
 
 | constante | valor |
 |---|---|
-| `VERSAO_CONTRATO_SNAPSHOT` | `snapshots_concorrentes_v4` |
+| `VERSAO_CONTRATO_SNAPSHOT` | `snapshots_concorrentes_v5` |
 | `VERSAO_CONTRATO_CHURN` | `churn_staleness_v2` |
 | `VERSAO_CONTRATO_PRESENCA_AGREGADOR` | `presenca_agregador_v1` |
 | `VERSAO_CONTRATO_SCORE` | `score_vulnerabilidade_v8` |

@@ -960,6 +960,173 @@ def test_materializar_sem_csv_frame_vazio_bem_formado(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # BLK-MA-09 / DEC-026 â€” colunas-fato de rating, sem peso
 # --------------------------------------------------------------------------- #
+def _escrever_folha_a_mao(base: Path, semana: str, frame: pd.DataFrame) -> None:
+    """Grava as folhas `fonte=` sem passar pelo validador — simula safra de OUTRO contrato.
+
+    Mesmo molde de `test_ler_snapshots_sobrevive_a_esquema_misto`. É obrigatório aqui: desde a
+    DEC-063 `escrever_particao_semana` valida `versao_contrato` contra a versão CORRENTE, então
+    uma partição `v4` não pode mais nascer pelo caminho público — e é exatamente ela que a
+    migração precisa encontrar no disco.
+    """
+    for fonte, bloco in frame.groupby("fonte", sort=True):
+        destino = base / f"semana={semana}" / f"fonte={fonte}"
+        destino.mkdir(parents=True, exist_ok=True)
+        pq.write_table(
+            pa.Table.from_pandas(bloco.drop(columns=["fonte"]), preserve_index=False),
+            str(destino / "parte-0.parquet"),
+        )
+
+
+def _particao_v4(
+    dirs: tuple[Path, Path, Path], base: Path, semana: str
+) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Escreve uma partição no contrato `v4` a partir do MESMO feed sintético, e devolve o de->para.
+
+    O `de->para` sai do próprio pipeline (`ler_feeds -> limpar_ruido -> derivar_chave`), que hoje
+    produz a chave `v5`; a `v4` é recomputada com a função congelada sobre as mesmas linhas. É a
+    réplica em miniatura do que a migração faz contra o feed real.
+    """
+    _tp, _wh, un = dirs
+    com_chave = m.derivar_chave(m.limpar_ruido(m.ler_feeds(_tp, _wh, un))[0])
+    v5_por_v4 = {
+        c.chave_hash_estavel_v4(f, r, n, h): str(k)
+        for f, r, n, h, k in zip(
+            com_chave["fonte"],
+            com_chave["rede"],
+            com_chave["nome"],
+            com_chave["hex_id_res7"],
+            com_chave["chave_snapshot"],
+            strict=False,
+        )
+    }
+    v4_por_v5 = {v: k for k, v in v5_por_v4.items()}
+
+    snap = _snapshot_valido(dirs).copy()
+    snap["chave_snapshot"] = [
+        v4_por_v5.get(str(k), str(k)) if o == "hash_estavel" else str(k)
+        for k, o in zip(snap["chave_snapshot"], snap["chave_origem"], strict=False)
+    ]
+    snap["versao_contrato"] = c.VERSAO_CONTRATO_SNAPSHOT_V4
+    _escrever_folha_a_mao(base, semana, snap)
+    return snap, v5_por_v4
+
+
+def test_migrar_chave_troca_a_chave_e_carimba_a_versao(
+    dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    """Caminho feliz: as linhas são as MESMAS, só a identidade muda para o `v5` `[DEC-063]`."""
+    base, _tp, _wh, un = tmp_path / "serie", *dirs_sinteticos
+    antes, v5_por_v4 = _particao_v4(dirs_sinteticos, base, "2026-31")
+    n_unidades = int((antes["fonte"] == "unidades").sum())
+    assert n_unidades > 0, "pre-condicao: a fixture tem feed de cadeias"
+
+    saida = m.migrar_chave_churn(base, semana="2026-31", dir_unidades=un)
+
+    assert saida["migradas"] == n_unidades
+    lido = m.ler_snapshots(base, semanas=["2026-31"], fontes=["unidades"])
+    assert len(lido) == n_unidades
+    assert set(lido["versao_contrato"]) == {c.VERSAO_CONTRATO_SNAPSHOT}
+    # Toda chave nova SAIU do de->para (nao foi inventada), e NENHUMA chave v4 sobreviveu. A
+    # versao fraca disto (`== v5 & lido`) e' tautologica: passaria ate' se nada tivesse mudado.
+    novas = set(lido["chave_snapshot"])
+    assert novas <= set(v5_por_v4.values()), "chave que nao veio do de->para"
+    assert not (novas & set(v5_por_v4)), "chave v4 sobreviveu na particao migrada"
+    assert novas != set(antes.loc[antes["fonte"] == "unidades", "chave_snapshot"])
+
+
+def test_migrar_chave_nao_toca_as_outras_fontes(
+    dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    """WellHub/TotalPass usam `chave_do_slug`, que a DEC-063 não muda — a folha deles sobrevive."""
+    base, _tp, _wh, un = tmp_path / "serie", *dirs_sinteticos
+    antes, _ = _particao_v4(dirs_sinteticos, base, "2026-31")
+    wh_antes = m.ler_snapshots(base, semanas=["2026-31"], fontes=["wellhub"])
+
+    m.migrar_chave_churn(base, semana="2026-31", dir_unidades=un)
+
+    wh_depois = m.ler_snapshots(base, semanas=["2026-31"], fontes=["wellhub"])
+    assert set(wh_depois["chave_snapshot"]) == set(wh_antes["chave_snapshot"])
+    assert set(wh_depois["versao_contrato"]) == {c.VERSAO_CONTRATO_SNAPSHOT_V4}, (
+        "a folha de outra fonte foi reescrita; `escrever_particao_semana` so' devia trocar as "
+        "folhas presentes no frame"
+    )
+
+
+def test_migrar_chave_e_idempotente(
+    dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    base, _tp, _wh, un = tmp_path / "serie", *dirs_sinteticos
+    _particao_v4(dirs_sinteticos, base, "2026-31")
+    m.migrar_chave_churn(base, semana="2026-31", dir_unidades=un)
+
+    segunda = m.migrar_chave_churn(base, semana="2026-31", dir_unidades=un)
+    assert segunda["ja_migrada"] is True
+    assert segunda["migradas"] == 0
+
+
+def test_migrar_chave_dry_run_nao_toca_o_disco(
+    dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    base, _tp, _wh, un = tmp_path / "serie", *dirs_sinteticos
+    antes, _ = _particao_v4(dirs_sinteticos, base, "2026-31")
+    esperado = set(antes.loc[antes["fonte"] == "unidades", "chave_snapshot"])
+
+    saida = m.migrar_chave_churn(base, semana="2026-31", dir_unidades=un, dry_run=True)
+
+    assert saida["dry_run"] is True and saida["migradas"] > 0
+    lido = m.ler_snapshots(base, semanas=["2026-31"], fontes=["unidades"])
+    assert set(lido["chave_snapshot"]) == esperado
+    assert set(lido["versao_contrato"]) == {c.VERSAO_CONTRATO_SNAPSHOT_V4}
+
+
+def test_migrar_chave_falha_FECHADO_quando_o_feed_nao_reproduz_a_particao(
+    dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    """Mapa PARCIAL é pior que mapa nenhum: deixaria chave velha e nova lado a lado.
+
+    É o dano em massa que a migração existe para evitar, então a recusa é total e nada é gravado.
+    """
+    base, _tp, _wh, _un = tmp_path / "serie", *dirs_sinteticos
+    antes, _ = _particao_v4(dirs_sinteticos, base, "2026-31")
+    esperado = set(antes.loc[antes["fonte"] == "unidades", "chave_snapshot"])
+
+    outro_feed = tmp_path / "feed_errado"
+    _escrever_csv(
+        outro_feed / "unidades_selfit.csv",
+        pd.DataFrame(
+            {
+                "nome_unidade": ["Selfit Outra Praca"],
+                "latitude": [-19.9200],
+                "longitude": [-43.9400],
+                "data_coleta": ["2026-07-25"],
+            }
+        ),
+    )
+    with pytest.raises(ValueError, match="NAO foram reproduzidas"):
+        m.migrar_chave_churn(base, semana="2026-31", dir_unidades=outro_feed)
+
+    lido = m.ler_snapshots(base, semanas=["2026-31"], fontes=["unidades"])
+    assert set(lido["chave_snapshot"]) == esperado, "a particao foi tocada apesar da recusa"
+    assert set(lido["versao_contrato"]) == {c.VERSAO_CONTRATO_SNAPSHOT_V4}
+
+
+def test_migrar_chave_recusa_versao_desconhecida(
+    dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    base, _tp, _wh, un = tmp_path / "serie", *dirs_sinteticos
+    snap = _snapshot_valido(dirs_sinteticos).copy()
+    snap["versao_contrato"] = "snapshots_concorrentes_v1"
+    _escrever_folha_a_mao(base, "2026-31", snap)
+    with pytest.raises(ValueError, match="so' converte"):
+        m.migrar_chave_churn(base, semana="2026-31", dir_unidades=un)
+
+
+def test_migrar_chave_semana_sem_folha_e_no_op(tmp_path: Path) -> None:
+    """Base sem a folha `fonte=unidades` não é erro: é nada a fazer."""
+    saida = m.migrar_chave_churn(tmp_path / "vazia", semana="2026-31")
+    assert saida["migradas"] == 0 and saida["linhas"] == 0
+
+
 def test_ler_snapshots_sobrevive_a_esquema_misto(
     dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
 ) -> None:
