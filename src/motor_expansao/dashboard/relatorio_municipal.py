@@ -49,7 +49,11 @@ from motor_expansao.dashboard.censo_map import (
 from motor_expansao.dashboard.censo_map import (
     _atribuicao_tiles as _censo_atribuicao_tiles,
 )
-from motor_expansao.dashboard.competitors import _render_square_logo_tile
+from motor_expansao.dashboard.competitors import (
+    CHAVE_AGREGADOR,
+    PIN_INDEPENDENTE_PX,
+    _render_square_logo_tile,
+)
 from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
 from motor_expansao.dashboard.utils import score_band_to_color
 from motor_expansao.perfil import resolver_perfil
@@ -315,11 +319,20 @@ _REDE_NOME_OVERRIDES = {
 }
 
 
+def _chave_rede(rede: Any) -> str:
+    """Chave da rede do pin; "" quando a linha nao tem rede (academia independente)."""
+    if rede is None or pd.isna(rede):
+        return ""
+    return str(rede).strip()
+
+
 def _prettify_rede(rede: str) -> str:
     """Nome legivel da rede: override conhecido ou title-case trocando '_' por espaco."""
     key = str(rede or "").strip()
     if not key:
         return "Concorrente"
+    if key == CHAVE_AGREGADOR:
+        return "Independentes (Wellhub)"
     low = key.casefold()
     if low in _REDE_NOME_OVERRIDES:
         return _REDE_NOME_OVERRIDES[low]
@@ -1419,7 +1432,9 @@ def _pins_no_municipio(
     if conc_muni is not None:
         n_conc = int(len(conc_muni))
         if "rede" in conc_muni.columns:
-            redes = conc_muni["rede"].astype(str)
+            # Independente (rede vazia, DEC-046) conta no balde do agregador; `astype(str)`
+            # direto abria um balde "<NA>" com a placa cinza "C" no slide 8.
+            redes = conc_muni["rede"].map(lambda r: _chave_rede(r) or CHAVE_AGREGADOR)
             por_rede = {
                 str(rede): int(cnt) for rede, cnt in redes.value_counts().items()
             }
@@ -1581,12 +1596,12 @@ def _score_faixa_color(value: float, alpha: int = 200) -> tuple[int, int, int, i
 
 
 def _font(size: int = 12) -> ImageFont.ImageFont:
+    # Mesma regra do `censo_map._font` (BLK-RELPON-06): fonte EMBUTIDA do Pillow, que escala.
+    # `arial.ttf` so existe no Windows; na imagem de producao o fallback `load_default()` SEM
+    # size desenhava todo texto de mapa num bitmap fixo de ~10 px (rotulo de 8 px saia grande).
     from typing import cast
 
-    try:
-        return cast(ImageFont.ImageFont, ImageFont.truetype("arial.ttf", size))
-    except OSError:
-        return cast(ImageFont.ImageFont, ImageFont.load_default())
+    return cast(ImageFont.ImageFont, ImageFont.load_default(size=size))
 
 
 def _lonlat_to_mercator(lon: float, lat: float) -> tuple[float, float]:
@@ -2459,17 +2474,20 @@ def _draw_pins(
         if not (minx <= x <= maxx and miny <= y <= maxy):
             continue
         px, py = project(x, y)
+        size = _PIN_LOGO_PX
         if forced_key:
             key = forced_key
         else:
-            rede = row.get("rede")
-            key = str(rede) if rede is not None and not pd.isna(rede) and str(rede).strip() else ""
+            key = _chave_rede(row.get("rede"))
+            if not key:
+                # DEC-046: linha sem `rede` e' academia INDEPENDENTE -> marcador do agregador,
+                # menor que a bandeira de cadeia (mesmo ramo do `censo_map`, Pontual).
+                key, size = CHAVE_AGREGADOR, PIN_INDEPENDENTE_PX
         try:
             from typing import cast
 
             # BLK-RELPON-09: logo QUADRADA (sem balao/mascara circular), ancorada pelo
             # CENTRO do quadrado no ponto (S2b) -- o marcador nao tem ponta.
-            size = _PIN_LOGO_PX
             tile = cast(Image.Image, _render_square_logo_tile(key, size))
             image.paste(tile, (int(px) - size // 2, int(py) - size // 2), tile)
         except Exception:
@@ -2484,11 +2502,18 @@ def _draw_text(
     fill: tuple[int, int, int] = (31, 41, 55),
     font: ImageFont.ImageFont | None = None,
 ) -> None:
-    draw.text(xy, text, fill=fill, font=font or _font())
+    draw.text(xy, _texto_render(text), fill=fill, font=font or _font())
+
+
+def _texto_render(text: str) -> str:
+    """Excecao de RENDER (CLAUDE.md §2): texto de PNG sai sem acento. A fonte embutida do
+    Pillow (12.3, a da imagem de producao) nao tem glifo acentuado e desenha um quadrado."""
+    norm = unicodedata.normalize("NFKD", str(text))
+    return "".join(ch for ch in norm if not unicodedata.combining(ch))
 
 
 def _text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> int:
-    bbox = draw.textbbox((0, 0), text, font=font)
+    bbox = draw.textbbox((0, 0), _texto_render(text), font=font)
     return int(bbox[2] - bbox[0])
 
 
@@ -2563,18 +2588,16 @@ def render_mapas_municipio(
     # `focus_bounds` (que enquadra hexes relevantes) de proposito -- o slide serve para situar o
     # municipio todo, inclusive a parte rural que fica fora do recorte de oportunidade.
     bairros_geo = municipio_result.get("bairros_geo") or {}
-    if unidade == UNIDADE_HEXAGONO:
-        # Modo hexagono: nenhuma camada de bairro e' produzida, e os choropleths de hexagono
-        # acima ficam como estao. E' o relatorio classico, agora por escolha e nao por falta
-        # de dado.
-        return mapas
-
     mapas["bairros"] = _render_mapa_bairros(
         bairros_geo,
         basemap=basemap,
         width=width,
         height=height,
     )
+    if unidade == UNIDADE_HEXAGONO:
+        # Modo hexagono: so a divisa dos bairros (pagina Bairros Oficiais, igual no motor e no
+        # bot); sem nucleo urbano, e os choropleths acima seguem por hexagono.
+        return mapas
 
     # BLK-RELMUN-11: segunda vista, com ZOOM no nucleo urbano. Em municipio de fronteira
     # agricola a cidade ocupa ~2% do territorio (Sinop/MT: 21 bairros viram um ponto no mapa
@@ -3875,7 +3898,7 @@ def gerar_pdf_relatorio_municipal(
 
     `unidade` decide a leitura e o numero de paginas:
     - `UNIDADE_BAIRRO` (default): 12 paginas, 11 quando o municipio nao tem bairro na base.
-    - `UNIDADE_HEXAGONO`: 10 paginas -- sem Bairros Oficiais e sem Nucleo Urbano.
+    - `UNIDADE_HEXAGONO`: 11 paginas -- com Bairros Oficiais, sem Nucleo Urbano.
 
     `mapas` = dict `{"cobertura","bairros","resumo","score","residual","dominio"}` (camadas PNG);
     ausente -> paginas com "Mapa indisponivel". `ultra_dir` aponta os assets de branding (fallback
@@ -3906,10 +3929,9 @@ def gerar_pdf_relatorio_municipal(
     # Territorio -> numeros -> mapas, a mesma ordem do material de referencia: primeiro o leitor
     # ancora o municipio em nomes que conhece, depois ve o ranking, so entao os mapas tematicos.
     modo_bairro = unidade != UNIDADE_HEXAGONO
-    if modo_bairro:
-        _bairros_mapa_page(
-            pdf, municipio_result, mapas.get("bairros"), assets, primary=p2, secondary=s2
-        )
+    _bairros_mapa_page(
+        pdf, municipio_result, mapas.get("bairros"), assets, primary=p2, secondary=s2
+    )
     # Nucleo urbano: logo APOS a vista do municipio inteiro (situar -> aproximar), e SO quando
     # ha bairro para aproximar. Sem bairro na base (Sao Luis/MA, Sorocaba/SP) a pagina saia com
     # "Mapa indisponivel", "0 bairros" e "Sem densidade" -- uma pagina inteira dizendo nada,
