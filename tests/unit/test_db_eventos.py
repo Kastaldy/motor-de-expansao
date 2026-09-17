@@ -89,6 +89,118 @@ def test_registrar_aceita_um_id_ja_cunhado(con: FakeConexao) -> None:
 
 
 # --------------------------------------------------------------------------------------
+# Acesso (§2.1) — `login` e `logout`, destravados pela epic do P19
+# --------------------------------------------------------------------------------------
+
+
+def test_login_grava_o_tipo_e_so_a_origem(con: FakeConexao) -> None:
+    """O contrato (§2.1) preve `metadados` com `origem`, e nada mais."""
+    mod.registrar_login(autor=7)
+    (autor, tipo, metadados) = con.eventos[0]
+    assert (autor, tipo) == (7, "login")
+    assert metadados.obj == {"origem": "web"}
+
+
+def test_login_aceita_a_origem_bot(con: FakeConexao) -> None:
+    """`origem` e' `web`/`bot` no contrato — o bot tambem entra na plataforma."""
+    mod.registrar_login(autor=7, origem="bot")
+    assert con.eventos[0][2].obj == {"origem": "bot"}
+
+
+def test_login_NUNCA_leva_login_nem_email_em_metadados(con: FakeConexao) -> None:
+    """Regra da §2.7, literal: "nunca o login nem o e-mail do alvo em `metadados`".
+
+    E' PII, e o `id_usuario` do carimbo ja' identifica a pessoa. Este teste falha se alguem
+    "enriquecer" o payload com o nome de quem entrou -- que e' a tentacao obvia num evento
+    chamado `login`.
+    """
+    mod.registrar_login(autor=7)
+    chaves = set(con.eventos[0][2].obj)
+    assert chaves == {"origem"}
+    assert not (chaves & {"login", "email", "usuario", "nome"})
+
+
+def test_login_carimba_o_autor_ANTES_de_escrever(con: FakeConexao) -> None:
+    """O carimbo e' o PRIMEIRO comando da transacao (D28): carimbar depois deixaria a
+    janela em que a trigger ja' rodou sem saber quem agiu."""
+    mod.registrar_login(autor=7)
+    primeiro_sql, primeiro_params = con.executados[0]
+    assert "set_config" in primeiro_sql
+    assert primeiro_params == ("7",)
+
+
+def test_login_SEM_autor_e_recusado(con: FakeConexao) -> None:
+    """Nao ha' login de sistema: quando esta funcao e' chamada, a senha JA' foi verificada.
+
+    Sem esta guarda o `transacao` aceitaria `id_usuario=None` (acao de sistema e' legitima
+    no D19) e o evento sairia com autoria nula -- sem responder a unica pergunta que ele
+    existe para responder. E' a diferenca entre a regra estar na docstring e estar no codigo.
+    """
+    with pytest.raises(ValueError, match="sem autor"):
+        mod.registrar_login(autor=None)  # type: ignore[arg-type]
+    assert con.eventos == [], "gravou mesmo recusando"
+
+
+def test_logout_grava_metadados_NULO_e_nao_objeto_vazio(con: FakeConexao) -> None:
+    """`NULL`, nao `{}`. Um objeto vazio afirmaria que ha' payload e ele esta' vazio; a
+    verdade e' que este evento nao tem payload. `metadados IS NULL` e `metadados = '{}'`
+    respondem coisas diferentes para quem consulta."""
+    mod.registrar_logout(autor=7)
+    (autor, tipo, metadados) = con.eventos[0]
+    assert (autor, tipo, metadados) == (7, "logout", None)
+
+
+def test_os_dois_deixam_entidade_nula(con: FakeConexao) -> None:
+    """§2.1: `entidade` e' "—" nos dois. O par polimorfico so' vale quando o alvo e' LINHA
+    deste banco (D24), e entrar/sair nao tem alvo nenhum."""
+    mod.registrar_login(autor=7)
+    mod.registrar_logout(autor=7)
+    for sql, _params in con.executados:
+        if "INSERT INTO eventos" in sql:
+            assert "NULL, NULL" in sql
+
+
+# --------------------------------------------------------------------------------------
+# O vocabulario de `tipo` x o contrato — guarda que NAO existia
+# --------------------------------------------------------------------------------------
+
+
+def _tipos_declarados() -> dict[str, str]:
+    """`{nome da constante: valor}` de todo `EVENTO_*` do modulo."""
+    return {n: v for n, v in vars(mod).items() if n.startswith("EVENTO_") and isinstance(v, str)}
+
+
+def test_todo_tipo_de_evento_existe_no_contrato() -> None:
+    """O modulo diz "fora desta lista e' defeito" -- e ate' 17/09/2026 NADA impunha isso.
+
+    Medido ao acrescentar `login`/`logout`: as duas constantes entraram e nenhum teste
+    notou. Um `tipo` inventado aqui grava linha que consulta nenhuma do contrato alcanca,
+    e o defeito e' silencioso -- a escrita passa.
+    """
+    from pathlib import Path
+
+    contrato = (
+        Path(__file__).resolve().parents[2] / "docs" / "eventos_contrato.md"
+    ).read_text(encoding="utf-8")
+    ausentes = [f"{n}={v!r}" for n, v in _tipos_declarados().items() if f"`{v}`" not in contrato]
+    assert not ausentes, (
+        "tipos de evento sem contrapartida em `docs/eventos_contrato.md`: "
+        + ", ".join(ausentes)
+        + ". Acrescentar `tipo` exige editar o contrato ANTES -- ver a §5, que ja' ficou "
+        "falsa por um dia quando o dossie ganhou produtor."
+    )
+
+
+def test_a_varredura_de_tipos_enxerga_constantes_de_verdade() -> None:
+    """Sem esta metade, o teste acima e' garantia FALSA: se o prefixo `EVENTO_` mudar ou as
+    constantes migrarem de modulo, ele passa a comparar um dicionario VAZIO e fica verde
+    para sempre. Mesma licao de `test_ip_nao_entra_em_eventos.py`."""
+    declarados = _tipos_declarados()
+    assert len(declarados) >= 6, declarados
+    assert declarados["EVENTO_LOGIN"] == "login"
+
+
+# --------------------------------------------------------------------------------------
 # O contrato do evento
 # --------------------------------------------------------------------------------------
 

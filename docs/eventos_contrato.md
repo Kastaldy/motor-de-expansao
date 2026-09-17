@@ -39,10 +39,22 @@ um valor é editar esta tabela primeiro.
 | `ciencia.confidencialidade` | Clique no OK do pop-up de entrada | — | — |
 | `bot.autorizado` | Senha do bot aceita | — | `chat_hash` |
 
-> **`login` ainda não é registrável.** Enquanto o Authelia autenticar, a entrada não passa pelo
-> backend — o piloto só recebe o `Remote-User` já resolvido. O registro completo depende da epic de
-> autenticação decidida no **P19**. Até lá, o mais próximo é a primeira requisição da sessão, que a
-> trilha da DEC-027 já tem.
+> **`login` e `logout` ganharam PRODUTOR em 17/09/2026** (`db/eventos.registrar_login` /
+> `registrar_logout`), pela epic do **P19**. O que faltava nunca foi coluna: enquanto o Authelia
+> autentica, a entrada não passa pelo backend — o piloto só recebe o `Remote-User` já resolvido.
+>
+> **Produtor existe, mas ainda não há chamador:** as rotas `POST /api/login` e `POST /api/logout`
+> vêm na fatia seguinte, e o portão de sessão nasce dormente (`MOTOR_AUTENTICACAO_PROPRIA`). Então
+> hoje nenhuma linha de `login` é escrita — e esta nota diz isso em voz alta em vez de prometer o
+> que não sai.
+>
+> **Por que isto é reposição, e não conveniência.** O `docs/trilha_acesso_piloto.md` registra as
+> tentativas de login do Authelia — **sucesso e falha**, com usuário e IP — como a **camada 3** da
+> trilha, a que "responde quem entrou e quando". O corte do P19 remove essa camada junto com o
+> Authelia; sem estes dois eventos ela ficaria sem substituto. Falta ainda o registro de **falha**
+> de login, que é decisão da epic (a §2.1 não o prevê hoje) e anda junto com a ausência de
+> estrangulamento de tentativa — medido: não existe `rate limit` em nenhum lugar de `web/server/`,
+> e o `regulation:` do Authelia é outra coisa que sai no corte.
 
 ### 2.2 Geração de artefato — o núcleo do D17
 
@@ -338,11 +350,15 @@ daquela seção.
 > produtor e a §5 continuou anunciando que nada fora da §2.7 gravava. Contrato e implementação
 > andam juntos: quem acrescenta produtor edita as duas seções.
 
-**Não grava:** o que resta das famílias §2.1 a §2.6 — `login`, `logout`, `ciencia.confidencialidade`
-e `bot.autorizado` (§2.1), `cadastro.editado` (§2.3) — que a própria §2.3 manda **não** duplicar
-enquanto o log em arquivo existir — e a família inteira da §2.6, que depende da F5.4 existir. `login` segue sem produtor por outro motivo, e não por
-falta de coluna: enquanto o Authelia autenticar, a entrada não passa pelo motor — é o P19 que
-destrava esse, não a D26.
+**Não grava:** o que resta das famílias §2.1 a §2.6 — `ciencia.confidencialidade` e
+`bot.autorizado` (§2.1), `cadastro.editado` (§2.3) — que a própria §2.3 manda **não** duplicar
+enquanto o log em arquivo existir — e a família inteira da §2.6, que depende da F5.4 existir.
+
+**`login` e `logout` saíram desta lista em 17/09/2026**, e com uma ressalva que importa: eles têm
+**produtor** (`registrar_login`/`registrar_logout`, pela epic do P19) e **ainda não têm chamador** —
+as rotas de entrada e saída vêm na fatia seguinte, e o portão de sessão nasce dormente. Ou seja,
+hoje o par está no vocabulário e no código, e nenhuma linha é escrita. Quem ler esta seção
+procurando linhas de `login` no banco não vai achar, e é assim mesmo até o corte.
 
 **O esquema comporta tudo isto.** A D24 fechou a última pendência de modelo e a `014` criou os
 índices que faltavam; a `015` acrescentou a capacidade que separa ver o painel de mudar quem entra.

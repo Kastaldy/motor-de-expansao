@@ -50,6 +50,21 @@ EVENTO_VISITA_DESMARCADA = "imovel.visita_desmarcada"
 #: backend conhecem `hex_id`/`imovel_id`, e derivar da coordenada e' o que a §2.2 recusa.
 EVENTO_VIABILIDADE_CALCULADA = "viabilidade.calculada"
 
+#: §2.1, destravados pela epic do P19 (D30). Ate' aqui o contrato os listava como "ainda nao
+#: registravel", e o motivo nao era falta de coluna: enquanto o Authelia autentica, a entrada
+#: nao passa pelo motor -- o piloto so' recebe o `Remote-User` ja' resolvido.
+#:
+#: E ISTO NAO E' CONVENIENCIA DE AUDITORIA, E' REPOSICAO. O `docs/trilha_acesso_piloto.md` §22
+#: registra que as tentativas de login do Authelia -- sucesso E falha, com usuario e IP -- sao a
+#: CAMADA 3 da trilha, a que "responde quem entrou e quando". O corte remove essa camada, e
+#: sem estes dois eventos ela nao teria substituto nenhum.
+#:
+#: `metadados` leva SO' `origem`, pela regra da §2.7: "nunca o login nem o e-mail do alvo em
+#: `metadados`" -- e' PII, e o `id_usuario` do carimbo ja' identifica a pessoa. `logout` nao
+#: leva metadado algum, porque nao ha' o que qualificar numa saida explicita.
+EVENTO_LOGIN = "login"
+EVENTO_LOGOUT = "logout"
+
 #: As chaves de alvo sao CONTRATO, e o defeito de errar uma e' SILENCIOSO: a escrita passa,
 #: o evento cai fora do indice parcial, e ninguem descobre ate' a tabela crescer. O contrato
 #: diz, com todas as letras: "Gravar `id_imovel` ou `imovel` poe o evento fora dos indices".
@@ -81,6 +96,14 @@ VALUES (%s, %s, NULL, NULL, %s)
 
 # Idem. Aqui `entidade` nula nao e' emenda do D24 e sim ausencia real: a analise nao declara alvo.
 SQL_REGISTRAR_VIABILIDADE = """
+INSERT INTO eventos (id_usuario, tipo, entidade, entidade_id, metadados)
+VALUES (%s, %s, NULL, NULL, %s)
+"""
+
+# Acesso (§2.1). Constante propria pelo mesmo motivo das outras quatro: reusar faria o nome
+# mentir sobre o que a instrucao grava, e as duas podem divergir amanha -- `login` tem
+# `metadados` e `logout` nao tem nenhum, entao ja' nascem diferentes no CHAMADOR.
+SQL_REGISTRAR_ACESSO = """
 INSERT INTO eventos (id_usuario, tipo, entidade, entidade_id, metadados)
 VALUES (%s, %s, NULL, NULL, %s)
 """
@@ -232,3 +255,39 @@ def registrar_viabilidade(
             SQL_REGISTRAR_VIABILIDADE,
             (autor, EVENTO_VIABILIDADE_CALCULADA, Jsonb(metadados)),
         )
+
+
+def registrar_login(*, autor: int, origem: str = "web") -> None:
+    """Grava `login` (§2.1). Destravado pela epic do P19 -- ver as constantes no topo.
+
+    `autor` e' OBRIGATORIO e nao aceita `None`, ao contrario dos outros produtores deste
+    modulo: um `login` de autoria nula nao responde a pergunta que o evento existe para
+    responder ("quem entrou e quando"), e no momento em que esta funcao e' chamada a senha
+    JA' foi verificada -- logo o id e' sempre conhecido. Nao ha' login de sistema.
+
+    `metadados` leva SO' `origem`. A §2.7 e' explicita: "nunca o login nem o e-mail do alvo
+    em `metadados`" -- e' PII, e o `id_usuario` do carimbo ja' identifica a pessoa.
+    """
+    from psycopg.types.json import Jsonb  # import tardio: so' quem escreve paga
+
+    # A frase acima vira CODIGO aqui. `transacao` aceita `id_usuario=None` (acao de sistema,
+    # D19), e `_normalizar_autor` devolve `None` sem reclamar -- entao, sem esta guarda, um
+    # `login` de autoria nula passaria em silencio e o evento nao responderia a unica
+    # pergunta que existe para responder. Afirmacao em docstring sem trava no codigo e' o
+    # defeito que esta base ja' pagou caro: ver a nota do `ip` em `005-eventos.md` (P15).
+    if autor is None:
+        raise ValueError("login sem autor: a senha ja' foi verificada, o id e' sempre conhecido")
+
+    with transacao(id_usuario=autor) as con:
+        con.execute(SQL_REGISTRAR_ACESSO, (autor, EVENTO_LOGIN, Jsonb({"origem": origem})))
+
+
+def registrar_logout(*, autor: int) -> None:
+    """Grava `logout` (§2.1). SEM metadados -- o contrato nao preve nenhum.
+
+    `NULL` em `metadados`, e nao `{}`: um objeto vazio afirmaria que ha' payload e ele esta'
+    vazio, quando a verdade e' que este evento nao tem payload. A distincao importa para
+    quem consulta -- `metadados IS NULL` e `metadados = '{}'` respondem coisas diferentes.
+    """
+    with transacao(id_usuario=autor) as con:
+        con.execute(SQL_REGISTRAR_ACESSO, (autor, EVENTO_LOGOUT, None))
