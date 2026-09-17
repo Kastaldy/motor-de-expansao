@@ -40,7 +40,7 @@ id de alvo, para nao haver como chamar isso para outra pessoa por engano.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .postgres import conexao, transacao
@@ -171,6 +171,28 @@ FOR UPDATE OF u
 # exibir, porque nao tem tela onde exibir.
 SQL_ESTADO_DA_SENHA_POR_LOGIN = """
 SELECT u.deve_trocar_senha_usuario, u.senha_definida_em_usuario IS NOT NULL
+FROM usuarios u
+WHERE u.login_usuario = %s AND u.ativo
+"""
+
+# A credencial para o LOGIN do P19 (D30). Constante PROPRIA, e as duas vizinhas explicam por que
+# nenhuma delas serve:
+#   * `SQL_ESTADO_DA_SENHA` devolve o hash, mas e' por `id_usuario` -- e quem esta' entrando
+#     informa LOGIN, nao id -- e trava a linha com `FOR UPDATE`, porque e' do fluxo de TROCA.
+#     Travar a linha de `usuarios` a cada tentativa de login serializaria as entradas da pessoa e
+#     poria escrita no caminho de quem so' quer entrar;
+#   * `SQL_ESTADO_DA_SENHA_POR_LOGIN` e' por login, mas NAO traz hash nem id -- ela existe para o
+#     `/api/me` oferecer a troca, e o comentario da vizinha diz a regra que ela honra: "ler um hash
+#     que nao sera' usado e' tirar o hash do banco a toa". Aqui o hash SERA' usado.
+#
+# `AND u.ativo` e' a trava de desligamento: quem foi desativado nao entra, e nao ha' caminho de
+# login que contorne isso. Mesmo espelho do D9/D23 que o `SQL_IDENTIDADE` do rbac usa.
+#
+# `deve_trocar_senha_usuario` vem junto porque a resposta do login precisa dizer a' SPA se ela
+# deve abrir a tela de troca imediatamente (D26). Buscar isso depois seria uma segunda ida ao
+# banco para um dado que ja' estava na mesma linha.
+SQL_CREDENCIAL_POR_LOGIN = """
+SELECT u.id_usuario, u.senha_hash, u.deve_trocar_senha_usuario
 FROM usuarios u
 WHERE u.login_usuario = %s AND u.ativo
 """
@@ -473,6 +495,48 @@ def criar(*, login: str, nome: str, email: str, perfil: str, autor: int) -> dict
         # A tela usa isto para mostrar o recado do Authelia, que e' o passo que falta.
         "falta_cadastrar_no_authelia": True,
     }
+
+
+@dataclass(frozen=True)
+class Credencial:
+    """O que o login precisa conferir, e nada mais.
+
+    `senha_hash` e' `repr=False` DE PROPOSITO: dataclass imprime todos os campos no `repr`, e
+    um traceback -- ou um `_LOG.debug("%s", cred)` distraido -- levaria o hash para o log. O hash
+    nao e' a senha, mas tambem nao e' dado de log: e' material de ataque offline se o log vazar.
+    """
+
+    # `senha_hash` vem POR ULTIMO por exigencia do type checker: `field(...)` conta como campo
+    # com default para ele, e campo sem default nao pode vir depois de um com default. Em tempo
+    # de execucao `field(repr=False)` nao da' default nenhum -- mas o gate e' o `mypy src/`, e a
+    # ordem custa nada.
+    id_usuario: int
+    deve_trocar: bool
+    senha_hash: str = field(repr=False)
+
+
+def credenciais_por_login(login: str) -> Credencial | None:
+    """A credencial de quem esta' tentando entrar. `None` = login inexistente OU inativo.
+
+    OS DOIS CASOS CAEM NO MESMO `None`, e isso e' decisao de seguranca, nao economia: distinguir
+    "esse login nao existe" de "existe e esta' desativado" entrega ao visitante um oraculo de
+    quem trabalha aqui. Quem precisa do detalhe olha a tabela.
+
+    LEITURA, nunca transacao de escrita: entrar nao muda `usuarios`. E' o que permite tentativa
+    de login concorrente sem serializar ninguem -- ver o comentario do `SQL_CREDENCIAL_POR_LOGIN`
+    sobre o `FOR UPDATE` da constante vizinha.
+
+    O que esta funcao NAO faz: conferir a senha. Isso e' de `senhas.verificar`, que recebe o hash
+    e nunca levanta por senha errada. Separar as duas mantem o hash fora de qualquer decisao de
+    fluxo aqui dentro.
+    """
+    if not login or not login.strip():
+        return None
+    with conexao() as con:
+        linha = con.execute(SQL_CREDENCIAL_POR_LOGIN, (login.strip(),)).fetchone()
+    if linha is None:
+        return None
+    return Credencial(id_usuario=int(linha[0]), senha_hash=str(linha[1]), deve_trocar=bool(linha[2]))
 
 
 def estado_da_senha(login: str) -> dict[str, bool] | None:

@@ -108,6 +108,63 @@ def _con_padrao(monkeypatch: pytest.MonkeyPatch, *, perfil: str, ativo: bool) ->
 # --------------------------------------------------------------------------------------
 
 
+def test_credencial_por_login_traz_id_hash_e_deve_trocar(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O que o login do P19 (D30) precisa conferir, numa ida so' ao banco."""
+    con = _instalar(monkeypatch, {"SELECT u.id_usuario, u.senha_hash": [(7, "$argon2id$x", True)]})
+    cred = mod.credenciais_por_login("vinicius")
+
+    assert cred is not None
+    assert (cred.id_usuario, cred.senha_hash, cred.deve_trocar) == (7, "$argon2id$x", True)
+    # Leitura, nao transacao de escrita: entrar nao muda `usuarios`.
+    assert con.sql_que_contem("READ ONLY")
+    _sql, params = con.sql_que_contem("SELECT u.id_usuario, u.senha_hash")[0]
+    assert params == ("vinicius",)
+
+
+def test_o_login_e_normalizado_antes_de_consultar(monkeypatch: pytest.MonkeyPatch) -> None:
+    con = _instalar(monkeypatch, {"SELECT u.id_usuario, u.senha_hash": [(7, "h", False)]})
+    mod.credenciais_por_login("  vinicius  ")
+    _sql, params = con.sql_que_contem("SELECT u.id_usuario, u.senha_hash")[0]
+    assert params == ("vinicius",), "espaco em volta do login viraria login inexistente"
+
+
+def test_login_inexistente_e_login_inativo_dao_O_MESMO_None(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Decisao de seguranca, nao economia.
+
+    O `AND u.ativo` da consulta faz o desativado nao voltar linha -- igual a quem nunca existiu.
+    Distinguir os dois entregaria ao visitante um oraculo de quem trabalha aqui.
+    """
+    _instalar(monkeypatch, {"SELECT u.id_usuario, u.senha_hash": []})
+    assert mod.credenciais_por_login("fantasma") is None
+    assert "AND u.ativo" in mod.SQL_CREDENCIAL_POR_LOGIN
+
+
+def test_login_vazio_nao_consulta_o_banco(monkeypatch: pytest.MonkeyPatch) -> None:
+    con = _instalar(monkeypatch, {"SELECT u.id_usuario, u.senha_hash": [(7, "h", False)]})
+    assert mod.credenciais_por_login("") is None
+    assert mod.credenciais_por_login("   ") is None
+    assert con.executados == [], "consultou o banco sem login para procurar"
+
+
+def test_o_hash_nao_aparece_no_repr_da_credencial() -> None:
+    """A razao do `repr=False`: dataclass imprime todos os campos, e um traceback -- ou um
+    `_LOG.debug("%s", cred)` distraido -- levaria o hash para o log. O hash nao e' a senha, mas
+    e' material de ataque offline se o log vazar."""
+    cred = mod.Credencial(id_usuario=7, deve_trocar=False, senha_hash="$argon2id$SEGREDO")
+    assert "SEGREDO" not in repr(cred)
+    assert cred.senha_hash == "$argon2id$SEGREDO", "esconder do repr nao pode esconder do codigo"
+
+
+def test_o_login_nao_trava_a_linha_de_usuarios() -> None:
+    """`FOR UPDATE` aqui serializaria as tentativas de login da mesma pessoa e poria ESCRITA no
+    caminho de quem so' quer entrar. As duas constantes vizinhas travam de proposito -- elas sao
+    dos fluxos de TROCA e de ADMINISTRACAO."""
+    assert "FOR UPDATE" not in mod.SQL_CREDENCIAL_POR_LOGIN
+    assert "FOR UPDATE" in mod.SQL_ESTADO_DA_SENHA
+
+
 def test_listar_traz_inativos(monkeypatch: pytest.MonkeyPatch) -> None:
     """Esconder quem foi desativado tornaria a REATIVAÇÃO impossível pela tela."""
     inativo = (8, "quem_saiu", "Quem Saiu", "q@ultra.com", "expansao", False, None, None, False, True)
