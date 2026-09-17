@@ -4525,9 +4525,15 @@ def acessos_usuarios_redefinir_senha(
 
     eu = _identidade_do_admin(remote_user)
     try:
-        return db_usuarios.redefinir_senha(id_usuario, autor=eu.id_usuario)
+        resultado = db_usuarios.redefinir_senha(id_usuario, autor=eu.id_usuario)
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
         raise _erro_de_usuarios(erro) from erro
+    # Decisao 2 do P19: trocar CREDENCIAL derruba as sessoes abertas. Este e' o caso que
+    # mais importa dos tres -- e' o caminho de desligamento e de suspeita de vazamento, e
+    # deixar a sessao viva aqui manteria a pessoa dentro com a senha que acabou de perder.
+    # `autor` separa quem AGIU de quem SOFREU: o ato e' do admin.
+    _derrubar_sessoes(id_usuario, autor=eu.id_usuario, motivo="senha redefinida pelo admin")
+    return resultado
 
 
 @app.post("/api/acessos/usuarios/{id_usuario}/exigir-troca", include_in_schema=False)
@@ -4550,6 +4556,174 @@ def acessos_usuarios_exigir_troca(
         return db_usuarios.exigir_troca(id_usuario, autor=eu.id_usuario)
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
         raise _erro_de_usuarios(erro) from erro
+
+
+class LoginIn(BaseModel):
+    """Entrada na plataforma. `lembrar` e' a caixinha da decisao 2 (fiel ao Authelia).
+
+    Sem restricao de tamanho de proposito: a POLITICA de senha vive em `senhas.validar` e
+    vale na CRIACAO. Impo-la aqui ensinaria o formato da senha a quem esta' tentando
+    adivinhar -- e recusaria, com mensagem diferente, uma senha legitima antiga.
+    """
+
+    login: str
+    senha: str
+    lembrar: bool = False
+
+
+def _cookie_de_sessao(resposta: Response, token: str, *, lembrar: bool) -> None:
+    """Escreve o cookie da sessao. UNICO lugar do repo que emite `Set-Cookie`.
+
+    Os flags nao sao gosto:
+      * `httponly` -- JavaScript nao le' o token, entao um XSS nao o carrega embora;
+      * `secure` + `samesite="lax"` -- o cookie nao viaja em http nem em requisicao
+        cross-site de terceiro; `lax` e nao `strict` porque `strict` quebraria a volta do
+        `rd=` (a pessoa clica no link do piloto e chegaria deslogada);
+      * `path="/"` -- a SPA e a API moram no mesmo host, e o prefixo `__Host-` EXIGE isto.
+
+    `max_age` e' o eixo de "lembrar de mim" (decisao 2, opcao (a) -- FIEL): com a caixinha,
+    cookie PERSISTENTE de 8h, que sobrevive a fechar e reabrir o navegador; sem ela, cookie
+    de SESSAO, que morre com a janela. Nos DOIS casos a sessao no banco dura os mesmos 8h --
+    "lembrar" muda a persistencia do cookie, NAO o tempo de vida. No Authelia o
+    `remember_me` ja' e' igual ao `expiration`, e reproduzir era a decisao.
+    """
+    seguro = acesso.em_producao()
+    resposta.set_cookie(
+        key=acesso.COOKIE_SESSAO if seguro else acesso.COOKIE_SESSAO_DEV,
+        value=token,
+        httponly=True,
+        secure=seguro,
+        samesite="lax",
+        path="/",
+        max_age=db_sessoes_duracao_s() if lembrar else None,
+    )
+
+
+def db_sessoes_duracao_s() -> int:
+    """Os 8h da decisao 2, em segundos, lidos da CONSTANTE -- nunca recopiados aqui."""
+    from motor_expansao.db import sessoes as db_sessoes
+
+    return db_sessoes.DURACAO_SESSAO_H * 3600
+
+
+@app.post("/api/login", include_in_schema=False)
+def login(body: LoginIn) -> Response:
+    """Entra na plataforma: confere a senha, abre sessao e devolve o cookie.
+
+    SO' ATENDE COM A AUTENTICACAO PROPRIA LIGADA. Enquanto o Authelia autentica, esta rota
+    responde 404 -- e nao 501 ou 403 -- porque neste deploy ela nao existe: anunciar uma
+    porta de login que o sistema nao usa so' convida tentativa.
+
+    O MESMO 401 PARA OS DOIS ERROS. Login inexistente e senha errada devolvem a mesma
+    resposta, com a mesma mensagem: distinguir entrega ao visitante um oraculo de quem
+    trabalha aqui. E' a mesma decisao que `credenciais_por_login` ja' tomou na consulta,
+    onde inexistente e inativo caem no mesmo `None`.
+
+    O que esta rota NAO tem, e esta' declarado: estrangulamento de tentativa. Nao existe
+    `rate limit` em lugar nenhum de `web/server/` (medido), e o `regulation:` do Authelia
+    sai no corte. E' assunto da decisao 3 da epic, registrado no contrato de eventos.
+    """
+    from motor_expansao.db import senhas as db_senhas
+    from motor_expansao.db import sessoes as db_sessoes
+    from motor_expansao.db import usuarios as db_usuarios
+
+    if not db_sessoes.ligada():
+        raise HTTPException(404, "Not Found")
+
+    negado = HTTPException(401, "Login ou senha incorretos.")
+    try:
+        credencial = db_usuarios.credenciais_por_login(body.login)
+        # A verificacao roda MESMO sem credencial, e o `None` e' proposital: `senhas.verificar`
+        # JA' paga um `ph.hash` descartavel quando o hash e' nulo ou fora do formato PHC,
+        # exatamente para o cronometro nao denunciar quem tem cadastro. A defesa ja' estava
+        # escrita la', com a razao no docstring -- duplica-la aqui com um hash-sentinela seria
+        # uma segunda redacao da mesma garantia, que e' como elas passam a divergir.
+        confere = db_senhas.verificar(body.senha, credencial.senha_hash if credencial else None)
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_usuarios(erro) from erro
+    if credencial is None or not confere:
+        raise negado
+
+    aberta = db_sessoes.abrir(id_usuario=credencial.id_usuario)
+    try:
+        from motor_expansao.db import eventos as db_eventos
+
+        db_eventos.registrar_login(autor=credencial.id_usuario)
+    except Exception:  # noqa: BLE001 — o rastro nunca impede a entrada
+        _LOG_D17.exception("login do usuario %d SEM evento", credencial.id_usuario)
+
+    resposta = JSONResponse({"deve_trocar_senha": credencial.deve_trocar})
+    _cookie_de_sessao(resposta, aberta.token, lembrar=body.lembrar)
+    return resposta
+
+
+@app.post("/api/logout", include_in_schema=False)
+def logout(request: Request) -> Response:
+    """Sai: revoga a sessao no SERVIDOR e apaga o cookie.
+
+    Revogar no servidor e' o ponto inteiro da D30 ter escolhido tabela: o `BotaoSair.tsx`
+    ja' documenta que limpar estado no cliente NAO e' logout -- a tela pareceria deslogada
+    e a requisicao seguinte continuaria autenticada.
+
+    IDEMPOTENTE: sair duas vezes, ou sair com sessao ja' vencida, nao e' erro. A resposta e'
+    a mesma, e o cookie e' apagado de todo jeito.
+    """
+    from motor_expansao.db import sessoes as db_sessoes
+
+    if not db_sessoes.ligada():
+        raise HTTPException(404, "Not Found")
+
+    token = request.cookies.get(acesso.COOKIE_SESSAO) or request.cookies.get(
+        acesso.COOKIE_SESSAO_DEV
+    )
+    sessao = db_sessoes.validar(token or "") if token else None
+    if sessao is not None:
+        try:
+            db_sessoes.revogar(token=token or "", id_usuario=sessao.identidade.id_usuario)
+            from motor_expansao.db import eventos as db_eventos
+
+            db_eventos.registrar_logout(autor=sessao.identidade.id_usuario)
+        except Exception:  # noqa: BLE001 — sair nunca falha por causa do rastro
+            _LOG_D17.exception("logout do usuario %d SEM evento", sessao.identidade.id_usuario)
+
+    resposta = JSONResponse({"ok": True})
+    # Apaga nos DOIS nomes: quem alternou entre dev e producao no mesmo navegador teria o
+    # outro cookie sobrando, e o portao aceita qualquer um dos dois.
+    for nome in (acesso.COOKIE_SESSAO, acesso.COOKIE_SESSAO_DEV):
+        resposta.delete_cookie(key=nome, path="/")
+    return resposta
+
+
+def _derrubar_sessoes(id_alvo: int, *, autor: int, motivo: str) -> None:
+    """Revoga TODAS as sessoes abertas de `id_alvo`. Nunca derruba a operacao que a chamou.
+
+    A ordem importa e e' deliberada: a troca de senha acontece PRIMEIRO e so' entao as
+    sessoes caem. Se a revogacao falhar, a troca CONTINUA valendo e o erro vira log --
+    o contrario perderia a troca de senha por causa do rastro, que e' trocar um problema
+    grande por um pequeno. Mesma politica do `_registrar_acesso` da DEC-027.
+
+    Sem banco configurado isto e' silencioso de proposito: nao ha' sessao propria enquanto o
+    Authelia autentica, entao nao ha' o que revogar -- e um traceback por troca de senha
+    treinaria o operador a ignorar justamente este log.
+    """
+    try:
+        from motor_expansao.db import BancoNaoConfigurado
+        from motor_expansao.db import sessoes as db_sessoes
+
+        try:
+            caidas = db_sessoes.revogar_todas_do_usuario(id_usuario=id_alvo, autor=autor)
+        except BancoNaoConfigurado:
+            _LOG_D17.debug("deploy sem banco — %s sem sessao a revogar", motivo)
+            return
+        if caidas:
+            _LOG_D17.info("%s: %d sessao(oes) do usuario %d revogada(s)", motivo, caidas, id_alvo)
+    except Exception:  # noqa: BLE001 — a revogacao nunca derruba a troca de senha
+        _LOG_D17.exception(
+            "%s: FALHA ao revogar as sessoes do usuario %d — a credencial mudou e sessoes "
+            "abertas com a ANTIGA podem seguir validas ate' expirarem",
+            motivo,
+            id_alvo,
+        )
 
 
 @app.patch("/api/me/senha", include_in_schema=False)
@@ -4577,13 +4751,19 @@ def me_trocar_senha(
 
     eu = _minha_identidade(remote_user)
     try:
-        return db_usuarios.trocar_a_propria_senha(
+        resultado = db_usuarios.trocar_a_propria_senha(
             autor=eu.id_usuario,
             senha_atual=body.senha_atual,
             nova_senha=body.nova_senha,
         )
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
         raise _erro_de_usuarios(erro) from erro
+    # Decisao 2 do P19: a senha nova invalida as sessoes abertas com a ANTIGA. Aqui quem
+    # age e quem sofre sao a mesma pessoa -- inclusive a sessao DESTA requisicao cai, e e'
+    # o comportamento certo: trocar senha e continuar logado com a credencial velha e'
+    # exatamente o que a revogacao existe para impedir. A tela pede login de novo.
+    _derrubar_sessoes(eu.id_usuario, autor=eu.id_usuario, motivo="troca da propria senha")
+    return resultado
 
 
 # ============================================================================

@@ -299,6 +299,18 @@ COOKIE_SESSAO_DEV = "motor_sessao"
 HEADERS_DE_IDENTIDADE = ("remote-user", "remote-email")
 
 
+def em_producao() -> bool:
+    """Este processo roda em PRODUCAO? Leitor publico do mesmo sinal que o resto do modulo.
+
+    Existe porque o `app.py` precisa decidir os flags do cookie de sessao (`Secure` e o
+    prefixo `__Host-`, que exigem https) e alcancar `_fail_closed_ativo` de fora seria furar
+    o `_` de um modulo vizinho. O SINAL e' o mesmo de sempre -- `MOTOR_CADASTRO_DIR`, o
+    volume `:rw` que so' o compose monta --, e reusa-lo evita um SEGUNDO conceito de "estou
+    em producao" que possa divergir do primeiro (§ do `rbac.login_efetivo`).
+    """
+    return _fail_closed_ativo()
+
+
 def rota_publica_sem_sessao(path: str) -> bool:
     """`True` = atende sem sessao. Estaticos da SPA inclusos (nao comecam com `/api/`).
 
