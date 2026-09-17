@@ -5299,9 +5299,20 @@ e as demais **nunca rodaram**, logo nunca reportaram nada. Parsing consertaria *
 comparação com o baseline commitado pega os dois casos, e não depende de mapear nome de coletor
 para nome de arquivo (onde uma exceção entre 107 passaria batida).
 
-**Prova.** Sandbox com três redes exercitando os três casos: a que não recoletou voltou à safra, a
-que recoletou ficou intocada, a sem mudança desde o commit não foi tocada — 1 restauração, zero
-falso positivo. Mais 7 testes de contrato textual, incluindo a ORDEM backup-antes-do-descarte.
+**Prova.** `test_restauracao_EXECUTADA_nos_tres_casos` **executa** o laço — `cp -a`, `cmp`,
+`git show` — num repositório git temporário, com três redes cobrindo os três casos que existem: a
+que não recoletou volta à safra, a que recoletou fica intocada, a sem mudança desde o commit não é
+tocada (1 restauração, zero falso positivo). O teste **extrai o trecho do próprio wrapper** em vez
+de reescrevê-lo, senão seria a segunda redação da mesma regra e passaria mesmo com o wrapper
+divergindo (lição da DEC-044); `test_o_laco_extraido_e_o_do_wrapper_nao_uma_copia` falha alto se os
+marcadores sumirem. Mais 9 testes de contrato textual, incluindo a ORDEM backup-antes-do-descarte e
+a acentuação das mensagens ao chat de ops.
+
+> A primeira versão deste bloco dizia "sandbox com três redes" apontando para um script que rodou
+> de verdade mas **vivia no scratchpad da sessão** — prova não reproduzível por quem lê o repo.
+> Achado MÉDIO da revisão do PR #380, e correto: a lógica que **sobrescreve CSV de coleta** tinha
+> só teste de substring, e um refator que preservasse as strings e quebrasse o `cmp` passaria com
+> tudo verde.
 
 **Armadilha declarada:** o `cmp` compara bytes. Se os CSVs ganharem normalização de EOL, a
 comparação daria "diferente" para todas as redes e a restauração viraria **no-op silencioso** — a

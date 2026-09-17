@@ -27,6 +27,9 @@ os dois em vez de proibi-los.
 
 from __future__ import annotations
 
+import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -34,6 +37,21 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 WRAPPER = ROOT / "scripts" / "cron" / "run_weekly_90.sh"
 RUNBOOK = ROOT / "docs" / "infra_producao.md"
+
+#: Marcadores do laço de restauração DENTRO do wrapper. O teste funcional EXTRAI esse trecho e o
+#: executa — em vez de reescrevê-lo aqui. Reescrever criaria a segunda redação da mesma regra: o
+#: teste passaria mesmo se o wrapper divergisse, que é exatamente o defeito que o laço existe para
+#: impedir (e a lição da DEC-044, de duas redações que se desencontram em silêncio).
+_INICIO_LACO = "  RESTAURADAS=0"
+_FIM_LACO = "  done"
+
+
+def _laco_de_restauracao() -> str:
+    """O trecho EXECUTÁVEL do laço, recortado do wrapper de produção."""
+    texto = WRAPPER.read_text(encoding="utf-8")
+    i = texto.index(_INICIO_LACO)
+    j = texto.index(_FIM_LACO, i) + len(_FIM_LACO)
+    return texto[i:j]
 
 
 def _linhas_executaveis(caminho: Path) -> list[str]:
@@ -229,6 +247,120 @@ def test_o_cabecalho_registra_a_divida_como_PAGA_e_o_mecanismo() -> None:
     texto = WRAPPER.read_text(encoding="utf-8")
     assert "DIVIDA DO DESCARTE CEGO FOI PAGA" in texto
     assert "selfit 231 -> 119" in texto, "o incidente que originou o conserto saiu do cabeçalho"
+
+
+# --------------------------------------------------------------------------- #
+# Teste FUNCIONAL do laço — ele sobrescreve CSV de coleta, e substring não basta
+# --------------------------------------------------------------------------- #
+@pytest.mark.skipif(shutil.which("bash") is None, reason="precisa de bash (Git Bash no Windows)")
+@pytest.mark.skipif(shutil.which("git") is None, reason="precisa de git")
+def test_restauracao_EXECUTADA_nos_tres_casos(tmp_path: Path) -> None:
+    """Executa o laço do wrapper de verdade: `cp -a`, `cmp`, `git show`.
+
+    Achado MÉDIO da revisão do PR #380, e ele estava certo: os outros testes checam substring e
+    ordem de linhas. Um refator que preserve as strings e quebre o `cmp` passaria com tudo verde —
+    e esta é a lógica que **sobrescreve dado de coleta**.
+
+    Os três casos, que são os únicos que existem:
+
+    | rede | situação                      | esperado            |
+    |------|-------------------------------|---------------------|
+    | A    | não recoletou                 | volta à safra       |
+    | B    | recoletou                     | intocada            |
+    | C    | sem mudança desde o commit    | no-op               |
+
+    O `C` é o que impede o falso positivo: sem a segunda condição (`! cmp safra atual`), ele seria
+    "restaurado" à toa toda semana.
+    """
+    repo = tmp_path / "repo"
+    (repo / "Unidades").mkdir(parents=True)
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    def escrever(caminho: Path, conteudo: str) -> None:
+        """LF SEMPRE — `write_text` usa `newline=None` e traduz `\\n` para CRLF no Windows.
+
+        Sem isto o teste mediria um cenário que a VPS não tem: lá o checkout é Linux, sem
+        conversão. Medido em 2026-09-17: com `write_text` puro o arquivo nascia CRLF, o
+        `git show` devolvia LF, o `cmp` dava "diferente" e o laço não restaurava nada — teste
+        vermelho por defeito do TESTE, com o laço correto.
+        """
+        caminho.write_text(conteudo, encoding="utf-8", newline="\n")
+
+    git("init", "-q", ".")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    # O `core.autocrlf` do git GLOBAL vaza para o repo temporário (na estação Windows vem `true`)
+    # e reintroduziria a conversão no checkout. Produção não tem isso.
+    git("config", "core.autocrlf", "false")
+    for rede in ("a", "b", "c"):
+        escrever(repo / "Unidades" / f"unidades_{rede}.csv", f"nome;lat\nBASE_{rede.upper()};1\n")
+    git("add", "-A")
+    git("commit", "-qm", "base")
+
+    safra = tmp_path / "infra" / "safra_anterior"
+    safra.mkdir(parents=True)
+    escrever(safra / "unidades_a.csv", "nome;lat\nSAFRA_A;1\n")
+    escrever(safra / "unidades_b.csv", "nome;lat\nSAFRA_B;1\n")
+    escrever(safra / "unidades_c.csv", "nome;lat\nBASE_C;1\n")  # sem mudança desde o commit
+
+    # Só a rede B recoletou; A ficou no baseline (o coletor falhou ou nunca rodou).
+    escrever(repo / "Unidades" / "unidades_b.csv", "nome;lat\nNOVO_B;1\n")
+
+    # NADA de tradução de caminho: o script roda com `cwd=repo` e a safra entra RELATIVA.
+    #
+    # Custou sete rodadas de depuração descobrir por quê. Interpolar caminho absoluto exige
+    # converter `C:\...` para a forma do MSYS, e `cygpath` só existe no Git Bash (o runner Linux
+    # do CI não tem). Quando ele falha, o código cai em `as_posix()` -> `C:/Users/...`, e aí vem a
+    # armadilha: o `cd` ACEITA essa forma, mas o `[ -f "$SAFRA/$nome" ]` do laço NÃO — então cada
+    # rede bate no `continue` e o laço termina com `VARRIDOS=3`, `returncode 0` e ZERO
+    # restaurações. Um verde que não prova nada, do lado do teste desta vez.
+    #
+    # Caminho relativo elimina a tradução inteira e vale igual nos dois sistemas.
+    script = (
+        "set -u\n"
+        'SAFRA="../infra/safra_anterior"\n'
+        'echo "VARRIDOS=$(ls Unidades/*.csv | wc -l)"\n'
+        f"{_laco_de_restauracao()}\n"
+    )
+    saida = subprocess.run(
+        ["bash", "-c", script],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert saida.returncode == 0, f"o laço falhou: {saida.stderr}"
+    assert "VARRIDOS=3" in saida.stdout, (
+        f"o laço não varreu os 3 CSVs — sem isto, `returncode 0` não prova execução. "
+        f"stdout={saida.stdout!r} stderr={saida.stderr!r}"
+    )
+
+    lido = {
+        rede: (repo / "Unidades" / f"unidades_{rede}.csv").read_text(encoding="utf-8")
+        for rede in ("a", "b", "c")
+    }
+    assert "SAFRA_A" in lido["a"], "a rede que NÃO recoletou não voltou à safra — o dano continua"
+    assert "NOVO_B" in lido["b"], "a rede que recoletou foi sobrescrita pela safra (regressão grave)"
+    assert "BASE_C" in lido["c"], "rede sem mudança desde o commit foi tocada à toa"
+    # O texto é "restaurada da safra anterior: <nome>" — casar por prefixo curto ("restaurada:")
+    # NÃO funciona, e foi o que me fez depurar caminho, EOL e recorte do laço por quatro rodadas
+    # enquanto o laço estava certo e o `stdout` dizia isso o tempo todo.
+    assert "restaurada da safra anterior: unidades_a.csv" in saida.stdout, (
+        f"a linha de restauração não saiu como esperado. stdout={saida.stdout!r}"
+    )
+    assert saida.stdout.count("restaurada da safra anterior:") == 1, (
+        f"restaurou mais de uma rede (falso positivo). stdout={saida.stdout!r}"
+    )
+
+
+def test_o_laco_extraido_e_o_do_wrapper_nao_uma_copia() -> None:
+    """Se os marcadores saírem do wrapper, o teste funcional vira teatro — falha alto aqui."""
+    laco = _laco_de_restauracao()
+    assert 'git show "HEAD:Unidades/$nome"' in laco, "o laço extraído não é o de produção"
+    assert re.search(r"for f in Unidades/\*\.csv", laco), "o laço extraído perdeu a varredura"
 
 
 def test_runbook_aponta_para_o_arquivo_versionado() -> None:

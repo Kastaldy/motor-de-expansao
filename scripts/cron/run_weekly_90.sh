@@ -127,6 +127,29 @@ enviar_telegram('🔴 [Coleta] ' + sys.argv[1], os.environ['API_TELEGRAM_TOKEN']
   #   familia de defeito do mount que congelou os pins. Hoje o checkout da VPS e' Linux e nao ha
   #   conversao (medido); se a premissa mudar, este laco precisa comparar normalizado.
   echo "[$(date -u)] conferindo quais redes nao recoletaram..."
+
+  # SONDA DA PREMISSA DE EOL, antes do laco. A armadilha descrita acima nao e' teorica: ela
+  # DERRUBOU o laco num ambiente real (a estacao Windows, com `core.autocrlf=true`, em
+  # 2026-09-17) -- `git show` devolvia LF, o disco tinha CRLF, o `cmp` dava "diferente" para
+  # TODAS as redes e nada era restaurado. O sintoma disso em producao seria indistinguivel de um
+  # domingo saudavel: "nenhuma rede precisou restaurar". Guarda que falha ABERTA e em SILENCIO e'
+  # o defeito que este lote inteiro existe para nao repetir, entao aqui ela GRITA.
+  #
+  # Nao aborta: restaurar nada e' exatamente o comportamento de antes deste bloco, logo nao
+  # piora nada -- o que nao pode e' ninguem saber.
+  DIVERGEM=0; COMPARAVEIS=0
+  for f in Unidades/*.csv; do
+    git cat-file -e "HEAD:Unidades/$(basename "$f")" 2>/dev/null || continue
+    COMPARAVEIS=$((COMPARAVEIS + 1))
+    git show "HEAD:Unidades/$(basename "$f")" 2>/dev/null | cmp -s - "$f" || DIVERGEM=$((DIVERGEM + 1))
+  done
+  if [ "$COMPARAVEIS" -gt 10 ] && [ "$DIVERGEM" -eq "$COMPARAVEIS" ]; then
+    echo "!! [$(date -u)] SUSPEITA DE EOL: as $COMPARAVEIS redes comparaveis divergem TODAS do"
+    echo "!! baseline. Ou 100% recoletou (implausivel), ou a comparacao por bytes quebrou"
+    echo "!! (normalizacao de EOL). A restauracao vira no-op silencioso -- conferir antes de confiar."
+    _avisar_ops "sonda de EOL: as ${COMPARAVEIS} redes comparáveis divergem TODAS do baseline. Ou 100% recoletou, ou a comparação por bytes quebrou e a restauração virou no-op — conferir $LOG"
+  fi
+
   RESTAURADAS=0
   for f in Unidades/*.csv; do
     nome=$(basename "$f")
