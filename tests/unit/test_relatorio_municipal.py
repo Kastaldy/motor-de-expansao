@@ -960,6 +960,23 @@ def test_tabela_hexes_prefere_renda_censitaria_a_municipal():
     assert tab2["renda_constante"]
 
 
+def test_tabela_hexes_celula_pd_na_vira_none():
+    """O enriquecido real grava as metricas como `Float32` NULAVEL: o buraco chega como `pd.NA`,
+    nao NaN, e `float(pd.NA)` derrubava o relatorio inteiro (421 municipios do BR, Acrelandia/AC
+    entre eles). A celula sem dado vira None -- o mesmo "n/d" do NaN."""
+    from motor_expansao.dashboard.relatorio_municipal import _tabela_hexes
+
+    df = _sample_df()
+    df["score_setor_2022_calibrado"] = pd.array([0.5, pd.NA, 0.7, 0.8], dtype="Float32")
+    df["densidade_pop_setor_hab_km2"] = pd.array([pd.NA] * len(df), dtype="Float32")
+
+    tab = _tabela_hexes(df)
+
+    assert tab["n_exibidas"] == len(df)
+    assert all(linha["densidade"] is None for linha in tab["linhas"])
+    assert sum(linha["score"] is None for linha in tab["linhas"]) == 1
+
+
 def test_tabela_hexes_vazia_sem_hexes():
     from motor_expansao.dashboard.relatorio_municipal import _tabela_hexes
 

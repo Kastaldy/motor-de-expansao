@@ -1122,7 +1122,11 @@ def _tabela_hexes(
         """NaN vira None: `nan != nan` faria duas chamadas identicas de `agregar_municipio`
         compararem como diferentes (invariante travado em teste), e NaN nao e' JSON valido --
         este dict trafega pela API. `_format_number(None)` ja imprime "n/d".
+        `pd.isna` e nao so `isnan`: o enriquecido e' `Float32` nulavel e o buraco chega como
+        `pd.NA`, que `float()` recusa.
         """
+        if pd.isna(valor):
+            return None
         v = float(valor)
         return None if math.isnan(v) else v
 
