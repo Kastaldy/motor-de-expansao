@@ -195,6 +195,26 @@ def test_o_pull_que_falha_GRITA_em_vez_de_sussurrar() -> None:
     assert "git pull --ff-only || echo" not in texto, "o `|| echo` que engolia a falha voltou"
 
 
+def test_as_mensagens_de_ops_sao_ACENTUADAS() -> None:
+    """`CLAUDE.md` §2: texto de usuário é acentuado, e o bot Telegram é canal de usuário.
+
+    Achado MÉDIO da revisão do PR #380: as duas mensagens novas iam ao chat de ops com "nao",
+    "esta", "repositorio", "copia" — enquanto o precedente do próprio repo (`_avisar_falha` em
+    `run_atualizacao_crescimento.sh`) já manda acentuado nesse mesmo canal.
+
+    A regra proíbe acento em IDENTIFICADOR, não em prosa: estas strings viajam em JSON UTF-8 pelo
+    `sendMessage`, não são nome de coluna nem valor de enum. Travado aqui porque acento é o
+    primeiro detalhe que se perde numa edição futura — e ninguém nota, porque a mensagem só
+    aparece no dia em que algo falha.
+    """
+    texto = WRAPPER.read_text(encoding="utf-8")
+    mensagens = [linha for linha in texto.splitlines() if '_avisar_ops "' in linha]
+    assert len(mensagens) >= 2, "as mensagens de ops sumiram"
+    for palavra in ("cópia", "não", "repositório", "está"):
+        assert palavra in texto, f"{palavra!r} perdeu o acento na mensagem enviada ao chat de ops"
+    assert "�" not in texto, "o arquivo tem caractere de substituição (encoding corrompido)"
+
+
 def test_o_aviso_reusa_o_primitivo_e_nunca_derruba_o_lote() -> None:
     """Aviso é efeito colateral, não etapa — e o token não pode vazar no log do cron."""
     texto = "\n".join(_linhas_executaveis(WRAPPER))

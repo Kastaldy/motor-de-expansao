@@ -98,7 +98,7 @@ enviar_telegram('🔴 [Coleta] ' + sys.argv[1], os.environ['API_TELEGRAM_TOKEN']
     PULL_FALHOU=1
     echo "!! [$(date -u)] ERRO: git pull --ff-only FALHOU -- o lote segue com a copia LOCAL,"
     echo "!! que pode nao ter coletores consertados. HEAD=$(git rev-parse --short HEAD)"
-    _avisar_ops "git pull do coletor FALHOU (HEAD=$(git rev-parse --short HEAD)); o lote seguiu com a copia local, sem os consertos que estiverem na origin"
+    _avisar_ops "git pull do coletor FALHOU (HEAD=$(git rev-parse --short HEAD)); o lote seguiu com a cópia local, sem os consertos que estiverem na origin"
   fi
 
   docker build -t gymscraping:local . || { echo "ERRO: build falhou"; exit 1; }
@@ -140,7 +140,7 @@ enviar_telegram('🔴 [Coleta] ' + sys.argv[1], os.environ['API_TELEGRAM_TOKEN']
   done
   echo "[$(date -u)] redes restauradas (nao recoletaram): $RESTAURADAS"
   if [ "$RESTAURADAS" -gt 0 ]; then
-    _avisar_ops "${RESTAURADAS} rede(s) nao recoletaram neste lote e voltaram a safra ANTERIOR em vez do baseline do repositorio. A contagem delas esta defasada, nao zerada -- ver $LOG"
+    _avisar_ops "${RESTAURADAS} rede(s) não recoletaram neste lote e voltaram à safra ANTERIOR em vez do baseline do repositório. A contagem delas está defasada, não zerada — ver $LOG"
   fi
 
   # 1.5) Snapshot semanal (BLK-MA-06): fotografa unidades (recem-coletado aqui) + wellhub
