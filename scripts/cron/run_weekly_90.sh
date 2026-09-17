@@ -30,11 +30,16 @@
 # de o arquivo existir, e por isso o teste proprio (`test_wrapper_cron_weekly_90.py`) EXIGE os
 # dois em vez de proibi-los.
 #
-# DIVIDA DECLARADA, NAO CORRIGIDA AQUI (seria mudanca de comportamento num PR de
-# versionamento): a linha 2 faz `git checkout -- Unidades/` e a 3 engole a falha do pull com
-# `|| echo`. Juntas, elas tornam DESTRUTIVA uma falha de coletor -- o CSV raspado e' descartado
-# e a rede volta ao baseline do repositorio -- e deixam um pull que falha passar em silencio.
-# Foi assim que o checkout ficou 8 commits atras sem ninguem ver, ate' 2026-09-17.
+# A DIVIDA DO DESCARTE CEGO FOI PAGA EM 2026-09-17 `[BLK-COLETA-01]`. Ate' entao este arquivo
+# abria com `git checkout -- Unidades/` (descarta os CSVs raspados para o pull dar fast-forward)
+# e `git pull --ff-only || echo` (engole a falha). Juntas, as duas tornavam DESTRUTIVA a falha de
+# um coletor -- a rede voltava ao baseline do REPOSITORIO, nao a' safra da semana passada -- e
+# deixavam o clone envelhecer em silencio. Foi o mecanismo do incidente de 2026-09-13
+# (`selfit 231 -> 119`) e do checkout parado 8 commits atras por cinco dias.
+#
+# Agora: a safra e' PRESERVADA antes do descarte (passo 0), quem nao recoletou volta a ELA e nao
+# ao baseline (passo 2.5, por CONTEUDO), e o pull que falha AVISA no chat de ops. O descarte em
+# si continua -- ele e' o preco do fast-forward --, mas deixou de ser perda.
 set -uo pipefail
 REPO=/opt/gymscraping
 INFRA=/opt/gymscraping-infra
@@ -43,18 +48,132 @@ LOGDIR=/var/log/gymscraping
 mkdir -p "$LOGDIR"
 TS=$(date -u +%Y%m%d-%H%M%S)
 LOG="$LOGDIR/weekly_${TS}.log"
+
+# Aviso no chat de ops (bot "Paulo"), molde do `_avisar_falha` de `run_atualizacao_crescimento.sh`.
+# Reusa `enviar_telegram` (`api/relatorio_acessos.py`), que ja' paga duas dividas: particao abaixo
+# do teto de 4096 do Telegram e falha SEM vazar o token -- o `raise_for_status` do requests embute
+# a URL na mensagem, e stderr de cron vai para log em disco.
+# NUNCA derruba o lote: aviso e' efeito colateral, nao etapa. Credencial ausente fica gritada no
+# log, senao ops ficaria surdo sem ninguem saber.
+_avisar_ops() {
+  local msg="$1" tok cid img
+  img="$(grep -E '^API_IMAGE=' "$MOTOR/app/.env" | head -1 | cut -d= -f2- | tr -d '\r"'"'"'' || true)"
+  tok="$(grep -E '^API_TELEGRAM_TOKEN=' "$MOTOR/app/.env" | head -1 | cut -d= -f2- | tr -d '\r"'"'"'' || true)"
+  cid="$(grep -E '^MONITOR_TELEGRAM_CHAT_ID=' "$MOTOR/app/.env" | head -1 | cut -d= -f2- | tr -d '\r"'"'"'' || true)"
+  if [ -z "$tok" ] || [ -z "$cid" ] || [ -z "$img" ]; then
+    echo "!! AVISO NAO ENVIADO (credencial/imagem ausente no .env): $msg"
+    return 0
+  fi
+  # Token e chat vao por `-e NOME` SEM valor -- herdam do ambiente e NAO aparecem em `ps`.
+  # Passar `-e NOME="$valor"` poe o token na linha de comando, visivel para qualquer processo
+  # da maquina. E' a forma que `run_regen_mercado.sh:175` e `run_atualizacao_crescimento.sh:137`
+  # usam DE PROPOSITO, com comentario proprio; a primeira versao deste bloco divergiu dela e
+  # reabriu o vazamento que o repo ja' tinha fechado (achado da revisao do PR #380).
+  # O `export` e' o que torna o `-e NOME` possivel: sem ele a variavel e' `local` e nao cruza
+  # para o processo do docker.
+  export API_TELEGRAM_TOKEN="$tok" MONITOR_TELEGRAM_CHAT_ID="$cid"
+  docker run --rm -e API_TELEGRAM_TOKEN -e MONITOR_TELEGRAM_CHAT_ID "$img" \
+    python -c "
+import os, sys
+from motor_expansao.api.relatorio_acessos import enviar_telegram
+enviar_telegram('🔴 [Coleta] ' + sys.argv[1], os.environ['API_TELEGRAM_TOKEN'], os.environ['MONITOR_TELEGRAM_CHAT_ID'])
+" "$msg" 2>/dev/null || echo "!! falha ao enviar o aviso ao chat de ops (o lote segue): $msg"
+}
 {
   echo "[$(date -u)] === run_weekly_90 INICIO ==="
   cd "$REPO" || { echo "ERRO: sem $REPO"; exit 1; }
   [ -f "$INFRA/contagem_atual.csv" ] && cp -f "$INFRA/contagem_atual.csv" "$INFRA/contagem_anterior.csv"
-  git checkout -- Unidades/ 2>/dev/null || true   # auto-cura: descarta CSVs raspados p/ o pull dar fast-forward
-  git pull --ff-only || echo "AVISO: git pull falhou; segue com a copia local"
+
+  # 0) SALVAGUARDA da safra anterior, ANTES do descarte `[BLK-COLETA-01]`.
+  #    O `git checkout -- Unidades/` abaixo continua necessario (sem arvore limpa o pull nao da
+  #    fast-forward), mas ele descarta os CSVs RASPADOS: a rede cujo coletor falhar fica com o
+  #    baseline do REPOSITORIO, que pode ser de meses atras. Foi assim que a Selfit caiu de 231
+  #    para 119 em 2026-09-13 e o snapshot quase fotografou isso. O backup e' o que torna a
+  #    restauracao do passo 2.5 possivel -- sem ele nao ha para onde voltar.
+  SAFRA="$INFRA/safra_anterior"
+  rm -rf "$SAFRA"; mkdir -p "$SAFRA"
+  cp -a Unidades/. "$SAFRA"/ 2>/dev/null || true
+  echo "[$(date -u)] safra anterior preservada: $(ls "$SAFRA"/*.csv 2>/dev/null | wc -l) CSV(s)"
+
+  git checkout -- Unidades/ 2>/dev/null || true   # arvore limpa p/ o pull dar fast-forward
+
+  # O pull que FALHA passa a GRITAR `[BLK-COLETA-01]`. Com `|| echo` ele morria num log que
+  # ninguem abre, e o clone ficou 8 commits atras por 5 dias sem ninguem ver -- coletor
+  # consertado no repo do Vini simplesmente nao chegava aqui. NAO aborta o lote: a coleta ainda
+  # vale, e derrubar o domingo inteiro por causa do pull seria trocar um dano por outro maior.
+  if ! git pull --ff-only; then
+    echo "!! [$(date -u)] ERRO: git pull --ff-only FALHOU -- o lote segue com a copia LOCAL,"
+    echo "!! que pode nao ter coletores consertados. HEAD=$(git rev-parse --short HEAD)"
+    _avisar_ops "git pull do coletor FALHOU (HEAD=$(git rev-parse --short HEAD)); o lote seguiu com a cópia local, sem os consertos que estiverem na origin"
+  fi
+
   docker build -t gymscraping:local . || { echo "ERRO: build falhou"; exit 1; }
 
   # 1) Coleta dos 90 (root: sobrescreve CSVs; Chrome usa --no-sandbox)
   docker rm -f gym_batch_90 >/dev/null 2>&1 || true
   docker run --rm --user 0:0 -v "$REPO/Unidades:/app/Unidades" --name gym_batch_90 \
     gymscraping:local python -B executar_coletores.py --workers 3 --scheduler-policy weighted --timing
+
+  # 2.5) RESTAURACAO da safra para quem NAO recoletou `[BLK-COLETA-01]`.
+  #      (numerado 2.5 para casar com `docs/infra_producao.md` e NAO colidir com o `# 1.5)` do
+  #      snapshot semanal, mais abaixo -- duas redacoes da mesma sequencia se desencontrando e'
+  #      a licao da DEC-044, citada neste proprio bloco)
+  #
+  #   Criterio por CONTEUDO, e isso e' medicao, nao gosto. O executor imprime
+  #   `Resultado: falha (N) em ...` por coletor, e a tentacao e' parsear o log -- mas no lote de
+  #   2026-09-13 havia so' **3** linhas de falha enquanto **~56** redes ficaram defasadas: o lote
+  #   morreu no #28 de 90 e os outros NUNCA RODARAM, logo nunca reportaram nada. Parsing
+  #   consertaria 3 de 59. Comparar o arquivo com o baseline commitado pega os DOIS casos.
+  #
+  #   Regra: se o CSV de agora e' identico ao do repositorio E a safra anterior tinha algo
+  #   DIFERENTE, entao aquela rede nao foi recoletada nesta rodada -- restaura a safra. Rede
+  #   realmente sem mudanca desde o commit fica identica nos tres, e nada acontece (no-op).
+  #
+  #   ARMADILHA DECLARADA: o `cmp` compara BYTES. Se algum dia os CSVs de `Unidades/` ganharem
+  #   normalizacao de EOL (`.gitattributes`, `core.autocrlf`), o `git show` devolveria LF e o
+  #   arquivo em disco CRLF -- a comparacao daria "diferente" para TODAS as redes, nenhuma
+  #   seria restaurada, e isso passaria como "todo mundo recoletou". No-op silencioso, a mesma
+  #   familia de defeito do mount que congelou os pins. Hoje o checkout da VPS e' Linux e nao ha
+  #   conversao (medido); se a premissa mudar, este laco precisa comparar normalizado.
+  echo "[$(date -u)] conferindo quais redes nao recoletaram..."
+
+  # SONDA DA PREMISSA DE EOL, antes do laco. A armadilha descrita acima nao e' teorica: ela
+  # DERRUBOU o laco num ambiente real (a estacao Windows, com `core.autocrlf=true`, em
+  # 2026-09-17) -- `git show` devolvia LF, o disco tinha CRLF, o `cmp` dava "diferente" para
+  # TODAS as redes e nada era restaurado. O sintoma disso em producao seria indistinguivel de um
+  # domingo saudavel: "nenhuma rede precisou restaurar". Guarda que falha ABERTA e em SILENCIO e'
+  # o defeito que este lote inteiro existe para nao repetir, entao aqui ela GRITA.
+  #
+  # Nao aborta: restaurar nada e' exatamente o comportamento de antes deste bloco, logo nao
+  # piora nada -- o que nao pode e' ninguem saber.
+  DIVERGEM=0; COMPARAVEIS=0
+  for f in Unidades/*.csv; do
+    git cat-file -e "HEAD:Unidades/$(basename "$f")" 2>/dev/null || continue
+    COMPARAVEIS=$((COMPARAVEIS + 1))
+    git show "HEAD:Unidades/$(basename "$f")" 2>/dev/null | cmp -s - "$f" || DIVERGEM=$((DIVERGEM + 1))
+  done
+  if [ "$COMPARAVEIS" -gt 10 ] && [ "$DIVERGEM" -eq "$COMPARAVEIS" ]; then
+    echo "!! [$(date -u)] SUSPEITA DE EOL: as $COMPARAVEIS redes comparaveis divergem TODAS do"
+    echo "!! baseline. Ou 100% recoletou (implausivel), ou a comparacao por bytes quebrou"
+    echo "!! (normalizacao de EOL). A restauracao vira no-op silencioso -- conferir antes de confiar."
+    _avisar_ops "sonda de EOL: as ${COMPARAVEIS} redes comparáveis divergem TODAS do baseline. Ou 100% recoletou, ou a comparação por bytes quebrou e a restauração virou no-op — conferir $LOG"
+  fi
+
+  RESTAURADAS=0
+  for f in Unidades/*.csv; do
+    nome=$(basename "$f")
+    [ -f "$SAFRA/$nome" ] || continue
+    if git show "HEAD:Unidades/$nome" 2>/dev/null | cmp -s - "$f" \
+       && ! cmp -s "$SAFRA/$nome" "$f"; then
+      cp -f "$SAFRA/$nome" "$f"
+      RESTAURADAS=$((RESTAURADAS + 1))
+      echo "   restaurada da safra anterior: $nome"
+    fi
+  done
+  echo "[$(date -u)] redes restauradas (nao recoletaram): $RESTAURADAS"
+  if [ "$RESTAURADAS" -gt 0 ]; then
+    _avisar_ops "${RESTAURADAS} rede(s) não recoletaram neste lote e voltaram à safra ANTERIOR em vez do baseline do repositório. A contagem delas está defasada, não zerada — ver $LOG"
+  fi
 
   # 1.5) Snapshot semanal (BLK-MA-06): fotografa unidades (recem-coletado aqui) + wellhub
   #      (coletado no sabado) para a serie do S3/churn e S4/staleness. UMA chamada com as
