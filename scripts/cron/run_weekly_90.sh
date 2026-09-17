@@ -48,7 +48,6 @@ LOGDIR=/var/log/gymscraping
 mkdir -p "$LOGDIR"
 TS=$(date -u +%Y%m%d-%H%M%S)
 LOG="$LOGDIR/weekly_${TS}.log"
-PULL_FALHOU=0
 
 # Aviso no chat de ops (bot "Paulo"), molde do `_avisar_falha` de `run_atualizacao_crescimento.sh`.
 # Reusa `enviar_telegram` (`api/relatorio_acessos.py`), que ja' paga duas dividas: particao abaixo
@@ -95,7 +94,6 @@ enviar_telegram('🔴 [Coleta] ' + sys.argv[1], os.environ['API_TELEGRAM_TOKEN']
   # consertado no repo do Vini simplesmente nao chegava aqui. NAO aborta o lote: a coleta ainda
   # vale, e derrubar o domingo inteiro por causa do pull seria trocar um dano por outro maior.
   if ! git pull --ff-only; then
-    PULL_FALHOU=1
     echo "!! [$(date -u)] ERRO: git pull --ff-only FALHOU -- o lote segue com a copia LOCAL,"
     echo "!! que pode nao ter coletores consertados. HEAD=$(git rev-parse --short HEAD)"
     _avisar_ops "git pull do coletor FALHOU (HEAD=$(git rev-parse --short HEAD)); o lote seguiu com a cópia local, sem os consertos que estiverem na origin"

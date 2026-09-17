@@ -38,6 +38,21 @@ ROOT = Path(__file__).resolve().parents[2]
 WRAPPER = ROOT / "scripts" / "cron" / "run_weekly_90.sh"
 RUNBOOK = ROOT / "docs" / "infra_producao.md"
 
+#: Marcadores da SONDA DE EOL, que roda ANTES do laço. Ela ficou sem teste no primeiro commit —
+#: achado MÉDIO da revisão, e irônico: a sonda existe justamente porque essa armadilha já derrubou
+#: o laço num ambiente real. Lógica nova sem teste é o que este PR inteiro combate.
+_INICIO_SONDA = "  DIVERGEM=0; COMPARAVEIS=0"
+_FIM_SONDA = "  fi"
+
+
+def _sonda_de_eol() -> str:
+    """O trecho EXECUTÁVEL da sonda, recortado do wrapper de produção."""
+    texto = WRAPPER.read_text(encoding="utf-8")
+    i = texto.index(_INICIO_SONDA)
+    j = texto.index(_FIM_SONDA, i) + len(_FIM_SONDA)
+    return texto[i:j]
+
+
 #: Marcadores do laço de restauração DENTRO do wrapper. O teste funcional EXTRAI esse trecho e o
 #: executa — em vez de reescrevê-lo aqui. Reescrever criaria a segunda redação da mesma regra: o
 #: teste passaria mesmo se o wrapper divergisse, que é exatamente o defeito que o laço existe para
@@ -354,6 +369,82 @@ def test_restauracao_EXECUTADA_nos_tres_casos(tmp_path: Path) -> None:
     assert saida.stdout.count("restaurada da safra anterior:") == 1, (
         f"restaurou mais de uma rede (falso positivo). stdout={saida.stdout!r}"
     )
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="precisa de bash (Git Bash no Windows)")
+@pytest.mark.skipif(shutil.which("git") is None, reason="precisa de git")
+def test_sonda_de_eol_EXECUTADA_dispara_so_quando_TODAS_divergem(tmp_path: Path) -> None:
+    """A sonda tem de gritar no caso patológico e ficar calada no normal.
+
+    Ela existe porque a comparação por bytes pode quebrar em bloco (normalização de EOL) e o
+    sintoma em produção seria "nenhuma rede precisou restaurar" — indistinguível de um domingo
+    saudável. Sem teste, a própria guarda contra falha-silenciosa poderia falhar em silêncio.
+
+    Dois cenários, e o segundo é o que impede o alarme falso toda semana:
+
+    | cenário                         | esperado          |
+    |---------------------------------|-------------------|
+    | 12 redes, TODAS divergem        | avisa             |
+    | 12 redes, só algumas divergem   | calada            |
+    """
+
+    def cenario(*, todas_divergem: bool) -> str:
+        raiz = tmp_path / ("todas" if todas_divergem else "algumas")
+        repo = raiz / "repo"
+        (repo / "Unidades").mkdir(parents=True)
+
+        def git(*args: str) -> None:
+            subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+        git("init", "-q", ".")
+        git("config", "user.email", "t@t")
+        git("config", "user.name", "t")
+        git("config", "core.autocrlf", "false")
+        # 12 redes: acima do piso de 10 que a sonda exige para opinar.
+        for n in range(12):
+            (repo / "Unidades" / f"unidades_{n}.csv").write_text(
+                f"nome;lat\nBASE_{n};1\n", encoding="utf-8", newline="\n"
+            )
+        git("add", "-A")
+        git("commit", "-qm", "base")
+        quantas = 12 if todas_divergem else 3
+        for n in range(quantas):
+            (repo / "Unidades" / f"unidades_{n}.csv").write_text(
+                f"nome;lat\nMUDOU_{n};1\n", encoding="utf-8", newline="\n"
+            )
+        # `_avisar_ops` é stub: o teste mede a DECISÃO da sonda, não o envio ao Telegram.
+        script = f'set -u\n_avisar_ops() {{ echo "AVISOU: $1"; }}\nLOG=/dev/null\n{_sonda_de_eol()}\n'
+        saida = subprocess.run(
+            ["bash", "-c", script],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert saida.returncode == 0, f"a sonda falhou: {saida.stderr}"
+        return saida.stdout
+
+    patologico = cenario(todas_divergem=True)
+    assert "SUSPEITA DE EOL" in patologico, (
+        f"a sonda não gritou com 100% divergindo — a guarda contra falha silenciosa ficou "
+        f"silenciosa. stdout={patologico!r}"
+    )
+    assert "AVISOU:" in patologico, "a sonda não chamou o aviso a ops"
+
+    normal = cenario(todas_divergem=False)
+    assert "SUSPEITA DE EOL" not in normal, (
+        f"a sonda deu alarme falso com divergência parcial — dispararia quase toda semana, e "
+        f"alarme que toca sempre é alarme que ninguém lê. stdout={normal!r}"
+    )
+
+
+def test_a_sonda_roda_ANTES_do_laco() -> None:
+    """Depois do laço ela seria inútil: o diagnóstico chegaria após a decisão de restaurar."""
+    executaveis = _linhas_executaveis(WRAPPER)
+    i_sonda = next(i for i, linha in enumerate(executaveis) if "DIVERGEM=0" in linha)
+    i_laco = next(i for i, linha in enumerate(executaveis) if "RESTAURADAS=0" in linha)
+    assert i_sonda < i_laco, "a sonda de EOL passou para depois do laço"
 
 
 def test_o_laco_extraido_e_o_do_wrapper_nao_uma_copia() -> None:
