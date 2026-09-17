@@ -402,14 +402,16 @@ ULTRA_LOGO_FILE = "logo_ultra.png"
 # menor que o das cadeias, na cor do agregador que as revelou. E' a mesma regra que o Mapa
 # Territorial do piloto ja' usa (`HexMap.tsx`, camada `independentes-pins`, BLK-MA-15).
 #
-# O PNG e' OPCIONAL de proposito. Ele vive no diretorio de logos montado em producao
-# (`concorrentes/`, o mesmo do `sync_concorrentes_dashboard`), e nao dentro do pacote: o
-# `motor_expansao` nao distribui asset binario nenhum hoje, e criar esse precedente por um
-# icone cobraria configuracao de package-data e um caminho novo no build. Sem o arquivo, o
-# marcador cai num ponto solido na cor da marca — que continua cumprindo o que o marcador
-# precisa cumprir (ser pequeno, uniforme e distinguivel da bandeira de cadeia).
+# O PNG vem de DOIS lugares, nesta ordem: o diretorio de logos montado em producao
+# (`concorrentes/`) e, na falta dele, a arte que o pacote carrega (`assets/`, a mesma de
+# `web/public/logo-wellhub.png`). A segunda fonte existe porque a primeira nunca chegava:
+# o `sync_concorrentes_dashboard` so' copia as redes do registro, e o PDF pontual saia com
+# as independentes sem a logo (Juan, 2026-09-17). O hatch empacota o PNG sem configuracao
+# (`packages = ["src/motor_expansao"]`). Sem nenhum dos dois, o marcador cai num ponto
+# solido na cor da marca.
 CHAVE_AGREGADOR = "__wellhub__"
 AGREGADOR_LOGO_FILE = "logo_wellhub.png"
+AGREGADOR_LOGO_PACOTE = Path(__file__).resolve().parent / "assets" / AGREGADOR_LOGO_FILE
 AGREGADOR_BRAND = {"label": "Independente", "short": "", "bg": "#F04E6E", "fg": "#FFFFFF"}
 # 20 px contra os 30 px da bandeira de cadeia (`_PIN_LOGO_PX`), na mesma proporcao que o
 # mapa usa (22 contra 30-38): a independente e' camada secundaria e nao pode competir com a
@@ -503,13 +505,13 @@ def preload_logos(competitors_dir: Path, ultra_dir: Path | None = None) -> None:
         icon = _png_icon_data(ultra_dir / ULTRA_LOGO_FILE, pin_bg=ULTRA_BRAND["bg"])
         if icon is not None:
             _ICON_CACHE["__ultra__"] = icon
-    # DEC-046: marcador do independente. Ausente -> `_render_marcador_independente` cai no
-    # ponto solido; nao ha erro nem pin faltando.
-    icon = _png_icon_data(
-        competitors_dir / AGREGADOR_LOGO_FILE, pin_bg=str(AGREGADOR_BRAND["bg"])
-    )
-    if icon is not None:
-        _ICON_CACHE[CHAVE_AGREGADOR] = icon
+    # DEC-046: marcador do independente. O diretorio vence o pacote; sem nenhum dos dois o
+    # tile cai no ponto solido, sem erro nem pin faltando.
+    for arte in (competitors_dir / AGREGADOR_LOGO_FILE, AGREGADOR_LOGO_PACOTE):
+        icon = _png_icon_data(arte, pin_bg=str(AGREGADOR_BRAND["bg"]))
+        if icon is not None:
+            _ICON_CACHE[CHAVE_AGREGADOR] = icon
+            break
 
 
 # ── I/O ────────────────────────────────────────────────────────────────────────
