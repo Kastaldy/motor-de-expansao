@@ -102,6 +102,7 @@ COLUNAS_ARTEFATO = [
     "cod_bairro",
     "nome_bairro",
     "nome_subdistrito",
+    "cod_distrito",
     "nome_distrito",
     "situacao_setor",
     "area_setor_km2_ibge",
@@ -341,13 +342,27 @@ def carregar_malha_uf(path: Path, uf: str) -> gpd.GeoDataFrame:
 
     cols = [
         "CD_SETOR", "CD_UF", "CD_MUN", "NM_MUN", "CD_BAIRRO", "NM_BAIRRO",
-        "NM_SUBDIST", "NM_DIST", "SITUACAO", "AREA_KM2", "geometry",
+        "NM_SUBDIST", "CD_DIST", "NM_DIST", "SITUACAO", "AREA_KM2", "geometry",
     ]
     gdf = gdf[[col for col in cols if col in gdf.columns]].copy()
     gdf["cod_setor"] = gdf["CD_SETOR"].map(lambda value: _normalizar_codigo_ibge(value, 15))
     gdf["cod_uf"] = gdf["CD_UF"].astype(str).str.zfill(2)
     gdf["uf"] = gdf["cod_uf"].map(UF_POR_CODIGO)
-    gdf["cod_municipio"] = gdf["CD_MUN"].astype(str).str.zfill(7)
+    gdf["cod_municipio"] = gdf["CD_MUN"].map(lambda value: _normalizar_codigo_ibge(value, 7))
+    # Setor SEM municipio nao e' territorio analisavel, e virava particao espuria: o
+    # `astype(str).str.zfill(7)` antigo transformava `None` em "000None", criando
+    # `uf=RS/cod_municipio=000None/`. Sao as lagoas costeiras do RS (4300001/4300002),
+    # pseudo-municipios que o IBGE usa para massa d'agua -- 2 setores em 468.099.
+    #
+    # E' esse par que fazia o artefato reportar 5.571 municipios quando o Brasil tem 5.570.
+    # Descartar aqui e' o que faz a contagem voltar a significar o que o nome diz.
+    sem_municipio = gdf["cod_municipio"].isna()
+    if sem_municipio.any():
+        print(
+            f"  [aviso] {int(sem_municipio.sum())} setor(es) sem CD_MUN descartado(s) "
+            f"(massa d'agua): {', '.join(gdf.loc[sem_municipio, 'cod_setor'].astype(str))}"
+        )
+        gdf = gdf[~sem_municipio].copy()
     gdf["nome_municipio"] = gdf["NM_MUN"].astype(str)
     # NM_BAIRRO existe no DBF IBGE 2022 mas cobertura e HETEROGENEA (capitais/grandes têm; muitos
     # municipios pequenos e o DF nao têm) -> NA quando ausente. cod_bairro opcional p/ rastreio.
@@ -370,6 +385,18 @@ def carregar_malha_uf(path: Path, uf: str) -> gpd.GeoDataFrame:
         gdf["nome_distrito"] = gdf["NM_DIST"].map(_normalizar_nome_bairro)
     else:
         gdf["nome_distrito"] = pd.NA
+    # CD_DIST estava no DBF desde sempre (9 digitos: municipio + distrito) e o artefato saia
+    # SEM ele -- so' com o NOME do distrito. Isso obrigava quem quisesse agregar por distrito a
+    # casar NOME + municipio + UF, que e' fragil, e deixava o ETL das bases de referencia do
+    # `banco-de-reservas` sem a chave que o proprio de-para dele pressupoe.
+    #
+    # Medido na malha inteira (468.099 setores, 26/08/2026): 10.699 distritos distintos, NENHUM
+    # com mais de um nome ou mais de um municipio. Os 2 registros sem CD_DIST sao as lagoas
+    # costeiras do RS (pseudo-municipios do IBGE para massa d'agua), que tambem nao tem CD_MUN.
+    if "CD_DIST" in gdf.columns:
+        gdf["cod_distrito"] = gdf["CD_DIST"].map(lambda value: _normalizar_codigo_ibge(value, 9))
+    else:
+        gdf["cod_distrito"] = pd.NA
     gdf["situacao_setor"] = gdf.get("SITUACAO", pd.Series(pd.NA, index=gdf.index))
     gdf["area_setor_km2_ibge"] = _to_number(gdf.get("AREA_KM2", pd.Series(np.nan, index=gdf.index)))
     return gdf.reset_index(drop=True)

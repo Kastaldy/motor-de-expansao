@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import AvisoConfidencialidade from './components/AvisoConfidencialidade'
 import AvisoSessao from './components/AvisoSessao'
+import TrocaDeSenha from './components/TrocaDeSenha'
 import Dock from './components/Dock'
 import type { SearchPin } from './components/HexMap'
 import AcessosScreen from './screens/AcessosScreen'
@@ -13,6 +14,12 @@ import OportunidadesImobiliariasScreen from './screens/OportunidadesImobiliarias
 import PontoScreen from './screens/PontoScreen'
 import ViabilityScreen from './screens/ViabilityScreen'
 import { abasDoPayload, modosLiberados, telaInicial, telaLiberada, type Aba } from './lib/acesso'
+import {
+  deveOferecerTroca,
+  estadoDaSenhaDoPayload,
+  mensagemDoErro,
+  type EstadoDaSenha,
+} from './lib/troca-de-senha'
 import { api, ApiError } from './lib/api'
 import { assinarQuedaDeSessao, entrarNovamente } from './lib/sessao'
 import type { AlvoCaptura } from './lib/captura-mapa'
@@ -60,6 +67,17 @@ export default function App() {
   // Ciencia do aviso de confidencialidade — nasce false a CADA carga do app.
   const [cienteConfidencialidade, setCienteConfidencialidade] = useState(false)
 
+  /* Troca da própria senha (D26). Três estados, e cada um responde outra pergunta:
+     `estadoSenha` é o FATO vindo de `/api/me` (`null` = não sei, e não sei nunca vira
+     oferta); `senhaDispensada` é o "agora não" DESTA carga, no molde do aviso de
+     confidencialidade — sem depósito no navegador, porque a oferta deve voltar na
+     próxima entrada de quem ainda não trocou; `senhaAberta` é a pessoa tendo clicado
+     no cadeado do Dock por vontade própria, que precisa abrir mesmo depois de dispensar
+     e mesmo para quem já tem senha própria. */
+  const [estadoSenha, setEstadoSenha] = useState<EstadoDaSenha | null>(null)
+  const [senhaDispensada, setSenhaDispensada] = useState(false)
+  const [senhaAberta, setSenhaAberta] = useState(false)
+
   /**
    * Sessao do Authelia caiu -> pop-up bloqueante com o botao de relogar.
    *
@@ -83,6 +101,7 @@ export default function App() {
       .then((r) => {
         const s = abasDoPayload(r)
         setAbas(s)
+        setEstadoSenha(estadoDaSenhaDoPayload(r))
         // Se o usuário abriu numa tela que não pode ver (estado antigo, deep state),
         // leva para o lugar certo em vez de deixar a tela vazia atrás de 403s.
         if (s) setTela((t) => (telaLiberada(t, s) ? t : telaInicial(s)))
@@ -405,7 +424,17 @@ export default function App() {
         overflow: 'hidden',
       }}
     >
-      <Dock tela={tela} onTela={navegar} abas={abas} tema={tema} onTema={trocarTema} pais={pais} />
+      <Dock
+        tela={tela}
+        onTela={navegar}
+        abas={abas}
+        tema={tema}
+        onTema={trocarTema}
+        pais={pais}
+        /* Sem `estadoSenha` não há atalho: o banco não respondeu, ou a pessoa não tem
+           cadastro. Um cadeado que abre um formulário fadado a 409 é pior que nenhum. */
+        onSenha={estadoSenha ? () => setSenhaAberta(true) : undefined}
+      />
 
       <main style={{ flex: 1, position: 'relative', minWidth: 0 }}>
         {tela === 'inicio' ? (
@@ -595,6 +624,43 @@ export default function App() {
           }}
         />
       )}
+
+      {/* Troca da própria senha. Só DEPOIS da ciência de confidencialidade: os dois são
+          modais de `zIndex: 100` e empilhá-los deixaria a pessoa digitando senha atrás de
+          um véu que ela ainda não leu. O de confidencialidade é o que tem ordem legal. */}
+      {cienteConfidencialidade &&
+        estadoSenha &&
+        (senhaAberta || deveOferecerTroca(estadoSenha, senhaDispensada)) && (
+          <TrocaDeSenha
+            estado={estadoSenha}
+            onDispensar={() => {
+              setSenhaAberta(false)
+              setSenhaDispensada(true)
+            }}
+            onTrocar={async (senhaAtual, nova) => {
+              try {
+                await api.trocarMinhaSenha(senhaAtual, nova)
+                /* O estado local é a AUTORIDADE daqui para a frente, e isto não é
+                   atalho: `api.me()` é memoizada por carga de página (api.ts:198) e não
+                   tem reset exportado — chamá-la de novo devolveria a MESMA resposta,
+                   com `deve_trocar` ainda true, e a oferta voltaria para quem acabou de
+                   trocar. A memo existe de propósito (DEC-027: duas chamadas inflariam a
+                   trilha), então quem se ajusta é o estado, não o cliente. */
+                setEstadoSenha({ deveTrocar: false, propria: true })
+                return null
+              } catch (e) {
+                const erro = e as { status?: number; message?: string }
+                return mensagemDoErro(erro.status ?? 0, erro.message)
+              }
+            }}
+          />
+        )}
+
+      {/* POR ÚLTIMO de propósito, e não por acaso da resolução do merge: com o mesmo
+          `zIndex` dos outros dois, quem é o último filho fica por cima. Sessão caída tem
+          de cobrir a troca de senha — sem sessão a chamada morre em 401 de qualquer
+          jeito, e deixar a pessoa digitando senha por cima de um aviso de que precisa
+          entrar de novo seria trabalho jogado fora. */}
       {sessaoCaiu && <AvisoSessao onEntrar={entrarNovamente} />}
     </div>
     </BaseProvider>

@@ -54,6 +54,62 @@ class UltraPDF(FPDF):
         self.set_margins(0, 0, 0)
 
 
+# --- Marca d'agua de rastreabilidade (BLK-EST-01 / D17) ---------------------
+# Os valores sao copia dos que `censo_report.py` e `relatorio_municipal.py` ja' usam.
+# Os dois legados NAO sao reapontados aqui, pela mesma razao escrita no cabecalho deste
+# modulo -- o que impede a duplicacao de virar triplicacao e' o teste anti-drift
+# `test_marca_dagua_identica_nos_tres`, no molde do `test_ultra_pdf_config_identica`.
+MARCA_BASE = "Ultra Academia"
+MARCA_RGB = (120, 120, 120)
+MARCA_RGB_CAPA = (255, 255, 255)
+MARCA_ALPHA = 0.65
+MARCA_FONT_PT = 10
+MARCA_MARGEM = 20.0
+
+
+def nome_exibicao(usuario: str) -> str:
+    """Nome de EXIBICAO do login: "will.lindo" -> "Will Lindo".
+
+    Camada de exibicao apenas (CLAUDE.md §2): o valor bruto segue intacto em trilha, log e
+    payload. Quebra no ponto E no underscore porque o cadastro tem as duas convencoes.
+    """
+    partes = [p for p in str(usuario).replace("_", " ").replace(".", " ").split() if p]
+    if not partes:
+        return str(usuario).strip()
+    return " ".join(p[:1].upper() + p[1:] for p in partes)
+
+
+def texto_da_marca(solicitante: str | None, report_id: str | None = None) -> str:
+    """A base, mais quem pediu e o `report_id`, quando existirem. ASCII-safe.
+
+    O `report_id` (D17) e' o que amarra ARQUIVO a pessoa -- a trilha da DEC-027 amarra
+    REQUISICAO a pessoa, e dois decks do mesmo recorte gerados no mesmo minuto produzem
+    duas linhas indistinguiveis nela.
+    """
+    partes = [MARCA_BASE]
+    if solicitante is not None and str(solicitante).strip():
+        partes.append(nome_exibicao(str(solicitante)))
+    if report_id is not None and str(report_id).strip():
+        partes.append(str(report_id).strip())
+    return ascii_seguro(" | ".join(partes))
+
+
+def desenhar_marca(pdf: FPDF, texto: str, *, rgb: tuple[int, int, int] = MARCA_RGB) -> None:
+    """Desenha a marca no canto inferior-direito, horizontal e discreta.
+
+    Usa `pdf.text` (baseline), imune a `set_margins`/auto_page_break OFF. Tem de ser
+    chamada DEPOIS do conteudo da pagina, para ficar POR CIMA do fundo e das imagens --
+    e com a compressao desligada (o `UltraPDF` ja' desliga) o texto vai em CLARO no
+    content stream, sem `/Annot` separavel que alguem possa remover num editor.
+    """
+    pdf.set_font("Helvetica", "", MARCA_FONT_PT)
+    pdf.set_text_color(*rgb)
+    x = PAGINA_LARGURA - MARCA_MARGEM - pdf.get_string_width(texto)
+    y = PAGINA_ALTURA - MARCA_MARGEM
+    with pdf.local_context(fill_opacity=MARCA_ALPHA):
+        pdf.text(x, y, texto)
+
+
 def ascii_seguro(texto: object) -> str:
     """Reduz a latin-1 seguro para o core font Helvetica do fpdf2."""
     return str(texto).encode("latin-1", errors="replace").decode("latin-1")

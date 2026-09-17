@@ -59,6 +59,8 @@ from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
 from motor_expansao.dashboard.utils import score_band_to_color
 from motor_expansao.perfil import resolver_perfil
 
+from . import pdf_base
+
 # ---------------------------------------------------------------------------
 # Constantes de DISPLAY do relatorio (DEC-011 parte 2). Locais a este modulo;
 # NAO mexem em flag_sam/DEC-006/DEC-007 (pipeline de mercado) nem no M1.
@@ -2810,10 +2812,18 @@ def _draw_watermark(pdf: _UltraPDF, text: str, *, rgb: tuple[int, int, int] = _W
         pdf.text(x, y, text)
 
 
-def _watermark_text(solicitante: str | None) -> str:
-    if solicitante is None or not solicitante.strip():
-        return _ascii(_WATERMARK_BASE)
-    return _ascii(f"{_WATERMARK_BASE} | {solicitante.strip()}")
+def _watermark_text(solicitante: str | None, report_id: str | None = None) -> str:
+    """Delega ao texto COMPARTILHADO de `pdf_base` (10/09, D17).
+
+    So' o TEXTO -- o `_draw_watermark` acima fica como esta', porque ele e' o desenho e
+    mexer nele mexeria nos bytes de um gerador em producao com teste de regressao.
+
+    Duas coisas mudam de comportamento, e as duas sao consertos: o `report_id` passa a
+    caber, e o solicitante passa por `nome_exibicao` -- antes era `strip()` cru, entao
+    "felipe_castaldi" saia com o underscore no PDF enquanto o Pontual ja' escrevia
+    "Felipe Castaldi" para a MESMA pessoa.
+    """
+    return pdf_base.texto_da_marca(solicitante, report_id)
 
 
 def _local_label(result: dict[str, Any]) -> str:
@@ -3902,6 +3912,7 @@ def gerar_pdf_relatorio_municipal(
     *,
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
+    report_id: str | None = None,
     versao: str | None = None,
     unidade: str = UNIDADE_BAIRRO,
 ) -> bytes:
@@ -3935,6 +3946,11 @@ def gerar_pdf_relatorio_municipal(
     p11, _ = _tema_bicolor(11)
 
     pdf = _UltraPDF()
+    if report_id:
+        # SEGUNDA camada do carimbo (D17): o `/Info` sobrevive a RECORTE de pagina e a
+        # extracao de texto; a marca-d'agua sobrevive a screenshot e a reimpressao.
+        pdf.set_subject(f"report_id {report_id}")
+        pdf.set_keywords(f"report_id={report_id}")
     _cover_page(pdf, municipio_result, assets)
     _cobertura_page(pdf, municipio_result, mapas.get("cobertura"), assets, primary=p1, secondary=s1)
     # Territorio -> numeros -> mapas, a mesma ordem do material de referencia: primeiro o leitor
@@ -3961,7 +3977,7 @@ def gerar_pdf_relatorio_municipal(
     _sintese_page(pdf, municipio_result, assets, primary=p10)
     _espaco_academias_page(pdf, municipio_result, assets, primary=p11)
 
-    wm_text = _watermark_text(solicitante)
+    wm_text = _watermark_text(solicitante, report_id)
     for page_number in range(1, pdf.pages_count + 1):
         pdf.page = page_number
         rgb = _WATERMARK_RGB_COVER if page_number == 1 else _WATERMARK_RGB
@@ -3977,6 +3993,7 @@ def gerar_payloads_download_relatorio_municipal(
     filename_prefix: str | None = None,
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
+    report_id: str | None = None,
     versao: str | None = None,
     unidade: str = UNIDADE_BAIRRO,
 ) -> RelatorioMunicipalDownloadPayloads:
@@ -3985,7 +4002,7 @@ def gerar_payloads_download_relatorio_municipal(
     prefix = filename_prefix or f"relatorio_municipal_{uf}_{muni}".strip("_")
     pdf_bytes = gerar_pdf_relatorio_municipal(
         municipio_result, mapas, ultra_dir=ultra_dir, solicitante=solicitante, versao=versao,
-        unidade=unidade,
+        unidade=unidade, report_id=report_id,
     )
     return RelatorioMunicipalDownloadPayloads(
         pdf_bytes=pdf_bytes,

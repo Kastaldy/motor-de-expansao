@@ -672,3 +672,70 @@ def test_acao_desconhecida_e_404_mesmo_para_quem_pode(escrever_mapa) -> None:
     assert exc.value.status_code == 404
     # E a acao do vocabulario responde normalmente.
     assert pilot_app.api_imobiliaria_evento("abrir-imovel") == {"ok": True}
+
+
+# --- sem identidade nao ha curinga (15/09, preparacao do P19) ------------------------
+
+
+def test_sem_identidade_o_curinga_nao_vale(escrever_mapa, monkeypatch: pytest.MonkeyPatch) -> None:
+    """O curinga "*" e' "qualquer usuario AUTENTICADO"; quem chega sem identidade nao e' usuario.
+
+    Ate' 15/09 ele caia tambem sobre `None`: com este mapa, 18 rotas atendiam requisicao anonima no
+    modo JSON. Nao vazava porque o Authelia injeta o header -- mas e' a porta que abre no dia em que
+    ele sair, e a unica defesa da instancia AR. O teste `test_header_ausente_com_controle_ativo_
+    bloqueia` ja' dizia isso, mas com um mapa SEM curinga, que e' justamente o caso que nao abria.
+    """
+    monkeypatch.delenv("MOTOR_DEV_USUARIO", raising=False)
+    escrever_mapa({"ana": ["executiva"], "*": ["mapa", "oportunidades"]})
+    assert acesso.abas_do_usuario(None) == frozenset()
+    assert acesso.motivo_bloqueio("/api/uf/SP", None) is not None
+    # quem TEM identidade continua herdando o curinga
+    assert acesso.abas_do_usuario("novato") == frozenset({"mapa", "oportunidades"})
+    assert acesso.motivo_bloqueio("/api/uf/SP", "novato") is None
+
+
+def test_o_gate_json_honra_a_identidade_de_dev(
+    escrever_mapa, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mesma resolucao de todo o resto: sem header, a pessoa de `MOTOR_DEV_USUARIO`.
+
+    Antes o gate JSON lia o header cru, e em desenvolvimento a pessoa nomeada nunca recebia as abas
+    NOMINAIS dela -- so' o curinga, como se fosse anonima.
+    """
+    from motor_expansao.db import rbac
+
+    monkeypatch.setenv(rbac.ENV_DEV_USUARIO, "ana")
+    monkeypatch.delenv(rbac.ENV_SINAL_PRODUCAO, raising=False)
+    monkeypatch.delenv(rbac.ENV_DEV_IDENTIDADE, raising=False)
+    escrever_mapa({"ana": ["executiva"], "*": ["mapa"]})
+    assert acesso.motivo_bloqueio("/api/executiva/SP", None) is None
+
+
+def test_em_producao_a_identidade_de_dev_nao_entra_no_gate_json(
+    escrever_mapa, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O sinal de producao desliga a identidade de dev: sem header, sem abas -- mesmo nomeada."""
+    from motor_expansao.db import rbac
+
+    monkeypatch.setenv(rbac.ENV_DEV_USUARIO, "ana")
+    monkeypatch.setenv(rbac.ENV_SINAL_PRODUCAO, "/opt/motor-expansao/cadastro")
+    monkeypatch.delenv(rbac.ENV_DEV_IDENTIDADE, raising=False)
+    escrever_mapa({"ana": ["executiva"], "*": ["mapa"]})
+    assert acesso.motivo_bloqueio("/api/executiva/SP", None) is not None
+    assert acesso.motivo_bloqueio("/api/uf/SP", None) is not None
+
+
+def test_me_no_modo_json_le_a_mesma_pessoa_que_o_gate(
+    escrever_mapa, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tela e o portao nao podem ler a mesma pessoa de fontes diferentes -- o defeito do
+    `_estado_da_minha_senha` de 14/09, um nivel acima."""
+    from motor_expansao.db import rbac
+
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: False)
+    monkeypatch.setenv(rbac.ENV_DEV_USUARIO, "ana")
+    monkeypatch.delenv(rbac.ENV_SINAL_PRODUCAO, raising=False)
+    monkeypatch.delenv(rbac.ENV_DEV_IDENTIDADE, raising=False)
+    escrever_mapa({"ana": ["executiva"], "*": ["mapa"]})
+    abas = set(pilot_app.me(remote_user=None)["abas"])
+    assert "executiva" in abas, abas

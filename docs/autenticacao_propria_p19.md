@@ -1,0 +1,149 @@
+# Autenticação própria do piloto (epic do P19) — escopo
+
+> **O que é.** O levantamento do que a epic do **P19** precisa fazer para o motor passar a autenticar
+> e o Authelia sair. Não é especificação de implementação nem cronograma: é o mapa do terreno,
+> medido, para que a primeira pessoa a pegar isto não comece descobrindo o que já existe.
+>
+> **Decisão anterior, não reabrir.** O P19 (`banco-de-reservas/decisoes-pendentes.md`) escolheu a
+> opção **(c)** em 01/09/2026 — o motor autentica, o Authelia sai — **contra a recomendação** do
+> próprio documento, com o escopo perguntado explicitamente antes. Este documento serve à decisão
+> tomada; não a discute.
+>
+> **Tudo aqui foi medido em 16/09/2026**, salvo o que estiver marcado como **proposta** ou
+> **em aberto**. Onde eu não medi, está escrito que não medi.
+
+## 1. O que já existe (e é mais do que parece)
+
+A leitura corrente — inclusive a do próprio P19 — subestima o que está pronto. Medido:
+
+**No banco e no backend (entregues pela D26, migration 016):**
+
+- `db/senhas.py`: `gerar`, `verificar` e política de força, em **Argon2id** com os parâmetros padrão
+  do Authelia 4.37+. A escolha foi deliberada para permitir **importar** os hashes existentes.
+- `usuarios.senha_hash` guarda PHC de verdade; `senha_definida_em_usuario` e
+  `deve_trocar_senha_usuario` dão o ciclo de vida.
+- `PATCH /api/me/senha` (a pessoa troca a própria) e, na tela de administração, criar usuário,
+  redefinir senha e exigir troca.
+- `acesso.login_da_requisicao` é o **funil único** de identidade: hoje lê o header e, no vazio, cai
+  na identidade de desenvolvimento (travada em produção por `MOTOR_CADASTRO_DIR`).
+
+**No front:**
+
+- `AvisoSessao.tsx` + `lib/sessao.ts`: **detecção de sessão vencida** por sonda, com trava de mão
+  única e sobreposição bloqueante com "Entrar novamente". Erro de rede e backend fora **não**
+  disparam, de propósito.
+- `BotaoSair.tsx`: botão de sair com confirmação, que hoje navega para o `/logout` do portal
+  (`lib/logoff.ts` monta a URL do hostname; devolve `null` em dev, e o diálogo diz que não há sessão
+  a encerrar).
+- `TrocaDeSenha.tsx` + `lib/troca-de-senha.ts`: tela de troca e a política espelhada no cliente.
+
+**O que falta, então, é menor do que "construir autenticação":** o **formulário de login**, o
+**portão de sessão** no backend, e a **troca do critério** de expiração no front.
+
+## 2. O ponto de inserção — e a regra de ordem que decide onde ele vai
+
+Aqui o P19 descreve a epic maior do que ela é. Ele diz que "cada rota passa a validar sessão por
+conta própria". **Não é o caso neste código:** o controle de acesso já é um middleware **global**
+(`_controle_de_acesso_por_aba`), então a validação de sessão cabe **num ponto só** — não nas ~40
+rotas.
+
+**A ordem importa, e é contraintuitiva.** `@app.middleware("http")` empilha cada novo middleware
+**por fora**, então **o último declarado roda primeiro**. Em `web/server/app.py`, `_trilha_acesso`
+(DEC-027) é declarado **depois** de `_controle_de_acesso_por_aba` — e por isso a trilha **envolve** o
+controle, registrando inclusive os 403 que ele devolve:
+
+| Ordem de execução | Middleware | Declarado |
+|---|---|---|
+| **1º** | `_trilha_acesso` (DEC-027) | por último |
+| 2º | `_controle_de_acesso_por_aba` | antes dele |
+
+> **Confira, não confie nesta tabela.** O que vale é a ordem de declaração no arquivo, e ela se lê
+> com `grep -n '@app.middleware("http")' -A2 web/server/app.py`. Números de linha envelhecem a cada
+> inserção acima deles — e um documento que os cita como fato vira mentira silenciosa, que é a
+> família de defeito que a revisão de 16/09/2026 passou o dia corrigindo neste repositório e no
+> `banco-de-reservas`. Na data da medição eram 357 e 662, nessa ordem.
+
+O portão de sessão precisa ser declarado **entre os dois** — depois do controle de abas, antes da
+trilha — para rodar **antes** do controle e **dentro** da trilha. Nessa posição, um 401 de sessão
+inválida é barrado cedo e ainda assim vira linha de auditoria. Declarado fora dessa faixa, ou o 401
+some do log, ou a pessoa sem sessão chega ao controle de abas.
+
+## 3. O que precisa continuar público
+
+Hoje nada disso importa: o Authelia barra na borda, e requisição sem sessão **não chega** ao
+backend. Depois do corte, o motor é a única porta — e ele serve a SPA:
+`app.mount("/", StaticFiles(..., html=True))`, registrado **por último**, depois das rotas de API.
+
+Precisam continuar alcançáveis sem sessão:
+
+- os **estáticos da SPA** e a rota da tela de login (mesmo processo, mesmo host);
+- o **endpoint de login** em si;
+- `/api/health`, que hoje não tem regra e é mudo por decisão de pentest.
+
+E `/api/me`, que hoje é livre e é a **primeira chamada da SPA**, passa a exigir sessão — é ela que
+responde "quem sou eu" depois do login.
+
+## 4. Ninguém pode ficar trancado no corte — e há duas rotas
+
+Medido, e as duas já estão disponíveis:
+
+1. **Importar os hashes do Authelia.** O `users_database.yml` guarda `argon2id`, e a D26 escolheu os
+   mesmos parâmetros exatamente para isso. Ninguém redefine senha no dia da virada.
+2. **Esvaziar a fila antes.** As pessoas podem definir senha própria **desde já**, e
+   `senha_definida_em_usuario` é literalmente a fila: nulo = ainda na senha inicial. O P19 diz, com
+   estas palavras, que essa coluna "é a fila que a epic precisa zerar".
+
+As duas se combinam: importar cobre quem não agiu, a fila mede quem já agiu.
+
+**Não medido:** quantas pessoas já têm senha própria hoje. Isso exige consultar o banco em produção,
+o que não foi feito daqui.
+
+## 5. Obrigações que a epic herda
+
+- **Evento `login`.** O contrato (`eventos_contrato.md` §2.1) já o especifica — `metadados` com
+  `origem` (`web`/`bot`), sem `entidade` — e traz a nota de que ele "ainda não é registrável" porque
+  a entrada não passa pelo backend. A epic é o que destrava, e a nota sai junto. `logout` idem, sem
+  metadados.
+- **Reabrir o P14.** Hoje `senha_hash` é dado que ninguém lê; depois do corte vira a credencial de
+  acesso à plataforma. A opção (c) do P14 (restringir a coluna por `GRANT` + função de login
+  `SECURITY DEFINER`) foi adiada nomeando só "requisito de LGPD/auditoria" como gatilho — o corte é
+  gatilho por si, e o texto do P14 ainda não diz isso.
+- **`BLK-SEC-03-FU2`** (revisão de acesso e offboarding) é pré-requisito prático: é dele que sai a
+  conciliação entre `users_database.yml` e as linhas de `usuarios`. Já separado do FU1 em
+  16/09/2026 justamente por sobreviver ao corte.
+- **`BLK-SEC-03-FU1`** (forçar TOTP no Authelia) está **adiado**: configura 2FA no componente que
+  sai. Se a epic ganhar data distante, ele volta à mesa.
+
+## 6. Armadilhas medidas
+
+- **`python-jose` e `passlib` estão no `pyproject.toml` — e são cilada.** Vivem no extra `api`
+  **legado**, que, segundo o comentário ao lado, **nenhum Dockerfile instala** e que arrasta
+  SQLAlchemy, psycopg2-binary e Prefect. Usá-los "porque já estão declarados" traz a cascata inteira
+  para a imagem do piloto. O `argon2-cffi` que a D26 usa está no extra `auth`, próprio, e **esse** a
+  imagem instala.
+- **A identidade de desenvolvimento não pode virar porta.** `rbac.login_efetivo` tem duas travas
+  (override explícito e o sinal de produção `MOTOR_CADASTRO_DIR`). O portão de sessão precisa
+  respeitar as mesmas, senão o modo de dev vira caminho de entrada em produção.
+- **Limpar estado no cliente não é logout.** O `BotaoSair` documenta o motivo: a tela pareceria
+  deslogada e a requisição seguinte continuaria autenticada. Logout tem de invalidar no servidor.
+
+## 7. Decisões ainda em aberto
+
+Nenhuma destas foi tomada. Estão aqui para não serem descobertas no meio da implementação:
+
+1. **Onde a sessão vive** — cookie assinado (sem tabela) ou tabela de sessão no banco (migration
+   nova, revogação central, custo de leitura por requisição). O esquema **não** tem tabela de sessão
+   hoje.
+2. **Duração da sessão e inatividade.** O Authelia usa `inactivity: 30m`, e o `AvisoSessao` nasceu
+   dessa realidade — trocar o número muda a experiência de quem deixa a tela aberta.
+3. **2FA depois do corte** — se some junto com o Authelia, se é reconstruído, e se é obrigatório.
+   O `BLK-SEC-03-FU1` queria forçá-lo.
+4. **Recuperação de senha** — hoje não existe caminho nenhum: quem esquece depende de um admin
+   redefinir pela tela. Autoatendimento exige e-mail, que o piloto não envia.
+5. **A borda.** O Caddy deixa de fazer *forward-auth*; o que fica no lugar (e o que acontece com os
+   headers `Remote-*` que o RBAC lê hoje) é decisão de infraestrutura, com execução na VPS sob o §6.
+
+## 8. O que este documento não é
+
+Não é cronograma, não escolhe biblioteca e não desenha telas. E não substitui o P19 no
+`banco-de-reservas`, que continua sendo onde a **decisão** mora — aqui está o **terreno** dela.

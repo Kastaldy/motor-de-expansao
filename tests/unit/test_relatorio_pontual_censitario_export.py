@@ -482,6 +482,10 @@ def test_nome_exibicao_variantes():
     assert _nome_exibicao("marcel_gandra") == "Marcel Gandra"
     assert _nome_exibicao("Analista Teste") == "Analista Teste"
     assert _nome_exibicao("  ana  ") == "Ana"
+    # O PONTO entra junto do underscore (10/09): o cadastro tem as duas convencoes de
+    # login, e sem isto a marca-d'agua do D17 sairia "Will.lindo" para quem tem ponto.
+    assert _nome_exibicao("will.lindo") == "Will Lindo"
+    assert _nome_exibicao("ana.ribeiro.silva") == "Ana Ribeiro Silva"
     assert _nome_exibicao("") == ""
 
 

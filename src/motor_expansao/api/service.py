@@ -926,6 +926,7 @@ def montar_pdf_municipio(
     settings: Settings,
     unidade: str = "bairro",
     solicitante: str | None = None,
+    report_id: str | None = None,
 ) -> bytes:
     """Preparo UNICO do Relatorio Municipal: bot/API e motor (web) passam por aqui. READ-ONLY.
 
@@ -1044,8 +1045,12 @@ def montar_pdf_municipio(
         except Exception:
             mapas = None
 
+    # `report_id` (D17) e' OPCIONAL e default `None`: o bot/API segue chamando sem ele e o PDF
+    # sai byte-identico. Quem o passa e' o piloto web, onde a trilha da DEC-027 gera o id que
+    # amarra o arquivo ao evento de geracao. Sem este repasse, o caminho unico do #373
+    # engoliria o carimbo em silencio — o PDF sairia sem `/Info` e com marca-d'agua anonima.
     payloads = gerar_payloads_download_relatorio_municipal(
         result, mapas, ultra_dir=ultra_dir, solicitante=solicitante,
-        unidade=unidade,
+        unidade=unidade, report_id=report_id,
     )
     return payloads.pdf_bytes

@@ -25,7 +25,25 @@ export function temAlunos(p: Pick<Pin, 'alunos'>): boolean {
 }
 
 /**
- * Tamanho, em PIXELS, da moldura de destaque de um pino com alunos.
+ * Esta unidade merece a MOLDURA de destaque?
+ *
+ * UM SIMBOLO SO', por decisao do dono (2026-09-10, reafirmada na emenda 3 da
+ * DEC-035): a moldura e o antigo halo do agregador diziam a MESMA frase — "temos
+ * informacao sobre esta academia" —, e ter dois simbolos separava origens de dado
+ * que ao operador nao interessam. Desenhar dois aneis concentricos em quem tem os
+ * dois seria recriar essa separacao com geometria.
+ *
+ * `temAlunos` continua existindo e NAO foi absorvido aqui de proposito: o
+ * `MapScreen` o usa para dizer "ha numero de alunos neste recorte", que e' outra
+ * afirmacao. Unificar os dois faria a legenda prometer aluno onde so' ha
+ * diagnostico.
+ */
+export function temDestaque(p: Pick<Pin, 'alunos' | 'diag'>): boolean {
+  return temAlunos(p) || p.diag === true
+}
+
+/**
+ * Tamanho, em PIXELS, da moldura de destaque.
  *
  * A moldura e' um QUADRADO ARREDONDADO colado na bandeira, e nao um circulo
  * afastado dela. A primeira versao era um aro solto (raio 23/28 px) e o dono
@@ -34,23 +52,17 @@ export function temAlunos(p: Pick<Pin, 'alunos'>): boolean {
  * ponto no mapa — e some no meio dos hexagonos coloridos da camada de pressao.
  * Colado, ele lê como o que e': a borda daquela bandeira, mais forte.
  *
- * O molde e' o halo do agregador (`_quadrado_logo(halo=True)` em
- * `web/server/app.py`), que ja' resolve isso com um anel rente ao quadrado
- * separado por um respiro transparente estreito.
+ * CONSTANTE desde 17/09/2026 (BLK-WEB-23). Antes havia dois ramos, 38 e 46,
+ * porque o pino com diagnostico era desenhado maior (`getSize` 38) — ele nascia
+ * de um viewBox 160 para caber o anel assado dentro do proprio icone. Com o anel
+ * virando ESTA moldura, aquele icone morreu: todo pino volta a 30, e um so'
+ * tamanho serve a todos. O `+8` poe a moldura ~3 px alem da aresta.
  *
- * Os numeros: o pino normal e' desenhado com `getSize` 30 e o de agregador com
- * 38 (que existe so' para o quadrado sair do mesmo tamanho apesar do viewBox 160
- * do halo). `+8` poe a moldura ~3 px alem da aresta nos dois casos — o mesmo
- * respiro do halo.
- *
- * O pino que virou FOTO usa a mesma geometria do normal (viewBox 128, `getSize`
- * 30), entao nao precisa de um terceiro ramo. E' o caso em que uma variante de
- * ICONE POR REDE teria sumido em silencio, porque a foto vence a cascata do
- * `getIcon` — aqui a moldura e' uma camada propria e nao depende dessa cascata.
+ * O pino que virou FOTO usa a mesma geometria (viewBox 128, `getSize` 30) — e e'
+ * justamente o caso em que uma variante de ICONE POR REDE sumia em silencio,
+ * porque a foto vence a cascata do `getIcon`. Camada nao disputa essa cascata.
  */
-export function tamanhoMolduraAlunos(p: Pick<Pin, 'diag'>): number {
-  return (p.diag ? 38 : 30) + 8
-}
+export const TAMANHO_MOLDURA = 30 + 8
 
 /** Linha escura fina por TRAS do branco. Ver `svgMolduraAlunos`. */
 const KEYLINE = 'rgb(10,16,24)'

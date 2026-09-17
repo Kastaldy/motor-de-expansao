@@ -13,9 +13,11 @@ import pytest
 
 # Garantir modo de teste
 os.environ.setdefault("ENVIRONMENT", "test")
-os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://ultra:ultra123@localhost:5432/motor_expansao_test")
-os.environ.setdefault("DATABASE_URL_SYNC", "postgresql+psycopg2://ultra:ultra123@localhost:5432/motor_expansao_test")
-os.environ.setdefault("SECRET_KEY", "test-secret-key")
+# DATABASE_URL/DATABASE_URL_SYNC/SECRET_KEY sairam daqui (2026-09-01) junto com os defaults
+# do `config.py`: eram do PostGIS de maio, que nunca subiu, e nenhum codigo os lia. Injeta-los
+# no ambiente de teste sugeria a quem lesse que a suite falava com um Postgres -- e, agora que
+# existe banco de verdade, seria um caminho a mais para alguem apontar sem querer.
+# A suite do banco (`tests/unit/test_db_*.py`) NAO conecta em lugar nenhum: usa dubles.
 os.environ.setdefault("H3_RESOLUTION", "7")
 os.environ.setdefault("DIST_MIN_ULTRA_KM", "1.0")
 os.environ.setdefault("RENDA_MIN", "4500")

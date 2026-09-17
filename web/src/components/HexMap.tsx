@@ -43,7 +43,7 @@ import {
   type RGBA,
 } from '../lib/colors'
 import { perfilDoCliente } from '../lib/perfil'
-import { svgMolduraAlunos, tamanhoMolduraAlunos, temAlunos } from '../lib/pins'
+import { svgMolduraAlunos, TAMANHO_MOLDURA, temDestaque } from '../lib/pins'
 import type { Tema } from '../lib/tema'
 import type {
   Cobertura1k,
@@ -165,8 +165,14 @@ interface PeleDoMapa {
    *
    * O contraste no tema claro nao vem da cor, vem da linha escura que
    * `svgMolduraAlunos` desenha por baixo — branco puro sobre o Positron
-   * desapareceria, que e' o defeito que o `HALO_DIAGNOSTICO` (#E8EEF5) tem hoje
-   * por ter sido calibrado so' contra o Dark Matter.
+   * desapareceria. Era exatamente o defeito do antigo `HALO_DIAGNOSTICO`
+   * (#E8EEF5), calibrado so' contra o Dark Matter.
+   *
+   * Desde 17/09/2026 (BLK-WEB-23, emenda 3 da DEC-035) a unificacao se completou
+   * tambem no CODIGO: o halo deixou de ser variante de icone servida pelo backend
+   * e passou a ser ESTA moldura, acesa por `temDestaque` (alunos OU diagnostico).
+   * Entao este `aro` pinta os dois casos, e o defeito do contraste morreu com o
+   * `#E8EEF5` que o causava.
    */
   aroAlunos: RGBA
   /**
@@ -1313,19 +1319,26 @@ export default function HexMap({
            1. o caminho da FOTO vence a cascata do `getIcon`, entao um icone novo
               sumiria em silencio em toda unidade que virou foto — a familia de
               defeito que este repo ja' pagou caro;
-           2. cada variante por rede RE-EMBUTE o PNG da marca em base64 duas vezes
-              (~16/9 dos bytes), e as variantes de halo ja' custam ~1,44 MB em Sao
-              Paulo (BLK-WEB-23). Aqui a moldura e' UM svg generico: uma entrada de
-              atlas no mapa inteiro, e ZERO de payload — `alunos` ja' viaja no pino;
-           3. um SVG gerado no Python nao sabe o tema, e a moldura precisa saber. */
-      ...(pins?.concorrentes?.some(temAlunos)
+           2. cada variante por rede RE-EMBUTE o PNG da marca em base64, e era isso
+              que o halo do agregador fazia ate' 17/09/2026: a mesma logo, byte a
+              byte, uma segunda vez no payload de toda rede com diagnostico
+              (BLK-WEB-23). Aqui a moldura e' UM svg generico: uma entrada de atlas
+              no mapa inteiro, e ZERO de payload;
+           3. um SVG gerado no Python nao sabe o tema, e a moldura precisa saber.
+
+         DESDE 17/09/2026 ELA ACENDE PARA OS DOIS (`temDestaque`): alunos reais e
+         diagnostico. O halo do agregador nao existe mais como icone — ele E' esta
+         camada. Um simbolo so', que e' a decisao do dono de 10/09 levada ao codigo,
+         e de quebra o motivo 1 passou a valer para o diagnostico tambem: ele
+         sumia no pino que virou foto, e agora nao some. */
+      ...(pins?.concorrentes?.some(temDestaque)
         ? [
             new IconLayer<Pin>({
-              id: 'conc-alunos-moldura',
-              data: (pins?.concorrentes ?? []).filter(temAlunos),
+              id: 'conc-destaque-moldura',
+              data: (pins?.concorrentes ?? []).filter(temDestaque),
               getPosition: (d) => [d.lng, d.lat],
               getIcon: () => molduraAlunos,
-              getSize: tamanhoMolduraAlunos,
+              getSize: TAMANHO_MOLDURA,
               sizeUnits: 'pixels',
               // Nao pode roubar o hover da bandeira: quem responde ao mouse e' o
               // pino, que e' quem tem o balao com o numero.
@@ -1357,15 +1370,18 @@ export default function HexMap({
              Quem decide QUAIS pinos entram é o servidor (`icone_foto`): ele sabe quais
              logos existem e aplica o teto do atlas. */
           (d.icone_foto && d.foto ? iconeDaFoto(d.foto) : undefined) ??
-          (d.diag ? iconObjs[`${d.rede ?? ''}__diag`] : undefined) ??
           iconObjs[d.rede ?? ''] ??
           iconObjs.__ultra__,
         // A logo estava pequena demais para ser lida no mapa. A textura do atlas tem 128px
         // (PNG de origem 320x320), entao ha folga ate ~64px CSS sem upscaling — subir para
         // 30 (cap 34) so gasta resolucao que ja existia.
-        // 38 contra 30 porque o SVG com halo tem viewBox 160 e nao 128: a razao 38/160 devolve o
-        // QUADRADO no mesmo tamanho do pin sem halo (30/128). Sem isso o halo encolheria a marca.
-        getSize: (d) => (d.diag ? 38 : 30),
+        //
+        // TAMANHO UNICO desde 17/09/2026 (BLK-WEB-23). Antes o pino com `diag` era desenhado a
+        // 38, porque o icone dele nascia de um viewBox 160 para caber o anel assado dentro do
+        // proprio SVG — e o 38 existia so' para o QUADRADO sair do mesmo tamanho apesar disso.
+        // Com o anel virando a moldura (camada), aquele icone morreu e o 38 perdeu a razao de
+        // ser: mante-lo desenharia a mesma marca maior sem nada em volta para justificar.
+        getSize: 30,
         sizeUnits: 'pixels',
         sizeMinPixels: 10,
         sizeMaxPixels: 43,

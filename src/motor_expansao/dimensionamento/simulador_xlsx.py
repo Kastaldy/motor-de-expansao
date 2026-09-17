@@ -120,6 +120,7 @@ from xml.etree import ElementTree as ET
 import openpyxl
 from openpyxl.comments import Comment
 from openpyxl.formatting.rule import CellIsRule
+from openpyxl.packaging.custom import StringProperty
 from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.workbook.defined_name import DefinedName
@@ -2266,6 +2267,115 @@ def _write_aba_afericao(
 
 
 # ---------------------------------------------------------------------------
+# Rastreio do arquivo (D17) — DUAS camadas
+# ---------------------------------------------------------------------------
+# Pelo mesmo motivo do PDF: uma cobre o furo da outra.
+#
+#   VISIVEL   `Afericao`, bloco no fim da aba. Sobrevive a "salvar como", a e-mail,
+#             a imprimir e a converter para PDF. Morre se a pessoa apagar as linhas.
+#   INVISIVEL `docProps/core.xml` + `docProps/custom.xml`, partes do ZIP que todo
+#             .xlsx e'. Sobrevive a EDICAO normal e a re-salvar pelo Excel -- que e'
+#             justamente o que a visivel nao garante, porque este arquivo existe para
+#             ser mexido. Morre no copy-paste de celulas para uma pasta nova, no
+#             "salvar como CSV" e no Inspetor de Documento.
+#
+# Nenhuma das duas prova QUEM vazou: elas identificam a GERACAO de onde a copia veio.
+# Quem gerou pode ter mandado o arquivo para dez pessoas legitimamente.
+#
+# O bloco visivel vai na AFERICAO, e nao no Resumo, de proposito: o simulador existe
+# para ser aberto na frente do investidor (o pedido fundador do FIN-VIAB-01), e o Resumo
+# e' a aba que ele le'. A Afericao ja' e' a aba de PROVENIENCIA -- ela ja' diz "o numero
+# que o motor calculou no momento em que este arquivo foi gerado".
+
+_RASTREIO_TITULO = "RASTREIO DESTE ARQUIVO"
+_RASTREIO_LABEL_QUEM = "Gerado por"
+_RASTREIO_LABEL_ID = "Identificador do arquivo"
+_RASTREIO_ORIENTACAO = (
+    "Para que serve: informe o identificador acima ao time de Estratégia e Growth e ele "
+    "diz de qual geração esta cópia veio. Não é senha e não dá acesso a nada. A mesma "
+    "informação fica nas propriedades do arquivo (Arquivo > Informações), para o caso de "
+    "estas linhas se perderem."
+)
+
+
+def _carimbar_docprops(
+    wb: openpyxl.Workbook, solicitante: str | None, report_id: str | None
+) -> None:
+    """Camada INVISIVEL: as propriedades do documento, dentro do ZIP.
+
+    `subject` recebe o MESMO texto da marca-d'agua dos tres PDFs (`pdf_base`), para uma
+    pessoa ter um nome so' em todos os artefatos -- o import e' tardio porque este modulo
+    nao depende de `fpdf` e nao ha por que arrasta-lo para o caminho da planilha.
+
+    `creator` leva o nome porque e' o campo que o Windows mostra em Propriedades >
+    Detalhes > Autores: quem achar o arquivo le' isso sem abrir o Excel e sem o sistema.
+    """
+    from motor_expansao.dashboard.pdf_base import nome_exibicao, texto_da_marca
+
+    # O `strip()` entra numa VARIAVEL, e nao no meio do `if`: o guarda provava nao-nulo
+    # em runtime e o mypy nao estreitava atraves dele (gate bloqueante do CI). De quebra,
+    # `nome_exibicao` passa a receber o valor APARADO -- antes o guarda testava o aparado
+    # e a chamada usava o cru.
+    quem_bruto = (solicitante or "").strip()
+    quem = nome_exibicao(quem_bruto) if quem_bruto else ""
+    wb.properties.title = "Simulador de viabilidade - Ultra Academia"
+    wb.properties.subject = texto_da_marca(solicitante, report_id)
+    if quem:
+        wb.properties.creator = quem
+        wb.properties.lastModifiedBy = quem
+    if (report_id or "").strip():
+        wb.properties.keywords = f"report_id={report_id}"
+
+    # `custom.xml`: chave/valor NOMEADO, que e' o que se le' por programa sem regex em
+    # prosa. `core.xml` continua sendo a copia legivel por humano.
+    for nome, valor in (("report_id", report_id), ("solicitante", solicitante)):
+        if (valor or "").strip():
+            wb.custom_doc_props.append(StringProperty(name=nome, value=str(valor).strip()))
+
+
+def _write_bloco_rastreio(
+    ws: Worksheet, solicitante: str | None, report_id: str | None
+) -> None:
+    """Camada VISIVEL: bloco no fim da aba Afericao."""
+    from motor_expansao.dashboard.pdf_base import nome_exibicao
+
+    row = ws.max_row + 2
+    _cabecalho_tabela(ws, row, [_RASTREIO_TITULO, "", "", "", ""])
+
+    quem_bruto = (solicitante or "").strip()
+    linhas = (
+        (_RASTREIO_LABEL_QUEM, nome_exibicao(quem_bruto) if quem_bruto else "—"),
+        (_RASTREIO_LABEL_ID, (report_id or "—").strip()),
+    )
+    for i, (label, valor) in enumerate(linhas, start=1):
+        _linha_label(ws, row + i, label)
+        c = ws.cell(row=row + i, column=2, value=valor)
+        c.fill = _fill(_CINZA_TRAVADO)
+        c.font = Font(name=_FONTE_PADRAO, color=_CINZA_ESC, size=9)
+        c.alignment = Alignment(horizontal="left", vertical="center")
+        c.border = _BORDA_FINA
+        # O identificador e' longo e a coluna B e' estreita; sem a mesclagem ele fica
+        # cortado na tela e a pessoa copia metade.
+        ws.merge_cells(start_row=row + i, start_column=2, end_row=row + i, end_column=5)
+
+    _nota(ws, row + len(linhas) + 1, _RASTREIO_ORIENTACAO, len(_AFER_COLS))
+
+
+def _carimbar_rastreio(
+    wb: openpyxl.Workbook, solicitante: str | None, report_id: str | None
+) -> None:
+    """As duas camadas. SEM identidade nenhuma, nao carimba nada.
+
+    O ramo vazio existe para a chamada direta de biblioteca (teste, script) sair
+    IDENTICA ao que saia antes -- mesmo contrato do `aviso_nota=None`.
+    """
+    if not (solicitante or "").strip() and not (report_id or "").strip():
+        return
+    _carimbar_docprops(wb, solicitante, report_id)
+    _write_bloco_rastreio(wb[ABA_AFERICAO], solicitante, report_id)
+
+
+# ---------------------------------------------------------------------------
 # Nomes definidos (para as premissas serem chamaveis por nome no Excel)
 # ---------------------------------------------------------------------------
 
@@ -2502,6 +2612,8 @@ def gerar_simulador_xlsx(
     m2: float | None = None,
     resultado: ViabilidadeResult | None = None,
     aviso_nota: str | None = None,
+    solicitante: str | None = None,
+    report_id: str | None = None,
 ) -> bytes:
     """Gera o simulador financeiro completo em .xlsx com FORMULAS VIVAS.
 
@@ -2539,6 +2651,11 @@ def gerar_simulador_xlsx(
         piloto web le `avisos.viabilidade_tributo_provisorio.texto_curto`, que cabe
         na linha unica mesclada); este modulo nao conhece pais nenhum (DEC-047).
         `None` (default) = comportamento identico ao anterior, byte a byte.
+    solicitante, report_id:
+        Rastreio do D17: quem pediu o arquivo e o identificador que o amarra ao evento
+        `relatorio.gerado`. Carimbados em DUAS camadas -- ver o bloco "Rastreio do
+        arquivo" acima. Os dois `None` (default) = nada e carimbado e o arquivo sai
+        identico ao anterior, byte a byte.
 
     Returns
     -------
@@ -2604,6 +2721,7 @@ def gerar_simulador_xlsx(
     )
 
     _registrar_nomes(wb, refs)
+    _carimbar_rastreio(wb, solicitante, report_id)
     wb.calculation.fullCalcOnLoad = True
 
     buf = BytesIO()
