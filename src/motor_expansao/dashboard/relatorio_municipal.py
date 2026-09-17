@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -60,6 +60,9 @@ from motor_expansao.dashboard.utils import score_band_to_color
 from motor_expansao.perfil import resolver_perfil
 
 from . import pdf_base
+
+if TYPE_CHECKING:
+    from motor_expansao.dashboard.relatorio_praca import PracaDaCidade
 
 # ---------------------------------------------------------------------------
 # Constantes de DISPLAY do relatorio (DEC-011 parte 2). Locais a este modulo;
@@ -3779,6 +3782,215 @@ def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 
+# ── Paginas da PRACA (`relatorio_praca.PracaDaCidade`): mapas de calor, pressao, crescimento e
+# onde crescer. Condicionais (so' com `praca=`), por isso fora de `PDF_SECTION_HEADERS`. Texto
+# pelo `texto_pdf` antes do `_ascii`: parte dele vem pronto da camada de crescimento, com travessao.
+
+_PRACA_MAPA_W = 430.0
+_PRACA_MAPA_H = _PRACA_MAPA_W * 1000.0 / 1400.0  # proporcao dos PNGs de `relatorio_praca_mapas`
+
+
+def _praca_texto(texto: Any) -> str:
+    from motor_expansao.dashboard.relatorio_praca import texto_pdf
+
+    return _ascii(texto_pdf(texto))
+
+
+def _praca_pct(valor: float | None) -> str:
+    return TEXTO_SEM_DADO if valor is None else _format_number(valor, 0, "%")
+
+
+def _praca_calor_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
+                      assets: dict[str, bytes | None], *,
+                      primary: tuple[int, int, int], secondary: tuple[int, int, int]) -> None:
+    from motor_expansao.dashboard.relatorio_praca import TITULO_MAPAS_CALOR_CIDADE
+
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, TITULO_MAPAS_CALOR_CIDADE, rgb=primary)
+    y = 96.0
+    for idx, (chave, cor) in enumerate((("calor_cidade_renda_domiciliar", primary), ("calor_cidade_densidade", secondary))):
+        _draw_framed_map(
+            pdf, praca.mapas.get(chave), max_w=_PRACA_MAPA_W, max_h=_PRACA_MAPA_H,
+            x_anchor=36.0 + idx * (_PRACA_MAPA_W + 28.0), y_anchor=y, border_rgb=cor,
+        )
+    legenda = (
+        f"{praca.n_hexagonos_cidade} hexágonos de {praca.municipio}. Renda média domiciliar e "
+        "densidade (habitantes por km² do hexágono), com as cores do slide Mapas de calor e as "
+        "faixas pelos quintis da própria cidade: o mapa compara bairros da mesma praça, não cidades."
+    )
+    if praca.renda_municipal:
+        legenda += " Nesta base a renda é a do município inteiro, então o mapa de renda sai de uma cor só."
+    _draw_note(pdf, 36.0, y + _PRACA_MAPA_H + 24.0, _PAGE_W - 72.0, _praca_texto(legenda))
+    _draw_footer(pdf, versao=result.get("versao_contrato"))
+
+
+def _praca_pressao_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
+                        assets: dict[str, bytes | None], *,
+                        primary: tuple[int, int, int], secondary: tuple[int, int, int]) -> None:
+    from motor_expansao.dashboard.relatorio_praca import (
+        N_DISCOS_DISPUTA,
+        TITULO_PRESSAO_CONCORRENCIAL,
+    )
+
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, TITULO_PRESSAO_CONCORRENCIAL, rgb=primary)
+    _draw_framed_map(pdf, praca.mapas.get("pressao_cidade"), max_w=540.0, max_h=386.0,
+                     x_anchor=34.0, y_anchor=90.0, border_rgb=primary)
+
+    p = praca.pressao
+    raio_txt = f"{p.raio_m / 1000:.1f}".replace(".", ",")
+    px = 610.0
+    pw = _PAGE_W - px - 36.0
+    linhas = [
+        ("Concorrentes", _format_number(p.n_concorrentes, 0)),
+        ("das quais independentes", _format_number(p.n_independentes, 0)),
+        ("Unidades Ultra", _format_number(p.n_ultra, 0)),
+        ("Hexágonos sob algum raio", _praca_pct(p.pct_coberto)),
+        (f"Hexágonos com {N_DISCOS_DISPUTA}+ raios", _praca_pct(p.pct_disputado)),
+        ("Máximo de raios num hexágono", _format_number(p.max_discos_no_hex, 0)),
+    ]
+    y = _info_panel(pdf, px, 76.0, pw, f"Raios de {raio_txt} km", linhas, accent=secondary)
+
+    if p.redes:
+        y += 14.0
+        pdf.set_text_color(*secondary)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.set_xy(px, y)
+        pdf.cell(pw, 14, _ascii("Redes com mais unidades"))
+        y += 20.0
+        for rede, n in p.redes[:5]:
+            tem_logo = _draw_rede_logo(pdf, rede, px, y)
+            pdf.set_text_color(45, 45, 45)
+            pdf.set_font("Helvetica", "", 11)
+            pdf.set_xy(px + (20.0 if tem_logo else 0.0), y + 1)
+            pdf.cell(pw - 60, 13, _ascii(_encurtar(pdf, _prettify_rede(rede), pw - 80)))
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.set_xy(px + pw - 40, y + 1)
+            pdf.cell(40, 13, _ascii(_format_number(n, 0)), align="R")
+            y += 18.0
+    _draw_note(
+        pdf, px, max(y + 8.0, _PAGE_H - 76.0), pw,
+        f"Cada círculo é a área de influência de {raio_txt} km que o motor usa para descontar a "
+        "concorrência do residual. Onde os círculos se sobrepõem a cor escurece: mais academias "
+        "disputando o mesmo público. Conta o centro de cada hexágono.",
+    )
+    _draw_footer(pdf, versao=result.get("versao_contrato"))
+
+
+def _praca_crescimento_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
+                            assets: dict[str, bytes | None], *,
+                            primary: tuple[int, int, int], secondary: tuple[int, int, int]) -> None:
+    from motor_expansao.dashboard.relatorio_praca import TITULO_COMO_A_CIDADE_ESTA_INDO
+
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, TITULO_COMO_A_CIDADE_ESTA_INDO, rgb=primary)
+    c = praca.crescimento
+    x = 36.0
+    w = _PAGE_W - 72.0
+    frase_h = 96.0
+    _rounded_panel(pdf, x, 76.0, w, frase_h, border_rgb=secondary)
+    pdf.set_text_color(*secondary)
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.set_xy(x + 16, 90.0)
+    pdf.cell(w - 32, 16, _ascii(_local_label(result)))
+    pdf.set_text_color(45, 45, 45)
+    pdf.set_font("Helvetica", "", 12)
+    pdf.set_xy(x + 16, 112.0)
+    pdf.multi_cell(w - 32, 16, _praca_texto(c.frase))
+
+    if c.linhas:
+        metade = (len(c.linhas) + 1) // 2
+        col_w = (w - 20.0) / 2.0
+        for idx, bloco in enumerate((c.linhas[:metade], c.linhas[metade:])):
+            if bloco:
+                _info_panel(
+                    pdf, x + idx * (col_w + 20.0), 76.0 + frase_h + 18.0, col_w,
+                    "Emprego e empresas" if idx == 0 else "Salário e setor",
+                    [(_praca_texto(r), _praca_texto(v)) for r, v in bloco],
+                    accent=primary if idx == 0 else secondary,
+                )
+    _draw_note(
+        pdf, x, _PAGE_H - 60.0, w,
+        "Fontes: CAGED, RAIS e Receita Federal (camada de crescimento municipal, atualização "
+        "trimestral). Contexto sobre a praça: não é previsão de desempenho de unidade.",
+    )
+    _draw_footer(pdf, versao=result.get("versao_contrato"), with_attribution=False)
+
+
+def _praca_onde_crescer_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
+                             assets: dict[str, bytes | None], *,
+                             primary: tuple[int, int, int], secondary: tuple[int, int, int]) -> None:
+    from motor_expansao.dashboard.relatorio_praca import TITULO_ONDE_CRESCER
+
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, TITULO_ONDE_CRESCER, rgb=primary)
+    _draw_framed_map(pdf, praca.mapas.get("onde_crescer"), max_w=_PRACA_MAPA_W, max_h=_PRACA_MAPA_H,
+                     x_anchor=34.0, y_anchor=96.0, border_rgb=primary)
+
+    sel = praca.onde_crescer
+    bairros = result.get("bairros_por_hex") or {}
+    x = 34.0 + _PRACA_MAPA_W + 30.0
+    w = _PAGE_W - x - 36.0
+    colunas = (("#", 20.0), ("Bairro", 104.0), ("Residual (alunos)", 70.0), ("Renda domiciliar", 72.0),
+               ("Densidade (hab/km2)", 72.0), ("População", 62.0))
+    escala = w / sum(c[1] for c in colunas)
+    larguras = [c[1] * escala for c in colunas]
+
+    y = 80.0
+    pdf.set_fill_color(*secondary)
+    pdf.set_text_color(*_BRANCO)
+    pdf.set_font("Helvetica", "B", 8)
+    xx = x
+    for (rotulo, _), lw in zip(colunas, larguras, strict=True):
+        pdf.set_xy(xx, y)
+        pdf.multi_cell(lw, 12, _ascii(rotulo), align="C", fill=True, max_line_height=12, new_x="RIGHT", new_y="TOP")
+        xx += lw
+    y += 26.0
+
+    pdf.set_font("Helvetica", "", 9)
+    for i, row in enumerate(sel.hexagonos.to_dict("records")):
+        pdf.set_fill_color(*((255, 255, 255) if i % 2 == 0 else (240, 242, 245)))
+        pdf.set_text_color(45, 45, 45)
+        bairro = bairros.get(str(row.get("hex_id"))) or TEXTO_SEM_DADO
+        valores = (
+            str(row.get("posicao", i + 1)),
+            _encurtar(pdf, str(bairro), larguras[1] - 4),
+            _format_number(row.get("oferta_efetiva_disponivel"), 0),
+            _renda(row.get("renda_domiciliar")),
+            _format_number(row.get("densidade_hab_km2"), 0),
+            _format_number(row.get("pop_leitura"), 0),
+        )
+        xx = x
+        for valor, lw in zip(valores, larguras, strict=True):
+            pdf.set_xy(xx, y)
+            pdf.cell(lw, 22, _ascii(valor), align="C", fill=True)
+            xx += lw
+        y += 22.0
+    if sel.hexagonos.empty:
+        pdf.set_xy(x, y + 4)
+        pdf.cell(w, 16, _ascii("Nenhum hexágono passou nos dois critérios."))
+        y += 22.0
+
+    mediana = _renda(sel.mediana_renda) if sel.mediana_renda is not None else TEXTO_SEM_DADO
+    _draw_note(
+        pdf, x, y + 12.0, w,
+        "Critério: entram só hexágonos com residual positivo E renda domiciliar igual ou acima da "
+        f"mediana da cidade ({mediana}). Entre eles, a ordem é o índice de praça (70% "
+        "socioeconômico, 30% demanda), o mesmo da fila do funil. O residual sozinho puxaria para as "
+        "áreas mais populosas, que nem sempre têm renda.",
+    )
+    if sel.aviso:
+        pdf.set_text_color(*secondary)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_xy(x, pdf.get_y() + 6)
+        pdf.multi_cell(w, 12, _praca_texto(sel.aviso))
+    _draw_footer(pdf, versao=result.get("versao_contrato"))
+
+
 def _sintese_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None], *,
                   primary: tuple[int, int, int] = ULTRA_TURQUESA) -> None:
     pdf.add_page()
@@ -3915,6 +4127,7 @@ def gerar_pdf_relatorio_municipal(
     report_id: str | None = None,
     versao: str | None = None,
     unidade: str = UNIDADE_BAIRRO,
+    praca: PracaDaCidade | None = None,
 ) -> bytes:
     """Gera o PDF do Relatorio Municipal.
 
@@ -3926,6 +4139,11 @@ def gerar_pdf_relatorio_municipal(
     ausente -> paginas com "Mapa indisponivel". `ultra_dir` aponta os assets de branding (fallback
     gracioso para cor solida). `solicitante` carimba a marca d'agua em todas as paginas
     (anti-PII). `versao` sobrescreve o carimbo de versao do rodape. READ-ONLY sobre o M1.
+
+    `praca` (pedido do Felipe, 2026-09-10) acrescenta QUATRO paginas: "Mapas de calor da cidade"
+    (depois de Score Censitario), "Pressao concorrencial" (depois de Residual Fitness), "Onde
+    crescer" (depois de Expansao de Dominio) e "Como a cidade esta indo" (antes da Sintese).
+    `None` = PDF identico ao de antes do parametro.
     """
     assets = _load_branding_assets(ultra_dir)
     mapas = mapas or {}
@@ -3970,10 +4188,24 @@ def gerar_pdf_relatorio_municipal(
         )
     _tabela_hexes_page(pdf, municipio_result, assets, primary=p4)
     _resumo_page(pdf, municipio_result, mapas.get("resumo"), assets, primary=p5, secondary=s5)
+    # Ordinais 12..15 para as paginas da praca: livres (1..11 em uso) e ABSOLUTOS, entao nenhuma
+    # pagina existente troca de cor quando elas entram.
     _score_page(pdf, municipio_result, mapas.get("score"), assets, primary=p6, secondary=s6)
+    if praca is not None:
+        p12, s12 = _tema_bicolor(12)
+        _praca_calor_page(pdf, municipio_result, praca, assets, primary=p12, secondary=s12)
     _residual_page(pdf, municipio_result, mapas.get("residual"), assets, primary=p7, secondary=s7)
+    if praca is not None:
+        p13, s13 = _tema_bicolor(13)
+        _praca_pressao_page(pdf, municipio_result, praca, assets, primary=p13, secondary=s13)
     _dominio_page(pdf, municipio_result, mapas.get("dominio"), assets, primary=p8, secondary=s8)
+    if praca is not None:
+        p14, s14 = _tema_bicolor(14)
+        _praca_onde_crescer_page(pdf, municipio_result, praca, assets, primary=p14, secondary=s14)
     _bairros_page(pdf, municipio_result, assets, primary=p9)
+    if praca is not None:
+        p15, s15 = _tema_bicolor(15)
+        _praca_crescimento_page(pdf, municipio_result, praca, assets, primary=p15, secondary=s15)
     _sintese_page(pdf, municipio_result, assets, primary=p10)
     _espaco_academias_page(pdf, municipio_result, assets, primary=p11)
 
@@ -3996,13 +4228,14 @@ def gerar_payloads_download_relatorio_municipal(
     report_id: str | None = None,
     versao: str | None = None,
     unidade: str = UNIDADE_BAIRRO,
+    praca: PracaDaCidade | None = None,
 ) -> RelatorioMunicipalDownloadPayloads:
     uf = _slug(municipio_result.get("uf", ""))
     muni = _slug(municipio_result.get("nome_municipio", "municipio"))
     prefix = filename_prefix or f"relatorio_municipal_{uf}_{muni}".strip("_")
     pdf_bytes = gerar_pdf_relatorio_municipal(
         municipio_result, mapas, ultra_dir=ultra_dir, solicitante=solicitante, versao=versao,
-        unidade=unidade, report_id=report_id,
+        unidade=unidade, report_id=report_id, praca=praca,
     )
     return RelatorioMunicipalDownloadPayloads(
         pdf_bytes=pdf_bytes,

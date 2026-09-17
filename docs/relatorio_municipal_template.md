@@ -200,6 +200,17 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
   Bio Ritmo/pin, SkyFit, RedFit, etc. — usar as redes realmente mapeadas no município).
 - Método (rodapé): "contagem de pins dentro do território · Espaço = Σ hexágonos amarelos ÷ 2.500".
 
+## Páginas da praça (pedido do Felipe, 2026-09-10)
+
+`service.montar_pdf_municipio` — o preparo único do motor e do bot (#373) — monta `praca=PracaDaCidade` (`service._praca_da_cidade`) e o PDF ganha **quatro páginas** (12 -> 16 no modo bairro). Sem `praca` o PDF sai o de antes; as páginas são condicionais e ficam fora de `PDF_SECTION_HEADERS`. Cores pelos ordinais 12..15 de `_tema_bicolor`, então nenhuma página existente troca de cor. Falha no preparo deixa o PDF sair sem as quatro; falha de um mapa vira "Mapa indisponível". Lógica pura em `dashboard/relatorio_praca.py`, PNGs em `dashboard/relatorio_praca_mapas.py`, testes em `tests/unit/test_relatorio_municipal_praca.py`.
+
+- **Mapas de calor da cidade** (depois de Score Censitário): renda média domiciliar e densidade por hexágono, lado a lado. Renda pelo mesmo mapa da tabela de regiões (`carregar_renda_domiciliar_por_hex`); sem ele a coluna fica nula, nunca cai na per capita. Densidade = população de leitura (`COLS_POPULACAO`, a precedência do piloto) sobre a área da célula, e não `densidade_pop_setor_hab_km2`, que é do setor. Cores do slide "Mapas de calor" do pontual; cortes pelos quintis da própria cidade (`quebras_por_quantil`), porque a pergunta é "quais bairros desta praça".
+- **Pressão concorrencial** (depois de Residual Fitness): um disco de `RAIO_INFLUENCIA_M` (1 km, DEC-051) por academia do município — o recorte do slide Concorrentes (`filtrar_pins_do_municipio`) — sobre a cidade inteira. Com mais de `LOGOS_MAX_CIDADE` (120) academias as logos viram pontos, senão escondem os discos. Painel: concorrentes, independentes, Ultra, % dos hexágonos com o centro sob algum raio, % com 3+ raios (`N_DISCOS_DISPUTA`), máximo num hexágono e as 5 redes com mais unidades (`pressao_na_cidade`).
+- **Onde crescer** (depois de Expansão de Domínio): os 5 hexágonos de `selecionar_onde_crescer`, com o bairro dominante. **Não é o residual puro** (Spearman ~0,995 com população, DEC-041): elegível = residual > 0 **e** renda domiciliar >= mediana da cidade; ordem pelo `indice_praca` da DEC-041, desempate por renda e `hex_id`. O índice é calculado por `dashboard/praca_indice.py`, o MESMO módulo da camada 5 do funil — ele saiu de `web/server/` para `src/` porque o container da API não importa `web/server`, e `web/server/praca_indice.py` virou alias (`sys.modules`). Leitura só do PDF: funil, `/api/hexagonos` e índice não mudam.
+- **Como a cidade está indo** (antes da Síntese): a linha do município em `crescimento_municipal.parquet` da staging (`linha_crescimento_municipal`, por `cod6` e, sem ele, por `UF|NOME`), lida pelo service para o bot e o motor terem a mesma página — a base do bot não traz as colunas `cres_*`. Frase = `v_frase`. Município sem linha (inclusive AR, que não tem a camada) mostra "Sem dado de crescimento para este município.".
+
+A moeda dos mapas e da tabela vem do perfil (`simbolo_renda`, #374).
+
 ## Decisões do gate humano (APROVADO por Vinicius, 2026-06-22 — DEC-011) — IMPLEMENTADO
 
 Implementação em `src/motor_expansao/dashboard/relatorio_municipal.py` (módulo NOVO, disjunto;

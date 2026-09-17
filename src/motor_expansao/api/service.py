@@ -15,6 +15,7 @@ LAZY, dentro de `analisar_ponto`, para nao pesar a subida do app.
 from __future__ import annotations
 
 import json
+import logging
 import unicodedata
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -1113,12 +1114,123 @@ def montar_pdf_municipio(
         except Exception:
             mapas = None
 
+    # Paginas da PRACA (mapas de calor, pressao, crescimento, onde crescer). Falha aqui deixa o PDF
+    # sair sem elas, como antes -- nunca derruba o relatorio.
+    try:
+        praca = _praca_da_cidade(
+            df_muni, uf=uf, nome_municipio=nome_municipio, cod=cod, comp_df=comp_df,
+            ultra_df=ultra_df, poligono=poligono, renda_dom=renda_dom, settings=settings,
+            basemap=mapas is not None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _LOG_PRACA.warning("paginas da praca omitidas em %s/%s: %r", nome_municipio, uf, exc)
+        praca = None
+
     # `report_id` (D17) e' OPCIONAL e default `None`: o bot/API segue chamando sem ele e o PDF
     # sai byte-identico. Quem o passa e' o piloto web, onde a trilha da DEC-027 gera o id que
     # amarra o arquivo ao evento de geracao. Sem este repasse, o caminho unico do #373
     # engoliria o carimbo em silencio — o PDF sairia sem `/Info` e com marca-d'agua anonima.
     payloads = gerar_payloads_download_relatorio_municipal(
         result, mapas, ultra_dir=ultra_dir, solicitante=solicitante,
-        unidade=unidade, report_id=report_id,
+        unidade=unidade, report_id=report_id, praca=praca,
     )
     return payloads.pdf_bytes
+
+
+_LOG_PRACA = logging.getLogger("motor_expansao.relatorio_praca")
+
+
+def _praca_da_cidade(
+    df_muni,
+    *,
+    uf: str,
+    nome_municipio: str,
+    cod: str | None,
+    comp_df,
+    ultra_df,
+    poligono,
+    renda_dom: dict | None,
+    settings: Settings,
+    basemap: bool = True,
+):
+    """Monta a `PracaDaCidade` das quatro paginas novas do Relatorio Municipal.
+
+    Mesmo preparo para o motor e o bot: renda domiciliar pelo mapa que a tabela de regioes ja usa,
+    pins pelo recorte do slide Concorrentes e crescimento por `crescimento_municipal.parquet` da
+    staging (a base do bot nao traz as colunas `cres_*`). Cada mapa que falha vira fallback textual.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from motor_expansao.dashboard import relatorio_praca as rp
+    from motor_expansao.dashboard import relatorio_praca_mapas as rpm
+    from motor_expansao.dashboard.relatorio_municipal import (
+        _hexes_do_municipio,
+        filtrar_pins_do_municipio,
+    )
+
+    hexes = rp.preparar_hexes_da_cidade(df_muni, renda_dom)
+    sel = rp.selecionar_onde_crescer(hexes)
+
+    hexes_muni = _hexes_do_municipio(df_muni)
+    conc = filtrar_pins_do_municipio(comp_df, hexes_muni=hexes_muni, poligono=poligono)
+    ult = filtrar_pins_do_municipio(ultra_df, hexes_muni=hexes_muni, poligono=poligono)
+
+    cres_df = _carregar_parquet_full(str(settings.staging_dir / "crescimento_municipal.parquet"))
+    linha = rp.linha_crescimento_municipal(cres_df, uf=uf, cod_municipio=cod, nome_municipio=nome_municipio)
+    crescimento = rp.resumir_crescimento(linha, uf=uf, rotulo_tendencia=_ROTULO_TENDENCIA)
+
+    # Simbolo do perfil (R$ no BR, USD na AR), como a tabela do proprio relatorio (`_renda`).
+    simbolo = resolver_perfil().moeda.simbolo_renda()
+
+    def _moeda(v: float) -> str:
+        return f"{simbolo} {int(round(v)):,}".replace(",", ".")
+
+    def _inteiro(v: float) -> str:
+        return f"{int(round(v)):,}".replace(",", ".")
+
+    def _calor(coluna: str, titulo: str, legenda: str, formatar, paleta):
+        return lambda fundo: rpm.render_calor_cidade(
+            hexes, coluna, titulo=titulo, legenda_titulo=legenda, formatar=formatar, paleta=paleta,
+            subtitulo="Por hexagono, cidade inteira", basemap=fundo,
+        )
+
+    desenhos = (
+        ("calor_cidade_renda_domiciliar", _calor("renda_domiciliar", "Renda media domiciliar", f"{simbolo} por domicilio", _moeda, rpm.PALETA_RENDA)),
+        ("calor_cidade_densidade", _calor("densidade_hab_km2", "Densidade demografica", "Habitantes por km2", _inteiro, rpm.PALETA_DENSIDADE)),
+        ("pressao_cidade", lambda fundo: rpm.render_pressao_cidade(hexes, conc, ult, basemap=fundo)),
+        ("onde_crescer", lambda fundo: rpm.render_onde_crescer(hexes, sel.hexagonos, basemap=fundo)),
+    )
+
+    def _desenhar(item):
+        chave, desenhar = item
+        # Mesma escada dos mapas do relatorio: fundo de ruas online e, se falhar, canvas offline.
+        for fundo in ((True, False) if basemap else (False,)):
+            try:
+                return chave, desenhar(fundo)
+            except Exception as exc:  # noqa: BLE001 - mapa que falha vira fallback textual
+                _LOG_PRACA.warning("mapa %s (fundo=%s) falhou: %r", chave, fundo, exc)
+        return chave, None
+
+    # Em paralelo: a frio, cada mapa gasta 15-20 s baixando o fundo de ruas (medido em SP). As
+    # threads so' esperam rede e leem frames prontos -- nenhuma escreve em estado compartilhado.
+    with ThreadPoolExecutor(max_workers=len(desenhos)) as pool:
+        mapas = {chave: png for chave, png in pool.map(_desenhar, desenhos) if png}
+
+    _LOG_PRACA.info(
+        "praca %s/%s: %d hexagonos, %d elegiveis, mediana renda dom. %s, crescimento=%s",
+        nome_municipio, uf, len(hexes), sel.n_elegiveis, sel.mediana_renda, crescimento.disponivel,
+    )
+    return rp.PracaDaCidade(
+        municipio=nome_municipio,
+        uf=uf,
+        onde_crescer=sel,
+        pressao=rp.pressao_na_cidade(hexes, conc, ult),
+        crescimento=crescimento,
+        mapas=mapas,
+        n_hexagonos_cidade=int(len(hexes)),
+        renda_municipal=rp.renda_e_municipal(hexes),
+    )
+
+
+#: Rotulo de exibicao da tendencia (valor bruto sem acento, §2) -- o mesmo de `app._ROTULO_TEND`.
+_ROTULO_TENDENCIA = {"Estavel": "Estável", "Em alta": "Em alta", "Em queda": "Em queda"}
