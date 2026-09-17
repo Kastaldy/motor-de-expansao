@@ -158,7 +158,13 @@ concorrentes) só aparecem após `docker compose -f docker-compose.prod.yml rest
   `github-gymscraping` em `/root/.ssh/config`). O `git pull` semanal traz coletores novos automaticamente.
 - **Imagem:** `gymscraping:local` — `Dockerfile` no próprio repo do scraper (Chrome + webdriver-manager +
   Chromium do Playwright). Reconstruída a cada run (cache acelera).
-- **Runner:** **`/opt/gymscraping-infra/run_weekly_90.sh`** (infra na VPS, fora do repo). Faz, em sequência:
+- **Runner:** **`/opt/gymscraping-infra/run_weekly_90.sh`**, cuja fonte versionada é
+  **`scripts/cron/run_weekly_90.sh`** (neste repo desde 2026-09-17; instalação por `cp` + `chmod +x`,
+  manual, como a dos outros wrappers). Até então ele era o **único wrapper de produção fora do
+  repositório**, e o custo foi medido: a DEC-059 tirou o mount do checkout velho da etapa de regen em
+  12/09 e **deixou o passo 4.5 (pins M&A) para trás**, porque não havia diff para ninguém revisar — o
+  passo seguiu rodando um checkout congelado em 19/08 e gravando artefato **vazio com `exit 0`** de
+  30/08 a 17/09, contido apenas pela guarda de desenhabilidade. Faz, em sequência:
   1. `git pull` + `docker build`;
   2. **Coleta** dos 90 (`executar_coletores.py --workers 3 --scheduler-policy weighted`, container `--user 0:0`);
   3. **Relatório de crescimento por rede** (`/opt/gymscraping-infra/relatorio_crescimento.py`): snapshot
