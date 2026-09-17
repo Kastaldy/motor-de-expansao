@@ -842,6 +842,17 @@ def escrever_setores_geo(saida: Path, mapa_dep: dict[str, tuple[str, str]],
         except Exception:
             return float("nan")
 
+    # --- bbox do radio, em graus --------------------------------------------
+    # Os leitores de bairro do Relatorio Municipal (`_carregar_bairros_por_hex` e
+    # `carregar_bairros_geo`) levam o radio ao hexagono pelo centro do bbox. Sem estas
+    # colunas a leitura falhava e os dois devolviam vazio EM SILENCIO: a Comuna 1 saia
+    # "Nao disponivel" na Comparacao e sem a pagina de Bairros Oficiais (Juan, 2026-09-17).
+    def _bbox(g) -> tuple[float, float, float, float]:
+        try:
+            return tuple(float(v) for v in _wkb.loads(bytes(g)).bounds)  # type: ignore[return-value]
+        except Exception:
+            return (float("nan"),) * 4  # type: ignore[return-value]
+
     dest = saida / "outputs" / "setores_censitarios_2022_geo"
     shutil.rmtree(dest, ignore_errors=True)
 
@@ -858,6 +869,10 @@ def escrever_setores_geo(saida: Path, mapa_dep: dict[str, tuple[str, str]],
         pop = pd.to_numeric(grupo["POB_TOT_P"], errors="coerce").fillna(0.0)
         viv = pd.to_numeric(grupo["VIV_TOT_P"], errors="coerce").fillna(0.0)
         area = grupo["geometry"].map(_area_m2)
+        bbox = pd.DataFrame(
+            grupo["geometry"].map(_bbox).tolist(),
+            columns=["bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy"],
+        )
         moradores = (pop / viv.where(viv > 0)).clip(lower=1.0, upper=10.0)
         renda = grupo["COD_2022"].map(renda_por_radio)
         score = grupo["COD_2022"].map(score_por_radio)
@@ -871,8 +886,19 @@ def escrever_setores_geo(saida: Path, mapa_dep: dict[str, tuple[str, str]],
                 # `nome_distrito` e' o FALLBACK que `agregar_perfil_bairro_distrito` usa
                 # quando nao ha `cod_bairro`. Sem ele, "Perfil nao disponivel".
                 "nome_distrito": grupo["COD_2022"].map(bairro_por_radio).values,
+                # O INDEC nao publica bairro nem subdistrito por radio. As colunas vao VAZIAS
+                # de proposito: os leitores de bairro exigem que existam, e a cascata deles
+                # (`nome_bairro` -> `nome_subdistrito` -> `nome_distrito`) cai na localidade.
+                "nome_bairro": pd.Series(pd.NA, index=grupo.index, dtype="string").values,
+                "nome_subdistrito": pd.Series(pd.NA, index=grupo.index, dtype="string").values,
                 "geometry_wkb": grupo["geometry"].values,
+                "bbox_minx": bbox["bbox_minx"].values,
+                "bbox_miny": bbox["bbox_miny"].values,
+                "bbox_maxx": bbox["bbox_maxx"].values,
+                "bbox_maxy": bbox["bbox_maxy"].values,
                 "area_setor_m2": area.values,
+                # Mesmo numero em km2: e' o nome que a pagina de Bairros Oficiais soma.
+                "area_setor_km2_ibge": (area / 1_000_000.0).values,
                 "pop_total_setor_2022": pop.values,
                 "domicilios_particulares_ocupados_setor_2022": viv.values,
                 "renda_per_capita_setor_2022_calibrada": renda.values,

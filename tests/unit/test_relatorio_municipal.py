@@ -1902,12 +1902,12 @@ def test_renda_domiciliar_aplica_uplift_e_pondera_por_domicilios(monkeypatch):
 
 def test_valor_ausente_nao_vira_reais_de_texto():
     """"R$ Não disponível" lê como se o valor fosse a string (visto na tabela de Sinop/MT)."""
-    from motor_expansao.dashboard.relatorio_municipal import _reais
+    from motor_expansao.dashboard.relatorio_municipal import _renda
 
-    assert _reais(5210.0) == "R$ 5.210"
-    assert _reais(None) == TEXTO_SEM_DADO
-    assert _reais(float("nan")) == TEXTO_SEM_DADO
-    assert not _reais(None).startswith("R$")
+    assert _renda(5210.0) == "R$ 5.210"
+    assert _renda(None) == TEXTO_SEM_DADO
+    assert _renda(float("nan")) == TEXTO_SEM_DADO
+    assert not _renda(None).startswith("R$")
 
 
 # ---------------------------------------------------------------------------
