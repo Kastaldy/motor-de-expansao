@@ -1632,26 +1632,30 @@ def _svg_data_uri(svg: str) -> str:
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
 
 
-# `[BLK-MA-17 metade 1]` Cor do HALO que marca "esta unidade tem diagnostico".
+# `[BLK-WEB-23]` O HALO NAO MORA MAIS AQUI -- e' camada no front (DEC-035, emenda 3).
 #
-# NAO pode ser a borda do quadrado: aquela ja' carrega a cor da REDE (7 px de stroke), e sobrescreve-la
-# apagaria a identidade da marca. NAO pode ser ciano (`--ac: #35c9d6`): e' a Ultra e o contorno de
-# selecao. NAO pode ser amarelo/verde/vermelho: sao a escala de score dos hexagonos. Sobra um claro
-# neutro -- e o RESPIRO escuro entre ele e a borda da rede e' o que impede a leitura de "borda dupla".
-HALO_DIAGNOSTICO = "#E8EEF5"
+# Ate' 17/09/2026 este modulo gerava uma SEGUNDA variante de cada icone, com um anel `#E8EEF5`
+# desenhado dentro do proprio SVG, servida em `pins.icones` sob a chave `<rede>__diag`. O defeito
+# era estrutural: o anel exigia um SVG novo, e esse SVG RE-EMBUTIA o mesmo PNG da marca em base64.
+# Cada rede com diagnostico no recorte pagava a logo DUAS VEZES, byte a byte igual.
+#
+# Agora quem desenha o anel e' a moldura do front (`svgMolduraAlunos`), que ja' existia para os
+# alunos reais: UM svg generico, uma entrada de atlas no mapa inteiro, zero de payload. O backend
+# segue mandando a flag `diag` no pino -- e' ela que acende a moldura --, mas nao manda mais icone
+# nenhum por causa dela.
+#
+# Tres ganhos alem dos bytes, e nenhum foi de graca antes: (1) o anel deixa de sumir no pino que
+# virou FOTO, porque camada nao disputa a cascata do `getIcon`; (2) passa a enxergar o TEMA, coisa
+# que um SVG gerado no Python nao sabe fazer; (3) herda a linha escura por baixo, que e' o que da'
+# contraste sobre o basemap claro -- o `#E8EEF5` fora calibrado so' contra o Dark Matter.
 
-# Sufixo da chave do icone com halo no dicionario `pins.icones`. O front resolve
-# `iconObjs[rede + SUFIXO]` quando o pin tem `diag`, e cai no icone normal se faltar.
-SUFIXO_ICONE_DIAG = "__diag"
 
-
-def _quadrado_logo(logo_path: Path | None, bg: str, *, halo: bool = False) -> str | None:
+def _quadrado_logo(logo_path: Path | None, bg: str) -> str | None:
     """Quadrado branco arredondado com a logo PNG encaixada. None se o PNG faltar.
 
-    `halo=True` desenha um anel externo separado por um respiro transparente (que sobre o mapa
-    escuro aparece escuro). O viewBox cresce de 128 para 160 e o quadrado e' deslocado para o
-    centro, entao o icone com halo precisa de `getSize` proporcionalmente maior para o QUADRADO
-    sair do mesmo tamanho -- 38 contra 30, que e' o que o `HexMap` faz.
+    UMA variante por rede, e essa unicidade e' o ponto (BLK-WEB-23). Ate' 17/09/2026 existia uma
+    segunda, com anel de diagnostico, que re-embutia este MESMO `png` em base64 -- a logo viajava
+    duas vezes no payload de toda rede com diagnostico no recorte. O anel virou camada no front.
     """
     if logo_path is None or not logo_path.exists():
         return None
@@ -1659,46 +1663,23 @@ def _quadrado_logo(logo_path: Path | None, bg: str, *, halo: bool = False) -> st
         png = base64.b64encode(logo_path.read_bytes()).decode("ascii")
     except Exception:  # noqa: BLE001
         return None
-    if not halo:
-        svg = (
-            '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
-            'width="128" height="128" viewBox="0 0 128 128">'
-            f'<rect x="4" y="4" width="120" height="120" rx="26" fill="#FFFFFF" stroke="{bg}" stroke-width="7"/>'
-            f'<image href="data:image/png;base64,{png}" x="18" y="18" width="92" height="92" '
-            'preserveAspectRatio="xMidYMid meet"/></svg>'
-        )
-        return _svg_data_uri(svg)
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
-        'width="160" height="160" viewBox="0 0 160 160">'
-        # anel externo: o destaque. `fill=none` deixa o respiro transparente.
-        f'<rect x="7" y="7" width="146" height="146" rx="36" fill="none" '
-        f'stroke="{HALO_DIAGNOSTICO}" stroke-width="7" stroke-opacity="0.92"/>'
-        # o quadrado da rede, identico ao normal, deslocado 16 px para o centro
-        f'<rect x="20" y="20" width="120" height="120" rx="26" fill="#FFFFFF" stroke="{bg}" stroke-width="7"/>'
-        f'<image href="data:image/png;base64,{png}" x="34" y="34" width="92" height="92" '
+        'width="128" height="128" viewBox="0 0 128 128">'
+        f'<rect x="4" y="4" width="120" height="120" rx="26" fill="#FFFFFF" stroke="{bg}" stroke-width="7"/>'
+        f'<image href="data:image/png;base64,{png}" x="18" y="18" width="92" height="92" '
         'preserveAspectRatio="xMidYMid meet"/></svg>'
     )
     return _svg_data_uri(svg)
 
 
-def _quadrado_sigla(short: str, bg: str, fg: str, *, halo: bool = False) -> str:
+def _quadrado_sigla(short: str, bg: str, fg: str) -> str:
     """Fallback quando a rede nao tem PNG. Hoje as 107 tem, mas o caminho continua vivo."""
     sigla = _clean(short)[:3] or "C"
-    if not halo:
-        svg = (
-            '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">'
-            f'<rect x="4" y="4" width="120" height="120" rx="26" fill="{bg}" stroke="#FFFFFF" stroke-width="7"/>'
-            f'<text x="64" y="83" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" '
-            f'font-size="46" font-weight="800" fill="{fg}">{sigla}</text></svg>'
-        )
-        return _svg_data_uri(svg)
     svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">'
-        f'<rect x="7" y="7" width="146" height="146" rx="36" fill="none" '
-        f'stroke="{HALO_DIAGNOSTICO}" stroke-width="7" stroke-opacity="0.92"/>'
-        f'<rect x="20" y="20" width="120" height="120" rx="26" fill="{bg}" stroke="#FFFFFF" stroke-width="7"/>'
-        f'<text x="80" y="99" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" '
+        '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">'
+        f'<rect x="4" y="4" width="120" height="120" rx="26" fill="{bg}" stroke="#FFFFFF" stroke-width="7"/>'
+        f'<text x="64" y="83" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" '
         f'font-size="46" font-weight="800" fill="{fg}">{sigla}</text></svg>'
     )
     return _svg_data_uri(svg)
@@ -1753,7 +1734,7 @@ def _foto_valida(nome: Any) -> str | None:
 # tem `logo_<slug>.png`, e cada MISS custa Path.exists() + read_bytes() + base64 do PNG. Com 107
 # redes possiveis contra 64 entradas o LRU entrava em thrash entre municipios.
 @functools.lru_cache(maxsize=256)
-def _icone_rede(rede: str, halo: bool = False) -> str:
+def _icone_rede(rede: str) -> str:
     from motor_expansao.dashboard.competitors import (
         COMPETITOR_BRANDS,
         COMPETITOR_LOGO_FILES,
@@ -1771,8 +1752,8 @@ def _icone_rede(rede: str, halo: bool = False) -> str:
     # resposta certa para "nao tenho a logo".
     logo_file = COMPETITOR_LOGO_FILES.get(rede) or f"logo_{_slug_rede(rede)}.png"
     logo_path = COMPETITORS_LOGO_DIR / logo_file
-    return _quadrado_logo(logo_path, str(brand["bg"]), halo=halo) or _quadrado_sigla(
-        str(brand["short"]), str(brand["bg"]), str(brand["fg"]), halo=halo
+    return _quadrado_logo(logo_path, str(brand["bg"])) or _quadrado_sigla(
+        str(brand["short"]), str(brand["bg"]), str(brand["fg"])
     )
 
 
@@ -2082,11 +2063,20 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
         ]
 
     redes = sorted(conc["rede"].dropna().astype(str).unique()) if len(conc) else []
-    icones = {r: _icone_rede(r) for r in redes}
-    # Variante COM halo, so' para as redes que de fato tem unidade com diagnostico no recorte —
-    # gerar as 107 sempre dobraria o atlas de textura sem ninguem usar.
-    for r in sorted({str(x["rede"]) for x in linhas_diag if x["rede"]}):
-        icones[f"{r}{SUFIXO_ICONE_DIAG}"] = _icone_rede(r, halo=True)
+    # UMA entrada por rede. Ate' 17/09/2026 havia uma segunda, `<rede>__diag`, com o anel de
+    # diagnostico assado dentro do SVG -- e ela re-embutia o mesmo PNG em base64 (BLK-WEB-23).
+    # O anel agora e' a moldura do front, generica e independente da rede; o que o pino carrega
+    # para acende-la e' a flag `diag`, que continua no payload.
+    #
+    # A UNIAO DAS DUAS FONTES E' OBRIGATORIA, e nao detalhe de estilo. `redes` sai de `conc`
+    # (concorrentes_mapeados); as unidades que vem SO' do feed do agregador aparecem apenas em
+    # `linhas_diag`. Enquanto o halo era variante, o laco que a gerava era o UNICO lugar que dava
+    # icone a essas redes -- `iconObjs[rede]` nunca existiu para elas, so' `iconObjs[rede__diag]`.
+    # Montar o dicionario so' de `redes` as deixaria cair a cascata inteira do `getIcon` ate' o
+    # fim e serem desenhadas com o icone da ULTRA: concorrente do feed virando unidade propria no
+    # mapa, sem erro nenhum no console. Travado por `test_o_dicionario_tem_UMA_entrada_por_rede`.
+    redes_com_pino = sorted(set(redes) | {str(x["rede"]) for x in linhas_diag if x["rede"]})
+    icones = {r: _icone_rede(r) for r in redes_com_pino}
     if len(ultra):
         icones["__ultra__"] = _icone_ultra()
 

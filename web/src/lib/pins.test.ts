@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { svgMolduraAlunos, tamanhoMolduraAlunos, temAlunos } from './pins'
+import { svgMolduraAlunos, TAMANHO_MOLDURA, temAlunos, temDestaque } from './pins'
 
 /* As regras que decidem a moldura de destaque dos pinos com alunos reais. Sao
    testadas aqui porque o `HexMap` nao tem teste de componente: sem isto, a regra
@@ -25,27 +25,56 @@ describe('temAlunos', () => {
   })
 })
 
-describe('tamanhoMolduraAlunos', () => {
+describe('temDestaque', () => {
+  it('acende para quem tem alunos', () => {
+    expect(temDestaque({ alunos: 1875 })).toBe(true)
+  })
+
+  it('acende para quem tem diagnostico, mesmo sem alunos', () => {
+    /* E' o antigo halo do agregador. Ate' 17/09/2026 ele era uma VARIANTE DE ICONE
+       servida pelo backend (`<rede>__diag`), que re-embutia o PNG da marca em
+       base64 — a logo viajava duas vezes (BLK-WEB-23). Agora e' esta moldura. */
+    expect(temDestaque({ diag: true })).toBe(true)
+    expect(temDestaque({ alunos: null, diag: true })).toBe(true)
+  })
+
+  it('UM simbolo so: quem tem os dois nao ganha dois aneis', () => {
+    /* Decisao do dono (2026-09-10, reafirmada na emenda 3 da DEC-035): moldura e
+       halo diziam a MESMA frase, e dois aneis concentricos recriariam com
+       geometria a separacao que ele mandou eliminar. O predicado devolve UM
+       booleano de proposito — nao ha grau de destaque. */
+    expect(temDestaque({ alunos: 1875, diag: true })).toBe(true)
+  })
+
+  it('nao acende sem nenhum dos dois', () => {
+    expect(temDestaque({})).toBe(false)
+    expect(temDestaque({ alunos: null })).toBe(false)
+    expect(temDestaque({ alunos: undefined, diag: false })).toBe(false)
+  })
+
+  it('nao absorve o temAlunos: sao perguntas diferentes', () => {
+    /* O `MapScreen` usa `temAlunos` para dizer "ha numero de alunos neste
+       recorte". Se ele passasse a responder pelo diagnostico, a legenda
+       prometeria aluno onde so' ha diagnostico. */
+    expect(temDestaque({ diag: true })).toBe(true)
+    expect(temAlunos({ diag: true } as { alunos?: number | null })).toBe(false)
+  })
+})
+
+describe('TAMANHO_MOLDURA', () => {
   it('fica COLADA na bandeira, nao solta como um aro', () => {
-    /* O `+8` sobre o tamanho do pino poe a moldura ~3 px alem da aresta — o mesmo
-       respiro do halo do agregador. A versao anterior era um circulo a 8 px da
-       aresta e o dono reprovou olhando a tela: na camada 3 ele lia como mais um
-       PONTO no mapa e sumia entre os hexagonos de pressao. */
-    expect(tamanhoMolduraAlunos({ diag: false })).toBe(38)
-    expect(tamanhoMolduraAlunos({})).toBe(38)
+    /* O `+8` sobre o pino de 30 poe a moldura ~3 px alem da aresta. A versao
+       anterior era um circulo a 8 px da aresta e o dono reprovou olhando a tela:
+       na camada 3 ele lia como mais um PONTO no mapa e sumia entre os hexagonos
+       de pressao. */
+    expect(TAMANHO_MOLDURA).toBe(38)
   })
 
-  it('acompanha o pino maior do agregador', () => {
-    /* O pino `diag` e' desenhado com getSize 38 porque nasce de um viewBox 160. */
-    expect(tamanhoMolduraAlunos({ diag: true })).toBe(46)
-  })
-
-  it('a folga sobre o pino e a MESMA nos dois casos', () => {
-    /* Se as folgas divergissem, o destaque teria dois pesos visuais e o operador
-       leria "mais forte" onde e' so' geometria de icone. */
-    expect(tamanhoMolduraAlunos({ diag: true }) - 38).toBe(
-      tamanhoMolduraAlunos({ diag: false }) - 30,
-    )
+  it('e CONSTANTE: nao ha mais pino de tamanho diferente para acompanhar', () => {
+    /* Antes havia dois ramos (38 e 46) porque o pino com `diag` era desenhado a
+       38 — o icone dele nascia de um viewBox 160 para caber o anel por dentro.
+       Com o anel virando camada, todo pino voltou a 30 e um so' tamanho serve. */
+    expect(typeof TAMANHO_MOLDURA).toBe('number')
   })
 })
 

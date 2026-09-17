@@ -2430,7 +2430,7 @@ READ-ONLY sobre o M1; suíte verde.
 | **Criticidade** | **Baixa** — não muda número nenhum; é peso de payload e memória de textura. READ-ONLY sobre o M1. |
 | **Prioridade** | Baixa. Vale antes de a camada crescer para mais UFs, não antes do merge. |
 | **Esteira** | Builder → QA (sem gate). |
-| **Status** | Pendente — **achado da revisão adversarial pré-PR (2026-08-19)**, medido. |
+| **Status** | **FEITO (2026-09-17)** — opção 1 (halo como camada), pela decisão de Felipe; ver a nota de fechamento no fim do bloco. |
 | **Depende de** | BLK-MA-17 metade 1 (DEC-035 emenda 1) — é ela que cria a variante com halo. |
 | **Autonomia** | **manual (NÃO loop-safe)** |
 
@@ -2457,6 +2457,48 @@ artefato/peso/score do M1.
 **Critério de aceite.** O payload de um município com halo deixa de carregar o mesmo PNG duas vezes,
 medido em bytes antes e depois; o halo continua visualmente idêntico ao aprovado; sem regressão nos
 testes do piloto.
+
+---
+
+#### Fechamento — 2026-09-17
+
+**O que foi feito: a opção 1, mas não como este bloco a descrevia.** O texto acima propunha um
+`ScatterplotLayer` de círculos vazados, camada nova. O que existe é melhor e mais barato: a
+**moldura de alunos reais já era exatamente essa camada** — `IconLayer` com UM svg genérico, atrás
+das bandeiras, com as armadilhas já travadas por teste (`width`/`height` explícitos, senão o deck.gl
+não desenha nada). Ela passou a acender também para `diag`, por `temDestaque`. Nenhuma camada
+nasceu; o risco de "desalinhamento em zoom extremo" que o bloco temia nunca se colocou, porque a
+moldura já se alinhava pelo mesmo `getPosition` havia semanas.
+
+**A opção 2 está morta, e fica registrado para ninguém reabrir.** `<use>` com referência externa não
+resolve dentro de SVG em data-URI, e o próprio front documenta que o deck.gl rasteriza cada data-URI
+isoladamente — foi assim que a moldura saiu invisível na primeira tentativa.
+
+**DOIS critérios de aceite NÃO foram cumpridos como escritos, e isso é o registro honesto:**
+
+1. **"medido em bytes antes e depois" — NÃO medido.** O diretório `concorrentes/` não existe nesta
+   estação, e toda tentativa caiu no quadrado de sigla, que não embute PNG nenhum. O que está
+   provado é a **eliminação estrutural**: nenhuma chave `__diag` no payload, travada por
+   `test_o_dicionario_tem_UMA_entrada_por_rede`. Os "~1,44 MB / 29 redes" do enunciado permanecem
+   número herdado, nunca verificado por quem fechou o bloco.
+2. **"o halo continua visualmente idêntico" — NÃO continua, de propósito.** O anel cinza `#E8EEF5`
+   virou a moldura branca com linha escura por baixo. Isso contraria o "Fora de escopo" acima, e foi
+   **decisão de Felipe em 17/09**, tomada com o preço declarado antes: um símbolo só, porque moldura
+   e halo diziam a mesma frase. Registrado na **emenda 3 da DEC-035**.
+
+**Uma regressão que a remoção quase custou.** O laço da variante era o **único** lugar que criava
+ícone para as redes vindas só do feed do agregador — para elas nunca existiu `iconObjs[rede]`, só
+`iconObjs[rede__diag]`. Removê-lo sem mais as faria cair a cascata inteira do `getIcon` e serem
+desenhadas **com o ícone da Ultra**, sem erro no console. O dicionário passa a ser montado da união
+das duas fontes, e o teste acima é quem trava isso — ele pegou a regressão na primeira execução.
+
+**De quebra, dois defeitos existentes morreram:** o halo sumia no pino que virou FOTO (a foto vence
+a cascata do `getIcon`; camada não disputa) e era quase invisível sobre o basemap claro (o `#E8EEF5`
+fora calibrado só contra o Dark Matter).
+
+**Verificação:** `ruff` limpo; `tsc --noEmit` exit 0; front **1003 testes** em 47 arquivos; Python
+**4964 passados** (rodado em blocos — a suíte inteira num processo só foi morta por falta de memória
+nesta máquina, com 2,6 GB livres de 16 GB e uma sessão vizinha ocupando o resto).
 
 ---
 
