@@ -309,3 +309,31 @@ def test_service_monta_a_praca_com_crescimento_da_staging(tmp_path, monkeypatch)
     assert praca.pressao.n_concorrentes == 1  # a academia de fora do municipio nao entra
     assert set(praca.mapas) == {"calor_cidade_renda_domiciliar", "calor_cidade_densidade", "pressao_cidade", "onde_crescer"}
     assert len(praca.onde_crescer.hexagonos) >= 1
+
+
+# --------------------------------------------------------------------------- #
+# Pins nos mapas tematicos                                                    #
+# --------------------------------------------------------------------------- #
+def test_score_e_residual_saem_sem_pins(monkeypatch):
+    """Em capital as logos cobriam os hexagonos: score e residual ficam so' com a cor."""
+    from motor_expansao.dashboard import relatorio_municipal as relmun
+
+    recebidos: dict[str, object] = {}
+
+    def _render(df, *, camada, competitors_df=None, ultra_df=None, **k):
+        recebidos[camada] = (competitors_df, ultra_df)
+        return b"PNG"
+
+    monkeypatch.setattr(relmun, "_render_mapa_municipio", _render)
+    monkeypatch.setattr(relmun, "_render_mapa_bairros", lambda *a, **k: b"PNG")
+    df = _df_cidade(1)
+    conc = pd.DataFrame({"rede": ["smart_fit"], "lat": [_LAT], "lng": [_LNG]})
+    ultra = pd.DataFrame({"lat": [_LAT], "lng": [_LNG]})
+    relmun.render_mapas_municipio(df, {"zonas": []}, competitors_df=conc, ultra_df=ultra)
+
+    assert recebidos["score"] == (None, None)
+    assert recebidos["residual"] == (None, None)
+    assert recebidos["cobertura"] == (None, None)
+    for camada in ("resumo", "dominio"):
+        c, u = recebidos[camada]
+        assert c is not None and len(c) == 1 and u is not None and len(u) == 1

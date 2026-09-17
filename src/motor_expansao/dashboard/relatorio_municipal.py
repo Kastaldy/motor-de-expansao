@@ -2570,20 +2570,24 @@ def render_mapas_municipio(
     focus_bounds = _focus_bounds_mercator(
         df_muni, competitors_df=competitors_df, ultra_df=ultra_df
     )
+    # Score e residual SEM pins (Juan, 2026-09-17): em capital as logos cobriam os hexagonos --
+    # Sao Paulo tem 491 academias. Mesma regra que a versao por bairro ja seguia; quem esta
+    # instalado aparece em Resumo, Dominio, Pressao concorrencial e Espaco e academias.
+    com_pins = {"resumo": True, "score": False, "residual": False, "dominio": True}
     mapas = {
         camada: _render_mapa_municipio(
             df_muni,
             camada=camada,
             municipio_result=municipio_result,
             zonas=zonas,
-            competitors_df=competitors_df,
-            ultra_df=ultra_df,
+            competitors_df=competitors_df if pins else None,
+            ultra_df=ultra_df if pins else None,
             basemap=basemap,
             width=width,
             height=height,
             focus_bounds=focus_bounds,
         )
-        for camada in ("resumo", "score", "residual", "dominio")
+        for camada, pins in com_pins.items()
     }
 
     # Camada "cobertura": municipio INTEIRO (focus_bounds=None), sem pins (leitura limpa).

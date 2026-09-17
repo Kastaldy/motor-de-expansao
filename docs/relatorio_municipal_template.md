@@ -211,6 +211,8 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
 
 A moeda dos mapas e da tabela vem do perfil (`simbolo_renda`, #374).
 
+**Score Censitário e Residual Fitness sem pins (2026-09-17).** Na versão por hexágono os dois mapas levavam as logos de concorrentes e Ultra, e em capital elas cobriam os hexágonos (São Paulo: 491 academias). Agora seguem a regra da versão por bairro: pins só em Resumo e Domínio.
+
 ## Decisões do gate humano (APROVADO por Vinicius, 2026-06-22 — DEC-011) — IMPLEMENTADO
 
 Implementação em `src/motor_expansao/dashboard/relatorio_municipal.py` (módulo NOVO, disjunto;
