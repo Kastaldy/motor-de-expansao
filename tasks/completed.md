@@ -13757,3 +13757,44 @@ Ciclo ad-hoc pedido pelo Felipe (urgência de estudos/extração de relatórios)
 - **Pop-up de confidencialidade no piloto** (`web/src/components/AvisoConfidencialidade.tsx` + fio no `App.tsx`): bloqueante, centrado, a cada entrada (estado local sem persistência), padrão visual do sistema (Glass/Eyebrow/Botao), só prossegue no "OK, estou ciente".
 - Testes: 4 novos em `test_relatorio_pontual_censitario_export.py` (marca em todas as páginas, humanização, login bruto ausente, jargão ausente com needles de palavra única); `_TIT_NUM` atualizado em `test_relatorio_pontual_viabilidade.py`. 202 testes dos arquivos de PDF verdes; vitest + build verdes.
 - Amostra validada pelo Felipe: `amostra-relatorio-pontual-confidencial.pdf` (Av. Paulista 1500, dados reais, 9 páginas).
+
+## Fechamento de ciclo — BLK-BASEMAP-04 (2026-09-17)
+
+Bloco fechado com **uma frente entregue e a outra REFUTADA POR MEDIÇÃO**. O gate visual previsto
+na esteira (`[GATE VISUAL — Vinicius]`) **perdeu objeto**: nada muda de resolução de render.
+
+- **(b) Orçamento de tempo do mosaico — ENTREGUE** (commit `110a713`). O `_LABELS_TIMEOUT_S = 8`
+  é teto POR LADRILHO; contra um CDN em blackhole o pior caso ainda segurava o PDF por ~10 min.
+  `_fetch_labels` ganhou prazo de parede para o mosaico INTEIRO
+  (`API_BASEMAP_LABELS_ORCAMENTO_S`, padrão 45 s): estourado o prazo, para de coletar e entrega o
+  mosaico **parcial** em vez de abortar. É FUNÇÃO e não constante de módulo — constante seria lida
+  no import e a env viraria enfeite; lixo na env (`abacaxi`, `-3`, `0`, vazio) cai no padrão.
+- **Provado por sabotagem, e uma das três previsões saiu pelo lado incômodo:** prazo infinito
+  (`+3600`) → VERMELHO (1,54 s contra teto de 0,90 s); `shutdown(wait=True)` → VERMELHO (1,53 s);
+  **remover o `break` → VERDE**. O `break` NÃO carrega a garantia — sem ele os `result()` com
+  prazo vencido estouram na hora e o laço drena rápido igual. Quem sustenta a promessa são o prazo
+  e o `cancel_futures=True` num executor explícito (um `with` bloquearia na saída exatamente pelo
+  que o orçamento existe para cortar).
+- **Teto do teste em 0,6x o custo completo, não 0,5x**: medido, o caminho feliz gasta 0,53 s
+  contra 1,50 s do completo — com 0,75 s, UMA leva de atraso (0,3 s/ladrilho) pintava vermelho sem
+  defeito nenhum. Teste de tempo apertado é instabilidade esperando acontecer.
+- **(a) REFUTADA.** O backlog afirmava 624 tiles, canvas de 654 MB e `@2x` "100% desperdiçado"
+  (downsample de 21,6x). Remedido no frame canônico de hoje (raio 1,0 km da DEC-021, `width=1000`):
+  **16 tiles, 16 MB, 1,67x**. Os 624 dependiam do bump duplo que o BLK-BASEMAP-06 tratou como
+  DEFEITO e removeu — hoje os dois chamadores passam `zoom_bump=0`, então **a metade "baixar
+  `_LABELS_ZOOM_BUMP` de 1 para 0" já estava no ar sem baixa dada**. E dropar o `@2x` economizaria
+  16 MB → 4 MB levando o mosaico a **0,84x** a densidade do frame: abaixo de 1:1, que é a
+  ilegibilidade sub-pixel que o BASEMAP-06 foi aberto para corrigir. O `@2x` é decisão de
+  legibilidade, não desperdício.
+- **O custo não migrou para o outro consumidor:** a grade acompanha a LARGURA EM PX, não a área —
+  o Municipal de ~200 km custa os mesmos 9 tiles que um de ~20 km, porque `_labels_grid` desce o
+  zoom em vez de crescer a grade. O regime de 624 tiles não existe em lugar nenhum do código atual.
+- **(c)** (rótulos pelo tileserver próprio, CARTO fora) é escopo do **BLK-BASEMAP-06**; manter aqui
+  duplicaria o item.
+- Lição registrada, 3ª da mesma família nesta sessão (DEC-038/045/050): documento afirmando um
+  número que a medição não sustenta. O texto do backlog ficou dois blocos desatualizado porque
+  ninguém remediu depois do conserto que apagou a causa.
+- Testes: 2 novos em `test_relatorio_pontual_censitario_mapa.py` (resolução em runtime + tolerância
+  a lixo; corte do mosaico com 3 asserções, nenhuma bastando sozinha). Arquivo inteiro 66 verdes;
+  `ruff` limpo; parsers de `tasks/` 215 verdes.
+- Guardrail: §5 READ-ONLY M1 — camada de render, nenhuma mudança em score/pesos/carteira/artefatos.

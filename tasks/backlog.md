@@ -3611,15 +3611,11 @@ Emendas em DEC-004 e DEC-011.
 
 ---
 
-### BLK-BASEMAP-04 — Custo do mosaico de rótulos: `@2x` desperdiçado e orçamento de tempo
+### BLK-BASEMAP-04 — CONCLUÍDO em 2026-09-17 (ver `tasks/completed.md`)
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **Média** (custo/latência de RENDER; **READ-ONLY sobre o M1**) |
-| **Esteira** | Block Orchestrator → Planner → `[GATE VISUAL — Vinicius]` → Builder → QA |
-| **Depende de** | BLK-BASEMAP-03 |
-| **Status** | Pendente |
-| **Autonomia** | **manual (NÃO loop-safe)** — muda resolução de render, exige gate visual |
+| **Status** | **CONCLUÍDO** — (a) metade já no ar e metade REFUTADA por medição, (b) entregue, (c) é o BLK-BASEMAP-06 |
 
 **Contexto (medido no frame canônico do Pontual à época: raio 1,5 km, canvas 1000x760, lat −23,55 — raio de 1,0 km desde a DEC-021).**
 O mosaico de rótulos busca **624 tiles** por relatório contra 169 do basemap, e aloca um canvas de
@@ -3627,12 +3623,43 @@ O mosaico de rótulos busca **624 tiles** por relatório contra 169 do basemap, 
 3,349 px/m contra 0,1548 px/m do frame — downsample de **21,6x** no render. O cache do
 BLK-BASEMAP-03 corta a repetição, **não o pico**: no cache frio os 624 tiles e os 654 MB continuam.
 
+**REMEDIÇÃO 2026-09-17 — o parágrafo acima é HISTÓRICO e não descreve mais o código.** Os 624
+tiles dependiam do bump duplo (`_BASEMAP_ZOOM_BUMP + _LABELS_ZOOM_BUMP`, zoom +2) que o
+BLK-BASEMAP-06 tratou como DEFEITO e removeu; hoje os dois chamadores passam `zoom_bump=0`
+(`censo_map._render_camada` e `relatorio_municipal.py:2016`). Medido no frame canônico de hoje
+(raio 1,0 km da DEC-021, `width=1000`, lat −23,55), com `_labels_grid`/`_labels_extent` offline:
+
+| | backlog acima | medido 2026-09-17 |
+|---|---|---|
+| tiles por chamada | 624 | **16** |
+| canvas | 654 MB | **16 MB** |
+| densidade mosaico / frame | 21,6x | **1,67x** |
+
+A contagem acompanha a **largura em px**, NÃO a área do recorte: o Municipal de ~200 km custa os
+mesmos 9 tiles que um de ~20 km, porque a grade desce o zoom em vez de crescer (só `width=2000`
+sobe para 49). Então o custo não migrou para o outro consumidor — ele deixou de existir.
+**Dropar o `@2x` está REFUTADO:** economizaria 16 MB → 4 MB e levaria o mosaico a **0,84x** a
+densidade do frame, isto é, abaixo de 1:1 — exatamente a ilegibilidade sub-pixel que o
+BLK-BASEMAP-06 foi aberto para corrigir. O `@2x` é decisão de legibilidade, não desperdício, e o
+teste `test_relatorio_pontual_censitario_mapa.py:1528` já documenta o teto de 3x com essa razão.
+
 **Objetivo.** (a) avaliar dropar o `@2x` e/ou baixar `_LABELS_ZOOM_BUMP` de 1 para 0 (corta os
 tiles ~4x) — **precisa de gate visual**, porque a nitidez dos nomes foi aprovada por Vinicius no
 gate do BLK-RELPON-11; (b) orçamento de tempo (wall-clock) para o mosaico inteiro, em vez de só
 timeout por tile: hoje o pior caso contra um CDN em blackhole ainda é ~10 min segurando o PDF;
 (c) avaliar servir os rótulos do **próprio tileserver** (camada `transportation_name` no estilo
 `ultra-maptiler`), o que elimina o CARTO e deixa o rodapé honestamente só `(c) OpenStreetMap`.
+
+**Estado por frente (2026-09-17):**
+- **(a) bump 1 → 0: JÁ FEITO**, e nunca foi dado baixa — os dois chamadores passam `zoom_bump=0`.
+  **(a) dropar o `@2x`: REFUTADO** pela remedição acima (levaria o mosaico a 0,84x do frame).
+  Nenhuma das duas metades precisa de gate visual: uma já está no ar, a outra não deve ser feita.
+- **(b) ENTREGUE.** `API_BASEMAP_LABELS_ORCAMENTO_S` (padrão 45 s) em `_fetch_labels`: estourado o
+  prazo, para de coletar e devolve o mosaico PARCIAL. Resolvido em RUNTIME (constante de módulo
+  faria a env virar enfeite) e tolerante a lixo na env. Provado por sabotagem — prazo infinito e
+  `shutdown(wait=True)` ficam vermelhos; remover o `break` NÃO fica, porque o `break` é
+  otimização e quem sustenta a promessa são o prazo e o `cancel_futures`.
+- **(c)** é o escopo do **BLK-BASEMAP-06**, que já o trata; manter aqui duplicaria o item.
 
 **Guardrail.** §5 READ-ONLY M1. Qualquer mudança de resolução passa por gate visual antes do merge.
 
