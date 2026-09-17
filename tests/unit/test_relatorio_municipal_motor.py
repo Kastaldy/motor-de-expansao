@@ -17,16 +17,20 @@ aqui entram apenas os cenarios que so existiam atraves da UI. Nenhum teste bate 
 from __future__ import annotations
 
 import math
+import re
 
 import h3
 import pandas as pd
+import pytest
 
+from motor_expansao.dashboard import relatorio_municipal as rm
 from motor_expansao.dashboard.relatorio_municipal import (
     _municipio_mask,
     agregar_municipio,
     gerar_payloads_download_relatorio_municipal,
     render_mapas_municipio,
 )
+from motor_expansao.perfil import PERFIL_BR_EMBARCADO, carregar_perfil
 
 
 def _hex(lat: float, lng: float) -> str:
@@ -245,3 +249,82 @@ def test_cadeia_ui_lote_municipio_sem_hex_nao_aborta_os_demais():
     assert len(gerados) == 2
     assert all(p.pdf_bytes.startswith(b"%PDF") for p in gerados)
     assert len({p.pdf_filename for p in gerados}) == 2
+
+
+# ---------------------------------------------------------------------------
+# Argentina (BLK-INTL-10): o municipal sai com a base AR e sem cara de Brasil
+# ---------------------------------------------------------------------------
+
+# Colunas que o exportador AR (`exportar_piloto_ar.py`) NAO emite. Medido na base real
+# (`motor_data_ar`, 2026-09-16): sem elas a rota /api/relatorio/municipal devolvia 500
+# "'numpy.float64' object has no attribute 'dropna'" para qualquer departamento.
+_COLUNAS_AUSENTES_NA_AR = (
+    "penetracao_fitness_mercado_estimada",
+    "pop_total_setor_2022",
+    "fonte_populacao_corte",
+)
+
+
+@pytest.fixture
+def perfil_ar(monkeypatch):
+    """O modulo le o perfil na CHAMADA (`resolver_perfil()`), entao trocar o resolvedor basta:
+    e o mesmo efeito de subir o container com o `perfil.json` argentino."""
+    perfil = carregar_perfil(PERFIL_BR_EMBARCADO.parents[1] / "AR" / "perfil.json")
+    monkeypatch.setattr(rm, "resolver_perfil", lambda: perfil)
+    return perfil
+
+
+def _df_argentino() -> pd.DataFrame:
+    linhas = [
+        _row(-34.60, -58.37, "Comuna 1", "CA", oferta=4451.0, consumo=1000.0),
+        _row(-34.61, -58.38, "Comuna 1", "CA", oferta=500.0, consumo=200.0),
+    ]
+    df = pd.DataFrame(linhas)
+    return df.drop(columns=[c for c in _COLUNAS_AUSENTES_NA_AR if c in df.columns])
+
+
+def test_agregar_municipio_sem_as_colunas_que_a_base_ar_nao_tem():
+    """Coluna ausente vira Series de NaN, nao escalar: a penetracao sai n/d e a populacao cai
+    para `pop_total` em vez de derrubar a agregacao inteira."""
+    res = agregar_municipio(_df_argentino(), nome_municipio="Comuna 1", uf="CA")
+
+    assert res["n_hex_total"] == 2
+    assert math.isnan(res["penetracao_fitness_media"])
+    assert res["pop_total_municipio"] == pytest.approx(4000.0)
+
+
+def test_renda_sai_no_simbolo_da_moeda_de_renda_do_perfil(perfil_ar):
+    """A renda AR chega em USD enquanto a moeda do pais e ARS ("$"): o rotulo e o codigo
+    `USD`, nunca o `R$` fixo nem o `$` do peso."""
+    assert rm._renda(1234.56, 2) == "USD 1.234,56"
+
+
+def test_renda_no_perfil_br_continua_em_reais():
+    assert rm._renda(1234.56, 2) == "R$ 1.234,56"
+    assert rm._renda(float("nan")) == rm.TEXTO_SEM_DADO
+
+
+def test_instituto_do_censo_vem_do_perfil(perfil_ar):
+    assert rm._instituto_censo() == "INDEC"
+
+
+def test_instituto_do_censo_no_perfil_br_e_o_ibge():
+    assert rm._instituto_censo() == "IBGE"
+
+
+def _texto_do_pdf(pdf_bytes: bytes) -> bytes:
+    """So' os operandos de texto (`(...) Tj`). As imagens vao sem compressao no PDF e, num
+    relatorio real de 3 MB, "R$" aparece dezenas de vezes por ACASO dentro delas."""
+    return b"\n".join(re.findall(rb"\(([^\n]*)\) ?Tj", pdf_bytes))
+
+
+def test_pdf_argentino_nao_cita_ibge_nem_reais(perfil_ar):
+    payload = _payload_como_a_ui(_df_argentino(), "Comuna 1", "CA")
+
+    assert payload is not None
+    assert payload.pdf_bytes.startswith(b"%PDF-1.4")
+    texto = _texto_do_pdf(payload.pdf_bytes)
+    assert b"IBGE" not in texto
+    assert b"R$" not in texto
+    assert b"INDEC" in texto
+    assert b"USD" in texto
