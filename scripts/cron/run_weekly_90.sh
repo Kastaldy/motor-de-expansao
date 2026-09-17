@@ -38,7 +38,7 @@
 # (`selfit 231 -> 119`) e do checkout parado 8 commits atras por cinco dias.
 #
 # Agora: a safra e' PRESERVADA antes do descarte (passo 0), quem nao recoletou volta a ELA e nao
-# ao baseline (passo 1.5, por CONTEUDO), e o pull que falha AVISA no chat de ops. O descarte em
+# ao baseline (passo 2.5, por CONTEUDO), e o pull que falha AVISA no chat de ops. O descarte em
 # si continua -- ele e' o preco do fast-forward --, mas deixou de ser perda.
 set -uo pipefail
 REPO=/opt/gymscraping
@@ -89,7 +89,7 @@ enviar_telegram('🔴 [Coleta] ' + sys.argv[1], os.environ['API_TELEGRAM_TOKEN']
   #    fast-forward), mas ele descarta os CSVs RASPADOS: a rede cujo coletor falhar fica com o
   #    baseline do REPOSITORIO, que pode ser de meses atras. Foi assim que a Selfit caiu de 231
   #    para 119 em 2026-09-13 e o snapshot quase fotografou isso. O backup e' o que torna a
-  #    restauracao do passo 1.5 possivel -- sem ele nao ha para onde voltar.
+  #    restauracao do passo 2.5 possivel -- sem ele nao ha para onde voltar.
   SAFRA="$INFRA/safra_anterior"
   rm -rf "$SAFRA"; mkdir -p "$SAFRA"
   cp -a Unidades/. "$SAFRA"/ 2>/dev/null || true

@@ -5287,7 +5287,7 @@ do crash e o da âncora da Smart Fit, já mergeados no repo do Vini, simplesment
 1. **Passo 0 — a safra é preservada ANTES do descarte** (`$INFRA/safra_anterior`). O descarte
    continua (é o preço do fast-forward), mas deixou de ser perda. A ORDEM é a carga: preservar
    depois salvaria o baseline, que é o dado errado.
-2. **Passo 1.5 — quem não recoletou volta à SAFRA, não ao baseline.** Critério por **conteúdo**:
+2. **Passo 2.5 — quem não recoletou volta à SAFRA, não ao baseline.** Critério por **conteúdo**:
    CSV idêntico ao commitado **e** diferente da safra ⇒ não foi recoletado ⇒ restaura.
 3. **O `pull` que falha avisa no chat de ops**, reusando `enviar_telegram`. **Não aborta** o lote:
    a coleta ainda vale, e derrubar o domingo trocaria um dano por outro maior.
