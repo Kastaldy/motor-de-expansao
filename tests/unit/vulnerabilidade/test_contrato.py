@@ -348,12 +348,17 @@ def test_nome_base_nunca_devolve_vazio_para_nome_que_e_so_o_marcador() -> None:
 
 
 def test_marcador_composto_nao_deixa_palavra_orfa() -> None:
-    """Regressão da ORDEM da alternação: `pre lancamento` tem de vir ANTES de `lancamento`.
+    """Regressão da PRESENÇA da forma composta: `pre lancamento` tem de estar na alternação.
 
-    O `re` casa a PRIMEIRA alternativa, não a mais longa. Com a ordem invertida, "pre lancamento"
-    perdia só a segunda palavra e sobrava um `pre` órfão — medido em 15 unidades da `ad3`. O dano
-    não é estético: quando a unidade inaugurasse e o sufixo caísse, `"... pre"` -> `"..."` geraria
-    exatamente o churn falso que esta função existe para matar.
+    Sem ela, `lancamento` casa sozinho e sobra um `pre` órfão — medido em 15 unidades da `ad3`. O
+    dano não é estético: quando a unidade inaugurasse e o sufixo caísse, `"... pre"` -> `"..."`
+    geraria exatamente o churn falso que esta função existe para matar.
+
+    **A ORDEM entre as alternativas é indiferente**, e a primeira redação deste teste dizia o
+    contrário. O `re` procura a POSIÇÃO mais à esquerda antes de testar alternativas; na posição
+    do `pre`, `lancamento` não casa e só a composta pode casar. Medido nos dois sentidos: saída
+    idêntica. Quem remover a alternativa composta quebra aqui; quem a reordenar, não — e é isso
+    mesmo que se quer travar.
     """
     assert not c.nome_base("AD3 - Gaspar (Pré-Lançamento)").endswith(" pre")
     assert c.nome_base("AD3 - Gaspar (Pré-Lançamento)") == c.nome_base("AD3 - Gaspar")

@@ -1226,12 +1226,16 @@ def hash_campos_raspados(campos: Mapping[str, object], fonte: str) -> str:
 #: `- Inaugurada` e `(Pré-Lançamento)` (a rede `ad3` inteira) cobrem os 50 nomes distintos que o
 #: marcador altera.
 #:
-#: **`pre ...` vem ANTES das formas nuas, e isso não é estilo.** A alternação do `re` casa a
-#: PRIMEIRA alternativa, não a mais longa: com `lancamento` na frente, `"pre lancamento"` perdia
-#: só a segunda palavra e sobrava um `pre` órfão no nome_base — que voltaria a produzir churn
-#: falso exatamente quando a unidade inaugurasse e o sufixo caísse, o defeito que esta função
-#: existe para matar. Medido antes de corrigir: 15 unidades da `ad3` saíam como
-#: `"ad3 gaspar pre"`.
+#: **A forma COMPOSTA precisa EXISTIR — e é só isso que importa, não a ordem.** Sem
+#: `pre\s+lancamento` na alternação, `lancamento` casa sozinho e sobra um `pre` órfão no
+#: `nome_base`, que voltaria a produzir churn falso exatamente quando a unidade inaugurasse e o
+#: sufixo caísse — o defeito que esta função existe para matar. Medido antes de corrigir: 15
+#: unidades da `ad3` saíam como `"ad3 gaspar pre"`.
+#:
+#: A ORDEM entre as alternativas é **indiferente**, e a primeira redação deste comentário
+#: afirmava o contrário. O `re` procura a POSIÇÃO mais à esquerda antes de testar alternativas;
+#: na posição do `pre`, `lancamento` não casa e só a composta pode casar. Medido nos dois
+#: sentidos: saída idêntica nos 6 casos reais. Correção apontada pela revisão do PR #378.
 _RE_MARCADOR_PIPELINE = re.compile(
     r"\b(pre\s+lancamento|pre\s+venda|pre\s+abertura|proxima\s+abertura"
     r"|em\s+breve|inaugura\w*|lancamento)\b"
