@@ -248,6 +248,30 @@ def test_as_mensagens_de_ops_sao_ACENTUADAS() -> None:
     assert "�" not in texto, "o arquivo tem caractere de substituição (encoding corrompido)"
 
 
+def test_o_token_NAO_vai_por_valor_no_docker_run() -> None:
+    """`-e NOME="$valor"` põe o token na linha de comando — visível em `ps` para a máquina toda.
+
+    Achado da revisão do PR #380, e eu havia escrito "molde do `_avisar_falha`" no cabeçalho
+    enquanto divergia dele exatamente aqui. Os dois irmãos (`run_regen_mercado.sh:175`,
+    `run_atualizacao_crescimento.sh:137`) usam `-e NOME` SEM valor de propósito, com comentário.
+
+    Travado porque vazamento de credencial reaberto por uma edição futura não deixa rastro: o
+    aviso continua chegando e ninguém percebe que o token passou a aparecer no `ps`.
+    """
+    executaveis = "\n".join(_linhas_executaveis(WRAPPER))
+    assert "-e API_TELEGRAM_TOKEN=" not in executaveis, (
+        "o token voltou a ser passado por VALOR no `docker run` — visível em `ps`"
+    )
+    assert "-e MONITOR_TELEGRAM_CHAT_ID=" not in executaveis, "o chat_id voltou a ir por valor"
+    assert "-e API_TELEGRAM_TOKEN -e MONITOR_TELEGRAM_CHAT_ID" in executaveis, (
+        "a forma `-e NOME` (herda do ambiente) sumiu"
+    )
+    # `-e NOME` só funciona com a variável EXPORTADA: `local` não cruza para o docker.
+    assert "export API_TELEGRAM_TOKEN" in executaveis, (
+        "sem `export`, o `-e NOME` manda variável vazia e o aviso morre em silêncio"
+    )
+
+
 def test_o_aviso_reusa_o_primitivo_e_nunca_derruba_o_lote() -> None:
     """Aviso é efeito colateral, não etapa — e o token não pode vazar no log do cron."""
     texto = "\n".join(_linhas_executaveis(WRAPPER))

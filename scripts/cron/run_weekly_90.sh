@@ -64,7 +64,15 @@ _avisar_ops() {
     echo "!! AVISO NAO ENVIADO (credencial/imagem ausente no .env): $msg"
     return 0
   fi
-  docker run --rm -e API_TELEGRAM_TOKEN="$tok" -e MONITOR_TELEGRAM_CHAT_ID="$cid" "$img" \
+  # Token e chat vao por `-e NOME` SEM valor -- herdam do ambiente e NAO aparecem em `ps`.
+  # Passar `-e NOME="$valor"` poe o token na linha de comando, visivel para qualquer processo
+  # da maquina. E' a forma que `run_regen_mercado.sh:175` e `run_atualizacao_crescimento.sh:137`
+  # usam DE PROPOSITO, com comentario proprio; a primeira versao deste bloco divergiu dela e
+  # reabriu o vazamento que o repo ja' tinha fechado (achado da revisao do PR #380).
+  # O `export` e' o que torna o `-e NOME` possivel: sem ele a variavel e' `local` e nao cruza
+  # para o processo do docker.
+  export API_TELEGRAM_TOKEN="$tok" MONITOR_TELEGRAM_CHAT_ID="$cid"
+  docker run --rm -e API_TELEGRAM_TOKEN -e MONITOR_TELEGRAM_CHAT_ID "$img" \
     python -c "
 import os, sys
 from motor_expansao.api.relatorio_acessos import enviar_telegram
@@ -106,7 +114,10 @@ enviar_telegram('🔴 [Coleta] ' + sys.argv[1], os.environ['API_TELEGRAM_TOKEN']
   docker run --rm --user 0:0 -v "$REPO/Unidades:/app/Unidades" --name gym_batch_90 \
     gymscraping:local python -B executar_coletores.py --workers 3 --scheduler-policy weighted --timing
 
-  # 1.5) RESTAURACAO da safra para quem NAO recoletou `[BLK-COLETA-01]`.
+  # 2.5) RESTAURACAO da safra para quem NAO recoletou `[BLK-COLETA-01]`.
+  #      (numerado 2.5 para casar com `docs/infra_producao.md` e NAO colidir com o `# 1.5)` do
+  #      snapshot semanal, mais abaixo -- duas redacoes da mesma sequencia se desencontrando e'
+  #      a licao da DEC-044, citada neste proprio bloco)
   #
   #   Criterio por CONTEUDO, e isso e' medicao, nao gosto. O executor imprime
   #   `Resultado: falha (N) em ...` por coletor, e a tentacao e' parsear o log -- mas no lote de
