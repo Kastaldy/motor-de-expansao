@@ -33,11 +33,15 @@ MANIFESTO = MIGRACOES / "manifesto.json"
 #: na D29 (a guarda de coerencia em `areas_estudo` e `contratos`, migration 017), que tambem
 #: levou as FUNCOES de 7 a 8. Sao estes os objetos que as migrations tem de criar -- se um sumir
 #: daqui, o banco novo nasce diferente do que ja' esta no ar, e nenhum teste de sintaxe pegaria.
+#: A 018 (D30, `sessoes`) somou 1 TABELA e 2 INDICES explicitos, e NENHUMA trigger/funcao: a
+#: coluna `ultimo_acesso_em_sessao` e' escrita pela aplicacao de proposito, porque uma trigger
+#: `BEFORE UPDATE` tambem dispararia na REVOGACAO e diria que a sessao foi usada no instante em
+#: que ela morreu.
 OBJETOS_ESPERADOS = {
-    "CREATE TABLE": 11,
+    "CREATE TABLE": 12,
     "CREATE TRIGGER": 7,
 }
-INDICES_ESPERADOS = 33   # +1 na D23 (login) e +3 na D24 (metadados: imovel/unidade/hex)
+INDICES_ESPERADOS = 35   # +1 na D23 (login), +3 na D24 (metadados) e +2 na D30 (sessoes)
 FUNCOES_ESPERADAS = 8    # +1 na D29 (`exige_geom_coerente`, uma so' para as duas tabelas)
 
 

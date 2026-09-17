@@ -131,9 +131,15 @@ o que não foi feito daqui.
 
 Nenhuma destas foi tomada. Estão aqui para não serem descobertas no meio da implementação:
 
-1. **Onde a sessão vive** — cookie assinado (sem tabela) ou tabela de sessão no banco (migration
-   nova, revogação central, custo de leitura por requisição). O esquema **não** tem tabela de sessão
-   hoje.
+1. ~~**Onde a sessão vive**~~ — **DECIDIDA em 17/09/2026 pela D30: tabela** (`sessoes`,
+   `banco-de-reservas/sql/018-sessoes.md`). O "custo de leitura por requisição" que pesava contra
+   ela foi **medido e não existe**: as 26 regras de `REGRAS_POR_CAPACIDADE` já chamam
+   `rbac.identidade()` a cada requisição guardada, sem cache, e a validação de sessão entra como
+   **um JOIN na mesma consulta**. O que decidiu foi a **revogação central** — logout que invalida
+   de verdade, troca de senha derrubando sessões, admin expulsando alguém —, que cookie assinado
+   não tem. Contra o cookie pesaram também um segredo novo (logo após o `config.py` perder o
+   `SECRET_KEY` morto) e dependência nova na imagem: `itsdangerous` não está no `pyproject.toml`
+   nem no `constraints.txt`.
 2. **Duração da sessão e inatividade.** O Authelia usa `inactivity: 30m`, e o `AvisoSessao` nasceu
    dessa realidade — trocar o número muda a experiência de quem deixa a tela aberta.
 3. **2FA depois do corte** — se some junto com o Authelia, se é reconstruído, e se é obrigatório.

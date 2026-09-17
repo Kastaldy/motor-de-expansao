@@ -127,6 +127,13 @@
       "documento": "017-coerencia-entre-parametros-e-geom.md",
       "sha256_bloco": "e5f12fd040e8f2dc89defe912070c3b2fb2113bf7cb9c986552cdaee10c88aea",
       "sha256_arquivo": "b712ec6cef9e872966fe7470a5932d0067cd3b37d97d7e43c0a6dd88af59601a"
+    },
+    {
+      "versao": "018",
+      "arquivo": "018-sessoes.sql",
+      "documento": "018-sessoes.md",
+      "sha256_bloco": "a411ab6fc6b51e6bf9c2bf4c90083f5767d45a7471c52c2b208aa614a49dd18a",
+      "sha256_arquivo": "4efc4fc8592b41a9265d2b211873b45f17517fa2917e7f5ea811ebf8bc241940"
     }
   ]
 }

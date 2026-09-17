@@ -87,10 +87,20 @@ def test_hash_ignora_fim_de_linha(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert cli._sha256_do_arquivo("x.sql") == com_crlf
 
 
-def test_o_contrato_conferido_cobre_as_11_tabelas_do_modelo() -> None:
+def test_o_contrato_conferido_cobre_as_12_tabelas_do_modelo() -> None:
     """A lista de `conferir` e a da §0 da `verificacao.md` tem de ser a MESMA: se
-    divergirem, a ferramenta passa a atestar um contrato que o documento nao descreve."""
-    assert len(cli.TABELAS_DO_MODELO) == 11
+    divergirem, a ferramenta passa a atestar um contrato que o documento nao descreve.
+
+    Eram ONZE ate' a D30, que somou `sessoes` (migration 018). O nome deste teste carrega o
+    numero pelo mesmo motivo que o do `..._as_8_funcoes` logo abaixo: numero no nome que
+    deixou de ser o numero e' a deriva doc-contra-codigo que esta suite existe para pegar.
+
+    ESTE ARQUIVO E' O QUARTO LUGAR onde os numeros da §0 vivem -- os outros tres sao a
+    propria `verificacao.md`, o `NUMEROS_DA_SECAO_ZERO` do `cli.py` e o `test_migracoes.py`.
+    A nota da 018 dizia "tres lugares" ate' esta assercao ficar vermelha com `12 == 11`, e
+    foi corrigida la'.
+    """
+    assert len(cli.TABELAS_DO_MODELO) == 12
     assert postgres.TABELA_MIGRACOES not in cli.TABELAS_DO_MODELO, (
         "a tabela de controle e' do motor, nao do modelo — some-la mudaria os seis numeros"
     )
@@ -136,13 +146,21 @@ def test_sql_de_registro_e_idempotente() -> None:
 def test_contagens_conferem_com_os_seis_numeros_da_secao_zero() -> None:
     esperado: dict[str, Any] = dict(cli.NUMEROS_DA_SECAO_ZERO)
     assert esperado == {
-        # 46 desde a D24: os tres indices de expressao sobre `metadados` (o de
+        # 49 desde a D30, que criou `sessoes` (migration 018) e somou tres: o de PK, o
+        # UNIQUE de `token_hash_sessao` (a consulta quente) e o da FK `id_usuario`. Era 46
+        # desde a D24 (os tres indices de expressao sobre `metadados`; o de
         # `idx_usuarios_login_ativo` da D23 levou de 42 a 43). Este numero e o da §0
         # da `verificacao.md` tem de andar JUNTOS — se um ficar para tras, um banco
         # correto passa a acusar DIVERGENTE.
-        "indices": 46,
-        "constraints CHECK": 12,
-        "chaves estrangeiras": 11,
+        "indices": 49,
+        # 13 desde a D30: `chk_sessao_expira_apos_criacao`, a guarda contra sessao que
+        # nasce vencida -- sem ela a pessoa veria "sessao expirada" logo apos digitar a
+        # senha certa, que e' o pior diagnostico possivel.
+        "constraints CHECK": 13,
+        # 12 desde a D30: `sessoes.id_usuario`, a UNICA FK do modelo com ON DELETE CASCADE
+        # (sessao nao e' registro a preservar, e sessao orfa decidindo acesso e' o que nao
+        # se quer). Toda FK ganha indice, e e' por isso que os indices somaram 3 e nao 2.
+        "chaves estrangeiras": 12,
         # 7 desde a D29: a guarda de coerencia (migration 017) poe uma trigger em
         # `areas_estudo` e outra em `contratos`. Mesma regra do numero acima -- este e o da
         # §0 da `verificacao.md` andam JUNTOS, senao um banco correto acusa DIVERGENTE.

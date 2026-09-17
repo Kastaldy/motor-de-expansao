@@ -52,12 +52,12 @@ SQL_TEM_TABELA_DE_CONTROLE = "SELECT to_regclass(%s) IS NOT NULL"
 TABELAS_DO_MODELO = (
     "usuarios", "perfis", "permissoes", "perfil_permissoes", "eventos",
     "areas_estudo", "contratos", "bairros", "distritos", "municipios",
-    "perfil_permissoes_historico",
+    "perfil_permissoes_historico", "sessoes",
 )
 NUMEROS_DA_SECAO_ZERO = {
-    "indices": 46,   # 33 explicitos + 11 de PK + 2 de UNIQUE (D24 somou os 3 de metadados)
-    "constraints CHECK": 12,
-    "chaves estrangeiras": 11,
+    "indices": 49,   # 35 explicitos + 12 de PK + 2 de UNIQUE (a 018/D30 somou 2 + o dela de PK)
+    "constraints CHECK": 13,    # a 018 (D30): `chk_sessao_expira_apos_criacao`
+    "chaves estrangeiras": 12,  # a 018 (D30): `sessoes.id_usuario`
     "triggers": 7,   # 5 ate' a 016; a 017 (D29) somou a guarda de coerencia nas duas regioes
     "colunas geometricas": 7,
 }
