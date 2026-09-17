@@ -5258,3 +5258,52 @@ ser auditável.
 
 **Aplicação na VPS é MANUAL**, semana a semana, com backup antes: `--migrar-chave-v5 --semana`
 reescreve a folha `fonte=unidades` daquela semana.
+
+---
+
+### BLK-COLETA-01 — A falha de um coletor deixa de ser DESTRUTIVA, e o `git pull` que falha passa a gritar
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — muda o dado de entrada (`Unidades/*.csv`) de toda a cadeia de concorrência, mas não toca fórmula, score nem artefato do M1. |
+| **Esteira** | `[GATE HUMANO]` |
+| **Depende de** | PR #377 (o wrapper virou arquivo versionado — sem isso não há diff para revisar) |
+| **Status** | **EM REVISÃO** (2026-09-17, PR aberto) |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera dado de produção na VPS e envia aviso a ops |
+
+**O defeito.** O lote abria com `git checkout -- Unidades/` (descarta os CSVs raspados para o
+`git pull` dar fast-forward) seguido de `git pull --ff-only || echo`. Juntas, as duas linhas
+faziam duas coisas ruins: a rede cujo coletor falhasse voltava ao **baseline do repositório** — que
+pode ser de meses atrás — em vez de ficar com a safra da semana passada; e um `pull` que falha
+passava em silêncio.
+
+**Os dois incidentes que isso produziu, medidos:** em 2026-09-13 o lote morreu no coletor #28 de 90
+e a **Selfit caiu de 231 para 119** unidades (o snapshot só não fotografou porque a guarda da
+DEC-061 o recusou); e o checkout ficou **8 commits atrás por cinco dias**, de modo que o conserto
+do crash e o da âncora da Smart Fit, já mergeados no repo do Vini, simplesmente não chegavam.
+
+**A correção.**
+
+1. **Passo 0 — a safra é preservada ANTES do descarte** (`$INFRA/safra_anterior`). O descarte
+   continua (é o preço do fast-forward), mas deixou de ser perda. A ORDEM é a carga: preservar
+   depois salvaria o baseline, que é o dado errado.
+2. **Passo 1.5 — quem não recoletou volta à SAFRA, não ao baseline.** Critério por **conteúdo**:
+   CSV idêntico ao commitado **e** diferente da safra ⇒ não foi recoletado ⇒ restaura.
+3. **O `pull` que falha avisa no chat de ops**, reusando `enviar_telegram`. **Não aborta** o lote:
+   a coleta ainda vale, e derrubar o domingo trocaria um dano por outro maior.
+
+**Por que conteúdo e não parsing do log — é o coração do bloco.** O executor imprime
+`Resultado: falha (N) em ...` por coletor, e o caminho óbvio seria ler isso. Medido no lote de
+13/09: havia **3** linhas de falha, enquanto **~56** redes ficaram defasadas — o lote morreu no #28
+e as demais **nunca rodaram**, logo nunca reportaram nada. Parsing consertaria **3 de 59**. A
+comparação com o baseline commitado pega os dois casos, e não depende de mapear nome de coletor
+para nome de arquivo (onde uma exceção entre 107 passaria batida).
+
+**Prova.** Sandbox com três redes exercitando os três casos: a que não recoletou voltou à safra, a
+que recoletou ficou intocada, a sem mudança desde o commit não foi tocada — 1 restauração, zero
+falso positivo. Mais 7 testes de contrato textual, incluindo a ORDEM backup-antes-do-descarte.
+
+**Armadilha declarada:** o `cmp` compara bytes. Se os CSVs ganharem normalização de EOL, a
+comparação daria "diferente" para todas as redes e a restauração viraria **no-op silencioso** — a
+mesma família do mount que congelou os pins. Hoje o checkout da VPS é Linux e não há conversão
+(medido); se a premissa mudar, o laço precisa comparar normalizado.

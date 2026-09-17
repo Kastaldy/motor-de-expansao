@@ -165,8 +165,18 @@ concorrentes) só aparecem após `docker compose -f docker-compose.prod.yml rest
   12/09 e **deixou o passo 4.5 (pins M&A) para trás**, porque não havia diff para ninguém revisar — o
   passo seguiu rodando um checkout congelado em 19/08 e gravando artefato **vazio com `exit 0`** de
   30/08 a 17/09, contido apenas pela guarda de desenhabilidade. Faz, em sequência:
-  1. `git pull` + `docker build`;
+  0. **Preserva a safra anterior** em `$INFRA/safra_anterior` **antes** do `git checkout -- Unidades/`
+     (BLK-COLETA-01). O descarte continua — é o preço do fast-forward —, mas deixou de ser perda: sem
+     esse backup, a rede cujo coletor falhasse voltaria ao baseline do repositório, que pode ser de
+     meses atrás (foi o mecanismo do `selfit 231 → 119` em 13/09);
+  1. `git pull` + `docker build`. **O pull que falha avisa no chat de ops** e NÃO aborta o lote: a
+     coleta ainda vale, e derrubar o domingo trocaria um dano por outro maior. Até 17/09 ele usava
+     `|| echo`, e foi assim que o clone ficou 8 commits atrás por cinco dias sem ninguém ver;
   2. **Coleta** dos 90 (`executar_coletores.py --workers 3 --scheduler-policy weighted`, container `--user 0:0`);
+  2.5. **Restaura a safra para quem NÃO recoletou** (BLK-COLETA-01), por **conteúdo**: CSV idêntico ao
+     commitado **e** diferente da safra ⇒ aquela rede não rodou nesta rodada. Não é parsing do log de
+     propósito — no lote de 13/09 havia 3 linhas de `Resultado: falha` para ~56 redes defasadas,
+     porque o lote morreu no #28 e as demais nunca rodaram. Restaurações > 0 avisam ops;
   3. **Relatório de crescimento por rede** (`/opt/gymscraping-infra/relatorio_crescimento.py`): snapshot
      `contagem_atual.csv`, diff vs. `contagem_anterior.csv` (delta por rede), histórico `historico_contagem.csv`
      e `relatorio_crescimento_<data>.txt`;

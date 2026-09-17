@@ -49,7 +49,14 @@ def test_wrapper_existe_e_e_bash() -> None:
     assert WRAPPER.is_file(), f"o lote de domingo deveria estar versionado em {WRAPPER}"
     texto = WRAPPER.read_text(encoding="utf-8")
     assert texto.startswith("#!/usr/bin/env bash"), "shebang ausente ou fora da 1a linha"
-    assert "\r" not in texto, "o wrapper tem CRLF; o shebang quebraria na VPS"
+    # BYTES, não texto. `read_text` usa universal newlines e CONVERTE `\r\n` em `\n` na leitura,
+    # então a versão anterior (`"\r" not in WRAPPER.read_text()`) **não conseguia falhar**: era
+    # uma guarda cega por construção, não por acidente. O arquivo está em LF hoje (verificado por
+    # `read_bytes`, CR = 0) — o que se corrige aqui é o INSTRUMENTO, antes que um dia ele precise
+    # servir. Na VPS, CRLF quebra o shebang (`bash\r: No such file or directory`).
+    assert b"\r" not in WRAPPER.read_bytes(), (
+        "o wrapper tem CRLF; o shebang quebraria na VPS — converta com `sed -i 's/\\r$//'`"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -133,14 +140,75 @@ def test_os_comandos_que_aqui_sao_legitimos(permitido: str) -> None:
     assert permitido in "\n".join(_linhas_executaveis(WRAPPER))
 
 
-def test_o_wrapper_declara_a_divida_do_pull_engolido() -> None:
-    """`git checkout -- Unidades/` + `|| echo` tornam DESTRUTIVA a falha de um coletor.
+# --------------------------------------------------------------------------- #
+# BLK-COLETA-01 — a falha de um coletor deixou de ser destrutiva
+# --------------------------------------------------------------------------- #
+def test_a_safra_anterior_e_preservada_ANTES_do_descarte() -> None:
+    """O backup é o que torna a restauração possível — sem ele não há para onde voltar.
 
-    Não é corrigido aqui de propósito — versionar não é hora de mudar comportamento —, mas fica
-    NOMEADO no arquivo: foi assim que o checkout ficou 8 commits atrás sem ninguém ver.
+    A ORDEM é a carga: preservar DEPOIS do `git checkout --` salvaria o baseline do repositório,
+    que é exatamente o dado errado.
     """
+    executaveis = _linhas_executaveis(WRAPPER)
+    texto = "\n".join(executaveis)
+    assert 'cp -a Unidades/. "$SAFRA"/' in texto, "a safra anterior deixou de ser preservada"
+    i_backup = next(i for i, linha in enumerate(executaveis) if "cp -a Unidades/." in linha)
+    i_descarte = next(
+        i for i, linha in enumerate(executaveis) if "git checkout -- Unidades/" in linha
+    )
+    assert i_backup < i_descarte, "o backup acontece depois do descarte: salvaria o baseline"
+
+
+def test_a_restauracao_e_por_CONTEUDO_e_nao_por_parsing_do_log() -> None:
+    """Parsing consertaria 3 de 59 — medido no lote de 2026-09-13.
+
+    Só 3 coletores reportaram `Resultado: falha`; ~56 redes ficaram defasadas porque o lote morreu
+    no #28 de 90 e elas NUNCA RODARAM, logo nunca reportaram nada. Comparar com o baseline
+    commitado pega os dois casos; ler o log pega um.
+    """
+    texto = "\n".join(_linhas_executaveis(WRAPPER))
+    assert 'git show "HEAD:Unidades/$nome"' in texto, "deixou de comparar com o baseline commitado"
+    assert "cmp -s" in texto, "a comparação por conteúdo sumiu"
+    assert "Resultado: falha" not in texto, (
+        "a restauração passou a depender de parsing do log — pega só quem RODOU e falhou, não "
+        "quem nunca rodou (o caso real de 13/09)"
+    )
+
+
+def test_a_restauracao_exige_as_DUAS_condicoes() -> None:
+    """Idêntico ao baseline **E** diferente da safra. Só a primeira mexeria em rede sem mudança."""
+    texto = "\n".join(_linhas_executaveis(WRAPPER))
+    assert '! cmp -s "$SAFRA/$nome" "$f"' in texto, (
+        "a segunda condição sumiu: rede parada desde o commit seria 'restaurada' à toa"
+    )
+
+
+def test_o_pull_que_falha_GRITA_em_vez_de_sussurrar() -> None:
+    """`|| echo` morre num log que ninguém abre — foi assim que o clone ficou 8 commits atrás.
+
+    E NÃO pode abortar: a coleta ainda vale, e derrubar o domingo inteiro trocaria um dano por
+    outro maior.
+    """
+    texto = "\n".join(_linhas_executaveis(WRAPPER))
+    assert "if ! git pull --ff-only; then" in texto, "o pull voltou a ser tolerante em silêncio"
+    assert '_avisar_ops "git pull do coletor FALHOU' in texto, "a falha do pull não avisa ops"
+    assert "git pull --ff-only || echo" not in texto, "o `|| echo` que engolia a falha voltou"
+
+
+def test_o_aviso_reusa_o_primitivo_e_nunca_derruba_o_lote() -> None:
+    """Aviso é efeito colateral, não etapa — e o token não pode vazar no log do cron."""
+    texto = "\n".join(_linhas_executaveis(WRAPPER))
+    assert "from motor_expansao.api.relatorio_acessos import enviar_telegram" in texto, (
+        "o aviso deixou de reusar `enviar_telegram` (particiona em 4096 e não vaza o token)"
+    )
+    assert "(o lote segue)" in texto, "a falha do AVISO passou a poder derrubar o lote"
+
+
+def test_o_cabecalho_registra_a_divida_como_PAGA_e_o_mecanismo() -> None:
+    """A dívida foi paga; o cabeçalho conta o mecanismo em vez de sumir com a história."""
     texto = WRAPPER.read_text(encoding="utf-8")
-    assert "DIVIDA DECLARADA" in texto, "a dívida do pull engolido saiu do cabeçalho"
+    assert "DIVIDA DO DESCARTE CEGO FOI PAGA" in texto
+    assert "selfit 231 -> 119" in texto, "o incidente que originou o conserto saiu do cabeçalho"
 
 
 def test_runbook_aponta_para_o_arquivo_versionado() -> None:
