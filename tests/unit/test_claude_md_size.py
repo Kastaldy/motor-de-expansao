@@ -16,7 +16,13 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 #: Teto de linhas do CLAUDE.md. Hoje ~179 (era 398 antes do split do §8). O teto é um
 #: backstop contra o re-bloat — se estourar, mova o detalhe para docs/ (não relaxe sem decisão).
-_TETO_LINHAS = 230
+#:
+#: 230 -> 231 na DEC-061 (2026-09-16). O backstop real é "nenhum CORPO de DEC no §8", e o §8 cresce
+#: **1 linha por DEC** por contrato (a regra no topo do CLAUDE.md manda exatamente isso). Com o
+#: arquivo parado no teto, toda DEC nova passaria a reprovar aqui — o teste deixaria de medir
+#: re-bloat e viraria um pedágio. Subir 1 junto com a linha-índice é a manutenção prevista; o que
+#: continua proibido é subir para acomodar PROSA, que pertence a docs/.
+_TETO_LINHAS = 231
 
 
 def _linhas(p: Path) -> int:

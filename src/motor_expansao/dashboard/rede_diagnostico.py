@@ -69,6 +69,17 @@ MESES_SALDO_NEGATIVO = 3  # acende 12 (14%)
 #: queda do faturamento contra a media dos 3 meses fechados anteriores
 REGUA_QUEDA_FATURAMENTO_PCT = -10.0  # acende 14 (18%)
 REGUA_QUEDA_FATURAMENTO_GRAVE_PCT = -20.0
+#: faturamento do mes fechado abaixo do teto da faixa "Critico" do time de campo. Alerta
+#: GRAVE (leva a unidade a prioridade alta) por decisao de Felipe em 2026-09-15: a faixa ja
+#: existia como ROTULO e nao acendia nada, entao a unidade critica podia sair "Sem alerta"
+#: na carteira. E' o MESMO numero do primeiro teto de `FAIXAS_FATURAMENTO`, por construcao.
+REGUA_FATURAMENTO_CRITICO = 150_000.0
+#: abaixo deste, o alerta de faturamento critico e' GRAVE (prioridade alta); entre este e o
+#: teto de 150 mil ele e' MEDIO (atencao). Decisao de Felipe em 2026-09-15, medida antes: com
+#: grave em 150 mil a fila `alta` de jul/2026 ia de 17 para 30 unidades (20% -> 35%) e
+#: estourava `BANDA_ALVO_ALTA`. Assim o alerta aparece em TODA unidade critica e so' as
+#: mais fundas furam a fila.
+REGUA_FATURAMENTO_CRITICO_GRAVE = 100_000.0
 
 #: severidade `alta` = 1 alerta grave OU este tanto de alertas medios.
 #:
@@ -138,6 +149,14 @@ REGUAS_VIGENTES: dict[str, dict[str, object]] = {
         "limiar_grave": REGUA_QUEDA_FATURAMENTO_GRAVE_PCT,
         "unidade": "% vs média de 3 meses",
     },
+    "faturamento_critico": {
+        "rotulo": "Faturamento crítico",
+        "metrica": "faturamento",
+        "sentido": "abaixo",
+        "limiar": REGUA_FATURAMENTO_CRITICO,
+        "limiar_grave": REGUA_FATURAMENTO_CRITICO_GRAVE,
+        "unidade": "reais no mês fechado",
+    },
 }
 
 # Faixas de faturamento que o time de campo JA usa na planilha diaria. Adotadas como
@@ -164,7 +183,7 @@ REGUAS_VIGENTES: dict[str, dict[str, object]] = {
 # paragrafo acima continua valendo integralmente -- seguem faixas ABSOLUTAS, aplicadas
 # igual a unidade de bairro e a flagship, com o benchmark por coorte como contrapeso.
 FAIXAS_FATURAMENTO: tuple[tuple[float, str, str], ...] = (
-    (150_000.0, "critico", "Crítico"),
+    (REGUA_FATURAMENTO_CRITICO, "critico", "Crítico"),
     (200_000.0, "regular", "Regular"),
     (300_000.0, "bom", "Bom"),
     (400_000.0, "excelente", "Excelente"),
@@ -412,7 +431,26 @@ def _alertas_da_unidade(linha: dict, historico: list[dict]) -> tuple[Alerta, ...
             )
         )
 
+    faturamento = _numero(linha.get("faturamento"))
+    if faturamento is not None and faturamento < REGUA_FATURAMENTO_CRITICO:
+        alertas.append(
+            Alerta(
+                "faturamento_critico",
+                "Faturamento crítico",
+                f"Faturamento de R$ {_milhar(faturamento)} no mês, abaixo de "
+                f"R$ {_milhar(REGUA_FATURAMENTO_CRITICO)} (faixa Crítico).",
+                "grave" if faturamento < REGUA_FATURAMENTO_CRITICO_GRAVE else "medio",
+                faturamento,
+                REGUA_FATURAMENTO_CRITICO,
+            )
+        )
+
     return tuple(alertas)
+
+
+def _milhar(valor: float) -> str:
+    """Inteiro com ponto de milhar, como o resto do produto: 149.500."""
+    return f"{valor:,.0f}".replace(",", ".")
 
 
 def _variacao_vs_media(linha: dict, historico: list[dict]) -> float | None:
@@ -497,6 +535,13 @@ _RECOMENDACOES: dict[str, tuple[str, str]] = {
         "Investigar a queda",
         "Comparar com o mesmo mês do ano anterior antes de concluir: pode ser sazonal. Se "
         "não for, olhar mix de plano e inadimplência no mesmo período.",
+    ),
+    "faturamento_critico": (
+        "Plano de recuperação de receita",
+        "A unidade fatura abaixo de R$ 150 mil no mês fechado, a faixa Crítico do time de "
+        "campo. Separar o que é base pequena (poucos recorrentes) do que é receita por aluno "
+        "baixa (mix de plano, desconto, agregador) e combinar com o franqueado uma meta "
+        "mensal para os próximos 90 dias.",
     ),
 }
 

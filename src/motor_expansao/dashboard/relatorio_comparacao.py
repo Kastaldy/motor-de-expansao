@@ -22,6 +22,7 @@ caem fora dele e viram "?" em silencio.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from datetime import date
 from io import BytesIO
@@ -556,6 +557,12 @@ def _slide_mapas(
     # conjunto para nenhuma imagem precisar ser cortada, e o teto da pagina manda no fim.
     disponivel = 470.0 - 108.0
 
+    # A legenda "Centro: lat, lng" sob a foto rouba altura da imagem, e so' quando existe:
+    # sem ela o slide fica identico ao de antes.
+    coordenadas = list(dados.get("coordenadas") or [])
+    legenda = 16.0 if any(coordenadas) else 0.0
+    disponivel -= legenda
+
     # A CAPTURA CHEGA NA ORDEM DE COLAGEM e `itens` chega RANQUEADO — parear pelas duas
     # posicoes punha o mapa de uma area sob o nome de outra assim que o ranking reordenava
     # (medido em 18/08: o hexagono da Bela Vista rotulado "Tatuape"). O par certo e' pelo
@@ -618,11 +625,38 @@ def _slide_mapas(
         pdf.set_draw_color(*CINZA_LINHA)
         pdf.rect(x, topo, largura, altura, style="D")
 
+        centro = _centro_de(coordenadas, indice_do_item(item, i))
+        if centro:
+            pdf.set_text_color(*CINZA_TEXTO)
+            pdf.set_font("Helvetica", "", 8.5)
+            pdf.set_xy(x, topo + altura + 4)
+            pdf.cell(largura, 11, centro, align="C")
+
     rodape(
         pdf,
         "Imagens capturadas do próprio Mapa Territorial, no enquadramento de cada área - "
-        "mesmas camadas e mesmas cores da tela. Pins: concorrentes mapeados e unidades Ultra.",
+        "mesmas camadas e mesmas cores da tela. Pins: concorrentes mapeados e unidades Ultra."
+        + (" Cole a coordenada na busca do mapa para voltar à área." if legenda else ""),
     )
+
+
+def _centro_de(coordenadas: Sequence[Any], k: int) -> str | None:
+    """`Centro: lat, lng` da area de indice `k`, no formato que a busca do mapa aceita colado.
+
+    Cinco casas (~1 m) com PONTO decimal: a virgula separa lat de lng na busca
+    (`web/src/lib/coord.ts`). Coordenada ausente ou invalida devolve `None` — a coluna
+    fica sem a linha, em vez de apontar outro lugar.
+    """
+    if not 0 <= k < len(coordenadas) or not isinstance(coordenadas[k], Mapping):
+        return None
+    try:
+        lat = float(coordenadas[k]["lat"])
+        lng = float(coordenadas[k]["lng"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not (math.isfinite(lat) and math.isfinite(lng)):
+        return None
+    return f"Centro: {lat:.5f}, {lng:.5f}"
 
 
 # ===========================================================================

@@ -78,10 +78,13 @@ import acesso  # noqa: E402  (controle TEMPORARIO de acesso por aba, por Remote-
 import cobertura_1km  # noqa: E402  (PROTOTIPO — area coberta pelo raio, para desenhar)
 import praca_indice  # noqa: E402  (indice conjuntivo da camada 5 — DEC-041)
 import pressao_1km  # noqa: E402  (PROTOTIPO — chave de raio 2 km / 1 km por area)
+import rede_inteligencia  # noqa: E402  (territorio, retencao, rampa e sinais da rede Ultra)
 
 from motor_expansao.dashboard import (  # noqa: E402
     acesso_analytics,
     acesso_log,
+    movimentacao_concorrencia,
+    planos_agregador,
     rede_cadastro,
     rede_coorte,
     rede_diagnostico,
@@ -681,6 +684,46 @@ async def _trilha_acesso(request: Request, call_next: Callable[..., Any]) -> Any
 # Carga de dados (lazy, cacheada por UF)
 # ============================================================================
 
+#: As camadas de leitura do pacote argentino, na ordem em que a ficha as mostra.
+#:
+#: `(chave no payload, coluna no parquet, casas decimais, escala)` — `casas=None` marca
+#: TEXTO, que aqui e sempre um PERIODO. Periodo nao e enfeite: "34.900 m2 autorizados" sem
+#: o intervalo nao diz se descreve 2019 ou o ultimo ano, e as cinco camadas tem janelas
+#: diferentes por vir de cinco fontes diferentes. Numero e periodo nascem e morrem
+#: juntos — inclusive na ausencia.
+#:
+#: A `escala` existe por UMA coluna: `oede_constr_share` vem do produtor como FRACAO
+#: (0..1), e as outras duas colunas de percentual do bloco (`*_cresc_pct`) ja vem em
+#: pontos percentuais. Sem a conversao aqui, `_num(0,0457; casas=1)` devolveria `0,0` e a
+#: tela publicaria "0,0 %" onde sao 4,6 % — numero errado, arredondado em silencio, e
+#: nenhum tipo reclamaria. Medido no pacote: mediana 0,0457 e maximo 0,6209 (Anelo/NQ,
+#: que e' 62 % de construcao, nao 0,6 %).
+#:
+#: FORA daqui de proposito: `viirs_luz_media` e `viirs_periodo`. A coluna existe no
+#: pacote (cobertura de 100%, unica que alcanca todo hexagono) e continua disponivel
+#: para quem for usa-la, mas radiancia crua nao tem regua que o operador saiba ler —
+#: "2,4" nao se compara com nada na tela —, e o backtest do proprio produtor mediu o
+#: ganho dela sobre o score em +0,0030 de AUC, abaixo do piso de 0,01 que ele mesmo
+#: declarou. Publicar um numero ilegivel que nao decide nada e ruido com aparencia de
+#: informacao. Entra no dia em que houver regua publicada para le-lo.
+_CAMADAS_AR: tuple[tuple[str, str, int | None, float], ...] = (
+    ("obras_m2", "mun_permisos_m2_12m", 0, 1.0),
+    ("obras_var", "mun_permisos_cresc_pct", 1, 1.0),
+    ("obras_periodo", "mun_permisos_periodo", None, 1.0),
+    ("soc_n", "soc_hex_n_3a", 0, 1.0),
+    ("soc_var", "soc_hex_cresc_partido_pct", 1, 1.0),
+    ("soc_janela", "soc_hex_janela_3a", None, 1.0),
+    ("emp_estoque", "oede_emp_estoque", 0, 1.0),
+    ("emp_salario", "oede_sal_medio_usd", 0, 1.0),
+    ("emp_constr", "oede_constr_share", 1, 100.0),
+    ("emp_periodo", "oede_periodo", None, 1.0),
+    ("fluxo_dia", "sube_usos_dia", 0, 1.0),
+    ("fluxo_periodo", "sube_periodo", None, 1.0),
+)
+
+_COLS_CAMADAS_AR: tuple[str, ...] = tuple(coluna for _, coluna, _, _ in _CAMADAS_AR)
+
+
 # Colunas que o mapa e o funil consomem. Lidas de forma defensiva: o parquet tem
 # 82 colunas e nem toda UF materializa todas.
 _COLS_DESEJADAS = [
@@ -720,6 +763,16 @@ _COLS_DESEJADAS = [
     "densidade_pop_setor_hab_km2",
     "faixa_oportunidade",
     "n_unidades_ultra_performance_hex",
+    # Camadas de leitura do pacote ARGENTINO (fases 12-17 do motor-argentina). Cada uma
+    # e um atributo do PARTIDO/DEPARTAMENTO repetido em todos os hexagonos dele — nunca
+    # uma medida do hexagono. Por isso NAO entram no `_hex_dict`: viajam uma vez por
+    # cidade em `_bloco_camadas_leitura`, pelo mesmo motivo medido em `_bloco_municipal`
+    # (os seis campos municipais do crescimento custavam 1,9 MB de repeticao em /api/uf).
+    #
+    # Ausentes no pacote BRASILEIRO, e a leitura por intersecao (`carregar_uf`) as
+    # descarta la sem ruido — e o mesmo caminho que as 82 colunas do artefato BR ja
+    # exercitam quando uma UF nao materializa alguma.
+    *_COLS_CAMADAS_AR,
 ]
 
 
@@ -958,11 +1011,29 @@ def carregar_independentes() -> pd.DataFrame | None:
 #
 # A margem e' o proprio raio da pressao: qualquer ponto que possa entrar na conta de alguem do
 # recorte tem de ser desenhavel. Maior que isso so' adicionaria pins que nao entram em conta nenhuma.
-PIN_MARGEM_M = 2000.0
+#
+# Emenda (2026-09-16): o valor vem do PERFIL (`reguas.pin_margem_m`, padrao 2000). A AR declara 0 —
+# as comunas de CABA sao pequenas e coladas, e a margem desenhava as vizinhas ao abrir uma delas.
+# Com 0 o recorte e' so' `hex ∈ sel`; o custo aceito e' o vizinho que conta na pressao de um hex de
+# borda nao aparecer no mapa.
+PIN_MARGEM_M = PERFIL.reguas.pin_margem_m
 _GRAU_LAT_M = 111_320.0
 
 
-def _bbox_com_margem(sel: pd.DataFrame, metros: float = PIN_MARGEM_M) -> tuple[float, float, float, float]:
+def _no_recorte(base: pd.DataFrame, sel: pd.DataFrame, hex_ids: set[str]) -> pd.Series:
+    """Mascara do recorte de pins: hexagono do municipio OU dentro da margem (`PIN_MARGEM_M`).
+
+    A margem e' lida AQUI, na chamada, e nao num default de argumento: congelada no `def`, ela
+    ignoraria o perfil sem erro nenhum.
+    """
+    no_muni = base["hex_id_res7"].astype(str).isin(hex_ids)
+    if PIN_MARGEM_M <= 0:
+        return no_muni
+    lat_min, lat_max, lng_min, lng_max = _bbox_com_margem(sel, PIN_MARGEM_M)
+    return no_muni | (base["lat"].between(lat_min, lat_max) & base["lng"].between(lng_min, lng_max))
+
+
+def _bbox_com_margem(sel: pd.DataFrame, metros: float) -> tuple[float, float, float, float]:
     """Bbox do recorte expandido por `metros`. Devolve `(lat_min, lat_max, lng_min, lng_max)`."""
     lat_min, lat_max = float(sel["lat"].min()), float(sel["lat"].max())
     lng_min, lng_max = float(sel["lng"].min()), float(sel["lng"].max())
@@ -987,9 +1058,7 @@ def _pins_independentes(sel: pd.DataFrame) -> dict[str, Any]:
     hexes = set(sel["hex_id"].astype(str))
     # Recorte = hexes do municipio UNIAO o que cai na margem do raio (ver `PIN_MARGEM_M`): sem a
     # segunda parte, quem esta' do outro lado da divisa conta na pressao e nao aparece no mapa.
-    lat_min, lat_max, lng_min, lng_max = _bbox_com_margem(sel)
-    na_margem = base["lat"].between(lat_min, lat_max) & base["lng"].between(lng_min, lng_max)
-    no_recorte = base[base["hex_id_res7"].isin(hexes) | na_margem]
+    no_recorte = base[_no_recorte(base, sel, hexes)]
     total = int(len(no_recorte))
     recorte = no_recorte.head(COMPETITOR_PIN_LIMIT)
 
@@ -1949,11 +2018,7 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
         # cruza divisa municipal, e antes desta uniao o concorrente do outro lado contava sem ser
         # desenhado — uma das tres causas da auditoria do pin nao fechar (DEC-035).
         chaves = conc["hex_id_res7"].astype(str)
-        m_lat_min, m_lat_max, m_lng_min, m_lng_max = _bbox_com_margem(sel)
-        na_margem = conc["lat"].between(m_lat_min, m_lat_max) & conc["lng"].between(
-            m_lng_min, m_lng_max
-        )
-        no_muni = conc[chaves.isin(hex_ids) | na_margem]
+        no_muni = conc[_no_recorte(conc, sel, hex_ids)]
         # O fallback e' para BASE ANTIGA sem hex casavel — nao para "este municipio nao tem
         # concorrente". Antes ele disparava sempre que `no_muni` vinha vazio, e ai plotava,
         # pelo bbox de centroides, o pin da cidade vizinha num municipio onde toda ficha diz
@@ -1988,14 +2053,7 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
     diag = carregar_redes()
     linhas_diag: list[dict[str, Any]] = []
     if diag is not None and len(diag):
-        d_lat_min, d_lat_max, d_lng_min, d_lng_max = _bbox_com_margem(sel)
-        no_recorte = diag[
-            diag["hex_id_res7"].isin(hex_ids)
-            | (
-                diag["lat"].between(d_lat_min, d_lat_max)
-                & diag["lng"].between(d_lng_min, d_lng_max)
-            )
-        ].head(COMPETITOR_PIN_LIMIT)
+        no_recorte = diag[_no_recorte(diag, sel, hex_ids)].head(COMPETITOR_PIN_LIMIT)
         linhas_diag = [
             {
                 "lat": _num(t.lat, 6),
@@ -3605,6 +3663,60 @@ def _bloco_municipal(vis: pd.DataFrame) -> dict[str, dict[str, Any]]:
         }
         # Cidade sem NENHUMA leitura nao entra: o dict e' esparso de proposito, e o
         # tooltip ja sabe lidar com a ausencia (a secao inteira some).
+        if any(v is not None for v in item.values()):
+            out[str(muni)] = item
+    return out
+
+
+def _escalar(valor: Any, escala: float) -> Any:
+    """Multiplica sem transformar ausencia em numero — `None`/NaN saem intactos."""
+    if escala == 1.0:
+        return valor
+    try:
+        bruto = float(valor)
+    except (TypeError, ValueError):
+        return valor
+    return valor if bruto != bruto else bruto * escala  # NaN != NaN
+
+
+def _bloco_camadas_leitura(vis: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    """As camadas de leitura argentinas, UMA vez por cidade — nunca por hexagono.
+
+    Mesma forma e mesmo motivo de `_bloco_municipal`: sao todas atributo do
+    PARTIDO/DEPARTAMENTO, entao os N hexagonos da cidade carregam o valor identico.
+    Medido em /api/uf/BS: 36,9 KB por cidade (135) contra 0,89 MB por hexagono (3.554) —
+    23x, ou +52 % sobre um payload de 1,71 MB.
+
+    ESPARSO por construcao, em dois niveis, e os dois importam:
+
+    - **cidade sem nenhuma leitura nao entra no dict.** Fora da RMBA nao ha recorrido de
+      linha publicado, e a IGJ so alcanca o GBA ampliado — a maioria das cidades tem
+      algumas camadas e nao tem outras;
+    - **pacote sem as colunas devolve `{}`.** E o caso do BRASIL, onde nenhuma delas
+      existe: `carregar_uf` ja as descartou na intersecao, a guarda abaixo ve o conjunto
+      vazio e a secao inteira some da tela sem um cartao em branco.
+
+    NaN NAO VIRA ZERO — `_num` devolve `None`, e `None` faz o campo sumir. Aqui vazio
+    significa partido sem pesquisa do INDEC, celula suprimida por sigilo estatistico ou
+    fonte que nao alcanca aquele lugar; zero significa medimos e deu zero (La Paz
+    autorizou 84 m2 em 2022 e 0 em 2025 — o zero e o dado). Preencher um com o outro e o
+    unico jeito de esta camada mentir sem errar nenhum tipo.
+    """
+    presentes = [c for c in _COLS_CAMADAS_AR if c in vis.columns]
+    if "nome_municipio" not in vis.columns or not presentes:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for muni, bloco in vis.groupby("nome_municipio", observed=True):
+        r = bloco.iloc[0]
+        item = {
+            chave: (
+                _texto(r.get(coluna))
+                if casas is None
+                else _num(_escalar(r.get(coluna), escala), casas)
+            )
+            for chave, coluna, casas, escala in _CAMADAS_AR
+            if coluna in presentes
+        }
         if any(v is not None for v in item.values()):
             out[str(muni)] = item
     return out
@@ -6073,6 +6185,7 @@ def uf_view(uf: str, limite: int = 15000) -> dict[str, Any]:
         "crescimento_estado": montar_crescimento_estado(df),
         "hexes": hexes,
         "cres_mun": _bloco_municipal(vis),
+        "ctx_mun": _bloco_camadas_leitura(vis),
         "pins": _pins_ultra_bbox(df),
     }
 
@@ -6129,6 +6242,7 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
         "passos": passos,
         "hexes": hexes,
         "cres_mun": _bloco_municipal(vis),
+        "ctx_mun": _bloco_camadas_leitura(vis),
         "pins": _montar_pins(sel),
         # Lista PROPRIA, nunca misturada a `pins.concorrentes`: cadeia e independente sao universos
         # de semantica oposta (quem disputa x quem se compra), e a intersecao entre eles e' vazia.
@@ -6762,7 +6876,9 @@ _REDE_SSS_METRICAS = (
 # Meses oferecidos no seletor de competência.
 _REDE_MESES_NO_SELETOR = 24
 # Meses da série histórica da ficha e da sparkline da carteira.
-_REDE_MESES_SERIE = 12
+# 13, e não 12: com 12 meses o mesmo mês do ano anterior ficava de FORA do gráfico e a
+# comparação ano a ano não aparecia (pedido do Felipe, 2026-09-15).
+_REDE_MESES_SERIE = 13
 # Teto de segurança do payload da carteira (o cliente não pagina).
 _REDE_MAX_UNIDADES = 400
 
@@ -7226,16 +7342,21 @@ def _rede_faixas(recorte: pd.DataFrame, contexto: dict[str, Any]) -> dict[str, A
     chave_da_linha = fechado["faturamento"].map(lambda v: rede_diagnostico.faixa_faturamento(v)[0])
     faturamento = pd.to_numeric(fechado["faturamento"], errors="coerce")
     faixas: list[dict[str, Any]] = []
-    for _teto, chave, rotulo in rede_diagnostico.FAIXAS_FATURAMENTO:
+    piso = None
+    for teto, chave, rotulo in rede_diagnostico.FAIXAS_FATURAMENTO:
         marca = chave_da_linha == chave
         faixas.append(
             {
                 "chave": chave,
                 "rotulo": rotulo,
+                # A régua vai junto para a legenda não repetir os limiares no front.
+                "de": piso,
+                "ate": None if teto == float("inf") else teto,
                 "n": int(marca.sum()),
                 "faturamento": _num(faturamento[marca].sum(), 2),
             }
         )
+        piso = None if teto == float("inf") else teto
     # A unidade sem faturamento no mês fechado não some da conta: sem este balde, a soma
     # das faixas não fecharia com o total do recorte e a barra mentiria por omissão.
     sem_dado = int((chave_da_linha == "sem_dado").sum())
@@ -8275,6 +8396,832 @@ def rede_unidade(unidade_id: str, mes: str | None = None) -> dict[str, Any]:
     return _rede_ficha_payload(unidade_id, mes)
 
 
+# --- Inteligência da rede ---------------------------------------------------
+#
+# O que está POR TRÁS dos números da Growth: a praça e a concorrência de cada unidade, a
+# retenção prevista, a rampa de maturação e os sinais que vêm antes do churn. Rotas PRÓPRIAS, e não campos novos na carteira e na ficha: o
+# payload da carteira alimenta CSV, XLSX e PDF, e o `test_carteira_e_ficha_concordam` trava
+# o contrato dos dois. Tudo aqui é leitura de artefato já materializado — READ-ONLY sobre o
+# M1 — e cada ausência de insumo é DITA na nota, nunca vira zero.
+
+_REDE_HEX_COLS_PRACA = (
+    "hex_id",
+    "uf",
+    "cod_municipio",
+    "renda_per_capita",
+    "nome_municipio",
+    "score_setor_2022_calibrado",
+    "renda_per_capita_setor_2022_calibrada",
+    "pop_total_setor_2022",
+    "oferta_efetiva_disponivel",
+)
+
+_NOTA_NAO_E_PREVISAO = (
+    "Praça × desempenho é leitura DIAGNÓSTICA, não previsão: a DEC-043 testou território "
+    "contra 45 unidades maduras e nenhum modelo previu faturamento melhor que a média. Os "
+    "cortes do quadrante são as medianas do conjunto exibido."
+)
+
+
+def _rede_ler_opcional(caminho: Path, colunas: Sequence[str] | None = None) -> pd.DataFrame | None:
+    """Parquet opcional: ausente ou ilegível devolve None (e o motivo vai para o stderr)."""
+    if not caminho.is_file():
+        return None
+    try:
+        import pyarrow.parquet as pq
+
+        disponiveis = set(pq.read_schema(caminho).names)
+        cols = [c for c in colunas if c in disponiveis] if colunas else None
+        return pd.read_parquet(caminho, columns=cols)
+    except Exception as erro:  # noqa: BLE001
+        print(f"[rede] {caminho.name} ilegível ({erro})", file=sys.stderr)
+        return None
+
+
+@functools.lru_cache(maxsize=1)
+def _rede_pontos() -> pd.DataFrame:
+    """Uma coordenada por unidade da base Growth (a mesma busca do mapa da aba)."""
+    colunas = ["unidade_id", "lat", "lng"]
+    cheio = _rede_fechamento()
+    if not len(cheio):
+        return pd.DataFrame(columns=colunas)
+    ultima = cheio.sort_values("competencia", kind="stable").groupby("unidade_id", as_index=False).last()
+    linhas = []
+    for linha in ultima.itertuples(index=False):
+        coord = _coord_da_unidade(str(linha.unidade_cru), str(linha.uf))
+        if coord:
+            linhas.append({"unidade_id": str(linha.unidade_id), "lat": coord[0], "lng": coord[1]})
+    return pd.DataFrame(linhas, columns=colunas)
+
+
+@functools.lru_cache(maxsize=1)
+def _rede_oferta() -> tuple[pd.DataFrame | None, tuple[str, ...]]:
+    """A união de oferta da DEC-046 (cadeias + agregador), a mesma do Relatório Pontual."""
+    try:
+        from motor_expansao.api.service import _oferta_unida
+
+        oferta, presentes = _oferta_unida(str(STAGING_DIR))
+        return oferta, tuple(presentes or ())
+    except Exception as erro:  # noqa: BLE001
+        print(f"[rede] oferta de concorrentes indisponível ({erro})", file=sys.stderr)
+        return None, ()
+
+
+@functools.lru_cache(maxsize=1)
+def _rede_redes_estudio() -> frozenset[str]:
+    """Slugs das redes de estúdio boutique, fora da concorrência (DEC-056).
+
+    A MESMA lista do residual, lida de onde ela vive: uma cópia aqui divergiria em silêncio
+    no dia em que o dono mexer nela.
+    """
+    try:
+        from motor_expansao.pipelines.enriquecimento_espacial_hexagonos import (
+            REDES_ESTUDIO_BOUTIQUE,
+        )
+
+        return frozenset(REDES_ESTUDIO_BOUTIQUE)
+    except Exception as erro:  # noqa: BLE001
+        print(f"[rede] lista de estúdios indisponível; eles contam como concorrentes ({erro})", file=sys.stderr)
+        return frozenset()
+
+
+def _rede_oferta_sem_estudio() -> pd.DataFrame | None:
+    """A união de oferta sem os estúdios boutique: a concorrência DIRETA da ficha."""
+    oferta, _ = _rede_oferta()
+    if oferta is None or "rede" not in oferta.columns:
+        return oferta
+    return oferta[~oferta["rede"].astype(str).isin(_rede_redes_estudio())].reset_index(drop=True)
+
+
+@functools.lru_cache(maxsize=1)
+def _rede_territorio() -> dict[str, dict[str, Any]]:
+    """Fatos territoriais de TODAS as unidades com coordenada. Não depende do período."""
+    pontos = _rede_pontos()
+    if not len(pontos):
+        return {}
+    import h3
+
+    discos: dict[str, list[str]] = {}
+    for linha in pontos.itertuples(index=False):
+        centro = h3.latlng_to_cell(float(linha.lat), float(linha.lng), 7)
+        discos[str(linha.unidade_id)] = [centro, *sorted(c for c in h3.grid_disk(centro, 1) if c != centro)]
+
+    # Fração de cada hexágono do disco que cai no RAIO DE 1 KM da unidade. O disco k=1 cobre
+    # o círculo inteiro (a aresta de um res-7 tem ~1,4 km); o que muda é quanto de cada
+    # hexágono entra. Mesmo círculo e mesmo polígono do protótipo de cobertura do Mapa.
+    pesos: dict[str, dict[str, float]] = {}
+    for linha in pontos.itertuples(index=False):
+        uid = str(linha.unidade_id)
+        circulo = cobertura_1km._disco(float(linha.lat), float(linha.lng), rede_inteligencia.RAIO_PROXIMO_M)
+        pesos[uid] = {}
+        for celula in discos[uid]:
+            poligono = cobertura_1km._hex_poly(celula)
+            pesos[uid][celula] = float(poligono.intersection(circulo).area / poligono.area) if poligono.area else 0.0
+
+    hexes = None
+    mercado = STAGING_DIR / "hexagonos_mercado_mapeado.parquet"
+    if mercado.is_file():
+        try:
+            import pyarrow.compute as pc
+            import pyarrow.dataset as ds
+
+            conjunto = ds.dataset(mercado)
+            cols = [c for c in _REDE_HEX_COLS_PRACA if c in conjunto.schema.names]
+            celulas = sorted({c for disco in discos.values() for c in disco})
+            hexes = (
+                conjunto.to_table(filter=pc.field("hex_id").isin(celulas), columns=cols)
+                .to_pandas()
+                .drop_duplicates("hex_id")
+                .set_index("hex_id")
+            )
+        except Exception as erro:  # noqa: BLE001
+            print(f"[rede] mercado por hexágono ilegível ({erro})", file=sys.stderr)
+
+    oferta = _rede_oferta_sem_estudio()
+    ultra = _rede_ler_opcional(
+        STAGING_DIR / "unidades_ultra_mapeadas.parquet", ("unidade", "uf", "lat", "lng", "flag_coord_valida")
+    )
+    if ultra is not None and "flag_coord_valida" in ultra.columns:
+        ultra = ultra[ultra["flag_coord_valida"].fillna(True).astype(bool)]
+    fatos = rede_inteligencia.fatos_territoriais(pontos, oferta, ultra, hexes, discos, pesos)
+    for uid, item in fatos.items():
+        celulas = [
+            c for c in discos.get(uid, [])
+            if hexes is not None and c in hexes.index and pesos.get(uid, {}).get(c, 0.0) > 0
+        ]
+        item["renda_domiciliar"] = (
+            _rede_renda_domiciliar(hexes.loc[celulas], pesos.get(uid)) if celulas else None
+        )
+        for rede in item.get("redes_no_entorno", []):
+            rede["logo"] = _icone_rede(rede["rede"])
+    return fatos
+
+
+def _rede_renda_domiciliar(bloco: pd.DataFrame, pesos: dict[str, float] | None = None) -> float | None:
+    """Renda média DOMICILIAR do disco da unidade, ponderada por população.
+
+    A MESMA cadeia do tooltip do hexágono e do Relatório Pontual (`_serie_renda` ->
+    `_renda_domiciliar_hex`): nada de fórmula nova, senão a ficha e o mapa mostrariam dois
+    números para o mesmo lugar. Hexágono sem município ou sem renda fica fora da média.
+    """
+    if not len(bloco):
+        return None
+    trabalho = bloco.copy()
+    trabalho["renda_leitura"], trabalho["renda_origem"] = _serie_renda(trabalho)
+    soma = peso = 0.0
+    for _, linha in trabalho.iterrows():
+        cod = linha.get("cod_municipio")
+        if cod is None or pd.isna(cod):
+            continue
+        cod_txt = str(cod).strip()
+        if cod_txt.endswith(".0"):
+            cod_txt = cod_txt[:-2]
+        linha = linha.copy()
+        linha["cod_municipio"] = cod_txt
+        dom = _renda_domiciliar_hex(linha, _fator_domiciliar(linha.get("uf"), cod_txt))
+        # Peso = população DENTRO do raio de 1 km (fração da área do hexágono no círculo).
+        pop = (_numf(linha.get("pop_total_setor_2022")) or 0.0) * (pesos or {}).get(linha.name, 1.0)
+        if dom is not None and pop > 0:
+            soma += dom * pop
+            peso += pop
+    return _num(soma / peso, 0) if peso else None
+
+
+@functools.lru_cache(maxsize=1)
+def _rede_fatos_agregador() -> pd.DataFrame | None:
+    """Nota, avaliações e vulnerabilidade das academias do agregador (redes + independentes)."""
+    partes = [
+        _rede_ler_opcional(
+            STAGING_DIR / nome,
+            ("lat", "lng", "nota_wellhub", "qtd_avaliacoes_wellhub", "score_vulnerabilidade"),
+        )
+        for nome in ("vulnerabilidade_ma_redes.parquet", "vulnerabilidade_ma_nomeadas.parquet")
+    ]
+    partes = [p for p in partes if p is not None and len(p)]
+    return pd.concat(partes, ignore_index=True) if partes else None
+
+
+@functools.lru_cache(maxsize=2)
+def _rede_planos(fonte: str) -> pd.DataFrame | None:
+    """Planos do agregador por academia (`scripts/ingerir_planos_agregador.py`). Opcional."""
+    return _rede_ler_opcional(STAGING_DIR / planos_agregador.arquivo_staging(fonte))
+
+
+def _rede_planos_unidade(unidade_id: str, fonte: str = "totalpass") -> dict[str, Any]:
+    """O nível da Ultra no agregador (`fonte`) contra o das academias a 2 km.
+
+    `disponivel=False` quando o artefato não foi ingerido — a tela diz isso, em vez de
+    desenhar "nenhuma academia no TotalPass".
+    """
+    planos = _rede_planos(fonte)
+    if planos is None or not len(planos):
+        return {"disponivel": False}
+    pontos = _rede_pontos()
+    linha = pontos[pontos["unidade_id"] == unidade_id]
+    data_coleta = str(planos["data_coleta"].max()) if "data_coleta" in planos.columns else None
+    if not len(linha):
+        return {"disponivel": True, "data_coleta": data_coleta, "sem_coordenada": True}
+    entorno = planos_agregador.planos_no_entorno(
+        float(linha["lat"].iloc[0]),
+        float(linha["lng"].iloc[0]),
+        planos,
+        excluir_nomes=planos_agregador.padrao_de_redes(_rede_redes_estudio()),
+        somente_musculacao=True,
+    )
+    return {"disponivel": True, "data_coleta": data_coleta, "sem_coordenada": False, **entorno}
+
+
+def _faixas_camada(bandas: Sequence[tuple[float, str, tuple[int, int, int, int]]]) -> list[dict[str, Any]]:
+    """Faixas de cor do núcleo em JSON. A tela não repete a régua: ela vem do perfil."""
+    return [
+        {"ate": None if corte == float("inf") else corte, "rotulo": rotulo, "cor": list(cor)}
+        for corte, rotulo, cor in bandas
+    ]
+
+
+@functools.lru_cache(maxsize=32)
+def _rede_setores_entorno(unidade_id: str) -> str:
+    """Setores censitários a ~2 km da unidade, com renda DOMICILIAR e densidade (JSON).
+
+    Camadas opcionais do mapa da ficha. Renda domiciliar pela fórmula canônica do Relatório
+    Pontual (`censo_map.py`): V06004 BRUTA x uplift SETORIAL x fator temporal — nunca a per
+    capita calibrada x moradores, que reintroduziria o `k` (+23,35%, ver CLAUDE.md §4).
+    Lê os municípios de TODOS os hexágonos do entorno: unidade na divisa desenharia meia
+    praça se só o município dela entrasse. Devolve string (imutável) para o cache.
+    READ-ONLY sobre o M1: só leitura do artefato geo derivado.
+    """
+    from motor_expansao.dashboard import constants as _constants
+    from motor_expansao.dashboard.data import read_censo_geo_partition
+
+    faixas = {
+        "renda_domiciliar": _faixas_camada(_constants.RENDA_MEDIA_DOMICILIAR_BANDS),
+        "densidade": _faixas_camada(_constants.DENSIDADE_POP_BANDS),
+    }
+    vazio = json.dumps({"disponivel": False, "setores": [], "faixas": faixas})
+    pontos = _rede_pontos()
+    linha = pontos[pontos["unidade_id"] == unidade_id]
+    mercado = STAGING_DIR / "hexagonos_mercado_mapeado.parquet"
+    if not len(linha) or not CENSO_GEO_DIR.exists() or not mercado.is_file():
+        return vazio
+    lat, lng = float(linha["lat"].iloc[0]), float(linha["lng"].iloc[0])
+
+    import h3
+    import pyarrow.compute as pc
+    import pyarrow.dataset as ds
+    from shapely import from_wkb
+
+    celulas = list(h3.grid_disk(h3.latlng_to_cell(lat, lng, 7), 2))
+    try:
+        municipios = (
+            ds.dataset(mercado)
+            .to_table(filter=pc.field("hex_id").isin(celulas), columns=["uf", "cod_municipio"])
+            .to_pandas()
+            .dropna()
+        )
+    except Exception as erro:  # noqa: BLE001
+        print(f"[rede] municípios do entorno ilegíveis ({erro})", file=sys.stderr)
+        return vazio
+
+    fator_temporal = _fator_temporal_renda()  # também reaponta os caminhos do uplift (1x)
+    circulo = cobertura_1km._disco(lat, lng, rede_inteligencia.RAIO_ENTORNO_M * 1.15)
+    minx, miny, maxx, maxy = circulo.bounds
+    feats: list[dict[str, Any]] = []
+    pares = {
+        (str(r.uf).upper(), str(r.cod_municipio).strip().removesuffix(".0"))
+        for r in municipios.itertuples(index=False)
+    }
+    for uf, cod in sorted(pares):
+        df = read_censo_geo_partition(CENSO_GEO_DIR, uf, cod)
+        if df.empty:
+            continue
+        # Corte barato pelo bbox antes de abrir a geometria.
+        if {"bbox_minx", "bbox_maxx", "bbox_miny", "bbox_maxy"} <= set(df.columns):
+            df = df[(df["bbox_maxx"] >= minx) & (df["bbox_minx"] <= maxx) & (df["bbox_maxy"] >= miny) & (df["bbox_miny"] <= maxy)]
+        for _, r in df.iterrows():
+            try:
+                geom = from_wkb(r.get("geometry_wkb"))
+            except Exception:  # noqa: BLE001
+                continue
+            if geom is None or geom.is_empty:
+                continue
+            if not geom.is_valid:
+                geom = geom.buffer(0)
+            if not geom.intersects(circulo):
+                continue
+            try:
+                geom = geom.simplify(SETORES_HEATMAP_SIMPLIFY_GRAUS, preserve_topology=True)
+            except Exception:  # noqa: BLE001
+                pass
+            renda = _numf(r.get("renda_responsavel_media_setor_2022"))
+            if renda is None:
+                # Fallback pela per capita BRUTA, nunca a calibrada (reintroduziria o k).
+                bruta, moradores = _numf(r.get("renda_per_capita_setor_2022")), _numf(r.get("avg_moradores_domicilio_setor_2022"))
+                renda = bruta * moradores if bruta is not None and moradores is not None else None
+            domiciliar = (
+                renda * float(_constants.uplift_composicao_por_setor(r.get("cod_setor"), uf, cod)) * float(fator_temporal)
+                if renda is not None
+                else None
+            )
+            for parte in cobertura_1km._aneis(geom):
+                feats.append(
+                    {
+                        "anel": parte,
+                        "renda_domiciliar": _num(domiciliar, 0),
+                        "densidade": _num(_numf(r.get("densidade_pop_setor_hab_km2")), 0),
+                    }
+                )
+    return json.dumps({"disponivel": bool(feats), "setores": feats, "faixas": faixas})
+
+
+@app.get("/api/rede/unidade/{unidade_id}/setores")
+def rede_unidade_setores(unidade_id: str) -> Response:
+    """Camadas de renda domiciliar e densidade do mapa da ficha. Carregadas SÓ quando a pessoa
+    liga uma delas: os polígonos de setor de uma praça densa passam de 1 MB."""
+    return Response(_rede_setores_entorno(unidade_id), media_type="application/json")
+
+
+def _rede_mapa_unidade(unidade_id: str) -> dict[str, Any] | None:
+    """O que o mapa da ficha desenha: a unidade, as academias a 2 km e as outras Ultra.
+
+    As logos vão UMA vez por rede (`logos`), não por pino: cada uma é um PNG em base64, e
+    repeti-la em 60 concorrentes de uma praça densa inflaria a ficha em megabytes.
+    """
+    pontos = _rede_pontos()
+    linha = pontos[pontos["unidade_id"] == unidade_id]
+    if not len(linha):
+        return None
+    lat, lng = float(linha["lat"].iloc[0]), float(linha["lng"].iloc[0])
+    oferta, _ = _rede_oferta()
+    concorrentes = rede_inteligencia.concorrentes_no_entorno(lat, lng, oferta, _rede_fatos_agregador())
+    planos_agregador.anexar_planos(concorrentes, _rede_planos("totalpass"), fonte="totalpass")
+    planos_agregador.anexar_planos(concorrentes, _rede_planos("wellhub"), fonte="wellhub")
+    # O mapa continua DESENHANDO o estúdio (DEC-056: o operador vê); a marca deixa os cards
+    # de concorrência tirá-lo das contas sem refazer a lista.
+    estudios = _rede_redes_estudio()
+    for c in concorrentes:
+        c["estudio"] = bool(c.get("rede") and c["rede"] in estudios)
+    logos ={c["rede"]: _icone_rede(c["rede"]) for c in concorrentes if c["classe"] == "cadeia" and c["rede"]}
+
+    vizinhas: list[dict[str, Any]] = []
+    ultra = _rede_ler_opcional(STAGING_DIR / "unidades_ultra_mapeadas.parquet", ("unidade", "lat", "lng"))
+    if ultra is not None and len(ultra):
+        ultra = ultra.dropna(subset=["lat", "lng"])
+        dist = rede_inteligencia.distancias_m(lat, lng, ultra["lat"].to_numpy(), ultra["lng"].to_numpy())
+        for i in range(len(ultra)):
+            if rede_inteligencia.DIST_MESMO_PONTO_M < dist[i] <= rede_inteligencia.RAIO_ENTORNO_M:
+                vizinhas.append({
+                    "lat": _num(float(ultra["lat"].iloc[i]), 6),
+                    "lng": _num(float(ultra["lng"].iloc[i]), 6),
+                    "nome": str(ultra["unidade"].iloc[i]).strip(),
+                    "distancia_m": _num(float(dist[i]), 0),
+                })
+    return {
+        "lat": _num(lat, 6),
+        "lng": _num(lng, 6),
+        "raio_m": rede_inteligencia.RAIO_ENTORNO_M,
+        "concorrentes": concorrentes,
+        "ultra": vizinhas,
+        "logos": logos,
+        "icone_ultra": _icone_ultra(),
+    }
+
+
+@functools.lru_cache(maxsize=1)
+def _rede_retencao() -> tuple[dict[str, dict[str, Any]], str | None]:
+    """Retenção por unidade (camada M2, DEC-014) e a data do artefato."""
+    caminho = STAGING_DIR / "unidade_territorio_retencao.parquet"
+    tabela = _rede_ler_opcional(caminho)
+    if tabela is None:
+        return {}, None
+    cadastro = _rede_cadastro()
+    codigos = {uid: registro.get("cod_unidade") for uid, registro in cadastro.unidades.items()}
+    data = pd.Timestamp(caminho.stat().st_mtime, unit="s").strftime("%d/%m/%Y")
+    return rede_inteligencia.retencao_por_unidade(tabela, codigos), data
+
+
+@functools.lru_cache(maxsize=1)
+def _rede_concorrencia_nova() -> dict[str, Any]:
+    """Concorrentes que ENTRARAM no feed nas últimas semanas, perto de cada unidade.
+
+    A série de snapshots vive só na VPS (DEC-039). Fora dela o dicionário volta com
+    `disponivel=False` e a tela diz que não há série — nunca "nenhum concorrente novo".
+    O TotalPass fica FORA, como no score (DEC-039, D9: a dedup TP x WH não está calibrada).
+    """
+    from motor_expansao.vulnerabilidade.snapshots import ler_snapshots
+
+    try:
+        snapshots = ler_snapshots(STAGING_DIR / "snapshots_concorrentes", fontes=("wellhub", "unidades"))
+    except Exception as erro:  # noqa: BLE001
+        print(f"[rede] snapshots de concorrentes ilegíveis ({erro})", file=sys.stderr)
+        snapshots = None
+    partes = [
+        _rede_ler_opcional(STAGING_DIR / nome, ("fonte", "chave_snapshot", "nome", "rede", "lat", "lng"))
+        for nome in ("vulnerabilidade_ma_redes.parquet", "vulnerabilidade_ma_nomeadas.parquet")
+    ]
+    partes = [p for p in partes if p is not None and len(p)]
+    coordenadas = pd.concat(partes, ignore_index=True) if partes else None
+    return rede_inteligencia.concorrentes_novos(snapshots, coordenadas, _rede_pontos())
+
+
+@functools.lru_cache(maxsize=1)
+def _rede_movimentacao() -> pd.DataFrame | None:
+    """Eventos de movimentação da concorrência, sem a Ultra e sem estúdios (DEC-056). Opcional.
+
+    Vem de `scripts/ingerir_movimentacao_concorrencia.py` (pacote garimpado da VPS em 15/09).
+    Ausente, a tela diz que não há histórico — nunca "nenhuma abertura".
+    """
+    tabela = _rede_ler_opcional(STAGING_DIR / movimentacao_concorrencia.ARQUIVO_STAGING)
+    if tabela is None:
+        return None
+    return movimentacao_concorrencia.filtrar_concorrencia(tabela, _rede_redes_estudio())
+
+
+def _rede_movimentacao_unidade(unidade_id: str) -> dict[str, Any]:
+    eventos = _rede_movimentacao()
+    if eventos is None:
+        return {
+            "disponivel": False,
+            "periodos": [],
+            "contagem": movimentacao_concorrencia.contagem_vazia(),
+            "eventos": [],
+            "logos": {},
+        }
+    pontos = _rede_pontos()
+    linha = pontos[pontos["unidade_id"] == unidade_id]
+    itens = (
+        movimentacao_concorrencia.eventos_no_entorno(float(linha["lat"].iloc[0]), float(linha["lng"].iloc[0]), eventos)
+        if len(linha)
+        else []
+    )
+    return {
+        "disponivel": True,
+        "sem_coordenada": not len(linha),
+        "periodos": movimentacao_concorrencia.periodos(eventos),
+        "contagem": movimentacao_concorrencia.contar(itens),
+        "eventos": itens,
+        # Logo miúda ao lado do nome, uma vez por rede (a lista pode repetir a mesma rede).
+        "logos": {rede: _icone_rede(rede) for rede in sorted({i["rede"] for i in itens if i["rede"]})},
+    }
+
+
+@functools.lru_cache(maxsize=1)
+def _rede_movimentacao_redes() -> dict[str, Any]:
+    """Crescimento por REDE e por agregador no pacote inteiro (não depende do recorte).
+
+    A pergunta aqui é "quem está crescendo", e ela é da rede concorrente, não da unidade Ultra:
+    uma abertura da Panobianco em Ribeirão Preto conta mesmo sem Ultra por perto.
+    """
+    eventos = _rede_movimentacao()
+    if eventos is None:
+        return {"disponivel": False, "periodos": [], "data_contagem": None, "redes": [], "agregadores": []}
+    redes = movimentacao_concorrencia.resumo_por_rede(eventos)
+    contagem = _rede_ler_opcional(STAGING_DIR / movimentacao_concorrencia.ARQUIVO_CONTAGEM_STAGING)
+    totais = dict(zip(contagem["rede"], contagem["unidades"], strict=True)) if contagem is not None else {}
+    data_contagem = str(contagem["data"].iloc[0]) if contagem is not None and len(contagem) else None
+    for linha in redes:
+        linha["logo"] = _icone_rede(linha["rede"])
+        linha["unidades"] = int(totais[linha["rede"]]) if linha["rede"] in totais else None
+    return {
+        "disponivel": True,
+        "periodos": movimentacao_concorrencia.periodos(eventos),
+        "data_contagem": data_contagem,
+        "redes": redes,
+        "agregadores": movimentacao_concorrencia.resumo_agregadores(eventos),
+    }
+
+
+@functools.lru_cache(maxsize=4)
+def _rede_sinais(competencia: str | None) -> dict[str, dict[str, Any]]:
+    return rede_inteligencia.sinais_antecedentes(_rede_fechamento(), _rede_base(), competencia)
+
+
+@functools.lru_cache(maxsize=4)
+def _rede_diagnostico_anterior(competencia: str | None) -> dict[str, Any]:
+    """Diagnóstico do mês fechado ANTERIOR ao mês-base — a outra ponta do "o que mudou"."""
+    if not competencia:
+        return {}
+    anterior = str(pd.Period(str(competencia), freq="M") - 1)
+    return rede_diagnostico.diagnosticar(_rede_fechamento(), anterior)
+
+
+def _rede_contexto_e_recorte(
+    mes: str | None,
+    inicio: str | None,
+    fim: str | None,
+    filtros: dict[str, str | None],
+) -> tuple[dict[str, Any], pd.DataFrame]:
+    """O MESMO período e o MESMO recorte da carteira — os painéis não divergem dela."""
+    meses = _rede_meses()
+    if not meses:
+        _rede_exigir_base()
+        raise HTTPException(404, "Base de rede sem competências com dado.")
+    if inicio and fim:
+        periodo_inicio, periodo_fim = _rede_periodo_valido(inicio, fim)
+    else:
+        periodo_inicio, periodo_fim = _rede_periodo_do_mes(mes if mes in meses else meses[0])
+    contexto = _rede_periodo(periodo_inicio, periodo_fim)
+    return contexto, _rede_filtrar(contexto, filtros)
+
+
+def _rede_mes_base(cheio: pd.DataFrame, competencia: str | None) -> pd.DataFrame:
+    if not competencia or not len(cheio):
+        return pd.DataFrame(columns=["unidade_id"]).set_index("unidade_id")
+    return cheio[cheio["competencia"].astype(str) == str(competencia)].set_index("unidade_id")
+
+
+def _rede_pontos_quadrante(
+    ids: Sequence[str],
+    recorte: pd.DataFrame,
+    mes_base: pd.DataFrame,
+    territorio: dict[str, dict[str, Any]],
+    diagnosticos: dict[str, Any],
+) -> list[dict[str, Any]]:
+    coortes = recorte.set_index("unidade_id")
+    pontos = []
+    for uid in ids:
+        fatos = territorio.get(uid) or {}
+        base = mes_base.loc[uid] if uid in mes_base.index else None
+        linha = coortes.loc[uid] if uid in coortes.index else None
+        diagnostico = diagnosticos.get(uid)
+        pontos.append(
+            {
+                "id": uid,
+                "nome": str(linha.get("unidade_cru", "")).strip() if linha is not None else uid,
+                "uf": str(linha.get("uf", "")) if linha is not None else "",
+                "coorte_rotulo": str(linha.get("coorte_rotulo", "")) if linha is not None else "",
+                "meses_operacao": _numf(base.get("meses_operacao")) if base is not None else None,
+                "faturamento": _num(_numf(base.get("faturamento")), 2) if base is not None else None,
+                "score_praca": fatos.get("score_praca"),
+                "concorrentes_1km": fatos.get("concorrentes_1km"),
+                "canibalizacao": fatos.get("canibalizacao"),
+                "severidade": diagnostico.severidade if diagnostico else "sem_base",
+            }
+        )
+    return pontos
+
+
+@app.get("/api/rede/inteligencia")
+def rede_inteligencia_recorte(
+    mes: str | None = None,
+    inicio: str | None = None,
+    fim: str | None = None,
+    uf: str | None = None,
+    master: str | None = None,
+    consultor: str | None = None,
+    coorte: str | None = None,
+    severidade: str | None = None,
+    busca: str | None = None,
+    maduras: bool = True,
+) -> dict[str, Any]:
+    """Painéis de inteligência do RECORTE: praça × execução, rampa, sinais, retenção e
+    o que mudou. Mesmos filtros e mesmo período da carteira."""
+    contexto, recorte = _rede_contexto_e_recorte(
+        mes, inicio, fim,
+        {"uf": uf, "master": master, "consultor": consultor, "coorte": coorte,
+         "severidade": severidade, "busca": busca},
+    )
+    competencia = contexto["competencia_diagnostico"]
+    cheio = contexto["cheio"]
+    ids = [str(u) for u in recorte["unidade_id"]]
+    nomes = {str(r.unidade_id): str(r.unidade_cru).strip() for r in recorte.itertuples(index=False)}
+    mes_base = _rede_mes_base(cheio, competencia)
+    territorio = _rede_territorio()
+    oferta, fontes_oferta = _rede_oferta()
+
+    quadrante = rede_inteligencia.quadrante_praca_execucao(
+        _rede_pontos_quadrante(ids, recorte, mes_base, territorio, contexto["diagnosticos"]),
+        somente_maduras=maduras,
+    )
+    rampa = rede_inteligencia.posicao_na_rampa(cheio, competencia, ids)
+
+    sinais_todos = _rede_sinais(competencia)
+    sinais = sorted(
+        (
+            {"id": uid, "nome": nomes[uid], **sinais_todos[uid]}
+            for uid in ids
+            if uid in sinais_todos and sinais_todos[uid]["acesos"]
+        ),
+        key=lambda s: (-s["acesos"], s["nome"]),
+    )
+
+    retencao, data_retencao = _rede_retencao()
+    cadastro_rede = _rede_cadastro()
+
+    def _consultor(uid: str) -> str | None:
+        return str(cadastro_rede.de(uid).get("consultor") or "").strip() or None
+
+    risco = sorted(
+        (
+            {"id": uid, "nome": nomes[uid], "consultor": _consultor(uid), **retencao[uid]}
+            for uid in ids
+            if uid in retencao and retencao[uid]["utilizavel"]
+        ),
+        key=lambda r: -(r["risco_percentil"] or 0),
+    )
+    fora_do_modelo = sum(1 for uid in ids if uid in retencao and not retencao[uid]["utilizavel"])
+
+    concorrencia = _rede_concorrencia_nova()
+    inauguradas = []
+    if len(mes_base):
+        primeiro_mes = pd.to_numeric(mes_base["meses_operacao"], errors="coerce") == 1
+        inauguradas = [str(u) for u in mes_base.index[primeiro_mes] if str(u) in nomes]
+    mudancas = rede_inteligencia.mudancas_do_mes(
+        contexto["diagnosticos"],
+        _rede_diagnostico_anterior(competencia),
+        nomes,
+        competencia=competencia,
+        inauguradas=inauguradas,
+        rampa=rampa,
+        concorrencia=concorrencia["por_unidade"],
+        ultima_semana=concorrencia["ultima_semana"],
+    )
+
+    com_territorio = [uid for uid in ids if (territorio.get(uid) or {}).get("score_praca") is not None]
+    notas = [_NOTA_NAO_E_PREVISAO]
+    if len(ids) - len(com_territorio):
+        notas.append(
+            f"{len(ids) - len(com_territorio)} unidade(s) do recorte sem coordenada ou sem "
+            "hexágono de mercado: ficam fora do quadrante."
+        )
+    if oferta is None:
+        notas.append("Base de concorrentes ausente neste ambiente: contagens de concorrência vazias.")
+    if not concorrencia["disponivel"]:
+        notas.append(
+            "Concorrente novo depende da série semanal de snapshots (DEC-039), que não está "
+            "neste ambiente: o painel não afirma que não houve abertura."
+        )
+    if data_retencao is None:
+        notas.append("Artefato de retenção ausente: risco de cancelamento indisponível.")
+
+    return {
+        "competencia": competencia,
+        "quadrante": {
+            **quadrante,
+            "somente_maduras": maduras,
+            "meses_madura": rede_inteligencia.MESES_MADURA,
+            "rotulos": rede_inteligencia.QUADRANTES,
+            "explicacao": rede_inteligencia.EXPLICACAO_QUADRANTE,
+        },
+        "rampa": {
+            "curva": rede_inteligencia.curva_de_rampa(cheio),
+            "unidades": rampa,
+            "janela": list(rede_inteligencia.RAMPA_JANELA_NOVAS),
+        },
+        "sinais": {
+            "unidades": sinais,
+            "avaliadas": sum(1 for uid in ids if uid in sinais_todos),
+            "definicoes": rede_inteligencia.SINAIS,
+        },
+        "retencao": {
+            "data_artefato": data_retencao,
+            "cobertas": len(risco),
+            "fora_do_modelo": fora_do_modelo,
+            "no_recorte": len(ids),
+            "unidades": risco,
+        },
+        "concorrencia_nova": {
+            "disponivel": concorrencia["disponivel"],
+            "semanas_na_serie": concorrencia["semanas_na_serie"],
+            "ultima_semana": concorrencia["ultima_semana"],
+            "unidades_afetadas": sum(1 for uid in ids if concorrencia["por_unidade"].get(uid)),
+        },
+        "movimentacao": _rede_movimentacao_redes(),
+        "canibalizacao": [
+            {
+                "id": uid,
+                "nome": nomes[uid],
+                "vizinha": territorio[uid].get("ultra_mais_proxima_nome"),
+                "distancia_m": territorio[uid].get("ultra_mais_proxima_m"),
+            }
+            for uid in ids
+            if (territorio.get(uid) or {}).get("canibalizacao")
+        ],
+        "mudancas": mudancas,
+        "fontes_oferta": list(fontes_oferta),
+        "notas": notas,
+    }
+
+
+def _rede_pares_de_praca(
+    pontos: Sequence[dict[str, Any]], ponto: dict[str, Any] | None, vizinhos: int = 4
+) -> list[dict[str, Any]]:
+    """As unidades de praça MAIS PARECIDA, com o faturamento de cada uma.
+
+    "Praça boa, faturamento abaixo da mediana" diz o quadrante, mas não contra quem. Estas
+    são as unidades que operam no mesmo tipo de chão (score de praça mais próximo), e é
+    delas que sai a conversa de execução. Só maduras, porque é o conjunto do quadrante.
+    """
+    if ponto is None:
+        return []
+    alvo = float(ponto["score_praca"])
+    perto = sorted(
+        (p for p in pontos if p["id"] != ponto["id"]),
+        key=lambda p: (abs(float(p["score_praca"]) - alvo), -float(p["faturamento"])),
+    )[:vizinhos]
+    return [
+        {
+            "id": p["id"],
+            "nome": p["nome"],
+            "score_praca": p["score_praca"],
+            "faturamento": p["faturamento"],
+            "esta_unidade": p["id"] == ponto["id"],
+        }
+        for p in sorted([ponto, *perto], key=lambda p: -float(p["score_praca"]))
+    ]
+
+
+@app.get("/api/rede/unidade/{unidade_id}/inteligencia")
+def rede_unidade_inteligencia(unidade_id: str, mes: str | None = None) -> dict[str, Any]:
+    """Território, retenção, rampa, sinais e concorrência nova de UMA unidade."""
+    meses = _rede_meses()
+    if not meses:
+        _rede_exigir_base()
+        raise HTTPException(404, "Base de rede sem competências com dado.")
+    mes_sel = mes if (mes in meses) else meses[0]
+    contexto = _rede_mes(mes_sel)
+    atual = contexto["atual"]
+    if not (atual["unidade_id"] == unidade_id).any():
+        raise HTTPException(404, f"Unidade {unidade_id} sem dados na competência {mes_sel}.")
+
+    competencia = contexto["competencia_diagnostico"]
+    cheio = contexto["cheio"]
+    territorio = _rede_territorio()
+    retencao, data_retencao = _rede_retencao()
+    concorrencia = _rede_concorrencia_nova()
+
+    ids = [str(u) for u in atual["unidade_id"]]
+    quadrante = rede_inteligencia.quadrante_praca_execucao(
+        _rede_pontos_quadrante(ids, atual, _rede_mes_base(cheio, competencia), territorio, contexto["diagnosticos"])
+    )
+    ponto = next((p for p in quadrante["pontos"] if p["id"] == unidade_id), None)
+    pares = _rede_pares_de_praca(quadrante["pontos"], ponto)
+    posicao = rede_inteligencia.posicao_na_rampa(cheio, competencia, [unidade_id])
+
+    mes_base = _rede_mes_base(cheio, competencia)
+    agregadores = None
+    if unidade_id in mes_base.index:
+        base = mes_base.loc[unidade_id]
+        agregadores = {
+            "wellhub": _num(_numf(base.get("alunos_gympass"))),
+            "totalpass": _num(_numf(base.get("alunos_totalpass"))),
+        }
+
+    return {
+        "unidade_id": unidade_id,
+        "competencia": competencia,
+        "territorio": territorio.get(unidade_id),
+        "quadrante": {
+            "ponto": ponto,
+            "pares": pares,
+            "corte_praca": quadrante["corte_praca"],
+            "corte_desempenho": quadrante["corte_desempenho"],
+            "n": quadrante["n"],
+            "meses_madura": rede_inteligencia.MESES_MADURA,
+            "explicacao": rede_inteligencia.EXPLICACAO_QUADRANTE,
+        },
+        "retencao": {"data_artefato": data_retencao, **(retencao.get(unidade_id) or {})}
+        if unidade_id in retencao
+        else {"data_artefato": data_retencao},
+        "rampa": {
+            "faturamento": {
+                "curva": rede_inteligencia.curva_de_rampa(cheio, "faturamento"),
+                "unidade": rede_inteligencia.trajetoria_da_unidade(cheio, unidade_id, "faturamento"),
+            },
+            "ativos": {
+                "curva": rede_inteligencia.curva_de_rampa(cheio, "ativos"),
+                "unidade": rede_inteligencia.trajetoria_da_unidade(cheio, unidade_id, "ativos"),
+            },
+            # Recorrentes e agregadores separados: o total de ativos esconde quem cresce. Uma
+            # unidade na mediana de ativos pode estar lá só por agregador.
+            "pagantes": {
+                "curva": rede_inteligencia.curva_de_rampa(cheio, "pagantes"),
+                "unidade": rede_inteligencia.trajetoria_da_unidade(cheio, unidade_id, "pagantes"),
+            },
+            "agregadores": {
+                "curva": rede_inteligencia.curva_de_rampa(cheio, "agregadores"),
+                "unidade": rede_inteligencia.trajetoria_da_unidade(cheio, unidade_id, "agregadores"),
+            },
+            "posicao": posicao[0] if posicao else None,
+        },
+        "sinais": _rede_sinais(competencia).get(unidade_id),
+        "agregadores": agregadores,
+        "concorrencia_nova": {
+            "disponivel": concorrencia["disponivel"],
+            "semanas_na_serie": concorrencia["semanas_na_serie"],
+            "ultima_semana": concorrencia["ultima_semana"],
+            "itens": [
+                i for i in concorrencia["por_unidade"].get(unidade_id, [])
+                if not (i.get("rede") and i["rede"] in _rede_redes_estudio())
+            ],
+        },
+        "mapa": _rede_mapa_unidade(unidade_id),
+        "planos": _rede_planos_unidade(unidade_id),
+        "planos_wellhub": _rede_planos_unidade(unidade_id, "wellhub"),
+        "movimentacao": _rede_movimentacao_unidade(unidade_id),
+        "notas": [_NOTA_NAO_E_PREVISAO],
+    }
+
+
 # --- Exports ----------------------------------------------------------------
 
 
@@ -9159,6 +10106,12 @@ class ComparacaoItemIn(BaseModel):
     porDimensao: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
 
 
+class ComparacaoCoordIn(BaseModel):
+    # Centro da area fotografada, impresso sob a foto para o operador VOLTAR a ela no mapa.
+    lat: float = Field(allow_inf_nan=False)
+    lng: float = Field(allow_inf_nan=False)
+
+
 class ComparacaoIn(BaseModel):
     """Corpo do deck de comparacao (pentest Onda B #10): fecha o type-confusion que
     virava 500 opaco (`{"itens": ["a"]}`) e poe teto em itens/imagens/porDimensao."""
@@ -9166,6 +10119,10 @@ class ComparacaoIn(BaseModel):
     model_config = ConfigDict(extra="allow")
     itens: list[ComparacaoItemIn] = Field(default_factory=list, max_length=_COMPARACAO_ITENS_MAX)
     imagens: list[str] = Field(default_factory=list, max_length=_COMPARACAO_ITENS_MAX)
+    # Na ORDEM DE COLAGEM, como `imagens`. Ausente = nenhuma linha "Centro:" (deck de pontos).
+    coordenadas: list[ComparacaoCoordIn | None] = Field(
+        default_factory=list, max_length=_COMPARACAO_ITENS_MAX
+    )
 
     @field_validator("imagens")
     @classmethod

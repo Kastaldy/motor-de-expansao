@@ -21,6 +21,7 @@ __all__ = [
     "AnalisarResponseJSON",
     "AnalisarMunicipioRequest",
     "MunicipiosResponse",
+    "FaixaAlunosResponse",
 ]
 
 
@@ -156,3 +157,29 @@ class AnalisarResponseJSON(BaseModel):
     versao_score: str = Field(examples=["score_setor_2022_calibrado"])
     gerado_em: str = Field(examples=["2026-06-11T12:00:00Z"])
     consumidor: str | None = Field(default=None, examples=["bot-telegram"])
+
+
+class FaixaAlunosResponse(BaseModel):
+    """Faixa plausivel de alunos para uma metragem — NAO e previsao de demanda.
+
+    Sai da curva tamanho->densidade dos comparaveis Ultra (DEC-009): depende so' de `m2`
+    e da base, nunca da geografia. `n_comparaveis` e `fonte` nao sao acessorios — sao o
+    que permite julgar o quanto a faixa vale: poucos comparaveis significam janela
+    alargada, e uma fonte de fallback significa outra populacao por tras do mesmo numero.
+    """
+
+    m2: float = Field(description="Metragem consultada.", examples=[1500])
+    p10: float | None = Field(description="Percentil 10 de alunos.", examples=[620])
+    p50: float | None = Field(description="Mediana de alunos.", examples=[980])
+    p90: float | None = Field(description="Percentil 90 de alunos.", examples=[1420])
+    n_comparaveis: int = Field(
+        description="Unidades comparaveis na janela. Zero = faixa nao calculada.",
+        examples=[23],
+    )
+    fonte: str = Field(
+        description=(
+            "Arquivo que alimentou a curva. Muda o SIGNIFICADO da faixa quando cai no "
+            "fallback, entao viaja junto com os numeros."
+        ),
+        examples=["base_calibracao_maduras.parquet (oficial)"],
+    )

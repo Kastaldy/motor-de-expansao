@@ -19,7 +19,7 @@
 
 import { cellToBoundary, cellToLatLng, isValidCell } from 'h3-js'
 
-import type { Pins } from './types'
+import type { Hex, Pins } from './types'
 
 /**
  * Um quadro a capturar: o hexagono a enquadrar e, no modo de imovel, ONDE ele esta'.
@@ -42,6 +42,38 @@ export interface AlvoCaptura {
    */
   uf?: string | null
   municipio?: string | null
+}
+
+/**
+ * O que a foto de um alvo MARCA: o contorno do hexagono sempre, o pin so' com coordenada.
+ *
+ * Os dois andavam juntos, e o contorno so' nascia quando havia pin. Desde que o #345
+ * esvaziou a coropleta durante a captura, isso tirou o hexagono de TODAS as colunas do
+ * deck de hexagonos, cujos alvos nao tem lat/lng — so' o deck de pontos seguia marcado.
+ */
+export function marcaDoAlvo(alvo: AlvoCaptura): {
+  hexId: string
+  pin: { lat: number; lng: number } | null
+} {
+  const temPin = typeof alvo.lat === 'number' && typeof alvo.lng === 'number'
+  return {
+    hexId: alvo.hexId,
+    pin: temPin ? { lat: alvo.lat as number, lng: alvo.lng as number } : null,
+  }
+}
+
+/**
+ * O alvo de captura de um HEXAGONO, no mesmo molde do alvo de um ponto (`PainelPontos`).
+ *
+ * Ate' 16/09/2026 o deck de hexagonos mandava so' o `hexId`. Sem `uf`/`municipio` a captura
+ * tomava todo hexagono como da cidade ABERTA, e na visao de UF — que mistura municipios —
+ * um hexagono distante saia fotografado com os pins de outro lugar. O pin vai no CENTRO da
+ * celula, que e' onde `quadroDaCaptura` poe a camera; a coordenada servida so' entra se o
+ * id nao for celula valida.
+ */
+export function alvoDoHex(h: Pick<Hex, 'id' | 'lat' | 'lng' | 'mun'>, uf: string | null): AlvoCaptura {
+  const [lat, lng] = isValidCell(h.id) ? cellToLatLng(h.id) : [h.lat, h.lng]
+  return { hexId: h.id, lat, lng, uf, municipio: h.mun ?? null }
 }
 
 /**

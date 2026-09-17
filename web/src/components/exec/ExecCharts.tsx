@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { COR_SEVERIDADE, rotuloMesCurto } from '../../lib/exec'
+import { COR_SEVERIDADE, corComAlfa, rotuloMesCurto } from '../../lib/exec'
 import { brl, brlCurto, num, pct } from '../../lib/format'
 import {
   ancoraDoRotulo,
@@ -63,8 +63,6 @@ export function BarrasPeriodo({
   // de o número existir na tela.
   const fmt = corpo === null ? curto : inteiro
 
-  const largura = 100 / fatias
-
   return (
     <figure style={{ margin: 0 }} ref={medir}>
       {titulo && (
@@ -80,7 +78,10 @@ export function BarrasPeriodo({
             <div
               key={m}
               title={`${m}: ${fmt(valor)}`}
-              style={{ width: `${largura}%`, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}
+              // `flex: 1 1 0` e não `width: 100%/n`: a largura percentual SOMADA aos `gap` de 3 px
+              // passava de 100% em (n-1)*3 px, e a última barra saía pela borda do card — visível
+              // na ficha em grade (2026-09-15). O flex divide só o espaço que SOBRA dos gaps.
+              style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}
             >
               {/* O número vai SOBRE a barra. Comparar alturas responde "subiu ou caiu";
                   só o valor responde "quanto" — e é o valor que vai para a conversa com
@@ -115,7 +116,7 @@ export function BarrasPeriodo({
           <span
             key={m}
             className="num"
-            style={{ width: `${largura}%`, font: '500 9px/1 var(--f-num)', color: 'var(--tx-muted)', textAlign: 'center' }}
+            style={{ flex: '1 1 0', minWidth: 0, font: '500 9px/1 var(--f-num)', color: 'var(--tx-muted)', textAlign: 'center' }}
           >
             {rotuloMesCurto(m)}
           </span>
@@ -397,6 +398,7 @@ export function FunilComercial({
   novosAlunos,
   conversao,
   aviso,
+  funil = false,
 }: {
   visitas: number | null
   convertidos: number | null
@@ -404,6 +406,10 @@ export function FunilComercial({
   novosAlunos: number | null
   conversao: number | null
   aviso: string | null
+  /** `true`: as mesmas barras alinhadas à esquerda, mas ALTAS (28 a 36 px), ocupando a
+   *  altura do card (card do recorte na Visão Executiva, pedido do Felipe em 15/09).
+   *  `false`: as barras finas de 14 px (ficha da unidade). */
+  funil?: boolean
 }) {
   const etapas = [
     { rotulo: 'Visitas', valor: visitas, cor: 'var(--ac)' },
@@ -413,20 +419,38 @@ export function FunilComercial({
   ]
   const base = Math.max(...etapas.map((e) => e.valor ?? 0), 1)
   return (
-    <div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={funil ? { flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 } : undefined}>
+      {/* Barra alta tem TETO de 36 px (47 px esticando ao card passou do ponto, Felipe 15/09):
+          a sobra de altura do card fica dividida acima e abaixo do bloco, que sai centrado. */}
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: funil ? 10 : 8,
+          ...(funil ? { flex: 1, justifyContent: 'center' } : {}),
+        }}
+      >
         {etapas.map((e) => (
-          <div key={e.rotulo} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div
+            key={e.rotulo}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, ...(funil ? { flex: 1, minHeight: 28, maxHeight: 36 } : {}) }}
+          >
             <span style={{ width: 96, font: '400 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
               {e.rotulo}
             </span>
-            <div style={{ flex: 1, height: 14, background: 'var(--surf-raised)', borderRadius: 3 }}>
+            <div
+              style={
+                funil
+                  ? { flex: 1, alignSelf: 'stretch', background: 'var(--surf-raised)', borderRadius: 5 }
+                  : { flex: 1, height: 14, background: 'var(--surf-raised)', borderRadius: 3 }
+              }
+            >
               <div
                 style={{
                   width: `${(100 * (e.valor ?? 0)) / base}%`,
                   height: '100%',
                   background: e.cor,
-                  borderRadius: 3,
+                  borderRadius: funil ? 5 : 3,
                 }}
               />
             </div>
@@ -472,8 +496,12 @@ export function BannerRecomendacao({
   return (
     <div
       style={{
-        border: `1px solid ${cor}55`,
-        background: `${cor}12`,
+        // `corComAlfa`, e não sufixo hex (`${cor}55` / `${cor}12`): desde que a severidade
+        // virou token (`var(--sev-alta)`, e90a1c5), o sufixo gerava `var(--sev-alta)12`, cor
+        // inválida que o navegador descarta em silêncio — o card do diagnóstico perdeu fundo e
+        // borda sem erro nenhum. 33% e 7% são os mesmos alfas do hex antigo (0x55, 0x12).
+        border: `1px solid ${corComAlfa(cor, 33)}`,
+        background: corComAlfa(cor, 7),
         borderRadius: 'var(--r-lg)',
         padding: '14px 16px',
       }}

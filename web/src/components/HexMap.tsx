@@ -14,6 +14,7 @@ import {
   chegouNoAlvo,
   comporCanvas,
   mapaPronto,
+  marcaDoAlvo,
   ordemDeVoo,
   ordenarParaEmpilhar,
   quadroDaCaptura,
@@ -732,15 +733,16 @@ export default function HexMap({
      Trocar o flag exige recriar o contexto WebGL, e é o que a `key` do DeckGL faz. */
   const [capturando, setCapturando] = useState(false)
   /**
-   * O pin do quadro que esta' sendo capturado AGORA.
+   * A marca do quadro que esta' sendo capturado AGORA: o hexagono e, se houver, o pin.
    *
    * Substitui o `searchPin` durante a captura, e nao se soma a ele: o `searchPin` e' um
    * so' — o do ponto aberto na janela — entao capturar tres enderecos em sequencia punha
    * a MESMA marca nas tres fotos, e nas duas primeiras ela apontava um imovel que nao era
-   * o assunto daquela coluna. Fora do modo de imovel fica `null`, e ai a captura sai sem
-   * pin nenhum: um pin de busca antigo no meio do deck se le como "o ponto e' aqui".
+   * o assunto daquela coluna. Fora do modo de imovel o pin fica `null`, e ai a captura sai
+   * sem pin nenhum: um pin de busca antigo no meio do deck se le como "o ponto e' aqui".
+   * O hexagono, esse, vem sempre — ver `marcaDoAlvo`.
    */
-  const [marcaCaptura, setMarcaCaptura] = useState<SearchPin | null>(null)
+  const [marcaCaptura, setMarcaCaptura] = useState<ReturnType<typeof marcaDoAlvo> | null>(null)
 
   const capturaAnterior = useRef(pedidoCaptura?.n ?? 0)
   useEffect(() => {
@@ -828,12 +830,8 @@ export default function HexMap({
         /* As camadas do municipio DESTE alvo entram ANTES do voo, junto com a marca: o
            deck precisa ja' estar pintando os pins certos quando o quadro parar. */
         setPinsDaCaptura(pedido.pins ?? null)
-        // A marca do imovel entra ANTES do voo, para estar pintada quando o quadro parar.
-        setMarcaCaptura(
-          pedido.lat != null && pedido.lng != null
-            ? { lat: pedido.lat, lng: pedido.lng, hexId: pedido.hexId }
-            : null,
-        )
+        // A marca entra ANTES do voo, para estar pintada quando o quadro parar.
+        setMarcaCaptura(marcaDoAlvo(pedido))
         /* SALTA, nao voa. A animacao e' para quem esta' olhando a tela, e durante a
            geracao ninguem esta'. Pior: com a instancia unica de `FlyToInterpolator`
            reaproveitada em sequencia, a transicao entre dois alvos vizinhos virava no-op
@@ -935,10 +933,18 @@ export default function HexMap({
     return s
   }, [cobertura1k])
 
-  /* Qual pin o mapa desenha. Durante a captura manda o do quadro (`marcaCaptura`), que
-     e' `null` fora do modo de imovel — e ai a foto sai sem pin, em vez de carregar a marca
-     de uma busca antiga para dentro do PDF. */
-  const pinNoMapa = capturando ? marcaCaptura : searchPin
+  /* O que o mapa marca. Durante a captura manda o quadro (`marcaCaptura`): o hexagono
+     sempre, e o pin so' no modo de imovel — fora dele a foto sai sem pin, em vez de
+     carregar a marca de uma busca antiga para dentro do PDF. */
+  const marcaNoMapa = useMemo(
+    () =>
+      capturando
+        ? marcaCaptura
+        : searchPin
+          ? { hexId: searchPin.hexId, pin: { lat: searchPin.lat, lng: searchPin.lng } }
+          : null,
+    [capturando, marcaCaptura, searchPin],
+  )
 
   /* --- Regua (BLK-CONC-MEDIR): ponta A -> ponta B, com trava nos pins --- */
   const [medicao, setMedicao] = useState<{ a: AlvoMedicao; b: AlvoMedicao | null } | null>(null)
@@ -1474,11 +1480,11 @@ export default function HexMap({
     // Buscar um endereco e' uma forma de SELECIONAR, entao vale a mesma cor do hex
     // selecionado e do item ativo do painel; o turquesa ficou exclusivo do cenario
     // multi-hex, que era a unica marcacao turquesa deliberada do mapa.
-    if (pinNoMapa) {
+    if (marcaNoMapa) {
       base.push(
         new H3HexagonLayer<{ id: string }>({
           id: 'search-hex',
-          data: [{ id: pinNoMapa.hexId }],
+          data: [{ id: marcaNoMapa.hexId }],
           getHexagon: (d) => d.id,
           extruded: false,
           filled: true,
@@ -1493,10 +1499,12 @@ export default function HexMap({
           pickable: false,
         }) as unknown as H3HexagonLayer<Hex>,
       )
+    }
+    if (marcaNoMapa?.pin) {
       base.push(
-        new ScatterplotLayer<SearchPin>({
+        new ScatterplotLayer<{ lat: number; lng: number }>({
           id: 'search-pin-ring',
-          data: [pinNoMapa],
+          data: [marcaNoMapa.pin],
           getPosition: (d) => [d.lng, d.lat],
           getRadius: 11,
           radiusUnits: 'pixels',
@@ -1505,9 +1513,9 @@ export default function HexMap({
         }) as unknown as ScatterplotLayer<Hex>,
       )
       base.push(
-        new ScatterplotLayer<SearchPin>({
+        new ScatterplotLayer<{ lat: number; lng: number }>({
           id: 'search-pin-core',
-          data: [pinNoMapa],
+          data: [marcaNoMapa.pin],
           getPosition: (d) => [d.lng, d.lat],
           getRadius: 6,
           radiusUnits: 'pixels',
@@ -1561,7 +1569,7 @@ export default function HexMap({
     cenarioKey,
     onSelecionar,
     capturando,
-    pinNoMapa,
+    marcaNoMapa,
     pinsEfetivos,
     iconObjs,
     rotulosRank,

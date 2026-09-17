@@ -55,6 +55,7 @@ import argparse
 import logging
 from collections.abc import Iterable, Sequence
 from pathlib import Path
+from typing import NamedTuple
 
 import h3
 import pandas as pd
@@ -79,6 +80,10 @@ ROOT = Path(__file__).resolve().parents[3]
 CARTEIRA_PATH_DEFAULT = ROOT / "data" / "outputs" / "carteira_expansao_acionavel.parquet"
 ACADEMIAS_PATH_DEFAULT = ROOT / "data" / "staging" / "vulnerabilidade_ma_academias.parquet"
 ALVOS_CSV_DEFAULT = ROOT / "data" / "outputs" / "alvos_ma_priorizados.csv"
+# `[DEC-062]` Fonte do mapa `hex_id_res7 -> cod_municipio` da TRAVA DE MUNICIPIO. Artefato oficial
+# do M1, lido SOMENTE (duas colunas). A chave e' o CODIGO IBGE e nao o nome -- ver
+# `mapa_municipio_por_hex`.
+ESTRUTURAL_PATH_DEFAULT = ROOT / "data" / "staging" / "brasil_estrutural.parquet"
 
 # FRONTEIRA COM O BLK-MA-20, E ELA É FAIL-CLOSED `[emenda de 2026-08-25 à DEC-039, D9]`.
 #
@@ -551,6 +556,25 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--dedup-cadeias-legado",
+        action="store_true",
+        help=(
+            "volta a dedup de CADEIAS do feed a regua ANTERIOR a DEC-062: sem a trava de municipio "
+            "e sem o raio ampliado de 300 m. Existe para reproduzir numero antigo e para reverter "
+            "sem mexer em codigo; a mesma regua vale para a pressao e para o pin proprio"
+        ),
+    )
+    p.add_argument(
+        "--estrutural",
+        type=Path,
+        default=None,
+        help=(
+            "fonte do mapa `hex_id -> cod_municipio` da trava de municipio (DEC-062). Default: "
+            "`data/staging/brasil_estrutural.parquet`, lido somente. Ausente, a trava DESLIGA e o "
+            "log sai em WARNING"
+        ),
+    )
+    p.add_argument(
         "--saida-nomeadas",
         type=Path,
         default=None,
@@ -615,11 +639,73 @@ def resolver_fontes(args: argparse.Namespace) -> tuple[str, ...] | None:
     return FONTES_ENTREGAVEL_DEFAULT
 
 
+class ReguaDedupCadeias(NamedTuple):
+    """A régua de dedup de CADEIAS do feed que o entregável aplica (DEC-062).
+
+    `municipio_por_hex` liga a TRAVA DE MUNICÍPIO e `raio_ampliado_m` liga o RAIO AMPLIADO; `None` em
+    qualquer um dos dois é a passagem desligada, exatamente como na função pura. `motivo` vai para o
+    log e para a auditoria, porque régua que muda sem dizer é o defeito que a DEC-048 (D4) proibiu.
+    """
+
+    municipio_por_hex: dict[str, str] | None
+    raio_ampliado_m: float | None
+    motivo: str
+
+
+def mapa_municipio_por_hex(caminho: Path | None = None) -> dict[str, str] | None:
+    """`hex_id_res7 -> cod_municipio` para a TRAVA DE MUNICÍPIO, ou `None` sem o insumo.
+
+    A chave é o CÓDIGO do IBGE, e não o nome, e a escolha não é estética: **232 nomes de município
+    existem em mais de uma UF** (medido em `brasil_estrutural.parquet` em 2026-09-15). Com o nome como
+    valor do mapa, dois homônimos de estados diferentes cairiam no mesmo balde `(rede, município)` e a
+    própria trava fundiria academias REAIS — o `ITABAIANA` que ela existe para impedir, entrando pela
+    porta dela. No dado de hoje as duas chaves dão o MESMO resultado (767 e 714 sobreviventes,
+    conjuntos e posições idênticos): o código fecha a porta, não muda número.
+
+    Lê SOMENTE duas colunas de um artefato oficial do M1, que nunca é reescrito aqui.
+    """
+    alvo = caminho or ESTRUTURAL_PATH_DEFAULT
+    if not alvo.exists():
+        return None
+    df = pd.read_parquet(alvo, columns=["hex_id", "cod_municipio"]).dropna()
+    return {str(h): str(cod) for h, cod in zip(df["hex_id"], df["cod_municipio"], strict=True)}
+
+
+def resolver_regua_dedup_cadeias(args: argparse.Namespace) -> ReguaDedupCadeias:
+    """A régua de dedup de cadeias EFETIVA, resolvida UMA vez para os dois consumidores (DEC-062).
+
+    Ligada por padrão: trava de município + raio ampliado. `--dedup-cadeias-legado` volta à régua
+    anterior sem mexer em código. Sem o mapa de município a trava DESLIGA e o raio segue ligado — e o
+    motivo diz, porque as sobreviventes deixam de bater com as 714 medidas na DEC.
+    """
+    from .contrato import DEDUP_CADEIA_FEED_RAIO_AMPLIADO_M
+
+    if getattr(args, "dedup_cadeias_legado", False):
+        return ReguaDedupCadeias(
+            None, None, "`--dedup-cadeias-legado`: regua ANTERIOR a DEC-062 (sem trava, sem raio)"
+        )
+    caminho = getattr(args, "estrutural", None)
+    mapa = mapa_municipio_por_hex(caminho)
+    raio = float(DEDUP_CADEIA_FEED_RAIO_AMPLIADO_M)
+    if mapa is None:
+        return ReguaDedupCadeias(
+            None,
+            raio,
+            f"DEC-062 PARCIAL: trava de municipio DESLIGADA, insumo ausente "
+            f"({caminho or ESTRUTURAL_PATH_DEFAULT}); raio ampliado {raio:g} m ligado. As "
+            f"sobreviventes saem ACIMA das 714 medidas na DEC",
+        )
+    return ReguaDedupCadeias(
+        mapa, raio, f"DEC-062: trava de municipio ({len(mapa)} hexes) + raio ampliado {raio:g} m"
+    )
+
+
 def _pressao_por_academia(
     caminho: Path | None,
     academias: pd.DataFrame | None = None,
     *,
     com_oferta_do_feed: bool = True,
+    regua: ReguaDedupCadeias | None = None,
 ) -> tuple[pd.DataFrame | None, str]:
     """Pressão POR ACADEMIA a partir do feed cru, ou `(None, motivo)`. Nunca derruba o lote.
 
@@ -676,7 +762,12 @@ def _pressao_por_academia(
         )
 
     pressao = calcular_pressao_por_academia(
-        academias, pontos, independentes=independentes, cadeias_do_feed=cadeias_do_feed
+        academias,
+        pontos,
+        independentes=independentes,
+        cadeias_do_feed=cadeias_do_feed,
+        dedup_cadeia_feed_municipio_por_hex=regua.municipio_por_hex if regua else None,
+        dedup_cadeia_feed_raio_ampliado_m=regua.raio_ampliado_m if regua else None,
     )
     return pressao, f"pressao POR ACADEMIA sobre {len(pressao)} unidade(s), {sufixo}"
 
@@ -713,11 +804,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     # vezes custaria o dobro e abriria a chance de os dois verem feeds diferentes.
     coordenadas = coordenadas_por_chave(fontes=fontes)
 
+    # `[DEC-062]` A regua de dedup de CADEIAS e' resolvida UMA vez e servida aos DOIS consumidores
+    # -- a pressao (oferta do s6) e o pin proprio (`--saida-redes`). Resolver em cada um abriria a
+    # chance de o pin e a oferta verem reguas diferentes: a duplicata visivel e a oferta fantasma
+    # sao o mesmo defeito, por duas portas. O log sai SEMPRE, e em WARNING quando a regua sai
+    # parcial por falta de insumo.
+    regua_dedup = resolver_regua_dedup_cadeias(args)
+    if regua_dedup.municipio_por_hex is None and regua_dedup.raio_ampliado_m is not None:
+        _logger.warning("dedup de cadeias: %s", regua_dedup.motivo)
+    else:
+        _logger.info("dedup de cadeias: %s", regua_dedup.motivo)
+
     if args.sem_pressao:
         pressao, motivo = None, "`--sem-pressao`: score sem o s6, por pedido explicito"
     else:
         pressao, motivo = _pressao_por_academia(
-            args.concorrentes, coordenadas, com_oferta_do_feed=not args.oferta_so_cadeias
+            args.concorrentes,
+            coordenadas,
+            com_oferta_do_feed=not args.oferta_so_cadeias,
+            regua=regua_dedup,
         )
     _logger.info("sinal 6: %s", motivo)
 
@@ -766,6 +871,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         dry_run=args.dry_run,
     )
     auditoria["sinal_6"] = motivo
+    auditoria["dedup_cadeias"] = regua_dedup.motivo
 
     # Artefato NOMEADO (BLK-MA-15): so' quando pedido explicitamente. Default `None` porque ele
     # carrega identidade — materializa-lo tem de ser um ato, nunca um efeito colateral.
@@ -801,7 +907,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if alvo_conc.exists():
             cadeias = coordenadas[coordenadas["rede"].astype(str) != CATEGORIA_INDEPENDENTE]
             com_pin = chaves_com_pin_proprio(
-                cadeias, _pontos_validos_frame(ler_concorrentes(alvo_conc))
+                cadeias,
+                _pontos_validos_frame(ler_concorrentes(alvo_conc)),
+                municipio_por_hex=regua_dedup.municipio_por_hex,
+                raio_ampliado_m=regua_dedup.raio_ampliado_m,
             )
         auditoria["redes"] = materializar_redes_nomeadas(
             churn_lido,
@@ -819,13 +928,17 @@ __all__ = [
     "ACADEMIAS_PATH_DEFAULT",
     "ALVOS_CSV_DEFAULT",
     "CARTEIRA_PATH_DEFAULT",
+    "ESTRUTURAL_PATH_DEFAULT",
     "FONTES_ENTREGAVEL_DEFAULT",
+    "ReguaDedupCadeias",
     "academias_com_hotness",
     "agregar_alvos_por_hex",
     "main",
+    "mapa_municipio_por_hex",
     "marcar_hex_quente",
     "materializar_alvos_ma",
     "resolver_fontes",
+    "resolver_regua_dedup_cadeias",
 ]
 
 

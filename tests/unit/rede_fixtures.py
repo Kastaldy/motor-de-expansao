@@ -80,7 +80,13 @@ QUANTIS_PRODUCAO: dict[str, list[float]] = {
     "nps": [-16.7, 27.1, 47.6, 68.4, 82.6, 89.2, 100.0],
     "pct_agregador_alunos": [0.0, 0.0, 20.4, 39.2, 54.2, 66.2, 91.0],
     "saldo_operacional": [-301.0, -14.0, -1.0, 22.5, 50.2, 143.5, 549.0],
-    "faturamento": [26_697.0, 85_740.0, 124_668.0, 188_251.0, 291_327.0, 359_488.0, 699_985.0],
+    # Faturamento RECALIBRADO em 2026-09-15 sobre o fechamento de jul/2026 da carteira (86
+    # unidades comparaveis). Os quantis de 2026-08-04 ([26.697 ... 699.985]) eram do faturamento
+    # da GROWTH, que nao traz a receita de agregador e fica ~20% abaixo; a aba passou a usar
+    # o do FINANCEIRO. Com a regua de faturamento critico (abaixo de 150 mil), a rede sintetica
+    # antiga punha 32% das unidades em prioridade alta contra 27% na base real -- o guardiao da
+    # banda reprovava por causa da FONTE velha da fixture, nao da regra.
+    "faturamento": [37_681.0, 114_128.0, 171_435.0, 239_651.0, 324_983.0, 443_057.0, 697_019.0],
 }
 _PROBABILIDADES = [0.0, 0.10, 0.25, 0.50, 0.75, 0.90, 1.0]
 

@@ -738,8 +738,8 @@ pela emenda de 2026-08-14 à DEC-028) e são **opt-in**: sem a flag, nada nomead
 
 | arquivo | o que desenha | contrato |
 |---|---|---|
-| `vulnerabilidade_ma_nomeadas.parquet` | pins das academias INDEPENDENTES, com score (BLK-MA-15) | `alvos_ma_nomeados_v5` |
-| `vulnerabilidade_ma_redes.parquet` | pins das unidades de REDE do agregador, com pressão e **sem** score (DEC-035) | `redes_ma_nomeadas_v2` |
+| `vulnerabilidade_ma_nomeadas.parquet` | pins das academias INDEPENDENTES, com score (BLK-MA-15) | `alvos_ma_nomeados_v6` |
+| `vulnerabilidade_ma_redes.parquet` | pins das unidades de REDE do agregador, com pressão e **sem** score (DEC-035) | `redes_ma_nomeadas_v3` |
 
 `vulnerabilidade_ma_academias.parquet` (variante sem identidade) **não vai a produção**: nenhuma
 superfície de lá o lê.
@@ -760,6 +760,12 @@ python -m motor_expansao.vulnerabilidade.alvos_ma \
 > `--fontes wellhub`" — o gesto que vazava tinha deixado de ser "editar uma linha" e passado a ser
 > "não digitar o flag". Para consumir a série inteira quando o BLK-MA-20 fechar, o gesto é
 > explícito: `--todas-as-fontes`.
+
+> **A dedup de cadeias da DEC-062 também vale sem flag.** O entregável liga a trava de município e
+> o raio ampliado por padrão e lê `data/staging/brasil_estrutural.parquet` para o mapa de município
+> (`--estrutural` troca o caminho). Sem esse arquivo a trava DESLIGA e o log sai em `WARNING`: as
+> sobreviventes ficam acima das 714 medidas e o pin deixa de bater com a DEC. Para reproduzir a
+> régua anterior: `--dedup-cadeias-legado`.
 
 > **Por que NÃO gerar na VPS**, ainda que a imagem da `api` tenha o módulo:
 > 1. `data/staging` e `data/outputs` são montados **`:ro`** nos containers de longa duração — o

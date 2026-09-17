@@ -479,16 +479,33 @@ def barra_de_meta(
     meta: float,
     minimo: float = -100.0,
     maximo: float = 100.0,
+    limiar_alerta: float | None = None,
 ) -> None:
-    """Regua com a meta marcada. Verde quando bate a meta, turquesa quando nao."""
+    """Regua com a meta marcada.
+
+    Sem `limiar_alerta`: verde quando bate a meta, turquesa quando nao. Com ele, semaforo igual
+    ao da tela: vermelho ate o limiar (inclusive), amarelo ate a meta, verde a partir dela.
+    """
+
+    def cor(v: float) -> tuple[int, int, int]:
+        if limiar_alerta is None:
+            return COR_SEVERIDADE["ok"] if v >= meta else ULTRA_TURQUESA
+        if v <= limiar_alerta:
+            return COR_SEVERIDADE["alta"]
+        return COR_SEVERIDADE["media"] if v < meta else COR_SEVERIDADE["ok"]
 
     def posicao(v: float) -> float:
         return x + largura * min(max((v - minimo) / (maximo - minimo), 0.0), 1.0)
 
     pdf.set_fill_color(*CINZA_CLARO)
     pdf.rect(x, y, largura, 8, style="F")
-    if valor is not None:
-        pdf.set_fill_color(*(COR_SEVERIDADE["ok"] if valor >= meta else ULTRA_TURQUESA))
+    if valor is not None and valor < minimo:
+        # Abaixo do minimo da regua (NPS negativo numa regua 0-100): nada preenche, e um
+        # marcador vermelho no inicio diz que o valor existe, abaixo de zero.
+        pdf.set_fill_color(*COR_SEVERIDADE["alta"])
+        pdf.rect(x, y, 8, 8, style="F")
+    elif valor is not None:
+        pdf.set_fill_color(*cor(valor))
         pdf.rect(x, y, max(posicao(valor) - x, 0.6), 8, style="F")
     pdf.set_fill_color(80, 80, 80)
     pdf.rect(posicao(meta) - 0.6, y - 2, 1.2, 12, style="F")

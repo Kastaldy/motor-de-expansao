@@ -153,12 +153,48 @@ def mesma_unidade(
     return similaridade_nome(nome_a, nome_b, rede) >= float(limiar_jaccard)
 
 
+def mesmo_estabelecimento(
+    nome_a: str,
+    nome_b: str,
+    *,
+    limiar_jaccard: float = JACCARD_MIN_NOME,
+) -> bool:
+    """`True` se os dois nomes descrevem o mesmo estabelecimento SEM rede a descontar.
+
+    É a variante para INDEPENDENTES, e a diferença com `mesma_unidade` é de premissa, não de
+    limiar. Lá o nome é `REDE + LUGAR` e a rede sai do discriminante porque é igual dos dois lados
+    por construção; aqui não há rede — o nome INTEIRO é a identidade. Passar `rede=""` para
+    `mesma_unidade` já daria isso, e a função existe para o chamador não ter de saber disso.
+
+    O que ela ACRESCENTA é o ramo de igualdade EXATA do nome normalizado, e ele não é redundante:
+    `similaridade_nome` devolve `0` quando algum discriminante fica vazio, e um nome inteiramente
+    genérico (`"Academia Fitness"`) zera dos dois lados. Foram medidos 5 pares assim na semana
+    `2026-33` — nomes byte a byte iguais a menos de 1 m que o Jaccard recusava por construção.
+
+    A regra de NEGAÇÃO por ordinal continua valendo e vem primeiro, pela mesma razão do
+    `mesma_unidade`: `Iron Gym` e `Iron Gym 2` são duas unidades, por mais igual que seja o resto.
+
+    **Limite herdado, declarado porque foi medido:** `ordinal_da_unidade` só reconhece o ordinal
+    como dígito ISOLADO (`[2-9]`) ou romano, então a forma ZERO-À-ESQUERDA escapa — o par real
+    `Academia Form Life` × `Academia Form Life 02`, a 23,9 m, casa. Corrigir isso é mexer numa
+    primitiva que a dedup de CADEIAS também usa, e portanto re-chavearia aquela série; fica
+    declarado aqui e fora do escopo desta função.
+    """
+    if ordinal_da_unidade(nome_a) != ordinal_da_unidade(nome_b):
+        return False
+    a, b = " ".join(_tokens(nome_a)), " ".join(_tokens(nome_b))
+    if a and a == b:
+        return True
+    return similaridade_nome(nome_a, nome_b, "") >= float(limiar_jaccard)
+
+
 __all__ = [
     "DIST_MAX_MESMO_NOME_M",
     "JACCARD_MIN_NOME",
     "RUIDO_NOME",
     "discriminante",
     "mesma_unidade",
+    "mesmo_estabelecimento",
     "ordinal_da_unidade",
     "similaridade_nome",
 ]
