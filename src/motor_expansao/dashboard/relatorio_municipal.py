@@ -3944,12 +3944,16 @@ def _praca_onde_crescer_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
     pdf.set_fill_color(*secondary)
     pdf.set_text_color(*_BRANCO)
     pdf.set_font("Helvetica", "B", 8)
+    # Faixa inteira pintada antes do texto: rotulo que quebra em duas linhas nao pode deixar a
+    # celula vizinha com meia altura de fundo.
+    pdf.rect(x, y, w, 26.0, style="F")
     xx = x
     for (rotulo, _), lw in zip(colunas, larguras, strict=True):
-        pdf.set_xy(xx, y)
-        pdf.multi_cell(lw, 12, _ascii(rotulo), align="C", fill=True, max_line_height=12, new_x="RIGHT", new_y="TOP")
+        uma_linha = pdf.get_string_width(_ascii(rotulo)) <= lw - 4
+        pdf.set_xy(xx, y + (7.0 if uma_linha else 1.0))
+        pdf.multi_cell(lw, 12, _ascii(rotulo), align="C", new_x="RIGHT", new_y="TOP")
         xx += lw
-    y += 26.0
+    y += 28.0
 
     pdf.set_font("Helvetica", "", 9)
     for i, row in enumerate(sel.hexagonos.to_dict("records")):
