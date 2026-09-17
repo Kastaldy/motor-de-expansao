@@ -106,7 +106,7 @@ class AnalisarMunicipioRequest(BaseModel):
     # quiser o relatorio classico pede "hexagono" explicitamente.
     unidade: Literal["bairro", "hexagono"] = Field(
         default="bairro",
-        description='Unidade dos mapas: "bairro" (12 paginas) ou "hexagono" (10 paginas).',
+        description='Unidade dos mapas: "bairro" (12 paginas) ou "hexagono" (11 paginas, com Bairros Oficiais).',
     )
     solicitante: str | None = Field(
         default=None,

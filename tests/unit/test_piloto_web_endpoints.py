@@ -768,99 +768,60 @@ def test_municipios_ignora_categorias_fantasma(
         _clear_caches()
 
 
-def test_relatorio_municipal_renderiza_e_passa_os_mapas(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Regressao (bug 'relatorio municipal nao gera'): o endpoint DEVE renderizar as
-    camadas de mapa e PASSA-LAS ao gerador. Antes chamava o gerador com mapas=None e o
-    PDF saia com 'Mapa indisponivel' em toda pagina. Patcha os colaboradores nas
-    fronteiras (o endpoint importa tudo de forma lazy do modulo relatorio_municipal)."""
+def test_relatorio_municipal_usa_o_mesmo_preparo_do_bot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O motor e o bot do Telegram geram o relatorio municipal pelo MESMO preparo
+    (`service.montar_pdf_municipio`), no modo hexagono. Antes o endpoint montava tudo a mao:
+    sem renda domiciliar (imprimia per capita sob o rotulo "Renda domiciliar") e sem a divisa
+    dos bairros (pagina "Bairros Oficiais" com "0 bairros"). O que fica no endpoint e' so' o
+    que depende do processo: a base da UF (enriquecido, que tambem serve a AR) e o recorte.
+    Os insumos do preparo (mapas, divisa, bairros, renda) sao travados em
+    `test_relatorio_municipal_caminho_unico.py`."""
     import motor_expansao.dashboard.relatorio_municipal as relmun
     from motor_expansao.api import service as api_service
 
     df = pd.DataFrame(
         {
-            "nome_municipio": ["X"],
-            "uf": ["DF"],
-            "hex_id": ["8a"],
-            "lat": [0.0],
-            "lng": [0.0],
-            # `cod_municipio` destrava os bairros: sem a coluna o endpoint curto-circuita
-            # (`bairros_por_hex(...) if cod_muni else None`) e a trava da B3 abaixo nao teria
-            # o que observar.
-            "cod_municipio": ["5300108"],
+            "nome_municipio": ["X", "Y"],
+            "uf": ["DF", "DF"],
+            "hex_id": ["8a", "8b"],
+            "cod_municipio": ["5300108", "5300109"],
         }
     )
     monkeypatch.setattr(pilot, "carregar_uf_completo", lambda uf: df)
-    monkeypatch.setattr(
-        relmun, "_municipio_mask", lambda d, nome: pd.Series([True] * len(d), index=d.index)
-    )
-    # Sem estes dois patches o teste passaria a depender de `data/ibge` e da particao geo
-    # existirem na maquina (existem no dev, nao no CI): fonte de bairro e de divisa viram mock.
-    monkeypatch.setattr(pilot, "bairros_por_hex", lambda uf, cod: {"8a": "Asa Norte"})
-    monkeypatch.setattr(relmun, "carregar_poligono_municipio", lambda *a, **k: None)
-
-    # Um mock `lambda *a, **k` aceita QUALQUER assinatura: se o endpoint parar de passar um
-    # kwarg, o teste continua verde e o PDF degrada calado (foi assim que a B3 escapou).
-    # Por isso os kwargs sao capturados e conferidos um a um.
-    agregou: dict[str, object] = {}
-
-    def _fake_agregar(*a, **k):
-        agregou.update(k)
-        return {"uf": "DF", "nome_municipio": "X", "n_hex_total": 1}
-
-    monkeypatch.setattr(relmun, "agregar_municipio", _fake_agregar)
-    monkeypatch.setattr(api_service, "_competitors_ultra", lambda cfg: (None, None))
 
     chamada: dict[str, object] = {}
 
-    def _fake_render(
-        df_muni,
-        result,
-        *,
-        competitors_df=None,
-        ultra_df=None,
-        basemap=False,
-        poligono_municipio=None,
-    ):
-        chamada["render"] = True
-        chamada["basemap"] = basemap
-        # BLK-RELMUN-05: o endpoint tem de REPASSAR o recorte territorial ao render. O kwarg
-        # e obrigatorio na assinatura do mock — sem ele a chamada real levanta TypeError.
-        chamada["poligono_kwarg"] = True
-        return {c: b"PNG" for c in ("cobertura", "resumo", "score", "residual", "dominio")}
+    def _fake_montar(df_muni, **k):
+        chamada["df_muni"] = df_muni
+        chamada.update(k)
+        return b"%PDF-1.4"
 
-    monkeypatch.setattr(relmun, "render_mapas_municipio", _fake_render)
+    monkeypatch.setattr(api_service, "montar_pdf_municipio", _fake_montar)
 
-    capturado: dict[str, object] = {}
-
-    def _fake_payloads(result, mapas=None, **k):
-        capturado["mapas"] = mapas
-
-        class _P:
-            pdf_bytes = b"%PDF-1.4"
-            pdf_filename = "r.pdf"
-
-        return _P()
-
-    monkeypatch.setattr(
-        relmun, "gerar_payloads_download_relatorio_municipal", _fake_payloads
-    )
-
-    resp = asyncio.run(pilot.relatorio_municipal(pilot.RelatorioMunicipalIn(uf="DF", municipio="X")))
+    resp = asyncio.run(pilot.relatorio_municipal(pilot.RelatorioMunicipalIn(uf="df", municipio="X")))
     assert resp.media_type == "application/pdf"
-    assert chamada.get("render") is True, "o endpoint nao chamou render_mapas_municipio"
-    assert chamada.get("poligono_kwarg") is True, (
-        "BLK-RELMUN-05: o endpoint tem de passar `poligono_municipio` ao render, senao os "
-        "pins do PDF voltam a vazar para os municipios vizinhos"
-    )
-    assert agregou.get("bairros_por_hex") is not None, (
-        "B3: o endpoint tem de passar `bairros_por_hex` ao `agregar_municipio`, senao o "
-        "agregador recebe None e a pagina de bairros degrada EM SILENCIO para "
-        "'N hexes - <tese>', ainda imprimindo a nota falsa de 'bairros nao mapeados na base "
-        "IBGE'. O caminho do bot/API ja passava; so o piloto web nao."
-    )
-    mapas = capturado.get("mapas")
-    assert mapas is not None, "regressao: o gerador recebeu mapas=None (PDF sem mapas)"
-    assert set(mapas) >= {"cobertura", "resumo", "score", "residual", "dominio"}
+    assert resp.body == b"%PDF-1.4"
+    assert 'filename="relatorio_municipal_df_x.pdf"' in resp.headers["content-disposition"]
+    assert chamada["unidade"] == relmun.UNIDADE_HEXAGONO
+    assert chamada["uf"] == "DF"
+    assert list(chamada["df_muni"]["hex_id"]) == ["8a"], "recorte do municipio pela base da UF"
+    assert chamada["settings"].competitors_logos_dir == pilot.COMPETITORS_LOGO_DIR
+
+
+def test_relatorio_municipal_propaga_o_404_do_preparo(monkeypatch: pytest.MonkeyPatch) -> None:
+    from motor_expansao.api import service as api_service
+    from motor_expansao.api.errors import APIError
+
+    df = pd.DataFrame({"nome_municipio": ["X"], "uf": ["DF"], "hex_id": ["8a"]})
+    monkeypatch.setattr(pilot, "carregar_uf_completo", lambda uf: df)
+
+    def _sem_hex(df_muni, **k):
+        raise APIError(404, "Municipio 'X' (DF) sem hexagonos", "municipio_sem_dados")
+
+    monkeypatch.setattr(api_service, "montar_pdf_municipio", _sem_hex)
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(pilot.relatorio_municipal(pilot.RelatorioMunicipalIn(uf="DF", municipio="X")))
+    assert e.value.status_code == 404
 
 
 def test_rotas_http_apontam_para_o_handler_certo():

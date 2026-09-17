@@ -30,6 +30,7 @@ municipio nao tem bairro mapeado (cobertura IBGE heterogenea). READ-ONLY sobre o
 from __future__ import annotations
 
 import math
+import re
 import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
@@ -49,7 +50,11 @@ from motor_expansao.dashboard.censo_map import (
 from motor_expansao.dashboard.censo_map import (
     _atribuicao_tiles as _censo_atribuicao_tiles,
 )
-from motor_expansao.dashboard.competitors import _render_square_logo_tile
+from motor_expansao.dashboard.competitors import (
+    CHAVE_AGREGADOR,
+    PIN_INDEPENDENTE_PX,
+    _render_square_logo_tile,
+)
 from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
 from motor_expansao.dashboard.utils import score_band_to_color
 from motor_expansao.perfil import resolver_perfil
@@ -317,11 +322,20 @@ _REDE_NOME_OVERRIDES = {
 }
 
 
+def _chave_rede(rede: Any) -> str:
+    """Chave da rede do pin; "" quando a linha nao tem rede (academia independente)."""
+    if rede is None or pd.isna(rede):
+        return ""
+    return str(rede).strip()
+
+
 def _prettify_rede(rede: str) -> str:
     """Nome legivel da rede: override conhecido ou title-case trocando '_' por espaco."""
     key = str(rede or "").strip()
     if not key:
         return "Concorrente"
+    if key == CHAVE_AGREGADOR:
+        return "Independentes (Wellhub)"
     low = key.casefold()
     if low in _REDE_NOME_OVERRIDES:
         return _REDE_NOME_OVERRIDES[low]
@@ -398,7 +412,7 @@ def _hex_destacado_mask(df_muni: pd.DataFrame) -> pd.Series:
     """D1 (emenda BLK-RELMUN-03): destacado <=> oferta_efetiva_disponivel>=2000 (Residual Fitness; termo de SAM removido)."""
     if df_muni.empty:
         return pd.Series(False, index=df_muni.index)
-    oferta = pd.to_numeric(df_muni.get("oferta_efetiva_disponivel"), errors="coerce")
+    oferta = _coluna_numerica(df_muni, "oferta_efetiva_disponivel")
     return oferta >= OFERTA_DESTAQUE_MIN
 
 
@@ -1043,15 +1057,26 @@ def _coluna_numerica(df: pd.DataFrame, nome: str) -> pd.Series:
     return pd.to_numeric(df[nome], errors="coerce")
 
 
-def _reais(valor: Any, decimais: int = 0) -> str:
-    """`R$ 5.210` quando ha numero; so o "n/d" quando nao ha.
+def _renda(valor: Any, decimais: int = 0) -> str:
+    """`R$ 5.210` (BR) / `USD 5.210` (AR) quando ha numero; so o "n/d" quando nao ha.
 
-    Colar "R$ " em cima do texto de ausencia produzia "R$ Nao disponivel", que lê como se o
+    O rotulo e' `moeda.simbolo_renda()` do perfil, nunca `moeda.simbolo` cru: a renda AR chega
+    em USD enquanto o simbolo do pais e' o "$" do peso (BLK-INTL-10).
+
+    Colar o simbolo em cima do texto de ausencia produzia "R$ Nao disponivel", que lê como se o
     valor fosse a string -- visto na tabela de Sinop/MT.
     """
     if valor is None or (isinstance(valor, float) and math.isnan(valor)):
         return TEXTO_SEM_DADO
-    return "R$ " + _format_number(valor, decimais)
+    return f"{resolver_perfil().moeda.simbolo_renda()} " + _format_number(valor, decimais)
+
+
+def _instituto_censo() -> str:
+    """Sigla do instituto do censo, lida do perfil: "Censo 2022 (IBGE)" -> "IBGE",
+    "Censo 2022 (INDEC)" -> "INDEC". Sem parenteses, o nome inteiro (BLK-INTL-10)."""
+    nome = resolver_perfil().fontes.censo.nome
+    achado = re.search(r"\(([^)]+)\)", nome)
+    return achado.group(1).strip() if achado else nome
 
 
 def _tabela_hexes(
@@ -1421,7 +1446,9 @@ def _pins_no_municipio(
     if conc_muni is not None:
         n_conc = int(len(conc_muni))
         if "rede" in conc_muni.columns:
-            redes = conc_muni["rede"].astype(str)
+            # Independente (rede vazia, DEC-046) conta no balde do agregador; `astype(str)`
+            # direto abria um balde "<NA>" com a placa cinza "C" no slide 8.
+            redes = conc_muni["rede"].map(lambda r: _chave_rede(r) or CHAVE_AGREGADOR)
             por_rede = {
                 str(rede): int(cnt) for rede, cnt in redes.value_counts().items()
             }
@@ -1479,7 +1506,7 @@ def agregar_municipio(
     n_hex_total = int(len(df_muni))
 
     destaque_mask = _hex_destacado_mask(df_muni)
-    oferta = pd.to_numeric(df_muni.get("oferta_efetiva_disponivel"), errors="coerce")
+    oferta = _coluna_numerica(df_muni, "oferta_efetiva_disponivel")
     oferta_destacados = oferta[destaque_mask].dropna()
     soma_oferta_amarelos = float(oferta_destacados.sum()) if not oferta_destacados.empty else 0.0
     n_hex_amarelos = int(destaque_mask.sum())
@@ -1487,19 +1514,19 @@ def agregar_municipio(
     # Ate 5 maiores parcelas para a caixa "Como calculamos".
     parcelas = [float(v) for v in oferta_destacados.sort_values(ascending=False).head(5).tolist()]
 
-    score_col = pd.to_numeric(df_muni.get("score_setor_2022_calibrado"), errors="coerce").dropna()
+    score_col = _coluna_numerica(df_muni, "score_setor_2022_calibrado").dropna()
     score_censo_medio = float(score_col.mean()) if not score_col.empty else float("nan")
     score_censo_max = float(score_col.max()) if not score_col.empty else float("nan")
 
     mercado_disponivel = float(oferta.dropna().sum()) if not oferta.dropna().empty else 0.0
 
-    pop_serie = pd.to_numeric(df_muni.get("pop_total_setor_2022"), errors="coerce")
+    pop_serie = _coluna_numerica(df_muni, "pop_total_setor_2022")
     if pop_serie.dropna().empty:
-        pop_serie = pd.to_numeric(df_muni.get("pop_total"), errors="coerce")
+        pop_serie = _coluna_numerica(df_muni, "pop_total")
     pop_total_municipio = float(pop_serie.dropna().sum()) if not pop_serie.dropna().empty else float("nan")
 
-    renda = pd.to_numeric(df_muni.get("renda_per_capita"), errors="coerce")
-    pesos = pd.to_numeric(df_muni.get("pop_total_setor_2022"), errors="coerce")
+    renda = _coluna_numerica(df_muni, "renda_per_capita")
+    pesos = _coluna_numerica(df_muni, "pop_total_setor_2022")
     valid = renda.notna() & pesos.notna() & (pesos > 0)
     if valid.any():
         renda_per_capita_media = float((renda[valid] * pesos[valid]).sum() / pesos[valid].sum())
@@ -1508,14 +1535,12 @@ def agregar_municipio(
     else:
         renda_per_capita_media = float("nan")
 
-    penetr = pd.to_numeric(df_muni.get("penetracao_fitness_mercado_estimada"), errors="coerce").dropna()
+    penetr = _coluna_numerica(df_muni, "penetracao_fitness_mercado_estimada").dropna()
     penetracao_fitness_media = float(penetr.mean()) if not penetr.empty else float("nan")
 
     # FU1: penetracao MUNICIPAL significativa = consumo / (consumo + residual) * 100.
     # consumo_total = sum(oferta_consumida_mercado_estimada); residual_total = mercado_disponivel.
-    consumo_serie = pd.to_numeric(
-        df_muni.get("oferta_consumida_mercado_estimada"), errors="coerce"
-    ).dropna()
+    consumo_serie = _coluna_numerica(df_muni, "oferta_consumida_mercado_estimada").dropna()
     consumo_total = float(consumo_serie.sum()) if not consumo_serie.empty else 0.0
     residual_total = mercado_disponivel
     denom = consumo_total + residual_total
@@ -1583,12 +1608,12 @@ def _score_faixa_color(value: float, alpha: int = 200) -> tuple[int, int, int, i
 
 
 def _font(size: int = 12) -> ImageFont.ImageFont:
+    # Mesma regra do `censo_map._font` (BLK-RELPON-06): fonte EMBUTIDA do Pillow, que escala.
+    # `arial.ttf` so existe no Windows; na imagem de producao o fallback `load_default()` SEM
+    # size desenhava todo texto de mapa num bitmap fixo de ~10 px (rotulo de 8 px saia grande).
     from typing import cast
 
-    try:
-        return cast(ImageFont.ImageFont, ImageFont.truetype("arial.ttf", size))
-    except OSError:
-        return cast(ImageFont.ImageFont, ImageFont.load_default())
+    return cast(ImageFont.ImageFont, ImageFont.load_default(size=size))
 
 
 def _lonlat_to_mercator(lon: float, lat: float) -> tuple[float, float]:
@@ -1634,9 +1659,9 @@ def _focus_bounds_mercator(
     destaque = _hex_destacado_mask(df_muni)
     rel = df_muni.loc[destaque]
     if rel.empty:
-        score = pd.to_numeric(df_muni.get("score_setor_2022_calibrado"), errors="coerce")
-        oferta = pd.to_numeric(df_muni.get("oferta_efetiva_disponivel"), errors="coerce")
-        pop = pd.to_numeric(df_muni.get("pop_total_setor_2022"), errors="coerce")
+        score = _coluna_numerica(df_muni, "score_setor_2022_calibrado")
+        oferta = _coluna_numerica(df_muni, "oferta_efetiva_disponivel")
+        pop = _coluna_numerica(df_muni, "pop_total_setor_2022")
         relevante = score.notna() | (oferta.fillna(0.0) > 0) | (pop.fillna(0.0) > 0)
         rel = df_muni.loc[relevante]
     rel = rel[rel["hex_id"].notna()]
@@ -2243,7 +2268,7 @@ def _render_mapa_bairros(
         draw.rounded_rectangle(map_box, radius=6, fill=(245, 245, 245), outline=(120, 120, 120))
         _draw_text(
             draw, (left + 16, (top + bottom) // 2),
-            "Bairros não mapeados na base IBGE 2022 para este município.", font=_font(13),
+            f"Bairros não mapeados na base {_instituto_censo()} 2022 para este município.", font=_font(13),
         )
         out = BytesIO()
         image.save(out, format="PNG", optimize=True)
@@ -2416,8 +2441,8 @@ def _render_mapa_bairros(
     n_desenhados = len(ocupadas)
     n_total = sum(1 for b in bairros if not b.get("sobra"))
     fonte_txt = _BAIRRO_METRICA_RODAPE.get(
-        str(metrica), "Setores censitários IBGE 2022 dissolvidos por bairro"
-    )
+        str(metrica), "Setores censitários {instituto} 2022 dissolvidos por bairro"
+    ).format(instituto=_instituto_censo())
     if _BAIRRO_METRICAS.get(str(metrica)) == "rateada":
         # Nunca deixar uma estimativa passar por medicao: o hexagono e' MAIOR que a maioria dos
         # bairros, entao este numero desceu do hexagono, nao subiu do setor.
@@ -2461,17 +2486,20 @@ def _draw_pins(
         if not (minx <= x <= maxx and miny <= y <= maxy):
             continue
         px, py = project(x, y)
+        size = _PIN_LOGO_PX
         if forced_key:
             key = forced_key
         else:
-            rede = row.get("rede")
-            key = str(rede) if rede is not None and not pd.isna(rede) and str(rede).strip() else ""
+            key = _chave_rede(row.get("rede"))
+            if not key:
+                # DEC-046: linha sem `rede` e' academia INDEPENDENTE -> marcador do agregador,
+                # menor que a bandeira de cadeia (mesmo ramo do `censo_map`, Pontual).
+                key, size = CHAVE_AGREGADOR, PIN_INDEPENDENTE_PX
         try:
             from typing import cast
 
             # BLK-RELPON-09: logo QUADRADA (sem balao/mascara circular), ancorada pelo
             # CENTRO do quadrado no ponto (S2b) -- o marcador nao tem ponta.
-            size = _PIN_LOGO_PX
             tile = cast(Image.Image, _render_square_logo_tile(key, size))
             image.paste(tile, (int(px) - size // 2, int(py) - size // 2), tile)
         except Exception:
@@ -2486,11 +2514,18 @@ def _draw_text(
     fill: tuple[int, int, int] = (31, 41, 55),
     font: ImageFont.ImageFont | None = None,
 ) -> None:
-    draw.text(xy, text, fill=fill, font=font or _font())
+    draw.text(xy, _texto_render(text), fill=fill, font=font or _font())
+
+
+def _texto_render(text: str) -> str:
+    """Excecao de RENDER (CLAUDE.md §2): texto de PNG sai sem acento. A fonte embutida do
+    Pillow (12.3, a da imagem de producao) nao tem glifo acentuado e desenha um quadrado."""
+    norm = unicodedata.normalize("NFKD", str(text))
+    return "".join(ch for ch in norm if not unicodedata.combining(ch))
 
 
 def _text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> int:
-    bbox = draw.textbbox((0, 0), text, font=font)
+    bbox = draw.textbbox((0, 0), _texto_render(text), font=font)
     return int(bbox[2] - bbox[0])
 
 
@@ -2565,18 +2600,16 @@ def render_mapas_municipio(
     # `focus_bounds` (que enquadra hexes relevantes) de proposito -- o slide serve para situar o
     # municipio todo, inclusive a parte rural que fica fora do recorte de oportunidade.
     bairros_geo = municipio_result.get("bairros_geo") or {}
-    if unidade == UNIDADE_HEXAGONO:
-        # Modo hexagono: nenhuma camada de bairro e' produzida, e os choropleths de hexagono
-        # acima ficam como estao. E' o relatorio classico, agora por escolha e nao por falta
-        # de dado.
-        return mapas
-
     mapas["bairros"] = _render_mapa_bairros(
         bairros_geo,
         basemap=basemap,
         width=width,
         height=height,
     )
+    if unidade == UNIDADE_HEXAGONO:
+        # Modo hexagono: so a divisa dos bairros (pagina Bairros Oficiais, igual no motor e no
+        # bot); sem nucleo urbano, e os choropleths acima seguem por hexagono.
+        return mapas
 
     # BLK-RELMUN-11: segunda vista, com ZOOM no nucleo urbano. Em municipio de fronteira
     # agricola a cidade ocupa ~2% do territorio (Sinop/MT: 21 bairros viram um ponto no mapa
@@ -3166,7 +3199,8 @@ def _score_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     # BAIRRO, a nota e o rodape tem de dizer isso -- as demais paginas seguem em hexagono, e o
     # leitor precisa saber em que unidade esta olhando em cada uma.
     por_bairro = tem_bairro_real(result.get("bairros_geo"))
-    unidade = "por bairro (IBGE 2022)" if por_bairro else "H3 res 7 (IBGE 2022)"
+    instituto = _instituto_censo()
+    unidade = f"por bairro ({instituto} 2022)" if por_bairro else f"H3 res 7 ({instituto} 2022)"
     _draw_note(
         pdf, px, py0 + panel_h + 10, pw,
         f"Score censitário {unidade}: faixas Alto>=70 / Médio-alto 50-70 / "
@@ -3176,9 +3210,9 @@ def _score_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(*_CINZA_TEXTO)
     rodape_fonte = (
-        "Fonte: IBGE Censo 2022 - setores agregados por bairro (média ponderada por população)"
+        f"Fonte: {instituto} Censo 2022 - setores agregados por bairro (média ponderada por população)"
         if por_bairro
-        else "Fonte: IBGE Censo 2022 - Agregação H3 resolução 7"
+        else f"Fonte: {instituto} Censo 2022 - Agregação H3 resolução 7"
     )
     pdf.cell(_PAGE_W - 72, 12, _ascii(rodape_fonte))
     _draw_footer(pdf, versao=result.get("versao_contrato"))
@@ -3214,7 +3248,7 @@ def _residual_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     yy = py0 + 116
     for rotulo, valor in (
         ("Hab. totais", _format_number(result.get("pop_total_municipio"), 0)),
-        ("Renda per capita", _reais(result.get("renda_per_capita_media"), 2)),
+        ("Renda per capita", _renda(result.get("renda_per_capita_media"), 2)),
         ("Penetração fitness", _format_number(result.get("penetracao_fitness_pct"), 1, "%")),
     ):
         pdf.set_text_color(45, 45, 45)
@@ -3347,7 +3381,7 @@ def _dominio_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pdf.set_xy(36, _PAGE_H - 36)
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(*_CINZA_TEXTO)
-    pdf.cell(_PAGE_W - 72, 12, _ascii("Motor de Expansão Ultra - IBGE + OSM"))
+    pdf.cell(_PAGE_W - 72, 12, _ascii(f"Motor de Expansão Ultra - {_instituto_censo()} + OSM"))
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 
@@ -3377,7 +3411,7 @@ _BAIRRO_METRICAS: dict[str, str] = {
     "dominio": "rateada",
 }
 _BAIRRO_METRICA_RODAPE: dict[str, str] = {
-    "score": "Score do bairro = média dos setores IBGE 2022 ponderada por população",
+    "score": "Score do bairro = média dos setores {instituto} 2022 ponderada por população",
     "residual": "Residual do bairro = média dos hexágonos, ponderada pela população dos setores",
     "resumo": "Aprovação do bairro = maioria da população em hexágono aprovado",
     "cobertura": "Aprovação do bairro = maioria da população em hexágono aprovado",
@@ -3443,7 +3477,7 @@ def _bairros_urbano_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | N
     _draw_note(
         pdf, 34.0, 490.0, 540.0,
         "Recorte = bairros mais densos que somam 85% da população do município (a página "
-        "anterior mostra o território inteiro). Densidade do Censo IBGE 2022; pins de Ultra e "
+        f"anterior mostra o território inteiro). Densidade do Censo {_instituto_censo()} 2022; pins de Ultra e "
         "concorrentes por posição real. Camada de display, não altera o M1.",
     )
     _draw_footer(pdf, versao=result.get("versao_contrato"))
@@ -3514,7 +3548,7 @@ def _tabela_hexes_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str,
             (str(linha["hex_id"]), (110, 116, 130), "", 7),
             (bairro, (40, 40, 40), "", 9),
             (_format_number(linha["pop"], 0), (40, 40, 40), "", 9),
-            (_reais(linha["renda"]), (40, 40, 40), "", 9),
+            (_renda(linha["renda"]), (40, 40, 40), "", 9),
             (_format_number(linha["densidade"], 0), (40, 40, 40), "", 9),
             (_format_number(linha["score"], 1), (40, 40, 40), "", 9),
             # Residual em VERDE quando a regiao passa no criterio de destaque (D1) -- mesma
@@ -3560,7 +3594,7 @@ def _tabela_hexes_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str,
         pdf, x0, y + 8, largura_total,
         f"Residual Fitness em VERDE = região aprovada (>= {_format_number(OFERTA_DESTAQUE_MIN, 0)} "
         f"alunos), a mesma regra que destaca o hexágono no mapa. {nota_renda} População e "
-        "densidade do Censo IBGE 2022; bairro dominante = bairro mais populoso do hexágono. "
+        f"densidade do Censo {_instituto_censo()} 2022; bairro dominante = bairro mais populoso do hexágono. "
         "Camada de display, não altera o M1.",
     )
     _draw_footer(pdf, versao=result.get("versao_contrato"))
@@ -3629,20 +3663,20 @@ def _bairros_mapa_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | Non
 
     if parcial:
         nota = (
-            f"A base IBGE 2022 só nomeia bairro/distrito em {cobertura * 100:.0f}% dos setores "
+            f"A base {_instituto_censo()} 2022 só nomeia bairro/distrito em {cobertura * 100:.0f}% dos setores "
             "deste município - a área cinza do mapa não tem divisa oficial. Para desenhar o "
             "restante seria preciso a malha de bairros da prefeitura. Camada de display, não "
             "altera o M1."
         )
     elif bairros:
         nota = (
-            "Limite de cada bairro = setores censitários do IBGE 2022 dissolvidos por bairro "
+            f"Limite de cada bairro = setores censitários do {_instituto_censo()} 2022 dissolvidos por bairro "
             "(sem bairro, usa subdistrito/distrito). Cobertura heterogênea entre municípios. "
             "População do Censo 2022; camada de display, não altera o M1."
         )
     else:
         nota = (
-            "Este município não tem bairro nem distrito mapeado na base IBGE 2022 - o limite "
+            f"Este município não tem bairro nem distrito mapeado na base {_instituto_censo()} 2022 - o limite "
             "territorial exigiria a malha de bairros da prefeitura. As páginas seguintes usam "
             "as zonas geométricas por distância ao centroide."
         )
@@ -3676,7 +3710,7 @@ def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
     if tem_bairros:
         pdf.multi_cell(
             _PAGE_W - 72, 14,
-            _ascii("Bairros (IBGE 2022) agrupados pelas zonas de domínio do município."),
+            _ascii(f"Bairros ({_instituto_censo()} 2022) agrupados pelas zonas de domínio do município."),
         )
     else:
         pdf.multi_cell(
@@ -3728,20 +3762,20 @@ def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
         if tem_bairros:
             _draw_note(
                 pdf, 36, yy + 2, _PAGE_W - 72,
-                "Fonte: IBGE Censo 2022 (bairro do setor; sem bairro, usa subdistrito/distrito). "
+                f"Fonte: {_instituto_censo()} Censo 2022 (bairro do setor; sem bairro, usa subdistrito/distrito). "
                 "Cobertura heterogênea entre municípios; zonas por distância ao centroide "
                 "(display, não altera o M1).",
             )
         else:
             _draw_note(
                 pdf, 36, yy + 2, _PAGE_W - 72,
-                "Bairros não mapeados na base IBGE 2022 para este município; exibição por zona "
+                f"Bairros não mapeados na base {_instituto_censo()} 2022 para este município; exibição por zona "
                 "geométrica (display); não altera dominio_df nem o M1.",
             )
     pdf.set_xy(36, _PAGE_H - 36)
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(*_CINZA_TEXTO)
-    pdf.cell(_PAGE_W - 72, 12, _ascii("Motor de Expansão Ultra - IBGE + OSM"))
+    pdf.cell(_PAGE_W - 72, 12, _ascii(f"Motor de Expansão Ultra - {_instituto_censo()} + OSM"))
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 
@@ -3886,7 +3920,7 @@ def gerar_pdf_relatorio_municipal(
 
     `unidade` decide a leitura e o numero de paginas:
     - `UNIDADE_BAIRRO` (default): 12 paginas, 11 quando o municipio nao tem bairro na base.
-    - `UNIDADE_HEXAGONO`: 10 paginas -- sem Bairros Oficiais e sem Nucleo Urbano.
+    - `UNIDADE_HEXAGONO`: 11 paginas -- com Bairros Oficiais, sem Nucleo Urbano.
 
     `mapas` = dict `{"cobertura","bairros","resumo","score","residual","dominio"}` (camadas PNG);
     ausente -> paginas com "Mapa indisponivel". `ultra_dir` aponta os assets de branding (fallback
@@ -3922,10 +3956,9 @@ def gerar_pdf_relatorio_municipal(
     # Territorio -> numeros -> mapas, a mesma ordem do material de referencia: primeiro o leitor
     # ancora o municipio em nomes que conhece, depois ve o ranking, so entao os mapas tematicos.
     modo_bairro = unidade != UNIDADE_HEXAGONO
-    if modo_bairro:
-        _bairros_mapa_page(
-            pdf, municipio_result, mapas.get("bairros"), assets, primary=p2, secondary=s2
-        )
+    _bairros_mapa_page(
+        pdf, municipio_result, mapas.get("bairros"), assets, primary=p2, secondary=s2
+    )
     # Nucleo urbano: logo APOS a vista do municipio inteiro (situar -> aproximar), e SO quando
     # ha bairro para aproximar. Sem bairro na base (Sao Luis/MA, Sorocaba/SP) a pagina saia com
     # "Mapa indisponivel", "0 bairros" e "Sem densidade" -- uma pagina inteira dizendo nada,

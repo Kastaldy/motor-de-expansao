@@ -884,15 +884,57 @@ def gerar_pdf_municipio(
     solicitante: str | None = None,
     unidade: str = "bairro",
 ) -> bytes:
-    """Gera o PDF do Relatorio Municipal (BLK-RELMUN). READ-ONLY.
+    """Gera o PDF do Relatorio Municipal (BLK-RELMUN) pelo bot/API. READ-ONLY.
 
-    `unidade` escolhe a leitura: "bairro" (default, 12 paginas) ou "hexagono" (10 paginas,
-    o relatorio classico). No modo hexagono a leitura da particao geo de bairros e' PULADA --
-    e' a parte cara do caminho e nada dela seria usado.
+    `unidade` escolhe a leitura: "bairro" (default, 12 paginas) ou "hexagono" (11 paginas,
+    o relatorio classico com a pagina Bairros Oficiais).
 
-    Resolve o municipio (aceita nome sem acento), agrega os hexes, renderiza os 6
-    mapas (basemap online com fallback offline) e monta o PDF pelo gerador do
-    dashboard. Levanta 404 se o municipio nao existe/nao tem hexes na UF.
+    Resolve o municipio (aceita nome sem acento), recorta a camada de mercado pela UF E pelo
+    nome e delega a `montar_pdf_municipio` -- o mesmo preparo do motor (web). O filtro por UF
+    e' obrigatorio: 232 nomes se repetem entre UFs, e "Rio Branco"/AC levava junto os hexes
+    de Rio Branco/MT (o mapa enquadrava os dois estados e os hexagonos sumiam). Levanta 404
+    se o municipio nao existe/nao tem hexes na UF.
+    """
+    uf = str(uf).strip().upper()
+    nome_exato, cands = resolver_municipio(uf, municipio, settings)
+    if nome_exato is None:
+        msg = f"Municipio '{municipio}' nao encontrado em {uf}"
+        if cands:
+            msg += ". Voce quis dizer: " + ", ".join(cands[:6]) + "?"
+        raise APIError(404, msg, "municipio_nao_encontrado")
+
+    df = _mercado_df(settings)
+    col = "nome_municipio" if "nome_municipio" in df.columns else "cidade"
+    mask = df[col].astype(str).str.strip().str.casefold() == nome_exato.casefold()
+    if "uf" in df.columns:
+        mask &= df["uf"].astype(str).str.strip().str.upper() == uf
+    return montar_pdf_municipio(
+        df.loc[mask],
+        uf=uf,
+        nome_municipio=nome_exato,
+        settings=settings,
+        unidade=unidade,
+        solicitante=solicitante or consumidor,
+    )
+
+
+def montar_pdf_municipio(
+    df_muni,
+    *,
+    uf: str,
+    nome_municipio: str,
+    settings: Settings,
+    unidade: str = "bairro",
+    solicitante: str | None = None,
+    report_id: str | None = None,
+) -> bytes:
+    """Preparo UNICO do Relatorio Municipal: bot/API e motor (web) passam por aqui. READ-ONLY.
+
+    Quem chama entrega os hexes do municipio JA recortados (`df_muni`), cada um da sua base:
+    o bot a camada de mercado, o motor a particao enriquecida da UF (que tambem serve a AR).
+    Todo o resto sai daqui, igual para os dois: concorrentes pela uniao DEC-046, bairros por
+    hex e divisa dos bairros, renda DOMICILIAR por hex, divisa do municipio, logos, os mapas
+    (basemap online com fallback offline) e o PDF. Levanta 404 sem hexes.
     """
     _reuse_contextily_session()  # mesma aceleracao de tiles do Pontual
 
@@ -907,21 +949,14 @@ def gerar_pdf_municipio(
     )
 
     uf = str(uf).strip().upper()
-    nome_exato, cands = resolver_municipio(uf, municipio, settings)
-    if nome_exato is None:
-        msg = f"Municipio '{municipio}' nao encontrado em {uf}"
-        if cands:
-            msg += ". Voce quis dizer: " + ", ".join(cands[:6]) + "?"
-        raise APIError(404, msg, "municipio_nao_encontrado")
+    if df_muni is None or df_muni.empty:
+        raise APIError(
+            404, f"Municipio '{nome_municipio}' ({uf}) sem hexagonos", "municipio_sem_dados"
+        )
 
-    df = _mercado_df(settings)
-    col = "nome_municipio" if "nome_municipio" in df.columns else "cidade"
-    df_muni = df.loc[df[col].astype(str).str.strip().str.casefold() == nome_exato.casefold()]
-    if df_muni.empty:
-        raise APIError(404, f"Municipio '{nome_exato}' ({uf}) sem hexagonos", "municipio_sem_dados")
-
-    comp_df = _carregar_parquet_full(str(settings.staging_dir / "concorrentes_mapeados.parquet"))
-    ultra_df = _carregar_parquet_full(str(settings.staging_dir / "unidades_ultra_mapeadas.parquet"))
+    # DEC-046 (emenda 2026-09-17): a rota municipal tambem recebe a UNIAO de oferta, com as
+    # independentes (pin da Wellhub) -- o motor ja recebia; o bot lia so os mapeados.
+    comp_df, ultra_df = _competitors_ultra(settings)
     dominio_df = _dominio_df(settings)
 
     # Bairros reais (best-effort): usa cod_municipio da propria linha + particao geo.
@@ -933,15 +968,24 @@ def gerar_pdf_municipio(
         # hexes sem setor casado (no Rio, 51 das 240 linhas). Se a 1a linha do slice calhasse de
         # ser uma dessas, TODA a camada de bairro sumia do relatorio -- e sem erro nenhum.
         cod = _normalizar_cod(_primeiro_cod_municipio(df_muni))
+        if not cod:
+            # A particao enriquecida pode trazer `cod_municipio` todo nulo (o codigo so' flui
+            # pelo traco censitario); sem ele renda, bairros e divisa sumiam em silencio.
+            from motor_expansao.dashboard.data import resolve_cod_municipio_from_geo_dir
+
+            cod = _normalizar_cod(
+                resolve_cod_municipio_from_geo_dir(settings.censo_geo_dir, uf, nome_municipio)
+            )
         if cod:
             bairros = _carregar_bairros_por_hex(uf, cod, settings.censo_geo_dir)
     except Exception:
         bairros = None
-    # BLK-RELMUN-06: limite territorial dos bairros (mesma particao geo, segunda leitura).
+    # BLK-RELMUN-06: limite territorial dos bairros (mesma particao geo, segunda leitura), nas
+    # DUAS unidades -- o modo hexagono tambem imprime a pagina "Bairros Oficiais".
     # Em try/except PROPRIO: uma falha aqui so tira o slide "Bairros Oficiais", nao pode
     # levar junto o rotulo por hex da pagina "Bairros por Zona", que ja funcionava.
     try:
-        if cod and unidade != "hexagono":
+        if cod:
             bairros_geo = carregar_bairros_geo(uf, cod, settings.censo_geo_dir)
     except Exception:
         bairros_geo = None
@@ -960,13 +1004,15 @@ def gerar_pdf_municipio(
     poligono = carregar_poligono_municipio(settings.ibge_dir, uf, cod)
 
     result = agregar_municipio(
-        df, nome_municipio=nome_exato, uf=uf, dominio_df=dominio_df,
+        df_muni, nome_municipio=nome_municipio, uf=uf, dominio_df=dominio_df,
         competitors_df=comp_df, ultra_df=ultra_df, bairros_por_hex=bairros,
         bairros_geo=bairros_geo, renda_domiciliar_por_hex=renda_dom,
         df_pre_filtrado=df_muni, poligono_municipio=poligono,
     )
     if result.get("n_hex_total", 0) == 0:
-        raise APIError(404, f"Municipio '{nome_exato}' ({uf}) sem hexagonos", "municipio_sem_dados")
+        raise APIError(
+            404, f"Municipio '{nome_municipio}' ({uf}) sem hexagonos", "municipio_sem_dados"
+        )
 
     # Popula o cache de logos das redes (_ICON_CACHE) ANTES de renderizar os mapas e o PDF.
     # Sem isto, tanto os pins do mapa quanto o breakdown "Concorrentes por rede" (slide 8)
@@ -999,8 +1045,12 @@ def gerar_pdf_municipio(
         except Exception:
             mapas = None
 
+    # `report_id` (D17) e' OPCIONAL e default `None`: o bot/API segue chamando sem ele e o PDF
+    # sai byte-identico. Quem o passa e' o piloto web, onde a trilha da DEC-027 gera o id que
+    # amarra o arquivo ao evento de geracao. Sem este repasse, o caminho unico do #373
+    # engoliria o carimbo em silencio — o PDF sairia sem `/Info` e com marca-d'agua anonima.
     payloads = gerar_payloads_download_relatorio_municipal(
-        result, mapas, ultra_dir=ultra_dir, solicitante=solicitante or consumidor,
-        unidade=unidade,
+        result, mapas, ultra_dir=ultra_dir, solicitante=solicitante,
+        unidade=unidade, report_id=report_id,
     )
     return payloads.pdf_bytes

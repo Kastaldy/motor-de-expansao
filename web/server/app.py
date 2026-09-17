@@ -9490,24 +9490,20 @@ def _gerar_relatorio_municipal_response(
     solicitante: str | None = None,
     report_id: str | None = None,
 ) -> Response:
-    """Relatorio Municipal (9 paginas). Acionado pelo 4o passo do mapa.
+    """Relatorio Municipal por hexagonos. Acionado pelo 4o passo do mapa.
 
-    Renderiza as 5 camadas de mapa (`render_mapas_municipio`) e AS PASSA ao gerador —
-    sem isso o PDF saia sem nenhum mapa (o gerador cai em "Mapa indisponivel" em toda
-    pagina), que era o defeito reportado ("relatorio nao gera"). Espelha o
-    /api/relatorio/pontual: reaponta o cache de tiles (RELATIVO ao CWD do uvicorn em
-    web/server) e degrada gracioso online -> offline -> sem mapas.
+    O preparo e' o MESMO do bot do Telegram (`service.montar_pdf_municipio`): renda
+    domiciliar, pagina Bairros Oficiais, uniao de oferta com as independentes (pin da
+    Wellhub), divisa, logos, mapas e PDF. Antes o motor montava tudo a mao e o PDF saia
+    diferente do do bot (renda per capita sob o rotulo "Renda domiciliar", bairros vazios).
+    Daqui sai so' o que depende do processo: a base da UF (a particao enriquecida, que
+    tambem serve a AR), o recorte do municipio e o cache de tiles.
     """
-    from motor_expansao.api.service import _competitors_ultra
+    from motor_expansao.api.errors import APIError
+    from motor_expansao.api.service import montar_pdf_municipio
     from motor_expansao.api.settings import Settings
     from motor_expansao.dashboard import relatorio_municipal as _relmun
-    from motor_expansao.dashboard.relatorio_municipal import (
-        _municipio_mask,
-        agregar_municipio,
-        carregar_poligono_municipio,
-        gerar_payloads_download_relatorio_municipal,
-        render_mapas_municipio,
-    )
+    from motor_expansao.dashboard.relatorio_municipal import UNIDADE_HEXAGONO, _municipio_mask
 
     df = carregar_uf_completo(body.uf)
     df_muni = df.loc[_municipio_mask(df, body.municipio)].copy()
@@ -9521,77 +9517,43 @@ def _gerar_relatorio_municipal_response(
         ibge_dir=IBGE_DIR,
         ultra_dir=ULTRA_DIR,
         staging_dir=STAGING_DIR,
+        competitors_logos_dir=COMPETITORS_LOGO_DIR,
         perfil=PERFIL,
     )
-    comp_df, ultra_df = _competitors_ultra(cfg)
-
-    # Codigo do municipio. Os dois consumidores abaixo (divisa e bairros) derivam do
-    # MESMO df, entao resolve-se uma vez so'. Mantida a forma do `origin/piloto-web`,
-    # que faz `.strip()` — o codigo vem do nome da particao e pode trazer espaco.
-    cod_muni = None
-    if "cod_municipio" in df_muni.columns and not df_muni["cod_municipio"].dropna().empty:
-        cod_muni = str(df_muni["cod_municipio"].dropna().iloc[0]).strip()
-
-    # Divisa REAL do municipio (malha IBGE em IBGE_DIR, ja montada no container do piloto):
-    # sem ela os pins vazavam para os municipios vizinhos (SBC saia com Santo Andre/Diadema/SP).
-    # `None` -> recorte por hexes res-7; o PDF sai igual, so menos exato na fronteira.
-    poligono = carregar_poligono_municipio(IBGE_DIR, body.uf.upper(), cod_muni)
-
-    # Bairros REAIS da pagina de bairros. Sem este kwarg `agregar_municipio` recebe None
-    # e a pagina degrada EM SILENCIO para "N hexes - <tese>", ainda imprimindo a nota
-    # falsa de "bairros nao mapeados na base IBGE". Streamlit e bot ja passavam.
-    bairros = bairros_por_hex(body.uf.upper(), cod_muni) if cod_muni else None
-
-    try:
-        result = agregar_municipio(
-            df,
-            nome_municipio=body.municipio,
-            uf=body.uf.upper(),
-            competitors_df=comp_df,
-            ultra_df=ultra_df,
-            bairros_por_hex=bairros,
-            df_pre_filtrado=df_muni,
-            poligono_municipio=poligono,
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(500, f"Falha ao agregar o municipio: {exc}") from exc
 
     # `_BASEMAP_CACHE_DIR` do modulo e RELATIVO ao CWD (uvicorn sobe de web/server).
     # Reaponta para o cache absoluto do checkout (mesmo motivo do /relatorio/pontual).
     _relmun._BASEMAP_CACHE_DIR = DATA_DIR / "cache" / "basemap_tiles"
 
-    def _mapas(basemap: bool) -> dict[str, bytes]:
-        return render_mapas_municipio(
-            df_muni,
-            result,
-            competitors_df=comp_df,
-            ultra_df=ultra_df,
-            basemap=basemap,
-            poligono_municipio=poligono,
-        )
-
-    # Ruas online -> offline (choropleth sem tiles) -> sem mapas. O PDF nunca falha
-    # por causa do basemap; na pior hipotese sai como antes (sem mapas).
+    uf = body.uf.upper()
     try:
-        mapas: dict[str, bytes] | None = _mapas(True)
-    except Exception:  # noqa: BLE001
-        try:
-            mapas = _mapas(False)
-        except Exception:  # noqa: BLE001
-            mapas = None
-
-    payloads = gerar_payloads_download_relatorio_municipal(
-        result,
-        mapas,
-        ultra_dir=ULTRA_DIR if ULTRA_DIR.exists() else None,
-        solicitante=solicitante,
-        report_id=report_id,
+        pdf_bytes = montar_pdf_municipio(
+            df_muni,
+            uf=uf,
+            nome_municipio=body.municipio,
+            settings=cfg,
+            unidade=UNIDADE_HEXAGONO,
+            # D17, preservado atraves do caminho unico do #373: `solicitante` vem da
+            # identidade Authelia resolvida na rota (o front NAO manda `body.solicitante`,
+            # entao usar o corpo aqui devolveria a marca-d'agua anonima), e `report_id`
+            # amarra o arquivo ao evento. Antes do merge esses dois iam direto ao
+            # `gerar_payloads_...`; agora atravessam o preparo compartilhado com o bot.
+            solicitante=solicitante,
+            report_id=report_id,
+        )
+    except APIError as exc:
+        # O piloto nao registra o handler de `APIError` da API de producao (`main.py`).
+        raise HTTPException(exc.status_code, exc.detail) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"Falha ao gerar o relatorio municipal: {exc}") from exc
+    pdf_filename = (
+        f"relatorio_municipal_{_relmun._slug(uf)}_{_relmun._slug(body.municipio)}.pdf"
     )
     return Response(
-        content=payloads.pdf_bytes,
+        content=pdf_bytes,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="{payloads.pdf_filename}"'
+            "Content-Disposition": f'attachment; filename="{pdf_filename}"'
         },
     )
 
