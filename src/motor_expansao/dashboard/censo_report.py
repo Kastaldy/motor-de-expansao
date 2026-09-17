@@ -742,7 +742,8 @@ def _draw_maps_grid(
 _SOCIOECONOMIA_RESIDUAL_TITULO = "Socioeconomia e Residual Fitness"
 # BLK-RELPON-13: fator de escala das 2 imagens do slide-hero (1.0 = tamanho atual). Ponto de
 # PARTIDA CALIBRAVEL no gate visual de Vinicius; so as paginas socioeconomia+residual o aplicam.
-_HERO_MAP_SCALE = 0.85
+# 0,85 -> 1,0 em 2026-09-17 (pedido do Juan: os dois mapas ocupavam metade do slide).
+_HERO_MAP_SCALE = 1.0
 
 
 # ---------------------------------------------------------------------------

@@ -387,3 +387,56 @@ def test_pressao_cola_a_logo_de_cada_academia():
         assert rpm.render_pressao_raios(_LAT, _LNG, conc, ultra, basemap=False)
     chaves = sorted(c.args[3] for c in colar.call_args_list)
     assert chaves == ["", "__ultra__", "smart_fit"]
+
+
+# --------------------------------------------------------------------------- #
+# Enquadramento do slide "Socioeconomia e Residual Fitness"                   #
+# --------------------------------------------------------------------------- #
+def test_enquadramento_do_slide_hero_se_ajusta_a_regiao():
+    """Capital (vizinhanca inteira povoada) aproxima; hexagonos povoados espalhados abrem o
+    quadro; sem a coluna de populacao fica nos 5 km de antes. Sempre dentro de [min, max].
+    Criterio e' POPULACAO, nao score: o score existe em hexagono rural tambem."""
+    import h3
+
+    from motor_expansao.dashboard import censo_map as cm
+
+    centro = h3.latlng_to_cell(_LAT, _LNG, 7)
+    disco = sorted(h3.grid_disk(centro, 7))
+
+    def _base(povoados) -> pd.DataFrame:
+        pop = [5_000.0 if h in povoados else 200.0 for h in disco]
+        # score em TODOS, como na base real: nao pode decidir o enquadramento
+        return pd.DataFrame({"hex_id": disco, "pop_total_setor_2022": pop, "score_setor_2022_calibrado": 40.0})
+
+    r_denso = cm.raio_enquadramento_hex_km(_LAT, _LNG, _base(set(disco)))
+    assert cm.RAIO_HERO_MIN_KM <= r_denso < cm.RAIO_RESIDUAL_DISPLAY_KM
+
+    espalhados = {centro, *list(h3.grid_ring(centro, 5))[::5]}
+    r_espalhado = cm.raio_enquadramento_hex_km(_LAT, _LNG, _base(espalhados))
+    assert r_denso < r_espalhado <= cm.RAIO_HERO_MAX_KM
+
+    assert cm.raio_enquadramento_hex_km(_LAT, _LNG, _base(set())) == cm.RAIO_HERO_MAX_KM
+    assert cm.raio_enquadramento_hex_km(_LAT, _LNG, _base({centro})) == cm.RAIO_HERO_MIN_KM
+
+    sem_pop = _base(set(disco)).drop(columns=["pop_total_setor_2022"])
+    assert cm.raio_enquadramento_hex_km(_LAT, _LNG, sem_pop) == cm.RAIO_RESIDUAL_DISPLAY_KM
+    assert cm.raio_enquadramento_hex_km(_LAT, _LNG, None) == cm.RAIO_RESIDUAL_DISPLAY_KM
+
+
+def test_os_dois_mapas_do_slide_hero_usam_o_mesmo_enquadramento(monkeypatch):
+    from motor_expansao.dashboard import censo_map as cm
+    from motor_expansao.dashboard import censo_report
+
+    raios: list[tuple[str, float]] = []
+
+    def _camada(*_a, **k):
+        raios.append((k.get("value_col", "oferta_efetiva_disponivel"), k["raio_exibicao_km"]))
+
+    monkeypatch.setattr(cm, "raio_enquadramento_hex_km", lambda *a, **k: 3.7)
+    monkeypatch.setattr(cm, "_render_camada_residual_hex", _camada)
+    cm.render_mapas_censitarios_combinados(
+        _LAT, _LNG, pd.DataFrame(columns=["geometry"]), basemap=False, hexes_df=pd.DataFrame({"hex_id": ["x"]})
+    )
+    assert raios == [("score_setor_2022_calibrado", 3.7), ("oferta_efetiva_disponivel", 3.7)]
+    # imagens maiores no slide: deixaram de ser reduzidas
+    assert censo_report._HERO_MAP_SCALE == 1.0

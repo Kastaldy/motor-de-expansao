@@ -505,7 +505,7 @@ def _residual_do_ponto(lat: float, lng: float, settings: Settings) -> dict:
     return residual
 
 
-def _hexes_vizinhos_do_ponto(lat: float, lng: float, settings: Settings, k: int = 5):
+def _hexes_vizinhos_do_ponto(lat: float, lng: float, settings: Settings, k: int = 7):
     """Hexes H3 (res 7) do disco de raio `k` em torno do ponto, com o valor de cada camada hex.
 
     Espelha `_residual_do_ponto`: filtra direto no parquet de mercado por um conjunto pequeno de
@@ -530,6 +530,10 @@ def _hexes_vizinhos_do_ponto(lat: float, lng: float, settings: Settings, k: int 
         colunas = ["hex_id", "oferta_efetiva_disponivel"]
         if "score_setor_2022_calibrado" in disponiveis:
             colunas.append("score_setor_2022_calibrado")
+        # Populacao do censo por hexagono: decide o enquadramento do slide-hero
+        # (`censo_map.raio_enquadramento_hex_km`). k=7 porque o quadro pode abrir ate 7 km.
+        if "pop_total_setor_2022" in disponiveis:
+            colunas.append("pop_total_setor_2022")
 
         centro = h3.latlng_to_cell(lat, lng, 7)  # 7 = H3_RESOLUTION (M1), LIDO
         celulas = list(h3.grid_disk(centro, k))

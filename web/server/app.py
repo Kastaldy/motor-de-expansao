@@ -9618,7 +9618,7 @@ def _viabilidade_pdf_payload(body: ViabilidadeIn) -> dict[str, Any] | None:
 
 
 def _residual_hexes_do_ponto(lat: float, lng: float, staging_dir: Path):
-    """Disco de hexes (grid_disk k=5, res 7) ao redor do ponto para o slide-hero
+    """Disco de hexes (grid_disk k=7, res 7) ao redor do ponto para o slide-hero
     "Socioeconomia e Residual Fitness": `oferta_efetiva_disponivel` (Residual) E
     `score_setor_2022_calibrado` (Socioeconomia, BLK-RELPON-13).
 
@@ -9642,15 +9642,18 @@ def _residual_hexes_do_ponto(lat: float, lng: float, staging_dir: Path):
         import pyarrow.dataset as ds
 
         centro = h3.latlng_to_cell(float(lat), float(lng), 7)
-        cells = list(h3.grid_disk(centro, 5))
+        # k=7 (169 hexes): o enquadramento do slide-hero abre ate 7 km em regiao espalhada.
+        cells = list(h3.grid_disk(centro, 7))
         if not cells:
             return None
         conjunto = ds.dataset(mercado)
         colunas = ["hex_id", "oferta_efetiva_disponivel"]
         # BLK-RELPON-13: o painel de Socioeconomia le `score_setor_2022_calibrado` do MESMO
         # disco de hexes. So pede se o schema tiver — parquet antigo continua servindo o Residual.
-        if "score_setor_2022_calibrado" in conjunto.schema.names:
-            colunas.append("score_setor_2022_calibrado")
+        # A populacao do censo decide o enquadramento (`censo_map.raio_enquadramento_hex_km`).
+        for coluna in ("score_setor_2022_calibrado", "pop_total_setor_2022"):
+            if coluna in conjunto.schema.names:
+                colunas.append(coluna)
         tbl = conjunto.to_table(filter=pc.field("hex_id").isin(cells), columns=colunas)
         if not tbl.num_rows:
             return None
