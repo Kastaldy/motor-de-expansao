@@ -393,6 +393,94 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
     return await call_next(request)
 
 
+# --- Portao de SESSAO (epic do P19, decisao 1 = D30) ------------------------
+# DECLARADO AQUI, e o lugar nao e' arbitrario: `@app.middleware("http")` empilha cada novo
+# middleware POR FORA, entao o ULTIMO declarado roda PRIMEIRO. A ordem de execucao fica
+# trilha -> portao de sessao -> controle de aba -> rota, que e' a unica que entrega as duas
+# propriedades que se quer ao mesmo tempo: o 401 de sessao invalida e' barrado ANTES do
+# controle de aba (nao faz sentido perguntar "que aba?" a quem nao esta' logado) e ainda
+# assim vira linha de auditoria, porque acontece DENTRO da trilha.
+#
+# Confira, nao confie neste comentario: `grep -n '@app.middleware("http")' -A2 web/server/app.py`.
+# Numeros de linha envelhecem a cada insercao acima deles.
+#
+# DORMENTE por construcao. Com `MOTOR_AUTENTICACAO_PROPRIA` ausente ou vazia, este
+# middleware devolve `call_next` na primeira linha e NADA muda -- e' o que permite esta
+# branch ir para producao com o Authelia ainda na frente. Mesmo idioma do
+# `MOTOR_DATABASE_URL`.
+
+
+def _sem_headers_de_identidade(scope: dict[str, Any]) -> list[tuple[bytes, bytes]]:
+    """Os headers da requisicao SEM nenhum que carregue identidade.
+
+    E' a linha mais critica deste arquivo quando o portao esta' ligado. Depois do corte nao
+    ha' Caddy fazendo `forward_auth`, logo `Remote-User` deixa de ser um header que SO' a
+    borda sabe injetar e passa a ser um header que QUALQUER cliente pode mandar. Sem esta
+    limpeza, `curl -H 'Remote-User: felipe'` seria personificacao completa: os 19 leitores de
+    `app.py` acreditariam, o RBAC resolveria as permissoes do Felipe e a trilha registraria
+    a acao no nome dele.
+    """
+    # Tupla nomeada em vez de expressao geradora inline. E' LEGIBILIDADE, e nao conserto de
+    # defeito: a primeira versao usava um gerador dentro do `if` da comprehension e eu
+    # afirmei, neste comentario, que ele "se esgotaria no primeiro item". ISSO ESTAVA ERRADO
+    # -- a expressao geradora dentro da condicao e' RECRIADA a cada iteracao, e a sabotagem
+    # que restaurou o gerador passou verde nos dois testes de limpeza, provando que as duas
+    # formas filtram igual. Fica a tupla porque ela se le' melhor e evita recriar o gerador
+    # a cada header; a afirmacao falsa sai, porque comentario que descreve defeito
+    # inexistente ensina a desconfiar do arquivo errado.
+    proibidos = tuple(h.encode("latin-1") for h in acesso.HEADERS_DE_IDENTIDADE)
+    return [(nome, valor) for nome, valor in scope["headers"] if nome.lower() not in proibidos]
+
+
+@app.middleware("http")
+async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-untyped-def]
+    from motor_expansao.db import sessoes as db_sessoes
+
+    if not db_sessoes.ligada():
+        return await call_next(request)  # Authelia no comando: nada muda
+
+    # A limpeza vem ANTES de qualquer decisao, e vale inclusive para rota publica: o
+    # `/api/login` nao deve poder ser chamado com um `Remote-User` sugerido pelo cliente,
+    # senao a propria tentativa de login carregaria identidade forjada para a trilha.
+    request.scope["headers"] = _sem_headers_de_identidade(request.scope)
+
+    caminho = request.url.path
+    if acesso.rota_publica_sem_sessao(caminho):
+        return await call_next(request)
+
+    cookie = request.cookies.get(acesso.COOKIE_SESSAO) or request.cookies.get(
+        acesso.COOKIE_SESSAO_DEV
+    )
+    try:
+        sessao = db_sessoes.validar(cookie or "")
+    except Exception:  # noqa: BLE001 — banco fora do ar nao pode virar 500 cru aqui
+        _LOG_D17.exception("portao de sessao: falha ao validar sessao")
+        return JSONResponse({"detail": "Sessão indisponível no momento."}, status_code=503)
+
+    if sessao is None:
+        # 401, e nao 403: a diferenca importa para a SPA. O `relatarAcessoNegado()` de
+        # `lib/sessao.ts` ja' trata 401 como queda de sessao SEM precisar de sonda -- e e'
+        # por isso que o portao proprio torna a sonda dispensavel para este caso.
+        return JSONResponse({"detail": "Sessão expirada ou inexistente."}, status_code=401)
+
+    # A identidade da SESSAO passa a ser a identidade da requisicao, para os 19 leitores do
+    # header seguirem funcionando sem uma linha de mudanca. E' injecao NOSSA sobre um scope
+    # ja' limpo -- nunca mesclagem com o que o cliente mandou.
+    request.scope["headers"] = [
+        *request.scope["headers"],
+        (b"remote-user", sessao.identidade.login.encode("latin-1", "ignore")),
+    ]
+
+    # Inatividade: so' escreve se a trava de 5 min ja' passou (decisao 2). A decisao e'
+    # tomada aqui, com o `ultimo_acesso` que o `validar` JA' devolveu -- sem segunda leitura.
+    try:
+        db_sessoes.tocar(id_sessao=sessao.id_sessao, id_usuario=sessao.identidade.id_usuario)
+    except Exception:  # noqa: BLE001 — bater o relogio nunca derruba a requisicao
+        _LOG_D17.debug("portao de sessao: toque de inatividade falhou", exc_info=True)
+
+    return await call_next(request)
+
+
 # --- Trilha de acesso (DEC-027) ---------------------------------------------
 # DEFINIDA DEPOIS do controle por aba de proposito: o decorator adiciona o
 # middleware mais recente por FORA da pilha, entao a trilha envolve o controle e

@@ -255,8 +255,60 @@ ROTAS_LIVRES = frozenset(
         "/api/me",
         "/api/me/senha",
         "/api/ciencia-confidencialidade",
+        # P19/D30: entrar e sair. Livres para os portoes de ABA e de PAIS de proposito --
+        # aqueles decidem o que a pessoa PODE, e aqui ela ainda nao e' ninguem. Quem decide
+        # se estas duas atendem e' o portao de SESSAO (ver `ROTAS_PUBLICAS_SEM_SESSAO`), que
+        # e' camada propria e separada. Sem esta declaracao, o
+        # `test_toda_rota_do_app_tem_regra_ou_e_livre_declarada` reprova -- e reprova com
+        # razao: rota `/api/*` sem decisao e' decisao que faltou tomar.
+        "/api/login",
+        "/api/logout",
     }
 )
+
+# --- Portao de SESSAO (epic do P19, decisao 1 = D30) ----------------------------
+# Camada NOVA e separada das outras tres. As de cima respondem "o que esta pessoa pode?";
+# esta responde "ha' alguem aqui?". Enquanto o Authelia autentica, ela esta' DORMENTE --
+# `sessoes.ligada()` (env `MOTOR_AUTENTICACAO_PROPRIA`) manda, e sem ela nada neste bloco
+# entra em requisicao nenhuma.
+
+#: O que atende SEM sessao depois do corte. Curto de proposito, e cada item tem razao:
+#:   * `/api/login`  -- e' por onde se obtem a sessao; exigi-la aqui e' impossivel;
+#:   * `/api/logout` -- idempotente, e recusar logout a quem perdeu a sessao e' absurdo;
+#:   * `/api/health` -- emudecido por decisao de pentest e usado pelo healthcheck do
+#:     container, que nao tem cookie nenhum. Amarrar os dois faria o Docker reiniciar o
+#:     `web` por falta de login.
+#: NAO entra aqui `/api/me`: ela e' a PRIMEIRA chamada da SPA e passa a exigir sessao --
+#: e' ela que responde "quem sou eu" DEPOIS do login (escopo do P19, §3).
+ROTAS_PUBLICAS_SEM_SESSAO = frozenset({"/api/login", "/api/logout", "/api/health"})
+
+#: Nome do cookie. `__Host-` nao e' enfeite: o prefixo obriga `Secure`, `Path=/` e ausencia
+#: de `Domain`, e o navegador RECUSA o cookie se qualquer um faltar -- ou seja, a regra passa
+#: a ser imposta pelo cliente, nao apenas pela nossa configuracao. Em dev (http) o prefixo
+#: nao vale, e por isso o nome alternativo existe.
+COOKIE_SESSAO = "__Host-motor_sessao"
+COOKIE_SESSAO_DEV = "motor_sessao"
+
+#: Headers que CARREGAM IDENTIDADE e que o cliente NAO pode ditar quando o portao manda.
+#: Sao dois, e a lista foi medida: `remote-user` tem 19 leitores em `app.py`, e `remote-email`
+#: e' lido pelo `_autor` da rota de cadastro E pelo fallback da trilha da DEC-027
+#: (`_registrar_acesso` faz `remote-user or remote-email`). Sobrescrever so' o primeiro
+#: deixaria um `Remote-Email` forjado virar o AUTOR registrado na auditoria -- porta fechada
+#: e janela aberta. `Remote-Name`/`Remote-Groups` ficam fora porque tem ZERO leitores
+#: (medido): o Caddy os copia e nada no piloto os consome.
+HEADERS_DE_IDENTIDADE = ("remote-user", "remote-email")
+
+
+def rota_publica_sem_sessao(path: str) -> bool:
+    """`True` = atende sem sessao. Estaticos da SPA inclusos (nao comecam com `/api/`).
+
+    A SPA e a tela de login moram no MESMO processo e host (`app.mount("/", StaticFiles...)`),
+    entao sem esta regra a pessoa nao teria de onde digitar a senha: o portao negaria o HTML
+    que contem o formulario, e o unico estado alcancavel seria 401 em tela branca.
+    """
+    if not path.startswith("/api/"):
+        return True
+    return path in ROTAS_PUBLICAS_SEM_SESSAO
 
 # --- Aba Acessos (emenda DEC-027, 2026-08-19): controle PROPRIO, mais forte ------
 # O painel de acessos expoe atividade do TIME (dado pessoal), entao NAO entra no
