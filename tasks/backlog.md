@@ -5219,7 +5219,7 @@ exigência que a DEC-048 registrou).
 | **Criticidade** | **Crítica** — muda `chave_snapshot`, que é a IDENTIDADE da academia na série → `status_churn`/`semanas_sem_mudanca` → `v3`/`v4` → `score_vulnerabilidade`, e é lida fora do pacote por `web/server/rede_inteligencia.py`, que a exibe no pin. [DEC-063](../docs/decisions/DEC-063.md). |
 | **Esteira** | `[GATE HUMANO]` — exige `critica-aprovada` do dono; o autor do PR não pode se aprovar. |
 | **Depende de** | DEC-039 (partição de 2 chaves), DEC-061 (guarda de coleta parcial) |
-| **Status** | **EM REVISÃO** (2026-09-17, PR aberto; DEC-063 **PROPOSTA**) |
+| **Status** | **EM REVISÃO** (2026-09-17, PR #378 aberto; DEC-063 **APROVADA** pelo dono) |
 | **Autonomia** | **manual (NÃO loop-safe)** — muda a identidade da série, Crítica, e a aplicação reescreve partições na VPS |
 
 **O defeito.** A chave do `v4` (`hash_estavel|fonte|rede|nome_normalizado|hex_id_res7`) foi
