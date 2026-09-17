@@ -1908,3 +1908,105 @@ def test_valor_ausente_nao_vira_reais_de_texto():
     assert _reais(None) == TEXTO_SEM_DADO
     assert _reais(float("nan")) == TEXTO_SEM_DADO
     assert not _reais(None).startswith("R$")
+
+
+# ---------------------------------------------------------------------------
+# Motor e Telegram iguais (2026-09-17): modo hexagono com Bairros Oficiais,
+# independente no pin da Wellhub, fonte dos mapas no tamanho pedido
+# ---------------------------------------------------------------------------
+
+
+def test_modo_hexagono_traz_bairros_oficiais_e_segue_por_hexagono():
+    """O botao "Municipal (hexagonos)" do bot omitia a pagina de bairros por desenho, e o motor
+    a imprimia vazia. Agora o modo hexagono tem a pagina (11 paginas), sem nucleo urbano, e os
+    mapas tematicos seguem por hexagono."""
+    from motor_expansao.dashboard.relatorio_municipal import UNIDADE_HEXAGONO
+
+    df = _sample_df()
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio(),
+                            bairros_geo=_bairros_geo_sample())
+    mapas = render_mapas_municipio(df, res, basemap=False, unidade=UNIDADE_HEXAGONO)
+    assert set(mapas) == {"cobertura", "bairros", "resumo", "score", "residual", "dominio"}
+    por_hex = render_mapas_municipio(df, {k: v for k, v in res.items() if k != "bairros_geo"},
+                                     basemap=False, unidade=UNIDADE_HEXAGONO)
+    assert mapas["score"] == por_hex["score"], "no modo hexagono o score nao vira choropleth de bairro"
+
+    pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas, unidade=UNIDADE_HEXAGONO)
+    assert b"/Count 11" in pdf_bytes
+    assert "Bairros Oficiais".encode("latin-1") in pdf_bytes
+    assert "Bairros - Núcleo Urbano".encode("latin-1") not in pdf_bytes
+
+
+def test_independente_sem_rede_usa_o_pin_e_o_rotulo_da_wellhub(monkeypatch):
+    """DEC-046 poe as independentes (rede NA) na uniao de oferta. Sem chave, o pin caia na
+    placa cinza "C" e o slide 8 abria um balde "<NA>"."""
+    import motor_expansao.dashboard.relatorio_municipal as rm
+    from motor_expansao.dashboard.competitors import CHAVE_AGREGADOR, PIN_INDEPENDENTE_PX
+
+    chamadas: list[tuple[str, int]] = []
+    real = rm._render_square_logo_tile
+
+    def _espia(key, size, *a, **k):
+        chamadas.append((key, size))
+        return real(key, size, *a, **k)
+
+    monkeypatch.setattr(rm, "_render_square_logo_tile", _espia)
+    frame = pd.DataFrame(
+        {"rede": pd.array([pd.NA, "smart_fit"], dtype="string"), "lat": [0.0, 0.0], "lng": [0.0, 0.0]}
+    )
+    img = Image.new("RGBA", (100, 100))
+    rm._draw_pins(rm.ImageDraw.Draw(img), img, frame, lambda x, y: (50.0, 50.0), "",
+                  -1.0, 1.0, -1.0, 1.0)
+    assert (CHAVE_AGREGADOR, PIN_INDEPENDENTE_PX) in chamadas
+    assert ("", rm._PIN_LOGO_PX) not in chamadas
+
+    df = _sample_df()
+    comp = pd.DataFrame(
+        {
+            "rede": pd.array([pd.NA, None, "smart_fit"], dtype="string"),
+            "lat": [-23.55, -23.55, -23.56],
+            "lng": [-46.63, -46.63, -46.64],
+            "hex_id_res7": [_hex(-23.55, -46.63)] * 2 + [_hex(-23.56, -46.64)],
+        }
+    )
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", competitors_df=comp)
+    assert res["concorrentes_por_rede"] == {CHAVE_AGREGADOR: 2, "smart_fit": 1}
+    assert _prettify_rede(CHAVE_AGREGADOR) == "Independentes (Wellhub)"
+
+
+def test_fonte_do_mapa_escala_sem_arial(monkeypatch):
+    """Na imagem de producao nao ha arial.ttf: o fallback sem `size` desenhava todo texto de
+    mapa no mesmo bitmap de ~10 px (rotulo de 8 px saia GRANDE). censo_map ja corrigiu."""
+    import motor_expansao.dashboard.relatorio_municipal as rm
+
+    real = rm.ImageFont.truetype
+
+    def _sem_arial(font=None, *a, **k):
+        # So o arquivo do SISTEMA falta; a fonte embutida do Pillow (BytesIO) continua valendo.
+        if isinstance(font, str):
+            raise OSError("cannot open resource")
+        return real(font, *a, **k)
+
+    monkeypatch.setattr(rm.ImageFont, "truetype", _sem_arial)
+    pequena = rm._font(8).getbbox("Ouro Verde")
+    grande = rm._font(20).getbbox("Ouro Verde")
+    assert (grande[3] - grande[1]) > (pequena[3] - pequena[1]) * 2
+
+
+def test_texto_do_mapa_sai_sem_acento_para_nao_virar_quadrado():
+    """A fonte embutida do Pillow (12.3, a da imagem de producao) nao tem glifo acentuado:
+    "Visão" saia "Vis[]o". Excecao de RENDER do CLAUDE.md §2: o texto do PNG vai em ASCII."""
+    import motor_expansao.dashboard.relatorio_municipal as rm
+
+    def _png(texto: str) -> bytes:
+        img = Image.new("RGB", (400, 40), "white")
+        draw = rm.ImageDraw.Draw(img)
+        rm._draw_text(draw, (4, 4), texto, font=rm._font(20))
+        return img.tobytes()
+
+    assert _png("Visão geral do município") == _png("Visao geral do municipio")
+    img = Image.new("RGB", (10, 10))
+    draw = rm.ImageDraw.Draw(img)
+    assert rm._text_width(draw, "São José", rm._font(13)) == rm._text_width(
+        draw, "Sao Jose", rm._font(13)
+    )
