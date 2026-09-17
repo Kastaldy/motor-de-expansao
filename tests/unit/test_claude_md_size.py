@@ -22,7 +22,9 @@ _ROOT = Path(__file__).resolve().parents[2]
 #: arquivo parado no teto, toda DEC nova passaria a reprovar aqui — o teste deixaria de medir
 #: re-bloat e viraria um pedágio. Subir 1 junto com a linha-índice é a manutenção prevista; o que
 #: continua proibido é subir para acomodar PROSA, que pertence a docs/.
-_TETO_LINHAS = 231
+#:
+#: 231 -> 232 na DEC-063 (2026-09-17), pela mesma manutenção prevista: uma DEC nova, uma linha-índice.
+_TETO_LINHAS = 232
 
 
 def _linhas(p: Path) -> int:

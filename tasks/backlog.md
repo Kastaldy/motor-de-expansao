@@ -5209,3 +5209,52 @@ exigência que a DEC-048 registrou).
 > cadastro) permanece; (c) o termo Ultra entra sem repartição por área (+0,03 pp);
 > (d) `CAPACIDADE_MIN_ACADEMIA_ALUNOS` fica órfã e o `CLAUDE.md` §4 ainda declara 2.500,
 > contra 2.325 medidos.
+
+---
+
+### BLK-CHAVE-01 — A âncora da chave de churn: `nome_base` + célula res-5, com MIGRAÇÃO das semanas já gravadas
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — muda `chave_snapshot`, que é a IDENTIDADE da academia na série → `status_churn`/`semanas_sem_mudanca` → `v3`/`v4` → `score_vulnerabilidade`, e é lida fora do pacote por `web/server/rede_inteligencia.py`, que a exibe no pin. [DEC-063](../docs/decisions/DEC-063.md). |
+| **Esteira** | `[GATE HUMANO]` — exige `critica-aprovada` do dono; o autor do PR não pode se aprovar. |
+| **Depende de** | DEC-039 (partição de 2 chaves), DEC-061 (guarda de coleta parcial) |
+| **Status** | **EM REVISÃO** (2026-09-17, PR #378 aberto; DEC-063 **APROVADA** pelo dono) |
+| **Autonomia** | **manual (NÃO loop-safe)** — muda a identidade da série, Crítica, e a aplicação reescreve partições na VPS |
+
+**O defeito.** A chave do `v4` (`hash_estavel|fonte|rede|nome_normalizado|hex_id_res7`) foi
+desenhada para absorver **jitter** de coordenada, e absorve — desde que o jitter não saia do
+hexágono. Dois movimentos que **não são mudança de mercado** escapam: a recalibração que cruza a
+**borda** da célula (a academia não se mexeu) e a queda do sufixo `"(Em breve)"` quando a unidade
+**inaugura**, que o S3 lê como fechamento + abertura — a leitura invertida do fato.
+
+**Medido** nas duas fotos reais do cadastro (02/08 e 06/09; 4.430 unidades em ambas), contra a
+referência `(rede, nome_base)` de 174 entradas / 58 saídas:
+
+| âncora | colisões A | colisões B | churn FALSO |
+|---|---:|---:|---:|
+| `rede\|nome\|hex7` (v4, hoje) | 1 | 1 | **91** |
+| `rede\|nome_base\|hex7` | 1 | 1 | 83 |
+| `rede\|nome_base\|hex5` (**v5**) | 1 | 1 | **23** |
+| `rede\|nome_base\|hex4` | 1 | 1 | 11 |
+| `rede\|nome_base` (sem geografia) | 8 | 7 | 0 |
+
+Descer de 7 para 5 **não custa colisão nenhuma**. O `hex4` corta mais, mas ~1.770 km² contra
+~252 km² é folga que a amostra de hoje (107 redes) não autoriza gastar. Sem geografia é a única
+linha que **perde academia de verdade** — o contrato COLAPSA a colisão e nunca desambigua.
+
+**Por que MIGRAR, e não só bumpar.** `concorrentes_novos` define "nova" como *primeira semana da
+chave ≠ primeira da série*: re-chavear faria **toda cadeia do país** aparecer como "concorrente
+novo" no pin da Visão Executiva por `SEMANAS_CONCORRENTE_NOVO = 8` semanas, e a guarda de lá
+(excluir a 1ª semana) não protege contra isso. **A janela é agora, por medição:** a série de
+`unidades` tem 2 observações contra `MIN_SEMANAS = 8`, então o S3 já está renormalizado para fora
+e o custo no score é ZERO; em ~6 semanas ela amadurece e o mesmo movimento vira falso positivo em
+massa num sinal maduro e visível.
+
+**O preimage existe.** O snapshot não guarda `nome` (anti-PII), mas o CSV que o gerou guarda: as
+fotos reproduzem **4.495/4.495** em `2026-31` e **4.610/4.610** em `2026-36`, zero órfãs. Por isso
+`chave_hash_estavel_v4` fica **congelada** com teste próprio — sem ela o `de → para` deixaria de
+ser auditável.
+
+**Aplicação na VPS é MANUAL**, semana a semana, com backup antes: `--migrar-chave-v5 --semana`
+reescreve a folha `fonte=unidades` daquela semana.
