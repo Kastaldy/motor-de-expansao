@@ -140,8 +140,25 @@ Nenhuma destas foi tomada. Estão aqui para não serem descobertas no meio da im
    não tem. Contra o cookie pesaram também um segredo novo (logo após o `config.py` perder o
    `SECRET_KEY` morto) e dependência nova na imagem: `itsdangerous` não está no `pyproject.toml`
    nem no `constraints.txt`.
-2. **Duração da sessão e inatividade.** O Authelia usa `inactivity: 30m`, e o `AvisoSessao` nasceu
-   dessa realidade — trocar o número muda a experiência de quem deixa a tela aberta.
+2. ~~**Duração da sessão e inatividade**~~ — **DECIDIDA em 17/09/2026, sem `D`** (não toca schema):
+   **reproduzir** o Authelia — **8h** de teto absoluto, **30 min** de inatividade — e "lembrar de
+   mim" **fiel**, cookie persistente entre fechar e reabrir o navegador com os mesmos 8h (lá o
+   `remember_me` já é igual ao `expiration`, então isto reproduz e não estende). Reproduzir em vez
+   de escolher porque o comentário da configuração do Authelia registra que mexer nesses números
+   **derrubou o login da rede por ~4h em 06/08/2026** — e, com a tabela da D30, o número é coluna,
+   então mudá-lo depois é política e não código.
+   **Trava de 5 min na inatividade**, por medição: a validação roda em `SET TRANSACTION READ ONLY`,
+   onde o servidor recusa escrita, então reescrever `ultimo_acesso_em_sessao` exigiria uma SEGUNDA
+   transação por requisição guardada (`set_config` + `UPDATE` + `COMMIT`) sobre um pool de 4
+   conexões. Com a trava, a coluna só é reescrita se já tiver mais de 5 min — pior caso, alguém sai
+   aos 30 min em vez de ~35. Decidir se vale escrever é de graça: a consulta de validação já
+   devolve a coluna.
+   **Duas consequências para o front, que esta decisão já resolve:** (i) "lembrar de mim" é
+   **caixinha nova** no formulário de login — medido, não existe nada hoje (`lembrar`/`remember`:
+   zero ocorrências em `web/src`); (ii) a **sonda de `lib/sessao.ts` deixa de ser necessária para o
+   caso de sessão**, porque o portão próprio responde **401** e `relatarAcessoNegado()` já trata 401
+   direto, sem sondar. A sonda continua útil só para separar "backend fora do ar" de outras falhas
+   de rede — o 302→CORS→`TypeError` que a obrigou a existir morre com o Authelia.
 3. **2FA depois do corte** — se some junto com o Authelia, se é reconstruído, e se é obrigatório.
    O `BLK-SEC-03-FU1` queria forçá-lo.
 4. **Recuperação de senha** — hoje não existe caminho nenhum: quem esquece depende de um admin
