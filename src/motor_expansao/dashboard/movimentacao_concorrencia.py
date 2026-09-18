@@ -20,7 +20,7 @@ Camada visual e READ-ONLY sobre o M1. Funções puras; o script de ingestão lê
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -257,6 +257,37 @@ def resumo_por_rede(eventos: pd.DataFrame | None) -> list[dict[str, Any]]:
             }
         )
     return sorted(linhas, key=lambda r: (-r["saldo"], -r["aberturas"], -r["em_breve"], r["rede"]))
+
+
+def incluir_redes_sem_movimentacao(
+    redes: list[dict[str, Any]],
+    totais: Mapping[str, Any],
+    excluir: Iterable[str] = (),
+) -> list[dict[str, Any]]:
+    """Acrescenta as redes MAPEADAS que nao se mexeram no periodo, zeradas.
+
+    `resumo_por_rede` nasce dos EVENTOS, entao rede parada nao aparecia — e a tabela so'
+    respondia "quem cresceu", nunca "quanto mercado existe". As paradas entram depois das
+    que se mexeram, da maior para a menor, e `excluir` tira os estudios boutique (DEC-056),
+    como no resto do card. A propria Ultra nunca entra.
+    """
+    fora = {str(r) for r in excluir}
+    ja_listadas = {str(linha["rede"]) for linha in redes}
+    paradas: list[dict[str, Any]] = [
+        {
+            "rede": str(rede),
+            "aberturas": 0,
+            "aberturas_conferidas": 0,
+            "fechamentos": 0,
+            "fechamentos_conferidos": 0,
+            "em_breve": 0,
+            "saldo": 0,
+            "unidades": int(unidades),
+        }
+        for rede, unidades in totais.items()
+        if str(rede) not in ja_listadas and str(rede) not in fora and str(rede).lower() != "ultra"
+    ]
+    return list(redes) + sorted(paradas, key=lambda r: (-int(r["unidades"] or 0), str(r["rede"])))
 
 
 def resumo_agregadores(eventos: pd.DataFrame | None) -> list[dict[str, Any]]:

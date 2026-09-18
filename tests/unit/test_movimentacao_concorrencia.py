@@ -104,3 +104,17 @@ def test_contagem_oficial_para_no_fim_validado_e_nao_na_foto_corrompida():
     ]
     assert mov.contagem_oficial(tabela, "2026-09-01")["unidades"].tolist() == [230]
     assert mov.contagem_oficial(tabela, "2026-01-01").empty
+
+
+def test_rede_mapeada_sem_movimentacao_entra_zerada_e_estudio_fica_fora():
+    """A tabela carrega o TAMANHO do mercado, nao so' quem se mexeu (Felipe, 17/09)."""
+    redes = [{"rede": "pratique", "aberturas": 2, "fechamentos": 0, "saldo": 2, "em_breve": 0, "unidades": 184}]
+    totais = {"pratique": 184, "smart_fit": 1000, "cia_athletica": 19, "velocity": 125, "ultra": 92}
+    saida = mov.incluir_redes_sem_movimentacao(redes, totais, excluir={"velocity"})
+    # as paradas vem depois das que se mexeram, da maior para a menor; estudio e Ultra fora
+    assert [r["rede"] for r in saida] == ["pratique", "smart_fit", "cia_athletica"]
+    parada = saida[1]
+    assert (parada["unidades"], parada["aberturas"], parada["fechamentos"], parada["saldo"]) == (1000, 0, 0, 0)
+    assert parada["aberturas_conferidas"] == 0 and parada["em_breve"] == 0
+    # sem contagem nenhuma, a lista original volta intacta
+    assert mov.incluir_redes_sem_movimentacao(redes, {}) == redes

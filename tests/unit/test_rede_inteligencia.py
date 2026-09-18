@@ -217,6 +217,31 @@ def test_retencao_nao_ranqueia_unidade_onde_o_modelo_se_declara_instavel():
     assert saida["b"]["risco_percentil"] == 100.0 and saida["c"]["risco_percentil"] == 50.0
 
 
+def test_receita_em_risco_pondera_pela_chance_de_cancelar():
+    """Alunos x chance em 12 meses x ticket — nao a receita recorrente inteira."""
+    tabela = pd.DataFrame(
+        [
+            {"cod_unidade": "1", "PROB_CANCEL_90D_MEDIA": 0.2, "P_CANCEL_12M_MEDIA": 0.4,
+             "N_ALUNOS": 1000, "TICKET_MEDIO_UNIDADE": 117.0, "USAR_PROB_ABSOLUTA": "Sim",
+             "CONFIABILIDADE_UNIDADE": "Absoluto OK"},
+            # o modelo diz que o absoluto nao vale: sai vazio, nao vira reais com falsa precisao
+            {"cod_unidade": "2", "PROB_CANCEL_90D_MEDIA": 0.1, "P_CANCEL_12M_MEDIA": 0.3,
+             "N_ALUNOS": 500, "TICKET_MEDIO_UNIDADE": 117.0, "USAR_PROB_ABSOLUTA": "Nao",
+             "CONFIABILIDADE_UNIDADE": "Apenas Ranking"},
+        ]
+    )
+    saida = ri.retencao_por_unidade(tabela, {"a": "1", "b": "2"})
+    assert saida["a"]["p_cancel_12m_pct"] == 40.0
+    assert saida["b"]["p_cancel_12m_pct"] is None  # o modelo diz: so' ranking
+    assert saida["b"]["ticket_medio"] == 117.0  # o ticket e' fato, nao previsao
+
+    # A conta e' sobre a operacao: RECORRENTES x chance x receita por recorrente REAL.
+    assert ri.receita_recorrente_em_risco(1000, 40.0, 150.0) == 60000.0
+    # sem probabilidade (o modelo nao libera o absoluto), nao se inventa o numero
+    assert ri.receita_recorrente_em_risco(1000, None, 150.0) is None
+    assert ri.receita_recorrente_em_risco(None, 40.0, 150.0) is None
+
+
 # ---------------------------------------------------------------------------
 # Concorrentes novos
 # ---------------------------------------------------------------------------
