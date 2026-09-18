@@ -215,6 +215,8 @@ A moeda dos mapas e da tabela vem do perfil (`simbolo_renda`, #374).
 - **Nome de bairro só nos 5 hexágonos de "Onde crescer".** Antes ele saía em todo hexágono aprovado (São Paulo: 154 placas). `service.montar_pdf_municipio` calcula a praça ANTES dos mapas e passa `hexes_rotulados` a `render_mapas_municipio`; sem ele o comportamento antigo continua valendo.
 - **Pins só da Ultra e das 5 maiores redes** (`principais_redes`, `TOP_REDES_NO_MAPA`), as mesmas da página de Pressão concorrencial. Independentes ficam fora do mapa temático. O rodapé do PNG declara o recorte em segunda linha ("no mapa, 370 de 511 academias: Ultra e as 5 maiores redes (...)"), e as contagens cheias seguem nos painéis das páginas.
 
+**Mapa do Resumo sem o número em cada hexágono (2026-09-17).** O Residual de cada hexágono destacado saía numa plaquinha magenta sobre o mapa (São Paulo: 154 delas). A pedido do Juan o relatório passa a pedir o mapa sem elas (`rotular_valores=False`); os valores seguem na tabela "Comparação das Regiões" e o total, no box "Como calculamos o espaço", que ficou intacto. Quem chama `_render_mapa_municipio` direto continua com o default `True`, e é assim que `test_rotulo_de_valor_fica_acima_do_marcador_blk_relpon_09_fu1` segue travando a ordem rótulo-sobre-pin.
+
 **Score Censitário e Residual Fitness sem pins (2026-09-17).** Na versão por hexágono os dois mapas levavam as logos de concorrentes e Ultra, e em capital elas cobriam os hexágonos (São Paulo: 491 academias). Agora seguem a regra da versão por bairro: pins só em Resumo e Domínio.
 
 ## Decisões do gate humano (APROVADO por Vinicius, 2026-06-22 — DEC-011) — IMPLEMENTADO

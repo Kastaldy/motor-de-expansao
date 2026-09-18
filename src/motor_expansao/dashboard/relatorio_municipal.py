@@ -1808,6 +1808,7 @@ def _render_mapa_municipio(
     focus_bounds: tuple[float, float, float, float] | None = None,
     hexes_rotulados: set[str] | None = None,
     nota_pins: str | None = None,
+    rotular_valores: bool = True,
 ) -> bytes:
     """Renderiza um PNG do municipio. `camada` define o esquema de cor dos hexes:
 
@@ -1821,7 +1822,8 @@ def _render_mapa_municipio(
     `basemap=True` busca tiles online (DEC-011) com fallback offline. Em CI/teste default
     `basemap=False`.
 
-    `hexes_rotulados` (2026-09-17, pedido do Juan) limita o NOME DO BAIRRO a esses hexagonos --
+    `rotular_valores=False` (2026-09-17, pedido do Juan) tira o numero do Residual de cima dos
+    hexagonos da camada "resumo". `hexes_rotulados` limita o NOME DO BAIRRO a esses hexagonos --
     em Sao Paulo os 154 aprovados viravam um tapete de placas. `None` mantem o de antes (nome em
     todo hexagono destacado). `nota_pins` e' a frase que o rodape do mapa acrescenta para declarar
     qual recorte de academias esta desenhado.
@@ -2002,7 +2004,12 @@ def _render_mapa_municipio(
             else:
                 color = _HEX_NEUTRO_RGBA
             odraw.polygon(pixels, fill=color, outline=(255, 255, 255, 90))
-            if destaque_mask[pos] and not math.isnan(oferta_hex[pos]):
+            # O Residual de cada hexagono destacado SAIU do mapa em 2026-09-17, a pedido do Juan:
+            # em Sao Paulo eram 154 plaquinhas e o mapa virava um tapete de numeros. Os valores
+            # seguem na tabela "Comparacao das Regioes" e o total, no box "Como calculamos o
+            # espaco". `rotular_valores=True` reproduz o mapa de antes (o default o mantem para
+            # quem chama esta funcao direto).
+            if rotular_valores and destaque_mask[pos] and not math.isnan(oferta_hex[pos]):
                 cx = int(sum(p[0] for p in pixels) / len(pixels))
                 cy = int(sum(p[1] for p in pixels) / len(pixels))
                 label_pins.append((cx, cy, _format_number(oferta_hex[pos], 0)))
@@ -2662,6 +2669,7 @@ def render_mapas_municipio(
             focus_bounds=focus_bounds,
             hexes_rotulados=hexes_rotulados,
             nota_pins=nota_pins if pins else None,
+            rotular_valores=False,
         )
         for camada, pins in com_pins.items()
     }

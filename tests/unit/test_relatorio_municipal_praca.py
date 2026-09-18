@@ -375,3 +375,20 @@ def test_mapas_tematicos_so_desenham_ultra_e_as_maiores_redes(monkeypatch):
     so_indep = pd.DataFrame({"rede": [None, None], "lat": _LAT, "lng": _LNG})
     assert relmun.principais_redes(so_indep) == []
     assert len(relmun._so_as_principais(so_indep, [])) == 2
+
+
+def test_mapa_do_resumo_sai_sem_o_numero_em_cada_hexagono(monkeypatch):
+    """Sao Paulo tinha 154 plaquinhas de Residual sobre os hexagonos. O relatorio passa a pedir
+    o mapa sem elas; quem chama o render direto continua com o de antes."""
+    from motor_expansao.dashboard import relatorio_municipal as relmun
+
+    vistos: dict[str, object] = {}
+
+    def _render(df, *, camada, rotular_valores=True, **k):
+        vistos[camada] = rotular_valores
+        return b"PNG"
+
+    monkeypatch.setattr(relmun, "_render_mapa_municipio", _render)
+    monkeypatch.setattr(relmun, "_render_mapa_bairros", lambda *a, **k: b"PNG")
+    relmun.render_mapas_municipio(_df_cidade(1), {"zonas": []})
+    assert vistos["resumo"] is False

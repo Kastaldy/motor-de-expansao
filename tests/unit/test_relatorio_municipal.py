@@ -34,6 +34,7 @@ from motor_expansao.dashboard.relatorio_municipal import (
     _hex_destacado_mask,
     _png_dimensions,
     _prettify_rede,
+    _render_mapa_municipio,
     _texto_zonas_sintese,
     _zonas_geometricas,
     agregar_municipio,
@@ -393,6 +394,9 @@ def test_mapa_municipal_marcador_ultra_quadrado_blk_relpon_09():
 def test_rotulo_de_valor_fica_acima_do_marcador_blk_relpon_09_fu1():
     """BLK-RELPON-09-FU1: o rotulo de Residual Fitness do hexagono vence o marcador.
 
+    Vale para quem pede o mapa COM os numeros (`rotular_valores=True`); o relatorio passou a
+    pedi-lo sem eles em 2026-09-17.
+
     Gate visual de Vinicius (2026-07-21): no Municipal os marcadores quadrados cobriam os
     numeros dos hexagonos -- o dado principal da pagina. O FU1 passou os rotulos para uma
     overlay propria, composta DEPOIS de `_draw_pins`.
@@ -414,12 +418,17 @@ def test_rotulo_de_valor_fica_acima_do_marcador_blk_relpon_09_fu1():
         [{"rede": "ultra", "lat": lat_c, "lng": lng_c, "hex_id_res7": hex_destacado}]
     )
 
-    com_pin = render_mapas_municipio(
-        df, res, competitors_df=None, ultra_df=ultra_no_centro, basemap=False
-    )["resumo"]
-    sem_pin = render_mapas_municipio(
-        df, res, competitors_df=None, ultra_df=None, basemap=False
-    )["resumo"]
+    # Desde 2026-09-17 o RELATORIO pede o mapa sem os numeros (`rotular_valores=False`, pedido
+    # do Juan: eram 154 plaquinhas em Sao Paulo). A ordem "rotulo por cima do pin" continua
+    # valendo no render, e e' o que este teste trava -- por isso ele chama o render direto.
+    def _resumo(ultra):
+        return _render_mapa_municipio(
+            df, camada="resumo", municipio_result=res, competitors_df=None, ultra_df=ultra,
+            basemap=False, rotular_valores=True,
+        )
+
+    com_pin = _resumo(ultra_no_centro)
+    sem_pin = _resumo(None)
 
     arr_com = np.array(Image.open(BytesIO(com_pin)).convert("RGB")).astype(np.int16)
     arr_sem = np.array(Image.open(BytesIO(sem_pin)).convert("RGB")).astype(np.int16)
