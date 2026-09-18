@@ -267,6 +267,40 @@ def test_concorrente_novo_exige_serie_e_ignora_a_primeira_semana():
     assert [i["nome"] for i in saida["por_unidade"]["u1"]] == ["Nova"]
 
 
+def test_novo_no_agregador_ignora_a_estreia_de_CADA_fonte_e_nao_lista_a_ultra():
+    """Dois defeitos vistos na ficha de Uberlandia em 18/09.
+
+    (1) A estreia descartada era a da SERIE, nao a da FONTE: `unidades` era fotografada desde
+    a semana 2026-31 e `wellhub` so' a partir de 2026-36, entao as 22.550 chaves do WellHub
+    passavam como recem-chegadas e a ficha listava o bairro inteiro.
+    (2) A propria Ultra entrava na lista (Center Shopping a 141 m, Floriano Peixoto, Cesario).
+    """
+    coords = pd.DataFrame(
+        [
+            {"fonte": "wellhub", "chave_snapshot": "wh_estreia", "nome": "Ja' estava", "lat": -23.001, "lng": -46.0},
+            {"fonte": "wellhub", "chave_snapshot": "wh_nova", "nome": "Nova", "lat": -23.002, "lng": -46.0},
+            {"fonte": "wellhub", "chave_snapshot": "wh_ultra", "nome": "Ultra Academia Center Shopping",
+             "lat": -23.0015, "lng": -46.0},
+            {"fonte": "unidades", "chave_snapshot": "un_estreia", "nome": "Cadeia", "lat": -23.003, "lng": -46.0},
+        ]
+    )
+    serie = pd.DataFrame(
+        [
+            {"semana": "2026-31", "fonte": "unidades", "chave_snapshot": "un_estreia"},
+            {"semana": "2026-36", "fonte": "unidades", "chave_snapshot": "un_estreia"},
+            # o WellHub so' comeca a ser fotografado em 2026-36: esta e' a ESTREIA dele
+            {"semana": "2026-36", "fonte": "wellhub", "chave_snapshot": "wh_estreia"},
+            {"semana": "2026-37", "fonte": "wellhub", "chave_snapshot": "wh_estreia"},
+            {"semana": "2026-37", "fonte": "wellhub", "chave_snapshot": "wh_nova"},
+            {"semana": "2026-37", "fonte": "wellhub", "chave_snapshot": "wh_ultra"},
+        ]
+    )
+    saida = ri.concorrentes_novos(serie, coords, _unidades())
+    assert saida["disponivel"] is True
+    # `wh_estreia` nao e' novidade (estreia da fonte) e a Ultra nao e' concorrente nossa
+    assert [i["nome"] for i in saida["por_unidade"]["u1"]] == ["Nova"]
+
+
 def test_sem_snapshots_nao_afirma_ausencia():
     saida = ri.concorrentes_novos(None, None, _unidades())
     assert saida["disponivel"] is False and saida["por_unidade"] == {}
