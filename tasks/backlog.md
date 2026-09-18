@@ -2201,7 +2201,7 @@ healthcheck; (7) a fronteira com o BLK-MA-20 escrita na DEC; (8) READ-ONLY sobre
 | **Criticidade** | **Média** — mexe num wrapper de cron **já aplicado na VPS**, o que exige reaplicação manual do Felipe. READ-ONLY sobre o M1. |
 | **Prioridade** | Média. O risco é real mas de cauda: exige que uma rodada de agregador atrase até domingo, o que hoje só acontece por travamento. |
 | **Esteira** | Block Orchestrator → Builder → QA → `[aplicação na VPS: passo MANUAL — §6]`. |
-| **Status** | Pendente — **criado em 2026-08-26**, fatiado do BLK-MA-21 pela decisão de escopo do sintetizador. |
+| **Status** | Pendente — **criado em 2026-08-26**, fatiado do BLK-MA-21 pela decisão de escopo do sintetizador. **ENCOLHIDO pela [DEC-064](../docs/decisions/DEC-064.md) (2026-09-18):** com a poda fora do regime (D1), o caso "duas podas concorrentes" some; **sobrevive** o achado principal — o wrapper de domingo não tem lock nenhum, e a poda segue existindo como ato manual. |
 | **Depende de** | BLK-MA-21 (o wrapper da terça e a grade semanal). |
 | **Autonomia** | **manual (NÃO loop-safe)** — cron de produção. |
 
@@ -2234,7 +2234,7 @@ podar concorrentemente; suíte verde; `loop_guard` sem CRÍTICO; nenhum comando 
 | **Criticidade** | **Alta** — mexe na única função do pacote que **apaga arquivo** (`podar_snapshots`, `shutil.rmtree`). READ-ONLY sobre o M1. |
 | **Prioridade** | **Baixa** *(rebaixada em 2026-08-26)*. A margem que ela compraria já vem de graça no `RETENCAO_SEMANAS = 26 = 2× o piso`. |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | Pendente — **criado em 2026-08-26**; existia como "adiado" dentro do BLK-MA-21 / DEC-039 (D5), com a justificativa da cadência MENSAL, que morreu. |
+| **Status** | **SEM OBJETO desde a [DEC-064](../docs/decisions/DEC-064.md) (2026-09-18)** — criado em 2026-08-26, existia como "adiado" dentro do BLK-MA-21 / DEC-039 (D5) com a justificativa da cadência MENSAL, que morreu; agora a própria premissa morre. Este bloco garante N observações por fonte **dentro de uma janela podada**, e o D1 tira a poda do regime: sem remoção, a assimetria "semanas de CALENDÁRIO × semanas OBSERVADAS" não causa perda nenhuma. Só volta a valer se a poda for reativada à mão. |
 | **Depende de** | BLK-MA-21. |
 | **Autonomia** | **manual (NÃO loop-safe)** — apaga arquivo em disco. |
 
@@ -2354,6 +2354,18 @@ FONTE) fez **22.877** chaves do WellHub serem lidas como recém-chegadas, contra
 
 **Fora de escopo.** Bump do contrato do snapshot (`v5 → v6`) e qualquer mudança em
 `COLUNAS_PII_PROIBIDAS`: a série continua anônima, e pôr nome dentro dela exige DEC própria.
+
+**Reconciliação com os dois follow-ups da poda** *(achado da revisão automática no PR #384)*. O D1
+desliga a poda **em regime**, e isso muda o chão de dois blocos pendentes — de formas DIFERENTES,
+por isso não cabe um carimbo único:
+
+- **BLK-MA-21-FU4 (poda por fonte) fica SEM OBJETO.** Ele existe para garantir N observações por
+  fonte **dentro de uma janela podada**; sem poda, nenhuma observação é removida e a assimetria
+  "semanas de CALENDÁRIO × semanas OBSERVADAS" deixa de causar perda. Sobrevive só como margem se a
+  poda for reativada à mão.
+- **BLK-MA-21-FU3 (`flock`) ENCOLHE, mas não morre.** Ele cobre duas coisas: podas concorrentes
+  (que somem com o D1) e o fato de o wrapper de domingo **não ter lock nenhum**, que continua
+  valendo — a poda segue existindo como ato manual, e o lock protege mais que ela.
 
 ---
 
