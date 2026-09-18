@@ -389,11 +389,12 @@ def test_dominio_numera_so_o_top_e_resumo_fecha_nos_escolhidos(monkeypatch):
     assert vistos["dominio"][1] == top
     assert vistos["resumo"][1] is None  # so' o dominio numera
     foco_top = relmun._focus_bounds_mercator(df, hexes_foco=top)
-    assert vistos["resumo"][0] == foco_top and vistos["dominio"][0] == foco_top
+    assert vistos["dominio"][0] == foco_top
     assert vistos["score"][0] == relmun._focus_bounds_mercator(df)
-    # o quadro dos escolhidos e' MENOR que o da cidade inteira
+    # o Resumo fecha nos mesmos hexagonos, com margem maior que a do Dominio, e nunca abre mais
+    # que o mapa da cidade (aqui, com 3 escolhidos de 19 hexagonos, o teto e' quem manda)
     largura = lambda b: b[2] - b[0]  # noqa: E731
-    assert largura(foco_top) < largura(vistos["score"][0])
+    assert largura(foco_top) < largura(vistos["resumo"][0]) <= largura(vistos["score"][0])
 
 
 def test_zona_pintada_so_nos_hexagonos_do_top():

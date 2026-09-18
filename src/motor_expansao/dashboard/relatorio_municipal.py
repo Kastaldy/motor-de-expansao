@@ -1642,6 +1642,10 @@ def _hex_boundary_mercator(hex_id: str) -> list[tuple[float, float]]:
 _FOCUS_MIN_SPAN_M = 5000.0
 # Padding fracional aplicado ao bbox de foco (AJUSTE 1): margem de ~16% em cada eixo.
 _FOCUS_PAD_FRAC = 0.08
+# O Resumo fecha nos mesmos hexagonos do Dominio, porem com margem MAIOR: ali a pergunta e'
+# "quanto espaco ha nesta cidade", entao o entorno precisa aparecer (Juan, 2026-09-17: "tirar um
+# pouco do zoom"). O Dominio, que numera os 10, continua apertado.
+_FOCUS_PAD_FRAC_RESUMO = 0.55
 
 
 def _focus_bounds_mercator(
@@ -1650,6 +1654,7 @@ def _focus_bounds_mercator(
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
     hexes_foco: set[str] | None = None,
+    pad_frac: float = _FOCUS_PAD_FRAC,
 ) -> tuple[float, float, float, float] | None:
     """AJUSTE 1 (FU1): bbox de FOCO em EPSG:3857 das regioes RELEVANTES do municipio.
 
@@ -1678,7 +1683,7 @@ def _focus_bounds_mercator(
                     xs_f.append(x)
                     ys_f.append(y)
             if xs_f:
-                return _com_margem(min(xs_f), min(ys_f), max(xs_f), max(ys_f))
+                return _com_margem(min(xs_f), min(ys_f), max(xs_f), max(ys_f), pad_frac=pad_frac)
 
     destaque = _hex_destacado_mask(df_muni)
     rel = df_muni.loc[destaque]
@@ -1726,11 +1731,11 @@ def _focus_bounds_mercator(
 
     if not xs or not ys:
         return None
-    return _com_margem(min(xs), min(ys), max(xs), max(ys))
+    return _com_margem(min(xs), min(ys), max(xs), max(ys), pad_frac=pad_frac)
 
 
 def _com_margem(
-    minx: float, miny: float, maxx: float, maxy: float
+    minx: float, miny: float, maxx: float, maxy: float, *, pad_frac: float = _FOCUS_PAD_FRAC
 ) -> tuple[float, float, float, float]:
     """Aplica extensao MINIMA (evita super-ampliar com 1 hex isolado) e o padding fracional."""
     cx, cy = (minx + maxx) / 2.0, (miny + maxy) / 2.0
@@ -1738,8 +1743,8 @@ def _com_margem(
     span_y = max(maxy - miny, _FOCUS_MIN_SPAN_M)
     minx, maxx = cx - span_x / 2.0, cx + span_x / 2.0
     miny, maxy = cy - span_y / 2.0, cy + span_y / 2.0
-    pad_x = span_x * _FOCUS_PAD_FRAC
-    pad_y = span_y * _FOCUS_PAD_FRAC
+    pad_x = span_x * pad_frac
+    pad_y = span_y * pad_frac
     return (minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)
 
 
@@ -2669,6 +2674,16 @@ def render_mapas_municipio(
     # Resumo e Dominio fecham o quadro nos hexagonos escolhidos (zoom na melhor area); os demais
     # seguem com o foco de sempre, agora com menos margem em volta.
     foco_top = _focus_bounds_mercator(df_muni, hexes_foco=hexes_top) if hexes_top else None
+    foco_resumo = (
+        _focus_bounds_mercator(df_muni, hexes_foco=hexes_top, pad_frac=_FOCUS_PAD_FRAC_RESUMO)
+        if hexes_top
+        else None
+    )
+    # Teto: a margem larga nunca pode abrir MAIS que o mapa da cidade -- em municipio pequeno,
+    # ou com os escolhidos espalhados, ela passaria do proprio municipio e viraria zoom negativo.
+    if foco_resumo is not None and focus_bounds is not None:
+        if (foco_resumo[2] - foco_resumo[0]) >= (focus_bounds[2] - focus_bounds[0]):
+            foco_resumo = focus_bounds
     # Mapas tematicos: so' a Ultra e as maiores redes. A contagem cheia (inclusive independentes)
     # segue nos numeros das paginas e na Pressao concorrencial, que e' onde a oferta e' o assunto.
     redes_principais = principais_redes(competitors_df)
@@ -2702,7 +2717,11 @@ def render_mapas_municipio(
             basemap=basemap,
             width=width,
             height=height,
-            focus_bounds=(foco_top or focus_bounds) if camada in ("resumo", "dominio") else focus_bounds,
+            focus_bounds=(
+                (foco_resumo or focus_bounds)
+                if camada == "resumo"
+                else (foco_top or focus_bounds) if camada == "dominio" else focus_bounds
+            ),
             hexes_rotulados=hexes_rotulados,
             hexes_top=hexes_top if camada == "dominio" else None,
             nota_pins=nota_pins if pins else None,
