@@ -207,12 +207,73 @@ def test_a_contagem_de_recusas_usa_a_janela_e_o_tipo(monkeypatch: pytest.MonkeyP
     assert mod.contar_recusas_recentes(id_usuario=7, minutos=15) == 3
 
     sql, params = [(s, p) for s, p in c.executados if "count(*)" in s][0]
-    assert params == (7, "login.recusado", 15)
+    # Os sete parâmetros, na ordem: conta, tipo contado, janela, piso da redefinição, e a
+    # subconsulta do último acerto (conta, tipo `login`, mesma janela).
+    assert params == (7, "login.recusado", 15, None, 7, "login", 15)
     # A janela é MÓVEL: sem o recorte por tempo, "5 tentativas" viraria bloqueio permanente
     # — e como a contagem é por conta, qualquer um trancaria a conta de qualquer um.
-    assert "criado_em_evento > now() - make_interval(mins => %s)" in sql
+    assert "now() - make_interval(mins => %s)" in sql
     # Leitura entra pelo `conexao()`, que abre a transação READ ONLY.
     assert any("READ ONLY" in s for s, _p in c.executados)
+
+
+def test_a_contagem_zera_no_ACERTO_e_na_REDEFINICAO(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Os dois marcos que soltam a tranca antes da janela vencer, e o que cada um resolve.
+
+    ACERTO: errar três vezes, lembrar a senha, entrar, sair e errar mais duas trancaria a conta
+    de quem provou saber a senha dois minutos antes. Não enfraquece nada -- quem entra já tem a
+    senha, e a trava existe para atrapalhar quem está adivinhando.
+
+    REDEFINIÇÃO: é o caso típico do pedido de ajuda -- a pessoa erra cinco vezes e SÓ ENTÃO liga
+    para o administrador. Sem este piso ela recebe a senha nova e continua barrada por até 15
+    minutos, lendo a mesma mensagem de senha errada.
+    """
+    sql = mod.SQL_CONTAR_RECUSAS
+    assert "GREATEST(" in sql, "a contagem voltou a ter um piso só"
+    # O marco do acerto sai do próprio `eventos`; o da redefinição chega pronto da credencial.
+    assert "max(criado_em_evento)" in sql
+    assert "COALESCE(%s::timestamptz" in sql
+
+    # A subconsulta do acerto é presa à MESMA janela: um acerto mais velho que ela é irrelevante
+    # (as recusas daquele período também já não contam), e sem o recorte a varredura poderia
+    # caminhar pelo histórico inteiro de quem tem muitos eventos procurando um `login`.
+    depois_do_greatest = sql.split("GREATEST(", 1)[1]
+    assert depois_do_greatest.count("now() - make_interval(mins => %s)") == 2, (
+        "a subconsulta do último acerto perdeu o recorte de janela"
+    )
+
+
+def test_o_marco_do_acerto_procura_LOGIN_e_nao_outra_coisa(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Contraprova do teste acima: ele confere a FORMA do SQL, e forma casa com o texto errado.
+
+    Se a subconsulta passasse a procurar `logout` -- ou o próprio `login.recusado`, que é o erro
+    plausível por vizinhança de nome --, todas as asserções de forma continuariam verdes e a
+    tranca zeraria na hora errada. Aqui se olha o PARÂMETRO que sai.
+    """
+    from motor_expansao.db import postgres
+
+    class _Con:
+        def __init__(self) -> None:
+            self.executados: list[tuple[str, Any]] = []
+
+        def execute(self, sql: str, params: Any = None) -> Any:
+            self.executados.append((sql, params))
+            return type("C", (), {"fetchone": lambda _s: (0,)})()
+
+    c = _Con()
+
+    @contextmanager
+    def fake_conexao():  # type: ignore[no-untyped-def]
+        c.executados.append((postgres.SQL_SOMENTE_LEITURA, None))
+        yield c
+
+    monkeypatch.setattr(mod, "conexao", fake_conexao)
+    mod.contar_recusas_recentes(id_usuario=7, minutos=15)
+    _sql, params = [(s, p) for s, p in c.executados if "count(*)" in s][0]
+
+    assert params[1] == mod.EVENTO_LOGIN_RECUSADO, "mudou o que se CONTA"
+    assert params[5] == mod.EVENTO_LOGIN, "o marco que zera a conta deixou de ser o ACERTO"
+    assert params[5] != params[1], "contar e zerar pelo MESMO evento zeraria sempre"
 
 
 def test_os_dois_deixam_entidade_nula(con: FakeConexao) -> None:

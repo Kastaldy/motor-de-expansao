@@ -4508,13 +4508,25 @@ def acessos_usuarios_criar(
 def acessos_usuarios_redefinir_senha(
     id_usuario: int,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
-) -> dict[str, Any]:
-    """Devolve a pessoa a senha INICIAL e liga a marca de troca. Grava `usuario.senha_redefinida`.
+) -> Response:
+    """Gera uma senha TEMPORARIA so' desta pessoa e a devolve UMA VEZ. Grava `usuario.senha_redefinida`.
 
     E' o caminho de quem esqueceu a senha, e ate' 15/09 ele nao existia: a unica saida era `UPDATE`
-    direto no banco, sem autor e sem evento. Sem corpo de proposito, pelo motivo da criacao: o
-    admin nao escolhe nem conhece a senha nova de ninguem -- a inicial compartilhada e' a mesma
-    entregue a quem nasce pela tela.
+    direto no banco, sem autor e sem evento. Sem corpo de proposito: o admin nao ESCOLHE a senha de
+    ninguem -- escolher levaria a padroes adivinhaveis e a senha que ele lembraria depois.
+
+    ATE' 18/09/2026 ELA ENTREGAVA A SENHA INICIAL COMPARTILHADA (D31), a mesma para todo mundo:
+    quem conhecesse aquele valor entrava na conta de qualquer um recem-redefinido. Agora a senha e'
+    aleatoria, so' desta pessoa, e vale `senhas.VALIDADE_TEMPORARIA_H` horas.
+
+    A SENHA SAI NO CORPO DA RESPOSTA, e e' a unica vez que um segredo faz isso neste sistema -- o
+    token de sessao vai no cookie justamente para nao sair no corpo. A diferenca e' o destinatario:
+    aqui quem precisa ler e' uma PESSOA, que vai repassar por telefone. Por isso o `no-store`: sem
+    ele a resposta ficaria em cache de navegador e em qualquer proxy no caminho.
+
+    Se o administrador perder a senha, o caminho e' clicar de novo -- e isso INVALIDA a anterior.
+    Foi assim que "poder rever a senha durante a validade" foi atendido sem guardar nada
+    recuperavel no banco, que hoje so' tem hashes.
 
     Mesmo portao das outras escritas daqui: a allowlist do painel no middleware e na rota, e
     `acesso.usuario_gerir` pela regra de `POST` em `/api/acessos/usuarios`, que casa por prefixo e
@@ -4533,7 +4545,10 @@ def acessos_usuarios_redefinir_senha(
     # deixar a sessao viva aqui manteria a pessoa dentro com a senha que acabou de perder.
     # `autor` separa quem AGIU de quem SOFREU: o ato e' do admin.
     _derrubar_sessoes(id_usuario, autor=eu.id_usuario, motivo="senha redefinida pelo admin")
-    return resultado
+    # `no-store` e nao `no-cache`: este corpo carrega uma senha viva. Sem ele a resposta pode
+    # ficar no cache do navegador e em qualquer intermediario do caminho, e a senha passaria a
+    # existir em lugares que ninguem vai lembrar de limpar.
+    return JSONResponse(resultado, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/acessos/usuarios/{id_usuario}/exigir-troca", include_in_schema=False)
@@ -4638,6 +4653,7 @@ def login(body: LoginIn) -> Response:
         raise HTTPException(404, "Not Found")
 
     negado = HTTPException(401, "Login ou senha incorretos.")
+    vencida = False
     try:
         from motor_expansao.db import eventos as db_eventos
 
@@ -4651,7 +4667,13 @@ def login(body: LoginIn) -> Response:
         trancado = False
         if credencial is not None:
             recusas = db_eventos.contar_recusas_recentes(
-                id_usuario=credencial.id_usuario, minutos=db_sessoes.JANELA_TENTATIVAS_MIN
+                id_usuario=credencial.id_usuario,
+                minutos=db_sessoes.JANELA_TENTATIVAS_MIN,
+                # A redefinicao por administrador ZERA a conta: ele confirmou a identidade por
+                # fora, o que vale mais que a heuristica de cinco tentativas -- e sem isto quem
+                # errou cinco vezes ANTES de ligar receberia a senha nova e seguiria barrado.
+                # O outro marco que zera (o ultimo acerto) sai do proprio `eventos`, la' dentro.
+                redefinida_em=credencial.redefinida_em,
             )
             trancado = recusas >= db_sessoes.MAX_TENTATIVAS
 
@@ -4665,6 +4687,17 @@ def login(body: LoginIn) -> Response:
             if trancado
             else db_senhas.verificar(body.senha, credencial.senha_hash if credencial else None)
         )
+
+        # SENHA TEMPORARIA VENCIDA (D31) conta como senha errada, e a checagem vem DEPOIS do
+        # Argon2 de proposito -- o oposto da trava acima. La' negar cedo poupa CPU numa rajada;
+        # aqui o estado e' raro, e checar antes faria a resposta voltar mais rapido para quem
+        # digitou a senha temporaria certa depois do prazo, denunciando que ela existiu.
+        if confere and credencial is not None and credencial.expira_em is not None:
+            from datetime import UTC, datetime
+
+            if credencial.expira_em <= datetime.now(UTC):
+                confere = False
+                vencida = True
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
         raise _erro_de_usuarios(erro) from erro
 
@@ -4684,6 +4717,14 @@ def login(body: LoginIn) -> Response:
         )
         raise negado
     if credencial is None or not confere:
+        if vencida:
+            # So' no log do operador. Para quem tentou, isto e' senha errada como qualquer
+            # outra -- dizer "sua senha temporaria venceu" confirmaria que ela existiu, e para
+            # quem varre nomes isso e' a confirmacao de que a conta e' real.
+            _LOG_D17.info(
+                "usuario %d tentou entrar com senha temporaria VENCIDA",
+                credencial.id_usuario if credencial else -1,
+            )
         # Registra a RECUSA antes de responder, e sem mudar o que se responde: o 401 e a
         # mensagem seguem identicos nos dois casos, porque distinguir entregaria o oraculo
         # de quem trabalha aqui. Quem distingue e' a LINHA no banco, que o visitante nao ve.

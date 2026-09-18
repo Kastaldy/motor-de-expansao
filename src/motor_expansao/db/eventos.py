@@ -33,6 +33,7 @@ chamador -- ver a nota em `web/server/app.py`, na rota do Pontual.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any
 
 from .postgres import conexao, transacao
@@ -129,11 +130,36 @@ VALUES (%s, %s, NULL, NULL, %s)
 # que sao as duas colunas do recorte -- o `tipo` filtra o punhado de linhas que sobra.
 #
 # `make_interval(mins => %s)` e nao f-string: o SQL deste repo nao se monta por concatenacao.
+# O piso da contagem e' o MAIOR entre tres marcos, e cada um zera a conta por um motivo proprio:
+#
+#   1. o inicio da janela movel -- e' o que faz a tranca se soltar sozinha;
+#   2. a ultima redefinicao por administrador -- ele confirmou a identidade por fora, o que e'
+#      evidencia mais forte que a heuristica de cinco tentativas. Sem isto, quem errou cinco vezes
+#      ANTES de ligar receberia a senha nova e continuaria barrado, lendo a mesma mensagem de senha
+#      errada, sem nada que explicasse;
+#   3. o ultimo acesso BEM-SUCEDIDO -- acertar a senha prova que nao e' quem esta' adivinhando.
+#      Nao enfraquece a defesa: quem consegue entrar ja' tem a senha, e a trava existe para
+#      atrapalhar quem nao tem.
+#
+# A subconsulta do marco 3 e' presa a MESMA janela de proposito. Um acerto mais antigo que ela e'
+# irrelevante (as recusas daquele periodo tambem ja' nao contam), e sem esse recorte a varredura
+# poderia caminhar pelo historico inteiro de quem tem muitos eventos procurando um `login`. Com
+# ele, as duas varreduras ficam presas aos mesmos minutos de dados, pelo indice
+# `idx_eventos_id_usuario_criado_em`, que ja' existia.
 SQL_CONTAR_RECUSAS = """
 SELECT count(*) FROM eventos
 WHERE id_usuario = %s
   AND tipo = %s
-  AND criado_em_evento > now() - make_interval(mins => %s)
+  AND criado_em_evento > GREATEST(
+        now() - make_interval(mins => %s),
+        COALESCE(%s::timestamptz, '-infinity'::timestamptz),
+        COALESCE((
+          SELECT max(criado_em_evento) FROM eventos
+          WHERE id_usuario = %s
+            AND tipo = %s
+            AND criado_em_evento > now() - make_interval(mins => %s)
+        ), '-infinity'::timestamptz)
+      )
 """
 
 
@@ -350,8 +376,10 @@ def registrar_login_recusado(
         con.execute(SQL_REGISTRAR_ACESSO, (autor, EVENTO_LOGIN_RECUSADO, Jsonb(metadados)))
 
 
-def contar_recusas_recentes(*, id_usuario: int, minutos: int) -> int:
-    """Quantas recusas esta conta acumulou nos ultimos `minutos`. LEITURA.
+def contar_recusas_recentes(
+    *, id_usuario: int, minutos: int, redefinida_em: datetime | None = None
+) -> int:
+    """Quantas recusas esta conta acumulou desde o ultimo marco que zera a conta. LEITURA.
 
     E' a base da trava de tentativas: quem decide o limite e a janela e' o chamador, e as
     duas constantes vivem em `db/sessoes.py`, junto das outras politicas de acesso. Aqui
@@ -367,10 +395,23 @@ def contar_recusas_recentes(*, id_usuario: int, minutos: int) -> int:
     `eventos` por causa do **P15**, que segue aberto. Varredura de nomes inexistentes
     continua sem trava no banco; o que ela deixa e' a linha de autoria nula e o registro da
     trilha (DEC-027), que tem o IP em arquivo.
+
+    `redefinida_em` vem da CREDENCIAL, ja' lida pela rota de login -- por isso nao custa consulta.
+    Um acerto anterior tambem zera a conta, e esse marco sai do proprio `eventos`; ver a nota do
+    `SQL_CONTAR_RECUSAS` sobre por que a subconsulta e' presa a mesma janela.
     """
     with conexao() as con:
         linha = con.execute(
-            SQL_CONTAR_RECUSAS, (id_usuario, EVENTO_LOGIN_RECUSADO, minutos)
+            SQL_CONTAR_RECUSAS,
+            (
+                id_usuario,
+                EVENTO_LOGIN_RECUSADO,
+                minutos,
+                redefinida_em,
+                id_usuario,
+                EVENTO_LOGIN,
+                minutos,
+            ),
         ).fetchone()
     return int(linha[0]) if linha else 0
 

@@ -103,10 +103,24 @@ def _preparar(
     )
 
 
-def _credencial(deve_trocar: bool = False) -> Any:
+def _credencial(
+    deve_trocar: bool = False, *, expira_em: Any = None, redefinida_em: Any = None
+) -> Any:
     from motor_expansao.db.usuarios import Credencial
 
-    return Credencial(id_usuario=7, deve_trocar=deve_trocar, senha_hash="$argon2id$real")
+    return Credencial(
+        id_usuario=7,
+        deve_trocar=deve_trocar,
+        senha_hash="$argon2id$real",
+        expira_em=expira_em,
+        redefinida_em=redefinida_em,
+    )
+
+
+def _daqui(minutos: int) -> Any:
+    from datetime import UTC, datetime, timedelta
+
+    return datetime.now(UTC) + timedelta(minutes=minutos)
 
 
 # --------------------------------------------------------------------------------------
@@ -488,3 +502,101 @@ def test_logout_sem_cookie_nenhum_tambem_responde(
 ) -> None:
     monkeypatch.setattr(db_sessoes, "validar", lambda _t: pytest.fail("validou sem cookie"))
     assert pilot.logout(_Requisicao()).status_code == 200
+
+
+# --------------------------------------------------------------------------------------
+# A senha TEMPORARIA vence (D31, 18/09)
+# --------------------------------------------------------------------------------------
+
+
+def test_senha_temporaria_VENCIDA_nao_entra(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """O prazo e' o que impede uma redefinicao esquecida de virar porta aberta indefinida.
+
+    A senha esta' CERTA aqui (`confere=True`): sem a checagem de prazo, este login entraria.
+    """
+    _preparar(monkeypatch, credencial=_credencial(expira_em=_daqui(-1)), confere=True)
+    with pytest.raises(pilot.HTTPException) as caiu:
+        pilot.login(pilot.LoginIn(login="vinicius", senha="a-temporaria"))
+    assert caiu.value.status_code == 401
+
+
+def test_senha_temporaria_VENCIDA_responde_o_MESMO_que_senha_errada(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dizer "sua senha temporaria venceu" confirma que ela existiu -- e, para quem varre nomes,
+    que a conta e' real. O visitante ve' o mesmo 401 de sempre."""
+    from motor_expansao.db import eventos as db_eventos
+
+    monkeypatch.setattr(db_eventos, "registrar_login_recusado", lambda **_kw: None)
+
+    _preparar(monkeypatch, credencial=_credencial(expira_em=_daqui(-1)), confere=True)
+    with pytest.raises(pilot.HTTPException) as vencida:
+        pilot.login(pilot.LoginIn(login="vinicius", senha="a-temporaria"))
+
+    _preparar(monkeypatch, credencial=_credencial(), confere=False)
+    with pytest.raises(pilot.HTTPException) as errada:
+        pilot.login(pilot.LoginIn(login="vinicius", senha="qualquer"))
+
+    assert vencida.value.status_code == errada.value.status_code
+    assert vencida.value.detail == errada.value.detail
+
+
+def test_senha_temporaria_DENTRO_do_prazo_entra(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A outra metade: o prazo nao pode barrar quem esta' dentro dele."""
+    _preparar(monkeypatch, credencial=_credencial(expira_em=_daqui(30)), confere=True)
+    resposta = pilot.login(pilot.LoginIn(login="vinicius", senha="a-temporaria"))
+    assert resposta.status_code == 200
+
+
+def test_senha_SEM_prazo_segue_entrando(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`expira_em = None` e' o estado de toda senha que a pessoa escolheu -- a maioria dos
+    logins. Uma comparacao malfeita com `None` transformaria isto em 401 para todo mundo."""
+    _preparar(monkeypatch, credencial=_credencial(expira_em=None), confere=True)
+    assert pilot.login(pilot.LoginIn(login="vinicius", senha="a-minha")).status_code == 200
+
+
+def test_o_prazo_e_conferido_DEPOIS_do_argon2(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O oposto da trava de tentativas, e de proposito.
+
+    A trava nega ANTES do Argon2 para poupar CPU numa rajada. O prazo e' estado RARO: conferi-lo
+    antes faria a resposta voltar mais rapido para quem digitou a temporaria certa depois do
+    vencimento -- e essa diferenca de tempo denuncia que a senha existiu.
+    """
+    verificacoes: list[Any] = []
+    _preparar(
+        monkeypatch,
+        credencial=_credencial(expira_em=_daqui(-1)),
+        confere=True,
+        verificacoes=verificacoes,
+    )
+    with pytest.raises(pilot.HTTPException):
+        pilot.login(pilot.LoginIn(login="vinicius", senha="a-temporaria"))
+    assert verificacoes == ["$argon2id$real"], "a senha vencida nao pagou o Argon2"
+
+
+def test_a_trava_recebe_o_piso_da_REDEFINICAO(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O caso tipico do pedido de ajuda: errou cinco vezes e SO' ENTAO ligou para o admin.
+
+    Sem repassar este piso, a pessoa recebe a senha nova e continua barrada por ate' 15 minutos,
+    lendo a mesma mensagem de senha errada -- sem nada que ligue uma coisa a outra.
+    """
+    from motor_expansao.db import eventos as db_eventos
+
+    vistos: list[dict[str, Any]] = []
+    marco = _daqui(-3)
+    # O espiao entra DEPOIS do `_preparar`, que tambem instala um dublê desta funcao. Na ordem
+    # inversa o dublê dele apagaria a captura e `vistos` ficaria vazio -- foi o que aconteceu na
+    # primeira tentativa, e e' a segunda vez nesta suite que a ordem morde.
+    _preparar(monkeypatch, credencial=_credencial(redefinida_em=marco), confere=True)
+    monkeypatch.setattr(
+        db_eventos, "contar_recusas_recentes", lambda **kw: (vistos.append(kw), 0)[1]
+    )
+    pilot.login(pilot.LoginIn(login="vinicius", senha="a-temporaria"))
+
+    assert vistos and vistos[0]["redefinida_em"] == marco

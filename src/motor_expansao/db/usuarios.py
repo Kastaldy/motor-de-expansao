@@ -41,6 +41,7 @@ id de alvo, para nao haver como chamar isso para outra pessoa por engano.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from .postgres import conexao, transacao
@@ -192,19 +193,26 @@ WHERE u.login_usuario = %s AND u.ativo
 # deve abrir a tela de troca imediatamente (D26). Buscar isso depois seria uma segunda ida ao
 # banco para um dado que ja' estava na mesma linha.
 SQL_CREDENCIAL_POR_LOGIN = """
-SELECT u.id_usuario, u.senha_hash, u.deve_trocar_senha_usuario
+SELECT u.id_usuario, u.senha_hash, u.deve_trocar_senha_usuario,
+       u.senha_expira_em_usuario, u.senha_redefinida_em_usuario
 FROM usuarios u
 WHERE u.login_usuario = %s AND u.ativo
 """
 
-# Os tres campos andam juntos e por isso vao no MESMO UPDATE: gravar o hash sem carimbar a data
+# Os campos andam juntos e por isso vao no MESMO UPDATE: gravar o hash sem carimbar a data
 # deixaria a coluna da 016 mentindo, e limpar `deve_trocar` sem gravar o hash liberaria a pessoa
 # de uma troca que nao aconteceu.
+#
+# `senha_expira_em_usuario = NULL` e' obrigatorio aqui, nao higiene: a senha que a pessoa acabou
+# de escolher nao expira, e deixar o prazo da TEMPORARIA para tras daria uma senha propria com
+# validade -- a pessoa barrada com a senha certa, lendo "Login ou senha incorretos". O
+# `ck_usuarios_prazo_exige_troca` (019) recusa a escrita se esta linha sumir.
 SQL_DEFINIR_SENHA = """
 UPDATE usuarios
 SET senha_hash = %s,
     senha_definida_em_usuario = now(),
-    deve_trocar_senha_usuario = FALSE
+    deve_trocar_senha_usuario = FALSE,
+    senha_expira_em_usuario = NULL
 WHERE id_usuario = %s
 """
 
@@ -225,7 +233,9 @@ SQL_REDEFINIR_SENHA = """
 UPDATE usuarios
 SET senha_hash = %s,
     senha_definida_em_usuario = NULL,
-    deve_trocar_senha_usuario = TRUE
+    deve_trocar_senha_usuario = TRUE,
+    senha_expira_em_usuario = now() + make_interval(hours => %s),
+    senha_redefinida_em_usuario = now()
 WHERE id_usuario = %s
 """
 
@@ -513,6 +523,14 @@ class Credencial:
     id_usuario: int
     deve_trocar: bool
     senha_hash: str = field(repr=False)
+    #: Ate' quando o hash guardado vale. `None` = nao expira (senha que a pessoa escolheu).
+    #: Quem compara com `now()` e' a rota de login -- DEPOIS do Argon2, para que "senha temporaria
+    #: vencida" e "senha errada" custem o mesmo tempo e nao virem oraculo.
+    expira_em: datetime | None = None
+    #: Quando um administrador redefiniu esta senha pela ultima vez. E' PISO da trava de
+    #: tentativas: sem ele a pessoa que errou cinco vezes antes de ligar receberia a senha nova e
+    #: continuaria barrada, lendo a mesma mensagem de senha errada.
+    redefinida_em: datetime | None = None
 
 
 def credenciais_por_login(login: str) -> Credencial | None:
@@ -536,7 +554,13 @@ def credenciais_por_login(login: str) -> Credencial | None:
         linha = con.execute(SQL_CREDENCIAL_POR_LOGIN, (login.strip(),)).fetchone()
     if linha is None:
         return None
-    return Credencial(id_usuario=int(linha[0]), senha_hash=str(linha[1]), deve_trocar=bool(linha[2]))
+    return Credencial(
+        id_usuario=int(linha[0]),
+        senha_hash=str(linha[1]),
+        deve_trocar=bool(linha[2]),
+        expira_em=linha[3],
+        redefinida_em=linha[4],
+    )
 
 
 def estado_da_senha(login: str) -> dict[str, bool] | None:
@@ -634,10 +658,14 @@ def redefinir_senha(id_alvo: int, *, autor: int) -> dict[str, Any]:
 
     _recusar_auto_alvo(id_alvo, autor)
 
+    # A senha e' NOVA e so' desta pessoa (D31). Ate' 18/09/2026 entregava-se
+    # `senhas.hash_da_senha_inicial()`, a MESMA senha para todo mundo -- e quem conhecesse aquele
+    # valor entrava na conta de qualquer um recem-redefinido.
+    #
     # Hashear FORA da transacao, como `criar`: ~64 MB e ~100 ms, e segurar a linha travada durante
-    # isso nao protege nada. E' tambem aqui que a falta de `MOTOR_SENHA_INICIAL` aparece, antes de
-    # qualquer escrita.
-    hash_inicial = senhas.hash_da_senha_inicial()
+    # isso nao protege nada.
+    temporaria = senhas.gerar_temporaria()
+    hash_temporario = senhas.gerar(temporaria)
 
     with transacao(id_usuario=autor) as con:
         linha = con.execute(SQL_ESTADO_DA_SENHA_PARA_ADMIN, (id_alvo,)).fetchone()
@@ -645,16 +673,28 @@ def redefinir_senha(id_alvo: int, *, autor: int) -> dict[str, Any]:
             raise UsuarioDesconhecido(f"usuário {id_alvo} não existe")
         tinha_senha_propria = bool(linha[1])
 
-        con.execute(SQL_REDEFINIR_SENHA, (hash_inicial, id_alvo))
+        con.execute(SQL_REDEFINIR_SENHA, (hash_temporario, senhas.VALIDADE_TEMPORARIA_H, id_alvo))
         _registrar(
             con,
             autor=autor,
             tipo=EVENTO_SENHA_REDEFINIDA,
             id_alvo=id_alvo,
-            metadados={"tinha_senha_propria": tinha_senha_propria},
+            # NUNCA a senha, nem o hash, nem parte de nenhum dos dois. `validade_horas` e' politica
+            # aplicada, nao segredo, e responde "por quanto tempo aquela senha valeu" a quem audita.
+            metadados={
+                "tinha_senha_propria": tinha_senha_propria,
+                "validade_horas": senhas.VALIDADE_TEMPORARIA_H,
+            },
         )
 
-    return {"id_usuario": id_alvo, "tinha_senha_propria": tinha_senha_propria}
+    # A senha em TEXTO PURO sai daqui uma unica vez, para o administrador ler e repassar. Ela nao
+    # e' guardada em lugar nenhum -- se ele a perder, o caminho e' gerar outra, o que mata esta.
+    return {
+        "id_usuario": id_alvo,
+        "tinha_senha_propria": tinha_senha_propria,
+        "senha_temporaria": temporaria,
+        "validade_horas": senhas.VALIDADE_TEMPORARIA_H,
+    }
 
 
 def exigir_troca(id_alvo: int, *, autor: int) -> dict[str, Any]:

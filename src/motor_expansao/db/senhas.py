@@ -67,6 +67,25 @@ MINIMO_DE_CARACTERES = 12
 #: graca. 128 nao aperta ninguem -- uma frase-senha longa cabe folgada.
 MAXIMO_DE_CARACTERES = 128
 
+#: Alfabeto da senha TEMPORARIA. Nao tem `i`, `l`, `o`, `0` nem `1`: esta senha nasce para ser
+#: DITADA -- o administrador a le' para a pessoa, quase sempre por telefone -- e as confusoes
+#: caras sao justamente essas. So' minusculas, pelo mesmo motivo: "e maiusculo ou minusculo?"
+#: e' uma pergunta a mais em cada caractere.
+ALFABETO_TEMPORARIA = "abcdefghjkmnpqrstuvwxyz23456789"
+
+#: Tres grupos de quatro, separados por hifen. O hifen e' so' leitura: quem digita em bloco erra
+#: menos com a senha fatiada, e `validar` nao se importa. 12 caracteres de um alfabeto de 31 dao
+#: ~59 bits -- folgado demais para um segredo que morre em duas horas, e o custo de folga aqui e'
+#: zero. O total com hifens e' 14, acima do piso de 12 exigido por `validar`.
+GRUPOS_DA_TEMPORARIA = 3
+CARACTERES_POR_GRUPO = 4
+
+#: Quanto vale uma senha temporaria. Decisao do dono em 18/09/2026: duas horas.
+#: O repasse e' por telefone, questao de minutos; se falhar, o administrador gera outra, e gerar
+#: outra MATA a anterior -- foi assim que "rever a senha" foi resolvido sem guardar nada
+#: recuperavel no banco.
+VALIDADE_TEMPORARIA_H = 2
+
 
 class HashIndisponivel(RuntimeError):
     """`argon2-cffi` nao esta instalado neste ambiente.
@@ -144,6 +163,30 @@ def gerar(senha: str) -> str:
     """Valida e devolve o PHC do Argon2id. Unico produtor legitimo de `usuarios.senha_hash`."""
     validar(senha)
     return str(_hasher().hash(senha))
+
+
+def gerar_temporaria() -> str:
+    """Uma senha temporaria NOVA, aleatoria e so' desta pessoa. Devolve o TEXTO PURO.
+
+    E' a unica funcao do modulo que devolve senha legivel, e existe por um motivo estreito: a
+    redefinicao por administrador precisa entregar algo que a pessoa consiga usar. Ate' 18/09/2026
+    o que se entregava era `senha_inicial()` -- a MESMA senha para todo mundo --, entao quem
+    conhecesse aquele valor entrava na conta de qualquer um que tivesse acabado de ser redefinido.
+
+    `secrets`, e nao `random`: o `random` e' um Mersenne Twister previsivel a partir de saidas
+    anteriores, e aqui a saida e' uma credencial.
+
+    O texto puro NAO e' guardado em lugar nenhum -- nem no banco, nem em log, nem em cache. Ele
+    aparece uma vez na resposta da rota, para o administrador ler, e depois so' existe o hash. Se
+    o administrador o perder, o caminho e' gerar outra, o que invalida esta.
+    """
+    import secrets
+
+    grupos = [
+        "".join(secrets.choice(ALFABETO_TEMPORARIA) for _ in range(CARACTERES_POR_GRUPO))
+        for _ in range(GRUPOS_DA_TEMPORARIA)
+    ]
+    return "-".join(grupos)
 
 
 def senha_inicial() -> str:

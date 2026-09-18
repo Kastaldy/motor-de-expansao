@@ -215,3 +215,53 @@ def test_disponivel_diz_a_verdade(_argon2: None) -> None:
     """Com o extra instalado, `disponivel()` e' verdadeiro — a tela usa isto para nao oferecer
     o que vai falhar com 503."""
     assert senhas.disponivel() is True
+
+
+# --------------------------------------------------------------------------------------
+# A senha TEMPORARIA (D31) — o que a redefinicao por administrador entrega
+# --------------------------------------------------------------------------------------
+
+
+def test_a_temporaria_passa_na_propria_politica() -> None:
+    """Ela e' uma senha como outra qualquer: se `validar` a reprovasse, `gerar` levantaria
+    `SenhaFraca` no meio da redefinicao -- e o admin veria erro ao clicar num botao correto."""
+    senhas.validar(senhas.gerar_temporaria())
+
+
+def test_duas_temporarias_nunca_sao_iguais() -> None:
+    """O contrario disto e' exatamente o defeito que a D31 corrige: senha compartilhada."""
+    assert len({senhas.gerar_temporaria() for _ in range(200)}) == 200
+
+
+def test_a_temporaria_nao_tem_caractere_ambiguo() -> None:
+    """Ela nasce para ser DITADA por telefone. `O`/`0` e `I`/`l`/`1` sao as confusoes caras --
+    e o custo delas nao e' erro de digitacao: e' a pessoa achar que foi barrada por outra coisa.
+    """
+    amostra = "".join(senhas.gerar_temporaria() for _ in range(200))
+    for ambiguo in ("o", "O", "0", "I", "l", "1"):
+        assert ambiguo not in amostra, f"caractere ambiguo na senha ditada: {ambiguo!r}"
+
+
+def test_a_temporaria_usa_secrets_e_nao_random() -> None:
+    """`random` e' Mersenne Twister: previsivel a partir de saidas anteriores. Aqui a saida e'
+    uma credencial, entao a fonte tem de ser a criptografica."""
+    from pathlib import Path
+
+    fonte = Path(senhas.__file__).read_text(encoding="utf-8")
+    assert "import secrets" in fonte
+    assert "import random" not in fonte
+    assert "random.choice" not in fonte
+
+
+def test_a_temporaria_tem_entropia_declarada() -> None:
+    """Tamanho e' a unica exigencia que o modulo sustenta (NIST SP 800-63B), entao ele precisa
+    SOBRAR: 12 caracteres de um alfabeto de 31 dao ~59 bits."""
+    import math
+
+    bits = (
+        senhas.GRUPOS_DA_TEMPORARIA
+        * senhas.CARACTERES_POR_GRUPO
+        * math.log2(len(senhas.ALFABETO_TEMPORARIA))
+    )
+    assert bits > 50, f"entropia caiu para {bits:.1f} bits"
+    assert len(senhas.gerar_temporaria()) >= senhas.MINIMO_DE_CARACTERES
