@@ -221,6 +221,11 @@ A moeda dos mapas e da tabela vem do perfil (`simbolo_renda`, #374).
 
 **Score Censitário e Residual Fitness sem pins (2026-09-17).** Na versão por hexágono os dois mapas levavam as logos de concorrentes e Ultra, e em capital elas cobriam os hexágonos (São Paulo: 491 academias). Agora seguem a regra da versão por bairro: pins só em Resumo e Domínio.
 
+**Bases com join censitário ruim (medido em Manaus/AM, 2026-09-17).** Três defeitos que só aparecem lá:
+- a **população do hexágono** vinha de `populacao_corte_hex`, que nessas bases repete os 2.063.689 habitantes do município em cada um dos 2.139 hexágonos (DEC-054/058). Na densidade isso virava "mesmo número ÷ área da célula" e o mapa saía em faixas verticais. A precedência de `relatorio_praca.COLS_POPULACAO` passa a começar por `pop_total_setor_2022` (cobertura medida: 99,9% em Manaus, 98,6% em São Paulo); sem dado de setor, `populacao_e_municipal` suprime o mapa de densidade e a legenda explica (`TEXTO_POP_MUNICIPAL`);
+- o **mapa do Resumo** ficava em branco onde não há nenhum hexágono aprovado; nesse caso ele volta a desenhar os cinza;
+- a **legenda do mapa de calor** repetia faixas ("0 a 0") ou publicava faixa degenerada ("0,2 a 0,2") quando a floresta domina os quintis; faixas assim são fundidas, e abaixo de 10 o número sai com uma casa decimal.
+
 ## Decisões do gate humano (APROVADO por Vinicius, 2026-06-22 — DEC-011) — IMPLEMENTADO
 
 Implementação em `src/motor_expansao/dashboard/relatorio_municipal.py` (módulo NOVO, disjunto;
