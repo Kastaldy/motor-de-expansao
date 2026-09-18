@@ -56,7 +56,7 @@ TABELAS_DO_MODELO = (
 )
 NUMEROS_DA_SECAO_ZERO = {
     "indices": 49,   # 35 explicitos + 12 de PK + 2 de UNIQUE (a 018/D30 somou 2 + o dela de PK)
-    "constraints CHECK": 13,    # a 018 (D30): `chk_sessao_expira_apos_criacao`
+    "constraints CHECK": 14,    # a 018 (D30) e a 019: `ck_usuarios_prazo_exige_troca`
     "chaves estrangeiras": 12,  # a 018 (D30): `sessoes.id_usuario`
     "triggers": 7,   # 5 ate' a 016; a 017 (D29) somou a guarda de coerencia nas duas regioes
     "colunas geometricas": 7,

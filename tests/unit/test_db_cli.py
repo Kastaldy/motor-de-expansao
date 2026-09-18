@@ -153,10 +153,14 @@ def test_contagens_conferem_com_os_seis_numeros_da_secao_zero() -> None:
         # da `verificacao.md` tem de andar JUNTOS — se um ficar para tras, um banco
         # correto passa a acusar DIVERGENTE.
         "indices": 49,
-        # 13 desde a D30: `chk_sessao_expira_apos_criacao`, a guarda contra sessao que
-        # nasce vencida -- sem ela a pessoa veria "sessao expirada" logo apos digitar a
-        # senha certa, que e' o pior diagnostico possivel.
-        "constraints CHECK": 13,
+        # 14 desde a 019: `ck_usuarios_prazo_exige_troca`, que impede senha PROPRIA com prazo
+        # de validade -- o estado que faria a pessoa ser barrada com a senha certa. Era 13 desde
+        # a D30 (`chk_sessao_expira_apos_criacao`, a guarda contra sessao que nasce vencida --
+        # sem ela a pessoa veria "sessao expirada" logo apos digitar a senha certa, que e' o pior
+        # diagnostico possivel). Desde 18/09/2026 este numero tambem e' conferido contra as
+        # MIGRATIONS, e nao so' contra um banco vivo, por `test_migracoes.py` -- ate' entao nada
+        # o cobria no CI, que nao tem Postgres.
+        "constraints CHECK": 14,
         # 12 desde a D30: `sessoes.id_usuario`, a UNICA FK do modelo com ON DELETE CASCADE
         # (sessao nao e' registro a preservar, e sessao orfa decidindo acesso e' o que nao
         # se quer). Toda FK ganha indice, e e' por isso que os indices somaram 3 e nao 2.

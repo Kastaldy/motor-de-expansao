@@ -134,6 +134,13 @@
       "documento": "018-sessoes.md",
       "sha256_bloco": "a411ab6fc6b51e6bf9c2bf4c90083f5767d45a7471c52c2b208aa614a49dd18a",
       "sha256_arquivo": "4efc4fc8592b41a9265d2b211873b45f17517fa2917e7f5ea811ebf8bc241940"
+    },
+    {
+      "versao": "019",
+      "arquivo": "019-senha-temporaria.sql",
+      "documento": "019-senha-temporaria.md",
+      "sha256_bloco": "4e13b274f0ac60f5e047239d19999b0f3d20fead5c0ae8f69c0233316b17e394",
+      "sha256_arquivo": "50e1fce6341b77b6257ac8581d54dff43f9a64f409ed143d8f4043774a860e0b"
     }
   ]
 }

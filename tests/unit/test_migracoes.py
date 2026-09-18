@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
@@ -41,8 +42,15 @@ OBJETOS_ESPERADOS = {
     "CREATE TABLE": 12,
     "CREATE TRIGGER": 7,
 }
-INDICES_ESPERADOS = 35   # +1 na D23 (login), +3 na D24 (metadados) e +2 na D30 (sessoes)
-FUNCOES_ESPERADAS = 8    # +1 na D29 (`exige_geom_coerente`, uma so' para as duas tabelas)
+INDICES_ESPERADOS = 35  # +1 na D23 (login), +3 na D24 (metadados) e +2 na D30 (sessoes)
+FUNCOES_ESPERADAS = 8  # +1 na D29 (`exige_geom_coerente`, uma so' para as duas tabelas)
+
+#: Os `CHECK` que as migrations criam. Ate' 18/09/2026 NADA neste arquivo os contava: os seis
+#: numeros da §0 so' eram conferidos por `db.cli` contra um banco VIVO, e o CI nao tem Postgres.
+#: Medido: a migration 019 acrescentou um `CHECK` e a suite inteira seguiu verde, deixando o
+#: `NUMEROS_DA_SECAO_ZERO` do `cli.py` afirmar 13 contra um banco com 14 -- divergencia que so'
+#: apareceria na mao do operador, como um `DIVERGENTE` sem causa aparente.
+CHECKS_ESPERADOS = 14
 
 
 def _sql() -> list[Path]:
@@ -82,9 +90,7 @@ def test_versoes_sao_sequenciais_e_sem_buraco() -> None:
     migration perdida, e o runner caminharia por cima da falta sem perceber."""
     versoes = [item["versao"] for item in _manifesto()["migracoes"]]
     assert versoes == sorted(versoes), "manifesto fora de ordem"
-    assert versoes == [f"{n:03d}" for n in range(len(versoes))], (
-        f"buraco na numeracao: {versoes}"
-    )
+    assert versoes == [f"{n:03d}" for n in range(len(versoes))], f"buraco na numeracao: {versoes}"
 
 
 def test_a_000_e_nativa_do_motor_e_as_demais_vem_da_documentacao() -> None:
@@ -134,6 +140,92 @@ def _nomes_criados(linhas: list[str], padrao: str) -> set[str]:
     return achados
 
 
+def _checks_de(textos: Iterable[str]) -> tuple[set[str], int]:
+    """Os `CHECK` que sobrevivem a uma cadeia de migrations: (nomeados, quantos anonimos).
+
+    CONTAR OCORRENCIAS NAO FUNCIONA, e foi medido: o texto tem 15 `CHECK (` para 14 constraints
+    no banco. Duas razoes -- a 014 DERRUBA e recria `chk_evento_entidade_valor` (aparece duas
+    vezes e vale uma), e parte dos `CHECK` nasce INLINE no `CREATE TABLE`, sem `CONSTRAINT
+    <nome>`, onde o Postgres gera o nome. Por isso se simula a cadeia em ordem, aplicando DROP
+    antes de ADD dentro de cada arquivo -- que e' a ordem em que a 014 os escreve.
+
+    Recebe TEXTOS, e nao caminhos, de proposito: o ramo do DROP nao tem caso vivo nas migrations
+    de hoje (o unico derrubado e' recriado no mesmo arquivo, e o `set` ja' o colapsaria sozinho),
+    entao sabotar o `discard` nao muda numero nenhum. Separar a leitura da varredura permite
+    prova-lo com entrada sintetica em vez de deixa-lo como codigo decorativo.
+    """
+    nomeados: set[str] = set()
+    anonimos = 0
+    for bruto in textos:
+        texto = "\n".join(
+            linha
+            for linha in bruto.splitlines()
+            if not linha.strip().startswith("--")  # a prosa MENCIONA "CHECK" e inflaria a conta
+        )
+        adicionados = re.findall(r"CONSTRAINT\s+(\w+)\s+CHECK", texto, re.I)
+        for nome in re.findall(r"DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?(\w+)", texto, re.I):
+            nomeados.discard(nome.lower())
+        nomeados.update(nome.lower() for nome in adicionados)
+        anonimos += len(re.findall(r"\bCHECK\s*\(", texto, re.I)) - len(adicionados)
+    return nomeados, anonimos
+
+
+def _checks_vivos() -> tuple[set[str], int]:
+    return _checks_de(p.read_text(encoding="utf-8") for p in _sql() if not p.name.startswith("000"))
+
+
+def test_o_ramo_de_DROP_derruba_de_verdade() -> None:
+    """Prova o ramo que as migrations de hoje NAO exercitam.
+
+    Sem isto ele seria codigo sem prova: sabota-lo deixa a suite verde, porque o unico `CHECK`
+    derrubado hoje (a 014) e' recriado no mesmo arquivo e o `set` o colapsa de qualquer jeito.
+    No dia em que uma migration derrubar um `CHECK` sem recriar, e' este teste que garante que a
+    conta acompanha.
+    """
+    derrubado, _ = _checks_de(
+        [
+            "ALTER TABLE t ADD CONSTRAINT ck_exemplo CHECK (x > 0);",
+            "ALTER TABLE t DROP CONSTRAINT ck_exemplo;",
+        ]
+    )
+    assert derrubado == set(), "DROP em migration posterior nao tirou o CHECK da conta"
+
+    # A forma da 014: derruba e recria no MESMO arquivo. Tem de sobrar UM.
+    recriado, _ = _checks_de(
+        ["ALTER TABLE t DROP CONSTRAINT ck_e;\nALTER TABLE t ADD CONSTRAINT ck_e CHECK (x > 0);"]
+    )
+    assert recriado == {"ck_e"}, "DROP aplicado DEPOIS do ADD apagaria um CHECK que existe"
+
+
+def test_os_checks_das_migracoes_batem_com_o_numero_que_o_cli_cobra() -> None:
+    """Fecha a lacuna achada em 18/09/2026: NADA conferia os `CHECK` sem um Postgres vivo.
+
+    `db.cli` cobra os seis numeros da §0 contra `pg_constraint`, e o CI nao tem banco -- entao a
+    019 pode acrescentar um `CHECK` e deixar o `cli.py` afirmando o numero velho com a suite
+    inteira verde. O operador descobriria como um `DIVERGENTE` sem causa aparente, que e' a pior
+    forma de um contrato falhar: ele vira ruido e para de ser levado a serio.
+    """
+    from motor_expansao.db import cli
+
+    nomeados, anonimos = _checks_vivos()
+    assert len(nomeados) + anonimos == CHECKS_ESPERADOS, sorted(nomeados)
+    assert CHECKS_ESPERADOS == cli.NUMEROS_DA_SECAO_ZERO["constraints CHECK"], (
+        "o numero que o `cli` cobra do banco divergiu do que as migrations criam"
+    )
+
+
+def test_a_varredura_de_CHECK_ainda_enxerga_os_nomeados() -> None:
+    """Contraprova do teste acima: se o padrao parar de casar, `len(nomeados)` cai e o total so'
+    fecharia por coincidencia com os anonimos. Sem isto, um guardrail morto passaria por vivo."""
+    nomeados, anonimos = _checks_vivos()
+    assert "ck_usuarios_prazo_exige_troca" in nomeados, "a varredura perdeu o CHECK da 019"
+    assert "chk_sessao_expira_apos_criacao" in nomeados, "a varredura perdeu o CHECK da 018"
+    assert "chk_evento_entidade_valor" in nomeados, (
+        "o recriado pela 014 sumiu: DROP/ADD fora de ordem"
+    )
+    assert anonimos > 0, "a varredura parou de enxergar os CHECK inline do CREATE TABLE"
+
+
 def test_objetos_criados_batem_com_o_cluster_real() -> None:
     # So' as migrations do MODELO: a `000` cria a tabela de controle do motor, que nao
     # esta entre as 11 nem e' contada pela §0 da `verificacao.md` (que filtra por lista
@@ -166,13 +258,9 @@ def test_auditoria_de_rbac_continua_endurecida() -> None:
     texto = (MIGRACOES / "009-historico-perfil-permissoes.sql").read_text(encoding="utf-8")
     # Contar so' o que e' CODIGO: o proprio documento explica em comentario por que o
     # `pg_temp` vai no fim, e contar a prosa junto daria um numero que nao significa nada.
-    codigo = [
-        linha for linha in texto.splitlines() if not linha.lstrip().startswith("--")
-    ]
+    codigo = [linha for linha in texto.splitlines() if not linha.lstrip().startswith("--")]
     definer = sum(1 for linha in codigo if "SECURITY DEFINER" in linha)
-    caminho = sum(
-        1 for linha in codigo if "SET search_path = pg_catalog, public, pg_temp" in linha
-    )
+    caminho = sum(1 for linha in codigo if "SET search_path = pg_catalog, public, pg_temp" in linha)
     # 2 gravadoras (`registra_*`, as unicas SECURITY DEFINER) e 4 com search_path fixo:
     # as duas acima mais `rotulo_perfil`/`rotulo_permissao`, que sao STABLE mas leem
     # tabela e cairiam no mesmo sequestro por `pg_temp`.
