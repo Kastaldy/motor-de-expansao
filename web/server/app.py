@@ -8823,6 +8823,10 @@ def _rede_movimentacao() -> pd.DataFrame | None:
     tabela = _rede_ler_opcional(STAGING_DIR / movimentacao_concorrencia.ARQUIVO_STAGING)
     if tabela is None:
         return None
+    # O descarte de RENOMEAÇÃO no agregador é aplicado aqui, na leitura, e não só na ingestão:
+    # o parquet em produção foi gerado antes da regra, e o pacote de origem não está mais
+    # disponível para reingerir. Idempotente — rodar duas vezes não tira nada a mais.
+    tabela = movimentacao_concorrencia.descartar_trocas_de_nome_no_agregador(tabela)
     return movimentacao_concorrencia.filtrar_concorrencia(tabela, _rede_redes_estudio())
 
 

@@ -104,6 +104,21 @@ def _pontos_validos(df: pd.DataFrame | None) -> pd.DataFrame:
     return saida.dropna(subset=["lat", "lng"]).reset_index(drop=True)
 
 
+def _mascara_ultra(df: pd.DataFrame) -> pd.Series:
+    """`True` onde a linha é uma unidade ULTRA — nossa, nunca concorrente.
+
+    O agregador lista as unidades Ultra como qualquer academia. Sem este corte, a ficha da
+    Aclimação desenhava "Ultra Academia - Aclimação" como independente a 37 m; e a lista de
+    "novos no agregador" da ficha de Uberlândia trouxe TRÊS Ultras (Center Shopping a 141 m,
+    Floriano Peixoto, Cesário) — relatado pelo Felipe em 18/09. A regra vale para as duas
+    leituras, por isso vive aqui: cai por nome (a Ultra de outro bairro também é nossa) e
+    por `rede`.
+    """
+    nomes = df["nome"].astype(str) if "nome" in df.columns else pd.Series("", index=df.index)
+    redes = df["rede"].astype(str) if "rede" in df.columns else pd.Series("", index=df.index)
+    return nomes.str.contains(r"\bultra\s+academia\b", case=False, regex=True) | redes.str.lower().eq("ultra")
+
+
 # ---------------------------------------------------------------------------
 # 2. Fatos territoriais
 # ---------------------------------------------------------------------------
@@ -284,10 +299,7 @@ def concorrentes_no_entorno(
     # academia, e sem este corte a ficha da Aclimação desenhava "Ultra Academia - Aclimação"
     # como independente a 37 m. Cai por nome (a Ultra de outro bairro também é nossa) e pelo
     # piso de mesmo ponto (a própria unidade com grafia diferente no feed).
-    nomes = conc["nome"].astype(str) if "nome" in conc.columns else pd.Series("", index=conc.index)
-    redes = conc["rede"].astype(str) if "rede" in conc.columns else pd.Series("", index=conc.index)
-    e_ultra = nomes.str.contains(r"\bultra\s+academia\b", case=False, regex=True) | redes.str.lower().eq("ultra")
-    manter = (d <= raio_m) & (d > casar_m) & ~e_ultra.to_numpy()
+    manter = (d <= raio_m) & (d > casar_m) & ~_mascara_ultra(conc).to_numpy()
     perto = conc[manter].assign(_dist=d[manter]).sort_values("_dist", kind="stable")
 
     agg = _pontos_validos(fatos_agregador)
@@ -507,9 +519,12 @@ def concorrentes_novos(
     O snapshot semanal não guarda coordenada (DEC-029, rota B: lida e descartada); ela vem
     das tabelas de vulnerabilidade, pela chave `(fonte, chave_snapshot)`.
 
-    "Nova" = a primeira semana em que a chave aparece é posterior à PRIMEIRA semana da
-    série e cai nas últimas `semanas`. A exclusão da primeira semana não é detalhe: sem
-    ela, no começo da série TODO o universo pareceria ter acabado de abrir.
+    "Nova" = a primeira semana em que a chave aparece é posterior à ESTREIA DA PRÓPRIA FONTE
+    e cai nas últimas `semanas`. A exclusão da estreia não é detalhe: sem ela, no começo da
+    série TODO o universo daquele feed pareceria ter acabado de abrir. E a estreia é POR
+    FONTE, não da série: cada feed começa a ser fotografado num domingo diferente — contra a
+    primeira semana global, as 22.550 chaves do WellHub passavam como recém-chegadas e a
+    ficha listava o bairro inteiro (Felipe, 18/09).
 
     Entrar no feed não é inaugurar — pode ser credenciamento no agregador. A tela diz.
     """
@@ -521,15 +536,22 @@ def concorrentes_novos(
         return {**vazio, "semanas_na_serie": len(semanas_serie),
                 "ultima_semana": semanas_serie[-1] if semanas_serie else None}
 
+    serie = snapshots.assign(semana=snapshots["semana"].astype(str))
     primeira = (
-        snapshots.assign(semana=snapshots["semana"].astype(str))
-        .groupby(["fonte", "chave_snapshot"], observed=True)["semana"]
+        serie.groupby(["fonte", "chave_snapshot"], observed=True)["semana"]
         .min()
         .reset_index(name="primeira_semana")
     )
+    # A primeira semana descartada é a DA PRÓPRIA FONTE, não a da série inteira. Cada feed
+    # começa a ser fotografado num domingo diferente: em 18/09 a série tinha `unidades` desde
+    # a semana 2026-31 e `wellhub` só a partir de 2026-36 — contra a primeira semana GLOBAL,
+    # as 22.550 chaves do WellHub passavam como recém-chegadas, e a ficha de Uberlândia
+    # listava o bairro inteiro "no agregador desde 2026-36" (Felipe, 18/09). Por fonte,
+    # sobram 142.
+    estreia = primeira.groupby("fonte", observed=True)["primeira_semana"].transform("min")
     recentes = set(semanas_serie[-semanas:])
     novos = primeira[
-        (primeira["primeira_semana"] != semanas_serie[0])
+        (primeira["primeira_semana"] != estreia)
         & primeira["primeira_semana"].isin(recentes)
     ]
     coords = _pontos_validos(coordenadas)
@@ -540,6 +562,8 @@ def concorrentes_novos(
         on=["fonte", "chave_snapshot"],
         how="inner",
     )
+    # A Ultra entra no feed do agregador como qualquer academia — e não é concorrente nova.
+    novos = novos[~_mascara_ultra(novos).to_numpy()].reset_index(drop=True)
     por_unidade: dict[str, list[dict[str, Any]]] = {}
     if len(novos):
         lats, lngs = novos["lat"].to_numpy(), novos["lng"].to_numpy()
