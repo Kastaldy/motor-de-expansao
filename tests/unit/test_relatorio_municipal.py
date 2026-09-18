@@ -1536,14 +1536,23 @@ def _competidor_vizinho() -> pd.DataFrame:
 
 
 def test_mapa_nao_desenha_concorrente_de_fora_do_municipio(monkeypatch):
-    """REGRESSAO do bug: `_draw_pins` so pode receber linhas DO municipio.
+    """REGRESSAO do bug: concorrente de fora do municipio nao pode ser desenhado.
 
-    Captura os frames entregues a `_draw_pins` em vez de inspecionar pixels: o que se quer
-    provar e o recorte, e ler pixel dependeria da geometria do enquadramento (que muda com o
-    foco). `_sample_competitors()` tem 3 linhas, sendo 1 num hex distante; somamos um vizinho
-    proximo, que e o caso que a bbox deixava passar e o hex nao.
+    `_sample_competitors()` tem 3 linhas, sendo 1 num hex distante; somamos um vizinho proximo,
+    que e o caso que a bbox deixava passar e o hex nao. Duas garantias, porque desde 2026-09-17 os
+    mapas tematicos nao desenham concorrente NENHUM (pedido do Juan: em Sao Paulo eram 370 pins):
+    (1) o recorte por municipio continua devolvendo so' as linhas de la -- e ele que alimenta a
+    contagem das paginas e o mapa da Pressao concorrencial; (2) nenhum frame de concorrente chega
+    a `_draw_pins` pelo caminho do relatorio.
     """
     from motor_expansao.dashboard import relatorio_municipal as rm
+
+    df = _sample_df()
+    comp = pd.concat([_sample_competitors(), _competidor_vizinho()], ignore_index=True)
+    recortado = rm.filtrar_pins_do_municipio(comp, hexes_muni=rm._hexes_do_municipio(df))
+    assert len(recortado) == 2, f"vazou pin de fora do municipio: {len(recortado)} linhas"
+    assert set(recortado["rede"]) == {"smart_fit", "bio_ritmo"}
+    assert "bluefit" not in set(recortado["rede"])  # o vizinho proximo, que a bbox deixava passar
 
     recebidos: list[pd.DataFrame | None] = []
 
@@ -1551,19 +1560,9 @@ def test_mapa_nao_desenha_concorrente_de_fora_do_municipio(monkeypatch):
         recebidos.append(None if frame is None else frame.copy())
 
     monkeypatch.setattr(rm, "_draw_pins", _spy)
-
-    df = _sample_df()
-    comp = pd.concat([_sample_competitors(), _competidor_vizinho()], ignore_index=True)
     res = agregar_municipio(df, nome_municipio="SAO PAULO", competitors_df=comp)
     render_mapas_municipio(df, res, competitors_df=comp, ultra_df=_sample_ultra(), basemap=False)
-
-    frames_conc = [f for f in recebidos if f is not None and "rede" in f.columns]
-    assert frames_conc, "nenhuma chamada de _draw_pins com concorrentes"
-    for frame in frames_conc:
-        assert len(frame) == 2, f"vazou pin de fora do municipio: {len(frame)} linhas"
-        assert set(frame["rede"]) == {"smart_fit", "bio_ritmo"}
-        # O vizinho (bluefit) e o distante nao podem chegar ao desenho.
-        assert "bluefit" not in set(frame["rede"])
+    assert not [f for f in recebidos if f is not None and "rede" in f.columns]
 
 
 def test_filtrar_pins_por_poligono_corta_a_faixa_de_fronteira():

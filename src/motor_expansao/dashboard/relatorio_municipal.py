@@ -2569,15 +2569,17 @@ def _text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont)
     return int(bbox[2] - bbox[0])
 
 
-#: Quantas redes concorrentes os mapas tematicos desenham (pedido do Juan, 2026-09-17: "so'
-#: mostrar as principais concorrentes"). Em Sao Paulo os 491 pins cobriam os hexagonos; as 5
-#: maiores redes sao as mesmas que a pagina de Pressao concorrencial ja lista.
-TOP_REDES_NO_MAPA = 5
+#: Quantas redes concorrentes os mapas tematicos desenham. Em 2026-09-17 o Juan levou este numero
+#: a ZERO: com as 5 maiores redes o mapa de Sao Paulo ainda saia com 370 pins (so' a Smart Fit tem
+#: 171), e Resumo/Dominio existem para responder ONDE HA ESPACO. A concorrencia tem duas paginas
+#: proprias (Pressao concorrencial e Espaco e academias) e os totais no painel ao lado.
+#: `principais_redes` fica, e voltar a desenhar as N maiores e' mudar esta constante.
+TOP_REDES_NO_MAPA = 0
 
 
 def principais_redes(competitors_df: pd.DataFrame | None, n: int = TOP_REDES_NO_MAPA) -> list[str]:
     """As `n` redes com mais unidades no municipio, em ordem total (mais unidades, depois nome)."""
-    if competitors_df is None or competitors_df.empty or "rede" not in competitors_df.columns:
+    if n <= 0 or competitors_df is None or competitors_df.empty or "rede" not in competitors_df.columns:
         return []
     rede = competitors_df["rede"].astype("string").str.strip()
     contagem = rede[rede.notna() & (rede != "")].value_counts()
@@ -2638,19 +2640,21 @@ def render_mapas_municipio(
     # Mapas tematicos: so' a Ultra e as maiores redes. A contagem cheia (inclusive independentes)
     # segue nos numeros das paginas e na Pressao concorrencial, que e' onde a oferta e' o assunto.
     redes_principais = principais_redes(competitors_df)
-    comp_principais = _so_as_principais(competitors_df, redes_principais)
-    n_desenhados = (0 if comp_principais is None else len(comp_principais)) + (
-        0 if ultra_df is None else len(ultra_df)
-    )
-    n_total = (0 if competitors_df is None else len(competitors_df)) + (
-        0 if ultra_df is None else len(ultra_df)
-    )
-    nota_pins = (
-        f"no mapa, {n_desenhados} de {n_total} academias: Ultra e as {len(redes_principais)} "
-        f"maiores redes ({', '.join(_prettify_rede(r) for r in redes_principais)})"
-        if redes_principais
-        else None
-    )
+    comp_principais = _so_as_principais(competitors_df, redes_principais) if redes_principais else None
+    n_conc = 0 if competitors_df is None else len(competitors_df)
+    if redes_principais:
+        nota_pins = (
+            f"no mapa, Ultra e as {len(redes_principais)} maiores redes "
+            f"({', '.join(_prettify_rede(r) for r in redes_principais)})"
+        )
+    else:
+        # Declara a ausencia: mapa sem concorrente nenhum desenhado parece cidade sem concorrencia.
+        nota_pins = (
+            f"no mapa, só as unidades Ultra; as {_format_number(n_conc, 0)} concorrentes estão em "
+            "Pressão concorrencial e Espaço e academias"
+            if n_conc
+            else None
+        )
     # Score e residual SEM pins (Juan, 2026-09-17): em capital as logos cobriam os hexagonos --
     # Sao Paulo tem 491 academias. Mesma regra que a versao por bairro ja seguia; quem esta
     # instalado aparece em Resumo, Dominio, Pressao concorrencial e Espaco e academias.

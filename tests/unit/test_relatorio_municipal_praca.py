@@ -314,46 +314,20 @@ def test_service_monta_a_praca_com_crescimento_da_staging(tmp_path, monkeypatch)
 # --------------------------------------------------------------------------- #
 # Pins nos mapas tematicos                                                    #
 # --------------------------------------------------------------------------- #
-def test_score_e_residual_saem_sem_pins(monkeypatch):
-    """Em capital as logos cobriam os hexagonos: score e residual ficam so' com a cor."""
-    from motor_expansao.dashboard import relatorio_municipal as relmun
-
-    recebidos: dict[str, object] = {}
-
-    def _render(df, *, camada, competitors_df=None, ultra_df=None, **k):
-        recebidos[camada] = (competitors_df, ultra_df)
-        return b"PNG"
-
-    monkeypatch.setattr(relmun, "_render_mapa_municipio", _render)
-    monkeypatch.setattr(relmun, "_render_mapa_bairros", lambda *a, **k: b"PNG")
-    df = _df_cidade(1)
-    conc = pd.DataFrame({"rede": ["smart_fit"], "lat": [_LAT], "lng": [_LNG]})
-    ultra = pd.DataFrame({"lat": [_LAT], "lng": [_LNG]})
-    relmun.render_mapas_municipio(df, {"zonas": []}, competitors_df=conc, ultra_df=ultra)
-
-    assert recebidos["score"] == (None, None)
-    assert recebidos["residual"] == (None, None)
-    assert recebidos["cobertura"] == (None, None)
-    for camada in ("resumo", "dominio"):
-        c, u = recebidos[camada]
-        assert c is not None and len(c) == 1 and u is not None and len(u) == 1
-
-
-def test_mapas_tematicos_so_desenham_ultra_e_as_maiores_redes(monkeypatch):
-    """Sao Paulo tem 491 concorrentes: os mapas ficam com a Ultra e as 5 maiores redes, e o
-    rodape do PNG diz quais sao."""
+def test_mapas_tematicos_desenham_so_a_ultra(monkeypatch):
+    """Sao Paulo tem 491 concorrentes: os mapas de Resumo e Dominio ficam so' com a rede propria,
+    e o rodape do PNG diz onde a concorrencia esta."""
     from motor_expansao.dashboard import relatorio_municipal as relmun
 
     recebidos: dict[str, tuple] = {}
 
     def _render(df, *, camada, competitors_df=None, ultra_df=None, nota_pins=None, **k):
-        recebidos[camada] = (competitors_df, nota_pins, k.get("hexes_rotulados"))
+        recebidos[camada] = (competitors_df, ultra_df, nota_pins, k.get("hexes_rotulados"))
         return b"PNG"
 
     monkeypatch.setattr(relmun, "_render_mapa_municipio", _render)
     monkeypatch.setattr(relmun, "_render_mapa_bairros", lambda *a, **k: b"PNG")
-    redes = ["smart_fit"] * 9 + ["bluefit"] * 7 + ["selfit"] * 5 + ["panobianco"] * 4 + ["gavioes"] * 3 + ["pequena"] * 2
-    conc = pd.DataFrame({"rede": redes + [None], "lat": _LAT, "lng": _LNG})
+    conc = pd.DataFrame({"rede": ["smart_fit"] * 9 + [None], "lat": _LAT, "lng": _LNG})
     ultra = pd.DataFrame({"lat": [_LAT], "lng": [_LNG]})
     top5 = {"h_a", "h_b"}
 
@@ -361,20 +335,21 @@ def test_mapas_tematicos_so_desenham_ultra_e_as_maiores_redes(monkeypatch):
         _df_cidade(1), {"zonas": []}, competitors_df=conc, ultra_df=ultra, hexes_rotulados=top5
     )
 
-    assert relmun.principais_redes(conc) == ["smart_fit", "bluefit", "selfit", "panobianco", "gavioes"]
-    pins, nota, rotulados = recebidos["resumo"]
-    assert len(pins) == 28  # 9+7+5+4+3; a rede pequena e a independente ficam de fora
-    assert set(pins["rede"]) == {"smart_fit", "bluefit", "selfit", "panobianco", "gavioes"}
-    assert nota is not None and "5 maiores redes" in nota and "29 de 32" in nota  # 28 concorrentes das 5 redes + 1 Ultra, de 31 + 1 and "Smart Fit" in nota and "pequena" not in nota
-    assert rotulados == top5
-    # mapa sem pins nao promete recorte de academia nenhum
-    assert recebidos["score"][0] is None and recebidos["score"][1] is None
-    assert recebidos["score"][2] == top5
+    assert relmun.TOP_REDES_NO_MAPA == 0
+    assert relmun.principais_redes(conc) == []
+    for camada in ("resumo", "dominio"):
+        pins, ult, nota, rotulados = recebidos[camada]
+        assert pins is None, f"{camada} desenhou concorrente"
+        assert ult is not None and len(ult) == 1
+        assert nota is not None and "só as unidades Ultra" in nota and "10 concorrentes" in nota
+        assert rotulados == top5
+    # score/residual/cobertura seguem sem pin nenhum e sem promessa de recorte
+    for camada in ("score", "residual", "cobertura"):
+        assert recebidos[camada][0] is None and recebidos[camada][2] is None
 
-    # municipio so' com independentes: nao ha o que recortar, o frame passa inteiro
-    so_indep = pd.DataFrame({"rede": [None, None], "lat": _LAT, "lng": _LNG})
-    assert relmun.principais_redes(so_indep) == []
-    assert len(relmun._so_as_principais(so_indep, [])) == 2
+    # a regra volta a desenhar redes so' mudando a constante
+    assert relmun.principais_redes(conc, 1) == ["smart_fit"]
+    assert len(relmun._so_as_principais(conc, ["smart_fit"])) == 9
 
 
 def test_mapa_do_resumo_sai_sem_o_numero_em_cada_hexagono(monkeypatch):
