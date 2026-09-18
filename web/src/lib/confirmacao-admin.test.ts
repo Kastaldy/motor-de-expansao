@@ -277,7 +277,7 @@ describe('redefinir a senha de alguem (15/09)', () => {
 
   it('quando apaga uma senha escolhida, diz isso e pinta de perigo', () => {
     const c = montarConfirmacao({ ...alvo, senhaPropria: true })
-    expect(c.titulo).toBe('Bruno Teste volta para a senha inicial')
+    expect(c.titulo).toBe('Bruno Teste recebe uma senha temporária')
     expect(c.apoio.join(' ')).toContain('deixa de valer agora')
     expect(c.gravidade).toBe('alta')
   })
@@ -288,10 +288,23 @@ describe('redefinir a senha de alguem (15/09)', () => {
     expect(c.gravidade).toBe('media')
   })
 
-  it('deixa claro que o admin nao passa a conhecer a senha de ninguem', () => {
+  it('avisa que o admin VAI ver a senha, uma vez só', () => {
+    /* Até 18/09/2026 este teste guardava a promessa CONTRÁRIA — "você não passa a conhecer a
+       senha de ninguém" —, que era verdade quando a redefinição entregava a senha inicial
+       compartilhada. A D31 a tornou falsa: agora o administrador segura uma credencial viva.
+       Esconder isso dele seria pior que o próprio risco, porque ele não saberia que precisa
+       repassá-la com cuidado nem que não poderá consultá-la depois. */
     const texto = montarConfirmacao({ ...alvo, senhaPropria: true }).apoio.join(' ')
-    expect(texto).toContain('não passa a conhecer a senha de ninguém')
-    expect(texto).toContain('senha inicial')
+    expect(texto).toContain('UMA ÚNICA VEZ')
+    expect(texto).not.toContain('não passa a conhecer a senha de ninguém')
+  })
+
+  it('avisa que as sessoes abertas caem', () => {
+    /* É metade da defesa: sem derrubar sessão, quem tivesse roubado uma continuaria dentro
+       com a senha que a vítima acabou de perder. O admin precisa saber que isso acontece. */
+    expect(montarConfirmacao({ ...alvo, senhaPropria: true }).apoio.join(' ')).toContain(
+      'sessões abertas',
+    )
   })
 
   it('nao promete o que ainda nao vale: o Authelia segue autenticando', () => {

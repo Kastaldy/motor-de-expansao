@@ -2135,10 +2135,18 @@ export interface MinhaSenhaTrocada {
 }
 
 /** Resposta de `POST .../redefinir-senha` (15/09). `tinha_senha_propria` diz se o gesto
- *  apagou uma senha que a pessoa escolheu — é o que a tela usa para o recado certo. */
+ *  apagou uma senha que a pessoa escolheu — é o que a tela usa para o recado certo.
+ *
+ *  `senha_temporaria` entrou na D31 (18/09) e é a ÚNICA vez que um segredo atravessa o corpo
+ *  de uma resposta neste sistema — o token de sessão vai no cookie justamente para não fazer
+ *  isso. A diferença é o destinatário: aqui quem lê é uma pessoa, que vai repassar por
+ *  telefone. Ela chega uma vez e não é reconsultável: se o administrador a perder, o caminho é
+ *  gerar outra, o que invalida esta. Nunca guardar em `localStorage`. */
 export interface AdminSenhaRedefinida {
   id_usuario: number
   tinha_senha_propria: boolean
+  senha_temporaria: string
+  validade_horas: number
 }
 
 /** Resposta de `POST .../exigir-troca` (15/09). `mudou: false` = a troca já estava pedida —

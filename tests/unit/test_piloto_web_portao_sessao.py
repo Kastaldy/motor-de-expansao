@@ -195,7 +195,9 @@ def test_o_Remote_Email_TAMBEM_e_descartado(_ligado: None, monkeypatch: pytest.M
     assert "felipe@ultra.com" not in [v for _n, v in req.headers_do_scope()]
 
 
-def test_a_limpeza_vale_ATE_nas_rotas_publicas(_ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_limpeza_vale_ATE_nas_rotas_publicas(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A limpeza vem ANTES da decisao de rota publica, e e' deliberado: a propria tentativa
     de login nao deve carregar identidade sugerida pelo cliente para a trilha."""
     monkeypatch.setattr(db_sessoes, "validar", lambda _t: pytest.fail("rota publica validou"))
@@ -370,3 +372,59 @@ def test_a_ordem_dos_middlewares_e_a_medida() -> None:
     ]
     nomes = [n for n in nomes if n]
     assert nomes == ["_trilha_acesso", "_portao_de_sessao", "_controle_de_acesso_por_aba"], nomes
+
+
+# --------------------------------------------------------------------------------------
+# Troca de senha PENDENTE vira BLOQUEIO (D31, 18/09)
+# --------------------------------------------------------------------------------------
+
+
+def test_com_troca_pendente_as_rotas_de_dados_sao_403() -> None:
+    """Ate' 18/09/2026 `deve_trocar` era so' sugestao: o modal tinha "Agora nao" e nenhuma rota
+    negava. Quem recebia a senha temporaria dispensava o aviso e ficava nela ate' vencer."""
+    assert acesso.bloqueio_por_troca_pendente("/api/hexagonos") is not None
+    assert acesso.bloqueio_por_troca_pendente("/api/acessos/usuarios") is not None
+    assert acesso.bloqueio_por_troca_pendente("/api/viabilidade") is not None
+
+
+def test_a_pessoa_bloqueada_NAO_fica_sem_saida() -> None:
+    """A parte que importa mais que o bloqueio: sem estas quatro, o bloqueio vira armadilha.
+
+    `/api/me` e' como a SPA descobre que precisa trocar; `/api/me/senha` e' a propria troca, o
+    unico caminho para fora; `/api/logout` deixa desistir e sair; `/api/login` porque quem ainda
+    nao entrou nao esta' neste estado. Um bloqueio sem porta de saida exigiria intervencao no
+    banco para destravar cada pessoa.
+    """
+    for rota in ("/api/me", "/api/me/senha", "/api/logout", "/api/login"):
+        assert acesso.bloqueio_por_troca_pendente(rota) is None, f"{rota} ficou sem saida"
+
+
+def test_a_SPA_e_os_estaticos_carregam_durante_o_bloqueio() -> None:
+    """Bloquear o HTML e o JS deixaria a pessoa numa tela branca, sem o modal que a liberta --
+    o sintoma seria "o sistema parou" e nao "preciso trocar a senha"."""
+    for caminho in ("/", "/index.html", "/assets/app.js"):
+        assert acesso.bloqueio_por_troca_pendente(caminho) is None
+
+
+def test_o_bloqueio_NAO_reusa_a_lista_de_rotas_livres() -> None:
+    """Licao da DEC-037, em forma executavel.
+
+    La', a aba `imobiliaria` reusava o gate de `oportunidades`, e isso tornou impossivel
+    restringir uma sem tirar a outra. Aqui o reuso serviria DADOS (`/api/ufs`,
+    `/api/metodologia` sao livres de aba) a quem ainda esta' na senha temporaria.
+    """
+    assert acesso.ROTAS_COM_TROCA_PENDENTE < acesso.ROTAS_LIVRES, (
+        "o conjunto do bloqueio deixou de ser mais estreito que o das rotas livres"
+    )
+    for servindo_dados in ("/api/ufs", "/api/metodologia"):
+        assert servindo_dados in acesso.ROTAS_LIVRES
+        assert acesso.bloqueio_por_troca_pendente(servindo_dados) is not None
+
+
+def test_o_bloqueio_e_403_e_nao_404() -> None:
+    """Aqui nao ha' nada a esconder -- a pessoa esta' autenticada e sabe quem e'. Um 404 mandaria
+    a SPA tratar como rota inexistente, e o sintoma viraria tela vazia sem explicacao. O texto e'
+    o que ela vai LER, entao diz o que fazer."""
+    motivo = acesso.bloqueio_por_troca_pendente("/api/hexagonos")
+    assert motivo is not None
+    assert "senha" in motivo.lower()

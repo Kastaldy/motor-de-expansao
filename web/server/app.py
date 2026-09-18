@@ -471,6 +471,18 @@ async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-unt
         (b"remote-user", sessao.identidade.login.encode("latin-1", "ignore")),
     ]
 
+    # TROCA DE SENHA PENDENTE (D31): enquanto ela nao acontece, so' um punhado de rotas atende.
+    # Ate' 18/09/2026 `deve_trocar` era so' sugestao na tela, entao quem recebia a senha
+    # temporaria podia dispensar o modal e ficar nela ate' vencer.
+    #
+    # O corte vem DEPOIS da injecao do `remote-user` de proposito: `/api/me` e `/api/me/senha`
+    # atendem neste estado e precisam saber QUEM esta' pedindo -- sem o header elas nao teriam
+    # como resolver a identidade, e a pessoa ficaria sem caminho para sair do bloqueio.
+    if sessao.deve_trocar:
+        motivo = acesso.bloqueio_por_troca_pendente(caminho)
+        if motivo is not None:
+            return JSONResponse({"detail": motivo}, status_code=403)
+
     # Inatividade: so' escreve se a trava de 5 min ja' passou (decisao 2). A decisao e'
     # tomada aqui, com o `ultimo_acesso` que o `validar` JA' devolveu -- sem segunda leitura.
     try:

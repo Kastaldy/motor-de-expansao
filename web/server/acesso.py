@@ -266,6 +266,50 @@ ROTAS_LIVRES = frozenset(
     }
 )
 
+# --- Troca de senha PENDENTE (D31) ----------------------------------------------
+# As UNICAS rotas que atendem enquanto a pessoa ainda deve a troca. Todo o resto responde 403.
+#
+# Ate' 18/09/2026 `deve_trocar_senha_usuario` era so' SUGESTAO: o modal da SPA tinha "Agora nao"
+# e nenhuma rota negava por causa dele (medido). Quem recebia a senha temporaria podia entrar,
+# dispensar o aviso e ficar nela ate' vencer -- e, quando a senha era a inicial COMPARTILHADA,
+# ficar nela para sempre. Bloquear e' o que fecha a janela no primeiro acesso.
+#
+# CONJUNTO PROPRIO, e nao reuso de `ROTAS_LIVRES`, por dois motivos. Primeiro porque aquele e'
+# mais largo: `/api/ufs` e `/api/metodologia` sao livres de ABA e serviriam dados a quem ainda
+# esta' na senha temporaria. Segundo pela licao da DEC-037 -- a aba `imobiliaria` reusava o gate
+# de `oportunidades`, e isso tornou impossivel restringir uma sem tirar a outra. Duas perguntas
+# diferentes merecem duas listas.
+#
+# Cada uma esta' aqui porque SEM ELA a pessoa fica presa sem saida:
+#   * `/api/me`        -> e' como a SPA descobre que precisa trocar (`deve_trocar` no payload);
+#   * `/api/me/senha`  -> e' a propria troca, o unico caminho para fora deste estado;
+#   * `/api/logout`    -> desistir e sair tem de continuar possivel;
+#   * `/api/login`     -> quem ainda nao entrou nao esta' neste estado;
+#   * `/api/health`    -> monitoracao nao e' gente e nao troca senha nenhuma.
+ROTAS_COM_TROCA_PENDENTE = frozenset(
+    {
+        "/api/health",
+        "/api/me",
+        "/api/me/senha",
+        "/api/login",
+        "/api/logout",
+    }
+)
+
+
+def bloqueio_por_troca_pendente(caminho: str) -> str | None:
+    """Motivo do 403 quando a pessoa deve a troca, ou `None` se esta rota atende assim mesmo.
+
+    403 e NAO 404: aqui, ao contrario do painel de acessos, nao ha' nada a esconder -- a pessoa
+    esta' autenticada, sabe quem e', e precisa entender por que nao passa. Um 404 mandaria a SPA
+    tratar como rota inexistente e o sintoma viraria tela vazia sem explicacao.
+    """
+    if caminho in ROTAS_COM_TROCA_PENDENTE:
+        return None
+    if not caminho.startswith("/api/"):
+        return None  # a SPA e seus estaticos precisam CARREGAR para poder mostrar o modal
+    return "Defina uma senha nova para continuar."
+
 # --- Portao de SESSAO (epic do P19, decisao 1 = D30) ----------------------------
 # Camada NOVA e separada das outras tres. As de cima respondem "o que esta pessoa pode?";
 # esta responde "ha' alguem aqui?". Enquanto o Authelia autentica, ela esta' DORMENTE --

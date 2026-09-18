@@ -111,7 +111,15 @@ _COLUNAS_COMPARTILHADAS = ("u.id_usuario", "p.nome_perfil", "pe.chave")
 
 #: O que a sessao acrescenta, e NADA MAIS. Fixado para que uma coluna nova entre com
 #: decisao, nao de carona.
-_EXTRAS_DA_SESSAO = ("u.login_usuario", "s.id_sessao", "s.ultimo_acesso_em_sessao")
+#: `deve_trocar_senha_usuario` entrou na D31: a troca virou BLOQUEIO, e o portao de sessao
+#: precisa saber disso a cada requisicao guardada. Buscar a parte seria segunda ida ao banco
+#: para um dado que ja' esta' na linha que este JOIN le'.
+_EXTRAS_DA_SESSAO = (
+    "u.login_usuario",
+    "s.id_sessao",
+    "s.ultimo_acesso_em_sessao",
+    "u.deve_trocar_senha_usuario",
+)
 
 
 def _colunas_do_select(sql: str) -> list[str]:
@@ -155,7 +163,12 @@ def test_a_comparacao_acima_enxerga_sql_de_verdade() -> None:
     nao guarda nada.
     """
     assert len(_colunas_do_select(rbac.SQL_IDENTIDADE)) == 3
-    assert len(_colunas_do_select(sessoes.SQL_VALIDAR)) == 6
+    # DERIVADO de `_EXTRAS_DA_SESSAO`, e nao um numero cravado. Ate' 18/09/2026 este `6` era
+    # literal, entao acrescentar uma coluna a' consulta exigia lembrar de bumpar DOIS lugares --
+    # e o segundo falhava com "assert 7 == 6", que nao explica nada a quem chegou agora. O teste
+    # continua servindo ao que existe para fazer: um regex quebrado devolveria 0 ou 1 coluna e
+    # nenhuma das duas assercoes fecharia.
+    assert len(_colunas_do_select(sessoes.SQL_VALIDAR)) == 3 + len(_EXTRAS_DA_SESSAO)
 
 
 def test_os_tres_filtros_de_sessao_viva_estao_na_consulta() -> None:
@@ -196,7 +209,7 @@ def test_tokens_nao_repetem() -> None:
 
 
 def test_validar_manda_o_hash_e_a_inatividade(monkeypatch: pytest.MonkeyPatch) -> None:
-    con = _instalar(monkeypatch, [(7, "growth", "rede.ver", "vinicius", 42, None)])
+    con = _instalar(monkeypatch, [(7, "growth", "rede.ver", "vinicius", 42, None, False)])
     valida = sessoes.validar("token-de-teste")
 
     _sql, params = _sql_do(con, "FROM sessoes s")
@@ -211,8 +224,8 @@ def test_validar_agrega_as_permissoes_de_varias_linhas(monkeypatch: pytest.Monke
     _instalar(
         monkeypatch,
         [
-            (7, "growth", "rede.ver", "vinicius", 42, None),
-            (7, "growth", "viabilidade.simular", "vinicius", 42, None),
+            (7, "growth", "rede.ver", "vinicius", 42, None, False),
+            (7, "growth", "viabilidade.simular", "vinicius", 42, None, False),
         ],
     )
     valida = sessoes.validar("t")
@@ -225,7 +238,7 @@ def test_perfil_sem_permissao_nenhuma_existe_e_nao_pode_nada(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """`chave` nula pelo LEFT JOIN: a pessoa EXISTE e nao pode nada -- diferente de `None`."""
-    _instalar(monkeypatch, [(7, "novato", None, "alguem", 42, None)])
+    _instalar(monkeypatch, [(7, "novato", None, "alguem", 42, None, False)])
     valida = sessoes.validar("t")
     assert valida is not None
     assert valida.identidade.permissoes == frozenset()
@@ -238,7 +251,7 @@ def test_sem_linha_nao_ha_sessao(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_token_vazio_nao_consulta_o_banco(monkeypatch: pytest.MonkeyPatch) -> None:
     """Curto-circuito: sem token nao ha' o que perguntar, e perguntar custaria uma ida."""
-    con = _instalar(monkeypatch, [(7, "growth", "rede.ver", "v", 42, None)])
+    con = _instalar(monkeypatch, [(7, "growth", "rede.ver", "v", 42, None, False)])
     assert sessoes.validar("") is None
     assert con.executados == [], "consultou o banco com token vazio"
 
