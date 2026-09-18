@@ -1642,10 +1642,10 @@ def _hex_boundary_mercator(hex_id: str) -> list[tuple[float, float]]:
 _FOCUS_MIN_SPAN_M = 5000.0
 # Padding fracional aplicado ao bbox de foco (AJUSTE 1): margem de ~16% em cada eixo.
 _FOCUS_PAD_FRAC = 0.08
-# O Resumo fecha nos mesmos hexagonos do Dominio, porem com margem MAIOR: ali a pergunta e'
-# "quanto espaco ha nesta cidade", entao o entorno precisa aparecer (Juan, 2026-09-17: "tirar um
-# pouco do zoom"). O Dominio, que numera os 10, continua apertado.
-_FOCUS_PAD_FRAC_RESUMO = 0.55
+# O Resumo fecha nos hexagonos APROVADOS (os verdes), com margem propria: ali a pergunta e'
+# "quanto espaco ha nesta cidade", entao o entorno precisa aparecer -- mas sem a cauda de
+# hexagonos cinza que os PINS traziam para dentro do quadro (Juan, 2026-09-17).
+_FOCUS_PAD_FRAC_RESUMO = 0.12
 
 
 def _focus_bounds_mercator(
@@ -2028,10 +2028,13 @@ def _render_mapa_municipio(
                 color = _HEX_REPROVADO_RGBA
             odraw.polygon(pixels, fill=color, outline=(255, 255, 255, 90))
         elif camada == "resumo":
-            if destaque_mask[pos]:
-                color = _HEX_DESTAQUE_RGBA if fonte_propria[pos] else _HEX_DESTAQUE_MUNICIPAL_RGBA
-            else:
-                color = _HEX_NEUTRO_RGBA
+            # So' os APROVADOS (2026-09-17, pedido do Juan: "respeitando os hexagonos verdes,
+            # tirando os cinzas"). O cinza era a cauda nao aprovada -- em Sao Paulo, a faixa sul
+            # -- que enchia o quadro sem dizer nada: a pagina fala do espaco que EXISTE. A
+            # "Visao Geral do Municipio" segue mostrando aprovados e reprovados lado a lado.
+            if not destaque_mask[pos]:
+                continue
+            color = _HEX_DESTAQUE_RGBA if fonte_propria[pos] else _HEX_DESTAQUE_MUNICIPAL_RGBA
             odraw.polygon(pixels, fill=color, outline=(255, 255, 255, 90))
             # O Residual de cada hexagono destacado SAIU do mapa em 2026-09-17, a pedido do Juan:
             # em Sao Paulo eram 154 plaquinhas e o mapa virava um tapete de numeros. Os valores
@@ -2674,16 +2677,9 @@ def render_mapas_municipio(
     # Resumo e Dominio fecham o quadro nos hexagonos escolhidos (zoom na melhor area); os demais
     # seguem com o foco de sempre, agora com menos margem em volta.
     foco_top = _focus_bounds_mercator(df_muni, hexes_foco=hexes_top) if hexes_top else None
-    foco_resumo = (
-        _focus_bounds_mercator(df_muni, hexes_foco=hexes_top, pad_frac=_FOCUS_PAD_FRAC_RESUMO)
-        if hexes_top
-        else None
-    )
-    # Teto: a margem larga nunca pode abrir MAIS que o mapa da cidade -- em municipio pequeno,
-    # ou com os escolhidos espalhados, ela passaria do proprio municipio e viraria zoom negativo.
-    if foco_resumo is not None and focus_bounds is not None:
-        if (foco_resumo[2] - foco_resumo[0]) >= (focus_bounds[2] - focus_bounds[0]):
-            foco_resumo = focus_bounds
+    # Resumo: so' os hexagonos APROVADOS, SEM os pins no calculo. Com eles, uma unidade Ultra no
+    # extremo sul de Sao Paulo esticava o quadro e trazia junto a cauda de hexagonos cinza.
+    foco_resumo = _focus_bounds_mercator(df_muni, pad_frac=_FOCUS_PAD_FRAC_RESUMO) or focus_bounds
     # Mapas tematicos: so' a Ultra e as maiores redes. A contagem cheia (inclusive independentes)
     # segue nos numeros das paginas e na Pressao concorrencial, que e' onde a oferta e' o assunto.
     redes_principais = principais_redes(competitors_df)
@@ -2718,7 +2714,7 @@ def render_mapas_municipio(
             width=width,
             height=height,
             focus_bounds=(
-                (foco_resumo or focus_bounds)
+                foco_resumo
                 if camada == "resumo"
                 else (foco_top or focus_bounds) if camada == "dominio" else focus_bounds
             ),

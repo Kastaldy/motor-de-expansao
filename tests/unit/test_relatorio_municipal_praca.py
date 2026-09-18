@@ -370,12 +370,29 @@ def test_mapa_do_resumo_sai_sem_o_numero_em_cada_hexagono(monkeypatch):
 
 
 def test_dominio_numera_so_o_top_e_resumo_fecha_nos_escolhidos(monkeypatch):
-    """Dominio: cor e numero de zona so' nos 10 melhores. Resumo e Dominio enquadram esses
-    hexagonos; score e residual seguem com o foco da cidade."""
+    """Dominio: cor e numero de zona so' nos 10 melhores, enquadrados neles. Resumo: quadro nos
+    hexagonos APROVADOS, sem os pins no calculo -- com eles, uma unidade num hexagono afastado
+    esticava o mapa e trazia a cauda de hexagonos cinza. Score e residual seguem no foco de sempre.
+    """
     from motor_expansao.dashboard import relatorio_municipal as relmun
 
-    df = _df_cidade(2)
-    top = {str(h) for h in df["hex_id"].iloc[:3]}
+    # mancha aprovada compacta (anel 1) + um hexagono afastado e NAO aprovado, com uma Ultra nele
+    centro = h3.latlng_to_cell(_LAT, _LNG, 7)
+    perto = sorted(h3.grid_disk(centro, 1))
+    afastado = h3.grid_ring(centro, 8)[0]
+    df = pd.DataFrame(
+        {
+            "hex_id": [*perto, afastado],
+            "nome_municipio": "SAO PAULO",
+            "uf": "SP",
+            "oferta_efetiva_disponivel": [5_000.0] * len(perto) + [100.0],
+            "score_setor_2022_calibrado": 50.0,
+            "pop_total_setor_2022": 1_000.0,
+        }
+    )
+    lat_p, lng_p = h3.cell_to_latlng(afastado)
+    ultra = pd.DataFrame({"lat": [lat_p], "lng": [lng_p]})
+    top = {str(h) for h in perto[:3]}
     vistos: dict[str, tuple] = {}
 
     def _render(d, *, camada, focus_bounds=None, hexes_top=None, **k):
@@ -384,17 +401,18 @@ def test_dominio_numera_so_o_top_e_resumo_fecha_nos_escolhidos(monkeypatch):
 
     monkeypatch.setattr(relmun, "_render_mapa_municipio", _render)
     monkeypatch.setattr(relmun, "_render_mapa_bairros", lambda *a, **k: b"PNG")
-    relmun.render_mapas_municipio(df, {"zonas": []}, hexes_top=top)
+    relmun.render_mapas_municipio(df, {"zonas": []}, ultra_df=ultra, hexes_top=top)
 
     assert vistos["dominio"][1] == top
     assert vistos["resumo"][1] is None  # so' o dominio numera
-    foco_top = relmun._focus_bounds_mercator(df, hexes_foco=top)
-    assert vistos["dominio"][0] == foco_top
-    assert vistos["score"][0] == relmun._focus_bounds_mercator(df)
-    # o Resumo fecha nos mesmos hexagonos, com margem maior que a do Dominio, e nunca abre mais
-    # que o mapa da cidade (aqui, com 3 escolhidos de 19 hexagonos, o teto e' quem manda)
-    largura = lambda b: b[2] - b[0]  # noqa: E731
-    assert largura(foco_top) < largura(vistos["resumo"][0]) <= largura(vistos["score"][0])
+    assert vistos["dominio"][0] == relmun._focus_bounds_mercator(df, hexes_foco=top)
+    assert vistos["score"][0] == relmun._focus_bounds_mercator(df, ultra_df=ultra)
+    assert vistos["resumo"][0] == relmun._focus_bounds_mercator(
+        df, pad_frac=relmun._FOCUS_PAD_FRAC_RESUMO
+    )
+    # o quadro do Resumo NAO estica ate' a unidade do hexagono afastado
+    altura = lambda b: b[3] - b[1]  # noqa: E731
+    assert altura(vistos["resumo"][0]) < altura(vistos["score"][0])
 
 
 def test_zona_pintada_so_nos_hexagonos_do_top():
@@ -423,3 +441,27 @@ def test_zona_pintada_so_nos_hexagonos_do_top():
     px_tres = int(np.any(_arr(set(ids[:3])) != sem_zona, axis=-1).sum())
     assert px_todos > 0
     assert 0 < px_tres < px_todos / 2
+
+
+def test_resumo_desenha_so_os_aprovados():
+    """O mapa do Resumo perdeu o cinza dos nao aprovados; a Visao Geral continua com os dois.
+
+    Prova por EQUIVALENCIA: se o nao aprovado nao e' desenhado, o mapa sai identico ao de um
+    frame que nem sequer o contem. Procurar o tom cinza no PNG nao serve -- o fundo de ruas tem
+    cinzas parecidos.
+    """
+    from motor_expansao.dashboard import relatorio_municipal as relmun
+
+    df = _df_cidade(2)  # oferta 500 + 800*i: os dois primeiros ficam abaixo do corte de 2.000
+    so_aprovados = df.loc[df["oferta_efetiva_disponivel"] >= 2_000]
+    assert len(so_aprovados) < len(df)
+    result = _resultado(df)
+
+    def _png(camada, frame):
+        return relmun._render_mapa_municipio(
+            frame, camada=camada, municipio_result=result, basemap=False,
+            focus_bounds=relmun._focus_bounds_mercator(df),
+        )
+
+    assert _png("resumo", df) == _png("resumo", so_aprovados)
+    assert _png("cobertura", df) != _png("cobertura", so_aprovados)
