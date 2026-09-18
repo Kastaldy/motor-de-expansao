@@ -47,7 +47,7 @@ from datetime import date
 VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v4"
 VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
-VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v8"  # v8: DEC-062
+VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v9"  # v9: DEC-063
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
 H3_RES_CONTRATO = 7
@@ -416,7 +416,30 @@ PESOS_ALVO_D4: dict[str, float] = {"s1": 0.15, "s2": 0.25, "s3": 0.35, "s4": 0.2
 
 # S2 (rating in-app) é `n/d` PERMANENTE no Plano B (contrato §7 / D3) até o BLK-MA-08 ajustar o
 # coletor. Reativar o sinal 2 é remover UMA entrada desta tupla — a fórmula do score não muda.
-SINAIS_INATIVOS: tuple[str, ...] = ("s2",)
+# `[DEC-063]` O **s1 entra aqui**, e a razao e' medida, nao de gosto.
+#
+# O sinal pergunta "esta academia esta' em um agregador ou nos dois?" -- propriedade da ACADEMIA.
+# Mas ele e' medido por HEXAGONO (`n_agregadores_no_hex`), porque quando foi construido nao existia
+# identidade cross-provider: a chave do snapshot embute a `fonte`, entao "quantos agregadores cobrem
+# esta linha" seria constante `1`. O hex era a unica granularidade computavel.
+#
+# Com o TotalPass na serie, esse contorno passa a MENTIR em escala: o hex declara "2 agregadores"
+# para 91,45% das independentes do WellHub, mas so' 54,53% tem gemea do TotalPass a <= 50 m --
+# **falso em 36,99% do universo**, num sinal de peso efetivo 0,600. O proprio modulo ja' declarava
+# o vies em prosa; esta DEC mediu o tamanho.
+#
+# POR QUE TIRAR DA CONTA E NAO CONSERTAR AGORA. A dedup JA' responde a pergunta por academia (e' o
+# que a torna corrigivel -- ver a pendencia abaixo), e a correcao foi MEDIDA: ela reordena a lista
+# a Spearman **0,475**, a maior reordenacao ja' considerada neste repo, porque o sinal e' binario
+# (`{0; 0,5}`) e pesa 0,600. Corrigir o endereco nao tira o degrau.
+#
+# Tirando-o da conta, a lista NAO se move: `v1` assume hoje um UNICO valor (`[0.5]`, medido), entao
+# `30 + 40*v6` vira `100*v6` -- monotonico. O ganho vem inteiro: universo 19.329 -> 35.170.
+#
+# **PENDENCIA INSEPARAVEL:** religar o s1 e corrigir o GRAO sao o MESMO ato. Com o TotalPass na
+# serie, remover `"s1"` daqui sem levar o sinal para o grao por ACADEMIA ressuscita os 36,99% no
+# mesmo instante. Quem for religar tem de ler isto antes: nao e' "remover uma entrada de uma lista".
+SINAIS_INATIVOS: tuple[str, ...] = ("s1", "s2")
 
 # `novo` mapeia para `None` (= AUSENTE), NUNCA para `0.0`: ler "série curta demais para julgar"
 # como "estável" inverteria o sinal em silêncio. As chaves são EXATAMENTE `STATUS_CHURN_VALIDOS`
@@ -481,7 +504,7 @@ CONTRATO_COLUNAS_SCORE: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Sinal 6 — pressão competitiva com decaimento por distância (BLK-MA-12)
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v5"  # v5: DEC-062
+VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v6"  # v6: DEC-063
 
 # Raio de TRUNCAMENTO, não de alcance: quem define o alcance efetivo é a forma do kernel. 2.000 m
 # é o mesmo do `pressao_concorrencial_score_2km` da camada de mercado — manter o número igual é o
@@ -582,6 +605,30 @@ DEDUP_INDEPENDENTES_M = 50.0
 #
 # O default e' `None` = comportamento de HOJE, byte a byte (nenhuma dedup dentro da mesma fonte).
 DEDUP_INDEPENDENTES_NOME_M = 150.0
+
+# `[DEC-063]` Alcance do casamento que responde "esta academia esta' NOS DOIS apps?".
+#
+# **NAO e' a regua da dedup de OFERTA, e a diferenca e' deliberada.** La' (`DEDUP_INDEPENDENTES_M`,
+# 50 m) o custo de errar e' assimetrico num sentido: nao colapsar DOBRA a oferta de toda academia
+# listada nas duas fontes -- erro sistematico, em massa, invisivel. Aqui o pino AFIRMA um fato ao
+# operador, e afirmar errado num artefato entregue e' pior que omitir; mas omitir tambem AFIRMA
+# ("so' TotalPass" e' uma afirmacao), entao nao existe lado seguro e a regua e' escolha de produto.
+#
+# Medido nos feeds reais de 2026-09-17 (universo aproximado de independentes -- o feed bruto nao tem
+# `rede`, entao o numero e' TETO):
+#
+#   | regua                | "ambos" | so WH  | so TP  |
+#   |----------------------|---------|--------|--------|
+#   |  50 m (distancia)    | 11.640  | 30.639 |  4.786 |
+#   |  50 m + nome         |  7.629  | 35.749 |  8.797 |
+#   | 100 m (distancia)    | 12.838  | 28.042 |  3.588 |
+#   | 100 m + nome         |  8.250  | 35.123 |  8.176 |  <- ESCOLHIDA (Vinicius, 2026-09-17)
+#
+# O 100 m NAO compra ruido: dos 1.198 pares que so' aparecem entre 50 e 100 m, 621 (51,8%) concordam
+# no nome -- menos que os 65,5% da faixa curta, mas longe dos 1,55% que a tabela de
+# `DEDUP_INDEPENDENTES_NOME_M` mede a 300 m DENTRO da mesma fonte. Faz sentido: apps diferentes
+# discordam de coordenada, entao par REAL legitimamente fica mais longe.
+RAIO_MESMA_ACADEMIA_ENTRE_APPS_M = 100.0
 
 # Resolução H3 do bucket espacial da dedup (aresta ~29 m). Serve só para não comparar todos os
 # pares (19.329² = 373 M): o candidato é buscado na própria célula + um `grid_disk` de raio
@@ -793,7 +840,7 @@ CONTRATO_COLUNAS_PRESSAO: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Lista priorizada de alvos de M&A (D5/D6) — BLK-MA-05
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v5"  # v5: DEC-062
+VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v6"  # v6: DEC-063
 
 # Gate D5 (ratificado em 2026-07-23; reabrir exige DEC). A INVERSÃO do §2 mora aqui: comprar quer
 # demanda ALTA + residual BAIXO, o OPOSTO de `abrir_agora`.
@@ -889,7 +936,7 @@ CONTRATO_COLUNAS_ALVOS_MA: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Variante NOMEADA (D1-B) — BLK-MA-15
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v6"  # v6: DEC-062
+VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v8"  # v8: DEC-063, `fontes_da_academia`
 
 # O UNICO contrato desta camada que carrega IDENTIDADE e COORDENADA, autorizado pela emenda de
 # 2026-08-14 a DEC-028 (decidida por Vinicius). Grao: uma linha por academia.
@@ -903,6 +950,14 @@ VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v6"  # v6: DEC-062
 # nao e' desenhavel. Descarta-la esconderia um alvo por acidente de coleta.
 CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
     "fonte": "string",
+    # `[DEC-063]` QUAIS apps listam esta academia, em ordem alfabetica e separados por virgula
+    # (`"wellhub"`, `"totalpass"`, `"totalpass,wellhub"`). Idioma de `fontes_lidas` (snapshot v4).
+    #
+    # NAO e' um booleano "ambos" de proposito: a string diz QUAIS, sobrevive a um terceiro
+    # agregador, e o desenho deriva "ambos" da virgula. NULA quando a academia nao tem coordenada
+    # -- ela existe (tem score) e nao e' casavel, entao carimbar a propria fonte sozinha AFIRMARIA
+    # exclusividade nao medida. Mesma regra da auditoria da pressao: ausencia de medicao e' nula.
+    "fontes_da_academia": "string",
     "chave_snapshot": "string",
     "nome": "string",  # IDENTIDADE — o ponto do artefato (emenda DEC-028)
     "lat": "Float64",  # nulavel: sem coordenada a academia existe, so' nao tem pin
@@ -953,7 +1008,7 @@ CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
 # no mesmo dia e o score leria um evento de negociacao como 440 alvos. O S6 nao tem esse defeito: e'
 # geografico e nao sabe se a academia e' de rede. Molde do G-D2 e da DEC-026 — o fato entra antes do
 # peso.
-VERSAO_CONTRATO_REDES_NOMEADAS = "redes_ma_nomeadas_v3"  # v3: DEC-062
+VERSAO_CONTRATO_REDES_NOMEADAS = "redes_ma_nomeadas_v4"  # v4: DEC-063
 
 CONTRATO_COLUNAS_REDES_NOMEADAS: dict[str, str] = {
     "fonte": "string",
@@ -1318,6 +1373,7 @@ __all__ = [
     "DEDUP_CADEIA_FEED_COLUNA_NOME_MAPEADO",
     "DEDUP_INDEPENDENTES_M",
     "DEDUP_INDEPENDENTES_NOME_M",
+    "RAIO_MESMA_ACADEMIA_ENTRE_APPS_M",
     "DEDUP_H3_RES",
     "DEDUP_NOME_H3_RES",
     "DEDUP_K_MARGEM_ANEIS",

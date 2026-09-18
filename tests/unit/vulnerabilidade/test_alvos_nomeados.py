@@ -65,6 +65,134 @@ def _coordenadas(nomes: dict[str, str], *, sem_coord: tuple[str, ...] = ()) -> p
 
 
 # --------------------------------------------------------------------------- #
+# `[DEC-063]` Fixtures MULTI-FONTE, para a coluna `fontes_da_academia`.
+#
+# O `_coordenadas` acima crava `fonte="totalpass"` e poe tudo na MESMA coordenada — com isso todo
+# par sairia a 0 m e o raio de 100 m nunca seria exercitado. Estes irmaos existem por isso; alterar
+# o compartilhado perturbaria os testes que ja' dependem da forma dele.
+# --------------------------------------------------------------------------- #
+_LAT_BASE, _LNG_BASE = -23.55, -46.63
+_DELTA_PERTO = 0.0005   # ~55 m: DENTRO do raio
+_DELTA_LONGE = 0.0015   # ~167 m: FORA do raio
+
+
+def _score_multi(pares: list[tuple[str, str]]) -> pd.DataFrame:
+    """Score com linhas de fontes DIFERENTES. `pares` = `[(chave, fonte)]`."""
+    return calcular_score_vulnerabilidade(
+        churn=_churn(
+            [
+                _linha_churn(k, fonte=f, hex_id=HEX_A, n_semanas_serie=13, interpretavel=True)
+                for k, f in pares
+            ]
+        ),
+        presenca=_presenca([_linha_presenca(HEX_A)]),
+    )
+
+
+def _coord_multi(linhas: list[tuple[str, str, str, float | None]]) -> pd.DataFrame:
+    """`linhas` = `[(fonte, chave, nome, delta_lat)]`. `delta_lat=None` -> sem coordenada."""
+    return pd.DataFrame(
+        [
+            {
+                "fonte": fonte,
+                "chave_snapshot": chave,
+                "nome": nome,
+                "lat": None if delta is None else _LAT_BASE + delta,
+                "lng": None if delta is None else _LNG_BASE,
+            }
+            for fonte, chave, nome, delta in linhas
+        ],
+        columns=["fonte", "chave_snapshot", "nome", "lat", "lng"],
+    )
+
+
+def _fontes_de(df: pd.DataFrame, chave: str) -> object:
+    recorte = df[df["chave_snapshot"] == chave]
+    assert len(recorte) == 1, f"a chave {chave} deveria ter exatamente 1 linha"
+    return recorte.iloc[0]["fontes_da_academia"]
+
+
+def test_par_entre_apps_perto_e_com_nome_que_casa_vira_ambos() -> None:
+    """A promessa da coluna: as DUAS linhas passam a declarar as duas fontes."""
+    out = m.montar_alvos_nomeados(
+        _score_multi([("k_tp", "totalpass"), ("k_wh", "wellhub")]),
+        _coord_multi([
+            ("totalpass", "k_tp", "Academia Alfa", 0.0),
+            ("wellhub", "k_wh", "Academia Alfa", _DELTA_PERTO),
+        ]),
+    )
+    assert str(_fontes_de(out, "k_tp")) == "totalpass,wellhub"
+    assert str(_fontes_de(out, "k_wh")) == "totalpass,wellhub"
+
+
+def test_par_perto_com_nome_que_NAO_casa_fica_cada_um_na_sua_fonte() -> None:
+    """A regua escolhida e' `100 m E nome`, nao `OU`: perto sem nome nao basta."""
+    out = m.montar_alvos_nomeados(
+        _score_multi([("k_tp", "totalpass"), ("k_wh", "wellhub")]),
+        _coord_multi([
+            ("totalpass", "k_tp", "Academia Alfa", 0.0),
+            ("wellhub", "k_wh", "Studio Beta Pilates", _DELTA_PERTO),
+        ]),
+    )
+    assert str(_fontes_de(out, "k_tp")) == "totalpass"
+    assert str(_fontes_de(out, "k_wh")) == "wellhub"
+
+
+def test_par_com_nome_que_casa_mas_LONGE_nao_vira_ambos() -> None:
+    """O raio MORDE — e este teste e' o que protege o bucket H3.
+
+    Um `k` sub-dimensionado nao levanta erro: ele devolve "nenhum casamento", que e' exatamente o
+    que um raio correto devolve quando nao ha' par. O defeito so' aparece com um caso que DEVERIA
+    casar por nome e nao deve casar por distancia.
+    """
+    out = m.montar_alvos_nomeados(
+        _score_multi([("k_tp", "totalpass"), ("k_wh", "wellhub")]),
+        _coord_multi([
+            ("totalpass", "k_tp", "Academia Alfa", 0.0),
+            ("wellhub", "k_wh", "Academia Alfa", _DELTA_LONGE),
+        ]),
+    )
+    assert str(_fontes_de(out, "k_tp")) == "totalpass"
+    assert str(_fontes_de(out, "k_wh")) == "wellhub"
+
+
+def test_com_uma_fonte_so_cada_linha_sai_com_a_propria_fonte() -> None:
+    """O degrade de `--fontes wellhub`, que sai DE GRACA — e de graca e' onde ninguem olha.
+
+    `coordenadas_por_chave(fontes=...)` ja' recortou a montante, entao nao existe par entre fontes
+    e nenhum caso especial e' preciso. Sem este teste, quebrar isso passaria em silencio.
+    """
+    out = m.montar_alvos_nomeados(
+        _score_multi([("k1", "wellhub"), ("k2", "wellhub")]),
+        _coord_multi([
+            ("wellhub", "k1", "Academia Alfa", 0.0),
+            ("wellhub", "k2", "Academia Alfa", _DELTA_PERTO),
+        ]),
+    )
+    assert str(_fontes_de(out, "k1")) == "wellhub"
+    assert str(_fontes_de(out, "k2")) == "wellhub"
+
+
+def test_academia_sem_coordenada_sai_com_fontes_NULA() -> None:
+    """Nulo, nao a propria fonte: a linha existe e NAO e' casavel.
+
+    Carimbar `"totalpass"` sozinho afirmaria exclusividade que nao foi medida — mesma regra da
+    auditoria da pressao, onde ausencia de medicao e' nula e nunca zero.
+    """
+    out = m.montar_alvos_nomeados(
+        _score_multi([("k_sem", "totalpass")]),
+        _coord_multi([("totalpass", "k_sem", "Academia Alfa", None)]),
+    )
+    assert pd.isna(_fontes_de(out, "k_sem")), "sem coordenada -> nulo, nunca a propria fonte"
+
+
+def test_contrato_carrega_a_coluna_e_a_versao_subiu() -> None:
+    assert "fontes_da_academia" in c.CONTRATO_COLUNAS_ALVOS_NOMEADOS
+    assert c.VERSAO_CONTRATO_ALVOS_NOMEADOS == "alvos_ma_nomeados_v8"
+    assert c.RAIO_MESMA_ACADEMIA_ENTRE_APPS_M == 100.0
+
+
+# --------------------------------------------------------------------------- #
 # O join
 # --------------------------------------------------------------------------- #
 def test_identidade_e_score_chegam_na_mesma_linha() -> None:

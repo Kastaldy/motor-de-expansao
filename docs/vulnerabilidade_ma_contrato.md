@@ -137,7 +137,7 @@ tem demanda e interesse de presença). É um funil comercial, não uma decisão 
   `sumiu_recente` no mesmo dia, e o composto leria um evento de negociação como 440 alvos. Molde do
   G-D2 e da DEC-026: o fato entra antes do peso.
 
-  Artefato próprio, **`redes_ma_nomeadas_v3`** (20 colunas, gitignored, opt-in por `--saida-redes`),
+  Artefato próprio, **`redes_ma_nomeadas_v4`** (20 colunas, gitignored, opt-in por `--saida-redes`),
   com guard que levanta se qualquer coluna `score_*`/`v6` aparecer nele. **A pressão dessas unidades
   já era calculada e descartada** — o cálculo roda sobre o feed inteiro (22.173 linhas) e é o join do
   score que as filtra —, então esta metade não recalcula nada: materializa o que era jogado fora.
@@ -155,7 +155,7 @@ tem demanda e interesse de presença). É um funil comercial, não uma decisão 
   >
   > **[DEC-062, 2026-09-15] O split muda de novo.** Com a trava de município e o raio ampliado
   > ligados no entregável, ele passa a **714 com pin próprio / 2.130 já cobertas**
-  > (`redes_ma_nomeadas_v3`). A expectativa da auditoria do pin acompanha o artefato regenerado.
+  > (`redes_ma_nomeadas_v4`). A expectativa da auditoria do pin acompanha o artefato regenerado.
 
 ---
 
@@ -1081,11 +1081,11 @@ Estado em **2026-08-25**:
 | `VERSAO_CONTRATO_SNAPSHOT` | `snapshots_concorrentes_v4` |
 | `VERSAO_CONTRATO_CHURN` | `churn_staleness_v2` |
 | `VERSAO_CONTRATO_PRESENCA_AGREGADOR` | `presenca_agregador_v1` |
-| `VERSAO_CONTRATO_SCORE` | `score_vulnerabilidade_v8` |
-| `VERSAO_CONTRATO_PRESSAO` | `pressao_competitiva_v5` |
-| `VERSAO_CONTRATO_ALVOS_MA` | `alvos_ma_v5` |
-| `VERSAO_CONTRATO_ALVOS_NOMEADOS` | `alvos_ma_nomeados_v6` |
-| `VERSAO_CONTRATO_REDES_NOMEADAS` | `redes_ma_nomeadas_v3` |
+| `VERSAO_CONTRATO_SCORE` | `score_vulnerabilidade_v9` |
+| `VERSAO_CONTRATO_PRESSAO` | `pressao_competitiva_v6` |
+| `VERSAO_CONTRATO_ALVOS_MA` | `alvos_ma_v6` |
+| `VERSAO_CONTRATO_ALVOS_NOMEADOS` | `alvos_ma_nomeados_v8` |
+| `VERSAO_CONTRATO_REDES_NOMEADAS` | `redes_ma_nomeadas_v4` |
 
 Cada artefato carrega a sua na coluna `versao_contrato` — é assim que se descobre, sem adivinhação,
 se um parquet em produção é da safra corrente.

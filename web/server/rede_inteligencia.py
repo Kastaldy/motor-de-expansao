@@ -271,7 +271,7 @@ def concorrentes_no_entorno(
 ) -> list[dict[str, Any]]:
     """Cada academia a até `raio_m` da unidade, para o MAPA da ficha, da mais próxima à mais longe.
 
-    `oferta` é a união da DEC-046 (`lat`, `lng`, `nome`, `rede`, `classe`). Os fatos do
+    `oferta` é a união da DEC-046 (`lat`, `lng`, `nome`, `rede`, `classe`, `fonte`). Os fatos do
     agregador — nota e avaliações do Wellhub e o score de vulnerabilidade, que só as
     independentes têm (DEC-035) — vêm de outra tabela e são casados pelo ponto mais
     próximo a até `casar_m`. Sem par, os campos ficam `None`: ausência nunca vira nota zero.
@@ -304,6 +304,22 @@ def concorrentes_no_entorno(
             "rede": (str(linha.get("rede")).strip() or None) if pd.notna(linha.get("rede")) else None,
             "classe": str(linha.get("classe") or "cadeia"),
             "distancia_m": _r(linha["_dist"], 0),
+            # `[DEC-063]` De qual app veio a academia — é o que decide a arte do pino. Sai da
+            # PRÓPRIA linha da união (a DEC-063 põe `fonte` em `_COLS_OFERTA`), e não da tabela
+            # de fatos casada por ponto: o pino precisa da marca certa mesmo quando não há par
+            # dentro de `casar_m`.
+            "fonte": (
+                (str(linha.get("fonte")).strip().lower() or None)
+                if pd.notna(linha.get("fonte"))
+                else None
+            ),
+            # `[DEC-063 / fatia 2]` Sai da PROPRIA linha da uniao, como a `fonte` — e nao da tabela
+            # de fatos casada por ponto, que pode nao ter par.
+            "fontes_da_academia": (
+                (str(linha.get("fontes_da_academia")).strip().lower() or None)
+                if pd.notna(linha.get("fontes_da_academia"))
+                else None
+            ),
             "nota_wellhub": None,
             "avaliacoes": None,
             "vulnerabilidade": None,

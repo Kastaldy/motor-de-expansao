@@ -243,6 +243,177 @@ def test_arte_do_wellhub_do_pacote_e_a_mesma_do_piloto():
     assert AGREGADOR_LOGO_PACOTE.read_bytes() == piloto.read_bytes()
 
 
+def test_a_arte_do_totalpass_e_CONVERSAO_FIEL_e_nao_copia_de_bytes():
+    """`[DEC-063]` O invariante do TotalPass e' DIFERENTE do WellHub, e de proposito.
+
+    O do WellHub e' igualdade de BYTES: a arte do piloto ja' e' PNG e foi copiada. O original do
+    TotalPass e' JPEG -- e `_png_to_pin_svg` crava `data:image/png` no `href` e recorta a logo num
+    circulo, entao um JPEG entraria mentindo sobre o proprio tipo e com os cantos brancos dentro
+    do recorte. A arte empacotada e' CONVERSAO; exigir "mesmos bytes" seria falso por construcao,
+    e o que se pode exigir de uma conversao e' mesmos PIXELS.
+    """
+    from PIL import Image
+
+    from motor_expansao.dashboard.competitors import AGREGADOR_TP_LOGO_PACOTE
+
+    piloto = Path(__file__).resolve().parents[2] / "web" / "public" / "logo-totalpass.jpg"
+    origem = Image.open(piloto).convert("RGB")
+    empacotada = Image.open(AGREGADOR_TP_LOGO_PACOTE).convert("RGB")
+    assert empacotada.size == origem.size
+    assert list(empacotada.getdata()) == list(origem.getdata())
+
+
+def test_marcador_do_totalpass_tem_a_logo_propria_sem_o_png_no_diretorio(tmp_path):
+    """Gemeo do teste do WellHub: a arte do PACOTE cobre a ausencia no diretorio montado.
+
+    E' o estado real de producao -- o `sync_concorrentes_dashboard` so' copia as redes do
+    registro, e foi por isso que as independentes sairam sem logo ate' 2026-09-17.
+    """
+    from motor_expansao.dashboard.competitors import CHAVE_AGREGADOR_TP
+
+    concorrentes_dir = tmp_path / "concorrentes"
+    concorrentes_dir.mkdir()
+    _ICON_CACHE.pop(CHAVE_AGREGADOR_TP, None)
+    preload_logos(concorrentes_dir)
+    assert CHAVE_AGREGADOR_TP in _ICON_CACHE
+    assert _tile_tem_logo(CHAVE_AGREGADOR_TP)
+
+
+def _cores_opacas(key: str) -> set[tuple[int, int, int]]:
+    tile = _render_square_logo_tile(key, 64, border=False, shadow=False)
+    return {px[:3] for px in tile.getdata() if px[3] == 255}
+
+
+def _bytes_do_tile(key: str) -> bytes:
+    tile = _render_square_logo_tile(key, 64, border=False, shadow=False)
+    return tile.tobytes()
+
+
+def test_ambos_COM_arte_compoe_as_duas_logos(tmp_path):
+    """`[DEC-063 / fatia 2]` M2: placa branca com as DUAS logos, uma por metade.
+
+    O criterio NAO e' o `_tile_tem_logo` do arquivo: ele exige "mais de 2 cores opacas", e a placa
+    bipartida SEM arte ja' tem rosa, verde e branco — aprovaria os dois estados, e um teste que
+    passa nos dois nao prova nenhum. Aqui o que prova e' a DIFERENCA entre os dois renders.
+    """
+    from motor_expansao.dashboard.competitors import (
+        CHAVE_AGREGADOR,
+        CHAVE_AGREGADOR_TP,
+        CHAVE_AMBOS,
+    )
+
+    for chave in (CHAVE_AGREGADOR, CHAVE_AGREGADOR_TP):
+        _ICON_CACHE.pop(chave, None)
+    sem_arte = _bytes_do_tile(CHAVE_AMBOS)
+
+    preload_logos(tmp_path / "vazio")  # cai na arte do PACOTE, que viaja sempre
+    com_arte = _bytes_do_tile(CHAVE_AMBOS)
+
+    assert com_arte != sem_arte, "com as duas artes no cache o M2 tem de sair diferente da B5"
+    assert (255, 255, 255) in _cores_opacas(CHAVE_AMBOS), "o M2 tem placa BRANCA sob as logos"
+
+
+def test_ambos_SEM_arte_cai_na_placa_bipartida_B5(tmp_path):
+    """`[DEC-063 / fatia 2]` A degradacao escolhida — e a que MAIS importa.
+
+    Sem arte a cor sozinha continua dizendo "esta nos dois": metade rosa, metade verde. Se isto
+    virasse placa solida, o terceiro estado sumiria exatamente onde a arte nao chega.
+    """
+    from motor_expansao.dashboard.competitors import (
+        AGREGADOR_BRAND,
+        AGREGADOR_TP_BRAND,
+        CHAVE_AGREGADOR,
+        CHAVE_AGREGADOR_TP,
+        CHAVE_AMBOS,
+    )
+
+    def _rgb(h: str) -> tuple[int, int, int]:
+        h = h.lstrip("#")
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+    for chave in (CHAVE_AGREGADOR, CHAVE_AGREGADOR_TP):
+        _ICON_CACHE.pop(chave, None)
+    cores = _cores_opacas(CHAVE_AMBOS)
+    assert _rgb(str(AGREGADOR_BRAND["bg"])) in cores, "falta a metade do Wellhub"
+    assert _rgb(str(AGREGADOR_TP_BRAND["bg"])) in cores, "falta a metade do TotalPass"
+
+
+def test_a_arte_de_AMBOS_e_a_composicao_EXATA_das_duas_atuais():
+    """`[DEC-063 / fatia 2]` O asset composto nao pode envelhecer em silencio.
+
+    A web precisa de um ARQUIVO (a `IconLayer` do deck.gl recebe URL, nao desenho), enquanto o PDF
+    compoe em tempo de render. Um terceiro arquivo tem um modo de falha proprio: trocar a logo de um
+    dos apps deixa o composto VALIDO como imagem e FALSO como informacao -- e invisivel, porque nada
+    quebra.
+
+    Este teste fecha isso: os pixels do arquivo tem de ser exatamente os da composicao das artes de
+    HOJE. Trocar qualquer uma das duas origens sem regerar o asset fica VERMELHO.
+    """
+    from PIL import Image
+
+    from motor_expansao.dashboard.competitors import compor_arte_ambos
+
+    arquivo = Path(__file__).resolve().parents[2] / "web" / "public" / "logo-ambos.png"
+    assert arquivo.exists(), "o asset do terceiro estado nao foi gerado"
+    do_disco = Image.open(arquivo).convert("RGBA")
+    esperado = compor_arte_ambos()
+    assert isinstance(esperado, Image.Image)
+    assert do_disco.size == esperado.size
+    assert list(do_disco.getdata()) == list(esperado.getdata()), (
+        "o asset composto divergiu das artes atuais -- regere `web/public/logo-ambos.png`"
+    )
+
+
+def test_a_chave_sai_da_coluna_fontes_da_academia():
+    """`[DEC-063 / fatia 2]` O coracao da fatia: virgula -> `__ambos__`.
+
+    Sem a coluna (artefato anterior ao `alvos_ma_nomeados_v8`) cai na `fonte` e reproduz o desenho
+    de hoje — o fallback nao inventa estado novo.
+    """
+    from motor_expansao.dashboard.competitors import (
+        CHAVE_AGREGADOR,
+        CHAVE_AGREGADOR_TP,
+        CHAVE_AMBOS,
+        chave_agregador_da_fonte,
+    )
+
+    assert chave_agregador_da_fonte("wellhub", "totalpass,wellhub") == CHAVE_AMBOS
+    assert chave_agregador_da_fonte("totalpass", "totalpass") == CHAVE_AGREGADOR_TP
+    assert chave_agregador_da_fonte("wellhub", "wellhub") == CHAVE_AGREGADOR
+    # artefato antigo: a coluna nao existe
+    assert chave_agregador_da_fonte("totalpass", None) == CHAVE_AGREGADOR_TP
+    assert chave_agregador_da_fonte(None, None) == CHAVE_AGREGADOR
+
+
+def test_os_dois_apps_se_distinguem_por_COR_e_nao_so_por_arte():
+    """`[DEC-063]` Sem PNG nenhum o tile cai na placa SOLIDA da marca.
+
+    Se a cor fosse a mesma, o fallback apagaria a distincao exatamente onde ela mais importa: em
+    producao, onde a arte do agregador nao chega ao diretorio montado. Por isso cada app tem COR,
+    e nao so' logo -- o pino verde/rosa continua respondendo "de qual app e' esta academia?".
+    """
+    from motor_expansao.dashboard.competitors import (
+        AGREGADOR_BRAND,
+        AGREGADOR_TP_BRAND,
+        ARTE_AGREGADOR,
+        CHAVE_AGREGADOR,
+        CHAVE_AGREGADOR_TP,
+        CHAVE_AMBOS,
+        CHAVES_AGREGADOR,
+    )
+
+    assert AGREGADOR_BRAND["bg"] != AGREGADOR_TP_BRAND["bg"]
+    # `[DEC-063 / fatia 2]` TRES chaves, DUAS artes — e a assimetria e' o DESENHO, nao esquecimento:
+    # `__ambos__` COMPOE as duas artes existentes em vez de ter a sua. Ate' a fatia 2 este teste
+    # afirmava a igualdade dos dois conjuntos, e a segunda assercao nem chegava a rodar quando a
+    # primeira caia — por isso as duas sao reapontadas juntas.
+    assert len(CHAVES_AGREGADOR) == 3
+    assert set(ARTE_AGREGADOR) == {CHAVE_AGREGADOR, CHAVE_AGREGADOR_TP}
+    assert CHAVE_AMBOS in CHAVES_AGREGADOR
+    assert CHAVE_AMBOS not in ARTE_AGREGADOR, "o terceiro estado COMPOE, nao tem arte propria"
+    assert len({nome for nome, _caminho in ARTE_AGREGADOR.values()}) == 2
+
+
 def test_preload_logos_sem_arquivos_nao_quebra_o_app(tmp_path):
     concorrentes_dir = tmp_path / "sem_logos"
     concorrentes_dir.mkdir()

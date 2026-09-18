@@ -240,6 +240,48 @@ def test_independente_e_desenhada_ANTES_da_cadeia():
         "lat": [LAT, LAT + 0.001, LAT + 0.002, LAT + 0.003],
         "lng": [LNG, LNG + 0.001, LNG + 0.002, LNG + 0.003],
     })
+    from motor_expansao.dashboard.competitors import CHAVES_AGREGADOR
+
     chaves = [chave for _x, _y, chave in cm._project_points(pontos, LAT, LNG)]
-    assert chaves[:2] == ["", ""], "independentes primeiro"
-    assert all(chaves[2:]), "cadeias por ultimo"
+    # `[DEC-063]` A codificacao de "independente" deixou de ser a string VAZIA e passou a ser a
+    # chave do APP que a revelou (sem coluna `fonte`, cai no WellHub). A PROPRIEDADE sob teste --
+    # independente ANTES, bandeira de rede POR CIMA -- e' exatamente a mesma, e e' ela que impede
+    # a inversao silenciosa da sobreposicao: com a chave nova, um `sort` por `bool(chave)` passaria
+    # a desenhar a independente em cima da cadeia sem erro nenhum.
+    assert all(c in CHAVES_AGREGADOR for c in chaves[:2]), "independentes primeiro"
+    assert all(c and c not in CHAVES_AGREGADOR for c in chaves[2:]), "cadeias por ultimo"
+
+
+def test_a_chave_do_independente_sai_do_app_que_a_revelou():
+    """`[DEC-063]` WellHub e TotalPass passam a ter chave (e cor) proprias.
+
+    Sem `fonte`, cai no WellHub -- e isso NAO afirma procedencia: o artefato publicado hoje
+    (`alvos_ma_nomeados_v5`) tem `fonte` em 100% das 19.329 linhas, todas `wellhub`, entao o
+    fallback REPRODUZ o desenho anterior a esta DEC em vez de inventar um estado novo.
+    """
+    from motor_expansao.dashboard import censo_map as cm
+    from motor_expansao.dashboard.competitors import CHAVE_AGREGADOR, CHAVE_AGREGADOR_TP
+
+    pontos = pd.DataFrame({
+        "rede": [None, None, None],
+        "fonte": ["wellhub", "totalpass", None],
+        "lat": [LAT, LAT + 0.001, LAT + 0.002],
+        "lng": [LNG, LNG + 0.001, LNG + 0.002],
+    })
+    chaves = [chave for _x, _y, chave in cm._project_points(pontos, LAT, LNG)]
+    assert chaves == [CHAVE_AGREGADOR, CHAVE_AGREGADOR_TP, CHAVE_AGREGADOR]
+
+
+def test_os_dois_relatorios_leem_a_MESMA_redacao_da_regra():
+    """Licao da DEC-044: a mesma regra escrita em dois lugares nao da erro -- DESENCONTRA.
+
+    Pontual e Municipal desenham o mesmo marcador por caminhos proprios (`censo_map` e
+    `relatorio_municipal`, cada um com seu `_PIN_LOGO_PX`). Se cada um decidisse a marca por
+    conta, a MESMA academia sairia verde num PDF e rosa no outro, sem nada ficar vermelho.
+    """
+    from motor_expansao.dashboard import censo_map as cm
+    from motor_expansao.dashboard import relatorio_municipal as rm
+    from motor_expansao.dashboard.competitors import chave_agregador_da_fonte
+
+    assert cm.chave_agregador_da_fonte is chave_agregador_da_fonte
+    assert rm.chave_agregador_da_fonte is chave_agregador_da_fonte

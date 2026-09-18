@@ -439,6 +439,12 @@ export interface PinIndependente {
   lat: number | null
   lng: number | null
   nome: string
+  /** `[DEC-063]` App que revelou a academia (`wellhub` | `totalpass`) — decide a arte do pino.
+   *  Opcional: em payload antigo o mapa cai na marca do Wellhub, que era o universo inteiro. */
+  fonte?: string | null
+  /** `[DEC-063 / fatia 2]` QUAIS apps listam a academia, separados por vírgula
+   *  (`"totalpass,wellhub"`). Com vírgula, o pino sai no terceiro estado. */
+  fontes_da_academia?: string | null
   /** `score_vulnerabilidade` — preenchido sempre que há ≥ 1 sinal. */
   score: number | null
   /** `score_vulnerabilidade_ordenavel` — NULO no regime provisório (G-D1). O par com `score`
@@ -1601,6 +1607,11 @@ export interface RedeMapaConcorrente {
   nome: string | null
   rede: string | null
   classe: string
+  /** `[DEC-063]` App que revelou a academia (`wellhub` | `totalpass`) — decide a arte do pino.
+   *  Opcional pela mesma razão de `PinIndependente.fonte`. */
+  fonte?: string | null
+  /** `[DEC-063 / fatia 2]` QUAIS apps listam a academia. Com vírgula, terceiro estado. */
+  fontes_da_academia?: string | null
   distancia_m: number | null
   nota_wellhub: number | null
   avaliacoes: number | null

@@ -441,18 +441,27 @@ def test_15_contratos_e_as_quatro_versoes_bumpadas() -> None:
     """
     assert len(c.CONTRATO_COLUNAS_PRESSAO_ACADEMIA) == 15
     assert len(c.CONTRATO_COLUNAS_PRESSAO) == 14
-    assert len(c.CONTRATO_COLUNAS_ALVOS_NOMEADOS) == 24
+    # `[DEC-063]` 25 desde `alvos_ma_nomeados_v8`: entra `fontes_da_academia` (quais apps
+    # listam a academia). O pino de contagem acusou o crescimento, que e' o que ele existe
+    # para fazer.
+    assert len(c.CONTRATO_COLUNAS_ALVOS_NOMEADOS) == 25
     # Estes NÃO mudam de schema: o molde do BLK-MA-18 manda a auditoria para o nomeado.
     assert len(c.CONTRATO_COLUNAS_SCORE) == 26
     assert len(c.CONTRATO_COLUNAS_ALVOS_MA) == 18
     assert len(c.CONTRATO_COLUNAS_ACADEMIAS_MA) == 26
 
-    # `[DEC-062]` os quatro sobem de novo: ligar a trava de municipio e o raio ampliado muda a
-    # oferta do s6 (137 pontos a menos), e com ela os tres artefatos que carimbam valor.
-    assert c.VERSAO_CONTRATO_PRESSAO == "pressao_competitiva_v5"
-    assert c.VERSAO_CONTRATO_SCORE == "score_vulnerabilidade_v8"
-    assert c.VERSAO_CONTRATO_ALVOS_MA == "alvos_ma_v5"
-    assert c.VERSAO_CONTRATO_ALVOS_NOMEADOS == "alvos_ma_nomeados_v6"
+    # `[DEC-063]` os quatro sobem de novo: o TotalPass entra na OFERTA do s6 (independentes e as
+    # 1.789 unidades de rede) e o representante da dedup entre fontes passa a ser escolhido pelo
+    # NOME -- muda o valor que os tres artefatos carimbam. A PRESENCA nao entra, e por isso
+    # `presenca_agregador`, `churn_staleness` e `snapshots_concorrentes` NAO sobem: a metade
+    # benigna preserva o s1 exatamente onde ele estava.
+    assert c.VERSAO_CONTRATO_PRESSAO == "pressao_competitiva_v6"
+    assert c.VERSAO_CONTRATO_SCORE == "score_vulnerabilidade_v9"
+    assert c.VERSAO_CONTRATO_ALVOS_MA == "alvos_ma_v6"
+    assert c.VERSAO_CONTRATO_ALVOS_NOMEADOS == "alvos_ma_nomeados_v8"
+    assert c.VERSAO_CONTRATO_PRESENCA_AGREGADOR == "presenca_agregador_v1", (
+        "a presenca NAO muda na metade benigna -- se este pino cair, o s1 recebeu o TotalPass"
+    )
 
     # Sem terceiro valor de enum: o rótulo classifica CATEGORIA, e a categoria não mudou.
     assert c.UNIVERSOS_OFERTA == (

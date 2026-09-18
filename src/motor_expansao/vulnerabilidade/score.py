@@ -581,7 +581,27 @@ def _assert_schema_score(df: pd.DataFrame) -> None:
                 f"deve equivaler a `{coluna}` nao nulo"
             )
 
-    if bool((v1.isna() != df["n_agregadores_no_hex"].isna()).any()):
+    # `[DEC-063]` O invariante tem DOIS regimes, e cada um tem a sua checagem — nenhum modo de
+    # falha fica sem vigia.
+    #
+    # Com o `s1` ATIVO (o caso de sempre), o biconditional vale intacto: `v1` existe se e somente
+    # se o join casou, e é isso que torna um miss AUDITÁVEL em vez de silencioso.
+    #
+    # Com o `s1` INATIVO, `v1` é nulo por DECISÃO e o join continua funcionando — as duas pontas
+    # deixam de ser equivalentes por construção, e exigir a equivalência reprovaria todo frame
+    # válido. A falha que o biconditional vigia (`v1` preenchido sem join) torna-se IMPOSSÍVEL, e
+    # no lugar dela entra uma checagem MAIS FORTE: `v1` tem de estar nulo em TODA linha. Se
+    # aparecer preenchido, alguém religou o sinal sem passar por `SINAIS_INATIVOS`.
+    #
+    # O rastro de auditoria não se perde: `n_agregadores_no_hex` continua publicado e nulável, e
+    # responde sozinho "quantas linhas não casaram no join".
+    if "s1" in SINAIS_INATIVOS:
+        if bool(v1.notna().any()):
+            raise ValueError(
+                "`s1` está em SINAIS_INATIVOS: `v1` deve ser nulo em TODAS as linhas — "
+                "apareceu preenchido, então o sinal foi religado por fora"
+            )
+    elif bool((v1.isna() != df["n_agregadores_no_hex"].isna()).any()):
         raise ValueError(
             "biconditional do join violado: `v1` nulo deve equivaler a "
             "`n_agregadores_no_hex` nulo"
