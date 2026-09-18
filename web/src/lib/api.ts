@@ -35,6 +35,7 @@ import type {
   ViabilidadeIn,
   ViabilidadeOut,
 } from './types'
+import { ehQuedaDeSessao, entradaDoPayload, type EntradaAceita } from './login'
 import { relatarAcessoNegado, relatarFalhaDeRede } from './sessao'
 
 /** Query string da rede, omitindo o que esta vazio. */
@@ -79,7 +80,13 @@ async function pedir<T>(
       // 401 atras do Caddy = o Authelia negou o acesso (sessao vencida). Ver
       // `lib/sessao.ts`: o caminho COMUM e' o 302, que nem chega aqui — este ramo
       // cobre a variante em que o Authelia responde 401 em vez de redirecionar.
-      if (r.status === 401) relatarAcessoNegado()
+      //
+      // A EXCECAO E' O LOGIN, e ela e' cirurgica (`ehQuedaDeSessao`): a rota de entrada
+      // devolve 401 para SENHA ERRADA, e o anuncio de queda e' de mao unica
+      // (`jaAnunciado` nunca volta atras). Sem isto, errar a senha UMA vez abriria
+      // "Sessao encerrada", travaria a trava para o resto da carga e ofereceria como
+      // unica saida recarregar a pagina — vaivem sem causa visivel.
+      if (r.status === 401 && ehQuedaDeSessao(url)) relatarAcessoNegado()
       let detalhe = `${r.status}`
       try {
         const j = await r.json()
@@ -241,6 +248,53 @@ export const api = {
       _me = null
       throw e
     })),
+
+  /**
+   * Entra na plataforma (epic do P19). O token da sessão volta no COOKIE, nunca no
+   * corpo — então não há nada a guardar aqui.
+   *
+   * **Limpa a memo do `/api/me` antes de resolver**, e isso não é zelo: a memo guarda
+   * o SUCESSO por carga de página. Sem a limpeza, sair e entrar como outra pessoa na
+   * mesma aba serviria as abas da anterior — a segunda herdaria as permissões da
+   * primeira, sem recarregar e sem aviso. A falha já se limpava sozinha (o `catch`
+   * acima); o sucesso, não.
+   *
+   * Erros: **401** é login ou senha incorretos — e é o MESMO para usuário inexistente,
+   * de propósito. **404** é a entrada própria desligada neste ambiente
+   * (`MOTOR_AUTENTICACAO_PROPRIA`); **503** é banco fora do ar ou servidor sem o extra
+   * de hash. Os textos ficam em `lib/login.ts::mensagemDaFalha`.
+   */
+  entrar: async (login: string, senha: string, lembrar = false): Promise<EntradaAceita> => {
+    const bruto = await pedir<unknown>(
+      '/api/login',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login: login.trim(), senha, lembrar }),
+      },
+      15_000,
+    )
+    _me = null
+    return entradaDoPayload(bruto)
+  },
+
+  /**
+   * Sai: o servidor revoga a sessão e apaga o cookie.
+   *
+   * Revogar no SERVIDOR é o ponto inteiro de a sessão morar em tabela: limpar estado
+   * no cliente não é logout — a tela pareceria deslogada e a requisição seguinte
+   * continuaria autenticada (é o que o `BotaoSair.tsx` já documenta).
+   *
+   * Limpa a memo pelo mesmo motivo do `entrar`. Idempotente: sair duas vezes, ou sair
+   * com a sessão já vencida, não é erro.
+   */
+  sair: async (): Promise<void> => {
+    try {
+      await pedir<unknown>('/api/logout', { method: 'POST' }, 10_000)
+    } finally {
+      _me = null
+    }
+  },
 
   ufs: () => pedir<{ ufs: string[] }>('/api/ufs'),
 
