@@ -469,3 +469,56 @@ def test_resumo_desenha_so_os_aprovados():
 
     assert _png("resumo", df) == _png("resumo", so_aprovados)
     assert _png("cobertura", df) != _png("cobertura", so_aprovados)
+
+
+# --------------------------------------------------------------------------- #
+# Bases com join censitario ruim (Manaus)                                     #
+# --------------------------------------------------------------------------- #
+def test_populacao_do_hexagono_vem_do_setor_e_nao_do_municipio():
+    """Em Manaus `populacao_corte_hex` traz os 2.063.689 habitantes da cidade em CADA hexagono
+    (DEC-054/058). Usada na densidade, ela viraria o mesmo numero dividido pela area da celula --
+    o mapa saia em faixas verticais. A precedencia comeca pelo dado de SETOR."""
+    df = _df_cidade(1)
+    n = len(df)
+    df = df.assign(
+        populacao_corte_hex=2_063_689.0,
+        fonte_populacao_corte="total_municipal",
+        pop_total_setor_2022=[100.0 * (i + 1) for i in range(n)],
+    )
+    hexes = rp.preparar_hexes_da_cidade(df, None)
+    assert hexes[rp.COL_POPULACAO].tolist() == [100.0 * (i + 1) for i in range(n)]
+    assert hexes["densidade_hab_km2"].nunique() == n  # nao e' constante/area
+    assert not rp.populacao_e_municipal(hexes)
+
+    # sem dado de setor, a populacao E' a do municipio: a densidade nao pode ser publicada
+    so_municipal = df.drop(columns=["pop_total_setor_2022"])
+    assert rp.populacao_e_municipal(rp.preparar_hexes_da_cidade(so_municipal, None))
+
+
+def test_faixa_degenerada_some_da_legenda():
+    """Com a floresta dominando os quintis, duas faixas formatavam igual ("0 a 0") ou nasciam
+    degeneradas ("0,2 a 0,2"). A legenda funde essas faixas."""
+    from unittest import mock
+
+    centro = h3.latlng_to_cell(_LAT, _LNG, 7)
+    celulas = sorted(h3.grid_disk(centro, 3))
+    # 90% quase vazios e alguns povoados: e' o perfil de um municipio de floresta
+    valores = [0.1] * (len(celulas) - 3) + [50.0, 80.0, 900.0]
+    hexes = pd.DataFrame({"hex_id": celulas, "v": valores})
+
+    rotulos: list[str] = []
+    real = rpm._legenda
+
+    def _spy(draw, titulo, itens, **k):
+        rotulos.extend(r for r, _ in itens)
+        return real(draw, titulo, itens, **k)
+
+    with mock.patch.object(rpm, "_legenda", _spy):
+        rpm.render_calor_cidade(
+            hexes, "v", titulo="x", legenda_titulo="x", formatar=lambda v: f"{v:.0f}",
+            paleta=rpm.PALETA_DENSIDADE, basemap=False,
+        )
+    faixas = [r for r in rotulos if r != "Sem dado"]
+    assert faixas and len(faixas) == len(set(faixas))
+    assert not [r for r in faixas if r.startswith("0 a 0") and r != "0 a 0"]
+    assert all(r.split(" a ")[0] != r.split(" a ")[-1] for r in faixas if " a " in r)

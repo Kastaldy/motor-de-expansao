@@ -279,7 +279,16 @@ def render_calor_cidade(
         # A ultima faixa vai ate' o MAXIMO da cidade, que costuma ser um hexagono atipico: escrever
         # o maximo na legenda poe um numero de outlier no lugar de destaque. "acima de" basta.
         ultima = i == len(limites) - 1 and i > 0
-        itens.append((f"acima de {formatar(anterior)}" if ultima else f"{formatar(anterior)} a {formatar(limite)}", c))
+        # Faixa DEGENERADA: com os cortes proximos, os dois extremos formatam igual e a linha
+        # sairia "0,2 a 0,2" (Manaus, densidade: a floresta domina os quintis). Ela se funde com a
+        # proxima -- `anterior` nao avanca, entao o intervalo seguinte comeca do mesmo piso.
+        if not ultima and formatar(anterior) == formatar(limite):
+            continue
+        rotulo = f"acima de {formatar(anterior)}" if ultima else f"{formatar(anterior)} a {formatar(limite)}"
+        if itens and itens[-1][0] == rotulo:
+            anterior = limite
+            continue
+        itens.append((rotulo, c))
         anterior = limite
     itens.append(("Sem dado", _SEM_DADO))
     yy = _legenda(draw, legenda_titulo, itens)

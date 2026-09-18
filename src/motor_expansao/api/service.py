@@ -1217,6 +1217,10 @@ def _praca_da_cidade(
         return f"{simbolo} {int(round(v)):,}".replace(",", ".")
 
     def _inteiro(v: float) -> str:
+        # Uma casa decimal abaixo de 10: em Manaus a floresta domina os quintis e a legenda da
+        # densidade saia com faixas "0 a 0", que nao dizem nada.
+        if 0 < v < 10:
+            return f"{v:.1f}".replace(".", ",")
         return f"{int(round(v)):,}".replace(",", ".")
 
     def _calor(coluna: str, titulo: str, legenda: str, formatar, paleta):
@@ -1225,12 +1229,23 @@ def _praca_da_cidade(
             subtitulo="Por hexagono, cidade inteira", basemap=fundo,
         )
 
-    desenhos = (
+    pop_municipal = rp.populacao_e_municipal(hexes)
+    desenhos = [
         ("calor_cidade_renda_domiciliar", _calor("renda_domiciliar", "Renda media domiciliar", f"{simbolo} por domicilio", _moeda, rpm.PALETA_RENDA)),
-        ("calor_cidade_densidade", _calor("densidade_hab_km2", "Densidade demografica", "Habitantes por km2", _inteiro, rpm.PALETA_DENSIDADE)),
         ("pressao_cidade", lambda fundo: rpm.render_pressao_cidade(hexes, conc, ult, basemap=fundo)),
         ("onde_crescer", lambda fundo: rpm.render_onde_crescer(hexes, sel.hexagonos, basemap=fundo)),
-    )
+    ]
+    if not pop_municipal:
+        # Com a populacao do municipio repetida em cada hexagono (Manaus: 2.063.689 nos 2.139), a
+        # densidade seria o mesmo numero dividido pela area da celula -- o mapa saia em faixas
+        # verticais. Nesse caso a pagina publica so' a renda e explica a ausencia.
+        desenhos.insert(
+            1,
+            (
+                "calor_cidade_densidade",
+                _calor("densidade_hab_km2", "Densidade demografica", "Habitantes por km2", _inteiro, rpm.PALETA_DENSIDADE),
+            ),
+        )
 
     def _desenhar(item):
         chave, desenhar = item
@@ -1260,6 +1275,7 @@ def _praca_da_cidade(
         mapas=mapas,
         n_hexagonos_cidade=int(len(hexes)),
         renda_municipal=rp.renda_e_municipal(hexes),
+        populacao_municipal=pop_municipal,
     )
 
 

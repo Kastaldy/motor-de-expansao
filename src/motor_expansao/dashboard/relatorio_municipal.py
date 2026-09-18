@@ -1998,6 +1998,9 @@ def _render_mapa_municipio(
     overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     odraw = ImageDraw.Draw(overlay, "RGBA")
 
+    # Municipio SEM nenhum aprovado (Manaus) volta a desenhar os cinza: com a regra de so' pintar
+    # os verdes, o mapa saia em branco e parecia falha de geracao.
+    tem_aprovado = bool(destaque_mask.any())
     label_pins: list[tuple[int, int, str]] = []
     zona_labels: list[tuple[int, int, str, tuple[int, int, int]]] = []
     # BLK-RELMUN-08: nome do bairro dominante sobre o hexagono, para identificar a regiao.
@@ -2032,9 +2035,12 @@ def _render_mapa_municipio(
             # tirando os cinzas"). O cinza era a cauda nao aprovada -- em Sao Paulo, a faixa sul
             # -- que enchia o quadro sem dizer nada: a pagina fala do espaco que EXISTE. A
             # "Visao Geral do Municipio" segue mostrando aprovados e reprovados lado a lado.
-            if not destaque_mask[pos]:
+            if not destaque_mask[pos] and tem_aprovado:
                 continue
-            color = _HEX_DESTAQUE_RGBA if fonte_propria[pos] else _HEX_DESTAQUE_MUNICIPAL_RGBA
+            if destaque_mask[pos]:
+                color = _HEX_DESTAQUE_RGBA if fonte_propria[pos] else _HEX_DESTAQUE_MUNICIPAL_RGBA
+            else:
+                color = _HEX_NEUTRO_RGBA
             odraw.polygon(pixels, fill=color, outline=(255, 255, 255, 90))
             # O Residual de cada hexagono destacado SAIU do mapa em 2026-09-17, a pedido do Juan:
             # em Sao Paulo eram 154 plaquinhas e o mapa virava um tapete de numeros. Os valores
@@ -3950,25 +3956,39 @@ def _praca_pct(valor: float | None) -> str:
 def _praca_calor_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
                       assets: dict[str, bytes | None], *,
                       primary: tuple[int, int, int], secondary: tuple[int, int, int]) -> None:
-    from motor_expansao.dashboard.relatorio_praca import TITULO_MAPAS_CALOR_CIDADE
+    from motor_expansao.dashboard.relatorio_praca import (
+        TEXTO_POP_MUNICIPAL,
+        TITULO_MAPAS_CALOR_CIDADE,
+    )
 
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _draw_title_band(pdf, TITULO_MAPAS_CALOR_CIDADE, rgb=primary)
     y = 96.0
-    for idx, (chave, cor) in enumerate((("calor_cidade_renda_domiciliar", primary), ("calor_cidade_densidade", secondary))):
+    # Sem o mapa de densidade (base que so' tem a populacao do municipio), a renda ocupa o slide
+    # inteiro em vez de dividir a pagina com uma moldura vazia.
+    tem_densidade = "calor_cidade_densidade" in praca.mapas
+    largura = _PRACA_MAPA_W if tem_densidade else _PRACA_MAPA_W * 1.4
+    altura = largura * 1000.0 / 1400.0
+    chaves = [("calor_cidade_renda_domiciliar", primary)]
+    if tem_densidade:
+        chaves.append(("calor_cidade_densidade", secondary))
+    for idx, (chave, cor) in enumerate(chaves):
         _draw_framed_map(
-            pdf, praca.mapas.get(chave), max_w=_PRACA_MAPA_W, max_h=_PRACA_MAPA_H,
-            x_anchor=36.0 + idx * (_PRACA_MAPA_W + 28.0), y_anchor=y, border_rgb=cor,
+            pdf, praca.mapas.get(chave), max_w=largura, max_h=altura,
+            x_anchor=36.0 + idx * (largura + 28.0), y_anchor=y, border_rgb=cor,
         )
     legenda = (
-        f"{praca.n_hexagonos_cidade} hexágonos de {praca.municipio}. Renda média domiciliar e "
-        "densidade (habitantes por km² do hexágono), com as cores do slide Mapas de calor e as "
-        "faixas pelos quintis da própria cidade: o mapa compara bairros da mesma praça, não cidades."
+        f"{praca.n_hexagonos_cidade} hexágonos de {praca.municipio}. Renda média domiciliar "
+        + ("e densidade (habitantes por km² do hexágono), " if tem_densidade else "")
+        + "com as cores do slide Mapas de calor e as faixas pelos quintis da própria cidade: "
+        "o mapa compara bairros da mesma praça, não cidades."
     )
     if praca.renda_municipal:
         legenda += " Nesta base a renda é a do município inteiro, então o mapa de renda sai de uma cor só."
-    _draw_note(pdf, 36.0, y + _PRACA_MAPA_H + 24.0, _PAGE_W - 72.0, _praca_texto(legenda))
+    if praca.populacao_municipal:
+        legenda += " " + TEXTO_POP_MUNICIPAL
+    _draw_note(pdf, 36.0, y + altura + 24.0, _PAGE_W - 72.0, _praca_texto(legenda))
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 

@@ -60,13 +60,23 @@ COL_SCORE_SOCIO = "score_setor_2022_calibrado"
 COL_CRES_HEX_TAXA = "cres_hex_taxa"
 COL_CRES_HEX_CLASSE = "cres_hex_classe"
 
-#: Precedencia da populacao do hexagono: a MESMA de `app.COLS_POP_LEITURA`. A base do bot
-#: (camada de mercado) nao tem `pop_leitura`; a do motor so' a tem depois de `_derivar`.
+#: Precedencia da populacao do hexagono. O SETOR vem primeiro, e isso e' DIFERENTE do funil
+#: (`app.COLS_POP_LEITURA`, que comeca por `populacao_corte_hex`) de proposito: onde o join
+#: censitario e' ruim, `populacao_corte_hex` carrega a populacao do MUNICIPIO INTEIRO repetida em
+#: cada hexagono (DEC-054/058). Medido em Manaus: 2.063.689 habitantes nos 2.139 hexagonos, um
+#: valor so'. Para o funil isso e' um gate conservador; para um mapa de densidade e' ficcao -- a
+#: divisao por uma area quase igual virava faixas verticais, a "densidade em linhas" que o Juan
+#: viu. Aqui a leitura e' por hexagono, entao a ordem comeca pelo dado de setor.
 COLS_POPULACAO: tuple[str, ...] = (
+    "pop_total_setor_2022",
     COL_POPULACAO,
     "populacao_corte_hex",
-    "pop_total_setor_2022",
     "pop_total",
+)
+
+TEXTO_POP_MUNICIPAL = (
+    "Atenção: nesta base a população dos hexágonos é a do município inteiro, sem dado por setor. "
+    "O mapa de densidade não é publicado, porque dividiria o mesmo número pela área de cada célula."
 )
 
 _RAIO_TERRA_M = 6_371_008.8
@@ -618,6 +628,38 @@ def serie_populacao(hexes: pd.DataFrame) -> pd.Series:
     return pd.Series(np.nan, index=hexes.index, dtype="float64")
 
 
+def populacao_e_municipal(hexes: pd.DataFrame | None) -> bool:
+    """True quando a populacao dos hexagonos nao diferencia bairros: e' a do municipio inteiro.
+
+    Mesmo molde de `renda_e_municipal`: um valor so' na cidade toda (ou `fonte_populacao_corte`
+    dizendo `total_municipal` na maioria) significa join censitario ruim (DEC-054/058).
+    """
+    if hexes is None or hexes.empty:
+        return False
+    if "fonte_populacao_corte" in hexes.columns and COL_POPULACAO in hexes.columns:
+        fonte = hexes["fonte_populacao_corte"].astype("string")
+        if float((fonte == "total_municipal").mean()) >= 0.5 and _populacao_sem_setor(hexes):
+            return True
+    return _populacao_sem_setor(hexes) and _valor_unico(hexes.get(COL_POPULACAO))
+
+
+def _populacao_sem_setor(hexes: pd.DataFrame) -> bool:
+    """A base nao traz populacao POR SETOR utilizavel (coluna ausente ou com um valor so')."""
+    if "pop_total_setor_2022" not in hexes.columns:
+        return True
+    return _valor_unico(hexes["pop_total_setor_2022"])
+
+
+def _valor_unico(serie: Any) -> bool:
+    if serie is None:
+        return True
+    valores = pd.to_numeric(pd.Series(serie), errors="coerce")
+    validos = valores[valores.notna() & (valores > 0)]
+    if len(validos) < 2:
+        return True
+    return int(validos.round(0).nunique()) <= 1
+
+
 def preparar_hexes_da_cidade(
     df_muni: pd.DataFrame,
     renda_domiciliar_por_hex: Mapping[str, Any] | None,
@@ -688,6 +730,7 @@ class PracaDaCidade:
     mapas: dict[str, bytes] = field(default_factory=dict)
     n_hexagonos_cidade: int = 0
     renda_municipal: bool = False
+    populacao_municipal: bool = False
 
 
 def quebras_por_quantil(valores: Any, n_classes: int = 5) -> list[float]:
