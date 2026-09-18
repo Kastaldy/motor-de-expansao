@@ -2330,6 +2330,33 @@ definido antes de qualquer código; validação com fixtures sintéticas; READ-O
 
 ---
 
+### BLK-MA-22 — Retenção integral, estado incremental e a ponte de identidade (DEC-064)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — mexe na única função do pacote que **apaga arquivo** (a poda), troca o REGIME DE LEITURA da série que alimenta S3/S4 e cria artefato que persiste **nome e coordenada** de estabelecimento. READ-ONLY sobre o M1: escreve só em `data/staging/`. DEC própria: [DEC-064](../docs/decisions/DEC-064.md). |
+| **Prioridade** | **Alta.** É o que destrava a movimentação DINÂMICA na ficha da unidade: hoje o diff semanal sabe QUE uma chave entrou ou saiu e não sabe QUEM nem ONDE, porque a série é anônima e os feeds crus são sobrescritos todo domingo. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE humano — DEC-064 APROVADA em 2026-09-18]` → Builder → QA → `[aplicação na VPS: passo MANUAL, comando a comando — §6]`. |
+| **Status** | **Pendente.** DEC registrada em 2026-09-18; implementação não iniciada. |
+| **Depende de** | DEC-064 (aprovada). Nada mais — a série já existe no disco da VPS (3 semanas) e o `ler_snapshots` já aceita `semanas=`/`fontes=`. |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca a poda de produção e cria artefato com nome/coordenada. NUNCA marcar loop-safe. |
+
+**As quatro entregas.** (1) `executar()` deixa de podar em regime, com `podar_snapshots` mantendo a
+invariante `>= 1`; (2) churn/staleness passa a ser **materializado** e atualizado por `estado
+anterior + semana nova`, com `--reprocessar` reconstruindo do zero a partir da série retida;
+(3) ponte `semana, fonte, chave_snapshot, nome, lat, lng`, gravada do frame de trabalho antes da
+projeção das 13 colunas; (4) estreia por fonte e observabilidade por `(fonte, rede)` derivadas da
+LISTAGEM de diretórios, nunca dos dados lidos.
+
+**A armadilha a não repetir.** A estreia NÃO pode sair do frame recortado: seria a borda da janela,
+e o defeito corrigido no PR #383 voltaria por outro caminho — lá, a estreia por SÉRIE (em vez de por
+FONTE) fez **22.877** chaves do WellHub serem lidas como recém-chegadas, contra **327** reais.
+
+**Fora de escopo.** Bump do contrato do snapshot (`v5 → v6`) e qualquer mudança em
+`COLUNAS_PII_PROIBIDAS`: a série continua anônima, e pôr nome dentro dela exige DEC própria.
+
+---
+
 ### BLK-MA-17-FU5 — O resíduo do dedup: ~87 duplicatas que o nome não casa porque o insumo não tem nome
 
 | | |

@@ -24,7 +24,10 @@ _ROOT = Path(__file__).resolve().parents[2]
 #: continua proibido é subir para acomodar PROSA, que pertence a docs/.
 #:
 #: 231 -> 232 na DEC-063 (2026-09-17), pela mesma manutenção prevista: uma DEC nova, uma linha-índice.
-_TETO_LINHAS = 232
+#:
+#: 232 -> 233 na DEC-064 (2026-09-18), idem. O corpo da decisão (retenção integral da série, estado
+#: incremental e ponte de identidade) está em docs/decisions/DEC-064.md; no §8 entrou 1 linha.
+_TETO_LINHAS = 233
 
 
 def _linhas(p: Path) -> int:
