@@ -2201,7 +2201,7 @@ healthcheck; (7) a fronteira com o BLK-MA-20 escrita na DEC; (8) READ-ONLY sobre
 | **Criticidade** | **Média** — mexe num wrapper de cron **já aplicado na VPS**, o que exige reaplicação manual do Felipe. READ-ONLY sobre o M1. |
 | **Prioridade** | Média. O risco é real mas de cauda: exige que uma rodada de agregador atrase até domingo, o que hoje só acontece por travamento. |
 | **Esteira** | Block Orchestrator → Builder → QA → `[aplicação na VPS: passo MANUAL — §6]`. |
-| **Status** | Pendente — **criado em 2026-08-26**, fatiado do BLK-MA-21 pela decisão de escopo do sintetizador. |
+| **Status** | Pendente — **criado em 2026-08-26**, fatiado do BLK-MA-21 pela decisão de escopo do sintetizador. **ENCOLHIDO pela [DEC-064](../docs/decisions/DEC-064.md) (2026-09-18):** com a poda fora do regime (D1), o caso "duas podas concorrentes" some; **sobrevive** o achado principal — o wrapper de domingo não tem lock nenhum, e a poda segue existindo como ato manual. |
 | **Depende de** | BLK-MA-21 (o wrapper da terça e a grade semanal). |
 | **Autonomia** | **manual (NÃO loop-safe)** — cron de produção. |
 
@@ -2234,7 +2234,7 @@ podar concorrentemente; suíte verde; `loop_guard` sem CRÍTICO; nenhum comando 
 | **Criticidade** | **Alta** — mexe na única função do pacote que **apaga arquivo** (`podar_snapshots`, `shutil.rmtree`). READ-ONLY sobre o M1. |
 | **Prioridade** | **Baixa** *(rebaixada em 2026-08-26)*. A margem que ela compraria já vem de graça no `RETENCAO_SEMANAS = 26 = 2× o piso`. |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | Pendente — **criado em 2026-08-26**; existia como "adiado" dentro do BLK-MA-21 / DEC-039 (D5), com a justificativa da cadência MENSAL, que morreu. |
+| **Status** | **SEM OBJETO desde a [DEC-064](../docs/decisions/DEC-064.md) (2026-09-18)** — criado em 2026-08-26, existia como "adiado" dentro do BLK-MA-21 / DEC-039 (D5) com a justificativa da cadência MENSAL, que morreu; agora a própria premissa morre. Este bloco garante N observações por fonte **dentro de uma janela podada**, e o D1 tira a poda do regime: sem remoção, a assimetria "semanas de CALENDÁRIO × semanas OBSERVADAS" não causa perda nenhuma. Só volta a valer se a poda for reativada à mão. |
 | **Depende de** | BLK-MA-21. |
 | **Autonomia** | **manual (NÃO loop-safe)** — apaga arquivo em disco. |
 
@@ -2327,6 +2327,45 @@ definido antes de qualquer código; validação com fixtures sintéticas; READ-O
 
 
 
+
+---
+
+### BLK-MA-22 — Retenção integral, estado incremental e a ponte de identidade (DEC-064)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — mexe na única função do pacote que **apaga arquivo** (a poda), troca o REGIME DE LEITURA da série que alimenta S3/S4 e cria artefato que persiste **nome e coordenada** de estabelecimento. READ-ONLY sobre o M1: escreve só em `data/staging/`. DEC própria: [DEC-064](../docs/decisions/DEC-064.md). |
+| **Prioridade** | **Alta.** É o que destrava a movimentação DINÂMICA na ficha da unidade: hoje o diff semanal sabe QUE uma chave entrou ou saiu e não sabe QUEM nem ONDE, porque a série é anônima e os feeds crus são sobrescritos todo domingo. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE humano — DEC-064 APROVADA em 2026-09-18]` → Builder → QA → `[aplicação na VPS: passo MANUAL, comando a comando — §6]`. |
+| **Status** | **Pendente.** DEC registrada em 2026-09-18; implementação não iniciada. |
+| **Depende de** | DEC-064 (aprovada). Nada mais — a série já existe no disco da VPS (3 semanas) e o `ler_snapshots` já aceita `semanas=`/`fontes=`. |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca a poda de produção e cria artefato com nome/coordenada. NUNCA marcar loop-safe. |
+
+**As quatro entregas.** (1) `executar()` deixa de podar em regime, com `podar_snapshots` mantendo a
+invariante `>= 1`; (2) churn/staleness passa a ser **materializado** e atualizado por `estado
+anterior + semana nova`, com `--reprocessar` reconstruindo do zero a partir da série retida;
+(3) ponte `semana, fonte, chave_snapshot, nome, lat, lng`, gravada do frame de trabalho antes da
+projeção das 13 colunas; (4) estreia por fonte e observabilidade por `(fonte, rede)` derivadas da
+LISTAGEM de diretórios, nunca dos dados lidos.
+
+**A armadilha a não repetir.** A estreia NÃO pode sair do frame recortado: seria a borda da janela,
+e o defeito corrigido no PR #383 voltaria por outro caminho — lá, a estreia por SÉRIE (em vez de por
+FONTE) fez **22.877** chaves do WellHub serem lidas como recém-chegadas, contra **327** reais.
+
+**Fora de escopo.** Bump do contrato do snapshot (`v5 → v6`) e qualquer mudança em
+`COLUNAS_PII_PROIBIDAS`: a série continua anônima, e pôr nome dentro dela exige DEC própria.
+
+**Reconciliação com os dois follow-ups da poda** *(achado da revisão automática no PR #384)*. O D1
+desliga a poda **em regime**, e isso muda o chão de dois blocos pendentes — de formas DIFERENTES,
+por isso não cabe um carimbo único:
+
+- **BLK-MA-21-FU4 (poda por fonte) fica SEM OBJETO.** Ele existe para garantir N observações por
+  fonte **dentro de uma janela podada**; sem poda, nenhuma observação é removida e a assimetria
+  "semanas de CALENDÁRIO × semanas OBSERVADAS" deixa de causar perda. Sobrevive só como margem se a
+  poda for reativada à mão.
+- **BLK-MA-21-FU3 (`flock`) ENCOLHE, mas não morre.** Ele cobre duas coisas: podas concorrentes
+  (que somem com o D1) e o fato de o wrapper de domingo **não ter lock nenhum**, que continua
+  valendo — a poda segue existindo como ato manual, e o lock protege mais que ela.
 
 ---
 
