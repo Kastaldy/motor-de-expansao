@@ -4642,6 +4642,18 @@ def login(body: LoginIn) -> Response:
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
         raise _erro_de_usuarios(erro) from erro
     if credencial is None or not confere:
+        # Registra a RECUSA antes de responder, e sem mudar o que se responde: o 401 e a
+        # mensagem seguem identicos nos dois casos, porque distinguir entregaria o oraculo
+        # de quem trabalha aqui. Quem distingue e' a LINHA no banco, que o visitante nao ve.
+        try:
+            from motor_expansao.db import eventos as db_eventos
+
+            db_eventos.registrar_login_recusado(
+                autor=credencial.id_usuario if credencial else None,
+                usuario_conhecido=credencial is not None,
+            )
+        except Exception:  # noqa: BLE001 — o rastro nunca muda a resposta ao visitante
+            _LOG_D17.exception("tentativa de login recusada SEM evento no banco")
         raise negado
 
     aberta = db_sessoes.abrir(id_usuario=credencial.id_usuario)

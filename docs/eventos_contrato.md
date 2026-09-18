@@ -35,6 +35,7 @@ um valor é editar esta tabela primeiro.
 | `tipo` | Quando | `entidade` | `metadados` |
 |---|---|---|---|
 | `login` | Entrada na plataforma | — | `origem` (`web`/`bot`) |
+| `login.recusado` | Tentativa que **não** entrou | — | `origem`, `usuario_conhecido` (booleano) |
 | `logout` | Saída explícita | — | — |
 | `ciencia.confidencialidade` | Clique no OK do pop-up de entrada | — | — |
 | `bot.autorizado` | Senha do bot aceita | — | `chat_hash` |
@@ -51,10 +52,28 @@ um valor é editar esta tabela primeiro.
 > **Por que isto é reposição, e não conveniência.** O `docs/trilha_acesso_piloto.md` registra as
 > tentativas de login do Authelia — **sucesso e falha**, com usuário e IP — como a **camada 3** da
 > trilha, a que "responde quem entrou e quando". O corte do P19 remove essa camada junto com o
-> Authelia; sem estes dois eventos ela ficaria sem substituto. Falta ainda o registro de **falha**
-> de login, que é decisão da epic (a §2.1 não o prevê hoje) e anda junto com a ausência de
-> estrangulamento de tentativa — medido: não existe `rate limit` em nenhum lugar de `web/server/`,
-> e o `regulation:` do Authelia é outra coisa que sai no corte.
+> Authelia; sem estes dois eventos ela ficaria sem substituto.
+>
+> **`login.recusado` entrou em 18/09/2026**, e o que ele pode carregar é pequeno por decisões
+> alheias a esta seção — vale escrever para ninguém procurar o que não está lá:
+>
+> - **o IP fica FORA.** O **P15** (base legal e prazo) segue aberto, e há teste de contrato no
+>   motor que recusa qualquer `INSERT` em `eventos` mencionando a coluna. Quem guarda o IP da
+>   tentativa é a **trilha da DEC-027**, em arquivo, por 90 dias — e ela **já grava** o `POST
+>   /api/login` hoje (`relevante()` só exclui `/api/health`, `/assets/` e estáticos);
+> - **o login digitado fica fora** — a §2.7 proíbe login e e-mail em `metadados` (PII), e é
+>   justamente o único identificador quando o usuário digitado não existe;
+> - **o que sobra é o que importa:** login existente → `id_usuario` preenchido, e a pergunta
+>   "quantas tentativas falhas contra esta conta" ganha resposta. Login inexistente → autoria
+>   nula, e o `usuario_conhecido` separa **senha errada** de **varredura de nomes**, que são
+>   incidentes diferentes. Ele não vaza nada: vive no banco, nunca na resposta HTTP, que
+>   continua idêntica nos dois casos.
+>
+> **Registrar não é barrar.** Continua sem existir estrangulamento de tentativa em lugar nenhum
+> do piloto (medido), e o `regulation:` do Authelia sai no corte. Gravar uma linha por tentativa
+> também significa que quem martelar o login escreve no banco — em tabela append-only cujo
+> expurgo é operação à parte (§8.2 do esquema). Limitar a tentativa é a **decisão 3** da epic, e
+> é ela que fecha os dois assuntos de uma vez.
 
 ### 2.2 Geração de artefato — o núcleo do D17
 

@@ -150,6 +150,40 @@ def test_logout_grava_metadados_NULO_e_nao_objeto_vazio(con: FakeConexao) -> Non
     assert (autor, tipo, metadados) == (7, "logout", None)
 
 
+def test_recusa_de_conta_EXISTENTE_carimba_o_id(con: FakeConexao) -> None:
+    """É o caso que torna a linha útil: "quantas tentativas falhas contra esta conta"."""
+    mod.registrar_login_recusado(autor=7, usuario_conhecido=True)
+    (autor, tipo, metadados) = con.eventos[0]
+    assert (autor, tipo) == (7, "login.recusado")
+    assert metadados.obj == {"origem": "web", "usuario_conhecido": True}
+
+
+def test_recusa_de_usuario_INEXISTENTE_sai_com_autoria_nula(con: FakeConexao) -> None:
+    """Não há id a carimbar, e ação de autoria nula é informação legítima (D19).
+
+    Diferente de `registrar_login`, que RECUSA autor nulo — lá a senha já foi verificada e
+    o id é sempre conhecido; aqui a inexistência do usuário é o próprio fato registrado.
+    """
+    mod.registrar_login_recusado(autor=None, usuario_conhecido=False)
+    (autor, _tipo, metadados) = con.eventos[0]
+    assert autor is None
+    assert metadados.obj["usuario_conhecido"] is False
+
+
+def test_a_recusa_NUNCA_leva_o_login_digitado_nem_IP(con: FakeConexao) -> None:
+    """As duas proibições que moldaram este evento, numa asserção só.
+
+    O login digitado é PII (§2.7) — e é a tentação óbvia aqui, porque quando o usuário não
+    existe ele é o único identificador que sobra. O `ip` depende do **P15**, aberto, e tem
+    guarda própria (`test_ip_nao_entra_em_eventos.py`); esta asserção é a segunda camada,
+    do lado do payload.
+    """
+    mod.registrar_login_recusado(autor=None, usuario_conhecido=False)
+    chaves = set(con.eventos[0][2].obj)
+    assert chaves == {"origem", "usuario_conhecido"}
+    assert not (chaves & {"login", "usuario", "email", "ip", "senha"})
+
+
 def test_os_dois_deixam_entidade_nula(con: FakeConexao) -> None:
     """§2.1: `entidade` e' "—" nos dois. O par polimorfico so' vale quando o alvo e' LINHA
     deste banco (D24), e entrar/sair nao tem alvo nenhum."""

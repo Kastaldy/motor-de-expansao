@@ -143,6 +143,82 @@ def test_login_inexistente_e_senha_errada_dao_a_MESMA_resposta(
     assert sem_usuario.value.detail == senha_errada.value.detail
 
 
+def test_a_recusa_vira_evento_com_o_id_quando_a_conta_existe(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from motor_expansao.db import eventos as db_eventos
+
+    vistos: list[dict[str, Any]] = []
+    monkeypatch.setattr(db_eventos, "registrar_login_recusado", lambda **kw: vistos.append(kw))
+    _preparar(monkeypatch, credencial=_credencial(), confere=False)
+
+    with pytest.raises(pilot.HTTPException):
+        pilot.login(pilot.LoginIn(login="vinicius", senha="errada"))
+
+    assert vistos == [{"autor": 7, "usuario_conhecido": True}]
+
+
+def test_a_recusa_de_usuario_inexistente_vira_evento_sem_autor(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from motor_expansao.db import eventos as db_eventos
+
+    vistos: list[dict[str, Any]] = []
+    monkeypatch.setattr(db_eventos, "registrar_login_recusado", lambda **kw: vistos.append(kw))
+    _preparar(monkeypatch, credencial=None, confere=False)
+
+    with pytest.raises(pilot.HTTPException):
+        pilot.login(pilot.LoginIn(login="fantasma", senha="x"))
+
+    assert vistos == [{"autor": None, "usuario_conhecido": False}]
+
+
+def test_registrar_a_recusa_NAO_muda_a_resposta_ao_visitante(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A asserção central deste bloco.
+
+    O banco passa a distinguir os dois casos — e a RESPOSTA não pode distinguir, senão eu
+    teria construído, do lado de fora, exatamente o oráculo que o resto do desenho existe
+    para evitar. Status e mensagem idênticos, com o evento gravando coisas diferentes.
+    """
+    from motor_expansao.db import eventos as db_eventos
+
+    vistos: list[dict[str, Any]] = []
+    monkeypatch.setattr(db_eventos, "registrar_login_recusado", lambda **kw: vistos.append(kw))
+
+    _preparar(monkeypatch, credencial=None, confere=False)
+    with pytest.raises(pilot.HTTPException) as sem_usuario:
+        pilot.login(pilot.LoginIn(login="fantasma", senha="x"))
+
+    _preparar(monkeypatch, credencial=_credencial(), confere=False)
+    with pytest.raises(pilot.HTTPException) as senha_errada:
+        pilot.login(pilot.LoginIn(login="vinicius", senha="errada"))
+
+    assert sem_usuario.value.status_code == senha_errada.value.status_code
+    assert sem_usuario.value.detail == senha_errada.value.detail
+    # ...e o banco, esse sim, separou os dois.
+    assert [v["usuario_conhecido"] for v in vistos] == [False, True]
+
+
+def test_falha_ao_gravar_a_recusa_nao_muda_a_resposta(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rastro nunca altera o que o visitante recebe — nem para melhor, nem para pior."""
+    from motor_expansao.db import eventos as db_eventos
+
+    monkeypatch.setattr(
+        db_eventos,
+        "registrar_login_recusado",
+        lambda **_kw: (_ for _ in ()).throw(RuntimeError("banco fora")),
+    )
+    _preparar(monkeypatch, credencial=_credencial(), confere=False)
+
+    with pytest.raises(pilot.HTTPException) as caiu:
+        pilot.login(pilot.LoginIn(login="vinicius", senha="errada"))
+    assert caiu.value.status_code == 401
+
+
 def test_a_senha_e_verificada_MESMO_sem_credencial(
     ligado: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

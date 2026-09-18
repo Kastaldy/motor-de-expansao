@@ -65,6 +65,22 @@ EVENTO_VIABILIDADE_CALCULADA = "viabilidade.calculada"
 EVENTO_LOGIN = "login"
 EVENTO_LOGOUT = "logout"
 
+#: Tentativa RECUSADA. Nao existia no contrato ate' 18/09/2026 -- a §2.1 previa so' o
+#: sucesso, e a propria nota de la' registrava a falta como decisao em aberto da epic.
+#:
+#: O QUE ELE PODE CARREGAR E' PEQUENO, E POR DECISAO ALHEIA A ESTE ARQUIVO:
+#:   * o IP fica FORA -- o P15 (base legal e prazo de retencao) segue aberto, e ha' teste
+#:     de contrato que recusa qualquer `INSERT` em `eventos` mencionando a coluna. Quem
+#:     guarda o IP da tentativa e' a trilha da DEC-027, em arquivo, por 90 dias;
+#:   * o LOGIN DIGITADO fica fora -- a §2.7 proibe login e e-mail em `metadados` (PII), e
+#:     e' exatamente o unico identificador quando o usuario digitado nao existe.
+#:
+#: Sobra o que importa: quando o login EXISTE, o `id_usuario` vai na coluna de autor, e a
+#: pergunta "quantas tentativas falhas contra esta conta" passa a ter resposta. Quando nao
+#: existe, a linha sai com autoria nula -- e e' o `usuario_conhecido` dos metadados que
+#: separa SENHA ERRADA de VARREDURA DE NOMES, que sao incidentes diferentes.
+EVENTO_LOGIN_RECUSADO = "login.recusado"
+
 #: As chaves de alvo sao CONTRATO, e o defeito de errar uma e' SILENCIOSO: a escrita passa,
 #: o evento cai fora do indice parcial, e ninguem descobre ate' a tabela crescer. O contrato
 #: diz, com todas as letras: "Gravar `id_imovel` ou `imovel` poe o evento fora dos indices".
@@ -280,6 +296,35 @@ def registrar_login(*, autor: int, origem: str = "web") -> None:
 
     with transacao(id_usuario=autor) as con:
         con.execute(SQL_REGISTRAR_ACESSO, (autor, EVENTO_LOGIN, Jsonb({"origem": origem})))
+
+
+def registrar_login_recusado(
+    *, autor: int | None, usuario_conhecido: bool, origem: str = "web"
+) -> None:
+    """Grava `login.recusado` (§2.1). Tentativa que NAO entrou.
+
+    `autor` aceita `None` aqui -- ao contrario de `registrar_login`, e a diferenca e' o
+    ponto inteiro desta funcao: numa recusa por usuario INEXISTENTE nao ha' id a carimbar,
+    e a acao de autoria nula e' informacao legitima (D19). Numa recusa por SENHA ERRADA de
+    conta existente, o id vai preenchido -- e e' o que torna a linha util.
+
+    `usuario_conhecido` NAO e' PII e nao vaza nada para quem tenta: ele vive no banco, nunca
+    na resposta HTTP, que continua sendo a mesma para os dois casos justamente para nao
+    entregar a lista de quem trabalha aqui.
+
+    O QUE ESTA FUNCAO NAO RESOLVE, e precisa estar dito: ela REGISTRA, nao BARRA. Continua
+    nao havendo estrangulamento de tentativa em lugar nenhum do piloto (medido), e o
+    `regulation:` do Authelia sai no corte. Gravar uma linha por tentativa tambem significa
+    que quem martelar o login escreve no banco -- a trilha em arquivo ja' tem a mesma
+    propriedade, mas em `eventos` isso e' tabela append-only cujo expurgo e' operacao a
+    parte (§8.2 do esquema). Limitar a tentativa e' a decisao 3 da epic, e e' ela que fecha
+    os dois assuntos de uma vez.
+    """
+    from psycopg.types.json import Jsonb  # import tardio: so' quem escreve paga
+
+    metadados = {"origem": origem, "usuario_conhecido": usuario_conhecido}
+    with transacao(id_usuario=autor) as con:
+        con.execute(SQL_REGISTRAR_ACESSO, (autor, EVENTO_LOGIN_RECUSADO, Jsonb(metadados)))
 
 
 def registrar_logout(*, autor: int) -> None:
