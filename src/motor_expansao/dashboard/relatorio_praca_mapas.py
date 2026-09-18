@@ -69,6 +69,10 @@ _COR_CIDADE = (148, 163, 184, 70)
 
 _JANELA_PRESSAO_M = 2_600.0
 
+#: Margem do quadro de "Onde crescer" em torno dos hexagonos escolhidos (fracao do proprio span).
+#: 0,6 deixa cerca de um hexagono de folga de cada lado quando os 5 estao juntos.
+_MARGEM_ONDE_CRESCER = 0.6
+
 
 def _png(image: Image.Image) -> bytes:
     out = BytesIO()
@@ -122,8 +126,10 @@ def _bounds_de_pontos(lats: Sequence[float], lngs: Sequence[float], margem: floa
     xs, ys = to_3857.transform(np.asarray(lngs, dtype="float64"), np.asarray(lats, dtype="float64"))
     minx, maxx = float(np.nanmin(xs)), float(np.nanmax(xs))
     miny, maxy = float(np.nanmin(ys)), float(np.nanmax(ys))
-    dx = (maxx - minx) * margem + 200.0
-    dy = (maxy - miny) * margem + 200.0
+    # Piso de 1.500 m: com 1 ou 2 hexagonos quase no mesmo ponto o span tende a zero e o mapa
+    # sairia num zoom de rua, sem contexto nenhum.
+    dx = max((maxx - minx) * margem, 1_500.0) + 200.0
+    dy = max((maxy - miny) * margem, 1_500.0) + 200.0
     return (minx - dx, miny - dy, maxx + dx, maxy + dy)
 
 
@@ -451,6 +457,27 @@ def _quadro_da_cidade(hexes: pd.DataFrame, lat: float | None, lng: float | None)
     return _Quadro(_bounds_de_pontos(*_com_ponto(lats, lngs, lat, lng)), _W, _H)
 
 
+def quadro_onde_crescer(
+    top: pd.DataFrame,
+    hexes_cidade: pd.DataFrame | None = None,
+    lat: float | None = None,
+    lng: float | None = None,
+) -> _Quadro | None:
+    """Enquadramento do mapa de "Onde crescer": os hexagonos ESCOLHIDOS, com margem.
+
+    Zoom na melhor area (2026-09-17, pedido do Juan): antes o quadro era o municipio inteiro e em
+    capital os 5 escolhidos viravam 5 pontinhos verdes. Sem escolhidos desenhaveis, cai no
+    enquadramento da cidade.
+    """
+    lats, lngs = _centroides(top) if top is not None and len(top) else ([], [])
+    if lats:
+        return _Quadro(
+            _bounds_de_pontos(*_com_ponto(lats, lngs, lat, lng), margem=_MARGEM_ONDE_CRESCER), _W, _H
+        )
+    base = hexes_cidade if hexes_cidade is not None and not hexes_cidade.empty else top
+    return _quadro_da_cidade(base, lat, lng) if base is not None and len(base) else None
+
+
 def render_onde_crescer(
     hexes_cidade: pd.DataFrame | None,
     top: pd.DataFrame,
@@ -462,8 +489,7 @@ def render_onde_crescer(
     """A cidade em cinza e os hexagonos escolhidos em destaque, numerados na ordem da lista."""
     if top is None or top.empty or "hex_id" not in top.columns:
         return None
-    base = hexes_cidade if hexes_cidade is not None and not hexes_cidade.empty else top
-    quadro = _quadro_da_cidade(base, lat, lng)
+    quadro = quadro_onde_crescer(top, hexes_cidade, lat, lng)
     if quadro is None:
         return None
     image, draw, desenhou = _base(quadro, "Onde crescer", "Top 5 hexagonos da cidade", basemap=basemap)

@@ -1637,9 +1637,11 @@ def _hex_boundary_mercator(hex_id: str) -> list[tuple[float, float]]:
 
 # Extensao MINIMA do viewport de foco (em metros 3857). Evita super-ampliar quando o foco
 # e um unico/poucos hexes (~1,2 km de aresta no res-7): garante ao menos ~6 km de lado.
-_FOCUS_MIN_SPAN_M = 6000.0
+# 6.000 -> 5.000 m e 0,16 -> 0,08 de margem em 2026-09-17: o pedido do Juan de "um leve zoom"
+# nos mapas que continuam mostrando a cidade toda.
+_FOCUS_MIN_SPAN_M = 5000.0
 # Padding fracional aplicado ao bbox de foco (AJUSTE 1): margem de ~16% em cada eixo.
-_FOCUS_PAD_FRAC = 0.16
+_FOCUS_PAD_FRAC = 0.08
 
 
 def _focus_bounds_mercator(
@@ -1647,6 +1649,7 @@ def _focus_bounds_mercator(
     *,
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
+    hexes_foco: set[str] | None = None,
 ) -> tuple[float, float, float, float] | None:
     """AJUSTE 1 (FU1): bbox de FOCO em EPSG:3857 das regioes RELEVANTES do municipio.
 
@@ -1658,6 +1661,24 @@ def _focus_bounds_mercator(
     """
     if df_muni.empty or "hex_id" not in df_muni.columns:
         return None
+
+    if hexes_foco:
+        # Zoom na MELHOR area (2026-09-17): o quadro fecha nos hexagonos escolhidos. Pins ficam
+        # fora do calculo -- eles enquadravam a cidade inteira e desfaziam o zoom.
+        rel = df_muni.loc[df_muni["hex_id"].astype(str).isin(hexes_foco)]
+        if not rel.empty:
+            xs_f: list[float] = []
+            ys_f: list[float] = []
+            for hid in rel["hex_id"].astype(str):
+                try:
+                    poly = _hex_boundary_mercator(hid)
+                except Exception:
+                    continue
+                for x, y in poly:
+                    xs_f.append(x)
+                    ys_f.append(y)
+            if xs_f:
+                return _com_margem(min(xs_f), min(ys_f), max(xs_f), max(ys_f))
 
     destaque = _hex_destacado_mask(df_muni)
     rel = df_muni.loc[destaque]
@@ -1705,17 +1726,18 @@ def _focus_bounds_mercator(
 
     if not xs or not ys:
         return None
-    minx, maxx = min(xs), max(xs)
-    miny, maxy = min(ys), max(ys)
+    return _com_margem(min(xs), min(ys), max(xs), max(ys))
 
-    # Extensao MINIMA (evita super-ampliar com 1 hex isolado).
+
+def _com_margem(
+    minx: float, miny: float, maxx: float, maxy: float
+) -> tuple[float, float, float, float]:
+    """Aplica extensao MINIMA (evita super-ampliar com 1 hex isolado) e o padding fracional."""
     cx, cy = (minx + maxx) / 2.0, (miny + maxy) / 2.0
     span_x = max(maxx - minx, _FOCUS_MIN_SPAN_M)
     span_y = max(maxy - miny, _FOCUS_MIN_SPAN_M)
     minx, maxx = cx - span_x / 2.0, cx + span_x / 2.0
     miny, maxy = cy - span_y / 2.0, cy + span_y / 2.0
-
-    # Padding fracional.
     pad_x = span_x * _FOCUS_PAD_FRAC
     pad_y = span_y * _FOCUS_PAD_FRAC
     return (minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)
@@ -1807,6 +1829,7 @@ def _render_mapa_municipio(
     basemap: bool = False,
     focus_bounds: tuple[float, float, float, float] | None = None,
     hexes_rotulados: set[str] | None = None,
+    hexes_top: set[str] | None = None,
     nota_pins: str | None = None,
     rotular_valores: bool = True,
 ) -> bytes:
@@ -1823,7 +1846,8 @@ def _render_mapa_municipio(
     `basemap=False`.
 
     `rotular_valores=False` (2026-09-17, pedido do Juan) tira o numero do Residual de cima dos
-    hexagonos da camada "resumo". `hexes_rotulados` limita o NOME DO BAIRRO a esses hexagonos --
+    hexagonos da camada "resumo". `hexes_top` limita a cor e o numero de zona da camada "dominio"
+    aos 10 melhores hexagonos. `hexes_rotulados` limita o NOME DO BAIRRO a esses hexagonos --
     em Sao Paulo os 154 aprovados viravam um tapete de placas. `None` mantem o de antes (nome em
     todo hexagono destacado). `nota_pins` e' a frase que o rodape do mapa acrescenta para declarar
     qual recorte de academias esta desenhado.
@@ -2022,6 +2046,10 @@ def _render_mapa_municipio(
         elif camada == "dominio":
             hid = hex_id_list[pos] if pos < len(hex_id_list) else ""
             zona = hex_zona_geo.get(hid)
+            # Com `hexes_top` (2026-09-17, pedido do Juan), so' os 10 melhores levam cor e numero
+            # de zona: numerar os 154 aprovados de Sao Paulo enchia o mapa de circulos magenta.
+            if hexes_top is not None and hid not in hexes_top:
+                zona = None
             if zona is not None:
                 color = _ZONA_CORES_RGBA[zona]
                 odraw.polygon(pixels, fill=color, outline=(255, 255, 255, 110))
@@ -2610,6 +2638,7 @@ def render_mapas_municipio(
     height: int = 704,
     poligono_municipio: Any | None = None,
     hexes_rotulados: set[str] | None = None,
+    hexes_top: set[str] | None = None,
 ) -> dict[str, bytes]:
     """Gera as camadas de mapa do relatorio (cobertura/resumo/score/residual/dominio).
 
@@ -2637,6 +2666,9 @@ def render_mapas_municipio(
     focus_bounds = _focus_bounds_mercator(
         df_muni, competitors_df=competitors_df, ultra_df=ultra_df
     )
+    # Resumo e Dominio fecham o quadro nos hexagonos escolhidos (zoom na melhor area); os demais
+    # seguem com o foco de sempre, agora com menos margem em volta.
+    foco_top = _focus_bounds_mercator(df_muni, hexes_foco=hexes_top) if hexes_top else None
     # Mapas tematicos: so' a Ultra e as maiores redes. A contagem cheia (inclusive independentes)
     # segue nos numeros das paginas e na Pressao concorrencial, que e' onde a oferta e' o assunto.
     redes_principais = principais_redes(competitors_df)
@@ -2670,8 +2702,9 @@ def render_mapas_municipio(
             basemap=basemap,
             width=width,
             height=height,
-            focus_bounds=focus_bounds,
+            focus_bounds=(foco_top or focus_bounds) if camada in ("resumo", "dominio") else focus_bounds,
             hexes_rotulados=hexes_rotulados,
+            hexes_top=hexes_top if camada == "dominio" else None,
             nota_pins=nota_pins if pins else None,
             rotular_valores=False,
         )

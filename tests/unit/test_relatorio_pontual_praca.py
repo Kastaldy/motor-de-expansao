@@ -333,15 +333,16 @@ def test_onde_crescer_pinta_os_numerados_de_verde_na_escala_da_cidade():
     verde = np.all(arr == rpm._COR_TOP, axis=-1)
     assert rpm._COR_TOP[1] > rpm._COR_TOP[0] + 60 and rpm._COR_TOP[1] > rpm._COR_TOP[2] + 40
 
-    quadro = rpm._quadro_da_cidade(hexes, _LAT, _LNG)
+    quadro = rpm.quadro_onde_crescer(top, hexes, _LAT, _LNG)
     for h in escolhidos:
         lat_c, lng_c = h3.cell_to_latlng(h)
         cx, cy = (int(round(v)) for v in quadro.lnglat(lng_c, lat_c))
         janela = verde[cy - 25 : cy + 26, cx - 25 : cx + 26]
         assert janela.sum() >= 150, f"{h}: so {janela.sum()} px verdes em volta do centro"
 
-    # hexagono comum da cidade (longe do pino e dos escolhidos): translucido, o fundo aparece
-    lat_c, lng_c = h3.cell_to_latlng(h3.grid_ring(centro, 6)[0])
+    # hexagono comum da cidade (dentro do quadro, longe do pino e dos escolhidos): translucido,
+    # o fundo aparece
+    lat_c, lng_c = h3.cell_to_latlng(h3.grid_ring(centro, 11)[6])
     cx, cy = (int(round(v)) for v in quadro.lnglat(lng_c, lat_c))
     assert arr[cy, cx].min() >= 200, f"cidade opaca demais: {arr[cy, cx]}"
 

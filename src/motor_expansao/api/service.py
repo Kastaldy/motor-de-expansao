@@ -1121,11 +1121,15 @@ def montar_pdf_municipio(
         if praca is not None and len(praca.onde_crescer.hexagonos)
         else None
     )
+    # Os 10 melhores pela MESMA regua de "Onde crescer" (os 5 da pagina sao os 5 primeiros):
+    # e' o que a camada de Dominio numera, em vez dos 154 aprovados de Sao Paulo.
+    hexes_top = _top_para_o_dominio(df_muni, renda_dom) if praca is not None else None
 
     def _mapas(basemap: bool):
         return render_mapas_municipio(
             df_muni, result, competitors_df=comp_df, ultra_df=ultra_df, basemap=basemap,
             poligono_municipio=poligono, unidade=unidade, hexes_rotulados=hexes_rotulados,
+            hexes_top=hexes_top,
         )
 
     try:
@@ -1148,6 +1152,22 @@ def montar_pdf_municipio(
 
 
 _LOG_PRACA = logging.getLogger("motor_expansao.relatorio_praca")
+
+#: Quantos hexagonos a camada de Dominio numera (pedido do Juan, 2026-09-17).
+TOP_HEXES_DOMINIO = 10
+
+
+def _top_para_o_dominio(df_muni, renda_dom: dict | None) -> set[str] | None:
+    """Os `TOP_HEXES_DOMINIO` melhores pela regua de "Onde crescer". `None` se nao der para ordenar."""
+    from motor_expansao.dashboard import relatorio_praca as rp
+
+    try:
+        hexes = rp.preparar_hexes_da_cidade(df_muni, renda_dom)
+        sel = rp.selecionar_onde_crescer(hexes, n=TOP_HEXES_DOMINIO)
+    except Exception as exc:  # noqa: BLE001 - mapa segue com o comportamento de antes
+        _LOG_PRACA.warning("top do dominio indisponivel: %r", exc)
+        return None
+    return {str(h) for h in sel.hexagonos["hex_id"]} or None
 
 
 def _praca_da_cidade(

@@ -367,3 +367,58 @@ def test_mapa_do_resumo_sai_sem_o_numero_em_cada_hexagono(monkeypatch):
     monkeypatch.setattr(relmun, "_render_mapa_bairros", lambda *a, **k: b"PNG")
     relmun.render_mapas_municipio(_df_cidade(1), {"zonas": []})
     assert vistos["resumo"] is False
+
+
+def test_dominio_numera_so_o_top_e_resumo_fecha_nos_escolhidos(monkeypatch):
+    """Dominio: cor e numero de zona so' nos 10 melhores. Resumo e Dominio enquadram esses
+    hexagonos; score e residual seguem com o foco da cidade."""
+    from motor_expansao.dashboard import relatorio_municipal as relmun
+
+    df = _df_cidade(2)
+    top = {str(h) for h in df["hex_id"].iloc[:3]}
+    vistos: dict[str, tuple] = {}
+
+    def _render(d, *, camada, focus_bounds=None, hexes_top=None, **k):
+        vistos[camada] = (focus_bounds, hexes_top)
+        return b"PNG"
+
+    monkeypatch.setattr(relmun, "_render_mapa_municipio", _render)
+    monkeypatch.setattr(relmun, "_render_mapa_bairros", lambda *a, **k: b"PNG")
+    relmun.render_mapas_municipio(df, {"zonas": []}, hexes_top=top)
+
+    assert vistos["dominio"][1] == top
+    assert vistos["resumo"][1] is None  # so' o dominio numera
+    foco_top = relmun._focus_bounds_mercator(df, hexes_foco=top)
+    assert vistos["resumo"][0] == foco_top and vistos["dominio"][0] == foco_top
+    assert vistos["score"][0] == relmun._focus_bounds_mercator(df)
+    # o quadro dos escolhidos e' MENOR que o da cidade inteira
+    largura = lambda b: b[2] - b[0]  # noqa: E731
+    assert largura(foco_top) < largura(vistos["score"][0])
+
+
+def test_zona_pintada_so_nos_hexagonos_do_top():
+    """Sem `hexes_top` todo hexagono com zona e' pintado; com ele, so' os escolhidos.
+
+    Mede por DIFERENCA contra o render sem zona nenhuma (`hexes_top=set()`): a cor da zona entra
+    com alpha sobre o fundo, entao procurar o tom puro no PNG acharia zero pixel.
+    """
+    import numpy as np
+    from PIL import Image
+
+    from motor_expansao.dashboard import relatorio_municipal as relmun
+
+    df = _df_cidade(2)
+    ids = [str(h) for h in df["hex_id"]]
+    result = {"hex_zona_geo": dict.fromkeys(ids, 0), "zonas": []}
+
+    def _arr(hexes_top):
+        png = relmun._render_mapa_municipio(
+            df, camada="dominio", municipio_result=result, basemap=False, hexes_top=hexes_top
+        )
+        return np.array(Image.open(BytesIO(png)).convert("RGB")).astype(np.int16)
+
+    sem_zona = _arr(set())
+    px_todos = int(np.any(_arr(None) != sem_zona, axis=-1).sum())
+    px_tres = int(np.any(_arr(set(ids[:3])) != sem_zona, axis=-1).sum())
+    assert px_todos > 0
+    assert 0 < px_tres < px_todos / 2
