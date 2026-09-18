@@ -3202,7 +3202,7 @@ def _resumo_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pw = _PAGE_W - px - 36.0
     # FU1: centraliza verticalmente o bloco (painel + box "Como calculamos").
     panel_h = 36.0 + 3 * 26.0 + 12.0
-    box_h = 92.0  # 110 -> 92 quando a linha das parcelas saiu (2026-09-17)
+    box_h = 110.0
     bloco_h = panel_h + 12.0 + box_h
     py0 = _centered_y(bloco_h)
     y_end = _info_panel(
@@ -3223,22 +3223,17 @@ def _resumo_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pdf.set_text_color(45, 45, 45)
     pdf.set_font("Helvetica", "", 10)
     pdf.set_xy(px + 12, y_end + 42)
-    pdf.multi_cell(
-        pw - 24, 13,
-        _ascii(f"Soma dos hexágonos destacados / {_format_number(CAPACIDADE_UNIDADE, 0)} alunos por unidade"),
-    )
-    # A linha das 5 maiores parcelas ("20.633 + 20.579 + ... = 1.348.560") saiu em 2026-09-17, a
-    # pedido do Juan: era informacao demais na pagina, e o total ja diz de onde vem o numero.
-    # `parcelas_amarelos` continua no contrato do `result` (auditoria), so' nao e' mais impressa.
+    pdf.multi_cell(pw - 24, 13, _ascii("Soma dos hexágonos destacados / 2.500"))
+    parcelas = result.get("parcelas_amarelos") or []
     soma = result.get("soma_oferta_amarelos", 0.0)
-    pdf.set_xy(px + 12, y_end + 68)
-    pdf.cell(
-        pw - 24, 14,
-        _ascii(
-            f"{_format_number(soma, 0)} / {_format_number(CAPACIDADE_UNIDADE, 0)} -> "
-            f"{_format_number(result.get('espaco_para_academias'), 0)}"
-        ),
-    )
+    if parcelas:
+        expr = " + ".join(_format_number(p, 0) for p in parcelas)
+        if len(parcelas) < int(result.get("n_hex_amarelos", 0)):
+            expr += " + ..."
+        pdf.set_xy(px + 12, y_end + 60)
+        pdf.multi_cell(pw - 24, 13, _ascii(f"{expr} = {_format_number(soma, 0)}"))
+    pdf.set_xy(px + 12, y_end + 88)
+    pdf.cell(pw - 24, 14, _ascii(f"/ 2.500 -> {_format_number(result.get('espaco_para_academias'), 0)}"))
     # AJUSTE 2 (BLK-RELMUN-03): legenda BREVE do criterio de inclusao do hexagono (limiar real
     # do _hex_destacado_mask: OFERTA_DESTAQUE_MIN — SO Residual Fitness, termo de SAM removido).
     _draw_note(
