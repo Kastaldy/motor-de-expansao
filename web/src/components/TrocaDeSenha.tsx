@@ -7,7 +7,7 @@ import {
   textoDaTroca,
   type EstadoDaSenha,
 } from '../lib/troca-de-senha'
-import { Botao, Eyebrow, Glass, Spinner } from './primitives'
+import { Botao, Campo, Eyebrow, Glass, Spinner } from './primitives'
 
 /* ---------------------------------------------------------------------------
    Troca da PRÓPRIA senha (D26 / migration 016).
@@ -245,63 +245,6 @@ export default function TrocaDeSenha({
   )
 }
 
-/* `type="password"` sem botão de revelar: revelar é conveniência que custa um vazamento
-   por cima do ombro e em captura de tela, e aqui a pessoa digita isto uma vez. Quem
-   confere a digitação é o campo de repetição, que é para o que ele serve. */
-function Campo({
-  id,
-  rotulo,
-  valor,
-  onValor,
-  desabilitado,
-  ruim = false,
-  foco = false,
-  onEnter,
-}: {
-  id: string
-  rotulo: string
-  valor: string
-  onValor: (v: string) => void
-  desabilitado: boolean
-  ruim?: boolean
-  foco?: boolean
-  onEnter?: () => void
-}) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <label
-        htmlFor={id}
-        style={{
-          font: '600 10px/1 var(--f-ui)',
-          letterSpacing: '.07em',
-          textTransform: 'uppercase',
-          color: 'var(--tx-muted)',
-        }}
-      >
-        {rotulo}
-      </label>
-      <input
-        id={id}
-        type="password"
-        autoFocus={foco}
-        autoComplete={id === 'senha-atual' ? 'current-password' : 'new-password'}
-        spellCheck={false}
-        disabled={desabilitado}
-        value={valor}
-        onChange={(ev) => onValor(ev.target.value)}
-        onKeyDown={(ev) => {
-          if (ev.key === 'Enter' && onEnter) onEnter()
-        }}
-        style={{
-          padding: '9px 11px',
-          borderRadius: 'var(--r-sm)',
-          border: `1px solid ${ruim ? 'var(--sev-alta)' : 'var(--line-strong)'}`,
-          background: 'var(--surf-chrome)',
-          color: 'var(--tx-max)',
-          font: '500 13px/1.3 var(--f-ui)',
-          width: '100%',
-        }}
-      />
-    </div>
-  )
-}
+/* O `Campo` mudou-se para `primitives.tsx` quando a tela de login passou a precisar do
+   mesmo componente — as chamadas acima não mudaram, porque lá ele mantém `password` como
+   default e a mesma dedução de `autoComplete`. */

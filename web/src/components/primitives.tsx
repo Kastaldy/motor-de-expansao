@@ -595,3 +595,77 @@ export function BarraMeta({
     </div>
   )
 }
+
+/* Campo de formulário com rótulo. Nasceu local no `TrocaDeSenha.tsx` e veio para cá
+   quando a tela de login passou a precisar do MESMO campo: duplicar o estilo criaria
+   duas redações do mesmo componente, que divergem em silêncio — some um `borderRadius`
+   num lado e ninguém nota até alguém comparar as duas telas.
+
+   `type="password"` continua sendo o DEFAULT, e `autoComplete` mantém exatamente a
+   dedução que existia (`senha-atual` -> `current-password`, o resto -> `new-password`),
+   para as três chamadas do `TrocaDeSenha` não mudarem em nada ao migrar.
+
+   SEM botão de revelar senha, e isso é decisão herdada: revelar é conveniência que custa
+   um vazamento por cima do ombro e em captura de tela. Quem confere a digitação é o campo
+   de repetição, que é para o que ele serve. */
+export function Campo({
+  id,
+  rotulo,
+  valor,
+  onValor,
+  desabilitado,
+  tipo = 'password',
+  autoComplete,
+  ruim = false,
+  foco = false,
+  onEnter,
+}: {
+  id: string
+  rotulo: string
+  valor: string
+  onValor: (v: string) => void
+  desabilitado: boolean
+  tipo?: 'text' | 'password'
+  autoComplete?: string
+  ruim?: boolean
+  foco?: boolean
+  onEnter?: () => void
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <label
+        htmlFor={id}
+        style={{
+          font: '600 10px/1 var(--f-ui)',
+          letterSpacing: '.07em',
+          textTransform: 'uppercase',
+          color: 'var(--tx-muted)',
+        }}
+      >
+        {rotulo}
+      </label>
+      <input
+        id={id}
+        type={tipo}
+        autoFocus={foco}
+        autoComplete={autoComplete ?? (id === 'senha-atual' ? 'current-password' : 'new-password')}
+        spellCheck={false}
+        disabled={desabilitado}
+        value={valor}
+        onChange={(ev) => onValor(ev.target.value)}
+        onKeyDown={(ev) => {
+          if (ev.key === 'Enter' && onEnter) onEnter()
+        }}
+        style={{
+          padding: '9px 11px',
+          borderRadius: 'var(--r-sm)',
+          border: `1px solid ${ruim ? 'var(--sev-alta)' : 'var(--line-strong)'}`,
+          background: 'var(--surf-chrome)',
+          color: 'var(--tx-max)',
+          font: '500 13px/1.3 var(--f-ui)',
+          width: '100%',
+        }}
+      />
+    </div>
+  )
+}
