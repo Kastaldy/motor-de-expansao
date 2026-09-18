@@ -4122,8 +4122,13 @@ def _praca_onde_crescer_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
             xx += lw
         y += 22.0
     if sel.hexagonos.empty:
-        pdf.set_xy(x, y + 4)
-        pdf.cell(w, 16, _ascii("Nenhum hexágono passou nos dois critérios."))
+        # A cor do texto vinha BRANCA do cabecalho da tabela -- em Manaus a frase saia invisivel
+        # sobre o fundo claro. Com aviso, ele ja diz a mesma coisa e com mais detalhe.
+        if not sel.aviso:
+            pdf.set_text_color(45, 45, 45)
+            pdf.set_font("Helvetica", "", 10)
+            pdf.set_xy(x, y + 4)
+            pdf.cell(w, 16, _ascii("Nenhum hexágono passou nos dois critérios."))
         y += 22.0
 
     mediana = _renda(sel.mediana_renda) if sel.mediana_renda is not None else TEXTO_SEM_DADO

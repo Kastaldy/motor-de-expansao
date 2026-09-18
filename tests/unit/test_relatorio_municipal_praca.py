@@ -272,15 +272,18 @@ def test_pdf_onde_crescer_mostra_bairro_criterio_e_rede_pelo_rotulo():
 def test_pdf_municipal_sem_crescimento_e_sem_elegivel_explica():
     df = _df_cidade(1)
     hexes = rp.preparar_hexes_da_cidade(df, None)
+    sel_vazia = rp.selecionar_onde_crescer(hexes)
+    assert sel_vazia.hexagonos.empty
     praca = _praca(
         df,
-        onde_crescer=rp.selecionar_onde_crescer(hexes),
+        onde_crescer=sel_vazia,
         crescimento=rp.resumir_crescimento(None),
         mapas={},
     )
     pdf = gerar_pdf_relatorio_municipal(_resultado(df), None, praca=praca)
     assert rp.TEXTO_SEM_CRESCIMENTO.encode("latin-1") in pdf
-    assert "Nenhum hexágono passou".encode("latin-1") in pdf
+    # sem elegivel, quem explica e' o aviso da selecao (a frase da tabela seria redundante)
+    assert praca.onde_crescer.aviso and "Nenhum hexágono do município".encode("latin-1") in pdf
     assert "Mapa indisponível".encode("latin-1") in pdf
 
 

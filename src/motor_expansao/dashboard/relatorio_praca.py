@@ -174,9 +174,21 @@ def selecionar_onde_crescer(
     elif n_eleg < n:
         if mediana is None:
             aviso = "Nenhum hexágono do município tem renda domiciliar publicada."
+        elif n_eleg == 0:
+            # "So' 0 hexagono(s) ... a lista mostra os que existem" saia em Manaus, onde nao ha
+            # nenhum: a frase prometia uma lista que nao existe.
+            aviso = (
+                "Nenhum hexágono do município tem, ao mesmo tempo, residual positivo e renda "
+                "domiciliar na metade de cima da cidade."
+            )
+        elif n_eleg == 1:
+            aviso = (
+                "Só 1 hexágono do município tem residual positivo e renda domiciliar na metade "
+                "de cima da cidade."
+            )
         else:
             aviso = (
-                f"Só {n_eleg} hexágono(s) do município têm residual positivo e renda domiciliar "
+                f"Só {n_eleg} hexágonos do município têm residual positivo e renda domiciliar "
                 "na metade de cima da cidade; a lista mostra os que existem."
             )
     return SelecaoOndeCrescer(hexagonos=top, mediana_renda=mediana, n_elegiveis=n_eleg, aviso=aviso)
