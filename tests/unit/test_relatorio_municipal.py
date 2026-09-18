@@ -1970,14 +1970,14 @@ def test_independente_sem_rede_usa_o_pin_e_o_rotulo_do_app_que_a_revelou(monkeyp
         }
     )
     res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", competitors_df=comp)
-    # Sem coluna `fonte` (o artefato anterior a DEC-063) as duas caem no WellHub: o agrupamento
+    # Sem coluna `fonte` (o artefato anterior a DEC-064) as duas caem no WellHub: o agrupamento
     # e o rotulo ficam IDENTICOS aos de antes desta DEC.
     assert res["concorrentes_por_rede"] == {CHAVE_AGREGADOR: 2, "smart_fit": 1}
     assert _prettify_rede(CHAVE_AGREGADOR) == "Independentes (Wellhub)"
 
 
 def test_o_balde_e_o_rotulo_do_slide_8_se_separam_por_app():
-    """`[DEC-063]` O balde do slide "Concorrentes por rede" deixa de ser UM so'.
+    """`[DEC-064]` O balde do slide "Concorrentes por rede" deixa de ser UM so'.
 
     Ate' 2026-09-17 ele era rotulado pelo literal "Independentes (Wellhub)", cravado em
     `_prettify_rede`. Com o TotalPass no entregavel, esse balde unico passaria a CONTAR academias

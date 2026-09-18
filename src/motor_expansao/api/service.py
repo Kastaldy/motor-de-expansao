@@ -224,7 +224,7 @@ FONTES_OFERTA = (FONTE_MAPEADOS, FONTE_REDES_AGREGADOR, FONTE_INDEPENDENTES)
 # DEC-034 e NAO casa nome -- independente nao tem `rede` com que casar.
 _DEDUP_INDEPENDENTE_M = 50.0
 
-# `[DEC-063]` `fonte` entra na projecao. Ela SEMPRE existiu no artefato nomeado (100% das 19.329
+# `[DEC-064]` `fonte` entra na projecao. Ela SEMPRE existiu no artefato nomeado (100% das 19.329
 # linhas), e morria exatamente aqui: `unida[_COLS_OFERTA]` e' a projecao final, entao o desenho
 # recebia a academia sem saber de qual app ela veio e so' podia assumir WellHub.
 _COLS_OFERTA = ["rede", "nome", "lat", "lng", "classe", "fonte", "fontes_da_academia"]
@@ -303,7 +303,7 @@ def _oferta_unida(staging_dir_str: str):
                 # Cadastro PROPRIO: nao veio de app nenhum. Nulo e' a resposta honesta -- nao
                 # existe "fonte agregadora" para estas linhas.
                 "fonte": pd.Series([pd.NA] * len(mapeados), dtype="string"),
-                # `[DEC-063 / fatia 2]` Idem, e a coluna PRECISA existir aqui: `_COLS_OFERTA` e' a
+                # `[DEC-064 / fatia 2]` Idem, e a coluna PRECISA existir aqui: `_COLS_OFERTA` e' a
                 # projecao final sobre a concatenacao dos tres partes -- ramo que nao a produz
                 # derruba a uniao inteira com `KeyError` quando os outros faltam.
                 "fontes_da_academia": pd.Series([pd.NA] * len(mapeados), dtype="string"),
@@ -340,7 +340,7 @@ def _oferta_unida(staging_dir_str: str):
                     if "fonte" in redes.columns
                     else pd.Series([pd.NA] * len(redes), dtype="string")
                 ),
-                # `[DEC-063 / fatia 2]` O artefato de REDES tem contrato proprio
+                # `[DEC-064 / fatia 2]` O artefato de REDES tem contrato proprio
                 # (`redes_ma_nomeadas_v4`) e NAO carrega esta coluna. Nulo e' a resposta correta:
                 # carimbar a `fonte` sozinha afirmaria exclusividade nao medida.
                 "fontes_da_academia": (
@@ -372,13 +372,13 @@ def _oferta_unida(staging_dir_str: str):
             "lng": pd.to_numeric(indep["lng"], errors="coerce"),
             "classe": CLASSE_INDEPENDENTE,
             # O app que revelou a academia. E' o UNICO dos tres partes em que ela nao e' nula por
-            # construcao -- e e' dela que sai a cor do pino (DEC-063).
+            # construcao -- e e' dela que sai a cor do pino (DEC-064).
             "fonte": (
                 indep["fonte"].astype("string")
                 if "fonte" in indep.columns
                 else pd.Series([pd.NA] * len(indep), dtype="string")
             ),
-            # `[DEC-063 / fatia 2]` QUAIS apps listam a academia. Com virgula, o pino sai no
+            # `[DEC-064 / fatia 2]` QUAIS apps listam a academia. Com virgula, o pino sai no
             # terceiro estado. Ausente em artefato anterior ao `v8` -- e ai' o desenho cai na
             # `fonte`, reproduzindo o de hoje.
             "fontes_da_academia": (

@@ -158,7 +158,7 @@ def montar_alvos_nomeados(
 
 
 def _fontes_da_academia(df: pd.DataFrame) -> pd.Series:
-    """`[DEC-063]` Quais apps listam CADA academia — a resposta a "esta nos dois?".
+    """`[DEC-064]` Quais apps listam CADA academia — a resposta a "esta nos dois?".
 
     A regra e' **`RAIO_MESMA_ACADEMIA_ENTRE_APPS_M` E nome** (100 m + `mesmo_estabelecimento`),
     escolhida por Vinicius em 2026-09-17 sobre a tabela medida em `contrato.py`.

@@ -118,7 +118,7 @@ def test_o_pin_carrega_os_numeros_da_academia(com_independentes: Path) -> None:
 
 
 def test_o_pin_declara_de_QUAL_app_a_academia_veio(com_independentes: Path) -> None:
-    """`[DEC-063]` A arte do pino sai da `fonte` — então a `fonte` tem de CHEGAR ao item.
+    """`[DEC-064]` A arte do pino sai da `fonte` — então a `fonte` tem de CHEGAR ao item.
 
     A coluna existe no artefato nomeado desde sempre e vem 100% preenchida (medido no publicado:
     19.329 de 19.329 no `v5`, todas `wellhub`). Ela morria em `_COLS_NOMEADAS`, a lista de
@@ -126,7 +126,7 @@ def test_o_pin_declara_de_QUAL_app_a_academia_veio(com_independentes: Path) -> N
 
     Campo aditivo sem teste é o que regride em silêncio: tirá-lo da lista outra vez faria o mapa
     voltar a carimbar academia do TotalPass com a bandeira do CONCORRENTE, e **nenhuma suíte
-    ficaria vermelha** — que é exatamente o defeito que a DEC-063 corrigiu.
+    ficaria vermelha** — que é exatamente o defeito que a DEC-064 corrigiu.
     """
     misto = _nomeadas()
     misto.loc[misto["nome"] == "Gama Fit", "fonte"] = "totalpass"
@@ -141,7 +141,7 @@ def test_o_pin_declara_de_QUAL_app_a_academia_veio(com_independentes: Path) -> N
 
 
 def test_o_pin_declara_quando_a_academia_esta_nos_DOIS_apps(com_independentes: Path) -> None:
-    """`[DEC-063 / fatia 2]` A coluna `fontes_da_academia` tem de CHEGAR ao item.
+    """`[DEC-064 / fatia 2]` A coluna `fontes_da_academia` tem de CHEGAR ao item.
 
     Ela nasce em `montar_alvos_nomeados` (100 m + nome) e atravessa `_COLS_NOMEADAS` — a lista de
     PERMISSAO do piloto, que e' onde a `fonte` morria antes de ontem. Campo aditivo sem teste

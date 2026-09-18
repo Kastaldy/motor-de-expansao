@@ -47,7 +47,7 @@ from datetime import date
 VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v4"
 VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
-VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v9"  # v9: DEC-063
+VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v9"  # v9: DEC-064
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
 H3_RES_CONTRATO = 7
@@ -416,7 +416,7 @@ PESOS_ALVO_D4: dict[str, float] = {"s1": 0.15, "s2": 0.25, "s3": 0.35, "s4": 0.2
 
 # S2 (rating in-app) é `n/d` PERMANENTE no Plano B (contrato §7 / D3) até o BLK-MA-08 ajustar o
 # coletor. Reativar o sinal 2 é remover UMA entrada desta tupla — a fórmula do score não muda.
-# `[DEC-063]` O **s1 entra aqui**, e a razao e' medida, nao de gosto.
+# `[DEC-064]` O **s1 entra aqui**, e a razao e' medida, nao de gosto.
 #
 # O sinal pergunta "esta academia esta' em um agregador ou nos dois?" -- propriedade da ACADEMIA.
 # Mas ele e' medido por HEXAGONO (`n_agregadores_no_hex`), porque quando foi construido nao existia
@@ -504,7 +504,7 @@ CONTRATO_COLUNAS_SCORE: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Sinal 6 — pressão competitiva com decaimento por distância (BLK-MA-12)
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v6"  # v6: DEC-063
+VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v6"  # v6: DEC-064
 
 # Raio de TRUNCAMENTO, não de alcance: quem define o alcance efetivo é a forma do kernel. 2.000 m
 # é o mesmo do `pressao_concorrencial_score_2km` da camada de mercado — manter o número igual é o
@@ -606,7 +606,7 @@ DEDUP_INDEPENDENTES_M = 50.0
 # O default e' `None` = comportamento de HOJE, byte a byte (nenhuma dedup dentro da mesma fonte).
 DEDUP_INDEPENDENTES_NOME_M = 150.0
 
-# `[DEC-063]` Alcance do casamento que responde "esta academia esta' NOS DOIS apps?".
+# `[DEC-064]` Alcance do casamento que responde "esta academia esta' NOS DOIS apps?".
 #
 # **NAO e' a regua da dedup de OFERTA, e a diferenca e' deliberada.** La' (`DEDUP_INDEPENDENTES_M`,
 # 50 m) o custo de errar e' assimetrico num sentido: nao colapsar DOBRA a oferta de toda academia
@@ -840,7 +840,7 @@ CONTRATO_COLUNAS_PRESSAO: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Lista priorizada de alvos de M&A (D5/D6) — BLK-MA-05
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v6"  # v6: DEC-063
+VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v6"  # v6: DEC-064
 
 # Gate D5 (ratificado em 2026-07-23; reabrir exige DEC). A INVERSÃO do §2 mora aqui: comprar quer
 # demanda ALTA + residual BAIXO, o OPOSTO de `abrir_agora`.
@@ -936,7 +936,7 @@ CONTRATO_COLUNAS_ALVOS_MA: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Variante NOMEADA (D1-B) — BLK-MA-15
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v8"  # v8: DEC-063, `fontes_da_academia`
+VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v8"  # v8: DEC-064, `fontes_da_academia`
 
 # O UNICO contrato desta camada que carrega IDENTIDADE e COORDENADA, autorizado pela emenda de
 # 2026-08-14 a DEC-028 (decidida por Vinicius). Grao: uma linha por academia.
@@ -950,7 +950,7 @@ VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v8"  # v8: DEC-063, `fontes_
 # nao e' desenhavel. Descarta-la esconderia um alvo por acidente de coleta.
 CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
     "fonte": "string",
-    # `[DEC-063]` QUAIS apps listam esta academia, em ordem alfabetica e separados por virgula
+    # `[DEC-064]` QUAIS apps listam esta academia, em ordem alfabetica e separados por virgula
     # (`"wellhub"`, `"totalpass"`, `"totalpass,wellhub"`). Idioma de `fontes_lidas` (snapshot v4).
     #
     # NAO e' um booleano "ambos" de proposito: a string diz QUAIS, sobrevive a um terceiro
@@ -1008,7 +1008,7 @@ CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
 # no mesmo dia e o score leria um evento de negociacao como 440 alvos. O S6 nao tem esse defeito: e'
 # geografico e nao sabe se a academia e' de rede. Molde do G-D2 e da DEC-026 — o fato entra antes do
 # peso.
-VERSAO_CONTRATO_REDES_NOMEADAS = "redes_ma_nomeadas_v4"  # v4: DEC-063
+VERSAO_CONTRATO_REDES_NOMEADAS = "redes_ma_nomeadas_v4"  # v4: DEC-064
 
 CONTRATO_COLUNAS_REDES_NOMEADAS: dict[str, str] = {
     "fonte": "string",

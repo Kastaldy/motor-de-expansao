@@ -279,7 +279,7 @@ def test_agregacao_nao_atravessa_regimes() -> None:
     alvos = agregar_alvos_por_hex(academias_com_hotness(score, _carteira()))
     do_hex = alvos[alvos["hex_id_res7"] == HEX_Q]
     assert len(do_hex) == 2, "regimes diferentes no mesmo hex nao podem colapsar numa linha"
-    # `[DEC-063]` o regime completo perdeu o `s1` (`SINAIS_INATIVOS`); o `{s3}` forjado acima
+    # `[DEC-064]` o regime completo perdeu o `s1` (`SINAIS_INATIVOS`); o `{s3}` forjado acima
     # continua sendo o outro regime, e a propriedade sob teste — regimes diferentes no mesmo hex
     # NÃO colapsam numa linha — é a mesma.
     assert set(do_hex["sinais_disponiveis"]) == {"s3,s4", "s3"}
@@ -319,7 +319,7 @@ def test_ordenacao_usa_o_regime_como_chave_primaria() -> None:
     assert float(alvos.iloc[0]["score_vulnerabilidade_medio"]) < float(
         alvos.iloc[-1]["score_vulnerabilidade_medio"]
     ), "a linha de score 100 e' de 1 sinal e NAO pode encabecar a lista"
-    # `[DEC-063]` 2, não 3: o regime completo é `{s3, s4}` desde que o `s1` saiu da conta.
+    # `[DEC-064]` 2, não 3: o regime completo é `{s3, s4}` desde que o `s1` saiu da conta.
     assert int(alvos.iloc[0]["n_sinais_disponiveis"]) == 2
 
 
@@ -628,7 +628,7 @@ def test_o_recorte_de_fontes_e_FAIL_CLOSED(caplog: pytest.LogCaptureFixture) -> 
     receitas canônicas do próprio repositório o omitiam. O teste anterior travava exatamente o
     comportamento errado, assertando `default is None`.
     """
-    # `[DEC-063]` A FRONTEIRA MUDOU DE LUGAR, e este teste é onde isso fica escrito.
+    # `[DEC-064]` A FRONTEIRA MUDOU DE LUGAR, e este teste é onde isso fica escrito.
     #
     # Até 2026-09-16 o que impedia o TotalPass de contaminar o ranking era a FONTE ficar fora da
     # série — e este guarda afirmava `"totalpass" not in serie`. Proteger assim custava as 15.841
@@ -642,7 +642,7 @@ def test_o_recorte_de_fontes_e_FAIL_CLOSED(caplog: pytest.LogCaptureFixture) -> 
     # 1. Omissão => as DUAS fontes. É o que põe as 15.841 na lista de candidatas.
     assert m.resolver_fontes(m._parse_args(["--base-dir", "x"])) == ("totalpass", "wellhub")
     # 2. Recorte explícito manda sobre o default — `--fontes wellhub` reproduz o universo anterior
-    #    à DEC-063 sem mexer em código.
+    #    à DEC-064 sem mexer em código.
     assert m.resolver_fontes(m._parse_args(["--base-dir", "x", "--fontes", "wellhub"])) == (
         "wellhub",
     )
@@ -659,7 +659,7 @@ def test_o_recorte_de_fontes_e_FAIL_CLOSED(caplog: pytest.LogCaptureFixture) -> 
     assert "s1" in SINAIS_INATIVOS, (
         "o `s1` voltou a pesar. Com o TotalPass na série, ele erra em 36,99% do universo por medir "
         "o HEXÁGONO e não a academia — religá-lo exige, no MESMO ato, levá-lo ao grão por academia "
-        "(a dedup já responde isso). Ver DEC-063."
+        "(a dedup já responde isso). Ver DEC-064."
     )
 
 
@@ -724,9 +724,9 @@ def test_ramo_que_impoe_o_recorte_injeta_a_serie_recortada(
     decorativo — e nada ficaria vermelho. **Essa propriedade é a mesma, e continua sendo o objeto
     deste teste.**
 
-    `[DEC-063]` O que mudou foi o VALOR. Até 2026-09-16 o teste se chamava
+    `[DEC-064]` O que mudou foi o VALOR. Até 2026-09-16 o teste se chamava
     `..._tira_o_totalpass_do_entregavel` e provava que a omissão do flag deixava **uma** fonte
-    passar. A DEC-063 decidiu o contrário: o TotalPass ENTRA (são 15.841 candidatas que só existem
+    passar. A DEC-064 decidiu o contrário: o TotalPass ENTRA (são 15.841 candidatas que só existem
     nele), e a proteção mudou de lugar — deixou de ser "a fonte fica fora da série" e passou a ser
     "o sinal fica fora da conta" (`s1` em `SINAIS_INATIVOS`). Por isso a omissão agora deixa passar
     as DUAS, e quem guarda a fronteira é o teste do `SINAIS_INATIVOS`, não este.
@@ -748,7 +748,7 @@ def test_ramo_que_impoe_o_recorte_injeta_a_serie_recortada(
     assert m.main([*comum, "--todas-as-fontes"]) == 0
     aberto = capsys.readouterr().out
 
-    # `[DEC-063]` A omissão aplica `FONTES_ENTREGAVEL_DEFAULT`, que agora são as DUAS fontes —
+    # `[DEC-064]` A omissão aplica `FONTES_ENTREGAVEL_DEFAULT`, que agora são as DUAS fontes —
     # e é isso que põe as academias do TotalPass na lista de candidatas. O recorte continua sendo
     # APLICADO (não decorativo): `--fontes wellhub` reproduz o universo anterior, com UMA fonte.
     assert "'academias': 2" in fechado, (
@@ -759,7 +759,7 @@ def test_ramo_que_impoe_o_recorte_injeta_a_serie_recortada(
     assert m.main([*comum, "--fontes", "wellhub"]) == 0
     recortado = capsys.readouterr().out
     assert "'academias': 1" in recortado, (
-        f"`--fontes wellhub` tinha de reproduzir o universo anterior a DEC-063: {recortado}"
+        f"`--fontes wellhub` tinha de reproduzir o universo anterior a DEC-064: {recortado}"
     )
 
 
@@ -770,9 +770,9 @@ def test_as_receitas_canonicas_declaram_o_recorte_que_a_omissao_aplica() -> None
     `--todas-as-fontes`, que abre a série inteira por gesto mudo. Até 2026-08-25 elas omitiam
     `--fontes wellhub` sobre um `default=None`, e omitir era exatamente o gesto que vazava.
 
-    `[DEC-063]` Chamava-se `..._nao_regridem_para_fail_open` e exigia o literal **`FAIL-CLOSED`**
+    `[DEC-064]` Chamava-se `..._nao_regridem_para_fail_open` e exigia o literal **`FAIL-CLOSED`**
     nos dois textos. Esse literal descrevia o recorte por FONTE — "omitir aplica só `wellhub`" —,
-    e a DEC-063 revogou exatamente isso: omitir passou a aplicar as DUAS. Exigi-lo hoje obrigaria
+    e a DEC-064 revogou exatamente isso: omitir passou a aplicar as DUAS. Exigi-lo hoje obrigaria
     a receita copiável a AFIRMAR um desenho que não existe, que é a falha da qual nasceu a emenda
     E3 da DEC-039. A propriedade que sobrevive — e que este teste passa a guardar — é a mesma de
     sempre: **a receita declara QUAL recorte a omissão aplica**.
@@ -806,7 +806,7 @@ def test_as_receitas_canonicas_declaram_o_recorte_que_a_omissao_aplica() -> None
         assert "--todas-as-fontes" not in texto, f"{nome}: a receita copiavel abre a serie inteira"
 
     # E as duas dizem, em prosa, QUAL recorte a omissão aplica — senão o operador lê "sem flag =
-    # tudo"; e, desde a DEC-063, também o inverso ("sem flag = só wellhub"), que já foi verdade.
+    # tudo"; e, desde a DEC-064, também o inverso ("sem flag = só wellhub"), que já foi verdade.
     assert 'FONTES_ENTREGAVEL_DEFAULT = ("totalpass", "wellhub")' in runbook, (
         "o runbook nao declara o default vigente que a omissao aplica"
     )

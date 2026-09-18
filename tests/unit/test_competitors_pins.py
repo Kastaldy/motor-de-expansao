@@ -244,7 +244,7 @@ def test_arte_do_wellhub_do_pacote_e_a_mesma_do_piloto():
 
 
 def test_a_arte_do_totalpass_e_CONVERSAO_FIEL_e_nao_copia_de_bytes():
-    """`[DEC-063]` O invariante do TotalPass e' DIFERENTE do WellHub, e de proposito.
+    """`[DEC-064]` O invariante do TotalPass e' DIFERENTE do WellHub, e de proposito.
 
     O do WellHub e' igualdade de BYTES: a arte do piloto ja' e' PNG e foi copiada. O original do
     TotalPass e' JPEG -- e `_png_to_pin_svg` crava `data:image/png` no `href` e recorta a logo num
@@ -290,7 +290,7 @@ def _bytes_do_tile(key: str) -> bytes:
 
 
 def test_ambos_COM_arte_compoe_as_duas_logos(tmp_path):
-    """`[DEC-063 / fatia 2]` M2: placa branca com as DUAS logos, uma por metade.
+    """`[DEC-064 / fatia 2]` M2: placa branca com as DUAS logos, uma por metade.
 
     O criterio NAO e' o `_tile_tem_logo` do arquivo: ele exige "mais de 2 cores opacas", e a placa
     bipartida SEM arte ja' tem rosa, verde e branco — aprovaria os dois estados, e um teste que
@@ -314,7 +314,7 @@ def test_ambos_COM_arte_compoe_as_duas_logos(tmp_path):
 
 
 def test_ambos_SEM_arte_cai_na_placa_bipartida_B5(tmp_path):
-    """`[DEC-063 / fatia 2]` A degradacao escolhida — e a que MAIS importa.
+    """`[DEC-064 / fatia 2]` A degradacao escolhida — e a que MAIS importa.
 
     Sem arte a cor sozinha continua dizendo "esta nos dois": metade rosa, metade verde. Se isto
     virasse placa solida, o terceiro estado sumiria exatamente onde a arte nao chega.
@@ -339,7 +339,7 @@ def test_ambos_SEM_arte_cai_na_placa_bipartida_B5(tmp_path):
 
 
 def test_a_arte_de_AMBOS_e_a_composicao_EXATA_das_duas_atuais():
-    """`[DEC-063 / fatia 2]` O asset composto nao pode envelhecer em silencio.
+    """`[DEC-064 / fatia 2]` O asset composto nao pode envelhecer em silencio.
 
     A web precisa de um ARQUIVO (a `IconLayer` do deck.gl recebe URL, nao desenho), enquanto o PDF
     compoe em tempo de render. Um terceiro arquivo tem um modo de falha proprio: trocar a logo de um
@@ -365,7 +365,7 @@ def test_a_arte_de_AMBOS_e_a_composicao_EXATA_das_duas_atuais():
 
 
 def test_a_chave_sai_da_coluna_fontes_da_academia():
-    """`[DEC-063 / fatia 2]` O coracao da fatia: virgula -> `__ambos__`.
+    """`[DEC-064 / fatia 2]` O coracao da fatia: virgula -> `__ambos__`.
 
     Sem a coluna (artefato anterior ao `alvos_ma_nomeados_v8`) cai na `fonte` e reproduz o desenho
     de hoje — o fallback nao inventa estado novo.
@@ -386,7 +386,7 @@ def test_a_chave_sai_da_coluna_fontes_da_academia():
 
 
 def test_os_dois_apps_se_distinguem_por_COR_e_nao_so_por_arte():
-    """`[DEC-063]` Sem PNG nenhum o tile cai na placa SOLIDA da marca.
+    """`[DEC-064]` Sem PNG nenhum o tile cai na placa SOLIDA da marca.
 
     Se a cor fosse a mesma, o fallback apagaria a distincao exatamente onde ela mais importa: em
     producao, onde a arte do agregador nao chega ao diretorio montado. Por isso cada app tem COR,
@@ -403,7 +403,7 @@ def test_os_dois_apps_se_distinguem_por_COR_e_nao_so_por_arte():
     )
 
     assert AGREGADOR_BRAND["bg"] != AGREGADOR_TP_BRAND["bg"]
-    # `[DEC-063 / fatia 2]` TRES chaves, DUAS artes — e a assimetria e' o DESENHO, nao esquecimento:
+    # `[DEC-064 / fatia 2]` TRES chaves, DUAS artes — e a assimetria e' o DESENHO, nao esquecimento:
     # `__ambos__` COMPOE as duas artes existentes em vez de ter a sua. Ate' a fatia 2 este teste
     # afirmava a igualdade dos dois conjuntos, e a segunda assercao nem chegava a rodar quando a
     # primeira caia — por isso as duas sao reapontadas juntas.

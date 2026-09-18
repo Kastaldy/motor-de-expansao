@@ -161,7 +161,7 @@ def main() -> None:
         print("       --base-dir data/staging/snapshots_concorrentes \\")
         print("       --saida-nomeadas data/staging/vulnerabilidade_ma_nomeadas.parquet \\")
         print("       --saida-redes data/staging/vulnerabilidade_ma_redes.parquet")
-        print("  -> O recorte de fontes: omitir `--fontes` aplica o default da DEC-063,")
+        print("  -> O recorte de fontes: omitir `--fontes` aplica o default da DEC-064,")
         print("     que e' `totalpass,wellhub` -- o TotalPass entra no entregavel.")
         print("     `--fontes wellhub` reproduz o universo anterior (19.329 academias).")
         print("  -> A fronteira do BLK-MA-20 nao sumiu: mudou de lugar. O que segue fora do")

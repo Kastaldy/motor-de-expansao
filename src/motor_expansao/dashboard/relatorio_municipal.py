@@ -334,7 +334,7 @@ def _prettify_rede(rede: str) -> str:
     if not key:
         return "Concorrente"
     if key in ROTULO_AGREGADOR:
-        # `[DEC-063]` Era o literal "Independentes (Wellhub)" cravado aqui. Com o TotalPass no
+        # `[DEC-064]` Era o literal "Independentes (Wellhub)" cravado aqui. Com o TotalPass no
         # entregavel, o slide 8 escreveria o nome do app ERRADO para as academias que so'
         # existem nele.
         return ROTULO_AGREGADOR[key]
@@ -1451,7 +1451,7 @@ def _pins_no_municipio(
             # Independente (rede vazia, DEC-046) conta no balde do agregador; `astype(str)`
             # direto abria um balde "<NA>" com a placa cinza "C" no slide 8.
             #
-            # `[DEC-063]` O balde sai do APP que revelou a academia, e nao mais de uma constante:
+            # `[DEC-064]` O balde sai do APP que revelou a academia, e nao mais de uma constante:
             # sem `fonte` (artefato anterior a esta DEC) cai no WellHub e o agrupamento fica
             # IDENTICO ao de antes.
             fontes = (
@@ -1459,7 +1459,7 @@ def _pins_no_municipio(
                 if "fonte" in conc_muni.columns
                 else pd.Series([None] * len(conc_muni), index=conc_muni.index)
             )
-            # `[DEC-063 / fatia 2]` O balde tambem se desdobra: academia nos dois apps conta num
+            # `[DEC-064 / fatia 2]` O balde tambem se desdobra: academia nos dois apps conta num
             # balde PROPRIO, senao ela seria somada sob o nome de um app so'.
             declaradas = (
                 conc_muni["fontes_da_academia"]
@@ -2521,7 +2521,7 @@ def _draw_pins(
             if not key:
                 # DEC-046: linha sem `rede` e' academia INDEPENDENTE -> marcador do agregador,
                 # menor que a bandeira de cadeia (mesmo ramo do `censo_map`, Pontual).
-                # `[DEC-063]` A MARCA sai do app que a revelou: rosa no WellHub, verde no
+                # `[DEC-064]` A MARCA sai do app que a revelou: rosa no WellHub, verde no
                 # TotalPass. MESMA funcao que o Pontual chama -- uma redacao da regra.
                 key, size = (
                     chave_agregador_da_fonte(row.get("fonte"), row.get("fontes_da_academia")),
