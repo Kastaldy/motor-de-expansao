@@ -1642,10 +1642,10 @@ def _hex_boundary_mercator(hex_id: str) -> list[tuple[float, float]]:
 _FOCUS_MIN_SPAN_M = 5000.0
 # Padding fracional aplicado ao bbox de foco (AJUSTE 1): margem de ~16% em cada eixo.
 _FOCUS_PAD_FRAC = 0.08
-# O Resumo fecha nos hexagonos APROVADOS (os verdes), com margem propria: ali a pergunta e'
-# "quanto espaco ha nesta cidade", entao o entorno precisa aparecer -- mas sem a cauda de
-# hexagonos cinza que os PINS traziam para dentro do quadro (Juan, 2026-09-17).
-_FOCUS_PAD_FRAC_RESUMO = 0.12
+# O Resumo fecha nos MESMOS hexagonos do Dominio (os escolhidos), com margem folgada: enquadrar
+# todos os aprovados devolvia a cidade inteira, porque em Sao Paulo eles vao de norte a sul.
+# Com 0,55 o quadro mostra a melhor area e o bastante em volta para situar (Juan, 2026-09-17).
+_FOCUS_PAD_FRAC_RESUMO = 0.55
 
 
 def _focus_bounds_mercator(
@@ -2677,9 +2677,13 @@ def render_mapas_municipio(
     # Resumo e Dominio fecham o quadro nos hexagonos escolhidos (zoom na melhor area); os demais
     # seguem com o foco de sempre, agora com menos margem em volta.
     foco_top = _focus_bounds_mercator(df_muni, hexes_foco=hexes_top) if hexes_top else None
-    # Resumo: so' os hexagonos APROVADOS, SEM os pins no calculo. Com eles, uma unidade Ultra no
-    # extremo sul de Sao Paulo esticava o quadro e trazia junto a cauda de hexagonos cinza.
-    foco_resumo = _focus_bounds_mercator(df_muni, pad_frac=_FOCUS_PAD_FRAC_RESUMO) or focus_bounds
+    # Resumo: os escolhidos com margem folgada, SEM os pins no calculo (uma unidade Ultra num
+    # hexagono afastado esticava o quadro). Sem `hexes_top`, cai nos aprovados.
+    foco_resumo = (
+        _focus_bounds_mercator(df_muni, hexes_foco=hexes_top, pad_frac=_FOCUS_PAD_FRAC_RESUMO)
+        if hexes_top
+        else _focus_bounds_mercator(df_muni, pad_frac=_FOCUS_PAD_FRAC_RESUMO)
+    ) or focus_bounds
     # Mapas tematicos: so' a Ultra e as maiores redes. A contagem cheia (inclusive independentes)
     # segue nos numeros das paginas e na Pressao concorrencial, que e' onde a oferta e' o assunto.
     redes_principais = principais_redes(competitors_df)

@@ -408,11 +408,12 @@ def test_dominio_numera_so_o_top_e_resumo_fecha_nos_escolhidos(monkeypatch):
     assert vistos["dominio"][0] == relmun._focus_bounds_mercator(df, hexes_foco=top)
     assert vistos["score"][0] == relmun._focus_bounds_mercator(df, ultra_df=ultra)
     assert vistos["resumo"][0] == relmun._focus_bounds_mercator(
-        df, pad_frac=relmun._FOCUS_PAD_FRAC_RESUMO
+        df, hexes_foco=top, pad_frac=relmun._FOCUS_PAD_FRAC_RESUMO
     )
-    # o quadro do Resumo NAO estica ate' a unidade do hexagono afastado
+    # o Resumo fecha nos escolhidos com folga: mais largo que o Dominio e sem esticar ate' a
+    # unidade do hexagono afastado, que so' entra no foco das demais camadas
     altura = lambda b: b[3] - b[1]  # noqa: E731
-    assert altura(vistos["resumo"][0]) < altura(vistos["score"][0])
+    assert altura(vistos["dominio"][0]) < altura(vistos["resumo"][0]) < altura(vistos["score"][0])
 
 
 def test_zona_pintada_so_nos_hexagonos_do_top():
