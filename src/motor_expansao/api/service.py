@@ -1104,10 +1104,28 @@ def montar_pdf_municipio(
     if logos_dir is not None:
         preload_logos(logos_dir, ultra_dir=ultra_dir)
 
+    # Paginas da PRACA (mapas de calor, pressao, crescimento, onde crescer). Falha aqui deixa o PDF
+    # sair sem elas, como antes -- nunca derruba o relatorio. Vem ANTES dos mapas do relatorio
+    # porque os 5 hexagonos de "Onde crescer" sao os unicos que levam nome de bairro neles.
+    try:
+        praca = _praca_da_cidade(
+            df_muni, uf=uf, nome_municipio=nome_municipio, cod=cod, comp_df=comp_df,
+            ultra_df=ultra_df, poligono=poligono, renda_dom=renda_dom, settings=settings,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _LOG_PRACA.warning("paginas da praca omitidas em %s/%s: %r", nome_municipio, uf, exc)
+        praca = None
+
+    hexes_rotulados = (
+        {str(h) for h in praca.onde_crescer.hexagonos["hex_id"]}
+        if praca is not None and len(praca.onde_crescer.hexagonos)
+        else None
+    )
+
     def _mapas(basemap: bool):
         return render_mapas_municipio(
             df_muni, result, competitors_df=comp_df, ultra_df=ultra_df, basemap=basemap,
-            poligono_municipio=poligono, unidade=unidade,
+            poligono_municipio=poligono, unidade=unidade, hexes_rotulados=hexes_rotulados,
         )
 
     try:
@@ -1117,18 +1135,6 @@ def montar_pdf_municipio(
             mapas = _mapas(False)
         except Exception:
             mapas = None
-
-    # Paginas da PRACA (mapas de calor, pressao, crescimento, onde crescer). Falha aqui deixa o PDF
-    # sair sem elas, como antes -- nunca derruba o relatorio.
-    try:
-        praca = _praca_da_cidade(
-            df_muni, uf=uf, nome_municipio=nome_municipio, cod=cod, comp_df=comp_df,
-            ultra_df=ultra_df, poligono=poligono, renda_dom=renda_dom, settings=settings,
-            basemap=mapas is not None,
-        )
-    except Exception as exc:  # noqa: BLE001
-        _LOG_PRACA.warning("paginas da praca omitidas em %s/%s: %r", nome_municipio, uf, exc)
-        praca = None
 
     # `report_id` (D17) e' OPCIONAL e default `None`: o bot/API segue chamando sem ele e o PDF
     # sai byte-identico. Quem o passa e' o piloto web, onde a trilha da DEC-027 gera o id que
@@ -1161,7 +1167,8 @@ def _praca_da_cidade(
 
     Mesmo preparo para o motor e o bot: renda domiciliar pelo mapa que a tabela de regioes ja usa,
     pins pelo recorte do slide Concorrentes e crescimento por `crescimento_municipal.parquet` da
-    staging (a base do bot nao traz as colunas `cres_*`). Cada mapa que falha vira fallback textual.
+    staging (a base do bot nao traz as colunas `cres_*`). Cada mapa tenta o fundo de ruas online e
+    cai no canvas offline; o que falhar nos dois vira fallback textual na pagina.
     """
     from concurrent.futures import ThreadPoolExecutor
 

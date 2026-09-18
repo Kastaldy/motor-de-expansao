@@ -337,3 +337,41 @@ def test_score_e_residual_saem_sem_pins(monkeypatch):
     for camada in ("resumo", "dominio"):
         c, u = recebidos[camada]
         assert c is not None and len(c) == 1 and u is not None and len(u) == 1
+
+
+def test_mapas_tematicos_so_desenham_ultra_e_as_maiores_redes(monkeypatch):
+    """Sao Paulo tem 491 concorrentes: os mapas ficam com a Ultra e as 5 maiores redes, e o
+    rodape do PNG diz quais sao."""
+    from motor_expansao.dashboard import relatorio_municipal as relmun
+
+    recebidos: dict[str, tuple] = {}
+
+    def _render(df, *, camada, competitors_df=None, ultra_df=None, nota_pins=None, **k):
+        recebidos[camada] = (competitors_df, nota_pins, k.get("hexes_rotulados"))
+        return b"PNG"
+
+    monkeypatch.setattr(relmun, "_render_mapa_municipio", _render)
+    monkeypatch.setattr(relmun, "_render_mapa_bairros", lambda *a, **k: b"PNG")
+    redes = ["smart_fit"] * 9 + ["bluefit"] * 7 + ["selfit"] * 5 + ["panobianco"] * 4 + ["gavioes"] * 3 + ["pequena"] * 2
+    conc = pd.DataFrame({"rede": redes + [None], "lat": _LAT, "lng": _LNG})
+    ultra = pd.DataFrame({"lat": [_LAT], "lng": [_LNG]})
+    top5 = {"h_a", "h_b"}
+
+    relmun.render_mapas_municipio(
+        _df_cidade(1), {"zonas": []}, competitors_df=conc, ultra_df=ultra, hexes_rotulados=top5
+    )
+
+    assert relmun.principais_redes(conc) == ["smart_fit", "bluefit", "selfit", "panobianco", "gavioes"]
+    pins, nota, rotulados = recebidos["resumo"]
+    assert len(pins) == 28  # 9+7+5+4+3; a rede pequena e a independente ficam de fora
+    assert set(pins["rede"]) == {"smart_fit", "bluefit", "selfit", "panobianco", "gavioes"}
+    assert nota is not None and "5 maiores redes" in nota and "29 de 32" in nota  # 28 concorrentes das 5 redes + 1 Ultra, de 31 + 1 and "Smart Fit" in nota and "pequena" not in nota
+    assert rotulados == top5
+    # mapa sem pins nao promete recorte de academia nenhum
+    assert recebidos["score"][0] is None and recebidos["score"][1] is None
+    assert recebidos["score"][2] == top5
+
+    # municipio so' com independentes: nao ha o que recortar, o frame passa inteiro
+    so_indep = pd.DataFrame({"rede": [None, None], "lat": _LAT, "lng": _LNG})
+    assert relmun.principais_redes(so_indep) == []
+    assert len(relmun._so_as_principais(so_indep, [])) == 2

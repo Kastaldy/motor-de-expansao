@@ -1806,6 +1806,8 @@ def _render_mapa_municipio(
     height: int = 704,
     basemap: bool = False,
     focus_bounds: tuple[float, float, float, float] | None = None,
+    hexes_rotulados: set[str] | None = None,
+    nota_pins: str | None = None,
 ) -> bytes:
     """Renderiza um PNG do municipio. `camada` define o esquema de cor dos hexes:
 
@@ -1818,6 +1820,11 @@ def _render_mapa_municipio(
 
     `basemap=True` busca tiles online (DEC-011) com fallback offline. Em CI/teste default
     `basemap=False`.
+
+    `hexes_rotulados` (2026-09-17, pedido do Juan) limita o NOME DO BAIRRO a esses hexagonos --
+    em Sao Paulo os 154 aprovados viravam um tapete de placas. `None` mantem o de antes (nome em
+    todo hexagono destacado). `nota_pins` e' a frase que o rodape do mapa acrescenta para declarar
+    qual recorte de academias esta desenhado.
 
     `focus_bounds` (AJUSTE 1, FU1) e o bbox de VIEWPORT em EPSG:3857 (regioes relevantes do
     municipio + pins, com padding/extensao minima); quando dado, a CAMERA enquadra esse
@@ -1972,10 +1979,12 @@ def _render_mapa_municipio(
         if len(pixels) < 3:
             continue
         if mapa_bairro and destaque_mask[pos]:
-            # So nos hexes DESTACADOS: rotular os 240 hexes do Rio deixaria o mapa ilegivel, e
-            # os aprovados sao justamente os que o relatorio manda olhar.
+            # So nos hexes DESTACADOS -- e, com `hexes_rotulados`, so' nos escolhidos: rotular os
+            # 154 aprovados de Sao Paulo deixava o mapa ilegivel.
             hid = hex_id_list[pos] if pos < len(hex_id_list) else ""
             nome_bairro = mapa_bairro.get(hid)
+            if hexes_rotulados is not None and hid not in hexes_rotulados:
+                nome_bairro = None
             if nome_bairro:
                 cx_b = int(sum(p[0] for p in pixels) / len(pixels))
                 cy_b = int(sum(p[1] for p in pixels) / len(pixels))
@@ -2147,12 +2156,15 @@ def _render_mapa_municipio(
     )
     if bairro_labels:
         # Declara o corte: sem isto, um mapa com 8 de 152 nomes parece ter so 8 regioes.
-        footer += (
-            f" - bairro em {n_bairro_desenhados} de {len(bairro_labels)} regiões aprovadas"
-            if n_bairro_desenhados < len(bairro_labels)
-            else f" - bairro nas {n_bairro_desenhados} regiões aprovadas"
-        )
-    _draw_text(draw, (24, height - 28), footer, font=_font(11), fill=(71, 85, 105))
+        if hexes_rotulados is not None:
+            footer += f" - bairro nos {n_bairro_desenhados} hexágonos de Onde crescer"
+        else:
+            footer += (
+                f" - bairro em {n_bairro_desenhados} de {len(bairro_labels)} regiões aprovadas"
+                if n_bairro_desenhados < len(bairro_labels)
+                else f" - bairro nas {n_bairro_desenhados} regiões aprovadas"
+            )
+    _rodape_do_mapa(draw, footer, nota_pins, height=height, largura_max=width - 48)
 
     out = BytesIO()
     image.save(out, format="PNG", optimize=True)
@@ -2233,6 +2245,7 @@ def _render_mapa_bairros(
     width: int = 1000,
     height: int = 704,
     basemap: bool = False,
+    nota_pins: str | None = None,
 ) -> bytes:
     """PNG dos bairros (BLK-RELMUN-06), no formato do material de Expansao. Dois modos:
 
@@ -2460,11 +2473,28 @@ def _render_mapa_bairros(
         if drew_basemap
         else f"{fonte_txt} - fundo de ruas offline"
     )
-    _draw_text(draw, (24, height - 28), rodape, font=_font(11), fill=(71, 85, 105))
+    _rodape_do_mapa(draw, rodape, nota_pins, height=height, largura_max=width - 48)
 
     out = BytesIO()
     image.save(out, format="PNG", optimize=True)
     return out.getvalue()
+
+
+def _rodape_do_mapa(
+    draw: ImageDraw.ImageDraw, texto: str, nota: str | None, *, height: int, largura_max: int
+) -> None:
+    """Rodape do PNG: a credito/procedencia na 1a linha e a nota das academias na 2a.
+
+    Em duas linhas porque numa so' a nota estourava a largura do PNG e saia cortada no meio do
+    nome da ultima rede (Sao Paulo, 2026-09-17). Nota que ainda nao caiba e' truncada com "...".
+    """
+    _draw_text(draw, (24, height - 40), texto, font=_font(11), fill=(71, 85, 105))
+    if not nota:
+        return
+    fonte = _font(11)
+    while nota and _text_width(draw, nota, fonte) > largura_max:
+        nota = nota[:-1]
+    _draw_text(draw, (24, height - 24), nota, font=fonte, fill=(71, 85, 105))
 
 
 def _draw_pins(
@@ -2532,6 +2562,33 @@ def _text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont)
     return int(bbox[2] - bbox[0])
 
 
+#: Quantas redes concorrentes os mapas tematicos desenham (pedido do Juan, 2026-09-17: "so'
+#: mostrar as principais concorrentes"). Em Sao Paulo os 491 pins cobriam os hexagonos; as 5
+#: maiores redes sao as mesmas que a pagina de Pressao concorrencial ja lista.
+TOP_REDES_NO_MAPA = 5
+
+
+def principais_redes(competitors_df: pd.DataFrame | None, n: int = TOP_REDES_NO_MAPA) -> list[str]:
+    """As `n` redes com mais unidades no municipio, em ordem total (mais unidades, depois nome)."""
+    if competitors_df is None or competitors_df.empty or "rede" not in competitors_df.columns:
+        return []
+    rede = competitors_df["rede"].astype("string").str.strip()
+    contagem = rede[rede.notna() & (rede != "")].value_counts()
+    ordenado = sorted(((str(k), int(v)) for k, v in contagem.items()), key=lambda kv: (-kv[1], kv[0]))
+    return [nome for nome, _ in ordenado[:n]]
+
+
+def _so_as_principais(competitors_df: pd.DataFrame | None, redes: list[str]) -> pd.DataFrame | None:
+    """Recorta os pins as `redes` dadas; independente (sem rede) fica fora do mapa tematico.
+
+    Sem rede nenhuma para recortar (`redes` vazia, ex.: municipio so' com independentes) devolve
+    o frame inteiro -- ai' nao ha o que poluir.
+    """
+    if competitors_df is None or competitors_df.empty or not redes or "rede" not in competitors_df.columns:
+        return competitors_df
+    return competitors_df.loc[competitors_df["rede"].astype("string").str.strip().isin(redes)]
+
+
 def render_mapas_municipio(
     df_muni: pd.DataFrame,
     municipio_result: dict[str, Any],
@@ -2543,6 +2600,7 @@ def render_mapas_municipio(
     width: int = 1000,
     height: int = 704,
     poligono_municipio: Any | None = None,
+    hexes_rotulados: set[str] | None = None,
 ) -> dict[str, bytes]:
     """Gera as camadas de mapa do relatorio (cobertura/resumo/score/residual/dominio).
 
@@ -2570,6 +2628,22 @@ def render_mapas_municipio(
     focus_bounds = _focus_bounds_mercator(
         df_muni, competitors_df=competitors_df, ultra_df=ultra_df
     )
+    # Mapas tematicos: so' a Ultra e as maiores redes. A contagem cheia (inclusive independentes)
+    # segue nos numeros das paginas e na Pressao concorrencial, que e' onde a oferta e' o assunto.
+    redes_principais = principais_redes(competitors_df)
+    comp_principais = _so_as_principais(competitors_df, redes_principais)
+    n_desenhados = (0 if comp_principais is None else len(comp_principais)) + (
+        0 if ultra_df is None else len(ultra_df)
+    )
+    n_total = (0 if competitors_df is None else len(competitors_df)) + (
+        0 if ultra_df is None else len(ultra_df)
+    )
+    nota_pins = (
+        f"no mapa, {n_desenhados} de {n_total} academias: Ultra e as {len(redes_principais)} "
+        f"maiores redes ({', '.join(_prettify_rede(r) for r in redes_principais)})"
+        if redes_principais
+        else None
+    )
     # Score e residual SEM pins (Juan, 2026-09-17): em capital as logos cobriam os hexagonos --
     # Sao Paulo tem 491 academias. Mesma regra que a versao por bairro ja seguia; quem esta
     # instalado aparece em Resumo, Dominio, Pressao concorrencial e Espaco e academias.
@@ -2580,12 +2654,14 @@ def render_mapas_municipio(
             camada=camada,
             municipio_result=municipio_result,
             zonas=zonas,
-            competitors_df=competitors_df if pins else None,
+            competitors_df=comp_principais if pins else None,
             ultra_df=ultra_df if pins else None,
             basemap=basemap,
             width=width,
             height=height,
             focus_bounds=focus_bounds,
+            hexes_rotulados=hexes_rotulados,
+            nota_pins=nota_pins if pins else None,
         )
         for camada, pins in com_pins.items()
     }
@@ -2601,6 +2677,7 @@ def render_mapas_municipio(
         width=width,
         height=height,
         focus_bounds=None,
+        hexes_rotulados=hexes_rotulados,
     )
 
     # Camada "bairros" (BLK-RELMUN-06): divisa territorial real, municipio INTEIRO. Nao usa
@@ -2632,8 +2709,9 @@ def render_mapas_municipio(
             # leitor nao tinha o que ler no zoom (Juan, em Varzea Grande/MT: "falta as cores").
             metrica="score",
             bounds=bounds_urbano,
-            competitors_df=competitors_df,
+            competitors_df=comp_principais,
             ultra_df=ultra_df,
+            nota_pins=nota_pins,
             basemap=basemap,
             width=width,
             height=height,
@@ -2677,8 +2755,9 @@ def render_mapas_municipio(
                 # `focus_bounds` que as camadas de HEXAGONO ja usavam; era a paridade que
                 # faltava. A pagina 3 (municipio inteiro) segue sem recorte, de proposito.
                 bounds=bounds_urbano,
-                competitors_df=competitors_df if com_pins else None,
+                competitors_df=comp_principais if com_pins else None,
                 ultra_df=ultra_df if com_pins else None,
+                nota_pins=nota_pins if com_pins else None,
                 basemap=basemap,
                 width=width,
                 height=height,

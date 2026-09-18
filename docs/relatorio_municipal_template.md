@@ -211,6 +211,10 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
 
 A moeda dos mapas e da tabela vem do perfil (`simbolo_renda`, #374).
 
+**Limpeza dos mapas temáticos (2026-09-17, pedido do Juan).** Duas regras, porque em capital o mapa ficava ilegível:
+- **Nome de bairro só nos 5 hexágonos de "Onde crescer".** Antes ele saía em todo hexágono aprovado (São Paulo: 154 placas). `service.montar_pdf_municipio` calcula a praça ANTES dos mapas e passa `hexes_rotulados` a `render_mapas_municipio`; sem ele o comportamento antigo continua valendo.
+- **Pins só da Ultra e das 5 maiores redes** (`principais_redes`, `TOP_REDES_NO_MAPA`), as mesmas da página de Pressão concorrencial. Independentes ficam fora do mapa temático. O rodapé do PNG declara o recorte em segunda linha ("no mapa, 370 de 511 academias: Ultra e as 5 maiores redes (...)"), e as contagens cheias seguem nos painéis das páginas.
+
 **Score Censitário e Residual Fitness sem pins (2026-09-17).** Na versão por hexágono os dois mapas levavam as logos de concorrentes e Ultra, e em capital elas cobriam os hexágonos (São Paulo: 491 academias). Agora seguem a regra da versão por bairro: pins só em Resumo e Domínio.
 
 ## Decisões do gate humano (APROVADO por Vinicius, 2026-06-22 — DEC-011) — IMPLEMENTADO
