@@ -441,6 +441,11 @@ def retencao_por_unidade(
         linha = base.loc[chave]
         utilizavel = bool(confiavel.get(chave, False))
         absoluta = utilizavel and str(linha.get("USAR_PROB_ABSOLUTA", "")).strip().lower() == "sim"
+        p12 = _f(linha.get("P_CANCEL_12M_MEDIA"))
+        # O ticket do artefato e' de TABELA (tres valores em toda a rede: 117/147/197). Fica como
+        # fato, mas a receita em risco e' calculada fora daqui, sobre a receita por recorrente
+        # REAL da operacao (`receita_recorrente_em_risco`) — decisao do Felipe, 17/09.
+        ticket = _f(linha.get("TICKET_MEDIO_UNIDADE"))
         saida[str(uid)] = {
             "utilizavel": utilizavel,
             "alunos_modelados": _r(linha.get("N_ALUNOS"), 0),
@@ -448,6 +453,8 @@ def retencao_por_unidade(
             if absoluta and _f(linha.get("PROB_CANCEL_90D_MEDIA")) is not None
             else None,
             "risco_percentil": _r(percentil.get(chave), 0) if utilizavel else None,
+            "p_cancel_12m_pct": _r(100 * p12, 1) if absoluta and p12 is not None else None,
+            "ticket_medio": _r(ticket, 0),
             "ltv_12m_mediano": _r(linha.get("LTV_PROSPECTIVO_12M_MEDIANO"), 0),
             "meses_ativos_12m": _r(linha.get("E_MESES_ATIVOS_12M_MEDIANO"), 1),
             "ltv_fragil_pct": _r(100 * (_f(linha.get("PCT_LTV_FRAGIL")) or 0), 1),
@@ -460,6 +467,26 @@ def retencao_por_unidade(
             "probabilidade_absoluta_valida": absoluta,
         }
     return saida
+
+
+def receita_recorrente_em_risco(
+    recorrentes: float | None,
+    p_cancel_12m_pct: float | None,
+    receita_por_recorrente: float | None,
+) -> float | None:
+    """Mensalidade que o modelo espera perder em 12 meses, por mes.
+
+    RECORRENTES (pagantes de balcao) x chance de cancelar em 12 meses x receita por
+    recorrente REAL — nao `ativos`, porque aluno de agregador nao cancela contrato com a
+    unidade, e nao o ticket de TABELA do artefato, que so' tem tres valores na rede toda
+    enquanto o real vai de R$ 109 a R$ 276 (medido em 17/09).
+
+    Devolve `None` quando a probabilidade nao esta' disponivel: onde o proprio modelo diz
+    que o numero absoluto nao vale, a conta viraria reais com falsa precisao.
+    """
+    if recorrentes is None or p_cancel_12m_pct is None or receita_por_recorrente is None:
+        return None
+    return _r(recorrentes * (p_cancel_12m_pct / 100.0) * receita_por_recorrente, 0)
 
 
 # ---------------------------------------------------------------------------
