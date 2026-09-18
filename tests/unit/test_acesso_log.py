@@ -325,12 +325,68 @@ def test_middleware_sem_caddy_cai_no_ip_do_socket_e_desconhecido(
 ) -> None:
     trilha = tmp_path / "trilha"
     monkeypatch.setenv("MOTOR_ACESSO_LOG_DIR", str(trilha))
+    # Sem header E sem identidade de dev. O `delenv` e' explicito desde 10/09: a trilha
+    # passou a honrar o `MOTOR_DEV_USUARIO`, entao "desconhecido" deixou de ser a unica
+    # saida possivel e este teste precisa dizer de qual ausencia ele fala.
+    monkeypatch.delenv("MOTOR_DEV_USUARIO", raising=False)
 
     _rodar_middleware(_Requisicao("/api/ufs", host="127.0.0.1"))
 
     (registro,) = _linhas_da_trilha(trilha)
     assert registro["usuario"] == "desconhecido"
     assert registro["ip"] == "127.0.0.1"
+
+
+# --- a identidade de DEV na trilha (10/09) ------------------------------------
+# A trilha lia o header CRU e, sem Authelia local, gravava "desconhecido" em toda
+# requisicao de desenvolvimento -- inclusive nas de quem estava administrando. E' o
+# mesmo defeito que o `d2e4264` consertou na allowlist, reaparecido na camada vizinha
+# porque havia DUAS resolucoes de identidade. Agora ha uma so.
+
+
+def test_trilha_registra_a_identidade_de_dev_quando_nao_ha_header(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    trilha = tmp_path / "trilha"
+    monkeypatch.setenv("MOTOR_ACESSO_LOG_DIR", str(trilha))
+    monkeypatch.delenv("MOTOR_CADASTRO_DIR", raising=False)  # nao e' producao
+    monkeypatch.setenv("MOTOR_DEV_USUARIO", "will.lindo")
+
+    _rodar_middleware(_Requisicao("/api/ufs"))
+
+    (registro,) = _linhas_da_trilha(trilha)
+    assert registro["usuario"] == "will.lindo"
+
+
+def test_o_header_sempre_vence_a_identidade_de_dev(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Em producao o header e' a unica verdade, e a env nunca pode sobrescreve-lo."""
+    trilha = tmp_path / "trilha"
+    monkeypatch.setenv("MOTOR_ACESSO_LOG_DIR", str(trilha))
+    monkeypatch.setenv("MOTOR_DEV_USUARIO", "will.lindo")
+
+    _rodar_middleware(_Requisicao("/api/ufs", headers={"remote-user": "ana.teste"}))
+
+    (registro,) = _linhas_da_trilha(trilha)
+    assert registro["usuario"] == "ana.teste"
+
+
+def test_o_sinal_de_producao_desliga_a_identidade_de_dev_na_trilha(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Com `MOTOR_CADASTRO_DIR` setado (o volume `:rw` so' existe no compose), a env de
+    dev deixa de valer -- senao ela seria um jeito de FORJAR autoria na trilha."""
+    trilha = tmp_path / "trilha"
+    monkeypatch.setenv("MOTOR_ACESSO_LOG_DIR", str(trilha))
+    monkeypatch.setenv("MOTOR_DEV_USUARIO", "will.lindo")
+    monkeypatch.setenv("MOTOR_CADASTRO_DIR", str(tmp_path / "cadastro"))
+    monkeypatch.delenv("MOTOR_DEV_IDENTIDADE", raising=False)
+
+    _rodar_middleware(_Requisicao("/api/ufs"))
+
+    (registro,) = _linhas_da_trilha(trilha)
+    assert registro["usuario"] == "desconhecido"
 
 
 def test_middleware_ignora_health_e_estaticos(

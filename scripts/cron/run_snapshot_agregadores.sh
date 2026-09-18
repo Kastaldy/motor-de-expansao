@@ -92,7 +92,7 @@
 #                             esperado por construcao -- a curadoria em DRY_RUN nao copia
 #                             nada, entao nao ha o que o snapshot leia. Rode o modo seco
 #                             uma 2a vez DEPOIS da 1a execucao real para a leitura valer;
-#   * `versao_contrato`    -- tem de ser `snapshots_concorrentes_v4`. Se vier `v3`,
+#   * `versao_contrato`    -- tem de ser `snapshots_concorrentes_v5`. Se vier `v4`/`v3`,
 #                             a VPS esta rodando IMAGEM ANTIGA, que escreve com UMA
 #                             chave de particao e APAGA a folha da outra cadencia.
 #                             NAO agende: aplique a imagem nova primeiro.
@@ -316,7 +316,7 @@ docker run --rm \
 if [ "$DRY_RUN" = "1" ]; then
   echo '>> DRY-RUN: nada gravado, nenhuma semana podada.'
   echo '   Confira acima: fontes_publicadas, linhas_snapshot, retencao_semanas=26 e'
-  echo '   versao_contrato=snapshots_concorrentes_v4 (v3 = imagem ANTIGA; NAO agende).'
+  echo '   versao_contrato=snapshots_concorrentes_v5 (v4/v3 = imagem ANTIGA; NAO agende).'
 else
   echo ">> particoes em ${HOST_STAGING}/snapshots_concorrentes/"
   ls -la "${HOST_STAGING}/snapshots_concorrentes/" 2>/dev/null || echo "   (primeira execucao?)"

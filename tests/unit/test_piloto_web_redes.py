@@ -14,8 +14,11 @@ O que esta suíte protege:
   * **Elas são constantes, não opcionais.** Não existe chave, e a lista separada sumiu do payload.
   * **A bandeira é a da rede.** As 83 redes do feed têm logo cadastrado (medido: 100%), então
     nenhuma cai no quadrado de sigla — e a borda de 7 px continua sendo a cor da marca.
-  * **O halo é uma variante de ícone, não uma cor de dado.** Chave `<rede>__diag` no dicionário de
-    ícones, e o front cai no ícone normal se ela faltar.
+  * **O halo é uma CAMADA, não uma variante de ícone** (desde 17/09/2026, BLK-WEB-23 e emenda 3 da
+    DEC-035). O payload carrega a flag `diag` no pino; quem desenha o anel é a moldura genérica do
+    front. Até essa data o backend servia um segundo ícone por rede (`<rede>__diag`) que
+    **re-embutia o mesmo PNG da marca em base64** — a logo viajava duas vezes para toda rede com
+    diagnóstico no recorte. O dicionário de ícones agora tem UMA entrada por rede.
   * **`diag` não traz score.** A decisão da DEC-035 vale igual: numa rede, presença e churn medem
     negociação da marca.
   * **A precedência continua valendo.** Só entra quem não tem equivalente em
@@ -203,47 +206,54 @@ def test_recorte_sem_unidade_de_rede_nao_e_confundido_com_artefato_ausente(
 # --------------------------------------------------------------------------- #
 # O halo                                                                        #
 # --------------------------------------------------------------------------- #
-def test_o_icone_com_halo_e_servido_para_as_redes_que_tem_diagnostico(com_redes: Path) -> None:
-    """Chave `<rede>__diag` no dicionário, e SÓ para quem tem unidade com diagnóstico."""
+def test_o_dicionario_tem_UMA_entrada_por_rede(com_redes: Path) -> None:
+    """O contrário do que valia até 17/09: nenhuma variante `__diag`.
+
+    Este é o teste que a BLK-WEB-23 comprou. Cada variante extra re-embutia o PNG da marca em
+    base64 — a mesma logo, byte a byte, uma segunda vez no payload. A regressão seria MUDA: o
+    mapa continuaria certo e só o peso cresceria, que é por que ela sobreviveu meses.
+    """
     dados = _muni()
     icones = dados["pins"]["icones"]
     redes_diag = {p["rede"] for p in _com_diag(dados)}
     assert redes_diag, "premissa: ha unidade com diagnostico no recorte"
-    for r in redes_diag:
-        assert f"{r}{pilot.SUFIXO_ICONE_DIAG}" in icones, f"falta o icone com halo de {r}"
+
+    sobrando = [k for k in icones if k.endswith("__diag")]
+    assert not sobrando, f"variante de halo ressuscitou no payload: {sobrando}"
+
+    # Uma entrada por rede do recorte (mais `__ultra__`, quando ha unidade Ultra).
+    redes = {p["rede"] for p in dados["pins"]["concorrentes"] if p.get("rede")}
+    assert {k for k in icones if not k.startswith("__")} == redes
 
 
-def test_o_halo_nao_e_servido_para_rede_sem_diagnostico(com_redes: Path) -> None:
-    """Gerar as 107 variantes sempre dobraria o atlas de textura sem ninguém usar."""
-    dados = _muni()
-    redes_diag = {p["rede"] for p in _com_diag(dados)}
-    com_halo = {k.removesuffix(pilot.SUFIXO_ICONE_DIAG) for k in dados["pins"]["icones"] if k.endswith(pilot.SUFIXO_ICONE_DIAG)}
-    assert com_halo == redes_diag
+def test_a_flag_diag_continua_no_pino_para_acender_a_moldura(com_redes: Path) -> None:
+    """O halo virou camada, e é a flag que a acende — tirá-la apagaria o destaque em silêncio."""
+    com_diag = _com_diag(_muni())
+    assert com_diag, "premissa: ha unidade com diagnostico no recorte"
+    assert all(p["diag"] is True for p in com_diag)
 
 
-def test_o_icone_com_halo_preserva_a_cor_da_rede(com_redes: Path) -> None:
-    """A borda de 7 px é a identidade da marca — o halo é um anel EXTERNO, não a substitui."""
+def test_o_icone_preserva_a_cor_da_rede(com_redes: Path) -> None:
+    """A borda de 7 px é a identidade da marca, e ela não depende do halo para existir.
+
+    O teste anterior provava isso no ícone COM halo (o anel era externo e não substituía a
+    borda). Com o anel fora do ícone, a mesma garantia se faz no ícone único — e o `viewBox`
+    volta a 128, porque não há mais anel a acomodar.
+    """
     import base64 as b64
     import urllib.parse
 
     from motor_expansao.dashboard.competitors import COMPETITOR_BRANDS
 
-    normal = pilot._icone_rede("bluefit")
-    com_halo = pilot._icone_rede("bluefit", halo=True)
-    assert normal != com_halo
-
-    def _svg(uri: str) -> str:
-        dados = uri.split(",", 1)[1]
-        return (
-            b64.b64decode(dados).decode("utf-8")
-            if ";base64" in uri
-            else urllib.parse.unquote(dados)
-        )
-
-    svg = _svg(com_halo)
-    assert str(COMPETITOR_BRANDS["bluefit"]["bg"]) in svg, "a cor da rede sumiu do icone com halo"
-    assert pilot.HALO_DIAGNOSTICO in svg, "o halo nao foi desenhado"
-    assert 'viewBox="0 0 160 160"' in svg, "o viewBox tem de crescer para caber o anel externo"
+    uri = pilot._icone_rede("bluefit")
+    dados = uri.split(",", 1)[1]
+    svg = (
+        b64.b64decode(dados).decode("utf-8")
+        if ";base64" in uri
+        else urllib.parse.unquote(dados)
+    )
+    assert str(COMPETITOR_BRANDS["bluefit"]["bg"]) in svg, "a cor da rede sumiu do icone"
+    assert 'viewBox="0 0 128 128"' in svg, "o viewBox do icone unico e' 128"
 
 
 # --------------------------------------------------------------------------- #

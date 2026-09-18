@@ -35,8 +35,14 @@ Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de s
 - [deploy_api_bot.md](deploy_api_bot.md) — containerização/deploy da API + bot Telegram.
 - [backup_restore.md](backup_restore.md) — **[canônico]** backup e regeneração (DR) de segredos e dados.
 - [trilha_acesso_piloto.md](trilha_acesso_piloto.md) — **[canônico]** trilha de acesso do piloto (DEC-027): quem fez o quê, retenção e habilitação na VPS.
+- [autenticacao_propria_p19.md](autenticacao_propria_p19.md) — escopo da epic do **P19** (o motor passa a autenticar e o Authelia sai): o que já existe no front e no backend, o ponto único de inserção da sessão no middleware, as duas rotas para ninguém ficar trancado no corte, as armadilhas medidas e as cinco decisões ainda abertas. **Não é canônico de propósito** — a decisão mora no P19 (`banco-de-reservas/decisoes-pendentes.md`); aqui está o terreno dela.
 - [deploy_piloto_web.md](deploy_piloto_web.md) — **[canônico]** runbook completo de deploy do piloto web (imagem `motor-expansao-web` por digest).
 - [deploy_plan.md](deploy_plan.md) · [archive/deploy_vps_streamlit.md](archive/deploy_vps_streamlit.md) — **[histórico]** planos/runbooks antigos de deploy (ver `infra_producao.md`).
+- [banco_conexao.md](banco_conexao.md) — **[canônico]** conexão com o banco PostgreSQL/PostGIS (`MOTOR_DATABASE_URL`): os três estados, leitura `READ ONLY` × escrita com `app.id_usuario`, e por que o diagnóstico não fica no `/api/health`.
+- [banco_deploy.md](banco_deploy.md) — **[canônico]** runbook do banco: o **ensaio local** que precede qualquer
+  subida, a ordem que evita trancar todo mundo para fora, provisionamento dos papéis do D20, backup/restore
+  e o interruptor de rollback.
+- [eventos_contrato.md](eventos_contrato.md) — **[canônico]** o que a tabela `eventos` registra: vocabulário fechado de `tipo`, de-para para `entidade`/`metadados`, e a fronteira entre AÇÃO (vai para o banco) e telemetria de requisição (segue em JSONL, DEC-027).
 
 ## 5. Orquestração, Loop e Governança
 - [portao_merge_orq21.md](portao_merge_orq21.md) — **[canônico]** runbook do portão de merge (DEC-016/BLK-ORQ-21).

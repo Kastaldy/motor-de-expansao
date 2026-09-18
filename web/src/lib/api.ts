@@ -4,11 +4,18 @@ import type {
   AcaoImobiliaria,
   AcessosFicha,
   AcessosResumo,
+  AdminAlteracao,
+  AdminCriacao,
+  AdminSenhaRedefinida,
+  AdminTrocaExigida,
+  AdminUsuarioNovo,
+  AdminUsuariosPayload,
   AlvoEvento,
   ExecutivaPayload,
   FaixaAlunos,
   MePayload,
   MetodologiaPayload,
+  MinhaSenhaTrocada,
   MunicipioItem,
   OportunidadesPayload,
   Cobertura1k,
@@ -299,6 +306,107 @@ export const api = {
       `/api/acessos/usuario/${encodeURIComponent(nome)}?dias=${dias}`,
       {},
       30_000,
+    ),
+
+  /* ---- Administração de usuários (D25) ---- */
+
+  /** Quem existe, com que perfil, e as opções do seletor. Traz inativos. */
+  adminUsuarios: () =>
+    pedir<AdminUsuariosPayload>('/api/acessos/usuarios', {}, 15_000),
+
+  /**
+   * Cria uma pessoa (D26). O path é sem barra final: é ele que o mapa de acesso casa.
+   *
+   * Não há campo de senha — quem nasce aqui recebe a senha inicial compartilhada
+   * (`MOTOR_SENHA_INICIAL` no servidor) e troca no primeiro acesso.
+   *
+   * Erros que a tela precisa distinguir: **409** é login ou e-mail já em uso por
+   * alguém ATIVO (e a saída costuma ser reativar quem saiu, não criar outro), **422**
+   * é perfil inexistente ou campo malformado, e **503** é o servidor sem
+   * `MOTOR_SENHA_INICIAL` ou sem o extra `auth` — nos dois casos, nada foi criado.
+   */
+  adminCriarUsuario: (novo: AdminUsuarioNovo) =>
+    pedir<AdminCriacao>(
+      '/api/acessos/usuarios',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(novo),
+      },
+      15_000,
+    ),
+
+  /**
+   * Troca a PRÓPRIA senha (D26). Fora de `/api/acessos/` de propósito: não é ato de
+   * administração, e sob aquele prefixo levaria 404 de quem não administra o painel.
+   *
+   * O alvo não é parâmetro em lugar nenhum — o servidor resolve a identidade de quem
+   * pediu e escreve só na linha dele.
+   *
+   * Erros: **403** é senha atual errada, **422** é a nova reprovada pela política
+   * (mínimo de 12 caracteres, e não pode ser a inicial compartilhada), **409** é não
+   * ter cadastro no banco.
+   */
+  trocarMinhaSenha: (senhaAtual: string, novaSenha: string) =>
+    pedir<MinhaSenhaTrocada>(
+      '/api/me/senha',
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ senha_atual: senhaAtual, nova_senha: novaSenha }),
+      },
+      15_000,
+    ),
+
+  /**
+   * Muda perfil e/ou status de UMA pessoa.
+   *
+   * Os dois campos são independentes: mandar só `perfil` não mexe no status, e
+   * vice-versa. Cada um vira seu próprio evento no banco, porque "virou Growth" e
+   * "foi desativado" respondem a perguntas diferentes na auditoria.
+   *
+   * Erros que a tela precisa distinguir: **403** é a trava de auto-alvo (ninguém muda
+   * o próprio acesso), **409** é estar na allowlist do painel sem ter cadastro no
+   * banco, e **503** é banco fora do ar.
+   */
+  adminAlterarUsuario: (
+    idUsuario: number,
+    mudanca: { perfil?: string; ativo?: boolean },
+  ) =>
+    pedir<AdminAlteracao>(
+      `/api/acessos/usuarios/${idUsuario}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mudanca),
+      },
+      15_000,
+    ),
+
+  /**
+   * Devolve UMA pessoa à senha inicial compartilhada e liga a marca de troca (15/09).
+   *
+   * Sem corpo de propósito: o admin não escolhe nem conhece a senha nova de ninguém.
+   * Erros: **403** é a trava de auto-alvo (a própria senha se troca em `/api/me/senha`),
+   * **404** é gente que não existe, **503** é banco fora do ar ou o servidor sem
+   * `MOTOR_SENHA_INICIAL` — nos dois casos, nada foi alterado.
+   */
+  adminRedefinirSenha: (idUsuario: number) =>
+    pedir<AdminSenhaRedefinida>(
+      `/api/acessos/usuarios/${idUsuario}/redefinir-senha`,
+      { method: 'POST' },
+      15_000,
+    ),
+
+  /**
+   * Liga a marca de troca de UMA pessoa sem mexer na senha dela (15/09). `mudou: false`
+   * quando a troca já estava pedida. Mesmos erros de auto-alvo e de banco do redefinir.
+   */
+  adminExigirTroca: (idUsuario: number) =>
+    pedir<AdminTrocaExigida>(
+      `/api/acessos/usuarios/${idUsuario}/exigir-troca`,
+      { method: 'POST' },
+      15_000,
     ),
 
   /**

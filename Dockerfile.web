@@ -37,12 +37,17 @@ RUN apt-get update \
     && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
-# Motor (funcoes puras) + FastAPI/uvicorn (api_mvp) + contextily (basemap, p/ o PDF).
-# streamlit ja vem nas dependencias base. SEMPRE com o lockfile universal.
+# Motor (funcoes puras) + FastAPI/uvicorn (api_mvp) + contextily (basemap, p/ o PDF)
+# + psycopg (db). SEMPRE com o lockfile universal.
 # (COPY . . respeita o .dockerignore: nao traz data/, tests/, web/node_modules, web/dist.)
+#
+# O extra `db` entra na IMAGEM mesmo antes de existir servico de banco no compose: sem
+# `MOTOR_DATABASE_URL` o driver e' carregado e nunca usado, e ligar o banco depois vira
+# uma variavel de ambiente em vez de um rebuild. E' o mesmo desenho do `MOTOR_CADASTRO_DIR`,
+# que ja' estava no codigo antes de o volume :rw existir.
 COPY . .
 RUN python -m pip install --upgrade pip \
-    && python -m pip install ".[basemap,api_mvp,simulador_cache]" -c constraints.txt
+    && python -m pip install ".[basemap,api_mvp,simulador_cache,db,auth]" -c constraints.txt
 
 # dist/ vem do estagio Node (o COPY . . nao o traz, por causa do .dockerignore)
 COPY --from=frontend /web/dist ./web/dist

@@ -123,6 +123,49 @@ _LABELS_CACHE_DIR = Path("data/cache/label_tiles")
 # como follow-up no BLK-BASEMAP-04 junto com o desperdicio do @2x.
 _LABELS_TIMEOUT_S = 8
 
+# ORCAMENTO DE TEMPO do mosaico INTEIRO (BLK-BASEMAP-04, frente (b)). O timeout acima e' POR
+# TILE, e por isso nao limita nada de util: contra um CDN que faz BLACKHOLE o pior caso e'
+# `n_tiles / 8 workers x 8 s` — com os ~600 tiles do frame canonico, ~10 min segurando a geracao
+# do PDF. O teto de verdade tem de ser do conjunto.
+#
+# 45 s tem folga de sobra para o caminho normal: mesmo com o cache FRIO, ~600 tiles em 8 threads
+# a ~150 ms cada fecham em ~11 s. Com cache quente e' leitura de disco e nem chega perto.
+#
+# O QUE ELE GARANTE, E O QUE NAO: apos o prazo a coleta PARA e o mosaico sai parcial (ou None, se
+# nenhum tile entrou — o contrato de sempre). Mas `shutdown(cancel_futures=True)` so' mata o que
+# ainda NAO comecou; os ate' 8 tiles em voo seguem ate' o proprio timeout deles. Entao o teto real
+# e' `orcamento + _LABELS_TIMEOUT_S`, ~53 s, e nao 45 s cravados. Prometer 45 s no comentario
+# seria mentir sobre uma garantia que o `ThreadPoolExecutor` nao da.
+#
+# Sobrescrevivel por env para ops afrouxar/apertar sem release.
+_LABELS_ORCAMENTO_ENV = "API_BASEMAP_LABELS_ORCAMENTO_S"
+_LABELS_ORCAMENTO_PADRAO_S = 45.0
+
+
+def _labels_orcamento_s() -> float:
+    """Orcamento do mosaico, resolvido em RUNTIME — mesmo idioma de `_labels_tiles_url`.
+
+    FUNCAO, e nao constante, por tres motivos, e nenhum e' estilo:
+      * este modulo nao importa `os` no topo (cada funcao que precisa faz o seu `import os`),
+        entao uma constante que lesse `os.environ` no nivel do modulo nem importaria;
+      * constante e' lida UMA vez, no import. A env viraria enfeite: ops mudaria o valor e o
+        processo seguiria com o antigo ate' reiniciar;
+      * teste precisa conseguir apertar o prazo sem mexer no ambiente do processo inteiro.
+
+    Valor invalido cai no padrao em vez de derrubar o render: o orcamento e' mitigacao, e uma
+    mitigacao que quebra a geracao do PDF por causa de um typo na env e' pior que nao ter.
+    """
+    import os
+
+    bruto = os.environ.get(_LABELS_ORCAMENTO_ENV)
+    if not bruto:
+        return _LABELS_ORCAMENTO_PADRAO_S
+    try:
+        valor = float(bruto)
+    except ValueError:
+        return _LABELS_ORCAMENTO_PADRAO_S
+    return valor if valor > 0 else _LABELS_ORCAMENTO_PADRAO_S
+
 # Circunferencia da Terra em Web Mercator (EPSG:3857). Uma constante so, usada pelo calculo de
 # zoom e pela grade de tiles do overlay — antes o mesmo literal aparecia nos dois lugares.
 _EARTH_M = 2.0 * np.pi * 6378137.0
@@ -979,6 +1022,7 @@ def _fetch_labels(
     entraram e devolve None se for zero").
     """
     import concurrent.futures as cf
+    import time
 
     if not _labels_tiles_url():
         return None  # sem fonte de rotulos configurada -> contrato de None (mapa sem nomes)
@@ -990,19 +1034,33 @@ def _fetch_labels(
         canvas = Image.new("RGBA", ((tx1 - tx0 + 1) * px, (ty1 - ty0 + 1) * px), (0, 0, 0, 0))
         coords = [(tx, ty) for ty in range(ty0, ty1 + 1) for tx in range(tx0, tx1 + 1)]
         entraram = 0
-        with cf.ThreadPoolExecutor(max_workers=8) as executor:
+        prazo = time.monotonic() + _labels_orcamento_s()
+        executor = cf.ThreadPoolExecutor(max_workers=8)
+        try:
             futures = {
                 (tx, ty): executor.submit(_labels_tile, zoom, tx, ty) for tx, ty in coords
             }
             for (tx, ty), future in futures.items():
+                restante = prazo - time.monotonic()
+                if restante <= 0:
+                    # ORCAMENTO ESTOURADO: para de coletar e segue com o que chegou. O mosaico
+                    # parcial e' resposta legitima -- o contrato desta funcao ja' era "tile
+                    # faltando nao e' problema", e o `entraram` abaixo distingue parcial de vazio.
+                    break
                 try:
-                    tile = future.result()
+                    tile = future.result(timeout=restante)
                     if tile.size != (px, px):
                         tile = tile.resize((px, px), Image.Resampling.LANCZOS)
                     canvas.alpha_composite(tile, ((tx - tx0) * px, (ty - ty0) * px))
                     entraram += 1
                 except Exception:
                     continue  # rotulo faltando nao e problema (base ja desenhada)
+        finally:
+            # `cancel_futures` mata o que ainda NAO comecou; o que ja' esta em voo nao tem como
+            # ser interrompido, e o `shutdown` implicito do `with` esperaria por ele. Por isso o
+            # executor e' explicito aqui: sem isto o orcamento nao valeria nada, porque a saida
+            # do bloco bloquearia exatamente pelo que ele existe para cortar.
+            executor.shutdown(wait=False, cancel_futures=True)
         if not entraram:
             return None  # rede toda fora -> contrato de None, nao mosaico transparente
         return canvas, _labels_extent(tx0, tx1, ty0, ty1, tile_m)

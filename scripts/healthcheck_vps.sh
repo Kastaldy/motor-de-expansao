@@ -81,8 +81,17 @@ CONTAINERS=(
     motor_expansao_web
     # Instancia ARGENTINA (Bloco E / BLK-INTL-08, servico `web_ar` do docker-compose.ar.yml,
     # MESMA VPS): entra na vigilancia junto com a subida. EDGE_URL segue escalar (so o host
-    # BR) — debito consciente ate o BLK-INTL-09. Total: 7.
+    # BR) -- debito consciente ate o BLK-INTL-09.
     motor_expansao_web_ar
+    # Postgres/PostGIS. O `web` NAO cai junto quando ele morre -- o piloto foi desenhado
+    # para servir sem banco, e o healthcheck do container deliberadamente nao o consulta.
+    # Sem esta linha, o banco fora do ar seria invisivel: leitura de parquet segue servindo,
+    # e so o RBAC comeca a negar.
+    #
+    # Total: 8. Os dois acima entraram em paralelo, em branches diferentes, e cada lado
+    # escreveu "Total: 7" contando apenas o proprio acrescimo -- o numero certo so' aparece
+    # aqui, depois do merge.
+    motor_expansao_postgres
 )
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"

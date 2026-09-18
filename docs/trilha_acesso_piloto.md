@@ -172,6 +172,13 @@ A trilha ganhou um consumidor visual: a aba `Acessos` do piloto
 (`web/src/screens/AcessosScreen.tsx` + rotas `/api/acessos/*` servidas por
 `src/motor_expansao/dashboard/acesso_analytics.py`). Contrato:
 
+> **A aba deixou de ser só de leitura (D25, 02/09/2026).** Ela ganhou a administração de
+> usuários — trocar perfil e ativar/desativar —, servida por
+> `src/motor_expansao/db/usuarios.py`. Isso não afrouxa nada do contrato abaixo: a allowlist de
+> env continua valendo para todas as rotas do painel, e as de ESCRITA exigem, além dela, a
+> capacidade `acesso.usuario_gerir` do banco — que é diferente da `acesso.painel_ver` de propósito,
+> porque ver a trilha e mudar quem entra no sistema não são o mesmo poder.
+
 - **Autorização própria, mais forte que a das abas**: allowlist na env
   `MOTOR_ACESSOS_ADMIN_USUARIOS` (usuários Authelia separados por vírgula,
   case-insensitive), checada no middleware contra o `Remote-User`. FORA do

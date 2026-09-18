@@ -373,7 +373,21 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
     detalhe_pais = acesso.motivo_bloqueio_pais(request.url.path, PERFIL)
     if detalhe_pais is not None:
         return JSONResponse({"detail": detalhe_pais}, status_code=404)
-    detalhe = acesso.motivo_bloqueio(request.url.path, remote_user)
+    # So' agora o gate de USUARIO. Com o banco configurado, quem manda e' o RBAC
+    # (capacidades por rota+METODO, D22); sem ele, segue o mapa `usuario -> [abas]` do
+    # JSON, sem nada mudar. A troca e' por ENV, e nao por deploy: `MOTOR_DATABASE_URL`
+    # liga, e tirar a var volta atras.
+    #
+    # As tres camadas sao eixos DIFERENTES e a ordem e' significativa: `bloqueio_acessos`
+    # (allowlist do painel, emenda DEC-027) fica por cima de tudo; o gate de PAIS diz o
+    # que a instancia serve; o de USUARIO diz o que a pessoa pode. Nenhum e' concedivel
+    # pelos outros.
+    if acesso.banco_no_comando():
+        detalhe = acesso.motivo_bloqueio_por_banco(
+            request.url.path, request.method, remote_user
+        )
+    else:
+        detalhe = acesso.motivo_bloqueio(request.url.path, remote_user)
     if detalhe is not None:
         return JSONResponse({"detail": detalhe}, status_code=403)
     return await call_next(request)
@@ -418,6 +432,204 @@ def _ip_real_do_xff(xff: str | None, fallback: str | None) -> str | None:
     return fallback
 
 
+#: Log do D17. Nome proprio, no padrao `piloto.<assunto>` do arquivo: quando um
+#: identificador nasce orfao, o operador precisa achar a linha por assunto, nao caçá-la
+#: no meio do log de requisicao.
+_LOG_D17 = logging.getLogger("piloto.d17")
+
+
+def _registrar_relatorio_gerado(
+    remote_user: str | None,
+    *,
+    relatorio: str,
+    formato: str,
+    alvo: dict[str, str] | None = None,
+) -> str:
+    """Cunha o `report_id`, tenta gravar `relatorio.gerado`, e devolve o id SEMPRE (D17).
+
+    A POLITICA e' de produto, decidida em 10/09: **carimba sempre, grava quando da'**.
+    O PDF leva o identificador mesmo que o banco esteja fora, e o relatorio nunca falha
+    por causa da trilha -- mesmo principio do `_registrar_acesso` logo abaixo.
+
+    O CUSTO dessa escolha, e ele e' real: um id carimbado sem linha no banco e' um
+    identificador ORFAO. Quem achar o arquivo vazado le' o codigo, consulta o banco e nao
+    encontra nada. Por isso a falha e' LOGADA como ERRO, e nao engolida: sem o log, a
+    unica pista de que o rastreio nao existe para aquele arquivo seria a ausencia de uma
+    linha que ninguem sabe procurar.
+
+    Quando o P19 for executado e o login passar a depender do banco, a janela quase
+    fecha sozinha: sem banco nao ha sessao, e sem sessao ninguem gera relatorio. Ate' la',
+    a janela e' real -- o Authelia autentica por fora, e o proprio runbook manda esvaziar
+    `MOTOR_DATABASE_URL` como interruptor de incidente.
+
+    A identidade vem da MESMA resolucao de todo o resto (`acesso.login_da_requisicao`),
+    e o `id_usuario` sai do RBAC. Sem cadastro no banco, o evento sai com autor nulo em
+    vez de nao sair: o D19 preve acao de autoria nula, e meio evento vale mais que nenhum.
+    """
+    from motor_expansao.db import BancoNaoConfigurado
+    from motor_expansao.db import eventos as db_eventos
+
+    report_id = db_eventos.novo_report_id()
+    try:
+        from motor_expansao.db import rbac
+
+        quem = rbac.identidade(acesso.login_da_requisicao(remote_user))
+        db_eventos.registrar_relatorio(
+            autor=quem.id_usuario if quem is not None else None,
+            relatorio=relatorio,
+            formato=formato,
+            origem="web",
+            alvo=alvo,
+            report_id=report_id,
+        )
+    except BancoNaoConfigurado:
+        # Deploy SEM banco nao e' incidente: e' configuracao declarada. Um traceback por
+        # relatorio aqui treinaria o operador a ignorar justamente o log que existe para
+        # denunciar rastro perdido -- e no dia em que o banco REALMENTE cair, o ERROR abaixo
+        # chegaria no meio de milhares de iguais. O `postgres.py` ja' separa os dois casos em
+        # classes distintas; este ramo so' honra a separacao que ele fez.
+        _LOG_D17.debug(
+            "D17: deploy sem banco — relatorio %s saiu com report_id=%s e SEM evento; "
+            "neste deploy o id nasce ORFAO por construcao",
+            relatorio,
+            report_id,
+        )
+    except Exception:  # noqa: BLE001 — a trilha nunca derruba o relatorio
+        _LOG_D17.exception(
+            "D17: relatorio %s gerado com report_id=%s SEM evento no banco — "
+            "o identificador do arquivo esta ORFAO e o rastreio nao vai resolver",
+            relatorio,
+            report_id,
+        )
+    return report_id
+
+
+def _registrar_dossie_baixado(remote_user: str | None, *, imovel_id: str) -> None:
+    """Grava `dossie.baixado`, e NUNCA deixa a trilha impedir a entrega do PDF.
+
+    Mesma politica do `_registrar_relatorio_gerado` logo acima, e pela mesma razao: o
+    arquivo sai mesmo com o banco fora. A diferenca e' que aqui nao ha id a devolver -- o
+    dossie vem pronto do coletor e nao tem `report_id` --, entao o rastro possivel e' o par
+    (quem, quando) com o `imovel_id` em `metadados`.
+
+    A falha e' LOGADA como erro pelo mesmo motivo de la': em silencio, um dossie baixado
+    sem evento e' indistinguivel de um dossie que ninguem baixou, e este e' o unico artefato
+    do piloto que carrega contato de corretor.
+
+    O GESTO da tela (`POST /api/imobiliaria/evento/abrir-dossie`) NAO grava: ele dispara
+    tambem quando o imovel nao tem dossie, e registrar la' contaria download que nao houve.
+    Ver a correcao de 16/09 na §2.4 do contrato.
+    """
+    from motor_expansao.db import BancoNaoConfigurado
+    from motor_expansao.db import eventos as db_eventos
+
+    try:
+        from motor_expansao.db import rbac
+
+        quem = rbac.identidade(acesso.login_da_requisicao(remote_user))
+        db_eventos.registrar_dossie_baixado(
+            autor=quem.id_usuario if quem is not None else None,
+            imovel_id=imovel_id,
+            origem="web",
+        )
+    except BancoNaoConfigurado:
+        # Mesma razao do relatorio acima: sem banco configurado, a ausencia de evento e' o
+        # comportamento declarado do deploy, e nao uma falha a investigar.
+        _LOG_D17.debug("D17: deploy sem banco — dossie do imovel %s entregue sem evento", imovel_id)
+    except Exception:  # noqa: BLE001 — a trilha nunca derruba a entrega do arquivo
+        _LOG_D17.exception(
+            "D17: dossie do imovel %s entregue SEM evento no banco — o download do unico "
+            "artefato com PII de corretor ficou sem rastro",
+            imovel_id,
+        )
+
+
+def _registrar_visita_imovel(remote_user: str | None, *, acao: str, imovel: str | None) -> None:
+    """Grava `imovel.visita_marcada`/`_desmarcada`, e NUNCA deixa a trilha derrubar o gesto.
+
+    SEM IMOVEL NAO HA EVENTO, e esta e' a diferenca em relacao ao dossie e ao relatorio. La'
+    vale "meio evento vale mais que nenhum" -- um `relatorio.gerado` anonimo ainda diz que o
+    arquivo existiu. Aqui o valor INTEIRO do evento e' o alvo: um `visita_marcada` sem
+    `imovel_id` cai fora do indice parcial da 014 e nao responde a pergunta que ele existe
+    para responder (quais imoveis entraram na fila de visita). Entao registra-se nada, e a
+    ausencia vira log -- o gesto segue na trilha da DEC-027, que grava a query inteira.
+
+    A tela manda o alvo como `imovel`; o contrato pede `imovel_id` em `metadados`, que e' uma
+    das tres `CHAVES_DE_ALVO` que os indices conhecem. A traducao acontece aqui, e tem teste:
+    errar a chave e' defeito SILENCIOSO -- a escrita passa e o evento some das consultas.
+    """
+    if not (imovel or "").strip():
+        _LOG_D17.error(
+            "gesto %s sem `imovel` na query — evento NAO gravado (sem alvo ele fica fora do "
+            "indice e nao responde nada); o gesto segue na trilha",
+            acao,
+        )
+        return
+
+    from motor_expansao.db import BancoNaoConfigurado
+    from motor_expansao.db import eventos as db_eventos
+
+    try:
+        from motor_expansao.db import rbac
+
+        quem = rbac.identidade(acesso.login_da_requisicao(remote_user))
+        db_eventos.registrar_visita(
+            autor=quem.id_usuario if quem is not None else None,
+            imovel_id=imovel.strip(),
+            marcada=acao == "marcar-visita",
+            origem="web",
+        )
+    except BancoNaoConfigurado:
+        # Sem banco configurado a decisao de visita fica so' na trilha de 90 dias, e isso e' o
+        # esperado deste deploy. A guarda de ALVO AUSENTE, logo acima, segue sendo ERRO: la' o
+        # gesto chegou incompleto, que e' defeito, e nao configuracao.
+        _LOG_D17.debug("deploy sem banco — gesto %s no imovel %s sem evento", acao, imovel)
+    except Exception:  # noqa: BLE001 — a trilha nunca derruba o gesto
+        _LOG_D17.exception(
+            "gesto %s no imovel %s SEM evento no banco — a decisao de visita ficou so' na "
+            "trilha de 90 dias",
+            acao,
+            imovel,
+        )
+
+
+def _registrar_viabilidade_calculada(remote_user: str | None, *, body: Any) -> None:
+    """Grava `viabilidade.calculada`, e NUNCA deixa a trilha derrubar o calculo.
+
+    Chamado DEPOIS de o motor responder, pela mesma razao do dossie: registrar antes
+    contaria uma analise que pode nao ter terminado.
+
+    So' as PREMISSAS vao para `metadados` -- `m2`, `aluguel` e `demanda`. Nada de `lat`/`lng`
+    (a §4 mantem coordenada fora) e nada de alvo: nem o pedido nem o backend conhecem
+    `hex_id`/`imovel_id`, e derivar o hexagono da coordenada e' o que a §2.2 recusa. Nada de
+    numero de SAIDA, tambem: break-even e payback sao resposta do motor, e `eventos` registra
+    o que a pessoa PEDIU. Ver a correcao de 16/09 na §2.5.
+    """
+    from motor_expansao.db import BancoNaoConfigurado
+    from motor_expansao.db import eventos as db_eventos
+
+    try:
+        from motor_expansao.db import rbac
+
+        quem = rbac.identidade(acesso.login_da_requisicao(remote_user))
+        db_eventos.registrar_viabilidade(
+            autor=quem.id_usuario if quem is not None else None,
+            m2=body.m2,
+            aluguel=body.aluguel,
+            demanda=body.demanda,
+            origem="web",
+        )
+    except BancoNaoConfigurado:
+        # A tela de Viabilidade e' a mais quente das quatro: sem este ramo, um deploy sem banco
+        # escrevia um traceback por CALCULO.
+        _LOG_D17.debug("deploy sem banco — viabilidade calculada sem evento")
+    except Exception:  # noqa: BLE001 — a trilha nunca derruba o calculo
+        _LOG_D17.exception(
+            "viabilidade calculada SEM evento no banco — a analise saiu para a tela e nao "
+            "deixou rastro de quem a pediu"
+        )
+
+
 def _registrar_acesso(request: Request, *, status: int, inicio: float, tamanho: str | None) -> None:
     """Monta e grava a linha da trilha. Rastro, nao transacao: falha morre aqui."""
     try:
@@ -427,7 +639,15 @@ def _registrar_acesso(request: Request, *, status: int, inicio: float, tamanho: 
         xff = request.headers.get("x-forwarded-for")
         cliente = request.client.host if request.client else None
         evento = acesso_log.montar_evento(
-            usuario=request.headers.get("remote-user") or request.headers.get("remote-email"),
+            # MESMA resolucao que a allowlist e o RBAC usam. Ler o header cru aqui fazia
+            # toda requisicao de DESENVOLVIMENTO cair em "desconhecido": nao ha Authelia
+            # local, entao nao ha `Remote-User`, e a trilha ficava sem dono justamente na
+            # maquina onde ela e' exercitada. Em producao nada muda -- o header sempre
+            # existe e vence sempre; e a identidade de dev tem as travas do
+            # `rbac.login_efetivo` (override explicito, e o sinal de producao mandando).
+            usuario=acesso.login_da_requisicao(
+                request.headers.get("remote-user") or request.headers.get("remote-email")
+            ),
             ip=_ip_real_do_xff(xff, cliente),
             metodo=request.method,
             rota=caminho,
@@ -1424,26 +1644,30 @@ def _svg_data_uri(svg: str) -> str:
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
 
 
-# `[BLK-MA-17 metade 1]` Cor do HALO que marca "esta unidade tem diagnostico".
+# `[BLK-WEB-23]` O HALO NAO MORA MAIS AQUI -- e' camada no front (DEC-035, emenda 3).
 #
-# NAO pode ser a borda do quadrado: aquela ja' carrega a cor da REDE (7 px de stroke), e sobrescreve-la
-# apagaria a identidade da marca. NAO pode ser ciano (`--ac: #35c9d6`): e' a Ultra e o contorno de
-# selecao. NAO pode ser amarelo/verde/vermelho: sao a escala de score dos hexagonos. Sobra um claro
-# neutro -- e o RESPIRO escuro entre ele e a borda da rede e' o que impede a leitura de "borda dupla".
-HALO_DIAGNOSTICO = "#E8EEF5"
+# Ate' 17/09/2026 este modulo gerava uma SEGUNDA variante de cada icone, com um anel `#E8EEF5`
+# desenhado dentro do proprio SVG, servida em `pins.icones` sob a chave `<rede>__diag`. O defeito
+# era estrutural: o anel exigia um SVG novo, e esse SVG RE-EMBUTIA o mesmo PNG da marca em base64.
+# Cada rede com diagnostico no recorte pagava a logo DUAS VEZES, byte a byte igual.
+#
+# Agora quem desenha o anel e' a moldura do front (`svgMolduraAlunos`), que ja' existia para os
+# alunos reais: UM svg generico, uma entrada de atlas no mapa inteiro, zero de payload. O backend
+# segue mandando a flag `diag` no pino -- e' ela que acende a moldura --, mas nao manda mais icone
+# nenhum por causa dela.
+#
+# Tres ganhos alem dos bytes, e nenhum foi de graca antes: (1) o anel deixa de sumir no pino que
+# virou FOTO, porque camada nao disputa a cascata do `getIcon`; (2) passa a enxergar o TEMA, coisa
+# que um SVG gerado no Python nao sabe fazer; (3) herda a linha escura por baixo, que e' o que da'
+# contraste sobre o basemap claro -- o `#E8EEF5` fora calibrado so' contra o Dark Matter.
 
-# Sufixo da chave do icone com halo no dicionario `pins.icones`. O front resolve
-# `iconObjs[rede + SUFIXO]` quando o pin tem `diag`, e cai no icone normal se faltar.
-SUFIXO_ICONE_DIAG = "__diag"
 
-
-def _quadrado_logo(logo_path: Path | None, bg: str, *, halo: bool = False) -> str | None:
+def _quadrado_logo(logo_path: Path | None, bg: str) -> str | None:
     """Quadrado branco arredondado com a logo PNG encaixada. None se o PNG faltar.
 
-    `halo=True` desenha um anel externo separado por um respiro transparente (que sobre o mapa
-    escuro aparece escuro). O viewBox cresce de 128 para 160 e o quadrado e' deslocado para o
-    centro, entao o icone com halo precisa de `getSize` proporcionalmente maior para o QUADRADO
-    sair do mesmo tamanho -- 38 contra 30, que e' o que o `HexMap` faz.
+    UMA variante por rede, e essa unicidade e' o ponto (BLK-WEB-23). Ate' 17/09/2026 existia uma
+    segunda, com anel de diagnostico, que re-embutia este MESMO `png` em base64 -- a logo viajava
+    duas vezes no payload de toda rede com diagnostico no recorte. O anel virou camada no front.
     """
     if logo_path is None or not logo_path.exists():
         return None
@@ -1451,46 +1675,23 @@ def _quadrado_logo(logo_path: Path | None, bg: str, *, halo: bool = False) -> st
         png = base64.b64encode(logo_path.read_bytes()).decode("ascii")
     except Exception:  # noqa: BLE001
         return None
-    if not halo:
-        svg = (
-            '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
-            'width="128" height="128" viewBox="0 0 128 128">'
-            f'<rect x="4" y="4" width="120" height="120" rx="26" fill="#FFFFFF" stroke="{bg}" stroke-width="7"/>'
-            f'<image href="data:image/png;base64,{png}" x="18" y="18" width="92" height="92" '
-            'preserveAspectRatio="xMidYMid meet"/></svg>'
-        )
-        return _svg_data_uri(svg)
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
-        'width="160" height="160" viewBox="0 0 160 160">'
-        # anel externo: o destaque. `fill=none` deixa o respiro transparente.
-        f'<rect x="7" y="7" width="146" height="146" rx="36" fill="none" '
-        f'stroke="{HALO_DIAGNOSTICO}" stroke-width="7" stroke-opacity="0.92"/>'
-        # o quadrado da rede, identico ao normal, deslocado 16 px para o centro
-        f'<rect x="20" y="20" width="120" height="120" rx="26" fill="#FFFFFF" stroke="{bg}" stroke-width="7"/>'
-        f'<image href="data:image/png;base64,{png}" x="34" y="34" width="92" height="92" '
+        'width="128" height="128" viewBox="0 0 128 128">'
+        f'<rect x="4" y="4" width="120" height="120" rx="26" fill="#FFFFFF" stroke="{bg}" stroke-width="7"/>'
+        f'<image href="data:image/png;base64,{png}" x="18" y="18" width="92" height="92" '
         'preserveAspectRatio="xMidYMid meet"/></svg>'
     )
     return _svg_data_uri(svg)
 
 
-def _quadrado_sigla(short: str, bg: str, fg: str, *, halo: bool = False) -> str:
+def _quadrado_sigla(short: str, bg: str, fg: str) -> str:
     """Fallback quando a rede nao tem PNG. Hoje as 107 tem, mas o caminho continua vivo."""
     sigla = _clean(short)[:3] or "C"
-    if not halo:
-        svg = (
-            '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">'
-            f'<rect x="4" y="4" width="120" height="120" rx="26" fill="{bg}" stroke="#FFFFFF" stroke-width="7"/>'
-            f'<text x="64" y="83" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" '
-            f'font-size="46" font-weight="800" fill="{fg}">{sigla}</text></svg>'
-        )
-        return _svg_data_uri(svg)
     svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">'
-        f'<rect x="7" y="7" width="146" height="146" rx="36" fill="none" '
-        f'stroke="{HALO_DIAGNOSTICO}" stroke-width="7" stroke-opacity="0.92"/>'
-        f'<rect x="20" y="20" width="120" height="120" rx="26" fill="{bg}" stroke="#FFFFFF" stroke-width="7"/>'
-        f'<text x="80" y="99" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" '
+        '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">'
+        f'<rect x="4" y="4" width="120" height="120" rx="26" fill="{bg}" stroke="#FFFFFF" stroke-width="7"/>'
+        f'<text x="64" y="83" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" '
         f'font-size="46" font-weight="800" fill="{fg}">{sigla}</text></svg>'
     )
     return _svg_data_uri(svg)
@@ -1545,7 +1746,7 @@ def _foto_valida(nome: Any) -> str | None:
 # tem `logo_<slug>.png`, e cada MISS custa Path.exists() + read_bytes() + base64 do PNG. Com 107
 # redes possiveis contra 64 entradas o LRU entrava em thrash entre municipios.
 @functools.lru_cache(maxsize=256)
-def _icone_rede(rede: str, halo: bool = False) -> str:
+def _icone_rede(rede: str) -> str:
     from motor_expansao.dashboard.competitors import (
         COMPETITOR_BRANDS,
         COMPETITOR_LOGO_FILES,
@@ -1563,8 +1764,8 @@ def _icone_rede(rede: str, halo: bool = False) -> str:
     # resposta certa para "nao tenho a logo".
     logo_file = COMPETITOR_LOGO_FILES.get(rede) or f"logo_{_slug_rede(rede)}.png"
     logo_path = COMPETITORS_LOGO_DIR / logo_file
-    return _quadrado_logo(logo_path, str(brand["bg"]), halo=halo) or _quadrado_sigla(
-        str(brand["short"]), str(brand["bg"]), str(brand["fg"]), halo=halo
+    return _quadrado_logo(logo_path, str(brand["bg"])) or _quadrado_sigla(
+        str(brand["short"]), str(brand["bg"]), str(brand["fg"])
     )
 
 
@@ -1874,11 +2075,20 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
         ]
 
     redes = sorted(conc["rede"].dropna().astype(str).unique()) if len(conc) else []
-    icones = {r: _icone_rede(r) for r in redes}
-    # Variante COM halo, so' para as redes que de fato tem unidade com diagnostico no recorte —
-    # gerar as 107 sempre dobraria o atlas de textura sem ninguem usar.
-    for r in sorted({str(x["rede"]) for x in linhas_diag if x["rede"]}):
-        icones[f"{r}{SUFIXO_ICONE_DIAG}"] = _icone_rede(r, halo=True)
+    # UMA entrada por rede. Ate' 17/09/2026 havia uma segunda, `<rede>__diag`, com o anel de
+    # diagnostico assado dentro do SVG -- e ela re-embutia o mesmo PNG em base64 (BLK-WEB-23).
+    # O anel agora e' a moldura do front, generica e independente da rede; o que o pino carrega
+    # para acende-la e' a flag `diag`, que continua no payload.
+    #
+    # A UNIAO DAS DUAS FONTES E' OBRIGATORIA, e nao detalhe de estilo. `redes` sai de `conc`
+    # (concorrentes_mapeados); as unidades que vem SO' do feed do agregador aparecem apenas em
+    # `linhas_diag`. Enquanto o halo era variante, o laco que a gerava era o UNICO lugar que dava
+    # icone a essas redes -- `iconObjs[rede]` nunca existiu para elas, so' `iconObjs[rede__diag]`.
+    # Montar o dicionario so' de `redes` as deixaria cair a cascata inteira do `getIcon` ate' o
+    # fim e serem desenhadas com o icone da ULTRA: concorrente do feed virando unidade propria no
+    # mapa, sem erro nenhum no console. Travado por `test_o_dicionario_tem_UMA_entrada_por_rede`.
+    redes_com_pino = sorted(set(redes) | {str(x["rede"]) for x in linhas_diag if x["rede"]})
+    icones = {r: _icone_rede(r) for r in redes_com_pino}
     if len(ultra):
         icones["__ultra__"] = _icone_ultra()
 
@@ -3700,21 +3910,84 @@ def me(
     rota so' informa.
     """
     usuario = acesso.normalizar_usuario(remote_user)
-    # Interseccao com `PERFIL.superficies` (Bloco C): o cadastro de abas e' um
-    # arquivo OPERACIONAL por instancia (DEC-023), separado do perfil — nada o
-    # impede de conceder "oportunidades" a um usuario argentino por copia-e-cola do
-    # cadastro brasileiro. Sem esta linha, a SPA mostraria o card e o clique
-    # morreria no 404 do gate de pais (`acesso.motivo_bloqueio_pais`); com ela, o
-    # card simplesmente nao aparece — a instancia e' quem decide o TETO, o cadastro
-    # so' pode conceder DENTRO dele.
-    abas = set(acesso.abas_do_usuario(usuario)) & set(PERFIL.superficies)
-    # A aba Acessos NUNCA vem do JSON de abas: so' da allowlist de env (emenda
-    # DEC-027). Entra aqui apenas para a SPA saber que pode mostrar o icone. Fica DE
-    # FORA da interseccao acima de proposito: nao e' superficie de pais (nao esta em
-    # `ABAS_VALIDAS`/`PERFIL.superficies`), e' controle de equipe interna.
+    # A FONTE das abas depende do banco; o TETO da instancia vale nos dois casos.
+    #
+    # Fonte: com o banco no comando, as abas saem das CAPACIDADES do RBAC (D22); sem
+    # ele, do mapa `usuario -> [abas]` do JSON. Isto tem de acompanhar o middleware --
+    # enquanto a rota respondia so' pelo JSON e o gate ja' decidia pelo banco, a
+    # interface OFERECIA aba que o backend negava.
+    if acesso.banco_no_comando():
+        abas = set(acesso.abas_do_usuario_por_banco(remote_user))
+    else:
+        # A MESMA resolucao do gate (`motivo_bloqueio`): header, ou identidade de dev no vazio.
+        # Com o header cru aqui e `login_da_requisicao` la', a tela e o portao voltariam a ler a
+        # mesma pessoa de fontes diferentes.
+        abas = set(acesso.abas_do_usuario(acesso.login_da_requisicao(remote_user)))
+    # Teto (Bloco C): a INSTANCIA decide o que oferece; a fonte acima so' pode conceder
+    # DENTRO disso. Vale para os DOIS ramos de proposito -- o RBAC do banco nao tem eixo
+    # de pais, entao sem esta linha um usuario com `territorio.ranking_nacional` numa
+    # instancia sem `oportunidades` receberia o card e o clique morreria no 404 do
+    # `motivo_bloqueio_pais`. A interseccao fica FORA do if/else justamente para que
+    # acrescentar uma terceira fonte de abas amanha nao possa esquece-la.
+    abas &= set(PERFIL.superficies)
+    # A aba Acessos NUNCA vem do JSON de abas nem do RBAC: so' da allowlist de env
+    # (emenda DEC-027). Entra aqui apenas para a SPA saber que pode mostrar o icone, e
+    # fica DE FORA da interseccao acima de proposito: nao e' superficie de pais (nao
+    # esta em `ABAS_VALIDAS`/`PERFIL.superficies`), e' controle de equipe interna.
     if acesso.pode_ver_acessos(usuario):
         abas.add(acesso.ABA_ACESSOS)
-    return {"usuario": usuario, "abas": sorted(abas), "perfil": _perfil_do_cliente()}
+    resposta: dict[str, Any] = {
+        "usuario": usuario,
+        "abas": sorted(abas),
+        "perfil": _perfil_do_cliente(),
+    }
+    # A chave `senha` so' aparece quando o banco responde E a pessoa tem linha. AUSENTE em vez de
+    # nula: o front ja' trata `perfil?` assim (um backend anterior ao Bloco C nao manda o campo e
+    # a SPA abre igual), e o mesmo vale aqui -- ausencia significa "nao sei", que e' diferente de
+    # "nao precisa trocar". Um `false` inventado esconderia a oferta de troca de todo mundo no dia
+    # em que o banco piscasse.
+    # Passa o HEADER CRU, e nao o `usuario` normalizado acima: quem resolve a identidade aqui e'
+    # `login_da_requisicao`, que em desenvolvimento honra o `MOTOR_DEV_USUARIO`. Ver o helper.
+    estado = _estado_da_minha_senha(remote_user)
+    if estado is not None:
+        resposta["senha"] = estado
+    return resposta
+
+
+def _estado_da_minha_senha(remote_user: object) -> dict[str, bool] | None:
+    """`{"deve_trocar", "propria"}` de quem esta' logado, ou `None` quando nao da' para saber.
+
+    ENGOLE A FALHA DE PROPOSITO, e este e' o ponto do helper. `/api/me` e' a PRIMEIRA chamada da
+    SPA: e' dela que saem as abas e o perfil do pais. Deixar uma consulta acessoria derrubar essa
+    rota apagaria o piloto inteiro por causa de um campo que so' serve para OFERECER a troca de
+    senha -- trocar uma inconveniencia por um apagao.
+
+    Por isso o `except Exception`: alem de banco fora e banco nao configurado, cabe aqui o banco
+    que respondeu e ainda nao tem a coluna da 016 (migration nao aplicada). Nos tres casos a
+    resposta certa e' a mesma -- nao sei -- e a SPA simplesmente nao oferece a troca.
+
+    A IDENTIDADE VEM DE `login_da_requisicao`, e nao do header cru -- corrigido em 14/09, depois
+    de a tela nao aparecer em desenvolvimento nenhuma vez. E' o mesmo defeito que o docstring
+    daquela funcao descreve: duas camadas lendo a MESMA pessoa de fontes diferentes. A rota de
+    ESCRITA (`PATCH /api/me/senha`) sempre resolveu por `rbac.identidade`, que honra o
+    `MOTOR_DEV_USUARIO`; so' esta leitura exigia `Remote-User`, entao na maquina de quem
+    desenvolve -- onde nao ha Authelia para injetar o header -- a SPA nunca recebia o campo e
+    nunca oferecia a troca, enquanto o endpoint por tras dela funcionava.
+    """
+    # A ordem e' de proposito: `banco_no_comando()` nao importa nada, e `login_da_requisicao`
+    # importa o `rbac`. Sem banco no comando, a identidade nem precisa ser resolvida.
+    if not acesso.banco_no_comando():
+        return None
+    login = acesso.login_da_requisicao(remote_user)
+    if not login:
+        return None
+    try:
+        from motor_expansao.db import usuarios as db_usuarios
+
+        return db_usuarios.estado_da_senha(login)
+    except Exception:  # noqa: BLE001 - ver o docstring: nada aqui pode derrubar o /api/me
+        _LOG_D17.debug("estado da senha indisponivel para %s", login, exc_info=True)
+        return None
 
 
 @functools.lru_cache(maxsize=1)
@@ -3829,6 +4102,23 @@ def _consolidar_rollup_de_uso() -> None:
     acesso_analytics.consolidar_rollup_seguro()
 
 
+@app.on_event("shutdown")
+def _fechar_pool_do_banco() -> None:
+    """Devolve as conexoes ao encerrar. NAO ha `startup` correspondente de proposito:
+    o pool nasce sob demanda, para que um banco fora do ar (ou ausente) nunca atrase
+    nem impeca o boot do piloto -- que serve tudo que nao depende dele.
+
+    Import tardio e `except` largo pelo mesmo motivo do rollup acima: shutdown e'
+    higiene, e nao pode ser o que derruba o encerramento.
+    """
+    try:
+        from motor_expansao import db
+
+        db.fechar_pool()
+    except Exception:  # noqa: BLE001 - encerramento nunca falha por causa disto
+        pass
+
+
 def _exigir_admin_acessos(remote_user: str | None) -> None:
     if not acesso.pode_ver_acessos(remote_user):
         raise HTTPException(status_code=404, detail="Not Found")
@@ -3848,7 +4138,31 @@ def acessos_saude_artefatos(
     fail-closed do middleware; o `_exigir_admin_acessos` e' cinto e suspensorio.
     """
     _exigir_admin_acessos(remote_user)
-    return _inventario_artefatos()
+    inventario = _inventario_artefatos()
+    inventario["banco"] = _saude_do_banco()
+    return inventario
+
+
+def _saude_do_banco() -> dict[str, Any]:
+    """Estado do banco para o diagnostico de ADMIN — nunca para o /api/health.
+
+    O `/api/health` e' rota LIVRE e foi emudecido de proposito (pentest Onda B #8):
+    versao de servidor, versao de PostGIS e estado de migration sao exatamente o tipo
+    de reconhecimento que aquele achado tirou de la'. Aqui, sob `/api/acessos/`, ja'
+    nasce atras do 404 fail-closed do middleware.
+
+    O healthcheck do container tambem NAO deve olhar o banco: o piloto foi desenhado
+    para servir sem ele, e amarrar os dois faria o Docker reiniciar o `web` a cada
+    piscada do Postgres -- derrubando o que ainda estava funcionando.
+
+    Import tardio pelo mesmo motivo de `rede_export`: o pacote so' e' tocado por quem
+    de fato consulta o banco, e um ambiente sem o extra `db` instalado nao paga nada.
+    """
+    try:
+        from motor_expansao import db
+    except ImportError as erro:
+        return {"configurado": False, "conectado": False, "erro": f"pacote db ausente: {erro}"}
+    return db.saude()
 
 
 @app.get("/api/acessos/resumo", include_in_schema=False)
@@ -3873,6 +4187,327 @@ def acessos_usuario(
     if ficha is None:
         raise HTTPException(status_code=404, detail="Sem atividade deste usuário na janela.")
     return ficha
+
+
+# ---------------------------------------------------------------------------
+# Administracao de usuarios (D25) — quem entra, com que perfil
+#
+# Existe para desfazer uma REGRESSAO: antes do banco, mudar o acesso de alguem era
+# editar o `acesso_abas.json` no volume `:rw`, sem rebuild e sem deploy. Com o RBAC
+# no banco, a mesma mudanca viraria `UPDATE` manual na VPS.
+#
+# GATE DUPLO, de proposito. Estas rotas estao sob `/api/acessos/`, entao passam pela
+# allowlist de env do painel (`_exigir_admin_acessos`, 404 que nao anuncia existencia)
+# E pela capacidade do banco — `acesso.painel_ver` no GET, `acesso.usuario_gerir` nas
+# escritas (regra propria em `acesso.py`, antes da generica). Ver o `/api/rede/cadastro`,
+# que separa leitura de escrita do mesmo jeito.
+#
+# O SQL nao mora aqui: `motor_expansao.db.usuarios`. O CI nao tem Postgres, entao o SQL
+# precisa ser localizavel para o gate de sintaxe offline alcancar e para haver o que
+# revisar antes de rodar contra banco real.
+# ---------------------------------------------------------------------------
+
+
+class UsuarioAdminIn(BaseModel):
+    """Mudanca de acesso. Os dois campos sao opcionais e independentes."""
+
+    perfil: str | None = None
+    ativo: bool | None = None
+
+
+class UsuarioNovoIn(BaseModel):
+    """Pessoa nova (D26). Os quatro campos sao OBRIGATORIOS, ao contrario dos de alteracao.
+
+    Nao ha campo `senha` de proposito: quem nasce pela tela recebe a senha INICIAL
+    compartilhada (`MOTOR_SENHA_INICIAL`) e troca no primeiro acesso. Um campo de senha aqui
+    faria o admin conhecer a senha de outra pessoa, e qualquer acao daquela conta viraria
+    contestavel -- o oposto do que o D17 existe para sustentar.
+    """
+
+    login: str
+    nome: str
+    email: str
+    perfil: str
+
+
+class MinhaSenhaIn(BaseModel):
+    """Troca da PROPRIA senha. Exige a atual, que no primeiro acesso e' a inicial."""
+
+    senha_atual: str
+    nova_senha: str
+
+
+def _identidade_do_admin(remote_user: str | None) -> Any:
+    """Quem esta pedindo. Levanta 503 se o banco nao responder.
+
+    Sem `id_usuario` nao ha o que carimbar em `app.id_usuario`, e uma escrita cujo autor
+    ficou nulo por acidente e' exatamente o que o D19 existe para impedir — entao aqui a
+    ausencia de identidade e' erro, nunca acao de sistema.
+    """
+    from motor_expansao.db import BancoIndisponivel, rbac
+
+    try:
+        eu = rbac.identidade(remote_user)
+    except BancoIndisponivel as erro:
+        raise HTTPException(503, f"Banco indisponível: {erro}") from erro
+    if eu is None:
+        # O `_exigir_admin_acessos` ja passou (allowlist de env), mas a pessoa nao tem
+        # linha em `usuarios`. Os dois cadastros divergiram — e a acao nao pode sair sem autor.
+        raise HTTPException(
+            409,
+            "Você está na allowlist do painel mas não tem cadastro no banco. "
+            "Sem isso não há autor para registrar a mudança.",
+        )
+    return eu
+
+
+def _minha_identidade(remote_user: str | None) -> Any:
+    """Quem esta pedindo, para rotas que NAO sao de administracao (`/api/me/...`).
+
+    Existe separada do `_identidade_do_admin` por causa da mensagem: lá, a ausencia de linha em
+    `usuarios` significa "a allowlist do painel e o banco divergiram", que e' um problema de
+    configuracao do operador. Aqui significa "voce nao tem cadastro", que e' outra conversa e
+    outro recado -- reaproveitar a mensagem do painel mandaria a pessoa procurar uma allowlist
+    em que ela nunca esteve.
+    """
+    from motor_expansao.db import BancoIndisponivel, rbac
+
+    try:
+        eu = rbac.identidade(remote_user)
+    except BancoIndisponivel as erro:
+        raise HTTPException(503, f"Banco indisponível: {erro}") from erro
+    if eu is None:
+        raise HTTPException(
+            409,
+            "Você não tem cadastro no banco, então não há senha sua para trocar. "
+            "Peça a alguém do perfil Growth para criar o seu acesso.",
+        )
+    return eu
+
+
+def _erro_de_usuarios(erro: Exception) -> HTTPException:
+    """Traduz as excecoes do modulo de dados para o status certo.
+
+    A ORDEM importa: `LoginEmUso`, `EmailEmUso` e `SenhaFraca` sao todos `ValueError`, entao os
+    especificos vem antes do generico -- senao um conflito de login (409, acionavel) sairia como
+    422 e a tela mostraria o recado errado.
+    """
+    from motor_expansao.db import BancoIndisponivel, BancoNaoConfigurado
+    from motor_expansao.db import senhas as db_senhas
+    from motor_expansao.db import usuarios as db_usuarios
+
+    if isinstance(erro, db_usuarios.UsuarioDesconhecido):
+        return HTTPException(404, str(erro))
+    if isinstance(erro, db_usuarios.PerfilDesconhecido):
+        return HTTPException(422, str(erro))
+    if isinstance(erro, db_usuarios.AlvoEhOAutor):
+        return HTTPException(403, str(erro))
+    if isinstance(erro, db_usuarios.SenhaAtualIncorreta):
+        return HTTPException(403, str(erro))
+    if isinstance(erro, (db_usuarios.LoginEmUso, db_usuarios.EmailEmUso)):
+        # 409 e nao 422: o corpo esta bem formado, o conflito e' com o ESTADO -- e a tela tem
+        # uma saida concreta a oferecer (reativar quem saiu, em vez de criar outro cadastro).
+        return HTTPException(409, str(erro))
+    if isinstance(erro, db_senhas.SenhaFraca):
+        return HTTPException(422, str(erro))
+    if isinstance(erro, db_senhas.SenhaInicialNaoConfigurada):
+        # Falta de configuracao do deploy, no molde do `BancoIndisponivel`: nao e' erro de quem
+        # clicou, e a mensagem tem de dizer o que o OPERADOR precisa fazer.
+        return HTTPException(503, str(erro))
+    if isinstance(erro, db_senhas.HashIndisponivel):
+        return HTTPException(503, str(erro))
+    if isinstance(erro, BancoNaoConfigurado):
+        # IRMAO do `BancoIndisponivel` abaixo, e a distincao e' a razao deste ramo existir: la'
+        # e' INCIDENTE (o banco existe e nao respondeu), aqui e' ESCOLHA DE OPERACAO declarada
+        # (`MOTOR_DATABASE_URL` vazia devolve o piloto ao comportamento pre-banco -- §4). Sem
+        # este ramo a excecao chegava ao `raise erro` do fim e o card "Administracao de
+        # usuarios" mostrava um 500 CRU num deploy sem banco, que e' o estado PADRAO do
+        # compose. A tela ja' sabe dizer "Indisponivel — nada foi alterado" quando recebe 503
+        # (`PainelUsuarios.tsx`); faltava mandar o 503.
+        return HTTPException(
+            503,
+            "Administração de usuários indisponível: este deploy está sem banco configurado.",
+        )
+    if isinstance(erro, BancoIndisponivel):
+        return HTTPException(503, f"Banco indisponível: {erro}")
+    if isinstance(erro, ValueError):
+        # `criar` recusa campo vazio e e-mail sem `@` por aqui.
+        return HTTPException(422, str(erro))
+    raise erro
+
+
+@app.get("/api/acessos/usuarios", include_in_schema=False)
+def acessos_usuarios_listar(
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Todos os usuarios (ativos e inativos) e os perfis disponiveis.
+
+    Inativos vem juntos de proposito: escondê-los tornaria a REATIVACAO impossivel pela
+    tela, que e' o caso de quem volta de licenca ou muda de area e retorna.
+    """
+    _exigir_admin_acessos(remote_user)
+    from motor_expansao.db import usuarios as db_usuarios
+
+    eu = _identidade_do_admin(remote_user)
+    try:
+        lista = db_usuarios.listar()
+        opcoes = db_usuarios.perfis()
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_usuarios(erro) from erro
+    return {
+        "usuarios": [u.como_json() for u in lista],
+        "perfis": opcoes,
+        # A tela desabilita a propria linha. O backend recusa de todo jeito
+        # (`AlvoEhOAutor`); isto e' para o botao nao prometer o que sera negado.
+        "eu": eu.id_usuario,
+    }
+
+
+@app.patch("/api/acessos/usuarios/{id_usuario}", include_in_schema=False)
+def acessos_usuarios_alterar(
+    id_usuario: int,
+    body: UsuarioAdminIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Troca o perfil e/ou o status. Cada mudanca grava seu evento na MESMA transacao.
+
+    Os dois campos sao independentes e podem vir juntos; quando vem, sao DUAS transacoes
+    e DOIS eventos, porque sao duas decisoes distintas — "virou Growth" e "foi desativado"
+    respondem a perguntas diferentes na auditoria e nao devem colapsar numa linha so'.
+    """
+    _exigir_admin_acessos(remote_user)
+    from motor_expansao.db import usuarios as db_usuarios
+
+    if body.perfil is None and body.ativo is None:
+        raise HTTPException(422, "Informe `perfil`, `ativo`, ou os dois.")
+
+    eu = _identidade_do_admin(remote_user)
+    resultado: dict[str, Any] = {"id_usuario": id_usuario}
+    try:
+        if body.perfil is not None:
+            resultado["perfil"] = db_usuarios.alterar_perfil(
+                id_usuario, body.perfil, autor=eu.id_usuario
+            )
+        if body.ativo is not None:
+            resultado["status"] = db_usuarios.definir_ativo(
+                id_usuario, body.ativo, autor=eu.id_usuario
+            )
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_usuarios(erro) from erro
+    return resultado
+
+
+@app.post("/api/acessos/usuarios", include_in_schema=False)
+def acessos_usuarios_criar(
+    body: UsuarioNovoIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Cria a pessoa e grava `usuario.criado` na MESMA transacao (D26).
+
+    O path e' exatamente `/api/acessos/usuarios`, sem barra final, porque e' esse que o mapa
+    de acesso casa: `acesso.py` reserva `POST` ali para `acesso.usuario_gerir`, antes da regra
+    generica de `acesso.painel_ver`. Ver a pessoa e criar pessoa sao capacidades diferentes.
+
+    A senha entregue e' a INICIAL compartilhada, e a resposta traz `falta_cadastrar_no_authelia`
+    para a tela poder dizer o passo que ainda e' manual: enquanto o Authelia autenticar, uma
+    linha em `usuarios` sem a entrada no `users_database.yml` nao deixa a pessoa entrar.
+    """
+    _exigir_admin_acessos(remote_user)
+    from motor_expansao.db import usuarios as db_usuarios
+
+    eu = _identidade_do_admin(remote_user)
+    try:
+        return db_usuarios.criar(
+            login=body.login,
+            nome=body.nome,
+            email=body.email,
+            perfil=body.perfil,
+            autor=eu.id_usuario,
+        )
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_usuarios(erro) from erro
+
+
+@app.post("/api/acessos/usuarios/{id_usuario}/redefinir-senha", include_in_schema=False)
+def acessos_usuarios_redefinir_senha(
+    id_usuario: int,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Devolve a pessoa a senha INICIAL e liga a marca de troca. Grava `usuario.senha_redefinida`.
+
+    E' o caminho de quem esqueceu a senha, e ate' 15/09 ele nao existia: a unica saida era `UPDATE`
+    direto no banco, sem autor e sem evento. Sem corpo de proposito, pelo motivo da criacao: o
+    admin nao escolhe nem conhece a senha nova de ninguem -- a inicial compartilhada e' a mesma
+    entregue a quem nasce pela tela.
+
+    Mesmo portao das outras escritas daqui: a allowlist do painel no middleware e na rota, e
+    `acesso.usuario_gerir` pela regra de `POST` em `/api/acessos/usuarios`, que casa por prefixo e
+    por isso ja' cobre este caminho.
+    """
+    _exigir_admin_acessos(remote_user)
+    from motor_expansao.db import usuarios as db_usuarios
+
+    eu = _identidade_do_admin(remote_user)
+    try:
+        return db_usuarios.redefinir_senha(id_usuario, autor=eu.id_usuario)
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_usuarios(erro) from erro
+
+
+@app.post("/api/acessos/usuarios/{id_usuario}/exigir-troca", include_in_schema=False)
+def acessos_usuarios_exigir_troca(
+    id_usuario: int,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Liga a marca de troca sem mexer na senha. Grava `usuario.troca_exigida`.
+
+    A migration 016 previa o gesto e o codigo nao existia: `deve_trocar_senha_usuario` so' andava
+    de `TRUE` para `FALSE`. Serve depois de uma suspeita de vazamento, ou quando alguem conta ter
+    compartilhado a senha. `mudou: false` quando a troca ja' estava pedida -- sucesso sem evento,
+    como nas outras escritas desta tela.
+    """
+    _exigir_admin_acessos(remote_user)
+    from motor_expansao.db import usuarios as db_usuarios
+
+    eu = _identidade_do_admin(remote_user)
+    try:
+        return db_usuarios.exigir_troca(id_usuario, autor=eu.id_usuario)
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_usuarios(erro) from erro
+
+
+@app.patch("/api/me/senha", include_in_schema=False)
+def me_trocar_senha(
+    body: MinhaSenhaIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """A pessoa troca a SENHA DELA. Nao passa pela allowlist do painel, e nao deve.
+
+    Esta rota fica FORA de `/api/acessos/` de proposito, por duas razoes. A primeira e' que
+    `bloqueio_acessos` devolve 404 seco para todo aquele prefixo a quem nao esta na allowlist de
+    administracao -- e trocar a propria senha nao e' ato de administracao. A segunda e' que
+    `capacidade_necessaria` nao tem regra para `/api/me`, entao a rota e' livre para quem tem
+    identidade: exatamente o publico certo, porque toda pessoa deve poder trocar a propria senha.
+
+    A ausencia de gate nao afrouxa nada, porque o alvo nao e' parametro: `trocar_a_propria_senha`
+    so' aceita `autor`, e escreve so' na linha dele. Nao existe forma de chamar isto para outra
+    pessoa, nem passando id, nem passando login.
+
+    ENQUANTO O AUTHELIA AUTENTICAR, esta rota nao muda como ninguem entra: ela prepara a coluna
+    para o dia da virada do P19. E' o que permite as pessoas irem definindo senha propria ANTES
+    do corte, em vez de todo mundo redefinir no mesmo dia.
+    """
+    from motor_expansao.db import usuarios as db_usuarios
+
+    eu = _minha_identidade(remote_user)
+    try:
+        return db_usuarios.trocar_a_propria_senha(
+            autor=eu.id_usuario,
+            senha_atual=body.senha_atual,
+            nova_senha=body.nova_senha,
+        )
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_usuarios(erro) from erro
 
 
 # ============================================================================
@@ -5879,13 +6514,21 @@ def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
 
 
 @app.post("/api/viabilidade")
-def viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
+def viabilidade(
+    body: ViabilidadeIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
     """Viabilidade do ponto — devolve o `viabilidade_payload_v1` (contrato unico).
 
     GUARDRAIL: a demanda e PREMISSA EXPLICITA do operador (DEC-009), nunca derivada
     de lat/lng. READ-ONLY sobre o M1.
+
+    Registra `viabilidade.calculada` DEPOIS de o motor responder: gravar antes contaria uma
+    analise que pode nao ter terminado. O calculo nunca falha por causa da trilha.
     """
-    return _payload_viabilidade(body)
+    payload = _payload_viabilidade(body)
+    _registrar_viabilidade_calculada(remote_user, body=body)
+    return payload
 
 
 
@@ -8836,7 +9479,10 @@ class RelatorioMunicipalIn(BaseModel):
 
 
 @app.post("/api/relatorio/municipal")
-async def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
+async def relatorio_municipal(
+    body: RelatorioMunicipalIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> Response:
     """Rota fina: gate de concorrencia `_PDF_SEMAFORO` + threadpool, igual a
     /api/relatorio/pontual, /comparacao e /simulador/xlsx.
 
@@ -8845,11 +9491,23 @@ async def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
     do uvicorn e derrubavam ate' o /api/health. O corpo pesado agora vive no helper
     sincrono `_gerar_relatorio_municipal_response`, chamado sob o teto de concorrencia.
     """
+    # D17: a marca-d'agua deste gerador ja' existia, mas o `solicitante` que ela usa
+    # nunca chegava preenchido -- o front nao o envia. Agora ela recebe quem pediu de
+    # verdade, e o identificador que amarra o arquivo ao evento.
+    report_id = _registrar_relatorio_gerado(remote_user, relatorio="municipal", formato="pdf")
+    solicitante = body.solicitante or acesso.login_da_requisicao(remote_user)
+
     async with _PDF_SEMAFORO:
-        return await run_in_threadpool(_gerar_relatorio_municipal_response, body)
+        return await run_in_threadpool(
+            _gerar_relatorio_municipal_response, body, solicitante, report_id
+        )
 
 
-def _gerar_relatorio_municipal_response(body: RelatorioMunicipalIn) -> Response:
+def _gerar_relatorio_municipal_response(
+    body: RelatorioMunicipalIn,
+    solicitante: str | None = None,
+    report_id: str | None = None,
+) -> Response:
     """Relatorio Municipal por hexagonos. Acionado pelo 4o passo do mapa.
 
     O preparo e' o MESMO do bot do Telegram (`service.montar_pdf_municipio`): renda
@@ -8893,7 +9551,13 @@ def _gerar_relatorio_municipal_response(body: RelatorioMunicipalIn) -> Response:
             nome_municipio=body.municipio,
             settings=cfg,
             unidade=UNIDADE_HEXAGONO,
-            solicitante=body.solicitante,
+            # D17, preservado atraves do caminho unico do #373: `solicitante` vem da
+            # identidade Authelia resolvida na rota (o front NAO manda `body.solicitante`,
+            # entao usar o corpo aqui devolveria a marca-d'agua anonima), e `report_id`
+            # amarra o arquivo ao evento. Antes do merge esses dois iam direto ao
+            # `gerar_payloads_...`; agora atravessam o preparo compartilhado com o bot.
+            solicitante=solicitante,
+            report_id=report_id,
         )
     except APIError as exc:
         # O piloto nao registra o handler de `APIError` da API de producao (`main.py`).
@@ -8980,6 +9644,7 @@ async def relatorio_pontual(
     viabilidade_inputs_json: str | None = None,
     origem_centroide_hex: bool = False,
     fotos: list[UploadFile] | None = None,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> Response:
     """Relatorio Pontual Censitario 1,0 km (DEC-021) — fotos, dados do imovel e viabilidade.
 
@@ -9017,6 +9682,20 @@ async def relatorio_pontual(
     # relatorios simultaneos serializaram em 12/21/31 s e um /api/health levou 29 s).
     # Era isso que aparecia como "o relatorio carrega para sempre" na aba Viabilidade.
     # No threadpool o event loop segue livre e os pedidos rodam de fato em paralelo.
+    # D17: o `report_id` nasce ANTES do PDF, porque ele precisa ser carimbado nos bytes.
+    # A gravacao do evento e' tentada aqui e pode falhar sem derrubar o relatorio -- ver
+    # `_registrar_relatorio_gerado`.
+    report_id = _registrar_relatorio_gerado(remote_user, relatorio="pontual", formato="pdf")
+
+    # A marca-d'agua passa a dizer QUEM gerou, e nao so' "Ultra Academia".
+    #
+    # O `solicitante` e' parametro de query desde sempre, mas o front NUNCA o preenche --
+    # os dois chamadores do Pontual o omitem. Resultado: todo PDF saia com a base sozinha,
+    # e o D17 dependia inteiramente do `report_id`. Agora a identidade REAL (a mesma que
+    # grava o evento) entra como fallback; um `solicitante` explicito, se algum dia vier,
+    # continua vencendo, porque e' o unico caso em que quem pede diz o nome de proposito.
+    solicitante = solicitante or acesso.login_da_requisicao(remote_user)
+
     async with _PDF_SEMAFORO:
         return await run_in_threadpool(
             _gerar_relatorio_pontual_pdf,
@@ -9029,6 +9708,7 @@ async def relatorio_pontual(
             viabilidade_inputs_json,
             fotos_bytes,
             origem_centroide_hex,
+            report_id,
         )
 
 
@@ -9042,6 +9722,7 @@ def _gerar_relatorio_pontual_pdf(
     viabilidade_inputs_json: str | None,
     fotos_bytes: list[bytes],
     origem_centroide_hex: bool = False,
+    report_id: str | None = None,
 ) -> Response:
     """Corpo SINCRONO do Relatorio Pontual — roda no threadpool, nunca no event loop.
 
@@ -9194,6 +9875,7 @@ def _gerar_relatorio_pontual_pdf(
         perfil_bairro=perfil_bairro,
         ultra_dir=ultra_dir,
         solicitante=solicitante,
+        report_id=report_id,
         rotulo=rotulo,
         fotos=fotos_bytes[:2] or None,
         info_imovel=json.loads(info_imovel) if info_imovel else None,
@@ -9274,7 +9956,11 @@ def _kwargs_aceitos(fn: Callable[..., Any], **candidatos: Any) -> dict[str, Any]
 
 
 @app.post("/api/simulador/xlsx")
-async def simulador_xlsx(body: ViabilidadeIn, rotulo: str | None = None) -> Response:
+async def simulador_xlsx(
+    body: ViabilidadeIn,
+    rotulo: str | None = None,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> Response:
     """Simulador financeiro completo em XLSX, com formulas vivas.
 
     Mesmo corpo do /api/viabilidade (`ViabilidadeIn`); `rotulo` (query) so nomeia o
@@ -9290,11 +9976,23 @@ async def simulador_xlsx(body: ViabilidadeIn, rotulo: str | None = None) -> Resp
     CPU; sem o teto, N requisicoes concorrentes saturavam o threadpool do uvicorn e
     derrubavam ate' o /api/health. Mesmo padrao de /api/relatorio/pontual e /comparacao.
     """
+    # D17: a planilha nao tem content stream onde desenhar marca-d'agua, entao o carimbo
+    # e' o par bloco-visivel + `docProps` -- ver "Rastreio do arquivo" no gerador.
+    report_id = _registrar_relatorio_gerado(remote_user, relatorio="simulador", formato="xlsx")
+    solicitante = acesso.login_da_requisicao(remote_user)
+
     async with _PDF_SEMAFORO:
-        return await run_in_threadpool(_gerar_simulador_xlsx_response, body, rotulo)
+        return await run_in_threadpool(
+            _gerar_simulador_xlsx_response, body, rotulo, solicitante, report_id
+        )
 
 
-def _gerar_simulador_xlsx_response(body: ViabilidadeIn, rotulo: str | None) -> Response:
+def _gerar_simulador_xlsx_response(
+    body: ViabilidadeIn,
+    rotulo: str | None,
+    solicitante: str | None = None,
+    report_id: str | None = None,
+) -> Response:
     """Corpo SINCRONO da rota do XLSX — roda no threadpool, nunca no event loop.
 
     Deliberadamente `def`, nao `async def`: e o que mantem o servidor respondendo
@@ -9313,6 +10011,8 @@ def _gerar_simulador_xlsx_response(body: ViabilidadeIn, rotulo: str | None) -> R
         rotulo=rotulo,
         m2=float(body.m2),
         aviso_nota=_texto_do_aviso_de_viabilidade("xlsx", "texto_curto"),
+        solicitante=solicitante,
+        report_id=report_id,
     )
 
     conteudo = gerar(float(body.demanda), premissas, inv, **extras)
@@ -9349,12 +10049,22 @@ def _png_de_data_url(valor: object) -> bytes | None:
         return None
 
 
-def _gerar_comparacao_pdf(payload: dict[str, Any]) -> bytes:
+def _gerar_comparacao_pdf(
+    payload: dict[str, Any],
+    solicitante: str | None = None,
+    report_id: str | None = None,
+) -> bytes:
     """Corpo SINCRONO do deck — roda no threadpool, nunca no event loop."""
     from motor_expansao.dashboard.relatorio_comparacao import gerar_pdf_comparacao
 
     imagens = [_png_de_data_url(v) for v in (payload.get("imagens") or [])]
-    return gerar_pdf_comparacao(payload, mapas=imagens, ultra_dir=ULTRA_DIR)
+    return gerar_pdf_comparacao(
+        payload,
+        mapas=imagens,
+        ultra_dir=ULTRA_DIR,
+        solicitante=solicitante,
+        report_id=report_id,
+    )
 
 
 class ComparacaoItemIn(BaseModel):
@@ -9394,7 +10104,10 @@ class ComparacaoIn(BaseModel):
 
 
 @app.post("/api/relatorio/comparacao")
-async def relatorio_comparacao(body: ComparacaoIn) -> Response:
+async def relatorio_comparacao(
+    body: ComparacaoIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> Response:
     """Deck de 6-7 slides da comparacao de areas.
 
     O CORPO TRAZ O RANKING JA CALCULADO, e isso e' deliberado. A regra de comparacao —
@@ -9415,9 +10128,17 @@ async def relatorio_comparacao(body: ComparacaoIn) -> Response:
     `dict[str, Any]` cru: type-confusion virava 500 opaco (poluia a trilha) e listas sem
     teto alimentavam o gerador sincrono.
     """
+    # D17: o deck era a superficie mais exposta do piloto -- nao tinha marca-d'agua
+    # nenhuma, so' um `set_author` fixo igual para todo mundo. Agora nasce com quem pediu
+    # e com o identificador, como o Pontual.
+    report_id = _registrar_relatorio_gerado(remote_user, relatorio="comparacao", formato="pdf")
+    solicitante = acesso.login_da_requisicao(remote_user)
+
     async with _PDF_SEMAFORO:
         try:
-            pdf = await run_in_threadpool(_gerar_comparacao_pdf, body.model_dump())
+            pdf = await run_in_threadpool(
+                _gerar_comparacao_pdf, body.model_dump(), solicitante, report_id
+            )
         except HTTPException:
             raise
         except Exception as exc:  # noqa: BLE001 — corpo malformado nao pode virar 500 opaco
@@ -9673,15 +10394,23 @@ def api_oportunidades(uf: str | None = None, limite: int = 500) -> dict[str, Any
 
 
 @app.get("/api/oportunidades/{imovel_id}/dossie")
-def api_oportunidade_dossie(imovel_id: str) -> Any:
+def api_oportunidade_dossie(
+    imovel_id: str,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> Any:
     """Serve o dossie PDF do coletor para um imovel, quando existe (senao 404 — o front
-    cai no Relatorio Pontual). SEM PII na rota: o PDF ja e' o artefato do coletor."""
+    cai no Relatorio Pontual). SEM PII na rota: o PDF ja e' o artefato do coletor.
+
+    Registra `dossie.baixado` DEPOIS de saber que o arquivo existe: gravar antes do 404
+    contaria como baixado um dossie que ninguem recebeu.
+    """
     from fastapi import HTTPException
     from fastapi.responses import FileResponse
 
     pdf = _dossie_index().get(imovel_id)
     if pdf is None or not Path(pdf).exists():
         raise HTTPException(status_code=404, detail="Dossie nao disponivel para este imovel.")
+    _registrar_dossie_baixado(remote_user, imovel_id=imovel_id)
     return FileResponse(str(pdf), media_type="application/pdf", filename=Path(pdf).name)
 
 
@@ -9713,20 +10442,36 @@ ACOES_IMOBILIARIA: frozenset[str] = frozenset(
     }
 )
 
+#: Os DOIS que sobem para `eventos` (contrato §2.4). Os outros cinco sao uso de tela e ficam
+#: so' na trilha de 90 dias -- e `abrir-dossie` nao entra aqui de proposito: quem grava o
+#: download e' o GET do PDF, senao o mesmo clique contaria duas vezes (correcao de 16/09).
+GESTOS_QUE_VIRAM_EVENTO: frozenset[str] = frozenset({"marcar-visita", "desmarcar-visita"})
+
 
 @app.post("/api/imobiliaria/evento/{acao}")
-def api_imobiliaria_evento(acao: str) -> dict[str, Any]:
+def api_imobiliaria_evento(
+    acao: str,
+    imovel: str | None = None,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
     """Registra um gesto da camada imobiliaria na trilha de acesso (DEC-027).
 
     Corpo vazio de proposito. O alvo do gesto viaja na QUERY (`imovel`, `uf`,
-    `municipio`, `origem`) e nao e' declarado aqui: quem grava e' o middleware da
-    trilha, que ja' persiste `request.url.query` inteira. Acao desconhecida devolve
-    404 para o vocabulario nao virar lixo no painel de Acessos.
+    `municipio`, `origem`): quem grava a linha da trilha e' o middleware, que ja' persiste
+    `request.url.query` inteira. Acao desconhecida devolve 404 para o vocabulario nao virar
+    lixo no painel de Acessos.
+
+    DOIS dos sete tambem sobem para `eventos` (contrato §2.4) -- marcar e desmarcar visita
+    sao decisao de NEGOCIO sobre um imovel, e por isso `imovel` passou a ser declarado aqui.
+    O resto continua so' na trilha. A resposta nao muda: o gesto responde `ok` mesmo quando o
+    evento nao pode ser gravado.
     """
     from fastapi import HTTPException
 
     if acao not in ACOES_IMOBILIARIA:
         raise HTTPException(status_code=404, detail="Acao desconhecida.")
+    if acao in GESTOS_QUE_VIRAM_EVENTO:
+        _registrar_visita_imovel(remote_user, acao=acao, imovel=imovel)
     return {"ok": True}
 
 

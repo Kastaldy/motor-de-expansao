@@ -916,25 +916,64 @@ exige decisão humana sobre quais fontes baixar e validação de licença/LGPD.*
 
 ---
 
-### BLK-SEC-03-FU1 — Forçar 2FA no Authelia + revisão de acesso do dashboard (P4 do SEC-03)
+### BLK-SEC-03-FU1 — Forçar 2FA no Authelia (P4 do SEC-03)
 
 | Campo | Valor |
 |---|---|
 | **Criticidade** | **Média** (acesso ao dashboard; não toca M1/score) |
 | **Prioridade** | Média |
 | **Esteira** | interativa com gate humano (VPS §6) — **agendar com o TIME AVISADO** |
-| **Status** | Pendente |
+| **Status** | **ADIADO (16/09/2026)** — ver a nota de sobreposição abaixo |
 | **Origem** | P4 do BLK-SEC-03 (concluído 2026-07-13), adiado por decisão de Felipe para não trancar o time |
 | **Autonomia** | **manual (NÃO loop-safe)** — VPS + coordenação de pessoas |
 
-**Escopo:** (1) avaliar/forçar `two_factor` para o grupo `ultra_team` no Authelia
+**Escopo:** avaliar/forçar `two_factor` para o grupo `ultra_team` no Authelia
 (`authelia/configuration.yml`), com prazo prévio para o time cadastrar TOTP e virada em horário
-combinado com todos disponíveis; rollback = voltar a policy a `one_factor` (1 edit). (2) Revisão de
-acesso em `authelia/users_database.yml`: remover usuários obsoletos, definir offboarding (revogar ao
-sair) e periodicidade da revisão. Documentar em `docs/infra_producao.md`.
+combinado com todos disponíveis; rollback = voltar a policy a `one_factor` (1 edit).
 
 **Risco:** trancar o time fora do dashboard se virar sem aviso — mitigado por agendamento + rollback
 de 1 edit.
+
+> **Por que adiado, e não cancelado (decisão de Felipe, 16/09/2026).** Este bloco configura 2FA
+> **no Authelia** — o componente que o **P19** do `banco-de-reservas` decidiu **remover**: lá o motor
+> passa a autenticar e o Authelia sai. Forçar TOTP aqui custa janela agendada e todo o time
+> cadastrando, e esse trabalho **evapora no corte**. Até 16/09 nenhum dos dois textos sabia do outro:
+> o P19 cita este bloco como quem "quer forçar" TOTP, e este bloco não sabia que o Authelia sairia.
+>
+> Não é cancelado porque a epic **não tem data**: se ela demorar, o acesso segue em fator único, e
+> aí este bloco volta a ser o seguro certo. A decisão é de SEQUÊNCIA, não de mérito — e quando a
+> epic tiver cronograma, esta linha se resolve sozinha num dos dois sentidos.
+>
+> A outra metade do escopo original (revisão de acesso e offboarding) **saiu deste bloco** e virou o
+> **BLK-SEC-03-FU2**, logo abaixo: aquela metade a epic precisa de qualquer jeito, então ela anda
+> agora. O número menor aqui é histórico, não ordem de execução.
+
+---
+
+### BLK-SEC-03-FU2 — Revisão de acesso e offboarding no Authelia (metade do FU1)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (acesso ao piloto; não toca M1/score) |
+| **Prioridade** | Média |
+| **Esteira** | interativa com gate humano (VPS §6) — cada comando confirmado |
+| **Status** | Pendente — **esta é a metade que anda agora** |
+| **Origem** | metade (2) do BLK-SEC-03-FU1, separada em 16/09/2026 por decisão de Felipe |
+| **Autonomia** | **manual (NÃO loop-safe)** — VPS + dado de pessoas |
+
+**Escopo:** revisão de acesso em `authelia/users_database.yml` — remover usuários obsoletos, definir
+**offboarding** (revogar ao sair) e a **periodicidade** da revisão. Documentar em
+`docs/infra_producao.md`.
+
+**Por que esta metade não espera a epic.** Ela **sobrevive ao corte**: o P19 troca quem autentica,
+não quem tem direito de entrar. A lista de quem está dentro, a regra de revogar na saída e a
+cadência de revisão valem igual no Authelia de hoje e no motor de amanhã — e o corte ainda vai
+**precisar** dessa conciliação de elenco para saber quais linhas de `usuarios` correspondem a gente
+de verdade. Fazer agora é trabalho que conta duas vezes; adiar é deixar parada a única metade que
+não depende de cronograma nenhum.
+
+**Risco:** baixo e de outra natureza que o FU1 — não vira policy nem tranca ninguém; o erro possível
+é remover acesso de quem ainda precisa, que se desfaz com um `INSERT` de volta.
 
 ---
 
@@ -2391,7 +2430,7 @@ READ-ONLY sobre o M1; suíte verde.
 | **Criticidade** | **Baixa** — não muda número nenhum; é peso de payload e memória de textura. READ-ONLY sobre o M1. |
 | **Prioridade** | Baixa. Vale antes de a camada crescer para mais UFs, não antes do merge. |
 | **Esteira** | Builder → QA (sem gate). |
-| **Status** | Pendente — **achado da revisão adversarial pré-PR (2026-08-19)**, medido. |
+| **Status** | **FEITO (2026-09-17)** — opção 1 (halo como camada), pela decisão de Felipe; ver a nota de fechamento no fim do bloco. |
 | **Depende de** | BLK-MA-17 metade 1 (DEC-035 emenda 1) — é ela que cria a variante com halo. |
 | **Autonomia** | **manual (NÃO loop-safe)** |
 
@@ -2418,6 +2457,48 @@ artefato/peso/score do M1.
 **Critério de aceite.** O payload de um município com halo deixa de carregar o mesmo PNG duas vezes,
 medido em bytes antes e depois; o halo continua visualmente idêntico ao aprovado; sem regressão nos
 testes do piloto.
+
+---
+
+#### Fechamento — 2026-09-17
+
+**O que foi feito: a opção 1, mas não como este bloco a descrevia.** O texto acima propunha um
+`ScatterplotLayer` de círculos vazados, camada nova. O que existe é melhor e mais barato: a
+**moldura de alunos reais já era exatamente essa camada** — `IconLayer` com UM svg genérico, atrás
+das bandeiras, com as armadilhas já travadas por teste (`width`/`height` explícitos, senão o deck.gl
+não desenha nada). Ela passou a acender também para `diag`, por `temDestaque`. Nenhuma camada
+nasceu; o risco de "desalinhamento em zoom extremo" que o bloco temia nunca se colocou, porque a
+moldura já se alinhava pelo mesmo `getPosition` havia semanas.
+
+**A opção 2 está morta, e fica registrado para ninguém reabrir.** `<use>` com referência externa não
+resolve dentro de SVG em data-URI, e o próprio front documenta que o deck.gl rasteriza cada data-URI
+isoladamente — foi assim que a moldura saiu invisível na primeira tentativa.
+
+**DOIS critérios de aceite NÃO foram cumpridos como escritos, e isso é o registro honesto:**
+
+1. **"medido em bytes antes e depois" — NÃO medido.** O diretório `concorrentes/` não existe nesta
+   estação, e toda tentativa caiu no quadrado de sigla, que não embute PNG nenhum. O que está
+   provado é a **eliminação estrutural**: nenhuma chave `__diag` no payload, travada por
+   `test_o_dicionario_tem_UMA_entrada_por_rede`. Os "~1,44 MB / 29 redes" do enunciado permanecem
+   número herdado, nunca verificado por quem fechou o bloco.
+2. **"o halo continua visualmente idêntico" — NÃO continua, de propósito.** O anel cinza `#E8EEF5`
+   virou a moldura branca com linha escura por baixo. Isso contraria o "Fora de escopo" acima, e foi
+   **decisão de Felipe em 17/09**, tomada com o preço declarado antes: um símbolo só, porque moldura
+   e halo diziam a mesma frase. Registrado na **emenda 3 da DEC-035**.
+
+**Uma regressão que a remoção quase custou.** O laço da variante era o **único** lugar que criava
+ícone para as redes vindas só do feed do agregador — para elas nunca existiu `iconObjs[rede]`, só
+`iconObjs[rede__diag]`. Removê-lo sem mais as faria cair a cascata inteira do `getIcon` e serem
+desenhadas **com o ícone da Ultra**, sem erro no console. O dicionário passa a ser montado da união
+das duas fontes, e o teste acima é quem trava isso — ele pegou a regressão na primeira execução.
+
+**De quebra, dois defeitos existentes morreram:** o halo sumia no pino que virou FOTO (a foto vence
+a cascata do `getIcon`; camada não disputa) e era quase invisível sobre o basemap claro (o `#E8EEF5`
+fora calibrado só contra o Dark Matter).
+
+**Verificação:** `ruff` limpo; `tsc --noEmit` exit 0; front **1003 testes** em 47 arquivos; Python
+**4964 passados** (rodado em blocos — a suíte inteira num processo só foi morta por falta de memória
+nesta máquina, com 2,6 GB livres de 16 GB e uma sessão vizinha ocupando o resto).
 
 ---
 
@@ -3530,15 +3611,11 @@ Emendas em DEC-004 e DEC-011.
 
 ---
 
-### BLK-BASEMAP-04 — Custo do mosaico de rótulos: `@2x` desperdiçado e orçamento de tempo
+### BLK-BASEMAP-04 — CONCLUÍDO em 2026-09-17 (ver `tasks/completed.md`)
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **Média** (custo/latência de RENDER; **READ-ONLY sobre o M1**) |
-| **Esteira** | Block Orchestrator → Planner → `[GATE VISUAL — Vinicius]` → Builder → QA |
-| **Depende de** | BLK-BASEMAP-03 |
-| **Status** | Pendente |
-| **Autonomia** | **manual (NÃO loop-safe)** — muda resolução de render, exige gate visual |
+| **Status** | **CONCLUÍDO** — (a) metade já no ar e metade REFUTADA por medição, (b) entregue, (c) é o BLK-BASEMAP-06 |
 
 **Contexto (medido no frame canônico do Pontual à época: raio 1,5 km, canvas 1000x760, lat −23,55 — raio de 1,0 km desde a DEC-021).**
 O mosaico de rótulos busca **624 tiles** por relatório contra 169 do basemap, e aloca um canvas de
@@ -3546,12 +3623,43 @@ O mosaico de rótulos busca **624 tiles** por relatório contra 169 do basemap, 
 3,349 px/m contra 0,1548 px/m do frame — downsample de **21,6x** no render. O cache do
 BLK-BASEMAP-03 corta a repetição, **não o pico**: no cache frio os 624 tiles e os 654 MB continuam.
 
+**REMEDIÇÃO 2026-09-17 — o parágrafo acima é HISTÓRICO e não descreve mais o código.** Os 624
+tiles dependiam do bump duplo (`_BASEMAP_ZOOM_BUMP + _LABELS_ZOOM_BUMP`, zoom +2) que o
+BLK-BASEMAP-06 tratou como DEFEITO e removeu; hoje os dois chamadores passam `zoom_bump=0`
+(`censo_map._render_camada` e `relatorio_municipal.py:2016`). Medido no frame canônico de hoje
+(raio 1,0 km da DEC-021, `width=1000`, lat −23,55), com `_labels_grid`/`_labels_extent` offline:
+
+| | backlog acima | medido 2026-09-17 |
+|---|---|---|
+| tiles por chamada | 624 | **16** |
+| canvas | 654 MB | **16 MB** |
+| densidade mosaico / frame | 21,6x | **1,67x** |
+
+A contagem acompanha a **largura em px**, NÃO a área do recorte: o Municipal de ~200 km custa os
+mesmos 9 tiles que um de ~20 km, porque a grade desce o zoom em vez de crescer (só `width=2000`
+sobe para 49). Então o custo não migrou para o outro consumidor — ele deixou de existir.
+**Dropar o `@2x` está REFUTADO:** economizaria 16 MB → 4 MB e levaria o mosaico a **0,84x** a
+densidade do frame, isto é, abaixo de 1:1 — exatamente a ilegibilidade sub-pixel que o
+BLK-BASEMAP-06 foi aberto para corrigir. O `@2x` é decisão de legibilidade, não desperdício, e o
+teste `test_relatorio_pontual_censitario_mapa.py:1528` já documenta o teto de 3x com essa razão.
+
 **Objetivo.** (a) avaliar dropar o `@2x` e/ou baixar `_LABELS_ZOOM_BUMP` de 1 para 0 (corta os
 tiles ~4x) — **precisa de gate visual**, porque a nitidez dos nomes foi aprovada por Vinicius no
 gate do BLK-RELPON-11; (b) orçamento de tempo (wall-clock) para o mosaico inteiro, em vez de só
 timeout por tile: hoje o pior caso contra um CDN em blackhole ainda é ~10 min segurando o PDF;
 (c) avaliar servir os rótulos do **próprio tileserver** (camada `transportation_name` no estilo
 `ultra-maptiler`), o que elimina o CARTO e deixa o rodapé honestamente só `(c) OpenStreetMap`.
+
+**Estado por frente (2026-09-17):**
+- **(a) bump 1 → 0: JÁ FEITO**, e nunca foi dado baixa — os dois chamadores passam `zoom_bump=0`.
+  **(a) dropar o `@2x`: REFUTADO** pela remedição acima (levaria o mosaico a 0,84x do frame).
+  Nenhuma das duas metades precisa de gate visual: uma já está no ar, a outra não deve ser feita.
+- **(b) ENTREGUE.** `API_BASEMAP_LABELS_ORCAMENTO_S` (padrão 45 s) em `_fetch_labels`: estourado o
+  prazo, para de coletar e devolve o mosaico PARCIAL. Resolvido em RUNTIME (constante de módulo
+  faria a env virar enfeite) e tolerante a lixo na env. Provado por sabotagem — prazo infinito e
+  `shutdown(wait=True)` ficam vermelhos; remover o `break` NÃO fica, porque o `break` é
+  otimização e quem sustenta a promessa são o prazo e o `cancel_futures`.
+- **(c)** é o escopo do **BLK-BASEMAP-06**, que já o trata; manter aqui duplicaria o item.
 
 **Guardrail.** §5 READ-ONLY M1. Qualquer mudança de resolução passa por gate visual antes do merge.
 
@@ -5101,3 +5209,112 @@ exigência que a DEC-048 registrou).
 > cadastro) permanece; (c) o termo Ultra entra sem repartição por área (+0,03 pp);
 > (d) `CAPACIDADE_MIN_ACADEMIA_ALUNOS` fica órfã e o `CLAUDE.md` §4 ainda declara 2.500,
 > contra 2.325 medidos.
+
+---
+
+### BLK-CHAVE-01 — A âncora da chave de churn: `nome_base` + célula res-5, com MIGRAÇÃO das semanas já gravadas
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — muda `chave_snapshot`, que é a IDENTIDADE da academia na série → `status_churn`/`semanas_sem_mudanca` → `v3`/`v4` → `score_vulnerabilidade`, e é lida fora do pacote por `web/server/rede_inteligencia.py`, que a exibe no pin. [DEC-063](../docs/decisions/DEC-063.md). |
+| **Esteira** | `[GATE HUMANO]` — exige `critica-aprovada` do dono; o autor do PR não pode se aprovar. |
+| **Depende de** | DEC-039 (partição de 2 chaves), DEC-061 (guarda de coleta parcial) |
+| **Status** | **EM REVISÃO** (2026-09-17, PR #378 aberto; DEC-063 **APROVADA** pelo dono) |
+| **Autonomia** | **manual (NÃO loop-safe)** — muda a identidade da série, Crítica, e a aplicação reescreve partições na VPS |
+
+**O defeito.** A chave do `v4` (`hash_estavel|fonte|rede|nome_normalizado|hex_id_res7`) foi
+desenhada para absorver **jitter** de coordenada, e absorve — desde que o jitter não saia do
+hexágono. Dois movimentos que **não são mudança de mercado** escapam: a recalibração que cruza a
+**borda** da célula (a academia não se mexeu) e a queda do sufixo `"(Em breve)"` quando a unidade
+**inaugura**, que o S3 lê como fechamento + abertura — a leitura invertida do fato.
+
+**Medido** nas duas fotos reais do cadastro (02/08 e 06/09; 4.430 unidades em ambas), contra a
+referência `(rede, nome_base)` de 174 entradas / 58 saídas:
+
+| âncora | colisões A | colisões B | churn FALSO |
+|---|---:|---:|---:|
+| `rede\|nome\|hex7` (v4, hoje) | 1 | 1 | **91** |
+| `rede\|nome_base\|hex7` | 1 | 1 | 83 |
+| `rede\|nome_base\|hex5` (**v5**) | 1 | 1 | **23** |
+| `rede\|nome_base\|hex4` | 1 | 1 | 11 |
+| `rede\|nome_base` (sem geografia) | 8 | 7 | 0 |
+
+Descer de 7 para 5 **não custa colisão nenhuma**. O `hex4` corta mais, mas ~1.770 km² contra
+~252 km² é folga que a amostra de hoje (107 redes) não autoriza gastar. Sem geografia é a única
+linha que **perde academia de verdade** — o contrato COLAPSA a colisão e nunca desambigua.
+
+**Por que MIGRAR, e não só bumpar.** `concorrentes_novos` define "nova" como *primeira semana da
+chave ≠ primeira da série*: re-chavear faria **toda cadeia do país** aparecer como "concorrente
+novo" no pin da Visão Executiva por `SEMANAS_CONCORRENTE_NOVO = 8` semanas, e a guarda de lá
+(excluir a 1ª semana) não protege contra isso. **A janela é agora, por medição:** a série de
+`unidades` tem 2 observações contra `MIN_SEMANAS = 8`, então o S3 já está renormalizado para fora
+e o custo no score é ZERO; em ~6 semanas ela amadurece e o mesmo movimento vira falso positivo em
+massa num sinal maduro e visível.
+
+**O preimage existe.** O snapshot não guarda `nome` (anti-PII), mas o CSV que o gerou guarda: as
+fotos reproduzem **4.495/4.495** em `2026-31` e **4.610/4.610** em `2026-36`, zero órfãs. Por isso
+`chave_hash_estavel_v4` fica **congelada** com teste próprio — sem ela o `de → para` deixaria de
+ser auditável.
+
+**Aplicação na VPS é MANUAL**, semana a semana, com backup antes: `--migrar-chave-v5 --semana`
+reescreve a folha `fonte=unidades` daquela semana.
+
+---
+
+### BLK-COLETA-01 — A falha de um coletor deixa de ser DESTRUTIVA, e o `git pull` que falha passa a gritar
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — muda o dado de entrada (`Unidades/*.csv`) de toda a cadeia de concorrência, mas não toca fórmula, score nem artefato do M1. |
+| **Esteira** | `[GATE HUMANO]` |
+| **Depende de** | PR #377 (o wrapper virou arquivo versionado — sem isso não há diff para revisar) |
+| **Status** | **EM REVISÃO** (2026-09-17, PR aberto) |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera dado de produção na VPS e envia aviso a ops |
+
+**O defeito.** O lote abria com `git checkout -- Unidades/` (descarta os CSVs raspados para o
+`git pull` dar fast-forward) seguido de `git pull --ff-only || echo`. Juntas, as duas linhas
+faziam duas coisas ruins: a rede cujo coletor falhasse voltava ao **baseline do repositório** — que
+pode ser de meses atrás — em vez de ficar com a safra da semana passada; e um `pull` que falha
+passava em silêncio.
+
+**Os dois incidentes que isso produziu, medidos:** em 2026-09-13 o lote morreu no coletor #28 de 90
+e a **Selfit caiu de 231 para 119** unidades (o snapshot só não fotografou porque a guarda da
+DEC-061 o recusou); e o checkout ficou **8 commits atrás por cinco dias**, de modo que o conserto
+do crash e o da âncora da Smart Fit, já mergeados no repo do Vini, simplesmente não chegavam.
+
+**A correção.**
+
+1. **Passo 0 — a safra é preservada ANTES do descarte** (`$INFRA/safra_anterior`). O descarte
+   continua (é o preço do fast-forward), mas deixou de ser perda. A ORDEM é a carga: preservar
+   depois salvaria o baseline, que é o dado errado.
+2. **Passo 2.5 — quem não recoletou volta à SAFRA, não ao baseline.** Critério por **conteúdo**:
+   CSV idêntico ao commitado **e** diferente da safra ⇒ não foi recoletado ⇒ restaura.
+3. **O `pull` que falha avisa no chat de ops**, reusando `enviar_telegram`. **Não aborta** o lote:
+   a coleta ainda vale, e derrubar o domingo trocaria um dano por outro maior.
+
+**Por que conteúdo e não parsing do log — é o coração do bloco.** O executor imprime
+`Resultado: falha (N) em ...` por coletor, e o caminho óbvio seria ler isso. Medido no lote de
+13/09: havia **3** linhas de falha, enquanto **~56** redes ficaram defasadas — o lote morreu no #28
+e as demais **nunca rodaram**, logo nunca reportaram nada. Parsing consertaria **3 de 59**. A
+comparação com o baseline commitado pega os dois casos, e não depende de mapear nome de coletor
+para nome de arquivo (onde uma exceção entre 107 passaria batida).
+
+**Prova.** `test_restauracao_EXECUTADA_nos_tres_casos` **executa** o laço — `cp -a`, `cmp`,
+`git show` — num repositório git temporário, com três redes cobrindo os três casos que existem: a
+que não recoletou volta à safra, a que recoletou fica intocada, a sem mudança desde o commit não é
+tocada (1 restauração, zero falso positivo). O teste **extrai o trecho do próprio wrapper** em vez
+de reescrevê-lo, senão seria a segunda redação da mesma regra e passaria mesmo com o wrapper
+divergindo (lição da DEC-044); `test_o_laco_extraido_e_o_do_wrapper_nao_uma_copia` falha alto se os
+marcadores sumirem. Mais 9 testes de contrato textual, incluindo a ORDEM backup-antes-do-descarte e
+a acentuação das mensagens ao chat de ops.
+
+> A primeira versão deste bloco dizia "sandbox com três redes" apontando para um script que rodou
+> de verdade mas **vivia no scratchpad da sessão** — prova não reproduzível por quem lê o repo.
+> Achado MÉDIO da revisão do PR #380, e correto: a lógica que **sobrescreve CSV de coleta** tinha
+> só teste de substring, e um refator que preservasse as strings e quebrasse o `cmp` passaria com
+> tudo verde.
+
+**Armadilha declarada:** o `cmp` compara bytes. Se os CSVs ganharem normalização de EOL, a
+comparação daria "diferente" para todas as redes e a restauração viraria **no-op silencioso** — a
+mesma família do mount que congelou os pins. Hoje o checkout da VPS é Linux e não há conversão
+(medido); se a premissa mudar, o laço precisa comparar normalizado.

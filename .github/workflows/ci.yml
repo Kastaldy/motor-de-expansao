@@ -39,11 +39,23 @@ jobs:
       - name: Instalar dependencias
         # inclui [api_mvp] (fastapi/uvicorn/pydantic) p/ a suite da API GeoEspacial
         # rodar no CI. NAO arrasta p/ as imagens: Dockerfile.web/.api instalam so seus extras.
+        #
+        # [db] e [auth] entraram em 11/09. Ate' aqui o CI instalava so' [dev,api_mvp] e
+        # 222 testes NAO RODAVAM nele -- toda a camada de banco (usuarios, senhas, RBAC,
+        # eventos, CLI, as duas suites de acesso) passava verde so' na maquina de quem
+        # escreveu. Nao havia skip anunciando isso: sem `psycopg`/`argon2-cffi` os modulos
+        # nem importam, e o que o CI nao coleta ele nao reporta como pulado.
+        # O custo e' uma roda binaria de cada (`psycopg[binary]`, `argon2-cffi`), e o ganho
+        # colateral e' que o pip-audit abaixo passa a AUDITAR as duas.
+        #
         # BLK-OPS-12: -c constraints.txt PINA todas as deps transitivas (lockfile
         # universal gerado por uv p/ >=3.11; mesmo arquivo usado nos Dockerfiles) ->
         # CI, imagens e local instalam as MESMAS versoes. Refresh do lock:
         #   uv pip compile pyproject.toml --all-extras --universal --python-version 3.11 -o constraints.txt
-        run: pip install -e ".[dev,api_mvp]" -c constraints.txt
+        # ATENCAO: `argon2-cffi` ainda NAO esta no lock (BLK-OPS-12 em aberto), entao ele
+        # instala na ultima versao que o range do pyproject aceitar -- aqui e na imagem de
+        # producao, que roda o mesmo `-c`. Fechar isso e' o refresh do lock acima.
+        run: pip install -e ".[dev,api_mvp,db,auth]" -c constraints.txt
 
       # ruff/mypy sao steps de qualidade BLOQUEANTES desde BLK-OPS-02b: a divida
       # latente de lint/tipos (286 ruff + 23 mypy) foi zerada naquele ciclo, sem
@@ -282,7 +294,15 @@ jobs:
           # `perfil.py` pelo mesmo motivo do `publish-api` (ver o comentario la'): desde o
           # commit A3 o `web/server/app.py` resolve o perfil NO IMPORT, entao esta imagem
           # depende do loader tanto quanto a outra.
-          if git diff --name-only "$BASE" "${{ github.sha }}" | grep -qE '^(Dockerfile\.web|web/|src/motor_expansao/(dashboard|dimensionamento|api)/|src/motor_expansao/perfil\.py$|pyproject\.toml$)'; then
+          #
+          # `db/` entra pelo MESMO raciocinio (D26): a imagem instala os extras `db` e
+          # `auth`, e o `web/server/acesso.py` importa `motor_expansao.db` e
+          # `motor_expansao.db.rbac` em tres funcoes do caminho de autorizacao. Sem esta
+          # alternativa, uma mudanca so' em `db/` -- inclusive no RBAC ou no hash de
+          # senha -- nao republicaria a imagem, e a VPS seguiria com o codigo antigo em
+          # silencio. NAO acrescentar `db/` ao filtro do `publish-api`: aquela imagem nao
+          # instala nem importa o pacote (`Dockerfile.api` usa `.[basemap,api_mvp,geocoder]`).
+          if git diff --name-only "$BASE" "${{ github.sha }}" | grep -qE '^(Dockerfile\.web|web/|src/motor_expansao/(dashboard|dimensionamento|api|db)/|src/motor_expansao/perfil\.py$|pyproject\.toml$)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"; echo "arquivos do web mudaram -> publica"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"; echo "nada do web mudou -> pula build"

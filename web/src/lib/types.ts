@@ -15,6 +15,10 @@ export interface MePayload {
    *  continuar abrindo. Quem valida e estreita é `definirPerfil` em `lib/perfil.ts`,
    *  no mesmo espírito defensivo de `abasDoPayload`. */
   perfil?: unknown
+  /** Estado da senha de quem esta' logado (D26, 11/09). Opcional pelo MESMO motivo do
+   *  `perfil`: backend anterior nao manda o campo, e ausencia significa "nao sei" --
+   *  nunca "nao precisa trocar". Quem le' e estreita e' `estadoDaSenhaDoPayload`. */
+  senha?: unknown
 }
 
 /** Tom do chip do ranking. Fronteira TS<->Python sem contrato gerado: o produtor
@@ -2066,4 +2070,91 @@ export interface AcessosFicha {
   heatmap: number[][]
   /** Mais recente primeiro; teto de 80 eventos. */
   linha_do_tempo: AcessosEventoTempo[]
+}
+
+/* ---- Administração de usuários (D25) — quem entra, com que perfil ---- */
+
+/** Uma linha da tabela de administração. Inclui INATIVOS: escondê-los tornaria a
+ *  reativação impossível pela tela, que é o caso de quem volta de licença. */
+export interface AdminUsuario {
+  id_usuario: number
+  /** O `Remote-User` do Authelia (D23) — a chave que casa com a trilha da DEC-027. */
+  login: string
+  nome: string
+  email: string
+  perfil: string
+  ativo: boolean
+  /** Se a pessoa já definiu a senha dela alguma vez (016). `false` = ainda na inicial
+   *  compartilhada. Nunca vem hash nenhum no payload — só este booleano. */
+  senha_propria: boolean
+  /** Se a próxima entrada dela deve pedir troca (016). Não é o inverso do de cima: um
+   *  admin pode forçar troca de quem já definiu, e aí os dois são verdadeiros. */
+  deve_trocar_senha: boolean
+}
+
+/** Opção do seletor de perfil. A ordem vem do backend e é a hierarquia da D22
+ *  (Expansão ⊂ Líderes ⊂ Growth, Consultoria ⊂ Líderes), do menor para o maior. */
+export interface AdminPerfil {
+  perfil: string
+  descricao: string
+  capacidades: number
+}
+
+export interface AdminUsuariosPayload {
+  usuarios: AdminUsuario[]
+  perfis: AdminPerfil[]
+  /** `id_usuario` de quem está olhando: a tela desabilita a própria linha. O backend
+   *  recusa de todo jeito (403) — isto é para o botão não prometer o que será negado. */
+  eu: number
+}
+
+/** Resposta do PATCH. Cada bloco só vem se o campo correspondente foi enviado, e
+ *  `mudou: false` significa "já estava assim" — sucesso sem evento gravado. */
+export interface AdminAlteracao {
+  id_usuario: number
+  perfil?: { id_usuario: number; de: string; para: string; mudou: boolean }
+  status?: { id_usuario: number; ativo: boolean; mudou: boolean }
+}
+
+/** Corpo do POST de criação (D26). Sem campo de senha DE PROPÓSITO: quem nasce pela
+ *  tela recebe a senha inicial compartilhada e troca no primeiro acesso. Um campo de
+ *  senha aqui faria o admin conhecer a senha de outra pessoa, e qualquer ação daquela
+ *  conta ficaria contestável — o oposto do que o D17 sustenta. */
+export interface AdminUsuarioNovo {
+  login: string
+  nome: string
+  email: string
+  perfil: string
+}
+
+/** Resposta do POST. `falta_cadastrar_no_authelia` é sempre `true` enquanto o P19 não
+ *  for executado, e a tela PRECISA mostrá-lo: uma linha em `usuarios` sem a entrada no
+ *  `users_database.yml` não deixa a pessoa entrar, e sem esse recado criar usuário
+ *  viraria uma armadilha silenciosa. */
+export interface AdminCriacao {
+  id_usuario: number
+  login: string
+  perfil: string
+  falta_cadastrar_no_authelia: boolean
+}
+
+/** Resposta da troca da própria senha (D26). `primeira_vez` distingue "saiu da senha
+ *  inicial" de "trocou de novo" — é o que a tela usa para o recado certo. */
+export interface MinhaSenhaTrocada {
+  id_usuario: number
+  primeira_vez: boolean
+}
+
+/** Resposta de `POST .../redefinir-senha` (15/09). `tinha_senha_propria` diz se o gesto
+ *  apagou uma senha que a pessoa escolheu — é o que a tela usa para o recado certo. */
+export interface AdminSenhaRedefinida {
+  id_usuario: number
+  tinha_senha_propria: boolean
+}
+
+/** Resposta de `POST .../exigir-troca` (15/09). `mudou: false` = a troca já estava pedida —
+ *  sucesso sem evento gravado, como nas outras escritas da tela. */
+export interface AdminTrocaExigida {
+  id_usuario: number
+  mudou: boolean
 }

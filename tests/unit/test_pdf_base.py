@@ -43,6 +43,84 @@ def test_ultra_pdf_config_identica(legado: type) -> None:
     assert _configuracao(pdf_base.UltraPDF) == _configuracao(legado)
 
 
+# --- Marca d'agua de rastreabilidade (D17) ------------------------------------
+# Mesma disciplina do bloco acima: `censo_report` e `relatorio_municipal` ficam como
+# estao, e a Comparacao usa a versao compartilhada. O que impede a TRIPLICACAO de virar
+# QUADRUPLICACAO em silencio e' o teste abaixo.
+
+
+def test_a_marca_dagua_dos_tres_parte_da_mesma_base() -> None:
+    """A base e as cores tem de ser as mesmas nos tres — um deck com cinza diferente do
+    relatorio nao e' escolha de design, e' cópia que derivou."""
+    from motor_expansao.dashboard import censo_report as censo
+
+    assert pdf_base.MARCA_BASE == censo._WATERMARK_BASE == "Ultra Academia"
+    assert pdf_base.MARCA_RGB == censo._WATERMARK_RGB
+    assert pdf_base.MARCA_RGB_CAPA == censo._WATERMARK_RGB_COVER
+    assert pdf_base.MARCA_ALPHA == censo._WATERMARK_ALPHA
+    assert pdf_base.MARCA_FONT_PT == censo._WATERMARK_FONT_PT
+    assert pdf_base.MARCA_MARGEM == censo._WATERMARK_MARGIN
+
+
+def test_o_texto_da_marca_e_igual_ao_do_relatorio_pontual() -> None:
+    """As duas implementacoes convivem; o que nao pode e' produzirem textos DIFERENTES
+    para a mesma pessoa e o mesmo relatorio."""
+    from motor_expansao.dashboard import censo_report as censo
+
+    for solicitante, rid in [
+        (None, None),
+        ("will.lindo", None),
+        (None, "1ea94069-1885-4266-9de3-9f80ea0db90a"),
+        ("felipe_castaldi", "1ea94069-1885-4266-9de3-9f80ea0db90a"),
+        ("  ", "  "),
+    ]:
+        assert pdf_base.texto_da_marca(solicitante, rid) == censo._watermark_text(
+            solicitante, rid
+        ), f"marca divergiu para {solicitante!r} / {rid!r}"
+
+
+def test_o_texto_da_marca_e_igual_nos_TRES_geradores() -> None:
+    """Os tres tem de escrever a MESMA marca para a mesma pessoa e o mesmo relatorio.
+
+    Ate' 10/09 nao escreviam: o censo passava por `_nome_exibicao` e o municipal fazia
+    so' `strip()`, entao "felipe_castaldi" saia com underscore num PDF e como
+    "Felipe Castaldi" no outro -- a MESMA pessoa, dois nomes, no mesmo dia.
+    """
+    from motor_expansao.dashboard import censo_report as censo
+    from motor_expansao.dashboard import relatorio_municipal as municipal
+
+    casos = [
+        (None, None),
+        ("will.lindo", None),
+        ("felipe_castaldi", "1ea94069-1885-4266-9de3-9f80ea0db90a"),
+        ("Analista Teste", "abc-123"),
+        ("  ", "  "),
+    ]
+    for solicitante, rid in casos:
+        base = pdf_base.texto_da_marca(solicitante, rid)
+        assert censo._watermark_text(solicitante, rid) == base, f"censo divergiu: {solicitante!r}"
+        assert municipal._watermark_text(solicitante, rid) == base, (
+            f"municipal divergiu: {solicitante!r}"
+        )
+
+
+def test_o_nome_de_exibicao_quebra_no_ponto_e_no_underscore() -> None:
+    """O cadastro tem as duas convencoes de login. Sem as duas, metade das pessoas sairia
+    com o slug cru num texto de usuario, contra a regra do CLAUDE.md §2."""
+    assert pdf_base.nome_exibicao("will.lindo") == "Will Lindo"
+    assert pdf_base.nome_exibicao("felipe_castaldi") == "Felipe Castaldi"
+    assert pdf_base.nome_exibicao("Analista Teste") == "Analista Teste"
+    assert pdf_base.nome_exibicao("") == ""
+
+
+def test_a_marca_e_ascii_segura() -> None:
+    """Core font Helvetica: fora de latin-1 vira "?" em SILENCIO. Um UUID e' ASCII puro,
+    mas o NOME nao e' — e o travessao de um nome colado de outro lugar sumiria calado."""
+    texto = pdf_base.texto_da_marca("joão—silva", "abc-123")
+    assert texto == texto.encode("latin-1", errors="replace").decode("latin-1")
+    assert "abc-123" in texto
+
+
 def test_pagina_e_16_por_9_em_pontos() -> None:
     pdf = pdf_base.UltraPDF()
     assert (round(pdf.w), round(pdf.h)) == (

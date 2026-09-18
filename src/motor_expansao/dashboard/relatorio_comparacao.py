@@ -34,15 +34,19 @@ from motor_expansao.dashboard.pdf_base import (
     CINZA_CLARO,
     CINZA_LINHA,
     CINZA_TEXTO,
+    MARCA_RGB,
+    MARCA_RGB_CAPA,
     PAGINA_ALTURA,
     PAGINA_LARGURA,
     ULTRA_MAGENTA,
     ULTRA_TURQUESA,
     UltraPDF,
     ascii_seguro,
+    desenhar_marca,
     faixa_de_titulo,
     linha_de_tabela,
     rodape,
+    texto_da_marca,
 )
 
 #: Teto de itens no deck. O mesmo `MAX_COMPARADOS` da tela e o mesmo tamanho da paleta de
@@ -949,6 +953,8 @@ def gerar_pdf_comparacao(
     mapas: Sequence[bytes | None] | None = None,
     ultra_dir: Path | str | None = None,
     quando: date | None = None,
+    solicitante: str | None = None,
+    report_id: str | None = None,
 ) -> bytes:
     """Monta o deck de 6 slides a partir do ranking JA CALCULADO pelo front.
 
@@ -961,6 +967,12 @@ def gerar_pdf_comparacao(
     pdf = UltraPDF()
     pdf.set_title(ascii_seguro(str(dados.get("titulo") or "Comparação de áreas")))
     pdf.set_author("Motor de Expansão - Ultra Academia")
+    if report_id:
+        # SEGUNDA camada do carimbo: o `/Info` sobrevive a RECORTE de pagina e a extracao
+        # de texto; a marca-d'agua sobrevive a screenshot e a reimpressao. Nenhuma sozinha
+        # cobre os dois modos de vazamento.
+        pdf.set_subject(f"report_id {report_id}")
+        pdf.set_keywords(f"report_id={report_id}")
 
     _slide_capa(pdf, dados, arte["capa"], quando)
     _slide_graficos(pdf, dados, arte["conteudo"])
@@ -975,5 +987,17 @@ def gerar_pdf_comparacao(
     # `_slide_tabela` fica no modulo, sem chamador, so' se voltar a fazer falta.
     _slide_recomendacao(pdf, dados, arte["conteudo"])
     _slide_encerramento(pdf, dados, arte["capa"], quando)
+
+    # Marca d'agua POR CIMA do conteudo de CADA slide (D17).
+    #
+    # Este deck NAO TINHA marca nenhuma ate' 10/09 -- era a superficie mais exposta do
+    # piloto: um deck vazado nao carregava nada apontando para pessoa nem para requisicao,
+    # so' um `set_author` fixo, igual para todo mundo. Escrever na pagina `n` via
+    # `pdf.page = n` ANEXA ao stream dela, entao a marca fica por cima do fundo e das
+    # imagens. A capa (pagina 1) usa branco, que e' o que se le' sobre o fundo turquesa.
+    marca = texto_da_marca(solicitante, report_id)
+    for numero in range(1, pdf.pages_count + 1):
+        pdf.page = numero
+        desenhar_marca(pdf, marca, rgb=MARCA_RGB_CAPA if numero == 1 else MARCA_RGB)
 
     return bytes(pdf.output())

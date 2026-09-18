@@ -32,14 +32,15 @@ if BaseSettings is not None:
     class Settings(BaseSettings):
         model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-        # Banco
-        DATABASE_URL: str = "postgresql+asyncpg://ultra:ultra123@localhost:5432/motor_expansao"
-        DATABASE_URL_SYNC: str = "postgresql+psycopg2://ultra:ultra123@localhost:5432/motor_expansao"
+        # NAO reintroduzir DATABASE_URL/SECRET_KEY aqui. Eram restos do PostGIS de maio
+        # (`fora_primeira_fase/api_postgis/`), com usuario e senha embutidos no fonte e
+        # chave de assinatura fraca -- nenhum dos dois lido por linha nenhuma de codigo.
+        # O banco de verdade tem porta propria: `MOTOR_DATABASE_URL`, em
+        # `motor_expansao/db/postgres.py`, sem default e sem segredo no fonte.
+        # `test_config_sem_credencial_morta` trava isso.
 
         # App
         ENVIRONMENT: str = "development"
-        SECRET_KEY: str = "dev-secret-key-change-in-production"
-        ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
         # APIs externas
         GOOGLE_MAPS_API_KEY: str = ""
@@ -102,14 +103,11 @@ if BaseSettings is not None:
 else:
 
     class Settings:  # type: ignore[no-redef]  # fallback runtime legitimo: definicao alternativa quando pydantic-settings ausente
-        # Banco
-        DATABASE_URL = "postgresql+asyncpg://ultra:ultra123@localhost:5432/motor_expansao"
-        DATABASE_URL_SYNC = "postgresql+psycopg2://ultra:ultra123@localhost:5432/motor_expansao"
+        # Idem ao ramo com pydantic-settings: DATABASE_URL/SECRET_KEY sairam daqui e nao
+        # voltam. Ver a nota la' em cima e `motor_expansao/db/postgres.py`.
 
         # App
         ENVIRONMENT = "development"
-        SECRET_KEY = "dev-secret-key-change-in-production"
-        ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
         # APIs externas
         GOOGLE_MAPS_API_KEY = ""

@@ -1,6 +1,7 @@
 # docker-compose.prod.yml — Motor de Expansão Ultra Academia
 #
 # Serviços:
+#   postgres   — PostgreSQL 18 + PostGIS 3.6 (sem porta no host; só a rede interna alcança)
 #   web        — piloto web (SPA + API FastAPI; sem porta no host, acessível via rede interna)
 #   caddy      — reverse proxy com HTTPS automático via Let's Encrypt
 #   authelia   — autenticação self-hosted com tela de login e suporte a 2FA opcional
@@ -14,6 +15,57 @@
 #      camadas paralelas; sem o bind, os overlays do Mapa Territorial somem em silencio)
 
 services:
+
+  # ── PostgreSQL + PostGIS ───────────────────────────────────────────────────
+  # O banco do `banco-de-reservas`. Sem porta no host: quem alcanca e' quem esta'
+  # na app_net. A versao NAO e' livre — o D18 depende do PostGIS 3.6 para o
+  # ST_Buffer em `geography` preservar o SRID, e o esquema foi validado no 18.4.
+  #
+  # O usuario daqui e' o DONO do schema: ele aplica migration (DDL) e e' o
+  # `SECURITY DEFINER` das triggers de auditoria do D19. A aplicacao NUNCA usa
+  # esta credencial — ela usa o papel `app` do D20, criado depois pelo
+  # `sql/papeis-e-privilegios.md`. Sao dois segredos distintos de proposito: e' o
+  # dono que poderia desligar a propria trigger, e por isso ele nao vai no `web`.
+  postgres:
+    image: postgis/postgis:18-3.6
+    container_name: motor_expansao_postgres
+    restart: unless-stopped
+    # Teto conservador: a KVM4 tem 16 GB e os tetos de `web` (8g) e `api` (6g) ja'
+    # somam 14. `mem_limit` nao RESERVA memoria, mas 2g aqui e' o que sobra sem
+    # contar com swap. O ETL da fase 5 (dissolve por UF) e' o candidato a estourar
+    # isto — quando ele existir, medir antes de subir o teto.
+    mem_limit: 2g
+    # Postgres usa /dev/shm para hash join e query paralela. O default do Docker e'
+    # 64 MB, e o sintoma de faltar e' um "could not resize shared memory segment"
+    # no meio de uma consulta grande — nao no boot, onde alguem veria.
+    shm_size: 256m
+    expose:
+      - "5432"
+    environment:
+      # Fail-closed (BLK-SEC-05), igual aos AUTHELIA_*: sem o segredo no .env o
+      # compose ABORTA. Um Postgres que sobe com senha vazia e' um banco aberto
+      # para qualquer container da app_net.
+      POSTGRES_DB: ${POSTGRES_DB:?defina POSTGRES_DB no .env — o canonico e' banco_de_reservas}
+      POSTGRES_USER: ${POSTGRES_OWNER_USER:?defina POSTGRES_OWNER_USER no .env — o DONO do schema, nunca o papel `app`}
+      POSTGRES_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?defina POSTGRES_OWNER_PASSWORD no .env (openssl rand -hex 24)}
+      # UTF8 explicito. O seed do RBAC tem descricao acentuada que vira rotulo de
+      # tela, e a verificacao mede char_length/octet_length — num cluster que
+      # nascesse SQL_ASCII o duplo-encoding entraria sem ninguem ver.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app_net
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      # `-U`/`-d` explicitos: sem eles o pg_isready usa o usuario do processo (root)
+      # e responde "accepting connections" mesmo quando o banco do .env nao existe.
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   # ── API GeoEspacial (on-demand, interna) ───────────────────────────────────
   # Container separado, mesma VPS/rede. Consome os MESMOS volumes de dados (:ro)
@@ -177,6 +229,13 @@ services:
     # principal e carrega particoes de UF inteiras em memoria na 1a leitura.
     mem_limit: 8g
     memswap_limit: 10g
+    # Ordem de subida, NAO condicao de saude. `service_started` de proposito: com
+    # `service_healthy` um Postgres doente impediria o `web` de subir, e o piloto
+    # foi desenhado para servir sem banco (leitura de parquet nao passa por ele).
+    # `depends_on` nao propaga restart — derrubar o postgres nao derruba o web.
+    depends_on:
+      postgres:
+        condition: service_started
     expose:
       - "8899"
     environment:
@@ -222,6 +281,26 @@ services:
       # sem fail-open). Vazia/ausente = painel DESLIGADO para todos (404).
       # O valor vive no .env da VPS (ex.: MOTOR_ACESSOS_ADMIN_USUARIOS=felipe).
       MOTOR_ACESSOS_ADMIN_USUARIOS: ${MOTOR_ACESSOS_ADMIN_USUARIOS:-}
+      # Banco PostgreSQL/PostGIS. OPCIONAL de proposito, e por isso `:-` e nao `:?`:
+      # ausente ou vazia, o piloto sobe e serve como sempre, sem tentar conexao nenhuma
+      # (`motor_expansao.db` trata "sem env" e "sem driver" como o mesmo estado de nao
+      # configurado). Assim esta imagem vai para producao ANTES de existir servico de
+      # banco no compose, e ligar depois e' preencher o .env — nao um rebuild.
+      #
+      # Quando o servico existir, o valor aponta para o papel `app` do D20 (sem DDL),
+      # nunca para o dono do schema: e' o dono que poderia desligar a propria trigger
+      # de auditoria, que e' o caminho que o SECURITY DEFINER do D19 declara barrar.
+      #
+      # Diagnostico: `/api/acessos/saude-artefatos` -> bloco `banco`. O `/api/health`
+      # NAO olha o banco de proposito — amarrar os dois faria o healthcheck derrubar o
+      # container a cada piscada do Postgres, levando junto tudo que nao depende dele.
+      MOTOR_DATABASE_URL: ${MOTOR_DATABASE_URL:-}
+      # Senha INICIAL de quem e' criado pela tela de administracao (D26). `:-` e nao `:?`
+      # de proposito: ela e' necessaria para CRIAR usuario, nao para o piloto SUBIR — e
+      # amarrar a subida a ela transformaria uma funcao da aba Acessos em pre-requisito de
+      # deploy. Ausente, criar usuario responde 503 com mensagem explicita e todo o resto
+      # do piloto segue servindo. Ver o bloco dela no `.env.example`.
+      MOTOR_SENHA_INICIAL: ${MOTOR_SENHA_INICIAL:-}
       # BLK-SAT-01: chave do ArcGIS Location Platform p/ a vista aerea (satelite) do
       # Relatorio Pontual. Sem a var -> render devolve None -> pagina omitida (PDF sai igual).
       API_ARCGIS_API_KEY: ${API_ARCGIS_API_KEY:-}
@@ -338,3 +417,4 @@ volumes:
   caddy_data:
   caddy_config:
   bot_data:        # sessoes do bot (quem ja logou) — persiste entre restarts
+  postgres_data:   # dados do Postgres — o UNICO volume que nenhum pipeline regenera

@@ -1731,8 +1731,75 @@ def test_fetch_labels_devolve_none_quando_nenhum_tile_entra(monkeypatch, tmp_pat
 
 
 def test_labels_timeout_por_tile_limita_o_pior_caso():
-    """Teto por tile explícito: 8 s. Documenta o pior caso do mosaico contra CDN em blackhole."""
+    """Teto por tile explícito: 8 s.
+
+    Ele NÃO é mais o pior caso do mosaico — passou a ser só a metade por tile. O teto do
+    CONJUNTO é o orçamento do BLK-BASEMAP-04, testado logo abaixo: sozinho, este 8 s deixava o
+    pior caso em `n_tiles / 8 workers × 8 s`, ou seja ~10 min de PDF preso contra um CDN em
+    blackhole (que não recusa — simplesmente não responde).
+    """
     assert censo_map._LABELS_TIMEOUT_S <= 8
+
+
+def test_orcamento_do_mosaico_resolve_em_runtime_e_tolera_lixo(monkeypatch):
+    """É FUNÇÃO, não constante — e isso não é estilo (BLK-BASEMAP-04).
+
+    Constante seria lida uma vez no import: a env viraria enfeite (ops mudaria o valor e o
+    processo seguiria com o antigo) e o teste abaixo não teria como apertar o prazo. O módulo
+    também não importa `os` no topo, então uma constante nem importaria.
+    """
+    assert censo_map._labels_orcamento_s() == censo_map._LABELS_ORCAMENTO_PADRAO_S
+
+    monkeypatch.setenv(censo_map._LABELS_ORCAMENTO_ENV, "12.5")
+    assert censo_map._labels_orcamento_s() == 12.5
+
+    # Mitigação que derruba o render por causa de um typo na env é pior que não ter mitigação.
+    for lixo in ("abacaxi", "-3", "0", ""):
+        monkeypatch.setenv(censo_map._LABELS_ORCAMENTO_ENV, lixo)
+        assert censo_map._labels_orcamento_s() == censo_map._LABELS_ORCAMENTO_PADRAO_S
+
+
+def test_orcamento_corta_o_mosaico_e_devolve_o_parcial(monkeypatch, tmp_path):
+    """O teto do CONJUNTO: estourado o prazo, para de coletar e entrega o que chegou.
+
+    TRÊS asserções, e nenhuma basta sozinha:
+      * voltou RÁPIDO — se só isso, passaria também se a função falhasse cedo por outro motivo;
+      * voltou com mosaico PARCIAL e não `None` — prova que degradou, não abortou;
+      * o teto e' 0,6 do custo completo e NAO a metade: medido, o caminho feliz gasta 0,53s
+        contra 1,50s do completo, e com a metade (0,75s) UMA leva de atraso (0,3s) pintava
+        vermelho sem defeito nenhum. Sob sabotagem o gasto vai a 1,53s — longe dos dois lados;
+      * a grade tinha ladrilhos de sobra — sem isso o teste passaria à toa num mosaico de dois,
+        onde a coleta completa já caberia no prazo e o corte nunca aconteceria.
+
+    O prazo dá folga para a PRIMEIRA leva (8 workers) aterrissar de propósito. Com prazo menor
+    que um ladrilho, nada entra e o contrato antigo devolve `None` — correto, porém seria outro
+    teste, e este aqui deixaria de medir o corte.
+    """
+    import time as _time
+
+    monkeypatch.setattr(censo_map, "_LABELS_CACHE_DIR", tmp_path / "labels")
+    monkeypatch.setenv(censo_map._LABELS_ORCAMENTO_ENV, "0.5")
+
+    bounds = (-5_200_000.0, -2_800_000.0, -5_150_000.0, -2_750_000.0)
+    _zoom, tx0, tx1, ty0, ty1, _tile_m = censo_map._labels_grid(bounds, 1000)
+    n_tiles = (tx1 - tx0 + 1) * (ty1 - ty0 + 1)
+    assert n_tiles >= 24, f"grade pequena demais ({n_tiles}) para o orcamento ser decisivo"
+
+    def _tile_lento(_zoom, _tx, _ty):
+        _time.sleep(0.3)
+        return Image.new("RGBA", (512, 512), (0, 255, 0, 255))
+
+    monkeypatch.setattr(censo_map, "_labels_tile", _tile_lento)
+
+    t0 = _time.monotonic()
+    out = censo_map._fetch_labels(bounds, 1000)
+    gasto = _time.monotonic() - t0
+
+    completo = -(-n_tiles // 8) * 0.3  # levas de 8 workers, ceil
+    assert out is not None, "cortou cedo demais e devolveu None em vez do parcial"
+    assert gasto < completo * 0.6, (
+        f"gastou {gasto:.2f}s; teto {completo * 0.6:.2f}s; a coleta completa custaria ~{completo:.2f}s — o orcamento nao cortou"
+    )
 
 
 def test_camada_renda_per_capita_ignora_a_coluna_calibrada(monkeypatch):
