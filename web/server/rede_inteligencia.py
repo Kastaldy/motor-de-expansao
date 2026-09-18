@@ -519,9 +519,12 @@ def concorrentes_novos(
     O snapshot semanal não guarda coordenada (DEC-029, rota B: lida e descartada); ela vem
     das tabelas de vulnerabilidade, pela chave `(fonte, chave_snapshot)`.
 
-    "Nova" = a primeira semana em que a chave aparece é posterior à PRIMEIRA semana da
-    série e cai nas últimas `semanas`. A exclusão da primeira semana não é detalhe: sem
-    ela, no começo da série TODO o universo pareceria ter acabado de abrir.
+    "Nova" = a primeira semana em que a chave aparece é posterior à ESTREIA DA PRÓPRIA FONTE
+    e cai nas últimas `semanas`. A exclusão da estreia não é detalhe: sem ela, no começo da
+    série TODO o universo daquele feed pareceria ter acabado de abrir. E a estreia é POR
+    FONTE, não da série: cada feed começa a ser fotografado num domingo diferente — contra a
+    primeira semana global, as 22.550 chaves do WellHub passavam como recém-chegadas e a
+    ficha listava o bairro inteiro (Felipe, 18/09).
 
     Entrar no feed não é inaugurar — pode ser credenciamento no agregador. A tela diz.
     """
