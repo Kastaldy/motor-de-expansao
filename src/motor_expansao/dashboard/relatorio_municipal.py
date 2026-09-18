@@ -1998,9 +1998,6 @@ def _render_mapa_municipio(
     overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     odraw = ImageDraw.Draw(overlay, "RGBA")
 
-    # Municipio SEM nenhum aprovado (Manaus) volta a desenhar os cinza: com a regra de so' pintar
-    # os verdes, o mapa saia em branco e parecia falha de geracao.
-    tem_aprovado = bool(destaque_mask.any())
     label_pins: list[tuple[int, int, str]] = []
     zona_labels: list[tuple[int, int, str, tuple[int, int, int]]] = []
     # BLK-RELMUN-08: nome do bairro dominante sobre o hexagono, para identificar a regiao.
@@ -2031,12 +2028,10 @@ def _render_mapa_municipio(
                 color = _HEX_REPROVADO_RGBA
             odraw.polygon(pixels, fill=color, outline=(255, 255, 255, 90))
         elif camada == "resumo":
-            # So' os APROVADOS (2026-09-17, pedido do Juan: "respeitando os hexagonos verdes,
-            # tirando os cinzas"). O cinza era a cauda nao aprovada -- em Sao Paulo, a faixa sul
-            # -- que enchia o quadro sem dizer nada: a pagina fala do espaco que EXISTE. A
-            # "Visao Geral do Municipio" segue mostrando aprovados e reprovados lado a lado.
-            if not destaque_mask[pos] and tem_aprovado:
-                continue
+            # Os nao aprovados sao desenhados: eles sao o CONTEXTO do quadro. O pedido de
+            # 2026-09-17 era que o ZOOM priorizasse os hexagonos verdes quando houvesse cinza nas
+            # pontas -- quem faz isso e' o `focus_bounds` (hexagonos escolhidos), nao este desenho.
+            # Apagar o cinza foi leitura errada e durou um dia (Juan, 2026-09-18).
             if destaque_mask[pos]:
                 color = _HEX_DESTAQUE_RGBA if fonte_propria[pos] else _HEX_DESTAQUE_MUNICIPAL_RGBA
             else:

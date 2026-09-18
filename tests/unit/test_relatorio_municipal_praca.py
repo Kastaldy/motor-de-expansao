@@ -447,13 +447,9 @@ def test_zona_pintada_so_nos_hexagonos_do_top():
     assert 0 < px_tres < px_todos / 2
 
 
-def test_resumo_desenha_so_os_aprovados():
-    """O mapa do Resumo perdeu o cinza dos nao aprovados; a Visao Geral continua com os dois.
-
-    Prova por EQUIVALENCIA: se o nao aprovado nao e' desenhado, o mapa sai identico ao de um
-    frame que nem sequer o contem. Procurar o tom cinza no PNG nao serve -- o fundo de ruas tem
-    cinzas parecidos.
-    """
+def test_resumo_desenha_os_nao_aprovados_como_contexto():
+    """O cinza CONTINUA no mapa do Resumo: o pedido era priorizar os verdes no ZOOM, nao apagar o
+    contexto. Quem prioriza e' o `focus_bounds`, testado acima."""
     from motor_expansao.dashboard import relatorio_municipal as relmun
 
     df = _df_cidade(2)  # oferta 500 + 800*i: os dois primeiros ficam abaixo do corte de 2.000
@@ -461,14 +457,13 @@ def test_resumo_desenha_so_os_aprovados():
     assert len(so_aprovados) < len(df)
     result = _resultado(df)
 
-    def _png(camada, frame):
+    def _png(frame):
         return relmun._render_mapa_municipio(
-            frame, camada=camada, municipio_result=result, basemap=False,
+            frame, camada="resumo", municipio_result=result, basemap=False,
             focus_bounds=relmun._focus_bounds_mercator(df),
         )
 
-    assert _png("resumo", df) == _png("resumo", so_aprovados)
-    assert _png("cobertura", df) != _png("cobertura", so_aprovados)
+    assert _png(df) != _png(so_aprovados)
 
 
 # --------------------------------------------------------------------------- #
