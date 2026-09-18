@@ -195,6 +195,12 @@ _STREET_CAP = 210
 # circulo — estilo GeoFusion, sem letterbox. A analise (KPIs) segue circular/INTOCADA; e so RENDER.
 _MAP_FRAME_MARGIN = 0.08
 
+# Tamanho padrao da figura dos mapas. Virou constante (era literal repetido nas assinaturas)
+# porque `alcance_do_frame_km` precisa do MESMO par para dizer ate' onde o frame chega —
+# quem seleciona os setores le esse alcance.
+MAPA_WIDTH_PADRAO = 1280
+MAPA_HEIGHT_PADRAO = 760
+
 # BLK-RELPON-09 (S2a): lado do marcador de concorrente/Ultra em PIXELS do PNG-fonte.
 # Era um balao de 40 px cuja logo util media ~17 px; agora o quadrado INTEIRO e logo
 # (~26 px uteis). Ancora = CENTRO do quadrado (S2b). RENDER apenas (READ-ONLY M1).
@@ -349,6 +355,23 @@ def _frame_box_metric(raio_km: float, width: int, height: int) -> Polygon:
     else:
         frame_half_x, frame_half_y = base_half, base_half / aspect
     return box(-frame_half_x, -frame_half_y, frame_half_x, frame_half_y)
+
+
+def alcance_do_frame_km(
+    raio_km: float,
+    width: int = MAPA_WIDTH_PADRAO,
+    height: int = MAPA_HEIGHT_PADRAO,
+) -> float:
+    """Quanto o FRAME do mapa alcanca, em km, a partir do ponto (o maior meio-lado).
+
+    Quem carrega os setores precisa saber ate' onde o mapa vai — e o frame e' RETANGULAR e
+    maior que o raio (`_frame_box_metric`). Este helper existe para que esse numero tenha UMA
+    fonte: quem seleciona o dado e quem o desenha leem a mesma geometria. Fixar o alcance num
+    literal do outro lado da fronteira faria o mapa pedir uma area e a selecao entregar outra —
+    e a divergencia apareceria como buraco no choropleth, sem erro nenhum.
+    """
+    minx, miny, maxx, maxy = _frame_box_metric(raio_km, width, height).bounds
+    return max(abs(minx), abs(miny), abs(maxx), abs(maxy)) / 1000.0
 
 
 def _font(size: int = 12) -> ImageFont.ImageFont:
@@ -1616,8 +1639,8 @@ def render_mapas_censitarios_combinados(
     raio_km: float = RAIO_CENSITARIO_DEFAULT_KM,
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
-    width: int = 1280,
-    height: int = 760,
+    width: int = MAPA_WIDTH_PADRAO,
+    height: int = MAPA_HEIGHT_PADRAO,
     basemap: bool = True,
     logos_dir: Path | None = None,
     ultra_logo_dir: Path | None = None,
@@ -2019,8 +2042,8 @@ def render_mapa_censitario_estatico_png(
     metric_column: str = "pop_estimada_intersecao",
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
-    width: int = 1280,
-    height: int = 760,
+    width: int = MAPA_WIDTH_PADRAO,
+    height: int = MAPA_HEIGHT_PADRAO,
     basemap: bool = False,
 ) -> bytes:
     """LEGADO: wrapper fino sobre `render_mapas_censitarios_combinados`.

@@ -9754,7 +9754,7 @@ def _gerar_relatorio_pontual_pdf(
     )
 
     try:
-        uf, _cod, setores_df = _resolver_e_carregar(lat, lng, cfg)
+        uf, cod_municipio, setores_df = _resolver_e_carregar(lat, lng, cfg)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f"Nao foi possivel resolver a coordenada: {exc}") from exc
 
@@ -9775,6 +9775,9 @@ def _gerar_relatorio_pontual_pdf(
         nome_distrito=result.get("nome_distrito_ponto"),
         nome_municipio=_nome_municipio_de(setores_df),
         uf=uf,
+        # Fecha a chave do fallback por `nome_distrito` no municipio DO PONTO: com
+        # o vizinho de divisa no mesmo `setores_df`, "Centro" casaria nos dois.
+        cod_municipio=cod_municipio,
     )
 
     ultra_dir = ULTRA_DIR if ULTRA_DIR.is_dir() else None
