@@ -69,11 +69,26 @@ um valor é editar esta tabela primeiro.
 >   incidentes diferentes. Ele não vaza nada: vive no banco, nunca na resposta HTTP, que
 >   continua idêntica nos dois casos.
 >
-> **Registrar não é barrar.** Continua sem existir estrangulamento de tentativa em lugar nenhum
-> do piloto (medido), e o `regulation:` do Authelia sai no corte. Gravar uma linha por tentativa
-> também significa que quem martelar o login escreve no banco — em tabela append-only cujo
-> expurgo é operação à parte (§8.2 do esquema). Limitar a tentativa é a **decisão 3** da epic, e
-> é ela que fecha os dois assuntos de uma vez.
+> **Registrar passou a barrar (18/09/2026).** Este é o primeiro evento do contrato com um
+> **consumidor de LEITURA em caminho quente**: `POST /api/login` conta os `login.recusado` da
+> conta nos últimos **15 minutos** e recusa a partir de **5**, antes de verificar a senha. Três
+> consequências que não se leem na tabela:
+>
+> - **a linha virou mecanismo, não só rastro.** Quem apagar `login.recusado` **destranca**
+>   contas: o expurgo da §8.2 do esquema deixou de ser operação puramente de retenção e passa a
+>   ter efeito de segurança. A janela de 15 min é muito menor que qualquer retenção praticada,
+>   então na prática o expurgo não alcança a janela — mas a dependência agora existe e precisa
+>   ser lida antes de se mexer em prazo de expurgo;
+> - **a tentativa BARRADA não vira evento**, de propósito. Se contasse, uma requisição por
+>   janela manteria a conta da vítima trancada para sempre e o contador nunca drenaria: a trava
+>   viraria a arma que ela existe para impedir. Fica só o aviso no log do operador;
+> - **a varredura de nomes inexistentes continua sem trava.** Sem `id_usuario` não há o que
+>   contar, e o IP — que resolveria — está fora pelo **P15**. Limitar por origem de rede segue
+>   em aberto; o que entrou foi a trava **por conta**.
+>
+> A trava **não é** nenhuma das cinco decisões numeradas da epic (a 3 é 2FA) — a nota anterior
+> desta seção dizia que era, e estava errada. Ela é item próprio, pedido em 18/09/2026, e o que
+> a destravou foi uma medição: o índice `idx_eventos_id_usuario_criado_em` já existia.
 
 ### 2.2 Geração de artefato — o núcleo do D17
 

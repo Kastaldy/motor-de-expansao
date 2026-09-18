@@ -4619,9 +4619,16 @@ def login(body: LoginIn) -> Response:
     trabalha aqui. E' a mesma decisao que `credenciais_por_login` ja' tomou na consulta,
     onde inexistente e inativo caem no mesmo `None`.
 
-    O que esta rota NAO tem, e esta' declarado: estrangulamento de tentativa. Nao existe
-    `rate limit` em lugar nenhum de `web/server/` (medido), e o `regulation:` do Authelia
-    sai no corte. E' assunto da decisao 3 da epic, registrado no contrato de eventos.
+    TRAVA DE TENTATIVAS (18/09/2026): 5 recusas na janela MOVEL de 15 min barram a conta. A
+    contagem sai dos proprios eventos `login.recusado`; o indice
+    `idx_eventos_id_usuario_criado_em` ja' existia, entao nao houve migracao. A janela e'
+    movel de proposito -- sem ela a tranca nunca drenaria e qualquer pessoa poderia deixar a
+    conta de outra trancada para sempre.
+
+    O que esta rota continua NAO tendo, e fica declarado: trava por IP. `eventos` nao guarda
+    IP (P15 aberto), entao quem varre nomes INEXISTENTES nao tranca nada -- sem `id_usuario`
+    nao ha' o que contar. Tambem nao existe `rate limit` de rede em `web/server/` (medido), e
+    o `regulation:` do Authelia sai no corte.
     """
     from motor_expansao.db import senhas as db_senhas
     from motor_expansao.db import sessoes as db_sessoes
@@ -4632,15 +4639,50 @@ def login(body: LoginIn) -> Response:
 
     negado = HTTPException(401, "Login ou senha incorretos.")
     try:
+        from motor_expansao.db import eventos as db_eventos
+
         credencial = db_usuarios.credenciais_por_login(body.login)
+
+        # TRAVA DE TENTATIVAS, avaliada ANTES do Argon2: negar cedo e' o que impede uma
+        # rajada de queimar CPU do servidor a cada tentativa, que e' metade do estrago da
+        # forca bruta. O preco e' que "conta trancada" responde MAIS RAPIDO que "senha
+        # errada" -- troca aceita, porque quem provocou a tranca ja' sabe que a conta
+        # existe e o tempo nao lhe conta nada novo.
+        trancado = False
+        if credencial is not None:
+            recusas = db_eventos.contar_recusas_recentes(
+                id_usuario=credencial.id_usuario, minutos=db_sessoes.JANELA_TENTATIVAS_MIN
+            )
+            trancado = recusas >= db_sessoes.MAX_TENTATIVAS
+
         # A verificacao roda MESMO sem credencial, e o `None` e' proposital: `senhas.verificar`
         # JA' paga um `ph.hash` descartavel quando o hash e' nulo ou fora do formato PHC,
         # exatamente para o cronometro nao denunciar quem tem cadastro. A defesa ja' estava
         # escrita la', com a razao no docstring -- duplica-la aqui com um hash-sentinela seria
         # uma segunda redacao da mesma garantia, que e' como elas passam a divergir.
-        confere = db_senhas.verificar(body.senha, credencial.senha_hash if credencial else None)
+        confere = (
+            False
+            if trancado
+            else db_senhas.verificar(body.senha, credencial.senha_hash if credencial else None)
+        )
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
         raise _erro_de_usuarios(erro) from erro
+
+    # FORA do `try` de proposito: aqui dentro ha' um `except Exception` que TRADUZ erros de
+    # dominio, e levantar a recusa la' dentro a faria passar pelo tradutor -- funcionaria por
+    # acidente, nao por desenho.
+    if trancado:
+        # NAO registra evento: se a tentativa barrada contasse, um atacante manteria a conta
+        # da vitima trancada para sempre com uma requisicao a cada janela, e o contador nunca
+        # drenaria. Sem registrar, a tranca SEMPRE expira. Fica o aviso no log do operador,
+        # que e' quem precisa enxergar o ataque.
+        _LOG_D17.warning(
+            "usuario %d barrado pela trava de tentativas (%d recusas em %d min)",
+            credencial.id_usuario if credencial else -1,
+            recusas,
+            db_sessoes.JANELA_TENTATIVAS_MIN,
+        )
+        raise negado
     if credencial is None or not confere:
         # Registra a RECUSA antes de responder, e sem mudar o que se responde: o 401 e a
         # mensagem seguem identicos nos dois casos, porque distinguir entregaria o oraculo

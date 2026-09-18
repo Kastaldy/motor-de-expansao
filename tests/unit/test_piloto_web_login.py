@@ -67,8 +67,12 @@ def _sem_eventos(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, int]]:
     from motor_expansao.db import eventos as db_eventos
 
     vistos: list[tuple[str, int]] = []
-    monkeypatch.setattr(db_eventos, "registrar_login", lambda **kw: vistos.append(("login", kw["autor"])))
-    monkeypatch.setattr(db_eventos, "registrar_logout", lambda **kw: vistos.append(("logout", kw["autor"])))
+    monkeypatch.setattr(
+        db_eventos, "registrar_login", lambda **kw: vistos.append(("login", kw["autor"]))
+    )
+    monkeypatch.setattr(
+        db_eventos, "registrar_logout", lambda **kw: vistos.append(("logout", kw["autor"]))
+    )
     return vistos
 
 
@@ -79,10 +83,14 @@ def _preparar(
     confere: bool,
     verificacoes: list[Any] | None = None,
 ) -> None:
+    from motor_expansao.db import eventos as db_eventos
     from motor_expansao.db import senhas as db_senhas
     from motor_expansao.db import usuarios as db_usuarios
 
     monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: credencial)
+    # A trava de tentativas consulta o banco a cada login de conta existente; aqui ela sai
+    # do caminho com contador ZERADO. Quem prova a trava sao os testes proprios dela.
+    monkeypatch.setattr(db_eventos, "contar_recusas_recentes", lambda **_kw: 0)
 
     def _verificar(senha: str, hash_guardado: str | None) -> bool:
         if verificacoes is not None:
@@ -141,6 +149,141 @@ def test_login_inexistente_e_senha_errada_dao_a_MESMA_resposta(
 
     assert sem_usuario.value.status_code == senha_errada.value.status_code == 401
     assert sem_usuario.value.detail == senha_errada.value.detail
+
+
+def _travar(monkeypatch: pytest.MonkeyPatch, recusas: int, *, confere: bool = False) -> list[str]:
+    """Instala o contador e devolve a lista de chamadas caras que foram feitas.
+
+    `confere=True` significa SENHA CERTA, e e' o que da poder aos testes da tranca: com
+    senha errada o 401 sai por qualquer caminho, entao um teste que so' olhasse o codigo de
+    status ficaria verde mesmo com a trava arrancada -- foi assim que duas assercoes minhas
+    passaram vazias ate' a sabotagem de 18/09/2026 mostrar. Com a senha CERTA, so' a tranca
+    pode negar.
+    """
+    from motor_expansao.db import eventos as db_eventos
+    from motor_expansao.db import senhas as db_senhas
+
+    caras: list[str] = []
+    monkeypatch.setattr(db_eventos, "contar_recusas_recentes", lambda **_kw: recusas)
+    # O autouse `_sem_eventos` cobre login/logout, nao a recusa: sem isto o caminho NAO
+    # barrado iria ao banco de verdade.
+    monkeypatch.setattr(db_eventos, "registrar_login_recusado", lambda **_kw: None)
+    monkeypatch.setattr(
+        db_senhas, "verificar", lambda *_a, **_k: (caras.append("argon2"), confere)[1]
+    )
+    monkeypatch.setattr(
+        db_sessoes, "abrir", lambda **_kw: db_sessoes.SessaoAberta("tok-secreto", 42, None)
+    )
+    return caras
+
+
+def test_na_quinta_recusa_a_conta_e_barrada(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cinco e' o limite decidido em 18/09/2026: com cinco na janela, a sexta nao passa.
+
+    A senha aqui esta' CERTA: sem a trava este login ENTRARIA, entao o 401 so' pode vir dela.
+    """
+    from motor_expansao.db import usuarios as db_usuarios
+
+    monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: _credencial())
+    _travar(monkeypatch, recusas=5, confere=True)
+
+    with pytest.raises(pilot.HTTPException) as caiu:
+        pilot.login(pilot.LoginIn(login="vinicius", senha="a-senha-certa"))
+    assert caiu.value.status_code == 401
+
+
+def test_com_quatro_recusas_ainda_passa(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A trava é no QUINTO, não no quarto — o limite é `>=`, e este teste fixa o lado de cá."""
+    from motor_expansao.db import usuarios as db_usuarios
+
+    monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: _credencial())
+    caras = _travar(monkeypatch, recusas=4)
+
+    with pytest.raises(pilot.HTTPException):
+        pilot.login(pilot.LoginIn(login="vinicius", senha="errada"))
+    assert caras == ["argon2"], "com 4 recusas a senha ainda deve ser verificada"
+
+
+def test_a_conta_barrada_NAO_paga_o_argon2(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Negar cedo é metade da defesa: uma rajada não pode queimar CPU a cada tentativa."""
+    from motor_expansao.db import usuarios as db_usuarios
+
+    monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: _credencial())
+    caras = _travar(monkeypatch, recusas=9)
+
+    with pytest.raises(pilot.HTTPException):
+        pilot.login(pilot.LoginIn(login="vinicius", senha="qualquer"))
+    assert caras == [], "verificou a senha de uma conta já barrada"
+
+
+def test_tentativa_BARRADA_nao_vira_evento(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A asserção que impede a trava de virar arma.
+
+    Se a tentativa barrada contasse, um atacante manteria a conta da vítima trancada para
+    sempre com uma requisição a cada janela — o contador nunca drenaria e o bloqueio, que é
+    temporário por desenho, viraria permanente. Não registrando, a janela sempre esvazia.
+    """
+    from motor_expansao.db import eventos as db_eventos
+    from motor_expansao.db import usuarios as db_usuarios
+
+    vistos: list[dict[str, Any]] = []
+    monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: _credencial())
+    # O coletor entra DEPOIS do `_travar`, que tambem instala um dublê desta função: na
+    # ordem inversa o no-op dele apagava a captura e a asserção ficava verde sozinha.
+    _travar(monkeypatch, recusas=5, confere=True)
+    monkeypatch.setattr(db_eventos, "registrar_login_recusado", lambda **kw: vistos.append(kw))
+
+    with pytest.raises(pilot.HTTPException):
+        pilot.login(pilot.LoginIn(login="vinicius", senha="a-senha-certa"))
+    assert vistos == [], "a tentativa barrada virou evento e prolongaria a própria trava"
+
+
+def test_usuario_INEXISTENTE_nao_e_barrado_pela_trava(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Limitação declarada, não esquecimento.
+
+    Sem `id_usuario` não há o que contar, e o IP — que resolveria — não está em `eventos`
+    por causa do P15. Varredura de nomes inexistentes segue sem trava no banco; o que ela
+    deixa é a linha de autoria nula e o registro da trilha, que tem o IP em arquivo.
+    """
+    from motor_expansao.db import eventos as db_eventos
+    from motor_expansao.db import usuarios as db_usuarios
+
+    contagens: list[Any] = []
+    monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: None)
+    monkeypatch.setattr(
+        db_eventos, "contar_recusas_recentes", lambda **kw: (contagens.append(kw), 99)[1]
+    )
+    monkeypatch.setattr(db_eventos, "registrar_login_recusado", lambda **_kw: None)
+    from motor_expansao.db import senhas as db_senhas
+
+    monkeypatch.setattr(db_senhas, "verificar", lambda *_a, **_k: False)
+
+    with pytest.raises(pilot.HTTPException):
+        pilot.login(pilot.LoginIn(login="fantasma", senha="x"))
+    assert contagens == [], "tentou contar recusas de quem não tem cadastro"
+
+
+def test_a_conta_barrada_devolve_a_MESMA_mensagem(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dizer "conta bloqueada" avisaria a quem varre nomes que acertou um."""
+    from motor_expansao.db import eventos as db_eventos
+    from motor_expansao.db import usuarios as db_usuarios
+
+    monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: _credencial())
+    _travar(monkeypatch, recusas=5, confere=True)
+    with pytest.raises(pilot.HTTPException) as barrada:
+        pilot.login(pilot.LoginIn(login="vinicius", senha="a-senha-certa"))
+
+    _preparar(monkeypatch, credencial=None, confere=False)
+    monkeypatch.setattr(db_eventos, "registrar_login_recusado", lambda **_kw: None)
+    with pytest.raises(pilot.HTTPException) as comum:
+        pilot.login(pilot.LoginIn(login="fantasma", senha="x"))
+
+    assert barrada.value.status_code == comum.value.status_code
+    assert barrada.value.detail == comum.value.detail
 
 
 def test_a_recusa_vira_evento_com_o_id_quando_a_conta_existe(
@@ -239,7 +382,9 @@ def test_a_senha_e_verificada_MESMO_sem_credencial(
 # --------------------------------------------------------------------------------------
 
 
-def test_o_token_vai_no_COOKIE_e_nunca_no_corpo(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_o_token_vai_no_COOKIE_e_nunca_no_corpo(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """O corpo da resposta trafega em log de proxy e em ferramenta de rede; o cookie
     `httponly` nao. O token so' existe no cookie."""
     _preparar(monkeypatch, credencial=_credencial(), confere=True)
@@ -338,6 +483,8 @@ def test_logout_sem_sessao_viva_nao_e_erro(ligado: None, monkeypatch: pytest.Mon
     assert len(_cookies_da(resposta)) == 2
 
 
-def test_logout_sem_cookie_nenhum_tambem_responde(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_logout_sem_cookie_nenhum_tambem_responde(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(db_sessoes, "validar", lambda _t: pytest.fail("validou sem cookie"))
     assert pilot.logout(_Requisicao()).status_code == 200

@@ -82,9 +82,9 @@ def test_registrar_devolve_o_id_que_gravou(con: FakeConexao) -> None:
 def test_registrar_aceita_um_id_ja_cunhado(con: FakeConexao) -> None:
     """A rota cunha ANTES, porque o id precisa ser carimbado nos bytes do PDF."""
     meu = mod.novo_report_id()
-    assert mod.registrar_relatorio(
-        autor=7, relatorio="pontual", formato="pdf", report_id=meu
-    ) == meu
+    assert (
+        mod.registrar_relatorio(autor=7, relatorio="pontual", formato="pdf", report_id=meu) == meu
+    )
     assert con.eventos[0][2].obj["report_id"] == meu
 
 
@@ -184,6 +184,37 @@ def test_a_recusa_NUNCA_leva_o_login_digitado_nem_IP(con: FakeConexao) -> None:
     assert not (chaves & {"login", "usuario", "email", "ip", "senha"})
 
 
+def test_a_contagem_de_recusas_usa_a_janela_e_o_tipo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A trava de tentativas se apoia nesta consulta — e ela é LEITURA, não escrita."""
+    from motor_expansao.db import postgres
+
+    class _Con:
+        def __init__(self) -> None:
+            self.executados: list[tuple[str, Any]] = []
+
+        def execute(self, sql: str, params: Any = None) -> Any:
+            self.executados.append((sql, params))
+            return type("C", (), {"fetchone": lambda _s: (3,)})()
+
+    c = _Con()
+
+    @contextmanager
+    def fake_conexao():  # type: ignore[no-untyped-def]
+        c.executados.append((postgres.SQL_SOMENTE_LEITURA, None))
+        yield c
+
+    monkeypatch.setattr(mod, "conexao", fake_conexao)
+    assert mod.contar_recusas_recentes(id_usuario=7, minutos=15) == 3
+
+    sql, params = [(s, p) for s, p in c.executados if "count(*)" in s][0]
+    assert params == (7, "login.recusado", 15)
+    # A janela é MÓVEL: sem o recorte por tempo, "5 tentativas" viraria bloqueio permanente
+    # — e como a contagem é por conta, qualquer um trancaria a conta de qualquer um.
+    assert "criado_em_evento > now() - make_interval(mins => %s)" in sql
+    # Leitura entra pelo `conexao()`, que abre a transação READ ONLY.
+    assert any("READ ONLY" in s for s, _p in c.executados)
+
+
 def test_os_dois_deixam_entidade_nula(con: FakeConexao) -> None:
     """§2.1: `entidade` e' "—" nos dois. O par polimorfico so' vale quando o alvo e' LINHA
     deste banco (D24), e entrar/sair nao tem alvo nenhum."""
@@ -213,9 +244,9 @@ def test_todo_tipo_de_evento_existe_no_contrato() -> None:
     """
     from pathlib import Path
 
-    contrato = (
-        Path(__file__).resolve().parents[2] / "docs" / "eventos_contrato.md"
-    ).read_text(encoding="utf-8")
+    contrato = (Path(__file__).resolve().parents[2] / "docs" / "eventos_contrato.md").read_text(
+        encoding="utf-8"
+    )
     ausentes = [f"{n}={v!r}" for n, v in _tipos_declarados().items() if f"`{v}`" not in contrato]
     assert not ausentes, (
         "tipos de evento sem contrapartida em `docs/eventos_contrato.md`: "
@@ -287,9 +318,7 @@ def test_relatorio_e_formato_sao_AMBOS_necessarios(con: FakeConexao) -> None:
 
 @pytest.mark.parametrize("chave", ["hex_id", "imovel_id", "unidade_id"])
 def test_as_tres_chaves_do_contrato_passam(con: FakeConexao, chave: str) -> None:
-    mod.registrar_relatorio(
-        autor=7, relatorio="pontual", formato="pdf", alvo={chave: "abc123"}
-    )
+    mod.registrar_relatorio(autor=7, relatorio="pontual", formato="pdf", alvo={chave: "abc123"})
     assert con.eventos[0][2].obj[chave] == "abc123"
 
 
@@ -299,9 +328,7 @@ def test_chave_de_alvo_fora_do_contrato_e_RECUSADA(con: FakeConexao, errada: str
     índice parcial, e ninguém descobre até a tabela crescer. O contrato avisa disso com
     todas as letras — então aqui a escrita não passa."""
     with pytest.raises(mod.AlvoForaDoContrato):
-        mod.registrar_relatorio(
-            autor=7, relatorio="pontual", formato="pdf", alvo={errada: "x"}
-        )
+        mod.registrar_relatorio(autor=7, relatorio="pontual", formato="pdf", alvo={errada: "x"})
     assert con.eventos == [], "nada pode ter sido gravado"
 
 
@@ -336,14 +363,73 @@ def test_o_evento_gravado_nao_carrega_PII(con: FakeConexao) -> None:
         assert pii not in achatado, f"PII em metadados: {achatado}"
 
 
-def test_escrita_passa_pela_transacao_e_nunca_pela_conexao() -> None:
-    """`conexao()` abre `READ ONLY` e o servidor recusaria o INSERT; `transacao()` é a via
-    de escrita e é ela que declara `app.id_usuario` para as triggers do D19."""
+_ESCRITAS = ("insert into", "update ", "delete from")
+
+
+def _sql_por_gerenciador() -> dict[str, list[str]]:
+    """Mapeia `conexao`/`transacao` -> os SQL executados DENTRO de cada bloco `with`.
+
+    Ate' 18/09/2026 esta garantia era um scan de texto (`"conexao(" not in fonte`). Ele
+    passava a impressao de proibir escrita pela conexao de leitura, mas o que media era a
+    AUSENCIA DA PALAVRA -- entao a primeira LEITURA legitima do modulo (a contagem de
+    recusas da trava de tentativas) o derrubava, sem que nada de errado tivesse acontecido.
+    Por AST a pergunta e' a certa: que SQL roda sob qual gerenciador.
+    """
+    import ast
     from pathlib import Path
 
-    fonte = Path(mod.__file__).read_text(encoding="utf-8")
-    assert "from .postgres import transacao" in fonte
-    assert "conexao(" not in fonte
+    arvore = ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))
+    constantes = {
+        alvo.id: no.value.value
+        for no in arvore.body
+        if isinstance(no, ast.Assign) and isinstance(no.value, ast.Constant)
+        for alvo in no.targets
+        if isinstance(alvo, ast.Name) and isinstance(no.value.value, str)
+    }
+
+    achados: dict[str, list[str]] = {"conexao": [], "transacao": []}
+    for no in ast.walk(arvore):
+        if not isinstance(no, ast.With):
+            continue
+        gerentes = {
+            item.context_expr.func.id
+            for item in no.items
+            if isinstance(item.context_expr, ast.Call)
+            and isinstance(item.context_expr.func, ast.Name)
+        }
+        gerente = next((g for g in gerentes if g in achados), None)
+        if gerente is None:
+            continue
+        for interno in ast.walk(no):
+            if (
+                isinstance(interno, ast.Call)
+                and isinstance(interno.func, ast.Attribute)
+                and interno.func.attr == "execute"
+                and interno.args
+                and isinstance(interno.args[0], ast.Name)
+            ):
+                achados[gerente].append(constantes.get(interno.args[0].id, "").lower())
+    return achados
+
+
+def test_escrita_passa_pela_transacao_e_nunca_pela_conexao() -> None:
+    """`conexao()` abre `READ ONLY` e o servidor recusaria o INSERT; `transacao()` e' a via
+    de escrita e e' ela que declara `app.id_usuario` para as triggers do D19."""
+    achados = _sql_por_gerenciador()
+    for sql in achados["conexao"]:
+        assert not any(verbo in sql for verbo in _ESCRITAS), f"escrita sob conexao(): {sql}"
+
+
+def test_a_varredura_do_gerenciador_ainda_ENXERGA_os_dois_lados() -> None:
+    """Contraprova: sem isto, um `execute` que a varredura deixasse de casar tornaria o
+    teste acima verde por nao achar NADA -- que e' exatamente como um guardrail morre."""
+    achados = _sql_por_gerenciador()
+    assert any("insert into eventos" in sql for sql in achados["transacao"]), (
+        "a varredura parou de enxergar as ESCRITAS do modulo"
+    )
+    assert any(sql.strip().startswith("select") for sql in achados["conexao"]), (
+        "a varredura parou de enxergar as LEITURAS do modulo"
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -416,7 +502,7 @@ def test_metadados_do_dossie_nao_carregam_PII(con: FakeConexao) -> None:
 def test_o_estado_do_gesto_escolhe_o_tipo(
     con: FakeConexao, marcada: bool, tipo_esperado: str
 ) -> None:
-    """"Marcou" e "desmarcou" respondem perguntas diferentes: quantos imoveis entraram na fila
+    """ "Marcou" e "desmarcou" respondem perguntas diferentes: quantos imoveis entraram na fila
     de visita, e quantos sairam. Colapsar num `visita_alternada` perderia a direcao."""
     mod.registrar_visita(autor=7, imovel_id="im_3f2a9b", marcada=marcada)
     assert con.eventos[0][1] == tipo_esperado

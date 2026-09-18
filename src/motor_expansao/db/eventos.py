@@ -35,7 +35,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from .postgres import transacao
+from .postgres import conexao, transacao
 
 #: Vocabulario de `tipo` do `docs/eventos_contrato.md` §2.2. Fora desta lista e' defeito.
 EVENTO_RELATORIO_GERADO = "relatorio.gerado"
@@ -122,6 +122,18 @@ VALUES (%s, %s, NULL, NULL, %s)
 SQL_REGISTRAR_ACESSO = """
 INSERT INTO eventos (id_usuario, tipo, entidade, entidade_id, metadados)
 VALUES (%s, %s, NULL, NULL, %s)
+"""
+
+# Quantas recusas esta conta acumulou na janela. SEM migration nova: o
+# `idx_eventos_id_usuario_criado_em` (005) cobre exatamente `(id_usuario, criado_em_evento)`,
+# que sao as duas colunas do recorte -- o `tipo` filtra o punhado de linhas que sobra.
+#
+# `make_interval(mins => %s)` e nao f-string: o SQL deste repo nao se monta por concatenacao.
+SQL_CONTAR_RECUSAS = """
+SELECT count(*) FROM eventos
+WHERE id_usuario = %s
+  AND tipo = %s
+  AND criado_em_evento > now() - make_interval(mins => %s)
 """
 
 
@@ -312,19 +324,55 @@ def registrar_login_recusado(
     na resposta HTTP, que continua sendo a mesma para os dois casos justamente para nao
     entregar a lista de quem trabalha aqui.
 
-    O QUE ESTA FUNCAO NAO RESOLVE, e precisa estar dito: ela REGISTRA, nao BARRA. Continua
-    nao havendo estrangulamento de tentativa em lugar nenhum do piloto (medido), e o
-    `regulation:` do Authelia sai no corte. Gravar uma linha por tentativa tambem significa
-    que quem martelar o login escreve no banco -- a trilha em arquivo ja' tem a mesma
-    propriedade, mas em `eventos` isso e' tabela append-only cujo expurgo e' operacao a
-    parte (§8.2 do esquema). Limitar a tentativa e' a decisao 3 da epic, e e' ela que fecha
-    os dois assuntos de uma vez.
+    A LINHA QUE ESTA FUNCAO GRAVA E' O INSUMO DA TRAVA (18/09/2026): `contar_recusas_recentes`
+    a le, e `POST /api/login` barra a conta em `sessoes.MAX_TENTATIVAS` recusas dentro de
+    `sessoes.JANELA_TENTATIVAS_MIN`. Duas consequencias de manutencao:
+
+    - quem NAO chamar esta funcao num caminho de recusa novo abre um buraco na trava, em
+      silencio -- a trava so' enxerga o que foi registrado aqui;
+    - quem APAGAR estas linhas DESTRANCA contas. O expurgo da §8.2 do esquema deixou de ser
+      so' retencao; a janela de 15 min e' muito menor que qualquer prazo praticado, entao na
+      pratica nao se tocam, mas a dependencia existe.
+
+    A tentativa ja' BARRADA nao chega aqui, de proposito: se contasse, uma requisicao por
+    janela manteria a conta trancada para sempre e o contador nunca drenaria.
+
+    O QUE CONTINUA EM ABERTO: trava por IP. Sem `id_usuario` nao ha' o que contar, entao
+    varredura de nomes INEXISTENTES nao tranca nada; o IP esta' fora pelo P15.
+
+    (A trava NAO e' nenhuma das cinco decisoes numeradas da epic -- a 3 e' 2FA. A versao
+    anterior desta docstring dizia que era, e estava errada.)
     """
     from psycopg.types.json import Jsonb  # import tardio: so' quem escreve paga
 
     metadados = {"origem": origem, "usuario_conhecido": usuario_conhecido}
     with transacao(id_usuario=autor) as con:
         con.execute(SQL_REGISTRAR_ACESSO, (autor, EVENTO_LOGIN_RECUSADO, Jsonb(metadados)))
+
+
+def contar_recusas_recentes(*, id_usuario: int, minutos: int) -> int:
+    """Quantas recusas esta conta acumulou nos ultimos `minutos`. LEITURA.
+
+    E' a base da trava de tentativas: quem decide o limite e a janela e' o chamador, e as
+    duas constantes vivem em `db/sessoes.py`, junto das outras politicas de acesso. Aqui
+    fica so' a consulta, porque a tabela e' desta casa.
+
+    A JANELA E' MOVEL, E ISSO E' O QUE FAZ A TRANCA SE SOLTAR SOZINHA. Contar "5 desde
+    sempre" seria bloqueio permanente -- e como a contagem e' POR CONTA, qualquer pessoa
+    trancaria a conta de qualquer outra para sempre, digitando o usuario dela cinco vezes.
+    Com janela, o dano de uma tranca maliciosa expira sem ninguem precisar intervir.
+
+    O QUE ELA NAO ALCANCA, e nao ha' como alcancar daqui: tentativa contra usuario que NAO
+    EXISTE nao tem `id_usuario` para contar, e o IP -- que resolveria -- nao esta' em
+    `eventos` por causa do **P15**, que segue aberto. Varredura de nomes inexistentes
+    continua sem trava no banco; o que ela deixa e' a linha de autoria nula e o registro da
+    trilha (DEC-027), que tem o IP em arquivo.
+    """
+    with conexao() as con:
+        linha = con.execute(
+            SQL_CONTAR_RECUSAS, (id_usuario, EVENTO_LOGIN_RECUSADO, minutos)
+        ).fetchone()
+    return int(linha[0]) if linha else 0
 
 
 def registrar_logout(*, autor: int) -> None:

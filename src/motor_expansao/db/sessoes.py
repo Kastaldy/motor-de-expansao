@@ -75,6 +75,18 @@ INATIVIDADE_MIN = 30
 #: 30 min e' operacionalmente irrelevante; a escrita por requisicao nao e'.
 TRAVA_TOQUE_MIN = 5
 
+#: TRAVA DE TENTATIVAS (decisao de 18/09/2026: cinco). Recusas contadas numa JANELA MOVEL --
+#: e a janela nao e' detalhe, e' o que impede a trava de virar arma.
+#:
+#: A contagem so' existe POR CONTA (o `id_usuario` do evento `login.recusado`). Contar por IP
+#: e' impossivel no banco enquanto o **P15** estiver aberto, porque o IP nao e' gravado em
+#: `eventos`. Consequencia que precisa estar dita: qualquer pessoa consegue trancar a conta
+#: de outra digitando o usuario dela cinco vezes com senha errada. Por isso a tranca e'
+#: TEMPORARIA e se solta sozinha quando as recusas velhas saem da janela -- bloqueio
+#: permanente entregaria um botao de negar acesso a quem souber um nome de usuario.
+MAX_TENTATIVAS = 5
+JANELA_TENTATIVAS_MIN = 15
+
 #: Bytes de entropia do token. 32 bytes -> 43 caracteres urlsafe.
 _BYTES_DO_TOKEN = 32
 
