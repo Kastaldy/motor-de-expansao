@@ -49,6 +49,11 @@ import h3
 VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v5"  # v5: DEC-063 (ancora da chave de churn)
 VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
+# Estado materializado de churn/staleness e a tabela de semanas observadas `[DEC-064, D2]`. São
+# artefatos NOVOS, não bump de nada: `VERSAO_CONTRATO_CHURN` segue `v2`, porque o FRAME que o
+# extrator devolve não mudou de schema — o que muda é de onde ele vem.
+VERSAO_CONTRATO_CHURN_ESTADO = "churn_estado_v1"
+VERSAO_CONTRATO_OBSERVABILIDADE = "observabilidade_escopo_v1"
 VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v8"  # v8: DEC-062
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
@@ -419,6 +424,78 @@ CONTRATO_COLUNAS_CHURN: dict[str, str] = {
     "flag_serie_imatura": "bool",
     "flag_staleness_interpretavel": "bool",
     "flag_troca_chave_na_serie": "bool",
+    "versao_contrato": "string",
+}
+
+# --------------------------------------------------------------------------- #
+# Estado incremental de churn/staleness `[DEC-064, D2]`
+# --------------------------------------------------------------------------- #
+# O "arquivo resumo" da decisão do dono: em vez de recalcular churn varrendo a série toda semana,
+# guarda-se UMA linha por `(fonte, chave_snapshot)` e atualiza-se com `estado anterior + semana
+# nova`. Motivo medido: `extrair_churn_staleness` já produzia este frame (19 colunas, ~27 mil
+# linhas, ordem de 2 MB) e **jogava fora** — o pacote só materializava
+# `vulnerabilidade_ma_{academias,nomeadas,redes}`.
+#
+# DAS 19 COLUNAS DO CHURN, 17 SÃO DERIVÁVEIS DE ACUMULADOR DIRETO. Duas exigem estado explícito, e
+# é nelas que o cuidado mora:
+#
+#   * `semanas_sem_mudanca` compara o `hash_campos_raspados` da semana nova com o da ÚLTIMA
+#     observação — então basta o hash CORRENTE viver aqui (`hash_ultimo`), não a série de hashes.
+#   * `flag_troca_chave_na_serie` pergunta se o conjunto de `chave_origem` do ESCOPO mudou entre
+#     semanas consecutivas — e a resposta NÃO cabe aqui: é propriedade do escopo ao longo do tempo,
+#     não da chave. Guardá-la por chave (a 1ª versão deste contrato fazia isso, com uma coluna
+#     `origens_ultima_semana`) DIVERGE da varredura quando a chave tem gap de presença: a varredura
+#     compara semanas consecutivas do escopo mesmo nas semanas em que a chave está ausente, e o
+#     estado por chave só enxergaria a última semana em que ELA foi vista. Achado da revisão
+#     automática no PR #387; as origens passaram para `CONTRATO_COLUNAS_OBSERVABILIDADE`.
+#
+# E o mesmo vale para `n_semanas_serie`: conta o EIXO do escopo `(fonte, rede)`, então também vive
+# na tabela de observabilidade.
+#
+# `presente_na_ultima_semana_do_eixo` é o que torna `n_desaparecimentos` incremental: sem ele, saber
+# se a semana nova é uma transição presente->ausente exigiria reler a série, que é exatamente o
+# custo que esta tabela existe para eliminar.
+CONTRATO_COLUNAS_CHURN_ESTADO: dict[str, str] = {
+    "fonte": "string",
+    "chave_snapshot": "string",
+    "rede": "string",  # da ULTIMA observacao, como no churn
+    "hex_id_res7": "string",  # da ULTIMA observacao
+    "chave_origem": "string",  # da ULTIMA observacao
+    "semana_primeira_observacao": "string",
+    "semana_ultima_observacao": "string",
+    "snapshot_date_ultimo": "string",
+    "hash_ultimo": "string",  # para `semanas_sem_mudanca` sem reler a serie
+    "n_semanas_presente": "int64",
+    "n_desaparecimentos": "int64",
+    "semanas_sem_mudanca": "int64",
+    "presente_na_ultima_semana_do_eixo": "bool",
+    "nota_wellhub": "Float64",  # FATO sem peso, da ULTIMA observacao (DEC-026)
+    "qtd_avaliacoes_wellhub": "Int64",  # FATO sem peso, da ULTIMA observacao (DEC-026)
+    "versao_contrato": "string",
+}
+
+# Semanas OBSERVADAS por escopo `(fonte, rede)` — o EIXO do algoritmo de churn.
+#
+# É a defesa que impede "o coletor da rede falhou" virar `sumiu_recente` em massa: uma semana em que
+# o escopo não foi observado simplesmente não entra no eixo daquela chave, logo não pode gerar
+# transição presente->ausente. O escopo é o PAR, nunca só a `fonte`, porque o feed `unidades` é um
+# CSV por rede — o sumiço do arquivo de UMA rede deixaria a fonte "observada" e marcaria a rede
+# inteira como churn (falso positivo no sinal de maior peso, ~0,467).
+#
+# Uma linha por `(fonte, rede, semana)`. Grão de LINHA e não lista numa célula de propósito: é o que
+# permite acrescentar a semana nova sem reescrever o histórico do escopo, e é o que sobrevive a
+# `--reprocessar` sendo comparável linha a linha com o que a varredura completa produz.
+#
+# `origens` é o conjunto de `chave_origem` que o escopo apresentou NAQUELA semana (CSV ordenado, ex.
+# `"hash_estavel,slug"`). Ela mora aqui, e não no estado por chave, porque `flag_troca_chave_na_serie`
+# compara semanas CONSECUTIVAS DO ESCOPO — inclusive as semanas em que uma dada chave está ausente.
+# No feed TP/WH o rebaixamento de chave ocorre POR LINHA e convive com o `slug` na mesma semana, então
+# mistura estável NÃO é troca: o que caracteriza troca é variação TEMPORAL do conjunto.
+CONTRATO_COLUNAS_OBSERVABILIDADE: dict[str, str] = {
+    "fonte": "string",
+    "rede": "string",
+    "semana": "string",
+    "origens": "string",  # CSV ordenado de `chave_origem` do ESCOPO naquela semana
     "versao_contrato": "string",
 }
 
