@@ -903,21 +903,29 @@ def montar_ponte_identidade(df: pd.DataFrame) -> pd.DataFrame:
     projeta as colunas que a projeção do contrato mata. É por isso que a ponte nasce **antes** da
     fronteira anti-PII e não depois: depois, a informação já não existe.
 
-    O colapso é o MESMO de `montar_snapshot` (`(fonte, chave_snapshot)`, `keep="first"`). Tem de
-    ser: se a ponte colapsasse por outro critério, ela responderia "quem é esta chave" com uma
-    linha que o snapshot descartou, e o operador leria o nome errado no evento da ficha.
+    O colapso é o MESMO de `montar_snapshot` — e "mesmo" inclui o **desempate**: a ordenação por
+    `["fonte", "chave_snapshot", "hash_campos_raspados"]` (estável) ANTES do
+    `drop_duplicates(keep="first")`. Sem ela, as duas funções colapsariam o mesmo par para linhas
+    DIFERENTES, cada uma pela ordem em que o CSV foi lido: a ponte responderia "quem é esta chave"
+    descrevendo a linha que o snapshot descartou, e a ficha exibiria o nome e a coordenada errados
+    no evento. Travado por `test_ponte_colapsa_colisao_pela_MESMA_linha_do_snapshot` — o defeito foi
+    achado pela revisão automática no PR #386, com a docstring já afirmando a equivalência que o
+    código não cumpria.
     """
     if df.empty:
         return pd.DataFrame(
             {col: pd.Series(dtype=dtype) for col, dtype in CONTRATO_COLUNAS_PONTE.items()}
         )
+    ordenado = df.sort_values(
+        ["fonte", "chave_snapshot", "hash_campos_raspados"], kind="mergesort"
+    )
     out = pd.DataFrame(
         {
-            "fonte": df["fonte"].astype("string"),
-            "chave_snapshot": df["chave_snapshot"].astype("string"),
-            "nome": df["nome"].astype("string"),
-            "lat": pd.to_numeric(df["latitude"], errors="coerce").astype("Float64"),
-            "lng": pd.to_numeric(df["longitude"], errors="coerce").astype("Float64"),
+            "fonte": ordenado["fonte"].astype("string"),
+            "chave_snapshot": ordenado["chave_snapshot"].astype("string"),
+            "nome": ordenado["nome"].astype("string"),
+            "lat": pd.to_numeric(ordenado["latitude"], errors="coerce").astype("Float64"),
+            "lng": pd.to_numeric(ordenado["longitude"], errors="coerce").astype("Float64"),
         }
     )
     return out.drop_duplicates(subset=["fonte", "chave_snapshot"], keep="first").reset_index(

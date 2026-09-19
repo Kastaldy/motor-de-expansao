@@ -243,6 +243,47 @@ def test_ponte_mora_FORA_da_arvore_da_serie(serie_de_duas_semanas: tuple[Path, P
     assert len(m.ler_snapshots(base)) == 12  # a serie segue legivel e intacta
 
 
+def test_ponte_colapsa_colisao_pela_MESMA_linha_do_snapshot(tmp_path: Path) -> None:
+    """Achado da revisão automática no PR #386, travado.
+
+    Duas linhas com a MESMA chave e hashes diferentes são COLAPSADAS nas duas funções (nunca
+    desambiguadas por ordinal — a colisão é falso negativo deliberado). O que este teste mede é que
+    elas colapsam para a **mesma** linha: `montar_snapshot` ordena por `hash_campos_raspados` antes
+    do `drop_duplicates`, e a ponte precisa do MESMO desempate. Sem isso, cada uma guardaria a linha
+    que viesse primeiro no CSV, e a ficha exibiria o nome e a coordenada de uma academia que o
+    snapshot não manteve — com as duas funções "certas" isoladamente.
+
+    Puro, sem I/O: mesmo frame de trabalho entra nas duas.
+    """
+    un, vazio = tmp_path / "un", tmp_path / "vazio"
+    un.mkdir(parents=True)
+    vazio.mkdir()
+    pd.DataFrame(
+        {
+            # Nome idêntico + mesma célula => MESMA chave; coordenadas distintas => hash distinto.
+            "nome_unidade": ["Selfit Centro", "Selfit Centro"],
+            "latitude": [-23.5500, -23.5501],
+            "longitude": [-46.6300, -46.6301],
+            "data_coleta": ["2026-07-27", "2026-07-27"],
+        }
+    ).to_csv(un / "unidades_selfit.csv", sep=";", encoding="utf-8-sig", index=False)
+
+    bruto = m.ler_feeds(vazio, vazio, un, fontes=["unidades"])
+    limpo, _ = m.limpar_ruido(bruto)
+    com_chave = m.derivar_chave(m.calcular_hash_campos_raspados(limpo))
+    snapshot, auditoria = m.montar_snapshot(com_chave, fontes_lidas="unidades")
+    ponte = m.montar_ponte_identidade(com_chave)
+
+    assert auditoria["chaves_colapsadas"] == 1, "a fixture precisa COLIDIR, senao nao mede nada"
+    assert len(snapshot) == 1 and len(ponte) == 1
+
+    sobrevivente = com_chave[
+        com_chave["hash_campos_raspados"].astype(str) == str(snapshot.iloc[0]["hash_campos_raspados"])
+    ].iloc[0]
+    assert float(ponte.iloc[0]["lat"]) == pytest.approx(float(sobrevivente["latitude"]))
+    assert float(ponte.iloc[0]["lng"]) == pytest.approx(float(sobrevivente["longitude"]))
+
+
 def test_semana_reprovada_nao_deixa_ponte_orfa(tmp_path: Path) -> None:
     """As duas árvores nunca podem discordar sobre quais semanas existem.
 
