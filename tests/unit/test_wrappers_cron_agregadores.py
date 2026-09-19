@@ -341,7 +341,10 @@ def test_wrapper_e_runbook_citam_a_mesma_retencao() -> None:
     """
     from motor_expansao.vulnerabilidade import contrato as c
 
-    esperado = str(c.RETENCAO_SEMANAS)
+    # Desde a DEC-064 o valor VIGENTE do `DRY_RUN` é a sentinela de reter tudo, não o `26`: é ele
+    # que o modo seco imprime, logo é ele que o operador confere. O `26` não sumiu — virou o valor
+    # de referência da poda MANUAL, e a prosa que o explica continua nos dois textos.
+    esperado = str(c.RETENCAO_TUDO)
     wrapper = WRAPPER.read_text(encoding="utf-8")
     runbook = (ROOT / "docs" / "infra_producao.md").read_text(encoding="utf-8")
 

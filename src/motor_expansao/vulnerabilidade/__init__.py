@@ -53,6 +53,7 @@ from .contrato import (
     CONTRATO_COLUNAS_ACADEMIAS_MA,
     CONTRATO_COLUNAS_ALVOS_MA,
     CONTRATO_COLUNAS_CHURN,
+    CONTRATO_COLUNAS_PONTE,
     CONTRATO_COLUNAS_PRESENCA_AGREGADOR,
     CONTRATO_COLUNAS_PRESSAO,
     CONTRATO_COLUNAS_PRESSAO_ACADEMIA,
@@ -67,6 +68,7 @@ from .contrato import (
     PRESSAO_RAIO_M,
     QUANTIL_SAM_QUENTE,
     RETENCAO_SEMANAS,
+    RETENCAO_TUDO,
     SINAIS_INATIVOS,
     SINAIS_ORDEM,
     STALE_SEMANAS,
@@ -88,18 +90,25 @@ from .pressao_competitiva import (
 )
 from .score import calcular_score_vulnerabilidade
 from .snapshots import (
+    PONTE_DIR_DEFAULT,
     SNAPSHOTS_DIR_DEFAULT,
     avaliar_estabilidade_slug,
     calcular_hash_campos_raspados,
     coordenadas_por_chave,
     derivar_chave,
     escrever_particao_semana,
+    escrever_ponte_identidade,
     ler_feeds,
+    ler_ponte_identidade,
     ler_snapshots,
     limpar_ruido,
+    listar_particoes,
     materializar,
+    montar_ponte_identidade,
     montar_snapshot,
     podar_snapshots,
+    ponte_dir_de,
+    primeira_semana_por_fonte,
 )
 
 __all__ = [
@@ -115,6 +124,16 @@ __all__ = [
     "ler_snapshots",
     "podar_snapshots",
     "SNAPSHOTS_DIR_DEFAULT",
+    # Listagem de particoes (metadado; estreia e observabilidade -- DEC-064 D5)
+    "listar_particoes",
+    "primeira_semana_por_fonte",
+    # Ponte de identidade `chave -> nome/lat/lng` (DEC-064 D3; NOMEADA e gitignored)
+    "montar_ponte_identidade",
+    "escrever_ponte_identidade",
+    "ler_ponte_identidade",
+    "ponte_dir_de",
+    "CONTRATO_COLUNAS_PONTE",
+    "PONTE_DIR_DEFAULT",
     # Extrator (serie -> churn/staleness)
     "extrair_churn_staleness",
     # Sinal 1 (presenca em agregador, hex-level)
@@ -164,4 +183,5 @@ __all__ = [
     "MIN_SEMANAS",
     "STALE_SEMANAS",
     "RETENCAO_SEMANAS",
+    "RETENCAO_TUDO",
 ]
