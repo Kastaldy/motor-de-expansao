@@ -96,11 +96,15 @@
 #                             a VPS esta rodando IMAGEM ANTIGA, que escreve com UMA
 #                             chave de particao e APAGA a folha da outra cadencia.
 #                             NAO agende: aplique a imagem nova primeiro.
-#   * `retencao_semanas`   -- tem de ser 26. O `78` e' o valor da premissa MENSAL,
-#                             que morreu: sob cadencia SEMANAL N particoes = N
-#                             observacoes de CADA fonte, e o piso MEDIDO para o v4
-#                             saturar e' 13 (`semanas_sem_mudanca` vale k-1 contra
-#                             STALE_SEMANAS=12). 26 = 2x o piso. NUNCA abaixo de 13.
+#   * `retencao_semanas`   -- tem de ser 0 (DEC-064: RETER TUDO; a poda NAO roda em
+#                             regime). Se vier `26` ou `78`, a VPS esta rodando imagem
+#                             ANTERIOR a DEC-064, que PODA -- e o que a poda apaga e'
+#                             justamente a serie de que `--reprocessar` depende.
+#                             NAO agende: aplique a imagem nova primeiro.
+#                             A poda segue disponivel como ato MANUAL
+#                             (`--retencao-semanas N`): valor de referencia 26 = 2x o
+#                             piso MEDIDO de 13 (`semanas_sem_mudanca` vale k-1 contra
+#                             STALE_SEMANAS=12). Se podar, NUNCA abaixo de 13.
 #
 # INSTALACAO (uma vez):
 #     install -d -m 0755 /opt/motor-expansao-infra   # idempotente
@@ -315,7 +319,7 @@ docker run --rm \
 
 if [ "$DRY_RUN" = "1" ]; then
   echo '>> DRY-RUN: nada gravado, nenhuma semana podada.'
-  echo '   Confira acima: fontes_publicadas, linhas_snapshot, retencao_semanas=26 e'
+  echo '   Confira acima: fontes_publicadas, linhas_snapshot, retencao_semanas=0 e'
   echo '   versao_contrato=snapshots_concorrentes_v5 (v4/v3 = imagem ANTIGA; NAO agende).'
 else
   echo ">> particoes em ${HOST_STAGING}/snapshots_concorrentes/"

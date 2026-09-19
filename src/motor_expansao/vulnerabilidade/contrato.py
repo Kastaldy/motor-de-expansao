@@ -120,6 +120,47 @@ STALE_SEMANAS = 12
 # compraria já vem de graça no 26 = 2x o piso.
 RETENCAO_SEMANAS = 26
 
+# Sentinela de "reter tudo" — o DEFAULT de regime desde a DEC-064 (D1).
+#
+# O `26` acima continua correto e continua sendo o piso a usar SE a poda for reativada; o que a
+# DEC-064 remove é a RESTRIÇÃO que o comprava. O teto existia porque `ler_snapshots` carregava a
+# série inteira (os ~70,5 MB de RSS por semana retida, medidos no D5 da DEC-039) — e essa leitura
+# passou a ser RECORTADA na origem (filtro de partição, não filtro em pandas depois do
+# `to_pandas`). Sem o custo de leitura, reter mais semanas custa 2,6 MB de disco por semana
+# (medido; 138 GB livres na VPS), e a série inteira é o que torna `--reprocessar` possível.
+#
+# `0` e não `None` de propósito: `--retencao-semanas` é `type=int`, e um `None` na CLI exigiria um
+# tipo próprio só para dizer "não pode". Como `podar_snapshots` LEVANTA para `< 1`, a sentinela é
+# inalcançável por ela — quem decide não podar é o orquestrador, nunca a função que apaga
+# diretório. `executar(retencao_semanas=26)` continua podando, e é assim que a poda segue
+# disponível como ato manual.
+RETENCAO_TUDO = 0
+
+# Ponte de identidade `chave_snapshot -> quem/onde` (DEC-064, D3). Artefato NOMEADO e gitignored,
+# irmão da série e NUNCA parte dela: a série continua anônima, e pôr nome dentro dela exigiria bump
+# `v5 -> v6` e DEC própria.
+#
+# Por que ela existe: a ficha da unidade desenha evento com NOME, COORDENADA e distância; o diff
+# semanal da série sabe QUE uma chave entrou ou saiu e não sabe QUEM nem ONDE. Os pins
+# `vulnerabilidade_ma_*` não resolvem — são retrato do PRESENTE, então servem para quem entrou e
+# nunca para quem SAIU, cuja chave não está no arquivo novo.
+#
+# `semana` e `fonte` são chaves de PARTIÇÃO (vivem no caminho, como no snapshot); o arquivo leva as
+# outras quatro. Estas seis colunas são exatamente as que a DEC enumera — nada mais entra aqui sem
+# emenda, porque cada coluna a mais é dado de estabelecimento persistido a mais.
+#
+# ANTI-PII: `nome`/`lat`/`lng` são o PONTO deste artefato, e por isso ele NÃO reusa
+# `COLUNAS_PII_PROIBIDAS` — precedente explícito de `alvos_nomeados.py`. O que a DEC-012 protege é
+# PII de PESSOAS; nome e endereço de ESTABELECIMENTO comercial, raspados de site público, são dado
+# de NEGÓCIO (§11 do contrato do epic, e D4 da DEC-064).
+CONTRATO_COLUNAS_PONTE: dict[str, str] = {
+    "fonte": "string",
+    "chave_snapshot": "string",
+    "nome": "string",
+    "lat": "Float64",
+    "lng": "Float64",
+}
+
 # ARBITRADO, nao medido (sem serie real; revisitar no BLK-MA-06). O valor importa menos que o
 # DESENHO: o rebaixamento GLOBAL da chave só ocorre se o chamador INJETAR a taxa medida (default
 # `None` em `derivar_chave`/`materializar`), senão uma reavaliação automática re-chavearia o

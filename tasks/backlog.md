@@ -2337,7 +2337,7 @@ definido antes de qualquer código; validação com fixtures sintéticas; READ-O
 | **Criticidade** | **Alta** — mexe na única função do pacote que **apaga arquivo** (a poda), troca o REGIME DE LEITURA da série que alimenta S3/S4 e cria artefato que persiste **nome e coordenada** de estabelecimento. READ-ONLY sobre o M1: escreve só em `data/staging/`. DEC própria: [DEC-064](../docs/decisions/DEC-064.md). |
 | **Prioridade** | **Alta.** É o que destrava a movimentação DINÂMICA na ficha da unidade: hoje o diff semanal sabe QUE uma chave entrou ou saiu e não sabe QUEM nem ONDE, porque a série é anônima e os feeds crus são sobrescritos todo domingo. |
 | **Esteira** | Block Orchestrator → Planner → `[GATE humano — DEC-064 APROVADA em 2026-09-18]` → Builder → QA → `[aplicação na VPS: passo MANUAL, comando a comando — §6]`. |
-| **Status** | **Pendente.** DEC registrada em 2026-09-18; implementação não iniciada. |
+| **Status** | **Em andamento** (2026-09-18). Entregas **1, 3 e 4 FEITAS** — retenção integral (sentinela `RETENCAO_TUDO`, poda fora do regime e invariante `>= 1` intacta), ponte de identidade e estreia/observabilidade pela listagem —, junto com a leitura RECORTADA na varredura, que é o que paga a retenção. Falta a entrega **2** (estado incremental + `--reprocessar`), que vai em PR próprio por tamanho. |
 | **Depende de** | DEC-064 (aprovada). Nada mais — a série já existe no disco da VPS (3 semanas) e o `ler_snapshots` já aceita `semanas=`/`fontes=`. |
 | **Autonomia** | **manual (NÃO loop-safe)** — toca a poda de produção e cria artefato com nome/coordenada. NUNCA marcar loop-safe. |
 
