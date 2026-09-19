@@ -45,6 +45,18 @@ from .alvos_ma import (
     marcar_hex_quente,
     materializar_alvos_ma,
 )
+from .churn_estado import (
+    ESTADO_DIR_DEFAULT,
+    aplicar_semana,
+    atualizar,
+    churn_do_estado,
+    escrever_estado,
+    estado_dir_de,
+    estado_vazio,
+    ler_estado,
+    observabilidade_vazia,
+    reprocessar,
+)
 from .churn_staleness import extrair_churn_staleness
 from .contrato import (
     ADJACENCIA_HEX_QUENTE_K,
@@ -53,6 +65,8 @@ from .contrato import (
     CONTRATO_COLUNAS_ACADEMIAS_MA,
     CONTRATO_COLUNAS_ALVOS_MA,
     CONTRATO_COLUNAS_CHURN,
+    CONTRATO_COLUNAS_CHURN_ESTADO,
+    CONTRATO_COLUNAS_OBSERVABILIDADE,
     CONTRATO_COLUNAS_PONTE,
     CONTRATO_COLUNAS_PRESENCA_AGREGADOR,
     CONTRATO_COLUNAS_PRESSAO,
@@ -75,6 +89,8 @@ from .contrato import (
     V3_POR_STATUS_CHURN,
     VERSAO_CONTRATO_ALVOS_MA,
     VERSAO_CONTRATO_CHURN,
+    VERSAO_CONTRATO_CHURN_ESTADO,
+    VERSAO_CONTRATO_OBSERVABILIDADE,
     VERSAO_CONTRATO_PRESENCA_AGREGADOR,
     VERSAO_CONTRATO_PRESSAO,
     VERSAO_CONTRATO_SCORE,
@@ -136,6 +152,21 @@ __all__ = [
     "PONTE_DIR_DEFAULT",
     # Extrator (serie -> churn/staleness)
     "extrair_churn_staleness",
+    # Estado INCREMENTAL de churn/staleness (DEC-064 D2; terceiro caminho, nao substitui os dois)
+    "aplicar_semana",
+    "churn_do_estado",
+    "reprocessar",
+    "atualizar",
+    "ler_estado",
+    "escrever_estado",
+    "estado_vazio",
+    "observabilidade_vazia",
+    "estado_dir_de",
+    "ESTADO_DIR_DEFAULT",
+    "CONTRATO_COLUNAS_CHURN_ESTADO",
+    "CONTRATO_COLUNAS_OBSERVABILIDADE",
+    "VERSAO_CONTRATO_CHURN_ESTADO",
+    "VERSAO_CONTRATO_OBSERVABILIDADE",
     # Sinal 1 (presenca em agregador, hex-level)
     "extrair_presenca_agregador",
     "CONTRATO_COLUNAS_PRESENCA_AGREGADOR",
