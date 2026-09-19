@@ -184,11 +184,26 @@ def aplicar_semana(
         )
 
     # ---------------- observabilidade: o EIXO ganha a semana nova ----------------
+    # `origens` viaja AQUI, no grao do escopo `[achado do claude-review no PR #387]`. Ela e'
+    # propriedade do ESCOPO ao longo do tempo, e a varredura compara semanas consecutivas do escopo
+    # mesmo nas semanas em que uma dada chave esta' AUSENTE. Guardada por chave, como estava, o
+    # incremental so' enxergaria a ultima semana em que aquela chave foi vista, e divergiria da
+    # varredura sempre que gap de presenca coincidisse com troca de origem.
+    origens_agora: dict[tuple[str, str], set[str]] = {}
+    if not snapshot.empty:
+        for fonte, rede, origem in zip(
+            snapshot["fonte"], snapshot["rede"], snapshot["chave_origem"], strict=False
+        ):
+            par = (str(fonte), str(rede))
+            if par in escopos_a_aplicar:
+                origens_agora.setdefault(par, set()).add(str(origem))
+
     linhas_obs = [
         {
             "fonte": fonte,
             "rede": rede,
             "semana": semana,
+            "origens": ",".join(sorted(origens_agora.get((fonte, rede), set()))),
             "versao_contrato": VERSAO_CONTRATO_OBSERVABILIDADE,
         }
         for fonte, rede in sorted(escopos_a_aplicar)
@@ -201,17 +216,6 @@ def aplicar_semana(
     obs = _coagir(obs, CONTRATO_COLUNAS_OBSERVABILIDADE)
 
     # ---------------- estado: uma linha por (fonte, chave_snapshot) ----------------
-    # `origens_ultima_semana` e' por ESCOPO; o veredito de troca de chave compara o conjunto desta
-    # semana com o da ultima semana observada DAQUELE escopo.
-    origens_agora: dict[tuple[str, str], set[str]] = {}
-    if not snapshot.empty:
-        for fonte, rede, origem in zip(
-            snapshot["fonte"], snapshot["rede"], snapshot["chave_origem"], strict=False
-        ):
-            par = (str(fonte), str(rede))
-            if par in escopos_a_aplicar:
-                origens_agora.setdefault(par, set()).add(str(origem))
-
     por_chave = {
         (str(f), str(k)): i
         for i, (f, k) in enumerate(zip(est["fonte"], est["chave_snapshot"], strict=False))
@@ -226,7 +230,6 @@ def aplicar_semana(
                 continue
             chave = str(linha["chave_snapshot"])
             vistas_agora.add((fonte, chave))
-            origens_csv = ",".join(sorted(origens_agora.get((fonte, rede), set())))
             idx = por_chave.get((fonte, chave))
             if idx is None:
                 registros.append(
@@ -248,8 +251,6 @@ def aplicar_semana(
                         "presente_na_ultima_semana_do_eixo": True,
                         "nota_wellhub": linha["nota_wellhub"],
                         "qtd_avaliacoes_wellhub": linha["qtd_avaliacoes_wellhub"],
-                        "origens_ultima_semana": origens_csv,
-                        "flag_troca_chave_na_serie": False,
                         "versao_contrato": VERSAO_CONTRATO_CHURN_ESTADO,
                     }
                 )
@@ -258,7 +259,6 @@ def aplicar_semana(
             atual = registros[idx]
             hash_novo = str(linha["hash_campos_raspados"])
             mudou = hash_novo != str(atual["hash_ultimo"])
-            trocou_origem = origens_csv != str(atual["origens_ultima_semana"])
             reapareceu = not bool(atual["presente_na_ultima_semana_do_eixo"])
             atual.update(
                 {
@@ -273,9 +273,6 @@ def aplicar_semana(
                     "presente_na_ultima_semana_do_eixo": True,
                     "nota_wellhub": linha["nota_wellhub"],
                     "qtd_avaliacoes_wellhub": linha["qtd_avaliacoes_wellhub"],
-                    "origens_ultima_semana": origens_csv,
-                    "flag_troca_chave_na_serie": bool(atual["flag_troca_chave_na_serie"])
-                    or trocou_origem,
                     "versao_contrato": VERSAO_CONTRATO_CHURN_ESTADO,
                 }
             )
@@ -319,14 +316,32 @@ def churn_do_estado(
         return vazio
 
     eixo: dict[tuple[str, str], list[str]] = {}
+    origens_por_escopo: dict[tuple[str, str], dict[str, str]] = {}
     if not observabilidade.empty:
-        for fonte, rede, semana in zip(
+        for fonte, rede, semana, origens in zip(
             observabilidade["fonte"],
             observabilidade["rede"],
             observabilidade["semana"],
+            observabilidade["origens"],
             strict=False,
         ):
-            eixo.setdefault((str(fonte), str(rede)), []).append(str(semana))
+            par = (str(fonte), str(rede))
+            eixo.setdefault(par, []).append(str(semana))
+            origens_por_escopo.setdefault(par, {})[str(semana)] = str(origens)
+
+    def _trocou_de_chave(par: tuple[str, str]) -> bool:
+        """O conjunto de `chave_origem` do ESCOPO mudou entre semanas consecutivas?
+
+        Mesma pergunta — e mesmas duas exclusões — de `_houve_troca_de_chave` na varredura: uma
+        única semana observada não caracteriza troca, e mistura ESTÁVEL (o mesmo conjunto em todas
+        as semanas) é o estado NORMAL do feed TP/WH, não um evento. O que a flag sinaliza é
+        variação TEMPORAL.
+        """
+        por_semana = origens_por_escopo.get(par, {})
+        if len(por_semana) < 2:
+            return False
+        conjuntos = [por_semana[s] for s in sorted(por_semana)]
+        return any(a != b for a, b in zip(conjuntos, conjuntos[1:], strict=False))
 
     linhas: list[dict[str, object]] = []
     for registro in estado.to_dict("records"):
@@ -367,7 +382,7 @@ def churn_do_estado(
                 "qtd_avaliacoes_wellhub": registro["qtd_avaliacoes_wellhub"],
                 "flag_serie_imatura": bool(n_semanas_serie < int(min_semanas)),
                 "flag_staleness_interpretavel": bool(n_semanas_serie >= int(stale_semanas)),
-                "flag_troca_chave_na_serie": bool(registro["flag_troca_chave_na_serie"]),
+                "flag_troca_chave_na_serie": _trocou_de_chave((fonte, rede)),
                 "versao_contrato": VERSAO_CONTRATO_CHURN,
             }
         )

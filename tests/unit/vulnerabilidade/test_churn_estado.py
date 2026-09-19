@@ -240,6 +240,68 @@ def test_atualizar_com_reprocessar_ignora_o_estado_do_disco(tmp_path: Path) -> N
     assert auditoria["chaves_no_estado"] == 5
 
 
+def test_troca_de_origem_no_escopo_durante_gap_da_chave(tmp_path: Path) -> None:
+    """Achado da revisão automática no PR #387, travado — e é o caso que o resto da suíte não vê.
+
+    `flag_troca_chave_na_serie` pergunta se o conjunto de `chave_origem` do **ESCOPO** mudou entre
+    semanas consecutivas. A varredura compara o histórico do escopo inteiro, **inclusive as semanas
+    em que uma dada chave está ausente**. A 1ª versão deste módulo guardava as origens por CHAVE, e
+    então só enxergava a última semana em que ELA foi vista: com gap de presença coincidindo com a
+    troca de origem no escopo, incremental dava `False` e varredura dava `True`.
+
+    O furo passou despercebido porque **todos os outros testes usam a fonte `unidades`**, onde
+    `chave_origem` é sempre `hash_estavel` e a coluna nunca varia — ou seja, a suíte de equivalência
+    não exercitava a dimensão que a coluna mede. Aqui a fonte é `wellhub`, com `slug`.
+
+    Cenário: `k_gap` está presente nas semanas 1 e 4; nas semanas 2 e 3 o escopo é observado por
+    outra chave e migra de `slug` para `hash_estavel`.
+    """
+    import h3
+
+    hex_id = h3.latlng_to_cell(-23.5500, -46.6300, 7)
+
+    def _linha(chave: str, origem: str, hash_: str = "h0") -> dict[str, object]:
+        return {
+            "snapshot_date": "2026-01-05",
+            "slug": chave,
+            "concorrente_id": "0" * 40,
+            "chave_snapshot": chave,
+            "chave_origem": origem,
+            "hex_id_res7": hex_id,
+            "rede": "independente",
+            "fonte": "wellhub",
+            "hash_campos_raspados": hash_,
+            "nota_wellhub": None,
+            "qtd_avaliacoes_wellhub": None,
+            "fontes_lidas": "wellhub",
+            "versao_contrato": c.VERSAO_CONTRATO_SNAPSHOT,
+        }
+
+    semanas_linhas = [
+        (SEMANAS[0], [_linha("k_gap", "slug"), _linha("k_fixa", "slug")]),
+        (SEMANAS[1], [_linha("k_fixa", "hash_estavel")]),  # k_gap ausente; o escopo TROCA de origem
+        (SEMANAS[2], [_linha("k_fixa", "hash_estavel")]),
+        (SEMANAS[3], [_linha("k_gap", "hash_estavel"), _linha("k_fixa", "hash_estavel")]),
+    ]
+
+    estado, obs = e.estado_vazio(), e.observabilidade_vazia()
+    injetados = []
+    for semana, linhas in semanas_linhas:
+        snapshot = pd.DataFrame(linhas, columns=list(c.CONTRATO_COLUNAS_SNAPSHOT.keys()))
+        estado, obs = e.aplicar_semana(estado, obs, snapshot, semana=semana)
+        com_semana = snapshot.copy()
+        com_semana["semana"] = semana
+        injetados.append(com_semana)
+
+    incremental = e.churn_do_estado(estado, obs)
+    varredura = extrair_churn_staleness(snapshots=injetados)
+
+    assert bool(varredura["flag_troca_chave_na_serie"].all()), (
+        "a fixture precisa produzir TROCA na varredura, senao o teste nao mede nada"
+    )
+    pd.testing.assert_frame_equal(incremental, varredura)
+
+
 def test_semana_fora_do_formato_iso_levanta() -> None:
     with pytest.raises(ValueError, match="AAAA-SS"):
         e.aplicar_semana(e.estado_vazio(), e.observabilidade_vazia(), pd.DataFrame(), semana="2026-7")

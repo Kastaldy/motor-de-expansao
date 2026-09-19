@@ -442,11 +442,15 @@ CONTRATO_COLUNAS_CHURN: dict[str, str] = {
 #   * `semanas_sem_mudanca` compara o `hash_campos_raspados` da semana nova com o da ÚLTIMA
 #     observação — então basta o hash CORRENTE viver aqui (`hash_ultimo`), não a série de hashes.
 #   * `flag_troca_chave_na_serie` pergunta se o conjunto de `chave_origem` do ESCOPO mudou entre
-#     semanas consecutivas; o que persiste é o conjunto da última semana observada
-#     (`origens_ultima_semana`, CSV ordenado) mais o veredito acumulado.
+#     semanas consecutivas — e a resposta NÃO cabe aqui: é propriedade do escopo ao longo do tempo,
+#     não da chave. Guardá-la por chave (a 1ª versão deste contrato fazia isso, com uma coluna
+#     `origens_ultima_semana`) DIVERGE da varredura quando a chave tem gap de presença: a varredura
+#     compara semanas consecutivas do escopo mesmo nas semanas em que a chave está ausente, e o
+#     estado por chave só enxergaria a última semana em que ELA foi vista. Achado da revisão
+#     automática no PR #387; as origens passaram para `CONTRATO_COLUNAS_OBSERVABILIDADE`.
 #
-# E uma coluna do churn NÃO cabe aqui por construção: `n_semanas_serie` conta o EIXO do escopo
-# `(fonte, rede)`, que não é propriedade da chave — vive em `CONTRATO_COLUNAS_OBSERVABILIDADE`.
+# E o mesmo vale para `n_semanas_serie`: conta o EIXO do escopo `(fonte, rede)`, então também vive
+# na tabela de observabilidade.
 #
 # `presente_na_ultima_semana_do_eixo` é o que torna `n_desaparecimentos` incremental: sem ele, saber
 # se a semana nova é uma transição presente->ausente exigiria reler a série, que é exatamente o
@@ -467,8 +471,6 @@ CONTRATO_COLUNAS_CHURN_ESTADO: dict[str, str] = {
     "presente_na_ultima_semana_do_eixo": "bool",
     "nota_wellhub": "Float64",  # FATO sem peso, da ULTIMA observacao (DEC-026)
     "qtd_avaliacoes_wellhub": "Int64",  # FATO sem peso, da ULTIMA observacao (DEC-026)
-    "origens_ultima_semana": "string",  # CSV ordenado de `chave_origem` do ESCOPO
-    "flag_troca_chave_na_serie": "bool",  # veredito ACUMULADO (uma vez verdadeiro, permanece)
     "versao_contrato": "string",
 }
 
@@ -483,10 +485,17 @@ CONTRATO_COLUNAS_CHURN_ESTADO: dict[str, str] = {
 # Uma linha por `(fonte, rede, semana)`. Grão de LINHA e não lista numa célula de propósito: é o que
 # permite acrescentar a semana nova sem reescrever o histórico do escopo, e é o que sobrevive a
 # `--reprocessar` sendo comparável linha a linha com o que a varredura completa produz.
+#
+# `origens` é o conjunto de `chave_origem` que o escopo apresentou NAQUELA semana (CSV ordenado, ex.
+# `"hash_estavel,slug"`). Ela mora aqui, e não no estado por chave, porque `flag_troca_chave_na_serie`
+# compara semanas CONSECUTIVAS DO ESCOPO — inclusive as semanas em que uma dada chave está ausente.
+# No feed TP/WH o rebaixamento de chave ocorre POR LINHA e convive com o `slug` na mesma semana, então
+# mistura estável NÃO é troca: o que caracteriza troca é variação TEMPORAL do conjunto.
 CONTRATO_COLUNAS_OBSERVABILIDADE: dict[str, str] = {
     "fonte": "string",
     "rede": "string",
     "semana": "string",
+    "origens": "string",  # CSV ordenado de `chave_origem` do ESCOPO naquela semana
     "versao_contrato": "string",
 }
 
