@@ -263,6 +263,31 @@ def test_retencao_nao_ranqueia_unidade_onde_o_modelo_se_declara_instavel():
     assert saida["b"]["risco_percentil"] == 100.0 and saida["c"]["risco_percentil"] == 50.0
 
 
+def test_receita_em_risco_pondera_pela_chance_de_cancelar():
+    """Alunos x chance em 12 meses x ticket — nao a receita recorrente inteira."""
+    tabela = pd.DataFrame(
+        [
+            {"cod_unidade": "1", "PROB_CANCEL_90D_MEDIA": 0.2, "P_CANCEL_12M_MEDIA": 0.4,
+             "N_ALUNOS": 1000, "TICKET_MEDIO_UNIDADE": 117.0, "USAR_PROB_ABSOLUTA": "Sim",
+             "CONFIABILIDADE_UNIDADE": "Absoluto OK"},
+            # o modelo diz que o absoluto nao vale: sai vazio, nao vira reais com falsa precisao
+            {"cod_unidade": "2", "PROB_CANCEL_90D_MEDIA": 0.1, "P_CANCEL_12M_MEDIA": 0.3,
+             "N_ALUNOS": 500, "TICKET_MEDIO_UNIDADE": 117.0, "USAR_PROB_ABSOLUTA": "Nao",
+             "CONFIABILIDADE_UNIDADE": "Apenas Ranking"},
+        ]
+    )
+    saida = ri.retencao_por_unidade(tabela, {"a": "1", "b": "2"})
+    assert saida["a"]["p_cancel_12m_pct"] == 40.0
+    assert saida["b"]["p_cancel_12m_pct"] is None  # o modelo diz: so' ranking
+    assert saida["b"]["ticket_medio"] == 117.0  # o ticket e' fato, nao previsao
+
+    # A conta e' sobre a operacao: RECORRENTES x chance x receita por recorrente REAL.
+    assert ri.receita_recorrente_em_risco(1000, 40.0, 150.0) == 60000.0
+    # sem probabilidade (o modelo nao libera o absoluto), nao se inventa o numero
+    assert ri.receita_recorrente_em_risco(1000, None, 150.0) is None
+    assert ri.receita_recorrente_em_risco(None, 40.0, 150.0) is None
+
+
 # ---------------------------------------------------------------------------
 # Concorrentes novos
 # ---------------------------------------------------------------------------
@@ -285,6 +310,40 @@ def test_concorrente_novo_exige_serie_e_ignora_a_primeira_semana():
     serie = pd.DataFrame([_snap("2026-30", "antiga"), _snap("2026-31", "antiga"), _snap("2026-31", "nova")])
     saida = ri.concorrentes_novos(serie, coords, _unidades())
     assert saida["disponivel"] is True
+    assert [i["nome"] for i in saida["por_unidade"]["u1"]] == ["Nova"]
+
+
+def test_novo_no_agregador_ignora_a_estreia_de_CADA_fonte_e_nao_lista_a_ultra():
+    """Dois defeitos vistos na ficha de Uberlandia em 18/09.
+
+    (1) A estreia descartada era a da SERIE, nao a da FONTE: `unidades` era fotografada desde
+    a semana 2026-31 e `wellhub` so' a partir de 2026-36, entao as 22.550 chaves do WellHub
+    passavam como recem-chegadas e a ficha listava o bairro inteiro.
+    (2) A propria Ultra entrava na lista (Center Shopping a 141 m, Floriano Peixoto, Cesario).
+    """
+    coords = pd.DataFrame(
+        [
+            {"fonte": "wellhub", "chave_snapshot": "wh_estreia", "nome": "Ja' estava", "lat": -23.001, "lng": -46.0},
+            {"fonte": "wellhub", "chave_snapshot": "wh_nova", "nome": "Nova", "lat": -23.002, "lng": -46.0},
+            {"fonte": "wellhub", "chave_snapshot": "wh_ultra", "nome": "Ultra Academia Center Shopping",
+             "lat": -23.0015, "lng": -46.0},
+            {"fonte": "unidades", "chave_snapshot": "un_estreia", "nome": "Cadeia", "lat": -23.003, "lng": -46.0},
+        ]
+    )
+    serie = pd.DataFrame(
+        [
+            {"semana": "2026-31", "fonte": "unidades", "chave_snapshot": "un_estreia"},
+            {"semana": "2026-36", "fonte": "unidades", "chave_snapshot": "un_estreia"},
+            # o WellHub so' comeca a ser fotografado em 2026-36: esta e' a ESTREIA dele
+            {"semana": "2026-36", "fonte": "wellhub", "chave_snapshot": "wh_estreia"},
+            {"semana": "2026-37", "fonte": "wellhub", "chave_snapshot": "wh_estreia"},
+            {"semana": "2026-37", "fonte": "wellhub", "chave_snapshot": "wh_nova"},
+            {"semana": "2026-37", "fonte": "wellhub", "chave_snapshot": "wh_ultra"},
+        ]
+    )
+    saida = ri.concorrentes_novos(serie, coords, _unidades())
+    assert saida["disponivel"] is True
+    # `wh_estreia` nao e' novidade (estreia da fonte) e a Ultra nao e' concorrente nossa
     assert [i["nome"] for i in saida["por_unidade"]["u1"]] == ["Nova"]
 
 

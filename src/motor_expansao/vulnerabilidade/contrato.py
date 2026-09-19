@@ -49,6 +49,11 @@ import h3
 VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v5"  # v5: DEC-063 (ancora da chave de churn)
 VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
+# Estado materializado de churn/staleness e a tabela de semanas observadas `[DEC-064, D2]`. São
+# artefatos NOVOS, não bump de nada: `VERSAO_CONTRATO_CHURN` segue `v2`, porque o FRAME que o
+# extrator devolve não mudou de schema — o que muda é de onde ele vem.
+VERSAO_CONTRATO_CHURN_ESTADO = "churn_estado_v1"
+VERSAO_CONTRATO_OBSERVABILIDADE = "observabilidade_escopo_v1"
 VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v9"  # v9: DEC-065
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
@@ -119,6 +124,47 @@ STALE_SEMANAS = 12
 # folha) fica em bloco próprio: ela mexe na única função do pacote que apaga arquivo, e a margem que
 # compraria já vem de graça no 26 = 2x o piso.
 RETENCAO_SEMANAS = 26
+
+# Sentinela de "reter tudo" — o DEFAULT de regime desde a DEC-064 (D1).
+#
+# O `26` acima continua correto e continua sendo o piso a usar SE a poda for reativada; o que a
+# DEC-064 remove é a RESTRIÇÃO que o comprava. O teto existia porque `ler_snapshots` carregava a
+# série inteira (os ~70,5 MB de RSS por semana retida, medidos no D5 da DEC-039) — e essa leitura
+# passou a ser RECORTADA na origem (filtro de partição, não filtro em pandas depois do
+# `to_pandas`). Sem o custo de leitura, reter mais semanas custa 2,6 MB de disco por semana
+# (medido; 138 GB livres na VPS), e a série inteira é o que torna `--reprocessar` possível.
+#
+# `0` e não `None` de propósito: `--retencao-semanas` é `type=int`, e um `None` na CLI exigiria um
+# tipo próprio só para dizer "não pode". Como `podar_snapshots` LEVANTA para `< 1`, a sentinela é
+# inalcançável por ela — quem decide não podar é o orquestrador, nunca a função que apaga
+# diretório. `executar(retencao_semanas=26)` continua podando, e é assim que a poda segue
+# disponível como ato manual.
+RETENCAO_TUDO = 0
+
+# Ponte de identidade `chave_snapshot -> quem/onde` (DEC-064, D3). Artefato NOMEADO e gitignored,
+# irmão da série e NUNCA parte dela: a série continua anônima, e pôr nome dentro dela exigiria bump
+# `v5 -> v6` e DEC própria.
+#
+# Por que ela existe: a ficha da unidade desenha evento com NOME, COORDENADA e distância; o diff
+# semanal da série sabe QUE uma chave entrou ou saiu e não sabe QUEM nem ONDE. Os pins
+# `vulnerabilidade_ma_*` não resolvem — são retrato do PRESENTE, então servem para quem entrou e
+# nunca para quem SAIU, cuja chave não está no arquivo novo.
+#
+# `semana` e `fonte` são chaves de PARTIÇÃO (vivem no caminho, como no snapshot); o arquivo leva as
+# outras quatro. Estas seis colunas são exatamente as que a DEC enumera — nada mais entra aqui sem
+# emenda, porque cada coluna a mais é dado de estabelecimento persistido a mais.
+#
+# ANTI-PII: `nome`/`lat`/`lng` são o PONTO deste artefato, e por isso ele NÃO reusa
+# `COLUNAS_PII_PROIBIDAS` — precedente explícito de `alvos_nomeados.py`. O que a DEC-012 protege é
+# PII de PESSOAS; nome e endereço de ESTABELECIMENTO comercial, raspados de site público, são dado
+# de NEGÓCIO (§11 do contrato do epic, e D4 da DEC-064).
+CONTRATO_COLUNAS_PONTE: dict[str, str] = {
+    "fonte": "string",
+    "chave_snapshot": "string",
+    "nome": "string",
+    "lat": "Float64",
+    "lng": "Float64",
+}
 
 # ARBITRADO, nao medido (sem serie real; revisitar no BLK-MA-06). O valor importa menos que o
 # DESENHO: o rebaixamento GLOBAL da chave só ocorre se o chamador INJETAR a taxa medida (default
@@ -378,6 +424,78 @@ CONTRATO_COLUNAS_CHURN: dict[str, str] = {
     "flag_serie_imatura": "bool",
     "flag_staleness_interpretavel": "bool",
     "flag_troca_chave_na_serie": "bool",
+    "versao_contrato": "string",
+}
+
+# --------------------------------------------------------------------------- #
+# Estado incremental de churn/staleness `[DEC-064, D2]`
+# --------------------------------------------------------------------------- #
+# O "arquivo resumo" da decisão do dono: em vez de recalcular churn varrendo a série toda semana,
+# guarda-se UMA linha por `(fonte, chave_snapshot)` e atualiza-se com `estado anterior + semana
+# nova`. Motivo medido: `extrair_churn_staleness` já produzia este frame (19 colunas, ~27 mil
+# linhas, ordem de 2 MB) e **jogava fora** — o pacote só materializava
+# `vulnerabilidade_ma_{academias,nomeadas,redes}`.
+#
+# DAS 19 COLUNAS DO CHURN, 17 SÃO DERIVÁVEIS DE ACUMULADOR DIRETO. Duas exigem estado explícito, e
+# é nelas que o cuidado mora:
+#
+#   * `semanas_sem_mudanca` compara o `hash_campos_raspados` da semana nova com o da ÚLTIMA
+#     observação — então basta o hash CORRENTE viver aqui (`hash_ultimo`), não a série de hashes.
+#   * `flag_troca_chave_na_serie` pergunta se o conjunto de `chave_origem` do ESCOPO mudou entre
+#     semanas consecutivas — e a resposta NÃO cabe aqui: é propriedade do escopo ao longo do tempo,
+#     não da chave. Guardá-la por chave (a 1ª versão deste contrato fazia isso, com uma coluna
+#     `origens_ultima_semana`) DIVERGE da varredura quando a chave tem gap de presença: a varredura
+#     compara semanas consecutivas do escopo mesmo nas semanas em que a chave está ausente, e o
+#     estado por chave só enxergaria a última semana em que ELA foi vista. Achado da revisão
+#     automática no PR #387; as origens passaram para `CONTRATO_COLUNAS_OBSERVABILIDADE`.
+#
+# E o mesmo vale para `n_semanas_serie`: conta o EIXO do escopo `(fonte, rede)`, então também vive
+# na tabela de observabilidade.
+#
+# `presente_na_ultima_semana_do_eixo` é o que torna `n_desaparecimentos` incremental: sem ele, saber
+# se a semana nova é uma transição presente->ausente exigiria reler a série, que é exatamente o
+# custo que esta tabela existe para eliminar.
+CONTRATO_COLUNAS_CHURN_ESTADO: dict[str, str] = {
+    "fonte": "string",
+    "chave_snapshot": "string",
+    "rede": "string",  # da ULTIMA observacao, como no churn
+    "hex_id_res7": "string",  # da ULTIMA observacao
+    "chave_origem": "string",  # da ULTIMA observacao
+    "semana_primeira_observacao": "string",
+    "semana_ultima_observacao": "string",
+    "snapshot_date_ultimo": "string",
+    "hash_ultimo": "string",  # para `semanas_sem_mudanca` sem reler a serie
+    "n_semanas_presente": "int64",
+    "n_desaparecimentos": "int64",
+    "semanas_sem_mudanca": "int64",
+    "presente_na_ultima_semana_do_eixo": "bool",
+    "nota_wellhub": "Float64",  # FATO sem peso, da ULTIMA observacao (DEC-026)
+    "qtd_avaliacoes_wellhub": "Int64",  # FATO sem peso, da ULTIMA observacao (DEC-026)
+    "versao_contrato": "string",
+}
+
+# Semanas OBSERVADAS por escopo `(fonte, rede)` — o EIXO do algoritmo de churn.
+#
+# É a defesa que impede "o coletor da rede falhou" virar `sumiu_recente` em massa: uma semana em que
+# o escopo não foi observado simplesmente não entra no eixo daquela chave, logo não pode gerar
+# transição presente->ausente. O escopo é o PAR, nunca só a `fonte`, porque o feed `unidades` é um
+# CSV por rede — o sumiço do arquivo de UMA rede deixaria a fonte "observada" e marcaria a rede
+# inteira como churn (falso positivo no sinal de maior peso, ~0,467).
+#
+# Uma linha por `(fonte, rede, semana)`. Grão de LINHA e não lista numa célula de propósito: é o que
+# permite acrescentar a semana nova sem reescrever o histórico do escopo, e é o que sobrevive a
+# `--reprocessar` sendo comparável linha a linha com o que a varredura completa produz.
+#
+# `origens` é o conjunto de `chave_origem` que o escopo apresentou NAQUELA semana (CSV ordenado, ex.
+# `"hash_estavel,slug"`). Ela mora aqui, e não no estado por chave, porque `flag_troca_chave_na_serie`
+# compara semanas CONSECUTIVAS DO ESCOPO — inclusive as semanas em que uma dada chave está ausente.
+# No feed TP/WH o rebaixamento de chave ocorre POR LINHA e convive com o `slug` na mesma semana, então
+# mistura estável NÃO é troca: o que caracteriza troca é variação TEMPORAL do conjunto.
+CONTRATO_COLUNAS_OBSERVABILIDADE: dict[str, str] = {
+    "fonte": "string",
+    "rede": "string",
+    "semana": "string",
+    "origens": "string",  # CSV ordenado de `chave_origem` do ESCOPO naquela semana
     "versao_contrato": "string",
 }
 

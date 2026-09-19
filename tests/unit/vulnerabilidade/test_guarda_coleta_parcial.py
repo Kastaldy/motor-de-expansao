@@ -197,16 +197,26 @@ def test_main_zero_quando_aprova(base_com_semana_1: tuple[Path, Path]) -> None:
     assert (base / f"semana={SEMANA_2}" / "fonte=unidades").is_dir()
 
 
-def test_serie_ilegivel_APROVA_e_carimba_o_erro(base_com_semana_1: tuple[Path, Path]) -> None:
-    """A guarda não pode virar o motivo de a semana se perder.
+def test_referencia_ilegivel_APROVA_e_carimba_o_erro(base_com_semana_1: tuple[Path, Path]) -> None:
+    """A guarda não pode virar o motivo de a semana se perder (degradação da DEC-061).
 
-    Parte corrompida, layout legado ou arquivo estranho na árvore fazem `ler_snapshots` levantar.
-    Antes desta degradação, isso derrubava o snapshot INTEIRO — a guarda passaria a causar
-    exatamente o dano que existe para evitar. Sem referência legível ela aprova e registra.
+    A FOLHA de referência corrompida faz `ler_snapshots` levantar. Sem ela a guarda não tem contra
+    o que comparar, e a direção segura é APROVAR e carimbar: perder a checagem de uma semana custa
+    menos que perder a semana.
+
+    **O locus mudou com a DEC-064** e este teste acompanhou. Antes a guarda lia a série INTEIRA, e
+    a degradação era testada com um arquivo corrompido em QUALQUER ponto da árvore — o que passava
+    porque um parquet ruim em 2020 derrubava a leitura de 2026 junto. Agora a leitura é recortada
+    em `(semana de referência, fonte)`, então o que precisa degradar é a referência EM SI; é ela
+    que este teste quebra. O caso antigo virou
+    `test_lixo_em_outra_semana_nao_cega_a_guarda`, e a propriedade que ele passou a medir é a
+    oposta — e melhor.
     """
     un, base = base_com_semana_1
-    (base / "semana=2020-01").mkdir(parents=True, exist_ok=True)
-    (base / "semana=2020-01" / "parte-0.parquet").write_bytes(b"nao e' parquet")
+    folhas = sorted(base.glob("semana=*/fonte=unidades"))
+    assert folhas, "fixture sem folha de referencia: o teste nao mede o que promete"
+    for parquet in sorted(folhas[-1].glob("*.parquet")):
+        parquet.write_bytes(b"nao e' parquet")
     _escrever_rede(un, "beta", 6, data_coleta="2026-05-26")  # desabaria, se houvesse referencia
 
     _, auditoria = m.materializar(
@@ -216,6 +226,31 @@ def test_serie_ilegivel_APROVA_e_carimba_o_erro(base_com_semana_1: tuple[Path, P
     assert guarda["aprovado"] is True
     assert guarda["erro_leitura_serie"] is not None
     assert auditoria["publicado"] is True
+
+
+def test_lixo_em_outra_semana_nao_cega_a_guarda(base_com_semana_1: tuple[Path, Path]) -> None:
+    """Arquivo ilegível numa semana QUE NÃO É a referência não pode desligar a guarda `[DEC-064]`.
+
+    Com a leitura da série inteira, um `parte-*.parquet` corrompido de 2020 — ou um resíduo do
+    layout legado de 1 chave — fazia `ler_snapshots` levantar e a guarda APROVAVA tudo: um colapso
+    real de rede passava, porque um arquivo velho e irrelevante estava quebrado. A degradação
+    existe para não perder a semana, não para virar um interruptor que qualquer resíduo desliga.
+
+    Com a referência lida por `(semana, fonte)`, o resíduo fica fora do recorte e a guarda enxerga
+    a queda: a rede beta cai 20 -> 6 (70%) e a semana é RECUSADA, como deve.
+    """
+    un, base = base_com_semana_1
+    (base / "semana=2020-01").mkdir(parents=True, exist_ok=True)
+    (base / "semana=2020-01" / "parte-0.parquet").write_bytes(b"nao e' parquet")
+    _escrever_rede(un, "beta", 6, data_coleta="2026-05-26")
+
+    _, auditoria = m.materializar(
+        un.parent / "tp", un.parent / "wh", un, base_dir=base, data_referencia=REF_2, fontes=["unidades"]
+    )
+    guarda = auditoria["coleta_parcial"]
+    assert guarda["aprovado"] is False
+    assert any("rede beta" in motivo for motivo in guarda["motivos"])
+    assert auditoria["publicado"] is False
 
 
 def test_piso_absoluto_do_total_nao_reprova_base_minuscula(tmp_path: Path) -> None:

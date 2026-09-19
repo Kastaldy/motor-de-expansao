@@ -1446,6 +1446,11 @@ export interface RedeRetencao {
   /** só existe onde o próprio modelo diz que a probabilidade absoluta vale */
   prob_cancel_90d_pct: number | null
   risco_percentil: number | null
+  /** chance de cancelar em 12 meses; mesmo portão do número de 90 dias */
+  p_cancel_12m_pct: number | null
+  ticket_medio: number | null
+  /** alunos × chance em 12 meses × ticket: a mensalidade que o modelo espera perder */
+  receita_em_risco: number | null
   ltv_12m_mediano: number | null
   meses_ativos_12m: number | null
   ltv_fragil_pct: number | null
@@ -1541,7 +1546,18 @@ export interface RedeInteligencia {
     /** unidades com leitura do modelo, mas em que ele se declara instável/descalibrado */
     fora_do_modelo: number
     no_recorte: number
-    unidades: ({ id: string; nome: string; consultor: string | null } & RedeRetencao)[]
+    /** `churn_pct`, `ativos`, `recorrentes` e `receita_por_recorrente` vêm da OPERAÇÃO (Growth)
+     *  no mês base, não do modelo. `recorrentes` (pagantes de balcão) é quem de fato cancela e
+     *  é o denominador do próprio churn real; `ativos` inclui aluno de agregador. */
+    unidades: ({
+      id: string
+      nome: string
+      consultor: string | null
+      churn_pct: number | null
+      ativos: number | null
+      recorrentes: number | null
+      receita_por_recorrente: number | null
+    } & RedeRetencao)[]
   }
   concorrencia_nova: {
     disponivel: boolean
@@ -1553,7 +1569,10 @@ export interface RedeInteligencia {
     disponivel: boolean
     periodos: RedeMovimentoPeriodo[]
     data_contagem?: string | null
+    /** TODA rede mapeada, inclusive as sem movimentação no período (que vêm zeradas) */
     redes: RedeCrescimentoRede[]
+    redes_mapeadas?: number
+    unidades_mapeadas?: number
     agregadores: RedeCrescimentoAgregador[]
   }
   canibalizacao: { id: string; nome: string; vizinha: string | null; distancia_m: number | null }[]

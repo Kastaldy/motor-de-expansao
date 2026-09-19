@@ -1477,7 +1477,9 @@ def test_m6_cli_analisa_os_argumentos_do_cron() -> None:
     assert args.base_dir == Path("/tmp/serie")
     assert args.data_referencia == date(2026, 7, 29)
     assert args.dry_run is True
-    assert args.retencao_semanas == c.RETENCAO_SEMANAS
+    # DEC-064 (D1): o default da CLI e' a sentinela de RETER TUDO, nao o `26`. O `26` segue sendo
+    # o valor de referencia da poda MANUAL, e `podar_snapshots` segue levantando abaixo de 1.
+    assert args.retencao_semanas == c.RETENCAO_TUDO
 
     padrao = m._parse_args([])
     assert padrao.dry_run is False, "dry-run nao pode ser o default: o cron precisa gravar"

@@ -75,6 +75,8 @@ export default function FichaInteligencia({
   const rampa = dados.rampa[metricaRampa]
   const posicao = dados.rampa.posicao
   const cn = dados.concorrencia_nova
+  /** Quantas academias "novas no agregador" a lista mostra antes de resumir em "+N". */
+  const MAX_NOVOS_AGREGADOR = 6
   const mov = dados.movimentacao
   // Nota média das concorrentes DIRETAS a 2 km: sem estúdios (DEC-056) e só quem tem nota.
   const notas = (dados.mapa?.concorrentes ?? []).filter((c) => !c.estudio && c.nota_wellhub !== null).map((c) => c.nota_wellhub as number)
@@ -221,11 +223,21 @@ export default function FichaInteligencia({
                     )}
                     {cn.itens.length > 0 && (
                       <div style={{ marginTop: 10, font: '400 11px/1.6 var(--f-ui)', color: 'var(--tx-narrative)' }}>
-                        {cn.itens.map((i, k) => (
-                          <div key={k}>
+                        {/* TETO de linhas: em 18/09 a série ainda não separava a estreia de cada
+                            fonte e esta lista saiu com 33 nomes, esticando a seção e deixando o
+                            card de preço ao lado com um vazio enorme (Felipe). A causa foi
+                            corrigida no backend; o teto garante que a lista nunca volte a mandar
+                            na altura do card. */}
+                        {cn.itens.slice(0, MAX_NOVOS_AGREGADOR).map((i, k) => (
+                          <div key={k} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {i.nome ?? nomeRede(i.rede)} · {metros(i.distancia_m)} · no agregador desde {i.primeira_semana}
                           </div>
                         ))}
+                        {cn.itens.length > MAX_NOVOS_AGREGADOR && (
+                          <div style={{ color: 'var(--tx-muted)' }}>
+                            +{cn.itens.length - MAX_NOVOS_AGREGADOR} outras entraram no agregador a 2 km
+                          </div>
+                        )}
                       </div>
                     )}
                   </Quadro>
