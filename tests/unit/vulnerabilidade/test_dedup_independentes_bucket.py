@@ -154,7 +154,7 @@ def test_equivalencia_contra_varredura_completa() -> None:
     Compara-se o CONJUNTO de chaves colapsadas, não o representante de cada uma — e o invariante
     forte, "não perder colapso", é o que este teste trava; é o que o `k` cravado violava.
 
-    **Até a DEC-064 esta docstring dizia que a função "para no PRIMEIRO candidato que encontrar".
+    **Até a DEC-065 esta docstring dizia que a função "para no PRIMEIRO candidato que encontrar".
     Deixou de ser verdade:** o representante passou a ser quem CASA O NOME e, sem casamento, o MAIS
     PRÓXIMO. A comparação por CONJUNTO continua sendo a certa aqui — ela prova cobertura do bucket,
     que é outra propriedade —, e a escolha do representante ganhou teste próprio em

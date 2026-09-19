@@ -581,7 +581,7 @@ def _assert_schema_score(df: pd.DataFrame) -> None:
                 f"deve equivaler a `{coluna}` nao nulo"
             )
 
-    # `[DEC-064]` O invariante tem DOIS regimes, e cada um tem a sua checagem — nenhum modo de
+    # `[DEC-065]` O invariante tem DOIS regimes, e cada um tem a sua checagem — nenhum modo de
     # falha fica sem vigia.
     #
     # Com o `s1` ATIVO (o caso de sempre), o biconditional vale intacto: `v1` existe se e somente

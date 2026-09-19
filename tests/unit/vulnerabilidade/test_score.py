@@ -201,7 +201,7 @@ def _tokens(linha: pd.Series) -> list[str]:
 def _saida_valida() -> pd.DataFrame:
     """Saída bem-formada com os TRÊS regimes que interessam, base dos testes de `_assert_schema`.
 
-    `[DEC-064]` Até a DEC-064 os três regimes eram `{s1,s3,s4}`, o ramp-up `{s1}` e o vazio. Com o
+    `[DEC-065]` Até a DEC-065 os três regimes eram `{s1,s3,s4}`, o ramp-up `{s1}` e o vazio. Com o
     `s1` INATIVO os dois últimos COLAPSAM num só — ramp-up sem `s1` é ausência de sinal —, e a
     fixture deixaria de cobrir o que diz cobrir. Quem separa os três agora é a PRESSÃO, fornecida
     só ao hex que tem par no sinal 1:
@@ -284,7 +284,7 @@ def test_pesos_do_d4_seguem_congelados_e_somam_um() -> None:
     assert abs(sum(c.PESOS_ALVO_D4.values()) - 1.0) < 1e-9
     for sinal, peso in c.PESOS_ALVO_D4.items():
         assert c.PESOS_ALVO_SINAIS[sinal] == peso, f"o S6 nao pode ter mexido em `{sinal}`"
-    # `[DEC-064]` O `s1` entrou em `SINAIS_INATIVOS`, e a linha acima é o que prova que isso NÃO
+    # `[DEC-065]` O `s1` entrou em `SINAIS_INATIVOS`, e a linha acima é o que prova que isso NÃO
     # foi repesagem: `PESOS_ALVO_D4` e `PESOS_ALVO_SINAIS` seguem IDÊNTICOS. Inativar tira o sinal
     # da soma pela porta da disponibilidade — `renormalizar_pesos` divide pelos PRESENTES —, sem
     # digitar peso novo. O gate de 2026-07-23 continua fechado.
@@ -331,7 +331,7 @@ def test_s6_entra_no_regime_quando_o_insumo_vem(serie_madura_s3_s4: list[pd.Data
     linha = _linha_de(out, "k_tp")
     assert "s6" in _tokens(linha)
     assert float(linha["v6"]) == pytest.approx(0.60)
-    # `[DEC-064]` 3, não 4: o `s1` saiu da conta (`SINAIS_INATIVOS`).
+    # `[DEC-065]` 3, não 4: o `s1` saiu da conta (`SINAIS_INATIVOS`).
     assert int(linha["n_sinais_disponiveis"]) == 3
 
 
@@ -469,9 +469,9 @@ def test_renormalizar_pesos_rejeita_sinal_desconhecido() -> None:
 # CA-2 — os regimes de disponibilidade e os seus pesos efetivos
 # --------------------------------------------------------------------------- #
 def test_regime_so_s1_NAO_OCORRE_MAIS(serie_rampup: list[pd.DataFrame]) -> None:
-    """`[DEC-064]` O regime `{s1}` deixou de existir, e a consequência é ausência — não zero.
+    """`[DEC-065]` O regime `{s1}` deixou de existir, e a consequência é ausência — não zero.
 
-    Até a DEC-064 este teste provava o ramp-up: S3/S4 fora, S1 com peso `1,00`, score `{0, 50}`.
+    Até a DEC-065 este teste provava o ramp-up: S3/S4 fora, S1 com peso `1,00`, score `{0, 50}`.
     Com o `s1` em `SINAIS_INATIVOS` a série imatura sem pressão fica com ZERO sinais, e a regra é
     explícita: score AUSENTE, jamais `0` — `0` afirmaria solidez sobre quem não se mediu.
 
@@ -490,7 +490,7 @@ def test_regime_so_s1_NAO_OCORRE_MAIS(serie_rampup: list[pd.DataFrame]) -> None:
 def test_regime_de_um_sinal_agora_e_alcancavel_pela_rota_ordinaria(
     serie_madura_s3: list[pd.DataFrame],
 ) -> None:
-    """`[DEC-064]` O regime de UM sinal deixou de exigir frame forjado.
+    """`[DEC-065]` O regime de UM sinal deixou de exigir frame forjado.
 
     Chamava-se `test_regime_s1_s3` e provava a renormalização de `{s1, s3}`. Com o `s1` em
     `SINAIS_INATIVOS` esse assunto COLAPSOU no de `test_regime_so_s3` (abaixo), que cobre `{s3}`
@@ -517,7 +517,7 @@ def test_regime_de_um_sinal_agora_e_alcancavel_pela_rota_ordinaria(
 def test_regime_s3_s4(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
     """13 semanas: os sinais do Plano B que PESAM entram, com os efetivos renormalizados.
 
-    `[DEC-064]` Chamava-se `test_regime_s1_s3_s4`. O Plano B tinha três sinais porque o `s1`
+    `[DEC-065]` Chamava-se `test_regime_s1_s3_s4`. O Plano B tinha três sinais porque o `s1`
     contava; com ele inativo, o regime maduro sem pressão é `{s3, s4}`. Os PESOS-ALVO não mudaram
     — quem muda é o conjunto dos presentes, e `renormalizar_pesos` divide por eles.
     """
@@ -545,7 +545,7 @@ def test_regime_so_s3() -> None:
     É fiel ao §8.4 ratificado (S3 maduro é sinal maduro), mas significa que o guardrail criado pelo
     G-D1 **não cobre** este regime.
 
-    `[DEC-064]` **Até 2026-09-17 esta docstring dizia que o regime era "inalcançável pelo caminho
+    `[DEC-065]` **Até 2026-09-17 esta docstring dizia que o regime era "inalcançável pelo caminho
     `base_dir`"**, porque os dois frames saem da MESMA série e todo hex do churn tem par no sinal 1.
     O par continua existindo — mas o `s1` entrou em `SINAIS_INATIVOS` e deixou de CONTAR, então o
     regime de um sinal passou a ser alcançável pela rota ordinária (ver o teste logo acima). A
@@ -616,7 +616,7 @@ def test_ordenavel_nao_separa_regimes_de_tamanho_diferente() -> None:
     assert not bool(ordenado["score_vulnerabilidade_ordenavel"].isna().any()), (
         "nenhuma das duas é filtrada pela ordenável: a segmentação tem de ser explícita"
     )
-    # `[DEC-064]` `{1, 2}`: o regime completo virou `{s3, s4}` quando o `s1` saiu da conta. A
+    # `[DEC-065]` `{1, 2}`: o regime completo virou `{s3, s4}` quando o `s1` saiu da conta. A
     # propriedade sob teste — regimes de TAMANHOS diferentes não são separados pela ordenável — é
     # a mesma, e continua exigindo que a segmentação seja explícita.
     assert set(int(v) for v in ordenado["n_sinais_disponiveis"]) == {1, 2}
@@ -660,7 +660,7 @@ def test_v1_por_mapa_categorico() -> None:
         [_linha_presenca(HEX_A), _linha_presenca(HEX_B, fontes=("totalpass",))]
     )
     out = calcular_score_vulnerabilidade(churn=churn, presenca=presenca)
-    # `[DEC-064]` O mapa continua EXISTINDO e continua sendo o que governa o `v1` no dia em que o
+    # `[DEC-065]` O mapa continua EXISTINDO e continua sendo o que governa o `v1` no dia em que o
     # `s1` for religado — então ele segue provado, na CONSTANTE. O que morreu foi a rota pelo
     # score: com o sinal inativo, `v1` é nulo e não exibe mais o mapa.
     from motor_expansao.vulnerabilidade.score import _V1_POR_N_AGREGADORES
@@ -685,7 +685,7 @@ def test_nenhum_percentil_toca_v1_nem_v3() -> None:
 
     alvo_sozinha = _linha_de(sozinha, "k_alvo")
     alvo_multidao = _linha_de(multidao, "k_alvo")
-    # `[DEC-064]` O `v1` saiu da conta e é nulo dos dois lados — comparar `float(nan)` provaria
+    # `[DEC-065]` O `v1` saiu da conta e é nulo dos dois lados — comparar `float(nan)` provaria
     # nada. A propriedade (nenhum percentil toca os componentes) segue provada pelo `v3`.
     assert pd.isna(alvo_sozinha["v1"]) and pd.isna(alvo_multidao["v1"])
     assert float(alvo_sozinha["v3"]) == float(alvo_multidao["v3"])
@@ -803,7 +803,7 @@ def test_v4_nao_depende_do_universo() -> None:
 # CA-6 — o regime `{S1}` produz `{0, 50}`: a evidência que o gate releu
 # --------------------------------------------------------------------------- #
 def test_rampup_sem_pressao_fica_SEM_NOTA(serie_rampup: list[pd.DataFrame]) -> None:
-    """`[DEC-064]` O ramp-up produzia `{0, 50}` — os dois valores do `v1`. Agora produz ausência.
+    """`[DEC-065]` O ramp-up produzia `{0, 50}` — os dois valores do `v1`. Agora produz ausência.
 
     Aqueles dois valores eram o `v1` e nada mais. Com o `s1` fora da conta e sem pressão, não há
     componente algum, e a nota é AUSENTE. Em produção isto não ocorre: o entregável sempre fornece
@@ -827,7 +827,7 @@ def test_rampup_flag_score_provisorio_em_todas_as_linhas(
 def test_rampup_coluna_ordenavel_e_toda_nula(serie_rampup: list[pd.DataFrame]) -> None:
     """G-D1: ordenar um frame provisório devolve NADA, não devolve lixo.
 
-    `[DEC-064]` A segunda asserção INVERTEU: antes o score existia (era `{0, 50}`) e só o
+    `[DEC-065]` A segunda asserção INVERTEU: antes o score existia (era `{0, 50}`) e só o
     `ordenavel` era nulo; agora não há sinal algum, então o próprio score é ausente. O que o G-D1
     protege — ordenação não devolve lixo — segue valendo, por um caminho mais forte.
     """
@@ -888,8 +888,8 @@ def test_pressao_tira_o_rampup_do_regime_provisorio(serie_rampup: list[pd.DataFr
     # E DEPOIS de o insumo chegar: a régua deixa de ter dois valores e volta a ordenar.
     assert not bool(com["flag_score_provisorio"].any())
     assert not bool(com["score_vulnerabilidade_ordenavel"].isna().any())
-    # A ordenação só faz sentido se houver o que ordenar, e `[DEC-064]` mudou O QUE HÁ antes do
-    # S6 — não a emenda. Até a DEC-064 a régua sem S6 era CATEGÓRICA (o `v1` só assumia
+    # A ordenação só faz sentido se houver o que ordenar, e `[DEC-065]` mudou O QUE HÁ antes do
+    # S6 — não a emenda. Até a DEC-065 a régua sem S6 era CATEGÓRICA (o `v1` só assumia
     # `{0.0, 0.5}`, então o score só podia ser `{0, 50}`), e era esse domínio de dois valores que
     # o G-D1 se recusava a ordenar. Com o `s1` em `SINAIS_INATIVOS`, a série imatura sem pressão
     # não tem sinal ALGUM: a nota é AUSENTE. O S6 continua sendo o que devolve uma régua contínua,
@@ -936,7 +936,7 @@ def test_score_zero_no_rampup_nao_significa_nao_vulneravel(
     churn, presenca = _insumos(serie_rampup)
     out = calcular_score_vulnerabilidade(churn=churn, presenca=presenca)
     linha = _linha_de(out, "k_tp")
-    # `[DEC-064]` O `0` que este teste explicava NÃO PODE MAIS OCORRER: ele vinha do `v1` valendo
+    # `[DEC-065]` O `0` que este teste explicava NÃO PODE MAIS OCORRER: ele vinha do `v1` valendo
     # `0.0` (hex com os 2 agregadores), e o `v1` saiu da conta. O mal-entendido que o teste
     # prevenia — ler `0` como "academia sólida" — deixa de ser possível, porque agora não há nota.
     assert pd.isna(linha["score_vulnerabilidade"])
@@ -1118,7 +1118,7 @@ def test_join_da_mesma_serie_nao_tem_left_only(serie_madura_s3_s4: list[pd.DataF
     """Invariância do INSUMO (não do tipo): os dois frames vindos da MESMA série sempre casam."""
     churn, presenca = _insumos(serie_madura_s3_s4)
     out = calcular_score_vulnerabilidade(churn=churn, presenca=presenca)
-    # `[DEC-064]` A prova de que os dois frames casam é a coluna de AUDITORIA, não o `v1`: com o
+    # `[DEC-065]` A prova de que os dois frames casam é a coluna de AUDITORIA, não o `v1`: com o
     # `s1` inativo o componente é nulo por decisão, e usá-lo aqui mediria outra coisa.
     assert not bool(out["n_agregadores_no_hex"].isna().any())
 
@@ -1321,7 +1321,7 @@ def test_assert_schema_rejeita_score_zero_com_zero_sinais() -> None:
 
 
 def test_assert_schema_rejeita_flag_provisorio_incoerente() -> None:
-    # `[DEC-064]` A linha forjada mudou de `k_so_s1` para `k_sem_sinal`, e a razão é a fixture: com
+    # `[DEC-065]` A linha forjada mudou de `k_so_s1` para `k_sem_sinal`, e a razão é a fixture: com
     # pressão no hex, `k_so_s1` está no regime `{s6}` e portanto JÁ é não-provisória — forçar
     # `False` nela deixou de ser incoerência, e o teste passava a não testar nada. Quem é
     # provisória agora é a linha de ZERO sinais.
@@ -1345,7 +1345,7 @@ def test_assert_schema_rejeita_ordenavel_incoerente() -> None:
 
 
 def test_assert_schema_rejeita_versao_inesperada() -> None:
-    # O valor invalido e' DERIVADO da constante, nunca um literal de versao. Ate' a DEC-064 este
+    # O valor invalido e' DERIVADO da constante, nunca um literal de versao. Ate' a DEC-065 este
     # teste cravava `"score_vulnerabilidade_v9"` como impossivel -- e o bump daquela DEC o tornou
     # o valor CORRENTE, entao o schema parou de rejeitar e o teste parou de testar. Um literal
     # aqui e' uma bomba-relogio armada para o proximo bump; derivando, nenhum bump pode colidir.
@@ -1402,7 +1402,7 @@ def test_status_churn_e_fato_propagado_sem_peso() -> None:
             _linha_churn("k_sumiu", status="sumiu_recente", imatura=True),
         ]
     )
-    # `[DEC-064]` Com pressão: sem ela as duas linhas ficariam SEM NOTA, e `null == null` é falso
+    # `[DEC-065]` Com pressão: sem ela as duas linhas ficariam SEM NOTA, e `null == null` é falso
     # — a propriedade (o `status_churn` não move a nota) precisa de uma nota para ser provada.
     out = calcular_score_vulnerabilidade(
         churn=churn, presenca=_presenca([_linha_presenca()]), pressao=_pressao([(HEX_A, 40.0)])

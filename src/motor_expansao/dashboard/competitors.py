@@ -414,7 +414,7 @@ AGREGADOR_LOGO_FILE = "logo_wellhub.png"
 AGREGADOR_LOGO_PACOTE = Path(__file__).resolve().parent / "assets" / AGREGADOR_LOGO_FILE
 AGREGADOR_BRAND = {"label": "Independente", "short": "", "bg": "#F04E6E", "fg": "#FFFFFF"}
 
-# `[DEC-064]` TotalPass. Ate' 2026-09-17 havia UM app so': enquanto o D9 da DEC-039 mantinha o
+# `[DEC-065]` TotalPass. Ate' 2026-09-17 havia UM app so': enquanto o D9 da DEC-039 mantinha o
 # TotalPass fora da serie, "independente" e "veio do WellHub" eram a mesma coisa e a logo rosa
 # nunca mentia. Com o TotalPass no entregavel, academia que so' existe nele sairia com a bandeira
 # do CONCORRENTE num PDF entregue -- e nada ficaria vermelho, porque a arte nao entra em conta
@@ -434,9 +434,9 @@ AGREGADOR_TP_BRAND = {"label": "Independente", "short": "", "bg": "#27D07D", "fg
 
 # As duas chaves COMO CONJUNTO, porque tres lugares perguntam "esta chave e' de independente?":
 # o TAMANHO do pino (`_paste_logo_pin` no Pontual e o ramo gemeo no Municipal) e a PRECEDENCIA de
-# desenho (`_project_points`). Ate' a DEC-064 a pergunta era "a chave e' vazia?" e `bool()` bastava,
+# desenho (`_project_points`). Ate' a DEC-065 a pergunta era "a chave e' vazia?" e `bool()` bastava,
 # porque so' havia uma resposta possivel.
-# `[DEC-064 / fatia 2]` A academia que esta' nos DOIS apps. Ela NAO tem arte propria: o tile
+# `[DEC-065 / fatia 2]` A academia que esta' nos DOIS apps. Ela NAO tem arte propria: o tile
 # COMPOE as duas existentes (M2). Por isso ela entra em `CHAVES_AGREGADOR` e em `MARCA_AGREGADOR`,
 # mas **nao** em `ARTE_AGREGADOR` -- a assimetria e' o desenho, nao esquecimento.
 #
@@ -456,7 +456,7 @@ ARTE_AGREGADOR: dict[str, tuple[str, Path]] = {
     CHAVE_AGREGADOR_TP: (AGREGADOR_TP_LOGO_FILE, AGREGADOR_TP_LOGO_PACOTE),
 }
 
-# `[DEC-064 / fatia 2]` A arte do terceiro estado para a WEB.
+# `[DEC-065 / fatia 2]` A arte do terceiro estado para a WEB.
 #
 # O PDF COMPOE em tempo de render (`_render_square_logo_tile`, ramo do `__ambos__`); a web NAO pode
 # -- a `IconLayer` do deck.gl recebe URL de imagem. Entao o asset e' gerado deste codigo e gravado
@@ -510,14 +510,14 @@ ROTULO_AGREGADOR: dict[str, str] = {
 def chave_agregador_da_fonte(fonte: object, fontes: object = None) -> str:
     """`fonte`/`fontes_da_academia` da linha -> chave do marcador. UMA redacao, tres chamadores.
 
-    `[DEC-064 / fatia 2]` `fontes` e' a coluna `fontes_da_academia` (`alvos_ma_nomeados_v8`), que
+    `[DEC-065 / fatia 2]` `fontes` e' a coluna `fontes_da_academia` (`alvos_ma_nomeados_v8`), que
     diz QUAIS apps listam a academia. Com virgula -> `__ambos__`. O `or` mora AQUI, e nao no
     chamador, porque a regra escrita em tres lugares nao da erro: desencontra em silencio.
 
     Artefato ANTERIOR ao v8 nao tem a coluna, e ai' o fallback para `fonte` reproduz o desenho de
     hoje -- nao inventa estado novo.
 
-    `[DEC-064]` Fonte ausente ou desconhecida cai no WellHub, e isso e' deliberado: o artefato
+    `[DEC-065]` Fonte ausente ou desconhecida cai no WellHub, e isso e' deliberado: o artefato
     publicado hoje (`alvos_ma_nomeados_v5`) tem `fonte` em 100% das 19.329 linhas e todas valem
     `wellhub`, entao o fallback REPRODUZ o desenho anterior a esta DEC em vez de inventar um
     estado novo. Ele nao AFIRMA procedencia; ele preserva o que ja' era verdade.
@@ -538,7 +538,7 @@ def chave_agregador_da_fonte(fonte: object, fontes: object = None) -> str:
 PIN_INDEPENDENTE_PX = 20
 
 # cache de logos PNG: rede -> icon_data; "__ultra__" para Ultra; "__wellhub__" e "__totalpass__"
-# para as independentes de cada app (DEC-064)
+# para as independentes de cada app (DEC-065)
 _ICON_CACHE: dict[str, dict] = {}
 
 
@@ -627,7 +627,7 @@ def preload_logos(competitors_dir: Path, ultra_dir: Path | None = None) -> None:
             _ICON_CACHE["__ultra__"] = icon
     # DEC-046: marcador do independente. O diretorio vence o pacote; sem nenhum dos dois o
     # tile cai no ponto solido, sem erro nem pin faltando.
-    # `[DEC-064]` Uma passada POR APP: cada um tem arte e cor proprias, e a precedencia
+    # `[DEC-065]` Uma passada POR APP: cada um tem arte e cor proprias, e a precedencia
     # diretorio-sobre-pacote vale para os dois.
     for chave, (nome_arte, arte_pacote) in ARTE_AGREGADOR.items():
         for arte in (competitors_dir / nome_arte, arte_pacote):
@@ -1105,7 +1105,7 @@ def _render_square_logo_tile(
         # ele cai no fallback abaixo e vira uma placa SOLIDA na cor da marca — `short` e'
         # vazio de proposito, porque sigla nenhuma distingue 19 mil academias sem marca
         # (o piloto abandonou o "IND" pelo mesmo motivo, em 2026-08-26).
-        # `[DEC-064]` A cor sai do APP: rosa no WellHub, verde no TotalPass. E' ela que carrega a
+        # `[DEC-065]` A cor sai do APP: rosa no WellHub, verde no TotalPass. E' ela que carrega a
         # distincao quando a arte falta -- por isso cada app tem COR, e nao so' logo.
         brand = dict(MARCA_AGREGADOR[key])
     else:
@@ -1133,7 +1133,7 @@ def _render_square_logo_tile(
             fill=_SQUARE_LOGO_SHADOW_RGBA,
         )
 
-    # `[DEC-064 / fatia 2]` O terceiro estado: academia nos DOIS apps.
+    # `[DEC-065 / fatia 2]` O terceiro estado: academia nos DOIS apps.
     #
     # M2 = placa BIPARTIDA com as duas logos, uma por metade. Nao ha' arte propria para ele: as
     # duas sao as que ja' estao no `_ICON_CACHE`. Faltando qualquer uma, o `return` nao acontece e
@@ -1204,7 +1204,7 @@ def _render_square_logo_tile(
 
     # fallback: placa na cor da marca + sigla centrada
     draw.rounded_rectangle(card, radius=_SQUARE_LOGO_RADIUS, fill=bg)
-    # `[DEC-064 / fatia 2]` A B5: sem arte, o "ambos" vira placa BIPARTIDA (rosa | verde) em vez de
+    # `[DEC-065 / fatia 2]` A B5: sem arte, o "ambos" vira placa BIPARTIDA (rosa | verde) em vez de
     # solida. E' a degradacao escolhida -- e a que MAIS importa, porque a cor sozinha continua
     # dizendo "esta nos dois" quando a logo nao chega.
     if key == CHAVE_AMBOS:

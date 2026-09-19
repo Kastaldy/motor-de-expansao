@@ -729,7 +729,7 @@ passaria despercebido para sempre. Limiar `MONITOR_AGREGADOR_MAX_DIAS` (default 
 > segura para um monitor. Chave ilegível cai no mtime e **diz** que caiu, no texto do alerta.
 
 **Fronteira com o BLK-MA-20 (DEC-039, D9) — o recorte por FONTE acabou** *(emenda de
-2026-08-25; revogada pela DEC-064 em 2026-09-17)*. A partição do **TotalPass é gravada desde a
+2026-08-25; revogada pela DEC-065 em 2026-09-17)*. A partição do **TotalPass é gravada desde a
 primeira semana** (o cronômetro de `MIN_SEMANAS = 8` são 8 semanas na cadência real — cada semana
 de espera é irrecuperável). **O BLK-MA-20 fechou:** a dedup TP × WH foi calibrada contra par real
 (a régua de 50 m, antes *arbitrada*, foi medida e MANTIDA) e o TotalPass entra **inteiro** — oferta
@@ -740,18 +740,18 @@ o motivo de o `s1` não pesar — mas quem o contém agora é o `SINAIS_INATIVOS
 fonte.
 
 **A fronteira não sumiu: mudou de lugar.** O que impedia o TotalPass de contaminar o ranking era
-a FONTE ficar fora da série; desde a DEC-064 é o **SINAL** ficar fora da conta — `s1` está em
+a FONTE ficar fora da série; desde a DEC-065 é o **SINAL** ficar fora da conta — `s1` está em
 `SINAIS_INATIVOS`, propagado como fato e sem peso. Proteger pela fonte custaria as 15.841
 candidatas que só o TotalPass conhece; proteger pelo sinal custa zero, porque `v1` hoje vale o
 mesmo para todas as academias.
 
 O recorte é imposto por código **na ausência de gesto**: `alvos_ma` sem `--fontes` aplica
 `FONTES_ENTREGAVEL_DEFAULT = ("totalpass", "wellhub")` e registra o recorte no log.
-`--fontes wellhub` reproduz o universo anterior à DEC-064 (19.329) sem mexer em código.
+`--fontes wellhub` reproduz o universo anterior à DEC-065 (19.329) sem mexer em código.
 
 > **Religar o `s1` NÃO é "tirar uma entrada de uma lista".** Com o TotalPass na série, removê-lo de
 > `SINAIS_INATIVOS` sem levar o sinal ao grão por ACADEMIA ressuscita, no mesmo instante, o erro de
-> 36,99% que a DEC-064 mediu. Os dois atos são inseparáveis.
+> 36,99% que a DEC-065 mediu. Os dois atos são inseparáveis.
 
 O flag `--todas-as-fontes` continua existindo e continua sendo o gesto EXPLÍCITO para consumir a
 série **inteira** — hoje isso significa "além das duas do default" (incompatível com `--fontes`, e o
@@ -759,7 +759,7 @@ log sai em `WARNING`). O que ele deixou de ser é a porta que separava o TotalPa
 porta virou o `SINAIS_INATIVOS`. A primeira implementação do recorte tinha `default=None` e, com
 isso, a propriedade que a DEC-039 rejeitou com a frase *"é prosa: a cadeia roda com as duas fontes
 sem editar uma linha"* — o gesto que vazava era **não digitar o flag**, e duas das três receitas
-canônicas do próprio repositório o omitiam. A lição sobrevive à DEC-064 e é por isso que o default
+canônicas do próprio repositório o omitiam. A lição sobrevive à DEC-065 e é por isso que o default
 continua sendo declarado em toda receita copiável.
 
 ### Entregável de M&A no piloto (BLK-MA-19 — os pins de academia no Mapa Territorial)
@@ -791,13 +791,13 @@ python -m motor_expansao.vulnerabilidade.alvos_ma \
 ```
 
 > **Não falta `--fontes` aqui — a omissão JÁ aplica o recorte vigente** *(DEC-039, D9; emenda de
-> 2026-08-25; default trocado pela DEC-064 em 2026-09-17)*. Omitir o flag aplica
+> 2026-08-25; default trocado pela DEC-065 em 2026-09-17)*. Omitir o flag aplica
 > `FONTES_ENTREGAVEL_DEFAULT = ("totalpass", "wellhub")`, e o log da execução diz qual recorte
 > valeu. **Até 2026-09-17 este mesmo blockquote afirmava que a omissão aplicava `("wellhub",)`** — e
 > deixou de ser verdade no dia em que o default mudou, no bloco que o operador COPIA; é a mesma
 > falha que originou a emenda E3 da DEC-039, quando o bloco rodava **sem recorte nenhum** vinte e
 > quatro linhas depois de a seção do cron prometer, em prosa, que "o entregável roda `--fontes
-> wellhub`". Para reproduzir o universo anterior à DEC-064 (19.329 academias): `--fontes wellhub`.
+> wellhub`". Para reproduzir o universo anterior à DEC-065 (19.329 academias): `--fontes wellhub`.
 > Para a série inteira, além das duas: `--todas-as-fontes`.
 
 > **A dedup de cadeias da DEC-062 também vale sem flag.** O entregável liga a trava de município e

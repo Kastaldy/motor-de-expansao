@@ -16,7 +16,7 @@ import { metros, nomeRede } from './Inteligencia'
 
    Camada visual, READ-ONLY. Redes aparecem com a LOGO; independentes, com o
    ícone do APP QUE AS REVELOU — o mesmo critério do Mapa Territorial, para o
-   operador não aprender duas legendas. `[DEC-064]` Até 2026-09-17 era sempre o
+   operador não aprender duas legendas. `[DEC-065]` Até 2026-09-17 era sempre o
    ícone do Wellhub, e este comentário dizia "todas vêm do feed do agregador":
    verdade enquanto o TotalPass estava fora da série, falsa depois que ele
    entrou no entregável. A cor por
@@ -36,11 +36,11 @@ const BASEMAP = {
 /** Identidade de módulo (estável): um objeto novo por render reempacotaria o atlas do deck.gl. */
 const ICONE_WELLHUB = { url: '/logo-wellhub.png', width: 128, height: 128, anchorX: 64, anchorY: 64, mask: false }
 const ICONE_TOTALPASS = { url: '/logo-totalpass.jpg', width: 128, height: 128, anchorX: 64, anchorY: 64, mask: false }
-/** `[DEC-064 / fatia 2]` Academia nos DOIS apps. Arte COMPOSTA das outras duas e gerada por
+/** `[DEC-065 / fatia 2]` Academia nos DOIS apps. Arte COMPOSTA das outras duas e gerada por
  *  `competitors.compor_arte_ambos`, com teste que a trava contra envelhecer: no PDF o M2 é
  *  composto em tempo de render, mas a `IconLayer` recebe URL e precisa do arquivo. */
 const ICONE_AMBOS = { url: '/logo-ambos.png', width: 128, height: 128, anchorX: 64, anchorY: 64, mask: false }
-/** `[DEC-064]` A marca sai do app. Sem `fonte` (payload antigo) cai no Wellhub — que era o
+/** `[DEC-065]` A marca sai do app. Sem `fonte` (payload antigo) cai no Wellhub — que era o
  *  universo inteiro até esta DEC, então o fallback reproduz o desenho anterior. */
 const iconeDoApp = (fonte?: string | null, fontes?: string | null) => {
   const declarado = String(fontes ?? '').toLowerCase()
@@ -299,7 +299,7 @@ export default function FichaMapa({
         ) : (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              {/* [DEC-064] DUAS entradas, porque agora há duas artes. Esta legenda chegou a ficar
+              {/* [DEC-065] DUAS entradas, porque agora há duas artes. Esta legenda chegou a ficar
                   NEUTRA por uma conclusão errada minha — a de que estes pins eram coral. O coral é
                   a cor do TEXTO da pílula no Mapa (`--indep-tx`), não a arte do pino: os pins daqui
                   sempre usaram a logo do agregador. */}

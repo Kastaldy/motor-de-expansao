@@ -951,11 +951,11 @@ def carregar_crescimento() -> pd.DataFrame | None:
 # interna e nao tem uso na tela.
 _COLS_NOMEADAS = [
     "nome",
-    # `[DEC-064]` De qual app veio a academia. O artefato SEMPRE teve a coluna; o piloto e' que a
+    # `[DEC-065]` De qual app veio a academia. O artefato SEMPRE teve a coluna; o piloto e' que a
     # descartava aqui, nesta lista de permissao. Sem ela a tela nao tem como distinguir WellHub de
     # TotalPass -- e a legenda afirmava "(Wellhub)" para as duas.
     "fonte",
-    # `[DEC-064 / fatia 2]` QUAIS apps a listam (`alvos_ma_nomeados_v8`). Mesma armadilha da linha
+    # `[DEC-065 / fatia 2]` QUAIS apps a listam (`alvos_ma_nomeados_v8`). Mesma armadilha da linha
     # acima: a coluna existe no artefato e morre AQUI se nao for permitida.
     "fontes_da_academia",
     "lat",
@@ -1074,9 +1074,9 @@ def _pins_independentes(sel: pd.DataFrame) -> dict[str, Any]:
             "lat": _num(t.lat, 6),
             "lng": _num(t.lng, 6),
             "nome": _clean(getattr(t, "nome", "")),
-            # `[DEC-064]` O app que revelou a academia -- decide a arte do pino no mapa.
+            # `[DEC-065]` O app que revelou a academia -- decide a arte do pino no mapa.
             "fonte": _texto(getattr(t, "fonte", None)),
-            # `[DEC-064 / fatia 2]` Com virgula (`"totalpass,wellhub"`), o pino sai no terceiro
+            # `[DEC-065 / fatia 2]` Com virgula (`"totalpass,wellhub"`), o pino sai no terceiro
             # estado. Nulo em artefato anterior ao `v8`, e ai' o desenho cai na `fonte`.
             "fontes_da_academia": _texto(getattr(t, "fontes_da_academia", None)),
             # `score` e' o do §8.4 — sempre preenchido quando ha >= 1 sinal. `ordenavel` e' nulo no
@@ -8807,12 +8807,12 @@ def _rede_concorrencia_nova() -> dict[str, Any]:
 
     A série de snapshots vive só na VPS (DEC-039). Fora dela o dicionário volta com
     `disponivel=False` e a tela diz que não há série — nunca "nenhum concorrente novo".
-    `[DEC-064]` O TotalPass segue FORA, mas a RAZÃO mudou — e a antiga virou falsa. Ela dizia
+    `[DEC-065]` O TotalPass segue FORA, mas a RAZÃO mudou — e a antiga virou falsa. Ela dizia
     "como no score (D9: a dedup TP x WH não está calibrada)", e as duas metades caíram: a dedup
     FOI calibrada (BLK-MA-20) e o score deixou de excluir a fonte. A razão real é o CRONÔMETRO:
     esta superfície mede quem ENTROU no feed, e a série não tem história de TotalPass. Incluí-lo
     agora faria TODA academia dele aparecer como "entrou esta semana" — a mesma onda de falso
-    positivo que a DEC-061 existe para barrar. Presença e churn estão fora do escopo da DEC-064
+    positivo que a DEC-061 existe para barrar. Presença e churn estão fora do escopo da DEC-065
     por decisão explícita dela.
     """
     from motor_expansao.vulnerabilidade.snapshots import ler_snapshots

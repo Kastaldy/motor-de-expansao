@@ -580,12 +580,12 @@ def _paste_logo_pin(
     # (`test_camadas_existentes_ficam_byte_identicas_com_os_defaults_novos` e
     # `test_shared_transformer_bytes_identicos` cobram exatamente isso).
     if not key:
-        # `[DEC-064]` Chave vazia = independente de fonte desconhecida. Cai no WellHub para
+        # `[DEC-065]` Chave vazia = independente de fonte desconhecida. Cai no WellHub para
         # reproduzir o desenho anterior a esta DEC, nao para afirmar que ela veio de la'.
         key = CHAVE_AGREGADOR
     if key in CHAVES_AGREGADOR:
         # O tamanho e' propriedade de SER independente, nao de qual app a revelou. Ate' a
-        # DEC-064 os dois testes eram o mesmo `if`, porque so' havia uma chave possivel.
+        # DEC-065 os dois testes eram o mesmo `if`, porque so' havia uma chave possivel.
         size = PIN_INDEPENDENTE_PX
     tile = cast(Image.Image, _render_square_logo_tile(key, size))
     image.paste(tile, (int(px) - size // 2, int(py) - size // 2), tile)
@@ -754,7 +754,7 @@ def _project_points(
         if rede is not None and not pd.isna(rede) and str(rede).strip():
             key = str(rede)
         else:
-            # `[DEC-064]` Linha sem `rede` e' INDEPENDENTE, e a chave passa a dizer de QUAL app
+            # `[DEC-065]` Linha sem `rede` e' INDEPENDENTE, e a chave passa a dizer de QUAL app
             # ela veio. Antes era string vazia e `_paste_logo_pin` resolvia para o WellHub -- o
             # que era correto enquanto o TotalPass estava fora da serie.
             key = chave_agregador_da_fonte(row.get("fonte"), row.get("fontes_da_academia"))
@@ -765,7 +765,7 @@ def _project_points(
     # produziu e' preservada. Sem independente no recorte (todo caminho anterior a DEC-046, e os
     # pins da Ultra) a lista sai IDENTICA.
     #
-    # `[DEC-064]` O teste DEIXOU de ser `bool(chave)`. Com a chave do app a independente virou
+    # `[DEC-065]` O teste DEIXOU de ser `bool(chave)`. Com a chave do app a independente virou
     # "verdadeira" e passaria a ser desenhada POR CIMA das cadeias: a precedencia se inverteria
     # em silencio, sem erro e sem nada vermelho fora do teste que cobre a ordem.
     coords.sort(key=lambda ponto: ponto[2] not in CHAVES_AGREGADOR)
