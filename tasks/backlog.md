@@ -2201,7 +2201,7 @@ healthcheck; (7) a fronteira com o BLK-MA-20 escrita na DEC; (8) READ-ONLY sobre
 | **Criticidade** | **Média** — mexe num wrapper de cron **já aplicado na VPS**, o que exige reaplicação manual do Felipe. READ-ONLY sobre o M1. |
 | **Prioridade** | Média. O risco é real mas de cauda: exige que uma rodada de agregador atrase até domingo, o que hoje só acontece por travamento. |
 | **Esteira** | Block Orchestrator → Builder → QA → `[aplicação na VPS: passo MANUAL — §6]`. |
-| **Status** | Pendente — **criado em 2026-08-26**, fatiado do BLK-MA-21 pela decisão de escopo do sintetizador. |
+| **Status** | Pendente — **criado em 2026-08-26**, fatiado do BLK-MA-21 pela decisão de escopo do sintetizador. **ENCOLHIDO pela [DEC-064](../docs/decisions/DEC-064.md) (2026-09-18):** com a poda fora do regime (D1), o caso "duas podas concorrentes" some; **sobrevive** o achado principal — o wrapper de domingo não tem lock nenhum, e a poda segue existindo como ato manual. |
 | **Depende de** | BLK-MA-21 (o wrapper da terça e a grade semanal). |
 | **Autonomia** | **manual (NÃO loop-safe)** — cron de produção. |
 
@@ -2234,7 +2234,7 @@ podar concorrentemente; suíte verde; `loop_guard` sem CRÍTICO; nenhum comando 
 | **Criticidade** | **Alta** — mexe na única função do pacote que **apaga arquivo** (`podar_snapshots`, `shutil.rmtree`). READ-ONLY sobre o M1. |
 | **Prioridade** | **Baixa** *(rebaixada em 2026-08-26)*. A margem que ela compraria já vem de graça no `RETENCAO_SEMANAS = 26 = 2× o piso`. |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | Pendente — **criado em 2026-08-26**; existia como "adiado" dentro do BLK-MA-21 / DEC-039 (D5), com a justificativa da cadência MENSAL, que morreu. |
+| **Status** | **SEM OBJETO desde a [DEC-064](../docs/decisions/DEC-064.md) (2026-09-18)** — criado em 2026-08-26, existia como "adiado" dentro do BLK-MA-21 / DEC-039 (D5) com a justificativa da cadência MENSAL, que morreu; agora a própria premissa morre. Este bloco garante N observações por fonte **dentro de uma janela podada**, e o D1 tira a poda do regime: sem remoção, a assimetria "semanas de CALENDÁRIO × semanas OBSERVADAS" não causa perda nenhuma. Só volta a valer se a poda for reativada à mão. |
 | **Depende de** | BLK-MA-21. |
 | **Autonomia** | **manual (NÃO loop-safe)** — apaga arquivo em disco. |
 
@@ -2327,6 +2327,45 @@ definido antes de qualquer código; validação com fixtures sintéticas; READ-O
 
 
 
+
+---
+
+### BLK-MA-22 — Retenção integral, estado incremental e a ponte de identidade (DEC-064)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — mexe na única função do pacote que **apaga arquivo** (a poda), troca o REGIME DE LEITURA da série que alimenta S3/S4 e cria artefato que persiste **nome e coordenada** de estabelecimento. READ-ONLY sobre o M1: escreve só em `data/staging/`. DEC própria: [DEC-064](../docs/decisions/DEC-064.md). |
+| **Prioridade** | **Alta.** É o que destrava a movimentação DINÂMICA na ficha da unidade: hoje o diff semanal sabe QUE uma chave entrou ou saiu e não sabe QUEM nem ONDE, porque a série é anônima e os feeds crus são sobrescritos todo domingo. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE humano — DEC-064 APROVADA em 2026-09-18]` → Builder → QA → `[aplicação na VPS: passo MANUAL, comando a comando — §6]`. |
+| **Status** | **Implementado** (2026-09-18), em dois PRs. **PR A** (#386, `c1a86c7`): entregas 1, 3 e 4 — retenção integral (sentinela `RETENCAO_TUDO`, poda fora do regime, invariante `>= 1` intacta), ponte de identidade e estreia/observabilidade pela listagem —, mais a leitura RECORTADA por partição, que é o que paga a retenção. **PR B**: entrega 2 — `churn_estado.py`, com `churn_estado_v1` + `observabilidade_escopo_v1` e `reprocessar`, travado pelo teste de equivalência incremental × varredura. **Falta APLICAR na VPS** (manual, comando a comando) e **ligar o estado no cron**: hoje nada chama `atualizar()` em produção, então o ganho de memória e a movimentação dinâmica da ficha ainda não existem no ar. |
+| **Depende de** | DEC-064 (aprovada). Nada mais — a série já existe no disco da VPS (3 semanas) e o `ler_snapshots` já aceita `semanas=`/`fontes=`. |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca a poda de produção e cria artefato com nome/coordenada. NUNCA marcar loop-safe. |
+
+**As quatro entregas.** (1) `executar()` deixa de podar em regime, com `podar_snapshots` mantendo a
+invariante `>= 1`; (2) churn/staleness passa a ser **materializado** e atualizado por `estado
+anterior + semana nova`, com `--reprocessar` reconstruindo do zero a partir da série retida;
+(3) ponte `semana, fonte, chave_snapshot, nome, lat, lng`, gravada do frame de trabalho antes da
+projeção das 13 colunas; (4) estreia por fonte e observabilidade por `(fonte, rede)` derivadas da
+LISTAGEM de diretórios, nunca dos dados lidos.
+
+**A armadilha a não repetir.** A estreia NÃO pode sair do frame recortado: seria a borda da janela,
+e o defeito corrigido no PR #383 voltaria por outro caminho — lá, a estreia por SÉRIE (em vez de por
+FONTE) fez **22.877** chaves do WellHub serem lidas como recém-chegadas, contra **327** reais.
+
+**Fora de escopo.** Bump do contrato do snapshot (`v5 → v6`) e qualquer mudança em
+`COLUNAS_PII_PROIBIDAS`: a série continua anônima, e pôr nome dentro dela exige DEC própria.
+
+**Reconciliação com os dois follow-ups da poda** *(achado da revisão automática no PR #384)*. O D1
+desliga a poda **em regime**, e isso muda o chão de dois blocos pendentes — de formas DIFERENTES,
+por isso não cabe um carimbo único:
+
+- **BLK-MA-21-FU4 (poda por fonte) fica SEM OBJETO.** Ele existe para garantir N observações por
+  fonte **dentro de uma janela podada**; sem poda, nenhuma observação é removida e a assimetria
+  "semanas de CALENDÁRIO × semanas OBSERVADAS" deixa de causar perda. Sobrevive só como margem se a
+  poda for reativada à mão.
+- **BLK-MA-21-FU3 (`flock`) ENCOLHE, mas não morre.** Ele cobre duas coisas: podas concorrentes
+  (que somem com o D1) e o fato de o wrapper de domingo **não ter lock nenhum**, que continua
+  valendo — a poda segue existindo como ato manual, e o lock protege mais que ela.
 
 ---
 
@@ -5209,3 +5248,112 @@ exigência que a DEC-048 registrou).
 > cadastro) permanece; (c) o termo Ultra entra sem repartição por área (+0,03 pp);
 > (d) `CAPACIDADE_MIN_ACADEMIA_ALUNOS` fica órfã e o `CLAUDE.md` §4 ainda declara 2.500,
 > contra 2.325 medidos.
+
+---
+
+### BLK-CHAVE-01 — A âncora da chave de churn: `nome_base` + célula res-5, com MIGRAÇÃO das semanas já gravadas
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — muda `chave_snapshot`, que é a IDENTIDADE da academia na série → `status_churn`/`semanas_sem_mudanca` → `v3`/`v4` → `score_vulnerabilidade`, e é lida fora do pacote por `web/server/rede_inteligencia.py`, que a exibe no pin. [DEC-063](../docs/decisions/DEC-063.md). |
+| **Esteira** | `[GATE HUMANO]` — exige `critica-aprovada` do dono; o autor do PR não pode se aprovar. |
+| **Depende de** | DEC-039 (partição de 2 chaves), DEC-061 (guarda de coleta parcial) |
+| **Status** | **EM REVISÃO** (2026-09-17, PR #378 aberto; DEC-063 **APROVADA** pelo dono) |
+| **Autonomia** | **manual (NÃO loop-safe)** — muda a identidade da série, Crítica, e a aplicação reescreve partições na VPS |
+
+**O defeito.** A chave do `v4` (`hash_estavel|fonte|rede|nome_normalizado|hex_id_res7`) foi
+desenhada para absorver **jitter** de coordenada, e absorve — desde que o jitter não saia do
+hexágono. Dois movimentos que **não são mudança de mercado** escapam: a recalibração que cruza a
+**borda** da célula (a academia não se mexeu) e a queda do sufixo `"(Em breve)"` quando a unidade
+**inaugura**, que o S3 lê como fechamento + abertura — a leitura invertida do fato.
+
+**Medido** nas duas fotos reais do cadastro (02/08 e 06/09; 4.430 unidades em ambas), contra a
+referência `(rede, nome_base)` de 174 entradas / 58 saídas:
+
+| âncora | colisões A | colisões B | churn FALSO |
+|---|---:|---:|---:|
+| `rede\|nome\|hex7` (v4, hoje) | 1 | 1 | **91** |
+| `rede\|nome_base\|hex7` | 1 | 1 | 83 |
+| `rede\|nome_base\|hex5` (**v5**) | 1 | 1 | **23** |
+| `rede\|nome_base\|hex4` | 1 | 1 | 11 |
+| `rede\|nome_base` (sem geografia) | 8 | 7 | 0 |
+
+Descer de 7 para 5 **não custa colisão nenhuma**. O `hex4` corta mais, mas ~1.770 km² contra
+~252 km² é folga que a amostra de hoje (107 redes) não autoriza gastar. Sem geografia é a única
+linha que **perde academia de verdade** — o contrato COLAPSA a colisão e nunca desambigua.
+
+**Por que MIGRAR, e não só bumpar.** `concorrentes_novos` define "nova" como *primeira semana da
+chave ≠ primeira da série*: re-chavear faria **toda cadeia do país** aparecer como "concorrente
+novo" no pin da Visão Executiva por `SEMANAS_CONCORRENTE_NOVO = 8` semanas, e a guarda de lá
+(excluir a 1ª semana) não protege contra isso. **A janela é agora, por medição:** a série de
+`unidades` tem 2 observações contra `MIN_SEMANAS = 8`, então o S3 já está renormalizado para fora
+e o custo no score é ZERO; em ~6 semanas ela amadurece e o mesmo movimento vira falso positivo em
+massa num sinal maduro e visível.
+
+**O preimage existe.** O snapshot não guarda `nome` (anti-PII), mas o CSV que o gerou guarda: as
+fotos reproduzem **4.495/4.495** em `2026-31` e **4.610/4.610** em `2026-36`, zero órfãs. Por isso
+`chave_hash_estavel_v4` fica **congelada** com teste próprio — sem ela o `de → para` deixaria de
+ser auditável.
+
+**Aplicação na VPS é MANUAL**, semana a semana, com backup antes: `--migrar-chave-v5 --semana`
+reescreve a folha `fonte=unidades` daquela semana.
+
+---
+
+### BLK-COLETA-01 — A falha de um coletor deixa de ser DESTRUTIVA, e o `git pull` que falha passa a gritar
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — muda o dado de entrada (`Unidades/*.csv`) de toda a cadeia de concorrência, mas não toca fórmula, score nem artefato do M1. |
+| **Esteira** | `[GATE HUMANO]` |
+| **Depende de** | PR #377 (o wrapper virou arquivo versionado — sem isso não há diff para revisar) |
+| **Status** | **EM REVISÃO** (2026-09-17, PR aberto) |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera dado de produção na VPS e envia aviso a ops |
+
+**O defeito.** O lote abria com `git checkout -- Unidades/` (descarta os CSVs raspados para o
+`git pull` dar fast-forward) seguido de `git pull --ff-only || echo`. Juntas, as duas linhas
+faziam duas coisas ruins: a rede cujo coletor falhasse voltava ao **baseline do repositório** — que
+pode ser de meses atrás — em vez de ficar com a safra da semana passada; e um `pull` que falha
+passava em silêncio.
+
+**Os dois incidentes que isso produziu, medidos:** em 2026-09-13 o lote morreu no coletor #28 de 90
+e a **Selfit caiu de 231 para 119** unidades (o snapshot só não fotografou porque a guarda da
+DEC-061 o recusou); e o checkout ficou **8 commits atrás por cinco dias**, de modo que o conserto
+do crash e o da âncora da Smart Fit, já mergeados no repo do Vini, simplesmente não chegavam.
+
+**A correção.**
+
+1. **Passo 0 — a safra é preservada ANTES do descarte** (`$INFRA/safra_anterior`). O descarte
+   continua (é o preço do fast-forward), mas deixou de ser perda. A ORDEM é a carga: preservar
+   depois salvaria o baseline, que é o dado errado.
+2. **Passo 2.5 — quem não recoletou volta à SAFRA, não ao baseline.** Critério por **conteúdo**:
+   CSV idêntico ao commitado **e** diferente da safra ⇒ não foi recoletado ⇒ restaura.
+3. **O `pull` que falha avisa no chat de ops**, reusando `enviar_telegram`. **Não aborta** o lote:
+   a coleta ainda vale, e derrubar o domingo trocaria um dano por outro maior.
+
+**Por que conteúdo e não parsing do log — é o coração do bloco.** O executor imprime
+`Resultado: falha (N) em ...` por coletor, e o caminho óbvio seria ler isso. Medido no lote de
+13/09: havia **3** linhas de falha, enquanto **~56** redes ficaram defasadas — o lote morreu no #28
+e as demais **nunca rodaram**, logo nunca reportaram nada. Parsing consertaria **3 de 59**. A
+comparação com o baseline commitado pega os dois casos, e não depende de mapear nome de coletor
+para nome de arquivo (onde uma exceção entre 107 passaria batida).
+
+**Prova.** `test_restauracao_EXECUTADA_nos_tres_casos` **executa** o laço — `cp -a`, `cmp`,
+`git show` — num repositório git temporário, com três redes cobrindo os três casos que existem: a
+que não recoletou volta à safra, a que recoletou fica intocada, a sem mudança desde o commit não é
+tocada (1 restauração, zero falso positivo). O teste **extrai o trecho do próprio wrapper** em vez
+de reescrevê-lo, senão seria a segunda redação da mesma regra e passaria mesmo com o wrapper
+divergindo (lição da DEC-044); `test_o_laco_extraido_e_o_do_wrapper_nao_uma_copia` falha alto se os
+marcadores sumirem. Mais 9 testes de contrato textual, incluindo a ORDEM backup-antes-do-descarte e
+a acentuação das mensagens ao chat de ops.
+
+> A primeira versão deste bloco dizia "sandbox com três redes" apontando para um script que rodou
+> de verdade mas **vivia no scratchpad da sessão** — prova não reproduzível por quem lê o repo.
+> Achado MÉDIO da revisão do PR #380, e correto: a lógica que **sobrescreve CSV de coleta** tinha
+> só teste de substring, e um refator que preservasse as strings e quebrasse o `cmp` passaria com
+> tudo verde.
+
+**Armadilha declarada:** o `cmp` compara bytes. Se os CSVs ganharem normalização de EOL, a
+comparação daria "diferente" para todas as redes e a restauração viraria **no-op silencioso** — a
+mesma família do mount que congelou os pins. Hoje o checkout da VPS é Linux e não há conversão
+(medido); se a premissa mudar, o laço precisa comparar normalizado.

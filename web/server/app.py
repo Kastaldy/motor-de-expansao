@@ -8823,6 +8823,10 @@ def _rede_movimentacao() -> pd.DataFrame | None:
     tabela = _rede_ler_opcional(STAGING_DIR / movimentacao_concorrencia.ARQUIVO_STAGING)
     if tabela is None:
         return None
+    # O descarte de RENOMEAÇÃO no agregador é aplicado aqui, na leitura, e não só na ingestão:
+    # o parquet em produção foi gerado antes da regra, e o pacote de origem não está mais
+    # disponível para reingerir. Idempotente — rodar duas vezes não tira nada a mais.
+    tabela = movimentacao_concorrencia.descartar_trocas_de_nome_no_agregador(tabela)
     return movimentacao_concorrencia.filtrar_concorrencia(tabela, _rede_redes_estudio())
 
 
@@ -8869,13 +8873,21 @@ def _rede_movimentacao_redes() -> dict[str, Any]:
     totais = dict(zip(contagem["rede"], contagem["unidades"], strict=True)) if contagem is not None else {}
     data_contagem = str(contagem["data"].iloc[0]) if contagem is not None and len(contagem) else None
     for linha in redes:
-        linha["logo"] = _icone_rede(linha["rede"])
         linha["unidades"] = int(totais[linha["rede"]]) if linha["rede"] in totais else None
+    # Toda rede MAPEADA entra, mesmo sem nenhuma movimentação no período (Felipe, 17/09): a
+    # tabela deixa de ser só "quem mexeu" e passa a carregar o tamanho do mercado.
+    redes = movimentacao_concorrencia.incluir_redes_sem_movimentacao(
+        redes, totais, _rede_redes_estudio()
+    )
+    for linha in redes:
+        linha["logo"] = _icone_rede(linha["rede"])
     return {
         "disponivel": True,
         "periodos": movimentacao_concorrencia.periodos(eventos),
         "data_contagem": data_contagem,
         "redes": redes,
+        "redes_mapeadas": len(redes),
+        "unidades_mapeadas": sum(int(linha["unidades"] or 0) for linha in redes),
         "agregadores": movimentacao_concorrencia.resumo_agregadores(eventos),
     }
 
@@ -9000,15 +9012,47 @@ def rede_inteligencia_recorte(
     def _consultor(uid: str) -> str | None:
         return str(cadastro_rede.de(uid).get("consultor") or "").strip() or None
 
+    def _do_mes(uid: str, coluna: str, casas: int) -> float | None:
+        """Métrica da OPERAÇÃO (Growth) no mês base, para a unidade."""
+        if uid not in mes_base.index:
+            return None
+        return _num(_numf(mes_base.loc[uid].get(coluna)), casas)
+
     risco = sorted(
         (
-            {"id": uid, "nome": nomes[uid], "consultor": _consultor(uid), **retencao[uid]}
+            {
+                "id": uid,
+                "nome": nomes[uid],
+                "consultor": _consultor(uid),
+                # Churn REAL e alunos ativos vêm da operação, não do modelo: a tabela do ranking
+                # confronta o que já aconteceu com o que o modelo prevê (Felipe, 17/09).
+                "churn_pct": _do_mes(uid, "churn_pct", 1),
+                "ativos": _do_mes(uid, "ativos", 0),
+                # Recorrentes (`pagantes`): é quem de fato CANCELA, e é o mesmo denominador do
+                # churn real (`cancelados / pagantes_m1`). Aluno de agregador não cancela
+                # contrato com a unidade — entra em `ativos`, não aqui (Felipe, 17/09).
+                "recorrentes": _do_mes(uid, "pagantes", 0),
+                "receita_por_recorrente": _do_mes(uid, "receita_por_recorrente", 2),
+                **retencao[uid],
+                # depois do espalhamento do modelo, de propósito: a conta é da OPERAÇÃO
+                "receita_em_risco": rede_inteligencia.receita_recorrente_em_risco(
+                    _do_mes(uid, "pagantes", 0),
+                    retencao[uid]["p_cancel_12m_pct"],
+                    _do_mes(uid, "receita_por_recorrente", 2),
+                ),
+            }
             for uid in ids
-            if uid in retencao and retencao[uid]["utilizavel"]
+            # Só PREVISÃO CONFIÁVEL: o corte deixa de ser `utilizavel` (que admitia as unidades
+            # de "Apenas Ranking", onde o modelo ordena mas não calibra o número) e passa a ser
+            # `probabilidade_absoluta_valida` — pedido do Felipe, 17/09. O percentil de risco
+            # continua medido contra TODAS as utilizáveis: é posição na rede, não no recorte.
+            if uid in retencao and retencao[uid]["probabilidade_absoluta_valida"]
         ),
         key=lambda r: -(r["risco_percentil"] or 0),
     )
-    fora_do_modelo = sum(1 for uid in ids if uid in retencao and not retencao[uid]["utilizavel"])
+    fora_do_modelo = sum(
+        1 for uid in ids if uid in retencao and not retencao[uid]["probabilidade_absoluta_valida"]
+    )
 
     concorrencia = _rede_concorrencia_nova()
     inauguradas = []

@@ -158,9 +158,25 @@ concorrentes) só aparecem após `docker compose -f docker-compose.prod.yml rest
   `github-gymscraping` em `/root/.ssh/config`). O `git pull` semanal traz coletores novos automaticamente.
 - **Imagem:** `gymscraping:local` — `Dockerfile` no próprio repo do scraper (Chrome + webdriver-manager +
   Chromium do Playwright). Reconstruída a cada run (cache acelera).
-- **Runner:** **`/opt/gymscraping-infra/run_weekly_90.sh`** (infra na VPS, fora do repo). Faz, em sequência:
-  1. `git pull` + `docker build`;
+- **Runner:** **`/opt/gymscraping-infra/run_weekly_90.sh`**, cuja fonte versionada é
+  **`scripts/cron/run_weekly_90.sh`** (neste repo desde 2026-09-17; instalação por `cp` + `chmod +x`,
+  manual, como a dos outros wrappers). Até então ele era o **único wrapper de produção fora do
+  repositório**, e o custo foi medido: a DEC-059 tirou o mount do checkout velho da etapa de regen em
+  12/09 e **deixou o passo 4.5 (pins M&A) para trás**, porque não havia diff para ninguém revisar — o
+  passo seguiu rodando um checkout congelado em 19/08 e gravando artefato **vazio com `exit 0`** de
+  30/08 a 17/09, contido apenas pela guarda de desenhabilidade. Faz, em sequência:
+  0. **Preserva a safra anterior** em `$INFRA/safra_anterior` **antes** do `git checkout -- Unidades/`
+     (BLK-COLETA-01). O descarte continua — é o preço do fast-forward —, mas deixou de ser perda: sem
+     esse backup, a rede cujo coletor falhasse voltaria ao baseline do repositório, que pode ser de
+     meses atrás (foi o mecanismo do `selfit 231 → 119` em 13/09);
+  1. `git pull` + `docker build`. **O pull que falha avisa no chat de ops** e NÃO aborta o lote: a
+     coleta ainda vale, e derrubar o domingo trocaria um dano por outro maior. Até 17/09 ele usava
+     `|| echo`, e foi assim que o clone ficou 8 commits atrás por cinco dias sem ninguém ver;
   2. **Coleta** dos 90 (`executar_coletores.py --workers 3 --scheduler-policy weighted`, container `--user 0:0`);
+  2.5. **Restaura a safra para quem NÃO recoletou** (BLK-COLETA-01), por **conteúdo**: CSV idêntico ao
+     commitado **e** diferente da safra ⇒ aquela rede não rodou nesta rodada. Não é parsing do log de
+     propósito — no lote de 13/09 havia 3 linhas de `Resultado: falha` para ~56 redes defasadas,
+     porque o lote morreu no #28 e as demais nunca rodaram. Restaurações > 0 avisam ops;
   3. **Relatório de crescimento por rede** (`/opt/gymscraping-infra/relatorio_crescimento.py`): snapshot
      `contagem_atual.csv`, diff vs. `contagem_anterior.csv` (delta por rede), histórico `historico_contagem.csv`
      e `relatorio_crescimento_<data>.txt`;
@@ -659,8 +675,8 @@ Confira na saída, nesta ordem:
 | `fontes_publicadas=` | vazio ⇒ os dois feeds estão velhos ou o caminho do clone está errado |
 | `regua_idade` | por agregador: `data_coleta_min` é a régua boa; `mtime` é **fallback** (o feed não trouxe data legível) e vale bem menos — foi por medir mtime que 85 dias saíram como `0`. O rótulo sem o sufixo `_min` também denuncia imagem antiga. `indisponivel` **com** CSVs no diretório ⇒ o mtime está no **futuro** (relógio torto na máquina que coletou): a curadoria recusa em vez de publicar, porque idade negativa passaria por qualquer limiar. Corrija o relógio e recolete |
 | `linhas_snapshot` | `0` ⇒ o caminho dos CSVs curados está errado (o glob não casou com nada). **Exceção:** na **primeira instalação**, com o destino ainda vazio, `0` é o esperado *por construção* — a curadoria em `DRY_RUN` não copia nada, então não há o que o snapshot leia. Repita o modo seco **depois** da 1ª execução real para a leitura valer |
-| `versao_contrato` | tem de ser `snapshots_concorrentes_v4`. **`v3` = imagem ANTIGA na VPS** — ela escreve com uma chave e apaga a folha da outra cadência. **Não agende**: aplique a imagem nova primeiro |
-| `retencao_semanas` | tem de ser `26` (piso duro medido: **13**; nunca abaixo). O `78` é o valor da premissa **mensal**, que morreu — se o `DRY_RUN` mostrar `78`, a VPS está com imagem antiga |
+| `versao_contrato` | tem de ser `snapshots_concorrentes_v5` (bump da DEC-063, âncora da chave). **`v4`/`v3` = imagem ANTIGA na VPS** — a `v3` escreve com uma chave e apaga a folha da outra cadência. **Não agende**: aplique a imagem nova primeiro |
+| `retencao_semanas` | tem de ser `0` — **reter tudo**, a poda não roda em regime (DEC-064). `26` ou `78` ⇒ imagem **anterior à DEC-064**, que PODA, e o que ela apaga é a série de que o reprocessamento depende. **Não agende.** A poda continua disponível como ato **manual** (`--retencao-semanas N`): referência `26` = 2× o piso medido de **13**, nunca abaixo dele |
 
 > Os dois últimos campos entraram na auditoria **exatamente** para isto: são a única forma de o
 > `DRY_RUN` provar **qual imagem está rodando** antes de agendar. A lição é do BLK-MA-19 — "código

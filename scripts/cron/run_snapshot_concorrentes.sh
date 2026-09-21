@@ -11,7 +11,7 @@
 # rodar numa IMAGEM ANTIGA (que escreve so' `semana=`), ele APAGA a folha gravada
 # pelo cron dos AGREGADORES na mesma semana ISO -- e terca e domingo caem na MESMA
 # semana ISO, medido. Antes de instalar, confira na saida do `DRY_RUN=1` que
-# `versao_contrato` e' `snapshots_concorrentes_v4`; com `v3`, NAO agende -- aplique
+# `versao_contrato` e' `snapshots_concorrentes_v5`; com `v4`/`v3`, NAO agende -- aplique
 # a imagem nova primeiro (ordem de 6 passos em docs/infra_producao.md, "Coleta
 # semanal dos agregadores").
 #
