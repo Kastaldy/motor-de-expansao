@@ -2690,6 +2690,7 @@ def render_mapas_municipio(
     redes_principais = principais_redes(competitors_df)
     comp_principais = _so_as_principais(competitors_df, redes_principais) if redes_principais else None
     n_conc = 0 if competitors_df is None else len(competitors_df)
+    nota_pins: str | None
     if redes_principais:
         nota_pins = (
             f"no mapa, Ultra e as {len(redes_principais)} maiores redes "
@@ -2706,7 +2707,7 @@ def render_mapas_municipio(
     # Score e residual SEM pins (Juan, 2026-09-17): em capital as logos cobriam os hexagonos --
     # Sao Paulo tem 491 academias. Mesma regra que a versao por bairro ja seguia; quem esta
     # instalado aparece em Resumo, Dominio, Pressao concorrencial e Espaco e academias.
-    com_pins = {"resumo": True, "score": False, "residual": False, "dominio": True}
+    pins_por_camada = {"resumo": True, "score": False, "residual": False, "dominio": True}
     mapas = {
         camada: _render_mapa_municipio(
             df_muni,
@@ -2728,7 +2729,7 @@ def render_mapas_municipio(
             nota_pins=nota_pins if pins else None,
             rotular_valores=False,
         )
-        for camada, pins in com_pins.items()
+        for camada, pins in pins_por_camada.items()
     }
 
     # Camada "cobertura": municipio INTEIRO (focus_bounds=None), sem pins (leitura limpa).
