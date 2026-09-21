@@ -481,7 +481,7 @@ def dedup_independentes(
         if nome_mesma_fonte_m is not None and "nome" in independentes.columns
         else None
     )
-    # `[DEC-065]` O NOME e' carregado sempre que a COLUNA existir, e nao so' quando a passagem da
+    # `[DEC-066]` O NOME e' carregado sempre que a COLUNA existir, e nao so' quando a passagem da
     # MESMA fonte esta' ligada. Os dois usos sao independentes: `raio_nome` governa a passagem
     # intra-fonte (opt-in, default `None`), enquanto o DESEMPATE entre fontes precisa do nome no
     # caminho PADRAO. Amarrar os dois ao mesmo bool deixaria o desempate inerte justamente na
@@ -541,7 +541,7 @@ def dedup_independentes(
     for i in range(len(base)):
         representante: int | None = None
         # PASSAGEM POR DISTANCIA, entre fontes DIFERENTES. O representante e' quem CASA O NOME; sem
-        # casamento, o MAIS PROXIMO `[DEC-065]`.
+        # casamento, o MAIS PROXIMO `[DEC-066]`.
         #
         # ATE' 2026-09-16 ela pegava o PRIMEIRO e dava `break` -- o primeiro na ordem em que o
         # `grid_disk` devolve as celulas, arbitraria em relacao a distancia. Medido em 91 pares, o

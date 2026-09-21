@@ -212,12 +212,12 @@ def test_default_do_ponto_de_entrada_de_producao_nao_mudou() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 8. O DESEMPATE entre fontes (DEC-065) - o nome escolhe, a distancia so' decide o empate          #
+# 8. O DESEMPATE entre fontes (DEC-066) - o nome escolhe, a distancia so' decide o empate          #
 # --------------------------------------------------------------------------- #
 def test_entre_fontes_o_nome_vence_o_candidato_mais_proximo() -> None:
     """O caso `Agoge`, sintetizado: colapsar no mais PERTO apagava a academia errada.
 
-    Ate' a DEC-065 a passagem por distancia pegava o PRIMEIRO candidato na ordem do `grid_disk` --
+    Ate' a DEC-066 a passagem por distancia pegava o PRIMEIRO candidato na ordem do `grid_disk` --
     arbitraria -- e dava `break`. Medido em 91 pares, o escolhido era OUTRA academia, e o erro era
     DUPLO: a unidade sumia dentro de quem ela nao e', e a gemea verdadeira sobrevivia em separado.
     No dado real: `Academia Agoge` colapsava contra `SCoccorese - Pilates` a 0,0 m tendo

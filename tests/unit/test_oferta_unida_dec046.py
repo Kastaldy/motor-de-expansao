@@ -243,7 +243,7 @@ def test_independente_e_desenhada_ANTES_da_cadeia():
     from motor_expansao.dashboard.competitors import CHAVES_AGREGADOR
 
     chaves = [chave for _x, _y, chave in cm._project_points(pontos, LAT, LNG)]
-    # `[DEC-065]` A codificacao de "independente" deixou de ser a string VAZIA e passou a ser a
+    # `[DEC-066]` A codificacao de "independente" deixou de ser a string VAZIA e passou a ser a
     # chave do APP que a revelou (sem coluna `fonte`, cai no WellHub). A PROPRIEDADE sob teste --
     # independente ANTES, bandeira de rede POR CIMA -- e' exatamente a mesma, e e' ela que impede
     # a inversao silenciosa da sobreposicao: com a chave nova, um `sort` por `bool(chave)` passaria
@@ -253,7 +253,7 @@ def test_independente_e_desenhada_ANTES_da_cadeia():
 
 
 def test_a_chave_do_independente_sai_do_app_que_a_revelou():
-    """`[DEC-065]` WellHub e TotalPass passam a ter chave (e cor) proprias.
+    """`[DEC-066]` WellHub e TotalPass passam a ter chave (e cor) proprias.
 
     Sem `fonte`, cai no WellHub -- e isso NAO afirma procedencia: o artefato publicado hoje
     (`alvos_ma_nomeados_v5`) tem `fonte` em 100% das 19.329 linhas, todas `wellhub`, entao o

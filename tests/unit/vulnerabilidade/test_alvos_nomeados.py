@@ -65,7 +65,7 @@ def _coordenadas(nomes: dict[str, str], *, sem_coord: tuple[str, ...] = ()) -> p
 
 
 # --------------------------------------------------------------------------- #
-# `[DEC-065]` Fixtures MULTI-FONTE, para a coluna `fontes_da_academia`.
+# `[DEC-066]` Fixtures MULTI-FONTE, para a coluna `fontes_da_academia`.
 #
 # O `_coordenadas` acima crava `fonte="totalpass"` e poe tudo na MESMA coordenada — com isso todo
 # par sairia a 0 m e o raio de 100 m nunca seria exercitado. Estes irmaos existem por isso; alterar

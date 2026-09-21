@@ -119,7 +119,7 @@ def test_entorno_ordena_por_distancia_e_casa_fatos_do_agregador_so_no_mesmo_pont
 
 
 def test_o_item_da_ficha_declara_de_QUAL_app_a_academia_veio():
-    """`[DEC-065]` A `fonte` sai da PRÓPRIA linha da união — não da tabela de fatos.
+    """`[DEC-066]` A `fonte` sai da PRÓPRIA linha da união — não da tabela de fatos.
 
     A distinção é o ponto. Os fatos do agregador são casados por PONTO, a até `casar_m`, e sem par
     os campos ficam `None` (é o que o teste acima prova para `vulnerabilidade`). Se a MARCA do pino
@@ -144,9 +144,9 @@ def test_o_item_da_ficha_declara_de_QUAL_app_a_academia_veio():
 
 
 def test_o_item_da_ficha_declara_quando_esta_nos_DOIS_apps():
-    """`[DEC-065 / fatia 2]` A ficha tambem desenha o terceiro estado.
+    """`[DEC-066 / fatia 2]` A ficha tambem desenha o terceiro estado.
 
-    Mesma razao do item do payload: a coluna sai da PROPRIA linha da uniao (a DEC-065 a poe em
+    Mesma razao do item do payload: a coluna sai da PROPRIA linha da uniao (a DEC-066 a poe em
     `_COLS_OFERTA`), e nao da tabela de fatos casada por ponto — que pode nao ter par e deixaria a
     marca errada por acidente de distancia.
     """
