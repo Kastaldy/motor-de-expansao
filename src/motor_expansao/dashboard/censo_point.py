@@ -643,6 +643,7 @@ def agregar_perfil_bairro_distrito(
     nome_distrito: str | None = None,
     nome_municipio: str | None = None,
     uf: str | None = None,
+    cod_municipio: str | None = None,
 ) -> dict[str, object]:
     """Agrega populacao/domicilios/densidade/renda sobre TODOS os setores de um bairro/distrito.
 
@@ -690,6 +691,19 @@ def agregar_perfil_bairro_distrito(
         ):
             tipo = "distrito"
             mask = setores_df["nome_distrito"].astype(str).str.strip() == nome_distrito_str
+            # O fallback casa por NOME, e nome de distrito NAO e' unico no pais ("Centro"
+            # existe em quase toda cidade). Enquanto o `setores_df` era de um municipio so',
+            # isso bastava; desde que o ponto de divisa passou a carregar tambem os vizinhos
+            # (2026-09-17), o "Centro" do vizinho entraria neste agregado — e o D2 e' a
+            # unidade administrativa que CONTEM o ponto. `cod_municipio` ausente (chamador
+            # antigo) ou coluna ausente -> comportamento de antes, sem quebrar.
+            cod_municipio_str = str(cod_municipio).strip() if cod_municipio is not None else ""
+            if (
+                cod_municipio_str
+                and cod_municipio_str.lower() != "nan"
+                and "cod_municipio" in setores_df.columns
+            ):
+                mask &= setores_df["cod_municipio"].astype(str).str.strip() == cod_municipio_str
             nome_unidade = nome_distrito_str
 
     if tipo is None or mask is None:

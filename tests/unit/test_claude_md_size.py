@@ -27,7 +27,9 @@ _ROOT = Path(__file__).resolve().parents[2]
 #:
 #: 232 -> 233 na DEC-064 (2026-09-18), idem. O corpo da decisão (retenção integral da série, estado
 #: incremental e ponte de identidade) está em docs/decisions/DEC-064.md; no §8 entrou 1 linha.
-_TETO_LINHAS = 233
+#:
+#: 233 -> 234 na DEC-065 (2026-09-21), idem: 1 linha-índice, corpo em docs/decisions/DEC-065.md.
+_TETO_LINHAS = 234
 
 
 def _linhas(p: Path) -> int:

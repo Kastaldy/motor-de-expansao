@@ -302,6 +302,105 @@ def test_troca_de_origem_no_escopo_durante_gap_da_chave(tmp_path: Path) -> None:
     pd.testing.assert_frame_equal(incremental, varredura)
 
 
+# --------------------------------------------------------------------------- #
+# O cron liga o estado (DEC-064 D2 -- a ultima peca do BLK-MA-22)
+# --------------------------------------------------------------------------- #
+def test_executar_atualiza_o_estado_ao_publicar(tmp_path: Path) -> None:
+    """O passo que faltava: quem grava a partição atualiza o estado, no MESMO processo.
+
+    Ligado por dentro do `executar()` e não por um passo novo no wrapper do cron, porque toda vez
+    que shell e código precisaram concordar sobre algo neste epic (recorte de fontes, valor da
+    retenção, path-filter da imagem) eles divergiram em silêncio.
+    """
+    un, base = tmp_path / "un", tmp_path / "staging" / "snapshots_concorrentes"
+    _escrever_rede(un, "alfa", 5, data_coleta=REFS[0].isoformat())
+
+    auditoria = m.executar(
+        tmp_path / "tp", tmp_path / "wh", un, base_dir=base, data_referencia=REFS[0],
+        fontes=["unidades"],
+    )
+
+    assert auditoria["publicado"] is True
+    estado_aud = auditoria["estado_churn"]
+    assert isinstance(estado_aud, dict)
+    assert estado_aud["modo"] == "incremental"
+    assert estado_aud["chaves_no_estado"] == 5
+
+    estado, obs = e.ler_estado(e.estado_dir_de(base))
+    assert len(estado) == 5
+    assert len(e.churn_do_estado(estado, obs)) == 5
+
+
+def test_semana_recusada_nao_contamina_o_estado(tmp_path: Path) -> None:
+    """Coleta parcial não entra no acumulador — e é pior aqui do que na série.
+
+    A série se conserta apagando uma partição (foi o que a DEC-061 fez com a `2026-37`); um
+    acumulador, não. Se a foto quebrada entrasse, `n_desaparecimentos` e `semanas_sem_mudanca`
+    ficariam errados para sempre, e só `--reprocessar` desfaria.
+    """
+    un, base = tmp_path / "un", tmp_path / "staging" / "snapshots_concorrentes"
+    _escrever_rede(un, "alfa", 20, data_coleta=REFS[0].isoformat())
+    m.executar(
+        tmp_path / "tp", tmp_path / "wh", un, base_dir=base, data_referencia=REFS[0],
+        fontes=["unidades"],
+    )
+    estado_antes, _ = e.ler_estado(e.estado_dir_de(base))
+
+    _escrever_rede(un, "alfa", 6, data_coleta=REFS[1].isoformat())  # -70%: a guarda REPROVA
+    auditoria = m.executar(
+        tmp_path / "tp", tmp_path / "wh", un, base_dir=base, data_referencia=REFS[1],
+        fontes=["unidades"],
+    )
+
+    assert auditoria["publicado"] is False
+    assert auditoria["estado_churn"] is None
+    estado_depois, _ = e.ler_estado(e.estado_dir_de(base))
+    pd.testing.assert_frame_equal(estado_antes, estado_depois)
+
+
+def test_dry_run_nao_toca_o_estado(tmp_path: Path) -> None:
+    """Modo seco existe para antecipar o domingo sem tocar disco — o estado é disco."""
+    un, base = tmp_path / "un", tmp_path / "staging" / "snapshots_concorrentes"
+    _escrever_rede(un, "alfa", 5, data_coleta=REFS[0].isoformat())
+
+    auditoria = m.executar(
+        tmp_path / "tp", tmp_path / "wh", un, base_dir=base, data_referencia=REFS[0],
+        dry_run=True, fontes=["unidades"],
+    )
+
+    assert auditoria["dry_run"] is True
+    assert "estado_churn" not in auditoria or auditoria["estado_churn"] is None
+    assert not e.estado_dir_de(base).exists()
+
+
+def test_sem_estado_desliga_a_atualizacao(tmp_path: Path) -> None:
+    """A escotilha de emergência: publica a série e NÃO mexe no acumulador."""
+    un, base = tmp_path / "un", tmp_path / "staging" / "snapshots_concorrentes"
+    _escrever_rede(un, "alfa", 5, data_coleta=REFS[0].isoformat())
+
+    auditoria = m.executar(
+        tmp_path / "tp", tmp_path / "wh", un, base_dir=base, data_referencia=REFS[0],
+        fontes=["unidades"], atualizar_estado=False,
+    )
+
+    assert auditoria["publicado"] is True
+    assert auditoria["estado_churn"] is None
+    assert not e.estado_dir_de(base).exists()
+
+
+def test_cli_expoe_os_flags_do_estado() -> None:
+    """Os três flags chegam ao `executar()` com o tipo certo — o cron depende deles."""
+    args = m._parse_args(["--reprocessar", "--sem-estado", "--estado-dir", "/tmp/estado"])
+    assert args.reprocessar is True
+    assert args.sem_estado is True
+    assert args.estado_dir == Path("/tmp/estado")
+
+    padrao = m._parse_args([])
+    assert padrao.reprocessar is False
+    assert padrao.sem_estado is False, "em regime o estado TEM de acompanhar a serie"
+    assert padrao.estado_dir is None, "default derivado do --base-dir"
+
+
 def test_semana_fora_do_formato_iso_levanta() -> None:
     with pytest.raises(ValueError, match="AAAA-SS"):
         e.aplicar_semana(e.estado_vazio(), e.observabilidade_vazia(), pd.DataFrame(), semana="2026-7")

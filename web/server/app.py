@@ -9636,7 +9636,7 @@ def _viabilidade_pdf_payload(body: ViabilidadeIn) -> dict[str, Any] | None:
 
 
 def _residual_hexes_do_ponto(lat: float, lng: float, staging_dir: Path):
-    """Disco de hexes (grid_disk k=5, res 7) ao redor do ponto para o slide-hero
+    """Disco de hexes (grid_disk k=7, res 7) ao redor do ponto para o slide-hero
     "Socioeconomia e Residual Fitness": `oferta_efetiva_disponivel` (Residual) E
     `score_setor_2022_calibrado` (Socioeconomia, BLK-RELPON-13).
 
@@ -9660,21 +9660,118 @@ def _residual_hexes_do_ponto(lat: float, lng: float, staging_dir: Path):
         import pyarrow.dataset as ds
 
         centro = h3.latlng_to_cell(float(lat), float(lng), 7)
-        cells = list(h3.grid_disk(centro, 5))
+        # k=7 (169 hexes): o enquadramento do slide-hero abre ate 7 km em regiao espalhada.
+        cells = list(h3.grid_disk(centro, 7))
         if not cells:
             return None
         conjunto = ds.dataset(mercado)
         colunas = ["hex_id", "oferta_efetiva_disponivel"]
         # BLK-RELPON-13: o painel de Socioeconomia le `score_setor_2022_calibrado` do MESMO
         # disco de hexes. So pede se o schema tiver — parquet antigo continua servindo o Residual.
-        if "score_setor_2022_calibrado" in conjunto.schema.names:
-            colunas.append("score_setor_2022_calibrado")
+        # A populacao do censo decide o enquadramento (`censo_map.raio_enquadramento_hex_km`).
+        for coluna in ("score_setor_2022_calibrado", "pop_total_setor_2022"):
+            if coluna in conjunto.schema.names:
+                colunas.append(coluna)
         tbl = conjunto.to_table(filter=pc.field("hex_id").isin(cells), columns=colunas)
         if not tbl.num_rows:
             return None
         return tbl.to_pandas()
     except Exception:  # noqa: BLE001
         return None
+
+
+_LOG_PRACA = logging.getLogger("piloto.relatorio_praca")
+
+
+def _hexes_do_municipio(uf: str, cod_municipio: str | None, nome_municipio: str | None) -> pd.DataFrame:
+    """Hexagonos do municipio no artefato enriquecido (com `cres_*` e `cres_hex_*` ja juntados).
+
+    Casa por `cod_municipio` e, onde a particao o deixa nulo, pelo NOME normalizado -- o mesmo
+    fallback de `_juntar_crescimento` (6 UFs tem o codigo 100% nulo no M1). Devolve um frame
+    NOVO: `carregar_uf` e' cache compartilhado entre requisicoes.
+    """
+    df = carregar_uf(uf)
+    mask = pd.Series(False, index=df.index)
+    if cod_municipio and "cod_municipio" in df.columns:
+        cod = df["cod_municipio"].astype("string").str.replace(r"\.0$", "", regex=True)
+        mask |= (cod == str(cod_municipio)) | (cod.str[:6] == str(cod_municipio)[:6])
+    if nome_municipio and "nome_municipio" in df.columns:
+        alvo = _norm_nome(pd.Series([nome_municipio])).iloc[0]
+        mask |= _norm_nome(df["nome_municipio"]) == alvo
+    return df.loc[mask].copy()
+
+
+def _praca_para_pdf(
+    lat: float,
+    lng: float,
+    uf: str,
+    cod_municipio: str | None,
+    nome_municipio: str | None,
+    comp_df: pd.DataFrame | None,
+    ultra_df: pd.DataFrame | None,
+    *,
+    basemap: bool = True,
+):
+    """Monta a `PracaDoPonto` das duas paginas novas (pressao e crescimento). `None` sem base da UF.
+
+    Mapa que falha vira fallback textual; municipio ou hexagono sem crescimento viram a frase de
+    "sem dado". Nenhum caminho daqui derruba o PDF.
+    """
+    import h3
+
+    from motor_expansao.dashboard import relatorio_praca as rp
+    from motor_expansao.dashboard import relatorio_praca_mapas as rpm
+
+    try:
+        hexes = _hexes_do_municipio(uf, cod_municipio, nome_municipio)
+    except HTTPException as exc:
+        _LOG_PRACA.warning("praca sem base da UF %s: %s", uf, exc.detail)
+        return None
+
+    municipio = nome_municipio or (str(_mun_val(hexes, "nome_municipio")) if len(hexes) else "")
+    municipio = municipio.title() if municipio.isupper() else municipio
+
+    linha_cres = {c: _mun_val(hexes, c) for c in _COLS_CRESCIMENTO if c in hexes.columns}
+    tem_cres = linha_cres.get("cres_tendencia") is not None or linha_cres.get("v_frase")
+    frase = _narrativa_crescimento(hexes, municipio) if tem_cres else None
+    crescimento = rp.resumir_crescimento(linha_cres, uf=uf, frase=frase, rotulo_tendencia=_ROTULO_TEND)
+
+    # Hexagono do ponto: primeiro na propria cidade (ja com `cres_hex_*`); ponto na divisa cai
+    # num hexagono de outro municipio, e ai' a leitura vem direto da camada por hexagono.
+    hex_ponto = str(h3.latlng_to_cell(lat, lng, 7))
+    linha_hex: dict[str, Any] | None = None
+    if "hex_id" in hexes.columns:
+        achados = hexes.loc[hexes["hex_id"].astype(str) == hex_ponto]
+        if len(achados):
+            linha_hex = achados.iloc[0].to_dict()
+    if linha_hex is None or pd.isna(pd.to_numeric(pd.Series([linha_hex.get("cres_hex_taxa")]), errors="coerce").iloc[0]):
+        chex = carregar_crescimento_hex()
+        if chex is not None:
+            achados = chex.loc[chex["hex_id"] == hex_ponto]
+            if len(achados):
+                linha_hex = achados.iloc[0].to_dict()
+    crescimento_hex = rp.crescimento_do_hexagono(linha_hex, hexes)
+
+    mapas: dict[str, bytes] = {}
+    for fundo in ((True, False) if basemap else (False,)):
+        try:
+            mapas["pressao_raios"] = rpm.render_pressao_raios(lat, lng, comp_df, ultra_df, basemap=fundo)
+            break
+        except Exception as exc:  # noqa: BLE001 - mapa que falha vira fallback textual
+            _LOG_PRACA.warning("mapa pressao_raios (fundo=%s) falhou: %r", fundo, exc)
+
+    _LOG_PRACA.info(
+        "praca %s/%s: hexagono %s, crescimento=%s, obra nova=%s",
+        municipio, uf, hex_ponto, crescimento.disponivel, crescimento_hex.disponivel,
+    )
+    return rp.PracaDoPonto(
+        municipio=municipio,
+        uf=uf,
+        pressao=rp.pressao_sobre_ponto(lat, lng, comp_df, ultra_df),
+        crescimento=crescimento,
+        crescimento_hex=crescimento_hex,
+        mapas=mapas,
+    )
 
 
 @app.post("/api/relatorio/pontual")
@@ -9816,7 +9913,7 @@ def _gerar_relatorio_pontual_pdf(
     )
 
     try:
-        uf, _cod, setores_df = _resolver_e_carregar(lat, lng, cfg)
+        uf, cod_municipio, setores_df = _resolver_e_carregar(lat, lng, cfg)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f"Nao foi possivel resolver a coordenada: {exc}") from exc
 
@@ -9837,6 +9934,9 @@ def _gerar_relatorio_pontual_pdf(
         nome_distrito=result.get("nome_distrito_ponto"),
         nome_municipio=_nome_municipio_de(setores_df),
         uf=uf,
+        # Fecha a chave do fallback por `nome_distrito` no municipio DO PONTO: com
+        # o vizinho de divisa no mesmo `setores_df`, "Centro" casaria nos dois.
+        cod_municipio=cod_municipio,
     )
 
     ultra_dir = ULTRA_DIR if ULTRA_DIR.is_dir() else None
@@ -9879,6 +9979,17 @@ def _gerar_relatorio_pontual_pdf(
         residual = _residual_do_ponto(lat, lng, cfg)
     except Exception:  # noqa: BLE001
         residual = None
+
+    # Paginas da PRACA (pressao sobre o ponto e como a cidade esta indo). Mesma escada de basemap
+    # dos mapas acima; qualquer falha deixa o PDF sair sem elas, como antes.
+    try:
+        praca = _praca_para_pdf(
+            lat, lng, uf, cod_municipio, _nome_municipio_de(setores_df), comp_df, ultra_df,
+            basemap=mapas is not None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _LOG_PRACA.warning("paginas da praca omitidas: %r", exc)
+        praca = None
 
     # BLK-SAT-01: vista aerea (satelite Esri) da capa do PDF. A chave vem de env
     # API_ARCGIS_API_KEY (passthrough no compose); sem chave/rede -> None -> pagina
@@ -9931,6 +10042,7 @@ def _gerar_relatorio_pontual_pdf(
         # em `onde`, o `texto_rodape` e carimbado em todas as paginas de resultado
         # financeiro. No Brasil (`avisos` = {}) isto e None e o PDF nao muda um byte.
         aviso_rodape=_texto_do_aviso_de_viabilidade("pdf", "texto_rodape"),
+        praca=praca,
     )
     return Response(
         content=pdf,

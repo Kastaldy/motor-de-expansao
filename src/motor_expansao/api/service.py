@@ -15,14 +15,17 @@ LAZY, dentro de `analisar_ponto`, para nao pesar a subida do app.
 from __future__ import annotations
 
 import json
+import logging
 import unicodedata
 from datetime import UTC, datetime
 from functools import lru_cache
+from math import cos, radians
 from pathlib import Path
 from typing import Any
 
 from shapely import STRtree
 from shapely.geometry import Point, shape
+from shapely.geometry import box as shp_box
 
 from motor_expansao.api import __version__
 from motor_expansao.api.errors import APIError
@@ -47,6 +50,13 @@ _PERFIL = resolver_perfil()
 # 2 km cobre o pior caso do centroide de um hex res-7 (circunraio ~1,5 km) sem alcançar o
 # municipio errado do outro lado de uma baia.
 _TOLERANCIA_MALHA_GRAUS = 0.018
+
+# Um grau de LATITUDE em km (constante por definicao do meridiano; longitude encolhe com o
+# cosseno da latitude e por isso e' calculada ponto a ponto). Serve so' para transformar o
+# alcance do frame, que vem em km, no quadro em GRAUS com que se consulta a malha — uma
+# aproximacao GENEROSA de proposito: incluir um municipio que nao contribui setor custa uma
+# leitura de particao; excluir um que contribui e' o defeito que esta correcao fecha.
+_KM_POR_GRAU_LAT = 111.32
 
 
 class _MalhaMunicipal:
@@ -76,6 +86,24 @@ class _MalhaMunicipal:
         if self._geoms[i].distance(ponto) <= _TOLERANCIA_MALHA_GRAUS:
             return self._meta[i]
         return None
+
+    def alcancados(self, lat: float, lng: float, raio_km: float) -> list[tuple[str, str]]:
+        """Municipios cuja geometria toca o quadrado de meio-lado `raio_km` em torno do ponto.
+
+        E' a consulta que o Relatorio Pontual precisa e `resolver` nao responde: o raio de
+        analise atravessa divisa, e o municipio DO PONTO nao e' o unico com setores dentro
+        dele. Devolve em ordem estavel (a da arvore), SEM o do ponto em posicao especial —
+        quem chama e' que decide a precedencia.
+        """
+        meio_lado_lat = raio_km / _KM_POR_GRAU_LAT
+        # Longitude encolhe com o cosseno da latitude; o piso evita divisao por ~0 perto dos
+        # polos (irrelevante no Brasil, mas o codigo nao sabe em que pais roda — DEC-047).
+        cos_lat = max(cos(radians(lat)), 0.01)
+        meio_lado_lng = meio_lado_lat / cos_lat
+        quadro = shp_box(
+            lng - meio_lado_lng, lat - meio_lado_lat, lng + meio_lado_lng, lat + meio_lado_lat
+        )
+        return [self._meta[int(i)] for i in self._tree.query(quadro, predicate="intersects")]
 
 
 @lru_cache(maxsize=4)
@@ -151,7 +179,45 @@ def _resolver_e_carregar(lat: float, lng: float, settings: Settings):
             f"Materialize setores_censitarios_2022_geo/ para {uf}/{cod_municipio}",
             "base_geo_ausente",
         )
+
+    # O raio NAO para na divisa. Ate' 2026-09-17 so' a particao do municipio do ponto era
+    # lida, e no ponto de Sao Caetano do Sul relatado por Juan (77 m da divisa com Sao Paulo)
+    # isso apagava 51 dos 98 setores do raio e 20.079 dos 30.694 habitantes: o choropleth
+    # saia cortado em linha reta e os Big Numbers contavam meia vizinhanca. A ausencia que
+    # IMPORTA continua sendo a do proprio ponto -> o 404 acima e' avaliado ANTES da uniao, e
+    # vizinho sem particao apenas nao entra (cobertura parcial e' estado normal do artefato).
+    vizinhos = [
+        chave
+        for chave in _malha_alcancada(malha, lat, lng)
+        if chave != (uf, cod_municipio)
+    ]
+    if vizinhos:
+        import pandas as pd
+
+        extras = [
+            frame
+            for frame in (
+                read_censo_geo_partition(settings.censo_geo_dir, uf_v, cod_v)
+                for uf_v, cod_v in vizinhos
+            )
+            if frame is not None and not frame.empty
+        ]
+        if extras:
+            # O municipio do ponto vem PRIMEIRO de proposito: `_nome_municipio_de` rotula o
+            # painel com a primeira linha nao-nula, e o rotulo e' do ponto, nao do vizinho.
+            setores_df = pd.concat([setores_df, *extras], ignore_index=True)
+
     return uf, cod_municipio, setores_df
+
+
+def _malha_alcancada(malha: _MalhaMunicipal, lat: float, lng: float) -> list[tuple[str, str]]:
+    """Municipios que o FRAME do mapa alcanca — o alcance vem de quem desenha o frame."""
+    from motor_expansao.dashboard.censo_map import (
+        RAIO_CENSITARIO_DEFAULT_KM,
+        alcance_do_frame_km,
+    )
+
+    return malha.alcancados(lat, lng, alcance_do_frame_km(RAIO_CENSITARIO_DEFAULT_KM))
 
 
 def _nome_municipio_de(setores_df) -> str | None:
@@ -479,7 +545,7 @@ def _residual_do_ponto(lat: float, lng: float, settings: Settings) -> dict:
     return residual
 
 
-def _hexes_vizinhos_do_ponto(lat: float, lng: float, settings: Settings, k: int = 5):
+def _hexes_vizinhos_do_ponto(lat: float, lng: float, settings: Settings, k: int = 7):
     """Hexes H3 (res 7) do disco de raio `k` em torno do ponto, com o valor de cada camada hex.
 
     Espelha `_residual_do_ponto`: filtra direto no parquet de mercado por um conjunto pequeno de
@@ -504,6 +570,10 @@ def _hexes_vizinhos_do_ponto(lat: float, lng: float, settings: Settings, k: int 
         colunas = ["hex_id", "oferta_efetiva_disponivel"]
         if "score_setor_2022_calibrado" in disponiveis:
             colunas.append("score_setor_2022_calibrado")
+        # Populacao do censo por hexagono: decide o enquadramento do slide-hero
+        # (`censo_map.raio_enquadramento_hex_km`). k=7 porque o quadro pode abrir ate 7 km.
+        if "pop_total_setor_2022" in disponiveis:
+            colunas.append("pop_total_setor_2022")
 
         centro = h3.latlng_to_cell(lat, lng, 7)  # 7 = H3_RESOLUTION (M1), LIDO
         celulas = list(h3.grid_disk(centro, k))
@@ -640,7 +710,7 @@ def gerar_pdf_ponto(
     )
     from motor_expansao.dashboard.censo_report import gerar_pdf_relatorio_pontual_classico
 
-    uf, _cod, setores_df = _resolver_e_carregar(lat, lng, settings)
+    uf, cod_municipio, setores_df = _resolver_e_carregar(lat, lng, settings)
     comp_df, ultra_df = _competitors_ultra(settings)
     result = analisar_ponto_censitario_setores(
         lat, lng, setores_df, raio_km=RAIO_CENSITARIO_DEFAULT_KM,
@@ -658,6 +728,9 @@ def gerar_pdf_ponto(
         nome_distrito=result.get("nome_distrito_ponto"),
         nome_municipio=_nome_municipio_de(setores_df),
         uf=uf,
+        # Fecha a chave do fallback por `nome_distrito` no municipio DO PONTO: com
+        # o vizinho de divisa no mesmo `setores_df`, "Centro" casaria nos dois.
+        cod_municipio=cod_municipio,
     )
 
     ultra_dir = settings.ultra_dir if Path(settings.ultra_dir).is_dir() else None
@@ -1071,10 +1144,32 @@ def montar_pdf_municipio(
     if logos_dir is not None:
         preload_logos(logos_dir, ultra_dir=ultra_dir)
 
+    # Paginas da PRACA (mapas de calor, pressao, crescimento, onde crescer). Falha aqui deixa o PDF
+    # sair sem elas, como antes -- nunca derruba o relatorio. Vem ANTES dos mapas do relatorio
+    # porque os 5 hexagonos de "Onde crescer" sao os unicos que levam nome de bairro neles.
+    try:
+        praca = _praca_da_cidade(
+            df_muni, uf=uf, nome_municipio=nome_municipio, cod=cod, comp_df=comp_df,
+            ultra_df=ultra_df, poligono=poligono, renda_dom=renda_dom, settings=settings,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _LOG_PRACA.warning("paginas da praca omitidas em %s/%s: %r", nome_municipio, uf, exc)
+        praca = None
+
+    hexes_rotulados = (
+        {str(h) for h in praca.onde_crescer.hexagonos["hex_id"]}
+        if praca is not None and len(praca.onde_crescer.hexagonos)
+        else None
+    )
+    # Os 10 melhores pela MESMA regua de "Onde crescer" (os 5 da pagina sao os 5 primeiros):
+    # e' o que a camada de Dominio numera, em vez dos 154 aprovados de Sao Paulo.
+    hexes_top = _top_para_o_dominio(df_muni, renda_dom) if praca is not None else None
+
     def _mapas(basemap: bool):
         return render_mapas_municipio(
             df_muni, result, competitors_df=comp_df, ultra_df=ultra_df, basemap=basemap,
-            poligono_municipio=poligono, unidade=unidade,
+            poligono_municipio=poligono, unidade=unidade, hexes_rotulados=hexes_rotulados,
+            hexes_top=hexes_top,
         )
 
     try:
@@ -1091,6 +1186,138 @@ def montar_pdf_municipio(
     # engoliria o carimbo em silencio — o PDF sairia sem `/Info` e com marca-d'agua anonima.
     payloads = gerar_payloads_download_relatorio_municipal(
         result, mapas, ultra_dir=ultra_dir, solicitante=solicitante,
-        unidade=unidade, report_id=report_id,
+        unidade=unidade, report_id=report_id, praca=praca,
     )
     return payloads.pdf_bytes
+
+
+_LOG_PRACA = logging.getLogger("motor_expansao.relatorio_praca")
+
+#: Quantos hexagonos a camada de Dominio numera (pedido do Juan, 2026-09-17).
+TOP_HEXES_DOMINIO = 10
+
+
+def _top_para_o_dominio(df_muni, renda_dom: dict | None) -> set[str] | None:
+    """Os `TOP_HEXES_DOMINIO` melhores pela regua de "Onde crescer". `None` se nao der para ordenar."""
+    from motor_expansao.dashboard import relatorio_praca as rp
+
+    try:
+        hexes = rp.preparar_hexes_da_cidade(df_muni, renda_dom)
+        sel = rp.selecionar_onde_crescer(hexes, n=TOP_HEXES_DOMINIO)
+    except Exception as exc:  # noqa: BLE001 - mapa segue com o comportamento de antes
+        _LOG_PRACA.warning("top do dominio indisponivel: %r", exc)
+        return None
+    return {str(h) for h in sel.hexagonos["hex_id"]} or None
+
+
+def _praca_da_cidade(
+    df_muni,
+    *,
+    uf: str,
+    nome_municipio: str,
+    cod: str | None,
+    comp_df,
+    ultra_df,
+    poligono,
+    renda_dom: dict | None,
+    settings: Settings,
+    basemap: bool = True,
+):
+    """Monta a `PracaDaCidade` das quatro paginas novas do Relatorio Municipal.
+
+    Mesmo preparo para o motor e o bot: renda domiciliar pelo mapa que a tabela de regioes ja usa,
+    pins pelo recorte do slide Concorrentes e crescimento por `crescimento_municipal.parquet` da
+    staging (a base do bot nao traz as colunas `cres_*`). Cada mapa tenta o fundo de ruas online e
+    cai no canvas offline; o que falhar nos dois vira fallback textual na pagina.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from motor_expansao.dashboard import relatorio_praca as rp
+    from motor_expansao.dashboard import relatorio_praca_mapas as rpm
+    from motor_expansao.dashboard.relatorio_municipal import (
+        _hexes_do_municipio,
+        filtrar_pins_do_municipio,
+    )
+
+    hexes = rp.preparar_hexes_da_cidade(df_muni, renda_dom)
+    sel = rp.selecionar_onde_crescer(hexes)
+
+    hexes_muni = _hexes_do_municipio(df_muni)
+    conc = filtrar_pins_do_municipio(comp_df, hexes_muni=hexes_muni, poligono=poligono)
+    ult = filtrar_pins_do_municipio(ultra_df, hexes_muni=hexes_muni, poligono=poligono)
+
+    cres_df = _carregar_parquet_full(str(settings.staging_dir / "crescimento_municipal.parquet"))
+    linha = rp.linha_crescimento_municipal(cres_df, uf=uf, cod_municipio=cod, nome_municipio=nome_municipio)
+    crescimento = rp.resumir_crescimento(linha, uf=uf, rotulo_tendencia=_ROTULO_TENDENCIA)
+
+    # Simbolo do perfil (R$ no BR, USD na AR), como a tabela do proprio relatorio (`_renda`).
+    simbolo = resolver_perfil().moeda.simbolo_renda()
+
+    def _moeda(v: float) -> str:
+        return f"{simbolo} {int(round(v)):,}".replace(",", ".")
+
+    def _inteiro(v: float) -> str:
+        # Uma casa decimal abaixo de 10: em Manaus a floresta domina os quintis e a legenda da
+        # densidade saia com faixas "0 a 0", que nao dizem nada.
+        if 0 < v < 10:
+            return f"{v:.1f}".replace(".", ",")
+        return f"{int(round(v)):,}".replace(",", ".")
+
+    def _calor(coluna: str, titulo: str, legenda: str, formatar, paleta):
+        return lambda fundo: rpm.render_calor_cidade(
+            hexes, coluna, titulo=titulo, legenda_titulo=legenda, formatar=formatar, paleta=paleta,
+            subtitulo="Por hexagono, cidade inteira", basemap=fundo,
+        )
+
+    pop_municipal = rp.populacao_e_municipal(hexes)
+    desenhos = [
+        ("calor_cidade_renda_domiciliar", _calor("renda_domiciliar", "Renda media domiciliar", f"{simbolo} por domicilio", _moeda, rpm.PALETA_RENDA)),
+        ("pressao_cidade", lambda fundo: rpm.render_pressao_cidade(hexes, conc, ult, basemap=fundo)),
+        ("onde_crescer", lambda fundo: rpm.render_onde_crescer(hexes, sel.hexagonos, basemap=fundo)),
+    ]
+    if not pop_municipal:
+        # Com a populacao do municipio repetida em cada hexagono (Manaus: 2.063.689 nos 2.139), a
+        # densidade seria o mesmo numero dividido pela area da celula -- o mapa saia em faixas
+        # verticais. Nesse caso a pagina publica so' a renda e explica a ausencia.
+        desenhos.insert(
+            1,
+            (
+                "calor_cidade_densidade",
+                _calor("densidade_hab_km2", "Densidade demografica", "Habitantes por km2", _inteiro, rpm.PALETA_DENSIDADE),
+            ),
+        )
+
+    def _desenhar(item):
+        chave, desenhar = item
+        # Mesma escada dos mapas do relatorio: fundo de ruas online e, se falhar, canvas offline.
+        for fundo in ((True, False) if basemap else (False,)):
+            try:
+                return chave, desenhar(fundo)
+            except Exception as exc:  # noqa: BLE001 - mapa que falha vira fallback textual
+                _LOG_PRACA.warning("mapa %s (fundo=%s) falhou: %r", chave, fundo, exc)
+        return chave, None
+
+    # Em paralelo: a frio, cada mapa gasta 15-20 s baixando o fundo de ruas (medido em SP). As
+    # threads so' esperam rede e leem frames prontos -- nenhuma escreve em estado compartilhado.
+    with ThreadPoolExecutor(max_workers=len(desenhos)) as pool:
+        mapas = {chave: png for chave, png in pool.map(_desenhar, desenhos) if png}
+
+    _LOG_PRACA.info(
+        "praca %s/%s: %d hexagonos, %d elegiveis, mediana renda dom. %s, crescimento=%s",
+        nome_municipio, uf, len(hexes), sel.n_elegiveis, sel.mediana_renda, crescimento.disponivel,
+    )
+    return rp.PracaDaCidade(
+        municipio=nome_municipio,
+        uf=uf,
+        onde_crescer=sel,
+        pressao=rp.pressao_na_cidade(hexes, conc, ult),
+        crescimento=crescimento,
+        mapas=mapas,
+        n_hexagonos_cidade=int(len(hexes)),
+        renda_municipal=rp.renda_e_municipal(hexes),
+        populacao_municipal=pop_municipal,
+    )
+
+
+#: Rotulo de exibicao da tendencia (valor bruto sem acento, §2) -- o mesmo de `app._ROTULO_TEND`.
+_ROTULO_TENDENCIA = {"Estavel": "Estável", "Em alta": "Em alta", "Em queda": "Em queda"}

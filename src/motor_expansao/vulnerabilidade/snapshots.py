@@ -1741,6 +1741,9 @@ def executar(
     retencao_semanas: int = RETENCAO_TUDO,
     dry_run: bool = False,
     ponte_dir: Path | None = None,
+    estado_dir: Path | None = None,
+    atualizar_estado: bool = True,
+    reprocessar_estado: bool = False,
     fontes: Sequence[str] | None = None,
     forcar: bool = False,
 ) -> dict[str, object]:
@@ -1755,9 +1758,20 @@ def executar(
     que torna `--reprocessar` possível. Passar qualquer valor `>= 1` reativa a poda keep-newest-N;
     é assim que ela segue disponível como ato MANUAL, com a invariante `>= 1` intacta do outro lado.
 
-    `dry_run=True` roda o caminho inteiro e **não toca disco**: nada é gravado e **nada é podado**.
-    Existe porque este é o unico ponto do pacote que APAGA arquivo, e um cron novo precisa poder ser
-    validado antes de rodar para valer (BLK-MA-02-FU1, m6).
+    **O estado incremental de churn é atualizado AQUI `[DEC-064, D2]`**, logo depois da publicação e
+    sob a MESMA condição dela: semana que a guarda de coleta parcial recusou não entra no estado,
+    senão o acumulador herdaria a foto quebrada que a DEC-061 existe para barrar — e, ao contrário
+    da série, um acumulador não se conserta apagando uma partição.
+
+    Ligado **por dentro**, com `atualizar_estado=True` por default, e não por um passo novo no
+    wrapper do cron. A razão é a lição mais cara deste epic: sempre que o shell e o código
+    precisaram concordar sobre alguma coisa (o recorte de fontes, o valor da retenção, o filtro de
+    path da imagem), eles divergiram em silêncio. Aqui não há o que divergir — quem grava a
+    partição atualiza o estado, no mesmo processo e na mesma decisão.
+
+    `dry_run=True` roda o caminho inteiro e **não toca disco**: nada é gravado, **nada é podado** e
+    o estado **não** é atualizado. Existe porque este é o unico ponto do pacote que APAGA arquivo, e
+    um cron novo precisa poder ser validado antes de rodar para valer (BLK-MA-02-FU1, m6).
 
     A auditoria carrega `retencao_semanas` e `versao_contrato` `[BLK-MA-21]`. Não é cosmético: é a
     única forma de um `DRY_RUN` na VPS provar **qual imagem está rodando** antes de agendar. Uma
@@ -1765,7 +1779,7 @@ def executar(
     "código publicado != camada no ar" veio de exatamente esse tipo de suposição não verificada.
     Nenhum dos dois campos toca o parquet, logo nenhum exige bump.
     """
-    _snapshot, auditoria = materializar(
+    snapshot, auditoria = materializar(
         dir_totalpass,
         dir_wellhub,
         dir_unidades,
@@ -1786,10 +1800,27 @@ def executar(
         return auditoria
     auditoria["dry_run"] = False
     if not auditoria.get("publicado", True):
-        # Nada foi gravado: podar aqui encurtaria a serie BOA por causa de uma semana que nem entrou.
+        # Nada foi gravado: podar aqui encurtaria a serie BOA por causa de uma semana que nem entrou,
+        # e atualizar o estado o contaminaria com a foto que a guarda acabou de RECUSAR.
         auditoria["semanas_removidas"] = 0
-        _logger.error("nada publicado (coleta parcial): retencao NAO aplicada")
+        auditoria["estado_churn"] = None
+        _logger.error("nada publicado (coleta parcial): retencao e estado NAO aplicados")
         return auditoria
+
+    # Estado incremental de churn `[DEC-064, D2]`. Import LOCAL de proposito: `churn_estado` importa
+    # `snapshots`, e um import de topo fecharia o ciclo.
+    if atualizar_estado:
+        from .churn_estado import atualizar as _atualizar_estado
+
+        auditoria["estado_churn"] = _atualizar_estado(
+            snapshot,
+            base_dir,
+            semana=str(auditoria["semana"]),
+            estado_dir=estado_dir,
+            reprocessar_tudo=reprocessar_estado,
+        )
+    else:
+        auditoria["estado_churn"] = None
     if int(retencao_semanas) <= RETENCAO_TUDO:
         # Regime normal desde a DEC-064 (D1): a serie inteira fica. A poda NAO e' consultada, e a
         # invariante `>= 1` de `podar_snapshots` segue intacta porque a sentinela nunca chega la'.
@@ -1829,6 +1860,32 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "gitignored, arvore IRMA da serie -- nunca dentro dela. Default: derivado do "
             f"`--base-dir` (irmao de nome `{PONTE_DIR_DEFAULT.name}`), para a ponte acompanhar "
             "a serie mesmo quando ela nao esta' no caminho de producao"
+        ),
+    )
+    p.add_argument(
+        "--estado-dir",
+        type=Path,
+        default=None,
+        help=(
+            "raiz do estado incremental de churn (DEC-064 D2). Default: derivado do `--base-dir`, "
+            "para o estado acompanhar a serie que ele descreve"
+        ),
+    )
+    p.add_argument(
+        "--sem-estado",
+        action="store_true",
+        help=(
+            "NAO atualiza o estado incremental de churn apos publicar. Escotilha para uma execucao "
+            "de emergencia; em regime o estado tem de acompanhar a serie"
+        ),
+    )
+    p.add_argument(
+        "--reprocessar",
+        action="store_true",
+        help=(
+            "reconstroi o estado de churn do ZERO a partir da serie retida, uma semana por vez, "
+            "em vez de aplicar so' a semana corrente (DEC-064 D2). E' o caminho de reposicao da "
+            "consistencia: use depois de mudar a regra do acumulador ou se uma semana foi perdida"
         ),
     )
     p.add_argument(
@@ -1941,6 +1998,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         dir_unidades=args.dir_unidades,
         base_dir=args.base_dir,
         ponte_dir=args.ponte_dir,
+        estado_dir=args.estado_dir,
+        atualizar_estado=not args.sem_estado,
+        reprocessar_estado=bool(args.reprocessar),
         data_referencia=args.data_referencia,
         retencao_semanas=args.retencao_semanas,
         dry_run=args.dry_run,
