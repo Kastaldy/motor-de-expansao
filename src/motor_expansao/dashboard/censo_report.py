@@ -23,6 +23,12 @@ from motor_expansao.dashboard.censo_point import (
     RAIO_CENSITARIO_DEFAULT_KM,
 )
 from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
+from motor_expansao.dashboard.relatorio_praca import (
+    TITULO_COMO_A_CIDADE_ESTA_INDO,
+    TITULO_PRESSAO_CONCORRENCIAL,
+    PracaDoPonto,
+    texto_pdf,
+)
 from motor_expansao.perfil import resolver_perfil
 
 # Cabecalhos canonicos das 7 paginas do template Ultra. Renderizam em latin-1 (core font
@@ -84,6 +90,8 @@ MAP_LAYER_TITLES: tuple[tuple[str, str], ...] = (
     ("socioeconomia", "Socioeconomia"),
     ("residual", "Residual Fitness"),
     ("concorrentes", "Concorrentes e Ultra"),
+    # Pagina da PRACA (`relatorio_praca.PracaDoPonto.mapas`): so' existe no PDF do piloto web.
+    ("pressao_raios", "Pressão concorrencial"),
 )
 
 CSV_SETOR_COLUMNS = [
@@ -734,7 +742,8 @@ def _draw_maps_grid(
 _SOCIOECONOMIA_RESIDUAL_TITULO = "Socioeconomia e Residual Fitness"
 # BLK-RELPON-13: fator de escala das 2 imagens do slide-hero (1.0 = tamanho atual). Ponto de
 # PARTIDA CALIBRAVEL no gate visual de Vinicius; so as paginas socioeconomia+residual o aplicam.
-_HERO_MAP_SCALE = 0.85
+# 0,85 -> 1,0 em 2026-09-17 (pedido do Juan: os dois mapas ocupavam metade do slide).
+_HERO_MAP_SCALE = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -3821,6 +3830,186 @@ def _classico_competitors_page(
     _draw_footer(pdf, with_attribution=True)
 
 
+# ── Paginas da PRACA (piloto web): pressao sobre o ponto e como a cidade esta indo ─────────
+# Condicionais (so' com `praca=`), por isso fora de `PDF_SECTION_HEADERS`. Texto pelo `texto_pdf`
+# antes do `_ascii`: parte dele vem pronto de outra camada e traz travessao.
+
+_PRACA_TOPO = _CLASSICO_MARGIN + _CLASSICO_BAND_H + 12.0 + 24.0 + 8.0
+_PRACA_ROTULO_RGB = (120, 126, 138)
+_PRACA_VALOR_RGB = (38, 50, 71)
+
+
+def _fmt_milhar(valor: Any, prefixo: str = "") -> str:
+    x = pd.to_numeric(pd.Series([valor]), errors="coerce").iloc[0]
+    if pd.isna(x):
+        return TEXTO_SEM_DADO
+    return f"{prefixo}{int(round(float(x))):,}".replace(",", ".")
+
+
+def _rotulo_rede(slug: str | None) -> str:
+    """Nome de exibicao da rede (`smart_fit` -> `Smart Fit`); o que nao for slug conhecido passa."""
+    if not slug:
+        return TEXTO_SEM_DADO
+    # Import local, como em `_redes_no_raio`: o modulo de logos so' carrega quando ha rede a nomear.
+    from motor_expansao.dashboard.competitors import COMPETITOR_BRANDS
+
+    return str(COMPETITOR_BRANDS.get(slug, {}).get("label", slug))
+
+
+def _imagem_na_caixa(pdf: _UltraPDF, png: bytes | None, x: float, y: float, w: float, h: float) -> bool:
+    """Encaixa o PNG na caixa preservando a proporcao, centralizado. False sem imagem."""
+    if not png:
+        return False
+    dims = _png_dimensions(png)
+    if dims is None:
+        return False
+    iw, ih = dims
+    escala = min(w / iw, h / ih)
+    dw, dh = iw * escala, ih * escala
+    try:
+        pdf.image(BytesIO(png), x=x + (w - dw) / 2.0, y=y + (h - dh) / 2.0, w=dw, h=dh)
+    except Exception:
+        return False
+    return True
+
+
+def _sem_mapa(pdf: _UltraPDF, x: float, y: float, w: float, h: float) -> None:
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_xy(x, y + h / 2.0 - 8)
+    pdf.cell(w, 16, _ascii(f"Mapa {TEXTO_SEM_DADO.lower()}"), align="C")
+
+
+def _linha_rotulo_valor(pdf: _UltraPDF, x: float, y: float, w: float, rotulo: str, valor: str) -> float:
+    pdf.set_text_color(*_PRACA_ROTULO_RGB)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_xy(x, y)
+    pdf.cell(w, 13, _ascii(texto_pdf(rotulo)))
+    pdf.set_text_color(*_PRACA_VALOR_RGB)
+    pdf.set_font("Helvetica", "B", 15)
+    pdf.set_xy(x, y + 13)
+    pdf.multi_cell(w, 18, _ascii(texto_pdf(valor)))
+    return pdf.get_y() + 8
+
+
+def _praca_pressao_page(
+    pdf: _UltraPDF, praca: PracaDoPonto, layers: dict[str, bytes], assets: dict[str, bytes | None],
+    *, banda_texto: str, primary: tuple[int, int, int], secondary: tuple[int, int, int],
+) -> None:
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _classico_title_band(pdf, banda_texto, TITULO_PRESSAO_CONCORRENCIAL, assets, rgb=primary)
+    mapa_w = 600.0
+    altura = _PAGE_H - 30.0 - _PRACA_TOPO
+    if not _imagem_na_caixa(pdf, layers.get("pressao_raios"), _CLASSICO_MARGIN, _PRACA_TOPO, mapa_w, altura):
+        _sem_mapa(pdf, _CLASSICO_MARGIN, _PRACA_TOPO, mapa_w, altura)
+
+    p = praca.pressao
+    x = _CLASSICO_MARGIN + mapa_w + 20.0
+    w = _PAGE_W - x - _CLASSICO_MARGIN
+    raio_txt = f"{p.raio_m / 1000:.1f}".replace(".", ",")
+    y = _PRACA_TOPO + 4
+    pdf.set_text_color(*secondary)
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.set_xy(x, y)
+    pdf.multi_cell(w, 16, _ascii(f"Quem alcança o ponto (raio de {raio_txt} km)"))
+    y = pdf.get_y() + 8
+    y = _linha_rotulo_valor(pdf, x, y, w, "Raios sobre o ponto", str(p.n_raios_sobre_ponto))
+    y = _linha_rotulo_valor(
+        pdf, x, y, w, "Concorrentes / unidades Ultra",
+        f"{p.n_concorrentes_sobre_ponto} / {p.n_ultra_sobre_ponto}",
+    )
+    if p.dist_mais_proxima_m is not None:
+        y = _linha_rotulo_valor(
+            pdf, x, y, w, "Academia mais próxima",
+            f"{_rotulo_rede(p.nome_mais_proxima)} a {_fmt_milhar(p.dist_mais_proxima_m)} m",
+        )
+    else:
+        y = _linha_rotulo_valor(pdf, x, y, w, "Academia mais próxima", TEXTO_SEM_DADO)
+    redes = [f"{_rotulo_rede(nome)} ({n})" for nome, n in p.redes_sobre_ponto[:6]]
+    if p.n_independentes_sobre_ponto:
+        redes.append(f"Independentes ({p.n_independentes_sobre_ponto})")
+    y = _linha_rotulo_valor(pdf, x, y, w, "Redes sobre o ponto", ", ".join(redes) if redes else "Nenhuma")
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_xy(x, max(y, _PAGE_H - 110))
+    pdf.multi_cell(
+        w, 12,
+        _ascii(
+            f"Cada círculo é a área de influência de {raio_txt} km que o motor usa para descontar a "
+            "concorrência do residual. Onde os círculos se sobrepõem a cor escurece: mais academias "
+            "disputando o mesmo público."
+        ),
+    )
+    _draw_footer(pdf, with_attribution=True)
+
+
+def _praca_cidade_page(
+    pdf: _UltraPDF, praca: PracaDoPonto, assets: dict[str, bytes | None],
+    *, banda_texto: str, primary: tuple[int, int, int], secondary: tuple[int, int, int],
+) -> None:
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _classico_title_band(pdf, banda_texto, TITULO_COMO_A_CIDADE_ESTA_INDO, assets, rgb=primary)
+    c = praca.crescimento
+    x = _CLASSICO_MARGIN + 20.0
+    w = _PAGE_W - 2 * x
+    local = f"{texto_pdf(praca.municipio)}/{praca.uf}" if praca.uf else texto_pdf(praca.municipio)
+    pdf.set_text_color(*secondary)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_xy(x, _PRACA_TOPO + 4)
+    pdf.cell(w, 18, _ascii(local))
+
+    pdf.set_text_color(*_PRACA_VALOR_RGB)
+    pdf.set_font("Helvetica", "", 13)
+    pdf.set_xy(x, _PRACA_TOPO + 30)
+    pdf.multi_cell(w, 18, _ascii(texto_pdf(c.frase)))
+    y = pdf.get_y() + 14
+
+    # Duas colunas: a cidade (camada municipal) a esquerda e o hexagono do ponto (obra nova por
+    # satelite) a direita. As bases nao se misturam -- a mesma divisao da ficha do hexagono na tela.
+    col_w = (w - 30.0) / 2.0
+    pdf.set_text_color(*secondary)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_xy(x, y)
+    pdf.cell(col_w, 14, _ascii("Na cidade"))
+    y_esq = y + 22
+    for rotulo, valor in c.linhas:
+        y_esq = _linha_rotulo_valor(pdf, x, y_esq, col_w, rotulo, valor)
+
+    h = praca.crescimento_hex
+    xd = x + col_w + 30.0
+    pdf.set_draw_color(*secondary)
+    pdf.set_line_width(1.2)
+    pdf.line(xd - 15.0, y, xd - 15.0, _PAGE_H - 60.0)
+    pdf.set_text_color(*secondary)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_xy(xd, y)
+    pdf.cell(col_w, 14, _ascii("No hexágono do ponto"))
+    y_dir = y + 22
+    if h.disponivel:
+        y_dir = _linha_rotulo_valor(pdf, xd, y_dir, col_w, "Área construída 2016-2023", h.taxa_texto or TEXTO_SEM_DADO)
+        if h.classe:
+            y_dir = _linha_rotulo_valor(pdf, xd, y_dir, col_w, "Classe do hexágono", h.classe)
+        if h.mediana_cidade_texto:
+            y_dir = _linha_rotulo_valor(pdf, xd, y_dir, col_w, "Mediana dos hexágonos da cidade", h.mediana_cidade_texto)
+    pdf.set_text_color(*_PRACA_VALOR_RGB)
+    pdf.set_font("Helvetica", "", 10.5)
+    pdf.set_xy(xd, y_dir + 2)
+    pdf.multi_cell(col_w, 14, _ascii(texto_pdf(h.frase)))
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_xy(x, _PAGE_H - 48)
+    pdf.multi_cell(
+        w, 12,
+        _ascii(
+            "Fontes: CAGED, RAIS e Receita Federal (cidade) e área construída por satélite, 2016-2023 "
+            "(hexágono). Contexto sobre a praça: não é previsão de desempenho de unidade."
+        ),
+    )
+    _draw_footer(pdf, with_attribution=False)
+
+
 def _classico_perfil_bairro_page(
     pdf: _UltraPDF,
     perfil_bairro: dict[str, Any] | None,
@@ -3990,8 +4179,14 @@ def gerar_pdf_relatorio_pontual_classico(
     origem_centroide_hex: bool = False,
     conclusao_so_estudo: bool = False,
     aviso_rodape: str | None = None,
+    praca: PracaDoPonto | None = None,
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
+
+    `praca` (piloto web) acrescenta DUAS paginas: "Pressao concorrencial" (depois de
+    "Concorrentes") e "Como a cidade esta indo", com o hexagono do ponto (depois de "Big
+    Numbers"). Mapas de calor da cidade e onde crescer sao do Relatorio Municipal. `None`
+    (default, caminho da API/bot) = PDF identico ao de antes do parametro.
 
     BLK-RELPON-14: e' a IMPLEMENTACAO UNICA do relatorio pontual — o template "recente" foi
     descontinuado e `gerar_pdf_relatorio_pontual_censitario` virou um wrapper fino sobre esta
@@ -4037,6 +4232,9 @@ def gerar_pdf_relatorio_pontual_classico(
     """
     assets = _load_branding_assets(ultra_dir)
     layers = dict(_normalize_mapas_by_key(mapas))
+    if praca is not None and praca.mapas:
+        # Pelo mesmo filtro de `MAP_LAYER_TITLES`: chave fora da tupla e' descartada, como as demais.
+        layers.update(_normalize_mapas_by_key(praca.mapas))
     banda_texto = _classico_banda_texto(result, rotulo)
 
     # Tom principal alterna por pagina de conteudo (turquesa <-> magenta). BLK-RELPON-01 +
@@ -4099,11 +4297,21 @@ def gerar_pdf_relatorio_pontual_classico(
         pdf, result, layers.get("concorrentes"), assets, banda_texto=banda_texto,
         primary=p2, secondary=s2,
     )
+    # Ordinais 7 e 8 para as paginas da praca: livres (0..5 em uso) e ABSOLUTOS, entao nenhuma
+    # pagina existente troca de cor.
+    if praca is not None:
+        p7, s7 = _tema_bicolor(7)
+        _praca_pressao_page(
+            pdf, praca, layers, assets, banda_texto=banda_texto, primary=p7, secondary=s7
+        )
     _classico_perfil_bairro_page(
         pdf, perfil_bairro, assets, banda_texto=banda_texto, primary=p3, secondary=s3,
     )
     _big_numbers_page(pdf, result, residual, assets, primary=p4, secondary=s4)
     _classico_banda_magenta_rodape(pdf)
+    if praca is not None:
+        p8, s8 = _tema_bicolor(8)
+        _praca_cidade_page(pdf, praca, assets, banda_texto=banda_texto, primary=p8, secondary=s8)
     # Paginas de RESULTADO FINANCEIRO (numeros de viabilidade, graficos e conclusao com
     # parecer financeiro), anotadas POR NUMERO na ordem em que nascem: e nelas — e so
     # nelas — que o `aviso_rodape` do Bloco C+ e carimbado, mais abaixo, pelo mesmo
