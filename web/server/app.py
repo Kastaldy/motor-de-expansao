@@ -9966,7 +9966,8 @@ def _gerar_relatorio_pontual_pdf(
     # dos mapas acima; qualquer falha deixa o PDF sair sem elas, como antes.
     try:
         praca = _praca_para_pdf(
-            lat, lng, uf, _cod, _nome_municipio_de(setores_df), comp_df, ultra_df, basemap=mapas is not None
+            lat, lng, uf, cod_municipio, _nome_municipio_de(setores_df), comp_df, ultra_df,
+            basemap=mapas is not None,
         )
     except Exception as exc:  # noqa: BLE001
         _LOG_PRACA.warning("paginas da praca omitidas: %r", exc)
