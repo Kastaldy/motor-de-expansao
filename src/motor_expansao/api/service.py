@@ -18,11 +18,13 @@ import json
 import unicodedata
 from datetime import UTC, datetime
 from functools import lru_cache
+from math import cos, radians
 from pathlib import Path
 from typing import Any
 
 from shapely import STRtree
 from shapely.geometry import Point, shape
+from shapely.geometry import box as shp_box
 
 from motor_expansao.api import __version__
 from motor_expansao.api.errors import APIError
@@ -47,6 +49,13 @@ _PERFIL = resolver_perfil()
 # 2 km cobre o pior caso do centroide de um hex res-7 (circunraio ~1,5 km) sem alcançar o
 # municipio errado do outro lado de uma baia.
 _TOLERANCIA_MALHA_GRAUS = 0.018
+
+# Um grau de LATITUDE em km (constante por definicao do meridiano; longitude encolhe com o
+# cosseno da latitude e por isso e' calculada ponto a ponto). Serve so' para transformar o
+# alcance do frame, que vem em km, no quadro em GRAUS com que se consulta a malha — uma
+# aproximacao GENEROSA de proposito: incluir um municipio que nao contribui setor custa uma
+# leitura de particao; excluir um que contribui e' o defeito que esta correcao fecha.
+_KM_POR_GRAU_LAT = 111.32
 
 
 class _MalhaMunicipal:
@@ -76,6 +85,24 @@ class _MalhaMunicipal:
         if self._geoms[i].distance(ponto) <= _TOLERANCIA_MALHA_GRAUS:
             return self._meta[i]
         return None
+
+    def alcancados(self, lat: float, lng: float, raio_km: float) -> list[tuple[str, str]]:
+        """Municipios cuja geometria toca o quadrado de meio-lado `raio_km` em torno do ponto.
+
+        E' a consulta que o Relatorio Pontual precisa e `resolver` nao responde: o raio de
+        analise atravessa divisa, e o municipio DO PONTO nao e' o unico com setores dentro
+        dele. Devolve em ordem estavel (a da arvore), SEM o do ponto em posicao especial —
+        quem chama e' que decide a precedencia.
+        """
+        meio_lado_lat = raio_km / _KM_POR_GRAU_LAT
+        # Longitude encolhe com o cosseno da latitude; o piso evita divisao por ~0 perto dos
+        # polos (irrelevante no Brasil, mas o codigo nao sabe em que pais roda — DEC-047).
+        cos_lat = max(cos(radians(lat)), 0.01)
+        meio_lado_lng = meio_lado_lat / cos_lat
+        quadro = shp_box(
+            lng - meio_lado_lng, lat - meio_lado_lat, lng + meio_lado_lng, lat + meio_lado_lat
+        )
+        return [self._meta[int(i)] for i in self._tree.query(quadro, predicate="intersects")]
 
 
 @lru_cache(maxsize=4)
@@ -151,7 +178,45 @@ def _resolver_e_carregar(lat: float, lng: float, settings: Settings):
             f"Materialize setores_censitarios_2022_geo/ para {uf}/{cod_municipio}",
             "base_geo_ausente",
         )
+
+    # O raio NAO para na divisa. Ate' 2026-09-17 so' a particao do municipio do ponto era
+    # lida, e no ponto de Sao Caetano do Sul relatado por Juan (77 m da divisa com Sao Paulo)
+    # isso apagava 51 dos 98 setores do raio e 20.079 dos 30.694 habitantes: o choropleth
+    # saia cortado em linha reta e os Big Numbers contavam meia vizinhanca. A ausencia que
+    # IMPORTA continua sendo a do proprio ponto -> o 404 acima e' avaliado ANTES da uniao, e
+    # vizinho sem particao apenas nao entra (cobertura parcial e' estado normal do artefato).
+    vizinhos = [
+        chave
+        for chave in _malha_alcancada(malha, lat, lng)
+        if chave != (uf, cod_municipio)
+    ]
+    if vizinhos:
+        import pandas as pd
+
+        extras = [
+            frame
+            for frame in (
+                read_censo_geo_partition(settings.censo_geo_dir, uf_v, cod_v)
+                for uf_v, cod_v in vizinhos
+            )
+            if frame is not None and not frame.empty
+        ]
+        if extras:
+            # O municipio do ponto vem PRIMEIRO de proposito: `_nome_municipio_de` rotula o
+            # painel com a primeira linha nao-nula, e o rotulo e' do ponto, nao do vizinho.
+            setores_df = pd.concat([setores_df, *extras], ignore_index=True)
+
     return uf, cod_municipio, setores_df
+
+
+def _malha_alcancada(malha: _MalhaMunicipal, lat: float, lng: float) -> list[tuple[str, str]]:
+    """Municipios que o FRAME do mapa alcanca — o alcance vem de quem desenha o frame."""
+    from motor_expansao.dashboard.censo_map import (
+        RAIO_CENSITARIO_DEFAULT_KM,
+        alcance_do_frame_km,
+    )
+
+    return malha.alcancados(lat, lng, alcance_do_frame_km(RAIO_CENSITARIO_DEFAULT_KM))
 
 
 def _nome_municipio_de(setores_df) -> str | None:
@@ -600,7 +665,7 @@ def gerar_pdf_ponto(
     )
     from motor_expansao.dashboard.censo_report import gerar_pdf_relatorio_pontual_classico
 
-    uf, _cod, setores_df = _resolver_e_carregar(lat, lng, settings)
+    uf, cod_municipio, setores_df = _resolver_e_carregar(lat, lng, settings)
     comp_df, ultra_df = _competitors_ultra(settings)
     result = analisar_ponto_censitario_setores(
         lat, lng, setores_df, raio_km=RAIO_CENSITARIO_DEFAULT_KM,
@@ -618,6 +683,9 @@ def gerar_pdf_ponto(
         nome_distrito=result.get("nome_distrito_ponto"),
         nome_municipio=_nome_municipio_de(setores_df),
         uf=uf,
+        # Fecha a chave do fallback por `nome_distrito` no municipio DO PONTO: com
+        # o vizinho de divisa no mesmo `setores_df`, "Centro" casaria nos dois.
+        cod_municipio=cod_municipio,
     )
 
     ultra_dir = settings.ultra_dir if Path(settings.ultra_dir).is_dir() else None
