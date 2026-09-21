@@ -80,6 +80,7 @@ o **marcador por app**: enquanto o TotalPass estava fora, "independente" e "veio
 mesma coisa e a logo rosa nunca mentia — com ele dentro, academia do TotalPass sairia com a bandeira
 do concorrente em PDF entregue, e o slide "Concorrentes por rede" a contaria como Wellhub — isso
 sem bump, porque a coluna `fonte` já existia e morria na projeção. **E um terceiro estado**, para as
-academias que estão nos DOIS apps: régua **100 m + nome** (8.250 academias, escolhida sobre cinco
-alternativas medidas), coluna `fontes_da_academia` com bump `alvos_ma_nomeados_v7 -> v8`, pino de
+academias que estão nos DOIS apps: régua **100 m + nome** (**7.685 estabelecimentos** = 15.370 LINHAS
+no artefato, pois cada uma ocupa duas; tabela refeita em 21/09 sobre a série real e fechando em
+35.667 nas cinco réguas, com a ORDEM delas idêntica à da escolha), coluna `fontes_da_academia` com bump `alvos_ma_nomeados_v7 -> v8`, pino de
 placa bipartida com as duas logos e asset composto na web travado por teste de pixels. **DUAS RÉGUAS de "mesma academia" convivem no produto, e está declarado para não virar desencontro silencioso (DEC-044):** 50 m para a OFERTA — a da dedup TP x WH, "arbitrada" desde 2026-08-14, calibrada contra par real e que **fica como está**, porque acima de 100 m o ganho marginal cai abaixo da taxa-base de academias genuinamente próximas, e não colapsar dobra a oferta de toda academia listada nas duas fontes — e 100 m + nome para a AFIRMAÇÃO do pino, onde errar publica procedência falsa num artefato entregue. **Seis** bumps (o sexto é o `alvos_ma_nomeados_v7 -> v8` acima); `presenca_agregador`, `churn_staleness` e `snapshots_concorrentes` NÃO — o que corrige a lista do BLK-MA-20 — **PROPOSTA**
