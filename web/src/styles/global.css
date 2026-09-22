@@ -93,7 +93,12 @@ button:disabled {
   cursor: not-allowed;
 }
 
-input,
+/* CAMPO DE TEXTO. O seletor exclui caixa de seleção e botão de opção de propósito: até
+   22/09/2026 ele dizia só `input`, e `width: 100%` + `padding: 11px 13px` caíam também sobre
+   `type="checkbox"`. O efeito era visível e ninguém tinha olhado — a caixa virava um retângulo
+   largo, com a marca deslocada do rótulo por dezenas de pixels. Apareceu na tela de login, mas
+   já valia para o `NarrativePanel` desde sempre. */
+input:not([type='checkbox']):not([type='radio']),
 textarea {
   background: var(--surf-input);
   border: 1px solid var(--line);
@@ -103,6 +108,17 @@ textarea {
   font: 500 13px/1.2 var(--f-ui);
   outline: none;
   width: 100%;
+}
+
+/* `flex: none` não é enfeite: as três caixas do app vivem dentro de `display: flex`, e sem isto
+   elas voltam a esticar ou encolher conforme o rótulo ao lado. */
+input[type='checkbox'],
+input[type='radio'] {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  accent-color: var(--ac);
+  cursor: inherit;
 }
 
 input:focus-visible,
