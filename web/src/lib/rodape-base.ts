@@ -88,6 +88,27 @@ export function rodapeDaBase(ufs: readonly string[] | null | undefined): string 
   return `${n} ${n === 1 ? u.um : u.varios} · ${CENSO[pais]} + ${PONTOS[pais]} · camada visual read-only`
 }
 
+/**
+ * A procedencia CURTA, para caber num selo — hoje, a pilula do painel da tela de entrar.
+ *
+ * O `rodapeDaBase` e' uma FRASE de rodape ("27 estados · Censo 2022 (IBGE) + rede Ultra e
+ * concorrentes mapeados · camada visual read-only"): dentro de uma pilula ela quebra em
+ * duas linhas e passa por cima do desenho. Aqui ficam so' as duas primeiras partes, com o
+ * MESMO vocabulario por pais — encurtar cravando "estados" e "IBGE" creditaria o instituto
+ * errado na Argentina, que e' exatamente o defeito que este arquivo existe para evitar.
+ *
+ * `null` pela mesma regra do rodape: sem base carregada nao ha' procedencia a declarar, e
+ * o selo inteiro sai em vez de anunciar "0 estados".
+ */
+export function procedenciaCurta(ufs: readonly string[] | null | undefined): string | null {
+  const n = ufs?.length ?? 0
+  if (n === 0) return null
+  const pais = paisDoPerfil()
+  if (pais === null) return `${n} unidades federativas`
+  const u = UNIDADE[pais]
+  return `${n} ${n === 1 ? u.um : u.varios} · ${CENSO[pais]}`
+}
+
 /** A mesma leitura, para a espera do ranking ("Comparando os N …"). */
 export function nomeDasUnidades(ufs: readonly string[] | null | undefined): string {
   const n = ufs?.length ?? 0

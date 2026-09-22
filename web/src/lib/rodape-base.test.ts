@@ -5,6 +5,7 @@ import {
   censoDaBase,
   institutoDoCenso,
   nomeDasUnidades,
+  procedenciaCurta,
   rodapeDaBase,
   tituloEscolhaUnidade,
 } from './rodape-base'
@@ -127,5 +128,25 @@ describe('as frases que citam a FONTE', () => {
     expect(censoDaBase()).toBeNull()
     expect(institutoDoCenso()).toBeNull()
     expect(tituloEscolhaUnidade()).toBe('Escolha a unidade federativa')
+  })
+})
+
+describe('procedenciaCurta', () => {
+  it('e a frase do rodape SEM a camada de pontos e sem o carimbo read-only', () => {
+    /* Ela existe para caber numa pilula. O rodape inteiro quebra em duas linhas ali e
+       passa por cima do desenho do painel — foi o que apareceu na primeira montagem da
+       tela de entrar. */
+    expect(procedenciaCurta(['SP', 'RJ'])).toBe('2 estados · Censo 2022 (IBGE)')
+  })
+
+  it('concorda no singular', () => {
+    expect(procedenciaCurta(['SP'])).toBe('1 estado · Censo 2022 (IBGE)')
+  })
+
+  it('sem base nao inventa procedencia', () => {
+    // O selo inteiro sai, em vez de anunciar "0 estados".
+    expect(procedenciaCurta([])).toBeNull()
+    expect(procedenciaCurta(null)).toBeNull()
+    expect(procedenciaCurta(undefined)).toBeNull()
   })
 })
