@@ -507,6 +507,36 @@ ROTULO_AGREGADOR: dict[str, str] = {
 }
 
 
+def _texto_de_celula(valor: object) -> str:
+    """Texto normalizado de uma celula que pode estar AUSENTE. Ausencia vira `""`.
+
+    Existe porque `str(valor or "")` **levanta** quando o valor e' `pd.NA`: o `or` avalia
+    `bool(pd.NA)` ANTES de chegar no `str()`, e `NAType.__bool__` e' `TypeError` por definicao
+    ("boolean value of NA is ambiguous"). Com `None` ou `NaN` a mesma expressao funciona, e e'
+    por isso que o defeito passou despercebido -- ele so' aparece no dtype NULAVEL do pandas.
+
+    E foi assim que TODO mapa gerado no servidor caiu em 2026-09-22: `api/service.py` monta
+    `fonte`/`fontes_da_academia` como `pd.Series([pd.NA] * n, dtype="string")` quando o artefato
+    servido e' anterior ao `alvos_ma_nomeados_v8` (producao servia o `v6`), e o docstring desta
+    funcao PROMETE que artefato antigo "cai na `fonte`, reproduzindo o desenho de hoje". O `or`
+    quebrava essa promessa em TODA linha sem rede -- as independentes, que sao justamente as que
+    chegam aqui. Trocar o `pd.NA` do fallback por `None` NAO resolveria: numa Series de dtype
+    `string` o pandas converte `None` de volta para `pd.NA`.
+
+    Mesma familia do defeito ja' anotado em `alvos_ma.py`: `float("nan")` absorve, `pd.NA` explode.
+    """
+    if valor is None:
+        return ""
+    try:
+        if pd.isna(valor):
+            return ""
+    except (TypeError, ValueError):
+        # `pd.isna` devolve ARRAY para entrada vetorial, e ai' o `if` levantaria por ambiguidade.
+        # Um valor que nao sabe responder "sou nulo?" e' tratado pelo `str()` abaixo.
+        pass
+    return str(valor).strip().lower()
+
+
 def chave_agregador_da_fonte(fonte: object, fontes: object = None) -> str:
     """`fonte`/`fontes_da_academia` da linha -> chave do marcador. UMA redacao, tres chamadores.
 
@@ -525,10 +555,10 @@ def chave_agregador_da_fonte(fonte: object, fontes: object = None) -> str:
     E' funcao, e nao `if` repetido, pela licao da DEC-044: a mesma regra escrita em tres lugares
     nao da erro -- desencontra em silencio.
     """
-    declarado = str(fontes or "").strip().lower()
+    declarado = _texto_de_celula(fontes)
     if "," in declarado:
         return CHAVE_AMBOS
-    escolhida = declarado or str(fonte or "").strip().lower()
+    escolhida = declarado or _texto_de_celula(fonte)
     return CHAVE_AGREGADOR_TP if escolhida == "totalpass" else CHAVE_AGREGADOR
 
 

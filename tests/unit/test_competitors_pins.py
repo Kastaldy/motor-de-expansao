@@ -385,6 +385,35 @@ def test_a_chave_sai_da_coluna_fontes_da_academia():
     assert chave_agregador_da_fonte(None, None) == CHAVE_AGREGADOR
 
 
+def test_celula_NULAVEL_do_pandas_nao_levanta():
+    """`pd.NA` nao e' `None`: `str(x or "")` LEVANTA nele, e derrubou os mapas em 2026-09-22.
+
+    O caso `None` ja' estava coberto acima -- e foi justamente isso que deu a falsa sensacao de
+    cobertura. Numa coluna de dtype `string` o ausente e' `pd.NA`, e `bool(pd.NA)` e' `TypeError`
+    por definicao. `api/service.py` monta essas colunas como `pd.Series([pd.NA] * n,
+    dtype="string")` quando o artefato e' anterior ao `alvos_ma_nomeados_v8`, entao este era o
+    valor REAL em producao, em toda linha sem rede.
+
+    `NaN` entra junto porque e' o ausente do dtype NAO nulavel -- os dois chegam aqui conforme o
+    artefato, e nenhum dos dois pode derrubar o desenho.
+    """
+    import pandas as pd
+
+    from motor_expansao.dashboard.competitors import (
+        CHAVE_AGREGADOR,
+        CHAVE_AGREGADOR_TP,
+        CHAVE_AMBOS,
+        chave_agregador_da_fonte,
+    )
+
+    for ausente in (pd.NA, float("nan"), None, ""):
+        assert chave_agregador_da_fonte(ausente, ausente) == CHAVE_AGREGADOR
+        assert chave_agregador_da_fonte("totalpass", ausente) == CHAVE_AGREGADOR_TP
+    # Ausente no 1o argumento NAO pode mascarar a procedencia declarada no 2o.
+    assert chave_agregador_da_fonte(pd.NA, "totalpass") == CHAVE_AGREGADOR_TP
+    assert chave_agregador_da_fonte(pd.NA, "totalpass,wellhub") == CHAVE_AMBOS
+
+
 def test_os_dois_apps_se_distinguem_por_COR_e_nao_so_por_arte():
     """`[DEC-066]` Sem PNG nenhum o tile cai na placa SOLIDA da marca.
 
