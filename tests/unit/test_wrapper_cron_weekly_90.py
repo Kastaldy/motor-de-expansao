@@ -176,6 +176,56 @@ def test_os_comandos_que_aqui_sao_legitimos(permitido: str) -> None:
 # --------------------------------------------------------------------------- #
 # BLK-COLETA-01 — a falha de um coletor deixou de ser destrutiva
 # --------------------------------------------------------------------------- #
+def test_o_historico_de_contagem_e_publicado_no_staging() -> None:
+    """O saldo por rede vivia SÓ no repo do coletor, e o motor nunca o enxergava.
+
+    É o número que o chat de ops recebe toda semana (`relatorio_crescimento.py`) e que a tela de
+    movimentação concorrencial não tinha — lá o saldo vinha de um pacote estático, tirado à mão uma
+    vez. Sem esta cópia, o módulo de saldo (`dashboard/saldo_rede.py`) não tem o que ler em
+    produção, e a tela continua estática por mais uma semana sem ninguém notar.
+    """
+    txt = WRAPPER.read_text(encoding="utf-8")
+    assert 'cp -f "$INFRA/historico_contagem.csv" "$MOTOR/data/staging/historico_contagem.csv"' in txt, (
+        "o historico de contagem nao e' publicado no staging do motor"
+    )
+    # COPIA, nunca symlink: o staging e' montado `:ro` nos containers e viaja em backup; um link
+    # apontaria para fora da arvore e quebraria nos dois casos.
+    assert "ln -s" not in txt.split("historico_contagem")[1][:400], (
+        "o transporte tem de ser copia, nao symlink"
+    )
+
+
+def test_o_transporte_vem_DEPOIS_do_relatorio_que_anexa_a_linha() -> None:
+    """Ordem não é estética: é o passo 2 que acabou de anexar a linha DESTA semana.
+
+    Copiar antes publicaria o histórico da semana passada — e o defeito seria invisível, porque o
+    arquivo existiria, com conteúdo plausível e uma linha a menos.
+    """
+    txt = WRAPPER.read_text(encoding="utf-8")
+    i_relatorio = txt.find("relatorio_crescimento.py")
+    i_transporte = txt.find('cp -f "$INFRA/historico_contagem.csv"')
+    assert i_relatorio != -1 and i_transporte != -1
+    assert i_relatorio < i_transporte, (
+        "o transporte esta' ANTES do relatorio: publicaria a foto da semana passada"
+    )
+
+
+def test_o_transporte_que_falha_NAO_aborta_o_lote() -> None:
+    """A coleta é a parte cara e insubstituível da noite; o transporte, não.
+
+    Sem o arquivo novo a tela mostra a semana anterior — degradação aceitável. Sem a coleta,
+    perde-se a semana para sempre, e foi exatamente esse o dano do BLK-COLETA-01.
+    """
+    txt = WRAPPER.read_text(encoding="utf-8")
+    # Recorte ancorado no PASSO SEGUINTE, nunca por contagem de caracteres: a 1a versao deste teste
+    # usava `[:900]` e o comentario do bloco consumia a janela inteira, deixando o `else` de fora.
+    # Um limite arbitrario que se ajusta ate' passar mede o tamanho do comentario, nao o codigo.
+    depois = txt.split("2.1) TRANSPORTE")[1]
+    bloco = depois.split("# 3)")[0]
+    assert "|| echo" in bloco, "falha no transporte nao pode abortar o lote de coleta"
+    assert "nao existe" in bloco, "ausencia do arquivo tem de AVISAR, nao passar em silencio"
+
+
 def test_a_safra_anterior_e_preservada_ANTES_do_descarte() -> None:
     """O backup é o que torna a restauração possível — sem ele não há para onde voltar.
 

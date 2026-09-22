@@ -188,6 +188,28 @@ enviar_telegram('🔴 [Coleta] ' + sys.argv[1], os.environ['API_TELEGRAM_TOKEN']
   docker run --rm --user 0:0 -v "$REPO/Unidades:/app/Unidades:ro" -v "$INFRA:/infra" \
     gymscraping:local python -B /infra/relatorio_crescimento.py
 
+  # 2.1) TRANSPORTE do historico de contagem para o staging do motor.
+  #
+  #      O saldo por rede que o Telegram mostra toda semana vive so' em `/opt/gymscraping-infra`,
+  #      que e' o repo do COLETOR -- o motor nunca o enxergou, e por isso a tela de movimentacao
+  #      concorrencial exibia saldo de um pacote estatico, tirado a mao uma vez. A copia vem AQUI,
+  #      logo depois do passo 2, porque e' ele que acabou de anexar a linha desta semana.
+  #
+  #      Copia, nao link: o staging e' montado `:ro` nos containers e viaja em backup; um symlink
+  #      apontaria para fora da arvore e quebraria nos dois casos.
+  #
+  #      `|| echo` de proposito -- falhar o transporte NAO pode abortar o lote de coleta, que e' a
+  #      parte cara e insubstituivel da noite. Sem o arquivo novo a tela mostra a semana anterior,
+  #      que e' degradacao aceitavel; sem a coleta, perde-se a semana para sempre.
+  if [ -f "$INFRA/historico_contagem.csv" ]; then
+    install -d -m 0755 "$MOTOR/data/staging" 2>/dev/null || true
+    cp -f "$INFRA/historico_contagem.csv" "$MOTOR/data/staging/historico_contagem.csv" \
+      && echo "[$(date -u)] historico de contagem publicado no staging ($(wc -l < "$INFRA/historico_contagem.csv") linhas)" \
+      || echo "!! falha ao publicar o historico de contagem no staging (o lote segue)"
+  else
+    echo "!! $INFRA/historico_contagem.csv nao existe -- o passo 2 falhou? (o lote segue)"
+  fi
+
   # 3) Integracao ao motor: regen camada paralela mercado/residual (READ-ONLY M1).
   #    Roda o codigo da IMAGEM da api (DEC-022: o streamlit foi aposentado; a imagem da api tem
   #    superset das deps). A imagem ja' traz `/app/src` pelo `COPY . .` do Dockerfile, entao
