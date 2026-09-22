@@ -17,13 +17,13 @@ describe('URL de logoff — derivada do host, nunca cravada', () => {
     // `auth.ultra-expansao.tech` é o portal deste deploy (docs/infra_producao.md e o
     // `rd=` do forward_auth em deploy/caddy/piloto-ar.Caddyfile.template).
     expect(urlDeLogoff('piloto.ultra-expansao.tech')).toBe(
-      'https://auth.ultra-expansao.tech/logout',
+      'https://auth.ultra-expansao.tech/logout?rd=https%3A%2F%2Fpiloto.ultra-expansao.tech%2F',
     )
   })
 
   it('a instância argentina cai no MESMO portal — há um Authelia só', () => {
     expect(urlDeLogoff('piloto-ar.ultra-expansao.tech')).toBe(
-      'https://auth.ultra-expansao.tech/logout',
+      'https://auth.ultra-expansao.tech/logout?rd=https%3A%2F%2Fpiloto-ar.ultra-expansao.tech%2F',
     )
   })
 
@@ -57,7 +57,7 @@ describe('URL de logoff — derivada do host, nunca cravada', () => {
 
   it('normaliza caixa e o ponto final do FQDN', () => {
     expect(urlDeLogoff('PILOTO.Ultra-Expansao.TECH.')).toBe(
-      'https://auth.ultra-expansao.tech/logout',
+      'https://auth.ultra-expansao.tech/logout?rd=https%3A%2F%2Fpiloto.ultra-expansao.tech%2F',
     )
   })
 })
@@ -129,5 +129,31 @@ describe('botão de sair — guarda por texto-fonte (não há jsdom)', () => {
   it('texto de usuário acentuado (CLAUDE.md §2)', () => {
     expect(botao).toContain('Sair da conta')
     expect(botao).toContain('não ficam salvas')
+  })
+})
+
+describe('destino do logoff (2026-09-22)', () => {
+  it('volta para o HOST de onde a pessoa saiu, nao para a raiz de auth.', () => {
+    /* Quem deslogou do piloto-ar deve voltar a entrar no piloto-ar. O caminho passa pelo
+       `forward_auth` daquele host, que manda para a nossa tela com o `rd` preenchido —
+       entao, ao entrar de novo, a pessoa cai onde estava. */
+    expect(urlDeLogoff('piloto-ar.ultra-expansao.tech')).toContain(
+      'rd=https%3A%2F%2Fpiloto-ar.ultra-expansao.tech%2F',
+    )
+    expect(urlDeLogoff('piloto.ultra-expansao.tech')).toContain(
+      'rd=https%3A%2F%2Fpiloto.ultra-expansao.tech%2F',
+    )
+  })
+
+  it('o destino vai CODIFICADO', () => {
+    // Sem codificar, o `://` e as barras quebrariam a query no primeiro parser.
+    const url = urlDeLogoff('piloto.ultra-expansao.tech')!
+    expect(url).not.toContain('rd=https://')
+    expect(url.split('?')[0]).toBe('https://auth.ultra-expansao.tech/logout')
+  })
+
+  it('ambiente sem portal continua sem URL — o destino nao ressuscita o botao', () => {
+    expect(urlDeLogoff('localhost')).toBeNull()
+    expect(urlDeLogoff('127.0.0.1')).toBeNull()
   })
 })
