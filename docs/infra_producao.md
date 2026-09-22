@@ -815,7 +815,8 @@ python -m motor_expansao.vulnerabilidade.alvos_ma \
 >    `mkdir(parents=True)` **cria o diretório e grava lá com exit code 0**, e o `--rm` apaga tudo.
 >    Sai "sucesso" e não há arquivo.
 > 3. Sem `snapshots_concorrentes/semana=*` no host, a cadeia devolve frames **vazios** de ponta a
->    ponta e grava artefatos vazios — aí o `/api/health` **para de acusar** e a camada fica
+>    ponta e grava artefatos vazios — aí o `/api/acessos/saude-artefatos` **para de acusar**
+> (o `/api/health` nunca acusou: é mudo desde o pentest Onda B #8) e a camada fica
 >    invisível **com sinal verde**, que é pior que o estado de hoje.
 >
 > Caminho canônico: gerar na estação, conferir, e **transportar por `scp`**.

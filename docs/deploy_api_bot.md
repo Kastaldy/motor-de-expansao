@@ -101,14 +101,22 @@ A imagem `motor-expansao-api` é publicada no GHCR pelo job **`publish-api`** do
 `Dockerfile.api`, `src/motor_expansao/api/**` ou `pyproject.toml`. A VPS **puxa** por digest
 (`API_IMAGE` no `.env`), sem buildar localmente. Execução na VPS é passo humano (§6).
 
-> ⚠️ **GOTCHA — mudança em `dashboard/` NÃO dispara o rebuild da API.** A imagem da API
-> **contém e executa** o código de `src/motor_expansao/dashboard/**` (o bot gera o PDF via
-> `censo_report`/`censo_map`/`censo_point`). Mas o filtro de caminho do `publish-api` só olha
-> `api/`/`Dockerfile.api`/`pyproject.toml` — então uma feature de **dashboard** (ex.: novo
-> choropleth no Relatório Pontual, ajuste de legenda) sobe no **web** pelo push na `main` (o
-> path-filter do `publish-web` cobre `src/motor_expansao/dashboard/**`), mas a imagem da
-> **API/bot fica STALE**. Para propagar ao bot, **republique a API manualmente**
-> após o merge: `gh workflow run ci.yml --ref main -f publish_api=true`,
+> ⚠️ **ATENÇÃO — o filtro do `publish-api` não cobre tudo que a imagem executa.**
+>
+> **O gotcha antigo ACABOU, e este bloco ficou dizendo o contrário até 2026-09-22.** Até
+> 2026-08-14 o filtro só olhava `api/`/`Dockerfile.api`/`pyproject.toml`, e mudança em
+> `dashboard/` deixava a imagem da API/bot STALE. Hoje o filtro real
+> (`.github/workflows/ci.yml`) cobre `Dockerfile.api`, `src/motor_expansao/api/`,
+> `src/motor_expansao/dashboard/`, `src/motor_expansao/dimensionamento/`,
+> `src/motor_expansao/perfil.py` e `pyproject.toml`. O `CLAUDE.md` §2 já registrava o fim do
+> gotcha; este arquivo é que não tinha acompanhado.
+>
+> **O que CONTINUA valendo, e não estava escrito em lugar nenhum:** o filtro **não** inclui
+> `src/motor_expansao/vulnerabilidade/` nem `src/motor_expansao/pipelines/`. E os crons de M&A
+> e de mercado rodam o código da **imagem da API** — então um PR que toque `vulnerabilidade/`
+> **não reconstrói imagem nenhuma**, e o cron segue executando o módulo antigo. É a família de
+> falha que os runbooks mandam caçar por `versao_contrato`. Depois de um PR assim, o republish
+> manual é **obrigatório**: `gh workflow run ci.yml --ref main -f publish_api=true`,
 > pegue o "API digest imutavel publicado" e faça o pull+up abaixo. Verificação de fechamento:
 > `docker compose -f docker-compose.prod.yml exec -T api python -c "from motor_expansao.dashboard import censo_map as m; print(len(m.CAMADAS_CENSITARIAS), m.CAMADAS_CENSITARIAS)"`
 > deve refletir o código novo. **Esperado hoje (pós-BLK-RELPON-14): 7 chaves** — `densidade`,

@@ -13,7 +13,10 @@ respondia sobre uma pasta que o app nao le — dava [FALTA] com o piloto funcion
 nenhum: manda procurar o problema no lugar errado.
 
 O QUE ELE NAO ALCANCA: o ambiente PUBLICADO. Aqui so' se ve o disco local. Para o VPS,
-`GET /api/health` devolve os mesmos artefatos em `artefatos_faltando`.
+`GET /api/acessos/saude-artefatos` devolve os mesmos artefatos em `artefatos_faltando`
+-- rota de ADMIN (`Remote-User` em `MOTOR_ACESSOS_ADMIN_USUARIOS`; fora dela, 404).
+NAO use `/api/health`: ele foi emudecido pelo pentest Onda B #8 e devolve so'
+`{"status": "ok"}`, verde inclusive com os artefatos ausentes.
 """
 
 import os
