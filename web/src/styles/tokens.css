@@ -128,6 +128,22 @@
   /* 3,26:1 sobre --bg-base: passa como ELEMENTO GRAFICO (>=3:1) e reprova como
      texto pequeno. So' pode virar regra/ponto/borda, nunca cor de rotulo. */
 
+  /* --- Trilha de OPERACOES (a rede que ja' existe) --------------------------
+     O Inicio pergunta duas coisas diferentes: "onde abrir" (EXPANSAO, turquesa
+     `--ac`) e "como vai o que ja' abriu" (OPERACOES, rosa). A matiz e' a mesma
+     familia do `--gr-rosa` dos graficos, e nao um sexto significado do turquesa:
+     sem separar, as duas trilhas do seletor liam como a mesma pergunta.
+
+     Vale so' na ENTRADA (cards, pilula de trilha, icone da Executiva no Dock).
+     NAO entra em mapa, score, faixa nem legenda — la' a cor ja' tem dono.
+
+     --ops      = superficie/traco (elemento grafico, >=3:1)
+     --ops-text = texto pequeno sobre o fundo do app (>=4,5:1)
+     --ops-on   = texto SOBRE o rosa cheio */
+  --ops: #f472b6;
+  --ops-text: #f9a8d4;
+  --ops-on: #2c0a1a;
+
   /* --- Identidade das 4 camadas do funil (--l1..--l4) -----------------------
      Uma matiz por camada, EXCLUSIVA do chrome de navegacao: eyebrow "Camada N de
      4", bloco do funil, bolinha/contador do stepper, borda do rotulo de rank e o
@@ -468,6 +484,14 @@
      nao vibrar contra o cinza do fundo. Continua proibido como cor de rotulo. */
   --ultra: #b30019;
 
+  /* --- Trilha de OPERACOES -------------------------------------------------
+     Mesma regra do resto do bloco claro: a MATIZ do escuro (#f472b6) e' preservada
+     e a luminancia desce ate' o texto passar — o rosa do escuro da ~2,3:1 sobre o
+     gelo. `--ops-on` inverte junto, porque o rosa escuro pede texto branco. */
+  --ops: #c02a86;
+  --ops-text: #a81b6b;
+  --ops-on: #ffffff;
+
   /* --- Identidade das camadas do funil (--l1..--l5) -------------------------
      Mesma regra do resto do bloco: a MATIZ e' preservada e a luminancia desce ate'
      o texto passar. As matizes claras do escuro reprovam todas sobre branco — --l1
@@ -707,6 +731,11 @@
   --warn: #d9a441;
   --warn-text: #e9c07a;
   --ultra: #c8001e;
+  /* Trilha de operacoes: dentro deste escopo a caixa e' escura de novo, entao volta o
+     rosa claro do :root — o rosa escuro do tema claro sumiria contra o cromo. */
+  --ops: #f472b6;
+  --ops-text: #f9a8d4;
+  --ops-on: #2c0a1a;
   --info: #2f6bed;
   --carga: #f2c230;
   --sinal-off: #5a6472;

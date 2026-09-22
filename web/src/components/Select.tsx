@@ -27,6 +27,13 @@ export interface SelectProps {
    * envolve-lo num painel criaria duas bordas aninhadas com so' a de dentro clicavel.
    */
   variante?: 'padrao' | 'painel'
+  /**
+   * Faz o botao ocupar a largura inteira do pai. Por padrao ele se ajusta ao CONTEUDO
+   * (`maxWidth` so' poe teto), e num painel centralizado isso produz um seletor estreito
+   * e desalinhado com os controles de largura cheia em volta — era o "canto superior
+   * esquerdo" dos painoes do Inicio.
+   */
+  larguraCheia?: boolean
 }
 
 export default function Select({
@@ -38,6 +45,7 @@ export default function Select({
   buscavel,
   placeholder,
   variante = 'padrao',
+  larguraCheia = false,
 }: SelectProps) {
   const [aberto, setAberto] = useState(false)
   const [foco, setFoco] = useState(-1)
@@ -156,6 +164,7 @@ export default function Select({
           alignItems: 'center',
           gap: painel ? 12 : 8,
           maxWidth,
+          ...(larguraCheia ? { width: '100%', boxSizing: 'border-box' as const } : null),
           background: painel ? 'var(--surf-panel)' : 'var(--surf-select)',
           border: `1px solid ${aberto || painel ? 'var(--ac-a30)' : 'var(--line)'}`,
           borderRadius: painel ? 'var(--r-lg)' : 8,
