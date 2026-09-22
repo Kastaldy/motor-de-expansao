@@ -286,31 +286,80 @@ enviar_telegram('🔴 [Coleta] ' + sys.argv[1], os.environ['API_TELEGRAM_TOKEN']
         # e PROMOVEU o lixo. Agora conta os pins com coordenada de fato antes de promover.
         # Em 2026-09-17 provou-se de novo: com o checkout velho montado, ela barrou 3 semanas de
         # artefato vazio (0 desenhaveis) e preservou os pins de 30/08.
-        DRAW=$(docker run --rm --user 0:0 -e PYTHONPATH=/app/src \
+        # GUARDA DE COERENCIA DE CHAVE: desenhavel NAO basta. A serie ja' migrou de chave uma vez
+        # (DEC-063, `v4` -> `v5`) e migrara de novo; um materializador que rode com a funcao de
+        # chave VELHA produz artefato CHEIO -- lat/lng preenchidos, bytes de sobra, centenas de
+        # desenhaveis -- e identidade que nao existe na serie. A guarda de desenhabilidade aprova
+        # isso sem piscar, porque ela pergunta "tem coordenada?", nao "e' esta academia?".
+        #
+        # A medicao e' INDEPENDENTE do contrato DE PROPOSITO: le a serie com pyarrow CRU (hive),
+        # nunca com `ler_snapshots`. Passar pelo mesmo caminho de codigo que produziu o artefato
+        # faria a guarda herdar exatamente o defeito que ela procura -- foi assim que o checkout
+        # congelado em 19/08 leu a serie de duas chaves declarando `v3`, recebeu `fonte` NULA e
+        # gravou vazio com `exit 0` por tres semanas.
+        #
+        # SERIE ILEGIVEL ABSTEM (devolve `-1`), pelo precedente explicito da DEC-061: uma guarda
+        # que derruba a promocao quando nao consegue medir causa o dano que existe para evitar --
+        # pins congelados. ARTEFATO ilegivel continua BLOQUEANDO, porque ai' desenhaveis=0.
+        #
+        # Os caminhos saem de env var so' para que o TESTE rode este mesmo script em vez de uma
+        # copia dele; em producao os defaults sao os caminhos reais.
+        MEDIDA=$(docker run --rm --user 0:0 -e PYTHONPATH=/app/src \
                  -w /app -v "$MOTOR/data:/app/data" "$IMG" \
-                 python -c 'import pandas as pd
+                 python -c '
+import os
+import pandas as pd
+import pyarrow.dataset as ds
+novo = os.environ.get("PINS_NOVO", "/app/data/staging/vulnerabilidade_ma_nomeadas_novo.parquet")
+serie = os.environ.get("PINS_SERIE", "/app/data/staging/snapshots_concorrentes")
 try:
-    d = pd.read_parquet("/app/data/staging/vulnerabilidade_ma_nomeadas_novo.parquet")
-    print(int(d["lat"].notna().sum()))
+    d = pd.read_parquet(novo, columns=["lat", "chave_snapshot"])
 except Exception:
-    print(0)' 2>/dev/null | tail -1)
-        echo "[$(date -u)] pins novos com coordenada (desenhaveis): ${DRAW:-0}"
+    print(0, -1)
+    raise SystemExit
+draw = int(d["lat"].notna().sum())
+try:
+    vistas = set(
+        ds.dataset(serie, format="parquet", partitioning="hive")
+        .to_table(columns=["chave_snapshot"])
+        .column("chave_snapshot")
+        .to_pylist()
+    )
+except Exception:
+    print(draw, -1)
+    raise SystemExit
+chaves = d["chave_snapshot"].dropna().astype(str)
+print(draw, int(round(100 * chaves.isin(vistas).mean())) if len(chaves) else 0)
+' 2>/dev/null | tail -1)
+        DRAW=$(echo "$MEDIDA" | awk '{print $1}')
+        COER=$(echo "$MEDIDA" | awk '{print $2}')
+        echo "[$(date -u)] pins novos: desenhaveis=${DRAW:-0}, chaves presentes na serie=${COER:--1}%"
+        if [ "${COER:--1}" -lt 0 ]; then
+          echo "[$(date -u)] AVISO: serie ilegivel -- a coerencia de chave ABSTEVE (DEC-061); so' a desenhabilidade decide"
+        fi
         if [ -f "$SD/vulnerabilidade_ma_nomeadas_novo.parquet" ] \
            && [ "$(stat -c%s "$SD/vulnerabilidade_ma_nomeadas_novo.parquet")" -gt 500000 ] \
            && [ -f "$SD/vulnerabilidade_ma_redes_novo.parquet" ] \
            && [ "$(stat -c%s "$SD/vulnerabilidade_ma_redes_novo.parquet")" -gt 50000 ] \
-           && [ "${DRAW:-0}" -ge 100 ]; then
+           && [ "${DRAW:-0}" -ge 100 ] \
+           && { [ "${COER:--1}" -lt 0 ] || [ "${COER:-0}" -ge 50 ]; }; then
           mv -f "$SD/vulnerabilidade_ma_nomeadas_novo.parquet" "$SD/vulnerabilidade_ma_nomeadas.parquet"
           mv -f "$SD/vulnerabilidade_ma_redes_novo.parquet"    "$SD/vulnerabilidade_ma_redes.parquet"
           mv -f "$SD/vulnerabilidade_ma_academias_novo.parquet" "$SD/vulnerabilidade_ma_academias.parquet" 2>/dev/null || true
           mv -f "$OD/alvos_ma_priorizados_novo.csv" "$OD/alvos_ma_priorizados.csv" 2>/dev/null || true
           echo "[$(date -u)] pins M&A promovidos (${DRAW} desenhaveis)"
         else
-          echo "[$(date -u)] AVISO: pins M&A vazios/pequenos/sem coordenada (desenhaveis=${DRAW:-0}); mantendo os anteriores"
+          echo "[$(date -u)] AVISO: pins M&A reprovados (desenhaveis=${DRAW:-0}, chaves na serie=${COER:--1}%); mantendo os anteriores"
+          # O SILENCIO era a outra metade do incidente: de 30/08 a 17/09 a guarda barrou artefato
+          # vazio TRES semanas seguidas e fez o certo -- mas so' escrevia num log que ninguem le,
+          # entao os pins ficaram congelados sem que ninguem soubesse. Bloquear promocao agora
+          # GRITA. E' o que fecha o ciclo: sem o aviso, endurecer a guarda so' congela melhor.
+          _avisar_ops "os pins M&A NÃO foram promovidos neste lote (desenháveis=${DRAW:-0}, chaves presentes na série=${COER:--1}%). O mapa está servindo os pins da safra anterior — ver $LOG"
           rm -f "$SD"/vulnerabilidade_ma_*_novo.parquet "$OD/alvos_ma_priorizados_novo.csv"
         fi
       else
         echo "[$(date -u)] AVISO: materializador M&A falhou; mantendo pins anteriores"
+        _avisar_ops "o materializador de pins M&A falhou neste lote. Os pins do mapa estão congelados na safra anterior e não envelhecem sozinhos — ver $LOG"
         rm -f "$SD"/vulnerabilidade_ma_*_novo.parquet "$OD/alvos_ma_priorizados_novo.csv"
       fi
 

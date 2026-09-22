@@ -1136,7 +1136,15 @@ O que é vigiado e a cadência (crontab do root):
 0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh agregadores # quinta 09h BRT: idade da partição de cada agregador (BLK-MA-21)
 0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh crescimento # quinta 09h BRT: idade da camada de crescimento municipal (DEC-052; limiar 100 dias)
 0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh mercado     # quinta 09h BRT: camada de mercado x cadastro de concorrentes (DEC-059; limiar 9 dias)
+0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh pins        # quinta 09h BRT: idade da última promoção dos pins de M&A + desenháveis (limiar 9 dias / piso 100)
 ```
+
+> **Por que os pins têm monitor próprio.** A guarda de desenhabilidade do passo 4.5 do lote de
+> domingo faz o certo ao barrar artefato ruim, mas o efeito dela é **invisível**: entre 30/08 e
+> 17/09 ela preservou os pins bons por três semanas seguidas enquanto o mapa servia dado cada vez
+> mais velho, e nada alertou. Sem relógio, uma guarda que só bloqueia troca "pin errado" por "pin
+> velho em silêncio". Aqui o **mtime é confiável** — ao contrário do monitor de `mercado`, em que
+> o arquivo é reescrito toda semana —, porque este só é tocado pelo `mv` da promoção.
 
 Comportamento anti-spam: alerta na transição OK→FAIL, lembrete a cada 1h enquanto durar,
 e aviso de recuperação no FAIL→OK (estado em `/var/lib/motor-monitoring/`). Logs em
