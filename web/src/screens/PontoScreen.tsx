@@ -28,7 +28,7 @@ import {
   rotulosDosPontos,
 } from '../lib/comparacao-pontos'
 import type { AlvoCaptura } from '../lib/captura-mapa'
-import { linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
+import { classificarEntrada, linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
 import { num } from '../lib/format'
 import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
 
@@ -63,6 +63,8 @@ export default function PontoScreen({
   onAnalisarPonto,
   onLocalizar,
   pedido,
+  textoInicial,
+  onTextoAplicado,
   onLimparPin,
   onInicio,
 }: {
@@ -89,6 +91,16 @@ export default function PontoScreen({
    * dispararia na segunda, e o operador ficaria olhando um botao que nao responde.
    */
   pedido: { lat: number; lng: number; n: number } | null
+  /**
+   * O que o operador colou NO CARD do Início (2026-09-22) — texto cru, do mesmo jeito
+   * que ele sairia da caixa desta tela. Resolvido uma vez, na montagem, pelo MESMO
+   * `resolver()` da caixa daqui: é o que garante que colar no card e colar aqui tratem
+   * link curto, link longo, coordenada e endereço com as mesmas regras e as mesmas
+   * mensagens de erro.
+   */
+  textoInicial?: string | null
+  /** Avisa que o texto foi consumido — ele vale uma entrada, não todas. */
+  onTextoAplicado?: () => void
   /** Apaga a marca do endereço no mapa. Usado pela limpeza. */
   onLimparPin: () => void
   /** Volta ao menu de modos — só o hero de entrada usa, como o Explorar faz. */
@@ -251,6 +263,21 @@ export default function PontoScreen({
     ultimoPedido.current = pedido.n
     void analisarCoordenada(pedido.lat, pedido.lng)
   }, [pedido, analisarCoordenada])
+
+  /* O endereço colado NO CARD do Início. Consumido UMA vez, na montagem: o efeito não
+     depende de `textoInicial` de propósito — reagir a ele reanalisaria o mesmo ponto a
+     cada re-render desta tela, que re-renderiza a cada resposta de API.
+
+     Passa pelo MESMO `resolver()` do `CampoPonto`, com a mesma classificação: colar no
+     card e colar aqui têm de tratar link curto, link longo, coordenada e endereço com
+     as mesmas regras — e falhar com as mesmas mensagens. */
+  useEffect(() => {
+    const texto = textoInicial?.trim()
+    if (!texto) return
+    onTextoAplicado?.()
+    void resolver(classificarEntrada(texto), texto)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function resolver(entrada: EntradaClassificada, texto: string) {
     // O front resolve coordenada e link longo sozinho; o resto custa uma ida ao servidor

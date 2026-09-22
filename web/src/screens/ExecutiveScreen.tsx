@@ -44,6 +44,7 @@ import {
   tituloDaCelula,
 } from '../lib/exec'
 import { brlCurto, num, pct } from '../lib/format'
+import type { EntradaExecutiva } from '../lib/inicio'
 import type { Periodo } from '../lib/periodo'
 import { rotuloDoPeriodo } from '../lib/periodo'
 import type { Tema } from '../lib/tema'
@@ -131,10 +132,24 @@ const TODOS = '__todos__'
 export default function ExecutiveScreen({
   onInicio,
   tema,
+  entrada = null,
+  onEntradaAplicada,
 }: {
   onInicio: () => void
   /** Tema do app (`App`). A aba já foi dona dele; hoje só o LÊ, para o `ExecMap`. */
   tema: Tema
+  /**
+   * Com que recorte abrir, quando a entrada veio de um card da trilha de operações do
+   * Início (2026-09-22). `null` = panorama, que é como a aba sempre abriu.
+   *
+   * O card ESCOLHE de verdade: `recorte` aplica o filtro do eixo pedido e `unidade`
+   * abre a ficha. A etapa anterior só punha o cursor no campo certo, e o operador ainda
+   * chegava numa carteira de ~100 linhas para escolher ali — que é exatamente o passo
+   * que o card passou a resolver antes de navegar.
+   */
+  entrada?: EntradaExecutiva
+  /** Avisa que a entrada foi consumida — ela vale uma abertura, não todas. */
+  onEntradaAplicada?: () => void
 }) {
   const [filtros, setFiltros] = useState<RedeFiltros | null>(null)
   const [carteira, setCarteira] = useState<RedeCarteira | null>(null)
@@ -284,6 +299,26 @@ export default function ExecutiveScreen({
     setAberta(null)
     if (window.history.state?.unidade) window.history.back()
   }
+
+  /* ENTRADA vinda de um card da trilha de operações do Início (2026-09-22).
+
+     Consumida UMA vez, na montagem: o efeito não depende de `entrada` de propósito. A
+     aba re-renderiza a cada resposta de API, e reaplicar o recorte a cada uma
+     desfaria, em silêncio, o filtro que o operador tivesse acabado de mudar aqui
+     dentro — o atalho de entrada viraria uma trava.
+
+     O recorte é aplicado nos MESMOS estados que os seletores do cabeçalho escrevem, e
+     não numa segunda via: o chip de filtro aparece preenchido, "Limpar filtros" limpa,
+     e a leitura de `temRecorte` continua valendo. */
+  useEffect(() => {
+    if (!entrada) return
+    if (entrada.tipo === 'unidade') abrirFichaPorId(entrada.id)
+    else if (entrada.dimensao === 'uf') setUf(entrada.valor)
+    else if (entrada.dimensao === 'master') setMaster(entrada.valor)
+    else setConsultor(entrada.valor)
+    onEntradaAplicada?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const unidades = useMemo(() => {
     if (!carteira) return []
