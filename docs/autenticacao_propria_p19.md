@@ -111,8 +111,10 @@ o que não foi feito daqui.
 - **`BLK-SEC-03-FU2`** (revisão de acesso e offboarding) é pré-requisito prático: é dele que sai a
   conciliação entre `users_database.yml` e as linhas de `usuarios`. Já separado do FU1 em
   16/09/2026 justamente por sobreviver ao corte.
-- **`BLK-SEC-03-FU1`** (forçar TOTP no Authelia) está **adiado**: configura 2FA no componente que
-  sai. Se a epic ganhar data distante, ele volta à mesa.
+- **`BLK-SEC-03-FU1`** (forçar TOTP no Authelia) está **SEM OBJETO desde 22/09/2026**: a decisão 3
+  (§7) fechou que 2FA não entra no projeto por agora. Até aquela data ele estava só **adiado**, com
+  a ressalva de que "se a epic ganhar data distante, ele volta à mesa" — a decisão do dono substitui
+  essa ressalva. Reabrir o FU1 exige reabrir a decisão 3 antes, e não o contrário.
 
 ## 6. Armadilhas medidas
 
@@ -159,8 +161,22 @@ Nenhuma destas foi tomada. Estão aqui para não serem descobertas no meio da im
    caso de sessão**, porque o portão próprio responde **401** e `relatarAcessoNegado()` já trata 401
    direto, sem sondar. A sonda continua útil só para separar "backend fora do ar" de outras falhas
    de rede — o 302→CORS→`TypeError` que a obrigou a existir morre com o Authelia.
-3. **2FA depois do corte** — se some junto com o Authelia, se é reconstruído, e se é obrigatório.
-   O `BLK-SEC-03-FU1` queria forçá-lo.
+3. ~~**2FA depois do corte**~~ — **DECIDIDA em 22/09/2026, sem `D`** (não toca schema e não entra
+   código): **não entra no projeto por agora**, por decisão do dono.
+   **A premissa do enunciado anterior estava errada, e foi medida antes de perguntar:** não há 2FA
+   a perder. As duas regras do Authelia são `one_factor` (`authelia/configuration.yml`, e o
+   `plano_multipais.md` §514 já registrava isso ao tratar de outra coisa), e o `BLK-SEC-03-FU1`
+   existia justamente para **ligá-lo** — adiado em 16/09 por configurar 2FA no componente que sai.
+   Então o corte não remove nada; o que se decidiu foi **não acrescentar**. O FU1 fica **sem
+   objeto** enquanto esta decisão valer.
+   **CONSEQUÊNCIA QUE ESTA DECISÃO CRIA, e que o resto da epic herda:** a plataforma segue de
+   **fator único**. A senha passa a ser a única barreira, e tudo o que a protege carrega o peso
+   sozinho — a trava de 5 tentativas em 15 min, o prazo de 2 h da senha temporária, a revogação de
+   sessões na troca e o bloqueio até a pessoa definir a própria (D31). **Nenhum deles tem rede por
+   baixo**, então afrouxar qualquer um é decisão de segurança, não de conveniência. Custo
+   operacional evitado, e que pesou: cadastrar TOTP exige as pessoas presentes, uma a uma
+   (`infra_producao.md:1026`), e perder o celular viraria um SEGUNDO caminho de recuperação, com
+   toda a discussão da decisão 4 repetida.
 4. **Recuperação de senha** — hoje não existe caminho nenhum: quem esquece depende de um admin
    redefinir pela tela. Autoatendimento exige e-mail, que o piloto não envia.
 5. **A borda.** O Caddy deixa de fazer *forward-auth*; o que fica no lugar (e o que acontece com os
