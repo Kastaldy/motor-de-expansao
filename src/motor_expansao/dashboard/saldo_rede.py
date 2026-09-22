@@ -68,7 +68,12 @@ def ler_historico_contagem(caminho: Path) -> pd.DataFrame:
     o lote rodou duas vezes no mesmo dia — somar ou escolher uma delas em silêncio produziria saldo
     falso para aquela semana inteira.
     """
-    bruto = pd.read_csv(caminho, sep=";", dtype=str, keep_default_na=False, encoding="utf-8")
+    # `utf-8-sig`, nunca `utf-8` puro: é o padrão de CSV do projeto (CLAUDE.md §2) e o que os
+    # módulos irmãos que leem feed de coletor já aplicam (`snapshots.py`, `curadoria_agregadores.py`).
+    # Com BOM e `utf-8` puro, o header sai como `﻿data_execucao`, a coluna "não existe" e o
+    # erro acusa o CONTRATO — apontando para o lugar errado, longe da causa. Achado da revisão
+    # automática no PR #393.
+    bruto = pd.read_csv(caminho, sep=";", dtype=str, keep_default_na=False, encoding="utf-8-sig")
     faltando = [c for c in CONTRATO_COLUNAS_HISTORICO if c not in bruto.columns]
     if faltando:
         raise ValueError(f"historico de contagem fora do contrato; colunas ausentes: {faltando}")

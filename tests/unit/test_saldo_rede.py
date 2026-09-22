@@ -59,6 +59,25 @@ def test_leitura_tira_o_cr_e_tipa(tmp_path: Path) -> None:
     assert set(hist["data_coleta"]) == {"2026-05-26", "2026-09-13"}
 
 
+def test_csv_com_BOM_e_lido_sem_sujar_o_header(tmp_path: Path) -> None:
+    """Achado da revisão automática no PR #393, travado.
+
+    O arquivo da VPS hoje não tem BOM, mas o padrão de CSV do projeto é `utf-8-sig` e os módulos
+    irmãos que leem feed de coletor já o aplicam. Com `utf-8` puro e BOM, o header vira
+    `\\ufeffdata_execucao`: a coluna "não existe", e o erro acusa o CONTRATO — apontando para o
+    lugar errado, longe da causa. É a mesma família do defeito que o `\\r` já produziu aqui.
+    """
+    caminho = tmp_path / "hist_bom.csv"
+    caminho.write_text(
+        "﻿data_execucao;rede;unidades;data_coleta\r\n2026-09-20;selfit;231;2026-09-20\r\n",
+        encoding="utf-8",
+    )
+    hist = s.ler_historico_contagem(caminho)
+
+    assert list(hist.columns) == list(s.CONTRATO_COLUNAS_HISTORICO)
+    assert str(hist.iloc[0]["rede"]) == "selfit"
+
+
 def test_data_coleta_vazia_sobrevive_como_vazia(tmp_path: Path) -> None:
     """Coletor que não devolveu nada != coletado hoje. São 12 linhas assim em produção."""
     caminho = _escrever_historico(
