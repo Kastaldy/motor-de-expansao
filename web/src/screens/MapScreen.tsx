@@ -1047,38 +1047,47 @@ export default function MapScreen({
         explicacao="O mapa lê o território inteiro e monta a sequência de camadas — do potencial socioeconômico até os municípios com mais espaço para abrir."
         onInicio={onInicio}
       >
-        <div
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 12,
-            padding: '14px 16px',
-            background: 'var(--surf-panel)',
-            border: '1px solid var(--ac-a30)',
-            borderRadius: 'var(--r-lg)',
-            backdropFilter: 'blur(16px)',
-            boxShadow: 'var(--ac-glow)',
-          }}
-        >
-          <span style={{ font: '600 13px/1 var(--f-ui)', color: 'var(--tx-soft)' }}>
-            Selecione um estado
-          </span>
-          {ufs.length ? (
+        {/* A caixa E' o seletor. Ate' 2026-09-22 havia DUAS: este painel com o rotulo
+            "Selecione um estado" e, dentro dele, o botao do dropdown com placeholder
+            "Escolha…" — duas bordas aninhadas dizendo a mesma coisa, e so' a de dentro
+            clicavel. Quem mirava a de fora nao abria nada. */}
+        {ufs.length ? (
+          /* O `textAlign: 'center'` do Landing so' centraliza elemento INLINE, e a raiz do
+             `Select` e' um <div> de bloco — precisa ser `position: relative` para ancorar o
+             popup. Dai este wrapper de layout: sem borda, fundo ou sombra, entao a unica
+             caixa visivel continua sendo o proprio botao. */
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
             <Select
               label="Escolha um estado para começar"
               value=""
               onChange={onUf}
-              maxWidth={260}
+              maxWidth={280}
               buscavel
-              placeholder="Escolha…"
+              variante="painel"
+              placeholder="Selecione um estado"
               options={ufs.map((u) => ({ value: u, label: u }))}
             />
-          ) : (
+          </div>
+        ) : (
+          /* O carregando mantem a moldura do painel: sem ela a landing saltaria quando a
+             lista chegasse — a caixa sumiria e voltaria. */
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              padding: '14px 16px',
+              background: 'var(--surf-panel)',
+              border: '1px solid var(--ac-a30)',
+              borderRadius: 'var(--r-lg)',
+              backdropFilter: 'blur(16px)',
+              boxShadow: 'var(--ac-glow)',
+            }}
+          >
             <span className="num" style={{ font: '500 12px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
               carregando estados…
             </span>
-          )}
-        </div>
+          </div>
+        )}
       </Landing>
     )
   }
