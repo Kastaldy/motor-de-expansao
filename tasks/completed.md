@@ -13846,6 +13846,15 @@ Vinicius em 2026-09-21). O bloco fecha com uma pendência **declarada**, não es
 - **M1 INTACTO, verificado por data:** `brasil_priorizados`, `brasil_estrutural` e
   `hexagonos_brasil_dashboard` seguem em 10/06.
 - Testes: **1.152 verdes, 9 skipped** em `tests/unit/vulnerabilidade` + `tests/contracts`.
+- **Uma divergência de governança que este bloco deixou como lição.** O campo `Criticidade` do
+  bloco no backlog dizia **Alta**; a DEC-066 se declara **Crítica**, e o `guard` — que julga pelo
+  DIFF, sem ler a DEC — chegou em **crítico** por conta própria. Como o `review-gate` confere a
+  label contra o campo do backlog da BASE, citar o bloco no título ou na branch tornava impossível
+  declarar `criticidade:critica` sem reprovar no cross-check. O PR #390 resolveu **renomeando a
+  branch** (`ciclo/blk-ma-20-tp-na-oferta` -> `ciclo/totalpass-na-oferta`), que é a rota que a
+  própria linha de Governança da DEC-066 prescreve. Corrigir na causa seria subir o campo do
+  backlog — mas o bloco fecha aqui, então o campo some com o stub e a lição fica registrada nesta
+  linha.
 - **Fica aberto, e está declarado na DEC:** (i) o **grão do `s1` por academia**, inseparável de
   devolver peso ao sinal; (ii) a recalibração da taxa (dívida da DEC-048); (iii) o relógio de
   maturação do S3/S4 do TotalPass, que só anda com foto semanal de feed **recoletado** — a guarda
