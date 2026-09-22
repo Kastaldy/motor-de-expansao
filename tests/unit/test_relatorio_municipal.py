@@ -1984,6 +1984,48 @@ def test_independente_sem_rede_usa_o_pin_e_o_rotulo_do_app_que_a_revelou(monkeyp
     assert _prettify_rede(CHAVE_AGREGADOR) == "Independentes (Wellhub)"
 
 
+def test_coluna_de_fonte_NULAVEL_nao_derruba_o_mapa_inteiro():
+    """Incidente de 2026-09-22: TODO mapa gerado no servidor saiu com HTTP 500.
+
+    `TypeError: boolean value of NA is ambiguous`, em `chave_agregador_da_fonte`, via o listcomp
+    dos pins. O gatilho e' um DESCASAMENTO DE ARTEFATO, nao de codigo: producao servia
+    `alvos_ma_nomeados_v6` enquanto o codigo ja' consumia o `v8`. Sem a coluna no parquet,
+    `api/service.py` a CONSTROI como `pd.Series([pd.NA] * n, dtype="string")` -- e o
+    `str(fontes or "")` avaliava `bool(pd.NA)` antes do `str()`.
+
+    **Por que a suite ficou verde com o caso "coberto".** O teste da DEC-066 logo abaixo ja' tinha
+    `pd.NA` em `fonte`, e mesmo assim nao pegava o defeito, porque lhe faltavam as DUAS condicoes
+    que producao junta:
+
+      * a coluna `fontes_da_academia` **presente** (la' ela e' ausente, e o fallback e' `None`
+        puro, que o `or` absorve sem reclamar);
+      * uma linha **sem rede** (la' a unica linha com `fonte` nula e' a do `smart_fit`, entao
+        `_chave_rede` devolve verdadeiro e o `or` CURTO-CIRCUITA -- a funcao nunca e' chamada).
+
+    Por isso este teste monta o frame como o `service.py` monta, e nao como era comodo montar.
+    """
+    from motor_expansao.dashboard.competitors import CHAVE_AGREGADOR
+
+    df = _sample_df()
+    hx = _hex(-23.55, -46.63)
+    comp = pd.DataFrame(
+        {
+            # Independente: sem rede, e' ela que chega na funcao (as com rede curto-circuitam).
+            "rede": pd.array([pd.NA], dtype="string"),
+            "fonte": pd.array([pd.NA], dtype="string"),
+            # A coluna EXISTE e esta' toda nula -- exatamente o fallback do `service.py`.
+            "fontes_da_academia": pd.Series([pd.NA], dtype="string"),
+            "lat": [-23.55],
+            "lng": [-46.63],
+            "hex_id_res7": [hx],
+        }
+    )
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", competitors_df=comp)
+    # Sem procedencia declarada, o desenho cai no WellHub -- o que o docstring da funcao PROMETE
+    # para artefato anterior ao `v8`. A promessa e' o que este teste trava.
+    assert res["concorrentes_por_rede"] == {CHAVE_AGREGADOR: 1}
+
+
 def test_o_balde_e_o_rotulo_do_slide_8_se_separam_por_app():
     """`[DEC-066]` O balde do slide "Concorrentes por rede" deixa de ser UM so'.
 
