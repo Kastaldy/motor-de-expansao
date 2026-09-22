@@ -192,11 +192,14 @@ def test_os_seis_numeros_da_secao_zero_batem_com_o_banco(con: Any) -> None:
     afirma 14 para o banco. As duas contas nunca se encontraram, porque o CI não tem Postgres.
     Aqui elas se encontram.
     """
-    reais = dict(con.execute(cli.SQL_CONTAGENS).fetchall())
+    # A consulta recebe a lista NOMINAL das tabelas do modelo: a §0 conta só elas, e não o que
+    # mais exista no schema. Chamá-la sem o parâmetro é erro de sintaxe, não contagem errada.
+    reais = dict(con.execute(cli.SQL_CONTAGENS, (list(cli.TABELAS_DO_MODELO),)).fetchall())
     for item, esperado in cli.NUMEROS_DA_SECAO_ZERO.items():
         assert reais.get(item) == esperado, (
             f"§0 divergente em {item}: {reais.get(item)} != {esperado}"
         )
+    assert reais.get("tabelas") == len(cli.TABELAS_DO_MODELO)
 
 
 def test_o_CHECK_da_019_recusa_senha_propria_com_prazo(con: Any, pessoa: dict[str, Any]) -> None:
