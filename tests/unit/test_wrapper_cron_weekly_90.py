@@ -537,3 +537,81 @@ def test_runbook_aponta_para_o_arquivo_versionado() -> None:
     assert "infra na VPS, fora do repo" not in texto, (
         "o runbook ainda declara o wrapper como fora do repositório"
     )
+#: Marcadores do bloco que decide o mount do feed do TotalPass (passo 4.5). Mesmo princípio da
+#: sonda e do laço acima: o teste EXTRAI e EXECUTA o trecho de produção em vez de reescrevê-lo.
+_INICIO_MOUNT_TP = "      MA_TP=()"
+_FIM_MOUNT_TP = "      fi"
+
+
+def _bloco_mount_totalpass() -> str:
+    """O trecho EXECUTÁVEL da decisão do mount, recortado do wrapper de produção."""
+    texto = WRAPPER.read_text(encoding="utf-8")
+    i = texto.index(_INICIO_MOUNT_TP)
+    j = texto.index(_FIM_MOUNT_TP, i) + len(_FIM_MOUNT_TP)
+    return texto[i:j]
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash ausente nesta máquina")
+@pytest.mark.parametrize("tem_feed", [True, False])
+def test_mount_do_totalpass_segue_a_presenca_do_feed(tmp_path: Path, tem_feed: bool) -> None:
+    """Com o feed, o mount entra; sem ele, o array fica VAZIO e ops é avisado.
+
+    RODA sob `set -u` de propósito. O risco real deste bloco não é sintaxe — é a expansão de
+    array VAZIO, que sob `set -u` explode em bash < 4.4 e derrubaria o passo justamente no caso
+    em que o feed falta. `bash -n` não vê isso; só a execução vê.
+
+    E a ausência precisa AVISAR: sem o feed os pins saem só com o WellHub, e a contagem de
+    concorrentes do mapa fica subestimada sem que nada quebre.
+    """
+    repo = tmp_path / "gymscraping"
+    (repo / "TotalPass" / "csvs").mkdir(parents=True) if tem_feed else repo.mkdir()
+
+    script = "\n".join(
+        [
+            "set -uo pipefail",
+            f'REPO="{repo.as_posix()}"',
+            'LOG="/tmp/irrelevante.log"',
+            '_avisar_ops() { echo "OPS: $1"; }',
+            _bloco_mount_totalpass(),
+            'echo "N=${#MA_TP[@]}"',
+            'if [ "${#MA_TP[@]}" -gt 0 ]; then printf "%s\\n" "${MA_TP[@]}"; fi',
+        ]
+    )
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+
+    assert r.returncode == 0, f"o bloco explodiu sob `set -u`:\n{r.stderr}"
+    if tem_feed:
+        assert "N=2" in r.stdout, f"esperava o par `-v <spec>` no array; saiu:\n{r.stdout}"
+        assert "/app/concorrentes/totalpass/csvs:ro" in r.stdout, (
+            "o destino dentro do container mudou — `DIR_TOTALPASS_DEFAULT` é "
+            "`concorrentes/totalpass/csvs`, e o materializador procura exatamente lá"
+        )
+        assert "OPS:" not in r.stdout, "avisou ops com o feed presente"
+    else:
+        assert "N=0" in r.stdout, f"sem feed o array tem de ficar vazio; saiu:\n{r.stdout}"
+        assert "OPS:" in r.stdout, (
+            "a ausência do feed passou em SILÊNCIO — é exatamente o modo de falha que este "
+            "bloco existe para impedir"
+        )
+
+
+def test_o_docker_run_dos_pins_realmente_passa_o_array_do_totalpass() -> None:
+    """O bloco pode existir e o mount nunca chegar ao container.
+
+    Sem esta asserção os testes funcionais acima passariam com o `docker run` intacto, montando
+    só o WellHub — o defeito original, com um bloco de decisão decorativo ao lado.
+    """
+    executaveis = "\n".join(_linhas_executaveis(WRAPPER))
+    assert '${MA_TP[@]+"${MA_TP[@]}"}' in executaveis, (
+        "o `docker run` do passo 4.5 não passa `MA_TP` — o mount do TotalPass é decidido e "
+        "depois descartado"
+    )
+
+
+def test_o_totalpass_SOMA_ao_wellhub_em_vez_de_substitui_lo() -> None:
+    """O copiar-colar natural aqui troca uma fonte pela outra. A DEC-066 pede as DUAS."""
+    executaveis = "\n".join(_linhas_executaveis(WRAPPER))
+    assert '-v "$REPO/Wellhub/csvs:/app/concorrentes/wellhub/csvs:ro"' in executaveis, (
+        "o mount do WellHub sumiu — o TotalPass entra SOMANDO, nunca substituindo"
+    )
+    assert '$REPO/TotalPass/csvs:/app/concorrentes/totalpass/csvs:ro' in executaveis

@@ -268,10 +268,38 @@ enviar_telegram('🔴 [Coleta] ' + sys.argv[1], os.environ['API_TELEGRAM_TOKEN']
       # `PYTHONPATH=/app/src` e `-w /app` FICAM: o caminho da carteira e' resolvido pela
       # localizacao do PACOTE (`ROOT` derivado de `__file__`), nao pelo CWD, entao rodar de
       # `site-packages` quebra com `FileNotFoundError: /usr/local/lib/python3.11/data/outputs/...`.
+      # FEED DO TOTALPASS -- mount CONDICIONAL, e a ausencia AVISA.
+      #
+      # Desde a DEC-066 o entregavel sai com as DUAS fontes por default
+      # (`FONTES_ENTREGAVEL_DEFAULT`) e o UNIVERSO vem da serie. A COORDENADA, porem, vem dos
+      # CSVs CRUS -- ver o comentario acima. Sem este mount o container nao tem o feed do
+      # TotalPass, e `ler_feeds` trata diretorio ausente como ZERO linhas SEM levantar: os pins
+      # sairiam so' com o WellHub, e as 15.841 academias que so' o TotalPass conhece sumiriam
+      # do mapa em silencio -- justamente a contagem que diz se ainda cabe unidade na praca.
+      #
+      # AS GUARDAS ABAIXO NAO PEGAM ESTE CASO, e vale dizer por que: `DRAW` mede desenhaveis e
+      # o WellHub sozinho da' ~19,6 mil; a coerencia de chave do #395 mede quantas chaves estao
+      # na SERIE, e as do TotalPass estao (e' de la' que o universo vem) -- o que falta e' a
+      # coordenada. As duas barram artefato VAZIO; este seria artefato pela METADE.
+      #
+      # CONDICIONAL e nao incondicional: com a origem ausente o Docker CRIA um diretorio vazio
+      # no host e monta o vazio -- mesmo silencio de hoje, com uma pasta de brinde. O `if` faz
+      # a ausencia gritar, no molde do resto do wrapper.
+      MA_TP=()
+      if [ -d "$REPO/TotalPass/csvs" ]; then
+        MA_TP=(-v "$REPO/TotalPass/csvs:/app/concorrentes/totalpass/csvs:ro")
+      else
+        echo "!! $REPO/TotalPass/csvs ausente -- os pins deste lote sairao SEM o TotalPass"
+        _avisar_ops "o feed do TotalPass não está em $REPO/TotalPass/csvs — os pins M&A deste lote saem só com o WellHub, sem as academias que só o TotalPass conhece. A contagem de concorrentes do mapa fica subestimada até o feed voltar — ver $LOG"
+      fi
+
+      # `${MA_TP[@]+"${MA_TP[@]}"}` e' o idioma seguro sob `set -u`: array vazio com
+      # `"${arr[@]}"` so' nao explode em bash >= 4.4.
       if docker run --rm --user 0:0 -e PYTHONPATH=/app/src -w /app \
            -v "$MOTOR/data:/app/data" \
            -v "$REPO/Unidades:/app/concorrentes/Unidades:ro" \
            -v "$REPO/Wellhub/csvs:/app/concorrentes/wellhub/csvs:ro" \
+           ${MA_TP[@]+"${MA_TP[@]}"} \
            --name motor_ma_weekly "$IMG" \
            python -m motor_expansao.vulnerabilidade.alvos_ma \
              --base-dir /app/data/staging/snapshots_concorrentes \
