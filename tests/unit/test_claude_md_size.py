@@ -29,7 +29,9 @@ _ROOT = Path(__file__).resolve().parents[2]
 #: incremental e ponte de identidade) está em docs/decisions/DEC-064.md; no §8 entrou 1 linha.
 #:
 #: 233 -> 234 na DEC-065 (2026-09-21), idem: 1 linha-índice, corpo em docs/decisions/DEC-065.md.
-_TETO_LINHAS = 234
+#:
+#: 234 -> 235 na DEC-067 (2026-09-22), idem: 1 linha-índice, corpo em docs/decisions/DEC-067.md.
+_TETO_LINHAS = 235
 
 
 def _linhas(p: Path) -> int:
