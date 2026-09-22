@@ -306,7 +306,12 @@ docker compose -f docker-compose.prod.yml restart web
 **Conferir no ar:**
 
 ```bash
-curl -s https://<host-do-piloto>/api/health | jq '.artefatos.oportunidades_imobiliarias, .artefatos_faltando'
+# O inventario SAIU do /api/health (emudecido, pentest Onda B #8) e vive sob a rota de
+# admin: `Remote-User` precisa estar em MOTOR_ACESSOS_ADMIN_USUARIOS; fora dela, 404.
+docker compose -f docker-compose.prod.yml exec web curl -fsS \
+  -H 'Remote-User: <admin de acessos>' \
+  http://127.0.0.1:8899/api/acessos/saude-artefatos \
+  | jq '.artefatos.oportunidades_imobiliarias, .artefatos_faltando'
 ```
 
 Sem o mount, a rota `/api/oportunidades` responde **200 com lista vazia** e a tela diz
@@ -396,8 +401,12 @@ Abrir `https://piloto.ultra-expansao.tech` → login Authelia → piloto.
 
 ## 6. Checklist de verificação pós-deploy
 
-- [ ] `GET /api/health` responde `{"status":"ok"}` no container.
-- [ ] **`artefatos_faltando` do `/api/health` vem vazio.** É o item que faltava aqui: os
+- [ ] `GET /api/health` responde `{"status":"ok"}` no container. **É só isso que ele
+      responde** — foi emudecido pelo pentest Onda B #8, então ele fica verde com os
+      artefatos faltando. Prova que o container está de pé, e nada além disso.
+- [ ] **`artefatos_faltando` vem vazio** — em `GET /api/acessos/saude-artefatos`, que é
+      para onde o inventário mudou (rota de admin: `Remote-User` em
+      `MOTOR_ACESSOS_ADMIN_USUARIOS`, senão 404). É o item que faltava aqui: os
       parquets de crescimento (`crescimento_municipal`, `crescimento_hex`) não vêm no
       git nem na imagem — chegam só pelo bind mount `/opt/motor-expansao/data/staging`.
       Sem eles o piloto sobe normal e o **passo 4 sai vazio e sem cor, em silêncio**,

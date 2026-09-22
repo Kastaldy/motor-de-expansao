@@ -606,7 +606,9 @@ docker compose -f docker-compose.prod.yml ps
 
 # 2. Healthcheck do piloto web — POR DENTRO do container (este e' o caminho bom)
 docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:8899/api/health
-# Esperado: HTTP 200 + {"status":"ok","artefatos_faltando":[], ...}
+# Esperado: HTTP 200 + {"status":"ok"} — e SO' isso. O /api/health foi EMUDECIDO pelo
+# pentest Onda B #8: ele prova que o container responde, NAO que o dado chegou.
+# O inventario de artefatos mora em /api/acessos/saude-artefatos (so' admin).
 #
 # NAO usar `curl -fsS https://piloto.ultra-expansao.tech/api/health` como verificacao: o
 # `forward_auth` do Caddy vale para o SITE INTEIRO (ver o bloco do Caddyfile em
