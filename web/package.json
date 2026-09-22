@@ -6,7 +6,7 @@
   "description": "Piloto web do Motor de Expansao Ultra Academia — Mapa Territorial + Viabilidade",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && vite build --config vite.entrar.config.ts",
     "preview": "vite preview --port 5000",
     "lint": "tsc --noEmit",
     "test": "vitest run",
