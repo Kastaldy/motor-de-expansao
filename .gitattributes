@@ -41,10 +41,25 @@ docs/**/*.md           text eol=lf
 # o checkout Windows (core.autocrlf=true) os entregaria em CRLF. Mesma razao do `.githooks/*`.
 openmaptiles-infra/**   text eol=lf
 
-# graph.json e' ARTEFATO GERADO (graphify, BLK-GRAPH-01): ~10 MB / 263k linhas de JSON.
-# Sem `-diff` ele domina 99% do diff do PR e AFOGA o revisor automatico -- o
-# `claude-review` do PR #150 terminou com `success` mas sem saida estruturada, e o gate
-# reprovou fail-closed. `-diff` faz o git tratar como binario ("Binary files differ");
-# `linguist-generated` colapsa na UI do GitHub. NAO altera o conteudo versionado nem
-# encosta nas regras de eol/binary dos `.enc.*` acima.
+# graph.json e' ARTEFATO GERADO (graphify, BLK-GRAPH-01): 16,2 MB / 450.016 linhas de JSON
+# (medido na main em 2026-09-22; ate' entao esta nota dizia "~10 MB / 263k linhas").
+# `-diff` faz o git tratar como binario ("Binary files differ") e `linguist-generated`
+# colapsa na UI do GitHub. As duas coisas FUNCIONAM e valem a pena. NAO altera o conteudo
+# versionado nem encosta nas regras de eol/binary dos `.enc.*` acima.
+#
+# O QUE ESTA LINHA **NAO** RESOLVE -- medido no PR #390, 2026-09-22: o REVISOR AUTOMATICO.
+# `.gitattributes` governa o git e a UI, nao a API do GitHub. `gh pr diff` devolve o arquivo
+# INTEIRO como texto: 40.180.974 B de um diff de 41.584.442 B, ou 96,6%. E `Bash(gh pr diff:*)`
+# e' a UNICA ferramenta de shell que o `claude-review` tem permissao de usar -- ele nao tem como
+# nao ler. Resultado: `error_max_turns` (41 turnos, 16 negacoes de permissao), DUAS vezes
+# seguidas, sem saida estruturada, gate fail-closed. Tirar o grafo do PR derrubou o diff de
+# 41,5 MB para 245.669 B, 170x menor.
+#
+# Ate' 2026-09-22 esta nota AFIRMAVA que o `-diff` resolvia esse afogamento, citando o PR #150
+# (que sofreu o mesmo, com `success` e sem saida estruturada). A afirmacao era falsa e passou
+# despercebida porque, do #150 ate' o #390, nenhum PR de CODIGO GRANDE voltou a carregar o grafo
+# junto. Mesma familia das DEC-038/045/050: documento afirmando o que a medicao nao sustenta.
+#
+# REGRA PRATICA: artefato do grafo vai em PR PROPRIO (`chore(graph)`), nunca junto de codigo a
+# revisar. Os quatro reindexes que entraram na main antes do #390 eram commits de 5 arquivos.
 graphify-out/graph.json -diff linguist-generated=true
