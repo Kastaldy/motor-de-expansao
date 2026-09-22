@@ -100,9 +100,36 @@ def test_wellhub_sem_csvs_musculacao_usa_csvs(origem: Path) -> None:
     assert "default" in motivo
 
 
-def test_wellhub_musculacao_mais_antigo_levanta(origem: Path) -> None:
-    """Mudanca de modo do coletor: escolher em silencio troca "erro" por "numero maior"."""
+def test_mtime_divergente_com_a_mesma_coleta_escolhe_o_subset(origem: Path) -> None:
+    """`mtime` divergente NAO e' ambiguidade quando a `data_coleta` e' a mesma nos dois.
+
+    Regressao do incidente de 2026-09-18 `[emenda ao D3 da DEC-039]`. No clone real,
+    `csvs/` tinha mtime de 18/08 e `csvs_musculacao/` de 07/08, e os DOIS carregavam
+    `data_coleta = 2026-08-05`: vieram da mesma coleta, e o `mtime` de `csvs/` era mais novo
+    so' porque `split_by_state` reescreve aquele diretorio a cada execucao -- o mesmo fato
+    que ja' tinha tirado o `mtime` da regua de IDADE. A guarda antiga acusava ambiguidade
+    FALSA, e o operador apagava o subset filtrado, deixando o universo completo como unico.
+
+    Esta prova e' a antiga `test_wellhub_musculacao_mais_antigo_levanta` com o veredito
+    INVERTIDO: a fixtura dela envelhecia so' o `mtime`, entao ela media este caso e nao o
+    que dizia medir.
+    """
     for arquivo in (origem / "Wellhub" / "csvs_musculacao").glob("*.csv"):
+        _envelhecer(arquivo, 40.0)
+
+    diretorio, motivo = cur.escolher_diretorio_fonte(origem, "wellhub")
+    assert diretorio == origem / "Wellhub" / "csvs_musculacao"
+    assert "MESMA data_coleta" in motivo
+
+
+def test_coleta_divergente_com_musculacao_mais_antigo_levanta(origem: Path) -> None:
+    """Troca de modo DE VERDADE: `data_coleta` distinto E `mtime` do subset mais antigo.
+
+    E' o cenario que a prova antiga QUERIA montar. Aqui ele e' construido pela variavel que
+    de fato o distingue -- a coleta --, e a guarda continua fail-closed.
+    """
+    for arquivo in (origem / "Wellhub" / "csvs_musculacao").glob("*.csv"):
+        _envelhecer_conteudo(arquivo, 30)
         _envelhecer(arquivo, 40.0)
 
     with pytest.raises(ValueError, match="ambiguo"):
@@ -298,8 +325,11 @@ def test_curadoria_e_tudo_ou_nada_quando_a_decisao_levanta(origem: Path, tmp_pat
     quando a excecao do `wellhub` subia, e o destino ficava com meia curadoria de uma semana nova
     enquanto o wrapper abortava.
     """
-    # Estado ambiguo de D3: `csvs_musculacao/` estritamente mais antigo que `csvs/`.
+    # Estado ambiguo de D3. Precisa da coleta DIVERGENTE, nao so' do mtime: desde a emenda de
+    # 2026-09-18, `data_coleta` igual nos dois significa mesma coleta e a guarda RESOLVE em vez
+    # de levantar.
     for arquivo in (origem / "Wellhub" / "csvs_musculacao").glob("*.csv"):
+        _envelhecer_conteudo(arquivo, 30)
         _envelhecer(arquivo, 10.0)
 
     destino = tmp_path / "destino"
@@ -307,6 +337,45 @@ def test_curadoria_e_tudo_ou_nada_quando_a_decisao_levanta(origem: Path, tmp_pat
         cur.curar(origem, destino, agora=AGORA)
 
     assert not destino.exists(), "a excecao de decisao alcancou o disco de destino"
+
+
+def test_teto_relativo_barra_universo_que_saltou(origem: Path, tmp_path: Path) -> None:
+    """Volume MUITO acima do ja' publicado e' troca de modo do coletor, nao crescimento.
+
+    Guarda o furo que a emenda de 2026-09-18 fechou: com `csvs_musculacao/` ausente, a escolha
+    SUPOE que `csvs/` vem filtrado. Se a suposicao for falsa (ultima coleta com o filtro
+    desligado e o subset apagado a mao), o universo completo seria publicado como se fosse o
+    subset -- 2,05x no clone real. O teto e' o que transforma isso em recusa.
+    """
+    destino = tmp_path / "destino"
+    baseline = destino / "wellhub" / "csvs"
+    baseline.mkdir(parents=True)
+    _escrever_csv(baseline / "unidades_wellhub_sp.csv", linhas=3)
+
+    # o subset some: a escolha cai no ramo que SUPOE `csvs/` filtrado
+    for arquivo in (origem / "Wellhub" / "csvs_musculacao").glob("*.csv"):
+        arquivo.unlink()
+    # e `csvs/` chega com o universo inflado
+    _escrever_csv(origem / "Wellhub" / "csvs" / "unidades_wellhub_sp.csv", linhas=30)
+
+    relatorio = cur.curar(origem, destino, agora=AGORA)
+    assert relatorio["wellhub"]["publicado"] is False
+    assert "ACIMA do teto" in str(relatorio["wellhub"]["motivo_recusa"])
+    assert "wellhub" not in relatorio["fontes_publicadas"]
+
+
+def test_teto_relativo_zero_desliga(origem: Path, tmp_path: Path) -> None:
+    """Escotilha de saida: `--teto-relativo 0` publica o salto, para crescimento real."""
+    destino = tmp_path / "destino"
+    baseline = destino / "wellhub" / "csvs"
+    baseline.mkdir(parents=True)
+    _escrever_csv(baseline / "unidades_wellhub_sp.csv", linhas=3)
+    for arquivo in (origem / "Wellhub" / "csvs_musculacao").glob("*.csv"):
+        arquivo.unlink()
+    _escrever_csv(origem / "Wellhub" / "csvs" / "unidades_wellhub_sp.csv", linhas=30)
+
+    relatorio = cur.curar(origem, destino, agora=AGORA, teto_relativo=0)
+    assert relatorio["wellhub"]["publicado"] is True
 
 
 def test_limite_de_linhas_barra_universo_inflado(origem: Path, tmp_path: Path) -> None:

@@ -94,10 +94,19 @@ ESTRUTURAL_PATH_DEFAULT = ROOT / "data" / "staging" / "brasil_estrutural.parquet
 # wellhub` (`docs/infra_producao.md` e `scripts/check_artifacts.py`), então o vazamento não era
 # hipotético: era o caminho que o operador copiava.
 #
-# Com o default abaixo, OMITIR é o comportamento seguro. Consumir a série inteira passa a exigir um
-# gesto explícito (`--todas-as-fontes`), que é o que o BLK-MA-20 vai autorizar quando decidir o grão
-# do S1 e calibrar a dedup TP x WH — hoje arbitrada, não medida.
-FONTES_ENTREGAVEL_DEFAULT: tuple[str, ...] = ("wellhub",)
+# `[DEC-066]` **O BLK-MA-20 decidiu: o TotalPass ENTRA, nas duas pontas.** Até 2026-09-16 este
+# bloco dizia que o gesto explícito era "o que o BLK-MA-20 vai autorizar quando decidir o grão do S1
+# e calibrar a dedup TP x WH — hoje arbitrada, não medida". As duas metades caíram: a dedup foi
+# calibrada contra par real (a régua de 50 m foi MEDIDA e mantida) e a decisão foi tomada.
+#
+# **A fronteira não sumiu — ela MUDOU DE LUGAR.** Antes, o que impedia o TotalPass de contaminar o
+# ranking era a fonte ficar fora da série. Agora é o SINAL ficar fora da conta: o `s1` está em
+# `SINAIS_INATIVOS` (fato sem peso, molde da DEC-026), e é lá que o comentário explica por quê.
+# Proteger pela FONTE custaria as 15.841 candidatas que o TotalPass traz; proteger pelo SINAL não
+# custa nenhuma, porque `v1` hoje vale o mesmo para todas (medido: um único valor, `0.5`).
+#
+# `--fontes wellhub` reproduz o universo anterior à DEC-066 sem mexer em código.
+FONTES_ENTREGAVEL_DEFAULT: tuple[str, ...] = ("totalpass", "wellhub")
 
 # A chave de join tem nome diferente dos dois lados: `hex_id` na carteira, `hex_id_res7` na
 # academia. Mesmo conteúdo, e a diferença é herdada — renomear qualquer um dos dois seria mudança
@@ -628,9 +637,14 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def resolver_fontes(args: argparse.Namespace) -> tuple[str, ...] | None:
     """Recorte de fontes EFETIVO: `None` só quando alguém pediu a série inteira de propósito.
 
-    É aqui que a fronteira do D9 deixa de ser prosa. A ordem importa e é fail-closed: o gesto
-    explícito (`--todas-as-fontes`) manda; depois o recorte explícito (`--fontes`); e a AUSÊNCIA de
-    gesto cai no `FONTES_ENTREGAVEL_DEFAULT`, nunca em "tudo".
+    A ordem importa: o gesto explícito (`--todas-as-fontes`) manda; depois o recorte explícito
+    (`--fontes`); e a AUSÊNCIA de gesto cai no `FONTES_ENTREGAVEL_DEFAULT`.
+
+    `[DEC-066]` **Houve, por algumas horas de 2026-09-16, um par de recortes** (`RecorteFontes`),
+    para manter a série fechada enquanto a oferta abria. A opção B dissolveu a distinção: as
+    academias do TotalPass só viram candidatas se entrarem no HISTÓRICO, então os dois eixos
+    passaram a ter sempre o mesmo valor — e abstração cujos dois lados nunca divergem é peso morto.
+    A proteção que o par carregava vive agora em `SINAIS_INATIVOS`.
     """
     if getattr(args, "todas_as_fontes", False):
         return None
@@ -730,7 +744,7 @@ def _pressao_por_academia(
     `False` reproduz o número HISTÓRICO (`--oferta-so-cadeias`) e é o universo comparável com o
     `pressao_concorrencial_score_2km` da camada de mercado, que conta só cadeia mapeada.
     """
-    from .contrato import CATEGORIA_INDEPENDENTE
+    from .contrato import CATEGORIA_INDEPENDENTE, DEDUP_INDEPENDENTES_NOME_M
     from .pressao_competitiva import (
         CONCORRENTES_PATH_DEFAULT,
         calcular_pressao_por_academia,
@@ -766,6 +780,13 @@ def _pressao_por_academia(
         pontos,
         independentes=independentes,
         cadeias_do_feed=cadeias_do_feed,
+        # `[DEC-066]` A passagem por NOME dentro da MESMA fonte, enfim LIGADA. Ela estava
+        # implementada e testada desde 2026-09-10 e NUNCA teve chamador -- este parametro nao era
+        # repassado, entao ficava no default `None` e a duplicata interna seguia intacta. Medido:
+        # 70 no WellHub e 43 no TotalPass, e elas se AUTO-PRESSIONAVAM: `Imperio Fitness Academia`
+        # e `IMPERIO FITNESS ACADEMIA`, ambas 43,33 -> 30,00. A auto-exclusao nao pegava, e nao e'
+        # bug dela -- o fantasma e' OUTRA chave, em OUTRA posicao.
+        dedup_independentes_nome_m=DEDUP_INDEPENDENTES_NOME_M,
         dedup_cadeia_feed_municipio_por_hex=regua.municipio_por_hex if regua else None,
         dedup_cadeia_feed_raio_ampliado_m=regua.raio_ampliado_m if regua else None,
     )
@@ -790,14 +811,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     fontes = resolver_fontes(args)
     if fontes is None:
         _logger.warning(
-            "recorte de fontes DESLIGADO por `--todas-as-fontes`: a serie INTEIRA entra no "
-            "ranking, com a dedup TP x WH ainda arbitrada (DEC-039, D9)"
+            "recorte de fontes DESLIGADO por `--todas-as-fontes`: a serie INTEIRA entra no ranking"
         )
     else:
         _logger.info(
             "recorte de fontes: %s%s",
             ",".join(sorted(fontes)),
-            "" if args.fontes else " (default do entregavel; use `--todas-as-fontes` para abrir)",
+            "" if args.fontes else " (default da DEC-066; use `--fontes wellhub` para o anterior)",
         )
 
     # UMA leitura do feed cru serve aos dois consumidores (pressao e artefato nomeado). Ler duas

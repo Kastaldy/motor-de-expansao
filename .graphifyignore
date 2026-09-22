@@ -1,0 +1,24 @@
+# Recorte curado do corpus do grafo de conhecimento -- CLAUDE.md, secao 7.
+#
+# A regra ja' existia em prosa ("context/handoff/ e imagens ficam FORA do corpus") e ja'
+# falhou na pratica: em 2026-08-04 um rebuild sem filtro indexou 584 logs de handoff
+# (11.181 nos = 54,6% do grafo). O recorte foi restaurado a mao em 2026-08-19 e de novo
+# em 2026-09-18. Este arquivo tira a regra da memoria de quem roda e poe no `detect`.
+#
+# Medido em 2026-09-21 contra o grafo curado (877 arquivos-fonte, manifest de 910 entradas):
+# ZERO desses arquivos vem de context/ ou de imagem. Estas regras nao removem nada que
+# esteja indexado -- elas impedem a re-entrada.
+
+# Logs de handoff entre agentes (599 arquivos). Registro de PROCESSO, nao de conhecimento:
+# o que eles decidiram ja' vive nas DECs, nos docs e no codigo, que sao o corpus de fato.
+context/
+
+# Imagens. O extrator de visao gasta um subagente por imagem e o corpus curado nunca teve
+# nenhuma; o conteudo delas chega ao grafo pelos docs que as citam.
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.bmp
+*.svg

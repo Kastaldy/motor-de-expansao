@@ -1945,7 +1945,7 @@ def test_modo_hexagono_traz_bairros_oficiais_e_segue_por_hexagono():
     assert "Bairros - Núcleo Urbano".encode("latin-1") not in pdf_bytes
 
 
-def test_independente_sem_rede_usa_o_pin_e_o_rotulo_da_wellhub(monkeypatch):
+def test_independente_sem_rede_usa_o_pin_e_o_rotulo_do_app_que_a_revelou(monkeypatch):
     """DEC-046 poe as independentes (rede NA) na uniao de oferta. Sem chave, o pin caia na
     placa cinza "C" e o slide 8 abria um balde "<NA>"."""
     import motor_expansao.dashboard.relatorio_municipal as rm
@@ -1978,8 +1978,39 @@ def test_independente_sem_rede_usa_o_pin_e_o_rotulo_da_wellhub(monkeypatch):
         }
     )
     res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", competitors_df=comp)
+    # Sem coluna `fonte` (o artefato anterior a DEC-066) as duas caem no WellHub: o agrupamento
+    # e o rotulo ficam IDENTICOS aos de antes desta DEC.
     assert res["concorrentes_por_rede"] == {CHAVE_AGREGADOR: 2, "smart_fit": 1}
     assert _prettify_rede(CHAVE_AGREGADOR) == "Independentes (Wellhub)"
+
+
+def test_o_balde_e_o_rotulo_do_slide_8_se_separam_por_app():
+    """`[DEC-066]` O balde do slide "Concorrentes por rede" deixa de ser UM so'.
+
+    Ate' 2026-09-17 ele era rotulado pelo literal "Independentes (Wellhub)", cravado em
+    `_prettify_rede`. Com o TotalPass no entregavel, esse balde unico passaria a CONTAR academias
+    que nao estao no WellHub e a escrever o nome do app errado num PDF entregue -- sem erro e sem
+    teste vermelho, porque contagem e rotulo nao dependem de conta nenhuma.
+    """
+    from motor_expansao.dashboard.competitors import CHAVE_AGREGADOR, CHAVE_AGREGADOR_TP
+
+    df = _sample_df()
+    comp = pd.DataFrame(
+        {
+            "rede": pd.array([pd.NA, pd.NA, "smart_fit"], dtype="string"),
+            "fonte": pd.array(["wellhub", "totalpass", pd.NA], dtype="string"),
+            "lat": [-23.55, -23.55, -23.56],
+            "lng": [-46.63, -46.63, -46.64],
+            "hex_id_res7": [_hex(-23.55, -46.63)] * 2 + [_hex(-23.56, -46.64)],
+        }
+    )
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", competitors_df=comp)
+    assert res["concorrentes_por_rede"] == {
+        CHAVE_AGREGADOR: 1,
+        CHAVE_AGREGADOR_TP: 1,
+        "smart_fit": 1,
+    }
+    assert _prettify_rede(CHAVE_AGREGADOR_TP) == "Independentes (TotalPass)"
 
 
 def test_fonte_do_mapa_escala_sem_arial(monkeypatch):

@@ -40,8 +40,11 @@ import pandas as pd
 from .contrato import (
     CONTRATO_COLUNAS_ALVOS_NOMEADOS,
     CONTRATO_COLUNAS_SCORE,
+    DEDUP_H3_RES,
+    RAIO_MESMA_ACADEMIA_ENTRE_APPS_M,
     VERSAO_CONTRATO_ALVOS_NOMEADOS,
 )
+from .identidade import mesmo_estabelecimento
 
 _logger = logging.getLogger(__name__)
 
@@ -138,6 +141,7 @@ def montar_alvos_nomeados(
         coord[[*chaves, "nome", "lat", "lng"]], on=chaves, how="left", validate="one_to_one"
     )
     out = _juntar_auditoria_da_pressao(out, pressao, chaves)
+    out["fontes_da_academia"] = _fontes_da_academia(out)
     sem_pin = int(out["lat"].isna().sum())
     if sem_pin:
         # AVISO, não descarte: a academia tem score e o operador precisa saber que ela existe,
@@ -151,6 +155,93 @@ def montar_alvos_nomeados(
     out = out.sort_values(["fonte", "chave_snapshot"], kind="mergesort").reset_index(drop=True)
     _assert_schema_nomeados(out)
     return out
+
+
+def _fontes_da_academia(df: pd.DataFrame) -> pd.Series:
+    """`[DEC-066]` Quais apps listam CADA academia — a resposta a "esta nos dois?".
+
+    A regra e' **`RAIO_MESMA_ACADEMIA_ENTRE_APPS_M` E nome** (100 m + `mesmo_estabelecimento`),
+    escolhida por Vinicius em 2026-09-17 sobre a tabela medida em `contrato.py`.
+
+    **Por que aqui e nao sobre `coordenadas`:** neste ponto o frame ja' esta' unido ao SCORE, que
+    exclui cadeias por construcao. Entao "fonte diferente" so' pode ser TotalPass x WellHub. Sobre o
+    frame cru, um `--todas-as-fontes` traria a fonte `unidades` (CADEIAS) e o pino afirmaria
+    presenca em dois apps onde ha' uma academia e uma cadeia.
+
+    **Degrade de graca:** `coordenadas_por_chave(fontes=...)` ja' recortou, entao com
+    `--fontes wellhub` existe uma fonte so', nenhum par cruzado e' possivel, e cada linha sai com a
+    propria fonte. Nenhum caso especial.
+
+    Linha SEM coordenada sai **nula**: ela existe e nao e' casavel, e carimbar a propria fonte
+    sozinha afirmaria exclusividade que nao foi medida.
+    """
+    import h3
+    import numpy as np
+
+    from .pressao_competitiva import _haversine_m, _k_do_bucket
+
+    vazio = pd.Series(pd.NA, index=df.index, dtype="string")
+    if df.empty:
+        return vazio
+
+    lat = pd.to_numeric(df["lat"], errors="coerce")
+    lng = pd.to_numeric(df["lng"], errors="coerce")
+    desenhavel = lat.notna() & lng.notna()
+    if not bool(desenhavel.any()):
+        return vazio
+
+    idx = df.index[desenhavel].tolist()
+    fontes = df.loc[idx, "fonte"].astype(str).tolist()
+    nomes = df.loc[idx, "nome"].astype("string").fillna("").astype(str).tolist()
+    celulas = [
+        h3.latlng_to_cell(float(la), float(ln), DEDUP_H3_RES)
+        for la, ln in zip(lat.loc[idx], lng.loc[idx], strict=True)
+    ]
+    # O `k` sai do LIMIAR, nunca de literal: `_k_do_bucket` e' a mesma derivacao que a dedup usa, e
+    # a docstring dela chama o `k` cravado de "o erro silencioso mais provavel de qualquer dedup com
+    # bucket H3". Ela e' privada por CONVENCAO (so' usa `h3`, `math` e uma constante do contrato);
+    # re-deriva-la aqui duplicaria a regra, que e' o defeito da DEC-044.
+    k = _k_do_bucket(RAIO_MESMA_ACADEMIA_ENTRE_APPS_M)
+    ocupantes: dict[str, list[int]] = {}
+    for pos, celula in enumerate(celulas):
+        ocupantes.setdefault(celula, []).append(pos)
+
+    lat_arr = lat.loc[idx].to_numpy(dtype="float64")
+    lng_arr = lng.loc[idx].to_numpy(dtype="float64")
+
+    achadas: list[set[str]] = [{f} for f in fontes]
+    for i in range(len(idx)):
+        # `j > i` e' o que evita comparar o par duas vezes; a simetria e' resolvida gravando nos
+        # DOIS lados quando o casamento acontece.
+        candidatos = [
+            j
+            for vizinha in h3.grid_disk(celulas[i], k)
+            for j in ocupantes.get(vizinha, ())
+            if j > i and fontes[j] != fontes[i] and nomes[i] and nomes[j]
+        ]
+        if not candidatos:
+            continue
+        # VETORIZADO, como `_haversine_m` foi desenhada: UMA chamada por academia, com o array dos
+        # candidatos. Chama-la por PAR com floats roda, mas a assinatura dela e' `np.ndarray` e o
+        # `mypy` -- gate bloqueante do CI -- reprova.
+        alvos = np.asarray(candidatos, dtype="int64")
+        distancias = _haversine_m(
+            np.full(alvos.size, lat_arr[i]),
+            np.full(alvos.size, lng_arr[i]),
+            lat_arr[alvos],
+            lng_arr[alvos],
+        )
+        for j, d in zip(candidatos, distancias, strict=True):
+            if float(d) > RAIO_MESMA_ACADEMIA_ENTRE_APPS_M:
+                continue
+            if mesmo_estabelecimento(nomes[i], nomes[j]):
+                achadas[i].add(fontes[j])
+                achadas[j].add(fontes[i])
+
+    saida = vazio.copy()
+    for pos, rotulo in enumerate(idx):
+        saida.at[rotulo] = ",".join(sorted(achadas[pos]))
+    return saida
 
 
 _AUDITORIA_PRESSAO: tuple[str, ...] = (

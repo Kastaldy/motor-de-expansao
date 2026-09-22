@@ -13798,3 +13798,56 @@ na esteira (`[GATE VISUAL — Vinicius]`) **perdeu objeto**: nada muda de resolu
   a lixo; corte do mosaico com 3 asserções, nenhuma bastando sozinha). Arquivo inteiro 66 verdes;
   `ruff` limpo; parsers de `tasks/` 215 verdes.
 - Guardrail: §5 READ-ONLY M1 — camada de render, nenhuma mudança em score/pesos/carteira/artefatos.
+
+## Fechamento de ciclo — BLK-MA-20 (2026-09-21)
+
+O TotalPass entra INTEIRO no universo do entregável, pela **DEC-066** (Crítica, aprovada por
+Vinicius em 2026-09-21). O bloco fecha com uma pendência **declarada**, não esquecida: o grão do `s1`.
+
+- **O que destravou o bloco foi DESLIGAR o `s1`, não resolvê-lo.** O levantamento de 24/08 media o
+  preço de soltá-lo com duas fontes: Spearman `0,692` contra a régua de então e **100 das 100
+  primeiras linhas trocando**. A causa é de GRÃO — o `v1` é medido por HEXÁGONO, e o hex dizia
+  "2 agregadores" para 89,60% das academias do WellHub quando só 50,35% tinham gêmea do TotalPass a
+  ≤ 50 m. O `s1` entra em `SINAIS_INATIVOS` (fato sem peso, molde do G-D2/DEC-026), que é a
+  "terceira via" que o próprio backlog registrava como a avaliar no gate.
+- **Régua de dedup calibrada com par real** — passo 2 do bloco, impossível antes de existir
+  TotalPass: `DEDUP_INDEPENDENTES_M = 50 m`, desempate do representante por NOME (nunca como
+  exigência) e `nome_mesma_fonte_m` para a duplicata INTERNA de cada feed.
+- **Duas réguas de "mesma academia" convivem, e isso é desenho:** 50 m para a OFERTA, 100 m + nome
+  para a AFIRMAÇÃO do pin. São perguntas diferentes — quanto mercado a academia consome, e se é
+  honesto desenhar um pino dizendo "esta academia está nos dois apps".
+- **Efeito medido com o confundidor eliminado.** O comparativo saiu de um backup tirado no MESMO
+  dia, com o MESMO feed fresco e só o WellHub publicado: a única diferença entre os dois lados é o
+  TotalPass entrar. A leitura de 19/09 estava confundida por um mês de deriva não propagada.
+
+  | medida | só WellHub | com TotalPass | delta |
+  |---|---:|---:|---:|
+  | academias no universo | 20.130 | 35.971 | +15.841 |
+  | unidades de REDE no artefato | 2.909 | 4.698 | +1.789 |
+  | unidades com pin próprio | 734 | 904 | +170 |
+  | consumo de mercado | 11.802.500 | 12.215.000 | +412.500 |
+  | oferta efetiva disponível | 15.999.125 | 16.163.414 | +164.289 |
+  | concorrentes em 1 km | 14.867 | 15.393 | +526 |
+
+  Na malha: **503 hexágonos ganharam concorrente**, 772 subiram consumo instalado e **267 perderam
+  residual** — esses 267 são onde o TotalPass de fato apertou.
+- **O paradoxo que a DEC existe para avisar se confirmou.** Entrou mais concorrência (+412.500 de
+  consumo) e o residual publicado **SUBIU** (+164.289). A causa foi medida:
+  `taxa_fitness_mercado_calibrada` foi de `0,173166` para `0,176257` (+1,79%) — a taxa é calibrada
+  a partir das academias MAPEADAS, então mapear mais infla o mercado potencial (TAM e SAM +1,78%).
+  É a dívida da DEC-048, que esta DEC declara NÃO pagar. **O contrafactual com a taxa travada não
+  foi publicado porque não foi rodado**; o medido sustenta a DIREÇÃO, não um número.
+- **Defeito corrigido no caminho** (commit `143c848`): a escolha entre `Wellhub/csvs_musculacao` e
+  `Wellhub/csvs` saía do `mtime`, que MENTE — `split_by_state` reescreve os 27 CSVs e um feed de
+  85 dias media `0` dia. A régua passou para `data_coleta` e o ramo "ausente" ganhou teto relativo
+  (`TETO_RELATIVO_DEFAULT = 1.5`). A recomendação anterior — apagar `csvs_musculacao` por mtime —
+  apagava o subset FILTRADO (22.173) e deixava o universo NÃO filtrado (45.526), transformando uma
+  guarda fail-closed em fail-open.
+- **M1 INTACTO, verificado por data:** `brasil_priorizados`, `brasil_estrutural` e
+  `hexagonos_brasil_dashboard` seguem em 10/06.
+- Testes: **1.152 verdes, 9 skipped** em `tests/unit/vulnerabilidade` + `tests/contracts`.
+- **Fica aberto, e está declarado na DEC:** (i) o **grão do `s1` por academia**, inseparável de
+  devolver peso ao sinal; (ii) a recalibração da taxa (dívida da DEC-048); (iii) o relógio de
+  maturação do S3/S4 do TotalPass, que só anda com foto semanal de feed **recoletado** — a guarda
+  de frescor da DEC-039 D4 recusa feed com mais de 3 dias, e recusar é o comportamento certo:
+  fotografar feed não recoletado faz o S4 ler "parado" no universo inteiro da fonte.

@@ -15,8 +15,11 @@ import { metros, nomeRede } from './Inteligencia'
    Mapa da ficha — a unidade no centro e quem disputa o aluno a até 2 km.
 
    Camada visual, READ-ONLY. Redes aparecem com a LOGO; independentes, com o
-   ícone do Wellhub (todas vêm do feed do agregador) — o MESMO ícone do Mapa
-   Territorial, para o operador não aprender duas legendas. A cor por
+   ícone do APP QUE AS REVELOU — o mesmo critério do Mapa Territorial, para o
+   operador não aprender duas legendas. `[DEC-066]` Até 2026-09-17 era sempre o
+   ícone do Wellhub, e este comentário dizia "todas vêm do feed do agregador":
+   verdade enquanto o TotalPass estava fora da série, falsa depois que ele
+   entrou no entregável. A cor por
    vulnerabilidade saiu em 2026-09-15 (pedido do Felipe): o mapa serve para
    LOCALIZAR a concorrência. Anéis de 1 e 2 km dão a escala.
 
@@ -32,6 +35,19 @@ const BASEMAP = {
 
 /** Identidade de módulo (estável): um objeto novo por render reempacotaria o atlas do deck.gl. */
 const ICONE_WELLHUB = { url: '/logo-wellhub.png', width: 128, height: 128, anchorX: 64, anchorY: 64, mask: false }
+const ICONE_TOTALPASS = { url: '/logo-totalpass.jpg', width: 128, height: 128, anchorX: 64, anchorY: 64, mask: false }
+/** `[DEC-066 / fatia 2]` Academia nos DOIS apps. Arte COMPOSTA das outras duas e gerada por
+ *  `competitors.compor_arte_ambos`, com teste que a trava contra envelhecer: no PDF o M2 é
+ *  composto em tempo de render, mas a `IconLayer` recebe URL e precisa do arquivo. */
+const ICONE_AMBOS = { url: '/logo-ambos.png', width: 128, height: 128, anchorX: 64, anchorY: 64, mask: false }
+/** `[DEC-066]` A marca sai do app. Sem `fonte` (payload antigo) cai no Wellhub — que era o
+ *  universo inteiro até esta DEC, então o fallback reproduz o desenho anterior. */
+const iconeDoApp = (fonte?: string | null, fontes?: string | null) => {
+  const declarado = String(fontes ?? '').toLowerCase()
+  if (declarado.includes(',')) return ICONE_AMBOS
+  const escolhida = declarado || String(fonte ?? '').toLowerCase()
+  return escolhida === 'totalpass' ? ICONE_TOTALPASS : ICONE_WELLHUB
+}
 
 type Pino = RedeMapaConcorrente & { temLogo: boolean }
 
@@ -129,7 +145,7 @@ export default function FichaMapa({
         id: 'independentes',
         data: pinos.filter((p) => !p.temLogo),
         getPosition: (d) => [d.lng, d.lat],
-        getIcon: () => ICONE_WELLHUB,
+        getIcon: (d) => iconeDoApp(d.fonte, d.fontes_da_academia),
         getSize: 22,
         sizeUnits: 'pixels',
         pickable: true,
@@ -283,7 +299,14 @@ export default function FichaMapa({
         ) : (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {/* [DEC-066] DUAS entradas, porque agora há duas artes. Esta legenda chegou a ficar
+                  NEUTRA por uma conclusão errada minha — a de que estes pins eram coral. O coral é
+                  a cor do TEXTO da pílula no Mapa (`--indep-tx`), não a arte do pino: os pins daqui
+                  sempre usaram a logo do agregador. */}
               <img src="/logo-wellhub.png" alt="" width={14} height={14} style={{ display: 'block' }} /> Independentes (Wellhub)
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <img src="/logo-totalpass.jpg" alt="" width={14} height={14} style={{ display: 'block' }} /> Independentes (TotalPass)
             </div>
             <div style={{ color: 'var(--tx-muted)' }}>Logos = redes · anéis de 1 e 2 km</div>
           </>

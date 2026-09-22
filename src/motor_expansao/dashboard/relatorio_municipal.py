@@ -51,9 +51,10 @@ from motor_expansao.dashboard.censo_map import (
     _atribuicao_tiles as _censo_atribuicao_tiles,
 )
 from motor_expansao.dashboard.competitors import (
-    CHAVE_AGREGADOR,
     PIN_INDEPENDENTE_PX,
+    ROTULO_AGREGADOR,
     _render_square_logo_tile,
+    chave_agregador_da_fonte,
 )
 from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
 from motor_expansao.dashboard.utils import score_band_to_color
@@ -337,8 +338,11 @@ def _prettify_rede(rede: str) -> str:
     key = str(rede or "").strip()
     if not key:
         return "Concorrente"
-    if key == CHAVE_AGREGADOR:
-        return "Independentes (Wellhub)"
+    if key in ROTULO_AGREGADOR:
+        # `[DEC-066]` Era o literal "Independentes (Wellhub)" cravado aqui. Com o TotalPass no
+        # entregavel, o slide 8 escreveria o nome do app ERRADO para as academias que so'
+        # existem nele.
+        return ROTULO_AGREGADOR[key]
     low = key.casefold()
     if low in _REDE_NOME_OVERRIDES:
         return _REDE_NOME_OVERRIDES[low]
@@ -1451,7 +1455,32 @@ def _pins_no_municipio(
         if "rede" in conc_muni.columns:
             # Independente (rede vazia, DEC-046) conta no balde do agregador; `astype(str)`
             # direto abria um balde "<NA>" com a placa cinza "C" no slide 8.
-            redes = conc_muni["rede"].map(lambda r: _chave_rede(r) or CHAVE_AGREGADOR)
+            #
+            # `[DEC-066]` O balde sai do APP que revelou a academia, e nao mais de uma constante:
+            # sem `fonte` (artefato anterior a esta DEC) cai no WellHub e o agrupamento fica
+            # IDENTICO ao de antes.
+            fontes = (
+                conc_muni["fonte"]
+                if "fonte" in conc_muni.columns
+                else pd.Series([None] * len(conc_muni), index=conc_muni.index)
+            )
+            # `[DEC-066 / fatia 2]` O balde tambem se desdobra: academia nos dois apps conta num
+            # balde PROPRIO, senao ela seria somada sob o nome de um app so'.
+            declaradas = (
+                conc_muni["fontes_da_academia"]
+                if "fontes_da_academia" in conc_muni.columns
+                else pd.Series([None] * len(conc_muni), index=conc_muni.index)
+            )
+            redes = pd.Series(
+                [
+                    _chave_rede(r) or chave_agregador_da_fonte(f, d)
+                    for r, f, d in zip(
+                        conc_muni["rede"], fontes, declaradas, strict=False
+                    )
+                ],
+                index=conc_muni.index,
+                dtype="object",
+            )
             por_rede = {
                 str(rede): int(cnt) for rede, cnt in redes.value_counts().items()
             }
@@ -2571,7 +2600,12 @@ def _draw_pins(
             if not key:
                 # DEC-046: linha sem `rede` e' academia INDEPENDENTE -> marcador do agregador,
                 # menor que a bandeira de cadeia (mesmo ramo do `censo_map`, Pontual).
-                key, size = CHAVE_AGREGADOR, PIN_INDEPENDENTE_PX
+                # `[DEC-066]` A MARCA sai do app que a revelou: rosa no WellHub, verde no
+                # TotalPass. MESMA funcao que o Pontual chama -- uma redacao da regra.
+                key, size = (
+                    chave_agregador_da_fonte(row.get("fonte"), row.get("fontes_da_academia")),
+                    PIN_INDEPENDENTE_PX,
+                )
         try:
             from typing import cast
 

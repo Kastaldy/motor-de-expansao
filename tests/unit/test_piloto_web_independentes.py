@@ -117,6 +117,51 @@ def test_o_pin_carrega_os_numeros_da_academia(com_independentes: Path) -> None:
     assert pin["provisorio"] is False
 
 
+def test_o_pin_declara_de_QUAL_app_a_academia_veio(com_independentes: Path) -> None:
+    """`[DEC-066]` A arte do pino sai da `fonte` — então a `fonte` tem de CHEGAR ao item.
+
+    A coluna existe no artefato nomeado desde sempre e vem 100% preenchida (medido no publicado:
+    19.329 de 19.329 no `v5`, todas `wellhub`). Ela morria em `_COLS_NOMEADAS`, a lista de
+    PERMISSÃO deste payload — e por isso o mapa só podia desenhar a marca do WellHub.
+
+    Campo aditivo sem teste é o que regride em silêncio: tirá-lo da lista outra vez faria o mapa
+    voltar a carimbar academia do TotalPass com a bandeira do CONCORRENTE, e **nenhuma suíte
+    ficaria vermelha** — que é exatamente o defeito que a DEC-066 corrigiu.
+    """
+    misto = _nomeadas()
+    misto.loc[misto["nome"] == "Gama Fit", "fonte"] = "totalpass"
+    misto.to_parquet(
+        com_independentes / "staging" / "vulnerabilidade_ma_nomeadas.parquet", index=False
+    )
+    pilot.carregar_independentes.cache_clear()
+
+    por_nome = {p["nome"]: p for p in _muni()["independentes"]["itens"]}
+    assert por_nome["Gama Fit"]["fonte"] == "totalpass"
+    assert por_nome["Academia Alfa"]["fonte"] == "wellhub"
+
+
+def test_o_pin_declara_quando_a_academia_esta_nos_DOIS_apps(com_independentes: Path) -> None:
+    """`[DEC-066 / fatia 2]` A coluna `fontes_da_academia` tem de CHEGAR ao item.
+
+    Ela nasce em `montar_alvos_nomeados` (100 m + nome) e atravessa `_COLS_NOMEADAS` — a lista de
+    PERMISSAO do piloto, que e' onde a `fonte` morria antes de ontem. Campo aditivo sem teste
+    regride em silencio: a suite fica verde porque nada quebrou, nao porque o campo funciona.
+
+    Com virgula, o mapa desenha o terceiro estado (placa bipartida com as duas logos).
+    """
+    misto = _nomeadas()
+    misto["fontes_da_academia"] = "wellhub"
+    misto.loc[misto["nome"] == "Gama Fit", "fontes_da_academia"] = "totalpass,wellhub"
+    misto.to_parquet(
+        com_independentes / "staging" / "vulnerabilidade_ma_nomeadas.parquet", index=False
+    )
+    pilot.carregar_independentes.cache_clear()
+
+    por_nome = {p["nome"]: p for p in _muni()["independentes"]["itens"]}
+    assert por_nome["Gama Fit"]["fontes_da_academia"] == "totalpass,wellhub"
+    assert por_nome["Academia Alfa"]["fontes_da_academia"] == "wellhub"
+
+
 def test_academia_LONGE_de_outro_municipio_nao_entra(com_independentes: Path) -> None:
     """O recorte é por hexágono do município MAIS a margem do raio da pressão (DEC-035).
 

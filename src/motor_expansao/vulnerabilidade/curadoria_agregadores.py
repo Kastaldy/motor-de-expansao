@@ -111,6 +111,13 @@ REGUA_INDISPONIVEL = "indisponivel"
 # das linhas, e as que faltam viram `sumiu_recente` em massa no S1, que é o sinal de MAIOR peso.
 # Inerte na primeira execução, por construção: sem destino publicado não há baseline para comparar.
 PISO_RELATIVO_DEFAULT = 0.5
+# Teto relativo `[emenda de 2026-09-18 ao D3 da DEC-039]`: fracao MAXIMA do volume ja'
+# publicado. Existe porque o ramo "`csvs_musculacao/` ausente" SUPOE que `csvs/` ja' vem
+# filtrado, e a suposicao e' falsa quando a ultima coleta rodou com o filtro desligado e o
+# subset foi apagado. Os dois universos diferem 2-3x (medido: 45.526 x 22.173, 2,05x), entao
+# `1.5` separa troca de modo de crescimento real com folga nos dois lados. Inerte na primeira
+# publicacao, como o piso.
+TETO_RELATIVO_DEFAULT = 1.5
 
 
 def _csvs(diretorio: Path) -> list[Path]:
@@ -190,6 +197,32 @@ def escolher_diretorio_fonte(origem: Path, agregador: str) -> tuple[Path, str]:
             "em que `csvs/` ja' sai filtrado por musculacao"
         )
     mtime_csvs = _mtime_mais_novo(csvs)
+
+    # MESMA `data_coleta` nos dois => MESMA coleta, e entao o `mtime` nao decide nada
+    # `[emenda de 2026-09-18 ao D3 da DEC-039]`. O ramo abaixo nasceu justificando o `mtime`
+    # com "os dois carregam o mesmo data_coleta" -- e e' esse parentese que o derruba: se
+    # carregam, vieram da mesma execucao, logo o filtro do pipeline estava DESLIGADO,
+    # `csvs/` e' o universo COMPLETO e `csvs_musculacao/` e' o subset. Nao ha' ambiguidade.
+    # O `mtime` diverge porque `split_by_state` reescreve `csvs/` a cada execucao (o mesmo
+    # fato que tirou o `mtime` da regua de IDADE, linhas 26-35). Medido no clone real em
+    # 2026-09-18: mtime 18/08 x 07/08, `data_coleta = 2026-08-05` nos DOIS -> a guarda
+    # acusou ambiguidade FALSA e o subset filtrado foi apagado a mao.
+    hoje = datetime.now(tz=UTC).date()
+    coleta_musc = _data_coleta_mais_antiga(_csvs(musculacao), hoje)
+    coleta_csvs = _data_coleta_mais_antiga(_csvs(csvs), hoje)
+    if (
+        coleta_musc is not None
+        and coleta_csvs is not None
+        and coleta_musc[0] == coleta_csvs[0]
+    ):
+        return (
+            musculacao,
+            f"`csvs_musculacao/` e `csvs/` carregam a MESMA data_coleta "
+            f"({coleta_musc[0].isoformat()}): sairam da mesma coleta, com o filtro do "
+            "pipeline DESLIGADO -- `csvs/` e' o universo completo e `csvs_musculacao/` e' o "
+            "subset de musculacao",
+        )
+
     if mtime_csvs is not None and mtime_musc < mtime_csvs:
         raise ValueError(
             "WellHub em estado ambiguo: `csvs_musculacao/` existe mas e' MAIS ANTIGO que `csvs/`, "
@@ -385,6 +418,7 @@ def _decidir(
     max_idade_dias: float,
     limite: int | None,
     piso_relativo: float,
+    teto_relativo: float,
     agora: datetime,
 ) -> tuple[dict[str, object], list[Path]]:
     """Decide UM agregador sem tocar o disco de destino: `(detalhe do relatório, arquivos)`.
@@ -445,6 +479,18 @@ def _decidir(
             "costuma ser coleta interrompida, e as linhas que faltam viram `sumiu_recente` em massa "
             "no S1. Confira o log do coletor; para publicar assim mesmo, `--piso-relativo 0`"
         )
+    elif (
+        teto_relativo > 0
+        and publicado_antes > 0
+        and n_linhas > publicado_antes * float(teto_relativo)
+    ):
+        recusa = (
+            f"volume ACIMA do teto: {n_linhas} linha(s) contra {publicado_antes} ja' publicada(s) "
+            f"({n_linhas / publicado_antes:.0%}, teto {float(teto_relativo):.0%}). Salto assim "
+            "costuma ser TROCA DE MODO do coletor (universo nao filtrado no lugar do subset de "
+            "musculacao), nao crescimento real -- e ele infla o funil de M&A em silencio. "
+            "Confira em que modo o coletor rodou; para publicar assim mesmo, `--teto-relativo 0`"
+        )
 
     detalhe: dict[str, object] = {
         "diretorio_origem": str(dir_origem),
@@ -468,6 +514,7 @@ def curar(
     max_idade_dias: float = MAX_IDADE_DIAS_DEFAULT,
     limites: dict[str, int | None] | None = None,
     piso_relativo: float = PISO_RELATIVO_DEFAULT,
+    teto_relativo: float = TETO_RELATIVO_DEFAULT,
     agora: datetime | None = None,
     dry_run: bool = False,
 ) -> dict[str, object]:
@@ -508,6 +555,7 @@ def curar(
             max_idade_dias=max_idade_dias,
             limite=limites.get(agregador),
             piso_relativo=piso_relativo,
+            teto_relativo=teto_relativo,
             agora=agora,
         )
         for agregador in AGREGADORES
@@ -603,6 +651,17 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--teto-relativo",
+        type=float,
+        default=TETO_RELATIVO_DEFAULT,
+        help=(
+            f"fracao MAXIMA do volume ja' publicado no destino (default "
+            f"{TETO_RELATIVO_DEFAULT:g}); acima dela a fonte nao e' publicada, porque salto de "
+            "volume costuma ser troca de modo do coletor. `0` desliga. Inerte na primeira "
+            "execucao, quando nao ha' baseline"
+        ),
+    )
+    p.add_argument(
         "--dry-run",
         action="store_true",
         help="decide e relata sem copiar arquivo nem criar diretorio",
@@ -630,6 +689,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "totalpass": args.max_linhas_totalpass,
         },
         piso_relativo=args.piso_relativo,
+        teto_relativo=args.teto_relativo,
         dry_run=args.dry_run,
     )
     print(relatorio)
@@ -645,6 +705,7 @@ __all__ = [
     "MAX_IDADE_DIAS_DEFAULT",
     "ORIGEM_DEFAULT",
     "PISO_RELATIVO_DEFAULT",
+    "TETO_RELATIVO_DEFAULT",
     "REGUA_DATA_COLETA",
     "REGUA_INDISPONIVEL",
     "REGUA_MTIME",

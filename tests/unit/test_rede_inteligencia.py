@@ -118,6 +118,52 @@ def test_entorno_ordena_por_distancia_e_casa_fatos_do_agregador_so_no_mesmo_pont
     assert ri.concorrentes_no_entorno(-23.0, -46.0, None) == []
 
 
+def test_o_item_da_ficha_declara_de_QUAL_app_a_academia_veio():
+    """`[DEC-066]` A `fonte` sai da PRÓPRIA linha da união — não da tabela de fatos.
+
+    A distinção é o ponto. Os fatos do agregador são casados por PONTO, a até `casar_m`, e sem par
+    os campos ficam `None` (é o que o teste acima prova para `vulnerabilidade`). Se a MARCA do pino
+    dependesse desse casamento, independente sem par cairia no WellHub por acidente de DISTÂNCIA —
+    o pino do TotalPass sairia rosa e ninguém notaria, porque nada erra em voz alta.
+
+    Por isso este teste roda SEM tabela de fatos: a marca tem de estar certa mesmo assim.
+    """
+    oferta = pd.DataFrame(
+        [
+            {"lat": -23.003, "lng": -46.0, "nome": "Do Wellhub", "rede": "",
+             "classe": "independente", "fonte": "wellhub"},
+            {"lat": -23.004, "lng": -46.0, "nome": "Do TotalPass", "rede": "",
+             "classe": "independente", "fonte": "totalpass"},
+        ]
+    )
+    por_nome = {c["nome"]: c for c in ri.concorrentes_no_entorno(-23.0, -46.0, oferta)}
+    assert por_nome["Do Wellhub"]["fonte"] == "wellhub"
+    assert por_nome["Do TotalPass"]["fonte"] == "totalpass"
+    # Sem par de fatos: ausência, nunca zero — e a marca NÃO depende disso.
+    assert por_nome["Do TotalPass"]["vulnerabilidade"] is None
+
+
+def test_o_item_da_ficha_declara_quando_esta_nos_DOIS_apps():
+    """`[DEC-066 / fatia 2]` A ficha tambem desenha o terceiro estado.
+
+    Mesma razao do item do payload: a coluna sai da PROPRIA linha da uniao (a DEC-066 a poe em
+    `_COLS_OFERTA`), e nao da tabela de fatos casada por ponto — que pode nao ter par e deixaria a
+    marca errada por acidente de distancia.
+    """
+    oferta = pd.DataFrame(
+        [
+            {"lat": -23.003, "lng": -46.0, "nome": "So no Wellhub", "rede": "",
+             "classe": "independente", "fonte": "wellhub", "fontes_da_academia": "wellhub"},
+            {"lat": -23.004, "lng": -46.0, "nome": "Nos dois", "rede": "",
+             "classe": "independente", "fonte": "wellhub",
+             "fontes_da_academia": "totalpass,wellhub"},
+        ]
+    )
+    por_nome = {c["nome"]: c for c in ri.concorrentes_no_entorno(-23.0, -46.0, oferta)}
+    assert por_nome["Nos dois"]["fontes_da_academia"] == "totalpass,wellhub"
+    assert por_nome["So no Wellhub"]["fontes_da_academia"] == "wellhub"
+
+
 def test_entorno_nao_lista_a_propria_ultra_como_concorrente():
     oferta = pd.DataFrame(
         [
