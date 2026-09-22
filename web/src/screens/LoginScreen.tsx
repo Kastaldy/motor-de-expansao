@@ -1,6 +1,18 @@
 import { useId, useState } from 'react'
 
 import MalhaBrasil from '../components/login/MalhaBrasil'
+/* O logo entra por IMPORT, e não pelo caminho `/logo-ultra.png` que o Dock usa.
+
+   Esta tela é servida na raiz de `auth.ultra-expansao.tech`, onde só a página e o
+   prefixo `entrar-assets/` vêm do nosso container — a raiz do host pertence ao
+   Authelia. Um `src="/logo-ultra.png"` cairia lá e o logo sumiria EM PRODUÇÃO, sem
+   nada quebrar em desenvolvimento. Resolvido no build, o caminho não tem como estar
+   errado no ar sem antes quebrar o build.
+
+   O arquivo é uma CÓPIA de `public/logo-ultra.png` com a extensão que o conteúdo pede
+   (é AVIF por dentro — a mesma armadilha que o `portal/index.html` documenta). São
+   7 KB duplicados para que o piloto não precise mudar de caminho por causa desta tela. */
+import logoUltra from '../assets/logo-ultra.avif'
 import {
   MENSAGEM_FALHA,
   normalizarUsuario,
@@ -8,7 +20,7 @@ import {
   type EstadoEnvio,
   type FalhaLogin,
 } from '../lib/login'
-import { procedenciaCurta } from '../lib/rodape-base'
+import { censoDaBase, procedenciaCurta } from '../lib/rodape-base'
 import { useUfsDaBase } from '../lib/base-contexto'
 
 /**
@@ -55,6 +67,7 @@ export default function LoginScreen({
   const idSenha = useId()
   const idErro = useId()
   const habilitado = podeEnviar(usuario, senha, estado)
+  const selo = procedenciaCurta(ufs) ?? censoDaBase()
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault()
@@ -148,7 +161,7 @@ export default function LoginScreen({
                 }}
               >
                 <img
-                  src="/logo-ultra.png"
+                  src={logoUltra}
                   alt="Ultra Academia"
                   style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                 />
@@ -389,7 +402,12 @@ export default function LoginScreen({
             <MalhaBrasil idBrilho="brilho-painel" />
           </div>
 
-          {procedenciaCurta(ufs) && (
+          {/* SELO de procedência. Servida em `auth.`, a tela não fala com o nosso
+              backend — quem está aqui ainda não entrou, e `/api/ufs` está atrás do
+              login. Sem a lista, a contagem de estados não existe e o selo cai no
+              crédito do censo sozinho, que é fato do PERFIL e não da base. Some por
+              inteiro se nem isso for conhecido, em vez de anunciar "0 estados". */}
+          {selo && (
             <div
               style={{
                 position: 'absolute',
@@ -410,7 +428,7 @@ export default function LoginScreen({
                 aria-hidden
                 style={{ width: 6, height: 6, borderRadius: 3, background: 'var(--ac)' }}
               />
-              {procedenciaCurta(ufs)}
+              {selo}
             </div>
           )}
 

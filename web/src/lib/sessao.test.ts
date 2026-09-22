@@ -273,12 +273,37 @@ function fontesDe(dir: string): string[] {
   })
 }
 
+/**
+ * Quem chama `fetch` e NÃO deve avisar a sessão. Uma entrada por arquivo, cada uma com o
+ * motivo escrito: exceção sem motivo é guarda furada com álibi.
+ */
+const FORA_DA_GUARDA: Record<string, string> = {
+  'entrar.tsx':
+    'É a TELA DE ENTRAR, e os dois relatores fariam o oposto do certo ali. ' +
+    '`relatarAcessoNegado` existe para dizer "sua sessão caiu, entre de novo" — mas na ' +
+    'tela de login o 401 é senha errada, e o aviso mandaria a pessoa entrar de novo na ' +
+    'tela em que ela já está. `relatarFalhaDeRede` alimenta a sonda que separa "servidor ' +
+    'fora" de "sessão vencida"; sem sessão para vencer, ela só poderia concluir o ramo ' +
+    'errado. Quem chega aqui ainda não entrou: não há sessão a monitorar.',
+}
+
 const chamadoresProprios = fontesDe(RAIZ_SRC)
   .filter((f) => !DONOS_DO_MECANISMO.test(f))
   .filter((f) => readFileSync(f, 'utf8').includes('fetch('))
   .map((f) => relative(RAIZ_SRC, f).replace(/\\/g, '/'))
+  .filter((rel) => !(rel in FORA_DA_GUARDA))
 
 describe('quem chama `fetch` na mão também avisa a sessão', () => {
+  it('toda exceção declarada ainda existe e ainda chama fetch', () => {
+    /* Exceção que sobrevive ao arquivo vira permissão órfã: o próximo arquivo com aquele
+       nome nasceria fora da guarda sem ninguém ter decidido isso. */
+    for (const [rel, motivo] of Object.entries(FORA_DA_GUARDA)) {
+      const fonte = readFileSync(join(RAIZ_SRC, rel), 'utf8')
+      expect(fonte, `${rel}: exceção sem fetch — remova a entrada`).toContain('fetch(')
+      expect(motivo.trim().length, `${rel}: exceção sem motivo escrito`).toBeGreaterThan(40)
+    }
+  })
+
   it('o censo enxerga os dois decks — sem isto a guarda abaixo passaria vazia', () => {
     expect(chamadoresProprios).toContain('screens/MapScreen.tsx')
     expect(chamadoresProprios).toContain('components/PainelPontos.tsx')
