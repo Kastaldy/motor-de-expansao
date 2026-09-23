@@ -1147,6 +1147,39 @@ O que é vigiado e a cadência (crontab do root):
 > velho em silêncio". Aqui o **mtime é confiável** — ao contrário do monitor de `mercado`, em que
 > o arquivo é reescrito toda semana —, porque este só é tocado pelo `mv` da promoção.
 
+#### Alerta de borda — varreduras com assinatura (2026-09-23)
+
+Cron próprio (não é `healthcheck_vps.sh`): `scripts/cron/run_alerta_borda.sh`, instalado em
+`/opt/motor-expansao-infra/`, roda **08:23 UTC = 05:23 BRT** e cobre o **dia BRT anterior**
+inteiro — janela já fechada, o que dispensa guardar estado do que já foi alertado.
+
+```cron
+23 8 * * * /opt/motor-expansao-infra/run_alerta_borda.sh >> /var/log/motor-monitoring/alerta_borda.log 2>&1
+```
+
+Nasceu da investigação do "login desconhecido" de 22/09: a tela de entrar é a primeira rota do
+produto servida **sem autenticação**, e com ela a internet anônima passou a bater na porta. Lê o
+access log do Caddy (`/opt/motor-expansao/logs/caddy`, montado `:ro`), inclusive os `.gz` — a
+rotação é por **tamanho**, então o dia de ontem pode estar partido em dois arquivos.
+
+Duas decisões, ambas medidas no log de produção antes de escolher:
+
+- **Assinatura, não volume.** Em 21 dias havia 5.716 requisições barradas, e **78% eram o nosso
+  próprio healthcheck** batendo em `/`; 85% de tudo pedia só `/`. Um limiar de volume dispararia
+  todo dia por nossa causa. A regra pergunta outra coisa: o caminho pedido tem leitura inocente
+  neste servidor? (`.env`, `.git`, `wp-*`, `xmlrpc`, `phpmyadmin`, `id_rsa`, `.sql`, `.php`).
+- **`--so-notavel`, porque assinatura sozinha também não basta.** Rodando a regra contra o log
+  inteiro (36 dias, 745 requisições com assinatura, 102 pares IP-dia): **23 dos 36 dias** têm
+  sondagem de fundo — quase sempre um IP pedindo `.env` uma ou duas vezes. Avisar todos faria o
+  alerta falar em 2 de cada 3 dias até ninguém mais ler. Só sai mensagem com **≥ 5 IPs**, **≥ 20
+  requisições**, ou **qualquer 2xx** — esta última sozinha, sem limiar, porque sondagem *atendida*
+  é a única coisa aqui que muda o estado do sistema. Resultado: **10 dias em 36 (0,28/dia)**,
+  pegando a janela de 19–26/08 (6 a 13 IPs/dia) e os estouros de 20 e 21/09 (255 e 251
+  requisições) — e nada no trickle.
+
+Sob demanda, sem enviar nada:
+`docker run --rm -v /opt/motor-expansao/logs/caddy:/var/log/caddy:ro "$API_IMAGE" python -m motor_expansao.api.alerta_borda --dir /var/log/caddy --dia 2026-09-20`
+
 Comportamento anti-spam: alerta na transição OK→FAIL, lembrete a cada 1h enquanto durar,
 e aviso de recuperação no FAIL→OK (estado em `/var/lib/motor-monitoring/`). Logs em
 `/var/log/motor-monitoring/healthcheck.log`. Teste manual: `healthcheck_vps.sh test`.
