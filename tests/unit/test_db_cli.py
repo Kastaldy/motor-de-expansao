@@ -242,6 +242,13 @@ _D20_DE_PE: dict[str, Any] = {
     "has_sequence_privilege": True,
     "'usuarios', 'UPDATE'": True,
     "spatial_ref_sys": True,
+    # `sessoes` (D30), acrescentada em 23/09/2026. Um cluster "provisionado como o D20 manda"
+    # passou a incluir a escrita na sessao -- e o `DELETE` NEGADO, porque revogar e' `UPDATE`
+    # de `revogada_em_sessao` e o expurgo de retencao anonimiza em vez de apagar.
+    "'sessoes', 'INSERT'": True,
+    "'sessoes', 'UPDATE'": True,
+    "'sessoes', 'SELECT'": True,
+    "'sessoes', 'DELETE'": False,
     "tgenabled": "A",
 }
 
@@ -592,3 +599,118 @@ def test_estado_so_le(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFix
     assert con.commits == 0
     assert con.corpos_de_migration == []
     assert "migrations no manifesto" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------------------
+# `expurgar` — a retencao da origem das sessoes (P15, prazo fechado em 23/09/2026)
+# --------------------------------------------------------------------------------------
+
+
+class _ConExpurgo(_ConMigracoes):
+    """Reusa o dublê de migrations: ele tem `commit` contado, que e' o que importa aqui."""
+
+    def __init__(self, pendentes: int) -> None:
+        super().__init__()
+        self.pendentes = pendentes
+        self.rowcount = 0
+
+    def execute(self, sql: str, params: Any = None) -> Any:
+        from motor_expansao.db import sessoes
+
+        self.executados.append((sql, params))
+        if sql == sessoes.SQL_CONTAR_ORIGEM_VENCIDA:
+            self._valor = [(self.pendentes,)]
+            self.rowcount = 0
+        elif sql == sessoes.SQL_EXPURGAR_ORIGEM:
+            self._valor = []
+            self.rowcount = self.pendentes
+        else:  # pragma: no cover - nao deve haver outra consulta
+            self._valor = []
+        return self
+
+
+def _rodar_expurgo(
+    monkeypatch: pytest.MonkeyPatch, pendentes: int, *, simular: bool = False
+) -> tuple[int, _ConExpurgo]:
+    con = _ConExpurgo(pendentes)
+    monkeypatch.setattr(cli, "_conectar_para_ddl", lambda: con)
+    argv = ["expurgar", "--simular"] if simular else ["expurgar"]
+    return cli.main(argv), con
+
+
+def test_expurgar_ESCREVE_e_commita(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O commit e' EXPLICITO, como em `aplicar` e `registrar`.
+
+    Ate' 23/09/2026 este era o unico comando do CLI que dependia do `with` do psycopg para
+    commitar. Funcionava -- mas uma troca futura por `connect()/close()` faria o cron imprimir
+    "anonimizadas: N" com ROLLBACK silencioso. Numa politica de retencao, relatar remocao que
+    nao aconteceu e' o pior desfecho possivel, porque ninguem vai conferir.
+    """
+    from motor_expansao.db import sessoes
+
+    codigo, con = _rodar_expurgo(monkeypatch, pendentes=7)
+    assert codigo == 0
+    assert any(sql == sessoes.SQL_EXPURGAR_ORIGEM for sql, _p in con.executados)
+    assert con.commits == 1, "o expurgo escreveu sem commitar"
+
+
+def test_expurgar_manda_o_prazo_DECIDIDO(monkeypatch: pytest.MonkeyPatch) -> None:
+    """90 dias, da constante -- nao um numero digitado no comando."""
+    from motor_expansao.db import sessoes
+
+    _codigo, con = _rodar_expurgo(monkeypatch, pendentes=3)
+    for sql, params in con.executados:
+        if sql in (sessoes.SQL_EXPURGAR_ORIGEM, sessoes.SQL_CONTAR_ORIGEM_VENCIDA):
+            assert params == (sessoes.RETENCAO_ORIGEM_DIAS,)
+
+
+def test_expurgar_SIMULAR_nao_escreve_nem_commita(monkeypatch: pytest.MonkeyPatch) -> None:
+    """E' o smoke que a instalacao do cron manda rodar primeiro. Um modo seco que escreve
+    nao e' seco -- e aqui o que ele escreveria seria a REMOCAO de dado."""
+    from motor_expansao.db import sessoes
+
+    codigo, con = _rodar_expurgo(monkeypatch, pendentes=5, simular=True)
+    assert codigo == 0
+    assert not any(sql == sessoes.SQL_EXPURGAR_ORIGEM for sql, _p in con.executados)
+    assert con.commits == 0
+
+
+def test_expurgar_sem_nada_vencido_nao_escreve(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Idempotencia vista de fora: rodado todo dia, na maioria deles nao ha' o que fazer, e
+    nesses o comando nao pode tocar no banco."""
+    from motor_expansao.db import sessoes
+
+    codigo, con = _rodar_expurgo(monkeypatch, pendentes=0)
+    assert codigo == 0
+    assert not any(sql == sessoes.SQL_EXPURGAR_ORIGEM for sql, _p in con.executados)
+    assert con.commits == 0
+
+
+def test_privilegios_COBRE_sessoes() -> None:
+    """A checagem de `sessoes` tem de EXISTIR, e nao so' passar quando existe.
+
+    Sem esta assercao, apagar as duas checagens positivas deixaria a suite inteira verde --
+    e o `db privilegios`, que existe para provar o D20, voltaria a passar no exato cenario em
+    que o login morre: `sessoes` sem `GRANT` para o papel `app`.
+
+    E esse cenario NAO e' hipotetico em producao. O `ALTER DEFAULT PRIVILEGES` do
+    `papeis-e-privilegios.md` §6 diz `FOR ROLE postgres`, e so' alcanca objetos criados por
+    AQUELE papel -- mas o dono do schema em producao e' `reservas_owner`. A `sessoes`, criada
+    pela migration 018, nao herda nada, e o sintoma so' apareceria no dia da virada da chave.
+    O documento ja' nomeava a armadilha ("as tabelas novas nascem sem GRANT e ninguem
+    percebe"); o que faltava era alguem PERGUNTAR, e e' isto aqui.
+    """
+    positivas = " | ".join(sql for _rot, sql, _por in cli._checagens_positivas())
+    assert "'sessoes', 'INSERT'" in positivas
+    assert "'sessoes', 'UPDATE'" in positivas
+    assert "'sessoes', 'SELECT'" in positivas
+    assert "sessoes_id_sessao_seq" in positivas, (
+        "a sequence da sessao: `GRANT INSERT` na tabela NAO a cobre, e o login morre so' em "
+        "runtime -- mesma armadilha da sequence de eventos"
+    )
+
+    negativas = " | ".join(sql for _rot, sql, _por in cli._checagens_negativas())
+    assert "'sessoes', 'DELETE'" in negativas, (
+        "revogar e' UPDATE e o expurgo anonimiza; `DELETE` em `sessoes` significa que o "
+        "provisionamento foi afrouxado sem a decisao acompanhar"
+    )

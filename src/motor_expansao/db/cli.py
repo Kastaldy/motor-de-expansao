@@ -386,6 +386,14 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
             "promessa e' so' prosa",
         ),
         (
+            "apagar sessao",
+            "SELECT has_table_privilege(current_user, 'sessoes', 'DELETE')",
+            "revogar e' `UPDATE` de `revogada_em_sessao`, NUNCA `DELETE` -- apagar a linha "
+            "destruiria a resposta de 'quando esta sessao foi encerrada', e o expurgo de "
+            "retencao tambem anonimiza em vez de apagar. `DELETE` aqui significa que o "
+            "`papeis-e-privilegios.md` foi afrouxado sem que a decisao acompanhasse",
+        ),
+        (
             "alterar o historico de permissoes",
             "SELECT has_table_privilege(current_user, 'perfil_permissoes_historico', 'UPDATE')",
             "append-only: reescrever o passado e' pior que apaga-lo, porque nao deixa buraco",
@@ -458,6 +466,31 @@ def _checagens_positivas() -> list[tuple[str, str, str]]:
             "ler spatial_ref_sys",
             "SELECT has_table_privilege(current_user, 'spatial_ref_sys', 'SELECT')",
             "sem ela o PostGIS quebra ao tocar `geography` -- e o erro aparece longe daqui",
+        ),
+        # As duas de `sessoes` (D30) entraram em 23/09/2026, e a lacuna que fechavam era
+        # SILENCIOSA E GRAVE: este comando existe para provar o D20, e passava VERDE mesmo com
+        # a tabela `sessoes` sem `GRANT` nenhum para o `app`.
+        #
+        # E esse cenario nao e' hipotetico em producao. O `ALTER DEFAULT PRIVILEGES` do
+        # `papeis-e-privilegios.md` §6 diz `FOR ROLE postgres`, e vale so' para objetos criados
+        # por AQUELE papel -- mas o dono do schema em producao e' `reservas_owner`
+        # (`docs/banco_deploy.md`). Logo a `sessoes`, criada pela migration 018, NAO herda
+        # privilegio, e o sintoma so' apareceria no dia em que a autenticacao propria fosse
+        # ligada: `permission denied for table sessoes`, com todo mundo fora da plataforma.
+        # O proprio documento nomeia a armadilha ("as tabelas novas nascem sem GRANT e ninguem
+        # percebe"); faltava alguem PERGUNTAR.
+        (
+            "escrever em sessoes",
+            "SELECT has_table_privilege(current_user, 'sessoes', 'INSERT') "
+            "AND has_table_privilege(current_user, 'sessoes', 'UPDATE') "
+            "AND has_table_privilege(current_user, 'sessoes', 'SELECT')",
+            "sem isto o login nao abre sessao e ninguem entra depois do corte do P19",
+        ),
+        (
+            "usar a sequence de sessoes",
+            "SELECT has_sequence_privilege(current_user, 'sessoes_id_sessao_seq', 'USAGE')",
+            "mesma armadilha da sequence de eventos: `GRANT INSERT` na tabela NAO a cobre, e "
+            "o login morre so' em runtime",
         ),
     ]
 
@@ -559,7 +592,14 @@ def cmd_expurgar(args: argparse.Namespace) -> int:
             print("nada a expurgar")
             return 0
         cursor = con.execute(sessoes.SQL_EXPURGAR_ORIGEM, (dias,))
-        print(f"  anonimizadas: {getattr(cursor, 'rowcount', 0)}")
+        quantas = getattr(cursor, "rowcount", 0)
+        # COMMIT EXPLICITO, como `cmd_aplicar` e `cmd_registrar`. O `with` do psycopg3 ja'
+        # commitaria na saida limpa, mas este era o UNICO comando do CLI que dependia disso --
+        # e a inconsistencia e' o problema: uma troca futura de `with` por `connect()/close()`
+        # faria o cron imprimir "anonimizadas: N" com ROLLBACK silencioso. Numa politica de
+        # retencao, relatar remocao que nao aconteceu e' o pior desfecho possivel.
+        con.commit()
+        print(f"  anonimizadas: {quantas}")
     return 0
 
 

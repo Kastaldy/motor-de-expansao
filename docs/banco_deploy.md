@@ -475,6 +475,87 @@ DDL sobre dado real é onde se perde dado. O caminho de volta é o restore do du
 - O `/api/health` segue mudo (pentest Onda B #8): é rota livre. O diagnóstico do banco mora na rota
   de admin.
 
+## 9.0 Aplicar as migrations do P19 (018, 019, 020) — ORDEM QUE IMPORTA
+
+Auditoria de 23/09/2026 antes da primeira aplicação em produção. **A ordem abaixo não é
+preferência: cada passo evita uma falha concreta, e três delas não apareceram no ensaio local
+porque lá o banco nasce limpo e sem tráfego.**
+
+### 1. Ver o que produção realmente tem
+
+```bash
+docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN   web python -m motor_expansao.db estado
+```
+
+Se aparecer pendente **abaixo de 018** cujo efeito já esteja no banco, use
+`registrar --ate <NNN>` antes de aplicar. Motivo: `aplicar` roda **todas** as pendentes em
+ordem, e a [013](https://github.com/Kastaldy/banco-de-reservas) falha de propósito em tabela
+com linhas (`ADD COLUMN login_usuario CITEXT NOT NULL` sem default). O lote morreria ali e as
+018/019/020 nunca chegariam.
+
+### 2. Parar o `web`, ou pôr `lock_timeout`
+
+A 019 faz `ALTER TABLE usuarios` — que pega `ACCESS EXCLUSIVE` na tabela do caminho quente do
+RBAC. Uma sessão parada `idle in transaction` sobre `usuarios` faz o `ALTER` **esperar
+indefinidamente**, e a fila de locks bloqueia todo `SELECT` em `usuarios` enquanto isso: o
+RBAC inteiro para. Nenhuma das três migrations define `lock_timeout`, e o ensaio não pegou
+isso porque lá não há tráfego.
+
+Com o `web` parado o problema não existe. Se preferir aplicar com ele de pé, use `psql` e
+`SET lock_timeout = '3s';` antes de cada uma.
+
+### 3. Aplicar a 018 **e conceder o privilégio na sequência**
+
+```bash
+docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN   web python -m motor_expansao.db aplicar
+```
+
+**A `sessoes` nasce SEM privilégio para o papel `app`, e isso é silencioso.** O
+`ALTER DEFAULT PRIVILEGES` do `papeis-e-privilegios.md` §6 diz `FOR ROLE postgres`, e só
+alcança objetos criados por *aquele* papel — mas o dono do schema aqui é **`reservas_owner`**.
+A tabela criada pela migration não herda nada, e o sintoma só apareceria no dia da virada da
+chave: `permission denied for table sessoes`, com todo mundo fora da plataforma. O próprio
+documento nomeia a armadilha ("as tabelas novas nascem sem `GRANT` e ninguém percebe").
+
+Rode, como dono, as duas linhas do `papeis-e-privilegios.md` que cobrem a sessão:
+
+```sql
+GRANT SELECT, INSERT, UPDATE ON sessoes TO app;
+GRANT USAGE ON SEQUENCE sessoes_id_sessao_seq TO app;   -- sem ela, todo login morre
+```
+
+### 4. Aplicar 019 e 020
+
+Sem surpresa: o `CHECK` da 019 **não pode** reprovar linha existente (a coluna nasce na mesma
+transação, então toda linha tem `NULL` e a segunda perna é verdadeira), e a 020 só acrescenta
+colunas anuláveis.
+
+### 5. **Só então** trocar o digest da imagem
+
+**A imagem nova quebra rotas VIVAS se as migrations não vierem antes.** `PATCH /api/me/senha`
+e `POST /api/acessos/usuarios/{id}/redefinir-senha` escrevem `senha_expira_em_usuario` e
+**não** estão atrás da chave `MOTOR_AUTENTICACAO_PROPRIA` — verificado, zero ocorrências de
+`ligada()` nas duas. Sem a 019, as duas respondem 500 (`UndefinedColumn`) para qualquer
+pessoa que tente trocar a própria senha.
+
+O caminho inverso é seguro: a imagem antiga não conhece as colunas novas, e o `CHECK` não a
+atinge.
+
+### 6. Conferir
+
+```bash
+... web python -m motor_expansao.db conferir      # espera 12 / 49 / 14 / 12 / 7 / 7
+... web python -m motor_expansao.db privilegios   # com a URL do `app`, não a de dono
+```
+
+Desde 23/09/2026 o `privilegios` **cobre `sessoes`** (SELECT/INSERT/UPDATE + a sequence, e
+`DELETE` negado). Antes disso ele passaria verde no cenário do passo 3 — o comando que existe
+para provar o D20 não olhava a tabela nova.
+
+### 7. Instalar o cron do expurgo
+
+Só depois das três aplicadas — ver §9.1.
+
 ## 9.1 Expurgo da origem das sessões (retenção do P15)
 
 Instalação do cron: cabeçalho do
