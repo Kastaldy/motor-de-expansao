@@ -97,10 +97,17 @@ _BYTES_DO_TOKEN = 32
 # offline (pglast) alcancar tudo.
 
 SQL_ABRIR = """
-INSERT INTO sessoes (id_usuario, token_hash_sessao, expira_em_sessao)
-VALUES (%s, %s, now() + make_interval(hours => %s))
+INSERT INTO sessoes (id_usuario, token_hash_sessao, expira_em_sessao,
+                     ip_sessao, user_agent_sessao)
+VALUES (%s, %s, now() + make_interval(hours => %s), %s, %s)
 RETURNING id_sessao, expira_em_sessao
 """
+
+#: Teto do `user_agent` guardado. MESMO valor da trilha da DEC-027 (`agente`, teto 200), e o
+#: mesmo raciocinio: o header vem do cliente e pode ter qualquer tamanho. O excesso e' TRUNCADO
+#: aqui, nunca recusado -- a 020 explica por que um `CHECK` de tamanho no banco viraria negacao
+#: de servico por cabecalho (login que falha porque alguem mandou um `User-Agent` gigante).
+TETO_USER_AGENT = 200
 
 # SUPERCONJUNTO do `rbac.SQL_IDENTIDADE` -- ver "RISCO DECLARADO" no topo.
 #
@@ -205,7 +212,9 @@ def hash_do_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def abrir(*, id_usuario: int) -> SessaoAberta:
+def abrir(
+    *, id_usuario: int, ip: str | None = None, user_agent: str | None = None
+) -> SessaoAberta:
     """Cunha o token, grava a sessao e devolve o token EM CLARO -- uma unica vez.
 
     O token em claro existe so' aqui e no cookie: o banco guarda o hash, e nao ha' caminho
@@ -214,11 +223,27 @@ def abrir(*, id_usuario: int) -> SessaoAberta:
 
     O carimbo de autor (§3.7) vale SEM excecao: quando esta funcao e' chamada, a senha ja'
     foi verificada, entao `id_usuario` e' conhecido -- nao ha' "acao de sistema" aqui.
+
+    `ip` e `user_agent` (020) respondem "de onde esta sessao veio", que e' a pergunta do
+    `BLK-SEC-03-FU2` quando se quer saber se a sessao e' da pessoa ou de quem roubou o cookie
+    dela. Os DOIS sao opcionais e nulos por default: sessao sem origem conhecida e' estado
+    legitimo, e falhar aqui por falta de header derrubaria o login por um dado acessorio.
+
+    **O `ip` TEM DE CHEGAR JA' RESOLVIDO** -- este modulo nao le' header nenhum. Quem resolve
+    e' `web/server/app.py::_ip_real_do_xff`, que pega o ULTIMO token do `X-Forwarded-For` (o
+    Caddy anexa o peer real ao fim; os da esquerda sao forjaveis, e usar `[0]` foi
+    vulnerabilidade real no pentest de 19/08/2026). Reimplementar a resolucao aqui seria uma
+    segunda redacao da mesma regra -- e a segunda e' a que esquece a licao.
+
+    **O `ip` e' dado pessoal e a retencao segue em aberto (P15)**, com janela declarada no
+    1o deploy. Agrava: revogar sessao e' `UPDATE`, nunca `DELETE`, entao nenhuma linha sai
+    daqui sozinha. Ver a 020.
     """
     token = novo_token()
+    agente = (user_agent or "").strip()[:TETO_USER_AGENT] or None
     with transacao(id_usuario=id_usuario) as con:
         linha = con.execute(
-            SQL_ABRIR, (id_usuario, hash_do_token(token), DURACAO_SESSAO_H)
+            SQL_ABRIR, (id_usuario, hash_do_token(token), DURACAO_SESSAO_H, ip, agente)
         ).fetchone()
     # `RETURNING` sempre devolve linha num INSERT que nao levantou; se nao devolveu, algo
     # muito errado aconteceu e engolir isso daria uma sessao sem id para revogar depois.

@@ -30,10 +30,21 @@ A camada 1 é a fonte primária de auditoria de uso; a 2 é o registro bruto de 
   **Middleware:** `_trilha_acesso` em `web/server/app.py` (logo após o CORS).
 - **Uma linha JSON por requisição relevante**, chaves (identificadores, sem acento):
   `quando` (UTC, ISO, segundos), `usuario` (`Remote-User` → fallback `Remote-Email` →
-  `"desconhecido"`; teto 120), `ip` (primeiro salto do `X-Forwarded-For`; fallback IP do
+  `"desconhecido"`; teto 120), `ip` (**último** token do `X-Forwarded-For`; fallback IP do
   socket), `metodo`, `rota` (teto 300), `query` (teto 2000; omitida se vazia), `status`,
   `duracao_ms`, `agente` (user-agent, teto 200; omitido se vazio), `bytes`
   (content-length da resposta; omitido se ausente).
+
+  > **Por que o ÚLTIMO token, e não o primeiro.** Até 23/09/2026 esta linha dizia "primeiro
+  > salto" — descrevia o comportamento **vulnerável**, corrigido no código um mês antes. O Caddy
+  > **anexa** o peer real ao fim do `X-Forwarded-For`; tudo à esquerda vem do cliente e é
+  > forjável. O pentest de 19/08/2026 mediu o estrago: `X-Forwarded-For: 8.8.8.8` fazia a ação
+  > constar de um IP arbitrário na aba Acessos. A resolução correta vive em UM lugar
+  > (`web/server/app.py::_ip_real_do_xff`), que valida o formato e cai no peer TCP quando o
+  > último token não é IP — sinal de que alguém alcançou o backend sem passar pelo Caddy.
+  > **Desde a migration 020 há um SEGUNDO consumidor** (`sessoes.ip_sessao`), e ele chama a
+  > mesma função: documentação que descreve a versão vulnerável é pior que documentação
+  > ausente, porque quem a seguir reimplementa a falha.
 - **Filtro "sem inflar"** (`relevante()`): ficam FORA os assets estáticos do SPA
   (`/assets/*` e extensões `.js/.css/.woff2/.png/...`) e o `/api/health` (healthcheck do
   compose a cada 30 s). Todo o resto entra — inclusive `/` e deep-links do SPA (sinal de

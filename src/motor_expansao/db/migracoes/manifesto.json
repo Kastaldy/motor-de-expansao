@@ -141,6 +141,13 @@
       "documento": "019-senha-temporaria.md",
       "sha256_bloco": "4e13b274f0ac60f5e047239d19999b0f3d20fead5c0ae8f69c0233316b17e394",
       "sha256_arquivo": "50e1fce6341b77b6257ac8581d54dff43f9a64f409ed143d8f4043774a860e0b"
+    },
+    {
+      "versao": "020",
+      "arquivo": "020-sessao-origem.sql",
+      "documento": "020-sessao-origem.md",
+      "sha256_bloco": "7f9eedff035402edfb5c030bea9978d36e14de7d8628c052e46f3fe8b67a58f1",
+      "sha256_arquivo": "d31b59a0b74ffc52de5958efdb550d46c3ee473b4173548b63550ed06bba4636"
     }
   ]
 }

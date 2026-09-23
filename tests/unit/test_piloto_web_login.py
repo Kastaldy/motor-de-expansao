@@ -76,6 +76,30 @@ def _sem_eventos(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, int]]:
     return vistos
 
 
+class _RequisicaoDeLogin:
+    """O que a rota de login usa do `Request`: cabecalhos e o peer TCP.
+
+    Existe desde a 020, que passou a gravar DE ONDE a sessao veio. O default e' uma
+    requisicao SEM `X-Forwarded-For` e sem peer -- ou seja, origem desconhecida, que e'
+    estado legitimo e o caminho mais comum em teste.
+    """
+
+    def __init__(
+        self, *, xff: str | None = None, agente: str | None = None, peer: str | None = None
+    ) -> None:
+        cabecalhos = {}
+        if xff is not None:
+            cabecalhos["x-forwarded-for"] = xff
+        if agente is not None:
+            cabecalhos["user-agent"] = agente
+        self.headers = cabecalhos
+        self.client = type("Peer", (), {"host": peer})() if peer else None
+
+
+def _req(**kw: Any) -> Any:
+    return _RequisicaoDeLogin(**kw)
+
+
 def _preparar(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -133,7 +157,7 @@ def test_com_a_chave_desligada_o_login_e_404(monkeypatch: pytest.MonkeyPatch) ->
     tentativa. E' o estado de producao HOJE, com o Authelia autenticando."""
     monkeypatch.delenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, raising=False)
     with pytest.raises(pilot.HTTPException) as caiu:
-        pilot.login(pilot.LoginIn(login="v", senha="x"))
+        pilot.login(pilot.LoginIn(login="v", senha="x"), _req())
     assert caiu.value.status_code == 404
 
 
@@ -155,11 +179,11 @@ def test_login_inexistente_e_senha_errada_dao_a_MESMA_resposta(
     """Distinguir entregaria ao visitante um oraculo de quem trabalha aqui."""
     _preparar(monkeypatch, credencial=None, confere=False)
     with pytest.raises(pilot.HTTPException) as sem_usuario:
-        pilot.login(pilot.LoginIn(login="fantasma", senha="x"))
+        pilot.login(pilot.LoginIn(login="fantasma", senha="x"), _req())
 
     _preparar(monkeypatch, credencial=_credencial(), confere=False)
     with pytest.raises(pilot.HTTPException) as senha_errada:
-        pilot.login(pilot.LoginIn(login="vinicius", senha="errada"))
+        pilot.login(pilot.LoginIn(login="vinicius", senha="errada"), _req())
 
     assert sem_usuario.value.status_code == senha_errada.value.status_code == 401
     assert sem_usuario.value.detail == senha_errada.value.detail
@@ -202,7 +226,7 @@ def test_na_quinta_recusa_a_conta_e_barrada(ligado: None, monkeypatch: pytest.Mo
     _travar(monkeypatch, recusas=5, confere=True)
 
     with pytest.raises(pilot.HTTPException) as caiu:
-        pilot.login(pilot.LoginIn(login="vinicius", senha="a-senha-certa"))
+        pilot.login(pilot.LoginIn(login="vinicius", senha="a-senha-certa"), _req())
     assert caiu.value.status_code == 401
 
 
@@ -214,7 +238,7 @@ def test_com_quatro_recusas_ainda_passa(ligado: None, monkeypatch: pytest.Monkey
     caras = _travar(monkeypatch, recusas=4)
 
     with pytest.raises(pilot.HTTPException):
-        pilot.login(pilot.LoginIn(login="vinicius", senha="errada"))
+        pilot.login(pilot.LoginIn(login="vinicius", senha="errada"), _req())
     assert caras == ["argon2"], "com 4 recusas a senha ainda deve ser verificada"
 
 
@@ -226,7 +250,7 @@ def test_a_conta_barrada_NAO_paga_o_argon2(ligado: None, monkeypatch: pytest.Mon
     caras = _travar(monkeypatch, recusas=9)
 
     with pytest.raises(pilot.HTTPException):
-        pilot.login(pilot.LoginIn(login="vinicius", senha="qualquer"))
+        pilot.login(pilot.LoginIn(login="vinicius", senha="qualquer"), _req())
     assert caras == [], "verificou a senha de uma conta já barrada"
 
 
@@ -248,7 +272,7 @@ def test_tentativa_BARRADA_nao_vira_evento(ligado: None, monkeypatch: pytest.Mon
     monkeypatch.setattr(db_eventos, "registrar_login_recusado", lambda **kw: vistos.append(kw))
 
     with pytest.raises(pilot.HTTPException):
-        pilot.login(pilot.LoginIn(login="vinicius", senha="a-senha-certa"))
+        pilot.login(pilot.LoginIn(login="vinicius", senha="a-senha-certa"), _req())
     assert vistos == [], "a tentativa barrada virou evento e prolongaria a própria trava"
 
 
@@ -275,7 +299,7 @@ def test_usuario_INEXISTENTE_nao_e_barrado_pela_trava(
     monkeypatch.setattr(db_senhas, "verificar", lambda *_a, **_k: False)
 
     with pytest.raises(pilot.HTTPException):
-        pilot.login(pilot.LoginIn(login="fantasma", senha="x"))
+        pilot.login(pilot.LoginIn(login="fantasma", senha="x"), _req())
     assert contagens == [], "tentou contar recusas de quem não tem cadastro"
 
 
@@ -289,12 +313,12 @@ def test_a_conta_barrada_devolve_a_MESMA_mensagem(
     monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: _credencial())
     _travar(monkeypatch, recusas=5, confere=True)
     with pytest.raises(pilot.HTTPException) as barrada:
-        pilot.login(pilot.LoginIn(login="vinicius", senha="a-senha-certa"))
+        pilot.login(pilot.LoginIn(login="vinicius", senha="a-senha-certa"), _req())
 
     _preparar(monkeypatch, credencial=None, confere=False)
     monkeypatch.setattr(db_eventos, "registrar_login_recusado", lambda **_kw: None)
     with pytest.raises(pilot.HTTPException) as comum:
-        pilot.login(pilot.LoginIn(login="fantasma", senha="x"))
+        pilot.login(pilot.LoginIn(login="fantasma", senha="x"), _req())
 
     assert barrada.value.status_code == comum.value.status_code
     assert barrada.value.detail == comum.value.detail
@@ -310,7 +334,7 @@ def test_a_recusa_vira_evento_com_o_id_quando_a_conta_existe(
     _preparar(monkeypatch, credencial=_credencial(), confere=False)
 
     with pytest.raises(pilot.HTTPException):
-        pilot.login(pilot.LoginIn(login="vinicius", senha="errada"))
+        pilot.login(pilot.LoginIn(login="vinicius", senha="errada"), _req())
 
     assert vistos == [{"autor": 7, "usuario_conhecido": True}]
 
@@ -325,7 +349,7 @@ def test_a_recusa_de_usuario_inexistente_vira_evento_sem_autor(
     _preparar(monkeypatch, credencial=None, confere=False)
 
     with pytest.raises(pilot.HTTPException):
-        pilot.login(pilot.LoginIn(login="fantasma", senha="x"))
+        pilot.login(pilot.LoginIn(login="fantasma", senha="x"), _req())
 
     assert vistos == [{"autor": None, "usuario_conhecido": False}]
 
@@ -346,11 +370,11 @@ def test_registrar_a_recusa_NAO_muda_a_resposta_ao_visitante(
 
     _preparar(monkeypatch, credencial=None, confere=False)
     with pytest.raises(pilot.HTTPException) as sem_usuario:
-        pilot.login(pilot.LoginIn(login="fantasma", senha="x"))
+        pilot.login(pilot.LoginIn(login="fantasma", senha="x"), _req())
 
     _preparar(monkeypatch, credencial=_credencial(), confere=False)
     with pytest.raises(pilot.HTTPException) as senha_errada:
-        pilot.login(pilot.LoginIn(login="vinicius", senha="errada"))
+        pilot.login(pilot.LoginIn(login="vinicius", senha="errada"), _req())
 
     assert sem_usuario.value.status_code == senha_errada.value.status_code
     assert sem_usuario.value.detail == senha_errada.value.detail
@@ -372,7 +396,7 @@ def test_falha_ao_gravar_a_recusa_nao_muda_a_resposta(
     _preparar(monkeypatch, credencial=_credencial(), confere=False)
 
     with pytest.raises(pilot.HTTPException) as caiu:
-        pilot.login(pilot.LoginIn(login="vinicius", senha="errada"))
+        pilot.login(pilot.LoginIn(login="vinicius", senha="errada"), _req())
     assert caiu.value.status_code == 401
 
 
@@ -386,7 +410,7 @@ def test_a_senha_e_verificada_MESMO_sem_credencial(
     verificacoes: list[Any] = []
     _preparar(monkeypatch, credencial=None, confere=False, verificacoes=verificacoes)
     with pytest.raises(pilot.HTTPException):
-        pilot.login(pilot.LoginIn(login="fantasma", senha="x"))
+        pilot.login(pilot.LoginIn(login="fantasma", senha="x"), _req())
 
     assert verificacoes == [None], "nao verificou a senha quando o login nao existe"
 
@@ -402,7 +426,7 @@ def test_o_token_vai_no_COOKIE_e_nunca_no_corpo(
     """O corpo da resposta trafega em log de proxy e em ferramenta de rede; o cookie
     `httponly` nao. O token so' existe no cookie."""
     _preparar(monkeypatch, credencial=_credencial(), confere=True)
-    resposta = pilot.login(pilot.LoginIn(login="vinicius", senha="certa"))
+    resposta = pilot.login(pilot.LoginIn(login="vinicius", senha="certa"), _req())
 
     assert b"tok-secreto" not in resposta.body, "o token vazou no corpo da resposta"
     assert any("tok-secreto" in c for c in _cookies_da(resposta)), "o token nao foi no cookie"
@@ -410,7 +434,7 @@ def test_o_token_vai_no_COOKIE_e_nunca_no_corpo(
 
 def test_o_cookie_e_httponly_e_samesite_lax(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
     _preparar(monkeypatch, credencial=_credencial(), confere=True)
-    cookie = _cookies_da(pilot.login(pilot.LoginIn(login="v", senha="c")))[0].lower()
+    cookie = _cookies_da(pilot.login(pilot.LoginIn(login="v", senha="c"), _req()))[0].lower()
     assert "httponly" in cookie, "JavaScript conseguiria ler o token"
     assert "samesite=lax" in cookie
     assert "path=/" in cookie
@@ -426,8 +450,12 @@ def test_LEMBRAR_muda_a_persistencia_do_cookie_e_nao_a_vida_da_sessao(
     mesmos 8h -- e e' por isso que `abrir()` nao recebe parametro nenhum de duracao.
     """
     _preparar(monkeypatch, credencial=_credencial(), confere=True)
-    com = _cookies_da(pilot.login(pilot.LoginIn(login="v", senha="c", lembrar=True)))[0].lower()
-    sem = _cookies_da(pilot.login(pilot.LoginIn(login="v", senha="c", lembrar=False)))[0].lower()
+    com = _cookies_da(pilot.login(pilot.LoginIn(login="v", senha="c", lembrar=True), _req()))[
+        0
+    ].lower()
+    sem = _cookies_da(pilot.login(pilot.LoginIn(login="v", senha="c", lembrar=False), _req()))[
+        0
+    ].lower()
 
     assert f"max-age={db_sessoes.DURACAO_SESSAO_H * 3600}" in com
     assert "max-age" not in sem, "cookie de sessao nao pode ter validade propria"
@@ -439,14 +467,16 @@ def test_o_corpo_diz_a_SPA_se_ela_abre_a_tela_de_troca(
     """`deve_trocar_senha` vem da MESMA consulta da credencial (D26): buscar depois seria
     uma segunda ida ao banco por um dado que ja' estava na linha."""
     _preparar(monkeypatch, credencial=_credencial(deve_trocar=True), confere=True)
-    assert b'"deve_trocar_senha":true' in pilot.login(pilot.LoginIn(login="v", senha="c")).body
+    assert (
+        b'"deve_trocar_senha":true' in pilot.login(pilot.LoginIn(login="v", senha="c"), _req()).body
+    )
 
 
 def test_o_login_grava_o_evento_com_o_autor_certo(
     ligado: None, monkeypatch: pytest.MonkeyPatch, _sem_eventos: list[tuple[str, int]]
 ) -> None:
     _preparar(monkeypatch, credencial=_credencial(), confere=True)
-    pilot.login(pilot.LoginIn(login="v", senha="c"))
+    pilot.login(pilot.LoginIn(login="v", senha="c"), _req())
     assert _sem_eventos == [("login", 7)]
 
 
@@ -460,7 +490,7 @@ def test_falha_ao_gravar_o_evento_NAO_impede_a_entrada(
     monkeypatch.setattr(
         db_eventos, "registrar_login", lambda **_kw: (_ for _ in ()).throw(RuntimeError("x"))
     )
-    resposta = pilot.login(pilot.LoginIn(login="v", senha="c"))
+    resposta = pilot.login(pilot.LoginIn(login="v", senha="c"), _req())
     assert any("tok-secreto" in c for c in _cookies_da(resposta))
 
 
@@ -516,7 +546,7 @@ def test_senha_temporaria_VENCIDA_nao_entra(ligado: None, monkeypatch: pytest.Mo
     """
     _preparar(monkeypatch, credencial=_credencial(expira_em=_daqui(-1)), confere=True)
     with pytest.raises(pilot.HTTPException) as caiu:
-        pilot.login(pilot.LoginIn(login="vinicius", senha="a-temporaria"))
+        pilot.login(pilot.LoginIn(login="vinicius", senha="a-temporaria"), _req())
     assert caiu.value.status_code == 401
 
 
@@ -531,11 +561,11 @@ def test_senha_temporaria_VENCIDA_responde_o_MESMO_que_senha_errada(
 
     _preparar(monkeypatch, credencial=_credencial(expira_em=_daqui(-1)), confere=True)
     with pytest.raises(pilot.HTTPException) as vencida:
-        pilot.login(pilot.LoginIn(login="vinicius", senha="a-temporaria"))
+        pilot.login(pilot.LoginIn(login="vinicius", senha="a-temporaria"), _req())
 
     _preparar(monkeypatch, credencial=_credencial(), confere=False)
     with pytest.raises(pilot.HTTPException) as errada:
-        pilot.login(pilot.LoginIn(login="vinicius", senha="qualquer"))
+        pilot.login(pilot.LoginIn(login="vinicius", senha="qualquer"), _req())
 
     assert vencida.value.status_code == errada.value.status_code
     assert vencida.value.detail == errada.value.detail
@@ -546,7 +576,7 @@ def test_senha_temporaria_DENTRO_do_prazo_entra(
 ) -> None:
     """A outra metade: o prazo nao pode barrar quem esta' dentro dele."""
     _preparar(monkeypatch, credencial=_credencial(expira_em=_daqui(30)), confere=True)
-    resposta = pilot.login(pilot.LoginIn(login="vinicius", senha="a-temporaria"))
+    resposta = pilot.login(pilot.LoginIn(login="vinicius", senha="a-temporaria"), _req())
     assert resposta.status_code == 200
 
 
@@ -554,7 +584,7 @@ def test_senha_SEM_prazo_segue_entrando(ligado: None, monkeypatch: pytest.Monkey
     """`expira_em = None` e' o estado de toda senha que a pessoa escolheu -- a maioria dos
     logins. Uma comparacao malfeita com `None` transformaria isto em 401 para todo mundo."""
     _preparar(monkeypatch, credencial=_credencial(expira_em=None), confere=True)
-    assert pilot.login(pilot.LoginIn(login="vinicius", senha="a-minha")).status_code == 200
+    assert pilot.login(pilot.LoginIn(login="vinicius", senha="a-minha"), _req()).status_code == 200
 
 
 def test_o_prazo_e_conferido_DEPOIS_do_argon2(
@@ -574,7 +604,7 @@ def test_o_prazo_e_conferido_DEPOIS_do_argon2(
         verificacoes=verificacoes,
     )
     with pytest.raises(pilot.HTTPException):
-        pilot.login(pilot.LoginIn(login="vinicius", senha="a-temporaria"))
+        pilot.login(pilot.LoginIn(login="vinicius", senha="a-temporaria"), _req())
     assert verificacoes == ["$argon2id$real"], "a senha vencida nao pagou o Argon2"
 
 
@@ -597,6 +627,79 @@ def test_a_trava_recebe_o_piso_da_REDEFINICAO(
     monkeypatch.setattr(
         db_eventos, "contar_recusas_recentes", lambda **kw: (vistos.append(kw), 0)[1]
     )
-    pilot.login(pilot.LoginIn(login="vinicius", senha="a-temporaria"))
+    pilot.login(pilot.LoginIn(login="vinicius", senha="a-temporaria"), _req())
 
     assert vistos and vistos[0]["redefinida_em"] == marco
+
+
+# --------------------------------------------------------------------------------------
+# De onde a sessao veio (020) — e por que o IP nao e' forjavel
+# --------------------------------------------------------------------------------------
+
+
+def _capturar_origem(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    vistos: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        db_sessoes,
+        "abrir",
+        lambda **kw: (vistos.append(kw), db_sessoes.SessaoAberta("tok", 42, None))[1],
+    )
+    return vistos
+
+
+def test_a_sessao_guarda_o_ip_e_o_agente(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pergunta do `BLK-SEC-03-FU2`: esta sessao e' da pessoa ou de quem roubou o cookie?"""
+    _preparar(monkeypatch, credencial=_credencial(), confere=True)
+    vistos = _capturar_origem(monkeypatch)
+
+    pilot.login(
+        pilot.LoginIn(login="vinicius", senha="certa"),
+        _req(xff="198.51.100.7", agente="Mozilla/5.0 (Teste)", peer="10.0.0.1"),
+    )
+    assert vistos[0]["ip"] == "198.51.100.7"
+    assert vistos[0]["user_agent"] == "Mozilla/5.0 (Teste)"
+
+
+def test_o_IP_GRAVADO_NAO_E_FORJAVEL(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A garantia que sustenta a coluna inteira.
+
+    O Caddy ANEXA o peer real ao FIM do `X-Forwarded-For`; tudo a' esquerda vem do cliente.
+    Usar o PRIMEIRO token foi vulnerabilidade real no motor -- pentest de 19/08/2026, em que
+    `X-Forwarded-For: 8.8.8.8` fazia a acao constar de um IP arbitrario na aba Acessos.
+    Se a sessao gravasse `[0]`, a coluna nova nasceria com a mesma falha JA' CORRIGIDA em
+    outro lugar do mesmo arquivo -- que e' a forma mais cara de repetir um erro.
+    """
+    _preparar(monkeypatch, credencial=_credencial(), confere=True)
+    vistos = _capturar_origem(monkeypatch)
+
+    pilot.login(
+        pilot.LoginIn(login="vinicius", senha="certa"),
+        # O cliente MENTE no primeiro token; o Caddy anexa o verdadeiro no fim.
+        _req(xff="8.8.8.8, 203.0.113.50", peer="10.0.0.1"),
+    )
+    assert vistos[0]["ip"] == "203.0.113.50", "gravou o token FORJADO pelo cliente"
+    assert vistos[0]["ip"] != "8.8.8.8"
+
+
+def test_sem_proxy_na_frente_cai_no_peer_TCP(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Alcancar o backend SEM passar pelo Caddy nao pode virar IP inventado.
+
+    Sem `X-Forwarded-For`, o unico valor confiavel e' o peer da conexao, que nao e' forjavel.
+    """
+    _preparar(monkeypatch, credencial=_credencial(), confere=True)
+    vistos = _capturar_origem(monkeypatch)
+
+    pilot.login(pilot.LoginIn(login="vinicius", senha="certa"), _req(peer="10.0.0.1"))
+    assert vistos[0]["ip"] == "10.0.0.1"
+
+
+def test_origem_ausente_nao_derruba_o_login(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sessao sem origem conhecida e' estado legitimo. Trocar o principal (entrar) pelo
+    acessorio (saber de onde) seria inversao de prioridade."""
+    _preparar(monkeypatch, credencial=_credencial(), confere=True)
+    vistos = _capturar_origem(monkeypatch)
+
+    resposta = pilot.login(pilot.LoginIn(login="vinicius", senha="certa"), _req())
+    assert resposta.status_code == 200
+    assert vistos[0]["ip"] is None
+    assert vistos[0]["user_agent"] is None

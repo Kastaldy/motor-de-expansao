@@ -4646,7 +4646,7 @@ def db_sessoes_duracao_s() -> int:
 
 
 @app.post("/api/login", include_in_schema=False)
-def login(body: LoginIn) -> Response:
+def login(body: LoginIn, request: Request) -> Response:
     """Entra na plataforma: confere a senha, abre sessao e devolve o cookie.
 
     SO' ATENDE COM A AUTENTICACAO PROPRIA LIGADA. Enquanto o Authelia autentica, esta rota
@@ -4763,7 +4763,18 @@ def login(body: LoginIn) -> Response:
             _LOG_D17.exception("tentativa de login recusada SEM evento no banco")
         raise negado
 
-    aberta = db_sessoes.abrir(id_usuario=credencial.id_usuario)
+    # DE ONDE A SESSAO VEIO (020). O IP sai de `_ip_real_do_xff`, o MESMO resolvedor da
+    # trilha da DEC-027 -- nao ha' segunda leitura do `X-Forwarded-For` neste arquivo, e nao
+    # pode haver: usar o PRIMEIRO token em vez do ultimo foi vulnerabilidade real (pentest de
+    # 19/08/2026), e uma segunda redacao da regra e' a que esquece a licao.
+    aberta = db_sessoes.abrir(
+        id_usuario=credencial.id_usuario,
+        ip=_ip_real_do_xff(
+            request.headers.get("x-forwarded-for"),
+            request.client.host if request.client else None,
+        ),
+        user_agent=request.headers.get("user-agent"),
+    )
     try:
         from motor_expansao.db import eventos as db_eventos
 

@@ -77,7 +77,7 @@ def _instalar(
     rowcount: int = 0,
 ) -> FakeConexao:
     con = FakeConexao(linhas or [], rowcount)
-    monkeypatch.setattr(postgres, "_driver", lambda: (lambda **_k: FakePool(con)))
+    monkeypatch.setattr(postgres, "_driver", lambda: lambda **_k: FakePool(con))
     monkeypatch.setenv(postgres.ENV_URL, "postgresql://fake/motor")
     return con
 
@@ -370,4 +370,82 @@ def test_abrir_manda_a_duracao_da_decisao_2(monkeypatch: pytest.MonkeyPatch) -> 
     con = _instalar(monkeypatch, [(42, None)])
     sessoes.abrir(id_usuario=7)
     _sql, params = _sql_do(con, "INSERT INTO sessoes")
-    assert params[-1] == sessoes.DURACAO_SESSAO_H
+    # Por POSICAO, e nao `[-1]`: a 020 acrescentou `ip` e `user_agent` DEPOIS da duracao,
+    # e o indice negativo passou a apontar para o user-agent. O teste ficava vermelho
+    # dizendo "None != 8", que nao explica nada a quem chegou agora.
+    assert params[2] == sessoes.DURACAO_SESSAO_H
+
+
+# --------------------------------------------------------------------------------------
+# De onde a sessao veio (020) — `ip` e `user_agent`
+# --------------------------------------------------------------------------------------
+
+
+def test_abrir_grava_a_origem(monkeypatch: pytest.MonkeyPatch) -> None:
+    """As duas colunas da 020 entram no MESMO INSERT da sessao."""
+    con = _instalar(monkeypatch, [(42, None)])
+    sessoes.abrir(id_usuario=7, ip="203.0.113.9", user_agent="Mozilla/5.0 (Teste)")
+
+    sql, params = [(s, p) for s, p in con.executados if "INSERT INTO sessoes" in s][0]
+    assert "ip_sessao" in sql and "user_agent_sessao" in sql
+    assert params[3] == "203.0.113.9"
+    assert params[4] == "Mozilla/5.0 (Teste)"
+
+
+def test_origem_DESCONHECIDA_e_estado_legitimo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sessao sem origem nao pode derrubar o login.
+
+    Falhar aqui por falta de header trocaria um dado ACESSORIO (de onde veio) por o
+    principal (entrar). Os dois sao opcionais e nulos por default.
+    """
+    con = _instalar(monkeypatch, [(42, None)])
+    sessoes.abrir(id_usuario=7)
+    _sql, params = [(s, p) for s, p in con.executados if "INSERT INTO sessoes" in s][0]
+    assert params[3] is None
+    assert params[4] is None
+
+
+def test_user_agent_gigante_e_TRUNCADO_e_nao_recusado(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O header vem do CLIENTE e pode ter qualquer tamanho.
+
+    A 020 recusa um `CHECK` de comprimento no banco exatamente por isto: la', um
+    `User-Agent` gigante viraria erro de escrita, ou seja, LOGIN QUE FALHA -- negacao de
+    servico por cabecalho, de graca. Aqui o excesso e' cortado.
+    """
+    con = _instalar(monkeypatch, [(42, None)])
+    sessoes.abrir(id_usuario=7, user_agent="A" * 5000)
+    _sql, params = [(s, p) for s, p in con.executados if "INSERT INTO sessoes" in s][0]
+    assert len(params[4]) == sessoes.TETO_USER_AGENT
+
+
+def test_user_agent_vazio_vira_NULO_e_nao_string_vazia(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`''` afirmaria que o cliente se identificou com nada; nulo diz que nao se sabe."""
+    con = _instalar(monkeypatch, [(42, None)])
+    sessoes.abrir(id_usuario=7, user_agent="   ")
+    _sql, params = [(s, p) for s, p in con.executados if "INSERT INTO sessoes" in s][0]
+    assert params[4] is None
+
+
+def test_este_modulo_NAO_le_header_nenhum() -> None:
+    """A resolucao do IP mora em UM lugar so', e nao e' aqui.
+
+    Usar o PRIMEIRO token do `X-Forwarded-For` em vez do ultimo foi vulnerabilidade real
+    (pentest de 19/08/2026: `X-Forwarded-For: 8.8.8.8` fazia a acao constar de um IP
+    arbitrario). O resolvedor correto e' `app.py::_ip_real_do_xff`; uma segunda redacao aqui
+    seria a que esquece a licao -- e este teste fica vermelho se ela aparecer.
+    """
+    import ast
+    from pathlib import Path
+
+    # Por AST, e nao por texto: a primeira versao deste teste varria o fonte cru e ficava
+    # VERMELHA por causa da PROSA -- a docstring do `abrir` cita o `X-Forwarded-For` de
+    # proposito, para ensinar a licao do pentest. Comentario que explica a regra nao e'
+    # codigo que a viola, e um teste que nao distingue os dois ensina a apagar a explicacao.
+    arvore = ast.parse(Path(sessoes.__file__).read_text(encoding="utf-8"))
+    lidos: list[str] = []
+    for no in ast.walk(arvore):
+        if isinstance(no, ast.Attribute) and no.attr in {"headers", "cookies"}:
+            lidos.append(no.attr)
+        if isinstance(no, ast.Name) and no.id == "request":
+            lidos.append(no.id)
+    assert lidos == [], f"o modulo de sessao passou a ler a requisicao: {sorted(set(lidos))}"
