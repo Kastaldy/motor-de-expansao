@@ -31,6 +31,25 @@
 #   ( crontab -l 2>/dev/null; echo '23 8 * * * /opt/motor-expansao-infra/run_alerta_borda.sh >> /var/log/motor-monitoring/alerta_borda.log 2>&1' ) | crontab -
 #   # 08:23 UTC = 05:23 BRT: o dia BRT anterior ja fechou ha 5h, e a mensagem
 #   # chega antes do expediente. Servidor em UTC.
+#
+# SEGUNDA LINHA — VIGILANCIA DO DIA CORRENTE (pedido do Felipe, 2026-09-23):
+#   ( crontab -l 2>/dev/null; echo '0 */3 * * * /opt/motor-expansao-infra/run_alerta_borda.sh --dia $(TZ=America/Sao_Paulo date +\%F) >> /var/log/motor-monitoring/alerta_borda.log 2>&1' ) | crontab -
+#
+#   O diario cobre a janela FECHADA, entao um ataque hoje as 10h so' apareceria
+#   amanha as 05:23 — latencia grande demais para "identificar e barrar quem esta'
+#   fazendo". Esta linha fecha o buraco reexaminando o dia CORRENTE de 3 em 3h.
+#   Por isso o wrapper repassa `"$@"`: o `--dia` da linha vence o padrao (ontem).
+#
+#   O `%` PRECISA ir escapado (`+\%F`) — no crontab, `%` cru vira quebra de linha e
+#   o comando e' truncado ali, com o resto virando stdin. Mesma pegadinha ja' vista
+#   no cron dos agregadores (DEC-039).
+#
+#   REPETICAO E' ESPERADA, e foi aceita de olho aberto: nao ha estado do que ja' foi
+#   avisado (a janela fechada do diario dispensava estado), entao num dia NOTAVEL os
+#   mesmos IPs sao reanunciados a cada 3h ate' a meia-noite BRT — ate' ~7 vezes. Com
+#   ataque em curso isso e' util; depois que para, e' ruido. Em dia normal nada sai,
+#   porque `--so-notavel` segura (0,28 dia notavel por dia, medido). Tirar a
+#   repeticao exige arquivo de estado NO MODULO, o que custa imagem nova + deploy.
 # ============================================================================
 set -euo pipefail
 
@@ -88,6 +107,6 @@ docker run --rm \
   -e MONITOR_TELEGRAM_CHAT_ID \
   -v "$HOST_CADDY_LOG":/var/log/caddy:ro \
   "$API_IMAGE" \
-  python -m motor_expansao.api.alerta_borda --dir /var/log/caddy --enviar --so-notavel
+  python -m motor_expansao.api.alerta_borda --dir /var/log/caddy --enviar --so-notavel "$@"
 
 echo ">> [$(date -u +%FT%TZ)] alerta de borda - fim"
