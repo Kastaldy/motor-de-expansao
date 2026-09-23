@@ -27,7 +27,7 @@ import { ACC } from '../lib/imovel'
    foi montada para a ABA; este e' o realce da LINHA do painel de camadas do mapa. */
 const ACC_16 = 'rgba(221,61,151,.16)'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
-import { temAlunos } from '../lib/pins'
+import { REDES_LIGADAS_POR_PADRAO, pinsVisiveis, subDaChaveRedes, temAlunos } from '../lib/pins'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import { rodapeDaBase, tituloEscolhaUnidade } from '../lib/rodape-base'
 import { type AlvoCaptura, alvoDoHex, pinsDoAlvo } from '../lib/captura-mapa'
@@ -245,6 +245,15 @@ export default function MapScreen({
   useEffect(() => {
     if (!temIndependentes) setVerIndependentes(false)
   }, [temIndependentes])
+
+  /* Bandeiras das academias de REDE (as cadeias). Nasce LIGADA — o piloto abre identico ao de
+     hoje — e existe pelo gesto inverso, que faltava: apagar as bandeiras para ler o territorio
+     (ou as independentes) por baixo. Esconde bandeira, nao tira concorrente da conta: raio,
+     ficha, cenario e a foto do slide seguem lendo `dados.pins`. Preferencia do momento, como
+     a legenda: fora do `EstadoMapa`. */
+  const [verRedes, setVerRedes] = useState(REDES_LIGADAS_POR_PADRAO)
+  const temRedes = (dados?.pins?.concorrentes.length ?? 0) > 0
+  const pinsNoMapa = useMemo(() => pinsVisiveis(dados?.pins, verRedes), [dados?.pins, verRedes])
 
   /* Camada de OPORTUNIDADES IMOBILIARIAS (a oferta da aba, sobre o territorio).
      Comeca DESLIGADA pela mesma razao das outras chaves: o piloto abre identico ao
@@ -924,6 +933,23 @@ export default function MapScreen({
       })
     }
 
+    /* Academias de REDE — as bandeiras das cadeias. Vem ANTES das independentes porque e' a
+       camada instalada (na sobreposicao do mapa a rede vence), e some com o dado como as
+       demais. Cor neutra de proposito: sao 107 marcas, nenhuma cor as representa. */
+    if (temRedes) {
+      const n = dados?.pins?.concorrentes.length ?? 0
+      lista.push({
+        id: 'redes',
+        titulo: 'Academias de rede',
+        sub: subDaChaveRedes(n, verRedes),
+        ligado: verRedes,
+        onToggle: () => setVerRedes((v) => !v),
+        cor: 'var(--ac-text)',
+        corTexto: 'var(--ac-chip)',
+        corRealce: 'var(--ac-a16)',
+      })
+    }
+
     /* Academias INDEPENDENTES com score (BLK-MA-15). Vale em QUALQUER camada: a pergunta
        "quem ja opera aqui e esta espremido?" e' a INVERSAO do funil (comprar, nao abrir).
        O titulo diz de QUEM e' o pin — o mapa ja tem bandeiras de CADEIA, e os dois
@@ -1023,6 +1049,9 @@ export default function MapScreen({
     verCalorDensidade,
     verCalorRenda,
     alternarCenario,
+    temRedes,
+    verRedes,
+    dados?.pins,
     temIndependentes,
     independentes,
     verIndependentes,
@@ -1047,38 +1076,47 @@ export default function MapScreen({
         explicacao="O mapa lê o território inteiro e monta a sequência de camadas — do potencial socioeconômico até os municípios com mais espaço para abrir."
         onInicio={onInicio}
       >
-        <div
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 12,
-            padding: '14px 16px',
-            background: 'var(--surf-panel)',
-            border: '1px solid var(--ac-a30)',
-            borderRadius: 'var(--r-lg)',
-            backdropFilter: 'blur(16px)',
-            boxShadow: 'var(--ac-glow)',
-          }}
-        >
-          <span style={{ font: '600 13px/1 var(--f-ui)', color: 'var(--tx-soft)' }}>
-            Selecione um estado
-          </span>
-          {ufs.length ? (
+        {/* A caixa E' o seletor. Ate' 2026-09-22 havia DUAS: este painel com o rotulo
+            "Selecione um estado" e, dentro dele, o botao do dropdown com placeholder
+            "Escolha…" — duas bordas aninhadas dizendo a mesma coisa, e so' a de dentro
+            clicavel. Quem mirava a de fora nao abria nada. */}
+        {ufs.length ? (
+          /* O `textAlign: 'center'` do Landing so' centraliza elemento INLINE, e a raiz do
+             `Select` e' um <div> de bloco — precisa ser `position: relative` para ancorar o
+             popup. Dai este wrapper de layout: sem borda, fundo ou sombra, entao a unica
+             caixa visivel continua sendo o proprio botao. */
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
             <Select
               label="Escolha um estado para começar"
               value=""
               onChange={onUf}
-              maxWidth={260}
+              maxWidth={280}
               buscavel
-              placeholder="Escolha…"
+              variante="painel"
+              placeholder="Selecione um estado"
               options={ufs.map((u) => ({ value: u, label: u }))}
             />
-          ) : (
+          </div>
+        ) : (
+          /* O carregando mantem a moldura do painel: sem ela a landing saltaria quando a
+             lista chegasse — a caixa sumiria e voltaria. */
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              padding: '14px 16px',
+              background: 'var(--surf-panel)',
+              border: '1px solid var(--ac-a30)',
+              borderRadius: 'var(--r-lg)',
+              backdropFilter: 'blur(16px)',
+              boxShadow: 'var(--ac-glow)',
+            }}
+          >
             <span className="num" style={{ font: '500 12px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
               carregando estados…
             </span>
-          )}
-        </div>
+          </div>
+        )}
       </Landing>
     )
   }
@@ -1095,7 +1133,7 @@ export default function MapScreen({
           centro={dados.centro}
           municipio={dados.municipio ?? undefined}
           uf={dados.uf}
-          pins={dados.pins}
+          pins={pinsNoMapa}
           selecionado={modoCenario ? null : selecionado}
           cenario={cenario}
           raio1km={raio1km}
@@ -1478,7 +1516,7 @@ export default function MapScreen({
                   /* Explica o aro indigo SO' quando ele esta desenhado. Legenda que
                      nomeia simbolo ausente ensina o operador a procurar o que nao
                      existe naquele recorte. */
-                  comAlunos={(dados?.pins?.concorrentes ?? []).some(temAlunos)}
+                  comAlunos={(pinsNoMapa?.concorrentes ?? []).some(temAlunos)}
                 />
               )}
             </div>

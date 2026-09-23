@@ -1,111 +1,73 @@
-/* ---------------------------------------------------------------------------
-   Entrada na plataforma (epic do P19) — a metade PURA e testável.
+/**
+ * A regra da tela de entrar, PURA — sem React e sem rede.
+ *
+ * POR QUE VIVE AQUI. Mesmo motivo de `lib/inicio.ts` e `lib/troca-de-senha.ts`: o vitest
+ * do piloto roda em ambiente `node` e so' casa `src/**\/*.test.ts`, sem testing-library.
+ * Entao o que decide (o formulario esta' submissivel? o que esta mensagem quer dizer?)
+ * fica aqui, testavel, e a tela fica burra.
+ *
+ * O QUE ESTA TELA AINDA NAO FAZ. Ela nao autentica ninguem: quem autentica hoje e' o
+ * Authelia, na borda, e a decisao de onde o `submit` vai bater (API do Authelia agora,
+ * ou o motor depois do corte do P19) esta' em aberto. O `enviar` chega por prop de
+ * proposito — e' o unico ponto que muda quando essa decisao for tomada.
+ */
 
-   POR QUE SEPARADO DO COMPONENTE. Mesma divisão de `troca-de-senha.ts` e
-   `confirmacao-admin.ts`, e pela mesma razão: o `vitest.config.ts` roda com
-   `environment: 'node'` e `include: ['src/**\/*.test.ts']` — sem DOM, e só `.ts`.
-   Componente não é testável aqui; texto e regra são. O que pode mentir fica do
-   lado que tem teste.
+/** Em que ponto do envio a tela esta'. */
+export type EstadoEnvio = 'parado' | 'enviando'
 
-   O QUE ESTE ARQUIVO NÃO FAZ. Não valida FORÇA de senha. A política (mínimo de
-   caracteres, etc.) vale na CRIAÇÃO e mora em `db/senhas.py::validar`; aplicá-la
-   na entrada ensinaria o formato da senha a quem tenta adivinhar e recusaria, com
-   recado diferente, uma senha legítima antiga. Aqui só se pergunta se há o que
-   enviar.
-   --------------------------------------------------------------------------- */
+/**
+ * As falhas que a tela sabe nomear.
+ *
+ * `bloqueado` NAO e' detalhe de pintura, e por isso e' um caso proprio: o Authelia
+ * bloqueia o usuario apos 4 tentativas erradas em 2 minutos, por 10 minutos
+ * (`regulation` em `authelia/configuration.yml`, lido na VPS em 2026-09-22). A partir
+ * da quinta tentativa a senha CERTA tambem falha — e uma tela que traduza isso como
+ * "usuario ou senha invalidos" deixa a pessoa dez minutos repetindo a senha correta,
+ * convencida de que errou. Esse era o defeito a evitar desde o primeiro desenho.
+ */
+export type FalhaLogin = 'credencial' | 'bloqueado' | 'indisponivel' | 'nao-ligado'
 
-/** O que o servidor devolve quando a entrada dá certo. */
-export interface EntradaAceita {
-  /** A pessoa ainda está na senha inicial compartilhada e deve trocá-la agora. */
-  deveTrocarSenha: boolean
+export const MENSAGEM_FALHA: Readonly<Record<FalhaLogin, string>> = Object.freeze({
+  /* Mensagem DELIBERADAMENTE ambigua entre "usuario nao existe" e "senha errada": dizer
+     qual dos dois falhou entrega a quem sonda a lista de quem tem conta. */
+  credencial: 'Usuário ou senha incorretos.',
+  bloqueado:
+    'Muitas tentativas seguidas. Por segurança, o acesso ficou bloqueado por 10 minutos — aguarde e tente de novo.',
+  indisponivel:
+    'Não foi possível falar com o servidor de autenticação. Ele pode estar reiniciando.',
+  'nao-ligado':
+    'Esta tela ainda está em revisão: a autenticação continua sendo feita pela tela do Authelia.',
+})
+
+/** HTTP -> falha nomeada. O que nao for reconhecido vira `indisponivel`, nunca
+ *  `credencial`: afirmar que a senha esta' errada por causa de um 500 e' mentir. */
+export function falhaDoStatus(status: number): FalhaLogin {
+  if (status === 401 || status === 403) return 'credencial'
+  // 429 e' o codigo de "regulado"; o Authelia tambem responde 403 no banimento, e por
+  // isso o chamador que souber distinguir deve passar `bloqueado` explicitamente.
+  if (status === 429) return 'bloqueado'
+  return 'indisponivel'
 }
 
 /**
- * Lê a resposta de `POST /api/login` sem confiar nela.
+ * O formulario pode ser enviado?
  *
- * Defensivo no mesmo espírito de `estadoDaSenhaDoPayload`: campo ausente ou de
- * tipo errado vira `false` — "não sei" aqui não pode virar "abra a tela de troca",
- * porque abrir a troca sem necessidade trava a pessoa logo depois de entrar.
+ * Campo vazio NAO vai ao servidor: alem de economizar a ida, evita gastar uma das 4
+ * tentativas que o `regulation` conta antes de bloquear por 10 minutos.
  */
-export function entradaDoPayload(payload: unknown): EntradaAceita {
-  if (typeof payload !== 'object' || payload === null) return { deveTrocarSenha: false }
-  const bruto = (payload as { deve_trocar_senha?: unknown }).deve_trocar_senha
-  return { deveTrocarSenha: bruto === true }
+export function podeEnviar(usuario: string, senha: string, estado: EstadoEnvio): boolean {
+  if (estado === 'enviando') return false
+  return usuario.trim().length > 0 && senha.length > 0
 }
 
 /**
- * Pode enviar o formulário?
+ * O usuario, normalizado para o envio: sem espaco nas pontas e em minusculas.
  *
- * Só exige que haja conteúdo nos dois campos. Espaço em volta não conta: o
- * servidor normaliza o login com `strip()` antes de consultar, e deixar o botão
- * ativo com um campo só de espaços faria a pessoa gastar uma tentativa à toa.
+ * O `users_database.yml` do Authelia guarda os logins em minusculas, e o teclado do
+ * celular capitaliza a primeira letra por conta propria — "Felipe.silva" viraria uma
+ * tentativa desperdicada, e quatro delas bloqueiam o acesso por 10 minutos. A SENHA
+ * nunca e' tocada: espaco em senha e' caractere como outro qualquer.
  */
-export function podeEntrar(login: string, senha: string): boolean {
-  return login.trim().length > 0 && senha.length > 0
-}
-
-/** Rótulos da tela. Ficam aqui para poderem ser conferidos por teste. */
-export const TITULO_LOGIN = 'Entrar'
-export const ROTULO_LOGIN = 'Usuário'
-export const ROTULO_SENHA = 'Senha'
-export const ROTULO_LEMBRAR = 'Lembrar de mim neste computador'
-export const ROTULO_BOTAO = 'Entrar'
-
-/**
- * O que a caixinha "lembrar de mim" realmente faz, em uma linha, para a tela poder
- * dizer em vez de deixar a pessoa adivinhar.
- *
- * É FIEL ao que o Authelia já fazia (decisão 2, opção (a)): mantém a entrada ao
- * fechar e reabrir o navegador, e **não** estica o prazo — a sessão dura as mesmas
- * 8 horas nos dois casos. Prometer "continue conectado" sem o limite seria mentira
- * de interface, e quem fechasse o navegador confiando nisso voltaria deslogado no
- * dia seguinte sem entender por quê.
- */
-export const AJUDA_LEMBRAR =
-  'Mantém você conectado ao fechar o navegador. O acesso continua valendo por 8 horas.'
-
-/**
- * A mensagem que a pessoa lê quando a entrada falha.
- *
- * Recebe `status` e `detalhe` em vez do objeto de erro de propósito: `ApiError`
- * mora em `lib/api.ts`, e `api.ts` precisa importar ESTE módulo — tipar pelo objeto
- * fecharia um ciclo entre os dois.
- *
- * O 401 NUNCA distingue "usuário não existe" de "senha errada", e isso não é
- * descuido de texto: o servidor devolve a mesma resposta nos dois casos justamente
- * para não entregar a lista de quem trabalha aqui. Repetir a distinção na tela
- * desfaria a defesa do lado de cá.
- */
-export function mensagemDaFalha(status: number, detalhe?: string): string {
-  if (status === 401) return 'Login ou senha incorretos.'
-  if (status === 404) {
-    // O portão nasce dormente (`MOTOR_AUTENTICACAO_PROPRIA`): enquanto o Authelia
-    // autentica, a rota responde 404 porque neste ambiente ela não existe mesmo.
-    return 'A entrada própria não está ativada neste ambiente.'
-  }
-  if (status === 503) {
-    return 'O sistema de acesso está indisponível no momento. Tente de novo em instantes.'
-  }
-  if (status === 408) return 'A resposta demorou demais. Tente de novo.'
-  if (status === 0) return 'Não foi possível falar com o servidor. Ele pode estar fora do ar.'
-  // Qualquer outro: mostra o recado do servidor, se houver. Ele é escrito para a
-  // pessoa (é a mesma política de `mensagemDoErro` da troca de senha).
-  return detalhe?.trim() || 'Não foi possível entrar. Tente de novo.'
-}
-
-/**
- * Um 401 vindo do LOGIN é sessão caída?
- *
- * **Não** — e esta função existe para que a resposta fique escrita e testada, em vez
- * de depender de alguém lembrar.
- *
- * O `lib/api.ts` anuncia queda de sessão em todo 401, porque atrás do Authelia isso
- * só acontece quando a sessão vence. Mas a rota de login devolve 401 para SENHA
- * ERRADA — e o anúncio de queda é de mão única (`jaAnunciado` em `lib/sessao.ts`
- * nunca volta atrás): uma senha digitada errada abriria "Sessão encerrada", travaria
- * a trava para o resto da carga e ofereceria como única saída recarregar a página.
- * A pessoa entraria num vaivém sem entender a causa.
- */
-export function ehQuedaDeSessao(url: string): boolean {
-  return !url.startsWith('/api/login')
+export function normalizarUsuario(bruto: string): string {
+  return bruto.trim().toLowerCase()
 }

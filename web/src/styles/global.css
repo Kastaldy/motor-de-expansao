@@ -133,6 +133,32 @@ button:focus-visible,
   color: var(--tx-sub);
 }
 
+/* ── Preenchimento automático do navegador ─────────────────────────────────────
+   O Chrome pinta um fundo PRÓPRIO no campo que ele preencheu (azul-claro no tema
+   claro), e esse fundo ganha de estilo inline — não há como desligá-lo por
+   `background`. O contorno conhecido é pintar um `box-shadow` interno POR CIMA
+   dele, com a cor que o campo deveria ter.
+
+   A cor é `--surf-input` porque é a mesma dos campos do app E a da caixa que
+   envolve o campo na tela de entrar — nos dois casos o resultado é o campo
+   desaparecer dentro do que o cerca, que é o que se quer.
+
+   `transition ... 9999s` não é gambiarra decorativa: sem ela o Chrome reaplica o
+   fundo dele em algumas interações (foco, mudança de valor), e o campo pisca de
+   volta para o azul. O truque adia essa repintura para além de qualquer sessão.
+
+   `-webkit-text-fill-color` existe porque, no campo autopreenchido, ele vence
+   `color`; sem a linha, o texto sai preto sobre fundo escuro no tema escuro. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-text-fill-color: var(--tx-strong);
+  -webkit-box-shadow: 0 0 0 1000px var(--surf-input) inset;
+  caret-color: var(--tx-strong);
+  transition: background-color 9999s ease-in-out 0s;
+}
+
 /* Selects nativos no tema escuro — o popup de opcoes seguia branco sem isto. */
 select {
   color-scheme: dark;
@@ -236,4 +262,24 @@ select option {
 .maplibregl-ctrl-bottom-right {
   bottom: 6px;
   right: 6px;
+}
+
+
+/* ── Tela de ENTRAR: o cartão de duas colunas vira uma ──────────────────────────
+   O mockup desenha 620px de formulário + 540px de painel. Abaixo de ~1040px as duas
+   colunas não cabem sem espremer os campos, e campo de senha espremido é pior que
+   painel ausente — então o PAINEL é quem sai. Ele é decoração com uma frase; o
+   formulário é a função da tela.
+
+   Sem `!important`: a propriedade que estas regras trocam (`grid-template-columns`) é
+   declarada inline no componente, mas `display: none` no painel não é — e uma coluna
+   só já resolve o caso, porque o painel sai do fluxo. */
+@media (max-width: 1040px) {
+  .cartao-entrar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .painel-entrar {
+    display: none;
+  }
 }

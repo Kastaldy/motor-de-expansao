@@ -8,7 +8,7 @@ import {
   ROTULO_SENHA,
   TITULO_LOGIN,
   podeEntrar,
-} from '../lib/login'
+} from '../lib/login-motor'
 import { Botao, Campo, Eyebrow, Glass, Spinner } from './primitives'
 
 /* ---------------------------------------------------------------------------

@@ -151,12 +151,15 @@ def test_a_guarda_de_fonte_sobrevive_ao_k_maior() -> None:
 def test_equivalencia_contra_varredura_completa() -> None:
     """A única prova de que o bucket não mudou resultado. Molde do `test_14b` do BLK-MA-17.
 
-    Compara-se o CONJUNTO de chaves colapsadas, não o representante de cada uma: diferente da
-    `dedup_cadeias_do_feed` (que escolhe o ponto qualificado MAIS PRÓXIMO, com desempate por menor
-    índice), esta função para no PRIMEIRO candidato que encontrar, e a ordem em que o `grid_disk`
-    devolve as células não é a ordem dos índices. Quem colapsa é determinístico; qual representante
-    absorve, quando há mais de um candidato, não é. O invariante forte — "não perder colapso" — é o
-    que este teste trava, e é o que o `k` cravado violava.
+    Compara-se o CONJUNTO de chaves colapsadas, não o representante de cada uma — e o invariante
+    forte, "não perder colapso", é o que este teste trava; é o que o `k` cravado violava.
+
+    **Até a DEC-066 esta docstring dizia que a função "para no PRIMEIRO candidato que encontrar".
+    Deixou de ser verdade:** o representante passou a ser quem CASA O NOME e, sem casamento, o MAIS
+    PRÓXIMO. A comparação por CONJUNTO continua sendo a certa aqui — ela prova cobertura do bucket,
+    que é outra propriedade —, e a escolha do representante ganhou teste próprio em
+    `test_dedup_independentes_por_nome.py`. O conjunto de candidatos VISITADOS não mudou (mesmo
+    anel, mesmo limiar), então a equivalência contra a varredura completa segue válida.
     """
     linhas: list[tuple[str, str, float, float]] = []
     esperado_fora_do_anel_1 = 0

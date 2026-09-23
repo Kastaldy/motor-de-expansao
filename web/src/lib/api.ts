@@ -35,7 +35,7 @@ import type {
   ViabilidadeIn,
   ViabilidadeOut,
 } from './types'
-import { ehQuedaDeSessao, entradaDoPayload, type EntradaAceita } from './login'
+import { ehQuedaDeSessao, entradaDoPayload, type EntradaAceita } from './login-motor'
 import { relatarAcessoNegado, relatarFalhaDeRede } from './sessao'
 
 /** Query string da rede, omitindo o que esta vazio. */

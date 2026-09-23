@@ -390,7 +390,12 @@ def test_healthcheck_expoe_subcomando_mercado() -> None:
     texto = HEALTHCHECK.read_text(encoding="utf-8")
     assert "check_mercado()" in texto, "a função do subcomando não existe"
     assert "mercado) check_mercado ;;" in texto, "o `case` não roteia o subcomando"
-    assert "|crescimento|mercado|test}" in texto, (
+    # Trava que `mercado` continue LISTADO, não a cauda inteira da string congelada. A primeira
+    # redação afirmava `|crescimento|mercado|test}` e quebrou no primeiro subcomando novo a
+    # entrar depois dele (`pins`) — um teste que não é sobre `mercado` falhando por `mercado`.
+    # O irmão em `test_wrappers_cron_agregadores.py` já tinha acertado isto, com comentário
+    # dizendo exatamente por quê; esta linha só passou a seguir o precedente.
+    assert "|mercado|" in texto, (
         "a string de uso não lista o subcomando: ele existiria sem ser descobrível"
     )
 

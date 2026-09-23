@@ -64,12 +64,35 @@ export function hostDeAutenticacao(hostname: string | null | undefined): string 
  * URL de logoff do Authelia, ou `null` se este ambiente nao tem portal.
  *
  * `/logout` e' a rota de encerramento do portal do Authelia 4.38 (a versao fixada em
- * `docker-compose.prod.yml`). Vai SEM `?rd=`: o proprio Authelia decide o pouso pelo
- * `default_redirection_url` da config dele (que NAO e' versionada neste repo), e
- * qualquer destino que o piloto pedisse voltaria a bater no `forward_auth` — ou seja,
- * na tela de login, que e' exatamente onde o logoff deve terminar.
+ * `docker-compose.prod.yml`), e o logoff PRECISA passar por ela: quem invalida a sessao
+ * e' o servidor, e limpar estado no cliente so' faria a tela parecer deslogada enquanto
+ * a proxima requisicao seguiria autenticada.
+ *
+ * O `?rd=` VOLTOU, e a razao de ele ter saido caducou em 2026-09-22.
+ *
+ * Ate' aquele dia este modulo ia de proposito SEM destino, e o motivo escrito era: "o
+ * proprio Authelia decide o pouso, e qualquer destino que o piloto pedisse voltaria a
+ * bater no `forward_auth` — ou seja, na tela de login, que e' exatamente onde o logoff
+ * deve terminar". O raciocinio estava certo enquanto a tela de login era a do Authelia.
+ * Desde que a nossa passou a ocupar a raiz de `auth.`, o `/logout` sem destino deixa a
+ * pessoa parada na tela do PORTAL — que e' a tela que o produto acabou de substituir.
+ * Foi o que o Felipe viu ao clicar em Sair.
+ *
+ * O destino e' o PROPRIO host de onde a pessoa saiu, e nao a raiz de `auth.`: quem
+ * deslogou do piloto-ar deve voltar a entrar no piloto-ar. O caminho passa pelo
+ * `forward_auth` daquele host, que manda para a nossa tela com o `rd` preenchido — logo,
+ * ao entrar de novo, a pessoa cai onde estava em vez de no portal de paises.
+ *
+ * NAO e' redirecionamento aberto, e isso nao depende de nos: o `SignOut` do Authelia
+ * valida o destino NO SERVIDOR (`safeTargetURL`) antes de navegar, e cai na rota indice
+ * dele quando o destino nao passa. Ainda assim so' montamos destino de host que
+ * `hostDeAutenticacao` ja' reconheceu — duas travas, nenhuma dependendo da outra.
  */
 export function urlDeLogoff(hostname: string | null | undefined): string | null {
   const host = hostDeAutenticacao(hostname)
-  return host === null ? null : `https://${host}/logout`
+  if (host === null) return null
+  // `hostname` ja' passou pelo crivo de `hostDeAutenticacao`; normalizamos igual a ele
+  // para o destino nao carregar o ponto final nem a caixa do host cru.
+  const origem = (hostname ?? '').trim().toLowerCase().replace(/\.$/, '')
+  return `https://${host}/logout?rd=${encodeURIComponent(`https://${origem}/`)}`
 }

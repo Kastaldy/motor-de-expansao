@@ -57,4 +57,11 @@ regexes = [
     # 3.68). generic-api-key marca o literal por entropia, mas e nome de coluna, nao
     # segredo. Substring match cobre todas as ocorrencias. Robusto a drift de linha.
     '''n_concorrentes_mapeados_1km''',
+    # Grafo de conhecimento: nome de coluna do censo `domicilios_setor_2022`
+    # (entropia 3,52). Entrou no gate quando o grafo foi reindexado -- ele aparece
+    # dentro de um `rationale` de graphify-out/graph.json que DESCREVE o que um
+    # pipeline produz, ao lado do `renda_per_capita_setor_2022` que ja' esta' nesta
+    # lista. Mesma familia: nome de coluna, nao segredo. Robusto a drift de linha,
+    # o que importa aqui porque o graph.json e' regravado INTEIRO a cada reindexacao.
+    '''domicilios_setor_2022''',
 ]

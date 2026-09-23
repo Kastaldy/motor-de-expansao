@@ -1051,6 +1051,13 @@ def carregar_crescimento() -> pd.DataFrame | None:
 # interna e nao tem uso na tela.
 _COLS_NOMEADAS = [
     "nome",
+    # `[DEC-066]` De qual app veio a academia. O artefato SEMPRE teve a coluna; o piloto e' que a
+    # descartava aqui, nesta lista de permissao. Sem ela a tela nao tem como distinguir WellHub de
+    # TotalPass -- e a legenda afirmava "(Wellhub)" para as duas.
+    "fonte",
+    # `[DEC-066 / fatia 2]` QUAIS apps a listam (`alvos_ma_nomeados_v8`). Mesma armadilha da linha
+    # acima: a coluna existe no artefato e morre AQUI se nao for permitida.
+    "fontes_da_academia",
     "lat",
     "lng",
     "hex_id_res7",
@@ -1167,6 +1174,11 @@ def _pins_independentes(sel: pd.DataFrame) -> dict[str, Any]:
             "lat": _num(t.lat, 6),
             "lng": _num(t.lng, 6),
             "nome": _clean(getattr(t, "nome", "")),
+            # `[DEC-066]` O app que revelou a academia -- decide a arte do pino no mapa.
+            "fonte": _texto(getattr(t, "fonte", None)),
+            # `[DEC-066 / fatia 2]` Com virgula (`"totalpass,wellhub"`), o pino sai no terceiro
+            # estado. Nulo em artefato anterior ao `v8`, e ai' o desenho cai na `fonte`.
+            "fontes_da_academia": _texto(getattr(t, "fontes_da_academia", None)),
             # `score` e' o do §8.4 — sempre preenchido quando ha >= 1 sinal. `ordenavel` e' nulo no
             # regime provisorio (G-D1), e a tela precisa dos DOIS: um diz o numero, o outro diz se
             # ele pode ordenar.
@@ -9170,7 +9182,13 @@ def _rede_concorrencia_nova() -> dict[str, Any]:
 
     A série de snapshots vive só na VPS (DEC-039). Fora dela o dicionário volta com
     `disponivel=False` e a tela diz que não há série — nunca "nenhum concorrente novo".
-    O TotalPass fica FORA, como no score (DEC-039, D9: a dedup TP x WH não está calibrada).
+    `[DEC-066]` O TotalPass segue FORA, mas a RAZÃO mudou — e a antiga virou falsa. Ela dizia
+    "como no score (D9: a dedup TP x WH não está calibrada)", e as duas metades caíram: a dedup
+    FOI calibrada (BLK-MA-20) e o score deixou de excluir a fonte. A razão real é o CRONÔMETRO:
+    esta superfície mede quem ENTROU no feed, e a série não tem história de TotalPass. Incluí-lo
+    agora faria TODA academia dele aparecer como "entrou esta semana" — a mesma onda de falso
+    positivo que a DEC-061 existe para barrar. Presença e churn estão fora do escopo da DEC-066
+    por decisão explícita dela.
     """
     from motor_expansao.vulnerabilidade.snapshots import ler_snapshots
 
@@ -9198,6 +9216,10 @@ def _rede_movimentacao() -> pd.DataFrame | None:
     tabela = _rede_ler_opcional(STAGING_DIR / movimentacao_concorrencia.ARQUIVO_STAGING)
     if tabela is None:
         return None
+    # O descarte de RENOMEAÇÃO no agregador é aplicado aqui, na leitura, e não só na ingestão:
+    # o parquet em produção foi gerado antes da regra, e o pacote de origem não está mais
+    # disponível para reingerir. Idempotente — rodar duas vezes não tira nada a mais.
+    tabela = movimentacao_concorrencia.descartar_trocas_de_nome_no_agregador(tabela)
     return movimentacao_concorrencia.filtrar_concorrencia(tabela, _rede_redes_estudio())
 
 
@@ -9244,13 +9266,21 @@ def _rede_movimentacao_redes() -> dict[str, Any]:
     totais = dict(zip(contagem["rede"], contagem["unidades"], strict=True)) if contagem is not None else {}
     data_contagem = str(contagem["data"].iloc[0]) if contagem is not None and len(contagem) else None
     for linha in redes:
-        linha["logo"] = _icone_rede(linha["rede"])
         linha["unidades"] = int(totais[linha["rede"]]) if linha["rede"] in totais else None
+    # Toda rede MAPEADA entra, mesmo sem nenhuma movimentação no período (Felipe, 17/09): a
+    # tabela deixa de ser só "quem mexeu" e passa a carregar o tamanho do mercado.
+    redes = movimentacao_concorrencia.incluir_redes_sem_movimentacao(
+        redes, totais, _rede_redes_estudio()
+    )
+    for linha in redes:
+        linha["logo"] = _icone_rede(linha["rede"])
     return {
         "disponivel": True,
         "periodos": movimentacao_concorrencia.periodos(eventos),
         "data_contagem": data_contagem,
         "redes": redes,
+        "redes_mapeadas": len(redes),
+        "unidades_mapeadas": sum(int(linha["unidades"] or 0) for linha in redes),
         "agregadores": movimentacao_concorrencia.resumo_agregadores(eventos),
     }
 
@@ -9375,15 +9405,47 @@ def rede_inteligencia_recorte(
     def _consultor(uid: str) -> str | None:
         return str(cadastro_rede.de(uid).get("consultor") or "").strip() or None
 
+    def _do_mes(uid: str, coluna: str, casas: int) -> float | None:
+        """Métrica da OPERAÇÃO (Growth) no mês base, para a unidade."""
+        if uid not in mes_base.index:
+            return None
+        return _num(_numf(mes_base.loc[uid].get(coluna)), casas)
+
     risco = sorted(
         (
-            {"id": uid, "nome": nomes[uid], "consultor": _consultor(uid), **retencao[uid]}
+            {
+                "id": uid,
+                "nome": nomes[uid],
+                "consultor": _consultor(uid),
+                # Churn REAL e alunos ativos vêm da operação, não do modelo: a tabela do ranking
+                # confronta o que já aconteceu com o que o modelo prevê (Felipe, 17/09).
+                "churn_pct": _do_mes(uid, "churn_pct", 1),
+                "ativos": _do_mes(uid, "ativos", 0),
+                # Recorrentes (`pagantes`): é quem de fato CANCELA, e é o mesmo denominador do
+                # churn real (`cancelados / pagantes_m1`). Aluno de agregador não cancela
+                # contrato com a unidade — entra em `ativos`, não aqui (Felipe, 17/09).
+                "recorrentes": _do_mes(uid, "pagantes", 0),
+                "receita_por_recorrente": _do_mes(uid, "receita_por_recorrente", 2),
+                **retencao[uid],
+                # depois do espalhamento do modelo, de propósito: a conta é da OPERAÇÃO
+                "receita_em_risco": rede_inteligencia.receita_recorrente_em_risco(
+                    _do_mes(uid, "pagantes", 0),
+                    retencao[uid]["p_cancel_12m_pct"],
+                    _do_mes(uid, "receita_por_recorrente", 2),
+                ),
+            }
             for uid in ids
-            if uid in retencao and retencao[uid]["utilizavel"]
+            # Só PREVISÃO CONFIÁVEL: o corte deixa de ser `utilizavel` (que admitia as unidades
+            # de "Apenas Ranking", onde o modelo ordena mas não calibra o número) e passa a ser
+            # `probabilidade_absoluta_valida` — pedido do Felipe, 17/09. O percentil de risco
+            # continua medido contra TODAS as utilizáveis: é posição na rede, não no recorte.
+            if uid in retencao and retencao[uid]["probabilidade_absoluta_valida"]
         ),
         key=lambda r: -(r["risco_percentil"] or 0),
     )
-    fora_do_modelo = sum(1 for uid in ids if uid in retencao and not retencao[uid]["utilizavel"])
+    fora_do_modelo = sum(
+        1 for uid in ids if uid in retencao and not retencao[uid]["probabilidade_absoluta_valida"]
+    )
 
     concorrencia = _rede_concorrencia_nova()
     inauguradas = []
@@ -9949,7 +10011,7 @@ def _viabilidade_pdf_payload(body: ViabilidadeIn) -> dict[str, Any] | None:
 
 
 def _residual_hexes_do_ponto(lat: float, lng: float, staging_dir: Path):
-    """Disco de hexes (grid_disk k=5, res 7) ao redor do ponto para o slide-hero
+    """Disco de hexes (grid_disk k=7, res 7) ao redor do ponto para o slide-hero
     "Socioeconomia e Residual Fitness": `oferta_efetiva_disponivel` (Residual) E
     `score_setor_2022_calibrado` (Socioeconomia, BLK-RELPON-13).
 
@@ -9973,21 +10035,118 @@ def _residual_hexes_do_ponto(lat: float, lng: float, staging_dir: Path):
         import pyarrow.dataset as ds
 
         centro = h3.latlng_to_cell(float(lat), float(lng), 7)
-        cells = list(h3.grid_disk(centro, 5))
+        # k=7 (169 hexes): o enquadramento do slide-hero abre ate 7 km em regiao espalhada.
+        cells = list(h3.grid_disk(centro, 7))
         if not cells:
             return None
         conjunto = ds.dataset(mercado)
         colunas = ["hex_id", "oferta_efetiva_disponivel"]
         # BLK-RELPON-13: o painel de Socioeconomia le `score_setor_2022_calibrado` do MESMO
         # disco de hexes. So pede se o schema tiver — parquet antigo continua servindo o Residual.
-        if "score_setor_2022_calibrado" in conjunto.schema.names:
-            colunas.append("score_setor_2022_calibrado")
+        # A populacao do censo decide o enquadramento (`censo_map.raio_enquadramento_hex_km`).
+        for coluna in ("score_setor_2022_calibrado", "pop_total_setor_2022"):
+            if coluna in conjunto.schema.names:
+                colunas.append(coluna)
         tbl = conjunto.to_table(filter=pc.field("hex_id").isin(cells), columns=colunas)
         if not tbl.num_rows:
             return None
         return tbl.to_pandas()
     except Exception:  # noqa: BLE001
         return None
+
+
+_LOG_PRACA = logging.getLogger("piloto.relatorio_praca")
+
+
+def _hexes_do_municipio(uf: str, cod_municipio: str | None, nome_municipio: str | None) -> pd.DataFrame:
+    """Hexagonos do municipio no artefato enriquecido (com `cres_*` e `cres_hex_*` ja juntados).
+
+    Casa por `cod_municipio` e, onde a particao o deixa nulo, pelo NOME normalizado -- o mesmo
+    fallback de `_juntar_crescimento` (6 UFs tem o codigo 100% nulo no M1). Devolve um frame
+    NOVO: `carregar_uf` e' cache compartilhado entre requisicoes.
+    """
+    df = carregar_uf(uf)
+    mask = pd.Series(False, index=df.index)
+    if cod_municipio and "cod_municipio" in df.columns:
+        cod = df["cod_municipio"].astype("string").str.replace(r"\.0$", "", regex=True)
+        mask |= (cod == str(cod_municipio)) | (cod.str[:6] == str(cod_municipio)[:6])
+    if nome_municipio and "nome_municipio" in df.columns:
+        alvo = _norm_nome(pd.Series([nome_municipio])).iloc[0]
+        mask |= _norm_nome(df["nome_municipio"]) == alvo
+    return df.loc[mask].copy()
+
+
+def _praca_para_pdf(
+    lat: float,
+    lng: float,
+    uf: str,
+    cod_municipio: str | None,
+    nome_municipio: str | None,
+    comp_df: pd.DataFrame | None,
+    ultra_df: pd.DataFrame | None,
+    *,
+    basemap: bool = True,
+):
+    """Monta a `PracaDoPonto` das duas paginas novas (pressao e crescimento). `None` sem base da UF.
+
+    Mapa que falha vira fallback textual; municipio ou hexagono sem crescimento viram a frase de
+    "sem dado". Nenhum caminho daqui derruba o PDF.
+    """
+    import h3
+
+    from motor_expansao.dashboard import relatorio_praca as rp
+    from motor_expansao.dashboard import relatorio_praca_mapas as rpm
+
+    try:
+        hexes = _hexes_do_municipio(uf, cod_municipio, nome_municipio)
+    except HTTPException as exc:
+        _LOG_PRACA.warning("praca sem base da UF %s: %s", uf, exc.detail)
+        return None
+
+    municipio = nome_municipio or (str(_mun_val(hexes, "nome_municipio")) if len(hexes) else "")
+    municipio = municipio.title() if municipio.isupper() else municipio
+
+    linha_cres = {c: _mun_val(hexes, c) for c in _COLS_CRESCIMENTO if c in hexes.columns}
+    tem_cres = linha_cres.get("cres_tendencia") is not None or linha_cres.get("v_frase")
+    frase = _narrativa_crescimento(hexes, municipio) if tem_cres else None
+    crescimento = rp.resumir_crescimento(linha_cres, uf=uf, frase=frase, rotulo_tendencia=_ROTULO_TEND)
+
+    # Hexagono do ponto: primeiro na propria cidade (ja com `cres_hex_*`); ponto na divisa cai
+    # num hexagono de outro municipio, e ai' a leitura vem direto da camada por hexagono.
+    hex_ponto = str(h3.latlng_to_cell(lat, lng, 7))
+    linha_hex: dict[str, Any] | None = None
+    if "hex_id" in hexes.columns:
+        achados = hexes.loc[hexes["hex_id"].astype(str) == hex_ponto]
+        if len(achados):
+            linha_hex = achados.iloc[0].to_dict()
+    if linha_hex is None or pd.isna(pd.to_numeric(pd.Series([linha_hex.get("cres_hex_taxa")]), errors="coerce").iloc[0]):
+        chex = carregar_crescimento_hex()
+        if chex is not None:
+            achados = chex.loc[chex["hex_id"] == hex_ponto]
+            if len(achados):
+                linha_hex = achados.iloc[0].to_dict()
+    crescimento_hex = rp.crescimento_do_hexagono(linha_hex, hexes)
+
+    mapas: dict[str, bytes] = {}
+    for fundo in ((True, False) if basemap else (False,)):
+        try:
+            mapas["pressao_raios"] = rpm.render_pressao_raios(lat, lng, comp_df, ultra_df, basemap=fundo)
+            break
+        except Exception as exc:  # noqa: BLE001 - mapa que falha vira fallback textual
+            _LOG_PRACA.warning("mapa pressao_raios (fundo=%s) falhou: %r", fundo, exc)
+
+    _LOG_PRACA.info(
+        "praca %s/%s: hexagono %s, crescimento=%s, obra nova=%s",
+        municipio, uf, hex_ponto, crescimento.disponivel, crescimento_hex.disponivel,
+    )
+    return rp.PracaDoPonto(
+        municipio=municipio,
+        uf=uf,
+        pressao=rp.pressao_sobre_ponto(lat, lng, comp_df, ultra_df),
+        crescimento=crescimento,
+        crescimento_hex=crescimento_hex,
+        mapas=mapas,
+    )
 
 
 @app.post("/api/relatorio/pontual")
@@ -10129,7 +10288,7 @@ def _gerar_relatorio_pontual_pdf(
     )
 
     try:
-        uf, _cod, setores_df = _resolver_e_carregar(lat, lng, cfg)
+        uf, cod_municipio, setores_df = _resolver_e_carregar(lat, lng, cfg)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f"Nao foi possivel resolver a coordenada: {exc}") from exc
 
@@ -10150,6 +10309,9 @@ def _gerar_relatorio_pontual_pdf(
         nome_distrito=result.get("nome_distrito_ponto"),
         nome_municipio=_nome_municipio_de(setores_df),
         uf=uf,
+        # Fecha a chave do fallback por `nome_distrito` no municipio DO PONTO: com
+        # o vizinho de divisa no mesmo `setores_df`, "Centro" casaria nos dois.
+        cod_municipio=cod_municipio,
     )
 
     ultra_dir = ULTRA_DIR if ULTRA_DIR.is_dir() else None
@@ -10192,6 +10354,17 @@ def _gerar_relatorio_pontual_pdf(
         residual = _residual_do_ponto(lat, lng, cfg)
     except Exception:  # noqa: BLE001
         residual = None
+
+    # Paginas da PRACA (pressao sobre o ponto e como a cidade esta indo). Mesma escada de basemap
+    # dos mapas acima; qualquer falha deixa o PDF sair sem elas, como antes.
+    try:
+        praca = _praca_para_pdf(
+            lat, lng, uf, cod_municipio, _nome_municipio_de(setores_df), comp_df, ultra_df,
+            basemap=mapas is not None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _LOG_PRACA.warning("paginas da praca omitidas: %r", exc)
+        praca = None
 
     # BLK-SAT-01: vista aerea (satelite Esri) da capa do PDF. A chave vem de env
     # API_ARCGIS_API_KEY (passthrough no compose); sem chave/rede -> None -> pagina
@@ -10244,6 +10417,7 @@ def _gerar_relatorio_pontual_pdf(
         # em `onde`, o `texto_rodape` e carimbado em todas as paginas de resultado
         # financeiro. No Brasil (`avisos` = {}) isto e None e o PDF nao muda um byte.
         aviso_rodape=_texto_do_aviso_de_viabilidade("pdf", "texto_rodape"),
+        praca=praca,
     )
     return Response(
         content=pdf,

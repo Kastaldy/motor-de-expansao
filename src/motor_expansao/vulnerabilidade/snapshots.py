@@ -66,6 +66,7 @@ from .contrato import (
     COLUNAS_PARTICAO,
     COLUNAS_PII_PROIBIDAS,
     COLUNAS_SNAPSHOT_NULAVEIS,
+    CONTRATO_COLUNAS_PONTE,
     CONTRATO_COLUNAS_SNAPSHOT,
     FONTES_VALIDAS,
     H3_RES_CONTRATO,
@@ -78,11 +79,14 @@ from .contrato import (
     RE_SEMANA,
     RE_UUID,
     RETENCAO_SEMANAS,
+    RETENCAO_TUDO,
     TOLERANCIA_QUEDA_REDE_PCT,
     TOLERANCIA_QUEDA_TOTAL_PCT,
     VERSAO_CONTRATO_SNAPSHOT,
+    VERSAO_CONTRATO_SNAPSHOT_V4,
     chave_do_slug,
     chave_hash_estavel,
+    chave_hash_estavel_v4,
     concorrente_id_producao,
     coord_no_bbox_uf,
     coord_no_envelope,
@@ -102,6 +106,10 @@ DIR_TOTALPASS_DEFAULT = Path("concorrentes/totalpass/csvs")
 DIR_WELLHUB_DEFAULT = Path("concorrentes/wellhub/csvs")
 DIR_UNIDADES_DEFAULT = Path("concorrentes/Unidades")
 SNAPSHOTS_DIR_DEFAULT = Path("data/staging/snapshots_concorrentes")
+# Ponte de identidade (DEC-064, D3). Árvore IRMÃ da série, nunca dentro dela: `ler_snapshots` varre
+# `SNAPSHOTS_DIR_DEFAULT` inteiro com o schema do snapshot, e um parquet de outro schema lá dentro
+# quebraria a leitura da série — que é o insumo de S3/S4.
+PONTE_DIR_DEFAULT = Path("data/staging/ponte_identidade_concorrentes")
 
 # Prefixo dos arquivos de `Unidades/`: `unidades_<rede>.csv` -> rede = stem sem esse prefixo.
 _PREFIXO_UNIDADES = "unidades_"
@@ -132,6 +140,7 @@ _COLUNAS_TRABALHO: tuple[str, ...] = (
 
 _POLITICAS_CHAVE: frozenset[str] = frozenset({"auto", "hash_estavel"})
 _RE_DIR_SEMANA = re.compile(r"^semana=(\d{4}-\d{2})$")
+_RE_DIR_FONTE = re.compile(r"^fonte=(.+)$")
 
 
 # --------------------------------------------------------------------------- #
@@ -873,6 +882,124 @@ def escrever_particao_semana(
     return base_dir / f"semana={semana}"
 
 
+def ponte_dir_de(base_dir: Path, ponte_dir: Path | None = None) -> Path:
+    """Onde a ponte mora, dado onde a série mora. `ponte_dir` explícito vence.
+
+    DERIVADA do `base_dir`, e não uma constante absoluta, por um motivo que um default fixo
+    esconderia: todo chamador que aponta a série para outro lugar — cada teste com `tmp_path`, um
+    `--base-dir` de rascunho, o regen em diretório provisório — passaria a espalhar ponte em
+    `data/staging/` do processo, longe da série que ela descreve. Derivando, a ponte acompanha a
+    série por construção, e em produção cai exatamente em `PONTE_DIR_DEFAULT`.
+    """
+    if ponte_dir is not None:
+        return Path(ponte_dir)
+    return Path(base_dir).parent / PONTE_DIR_DEFAULT.name
+
+
+def montar_ponte_identidade(df: pd.DataFrame) -> pd.DataFrame:
+    """Frame de TRABALHO -> `(fonte, chave_snapshot, nome, lat, lng)`, uma linha por chave.
+
+    Recebe o frame que já passou por `derivar_chave` — o mesmo de que `montar_snapshot` parte — e
+    projeta as colunas que a projeção do contrato mata. É por isso que a ponte nasce **antes** da
+    fronteira anti-PII e não depois: depois, a informação já não existe.
+
+    O colapso é o MESMO de `montar_snapshot` — e "mesmo" inclui o **desempate**: a ordenação por
+    `["fonte", "chave_snapshot", "hash_campos_raspados"]` (estável) ANTES do
+    `drop_duplicates(keep="first")`. Sem ela, as duas funções colapsariam o mesmo par para linhas
+    DIFERENTES, cada uma pela ordem em que o CSV foi lido: a ponte responderia "quem é esta chave"
+    descrevendo a linha que o snapshot descartou, e a ficha exibiria o nome e a coordenada errados
+    no evento. Travado por `test_ponte_colapsa_colisao_pela_MESMA_linha_do_snapshot` — o defeito foi
+    achado pela revisão automática no PR #386, com a docstring já afirmando a equivalência que o
+    código não cumpria.
+    """
+    if df.empty:
+        return pd.DataFrame(
+            {col: pd.Series(dtype=dtype) for col, dtype in CONTRATO_COLUNAS_PONTE.items()}
+        )
+    ordenado = df.sort_values(
+        ["fonte", "chave_snapshot", "hash_campos_raspados"], kind="mergesort"
+    )
+    out = pd.DataFrame(
+        {
+            "fonte": ordenado["fonte"].astype("string"),
+            "chave_snapshot": ordenado["chave_snapshot"].astype("string"),
+            "nome": ordenado["nome"].astype("string"),
+            "lat": pd.to_numeric(ordenado["latitude"], errors="coerce").astype("Float64"),
+            "lng": pd.to_numeric(ordenado["longitude"], errors="coerce").astype("Float64"),
+        }
+    )
+    return out.drop_duplicates(subset=["fonte", "chave_snapshot"], keep="first").reset_index(
+        drop=True
+    )
+
+
+def escrever_ponte_identidade(
+    df: pd.DataFrame, ponte_dir: Path = PONTE_DIR_DEFAULT, *, semana: str
+) -> Path:
+    """Grava `ponte_dir/semana=AAAA-SS/fonte=<fonte>/parte-*.parquet` (DEC-064, D3).
+
+    Mesmas duas chaves de partição e mesma idempotência POR FOLHA da série, pela mesma razão: duas
+    cadências escrevem na mesma semana ISO, e com uma chave só a segunda apagaria a primeira.
+
+    Frame vazio **não apaga** a folha existente, também pelo mesmo motivo do snapshot: zero linha é
+    quase sempre coleta que falhou, não universo vazio.
+    """
+    if not isinstance(semana, str) or not RE_SEMANA.match(semana):
+        raise ValueError("escrever_ponte_identidade exige `semana` no formato ISO AAAA-SS")
+    destino = Path(ponte_dir) / f"semana={semana}"
+    if df.empty:
+        _logger.warning("ponte de identidade vazia para semana=%s: nada gravado", semana)
+        return destino
+    faltando = [c for c in CONTRATO_COLUNAS_PONTE if c not in df.columns]
+    if faltando:
+        raise ValueError(f"ponte de identidade fora do contrato; colunas ausentes: {faltando}")
+    frame = df[list(CONTRATO_COLUNAS_PONTE.keys())].copy()
+    base = Path(ponte_dir)
+    base.mkdir(parents=True, exist_ok=True)
+    frame["semana"] = str(semana)
+    tabela = pa.Table.from_pandas(frame, preserve_index=False, schema=_schema_arrow_ponte())
+    ds.write_dataset(
+        tabela,
+        base_dir=str(base),
+        format="parquet",
+        partitioning=_particionamento_hive(),
+        basename_template="parte-{i}.parquet",
+        existing_data_behavior="delete_matching",
+    )
+    return destino
+
+
+def ler_ponte_identidade(
+    ponte_dir: Path = PONTE_DIR_DEFAULT,
+    *,
+    semanas: Sequence[str] | None = None,
+    fontes: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    """Lê a ponte -> 5 colunas do contrato + `semana`. Recortada na varredura, como a série."""
+    base = Path(ponte_dir)
+    colunas = list(CONTRATO_COLUNAS_PONTE.keys()) + ["semana"]
+    vazio = pd.DataFrame(
+        {
+            **{c: pd.Series(dtype=dt) for c, dt in CONTRATO_COLUNAS_PONTE.items()},
+            "semana": pd.Series(dtype="string"),
+        }
+    )
+    if not base.exists() or not any(_RE_DIR_SEMANA.match(p.name) for p in base.iterdir()):
+        return vazio
+    dataset = ds.dataset(
+        str(base),
+        format="parquet",
+        schema=_schema_arrow_ponte(),
+        partitioning=_particionamento_hive(),
+    )
+    tabela = dataset.to_table(filter=_filtro_de_particao(semanas=semanas, fontes=fontes))
+    df = tabela.to_pandas(types_mapper=_TIPO_PANDAS_POR_ARROW.get)
+    out = df[colunas].reset_index(drop=True)
+    for coluna, dtype in CONTRATO_COLUNAS_PONTE.items():
+        out[coluna] = out[coluna].astype(dtype)
+    return out
+
+
 # Tradução dtype do contrato -> tipo Arrow, e a volta. Uma tabela só, para que a ida e a volta
 # não possam divergir (o `types_mapper` do `to_pandas` é a inversa desta).
 _TIPO_ARROW_POR_DTYPE: dict[str, pa.DataType] = {
@@ -885,6 +1012,12 @@ _TIPO_PANDAS_POR_ARROW: dict[pa.DataType, object] = {
     pa.float64(): pd.Float64Dtype(),
     pa.int64(): pd.Int64Dtype(),
 }
+
+
+def _schema_arrow_ponte() -> pa.Schema:
+    """Schema Arrow da ponte de identidade + a coluna de partição `semana`."""
+    campos = [(col, _TIPO_ARROW_POR_DTYPE[dtype]) for col, dtype in CONTRATO_COLUNAS_PONTE.items()]
+    return pa.schema([*campos, ("semana", pa.string())])
 
 
 def _schema_arrow_snapshot() -> pa.Schema:
@@ -903,6 +1036,67 @@ def _frame_snapshot_vazio(com_semana: bool = True) -> pd.DataFrame:
     if com_semana:
         dados["semana"] = pd.Series(dtype="string")
     return pd.DataFrame(dados)
+
+
+def _filtro_de_particao(
+    *, semanas: Sequence[str] | None, fontes: Sequence[str] | None
+) -> ds.Expression | None:
+    """Recorte de `semanas`/`fontes` como expressão de PARTIÇÃO (`None` = ler tudo).
+
+    Existe separada para que o filtro seja escrito UMA vez: a leitura recortada é o que sustenta a
+    retenção integral da DEC-064, e um segundo lugar que recortasse em pandas reintroduziria o pico
+    de memória sem que nenhum teste ficasse vermelho.
+    """
+    partes: list[ds.Expression] = []
+    if semanas is not None:
+        partes.append(ds.field("semana").isin(sorted({str(s) for s in semanas})))
+    if fontes is not None:
+        partes.append(ds.field("fonte").isin(sorted({str(f) for f in fontes})))
+    if not partes:
+        return None
+    filtro = partes[0]
+    for parte in partes[1:]:
+        filtro = filtro & parte
+    return filtro
+
+
+def listar_particoes(base_dir: Path = SNAPSHOTS_DIR_DEFAULT) -> dict[str, list[str]]:
+    """`{fonte: [semanas ISO ordenadas]}` pela LISTAGEM de diretórios — **não abre um parquet**.
+
+    É a leitura de METADADO que a DEC-064 (D5) exige para a estreia e para a observabilidade. Com
+    a leitura da série recortada, "a primeira semana desta fonte" **não pode** sair do frame lido:
+    sairia a borda da janela, e o defeito corrigido no PR #383 voltaria por outro caminho — lá, a
+    estreia por SÉRIE em vez de por FONTE fez 22.877 chaves do WellHub passarem por recém-chegadas,
+    contra 327 reais.
+
+    **Partição LEGADA (1 chave) é invisível aqui**, e é uma consequência declarada, não um
+    descuido: no layout antigo a `fonte` vive DENTRO do arquivo, então nomear a fonte exigiria
+    abrir o parquet — exatamente o que esta função existe para não fazer. Quem enxerga o legado é
+    `diagnosticar_layout_particoes`, e `escrever_particao_semana` já recusa gravar por cima dele.
+    """
+    base = Path(base_dir)
+    if not base.exists():
+        return {}
+    por_fonte: dict[str, list[str]] = {}
+    for filho in sorted(base.iterdir()):
+        casa = _RE_DIR_SEMANA.match(filho.name)
+        if not casa or not filho.is_dir():
+            continue
+        semana = casa.group(1)
+        for neto in sorted(filho.iterdir()):
+            casa_fonte = _RE_DIR_FONTE.match(neto.name)
+            if not casa_fonte or not neto.is_dir():
+                continue
+            por_fonte.setdefault(casa_fonte.group(1), []).append(semana)
+    return {fonte: sorted(set(semanas)) for fonte, semanas in sorted(por_fonte.items())}
+
+
+def primeira_semana_por_fonte(base_dir: Path = SNAPSHOTS_DIR_DEFAULT) -> dict[str, str]:
+    """`{fonte: primeira semana ISO da fonte}` — a ESTREIA, pela listagem (DEC-064, D5).
+
+    Derivada de `listar_particoes` e não do frame lido: ver lá por que a distinção importa.
+    """
+    return {fonte: semanas[0] for fonte, semanas in listar_particoes(base_dir).items() if semanas}
 
 
 def ler_snapshots(
@@ -940,8 +1134,15 @@ def ler_snapshots(
     schema declarado, o pyarrow preenche o que falta **por arquivo**, que é a semântica certa. É
     por ele que uma partição `v3` (sem `fontes_lidas`) segue legível, saindo com a coluna nula.
 
-    `fontes` recorta a série pelas fontes pedidas, no mesmo molde de `semanas` (filtro depois do
-    `to_pandas`). Existe para impor POR CÓDIGO a fronteira com o BLK-MA-20 (DEC-039, D9): a
+    **O recorte é aplicado na VARREDURA, não depois dela `[DEC-064]`.** `semanas=`/`fontes=` viram
+    filtro de PARTIÇÃO (`ds.field(...).isin(...)` passado ao `to_table`), então o pyarrow só abre
+    as folhas pedidas. Antes o filtro era em pandas DEPOIS do `to_pandas`, ou seja, a série inteira
+    subia para a memória para ser jogada fora em seguida — os ~70,5 MB de RSS por semana retida
+    medidos no D5 da DEC-039, que são exatamente o custo que fazia a retenção precisar de teto. O
+    resultado é idêntico; o que muda é o pico de memória, e é ele que sustenta o D1.
+
+    `fontes` recorta a série pelas fontes pedidas, no mesmo molde de `semanas`. Existe para impor
+    POR CÓDIGO a fronteira com o BLK-MA-20 (DEC-039, D9): a
     partição do `totalpass` passa a ser GRAVADA desde a primeira semana — para o cronômetro de
     `MIN_SEMANAS` começar a correr —, mas o consumo dela pelo score espera a calibração da dedup
     TP x WH, que hoje está arbitrada. Prosa não impediria: a cadeia inteira roda com as duas fontes
@@ -971,13 +1172,8 @@ def ler_snapshots(
         schema=_schema_arrow_snapshot(),
         partitioning=_particionamento_hive(),
     )
-    tabela = dataset.to_table()
+    tabela = dataset.to_table(filter=_filtro_de_particao(semanas=semanas, fontes=fontes))
     df = tabela.to_pandas(types_mapper=_TIPO_PANDAS_POR_ARROW.get)
-    if semanas is not None:
-        alvo = {str(s) for s in semanas}
-        df = df[df["semana"].astype(str).isin(alvo)]
-    if fontes is not None:
-        df = df[df["fonte"].astype(str).isin({str(f) for f in fontes})]
     colunas = list(CONTRATO_COLUNAS_SNAPSHOT.keys()) + ["semana"]
     for coluna in colunas:
         if coluna not in df.columns:
@@ -1201,6 +1397,128 @@ def migrar_layout_particoes(
     return migradas
 
 
+def migrar_chave_churn(
+    base_dir: Path = SNAPSHOTS_DIR_DEFAULT,
+    *,
+    semana: str,
+    dir_unidades: Path = DIR_UNIDADES_DEFAULT,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Re-chaveia a folha `semana=<S>/fonte=unidades` do `v4` para o `v5` `[DEC-063]`.
+
+    **Por que uma migração, e não simplesmente deixar a chave nova entrar na próxima semana.** A
+    chave é a identidade da academia na série: trocá-la sem migrar dá chave NOVA a todas as
+    unidades de cadeia, e `concorrentes_novos` (`web/server/rede_inteligencia.py`) define "nova"
+    como *primeira semana da chave != primeira semana da série*. Como a primeira semana das chaves
+    novas seria a da troca, **toda academia de cadeia do país apareceria como "concorrente novo"**
+    no pin da Visão Executiva, por `SEMANAS_CONCORRENTE_NOVO = 8` semanas. O relógio de maturidade
+    (`MIN_SEMANAS`, contado POR CHAVE) também reiniciaria.
+
+    **O preimage existe porque o feed guarda o que o snapshot não guarda.** O snapshot não persiste
+    `nome` (anti-PII, DEC-012), então a chave `v4` de uma partição gravada não é recomputável a
+    partir dela mesma. É recomputável a partir do CSV que a gerou: esta função refaz
+    `ler_feeds -> limpar_ruido -> derivar_chave` (o mesmo caminho de `coordenadas_por_chave`, nunca
+    uma segunda redação dele), obtém a chave `v5` e calcula a `v4` com `chave_hash_estavel_v4`
+    sobre as MESMAS linhas sobreviventes. Medido antes de escrever uma linha: a `v4` recomputada
+    reproduz **4.495 de 4.495** chaves em `2026-31` e **4.610 de 4.610** em `2026-36`, com zero
+    órfãs dos dois lados.
+
+    **FALHA FECHADO.** Se qualquer chave da partição não casar com o feed — ou vice-versa —, nada é
+    gravado. Um mapa parcial é pior que nenhum: as linhas não mapeadas ficariam com a chave antiga
+    ao lado das novas, que é o defeito de identidade em massa que a migração existe para evitar.
+    Partição que já está em `v5` é **no-op** (idempotente); versão desconhecida **aborta**.
+
+    Só a folha `fonte=unidades` é tocada. As outras fontes usam `chave_do_slug`, que a DEC-063 não
+    muda, e `escrever_particao_semana` substitui apenas as folhas presentes no frame.
+
+    `dry_run=True` não toca o disco: devolve as contagens do cruzamento para conferência.
+    """
+    if not isinstance(semana, str) or not RE_SEMANA.match(semana):
+        raise ValueError("migrar_chave_churn exige `semana` no formato ISO AAAA-SS")
+
+    persistido = ler_snapshots(base_dir, semanas=[semana], fontes=["unidades"])
+    if persistido.empty:
+        _logger.warning("semana=%s nao tem folha `fonte=unidades`: nada a migrar", semana)
+        return {"semana": semana, "linhas": 0, "migradas": 0, "dry_run": bool(dry_run)}
+
+    versoes = sorted({str(v) for v in persistido["versao_contrato"]})
+    if versoes == [VERSAO_CONTRATO_SNAPSHOT]:
+        _logger.info("semana=%s ja' esta em %s: no-op", semana, VERSAO_CONTRATO_SNAPSHOT)
+        return {
+            "semana": semana,
+            "linhas": int(len(persistido)),
+            "migradas": 0,
+            "ja_migrada": True,
+            "dry_run": bool(dry_run),
+        }
+    if versoes != [VERSAO_CONTRATO_SNAPSHOT_V4]:
+        raise ValueError(
+            f"semana={semana} tem versao_contrato {versoes}; esta migracao so' converte "
+            f"{VERSAO_CONTRATO_SNAPSHOT_V4} -> {VERSAO_CONTRATO_SNAPSHOT}"
+        )
+
+    # O MESMO caminho de `coordenadas_por_chave`: ler -> limpar -> derivar. Reusar (em vez de
+    # reimplementar) e' o que garante que as linhas sobreviventes aqui sejam as mesmas que
+    # `materializar` gravou — qualquer divergencia de filtro apareceria como orfa no cruzamento
+    # abaixo, e a guarda de fail-closed a transformaria em recusa, nunca em mapa parcial.
+    bruto = ler_feeds(dir_unidades=dir_unidades, fontes=["unidades"])
+    if bruto.empty:
+        raise ValueError(
+            f"o feed em {dir_unidades} nao tem linha nenhuma: sem ele nao ha como recomputar a "
+            "chave v4 (o snapshot nao guarda `nome`)"
+        )
+    limpo, _auditoria = limpar_ruido(bruto)
+    com_chave = derivar_chave(limpo)
+
+    de_para: dict[str, str] = {}
+    for fonte, rede, nome, hex7, nova in zip(
+        com_chave["fonte"],
+        com_chave["rede"],
+        com_chave["nome"],
+        com_chave["hex_id_res7"],
+        com_chave["chave_snapshot"],
+        strict=False,
+    ):
+        de_para[chave_hash_estavel_v4(fonte, rede, nome, hex7)] = str(nova)
+
+    no_disco = {str(k) for k in persistido["chave_snapshot"]}
+    sem_origem = sorted(no_disco - set(de_para))
+    if sem_origem:
+        raise ValueError(
+            f"semana={semana}: {len(sem_origem)} chave(s) do disco NAO foram reproduzidas pelo "
+            f"feed em {dir_unidades} (amostra: {sem_origem[:5]}). O feed nao e' o que gerou esta "
+            "particao; nada foi gravado (um mapa parcial deixaria chaves antigas e novas lado a "
+            "lado, que e' o dano que esta migracao existe para evitar)"
+        )
+
+    destinos = [de_para[str(k)] for k in persistido["chave_snapshot"]]
+    if len(set(destinos)) != len(destinos):
+        raise ValueError(
+            f"semana={semana}: a chave v5 COLAPSARIA linhas distintas desta particao "
+            f"({len(destinos) - len(set(destinos))} colisao(oes)); nada foi gravado"
+        )
+
+    resultado: dict[str, object] = {
+        "semana": semana,
+        "linhas": int(len(persistido)),
+        "migradas": int(len(destinos)),
+        "chaves_no_feed": int(len(de_para)),
+        "dry_run": bool(dry_run),
+    }
+    if dry_run:
+        _logger.info("DRY-RUN da migracao de chave: %s", resultado)
+        return resultado
+
+    novo = persistido.copy()
+    novo["chave_snapshot"] = pd.Series(destinos, index=novo.index, dtype="string")
+    novo["versao_contrato"] = pd.Series(
+        [VERSAO_CONTRATO_SNAPSHOT] * len(novo), index=novo.index, dtype="string"
+    )
+    escrever_particao_semana(novo, base_dir, semana=semana)
+    _logger.info("chave migrada v4 -> v5: %s", resultado)
+    return resultado
+
+
 # --------------------------------------------------------------------------- #
 # 6.1 Guarda de coleta PARCIAL (fronteira de publicação)
 # --------------------------------------------------------------------------- #
@@ -1240,6 +1558,11 @@ def avaliar_coleta_parcial(
     cadências próprias e universos de tamanho diferente; cruzar fontes inventaria queda onde só há
     calendário. Fonte que estreia não tem referência e **passa** — a guarda mede queda, não tamanho.
 
+    **Lê UMA semana, não a série `[DEC-064]`.** A referência sai de `listar_particoes` (metadado,
+    sem abrir parquet) e só a folha `(ref, fonte)` é carregada. Antes a guarda chamava
+    `ler_snapshots(base_dir)` inteiro para usar uma única semana de cada fonte — sob retenção
+    integral seria ELA o gargalo de memória do pacote, como a própria DEC-064 declarou.
+
     É a ÚNICA leitura de semanas anteriores fora da poda, e ela é deliberada: a fronteira declarada
     no topo do módulo ("o materializador nunca olha semanas anteriores") existia para o CÁLCULO do
     snapshot, que segue intacto — aqui não se deriva nada, só se decide publicar.
@@ -1252,10 +1575,10 @@ def avaliar_coleta_parcial(
     # legível ela APROVA e carimba o erro, que é a direção segura: perder a checagem de uma semana
     # custa menos que perder a semana.
     try:
-        serie = ler_snapshots(base_dir)
+        semanas_por_fonte = listar_particoes(base_dir)
         erro_leitura: str | None = None
     except Exception as exc:  # noqa: BLE001 — qualquer falha de leitura degrada, nunca bloqueia
-        serie = _frame_snapshot_vazio()
+        semanas_por_fonte = {}
         erro_leitura = f"{type(exc).__name__}: {exc}"
         _logger.error("guarda de coleta parcial sem referencia (serie ilegivel): %s", erro_leitura)
 
@@ -1264,18 +1587,31 @@ def avaliar_coleta_parcial(
 
     for fonte in sorted(set(snapshot["fonte"].astype(str))) if not snapshot.empty else []:
         atual = snapshot[snapshot["fonte"].astype(str) == fonte]
-        anteriores = (
-            sorted({s for s in serie.loc[serie["fonte"].astype(str) == fonte, "semana"].astype(str) if s < semana})
-            if not serie.empty
-            else []
-        )
+        anteriores = [s for s in semanas_por_fonte.get(fonte, []) if s < semana]
         if not anteriores:
             por_fonte[fonte] = {"semana_anterior": None, "unidades_antes": None,
                                 "unidades_agora": int(len(atual)), "queda_pct": None, "redes_que_desabaram": []}
             continue
 
         ref = anteriores[-1]
-        antes = serie[(serie["fonte"].astype(str) == fonte) & (serie["semana"].astype(str) == ref)]
+        try:
+            antes = ler_snapshots(base_dir, semanas=[ref], fontes=[fonte])
+        except Exception as exc:  # noqa: BLE001 — mesma degradacao do bloco acima, por fonte
+            erro_leitura = f"{type(exc).__name__}: {exc}"
+            _logger.error(
+                "guarda sem referencia para fonte=%s (semana %s ilegivel): %s",
+                fonte,
+                ref,
+                erro_leitura,
+            )
+            por_fonte[fonte] = {
+                "semana_anterior": None,
+                "unidades_antes": None,
+                "unidades_agora": int(len(atual)),
+                "queda_pct": None,
+                "redes_que_desabaram": [],
+            }
+            continue
         n_antes, n_agora = int(len(antes)), int(len(atual))
         queda_pct = 100.0 * (n_antes - n_agora) / n_antes if n_antes else 0.0
 
@@ -1323,6 +1659,7 @@ def materializar(
     data_referencia: date | None = None,
     *,
     escrever: bool = True,
+    ponte_dir: Path | None = None,
     taxa_slug_persistente: float | None = None,
     politica_chave: str = "auto",
     fontes: Sequence[str] | None = None,
@@ -1381,6 +1718,17 @@ def materializar(
     if publicar:
         destino = escrever_particao_semana(snapshot, base_dir, semana=semana)
         _logger.info("snapshot semanal escrito: %s (%d linhas)", destino, len(snapshot))
+        # Ponte de identidade (DEC-064, D3), do frame de TRABALHO — `com_chave`, não `snapshot`:
+        # aqui `nome`/`latitude`/`longitude` ainda existem. Gravada sob a MESMA condição do
+        # snapshot (`publicar`), para que as duas árvores nunca discordem sobre quais semanas
+        # existem: uma ponte de uma semana que a guarda de coleta parcial REPROVOU descreveria
+        # chaves que a série não tem.
+        ponte = montar_ponte_identidade(com_chave)
+        destino_ponte = escrever_ponte_identidade(
+            ponte, ponte_dir_de(base_dir, ponte_dir), semana=semana
+        )
+        auditoria["linhas_ponte"] = int(len(ponte))
+        _logger.info("ponte de identidade escrita: %s (%d linhas)", destino_ponte, len(ponte))
     return snapshot, auditoria
 
 
@@ -1390,8 +1738,12 @@ def executar(
     dir_unidades: Path = DIR_UNIDADES_DEFAULT,
     base_dir: Path = SNAPSHOTS_DIR_DEFAULT,
     data_referencia: date | None = None,
-    retencao_semanas: int = RETENCAO_SEMANAS,
+    retencao_semanas: int = RETENCAO_TUDO,
     dry_run: bool = False,
+    ponte_dir: Path | None = None,
+    estado_dir: Path | None = None,
+    atualizar_estado: bool = True,
+    reprocessar_estado: bool = False,
     fontes: Sequence[str] | None = None,
     forcar: bool = False,
 ) -> dict[str, object]:
@@ -1401,9 +1753,25 @@ def executar(
     2026-07-29), **depois** do passo de coleta — o snapshot tem de ser tirado DENTRO da execução do
     runner porque os CSVs crus são sobrescritos a cada coleta. **Único** lugar que poda.
 
-    `dry_run=True` roda o caminho inteiro e **não toca disco**: nada é gravado e **nada é podado**.
-    Existe porque este é o unico ponto do pacote que APAGA arquivo, e um cron novo precisa poder ser
-    validado antes de rodar para valer (BLK-MA-02-FU1, m6).
+    **A poda NÃO roda em regime desde a DEC-064 (D1).** O default de `retencao_semanas` é
+    `RETENCAO_TUDO`, e sob ela `podar_snapshots` nem é consultada — a série inteira fica, que é o
+    que torna `--reprocessar` possível. Passar qualquer valor `>= 1` reativa a poda keep-newest-N;
+    é assim que ela segue disponível como ato MANUAL, com a invariante `>= 1` intacta do outro lado.
+
+    **O estado incremental de churn é atualizado AQUI `[DEC-064, D2]`**, logo depois da publicação e
+    sob a MESMA condição dela: semana que a guarda de coleta parcial recusou não entra no estado,
+    senão o acumulador herdaria a foto quebrada que a DEC-061 existe para barrar — e, ao contrário
+    da série, um acumulador não se conserta apagando uma partição.
+
+    Ligado **por dentro**, com `atualizar_estado=True` por default, e não por um passo novo no
+    wrapper do cron. A razão é a lição mais cara deste epic: sempre que o shell e o código
+    precisaram concordar sobre alguma coisa (o recorte de fontes, o valor da retenção, o filtro de
+    path da imagem), eles divergiram em silêncio. Aqui não há o que divergir — quem grava a
+    partição atualiza o estado, no mesmo processo e na mesma decisão.
+
+    `dry_run=True` roda o caminho inteiro e **não toca disco**: nada é gravado, **nada é podado** e
+    o estado **não** é atualizado. Existe porque este é o unico ponto do pacote que APAGA arquivo, e
+    um cron novo precisa poder ser validado antes de rodar para valer (BLK-MA-02-FU1, m6).
 
     A auditoria carrega `retencao_semanas` e `versao_contrato` `[BLK-MA-21]`. Não é cosmético: é a
     única forma de um `DRY_RUN` na VPS provar **qual imagem está rodando** antes de agendar. Uma
@@ -1411,13 +1779,14 @@ def executar(
     "código publicado != camada no ar" veio de exatamente esse tipo de suposição não verificada.
     Nenhum dos dois campos toca o parquet, logo nenhum exige bump.
     """
-    _snapshot, auditoria = materializar(
+    snapshot, auditoria = materializar(
         dir_totalpass,
         dir_wellhub,
         dir_unidades,
         base_dir,
         data_referencia,
         escrever=not dry_run,
+        ponte_dir=ponte_dir,
         fontes=fontes,
         forcar=forcar,
     )
@@ -1431,9 +1800,32 @@ def executar(
         return auditoria
     auditoria["dry_run"] = False
     if not auditoria.get("publicado", True):
-        # Nada foi gravado: podar aqui encurtaria a serie BOA por causa de uma semana que nem entrou.
+        # Nada foi gravado: podar aqui encurtaria a serie BOA por causa de uma semana que nem entrou,
+        # e atualizar o estado o contaminaria com a foto que a guarda acabou de RECUSAR.
         auditoria["semanas_removidas"] = 0
-        _logger.error("nada publicado (coleta parcial): retencao NAO aplicada")
+        auditoria["estado_churn"] = None
+        _logger.error("nada publicado (coleta parcial): retencao e estado NAO aplicados")
+        return auditoria
+
+    # Estado incremental de churn `[DEC-064, D2]`. Import LOCAL de proposito: `churn_estado` importa
+    # `snapshots`, e um import de topo fecharia o ciclo.
+    if atualizar_estado:
+        from .churn_estado import atualizar as _atualizar_estado
+
+        auditoria["estado_churn"] = _atualizar_estado(
+            snapshot,
+            base_dir,
+            semana=str(auditoria["semana"]),
+            estado_dir=estado_dir,
+            reprocessar_tudo=reprocessar_estado,
+        )
+    else:
+        auditoria["estado_churn"] = None
+    if int(retencao_semanas) <= RETENCAO_TUDO:
+        # Regime normal desde a DEC-064 (D1): a serie inteira fica. A poda NAO e' consultada, e a
+        # invariante `>= 1` de `podar_snapshots` segue intacta porque a sentinela nunca chega la'.
+        auditoria["semanas_removidas"] = 0
+        _logger.info("retencao integral (DEC-064): nenhuma semana podada")
         return auditoria
     removidas = podar_snapshots(base_dir, retencao_semanas)
     auditoria["semanas_removidas"] = len(removidas)
@@ -1460,6 +1852,43 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="raiz das particoes `semana=AAAA-SS` (grava E poda aqui)",
     )
     p.add_argument(
+        "--ponte-dir",
+        type=Path,
+        default=None,
+        help=(
+            "raiz da ponte de identidade `chave -> nome/lat/lng` (DEC-064). Artefato NOMEADO e "
+            "gitignored, arvore IRMA da serie -- nunca dentro dela. Default: derivado do "
+            f"`--base-dir` (irmao de nome `{PONTE_DIR_DEFAULT.name}`), para a ponte acompanhar "
+            "a serie mesmo quando ela nao esta' no caminho de producao"
+        ),
+    )
+    p.add_argument(
+        "--estado-dir",
+        type=Path,
+        default=None,
+        help=(
+            "raiz do estado incremental de churn (DEC-064 D2). Default: derivado do `--base-dir`, "
+            "para o estado acompanhar a serie que ele descreve"
+        ),
+    )
+    p.add_argument(
+        "--sem-estado",
+        action="store_true",
+        help=(
+            "NAO atualiza o estado incremental de churn apos publicar. Escotilha para uma execucao "
+            "de emergencia; em regime o estado tem de acompanhar a serie"
+        ),
+    )
+    p.add_argument(
+        "--reprocessar",
+        action="store_true",
+        help=(
+            "reconstroi o estado de churn do ZERO a partir da serie retida, uma semana por vez, "
+            "em vez de aplicar so' a semana corrente (DEC-064 D2). E' o caminho de reposicao da "
+            "consistencia: use depois de mudar a regra do acumulador ou se uma semana foi perdida"
+        ),
+    )
+    p.add_argument(
         "--data-referencia",
         type=date.fromisoformat,
         default=None,
@@ -1468,8 +1897,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--retencao-semanas",
         type=int,
-        default=RETENCAO_SEMANAS,
-        help=f"semanas mantidas em disco (default {RETENCAO_SEMANAS})",
+        default=RETENCAO_TUDO,
+        help=(
+            f"semanas mantidas em disco. Default {RETENCAO_TUDO} = RETER TUDO, sem podar "
+            f"(DEC-064). Qualquer valor >= 1 reativa a poda keep-newest-N; o piso medido e' "
+            f"{RETENCAO_SEMANAS}, nunca abaixo dele"
+        ),
     )
     p.add_argument(
         "--dry-run",
@@ -1484,6 +1917,21 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "(`semana=X/fonte=Y/`) e SAI, sem materializar nada. Com `--dry-run` DIAGNOSTICA: "
             "lista as migraveis e TODAS as ambiguas, sem levantar e sem tocar o disco"
         ),
+    )
+    p.add_argument(
+        "--migrar-chave-v5",
+        action="store_true",
+        help=(
+            "re-chaveia a folha `fonte=unidades` de UMA semana do contrato v4 para o v5 (DEC-063) "
+            "e SAI, sem materializar nada. Exige `--semana` e um `--dir-unidades` que seja o feed "
+            "QUE GEROU aquela semana. Falha FECHADO: chave do disco que o feed nao reproduza "
+            "aborta a migracao sem gravar. Com `--dry-run`, so' cruza e reporta"
+        ),
+    )
+    p.add_argument(
+        "--semana",
+        default=None,
+        help="semana ISO AAAA-SS alvo de `--migrar-chave-v5` (uma por execucao)",
     )
     p.add_argument(
         "--forcar",
@@ -1529,11 +1977,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         migradas = migrar_layout_particoes(args.base_dir)
         print({"migrar_layout": migradas, "ambiguas": [], "dry_run": False})
         return 0
+    if args.migrar_chave_v5:
+        # Mesmo princípio do `--migrar-layout`: ANTES de `executar()` e sem materializar nada. A
+        # migração é um ato próprio; misturá-la a uma coleta faria a reescrita da série viajar de
+        # carona numa execução de rotina.
+        if not args.semana:
+            print({"erro": "--migrar-chave-v5 exige --semana AAAA-SS"})
+            return 2
+        resultado = migrar_chave_churn(
+            args.base_dir,
+            semana=args.semana,
+            dir_unidades=args.dir_unidades,
+            dry_run=bool(args.dry_run),
+        )
+        print(resultado)
+        return 0
     auditoria = executar(
         dir_totalpass=args.dir_totalpass,
         dir_wellhub=args.dir_wellhub,
         dir_unidades=args.dir_unidades,
         base_dir=args.base_dir,
+        ponte_dir=args.ponte_dir,
+        estado_dir=args.estado_dir,
+        atualizar_estado=not args.sem_estado,
+        reprocessar_estado=bool(args.reprocessar),
         data_referencia=args.data_referencia,
         retencao_semanas=args.retencao_semanas,
         dry_run=args.dry_run,
@@ -1565,6 +2032,13 @@ __all__ = [
     "avaliar_coleta_parcial",
     "escrever_particao_semana",
     "ler_snapshots",
+    "listar_particoes",
+    "primeira_semana_por_fonte",
+    "montar_ponte_identidade",
+    "escrever_ponte_identidade",
+    "ler_ponte_identidade",
+    "ponte_dir_de",
+    "PONTE_DIR_DEFAULT",
     "podar_snapshots",
     "diagnosticar_layout_particoes",
     "migrar_layout_particoes",

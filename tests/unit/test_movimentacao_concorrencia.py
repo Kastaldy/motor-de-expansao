@@ -95,6 +95,50 @@ def test_resumo_por_rede_soma_saldo_e_separa_o_conferido_e_agregador_fica_a_part
     assert mov.resumo_por_rede(None) == [] and mov.resumo_agregadores(None) == []
 
 
+def test_saida_e_entrada_no_mesmo_ponto_sao_renomeacao_e_nao_movimento():
+    """A Braves renomeou 7 unidades de uma vez e a ficha leu 7 saidas + 7 entradas (18/09)."""
+    def linha(tipo, nome, lat, lng):
+        return {"fonte": "wellhub", "tipo": tipo, "confianca": "alta", "rede": None,
+                "nome": nome, "lat": lat, "lng": lng, "de": "2026-09-05", "ate": "2026-09-12"}
+
+    quadro = pd.DataFrame(
+        [
+            linha("saiu_agregador", "Braves Gym Club - Uberlandia", -18.912412, -48.266396),
+            linha("entrou_agregador", "Braves - Uberlandia", -18.912412, -48.266396),  # MESMO ponto
+            linha("saiu_agregador", "Fechou de verdade", -23.5, -46.6),
+            linha("entrou_agregador", "Entrou de verdade", -22.9, -43.2),
+        ]
+    )
+    saida = mov.descartar_trocas_de_nome_no_agregador(quadro)
+    assert sorted(saida["nome"]) == ["Entrou de verdade", "Fechou de verdade"]
+    # periodos diferentes nao casam: so' se descarta o par da MESMA foto
+    outro = quadro.copy()
+    outro.loc[1, "de"] = "2026-08-01"
+    assert len(mov.descartar_trocas_de_nome_no_agregador(outro)) == 4
+
+
+def test_operador_novo_no_mesmo_endereco_nao_e_renomeacao():
+    """Coordenada igual NAO basta: oito dos 38 pares medidos em 18/09 eram troca de dono.
+
+    "Baby Gym Paulinia" -> "Brinca e Voa" no mesmo ponto e' mercado se mexendo. So' cai o
+    par que divide um termo PROPRIO — e "academia" nao conta, senao qualquer vizinho casaria.
+    """
+    def linha(tipo, nome):
+        return {"fonte": "wellhub", "tipo": tipo, "confianca": "alta", "rede": None,
+                "nome": nome, "lat": -23.0, "lng": -46.0, "de": "2026-09-05", "ate": "2026-09-12"}
+
+    trocou_de_dono = pd.DataFrame([linha("saiu_agregador", "Academia Total Force"), linha("entrou_agregador", "JF7 Fitness")])
+    assert len(mov.descartar_trocas_de_nome_no_agregador(trocou_de_dono)) == 2
+
+    # so' o generico em comum tambem nao basta
+    generico = pd.DataFrame([linha("saiu_agregador", "Ultra Academia - Centro"), linha("entrou_agregador", "Academia Nova")])
+    assert len(mov.descartar_trocas_de_nome_no_agregador(generico)) == 2
+
+    # termo proprio em comum, mesmo com o resto do nome diferente: e' renomeacao
+    renomeou = pd.DataFrame([linha("saiu_agregador", "Academia DNA - Vilhena"), linha("entrou_agregador", "DNA ACADEMIA")])
+    assert len(mov.descartar_trocas_de_nome_no_agregador(renomeou)) == 0
+
+
 def test_contagem_oficial_para_no_fim_validado_e_nao_na_foto_corrompida():
     tabela = pd.DataFrame({"rede": ["selfit", "nova"], "2026-08-30": [230, None], "2026-09-06": [231, 5], "2026-09-13": [119, 5]})
     c = mov.contagem_oficial(tabela, "2026-09-06")
@@ -104,3 +148,17 @@ def test_contagem_oficial_para_no_fim_validado_e_nao_na_foto_corrompida():
     ]
     assert mov.contagem_oficial(tabela, "2026-09-01")["unidades"].tolist() == [230]
     assert mov.contagem_oficial(tabela, "2026-01-01").empty
+
+
+def test_rede_mapeada_sem_movimentacao_entra_zerada_e_estudio_fica_fora():
+    """A tabela carrega o TAMANHO do mercado, nao so' quem se mexeu (Felipe, 17/09)."""
+    redes = [{"rede": "pratique", "aberturas": 2, "fechamentos": 0, "saldo": 2, "em_breve": 0, "unidades": 184}]
+    totais = {"pratique": 184, "smart_fit": 1000, "cia_athletica": 19, "velocity": 125, "ultra": 92}
+    saida = mov.incluir_redes_sem_movimentacao(redes, totais, excluir={"velocity"})
+    # as paradas vem depois das que se mexeram, da maior para a menor; estudio e Ultra fora
+    assert [r["rede"] for r in saida] == ["pratique", "smart_fit", "cia_athletica"]
+    parada = saida[1]
+    assert (parada["unidades"], parada["aberturas"], parada["fechamentos"], parada["saldo"]) == (1000, 0, 0, 0)
+    assert parada["aberturas_conferidas"] == 0 and parada["em_breve"] == 0
+    # sem contagem nenhuma, a lista original volta intacta
+    assert mov.incluir_redes_sem_movimentacao(redes, {}) == redes

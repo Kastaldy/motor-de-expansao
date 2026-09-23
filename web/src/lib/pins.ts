@@ -1,4 +1,4 @@
-import type { Pin } from './types'
+import type { Pin, Pins } from './types'
 
 /* ---------------------------------------------------------------------------
    Regras de leitura dos pinos de concorrente.
@@ -107,4 +107,46 @@ export function svgMolduraAlunos(cor: string, opacidade = 1): string {
         `</svg>`,
     )
   )
+}
+
+/* ---------------------------------------------------------------------------
+   Chave "Academias de rede" do painel de camadas (Juan, 2026-09-23).
+
+   As bandeiras das CADEIAS (Smart Fit, SkyFit, Bluefit...) sempre estiveram no
+   mapa sem chave nenhuma — e continuam: a chave nasce LIGADA. O que ela da' ao
+   operador e' o gesto inverso, que nao existia: apagar as ~4,5 mil bandeiras
+   para ler o territorio (ou as independentes) por baixo delas, como ja' se faz
+   com as outras camadas de ponto.
+
+   A chave esconde BANDEIRA, nao tira concorrente da conta: raio de 1 km,
+   contagens da ficha e do cenario e o slide da comparacao continuam lendo os
+   pins de origem. Por isso `pinsVisiveis` nunca muta o objeto recebido.
+   --------------------------------------------------------------------------- */
+
+/**
+ * A chave nasce ligada. Constante exportada (e testada) em vez de um `true`
+ * solto no `useState`: numero ou padrao escrito em comentario envelhece calado.
+ */
+export const REDES_LIGADAS_POR_PADRAO = true
+
+/**
+ * Os pins que o mapa DESENHA, dada a chave das redes.
+ *
+ * Ligada, devolve o MESMO objeto — identidade importa: `pins` e' dependencia de
+ * memos e `updateTriggers` no `HexMap`, e uma copia igual a cada render forcaria
+ * re-pack do atlas de icones sem nada ter mudado. Apagada, zera so' `concorrentes`
+ * e preserva Ultra, icones e as demais chaves: a unidade propria nao e' cadeia
+ * concorrente, e apaga-la junto responderia a outra pergunta.
+ */
+export function pinsVisiveis(pins: Pins | undefined, verRedes: boolean): Pins | undefined {
+  if (!pins || verRedes) return pins
+  return { ...pins, concorrentes: [] }
+}
+
+/**
+ * A linha de baixo da chave, no idioma das outras: apagada diz o que ha' para
+ * ver ("318 no recorte"), acesa diz o que esta' na tela ("318 · visível").
+ */
+export function subDaChaveRedes(n: number, ligado: boolean): string {
+  return ligado ? `${n} · visível` : `${n} no recorte`
 }

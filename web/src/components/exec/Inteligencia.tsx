@@ -156,7 +156,6 @@ export function PorTrasDosNumeros({
     <>
       <PracaExecucao dados={dados} maduras={maduras} onMaduras={onMaduras} onUnidade={onUnidade} />
       <Rampa dados={dados} onUnidade={onUnidade} />
-      <SinaisAntecedentes dados={dados} onUnidade={onUnidade} />
       <RiscoRetencao dados={dados} onUnidade={onUnidade} />
       <MovimentacaoConcorrencia dados={dados} />
     </>
@@ -542,7 +541,8 @@ function Rampa({ dados, onUnidade }: { dados: RedeInteligencia; onUnidade: (id: 
   )
 }
 
-/* ========================== SINAIS ANTECEDENTES ========================== */
+/* ===== SINAIS ANTECEDENTES (so' a celula: o card saiu da Executiva em 16/09;
+   a FICHA da unidade segue mostrando os sinais da propria unidade) ===== */
 
 export function CelulaSinal({ sinal }: { sinal: RedeSinal | undefined }) {
   if (!sinal || sinal.valor === null) return <span style={{ color: 'var(--tx-muted)' }}>—</span>
@@ -555,77 +555,6 @@ export function CelulaSinal({ sinal }: { sinal: RedeSinal | undefined }) {
     >
       {texto}
     </span>
-  )
-}
-
-function SinaisAntecedentes({ dados, onUnidade }: { dados: RedeInteligencia; onUnidade: (id: string) => void }) {
-  const { unidades, avaliadas, definicoes } = dados.sinais
-  const chaves = Object.keys(definicoes)
-  // O limiar do quartil é o MESMO para todas as unidades do mês: basta ler de uma.
-  const referencia = unidades[0]?.sinais ?? []
-  return (
-    <Glass style={CARD}>
-      <Titulo>Sinais antes do churn</Titulo>
-      <Lide>
-        Três números que costumam piorar <strong style={{ color: 'var(--tx-strong)' }}>antes</strong> do churn. Em vermelho, a
-        unidade está entre as 25% piores da rede naquele número. {unidades.length} de {avaliadas} unidades têm ao menos um
-        sinal aceso.
-      </Lide>
-      {unidades.length === 0 ? null : (
-        <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-          <div style={{ flex: '3 1 620px', minWidth: 0, maxHeight: 360, overflowY: 'auto' }}>
-            <TabelaSimples
-              cabecalho={['Unidade', ...chaves.map((c) => definicoes[c].rotulo), 'Acesos']}
-              linhas={unidades.map((u) => ({
-                id: u.id,
-                celulas: [
-                  u.nome,
-                  ...chaves.map((c) => <CelulaSinal key={c} sinal={u.sinais.find((s) => s.chave === c)} />),
-                  <span key="n" style={{ color: u.acesos >= 2 ? 'var(--neg)' : 'var(--tx-sub)', fontWeight: 700 }}>
-                    {u.acesos}
-                  </span>,
-                ],
-              }))}
-              onLinha={onUnidade}
-            />
-          </div>
-          <div style={{ flex: '1 1 280px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {chaves.map((c) => {
-              const limiar = referencia.find((s) => s.chave === c)?.limiar_quartil
-              const acesos = unidades.filter((u) => u.sinais.some((s) => s.chave === c && s.aceso)).length
-              const pior = definicoes[c].pior === 'alto'
-              return (
-                <div key={c} style={{ padding: '10px 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--line-soft)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-                    <span style={{ font: '600 12px/1.3 var(--f-ui)', color: 'var(--tx-strong)' }}>{definicoes[c].rotulo}</span>
-                    <span className="num" style={{ font: '700 16px/1 var(--f-num)', color: acesos ? 'var(--neg)' : 'var(--tx-muted)' }}>
-                      {acesos}
-                    </span>
-                  </div>
-                  <div style={{ font: '400 11px/1.45 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 4 }}>
-                    {definicoes[c].detalhe.charAt(0).toUpperCase() + definicoes[c].detalhe.slice(1)}.
-                  </div>
-                  <div style={{ font: '400 10.5px/1.4 var(--f-ui)', color: 'var(--tx-muted)', marginTop: 4 }}>
-                    Acende {pior ? 'a partir de' : 'abaixo de'}{' '}
-                    <strong className="num" style={{ color: 'var(--tx-strong)' }}>
-                      {limiar === null || limiar === undefined
-                        ? '—'
-                        : c === 'recorrentes_3m_pct'
-                          ? pctVar(limiar, 1)
-                          : pct(limiar, 1)}
-                    </strong>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-      <Rodape>
-        Cancelamento solicitado e cobrança: foto do fim do mês, sobre os recorrentes. Recorrentes em 3 meses: variação contra
-        três meses fechados antes. Sem régua absoluta validada, então a leitura é relativa à rede.
-      </Rodape>
-    </Glass>
   )
 }
 
@@ -671,8 +600,160 @@ const FAIXAS_RISCO: { ate: number; cor: string; rotulo: string }[] = [
   { ate: 101, cor: 'var(--neg)', rotulo: 'crítico' },
 ]
 
+/** Altura de uma linha do ranking e o passo entre elas: o funil (esquerda) e a tabela do modelo
+ *  (direita) são a MESMA lista, então a linha de uma tem de cair na altura da linha da outra —
+ *  é o alinhamento que dispensa repetir o nome da unidade na tabela. */
+const LINHA_RANKING = 26
+const GAP_RANKING = 3
+/** Cabeçalho da tabela; o funil recebe um vão da mesma altura para as linhas casarem. */
+const CABECALHO_RANKING = 20
+
 const corDoRisco = (percentil: number | null | undefined) =>
   FAIXAS_RISCO.find((f) => (percentil ?? 0) < f.ate)?.cor ?? 'var(--tx-off)'
+
+/**
+ * Ranking de risco em forma de FUNIL (sugestão do Vinicius, 17/09): a unidade de maior risco
+ * fica no topo e a barra vai estreitando para baixo. A largura é o percentil na rede — que é
+ * como o modelo se declara e, por já vir ordenado, garante o afunilamento. O número à direita
+ * continua sendo a chance em 90 dias onde o modelo diz que ela é confiável.
+ */
+function FunilRisco({
+  unidades,
+  onUnidade,
+}: {
+  unidades: RedeInteligencia['retencao']['unidades']
+  onUnidade: (id: string) => void
+}) {
+  const LARGURA_MIN = 34 // abaixo disso o nome não cabe dentro da faixa
+  // A largura é escalada pelo MÍNIMO e MÁXIMO do que está na tela, não por zero: os percentis
+  // do topo diferem por 2 ou 3 pontos e, numa escala de zero, o funil sairia reto.
+  const riscos = unidades.map((u) => u.risco_percentil ?? 0)
+  const teto = Math.max(...riscos, 1)
+  const piso = Math.min(...riscos)
+  const amplitude = teto - piso || 1
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: GAP_RANKING, width: '100%', minWidth: 0 }}>
+      {/* vão do cabeçalho da tabela vizinha, para as linhas das duas caírem na mesma altura */}
+      <div style={{ height: CABECALHO_RANKING }} />
+      {unidades.map((u) => {
+        const largura = LARGURA_MIN + (100 - LARGURA_MIN) * (((u.risco_percentil ?? 0) - piso) / amplitude)
+        const cor = corDoRisco(u.risco_percentil)
+        return (
+          <button
+            key={u.id}
+            type="button"
+            onClick={() => onUnidade(u.id)}
+            title={u.nome}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: 0, border: 0, background: 'transparent', cursor: 'pointer' }}
+          >
+            <span style={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'center' }}>
+              <span
+                style={{
+                  width: `${largura}%`,
+                  minWidth: 0,
+                  height: LINHA_RANKING,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '0 10px',
+                  background: cor,
+                  font: '600 11.5px/1 var(--f-ui)',
+                  color: '#fff',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {u.nome}
+              </span>
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * A MESMA lista do funil, unidade a unidade, com o que o modelo de retenção (DEC-014) tem a
+ * dizer de cada uma: chance em 90 dias, posição na rede, LTV previsto em 12 meses, meses ativos
+ * previstos, fatia frágil da base e quantos alunos entraram na conta. O nome não se repete
+ * aqui — a linha cai na mesma altura da faixa do funil, que já o traz.
+ */
+function TabelaRetencao({
+  unidades,
+  onUnidade,
+}: {
+  unidades: RedeInteligencia['retencao']['unidades']
+  onUnidade: (id: string) => void
+}) {
+  const colunas: { rotulo: string; titulo: string; valor: (u: (typeof unidades)[number]) => string; forte?: boolean }[] = [
+    {
+      rotulo: 'Churn real (mensal)',
+      titulo: 'Churn do mês base, da operação (cancelados sobre a base do início do mês) — o que JÁ aconteceu',
+      valor: (u) => pct(u.churn_pct, 1),
+    },
+    {
+      rotulo: 'Cancel. 12m',
+      titulo: 'Chance média de o aluno cancelar em 12 meses, prevista pelo modelo — só onde ele diz que o número absoluto vale',
+      valor: (u) => (u.p_cancel_12m_pct !== null ? pct(u.p_cancel_12m_pct, 1) : '—'),
+      forte: true,
+    },
+    {
+      rotulo: 'Receita em risco',
+      titulo: 'Recorrentes × chance de cancelar em 12 meses × receita por recorrente: a mensalidade que o modelo espera perder por mês',
+      // Traço curto, e não "Não disponível": a ausência aparece em metade das linhas (o modelo
+      // não libera o número absoluto nelas) e o texto longo engolia a coluna.
+      valor: (u) => (u.receita_em_risco !== null ? brl(u.receita_em_risco) : '—'),
+      forte: true,
+    },
+    // Recorrentes, e não ativos: quem cancela é o pagante de balcão — o aluno de agregador não
+    // tem contrato com a unidade. É também o denominador do churn real ao lado (Felipe, 17/09).
+    { rotulo: 'Recorrentes', titulo: 'Alunos recorrentes (pagantes de balcão) no mês base — a base que de fato cancela', valor: (u) => num(u.recorrentes) },
+  ]
+  // CENTRALIZADO, cabeçalho e número na mesma caixa (Felipe, 17/09): à direita os dois tinham a
+  // mesma borda, mas o rótulo longo se espalhava para a esquerda e parecia fora da coluna.
+  const celula = { padding: '0 8px', textAlign: 'center' as const, whiteSpace: 'nowrap' as const }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: GAP_RANKING, minWidth: 0, overflowX: 'auto' }}>
+      <div style={{ display: 'flex', height: CABECALHO_RANKING, alignItems: 'flex-end', borderBottom: '1px solid var(--line-mid)' }}>
+        {colunas.map((c) => (
+          <span
+            key={c.rotulo}
+            title={c.titulo}
+            style={{ ...celula, flex: 1, paddingBottom: 5, font: '600 9.5px/1.2 var(--f-ui)', letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--tx-muted)' }}
+          >
+            {c.rotulo}
+          </span>
+        ))}
+      </div>
+      {unidades.map((u) => (
+        <button
+          key={u.id}
+          type="button"
+          onClick={() => onUnidade(u.id)}
+          title={u.nome}
+          style={{ display: 'flex', alignItems: 'center', height: LINHA_RANKING, width: '100%', padding: 0, border: 0, borderBottom: '1px solid var(--line-soft)', background: 'transparent', cursor: 'pointer' }}
+        >
+          {colunas.map((c) => (
+            <span
+              key={c.rotulo}
+              className="num"
+              style={{
+                ...celula,
+                flex: 1,
+                font: `${c.forte ? 600 : 500} 11px/1 var(--f-num)`,
+                color: c.forte && (u.risco_percentil ?? 0) >= 75 ? 'var(--neg)' : c.forte ? 'var(--tx-strong)' : 'var(--tx-sub)',
+              }}
+            >
+              {c.valor(u)}
+            </span>
+          ))}
+        </button>
+      ))}
+    </div>
+  )
+}
 
 /**
  * Retenção prevista em DUAS leituras (pedido do Felipe, 15/09), no lugar das 16 barras de
@@ -754,33 +835,11 @@ function RiscoRetencao({ dados, onUnidade }: { dados: RedeInteligencia; onUnidad
           )}
 
           {vista === 'ranking' ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))', columnGap: 24 }}>
-              {visiveis.map((u) => (
-                <button
-                  key={u.id}
-                  type="button"
-                  onClick={() => onUnidade(u.id)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '6px 0', border: 0, borderBottom: '1px solid var(--line-soft)', background: 'transparent', cursor: 'pointer', textAlign: 'left' }}
-                >
-                  <span style={{ flex: 1, minWidth: 0, font: '500 12px/1.3 var(--f-ui)', color: 'var(--tx-strong)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {u.nome}
-                  </span>
-                  <span style={{ width: 96, height: 7, borderRadius: 4, background: 'var(--surf-raised)', flexShrink: 0 }}>
-                    <span
-                      style={{
-                        display: 'block',
-                        width: `${Math.max(u.risco_percentil ?? 0, 2)}%`,
-                        height: '100%',
-                        borderRadius: 4,
-                        background: corDoRisco(u.risco_percentil),
-                      }}
-                    />
-                  </span>
-                  <span className="num" style={{ width: 92, textAlign: 'right', font: '600 11px/1 var(--f-num)', color: (u.risco_percentil ?? 0) >= 75 ? 'var(--neg)' : 'var(--tx-sub)' }}>
-                    {u.prob_cancel_90d_pct !== null ? `${pct(u.prob_cancel_90d_pct, 1)} em 90d` : `p${num(u.risco_percentil)}`}
-                  </span>
-                </button>
-              ))}
+            // Funil à ESQUERDA e a tabela do modelo à DIREITA (Felipe, 17/09): as duas leem a
+            // mesma lista, linha a linha, então a comparação unidade a unidade sai do gráfico.
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 20, alignItems: 'start' }}>
+              <FunilRisco unidades={visiveis} onUnidade={onUnidade} />
+              <TabelaRetencao unidades={visiveis} onUnidade={onUnidade} />
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -826,8 +885,9 @@ function RiscoRetencao({ dados, onUnidade }: { dados: RedeInteligencia; onUnidad
         </>
       )}
       <Rodape>
-        A chance em 90 dias só aparece onde o modelo diz que ela é confiável; nas demais, a posição na rede. O mapa por
-        consultor mostra onde o risco se concentra — cada quadrado é uma unidade e abre a ficha.
+        Só entram as unidades em que o modelo libera a previsão absoluta; onde ele apenas ordena, sem calibrar o número,
+        a unidade fica de fora da lista. O mapa por consultor mostra onde o risco se concentra — cada quadrado é uma
+        unidade e abre a ficha.
         {r.data_artefato ? ` Modelo de ${r.data_artefato}.` : ''}
       </Rodape>
     </Glass>
@@ -848,8 +908,18 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
       const fechamentos = comCautela ? r.fechamentos : r.fechamentos_conferidos
       return { ...r, aberturas, fechamentos, saldo: aberturas - fechamentos }
     })
-    .filter((r) => r.aberturas || r.fechamentos || r.em_breve)
-    .sort((a, b) => b.saldo - a.saldo || b.aberturas - a.aberturas || b.em_breve - a.em_breve)
+    // Toda rede MAPEADA aparece, mesmo parada no período (Felipe, 17/09): quem se mexeu vem
+    // primeiro, por saldo; o resto por tamanho, para o mercado inteiro ficar à vista.
+    .sort((a, b) => {
+      const mexeu = (r: typeof a) => (r.aberturas || r.fechamentos || r.em_breve ? 1 : 0)
+      return (
+        mexeu(b) - mexeu(a) ||
+        b.saldo - a.saldo ||
+        b.aberturas - a.aberturas ||
+        b.em_breve - a.em_breve ||
+        (b.unidades ?? 0) - (a.unidades ?? 0)
+      )
+    })
   const visiveis = todas ? redes : redes.slice(0, 12)
   const wellhub = (m?.agregadores ?? []).filter((a) => a.agregador === 'wellhub')
   const celula = { padding: '0 8px', borderBottom: '1px solid var(--line-soft)', textAlign: 'right' as const, whiteSpace: 'nowrap' as const }
@@ -939,9 +1009,14 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
         </div>
       )}
       <Rodape>
+        {m?.unidades_mapeadas
+          ? `Mercado mapeado: ${num(m.unidades_mapeadas)} unidades em ${num(m.redes_mapeadas)} redes — rede sem movimentação no período aparece zerada. `
+          : ''}
         Redes: fotos do cadastro de 02/08 a 06/09, validadas contra a contagem oficial (a foto anterior entra só pelo botão);
         unidades = contagem oficial{m?.data_contagem ? ` de ${m.data_contagem.slice(8, 10)}/${m.data_contagem.slice(5, 7)}` : ''}.
-        &quot;Em breve&quot;: anúncios ainda não inaugurados. Wellhub: 31/08 a 12/09. Sem Smart Fit (teto do coletor) e sem estúdios; saída do site nem sempre é fechamento.
+        &quot;Em breve&quot;: anúncios ainda não inaugurados. Wellhub: 31/08 a 12/09. A Smart Fit conta na coluna de unidades, mas está
+        travada no teto de 1.000 do coletor e fica fora da movimentação, então o total é PISO; estúdios boutique fora (DEC-056);
+        saída do site nem sempre é fechamento.
       </Rodape>
     </Glass>
   )

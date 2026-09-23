@@ -34,6 +34,7 @@ from motor_expansao.dashboard.relatorio_municipal import (
     _hex_destacado_mask,
     _png_dimensions,
     _prettify_rede,
+    _render_mapa_municipio,
     _texto_zonas_sintese,
     _zonas_geometricas,
     agregar_municipio,
@@ -393,6 +394,9 @@ def test_mapa_municipal_marcador_ultra_quadrado_blk_relpon_09():
 def test_rotulo_de_valor_fica_acima_do_marcador_blk_relpon_09_fu1():
     """BLK-RELPON-09-FU1: o rotulo de Residual Fitness do hexagono vence o marcador.
 
+    Vale para quem pede o mapa COM os numeros (`rotular_valores=True`); o relatorio passou a
+    pedi-lo sem eles em 2026-09-17.
+
     Gate visual de Vinicius (2026-07-21): no Municipal os marcadores quadrados cobriam os
     numeros dos hexagonos -- o dado principal da pagina. O FU1 passou os rotulos para uma
     overlay propria, composta DEPOIS de `_draw_pins`.
@@ -414,12 +418,17 @@ def test_rotulo_de_valor_fica_acima_do_marcador_blk_relpon_09_fu1():
         [{"rede": "ultra", "lat": lat_c, "lng": lng_c, "hex_id_res7": hex_destacado}]
     )
 
-    com_pin = render_mapas_municipio(
-        df, res, competitors_df=None, ultra_df=ultra_no_centro, basemap=False
-    )["resumo"]
-    sem_pin = render_mapas_municipio(
-        df, res, competitors_df=None, ultra_df=None, basemap=False
-    )["resumo"]
+    # Desde 2026-09-17 o RELATORIO pede o mapa sem os numeros (`rotular_valores=False`, pedido
+    # do Juan: eram 154 plaquinhas em Sao Paulo). A ordem "rotulo por cima do pin" continua
+    # valendo no render, e e' o que este teste trava -- por isso ele chama o render direto.
+    def _resumo(ultra):
+        return _render_mapa_municipio(
+            df, camada="resumo", municipio_result=res, competitors_df=None, ultra_df=ultra,
+            basemap=False, rotular_valores=True,
+        )
+
+    com_pin = _resumo(ultra_no_centro)
+    sem_pin = _resumo(None)
 
     arr_com = np.array(Image.open(BytesIO(com_pin)).convert("RGB")).astype(np.int16)
     arr_sem = np.array(Image.open(BytesIO(sem_pin)).convert("RGB")).astype(np.int16)
@@ -1527,14 +1536,23 @@ def _competidor_vizinho() -> pd.DataFrame:
 
 
 def test_mapa_nao_desenha_concorrente_de_fora_do_municipio(monkeypatch):
-    """REGRESSAO do bug: `_draw_pins` so pode receber linhas DO municipio.
+    """REGRESSAO do bug: concorrente de fora do municipio nao pode ser desenhado.
 
-    Captura os frames entregues a `_draw_pins` em vez de inspecionar pixels: o que se quer
-    provar e o recorte, e ler pixel dependeria da geometria do enquadramento (que muda com o
-    foco). `_sample_competitors()` tem 3 linhas, sendo 1 num hex distante; somamos um vizinho
-    proximo, que e o caso que a bbox deixava passar e o hex nao.
+    `_sample_competitors()` tem 3 linhas, sendo 1 num hex distante; somamos um vizinho proximo,
+    que e o caso que a bbox deixava passar e o hex nao. Duas garantias, porque desde 2026-09-17 os
+    mapas tematicos nao desenham concorrente NENHUM (pedido do Juan: em Sao Paulo eram 370 pins):
+    (1) o recorte por municipio continua devolvendo so' as linhas de la -- e ele que alimenta a
+    contagem das paginas e o mapa da Pressao concorrencial; (2) nenhum frame de concorrente chega
+    a `_draw_pins` pelo caminho do relatorio.
     """
     from motor_expansao.dashboard import relatorio_municipal as rm
+
+    df = _sample_df()
+    comp = pd.concat([_sample_competitors(), _competidor_vizinho()], ignore_index=True)
+    recortado = rm.filtrar_pins_do_municipio(comp, hexes_muni=rm._hexes_do_municipio(df))
+    assert len(recortado) == 2, f"vazou pin de fora do municipio: {len(recortado)} linhas"
+    assert set(recortado["rede"]) == {"smart_fit", "bio_ritmo"}
+    assert "bluefit" not in set(recortado["rede"])  # o vizinho proximo, que a bbox deixava passar
 
     recebidos: list[pd.DataFrame | None] = []
 
@@ -1542,19 +1560,9 @@ def test_mapa_nao_desenha_concorrente_de_fora_do_municipio(monkeypatch):
         recebidos.append(None if frame is None else frame.copy())
 
     monkeypatch.setattr(rm, "_draw_pins", _spy)
-
-    df = _sample_df()
-    comp = pd.concat([_sample_competitors(), _competidor_vizinho()], ignore_index=True)
     res = agregar_municipio(df, nome_municipio="SAO PAULO", competitors_df=comp)
     render_mapas_municipio(df, res, competitors_df=comp, ultra_df=_sample_ultra(), basemap=False)
-
-    frames_conc = [f for f in recebidos if f is not None and "rede" in f.columns]
-    assert frames_conc, "nenhuma chamada de _draw_pins com concorrentes"
-    for frame in frames_conc:
-        assert len(frame) == 2, f"vazou pin de fora do municipio: {len(frame)} linhas"
-        assert set(frame["rede"]) == {"smart_fit", "bio_ritmo"}
-        # O vizinho (bluefit) e o distante nao podem chegar ao desenho.
-        assert "bluefit" not in set(frame["rede"])
+    assert not [f for f in recebidos if f is not None and "rede" in f.columns]
 
 
 def test_filtrar_pins_por_poligono_corta_a_faixa_de_fronteira():
@@ -1937,7 +1945,7 @@ def test_modo_hexagono_traz_bairros_oficiais_e_segue_por_hexagono():
     assert "Bairros - Núcleo Urbano".encode("latin-1") not in pdf_bytes
 
 
-def test_independente_sem_rede_usa_o_pin_e_o_rotulo_da_wellhub(monkeypatch):
+def test_independente_sem_rede_usa_o_pin_e_o_rotulo_do_app_que_a_revelou(monkeypatch):
     """DEC-046 poe as independentes (rede NA) na uniao de oferta. Sem chave, o pin caia na
     placa cinza "C" e o slide 8 abria um balde "<NA>"."""
     import motor_expansao.dashboard.relatorio_municipal as rm
@@ -1970,8 +1978,81 @@ def test_independente_sem_rede_usa_o_pin_e_o_rotulo_da_wellhub(monkeypatch):
         }
     )
     res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", competitors_df=comp)
+    # Sem coluna `fonte` (o artefato anterior a DEC-066) as duas caem no WellHub: o agrupamento
+    # e o rotulo ficam IDENTICOS aos de antes desta DEC.
     assert res["concorrentes_por_rede"] == {CHAVE_AGREGADOR: 2, "smart_fit": 1}
     assert _prettify_rede(CHAVE_AGREGADOR) == "Independentes (Wellhub)"
+
+
+def test_coluna_de_fonte_NULAVEL_nao_derruba_o_mapa_inteiro():
+    """Incidente de 2026-09-22: TODO mapa gerado no servidor saiu com HTTP 500.
+
+    `TypeError: boolean value of NA is ambiguous`, em `chave_agregador_da_fonte`, via o listcomp
+    dos pins. O gatilho e' um DESCASAMENTO DE ARTEFATO, nao de codigo: producao servia
+    `alvos_ma_nomeados_v6` enquanto o codigo ja' consumia o `v8`. Sem a coluna no parquet,
+    `api/service.py` a CONSTROI como `pd.Series([pd.NA] * n, dtype="string")` -- e o
+    `str(fontes or "")` avaliava `bool(pd.NA)` antes do `str()`.
+
+    **Por que a suite ficou verde com o caso "coberto".** O teste da DEC-066 logo abaixo ja' tinha
+    `pd.NA` em `fonte`, e mesmo assim nao pegava o defeito, porque lhe faltavam as DUAS condicoes
+    que producao junta:
+
+      * a coluna `fontes_da_academia` **presente** (la' ela e' ausente, e o fallback e' `None`
+        puro, que o `or` absorve sem reclamar);
+      * uma linha **sem rede** (la' a unica linha com `fonte` nula e' a do `smart_fit`, entao
+        `_chave_rede` devolve verdadeiro e o `or` CURTO-CIRCUITA -- a funcao nunca e' chamada).
+
+    Por isso este teste monta o frame como o `service.py` monta, e nao como era comodo montar.
+    """
+    from motor_expansao.dashboard.competitors import CHAVE_AGREGADOR
+
+    df = _sample_df()
+    hx = _hex(-23.55, -46.63)
+    comp = pd.DataFrame(
+        {
+            # Independente: sem rede, e' ela que chega na funcao (as com rede curto-circuitam).
+            "rede": pd.array([pd.NA], dtype="string"),
+            "fonte": pd.array([pd.NA], dtype="string"),
+            # A coluna EXISTE e esta' toda nula -- exatamente o fallback do `service.py`.
+            "fontes_da_academia": pd.Series([pd.NA], dtype="string"),
+            "lat": [-23.55],
+            "lng": [-46.63],
+            "hex_id_res7": [hx],
+        }
+    )
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", competitors_df=comp)
+    # Sem procedencia declarada, o desenho cai no WellHub -- o que o docstring da funcao PROMETE
+    # para artefato anterior ao `v8`. A promessa e' o que este teste trava.
+    assert res["concorrentes_por_rede"] == {CHAVE_AGREGADOR: 1}
+
+
+def test_o_balde_e_o_rotulo_do_slide_8_se_separam_por_app():
+    """`[DEC-066]` O balde do slide "Concorrentes por rede" deixa de ser UM so'.
+
+    Ate' 2026-09-17 ele era rotulado pelo literal "Independentes (Wellhub)", cravado em
+    `_prettify_rede`. Com o TotalPass no entregavel, esse balde unico passaria a CONTAR academias
+    que nao estao no WellHub e a escrever o nome do app errado num PDF entregue -- sem erro e sem
+    teste vermelho, porque contagem e rotulo nao dependem de conta nenhuma.
+    """
+    from motor_expansao.dashboard.competitors import CHAVE_AGREGADOR, CHAVE_AGREGADOR_TP
+
+    df = _sample_df()
+    comp = pd.DataFrame(
+        {
+            "rede": pd.array([pd.NA, pd.NA, "smart_fit"], dtype="string"),
+            "fonte": pd.array(["wellhub", "totalpass", pd.NA], dtype="string"),
+            "lat": [-23.55, -23.55, -23.56],
+            "lng": [-46.63, -46.63, -46.64],
+            "hex_id_res7": [_hex(-23.55, -46.63)] * 2 + [_hex(-23.56, -46.64)],
+        }
+    )
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", competitors_df=comp)
+    assert res["concorrentes_por_rede"] == {
+        CHAVE_AGREGADOR: 1,
+        CHAVE_AGREGADOR_TP: 1,
+        "smart_fit": 1,
+    }
+    assert _prettify_rede(CHAVE_AGREGADOR_TP) == "Independentes (TotalPass)"
 
 
 def test_fonte_do_mapa_escala_sem_arial(monkeypatch):

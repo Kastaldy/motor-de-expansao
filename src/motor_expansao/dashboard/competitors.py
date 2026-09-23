@@ -413,12 +413,162 @@ CHAVE_AGREGADOR = "__wellhub__"
 AGREGADOR_LOGO_FILE = "logo_wellhub.png"
 AGREGADOR_LOGO_PACOTE = Path(__file__).resolve().parent / "assets" / AGREGADOR_LOGO_FILE
 AGREGADOR_BRAND = {"label": "Independente", "short": "", "bg": "#F04E6E", "fg": "#FFFFFF"}
+
+# `[DEC-066]` TotalPass. Ate' 2026-09-17 havia UM app so': enquanto o D9 da DEC-039 mantinha o
+# TotalPass fora da serie, "independente" e "veio do WellHub" eram a mesma coisa e a logo rosa
+# nunca mentia. Com o TotalPass no entregavel, academia que so' existe nele sairia com a bandeira
+# do CONCORRENTE num PDF entregue -- e nada ficaria vermelho, porque a arte nao entra em conta
+# nenhuma.
+#
+# O verde NAO foi arbitrado: e' a cor dominante da propria arte (12,3% dos pixels amostrados de
+# `web/public/logo-totalpass.jpg`; as seis mais frequentes sao todas verde-dominantes). A arte do
+# pacote e' CONVERSAO para PNG, nao copia: o original e' JPEG, e `_png_to_pin_svg` crava
+# `data:image/png` no `href` e recorta a logo num circulo -- JPEG nao tem alfa e entraria como
+# quadrado branco.
+CHAVE_AGREGADOR_TP = "__totalpass__"
+AGREGADOR_TP_LOGO_FILE = "logo_totalpass.png"
+AGREGADOR_TP_LOGO_PACOTE = (
+    Path(__file__).resolve().parent / "assets" / AGREGADOR_TP_LOGO_FILE
+)
+AGREGADOR_TP_BRAND = {"label": "Independente", "short": "", "bg": "#27D07D", "fg": "#FFFFFF"}
+
+# As duas chaves COMO CONJUNTO, porque tres lugares perguntam "esta chave e' de independente?":
+# o TAMANHO do pino (`_paste_logo_pin` no Pontual e o ramo gemeo no Municipal) e a PRECEDENCIA de
+# desenho (`_project_points`). Ate' a DEC-066 a pergunta era "a chave e' vazia?" e `bool()` bastava,
+# porque so' havia uma resposta possivel.
+# `[DEC-066 / fatia 2]` A academia que esta' nos DOIS apps. Ela NAO tem arte propria: o tile
+# COMPOE as duas existentes (M2). Por isso ela entra em `CHAVES_AGREGADOR` e em `MARCA_AGREGADOR`,
+# mas **nao** em `ARTE_AGREGADOR` -- a assimetria e' o desenho, nao esquecimento.
+#
+# A COR e' a do WellHub, e isso e' deliberado: quando a arte falta, o tile cai na placa BIPARTIDA
+# (rosa | verde), que e' a B5. O `bg` so' serve de base sob a metade esquerda.
+CHAVE_AMBOS = "__ambos__"
+AGREGADOR_AMBOS_BRAND = {"label": "Independente", "short": "", "bg": "#F04E6E", "fg": "#FFFFFF"}
+
+CHAVES_AGREGADOR = frozenset({CHAVE_AGREGADOR, CHAVE_AGREGADOR_TP, CHAVE_AMBOS})
+MARCA_AGREGADOR: dict[str, dict[str, str]] = {
+    CHAVE_AGREGADOR: AGREGADOR_BRAND,
+    CHAVE_AGREGADOR_TP: AGREGADOR_TP_BRAND,
+    CHAVE_AMBOS: AGREGADOR_AMBOS_BRAND,
+}
+ARTE_AGREGADOR: dict[str, tuple[str, Path]] = {
+    CHAVE_AGREGADOR: (AGREGADOR_LOGO_FILE, AGREGADOR_LOGO_PACOTE),
+    CHAVE_AGREGADOR_TP: (AGREGADOR_TP_LOGO_FILE, AGREGADOR_TP_LOGO_PACOTE),
+}
+
+# `[DEC-066 / fatia 2]` A arte do terceiro estado para a WEB.
+#
+# O PDF COMPOE em tempo de render (`_render_square_logo_tile`, ramo do `__ambos__`); a web NAO pode
+# -- a `IconLayer` do deck.gl recebe URL de imagem. Entao o asset e' gerado deste codigo e gravado
+# em `web/public/logo-ambos.png`, e o teste exige que o arquivo seja exatamente esta composicao.
+#
+# Sem esse teste, trocar a logo de um dos apps deixaria o composto mostrando arte que nao existe
+# mais -- valido como imagem, falso como informacao, e invisivel.
+#
+# 128 px porque e' o tamanho que os outros dois icones do mapa declaram (`iconeDeck`).
+ARTE_AMBOS_PX = 128
+
+
+def compor_arte_ambos(size: int = ARTE_AMBOS_PX) -> object:
+    """As DUAS artes lado a lado, meia largura cada. Fonte unica da composicao.
+
+    Chamada pelo GERADOR do asset e pelo TESTE que o trava. Se cada um compusesse por conta, o
+    teste provaria a si mesmo em vez de provar o arquivo (licao da DEC-044).
+
+    As artes vem do PACOTE, nao de `web/public/`: a do WellHub e' byte-identica a do piloto e a do
+    TotalPass e' conversao fiel por pixels do `.jpg`, ambas ja' travadas por teste. Fonte de
+    verdade unica.
+    """
+    from PIL import Image
+
+    tela = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    meia = max(1, size // 2)
+    for i, caminho in enumerate((AGREGADOR_LOGO_PACOTE, AGREGADOR_TP_LOGO_PACOTE)):
+        arte = Image.open(caminho).convert("RGBA")
+        razao = min(meia / arte.width, size / arte.height)
+        nova = (max(1, int(round(arte.width * razao))), max(1, int(round(arte.height * razao))))
+        arte = arte.resize(nova, Image.Resampling.LANCZOS)
+        tela.alpha_composite(arte, (i * meia + (meia - nova[0]) // 2, (size - nova[1]) // 2))
+    return tela
+
+
+# Rotulo do BALDE do slide "Concorrentes por rede" (Relatorio Municipal). Mora aqui, e nao no
+# `relatorio_municipal`, pela mesma razao de `MARCA_AGREGADOR`: era o literal "Independentes
+# (Wellhub)" CRAVADO dentro de `_prettify_rede`, e ele virou falso no instante em que o TotalPass
+# entrou no entregavel. Literal cravado e' exatamente o que ninguem encontra quando a premissa
+# muda -- este so' apareceu porque um import quebrado obrigou o `ruff` a apontar a linha.
+#
+# Nao e' so' texto: e' CONTAGEM. Um balde unico somaria academias que nao estao no WellHub sob o
+# nome dele, sem erro e sem teste vermelho.
+ROTULO_AGREGADOR: dict[str, str] = {
+    CHAVE_AGREGADOR: "Independentes (Wellhub)",
+    CHAVE_AGREGADOR_TP: "Independentes (TotalPass)",
+    CHAVE_AMBOS: "Independentes (nos dois apps)",
+}
+
+
+def _texto_de_celula(valor: object) -> str:
+    """Texto normalizado de uma celula que pode estar AUSENTE. Ausencia vira `""`.
+
+    Existe porque `str(valor or "")` **levanta** quando o valor e' `pd.NA`: o `or` avalia
+    `bool(pd.NA)` ANTES de chegar no `str()`, e `NAType.__bool__` e' `TypeError` por definicao
+    ("boolean value of NA is ambiguous"). Com `None` ou `NaN` a mesma expressao funciona, e e'
+    por isso que o defeito passou despercebido -- ele so' aparece no dtype NULAVEL do pandas.
+
+    E foi assim que TODO mapa gerado no servidor caiu em 2026-09-22: `api/service.py` monta
+    `fonte`/`fontes_da_academia` como `pd.Series([pd.NA] * n, dtype="string")` quando o artefato
+    servido e' anterior ao `alvos_ma_nomeados_v8` (producao servia o `v6`), e o docstring desta
+    funcao PROMETE que artefato antigo "cai na `fonte`, reproduzindo o desenho de hoje". O `or`
+    quebrava essa promessa em TODA linha sem rede -- as independentes, que sao justamente as que
+    chegam aqui. Trocar o `pd.NA` do fallback por `None` NAO resolveria: numa Series de dtype
+    `string` o pandas converte `None` de volta para `pd.NA`.
+
+    Mesma familia do defeito ja' anotado em `alvos_ma.py`: `float("nan")` absorve, `pd.NA` explode.
+    """
+    if valor is None:
+        return ""
+    try:
+        if pd.isna(valor):
+            return ""
+    except (TypeError, ValueError):
+        # `pd.isna` devolve ARRAY para entrada vetorial, e ai' o `if` levantaria por ambiguidade.
+        # Um valor que nao sabe responder "sou nulo?" e' tratado pelo `str()` abaixo.
+        pass
+    return str(valor).strip().lower()
+
+
+def chave_agregador_da_fonte(fonte: object, fontes: object = None) -> str:
+    """`fonte`/`fontes_da_academia` da linha -> chave do marcador. UMA redacao, tres chamadores.
+
+    `[DEC-066 / fatia 2]` `fontes` e' a coluna `fontes_da_academia` (`alvos_ma_nomeados_v8`), que
+    diz QUAIS apps listam a academia. Com virgula -> `__ambos__`. O `or` mora AQUI, e nao no
+    chamador, porque a regra escrita em tres lugares nao da erro: desencontra em silencio.
+
+    Artefato ANTERIOR ao v8 nao tem a coluna, e ai' o fallback para `fonte` reproduz o desenho de
+    hoje -- nao inventa estado novo.
+
+    `[DEC-066]` Fonte ausente ou desconhecida cai no WellHub, e isso e' deliberado: o artefato
+    publicado hoje (`alvos_ma_nomeados_v5`) tem `fonte` em 100% das 19.329 linhas e todas valem
+    `wellhub`, entao o fallback REPRODUZ o desenho anterior a esta DEC em vez de inventar um
+    estado novo. Ele nao AFIRMA procedencia; ele preserva o que ja' era verdade.
+
+    E' funcao, e nao `if` repetido, pela licao da DEC-044: a mesma regra escrita em tres lugares
+    nao da erro -- desencontra em silencio.
+    """
+    declarado = _texto_de_celula(fontes)
+    if "," in declarado:
+        return CHAVE_AMBOS
+    escolhida = declarado or _texto_de_celula(fonte)
+    return CHAVE_AGREGADOR_TP if escolhida == "totalpass" else CHAVE_AGREGADOR
+
+
 # 20 px contra os 30 px da bandeira de cadeia (`_PIN_LOGO_PX`), na mesma proporcao que o
 # mapa usa (22 contra 30-38): a independente e' camada secundaria e nao pode competir com a
 # rede instalada na leitura.
 PIN_INDEPENDENTE_PX = 20
 
-# cache de logos PNG: rede -> icon_data; "__ultra__" para Ultra; "__wellhub__" p/ independente
+# cache de logos PNG: rede -> icon_data; "__ultra__" para Ultra; "__wellhub__" e "__totalpass__"
+# para as independentes de cada app (DEC-066)
 _ICON_CACHE: dict[str, dict] = {}
 
 
@@ -507,11 +657,14 @@ def preload_logos(competitors_dir: Path, ultra_dir: Path | None = None) -> None:
             _ICON_CACHE["__ultra__"] = icon
     # DEC-046: marcador do independente. O diretorio vence o pacote; sem nenhum dos dois o
     # tile cai no ponto solido, sem erro nem pin faltando.
-    for arte in (competitors_dir / AGREGADOR_LOGO_FILE, AGREGADOR_LOGO_PACOTE):
-        icon = _png_icon_data(arte, pin_bg=str(AGREGADOR_BRAND["bg"]))
-        if icon is not None:
-            _ICON_CACHE[CHAVE_AGREGADOR] = icon
-            break
+    # `[DEC-066]` Uma passada POR APP: cada um tem arte e cor proprias, e a precedencia
+    # diretorio-sobre-pacote vale para os dois.
+    for chave, (nome_arte, arte_pacote) in ARTE_AGREGADOR.items():
+        for arte in (competitors_dir / nome_arte, arte_pacote):
+            icon = _png_icon_data(arte, pin_bg=str(MARCA_AGREGADOR[chave]["bg"]))
+            if icon is not None:
+                _ICON_CACHE[chave] = icon
+                break
 
 
 # ── I/O ────────────────────────────────────────────────────────────────────────
@@ -977,12 +1130,14 @@ def _render_square_logo_tile(
 
     if key == "__ultra__":
         brand: dict[str, str] = dict(ULTRA_BRAND)
-    elif key == CHAVE_AGREGADOR:
+    elif key in CHAVES_AGREGADOR:
         # DEC-046: independente. Com o PNG no `_ICON_CACHE` sai a marca do agregador; sem
         # ele cai no fallback abaixo e vira uma placa SOLIDA na cor da marca — `short` e'
         # vazio de proposito, porque sigla nenhuma distingue 19 mil academias sem marca
         # (o piloto abandonou o "IND" pelo mesmo motivo, em 2026-08-26).
-        brand = dict(AGREGADOR_BRAND)
+        # `[DEC-066]` A cor sai do APP: rosa no WellHub, verde no TotalPass. E' ela que carrega a
+        # distincao quando a arte falta -- por isso cada app tem COR, e nao so' logo.
+        brand = dict(MARCA_AGREGADOR[key])
     else:
         brand = dict(
             COMPETITOR_BRANDS.get(
@@ -1007,6 +1162,44 @@ def _render_square_logo_tile(
             radius=_SQUARE_LOGO_RADIUS,
             fill=_SQUARE_LOGO_SHADOW_RGBA,
         )
+
+    # `[DEC-066 / fatia 2]` O terceiro estado: academia nos DOIS apps.
+    #
+    # M2 = placa BIPARTIDA com as duas logos, uma por metade. Nao ha' arte propria para ele: as
+    # duas sao as que ja' estao no `_ICON_CACHE`. Faltando qualquer uma, o `return` nao acontece e
+    # o fluxo cai na placa bipartida SO' DE COR mais abaixo -- que e' a B5, o fallback escolhido.
+    if key == CHAVE_AMBOS:
+        # DUAS variaveis nomeadas, e nao uma lista com `all(... is not None)`: o `mypy` nao propaga
+        # a garantia do `all` para dentro do laco, e a alternativa seria um `type: ignore` que
+        # esconderia um invariante que o tipo pode exprimir sozinho.
+        arte_wh = _extract_embedded_logo_png(str(icone_da_rede(CHAVE_AGREGADOR).get("url", "")))
+        arte_tp = _extract_embedded_logo_png(str(icone_da_rede(CHAVE_AGREGADOR_TP).get("url", "")))
+        if arte_wh is not None and arte_tp is not None:
+            try:
+                import io
+
+                draw.rounded_rectangle(card, radius=_SQUARE_LOGO_RADIUS, fill=(255, 255, 255, 255))
+                util = size - pad
+                meia = max(1, (util - 2 * bw) // 2)
+                alto = max(1, util - 2 * bw)
+                for i, bruto in enumerate((arte_wh, arte_tp)):
+                    arte = Image.open(io.BytesIO(bruto)).convert("RGBA")
+                    razao = min(meia / arte.width, alto / arte.height)
+                    nova = (
+                        max(1, int(round(arte.width * razao))),
+                        max(1, int(round(arte.height * razao))),
+                    )
+                    arte = arte.resize(nova, Image.Resampling.LANCZOS)
+                    ox = bw + i * meia + (meia - nova[0]) // 2
+                    oy = bw + (alto - nova[1]) // 2
+                    tile.paste(arte, (ox, oy), arte)
+                if border:
+                    draw.rounded_rectangle(
+                        card, radius=_SQUARE_LOGO_RADIUS, outline=(255, 255, 255, 255), width=bw
+                    )
+                return tile
+            except Exception:
+                pass
 
     logo_png = _extract_embedded_logo_png(str(icone_da_rede(key).get("url", "")))
     if logo_png is not None:
@@ -1041,6 +1234,12 @@ def _render_square_logo_tile(
 
     # fallback: placa na cor da marca + sigla centrada
     draw.rounded_rectangle(card, radius=_SQUARE_LOGO_RADIUS, fill=bg)
+    # `[DEC-066 / fatia 2]` A B5: sem arte, o "ambos" vira placa BIPARTIDA (rosa | verde) em vez de
+    # solida. E' a degradacao escolhida -- e a que MAIS importa, porque a cor sozinha continua
+    # dizendo "esta nos dois" quando a logo nao chega.
+    if key == CHAVE_AMBOS:
+        util = size - 1 - pad
+        draw.rectangle([util // 2, 0, util, util], fill=str(AGREGADOR_TP_BRAND["bg"]))
     font: ImageFont.FreeTypeFont | ImageFont.ImageFont
     try:
         # `load_default(size=)` (Pillow >= 10.1) respeita o tamanho pedido; `truetype`

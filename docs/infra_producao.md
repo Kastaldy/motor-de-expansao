@@ -158,9 +158,25 @@ concorrentes) só aparecem após `docker compose -f docker-compose.prod.yml rest
   `github-gymscraping` em `/root/.ssh/config`). O `git pull` semanal traz coletores novos automaticamente.
 - **Imagem:** `gymscraping:local` — `Dockerfile` no próprio repo do scraper (Chrome + webdriver-manager +
   Chromium do Playwright). Reconstruída a cada run (cache acelera).
-- **Runner:** **`/opt/gymscraping-infra/run_weekly_90.sh`** (infra na VPS, fora do repo). Faz, em sequência:
-  1. `git pull` + `docker build`;
+- **Runner:** **`/opt/gymscraping-infra/run_weekly_90.sh`**, cuja fonte versionada é
+  **`scripts/cron/run_weekly_90.sh`** (neste repo desde 2026-09-17; instalação por `cp` + `chmod +x`,
+  manual, como a dos outros wrappers). Até então ele era o **único wrapper de produção fora do
+  repositório**, e o custo foi medido: a DEC-059 tirou o mount do checkout velho da etapa de regen em
+  12/09 e **deixou o passo 4.5 (pins M&A) para trás**, porque não havia diff para ninguém revisar — o
+  passo seguiu rodando um checkout congelado em 19/08 e gravando artefato **vazio com `exit 0`** de
+  30/08 a 17/09, contido apenas pela guarda de desenhabilidade. Faz, em sequência:
+  0. **Preserva a safra anterior** em `$INFRA/safra_anterior` **antes** do `git checkout -- Unidades/`
+     (BLK-COLETA-01). O descarte continua — é o preço do fast-forward —, mas deixou de ser perda: sem
+     esse backup, a rede cujo coletor falhasse voltaria ao baseline do repositório, que pode ser de
+     meses atrás (foi o mecanismo do `selfit 231 → 119` em 13/09);
+  1. `git pull` + `docker build`. **O pull que falha avisa no chat de ops** e NÃO aborta o lote: a
+     coleta ainda vale, e derrubar o domingo trocaria um dano por outro maior. Até 17/09 ele usava
+     `|| echo`, e foi assim que o clone ficou 8 commits atrás por cinco dias sem ninguém ver;
   2. **Coleta** dos 90 (`executar_coletores.py --workers 3 --scheduler-policy weighted`, container `--user 0:0`);
+  2.5. **Restaura a safra para quem NÃO recoletou** (BLK-COLETA-01), por **conteúdo**: CSV idêntico ao
+     commitado **e** diferente da safra ⇒ aquela rede não rodou nesta rodada. Não é parsing do log de
+     propósito — no lote de 13/09 havia 3 linhas de `Resultado: falha` para ~56 redes defasadas,
+     porque o lote morreu no #28 e as demais nunca rodaram. Restaurações > 0 avisam ops;
   3. **Relatório de crescimento por rede** (`/opt/gymscraping-infra/relatorio_crescimento.py`): snapshot
      `contagem_atual.csv`, diff vs. `contagem_anterior.csv` (delta por rede), histórico `historico_contagem.csv`
      e `relatorio_crescimento_<data>.txt`;
@@ -659,8 +675,9 @@ Confira na saída, nesta ordem:
 | `fontes_publicadas=` | vazio ⇒ os dois feeds estão velhos ou o caminho do clone está errado |
 | `regua_idade` | por agregador: `data_coleta_min` é a régua boa; `mtime` é **fallback** (o feed não trouxe data legível) e vale bem menos — foi por medir mtime que 85 dias saíram como `0`. O rótulo sem o sufixo `_min` também denuncia imagem antiga. `indisponivel` **com** CSVs no diretório ⇒ o mtime está no **futuro** (relógio torto na máquina que coletou): a curadoria recusa em vez de publicar, porque idade negativa passaria por qualquer limiar. Corrija o relógio e recolete |
 | `linhas_snapshot` | `0` ⇒ o caminho dos CSVs curados está errado (o glob não casou com nada). **Exceção:** na **primeira instalação**, com o destino ainda vazio, `0` é o esperado *por construção* — a curadoria em `DRY_RUN` não copia nada, então não há o que o snapshot leia. Repita o modo seco **depois** da 1ª execução real para a leitura valer |
-| `versao_contrato` | tem de ser `snapshots_concorrentes_v4`. **`v3` = imagem ANTIGA na VPS** — ela escreve com uma chave e apaga a folha da outra cadência. **Não agende**: aplique a imagem nova primeiro |
-| `retencao_semanas` | tem de ser `26` (piso duro medido: **13**; nunca abaixo). O `78` é o valor da premissa **mensal**, que morreu — se o `DRY_RUN` mostrar `78`, a VPS está com imagem antiga |
+| `versao_contrato` | tem de ser `snapshots_concorrentes_v5` (bump da DEC-063, âncora da chave). **`v4`/`v3` = imagem ANTIGA na VPS** — a `v3` escreve com uma chave e apaga a folha da outra cadência. **Não agende**: aplique a imagem nova primeiro |
+| `retencao_semanas` | tem de ser `0` — **reter tudo**, a poda não roda em regime (DEC-064). `26` ou `78` ⇒ imagem **anterior à DEC-064**, que PODA, e o que ela apaga é a série de que o reprocessamento depende. **Não agende.** A poda continua disponível como ato **manual** (`--retencao-semanas N`): referência `26` = 2× o piso medido de **13**, nunca abaixo dele |
+| `estado_churn` | em execução REAL tem de vir preenchido, com `modo: incremental` e `chaves_no_estado` > 0 (DEC-064 D2). **`null` com `publicado: true` ⇒ imagem sem o cron do estado** — a série cresce e o acumulador não, e o churn nunca amadurece. Em `DRY_RUN` e em semana RECUSADA pela guarda, `null` é o **correto**: modo seco não toca disco, e coleta parcial não pode contaminar um acumulador (que, ao contrário da série, não se conserta apagando partição — só com `--reprocessar`) |
 
 > Os dois últimos campos entraram na auditoria **exatamente** para isto: são a única forma de o
 > `DRY_RUN` provar **qual imagem está rodando** antes de agendar. A lição é do BLK-MA-19 — "código
@@ -712,18 +729,39 @@ passaria despercebido para sempre. Limiar `MONITOR_AGREGADOR_MAX_DIAS` (default 
 > sempre na semana 1. A régua nova pode **adiantar** o alerta em até ~1 dia, nunca atrasá-lo — direção
 > segura para um monitor. Chave ilegível cai no mtime e **diz** que caiu, no texto do alerta.
 
-**Fronteira com o BLK-MA-20 (DEC-039, D9) — e ela é FAIL-CLOSED** *(emenda de 2026-08-25)*. A
-partição do **TotalPass é gravada desde a primeira semana** (o cronômetro de `MIN_SEMANAS = 8` são 8
-semanas na cadência real — cada semana de espera é irrecuperável), mas o **consumo** dela pelo score
-espera o BLK-MA-20 decidir o grão do S1 e calibrar a dedup TP × WH, que hoje está *arbitrada*.
+**Fronteira com o BLK-MA-20 (DEC-039, D9) — o recorte por FONTE acabou** *(emenda de
+2026-08-25; revogada pela DEC-066 em 2026-09-17)*. A partição do **TotalPass é gravada desde a
+primeira semana** (o cronômetro de `MIN_SEMANAS = 8` são 8 semanas na cadência real — cada semana
+de espera é irrecuperável). **O BLK-MA-20 fechou:** a dedup TP × WH foi calibrada contra par real
+(a régua de 50 m, antes *arbitrada*, foi medida e MANTIDA) e o TotalPass entra **inteiro** — oferta
+E série. Até 2026-09-17 este parágrafo dizia que ele entrava só na oferta e que "o SINAL 1 continua
+fora" por ser medido por hexágono: essa foi a meia-entrada **considerada e descartada**, porque
+custaria as 15.841 candidatas que só o TotalPass conhece. O erro de 36,99% é real e continua sendo
+o motivo de o `s1` não pesar — mas quem o contém agora é o `SINAIS_INATIVOS`, não o recorte de
+fonte.
+
+**A fronteira não sumiu: mudou de lugar.** O que impedia o TotalPass de contaminar o ranking era
+a FONTE ficar fora da série; desde a DEC-066 é o **SINAL** ficar fora da conta — `s1` está em
+`SINAIS_INATIVOS`, propagado como fato e sem peso. Proteger pela fonte custaria as 15.841
+candidatas que só o TotalPass conhece; proteger pelo sinal custa zero, porque `v1` hoje vale o
+mesmo para todas as academias.
 
 O recorte é imposto por código **na ausência de gesto**: `alvos_ma` sem `--fontes` aplica
-`FONTES_ENTREGAVEL_DEFAULT = ("wellhub",)` e registra o recorte no log. A primeira implementação
-tinha `default=None` e, com isso, a mesma propriedade que a DEC-039 rejeitou com a frase *"é prosa: a
-cadeia roda com as duas fontes sem editar uma linha"* — só que o gesto que vazava passou a ser **não
-digitar o flag**, e duas das três receitas canônicas do próprio repositório o omitiam. Para consumir
-a série inteira quando o MA-20 fechar, o gesto é explícito: `--todas-as-fontes` (incompatível com
-`--fontes`, e o log sai em `WARNING`).
+`FONTES_ENTREGAVEL_DEFAULT = ("totalpass", "wellhub")` e registra o recorte no log.
+`--fontes wellhub` reproduz o universo anterior à DEC-066 (19.329) sem mexer em código.
+
+> **Religar o `s1` NÃO é "tirar uma entrada de uma lista".** Com o TotalPass na série, removê-lo de
+> `SINAIS_INATIVOS` sem levar o sinal ao grão por ACADEMIA ressuscita, no mesmo instante, o erro de
+> 36,99% que a DEC-066 mediu. Os dois atos são inseparáveis.
+
+O flag `--todas-as-fontes` continua existindo e continua sendo o gesto EXPLÍCITO para consumir a
+série **inteira** — hoje isso significa "além das duas do default" (incompatível com `--fontes`, e o
+log sai em `WARNING`). O que ele deixou de ser é a porta que separava o TotalPass do ranking: essa
+porta virou o `SINAIS_INATIVOS`. A primeira implementação do recorte tinha `default=None` e, com
+isso, a propriedade que a DEC-039 rejeitou com a frase *"é prosa: a cadeia roda com as duas fontes
+sem editar uma linha"* — o gesto que vazava era **não digitar o flag**, e duas das três receitas
+canônicas do próprio repositório o omitiam. A lição sobrevive à DEC-066 e é por isso que o default
+continua sendo declarado em toda receita copiável.
 
 ### Entregável de M&A no piloto (BLK-MA-19 — os pins de academia no Mapa Territorial)
 
@@ -738,8 +776,8 @@ pela emenda de 2026-08-14 à DEC-028) e são **opt-in**: sem a flag, nada nomead
 
 | arquivo | o que desenha | contrato |
 |---|---|---|
-| `vulnerabilidade_ma_nomeadas.parquet` | pins das academias INDEPENDENTES, com score (BLK-MA-15) | `alvos_ma_nomeados_v6` |
-| `vulnerabilidade_ma_redes.parquet` | pins das unidades de REDE do agregador, com pressão e **sem** score (DEC-035) | `redes_ma_nomeadas_v3` |
+| `vulnerabilidade_ma_nomeadas.parquet` | pins das academias INDEPENDENTES, com score (BLK-MA-15) | `alvos_ma_nomeados_v8` |
+| `vulnerabilidade_ma_redes.parquet` | pins das unidades de REDE do agregador, com pressão e **sem** score (DEC-035) | `redes_ma_nomeadas_v4` |
 
 `vulnerabilidade_ma_academias.parquet` (variante sem identidade) **não vai a produção**: nenhuma
 superfície de lá o lê.
@@ -753,13 +791,15 @@ python -m motor_expansao.vulnerabilidade.alvos_ma \
   --saida-redes    data/staging/vulnerabilidade_ma_redes.parquet
 ```
 
-> **Não falta `--fontes wellhub` aqui — o recorte é FAIL-CLOSED** *(DEC-039, D9; emenda de
-> 2026-08-25)*. Omitir o flag aplica `FONTES_ENTREGAVEL_DEFAULT = ("wellhub",)`, e o log da execução
-> diz qual recorte valeu. Até 2026-08-25 este mesmo bloco copiável rodava **sem recorte nenhum**,
-> vinte e quatro linhas depois de a seção do cron dos agregadores prometer, em prosa, que "o entregável roda
-> `--fontes wellhub`" — o gesto que vazava tinha deixado de ser "editar uma linha" e passado a ser
-> "não digitar o flag". Para consumir a série inteira quando o BLK-MA-20 fechar, o gesto é
-> explícito: `--todas-as-fontes`.
+> **Não falta `--fontes` aqui — a omissão JÁ aplica o recorte vigente** *(DEC-039, D9; emenda de
+> 2026-08-25; default trocado pela DEC-066 em 2026-09-17)*. Omitir o flag aplica
+> `FONTES_ENTREGAVEL_DEFAULT = ("totalpass", "wellhub")`, e o log da execução diz qual recorte
+> valeu. **Até 2026-09-17 este mesmo blockquote afirmava que a omissão aplicava `("wellhub",)`** — e
+> deixou de ser verdade no dia em que o default mudou, no bloco que o operador COPIA; é a mesma
+> falha que originou a emenda E3 da DEC-039, quando o bloco rodava **sem recorte nenhum** vinte e
+> quatro linhas depois de a seção do cron prometer, em prosa, que "o entregável roda `--fontes
+> wellhub`". Para reproduzir o universo anterior à DEC-066 (19.329 academias): `--fontes wellhub`.
+> Para a série inteira, além das duas: `--todas-as-fontes`.
 
 > **A dedup de cadeias da DEC-062 também vale sem flag.** O entregável liga a trava de município e
 > o raio ampliado por padrão e lê `data/staging/brasil_estrutural.parquet` para o mapa de município
@@ -775,7 +815,8 @@ python -m motor_expansao.vulnerabilidade.alvos_ma \
 >    `mkdir(parents=True)` **cria o diretório e grava lá com exit code 0**, e o `--rm` apaga tudo.
 >    Sai "sucesso" e não há arquivo.
 > 3. Sem `snapshots_concorrentes/semana=*` no host, a cadeia devolve frames **vazios** de ponta a
->    ponta e grava artefatos vazios — aí o `/api/health` **para de acusar** e a camada fica
+>    ponta e grava artefatos vazios — aí o `/api/acessos/saude-artefatos` **para de acusar**
+> (o `/api/health` nunca acusou: é mudo desde o pentest Onda B #8) e a camada fica
 >    invisível **com sinal verde**, que é pior que o estado de hoje.
 >
 > Caminho canônico: gerar na estação, conferir, e **transportar por `scp`**.
@@ -1096,7 +1137,15 @@ O que é vigiado e a cadência (crontab do root):
 0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh agregadores # quinta 09h BRT: idade da partição de cada agregador (BLK-MA-21)
 0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh crescimento # quinta 09h BRT: idade da camada de crescimento municipal (DEC-052; limiar 100 dias)
 0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh mercado     # quinta 09h BRT: camada de mercado x cadastro de concorrentes (DEC-059; limiar 9 dias)
+0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh pins        # quinta 09h BRT: idade da última promoção dos pins de M&A + desenháveis (limiar 9 dias / piso 100)
 ```
+
+> **Por que os pins têm monitor próprio.** A guarda de desenhabilidade do passo 4.5 do lote de
+> domingo faz o certo ao barrar artefato ruim, mas o efeito dela é **invisível**: entre 30/08 e
+> 17/09 ela preservou os pins bons por três semanas seguidas enquanto o mapa servia dado cada vez
+> mais velho, e nada alertou. Sem relógio, uma guarda que só bloqueia troca "pin errado" por "pin
+> velho em silêncio". Aqui o **mtime é confiável** — ao contrário do monitor de `mercado`, em que
+> o arquivo é reescrito toda semana —, porque este só é tocado pelo `mv` da promoção.
 
 Comportamento anti-spam: alerta na transição OK→FAIL, lembrete a cada 1h enquanto durar,
 e aviso de recuperação no FAIL→OK (estado em `/var/lib/motor-monitoring/`). Logs em

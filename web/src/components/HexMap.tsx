@@ -71,10 +71,24 @@ function iconeDeck(url: string): IconeDeck {
   return { url, width: 128, height: 128, anchorX: 64, anchorY: 64, mask: false }
 }
 
-// Logo do WellHub para os pins de academias INDEPENDENTES (todas vem do feed do WellHub).
+// Logo do APP que revelou a academia, para os pins de INDEPENDENTES. `[DEC-066]` Ate' 2026-09-17
+// era sempre o WellHub, e este comentario dizia "todas vem do feed do WellHub" -- verdade enquanto
+// o TotalPass estava fora da serie, falsa depois que ele entrou no entregavel.
 // Identidade de modulo (estavel) -> nao dispara re-pack do atlas. So' as independentes usam
 // esta marca; as unidades de REDE seguem com a bandeira propria (iconObjs por rede em `conc-pins`).
 const ICONE_WELLHUB: IconeDeck = iconeDeck('/logo-wellhub.png')
+const ICONE_TOTALPASS: IconeDeck = iconeDeck('/logo-totalpass.jpg')
+// `[DEC-066 / fatia 2]` O terceiro estado: academia nos DOIS apps. Arte COMPOSTA das outras duas
+// (`competitors.compor_arte_ambos`), travada por teste -- a `IconLayer` recebe URL, entao a web
+// precisa do arquivo que o PDF compoe em tempo de render.
+const ICONE_AMBOS: IconeDeck = iconeDeck('/logo-ambos.png')
+/** Sem `fonte` (payload antigo) cai no WellHub, que era o universo inteiro ate' a DEC-066. */
+const iconeDoApp = (fonte?: string | null, fontes?: string | null): IconeDeck => {
+  const declarado = String(fontes ?? '').toLowerCase()
+  if (declarado.includes(',')) return ICONE_AMBOS
+  const escolhida = declarado || String(fonte ?? '').toLowerCase()
+  return escolhida === 'totalpass' ? ICONE_TOTALPASS : ICONE_WELLHUB
+}
 
 /* Icones de FOTO, um por unidade sem marca — memoizados por arquivo.
    Passa pelo MESMO `iconeDeck` das marcas, e isso nao e' cosmetico: sem `anchorX/anchorY`
@@ -1233,9 +1247,10 @@ export default function HexMap({
           ]
         : []),
 
-      /* INDEPENDENTES (BLK-MA-15): logo do WellHub. Todas vem do feed do WellHub, entao a marca
-         do agregador as identifica — pedido do Felipe (2026-08-25). SO' as independentes levam a
-         logo do WellHub; as unidades de REDE mantem a bandeira propria (camada `conc-pins`).
+      /* INDEPENDENTES (BLK-MA-15): logo do AGREGADOR que as revelou — pedido do Felipe
+         (2026-08-25), que a `[DEC-066]` desdobra em DOIS apps: ate' ela, "a marca do agregador"
+         era necessariamente a do WellHub. SO' as independentes levam essa marca; as unidades de
+         REDE mantem a bandeira propria (camada `conc-pins`).
          O numero vive no tooltip (setIndepHover). Desenhadas ANTES dos concorrentes e da Ultra:
          onde houver sobreposicao, quem manda na leitura e' a rede instalada. */
       ...(independentes?.length
@@ -1244,7 +1259,7 @@ export default function HexMap({
               id: 'independentes-pins',
               data: independentes,
               getPosition: (d) => [d.lng ?? 0, d.lat ?? 0],
-              getIcon: () => ICONE_WELLHUB,
+              getIcon: (d) => iconeDoApp(d.fonte, d.fontes_da_academia),
               // Menor que a bandeira das cadeias (30-38): a independente e' camada secundaria e
               // nao pode competir com a rede instalada. Cap 30 evita upscaling do atlas de 128px.
               getSize: 22,

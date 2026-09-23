@@ -21,6 +21,19 @@ export interface SelectProps {
   buscavel?: boolean
   /** Texto do botao quando nada esta selecionado (value sem opcao correspondente). */
   placeholder?: string
+  /**
+   * `padrao` (default) e o controle de barra/filtro. `painel` faz o BOTAO virar a caixa de
+   * destaque — vidro, brilho e respiro —, para telas em que o seletor e a unica acao e
+   * envolve-lo num painel criaria duas bordas aninhadas com so' a de dentro clicavel.
+   */
+  variante?: 'padrao' | 'painel'
+  /**
+   * Faz o botao ocupar a largura inteira do pai. Por padrao ele se ajusta ao CONTEUDO
+   * (`maxWidth` so' poe teto), e num painel centralizado isso produz um seletor estreito
+   * e desalinhado com os controles de largura cheia em volta — era o "canto superior
+   * esquerdo" dos painoes do Inicio.
+   */
+  larguraCheia?: boolean
 }
 
 export default function Select({
@@ -31,6 +44,8 @@ export default function Select({
   maxWidth = 150,
   buscavel,
   placeholder,
+  variante = 'padrao',
+  larguraCheia = false,
 }: SelectProps) {
   const [aberto, setAberto] = useState(false)
   const [foco, setFoco] = useState(-1)
@@ -47,6 +62,7 @@ export default function Select({
 
   const temBusca = buscavel ?? options.length > 8
   const selecionado = options.find((o) => o.value === value)
+  const painel = variante === 'painel'
 
   const filtradas = useMemo(
     () => (temBusca ? filtrarOpcoes(options, busca) : options),
@@ -146,15 +162,19 @@ export default function Select({
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 8,
+          gap: painel ? 12 : 8,
           maxWidth,
-          background: 'var(--surf-select)',
-          border: `1px solid ${aberto ? 'var(--ac-a30)' : 'var(--line)'}`,
-          borderRadius: 8,
-          padding: '6px 9px',
-          color: 'var(--tx-strong)',
-          font: '500 13px/1 var(--f-ui)',
+          ...(larguraCheia ? { width: '100%', boxSizing: 'border-box' as const } : null),
+          background: painel ? 'var(--surf-panel)' : 'var(--surf-select)',
+          border: `1px solid ${aberto || painel ? 'var(--ac-a30)' : 'var(--line)'}`,
+          borderRadius: painel ? 'var(--r-lg)' : 8,
+          padding: painel ? '14px 16px' : '6px 9px',
+          /* No painel sem escolha, o texto e' CONVITE, nao valor — herda o tom do rotulo que
+             ele substituiu. Escolhido, sobe para o tom forte, como em qualquer seletor. */
+          color: painel && !selecionado ? 'var(--tx-soft)' : 'var(--tx-strong)',
+          font: painel ? '600 13px/1 var(--f-ui)' : '500 13px/1 var(--f-ui)',
           cursor: 'pointer',
+          ...(painel ? { backdropFilter: 'blur(16px)', boxShadow: 'var(--ac-glow)' } : null),
         }}
       >
         <span

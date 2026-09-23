@@ -41,16 +41,51 @@ import unicodedata
 from collections.abc import Mapping, Sequence
 from datetime import date
 
+import h3
+
 # --------------------------------------------------------------------------- #
 # Carimbos de reprodutibilidade e parâmetros do contrato
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v4"
+VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v5"  # v5: DEC-063 (ancora da chave de churn)
 VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
-VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v8"  # v8: DEC-062
+# Estado materializado de churn/staleness e a tabela de semanas observadas `[DEC-064, D2]`. São
+# artefatos NOVOS, não bump de nada: `VERSAO_CONTRATO_CHURN` segue `v2`, porque o FRAME que o
+# extrator devolve não mudou de schema — o que muda é de onde ele vem.
+VERSAO_CONTRATO_CHURN_ESTADO = "churn_estado_v1"
+VERSAO_CONTRATO_OBSERVABILIDADE = "observabilidade_escopo_v1"
+VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v9"  # v9: DEC-066
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
 H3_RES_CONTRATO = 7
+
+# Resolução H3 da ÂNCORA DA CHAVE DE CHURN `[DEC-063]`. NÃO confundir com a de cima: aquela é o
+# grão do JOIN e da coluna `hex_id_res7`, que continua res-7; esta é só o pedaço de geografia que
+# entra no PAYLOAD DO HASH, e existe porque as duas perguntas são diferentes.
+#
+# O defeito: a chave res-7 não absorve recalibração de geocodificação que atravessa a BORDA do
+# hexágono — a academia não se mexeu, mas a célula mudou, e o S3 lê 1 `sumiu_recente` + 1 `novo`.
+# Medido nas duas fotos reais do cadastro (02/08 e 06/09; 4.430 unidades presentes nas duas),
+# contra a verdade de referência `(rede, nome_base)`, que tem 174 entradas e 58 saídas:
+#
+#   | âncora                     | colisões A | colisões B | entradas | saídas | churn FALSO |
+#   |----------------------------|-----------:|-----------:|---------:|-------:|------------:|
+#   | rede|nome|hex7 (v4, HOJE)  |          1 |          1 |      219 |    104 |      **91** |
+#   | rede|nome_base|hex7        |          1 |          1 |      215 |    100 |          83 |
+#   | rede|nome_base|hex6        |          1 |          1 |      197 |     82 |          47 |
+#   | rede|nome_base|hex5 (v5)   |          1 |          1 |      185 |     70 |      **23** |
+#   | rede|nome_base|hex4        |          1 |          1 |      179 |     64 |          11 |
+#   | rede|nome_base (sem geo)   |          8 |          7 |      174 |     58 |           0 |
+#
+# Três leituras decidem o valor. (1) As duas metades somam: só o `nome_base` leva 91 -> 83, só a
+# resolução levaria mais, e juntas dão **91 -> 23**. (2) Descer de 7 para 5 **não custa colisão
+# nenhuma** — as duas fotos seguem com 1, exatamente a mesma do v4; o que muda é quanta
+# recalibração a célula absorve (41 unidades trocam de célula em res-7, 11 em res-5). (3) O
+# `hex4` corta mais (11), mas a margem contra colisão FUTURA separa os dois: a célula res-4 tem
+# ~1.770 km² contra ~252 km² da res-5, e a amostra de hoje (107 redes, 4.430 unidades) não
+# autoriza gastar essa folga. Tirar a geografia zera o falso churn e é a ÚNICA linha que perde
+# academia de verdade — o contrato COLAPSA a colisão e nunca desambigua.
+H3_RES_CHAVE_CHURN = 5
 
 # Maturidade/retenção do contrato §6 (gate de produto 2026-07-23). NÃO alterar sem novo gate:
 # contam semanas OBSERVADAS, não semanas de calendário (ver §6/§12 do contrato).
@@ -89,6 +124,47 @@ STALE_SEMANAS = 12
 # folha) fica em bloco próprio: ela mexe na única função do pacote que apaga arquivo, e a margem que
 # compraria já vem de graça no 26 = 2x o piso.
 RETENCAO_SEMANAS = 26
+
+# Sentinela de "reter tudo" — o DEFAULT de regime desde a DEC-064 (D1).
+#
+# O `26` acima continua correto e continua sendo o piso a usar SE a poda for reativada; o que a
+# DEC-064 remove é a RESTRIÇÃO que o comprava. O teto existia porque `ler_snapshots` carregava a
+# série inteira (os ~70,5 MB de RSS por semana retida, medidos no D5 da DEC-039) — e essa leitura
+# passou a ser RECORTADA na origem (filtro de partição, não filtro em pandas depois do
+# `to_pandas`). Sem o custo de leitura, reter mais semanas custa 2,6 MB de disco por semana
+# (medido; 138 GB livres na VPS), e a série inteira é o que torna `--reprocessar` possível.
+#
+# `0` e não `None` de propósito: `--retencao-semanas` é `type=int`, e um `None` na CLI exigiria um
+# tipo próprio só para dizer "não pode". Como `podar_snapshots` LEVANTA para `< 1`, a sentinela é
+# inalcançável por ela — quem decide não podar é o orquestrador, nunca a função que apaga
+# diretório. `executar(retencao_semanas=26)` continua podando, e é assim que a poda segue
+# disponível como ato manual.
+RETENCAO_TUDO = 0
+
+# Ponte de identidade `chave_snapshot -> quem/onde` (DEC-064, D3). Artefato NOMEADO e gitignored,
+# irmão da série e NUNCA parte dela: a série continua anônima, e pôr nome dentro dela exigiria bump
+# `v5 -> v6` e DEC própria.
+#
+# Por que ela existe: a ficha da unidade desenha evento com NOME, COORDENADA e distância; o diff
+# semanal da série sabe QUE uma chave entrou ou saiu e não sabe QUEM nem ONDE. Os pins
+# `vulnerabilidade_ma_*` não resolvem — são retrato do PRESENTE, então servem para quem entrou e
+# nunca para quem SAIU, cuja chave não está no arquivo novo.
+#
+# `semana` e `fonte` são chaves de PARTIÇÃO (vivem no caminho, como no snapshot); o arquivo leva as
+# outras quatro. Estas seis colunas são exatamente as que a DEC enumera — nada mais entra aqui sem
+# emenda, porque cada coluna a mais é dado de estabelecimento persistido a mais.
+#
+# ANTI-PII: `nome`/`lat`/`lng` são o PONTO deste artefato, e por isso ele NÃO reusa
+# `COLUNAS_PII_PROIBIDAS` — precedente explícito de `alvos_nomeados.py`. O que a DEC-012 protege é
+# PII de PESSOAS; nome e endereço de ESTABELECIMENTO comercial, raspados de site público, são dado
+# de NEGÓCIO (§11 do contrato do epic, e D4 da DEC-064).
+CONTRATO_COLUNAS_PONTE: dict[str, str] = {
+    "fonte": "string",
+    "chave_snapshot": "string",
+    "nome": "string",
+    "lat": "Float64",
+    "lng": "Float64",
+}
 
 # ARBITRADO, nao medido (sem serie real; revisitar no BLK-MA-06). O valor importa menos que o
 # DESENHO: o rebaixamento GLOBAL da chave só ocorre se o chamador INJETAR a taxa medida (default
@@ -351,6 +427,78 @@ CONTRATO_COLUNAS_CHURN: dict[str, str] = {
     "versao_contrato": "string",
 }
 
+# --------------------------------------------------------------------------- #
+# Estado incremental de churn/staleness `[DEC-064, D2]`
+# --------------------------------------------------------------------------- #
+# O "arquivo resumo" da decisão do dono: em vez de recalcular churn varrendo a série toda semana,
+# guarda-se UMA linha por `(fonte, chave_snapshot)` e atualiza-se com `estado anterior + semana
+# nova`. Motivo medido: `extrair_churn_staleness` já produzia este frame (19 colunas, ~27 mil
+# linhas, ordem de 2 MB) e **jogava fora** — o pacote só materializava
+# `vulnerabilidade_ma_{academias,nomeadas,redes}`.
+#
+# DAS 19 COLUNAS DO CHURN, 17 SÃO DERIVÁVEIS DE ACUMULADOR DIRETO. Duas exigem estado explícito, e
+# é nelas que o cuidado mora:
+#
+#   * `semanas_sem_mudanca` compara o `hash_campos_raspados` da semana nova com o da ÚLTIMA
+#     observação — então basta o hash CORRENTE viver aqui (`hash_ultimo`), não a série de hashes.
+#   * `flag_troca_chave_na_serie` pergunta se o conjunto de `chave_origem` do ESCOPO mudou entre
+#     semanas consecutivas — e a resposta NÃO cabe aqui: é propriedade do escopo ao longo do tempo,
+#     não da chave. Guardá-la por chave (a 1ª versão deste contrato fazia isso, com uma coluna
+#     `origens_ultima_semana`) DIVERGE da varredura quando a chave tem gap de presença: a varredura
+#     compara semanas consecutivas do escopo mesmo nas semanas em que a chave está ausente, e o
+#     estado por chave só enxergaria a última semana em que ELA foi vista. Achado da revisão
+#     automática no PR #387; as origens passaram para `CONTRATO_COLUNAS_OBSERVABILIDADE`.
+#
+# E o mesmo vale para `n_semanas_serie`: conta o EIXO do escopo `(fonte, rede)`, então também vive
+# na tabela de observabilidade.
+#
+# `presente_na_ultima_semana_do_eixo` é o que torna `n_desaparecimentos` incremental: sem ele, saber
+# se a semana nova é uma transição presente->ausente exigiria reler a série, que é exatamente o
+# custo que esta tabela existe para eliminar.
+CONTRATO_COLUNAS_CHURN_ESTADO: dict[str, str] = {
+    "fonte": "string",
+    "chave_snapshot": "string",
+    "rede": "string",  # da ULTIMA observacao, como no churn
+    "hex_id_res7": "string",  # da ULTIMA observacao
+    "chave_origem": "string",  # da ULTIMA observacao
+    "semana_primeira_observacao": "string",
+    "semana_ultima_observacao": "string",
+    "snapshot_date_ultimo": "string",
+    "hash_ultimo": "string",  # para `semanas_sem_mudanca` sem reler a serie
+    "n_semanas_presente": "int64",
+    "n_desaparecimentos": "int64",
+    "semanas_sem_mudanca": "int64",
+    "presente_na_ultima_semana_do_eixo": "bool",
+    "nota_wellhub": "Float64",  # FATO sem peso, da ULTIMA observacao (DEC-026)
+    "qtd_avaliacoes_wellhub": "Int64",  # FATO sem peso, da ULTIMA observacao (DEC-026)
+    "versao_contrato": "string",
+}
+
+# Semanas OBSERVADAS por escopo `(fonte, rede)` — o EIXO do algoritmo de churn.
+#
+# É a defesa que impede "o coletor da rede falhou" virar `sumiu_recente` em massa: uma semana em que
+# o escopo não foi observado simplesmente não entra no eixo daquela chave, logo não pode gerar
+# transição presente->ausente. O escopo é o PAR, nunca só a `fonte`, porque o feed `unidades` é um
+# CSV por rede — o sumiço do arquivo de UMA rede deixaria a fonte "observada" e marcaria a rede
+# inteira como churn (falso positivo no sinal de maior peso, ~0,467).
+#
+# Uma linha por `(fonte, rede, semana)`. Grão de LINHA e não lista numa célula de propósito: é o que
+# permite acrescentar a semana nova sem reescrever o histórico do escopo, e é o que sobrevive a
+# `--reprocessar` sendo comparável linha a linha com o que a varredura completa produz.
+#
+# `origens` é o conjunto de `chave_origem` que o escopo apresentou NAQUELA semana (CSV ordenado, ex.
+# `"hash_estavel,slug"`). Ela mora aqui, e não no estado por chave, porque `flag_troca_chave_na_serie`
+# compara semanas CONSECUTIVAS DO ESCOPO — inclusive as semanas em que uma dada chave está ausente.
+# No feed TP/WH o rebaixamento de chave ocorre POR LINHA e convive com o `slug` na mesma semana, então
+# mistura estável NÃO é troca: o que caracteriza troca é variação TEMPORAL do conjunto.
+CONTRATO_COLUNAS_OBSERVABILIDADE: dict[str, str] = {
+    "fonte": "string",
+    "rede": "string",
+    "semana": "string",
+    "origens": "string",  # CSV ordenado de `chave_origem` do ESCOPO naquela semana
+    "versao_contrato": "string",
+}
+
 # Sinal 1 (presença em agregador), hex-level: 10 colunas, nesta ORDEM. Uma linha por
 # `hex_id_res7`. `v1`/`v2`/`score_vulnerabilidade`/`n_sinais_disponiveis`/`flag_score_provisorio`
 # estão AUSENTES DE PROPÓSITO — são BLK-MA-04 (e o `v2`, BLK-MA-08).
@@ -416,7 +564,30 @@ PESOS_ALVO_D4: dict[str, float] = {"s1": 0.15, "s2": 0.25, "s3": 0.35, "s4": 0.2
 
 # S2 (rating in-app) é `n/d` PERMANENTE no Plano B (contrato §7 / D3) até o BLK-MA-08 ajustar o
 # coletor. Reativar o sinal 2 é remover UMA entrada desta tupla — a fórmula do score não muda.
-SINAIS_INATIVOS: tuple[str, ...] = ("s2",)
+# `[DEC-066]` O **s1 entra aqui**, e a razao e' medida, nao de gosto.
+#
+# O sinal pergunta "esta academia esta' em um agregador ou nos dois?" -- propriedade da ACADEMIA.
+# Mas ele e' medido por HEXAGONO (`n_agregadores_no_hex`), porque quando foi construido nao existia
+# identidade cross-provider: a chave do snapshot embute a `fonte`, entao "quantos agregadores cobrem
+# esta linha" seria constante `1`. O hex era a unica granularidade computavel.
+#
+# Com o TotalPass na serie, esse contorno passa a MENTIR em escala: o hex declara "2 agregadores"
+# para 91,45% das independentes do WellHub, mas so' 54,53% tem gemea do TotalPass a <= 50 m --
+# **falso em 36,99% do universo**, num sinal de peso efetivo 0,600. O proprio modulo ja' declarava
+# o vies em prosa; esta DEC mediu o tamanho.
+#
+# POR QUE TIRAR DA CONTA E NAO CONSERTAR AGORA. A dedup JA' responde a pergunta por academia (e' o
+# que a torna corrigivel -- ver a pendencia abaixo), e a correcao foi MEDIDA: ela reordena a lista
+# a Spearman **0,475**, a maior reordenacao ja' considerada neste repo, porque o sinal e' binario
+# (`{0; 0,5}`) e pesa 0,600. Corrigir o endereco nao tira o degrau.
+#
+# Tirando-o da conta, a lista NAO se move: `v1` assume hoje um UNICO valor (`[0.5]`, medido), entao
+# `30 + 40*v6` vira `100*v6` -- monotonico. O ganho vem inteiro: universo 19.329 -> 35.170.
+#
+# **PENDENCIA INSEPARAVEL:** religar o s1 e corrigir o GRAO sao o MESMO ato. Com o TotalPass na
+# serie, remover `"s1"` daqui sem levar o sinal para o grao por ACADEMIA ressuscita os 36,99% no
+# mesmo instante. Quem for religar tem de ler isto antes: nao e' "remover uma entrada de uma lista".
+SINAIS_INATIVOS: tuple[str, ...] = ("s1", "s2")
 
 # `novo` mapeia para `None` (= AUSENTE), NUNCA para `0.0`: ler "série curta demais para julgar"
 # como "estável" inverteria o sinal em silêncio. As chaves são EXATAMENTE `STATUS_CHURN_VALIDOS`
@@ -481,7 +652,7 @@ CONTRATO_COLUNAS_SCORE: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Sinal 6 — pressão competitiva com decaimento por distância (BLK-MA-12)
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v5"  # v5: DEC-062
+VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v6"  # v6: DEC-066
 
 # Raio de TRUNCAMENTO, não de alcance: quem define o alcance efetivo é a forma do kernel. 2.000 m
 # é o mesmo do `pressao_concorrencial_score_2km` da camada de mercado — manter o número igual é o
@@ -582,6 +753,30 @@ DEDUP_INDEPENDENTES_M = 50.0
 #
 # O default e' `None` = comportamento de HOJE, byte a byte (nenhuma dedup dentro da mesma fonte).
 DEDUP_INDEPENDENTES_NOME_M = 150.0
+
+# `[DEC-066]` Alcance do casamento que responde "esta academia esta' NOS DOIS apps?".
+#
+# **NAO e' a regua da dedup de OFERTA, e a diferenca e' deliberada.** La' (`DEDUP_INDEPENDENTES_M`,
+# 50 m) o custo de errar e' assimetrico num sentido: nao colapsar DOBRA a oferta de toda academia
+# listada nas duas fontes -- erro sistematico, em massa, invisivel. Aqui o pino AFIRMA um fato ao
+# operador, e afirmar errado num artefato entregue e' pior que omitir; mas omitir tambem AFIRMA
+# ("so' TotalPass" e' uma afirmacao), entao nao existe lado seguro e a regua e' escolha de produto.
+#
+# Medido nos feeds reais de 2026-09-17 (universo aproximado de independentes -- o feed bruto nao tem
+# `rede`, entao o numero e' TETO):
+#
+#   | regua                | "ambos" | so WH  | so TP  |
+#   |----------------------|---------|--------|--------|
+#   |  50 m (distancia)    | 11.640  | 30.639 |  4.786 |
+#   |  50 m + nome         |  7.629  | 35.749 |  8.797 |
+#   | 100 m (distancia)    | 12.838  | 28.042 |  3.588 |
+#   | 100 m + nome         |  8.250  | 35.123 |  8.176 |  <- ESCOLHIDA (Vinicius, 2026-09-17)
+#
+# O 100 m NAO compra ruido: dos 1.198 pares que so' aparecem entre 50 e 100 m, 621 (51,8%) concordam
+# no nome -- menos que os 65,5% da faixa curta, mas longe dos 1,55% que a tabela de
+# `DEDUP_INDEPENDENTES_NOME_M` mede a 300 m DENTRO da mesma fonte. Faz sentido: apps diferentes
+# discordam de coordenada, entao par REAL legitimamente fica mais longe.
+RAIO_MESMA_ACADEMIA_ENTRE_APPS_M = 100.0
 
 # Resolução H3 do bucket espacial da dedup (aresta ~29 m). Serve só para não comparar todos os
 # pares (19.329² = 373 M): o candidato é buscado na própria célula + um `grid_disk` de raio
@@ -793,7 +988,7 @@ CONTRATO_COLUNAS_PRESSAO: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Lista priorizada de alvos de M&A (D5/D6) — BLK-MA-05
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v5"  # v5: DEC-062
+VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v6"  # v6: DEC-066
 
 # Gate D5 (ratificado em 2026-07-23; reabrir exige DEC). A INVERSÃO do §2 mora aqui: comprar quer
 # demanda ALTA + residual BAIXO, o OPOSTO de `abrir_agora`.
@@ -889,7 +1084,7 @@ CONTRATO_COLUNAS_ALVOS_MA: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # Variante NOMEADA (D1-B) — BLK-MA-15
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v6"  # v6: DEC-062
+VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v8"  # v8: DEC-066, `fontes_da_academia`
 
 # O UNICO contrato desta camada que carrega IDENTIDADE e COORDENADA, autorizado pela emenda de
 # 2026-08-14 a DEC-028 (decidida por Vinicius). Grao: uma linha por academia.
@@ -903,6 +1098,14 @@ VERSAO_CONTRATO_ALVOS_NOMEADOS = "alvos_ma_nomeados_v6"  # v6: DEC-062
 # nao e' desenhavel. Descarta-la esconderia um alvo por acidente de coleta.
 CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
     "fonte": "string",
+    # `[DEC-066]` QUAIS apps listam esta academia, em ordem alfabetica e separados por virgula
+    # (`"wellhub"`, `"totalpass"`, `"totalpass,wellhub"`). Idioma de `fontes_lidas` (snapshot v4).
+    #
+    # NAO e' um booleano "ambos" de proposito: a string diz QUAIS, sobrevive a um terceiro
+    # agregador, e o desenho deriva "ambos" da virgula. NULA quando a academia nao tem coordenada
+    # -- ela existe (tem score) e nao e' casavel, entao carimbar a propria fonte sozinha AFIRMARIA
+    # exclusividade nao medida. Mesma regra da auditoria da pressao: ausencia de medicao e' nula.
+    "fontes_da_academia": "string",
     "chave_snapshot": "string",
     "nome": "string",  # IDENTIDADE — o ponto do artefato (emenda DEC-028)
     "lat": "Float64",  # nulavel: sem coordenada a academia existe, so' nao tem pin
@@ -953,7 +1156,7 @@ CONTRATO_COLUNAS_ALVOS_NOMEADOS: dict[str, str] = {
 # no mesmo dia e o score leria um evento de negociacao como 440 alvos. O S6 nao tem esse defeito: e'
 # geografico e nao sabe se a academia e' de rede. Molde do G-D2 e da DEC-026 — o fato entra antes do
 # peso.
-VERSAO_CONTRATO_REDES_NOMEADAS = "redes_ma_nomeadas_v3"  # v3: DEC-062
+VERSAO_CONTRATO_REDES_NOMEADAS = "redes_ma_nomeadas_v4"  # v4: DEC-066
 
 CONTRATO_COLUNAS_REDES_NOMEADAS: dict[str, str] = {
     "fonte": "string",
@@ -1188,12 +1391,106 @@ def hash_campos_raspados(campos: Mapping[str, object], fonte: str) -> str:
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
+#: Marcador de PIPELINE no nome da unidade — aplicado ao texto JÁ normalizado, por isso ASCII e
+#: sem pontuação ("(Em breve)" chega aqui como "em breve", "Inauguração" como "inauguracao").
+#: Normalizar antes e casar depois evita manter duas grafias da mesma regra.
+#:
+#: As formas são as MEDIDAS nas duas fotos do cadastro, não as imaginadas: `(Em breve)`,
+#: `- Inaugurada` e `(Pré-Lançamento)` (a rede `ad3` inteira) cobrem os 50 nomes distintos que o
+#: marcador altera.
+#:
+#: **A forma COMPOSTA precisa EXISTIR — e é só isso que importa, não a ordem.** Sem
+#: `pre\s+lancamento` na alternação, `lancamento` casa sozinho e sobra um `pre` órfão no
+#: `nome_base`, que voltaria a produzir churn falso exatamente quando a unidade inaugurasse e o
+#: sufixo caísse — o defeito que esta função existe para matar. Medido antes de corrigir: 15
+#: unidades da `ad3` saíam como `"ad3 gaspar pre"`.
+#:
+#: A ORDEM entre as alternativas é **indiferente**, e a primeira redação deste comentário
+#: afirmava o contrário. O `re` procura a POSIÇÃO mais à esquerda antes de testar alternativas;
+#: na posição do `pre`, `lancamento` não casa e só a composta pode casar. Medido nos dois
+#: sentidos: saída idêntica nos 6 casos reais. Correção apontada pela revisão do PR #378.
+_RE_MARCADOR_PIPELINE = re.compile(
+    r"\b(pre\s+lancamento|pre\s+venda|pre\s+abertura|proxima\s+abertura"
+    r"|em\s+breve|inaugura\w*|lancamento)\b"
+)
+
+
+def nome_base(nome: object) -> str:
+    """`normalizar_texto` SEM o marcador de pipeline. **CONGELADA**: entra na chave de churn.
+
+    A rede anuncia a unidade como `"Smart Fit Centro (Em breve)"` e, quando ela inaugura, o
+    sufixo cai. Sob a chave do `v4` isso era 1 `sumiu_recente` + 1 `novo` — a leitura exatamente
+    invertida do fato, porque inauguração é o oposto de fechamento.
+
+    **Nunca devolve vazio.** Unidade cujo nome é só o marcador (`"Em breve"`) cairia para `""` e
+    todas elas colapsariam numa chave só, dentro da mesma rede e célula. Nesse caso devolve o
+    nome normalizado inteiro: perder a absorção do marcador numa linha é muito melhor que fundir
+    academias distintas, que o contrato não sabe desfazer.
+    """
+    norm = normalizar_texto(nome)
+    if not norm:
+        return ""
+    sem_marcador = _RE_ESPACOS.sub(" ", _RE_MARCADOR_PIPELINE.sub(" ", norm)).strip()
+    return sem_marcador or norm
+
+
+def _celula_da_chave(hex_id_res7: object) -> str:
+    """Pai res-5 da célula res-7 do contrato. Entrada inválida passa adiante, como string.
+
+    Degradar em vez de levantar é deliberado: quem garante a resolução é
+    `_assert_schema_snapshot` (que recusa o frame inteiro fora da res-7), e uma exceção aqui
+    mataria a materialização da semana por uma linha torta — o modo de falha que a DEC-061 existe
+    para evitar.
+    """
+    try:
+        return str(h3.cell_to_parent(str(hex_id_res7), H3_RES_CHAVE_CHURN))
+    except Exception:
+        return str(hex_id_res7)
+
+
 def chave_hash_estavel(fonte: object, rede: object, nome: object, hex_id_res7: object) -> str:
-    """Chave de churn de fallback: sha1 estável a jitter de coordenada dentro do hex res-7.
+    """Chave de churn de fallback: sha1 estável a recalibração de coordenada e a inauguração.
 
     Divergimos do `concorrente_id` de produção de propósito (gate 2026-07-29): lá a coordenada
     entra com `:.6f` (~11 cm), então qualquer re-geocodificação produziria 1 falso
     `sumiu_recente` + 1 falso `novo` no sinal de MAIOR peso (S3 ~= 0,467).
+
+    **Âncora emendada pela DEC-063.** O `v4` absorvia jitter DENTRO do hexágono res-7 e não a
+    recalibração que cruzava a BORDA dele — 41 das 4.430 unidades presentes nas duas fotos (0,93%)
+    trocaram de célula sem sair do lugar, e a `selfit` sozinha respondeu por **32** delas. Agora o
+    payload leva `nome_base` (sem o marcador de pipeline) e o pai res-5 da célula: o falso churn
+    medido cai de **91 para 23 pares**, com a colisão inalterada em 1 nas duas fotos.
+
+    **Não zera, e o resíduo tem nome.** Em res-5 ainda sobram 11 trocas de célula (`selfit` 7,
+    `contorno_do_corpo` 2, `wellness_club` 1, `my_box` 1): recalibração grande o bastante para
+    atravessar uma célula de ~252 km² é mudança de endereço plausível, e absorvê-la exigiria o
+    `hex4`, cuja folga contra colisão futura a amostra de hoje não autoriza gastar. A tabela
+    completa e a razão do `5` estão em `H3_RES_CHAVE_CHURN`.
+
+    A assinatura NÃO muda: o parâmetro continua sendo a célula **res-7** do contrato, e a
+    conversão acontece aqui dentro. Trocá-la obrigaria todo chamador a saber de uma segunda
+    resolução, que é justamente o acoplamento que a coluna `hex_id_res7` existe para evitar.
+    """
+    payload = f"hash_estavel|{fonte}|{rede}|{nome_base(nome)}|{_celula_da_chave(hex_id_res7)}"
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+#: Versão que a `chave_hash_estavel_v4` abaixo produz. Existe para a migração PODER RECUSAR uma
+#: partição que não seja exatamente aquela — versão desconhecida aborta em vez de tentar adivinhar.
+VERSAO_CONTRATO_SNAPSHOT_V4 = "snapshots_concorrentes_v4"
+
+
+def chave_hash_estavel_v4(fonte: object, rede: object, nome: object, hex_id_res7: object) -> str:
+    """Fórmula do `snapshots_concorrentes_v4`, **preservada só para MIGRAR** `[DEC-063]`.
+
+    Não tem chamador em produção e não deve ganhar um. Ela existe porque o snapshot **não guarda
+    `nome`** (anti-PII, DEC-012): sem esta função não há como recomputar a chave antiga de uma
+    partição já gravada, e o `de -> para` da migração deixaria de ser auditável — viraria "confie
+    que o mapa está certo". Com ela, `migrar_chave_churn` reproduz a chave v4 a partir da foto do
+    cadastro e a confere contra a que está no disco antes de trocar qualquer coisa (medido:
+    4.495/4.495 em `2026-31` e 4.610/4.610 em `2026-36`, zero órfãs dos dois lados).
+
+    **CONGELADA.** Mudar um caractere aqui quebra a reprodutibilidade de toda partição `v4`.
     """
     payload = f"hash_estavel|{fonte}|{rede}|{normalizar_texto(nome)}|{hex_id_res7}"
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
@@ -1318,6 +1615,7 @@ __all__ = [
     "DEDUP_CADEIA_FEED_COLUNA_NOME_MAPEADO",
     "DEDUP_INDEPENDENTES_M",
     "DEDUP_INDEPENDENTES_NOME_M",
+    "RAIO_MESMA_ACADEMIA_ENTRE_APPS_M",
     "DEDUP_H3_RES",
     "DEDUP_NOME_H3_RES",
     "DEDUP_K_MARGEM_ANEIS",
@@ -1347,7 +1645,10 @@ __all__ = [
     "rotulo_de_teste",
     "entrada_tecnologia_totalpass",
     "hash_campos_raspados",
+    "nome_base",
     "chave_hash_estavel",
+    "chave_hash_estavel_v4",
+    "VERSAO_CONTRATO_SNAPSHOT_V4",
     "chave_do_slug",
     "concorrente_id_producao",
     "renormalizar_pesos",

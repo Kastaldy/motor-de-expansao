@@ -1852,142 +1852,8 @@ o `/api/health`; (4) a pílula de independentes visível na tela, no drill-down 
 
 ---
 
-### BLK-MA-20 — TotalPass entra como FONTE do score (o arquivamento foi da NOTA, não da fonte)
+- BLK-MA-20 (concluído 2026-09-21) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** — muda o UNIVERSO de uma camada paralela e reordena o ranking em escala sem precedente aprovado (Spearman `0,692`; a DEC-034 tratou `0,991` como material). READ-ONLY sobre o M1: não toca `score_priorizacao`, pesos do M1, `config.py`, `pipelines/m1` nem artefato oficial. **Exige DEC própria antes do Builder** (molde DEC-033/034). |
-| **Prioridade** | **Alta, e a janela é agora.** O S1 hoje tem **variância zero** — 6.753 de 6.753 hexes com `n_agregadores_no_hex = 1` — e por isso o score é pressão renomeada. O TotalPass é a única coisa disponível que devolve variância a um componente ATIVO, e isso **independe de série**. E o custo de absorver a reordenação cresce com o histórico: hoje há **uma** partição local e **zero** em produção. |
-| **Esteira** | Block Orchestrator → Planner → `[GATE humano — DEC própria]` → Builder → QA. |
-| **Status** | Pendente — **levantamento concluído em 2026-08-24**, com números medidos (abaixo). Nenhuma linha de produção escrita. |
-| **Depende de** | **BLK-MA-06** (o cron semanal; é ele que valida o caminho com `DRY_RUN`) e **BLK-MA-21** (o cron SEMANAL dos agregadores, na terça — criado em 2026-08-25, cadência corrigida de mensal para semanal em 2026-08-26; sem ele o S3/S4 do TotalPass nunca amadurece, e é lá que a colisão de partição é resolvida). |
-| **Autonomia** | **manual (NÃO loop-safe)** — tem gate humano (DEC) e depende de cron de produção. |
-
-**A pergunta que abriu o bloco (Vinicius, 2026-08-24), e por que ela procede.** A DEC-026 tornou a
-nota do WellHub **coluna-fato SEM PESO**. Logo, a ausência permanente de nota no TotalPass é
-**irrelevante para o score** — e a assimetria que o spike do BLK-MA-10 declarou "permanente" afeta
-uma coluna de fato, não o ranking. Verificado: o spike arquivou o TotalPass literalmente **"como
-fonte de NOTA"** (`data/reports/spike_totalpass_nota_2026-08-05.md:101`); **nenhuma DEC de 001 a 037
-o proíbe como FONTE**, e o contrato já o declara agregador de primeira classe
-(`FONTES_AGREGADORES = ("totalpass", "wellhub")`, `contrato.py:76`), com entrada própria em
-`CAMPOS_HASH_POR_FONTE` e filtro de ruído específico dele. O schema do sinal 1 tem
-`fontes_presentes_no_hex` como *"subconjunto de FONTES_AGREGADORES"*: o desenho **espera** os dois.
-
-**O bloqueio não é o que parecia — CORREÇÃO de premissa, medida em 2026-08-24.** O feed do TotalPass
-**EXISTE**: 27 CSVs, **15.986 linhas**, `data_coleta = 2026-06-01` em 100% delas, schema de 10
-colunas (sem as duas de rating), em `GymScraping/TotalPass/csvs/` — o repo irmão do coletor. O que
-não existe é `motor-de-expansao/concorrentes/totalpass/`, que é o default de onde o snapshot lê.
-**O bloqueio de dado é uma CÓPIA de 27 arquivos**, não uma coleta a fazer. O CSV já sai pós-filtro de
-musculação, então é o universo "V2" da DEC-025, comparável ao WellHub.
-
-**Código: zero mudança para RODAR.** A cadeia inteira (`ler_feeds` → `limpar_ruido` →
-`derivar_chave` → `montar_snapshot` → `extrair_presenca_agregador` → `_pressao_por_academia` →
-`calcular_score_vulnerabilidade`) roda com as duas fontes sem editar uma linha; `montar_snapshot` já
-preenche a nota com `NA` para TotalPass. **Nenhum teste quebra** — as fixtures da suíte já são de
-duas fontes (158 ocorrências de `totalpass` em `tests/`), e um teste hoje `skipped` passa a rodar.
-
-#### O preço não está onde a pergunta supõe: o S6 é benigno, o S1 é que detona
-
-| efeito | Spearman contra hoje | top-100 |
-|---|---|---|
-| só o **S6** (oferta maior) | `0,985` | troca **9** |
-| **total**, com o S1 solto | **`0,692`** | troca **100 de 100** |
-
-Hoje, no regime `{s1,s6}`, o S1 tem peso efetivo **0,600** e contribui CONSTANTE (`v1 ≡ 0,5`), o que
-reduz o score a `30 + 40·v6`. Soltar o `v1` sem mais nada **não cria um discriminador — cria um
-degrau**: como `_V1_POR_N_AGREGADORES = {2: 0.0, 1: 0.5}` só mapeia para baixo, as duas populações
-caem em faixas quase disjuntas — `40·v6` (teto **38,6**) e `30 + 40·v6` (piso **30,0**) —, e
-**91,7% das academias ficariam acima do teto do outro grupo** independentemente da pressão real.
-
-**E o S1 estaria errado no GRÃO — é a DEC-029 se repetindo.** O `v1` é medido por HEXÁGONO. Com uma
-fonte só isso é vacuoso; com duas vira o erro dominante: o hex diz "2 agregadores" para **89,60%**
-das academias do WellHub, mas só **50,35%** têm gêmea do TotalPass a ≤50 m — **falso "2 agregadores"
-em 7.603 linhas (39,33% do universo)**, num sinal de peso seis vezes o do S6.
-
-**O que desarma: o tempo.** O mesmo TotalPass entra dominante hoje e informativo depois.
-
-| regime | peso efetivo do S1 |
-|---|---|
-| `s1,s6` — hoje | **0,600** |
-| `s1,s3,s6` | 0,250 |
-| `s1,s3,s4,s6` — completo | **0,176** |
-
-**Ganho real de universo, menor que o bruto.** Dos 14.281 independentes do TotalPass, **67,39% já
-estão no funil pelo WellHub**. Alvos genuinamente novos: **da ordem de 3.290** (+17% a +24% no
-universo, conforme a dedup case por distância ou também por nome).
-
-#### O caminho, na ordem
-
-0. **Copiar o feed** — 27 CSVs para `concorrentes/totalpass/csvs/`, com `PROVENIENCIA.md` no molde do
-   WellHub. Aqui **e** na VPS. Não exige nada além do ato.
-1. **BLK-MA-21 — cron SEMANAL dos agregadores** (criado em 2026-08-25; cadência corrigida em
-   2026-08-26). É lá que ficam a colisão de
-   partição, a retenção por cadência e os dois bloqueadores de caixa do coletor. **Correção de uma
-   afirmação deste bloco:** a colisão não é condicional — o semanal roda todo domingo e toda semana
-   ISO tem um domingo, então ela é **certa, toda semana**. E a saída medida (particionar por
-   `semana=X/fonte=Y`) **não exige bump** de `VERSAO_CONTRATO_SNAPSHOT`, ao contrário do que a lista
-   de bumps abaixo sugeria.
-2. **Calibrar `DEDUP_INDEPENDENTES_M`** com o primeiro par real. Hoje o valor é **arbitrado e não
-   calibrado**, declarado assim de propósito por não haver par TP×WH. A CDF medida: p25 `1,7 m` ·
-   p50 `13,6 m` · p75 `95,0 m` · p90 `367,2 m` — os 50 m de hoje pegam ~67% dos pares. Subir o
-   limiar sem matcher de nome apaga vizinho real, então calibrar provavelmente significa **portar
-   `identidade.mesma_unidade` para independentes**.
-3. **Decidir o GRÃO do S1** — é o passo que mais importa (ver os 39,33% acima). Opções: manter no
-   hex e aceitar o viés; medir por academia (molde da DEC-029); ou a via abaixo.
-4. **DEC Alta**, declarando o deslocamento medido e os **5 bumps obrigatórios**:
-   `presenca_agregador_v1→v2`, `score_v7→v8`, `pressao_v4→v5`, `alvos_ma_v4→v5`, `nomeados_v5→v6`
-   (candidatos: `redes_ma_nomeadas`, `snapshots_concorrentes_v3→v4`, `churn_staleness`).
-
-> **Terceira via a avaliar no gate — entrar com o TotalPass tratando o S1 como FATO SEM PESO**, no
-> molde exato da DEC-026 com a nota. Ganha-se o universo novo e a dedup calibrada com par real,
-> **sem** deixar um sinal binário de grão errado sequestrar 60% do ranking; o S1 volta a pesar
-> quando S3/S4 maturarem e ele valer 0,176 em vez de 0,600.
-
-**Fora de escopo.** A NOTA do TotalPass (arquivada, e a re-sonda de 2026-08-24 reconfirmou que não
-existe — o caminho para ela é comercial, não técnico); o BLK-MA-07 (reputação externa); qualquer
-peso do D4, que segue CONGELADO; e o cron **semanal** dos agregadores em si, que é o bloco do
-passo 1 (**BLK-MA-21**).
-
-**Riscos e o que fazer com eles.**
-- **S4 falso positivo em massa** se o feed de 01/06 for fotografado sem recoleta: a defasagem é de
-  ~10-11 semanas contra `STALE_SEMANAS = 12`, e a própria infra registra que fotografar feed não
-  recoletado é "pior do que não fotografar". → Recoletar o TotalPass **antes** da primeira foto, ou
-  entrar só com S1+S6 e ligar o S4 dele após a 2ª coleta real.
-- **Dupla contagem a jusante:** a dedup existe só do lado da OFERTA. `n_independentes_vulneraveis`
-  conta `chave_snapshot`, que embute a `fonte` → o CSV do comercial somaria 2 para a mesma academia,
-  e o pin do piloto desenharia dois. → Precisa de colapso explícito por estabelecimento.
-- **O corte por nota do BLK-MA-05 excluiria em silêncio o universo TotalPass inteiro** — deixa de ser
-  filtro de qualidade e vira filtro de FONTE.
-- **ToS de marca:** reter nome de estabelecimento do TotalPass num produto **publicado** (os pins do
-  piloto) é ato diferente da sonda read-only; os ToS restringem uso comercial de marca e reprodução
-  de conteúdo. Ninguém avaliou o caso publicado. → Uma linha na DEC.
-- **Nada carimba no parquet quais fontes a partição fotografou** (`fontes_lidas` só existe na
-  auditoria impressa), então "TotalPass não fotografado" fica indistinguível de "lido e vazio". →
-  Barato, cabe no mesmo bump.
-
-> **Dois números do levantamento que NÃO se sustentaram, registrados para ninguém os repetir.**
-> (1) *"A Smart Fit é invisível para a camada de M&A"* — **falso**: ela é a maior rede de
-> `concorrentes_mapeados.parquet`, com **1.000 unidades**, o dobro das 504 do TotalPass, e é esse o
-> insumo do S6. A pressão já a conta.
-> (2) *"A retenção de 26 semanas contra `MIN_SEMANAS = 8` faria a série nunca amadurecer em cadência
-> mensal"* — **falso**: `podar_snapshots` é **keep-newest-N sobre PARTIÇÕES**
-> (`candidatos[: len(candidatos) - 26]`), não poda por idade de calendário. *(Nota de 2026-08-26: a
-> premissa da cadência mensal caiu de vez — os agregadores rodam SEMANALMENTE, então 26 partições
-> são 26 observações de cada fonte, e a `RETENCAO_SEMANAS` voltou de `78` para `26`. O piso medido
-> para o `v4` saturar é **13**.)*
-
-**Procedência dos números.** Verificados de primeira mão em 2026-08-24: o feed do TotalPass (27
-CSVs / 15.986 linhas / `data_coleta`), a contagem da Smart Fit nas três bases, os pesos efetivos por
-regime, as faixas `30–68,6` × `0–38,6` e os 91,7%, o `keep-newest-N` da poda e o `delete_matching`.
-**Medidos pela auditoria e NÃO re-verificados linha a linha:** os Spearman, a interseção de hexes,
-os 92,24% / 39,33%, os ~3.290 alvos novos e a CDF da dedup. O critério de aceite abaixo exige
-re-medir esses antes da DEC.
-
-**Critério de aceite.** (1) Os números do parágrafo anterior marcados como não re-verificados são
-**re-medidos** e entram na DEC com script reproduzível; (2) a decisão de GRÃO do S1 está tomada e
-justificada com número; (3) a dedup está calibrada contra par real, com o efeito medido antes e
-depois; (4) os 5 bumps aplicados e a quebra de comparabilidade declarada; (5) nenhum peso do D4
-alterado; (6) READ-ONLY sobre o M1; (7) suíte verde e `loop_guard` sem CRÍTICO.
 
 ---
 
@@ -2211,7 +2077,7 @@ healthcheck; (7) a fronteira com o BLK-MA-20 escrita na DEC; (8) READ-ONLY sobre
 | **Criticidade** | **Média** — mexe num wrapper de cron **já aplicado na VPS**, o que exige reaplicação manual do Felipe. READ-ONLY sobre o M1. |
 | **Prioridade** | Média. O risco é real mas de cauda: exige que uma rodada de agregador atrase até domingo, o que hoje só acontece por travamento. |
 | **Esteira** | Block Orchestrator → Builder → QA → `[aplicação na VPS: passo MANUAL — §6]`. |
-| **Status** | Pendente — **criado em 2026-08-26**, fatiado do BLK-MA-21 pela decisão de escopo do sintetizador. |
+| **Status** | Pendente — **criado em 2026-08-26**, fatiado do BLK-MA-21 pela decisão de escopo do sintetizador. **ENCOLHIDO pela [DEC-064](../docs/decisions/DEC-064.md) (2026-09-18):** com a poda fora do regime (D1), o caso "duas podas concorrentes" some; **sobrevive** o achado principal — o wrapper de domingo não tem lock nenhum, e a poda segue existindo como ato manual. |
 | **Depende de** | BLK-MA-21 (o wrapper da terça e a grade semanal). |
 | **Autonomia** | **manual (NÃO loop-safe)** — cron de produção. |
 
@@ -2244,7 +2110,7 @@ podar concorrentemente; suíte verde; `loop_guard` sem CRÍTICO; nenhum comando 
 | **Criticidade** | **Alta** — mexe na única função do pacote que **apaga arquivo** (`podar_snapshots`, `shutil.rmtree`). READ-ONLY sobre o M1. |
 | **Prioridade** | **Baixa** *(rebaixada em 2026-08-26)*. A margem que ela compraria já vem de graça no `RETENCAO_SEMANAS = 26 = 2× o piso`. |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | Pendente — **criado em 2026-08-26**; existia como "adiado" dentro do BLK-MA-21 / DEC-039 (D5), com a justificativa da cadência MENSAL, que morreu. |
+| **Status** | **SEM OBJETO desde a [DEC-064](../docs/decisions/DEC-064.md) (2026-09-18)** — criado em 2026-08-26, existia como "adiado" dentro do BLK-MA-21 / DEC-039 (D5) com a justificativa da cadência MENSAL, que morreu; agora a própria premissa morre. Este bloco garante N observações por fonte **dentro de uma janela podada**, e o D1 tira a poda do regime: sem remoção, a assimetria "semanas de CALENDÁRIO × semanas OBSERVADAS" não causa perda nenhuma. Só volta a valer se a poda for reativada à mão. |
 | **Depende de** | BLK-MA-21. |
 | **Autonomia** | **manual (NÃO loop-safe)** — apaga arquivo em disco. |
 
@@ -2337,6 +2203,45 @@ definido antes de qualquer código; validação com fixtures sintéticas; READ-O
 
 
 
+
+---
+
+### BLK-MA-22 — Retenção integral, estado incremental e a ponte de identidade (DEC-064)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — mexe na única função do pacote que **apaga arquivo** (a poda), troca o REGIME DE LEITURA da série que alimenta S3/S4 e cria artefato que persiste **nome e coordenada** de estabelecimento. READ-ONLY sobre o M1: escreve só em `data/staging/`. DEC própria: [DEC-064](../docs/decisions/DEC-064.md). |
+| **Prioridade** | **Alta.** É o que destrava a movimentação DINÂMICA na ficha da unidade: hoje o diff semanal sabe QUE uma chave entrou ou saiu e não sabe QUEM nem ONDE, porque a série é anônima e os feeds crus são sobrescritos todo domingo. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE humano — DEC-064 APROVADA em 2026-09-18]` → Builder → QA → `[aplicação na VPS: passo MANUAL, comando a comando — §6]`. |
+| **Status** | **Implementado** (2026-09-18), em dois PRs. **PR A** (#386, `c1a86c7`): entregas 1, 3 e 4 — retenção integral (sentinela `RETENCAO_TUDO`, poda fora do regime, invariante `>= 1` intacta), ponte de identidade e estreia/observabilidade pela listagem —, mais a leitura RECORTADA por partição, que é o que paga a retenção. **PR B**: entrega 2 — `churn_estado.py`, com `churn_estado_v1` + `observabilidade_escopo_v1` e `reprocessar`, travado pelo teste de equivalência incremental × varredura. **PR C**: liga o estado no cron — `executar()` passa a atualizar o acumulador logo após publicar e **sob a mesma condição**, com `--reprocessar`, `--sem-estado` e `--estado-dir` na CLI; o wrapper do cron não muda uma linha, de propósito. **APLICADO na VPS** em 2026-09-19 (PR A + B, digests `8eec274d…`/`1111c876…`, revision `7425a2e`): a poda parou de rodar e a ponte gravou 27.400 linhas na coleta de 2026-09-20 (4.690 `unidades` + 22.710 `wellhub`, lat/lng 100% preenchidos). **Falta deployar o PR C** para o estado começar a acumular. |
+| **Depende de** | DEC-064 (aprovada). Nada mais — a série já existe no disco da VPS (3 semanas) e o `ler_snapshots` já aceita `semanas=`/`fontes=`. |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca a poda de produção e cria artefato com nome/coordenada. NUNCA marcar loop-safe. |
+
+**As quatro entregas.** (1) `executar()` deixa de podar em regime, com `podar_snapshots` mantendo a
+invariante `>= 1`; (2) churn/staleness passa a ser **materializado** e atualizado por `estado
+anterior + semana nova`, com `--reprocessar` reconstruindo do zero a partir da série retida;
+(3) ponte `semana, fonte, chave_snapshot, nome, lat, lng`, gravada do frame de trabalho antes da
+projeção das 13 colunas; (4) estreia por fonte e observabilidade por `(fonte, rede)` derivadas da
+LISTAGEM de diretórios, nunca dos dados lidos.
+
+**A armadilha a não repetir.** A estreia NÃO pode sair do frame recortado: seria a borda da janela,
+e o defeito corrigido no PR #383 voltaria por outro caminho — lá, a estreia por SÉRIE (em vez de por
+FONTE) fez **22.877** chaves do WellHub serem lidas como recém-chegadas, contra **327** reais.
+
+**Fora de escopo.** Bump do contrato do snapshot (`v5 → v6`) e qualquer mudança em
+`COLUNAS_PII_PROIBIDAS`: a série continua anônima, e pôr nome dentro dela exige DEC própria.
+
+**Reconciliação com os dois follow-ups da poda** *(achado da revisão automática no PR #384)*. O D1
+desliga a poda **em regime**, e isso muda o chão de dois blocos pendentes — de formas DIFERENTES,
+por isso não cabe um carimbo único:
+
+- **BLK-MA-21-FU4 (poda por fonte) fica SEM OBJETO.** Ele existe para garantir N observações por
+  fonte **dentro de uma janela podada**; sem poda, nenhuma observação é removida e a assimetria
+  "semanas de CALENDÁRIO × semanas OBSERVADAS" deixa de causar perda. Sobrevive só como margem se a
+  poda for reativada à mão.
+- **BLK-MA-21-FU3 (`flock`) ENCOLHE, mas não morre.** Ele cobre duas coisas: podas concorrentes
+  (que somem com o D1) e o fato de o wrapper de domingo **não ter lock nenhum**, que continua
+  valendo — a poda segue existindo como ato manual, e o lock protege mais que ela.
 
 ---
 
@@ -3621,57 +3526,8 @@ Emendas em DEC-004 e DEC-011.
 
 ---
 
-### BLK-BASEMAP-04 — CONCLUÍDO em 2026-09-17 (ver `tasks/completed.md`)
+- BLK-BASEMAP-04 (concluído 2026-09-17) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Status** | **CONCLUÍDO** — (a) metade já no ar e metade REFUTADA por medição, (b) entregue, (c) é o BLK-BASEMAP-06 |
-
-**Contexto (medido no frame canônico do Pontual à época: raio 1,5 km, canvas 1000x760, lat −23,55 — raio de 1,0 km desde a DEC-021).**
-O mosaico de rótulos busca **624 tiles** por relatório contra 169 do basemap, e aloca um canvas de
-`13312x12288` RGBA ≈ **654 MB por chamada**. O `@2x` é **100% desperdiçado**: o mosaico sai a
-3,349 px/m contra 0,1548 px/m do frame — downsample de **21,6x** no render. O cache do
-BLK-BASEMAP-03 corta a repetição, **não o pico**: no cache frio os 624 tiles e os 654 MB continuam.
-
-**REMEDIÇÃO 2026-09-17 — o parágrafo acima é HISTÓRICO e não descreve mais o código.** Os 624
-tiles dependiam do bump duplo (`_BASEMAP_ZOOM_BUMP + _LABELS_ZOOM_BUMP`, zoom +2) que o
-BLK-BASEMAP-06 tratou como DEFEITO e removeu; hoje os dois chamadores passam `zoom_bump=0`
-(`censo_map._render_camada` e `relatorio_municipal.py:2016`). Medido no frame canônico de hoje
-(raio 1,0 km da DEC-021, `width=1000`, lat −23,55), com `_labels_grid`/`_labels_extent` offline:
-
-| | backlog acima | medido 2026-09-17 |
-|---|---|---|
-| tiles por chamada | 624 | **16** |
-| canvas | 654 MB | **16 MB** |
-| densidade mosaico / frame | 21,6x | **1,67x** |
-
-A contagem acompanha a **largura em px**, NÃO a área do recorte: o Municipal de ~200 km custa os
-mesmos 9 tiles que um de ~20 km, porque a grade desce o zoom em vez de crescer (só `width=2000`
-sobe para 49). Então o custo não migrou para o outro consumidor — ele deixou de existir.
-**Dropar o `@2x` está REFUTADO:** economizaria 16 MB → 4 MB e levaria o mosaico a **0,84x** a
-densidade do frame, isto é, abaixo de 1:1 — exatamente a ilegibilidade sub-pixel que o
-BLK-BASEMAP-06 foi aberto para corrigir. O `@2x` é decisão de legibilidade, não desperdício, e o
-teste `test_relatorio_pontual_censitario_mapa.py:1528` já documenta o teto de 3x com essa razão.
-
-**Objetivo.** (a) avaliar dropar o `@2x` e/ou baixar `_LABELS_ZOOM_BUMP` de 1 para 0 (corta os
-tiles ~4x) — **precisa de gate visual**, porque a nitidez dos nomes foi aprovada por Vinicius no
-gate do BLK-RELPON-11; (b) orçamento de tempo (wall-clock) para o mosaico inteiro, em vez de só
-timeout por tile: hoje o pior caso contra um CDN em blackhole ainda é ~10 min segurando o PDF;
-(c) avaliar servir os rótulos do **próprio tileserver** (camada `transportation_name` no estilo
-`ultra-maptiler`), o que elimina o CARTO e deixa o rodapé honestamente só `(c) OpenStreetMap`.
-
-**Estado por frente (2026-09-17):**
-- **(a) bump 1 → 0: JÁ FEITO**, e nunca foi dado baixa — os dois chamadores passam `zoom_bump=0`.
-  **(a) dropar o `@2x`: REFUTADO** pela remedição acima (levaria o mosaico a 0,84x do frame).
-  Nenhuma das duas metades precisa de gate visual: uma já está no ar, a outra não deve ser feita.
-- **(b) ENTREGUE.** `API_BASEMAP_LABELS_ORCAMENTO_S` (padrão 45 s) em `_fetch_labels`: estourado o
-  prazo, para de coletar e devolve o mosaico PARCIAL. Resolvido em RUNTIME (constante de módulo
-  faria a env virar enfeite) e tolerante a lixo na env. Provado por sabotagem — prazo infinito e
-  `shutdown(wait=True)` ficam vermelhos; remover o `break` NÃO fica, porque o `break` é
-  otimização e quem sustenta a promessa são o prazo e o `cancel_futures`.
-- **(c)** é o escopo do **BLK-BASEMAP-06**, que já o trata; manter aqui duplicaria o item.
-
-**Guardrail.** §5 READ-ONLY M1. Qualquer mudança de resolução passa por gate visual antes do merge.
 
 ---
 
@@ -4854,7 +4710,6 @@ o molde de `tests/unit/test_paridade_paleta_web.py`.
 
 ---
 
-### BLK-JOINUF-01 — `qualidade_join_uf` é granularidade de ESTADO, não de município/hex; hexágono litorâneo quebra a classificação
 ### BLK-JOINUF-01 — A nota de join é grossa demais para a decisão que ela gateia: grão de ESTADO (fechado), linha AUSENTE na Fase A (fechado) e o DENOMINADOR da nota municipal
 
 > **Título renomeado em 2026-09-10.** Até aqui ele dizia "hexágono litorâneo quebra a classificação",
@@ -5219,3 +5074,112 @@ exigência que a DEC-048 registrou).
 > cadastro) permanece; (c) o termo Ultra entra sem repartição por área (+0,03 pp);
 > (d) `CAPACIDADE_MIN_ACADEMIA_ALUNOS` fica órfã e o `CLAUDE.md` §4 ainda declara 2.500,
 > contra 2.325 medidos.
+
+---
+
+### BLK-CHAVE-01 — A âncora da chave de churn: `nome_base` + célula res-5, com MIGRAÇÃO das semanas já gravadas
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — muda `chave_snapshot`, que é a IDENTIDADE da academia na série → `status_churn`/`semanas_sem_mudanca` → `v3`/`v4` → `score_vulnerabilidade`, e é lida fora do pacote por `web/server/rede_inteligencia.py`, que a exibe no pin. [DEC-063](../docs/decisions/DEC-063.md). |
+| **Esteira** | `[GATE HUMANO]` — exige `critica-aprovada` do dono; o autor do PR não pode se aprovar. |
+| **Depende de** | DEC-039 (partição de 2 chaves), DEC-061 (guarda de coleta parcial) |
+| **Status** | **EM REVISÃO** (2026-09-17, PR #378 aberto; DEC-063 **APROVADA** pelo dono) |
+| **Autonomia** | **manual (NÃO loop-safe)** — muda a identidade da série, Crítica, e a aplicação reescreve partições na VPS |
+
+**O defeito.** A chave do `v4` (`hash_estavel|fonte|rede|nome_normalizado|hex_id_res7`) foi
+desenhada para absorver **jitter** de coordenada, e absorve — desde que o jitter não saia do
+hexágono. Dois movimentos que **não são mudança de mercado** escapam: a recalibração que cruza a
+**borda** da célula (a academia não se mexeu) e a queda do sufixo `"(Em breve)"` quando a unidade
+**inaugura**, que o S3 lê como fechamento + abertura — a leitura invertida do fato.
+
+**Medido** nas duas fotos reais do cadastro (02/08 e 06/09; 4.430 unidades em ambas), contra a
+referência `(rede, nome_base)` de 174 entradas / 58 saídas:
+
+| âncora | colisões A | colisões B | churn FALSO |
+|---|---:|---:|---:|
+| `rede\|nome\|hex7` (v4, hoje) | 1 | 1 | **91** |
+| `rede\|nome_base\|hex7` | 1 | 1 | 83 |
+| `rede\|nome_base\|hex5` (**v5**) | 1 | 1 | **23** |
+| `rede\|nome_base\|hex4` | 1 | 1 | 11 |
+| `rede\|nome_base` (sem geografia) | 8 | 7 | 0 |
+
+Descer de 7 para 5 **não custa colisão nenhuma**. O `hex4` corta mais, mas ~1.770 km² contra
+~252 km² é folga que a amostra de hoje (107 redes) não autoriza gastar. Sem geografia é a única
+linha que **perde academia de verdade** — o contrato COLAPSA a colisão e nunca desambigua.
+
+**Por que MIGRAR, e não só bumpar.** `concorrentes_novos` define "nova" como *primeira semana da
+chave ≠ primeira da série*: re-chavear faria **toda cadeia do país** aparecer como "concorrente
+novo" no pin da Visão Executiva por `SEMANAS_CONCORRENTE_NOVO = 8` semanas, e a guarda de lá
+(excluir a 1ª semana) não protege contra isso. **A janela é agora, por medição:** a série de
+`unidades` tem 2 observações contra `MIN_SEMANAS = 8`, então o S3 já está renormalizado para fora
+e o custo no score é ZERO; em ~6 semanas ela amadurece e o mesmo movimento vira falso positivo em
+massa num sinal maduro e visível.
+
+**O preimage existe.** O snapshot não guarda `nome` (anti-PII), mas o CSV que o gerou guarda: as
+fotos reproduzem **4.495/4.495** em `2026-31` e **4.610/4.610** em `2026-36`, zero órfãs. Por isso
+`chave_hash_estavel_v4` fica **congelada** com teste próprio — sem ela o `de → para` deixaria de
+ser auditável.
+
+**Aplicação na VPS é MANUAL**, semana a semana, com backup antes: `--migrar-chave-v5 --semana`
+reescreve a folha `fonte=unidades` daquela semana.
+
+---
+
+### BLK-COLETA-01 — A falha de um coletor deixa de ser DESTRUTIVA, e o `git pull` que falha passa a gritar
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — muda o dado de entrada (`Unidades/*.csv`) de toda a cadeia de concorrência, mas não toca fórmula, score nem artefato do M1. |
+| **Esteira** | `[GATE HUMANO]` |
+| **Depende de** | PR #377 (o wrapper virou arquivo versionado — sem isso não há diff para revisar) |
+| **Status** | **EM REVISÃO** (2026-09-17, PR aberto) |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera dado de produção na VPS e envia aviso a ops |
+
+**O defeito.** O lote abria com `git checkout -- Unidades/` (descarta os CSVs raspados para o
+`git pull` dar fast-forward) seguido de `git pull --ff-only || echo`. Juntas, as duas linhas
+faziam duas coisas ruins: a rede cujo coletor falhasse voltava ao **baseline do repositório** — que
+pode ser de meses atrás — em vez de ficar com a safra da semana passada; e um `pull` que falha
+passava em silêncio.
+
+**Os dois incidentes que isso produziu, medidos:** em 2026-09-13 o lote morreu no coletor #28 de 90
+e a **Selfit caiu de 231 para 119** unidades (o snapshot só não fotografou porque a guarda da
+DEC-061 o recusou); e o checkout ficou **8 commits atrás por cinco dias**, de modo que o conserto
+do crash e o da âncora da Smart Fit, já mergeados no repo do Vini, simplesmente não chegavam.
+
+**A correção.**
+
+1. **Passo 0 — a safra é preservada ANTES do descarte** (`$INFRA/safra_anterior`). O descarte
+   continua (é o preço do fast-forward), mas deixou de ser perda. A ORDEM é a carga: preservar
+   depois salvaria o baseline, que é o dado errado.
+2. **Passo 2.5 — quem não recoletou volta à SAFRA, não ao baseline.** Critério por **conteúdo**:
+   CSV idêntico ao commitado **e** diferente da safra ⇒ não foi recoletado ⇒ restaura.
+3. **O `pull` que falha avisa no chat de ops**, reusando `enviar_telegram`. **Não aborta** o lote:
+   a coleta ainda vale, e derrubar o domingo trocaria um dano por outro maior.
+
+**Por que conteúdo e não parsing do log — é o coração do bloco.** O executor imprime
+`Resultado: falha (N) em ...` por coletor, e o caminho óbvio seria ler isso. Medido no lote de
+13/09: havia **3** linhas de falha, enquanto **~56** redes ficaram defasadas — o lote morreu no #28
+e as demais **nunca rodaram**, logo nunca reportaram nada. Parsing consertaria **3 de 59**. A
+comparação com o baseline commitado pega os dois casos, e não depende de mapear nome de coletor
+para nome de arquivo (onde uma exceção entre 107 passaria batida).
+
+**Prova.** `test_restauracao_EXECUTADA_nos_tres_casos` **executa** o laço — `cp -a`, `cmp`,
+`git show` — num repositório git temporário, com três redes cobrindo os três casos que existem: a
+que não recoletou volta à safra, a que recoletou fica intocada, a sem mudança desde o commit não é
+tocada (1 restauração, zero falso positivo). O teste **extrai o trecho do próprio wrapper** em vez
+de reescrevê-lo, senão seria a segunda redação da mesma regra e passaria mesmo com o wrapper
+divergindo (lição da DEC-044); `test_o_laco_extraido_e_o_do_wrapper_nao_uma_copia` falha alto se os
+marcadores sumirem. Mais 9 testes de contrato textual, incluindo a ORDEM backup-antes-do-descarte e
+a acentuação das mensagens ao chat de ops.
+
+> A primeira versão deste bloco dizia "sandbox com três redes" apontando para um script que rodou
+> de verdade mas **vivia no scratchpad da sessão** — prova não reproduzível por quem lê o repo.
+> Achado MÉDIO da revisão do PR #380, e correto: a lógica que **sobrescreve CSV de coleta** tinha
+> só teste de substring, e um refator que preservasse as strings e quebrasse o `cmp` passaria com
+> tudo verde.
+
+**Armadilha declarada:** o `cmp` compara bytes. Se os CSVs ganharem normalização de EOL, a
+comparação daria "diferente" para todas as redes e a restauração viraria **no-op silencioso** — a
+mesma família do mount que congelou os pins. Hoje o checkout da VPS é Linux e não há conversão
+(medido); se a premissa mudar, o laço precisa comparar normalizado.

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Entrar — Ultra Academia</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="description" content="Acesso restrito ao Motor de Expansão da Ultra Academia." />
+
+    <!--
+      PÁGINA PRÓPRIA, servida na RAIZ de `auth.ultra-expansao.tech`.
+
+      Não é a SPA do piloto: ela tem entrada e assets próprios (`entrar-assets/`) porque
+      divide o host com o portal do Authelia, e dois conjuntos de arquivos no mesmo
+      endereço colidiriam. O Caddy manda só a raiz e esse prefixo para o nosso container;
+      todo o resto daquele host continua indo para o Authelia — inclusive `/api/*`, que é
+      o que faz o `fetch` desta página ser de MESMA ORIGEM, sem CORS.
+    -->
+
+    <script>
+      /* Tema antes da primeira pintura, como no `index.html` do piloto: por efeito do
+         React, quem tivesse escolhido o claro veria a tela nascer preta e clarear. */
+      try {
+        var t = localStorage.getItem('motor.tema')
+        document.documentElement.setAttribute('data-tema', t === 'claro' ? 'claro' : 'escuro')
+      } catch (e) {
+        document.documentElement.setAttribute('data-tema', 'escuro')
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/entrar.tsx"></script>
+  </body>
+</html>

@@ -35,6 +35,8 @@ READ-ONLY sobre o M1: nada aqui toca score do M1, pesos, `config.py` ou artefato
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 
 from motor_expansao.vulnerabilidade.contrato import DEDUP_INDEPENDENTES_NOME_M
@@ -207,3 +209,124 @@ def test_default_do_ponto_de_entrada_de_producao_nao_mudou() -> None:
     # O raio das cadeias segue o do contrato -- 300 m so' entra por DEC.
     assert p["dedup_cadeia_feed_m"].default == DEDUP_CADEIA_FEED_M
     assert DEDUP_CADEIA_FEED_M == 150.0
+
+
+# --------------------------------------------------------------------------- #
+# 8. O DESEMPATE entre fontes (DEC-066) - o nome escolhe, a distancia so' decide o empate          #
+# --------------------------------------------------------------------------- #
+def test_entre_fontes_o_nome_vence_o_candidato_mais_proximo() -> None:
+    """O caso `Agoge`, sintetizado: colapsar no mais PERTO apagava a academia errada.
+
+    Ate' a DEC-066 a passagem por distancia pegava o PRIMEIRO candidato na ordem do `grid_disk` --
+    arbitraria -- e dava `break`. Medido em 91 pares, o escolhido era OUTRA academia, e o erro era
+    DUPLO: a unidade sumia dentro de quem ela nao e', e a gemea verdadeira sobrevivia em separado.
+    No dado real: `Academia Agoge` colapsava contra `SCoccorese - Pilates` a 0,0 m tendo
+    `Agoge Academia` a 3,3 m.
+
+    Ordem estavel `(fonte, chave)`: as `totalpass` viram ocupantes primeiro, a `wellhub` colapsa.
+    """
+    base = _frame(
+        [
+            ("totalpass", "a", 0.0, "SCoccorese - Pilates"),
+            ("totalpass", "b", 30.0, "Academia Agoge"),
+            ("wellhub", "z", 5.0, "Agoge Academia"),
+        ]
+    )
+    sobreviventes, mapa = dedup_independentes(base)
+
+    assert len(sobreviventes) == 2, "as duas do TotalPass sao da MESMA fonte: nunca colapsam"
+    assert mesmo_estabelecimento("Agoge Academia", "Academia Agoge") is True
+    assert mapa[("wellhub", "z")] == 1, (
+        "colapsou no vizinho mais PROXIMO (o pilates, posicao 0) em vez da gemea pelo NOME"
+    )
+
+
+def test_entre_fontes_sem_casamento_de_nome_vence_o_mais_proximo() -> None:
+    """Sem nome que case, o desempate cai na distancia - e nao no primeiro que o bucket devolver.
+
+    O nome DESEMPATA e nunca EXIGE: exigi-lo recusaria 3.060 colapsos reais a mediana de 6,2 m,
+    porque as duas fontes escrevem o nome de formas que o matcher nao concilia.
+    """
+    base = _frame(
+        [
+            ("totalpass", "a", 0.0, "Alfa Fitness"),
+            ("totalpass", "b", 30.0, "Beta Fitness"),
+            ("wellhub", "z", 5.0, "Gama Fitness"),
+        ]
+    )
+    sobreviventes, mapa = dedup_independentes(base)
+
+    assert len(sobreviventes) == 2
+    assert mapa[("wellhub", "z")] == 0, "sem casamento de nome, o representante e' o mais proximo"
+
+
+def test_o_desempate_vale_no_caminho_PADRAO_sem_o_parametro_da_mesma_fonte() -> None:
+    """A trava contra o defeito que quase entrou: o desempate amarrado ao opt-in errado.
+
+    O vetor de nomes so' era preenchido quando `nome_mesma_fonte_m` estava ligado -- e o default
+    dele e' `None`. Amarrado assim, o desempate entre fontes ficaria INERTE na configuracao de
+    producao: verde, e sem fazer nada. Este teste chama SEM o parametro de proposito.
+    """
+    base = _frame(
+        [
+            ("totalpass", "a", 0.0, "Studio Pina"),
+            ("totalpass", "b", 20.0, "Academia Vida Fitness"),
+            ("wellhub", "z", 3.0, "ACADEMIA VIDA FITNESS"),
+        ]
+    )
+    _sobreviventes, mapa = dedup_independentes(base)  # sem `nome_mesma_fonte_m`
+    assert mapa[("wellhub", "z")] == 1, "o desempate nao vale sem o opt-in da MESMA fonte"
+
+
+def test_sem_coluna_nome_o_desempate_cai_na_distancia_sem_quebrar() -> None:
+    """Frame sem `nome` continua valido: o desempate degrada para distancia, nao levanta."""
+    base = _frame(
+        [
+            ("totalpass", "a", 0.0, "irrelevante"),
+            ("totalpass", "b", 30.0, "irrelevante"),
+            ("wellhub", "z", 5.0, "irrelevante"),
+        ],
+        com_nome=False,
+    )
+    _sobreviventes, mapa = dedup_independentes(base)
+    assert mapa[("wellhub", "z")] == 0
+
+
+def test_a_ligacao_de_producao_repassa_o_parametro_da_mesma_fonte(monkeypatch) -> None:
+    """O defeito que este teste previne JA' ACONTECEU: implementada, testada e SEM CHAMADOR.
+
+    `nome_mesma_fonte_m` existe desde 2026-09-10 e `_pressao_por_academia` nunca a repassou, entao
+    ela ficava no default `None` e as 70 duplicatas internas do WellHub seguiam intactas -- cada uma
+    se AUTO-PRESSIONANDO (`Imperio Fitness Academia` e `IMPERIO FITNESS ACADEMIA`, ambas
+    43,33 -> 30,00). A DEC-062 chegou a registrar que criou o opt-in e nao o ligou.
+
+    Guardar a EXISTENCIA do parametro nao teria pego isso; e' preciso guardar a CHAMADA.
+    """
+    from motor_expansao.vulnerabilidade import alvos_ma as m_alvos
+    from motor_expansao.vulnerabilidade import pressao_competitiva as m_pressao
+
+    capturado: dict[str, object] = {}
+
+    def _falso(academias, concorrentes, **kwargs):  # noqa: ANN001, ANN003
+        capturado.update(kwargs)
+        return pd.DataFrame({"fonte": [], "chave_snapshot": [], "pressao_competitiva": []})
+
+    monkeypatch.setattr(m_pressao, "calcular_pressao_por_academia", _falso)
+    monkeypatch.setattr(m_pressao, "ler_concorrentes", lambda _p: pd.DataFrame())
+
+    academias = pd.DataFrame(
+        {
+            "fonte": ["wellhub"],
+            "chave_snapshot": ["k"],
+            "nome": ["Academia X"],
+            "lat": [_LAT],
+            "lng": [_LNG],
+            "rede": ["independente"],
+        }
+    )
+    caminho = Path(m_alvos.__file__)  # existe; so' precisa passar no `.exists()`
+    m_alvos._pressao_por_academia(caminho, academias)
+
+    assert capturado.get("dedup_independentes_nome_m") == DEDUP_INDEPENDENTES_NOME_M, (
+        "a passagem por NOME da mesma fonte voltou a ficar sem chamador"
+    )

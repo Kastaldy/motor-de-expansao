@@ -20,7 +20,9 @@ Camada visual e READ-ONLY sobre o M1. Funções puras; o script de ingestão lê
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import re
+import unicodedata
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +62,14 @@ LEITURA_CONFIANCA = {"usar": "alta", "usar_com_cautela_foto_nao_validada": "caut
 #: não validada) — em Valparaíso de Goiás, "BR 040 (GO)" abria enquanto "BR 040 – Valparaíso
 #: de Goiás (GO)" fechava.
 DIST_TROCA_CADASTRO_M = 1_000.0
+
+#: Entrada e saida do agregador no mesmo periodo, a ate' esta distancia E com termo proprio
+#: em comum no nome, sao a mesma academia RENOMEADA. O MESMO 1 km do cadastro, e pela mesma
+#: razao: quem trava o descarte aqui e' o NOME, nao a distancia. Medido em 18/09, subindo de
+#: 150 m: entre 150 m e 1 km entram so' DOIS pares, os dois renomeacao inequivoca ("L.P Gym
+#: Soccer" identico nas duas pontas; "Braves Gym Club - Xaxim" -> "Braves - Xaxim", que o
+#: coletor regeocodificou 420 m adiante). Nenhum falso positivo apareceu nessa faixa.
+DIST_TROCA_NOME_AGREGADOR_M = 1_000.0
 
 COLUNAS = ("fonte", "tipo", "confianca", "rede", "nome", "lat", "lng", "de", "ate")
 RAIO_ENTORNO_M = 2_000.0
@@ -111,6 +121,74 @@ def descartar_trocas_de_cadastro(quadro: pd.DataFrame, limite_m: float = DIST_TR
     return quadro.drop(index=list(fora))
 
 
+#: Palavras que quase toda academia tem no nome. Duas academias VIZINHAS e DIFERENTES dividem
+#: "academia"/"fit"/"gym" o tempo todo, entao elas nao servem para dizer que o ponto e' o mesmo
+#: negocio. Medido em 18/09: com esta lista, 30 dos 38 pares a <= 150 m casam (renomeacao) e os
+#: 8 restantes ficam — e os 8 sao troca de dono ("Baby Gym Paulinia" -> "Brinca e Voa").
+TERMOS_GENERICOS = frozenset(
+    {
+        "academia", "academias", "gym", "fit", "fitness", "centro", "ct", "studio", "estudio",
+        "club", "clube", "unidade", "training", "treinamento", "sports", "sport",
+        "de", "da", "do", "e", "a", "o", "em",
+    }
+)
+
+
+def _termos_proprios(nome: Any) -> set[str]:
+    """Termos do nome que IDENTIFICAM o negocio: sem acento, minusculos e sem os genericos."""
+    if nome is None or (isinstance(nome, float) and pd.isna(nome)):
+        return set()
+    texto = unicodedata.normalize("NFKD", str(nome)).encode("ascii", "ignore").decode()
+    return {t for t in re.split(r"[^a-z0-9]+", texto.lower()) if t and t not in TERMOS_GENERICOS}
+
+
+def descartar_trocas_de_nome_no_agregador(
+    quadro: pd.DataFrame, limite_m: float = DIST_TROCA_NOME_AGREGADOR_M
+) -> pd.DataFrame:
+    """Tira os pares entrou x saiu do agregador que sao a MESMA academia RENOMEADA.
+
+    O Wellhub nao guarda identidade estavel: quando a rede troca o nome da unidade, a foto
+    le' uma SAIDA (o nome velho sumiu) e uma ENTRADA (o nome novo apareceu), no mesmo ponto
+    e no mesmo periodo. Medido em 18/09: 38 das 133 saidas (29%) tinham entrada a <= 150 m,
+    quase todas a 0,0 m -- a Braves renomeou SETE unidades de uma vez ("Braves Gym Club -
+    Uberlandia" -> "Braves - Uberlandia"), e a ficha exibia as duas pontas como movimento de
+    mercado. Nao e' credenciamento nem descredenciamento: e' cadastro.
+
+    Mesma forma de `descartar_trocas_de_cadastro`, com tres diferencas: casa por PERIODO
+    apenas (no agregador a `rede` vem quase sempre nula), o limiar e' bem menor (a coordenada
+    nao e' recalibrada, e' identica) e exige NOME PARECIDO.
+
+    O nome nao e' preciosismo: coordenada sozinha descarta movimento REAL. Dos 38 pares a
+    <= 150 m medidos em 18/09, 30 compartilhavam um termo proprio (renomeacao) e OITO nao --
+    "Baby Gym Paulinia" -> "Brinca e Voa", "Academia Total Force" -> "JF7 Fitness": um
+    operador saiu e outro entrou no mesmo endereco, que e' mercado se mexendo, nao cadastro.
+    Por isso o par so' cai quando os nomes dividem um termo PROPRIO (fora os genericos do
+    ramo, senao "Academia X" casaria com "Academia Y" pelo "academia").
+    """
+    fora: set[Any] = set()
+    for _, grupo in quadro.groupby(["de", "ate"], dropna=False):
+        entradas = grupo[grupo["tipo"] == "entrou_agregador"]
+        saidas = grupo[grupo["tipo"] == "saiu_agregador"]
+        if not len(entradas) or not len(saidas):
+            continue
+        livres = list(saidas.index)
+        for i, e in entradas.iterrows():
+            if not livres:
+                break
+            s = saidas.loc[livres]
+            d = _distancias_m(float(e["lat"]), float(e["lng"]), s["lat"].to_numpy(float), s["lng"].to_numpy(float))
+            ordem = np.argsort(d, kind="stable")
+            termos_entrada = _termos_proprios(e.get("nome"))
+            for k in ordem:
+                if d[k] > limite_m:
+                    break
+                if termos_entrada & _termos_proprios(s.iloc[int(k)].get("nome")):
+                    fora.update({i, livres[int(k)]})
+                    livres.pop(int(k))
+                    break
+    return quadro.drop(index=list(fora))
+
+
 def normalizar_em_breve(df: pd.DataFrame) -> pd.DataFrame:
     """Anúncios "Em breve" que ainda não inauguraram na última foto."""
     df = df[df["situacao_06_09"].astype(str).str.startswith("ainda_em_breve")]
@@ -125,10 +203,11 @@ def normalizar_wellhub(df: pd.DataFrame) -> pd.DataFrame:
     """Entradas e saídas do Wellhub (redes e independentes)."""
     tipo = df["tipo"].map({"entrada": "entrou_agregador", "saida": "saiu_agregador"})
     df, tipo = df[tipo.notna()], tipo[tipo.notna()]
-    return _quadro(
+    quadro = _quadro(
         df, fonte="wellhub", tipo=tipo, confianca="alta", rede=_texto(df["rede_agregador"]),
         nome=_texto(df["nome"]), lat=df["latitude"], lng=df["longitude"], de=df["de"], ate=df["ate"],
     )
+    return descartar_trocas_de_nome_no_agregador(quadro)
 
 
 def _ler_csv(caminho: Path) -> pd.DataFrame:
@@ -257,6 +336,37 @@ def resumo_por_rede(eventos: pd.DataFrame | None) -> list[dict[str, Any]]:
             }
         )
     return sorted(linhas, key=lambda r: (-r["saldo"], -r["aberturas"], -r["em_breve"], r["rede"]))
+
+
+def incluir_redes_sem_movimentacao(
+    redes: list[dict[str, Any]],
+    totais: Mapping[str, Any],
+    excluir: Iterable[str] = (),
+) -> list[dict[str, Any]]:
+    """Acrescenta as redes MAPEADAS que nao se mexeram no periodo, zeradas.
+
+    `resumo_por_rede` nasce dos EVENTOS, entao rede parada nao aparecia — e a tabela so'
+    respondia "quem cresceu", nunca "quanto mercado existe". As paradas entram depois das
+    que se mexeram, da maior para a menor, e `excluir` tira os estudios boutique (DEC-056),
+    como no resto do card. A propria Ultra nunca entra.
+    """
+    fora = {str(r) for r in excluir}
+    ja_listadas = {str(linha["rede"]) for linha in redes}
+    paradas: list[dict[str, Any]] = [
+        {
+            "rede": str(rede),
+            "aberturas": 0,
+            "aberturas_conferidas": 0,
+            "fechamentos": 0,
+            "fechamentos_conferidos": 0,
+            "em_breve": 0,
+            "saldo": 0,
+            "unidades": int(unidades),
+        }
+        for rede, unidades in totais.items()
+        if str(rede) not in ja_listadas and str(rede) not in fora and str(rede).lower() != "ultra"
+    ]
+    return list(redes) + sorted(paradas, key=lambda r: (-int(r["unidades"] or 0), str(r["rede"])))
 
 
 def resumo_agregadores(eventos: pd.DataFrame | None) -> list[dict[str, Any]]:

@@ -22,10 +22,18 @@ import {
   type EstadoDaSenha,
 } from './lib/troca-de-senha'
 import { api, ApiError } from './lib/api'
-import { mensagemDaFalha } from './lib/login'
+import { mensagemDaFalha } from './lib/login-motor'
 import { assinarQuedaDeSessao, entrarNovamente } from './lib/sessao'
 import type { AlvoCaptura } from './lib/captura-mapa'
-import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
+import {
+  entradaDaExecutiva,
+  entradaValida,
+  modoPorId,
+  passoAlvoDoModo,
+  type EntradaExecutiva,
+  type EntradaInicio,
+  type ModoInicio,
+} from './lib/inicio'
 import { BaseProvider } from './lib/base-contexto'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
 import type { Tema } from './lib/tema'
@@ -276,6 +284,29 @@ export default function App() {
    */
   const [modoPendente, setModoPendente] = useState<ModoInicio | null>(null)
 
+  /**
+   * Com que recorte a Visão Executiva deve ABRIR — a trilha de OPERAÇÕES do Início
+   * (2026-09-22). Os três cards dela levam à MESMA tela, e o que os separa é a
+   * profundidade: panorama (a rede inteira), recorte (um estado, master ou consultor,
+   * escolhido no próprio card) e unidade (a ficha de uma, escolhida na busca do card).
+   *
+   * Mora aqui, e não na Executiva, pelo mesmo motivo do `focoImovel` logo abaixo: a
+   * troca de tela DESMONTA quem pediu, então a intenção precisa sobreviver no App.
+   * É consumida UMA vez, na montagem da aba (`onEntradaAplicada`) — senão voltar ao
+   * Início e entrar de novo pela logo reabriria a tela com a escolha de antes, que
+   * ninguém pediu desta vez.
+   */
+  const [entradaExec, setEntradaExec] = useState<EntradaExecutiva>(null)
+
+  /**
+   * O endereço colado NO CARD do Início, a caminho do `PontoScreen` (2026-09-22).
+   *
+   * Mora aqui pelo mesmo motivo do `entradaExec` acima: a troca de tela desmonta quem
+   * pediu. Vai como TEXTO CRU — classificar aqui duplicaria a régua de
+   * `lib/entrada-ponto.ts`, que é de lá. Consumido uma vez (`onTextoAplicado`).
+   */
+  const [textoPonto, setTextoPonto] = useState<string | null>(null)
+
   // Catálogo de UFs, uma vez.
   useEffect(() => {
     api
@@ -375,7 +406,7 @@ export default function App() {
 
   /** Um card do menu foi escolhido: guarda a intenção e abre a tela que a atende hoje. */
   const escolherModo = useCallback(
-    (modo: ModoInicio) => {
+    (modo: ModoInicio, entradaBruta?: EntradaInicio) => {
       const def = modoPorId(modo)
       if (!def) return
       // Card de modo vetado nem aparece no Início, mas a checagem fica aqui também:
@@ -390,6 +421,26 @@ export default function App() {
          ficha para explica-la (Juan, 2026-08-18). O territorio (uf/municipio/dados) fica:
          ele custa uma carga de servidor e continua sendo um mapa util. */
       if (modo === 'ponto') setPinPonto(null)
+      /* O card já respondeu a pergunta do segundo passo. `entradaValida` é o que impede
+         uma escolha malformada (valor vazio, dimensão desconhecida) de virar uma tela
+         vazia sem explicação.
+
+         `entradaDaExecutiva` ESTREITA: só recorte e unidade chegam à Visão Executiva.
+         Passar `null` LIMPA uma escolha pendente de propósito — quem entra pelo
+         panorama não deve herdar o recorte de uma entrada anterior. */
+      const entrada = entradaValida(entradaBruta ?? null)
+      setEntradaExec(entradaDaExecutiva(entrada))
+
+      /* Trilha de expansão: as duas entradas mexem em estado que já existia aqui.
+
+         O estado escolhido no card passa pelo MESMO `aoTrocarUf` do seletor do mapa, e
+         não por um `setUf` cru: ele zera o município, descarta o destino de hexágono de
+         uma leitura anterior e consome a intenção de passo do funil. Reimplementar isso
+         aqui criaria uma segunda porta de entrada para o mapa, com regras próprias. */
+      if (entrada?.tipo === 'uf') aoTrocarUf(entrada.uf)
+      // O texto vai CRU: quem classifica e resolve (coordenada, link longo, link curto,
+      // endereço) é o `PontoScreen`, que já tem as mensagens de cada caso.
+      setTextoPonto(entrada?.tipo === 'endereco' ? entrada.texto : null)
       const passo = passoAlvoDoModo(modo)
       if (passo !== null && uf) {
         setEstadoMapa({ ...ESTADO_MAPA_VAZIO, uf, municipio, passoN: passo })
@@ -399,7 +450,7 @@ export default function App() {
       }
       setTela(def.destino)
     },
-    [uf, municipio, abas],
+    [uf, municipio, abas, aoTrocarUf],
   )
 
   const voltarAoInicio = useCallback(() => {
@@ -536,6 +587,8 @@ export default function App() {
                  para sempre depois da primeira análise, e era o que impedia a tela de
                  entrada do modo de voltar. Ver o bloco `semMapa` no `PontoScreen`. */
               pedido={pedidoPonto}
+              textoInicial={textoPonto}
+              onTextoAplicado={() => setTextoPonto(null)}
               onLimparPin={limparPinPonto}
               onInicio={voltarAoInicio}
             />
@@ -611,7 +664,12 @@ export default function App() {
           // de confundir dois produtos diferentes, disparava um refetch de
           // `/api/uf/{uf}` no Mapa toda vez que se trocava o estado aqui — leitura que
           // pode passar de 15 s.
-          <ExecutiveScreen onInicio={voltarAoInicio} tema={tema} />
+          <ExecutiveScreen
+            onInicio={voltarAoInicio}
+            tema={tema}
+            entrada={entradaExec}
+            onEntradaAplicada={() => setEntradaExec(null)}
+          />
         ) : tela === 'acessos' ? (
           // Painel restrito (emenda DEC-027). Autônomo como a Executiva: não herda
           // UF/município — a trilha é da rede inteira, não de um recorte do mapa.

@@ -12,6 +12,7 @@
 #   agregadores idade da última partição de snapshot de cada agregador (cron semanal, BLK-MA-21)
 #   crescimento idade do artefato da camada de crescimento municipal (cron trimestral, DEC-052)
 #   mercado     coerência da camada de mercado com o cadastro de concorrentes (cron semanal, DEC-059)
+#   pins        idade da última PROMOÇÃO dos pins de M&A + quantos são desenháveis (cron semanal)
 #   test        envia mensagem de teste ao chat de ops
 #
 # Anti-spam: alerta só na transição OK->FAIL, lembrete a cada REMIND_SECS enquanto
@@ -66,6 +67,19 @@ MERCADO_LOG="${MONITOR_MERCADO_LOG:-/var/log/motor-snapshots/regen_mercado_lates
 # O container que já monta os dois parquets `:ro` — é dentro dele que a régua de
 # CONTEÚDO é medida (o host não tem Python com pyarrow).
 MERCADO_CONTAINER="${MONITOR_MERCADO_CONTAINER:-motor_expansao_web}"
+# Pins de vulnerabilidade M&A (passo 4.5 do lote de domingo). Aqui o MTIME é HONESTO, e a
+# diferença em relação ao `mercado` é a razão de este monitor existir: o arquivo só é tocado
+# pelo `mv` da PROMOÇÃO. Quando a guarda de desenhabilidade (ou a de coerência de chave) barra
+# a safra nova, nada é escrito — e o arquivo ENVELHECE, que é exatamente o sinal que faltou
+# entre 30/08 e 17/09, três semanas com os pins congelados e ninguém sabendo.
+# Ressalva declarada, a mesma do `crescimento`: `rsync`/restore do volume rejuvenesce mtime.
+PINS_MAX_DIAS="${MONITOR_PINS_MAX_DIAS:-9}"
+PINS_PARQUET="${MONITOR_PINS_PARQUET:-/opt/motor-expansao/data/staging/vulnerabilidade_ma_nomeadas.parquet}"
+# Piso de pins DESENHÁVEIS, em paridade com a guarda do `run_weekly_90.sh`: um artefato
+# promovido antes da guarda existir (incidente de 30/08: 42.862 linhas, todas SEM coordenada)
+# ficaria eternamente verde num monitor que só olhasse idade.
+PINS_MIN_DESENHAVEIS="${MONITOR_PINS_MIN_DESENHAVEIS:-100}"
+PINS_CONTAINER="${MONITOR_PINS_CONTAINER:-motor_expansao_web}"
 CONTAINERS=(
     motor_expansao_caddy
     motor_expansao_authelia
@@ -347,6 +361,45 @@ print(int(m["n_redes_mapeadas"].dropna().iloc[0]), int(c.loc[c["status_registro"
     fi
 }
 
+check_pins() {
+    # Idade e conteúdo dos pins de M&A do mapa (passo 4.5 do lote de domingo).
+    #
+    # Por que este monitor existe: a guarda de desenhabilidade do wrapper faz o CERTO ao barrar
+    # artefato ruim, mas o efeito dela é INVISÍVEL — de 30/08 a 17/09 ela preservou os pins bons
+    # por três semanas seguidas enquanto o mapa servia dado cada vez mais velho, e nada alertou.
+    # Uma guarda que só bloqueia, sem relógio, troca "pin errado" por "pin velho em silêncio".
+    #
+    # A régua de IDADE é o mtime, e aqui ele é confiável — ao contrário do `mercado`, em que o
+    # arquivo é reescrito toda semana e o mtime mente: este só é tocado pelo `mv` da promoção.
+    local idade_dias desenhaveis
+    if [[ ! -f "$PINS_PARQUET" ]]; then
+        report pins FAIL "Pins de M&A NUNCA foram publicados (${PINS_PARQUET} ausente). O passo 4.5 do lote de domingo rodou alguma vez?"
+        return
+    fi
+    idade_dias=$((($(date +%s) - $(stat -c %Y "$PINS_PARQUET")) / 86400))
+    if ((idade_dias > PINS_MAX_DIAS)); then
+        report pins FAIL "Pins de M&A sem promoção há ${idade_dias} dias (limiar ${PINS_MAX_DIAS}). A guarda do passo 4.5 está barrando a safra nova, ou o lote de domingo não rodou. Ver /var/log/gymscraping/weekly_latest.log"
+        return
+    fi
+    # Medido DENTRO do container, que já monta o parquet (o host não tem Python com pyarrow).
+    # Não conseguir medir é FAIL, pelo mesmo motivo do `mercado`: monitor cego não pode ser lido
+    # como "está tudo bem".
+    desenhaveis=$(docker exec "$PINS_CONTAINER" python -c '
+import pandas as pd
+d = pd.read_parquet("/app/data/staging/vulnerabilidade_ma_nomeadas.parquet", columns=["lat"])
+print(int(d["lat"].notna().sum()))
+' 2>/dev/null) || {
+        report pins FAIL "Não foi possível medir os pins de M&A (docker exec em ${PINS_CONTAINER} falhou). Monitor cego conta como falha."
+        return
+    }
+    if ((desenhaveis < PINS_MIN_DESENHAVEIS)); then
+        report pins FAIL "Pins de M&A publicados com apenas ${desenhaveis} academias desenháveis (piso ${PINS_MIN_DESENHAVEIS}). O mapa está servindo artefato sem coordenada — foi o incidente de 2026-08-30."
+        return
+    fi
+    log "pins: OK (${desenhaveis} desenháveis, promoção há ${idade_dias}d)"
+    report pins OK ""
+}
+
 case "${1:-}" in
 containers) check_containers ;;
 host) check_host ;;
@@ -355,12 +408,13 @@ coleta) check_coleta ;;
 agregadores) check_agregadores ;;
 crescimento) check_crescimento ;;
 mercado) check_mercado ;;
+pins) check_pins ;;
 test)
     send_telegram "✅ [VPS Ultra] Monitoramento ativo — mensagem de teste"
     echo "mensagem de teste enviada"
     ;;
 *)
-    echo "uso: $0 {containers|host|authelia|coleta|agregadores|crescimento|mercado|test}" >&2
+    echo "uso: $0 {containers|host|authelia|coleta|agregadores|crescimento|mercado|pins|test}" >&2
     exit 2
     ;;
 esac

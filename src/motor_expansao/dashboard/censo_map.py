@@ -30,8 +30,10 @@ from motor_expansao.dashboard.censo_point import (
 )
 from motor_expansao.dashboard.competitors import (
     CHAVE_AGREGADOR,
+    CHAVES_AGREGADOR,
     PIN_INDEPENDENTE_PX,
     _render_square_logo_tile,
+    chave_agregador_da_fonte,
 )
 from motor_expansao.dashboard.constants import (
     DENSIDADE_POP_BANDS,
@@ -195,6 +197,12 @@ _STREET_CAP = 210
 # circulo — estilo GeoFusion, sem letterbox. A analise (KPIs) segue circular/INTOCADA; e so RENDER.
 _MAP_FRAME_MARGIN = 0.08
 
+# Tamanho padrao da figura dos mapas. Virou constante (era literal repetido nas assinaturas)
+# porque `alcance_do_frame_km` precisa do MESMO par para dizer ate' onde o frame chega —
+# quem seleciona os setores le esse alcance.
+MAPA_WIDTH_PADRAO = 1280
+MAPA_HEIGHT_PADRAO = 760
+
 # BLK-RELPON-09 (S2a): lado do marcador de concorrente/Ultra em PIXELS do PNG-fonte.
 # Era um balao de 40 px cuja logo util media ~17 px; agora o quadrado INTEIRO e logo
 # (~26 px uteis). Ancora = CENTRO do quadrado (S2b). RENDER apenas (READ-ONLY M1).
@@ -243,6 +251,26 @@ RAIO_RESIDUAL_DISPLAY_KM = 5.0
 # k=5 da 11,63 km e cobre com folga (91 hexes, custo irrelevante). Nao reduzir "para economizar":
 # os hexes excedentes sao descartados de graca pelo clip ao frame.
 _RESIDUAL_GRID_DISK_K = 5
+
+# Enquadramento AUTOMATICO do slide-hero (pedido do Juan, 2026-09-17: "zoom maior, ajustado pela
+# regiao"). O raio de exibicao deixa de ser sempre 5 km: sai da distancia ate o N-esimo hexagono
+# POVOADO (>= `_RAIO_HERO_POP_MIN` habitantes do censo) mais proximo do ponto. Povoado, e nao "com
+# score": o score existe em todo hexagono, inclusive rural (medido: 91 de 91 no interior de MT), e
+# nao separaria cidade de campo. Em capital o 7o hexagono povoado e' do 1o anel (2,1 a 3,3 km, conforme o ponto cai no hexagono; Av. Paulista: 3,28 km) e o
+# frame fecha perto do piso; onde os hexagonos povoados estao espalhados (interior) ele abre ate o
+# teto. Sem folga: a margem de 8% do frame ja' mostra o 1o anel inteiro. Com 1,2 km de folga a
+# Paulista ficava em 4,48 km -- quase os 5 km de antes, e o zoom nao mudava. O piso segura o
+# mosaico chapado de 3 a 5 hexes que a DEC-011 descreve; o teto casa com
+# `_RESIDUAL_GRID_DISK_K_MAX`.
+RAIO_HERO_MIN_KM = 3.0
+RAIO_HERO_MAX_KM = 7.0
+_RAIO_HERO_N_HEXES = 7
+_RAIO_HERO_FOLGA_KM = 0.0
+# Ancora do universo POVOADO da regua absoluta (DEC-040: populacao 1.000 -> nota 0).
+_RAIO_HERO_POP_MIN = 1_000.0
+_RAIO_HERO_COL_POP = "pop_total_setor_2022"
+# k=7 cobre (2k+1)*1,057 = 15,9 km no pior eixo, contra a meia-diagonal de ~14,1 km do frame de 7 km.
+_RESIDUAL_GRID_DISK_K_MAX = 7
 
 _SECTOR_PALETTE = [
     (232, 242, 255, 225),
@@ -349,6 +377,23 @@ def _frame_box_metric(raio_km: float, width: int, height: int) -> Polygon:
     else:
         frame_half_x, frame_half_y = base_half, base_half / aspect
     return box(-frame_half_x, -frame_half_y, frame_half_x, frame_half_y)
+
+
+def alcance_do_frame_km(
+    raio_km: float,
+    width: int = MAPA_WIDTH_PADRAO,
+    height: int = MAPA_HEIGHT_PADRAO,
+) -> float:
+    """Quanto o FRAME do mapa alcanca, em km, a partir do ponto (o maior meio-lado).
+
+    Quem carrega os setores precisa saber ate' onde o mapa vai — e o frame e' RETANGULAR e
+    maior que o raio (`_frame_box_metric`). Este helper existe para que esse numero tenha UMA
+    fonte: quem seleciona o dado e quem o desenha leem a mesma geometria. Fixar o alcance num
+    literal do outro lado da fronteira faria o mapa pedir uma area e a selecao entregar outra —
+    e a divergencia apareceria como buraco no choropleth, sem erro nenhum.
+    """
+    minx, miny, maxx, maxy = _frame_box_metric(raio_km, width, height).bounds
+    return max(abs(minx), abs(miny), abs(maxx), abs(maxy)) / 1000.0
 
 
 def _font(size: int = 12) -> ImageFont.ImageFont:
@@ -578,7 +623,13 @@ def _paste_logo_pin(
     # (`test_camadas_existentes_ficam_byte_identicas_com_os_defaults_novos` e
     # `test_shared_transformer_bytes_identicos` cobram exatamente isso).
     if not key:
-        key, size = CHAVE_AGREGADOR, PIN_INDEPENDENTE_PX
+        # `[DEC-066]` Chave vazia = independente de fonte desconhecida. Cai no WellHub para
+        # reproduzir o desenho anterior a esta DEC, nao para afirmar que ela veio de la'.
+        key = CHAVE_AGREGADOR
+    if key in CHAVES_AGREGADOR:
+        # O tamanho e' propriedade de SER independente, nao de qual app a revelou. Ate' a
+        # DEC-066 os dois testes eram o mesmo `if`, porque so' havia uma chave possivel.
+        size = PIN_INDEPENDENTE_PX
     tile = cast(Image.Image, _render_square_logo_tile(key, size))
     image.paste(tile, (int(px) - size // 2, int(py) - size // 2), tile)
 
@@ -743,14 +794,24 @@ def _project_points(
             continue
         x, y = to_metric.transform(float(point_lng), float(point_lat))
         rede = row.get("rede")
-        key = str(rede) if rede is not None and not pd.isna(rede) and str(rede).strip() else ""
+        if rede is not None and not pd.isna(rede) and str(rede).strip():
+            key = str(rede)
+        else:
+            # `[DEC-066]` Linha sem `rede` e' INDEPENDENTE, e a chave passa a dizer de QUAL app
+            # ela veio. Antes era string vazia e `_paste_logo_pin` resolvia para o WellHub -- o
+            # que era correto enquanto o TotalPass estava fora da serie.
+            key = chave_agregador_da_fonte(row.get("fonte"), row.get("fontes_da_academia"))
         coords.append((x, y, key))
-    # DEC-046 (D6): independente (chave VAZIA) sai ANTES da cadeia, entao a bandeira da rede
-    # instalada fica POR CIMA na sobreposicao — a mesma precedencia que o Mapa Territorial
-    # do piloto aplica. `sort` e' ESTAVEL: dentro de cada grupo a ordem por distancia que
-    # `_points_in_radius` produziu e' preservada. Sem chave vazia no recorte (todo caminho
-    # anterior a DEC-046, e os pins da Ultra) a lista sai IDENTICA.
-    coords.sort(key=lambda ponto: bool(ponto[2]))
+    # DEC-046 (D6): a independente sai ANTES da cadeia, entao a bandeira da rede instalada fica
+    # POR CIMA na sobreposicao — a mesma precedencia que o Mapa Territorial do piloto aplica.
+    # `sort` e' ESTAVEL: dentro de cada grupo a ordem por distancia que `_points_in_radius`
+    # produziu e' preservada. Sem independente no recorte (todo caminho anterior a DEC-046, e os
+    # pins da Ultra) a lista sai IDENTICA.
+    #
+    # `[DEC-066]` O teste DEIXOU de ser `bool(chave)`. Com a chave do app a independente virou
+    # "verdadeira" e passaria a ser desenhada POR CIMA das cadeias: a precedencia se inverteria
+    # em silencio, sem erro e sem nada vermelho fora do teste que cobre a ordem.
+    coords.sort(key=lambda ponto: ponto[2] not in CHAVES_AGREGADOR)
     return coords
 
 
@@ -1367,6 +1428,7 @@ def _hex_polygons_3857(
     to_3857: Transformer,
     *,
     value_col: str = "oferta_efetiva_disponivel",
+    frame_raio_km: float = RAIO_RESIDUAL_DISPLAY_KM,
 ) -> tuple[list[tuple[BaseGeometry, int]], pd.Series, BaseGeometry | None]:
     """Poligonos dos hexes H3 res-7 do disco em torno do ponto, recortados ao frame (EPSG:3857).
 
@@ -1406,7 +1468,9 @@ def _hex_polygons_3857(
     if centro is None:
         return empty
     try:
-        celulas = set(h3.grid_disk(centro, _RESIDUAL_GRID_DISK_K))
+        # k do disco acompanha o frame: acima de 5 km o disco de k=5 deixaria cantos vazios.
+        k = _RESIDUAL_GRID_DISK_K if frame_raio_km <= RAIO_RESIDUAL_DISPLAY_KM else _RESIDUAL_GRID_DISK_K_MAX
+        celulas = set(h3.grid_disk(centro, k))
     except Exception:
         return empty
     if not celulas:
@@ -1442,6 +1506,45 @@ def _hex_polygons_3857(
     if not records:
         return empty
     return records, pd.Series(values, dtype="float64"), destaque
+
+
+def raio_enquadramento_hex_km(
+    lat: float,
+    lng: float,
+    hexes_df: pd.DataFrame | None,
+) -> float:
+    """Raio de EXIBICAO do slide-hero ajustado a regiao, em km (ver `RAIO_HERO_*`).
+
+    Distancia do ponto ao `_RAIO_HERO_N_HEXES`-esimo hexagono povoado mais proximo, mais
+    `_RAIO_HERO_FOLGA_KM`, preso em [`RAIO_HERO_MIN_KM`, `RAIO_HERO_MAX_KM`]. Com menos hexagonos
+    povoados que isso usa o mais distante deles; nenhum no disco -> o teto. Sem base, sem a coluna
+    de populacao ou sem h3 -> `RAIO_RESIDUAL_DISPLAY_KM` (o enquadramento de antes). So' RENDER:
+    nao toca KPI nem motor.
+    """
+    value_col = _RAIO_HERO_COL_POP
+    if hexes_df is None or hexes_df.empty or "hex_id" not in hexes_df.columns or value_col not in hexes_df.columns:
+        return RAIO_RESIDUAL_DISPLAY_KM
+    try:
+        import h3
+    except ImportError:
+        return RAIO_RESIDUAL_DISPLAY_KM
+    centro = _hex_id_central(lat, lng)
+    if centro is None:
+        return RAIO_RESIDUAL_DISPLAY_KM
+    try:
+        celulas = set(h3.grid_disk(centro, _RESIDUAL_GRID_DISK_K_MAX))
+    except Exception:
+        return RAIO_RESIDUAL_DISPLAY_KM
+    sub = hexes_df.loc[hexes_df["hex_id"].astype(str).isin(celulas)]
+    valores = pd.to_numeric(sub[value_col], errors="coerce")
+    ids = sub.loc[valores >= _RAIO_HERO_POP_MIN, "hex_id"].astype(str)
+    if ids.empty:
+        return RAIO_HERO_MAX_KM
+    dists = sorted(
+        h3.great_circle_distance((lat, lng), h3.cell_to_latlng(h), unit="km") for h in ids.unique()
+    )
+    alvo = dists[min(_RAIO_HERO_N_HEXES, len(dists)) - 1]
+    return float(min(max(alvo + _RAIO_HERO_FOLGA_KM, RAIO_HERO_MIN_KM), RAIO_HERO_MAX_KM))
 
 
 def _residual_hex_central(
@@ -1492,8 +1595,12 @@ def _render_camada_residual_hex(
     color_fn: Callable[[float], tuple[int, int, int, int]] | None = None,
     valor_central_rotulo: str = "Residual",
     valor_central_fmt: Callable[[float | None], str] = _format_valor_residual,
+    raio_exibicao_km: float = RAIO_RESIDUAL_DISPLAY_KM,
 ) -> bytes | None:
-    """Choropleth de `value_col` por hexagono H3 no raio de EXIBICAO de 5 km.
+    """Choropleth de `value_col` por hexagono H3 no raio de EXIBICAO (5 km por default).
+
+    `raio_exibicao_km` (2026-09-17): o slide-hero passa `raio_enquadramento_hex_km`, que ajusta o
+    enquadramento a regiao; o default mantem os 5 km.
 
     Monta o PROPRIO frame/basemap (bounds diferentes das camadas de 1,0 km) e delega o
     desenho a `_render_camada`, cujo `sector_records_3857` ja e' generico (poligonos 3857 coloridos
@@ -1518,7 +1625,7 @@ def _render_camada_residual_hex(
     if hexes_df is None or hexes_df.empty:
         return None
 
-    frame_metric = _frame_box_metric(RAIO_RESIDUAL_DISPLAY_KM, width, height)
+    frame_metric = _frame_box_metric(raio_exibicao_km, width, height)
 
     metric_crs = _local_metric_crs(lat, lng)
     to_3857_local = _transformer(metric_crs, CRS_WEB_MERCATOR)
@@ -1532,7 +1639,7 @@ def _render_camada_residual_hex(
     center_3857 = to_3857_local.transform(0.0, 0.0)
 
     hex_records, hex_values, hex_destaque = _hex_polygons_3857(
-        lat, lng, hexes_df, frame_3857, to_3857_wgs, value_col=value_col
+        lat, lng, hexes_df, frame_3857, to_3857_wgs, value_col=value_col, frame_raio_km=raio_exibicao_km
     )
     if not hex_records:
         return None
@@ -1616,8 +1723,8 @@ def render_mapas_censitarios_combinados(
     raio_km: float = RAIO_CENSITARIO_DEFAULT_KM,
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
-    width: int = 1280,
-    height: int = 760,
+    width: int = MAPA_WIDTH_PADRAO,
+    height: int = MAPA_HEIGHT_PADRAO,
     basemap: bool = True,
     logos_dir: Path | None = None,
     ultra_logo_dir: Path | None = None,
@@ -1969,10 +2076,13 @@ def render_mapas_censitarios_combinados(
     # Reusa `_render_camada_residual_hex` (mesmo frame/basemap/clip do residual), so trocando o
     # dado/titulo/legenda/cor. CONDICIONAL como o `residual`: sem `hexes_df`, sem a coluna
     # `score_setor_2022_calibrado` ou sem hex desenhavel -> chave AUSENTE, fallback textual do PDF.
+    # Mesmo enquadramento para as duas imagens do slide, ajustado a regiao do ponto.
+    raio_hero_km = raio_enquadramento_hex_km(lat, lng, hexes_df)
     socioeconomia_png = _render_camada_residual_hex(
         lat,
         lng,
         hexes_df,
+        raio_exibicao_km=raio_hero_km,
         basemap=basemap,
         width=width,
         height=height,
@@ -1997,6 +2107,7 @@ def render_mapas_censitarios_combinados(
         lat,
         lng,
         hexes_df,
+        raio_exibicao_km=raio_hero_km,
         basemap=basemap,
         width=width,
         height=height,
@@ -2019,8 +2130,8 @@ def render_mapa_censitario_estatico_png(
     metric_column: str = "pop_estimada_intersecao",
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
-    width: int = 1280,
-    height: int = 760,
+    width: int = MAPA_WIDTH_PADRAO,
+    height: int = MAPA_HEIGHT_PADRAO,
     basemap: bool = False,
 ) -> bytes:
     """LEGADO: wrapper fino sobre `render_mapas_censitarios_combinados`.

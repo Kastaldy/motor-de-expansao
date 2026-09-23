@@ -137,7 +137,7 @@ tem demanda e interesse de presença). É um funil comercial, não uma decisão 
   `sumiu_recente` no mesmo dia, e o composto leria um evento de negociação como 440 alvos. Molde do
   G-D2 e da DEC-026: o fato entra antes do peso.
 
-  Artefato próprio, **`redes_ma_nomeadas_v3`** (20 colunas, gitignored, opt-in por `--saida-redes`),
+  Artefato próprio, **`redes_ma_nomeadas_v4`** (20 colunas, gitignored, opt-in por `--saida-redes`),
   com guard que levanta se qualquer coluna `score_*`/`v6` aparecer nele. **A pressão dessas unidades
   já era calculada e descartada** — o cálculo roda sobre o feed inteiro (22.173 linhas) e é o join do
   score que as filtra —, então esta metade não recalcula nada: materializa o que era jogado fora.
@@ -155,7 +155,7 @@ tem demanda e interesse de presença). É um funil comercial, não uma decisão 
   >
   > **[DEC-062, 2026-09-15] O split muda de novo.** Com a trava de município e o raio ampliado
   > ligados no entregável, ele passa a **714 com pin próprio / 2.130 já cobertas**
-  > (`redes_ma_nomeadas_v3`). A expectativa da auditoria do pin acompanha o artefato regenerado.
+  > (`redes_ma_nomeadas_v4`). A expectativa da auditoria do pin acompanha o artefato regenerado.
 
 ---
 
@@ -207,7 +207,8 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
   (`sha1(rede|nome|lat|lng)`, `normalizar_concorrentes.py:29`) foi **descartado como chave de
   churn**: a coordenada entra com `:.6f` (~**11 cm**), então qualquer re-geocodificação produziria
   1 falso `sumiu_recente` + 1 falso `novo` no sinal de maior peso. A chave passa a ser
-  `sha1("hash_estavel|<fonte>|<rede>|<nome_normalizado>|<hex_id_res7>")` e, quando o `slug` é
+  `sha1("hash_estavel|<fonte>|<rede>|<nome_base>|<hex_id_res5>")` **`[âncora emendada pela
+  DEC-063]`** e, quando o `slug` é
   confiável, `sha1("slug|<fonte>|<slug_normalizado>")` — **sempre sha1 hex de 40** nos dois casos,
   com o valor de `chave_origem` registrando qual foi usada (`slug` | `hash_estavel`). Colisões de
   chave são **COLAPSADAS**, nunca desambiguadas por ordinal (ordinal depende da ordem de leitura do
@@ -310,6 +311,15 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
     **por fonte** dentro da partição garantiria N observações por fonte mesmo com buraco de folha,
     e fica em bloco próprio como **margem opcional**: ela mexe na única função do pacote que apaga
     arquivo, e a margem já vem de graça no 2×.
+- **Retenção INTEGRAL e leitura por ESTADO `[DEC-064, 2026-09-18]`.** O parágrafo acima descreve a
+  aritmética do `26`, que continua correta e vira o **piso de referência se a poda for reativada** —
+  mas o default de produção passou a ser `RETENCAO_TUDO`, e a poda **não roda em regime**. O que
+  comprava o teto era a leitura, não o disco: `ler_snapshots` passou a recortar por **partição** (e
+  não em pandas depois do `to_pandas`), e o churn passou a ser **estado materializado** —
+  `churn_estado_v1` (uma linha por `(fonte, chave_snapshot)`) mais `observabilidade_escopo_v1` (uma
+  linha por `(fonte, rede, semana)`, o EIXO). Ninguém varre a série em regime; `--reprocessar`
+  reconstrói tudo, **uma semana por vez**, e só é possível porque a série inteira ficou. A
+  equivalência entre os dois caminhos é travada por teste, não prometida.
 - **Derivação dos sinais.**
   - Churn (sinal 3): o `slug` (fallback `concorrente_id`) aparece / some / reaparece ("piscando") entre semanas.
   - Staleness (sinal 4): nº de semanas desde a última mudança de `hash_campos_raspados`.
@@ -1078,14 +1088,16 @@ Estado em **2026-08-25**:
 
 | constante | valor |
 |---|---|
-| `VERSAO_CONTRATO_SNAPSHOT` | `snapshots_concorrentes_v4` |
+| `VERSAO_CONTRATO_SNAPSHOT` | `snapshots_concorrentes_v5` |
 | `VERSAO_CONTRATO_CHURN` | `churn_staleness_v2` |
+| `VERSAO_CONTRATO_CHURN_ESTADO` | `churn_estado_v1` |
+| `VERSAO_CONTRATO_OBSERVABILIDADE` | `observabilidade_escopo_v1` |
 | `VERSAO_CONTRATO_PRESENCA_AGREGADOR` | `presenca_agregador_v1` |
-| `VERSAO_CONTRATO_SCORE` | `score_vulnerabilidade_v8` |
-| `VERSAO_CONTRATO_PRESSAO` | `pressao_competitiva_v5` |
-| `VERSAO_CONTRATO_ALVOS_MA` | `alvos_ma_v5` |
-| `VERSAO_CONTRATO_ALVOS_NOMEADOS` | `alvos_ma_nomeados_v6` |
-| `VERSAO_CONTRATO_REDES_NOMEADAS` | `redes_ma_nomeadas_v3` |
+| `VERSAO_CONTRATO_SCORE` | `score_vulnerabilidade_v9` |
+| `VERSAO_CONTRATO_PRESSAO` | `pressao_competitiva_v6` |
+| `VERSAO_CONTRATO_ALVOS_MA` | `alvos_ma_v6` |
+| `VERSAO_CONTRATO_ALVOS_NOMEADOS` | `alvos_ma_nomeados_v8` |
+| `VERSAO_CONTRATO_REDES_NOMEADAS` | `redes_ma_nomeadas_v4` |
 
 Cada artefato carrega a sua na coluna `versao_contrato` — é assim que se descobre, sem adivinhação,
 se um parquet em produção é da safra corrente.

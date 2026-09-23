@@ -78,16 +78,21 @@ describe('telaLiberada', () => {
 })
 
 describe('modosLiberados', () => {
-  it('sem controle devolve os 3 cards', () => {
+  it('sem controle devolve todos os cards das duas trilhas', () => {
     expect(modosLiberados(null)).toEqual(MODOS)
   })
 
-  it('mapa + oportunidades + viabilidade = os 3 cards (perfil do grupo 2)', () => {
-    expect(modosLiberados(setDe('mapa', 'oportunidades', 'viabilidade'))).toHaveLength(3)
+  it('mapa + oportunidades + viabilidade = so a trilha de expansao (perfil do grupo 2)', () => {
+    const modos = modosLiberados(setDe('mapa', 'oportunidades', 'viabilidade'))
+    expect(modos.map((m) => m.id)).toEqual(['oportunidades', 'regiao', 'ponto'])
   })
 
-  it('so executiva = nenhum card de analise', () => {
-    expect(modosLiberados(setDe('executiva'))).toHaveLength(0)
+  it('so executiva = os 3 cards de OPERACOES', () => {
+    /* Ate 2026-09-22 este perfil nao tinha card nenhum, e a consequencia era uma tela
+       de Inicio literalmente vazia para quem so' usa a Visao Executiva. A trilha de
+       operacoes existe por causa disto. */
+    const modos = modosLiberados(setDe('executiva'))
+    expect(modos.map((m) => m.id)).toEqual(['panorama', 'recorte', 'unidade'])
   })
 
   it('so oportunidades = so o card da fila', () => {
@@ -106,8 +111,11 @@ describe('telaInicial', () => {
     expect(telaInicial(new Set(TODAS_AS_ABAS))).toBe('inicio')
   })
 
-  it('so executiva pousa direto na executiva', () => {
-    expect(telaInicial(setDe('executiva'))).toBe('executiva')
+  it('so executiva pousa no INICIO, que agora tem a trilha de operacoes', () => {
+    /* Mudou em 2026-09-22 junto com a trilha de operacoes. Antes este perfil era
+       desviado para a Executiva justamente porque o Inicio nao tinha nada para ele —
+       e o desvio so' valia na PRIMEIRA carga: a logo do Dock trazia de volta ao vazio. */
+    expect(telaInicial(setDe('executiva'))).toBe('inicio')
   })
 
   it('so viabilidade pousa na viabilidade', () => {

@@ -313,6 +313,127 @@ def test_chave_muda_com_rede_diferente() -> None:
     assert base != c.chave_hash_estavel("unidades", "smart_fit", "Unidade Norte", hex_id)
 
 
+# --------------------------------------------------------------------------- #
+# DEC-063 — a âncora da chave: `nome_base` + pai res-5
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("entrada", "esperado"),
+    [
+        # As QUATRO formas MEDIDAS nas fotos do cadastro (50 nomes distintos alterados).
+        ("Corpo e Saúde - Cuiabá (Em breve)", "corpo e saude cuiaba"),
+        ("AV. T-63 - Inaugurada", "av t 63"),
+        ("AD3 - Gaspar (Pré-Lançamento)", "ad3 gaspar"),
+        ("Betim Centro - Pré-venda", "betim centro"),
+        # Sem marcador, `nome_base` é `normalizar_texto`.
+        ("Smart Fit Centro", "smart fit centro"),
+        # NÃO pode cortar palavra legítima que só começa com "pre".
+        ("Academia Pre Escolar", "academia pre escolar"),
+        ("", ""),
+        (None, ""),
+    ],
+)
+def test_nome_base_congelado(entrada: object, esperado: str) -> None:
+    """CONGELADA como `normalizar_texto`: entra na chave, logo mudá-la re-chaveia a série."""
+    assert c.nome_base(entrada) == esperado
+
+
+def test_nome_base_nunca_devolve_vazio_para_nome_que_e_so_o_marcador() -> None:
+    """`""` faria TODAS as unidades assim colapsarem numa chave só, na mesma rede e célula.
+
+    Perder a absorção do marcador numa linha é muito melhor que fundir academias distintas — o
+    contrato COLAPSA a colisão e nunca a desambigua.
+    """
+    assert c.nome_base("Em breve") == "em breve"
+    assert c.nome_base("(Pré-Lançamento)") == "pre lancamento"
+
+
+def test_marcador_composto_nao_deixa_palavra_orfa() -> None:
+    """Regressão da PRESENÇA da forma composta: `pre lancamento` tem de estar na alternação.
+
+    Sem ela, `lancamento` casa sozinho e sobra um `pre` órfão — medido em 15 unidades da `ad3`. O
+    dano não é estético: quando a unidade inaugurasse e o sufixo caísse, `"... pre"` -> `"..."`
+    geraria exatamente o churn falso que esta função existe para matar.
+
+    **A ORDEM entre as alternativas é indiferente**, e a primeira redação deste teste dizia o
+    contrário. O `re` procura a POSIÇÃO mais à esquerda antes de testar alternativas; na posição
+    do `pre`, `lancamento` não casa e só a composta pode casar. Medido nos dois sentidos: saída
+    idêntica. Quem remover a alternativa composta quebra aqui; quem a reordenar, não — e é isso
+    mesmo que se quer travar.
+    """
+    assert not c.nome_base("AD3 - Gaspar (Pré-Lançamento)").endswith(" pre")
+    assert c.nome_base("AD3 - Gaspar (Pré-Lançamento)") == c.nome_base("AD3 - Gaspar")
+
+
+def test_chave_absorve_a_inauguracao() -> None:
+    """Sair do "(Em breve)" é o OPOSTO de fechar, e o `v4` lia como 1 saída + 1 entrada."""
+    hex_id = h3.latlng_to_cell(-23.5500, -46.6300, 7)
+    anunciada = c.chave_hash_estavel("unidades", "smart_fit", "Smart Fit Centro (Em breve)", hex_id)
+    aberta = c.chave_hash_estavel("unidades", "smart_fit", "Smart Fit Centro", hex_id)
+    assert anunciada == aberta
+    assert c.chave_hash_estavel_v4(
+        "unidades", "smart_fit", "Smart Fit Centro (Em breve)", hex_id
+    ) != c.chave_hash_estavel_v4("unidades", "smart_fit", "Smart Fit Centro", hex_id)
+
+
+def test_chave_absorve_recalibracao_que_cruza_a_borda_do_hex7() -> None:
+    """O defeito CARACTERIZADO: mesma academia, célula res-7 diferente, pai res-5 igual.
+
+    Medido nas duas fotos: 41 das 4.430 unidades presentes em ambas trocaram de célula res-7 sem
+    sair do lugar (a `selfit` responde por 32). Em res-5 sobram 11.
+    """
+    origem = h3.latlng_to_cell(-23.5500, -46.6300, 7)
+    vizinhas = [v for v in h3.grid_ring(origem, 1) if h3.cell_to_parent(v, 5) == h3.cell_to_parent(origem, 5)]
+    assert vizinhas, "pre-condicao: ha vizinha res-7 sob o mesmo pai res-5"
+    destino = vizinhas[0]
+    assert origem != destino
+    assert c.chave_hash_estavel("unidades", "x", "Unidade", origem) == c.chave_hash_estavel(
+        "unidades", "x", "Unidade", destino
+    )
+    # E o `v4` NÃO absorvia — é por isso que a DEC-063 existe.
+    assert c.chave_hash_estavel_v4("unidades", "x", "Unidade", origem) != c.chave_hash_estavel_v4(
+        "unidades", "x", "Unidade", destino
+    )
+
+
+def test_celula_distante_continua_gerando_chave_diferente() -> None:
+    """A absorção tem limite: outra praça, outro pai res-5, outra chave."""
+    sp = h3.latlng_to_cell(-23.5500, -46.6300, 7)
+    rio = h3.latlng_to_cell(-22.9068, -43.1729, 7)
+    assert c.chave_hash_estavel("unidades", "x", "Unidade", sp) != c.chave_hash_estavel(
+        "unidades", "x", "Unidade", rio
+    )
+
+
+def test_chave_v4_congelada_replica_a_formula_do_contrato_antigo() -> None:
+    """`chave_hash_estavel_v4` NÃO pode mudar: é o preimage da migração `[DEC-063]`.
+
+    O snapshot não guarda `nome` (anti-PII), então sem esta função não há como recomputar a chave
+    de uma partição `v4` já gravada — o `de -> para` deixaria de ser auditável. A fórmula é
+    replicada aqui (molde de `test_concorrente_id_replica_formula_producao`), e não cravada como
+    literal, para que o teste falhe por MUDANÇA e não por reformatação.
+    """
+    fonte, rede, nome = "unidades", "smart_fit", "Smart Fit Centro"
+    hex_id = h3.latlng_to_cell(-23.5500, -46.6300, 7)
+    esperado = hashlib.sha1(
+        f"hash_estavel|{fonte}|{rede}|{c.normalizar_texto(nome)}|{hex_id}".encode()
+    ).hexdigest()
+    assert c.chave_hash_estavel_v4(fonte, rede, nome, hex_id) == esperado
+    # E ela é DIFERENTE da vigente — se um dia empatarem, a migração virou no-op silencioso.
+    assert c.chave_hash_estavel_v4(fonte, rede, nome, hex_id) != c.chave_hash_estavel(
+        fonte, rede, nome, hex_id
+    )
+
+
+def test_hex_invalido_degrada_em_vez_de_levantar() -> None:
+    """Quem recusa resolução errada é `_assert_schema_snapshot`, sobre o frame INTEIRO.
+
+    Levantar aqui mataria a materialização da semana por uma linha torta — o modo de falha que a
+    DEC-061 existe para evitar.
+    """
+    assert len(c.chave_hash_estavel("unidades", "x", "Unidade", "nao-e-hex")) == 40
+    assert len(c.chave_hash_estavel("unidades", "x", "Unidade", None)) == 40
+
+
 def test_chave_do_slug_tambem_e_sha1_de_40() -> None:
     """Refinamento do gate: as DUAS variantes de chave sao sha1 hex de 40 (dtype uniforme)."""
     chave = c.chave_do_slug("totalpass", "smart-fit-isaura-parente")

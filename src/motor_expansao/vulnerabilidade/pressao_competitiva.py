@@ -481,8 +481,13 @@ def dedup_independentes(
         if nome_mesma_fonte_m is not None and "nome" in independentes.columns
         else None
     )
-    usa_nome = raio_nome is not None
-    if usa_nome:
+    # `[DEC-066]` O NOME e' carregado sempre que a COLUNA existir, e nao so' quando a passagem da
+    # MESMA fonte esta' ligada. Os dois usos sao independentes: `raio_nome` governa a passagem
+    # intra-fonte (opt-in, default `None`), enquanto o DESEMPATE entre fontes precisa do nome no
+    # caminho PADRAO. Amarrar os dois ao mesmo bool deixaria o desempate inerte justamente na
+    # configuracao de producao -- verde, e sem fazer nada.
+    tem_nome = "nome" in independentes.columns
+    if tem_nome:
         colunas = [*colunas, "nome"]
     faltando = [c for c in colunas if c not in independentes.columns]
     if faltando:
@@ -505,7 +510,7 @@ def dedup_independentes(
     chaves = base["chave_snapshot"].astype(str).to_numpy()
     nomes = (
         base["nome"].astype("string").fillna("").astype(str).to_numpy()
-        if usa_nome
+        if tem_nome
         else np.full(len(base), "", dtype=object)
     )
     lat = base["lat"].to_numpy(dtype="float64")
@@ -535,6 +540,26 @@ def dedup_independentes(
 
     for i in range(len(base)):
         representante: int | None = None
+        # PASSAGEM POR DISTANCIA, entre fontes DIFERENTES. O representante e' quem CASA O NOME; sem
+        # casamento, o MAIS PROXIMO `[DEC-066]`.
+        #
+        # ATE' 2026-09-16 ela pegava o PRIMEIRO e dava `break` -- o primeiro na ordem em que o
+        # `grid_disk` devolve as celulas, arbitraria em relacao a distancia. Medido em 91 pares, o
+        # primeiro e' OUTRA academia, e o erro e' DUPLO: a unidade e' absorvida por quem ela nao e'
+        # (some concorrencia real) e a gemea verdadeira sobrevive como ponto separado (a mesma
+        # academia conta duas vezes). `Academia Agoge` colapsava contra `SCoccorese - Pilates` a
+        # 0,0 m tendo `Agoge Academia` a 3,3 m; `Personnalite Lago Norte`, contra uma unidade da
+        # PROPRIA Ultra.
+        #
+        # O nome DESEMPATA e nunca EXIGE: exigi-lo recusaria 3.060 colapsos reais a mediana de
+        # 6,2 m, porque as duas fontes escrevem o nome de formas que o matcher nao concilia.
+        #
+        # Sem o `break`, a busca custa mais -- e' preciso ver TODOS os candidatos para saber se
+        # algum casa. Medido sobre 35.170 independentes: segundos. O conjunto de candidatos
+        # VISITADOS nao muda (mesmo anel, mesmo limiar), so' muda qual deles vence: a equivalencia
+        # contra a varredura completa continua valendo.
+        melhor_d = float("inf")
+        mais_proximo: int | None = None
         for vizinha in h3.grid_disk(celulas[i], k):
             for j in ocupantes.get(vizinha, ()):
                 if fontes[j] == fontes[i]:
@@ -544,11 +569,19 @@ def dedup_independentes(
                         np.array([lat[i]]), np.array([lng[i]]), np.array([lat[j]]), np.array([lng[j]])
                     )[0]
                 )
-                if d <= float(distancia_m):
+                if d > float(distancia_m):
+                    continue
+                if d < melhor_d:
+                    melhor_d, mais_proximo = d, j
+                if (
+                    representante is None
+                    and nomes[i]
+                    and nomes[j]
+                    and mesmo_estabelecimento(nomes[i], nomes[j])
+                ):
                     representante = j
-                    break
-            if representante is not None:
-                break
+        if representante is None:
+            representante = mais_proximo
 
         # PASSAGEM POR NOME, dentro da MESMA fonte (opt-in). Ela e' a unica que alcanca a duplicata
         # real desta estacao: com so' o WellHub no ar, a guarda de fonte acima zera a dedup inteira.
