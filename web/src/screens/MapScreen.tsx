@@ -114,6 +114,18 @@ export interface MapScreenProps {
   /** Sem UF escolhida, não desenha o hero — quem o publica é a camada de cima. */
   semLanding?: boolean
   /**
+   * ID do imóvel a ABRIR assim que a lista da UF chegar — a porta de entrada da ficha
+   * do imóvel, que não existia (relato do Felipe, 2026-09-23: "abre o popup do
+   * hexágono em vez do popup de informações do imóvel").
+   *
+   * Vem como ID e não como objeto de propósito: a `FichaImovel` precisa do registro
+   * inteiro, e ele já está em `imoveisUf`, que este componente carrega para desenhar
+   * os pins. Receber o objeto pronto criaria uma segunda cópia do mesmo dado.
+   */
+  imovelInicial?: string | null
+  /** Avisa que a intenção acima foi consumida, para não reabrir a cada volta ao mapa. */
+  onImovelAberto?: () => void
+  /**
    * Publica a função de CAPTURA do mapa para quem está fora deste componente.
    *
    * O modo de ponto é irmão na árvore e usa o MESMO mapa (`App.tsx`), então ele precisa
@@ -156,6 +168,8 @@ export default function MapScreen({
   onPontoBuscado,
   janelaDoHex = true,
   semLanding = false,
+  imovelInicial = null,
+  onImovelAberto,
   onVerImovelNaAba,
   tema,
 }: MapScreenProps) {
@@ -326,6 +340,43 @@ export default function MapScreen({
   useEffect(() => {
     if (imoveisUf != null && !temImoveis) setVerImoveis(false)
   }, [imoveisUf, temImoveis])
+
+  /*
+   * CHEGADA VINDA DA ABA DE IMÓVEIS (2026-09-23) — abre a ficha do IMÓVEL e acende a
+   * camada, em vez de subir a ficha do hexágono.
+   *
+   * Espera `imoveisUf` chegar de propósito: a lista é buscada por UF e começa `null`,
+   * então no primeiro render não existe o registro que a `FichaImovel` precisa. Tentar
+   * abrir antes daria uma ficha vazia — e o efeito de troca de contexto (uf/município)
+   * ainda zeraria `imovelAberto` logo em seguida, apagando a abertura em silêncio.
+   *
+   * A camada é acesa SÓ aqui, nesta chegada: ela continua nascendo desligada para quem
+   * abre o mapa por qualquer outra porta, e quem a desligou de propósito não é
+   * surpreendido depois (decisão do Felipe). Sem acendê-la, o pin do imóvel nem seria
+   * desenhado e a ficha flutuaria sobre um mapa que não mostra do que ela fala.
+   *
+   * O `ref` garante UMA execução por intenção mesmo que o efeito seja reexecutado
+   * antes de o aviso de consumo voltar do App (é o que o StrictMode faz em dev).
+   *
+   * Imóvel não encontrado na lista é degradação DECLARADA, não silêncio: cai no
+   * comportamento antigo — seleciona o hexágono, que abre a ficha dele. Acontece se o
+   * registro sair do recorte servido (a lista vem com teto de 3.000 por UF).
+   */
+  const imovelInicialFeito = useRef<string | null>(null)
+  useEffect(() => {
+    if (!imovelInicial || imoveisUf == null) return
+    if (imovelInicialFeito.current === imovelInicial) return
+    imovelInicialFeito.current = imovelInicial
+
+    const alvo = imoveisUf.find((o) => o.id === imovelInicial)
+    if (alvo) {
+      setVerImoveis(true)
+      abrirImovel(alvo)
+    } else if (pin?.hexId) {
+      setSelecionado(pin.hexId)
+    }
+    onImovelAberto?.()
+  }, [imovelInicial, imoveisUf, abrirImovel, onImovelAberto, pin])
 
   /* Geometria do raio: buscada SOB DEMANDA, so' quando a CAMADA 3 esta aberta. Fora do
      payload do mapa de proposito — custa ~2,4 s e ~3,9 MB na UF de SP, e quem so' passa
@@ -906,6 +957,7 @@ export default function MapScreen({
     const lista: ChaveDeCamada[] = [
       {
         id: 'medir',
+        icone: 'regua',
         titulo: 'Medir distância',
         sub: medindo ? 'clique 2 pontos no mapa' : 'clique para ativar',
         ligado: medindo,
@@ -921,6 +973,7 @@ export default function MapScreen({
     if (!nivelUf) {
       lista.push({
         id: 'comparar',
+        icone: 'comparar',
         titulo: 'Comparar hexes',
         sub: modoCenario
           ? `${cenario.length} de ${MAX_COMPARADOS} selecionados`
@@ -940,6 +993,7 @@ export default function MapScreen({
       const n = dados?.pins?.concorrentes.length ?? 0
       lista.push({
         id: 'redes',
+        icone: 'halter',
         titulo: 'Academias de rede',
         sub: subDaChaveRedes(n, verRedes),
         ligado: verRedes,
@@ -960,6 +1014,22 @@ export default function MapScreen({
       const total = independentes?.total ?? 0
       lista.push({
         id: 'indep',
+        /* O símbolo do WELLHUB, em silhueta monocromática (Felipe, 2026-09-23). É a
+           marca do app de onde estas academias vêm — hoje 19.930 de 19.930, medido no
+           artefato servido.
+
+           Entra como MÁSCARA e não como `<img>`: assim é pintado com a cor da linha
+           (branco apagado, acento aceso) e acompanha o tema claro, em vez de ficar
+           rosa ao lado de ícones monocromáticos. A arte veio do PNG oficial, recortada
+           na silhueta — o `logo-wellhub.png` que o mapa usa no pin continua colorido e
+           intocado, porque lá a cor DISTINGUE os dois apps (DEC-066).
+
+           RESSALVA: a DEC-066 já colocou o TotalPass neste entregável e a regeneração
+           das duas fontes ainda não subiu para a VPS. No dia em que subir, esta chave
+           passará a exibir a marca do Wellhub sobre uma lista que também tem TotalPass
+           — o mesmo tipo de imprecisão que aquela DEC corrigiu no pin. Não é defeito
+           hoje; é dívida com data marcada. */
+        mascara: '/logo-wellhub-mono.png',
         titulo: 'Academias independentes',
         sub: verIndependentes
           ? `${n} · visível${independentes?.truncado ? ` de ${total} (teto)` : ''}`
@@ -977,6 +1047,7 @@ export default function MapScreen({
     if (temImoveis) {
       lista.push({
         id: 'imoveis',
+        icone: 'imoveis',
         titulo: 'Oportunidades imobiliárias',
         sub: verImoveis
           ? `${imoveisNoMapa.length} · visível`
@@ -1012,6 +1083,7 @@ export default function MapScreen({
       }
       lista.push({
         id: 'calor-densidade',
+        icone: 'pessoa',
         titulo: 'Densidade demográfica',
         sub: subCalor(verCalorDensidade),
         ligado: verCalorDensidade,
@@ -1025,6 +1097,7 @@ export default function MapScreen({
       })
       lista.push({
         id: 'calor-renda',
+        icone: 'dinheiro',
         titulo: 'Renda domiciliar',
         sub: subCalor(verCalorRenda),
         ligado: verCalorRenda,
