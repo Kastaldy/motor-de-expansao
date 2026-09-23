@@ -72,7 +72,16 @@ _COR_TOP = (22, 163, 74)
 _COR_TOP_BORDA = (20, 83, 45)
 _COR_CIDADE = (148, 163, 184, 70)
 
-_JANELA_PRESSAO_M = 2_600.0
+# Meia-largura da imagem de pressao do ponto, em RAIOS: 2,6 raios (2,6 km para o raio de 1 km
+# com que a pagina nasceu no #388; 1,95 km para o raio do pontual). Atrelada ao raio para o zoom acompanhar
+# o disco -- com a janela fixa, encolher o raio deixava os discos perdidos num mapa do mesmo
+# tamanho (revisao visual do Juan, 2026-09-23).
+_JANELA_PRESSAO_EM_RAIOS = 2.6
+
+
+def janela_pressao_m(raio_m: float) -> float:
+    """Meia-largura, em metros, do mapa de pressao do ponto para discos de `raio_m`."""
+    return float(raio_m) * _JANELA_PRESSAO_EM_RAIOS
 
 #: Margem do quadro de "Onde crescer" em torno dos hexagonos escolhidos (fracao do proprio span).
 #: 0,6 deixa cerca de um hexagono de folga de cada lado quando os 5 estao juntos.
@@ -165,9 +174,21 @@ def _base(quadro: _Quadro, titulo: str, subtitulo: str | None, *, basemap: bool)
     return image, draw, desenhou
 
 
-def _fechar(image: Image.Image, draw: ImageDraw.ImageDraw, quadro: _Quadro, desenhou: bool) -> bytes:
+# Barra de escala da imagem de pressao do PONTO: o mesmo comprimento do raio dos discos
+# (`RAIO_PRESSAO_PONTO_M`), para a barra e o disco se conferirem a olho. Com o default a barra
+# saia "1 km" ao lado de discos menores e lia-se como o raio da imagem (Juan, 2026-09-23).
+_ESCALA_PRESSAO_PONTO_M = (int(RAIO_PRESSAO_PONTO_M), 500, 250, 100)
+
+
+def _fechar(
+    image: Image.Image, draw: ImageDraw.ImageDraw, quadro: _Quadro, desenhou: bool,
+    *, escala_candidatos_m: tuple[int, ...] | None = None,
+) -> bytes:
     draw.rectangle(quadro.caixa, outline=_TINTA_SUAVE, width=2)
-    _draw_scale_bar(draw, quadro.caixa, 1.0 / quadro.scale)
+    if escala_candidatos_m is None:
+        _draw_scale_bar(draw, quadro.caixa, 1.0 / quadro.scale)
+    else:
+        _draw_scale_bar(draw, quadro.caixa, 1.0 / quadro.scale, candidates=escala_candidatos_m)
     rodape = f"EPSG:3857 - {_atribuicao_tiles() if desenhou else 'fundo de ruas offline'}"
     _draw_text(draw, (_MARGEM, _H - 40), rodape, font=_font(20), fill=_TINTA_SUAVE)
     return _png(image.convert("RGB"))
@@ -315,7 +336,7 @@ def render_pressao_raios(
     O default e' o raio de LEITURA do pontual (`RAIO_PRESSAO_PONTO_M`), nao o do modelo (`RAIO_INFLUENCIA_M`),
     que fica com `render_pressao_cidade` (municipal).
     """
-    janela = _JANELA_PRESSAO_M
+    janela = janela_pressao_m(raio_m)
     grau_lat = 111_195.0
     d_lat = janela / grau_lat
     d_lng = janela / (grau_lat * max(math.cos(math.radians(lat)), 0.01))
@@ -346,7 +367,7 @@ def render_pressao_raios(
     x = _W - _LEGEND_W + 24
     draw.ellipse([x, yy + 84, x + 40, yy + 124], outline=(0, 88, 220, 235), width=4)
     _draw_text(draw, (x + 58, yy + 90), f"Raio de {raio_txt} do ponto", font=_font(22))
-    return _fechar(image, draw, quadro, desenhou)
+    return _fechar(image, draw, quadro, desenhou, escala_candidatos_m=_ESCALA_PRESSAO_PONTO_M)
 
 
 #: Acima disto o mapa da cidade troca as logos por um ponto: numa capital com centenas de

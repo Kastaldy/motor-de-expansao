@@ -477,3 +477,36 @@ def test_os_dois_mapas_do_slide_hero_usam_o_mesmo_enquadramento(monkeypatch):
     assert raios == [("score_setor_2022_calibrado", 3.7), ("oferta_efetiva_disponivel", 3.7)]
     # imagens maiores no slide: deixaram de ser reduzidas
     assert censo_report._HERO_MAP_SCALE == 1.0
+
+
+def test_barra_de_escala_da_pressao_do_ponto_fica_abaixo_do_raio(monkeypatch):
+    # "1 km" na barra de escala, ao lado de discos de 750 m, lia-se como o raio da imagem
+    # (revisao visual do Juan, 2026-09-23). A imagem do ponto poe a barra no comprimento do
+    # raio; a da cidade (municipal) segue com o default.
+    from motor_expansao.dashboard import relatorio_praca_mapas as rpm
+
+    chamadas: list[dict] = []
+
+    def _falsa(draw, box, mpp, **kw):
+        chamadas.append(kw)
+
+    monkeypatch.setattr(rpm, "_draw_scale_bar", _falsa)
+    conc = pd.DataFrame({"rede": ["Smart Fit"], "lat": [_LAT + 300 / 111_195.0], "lng": [_LNG]})
+    rpm.render_pressao_raios(_LAT, _LNG, conc, None, basemap=False)
+    assert chamadas and max(chamadas[-1]["candidates"]) == rp.RAIO_PRESSAO_PONTO_M == 750
+
+    import h3
+
+    hexes = pd.DataFrame({"hex_id": sorted(h3.grid_disk(h3.latlng_to_cell(_LAT, _LNG, 7), 1))})
+    rpm.render_pressao_cidade(hexes, conc, None, basemap=False)
+    assert "candidates" not in chamadas[-1]
+
+
+def test_zoom_da_pressao_do_ponto_acompanha_o_raio():
+    # Janela fixa de 2,6 km deixava discos de 750 m perdidos no mapa dimensionado para 1 km
+    # (revisao visual do Juan, 2026-09-23): a meia-largura passa a ser 2,6 raios.
+    from motor_expansao.dashboard import relatorio_praca_mapas as rpm
+
+    assert rpm.janela_pressao_m(RAIO_INFLUENCIA_M) == 2_600.0  # o enquadramento do #388, intacto
+    assert rpm.janela_pressao_m(rp.RAIO_PRESSAO_PONTO_M) == 1_950.0
+    assert "2_600" not in inspect.getsource(rpm) and "2600" not in inspect.getsource(rpm)
