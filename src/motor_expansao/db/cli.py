@@ -530,6 +530,39 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_expurgar(args: argparse.Namespace) -> int:
+    """Zera a ORIGEM das sessoes alem do prazo de retencao (P15, fechado em 23/09/2026).
+
+    ANONIMIZA, nao apaga: o que tem prazo e' o dado pessoal (`ip_sessao`,
+    `user_agent_sessao`), nao o registro da sessao. Zeradas as duas colunas, a linha continua
+    respondendo "esta pessoa entrou em tal dia, revogada em tal outro" -- auditoria sem PII.
+    Apagar a linha contrariaria o desenho da 018, onde revogar e' `UPDATE` e nunca `DELETE`.
+
+    E' IDEMPOTENTE: rodar duas vezes seguidas nao reescreve nada na segunda, porque o `WHERE`
+    exige pelo menos uma das colunas preenchida. Isso torna o `rowcount` honesto -- ele diz
+    quanto FOI expurgado agora, e nao quantas linhas sao velhas.
+
+    Roda pelo DONO do schema (a mesma credencial das migrations): e' escrita de manutencao,
+    fora do RBAC de usuario, e o papel `app` nao precisa deste poder.
+    """
+    from . import sessoes
+
+    dias = sessoes.RETENCAO_ORIGEM_DIAS
+    with _conectar_para_ddl() as con:
+        (pendentes,) = con.execute(sessoes.SQL_CONTAR_ORIGEM_VENCIDA, (dias,)).fetchone()
+        print(f"retencao da origem: {dias} dias")
+        print(f"sessoes com origem alem do prazo: {pendentes}")
+        if args.simular:
+            print("(--simular: nada foi escrito)")
+            return 0
+        if not pendentes:
+            print("nada a expurgar")
+            return 0
+        cursor = con.execute(sessoes.SQL_EXPURGAR_ORIGEM, (dias,))
+        print(f"  anonimizadas: {getattr(cursor, 'rowcount', 0)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m motor_expansao.db", description=__doc__)
     sub = parser.add_subparsers(dest="comando", required=True)
@@ -555,6 +588,15 @@ def main(argv: list[str] | None = None) -> int:
         "privilegios",
         help="o papel `app` e' mesmo incapaz do que nao deve? (usa MOTOR_DATABASE_URL)",
     ).set_defaults(funcao=cmd_privilegios)
+
+    p_expurgar = sub.add_parser(
+        "expurgar",
+        help="zera ip/user-agent das sessoes alem do prazo de retencao (P15)",
+    )
+    p_expurgar.add_argument(
+        "--simular", action="store_true", help="so' conta; nao escreve nada"
+    )
+    p_expurgar.set_defaults(funcao=cmd_expurgar)
 
     args = parser.parse_args(argv)
     return int(args.funcao(args))

@@ -109,6 +109,38 @@ RETURNING id_sessao, expira_em_sessao
 #: de servico por cabecalho (login que falha porque alguem mandou um `User-Agent` gigante).
 TETO_USER_AGENT = 200
 
+#: Quanto tempo a ORIGEM da sessao (`ip_sessao`, `user_agent_sessao`) pode ficar guardada.
+#: Decisao do dono em 23/09/2026, fechando o **P15**: TRES MESES. Nao e' numero novo -- e' o
+#: mesmo prazo que a DEC-027 ja' pratica para a trilha de acesso em arquivo, que guarda o
+#: MESMO dado (IP e user-agent). Dois prazos diferentes para o mesmo dado seriam duas
+#: politicas de privacidade no mesmo sistema.
+RETENCAO_ORIGEM_DIAS = 90
+
+#: ANONIMIZA, nao apaga. O que tem prazo e' o DADO PESSOAL, nao o registro da sessao: zeradas
+#: as duas colunas, a linha continua respondendo "esta pessoa entrou em tal dia e a sessao foi
+#: revogada em tal outro" -- auditoria sem PII. Apagar a linha destruiria esse historico e
+#: contrariaria o desenho da 018, em que revogar e' `UPDATE` e nunca `DELETE`.
+#:
+#: `criado_em_sessao` e' o marco, e nao `expira_em_sessao`: o prazo conta da COLETA do dado.
+#:
+#: O `WHERE` exige pelo menos uma das duas preenchidas para a operacao ser IDEMPOTENTE -- sem
+#: isso, cada execucao reescreveria todas as linhas velhas e o `rowcount` mentiria sobre
+#: quanto ainda havia para expurgar.
+SQL_EXPURGAR_ORIGEM = """
+UPDATE sessoes
+SET ip_sessao = NULL, user_agent_sessao = NULL
+WHERE criado_em_sessao < now() - make_interval(days => %s)
+  AND (ip_sessao IS NOT NULL OR user_agent_sessao IS NOT NULL)
+"""
+
+#: Quantas linhas AINDA guardam origem alem do prazo. Serve ao `--simular` e ao operador que
+#: quer saber se o expurgo esta' em dia sem escrever nada.
+SQL_CONTAR_ORIGEM_VENCIDA = """
+SELECT count(*) FROM sessoes
+WHERE criado_em_sessao < now() - make_interval(days => %s)
+  AND (ip_sessao IS NOT NULL OR user_agent_sessao IS NOT NULL)
+"""
+
 # SUPERCONJUNTO do `rbac.SQL_IDENTIDADE` -- ver "RISCO DECLARADO" no topo.
 #
 # Os tres filtros de sessao viva, e por que cada um existe:

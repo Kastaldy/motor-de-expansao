@@ -449,3 +449,61 @@ def test_este_modulo_NAO_le_header_nenhum() -> None:
         if isinstance(no, ast.Name) and no.id == "request":
             lidos.append(no.id)
     assert lidos == [], f"o modulo de sessao passou a ler a requisicao: {sorted(set(lidos))}"
+
+
+# --------------------------------------------------------------------------------------
+# Retencao da ORIGEM — o P15 fechado em 23/09/2026 (3 meses)
+# --------------------------------------------------------------------------------------
+
+
+def test_a_retencao_e_de_tres_meses_e_bate_com_a_trilha() -> None:
+    """90 dias, e o numero nao e' novo.
+
+    E' o MESMO prazo que a DEC-027 ja' pratica para a trilha de acesso em arquivo, que guarda
+    o MESMO dado (IP e user-agent). Dois prazos diferentes para o mesmo dado seriam duas
+    politicas de privacidade dentro do mesmo sistema -- e a que alguem citasse seria sempre a
+    outra.
+    """
+    assert sessoes.RETENCAO_ORIGEM_DIAS == 90
+
+
+def test_o_expurgo_ANONIMIZA_e_nao_apaga() -> None:
+    """O que tem prazo e' o DADO PESSOAL, nao o registro da sessao.
+
+    Zeradas as duas colunas, a linha continua respondendo "entrou em tal dia, revogada em tal
+    outro" -- auditoria sem PII. `DELETE` destruiria esse historico e contrariaria o desenho da
+    018, onde revogar e' `UPDATE` e nunca `DELETE` (o papel `app` nem tem `DELETE`).
+    """
+    sql = sessoes.SQL_EXPURGAR_ORIGEM
+    assert sql.strip().startswith("UPDATE sessoes")
+    assert "DELETE" not in sql.upper()
+    assert "ip_sessao = NULL" in sql and "user_agent_sessao = NULL" in sql
+
+
+def test_o_expurgo_conta_da_COLETA_e_nao_do_vencimento() -> None:
+    """`criado_em_sessao`, nao `expira_em_sessao`: o prazo de retencao conta de quando o dado
+    foi COLETADO. Usar o vencimento daria 8h a mais, de graca, e por um motivo que nao existe."""
+    for sql in (sessoes.SQL_EXPURGAR_ORIGEM, sessoes.SQL_CONTAR_ORIGEM_VENCIDA):
+        assert "criado_em_sessao < now() - make_interval(days => %s)" in sql
+        assert "expira_em_sessao" not in sql
+
+
+def test_o_expurgo_e_IDEMPOTENTE_por_construcao() -> None:
+    """O `WHERE` exige pelo menos uma coluna preenchida.
+
+    Sem isso, cada execucao reescreveria todas as linhas velhas: o `rowcount` passaria a dizer
+    "quantas sao velhas" em vez de "quantas foram expurgadas AGORA", e o operador perderia o
+    unico sinal de que o expurgo esta' em dia.
+    """
+    assert "(ip_sessao IS NOT NULL OR user_agent_sessao IS NOT NULL)" in sessoes.SQL_EXPURGAR_ORIGEM
+
+
+def test_a_contagem_usa_O_MESMO_recorte_do_expurgo() -> None:
+    """Duas redacoes do mesmo recorte divergem em silencio, e aqui a divergencia seria cara: o
+    `--simular` diria um numero e a execucao faria outra coisa."""
+    import re
+
+    def _recorte(sql: str) -> str:
+        return re.sub(r"\s+", " ", sql[sql.upper().index("WHERE") :]).strip()
+
+    assert _recorte(sessoes.SQL_EXPURGAR_ORIGEM) == _recorte(sessoes.SQL_CONTAR_ORIGEM_VENCIDA)
