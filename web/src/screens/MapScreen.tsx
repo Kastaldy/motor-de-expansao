@@ -27,7 +27,7 @@ import { ACC } from '../lib/imovel'
    foi montada para a ABA; este e' o realce da LINHA do painel de camadas do mapa. */
 const ACC_16 = 'rgba(221,61,151,.16)'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
-import { temAlunos } from '../lib/pins'
+import { REDES_LIGADAS_POR_PADRAO, pinsVisiveis, subDaChaveRedes, temAlunos } from '../lib/pins'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import { rodapeDaBase, tituloEscolhaUnidade } from '../lib/rodape-base'
 import { type AlvoCaptura, alvoDoHex, pinsDoAlvo } from '../lib/captura-mapa'
@@ -245,6 +245,15 @@ export default function MapScreen({
   useEffect(() => {
     if (!temIndependentes) setVerIndependentes(false)
   }, [temIndependentes])
+
+  /* Bandeiras das academias de REDE (as cadeias). Nasce LIGADA — o piloto abre identico ao de
+     hoje — e existe pelo gesto inverso, que faltava: apagar as bandeiras para ler o territorio
+     (ou as independentes) por baixo. Esconde bandeira, nao tira concorrente da conta: raio,
+     ficha, cenario e a foto do slide seguem lendo `dados.pins`. Preferencia do momento, como
+     a legenda: fora do `EstadoMapa`. */
+  const [verRedes, setVerRedes] = useState(REDES_LIGADAS_POR_PADRAO)
+  const temRedes = (dados?.pins?.concorrentes.length ?? 0) > 0
+  const pinsNoMapa = useMemo(() => pinsVisiveis(dados?.pins, verRedes), [dados?.pins, verRedes])
 
   /* Camada de OPORTUNIDADES IMOBILIARIAS (a oferta da aba, sobre o territorio).
      Comeca DESLIGADA pela mesma razao das outras chaves: o piloto abre identico ao
@@ -924,6 +933,23 @@ export default function MapScreen({
       })
     }
 
+    /* Academias de REDE — as bandeiras das cadeias. Vem ANTES das independentes porque e' a
+       camada instalada (na sobreposicao do mapa a rede vence), e some com o dado como as
+       demais. Cor neutra de proposito: sao 107 marcas, nenhuma cor as representa. */
+    if (temRedes) {
+      const n = dados?.pins?.concorrentes.length ?? 0
+      lista.push({
+        id: 'redes',
+        titulo: 'Academias de rede',
+        sub: subDaChaveRedes(n, verRedes),
+        ligado: verRedes,
+        onToggle: () => setVerRedes((v) => !v),
+        cor: 'var(--ac-text)',
+        corTexto: 'var(--ac-chip)',
+        corRealce: 'var(--ac-a16)',
+      })
+    }
+
     /* Academias INDEPENDENTES com score (BLK-MA-15). Vale em QUALQUER camada: a pergunta
        "quem ja opera aqui e esta espremido?" e' a INVERSAO do funil (comprar, nao abrir).
        O titulo diz de QUEM e' o pin — o mapa ja tem bandeiras de CADEIA, e os dois
@@ -1023,6 +1049,9 @@ export default function MapScreen({
     verCalorDensidade,
     verCalorRenda,
     alternarCenario,
+    temRedes,
+    verRedes,
+    dados?.pins,
     temIndependentes,
     independentes,
     verIndependentes,
@@ -1104,7 +1133,7 @@ export default function MapScreen({
           centro={dados.centro}
           municipio={dados.municipio ?? undefined}
           uf={dados.uf}
-          pins={dados.pins}
+          pins={pinsNoMapa}
           selecionado={modoCenario ? null : selecionado}
           cenario={cenario}
           raio1km={raio1km}
@@ -1487,7 +1516,7 @@ export default function MapScreen({
                   /* Explica o aro indigo SO' quando ele esta desenhado. Legenda que
                      nomeia simbolo ausente ensina o operador a procurar o que nao
                      existe naquele recorte. */
-                  comAlunos={(dados?.pins?.concorrentes ?? []).some(temAlunos)}
+                  comAlunos={(pinsNoMapa?.concorrentes ?? []).some(temAlunos)}
                 />
               )}
             </div>
