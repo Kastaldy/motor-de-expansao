@@ -475,6 +475,39 @@ DDL sobre dado real é onde se perde dado. O caminho de volta é o restore do du
 - O `/api/health` segue mudo (pentest Onda B #8): é rota livre. O diagnóstico do banco mora na rota
   de admin.
 
+## 9.1 Expurgo da origem das sessões (retenção do P15)
+
+Instalação do cron: cabeçalho do
+[`scripts/cron/run_expurgo_sessoes.sh`](../scripts/cron/run_expurgo_sessoes.sh).
+Roda **04:40 UTC (01:40 BRT), diariamente** — e o horário não é arbitrário.
+
+**A ordem entre este cron e o backup É a política de retenção.** O expurgo zera
+`ip_sessao`/`user_agent_sessao` além de 90 dias; o backup, 30 minutos depois, dumpa o banco
+inteiro e a cópia semanal fica 28 dias. Invertida a ordem, cada dump carregaria os IPs já
+vencidos e a cópia off-box os guardaria por quatro semanas — a retenção de 90 dias viraria 118
+na prática, sem ninguém perceber. Há teste guardando a ordem
+(`tests/unit/test_wrapper_cron_expurgo_sessoes.py`), porque nenhum dos dois arquivos garante
+isso sozinho.
+
+**Anonimiza, não apaga.** O que tem prazo é o dado pessoal, não o registro da sessão: a linha
+permanece e continua respondendo "entrou em tal dia, revogada em tal outro". Apagar contrariaria
+o desenho da [018](https://github.com/Kastaldy/banco-de-reservas), em que revogar é `UPDATE` e
+nunca `DELETE` — o papel `app` nem tem `DELETE`.
+
+Antes de instalar, rode uma vez em modo seco (é o smoke documentado no cabeçalho):
+
+```bash
+/opt/motor-expansao-infra/run_expurgo_sessoes.sh --simular
+```
+
+**O prazo e a consulta não estão no script.** Vivem em `db/sessoes.py`
+(`RETENCAO_ORIGEM_DIAS`, `SQL_EXPURGAR_ORIGEM`), com teste e sabotagem; o wrapper só orquestra.
+Mudar o prazo é mudar uma constante, não editar shell — e há teste que recusa SQL dentro do
+wrapper.
+
+**O que este cron NÃO fecha:** a **base legal** do P15, que é decisão jurídica e não técnica.
+O prazo foi decidido em 23/09/2026 (3 meses); o fundamento, não.
+
 ## 10. Backup e restore
 
 Instalação do cron: cabeçalho do [`scripts/cron/run_backup_banco.sh`](../scripts/cron/run_backup_banco.sh).
@@ -487,7 +520,8 @@ puro justamente para permitir `pg_restore -t`: restaurar uma tabela sem derrubar
 "restore granular" listado como gap aceito.
 
 **Cópia off-box é restic, não rclone.** O dump carrega e-mail, `login_usuario`, `senha_hash` e o `ip`
-dos eventos. O restic cifra antes de o arquivo sair da máquina, com chave que o dono do bucket não
+das **sessões** — `eventos.ip` nunca teve produtor, e quem passou a guardar IP foi `sessoes`, pela
+migration 020 (23/09/2026). O restic cifra antes de o arquivo sair da máquina, com chave que o dono do bucket não
 tem. Sync de arquivo cru entregaria PII em claro a um terceiro. A senha do repositório é a chave de
 decifração: perdê-la é perder todo o backup — guarde a cópia no mesmo cofre do SOPS+age.
 
