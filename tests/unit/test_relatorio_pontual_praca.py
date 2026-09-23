@@ -116,32 +116,51 @@ def test_top5_sem_colunas_devolve_vazio_com_aviso():
 # --------------------------------------------------------------------------- #
 # Pressao                                                                     #
 # --------------------------------------------------------------------------- #
-def test_sobreposicao_usa_raio_oficial():
-    # O raio NAO e' redigitado: e' o do modelo de mercado (DEC-051), importado.
+def test_pressao_do_ponto_usa_750m_e_nao_o_raio_do_modelo():
+    # O raio da pagina de pressao do PONTUAL e' o de LEITURA do relatorio (750 m, pedido de
+    # 2026-09-23), nao o de influencia do modelo de mercado (DEC-051, 1 km). Os dois vivem em
+    # constante propria e nenhum e' redigitado: o modelo e o municipal continuam em 1 km.
+    from motor_expansao.dashboard import relatorio_praca_mapas as rpm
+
+    assert rp.RAIO_PRESSAO_PONTO_M == 750.0
+    assert RAIO_INFLUENCIA_M == 1_000.0
     fonte = inspect.getsource(rp)
     assert "RAIO_INFLUENCIA_M" in fonte
     assert "1000" not in fonte.replace("_", "") and "1_000" not in fonte
-    assert rp.pressao_sobre_ponto.__kwdefaults__["raio_m"] == RAIO_INFLUENCIA_M
+    assert rp.pressao_sobre_ponto.__kwdefaults__["raio_m"] == rp.RAIO_PRESSAO_PONTO_M
+    assert rpm.render_pressao_raios.__kwdefaults__["raio_m"] == rp.RAIO_PRESSAO_PONTO_M
+    assert "750" not in inspect.getsource(rpm)  # importa, nao redigita
+    # a imagem e a pagina imprimem o raio pelo MESMO formatador: 750 m, e nao "0,8 km"
+    assert rp.rotulo_raio(750.0) == "750 m"
+    assert rp.rotulo_raio(RAIO_INFLUENCIA_M) == "1,0 km"  # municipal: rotulo identico ao de antes
+    assert ":.1f" not in inspect.getsource(rpm)
+    # municipal intocado
+    assert rp.pressao_na_cidade.__kwdefaults__["raio_m"] == RAIO_INFLUENCIA_M
+    assert rpm.render_pressao_cidade.__kwdefaults__["raio_m"] == RAIO_INFLUENCIA_M
+    assert rp.discos_por_hexagono.__kwdefaults__["raio_m"] == RAIO_INFLUENCIA_M
 
     grau_lat_m = 111_195.0
     conc = pd.DataFrame(
         {
             "rede": ["Smart Fit", "Smart Fit", None],
-            # a 500 m, a 900 m e a 1.500 m ao norte
+            # a 500 m, a 900 m e a 1.500 m ao norte: com 750 m so' a primeira alcanca o ponto
             "lat": [_LAT + 500 / grau_lat_m, _LAT + 900 / grau_lat_m, _LAT + 1500 / grau_lat_m],
             "lng": [_LNG, _LNG, _LNG],
         }
     )
     ultra = pd.DataFrame({"lat": [_LAT - 300 / grau_lat_m], "lng": [_LNG]})
     p = pressao_sobre_ponto(_LAT, _LNG, conc, ultra)
-    assert p.raio_m == RAIO_INFLUENCIA_M
-    assert p.n_concorrentes_sobre_ponto == 2
+    assert p.raio_m == 750.0
+    assert p.n_concorrentes_sobre_ponto == 1
     assert p.n_ultra_sobre_ponto == 1
-    assert p.n_raios_sobre_ponto == 3
-    assert p.redes_sobre_ponto == [("Smart Fit", 2)]
+    assert p.n_raios_sobre_ponto == 2
+    assert p.redes_sobre_ponto == [("Smart Fit", 1)]
     assert p.n_independentes_sobre_ponto == 0
+    # a mais proxima e' a mais proxima de TODAS, dentro ou fora do raio
     assert abs(p.dist_mais_proxima_m - 500.0) < 5.0
     assert p.nome_mais_proxima == "Smart Fit"
+    # o raio do modelo continua disponivel a quem pedir explicitamente
+    assert pressao_sobre_ponto(_LAT, _LNG, conc, ultra, raio_m=RAIO_INFLUENCIA_M).n_concorrentes_sobre_ponto == 2
 
 
 def test_pressao_sem_concorrente():
@@ -265,6 +284,23 @@ def test_pdf_pressao_nomeia_a_rede_pelo_rotulo():
     )
     # parenteses saem escapados no stream do PDF; o que importa e' o rotulo no lugar do slug
     assert b"Smart Fit" in pdf and b"smart_fit" not in pdf
+
+
+def test_pdf_pressao_do_ponto_diz_750_m():
+    grau_lat_m = 111_195.0
+    conc = pd.DataFrame({"rede": ["smart_fit"], "lat": [_LAT + 300 / grau_lat_m], "lng": [_LNG]})
+    pdf = gerar_pdf_relatorio_pontual_classico(
+        _RESULT, None, praca=_praca(pressao=pressao_sobre_ponto(_LAT, _LNG, conc, None))
+    )
+    # parenteses saem escapados no stream: o titulo do painel e' "(raio de 750 m)"
+    assert b"o ponto \(raio de 750 m\)" in pdf
+    # nem o raio do modelo nem o arredondamento ".1f" (0,75 -> "0,8 km") no painel; o
+    # "1,0 km" das outras paginas (Concorrentes, capa) continua la e nao entra nesta conta
+    assert b"0,8 km" not in pdf
+    assert b"o ponto \(raio de 1,0 km\)" not in pdf
+    # a legenda nao pode mais afirmar que o circulo e' o raio que desconta o residual
+    assert b"que o motor usa para descontar" not in pdf
+    assert b"imediato" in pdf  # palavra unica da legenda nova; frases inteiras quebram de linha no stream
 
 
 def test_pdf_sem_praca_nao_muda():

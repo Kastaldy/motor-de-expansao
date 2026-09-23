@@ -36,7 +36,12 @@ from motor_expansao.dashboard.censo_map import (
 )
 from motor_expansao.dashboard.censo_point import CRS_ORIGEM_CENSO, _transformer
 from motor_expansao.dashboard.constants import DENSIDADE_POP_BANDS, RENDA_MEDIA_DOMICILIAR_BANDS
-from motor_expansao.dashboard.relatorio_praca import distancia_m, quebras_por_quantil
+from motor_expansao.dashboard.relatorio_praca import (
+    RAIO_PRESSAO_PONTO_M,
+    distancia_m,
+    quebras_por_quantil,
+    rotulo_raio,
+)
 from motor_expansao.pipelines.pressao_concorrencial_1km import RAIO_INFLUENCIA_M
 
 _W = 1400
@@ -302,10 +307,14 @@ def render_pressao_raios(
     concorrentes: pd.DataFrame | None,
     ultra: pd.DataFrame | None,
     *,
-    raio_m: float = RAIO_INFLUENCIA_M,
+    raio_m: float = RAIO_PRESSAO_PONTO_M,
     basemap: bool = True,
 ) -> bytes:
-    """Um disco de `raio_m` por academia no entorno; a sobreposicao escurece por soma de alpha."""
+    """Um disco de `raio_m` por academia no entorno; a sobreposicao escurece por soma de alpha.
+
+    O default e' o raio de LEITURA do pontual (`RAIO_PRESSAO_PONTO_M`), nao o do modelo (`RAIO_INFLUENCIA_M`),
+    que fica com `render_pressao_cidade` (municipal).
+    """
     janela = _JANELA_PRESSAO_M
     grau_lat = 111_195.0
     d_lat = janela / grau_lat
@@ -313,9 +322,9 @@ def render_pressao_raios(
     quadro = _Quadro(
         _bounds_de_pontos([lat - d_lat, lat + d_lat], [lng - d_lng, lng + d_lng], margem=0.0), _W, _H
     )
-    raio_txt = f"{raio_m / 1000:.1f}".replace(".", ",")
+    raio_txt = rotulo_raio(raio_m)
     image, draw, desenhou = _base(
-        quadro, "Pressao concorrencial", f"Area de influencia de {raio_txt} km por academia", basemap=basemap
+        quadro, "Pressao concorrencial", f"Area de influencia de {raio_txt} por academia", basemap=basemap
     )
 
     alcance = raio_m + janela * 1.5
@@ -336,7 +345,7 @@ def render_pressao_raios(
     yy = _legenda_discos(draw)
     x = _W - _LEGEND_W + 24
     draw.ellipse([x, yy + 84, x + 40, yy + 124], outline=(0, 88, 220, 235), width=4)
-    _draw_text(draw, (x + 58, yy + 90), f"Raio de {raio_txt} km do ponto", font=_font(22))
+    _draw_text(draw, (x + 58, yy + 90), f"Raio de {raio_txt} do ponto", font=_font(22))
     return _fechar(image, draw, quadro, desenhou)
 
 
@@ -363,9 +372,9 @@ def render_pressao_cidade(
     if not lats:
         return None
     quadro = _Quadro(_bounds_de_pontos(lats, lngs), _W, _H)
-    raio_txt = f"{raio_m / 1000:.1f}".replace(".", ",")
+    raio_txt = rotulo_raio(raio_m)
     image, draw, desenhou = _base(
-        quadro, "Pressao concorrencial", f"Area de influencia de {raio_txt} km por academia, cidade inteira",
+        quadro, "Pressao concorrencial", f"Area de influencia de {raio_txt} por academia, cidade inteira",
         basemap=basemap,
     )
     conc = _com_coordenada(concorrentes)
