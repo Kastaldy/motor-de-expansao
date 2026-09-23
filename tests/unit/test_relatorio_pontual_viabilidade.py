@@ -15,6 +15,7 @@ from motor_expansao.dashboard.censo_report import (
     _viab_breakeven,
     _viab_brl,
     _viab_faixa,
+    _viab_normalizado,
     _viab_payback,
     _viab_pct,
     gerar_pdf_relatorio_pontual_censitario,
@@ -154,3 +155,48 @@ def test_integra_graficos_reais_do_relviab_03():
     )
     assert b"/Count 10" in pdf_bytes  # + conclusao
     assert len(pdf_bytes) > 30_000  # 4 PNGs reais embutidos
+
+
+# --------------------------------------------------------------------------- #
+# Card "Capex total" no lugar de "Retorno anual do negocio" (pedido de 2026-09-23)  #
+# --------------------------------------------------------------------------- #
+_INVESTIMENTO = {
+    "obra": 1_200_000.0,
+    "equipamentos": 800_000.0,
+    "taxa_franquia": 160_000.0,
+    "investimento_total": 2_160_000.0,
+}
+
+
+def test_card_capex_total_substitui_retorno_anual():
+    viab = {
+        "dre": {"faturamento": 150_000.0, "margem": 0.18},
+        "retorno": {"otica": "desalavancada", "retorno_anual_desalavancado": 0.4475, "payback": 26.0},
+        "investimento": dict(_INVESTIMENTO),
+    }
+    pdf_bytes = gerar_pdf_relatorio_pontual_classico(_MIN_RESULT, None, viabilidade=viab)
+    assert _TIT_NUM in pdf_bytes
+    assert b"Capex total" in pdf_bytes
+    assert b"R$ 2.160.000,00" in pdf_bytes
+    assert b"Retorno anual do negocio" not in pdf_bytes
+    assert b"ROIC anual" not in pdf_bytes
+    # continua com 8 cards: o de capex ocupa a posicao do retorno, nada e' acrescentado
+    for rotulo in (b"Margem EBITDA", b"Payback", b"Faturamento/m", b"EBITDA/m", b"Faixa alunos"):
+        assert rotulo in pdf_bytes
+    assert b"44,8%" not in pdf_bytes  # o retorno nao sobrevive em outro card
+
+
+def test_capex_total_e_obra_mais_equipamentos_mais_franquia():
+    # LEITURA do payload: o total e' o que o simulador entregou...
+    dados = _viab_normalizado({"investimento": dict(_INVESTIMENTO)})
+    assert dados["capex_total"] == 2_160_000.0
+    # ...e, quando o payload nao traz o total, o PDF soma as tres partes
+    sem_total = {k: v for k, v in _INVESTIMENTO.items() if k != "investimento_total"}
+    assert _viab_normalizado({"investimento": sem_total})["capex_total"] == 2_160_000.0
+    # dict plano (montar_payload_pdf_viabilidade) tambem
+    assert _viab_normalizado({"obra": 1.0, "equipamentos": 2.0, "taxa_franquia": 3.0})["capex_total"] == 6.0
+    # parte faltando: nao inventa zero -- "n/d"
+    assert _viab_normalizado({"investimento": {"obra": 1.0, "equipamentos": 2.0}})["capex_total"] is None
+    assert _viab_normalizado({})["capex_total"] is None
+    pdf_bytes = gerar_pdf_relatorio_pontual_classico(_MIN_RESULT, None, viabilidade=_VIAB)
+    assert b"Capex total" in pdf_bytes and TEXTO_SEM_DADO.encode("latin-1") in pdf_bytes
