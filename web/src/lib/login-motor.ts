@@ -1,44 +1,25 @@
 /* ---------------------------------------------------------------------------
-   ATENÇÃO — DOIS MÓDULOS DE LOGIN CONVIVEM AQUI, e isso é ESTADO TEMPORÁRIO.
+   O CONTRATO DE CLIENTE DO NOSSO `/api/login` — e só ele.
 
-   `lib/login.ts`        -> a tela da main (`screens/LoginScreen.tsx`, página própria
-                            `entrar.html`), que fala com o PRIMEIRO FATOR DO AUTHELIA.
-   `lib/login-motor.ts`  -> ESTE arquivo: a tela da epic do P19
-                            (`components/LoginScreen.tsx`), que fala com o NOSSO
-                            `/api/login` — sessão em tabela, trava de tentativas,
-                            senha temporária.
+   Este arquivo já foi a metade pura de uma SEGUNDA tela de login, construída nesta
+   branch (epic do P19) em paralelo à da `main`. Em 23/09/2026 o dono decidiu: **a tela
+   da main fica**. A tela daqui foi removida, e com ela os rótulos, o `podeEntrar` e o
+   `mensagemDaFalha` — a tela da main tem vocabulário próprio (`podeEnviar`,
+   `MENSAGEM_FALHA`, `falhaDoStatus`, em `lib/login.ts`), e manter dois seria manter duas
+   redações da mesma regra, que é como elas divergem em silêncio.
 
-   As duas nasceram em paralelo, em ramos que não se enxergavam, e resolvem a MESMA
-   pergunta com vocabulários diferentes (`podeEntrar` x `podeEnviar`,
-   `mensagemDaFalha` x `falhaDoStatus`). Fundi-las num arquivo só produziria duas
-   redações da mesma regra, que é como elas passam a divergir em silêncio.
+   O QUE SOBROU NÃO É RESTO: é a ponte para o backend que a main não tem. `api.entrar()`
+   e `api.sair()` falam com as rotas desta epic — sessão em tabela, trava de tentativas,
+   senha temporária —, e é para elas que a tela da main vai apontar no dia do corte. A
+   DEC-067 diz, com todas as letras, que o `submit` dela "não tem para onde apontar"
+   enquanto as quatro decisões do P19 não tiverem resposta; elas têm, e isto é o destino.
 
-   A separação por NOME é deliberada e provisória: mantém as duas funcionando até o
-   dono decidir qual tela sobrevive. A DEC-067 diz que a tela da main "não tem para
-   onde apontar" até as quatro decisões do P19 serem respondidas — e elas foram, pela
-   D30/D31. O desfecho provável é a tela da main apontar para este backend; quando
-   isso for decidido, um destes dois arquivos morre.
-   --------------------------------------------------------------------------- */
-
-/* ---------------------------------------------------------------------------
-   Entrada na plataforma (epic do P19) — a metade PURA e testável.
-
-   POR QUE SEPARADO DO COMPONENTE. Mesma divisão de `troca-de-senha.ts` e
-   `confirmacao-admin.ts`, e pela mesma razão: o `vitest.config.ts` roda com
-   `environment: 'node'` e `include: ['src/**\/*.test.ts']` — sem DOM, e só `.ts`.
-   Componente não é testável aqui; texto e regra são. O que pode mentir fica do
-   lado que tem teste.
-
-   O QUE ESTE ARQUIVO NÃO FAZ. Não valida FORÇA de senha. A política (mínimo de
-   caracteres, etc.) vale na CRIAÇÃO e mora em `db/senhas.py::validar`; aplicá-la
-   na entrada ensinaria o formato da senha a quem tenta adivinhar e recusaria, com
-   recado diferente, uma senha legítima antiga. Aqui só se pergunta se há o que
-   enviar.
+   ESTÁ DORMENTE, como o resto da epic: nada aqui roda enquanto o Authelia autenticar.
    --------------------------------------------------------------------------- */
 
 /** O que o servidor devolve quando a entrada dá certo. */
 export interface EntradaAceita {
-  /** A pessoa ainda está na senha inicial compartilhada e deve trocá-la agora. */
+  /** A pessoa ainda está numa senha que não escolheu e deve trocá-la agora. */
   deveTrocarSenha: boolean
 }
 
@@ -53,66 +34,6 @@ export function entradaDoPayload(payload: unknown): EntradaAceita {
   if (typeof payload !== 'object' || payload === null) return { deveTrocarSenha: false }
   const bruto = (payload as { deve_trocar_senha?: unknown }).deve_trocar_senha
   return { deveTrocarSenha: bruto === true }
-}
-
-/**
- * Pode enviar o formulário?
- *
- * Só exige que haja conteúdo nos dois campos. Espaço em volta não conta: o
- * servidor normaliza o login com `strip()` antes de consultar, e deixar o botão
- * ativo com um campo só de espaços faria a pessoa gastar uma tentativa à toa.
- */
-export function podeEntrar(login: string, senha: string): boolean {
-  return login.trim().length > 0 && senha.length > 0
-}
-
-/** Rótulos da tela. Ficam aqui para poderem ser conferidos por teste. */
-export const TITULO_LOGIN = 'Entrar'
-export const ROTULO_LOGIN = 'Usuário'
-export const ROTULO_SENHA = 'Senha'
-export const ROTULO_LEMBRAR = 'Lembrar de mim neste computador'
-export const ROTULO_BOTAO = 'Entrar'
-
-/**
- * O que a caixinha "lembrar de mim" realmente faz, em uma linha, para a tela poder
- * dizer em vez de deixar a pessoa adivinhar.
- *
- * É FIEL ao que o Authelia já fazia (decisão 2, opção (a)): mantém a entrada ao
- * fechar e reabrir o navegador, e **não** estica o prazo — a sessão dura as mesmas
- * 8 horas nos dois casos. Prometer "continue conectado" sem o limite seria mentira
- * de interface, e quem fechasse o navegador confiando nisso voltaria deslogado no
- * dia seguinte sem entender por quê.
- */
-export const AJUDA_LEMBRAR =
-  'Mantém você conectado ao fechar o navegador. O acesso continua valendo por 8 horas.'
-
-/**
- * A mensagem que a pessoa lê quando a entrada falha.
- *
- * Recebe `status` e `detalhe` em vez do objeto de erro de propósito: `ApiError`
- * mora em `lib/api.ts`, e `api.ts` precisa importar ESTE módulo — tipar pelo objeto
- * fecharia um ciclo entre os dois.
- *
- * O 401 NUNCA distingue "usuário não existe" de "senha errada", e isso não é
- * descuido de texto: o servidor devolve a mesma resposta nos dois casos justamente
- * para não entregar a lista de quem trabalha aqui. Repetir a distinção na tela
- * desfaria a defesa do lado de cá.
- */
-export function mensagemDaFalha(status: number, detalhe?: string): string {
-  if (status === 401) return 'Login ou senha incorretos.'
-  if (status === 404) {
-    // O portão nasce dormente (`MOTOR_AUTENTICACAO_PROPRIA`): enquanto o Authelia
-    // autentica, a rota responde 404 porque neste ambiente ela não existe mesmo.
-    return 'A entrada própria não está ativada neste ambiente.'
-  }
-  if (status === 503) {
-    return 'O sistema de acesso está indisponível no momento. Tente de novo em instantes.'
-  }
-  if (status === 408) return 'A resposta demorou demais. Tente de novo.'
-  if (status === 0) return 'Não foi possível falar com o servidor. Ele pode estar fora do ar.'
-  // Qualquer outro: mostra o recado do servidor, se houver. Ele é escrito para a
-  // pessoa (é a mesma política de `mensagemDoErro` da troca de senha).
-  return detalhe?.trim() || 'Não foi possível entrar. Tente de novo.'
 }
 
 /**

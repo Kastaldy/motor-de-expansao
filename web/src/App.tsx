@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import AvisoConfidencialidade from './components/AvisoConfidencialidade'
 import AvisoSessao from './components/AvisoSessao'
-import LoginScreen from './components/LoginScreen'
 import TrocaDeSenha from './components/TrocaDeSenha'
 import Dock from './components/Dock'
 import type { SearchPin } from './components/HexMap'
@@ -22,7 +21,6 @@ import {
   type EstadoDaSenha,
 } from './lib/troca-de-senha'
 import { api, ApiError } from './lib/api'
-import { mensagemDaFalha } from './lib/login-motor'
 import { assinarQuedaDeSessao, entrarNovamente } from './lib/sessao'
 import type { AlvoCaptura } from './lib/captura-mapa'
 import {
@@ -104,17 +102,6 @@ export default function App() {
    * `null` = ainda não sabemos (ou o backend não tem a rota) -> tudo liberado,
    * espelhando o fail-open do backend — que é quem barra de verdade, rota a rota.
    */
-  /**
-   * A pessoa precisa entrar? (epic do P19, portão de sessão.)
-   *
-   * `false` até que o `/api/me` diga 401 — e não `null`/"não sei", de propósito: com o
-   * Authelia autenticando (o estado de HOJE) a rota responde 200 e esta bandeira nunca
-   * levanta. Começar em "não sei" e segurar a árvore faria TODA carga esperar por uma
-   * resposta que hoje sempre chega positiva, trocando um problema que não existe por
-   * uma tela branca a mais.
-   */
-  const [precisaEntrar, setPrecisaEntrar] = useState(false)
-
   const [abas, setAbas] = useState<Set<Aba> | null>(null)
   useEffect(() => {
     api
@@ -127,13 +114,12 @@ export default function App() {
         // leva para o lugar certo em vez de deixar a tela vazia atrás de 403s.
         if (s) setTela((t) => (telaLiberada(t, s) ? t : telaInicial(s)))
       })
-      .catch((e) => {
-        /* 401 = o portão de sessão (epic do P19) recusou: não há sessão, e a resposta
-           certa é a TELA DE ENTRADA, não seguir sem controle. Só o 401 muda de rumo;
-           qualquer outra falha continua degradando como antes — o backend é quem barra
-           de verdade, rota a rota. */
-        if (e instanceof ApiError && e.status === 401) setPrecisaEntrar(true)
-        /* demais casos: sem /api/me -> segue sem controle */
+      .catch(() => {
+        /* Sem `/api/me` -> segue sem controle; o backend é quem barra de verdade, rota a
+           rota. NÃO há desvio para tela de entrada aqui, e isso é a arquitetura da main:
+           quem não entrou não chega à SPA — o `forward_auth` do Caddy barra na BORDA e
+           manda para `entrar.html`. A DEC-067 mantém esse desenho depois do corte,
+           trocando só para onde o `forward_auth` aponta. */
       })
   }, [])
 
@@ -479,37 +465,6 @@ export default function App() {
     [abas],
   )
 
-  /* A TELA DE ENTRADA SUBSTITUI TUDO, e vem ANTES de qualquer outro estado — esta ordem
-     é a correção de uma armadilha, não estilo:
-
-     * antes do `AvisoSessao`: na PRIMEIRA visita com o portão ligado, o `/api/me` responde
-       401 e o `api.ts` anuncia queda de sessão. Sem este desvio apareceria "Sessão
-       encerrada" para quem nunca teve sessão, e o único botão de lá recarrega a página —
-       que dá 401 de novo. Vaivém. A tela de login É o destino do "entrar novamente";
-     * antes do `AvisoConfidencialidade`: não se pede ciência de confidencialidade a quem
-       ainda não entrou;
-     * antes do `BaseProvider`: ele carrega dados que quem está de fora não pode ver. */
-  if (precisaEntrar) {
-    return (
-      <LoginScreen
-        onEntrar={async (login, senha, lembrar) => {
-          try {
-            await api.entrar(login, senha, lembrar)
-          } catch (e) {
-            const status = e instanceof ApiError ? e.status : 0
-            const detalhe = e instanceof ApiError ? e.message : undefined
-            return mensagemDaFalha(status, detalhe)
-          }
-          /* Recarrega a página em vez de apenas trocar o estado: a árvore inteira nasceu
-             sem sessão (abas, perfil do país, dados da UF) e remontá-la à mão daqui seria
-             refazer, um a um, todos os efeitos de abertura — e esquecer um deixaria a tela
-             num meio-termo difícil de notar. O `entrar` já limpou a memo do `/api/me`. */
-          window.location.reload()
-          return null
-        }}
-      />
-    )
-  }
 
   return (
     <BaseProvider ufs={ufs}>

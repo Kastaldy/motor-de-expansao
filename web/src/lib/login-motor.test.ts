@@ -1,34 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api, ApiError } from './api'
-import {
-  AJUDA_LEMBRAR,
-  ehQuedaDeSessao,
-  entradaDoPayload,
-  mensagemDaFalha,
-  podeEntrar,
-} from './login-motor'
+import { ehQuedaDeSessao, entradaDoPayload } from './login-motor'
 import { assinarQuedaDeSessao, resetarEstadoDaSessao } from './sessao'
-
-describe('podeEntrar', () => {
-  it('exige conteúdo nos dois campos', () => {
-    expect(podeEntrar('vinicius', 'segredo')).toBe(true)
-    expect(podeEntrar('', 'segredo')).toBe(false)
-    expect(podeEntrar('vinicius', '')).toBe(false)
-  })
-
-  it('login só de espaços não vale', () => {
-    // O servidor normaliza com `strip()` antes de consultar: deixar o botão ativo
-    // aqui gastaria uma tentativa da pessoa à toa.
-    expect(podeEntrar('   ', 'segredo')).toBe(false)
-  })
-
-  it('não impõe política de senha na entrada', () => {
-    // A política vale na CRIAÇÃO (`db/senhas.py::validar`). Aplicá-la aqui ensinaria o
-    // formato da senha a quem tenta adivinhar, e recusaria senha legítima antiga.
-    expect(podeEntrar('vinicius', 'a')).toBe(true)
-  })
-})
 
 describe('entradaDoPayload', () => {
   it('lê o pedido de troca de senha', () => {
@@ -41,40 +15,6 @@ describe('entradaDoPayload', () => {
     // pessoa logo depois de ela entrar.
     for (const bruto of [{}, null, 'sim', { deve_trocar_senha: 'true' }, { deve_trocar_senha: 1 }]) {
       expect(entradaDoPayload(bruto)).toEqual({ deveTrocarSenha: false })
-    }
-  })
-})
-
-describe('mensagemDaFalha', () => {
-  it('401 não distingue usuário inexistente de senha errada', () => {
-    // O servidor devolve a MESMA resposta nos dois casos, para não entregar a lista de
-    // quem trabalha aqui. Distinguir na tela desfaria a defesa do lado de cá.
-    expect(mensagemDaFalha(401)).toBe('Login ou senha incorretos.')
-    expect(mensagemDaFalha(401, 'Usuário não encontrado.')).toBe('Login ou senha incorretos.')
-  })
-
-  it('404 explica que a entrada própria não está ligada', () => {
-    expect(mensagemDaFalha(404)).toContain('não está ativada')
-  })
-
-  it('503 e 408 e rede têm recados próprios e acionáveis', () => {
-    expect(mensagemDaFalha(503)).toContain('indisponível')
-    expect(mensagemDaFalha(408)).toContain('demorou')
-    expect(mensagemDaFalha(0)).toContain('servidor')
-  })
-
-  it('status desconhecido mostra o recado do servidor, quando há', () => {
-    expect(mensagemDaFalha(422, 'Campo inválido.')).toBe('Campo inválido.')
-    expect(mensagemDaFalha(422, '   ')).toBe('Não foi possível entrar. Tente de novo.')
-    expect(mensagemDaFalha(500)).toBe('Não foi possível entrar. Tente de novo.')
-  })
-
-  it('nenhuma mensagem vaza se o usuário existe', () => {
-    const todas = [401, 404, 503, 408, 0, 500].map((s) => mensagemDaFalha(s).toLowerCase())
-    for (const m of todas) {
-      expect(m).not.toContain('não existe')
-      expect(m).not.toContain('inexistente')
-      expect(m).not.toContain('não encontrado')
     }
   })
 })
@@ -160,12 +100,3 @@ describe('401 do login não pode virar "Sessão encerrada"', () => {
   })
 })
 
-describe('AJUDA_LEMBRAR', () => {
-  it('diz o que a caixinha faz E o que ela não faz', () => {
-    // Decisão 2, opção (a) — FIEL: mantém ao fechar o navegador e NÃO estica o prazo.
-    // Prometer "continue conectado" sem o limite faria quem fecha o navegador voltar
-    // deslogado no dia seguinte sem entender por quê.
-    expect(AJUDA_LEMBRAR).toContain('fechar o navegador')
-    expect(AJUDA_LEMBRAR).toContain('8 horas')
-  })
-})
