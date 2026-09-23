@@ -60,3 +60,24 @@ export const ITENS_DOCK: readonly ItemDock[] = Object.freeze([
      está na allowlist o ícone simplesmente não existe, como toda tela vetada. */
   Object.freeze({ id: 'acessos', tela: 'acessos' as const, titulo: 'Acessos e uso do piloto' }),
 ])
+
+/**
+ * Para onde um clique no Dock REALMENTE leva, dado o que já está selecionado.
+ *
+ * Nasce em 2026-09-23 de um relato do Felipe: clicar no ícone do mapa SEM nada
+ * selecionado caía no seletor de estado ANTIGO (a `Landing` do `MapScreen`, que faz
+ * `if (!uf)`) em vez da tela de Início. Aquela `Landing` já foi a porta de entrada do
+ * produto; desde o seletor novo ela é o PASSO 2 do modo "Explorar uma região", e
+ * chegar nela pelo Dock contornava o passo 1.
+ *
+ * A regra é só esta: mapa sem seleção -> Início. Com seleção, o ícone segue sendo o
+ * atalho de "voltar ao mapa como o deixei" descrito acima — e nenhum outro destino é
+ * desviado, porque só o mapa tem tela de pré-seleção para cair dentro.
+ *
+ * Mora aqui, e não no `MapScreen`, porque o desvio vale para a NAVEGAÇÃO do Dock e não
+ * para a tela: o Início legitimamente abre o mapa sem `uf` para pedir a região no passo
+ * 2, e um desvio dentro da tela devolveria o Início a si mesmo, em laço.
+ */
+export function destinoDoDock<T extends string>(tela: T, temSelecao: boolean): T | 'inicio' {
+  return tela === 'mapa' && !temSelecao ? 'inicio' : tela
+}

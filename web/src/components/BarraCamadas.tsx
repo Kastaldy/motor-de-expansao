@@ -47,6 +47,26 @@ export interface ChaveDeCamada {
   sub: string
   ligado: boolean
   onToggle: () => void
+  /**
+   * Chave do `ICONE` que representa esta camada (2026-09-23, pedido do Felipe).
+   *
+   * Opcional porque a ausência tem um comportamento útil e não é um erro: sem
+   * ícone, a linha cai no ponto de 8px que era o desenho anterior. Uma chave nova
+   * que esqueça o ícone continua legível em vez de abrir um buraco na linha.
+   */
+  icone?: keyof typeof ICONE | string
+  /**
+   * Silhueta de MARCA no lugar do traço — hoje só o símbolo do Wellhub na camada de
+   * independentes (Felipe, 2026-09-23).
+   *
+   * É aplicada como MÁSCARA CSS, não como `<img>`, e a diferença é o pedido dele: "ao
+   * invés de deixar ela rosa padrão, mude a cor para branco para seguir o padrão do
+   * resto dos ícones". Máscara pinta a silhueta com `currentColor`, então a marca
+   * obedece à MESMA regra de cor dos ícones de traço — branca apagada, acento acesa —
+   * e acompanha a virada do tema claro sozinha. Uma imagem recolorida no arquivo
+   * ficaria branca também no tema claro, onde branco é invisível.
+   */
+  mascara?: string | null
   /** Acento da camada: ponto, filete da linha acesa e trilho do switch. */
   cor: string
   /** O mesmo acento, na versao ja aprovada como COR DE TEXTO nos dois temas. */
@@ -63,10 +83,15 @@ const ICONE: Record<string, React.JSX.Element> = {
       <path d="m3 13 9 5 9-5" />
     </>
   ),
-  /* Regua: seta de duas pontas. */
+  /* RÉGUA de verdade — corpo com marcações (Felipe, 2026-09-23: "transforme em uma
+     régua de verdade, não duas setas"). A seta de duas pontas dizia "distância" como
+     conceito; a régua diz o INSTRUMENTO, que é o que a chave liga. Vale para o trilho
+     e para a linha do painel de uma vez, porque os dois leem esta mesma chave — o
+     princípio de "o trilho atalha o painel, não o repete" continua valendo. */
   regua: (
     <>
-      <path d="M4 12h16M8 8l-4 4 4 4M16 8l4 4-4 4" />
+      <rect x="2.5" y="8.5" width="19" height="7" rx="1.6" />
+      <path d="M7.3 8.5v2.8M12 8.5v3.4M16.7 8.5v2.8" />
     </>
   ),
   /* Dois quadros sobrepostos — comparar. */
@@ -82,7 +107,62 @@ const ICONE: Record<string, React.JSX.Element> = {
       <path d="M4 7h16M4 12h16M4 17h10" />
     </>
   ),
+  /* --- Ícones das CHAVES do painel (2026-09-23, pedido do Felipe) -------------
+     Substituíram o quadradinho de 8px que marcava cada linha. Com quatro chaves
+     ele bastava; com a lista crescendo, um quadrado igual em todas as linhas só
+     dizia "ligada/apagada" e obrigava a ler o título para saber do que se trata.
+
+     Não inventei símbolos: estes espelham o vocabulário que o MAPA já usa para
+     separar as camadas — rede é BANDEIRA (pin com logo), independente é
+     MARCADOR pequeno e por baixo da bandeira (DEC-066). O painel passa a falar a
+     mesma língua do desenho que ele liga e desliga. */
+  /* HALTER — as academias de REDE. Diz ACADEMIA, que é o que a pessoa procura na
+     lista; a versão anterior usava a bandeira do pin, que é a linguagem do mapa.
+     Uma tentativa de tríplice sobreposto (para sugerir volume) foi desfeita a pedido
+     do Felipe — o halter sozinho ficou. */
+  halter: (
+    <>
+      <path d="M3 9.5v5M6 7.5v9M18 7.5v9M21 9.5v5" />
+      <path d="M6 12h12" />
+    </>
+  ),
+  /* Telhado + porta: o IMÓVEL disponível. */
+  imoveis: (
+    <>
+      <path d="M4 11 12 4.5 20 11" />
+      <path d="M6.2 10v9.5h11.6V10" />
+      <path d="M10.3 19.5v-5h3.4v5" />
+    </>
+  ),
+  /* Uma PESSOA — densidade demográfica é gente por km². */
+  pessoa: (
+    <>
+      <circle cx="12" cy="7.8" r="3.3" />
+      <path d="M5.4 20c0-3.7 2.9-6.2 6.6-6.2s6.6 2.5 6.6 6.2" />
+    </>
+  ),
+  /* CÉDULA — a renda domiciliar. */
+  dinheiro: (
+    <>
+      <rect x="2.5" y="6" width="19" height="12" rx="2" />
+      <circle cx="12" cy="12" r="2.9" />
+      <path d="M6 9.4v5.2M18 9.4v5.2" />
+    </>
+  ),
 }
+
+/**
+ * Tamanho do ícone na linha do painel. 17 -> 20 em 2026-09-23 ("acho que dá pra
+ * aumentar um pouco os ícones ainda").
+ *
+ * Constante porque o traço SVG e a logo em `<img>` têm de medir o mesmo: eram dois
+ * literais `17` em ramos diferentes do mesmo `<span>`, e divergir faria a linha da
+ * camada de independentes pular de altura em relação às outras.
+ *
+ * Fica ABAIXO dos 34px do botão do trilho de propósito — o trilho é alvo de clique,
+ * a linha do painel é rótulo com alvo próprio (a linha inteira).
+ */
+const TAM_ICONE_CHAVE = 20
 
 function BotaoTrilho({
   icone,
@@ -200,16 +280,60 @@ function Linha({ chave }: { chave: ChaveDeCamada }) {
         transition: 'background .15s ease',
       }}
     >
-      <span
-        aria-hidden
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: 2,
-          flex: '0 0 auto',
-          background: on ? chave.cor : 'var(--sinal-off)',
-        }}
-      />
+      {/* Estado pela COR: acento quando acesa, texto normal quando apagada.
+          APAGADA NÃO É `--sinal-off` desde 2026-09-23 — o cinza do ponto de 8px
+          funcionava para uma marca de 8px, mas num ícone de 17px com traço de 1,7
+          ele sumia contra o painel (Felipe: "difícil visualizar assim"). `--tx-max`
+          é branco no tema escuro e escuro no claro, então "legível" não vira
+          "invisível" quando o tema troca. Quem diz o estado continua sendo o switch,
+          o filete e o fundo da linha — o ícone não precisava carregar isso sozinho. */}
+      {chave.mascara ? (
+        <span
+          aria-hidden
+          style={{
+            width: TAM_ICONE_CHAVE,
+            height: TAM_ICONE_CHAVE,
+            flex: '0 0 auto',
+            backgroundColor: on ? chave.cor : 'var(--tx-max)',
+            maskImage: `url(${chave.mascara})`,
+            WebkitMaskImage: `url(${chave.mascara})`,
+            maskSize: 'contain',
+            WebkitMaskSize: 'contain',
+            maskRepeat: 'no-repeat',
+            WebkitMaskRepeat: 'no-repeat',
+            maskPosition: 'center',
+            WebkitMaskPosition: 'center',
+          }}
+        />
+      ) : chave.icone && ICONE[chave.icone] ? (
+        <svg
+          width={TAM_ICONE_CHAVE}
+          height={TAM_ICONE_CHAVE}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          /* Traço um pouco mais fino que o do trilho (1,7): num ícone maior o mesmo
+             peso de linha fica pesado ao lado do texto de 13px da linha. */
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+          style={{ flex: '0 0 auto', color: on ? chave.cor : 'var(--tx-max)' }}
+        >
+          {ICONE[chave.icone]}
+        </svg>
+      ) : (
+        <span
+          aria-hidden
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: 2,
+            flex: '0 0 auto',
+            background: on ? chave.cor : 'var(--sinal-off)',
+          }}
+        />
+      )}
       <span style={{ minWidth: 0 }}>
         <span
           style={{

@@ -1154,8 +1154,21 @@ Cron próprio (não é `healthcheck_vps.sh`): `scripts/cron/run_alerta_borda.sh`
 inteiro — janela já fechada, o que dispensa guardar estado do que já foi alertado.
 
 ```cron
-23 8 * * * /opt/motor-expansao-infra/run_alerta_borda.sh >> /var/log/motor-monitoring/alerta_borda.log 2>&1
+23 8 * * *  /opt/motor-expansao-infra/run_alerta_borda.sh >> /var/log/motor-monitoring/alerta_borda.log 2>&1
+0 */3 * * * /opt/motor-expansao-infra/run_alerta_borda.sh --dia $(TZ=America/Sao_Paulo date +\%F) >> /var/log/motor-monitoring/alerta_borda.log 2>&1
 ```
+
+> **A segunda linha (23/09) é a vigilância do dia CORRENTE.** O diário cobre a janela fechada, então
+> um ataque às 10h só apareceria às 05:23 do dia seguinte — latência grande demais para "identificar
+> e barrar quem está fazendo". De 3 em 3h o dia corrente é reexaminado; o wrapper repassa `"$@"`, e o
+> `--dia` da linha vence o padrão (ontem). O `%` **precisa** ir escapado (`+\%F`): no crontab, `%` cru
+> vira quebra de linha e trunca o comando (mesma pegadinha do cron dos agregadores, DEC-039).
+>
+> **Repetição é esperada e foi aceita de olho aberto:** não há estado do que já foi avisado — a janela
+> fechada do diário dispensava estado —, então num dia **notável** os mesmos IPs são reanunciados a
+> cada 3h até a meia-noite BRT, até ~7 vezes. Com ataque em curso isso é útil; depois que para, é
+> ruído. Em dia normal nada sai (`--so-notavel`). Remover a repetição exige arquivo de estado **no
+> módulo**, o que custa imagem nova + deploy.
 
 Nasceu da investigação do "login desconhecido" de 22/09: a tela de entrar é a primeira rota do
 produto servida **sem autenticação**, e com ela a internet anônima passou a bater na porta. Lê o

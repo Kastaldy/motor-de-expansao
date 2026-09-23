@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Map, Marker } from 'react-map-gl/maplibre'
 
 import IconeTipo from '../components/IconeTipo'
@@ -14,6 +14,7 @@ import {
   ACC_12,
   ACC_24,
   ACC_30,
+  ACC_50,
   ACC_GLOW,
   ACC_ON,
   ACC_TX,
@@ -76,6 +77,23 @@ function mediana(xs: (number | null | undefined)[]): number | null {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
 }
 
+/**
+ * O que esta tela manda ao mapa quando alguém clica em "Ver no Mapa Territorial".
+ *
+ * `imovelId` entrou em 2026-09-23 (relato do Felipe: "abre o popup do hexágono em vez
+ * do popup de informações do imóvel"). A causa era esta: só iam daqui a COORDENADA e o
+ * `hex_id`, e com isso o mapa não tinha como saber QUAL imóvel abrir — restava-lhe a
+ * única ficha que ele sabia abrir na chegada, a do hexágono. A identidade do imóvel
+ * fecha esse buraco; a ficha é montada lá com o objeto que o mapa já carrega por UF.
+ */
+export interface PontoNoMapa {
+  lat: number
+  lng: number
+  hexId: string
+  /** Ausente = "leve-me a este lugar" (sem imóvel para abrir). */
+  imovelId?: string
+}
+
 /** Faturamento projetado/mes = alunos p50 da curva tamanho->densidade (simulador de
  *  Viabilidade, servido pronto pelo backend em `fat_proj`) x ticket. NAO usa residual. */
 const projFatDe = (o: Oportunidade): number | null => o.fat_proj ?? null
@@ -97,7 +115,7 @@ export default function OportunidadesImobiliariasScreen({
   onFocoAplicado,
 }: {
   onInicio: () => void
-  onVerNoMapa: (uf: string, municipio: string, ponto?: { lat: number; lng: number; hexId: string }) => void
+  onVerNoMapa: (uf: string, municipio: string, ponto?: PontoNoMapa) => void
   /**
    * Imovel que deve abrir JA SELECIONADO — o caminho inverso do "Ver no Mapa
    * Territorial": o botao "Ver na aba de imoveis" da janela do imovel no mapa.
@@ -517,7 +535,7 @@ function Ficha({
   visita: boolean
   onVisita: () => void
   onSel: (id: string) => void
-  onVerNoMapa: (uf: string, municipio: string, ponto?: { lat: number; lng: number; hexId: string }) => void
+  onVerNoMapa: (uf: string, municipio: string, ponto?: PontoNoMapa) => void
   /** true = card lateral compacto da vista de Mapa: hero enxuto, sem o mini-mapa. */
   lateral?: boolean
 }) {
@@ -640,6 +658,22 @@ function Ficha({
               <HeroStat label="Custo de ocupação" valor={ocupacao > 0 ? num(ocupacao) : '—'} unidade="R$/mês" nota="com IPTU e condomínio" />
               <HeroStat label="Projeção de faturamento" valor={projFat == null ? '—' : brl(projFat, true)} unidade="/mês" cor="var(--pos-text)"
                 nota={alunosProj != null ? `${num(alunosProj)} alunos (p50/m²) × R$ ${num(op.ticket_proj ?? 0)}` : 'sem base de m² p/ estimar'} />
+              {/*
+                O link COLADO na Projeção de faturamento (pedido do Felipe, 2026-09-23):
+                é neste número que a pessoa decide se o imóvel merece atenção, e a pergunta
+                seguinte é sempre "deixa eu ver o anúncio". Ter de rolar até a barra de
+                ações lá embaixo para isso quebrava a leitura no pior momento.
+
+                `marginLeft: auto` empurra para a borda direita da linha de stats: ele
+                COMPLEMENTA os números, não é mais um deles, e alinhado junto pareceria um
+                quinto indicador. Em tela estreita o `flexWrap` da linha o joga para baixo
+                sozinho, que é o comportamento certo.
+              */}
+              {op.url && (
+                <div style={{ marginLeft: 'auto', alignSelf: 'flex-end', paddingBottom: 2 }}>
+                  <LinkAnuncio url={op.url} />
+                </div>
+              )}
             </div>
           </div>
         </article>
@@ -679,7 +713,7 @@ function Ficha({
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'stretch' }}>
         <Botao onClick={() => {
           api.eventoImobiliaria('ver-no-mapa', { imovel: op.id, uf: op.uf, municipio: op.municipio, origem: 'aba' })
-          onVerNoMapa(op.uf, op.municipio, op.lat != null && op.lng != null ? { lat: op.lat, lng: op.lng, hexId: op.hex_id } : undefined)
+          onVerNoMapa(op.uf, op.municipio, op.lat != null && op.lng != null ? { lat: op.lat, lng: op.lng, hexId: op.hex_id, imovelId: op.id } : undefined)
         }} style={{ flex: 1, minWidth: 220, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: ACC, color: ACC_ON, boxShadow: ACC_GLOW }}>Ver no Mapa Territorial →</Botao>
         <Botao variante="ghost" onClick={baixarDossie} disabled={baixando} style={{ flex: 1, minWidth: 220, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
           title={op.tem_dossie ? 'Dossiê PDF do coletor (oferta + território)' : 'Sem dossiê pronto — gera o Relatório Pontual do endereço'}>
@@ -688,6 +722,20 @@ function Ficha({
         <Botao variante="ghost" onClick={onVisita} style={{ flex: 1, minWidth: 220, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: visita ? 'var(--warn-text)' : undefined }}>
           {visita ? '★ Marcado para visita' : '☆ Marcar para visita'}
         </Botao>
+        {/*
+          ANÚNCIO ORIGINAL (2026-09-23, relato do Felipe: "o botão não aparece na aba").
+
+          O campo `url` já chegava aqui — o backend o projeta em `_carregar_oportunidades`
+          e ele vive em `Oportunidade.url`; esta ficha simplesmente não o usava. A ficha do
+          PIN no mapa (`components/FichaImovel.tsx`) já oferecia o mesmo link, então quem
+          abria pelo mapa tinha a saída e quem abria pela aba não — a aba era o caminho
+          MENOS capaz, sendo a tela dedicada a imóveis.
+
+          NÃO amplia acesso: a lista (com `url`) é servida a `{mapa, imobiliaria}` pela
+          DEC-037, e o link já estava visível na outra superfície com o mesmo gate. O que é
+          restrito a `{imobiliaria}` é o DOSSIÊ, que segue no botão ao lado, intocado.
+        */}
+        {op.url && <LinkAnuncio url={op.url} bloco />}
       </div>
       {erroAcao && <div style={{ font: '400 11.5px/1.4 var(--f-ui)', color: 'var(--neg)' }}>{erroAcao}</div>}
 
@@ -1013,6 +1061,64 @@ function HeroStat({ label, valor, unidade, nota, cor }: { label: string; valor: 
       </div>
       {nota && <div style={{ font: '400 10.5px/1.3 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 5 }}>{nota}</div>}
     </div>
+  )
+}
+
+/**
+ * Link para o anúncio no portal de origem (2026-09-23, relato do Felipe).
+ *
+ * Aparece em DOIS lugares da mesma ficha, e por isso é um componente e não duas
+ * cópias de estilo: no card principal, colado na Projeção de faturamento (é ali que
+ * a pessoa decide se o imóvel merece atenção, e a pergunta seguinte é sempre "deixa
+ * eu ver o anúncio"), e na barra de ações lá embaixo, junto das outras saídas.
+ *
+ * DESTAQUE, em duas rodadas com o Felipe (mesmo dia). A primeira versão saiu com
+ * tratamento fantasma (borda fina, fundo de elevação) e ele apontou que sumia. A
+ * segunda levou o magenta de acento, e o pedido final foi outro: na barra de ações o
+ * botão tem de ser CHEIO, igual ao "Ver no Mapa Territorial", mas no AZUL do sistema.
+ *
+ * Daí os dois pesos, e eles não são decorativos:
+ *   - `bloco` (barra de ações): cheio, `--info` + glow. Divide a linha com os outros
+ *     três e precisa do mesmo peso para não parecer o irmão pobre da fila.
+ *   - padrão (card principal): contorno no magenta de acento. Ali ele é um APÊNDICE
+ *     da Projeção de faturamento; cheio, competiria com o número, que é o assunto.
+ *
+ * O azul é `--ac`, o acento do SISTEMA — o mesmo dos botões da Viabilidade. Uma
+ * versão intermediária usou `--info` (#2f6bed) por eu ter lido "azul do sistema" como
+ * o token chamado azul; o Felipe corrigiu apontando a Viabilidade, cujo primário é o
+ * `--ac`. Os pares `--info-on`/`--info-glow` que eu havia criado para aquilo foram
+ * removidos junto, para não deixarem token morto no `tokens.css`.
+ *
+ * É `<a>` e não `<Botao>` para herdar a navegação nativa: abrir em nova aba pelo
+ * meio/ctrl, copiar endereço, ver o destino na barra de status. Um `onClick` com
+ * `window.open` tiraria as três. `rel="noreferrer"` porque o destino é site de
+ * terceiro — sem ele, o portal recebe a URL do piloto no `Referer`.
+ */
+function LinkAnuncio({ url, bloco = false }: { url: string; bloco?: boolean }) {
+  const cheio: CSSProperties = {
+    flex: 1, minWidth: 220, padding: '12px 18px', borderRadius: 'var(--r-md)',
+    font: '700 13px/1 var(--f-ui)', color: 'var(--ac-on)',
+    background: 'var(--ac)', boxShadow: 'var(--ac-glow)', border: 'none',
+  }
+  const contorno: CSSProperties = {
+    padding: '0 16px', height: 38, borderRadius: 10,
+    font: '600 12.5px/1 var(--f-ui)', color: ACC_TX,
+    background: ACC_12, border: `1px solid ${ACC_50}`,
+  }
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      title="Abre o anúncio no site do portal, em nova aba"
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        textDecoration: 'none', whiteSpace: 'nowrap',
+        ...(bloco ? cheio : contorno),
+      }}
+    >
+      Ver anúncio original ↗
+    </a>
   )
 }
 
