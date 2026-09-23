@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
-import { svgMolduraAlunos, TAMANHO_MOLDURA, temAlunos, temDestaque } from './pins'
+import type { Pins } from './types'
+
+import {
+  REDES_LIGADAS_POR_PADRAO,
+  pinsVisiveis,
+  subDaChaveRedes,
+  svgMolduraAlunos,
+  TAMANHO_MOLDURA,
+  temAlunos,
+  temDestaque,
+} from './pins'
 
 /* As regras que decidem a moldura de destaque dos pinos com alunos reais. Sao
    testadas aqui porque o `HexMap` nao tem teste de componente: sem isto, a regra
@@ -124,5 +134,51 @@ describe('svgMolduraAlunos', () => {
     expect(iKey).toBeGreaterThan(-1)
     expect(iBranco).toBeGreaterThan(-1)
     expect(iKey).toBeLessThan(iBranco)
+  })
+})
+
+/* A chave "Academias de rede" do painel de camadas (Juan, 2026-09-23). As regras
+   moram em `lib/pins.ts` pelo mesmo motivo das de cima: o `MapScreen` nao tem teste
+   de componente, e "nasce ligada" escrito so' num `useState(true)` e' comentario
+   que envelhece. */
+
+describe('chave Academias de rede', () => {
+  const pins: Pins = {
+    concorrentes: [
+      { lat: -23.55, lng: -46.63, nome: 'Smart Fit Paulista', rede: 'smartfit' },
+      { lat: -23.56, lng: -46.64, nome: 'Bluefit Consolação', rede: 'bluefit' },
+    ],
+    ultra: [{ lat: -23.57, lng: -46.65, nome: 'Ultra Academia Pinheiros' }],
+    icones: { smartfit: 'data:image/svg+xml;utf8,a', bluefit: 'data:image/svg+xml;utf8,b' },
+    redes_disponivel: true,
+  }
+
+  it('nasce LIGADA: o piloto abre com as bandeiras das cadeias, como sempre abriu', () => {
+    expect(REDES_LIGADAS_POR_PADRAO).toBe(true)
+  })
+
+  it('ligada devolve o MESMO objeto — sem re-pack do atlas por uma copia igual', () => {
+    expect(pinsVisiveis(pins, true)).toBe(pins)
+  })
+
+  it('apagada tira as bandeiras de cadeia e preserva Ultra, icones e o resto', () => {
+    const r = pinsVisiveis(pins, false)
+    expect(r).not.toBe(pins)
+    expect(r?.concorrentes).toEqual([])
+    expect(r?.ultra).toBe(pins.ultra)
+    expect(r?.icones).toBe(pins.icones)
+    expect(r?.redes_disponivel).toBe(true)
+    /* O objeto de origem nao e' tocado: a captura do slide continua lendo dele. */
+    expect(pins.concorrentes).toHaveLength(2)
+  })
+
+  it('sem pins nao inventa objeto: undefined continua undefined', () => {
+    expect(pinsVisiveis(undefined, false)).toBeUndefined()
+    expect(pinsVisiveis(undefined, true)).toBeUndefined()
+  })
+
+  it('a linha de baixo fala o idioma das outras chaves', () => {
+    expect(subDaChaveRedes(12, true)).toBe('12 · visível')
+    expect(subDaChaveRedes(12, false)).toBe('12 no recorte')
   })
 })
