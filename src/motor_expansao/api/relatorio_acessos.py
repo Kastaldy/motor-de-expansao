@@ -95,7 +95,23 @@ _FUSO_BRT = timedelta(hours=-3)
 #: mesmo — o admin abrindo o painel inflaria as próprias contagens e viraria ruído
 #: no relatório de 3/3h. O painel usa este MESMO filtro (`evento_valido`), então
 #: Telegram e aba nunca divergem.
-ROTAS_FORA_DA_METRICA: tuple[str, ...] = ("/api/acessos",)
+#:
+#: A TELA DE ENTRAR entrou aqui em 2026-09-23, e o motivo é de outra natureza —
+#: vale ler antes de mexer. Ela é a primeira rota do produto servida pelo NOSSO
+#: container SEM autenticação (o `forward_auth` barrava tudo antes dela existir),
+#: então todo visitante anônimo da internet passou a virar linha de trilha com
+#: `usuario: "desconhecido"`. Medido no dia em que subiu: 46 acessos de 16 IPs em
+#: 14 horas, dos quais varredores hospedados em AWS, um proxy russo com user-agent
+#: de iPhone de 2011 e uma busca de `/xmlrpc.php` — ruído de internet, não uso.
+#:
+#: Fora da MÉTRICA, não fora da TRILHA: as linhas continuam gravadas no JSONL e
+#: auditáveis. É essa separação que permite enxergar uma varredura anormal contra
+#: a página de login sem que ela polua a leitura de quem usou o produto.
+ROTAS_FORA_DA_METRICA: tuple[str, ...] = (
+    "/api/acessos",
+    "/entrar.html",
+    "/entrar-assets/",
+)
 
 _PREFIXO_TRILHA = "acesso-"
 _SUFIXO_TRILHA = ".jsonl"

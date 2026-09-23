@@ -558,3 +558,87 @@ def test_sparkline_nunca_e_mais_longa_que_a_janela(tmp_path: Path) -> None:
     r = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)
     linha = next(u for u in r["usuarios"] if u["nome"] == "ana")
     assert len(linha["serie14"]) == 7
+
+
+# ---------------------------------------------------------------------------
+# Tela de entrar: ruído de internet fora da métrica (2026-09-23)
+# ---------------------------------------------------------------------------
+
+
+def test_tela_de_entrar_nao_conta_como_uso() -> None:
+    """A página de login é a 1ª rota do produto servida SEM autenticação.
+
+    Antes dela o `forward_auth` barrava tudo, e a trilha só via gente logada. Depois,
+    todo visitante anônimo da internet virou linha com `usuario: "desconhecido"` —
+    medido no dia em que subiu: 46 acessos de 16 IPs em 14 h, com varredores de AWS e
+    um proxy russo entre eles. Isso é ruído de internet, não uso do produto.
+    """
+    from motor_expansao.api.relatorio_acessos import evento_valido
+
+    for rota in ("/entrar.html", "/entrar-assets/entrar-abc123.js"):
+        assert not evento_valido({"rota": rota, "agente": "Mozilla/5.0"}), rota
+
+
+def test_tela_de_entrar_continua_na_trilha_crua() -> None:
+    """Fora da MÉTRICA não é fora da TRILHA.
+
+    O JSONL segue gravando a linha — é ela que mostraria uma varredura anormal contra
+    a página de login. Quem filtra é a leitura, não a escrita: `evento_valido` é lido
+    pelas duas superfícies de métrica e por nenhum ponto de gravação.
+    """
+    import inspect
+
+    from motor_expansao.api import relatorio_acessos
+
+    fonte = inspect.getsource(relatorio_acessos.evento_valido)
+    assert "write" not in fonte and "open(" not in fonte
+
+
+# ---------------------------------------------------------------------------
+# "Outras ações" tem de voltar a ser exceção (2026-09-23)
+# ---------------------------------------------------------------------------
+
+
+def test_rotas_de_abertura_do_app_tem_rotulo() -> None:
+    """As três rotas que a SPA dispara sozinha ao carregar não são gesto do operador.
+
+    Elas respondiam por 20,7% de TODOS os eventos (1.306 de 6.303 em 30 dias) dentro
+    de "Outras ações" — e um balde desse tamanho deixa de ser categoria e vira
+    esconderijo. Já cobrou o preço: em 10/09, três das 91 linhas do balde eram criar
+    usuário, trocar perfil e desativar.
+    """
+    from motor_expansao.dashboard.acesso_analytics import _feature_do_evento
+
+    for metodo, rota in (("GET", "/"), ("GET", "/api/me"), ("GET", "/api/ufs")):
+        rotulo = _feature_do_evento({"metodo": metodo, "rota": rota})
+        assert rotulo == "Abriu o piloto", f"{metodo} {rota} -> {rotulo}"
+
+
+def test_regra_da_raiz_nao_engole_as_outras_rotas() -> None:
+    """A raiz casa por IGUALDADE, nunca por prefixo.
+
+    `"/api/rede/carteira".startswith("/")` é verdadeiro: pôr a raiz na tabela de
+    prefixos rotularia TODAS as rotas como abertura e esvaziaria "Outras ações" — o
+    oposto do que esta mudança quer. Foi exatamente o defeito da primeira versão.
+    """
+    from motor_expansao.dashboard.acesso_analytics import _feature_do_evento
+
+    assert _feature_do_evento({"metodo": "GET", "rota": "/api/rede/carteira"}) == (
+        "Consultou carteira da rede"
+    )
+    assert _feature_do_evento({"metodo": "POST", "rota": "/api/acessos/usuarios"}) == (
+        "Criou um usuário"
+    )
+
+
+def test_outras_acoes_continua_existindo_como_tripwire() -> None:
+    """Rota desconhecida TEM de cair no balde — ele é o alarme, não um resto.
+
+    Se "Outras ações" deixasse de ser alcançável, uma rota nova sem rótulo entraria
+    no sistema sem ninguém ver, que é a falha que os rótulos existem para evitar.
+    """
+    from motor_expansao.dashboard.acesso_analytics import _feature_do_evento
+
+    assert _feature_do_evento({"metodo": "GET", "rota": "/api/rota-inventada"}) == (
+        "Outras ações"
+    )
