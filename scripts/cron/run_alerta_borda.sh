@@ -24,7 +24,10 @@
 #   cp scripts/cron/run_alerta_borda.sh /opt/motor-expansao-infra/run_alerta_borda.sh
 #   chmod +x /opt/motor-expansao-infra/run_alerta_borda.sh
 #   install -m 600 /dev/null /var/log/motor-monitoring/alerta_borda.log
-#   /opt/motor-expansao-infra/run_alerta_borda.sh   # smoke: imprime o dia de ontem
+#   # smoke de LEITURA antes de deixar qualquer mensagem sair (sem --enviar):
+#   docker run --rm --user 0:0 -v /opt/motor-expansao/logs/caddy:/var/log/caddy:ro \
+#     "$API_IMAGE" python -m motor_expansao.api.alerta_borda --dir /var/log/caddy --dia AAAA-MM-DD
+#   /opt/motor-expansao-infra/run_alerta_borda.sh   # 1o run de verdade (envia ou pula)
 #   ( crontab -l 2>/dev/null; echo '23 8 * * * /opt/motor-expansao-infra/run_alerta_borda.sh >> /var/log/motor-monitoring/alerta_borda.log 2>&1' ) | crontab -
 #   # 08:23 UTC = 05:23 BRT: o dia BRT anterior ja fechou ha 5h, e a mensagem
 #   # chega antes do expediente. Servidor em UTC.
@@ -67,7 +70,20 @@ if ! docker run --rm "$API_IMAGE" python -c "import motor_expansao.api.alerta_bo
   echo "!! a imagem da API nao tem o modulo alerta_borda — deploy pendente?"; exit 1
 fi
 
+# `--user 0:0` — a UNICA diferenca real contra o run_relatorio_acessos.sh, e ela
+# nao e' cosmetica. A imagem roda como `appuser` (uid 1000), e os dois diretorios
+# de log tem donos DIFERENTES: a trilha da DEC-027 e' `ubuntu:ubuntu 0700` (uid
+# 1000 — o container le), mas o access log do Caddy e' `root:root 0700` e o
+# container morria com `PermissionError: /var/log/caddy`. Espelhar o outro cron
+# sem olhar o dono foi o defeito; pego no smoke de instalacao em 2026-09-23.
+#
+# Rodar como root aqui e' a opcao MENOS invasiva das duas: o mount e' `:ro`, o
+# container e' efemero e nao ve a rede do compose. A alternativa seria afrouxar a
+# permissao do diretorio no HOST — e esse log guarda IP de terceiro, e' root-only
+# por desenho, e o relaxamento valeria para todo processo da maquina, nao so'
+# para este run de 2 segundos.
 docker run --rm \
+  --user 0:0 \
   -e API_TELEGRAM_TOKEN \
   -e MONITOR_TELEGRAM_CHAT_ID \
   -v "$HOST_CADDY_LOG":/var/log/caddy:ro \

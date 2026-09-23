@@ -1178,7 +1178,14 @@ Duas decisões, ambas medidas no log de produção antes de escolher:
   requisições) — e nada no trickle.
 
 Sob demanda, sem enviar nada:
-`docker run --rm -v /opt/motor-expansao/logs/caddy:/var/log/caddy:ro "$API_IMAGE" python -m motor_expansao.api.alerta_borda --dir /var/log/caddy --dia 2026-09-20`
+`docker run --rm --user 0:0 -v /opt/motor-expansao/logs/caddy:/var/log/caddy:ro "$API_IMAGE" python -m motor_expansao.api.alerta_borda --dir /var/log/caddy --dia 2026-09-20`
+
+> **`--user 0:0` não é cosmético.** A imagem roda como `appuser` (uid 1000), e os dois diretórios de
+> log têm donos diferentes: a trilha da DEC-027 é `ubuntu:ubuntu 0700` (uid 1000 — o container lê),
+> mas o access log do Caddy é `root:root 0700`. Espelhar o `run_relatorio_acessos.sh` sem olhar o
+> dono foi o defeito, pego no smoke de instalação em 23/09. Rodar como root é menos invasivo que
+> afrouxar a permissão no host: o mount é `:ro`, o container é efêmero, e o relaxamento valeria para
+> todo processo da máquina em vez de um run de 2 segundos.
 
 Comportamento anti-spam: alerta na transição OK→FAIL, lembrete a cada 1h enquanto durar,
 e aviso de recuperação no FAIL→OK (estado em `/var/lib/motor-monitoring/`). Logs em
