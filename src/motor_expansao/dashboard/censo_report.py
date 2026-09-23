@@ -27,6 +27,7 @@ from motor_expansao.dashboard.relatorio_praca import (
     TITULO_COMO_A_CIDADE_ESTA_INDO,
     TITULO_PRESSAO_CONCORRENCIAL,
     PracaDoPonto,
+    rotulo_raio,
     texto_pdf,
 )
 from motor_expansao.perfil import resolver_perfil
@@ -3922,12 +3923,12 @@ def _praca_pressao_page(
     p = praca.pressao
     x = _CLASSICO_MARGIN + mapa_w + 20.0
     w = _PAGE_W - x - _CLASSICO_MARGIN
-    raio_txt = f"{p.raio_m / 1000:.1f}".replace(".", ",")
+    raio_txt = rotulo_raio(p.raio_m)
     y = _PRACA_TOPO + 4
     pdf.set_text_color(*secondary)
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_xy(x, y)
-    pdf.multi_cell(w, 16, _ascii(f"Quem alcança o ponto (raio de {raio_txt} km)"))
+    pdf.multi_cell(w, 16, _ascii(f"Quem alcança o ponto (raio de {raio_txt})"))
     y = pdf.get_y() + 8
     y = _linha_rotulo_valor(pdf, x, y, w, "Raios sobre o ponto", str(p.n_raios_sobre_ponto))
     y = _linha_rotulo_valor(
@@ -3951,9 +3952,9 @@ def _praca_pressao_page(
     pdf.multi_cell(
         w, 12,
         _ascii(
-            f"Cada círculo é a área de influência de {raio_txt} km que o motor usa para descontar a "
-            "concorrência do residual. Onde os círculos se sobrepõem a cor escurece: mais academias "
-            "disputando o mesmo público."
+            f"Cada círculo é o raio de {raio_txt} em volta de uma academia, a leitura do relatório "
+            "para o entorno imediato do ponto. Onde os círculos se sobrepõem a cor escurece: mais "
+            "academias disputando o mesmo público."
         ),
     )
     _draw_footer(pdf, with_attribution=True)

@@ -1,5 +1,11 @@
 """Leitura da PRACA: o que o motor sabe da cidade, alem do raio de 1 km do ponto.
 
+DOIS RAIOS convivem aqui, e nenhum e' redigitado. `RAIO_INFLUENCIA_M` (1 km, DEC-051) e' o raio
+do MODELO de mercado: desconta o residual e desenha a pressao da cidade inteira no Relatorio
+Municipal. `RAIO_PRESSAO_PONTO_M` (750 m, pedido do Juan em 2026-09-23) e' o raio de LEITURA da
+pagina de pressao do Relatorio Pontual: o disco em volta de cada academia e a contagem de quem
+alcanca o ponto. Trocar o segundo nao mexe no modelo; trocar o primeiro exige DEC.
+
 Dois relatorios leem daqui (pedido do Felipe em 2026-09-10; divisao entre eles do Juan em
 2026-09-17):
 
@@ -37,7 +43,23 @@ import pandas as pd
 
 from motor_expansao.pipelines.pressao_concorrencial_1km import RAIO_INFLUENCIA_M
 
+# Raio de LEITURA da pagina de pressao do Relatorio PONTUAL (disco por academia + contagem de
+# quem alcanca o ponto). Nao e' o raio do modelo (`RAIO_INFLUENCIA_M`): ver docstring do modulo.
+RAIO_PRESSAO_PONTO_M = 750.0
+
 TOP_N_ONDE_CRESCER = 5
+
+
+def rotulo_raio(raio_m: float) -> str:
+    """750 -> "750 m"; um quilometro -> "1,0 km". Em metros abaixo de 1 km: `.1f` faria 0,75 virar "0,8 km".
+
+    Um formatador so' para a imagem (`relatorio_praca_mapas`) e a pagina (`censo_report`):
+    os dois imprimem o mesmo raio e nao podem discordar.
+    """
+    metros_por_km = 1e3  # conversao de unidade, nao o raio do modelo (que este modulo nao redigita)
+    if raio_m < metros_por_km:
+        return f"{int(round(raio_m))} m"
+    return f"{raio_m / metros_por_km:.1f}".replace(".", ",") + " km"
 
 TITULO_MAPAS_CALOR_CIDADE = "Mapas de calor da cidade"
 TITULO_PRESSAO_CONCORRENCIAL = "Pressão concorrencial"
@@ -272,13 +294,14 @@ def pressao_sobre_ponto(
     concorrentes: pd.DataFrame | None,
     ultra: pd.DataFrame | None,
     *,
-    raio_m: float = RAIO_INFLUENCIA_M,
+    raio_m: float = RAIO_PRESSAO_PONTO_M,
 ) -> PressaoNoPonto:
     """Conta os discos de `raio_m` que alcancam o ponto.
 
-    O raio e' o de influencia do modelo de mercado desde a DEC-051 (`RAIO_INFLUENCIA_M`, 1 km):
-    o mesmo que desconta o residual e o mesmo que a camada de pressao do mapa desenha. Um disco
-    alcanca o ponto quando o centro dele esta a ate `raio_m` do ponto.
+    O raio e' o de LEITURA do Relatorio Pontual (`RAIO_PRESSAO_PONTO_M`, 750 m): o mesmo que
+    `render_pressao_raios` desenha em volta de cada academia. Nao e' o raio do modelo de mercado
+    (`RAIO_INFLUENCIA_M`, 1 km, DEC-051), que segue descontando o residual. Um disco alcanca o
+    ponto quando o centro dele esta a ate `raio_m` do ponto.
     """
     conc = _pontos_validos(concorrentes)
     ult = _pontos_validos(ultra)
