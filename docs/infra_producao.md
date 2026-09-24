@@ -1026,8 +1026,51 @@ requisição seguinte, sem restart); mudanças no `Caddyfile` seguem pedindo
 
 ### Revogar usuário
 
-1. Editar `authelia/users_database.yml` e remover o bloco do usuário
-2. `docker compose -f docker-compose.prod.yml restart authelia`
+São **três** portas independentes, e revogar só a primeira não fecha as outras duas.
+
+1. **Authelia** — editar `authelia/users_database.yml`, remover o bloco do usuário e
+   `docker compose -f docker-compose.prod.yml restart authelia`.
+   O restart não é opcional se a pessoa puder estar logada: a sessão vive na memória
+   do processo (não há Redis) e o cookie dura 8h absolutas, então sem reiniciar ela
+   continua dentro. O restart desloga todo mundo — as pessoas só entram de novo.
+2. **Abas do piloto** — remover a chave do usuário em
+   `/opt/motor-expansao/cadastro/acesso_abas.json`. Relido por mtime: vale na hora,
+   sem restart. (O curinga `"*"` está em `[]`, então sair do arquivo já zera as abas —
+   mas o passo 1 continua necessário, senão a pessoa ainda autentica.)
+3. **Bot do Telegram** — remover o `chat_id` de
+   `/opt/motor-expansao/cadastro/bot_allowlist.json` (seção abaixo).
+
+> **Por que o passo 3 existe.** Até 2026-09-24 o bot tinha uma única porta: a senha
+> COMPARTILHADA. O "login" pedido depois dela nunca foi verificado contra nada — é
+> rótulo de trilha, não identidade. Medido no offboarding de 24/09: revogar no
+> Authelia **não fechava o bot**, porque o bot nunca consultou o Authelia. E trocar a
+> senha também não resolveria, porque as sessões são persistidas em disco com
+> `autorizado: true` e recarregadas no arranque.
+
+### Allowlist do bot do Telegram
+
+Arquivo: `/opt/motor-expansao/cadastro/bot_allowlist.json`. Um `chat_id` por entrada.
+
+```json
+{ "_comentario": "quem pode usar o bot; chat_id do Telegram", "chats": [123, -456] }
+```
+
+- **Editar com `nano` e pronto** — é lido por mtime, vale na próxima mensagem, sem
+  restart e sem deploy. O `cadastro/` entra no container como **diretório**, nunca
+  como arquivo: bind de arquivo único segue o inode, e `nano` substitui o arquivo ao
+  salvar (foi assim que o Caddyfile divergiu em 22/09).
+- **FAIL-CLOSED**: arquivo ausente ou JSON quebrado → **ninguém** entra. É de
+  propósito — um controle de revogação que se abre sozinho quando o arquivo some tem
+  o modo de falha igual ao cenário que deveria impedir. O custo assumido é que um
+  erro de mount derruba o bot para todos: indisponibilidade, não vazamento.
+- **Roda antes de tudo**, inclusive do `/acessos` e do estado de sessão. Por isso
+  tirar alguém da lista corta na mensagem seguinte, mesmo com sessão já autorizada —
+  e por isso não é preciso apagar sessão nem trocar a senha de ninguém.
+- Grupo tem `chat_id` **negativo** (o de ops é o mesmo do `MONITOR_TELEGRAM_CHAT_ID`)
+  e precisa estar na lista.
+- Para descobrir o `chat_id` de alguém: `docker exec motor_expansao_telegram_bot cat
+  /data/bot_sessoes.json` lista os chats que já interagiram, com o nome que a própria
+  pessoa digitou (é auto-declarado — não serve como prova de identidade).
 
 ### Trocar senha de usuário
 

@@ -652,28 +652,36 @@ function Ficha({
               {op.bairro ? `${op.bairro} · ` : ''}{op.municipio}/{op.uf} · <span style={{ color: 'var(--tx-soft)' }}>{labelTipo(op.tipo)} para locação</span>
             </div>
             <p style={{ margin: '0 0 18px', font: '400 15px/1.6 var(--f-ui)', color: 'var(--tx-soft)', maxWidth: '60ch' }}>{tese(op, sobra, atendido, pctLivre, r, medRsM2)}</p>
-            <div style={{ display: 'flex', gap: '22px 48px', flexWrap: 'wrap', paddingTop: 18, borderTop: '1px solid var(--line-soft)' }}>
-              <HeroStat label="Área" valor={op.area == null ? '—' : num(op.area)} unidade="m²" nota={labelTipo(op.tipo)} />
-              <HeroStat label="Aluguel" valor={op.aluguel == null ? '—' : num(op.aluguel)} unidade="R$/mês" nota={r != null ? `R$ ${num(r, 0)}/m²` : ''} />
-              <HeroStat label="Custo de ocupação" valor={ocupacao > 0 ? num(ocupacao) : '—'} unidade="R$/mês" nota="com IPTU e condomínio" />
-              <HeroStat label="Projeção de faturamento" valor={projFat == null ? '—' : brl(projFat, true)} unidade="/mês" cor="var(--pos-text)"
-                nota={alunosProj != null ? `${num(alunosProj)} alunos (p50/m²) × R$ ${num(op.ticket_proj ?? 0)}` : 'sem base de m² p/ estimar'} />
-              {/*
-                O link COLADO na Projeção de faturamento (pedido do Felipe, 2026-09-23):
-                é neste número que a pessoa decide se o imóvel merece atenção, e a pergunta
-                seguinte é sempre "deixa eu ver o anúncio". Ter de rolar até a barra de
-                ações lá embaixo para isso quebrava a leitura no pior momento.
+            {/*
+              DUAS CAIXAS, e não uma (corrigido em 2026-09-24 — o Felipe viu o botão
+              "quebrando a linha" em PRODUÇÃO, alinhado errado, enquanto no localhost
+              estava certo).
 
-                `marginLeft: auto` empurra para a borda direita da linha de stats: ele
-                COMPLEMENTA os números, não é mais um deles, e alinhado junto pareceria um
-                quinto indicador. Em tela estreita o `flexWrap` da linha o joga para baixo
-                sozinho, que é o comportamento certo.
-              */}
-              {op.url && (
-                <div style={{ marginLeft: 'auto', alignSelf: 'flex-end', paddingBottom: 2 }}>
-                  <LinkAnuncio url={op.url} />
-                </div>
-              )}
+              A primeira versão punha o link como mais um ITEM da mesma linha flex dos
+              indicadores. Com `flexWrap`, a partir de certa largura ele descia sozinho
+              para a segunda linha e o `marginLeft: auto` o empurrava para a borda —
+              solto, longe do número a que pertence. Não era um bug de produção: era
+              fragilidade de layout que depende da largura e do TAMANHO DO TEXTO dos
+              indicadores, e o dado de produção (valores maiores) caiu na faixa ruim
+              que o dado local não alcançava.
+
+              Agora os indicadores quebram entre SI, numa caixa própria, e o link é
+              IRMÃO dessa caixa. Quando o espaço aperta, ele desce por inteiro e
+              inteiro se mantém — nunca no meio dos números. O `gap` vertical de 12px é
+              o respiro que o Felipe achou na mão mexendo no DOM.
+            */}
+            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '12px 24px', flexWrap: 'wrap', paddingTop: 18, borderTop: '1px solid var(--line-soft)' }}>
+              <div style={{ display: 'flex', gap: '22px 48px', flexWrap: 'wrap', minWidth: 0, flex: '1 1 auto' }}>
+                <HeroStat label="Área" valor={op.area == null ? '—' : num(op.area)} unidade="m²" nota={labelTipo(op.tipo)} />
+                <HeroStat label="Aluguel" valor={op.aluguel == null ? '—' : num(op.aluguel)} unidade="R$/mês" nota={r != null ? `R$ ${num(r, 0)}/m²` : ''} />
+                <HeroStat label="Custo de ocupação" valor={ocupacao > 0 ? num(ocupacao) : '—'} unidade="R$/mês" nota="com IPTU e condomínio" />
+                <HeroStat label="Projeção de faturamento" valor={projFat == null ? '—' : brl(projFat, true)} unidade="/mês" cor="var(--pos-text)"
+                  nota={alunosProj != null ? `${num(alunosProj)} alunos (p50/m²) × R$ ${num(op.ticket_proj ?? 0)}` : 'sem base de m² p/ estimar'} />
+              </div>
+              {/* O link fica COLADO na Projeção de faturamento (pedido do Felipe,
+                  2026-09-23): é neste número que a pessoa decide se o imóvel merece
+                  atenção, e a pergunta seguinte é sempre "deixa eu ver o anúncio". */}
+              {op.url && <LinkAnuncio url={op.url} />}
             </div>
           </div>
         </article>
