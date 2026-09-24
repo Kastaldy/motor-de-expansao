@@ -175,17 +175,57 @@ def test_trilha_registra_autorizacao_e_negativa(tmp_path) -> None:
     assert [e["evento"] for e in _linhas(trilha)] == ["autorizado", "negado_allowlist"]
 
 
-def test_trilha_nao_guarda_chat_id_cru_nem_texto(tmp_path) -> None:
-    """Anti-PII: a referencia e' o HMAC opaco, e o texto da mensagem nao entra."""
+def test_trilha_nao_guarda_chat_id_cru_nem_nome_nem_texto(tmp_path) -> None:
+    """Anti-PII, e o NOME e' o ponto.
+
+    A 1a versao gravava o `login` auto-declarado — nome de pessoa em texto puro,
+    retido 90 dias. A revisao automatica reprovou: a DEC-027 tratou trilha analoga
+    como mudanca de postura de auditoria e excluiu o bot do escopo de proposito.
+    O nome era dispensavel — a referencia opaca ja' agrupa por pessoa.
+    """
     trilha = tmp_path / "trilha"
     s = Settings(bot_senha="abre", telegram_token="x", bot_trilha_dir=trilha)
     bot.processar(424242, "abre", s)
+    bot.processar(424242, "Fulano de Tal", s)  # etapa de login: o nome passa por aqui
 
     bruto = "".join(a.read_text(encoding="utf-8") for a in trilha.glob("*.jsonl"))
-    assert "424242" not in bruto
+    assert "424242" not in bruto          # chat_id cru
+    assert "Fulano" not in bruto          # nome auto-declarado
     for linha in _linhas(trilha):
         assert linha["chat"].startswith("#") and len(linha["chat"]) == 9
-        assert set(linha) == {"ts", "chat", "login", "evento", "detalhe"}
+        assert set(linha) == {"ts", "chat", "evento", "detalhe"}
+
+
+def test_senha_incorreta_deixa_rastro(tmp_path) -> None:
+    """Vocabulario sem emissor e' promessa vazia — era o 2o achado da revisao.
+
+    Tentativa contra a senha COMPARTILHADA e' o sinal de forca bruta que o log
+    efemero perdia a cada deploy; tem de sobreviver.
+    """
+    trilha = tmp_path / "trilha"
+    s = Settings(bot_senha="abre", telegram_token="x", bot_trilha_dir=trilha)
+    bot.processar(7, "oi", s)        # 1a msg = saudacao, nao conta como tentativa
+    bot.processar(7, "chutando", s)  # agora sim
+
+    eventos = [(e["evento"], e["detalhe"]) for e in _linhas(trilha)]
+    assert ("senha_incorreta", "tentativa 1") in eventos
+
+
+def test_todo_evento_declarado_tem_emissor() -> None:
+    """Trava a classe do achado: vocabulario declarado e nunca usado.
+
+    Le o FONTE porque o defeito e' de ausencia — nao ha execucao que o revele.
+    """
+    import pathlib
+
+    fonte = pathlib.Path(bot.__file__).read_text(encoding="utf-8")
+    for evento in bot.EVENTOS_TRILHA:
+        # Pelo menos DUAS aparicoes: a declaracao em `EVENTOS_TRILHA` e a chamada de
+        # `_registrar` que o emite. Contar e' mais robusto que recortar o arquivo por
+        # posicao — nao quebra quando alguem move o bloco de lugar.
+        assert fonte.count(f'"{evento}"') >= 2, (
+            f"evento {evento!r} declarado mas nunca emitido por `_registrar`"
+        )
 
 
 def test_trilha_desligada_sem_diretorio_configurado() -> None:

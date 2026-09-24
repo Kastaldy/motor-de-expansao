@@ -230,9 +230,22 @@ def _sessao(chat_id: int) -> dict:
 #
 # O QUE GRAVA, e o que NAO grava. Um JSONL por dia UTC, com carimbo de tempo, a
 # referencia OPACA do chat (o mesmo `#xxxxxxxx` do resto do bot — nunca o chat_id
-# cru), o `login` auto-declarado e um EVENTO de vocabulario FECHADO. Nao grava o
-# texto da mensagem nem a coordenada pedida: o proposito e' contar uso e sustentar
-# revogacao, e guardar endereco que alguem digitou seria coletar o que nao se precisa.
+# cru) e um EVENTO de vocabulario FECHADO. Nao grava o texto da mensagem nem a
+# coordenada pedida: o proposito e' contar uso e sustentar revogacao, e guardar
+# endereco que alguem digitou seria coletar o que nao se precisa.
+#
+# O NOME NAO ENTRA, e isso foi uma correcao. A primeira versao gravava tambem o
+# `login` auto-declarado — nome de pessoa, em texto puro, retido 90 dias. A revisao
+# automatica reprovou com razao: a DEC-027 tratou trilha analoga no piloto como
+# mudanca de postura de auditoria (criticidade Alta) e excluiu o bot do escopo de
+# proposito; persistir PII aqui reabriria aquilo sem DEC nenhuma.
+#
+# E o nome era DISPENSAVEL: a pergunta que a trilha responde — quantas solicitacoes,
+# quando, por quem — se responde pela referencia opaca, que ja' agrupa por pessoa.
+# Para traduzir a referencia em nome quando FOR preciso, o caminho e' o mesmo de
+# sempre: recomputar o HMAC dos chats do `bot_sessoes.json` (que guarda o nome) com o
+# token do bot. O dado identificavel fica onde ja' estava, sem copia nova com relogio
+# de 90 dias correndo.
 #
 # Mora no volume `bot_data`, que e' NOMEADO — sobrevive a recriacao do container, que
 # e' exatamente a falha que motivou o bloco. Retencao de 90 dias, espelhando a
@@ -266,7 +279,6 @@ def _registrar(chat_id: int, settings: Settings, evento: str, detalhe: str = "")
     linha = {
         "ts": agora.isoformat(timespec="seconds"),
         "chat": _chat_ref(chat_id, settings.telegram_token),
-        "login": (_sessoes.get(chat_id, {}) or {}).get("login"),
         "evento": evento,
         "detalhe": detalhe,
     }
@@ -568,7 +580,11 @@ def processar(
             s["saudou"] = True
             return [_msg(_SAUDACAO)]
         # Senha errada (ja saudou): conta e, no teto, bloqueia o chat.
+        # Vai para a trilha: tentativa contra a senha COMPARTILHADA e' justamente o
+        # sinal de forca bruta que o log efemero perdia a cada deploy. O `detalhe`
+        # carrega a contagem, para distinguir um erro de digitacao de uma sequencia.
         s["tentativas"] = int(s.get("tentativas", 0)) + 1
+        _registrar(chat_id, settings, "senha_incorreta", f"tentativa {s['tentativas']}")
         if s["tentativas"] >= _SENHA_MAX_TENTATIVAS:
             s["bloqueado_ate"] = agora + _SENHA_LOCKOUT_SEGUNDOS
             s["tentativas"] = 0

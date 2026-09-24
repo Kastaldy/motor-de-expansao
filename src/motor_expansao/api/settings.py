@@ -130,11 +130,17 @@ class Settings(BaseSettings):
             "nem por dict (DEC-047: o pais da instancia e o arquivo montado no volume)"
         )
 
-    @field_validator("acesso_log_dir", mode="before")
+    @field_validator("acesso_log_dir", "bot_allowlist_path", "bot_trilha_dir", mode="before")
     @classmethod
     def _acesso_log_dir_vazio_e_none(cls, value: object) -> object:
         # Env vazia ("API_ACESSO_LOG_DIR=") viraria Path(".") — truthy, e o guard
         # "None = indisponivel" do bot nunca dispararia (revisao de 2026-08-18).
+        #
+        # Os dois campos do bot entraram aqui em 2026-09-24, pela revisao: sem isto,
+        # `API_BOT_ALLOWLIST_PATH=` apontaria a allowlist para o CWD — `.stat()`
+        # funciona (e' diretorio), a leitura falha, e o fail-closed derruba o bot para
+        # TODOS; e `API_BOT_TRILHA_DIR=` escreveria a trilha no diretorio de trabalho
+        # do processo. Campo novo com o mesmo contrato entra nesta lista.
         if isinstance(value, str) and not value.strip():
             return None
         return value
