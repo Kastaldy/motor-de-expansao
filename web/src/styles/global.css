@@ -143,6 +143,35 @@ input:-webkit-autofill:active {
   transition: background-color 9999s ease-in-out 0s;
 }
 
+/* AVISO DE AUTOPREENCHIMENTO (2026-09-24, relato do Vinicius).
+
+   O navegador escreve o valor direto no DOM e NAO dispara o `change` que o React
+   escuta — entao a tela de entrar via os campos vazios e desenhava o botao como
+   desabilitado sobre campos visivelmente preenchidos.
+
+   Nao existe evento nativo de "autofill". O que existe, e e' a tecnica padrao, e'
+   esta: o Chrome aplica `:-webkit-autofill` ao preencher, e uma animacao presa a
+   esse seletor faz disparar um `animationstart` que o JS consegue ouvir. A animacao
+   NAO muda nada visualmente — ela existe so' para virar evento; por isso `opacity`
+   de 1 para 1 e duracao minima.
+
+   O NOME importa: `LoginScreen` compara `e.animationName === 'aviso-autofill'`, para
+   nao reagir a qualquer outra animacao que caia no mesmo elemento. Renomear aqui sem
+   renomear la' volta o defeito em silencio. */
+@keyframes aviso-autofill {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+input:-webkit-autofill {
+  animation-name: aviso-autofill;
+  animation-duration: 1ms;
+}
+
 /* Selects nativos no tema escuro — o popup de opcoes seguia branco sem isto. */
 select {
   color-scheme: dark;

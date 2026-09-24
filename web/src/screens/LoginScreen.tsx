@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 import MalhaBrasil from '../components/login/MalhaBrasil'
 /* O logo entra por IMPORT, e não pelo caminho `/logo-ultra.png` que o Dock usa.
@@ -66,6 +66,55 @@ export default function LoginScreen({
   const idUsuario = useId()
   const idSenha = useId()
   const idErro = useId()
+  /*
+   * AUTOFILL x ESTADO DO REACT (relato do Vinicius, 2026-09-24: "ao recarregar a
+   * sessão, quando os dados já estão preenchidos automaticamente, o botão de entrar
+   * aparece como não-clicável").
+   *
+   * O navegador (e o gerenciador de senhas) escreve o valor DIRETO no DOM e NÃO
+   * dispara o `change` que o React escuta. Então `usuario`/`senha` continuavam `''`,
+   * `podeEnviar` devolvia falso e o botão nascia `disabled` e apagado — sobre campos
+   * visivelmente preenchidos. O botão estava mentindo sobre o próprio formulário.
+   *
+   * A correção lê o DOM e sincroniza, em dois gatilhos porque o autofill chega por
+   * dois caminhos e nenhum deles basta sozinho:
+   *
+   *  1. NA MONTAGEM (e em alguns quadros seguintes). É o caso do relato — recarregar
+   *     a página com os campos já preenchidos. O valor às vezes só aparece depois da
+   *     primeira pintura, por isso não basta ler uma vez: relemos por ~1s.
+   *  2. NO `animationstart`. O Chrome aplica `:-webkit-autofill` quando preenche, e
+   *     `global.css` pendura uma animação sem efeito visual só para avisar aqui. É o
+   *     único evento confiável quando o preenchimento acontece DEPOIS da montagem —
+   *     por exemplo quando a pessoa escolhe a credencial no menu do gerenciador.
+   *
+   * Não mexe no fluxo de envio: apenas faz o estado do React refletir o que já está
+   * na tela.
+   */
+  const refUsuario = useRef<HTMLInputElement>(null)
+  const refSenha = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const sincronizar = () => {
+      const u = refUsuario.current?.value ?? ''
+      const p = refSenha.current?.value ?? ''
+      // Só escreve quando muda, para não pisar no que a pessoa está digitando.
+      if (u) setUsuario((atual) => (atual === u ? atual : u))
+      if (p) setSenha((atual) => (atual === p ? atual : p))
+    }
+    sincronizar()
+    // O autofill da recarga pode pousar depois da primeira pintura; 5 leituras em
+    // ~1s cobrem isso sem virar polling permanente.
+    const timers = [60, 150, 300, 600, 1000].map((ms) => window.setTimeout(sincronizar, ms))
+    return () => timers.forEach(window.clearTimeout)
+  }, [])
+
+  const aoAutoPreencher = (e: React.AnimationEvent<HTMLInputElement>) => {
+    if (e.animationName !== 'aviso-autofill') return
+    const alvo = e.currentTarget
+    if (alvo === refUsuario.current) setUsuario(alvo.value)
+    if (alvo === refSenha.current) setSenha(alvo.value)
+  }
+
   const habilitado = podeEnviar(usuario, senha, estado)
   const selo = procedenciaCurta(ufs) ?? censoDaBase()
 
@@ -232,6 +281,8 @@ export default function LoginScreen({
               <IconeUsuario />
               <input
                 id={idUsuario}
+                ref={refUsuario}
+                onAnimationStart={aoAutoPreencher}
                 name="username"
                 type="text"
                 value={usuario}
@@ -252,6 +303,8 @@ export default function LoginScreen({
               <IconeCadeado />
               <input
                 id={idSenha}
+                ref={refSenha}
+                onAnimationStart={aoAutoPreencher}
                 name="password"
                 type={verSenha ? 'text' : 'password'}
                 value={senha}

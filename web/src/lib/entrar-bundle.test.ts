@@ -59,4 +59,25 @@ describe('tela de entrar: caminhos de asset', () => {
     expect(entrada).toMatch(/fetch\(\s*'\/api\/firstfactor'/)
     expect(entrada).not.toMatch(/fetch\(\s*['"`]https?:/)
   })
+
+  it('o aviso de autofill existe no CSS com o nome que o TS compara', () => {
+    /* Relato do Vinicius (2026-09-24): com os campos autopreenchidos, o botao de
+       entrar nascia desabilitado — o navegador escreve no DOM sem disparar o evento
+       que o React escuta, entao o estado ficava vazio.
+
+       A correcao depende de um acoplamento POR NOME entre dois arquivos: a animacao
+       `aviso-autofill` no `global.css` e a comparacao `e.animationName === '...'` no
+       `LoginScreen`. Renomear de um lado so' devolve o defeito EM SILENCIO — nada
+       quebra, nada fica vermelho, o botao so' volta a mentir. Este teste e' o que
+       torna essa quebra visivel. */
+    const css = readFileSync(resolve(RAIZ, 'styles/global.css'), 'utf8')
+    const tela = ler('screens/LoginScreen.tsx')
+
+    expect(css).toMatch(/@keyframes\s+aviso-autofill\b/)
+    expect(css).toMatch(/input:-webkit-autofill\s*\{[^}]*animation-name:\s*aviso-autofill/)
+    expect(tela).toMatch(/animationName\s*!==\s*'aviso-autofill'/)
+    // E os dois campos precisam ESCUTAR o evento — sem o handler, a animacao dispara
+    // para ninguem.
+    expect(tela.match(/onAnimationStart=\{aoAutoPreencher\}/g)).toHaveLength(2)
+  })
 })
