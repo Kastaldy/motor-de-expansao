@@ -100,6 +100,19 @@ class Settings(BaseSettings):
     # time, entao NAO e' liberado pela senha compartilhada do bot: so este chat.
     # Vazio = comando desligado. Env: API_ACESSOS_ADMIN_CHAT_ID=...
     acessos_admin_chat_id: str = ""
+    # Arquivo com os chats AUTORIZADOS a usar o bot (allowlist por chat_id).
+    # Espelha o `acesso_abas.json` do piloto: mora no volume do cadastro, e' relido
+    # por mtime (editar na VPS vale na hora, sem restart) e e' FAIL-CLOSED — sumiu o
+    # arquivo, ninguem entra. Vazio/None = controle DESLIGADO (dev/teste).
+    # Env: API_BOT_ALLOWLIST_PATH=/cadastro/bot_allowlist.json
+    bot_allowlist_path: Path | None = None
+    # Diretorio da trilha PERSISTENTE do bot (um JSONL por dia UTC).
+    # Existe porque `docker logs` nao e' registro: guarda so' o container ATUAL, e
+    # todo deploy recria o container. Medido em 2026-09-24 — o deploy da vespera
+    # apagou o historico inteiro de uso do bot, e a pergunta "quem pediu o que, e
+    # quando" ficou sem fonte. Vazio/None = trilha DESLIGADA (dev/teste).
+    # Env: API_BOT_TRILHA_DIR=/data/trilha
+    bot_trilha_dir: Path | None = None
 
     @field_validator("perfil", mode="before")
     @classmethod
