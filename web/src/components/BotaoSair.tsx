@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { Botao, Modal } from './primitives'
+import { api, ApiError } from '../lib/api'
 import { urlDeLogoff } from '../lib/logoff'
+import { sair as decidirSaida } from '../lib/login-motor'
 
 /* ---------------------------------------------------------------------------
    Botão de SAIR do Dock (pedido do Felipe, 2026-09-10: "quando um usuário entra,
@@ -64,6 +66,9 @@ function alvoDoPortal(): HTMLElement {
 
 export default function BotaoSair() {
   const [perguntando, setPerguntando] = useState(false)
+  //: Recado quando o encerramento FALHA. Ele mantem o dialogo aberto de proposito: a
+  //: sessao continua viva, e fechar a janela deixaria a pessoa achando que saiu.
+  const [falha, setFalha] = useState<string | null>(null)
 
   // Lido no clique, e não no módulo: `location` não existe no ambiente node do vitest,
   // e um `null` capturado na carga travaria o botão para sempre.
@@ -110,9 +115,21 @@ export default function BotaoSair() {
         ? createPortal(
             <DialogoSair
               destino={destino}
-              onCancelar={() => setPerguntando(false)}
+              falha={falha}
+              onCancelar={() => {
+                setFalha(null)
+                setPerguntando(false)
+              }}
               onSair={() => {
-                if (destino !== null) window.location.assign(destino)
+                setFalha(null)
+                void decidirSaida(
+                  () => api.sair(),
+                  destino,
+                  (e): e is ApiError => e instanceof ApiError,
+                ).then((saida) => {
+                  if (saida.tipo === 'ir') window.location.assign(saida.destino)
+                  else setFalha(saida.recado)
+                })
               }}
             />,
             alvoDoPortal(),
@@ -147,22 +164,26 @@ function IconeSair() {
 
 function DialogoSair({
   destino,
+  falha,
   onCancelar,
   onSair,
 }: {
   destino: string | null
+  falha: string | null
   onCancelar: () => void
   onSair: () => void
 }) {
   const semPortal = destino === null
   const titulo = semPortal ? 'Não há sessão para encerrar' : 'Sair da conta?'
-  const corpo = semPortal
-    ? 'Este ambiente local não tem o portal de autenticação na frente, então ' +
-      'não há sessão a encerrar. Em produção, este botão encerra sua sessão e ' +
-      'leva de volta à tela de login.'
-    : 'Você será levado à tela de login, e a análise aberta agora será perdida — ' +
-      'o recorte do mapa, a ficha e as premissas digitadas não ficam salvas. ' +
-      'Para voltar, será preciso entrar de novo.'
+  const corpo =
+    falha ??
+    (semPortal
+      ? 'Este ambiente local não tem o portal de autenticação na frente. Se a ' +
+        'autenticação própria estiver ligada, sua sessão será encerrada no servidor ' +
+        'e você voltará à tela de entrar; se não, não há sessão a encerrar.'
+      : 'Sua sessão será encerrada NO SERVIDOR e você será levado à tela de login. ' +
+        'A análise aberta agora será perdida — o recorte do mapa, a ficha e as ' +
+        'premissas digitadas não ficam salvas.')
   return (
     <Modal
       titulo={titulo}

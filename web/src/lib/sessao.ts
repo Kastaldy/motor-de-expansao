@@ -154,18 +154,32 @@ export function relatarFalhaDeRede(): Promise<Diagnostico> {
 /**
  * Leva o operador de volta ao login DE VERDADE.
  *
- * `reload()` refaz a navegação de topo para a página atual. Sem sessão, essa navegação
- * passa pelo mesmo `forward_auth` do bloco de host citado no topo deste arquivo, o
- * Authelia responde 302 para `https://auth.ultra-expansao.tech/?rd=<url atual>` e o
- * browser SEGUE — navegação de topo não tem CORS, que é exatamente o que impedia o
- * `fetch` de fazer o mesmo. Depois do login, o `rd` traz a pessoa de volta ao piloto.
+ * VAI PARA `/entrar.html`, e esta é a única saída que está CERTA NOS DOIS MUNDOS —
+ * por isso ela não precisa saber em qual deles está rodando:
  *
- * Ou seja: não há URL de login para o front montar à mão, e montar uma seria inventar
- * um domínio que o front não conhece. Quem conhece é o Caddy. Em dev, sem Authelia na
- * frente, isto é só um F5 — não quebra nada.
+ *  * **Com o Authelia na frente (hoje):** o `forward_auth` do bloco de host cobre TUDO,
+ *    então esta navegação de topo passa por ele, o Authelia responde 302 para
+ *    `https://auth.ultra-expansao.tech/?rd=<destino>` e o browser SEGUE — navegação de
+ *    topo não tem CORS, que é o que impedia o `fetch` de fazer o mesmo. Idêntico ao que
+ *    o `reload()` fazia antes.
+ *  * **Depois do corte (P19/DEC-067):** o matcher `@protegido` cobre só `/api/*`, então
+ *    `/entrar.html` é servido direto e a pessoa vê a nossa tela de entrar.
+ *
+ * ERA `window.location.reload()`, E ISSO VIRAVA UM LAÇO FECHADO no dia do corte. O
+ * raciocínio antigo — "a navegação de topo passa pelo `forward_auth`" — deixa de valer
+ * quando o matcher passa a cobrir só a API: o `reload()` recarregaria a MESMA SPA, a
+ * primeira chamada levaria 401 de novo, a sobreposição reabriria, e o único botão dela
+ * faria tudo outra vez. A única saída seria alguém saber digitar `/entrar.html` na barra
+ * de endereço.
+ *
+ * O `rd` carrega de onde a pessoa veio, para o login devolvê-la à página que ela tentava
+ * abrir. É o mesmo parâmetro que o Authelia usa e que `lib/authelia.ts::destinoSeguro`
+ * valida na outra ponta — ele RECUSA destino de fora do domínio, senão o link de login
+ * viraria redirecionamento aberto.
  */
 export function entrarNovamente(): void {
-  window.location.reload()
+  const destino = `/entrar.html?rd=${encodeURIComponent(window.location.href)}`
+  window.location.assign(destino)
 }
 
 /** Só para os testes: zera a memo da sonda e o "já anunciei". */

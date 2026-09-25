@@ -68,3 +68,55 @@ export function entradaDoPayload(payload: unknown): EntradaAceita {
 export function ehQuedaDeSessao(url: string): boolean {
   return !url.startsWith('/api/login')
 }
+
+/** Para onde levar a pessoa depois de sair, e o que ela vê se o encerramento falhar. */
+export type Saida =
+  | { tipo: 'ir'; destino: string }
+  | { tipo: 'falhou'; recado: string }
+
+/**
+ * SAIR DE VERDADE — revoga no servidor ANTES de navegar.
+ *
+ * Até 25/09/2026 o botão de sair só fazia `window.location.assign(<portal do Authelia>)`
+ * e **nunca** chamava `api.sair()`: o grep por `api.sair` em `web/src` devolvia um único
+ * resultado, e era um docstring. Enquanto o Authelia autenticava isso funcionava, porque
+ * quem encerrava a sessão era o portal. Depois do corte deixaria de funcionar em silêncio
+ * — a pessoa seria levada ao portal (que continua de pé por causa da AR), a sessão no
+ * nosso banco **não** seria revogada e o cookie `__Host-motor_sessao` continuaria válido:
+ * bastaria voltar ao piloto para estar dentro. É exatamente o defeito que o próprio
+ * `/api/logout` declara inaceitável — "limpar estado no cliente NÃO é logout".
+ *
+ * COMO ELA SABE EM QUAL MUNDO ESTÁ: não sabe, e não precisa. Ela TENTA o nosso
+ * `/api/logout`; um **404** é a resposta documentada de "a entrada própria está desligada
+ * neste ambiente", e aí o portal do Authelia é quem encerra de verdade. Mesmo idioma que
+ * `api.entrar()` já usa.
+ *
+ * FALHA QUE NÃO É 404 NÃO NAVEGA. Se o servidor respondeu 503 (banco fora), a sessão
+ * continua ABERTA — mandar a pessoa embora mostraria uma tela deslogada por cima de uma
+ * sessão viva, que é a mentira que este caminho existe para não contar.
+ */
+export async function sair(
+  chamarSair: () => Promise<void>,
+  urlDoPortal: string | null,
+  ehApiError: (e: unknown) => e is { status: number },
+): Promise<Saida> {
+  try {
+    await chamarSair()
+  } catch (erro) {
+    if (ehApiError(erro) && erro.status === 404) {
+      // Entrada própria desligada: quem encerra é o portal. Sem portal (dev), não há
+      // sessão nossa nem dele — nada a encerrar, e o diálogo já diz isso.
+      return urlDoPortal === null
+        ? { tipo: 'ir', destino: '/entrar.html' }
+        : { tipo: 'ir', destino: urlDoPortal }
+    }
+    return {
+      tipo: 'falhou',
+      recado:
+        'Não foi possível encerrar a sessão agora — ela continua aberta. ' +
+        'Tente de novo em instantes; se persistir, avise quem administra.',
+    }
+  }
+  // Revogada no servidor. O destino é a nossa tela de entrar, que existe nos dois mundos.
+  return { tipo: 'ir', destino: '/entrar.html' }
+}
