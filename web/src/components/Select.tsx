@@ -172,7 +172,16 @@ export default function Select({
           /* No painel sem escolha, o texto e' CONVITE, nao valor — herda o tom do rotulo que
              ele substituiu. Escolhido, sobe para o tom forte, como em qualquer seletor. */
           color: painel && !selecionado ? 'var(--tx-soft)' : 'var(--tx-strong)',
-          font: painel ? '600 13px/1 var(--f-ui)' : '500 13px/1 var(--f-ui)',
+          /* CONDENSADA, como os demais rótulos de cromo (2026-09-25). O seletor é o que
+             mais aparece nas barras de filtro, e em `--f-ui` ele não carregava a voz da
+             marca — a barra "não mudava nada" ao trocar o tema. Fica em CAIXA E BAIXA e
+             sem itálico de propósito: o guia reserva o itálico maiúsculo a título e
+             subtítulo, e um seletor escrito em caixa alta itálica viraria manchete no
+             meio de um controle.
+
+             Um ponto a mais de corpo (14 contra 13): condensada ocupa menos largura e
+             lê menor no mesmo tamanho nominal. */
+          font: painel ? '600 14px/1 var(--f-titulo)' : '500 14px/1 var(--f-titulo)',
           cursor: 'pointer',
           ...(painel ? { backdropFilter: 'blur(16px)', boxShadow: 'var(--ac-glow)' } : null),
         }}

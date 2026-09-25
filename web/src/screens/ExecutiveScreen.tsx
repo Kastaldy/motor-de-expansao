@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 
 import BotaoInicio from '../components/BotaoInicio'
 import ExecMap from '../components/ExecMap'
@@ -487,7 +487,7 @@ export default function ExecutiveScreen({
       }}
     >
       <header
-        className="cromo-escuro"
+        className="barra-ultra"
         style={{
           flexShrink: 0,
           margin: '16px 16px 0',
@@ -511,7 +511,14 @@ export default function ExecutiveScreen({
             botões de export para a linha seguinte. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <BotaoInicio onInicio={onInicio} />
-        <h1 style={{ font: '600 14px/1 var(--f-ui)', letterSpacing: '-.01em', color: 'var(--tx-max)', margin: 0 }}>
+        {/* O TÍTULO da barra usa a voz de título da marca — condensada, itálica, caixa
+            alta. Estava em `--f-ui` 14px, isto é, com cara de rótulo de interface: era
+            um título que não usava a fonte de título, e foi parte do "a barra de filtros
+            não mudou nada". */}
+        <h1
+          className="ultra-titulo"
+          style={{ font: '700 20px/1 var(--f-titulo)', color: 'var(--tx-max)', margin: 0 }}
+        >
           Rede Ultra
         </h1>
         <span aria-hidden style={{ width: 1, height: 20, background: 'var(--line-mid)' }} />
@@ -692,22 +699,51 @@ export default function ExecutiveScreen({
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              {/* Rotulos dos KPIs no ciclo turquesa -> magenta -> laranja do Dock
-                  (Juan, 2026-09-09). So' o ROTULO alterna: o numero segue no semaforo
-                  proprio dele (destaque/tx-max), senao a cor da marca disputaria com a
-                  leitura de bom/ruim do Delta logo abaixo.
+              {/* CARD CHEIO DE COR, TEXTO BRANCO (2026-09-25, pedido do Felipe:
+                  "inverter a ordem — fundo do card com cor e o texto branco, para dar
+                  mais destaque"). Antes era o oposto: card branco com rótulo e número
+                  coloridos, e a cor aparecia em 10,5px de texto.
 
-                  O laranja entra pelo par de TEXTO (--gr-coral-tx), nao pelo token de
-                  serie: em 10,5px o --gr-coral do tema claro da' 3,28:1, que e' a regua
-                  de PREENCHIMENTO e reprova em texto pequeno — os indices 2 e 5 do ciclo
-                  ("Churn" e "Saldo operacional") caiam nele. Turquesa e magenta ja'
-                  passavam (4,69 e 4,83), e por isso so' o terceiro trocou de token. */}
-              {KPIS.map((k, i) => {
+                  ROSA DA MARCA em todos (decisão do Felipe, 2026-09-25). Duas versões
+                  anteriores erraram aqui: a primeira pintou três cores rotativas
+                  (turquesa, magenta, laranja), que viola o guia — só UMA secundária por
+                  peça; a segunda usou turquesa com magenta no destaque.
+
+                  Uma cor só para a fileira inteira é a leitura mais fiel ao guia: a
+                  fileira é UMA peça, e o magenta aqui é a única secundária da tela. O
+                  turquesa segue dominante no produto (rail, barra, acentos), que é o
+                  papel que o guia lhe dá.
+
+                  O HEX é o EXATO do guia, sem ajuste, e isso dá para conferir: branco
+                  sobre #C23C8E dá 4,85:1 e passa para o rótulo de 10,5px. Foi o
+                  turquesa que precisou descer um tom em outros lugares (2,93 no hex
+                  exato); o magenta não precisa.
+
+                  A ROTAÇÃO DE COR DO RÓTULO (turquesa -> magenta -> laranja, Juan
+                  2026-09-09) SAIU, e saiu nos DOIS temas — não só no claro. Foi decisão,
+                  não descuido: a regra que a derruba é do guia ("uma secundária por
+                  peça") e o Felipe mandou aplicá-lo em tudo. O escuro fica com rótulo
+                  neutro e o cartão de vidro de sempre; quem quiser a rotação de volta
+                  precisa reabrir a regra, não só mexer no token. */}
+              {KPIS.map((k) => {
                 const m = carteira.kpis[k.chave]
-                const corKpi = ['var(--ac-text)', 'var(--gr-rosa)', 'var(--gr-coral-tx)'][i % 3]
+                // Sem hex aqui: quem sabe de tema e' o token (ver `--kpi-*`).
                 return (
-                  <Glass key={k.chave} style={{ flex: '1 1 168px', padding: '13px 15px', minWidth: 0 }}>
-                    <div style={{ font: '600 10.5px/1.2 var(--f-ui)', color: corKpi }}>{k.rotulo}</div>
+                  <Glass
+                    key={k.chave}
+                    style={{
+                      flex: '1 1 168px',
+                      padding: '13px 15px',
+                      minWidth: 0,
+                      background: 'var(--kpi-fundo)',
+                      /* A borda do Glass é feita para vidro claro e vira um fio escuro
+                         sobre cor cheia; um véu branco sustenta a mesma separação. */
+                      border: '1px solid var(--kpi-borda)',
+                    }}
+                  >
+                    <div style={{ font: '600 10.5px/1.2 var(--f-ui)', color: 'var(--kpi-rotulo)' }}>
+                      {k.rotulo}
+                    </div>
                     <div
                       className="num"
                       style={{
@@ -715,21 +751,44 @@ export default function ExecutiveScreen({
                         // largo da fileira e estourava o card no ponto em que os seis KPIs
                         // ainda cabem numa linha so.
                         font: '700 19px/1 var(--f-num)',
-                        color: k.destaque ? 'var(--ac-text)' : 'var(--tx-max)',
+                        color: 'var(--kpi-valor)',
                         marginTop: 7,
                         whiteSpace: 'nowrap',
                       }}
                     >
                       {formatarMetrica(m?.atual, k.formato)}
                       {k.contagem && carteira.kpis[k.contagem]?.atual !== null && (
-                        <span style={{ font: '500 12px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+                        <span style={{ font: '500 12px/1 var(--f-num)', color: 'var(--kpi-apoio)' }}>
                           {' '}({num(carteira.kpis[k.contagem]?.atual)})
                         </span>
                       )}
                     </div>
-                    <div style={{ marginTop: 6 }}>
+                    {/* A PÍLULA BRANCA SAIU (o Felipe achou feia, e ela era mesmo um
+                        remendo: um retângulo branco no meio de um card de cor).
+
+                        O delta é verde/vermelho por SIGNIFICADO — subiu bom, subiu ruim
+                        — e apagar isso custaria o principal do indicador. A saída é
+                        redefinir `--pos`/`--neg` AQUI, no card: o `Delta` os lê como
+                        `var(--pos, …)`, então basta declará-los no elemento pai para ele
+                        adotar tons claros, legíveis sobre cor cheia, sem que o componente
+                        saiba de nada nem ganhe prop nova.
+
+                        Os tons são pastéis dos mesmos verde e vermelho: sobre o turquesa
+                        e o magenta dos cards, ambos passam com folga, e a leitura
+                        bom/ruim continua imediata. */}
+                    <div
+                      style={{
+                        marginTop: 8,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        ['--pos' as string]: 'var(--kpi-pos)',
+                        ['--neg' as string]: 'var(--kpi-neg)',
+                        ['--tx-muted' as string]: 'var(--kpi-apoio)',
+                      } as CSSProperties}
+                    >
                       <Delta leitura={lerDelta(m, k.bomSubindo, METRICAS_EM_PONTOS.has(k.chave))} />
-                      <span style={{ font: '400 9px/1 var(--f-ui)', color: 'var(--tx-muted)', marginLeft: 4 }}>
+                      <span style={{ font: '400 9px/1 var(--f-ui)', color: 'var(--kpi-apoio)' }}>
                         vs M-1
                       </span>
                     </div>
@@ -753,7 +812,6 @@ export default function ExecutiveScreen({
             <div style={{ display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
               <Glass style={{ ...COLUNA_PRINCIPAL, padding: 0, overflow: 'hidden' }}>
                 <div
-                  className="cromo-escuro"
                   style={{
                     padding: '13px 16px 11px',
                     display: 'flex',
@@ -824,7 +882,7 @@ export default function ExecutiveScreen({
                   terminava em serrilha. */}
               <div style={{ ...COLUNA_TRILHO, display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <Glass style={{ flex: '1 1 auto', minHeight: 300, padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                  <div className="cromo-escuro" style={{ padding: '13px 16px 9px', font: '600 10.5px/1 var(--f-ui)', letterSpacing: '.09em', textTransform: 'uppercase', color: 'var(--tx-strong)', background: 'var(--surf-chrome)' }}>
+                  <div style={{ padding: '13px 16px 9px', font: '600 10.5px/1 var(--f-ui)', letterSpacing: '.09em', textTransform: 'uppercase', color: 'var(--tx-strong)', background: 'var(--surf-chrome)' }}>
                     Onde estão
                   </div>
                   {/* O mapa é quem ESTICA: `flex: 1` faz a altura dele ser a sobra da

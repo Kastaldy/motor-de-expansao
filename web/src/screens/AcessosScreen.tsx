@@ -859,7 +859,10 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
         background: 'var(--bg-base)',
       }}
     >
+      {/* `barra-ultra`: a mesma barra turquesa das outras telas. Era a ultima barra
+          superior do produto ainda branca. */}
       <header
+        className="barra-ultra"
         style={{
           flexShrink: 0,
           display: 'flex',
