@@ -309,7 +309,7 @@ ROTAS_LIVRES = frozenset(
 #: e' ela que responde "quem sou eu" DEPOIS do login (escopo do P19, §3).
 #:
 #: ESTA LISTA TEM UMA SEGUNDA REDACAO, e ela e' declarada de proposito: o matcher
-#: `@protegido` do `deploy/caddy/piloto-ar.Caddyfile.template` repete estes caminhos, porque
+#: `@protegido` do `deploy/caddy/piloto-br.Caddyfile.template` repete estes caminhos, porque
 #: o Caddy precisa saber o que NAO mandar ao `forward_auth` antes de falar com o backend.
 #: Duas redacoes da mesma regra desencontram em SILENCIO (licao da DEC-044), entao
 #: `test_piloto_web_verify.py` compara as duas e falha se uma andar sem a outra.

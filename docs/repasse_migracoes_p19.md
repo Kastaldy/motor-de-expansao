@@ -260,9 +260,12 @@ migrations podem ficar aplicadas — não atrapalham.
 ## O que este repasse **não** faz
 
 - **Não liga a autenticação própria.** A chave `MOTOR_AUTENTICACAO_PROPRIA` continua desligada,
-  e o Authelia segue autenticando. Virar essa chave é outro movimento, com outro repasse.
-- **Não instala o cron de expurgo.** As instruções estão no cabeçalho de
-  `scripts/cron/run_expurgo_sessoes.sh` e podem ser feitas depois, sem pressa.
+  e o Authelia segue autenticando. Virar essa chave é outro movimento, e ele tem documento
+  próprio: **`docs/repasse_corte_p19.md`**. Comece por ele quando for a hora — ele pressupõe
+  este aqui já executado.
+- **Não instala o cron de expurgo.** O passo está em `docs/repasse_corte_p19.md` (seção final),
+  porque o caminho de cópia não é óbvio: o script vive em `/opt/motor-expansao/app/scripts/cron/`
+  depois do `git pull`, e precisa ser copiado para `/opt/motor-expansao-infra/`.
 - **Não toca em dado de ninguém.** As três migrations só acrescentam tabela e colunas vazias.
 
 ---
