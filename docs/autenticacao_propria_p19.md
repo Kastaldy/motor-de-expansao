@@ -195,10 +195,31 @@ Nenhuma destas foi tomada. Estão aqui para não serem descobertas no meio da im
    Custo operacional evitado, e que pesou: cadastrar TOTP exige as pessoas presentes, uma a uma
    (`infra_producao.md:1026`), e perder o celular viraria um SEGUNDO caminho de recuperação, com
    toda a discussão da decisão 4 repetida.
-4. **Recuperação de senha** — hoje não existe caminho nenhum: quem esquece depende de um admin
-   redefinir pela tela. Autoatendimento exige e-mail, que o piloto não envia.
-5. **A borda.** O Caddy deixa de fazer *forward-auth*; o que fica no lugar (e o que acontece com os
-   headers `Remote-*` que o RBAC lê hoje) é decisão de infraestrutura, com execução na VPS sob o §6.
+4. ~~**Recuperação de senha**~~ — **DECIDIDA em 18/09/2026** (D31 + migration 019). Mediada por
+   administrador, **sem autoatendimento**: o piloto não envia e-mail, e essa foi a razão. Quem
+   esquece pede a um admin, que gera pelo painel de Acessos uma **senha temporária aleatória e só
+   daquela pessoa**, mostrada **uma única vez** e válida por **2 h** — gerar outra invalida a
+   anterior, e foi assim que "rever a senha durante a validade" foi atendido sem guardar nada
+   recuperável no banco.
+   > Esta linha ficou sem o tachado até 25/09/2026, enquanto as outras quatro já o tinham — e a
+   > omissão não era cosmética: a DEC-067 declara este item fechado e aponta para ESTA lista como
+   > a canônica, então quem viesse conferir encontrava aberto o que a DEC dá por resolvido. Junto
+   > com a numeração invertida no `CLAUDE.md` (que chamava a recuperação de "5a pergunta"), isso
+   > fazia três documentos discordarem sobre quais decisões estão de pé.
+5. **A borda.** **Corrigido em 25/09/2026:** até esta data esta linha dizia que *"o Caddy deixa de
+   fazer forward-auth"*, e a **DEC-067** (22/09/2026, `docs/decisions/DEC-067.md`, item **D4**)
+   propõe o OPOSTO — o Caddy **continua** fazendo `forward_auth`, mudando só o ALVO: do serviço
+   `authelia` para o nosso `/api/verify`. As duas premissas não podiam conviver (uma diz que a
+   borda some, a outra que ela fica), e **vale a da DEC**, que é o veículo canônico da decisão e é
+   mais recente que este levantamento (medido em 16/09).
+   Segue **ABERTA** como decisão, e é ela que condiciona a data do corte
+   (`banco-de-reservas/decisoes-pendentes.md:39`). Continua sendo decisão de infraestrutura, com
+   execução na VPS sob o §6.
+   **Sobre os headers `Remote-*` que o RBAC lê hoje, a resposta já está no código e não depende da
+   borda:** com o portão ligado, o motor **apaga** `remote-user`/`remote-email` de toda requisição e
+   reinjeta `remote-user` a partir do COOKIE (`web/server/app.py:413-432` e `:469-472`), e
+   `Remote-Groups`/`Remote-Name` não têm leitor nenhum no piloto (`web/server/acesso.py:313-315`).
+   Ver a correção do D4 na DEC-067.
 
 ## 8. O que este documento não é
 

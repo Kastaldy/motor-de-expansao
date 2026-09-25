@@ -432,6 +432,22 @@ def _sem_headers_de_identidade(scope: dict[str, Any]) -> list[tuple[bytes, bytes
     return [(nome, valor) for nome, valor in scope["headers"] if nome.lower() not in proibidos]
 
 
+def _valor_de_cabecalho(valor: str) -> str:
+    """Texto seguro para um header HTTP: latin-1, descartando o que nao couber.
+
+    `login_usuario` vem do BANCO e NAO tem restricao de charset (`usuarios.criar` so' exige
+    nao-vazio), entao um login acentuado e' estado legitimo. Header HTTP e' latin-1: o
+    Starlette LEVANTA ao codificar um caractere fora dela, e o estrago depende de onde isso
+    acontece -- no portao seria 500 na requisicao da pessoa; no `/api/verify` seria 500 que o
+    Caddy repassa como NEGACAO, ou seja, um login com acento trancaria o dono dele para fora
+    do piloto. Degradar o valor e' preferivel a derrubar a autenticacao.
+
+    Redacao UNICA de proposito: o portao e a rota de verificacao emitem a mesma identidade, e
+    duas normalizacoes diferentes da mesma string desencontrariam em silencio (DEC-044).
+    """
+    return valor.encode("latin-1", "ignore").decode("latin-1")
+
+
 @app.middleware("http")
 async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-untyped-def]
     from motor_expansao.db import sessoes as db_sessoes
@@ -468,7 +484,7 @@ async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-unt
     # ja' limpo -- nunca mesclagem com o que o cliente mandou.
     request.scope["headers"] = [
         *request.scope["headers"],
-        (b"remote-user", sessao.identidade.login.encode("latin-1", "ignore")),
+        (b"remote-user", _valor_de_cabecalho(sessao.identidade.login).encode("latin-1")),
     ]
 
     # TROCA DE SENHA PENDENTE: o portao NAO barra por causa dela, e isso e' decisao do dono
@@ -4818,6 +4834,140 @@ def logout(request: Request) -> Response:
     for nome in (acesso.COOKIE_SESSAO, acesso.COOKIE_SESSAO_DEV):
         resposta.delete_cookie(key=nome, path="/")
     return resposta
+
+
+#: Os headers que o `/api/verify` emite, e que o `copy_headers` do Caddy copia sobre a
+#: requisicao antes de entrega-la ao backend. A lista aqui e a do Caddyfile sao a MESMA
+#: decisao em dois lugares, e `test_piloto_web_verify.py` compara as duas.
+#:
+#: Por que a lista importa alem do contrato: `copy_headers` so' SOBRESCREVE o que a resposta
+#: de autenticacao TROUXE. Header que esta' no `copy_headers` e NAO sai daqui e' header que
+#: chega ao backend exatamente como o CLIENTE mandou -- o oposto do que a diretiva parece
+#: prometer. Por isso as duas listas tem de ser identicas, e por isso `Remote-Name` saiu das
+#: DUAS (zero leitores no piloto, medido em `acesso.HEADERS_DE_IDENTIDADE`).
+CABECALHOS_DE_VERIFICACAO = ("Remote-User", "Remote-Groups", "Remote-Email")
+
+#: Throttle do aviso de "chamaram o /api/verify com a autenticacao propria desligada". Uma vez
+#: por processo, no molde do `_fail_closed_logado` do `acesso.py` e pelo mesmo motivo: a rota e'
+#: PUBLICA, entao um laco de requisicoes viraria um aviso por request -- e a mensagem existe
+#: para o operador achar um erro de ORDEM no deploy, que nao muda de linha para linha.
+_verify_desligado_logado = False
+
+
+@app.get("/api/verify", include_in_schema=False)
+def verify(request: Request) -> Response:
+    """O `forward_auth` do D4 (DEC-067): valida o COOKIE e responde 200 + headers, ou 401.
+
+    E' o que substitui o `/api/verify` do Authelia. O CAMINHO e' o mesmo de proposito -- muda
+    so' o alvo do `forward_auth` --, entao a borda nao aprende rota nova e o rollback e'
+    reapontar uma linha do Caddyfile.
+
+    LE O COOKIE, NUNCA O HEADER, e isto nao e' estilo: `_portao_de_sessao` chama
+    `_sem_headers_de_identidade` ANTES de qualquer decisao, INCLUSIVE para rota publica, entao
+    quando esta funcao roda `remote-user` e `remote-email` ja' foram apagados da requisicao.
+    Uma versao que lesse header nasceria quebrada (leria sempre vazio) E insegura (no dia em
+    que a limpeza mudasse, passaria a confiar em identidade mandada pelo cliente). A trava 1
+    da DEC-067 -- "nao pode aceitar identidade vinda do cliente" -- e' literal aqui: a UNICA
+    entrada que esta rota honra e' o cookie, e o cookie so' vale porque o banco o reconhece.
+
+    SEM IDENTIDADE DE DESENVOLVIMENTO (trava 2 da DEC-067). `rbac.login_efetivo` cai no
+    `MOTOR_DEV_USUARIO` quando nao ha' header, e esta rota NAO o chama -- nem indiretamente.
+    `login_efetivo` existe para quem roda o backend na propria maquina, SEM Caddy; esta rota
+    so' e' chamada PORQUE ha' um Caddy na frente. Um fallback aqui faria de um deploy com
+    `MOTOR_CADASTRO_DIR` ausente um piloto inteiro autenticado como a env de dev -- que e'
+    exatamente "o modo de dev vira caminho de entrada em producao".
+
+    NAO TOCA A INATIVIDADE (`db_sessoes.tocar`), e a razao e' de custo sem ganho: o
+    `forward_auth` roda a cada requisicao protegida, e essa MESMA requisicao passa segundos
+    depois pelo `_portao_de_sessao`, que ja' valida e ja' toca. Tocar aqui dobraria a
+    transacao de ESCRITA (o toque roda fora da `conexao()` READ ONLY, num pool de 4 conexoes)
+    sem mover o relogio de 30 min um segundo -- os dois carimbos seriam o mesmo `now()`. O que
+    fica DECLARADO e' o custo que esta arquitetura tem mesmo assim: um `SELECT` indexado a
+    mais por requisicao protegida, porque o backend NAO confia no veredito da borda e revalida.
+
+    BANCO FORA DO AR: 503, NAO 401. O Caddy repassa ao cliente a resposta nao-2xx desta rota,
+    entao a escolha e' entre duas mensagens, nao entre negar e liberar (negar e' obrigatorio
+    nos dois casos). 401 AFIRMA "sua sessao expirou", o que e' FALSO -- as sessoes estao
+    intactas, so' nao da' para le'-las -- e a SPA trata 401 como queda de sessao
+    (`relatarAcessoNegado` em `lib/sessao.ts`), entao uma piscada de banco viraria logout em
+    massa e mandaria a rede para uma tela de login que tambem nao pode funcionar, porque o
+    login tambem depende do banco. 503 diz "tente de novo", que e' a verdade, e o estrago e'
+    menor do que parece: o matcher `@protegido` do Caddyfile deixa os estaticos FORA do
+    `forward_auth`, entao a SPA ainda carrega e mostra o erro em vez de tela branca. E' tambem
+    a MESMA resposta, com a MESMA mensagem, que o `_portao_de_sessao` ja' da' para esta falha
+    -- o Caddy repassa status E corpo da negacao, entao a pessoa le' a mesma frase venha ela
+    da borda ou de dentro. Duas respostas para a mesma causa e' como elas passam a divergir.
+    """
+    global _verify_desligado_logado
+    from motor_expansao.db import sessoes as db_sessoes
+
+    if not db_sessoes.ligada():
+        # FAIL-CLOSED, e a ordem de aplicacao na VPS depende disso: o Caddy nega tudo que nao
+        # for 2xx, entao apontar o `forward_auth` para ca' ANTES de ligar
+        # `MOTOR_AUTENTICACAO_PROPRIA` derruba o piloto inteiro. Responder 200 aqui evitaria a
+        # queda e seria muito pior: o piloto ficaria PUBLICO enquanto ninguem percebesse.
+        # O `warning` existe para o operador achar a causa em um `docker logs`, em vez de
+        # investigar um 404 generico espalhado por todas as rotas.
+        if not _verify_desligado_logado:
+            _LOG_D17.warning(
+                "/api/verify chamado com MOTOR_AUTENTICACAO_PROPRIA DESLIGADA — se o Caddy ja' "
+                "aponta para ca', ligue a env ANTES de trocar o alvo do forward_auth"
+            )
+            _verify_desligado_logado = True
+        raise HTTPException(404, "Not Found")
+
+    token = request.cookies.get(acesso.COOKIE_SESSAO) or request.cookies.get(
+        acesso.COOKIE_SESSAO_DEV
+    )
+    try:
+        sessao = db_sessoes.validar(token or "")
+    except Exception:  # noqa: BLE001 — ver "BANCO FORA DO AR" no docstring
+        _LOG_D17.exception("/api/verify: falha ao validar a sessao")
+        return JSONResponse(
+            {"detail": "Sessão indisponível no momento."},
+            status_code=503,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    if sessao is None:
+        return JSONResponse(
+            {"detail": "Sessão expirada ou inexistente."},
+            status_code=401,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    # `no-store` obrigatorio: o corpo e' vazio, mas os HEADERS sao a identidade de uma pessoa.
+    # Sem ele, um intermediario do caminho poderia reusar esta resposta -- e reusar um veredito
+    # de autenticacao e' servir a sessao de alguem para outra pessoa.
+    #
+    # `Remote-Groups` = o PERFIL do RBAC (`expansao`/`consultoria`/`lideres`/`growth`). E' o
+    # equivalente honesto do que o Authelia servia: grupo, ou seja, a que conjunto de pessoas
+    # esta pertence. Nao sao as PERMISSOES de proposito -- publicar a lista de capacidades num
+    # header seria uma segunda redacao de `REGRAS_POR_CAPACIDADE` num lugar onde ninguem a
+    # aplica, e a autorizacao continua sendo decidida no processo, pelo RBAC.
+    #
+    # E fica DITO que hoje ele NAO alimenta nada: a propria DEC-067 mede que `Remote-Groups`
+    # tem zero leitores no piloto. Ele sai daqui por duas razoes que independem disso -- o
+    # contrato do D4, e a propriedade do `copy_headers` (o que a rota nao emite, o Caddy
+    # deixa passar como o CLIENTE mandou).
+    #
+    # `Remote-Email` sai VAZIO, e e' escolha. O header precisa EXISTIR (ver
+    # `CABECALHOS_DE_VERIFICACAO`), mas o valor nao tem consumidor depois do corte: os dois
+    # leitores de `remote-email` em `app.py` sao FALLBACK de `remote-user` (`_registrar_acesso`
+    # faz `remote-user or remote-email`), e `remote-user` passa a vir sempre; alem disso o
+    # portao APAGA `remote-email` de toda requisicao, entao nenhum valor emitido aqui seria
+    # lido. Carregar o e-mail custaria PII atravessando a borda (e logs de borda) para ninguem,
+    # e uma coluna a mais em `SQL_VALIDAR` -- que e' exatamente o custo por requisicao que a
+    # remocao de `deve_trocar_senha_usuario` acabou de tirar de la', em 25/09.
+    return Response(
+        status_code=200,
+        headers={
+            "Remote-User": _valor_de_cabecalho(sessao.identidade.login),
+            "Remote-Groups": _valor_de_cabecalho(sessao.identidade.perfil),
+            "Remote-Email": "",
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 def _derrubar_sessoes(id_alvo: int, *, autor: int, motivo: str) -> None:

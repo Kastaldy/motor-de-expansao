@@ -42,7 +42,15 @@ _TETO_AGENTE = 200
 
 #: Rotas que nao dizem nada sobre uso humano. O `/api/health` bate a cada 30s
 #: (healthcheck do compose) e afogaria a trilha com ruido de maquina.
-_ROTAS_IGNORADAS = {"/api/health"}
+#:
+#: `/api/verify` entra pelo MESMO motivo, e o efeito dela e' maior: ela e' o `forward_auth`
+#: do D4 (DEC-067), entao a borda a chama UMA VEZ POR REQUISICAO PROTEGIDA. Sem esta linha,
+#: no dia do corte a trilha da DEC-027 DOBRA de tamanho -- e a metade nova nao diz nada, porque
+#: cada `/api/verify` e' o eco da requisicao real que vem logo atras e ja' tem linha propria.
+#: Pior que o volume: a pergunta que a trilha responde e' "quem fez o que", e essas linhas
+#: respondem "a borda perguntou se alguem podia" -- ruido com forma de resposta. A retencao de
+#: 90 dias tambem paga: dobrar o volume e' dobrar o dado pessoal guardado pelo mesmo prazo.
+_ROTAS_IGNORADAS = {"/api/health", "/api/verify"}
 _PREFIXOS_IGNORADOS = ("/assets/",)
 #: Estaticos do SPA servidos pelo mount de raiz (js/fontes/imagens/sourcemaps).
 _EXTENSOES_IGNORADAS = re.compile(

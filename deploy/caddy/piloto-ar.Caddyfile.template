@@ -4,27 +4,64 @@
 # secrets/Caddyfile.enc) e vive na VPS em /opt/motor-expansao/app/Caddyfile.
 # Aplicacao (cada comando na VPS com aprovacao do Felipe, comando a comando —
 # CLAUDE.md §6):
-#   1. Anexar este bloco ao Caddyfile da VPS (ao lado do bloco de
+#   1. LIGAR `MOTOR_AUTENTICACAO_PROPRIA` no servico web ANTES de tocar neste bloco.
+#      A ordem nao e' preferencia: com a env desligada o `/api/verify` responde 404
+#      (fail-closed deliberado, ver o docstring da rota), o Caddy nega tudo que nao for
+#      2xx, e o piloto cai inteiro. Ligar depois inverte o risco para o lado errado.
+#   2. Anexar este bloco ao Caddyfile da VPS (ao lado do bloco de
 #      piloto.ultra-expansao.tech — docs/deploy_piloto_web.md §3).
-#   2. A regra do Authelia para piloto-ar.ultra-expansao.tech JA EXISTE (Bloco D,
-#      aplicado na VPS em 2026-09-03; backups no PR #308): subject group:expansao_ar,
-#      e as regras BR ja tem group:expansao_br. Resta so conceder o grupo
-#      expansao_ar aos usuarios AR no users_database.yml.
-#   3. Recarregar sem downtime:
+#   3. O bloco BR precisa da MESMA troca no mesmo corte. Ele e' gitignored e vive so' na
+#      VPS: se so' o AR migrar, o BR segue pedindo ao Authelia um veredito que o Authelia
+#      nao emite mais depois que ele sair, e o piloto BR fica sem borda.
+#   4. Recarregar sem downtime:
 #      docker compose -f docker-compose.prod.yml exec caddy \
 #          caddy reload --config /etc/caddy/Caddyfile
-#   4. Atualizar o backup cifrado (sops secrets/Caddyfile.enc).
+#   5. Atualizar o backup cifrado (sops secrets/Caddyfile.enc).
 #
 # Espelha o bloco BR (docs/deploy_piloto_web.md §3) com UMA diferenca deliberada:
 # o BR usa `reverse_proxy web:8899` (alias de SERVICO, valido porque Caddy e `web`
 # estao no MESMO compose). O alias de servico NAO cruza projects diferentes — o
 # `web_ar` mora no docker-compose.ar.yml (project motor-expansao-ar) — entao aqui
 # o alvo e' o container_name, que e' resolvido na rede compartilhada app_app_net.
+#
+# --- D4 da DEC-067: a borda FICA, o alvo do forward_auth e' que muda -------------
+# Ate' 2026-09-25 este bloco perguntava ao `authelia:9091`. Agora pergunta ao proprio
+# backend. O CAMINHO continua `/api/verify` DE PROPOSITO: a borda nao aprende rota nova,
+# o diff do Caddyfile e' de uma palavra, e o rollback e' reapontar essa palavra. Quem
+# responde e' `web/server/app.py::verify`.
+#
+# Requisicao sem sessao continua NAO CHEGANDO a' aplicacao — que e' o ganho inteiro de
+# manter o `forward_auth` em vez de confiar so' no middleware de dentro.
 
 piloto-ar.ultra-expansao.tech {
-    forward_auth authelia:9091 {
-        uri /api/verify?rd=https://auth.ultra-expansao.tech
-        copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
+    # O que a borda protege. Sem este matcher o `forward_auth` cobriria TAMBEM os
+    # estaticos, e a tela de login (que e' a propria SPA, servida por este mesmo host)
+    # ficaria atras da autenticacao que ela existe para obter: o unico estado alcancavel
+    # por quem nao tem sessao seria 401 em tela branca, sem formulario onde digitar a senha.
+    #
+    # A lista de excecoes e' a SEGUNDA REDACAO de `acesso.ROTAS_PUBLICAS_SEM_SESSAO`, e
+    # so' existe porque o Caddy precisa decidir antes de falar com o backend. Duas
+    # redacoes da mesma regra desencontram em silencio (DEC-044), entao
+    # `tests/unit/test_piloto_web_verify.py` compara as duas e falha se uma andar sozinha.
+    # Nao e' defesa unica: o `_portao_de_sessao` revalida tudo la' dentro, e e' ele que
+    # manda — a borda encolhe o raio de explosao, nao substitui o portao.
+    @protegido {
+        path /api/*
+        not path /api/login /api/logout /api/health /api/verify
+    }
+    forward_auth @protegido motor_expansao_web_ar:8899 {
+        # Sem `?rd=` — o parametro existia para mandar a pessoa ao host de login do
+        # Authelia (auth.ultra-expansao.tech), que deixa de existir. O login agora e' uma
+        # tela da propria SPA, servida por este host e FORA do `@protegido`, entao o
+        # navegador a alcanca sem redirecionamento nenhum; quem leva a pessoa ate' ela e' o
+        # `relatarAcessoNegado()` de `web/src/lib/sessao.ts`, que ja' trata 401 assim.
+        uri /api/verify
+        # EXATAMENTE os headers que a rota EMITE (`app.CABECALHOS_DE_VERIFICACAO`), nem um
+        # a mais: `copy_headers` so' sobrescreve o que a resposta de autenticacao trouxe,
+        # entao um nome listado aqui que a rota nao emite chega ao backend como o CLIENTE
+        # mandou — o oposto do que a diretiva parece prometer. `Remote-Name` saiu por isso
+        # (e porque tem zero leitores no piloto, medido em `acesso.HEADERS_DE_IDENTIDADE`).
+        copy_headers Remote-User Remote-Groups Remote-Email
     }
     reverse_proxy motor_expansao_web_ar:8899
     # Access log de edge do host AR (DEC-027 — metade da trilha: IP real, user-agent,

@@ -190,6 +190,23 @@ docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN \
   ok  colunas geometricas: 7 (esperado 7)
 ```
 
+> **Vai sair um AVISO junto, e ele é ESPERADO aqui — não pare por causa dele.** Depois dos seis
+> números, o comando imprime uma seção `== provisionamento (D20) ==` e, no fim dela:
+>
+> ```
+>   AVISO: este papel tem INSERT direto em perfil_permissoes_historico. Num
+>   cluster de teste isso e' esperado (voce conecta como dono); em PRODUCAO
+>   significa que o D20 nao esta de pe e a auditoria da 009 nao protege nada.
+> ```
+>
+> Ele sai **sempre neste passo**, e não é sintoma de nada: o passo 3 exportou
+> `MOTOR_DATABASE_URL_ADMIN`, que é a credencial do **dono do schema** — e o dono tem INSERT em
+> qualquer tabela dele por construção. O aviso existe para o caso de alguém rodar este comando
+> com a credencial da **aplicação**; aí ele seria grave.
+>
+> Quem responde de verdade por essa pergunta é o comando logo abaixo, que roda com a credencial
+> do piloto. É o resultado **dele** que decide se o D20 está de pé.
+
 Agora a checagem de privilégios, **com a credencial da aplicação** (não a de dono):
 
 ```bash

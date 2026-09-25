@@ -263,6 +263,12 @@ ROTAS_LIVRES = frozenset(
         # razao: rota `/api/*` sem decisao e' decisao que faltou tomar.
         "/api/login",
         "/api/logout",
+        # P19/D4 da DEC-067: o `forward_auth` do Caddy bate AQUI a cada requisicao protegida.
+        # Livre dos portoes de ABA e de PAIS pela mesma razao das duas de cima -- e uma a mais,
+        # que e' a que importa: quem pergunta e' a BORDA, antes de existir identidade nenhuma.
+        # Um gate de aba sobre ela transformaria "esta pessoa nao ve a aba Executiva" em "a
+        # borda nao consegue autenticar ninguem", e o piloto inteiro cairia com 403.
+        "/api/verify",
     }
 )
 
@@ -294,9 +300,22 @@ ROTAS_LIVRES = frozenset(
 #:   * `/api/health` -- emudecido por decisao de pentest e usado pelo healthcheck do
 #:     container, que nao tem cookie nenhum. Amarrar os dois faria o Docker reiniciar o
 #:     `web` por falta de login.
+#:   * `/api/verify` -- e' o `forward_auth` do D4 (DEC-067). Exigir sessao dela seria
+#:     circular: o portao a 401 antes de ela poder DIZER se ha' sessao, e a borda leria esse
+#:     401 como "ninguem esta' autenticado" para TODA requisicao do piloto. Ela nao e'
+#:     publica por descuido -- ela e' a rota que RESPONDE a pergunta, e por isso valida o
+#:     cookie por conta propria, dentro dela.
 #: NAO entra aqui `/api/me`: ela e' a PRIMEIRA chamada da SPA e passa a exigir sessao --
 #: e' ela que responde "quem sou eu" DEPOIS do login (escopo do P19, §3).
-ROTAS_PUBLICAS_SEM_SESSAO = frozenset({"/api/login", "/api/logout", "/api/health"})
+#:
+#: ESTA LISTA TEM UMA SEGUNDA REDACAO, e ela e' declarada de proposito: o matcher
+#: `@protegido` do `deploy/caddy/piloto-ar.Caddyfile.template` repete estes caminhos, porque
+#: o Caddy precisa saber o que NAO mandar ao `forward_auth` antes de falar com o backend.
+#: Duas redacoes da mesma regra desencontram em SILENCIO (licao da DEC-044), entao
+#: `test_piloto_web_verify.py` compara as duas e falha se uma andar sem a outra.
+ROTAS_PUBLICAS_SEM_SESSAO = frozenset(
+    {"/api/login", "/api/logout", "/api/health", "/api/verify"}
+)
 
 #: Nome do cookie. `__Host-` nao e' enfeite: o prefixo obriga `Secure`, `Path=/` e ausencia
 #: de `Domain`, e o navegador RECUSA o cookie se qualquer um faltar -- ou seja, a regra passa
