@@ -17,6 +17,22 @@
    ESTÁ DORMENTE, como o resto da epic: nada aqui roda enquanto o Authelia autenticar.
    --------------------------------------------------------------------------- */
 
+/**
+ * Espelham `MAX_TENTATIVAS` / `JANELA_TENTATIVAS_MIN` de `db/sessoes.py`.
+ *
+ * A tela precisa deles porque o servidor **não diz** que trancou: a trava responde o
+ * MESMO 401 com a MESMA mensagem de uma senha errada, de propósito — dizer "conta
+ * bloqueada" avisaria a quem varre nomes que acertou um. Sem campo que os separe,
+ * contar no cliente é a única forma de a tela dizer algo mais útil na enésima tentativa.
+ *
+ * Divergir daqui não quebra nada (o servidor manda), mas faz a tela prometer uma régua
+ * que não existe — então mude os dois juntos. Até 25/09/2026 a tela falava em "4
+ * tentativas" e "bloqueado por 10 minutos": eram os números do AUTHELIA (`max_retries 4`,
+ * `ban_time 10m`) vazados para dentro do nosso vocabulário.
+ */
+export const MAX_TENTATIVAS = 5
+export const JANELA_TENTATIVAS_MIN = 15
+
 /** O que o servidor devolve quando a entrada dá certo. */
 export interface EntradaAceita {
   /** A pessoa ainda está numa senha que não escolheu e deve trocá-la agora. */

@@ -31,8 +31,14 @@ export const MENSAGEM_FALHA: Readonly<Record<FalhaLogin, string>> = Object.freez
   /* Mensagem DELIBERADAMENTE ambigua entre "usuario nao existe" e "senha errada": dizer
      qual dos dois falhou entrega a quem sonda a lista de quem tem conta. */
   credencial: 'Usuário ou senha incorretos.',
+  /* A régua é do NOSSO servidor desde 25/09/2026: `MAX_TENTATIVAS` recusas numa janela
+     MÓVEL de `JANELA_TENTATIVAS_MIN` minutos (`db/sessoes.py`). Antes esta frase dizia
+     "bloqueado por 10 minutos", que é o `ban_time` do Authelia — e a diferença não é
+     detalhe: lá havia um relógio fixo para esperar, aqui a janela DESLIZA, então o que
+     destrava é a tentativa mais antiga envelhecer. Prometer "10 minutos" mandaria a
+     pessoa esperar um prazo que não existe. */
   bloqueado:
-    'Muitas tentativas seguidas. Por segurança, o acesso ficou bloqueado por 10 minutos — aguarde e tente de novo.',
+    'Muitas tentativas seguidas. Por segurança, o acesso ficou bloqueado — aguarde alguns minutos antes de tentar de novo, ou peça a um administrador para redefinir a sua senha.',
   indisponivel:
     'Não foi possível falar com o servidor de autenticação. Ele pode estar reiniciando.',
   'nao-ligado':

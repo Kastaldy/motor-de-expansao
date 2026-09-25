@@ -35,10 +35,13 @@ import { useUfsDaBase } from '../lib/base-contexto'
  * As decisões de segurança que a tela já respeita, e que não são pintura:
  *
  *  - a mensagem de credencial é AMBÍGUA entre usuário e senha, de propósito;
- *  - o bloqueio por tentativas tem mensagem PRÓPRIA (o Authelia bane por 10 min após 4
- *    erros em 2 min — `regulation`, lido na VPS em 2026-09-22): traduzi-lo como "senha
- *    errada" deixaria a pessoa repetindo a senha certa durante o banimento;
- *  - campo vazio não vai ao servidor, para não gastar uma das 4 tentativas;
+ *  - o bloqueio por tentativas tem mensagem PRÓPRIA: traduzi-lo como "senha errada"
+ *    deixaria a pessoa repetindo a senha certa enquanto a trava dura. A régua é a do
+ *    NOSSO servidor desde 25/09/2026 — `MAX_TENTATIVAS` recusas numa janela MÓVEL de
+ *    `JANELA_TENTATIVAS_MIN` minutos (`lib/login-motor.ts`, espelhando `db/sessoes.py`).
+ *    Até essa data este comentário descrevia o `regulation` do Authelia (4 erros em
+ *    2 min, banimento de 10 min), que deixa de existir no corte;
+ *  - campo vazio não vai ao servidor, para não gastar uma das tentativas da trava;
  *  - o `<form>` é `<form>` de verdade, com `type="submit"`: o Enter no campo de senha
  *    precisa entrar, e gerenciador de senha precisa reconhecer o par.
  *

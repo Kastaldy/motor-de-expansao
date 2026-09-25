@@ -278,13 +278,16 @@ function fontesDe(dir: string): string[] {
  * motivo escrito: exceção sem motivo é guarda furada com álibi.
  */
 const FORA_DA_GUARDA: Record<string, string> = {
-  'entrar.tsx':
-    'É a TELA DE ENTRAR, e os dois relatores fariam o oposto do certo ali. ' +
-    '`relatarAcessoNegado` existe para dizer "sua sessão caiu, entre de novo" — mas na ' +
-    'tela de login o 401 é senha errada, e o aviso mandaria a pessoa entrar de novo na ' +
-    'tela em que ela já está. `relatarFalhaDeRede` alimenta a sonda que separa "servidor ' +
-    'fora" de "sessão vencida"; sem sessão para vencer, ela só poderia concluir o ramo ' +
-    'errado. Quem chega aqui ainda não entrou: não há sessão a monitorar.',
+  /* `entrar.tsx` SAIU desta lista em 25/09/2026, e a saída é o sinal de que o desenho
+     melhorou: ela deixou de chamar `fetch` na mão (falava com o `/api/firstfactor` do
+     Authelia) e passou a usar `api.entrar()`, que vai pelo `pedir` — um dono do mecanismo.
+
+     A razão que a mantinha aqui continua verdadeira e NÃO se perdeu: na tela de login o
+     401 é senha errada, não sessão caída, e anunciar queda mandaria a pessoa entrar de
+     novo na tela em que ela já está. Só que agora isso é imposto por CÓDIGO, e não por
+     exceção declarada — `ehQuedaDeSessao('/api/login')` devolve `false` em
+     `lib/login-motor.ts`, e `pedir` a consulta antes de relatar. Guarda que vira código
+     é guarda que não depende de alguém manter uma lista. */
 }
 
 const chamadoresProprios = fontesDe(RAIZ_SRC)

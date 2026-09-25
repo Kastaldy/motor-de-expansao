@@ -74,12 +74,20 @@ describe('MENSAGEM_FALHA', () => {
     expect(m).not.toMatch(/não existe|inexistente|não encontrado/)
   })
 
-  it('o bloqueio diz que e bloqueio, e por quanto tempo', () => {
-    /* A regua vem do `regulation` do Authelia (4 tentativas / 2 min / ban de 10 min).
-       Se ela mudar la, esta mensagem mente — e o teste e o lembrete disso. */
+  it('o bloqueio diz que e bloqueio e oferece uma saida, SEM prometer prazo', () => {
+    /* Ate' 25/09/2026 este teste exigia a string "10 minutos", que era o `ban_time` do
+       `regulation` do Authelia. A regua passou a ser a NOSSA — `MAX_TENTATIVAS` recusas
+       numa janela MOVEL de `JANELA_TENTATIVAS_MIN` minutos (`db/sessoes.py`) — e a
+       diferenca nao e' de numero, e' de NATUREZA: la' havia um relogio fixo para esperar;
+       aqui a janela DESLIZA, entao o que destrava e' a tentativa mais antiga envelhecer.
+       Prometer um prazo mandaria a pessoa esperar algo que nao existe.
+
+       O teste agora PROIBE o prazo em vez de exigi-lo, e cobra a saida que sempre
+       funciona: pedir a um administrador para redefinir (redefinir DESTRAVA a conta). */
     const m = MENSAGEM_FALHA.bloqueado.toLowerCase()
     expect(m).toContain('bloque')
-    expect(m).toContain('10 minutos')
+    expect(m).not.toMatch(/\d+\s*minutos?/)
+    expect(m).toContain('administrador')
   })
 
   it('e congelado', () => {
