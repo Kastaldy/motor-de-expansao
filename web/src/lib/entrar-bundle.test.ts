@@ -80,4 +80,24 @@ describe('tela de entrar: caminhos de asset', () => {
     // para ninguem.
     expect(tela.match(/onAnimationStart=\{aoAutoPreencher\}/g)).toHaveLength(2)
   })
+
+  it('a habilitacao NAO depende de ler o valor autopreenchido', () => {
+    /* O defeito voltou uma vez por isto (relato de 25/09: "o botao so' fica azul
+       depois que eu clico na tela, independente de onde seja o clique").
+
+       O Chrome preenche os campos na carga mas SEGURA o valor da senha ate' haver um
+       gesto do usuario — `input.value` devolve vazio antes disso, e o clique em
+       qualquer lugar e' o gesto que libera. Uma correcao que sincronize o estado
+       lendo o DOM le' VAZIO e conclui "campo vazio": foi a 1a tentativa, e ela nao
+       resolveu.
+
+       O que sustenta o botao e' a PRESENCA do autofill (`auto`), nao o valor. E o
+       envio le' o DOM, porque ali o gesto ja' aconteceu. Estas duas travas sao o que
+       impede a regressao. */
+    const tela = ler('screens/LoginScreen.tsx')
+    expect(tela).toMatch(/podeEnviar\(usuario,\s*senha,\s*estado,\s*auto\)/)
+    expect(tela).toMatch(/matches\(':-webkit-autofill'\)/)
+    expect(tela).toMatch(/refUsuario\.current\?\.value\s*\|\|\s*usuario/)
+    expect(tela).toMatch(/refSenha\.current\?\.value\s*\|\|\s*senha/)
+  })
 })
