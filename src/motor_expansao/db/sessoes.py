@@ -153,14 +153,15 @@ WHERE criado_em_sessao < now() - make_interval(days => %s)
 # `make_interval(mins => %s)` e nao f-string: o SQL deste repo nao se monta por concatenacao
 # (politica do `postgres.py`), e um intervalo interpolado seria a primeira excecao.
 #
-# `deve_trocar_senha_usuario` (D31) vem junto porque a TROCA E' BLOQUEIO desde 18/09/2026: o
-# portao de sessao precisa saber, a cada requisicao, se esta pessoa ainda esta' devendo a troca.
-# Buscar isso a parte seria uma segunda ida ao banco por requisicao guardada, para um dado que
-# ja' esta' na linha que este JOIN le'.
+# `deve_trocar_senha_usuario` esteve nesta projecao entre 18/09 e 25/09/2026, quando a troca era
+# BLOQUEIO e o portao de sessao precisava do dado a cada requisicao. O dono reverteu para
+# RECOMENDADA em 25/09, o unico leitor sumiu, e a coluna saiu daqui: dado lido por requisicao sem
+# consumidor e' custo por requisicao. Quem pergunta pelo estado da senha e' `/api/me`, uma vez por
+# carga da SPA, por consulta propria (`_estado_da_minha_senha`). A COLUNA no banco continua -- e'
+# a projecao desta consulta que nao a carrega mais.
 SQL_VALIDAR = """
 SELECT u.id_usuario, p.nome_perfil, pe.chave,
-       u.login_usuario, s.id_sessao, s.ultimo_acesso_em_sessao,
-       u.deve_trocar_senha_usuario
+       u.login_usuario, s.id_sessao, s.ultimo_acesso_em_sessao
 FROM sessoes s
 JOIN usuarios u ON u.id_usuario = s.id_usuario
 JOIN perfis p ON p.id_perfil = u.id_perfil
@@ -218,10 +219,6 @@ class SessaoValida:
     identidade: Identidade
     id_sessao: int
     ultimo_acesso: object
-    #: Esta pessoa ainda deve trocar a senha? Desde a D31 isso BARRA as rotas de dados, em vez
-    #: de so' sugerir o modal na tela -- senao quem recebe a senha temporaria dispensa o aviso e
-    #: fica nela ate' vencer.
-    deve_trocar: bool = False
 
 
 def ligada() -> bool:
@@ -298,7 +295,7 @@ def validar(token: str) -> SessaoValida | None:
     if not linhas:
         return None
 
-    id_usuario, perfil, _chave, login, id_sessao, ultimo_acesso, deve_trocar = linhas[0]
+    id_usuario, perfil, _chave, login, id_sessao, ultimo_acesso = linhas[0]
     # `chave` vem NULL quando o perfil nao tem permissao nenhuma (LEFT JOIN): a pessoa
     # existe e nao pode nada. Distinto de nao existir, e o chamador precisa distinguir.
     chaves = frozenset(linha[2] for linha in linhas if linha[2] is not None)
@@ -316,7 +313,6 @@ def validar(token: str) -> SessaoValida | None:
         ),
         id_sessao=id_sessao,
         ultimo_acesso=ultimo_acesso,
-        deve_trocar=bool(deve_trocar),
     )
 
 

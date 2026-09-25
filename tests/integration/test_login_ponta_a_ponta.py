@@ -50,7 +50,8 @@ from motor_expansao.db import senhas as db_senhas  # noqa: E402
 from motor_expansao.db import sessoes as db_sessoes  # noqa: E402
 from motor_expansao.db import usuarios as db_usuarios  # noqa: E402
 
-#: Senhas do ensaio. Acima do piso de 12 e sem forma de credencial real -- este arquivo é lido
+#: Senhas do ensaio. Bem acima de `senhas.MINIMO_DE_CARACTERES` (8 desde 25/09/2026; era 12) e
+#: sem forma de credencial real -- este arquivo é lido
 #: por gente, e "senha de exemplo" no fonte é como um literal vira default de verdade depois.
 SENHA_ESCOLHIDA = "cavalo-bateria-grampo"
 SENHA_SEGUINTE = "outra-frase-comprida"
@@ -234,7 +235,6 @@ def test_entra_com_a_senha_certa(con: Any, pessoa: dict[str, Any]) -> None:
     valida = db_sessoes.validar(aberta.token)
     assert valida is not None
     assert valida.identidade.id_usuario == pessoa["id"]
-    assert valida.deve_trocar is False
 
 
 def test_cinco_recusas_trancam_a_conta(con: Any, pessoa: dict[str, Any]) -> None:
@@ -364,14 +364,29 @@ def test_trocar_a_propria_senha_LIMPA_o_prazo(con: Any, pessoa: dict[str, Any], 
     assert db_senhas.verificar(SENHA_SEGUINTE, credencial.senha_hash)
 
 
-def test_a_sessao_carrega_a_marca_de_troca(con: Any, pessoa: dict[str, Any], admin: int) -> None:
-    """É o que o portão de sessão lê a cada requisição para aplicar o bloqueio (D31)."""
+def test_a_marca_de_troca_fica_no_banco_e_NAO_barra_a_sessao(
+    con: Any, pessoa: dict[str, Any], admin: int
+) -> None:
+    """Redefinir marca a coluna, e a sessão abre e vale assim mesmo.
+
+    Entre 18/09 e 25/09/2026 esta marca BARRAVA as rotas de dados; o dono reverteu para
+    RECOMENDADA. As duas metades são medidas aqui contra o banco real: a coluna continua sendo
+    escrita (é dela que `/api/me` monta o convite da tela) e a sessão continua válida.
+    """
     db_usuarios.redefinir_senha(pessoa["id"], autor=admin)
+
+    with con.cursor() as cur:
+        cur.execute(
+            "SELECT deve_trocar_senha_usuario FROM usuarios WHERE id_usuario = %s",
+            (pessoa["id"],),
+        )
+        assert cur.fetchone()[0] is True, "redefinir deixou de marcar a troca devida"
+
     aberta = db_sessoes.abrir(id_usuario=pessoa["id"])
     valida = db_sessoes.validar(aberta.token)
 
-    assert valida is not None
-    assert valida.deve_trocar is True, "a sessão não sabe que a pessoa deve trocar a senha"
+    assert valida is not None, "a sessão foi recusada por uma troca que é apenas recomendada"
+    assert valida.identidade.id_usuario == pessoa["id"]
 
 
 def test_redefinir_REVOGA_as_sessoes_abertas(pessoa: dict[str, Any], admin: int) -> None:

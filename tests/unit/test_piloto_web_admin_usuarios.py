@@ -478,16 +478,26 @@ def test_senha_fraca_e_422(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(pilot_app, "_minha_identidade", lambda _u: _Eu())
 
+    # A mensagem sai da POLITICA DE VERDADE, e nao de um literal: ate' 25/09/2026 este dublê
+    # dizia "pelo menos 12 caracteres" cravado. O dono baixou o piso para 8 e este teste
+    # continuou VERDE ensinando o numero errado -- dublê que inventa a propria mensagem nao
+    # mede nada e ainda vira documentacao falsa do que a pessoa vai ler.
+    piso = senhas.MINIMO_DE_CARACTERES
+    curta = "a" * (piso - 1)
+    with pytest.raises(senhas.SenhaFraca) as reprovada:
+        senhas.validar(curta)
+    mensagem_real = str(reprovada.value)
+
     def _trocar(**_k: Any) -> None:
-        raise senhas.SenhaFraca("A senha precisa de pelo menos 12 caracteres.")
+        raise senhas.SenhaFraca(mensagem_real)
 
     monkeypatch.setattr(db_usuarios, "trocar_a_propria_senha", _trocar)
     with pytest.raises(HTTPException) as caiu:
         pilot_app.me_trocar_senha(
-            pilot_app.MinhaSenhaIn(senha_atual="x", nova_senha="curta"), remote_user=ADMIN
+            pilot_app.MinhaSenhaIn(senha_atual="x", nova_senha=curta), remote_user=ADMIN
         )
     assert caiu.value.status_code == 422
-    assert "12 caracteres" in str(caiu.value.detail)
+    assert f"{piso} caracteres" in str(caiu.value.detail)
 
 
 def test_sem_cadastro_no_banco_a_mensagem_nao_fala_da_allowlist(

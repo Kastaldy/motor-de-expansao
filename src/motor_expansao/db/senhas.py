@@ -60,7 +60,16 @@ BYTES_DE_CHAVE = 32
 #: uma letra trocada e um ano no fim, o que da' sensacao de rigor sem ganho mensuravel. Por isso
 #: aqui ha piso de tamanho e nada mais. (Nenhum exemplo literal neste arquivo, de proposito: ver
 #: `test_o_modulo_nao_carrega_senha_nenhuma_no_fonte`.)
-MINIMO_DE_CARACTERES = 12
+#:
+#: 8 por decisao do dono em 25/09/2026; era 12. O 8 e' o piso do proprio NIST SP 800-63B para
+#: senha escolhida por pessoa, entao a politica continua dentro da referencia que a justifica --
+#: mas a folga encurtou, e o que sustenta o resto sao as camadas VIZINHAS, nao este numero:
+#: Argon2id com os parametros do Authelia (custo por tentativa) e a trava de 5 tentativas em
+#: 15 minutos de `db/sessoes.py` (custo de VOLUME, que e' o que mata ataque online).
+#: Quem mexer aqui para baixo de novo precisa olhar aquelas duas antes.
+#:
+#: NAO vale para a senha TEMPORARIA, que nasce com 14 e nao passa por escolha humana.
+MINIMO_DE_CARACTERES = 8
 
 #: Teto, e ele e' defesa e nao usabilidade: Argon2 com custo de memoria fixo processa entrada
 #: arbitrariamente longa, entao aceitar megabytes num endpoint publico e' negacao de servico de
@@ -76,7 +85,10 @@ ALFABETO_TEMPORARIA = "abcdefghjkmnpqrstuvwxyz23456789"
 #: Tres grupos de quatro, separados por hifen. O hifen e' so' leitura: quem digita em bloco erra
 #: menos com a senha fatiada, e `validar` nao se importa. 12 caracteres de um alfabeto de 31 dao
 #: ~59 bits -- folgado demais para um segredo que morre em duas horas, e o custo de folga aqui e'
-#: zero. O total com hifens e' 14, acima do piso de 12 exigido por `validar`.
+#: zero. O total com hifens e' 14, acima do piso exigido por `validar` (8 desde 25/09/2026).
+#: Estes 12 NAO acompanham aquele piso: sao dimensionados pela entropia acima, e a temporaria
+#: nao e' escolhida por ninguem -- baixa-los para seguir o minimo enfraqueceria um segredo que
+#: e' gerado, ditado por telefone e descartado.
 GRUPOS_DA_TEMPORARIA = 3
 CARACTERES_POR_GRUPO = 4
 

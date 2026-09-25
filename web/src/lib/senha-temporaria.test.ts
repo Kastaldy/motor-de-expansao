@@ -21,7 +21,8 @@ describe('o aviso que acompanha a senha', () => {
 
   it('avisa que a pessoa terá de criar a própria senha', () => {
     // Sem isso o admin repassa a temporária como se fosse definitiva, e a pessoa estranha o
-    // modal obrigatório na entrada.
+    // aviso na entrada. A troca é OFERECIDA desde 25/09/2026 (o modal tem "Agora não"), então
+    // o que aperta é o PRAZO: a temporária vence em 2 h e depois disso tranca a pessoa.
     expect(avisoDaSenha(2)).toContain('própria senha')
   })
 })

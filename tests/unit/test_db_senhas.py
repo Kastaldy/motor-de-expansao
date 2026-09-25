@@ -64,15 +64,25 @@ def test_o_modulo_nao_carrega_senha_nenhuma_no_fonte() -> None:
         assert suspeita not in fonte, f"literal com forma de credencial no fonte: {suspeita!r}"
 
 
-@pytest.mark.parametrize("curta", ["", "abc", "12345678901"])
+@pytest.mark.parametrize(
+    "curta",
+    ["", "abc", "a" * (senhas.MINIMO_DE_CARACTERES - 1)],
+    ids=["vazia", "tres", "uma_abaixo_do_piso"],
+)
 def test_senha_curta_e_reprovada(curta: str) -> None:
-    """Piso de 12. Comprimento e' a unica exigencia que sustenta evidencia (NIST SP 800-63B)."""
+    """Comprimento e' a unica exigencia que sustenta evidencia (NIST SP 800-63B).
+
+    O caso de borda DERIVA da constante, e isso e' conserto de um defeito real: ate' 25/09/2026
+    o literal era `"12345678901"` (11 caracteres, escolhido quando o piso era 12). Quando o dono
+    baixou o piso para 8, aqueles 11 passaram a ser senha VALIDA e o teste reprovaria -- um
+    numero cravado num teste envelhece em silencio junto com a politica que ele guarda.
+    """
     with pytest.raises(senhas.SenhaFraca):
         senhas.validar(curta)
 
 
 def test_senha_no_limite_passa() -> None:
-    """Exatamente 12 caracteres tem de passar — o piso e' inclusivo."""
+    """Exatamente `MINIMO_DE_CARACTERES` tem de passar — o piso e' inclusivo."""
     senhas.validar("a" * senhas.MINIMO_DE_CARACTERES)
 
 

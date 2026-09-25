@@ -375,56 +375,55 @@ def test_a_ordem_dos_middlewares_e_a_medida() -> None:
 
 
 # --------------------------------------------------------------------------------------
-# Troca de senha PENDENTE vira BLOQUEIO (D31, 18/09)
+# Troca de senha PENDENTE: RECOMENDADA, nao obrigatoria (decisao do dono, 25/09/2026)
 # --------------------------------------------------------------------------------------
 
 
-def test_com_troca_pendente_as_rotas_de_dados_sao_403() -> None:
-    """Ate' 18/09/2026 `deve_trocar` era so' sugestao: o modal tinha "Agora nao" e nenhuma rota
-    negava. Quem recebia a senha temporaria dispensava o aviso e ficava nela ate' vencer."""
-    assert acesso.bloqueio_por_troca_pendente("/api/hexagonos") is not None
-    assert acesso.bloqueio_por_troca_pendente("/api/acessos/usuarios") is not None
-    assert acesso.bloqueio_por_troca_pendente("/api/viabilidade") is not None
+def test_o_portao_NAO_barra_quem_deve_a_troca_de_senha() -> None:
+    """Entre 18/09 e 25/09/2026 o portao devolvia 403 em toda rota de dados ate' a pessoa
+    definir a propria senha. O dono reverteu: a troca voltou a ser RECOMENDADA.
 
-
-def test_a_pessoa_bloqueada_NAO_fica_sem_saida() -> None:
-    """A parte que importa mais que o bloqueio: sem estas quatro, o bloqueio vira armadilha.
-
-    `/api/me` e' como a SPA descobre que precisa trocar; `/api/me/senha` e' a propria troca, o
-    unico caminho para fora; `/api/logout` deixa desistir e sair; `/api/login` porque quem ainda
-    nao entrou nao esta' neste estado. Um bloqueio sem porta de saida exigiria intervencao no
-    banco para destravar cada pessoa.
+    Este teste existe porque a REVERSAO tambem e' garantia -- religar o bloqueio sem decisao
+    tiraria o acesso de todo mundo que ainda nao trocou, e a falha apareceria como "o sistema
+    parou" para a rede inteira. Ele le' o CODIGO do portao, e nao a prosa: a sabotagem que este
+    arquivo ja' sofreu tres vezes foi exatamente um teste casando com comentario.
     """
-    for rota in ("/api/me", "/api/me/senha", "/api/logout", "/api/login"):
-        assert acesso.bloqueio_por_troca_pendente(rota) is None, f"{rota} ficou sem saida"
+    import ast
+    import inspect
+    import textwrap
 
+    fonte = inspect.getsource(pilot._portao_de_sessao)
+    arvore = ast.parse(textwrap.dedent(fonte))
 
-def test_a_SPA_e_os_estaticos_carregam_durante_o_bloqueio() -> None:
-    """Bloquear o HTML e o JS deixaria a pessoa numa tela branca, sem o modal que a liberta --
-    o sintoma seria "o sistema parou" e nao "preciso trocar a senha"."""
-    for caminho in ("/", "/index.html", "/assets/app.js"):
-        assert acesso.bloqueio_por_troca_pendente(caminho) is None
-
-
-def test_o_bloqueio_NAO_reusa_a_lista_de_rotas_livres() -> None:
-    """Licao da DEC-037, em forma executavel.
-
-    La', a aba `imobiliaria` reusava o gate de `oportunidades`, e isso tornou impossivel
-    restringir uma sem tirar a outra. Aqui o reuso serviria DADOS (`/api/ufs`,
-    `/api/metodologia` sao livres de aba) a quem ainda esta' na senha temporaria.
-    """
-    assert acesso.ROTAS_COM_TROCA_PENDENTE < acesso.ROTAS_LIVRES, (
-        "o conjunto do bloqueio deixou de ser mais estreito que o das rotas livres"
+    chamadas = {
+        no.func.attr
+        for no in ast.walk(arvore)
+        if isinstance(no, ast.Call) and isinstance(no.func, ast.Attribute)
+    }
+    assert "bloqueio_por_troca_pendente" not in chamadas, (
+        "o portao voltou a barrar por troca pendente -- isso e' decisao do dono, nao refatoracao"
     )
-    for servindo_dados in ("/api/ufs", "/api/metodologia"):
-        assert servindo_dados in acesso.ROTAS_LIVRES
-        assert acesso.bloqueio_por_troca_pendente(servindo_dados) is not None
+
+    nomes = {no.attr for no in ast.walk(arvore) if isinstance(no, ast.Attribute)}
+    assert "deve_trocar" not in nomes, "o portao voltou a ler `deve_trocar` da sessao"
 
 
-def test_o_bloqueio_e_403_e_nao_404() -> None:
-    """Aqui nao ha' nada a esconder -- a pessoa esta' autenticada e sabe quem e'. Um 404 mandaria
-    a SPA tratar como rota inexistente, e o sintoma viraria tela vazia sem explicacao. O texto e'
-    o que ela vai LER, entao diz o que fazer."""
-    motivo = acesso.bloqueio_por_troca_pendente("/api/hexagonos")
-    assert motivo is not None
-    assert "senha" in motivo.lower()
+def test_o_gate_de_troca_pendente_nao_existe_mais_no_modulo_de_acesso() -> None:
+    """A lista e a funcao foram REMOVIDAS, nao deixadas inertes.
+
+    Constante viva com zero leitores e' convite a religar sem decidir: o proximo leitor acha o
+    conjunto pronto, liga uma linha no portao e o 403 volta sem passar por ninguem.
+    """
+    assert not hasattr(acesso, "ROTAS_COM_TROCA_PENDENTE")
+    assert not hasattr(acesso, "bloqueio_por_troca_pendente")
+
+
+def test_a_sessao_nao_carrega_mais_a_marca_de_troca() -> None:
+    """O campo saiu da projecao junto com o unico leitor dele (o bloqueio).
+
+    Aqui a garantia e' de CUSTO: `SQL_VALIDAR` roda a cada requisicao guardada, e coluna lida
+    por requisicao sem consumidor e' custo por requisicao. Quem devolve o estado da senha e'
+    `/api/me`, uma vez por carga da SPA.
+    """
+    assert "deve_trocar_senha_usuario" not in db_sessoes.SQL_VALIDAR
+    assert not hasattr(db_sessoes.SessaoValida, "deve_trocar")

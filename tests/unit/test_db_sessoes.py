@@ -111,14 +111,14 @@ _COLUNAS_COMPARTILHADAS = ("u.id_usuario", "p.nome_perfil", "pe.chave")
 
 #: O que a sessao acrescenta, e NADA MAIS. Fixado para que uma coluna nova entre com
 #: decisao, nao de carona.
-#: `deve_trocar_senha_usuario` entrou na D31: a troca virou BLOQUEIO, e o portao de sessao
-#: precisa saber disso a cada requisicao guardada. Buscar a parte seria segunda ida ao banco
-#: para um dado que ja' esta' na linha que este JOIN le'.
+#: `deve_trocar_senha_usuario` esteve aqui entre 18/09 e 25/09/2026, enquanto a troca era
+#: BLOQUEIO e o portao precisava do dado a cada requisicao. O dono reverteu para RECOMENDADA,
+#: o leitor sumiu e a coluna saiu: esta consulta roda por requisicao guardada, entao coluna sem
+#: consumidor aqui e' custo por requisicao. Quem le' o estado da senha e' `/api/me`.
 _EXTRAS_DA_SESSAO = (
     "u.login_usuario",
     "s.id_sessao",
     "s.ultimo_acesso_em_sessao",
-    "u.deve_trocar_senha_usuario",
 )
 
 
@@ -209,7 +209,7 @@ def test_tokens_nao_repetem() -> None:
 
 
 def test_validar_manda_o_hash_e_a_inatividade(monkeypatch: pytest.MonkeyPatch) -> None:
-    con = _instalar(monkeypatch, [(7, "growth", "rede.ver", "vinicius", 42, None, False)])
+    con = _instalar(monkeypatch, [(7, "growth", "rede.ver", "vinicius", 42, None)])
     valida = sessoes.validar("token-de-teste")
 
     _sql, params = _sql_do(con, "FROM sessoes s")
@@ -224,8 +224,8 @@ def test_validar_agrega_as_permissoes_de_varias_linhas(monkeypatch: pytest.Monke
     _instalar(
         monkeypatch,
         [
-            (7, "growth", "rede.ver", "vinicius", 42, None, False),
-            (7, "growth", "viabilidade.simular", "vinicius", 42, None, False),
+            (7, "growth", "rede.ver", "vinicius", 42, None),
+            (7, "growth", "viabilidade.simular", "vinicius", 42, None),
         ],
     )
     valida = sessoes.validar("t")
@@ -238,7 +238,7 @@ def test_perfil_sem_permissao_nenhuma_existe_e_nao_pode_nada(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """`chave` nula pelo LEFT JOIN: a pessoa EXISTE e nao pode nada -- diferente de `None`."""
-    _instalar(monkeypatch, [(7, "novato", None, "alguem", 42, None, False)])
+    _instalar(monkeypatch, [(7, "novato", None, "alguem", 42, None)])
     valida = sessoes.validar("t")
     assert valida is not None
     assert valida.identidade.permissoes == frozenset()
@@ -251,7 +251,7 @@ def test_sem_linha_nao_ha_sessao(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_token_vazio_nao_consulta_o_banco(monkeypatch: pytest.MonkeyPatch) -> None:
     """Curto-circuito: sem token nao ha' o que perguntar, e perguntar custaria uma ida."""
-    con = _instalar(monkeypatch, [(7, "growth", "rede.ver", "v", 42, None, False)])
+    con = _instalar(monkeypatch, [(7, "growth", "rede.ver", "v", 42, None)])
     assert sessoes.validar("") is None
     assert con.executados == [], "consultou o banco com token vazio"
 

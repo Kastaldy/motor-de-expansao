@@ -218,9 +218,14 @@ export function montarConfirmacao(
         // de ninguém"), porque a redefinição entregava a senha inicial COMPARTILHADA. Ela
         // deixou de ser verdade junto com a D31, e esconder isso do administrador seria pior
         // que o próprio risco: ele precisa saber que está segurando uma credencial viva.
+        // "a pessoa terá de criar a própria ao entrar" caiu em 25/09/2026: era verdade enquanto
+        // a troca era BLOQUEIO (18/09 a 25/09), e o dono reverteu para RECOMENDADA. Sem a
+        // parede, quem adia continua na temporária até ela VENCER — e aí trava e volta para o
+        // administrador. Ele precisa ouvir o prazo, não uma obrigação que não existe.
         'A senha aparece para você UMA ÚNICA VEZ, para repassar — não dá para consultá-la ' +
-          'depois. Ela vale poucas horas e a pessoa terá de criar a própria ao entrar. Fica ' +
-          'registrado com o seu nome e a data.',
+          'depois. Ela vale poucas horas: avise que a pessoa precisa criar a própria DENTRO ' +
+          'desse prazo, porque o piloto oferece a troca mas não obriga, e depois disso a ' +
+          'temporária para de funcionar. Fica registrado com o seu nome e a data.',
         'Enquanto o Authelia autenticar, isto não muda como a pessoa entra hoje — prepara o dia ' +
           'em que o próprio sistema autenticar.',
       ],

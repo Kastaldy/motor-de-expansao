@@ -171,10 +171,28 @@ Nenhuma destas foi tomada. Estão aqui para não serem descobertas no meio da im
    objeto** enquanto esta decisão valer.
    **CONSEQUÊNCIA QUE ESTA DECISÃO CRIA, e que o resto da epic herda:** a plataforma segue de
    **fator único**. A senha passa a ser a única barreira, e tudo o que a protege carrega o peso
-   sozinho — a trava de 5 tentativas em 15 min, o prazo de 2 h da senha temporária, a revogação de
-   sessões na troca e o bloqueio até a pessoa definir a própria (D31). **Nenhum deles tem rede por
-   baixo**, então afrouxar qualquer um é decisão de segurança, não de conveniência. Custo
-   operacional evitado, e que pesou: cadastrar TOTP exige as pessoas presentes, uma a uma
+   sozinho — a trava de 5 tentativas em 15 min, o prazo de 2 h da senha temporária e a revogação
+   de sessões na troca. **Nenhum deles tem rede por baixo**, então afrouxar qualquer um é decisão
+   de segurança, não de conveniência.
+
+   > **DOIS FORAM AFROUXADOS em 25/09/2026, por decisão do dono — e este parágrafo é o padrão que
+   > ele mesmo pré-registrou, então a mudança fica escrita aqui em vez de apagar a frase.**
+   > A lista acima tinha um quarto item, *"o bloqueio até a pessoa definir a própria (D31)"*, que
+   > valeu de 18/09 a 25/09: quem devia a troca levava 403 em toda rota de dados. **A troca voltou
+   > a ser RECOMENDADA** — `/api/me` devolve `deve_trocar` e a SPA abre o modal, que tem "Agora
+   > não". E o **piso de senha caiu de 12 para 8 caracteres**.
+   >
+   > O que isso custa, dito sem suavizar: quem recebe a senha inicial **compartilhada** pode ficar
+   > nela indefinidamente, e era essa janela que o bloqueio fechava no primeiro acesso. Com um
+   > fator só, o que restou segurando a senha são os **três** itens acima — a trava de tentativas
+   > é a que mais pesa agora, porque é a única que limita VOLUME.
+   >
+   > O 8 continua sendo o piso do próprio NIST SP 800-63B para senha escolhida por pessoa, então a
+   > política não saiu da referência que a justifica; o que encurtou foi a folga. Quem for mexer
+   > de novo em `MINIMO_DE_CARACTERES`, em `MAX_TENTATIVAS` ou em `JANELA_TENTATIVAS_MIN` precisa
+   > ler este bloco antes: depois destas duas mudanças, elas deixaram de ser independentes.
+
+   Custo operacional evitado, e que pesou: cadastrar TOTP exige as pessoas presentes, uma a uma
    (`infra_producao.md:1026`), e perder o celular viraria um SEGUNDO caminho de recuperação, com
    toda a discussão da decisão 4 repetida.
 4. **Recuperação de senha** — hoje não existe caminho nenhum: quem esquece depende de um admin

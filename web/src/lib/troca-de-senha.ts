@@ -12,8 +12,11 @@
    a tela mostra o recado dele — por isso `mensagemDoErro` existe.
    --------------------------------------------------------------------------- */
 
-/** Espelham `MINIMO_DE_CARACTERES` / `MAXIMO_DE_CARACTERES` de `db/senhas.py`. */
-export const MINIMO_DE_CARACTERES = 12
+/** Espelham `MINIMO_DE_CARACTERES` / `MAXIMO_DE_CARACTERES` de `db/senhas.py`.
+ *  Divergir daquele arquivo não quebra nada — o servidor vence e a tela mostra o recado dele —,
+ *  mas faz a pessoa ouvir duas regras diferentes, então mude os dois juntos. (8 desde 25/09/2026.)
+ */
+export const MINIMO_DE_CARACTERES = 8
 export const MAXIMO_DE_CARACTERES = 128
 
 /** O que `/api/me` passou a devolver em 11/09. Ausente = não dá para saber. */
@@ -108,14 +111,25 @@ export function mensagemDoErro(status: number, doServidor?: string | null): stri
  * por quê: `deveTrocar` é a intenção e `propria` é o fato. Quando o admin forçar a
  * troca de quem já tinha senha própria, os dois vêm `true` — e aí a frase não pode
  * ser "defina a sua primeira senha", que seria mentira sobre o que já aconteceu.
+ *
+ * O RAMO `!propria` ATENDE DOIS ESTADOS QUE O PAYLOAD NÃO DISTINGUE, e até 25/09/2026 a
+ * frase afirmava só um deles. `/api/me` manda apenas `{deveTrocar, propria}`, e `propria`
+ * é `senha_definida_em_usuario IS NOT NULL` — que a redefinição por administrador ZERA
+ * (`SQL_REDEFINIR_SENHA`). Então caem aqui:
+ *   * quem nasceu pela tela, com a senha inicial COMPARTILHADA;
+ *   * quem foi redefinido por um admin, com uma temporária ALEATÓRIA e só dele, que vence.
+ * Dizer "é a mesma para todo mundo da equipe" ao segundo é falso, e desde que a troca
+ * deixou de ser bloqueio (25/09) é também perigoso: ele lê "senha compartilhada", conclui
+ * que não é urgente, clica "Agora não" — e a temporária vence em 2 h, trancando-o.
+ * A frase passa a cobrir os dois sem afirmar qual é, porque o payload não sabe.
  */
 export function textoDaTroca(estado: EstadoDaSenha): { titulo: string; chamada: string } {
   if (!estado.propria) {
     return {
       titulo: 'Defina a sua senha',
       chamada:
-        'Você ainda está com a senha inicial, que é a mesma para todo mundo da equipe. ' +
-        'Escolha uma que só você saiba.',
+        'Você ainda está com a senha que recebeu — a inicial da equipe ou uma temporária, ' +
+        'que expira em poucas horas. Escolha agora uma que só você saiba.',
     }
   }
   return {
@@ -130,11 +144,19 @@ export function textoDaTroca(estado: EstadoDaSenha): { titulo: string; chamada: 
  * Só quando o banco respondeu (`estado` não é nulo) e a coluna diz que sim. E só se a
  * pessoa não dispensou nesta sessão.
  *
- * OFERECE, NÃO OBRIGA — e isto é decisão, não esquecimento. Enquanto o P19 não
- * acontecer, quem autentica é o Authelia: a senha do banco não abre nem fecha porta
- * nenhuma. Trancar o piloto atrás dela hoje tiraria o acesso de todo mundo (os seis
- * cadastros estão com `deve_trocar = true`) em troca de zero segurança. No dia da
- * virada do P19 esta função é o único lugar a mudar.
+ * OFERECE, NÃO OBRIGA — e isto é decisão do dono (25/09/2026), não esquecimento nem
+ * estado provisório à espera do P19.
+ *
+ * Entre 18/09 e 25/09 a troca FOI obrigatória, e o bloqueio nunca morou aqui: era um 403
+ * no servidor (`ROTAS_COM_TROCA_PENDENTE` / `bloqueio_por_troca_pendente`, em
+ * `web/server/acesso.py`, aplicado pelo `_portao_de_sessao`). O dono reverteu, e o
+ * "Agora não" do modal é proposital.
+ *
+ * Até 25/09 este bloco prometia que "no dia da virada do P19 esta função é o único lugar
+ * a mudar". Era falso nas duas metades — quando a obrigatoriedade existiu, ela foi escrita
+ * no servidor, não aqui — e mandava o próximo leitor trancar o piloto justamente onde se
+ * decidiu não trancar. Se a obrigatoriedade voltar, o lugar é o portão de ROTA no servidor;
+ * esta função só decide a quem OFERECER.
  */
 export function deveOferecerTroca(estado: EstadoDaSenha | null, dispensado: boolean): boolean {
   if (estado === null) return false

@@ -24,10 +24,26 @@ export const AJUDA_GERAR_OUTRA =
   'Emite uma senha nova e invalida esta. Use se você perdeu a senha antes de repassar.'
 
 /** O que o administrador lê junto da senha. Diz as três coisas que ele precisa saber para não
- *  errar o repasse: que é temporária, por quanto tempo vale, e que não dá para consultar depois. */
+ *  errar o repasse: que é temporária, por quanto tempo vale, e que não dá para consultar depois.
+ *
+ *  O AVISO MUDOU EM 25/09/2026, e não por estilo. Ele dizia "Quem recebê-la terá de criar a
+ *  própria senha ao entrar" — verdade enquanto a troca era BLOQUEIO (18/09 a 25/09): sem trocar,
+ *  a pessoa não usava nada. O dono reverteu para RECOMENDADA, e a frase virou promessa falsa
+ *  que ESCONDE uma armadilha: o modal tem "Agora não", a sessão dura `DURACAO_SESSAO_H` (8 h) e
+ *  a temporária morre em `VALIDADE_TEMPORARIA_H` (2 h). Quem adiar segue trabalhando na sessão
+ *  aberta, a senha vence no meio do caminho, e no login seguinte ela é tratada como senha errada
+ *  (`web/server/app.py`, "SENHA
+ *  TEMPORARIA VENCIDA") — a pessoa fica trancada e precisa do administrador outra vez. Sob o
+ *  bloqueio isso era impossível; agora é o desfecho provável de quem clica "Agora não".
+ *  Por isso o texto passa a vender o PRAZO, que é o que de fato aperta. */
 export function avisoDaSenha(validadeHoras: number): string {
   const horas = validadeHoras === 1 ? '1 hora' : `${validadeHoras} horas`
-  return `Anote ou copie agora: esta senha aparece uma única vez e vale por ${horas}. Quem recebê-la terá de criar a própria senha ao entrar.`
+  return (
+    `Anote ou copie agora: esta senha aparece uma única vez e vale por ${horas}. ` +
+    `Diga a quem recebê-la para criar a própria senha DENTRO desse prazo — o piloto oferece a ` +
+    `troca na entrada, mas não obriga, e depois de ${horas} esta senha para de funcionar e ` +
+    `você terá de gerar outra.`
+  )
 }
 
 /** O recado depois de redefinir. Distingue os dois casos porque eles são eventos diferentes para

@@ -51,7 +51,9 @@ describe('a política, espelhada do servidor', () => {
   })
 
   it('curta demais diz QUANTOS faltam', () => {
-    /* "mínimo 12" manda a pessoa contar; "faltam 3" não. */
+    /* "mínimo N" manda a pessoa contar; "faltam 3" não. O número sai da constante de
+       propósito: o piso já mudou uma vez (12 -> 8 em 25/09/2026) e um literal aqui envelheceria
+       junto com a política que ele documenta. */
     const p = problemasDaSenha('curta')
     expect(p).toHaveLength(1)
     expect(p[0]).toContain(`faltam ${MINIMO_DE_CARACTERES - 'curta'.length}`)
@@ -131,10 +133,17 @@ describe('o recado de erro', () => {
 })
 
 describe('a frase muda conforme a pessoa JÁ tem senha própria', () => {
-  it('primeira vez: fala da senha inicial compartilhada', () => {
+  it('sem senha própria: não AFIRMA qual das duas credenciais ela tem', () => {
+    /* `propria: false` cobre DOIS estados que `/api/me` não distingue — a senha inicial
+       compartilhada (quem nasceu pela tela) e uma temporária aleatória que expira (quem foi
+       redefinido por admin, porque `SQL_REDEFINIR_SENHA` zera `senha_definida_em_usuario`).
+       Até 25/09/2026 a frase afirmava "é a mesma para todo mundo da equipe", falso para o
+       segundo — que, sem o bloqueio, lê isso, adia, e é trancado quando a temporária vence. */
     const t = textoDaTroca({ deveTrocar: true, propria: false })
     expect(t.titulo).toBe('Defina a sua senha')
-    expect(t.chamada).toContain('mesma para todo mundo')
+    expect(t.chamada).not.toContain('mesma para todo mundo')
+    expect(t.chamada).toContain('temporária')
+    expect(t.chamada).toContain('expira')
   })
 
   it('já tinha senha própria: não diz "primeira"', () => {
@@ -142,7 +151,7 @@ describe('a frase muda conforme a pessoa JÁ tem senha própria', () => {
        da primeira vez seria mentira sobre o que já aconteceu. */
     const t = textoDaTroca({ deveTrocar: true, propria: true })
     expect(t.titulo).toBe('Troque a sua senha')
-    expect(t.chamada).not.toContain('mesma para todo mundo')
+    expect(t.chamada).not.toContain('temporária')
   })
 })
 
@@ -162,10 +171,11 @@ describe('OFERECE, e não OBRIGA', () => {
   })
 
   it('DISPENSAR é possível — o pop-up não é parede', () => {
-    /* Enquanto o P19 não acontece, quem autentica é o Authelia e a senha do banco não
-       abre porta nenhuma. Trancar o piloto atrás dela tiraria o acesso dos seis
-       cadastros de hoje em troca de zero segurança. Se um dia virar parede, é esta
-       função que muda — e é este teste que vai vermelho avisando. */
+    /* Decisão do dono em 25/09/2026: a troca é RECOMENDADA, não obrigatória. Entre 18/09 e
+       25/09 ela foi obrigatória, e a parede NÃO estava aqui — era um 403 no servidor
+       (`ROTAS_COM_TROCA_PENDENTE` em `web/server/acesso.py`). Então este teste guarda a
+       escolha de OFERECER; ele não é, e nunca foi, o alarme de um bloqueio que mora noutra
+       camada. Se a obrigatoriedade voltar, quem vai vermelho é o teste do portão de rota. */
     const estado = { deveTrocar: true, propria: false }
     expect(deveOferecerTroca(estado, true)).toBe(false)
     expect(deveOferecerTroca(estado, false)).toBe(true)

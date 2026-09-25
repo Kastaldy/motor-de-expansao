@@ -398,8 +398,8 @@ export const api = {
    * pediu e escreve só na linha dele.
    *
    * Erros: **403** é senha atual errada, **422** é a nova reprovada pela política
-   * (mínimo de 12 caracteres, e não pode ser a inicial compartilhada), **409** é não
-   * ter cadastro no banco.
+   * (`MINIMO_DE_CARACTERES` de `lib/troca-de-senha.ts`, e não pode ser a inicial
+   * compartilhada), **409** é não ter cadastro no banco.
    */
   trocarMinhaSenha: (senhaAtual: string, novaSenha: string) =>
     pedir<MinhaSenhaTrocada>(
