@@ -1,0 +1,82 @@
+# piloto.Caddyfile.template — bloco do host BR DEPOIS do corte do P19 (DEC-067, D4)
+#
+# POR QUE ESTE ARQUIVO EXISTE. O `Caddyfile` real e' gitignored (`.gitignore`, linha 136)
+# e vive so' em `/opt/motor-expansao/app/` na VPS. Ate' 25/09/2026 o unico bloco
+# VERSIONADO era o do AR — e foi nele que a mudanca do D4 caiu, no host errado, porque
+# era o unico lugar que parecia ser o lugar. Este arquivo da' ao BR o que o AR ja' tinha:
+# um bloco versionado, revisavel em PR, que o operador COPIA em vez de redigir no meio de
+# uma janela de manutencao.
+#
+# ELE NAO E' APLICADO POR NINGUEM AUTOMATICAMENTE. E' material de copiar e colar para o
+# `Caddyfile` da VPS, e o passo e' manual sob o §6 do CLAUDE.md.
+#
+# ─────────────────────────────────────────────────────────────────────────────────
+# A ORDEM DE APLICACAO, e ela e' FAIL-CLOSED nos dois sentidos:
+#
+#   1. `MOTOR_AUTENTICACAO_PROPRIA` LIGADA no `.env` e o `web` reiniciado.
+#   2. SO' ENTAO trocar este bloco e recarregar o Caddy.
+#
+# Invertido, o piloto CAI INTEIRO: o Caddy pergunta ao `/api/verify`, que responde 404
+# com a chave desligada, e ele nega tudo que nao for 2xx — inclusive para quem ja' estava
+# dentro. Para VOLTAR atras: devolver o `forward_auth` ao `authelia:9091` e esvaziar a
+# chave. Nada no banco precisa ser revertido.
+#
+# PRE-REQUISITOS, ou trocar o bloco so' troca um problema por outro:
+#   * migrations 018, 019 e 020 aplicadas (`docs/repasse_migracoes_p19.md`);
+#   * `MOTOR_DATABASE_URL` preenchida e o Postgres no ar — a sessao vive em TABELA;
+#   * as pessoas com senha propria, ou os hashes do `users_database.yml` importados.
+# ─────────────────────────────────────────────────────────────────────────────────
+#
+# O AUTHELIA NAO MORRE NESTE CORTE. A instancia AR continua atras dele (ver
+# `piloto-ar.Caddyfile.template`), porque o `web_ar` nao tem banco e portanto nao tem
+# tabela de sessao. Manter o servico `authelia` de pe' e' PRE-REQUISITO deste corte, e
+# nao sobra de deploy.
+
+piloto.ultra-expansao.tech {
+    # O QUE A BORDA PROTEGE — e o matcher nao e' refinamento, e' o que impede a tela de
+    # login de ficar atras da autenticacao que ela existe para obter.
+    #
+    # Sem ele, o `forward_auth` cobriria TAMBEM os estaticos. A tela de entrar e' a
+    # propria SPA servida por este host (`entrar.html`), entao o unico estado alcancavel
+    # por quem nao tem sessao seria 401 em tela branca — sem formulario, sem saida.
+    #
+    # As quatro rotas de fora sao as MESMAS de `acesso.ROTAS_PUBLICAS_SEM_SESSAO` mais o
+    # `/api/verify`, e cada uma tem razao: `login` e' como se entra; `logout` e'
+    # idempotente de proposito (sair com a sessao ja' vencida nao e' erro); `health` e' o
+    # healthcheck do container, que nao e' gente; `verify` e' ESTE endpoint — perguntar a
+    # ele exigindo sessao seria recursao.
+    @protegido {
+        path /api/*
+        not path /api/login /api/logout /api/health /api/verify
+    }
+
+    # A BORDA FICA (D4, aprovado por Vinicius em 25/09/2026). Muda so' o ALVO: do servico
+    # `authelia` para o nosso backend. O CAMINHO `/api/verify` e' o MESMO que o Authelia
+    # servia, de proposito — a borda nao aprende rota nova, e o rollback e' reapontar
+    # esta linha.
+    #
+    # `?rd=` SAI: nao ha' mais host externo de login. Quem leva a pessoa a' tela e' o
+    # proprio SPA (`relatarAcessoNegado`, em `web/src/lib/sessao.ts`).
+    #
+    # `copy_headers` lista EXATAMENTE o que a rota emite, e a diferenca importa: o
+    # `copy_headers` so' SOBRESCREVE o que a resposta de autenticacao trouxe. Nome
+    # listado aqui que o `/api/verify` NAO emite chega ao backend como o CLIENTE mandou —
+    # o oposto do que a diretiva parece prometer. `Remote-Name` saiu dos dois lados por
+    # nao ter leitor nenhum (medido).
+    forward_auth @protegido web:8899 {
+        uri /api/verify
+        copy_headers Remote-User Remote-Groups Remote-Email
+    }
+
+    # `web:8899` e' alias de SERVICO, valido porque o Caddy e o `web` estao no MESMO
+    # compose (`docker-compose.prod.yml`). E' a diferenca deliberada para o bloco AR, que
+    # precisa do `container_name` por morar noutro project.
+    reverse_proxy web:8899
+
+    # Access log de edge (DEC-027 — metade da trilha: IP real, user-agent, latencia no
+    # Caddy; a outra metade e' o JSONL do backend). CONFERIR o formato contra o bloco que
+    # ja' esta' na VPS na hora de aplicar: este arquivo nasceu depois dele.
+    log {
+        output file /var/log/caddy/piloto-access.log
+    }
+}

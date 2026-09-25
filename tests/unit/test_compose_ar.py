@@ -146,3 +146,72 @@ def test_compose_ar_espelha_o_hardening_do_prod() -> None:
     # sem teto, um pico da AR briga com os 8g do BR pela RAM do host.
     assert web_ar["mem_limit"] == "2g"
     assert web_ar["memswap_limit"] == "3g"
+
+
+# --------------------------------------------------------------------------------------
+# A AR fica no Authelia (decisao de Vinicius, 25/09/2026)
+# --------------------------------------------------------------------------------------
+#
+# O corte do P19 (DEC-067, D4) troca o alvo do `forward_auth` do Authelia para o nosso
+# `/api/verify` — SO' NO BR. A AR fica onde esta', e o motivo e' de DEPENDENCIA, nao de
+# preferencia: a sessao propria vive em TABELA (D1/migration 018) e o `web_ar` nao tem
+# banco. Sem banco nao ha' tabela de sessao, logo o motor nao autentica ninguem la'.
+#
+# ESTE PAR DE TESTES EXISTE POR UM ERRO REAL, cometido em 25/09/2026. O unico Caddyfile
+# VERSIONADO era o do AR (o do BR e' gitignored e vive so' na VPS), entao a mudanca do D4
+# caiu nele — no host errado, porque era o unico lugar que parecia ser o lugar. Aplicada,
+# ela derrubaria a AR INTEIRA: `/api/verify` responderia 404 (chave desligada) ou 503 (sem
+# banco), e o Caddy nega tudo que nao for 2xx, inclusive para quem ja' estava dentro.
+#
+# A guarda e' de ACOPLAMENTO: enquanto o `web_ar` nao tiver `MOTOR_DATABASE_URL`, o bloco
+# dele tem de apontar para o Authelia. Os dois fatos so' podem mudar JUNTOS.
+
+_TEMPLATE_AR = _REPO / "deploy" / "caddy" / "piloto-ar.Caddyfile.template"
+_TEMPLATE_BR = _REPO / "deploy" / "caddy" / "piloto-br.Caddyfile.template"
+
+
+def test_o_bloco_do_AR_continua_apontando_para_o_authelia() -> None:
+    """Mover este `forward_auth` sem dar banco a' AR e' derrubar a instancia."""
+    texto = _TEMPLATE_AR.read_text(encoding="utf-8")
+    assert "forward_auth authelia:9091" in texto, (
+        "o bloco do AR deixou de apontar para o Authelia. A AR nao tem banco, entao ela "
+        "NAO pode ir para o `/api/verify`: a rota responderia 404 ou 503 e o Caddy negaria "
+        "a instancia inteira. Se a AR ganhou banco, mude os dois fatos no mesmo PR — este "
+        "teste e' o par do `test_o_AR_continua_sem_banco` logo abaixo."
+    )
+    assert "web_ar:8899" not in texto.split("forward_auth")[1].split("}")[0], (
+        "o `forward_auth` do AR passou a perguntar ao proprio `web_ar` — ver acima."
+    )
+
+
+def test_o_AR_continua_sem_banco_e_por_isso_fica_no_authelia() -> None:
+    """A outra metade do acoplamento, e a razao de o teste de cima existir.
+
+    Se alguem der `MOTOR_DATABASE_URL` ao `web_ar` e este teste ficar vermelho, a leitura
+    NAO e' "apague a asercao": e' que o pre-requisito do corte da AR passou a existir, e
+    a decisao de 25/09 pode ser reaberta — com DEC, porque ela foi tomada pelo dono.
+    """
+    env = _web_ar().get("environment") or {}
+    assert "MOTOR_DATABASE_URL" not in env, (
+        "o `web_ar` ganhou banco. Isso NAO e' erro — e' o pre-requisito para a AR "
+        "acompanhar o corte do P19. Reabra a decisao de 25/09/2026 (a AR ficar no "
+        "Authelia) em vez de so' apagar este teste."
+    )
+
+
+def test_o_bloco_do_BR_existe_versionado_e_aponta_para_o_nosso_verify() -> None:
+    """O BR precisava de um bloco versionado, e a falta dele foi a CAUSA do erro acima.
+
+    O `Caddyfile` real e' gitignored e vive so' na VPS. Sem um template do BR, quem fosse
+    aplicar o D4 nao tinha onde escreve-lo — e escreveu no do AR. Este arquivo e' o lugar
+    certo, revisavel em PR e copiavel na janela de manutencao.
+    """
+    texto = _TEMPLATE_BR.read_text(encoding="utf-8")
+    assert "forward_auth @protegido web:8899" in texto
+    assert "uri /api/verify" in texto
+    # O matcher NAO e' refinamento: sem ele a tela de entrar (`entrar.html`, estatico
+    # deste mesmo host) ficaria atras da autenticacao que ela existe para obter.
+    assert "@protegido" in texto and "not path /api/login" in texto, (
+        "o bloco do BR perdeu o matcher: o `forward_auth` cobriria os estaticos e a tela "
+        "de login ficaria inalcancavel — 401 em tela branca, sem formulario e sem saida."
+    )

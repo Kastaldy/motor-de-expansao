@@ -42,7 +42,13 @@ from motor_expansao.db import rbac  # noqa: E402
 from motor_expansao.db import sessoes as db_sessoes  # noqa: E402
 from motor_expansao.db.rbac import Identidade  # noqa: E402
 
-_TEMPLATE_CADDY = _REPO / "deploy" / "caddy" / "piloto-ar.Caddyfile.template"
+#: O bloco do BR, e a escolha do arquivo e' o conserto de um erro real de 25/09/2026.
+#: Estes testes liam o template do AR — o unico bloco VERSIONADO naquele momento, porque o
+#: do BR e' gitignored e vive so' na VPS. Foi por isso que a mudanca do D4 caiu no host
+#: errado. Com a AR decidida para ficar no Authelia (nao tem banco, logo nao tem tabela de
+#: sessao), o alvo do `forward_auth` proprio e' SO' o BR, e e' este o arquivo a conferir.
+#: Que o AR NAO tenha ido junto e' travado por `tests/unit/test_compose_ar.py`.
+_TEMPLATE_CADDY = _REPO / "deploy" / "caddy" / "piloto-br.Caddyfile.template"
 
 
 class _Url:
@@ -515,7 +521,10 @@ def test_o_template_do_caddy_aponta_para_a_NOSSA_rota() -> None:
     texto = _TEMPLATE_CADDY.read_text(encoding="utf-8")
     assert "forward_auth authelia:9091" not in texto, "o template ainda pergunta ao Authelia"
     assert _linha_do_template("uri ") == "uri /api/verify"
-    assert "forward_auth @protegido motor_expansao_web_ar:8899 {" in texto
+    # `web:8899` e' alias de SERVICO, e a diferenca para o AR e' deliberada: aqui o Caddy e
+    # o `web` estao no MESMO compose, entao o alias resolve. O bloco AR precisa do
+    # `container_name` por morar noutro project -- e, desde 25/09/2026, nem vai para ca'.
+    assert "forward_auth @protegido web:8899 {" in texto
 
 
 def test_as_excecoes_do_matcher_sao_as_MESMAS_rotas_publicas_do_backend() -> None:
