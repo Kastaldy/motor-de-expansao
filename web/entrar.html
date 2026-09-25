@@ -17,15 +17,42 @@
       o que faz o `fetch` desta página ser de MESMA ORIGEM, sem CORS.
     -->
 
+    <!--
+      Tema antes da primeira pintura, como no `index.html` do piloto.
+
+      AQUI O COOKIE É A FONTE QUE IMPORTA, e não o `localStorage`. Esta página é servida de
+      `auth.<dominio>` e o piloto de `piloto.<dominio>`: origens diferentes, `localStorage`
+      diferentes. Até 2026-09-25 este trecho lia só `localStorage`, ou seja, a caixa de
+      `auth.` — vazia, porque quem escolheu o tema escolheu no piloto. O resultado era a
+      tela de entrar SEMPRE escura para quem havia pedido o claro, e o defeito não aparecia
+      em desenvolvimento, onde as duas páginas saem do mesmo `localhost:5000`.
+
+      O `localStorage` fica primeiro mesmo assim, para manter UMA ordem de leitura com
+      `lerTema` e com o `index.html`: aqui ele simplesmente não tem valor, e o cookie
+      responde. Ver o cabeçalho de `COOKIE_TEMA` em `src/lib/tema.ts`.
+    -->
     <script>
-      /* Tema antes da primeira pintura, como no `index.html` do piloto: por efeito do
-         React, quem tivesse escolhido o claro veria a tela nascer preta e clarear. */
-      try {
-        var t = localStorage.getItem('motor.tema')
-        document.documentElement.setAttribute('data-tema', t === 'claro' ? 'claro' : 'escuro')
-      } catch (e) {
-        document.documentElement.setAttribute('data-tema', 'escuro')
-      }
+      ;(function () {
+        function valido(v) {
+          return v === 'claro' || v === 'escuro' ? v : null
+        }
+        var t = null
+        try {
+          t = valido(localStorage.getItem('motor.tema'))
+        } catch (e) {}
+        if (!t) {
+          try {
+            var m = document.cookie.match(/(?:^|;\s*)motor\.tema=\s*([^;\s]+)/)
+            t = m ? valido(m[1]) : null
+          } catch (e) {}
+        }
+        if (!t) {
+          try {
+            t = valido(localStorage.getItem('motor.exec.tema'))
+          } catch (e) {}
+        }
+        document.documentElement.setAttribute('data-tema', t || 'escuro')
+      })()
     </script>
   </head>
   <body>

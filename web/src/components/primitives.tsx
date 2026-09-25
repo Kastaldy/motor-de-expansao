@@ -82,9 +82,15 @@ export function Eyebrow({
         display: 'flex',
         alignItems: 'center',
         gap: 7,
-        font: '600 11px/1 var(--f-num)',
+        /* O SUBTITULO do guia (2026-09-25): condensada, ITALICA, caixa alta. Era mono
+           (`--f-num`), que e' a voz de NUMERO deste produto — e o eyebrow nunca foi
+           numero, e' o rotulo que anuncia a secao. O guia sugere teal para subtitulo,
+           mas a cor continua chegando por prop: cada tela ja' tem seu acento, e cravar
+           o teal aqui apagaria essa leitura (e brigaria com "uma cor de destaque por
+           peca"). O default da prop ja' e' `var(--ac)`. */
+        font: 'italic 600 12px/1 var(--f-titulo)',
         textTransform: 'uppercase',
-        letterSpacing: '.09em',
+        letterSpacing: '.08em',
         color: cor,
       }}
     >

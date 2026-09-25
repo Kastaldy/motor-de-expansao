@@ -1,10 +1,45 @@
-@import '@fontsource-variable/instrument-sans';
-@import '@fontsource/instrument-serif/400.css';
-@import '@fontsource/instrument-serif/400-italic.css';
-@import '@fontsource/ibm-plex-mono/400.css';
-@import '@fontsource/ibm-plex-mono/500.css';
-@import '@fontsource/ibm-plex-mono/600.css';
-@import '@fontsource/ibm-plex-mono/700.css';
+/* AS FONTES DE FORA DA MARCA SAIRAM (2026-09-25). Eram tres familias — Instrument
+   Sans (UI), Instrument Serif (voz narrativa) e IBM Plex Mono (numero) —, nenhuma
+   delas institucional. O guia: "nunca usar fontes fora das institucionais".
+
+   Ficam so' as duas da Ultra: Barlow (corpo e numero, analoga da DIN Regular) e Barlow
+   Condensed (titulo e subtitulo, analoga da DIN Condensed). Remover os imports nao e'
+   limpeza cosmetica — enquanto estivessem aqui, o navegador baixaria tres familias que
+   nada mais usa. */
+/* BARLOW CONDENSED — a fonte de TITULO da marca (2026-09-25).
+
+   O guia pede DIN Condensed Bold Italic em caixa alta para titulo e DIN Condensed
+   Italic para subtitulo. A DIN e' licenciada e nao existe como webfont livre; o
+   proprio guia lista tres alternativas: Oswald, Fjalla One e Barlow Condensed.
+
+   BARLOW CONDENSED e' a unica das tres com ITALICO DE VERDADE — Oswald e Fjalla One
+   nao tem, e o navegador teria de falsear inclinando o glifo (oblique sintetico). O
+   guia chama o italico de "marca registrada visual da identidade"; falsea-lo seria
+   entregar a aparencia sem a tipografia. Por isso a escolha nao e' de gosto.
+
+   Auto-hospedada via @fontsource, como as demais: nenhuma fonte do piloto vem de CDN
+   externa — o app roda atras do Authelia e nao deve depender de terceiro para pintar. */
+@import '@fontsource/barlow-condensed/400-italic.css';
+@import '@fontsource/barlow-condensed/600-italic.css';
+@import '@fontsource/barlow-condensed/700-italic.css';
+/* As variantes RETAS entraram junto (2026-09-25). Só as itálicas estavam importadas,
+   porque a condensada servia só a título e subtítulo — que o guia manda em itálico.
+   Quando ela passou a vestir também rótulo de filtro e seletor, que são retos, a falta
+   destes arquivos faria o navegador FALSEAR o itálico de volta para reto (oblique
+   sintético) — texto de interface desenhado por algoritmo, não pela fonte. */
+@import '@fontsource/barlow-condensed/400.css';
+@import '@fontsource/barlow-condensed/500.css';
+@import '@fontsource/barlow-condensed/600.css';
+/* BARLOW (largura normal) — o CORPO. O guia pede DIN *Regular* no texto de apoio, e
+   nao a condensada: condensar so' vale em titulo e subtitulo. Barlow e' a irma de
+   largura normal da mesma superfamilia da Barlow Condensed, o que mantem o desenho
+   das letras coerente entre titulo e corpo — e e' a analoga livre mais proxima da DIN
+   Regular. Os quatro pesos cobrem os usos do app (400 texto, 500/600 rotulo, 700
+   botao). */
+@import '@fontsource/barlow/400.css';
+@import '@fontsource/barlow/500.css';
+@import '@fontsource/barlow/600.css';
+@import '@fontsource/barlow/700.css';
 @import './tokens.css';
 
 *,
@@ -219,11 +254,67 @@ select option {
   font-feature-settings: 'tnum' 1;
 }
 
-/* Voz narrativa: o serif carrega o storytelling, o sans carrega a interface. */
+/* VOZ DE TITULO DA MARCA (2026-09-25). Era o serif narrativo; virou a hierarquia do
+   guia — caixa alta, italico, condensada.
+
+   OS `!important` SAO NECESSARIOS, e o motivo e' o atalho `font:`. Quase todos os 16
+   usos escrevem algo como `font: '400 27px/1.1 var(--f-story)'` em estilo INLINE, e o
+   atalho REDEFINE `font-style` e `font-weight` para o inicial — normal e 400. Estilo
+   inline vence classe, entao sem o `!important` o titulo sairia reto e leve, isto e',
+   sem as duas caracteristicas que o guia chama de marca registrada da identidade.
+
+   `text-transform` e `letter-spacing` NAO fazem parte do atalho e por isso nao
+   precisam de reforco.
+
+   A alternativa seria editar os 16 pontos de uso e pedir que todo titulo futuro
+   lembrasse de repetir `fontStyle`/`fontWeight` — mais codigo e uma regra que se perde
+   no primeiro esquecimento. Aqui a regra e' uma so'.
+
+   `letter-spacing` positivo porque condensada em caixa alta fecha demais: sem ele as
+   hastes colam e o titulo vira mancha. */
 .story {
   font-family: var(--f-story);
+  font-style: italic !important;
+  font-weight: 700 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+/* TITULO e SUBTITULO da marca (2026-09-25) — a hierarquia do guia, nos dois temas.
+
+   O guia e' explicito e a regra e' de IDENTIDADE, nao de gosto: titulo e subtitulo
+   sao SEMPRE italicos e em CAIXA ALTA ("marca registrada visual", pela sensacao de
+   movimento). Por isso o `font-style` e o `text-transform` vivem aqui, no uso, e nao
+   no token da fonte.
+
+   A COR nao entra nestas classes de proposito. O guia sugere magenta no titulo e teal
+   no subtitulo, mas este produto pinta titulo por CONTEXTO (acento da tela, faixa de
+   score, estado de alerta) e cravar a cor aqui atropelaria essas leituras — inclusive
+   a regra do proprio guia de "uma cor de destaque por peca". Quem quiser a cor do guia
+   aplica `color: var(--marca-magenta)` / `var(--ac-text)` no ponto de uso.
+
+   `letter-spacing` positivo porque condensada em caixa alta fecha demais: sem ele, as
+   hastes verticais colam e o titulo vira mancha. */
+.ultra-titulo,
+.ultra-subtitulo {
+  font-family: var(--f-titulo);
+  /* `!important` pelo MESMO motivo de `.story` duas regras acima, e aqui o defeito era
+     REAL, nao hipotetico: os dois unicos usos (`ExecutiveScreen` e `ViabilityScreen`)
+     aplicam `font: '700 20px/1 var(--f-titulo)'` em estilo INLINE, e o atalho `font:`
+     reseta `font-style` para `normal`. O titulo da marca — italico por definicao no
+     guia — saia RETO nos dois lugares em que ele existe, sem nada ficar vermelho. */
+  font-style: italic !important;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  line-height: 1.05;
+}
+
+.ultra-titulo {
+  font-weight: 700;
+}
+
+.ultra-subtitulo {
   font-weight: 400;
-  letter-spacing: 0.005em;
 }
 
 /* Scrollbar discreta — some do caminho, mas continua alcançavel. */

@@ -36,7 +36,7 @@ import { BaseProvider } from './lib/base-contexto'
 import { destinoDoDock } from './lib/dock-itens'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
 import type { Tema } from './lib/tema'
-import { depositoDoNavegador, gravarTema, lerTema } from './lib/tema'
+import { cookieDoNavegador, depositoDoNavegador, gravarTema, lerTema } from './lib/tema'
 import type { Hex, MunicipioItem, MunicipioPayload, Oportunidade } from './lib/types'
 import { perfilDoCliente } from './lib/perfil'
 
@@ -128,7 +128,9 @@ export default function App() {
    * da primeira pintura, e quem tinha escolhido o claro veria a tela nascer preta e
    * clarear em seguida.
    */
-  const [tema, setTema] = useState<Tema>(() => lerTema(depositoDoNavegador()))
+  const [tema, setTema] = useState<Tema>(() =>
+    lerTema(depositoDoNavegador(), cookieDoNavegador()),
+  )
 
   /**
    * O atributo vai no `<html>`, e não no `<div>` raiz daqui.
@@ -148,7 +150,10 @@ export default function App() {
 
   const trocarTema = useCallback((novo: Tema) => {
     setTema(novo)
-    gravarTema(novo, depositoDoNavegador())
+    /* O cookie entra junto porque a TELA DE ENTRAR vive em outro subdomínio e o
+       `localStorage` é partido por origem — ver o cabeçalho de `COOKIE_TEMA`. Sem ele,
+       quem escolhe o claro aqui continua recebendo a tela de login no escuro. */
+    gravarTema(novo, depositoDoNavegador(), cookieDoNavegador())
   }, [])
 
   const [ufs, setUfs] = useState<string[]>([])
@@ -687,6 +692,7 @@ export default function App() {
           // "Ver no Mapa" abre o Mapa Territorial no UF/município do imóvel E crava a
           // COORDENADA do imóvel: pin + hexágono selecionado + câmera no ponto.
           <OportunidadesImobiliariasScreen
+            tema={tema}
             onInicio={voltarAoInicio}
             focoInicial={focoImovel}
             onFocoAplicado={() => setFocoImovel(null)}

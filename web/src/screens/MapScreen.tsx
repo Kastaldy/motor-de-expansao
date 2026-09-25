@@ -1248,7 +1248,7 @@ export default function MapScreen({
 
       {/* ---------------- Header ---------------- */}
       <header
-        className="cromo-escuro"
+        className="barra-ultra"
         style={{
           position: 'relative',
           zIndex: 10,
