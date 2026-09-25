@@ -714,3 +714,56 @@ def test_privilegios_COBRE_sessoes() -> None:
         "revogar e' UPDATE e o expurgo anonimiza; `DELETE` em `sessoes` significa que o "
         "provisionamento foi afrouxado sem a decisao acompanhar"
     )
+
+
+def test_privilegios_NAO_estoura_com_objeto_ausente(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rodar contra um banco que ainda nao recebeu a 018 tem de RELATAR, nao explodir.
+
+    `has_table_privilege('sessoes', ...)` LEVANTA quando a tabela nao existe, em vez de devolver
+    falso. Ate' 25/09/2026 isso derrubava o comando inteiro com `UndefinedTable` e um traceback
+    cru no meio do relatorio -- medido contra um banco real sem a 018.
+
+    E o cenario e' NATURAL: conferir o estado ANTES de aplicar e' a primeira coisa que o operador
+    faz. Um traceback ali manda investigar o provisionamento, que esta' certo.
+
+    ESTE TESTE NASCEU DE UM ERRO DE JULGAMENTO: tres verificadores independentes classificaram
+    este risco como refutado; rodar contra o banco real mostrou que era verdadeiro. Voto de
+    maioria nao substitui execucao.
+    """
+    import psycopg
+
+    class _ConAusente(_ConPrivilegios):
+        def __init__(self) -> None:
+            super().__init__(dict(_D20_DE_PE))
+            self.rollbacks = 0
+
+        def execute(self, sql: str, params: Any = None) -> Any:
+            if "sessoes" in sql:
+                raise psycopg.errors.UndefinedTable('relação "sessoes" não existe')
+            return super().execute(sql, params)
+
+        def rollback(self) -> None:
+            self.rollbacks += 1
+
+    con = _ConAusente()
+    monkeypatch.setattr(cli, "_conectar_com_diagnostico", lambda _p, _u: con)
+    monkeypatch.setenv(postgres.ENV_URL, "postgresql://app@localhost/x")
+
+    codigo = cli.main(["privilegios"])
+
+    assert codigo == 1, "objeto ausente e' problema a relatar, nao sucesso"
+    assert con.rollbacks >= 1, (
+        "sem `rollback` a transacao fica abortada e TODA checagem seguinte falha com "
+        "`InFailedSqlTransaction` -- o relatorio mentiria sobre o resto"
+    )
+
+
+def test_o_sentinela_de_ausente_nao_e_False() -> None:
+    """`AUSENTE` e `False` respondem perguntas diferentes, e confundi-las inverte o diagnostico.
+
+    `False` = o papel NAO PODE (o `GRANT` falta). `AUSENTE` = o objeto nao existe (a MIGRATION
+    falta). Se o sentinela fosse falsy-e-indistinguivel, o relatorio acusaria privilegio faltando
+    e mandaria o operador mexer no provisionamento, que esta' correto.
+    """
+    assert cli.AUSENTE is not False
+    assert cli.AUSENTE is not None

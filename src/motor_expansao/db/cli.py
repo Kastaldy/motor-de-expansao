@@ -50,15 +50,24 @@ SQL_TEM_TABELA_DE_CONTROLE = "SELECT to_regclass(%s) IS NOT NULL"
 
 # Contrato conferido contra o dump do cluster real em 26/08/2026 (§0 da `verificacao.md`).
 TABELAS_DO_MODELO = (
-    "usuarios", "perfis", "permissoes", "perfil_permissoes", "eventos",
-    "areas_estudo", "contratos", "bairros", "distritos", "municipios",
-    "perfil_permissoes_historico", "sessoes",
+    "usuarios",
+    "perfis",
+    "permissoes",
+    "perfil_permissoes",
+    "eventos",
+    "areas_estudo",
+    "contratos",
+    "bairros",
+    "distritos",
+    "municipios",
+    "perfil_permissoes_historico",
+    "sessoes",
 )
 NUMEROS_DA_SECAO_ZERO = {
-    "indices": 49,   # 35 explicitos + 12 de PK + 2 de UNIQUE (a 018/D30 somou 2 + o dela de PK)
-    "constraints CHECK": 14,    # a 018 (D30) e a 019: `ck_usuarios_prazo_exige_troca`
+    "indices": 49,  # 35 explicitos + 12 de PK + 2 de UNIQUE (a 018/D30 somou 2 + o dela de PK)
+    "constraints CHECK": 14,  # a 018 (D30) e a 019: `ck_usuarios_prazo_exige_troca`
     "chaves estrangeiras": 12,  # a 018 (D30): `sessoes.id_usuario`
-    "triggers": 7,   # 5 ate' a 016; a 017 (D29) somou a guarda de coerencia nas duas regioes
+    "triggers": 7,  # 5 ate' a 016; a 017 (D29) somou a guarda de coerencia nas duas regioes
     "colunas geometricas": 7,
 }
 #: `prosecdef` e `proconfig` esperados por funcao, apos a migration 011 (D21) e a 017 (D29).
@@ -117,7 +126,9 @@ def _manifesto() -> list[dict[str, Any]]:
 def _sha256_do_arquivo(nome: str) -> str:
     # `read_text` normaliza fim de linha: o hash tem de ser o mesmo em Windows e Linux,
     # senao a mesma migration pareceria alterada so' por causa do checkout.
-    return hashlib.sha256((MIGRACOES / nome).read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        (MIGRACOES / nome).read_text(encoding="utf-8").encode("utf-8")
+    ).hexdigest()
 
 
 def _conectar_para_ddl() -> Any:
@@ -166,7 +177,9 @@ def _conectar_com_diagnostico(psycopg: Any, url: str) -> Any:
             "  - o banco existe? CREATE DATABASE <nome> ENCODING 'UTF8';\n"
             "  - o servidor esta no ar e ouvindo na porta 5432?"
         )
-        raise SystemExit(f"ERRO: nao consegui conectar.\n{detalhe}\n\nO que conferir:\n{dicas}") from None
+        raise SystemExit(
+            f"ERRO: nao consegui conectar.\n{detalhe}\n\nO que conferir:\n{dicas}"
+        ) from None
 
 
 def _aplicadas(con: Any) -> dict[str, str]:
@@ -237,7 +250,9 @@ def cmd_aplicar(args: argparse.Namespace) -> int:
             # continua aplicada e registrada, e reexecutar retoma de onde parou. As
             # proprias migrations ja' trazem BEGIN/COMMIT; o psycopg respeita.
             con.execute(sql)
-            con.execute(SQL_REGISTRAR, (m["versao"], m["arquivo"], _sha256_do_arquivo(m["arquivo"])))
+            con.execute(
+                SQL_REGISTRAR, (m["versao"], m["arquivo"], _sha256_do_arquivo(m["arquivo"]))
+            )
             con.commit()
             print(f"  aplicada {m['versao']}  {m['arquivo']}")
     return 0
@@ -256,15 +271,20 @@ def cmd_registrar(args: argparse.Namespace) -> int:
         raise SystemExit(f"ERRO: nenhuma migration ate' a versao {ate!r}")
 
     with _conectar_para_ddl() as con:
-        if not _aplicadas(con) and not con.execute(
-            SQL_TEM_TABELA_DE_CONTROLE, (postgres.TABELA_MIGRACOES,)
-        ).fetchone()[0]:
+        if (
+            not _aplicadas(con)
+            and not con.execute(
+                SQL_TEM_TABELA_DE_CONTROLE, (postgres.TABELA_MIGRACOES,)
+            ).fetchone()[0]
+        ):
             raise SystemExit(
                 f"ERRO: a tabela {postgres.TABELA_MIGRACOES} nao existe. Aplique a 000 "
                 "primeiro (ela e' a unica que precisa ir a mao, por criar o registro)."
             )
         for m in alvo:
-            con.execute(SQL_REGISTRAR, (m["versao"], m["arquivo"], _sha256_do_arquivo(m["arquivo"])))
+            con.execute(
+                SQL_REGISTRAR, (m["versao"], m["arquivo"], _sha256_do_arquivo(m["arquivo"]))
+            )
         con.commit()
     print(f"registradas como aplicadas (sem executar): {', '.join(m['versao'] for m in alvo)}")
     return 0
@@ -295,9 +315,7 @@ def cmd_conferir(_args: argparse.Namespace) -> int:
         print("\n== funcoes e endurecimento (D19/D21) ==")
         encontradas = {
             nome: (secdef, cfg)
-            for nome, secdef, cfg in con.execute(
-                SQL_FUNCOES, (list(FUNCOES_ESPERADAS),)
-            ).fetchall()
+            for nome, secdef, cfg in con.execute(SQL_FUNCOES, (list(FUNCOES_ESPERADAS),)).fetchall()
         }
         for nome, (secdef_esp, caminho_esp) in FUNCOES_ESPERADAS.items():
             atual = encontradas.get(nome)
@@ -369,6 +387,7 @@ def cmd_conferir(_args: argparse.Namespace) -> int:
 # Nenhuma checagem tenta escrever para ver se falha: isso deixaria lixo, dependeria de
 # rollback e, num banco com auditoria append-only, a propria tentativa vira linha.
 # ---------------------------------------------------------------------------------------
+
 
 def _checagens_negativas() -> list[tuple[str, str, str]]:
     """(rotulo, SQL -> bool, por que importa). `True` = o papel PODE = FALHA."""
@@ -495,10 +514,37 @@ def _checagens_positivas() -> list[tuple[str, str, str]]:
     ]
 
 
+#: Sentinela de "o objeto que esta checagem pergunta ainda nao existe no banco". Nao e' `False`
+#: de proposito: `False` significa "o papel NAO pode", e confundir as duas coisas faria o relatorio
+#: acusar privilegio faltando quando o que falta e' a MIGRATION.
+AUSENTE = object()
+
+
 def _valor_unico(con: Any, sql: str) -> Any:
-    """Primeira coluna da primeira linha. `None` quando a consulta nao devolve nada --
-    o que aqui e' resposta legitima (ex.: `bool_or` sobre zero linhas)."""
-    linha = con.execute(sql).fetchone()
+    """Primeira coluna da primeira linha, ou `AUSENTE` se o objeto perguntado nao existe.
+
+    POR QUE A TOLERANCIA, e ela e' estreita de proposito: `has_table_privilege('sessoes', ...)`
+    LEVANTA quando a tabela nao existe, em vez de devolver falso. Rodar este comando contra um
+    banco que ainda nao recebeu a 018 -- o que e' natural, para ver o estado antes de aplicar --
+    derrubava tudo com `UndefinedTable` e um traceback cru, no meio do relatorio. Medido em
+    25/09/2026 contra um banco real sem a 018.
+
+    So' `UndefinedTable`/`UndefinedObject` sao absorvidos, e viram uma LINHA PROPRIA no relatorio.
+    Qualquer outro erro continua subindo: engolir erro de banco num comando que existe para
+    atestar seguranca seria trocar um susto por uma mentira.
+
+    `None` segue significando "a consulta nao devolveu linha", que aqui e' resposta legitima
+    (ex.: `bool_or` sobre zero linhas).
+    """
+    import psycopg
+
+    try:
+        linha = con.execute(sql).fetchone()
+    except (psycopg.errors.UndefinedTable, psycopg.errors.UndefinedObject):
+        # A transacao fica abortada depois do erro; sem o rollback, TODA checagem seguinte
+        # falharia com `InFailedSqlTransaction` e o relatorio mentiria sobre o resto.
+        con.rollback()
+        return AUSENTE
     return None if linha is None else linha[0]
 
 
@@ -521,7 +567,14 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
 
         print("== o que este papel NAO pode ==")
         for rotulo, sql, porque in _checagens_negativas():
-            pode = bool(_valor_unico(con, sql))
+            bruto = _valor_unico(con, sql)
+            if bruto is AUSENTE:
+                # Objeto ausente nao e' privilegio indevido: nao ha' o que o papel possa fazer
+                # numa tabela que nao existe. Entra no relatorio para o operador saber, e NAO
+                # entra em `problemas`.
+                print(f"  --    {rotulo}: o objeto nao existe (migration pendente?)")
+                continue
+            pode = bool(bruto)
             print(f"  {'FALHA' if pode else 'ok   '} {rotulo}")
             if pode:
                 print(f"        por que importa: {porque}")
@@ -529,7 +582,15 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
 
         print("\n== o que este papel PRECISA poder ==")
         for rotulo, sql, porque in _checagens_positivas():
-            pode = bool(_valor_unico(con, sql))
+            bruto = _valor_unico(con, sql)
+            if bruto is AUSENTE:
+                # AQUI entra em `problemas`, mas com a causa CERTA: o piloto de fato nao vai
+                # conseguir o que precisa -- so' que por falta de migration, nao de `GRANT`.
+                # Dizer "FALHA" mandaria o operador conferir o provisionamento, que esta' certo.
+                print(f"  PEND  {rotulo}: o objeto nao existe -- aplique as migrations antes")
+                problemas.append(f"{rotulo} (migration pendente)")
+                continue
+            pode = bool(bruto)
             print(f"  {'ok   ' if pode else 'FALHA'} {rotulo}")
             if not pode:
                 print(f"        por que importa: {porque}")
@@ -559,7 +620,9 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
             "D20 (sql/papeis-e-privilegios.md) nao esta completo."
         )
         return 1
-    print("PRIVILEGIOS OK: o papel do piloto nao consegue o que nao deve, e consegue o que precisa.")
+    print(
+        "PRIVILEGIOS OK: o papel do piloto nao consegue o que nao deve, e consegue o que precisa."
+    )
     return 0
 
 
@@ -633,9 +696,7 @@ def main(argv: list[str] | None = None) -> int:
         "expurgar",
         help="zera ip/user-agent das sessoes alem do prazo de retencao (P15)",
     )
-    p_expurgar.add_argument(
-        "--simular", action="store_true", help="so' conta; nao escreve nada"
-    )
+    p_expurgar.add_argument("--simular", action="store_true", help="so' conta; nao escreve nada")
     p_expurgar.set_defaults(funcao=cmd_expurgar)
 
     args = parser.parse_args(argv)
