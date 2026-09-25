@@ -258,3 +258,69 @@ def test_poda_apaga_so_o_que_saiu_da_retencao(tmp_path) -> None:
     restantes = {a.stem for a in trilha.glob("*.jsonl")}
     assert velho not in restantes
     assert novo in restantes
+
+
+# ── o estado do controle na PARTIDA (2026-09-25) ────────────────────────────
+#
+# O gate era fail-CLOSED por ARQUIVO (ilegivel nega a todos) e fail-OPEN por
+# CONFIGURACAO (caminho ausente libera a todos) — e nao dizia qual das duas metades
+# estava valendo. O unico print de estado saia de dentro de `_allowlist`, so' com o
+# controle LIGADO e so' na PRIMEIRA mensagem processada: o estado que mais precisava
+# aparecer era justamente o que nunca imprimia nada. Bot no ar com a revogacao
+# desligada era indistinguivel de bot no ar com ela valendo.
+#
+# Importa porque a allowlist existe para revogar acesso de quem saiu da empresa: uma
+# env que some numa edicao do compose devolvia esse acesso sem uma linha de log.
+def test_producao_sem_allowlist_recusa_subir() -> None:
+    s = Settings(bot_senha="abre", telegram_token="x", environment="production")
+    with pytest.raises(SystemExit) as erro:
+        bot.verificar_controle_de_acesso(s)
+    assert "API_BOT_ALLOWLIST_PATH" in str(erro.value)
+
+
+def test_producao_com_allowlist_sobe_e_diz_quantos(tmp_path, capsys) -> None:
+    alvo = tmp_path / "bot_allowlist.json"
+    alvo.write_text(json.dumps({"chats": [7, 8, 9]}), encoding="utf-8")
+    s = Settings(
+        bot_senha="abre",
+        telegram_token="x",
+        environment="production",
+        bot_allowlist_path=alvo,
+    )
+    bot.verificar_controle_de_acesso(s)
+    saida = capsys.readouterr().out
+    assert "LIGADA" in saida
+    assert "3 chats" in saida
+
+
+def test_fora_de_producao_sobe_avisando_que_esta_desligada(capsys) -> None:
+    """Desenvolvimento segue usavel sem arquivo nenhum — mas o log diz o que vale."""
+    s = Settings(bot_senha="abre", telegram_token="x")
+    bot.verificar_controle_de_acesso(s)  # nao levanta
+    assert "DESLIGADA" in capsys.readouterr().out
+
+
+def test_arquivo_quebrado_grita_na_partida_e_nao_na_1a_mensagem(tmp_path, capsys) -> None:
+    """Fail-closed por arquivo continua valendo — o que muda e' QUANDO se descobre."""
+    alvo = tmp_path / "bot_allowlist.json"
+    alvo.write_text("{isto nao e json", encoding="utf-8")
+    s = Settings(
+        bot_senha="abre",
+        telegram_token="x",
+        environment="production",
+        bot_allowlist_path=alvo,
+    )
+    bot.verificar_controle_de_acesso(s)  # sobe: o arquivo pode ser consertado sem restart
+    saida = capsys.readouterr().out
+    assert "FAIL-CLOSED" in saida
+    assert "0 chats" in saida
+
+
+def test_env_vazia_cai_na_mesma_recusa_que_env_ausente() -> None:
+    """`API_BOT_ALLOWLIST_PATH=` vira None pelo validador — e nao pode virar brecha."""
+    s = Settings(
+        bot_senha="abre", telegram_token="x", environment="production", bot_allowlist_path=""
+    )
+    assert s.bot_allowlist_path is None
+    with pytest.raises(SystemExit):
+        bot.verificar_controle_de_acesso(s)
