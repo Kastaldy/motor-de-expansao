@@ -1914,7 +1914,34 @@ def _ultra_pontos_mapa() -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
     df = pd.concat(partes, ignore_index=True) if len(partes) > 1 else partes[0]
     df = df.dropna(subset=["lat", "lng"]).drop_duplicates(subset=["lat", "lng"])
+    # A correção vem DEPOIS da dedup: o cadastro guarda cópias exatas do ponto antigo
+    # da curada, e corrigir antes solta essas cópias como pins fantasmas a ~100 m.
+    df = _aplicar_coord_corrigida(df).drop_duplicates(subset=["lat", "lng"])
     return df[cols].reset_index(drop=True)
+
+
+def _aplicar_coord_corrigida(df: pd.DataFrame) -> pd.DataFrame:
+    """Aplica `_EXEC_COORD_CORRIGIDA` aos pins do mapa, para o Mapa e a Visão Executiva
+    mostrarem o MESMO ponto da mesma unidade.
+
+    Os pins não têm UF (a curada não a carrega), então a correção casa só pela chave —
+    e só quando a chave é única na tabela; uma chave que aparecesse em duas UFs seria
+    ambígua aqui e fica de fora, em vez de mover o pin de outra praça.
+    """
+    contagem: dict[str, int] = {}
+    for chave, _uf in _EXEC_COORD_CORRIGIDA:
+        contagem[chave] = contagem.get(chave, 0) + 1
+    por_chave = {c: p for (c, _uf), p in _EXEC_COORD_CORRIGIDA.items() if contagem[c] == 1}
+    if not len(df) or not por_chave:
+        return df
+    pontos = df["nome"].map(lambda n: por_chave.get(_chave_unidade(n)))
+    alvo = pontos.notna()
+    if not bool(alvo.any()):
+        return df
+    df = df.copy()
+    df.loc[alvo, "lat"] = [p[0] for p in pontos[alvo]]
+    df.loc[alvo, "lng"] = [p[1] for p in pontos[alvo]]
+    return df
 
 
 @functools.lru_cache(maxsize=1)
