@@ -212,7 +212,11 @@ Nenhuma destas foi tomada. Estão aqui para não serem descobertas no meio da im
    `authelia` para o nosso `/api/verify`. As duas premissas não podiam conviver (uma diz que a
    borda some, a outra que ela fica), e **vale a da DEC**, que é o veículo canônico da decisão e é
    mais recente que este levantamento (medido em 16/09).
-   Segue **ABERTA** como decisão, e é ela que condiciona a data do corte
+   ~~Segue **ABERTA**~~ — **DECIDIDA em 25/09/2026 por Vinicius: opção (b), a borda é
+   MANTIDA.** O Caddy continua fazendo `forward_auth`, repontado do Authelia para o nosso
+   `/api/verify` (rota escrita no mesmo dia). Era o último item aberto do §7, então **a data
+   do corte deixa de estar travada por decisão** — o que resta é execução manual na VPS, e
+   um pré-requisito medido: `MOTOR_AUTENTICACAO_PROPRIA` ainda não chega ao container
    (`banco-de-reservas/decisoes-pendentes.md:39`). Continua sendo decisão de infraestrutura, com
    execução na VPS sob o §6.
    **Sobre os headers `Remote-*` que o RBAC lê hoje, a resposta já está no código e não depende da
