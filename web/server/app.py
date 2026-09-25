@@ -6642,6 +6642,25 @@ _EXEC_ALIAS_COORD: dict[tuple[str, str], str] = {
 }
 
 
+# Coordenada FORNECIDA por Felipe, que vence TODAS as fontes em `_coord_da_unidade`.
+# Existe para os casos em que nenhum alias resolve: a unidade não tem linha própria nos
+# parquets, ou a linha que casa pelo nome tem o ponto de OUTRA unidade. Medido contra os
+# parquets da VPS em 2026-09-25:
+#   - as três Ceilândias por quadra e São Carlos Centro não casavam com nada e
+#     ficavam SEM pin na Visão Executiva;
+#   - Botanic Mall e Jardim Botânico estavam TROCADOS entre si (o ponto de uma no
+#     pin da outra, a ~5 km).
+# Chave = `(_chave_unidade(nome Growth), UF)`, já normalizada, como no alias acima.
+_EXEC_COORD_CORRIGIDA: dict[tuple[str, str], tuple[float, float]] = {
+    ("CEILANDIA QNM24", "DF"): (-15.801298089339188, -48.10755437145428),
+    ("CEILANDIA QNM33", "DF"): (-15.832624961873757, -48.08987702487761),
+    ("CEILANDIA QNN32", "DF"): (-15.839355019389082, -48.10880149815541),
+    ("SAO CARLOS - CENTRO", "SP"): (-22.012508486987347, -47.8880006733541),
+    ("BOTANIC MALL", "DF"): (-15.880275122281448, -47.82143693951672),
+    ("JARDIM BOTANICO", "DF"): (-15.83510411113517, -47.803140295231366),
+}
+
+
 @functools.lru_cache(maxsize=1)
 def _carregar_growth() -> pd.DataFrame:
     if not GROWTH_PARQUET.exists():
@@ -6721,13 +6740,17 @@ def _coord_da_unidade(nome: str, uf: str) -> tuple[float, float] | None:
          bases (ex.: "Novo Gama / GO" atendendo a unidade que a Growth marca como DF).
 
     Nomes comerciais que nenhuma normalização reconcilia passam antes por
-    `_EXEC_ALIAS_COORD`, que redireciona a busca para a chave do cadastro.
+    `_EXEC_ALIAS_COORD`, que redireciona a busca para a chave do cadastro. Acima de
+    tudo isso, `_EXEC_COORD_CORRIGIDA` devolve a coordenada fornecida manualmente.
     """
     curada, cad_por_chave_uf, cad_por_chave = _ultra_coord_map()
     uf = str(uf).upper().strip()
     chave = _chave_unidade(nome)
     if not chave:
         return None
+    corrigida = _EXEC_COORD_CORRIGIDA.get((chave, uf))
+    if corrigida:
+        return corrigida
     # O alias existe justamente porque a chave crua não casa: ele SUBSTITUI a chave.
     chave = _EXEC_ALIAS_COORD.get((chave, uf), chave)
     return (
