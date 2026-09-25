@@ -1,5 +1,3 @@
-import { resolve } from 'node:path'
-
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -54,23 +52,25 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: false,
     chunkSizeWarningLimit: 1600,
-    // DUAS PAGINAS, e sem esta lista a segunda NAO EXISTE no que se publica.
+    // A TELA DE ENTRAR NAO ENTRA AQUI, e isto e' decisao com razao de SEGURANCA escrita
+    // em `vite.entrar.config.ts` -- leia-a antes de "consertar" a ausencia dela.
     //
-    // O Vite constroi so' o `index.html` por padrao. `entrar.html` estava no repositorio
-    // desde o PR #400 e NUNCA SAIU NO BUILD -- medido em 25/09/2026 rodando `vite build`:
-    // a pasta de saida tinha `index.html` e mais nada. A tela de entrar existia no fonte,
-    // passava no lint e nos testes das partes puras, e nao chegava a imagem nenhuma. Um
-    // defeito que nao da' erro em lugar nenhum: o build sai com sucesso, e o que falta so'
-    // aparece quando alguem pede a pagina e leva 404.
+    // Em resumo: aquela pagina e' servida na raiz de `auth.ultra-expansao.tech`, e o Caddy
+    // manda para o nosso container so' a raiz e o prefixo `entrar-assets/`. Com uma entrada
+    // a mais AQUI, os arquivos das duas paginas cairiam juntos em `assets/` -- e servir a
+    // tela exigiria abrir `assets/` inteiro naquele host, expondo o bundle do piloto (com
+    // as rotas internas da API) a quem ainda nao entrou.
     //
-    // Sao bundles SEPARADOS de proposito, e a razao e' de seguranca: servir a SPA inteira
-    // do piloto a quem ainda nao entrou entregaria as rotas internas da API para quem so'
-    // deveria ver um formulario de login.
-    rollupOptions: {
-      input: {
-        index: resolve(__dirname, 'index.html'),
-        entrar: resolve(__dirname, 'entrar.html'),
-      },
-    },
+    // O build de DUAS PAGINAS ja' existe, e sempre existiu: `npm run build` e'
+    // `vite build && vite build --config vite.entrar.config.ts` (`package.json`), e o
+    // `Dockerfile.web` roda `npm run build`.
+    //
+    // ERRO COMETIDO EM 25/09/2026, registrado para nao se repetir: acrescentei aqui um
+    // `rollupOptions.input` com as duas entradas, depois de "medir" que `entrar.html` nao
+    // saia no build. A medicao usou `vite build` -- o comando CRU, que ninguem executa --
+    // em vez de `npm run build`. A tela sempre foi construida. A mudanca nao consertava
+    // nada e criava DUAS copias do bundle de login (`assets/entrar-*.js` orfa, mais a
+    // legitima em `entrar-assets/`), com o `dist/entrar.html` passando a depender da ORDEM
+    // dos dois builds para apontar para o prefixo certo.
   },
 })

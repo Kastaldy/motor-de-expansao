@@ -18,10 +18,13 @@ import './styles/global.css'
  * itens. `api.entrar()` existia desde o PR #400 e **não tinha um único chamador**: era
  * a ponte pronta esperando a decisão. Esta é a decisão chegando ao código.
  *
- * ELA NÃO ESTAVA SENDO PUBLICADA. Medido no mesmo dia: `vite build` produzia só o
- * `index.html`, porque o `vite.config.ts` não listava as duas entradas — o
- * `entrar.html` existia no repositório desde o PR #400 e nunca saiu em imagem nenhuma.
- * Corrigido junto, e é o conserto sem o qual todo o resto aqui seria teórico.
+ * ELA SEMPRE FOI PUBLICADA — e eu afirmei o contrário aqui, por algumas horas em
+ * 25/09/2026. A "medição" que sustentava aquilo rodou `vite build`, o comando cru, e não
+ * `npm run build`, que é o que o `Dockerfile.web` executa e que sempre fez os DOIS
+ * builds (`vite build && vite build --config vite.entrar.config.ts`). O registro fica
+ * porque a lição não é sobre esta página: medir o comando errado produz um defeito
+ * convincente, com número e tudo, e o "conserto" dele foi que quase quebrou a
+ * separação de bundles que `vite.entrar.config.ts` existe para garantir.
  *
  * POR QUE CONTINUA SENDO UM BUNDLE SEPARADO. A razão mudou de endereço, não de peso.
  * Antes era colisão de arquivos com o portal do Authelia no mesmo host; agora é
