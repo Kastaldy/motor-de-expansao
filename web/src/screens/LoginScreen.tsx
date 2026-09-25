@@ -76,55 +76,96 @@ export default function LoginScreen({
    * `podeEnviar` devolvia falso e o botão nascia `disabled` e apagado — sobre campos
    * visivelmente preenchidos. O botão estava mentindo sobre o próprio formulário.
    *
-   * A correção lê o DOM e sincroniza, em dois gatilhos porque o autofill chega por
-   * dois caminhos e nenhum deles basta sozinho:
+   * A 1ª tentativa (24/09) lia o DOM e sincronizava o estado. NÃO RESOLVEU, e o
+   * relato seguinte explicou por quê: "o botão só fica azul depois que eu clico na
+   * tela, independente de onde seja o clique". O Chrome preenche os campos na carga,
+   * mas SEGURA o valor da senha até haver um GESTO do usuário — antes disso
+   * `input.value` devolve string vazia. Ler o DOM lia vazio; ler mais vezes leria
+   * vazio mais vezes. E o clique em qualquer lugar é justamente o gesto que libera.
    *
-   *  1. NA MONTAGEM (e em alguns quadros seguintes). É o caso do relato — recarregar
-   *     a página com os campos já preenchidos. O valor às vezes só aparece depois da
-   *     primeira pintura, por isso não basta ler uma vez: relemos por ~1s.
-   *  2. NO `animationstart`. O Chrome aplica `:-webkit-autofill` quando preenche, e
-   *     `global.css` pendura uma animação sem efeito visual só para avisar aqui. É o
-   *     único evento confiável quando o preenchimento acontece DEPOIS da montagem —
-   *     por exemplo quando a pessoa escolhe a credencial no menu do gerenciador.
+   * A correção certa NÃO DEPENDE DO VALOR. Ela detecta que o campo ESTÁ
+   * autopreenchido e trata isso como "tem conteúdo":
    *
-   * Não mexe no fluxo de envio: apenas faz o estado do React refletir o que já está
-   * na tela.
+   *  1. `animationstart` — o Chrome aplica `:-webkit-autofill` ao preencher, e o
+   *     `global.css` pendura ali uma animação sem efeito visual só para virar evento.
+   *     É o aviso que funciona mesmo com o valor ainda ilegível.
+   *  2. `matches(':-webkit-autofill')` na montagem e em alguns quadros seguintes —
+   *     rede de segurança para quando o preenchimento acontece antes de a tela montar
+   *     e o evento se perde.
+   *
+   * O valor de verdade é lido no ENVIO, direto do DOM: lá o clique já aconteceu e o
+   * navegador o entrega. Por isso `enviar` não usa o estado do React.
+   *
+   * A trava "campo vazio não vai ao servidor" fica de pé: sem autofill nada muda, e
+   * ela existe para não gastar uma das 4 tentativas que o Authelia conta antes de
+   * banir por 10 minutos.
    */
   const refUsuario = useRef<HTMLInputElement>(null)
   const refSenha = useRef<HTMLInputElement>(null)
+  const [auto, setAuto] = useState<{ usuario?: boolean; senha?: boolean }>({})
 
   useEffect(() => {
-    const sincronizar = () => {
-      const u = refUsuario.current?.value ?? ''
-      const p = refSenha.current?.value ?? ''
-      // Só escreve quando muda, para não pisar no que a pessoa está digitando.
-      if (u) setUsuario((atual) => (atual === u ? atual : u))
-      if (p) setSenha((atual) => (atual === p ? atual : p))
+    const olhar = () => {
+      const marcado = (el: HTMLInputElement | null) => {
+        // O seletor é específico do WebKit/Blink: em navegador que não o conhece o
+        // `matches` LANÇA, e sem o try o efeito derrubaria a tela inteira.
+        try {
+          return el?.matches(':-webkit-autofill') ?? false
+        } catch {
+          return false
+        }
+      }
+      const u = marcado(refUsuario.current)
+      const p = marcado(refSenha.current)
+      // Só sobe: o autofill não se desfaz sozinho, e um `false` tardio apagaria um
+      // `true` legítimo vindo do `animationstart`.
+      if (u || p) setAuto((a) => ({ usuario: a.usuario || u, senha: a.senha || p }))
+      // Quando o valor JÁ é legível (depois do gesto, ou em navegador sem a trava),
+      // aproveita e sincroniza — mantém o estado fiel para quem depois edita o campo.
+      const vu = refUsuario.current?.value ?? ''
+      const vs = refSenha.current?.value ?? ''
+      if (vu) setUsuario((atual) => (atual === vu ? atual : vu))
+      if (vs) setSenha((atual) => (atual === vs ? atual : vs))
     }
-    sincronizar()
-    // O autofill da recarga pode pousar depois da primeira pintura; 5 leituras em
-    // ~1s cobrem isso sem virar polling permanente.
-    const timers = [60, 150, 300, 600, 1000].map((ms) => window.setTimeout(sincronizar, ms))
+    olhar()
+    const timers = [60, 150, 300, 600, 1000].map((ms) => window.setTimeout(olhar, ms))
     return () => timers.forEach(window.clearTimeout)
   }, [])
 
   const aoAutoPreencher = (e: React.AnimationEvent<HTMLInputElement>) => {
     if (e.animationName !== 'aviso-autofill') return
     const alvo = e.currentTarget
-    if (alvo === refUsuario.current) setUsuario(alvo.value)
-    if (alvo === refSenha.current) setSenha(alvo.value)
+    if (alvo === refUsuario.current) setAuto((a) => ({ ...a, usuario: true }))
+    if (alvo === refSenha.current) setAuto((a) => ({ ...a, senha: true }))
+    // Se o valor já vier legível, guarda; se vier vazio, o `auto` acima já sustenta
+    // o botão e o envio lê o DOM.
+    if (alvo.value) {
+      if (alvo === refUsuario.current) setUsuario(alvo.value)
+      if (alvo === refSenha.current) setSenha(alvo.value)
+    }
   }
 
-  const habilitado = podeEnviar(usuario, senha, estado)
+  const habilitado = podeEnviar(usuario, senha, estado, auto)
   const selo = procedenciaCurta(ufs) ?? censoDaBase()
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault()
     if (!habilitado) return
+    /* Lê do DOM, não do estado. Com autofill o estado pode estar VAZIO — o navegador
+       só entrega o valor depois de um gesto, e o clique que disparou este envio é
+       exatamente esse gesto. Cai no estado quando o ref não existe (teste/SSR). */
+    const usuarioEnviado = refUsuario.current?.value || usuario
+    const senhaEnviada = refSenha.current?.value || senha
+    if (!usuarioEnviado.trim() || !senhaEnviada) {
+      // O autofill prometeu conteúdo e o DOM não entregou: não gasta uma das 4
+      // tentativas que o Authelia conta antes de banir por 10 minutos.
+      setFalha('credencial')
+      return
+    }
     setEstado('enviando')
     setFalha(null)
     try {
-      setFalha(await onEntrar(normalizarUsuario(usuario), senha, manter))
+      setFalha(await onEntrar(normalizarUsuario(usuarioEnviado), senhaEnviada, manter))
     } catch {
       // Exceção não tratada é INDISPONÍVEL, nunca credencial — ver `falhaDoStatus`.
       setFalha('indisponivel')

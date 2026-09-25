@@ -25,6 +25,42 @@ describe('podeEnviar', () => {
     expect(podeEnviar('felipe.silva', '   ', 'parado')).toBe(true)
   })
 
+  describe('campo AUTOPREENCHIDO conta como preenchido', () => {
+    /* O defeito, relatado duas vezes: com usuario e senha autopreenchidos o botao
+       nascia cinza e so' acordava ao clicar em QUALQUER lugar da tela. O Chrome
+       preenche na carga mas segura o valor da senha ate' haver um gesto — entao ler
+       o DOM devolvia vazio, e o clique era o gesto que liberava. A habilitacao passa
+       a olhar a PRESENCA do autofill, nao o valor. */
+
+    it('os dois autopreenchidos, com valor ainda ilegivel, habilitam', () => {
+      expect(podeEnviar('', '', 'parado', { usuario: true, senha: true })).toBe(true)
+    })
+
+    it('so a senha autopreenchida, com usuario digitado', () => {
+      expect(podeEnviar('felipe.silva', '', 'parado', { senha: true })).toBe(true)
+    })
+
+    it('so um campo autopreenchido NAO basta', () => {
+      expect(podeEnviar('', '', 'parado', { senha: true })).toBe(false)
+      expect(podeEnviar('', '', 'parado', { usuario: true })).toBe(false)
+    })
+
+    it('nao afrouxa o resto: `enviando` continua bloqueando', () => {
+      // Duplo clique com autofill gastaria duas das 4 tentativas.
+      expect(podeEnviar('', '', 'enviando', { usuario: true, senha: true })).toBe(false)
+    })
+
+    it('sem autofill o comportamento e' + ' identico ao de antes', () => {
+      expect(podeEnviar('', 'segredo', 'parado', {})).toBe(false)
+      expect(podeEnviar('felipe.silva', '', 'parado', {})).toBe(false)
+      expect(podeEnviar('felipe.silva', 'segredo', 'parado', {})).toBe(true)
+    })
+
+    it('`false` explicito nao habilita (nao basta a chave existir)', () => {
+      expect(podeEnviar('', '', 'parado', { usuario: false, senha: false })).toBe(false)
+    })
+  })
+
   it('nao envia duas vezes enquanto o primeiro envio esta em voo', () => {
     // Duplo clique gastaria DUAS das 4 tentativas com a mesma credencial.
     expect(podeEnviar('felipe.silva', 'segredo', 'enviando')).toBe(false)
