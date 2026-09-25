@@ -666,6 +666,117 @@ def cmd_expurgar(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_alinhar_senhas(args: argparse.Namespace) -> int:
+    """Regrava o hash da senha INICIAL em quem nunca escolheu a propria.
+
+    PARA QUE ISTO EXISTE. O hash de cada pessoa foi gravado no momento da CRIACAO, a partir da
+    `MOTOR_SENHA_INICIAL` de entao. Se a env mudou depois, ou se a linha nasceu por SQL a mao,
+    a pessoa NAO ENTRA quando o motor passar a autenticar. Enquanto o Authelia autentica isso e'
+    inofensivo -- a coluna nao abre porta nenhuma --, e no dia do corte vira gente trancada,
+    descoberta uma a uma pelo telefone. Este comando e' o passo de PREPARACAO do corte.
+
+    SO' MEXE EM QUEM NUNCA ESCOLHEU SENHA, e o recorte e' a parte importante. Para essas pessoas
+    a senha inicial compartilhada E' a senha delas, entao regravar nao lhes tira nada. Quem
+    ESCOLHEU a propria e esta' com hash quebrado e' apenas RELATADO: consertar significaria
+    apagar a senha que ela escolheu, e isso e' decisao de gente. O dono do banco, que escolheu a
+    senha dele, nunca e' tocado.
+
+    UM SAL POR PESSOA, e nao um hash reaproveitado. `hash_da_senha_inicial()` e' chamada uma vez
+    POR LINHA de proposito: com o mesmo hash em todas, duas linhas iguais anunciariam no dump
+    exatamente quem ainda esta' na senha compartilhada -- e `deve_trocar_senha_usuario` ja'
+    responde isso de forma honesta, para quem tem direito de ver. Custa ~100 ms por pessoa.
+
+    E' IDEMPOTENTE, e isso custa um `verificar` por pessoa: quem nao escolheu senha tem o hash
+    CONFERIDO contra a inicial antes de entrar na lista. Sem essa conferencia o comando diria
+    "20 seriam alinhadas" tanto num banco quebrado quanto num banco ja' certo, e rodar duas vezes
+    nao distinguiria "funcionou" de "nao fez nada".
+
+    NAO GRAVA EVENTO, e a razao e' a mesma do `cmd_expurgar`: roda pelo DONO do schema, fora do
+    RBAC de usuario, e nao ha' usuario logado para carimbar como autor (`eventos.id_usuario` tem
+    FK). O registro deste ato e' o runbook (`docs/repasse_corte_p19.md`) e a saida deste comando
+    -- que por isso NOMEIA cada pessoa tocada, em vez de so' contar.
+    """
+    from . import senhas, usuarios
+
+    # A env ANTES do banco: sem ela nao ha' o que gravar, e a mensagem de `senha_inicial()`
+    # diz exatamente o que fazer. Descobrir isso depois de abrir a conexao so' atrasaria o erro.
+    try:
+        senhas.senha_inicial()
+    except senhas.SenhaInicialNaoConfigurada as erro:
+        print(f"ERRO: {erro}")
+        return 1
+    if not senhas.disponivel():
+        print("ERRO: argon2-cffi nao esta instalado neste ambiente (extra `auth`).")
+        return 1
+
+    with _conectar_para_ddl() as con:
+        linhas = con.execute(
+            usuarios.SQL_ESTADO_DA_SENHA_INICIAL, (senhas.PREFIXO_PHC + "%",)
+        ).fetchall()
+
+    inicial = senhas.senha_inicial()
+    por_classe: dict[str, list[tuple[int, str]]] = {
+        "sem_propria_ok": [],
+        "sem_propria": [],
+        "propria_quebrada": [],
+        "propria_ok": [],
+    }
+    for id_usuario, login, hash_atual, classe in linhas:
+        # QUEM NAO ESCOLHEU SENHA AINDA PRECISA SER CONFERIDO, e este `verificar` e' o que faz
+        # a contagem deste comando ser HONESTA. Sem ele, "20 seriam alinhadas" sai igual num
+        # banco com 20 hashes quebrados e num banco com 20 ja' corretos -- e o operador que roda
+        # o comando duas vezes nao consegue distinguir "funcionou" de "nao fez nada". E' a mesma
+        # exigencia que o `cmd_expurgar` documenta: o numero tem de dizer o que FALTA, nao
+        # quantas linhas existem. Custa ~100 ms por pessoa e roda so' aqui, na preparacao.
+        if classe == "sem_propria" and senhas.verificar(inicial, hash_atual):
+            classe = "sem_propria_ok"
+        por_classe[classe].append((id_usuario, login))
+
+    print(f"usuarios ativos: {len(linhas)}")
+    print(f"  ja' escolheram a propria senha, hash ok : {len(por_classe['propria_ok'])}")
+    print(f"  na senha inicial e JA' CONFEREM         : {len(por_classe['sem_propria_ok'])}")
+    print(f"  na senha inicial e NAO conferem         : {len(por_classe['sem_propria'])}")
+    print(f"  escolheram, mas o hash esta' QUEBRADO   : {len(por_classe['propria_quebrada'])}")
+
+    if por_classe["propria_quebrada"]:
+        print()
+        print("ATENCAO -- estas pessoas NAO entram depois do corte, e este comando NAO as toca:")
+        for _id, login in por_classe["propria_quebrada"]:
+            print(f"    {login}")
+        print("  Elas escolheram uma senha e o hash dela nao e' valido. Consertar significa")
+        print("  APAGAR a senha escolhida, entao a decisao e' de quem administra: redefina cada")
+        print("  uma pela tela de Acessos (senha temporaria, 2 h) ou combine outra saida.")
+
+    alvos = por_classe["sem_propria"]
+    if not alvos:
+        print()
+        print("nada a alinhar")
+        return 0
+
+    if args.simular:
+        print()
+        print("(--simular: nada foi escrito) seriam alinhadas:")
+        for _id, login in alvos:
+            print(f"    {login}")
+        return 0
+
+    print()
+    with _conectar_para_ddl() as con:
+        for id_usuario, login in alvos:
+            # Uma chamada por linha: sal proprio (ver o docstring).
+            con.execute(usuarios.SQL_ALINHAR_SENHA_INICIAL, (senhas.hash_da_senha_inicial(), id_usuario))
+            print(f"  alinhada: {login}")
+        # COMMIT EXPLICITO, pelo mesmo motivo do `cmd_expurgar`: este e' o unico ponto onde o
+        # comando escreve, e depender do `with` faria uma troca futura por `connect()/close()`
+        # imprimir "alinhada: <login>" com ROLLBACK silencioso. Relatar credencial gravada que
+        # nao foi e' o pior desfecho possivel -- a pessoa descobre no dia do corte.
+        con.commit()
+    print()
+    print(f"ALINHADAS: {len(alvos)}. Elas entram com a MOTOR_SENHA_INICIAL e a tela vai")
+    print("convidar cada uma a trocar no primeiro acesso.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m motor_expansao.db", description=__doc__)
     sub = parser.add_subparsers(dest="comando", required=True)
@@ -698,6 +809,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_expurgar.add_argument("--simular", action="store_true", help="so' conta; nao escreve nada")
     p_expurgar.set_defaults(funcao=cmd_expurgar)
+
+    p_alinhar = sub.add_parser(
+        "alinhar-senhas",
+        help="regrava o hash da senha inicial em quem nunca escolheu a propria (preparacao do corte)",
+    )
+    p_alinhar.add_argument("--simular", action="store_true", help="so' relata; nao escreve nada")
+    p_alinhar.set_defaults(funcao=cmd_alinhar_senhas)
 
     args = parser.parse_args(argv)
     return int(args.funcao(args))

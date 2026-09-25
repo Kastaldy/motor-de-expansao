@@ -24,7 +24,9 @@
 # PRE-REQUISITOS, ou trocar o bloco so' troca um problema por outro:
 #   * migrations 018, 019 e 020 aplicadas (`docs/repasse_migracoes_p19.md`);
 #   * `MOTOR_DATABASE_URL` preenchida e o Postgres no ar — a sessao vive em TABELA;
-#   * as pessoas com senha propria, ou os hashes do `users_database.yml` importados.
+#   * `db alinhar-senhas --simular` sem ninguem na coluna "NAO conferem" nem na "QUEBRADO"
+#     (passo 0 do `docs/repasse_corte_p19.md`). Importar hash do Authelia foi DESCARTADO em
+#     25/09/2026: todos usam a mesma senha, entao nao ha' senha individual a preservar.
 # ─────────────────────────────────────────────────────────────────────────────────
 #
 # O AUTHELIA NAO MORRE NESTE CORTE. A instancia AR continua atras dele (ver

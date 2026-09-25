@@ -55,39 +55,117 @@ imagem. A ordem entre elas é indiferente.
 
 ---
 
-## Passo 0 — Medir quem seria trancado (faça DIAS antes, não na janela)
+## Passo 0 — Garantir que ninguém fica trancado (faça DIAS antes, não na janela)
 
 Este é o único passo que não dá para desfazer depois: se alguém não consegue entrar, você vai
 descobrir com a pessoa do outro lado da linha.
 
-```bash
-docker compose -f docker-compose.prod.yml exec postgres \
-  psql -U reservas_owner -d banco_de_reservas -c \
-  "SELECT login_usuario FROM usuarios WHERE ativo AND (senha_hash IS NULL OR senha_hash NOT LIKE '\$argon2id\$%');"
-```
+**São três conferências, nesta ordem.** A primeira é a que tranca a equipe inteira se for pulada;
+as outras duas trancam pessoas individuais.
 
-**Esperado:** `(0 rows)`.
+### 0.a — Todo mundo que usa o piloto EXISTE na tabela `usuarios`?
 
-**Se vier alguma linha:** cada uma é uma pessoa que **não entra** depois do corte. O motor só
-aceita senha em formato Argon2id; linha semeada por SQL à mão (`hash_de_teste_*` e afins) é
-recusada. **Pare** e resolva antes — quem repassou precisa criar a senha dessas pessoas pela tela
-de Acessos.
+**Este é o passo que, pulado, tranca a equipe inteira** — e ele não tem nada a ver com senha.
 
-> **Atenção ao mal-entendido comum:** quem está na **senha inicial compartilhada** entra
-> normalmente — essa pessoa tem um hash Argon2id de verdade. O risco não é "estar na senha
-> inicial"; é o hash não ser Argon2id.
+Hoje quem libera o acesso é o arquivo `acesso_abas.json`, e quem autentica é o Authelia. **A
+tabela `usuarios` não participa disso.** Ou seja: alguém pode estar usando o piloto há meses sem
+ter linha nenhuma no banco. Depois do corte, sem linha em `usuarios` **não há como entrar**.
 
-### Quanta gente já tem senha própria
+Liste os dois lados e compare:
 
 ```bash
+cd /opt/motor-expansao/app
+
+# 1) quem tem acesso hoje (o arquivo que o piloto lê)
+cat /opt/motor-expansao/cadastro/acesso_abas.json
+
+# 2) quem existe no banco
 docker compose -f docker-compose.prod.yml exec postgres \
   psql -U reservas_owner -d banco_de_reservas -c \
-  "SELECT count(*) FILTER (WHERE senha_definida_em_usuario IS NOT NULL) AS propria, count(*) AS total FROM usuarios WHERE ativo;"
+  "SELECT login_usuario, ativo FROM usuarios ORDER BY login_usuario;"
 ```
 
-Isto é informativo, não um portão: quem ainda não trocou usa a senha inicial compartilhada e
-consegue entrar. Serve para você saber quantas pessoas vão ver o convite de troca no primeiro
-acesso.
+**Esperado:** todo login do arquivo aparece na tabela, e ativo.
+
+**Se faltar alguém — e é o caso provável:** essas pessoas precisam ser **criadas pela tela de
+Acessos** antes do corte. Criar pela tela é o caminho certo porque ele grava o hash da senha
+inicial, o perfil e a trilha de quem criou; `INSERT` à mão no banco produz exatamente o hash
+inválido que o passo 0.c existe para pegar.
+
+> **Não tente adivinhar o perfil de ninguém.** Quem decide qual perfil cada pessoa recebe é quem
+> repassou — os perfis (`expansao`, `consultoria`, `lideres`, `growth`) definem o que ela vê.
+
+> **Contexto que ajuda a dimensionar:** esta conciliação entre o `users_database.yml` do Authelia
+> e as linhas de `usuarios` é o conteúdo do bloco **`BLK-SEC-03-FU2`**, que o levantamento do P19
+> já declarava "pré-requisito prático" do corte e que segue **pendente**. Se ele não foi feito,
+> este passo é a versão mínima dele.
+
+### 0.b — As duas senhas compartilhadas são a MESMA?
+
+Hoje quase todo mundo usa **uma senha compartilhada** no Authelia. O motor também tem a sua, na
+variável `MOTOR_SENHA_INICIAL`. Se as duas forem a mesma string, ninguém percebe o corte.
+
+```bash
+cd /opt/motor-expansao/app
+grep '^MOTOR_SENHA_INICIAL=' .env
+```
+
+Compare com a senha que a equipe usa hoje para entrar.
+
+- **Iguais:** ótimo. Siga para o 0.c.
+- **Diferentes:** o corte vai funcionar, mas **todo mundo vai precisar da outra senha**. Duas
+  saídas: mudar `MOTOR_SENHA_INICIAL` no `.env` para a senha que a equipe já conhece (e então o
+  0.c é obrigatório, porque os hashes guardados continuam sendo os antigos), ou avisar a equipe
+  da senha nova. **Decida isto com quem repassou** — não escolha sozinho.
+- **Variável ausente ou vazia:** **pare**. Sem ela ninguém consegue entrar depois do corte e não
+  há como criar usuário.
+
+### 0.c — Alinhar os hashes e ver quem sobra
+
+```bash
+docker compose -f docker-compose.prod.yml run --rm \
+  -e MOTOR_DATABASE_URL_ADMIN -e MOTOR_SENHA_INICIAL \
+  web python -m motor_expansao.db alinhar-senhas --simular
+```
+
+> `--simular` **não escreve nada**. Rode assim primeiro, sempre.
+
+**Esperado:** quatro contagens, e o que interessa são as duas últimas:
+
+```
+usuarios ativos: <N>
+  ja' escolheram a propria senha, hash ok : <a>
+  na senha inicial e JA' CONFEREM         : <b>
+  na senha inicial e NAO conferem         : <c>
+  escolheram, mas o hash esta' QUEBRADO   : <d>
+```
+
+- **`c` maior que zero:** são pessoas que estão na senha compartilhada mas cujo hash guardado não
+  corresponde a ela — elas **não entrariam**. Rode o comando **sem** `--simular` para consertar:
+
+  ```bash
+  docker compose -f docker-compose.prod.yml run --rm \
+    -e MOTOR_DATABASE_URL_ADMIN -e MOTOR_SENHA_INICIAL \
+    web python -m motor_expansao.db alinhar-senhas
+  ```
+
+  Ele nomeia cada pessoa que alinhou. Rode o `--simular` de novo e confira que `c` virou **0**.
+
+- **`d` maior que zero:** o comando **lista os logins e não os toca**, de propósito. Essas pessoas
+  escolheram uma senha e o hash dela está inválido; consertar significaria **apagar a senha que
+  elas escolheram**. Leve a lista a quem repassou: o caminho é redefinir cada uma pela tela de
+  Acessos (senha temporária, válida 2 h) e combinar o repasse por telefone. **Não siga para o
+  passo 1 com `d` maior que zero sem essa decisão tomada.**
+
+> **O comando nunca toca em quem escolheu a própria senha** — e isso inclui **você/o dono**. É a
+> propriedade que o torna seguro de rodar na preparação: ele conserta só quem está na senha
+> compartilhada, para quem a senha compartilhada **é** a senha por definição.
+
+> **Atenção ao mal-entendido comum:** quem está na senha compartilhada **entra normalmente** —
+> essa pessoa tem um hash Argon2id de verdade. O risco não é "estar na senha inicial"; é o hash
+> guardado não corresponder à senha que a pessoa digita.
+
+O número `b` diz quantas pessoas vão ver o convite para trocar de senha no primeiro acesso.
 
 ---
 
@@ -96,9 +174,10 @@ acesso.
 **Antes de virar a chave**, avise quem usa o piloto. Três coisas:
 
 1. **A tela de login vai mudar de aparência.** É esperado.
-2. **A senha é a mesma de sempre** (a que elas usam no Authelia hoje) — desde que já tenham
-   trocado pelo piloto. Quem nunca trocou usa a senha inicial compartilhada, que quem repassou
-   informa.
+2. **Qual senha usar**, e isto depende do que o passo 0 encontrou: quem foi criado pela tela de
+   Acessos (inclusive agora, na preparação) nasce na **senha inicial compartilhada** — a
+   `MOTOR_SENHA_INICIAL`. Se ela for a mesma que a equipe já digita no Authelia (passo 0.b),
+   ninguém precisa decorar nada novo. Se não for, **avise qual é** antes da janela.
 3. **Se errarem a senha 5 vezes em 15 minutos, a conta trava.** E o servidor responde a mesma
    mensagem de "senha incorreta" — de propósito, para não avisar a quem varre nomes que acertou
    um. **Quem travar precisa pedir a um administrador para redefinir a senha pelo painel de

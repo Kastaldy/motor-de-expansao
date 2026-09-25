@@ -417,3 +417,111 @@ def test_o_evento_da_redefinicao_tem_as_duas_pessoas_e_nenhuma_senha(
     assert (id_autor, entidade, entidade_id) == (admin, db_usuarios.ENTIDADE_USUARIO, pessoa["id"])
     assert resultado["senha_temporaria"] not in str(metadados)
     assert set(metadados) == {"tinha_senha_propria", "validade_horas"}
+
+
+# --------------------------------------------------------------------------------------
+# `db alinhar-senhas` — a preparacao do corte (25/09/2026)
+# --------------------------------------------------------------------------------------
+
+
+def _hash_de(con: Any, id_usuario: int) -> tuple[str | None, Any]:
+    with con.cursor() as cur:
+        cur.execute(
+            "SELECT senha_hash, senha_definida_em_usuario FROM usuarios WHERE id_usuario = %s",
+            (id_usuario,),
+        )
+        return cur.fetchone()
+
+
+def test_alinhar_conserta_quem_nunca_escolheu_senha(
+    con: Any, pessoa: dict[str, Any]
+) -> None:
+    """O caso que o comando existe para resolver: hash semeado a mao, pessoa trancada.
+
+    Enquanto o Authelia autentica isso e' inofensivo. No dia do corte e' gente que nao entra,
+    descoberta uma a uma pelo telefone.
+    """
+    with con.cursor() as cur:
+        cur.execute(
+            "UPDATE usuarios SET senha_hash = 'hash_de_teste_1', "
+            "senha_definida_em_usuario = NULL WHERE id_usuario = %s",
+            (pessoa["id"],),
+        )
+
+    antes = db_usuarios.credenciais_por_login(pessoa["login"])
+    assert antes is not None
+    assert not db_senhas.verificar(db_senhas.senha_inicial(), antes.senha_hash), (
+        "cenario invalido: a pessoa ja' entrava antes do comando"
+    )
+
+    assert cli.main(["alinhar-senhas"]) == 0
+
+    depois = db_usuarios.credenciais_por_login(pessoa["login"])
+    assert depois is not None
+    assert db_senhas.verificar(db_senhas.senha_inicial(), depois.senha_hash), (
+        "a pessoa continua sem conseguir entrar com a senha inicial"
+    )
+    assert depois.deve_trocar is True, "a tela precisa CONVIDAR essa pessoa a trocar"
+
+
+def test_alinhar_NAO_TOCA_quem_escolheu_a_propria_senha(
+    con: Any, pessoa: dict[str, Any]
+) -> None:
+    """A propriedade de seguranca do comando, e a razao de ele nao ser um `UPDATE` cru.
+
+    Quem escolheu senha nao pode ter a senha apagada por um comando de manutencao -- e o DONO
+    do banco esta' exatamente nesse grupo. Um comando que "alinha todo mundo" derrubaria a senha
+    dele junto, no passo de PREPARACAO do corte.
+    """
+    _definir_senha_propria(con, pessoa["id"], SENHA_ESCOLHIDA)
+    hash_antes, definida_antes = _hash_de(con, pessoa["id"])
+
+    assert cli.main(["alinhar-senhas"]) == 0
+
+    hash_depois, definida_depois = _hash_de(con, pessoa["id"])
+    assert hash_depois == hash_antes, "o comando reescreveu a senha de quem a escolheu"
+    assert definida_depois == definida_antes
+    assert db_senhas.verificar(SENHA_ESCOLHIDA, hash_depois)
+
+
+def test_alinhar_com_simular_nao_escreve_nada(con: Any, pessoa: dict[str, Any]) -> None:
+    with con.cursor() as cur:
+        cur.execute(
+            "UPDATE usuarios SET senha_hash = 'hash_de_teste_2', "
+            "senha_definida_em_usuario = NULL WHERE id_usuario = %s",
+            (pessoa["id"],),
+        )
+    antes, _ = _hash_de(con, pessoa["id"])
+
+    assert cli.main(["alinhar-senhas", "--simular"]) == 0
+
+    depois, _ = _hash_de(con, pessoa["id"])
+    assert depois == antes, "`--simular` escreveu no banco"
+
+
+def test_alinhar_e_IDEMPOTENTE_e_a_contagem_e_honesta(
+    con: Any, pessoa: dict[str, Any], capsys: Any
+) -> None:
+    """Rodar duas vezes nao reescreve, e o numero diz o que FALTA.
+
+    Sem a conferencia do hash, a saida diria "N seriam alinhadas" tanto num banco quebrado
+    quanto num ja' certo -- e quem rodasse o comando duas vezes nao distinguiria "funcionou"
+    de "nao fez nada". E' a mesma exigencia que o `cmd_expurgar` documenta.
+    """
+    with con.cursor() as cur:
+        cur.execute(
+            "UPDATE usuarios SET senha_hash = 'hash_de_teste_3', "
+            "senha_definida_em_usuario = NULL WHERE id_usuario = %s",
+            (pessoa["id"],),
+        )
+
+    assert cli.main(["alinhar-senhas"]) == 0
+    primeira, _ = _hash_de(con, pessoa["id"])
+
+    capsys.readouterr()
+    assert cli.main(["alinhar-senhas", "--simular"]) == 0
+    saida = capsys.readouterr().out
+    assert "na senha inicial e NAO conferem         : 0" in saida, saida
+
+    segunda, _ = _hash_de(con, pessoa["id"])
+    assert segunda == primeira, "a segunda passada reescreveu o hash"

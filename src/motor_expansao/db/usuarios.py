@@ -726,3 +726,54 @@ def exigir_troca(id_alvo: int, *, autor: int) -> dict[str, Any]:
         )
 
     return {"id_usuario": id_alvo, "mudou": True}
+
+
+# --- Alinhar a senha inicial (preparacao do corte do P19) -------------------------------
+#
+# CONTEXTO, porque isto so' faz sentido com ele: o hash de cada pessoa foi gravado NO
+# MOMENTO EM QUE ELA FOI CRIADA, a partir da `MOTOR_SENHA_INICIAL` de ENTAO. Se a env mudou
+# depois, ou se a linha nasceu por SQL a mao (com `hash_de_teste_*` ou coisa parecida), a
+# pessoa NAO ENTRA quando o motor passar a autenticar -- `senhas.verificar` recusa qualquer
+# coisa fora do formato PHC, e um hash de outra senha nao casa com a que ela digita.
+#
+# Enquanto o Authelia autentica isso e' inofensivo (a coluna nao abre porta nenhuma). No dia
+# do corte vira gente trancada, descoberta uma a uma pelo telefone.
+
+#: Quem esta' em que estado. As tres classes sao EXCLUDENTES e a ordem importa para a
+#: decisao: so' a primeira e' segura de reescrever sem falar com ninguem.
+#:
+#:   `sem_propria`  -> nunca escolheu senha. A inicial compartilhada E' a senha dela por
+#:                     definicao, entao regravar o hash da inicial nao lhe tira nada.
+#:   `propria_quebrada` -> escolheu senha, mas o hash nao e' PHC valido. Esta' trancada, e
+#:                     consertar significa PERDER a senha que ela escolheu -- decisao de
+#:                     gente, nao de comando. Por isso aqui so' se RELATA.
+#:   `propria_ok`   -> nada a fazer.
+#:
+#: `senha_hash LIKE '$argon2id$%%'`: o `%%` e' escape do proprio psycopg, nao do SQL -- esta
+#: consulta leva parametro, e um `%` solitario viraria placeholder e morreria com
+#: "syntax error at or near". Ja' aconteceu neste repositorio, em `SQL_CONTAGENS`.
+SQL_ESTADO_DA_SENHA_INICIAL = """
+SELECT u.id_usuario, u.login_usuario, u.senha_hash,
+       CASE
+         WHEN u.senha_definida_em_usuario IS NULL THEN 'sem_propria'
+         WHEN u.senha_hash IS NULL OR u.senha_hash NOT LIKE %s THEN 'propria_quebrada'
+         ELSE 'propria_ok'
+       END AS classe
+FROM usuarios u
+WHERE u.ativo
+ORDER BY u.login_usuario
+"""
+
+#: Regrava o hash de UMA pessoa com a senha inicial. NAO e' o `SQL_DEFINIR_SENHA`, e a
+#: diferenca e' o ponto: aquele marca `senha_definida_em_usuario = now()` e
+#: `deve_trocar = FALSE`, porque ele registra uma ESCOLHA. Aqui nao houve escolha nenhuma --
+#: a pessoa continua na senha compartilhada, e as duas colunas tem de dizer isso. Marcar
+#: `deve_trocar = TRUE` e' o que faz a tela convidar para a troca no primeiro acesso.
+SQL_ALINHAR_SENHA_INICIAL = """
+UPDATE usuarios
+SET senha_hash = %s,
+    senha_definida_em_usuario = NULL,
+    deve_trocar_senha_usuario = TRUE,
+    senha_expira_em_usuario = NULL
+WHERE id_usuario = %s
+"""

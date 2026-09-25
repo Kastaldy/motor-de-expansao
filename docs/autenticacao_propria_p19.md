@@ -87,8 +87,18 @@ responde "quem sou eu" depois do login.
 
 Medido, e as duas já estão disponíveis:
 
-1. **Importar os hashes do Authelia.** O `users_database.yml` guarda `argon2id`, e a D26 escolheu os
-   mesmos parâmetros exatamente para isso. Ninguém redefine senha no dia da virada.
+1. ~~**Importar os hashes do Authelia.**~~ — **DESCARTADA em 25/09/2026**, e não por custo: o
+   dono informou que **todos os perfis, exceto o dele, usam a MESMA senha** hoje. Importar
+   copiaria uma senha compartilhada de um sistema para o outro, que é o estado que a D26 e a D31
+   existem para encerrar — e o único valor da importação era preservar senhas individuais, que
+   não existem. A compatibilidade técnica **segue real** (o hash carrega os próprios parâmetros;
+   medido em 25/09 que o nosso `verificar` aceita até hash de parâmetros diferentes); o que caiu
+   foi a utilidade. **Nunca houve ferramenta:** `python -m motor_expansao.db` não tem subcomando
+   de importação, e quatro documentos prometiam este caminho como disponível.
+
+   No lugar dela entra `db alinhar-senhas`, que é mais barato e resolve o problema real —
+   garantir que o hash guardado corresponde à senha compartilhada que a equipe digita. Ver
+   `docs/repasse_corte_p19.md`, passo 0.
 2. **Esvaziar a fila antes.** As pessoas podem definir senha própria **desde já**, e
    `senha_definida_em_usuario` é literalmente a fila: nulo = ainda na senha inicial. O P19 diz, com
    estas palavras, que essa coluna "é a fila que a epic precisa zerar".
