@@ -581,9 +581,13 @@ def _draw_scale_bar(
     draw: ImageDraw.ImageDraw,
     map_box: tuple[int, int, int, int],
     meters_per_px: float,
+    *,
+    candidates: tuple[int, ...] = (1000, 750, 500, 250, 100),
 ) -> None:
+    """Barra de escala: o MAIOR candidato que cabe em 140 px. `candidates` existe para a
+    imagem cujo assunto e' um raio (pressao do ponto, 750 m): um "1 km" solto ao lado dos
+    discos le-se como o raio, entao ela limita a barra a 500 m. Default identico ao de antes."""
     left, _, _, bottom = map_box
-    candidates = [1000, 750, 500, 250, 100]
     scale_m = next((value for value in candidates if value / meters_per_px <= 140), 100)
     px_len = max(20, int(round(scale_m / meters_per_px)))
     x0 = left + 18

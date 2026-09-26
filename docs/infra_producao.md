@@ -1026,30 +1026,69 @@ requisição seguinte, sem restart); mudanças no `Caddyfile` seguem pedindo
 
 ### Revogar usuário
 
-> **DEPOIS DO CORTE DO P19, os dois passos abaixo NÃO revogam ninguém no piloto brasileiro** —
-> e ainda causam dano. Quem autentica o BR passa a ser o banco: a pessoa removida do
-> `users_database.yml` **continua dentro** pelas 8 h da sessão aberta dela, e o
-> `restart authelia` **desloga a instância argentina inteira**, que continua dependendo dele.
+São **quatro** portas independentes, e revogar só a primeira não fecha as outras três.
+
+> **A porta 1 DEIXA DE REVOGAR O BR no dia do corte do P19, e a 4 nasce nesse dia.** Depois
+> que `MOTOR_AUTENTICACAO_PROPRIA` estiver preenchida, quem autentica o piloto brasileiro é o
+> banco: remover a pessoa do `users_database.yml` **não a tira de lá** — ela continua dentro
+> pelas 8 h da sessão aberta —, e o `restart authelia` **desloga a instância argentina
+> inteira**, que segue dependendo dele. Conferir o estado:
+> `cd /opt/motor-expansao/app && grep '^MOTOR_AUTENTICACAO_PROPRIA=' .env`.
 >
-> Saber em qual estado a instância está:
-> ```bash
-> cd /opt/motor-expansao/app && grep '^MOTOR_AUTENTICACAO_PROPRIA=' .env
-> ```
-> Vazia → o corte não aconteceu, siga os dois passos. Com valor → **use o passo 0 abaixo**.
+> Enquanto durar a janela de observação do corte, faça a **1 e a 4**: o rollback devolve o
+> Authelia ao comando, então quem sai da empresa precisa sair dos dois cadastros. É a dívida
+> declarada na emenda de 25/09/2026 da DEC-067.
 
-**0. Depois do corte — o gesto que funciona, e é imediato:** desativar a linha da pessoa em
-`usuarios`, pelo painel de **Acessos** do piloto. `SQL_VALIDAR` exige `u.ativo` a cada
-requisição guardada, então a sessão dela **morre na requisição seguinte** — não há janela de
-8 h nem restart de serviço nenhum. É a única porta que revoga de verdade no BR.
+1. **Authelia** — editar `authelia/users_database.yml`, remover o bloco do usuário e
+   `docker compose -f docker-compose.prod.yml restart authelia`.
+   O restart não é opcional se a pessoa puder estar logada: a sessão vive na memória
+   do processo (não há Redis) e o cookie dura 8h absolutas, então sem reiniciar ela
+   continua dentro. O restart desloga todo mundo — as pessoas só entram de novo.
+2. **Abas do piloto** — remover a chave do usuário em
+   `/opt/motor-expansao/cadastro/acesso_abas.json`. Relido por mtime: vale na hora,
+   sem restart. (O curinga `"*"` está em `[]`, então sair do arquivo já zera as abas —
+   mas o passo 1 continua necessário, senão a pessoa ainda autentica.)
+3. **Bot do Telegram** — remover o `chat_id` de
+   `/opt/motor-expansao/cadastro/bot_allowlist.json` (seção abaixo).
 
-> Fazer isso **além** dos passos 1 e 2 enquanto durar a janela de observação do corte: quem sai
-> da empresa precisa sair dos DOIS cadastros, porque o rollback devolve o Authelia ao comando.
-> É a dívida declarada na emenda de 25/09/2026 da DEC-067.
+> **Por que o passo 3 existe.** Até 2026-09-24 o bot tinha uma única porta: a senha
+> COMPARTILHADA. O "login" pedido depois dela nunca foi verificado contra nada — é
+> rótulo de trilha, não identidade. Medido no offboarding de 24/09: revogar no
+> Authelia **não fechava o bot**, porque o bot nunca consultou o Authelia. E trocar a
+> senha também não resolveria, porque as sessões são persistidas em disco com
+> `autorizado: true` e recarregadas no arranque.
 
-**Antes do corte (ou para a instância AR, sempre):**
+### Allowlist do bot do Telegram
 
-1. Editar `authelia/users_database.yml` e remover o bloco do usuário
-2. `docker compose -f docker-compose.prod.yml restart authelia`
+Arquivo: `/opt/motor-expansao/cadastro/bot_allowlist.json`. Um `chat_id` por entrada.
+
+```json
+{ "_comentario": "quem pode usar o bot; chat_id do Telegram", "chats": [123, -456] }
+```
+
+- **Editar com `nano` e pronto** — é lido por mtime, vale na próxima mensagem, sem
+  restart e sem deploy. O `cadastro/` entra no container como **diretório**, nunca
+  como arquivo: bind de arquivo único segue o inode, e `nano` substitui o arquivo ao
+  salvar (foi assim que o Caddyfile divergiu em 22/09).
+- **FAIL-CLOSED**: arquivo ausente ou JSON quebrado → **ninguém** entra. É de
+  propósito — um controle de revogação que se abre sozinho quando o arquivo some tem
+  o modo de falha igual ao cenário que deveria impedir. O custo assumido é que um
+  erro de mount derruba o bot para todos: indisponibilidade, não vazamento.
+- **Roda antes de tudo**, inclusive do `/acessos` e do estado de sessão. Por isso
+  tirar alguém da lista corta na mensagem seguinte, mesmo com sessão já autorizada —
+  e por isso não é preciso apagar sessão nem trocar a senha de ninguém.
+- Grupo tem `chat_id` **negativo** (o de ops é o mesmo do `MONITOR_TELEGRAM_CHAT_ID`)
+  e precisa estar na lista.
+- Para descobrir o `chat_id` de alguém: `docker exec motor_expansao_telegram_bot cat
+  /data/bot_sessoes.json` lista os chats que já interagiram, com o nome que a própria
+  pessoa digitou (é auto-declarado — não serve como prova de identidade).
+
+4. **Linha em `usuarios`** — desativar a pessoa pelo painel de **Acessos** do piloto. É a
+   única porta que revoga de verdade no BR depois do corte, e é **imediata**: `SQL_VALIDAR`
+   exige `u.ativo` a cada requisição guardada, então a sessão dela morre na requisição
+   **seguinte** — sem janela de 8 h e sem reiniciar serviço nenhum. Antes do corte esta porta
+   não faz diferença para o acesso (quem autentica é o Authelia), mas não atrapalha.
+
 
 ### Trocar senha de usuário
 
@@ -1168,6 +1207,59 @@ O que é vigiado e a cadência (crontab do root):
 > mais velho, e nada alertou. Sem relógio, uma guarda que só bloqueia troca "pin errado" por "pin
 > velho em silêncio". Aqui o **mtime é confiável** — ao contrário do monitor de `mercado`, em que
 > o arquivo é reescrito toda semana —, porque este só é tocado pelo `mv` da promoção.
+
+#### Alerta de borda — varreduras com assinatura (2026-09-23)
+
+Cron próprio (não é `healthcheck_vps.sh`): `scripts/cron/run_alerta_borda.sh`, instalado em
+`/opt/motor-expansao-infra/`, roda **08:23 UTC = 05:23 BRT** e cobre o **dia BRT anterior**
+inteiro — janela já fechada, o que dispensa guardar estado do que já foi alertado.
+
+```cron
+23 8 * * *  /opt/motor-expansao-infra/run_alerta_borda.sh >> /var/log/motor-monitoring/alerta_borda.log 2>&1
+0 */3 * * * /opt/motor-expansao-infra/run_alerta_borda.sh --dia $(TZ=America/Sao_Paulo date +\%F) >> /var/log/motor-monitoring/alerta_borda.log 2>&1
+```
+
+> **A segunda linha (23/09) é a vigilância do dia CORRENTE.** O diário cobre a janela fechada, então
+> um ataque às 10h só apareceria às 05:23 do dia seguinte — latência grande demais para "identificar
+> e barrar quem está fazendo". De 3 em 3h o dia corrente é reexaminado; o wrapper repassa `"$@"`, e o
+> `--dia` da linha vence o padrão (ontem). O `%` **precisa** ir escapado (`+\%F`): no crontab, `%` cru
+> vira quebra de linha e trunca o comando (mesma pegadinha do cron dos agregadores, DEC-039).
+>
+> **Repetição é esperada e foi aceita de olho aberto:** não há estado do que já foi avisado — a janela
+> fechada do diário dispensava estado —, então num dia **notável** os mesmos IPs são reanunciados a
+> cada 3h até a meia-noite BRT, até ~7 vezes. Com ataque em curso isso é útil; depois que para, é
+> ruído. Em dia normal nada sai (`--so-notavel`). Remover a repetição exige arquivo de estado **no
+> módulo**, o que custa imagem nova + deploy.
+
+Nasceu da investigação do "login desconhecido" de 22/09: a tela de entrar é a primeira rota do
+produto servida **sem autenticação**, e com ela a internet anônima passou a bater na porta. Lê o
+access log do Caddy (`/opt/motor-expansao/logs/caddy`, montado `:ro`), inclusive os `.gz` — a
+rotação é por **tamanho**, então o dia de ontem pode estar partido em dois arquivos.
+
+Duas decisões, ambas medidas no log de produção antes de escolher:
+
+- **Assinatura, não volume.** Em 21 dias havia 5.716 requisições barradas, e **78% eram o nosso
+  próprio healthcheck** batendo em `/`; 85% de tudo pedia só `/`. Um limiar de volume dispararia
+  todo dia por nossa causa. A regra pergunta outra coisa: o caminho pedido tem leitura inocente
+  neste servidor? (`.env`, `.git`, `wp-*`, `xmlrpc`, `phpmyadmin`, `id_rsa`, `.sql`, `.php`).
+- **`--so-notavel`, porque assinatura sozinha também não basta.** Rodando a regra contra o log
+  inteiro (36 dias, 745 requisições com assinatura, 102 pares IP-dia): **23 dos 36 dias** têm
+  sondagem de fundo — quase sempre um IP pedindo `.env` uma ou duas vezes. Avisar todos faria o
+  alerta falar em 2 de cada 3 dias até ninguém mais ler. Só sai mensagem com **≥ 5 IPs**, **≥ 20
+  requisições**, ou **qualquer 2xx** — esta última sozinha, sem limiar, porque sondagem *atendida*
+  é a única coisa aqui que muda o estado do sistema. Resultado: **10 dias em 36 (0,28/dia)**,
+  pegando a janela de 19–26/08 (6 a 13 IPs/dia) e os estouros de 20 e 21/09 (255 e 251
+  requisições) — e nada no trickle.
+
+Sob demanda, sem enviar nada:
+`docker run --rm --user 0:0 -v /opt/motor-expansao/logs/caddy:/var/log/caddy:ro "$API_IMAGE" python -m motor_expansao.api.alerta_borda --dir /var/log/caddy --dia 2026-09-20`
+
+> **`--user 0:0` não é cosmético.** A imagem roda como `appuser` (uid 1000), e os dois diretórios de
+> log têm donos diferentes: a trilha da DEC-027 é `ubuntu:ubuntu 0700` (uid 1000 — o container lê),
+> mas o access log do Caddy é `root:root 0700`. Espelhar o `run_relatorio_acessos.sh` sem olhar o
+> dono foi o defeito, pego no smoke de instalação em 23/09. Rodar como root é menos invasivo que
+> afrouxar a permissão no host: o mount é `:ro`, o container é efêmero, e o relaxamento valeria para
+> todo processo da máquina em vez de um run de 2 segundos.
 
 Comportamento anti-spam: alerta na transição OK→FAIL, lembrete a cada 1h enquanto durar,
 e aviso de recuperação no FAIL→OK (estado em `/var/lib/motor-monitoring/`). Logs em

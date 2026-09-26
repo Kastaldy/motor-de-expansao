@@ -22,22 +22,38 @@
       Fica em linha, e não num módulo, porque `/src/main.tsx` é `defer` por natureza: um
       arquivo separado chegaria tarde demais e o flash voltaria.
 
-      Espelha `CHAVE_TEMA` / `CHAVE_TEMA_LEGADA` / `TEMA_PADRAO` de `src/lib/tema.ts` —
-      ao renomear uma chave lá, renomeie aqui. O `try` existe porque tocar em
-      `localStorage` LEVANTA em aba anônima com cookies de terceiros bloqueados; sem ele
-      o app inteiro morreria antes de montar por causa de uma preferência de cor.
+      Espelha `CHAVE_TEMA` / `COOKIE_TEMA` / `CHAVE_TEMA_LEGADA` / `TEMA_PADRAO` de
+      `src/lib/tema.ts`, e na MESMA ORDEM que `lerTema` — ao renomear uma chave lá,
+      renomeie aqui; ler em outra ordem devolve o flash que este trecho evita.
+      `tema.test.ts` tem a guarda que torna o desencontro visível.
+
+      O `try` por fonte existe porque tocar em `localStorage` LEVANTA em aba anônima com
+      cookies de terceiros bloqueados; sem ele o app inteiro morreria antes de montar por
+      causa de uma preferência de cor — e um `try` só, ao redor de tudo, faria a primeira
+      fonte que estoura cancelar as outras duas.
     -->
     <script>
-      try {
-        var t =
-          localStorage.getItem('motor.tema') || localStorage.getItem('motor.exec.tema')
-        document.documentElement.setAttribute(
-          'data-tema',
-          t === 'claro' || t === 'escuro' ? t : 'escuro',
-        )
-      } catch (e) {
-        document.documentElement.setAttribute('data-tema', 'escuro')
-      }
+      ;(function () {
+        function valido(v) {
+          return v === 'claro' || v === 'escuro' ? v : null
+        }
+        var t = null
+        try {
+          t = valido(localStorage.getItem('motor.tema'))
+        } catch (e) {}
+        if (!t) {
+          try {
+            var m = document.cookie.match(/(?:^|;\s*)motor\.tema=\s*([^;\s]+)/)
+            t = m ? valido(m[1]) : null
+          } catch (e) {}
+        }
+        if (!t) {
+          try {
+            t = valido(localStorage.getItem('motor.exec.tema'))
+          } catch (e) {}
+        }
+        document.documentElement.setAttribute('data-tema', t || 'escuro')
+      })()
     </script>
   </head>
   <body>

@@ -58,6 +58,11 @@ ROLLUP_VERSAO = 1
 JANELA_DIAS_DEFAULT = 30
 JANELA_DIAS_MAX = 90
 
+#: Rótulo das rotas que a SPA dispara sozinha ao carregar — não são gesto do operador.
+#: Declarado ANTES de `FEATURES_ROTULOS` porque a tabela o consome na avaliação do
+#: módulo; embaixo dela vira `NameError` no import.
+_FEATURE_ABERTURA = "Abriu o piloto"
+
 #: Rota -> rótulo de FEATURE exibido na ficha do usuário ("o quê", sem o conteúdo).
 #: Prefixos mais específicos primeiro (`/api/rede/unidade/` antes de `/api/rede/`).
 #: Método só quando distingue leitura de escrita (PUT do cadastro).
@@ -88,6 +93,26 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
     # usa a leitura nacional ou a por estado.
     (None, "/api/hexagonos", "Ranking nacional de hexágonos"),
     (None, "/api/metodologia", "Leu a metodologia"),
+    # --- ABERTURA DO APP (2026-09-23) ---------------------------------------
+    # Três rotas que NÃO são gesto do operador: elas disparam sozinhas quando a SPA
+    # carrega. Estavam em "Outras ações" e sozinhas respondiam por **20,7% de todos
+    # os eventos** (1.306 de 6.303, medido em 30 dias de trilha) — um balde desse
+    # tamanho deixa de ser categoria e vira esconderijo.
+    #
+    # E esse esconderijo já cobrou o preço uma vez: em 10/09 mediu-se que das 91
+    # linhas do balde, TRÊS eram criar usuário, trocar perfil e desativar — as ações
+    # mais sensíveis do sistema, resumidas como "Outras ações" enquanto a trilha
+    # descrevia com precisão quem tinha olhado um imóvel.
+    #
+    # Rotulá-las (em vez de removê-las da métrica) preserva as contagens históricas
+    # e devolve a "Outras ações" o tamanho de exceção — que é o que faz uma rota nova
+    # aparecer ali ser VISÍVEL.
+    # A raiz NÃO entra nesta tabela: ela é de PREFIXOS, e `"/qualquer".startswith("/")`
+    # é sempre verdadeiro — a regra engoliria todas as rotas e esvaziaria "Outras
+    # ações", que é o oposto do que se quer. Ela é tratada por igualdade em
+    # `_feature_do_evento`, logo abaixo.
+    ("GET", "/api/me", _FEATURE_ABERTURA),
+    ("GET", "/api/ufs", _FEATURE_ABERTURA),
     # Camada imobiliária: o dossiê (prefixo com barra) antes da lista — first-match.
     (None, "/api/oportunidades/", "Baixou dossiê de imóvel"),
     (None, "/api/oportunidades", "Consultou oportunidades imobiliárias"),
@@ -213,9 +238,17 @@ def _eventos_da_janela(
     return eventos, confiavel
 
 
+#: A PÁGINA do app. Fora da tabela de prefixos de propósito (ver o comentário lá):
+#: casa por IGUALDADE, senão engoliria todas as rotas.
+_ROTAS_EXATAS: dict[str, str] = {"/": _FEATURE_ABERTURA}
+
+
 def _feature_do_evento(r: dict[str, Any]) -> str:
     metodo = str(r.get("metodo") or "").upper()
     rota = str(r.get("rota") or "")
+    exata = _ROTAS_EXATAS.get(rota)
+    if exata is not None:
+        return exata
     for metodo_regra, prefixo, rotulo in FEATURES_ROTULOS:
         if metodo_regra is not None and metodo != metodo_regra:
             continue

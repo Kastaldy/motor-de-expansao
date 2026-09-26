@@ -33,9 +33,10 @@ import {
   type ModoInicio,
 } from './lib/inicio'
 import { BaseProvider } from './lib/base-contexto'
+import { destinoDoDock } from './lib/dock-itens'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
 import type { Tema } from './lib/tema'
-import { depositoDoNavegador, gravarTema, lerTema } from './lib/tema'
+import { cookieDoNavegador, depositoDoNavegador, gravarTema, lerTema } from './lib/tema'
 import type { Hex, MunicipioItem, MunicipioPayload, Oportunidade } from './lib/types'
 import { perfilDoCliente } from './lib/perfil'
 
@@ -123,14 +124,6 @@ export default function App() {
       })
   }, [])
 
-  /** Toda troca de tela vinda de navegação passa por aqui: tela vetada é ignorada. */
-  const navegar = useCallback(
-    (t: Tela) => {
-      if (telaLiberada(t, abas)) setTela(t)
-    },
-    [abas],
-  )
-
   /**
    * Tema do APP (2026-08-25). Nasceu dentro da Visão Executiva e subiu para cá quando
    * o claro passou a valer para as cinco telas — ver `lib/tema.ts`.
@@ -139,7 +132,9 @@ export default function App() {
    * da primeira pintura, e quem tinha escolhido o claro veria a tela nascer preta e
    * clarear em seguida.
    */
-  const [tema, setTema] = useState<Tema>(() => lerTema(depositoDoNavegador()))
+  const [tema, setTema] = useState<Tema>(() =>
+    lerTema(depositoDoNavegador(), cookieDoNavegador()),
+  )
 
   /**
    * O atributo vai no `<html>`, e não no `<div>` raiz daqui.
@@ -159,7 +154,10 @@ export default function App() {
 
   const trocarTema = useCallback((novo: Tema) => {
     setTema(novo)
-    gravarTema(novo, depositoDoNavegador())
+    /* O cookie entra junto porque a TELA DE ENTRAR vive em outro subdomínio e o
+       `localStorage` é partido por origem — ver o cabeçalho de `COOKIE_TEMA`. Sem ele,
+       quem escolhe o claro aqui continua recebendo a tela de login no escuro. */
+    gravarTema(novo, depositoDoNavegador(), cookieDoNavegador())
   }, [])
 
   const [ufs, setUfs] = useState<string[]>([])
@@ -173,6 +171,48 @@ export default function App() {
   const [municipios, setMunicipios] = useState<MunicipioItem[]>([])
   // Vazio = visão da UF inteira; preenchido = drill-down no município.
   const [municipio, setMunicipio] = useState('')
+
+  /** Toda troca de tela vinda de navegação passa por aqui: tela vetada é ignorada. */
+  const navegar = useCallback(
+    (t: Tela) => {
+      if (telaLiberada(t, abas)) setTela(t)
+    },
+    [abas],
+  )
+
+  /**
+   * A navegação DO DOCK — e só dela. Aplica o desvio do mapa sem seleção.
+   *
+   * O DEFEITO ORIGINAL (2026-09-23, relato do Felipe): o ícone do mapa levava sempre a
+   * `tela = 'mapa'`, e lá o `MapScreen` faz `if (!uf)` e desenha a `Landing` — o
+   * seletor de estado que JÁ FOI a porta de entrada do produto e que, desde a tela de
+   * Início, virou o passo 2 do modo "Explorar uma região". Quem clicava no ícone sem
+   * nada selecionado caía na tela ANTIGA, contornando o seletor novo.
+   *
+   * POR QUE É UMA FUNÇÃO SEPARADA, e não um `if` dentro do `navegar`. Foi exatamente
+   * assim que nasceu, e quebrou os TRÊS caminhos que levam ao mapa COM destino
+   * (`onVerNoMapa` da lista de cidades, `onVerHexNoMapa` do ranking nacional e o "Ver
+   * no Mapa Territorial" da aba de imóveis): os três chamam `setUf(u)` e, na linha
+   * seguinte, navegam. `setUf` é assíncrono, então o `uf` lido aqui ainda é o ANTERIOR
+   * — vazio na primeira vez — e o guarda desviava para o Início justamente quando havia
+   * destino. O sintoma foi "clico em ver no mapa e vou parar na tela inicial".
+   *
+   * Separando, a regra fica onde ela é verdadeira: o clique no Dock não traz destino
+   * nenhum, então ler o `uf` já comprometido é correto ali e só ali.
+   *
+   * Mora DEPOIS de `uf` porque o lê nas dependências — declarada acima do `useState`,
+   * a lista seria avaliada na zona morta temporal e o app quebraria em todo render.
+   *
+   * Com seleção, nada muda: o ícone segue sendo "voltar ao que eu estava fazendo",
+   * preservando `uf`, `municipio` e o estado do mapa.
+   */
+  const navegarDoDock = useCallback(
+    (t: Tela) => {
+      if (!telaLiberada(t, abas)) return
+      setTela(destinoDoDock(t, Boolean(uf)))
+    },
+    [abas, uf],
+  )
 
   const [dados, setDados] = useState<MunicipioPayload | null>(null)
   const [carregando, setCarregando] = useState(false)
@@ -219,6 +259,23 @@ export default function App() {
    * sabe amarrar: o ponto no mapa, o hexagono em volta dele e a ficha.
    */
   const [pinDestino, setPinDestino] = useState<SearchPin | null>(null)
+
+  /**
+   * O imóvel que o mapa deve ABRIR assim que chegar, vindo da aba de imóveis.
+   *
+   * Existe porque o mapa não tinha porta de entrada para a ficha do imóvel: o "Ver no
+   * Mapa Territorial" mandava só coordenada e `hex_id`, e o único canal de "abrir algo
+   * ao chegar" era a seleção do HEXÁGONO — então subia a ficha errada (relato do
+   * Felipe, 2026-09-23).
+   *
+   * Guarda o ID e não o objeto: o `MapScreen` já carrega a lista de imóveis da UF para
+   * desenhar os pins, e a `FichaImovel` precisa do registro INTEIRO. Carregar o objeto
+   * por aqui criaria uma segunda fonte para o mesmo dado, que envelheceria sozinha.
+   *
+   * É intenção de uma viagem só, e por isso vive FORA do `estadoMapa` e é limpa quando
+   * consumida — ver o comentário no `onVerNoMapa`.
+   */
+  const [imovelDestino, setImovelDestino] = useState<string | null>(null)
 
   /**
    * A busca do cabecalho do mapa pediu a analise de uma coordenada (so' no modo de ponto).
@@ -482,7 +539,7 @@ export default function App() {
     >
       <Dock
         tela={tela}
-        onTela={navegar}
+        onTela={navegarDoDock}
         abas={abas}
         tema={tema}
         onTema={trocarTema}
@@ -607,6 +664,11 @@ export default function App() {
                limpeza que a troca de UF/municipio faz no pin da busca local, e e' o que
                leva a camera, o contorno de selecao e a ficha ao hexagono certo. */
             pinFixo={pinDestino}
+            /* Abre a ficha do IMÓVEL na chegada (e liga a camada de imóveis), em vez
+               da ficha do hexágono. `onImovelAberto` devolve o aviso de consumo: sem
+               ele a ficha reabriria a cada volta ao mapa, mesmo fechada de propósito. */
+            imovelInicial={imovelDestino}
+            onImovelAberto={() => setImovelDestino(null)}
             /* Mesmo portão do modo de ponto: aba vetada = botão ausente, não morto. */
             onVerImovelNaAba={
               telaLiberada('oportunidades-imob', abas) ? verImovelNaAba : undefined
@@ -635,12 +697,21 @@ export default function App() {
           // "Ver no Mapa" abre o Mapa Territorial no UF/município do imóvel E crava a
           // COORDENADA do imóvel: pin + hexágono selecionado + câmera no ponto.
           <OportunidadesImobiliariasScreen
+            tema={tema}
             onInicio={voltarAoInicio}
             focoInicial={focoImovel}
             onFocoAplicado={() => setFocoImovel(null)}
             onVerNoMapa={(u, m, ponto) => {
               setUf(u)
               setMunicipio(m)
+              /* Quando o destino é um IMÓVEL, o hexágono NÃO nasce selecionado.
+                 `selecionado` é o único canal de "abrir algo ao chegar" que o mapa
+                 tinha, e é ele que fazia subir a ficha do hexágono no lugar da ficha
+                 do imóvel (relato do Felipe, 2026-09-23). Sem pré-seleção, a janela do
+                 hex não abre sozinha — e o hexágono segue a UM CLIQUE, porque o que
+                 muda aqui é só a abertura automática, não o alvo do clique.
+                 O `pin` continua marcando o lugar e a câmera continua voando para lá. */
+              const abrindoImovel = Boolean(ponto?.imovelId)
               setEstadoMapa({
                 ...ESTADO_MAPA_VAZIO,
                 uf: u,
@@ -648,7 +719,7 @@ export default function App() {
                 ...(ponto
                   ? {
                       pin: { lat: ponto.lat, lng: ponto.lng, hexId: ponto.hexId },
-                      selecionado: ponto.hexId,
+                      ...(abrindoImovel ? {} : { selecionado: ponto.hexId }),
                       camera: {
                         longitude: ponto.lng,
                         latitude: ponto.lat,
@@ -659,6 +730,12 @@ export default function App() {
                     }
                   : {}),
               })
+              /* Intenção de UMA viagem, deliberadamente FORA do `estadoMapa`: aquele é
+                 a foto do mapa e sobrevive à troca de tela, então guardar a abertura
+                 ali faria a ficha ressuscitar toda vez que a pessoa voltasse ao mapa,
+                 mesmo depois de tê-la fechado. Mesmo espírito do `pinDestino`, que
+                 também é consumido e limpo. */
+              setImovelDestino(ponto?.imovelId ?? null)
               navegar('mapa')
             }}
           />

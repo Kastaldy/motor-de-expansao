@@ -220,6 +220,37 @@ def test_sem_cadastro_devolve_none(app_com_dados) -> None:
     assert pilot._coord_da_unidade("", "RJ") is None
 
 
+@pytest.mark.parametrize(
+    ("nome", "uf"),
+    [
+        ("CEILANDIA QNM24 - DF", "DF"),
+        ("CEILANDIA QNM33 - DF", "DF"),
+        ("CEILANDIA QNN32 - DF ", "DF"),  # a Growth grava com espaço final
+        ("SAO CARLOS - CENTRO - SP", "SP"),
+        ("BOTANIC MALL - DF", "DF"),
+        ("JARDIM BOTANICO", "DF"),  # sem sufixo de UF na Growth
+    ],
+)
+def test_coordenada_corrigida_casa_o_nome_da_growth(app_com_dados, nome: str, uf: str) -> None:
+    """Uma chave da tabela que não casa com o nome real vira no-op silencioso."""
+    chave = (pilot._chave_unidade(nome), uf)
+    assert chave in pilot._EXEC_COORD_CORRIGIDA
+    assert pilot._coord_da_unidade(nome, uf) == pilot._EXEC_COORD_CORRIGIDA[chave]
+
+
+def test_coordenada_corrigida_vence_a_base_curada(app_com_dados, monkeypatch: pytest.MonkeyPatch) -> None:
+    ponto = (-22.9, -43.2)
+    monkeypatch.setitem(pilot._EXEC_COORD_CORRIGIDA, ("BOTAFOGO", "RJ"), ponto)
+    assert pilot._coord_da_unidade("BOTAFOGO - RJ", "RJ") == ponto
+
+
+def test_coordenadas_corrigidas_sao_distintas_e_no_brasil() -> None:
+    pontos = list(pilot._EXEC_COORD_CORRIGIDA.values())
+    assert len(set(pontos)) == len(pontos)
+    for lat, lng in pontos:
+        assert -34.0 < lat < 5.5 and -74.0 < lng < -34.0
+
+
 def test_flag_coord_invalida_e_descartada(app_com_dados) -> None:
     assert pilot._coord_da_unidade("FANTASMA - RJ", "RJ") is None
 
@@ -277,6 +308,26 @@ def test_pins_do_mapa_respeitam_a_precedencia_da_curada(app_com_dados) -> None:
     ponto = (round(float(taubate.iloc[0]["lat"]), 4), round(float(taubate.iloc[0]["lng"]), 4))
     assert ponto == _TAUBATE_OK
     assert ponto != _TAUBATE_ERRADO
+
+
+def test_pins_do_mapa_aplicam_a_coordenada_corrigida(app_com_dados, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Botanic Mall e Jardim Botânico estavam trocados na curada: o Mapa tem de mostrar
+    o mesmo ponto que a Visão Executiva."""
+    ponto = (-22.9, -43.2)
+    monkeypatch.setitem(pilot._EXEC_COORD_CORRIGIDA, ("BOTAFOGO", "RJ"), ponto)
+    df = pilot._ultra_pontos_mapa()
+    botafogo = df[df["nome"].eq("BOTAFOGO")].iloc[0]
+    assert (float(botafogo["lat"]), float(botafogo["lng"])) == ponto
+    assert (float(botafogo["lat"]), float(botafogo["lng"])) == pilot._coord_da_unidade("BOTAFOGO - RJ", "RJ")
+
+
+def test_pins_do_mapa_ignoram_correcao_de_chave_ambigua(app_com_dados, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sem UF no pin, uma chave corrigida em duas UFs não pode mover nenhum dos dois."""
+    monkeypatch.setitem(pilot._EXEC_COORD_CORRIGIDA, ("TAUBATE", "SP"), (-23.0, -45.0))
+    monkeypatch.setitem(pilot._EXEC_COORD_CORRIGIDA, ("TAUBATE", "RJ"), (-22.0, -43.0))
+    df = pilot._ultra_pontos_mapa()
+    taubate = df[df["nome"].eq("TAUBATE")].iloc[0]
+    assert (round(float(taubate["lat"]), 4), round(float(taubate["lng"]), 4)) == _TAUBATE_OK
 
 
 def test_pins_do_mapa_descartam_flag_coord_invalida(app_com_dados) -> None:

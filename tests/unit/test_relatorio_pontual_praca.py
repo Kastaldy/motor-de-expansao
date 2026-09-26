@@ -116,32 +116,51 @@ def test_top5_sem_colunas_devolve_vazio_com_aviso():
 # --------------------------------------------------------------------------- #
 # Pressao                                                                     #
 # --------------------------------------------------------------------------- #
-def test_sobreposicao_usa_raio_oficial():
-    # O raio NAO e' redigitado: e' o do modelo de mercado (DEC-051), importado.
+def test_pressao_do_ponto_usa_750m_e_nao_o_raio_do_modelo():
+    # O raio da pagina de pressao do PONTUAL e' o de LEITURA do relatorio (750 m, pedido de
+    # 2026-09-23), nao o de influencia do modelo de mercado (DEC-051, 1 km). Os dois vivem em
+    # constante propria e nenhum e' redigitado: o modelo e o municipal continuam em 1 km.
+    from motor_expansao.dashboard import relatorio_praca_mapas as rpm
+
+    assert rp.RAIO_PRESSAO_PONTO_M == 750.0
+    assert RAIO_INFLUENCIA_M == 1_000.0
     fonte = inspect.getsource(rp)
     assert "RAIO_INFLUENCIA_M" in fonte
     assert "1000" not in fonte.replace("_", "") and "1_000" not in fonte
-    assert rp.pressao_sobre_ponto.__kwdefaults__["raio_m"] == RAIO_INFLUENCIA_M
+    assert rp.pressao_sobre_ponto.__kwdefaults__["raio_m"] == rp.RAIO_PRESSAO_PONTO_M
+    assert rpm.render_pressao_raios.__kwdefaults__["raio_m"] == rp.RAIO_PRESSAO_PONTO_M
+    assert "750" not in inspect.getsource(rpm)  # importa, nao redigita
+    # a imagem e a pagina imprimem o raio pelo MESMO formatador: 750 m, e nao "0,8 km"
+    assert rp.rotulo_raio(750.0) == "750 m"
+    assert rp.rotulo_raio(RAIO_INFLUENCIA_M) == "1,0 km"  # municipal: rotulo identico ao de antes
+    assert ":.1f" not in inspect.getsource(rpm)
+    # municipal intocado
+    assert rp.pressao_na_cidade.__kwdefaults__["raio_m"] == RAIO_INFLUENCIA_M
+    assert rpm.render_pressao_cidade.__kwdefaults__["raio_m"] == RAIO_INFLUENCIA_M
+    assert rp.discos_por_hexagono.__kwdefaults__["raio_m"] == RAIO_INFLUENCIA_M
 
     grau_lat_m = 111_195.0
     conc = pd.DataFrame(
         {
             "rede": ["Smart Fit", "Smart Fit", None],
-            # a 500 m, a 900 m e a 1.500 m ao norte
+            # a 500 m, a 900 m e a 1.500 m ao norte: com 750 m so' a primeira alcanca o ponto
             "lat": [_LAT + 500 / grau_lat_m, _LAT + 900 / grau_lat_m, _LAT + 1500 / grau_lat_m],
             "lng": [_LNG, _LNG, _LNG],
         }
     )
     ultra = pd.DataFrame({"lat": [_LAT - 300 / grau_lat_m], "lng": [_LNG]})
     p = pressao_sobre_ponto(_LAT, _LNG, conc, ultra)
-    assert p.raio_m == RAIO_INFLUENCIA_M
-    assert p.n_concorrentes_sobre_ponto == 2
+    assert p.raio_m == 750.0
+    assert p.n_concorrentes_sobre_ponto == 1
     assert p.n_ultra_sobre_ponto == 1
-    assert p.n_raios_sobre_ponto == 3
-    assert p.redes_sobre_ponto == [("Smart Fit", 2)]
+    assert p.n_raios_sobre_ponto == 2
+    assert p.redes_sobre_ponto == [("Smart Fit", 1)]
     assert p.n_independentes_sobre_ponto == 0
+    # a mais proxima e' a mais proxima de TODAS, dentro ou fora do raio
     assert abs(p.dist_mais_proxima_m - 500.0) < 5.0
     assert p.nome_mais_proxima == "Smart Fit"
+    # o raio do modelo continua disponivel a quem pedir explicitamente
+    assert pressao_sobre_ponto(_LAT, _LNG, conc, ultra, raio_m=RAIO_INFLUENCIA_M).n_concorrentes_sobre_ponto == 2
 
 
 def test_pressao_sem_concorrente():
@@ -265,6 +284,23 @@ def test_pdf_pressao_nomeia_a_rede_pelo_rotulo():
     )
     # parenteses saem escapados no stream do PDF; o que importa e' o rotulo no lugar do slug
     assert b"Smart Fit" in pdf and b"smart_fit" not in pdf
+
+
+def test_pdf_pressao_do_ponto_diz_750_m():
+    grau_lat_m = 111_195.0
+    conc = pd.DataFrame({"rede": ["smart_fit"], "lat": [_LAT + 300 / grau_lat_m], "lng": [_LNG]})
+    pdf = gerar_pdf_relatorio_pontual_classico(
+        _RESULT, None, praca=_praca(pressao=pressao_sobre_ponto(_LAT, _LNG, conc, None))
+    )
+    # parenteses saem escapados no stream: o titulo do painel e' "(raio de 750 m)"
+    assert b"o ponto \(raio de 750 m\)" in pdf
+    # nem o raio do modelo nem o arredondamento ".1f" (0,75 -> "0,8 km") no painel; o
+    # "1,0 km" das outras paginas (Concorrentes, capa) continua la e nao entra nesta conta
+    assert b"0,8 km" not in pdf
+    assert b"o ponto \(raio de 1,0 km\)" not in pdf
+    # a legenda nao pode mais afirmar que o circulo e' o raio que desconta o residual
+    assert b"que o motor usa para descontar" not in pdf
+    assert b"imediato" in pdf  # palavra unica da legenda nova; frases inteiras quebram de linha no stream
 
 
 def test_pdf_sem_praca_nao_muda():
@@ -441,3 +477,36 @@ def test_os_dois_mapas_do_slide_hero_usam_o_mesmo_enquadramento(monkeypatch):
     assert raios == [("score_setor_2022_calibrado", 3.7), ("oferta_efetiva_disponivel", 3.7)]
     # imagens maiores no slide: deixaram de ser reduzidas
     assert censo_report._HERO_MAP_SCALE == 1.0
+
+
+def test_barra_de_escala_da_pressao_do_ponto_fica_abaixo_do_raio(monkeypatch):
+    # "1 km" na barra de escala, ao lado de discos de 750 m, lia-se como o raio da imagem
+    # (revisao visual do Juan, 2026-09-23). A imagem do ponto poe a barra no comprimento do
+    # raio; a da cidade (municipal) segue com o default.
+    from motor_expansao.dashboard import relatorio_praca_mapas as rpm
+
+    chamadas: list[dict] = []
+
+    def _falsa(draw, box, mpp, **kw):
+        chamadas.append(kw)
+
+    monkeypatch.setattr(rpm, "_draw_scale_bar", _falsa)
+    conc = pd.DataFrame({"rede": ["Smart Fit"], "lat": [_LAT + 300 / 111_195.0], "lng": [_LNG]})
+    rpm.render_pressao_raios(_LAT, _LNG, conc, None, basemap=False)
+    assert chamadas and max(chamadas[-1]["candidates"]) == rp.RAIO_PRESSAO_PONTO_M == 750
+
+    import h3
+
+    hexes = pd.DataFrame({"hex_id": sorted(h3.grid_disk(h3.latlng_to_cell(_LAT, _LNG, 7), 1))})
+    rpm.render_pressao_cidade(hexes, conc, None, basemap=False)
+    assert "candidates" not in chamadas[-1]
+
+
+def test_zoom_da_pressao_do_ponto_acompanha_o_raio():
+    # Janela fixa de 2,6 km deixava discos de 750 m perdidos no mapa dimensionado para 1 km
+    # (revisao visual do Juan, 2026-09-23): a meia-largura passa a ser 2,6 raios.
+    from motor_expansao.dashboard import relatorio_praca_mapas as rpm
+
+    assert rpm.janela_pressao_m(RAIO_INFLUENCIA_M) == 2_600.0  # o enquadramento do #388, intacto
+    assert rpm.janela_pressao_m(rp.RAIO_PRESSAO_PONTO_M) == 1_950.0
+    assert "2_600" not in inspect.getsource(rpm) and "2600" not in inspect.getsource(rpm)

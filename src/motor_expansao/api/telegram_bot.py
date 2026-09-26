@@ -26,6 +26,8 @@ import json
 import socket
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -189,6 +191,211 @@ _sessoes: dict[int, dict] = {}
 
 def _sessao(chat_id: int) -> dict:
     return _sessoes.setdefault(chat_id, {"autorizado": False})
+
+
+# ---------------------------------------------------------------------------
+# ALLOWLIST DE CHATS (2026-09-24)
+#
+# POR QUE EXISTE. Ate' aqui o bot tinha UMA porta: a senha COMPARTILHADA. Quem a
+# soubesse entrava, e o "login" pedido logo depois NAO era verificado contra nada —
+# o codigo guarda o texto digitado (`s["login"] = t.strip() or "anonimo"`), que e'
+# rotulo de trilha, nao identidade. Consequencia medida no offboarding do Miguel:
+# revoga-lo no Authelia NAO fechava o bot, porque o bot nunca consultou o Authelia.
+#
+# POR QUE NAO RESOLVE TROCANDO A SENHA. As sessoes sao persistidas em disco com
+# `autorizado: true` e recarregadas no arranque; quem ja' entrou continua dentro
+# mesmo com senha nova. Por isso o gate e' por CHAT e roda ANTES do estado de
+# sessao: sair da lista corta na proxima mensagem, sem apagar sessao de ninguem.
+#
+# POR QUE NAO DA' PARA BLOQUEAR POR TELEFONE (a pergunta do Felipe). A Bot API nunca
+# entrega o telefone: o bot ve `chat_id` e, quando existe, o @username. O numero so'
+# chegaria se a propria pessoa tocasse num botao de compartilhar contato. Logo, a
+# unica chave de identidade disponivel e' o `chat_id` — e e' ela que a lista usa.
+#
+# FAIL-CLOSED, de proposito. Arquivo ausente/ilegivel -> NINGUEM entra. Um controle
+# de revogacao que se abre sozinho quando o arquivo some nao e' controle: o modo de
+# falha vira exatamente o cenario que ele deveria impedir. O custo assumido e' que um
+# erro de mount derruba o bot para todos — indisponibilidade, nao vazamento.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# TRILHA PERSISTENTE (2026-09-24)
+#
+# POR QUE EXISTE. O bot imprimia `[ESTUDO] chat=#xxxx ...` na saida do container, e
+# so'. `docker logs` guarda apenas o container ATUAL — todo deploy recria o container
+# e leva o historico junto. Medido no dia: o deploy da vespera zerou o registro
+# inteiro, e "quantas solicitacoes, e quando" ficou sem fonte nenhuma. A unica pista
+# que sobrou foi o mtime do `bot_sessoes.json`, que da' a ULTIMA atividade de
+# qualquer pessoa — nada por pessoa, nada de contagem.
+#
+# O QUE GRAVA, e o que NAO grava. Um JSONL por dia UTC, com carimbo de tempo, a
+# referencia OPACA do chat (o mesmo `#xxxxxxxx` do resto do bot — nunca o chat_id
+# cru) e um EVENTO de vocabulario FECHADO. Nao grava o texto da mensagem nem a
+# coordenada pedida: o proposito e' contar uso e sustentar revogacao, e guardar
+# endereco que alguem digitou seria coletar o que nao se precisa.
+#
+# O NOME NAO ENTRA, e isso foi uma correcao. A primeira versao gravava tambem o
+# `login` auto-declarado — nome de pessoa, em texto puro, retido 90 dias. A revisao
+# automatica reprovou com razao: a DEC-027 tratou trilha analoga no piloto como
+# mudanca de postura de auditoria (criticidade Alta) e excluiu o bot do escopo de
+# proposito; persistir PII aqui reabriria aquilo sem DEC nenhuma.
+#
+# E o nome era DISPENSAVEL: a pergunta que a trilha responde — quantas solicitacoes,
+# quando, por quem — se responde pela referencia opaca, que ja' agrupa por pessoa.
+# Para traduzir a referencia em nome quando FOR preciso, o caminho e' o mesmo de
+# sempre: recomputar o HMAC dos chats do `bot_sessoes.json` (que guarda o nome) com o
+# token do bot. O dado identificavel fica onde ja' estava, sem copia nova com relogio
+# de 90 dias correndo.
+#
+# Mora no volume `bot_data`, que e' NOMEADO — sobrevive a recriacao do container, que
+# e' exatamente a falha que motivou o bloco. Retencao de 90 dias, espelhando a
+# DEC-027 do piloto. Best-effort: nunca derruba o bot se a escrita falhar.
+# ---------------------------------------------------------------------------
+
+#: Eventos que a trilha reconhece. Fechado de proposito — evento novo se declara
+#: aqui, e nao nasce de uma string solta no meio do fluxo.
+EVENTOS_TRILHA = frozenset({
+    "autorizado",          # senha aceita
+    "negado_allowlist",    # chat fora da lista
+    "senha_incorreta",
+    "relatorio_pontual",
+    "relatorio_municipal",
+})
+
+TRILHA_RETENCAO_DIAS = 90
+
+_trilha_podada_em: str = ""
+
+
+def _registrar(chat_id: int, settings: Settings, evento: str, detalhe: str = "") -> None:
+    """Anexa uma linha a trilha do dia. Best-effort: erro aqui nunca derruba o bot."""
+    destino = settings.bot_trilha_dir
+    if destino is None:
+        return
+    if evento not in EVENTOS_TRILHA:  # pragma: no cover - guarda de programacao
+        raise ValueError(f"evento fora do vocabulario: {evento!r}")
+    agora = datetime.now(UTC)
+    dia = agora.strftime("%Y-%m-%d")
+    linha = {
+        "ts": agora.isoformat(timespec="seconds"),
+        "chat": _chat_ref(chat_id, settings.telegram_token),
+        "evento": evento,
+        "detalhe": detalhe,
+    }
+    try:
+        destino.mkdir(parents=True, exist_ok=True)
+        with (destino / f"{dia}.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(linha, ensure_ascii=False) + "\n")
+    except OSError as erro:
+        print(f"[TRILHA] falhou ({erro}) — seguindo sem registrar", flush=True)
+        return
+    _podar_trilha(destino, dia)
+
+
+def _podar_trilha(destino: Path, dia: str) -> None:
+    """Apaga os JSONL fora da retencao. Roda UMA vez por dia por processo."""
+    global _trilha_podada_em
+    if _trilha_podada_em == dia:
+        return
+    _trilha_podada_em = dia
+    corte = (datetime.now(UTC) - timedelta(days=TRILHA_RETENCAO_DIAS)).strftime("%Y-%m-%d")
+    try:
+        for arq in destino.glob("*.jsonl"):
+            if arq.stem < corte:  # nome é AAAA-MM-DD: ordem lexical == cronológica
+                arq.unlink(missing_ok=True)
+    except OSError:
+        pass  # poda e' higiene, nao pode virar motivo de falha
+
+
+_allow_cache: tuple[str, int, frozenset[int]] | None = None
+
+_SEM_ACESSO = (
+    "Este chat nao tem acesso a este bot.\n\n"
+    "Se voce faz parte do time da Ultra e precisa de acesso, fale com o Felipe."
+)
+
+
+def _allowlist(settings: Settings) -> frozenset[int] | None:
+    """Chats autorizados; `None` = controle DESLIGADO (sem caminho configurado).
+
+    Relida por MTIME, como o `acesso_abas.json` do piloto: editar o arquivo na VPS
+    vale na proxima mensagem, sem restart e sem deploy.
+    """
+    global _allow_cache
+    path = settings.bot_allowlist_path
+    if path is None:
+        return None
+    try:
+        mtime = path.stat().st_mtime_ns
+    except OSError:
+        _allow_cache = None
+        print(f"[ALLOWLIST] ilegivel ({path}) — FAIL-CLOSED: ninguem entra", flush=True)
+        return frozenset()
+
+    if _allow_cache is not None and _allow_cache[0] == str(path) and _allow_cache[1] == mtime:
+        return _allow_cache[2]
+
+    try:
+        bruto = json.loads(path.read_text(encoding="utf-8"))
+        # Aceita tanto a lista crua quanto o objeto com comentario e `chats`, para o
+        # arquivo poder explicar a si mesmo a quem for edita-lo.
+        crus = bruto.get("chats", []) if isinstance(bruto, dict) else bruto
+        if not isinstance(crus, list):
+            raise ValueError("esperava uma lista de chat_id em `chats`")
+        chats = frozenset(int(c) for c in crus)
+    except (OSError, ValueError, TypeError) as erro:
+        # NAO cacheia o erro: o proximo `stat` tenta de novo, e um arquivo consertado
+        # volta a valer sem restart.
+        _allow_cache = None
+        print(f"[ALLOWLIST] invalida ({erro}) — FAIL-CLOSED: ninguem entra", flush=True)
+        return frozenset()
+
+    _allow_cache = (str(path), mtime, chats)
+    print(f"[ALLOWLIST] carregada: {len(chats)} chats autorizados", flush=True)
+    return chats
+
+
+def verificar_controle_de_acesso(settings: Settings) -> None:
+    """Diz, na partida, se a allowlist esta' valendo — e recusa subir sem ela em producao.
+
+    O PROBLEMA QUE ISTO FECHA. `_allowlist` e' fail-CLOSED por ARQUIVO (ilegivel ou
+    invalido nega a todos) e fail-OPEN por CONFIGURACAO (caminho ausente libera a
+    todos). As duas metades sao defensaveis isoladas; juntas, e sem sinal nenhum, elas
+    tornavam "bot no ar com a revogacao valendo" indistinguivel de "bot no ar com a
+    revogacao desligada". O unico print de estado saia de dentro de `_allowlist`, so'
+    quando o controle estava LIGADO e so' na PRIMEIRA mensagem processada — ou seja, o
+    estado que mais precisa aparecer era exatamente o que nunca imprimia nada.
+
+    Isso importa porque o proposito da allowlist e' revogar acesso de quem saiu da
+    empresa (2026-09-24). Uma env que some numa edicao do compose devolvia o acesso a
+    essas pessoas sem uma linha de log.
+
+    Em producao o bot passa a RECUSAR subir sem allowlist. Fora dela sobe e avisa, que
+    e' o que mantem o desenvolvimento usavel sem arquivo nenhum.
+
+    Carrega a lista JA' aqui, e nao na primeira mensagem: arquivo quebrado aparece na
+    partida, e nao quando a primeira pessoa for barrada sem ninguem entender por que.
+    """
+    if settings.bot_allowlist_path is None:
+        if settings.environment == "production":
+            raise SystemExit(
+                "API_BOT_ALLOWLIST_PATH nao esta definida. Sem ela a allowlist fica "
+                "DESLIGADA e qualquer chat que descobrir o bot entra — inclusive quem "
+                "teve o acesso revogado. Na producao o caminho e' "
+                "/cadastro/bot_allowlist.json (volume :ro do docker-compose.prod.yml)."
+            )
+        print(
+            "[ALLOWLIST] DESLIGADA (sem API_BOT_ALLOWLIST_PATH) — qualquer chat entra.",
+            flush=True,
+        )
+        return
+
+    autorizados = _allowlist(settings)
+    print(
+        f"[ALLOWLIST] LIGADA ({settings.bot_allowlist_path}): "
+        f"{len(autorizados or ())} chats autorizados.",
+        flush=True,
+    )
 
 
 def _carregar_sessoes(settings: Settings) -> None:
@@ -374,11 +581,22 @@ def processar(
     no bot real, o loop passa um notify que manda "⏳ Gerando..." na hora, pra pessoa
     nao achar que travou.
     """
+    # 0. ALLOWLIST — antes de TUDO, inclusive do `/acessos` e do estado de sessao.
+    # E' o que faz a revogacao valer na proxima mensagem para quem ja' estava dentro
+    # (ver o bloco de comentario da `_allowlist`). Chat fora da lista nao chega a
+    # tocar em sessao, senha ou comando.
+    permitidos = _allowlist(settings)
+    if permitidos is not None and chat_id not in permitidos:
+        # Log com a referencia OPACA (LGPD) — o mesmo `#xxxxxxxx` do resto do bot.
+        print(f"[ALLOWLIST] negado chat={_chat_ref(chat_id, settings.telegram_token)}", flush=True)
+        _registrar(chat_id, settings, "negado_allowlist")
+        return [_msg(_SEM_ACESSO)]
+
     s = _sessao(chat_id)
     t = (texto or "").strip()
     low = t.lower()
 
-    # 0. /acessos — relatorio agregado de uso do piloto (trilha DEC-027), SO no chat
+    # 1. /acessos — relatorio agregado de uso do piloto (trilha DEC-027), SO no chat
     # de ops/alertas (id em `acessos_admin_chat_id`). Vem ANTES do gate de senha de
     # proposito: o id do chat e' autorizacao mais forte que a senha compartilhada, e
     # o grupo de ops nao passa pelo fluxo de login individual. `startswith` cobre a
@@ -398,13 +616,18 @@ def processar(
             s["etapa"] = "login"
             s["tentativas"] = 0
             s.pop("bloqueado_ate", None)
+            _registrar(chat_id, settings, "autorizado")
             return [_msg(_PEDIR_LOGIN)]
         # 1a interacao: so sauda (nao conta como tentativa de senha).
         if not s.get("saudou"):
             s["saudou"] = True
             return [_msg(_SAUDACAO)]
         # Senha errada (ja saudou): conta e, no teto, bloqueia o chat.
+        # Vai para a trilha: tentativa contra a senha COMPARTILHADA e' justamente o
+        # sinal de forca bruta que o log efemero perdia a cada deploy. O `detalhe`
+        # carrega a contagem, para distinguir um erro de digitacao de uma sequencia.
         s["tentativas"] = int(s.get("tentativas", 0)) + 1
+        _registrar(chat_id, settings, "senha_incorreta", f"tentativa {s['tentativas']}")
         if s["tentativas"] >= _SENHA_MAX_TENTATIVAS:
             s["bloqueado_ate"] = agora + _SENHA_LOCKOUT_SEGUNDOS
             s["tentativas"] = 0
@@ -476,6 +699,9 @@ def processar(
         # A unidade entra no log para separar os dois relatorios na apuracao de uso.
         print(f"[ESTUDO-MUNI] chat={_chat_ref(chat_id, settings.telegram_token)} uf={uf} "
               f"municipio={t} unidade={unidade}", flush=True)
+        # A UF e a unidade entram na trilha; o MUNICIPIO nao, pela mesma regra do
+        # pontual — a trilha conta uso, nao guarda o alvo de quem pesquisou.
+        _registrar(chat_id, settings, "relatorio_municipal", f"{uf}/{unidade}")
         return [
             _msg(f"📄 *Relatorio Municipal ({rotulo})* — {_escape_md(t.strip())} - {uf}"
                  f"\n_Solicitado por {_escape_md(s.get('login', '?'))}_"),
@@ -499,6 +725,10 @@ def processar(
     # o endereco resolvido; a coordenada (alvo do estudo) e' dado de negocio.
     print(f"[ESTUDO] chat={_chat_ref(chat_id, settings.telegram_token)} coord={lat},{lng}",
           flush=True)
+    # Sem a coordenada, ao contrario do log acima: aquele e' efemero e some no
+    # proximo deploy; esta trilha fica 90 dias, e guardar por 90 dias o endereco que
+    # cada pessoa pesquisou nao e' necessario para contar uso.
+    _registrar(chat_id, settings, "relatorio_pontual")
     return [
         _msg(f"📄 Relatorio de *{_escape_md(nome)}*\n_Solicitado por {_escape_md(s.get('login', '?'))}_"),
         {"pdf": pdf},
@@ -598,6 +828,8 @@ def main() -> None:
     if not token:
         raise SystemExit("Defina API_TELEGRAM_TOKEN (env ou .env) com o token do @BotFather.")
 
+    # ANTES de qualquer outra coisa: sem controle de acesso valendo, nada mais importa.
+    verificar_controle_de_acesso(settings)
     _configurar_menu_comandos(token)
     _carregar_sessoes(settings)  # restaura quem ja estava logado antes do restart
     print(f"Bot no ar. API em {settings.api_base_url}. Ctrl+C para sair.", flush=True)

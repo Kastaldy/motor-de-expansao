@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 import MalhaBrasil from '../components/login/MalhaBrasil'
 /* O logo entra por IMPORT, e não pelo caminho `/logo-ultra.png` que o Dock usa.
@@ -69,16 +69,107 @@ export default function LoginScreen({
   const idUsuario = useId()
   const idSenha = useId()
   const idErro = useId()
-  const habilitado = podeEnviar(usuario, senha, estado)
+  /*
+   * AUTOFILL x ESTADO DO REACT (relato do Vinicius, 2026-09-24: "ao recarregar a
+   * sessão, quando os dados já estão preenchidos automaticamente, o botão de entrar
+   * aparece como não-clicável").
+   *
+   * O navegador (e o gerenciador de senhas) escreve o valor DIRETO no DOM e NÃO
+   * dispara o `change` que o React escuta. Então `usuario`/`senha` continuavam `''`,
+   * `podeEnviar` devolvia falso e o botão nascia `disabled` e apagado — sobre campos
+   * visivelmente preenchidos. O botão estava mentindo sobre o próprio formulário.
+   *
+   * A 1ª tentativa (24/09) lia o DOM e sincronizava o estado. NÃO RESOLVEU, e o
+   * relato seguinte explicou por quê: "o botão só fica azul depois que eu clico na
+   * tela, independente de onde seja o clique". O Chrome preenche os campos na carga,
+   * mas SEGURA o valor da senha até haver um GESTO do usuário — antes disso
+   * `input.value` devolve string vazia. Ler o DOM lia vazio; ler mais vezes leria
+   * vazio mais vezes. E o clique em qualquer lugar é justamente o gesto que libera.
+   *
+   * A correção certa NÃO DEPENDE DO VALOR. Ela detecta que o campo ESTÁ
+   * autopreenchido e trata isso como "tem conteúdo":
+   *
+   *  1. `animationstart` — o Chrome aplica `:-webkit-autofill` ao preencher, e o
+   *     `global.css` pendura ali uma animação sem efeito visual só para virar evento.
+   *     É o aviso que funciona mesmo com o valor ainda ilegível.
+   *  2. `matches(':-webkit-autofill')` na montagem e em alguns quadros seguintes —
+   *     rede de segurança para quando o preenchimento acontece antes de a tela montar
+   *     e o evento se perde.
+   *
+   * O valor de verdade é lido no ENVIO, direto do DOM: lá o clique já aconteceu e o
+   * navegador o entrega. Por isso `enviar` não usa o estado do React.
+   *
+   * A trava "campo vazio não vai ao servidor" fica de pé: sem autofill nada muda, e
+   * ela existe para não gastar uma das tentativas da trava do servidor (`MAX_TENTATIVAS`,
+   * em `lib/login-motor.ts`) antes de
+   * banir por 10 minutos.
+   */
+  const refUsuario = useRef<HTMLInputElement>(null)
+  const refSenha = useRef<HTMLInputElement>(null)
+  const [auto, setAuto] = useState<{ usuario?: boolean; senha?: boolean }>({})
+
+  useEffect(() => {
+    const olhar = () => {
+      const marcado = (el: HTMLInputElement | null) => {
+        // O seletor é específico do WebKit/Blink: em navegador que não o conhece o
+        // `matches` LANÇA, e sem o try o efeito derrubaria a tela inteira.
+        try {
+          return el?.matches(':-webkit-autofill') ?? false
+        } catch {
+          return false
+        }
+      }
+      const u = marcado(refUsuario.current)
+      const p = marcado(refSenha.current)
+      // Só sobe: o autofill não se desfaz sozinho, e um `false` tardio apagaria um
+      // `true` legítimo vindo do `animationstart`.
+      if (u || p) setAuto((a) => ({ usuario: a.usuario || u, senha: a.senha || p }))
+      // Quando o valor JÁ é legível (depois do gesto, ou em navegador sem a trava),
+      // aproveita e sincroniza — mantém o estado fiel para quem depois edita o campo.
+      const vu = refUsuario.current?.value ?? ''
+      const vs = refSenha.current?.value ?? ''
+      if (vu) setUsuario((atual) => (atual === vu ? atual : vu))
+      if (vs) setSenha((atual) => (atual === vs ? atual : vs))
+    }
+    olhar()
+    const timers = [60, 150, 300, 600, 1000].map((ms) => window.setTimeout(olhar, ms))
+    return () => timers.forEach(window.clearTimeout)
+  }, [])
+
+  const aoAutoPreencher = (e: React.AnimationEvent<HTMLInputElement>) => {
+    if (e.animationName !== 'aviso-autofill') return
+    const alvo = e.currentTarget
+    if (alvo === refUsuario.current) setAuto((a) => ({ ...a, usuario: true }))
+    if (alvo === refSenha.current) setAuto((a) => ({ ...a, senha: true }))
+    // Se o valor já vier legível, guarda; se vier vazio, o `auto` acima já sustenta
+    // o botão e o envio lê o DOM.
+    if (alvo.value) {
+      if (alvo === refUsuario.current) setUsuario(alvo.value)
+      if (alvo === refSenha.current) setSenha(alvo.value)
+    }
+  }
+
+  const habilitado = podeEnviar(usuario, senha, estado, auto)
   const selo = procedenciaCurta(ufs) ?? censoDaBase()
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault()
     if (!habilitado) return
+    /* Lê do DOM, não do estado. Com autofill o estado pode estar VAZIO — o navegador
+       só entrega o valor depois de um gesto, e o clique que disparou este envio é
+       exatamente esse gesto. Cai no estado quando o ref não existe (teste/SSR). */
+    const usuarioEnviado = refUsuario.current?.value || usuario
+    const senhaEnviada = refSenha.current?.value || senha
+    if (!usuarioEnviado.trim() || !senhaEnviada) {
+      // O autofill prometeu conteúdo e o DOM não entregou: não gasta uma das
+      // tentativas que o Authelia conta antes de banir por 10 minutos.
+      setFalha('credencial')
+      return
+    }
     setEstado('enviando')
     setFalha(null)
     try {
-      setFalha(await onEntrar(normalizarUsuario(usuario), senha, manter))
+      setFalha(await onEntrar(normalizarUsuario(usuarioEnviado), senhaEnviada, manter))
     } catch {
       // Exceção não tratada é INDISPONÍVEL, nunca credencial — ver `falhaDoStatus`.
       setFalha('indisponivel')
@@ -235,6 +326,8 @@ export default function LoginScreen({
               <IconeUsuario />
               <input
                 id={idUsuario}
+                ref={refUsuario}
+                onAnimationStart={aoAutoPreencher}
                 name="username"
                 type="text"
                 value={usuario}
@@ -255,6 +348,8 @@ export default function LoginScreen({
               <IconeCadeado />
               <input
                 id={idSenha}
+                ref={refSenha}
+                onAnimationStart={aoAutoPreencher}
                 name="password"
                 type={verSenha ? 'text' : 'password'}
                 value={senha}

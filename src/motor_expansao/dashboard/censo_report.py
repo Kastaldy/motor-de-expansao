@@ -27,6 +27,7 @@ from motor_expansao.dashboard.relatorio_praca import (
     TITULO_COMO_A_CIDADE_ESTA_INDO,
     TITULO_PRESSAO_CONCORRENCIAL,
     PracaDoPonto,
+    rotulo_raio,
     texto_pdf,
 )
 from motor_expansao.perfil import resolver_perfil
@@ -1160,6 +1161,25 @@ def _viab_campo(viabilidade: Mapping[str, Any], plana: str, *caminho: str) -> An
     return atual
 
 
+def _viab_capex_total(viabilidade: Mapping[str, Any]) -> float | None:
+    """Obra + equipamentos + taxa de franquia (= `investimento_total` do simulador).
+
+    Le o total do payload (`investimento.investimento_total` ou a chave plana); quando ele
+    nao vem, soma as tres partes se TODAS vierem. Qualquer parte ausente -> None ("n/d").
+    """
+    total = _viab_campo(viabilidade, "investimento_total", "investimento", "investimento_total")
+    if _viab_tem(total):
+        return float(total)
+    partes = [
+        _viab_campo(viabilidade, "obra", "investimento", "obra"),
+        _viab_campo(viabilidade, "equipamentos", "investimento", "equipamentos"),
+        _viab_campo(viabilidade, "taxa_franquia", "investimento", "taxa_franquia"),
+    ]
+    if not all(_viab_tem(v) for v in partes):
+        return None
+    return float(sum(float(v) for v in partes))
+
+
 def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
     """Achata o payload de viabilidade nas chaves que o slide imprime (sem recalcular)."""
     teto = viabilidade.get("aluguel_teto")
@@ -1242,6 +1262,11 @@ def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
         "parcelas_franquia": _viab_campo(
             viabilidade, "parcelas_franquia", "investimento", "parcelas_franquia"
         ),
+        # Card "Capex total" (2026-09-23, no lugar de "Retorno anual do negocio"): obra +
+        # equipamentos + taxa de franquia, o `investimento_total` que o simulador entrega e
+        # que e' o denominador do retorno. LEITURA do payload; a soma so' entra quando o total
+        # nao vem e as tres partes vem -- parte faltando e' "n/d", nunca zero.
+        "capex_total": _viab_capex_total(viabilidade),
         "tir_anual": _viab_campo(viabilidade, "tir_anual", "retorno", "tir_anual"),
         "vpl": _viab_campo(viabilidade, "vpl", "retorno", "vpl"),
         "acumulado_mes_final": viabilidade.get("acumulado_mes_final"),
@@ -1532,24 +1557,15 @@ def _viabilidade_page(
 
     unidade_be = _viab_unidade_breakeven(dados)
     rotulo_be = f"Break-even ({unidade_be})" if unidade_be else "Alunos break-even"
-    otica = str(dados.get("retorno_otica") or "").strip()
-    # VOCABULARIO (4a rodada): "do negocio" no lugar de "desalavancado" — o rotulo
-    # tem de dizer O QUE mede (o ativo), nao o jargao de estrutura de capital.
-    rotulo_retorno = (
-        "Retorno anual do negocio" if otica.startswith("desalav") else "ROIC anual"
-    )
-    retorno_valor = (
-        dados.get("retorno_anual")
-        if _viab_tem(dados.get("retorno_anual"))
-        else dados.get("roic_anual")
-    )
-
+    # 5o card: "Capex total" (pedido de 2026-09-23). Ate entao era "Retorno anual do
+    # negocio"/"ROIC anual" (`retorno_anual`), que saiu da pagina de Numeros; o retorno
+    # continua no payload e na tela de Viabilidade, o PDF so' deixou de o imprimir aqui.
     cards = [
         (rotulo_be, _viab_breakeven(dados.get("alunos_breakeven"))),
         ("Aluguel-teto (mês)", _viab_brl(dados.get("aluguel_teto"))),
         ("Margem EBITDA", _viab_pct(dados.get("margem_ebitda_pct"))),
         ("Payback", _viab_payback(dados.get("payback_meses"))),
-        (rotulo_retorno, _viab_pct(retorno_valor)),
+        ("Capex total", _viab_brl(dados.get("capex_total"))),
         ("Faturamento/mês", _viab_brl(dados.get("faturamento_mensal"))),
         ("EBITDA/mês", _viab_brl(dados.get("ebitda_mensal"))),
         (
@@ -3907,12 +3923,12 @@ def _praca_pressao_page(
     p = praca.pressao
     x = _CLASSICO_MARGIN + mapa_w + 20.0
     w = _PAGE_W - x - _CLASSICO_MARGIN
-    raio_txt = f"{p.raio_m / 1000:.1f}".replace(".", ",")
+    raio_txt = rotulo_raio(p.raio_m)
     y = _PRACA_TOPO + 4
     pdf.set_text_color(*secondary)
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_xy(x, y)
-    pdf.multi_cell(w, 16, _ascii(f"Quem alcança o ponto (raio de {raio_txt} km)"))
+    pdf.multi_cell(w, 16, _ascii(f"Quem alcança o ponto (raio de {raio_txt})"))
     y = pdf.get_y() + 8
     y = _linha_rotulo_valor(pdf, x, y, w, "Raios sobre o ponto", str(p.n_raios_sobre_ponto))
     y = _linha_rotulo_valor(
@@ -3936,9 +3952,9 @@ def _praca_pressao_page(
     pdf.multi_cell(
         w, 12,
         _ascii(
-            f"Cada círculo é a área de influência de {raio_txt} km que o motor usa para descontar a "
-            "concorrência do residual. Onde os círculos se sobrepõem a cor escurece: mais academias "
-            "disputando o mesmo público."
+            f"Cada círculo é o raio de {raio_txt} em volta de uma academia, a leitura do relatório "
+            "para o entorno imediato do ponto. Onde os círculos se sobrepõem a cor escurece: mais "
+            "academias disputando o mesmo público."
         ),
     )
     _draw_footer(pdf, with_attribution=True)

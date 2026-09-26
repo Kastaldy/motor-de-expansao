@@ -76,4 +76,45 @@ describe('tela de entrar: caminhos de asset', () => {
     expect(entrada).not.toMatch(/firstfactor/)
     expect(entrada).not.toMatch(/\bmontarPedido\b|\blerResposta\b/)
   })
+
+  it('o aviso de autofill existe no CSS com o nome que o TS compara', () => {
+    /* Relato do Vinicius (2026-09-24): com os campos autopreenchidos, o botao de
+       entrar nascia desabilitado — o navegador escreve no DOM sem disparar o evento
+       que o React escuta, entao o estado ficava vazio.
+
+       A correcao depende de um acoplamento POR NOME entre dois arquivos: a animacao
+       `aviso-autofill` no `global.css` e a comparacao `e.animationName === '...'` no
+       `LoginScreen`. Renomear de um lado so' devolve o defeito EM SILENCIO — nada
+       quebra, nada fica vermelho, o botao so' volta a mentir. Este teste e' o que
+       torna essa quebra visivel. */
+    const css = readFileSync(resolve(RAIZ, 'styles/global.css'), 'utf8')
+    const tela = ler('screens/LoginScreen.tsx')
+
+    expect(css).toMatch(/@keyframes\s+aviso-autofill\b/)
+    expect(css).toMatch(/input:-webkit-autofill\s*\{[^}]*animation-name:\s*aviso-autofill/)
+    expect(tela).toMatch(/animationName\s*!==\s*'aviso-autofill'/)
+    // E os dois campos precisam ESCUTAR o evento — sem o handler, a animacao dispara
+    // para ninguem.
+    expect(tela.match(/onAnimationStart=\{aoAutoPreencher\}/g)).toHaveLength(2)
+  })
+
+  it('a habilitacao NAO depende de ler o valor autopreenchido', () => {
+    /* O defeito voltou uma vez por isto (relato de 25/09: "o botao so' fica azul
+       depois que eu clico na tela, independente de onde seja o clique").
+
+       O Chrome preenche os campos na carga mas SEGURA o valor da senha ate' haver um
+       gesto do usuario — `input.value` devolve vazio antes disso, e o clique em
+       qualquer lugar e' o gesto que libera. Uma correcao que sincronize o estado
+       lendo o DOM le' VAZIO e conclui "campo vazio": foi a 1a tentativa, e ela nao
+       resolveu.
+
+       O que sustenta o botao e' a PRESENCA do autofill (`auto`), nao o valor. E o
+       envio le' o DOM, porque ali o gesto ja' aconteceu. Estas duas travas sao o que
+       impede a regressao. */
+    const tela = ler('screens/LoginScreen.tsx')
+    expect(tela).toMatch(/podeEnviar\(usuario,\s*senha,\s*estado,\s*auto\)/)
+    expect(tela).toMatch(/matches\(':-webkit-autofill'\)/)
+    expect(tela).toMatch(/refUsuario\.current\?\.value\s*\|\|\s*usuario/)
+    expect(tela).toMatch(/refSenha\.current\?\.value\s*\|\|\s*senha/)
+  })
 })

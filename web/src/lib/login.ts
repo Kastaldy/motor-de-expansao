@@ -58,12 +58,39 @@ export function falhaDoStatus(status: number): FalhaLogin {
 /**
  * O formulario pode ser enviado?
  *
- * Campo vazio NAO vai ao servidor: alem de economizar a ida, evita gastar uma das 4
- * tentativas que o `regulation` conta antes de bloquear por 10 minutos.
+ * Campo vazio NAO vai ao servidor: alem de economizar a ida, evita gastar uma das
+ * tentativas da trava. A regua e' a do NOSSO servidor desde 25/09/2026 --
+ * `MAX_TENTATIVAS` recusas numa janela MOVEL de `JANELA_TENTATIVAS_MIN` minutos
+ * (`lib/login-motor.ts`, espelhando `db/sessoes.py`). Ate' essa data este comentario
+ * citava "4 tentativas / bloquear por 10 minutos", que e' o `regulation` do AUTHELIA e
+ * deixa de existir no corte do P19.
+ *
+ * `auto` marca os campos que o navegador AUTOPREENCHEU e cujo valor ele ainda nao
+ * deixa o JavaScript ler. Nao e' detalhe de implementacao, e' o coracao de um defeito
+ * relatado duas vezes (Vinicius, 2026-09-24; Felipe, 2026-09-25: "o botao so' fica
+ * azul depois que eu clico na tela, independente de onde seja o clique").
+ *
+ * O Chrome preenche usuario e senha na carga, mas SEGURA o valor da senha ate' haver
+ * um GESTO do usuario — antes disso `input.value` devolve string vazia. Por isso a 1a
+ * tentativa de correcao, que lia o DOM e sincronizava o estado, nao resolveu: ela lia
+ * vazio e concluia "campo vazio". E por isso o botao acordava a qualquer clique — o
+ * clique E' o gesto que libera a leitura.
+ *
+ * Com `auto`, o campo autopreenchido CONTA como preenchido para habilitar o botao. O
+ * valor de verdade e' lido na hora do envio, quando o clique ja' aconteceu e o
+ * navegador o entrega. A trava de "campo vazio nao vai ao servidor" fica de pe para
+ * quem realmente deixou o campo vazio: sem autofill, `auto` e' falso e nada muda.
  */
-export function podeEnviar(usuario: string, senha: string, estado: EstadoEnvio): boolean {
+export function podeEnviar(
+  usuario: string,
+  senha: string,
+  estado: EstadoEnvio,
+  auto: { usuario?: boolean; senha?: boolean } = {},
+): boolean {
   if (estado === 'enviando') return false
-  return usuario.trim().length > 0 && senha.length > 0
+  const temUsuario = usuario.trim().length > 0 || auto.usuario === true
+  const temSenha = senha.length > 0 || auto.senha === true
+  return temUsuario && temSenha
 }
 
 /**

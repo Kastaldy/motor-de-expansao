@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Map, Marker } from 'react-map-gl/maplibre'
 
 import IconeTipo from '../components/IconeTipo'
 import Select from '../components/Select'
 import { Aviso, Botao, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
+import type { Tema } from '../lib/tema'
+import { TEMA_PADRAO } from '../lib/tema'
 import { SCORE_BANDS_HEX } from '../lib/colors'
 import { brl, brlCurto, num } from '../lib/format'
 import {
@@ -14,6 +16,7 @@ import {
   ACC_12,
   ACC_24,
   ACC_30,
+  ACC_50,
   ACC_GLOW,
   ACC_ON,
   ACC_TX,
@@ -45,7 +48,14 @@ import 'maplibre-gl/dist/maplibre-gl.css'
  * ao lado do mini-mapa + acoes).
  */
 
-const BASEMAP = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+/* Basemap POR TEMA, como `ExecMap` e `FichaMapa` ja' faziam. Esta tela tinha uma
+   copia propria com o dark-matter cravado, e por isso o mapa ficava preto no tema
+   claro. Positron e' o par claro da MESMA familia Carto: ruas, rotulos e hierarquia de
+   vias ficam onde estavam, so' a pele muda. */
+const BASEMAP: Record<Tema, string> = {
+  escuro: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  claro: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+}
 const MAX_PINS = 160
 /* Teto da rota `/api/oportunidades` (cap de 3.000 no servidor). Pedimos o teto porque
    uma UF inteira cabe folgada nele — a maior, SP, tem 1.501 imoveis. So' o recorte
@@ -76,6 +86,23 @@ function mediana(xs: (number | null | undefined)[]): number | null {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
 }
 
+/**
+ * O que esta tela manda ao mapa quando alguém clica em "Ver no Mapa Territorial".
+ *
+ * `imovelId` entrou em 2026-09-23 (relato do Felipe: "abre o popup do hexágono em vez
+ * do popup de informações do imóvel"). A causa era esta: só iam daqui a COORDENADA e o
+ * `hex_id`, e com isso o mapa não tinha como saber QUAL imóvel abrir — restava-lhe a
+ * única ficha que ele sabia abrir na chegada, a do hexágono. A identidade do imóvel
+ * fecha esse buraco; a ficha é montada lá com o objeto que o mapa já carrega por UF.
+ */
+export interface PontoNoMapa {
+  lat: number
+  lng: number
+  hexId: string
+  /** Ausente = "leve-me a este lugar" (sem imóvel para abrir). */
+  imovelId?: string
+}
+
 /** Faturamento projetado/mes = alunos p50 da curva tamanho->densidade (simulador de
  *  Viabilidade, servido pronto pelo backend em `fat_proj`) x ticket. NAO usa residual. */
 const projFatDe = (o: Oportunidade): number | null => o.fat_proj ?? null
@@ -95,9 +122,10 @@ export default function OportunidadesImobiliariasScreen({
   onVerNoMapa,
   focoInicial = null,
   onFocoAplicado,
+  tema = TEMA_PADRAO,
 }: {
   onInicio: () => void
-  onVerNoMapa: (uf: string, municipio: string, ponto?: { lat: number; lng: number; hexId: string }) => void
+  onVerNoMapa: (uf: string, municipio: string, ponto?: PontoNoMapa) => void
   /**
    * Imovel que deve abrir JA SELECIONADO — o caminho inverso do "Ver no Mapa
    * Territorial": o botao "Ver na aba de imoveis" da janela do imovel no mapa.
@@ -107,6 +135,8 @@ export default function OportunidadesImobiliariasScreen({
   focoInicial?: Oportunidade | null
   /** Consome a intencao UMA vez, apos aplicar o foco (molde do `modoPendente` do App). */
   onFocoAplicado?: () => void
+  /** Tema vigente — decide o basemap. Sem ele o mapa ficaria preto no claro. */
+  tema?: Tema
 }) {
   const [itens, setItens] = useState<Oportunidade[] | null>(null)
   const [total, setTotal] = useState(0)
@@ -355,13 +385,13 @@ export default function OportunidadesImobiliariasScreen({
           /* Vista MAPA: mapa como principal + card lateral menor com o estudo do imovel */
           <div style={{ display: 'flex', gap: 16, padding: '16px 24px', height: '100%', minHeight: 0 }}>
             <div style={{ flex: 1, minWidth: 0, height: '100%' }}>
-              <MapaRecorte pontos={filtrados} sel={sel} onSel={selecionarImovel} altura="100%" />
+              <MapaRecorte pontos={filtrados} sel={sel} onSel={selecionarImovel} altura="100%" tema={tema} />
             </div>
             <aside style={{ width: 400, flexShrink: 0, overflowY: 'auto', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
               {atual ? (
                 <Ficha op={atual} rank={idxSel + 1} pares={filtrados} medRsM2={medRsM2}
                   visita={visitas.has(atual.id)} onVisita={() => aoAlternarVisita(atual)}
-                  onSel={selecionarImovel} onVerNoMapa={onVerNoMapa} lateral />
+                  onSel={selecionarImovel} onVerNoMapa={onVerNoMapa} tema={tema} lateral />
               ) : (
                 <Aviso titulo="Selecione uma oportunidade" corpo="Clique num ponto do mapa para ver o estudo." />
               )}
@@ -398,7 +428,7 @@ export default function OportunidadesImobiliariasScreen({
               {atual ? (
                 <Ficha op={atual} rank={idxSel + 1} pares={filtrados} medRsM2={medRsM2}
                   visita={visitas.has(atual.id)} onVisita={() => aoAlternarVisita(atual)}
-                  onSel={selecionarImovel} onVerNoMapa={onVerNoMapa} />
+                  onSel={selecionarImovel} onVerNoMapa={onVerNoMapa} tema={tema} />
               ) : (
                 <Aviso titulo="Selecione uma oportunidade" corpo="Escolha um imóvel no ranking à esquerda para ver o estudo." />
               )}
@@ -508,16 +538,18 @@ function LinhaRest({ pos, op, ativo, visita, onClick }: { pos: number; op: Oport
 
 /* ======================= Ficha ======================= */
 function Ficha({
-  op, rank, pares, medRsM2, visita, onVisita, onSel, onVerNoMapa, lateral = false,
+  op, rank, pares, medRsM2, visita, onVisita, onSel, onVerNoMapa, tema, lateral = false,
 }: {
   op: Oportunidade
   rank: number
   pares: Oportunidade[]
   medRsM2: number | null
+  /** Só repassa ao `MiniMapa`, que decide o basemap por ele. */
+  tema: Tema
   visita: boolean
   onVisita: () => void
   onSel: (id: string) => void
-  onVerNoMapa: (uf: string, municipio: string, ponto?: { lat: number; lng: number; hexId: string }) => void
+  onVerNoMapa: (uf: string, municipio: string, ponto?: PontoNoMapa) => void
   /** true = card lateral compacto da vista de Mapa: hero enxuto, sem o mini-mapa. */
   lateral?: boolean
 }) {
@@ -634,12 +666,36 @@ function Ficha({
               {op.bairro ? `${op.bairro} · ` : ''}{op.municipio}/{op.uf} · <span style={{ color: 'var(--tx-soft)' }}>{labelTipo(op.tipo)} para locação</span>
             </div>
             <p style={{ margin: '0 0 18px', font: '400 15px/1.6 var(--f-ui)', color: 'var(--tx-soft)', maxWidth: '60ch' }}>{tese(op, sobra, atendido, pctLivre, r, medRsM2)}</p>
-            <div style={{ display: 'flex', gap: '22px 48px', flexWrap: 'wrap', paddingTop: 18, borderTop: '1px solid var(--line-soft)' }}>
-              <HeroStat label="Área" valor={op.area == null ? '—' : num(op.area)} unidade="m²" nota={labelTipo(op.tipo)} />
-              <HeroStat label="Aluguel" valor={op.aluguel == null ? '—' : num(op.aluguel)} unidade="R$/mês" nota={r != null ? `R$ ${num(r, 0)}/m²` : ''} />
-              <HeroStat label="Custo de ocupação" valor={ocupacao > 0 ? num(ocupacao) : '—'} unidade="R$/mês" nota="com IPTU e condomínio" />
-              <HeroStat label="Projeção de faturamento" valor={projFat == null ? '—' : brl(projFat, true)} unidade="/mês" cor="var(--pos-text)"
-                nota={alunosProj != null ? `${num(alunosProj)} alunos (p50/m²) × R$ ${num(op.ticket_proj ?? 0)}` : 'sem base de m² p/ estimar'} />
+            {/*
+              DUAS CAIXAS, e não uma (corrigido em 2026-09-24 — o Felipe viu o botão
+              "quebrando a linha" em PRODUÇÃO, alinhado errado, enquanto no localhost
+              estava certo).
+
+              A primeira versão punha o link como mais um ITEM da mesma linha flex dos
+              indicadores. Com `flexWrap`, a partir de certa largura ele descia sozinho
+              para a segunda linha e o `marginLeft: auto` o empurrava para a borda —
+              solto, longe do número a que pertence. Não era um bug de produção: era
+              fragilidade de layout que depende da largura e do TAMANHO DO TEXTO dos
+              indicadores, e o dado de produção (valores maiores) caiu na faixa ruim
+              que o dado local não alcançava.
+
+              Agora os indicadores quebram entre SI, numa caixa própria, e o link é
+              IRMÃO dessa caixa. Quando o espaço aperta, ele desce por inteiro e
+              inteiro se mantém — nunca no meio dos números. O `gap` vertical de 12px é
+              o respiro que o Felipe achou na mão mexendo no DOM.
+            */}
+            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '12px 24px', flexWrap: 'wrap', paddingTop: 18, borderTop: '1px solid var(--line-soft)' }}>
+              <div style={{ display: 'flex', gap: '22px 48px', flexWrap: 'wrap', minWidth: 0, flex: '1 1 auto' }}>
+                <HeroStat label="Área" valor={op.area == null ? '—' : num(op.area)} unidade="m²" nota={labelTipo(op.tipo)} />
+                <HeroStat label="Aluguel" valor={op.aluguel == null ? '—' : num(op.aluguel)} unidade="R$/mês" nota={r != null ? `R$ ${num(r, 0)}/m²` : ''} />
+                <HeroStat label="Custo de ocupação" valor={ocupacao > 0 ? num(ocupacao) : '—'} unidade="R$/mês" nota="com IPTU e condomínio" />
+                <HeroStat label="Projeção de faturamento" valor={projFat == null ? '—' : brl(projFat, true)} unidade="/mês" cor="var(--pos-text)"
+                  nota={alunosProj != null ? `${num(alunosProj)} alunos (p50/m²) × R$ ${num(op.ticket_proj ?? 0)}` : 'sem base de m² p/ estimar'} />
+              </div>
+              {/* O link fica COLADO na Projeção de faturamento (pedido do Felipe,
+                  2026-09-23): é neste número que a pessoa decide se o imóvel merece
+                  atenção, e a pergunta seguinte é sempre "deixa eu ver o anúncio". */}
+              {op.url && <LinkAnuncio url={op.url} />}
             </div>
           </div>
         </article>
@@ -670,7 +726,7 @@ function Ficha({
             <div style={{ padding: '18px 18px 10px' }}>
               <TituloCard titulo="Localização" nota={op.hex_id.slice(0, 10).toUpperCase()} />
             </div>
-            <div style={{ padding: '0 14px 14px', flex: 1 }}><MiniMapa op={op} pares={pares} onSel={onSel} /></div>
+            <div style={{ padding: '0 14px 14px', flex: 1 }}><MiniMapa op={op} pares={pares} onSel={onSel} tema={tema} /></div>
           </Glass>
         </div>
       )}
@@ -679,7 +735,7 @@ function Ficha({
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'stretch' }}>
         <Botao onClick={() => {
           api.eventoImobiliaria('ver-no-mapa', { imovel: op.id, uf: op.uf, municipio: op.municipio, origem: 'aba' })
-          onVerNoMapa(op.uf, op.municipio, op.lat != null && op.lng != null ? { lat: op.lat, lng: op.lng, hexId: op.hex_id } : undefined)
+          onVerNoMapa(op.uf, op.municipio, op.lat != null && op.lng != null ? { lat: op.lat, lng: op.lng, hexId: op.hex_id, imovelId: op.id } : undefined)
         }} style={{ flex: 1, minWidth: 220, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: ACC, color: ACC_ON, boxShadow: ACC_GLOW }}>Ver no Mapa Territorial →</Botao>
         <Botao variante="ghost" onClick={baixarDossie} disabled={baixando} style={{ flex: 1, minWidth: 220, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
           title={op.tem_dossie ? 'Dossiê PDF do coletor (oferta + território)' : 'Sem dossiê pronto — gera o Relatório Pontual do endereço'}>
@@ -688,6 +744,20 @@ function Ficha({
         <Botao variante="ghost" onClick={onVisita} style={{ flex: 1, minWidth: 220, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: visita ? 'var(--warn-text)' : undefined }}>
           {visita ? '★ Marcado para visita' : '☆ Marcar para visita'}
         </Botao>
+        {/*
+          ANÚNCIO ORIGINAL (2026-09-23, relato do Felipe: "o botão não aparece na aba").
+
+          O campo `url` já chegava aqui — o backend o projeta em `_carregar_oportunidades`
+          e ele vive em `Oportunidade.url`; esta ficha simplesmente não o usava. A ficha do
+          PIN no mapa (`components/FichaImovel.tsx`) já oferecia o mesmo link, então quem
+          abria pelo mapa tinha a saída e quem abria pela aba não — a aba era o caminho
+          MENOS capaz, sendo a tela dedicada a imóveis.
+
+          NÃO amplia acesso: a lista (com `url`) é servida a `{mapa, imobiliaria}` pela
+          DEC-037, e o link já estava visível na outra superfície com o mesmo gate. O que é
+          restrito a `{imobiliaria}` é o DOSSIÊ, que segue no botão ao lado, intocado.
+        */}
+        {op.url && <LinkAnuncio url={op.url} bloco />}
       </div>
       {erroAcao && <div style={{ font: '400 11.5px/1.4 var(--f-ui)', color: 'var(--neg)' }}>{erroAcao}</div>}
 
@@ -868,7 +938,7 @@ function Scatter({ pontos, sel }: { pontos: Oportunidade[]; sel: string }) {
 }
 
 /* ======================= Mini-mapa da ficha (pan/zoom) ======================= */
-function MiniMapa({ op, pares, onSel }: { op: Oportunidade; pares: Oportunidade[]; onSel: (id: string) => void }) {
+function MiniMapa({ op, pares, onSel, tema }: { op: Oportunidade; pares: Oportunidade[]; onSel: (id: string) => void; tema: Tema }) {
   const [vs, setVs] = useState(() => ({ longitude: op.lng ?? -49, latitude: op.lat ?? -16, zoom: op.lat != null ? 13 : 3.5 }))
   const [zoomArmado, setZoomArmado] = useState(false)
   const [hover, setHover] = useState<string | null>(null)
@@ -889,7 +959,7 @@ function MiniMapa({ op, pares, onSel }: { op: Oportunidade; pares: Oportunidade[
       ) : (
         <>
           <Map longitude={vs.longitude} latitude={vs.latitude} zoom={vs.zoom} onMove={(e) => setVs(e.viewState)}
-            mapStyle={BASEMAP} scrollZoom={zoomArmado} dragRotate={false} attributionControl={{ compact: true }} reuseMaps
+            mapStyle={BASEMAP[tema]} scrollZoom={zoomArmado} dragRotate={false} attributionControl={{ compact: true }} reuseMaps
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
             {vizinhos.map((p) => (
               <Marker key={p.id} longitude={p.lng as number} latitude={p.lat as number} anchor="center" onClick={() => onSel(p.id)}>
@@ -919,7 +989,7 @@ function MiniMapa({ op, pares, onSel }: { op: Oportunidade; pares: Oportunidade[
 }
 
 /* ======================= Mapa do recorte (coluna esquerda) ======================= */
-function MapaRecorte({ pontos, sel, onSel, altura = 620 }: { pontos: Oportunidade[]; sel: string | null; onSel: (id: string) => void; altura?: number | string }) {
+function MapaRecorte({ pontos, sel, onSel, altura = 620, tema }: { pontos: Oportunidade[]; sel: string | null; onSel: (id: string) => void; altura?: number | string; tema: Tema }) {
   const [hover, setHover] = useState<string | null>(null)
   const comCoord = useMemo(() => pontos.filter((p) => p.lat != null && p.lng != null).slice(0, MAX_PINS), [pontos])
   // Chave do recorte: refaz o enquadramento inicial quando o conjunto muda.
@@ -942,7 +1012,7 @@ function MapaRecorte({ pontos, sel, onSel, altura = 620 }: { pontos: Oportunidad
   }
   return (
     <div style={{ borderRadius: 'var(--r-lg)', overflow: 'hidden', border: '1px solid var(--line)', background: 'var(--bg-lift)', height: altura, position: 'relative' }}>
-      <Map key={chave} initialViewState={inicial} mapStyle={BASEMAP} dragRotate={false} attributionControl={{ compact: true }} reuseMaps
+      <Map key={chave} initialViewState={inicial} mapStyle={BASEMAP[tema]} dragRotate={false} attributionControl={{ compact: true }} reuseMaps
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
         {comCoord.map((p) => {
           const on = p.id === sel
@@ -1013,6 +1083,64 @@ function HeroStat({ label, valor, unidade, nota, cor }: { label: string; valor: 
       </div>
       {nota && <div style={{ font: '400 10.5px/1.3 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 5 }}>{nota}</div>}
     </div>
+  )
+}
+
+/**
+ * Link para o anúncio no portal de origem (2026-09-23, relato do Felipe).
+ *
+ * Aparece em DOIS lugares da mesma ficha, e por isso é um componente e não duas
+ * cópias de estilo: no card principal, colado na Projeção de faturamento (é ali que
+ * a pessoa decide se o imóvel merece atenção, e a pergunta seguinte é sempre "deixa
+ * eu ver o anúncio"), e na barra de ações lá embaixo, junto das outras saídas.
+ *
+ * DESTAQUE, em duas rodadas com o Felipe (mesmo dia). A primeira versão saiu com
+ * tratamento fantasma (borda fina, fundo de elevação) e ele apontou que sumia. A
+ * segunda levou o magenta de acento, e o pedido final foi outro: na barra de ações o
+ * botão tem de ser CHEIO, igual ao "Ver no Mapa Territorial", mas no AZUL do sistema.
+ *
+ * Daí os dois pesos, e eles não são decorativos:
+ *   - `bloco` (barra de ações): cheio, `--info` + glow. Divide a linha com os outros
+ *     três e precisa do mesmo peso para não parecer o irmão pobre da fila.
+ *   - padrão (card principal): contorno no magenta de acento. Ali ele é um APÊNDICE
+ *     da Projeção de faturamento; cheio, competiria com o número, que é o assunto.
+ *
+ * O azul é `--ac`, o acento do SISTEMA — o mesmo dos botões da Viabilidade. Uma
+ * versão intermediária usou `--info` (#2f6bed) por eu ter lido "azul do sistema" como
+ * o token chamado azul; o Felipe corrigiu apontando a Viabilidade, cujo primário é o
+ * `--ac`. Os pares `--info-on`/`--info-glow` que eu havia criado para aquilo foram
+ * removidos junto, para não deixarem token morto no `tokens.css`.
+ *
+ * É `<a>` e não `<Botao>` para herdar a navegação nativa: abrir em nova aba pelo
+ * meio/ctrl, copiar endereço, ver o destino na barra de status. Um `onClick` com
+ * `window.open` tiraria as três. `rel="noreferrer"` porque o destino é site de
+ * terceiro — sem ele, o portal recebe a URL do piloto no `Referer`.
+ */
+function LinkAnuncio({ url, bloco = false }: { url: string; bloco?: boolean }) {
+  const cheio: CSSProperties = {
+    flex: 1, minWidth: 220, padding: '12px 18px', borderRadius: 'var(--r-md)',
+    font: '700 13px/1 var(--f-ui)', color: 'var(--ac-on)',
+    background: 'var(--ac)', boxShadow: 'var(--ac-glow)', border: 'none',
+  }
+  const contorno: CSSProperties = {
+    padding: '0 16px', height: 38, borderRadius: 10,
+    font: '600 12.5px/1 var(--f-ui)', color: ACC_TX,
+    background: ACC_12, border: `1px solid ${ACC_50}`,
+  }
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      title="Abre o anúncio no site do portal, em nova aba"
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        textDecoration: 'none', whiteSpace: 'nowrap',
+        ...(bloco ? cheio : contorno),
+      }}
+    >
+      Ver anúncio original ↗
+    </a>
   )
 }
 

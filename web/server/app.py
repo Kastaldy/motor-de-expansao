@@ -2026,7 +2026,34 @@ def _ultra_pontos_mapa() -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
     df = pd.concat(partes, ignore_index=True) if len(partes) > 1 else partes[0]
     df = df.dropna(subset=["lat", "lng"]).drop_duplicates(subset=["lat", "lng"])
+    # A correção vem DEPOIS da dedup: o cadastro guarda cópias exatas do ponto antigo
+    # da curada, e corrigir antes solta essas cópias como pins fantasmas a ~100 m.
+    df = _aplicar_coord_corrigida(df).drop_duplicates(subset=["lat", "lng"])
     return df[cols].reset_index(drop=True)
+
+
+def _aplicar_coord_corrigida(df: pd.DataFrame) -> pd.DataFrame:
+    """Aplica `_EXEC_COORD_CORRIGIDA` aos pins do mapa, para o Mapa e a Visão Executiva
+    mostrarem o MESMO ponto da mesma unidade.
+
+    Os pins não têm UF (a curada não a carrega), então a correção casa só pela chave —
+    e só quando a chave é única na tabela; uma chave que aparecesse em duas UFs seria
+    ambígua aqui e fica de fora, em vez de mover o pin de outra praça.
+    """
+    contagem: dict[str, int] = {}
+    for chave, _uf in _EXEC_COORD_CORRIGIDA:
+        contagem[chave] = contagem.get(chave, 0) + 1
+    por_chave = {c: p for (c, _uf), p in _EXEC_COORD_CORRIGIDA.items() if contagem[c] == 1}
+    if not len(df) or not por_chave:
+        return df
+    pontos = df["nome"].map(lambda n: por_chave.get(_chave_unidade(n)))
+    alvo = pontos.notna()
+    if not bool(alvo.any()):
+        return df
+    df = df.copy()
+    df.loc[alvo, "lat"] = [p[0] for p in pontos[alvo]]
+    df.loc[alvo, "lng"] = [p[1] for p in pontos[alvo]]
+    return df
 
 
 @functools.lru_cache(maxsize=1)
@@ -7174,6 +7201,25 @@ _EXEC_ALIAS_COORD: dict[tuple[str, str], str] = {
 }
 
 
+# Coordenada FORNECIDA por Felipe, que vence TODAS as fontes em `_coord_da_unidade`.
+# Existe para os casos em que nenhum alias resolve: a unidade não tem linha própria nos
+# parquets, ou a linha que casa pelo nome tem o ponto de OUTRA unidade. Medido contra os
+# parquets da VPS em 2026-09-25:
+#   - as três Ceilândias por quadra e São Carlos Centro não casavam com nada e
+#     ficavam SEM pin na Visão Executiva;
+#   - Botanic Mall e Jardim Botânico estavam TROCADOS entre si (o ponto de uma no
+#     pin da outra, a ~5 km).
+# Chave = `(_chave_unidade(nome Growth), UF)`, já normalizada, como no alias acima.
+_EXEC_COORD_CORRIGIDA: dict[tuple[str, str], tuple[float, float]] = {
+    ("CEILANDIA QNM24", "DF"): (-15.801298089339188, -48.10755437145428),
+    ("CEILANDIA QNM33", "DF"): (-15.832624961873757, -48.08987702487761),
+    ("CEILANDIA QNN32", "DF"): (-15.839355019389082, -48.10880149815541),
+    ("SAO CARLOS - CENTRO", "SP"): (-22.012508486987347, -47.8880006733541),
+    ("BOTANIC MALL", "DF"): (-15.880275122281448, -47.82143693951672),
+    ("JARDIM BOTANICO", "DF"): (-15.83510411113517, -47.803140295231366),
+}
+
+
 @functools.lru_cache(maxsize=1)
 def _carregar_growth() -> pd.DataFrame:
     if not GROWTH_PARQUET.exists():
@@ -7253,13 +7299,17 @@ def _coord_da_unidade(nome: str, uf: str) -> tuple[float, float] | None:
          bases (ex.: "Novo Gama / GO" atendendo a unidade que a Growth marca como DF).
 
     Nomes comerciais que nenhuma normalização reconcilia passam antes por
-    `_EXEC_ALIAS_COORD`, que redireciona a busca para a chave do cadastro.
+    `_EXEC_ALIAS_COORD`, que redireciona a busca para a chave do cadastro. Acima de
+    tudo isso, `_EXEC_COORD_CORRIGIDA` devolve a coordenada fornecida manualmente.
     """
     curada, cad_por_chave_uf, cad_por_chave = _ultra_coord_map()
     uf = str(uf).upper().strip()
     chave = _chave_unidade(nome)
     if not chave:
         return None
+    corrigida = _EXEC_COORD_CORRIGIDA.get((chave, uf))
+    if corrigida:
+        return corrigida
     # O alias existe justamente porque a chave crua não casa: ele SUBSTITUI a chave.
     chave = _EXEC_ALIAS_COORD.get((chave, uf), chave)
     return (
