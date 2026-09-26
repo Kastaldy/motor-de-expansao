@@ -10,7 +10,9 @@
 > **Pré-requisito obrigatório:** o `docs/repasse_migracoes_p19.md` já foi executado por inteiro
 > (migrations 018, 019 e 020 aplicadas). Este documento começa onde aquele termina.
 
-**Duração estimada:** 30 a 45 min, com ~5 min de piloto fora do ar.
+**Duração estimada:** 45 a 60 min. **Os Passos 4 e 5 são uma sequência contínua** — a partir da
+chave ligada, quem usa o piloto já é levado à nova tela de entrar, então não interrompa entre
+eles. O Passo 3 (credencial do banco) pode ser feito antes, com calma.
 **Janela recomendada:** fora do horário de uso, com alguém disponível por telefone.
 
 ---
@@ -214,7 +216,54 @@ cortado ainda.
 
 ---
 
-## Passo 3 — Ligar a chave
+## Passo 3 — Dar ao piloto a credencial do banco
+
+**Sem este passo, o Passo 5 apaga o piloto inteiro.** A sessão vive em tabela, então o motor
+precisa de credencial de banco para autenticar alguém — e ele **não avisa** que ela falta: a chave
+do Passo 4 não consulta o banco, só a própria variável.
+
+```bash
+cd /opt/motor-expansao/app
+grep '^MOTOR_DATABASE_URL=' .env
+```
+
+**Se vier vazia** — e é o estado de entrega —, preencha com a credencial do papel **`app`** (nunca
+a do dono):
+
+```
+MOTOR_DATABASE_URL=postgresql://app:<senha-do-papel-app>@postgres:5432/banco_de_reservas
+```
+
+```bash
+docker compose -f docker-compose.prod.yml up -d web
+```
+
+> **PARE E LEIA, porque este comando muda o comportamento do piloto NA HORA, antes de qualquer
+> chave de autenticação.** Com a variável preenchida, o controle de abas troca de fonte: sai do
+> `acesso_abas.json` e passa a ser o RBAC do banco, que é **deny-by-default**. Quem não tiver linha
+> em `usuarios` com perfil **perde as abas** — o piloto abre vazio para essa pessoa.
+>
+> **Portanto: só preencha esta variável depois de o Passo 0.a estar fechado** (todo mundo do
+> `acesso_abas.json` existe e está ativo em `usuarios`, com perfil). Se o 0.a não estiver fechado,
+> **volte para ele** — este passo é o que torna aquela conciliação obrigatória, e não opcional.
+
+**Confira, com o papel certo:**
+
+```bash
+docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL   web python -m motor_expansao.db privilegios
+```
+
+**Esperado:** `PRIVILEGIOS OK: o papel do piloto nao consegue o que nao deve, e consegue o que
+precisa.` A primeira linha da saída diz `papel conectado:` — tem de ser **`app`**.
+
+**Se vier `ERRO: defina MOTOR_DATABASE_URL`:** a variável não chegou ao container — confira que
+você editou o `.env` da pasta certa e rodou o `up -d`.
+**Se vier muitos `FALHA` e um recado sobre o dono:** você usou a credencial do **dono** em vez da
+do `app`. Troque — usar a do dono anula o isolamento de privilégios inteiro.
+
+---
+
+## Passo 4 — Ligar a chave
 
 ```bash
 # no .env:  MOTOR_AUTENTICACAO_PROPRIA=1
@@ -224,8 +273,22 @@ docker compose -f docker-compose.prod.yml up -d web
 > **`up -d web`, NÃO `restart web`.** O `restart` não relê o `.env` — o container voltaria com o
 > ambiente antigo e nada mudaria. Este é o erro mais fácil de cometer aqui.
 
-**Esperado:** o piloto continua funcionando normalmente. O Authelia ainda está na frente, então
-nada muda para quem está usando — mas agora as rotas de login do motor existem.
+**Esperado — e isto NÃO é "nada muda": o corte fica visível agora.** Até 25/09/2026 este
+documento dizia que o piloto continuaria funcionando normalmente porque o Authelia ainda está na
+frente. **É falso**, e a leitura errada faria você achar que quebrou algo quando na verdade
+funcionou: com a chave ligada, o portão de sessão **apaga os headers de identidade que o Authelia
+injeta** e passa a exigir o nosso cookie em toda rota `/api/*` que não seja
+`login`/`logout`/`health`/`verify`. Ninguém tem esse cookie neste instante.
+
+Então, a partir deste comando:
+
+- quem estava usando o piloto **recebe 401 na próxima ação** e é levado para a nossa tela de
+  entrar (`/entrar.html`);
+- entre este passo e o próximo, quem entrar passa por **DOIS logins**: o do Authelia, na borda,
+  e o nosso, na aplicação. É esperado e é temporário;
+- **ver a nossa tela de entrar aqui é o sinal de que funcionou**, não de que quebrou.
+
+Por isso o Passo 5 é a continuação natural deste, e não um passo para outro dia.
 
 **Confira que a chave chegou:**
 
@@ -236,13 +299,14 @@ docker compose -f docker-compose.prod.yml exec web printenv MOTOR_AUTENTICACAO_P
 **Esperado:** `1`.
 
 **Se vier vazio ou "não encontrado":** a branch `feat/p19-chave-no-compose` não está na `main`, ou
-o `up -d` não rodou. **Pare** — o passo 4 sem isto derruba o piloto.
+o `up -d` não rodou. **Pare** — o passo 5 sem isto derruba o piloto.
 
 ---
 
-## Passo 4 — Trocar o bloco do Caddy
+## Passo 5 — Trocar o bloco do Caddy
 
-**Este é o passo irreversível na prática** (dá para voltar, mas com o piloto fora do ar no meio).
+**Este é o passo que fecha o corte.** Dá para voltar (ver *Se precisar voltar atrás*), mas com o
+piloto fora do ar no meio. O que a equipe SENTE começou no passo anterior, com a chave.
 
 Abra `/opt/motor-expansao/app/Caddyfile` e substitua o bloco de
 `piloto.ultra-expansao.tech` pelo conteúdo de `deploy/caddy/piloto-br.Caddyfile.template`.
@@ -265,7 +329,7 @@ sops secrets/Caddyfile.enc   # cole o Caddyfile novo
 
 ---
 
-## Passo 5 — Conferir que funcionou
+## Passo 6 — Conferir que funcionou
 
 1. **Abra `https://piloto.ultra-expansao.tech` numa janela anônima.**
    **Esperado:** a nossa tela de entrar (não a do Authelia).

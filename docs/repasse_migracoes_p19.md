@@ -29,8 +29,16 @@ autenticando. É preparação, não virada de chave.
 | 1 | A imagem nova do `web` publicada, com as migrations dentro | você recebeu o **digest** (`ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:…`) |
 | 2 | Acesso SSH à VPS como root | `ssh` conecta |
 | 3 | A senha do papel **dono** do banco (`reservas_owner`) | está no `.env` do compose, em `POSTGRES_OWNER_PASSWORD` |
+| 4 | **As duas branches do P19 já estão na `main`** | `git log --oneline main \| grep -i "p19"` mostra os commits; e o `git pull` do passo 2 traz `src/motor_expansao/db/migracoes/018-sessoes.sql` |
 
 Se faltar qualquer um, **não comece** — o passo 4 é irreversível sem restore.
+
+> **Por que o pré-requisito 4 não é burocracia.** As migrations, este documento e o do corte
+> vivem em duas branches (`feat/p19-sessao` e `feat/p19-chave-no-compose`) que, até o merge, **não
+> estão na `main`**. Duas consequências concretas: o `git pull` do passo 2 não traz os arquivos que
+> os passos seguintes mandam usar, e o **digest do pré-requisito 1 não pode existir** — o CI só
+> publica a imagem em push para a `main`. Se você recebeu um digest e as branches não mergearam,
+> pergunte de onde ele veio antes de subir qualquer coisa.
 
 ---
 

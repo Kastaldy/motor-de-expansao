@@ -44,10 +44,14 @@ um valor é editar esta tabela primeiro.
 > `registrar_logout`), pela epic do **P19**. O que faltava nunca foi coluna: enquanto o Authelia
 > autentica, a entrada não passa pelo backend — o piloto só recebe o `Remote-User` já resolvido.
 >
-> **Produtor existe, mas ainda não há chamador:** as rotas `POST /api/login` e `POST /api/logout`
-> vêm na fatia seguinte, e o portão de sessão nasce dormente (`MOTOR_AUTENTICACAO_PROPRIA`). Então
-> hoje nenhuma linha de `login` é escrita — e esta nota diz isso em voz alta em vez de prometer o
-> que não sai.
+> **Produtor E CHAMADOR existem; o que falta é a chave.** *(Corrigido em 25/09/2026: esta nota
+> dizia "ainda não há chamador", e isso deixou de ser verdade quando as rotas foram escritas.)*
+> `POST /api/login` chama `registrar_login` e `registrar_login_recusado`, e `POST /api/logout`
+> chama `registrar_logout` (`web/server/app.py`). A distinção que fica de pé, e é outra: as duas
+> rotas respondem **404** enquanto `MOTOR_AUTENTICACAO_PROPRIA` estiver vazia, então hoje nenhuma
+> linha de `login` é escrita **em produção** — não por falta de chamador, mas porque o caminho
+> inteiro está dormente. Quem ligar a chave passa a ver as linhas no mesmo instante, sem mudar
+> uma linha de código.
 >
 > **Por que isto é reposição, e não conveniência.** O `docs/trilha_acesso_piloto.md` registra as
 > tentativas de login do Authelia — **sucesso e falha**, com usuário e IP — como a **camada 3** da
@@ -388,11 +392,13 @@ daquela seção.
 `bot.autorizado` (§2.1), `cadastro.editado` (§2.3) — que a própria §2.3 manda **não** duplicar
 enquanto o log em arquivo existir — e a família inteira da §2.6, que depende da F5.4 existir.
 
-**`login` e `logout` saíram desta lista em 17/09/2026**, e com uma ressalva que importa: eles têm
-**produtor** (`registrar_login`/`registrar_logout`, pela epic do P19) e **ainda não têm chamador** —
-as rotas de entrada e saída vêm na fatia seguinte, e o portão de sessão nasce dormente. Ou seja,
-hoje o par está no vocabulário e no código, e nenhuma linha é escrita. Quem ler esta seção
-procurando linhas de `login` no banco não vai achar, e é assim mesmo até o corte.
+**`login` e `logout` saíram desta lista em 17/09/2026**, e a ressalva MUDOU em 25/09: eles têm
+**produtor** (`registrar_login`/`registrar_logout`) **e chamador** — as rotas `POST /api/login` e
+`POST /api/logout` os invocam (`web/server/app.py`). *(Até 25/09 esta linha dizia "ainda não têm
+chamador", o que deixou de ser verdade quando as rotas foram escritas.)* O que ainda impede a
+escrita é a **chave**: as duas rotas respondem 404 com `MOTOR_AUTENTICACAO_PROPRIA` vazia. Então
+quem ler esta seção procurando linhas de `login` no banco não vai achar **até o corte** — e no dia
+do corte elas aparecem sozinhas, sem mudança de código.
 
 **O esquema comporta tudo isto.** A D24 fechou a última pendência de modelo e a `014` criou os
 índices que faltavam; a `015` acrescentou a capacidade que separa ver o painel de mudar quem entra.
