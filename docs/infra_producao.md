@@ -1026,6 +1026,28 @@ requisição seguinte, sem restart); mudanças no `Caddyfile` seguem pedindo
 
 ### Revogar usuário
 
+> **DEPOIS DO CORTE DO P19, os dois passos abaixo NÃO revogam ninguém no piloto brasileiro** —
+> e ainda causam dano. Quem autentica o BR passa a ser o banco: a pessoa removida do
+> `users_database.yml` **continua dentro** pelas 8 h da sessão aberta dela, e o
+> `restart authelia` **desloga a instância argentina inteira**, que continua dependendo dele.
+>
+> Saber em qual estado a instância está:
+> ```bash
+> cd /opt/motor-expansao/app && grep '^MOTOR_AUTENTICACAO_PROPRIA=' .env
+> ```
+> Vazia → o corte não aconteceu, siga os dois passos. Com valor → **use o passo 0 abaixo**.
+
+**0. Depois do corte — o gesto que funciona, e é imediato:** desativar a linha da pessoa em
+`usuarios`, pelo painel de **Acessos** do piloto. `SQL_VALIDAR` exige `u.ativo` a cada
+requisição guardada, então a sessão dela **morre na requisição seguinte** — não há janela de
+8 h nem restart de serviço nenhum. É a única porta que revoga de verdade no BR.
+
+> Fazer isso **além** dos passos 1 e 2 enquanto durar a janela de observação do corte: quem sai
+> da empresa precisa sair dos DOIS cadastros, porque o rollback devolve o Authelia ao comando.
+> É a dívida declarada na emenda de 25/09/2026 da DEC-067.
+
+**Antes do corte (ou para a instância AR, sempre):**
+
 1. Editar `authelia/users_database.yml` e remover o bloco do usuário
 2. `docker compose -f docker-compose.prod.yml restart authelia`
 

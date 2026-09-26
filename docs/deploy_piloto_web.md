@@ -322,6 +322,26 @@ o artefato entrou no `/api/health`: é o único lugar onde essa falta vira sinal
 
 ## 3. Caddy — bloco do subdomínio (editar na VPS)
 
+> ### ⚠ LEIA ANTES DE COPIAR O BLOCO ABAIXO
+>
+> **O bloco desta seção é o de ANTES do corte do P19.** Se o corte já aconteceu, copiá-lo
+> **DESFAZ o corte em silêncio**: a borda volta a perguntar ao Authelia, que não autentica mais
+> ninguém do lado brasileiro.
+>
+> **Como saber em qual estado a instância está:**
+> ```bash
+> cd /opt/motor-expansao/app
+> grep '^MOTOR_AUTENTICACAO_PROPRIA=' .env
+> ```
+> Vazia ou ausente → o corte NÃO aconteceu, e esta seção vale. Com valor → **o corte aconteceu**,
+> e o bloco correto é o de `deploy/caddy/piloto-br.Caddyfile.template`.
+>
+> Para **fazer** o corte, não use esta seção: siga `docs/repasse_corte_p19.md`, que tem a ordem
+> (chave primeiro, Caddy depois — o inverso derruba o piloto inteiro) e os pré-requisitos.
+>
+> **A instância AR não acompanha o corte** e continua atrás do Authelia — o bloco dela é
+> `deploy/caddy/piloto-ar.Caddyfile.template` e **não muda** (DEC-067, emenda de 25/09/2026).
+
 O `Caddyfile` **não está no git** (gitignored, backup cifrado em `secrets/Caddyfile.enc`);
 vive em `/opt/motor-expansao/app/Caddyfile`. O bloco do piloto (o bloco de `dashboard.` hoje só
 serve `/tiles/*` e redireciona a raiz 301 para cá — DEC-022):
@@ -346,6 +366,12 @@ docker compose -f docker-compose.prod.yml exec caddy caddy reload --config /etc/
 ---
 
 ## 4. Authelia — proteger o subdomínio (editar na VPS)
+
+> **Esta seção vale ANTES do corte do P19, e depois dele SÓ PARA A AR.** Depois do corte quem
+> autoriza o host brasileiro é o portão de sessão do motor, e a regra de `access_control` abaixo
+> deixa de ser consultada para ele. O serviço `authelia` **continua de pé** — a instância
+> argentina depende dele —, então a regra do `piloto-ar.` permanece necessária. Ver
+> `docs/repasse_corte_p19.md`.
 
 Config **não versionada** (backup cifrado `secrets/authelia.configuration.enc.yaml`); vive em
 `/opt/motor-expansao/app/authelia/configuration.yml`. Adicionar a regra:
@@ -423,7 +449,10 @@ Abrir `https://piloto.ultra-expansao.tech` → login Authelia → piloto.
       `"diag": true`. Na tela: a **pílula "Ver academias independentes"** aparece no
       drill-down municipal. (`pins.redes_disponivel` só existe em imagem ≥ BLK-MA-19 —
       ausente **não** é falha; ver a nota em `docs/infra_producao.md`.)
-- [ ] `https://piloto.ultra-expansao.tech` exige login (Authelia) e abre o SPA depois.
+- [ ] `https://piloto.ultra-expansao.tech` exige login e abre o SPA depois. **Qual login depende
+      do estado do corte:** antes dele, a tela do Authelia; depois, a nossa tela de entrar
+      (`/entrar.html`). Confira com `grep '^MOTOR_AUTENTICACAO_PROPRIA=' .env` qual esperar — ver
+      `docs/repasse_corte_p19.md`.
 - [ ] Mapa Territorial carrega uma UF (a 1ª leitura carrega a partição inteira, demora).
 - [ ] Viabilidade calcula um ponto e mostra o **banner "preliminar"**.
 - [ ] Relatório Pontual (PDF) gera sem erro (basemap/contextily presentes).

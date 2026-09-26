@@ -97,10 +97,19 @@ CONTAINERS=(
     # MESMA VPS): entra na vigilancia junto com a subida. EDGE_URL segue escalar (so o host
     # BR) -- debito consciente ate o BLK-INTL-09.
     motor_expansao_web_ar
-    # Postgres/PostGIS. O `web` NAO cai junto quando ele morre -- o piloto foi desenhado
-    # para servir sem banco, e o healthcheck do container deliberadamente nao o consulta.
-    # Sem esta linha, o banco fora do ar seria invisivel: leitura de parquet segue servindo,
-    # e so o RBAC comeca a negar.
+    # Postgres/PostGIS. ATENCAO A QUEM RECEBER ESTE ALERTA DE MADRUGADA: a gravidade MUDA
+    # com o corte do P19, e o texto antigo aqui dizia so' a metade tranquilizadora.
+    #
+    #   ANTES do corte: o `web` NAO cai junto. O piloto foi desenhado para servir sem banco
+    #   (leitura de parquet nao passa por ele) e o healthcheck do container deliberadamente
+    #   nao o consulta. Banco fora = degradacao: so' o RBAC comeca a negar.
+    #
+    #   DEPOIS do corte (`MOTOR_AUTENTICACAO_PROPRIA` preenchida): e' INDISPONIBILIDADE
+    #   TOTAL do piloto BR. A sessao vive em TABELA, entao sem banco o `/api/verify` responde
+    #   503, o Caddy nega tudo que nao for 2xx e NINGUEM entra -- inclusive quem ja' estava
+    #   dentro. E o login tambem nao funciona, porque depende do mesmo banco.
+    #
+    # Conferir o estado: `grep '^MOTOR_AUTENTICACAO_PROPRIA=' /opt/motor-expansao/app/.env`.
     #
     # Total: 8. Os dois acima entraram em paralelo, em branches diferentes, e cada lado
     # escreveu "Total: 7" contando apenas o proprio acrescimo -- o numero certo so' aparece
@@ -169,13 +178,30 @@ check_containers() {
             report "container_$c" OK ""
         fi
     done
-    # Edge externo: 2xx/3xx (redirect do Authelia) ou 401 = vivo
+    # Edge externo: 2xx/3xx (redirect do Authelia) ou 401 = vivo.
     code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' "$EDGE_URL" || echo "000")
     if [[ "$code" =~ ^(2|3|401) ]]; then
         report edge OK ""
     else
         report edge FAIL "Dashboard fora do ar: $EDGE_URL respondeu HTTP $code"
     fi
+
+    # AUTENTICACAO, e este check existe porque o de cima DEIXA DE MEDI-LA no corte do P19.
+    # A raiz do `EDGE_URL` esta' hoje atras do `forward_auth`, entao o codigo dela reflete a
+    # autenticacao. Depois do corte o matcher `@protegido` cobre so' `/api/*`: a raiz passa a
+    # servir o SPA com 200 SEMPRE, com ou sem ninguem conseguindo entrar -- o check acima
+    # ficaria verde para sempre, que e' pior que nao existir.
+    #
+    # `/api/me` SEM cookie tem de ser 401. Se vier 200, a borda parou de proteger e a API esta'
+    # aberta; se vier 503, o banco caiu e ninguem entra (ver o comentario do `postgres` acima).
+    # ANTES do corte tambem vale: o Authelia responde 302 ou 401, e os dois sao aceitos.
+    code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' "$EDGE_URL/api/me" || echo "000")
+    case "$code" in
+        401|30*) report auth OK "" ;;
+        200)     report auth FAIL "GRAVE: $EDGE_URL/api/me respondeu 200 SEM sessao -- a borda parou de proteger a API" ;;
+        503)     report auth FAIL "$EDGE_URL/api/me respondeu 503: banco fora do ar. Com o P19 ligado, ninguem entra" ;;
+        *)       report auth FAIL "$EDGE_URL/api/me respondeu HTTP $code (esperado 401)" ;;
+    esac
 }
 
 check_host() {
