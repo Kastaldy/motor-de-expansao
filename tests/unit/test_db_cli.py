@@ -796,10 +796,10 @@ def test_classificar_poe_cada_linha_na_classe_certa() -> None:
         ],
         _confere_com_a_inicial,
     )
-    assert [l for _i, l in por_classe["propria_ok"]] == ["dono"]
-    assert [l for _i, l in por_classe["propria_quebrada"]] == ["ana"]
-    assert [l for _i, l in por_classe["sem_propria_ok"]] == ["bruno"]
-    assert [l for _i, l in por_classe["sem_propria"]] == ["carla"]
+    assert [login for _i, login in por_classe["propria_ok"]] == ["dono"]
+    assert [login for _i, login in por_classe["propria_quebrada"]] == ["ana"]
+    assert [login for _i, login in por_classe["sem_propria_ok"]] == ["bruno"]
+    assert [login for _i, login in por_classe["sem_propria"]] == ["carla"]
 
 
 def test_quem_escolheu_a_propria_senha_NUNCA_entra_na_lista_de_reescrita() -> None:
@@ -840,7 +840,7 @@ def test_hash_NULO_de_quem_nunca_escolheu_entra_para_reescrita() -> None:
     por_classe = cli.classificar_para_alinhar(
         [(1, "sem-hash", None, "sem_propria")], _confere_com_a_inicial
     )
-    assert [l for _i, l in por_classe["sem_propria"]] == ["sem-hash"]
+    assert [login for _i, login in por_classe["sem_propria"]] == ["sem-hash"]
 
 
 def test_lista_vazia_nao_explode_e_devolve_as_quatro_classes() -> None:
