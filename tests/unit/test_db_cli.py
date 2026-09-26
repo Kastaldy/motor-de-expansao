@@ -767,3 +767,84 @@ def test_o_sentinela_de_ausente_nao_e_False() -> None:
     """
     assert cli.AUSENTE is not False
     assert cli.AUSENTE is not None
+
+
+# --------------------------------------------------------------------------------------
+# `alinhar-senhas`: a classificacao, SEM banco (25/09/2026)
+# --------------------------------------------------------------------------------------
+#
+# O CI nao tem Postgres, e o unico teste do comando era de integracao -- pulava sem banco.
+# Ou seja, o comando que se roda contra o banco de PRODUCAO, no passo que o runbook chama de
+# "o unico que nao da' para desfazer depois", chegava a' VPS sem verificacao automatica.
+# A decisao foi extraida para `classificar_para_alinhar` e e' o que estes testes cobrem.
+
+#: `(id, login, hash, classe-vinda-do-SQL)` — a forma de `SQL_ESTADO_DA_SENHA_INICIAL`.
+_CONFERE = "$argon2id$hash-da-inicial"
+
+
+def _confere_com_a_inicial(h: str | None) -> bool:
+    return h == _CONFERE
+
+
+def test_classificar_poe_cada_linha_na_classe_certa() -> None:
+    por_classe = cli.classificar_para_alinhar(
+        [
+            (1, "dono", "$argon2id$propria-do-dono", "propria_ok"),
+            (2, "ana", "hash_de_teste_1", "propria_quebrada"),
+            (3, "bruno", _CONFERE, "sem_propria"),
+            (4, "carla", "hash_de_teste_2", "sem_propria"),
+        ],
+        _confere_com_a_inicial,
+    )
+    assert [l for _i, l in por_classe["propria_ok"]] == ["dono"]
+    assert [l for _i, l in por_classe["propria_quebrada"]] == ["ana"]
+    assert [l for _i, l in por_classe["sem_propria_ok"]] == ["bruno"]
+    assert [l for _i, l in por_classe["sem_propria"]] == ["carla"]
+
+
+def test_quem_escolheu_a_propria_senha_NUNCA_entra_na_lista_de_reescrita() -> None:
+    """A propriedade de seguranca do comando, e ela inclui o DONO do banco.
+
+    Um comando que "alinha todo mundo" derrubaria a senha de quem a escolheu -- no passo de
+    PREPARACAO do corte, e sem ninguem pedir. Nem `propria_ok` nem `propria_quebrada` podem
+    aparecer em `sem_propria`, que e' a unica classe que o comando reescreve.
+    """
+    por_classe = cli.classificar_para_alinhar(
+        [
+            (1, "dono", "$argon2id$propria-do-dono", "propria_ok"),
+            (2, "ana", None, "propria_quebrada"),
+            (3, "bruno", "$argon2id$de-OUTRA-senha", "propria_ok"),
+        ],
+        _confere_com_a_inicial,
+    )
+    assert por_classe["sem_propria"] == [], (
+        "alguem que escolheu a propria senha entrou na lista de reescrita"
+    )
+
+
+def test_hash_que_CONFERE_sai_da_lista_e_e_isso_que_torna_o_comando_idempotente() -> None:
+    """Rodar duas vezes nao reescreve, e o numero diz o que FALTA.
+
+    Sem esta separacao a saida diria "N seriam alinhadas" tanto num banco quebrado quanto num
+    ja' certo -- e quem rodasse o comando duas vezes nao distinguiria "funcionou" de "nao fez
+    nada". E' a mesma exigencia que o `cmd_expurgar` documenta para o proprio contador.
+    """
+    linhas = [(i, f"p{i}", _CONFERE, "sem_propria") for i in range(1, 4)]
+    por_classe = cli.classificar_para_alinhar(linhas, _confere_com_a_inicial)
+    assert len(por_classe["sem_propria_ok"]) == 3
+    assert por_classe["sem_propria"] == []
+
+
+def test_hash_NULO_de_quem_nunca_escolheu_entra_para_reescrita() -> None:
+    """`senha_hash` nulo nao e' "confere": e' pessoa que nao entra."""
+    por_classe = cli.classificar_para_alinhar(
+        [(1, "sem-hash", None, "sem_propria")], _confere_com_a_inicial
+    )
+    assert [l for _i, l in por_classe["sem_propria"]] == ["sem-hash"]
+
+
+def test_lista_vazia_nao_explode_e_devolve_as_quatro_classes() -> None:
+    """Banco recem-criado, sem usuario nenhum -- o caso da VPS antes do passo 0.a."""
+    por_classe = cli.classificar_para_alinhar([], _confere_com_a_inicial)
+    assert set(por_classe) == {"sem_propria_ok", "sem_propria", "propria_quebrada", "propria_ok"}
+    assert all(v == [] for v in por_classe.values())

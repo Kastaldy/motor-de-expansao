@@ -260,6 +260,15 @@ nano .env                                  # WEB_IMAGE = digest ANTIGO
 docker compose -f docker-compose.prod.yml up -d web
 ```
 
+> **A instância ARGENTINA usa o MESMO `WEB_IMAGE`.** Editar o `.env` muda o digest das duas, e o
+> comando acima sobe só o `web` do BR — a AR fica com o arquivo dizendo um digest e o processo
+> rodando outro, e saltaria de imagem no próximo `up -d` que alguém desse nela. Suba-a também, na
+> mesma janela:
+> ```bash
+> docker compose -f docker-compose.ar.yml up -d web_ar
+> ```
+> **Esperado:** a AR reinicia e continua atrás do Authelia, sem mudança visível.
+
 A imagem antiga convive sem problema com as colunas novas: ela simplesmente não as conhece. As
 migrations podem ficar aplicadas — não atrapalham.
 

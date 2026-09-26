@@ -3,6 +3,11 @@ import { useEffect, useId, useRef, useState } from 'react'
 import MalhaBrasil from '../components/login/MalhaBrasil'
 /* O logo entra por IMPORT, e não pelo caminho `/logo-ultra.png` que o Dock usa.
 
+   MUDA NO CORTE DO P19 (DEC-067): a partir dele esta tela é servida pelo host do PILOTO
+   (`deploy/caddy/piloto-br.Caddyfile.template`) e fala com o NOSSO backend. O `auth.`
+   continua existindo — a instância AR depende dele. O parágrafo abaixo descreve o estado
+   de ANTES do corte, e o que ele diz sobre origem/cookie segue valendo nos dois.
+
    Esta tela é servida na raiz de `auth.ultra-expansao.tech`, onde só a página e o
    prefixo `entrar-assets/` vêm do nosso container — a raiz do host pertence ao
    Authelia. Um `src="/logo-ultra.png"` cairia lá e o logo sumiria EM PRODUÇÃO, sem
@@ -102,7 +107,7 @@ export default function LoginScreen({
    * A trava "campo vazio não vai ao servidor" fica de pé: sem autofill nada muda, e
    * ela existe para não gastar uma das tentativas da trava do servidor (`MAX_TENTATIVAS`,
    * em `lib/login-motor.ts`) antes de
-   * banir por 10 minutos.
+   * barrar a conta ate' a tentativa mais antiga envelhecer na janela.
    */
   const refUsuario = useRef<HTMLInputElement>(null)
   const refSenha = useRef<HTMLInputElement>(null)
@@ -162,7 +167,7 @@ export default function LoginScreen({
     const senhaEnviada = refSenha.current?.value || senha
     if (!usuarioEnviado.trim() || !senhaEnviada) {
       // O autofill prometeu conteúdo e o DOM não entregou: não gasta uma das
-      // tentativas que o Authelia conta antes de banir por 10 minutos.
+      // tentativas da trava do servidor (`MAX_TENTATIVAS`, em `lib/login-motor.ts`).
       setFalha('credencial')
       return
     }

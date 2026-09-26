@@ -448,6 +448,35 @@ def _valor_de_cabecalho(valor: str) -> str:
     return valor.encode("latin-1", "ignore").decode("latin-1")
 
 
+def _token_de_sessao(request: Request) -> str | None:
+    """O token do cookie de sessao, e' a UNICA leitura dele no repo.
+
+    ACEITA O NOME SEM PREFIXO SO' FORA DE PRODUCAO, e isto e' um endurecimento de
+    25/09/2026: antes os tres leitores faziam
+    `cookies.get(COOKIE_SESSAO) or cookies.get(COOKIE_SESSAO_DEV)` sem olhar o ambiente,
+    enquanto `_cookie_de_sessao` -- o unico emissor -- escolhe o nome POR
+    `acesso.em_producao()`. Emissao e leitura discordavam.
+
+    O QUE ISSO CUSTAVA. O prefixo `__Host-` existe para o NAVEGADOR impor as regras: ele
+    recusa o cookie se faltar `Secure`, `Path=/` ou se houver `Domain`. Aceitar
+    `motor_sessao` em producao devolve essa garantia -- um host irmao de
+    `ultra-expansao.tech` pode plantar `motor_sessao=<token>; Domain=.ultra-expansao.tech`,
+    e o backend honrava. A precedencia do `or` salvava quem JA' estava logado (o prefixado
+    vem primeiro), mas nao quem ainda nao entrou: fixacao de sessao, com a trilha da DEC-027
+    registrando o nome de quem plantou como se fosse ele.
+
+    A aceitacao dupla ERA deliberada e esta' declarada nos testes ("uma so' delas aceitando
+    trancaria um dos dois ambientes"). O que faltava era o recorte: em DEV o prefixo nao vale
+    (nao ha' https), entao o nome alternativo precisa ser aceito la' -- e SO' la'.
+    """
+    prefixado = request.cookies.get(acesso.COOKIE_SESSAO)
+    if prefixado:
+        return prefixado
+    if acesso.em_producao():
+        return None
+    return request.cookies.get(acesso.COOKIE_SESSAO_DEV)
+
+
 @app.middleware("http")
 async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-untyped-def]
     from motor_expansao.db import sessoes as db_sessoes
@@ -464,9 +493,7 @@ async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-unt
     if acesso.rota_publica_sem_sessao(caminho):
         return await call_next(request)
 
-    cookie = request.cookies.get(acesso.COOKIE_SESSAO) or request.cookies.get(
-        acesso.COOKIE_SESSAO_DEV
-    )
+    cookie = _token_de_sessao(request)
     try:
         sessao = db_sessoes.validar(cookie or "")
     except Exception:  # noqa: BLE001 — banco fora do ar nao pode virar 500 cru aqui
@@ -4842,9 +4869,7 @@ def logout(request: Request) -> Response:
     if not db_sessoes.ligada():
         raise HTTPException(404, "Not Found")
 
-    token = request.cookies.get(acesso.COOKIE_SESSAO) or request.cookies.get(
-        acesso.COOKIE_SESSAO_DEV
-    )
+    token = _token_de_sessao(request)
     sessao = db_sessoes.validar(token or "") if token else None
     if sessao is not None:
         try:
@@ -4943,9 +4968,7 @@ def verify(request: Request) -> Response:
             _verify_desligado_logado = True
         raise HTTPException(404, "Not Found")
 
-    token = request.cookies.get(acesso.COOKIE_SESSAO) or request.cookies.get(
-        acesso.COOKIE_SESSAO_DEV
-    )
+    token = _token_de_sessao(request)
     try:
         sessao = db_sessoes.validar(token or "")
     except Exception:  # noqa: BLE001 — ver "BANCO FORA DO AR" no docstring

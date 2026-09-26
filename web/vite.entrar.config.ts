@@ -8,6 +8,10 @@ import react from '@vitejs/plugin-react'
  *
  * POR QUE UM BUILD SEPARADO, e não uma segunda entrada do build principal. A página é
  * servida na raiz de `auth.ultra-expansao.tech`, host que ela divide com o portal do
+  * A topologia MUDA no corte do P19 (DEC-067): a partir dele esta pagina e' servida pelo ho
+  * st do PILOTO (`deploy/caddy/piloto-br.Caddyfile.template`), e nao pela raiz de `auth.`. 
+  * O `auth.` continua existindo -- a instancia AR depende dele --, e o cookie continua sain
+  * do com `Domain=<apex>`, entao o mecanismo descrito abaixo segue valendo nos dois casos.
  * Authelia. O Caddy manda para o nosso container só a raiz e o prefixo `entrar-assets/`;
  * todo o resto daquele host vai para o Authelia.
  *

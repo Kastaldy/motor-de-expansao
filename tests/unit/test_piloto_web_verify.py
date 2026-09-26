@@ -390,7 +390,24 @@ def test_o_CODIGO_da_rota_nao_le_header_nenhum() -> None:
     atributos = {no.attr for no in ast.walk(arvore) if isinstance(no, ast.Attribute)}
 
     assert "headers" not in atributos, "/api/verify le' headers da requisicao (trava 1)"
-    assert "cookies" in atributos, "/api/verify deixou de ler o cookie — o que ela valida?"
+
+    # A LEITURA DO COOKIE MUDOU DE CASA em 25/09/2026 e a guarda seguiu a indirecao em vez
+    # de ser afrouxada. A rota nao le' mais `request.cookies` direto: chama
+    # `_token_de_sessao`, que centraliza a regra (e recusa o nome sem prefixo em producao).
+    # Se a asercao tivesse sido apagada, a rota poderia parar de ler cookie NENHUM e nada
+    # ficaria vermelho -- e uma rota de autenticacao que nao le' credencial e' a falha total.
+    chamadas = {
+        no.func.id
+        for no in ast.walk(arvore)
+        if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
+    }
+    assert "_token_de_sessao" in chamadas, (
+        "/api/verify deixou de obter o token por `_token_de_sessao` — o que ela valida?"
+    )
+    helper = ast.parse(textwrap.dedent(inspect.getsource(pilot._token_de_sessao)))
+    do_helper = {no.attr for no in ast.walk(helper) if isinstance(no, ast.Attribute)}
+    assert "cookies" in do_helper, "`_token_de_sessao` deixou de ler o cookie"
+    assert "headers" not in do_helper, "`_token_de_sessao` passou a ler header (trava 1)"
 
     fonte = inspect.getsource(pilot.verify)
     corpo = fonte.split('"""', 2)[-1]  # fora do docstring, que CITA os headers de proposito
@@ -555,3 +572,88 @@ def test_o_copy_headers_lista_exatamente_o_que_a_rota_emite(
     resposta = pilot.verify(_Requisicao(cookies={acesso.COOKIE_SESSAO_DEV: "t"}))
     for nome in declarados:
         assert nome in resposta.headers, f"o Caddy copia {nome}, mas a rota nao o emite"
+
+
+# --------------------------------------------------------------------------------------
+# O nome do cookie: emissao e leitura passam a CONCORDAR (endurecimento de 25/09/2026)
+# --------------------------------------------------------------------------------------
+
+
+def test_em_PRODUCAO_o_cookie_sem_prefixo_e_IGNORADO(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O que o prefixo `__Host-` compra, e que a aceitacao dupla devolvia.
+
+    O prefixo existe para o NAVEGADOR impor as regras -- ele recusa o cookie sem `Secure`,
+    sem `Path=/` ou com `Domain`. Aceitar `motor_sessao` em producao anula isso: um host
+    irmao de `ultra-expansao.tech` pode plantar `motor_sessao=<token>;
+    Domain=.ultra-expansao.tech`, e o backend honrava. Quem ja' estava logado estava salvo
+    pela precedencia do `or`; quem NAO estava era fixado na sessao que o atacante escolheu.
+    """
+    monkeypatch.setattr(acesso, "em_producao", lambda: True)
+    espiao = _espiar(monkeypatch, devolve=None)
+
+    resposta = pilot.verify(_Requisicao(cookies={acesso.COOKIE_SESSAO_DEV: "plantado"}))
+
+    assert resposta.status_code == 401
+    assert espiao.token == "", (
+        f"em producao o nome sem prefixo foi lido: {espiao.token!r}"
+    )
+
+
+def test_FORA_de_producao_o_cookie_sem_prefixo_continua_valendo(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A outra metade, e a razao de o recorte ser por AMBIENTE e nao por remocao.
+
+    Em dev nao ha' https, entao o prefixo `__Host-` nao vale e o navegador nem guardaria o
+    cookie prefixado. Recusar o nome alternativo la' trancaria o desenvolvimento -- que e'
+    exactamente o que a aceitacao dupla existia para evitar.
+    """
+    monkeypatch.setattr(acesso, "em_producao", lambda: False)
+    espiao = _espiar(monkeypatch)
+
+    resposta = pilot.verify(_Requisicao(cookies={acesso.COOKIE_SESSAO_DEV: "valor-de-dev"}))
+
+    assert resposta.status_code == 200
+    assert espiao.token == "valor-de-dev"
+
+
+def test_o_prefixado_vale_nos_DOIS_ambientes() -> None:
+    """Ele nunca depende do ambiente: e' o nome que producao emite e dev aceita."""
+    import inspect
+
+    fonte = inspect.getsource(pilot._token_de_sessao)
+    # O prefixado e' lido ANTES de qualquer checagem de ambiente.
+    pos_prefixado = fonte.index("COOKIE_SESSAO)")
+    pos_ambiente = fonte.index("em_producao()")
+    assert pos_prefixado < pos_ambiente, (
+        "a leitura do cookie prefixado passou a depender do ambiente -- ele vale nos dois"
+    )
+
+
+def test_a_leitura_do_cookie_tem_UMA_redacao() -> None:
+    """Tres leitores com a mesma regra escrita tres vezes desencontram em SILENCIO.
+
+    Era o estado ate' 25/09/2026: o portao, o `/api/logout` e o `/api/verify` repetiam
+    `cookies.get(COOKIE_SESSAO) or cookies.get(COOKIE_SESSAO_DEV)`, e o emissor
+    (`_cookie_de_sessao`) decidia por ambiente. Endurecer um dos tres teria deixado os
+    outros dois abertos.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    fonte = Path(pilot.__file__).read_text(encoding="utf-8")
+    arvore = ast.parse(fonte)
+    lendo_cookie = [
+        no.name
+        for no in ast.walk(arvore)
+        if isinstance(no, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and "COOKIE_SESSAO_DEV" in ast.unparse(no)
+    ]
+    assert sorted(lendo_cookie) == ["_cookie_de_sessao", "_token_de_sessao", "logout"], (
+        f"quem menciona o nome de dev mudou: {sorted(lendo_cookie)}. Leitura tem de passar "
+        "por `_token_de_sessao`; `_cookie_de_sessao` EMITE e `logout` apaga os dois nomes."
+    )
+    _ = textwrap, inspect

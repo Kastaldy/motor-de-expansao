@@ -7,6 +7,10 @@ import { describe, expect, it } from 'vitest'
  * Guardas do BUNDLE da tela de entrar.
  *
  * Ela é servida na raiz de `auth.ultra-expansao.tech`, um host que ela DIVIDE com o
+  * A topologia MUDA no corte do P19 (DEC-067): a partir dele esta pagina e' servida pelo ho
+  * st do PILOTO (`deploy/caddy/piloto-br.Caddyfile.template`), e nao pela raiz de `auth.`. 
+  * O `auth.` continua existindo -- a instancia AR depende dele --, e o cookie continua sain
+  * do com `Domain=<apex>`, entao o mecanismo descrito abaixo segue valendo nos dois casos.
  * portal do Authelia: o Caddy manda para o nosso container só a página e o prefixo
  * `entrar-assets/`; todo o resto daquele host vai para o Authelia.
  *

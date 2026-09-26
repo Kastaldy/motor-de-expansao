@@ -336,10 +336,24 @@ sops secrets/Caddyfile.enc   # cole o Caddyfile novo
 2. **Entre com uma conta de teste.**
    **Esperado:** o piloto abre. Se a pessoa nunca trocou a senha, aparece o convite para trocar —
    com um botão "Agora não", porque a troca é **recomendada**, não obrigatória.
+   > **Mas para quem recebeu uma senha TEMPORÁRIA de um admin, o "Agora não" é armadilha:**
+   > essa senha vence em **2 horas**, e depois disso ela não entra mais — precisa de outra
+   > redefinição. Quem receber temporária tem de trocar dentro do prazo. Diga isso ao
+   > repassar a senha.
 3. **Clique em Sair.**
    **Esperado:** volta para a tela de entrar, e voltar ao piloto **exige entrar de novo**.
 4. **Confira que a AR não se mexeu:** abra `https://piloto-ar.ultra-expansao.tech`.
    **Esperado:** a tela do **Authelia**, como sempre foi.
+5. **Confira os outros dois endereços do domínio**, que o Passo 5 não tocou e que ninguém
+   mediu antes da janela:
+   ```bash
+   curl -sSI https://auth.ultra-expansao.tech/ | head -1
+   curl -sSI https://ultra-expansao.tech/     | head -1
+   ```
+   O `auth.` continua existindo (a AR depende dele) e o apex deve redirecionar, nunca
+   responder 200. **Se o `auth.` servir a NOSSA tela de entrar**, ela vai tentar
+   `POST /api/login` naquele host, o Authelia responde 404 e a pessoa fica num beco —
+   confira o bloco de `auth.` no `Caddyfile` da VPS **antes** da janela.
 
 **Se a tela de entrar não aparecer e o piloto der erro:** vá direto para *Se precisar voltar
 atrás*, abaixo.

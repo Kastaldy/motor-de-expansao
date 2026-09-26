@@ -154,7 +154,12 @@ export default function App() {
 
   const trocarTema = useCallback((novo: Tema) => {
     setTema(novo)
-    /* O cookie entra junto porque a TELA DE ENTRAR vive em outro subdomínio e o
+    /* DEPOIS DO CORTE DO P19 a tela de entrar passa a viver no MESMO host do piloto
+       (`/entrar.html`), então "outro subdomínio" deixa de ser a razão — mas o cookie
+       continua sendo o mecanismo certo, porque ele sai com `Domain=<apex>` e serve os
+       dois casos. Não simplifique isto sem medir: o `auth.` continua de pé para a AR.
+
+       O cookie entra junto porque a TELA DE ENTRAR vive em outro subdomínio e o
        `localStorage` é partido por origem — ver o cabeçalho de `COOKIE_TEMA`. Sem ele,
        quem escolhe o claro aqui continua recebendo a tela de login no escuro. */
     gravarTema(novo, depositoDoNavegador(), cookieDoNavegador())

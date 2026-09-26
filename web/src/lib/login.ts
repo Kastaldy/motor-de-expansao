@@ -19,7 +19,8 @@ export type EstadoEnvio = 'parado' | 'enviando'
  * As falhas que a tela sabe nomear.
  *
  * `bloqueado` NAO e' detalhe de pintura, e por isso e' um caso proprio: o Authelia
- * bloqueia o usuario apos 4 tentativas erradas em 2 minutos, por 10 minutos
+ * barra a conta apos `MAX_TENTATIVAS` recusas numa janela MOVEL de
+ * `JANELA_TENTATIVAS_MIN` minutos (`lib/login-motor.ts`, espelhando `db/sessoes.py`)
  * (`regulation` em `authelia/configuration.yml`, lido na VPS em 2026-09-22). A partir
  * da quinta tentativa a senha CERTA tambem falha — e uma tela que traduza isso como
  * "usuario ou senha invalidos" deixa a pessoa dez minutos repetindo a senha correta,
@@ -98,7 +99,8 @@ export function podeEnviar(
  *
  * O `users_database.yml` do Authelia guarda os logins em minusculas, e o teclado do
  * celular capitaliza a primeira letra por conta propria — "Felipe.silva" viraria uma
- * tentativa desperdicada, e quatro delas bloqueiam o acesso por 10 minutos. A SENHA
+ * tentativa desperdicada, e `MAX_TENTATIVAS` delas barram a conta ate' a mais antiga
+ * envelhecer na janela de `JANELA_TENTATIVAS_MIN` minutos. A SENHA
  * nunca e' tocada: espaco em senha e' caractere como outro qualquer.
  */
 export function normalizarUsuario(bruto: string): string {

@@ -92,6 +92,10 @@ export interface DepositoDeCookie {
  *
  * Sobe UM nível: de `piloto.ultra-expansao.tech` para `ultra-expansao.tech`, que é o
  * escopo que `auth.ultra-expansao.tech` também lê. Subir de mais bate num sufixo público
+  * A topologia MUDA no corte do P19 (DEC-067): a partir dele esta pagina e' servida pelo ho
+  * st do PILOTO (`deploy/caddy/piloto-br.Caddyfile.template`), e nao pela raiz de `auth.`. 
+  * O `auth.` continua existindo -- a instancia AR depende dele --, e o cookie continua sain
+  * do com `Domain=<apex>`, entao o mecanismo descrito abaixo segue valendo nos dois casos.
  * (`.tech`, `.com.br`, `.co.uk`) e o navegador DESCARTA o cookie em silêncio — por isso a
  * regra é UM nível, e não "os dois últimos rótulos".
  *

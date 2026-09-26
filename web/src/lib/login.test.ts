@@ -16,8 +16,9 @@ describe('podeEnviar', () => {
   })
 
   it('usuario so com espaco nao conta como preenchido', () => {
-    /* Nao e' capricho: cada ida ao servidor gasta uma das 4 tentativas que o
-       `regulation` conta antes de bloquear por 10 minutos. */
+    /* Nao e' capricho: cada ida ao servidor gasta uma das tentativas da trava do NOSSO
+       servidor (`MAX_TENTATIVAS` em `lib/login-motor.ts`, espelhando `db/sessoes.py`). Ate'
+       25/09/2026 este comentario citava o `regulation` do Authelia, que sai no corte. */
     expect(podeEnviar('   ', 'segredo', 'parado')).toBe(false)
   })
 
@@ -46,7 +47,7 @@ describe('podeEnviar', () => {
     })
 
     it('nao afrouxa o resto: `enviando` continua bloqueando', () => {
-      // Duplo clique com autofill gastaria duas das 4 tentativas.
+      // Duplo clique com autofill gastaria DUAS tentativas da trava.
       expect(podeEnviar('', '', 'enviando', { usuario: true, senha: true })).toBe(false)
     })
 
@@ -62,7 +63,7 @@ describe('podeEnviar', () => {
   })
 
   it('nao envia duas vezes enquanto o primeiro envio esta em voo', () => {
-    // Duplo clique gastaria DUAS das 4 tentativas com a mesma credencial.
+    // Duplo clique gastaria DUAS tentativas da trava com a mesma credencial.
     expect(podeEnviar('felipe.silva', 'segredo', 'enviando')).toBe(false)
   })
 })

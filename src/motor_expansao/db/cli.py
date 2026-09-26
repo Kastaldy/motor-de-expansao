@@ -666,6 +666,43 @@ def cmd_expurgar(args: argparse.Namespace) -> int:
     return 0
 
 
+def classificar_para_alinhar(
+    linhas: list[tuple[int, str, str | None, str]],
+    confere_com_a_inicial,
+) -> dict[str, list[tuple[int, str]]]:
+    """Separa as linhas de `SQL_ESTADO_DA_SENHA_INICIAL` nas QUATRO classes do alinhamento.
+
+    FUNCAO PROPRIA, e nao um laco dentro do comando, por um motivo de COBERTURA: o CI nao tem
+    Postgres (`.github/workflows/ci.yml` roda `pytest -q` e nao sobe servico de banco), e o
+    unico teste do `alinhar-senhas` era de integracao -- pulava sem banco. Ou seja, o comando
+    que se roda contra o banco de PRODUCAO, no passo que o runbook chama de o unico que nao da'
+    para desfazer, chegava a' VPS sem uma linha de verificacao automatica. Extraida, a decisao
+    inteira vira testavel sem banco nenhum.
+
+    `confere_com_a_inicial` entra por parametro (e nao `senhas.verificar` direto) para o teste
+    poder exercitar as quatro classes sem pagar Argon2 -- que custa ~100 ms por chamada.
+
+    As classes, e por que so' uma e' segura de reescrever:
+      `propria_ok`       -> escolheu senha, hash valido. Nada a fazer.
+      `propria_quebrada` -> escolheu senha, hash invalido. RELATAR: consertar apagaria a senha
+                            que ela escolheu, e isso e' decisao de gente.
+      `sem_propria_ok`   -> na inicial, e o hash JA' confere. Nada a fazer -- e' esta classe que
+                            torna a contagem honesta e o comando idempotente.
+      `sem_propria`      -> na inicial, e o hash NAO confere. E' a unica que se reescreve.
+    """
+    por_classe: dict[str, list[tuple[int, str]]] = {
+        "sem_propria_ok": [],
+        "sem_propria": [],
+        "propria_quebrada": [],
+        "propria_ok": [],
+    }
+    for id_usuario, login, hash_atual, classe in linhas:
+        if classe == "sem_propria" and confere_com_a_inicial(hash_atual):
+            classe = "sem_propria_ok"
+        por_classe[classe].append((id_usuario, login))
+    return por_classe
+
+
 def cmd_alinhar_senhas(args: argparse.Namespace) -> int:
     """Regrava o hash da senha INICIAL em quem nunca escolheu a propria.
 
@@ -715,22 +752,14 @@ def cmd_alinhar_senhas(args: argparse.Namespace) -> int:
         ).fetchall()
 
     inicial = senhas.senha_inicial()
-    por_classe: dict[str, list[tuple[int, str]]] = {
-        "sem_propria_ok": [],
-        "sem_propria": [],
-        "propria_quebrada": [],
-        "propria_ok": [],
-    }
-    for id_usuario, login, hash_atual, classe in linhas:
-        # QUEM NAO ESCOLHEU SENHA AINDA PRECISA SER CONFERIDO, e este `verificar` e' o que faz
-        # a contagem deste comando ser HONESTA. Sem ele, "20 seriam alinhadas" sai igual num
-        # banco com 20 hashes quebrados e num banco com 20 ja' corretos -- e o operador que roda
-        # o comando duas vezes nao consegue distinguir "funcionou" de "nao fez nada". E' a mesma
-        # exigencia que o `cmd_expurgar` documenta: o numero tem de dizer o que FALTA, nao
-        # quantas linhas existem. Custa ~100 ms por pessoa e roda so' aqui, na preparacao.
-        if classe == "sem_propria" and senhas.verificar(inicial, hash_atual):
-            classe = "sem_propria_ok"
-        por_classe[classe].append((id_usuario, login))
+    # QUEM NAO ESCOLHEU SENHA AINDA PRECISA SER CONFERIDO, e esse `verificar` e' o que faz a
+    # contagem deste comando ser HONESTA. Sem ele, "20 seriam alinhadas" sai igual num banco
+    # com 20 hashes quebrados e num com 20 ja' corretos -- e quem roda duas vezes nao
+    # distingue "funcionou" de "nao fez nada". Mesma exigencia que o `cmd_expurgar` documenta.
+    # A decisao mora em `classificar_para_alinhar`, que tem teste sem banco.
+    por_classe = classificar_para_alinhar(
+        list(linhas), lambda h: senhas.verificar(inicial, h)
+    )
 
     print(f"usuarios ativos: {len(linhas)}")
     print(f"  ja' escolheram a propria senha, hash ok : {len(por_classe['propria_ok'])}")

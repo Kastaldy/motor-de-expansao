@@ -38,6 +38,14 @@ piloto.ultra-expansao.tech {
     # O QUE A BORDA PROTEGE — e o matcher nao e' refinamento, e' o que impede a tela de
     # login de ficar atras da autenticacao que ela existe para obter.
     #
+    # CONSEQUENCIA DECLARADA, e ela MUDA a superficie publica: como o matcher cobre so'
+    # `/api/*`, a RAIZ e os estaticos passam a ser servidos a quem NAO entrou. Hoje, com o
+    # `forward_auth` cobrindo o host inteiro, o anonimo nao recebe nada; depois do corte ele
+    # recebe o `index.html` e o bundle do piloto, e so' o primeiro `/api/*` devolve 401.
+    # E' o preco de a tela de login nao poder ficar atras do login -- mas fica ESCRITO, porque
+    # esvazia em parte o argumento do bundle separado (`web/src/entrar.tsx`): o anonimo passa a
+    # alcancar os nomes das rotas internas da API de qualquer forma.
+    #
     # Sem ele, o `forward_auth` cobriria TAMBEM os estaticos. A tela de entrar e' a
     # propria SPA servida por este host (`entrar.html`), entao o unico estado alcancavel
     # por quem nao tem sessao seria 401 em tela branca — sem formulario, sem saida.
@@ -78,7 +86,16 @@ piloto.ultra-expansao.tech {
     # Access log de edge (DEC-027 — metade da trilha: IP real, user-agent, latencia no
     # Caddy; a outra metade e' o JSONL do backend). CONFERIR o formato contra o bloco que
     # ja' esta' na VPS na hora de aplicar: este arquivo nasceu depois dele.
+    # As tres diretivas de rotacao NAO sao enfeite: a DEC-027 fixa o teto do access log em
+    # 20 MiB x 10 arquivos, e `docs/trilha_acesso_piloto.md` publica esse numero. Sem elas o
+    # Caddy cai no default de 100 MiB e o teto de disco vai de ~200 MB para ~1 GB, deixando
+    # aquele documento errado -- e o passo do runbook manda SUBSTITUIR o bloco inteiro, entao
+    # o que nao estiver aqui e' perdido.
     log {
-        output file /var/log/caddy/piloto-access.log
+        output file /var/log/caddy/piloto-access.log {
+            roll_size 20mb
+            roll_keep 10
+            roll_keep_for 2160h
+        }
     }
 }
