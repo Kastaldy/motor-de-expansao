@@ -37,7 +37,9 @@ Hoje o **Authelia** confere quem entra, na porta da rua. Depois deste corte, que
 |---|---|
 | Acesso SSH à VPS | já configurado |
 | `WEB_IMAGE` (digest da imagem nova) | job `publish-web` no Actions, depois do merge |
-| Senha do dono do banco | com quem repassou |
+| Senha do dono do banco (`reservas_owner`) | no `.env` do compose, em `POSTGRES_OWNER_PASSWORD` |
+| **Senha do papel `app`** | **com quem repassou** — ela vive DENTRO da `MOTOR_DATABASE_URL` e, se essa variável está vazia (o estado de entrega), o valor não existe em lugar nenhum que você alcance. Foi gerada no provisionamento do banco (`docs/banco_deploy.md`, seção dos três papéis). **Sem ela o Passo 3 para**, e o Passo 3 é o que impede o Passo 5 de apagar o piloto |
+| **Seu login na allowlist do painel de Acessos** | a env `MOTOR_ACESSOS_ADMIN_USUARIOS` do `.env`. Sem o seu login lá, o painel responde **404** para você — e é a única ferramenta de criar gente e destravar conta |
 | Este documento e o `deploy/caddy/piloto-br.Caddyfile.template` | o repositório |
 
 ### Os dois merges que precedem tudo
@@ -69,17 +71,26 @@ as outras duas trancam pessoas individuais.
 
 **Este é o passo que, pulado, tranca a equipe inteira** — e ele não tem nada a ver com senha.
 
-Hoje quem libera o acesso é o arquivo `acesso_abas.json`, e quem autentica é o Authelia. **A
-tabela `usuarios` não participa disso.** Ou seja: alguém pode estar usando o piloto há meses sem
+Hoje quem autentica é o Authelia e quem libera as abas é o `acesso_abas.json`. **A tabela
+`usuarios` não participa de nada disso.** Ou seja: alguém pode estar usando o piloto há meses sem
 ter linha nenhuma no banco. Depois do corte, sem linha em `usuarios` **não há como entrar**.
+
+> **COMPARE CONTRA O AUTHELIA, NÃO CONTRA O `acesso_abas.json`.** O JSON aceita uma entrada
+> curinga `"*"`, que dá abas a **qualquer pessoa autenticada** — então ele pode listar três logins
+> enquanto vinte pessoas usam o piloto, e uma conferência contra ele passaria **verde** deixando
+> dezessete trancadas. A lista de quem consegue entrar hoje é o **`users_database.yml` do
+> Authelia**. Se houver `"*"` no JSON, ele não serve como lista de ninguém.
 
 Liste os dois lados e compare:
 
 ```bash
 cd /opt/motor-expansao/app
 
-# 1) quem tem acesso hoje (o arquivo que o piloto lê)
-cat /opt/motor-expansao/cadastro/acesso_abas.json
+# 1) quem consegue AUTENTICAR hoje — esta é a lista que importa
+grep -nE '^  [a-zA-Z0-9_.-]+:' authelia/users_database.yml
+
+# 1b) o JSON de abas é DIAGNÓSTICO, não lista: veja se tem curinga
+grep -c '"[*]"' /opt/motor-expansao/cadastro/acesso_abas.json
 
 # 2) quem existe no banco
 docker compose -f docker-compose.prod.yml exec postgres \
@@ -87,7 +98,7 @@ docker compose -f docker-compose.prod.yml exec postgres \
   "SELECT login_usuario, ativo FROM usuarios ORDER BY login_usuario;"
 ```
 
-**Esperado:** todo login do arquivo aparece na tabela, e ativo.
+**Esperado:** todo login do `users_database.yml` aparece na tabela, e ativo.
 
 **Se faltar alguém — e é o caso provável:** essas pessoas precisam ser **criadas pela tela de
 Acessos** antes do corte. Criar pela tela é o caminho certo porque ele grava o hash da senha
@@ -96,6 +107,24 @@ inválido que o passo 0.c existe para pegar.
 
 > **Não tente adivinhar o perfil de ninguém.** Quem decide qual perfil cada pessoa recebe é quem
 > repassou — os perfis (`expansao`, `consultoria`, `lideres`, `growth`) definem o que ela vê.
+
+> ### A ORDEM AQUI É CONTRAINTUITIVA, e sem ela você fica num impasse
+>
+> Criar gente pela tela de Acessos **exige o banco configurado** — ou seja, o Passo 3. E o Passo 3
+> manda só ser feito depois deste 0.a fechado. Parece circular; a saída é esta:
+>
+> 1. Faça o **Passo 3** (preencher `MOTOR_DATABASE_URL` e subir o `web`).
+> 2. **A partir desse instante o piloto fica degradado para a equipe, e é esperado:** o controle de
+>    abas troca do `acesso_abas.json` para o RBAC do banco, que é deny-by-default, então quem ainda
+>    não tem linha com perfil **abre o piloto vazio**. Ninguém perde dado; ninguém consegue
+>    trabalhar.
+> 3. **Você continua entrando no painel de Acessos**, porque ele é liberado pela env
+>    `MOTOR_ACESSOS_ADMIN_USUARIOS` e **não** pelo RBAC — é essa independência que desfaz o
+>    impasse.
+> 4. Crie todas as pessoas, com perfil. À medida que você cria, as abas voltam para cada uma.
+>
+> **Portanto: faça o Passo 3 e este 0.a na MESMA sessão, com tempo reservado**, e avise a equipe de
+> que haverá uma janela em que o piloto abre vazio. Não é o corte ainda — mas a equipe sente.
 
 > **Contexto que ajuda a dimensionar:** esta conciliação entre o `users_database.yml` do Authelia
 > e as linhas de `usuarios` é o conteúdo do bloco **`BLK-SEC-03-FU2`**, que o levantamento do P19
@@ -123,6 +152,25 @@ Compare com a senha que a equipe usa hoje para entrar.
   há como criar usuário.
 
 ### 0.c — Alinhar os hashes e ver quem sobra
+
+Antes dos dois comandos abaixo, **exporte a credencial do DONO do schema** — e isto não é
+formalidade:
+
+```bash
+export MOTOR_DATABASE_URL_ADMIN='postgresql://reservas_owner:<senha-do-dono>@postgres:5432/banco_de_reservas'
+```
+
+> **Se você esquecer, o comando NÃO reclama — ele roda com a credencial errada.** Medido: sem essa
+> variável, o runner cai para `MOTOR_DATABASE_URL`, que é a credencial do papel **`app`** — e o
+> `app` tem `UPDATE` em `usuarios` por desenho. Ou seja, o passo que este documento chama de "o
+> único que não dá para desfazer" reescreveria hashes pela credencial da aplicação, em silêncio,
+> sem uma linha de aviso. Confira a primeira linha da saída: ela nomeia o papel conectado.
+>
+> **Se vier `ERRO: defina MOTOR_DATABASE_URL_ADMIN (ou MOTOR_DATABASE_URL) com a credencial do DONO
+> do schema`:** nem a variável nem o fallback existem. Exporte e repita — nada foi escrito.
+>
+> Ao terminar o 0.c, `unset MOTOR_DATABASE_URL_ADMIN`. Ela é a credencial que aplica DDL; deixá-la
+> no ambiente de uma sessão que continua aberta é o que este repositório evita de propósito.
 
 ```bash
 docker compose -f docker-compose.prod.yml run --rm \
@@ -171,6 +219,30 @@ O número `b` diz quantas pessoas vão ver o convite para trocar de senha no pri
 
 ---
 
+## Onde fica o painel de Acessos (você vai usá-lo quatro vezes)
+
+Este documento manda criar gente, redefinir senha e destravar conta **pelo painel de Acessos**.
+Ele é uma aba do próprio piloto, chamada **Acessos**, e não aparece para todo mundo:
+
+- quem o vê é **só** quem está na env `MOTOR_ACESSOS_ADMIN_USUARIOS` (lista separada por vírgula,
+  comparada com o seu login, sem diferenciar maiúsculas);
+- **sem a env preenchida, o painel está desligado para todos** — em produção e em dev;
+- quem não pode vê **404**, não "acesso negado": a existência do painel não é anunciada. Então um
+  404 aqui é quase sempre "seu login não está na env", e não "a rota não existe".
+
+Confira antes da janela:
+
+```bash
+cd /opt/motor-expansao/app && grep '^MOTOR_ACESSOS_ADMIN_USUARIOS=' .env
+```
+
+**Se o seu login não estiver ali**, acrescente-o (separado por vírgula) e
+`docker compose -f docker-compose.prod.yml up -d web`. **Depois do corte** o painel passa a
+identificar você pela sessão, então o seu login também precisa existir em `usuarios` — o Passo 0.a
+cobre isso se você se incluir na conciliação.
+
+---
+
 ## Passo 1 — Avisar as pessoas
 
 **Antes de virar a chave**, avise quem usa o piloto. Três coisas:
@@ -182,8 +254,10 @@ O número `b` diz quantas pessoas vão ver o convite para trocar de senha no pri
    ninguém precisa decorar nada novo. Se não for, **avise qual é** antes da janela.
 3. **Se errarem a senha 5 vezes em 15 minutos, a conta trava.** E o servidor responde a mesma
    mensagem de "senha incorreta" — de propósito, para não avisar a quem varre nomes que acertou
-   um. **Quem travar precisa pedir a um administrador para redefinir a senha pelo painel de
-   Acessos**, o que destrava na hora.
+   um. Duas saídas, e diga as duas: **esperar** — a janela é MÓVEL, então a trava se desfaz
+   sozinha quando a tentativa mais antiga completa 15 minutos — ou **pedir a um administrador
+   para redefinir a senha** pelo painel de Acessos, o que destrava na hora. A segunda depende de
+   haver um administrador disponível; a primeira, não.
 
 > Deixe `docker compose -f docker-compose.prod.yml logs -f web` aberto durante a janela: é o
 > único lugar onde a trava aparece nomeada.
@@ -202,6 +276,14 @@ docker compose -f docker-compose.prod.yml up -d web
 **Esperado:** o container reinicia e o piloto continua funcionando **exatamente como antes** — o
 Authelia ainda autenticando. A chave ainda está desligada.
 
+> **A instância ARGENTINA usa o MESMO `WEB_IMAGE`.** Você acabou de editar o `.env`, que é
+> compartilhado: a AR ficou com o arquivo dizendo um digest e o processo rodando outro, e
+> saltaria de imagem no próximo `up -d` que alguém desse nela. Suba-a também, agora:
+> ```bash
+> docker compose -f docker-compose.ar.yml up -d web_ar
+> ```
+> **Esperado:** reinicia e continua atrás do Authelia, sem mudança visível.
+
 **Se o piloto não abrir:** volte o `WEB_IMAGE` para o digest anterior e suba de novo. Nada foi
 cortado ainda.
 
@@ -218,7 +300,8 @@ cortado ainda.
 
 ## Passo 3 — Dar ao piloto a credencial do banco
 
-**Sem este passo, o Passo 5 apaga o piloto inteiro.** A sessão vive em tabela, então o motor
+**Sem este passo, o corte apaga o piloto inteiro** — e o apagão começa já no Passo 4, quando
+a chave liga: sem banco, `validar()` falha e toda rota `/api/*` responde 503. A sessão vive em tabela, então o motor
 precisa de credencial de banco para autenticar alguém — e ele **não avisa** que ela falta: a chave
 do Passo 4 não consulta o banco, só a própria variável.
 
@@ -232,6 +315,13 @@ a do dono):
 
 ```
 MOTOR_DATABASE_URL=postgresql://app:<senha-do-papel-app>@postgres:5432/banco_de_reservas
+```
+
+> **Se a senha tiver `@`, `:`, `/` ou `?`, ela precisa de percent-encoding** — sem isso a libpq
+> corta a string no lugar errado e o erro sai como "host não encontrado", que manda você procurar
+> rede quando o problema é a senha. Na dúvida, peça uma senha sem esses caracteres.
+
+```
 ```
 
 ```bash
@@ -308,8 +398,16 @@ o `up -d` não rodou. **Pare** — o passo 5 sem isto derruba o piloto.
 **Este é o passo que fecha o corte.** Dá para voltar (ver *Se precisar voltar atrás*), mas com o
 piloto fora do ar no meio. O que a equipe SENTE começou no passo anterior, com a chave.
 
-Abra `/opt/motor-expansao/app/Caddyfile` e substitua o bloco de
-`piloto.ultra-expansao.tech` pelo conteúdo de `deploy/caddy/piloto-br.Caddyfile.template`.
+**Copie o bloco atual antes de tocar nele** — o `Caddyfile` é gitignored, então o que está lá
+não existe em nenhum outro lugar, e é dele que você vai precisar se tiver de voltar atrás:
+
+```bash
+cd /opt/motor-expansao/app
+cp Caddyfile Caddyfile.antes-do-p19
+```
+
+Agora abra o `Caddyfile` e substitua o bloco de `piloto.ultra-expansao.tech` pelo conteúdo de
+`deploy/caddy/piloto-br.Caddyfile.template`.
 
 > **NÃO TOQUE no bloco `piloto-ar.ultra-expansao.tech`.** Ele continua apontando para
 > `authelia:9091`, e isso é decisão — a AR não tem banco e cairia inteira.

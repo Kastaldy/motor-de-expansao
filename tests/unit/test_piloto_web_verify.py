@@ -620,15 +620,58 @@ def test_FORA_de_producao_o_cookie_sem_prefixo_continua_valendo(
 
 
 def test_o_prefixado_vale_nos_DOIS_ambientes() -> None:
-    """Ele nunca depende do ambiente: e' o nome que producao emite e dev aceita."""
-    import inspect
+    """A ORDEM dentro de `_token_de_sessao`: prefixado, depois o ambiente, depois o de dev.
 
-    fonte = inspect.getsource(pilot._token_de_sessao)
-    # O prefixado e' lido ANTES de qualquer checagem de ambiente.
-    pos_prefixado = fonte.index("COOKIE_SESSAO)")
-    pos_ambiente = fonte.index("em_producao()")
-    assert pos_prefixado < pos_ambiente, (
-        "a leitura do cookie prefixado passou a depender do ambiente -- ele vale nos dois"
+    POR AST E POR INDICE DE COMANDO, e as duas versoes anteriores deste teste erraram de
+    formas diferentes -- vale registrar porque sao armadilhas distintas:
+
+      1a: `inspect.getsource(...).index("COOKIE_SESSAO)")`. O `getsource` inclui o DOCSTRING,
+          que cita `cookies.get(COOKIE_SESSAO)` ao explicar o defeito antigo -- a guarda
+          casava com PROSA, na posicao 269 de uma funcao cujo codigo comeca na 1325, e
+          passaria verde com qualquer implementacao. Quinta vez que este repositorio e'
+          mordido por guarda que varre texto e acha comentario.
+      2a: assumiu que a leitura do nome de DEV ficava DENTRO de um `if`. Nao fica: ela e' o
+          `return` final, no nivel de cima, protegido por um `return` ANTECIPADO. A guarda
+          reprovava codigo correto. E `"COOKIE_SESSAO"` ainda e' substring de
+          `"COOKIE_SESSAO_DEV"`, entao comparar por texto acertava por acidente.
+
+    O que se mede: a POSICAO de cada comando no corpo, e os nomes dos atributos lidos por
+    identidade -- nunca por `in`.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    arvore = ast.parse(textwrap.dedent(inspect.getsource(pilot._token_de_sessao)))
+    funcao = arvore.body[0]
+    assert isinstance(funcao, ast.FunctionDef)
+
+    def atributos(no: ast.AST) -> set[str]:
+        return {x.attr for x in ast.walk(no) if isinstance(x, ast.Attribute)}
+
+    i_prefixado = i_ambiente = i_dev = None
+    for i, comando in enumerate(funcao.body):
+        attrs = atributos(comando)
+        if i_prefixado is None and "COOKIE_SESSAO" in attrs:
+            i_prefixado = i
+        if i_ambiente is None and "em_producao" in attrs:
+            i_ambiente = i
+        if i_dev is None and "COOKIE_SESSAO_DEV" in attrs:
+            i_dev = i
+
+    assert i_prefixado is not None, "`_token_de_sessao` parou de ler o cookie prefixado"
+    assert i_ambiente is not None, (
+        "`_token_de_sessao` parou de olhar o ambiente -- voltou a aceitar o nome de dev em producao"
+    )
+    assert i_dev is not None, "`_token_de_sessao` parou de aceitar o nome de dev (trancaria o dev)"
+
+    assert i_prefixado < i_ambiente, (
+        "a leitura do cookie prefixado passou para DEPOIS da checagem de ambiente -- ele vale "
+        "nos DOIS, e condiciona-lo trancaria producao ou dev"
+    )
+    assert i_ambiente < i_dev, (
+        "o nome de DEV passou a ser lido ANTES da checagem de ambiente -- e' o furo que o "
+        "endurecimento de 25/09/2026 fechou (fixacao de sessao por host irmao do dominio)"
     )
 
 

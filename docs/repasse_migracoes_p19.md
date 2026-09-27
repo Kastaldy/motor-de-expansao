@@ -222,8 +222,22 @@ docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL \
   web python -m motor_expansao.db privilegios
 ```
 
+> **Este comando exige a credencial do papel `app`, e ela pode não existir ainda.** A
+> `MOTOR_DATABASE_URL` é entregue **vazia** — é o estado normal antes do corte. Sem ela, o comando
+> devolve `ERRO: defina MOTOR_DATABASE_URL com a credencial do PILOTO (papel app).` e **não** um
+> dos dois desfechos abaixo. Duas saídas:
+>
+> - **se você tem a senha do papel `app`:** exporte e rode —
+>   `export MOTOR_DATABASE_URL='postgresql://app:<senha>@postgres:5432/banco_de_reservas'`;
+> - **se não tem:** pule esta metade do passo e rode-a no **Passo 3 do
+>   `docs/repasse_corte_p19.md`**, que é onde essa variável é preenchida de vez. Anote que você
+>   pulou: este comando é o **único verificador automático do passo 5**, e a falha que ele pega
+>   (o `GRANT` faltando em `sessoes`) só apareceria no dia do corte, como "ninguém consegue entrar".
+
 **Esperado:** `PRIVILEGIOS OK: o papel do piloto nao consegue o que nao deve, e consegue o que
-precisa.`
+precisa.` A **primeira linha** da saída diz `papel conectado:` — tem de ser **`app`**. Se disser
+`reservas_owner`, você usou a credencial do dono: saem muitas linhas de `FALHA` e um recado sobre
+isso, porque o dono pode tudo e o teste inteiro perde sentido.
 
 **Se vier `PRIVILEGIOS COM 2 PROBLEMA(S)` citando `escrever em sessoes` e `usar a sequence de
 sessoes`:** o passo 5 não pegou. Volte e refaça — é exatamente o que este comando existe para

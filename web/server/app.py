@@ -4883,8 +4883,19 @@ def logout(request: Request) -> Response:
     resposta = JSONResponse({"ok": True})
     # Apaga nos DOIS nomes: quem alternou entre dev e producao no mesmo navegador teria o
     # outro cookie sobrando, e o portao aceita qualquer um dos dois.
+    # `secure` e `httponly` no DELETE, e nao e' zelo: para apagar um cookie o navegador
+    # exige que o `Set-Cookie` de remocao satisfaca as MESMAS regras do original. O prefixo
+    # `__Host-` exige `Secure` e `Path=/`, entao um delete sem `secure` e' RECUSADO em
+    # producao -- o cookie ficava no navegador depois do logout. Nao era falha de seguranca
+    # (a sessao ja' foi revogada no servidor, e `SQL_VALIDAR` a recusa), mas o browser
+    # seguia mandando um token morto em toda requisicao, e o proximo a depurar isso leria
+    # "logout nao funciona".
+    #
+    # `secure=acesso.em_producao()` e nao `True` fixo: em dev (http) um cookie `Secure` nao
+    # e' aceito nem para apagar, e o nome de dev existe justamente porque ali nao ha' https.
+    seguro = acesso.em_producao()
     for nome in (acesso.COOKIE_SESSAO, acesso.COOKIE_SESSAO_DEV):
-        resposta.delete_cookie(key=nome, path="/")
+        resposta.delete_cookie(key=nome, path="/", secure=seguro, httponly=True, samesite="lax")
     return resposta
 
 
