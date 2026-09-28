@@ -1,5 +1,21 @@
 # Repasse — aplicar as migrations do P19 (018, 019, 020) na VPS
 
+> ## ⚠ ESTE DOCUMENTO SERVE A UM CENÁRIO SÓ: banco que JÁ EXISTE
+>
+> Ele acrescenta **três** migrations a um banco de produção que já tem as migrations `000` a `017`
+> aplicadas e tem tráfego.
+>
+> **Se o banco está sendo criado do zero — se o serviço `postgres` nunca subiu —, NÃO use este
+> documento.** Use o [`banco_deploy.md`](banco_deploy.md): o `db aplicar` do §5 dele aplica **todas**
+> as pendentes de uma vez, as 21, incluindo estas três. O §6 dele concede os privilégios de `sessoes`
+> que o Passo 5 daqui concede à mão, e o §7 cria as pessoas.
+>
+> **Por que isto não é preferência de organização.** O Passo 3 daqui manda **PARAR** se aparecer
+> qualquer pendente com número menor que 018 — e num banco novo **as 21 estão pendentes**, então a
+> parada dispara exatamente no cenário em que seguir é o certo. O motivo que o Passo 3 dá (a
+> migration `013` falharia) também se inverte: ela só falha em tabela **com linhas**, e num banco novo
+> `usuarios` está vazia.
+
 > **Para quem vai executar.** Este documento é auto-contido: você não precisa conhecer a epic
 > para segui-lo. Cada passo diz **o que rodar**, **o que esperar** e **o que fazer se vier
 > diferente**. Onde houver `<algo>`, substitua.

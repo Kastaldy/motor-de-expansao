@@ -279,8 +279,14 @@ consegue apagar o próprio rastro depende inteiramente de ela **não ser dona** 
 Na VPS, em `/opt/motor-expansao/app/.env`, a partir do bloco do `.env.example`:
 
 ```bash
-openssl rand -hex 24   # uma vez para o dono, outra para `app`, outra para `auditoria`
+openssl rand -hex 24   # QUATRO vezes: dono, `app`, `auditoria` e `etl`
 ```
+
+> **São quatro, não três.** O script do §6 cria um terceiro papel com `LOGIN` — o **`etl`** — e vem
+> com a senha de exemplo `'troque-me-etl'` escrita no próprio arquivo. Ele tem `TRUNCATE` em
+> `municipios`, `distritos` e `bairros`, que o script chama de "o privilégio mais destrutivo concedido
+> neste schema". Se o ETL ainda não é usado, `ALTER ROLE etl NOLOGIN;` depois de criá-lo é mais seguro
+> que guardar uma quarta senha.
 
 ```dotenv
 POSTGRES_DB=banco_de_reservas
@@ -290,6 +296,18 @@ MOTOR_DATABASE_URL=
 ```
 
 `MOTOR_DATABASE_URL` fica **vazia** por enquanto — é o passo 8.
+
+> **APAGUE a linha legada `POSTGRES_DB=motor_expansao`**, que vem no bloco da API legada no topo do
+> `.env.example`. Não basta escrever o bloco do banco depois dela: para o compose vale o **último**
+> valor, mas os dois scripts de cron deste projeto (`run_expurgo_sessoes.sh` e `run_backup_banco.sh`)
+> leem o `.env` com `grep … | head -1` — o **primeiro**. Com a legada no topo, os dois passam a
+> apontar para um banco que não existe e falham em silêncio, todas as noites. Nada no
+> `docker-compose.prod.yml` consome o bloco legado. Confirme com `grep -c '^POSTGRES_DB=' .env`, que
+> tem de dar **1**.
+
+> **A senha do dono é gravada DENTRO do cluster no primeiro boot, e trocá-la aqui depois não a muda.**
+> Por isso as quatro senhas precisam estar definitivas antes de qualquer `up`. E note que o serviço
+> `web` declara `depends_on: postgres`: um `up -d web` já sobe o banco e roda esse primeiro boot.
 
 Gerar as senhas em hexadecimal não é preciosismo: caractere especial (`@ : / ?`) numa URL libpq
 precisa de percent-encoding, e o sintoma de esquecer é um erro de *host não encontrado*, que manda
@@ -357,6 +375,12 @@ unset MOTOR_DATABASE_URL_ADMIN
 `-e MOTOR_DATABASE_URL_ADMIN` **sem valor** herda do ambiente: assim a senha não aparece no `argv`
 do `docker`, que é legível por qualquer usuário em `ps`.
 
+**Esperado, num banco novo:** o `estado` imprime `migrations no manifesto: 21`,
+`registradas no banco: 0`, uma linha por arquivo, e termina com uma linha `pendentes:` listando de
+`000` a `020`. Se o manifesto não disser 21, ou se houver alguma já registrada, **pare**.
+
+> A faixa `000→016` citada no §1.1 é do ensaio de maio e **não** é o que você vai ver.
+
 O runner grava o que aplicou em `migracoes_aplicadas` e recusa reaplicar. Se uma migration falhar,
 ela para ali — as anteriores ficam aplicadas e registradas, e a correção é retomar do ponto, não
 recomeçar.
@@ -367,7 +391,20 @@ O script completo é o `sql/papeis-e-privilegios.md` do repositório `banco-de-r
 Ele **não é migration** — quase tudo é `GRANT`, e por isso vive fora do runner e do controle de
 versão de schema.
 
-Rode o conteúdo dele por `psql` dentro do container, trocando as duas senhas de exemplo:
+**Rode as seções 1 a 7, mais duas do fim — e nunca as outras duas:**
+
+| Rode | NÃO rode |
+|---|---|
+| seções **1 a 7** — é onde vive todo o provisionamento | a **seção 8**: é a lista do que *não* fazer |
+| os **seis testes negativos** da seção *Testar* | **"Desfazer o provisionamento"**, no fim do arquivo — ela dropa os três papéis que você acabou de criar |
+| a seção **"Conferir o que ficou concedido"** | |
+
+A conferência não é opcional: ela é o **único** lugar que verifica o papel `etl` (espera 12 linhas
+para `app`, 1 para `auditoria` e 3 para `etl`), e o comando `privilegios` do motor não olha o `etl`.
+É também ela que pega o no-op do `FOR ROLE` descrito abaixo.
+
+**Troque as TRÊS senhas de exemplo** (`app`, `auditoria`, `etl`) e rode por `psql` dentro do
+container:
 
 ```bash
 docker exec -it motor_expansao_postgres \
@@ -383,9 +420,21 @@ Três pontos do script que não são "boa prática de segurança" genérica:
   `BIGSERIAL`: sem essa linha, todo `INSERT` do `app` morre por permissão negada.
 - **A seção 8 lista o que não fazer** — em particular, `REVOKE ALL ON ALL FUNCTIONS` derruba o
   `EXECUTE` das ~1200 funções `ST_*` e quebra o PostGIS inteiro. Leia antes de "reforçar".
+- **`ALTER DEFAULT PRIVILEGES FOR ROLE postgres` (seção 6) precisa virar `FOR ROLE reservas_owner`** —
+  duas ocorrências. O compose cria o banco com `POSTGRES_USER: ${POSTGRES_OWNER_USER}`, então um papel
+  chamado `postgres` **nunca é criado**: a colagem morre ali com `role "postgres" does not exist`. E se
+  ele existisse, as duas linhas seriam um no-op silencioso e toda tabela criada depois nasceria
+  invisível para o `app`. Há outras duas ocorrências no "Desfazer", que você não vai rodar — um `sed`
+  global acharia quatro.
+- **O bloco de prova da seção 7** (o do `session_replication_role`) é opcional e **escreve em tabela de
+  negócio**, deixando duas linhas permanentes no histórico. O próprio script oferece a saída de pulá-lo.
 
 Rode os blocos de **validação** e **teste** do próprio documento em seguida. O teste de append-only
 tem de ser rodado **depois** do `ALTER TABLE`, ou você lê como sucesso um teste que não rodou.
+
+> **O bloco de append-only "com autor" vai abortar aqui, e é esperado:** ele exige um usuário ativo, e
+> este passo roda **antes** do §7. Rode agora só os seis testes negativos por catálogo, e deixe aquele
+> para depois de criar a primeira pessoa.
 
 ## 7. Semear os usuários reais
 
@@ -411,6 +460,16 @@ depois de criar, com o login a cadastrar. Enquanto o Authelia autenticar, os doi
 juntos e é preciso lembrar dos dois; uma linha em `usuarios` sem a entrada de lá aparece na lista e
 não entra.
 
+**Depois de pôr a `MOTOR_SENHA_INICIAL` no `.env`, suba o `web`:**
+
+```bash
+docker compose -f docker-compose.prod.yml up -d web
+docker compose -f docker-compose.prod.yml exec web printenv MOTOR_SENHA_INICIAL
+```
+
+Editar o `.env` não alcança container em execução, e o `web` que está no ar subiu antes de a variável
+existir. Sem isso, o primeiro `Criar usuário` responde 503.
+
 **A senha de quem é criado pela tela vem de `MOTOR_SENHA_INICIAL`,** e ela precisa estar no `.env`
 antes do primeiro `Criar usuário` — sem ela a rota responde 503 com mensagem explícita, em vez de
 criar alguém com uma senha que ninguém sabe qual é. Cada pessoa recebe o hash Argon2id dela com sal
@@ -418,14 +477,64 @@ próprio e nasce marcada para trocar; a troca é em `PATCH /api/me/senha`, que *
 allowlist do painel — trocar a própria senha não é ato de administração. A coluna `Senha` da tela
 diz quem já saiu da inicial, e é a fila que o corte do P19 precisa zerar.
 
-> Se você estiver semeando a mão (o primeiro, ou o `dados-ficticios.md` num banco de ensaio), o
-> `senha_hash` que você inserir **não** vai autenticar nada — e desde a 016 isso fica visível:
-> `senha_definida_em_usuario` nasce nulo e `deve_trocar_senha_usuario` nasce `TRUE`, o que é a
-> verdade sobre uma linha semeada. Para gerar um hash de verdade fora da tela:
-> `python -c "from motor_expansao.db import senhas; print(senhas.gerar('<a senha>'))"` (exige o
-> extra `auth`).
+### O SQL do primeiro cadastro
+
+Antes do `INSERT`, gere o hash **da senha inicial**. É esta função, e não a `gerar()`, que produz o
+mesmo estado de quem nasce pela tela:
+
+```bash
+cd /opt/motor-expansao/app
+docker compose -f docker-compose.prod.yml run --rm \
+  web python -c "from motor_expansao.db import senhas; print(senhas.hash_da_senha_inicial())"
+```
+
+A saída começa com `$argon2id$`. Copie-a e use-a no `INSERT`:
+
+```bash
+docker exec -it motor_expansao_postgres psql -U reservas_owner -d banco_de_reservas
+```
+
+```sql
+INSERT INTO usuarios (nome_usuario, email, login_usuario, senha_hash, id_perfil)
+VALUES (
+  'Nome Completo da Pessoa',
+  'pessoa@ultraacademia.com.br',
+  'login_dela_no_authelia',
+  '<cole aqui o hash gerado acima>',
+  (SELECT id_perfil FROM perfis WHERE nome_perfil = 'growth')
+);
+```
+
+São **cinco colunas, e são exatamente as cinco `NOT NULL` sem default** depois de `001`→`020`; o
+resto tem default (`ativo` nasce `TRUE`, `deve_trocar_senha_usuario` também). São as mesmas cinco que
+a tela escreve — `SQL_CRIAR` em `db/usuarios.py`. Os perfis disponíveis são `growth`, `expansao`,
+`consultoria` e `lideres`; o primeiro tem de ser `growth`, pelo motivo acima.
+
+> **Por que `hash_da_senha_inicial()` e não `gerar('<a senha>')`.** A `gerar()` produz o hash de uma
+> senha **arbitrária**. Ela autentica — mas só com aquela senha, que mais ninguém tem — e o
+> `alinhar-senhas` da preparação do corte a **substitui** pela senha inicial, sem pedir confirmação,
+> porque `senha_definida_em_usuario` nasce nulo em toda linha semeada à mão. Com
+> `hash_da_senha_inicial()` a linha nasce na classe `sem_propria_ok` e aquele comando não tem nada a
+> fazer nela (travado por `tests/unit/test_db_cli.py`).
+>
+> Um `senha_hash` **improvisado**, que não seja um PHC Argon2id, não autentica ninguém: `verificar`
+> recusa qualquer coisa que não comece com `$argon2id$`.
+
+> **O `login_usuario` tem de ser a MESMA STRING da chave do `authelia/users_database.yml`.** A caixa
+> não importa — a coluna é `CITEXT` e a allowlist do painel compara com `casefold()`. O que não pode
+> divergir é o texto: usar o e-mail de um lado e o nome de usuário do outro deixa a pessoa de fora.
 
 ## 8. Ligar — e o que fazer se der errado
+
+**Antes de preencher, confira que o seu login está na allowlist do painel:**
+
+```bash
+grep '^MOTOR_ACESSOS_ADMIN_USUARIOS=' .env
+```
+
+No instante em que a URL é preenchida, quem não tem linha no banco perde as abas — e o painel de
+Acessos é a sua saída, liberado por esta variável e **não** pelo RBAC. Se o seu login não estiver
+nela, o painel responde 404 **para você**, justamente quando ele é a única ferramenta de destravar.
 
 ```dotenv
 MOTOR_DATABASE_URL=postgresql://app:<senha>@postgres:5432/banco_de_reservas
@@ -439,6 +548,16 @@ O host é o **nome do serviço** (`postgres`), não o `container_name`.
 
 Verificação, nesta ordem:
 
+**Re-exporte a credencial do dono**, que o §5 desfez com `unset`:
+
+```bash
+export MOTOR_DATABASE_URL_ADMIN='postgresql://reservas_owner:<senha>@postgres:5432/banco_de_reservas'
+```
+
+Sem ela o runner cai **em silêncio** para a credencial do `app`, e então o comando **estoura** com
+`permission denied for table migracoes_aplicadas` — o `app` não tem privilégio naquela tabela. O
+fallback é mudo; o resultado não é.
+
 ```bash
 # 1. o motor concorda com o banco? (tabelas, colunas, índices, papéis, versão)
 docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN \
@@ -450,7 +569,11 @@ docker compose -f docker-compose.prod.yml run --rm web \
 
 # 3. o piloto enxerga o banco? — bloco `banco` da rota de admin
 #    (o /api/health NÃO olha o banco, de propósito: ver §9)
-curl -s https://<dominio>/api/acessos/saude-artefatos | jq .banco
+#
+#    ATENÇÃO: esta rota fica atrás do forward_auth e da allowlist. Um `curl` sem sessão
+#    recebe o redirecionamento de login, e o `jq` responde `parse error` — que se lê como
+#    "o banco está quebrado". Abra no NAVEGADOR, já logado:
+#      https://piloto.ultra-expansao.tech/api/acessos/saude-artefatos
 ```
 
 E então, na tela: entre com um usuário de cada perfil e confirme que as abas aparecem e somem como

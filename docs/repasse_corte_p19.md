@@ -103,6 +103,11 @@ docker compose -f docker-compose.prod.yml exec postgres \
 
 **Esperado:** todo login do `users_database.yml` aparece na tabela, e ativo.
 
+> **Confira também a direção inversa**, que é a que ninguém mede: todo `login_usuario` da tabela tem
+> entrada no `users_database.yml`? Quem foi criado pela tela de Acessos e não foi cadastrado lá entra
+> normalmente **depois** do corte — e desaparece se houver rollback, porque o Authelia nunca soube
+> dele. É a mesma consequência da última linha da tabela de rollback, e ela não nomeia esse caso.
+
 **Se faltar alguém — e é o caso provável:** essas pessoas precisam ser **criadas pela tela de
 Acessos** antes do corte. Criar pela tela é o caminho certo porque ele grava o hash da senha
 inicial, o perfil e a trilha de quem criou; `INSERT` à mão no banco produz exatamente o hash
@@ -241,6 +246,13 @@ usuarios ativos: <N>
 > **O comando nunca toca em quem escolheu a própria senha** — e isso inclui **você/o dono**. É a
 > propriedade que o torna seguro de rodar na preparação: ele conserta só quem está na senha
 > compartilhada, para quem a senha compartilhada **é** a senha por definição.
+>
+> **Num banco recém-criado essa proteção não se aplica a ninguém**, e é preciso saber disso: "escolheu
+> a própria senha" é `senha_definida_em_usuario`, que nasce **nulo em toda linha**, inclusive na sua.
+> Se você semeou a si mesmo por SQL com o hash de uma senha **sua**, este comando o substitui pela
+> `MOTOR_SENHA_INICIAL` — ele imprime `alinhada: <seu login>`, mas não pede confirmação nem tem como
+> saber que aquilo era uma senha escolhida. Semeando com `hash_da_senha_inicial()` (§7 do
+> `banco_deploy.md`) o problema não existe: a linha nasce já conferindo.
 
 > **Atenção ao mal-entendido comum:** quem está na senha compartilhada **entra normalmente** —
 > essa pessoa tem um hash Argon2id de verdade. O risco não é "estar na senha inicial"; é o hash
@@ -382,7 +394,9 @@ docker compose -f docker-compose.prod.yml up -d web
 > em `usuarios` com perfil **perde as abas** — o piloto abre vazio para essa pessoa.
 >
 > **Portanto: só preencha esta variável depois de o Passo 0.a estar fechado** (todo mundo do
-> `acesso_abas.json` existe e está ativo em `usuarios`, com perfil). Se o 0.a não estiver fechado,
+> `authelia/users_database.yml` existe e está ativo em `usuarios`, com perfil — **não** do
+> `acesso_abas.json`, que aceita curinga e por isso o próprio 0.a proíbe usar como lista). Se o 0.a
+> não estiver fechado,
 > **volte para ele** — este passo é o que torna aquela conciliação obrigatória, e não opcional.
 
 **Confira, com o papel certo:**
