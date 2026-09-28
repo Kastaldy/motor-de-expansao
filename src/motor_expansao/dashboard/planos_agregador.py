@@ -84,6 +84,41 @@ CASAR_PROPRIA_M = 120.0
 #: Pino do mapa casa com a linha do agregador a até esta distância.
 CASAR_PINO_M = 60.0
 
+#: Vocabulário "V2" de musculação da DEC-025, sobre a string de modalidades normalizada
+#: (NFKD, sem acento, minúscula). O termo base é o PREFIXO `muscula` — cobre "musculação" e
+#: "muscular" —, e não a palavra inteira; foi assim que a emenda 1 daquela DEC o estendeu ao
+#: TotalPass.
+#:
+#: Existe porque entre maio e agosto de 2026 o WellHub RENOMEOU a taxonomia: "Musculação"
+#: praticamente desapareceu e virou "Treino de força", "Fisiculturismo" e "Treino Híbrido".
+#: Procurar a substring literal é uma falha SILENCIOSA — a coluna continua lá, só nasce
+#: errada. Medido em 2026-09-28 sobre os dois parquets que a produção serve: o WellHub
+#: marcava 19.142 de 22.091 linhas (86,65%) e o V2 marca 22.091 (100,00%) — **+2.949
+#: academias, 13,35% do feed**, que somem quando o piloto filtra `somente_musculacao=True`;
+#: o TotalPass ia de 17.220 de 17.602 (97,83%) para 17.602, **+382**. **Zero linhas
+#: perdidas** nos dois: V2 é superconjunto de V1, não é troca de régua.
+#:
+#: A DEC-025 escolheu o V2 como joelho da curva: V1->V2 recupera +134 unidades de maio por
+#: +175 linhas, e V2->V3 custa +2.831 para recuperar +8 e ainda arrasta box de CrossFit como
+#: se fosse academia de musculação.
+VOCABULARIO_MUSCULACAO_V2: tuple[str, ...] = (
+    "muscula",
+    "treino de forca",
+    "fisiculturismo",
+    "levantamento de peso",
+    "treino hibrido",
+)
+
+#: Palavra que, logo DEPOIS de "ultra", diz que a academia é de OUTRA marca. Ver `_e_ultra`.
+_GENERICOS_DEPOIS_DE_ULTRA = frozenset(
+    {"fit", "fitness", "fitcamp", "fitclub", "gym", "box", "life", "team", "sport", "sports"}
+)
+
+#: "ultra" como PALAVRA (nunca dentro de `ultrafit`/`ultrabox`) e a palavra logo depois dela.
+#: O `[^a-z0-9]*` no meio come espaço, hífen e barra: "ULTRA - Brasilândia" tem de ler
+#: "brasilandia", e "Ultra-Fit" tem de ler "fit".
+_PALAVRA_ULTRA = re.compile(r"\bultra\b[^a-z0-9]*(?P<seguinte>[a-z0-9]*)")
+
 
 def _sem_acento(texto: object) -> str:
     bruto = unicodedata.normalize("NFKD", str(texto or ""))
@@ -95,6 +130,16 @@ def _distancias_m(lat: float, lng: float, lats: np.ndarray, lngs: np.ndarray) ->
     p1, p2 = np.radians(lat), np.radians(lats)
     a = np.sin((p2 - p1) / 2) ** 2 + np.cos(p1) * np.cos(p2) * np.sin(np.radians(lngs - lng) / 2) ** 2
     return 2 * raio_terra * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+
+
+def tem_musculacao(modalidades: object) -> bool:
+    """True se a string de modalidades/atividades oferece musculação, pelo V2 da DEC-025.
+
+    Vale para as DUAS fontes. Uma régua por fonte seria a mesma taxonomia lida de dois
+    jeitos: o WellHub e o TotalPass se renomeiam no tempo, não entre si.
+    """
+    texto = _sem_acento(modalidades)
+    return any(termo in texto for termo in VOCABULARIO_MUSCULACAO_V2)
 
 
 def _num(valor: Any, casas: int = 2) -> float | None:
@@ -128,7 +173,7 @@ def normalizar(bruto: pd.DataFrame, fonte: str = "totalpass") -> pd.DataFrame:
             "cidade": bruto["cidade"].astype(str) if "cidade" in bruto.columns else "",
             "uf": bruto["uf"].astype(str).str.upper().str.strip(),
             "modalidades": modalidades.astype(str),
-            "musculacao": modalidades.map(lambda m: "musculacao" in _sem_acento(m)),
+            "musculacao": modalidades.map(tem_musculacao),
             "plano": bruto[f["plano"]].astype(str).str.strip(),
             "preco": preco.where(preco >= PRECO_MINIMO_VALIDO),
             "data_coleta": bruto["data_coleta"].astype(str),
@@ -150,8 +195,43 @@ def padrao_de_redes(slugs: Iterable[str]) -> str | None:
     return rf"\b(?:{'|'.join(sorted(partes))})\b" if partes else None
 
 
+def e_ultra(nome: object) -> bool:
+    """True se a listagem do agregador é uma unidade da própria Ultra.
+
+    A regra antiga exigia a expressão "ultra academia" e perdia **9 das nossas unidades** no
+    feed do WellHub — medido em 2026-09-28 sobre o parquet que a produção serve: `Ultra
+    Sagrada Família`, `ULTRA TAGUATINGA SUL`, `Ultra Guarapari`, `ULTRA UNAI`, `Ultra Jardim
+    das Américas`, `Ultra André de Barros`, `Ultra Vila Guanabara`, `Ultra Berrini` e `Ultra
+    Villa Branca` (no TotalPass, `ULTRA SÃO GONÇALO`). O dano é duplo: a unidade não acha o
+    PRÓPRIO plano, e pior, entra na lista de CONCORRENTES da Ultra vizinha — a rede
+    disputando preço com ela mesma.
+
+    Não dá para casar só pela palavra "ultra": o feed tem marcas alheias de verdade
+    (`Academia Ultra Fit`, `Ultra Fitness`, `Ultra FitCamp`, `Edu Ultra Team`, `Academia VO2
+    MAX Ultra`). O que separa os dois grupos é o que vem DEPOIS de "ultra": nas nossas é
+    sempre um LUGAR (o nome da unidade); nas alheias, uma palavra genérica de academia.
+
+    Por isso a régua é a palavra "ultra" seguida de algo que NÃO seja genérico — e seguida de
+    algo: "Academia VO2 MAX Ultra" termina em "ultra" e não é nossa. É uma lista de
+    CATEGORIA, não de marca, e é isso que a faz envelhecer devagar: nome de unidade nossa não
+    usa "fit"/"gym"/"box". `Ultrabox` e `Ultrafit` numa palavra só nem chegam aqui, porque
+    `\\bultra\\b` não casa dentro de palavra.
+
+    Risco medido antes de alargar: a marca alheia com "ultra" mais PRÓXIMA de uma Ultra
+    Academia está a **5.996 m** no WellHub e a **7.153 m** no TotalPass. Nenhuma entra nos
+    120 m do casamento da própria, e nenhuma entra nem nos 2.000 m do raio de concorrência.
+    """
+    # `finditer`, e não `search`: o feed junta duas academias num nome só ("Academia Ultra
+    # Fitness / Roofbox Crossfit Arrecife"), e basta UMA ocorrência ser nossa.
+    return any(
+        achado.group("seguinte")
+        and achado.group("seguinte") not in _GENERICOS_DEPOIS_DE_ULTRA
+        for achado in _PALAVRA_ULTRA.finditer(_sem_acento(nome))
+    )
+
+
 def _e_ultra(nomes: pd.Series) -> pd.Series:
-    return nomes.map(lambda n: "ultra academia" in _sem_acento(n))
+    return nomes.map(e_ultra)
 
 
 def planos_no_entorno(
