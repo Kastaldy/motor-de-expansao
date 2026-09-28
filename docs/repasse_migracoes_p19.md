@@ -22,23 +22,37 @@ autenticando. É preparação, não virada de chave.
 
 ---
 
-## Antes de começar — três coisas que precisam estar prontas
+## Antes de começar — quatro coisas que precisam estar prontas
 
 | # | Pré-requisito | Como conferir |
 |---|---|---|
 | 1 | A imagem nova do `web` publicada, com as migrations dentro | você recebeu o **digest** (`ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:…`) |
 | 2 | Acesso SSH à VPS como root | `ssh` conecta |
-| 3 | A senha do papel **dono** do banco (`reservas_owner`) | está no `.env` do compose, em `POSTGRES_OWNER_PASSWORD` |
-| 4 | **As duas branches do P19 já estão na `main`** | `git log --oneline main \| grep -i "p19"` mostra os commits; e o `git pull` do passo 2 traz `src/motor_expansao/db/migracoes/018-sessoes.sql` |
+| 3 | A senha do papel **dono** do banco (`reservas_owner`) | está no `.env` do compose (`/opt/motor-expansao/app/.env`), em `POSTGRES_OWNER_PASSWORD` |
+| 4 | **As duas branches do P19 já estão na `main`** | o comando abaixo lista os commits |
+
+```bash
+cd /opt/motor-expansao/app && git fetch origin && git log --oneline origin/main | grep -i p19
+```
+
+> **`git fetch` e `origin/main` não são preciosismo.** `git log main` leria o branch **local**, e o
+> clone da VPS só é atualizado no runbook do corte — que roda **depois** deste. Sem o `fetch`, o
+> comando vem **vazio mesmo com as duas branches já mergeadas**, e você desistiria de um trabalho
+> que estava liberado.
 
 Se faltar qualquer um, **não comece** — o passo 4 é irreversível sem restore.
 
 > **Por que o pré-requisito 4 não é burocracia.** As migrations, este documento e o do corte
 > vivem em duas branches (`feat/p19-sessao` e `feat/p19-chave-no-compose`) que, até o merge, **não
-> estão na `main`**. Duas consequências concretas: o `git pull` do passo 2 não traz os arquivos que
-> os passos seguintes mandam usar, e o **digest do pré-requisito 1 não pode existir** — o CI só
-> publica a imagem em push para a `main`. Se você recebeu um digest e as branches não mergearam,
-> pergunte de onde ele veio antes de subir qualquer coisa.
+> estão na `main`**. A consequência concreta é o pré-requisito 1: o **digest não pode existir**,
+> porque o CI só publica a imagem em push para a `main`. Se você recebeu um digest e as branches
+> não mergearam, pergunte de onde ele veio antes de subir qualquer coisa.
+>
+> **Os arquivos `.sql` das migrations não precisam estar no disco da VPS.** Eles viajam **dentro da
+> imagem** — o serviço `web` monta só diretórios de dados, nenhum monta o código. Por isso este
+> documento não manda fazer `git pull`: tudo que os passos abaixo rodam sai da imagem do
+> pré-requisito 1. (O runbook do corte, sim, faz `git pull`, porque lá você precisa do template do
+> Caddy em disco.)
 
 ---
 
@@ -83,12 +97,30 @@ A partir daqui as pessoas veem o piloto fora do ar. **Some quando o passo 7 term
 
 ## Passo 3 — Ver o que o banco de produção já tem
 
+Pegue os três campos da credencial do dono do próprio `.env`, em vez de supor que são os canônicos
+— eles são variáveis, não constantes:
+
+```bash
+cd /opt/motor-expansao/app
+grep -E '^POSTGRES_(DB|OWNER_USER|OWNER_PASSWORD)=' .env
+```
+
+Monte a URL com **esses** valores (`OWNER_USER` antes do `:`, `OWNER_PASSWORD` entre `:` e `@`,
+`DB` depois da barra):
+
 ```bash
 export MOTOR_DATABASE_URL_ADMIN='postgresql://reservas_owner:<senha-do-dono>@postgres:5432/banco_de_reservas'
 
 docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN \
   web python -m motor_expansao.db estado
 ```
+
+> **Se a senha do dono tiver `@`, `:`, `/` ou `?`, ela precisa de percent-encoding** antes de entrar
+> na URL (`@` vira `%40`, `:` vira `%3A`, `/` vira `%2F`, `?` vira `%3F`). Sem isso a libpq corta a
+> string no lugar errado, e o erro sai como **"autenticação falhou"** ou **"host não encontrado"** —
+> nunca como "URL malformada". Você procuraria rede ou senha trocada quando o problema é um
+> caractere. Esta senha já existe no `.env` e não é negociável: se ela tiver um desses caracteres,
+> codifique.
 
 **Esperado:** uma lista terminando em
 
@@ -108,6 +140,13 @@ Isso tem conserto, mas exige uma decisão que não cabe neste documento.
 > `-e MOTOR_DATABASE_URL_ADMIN` **sem valor depois do `=`** é intencional: assim a senha é
 > herdada do ambiente e não aparece na lista de processos, que qualquer usuário da máquina
 > consegue ler.
+
+> **A variável vive só neste terminal, e é por isso que os passos 4 e 6 podem falhar sem motivo
+> aparente.** Como o `-e` não carrega valor, ele herda do ambiente — e o ambiente morre se a conexão
+> SSH cair, se você abrir outra aba, ou se voltar depois de uma pausa. Nesses casos o comando
+> responde `ERRO: defina MOTOR_DATABASE_URL_ADMIN (ou MOTOR_DATABASE_URL) com a credencial do DONO
+> do schema`. **Não é problema no banco e nada foi perdido:** reexecute a linha do `export` acima,
+> neste terminal, e repita o comando.
 
 ---
 
@@ -254,6 +293,16 @@ unset MOTOR_DATABASE_URL_ADMIN
 ```
 
 **Esperado:** o container sobe e o `ps` mostra `(healthy)` em até ~1 min.
+
+> **A instância ARGENTINA usa o MESMO `WEB_IMAGE`, e precisa subir agora também.** O `.env` é
+> compartilhado: o passo 1 mudou o digest **das duas**, mas o comando acima sobe só o `web` do BR.
+> A AR fica com o arquivo dizendo um digest e o processo rodando outro — e saltaria de imagem, sem
+> ninguém esperando, no próximo `up -d` que alguém desse nela. **Não deixe esse desvio no ar:**
+> ```bash
+> docker compose -f docker-compose.ar.yml up -d web_ar
+> ```
+> **Esperado:** a AR reinicia e continua atrás do Authelia, sem mudança visível. A imagem nova não
+> muda nada para ela — o corte do P19 é só do Brasil.
 
 Confirme pelo navegador que o piloto abre e que dá para navegar normalmente. **Nada deve ter
 mudado visualmente** — se mudou, é sinal de que algo saiu do previsto.

@@ -40,6 +40,9 @@ Hoje o **Authelia** confere quem entra, na porta da rua. Depois deste corte, que
 | Senha do dono do banco (`reservas_owner`) | no `.env` do compose, em `POSTGRES_OWNER_PASSWORD` |
 | **Senha do papel `app`** | **com quem repassou** — ela vive DENTRO da `MOTOR_DATABASE_URL` e, se essa variável está vazia (o estado de entrega), o valor não existe em lugar nenhum que você alcance. Foi gerada no provisionamento do banco (`docs/banco_deploy.md`, seção dos três papéis). **Sem ela o Passo 3 para**, e o Passo 3 é o que impede o Passo 5 de apagar o piloto |
 | **Seu login na allowlist do painel de Acessos** | a env `MOTOR_ACESSOS_ADMIN_USUARIOS` do `.env`. Sem o seu login lá, o painel responde **404** para você — e é a única ferramenta de criar gente e destravar conta |
+| **Uma conta sua no Authelia**, com senha | **com quem repassou.** Estar na allowlist acima não basta: **hoje** o Caddy exige sessão do Authelia no host inteiro, então sem conta no `users_database.yml` o navegador nunca chega no painel de Acessos. Peça que o seu login seja a **mesma string** nos dois lugares |
+| **A senha compartilhada que a equipe digita hoje** | **com quem repassou** — ela **não existe em lugar nenhum do servidor**: o `users_database.yml` guarda só o hash, que não se desfaz. Sem ela o Passo 0.b não fecha, porque ele é uma comparação entre dois valores e o servidor só te dá um |
+| **`sops` instalado e a chave que decifra `secrets/Caddyfile.enc`** | **com quem repassou.** Teste **antes da janela**: `sops -d secrets/Caddyfile.enc \| head -1` tem de imprimir a primeira linha do Caddyfile. Se recusar, pare e peça — sem isso o último passo do corte não fecha, e o backup cifrado fica descrevendo um Caddyfile que não existe mais |
 | Este documento e o `deploy/caddy/piloto-br.Caddyfile.template` | o repositório |
 
 ### Os dois merges que precedem tudo
@@ -148,6 +151,16 @@ Compare com a senha que a equipe usa hoje para entrar.
   saídas: mudar `MOTOR_SENHA_INICIAL` no `.env` para a senha que a equipe já conhece (e então o
   0.c é obrigatório, porque os hashes guardados continuam sendo os antigos), ou avisar a equipe
   da senha nova. **Decida isto com quem repassou** — não escolha sozinho.
+
+  > **Se você mudar a variável no `.env`, suba o `web` antes de seguir:**
+  > ```bash
+  > docker compose -f docker-compose.prod.yml up -d web
+  > ```
+  > Este é o único ponto do documento que edita o `.env` sem subir o container, e a falha é muda: o
+  > comando do 0.c usa `run --rm`, que relê o `.env` a cada invocação, então **os hashes ficariam
+  > alinhados com o valor novo enquanto o container no ar continua criando gente com o antigo**.
+  > Quem fosse criado pela tela de Acessos até o próximo restart receberia a senha velha. Só depois
+  > de subir, rode o 0.c.
 - **Variável ausente ou vazia:** **pare**. Sem ela ninguém consegue entrar depois do corte e não
   há como criar usuário.
 
@@ -160,11 +173,23 @@ formalidade:
 export MOTOR_DATABASE_URL_ADMIN='postgresql://reservas_owner:<senha-do-dono>@postgres:5432/banco_de_reservas'
 ```
 
-> **Se você esquecer, o comando NÃO reclama — ele roda com a credencial errada.** Medido: sem essa
-> variável, o runner cai para `MOTOR_DATABASE_URL`, que é a credencial do papel **`app`** — e o
-> `app` tem `UPDATE` em `usuarios` por desenho. Ou seja, o passo que este documento chama de "o
+> **Se a senha do dono tiver `@`, `:`, `/` ou `?`, ela precisa de percent-encoding** aqui (`@` vira
+> `%40`, `:` vira `%3A`, `/` vira `%2F`, `?` vira `%3F`). Sem isso o erro sai como "autenticação
+> falhou" ou "host não encontrado", nunca como "URL malformada".
+
+> **Se você esquecer o `export`, o comando NÃO reclama — ele roda com a credencial errada.** Medido:
+> sem essa variável, o runner cai para `MOTOR_DATABASE_URL`, que é a credencial do papel **`app`** —
+> e o `app` tem `UPDATE` em `usuarios` por desenho. Ou seja, o passo que este documento chama de "o
 > único que não dá para desfazer" reescreveria hashes pela credencial da aplicação, em silêncio,
-> sem uma linha de aviso. Confira a primeira linha da saída: ela nomeia o papel conectado.
+> sem uma linha de aviso.
+>
+> **A saída do comando NÃO nomeia o papel conectado** — não há como descobrir pela tela com qual
+> credencial ele escreveu. Por isso a conferência é **antes** de rodar, sobre a variável:
+> ```bash
+> echo "$MOTOR_DATABASE_URL_ADMIN" | cut -d@ -f1
+> ```
+> Tem de imprimir `postgresql://reservas_owner:<a senha>`. Se sair vazio, o `export` não pegou neste
+> terminal — refaça antes de continuar.
 >
 > **Se vier `ERRO: defina MOTOR_DATABASE_URL_ADMIN (ou MOTOR_DATABASE_URL) com a credencial do DONO
 > do schema`:** nem a variável nem o fallback existem. Exporte e repita — nada foi escrito.
@@ -189,6 +214,12 @@ usuarios ativos: <N>
   na senha inicial e NAO conferem         : <c>
   escolheram, mas o hash esta' QUEBRADO   : <d>
 ```
+
+> **Olhe o `N` primeiro, porque é ele que denuncia o pior cenário.** `usuarios ativos` tem de ser
+> **igual ao número de logins que você conciliou no 0.a**. Se vier `0`, ou bem abaixo daquilo, o 0.a
+> não está fechado: as quatro contagens vêm zeradas, o comando imprime `nada a alinhar` — e isso
+> significa **"não há ninguém no banco"**, não "está tudo certo". Seguir daqui leva a um corte em que
+> a rede inteira fica trancada. Volte ao 0.a.
 
 - **`c` maior que zero:** são pessoas que estão na senha compartilhada mas cujo hash guardado não
   corresponde a ela — elas **não entrariam**. Rode o comando **sem** `--simular` para consertar:
@@ -222,10 +253,13 @@ O número `b` diz quantas pessoas vão ver o convite para trocar de senha no pri
 ## Onde fica o painel de Acessos (você vai usá-lo quatro vezes)
 
 Este documento manda criar gente, redefinir senha e destravar conta **pelo painel de Acessos**.
-Ele é uma aba do próprio piloto, chamada **Acessos**, e não aparece para todo mundo:
+Ele é uma aba do próprio piloto (`https://piloto.ultra-expansao.tech`), chamada **Acessos**, e não
+aparece para todo mundo:
 
 - quem o vê é **só** quem está na env `MOTOR_ACESSOS_ADMIN_USUARIOS` (lista separada por vírgula,
-  comparada com o seu login, sem diferenciar maiúsculas);
+  comparada com o seu login, sem diferenciar maiúsculas) — e **"o seu login", hoje, é o seu usuário
+  do Authelia**: é a chave que o `grep` do 0.a acabou de listar no `users_database.yml`, não o seu
+  usuário de SSH nem o seu e-mail;
 - **sem a env preenchida, o painel está desligado para todos** — em produção e em dev;
 - quem não pode vê **404**, não "acesso negado": a existência do painel não é anunciada. Então um
   404 aqui é quase sempre "seu login não está na env", e não "a rota não existe".
@@ -240,6 +274,13 @@ cd /opt/motor-expansao/app && grep '^MOTOR_ACESSOS_ADMIN_USUARIOS=' .env
 `docker compose -f docker-compose.prod.yml up -d web`. **Depois do corte** o painel passa a
 identificar você pela sessão, então o seu login também precisa existir em `usuarios` — o Passo 0.a
 cobre isso se você se incluir na conciliação.
+
+> **Use a MESMA string nos três lugares:** o seu usuário no Authelia, a entrada em
+> `MOTOR_ACESSOS_ADMIN_USUARIOS`, e o `login_usuario` da sua linha em `usuarios`. São namespaces
+> diferentes — antes do corte o painel te identifica pelo header do Authelia, depois pela sessão do
+> banco — e é justamente por isso que divergir é perigoso: se você se cadastrar em `usuarios` com
+> outra grafia (ou com o e-mail), o painel te devolve **404 no instante do corte**, e ele é a única
+> ferramenta de destravar conta. Você ficaria sem a chave e sem a fechadura ao mesmo tempo.
 
 ---
 
@@ -269,32 +310,39 @@ cobre isso se você se incluir na conciliação.
 ```bash
 cd /opt/motor-expansao/app
 git pull
+cp .env .env.bak-$(date +%F)     # guarda o digest ATUAL; é para onde você volta
+grep '^WEB_IMAGE=' .env          # anote esta linha
 # edite o .env: WEB_IMAGE=<digest novo>
 docker compose -f docker-compose.prod.yml up -d web
 ```
+
+> **A cópia não é zelo, é o caminho de volta.** A linha seguinte sobrescreve o `WEB_IMAGE`, e o
+> valor antigo deixa de existir no arquivo. Sem a cópia, a instrução de rollback aqui embaixo é
+> impossível de executar — e você descobriria isso justamente no momento em que o piloto não abriu.
+
+> **Se você já trocou o `WEB_IMAGE` no runbook das migrations** e nenhuma imagem nova foi publicada
+> desde então, este passo é **só conferência**: o `grep` acima tem de mostrar exatamente o digest que
+> você recebeu. Não existe um segundo build.
 
 **Esperado:** o container reinicia e o piloto continua funcionando **exatamente como antes** — o
 Authelia ainda autenticando. A chave ainda está desligada.
 
 > **A instância ARGENTINA usa o MESMO `WEB_IMAGE`.** Você acabou de editar o `.env`, que é
 > compartilhado: a AR ficou com o arquivo dizendo um digest e o processo rodando outro, e
-> saltaria de imagem no próximo `up -d` que alguém desse nela. Suba-a também, agora:
+> saltaria de imagem no próximo `up -d` que alguém desse nela. Suba-a também, agora — **uma vez só**:
 > ```bash
 > docker compose -f docker-compose.ar.yml up -d web_ar
 > ```
 > **Esperado:** reinicia e continua atrás do Authelia, sem mudança visível.
 
-**Se o piloto não abrir:** volte o `WEB_IMAGE` para o digest anterior e suba de novo. Nada foi
-cortado ainda.
+**Se o piloto não abrir:** volte o `WEB_IMAGE` para o digest anterior e suba de novo. O valor está
+na cópia que você fez no começo deste passo:
 
-> **A instância AR usa o MESMO `WEB_IMAGE`.** Editar o `.env` muda o digest das duas. O comando
-> acima sobe só o `web` do BR, então a AR fica com o arquivo dizendo uma coisa e o processo
-> rodando outra — e saltaria de digest no próximo `up -d` que alguém desse nela. Suba a AR também,
-> na mesma janela:
-> ```bash
-> docker compose -f docker-compose.ar.yml up -d web_ar
-> ```
-> **Esperado:** a AR reinicia e continua atrás do Authelia, sem mudança visível.
+```bash
+grep '^WEB_IMAGE=' .env.bak-$(date +%F)
+```
+
+Nada foi cortado ainda.
 
 ---
 
@@ -406,8 +454,24 @@ cd /opt/motor-expansao/app
 cp Caddyfile Caddyfile.antes-do-p19
 ```
 
-Agora abra o `Caddyfile` e substitua o bloco de `piloto.ultra-expansao.tech` pelo conteúdo de
-`deploy/caddy/piloto-br.Caddyfile.template`.
+**Antes de colar, compare os dois lado a lado.** Este passo substitui o bloco **inteiro**, então
+**toda diretiva que exista no bloco vivo e não exista no template desaparece** — compressão
+(`encode`), headers, `tls` explícito, outro caminho de log, uma rota extra. O template nasceu depois
+do bloco que está no ar e não pode saber o que foi acrescentado à mão lá:
+
+```bash
+grep -n -A40 'piloto.ultra-expansao.tech {' Caddyfile.antes-do-p19
+```
+
+Leia essa saída contra o template. **Qualquer linha que só exista no bloco vivo precisa ser levada
+para o texto novo.** E o `caddy validate` do fim deste passo **não reclama do que faltar** — uma
+configuração menor é uma configuração válida. O Passo 6 daria tudo verde e a perda só apareceria
+dias depois.
+
+Agora abra o `Caddyfile` e substitua o bloco de `piloto.ultra-expansao.tech` pelo bloco
+`piloto.ultra-expansao.tech { … }` do template — **da linha `piloto.ultra-expansao.tech {` até a
+chave que a fecha**. As primeiras linhas do template são comentário explicando decisões do projeto:
+elas são explicação, não configuração, e não vão para o servidor.
 
 > **NÃO TOQUE no bloco `piloto-ar.ultra-expansao.tech`.** Ele continua apontando para
 > `authelia:9091`, e isso é decisão — a AR não tem banco e cairia inteira.
@@ -462,10 +526,25 @@ atrás*, abaixo.
 
 **A ordem é o INVERSO da de ligar. Invertê-la derruba o piloto inteiro.**
 
-1. **Primeiro o Caddy:** devolva o bloco antigo (`forward_auth authelia:9091` cobrindo tudo,
-   **sem** o matcher `@protegido`) e recarregue.
+1. **Primeiro o Caddy:** devolva o bloco antigo copiando-o de **`Caddyfile.antes-do-p19`** — a cópia
+   que você fez no começo do Passo 5. É o bloco com `forward_auth authelia:9091` cobrindo tudo,
+   **sem** o matcher `@protegido`. Depois recarregue, com os mesmos dois comandos do Passo 5:
+
+   ```bash
+   cd /opt/motor-expansao/app
+   docker compose -f docker-compose.prod.yml exec caddy caddy validate --config /etc/caddy/Caddyfile
+   docker compose -f docker-compose.prod.yml exec caddy caddy reload --config /etc/caddy/Caddyfile
+   ```
+
 2. **Só então a chave:** `MOTOR_AUTENTICACAO_PROPRIA=` (vazia) e
    `docker compose -f docker-compose.prod.yml up -d web`.
+
+> **A `MOTOR_DATABASE_URL` FICA preenchida — não a esvazie.** Ela não tem nada a ver com quem
+> autentica; esvaziá-la devolveria o controle de abas ao `acesso_abas.json` e é uma segunda mudança
+> no meio de uma emergência. **Consequência que você precisa esperar:** com ela preenchida o piloto
+> segue no RBAC do banco, então quem ainda não tem perfil continua **abrindo o piloto vazio** mesmo
+> com o Authelia de volta. Isso **não** é rollback malfeito — é o Passo 3 ainda em vigor, e se
+> resolve dando perfil à pessoa pelo painel de Acessos.
 
 > Na ordem contrária, você fica com a chave desligada e o Caddy ainda perguntando ao
 > `/api/verify` — que responde 404 com a chave desligada. O Caddy nega tudo que não for uma
@@ -492,8 +571,12 @@ esse cadastro paralelo que torna o rollback sobrevivível.
 ```bash
 docker compose -f docker-compose.prod.yml exec postgres \
   psql -U reservas_owner -d banco_de_reservas -c \
-  "SELECT login_usuario, senha_definida_em_usuario FROM usuarios WHERE senha_definida_em_usuario > '<data do corte>' ORDER BY 2;"
+  "SELECT login_usuario, senha_definida_em_usuario FROM usuarios WHERE senha_definida_em_usuario > '2026-10-01 21:00' ORDER BY 2;"
 ```
+
+> **Troque `2026-10-01 21:00` pelo horário em que você rodou o Passo 4** (o da chave), **com hora**.
+> Se o corte e o rollback caírem no mesmo dia, uma data sem hora devolve a lista errada — e o erro é
+> mudo, porque a consulta roda igual.
 
 ---
 
@@ -528,5 +611,7 @@ Rode o `--simular` primeiro: ele conta e não escreve nada.
 ## Quem chamar
 
 - **Durante a janela:** quem repassou este documento.
-- **Se o piloto ficar fora e o rollback não resolver:** o bloco antigo do Caddy está no backup
-  cifrado (`sops secrets/Caddyfile.enc`) e no histórico do git.
+- **Se o piloto ficar fora e o rollback não resolver:** o bloco antigo do Caddy está em
+  **`/opt/motor-expansao/app/Caddyfile.antes-do-p19`** (a cópia do Passo 5) e, se ela tiver se
+  perdido, no backup cifrado (`sops -d secrets/Caddyfile.enc`). **Não procure no histórico do git:**
+  o `Caddyfile` é gitignored e nunca esteve versionado.
