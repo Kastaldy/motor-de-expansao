@@ -298,6 +298,44 @@ def competencia_fechada(hoje: date | None = None) -> str:
     return str(pd.Period(pd.Timestamp(hoje), freq="M") - 1)
 
 
+def aparar_placeholder(fat: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Tira do fim da série as competências que a planilha abriu e ainda não preencheu.
+
+    A planilha do Financeiro cria a coluna do mês ASSIM QUE ele começa, e ela fica zerada
+    até o fechamento. Essa coluna não é dado: é cabeçalho esperando valor.
+
+    Sem aparar, os dois portões da última competência disparam de uma vez — `mes_aberto`
+    (ela não fechou) e `ultima_vazia` (ninguém faturou nela) — e a ingestão ABORTA. O efeito
+    é o pior possível: o mês que JÁ fechou e está correto na planilha não consegue entrar, e
+    o parquet de produção congela no valor velho. Foi o que manteve o Guarujá de ago/2026 em
+    R$ 547.745,05 na tela por 20 dias, contra os R$ 217.525,74 da planilha (medido
+    2026-09-28) — a única célula divergente em 6.528 comparáveis.
+
+    Aparar é diferente de RELAXAR o portão, e a diferença é o que mantém a rede de segurança
+    inteira: uma competência com faturamento PARCIAL continua barrada por `mes_aberto`, que é
+    o caso que aquele portão existe para pegar. Só sai o que está inteiramente vazio.
+
+    Nunca esvazia a série: a última competência sobrevivente fica, ainda que também esteja
+    zerada — aí o `ultima_vazia` volta a valer e ABORTA, que é o certo para uma planilha que
+    chegou vazia.
+    """
+    if not len(fat):
+        return fat, []
+    meses = sorted(fat["competencia"].dropna().unique())
+    # `to_numeric` antes do `fillna`, pelo mesmo motivo do `validar`: a coluna chega como
+    # objeto justamente na competência em branco, que é a que este código existe para achar.
+    positivo = pd.to_numeric(fat["faturamento"], errors="coerce").fillna(0.0) > 0
+    cheio = fat.assign(_ok=positivo).groupby("competencia")["_ok"].sum()
+    descartadas: list[str] = []
+    for mes in reversed(meses[1:]):
+        if int(cheio.get(mes, 0)) > 0:
+            break
+        descartadas.append(str(mes))
+    if not descartadas:
+        return fat, []
+    return fat[~fat["competencia"].isin(descartadas)].reset_index(drop=True), sorted(descartadas)
+
+
 def validar(
     fat: pd.DataFrame,
     hoje: date | None = None,
@@ -366,12 +404,21 @@ def validar(
         )
 
     # --- E4/A2: a última competência veio preenchida? ----------------------------------
-    por_mes = fat.assign(positivo=fat["faturamento"].fillna(0) > 0).groupby("competencia")["positivo"].sum()
-    if len(por_mes) >= 2:
-        n_ultimo, n_penultimo = int(por_mes.loc[ultima]), int(por_mes.iloc[-2])
-        if n_ultimo == 0:
-            achados.append(Achado("erro", "ultima_vazia", f"nenhuma unidade com faturamento em {ultima}"))
-        elif n_ultimo < n_penultimo * 0.9:
+    # `to_numeric` antes do `fillna`: a coluna chega como objeto quando a competência está
+    # inteiramente em branco, e aí o `fillna` faz downcast silencioso (FutureWarning).
+    positivo = pd.to_numeric(fat["faturamento"], errors="coerce").fillna(0.0) > 0
+    por_mes = fat.assign(positivo=positivo).groupby("competencia")["positivo"].sum()
+    n_ultimo = int(por_mes.loc[ultima])
+    # O `ultima_vazia` NÃO depende de haver penúltimo — e essa independência passou a
+    # importar quando `aparar_placeholder` entrou: uma planilha que chegou inteiramente em
+    # branco é aparada até a primeira competência e, com o gate atrás de `len >= 2`, sairia
+    # daqui SEM achado nenhum e gravaria um parquet de faturamento todo nulo. Quem precisa de
+    # dois meses é a queda de cobertura, que é uma razão entre eles.
+    if n_ultimo == 0:
+        achados.append(Achado("erro", "ultima_vazia", f"nenhuma unidade com faturamento em {ultima}"))
+    elif len(por_mes) >= 2:
+        n_penultimo = int(por_mes.iloc[-2])
+        if n_ultimo < n_penultimo * 0.9:
             achados.append(
                 Achado(
                     "aviso",

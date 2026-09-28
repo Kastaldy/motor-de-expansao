@@ -668,3 +668,124 @@ def test_a_normalizacao_de_codigo_e_uma_so_nos_dois_lados() -> None:
         {"sao-carlos-centro-sp": 91},
     )
     assert alias == {CARLOS_PLANILHA: CARLOS_GROWTH}
+
+
+# ---------------------------------------------------------------------------
+# A coluna do mes em curso nao e' dado (`aparar_placeholder`)
+# ---------------------------------------------------------------------------
+# A planilha cria a coluna do mes ASSIM QUE ele comeca, e ela fica zerada ate' o
+# fechamento. Com ela dentro, `mes_aberto` e `ultima_vazia` disparam JUNTOS e a ingestao
+# aborta — logo o mes que JA' fechou e esta' correto na planilha nao consegue subir. Foi o
+# que manteve o Guaruja de ago/2026 em R$ 547.745,05 na tela por 20 dias contra os
+# R$ 217.525,74 da planilha (medido 2026-09-28, a unica celula divergente em 6.528).
+
+
+def _com_meses(*por_mes: tuple[str, float | None]) -> pd.DataFrame:
+    """Uma unidade, um valor por competencia (None = celula em branco na planilha)."""
+    return pd.DataFrame(
+        [
+            {
+                "cod_unidade": "01",
+                "unidade_planilha": "A",
+                "unidade_ux": "A",
+                "tem_depara": True,
+                "competencia": mes,
+                "faturamento": valor,
+                "vendas_ux": valor,
+                "gympass": 0.0,
+                "totalpass": 0.0,
+                "tem_saude": 0.0,
+            }
+            for mes, valor in por_mes
+        ]
+    )
+
+
+def test_a_competencia_aberta_e_vazia_do_fim_sai_e_e_relatada() -> None:
+    fat, aparado = fin.aparar_placeholder(
+        _com_meses(("2026-07", 100.0), ("2026-08", 200.0), ("2026-09", None))
+    )
+    assert aparado == ["2026-09"]
+    assert sorted(fat["competencia"]) == ["2026-07", "2026-08"]
+
+
+def test_apara_mais_de_uma_competencia_aberta_seguida() -> None:
+    fat, aparado = fin.aparar_placeholder(
+        _com_meses(("2026-07", 100.0), ("2026-08", None), ("2026-09", None))
+    )
+    assert aparado == ["2026-08", "2026-09"]
+    assert sorted(fat["competencia"]) == ["2026-07"]
+
+
+def test_competencia_com_faturamento_PARCIAL_continua_barrada() -> None:
+    """Aparar nao e' relaxar o portao, e esta e' a linha que separa as duas coisas.
+
+    Mes pela metade e' exatamente o caso que o `mes_aberto` existe para pegar — o snapshot
+    antigo embutido na planilha real tinha 19 unidades zeradas na ultima competencia, que
+    depois viraram valor cheio. So' sai o que esta' INTEIRAMENTE vazio.
+    """
+    quadro = pd.concat(
+        [
+            _com_meses(("2026-08", 200.0), ("2026-09", 1.0)),
+            _com_meses(("2026-08", 300.0), ("2026-09", None)).assign(unidade_planilha="B", unidade_ux="B"),
+        ],
+        ignore_index=True,
+    )
+    fat, aparado = fin.aparar_placeholder(quadro)
+    assert aparado == []
+    assert [a.codigo for a in fin.validar(fat, hoje=date(2026, 9, 28)) if a.eh_erro] == ["mes_aberto"]
+
+
+def test_competencia_vazia_no_MEIO_da_serie_nao_e_aparada() -> None:
+    """Buraco no meio e' defeito da fonte, e o portao `buraco` tem de continuar disparando.
+
+    Aparar do meio esconderia perda de dado; aparar do fim so' descarta cabecalho.
+    """
+    fat, aparado = fin.aparar_placeholder(
+        _com_meses(("2026-06", 100.0), ("2026-07", None), ("2026-08", 200.0))
+    )
+    assert aparado == []
+    assert len(fat) == 3
+
+
+def test_planilha_inteiramente_vazia_nao_e_esvaziada_e_ABORTA() -> None:
+    """A serie nunca fica vazia: a primeira competencia sobrevive.
+
+    Sem isso, uma planilha que chegou em branco sairia com `len(fat) == 0` e o unico achado
+    seria `vazia` — perderia a informacao de ATE' ONDE ela ia, e um frame vazio a jusante e'
+    pior que um erro nomeado.
+    """
+    fat, aparado = fin.aparar_placeholder(_com_meses(("2026-07", None), ("2026-08", None)))
+    assert aparado == ["2026-08"]
+    assert sorted(fat["competencia"]) == ["2026-07"]
+    assert [a.codigo for a in fin.validar(fat, hoje=date(2026, 9, 28)) if a.eh_erro] == ["ultima_vazia"]
+
+
+def test_quadro_vazio_nao_quebra() -> None:
+    fat, aparado = fin.aparar_placeholder(fin._vazio())
+    assert aparado == [] and not len(fat)
+
+
+def test_com_o_placeholder_aparado_a_planilha_de_setembro_valida(tmp_path: Path) -> None:
+    """O caso REAL de 2026-09-28, ponta a ponta: sem aparar aborta, aparando passa."""
+    caminho = _planilha(
+        tmp_path / "set.xlsx",
+        [
+            {
+                "rotulo": "01 - A",
+                "total": [100.0, 200.0, None],
+                "vendas_ux": [100.0, 200.0, None],
+            }
+        ],
+        meses=("2026-07", "2026-08", "2026-09"),
+        depara=[("A", "01", "A")],
+    )
+    cru = fin.ler_planilha(caminho)
+    assert sorted({a.codigo for a in fin.validar(cru, hoje=date(2026, 9, 28)) if a.eh_erro}) == [
+        "mes_aberto",
+        "ultima_vazia",
+    ]
+
+    fat, aparado = fin.aparar_placeholder(cru)
+    assert aparado == ["2026-09"]
+    assert [a for a in fin.validar(fat, hoje=date(2026, 9, 28)) if a.eh_erro] == []
