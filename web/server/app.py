@@ -11356,6 +11356,47 @@ def foto_concorrente(arquivo: str):
 # SPA. So monta se o dist/ existir (em dev o Vite serve o front na :5000 e faz
 # proxy /api para ca, entao o dist/ nem existe). Caminho configuravel via WEB_DIST_DIR.
 _DIST_DIR = Path(os.environ.get("WEB_DIST_DIR", str(_REPO_ROOT / "web" / "dist")))
+
+
+@app.get("/entrar.html", include_in_schema=False)
+def entrar_html() -> Any:
+    """A TELA DE ENTRAR NUNCA VEM DO CACHE. Rota própria só para poder dizer isso.
+
+    INCIDENTE MEDIDO (2026-09-28). A tela vive em DOIS hosts com significados opostos: no
+    host do Authelia o Caddy a serve na raiz e o `POST /api/firstfactor` chega ao Authelia;
+    no host do PILOTO o mesmo caminho vai para ESTE backend, que não tem essa rota. A
+    `StaticFiles` a servia com `ETag`/`Last-Modified` e **sem `Cache-Control`** — e aí
+    acontece isto, lido no access log do Caddy:
+
+      200 x3  `piloto/entrar.html`  enquanto a pessoa AINDA tinha sessão -> entra no cache
+      302 x3  depois do logout, o `forward_auth` manda ao portal — o comportamento certo
+      304 x1  o navegador revalidou a cópia do CACHE e nós dissemos "use a sua"
+
+    Nesse 304 a página volta a rodar no origin do PILOTO, já sem sessão. O `fetch` relativo
+    então bate em `piloto/api/login` (404, a chave do P19 está desligada) e em
+    `piloto/api/firstfactor` (405, não existe aqui), e a pessoa lê "não foi possível falar
+    com o servidor de autenticação" para sempre: cada recarga serve o mesmo cache. A única
+    saída era digitar o host do Authelia na barra de endereço.
+
+    `no-store` e não `no-cache`: `no-cache` ainda ARMAZENA e revalida — e revalidar é
+    exatamente o que produziu o 304. Página de login não se guarda.
+
+    A rota fica ANTES do `mount("/")` porque o mount casa tudo o que sobra; registrada
+    depois, nunca seria alcançada. E devolve 404 quando o `dist/` não existe (em dev o Vite
+    serve o front), em vez de estourar 500.
+    """
+    from fastapi.responses import FileResponse
+
+    caminho = _DIST_DIR / "entrar.html"
+    if not caminho.is_file():
+        raise HTTPException(status_code=404, detail="entrar.html nao existe neste build")
+    return FileResponse(
+        str(caminho),
+        media_type="text/html",
+        headers={"Cache-Control": "no-store", "Vary": "Host"},
+    )
+
+
 if _DIST_DIR.is_dir():
     app.mount("/", StaticFiles(directory=str(_DIST_DIR), html=True), name="spa")
 
