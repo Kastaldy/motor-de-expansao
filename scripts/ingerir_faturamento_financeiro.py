@@ -91,11 +91,20 @@ def main(planilha: Path | None, saida: Path, hoje: datetime | None,
     click.echo(f"           {origem.stat().st_size / 1e6:.2f} MB, baixada ha {idade_dias:.1f} dia(s)")
 
     fat = fin.ler_planilha(origem)
+    # A coluna do mes em curso nasce zerada na planilha e nao e' dado -- se ela entrar, os
+    # portoes `mes_aberto` e `ultima_vazia` abortam juntos e o mes que JA' fechou nao sobe.
+    fat, placeholder = fin.aparar_placeholder(fat)
     meses = sorted(fat["competencia"].dropna().unique())
     click.echo(
         f"lido     : {len(fat):,} linhas | {fat['unidade_planilha'].nunique()} unidades | "
         f"{len(meses)} competencias ({meses[0]} .. {meses[-1]})"
     )
+    if placeholder:
+        click.secho(
+            f"aparado  : {len(placeholder)} competencia(s) aberta(s) e sem faturamento "
+            f"({', '.join(placeholder)}) -- coluna que a planilha ja' criou e ainda nao preencheu",
+            fg="yellow",
+        )
 
     anterior = fin.carregar(saida)
     referencia: date | None = hoje.date() if hoje else None
