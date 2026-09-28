@@ -13,6 +13,7 @@ responde exatamente ao contrario. Tem teste proprio.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import UTC
 from typing import Any
 
 import pytest
@@ -24,7 +25,18 @@ from motor_expansao.db import usuarios as mod
 #: (id, login, nome, email, perfil, ativo, criado, atualizado, senha_propria, deve_trocar_senha)
 # As duas ultimas vem da 016. O Vinícius ja' definiu a dele; o `inativo` do teste abaixo nunca
 # definiu — e' o par que a tela precisa distinguir.
-LINHA_LISTA = (7, "vinicius", "Vinícius Cruz", "v@ultra.com", "growth", True, None, None, True, False)
+LINHA_LISTA = (
+    7,
+    "vinicius",
+    "Vinícius Cruz",
+    "v@ultra.com",
+    "growth",
+    True,
+    None,
+    None,
+    True,
+    False,
+)
 
 
 class FakeConexao:
@@ -81,7 +93,7 @@ def _instalar(
     monkeypatch: pytest.MonkeyPatch, respostas: dict[str, list[tuple[Any, ...]]]
 ) -> FakeConexao:
     con = FakeConexao(respostas)
-    monkeypatch.setattr(postgres, "_driver", lambda: (lambda **_k: FakePool(con)))
+    monkeypatch.setattr(postgres, "_driver", lambda: lambda **_k: FakePool(con))
     monkeypatch.setenv(postgres.ENV_URL, "postgresql://fake/motor")
     return con
 
@@ -108,9 +120,92 @@ def _con_padrao(monkeypatch: pytest.MonkeyPatch, *, perfil: str, ativo: bool) ->
 # --------------------------------------------------------------------------------------
 
 
+def test_credencial_por_login_traz_id_hash_e_deve_trocar(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O que o login do P19 (D30/D31) precisa conferir, numa ida so' ao banco.
+
+    As duas ultimas colunas vem da 019 e nao sao enfeite: `expira_em` e' o que faz a senha
+    temporaria morrer, e `redefinida_em` e' o piso da trava de tentativas. Buscar qualquer uma
+    depois seria segunda ida ao banco para um dado que ja' estava na mesma linha.
+    """
+    from datetime import datetime
+
+    prazo = datetime(2026, 9, 18, 12, 0, tzinfo=UTC)
+    redefinida = datetime(2026, 9, 18, 10, 0, tzinfo=UTC)
+    con = _instalar(
+        monkeypatch,
+        {"SELECT u.id_usuario, u.senha_hash": [(7, "$argon2id$x", True, prazo, redefinida)]},
+    )
+    cred = mod.credenciais_por_login("vinicius")
+
+    assert cred is not None
+    assert (cred.id_usuario, cred.senha_hash, cred.deve_trocar) == (7, "$argon2id$x", True)
+    assert (cred.expira_em, cred.redefinida_em) == (prazo, redefinida)
+    # Leitura, nao transacao de escrita: entrar nao muda `usuarios`.
+    assert con.sql_que_contem("READ ONLY")
+    _sql, params = con.sql_que_contem("SELECT u.id_usuario, u.senha_hash")[0]
+    assert params == ("vinicius",)
+
+
+def test_o_login_e_normalizado_antes_de_consultar(monkeypatch: pytest.MonkeyPatch) -> None:
+    con = _instalar(
+        monkeypatch, {"SELECT u.id_usuario, u.senha_hash": [(7, "h", False, None, None)]}
+    )
+    mod.credenciais_por_login("  vinicius  ")
+    _sql, params = con.sql_que_contem("SELECT u.id_usuario, u.senha_hash")[0]
+    assert params == ("vinicius",), "espaco em volta do login viraria login inexistente"
+
+
+def test_login_inexistente_e_login_inativo_dao_O_MESMO_None(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Decisao de seguranca, nao economia.
+
+    O `AND u.ativo` da consulta faz o desativado nao voltar linha -- igual a quem nunca existiu.
+    Distinguir os dois entregaria ao visitante um oraculo de quem trabalha aqui.
+    """
+    _instalar(monkeypatch, {"SELECT u.id_usuario, u.senha_hash": []})
+    assert mod.credenciais_por_login("fantasma") is None
+    assert "AND u.ativo" in mod.SQL_CREDENCIAL_POR_LOGIN
+
+
+def test_login_vazio_nao_consulta_o_banco(monkeypatch: pytest.MonkeyPatch) -> None:
+    con = _instalar(monkeypatch, {"SELECT u.id_usuario, u.senha_hash": [(7, "h", False)]})
+    assert mod.credenciais_por_login("") is None
+    assert mod.credenciais_por_login("   ") is None
+    assert con.executados == [], "consultou o banco sem login para procurar"
+
+
+def test_o_hash_nao_aparece_no_repr_da_credencial() -> None:
+    """A razao do `repr=False`: dataclass imprime todos os campos, e um traceback -- ou um
+    `_LOG.debug("%s", cred)` distraido -- levaria o hash para o log. O hash nao e' a senha, mas
+    e' material de ataque offline se o log vazar."""
+    cred = mod.Credencial(id_usuario=7, deve_trocar=False, senha_hash="$argon2id$SEGREDO")
+    assert "SEGREDO" not in repr(cred)
+    assert cred.senha_hash == "$argon2id$SEGREDO", "esconder do repr nao pode esconder do codigo"
+
+
+def test_o_login_nao_trava_a_linha_de_usuarios() -> None:
+    """`FOR UPDATE` aqui serializaria as tentativas de login da mesma pessoa e poria ESCRITA no
+    caminho de quem so' quer entrar. As duas constantes vizinhas travam de proposito -- elas sao
+    dos fluxos de TROCA e de ADMINISTRACAO."""
+    assert "FOR UPDATE" not in mod.SQL_CREDENCIAL_POR_LOGIN
+    assert "FOR UPDATE" in mod.SQL_ESTADO_DA_SENHA
+
+
 def test_listar_traz_inativos(monkeypatch: pytest.MonkeyPatch) -> None:
     """Esconder quem foi desativado tornaria a REATIVAÇÃO impossível pela tela."""
-    inativo = (8, "quem_saiu", "Quem Saiu", "q@ultra.com", "expansao", False, None, None, False, True)
+    inativo = (
+        8,
+        "quem_saiu",
+        "Quem Saiu",
+        "q@ultra.com",
+        "expansao",
+        False,
+        None,
+        None,
+        False,
+        True,
+    )
     con = _instalar(monkeypatch, {"FROM usuarios u": [LINHA_LISTA, inativo]})
     lista = mod.listar()
     assert [u.ativo for u in lista] == [True, False]
@@ -126,7 +221,18 @@ def test_listar_traz_o_estado_da_senha_de_cada_um(monkeypatch: pytest.MonkeyPatc
     definir agora?". Um admin pode forçar troca de quem já definiu, e nesse caso as duas são
     verdadeiras ao mesmo tempo — colapsá-las numa só perderia justamente esse caso.
     """
-    inativo = (8, "quem_saiu", "Quem Saiu", "q@ultra.com", "expansao", False, None, None, False, True)
+    inativo = (
+        8,
+        "quem_saiu",
+        "Quem Saiu",
+        "q@ultra.com",
+        "expansao",
+        False,
+        None,
+        None,
+        False,
+        True,
+    )
     _instalar(monkeypatch, {"FROM usuarios u": [LINHA_LISTA, inativo]})
     lista = mod.listar()
     assert [u.senha_propria for u in lista] == [True, False]
@@ -448,8 +554,12 @@ def test_criar_com_perfil_inexistente_nao_escreve(
 
 @pytest.mark.parametrize(
     ("login", "nome", "email"),
-    [("", "Ana", "ana@ultra.com"), ("ana", "", "ana@ultra.com"), ("ana", "Ana", ""),
-     ("ana", "Ana", "sem-arroba")],
+    [
+        ("", "Ana", "ana@ultra.com"),
+        ("ana", "", "ana@ultra.com"),
+        ("ana", "Ana", ""),
+        ("ana", "Ana", "sem-arroba"),
+    ],
 )
 def test_criar_recusa_campo_vazio_ou_email_invalido(
     monkeypatch: pytest.MonkeyPatch, _sem_argon2: None, login: str, nome: str, email: str
@@ -523,7 +633,9 @@ def test_trocar_a_propria_senha_grava_e_registra(
 
     monkeypatch.setattr(senhas, "verificar", lambda _s, _h: True)
     con = _con_senha(monkeypatch, ja_definiu=False)
-    saida = mod.trocar_a_propria_senha(autor=7, senha_atual="a-inicial", nova_senha="uma frase longa")
+    saida = mod.trocar_a_propria_senha(
+        autor=7, senha_atual="a-inicial", nova_senha="uma frase longa"
+    )
 
     assert con.executados[0][0] == postgres.SQL_DEFINIR_AUTOR
     assert len(con.sql_que_contem("SET senha_hash")) == 1
@@ -618,25 +730,90 @@ def _con_senha_admin(
 def test_redefinir_grava_o_espelho_de_quem_nasce_pela_tela(
     monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
 ) -> None:
-    """Hash da inicial, data NULA e marca ligada -- as tres colunas da 016, no mesmo UPDATE."""
+    """Data NULA, marca ligada, PRAZO e momento da redefinicao -- tudo no mesmo UPDATE.
+
+    O prazo e o momento nao sao enfeite: o primeiro e' o que faz a senha temporaria morrer, e o
+    segundo e' o PISO da trava de tentativas, sem o qual quem errou cinco vezes antes de ligar
+    continuaria barrado com a senha nova na mao.
+    """
+    from motor_expansao.db import senhas
+
     con = _con_senha_admin(monkeypatch, propria=True, deve_trocar=False)
     mod.redefinir_senha(9, autor=7)
 
     sql, params = con.sql_que_contem("SET senha_hash")[0]
     assert "senha_definida_em_usuario = NULL" in sql
     assert "deve_trocar_senha_usuario = TRUE" in sql
-    assert params == (HASH_FALSO, 9)
+    assert "senha_expira_em_usuario = now() + make_interval(hours => %s)" in sql
+    assert "senha_redefinida_em_usuario = now()" in sql
+    assert params == (HASH_FALSO, senhas.VALIDADE_TEMPORARIA_H, 9)
 
 
-def test_redefinir_grava_o_que_o_modulo_de_senha_produziu(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A ligacao, nao o algoritmo -- mesmo desenho do teste da criacao."""
+def test_o_hash_gravado_e_o_da_senha_DEVOLVIDA(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ligacao que sustenta tudo: o que o admin le' e' o que abre a conta.
+
+    Se `gerar_temporaria` e o hash se desencontrassem, a rota entregaria ao administrador uma
+    senha que nao funciona -- e o sintoma (pessoa nao entra) seria indistinguivel de senha
+    digitada errado. Por isso o dublê aqui CAPTURA o texto que foi hasheado e o compara com o
+    que a funcao devolveu.
+    """
     from motor_expansao.db import senhas
 
+    hasheadas: list[str] = []
     sentinela = "$argon2id$v=19$m=65536,t=3,p=4$UkVERUZJTklS$c2VudGluZWxh"
-    monkeypatch.setattr(senhas, "hash_da_senha_inicial", lambda: sentinela)
+
+    def _gerar(senha: str) -> str:
+        hasheadas.append(senha)
+        return sentinela
+
+    monkeypatch.setattr(senhas, "gerar", _gerar)
     con = _con_senha_admin(monkeypatch, propria=False, deve_trocar=True)
-    mod.redefinir_senha(9, autor=7)
+    saida = mod.redefinir_senha(9, autor=7)
+
     assert con.sql_que_contem("SET senha_hash")[0][1][0] == sentinela
+    assert hasheadas == [saida["senha_temporaria"]]
+
+
+def test_duas_redefinicoes_dao_senhas_DIFERENTES(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """Toda a diferenca em relacao ao que existia ate' 18/09/2026.
+
+    Antes, redefinir entregava `MOTOR_SENHA_INICIAL` -- a MESMA senha para todo mundo, sempre.
+    Este teste fica vermelho se alguem voltar a uma senha compartilhada, inclusive por engano
+    (uma constante no lugar da chamada ao gerador).
+    """
+    con = _con_senha_admin(monkeypatch, propria=True, deve_trocar=False)
+    primeira = mod.redefinir_senha(9, autor=7)["senha_temporaria"]
+    con.executados.clear()
+    segunda = mod.redefinir_senha(9, autor=7)["senha_temporaria"]
+    assert primeira != segunda
+
+
+def test_a_senha_temporaria_NUNCA_entra_no_evento(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """`eventos` e' append-only e lido por quem audita: senha ali dentro seria vazamento perene."""
+    con = _con_senha_admin(monkeypatch, propria=True, deve_trocar=False)
+    saida = mod.redefinir_senha(9, autor=7)
+
+    achatado = " ".join(str(v) for v in con.eventos[0][4].obj.values())
+    assert saida["senha_temporaria"] not in achatado
+    assert not (set(con.eventos[0][4].obj) & {"senha", "senha_temporaria", "hash"})
+
+
+def test_trocar_a_propria_senha_ZERA_o_prazo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A razao de existir do `ck_usuarios_prazo_exige_troca` (019), em forma executavel.
+
+    Quem sai da senha temporaria para a sua escolheu uma senha que NAO expira. Deixar o prazo da
+    temporaria para tras daria senha propria com validade -- e o sintoma seria a pessoa barrada
+    com a senha CERTA, lendo "Login ou senha incorretos", dias depois, sem nada que ligue uma
+    coisa a outra. O banco recusa a escrita pelo CHECK; este teste pega antes, no SQL.
+    """
+    assert "senha_expira_em_usuario = NULL" in mod.SQL_DEFINIR_SENHA, (
+        "trocar a propria senha parou de zerar o prazo: o CHECK da 019 vai recusar a escrita"
+    )
+    assert "deve_trocar_senha_usuario = FALSE" in mod.SQL_DEFINIR_SENHA
 
 
 def test_redefinir_registra_com_as_duas_pessoas_nos_lugares_certos(
@@ -661,9 +838,16 @@ def test_redefinir_diz_se_apagou_uma_senha_escolhida(
 
     E so' isso: nem a senha, nem o hash, nem parte de nenhum dos dois.
     """
+    from motor_expansao.db import senhas
+
     con = _con_senha_admin(monkeypatch, propria=propria, deve_trocar=not propria)
     saida = mod.redefinir_senha(9, autor=7)
-    assert con.eventos[0][4].obj == {"tinha_senha_propria": propria}
+    assert con.eventos[0][4].obj == {
+        "tinha_senha_propria": propria,
+        # Politica APLICADA, nao segredo: responde "por quanto tempo aquela senha valeu" a quem
+        # audita meses depois, quando a constante ja' pode ter outro valor.
+        "validade_horas": senhas.VALIDADE_TEMPORARIA_H,
+    }
     assert saida["tinha_senha_propria"] is propria
 
 
@@ -687,16 +871,23 @@ def test_ninguem_redefine_a_propria_senha_por_aqui(
     assert con.executados == []
 
 
-def test_redefinir_sem_senha_inicial_nao_escreve_nada(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A falta da env aparece ANTES da transacao -- nada fica meio feito."""
+def test_redefinir_sem_poder_hashear_nao_escreve_nada(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A falha de hash aparece ANTES da transacao -- nada fica meio feito.
+
+    Ate' 18/09/2026 o que faltava aqui era a env `MOTOR_SENHA_INICIAL`; agora a senha nasce do
+    proprio modulo e a unica falha possivel neste ponto e' a biblioteca de hash ausente. A
+    GARANTIA e' a mesma e e' ela que importa: nenhuma escrita comeca sem a senha pronta, senao
+    a linha ficaria com marca de troca e um hash que ninguem conhece -- conta perdida, sem
+    caminho de volta a nao ser outro clique de redefinicao.
+    """
     from motor_expansao.db import senhas
 
-    def _sem_env() -> str:
-        raise senhas.SenhaInicialNaoConfigurada("MOTOR_SENHA_INICIAL não está definida.")
+    def _sem_biblioteca(_senha: str) -> str:
+        raise senhas.HashIndisponivel("argon2-cffi não está instalado.")
 
-    monkeypatch.setattr(senhas, "hash_da_senha_inicial", _sem_env)
+    monkeypatch.setattr(senhas, "gerar", _sem_biblioteca)
     con = _con_senha_admin(monkeypatch, propria=True, deve_trocar=False)
-    with pytest.raises(senhas.SenhaInicialNaoConfigurada):
+    with pytest.raises(senhas.HashIndisponivel):
         mod.redefinir_senha(9, autor=7)
     assert con.executados == []
 

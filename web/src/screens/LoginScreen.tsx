@@ -3,6 +3,11 @@ import { useEffect, useId, useRef, useState } from 'react'
 import MalhaBrasil from '../components/login/MalhaBrasil'
 /* O logo entra por IMPORT, e não pelo caminho `/logo-ultra.png` que o Dock usa.
 
+   MUDA NO CORTE DO P19 (DEC-067): a partir dele esta tela é servida pelo host do PILOTO
+   (`deploy/caddy/piloto-br.Caddyfile.template`) e fala com o NOSSO backend. O `auth.`
+   continua existindo — a instância AR depende dele. O parágrafo abaixo descreve o estado
+   de ANTES do corte, e o que ele diz sobre origem/cookie segue valendo nos dois.
+
    Esta tela é servida na raiz de `auth.ultra-expansao.tech`, onde só a página e o
    prefixo `entrar-assets/` vêm do nosso container — a raiz do host pertence ao
    Authelia. Um `src="/logo-ultra.png"` cairia lá e o logo sumiria EM PRODUÇÃO, sem
@@ -35,10 +40,13 @@ import { useUfsDaBase } from '../lib/base-contexto'
  * As decisões de segurança que a tela já respeita, e que não são pintura:
  *
  *  - a mensagem de credencial é AMBÍGUA entre usuário e senha, de propósito;
- *  - o bloqueio por tentativas tem mensagem PRÓPRIA (o Authelia bane por 10 min após 4
- *    erros em 2 min — `regulation`, lido na VPS em 2026-09-22): traduzi-lo como "senha
- *    errada" deixaria a pessoa repetindo a senha certa durante o banimento;
- *  - campo vazio não vai ao servidor, para não gastar uma das 4 tentativas;
+ *  - o bloqueio por tentativas tem mensagem PRÓPRIA: traduzi-lo como "senha errada"
+ *    deixaria a pessoa repetindo a senha certa enquanto a trava dura. A régua é a do
+ *    NOSSO servidor desde 25/09/2026 — `MAX_TENTATIVAS` recusas numa janela MÓVEL de
+ *    `JANELA_TENTATIVAS_MIN` minutos (`lib/login-motor.ts`, espelhando `db/sessoes.py`).
+ *    Até essa data este comentário descrevia o `regulation` do Authelia (4 erros em
+ *    2 min, banimento de 10 min), que deixa de existir no corte;
+ *  - campo vazio não vai ao servidor, para não gastar uma das tentativas da trava;
  *  - o `<form>` é `<form>` de verdade, com `type="submit"`: o Enter no campo de senha
  *    precisa entrar, e gerenciador de senha precisa reconhecer o par.
  *
@@ -97,8 +105,9 @@ export default function LoginScreen({
    * navegador o entrega. Por isso `enviar` não usa o estado do React.
    *
    * A trava "campo vazio não vai ao servidor" fica de pé: sem autofill nada muda, e
-   * ela existe para não gastar uma das 4 tentativas que o Authelia conta antes de
-   * banir por 10 minutos.
+   * ela existe para não gastar uma das tentativas da trava do servidor (`MAX_TENTATIVAS`,
+   * em `lib/login-motor.ts`) antes de
+   * barrar a conta ate' a tentativa mais antiga envelhecer na janela.
    */
   const refUsuario = useRef<HTMLInputElement>(null)
   const refSenha = useRef<HTMLInputElement>(null)
@@ -157,8 +166,8 @@ export default function LoginScreen({
     const usuarioEnviado = refUsuario.current?.value || usuario
     const senhaEnviada = refSenha.current?.value || senha
     if (!usuarioEnviado.trim() || !senhaEnviada) {
-      // O autofill prometeu conteúdo e o DOM não entregou: não gasta uma das 4
-      // tentativas que o Authelia conta antes de banir por 10 minutos.
+      // O autofill prometeu conteúdo e o DOM não entregou: não gasta uma das
+      // tentativas da trava do servidor (`MAX_TENTATIVAS`, em `lib/login-motor.ts`).
       setFalha('credencial')
       return
     }

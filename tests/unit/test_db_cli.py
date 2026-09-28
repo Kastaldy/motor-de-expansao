@@ -87,10 +87,20 @@ def test_hash_ignora_fim_de_linha(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert cli._sha256_do_arquivo("x.sql") == com_crlf
 
 
-def test_o_contrato_conferido_cobre_as_11_tabelas_do_modelo() -> None:
+def test_o_contrato_conferido_cobre_as_12_tabelas_do_modelo() -> None:
     """A lista de `conferir` e a da §0 da `verificacao.md` tem de ser a MESMA: se
-    divergirem, a ferramenta passa a atestar um contrato que o documento nao descreve."""
-    assert len(cli.TABELAS_DO_MODELO) == 11
+    divergirem, a ferramenta passa a atestar um contrato que o documento nao descreve.
+
+    Eram ONZE ate' a D30, que somou `sessoes` (migration 018). O nome deste teste carrega o
+    numero pelo mesmo motivo que o do `..._as_8_funcoes` logo abaixo: numero no nome que
+    deixou de ser o numero e' a deriva doc-contra-codigo que esta suite existe para pegar.
+
+    ESTE ARQUIVO E' O QUARTO LUGAR onde os numeros da §0 vivem -- os outros tres sao a
+    propria `verificacao.md`, o `NUMEROS_DA_SECAO_ZERO` do `cli.py` e o `test_migracoes.py`.
+    A nota da 018 dizia "tres lugares" ate' esta assercao ficar vermelha com `12 == 11`, e
+    foi corrigida la'.
+    """
+    assert len(cli.TABELAS_DO_MODELO) == 12
     assert postgres.TABELA_MIGRACOES not in cli.TABELAS_DO_MODELO, (
         "a tabela de controle e' do motor, nao do modelo — some-la mudaria os seis numeros"
     )
@@ -136,13 +146,25 @@ def test_sql_de_registro_e_idempotente() -> None:
 def test_contagens_conferem_com_os_seis_numeros_da_secao_zero() -> None:
     esperado: dict[str, Any] = dict(cli.NUMEROS_DA_SECAO_ZERO)
     assert esperado == {
-        # 46 desde a D24: os tres indices de expressao sobre `metadados` (o de
+        # 49 desde a D30, que criou `sessoes` (migration 018) e somou tres: o de PK, o
+        # UNIQUE de `token_hash_sessao` (a consulta quente) e o da FK `id_usuario`. Era 46
+        # desde a D24 (os tres indices de expressao sobre `metadados`; o de
         # `idx_usuarios_login_ativo` da D23 levou de 42 a 43). Este numero e o da §0
         # da `verificacao.md` tem de andar JUNTOS — se um ficar para tras, um banco
         # correto passa a acusar DIVERGENTE.
-        "indices": 46,
-        "constraints CHECK": 12,
-        "chaves estrangeiras": 11,
+        "indices": 49,
+        # 14 desde a 019: `ck_usuarios_prazo_exige_troca`, que impede senha PROPRIA com prazo
+        # de validade -- o estado que faria a pessoa ser barrada com a senha certa. Era 13 desde
+        # a D30 (`chk_sessao_expira_apos_criacao`, a guarda contra sessao que nasce vencida --
+        # sem ela a pessoa veria "sessao expirada" logo apos digitar a senha certa, que e' o pior
+        # diagnostico possivel). Desde 18/09/2026 este numero tambem e' conferido contra as
+        # MIGRATIONS, e nao so' contra um banco vivo, por `test_migracoes.py` -- ate' entao nada
+        # o cobria no CI, que nao tem Postgres.
+        "constraints CHECK": 14,
+        # 12 desde a D30: `sessoes.id_usuario`, a UNICA FK do modelo com ON DELETE CASCADE
+        # (sessao nao e' registro a preservar, e sessao orfa decidindo acesso e' o que nao
+        # se quer). Toda FK ganha indice, e e' por isso que os indices somaram 3 e nao 2.
+        "chaves estrangeiras": 12,
         # 7 desde a D29: a guarda de coerencia (migration 017) poe uma trigger em
         # `areas_estudo` e outra em `contratos`. Mesma regra do numero acima -- este e o da
         # §0 da `verificacao.md` andam JUNTOS, senao um banco correto acusa DIVERGENTE.
@@ -220,6 +242,13 @@ _D20_DE_PE: dict[str, Any] = {
     "has_sequence_privilege": True,
     "'usuarios', 'UPDATE'": True,
     "spatial_ref_sys": True,
+    # `sessoes` (D30), acrescentada em 23/09/2026. Um cluster "provisionado como o D20 manda"
+    # passou a incluir a escrita na sessao -- e o `DELETE` NEGADO, porque revogar e' `UPDATE`
+    # de `revogada_em_sessao` e o expurgo de retencao anonimiza em vez de apagar.
+    "'sessoes', 'INSERT'": True,
+    "'sessoes', 'UPDATE'": True,
+    "'sessoes', 'SELECT'": True,
+    "'sessoes', 'DELETE'": False,
     "tgenabled": "A",
 }
 
@@ -570,3 +599,252 @@ def test_estado_so_le(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFix
     assert con.commits == 0
     assert con.corpos_de_migration == []
     assert "migrations no manifesto" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------------------
+# `expurgar` — a retencao da origem das sessoes (P15, prazo fechado em 23/09/2026)
+# --------------------------------------------------------------------------------------
+
+
+class _ConExpurgo(_ConMigracoes):
+    """Reusa o dublê de migrations: ele tem `commit` contado, que e' o que importa aqui."""
+
+    def __init__(self, pendentes: int) -> None:
+        super().__init__()
+        self.pendentes = pendentes
+        self.rowcount = 0
+
+    def execute(self, sql: str, params: Any = None) -> Any:
+        from motor_expansao.db import sessoes
+
+        self.executados.append((sql, params))
+        if sql == sessoes.SQL_CONTAR_ORIGEM_VENCIDA:
+            self._valor = [(self.pendentes,)]
+            self.rowcount = 0
+        elif sql == sessoes.SQL_EXPURGAR_ORIGEM:
+            self._valor = []
+            self.rowcount = self.pendentes
+        else:  # pragma: no cover - nao deve haver outra consulta
+            self._valor = []
+        return self
+
+
+def _rodar_expurgo(
+    monkeypatch: pytest.MonkeyPatch, pendentes: int, *, simular: bool = False
+) -> tuple[int, _ConExpurgo]:
+    con = _ConExpurgo(pendentes)
+    monkeypatch.setattr(cli, "_conectar_para_ddl", lambda: con)
+    argv = ["expurgar", "--simular"] if simular else ["expurgar"]
+    return cli.main(argv), con
+
+
+def test_expurgar_ESCREVE_e_commita(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O commit e' EXPLICITO, como em `aplicar` e `registrar`.
+
+    Ate' 23/09/2026 este era o unico comando do CLI que dependia do `with` do psycopg para
+    commitar. Funcionava -- mas uma troca futura por `connect()/close()` faria o cron imprimir
+    "anonimizadas: N" com ROLLBACK silencioso. Numa politica de retencao, relatar remocao que
+    nao aconteceu e' o pior desfecho possivel, porque ninguem vai conferir.
+    """
+    from motor_expansao.db import sessoes
+
+    codigo, con = _rodar_expurgo(monkeypatch, pendentes=7)
+    assert codigo == 0
+    assert any(sql == sessoes.SQL_EXPURGAR_ORIGEM for sql, _p in con.executados)
+    assert con.commits == 1, "o expurgo escreveu sem commitar"
+
+
+def test_expurgar_manda_o_prazo_DECIDIDO(monkeypatch: pytest.MonkeyPatch) -> None:
+    """90 dias, da constante -- nao um numero digitado no comando."""
+    from motor_expansao.db import sessoes
+
+    _codigo, con = _rodar_expurgo(monkeypatch, pendentes=3)
+    for sql, params in con.executados:
+        if sql in (sessoes.SQL_EXPURGAR_ORIGEM, sessoes.SQL_CONTAR_ORIGEM_VENCIDA):
+            assert params == (sessoes.RETENCAO_ORIGEM_DIAS,)
+
+
+def test_expurgar_SIMULAR_nao_escreve_nem_commita(monkeypatch: pytest.MonkeyPatch) -> None:
+    """E' o smoke que a instalacao do cron manda rodar primeiro. Um modo seco que escreve
+    nao e' seco -- e aqui o que ele escreveria seria a REMOCAO de dado."""
+    from motor_expansao.db import sessoes
+
+    codigo, con = _rodar_expurgo(monkeypatch, pendentes=5, simular=True)
+    assert codigo == 0
+    assert not any(sql == sessoes.SQL_EXPURGAR_ORIGEM for sql, _p in con.executados)
+    assert con.commits == 0
+
+
+def test_expurgar_sem_nada_vencido_nao_escreve(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Idempotencia vista de fora: rodado todo dia, na maioria deles nao ha' o que fazer, e
+    nesses o comando nao pode tocar no banco."""
+    from motor_expansao.db import sessoes
+
+    codigo, con = _rodar_expurgo(monkeypatch, pendentes=0)
+    assert codigo == 0
+    assert not any(sql == sessoes.SQL_EXPURGAR_ORIGEM for sql, _p in con.executados)
+    assert con.commits == 0
+
+
+def test_privilegios_COBRE_sessoes() -> None:
+    """A checagem de `sessoes` tem de EXISTIR, e nao so' passar quando existe.
+
+    Sem esta assercao, apagar as duas checagens positivas deixaria a suite inteira verde --
+    e o `db privilegios`, que existe para provar o D20, voltaria a passar no exato cenario em
+    que o login morre: `sessoes` sem `GRANT` para o papel `app`.
+
+    E esse cenario NAO e' hipotetico em producao. O `ALTER DEFAULT PRIVILEGES` do
+    `papeis-e-privilegios.md` §6 diz `FOR ROLE postgres`, e so' alcanca objetos criados por
+    AQUELE papel -- mas o dono do schema em producao e' `reservas_owner`. A `sessoes`, criada
+    pela migration 018, nao herda nada, e o sintoma so' apareceria no dia da virada da chave.
+    O documento ja' nomeava a armadilha ("as tabelas novas nascem sem GRANT e ninguem
+    percebe"); o que faltava era alguem PERGUNTAR, e e' isto aqui.
+    """
+    positivas = " | ".join(sql for _rot, sql, _por in cli._checagens_positivas())
+    assert "'sessoes', 'INSERT'" in positivas
+    assert "'sessoes', 'UPDATE'" in positivas
+    assert "'sessoes', 'SELECT'" in positivas
+    assert "sessoes_id_sessao_seq" in positivas, (
+        "a sequence da sessao: `GRANT INSERT` na tabela NAO a cobre, e o login morre so' em "
+        "runtime -- mesma armadilha da sequence de eventos"
+    )
+
+    negativas = " | ".join(sql for _rot, sql, _por in cli._checagens_negativas())
+    assert "'sessoes', 'DELETE'" in negativas, (
+        "revogar e' UPDATE e o expurgo anonimiza; `DELETE` em `sessoes` significa que o "
+        "provisionamento foi afrouxado sem a decisao acompanhar"
+    )
+
+
+def test_privilegios_NAO_estoura_com_objeto_ausente(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rodar contra um banco que ainda nao recebeu a 018 tem de RELATAR, nao explodir.
+
+    `has_table_privilege('sessoes', ...)` LEVANTA quando a tabela nao existe, em vez de devolver
+    falso. Ate' 25/09/2026 isso derrubava o comando inteiro com `UndefinedTable` e um traceback
+    cru no meio do relatorio -- medido contra um banco real sem a 018.
+
+    E o cenario e' NATURAL: conferir o estado ANTES de aplicar e' a primeira coisa que o operador
+    faz. Um traceback ali manda investigar o provisionamento, que esta' certo.
+
+    ESTE TESTE NASCEU DE UM ERRO DE JULGAMENTO: tres verificadores independentes classificaram
+    este risco como refutado; rodar contra o banco real mostrou que era verdadeiro. Voto de
+    maioria nao substitui execucao.
+    """
+    import psycopg
+
+    class _ConAusente(_ConPrivilegios):
+        def __init__(self) -> None:
+            super().__init__(dict(_D20_DE_PE))
+            self.rollbacks = 0
+
+        def execute(self, sql: str, params: Any = None) -> Any:
+            if "sessoes" in sql:
+                raise psycopg.errors.UndefinedTable('relação "sessoes" não existe')
+            return super().execute(sql, params)
+
+        def rollback(self) -> None:
+            self.rollbacks += 1
+
+    con = _ConAusente()
+    monkeypatch.setattr(cli, "_conectar_com_diagnostico", lambda _p, _u: con)
+    monkeypatch.setenv(postgres.ENV_URL, "postgresql://app@localhost/x")
+
+    codigo = cli.main(["privilegios"])
+
+    assert codigo == 1, "objeto ausente e' problema a relatar, nao sucesso"
+    assert con.rollbacks >= 1, (
+        "sem `rollback` a transacao fica abortada e TODA checagem seguinte falha com "
+        "`InFailedSqlTransaction` -- o relatorio mentiria sobre o resto"
+    )
+
+
+def test_o_sentinela_de_ausente_nao_e_False() -> None:
+    """`AUSENTE` e `False` respondem perguntas diferentes, e confundi-las inverte o diagnostico.
+
+    `False` = o papel NAO PODE (o `GRANT` falta). `AUSENTE` = o objeto nao existe (a MIGRATION
+    falta). Se o sentinela fosse falsy-e-indistinguivel, o relatorio acusaria privilegio faltando
+    e mandaria o operador mexer no provisionamento, que esta' correto.
+    """
+    assert cli.AUSENTE is not False
+    assert cli.AUSENTE is not None
+
+
+# --------------------------------------------------------------------------------------
+# `alinhar-senhas`: a classificacao, SEM banco (25/09/2026)
+# --------------------------------------------------------------------------------------
+#
+# O CI nao tem Postgres, e o unico teste do comando era de integracao -- pulava sem banco.
+# Ou seja, o comando que se roda contra o banco de PRODUCAO, no passo que o runbook chama de
+# "o unico que nao da' para desfazer depois", chegava a' VPS sem verificacao automatica.
+# A decisao foi extraida para `classificar_para_alinhar` e e' o que estes testes cobrem.
+
+#: `(id, login, hash, classe-vinda-do-SQL)` — a forma de `SQL_ESTADO_DA_SENHA_INICIAL`.
+_CONFERE = "$argon2id$hash-da-inicial"
+
+
+def _confere_com_a_inicial(h: str | None) -> bool:
+    return h == _CONFERE
+
+
+def test_classificar_poe_cada_linha_na_classe_certa() -> None:
+    por_classe = cli.classificar_para_alinhar(
+        [
+            (1, "dono", "$argon2id$propria-do-dono", "propria_ok"),
+            (2, "ana", "hash_de_teste_1", "propria_quebrada"),
+            (3, "bruno", _CONFERE, "sem_propria"),
+            (4, "carla", "hash_de_teste_2", "sem_propria"),
+        ],
+        _confere_com_a_inicial,
+    )
+    assert [login for _i, login in por_classe["propria_ok"]] == ["dono"]
+    assert [login for _i, login in por_classe["propria_quebrada"]] == ["ana"]
+    assert [login for _i, login in por_classe["sem_propria_ok"]] == ["bruno"]
+    assert [login for _i, login in por_classe["sem_propria"]] == ["carla"]
+
+
+def test_quem_escolheu_a_propria_senha_NUNCA_entra_na_lista_de_reescrita() -> None:
+    """A propriedade de seguranca do comando, e ela inclui o DONO do banco.
+
+    Um comando que "alinha todo mundo" derrubaria a senha de quem a escolheu -- no passo de
+    PREPARACAO do corte, e sem ninguem pedir. Nem `propria_ok` nem `propria_quebrada` podem
+    aparecer em `sem_propria`, que e' a unica classe que o comando reescreve.
+    """
+    por_classe = cli.classificar_para_alinhar(
+        [
+            (1, "dono", "$argon2id$propria-do-dono", "propria_ok"),
+            (2, "ana", None, "propria_quebrada"),
+            (3, "bruno", "$argon2id$de-OUTRA-senha", "propria_ok"),
+        ],
+        _confere_com_a_inicial,
+    )
+    assert por_classe["sem_propria"] == [], (
+        "alguem que escolheu a propria senha entrou na lista de reescrita"
+    )
+
+
+def test_hash_que_CONFERE_sai_da_lista_e_e_isso_que_torna_o_comando_idempotente() -> None:
+    """Rodar duas vezes nao reescreve, e o numero diz o que FALTA.
+
+    Sem esta separacao a saida diria "N seriam alinhadas" tanto num banco quebrado quanto num
+    ja' certo -- e quem rodasse o comando duas vezes nao distinguiria "funcionou" de "nao fez
+    nada". E' a mesma exigencia que o `cmd_expurgar` documenta para o proprio contador.
+    """
+    linhas = [(i, f"p{i}", _CONFERE, "sem_propria") for i in range(1, 4)]
+    por_classe = cli.classificar_para_alinhar(linhas, _confere_com_a_inicial)
+    assert len(por_classe["sem_propria_ok"]) == 3
+    assert por_classe["sem_propria"] == []
+
+
+def test_hash_NULO_de_quem_nunca_escolheu_entra_para_reescrita() -> None:
+    """`senha_hash` nulo nao e' "confere": e' pessoa que nao entra."""
+    por_classe = cli.classificar_para_alinhar(
+        [(1, "sem-hash", None, "sem_propria")], _confere_com_a_inicial
+    )
+    assert [login for _i, login in por_classe["sem_propria"]] == ["sem-hash"]
+
+
+def test_lista_vazia_nao_explode_e_devolve_as_quatro_classes() -> None:
+    """Banco recem-criado, sem usuario nenhum -- o caso da VPS antes do passo 0.a."""
+    por_classe = cli.classificar_para_alinhar([], _confere_com_a_inicial)
+    assert set(por_classe) == {"sem_propria_ok", "sem_propria", "propria_quebrada", "propria_ok"}
+    assert all(v == [] for v in por_classe.values())

@@ -21,6 +21,29 @@
 # `web_ar` mora no docker-compose.ar.yml (project motor-expansao-ar) — entao aqui
 # o alvo e' o container_name, que e' resolvido na rede compartilhada app_app_net.
 
+# ─────────────────────────────────────────────────────────────────────────────────
+# A AR FICA NO AUTHELIA, e isto e' DECISAO (Vinicius, 25/09/2026), nao esquecimento.
+#
+# O corte do P19 (DEC-067, D4) troca o alvo do `forward_auth` do Authelia para o nosso
+# `/api/verify` — mas SO' NO BR. O motivo e' medido e e' de dependencia: a sessao propria
+# vive em TABELA (D1/migration 018), e o `web_ar` NAO TEM BANCO — `docker-compose.ar.yml`
+# lista seis variaveis de ambiente e nenhuma e' `MOTOR_DATABASE_URL`. Sem banco nao ha'
+# tabela de sessao, logo o motor nao teria como autenticar ninguem deste lado.
+#
+# Apontar este bloco para o `web_ar` derrubaria a AR INTEIRA: a rota responderia 404 (a
+# chave desligada) ou 503 (sem banco), e o Caddy nega tudo que nao for 2xx — inclusive
+# para quem ja' estava dentro.
+#
+# CONSEQUENCIA QUE ISTO CRIA, e que precisa continuar verdadeira enquanto durar: o
+# servico `authelia` do `docker-compose.prod.yml` NAO pode ser removido no corte, e o
+# `users_database.yml` precisa seguir com as pessoas da AR. Passam a existir DOIS lugares
+# guardando quem entra — o banco (BR) e o arquivo do Authelia (AR) — e isso e' divida
+# declarada, nao desenho: quem sai da empresa tem de sair dos dois.
+#
+# Para a AR acompanhar o corte um dia, o pre-requisito e' o banco. Enquanto ele nao
+# existir, este bloco nao muda.
+# ─────────────────────────────────────────────────────────────────────────────────
+
 piloto-ar.ultra-expansao.tech {
     forward_auth authelia:9091 {
         uri /api/verify?rd=https://auth.ultra-expansao.tech

@@ -87,8 +87,18 @@ responde "quem sou eu" depois do login.
 
 Medido, e as duas já estão disponíveis:
 
-1. **Importar os hashes do Authelia.** O `users_database.yml` guarda `argon2id`, e a D26 escolheu os
-   mesmos parâmetros exatamente para isso. Ninguém redefine senha no dia da virada.
+1. ~~**Importar os hashes do Authelia.**~~ — **DESCARTADA em 25/09/2026**, e não por custo: o
+   dono informou que **todos os perfis, exceto o dele, usam a MESMA senha** hoje. Importar
+   copiaria uma senha compartilhada de um sistema para o outro, que é o estado que a D26 e a D31
+   existem para encerrar — e o único valor da importação era preservar senhas individuais, que
+   não existem. A compatibilidade técnica **segue real** (o hash carrega os próprios parâmetros;
+   medido em 25/09 que o nosso `verificar` aceita até hash de parâmetros diferentes); o que caiu
+   foi a utilidade. **Nunca houve ferramenta:** `python -m motor_expansao.db` não tem subcomando
+   de importação, e quatro documentos prometiam este caminho como disponível.
+
+   No lugar dela entra `db alinhar-senhas`, que é mais barato e resolve o problema real —
+   garantir que o hash guardado corresponde à senha compartilhada que a equipe digita. Ver
+   `docs/repasse_corte_p19.md`, passo 0.
 2. **Esvaziar a fila antes.** As pessoas podem definir senha própria **desde já**, e
    `senha_definida_em_usuario` é literalmente a fila: nulo = ainda na senha inicial. O P19 diz, com
    estas palavras, que essa coluna "é a fila que a epic precisa zerar".
@@ -111,8 +121,10 @@ o que não foi feito daqui.
 - **`BLK-SEC-03-FU2`** (revisão de acesso e offboarding) é pré-requisito prático: é dele que sai a
   conciliação entre `users_database.yml` e as linhas de `usuarios`. Já separado do FU1 em
   16/09/2026 justamente por sobreviver ao corte.
-- **`BLK-SEC-03-FU1`** (forçar TOTP no Authelia) está **adiado**: configura 2FA no componente que
-  sai. Se a epic ganhar data distante, ele volta à mesa.
+- **`BLK-SEC-03-FU1`** (forçar TOTP no Authelia) está **SEM OBJETO desde 22/09/2026**: a decisão 3
+  (§7) fechou que 2FA não entra no projeto por agora. Até aquela data ele estava só **adiado**, com
+  a ressalva de que "se a epic ganhar data distante, ele volta à mesa" — a decisão do dono substitui
+  essa ressalva. Reabrir o FU1 exige reabrir a decisão 3 antes, e não o contrário.
 
 ## 6. Armadilhas medidas
 
@@ -131,17 +143,97 @@ o que não foi feito daqui.
 
 Nenhuma destas foi tomada. Estão aqui para não serem descobertas no meio da implementação:
 
-1. **Onde a sessão vive** — cookie assinado (sem tabela) ou tabela de sessão no banco (migration
-   nova, revogação central, custo de leitura por requisição). O esquema **não** tem tabela de sessão
-   hoje.
-2. **Duração da sessão e inatividade.** O Authelia usa `inactivity: 30m`, e o `AvisoSessao` nasceu
-   dessa realidade — trocar o número muda a experiência de quem deixa a tela aberta.
-3. **2FA depois do corte** — se some junto com o Authelia, se é reconstruído, e se é obrigatório.
-   O `BLK-SEC-03-FU1` queria forçá-lo.
-4. **Recuperação de senha** — hoje não existe caminho nenhum: quem esquece depende de um admin
-   redefinir pela tela. Autoatendimento exige e-mail, que o piloto não envia.
-5. **A borda.** O Caddy deixa de fazer *forward-auth*; o que fica no lugar (e o que acontece com os
-   headers `Remote-*` que o RBAC lê hoje) é decisão de infraestrutura, com execução na VPS sob o §6.
+1. ~~**Onde a sessão vive**~~ — **DECIDIDA em 17/09/2026 pela D30: tabela** (`sessoes`,
+   `banco-de-reservas/sql/018-sessoes.md`). O "custo de leitura por requisição" que pesava contra
+   ela foi **medido e não existe**: as 26 regras de `REGRAS_POR_CAPACIDADE` já chamam
+   `rbac.identidade()` a cada requisição guardada, sem cache, e a validação de sessão entra como
+   **um JOIN na mesma consulta**. O que decidiu foi a **revogação central** — logout que invalida
+   de verdade, troca de senha derrubando sessões, admin expulsando alguém —, que cookie assinado
+   não tem. Contra o cookie pesaram também um segredo novo (logo após o `config.py` perder o
+   `SECRET_KEY` morto) e dependência nova na imagem: `itsdangerous` não está no `pyproject.toml`
+   nem no `constraints.txt`.
+2. ~~**Duração da sessão e inatividade**~~ — **DECIDIDA em 17/09/2026, sem `D`** (não toca schema):
+   **reproduzir** o Authelia — **8h** de teto absoluto, **30 min** de inatividade — e "lembrar de
+   mim" **fiel**, cookie persistente entre fechar e reabrir o navegador com os mesmos 8h (lá o
+   `remember_me` já é igual ao `expiration`, então isto reproduz e não estende). Reproduzir em vez
+   de escolher porque o comentário da configuração do Authelia registra que mexer nesses números
+   **derrubou o login da rede por ~4h em 06/08/2026** — e, com a tabela da D30, o número é coluna,
+   então mudá-lo depois é política e não código.
+   **Trava de 5 min na inatividade**, por medição: a validação roda em `SET TRANSACTION READ ONLY`,
+   onde o servidor recusa escrita, então reescrever `ultimo_acesso_em_sessao` exigiria uma SEGUNDA
+   transação por requisição guardada (`set_config` + `UPDATE` + `COMMIT`) sobre um pool de 4
+   conexões. Com a trava, a coluna só é reescrita se já tiver mais de 5 min — pior caso, alguém sai
+   aos 30 min em vez de ~35. Decidir se vale escrever é de graça: a consulta de validação já
+   devolve a coluna.
+   **Duas consequências para o front, que esta decisão já resolve:** (i) "lembrar de mim" é
+   **caixinha nova** no formulário de login — medido, não existe nada hoje (`lembrar`/`remember`:
+   zero ocorrências em `web/src`); (ii) a **sonda de `lib/sessao.ts` deixa de ser necessária para o
+   caso de sessão**, porque o portão próprio responde **401** e `relatarAcessoNegado()` já trata 401
+   direto, sem sondar. A sonda continua útil só para separar "backend fora do ar" de outras falhas
+   de rede — o 302→CORS→`TypeError` que a obrigou a existir morre com o Authelia.
+3. ~~**2FA depois do corte**~~ — **DECIDIDA em 22/09/2026, sem `D`** (não toca schema e não entra
+   código): **não entra no projeto por agora**, por decisão do dono.
+   **A premissa do enunciado anterior estava errada, e foi medida antes de perguntar:** não há 2FA
+   a perder. As duas regras do Authelia são `one_factor` (`authelia/configuration.yml`, e o
+   `plano_multipais.md` §514 já registrava isso ao tratar de outra coisa), e o `BLK-SEC-03-FU1`
+   existia justamente para **ligá-lo** — adiado em 16/09 por configurar 2FA no componente que sai.
+   Então o corte não remove nada; o que se decidiu foi **não acrescentar**. O FU1 fica **sem
+   objeto** enquanto esta decisão valer.
+   **CONSEQUÊNCIA QUE ESTA DECISÃO CRIA, e que o resto da epic herda:** a plataforma segue de
+   **fator único**. A senha passa a ser a única barreira, e tudo o que a protege carrega o peso
+   sozinho — a trava de 5 tentativas em 15 min, o prazo de 2 h da senha temporária e a revogação
+   de sessões na troca. **Nenhum deles tem rede por baixo**, então afrouxar qualquer um é decisão
+   de segurança, não de conveniência.
+
+   > **DOIS FORAM AFROUXADOS em 25/09/2026, por decisão do dono — e este parágrafo é o padrão que
+   > ele mesmo pré-registrou, então a mudança fica escrita aqui em vez de apagar a frase.**
+   > A lista acima tinha um quarto item, *"o bloqueio até a pessoa definir a própria (D31)"*, que
+   > valeu de 18/09 a 25/09: quem devia a troca levava 403 em toda rota de dados. **A troca voltou
+   > a ser RECOMENDADA** — `/api/me` devolve `deve_trocar` e a SPA abre o modal, que tem "Agora
+   > não". E o **piso de senha caiu de 12 para 8 caracteres**.
+   >
+   > O que isso custa, dito sem suavizar: quem recebe a senha inicial **compartilhada** pode ficar
+   > nela indefinidamente, e era essa janela que o bloqueio fechava no primeiro acesso. Com um
+   > fator só, o que restou segurando a senha são os **três** itens acima — a trava de tentativas
+   > é a que mais pesa agora, porque é a única que limita VOLUME.
+   >
+   > O 8 continua sendo o piso do próprio NIST SP 800-63B para senha escolhida por pessoa, então a
+   > política não saiu da referência que a justifica; o que encurtou foi a folga. Quem for mexer
+   > de novo em `MINIMO_DE_CARACTERES`, em `MAX_TENTATIVAS` ou em `JANELA_TENTATIVAS_MIN` precisa
+   > ler este bloco antes: depois destas duas mudanças, elas deixaram de ser independentes.
+
+   Custo operacional evitado, e que pesou: cadastrar TOTP exige as pessoas presentes, uma a uma
+   (`infra_producao.md:1026`), e perder o celular viraria um SEGUNDO caminho de recuperação, com
+   toda a discussão da decisão 4 repetida.
+4. ~~**Recuperação de senha**~~ — **DECIDIDA em 18/09/2026** (D31 + migration 019). Mediada por
+   administrador, **sem autoatendimento**: o piloto não envia e-mail, e essa foi a razão. Quem
+   esquece pede a um admin, que gera pelo painel de Acessos uma **senha temporária aleatória e só
+   daquela pessoa**, mostrada **uma única vez** e válida por **2 h** — gerar outra invalida a
+   anterior, e foi assim que "rever a senha durante a validade" foi atendido sem guardar nada
+   recuperável no banco.
+   > Esta linha ficou sem o tachado até 25/09/2026, enquanto as outras quatro já o tinham — e a
+   > omissão não era cosmética: a DEC-067 declara este item fechado e aponta para ESTA lista como
+   > a canônica, então quem viesse conferir encontrava aberto o que a DEC dá por resolvido. Junto
+   > com a numeração invertida no `CLAUDE.md` (que chamava a recuperação de "5a pergunta"), isso
+   > fazia três documentos discordarem sobre quais decisões estão de pé.
+5. **A borda.** **Corrigido em 25/09/2026:** até esta data esta linha dizia que *"o Caddy deixa de
+   fazer forward-auth"*, e a **DEC-067** (22/09/2026, `docs/decisions/DEC-067.md`, item **D4**)
+   propõe o OPOSTO — o Caddy **continua** fazendo `forward_auth`, mudando só o ALVO: do serviço
+   `authelia` para o nosso `/api/verify`. As duas premissas não podiam conviver (uma diz que a
+   borda some, a outra que ela fica), e **vale a da DEC**, que é o veículo canônico da decisão e é
+   mais recente que este levantamento (medido em 16/09).
+   ~~Segue **ABERTA**~~ — **DECIDIDA em 25/09/2026 por Vinicius: opção (b), a borda é
+   MANTIDA.** O Caddy continua fazendo `forward_auth`, repontado do Authelia para o nosso
+   `/api/verify` (rota escrita no mesmo dia). Era o último item aberto do §7, então **a data
+   do corte deixa de estar travada por decisão** — o que resta é execução manual na VPS, e
+   um pré-requisito medido: `MOTOR_AUTENTICACAO_PROPRIA` ainda não chega ao container
+   (`banco-de-reservas/decisoes-pendentes.md:39`). Continua sendo decisão de infraestrutura, com
+   execução na VPS sob o §6.
+   **Sobre os headers `Remote-*` que o RBAC lê hoje, a resposta já está no código e não depende da
+   borda:** com o portão ligado, o motor **apaga** `remote-user`/`remote-email` de toda requisição e
+   reinjeta `remote-user` a partir do COOKIE (`web/server/app.py:413-432` e `:469-472`), e
+   `Remote-Groups`/`Remote-Name` não têm leitor nenhum no piloto (`web/server/acesso.py:313-315`).
+   Ver a correção do D4 na DEC-067.
 
 ## 8. O que este documento não é
 

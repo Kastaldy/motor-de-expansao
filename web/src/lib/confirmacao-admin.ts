@@ -208,16 +208,24 @@ export function montarConfirmacao(
   if (acao.tipo === 'redefinir-senha') {
     return {
       eyebrow: 'Redefinir a senha de alguém',
-      titulo: `${acao.nome} volta para a senha inicial`,
+      titulo: `${acao.nome} recebe uma senha temporária`,
       apoio: [
         `Login ${acao.login}.`,
         acao.senhaPropria
-          ? 'A senha escolhida pela pessoa deixa de valer agora: a entrada volta a ser pela ' +
-            'senha inicial compartilhada, com a troca pedida em seguida.'
-          : 'A pessoa ainda não tinha definido a própria senha: a inicial é regravada e a troca ' +
-            'continua pendente.',
-        'Você não passa a conhecer a senha de ninguém — é a mesma senha inicial entregue a ' +
-          'quem é criado aqui. Fica registrado com o seu nome e a data.',
+          ? 'A senha escolhida pela pessoa deixa de valer agora, e as sessões abertas dela caem.'
+          : 'A pessoa ainda não tinha definido a própria senha — a troca continua pendente.',
+        // Antes de 18/09/2026 esta linha dizia o contrário ("você não passa a conhecer a senha
+        // de ninguém"), porque a redefinição entregava a senha inicial COMPARTILHADA. Ela
+        // deixou de ser verdade junto com a D31, e esconder isso do administrador seria pior
+        // que o próprio risco: ele precisa saber que está segurando uma credencial viva.
+        // "a pessoa terá de criar a própria ao entrar" caiu em 25/09/2026: era verdade enquanto
+        // a troca era BLOQUEIO (18/09 a 25/09), e o dono reverteu para RECOMENDADA. Sem a
+        // parede, quem adia continua na temporária até ela VENCER — e aí trava e volta para o
+        // administrador. Ele precisa ouvir o prazo, não uma obrigação que não existe.
+        'A senha aparece para você UMA ÚNICA VEZ, para repassar — não dá para consultá-la ' +
+          'depois. Ela vale poucas horas: avise que a pessoa precisa criar a própria DENTRO ' +
+          'desse prazo, porque o piloto oferece a troca mas não obriga, e depois disso a ' +
+          'temporária para de funcionar. Fica registrado com o seu nome e a data.',
         'Enquanto o Authelia autenticar, isto não muda como a pessoa entra hoje — prepara o dia ' +
           'em que o próprio sistema autenticar.',
       ],

@@ -35,14 +35,64 @@ um valor é editar esta tabela primeiro.
 | `tipo` | Quando | `entidade` | `metadados` |
 |---|---|---|---|
 | `login` | Entrada na plataforma | — | `origem` (`web`/`bot`) |
+| `login.recusado` | Tentativa que **não** entrou | — | `origem`, `usuario_conhecido` (booleano) |
 | `logout` | Saída explícita | — | — |
 | `ciencia.confidencialidade` | Clique no OK do pop-up de entrada | — | — |
 | `bot.autorizado` | Senha do bot aceita | — | `chat_hash` |
 
-> **`login` ainda não é registrável.** Enquanto o Authelia autenticar, a entrada não passa pelo
-> backend — o piloto só recebe o `Remote-User` já resolvido. O registro completo depende da epic de
-> autenticação decidida no **P19**. Até lá, o mais próximo é a primeira requisição da sessão, que a
-> trilha da DEC-027 já tem.
+> **`login` e `logout` ganharam PRODUTOR em 17/09/2026** (`db/eventos.registrar_login` /
+> `registrar_logout`), pela epic do **P19**. O que faltava nunca foi coluna: enquanto o Authelia
+> autentica, a entrada não passa pelo backend — o piloto só recebe o `Remote-User` já resolvido.
+>
+> **Produtor E CHAMADOR existem; o que falta é a chave.** *(Corrigido em 25/09/2026: esta nota
+> dizia "ainda não há chamador", e isso deixou de ser verdade quando as rotas foram escritas.)*
+> `POST /api/login` chama `registrar_login` e `registrar_login_recusado`, e `POST /api/logout`
+> chama `registrar_logout` (`web/server/app.py`). A distinção que fica de pé, e é outra: as duas
+> rotas respondem **404** enquanto `MOTOR_AUTENTICACAO_PROPRIA` estiver vazia, então hoje nenhuma
+> linha de `login` é escrita **em produção** — não por falta de chamador, mas porque o caminho
+> inteiro está dormente. Quem ligar a chave passa a ver as linhas no mesmo instante, sem mudar
+> uma linha de código.
+>
+> **Por que isto é reposição, e não conveniência.** O `docs/trilha_acesso_piloto.md` registra as
+> tentativas de login do Authelia — **sucesso e falha**, com usuário e IP — como a **camada 3** da
+> trilha, a que "responde quem entrou e quando". O corte do P19 remove essa camada junto com o
+> Authelia; sem estes dois eventos ela ficaria sem substituto.
+>
+> **`login.recusado` entrou em 18/09/2026**, e o que ele pode carregar é pequeno por decisões
+> alheias a esta seção — vale escrever para ninguém procurar o que não está lá:
+>
+> - **o IP fica FORA.** O **P15** (base legal e prazo) segue aberto, e há teste de contrato no
+>   motor que recusa qualquer `INSERT` em `eventos` mencionando a coluna. Quem guarda o IP da
+>   tentativa é a **trilha da DEC-027**, em arquivo, por 90 dias — e ela **já grava** o `POST
+>   /api/login` hoje (`relevante()` só exclui `/api/health`, `/assets/` e estáticos);
+> - **o login digitado fica fora** — a §2.7 proíbe login e e-mail em `metadados` (PII), e é
+>   justamente o único identificador quando o usuário digitado não existe;
+> - **o que sobra é o que importa:** login existente → `id_usuario` preenchido, e a pergunta
+>   "quantas tentativas falhas contra esta conta" ganha resposta. Login inexistente → autoria
+>   nula, e o `usuario_conhecido` separa **senha errada** de **varredura de nomes**, que são
+>   incidentes diferentes. Ele não vaza nada: vive no banco, nunca na resposta HTTP, que
+>   continua idêntica nos dois casos.
+>
+> **Registrar passou a barrar (18/09/2026).** Este é o primeiro evento do contrato com um
+> **consumidor de LEITURA em caminho quente**: `POST /api/login` conta os `login.recusado` da
+> conta nos últimos **15 minutos** e recusa a partir de **5**, antes de verificar a senha. Três
+> consequências que não se leem na tabela:
+>
+> - **a linha virou mecanismo, não só rastro.** Quem apagar `login.recusado` **destranca**
+>   contas: o expurgo da §8.2 do esquema deixou de ser operação puramente de retenção e passa a
+>   ter efeito de segurança. A janela de 15 min é muito menor que qualquer retenção praticada,
+>   então na prática o expurgo não alcança a janela — mas a dependência agora existe e precisa
+>   ser lida antes de se mexer em prazo de expurgo;
+> - **a tentativa BARRADA não vira evento**, de propósito. Se contasse, uma requisição por
+>   janela manteria a conta da vítima trancada para sempre e o contador nunca drenaria: a trava
+>   viraria a arma que ela existe para impedir. Fica só o aviso no log do operador;
+> - **a varredura de nomes inexistentes continua sem trava.** Sem `id_usuario` não há o que
+>   contar, e o IP — que resolveria — está fora pelo **P15**. Limitar por origem de rede segue
+>   em aberto; o que entrou foi a trava **por conta**.
+>
+> A trava **não é** nenhuma das cinco decisões numeradas da epic (a 3 é 2FA) — a nota anterior
+> desta seção dizia que era, e estava errada. Ela é item próprio, pedido em 18/09/2026, e o que
+> a destravou foi uma medição: o índice `idx_eventos_id_usuario_criado_em` já existia.
 
 ### 2.2 Geração de artefato — o núcleo do D17
 
@@ -338,11 +388,17 @@ daquela seção.
 > produtor e a §5 continuou anunciando que nada fora da §2.7 gravava. Contrato e implementação
 > andam juntos: quem acrescenta produtor edita as duas seções.
 
-**Não grava:** o que resta das famílias §2.1 a §2.6 — `login`, `logout`, `ciencia.confidencialidade`
-e `bot.autorizado` (§2.1), `cadastro.editado` (§2.3) — que a própria §2.3 manda **não** duplicar
-enquanto o log em arquivo existir — e a família inteira da §2.6, que depende da F5.4 existir. `login` segue sem produtor por outro motivo, e não por
-falta de coluna: enquanto o Authelia autenticar, a entrada não passa pelo motor — é o P19 que
-destrava esse, não a D26.
+**Não grava:** o que resta das famílias §2.1 a §2.6 — `ciencia.confidencialidade` e
+`bot.autorizado` (§2.1), `cadastro.editado` (§2.3) — que a própria §2.3 manda **não** duplicar
+enquanto o log em arquivo existir — e a família inteira da §2.6, que depende da F5.4 existir.
+
+**`login` e `logout` saíram desta lista em 17/09/2026**, e a ressalva MUDOU em 25/09: eles têm
+**produtor** (`registrar_login`/`registrar_logout`) **e chamador** — as rotas `POST /api/login` e
+`POST /api/logout` os invocam (`web/server/app.py`). *(Até 25/09 esta linha dizia "ainda não têm
+chamador", o que deixou de ser verdade quando as rotas foram escritas.)* O que ainda impede a
+escrita é a **chave**: as duas rotas respondem 404 com `MOTOR_AUTENTICACAO_PROPRIA` vazia. Então
+quem ler esta seção procurando linhas de `login` no banco não vai achar **até o corte** — e no dia
+do corte elas aparecem sozinhas, sem mudança de código.
 
 **O esquema comporta tudo isto.** A D24 fechou a última pendência de modelo e a `014` criou os
 índices que faltavam; a `015` acrescentou a capacidade que separa ver o painel de mudar quem entra.

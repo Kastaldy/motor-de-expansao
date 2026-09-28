@@ -16,8 +16,9 @@ describe('podeEnviar', () => {
   })
 
   it('usuario so com espaco nao conta como preenchido', () => {
-    /* Nao e' capricho: cada ida ao servidor gasta uma das 4 tentativas que o
-       `regulation` conta antes de bloquear por 10 minutos. */
+    /* Nao e' capricho: cada ida ao servidor gasta uma das tentativas da trava do NOSSO
+       servidor (`MAX_TENTATIVAS` em `lib/login-motor.ts`, espelhando `db/sessoes.py`). Ate'
+       25/09/2026 este comentario citava o `regulation` do Authelia, que sai no corte. */
     expect(podeEnviar('   ', 'segredo', 'parado')).toBe(false)
   })
 
@@ -46,7 +47,7 @@ describe('podeEnviar', () => {
     })
 
     it('nao afrouxa o resto: `enviando` continua bloqueando', () => {
-      // Duplo clique com autofill gastaria duas das 4 tentativas.
+      // Duplo clique com autofill gastaria DUAS tentativas da trava.
       expect(podeEnviar('', '', 'enviando', { usuario: true, senha: true })).toBe(false)
     })
 
@@ -62,7 +63,7 @@ describe('podeEnviar', () => {
   })
 
   it('nao envia duas vezes enquanto o primeiro envio esta em voo', () => {
-    // Duplo clique gastaria DUAS das 4 tentativas com a mesma credencial.
+    // Duplo clique gastaria DUAS tentativas da trava com a mesma credencial.
     expect(podeEnviar('felipe.silva', 'segredo', 'enviando')).toBe(false)
   })
 })
@@ -110,12 +111,20 @@ describe('MENSAGEM_FALHA', () => {
     expect(m).not.toMatch(/não existe|inexistente|não encontrado/)
   })
 
-  it('o bloqueio diz que e bloqueio, e por quanto tempo', () => {
-    /* A regua vem do `regulation` do Authelia (4 tentativas / 2 min / ban de 10 min).
-       Se ela mudar la, esta mensagem mente — e o teste e o lembrete disso. */
+  it('o bloqueio diz que e bloqueio e oferece uma saida, SEM prometer prazo', () => {
+    /* Ate' 25/09/2026 este teste exigia a string "10 minutos", que era o `ban_time` do
+       `regulation` do Authelia. A regua passou a ser a NOSSA — `MAX_TENTATIVAS` recusas
+       numa janela MOVEL de `JANELA_TENTATIVAS_MIN` minutos (`db/sessoes.py`) — e a
+       diferenca nao e' de numero, e' de NATUREZA: la' havia um relogio fixo para esperar;
+       aqui a janela DESLIZA, entao o que destrava e' a tentativa mais antiga envelhecer.
+       Prometer um prazo mandaria a pessoa esperar algo que nao existe.
+
+       O teste agora PROIBE o prazo em vez de exigi-lo, e cobra a saida que sempre
+       funciona: pedir a um administrador para redefinir (redefinir DESTRAVA a conta). */
     const m = MENSAGEM_FALHA.bloqueado.toLowerCase()
     expect(m).toContain('bloque')
-    expect(m).toContain('10 minutos')
+    expect(m).not.toMatch(/\d+\s*minutos?/)
+    expect(m).toContain('administrador')
   })
 
   it('e congelado', () => {

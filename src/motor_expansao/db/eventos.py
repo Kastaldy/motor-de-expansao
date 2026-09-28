@@ -33,9 +33,10 @@ chamador -- ver a nota em `web/server/app.py`, na rota do Pontual.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any
 
-from .postgres import transacao
+from .postgres import conexao, transacao
 
 #: Vocabulario de `tipo` do `docs/eventos_contrato.md` §2.2. Fora desta lista e' defeito.
 EVENTO_RELATORIO_GERADO = "relatorio.gerado"
@@ -49,6 +50,37 @@ EVENTO_VISITA_DESMARCADA = "imovel.visita_desmarcada"
 #: §2.5. SEM alvo de proposito -- ver a correcao de 16/09 naquela secao: nem o pedido nem o
 #: backend conhecem `hex_id`/`imovel_id`, e derivar da coordenada e' o que a §2.2 recusa.
 EVENTO_VIABILIDADE_CALCULADA = "viabilidade.calculada"
+
+#: §2.1, destravados pela epic do P19 (D30). Ate' aqui o contrato os listava como "ainda nao
+#: registravel", e o motivo nao era falta de coluna: enquanto o Authelia autentica, a entrada
+#: nao passa pelo motor -- o piloto so' recebe o `Remote-User` ja' resolvido.
+#:
+#: E ISTO NAO E' CONVENIENCIA DE AUDITORIA, E' REPOSICAO. O `docs/trilha_acesso_piloto.md` §22
+#: registra que as tentativas de login do Authelia -- sucesso E falha, com usuario e IP -- sao a
+#: CAMADA 3 da trilha, a que "responde quem entrou e quando". O corte remove essa camada, e
+#: sem estes dois eventos ela nao teria substituto nenhum.
+#:
+#: `metadados` leva SO' `origem`, pela regra da §2.7: "nunca o login nem o e-mail do alvo em
+#: `metadados`" -- e' PII, e o `id_usuario` do carimbo ja' identifica a pessoa. `logout` nao
+#: leva metadado algum, porque nao ha' o que qualificar numa saida explicita.
+EVENTO_LOGIN = "login"
+EVENTO_LOGOUT = "logout"
+
+#: Tentativa RECUSADA. Nao existia no contrato ate' 18/09/2026 -- a §2.1 previa so' o
+#: sucesso, e a propria nota de la' registrava a falta como decisao em aberto da epic.
+#:
+#: O QUE ELE PODE CARREGAR E' PEQUENO, E POR DECISAO ALHEIA A ESTE ARQUIVO:
+#:   * o IP fica FORA -- o P15 (base legal e prazo de retencao) segue aberto, e ha' teste
+#:     de contrato que recusa qualquer `INSERT` em `eventos` mencionando a coluna. Quem
+#:     guarda o IP da tentativa e' a trilha da DEC-027, em arquivo, por 90 dias;
+#:   * o LOGIN DIGITADO fica fora -- a §2.7 proibe login e e-mail em `metadados` (PII), e
+#:     e' exatamente o unico identificador quando o usuario digitado nao existe.
+#:
+#: Sobra o que importa: quando o login EXISTE, o `id_usuario` vai na coluna de autor, e a
+#: pergunta "quantas tentativas falhas contra esta conta" passa a ter resposta. Quando nao
+#: existe, a linha sai com autoria nula -- e e' o `usuario_conhecido` dos metadados que
+#: separa SENHA ERRADA de VARREDURA DE NOMES, que sao incidentes diferentes.
+EVENTO_LOGIN_RECUSADO = "login.recusado"
 
 #: As chaves de alvo sao CONTRATO, e o defeito de errar uma e' SILENCIOSO: a escrita passa,
 #: o evento cai fora do indice parcial, e ninguem descobre ate' a tabela crescer. O contrato
@@ -83,6 +115,51 @@ VALUES (%s, %s, NULL, NULL, %s)
 SQL_REGISTRAR_VIABILIDADE = """
 INSERT INTO eventos (id_usuario, tipo, entidade, entidade_id, metadados)
 VALUES (%s, %s, NULL, NULL, %s)
+"""
+
+# Acesso (§2.1). Constante propria pelo mesmo motivo das outras quatro: reusar faria o nome
+# mentir sobre o que a instrucao grava, e as duas podem divergir amanha -- `login` tem
+# `metadados` e `logout` nao tem nenhum, entao ja' nascem diferentes no CHAMADOR.
+SQL_REGISTRAR_ACESSO = """
+INSERT INTO eventos (id_usuario, tipo, entidade, entidade_id, metadados)
+VALUES (%s, %s, NULL, NULL, %s)
+"""
+
+# Quantas recusas esta conta acumulou na janela. SEM migration nova: o
+# `idx_eventos_id_usuario_criado_em` (005) cobre exatamente `(id_usuario, criado_em_evento)`,
+# que sao as duas colunas do recorte -- o `tipo` filtra o punhado de linhas que sobra.
+#
+# `make_interval(mins => %s)` e nao f-string: o SQL deste repo nao se monta por concatenacao.
+# O piso da contagem e' o MAIOR entre tres marcos, e cada um zera a conta por um motivo proprio:
+#
+#   1. o inicio da janela movel -- e' o que faz a tranca se soltar sozinha;
+#   2. a ultima redefinicao por administrador -- ele confirmou a identidade por fora, o que e'
+#      evidencia mais forte que a heuristica de cinco tentativas. Sem isto, quem errou cinco vezes
+#      ANTES de ligar receberia a senha nova e continuaria barrado, lendo a mesma mensagem de senha
+#      errada, sem nada que explicasse;
+#   3. o ultimo acesso BEM-SUCEDIDO -- acertar a senha prova que nao e' quem esta' adivinhando.
+#      Nao enfraquece a defesa: quem consegue entrar ja' tem a senha, e a trava existe para
+#      atrapalhar quem nao tem.
+#
+# A subconsulta do marco 3 e' presa a MESMA janela de proposito. Um acerto mais antigo que ela e'
+# irrelevante (as recusas daquele periodo tambem ja' nao contam), e sem esse recorte a varredura
+# poderia caminhar pelo historico inteiro de quem tem muitos eventos procurando um `login`. Com
+# ele, as duas varreduras ficam presas aos mesmos minutos de dados, pelo indice
+# `idx_eventos_id_usuario_criado_em`, que ja' existia.
+SQL_CONTAR_RECUSAS = """
+SELECT count(*) FROM eventos
+WHERE id_usuario = %s
+  AND tipo = %s
+  AND criado_em_evento > GREATEST(
+        now() - make_interval(mins => %s),
+        COALESCE(%s::timestamptz, '-infinity'::timestamptz),
+        COALESCE((
+          SELECT max(criado_em_evento) FROM eventos
+          WHERE id_usuario = %s
+            AND tipo = %s
+            AND criado_em_evento > now() - make_interval(mins => %s)
+        ), '-infinity'::timestamptz)
+      )
 """
 
 
@@ -232,3 +309,119 @@ def registrar_viabilidade(
             SQL_REGISTRAR_VIABILIDADE,
             (autor, EVENTO_VIABILIDADE_CALCULADA, Jsonb(metadados)),
         )
+
+
+def registrar_login(*, autor: int, origem: str = "web") -> None:
+    """Grava `login` (§2.1). Destravado pela epic do P19 -- ver as constantes no topo.
+
+    `autor` e' OBRIGATORIO e nao aceita `None`, ao contrario dos outros produtores deste
+    modulo: um `login` de autoria nula nao responde a pergunta que o evento existe para
+    responder ("quem entrou e quando"), e no momento em que esta funcao e' chamada a senha
+    JA' foi verificada -- logo o id e' sempre conhecido. Nao ha' login de sistema.
+
+    `metadados` leva SO' `origem`. A §2.7 e' explicita: "nunca o login nem o e-mail do alvo
+    em `metadados`" -- e' PII, e o `id_usuario` do carimbo ja' identifica a pessoa.
+    """
+    from psycopg.types.json import Jsonb  # import tardio: so' quem escreve paga
+
+    # A frase acima vira CODIGO aqui. `transacao` aceita `id_usuario=None` (acao de sistema,
+    # D19), e `_normalizar_autor` devolve `None` sem reclamar -- entao, sem esta guarda, um
+    # `login` de autoria nula passaria em silencio e o evento nao responderia a unica
+    # pergunta que existe para responder. Afirmacao em docstring sem trava no codigo e' o
+    # defeito que esta base ja' pagou caro: ver a nota do `ip` em `005-eventos.md` (P15).
+    if autor is None:
+        raise ValueError("login sem autor: a senha ja' foi verificada, o id e' sempre conhecido")
+
+    with transacao(id_usuario=autor) as con:
+        con.execute(SQL_REGISTRAR_ACESSO, (autor, EVENTO_LOGIN, Jsonb({"origem": origem})))
+
+
+def registrar_login_recusado(
+    *, autor: int | None, usuario_conhecido: bool, origem: str = "web"
+) -> None:
+    """Grava `login.recusado` (§2.1). Tentativa que NAO entrou.
+
+    `autor` aceita `None` aqui -- ao contrario de `registrar_login`, e a diferenca e' o
+    ponto inteiro desta funcao: numa recusa por usuario INEXISTENTE nao ha' id a carimbar,
+    e a acao de autoria nula e' informacao legitima (D19). Numa recusa por SENHA ERRADA de
+    conta existente, o id vai preenchido -- e e' o que torna a linha util.
+
+    `usuario_conhecido` NAO e' PII e nao vaza nada para quem tenta: ele vive no banco, nunca
+    na resposta HTTP, que continua sendo a mesma para os dois casos justamente para nao
+    entregar a lista de quem trabalha aqui.
+
+    A LINHA QUE ESTA FUNCAO GRAVA E' O INSUMO DA TRAVA (18/09/2026): `contar_recusas_recentes`
+    a le, e `POST /api/login` barra a conta em `sessoes.MAX_TENTATIVAS` recusas dentro de
+    `sessoes.JANELA_TENTATIVAS_MIN`. Duas consequencias de manutencao:
+
+    - quem NAO chamar esta funcao num caminho de recusa novo abre um buraco na trava, em
+      silencio -- a trava so' enxerga o que foi registrado aqui;
+    - quem APAGAR estas linhas DESTRANCA contas. O expurgo da §8.2 do esquema deixou de ser
+      so' retencao; a janela de 15 min e' muito menor que qualquer prazo praticado, entao na
+      pratica nao se tocam, mas a dependencia existe.
+
+    A tentativa ja' BARRADA nao chega aqui, de proposito: se contasse, uma requisicao por
+    janela manteria a conta trancada para sempre e o contador nunca drenaria.
+
+    O QUE CONTINUA EM ABERTO: trava por IP. Sem `id_usuario` nao ha' o que contar, entao
+    varredura de nomes INEXISTENTES nao tranca nada; o IP esta' fora pelo P15.
+
+    (A trava NAO e' nenhuma das cinco decisoes numeradas da epic -- a 3 e' 2FA. A versao
+    anterior desta docstring dizia que era, e estava errada.)
+    """
+    from psycopg.types.json import Jsonb  # import tardio: so' quem escreve paga
+
+    metadados = {"origem": origem, "usuario_conhecido": usuario_conhecido}
+    with transacao(id_usuario=autor) as con:
+        con.execute(SQL_REGISTRAR_ACESSO, (autor, EVENTO_LOGIN_RECUSADO, Jsonb(metadados)))
+
+
+def contar_recusas_recentes(
+    *, id_usuario: int, minutos: int, redefinida_em: datetime | None = None
+) -> int:
+    """Quantas recusas esta conta acumulou desde o ultimo marco que zera a conta. LEITURA.
+
+    E' a base da trava de tentativas: quem decide o limite e a janela e' o chamador, e as
+    duas constantes vivem em `db/sessoes.py`, junto das outras politicas de acesso. Aqui
+    fica so' a consulta, porque a tabela e' desta casa.
+
+    A JANELA E' MOVEL, E ISSO E' O QUE FAZ A TRANCA SE SOLTAR SOZINHA. Contar "5 desde
+    sempre" seria bloqueio permanente -- e como a contagem e' POR CONTA, qualquer pessoa
+    trancaria a conta de qualquer outra para sempre, digitando o usuario dela cinco vezes.
+    Com janela, o dano de uma tranca maliciosa expira sem ninguem precisar intervir.
+
+    O QUE ELA NAO ALCANCA, e nao ha' como alcancar daqui: tentativa contra usuario que NAO
+    EXISTE nao tem `id_usuario` para contar, e o IP -- que resolveria -- nao esta' em
+    `eventos` por causa do **P15**, que segue aberto. Varredura de nomes inexistentes
+    continua sem trava no banco; o que ela deixa e' a linha de autoria nula e o registro da
+    trilha (DEC-027), que tem o IP em arquivo.
+
+    `redefinida_em` vem da CREDENCIAL, ja' lida pela rota de login -- por isso nao custa consulta.
+    Um acerto anterior tambem zera a conta, e esse marco sai do proprio `eventos`; ver a nota do
+    `SQL_CONTAR_RECUSAS` sobre por que a subconsulta e' presa a mesma janela.
+    """
+    with conexao() as con:
+        linha = con.execute(
+            SQL_CONTAR_RECUSAS,
+            (
+                id_usuario,
+                EVENTO_LOGIN_RECUSADO,
+                minutos,
+                redefinida_em,
+                id_usuario,
+                EVENTO_LOGIN,
+                minutos,
+            ),
+        ).fetchone()
+    return int(linha[0]) if linha else 0
+
+
+def registrar_logout(*, autor: int) -> None:
+    """Grava `logout` (§2.1). SEM metadados -- o contrato nao preve nenhum.
+
+    `NULL` em `metadados`, e nao `{}`: um objeto vazio afirmaria que ha' payload e ele esta'
+    vazio, quando a verdade e' que este evento nao tem payload. A distincao importa para
+    quem consulta -- `metadados IS NULL` e `metadados = '{}'` respondem coisas diferentes.
+    """
+    with transacao(id_usuario=autor) as con:
+        con.execute(SQL_REGISTRAR_ACESSO, (autor, EVENTO_LOGOUT, None))
