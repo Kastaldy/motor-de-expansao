@@ -25,6 +25,21 @@
      Os valores do escuro sao os mesmos de sempre, digito por digito. */
   --grad-verdict: linear-gradient(120deg, #11282a, #0d1a1e 70%);
   --line-verdict: #24474a;
+  /* A borda VERDE do mesmo cartao, condicional ao selo positivo ("vale visita"): com o
+     aluguel acima do teto ela fica neutra, senao a moldura afirmaria um veredito que a
+     regua nega. Morava cravada em `FichaImovel.tsx` e vem com o valor de hoje. */
+  --line-verdict-ok: #1f4a3c;
+  /* O HERO da ficha do imovel (`FichaImovel.tsx`): roxo -> teal. Mesma historia do
+     --grad-verdict acima, no arquivo IRMAO — a migracao de 2026-09-10 consertou o cartao
+     de veredito do hexagono e deixou este para tras. Cravado, a tinta escurecia com o
+     tema e o fundo nao: o titulo media 1,08:1 no claro. Valores do escuro intactos. */
+  --grad-hero: linear-gradient(140deg, #1d1424 0%, #0b1519 68%);
+  --line-hero: #241b2e;
+  /* A tinta magenta de TEXTO da camada imobiliaria (a pilula "Oportunidade"). E' o
+     `ACC_TX` de `lib/imovel.ts`, que precisa de par no claro porque o fundo do hero
+     deixa de ser escuro. So' o par de TEXTO entra aqui: `ACC` e os alfas seguem em
+     `imovel.ts`, lidos por outras duas telas, e tokeniza-los e' bloco proprio. */
+  --imo-text: #f06fb6;
   --surf-chrome: rgba(16, 24, 34, 0.8);
   --surf-bar: rgba(16, 24, 34, 0.86);
   --surf-raised: rgba(255, 255, 255, 0.03);
@@ -228,6 +243,18 @@
   --l5-a10: rgba(238, 243, 248, 0.1);
   --l5-a24: rgba(238, 243, 248, 0.24);
   --l5-a60: rgba(238, 243, 248, 0.6);
+
+  /* --- Tinta dos tres scores da ficha do hexagono (`FichaHex.tsx`) -----------
+     A cor aqui identifica QUAL score, nao o valor dele (o valor esta' no numero e na
+     regua de tracinhos). Moravam cravados no componente, no mesmo bloco de constantes
+     que a migracao de 2026-09-10 esvaziou pela metade: o FUNDO do cartao de veredito
+     virou token e a TINTA dos scores ficou. Sem par no claro, o numero de 22px pintava
+     claro sobre o cartao claro — o HIBRIDO media 1,02:1, o "quase sumindo" que o Felipe
+     viu. Os valores do escuro sao os de sempre, digito por digito. */
+  --score-censo: #5ee6a8;
+  --score-residual: #22d3e0;
+  --score-hibrido: #eef6f7;
+  --score-hibrido-tick: #cfdfe3;
 
   /* --- Semaforo do diagnostico ---------------------------------------------
      Estes quatro moravam como HEX em `lib/exec.ts` (COR_SEVERIDADE). Viraram token
@@ -516,6 +543,21 @@
      reprova). Guardado por lib/tema-claro-ultra.test.ts, que mede as duas paradas. */
   --grad-verdict: linear-gradient(120deg, #e6f5f2, #f0faf8 70%);
   --line-verdict: #9fd0ca;
+  /* A borda verde condicional. Sobe de luminancia porque aqui ela e' desenho sobre gelo:
+     3,48:1 contra o 3,0 de objeto grafico. O valor do escuro (#1f4a3c) media 1,69:1 sobre
+     o proprio fundo escuro — ja' era invisivel no tema em que nasceu, e isso fica como
+     divida DECLARADA: este bloco conserta o claro, nao redesenha o escuro. */
+  --line-verdict-ok: #3f8f70;
+  /* O gelo do HERO, na mesma ordem do escuro: roxo -> teal vira magenta -> teal. O
+     magenta e' a identidade declarada da camada imobiliaria, e trocar o hero pelo gelo
+     teal do veredito apagaria a unica coisa que distingue as duas pecas da ficha.
+     Entrega titulo 14,13:1, bairro 7,97:1 e, no chip de hex_id (que pinta --surf-raised
+     por cima), 5,40:1. Medido em tema-claro-ultra.test.ts, nas DUAS paradas. */
+  --grad-hero: linear-gradient(140deg, #f7eaf2 0%, #eef7f6 68%);
+  --line-hero: #e3d3de;
+  /* Mesma luminancia do --ops-text deste bloco: a pilula "Oportunidade" pinta um veu da
+     PROPRIA cor como fundo, e o #f06fb6 do escuro dava 2,06:1 ali no claro. */
+  --imo-text: #a81b6b;
   --surf-chrome: rgba(255, 255, 255, 0.9);
   --surf-bar: rgba(255, 255, 255, 0.92);
   /* Os tres "raised" invertem o SINAL do alfa: no escuro se ilumina com branco, no
@@ -645,6 +687,23 @@
   --l5-a10: rgba(6, 23, 26, 0.1);
   --l5-a24: rgba(6, 23, 26, 0.24);
   --l5-a60: rgba(6, 23, 26, 0.6);
+
+  /* --- Tinta dos tres scores da ficha do hexagono ----------------------------
+     Os dois COLORIDOS escurecem preservando a matiz, como o resto deste bloco: censo
+     149,7 contra 152,6 do escuro (dif 2,9) e residual 183,4 contra 184,1 (dif 0,7).
+     Entregam 5,03:1 e 5,07:1 sobre o cartao (--surf-raised composto), contra 1,33:1 e
+     1,55:1 dos valores do escuro — e as duas matizes seguem distinguiveis entre si, que
+     e' a funcao delas.
+
+     O HIBRIDO vira NEUTRO ESCURO, e nao um teal: no escuro ele JA e' neutro claro por
+     desenho (ele e' a sintese dos outros dois, e a cor ali nao carrega matiz). E' o mesmo
+     movimento que o --l5 duas linhas acima descreve — "no claro o claro neutro vira o
+     ESCURO neutro, senao ela some". Inventar matiz para ele afirmaria uma familia de cor
+     que o score nao tem. */
+  --score-censo: #0a7740;
+  --score-residual: #0e7278;
+  --score-hibrido: #1f1f1f;
+  --score-hibrido-tick: #3a3a3a;
 
   /* --- Semantica ----------------------------------------------------------- */
   --pos: #0f9d55;

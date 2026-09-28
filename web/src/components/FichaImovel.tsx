@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react'
 import { brl, num } from '../lib/format'
 import {
   ACC,
-  ACC_TX,
   ALUGUEL_PCT_EXCECAO,
   ALUGUEL_PCT_IDEAL,
   ALUGUEL_PCT_TETO,
@@ -23,13 +22,22 @@ import { Botao } from './primitives'
 
 /* Gradientes do painel direito do design "Paineis do Hexagono" (pedido do Felipe,
    2026-08-21): hero roxo-escuro, card de veredito em teal e botao primario magenta.
-   Hex direto — tela so-escura, como a aba. A BORDA verde do veredito e' condicional:
-   no artboard ela acompanha o selo positivo ("vale visita"); com o aluguel acima do
-   teto, moldura verde afirmaria um veredito que a regua nega — ai fica neutra. */
-const FUNDO_HERO = 'linear-gradient(140deg, #1d1424 0%, #0b1519 68%)'
-const BORDA_HERO = '#241b2e'
-const FUNDO_VEREDITO = 'linear-gradient(120deg, #101f22, #0d171b 70%)'
-const BORDA_VEREDITO_OK = '#1f4a3c'
+   A BORDA verde do veredito e' condicional: no artboard ela acompanha o selo positivo
+   ("vale visita"); com o aluguel acima do teto, moldura verde afirmaria um veredito que a
+   regua nega — ai fica neutra.
+
+   O FUNDO e as DUAS BORDAS saiu daqui em 2026-09-28. Eram hex cravado, com a premissa
+   "tela so-escura, como a aba" escrita neste comentario — premissa que o tema claro matou.
+   Cor cravada nao tem par no claro: o interior destes dois blocos e' todo token, entao a
+   tinta escurecia com o tema e o fundo continuava quase preto. O titulo do hero media
+   1,08:1 e o negrito do "% da receita" 1,03:1 — os dois retangulos ilegiveis que o Felipe
+   relatou. Viraram --grad-hero / --line-hero / --grad-verdict / --line-verdict-ok, com o
+   escuro intacto digito por digito. E' exatamente a migracao que `FichaHex.tsx` fez no
+   cartao de veredito DELE em 2026-09-10, e que deixou este arquivo irmao para tras.
+
+   O que FICA cravado, e por que: o botao primario e' superficie CHEIA de cor com tinta
+   propria (5,92:1 e 4,84:1 medidos), funciona nos dois temas, e uma regra generica do tipo
+   "nenhum gradiente neste arquivo" o moveria de graca. */
 const FUNDO_BOTAO = 'linear-gradient(100deg, #f2599f, #e0459a)'
 const SOMBRA_BOTAO = '0 10px 28px -14px rgba(242,89,159,.8)'
 const TEXTO_BOTAO = '#2a0518'
@@ -88,8 +96,8 @@ export default function FichaImovel({
         style={{
           margin: '-16px -16px 0',
           padding: '18px 16px 14px',
-          background: FUNDO_HERO,
-          borderBottom: `1px solid ${BORDA_HERO}`,
+          background: 'var(--grad-hero)',
+          borderBottom: '1px solid var(--line-hero)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 13 }}>
@@ -110,14 +118,18 @@ export default function FichaImovel({
           </span>
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
-              <Pill texto="Oportunidade" cor={ACC_TX} />
+              {/* As DUAS tintas abaixo tiveram de andar junto com o fundo do hero, senao a
+                  correcao trocava um defeito por outro (medido, nao suposto): sobre o gelo,
+                  o magenta claro do `ACC_TX` cai a 2,06:1 e o `tint` do tipo, a 2,11..2,87:1.
+                  O `tint` continua vestindo o QUADRO de 56px, onde e' forma e nao texto. */}
+              <Pill texto="Oportunidade" cor="var(--imo-text)" />
               <span
                 className="num"
                 style={{
                   font: '400 9.5px/1 var(--f-num)',
                   letterSpacing: '.1em',
                   textTransform: 'uppercase',
-                  color: tint,
+                  color: 'var(--tx-narrative)',
                 }}
               >
                 {labelTipo(op.tipo)} p/ locação
@@ -170,8 +182,8 @@ export default function FichaImovel({
       {pct != null && cls && op.fat_proj != null ? (
         <CardPainel
           style={{
-            background: FUNDO_VEREDITO,
-            border: `1px solid ${cls.tom === 'var(--pos-text)' ? BORDA_VEREDITO_OK : 'var(--line-mid)'}`,
+            background: 'var(--grad-verdict)',
+            border: `1px solid ${cls.tom === 'var(--pos-text)' ? 'var(--line-verdict-ok)' : 'var(--line-mid)'}`,
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 9 }}>

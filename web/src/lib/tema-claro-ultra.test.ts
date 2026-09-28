@@ -587,3 +587,220 @@ describe('tinta de acento sobre lavagem de acento', () => {
     expect(escuro['--ac-chip']).not.toBe(escuro['--ac-text'])
   })
 })
+
+/* ---------------------------------------------------------------------------------
+   A FICHA DO IMOVEL E OS SCORES DA FICHA DO HEXAGONO.
+
+   Dois defeitos relatados pelo Felipe em 2026-09-28, com a MESMA causa e o MESMO molde
+   de conserto do `--grad-verdict` acima: cor CRAVADA em componente, escrita quando a
+   premissa era "tela so-escura". O interior das duas pecas e' todo token, entao a tinta
+   escurecia com o tema e o fundo (ou a tinta do score) nao.
+
+   Medido antes de consertar, no CLARO: titulo do hero 1,08:1, negrito do "% da receita"
+   1,03:1, score HIBRIDO 1,02:1, censo 1,33:1, residual 1,55:1. Nos MESMOS pares o escuro
+   entrega 16,57 / 15,83 / 11,03 / 9,47 — e' por isso que nada tinha ficado vermelho: a
+   unica assercao que tocava estas pecas conferia o PREFIXO do seletor, e prefixo de tema
+   nao e' regua de legibilidade.
+   --------------------------------------------------------------------------------- */
+describe('a ficha do imovel segue o tema', () => {
+  const claro = blocoClaro()
+  const escuro = blocoEscuro()
+  const paradas = (grad: string) => grad.match(/#[0-9a-fA-F]{6}/g) ?? []
+
+  it('os dois temas declaram o hero, a borda do veredito e a tinta magenta', () => {
+    for (const [nome, b] of [
+      ['escuro', escuro],
+      ['claro', claro],
+    ] as const) {
+      for (const token of ['--grad-hero', '--line-hero', '--line-verdict-ok', '--imo-text']) {
+        expect(b[token], `${token} no ${nome}`).toBeTruthy()
+      }
+    }
+  })
+
+  it('o escuro mantem, digito por digito, o que estava cravado no componente', () => {
+    expect(escuro['--grad-hero']).toBe('linear-gradient(140deg, #1d1424 0%, #0b1519 68%)')
+    expect(escuro['--line-hero']).toBe('#241b2e')
+    expect(escuro['--line-verdict-ok']).toBe('#1f4a3c')
+    expect(escuro['--imo-text']).toBe('#f06fb6')
+  })
+
+  it('no claro, o titulo e a linha do endereco se leem sobre TODAS as paradas do hero', () => {
+    const stops = paradas(claro['--grad-hero'])
+    expect(stops.length).toBeGreaterThanOrEqual(2)
+    for (const parada of stops) {
+      /* O `--tx-off` veste o separador " · " de 9,5px: e' pontuacao, alvo de 3,0. */
+      for (const nome of ['--tx-max', '--tx-narrative', '--tx-sub', '--tx-label']) {
+        expect(contraste(claro[nome], parada), `${nome} sobre ${parada}`).toBeGreaterThanOrEqual(4.5)
+      }
+      expect(contraste(claro['--tx-off'], parada), `--tx-off sobre ${parada}`).toBeGreaterThanOrEqual(3)
+    }
+  })
+
+  it('no claro, o chip do hex_id se le DEPOIS de pintar o veu levantado por cima do hero', () => {
+    /* A armadilha do `--surf-raised`: no claro o alfa e' TINTA, entao o chip escurece o
+       hero — mas so' 6%, e medir o hero nu seria medir outra coisa. */
+    for (const parada of paradas(claro['--grad-hero'])) {
+      const chip = compor(claro['--surf-raised'], parada)
+      expect(contraste(claro['--tx-sub'], chip), `--tx-sub sobre o chip em ${parada}`).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  it('no claro, o hero e gelo MAGENTA — a identidade da camada imobiliaria', () => {
+    /* A ordem do escuro e' roxo -> teal; o gelo espelha na mesma ordem, magenta -> teal.
+       Sem esta assercao, "consertar" o hero trocando-o pelo gelo do veredito passaria. */
+    const stops = paradas(claro['--grad-hero'])
+    const [h] = hsl(stops[0])
+    expect(difMatiz(h, H_MAGENTA), `1a parada ${stops[0]}`).toBeLessThanOrEqual(20)
+    for (const parada of stops) {
+      const [, s, l] = hsl(parada)
+      expect(s, parada).toBeGreaterThan(0)
+      expect(l, parada).toBeGreaterThan(0.5) // e' um hero CLARO
+    }
+  })
+
+  it('no claro, a pilula "Oportunidade" se le sobre o fundo que o Pill lhe da', () => {
+    /* `Pill` pinta `var(--surf-pending)` quando a cor vem em `var()` (ele so' compoe alfa
+       a partir de HEX). O magenta claro do escuro dava 2,06:1 aqui — esta e' a tinta que
+       tinha de andar JUNTO com o fundo do hero, senao a correcao trocava um defeito por
+       outro. */
+    for (const parada of paradas(claro['--grad-hero'])) {
+      const pilula = compor(claro['--surf-pending'], parada)
+      expect(contraste(claro['--imo-text'], pilula), `--imo-text sobre ${pilula}`).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  it('no claro, a borda verde condicional do veredito se ve sobre o gelo', () => {
+    for (const parada of paradas(claro['--grad-verdict'])) {
+      expect(
+        contraste(claro['--line-verdict-ok'], parada),
+        `--line-verdict-ok sobre ${parada}`,
+      ).toBeGreaterThanOrEqual(3)
+    }
+  })
+
+  it('FichaImovel nao crava mais fundo nem borda, e nem a tinta que o fundo derrubava', () => {
+    const tsx = readFileSync(fileURLToPath(new URL('../components/FichaImovel.tsx', import.meta.url)), 'utf-8')
+    for (const token of ['var(--grad-hero)', 'var(--line-hero)', 'var(--grad-verdict)', 'var(--line-verdict-ok)', 'var(--imo-text)']) {
+      expect(tsx, token).toContain(token)
+    }
+    /* Fora de comentario: os literais nao podem voltar por uma constante nova no topo.
+       O gradiente do BOTAO primario continua cravado de proposito (superficie cheia de
+       cor, com tinta propria, medida nos dois temas) — por isso a regra e' por VALOR e
+       nao "nenhum linear-gradient neste arquivo". */
+    const codigo = tsx.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '')
+    for (const literal of ['#1d1424', '#0b1519', '#241b2e', '#101f22', '#0d171b', '#1f4a3c']) {
+      expect(codigo, literal).not.toContain(literal)
+    }
+    /* `ACC_TX` era a tinta da pilula; se voltar, volta a 2,06:1 sobre o gelo. */
+    expect(codigo).not.toContain('ACC_TX')
+  })
+})
+
+describe('os tres scores da ficha do hexagono se leem nos dois temas', () => {
+  const claro = blocoClaro()
+  const escuro = blocoEscuro()
+  const TOKENS = ['--score-censo', '--score-residual', '--score-hibrido'] as const
+
+  /* A superficie REAL atras do numero: o card pinta `--surf-raised` e ele mora sobre
+     `--surf-panel`, que por sua vez mora sobre `--bg-base`. Duas composicoes, nao uma —
+     medir o `--bg-base` nu erra para o lado FACIL no claro. */
+  const cartaoDe = (b: Record<string, string>) =>
+    compor(b['--surf-raised'], compor(b['--surf-panel'], b['--bg-base']))
+  const pendenteDe = (b: Record<string, string>) =>
+    compor(b['--surf-pending'], compor(b['--surf-panel'], b['--bg-base']))
+
+  it('os dois temas declaram os quatro tokens', () => {
+    for (const [nome, b] of [
+      ['escuro', escuro],
+      ['claro', claro],
+    ] as const) {
+      for (const token of [...TOKENS, '--score-hibrido-tick']) {
+        expect(b[token], `${token} no ${nome}`).toBeTruthy()
+      }
+    }
+  })
+
+  it('o escuro mantem, digito por digito, o que estava cravado no componente', () => {
+    expect(escuro['--score-censo']).toBe('#5ee6a8')
+    expect(escuro['--score-residual']).toBe('#22d3e0')
+    expect(escuro['--score-hibrido']).toBe('#eef6f7')
+    expect(escuro['--score-hibrido-tick']).toBe('#cfdfe3')
+  })
+
+  it('o numero de 22px se le sobre o card, nos DOIS temas', () => {
+    /* 22px com peso 500 NAO e' "texto grande" pela WCAG (o piso de 3,0 pede >= 24px, ou
+       >= 19px em negrito) — o alvo e' 4,5. */
+    for (const [nome, b] of [
+      ['escuro', escuro],
+      ['claro', claro],
+    ] as const) {
+      const cartao = cartaoDe(b)
+      for (const token of TOKENS) {
+        expect(contraste(b[token], cartao), `${token} sobre ${cartao} (${nome})`).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+  })
+
+  it('a regua de tracinhos se ve sobre o tracinho vazio, nos DOIS temas', () => {
+    /* Preenchimento de 4px e' objeto grafico: alvo 3,0. O vazio e' `--surf-pending`. */
+    for (const [nome, b] of [
+      ['escuro', escuro],
+      ['claro', claro],
+    ] as const) {
+      const vazio = pendenteDe(b)
+      for (const token of [...TOKENS, '--score-hibrido-tick']) {
+        expect(contraste(b[token], vazio), `${token} sobre ${vazio} (${nome})`).toBeGreaterThanOrEqual(3)
+      }
+    }
+  })
+
+  it('no claro, censo e residual ESCURECEM preservando a matiz — nao viram outra cor', () => {
+    /* A regra que o proprio bloco claro documenta. Sem ela, "consertar" o contraste
+       pintando os tres de cinza passaria, e a cor deixaria de identificar QUAL score. */
+    for (const token of ['--score-censo', '--score-residual'] as const) {
+      const [he] = hsl(escuro[token])
+      const [hc, sc, lc] = hsl(claro[token])
+      expect(difMatiz(he, hc), `${token} mudou de matiz`).toBeLessThanOrEqual(8)
+      expect(sc, `${token} perdeu saturacao`).toBeGreaterThan(0.3)
+      expect(lc, `${token} nao escureceu`).toBeLessThan(hsl(escuro[token])[2])
+    }
+  })
+
+  it('as tres matizes seguem distinguiveis entre si no claro, que e a funcao delas', () => {
+    const [censo] = hsl(claro['--score-censo'])
+    const [residual] = hsl(claro['--score-residual'])
+    expect(difMatiz(censo, residual)).toBeGreaterThanOrEqual(20)
+  })
+
+  it('o HIBRIDO e neutro nos dois temas, como o --l5 da sintese', () => {
+    /* No escuro ele ja' e' um claro neutro por desenho; no claro vira o ESCURO neutro.
+       Inventar matiz para ele afirmaria uma familia de cor que o score nao tem.
+
+       A regua e' a AMPLITUDE entre os canais, nao a saturacao HSL: num cinza quase branco
+       a saturacao HSL dispara (`#eef6f7` da 0,36) porque o denominador dela encosta no
+       teto da luminancia — mediria "tem matiz" num valor cuja diferenca entre canais e' de
+       9 em 255. Amplitude de canal nao tem esse vies em nenhuma das duas pontas. */
+    for (const [nome, b] of [
+      ['escuro', escuro],
+      ['claro', claro],
+    ] as const) {
+      const canais = hex2rgb(b['--score-hibrido'])
+      const amplitude = (Math.max(...canais) - Math.min(...canais)) / 255
+      expect(amplitude, `amplitude de canal no ${nome}`).toBeLessThanOrEqual(0.06)
+    }
+    expect(hsl(claro['--score-hibrido'])[2]).toBeLessThan(0.5)
+    expect(hsl(escuro['--score-hibrido'])[2]).toBeGreaterThan(0.5)
+  })
+
+  it('FichaHex nao crava mais a tinta dos scores', () => {
+    const tsx = readFileSync(fileURLToPath(new URL('../components/FichaHex.tsx', import.meta.url)), 'utf-8')
+    for (const token of ['var(--score-censo)', 'var(--score-residual)', 'var(--score-hibrido)', 'var(--score-hibrido-tick)']) {
+      expect(tsx, token).toContain(token)
+    }
+    const codigo = tsx.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '')
+    for (const literal of ['#5ee6a8', '#22d3e0', '#eef6f7', '#cfdfe3']) {
+      expect(codigo, literal).not.toContain(literal)
+    }
+  })
+})
