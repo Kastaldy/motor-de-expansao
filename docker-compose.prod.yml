@@ -317,6 +317,23 @@ services:
       # deploy. Ausente, criar usuario responde 503 com mensagem explicita e todo o resto
       # do piloto segue servindo. Ver o bloco dela no `.env.example`.
       MOTOR_SENHA_INICIAL: ${MOTOR_SENHA_INICIAL:-}
+      # A CHAVE DO P19: com ela LIGADA, o motor autentica e o Authelia sai do caminho.
+      # Ausente ou vazia, TUDO da epic fica dormente — o portao de sessao devolve
+      # `call_next` na primeira linha e `/api/login`, `/api/logout` e `/api/verify`
+      # respondem 404. E' o mesmo idioma do `MOTOR_DATABASE_URL` logo acima.
+      #
+      # ELA PRECISA ESTAR AQUI, e nao so' no `.env`: este compose NAO TEM `env_file`,
+      # entao o container recebe exatamente o que este bloco lista e nada mais. Sem esta
+      # linha, por o valor no `.env` da VPS nao tem efeito nenhum — medido em 25/09/2026,
+      # e era o que tornava IMPOSSIVEL virar a chave depois de aplicar as migrations e
+      # publicar a imagem. A falha seria muda: nada quebra, o piloto sobe igual, e o
+      # operador conclui que a epic nao funciona.
+      #
+      # ORDEM NA VIRADA — FAIL-CLOSED, e a inversao derruba o piloto inteiro: ligue esta
+      # chave ANTES de repontar o `forward_auth` do Caddy para o nosso `/api/verify`
+      # (DEC-067, D4). Ao contrario, `/api/verify` responde 404, o Caddy nega tudo que
+      # nao for 2xx, e ninguem entra — inclusive quem ja' estava dentro.
+      MOTOR_AUTENTICACAO_PROPRIA: ${MOTOR_AUTENTICACAO_PROPRIA:-}
       # BLK-SAT-01: chave do ArcGIS Location Platform p/ a vista aerea (satelite) do
       # Relatorio Pontual. Sem a var -> render devolve None -> pagina omitida (PDF sai igual).
       API_ARCGIS_API_KEY: ${API_ARCGIS_API_KEY:-}

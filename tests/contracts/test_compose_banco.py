@@ -77,3 +77,52 @@ def test_postgres_e_o_volume_que_nenhum_pipeline_regenera(compose: dict) -> None
     )
     montagens = compose["services"]["postgres"].get("volumes") or []
     assert any(m.startswith("postgres_data:") for m in montagens)
+
+
+# --------------------------------------------------------------------------------------
+# O que o container NAO recebe: a lacuna de 25/09/2026
+# --------------------------------------------------------------------------------------
+#
+# `MOTOR_AUTENTICACAO_PROPRIA` e' a chave que liga a autenticacao propria (epic do P19,
+# DEC-067). Em 25/09/2026 ela existia no CODIGO, no `.env.example` de ninguem, no runbook
+# de repasse e em quatro documentos -- e NAO existia aqui. Consequencia medida: por o
+# valor no `.env` da VPS nao teria efeito nenhum, porque este compose nao tem `env_file`
+# e o container so' recebe o que o bloco `environment:` lista.
+#
+# A falha seria MUDA. Nada quebra, o piloto sobe igual, e o operador -- que acabou de
+# aplicar tres migrations e publicar uma imagem -- conclui que a epic nao funciona. E' a
+# familia de defeito que este repositorio ja' catalogou (DEC-038, DEC-042, DEC-050): um
+# valor legitimo que, no lugar errado, apaga uma superficie inteira em silencio.
+
+
+def test_a_chave_do_P19_chega_ao_container(compose: dict) -> None:
+    """Sem esta linha, virar a chave na VPS e' impossivel -- e o sintoma e' "nao acontece nada"."""
+    env = compose["services"]["web"]["environment"]
+    assert "MOTOR_AUTENTICACAO_PROPRIA" in env, (
+        "a chave do P19 sumiu do bloco `environment:` do servico `web`. Sem ela o container "
+        "nao a recebe, por o valor no `.env` da VPS vira no-op, e o corte do P19 fica "
+        "impossivel de ligar sem editar o compose no meio da janela de manutencao."
+    )
+    # `:-` e nao `:?`: ausente, o piloto SOBE com o Authelia autenticando, que e' o estado
+    # de producao. Um `:?` aqui faria a epic dormente virar pre-requisito de deploy.
+    assert env["MOTOR_AUTENTICACAO_PROPRIA"] == "${MOTOR_AUTENTICACAO_PROPRIA:-}", (
+        "a chave tem de ter default VAZIO. Com `:?` o compose passaria a ABORTAR sem ela, "
+        "transformando uma funcionalidade dormente em pre-requisito para o piloto subir."
+    )
+
+
+def test_o_web_continua_SEM_env_file(compose: dict) -> None:
+    """A premissa do teste acima, escrita como guarda.
+
+    Todo o argumento -- "a variavel PRECISA estar no `environment:`" -- vale porque o
+    servico nao carrega um `.env` inteiro. Se alguem acrescentar `env_file` um dia, a
+    conclusao muda: as variaveis passariam a chegar sozinhas, e o bloco `environment:`
+    deixaria de ser a lista completa do que o container ve'. Sem esta guarda, o teste de
+    cima continuaria verde enquanto o motivo dele deixou de existir -- e a proxima
+    variavel seria adicionada em dois lugares por uma razao que ja' nao vale.
+    """
+    assert "env_file" not in compose["services"]["web"], (
+        "o servico `web` ganhou `env_file`. Isso NAO e' erro, mas muda a premissa do "
+        "`test_a_chave_do_P19_chega_ao_container`: revise os dois juntos e reescreva o "
+        "raciocinio, em vez de so' apagar a asercao que ficou vermelha."
+    )
