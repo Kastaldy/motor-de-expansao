@@ -7520,15 +7520,36 @@ def _rede_ids() -> frozenset[str]:
 
 @functools.lru_cache(maxsize=1)
 def _rede_faturamento_financeiro() -> pd.DataFrame:
-    """Faturamento oficial da planilha do Financeiro. Vazio se a ingestão não rodou."""
+    """Faturamento oficial da planilha do Financeiro. Vazio se a ingestão não rodou.
+
+    O `unidade_ux` sai daqui já com o de-para POR CÓDIGO aplicado, para as unidades cujo
+    nome a planilha escreve diferente da Growth (São Carlos: `91` é `"SÃO CARLOS - SP"` na
+    planilha e `"SAO CARLOS - CENTRO - SP"` na Growth). Aqui, e não em cada consumidor,
+    porque os dois lugares que sobrepõem faturamento — o fechamento mensal e a janela livre
+    — leem desta função: corrigir em um só deixaria a tela mostrando um número no topo e
+    outro no gráfico, que é o defeito que a sobreposição existe para fechar.
+    """
     try:
-        return rede_faturamento_financeiro.carregar(FATURAMENTO_FINANCEIRO_PARQUET)
+        fat = rede_faturamento_financeiro.carregar(FATURAMENTO_FINANCEIRO_PARQUET)
     except (ValueError, OSError) as erro:
         # Parquet corrompido ou com esquema velho não pode derrubar a Visão Executiva: a
         # aba volta a mostrar o faturamento da Growth, que é pior mas está lá.
         print(f"[rede] faturamento do Financeiro ilegível ({erro}) — seguindo só com a Growth",
               file=sys.stderr)
         return pd.DataFrame()
+    if not len(fat):
+        return fat
+
+    cadastro = _rede_cadastro()
+    alias = rede_metricas.alias_do_financeiro_por_codigo(
+        fat,
+        rede_metricas.catalogo_de(_rede_base()),
+        {uid: registro.get("cod_unidade") for uid, registro in cadastro.unidades.items()},
+    )
+    if not alias:
+        return fat
+    print(f"[rede] Financeiro casado por código: {alias}", file=sys.stderr)
+    return fat.assign(unidade_ux=fat["unidade_ux"].replace(alias))
 
 
 @functools.lru_cache(maxsize=1)
