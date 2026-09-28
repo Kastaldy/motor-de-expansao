@@ -7251,6 +7251,21 @@ _EXEC_COORD_CORRIGIDA: dict[tuple[str, str], tuple[float, float]] = {
     ("SAO CARLOS - CENTRO", "SP"): (-22.012508486987347, -47.8880006733541),
     ("BOTANIC MALL", "DF"): (-15.880275122281448, -47.82143693951672),
     ("JARDIM BOTANICO", "DF"): (-15.83510411113517, -47.803140295231366),
+    # PLAZA SUL: o ponto exibido estava a 1.340,7 m da academia, numa rua a três quadras
+    # do shopping. A causa é a PRECEDÊNCIA, não a falta de dado — o cadastro amplo TEM o
+    # ponto certo, na linha "Plaza / SP", a 6,4 m desta coordenada; mas `_chave_unidade`
+    # a normaliza para "PLAZA", chave que nenhum nome da Growth produz. A busca casa antes
+    # na base curada, que tem uma linha literal "PLAZA SUL" com o ponto errado, e
+    # curto-circuita. Alias não resolveria: ele redireciona a busca no CADASTRO e a curada
+    # vem antes dele. Coordenada do Shopping Plaza Sul, conferida por Felipe em 2026-09-28.
+    ("PLAZA SUL", "SP"): (-23.619836588209818, -46.62658767878267),
+    # SAGRADA FAMILIA: esta entrada é DECLARAÇÃO, não correção de rumo — o alias
+    # `("SAGRADA FAMILIA","MT") -> "RONDONOPOLIS"` já resolvia, e a linha do cadastro está
+    # a 1,5 m daqui. Ela entra para que a unidade deixe de depender de uma linha cujo nome é
+    # o do MUNICÍPIO: o dia em que "Rondonópolis" passar a significar o centro da cidade (ou
+    # uma segunda unidade lá), a Sagrada Família anda sozinha e em silêncio. Coordenada
+    # conferida por Felipe em 2026-09-28 (Rondonópolis/MT, não Cuiabá).
+    ("SAGRADA FAMILIA", "MT"): (-16.472689780537294, -54.60695014754936),
 }
 
 

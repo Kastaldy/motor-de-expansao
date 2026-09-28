@@ -361,3 +361,97 @@ def test_executiva_centro_usa_so_quem_tem_coordenada(app_com_dados) -> None:
     body = pilot.executiva("RJ")
     lats = [u["lat"] for u in body["unidades"] if u["lat"] is not None]
     assert body["centro"]["lat"] == pytest.approx(sum(lats) / len(lats), abs=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Os dois pinos corrigidos por Felipe em 2026-09-28 (BLK-DADOS-UNI-01, itens 1-2)
+# ---------------------------------------------------------------------------
+
+# Coordenadas informadas por Felipe, medidas contra os parquets da VPS no mesmo dia.
+_PLAZA_SUL_OK = (-23.619836588209818, -46.62658767878267)
+_SAGRADA_FAMILIA_OK = (-16.472689780537294, -54.60695014754936)
+
+# O que a base curada da VPS tem hoje para "PLAZA SUL": 1.340,7 m ao norte da academia.
+_PLAZA_SUL_ERRADO = (-23.607786, -46.627038)
+# E o ponto CERTO que o cadastro amplo já tinha, na linha "Plaza / SP" — 6,4 m do alvo.
+_PLAZA_SP_CADASTRO = (-23.619857, -46.626529)
+
+
+def _metros(a: tuple[float, float], b: tuple[float, float]) -> float:
+    import math
+
+    r = 6_371_008.8
+    p1, p2 = math.radians(a[0]), math.radians(b[0])
+    x = (
+        math.sin((p2 - p1) / 2) ** 2
+        + math.cos(p1) * math.cos(p2) * math.sin(math.radians(b[1] - a[1]) / 2) ** 2
+    )
+    return 2 * r * math.asin(math.sqrt(min(1.0, x)))
+
+
+def test_plaza_sul_deixa_de_herdar_o_ponto_errado_da_curada(
+    app_com_dados, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A curada VENCE o cadastro por desenho, e é ela que carrega o ponto errado.
+
+    Este é o caso que alias nenhum resolve: `_EXEC_ALIAS_COORD` redireciona a busca no
+    CADASTRO, e a curada vem antes dele. Sem a coordenada corrigida, o `or` da precedência
+    devolve o ponto a 1,3 km e nem chega a olhar para o cadastro.
+    """
+    monkeypatch.setattr(
+        pilot,
+        "_carregar_ultra_pontos",
+        lambda: pd.DataFrame(
+            [{"unidade": "PLAZA SUL", "lat": _PLAZA_SUL_ERRADO[0], "lng": _PLAZA_SUL_ERRADO[1]}]
+        ).rename(columns={"unidade": "nome"}),
+    )
+    pilot.limpar_caches()
+    assert pilot._coord_da_unidade("PLAZA SUL - SP", "SP") == _PLAZA_SUL_OK
+
+
+def test_as_duas_coordenadas_novas_sao_as_que_felipe_informou() -> None:
+    assert pilot._EXEC_COORD_CORRIGIDA[("PLAZA SUL", "SP")] == _PLAZA_SUL_OK
+    assert pilot._EXEC_COORD_CORRIGIDA[("SAGRADA FAMILIA", "MT")] == _SAGRADA_FAMILIA_OK
+
+
+def test_a_correcao_da_plaza_sul_bate_com_o_ponto_que_o_cadastro_ja_tinha() -> None:
+    """Duas fontes independentes a 6,4 m: a coordenada do Felipe e a linha "Plaza / SP".
+
+    É o que separa "corrigi o pino" de "movi o pino": o cadastro amplo já apontava para o
+    shopping, e a correção concorda com ele. O erro nunca foi de dado ausente, foi de
+    precedência — a chave "PLAZA" do cadastro não casa com nome nenhum da Growth.
+    """
+    assert _metros(_PLAZA_SUL_OK, _PLAZA_SP_CADASTRO) < 15
+    assert _metros(_PLAZA_SUL_OK, _PLAZA_SUL_ERRADO) > 1_000
+
+
+def test_sagrada_familia_fica_em_rondonopolis_e_nao_em_cuiaba() -> None:
+    """O `01_pontos.py` a geocodificava como "Sagrada Família, CUIABÁ, MT".
+
+    Rondonópolis fica ~200 km a sudeste de Cuiabá: um bairro homônimo na capital não é a
+    mesma praça, e toda isócrona, concorrência e sobreposição saíam da cidade errada.
+    """
+    lat, lng = pilot._EXEC_COORD_CORRIGIDA[("SAGRADA FAMILIA", "MT")]
+    # Rondonópolis/MT
+    assert _metros((lat, lng), (-16.4673, -54.6372)) < 4_000
+    # e NÃO Cuiabá/MT
+    assert _metros((lat, lng), (-15.6014, -56.0979)) > 100_000
+
+
+def test_o_pino_do_mapa_recebe_a_mesma_correcao_da_visao_executiva(
+    app_com_dados, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Uma edição, duas superfícies. Se o pino ficasse de fora, o Mapa e a Executiva
+    mostrariam a MESMA unidade em dois lugares — e é o Mapa que o Felipe olha."""
+    monkeypatch.setattr(
+        pilot,
+        "_carregar_ultra_pontos",
+        lambda: pd.DataFrame(
+            [{"nome": "PLAZA SUL", "lat": _PLAZA_SUL_ERRADO[0], "lng": _PLAZA_SUL_ERRADO[1]}]
+        ),
+    )
+    monkeypatch.setattr(pilot, "_carregar_ultra_mapeadas", lambda: pd.DataFrame(columns=["nome", "uf", "cidade", "lat", "lng"]))
+    pilot.limpar_caches()
+    pinos = pilot._ultra_pontos_mapa()
+    linha = pinos[pinos["nome"] == "PLAZA SUL"].iloc[0]
+    assert (float(linha["lat"]), float(linha["lng"])) == _PLAZA_SUL_OK
