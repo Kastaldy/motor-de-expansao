@@ -381,9 +381,6 @@ MOTOR_DATABASE_URL=postgresql://app:<senha-do-papel-app>@postgres:5432/banco_de_
 > corta a string no lugar errado e o erro sai como "host não encontrado", que manda você procurar
 > rede quando o problema é a senha. Na dúvida, peça uma senha sem esses caracteres.
 
-```
-```
-
 ```bash
 docker compose -f docker-compose.prod.yml up -d web
 ```
