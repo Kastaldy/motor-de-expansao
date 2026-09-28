@@ -393,6 +393,145 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
     return await call_next(request)
 
 
+# --- Portao de SESSAO (epic do P19, decisao 1 = D30) ------------------------
+# DECLARADO AQUI, e o lugar nao e' arbitrario: `@app.middleware("http")` empilha cada novo
+# middleware POR FORA, entao o ULTIMO declarado roda PRIMEIRO. A ordem de execucao fica
+# trilha -> portao de sessao -> controle de aba -> rota, que e' a unica que entrega as duas
+# propriedades que se quer ao mesmo tempo: o 401 de sessao invalida e' barrado ANTES do
+# controle de aba (nao faz sentido perguntar "que aba?" a quem nao esta' logado) e ainda
+# assim vira linha de auditoria, porque acontece DENTRO da trilha.
+#
+# Confira, nao confie neste comentario: `grep -n '@app.middleware("http")' -A2 web/server/app.py`.
+# Numeros de linha envelhecem a cada insercao acima deles.
+#
+# DORMENTE por construcao. Com `MOTOR_AUTENTICACAO_PROPRIA` ausente ou vazia, este
+# middleware devolve `call_next` na primeira linha e NADA muda -- e' o que permite esta
+# branch ir para producao com o Authelia ainda na frente. Mesmo idioma do
+# `MOTOR_DATABASE_URL`.
+
+
+def _sem_headers_de_identidade(scope: dict[str, Any]) -> list[tuple[bytes, bytes]]:
+    """Os headers da requisicao SEM nenhum que carregue identidade.
+
+    E' a linha mais critica deste arquivo quando o portao esta' ligado. Depois do corte nao
+    ha' Caddy fazendo `forward_auth`, logo `Remote-User` deixa de ser um header que SO' a
+    borda sabe injetar e passa a ser um header que QUALQUER cliente pode mandar. Sem esta
+    limpeza, `curl -H 'Remote-User: felipe'` seria personificacao completa: os 19 leitores de
+    `app.py` acreditariam, o RBAC resolveria as permissoes do Felipe e a trilha registraria
+    a acao no nome dele.
+    """
+    # Tupla nomeada em vez de expressao geradora inline. E' LEGIBILIDADE, e nao conserto de
+    # defeito: a primeira versao usava um gerador dentro do `if` da comprehension e eu
+    # afirmei, neste comentario, que ele "se esgotaria no primeiro item". ISSO ESTAVA ERRADO
+    # -- a expressao geradora dentro da condicao e' RECRIADA a cada iteracao, e a sabotagem
+    # que restaurou o gerador passou verde nos dois testes de limpeza, provando que as duas
+    # formas filtram igual. Fica a tupla porque ela se le' melhor e evita recriar o gerador
+    # a cada header; a afirmacao falsa sai, porque comentario que descreve defeito
+    # inexistente ensina a desconfiar do arquivo errado.
+    proibidos = tuple(h.encode("latin-1") for h in acesso.HEADERS_DE_IDENTIDADE)
+    return [(nome, valor) for nome, valor in scope["headers"] if nome.lower() not in proibidos]
+
+
+def _valor_de_cabecalho(valor: str) -> str:
+    """Texto seguro para um header HTTP: latin-1, descartando o que nao couber.
+
+    `login_usuario` vem do BANCO e NAO tem restricao de charset (`usuarios.criar` so' exige
+    nao-vazio), entao um login acentuado e' estado legitimo. Header HTTP e' latin-1: o
+    Starlette LEVANTA ao codificar um caractere fora dela, e o estrago depende de onde isso
+    acontece -- no portao seria 500 na requisicao da pessoa; no `/api/verify` seria 500 que o
+    Caddy repassa como NEGACAO, ou seja, um login com acento trancaria o dono dele para fora
+    do piloto. Degradar o valor e' preferivel a derrubar a autenticacao.
+
+    Redacao UNICA de proposito: o portao e a rota de verificacao emitem a mesma identidade, e
+    duas normalizacoes diferentes da mesma string desencontrariam em silencio (DEC-044).
+    """
+    return valor.encode("latin-1", "ignore").decode("latin-1")
+
+
+def _token_de_sessao(request: Request) -> str | None:
+    """O token do cookie de sessao, e' a UNICA leitura dele no repo.
+
+    ACEITA O NOME SEM PREFIXO SO' FORA DE PRODUCAO, e isto e' um endurecimento de
+    25/09/2026: antes os tres leitores faziam
+    `cookies.get(COOKIE_SESSAO) or cookies.get(COOKIE_SESSAO_DEV)` sem olhar o ambiente,
+    enquanto `_cookie_de_sessao` -- o unico emissor -- escolhe o nome POR
+    `acesso.em_producao()`. Emissao e leitura discordavam.
+
+    O QUE ISSO CUSTAVA. O prefixo `__Host-` existe para o NAVEGADOR impor as regras: ele
+    recusa o cookie se faltar `Secure`, `Path=/` ou se houver `Domain`. Aceitar
+    `motor_sessao` em producao devolve essa garantia -- um host irmao de
+    `ultra-expansao.tech` pode plantar `motor_sessao=<token>; Domain=.ultra-expansao.tech`,
+    e o backend honrava. A precedencia do `or` salvava quem JA' estava logado (o prefixado
+    vem primeiro), mas nao quem ainda nao entrou: fixacao de sessao, com a trilha da DEC-027
+    registrando o nome de quem plantou como se fosse ele.
+
+    A aceitacao dupla ERA deliberada e esta' declarada nos testes ("uma so' delas aceitando
+    trancaria um dos dois ambientes"). O que faltava era o recorte: em DEV o prefixo nao vale
+    (nao ha' https), entao o nome alternativo precisa ser aceito la' -- e SO' la'.
+    """
+    prefixado = request.cookies.get(acesso.COOKIE_SESSAO)
+    if prefixado:
+        return prefixado
+    if acesso.em_producao():
+        return None
+    return request.cookies.get(acesso.COOKIE_SESSAO_DEV)
+
+
+@app.middleware("http")
+async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-untyped-def]
+    from motor_expansao.db import sessoes as db_sessoes
+
+    if not db_sessoes.ligada():
+        return await call_next(request)  # Authelia no comando: nada muda
+
+    # A limpeza vem ANTES de qualquer decisao, e vale inclusive para rota publica: o
+    # `/api/login` nao deve poder ser chamado com um `Remote-User` sugerido pelo cliente,
+    # senao a propria tentativa de login carregaria identidade forjada para a trilha.
+    request.scope["headers"] = _sem_headers_de_identidade(request.scope)
+
+    caminho = request.url.path
+    if acesso.rota_publica_sem_sessao(caminho):
+        return await call_next(request)
+
+    cookie = _token_de_sessao(request)
+    try:
+        sessao = db_sessoes.validar(cookie or "")
+    except Exception:  # noqa: BLE001 — banco fora do ar nao pode virar 500 cru aqui
+        _LOG_D17.exception("portao de sessao: falha ao validar sessao")
+        return JSONResponse({"detail": "Sessão indisponível no momento."}, status_code=503)
+
+    if sessao is None:
+        # 401, e nao 403: a diferenca importa para a SPA. O `relatarAcessoNegado()` de
+        # `lib/sessao.ts` ja' trata 401 como queda de sessao SEM precisar de sonda -- e e'
+        # por isso que o portao proprio torna a sonda dispensavel para este caso.
+        return JSONResponse({"detail": "Sessão expirada ou inexistente."}, status_code=401)
+
+    # A identidade da SESSAO passa a ser a identidade da requisicao, para os 19 leitores do
+    # header seguirem funcionando sem uma linha de mudanca. E' injecao NOSSA sobre um scope
+    # ja' limpo -- nunca mesclagem com o que o cliente mandou.
+    request.scope["headers"] = [
+        *request.scope["headers"],
+        (b"remote-user", _valor_de_cabecalho(sessao.identidade.login).encode("latin-1")),
+    ]
+
+    # TROCA DE SENHA PENDENTE: o portao NAO barra por causa dela, e isso e' decisao do dono
+    # (25/09/2026), nao esquecimento. Entre 18/09 e 25/09 aqui havia um 403 que segurava todas
+    # as rotas de dados ate' a pessoa definir a propria senha; a troca voltou a ser RECOMENDADA.
+    #
+    # Quem convida para trocar e' `/api/me`, que devolve `{"deve_trocar", "propria"}` para a SPA
+    # abrir o modal -- caminho proprio e independente deste middleware, que segue funcionando com
+    # o portao ligado ou desligado. Ver `_estado_da_minha_senha`.
+
+    # Inatividade: so' escreve se a trava de 5 min ja' passou (decisao 2). A decisao e'
+    # tomada aqui, com o `ultimo_acesso` que o `validar` JA' devolveu -- sem segunda leitura.
+    try:
+        db_sessoes.tocar(id_sessao=sessao.id_sessao, id_usuario=sessao.identidade.id_usuario)
+    except Exception:  # noqa: BLE001 — bater o relogio nunca derruba a requisicao
+        _LOG_D17.debug("portao de sessao: toque de inatividade falhou", exc_info=True)
+
+    return await call_next(request)
+
+
 # --- Trilha de acesso (DEC-027) ---------------------------------------------
 # DEFINIDA DEPOIS do controle por aba de proposito: o decorator adiciona o
 # middleware mais recente por FORA da pilha, entao a trilha envolve o controle e
@@ -1914,7 +2053,34 @@ def _ultra_pontos_mapa() -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
     df = pd.concat(partes, ignore_index=True) if len(partes) > 1 else partes[0]
     df = df.dropna(subset=["lat", "lng"]).drop_duplicates(subset=["lat", "lng"])
+    # A correção vem DEPOIS da dedup: o cadastro guarda cópias exatas do ponto antigo
+    # da curada, e corrigir antes solta essas cópias como pins fantasmas a ~100 m.
+    df = _aplicar_coord_corrigida(df).drop_duplicates(subset=["lat", "lng"])
     return df[cols].reset_index(drop=True)
+
+
+def _aplicar_coord_corrigida(df: pd.DataFrame) -> pd.DataFrame:
+    """Aplica `_EXEC_COORD_CORRIGIDA` aos pins do mapa, para o Mapa e a Visão Executiva
+    mostrarem o MESMO ponto da mesma unidade.
+
+    Os pins não têm UF (a curada não a carrega), então a correção casa só pela chave —
+    e só quando a chave é única na tabela; uma chave que aparecesse em duas UFs seria
+    ambígua aqui e fica de fora, em vez de mover o pin de outra praça.
+    """
+    contagem: dict[str, int] = {}
+    for chave, _uf in _EXEC_COORD_CORRIGIDA:
+        contagem[chave] = contagem.get(chave, 0) + 1
+    por_chave = {c: p for (c, _uf), p in _EXEC_COORD_CORRIGIDA.items() if contagem[c] == 1}
+    if not len(df) or not por_chave:
+        return df
+    pontos = df["nome"].map(lambda n: por_chave.get(_chave_unidade(n)))
+    alvo = pontos.notna()
+    if not bool(alvo.any()):
+        return df
+    df = df.copy()
+    df.loc[alvo, "lat"] = [p[0] for p in pontos[alvo]]
+    df.loc[alvo, "lng"] = [p[1] for p in pontos[alvo]]
+    return df
 
 
 @functools.lru_cache(maxsize=1)
@@ -4432,13 +4598,25 @@ def acessos_usuarios_criar(
 def acessos_usuarios_redefinir_senha(
     id_usuario: int,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
-) -> dict[str, Any]:
-    """Devolve a pessoa a senha INICIAL e liga a marca de troca. Grava `usuario.senha_redefinida`.
+) -> Response:
+    """Gera uma senha TEMPORARIA so' desta pessoa e a devolve UMA VEZ. Grava `usuario.senha_redefinida`.
 
     E' o caminho de quem esqueceu a senha, e ate' 15/09 ele nao existia: a unica saida era `UPDATE`
-    direto no banco, sem autor e sem evento. Sem corpo de proposito, pelo motivo da criacao: o
-    admin nao escolhe nem conhece a senha nova de ninguem -- a inicial compartilhada e' a mesma
-    entregue a quem nasce pela tela.
+    direto no banco, sem autor e sem evento. Sem corpo de proposito: o admin nao ESCOLHE a senha de
+    ninguem -- escolher levaria a padroes adivinhaveis e a senha que ele lembraria depois.
+
+    ATE' 18/09/2026 ELA ENTREGAVA A SENHA INICIAL COMPARTILHADA (D31), a mesma para todo mundo:
+    quem conhecesse aquele valor entrava na conta de qualquer um recem-redefinido. Agora a senha e'
+    aleatoria, so' desta pessoa, e vale `senhas.VALIDADE_TEMPORARIA_H` horas.
+
+    A SENHA SAI NO CORPO DA RESPOSTA, e e' a unica vez que um segredo faz isso neste sistema -- o
+    token de sessao vai no cookie justamente para nao sair no corpo. A diferenca e' o destinatario:
+    aqui quem precisa ler e' uma PESSOA, que vai repassar por telefone. Por isso o `no-store`: sem
+    ele a resposta ficaria em cache de navegador e em qualquer proxy no caminho.
+
+    Se o administrador perder a senha, o caminho e' clicar de novo -- e isso INVALIDA a anterior.
+    Foi assim que "poder rever a senha durante a validade" foi atendido sem guardar nada
+    recuperavel no banco, que hoje so' tem hashes.
 
     Mesmo portao das outras escritas daqui: a allowlist do painel no middleware e na rota, e
     `acesso.usuario_gerir` pela regra de `POST` em `/api/acessos/usuarios`, que casa por prefixo e
@@ -4449,9 +4627,18 @@ def acessos_usuarios_redefinir_senha(
 
     eu = _identidade_do_admin(remote_user)
     try:
-        return db_usuarios.redefinir_senha(id_usuario, autor=eu.id_usuario)
+        resultado = db_usuarios.redefinir_senha(id_usuario, autor=eu.id_usuario)
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
         raise _erro_de_usuarios(erro) from erro
+    # Decisao 2 do P19: trocar CREDENCIAL derruba as sessoes abertas. Este e' o caso que
+    # mais importa dos tres -- e' o caminho de desligamento e de suspeita de vazamento, e
+    # deixar a sessao viva aqui manteria a pessoa dentro com a senha que acabou de perder.
+    # `autor` separa quem AGIU de quem SOFREU: o ato e' do admin.
+    _derrubar_sessoes(id_usuario, autor=eu.id_usuario, motivo="senha redefinida pelo admin")
+    # `no-store` e nao `no-cache`: este corpo carrega uma senha viva. Sem ele a resposta pode
+    # ficar no cache do navegador e em qualquer intermediario do caminho, e a senha passaria a
+    # existir em lugares que ninguem vai lembrar de limpar.
+    return JSONResponse(resultado, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/acessos/usuarios/{id_usuario}/exigir-troca", include_in_schema=False)
@@ -4474,6 +4661,406 @@ def acessos_usuarios_exigir_troca(
         return db_usuarios.exigir_troca(id_usuario, autor=eu.id_usuario)
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
         raise _erro_de_usuarios(erro) from erro
+
+
+class LoginIn(BaseModel):
+    """Entrada na plataforma. `lembrar` e' a caixinha da decisao 2 (fiel ao Authelia).
+
+    Sem restricao de tamanho de proposito: a POLITICA de senha vive em `senhas.validar` e
+    vale na CRIACAO. Impo-la aqui ensinaria o formato da senha a quem esta' tentando
+    adivinhar -- e recusaria, com mensagem diferente, uma senha legitima antiga.
+    """
+
+    login: str
+    senha: str
+    lembrar: bool = False
+
+
+def _cookie_de_sessao(resposta: Response, token: str, *, lembrar: bool) -> None:
+    """Escreve o cookie da sessao. UNICO lugar do repo que emite `Set-Cookie`.
+
+    Os flags nao sao gosto:
+      * `httponly` -- JavaScript nao le' o token, entao um XSS nao o carrega embora;
+      * `secure` + `samesite="lax"` -- o cookie nao viaja em http nem em requisicao
+        cross-site de terceiro; `lax` e nao `strict` porque `strict` quebraria a volta do
+        `rd=` (a pessoa clica no link do piloto e chegaria deslogada);
+      * `path="/"` -- a SPA e a API moram no mesmo host, e o prefixo `__Host-` EXIGE isto.
+
+    `max_age` e' o eixo de "lembrar de mim" (decisao 2, opcao (a) -- FIEL): com a caixinha,
+    cookie PERSISTENTE de 8h, que sobrevive a fechar e reabrir o navegador; sem ela, cookie
+    de SESSAO, que morre com a janela. Nos DOIS casos a sessao no banco dura os mesmos 8h --
+    "lembrar" muda a persistencia do cookie, NAO o tempo de vida. No Authelia o
+    `remember_me` ja' e' igual ao `expiration`, e reproduzir era a decisao.
+    """
+    seguro = acesso.em_producao()
+    resposta.set_cookie(
+        key=acesso.COOKIE_SESSAO if seguro else acesso.COOKIE_SESSAO_DEV,
+        value=token,
+        httponly=True,
+        secure=seguro,
+        samesite="lax",
+        path="/",
+        max_age=db_sessoes_duracao_s() if lembrar else None,
+    )
+
+
+def db_sessoes_duracao_s() -> int:
+    """Os 8h da decisao 2, em segundos, lidos da CONSTANTE -- nunca recopiados aqui."""
+    from motor_expansao.db import sessoes as db_sessoes
+
+    return db_sessoes.DURACAO_SESSAO_H * 3600
+
+
+@app.post("/api/login", include_in_schema=False)
+def login(body: LoginIn, request: Request) -> Response:
+    """Entra na plataforma: confere a senha, abre sessao e devolve o cookie.
+
+    SO' ATENDE COM A AUTENTICACAO PROPRIA LIGADA. Enquanto o Authelia autentica, esta rota
+    responde 404 -- e nao 501 ou 403 -- porque neste deploy ela nao existe: anunciar uma
+    porta de login que o sistema nao usa so' convida tentativa.
+
+    O MESMO 401 PARA OS DOIS ERROS. Login inexistente e senha errada devolvem a mesma
+    resposta, com a mesma mensagem: distinguir entrega ao visitante um oraculo de quem
+    trabalha aqui. E' a mesma decisao que `credenciais_por_login` ja' tomou na consulta,
+    onde inexistente e inativo caem no mesmo `None`.
+
+    TRAVA DE TENTATIVAS (18/09/2026): 5 recusas na janela MOVEL de 15 min barram a conta. A
+    contagem sai dos proprios eventos `login.recusado`; o indice
+    `idx_eventos_id_usuario_criado_em` ja' existia, entao nao houve migracao. A janela e'
+    movel de proposito -- sem ela a tranca nunca drenaria e qualquer pessoa poderia deixar a
+    conta de outra trancada para sempre.
+
+    O que esta rota continua NAO tendo, e fica declarado: trava por IP. `eventos` nao guarda
+    IP (P15 aberto), entao quem varre nomes INEXISTENTES nao tranca nada -- sem `id_usuario`
+    nao ha' o que contar. Tambem nao existe `rate limit` de rede em `web/server/` (medido), e
+    o `regulation:` do Authelia sai no corte.
+    """
+    from motor_expansao.db import senhas as db_senhas
+    from motor_expansao.db import sessoes as db_sessoes
+    from motor_expansao.db import usuarios as db_usuarios
+
+    if not db_sessoes.ligada():
+        raise HTTPException(404, "Not Found")
+
+    negado = HTTPException(401, "Login ou senha incorretos.")
+    vencida = False
+    try:
+        from motor_expansao.db import eventos as db_eventos
+
+        credencial = db_usuarios.credenciais_por_login(body.login)
+
+        # TRAVA DE TENTATIVAS, avaliada ANTES do Argon2: negar cedo e' o que impede uma
+        # rajada de queimar CPU do servidor a cada tentativa, que e' metade do estrago da
+        # forca bruta. O preco e' que "conta trancada" responde MAIS RAPIDO que "senha
+        # errada" -- troca aceita, porque quem provocou a tranca ja' sabe que a conta
+        # existe e o tempo nao lhe conta nada novo.
+        trancado = False
+        if credencial is not None:
+            recusas = db_eventos.contar_recusas_recentes(
+                id_usuario=credencial.id_usuario,
+                minutos=db_sessoes.JANELA_TENTATIVAS_MIN,
+                # A redefinicao por administrador ZERA a conta: ele confirmou a identidade por
+                # fora, o que vale mais que a heuristica de cinco tentativas -- e sem isto quem
+                # errou cinco vezes ANTES de ligar receberia a senha nova e seguiria barrado.
+                # O outro marco que zera (o ultimo acerto) sai do proprio `eventos`, la' dentro.
+                redefinida_em=credencial.redefinida_em,
+            )
+            trancado = recusas >= db_sessoes.MAX_TENTATIVAS
+
+        # A verificacao roda MESMO sem credencial, e o `None` e' proposital: `senhas.verificar`
+        # JA' paga um `ph.hash` descartavel quando o hash e' nulo ou fora do formato PHC,
+        # exatamente para o cronometro nao denunciar quem tem cadastro. A defesa ja' estava
+        # escrita la', com a razao no docstring -- duplica-la aqui com um hash-sentinela seria
+        # uma segunda redacao da mesma garantia, que e' como elas passam a divergir.
+        confere = (
+            False
+            if trancado
+            else db_senhas.verificar(body.senha, credencial.senha_hash if credencial else None)
+        )
+
+        # SENHA TEMPORARIA VENCIDA (D31) conta como senha errada, e a checagem vem DEPOIS do
+        # Argon2 de proposito -- o oposto da trava acima. La' negar cedo poupa CPU numa rajada;
+        # aqui o estado e' raro, e checar antes faria a resposta voltar mais rapido para quem
+        # digitou a senha temporaria certa depois do prazo, denunciando que ela existiu.
+        if confere and credencial is not None and credencial.expira_em is not None:
+            from datetime import UTC, datetime
+
+            if credencial.expira_em <= datetime.now(UTC):
+                confere = False
+                vencida = True
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_usuarios(erro) from erro
+
+    # FORA do `try` de proposito: aqui dentro ha' um `except Exception` que TRADUZ erros de
+    # dominio, e levantar a recusa la' dentro a faria passar pelo tradutor -- funcionaria por
+    # acidente, nao por desenho.
+    if trancado:
+        # NAO registra evento: se a tentativa barrada contasse, um atacante manteria a conta
+        # da vitima trancada para sempre com uma requisicao a cada janela, e o contador nunca
+        # drenaria. Sem registrar, a tranca SEMPRE expira. Fica o aviso no log do operador,
+        # que e' quem precisa enxergar o ataque.
+        _LOG_D17.warning(
+            "usuario %d barrado pela trava de tentativas (%d recusas em %d min)",
+            credencial.id_usuario if credencial else -1,
+            recusas,
+            db_sessoes.JANELA_TENTATIVAS_MIN,
+        )
+        raise negado
+    if credencial is None or not confere:
+        if vencida:
+            # So' no log do operador. Para quem tentou, isto e' senha errada como qualquer
+            # outra -- dizer "sua senha temporaria venceu" confirmaria que ela existiu, e para
+            # quem varre nomes isso e' a confirmacao de que a conta e' real.
+            _LOG_D17.info(
+                "usuario %d tentou entrar com senha temporaria VENCIDA",
+                credencial.id_usuario if credencial else -1,
+            )
+        # Registra a RECUSA antes de responder, e sem mudar o que se responde: o 401 e a
+        # mensagem seguem identicos nos dois casos, porque distinguir entregaria o oraculo
+        # de quem trabalha aqui. Quem distingue e' a LINHA no banco, que o visitante nao ve.
+        try:
+            from motor_expansao.db import eventos as db_eventos
+
+            db_eventos.registrar_login_recusado(
+                autor=credencial.id_usuario if credencial else None,
+                usuario_conhecido=credencial is not None,
+            )
+        except Exception:  # noqa: BLE001 — o rastro nunca muda a resposta ao visitante
+            _LOG_D17.exception("tentativa de login recusada SEM evento no banco")
+        raise negado
+
+    # DE ONDE A SESSAO VEIO (020). O IP sai de `_ip_real_do_xff`, o MESMO resolvedor da
+    # trilha da DEC-027 -- nao ha' segunda leitura do `X-Forwarded-For` neste arquivo, e nao
+    # pode haver: usar o PRIMEIRO token em vez do ultimo foi vulnerabilidade real (pentest de
+    # 19/08/2026), e uma segunda redacao da regra e' a que esquece a licao.
+    aberta = db_sessoes.abrir(
+        id_usuario=credencial.id_usuario,
+        ip=_ip_real_do_xff(
+            request.headers.get("x-forwarded-for"),
+            request.client.host if request.client else None,
+        ),
+        user_agent=request.headers.get("user-agent"),
+    )
+    try:
+        from motor_expansao.db import eventos as db_eventos
+
+        db_eventos.registrar_login(autor=credencial.id_usuario)
+    except Exception:  # noqa: BLE001 — o rastro nunca impede a entrada
+        _LOG_D17.exception("login do usuario %d SEM evento", credencial.id_usuario)
+
+    resposta = JSONResponse({"deve_trocar_senha": credencial.deve_trocar})
+    _cookie_de_sessao(resposta, aberta.token, lembrar=body.lembrar)
+    return resposta
+
+
+@app.post("/api/logout", include_in_schema=False)
+def logout(request: Request) -> Response:
+    """Sai: revoga a sessao no SERVIDOR e apaga o cookie.
+
+    Revogar no servidor e' o ponto inteiro da D30 ter escolhido tabela: o `BotaoSair.tsx`
+    ja' documenta que limpar estado no cliente NAO e' logout -- a tela pareceria deslogada
+    e a requisicao seguinte continuaria autenticada.
+
+    IDEMPOTENTE: sair duas vezes, ou sair com sessao ja' vencida, nao e' erro. A resposta e'
+    a mesma, e o cookie e' apagado de todo jeito.
+    """
+    from motor_expansao.db import sessoes as db_sessoes
+
+    if not db_sessoes.ligada():
+        raise HTTPException(404, "Not Found")
+
+    token = _token_de_sessao(request)
+    sessao = db_sessoes.validar(token or "") if token else None
+    if sessao is not None:
+        try:
+            db_sessoes.revogar(token=token or "", id_usuario=sessao.identidade.id_usuario)
+            from motor_expansao.db import eventos as db_eventos
+
+            db_eventos.registrar_logout(autor=sessao.identidade.id_usuario)
+        except Exception:  # noqa: BLE001 — sair nunca falha por causa do rastro
+            _LOG_D17.exception("logout do usuario %d SEM evento", sessao.identidade.id_usuario)
+
+    resposta = JSONResponse({"ok": True})
+    # Apaga nos DOIS nomes: quem alternou entre dev e producao no mesmo navegador teria o
+    # outro cookie sobrando, e o portao aceita qualquer um dos dois.
+    # `secure` e `httponly` no DELETE, e nao e' zelo: para apagar um cookie o navegador
+    # exige que o `Set-Cookie` de remocao satisfaca as MESMAS regras do original. O prefixo
+    # `__Host-` exige `Secure` e `Path=/`, entao um delete sem `secure` e' RECUSADO em
+    # producao -- o cookie ficava no navegador depois do logout. Nao era falha de seguranca
+    # (a sessao ja' foi revogada no servidor, e `SQL_VALIDAR` a recusa), mas o browser
+    # seguia mandando um token morto em toda requisicao, e o proximo a depurar isso leria
+    # "logout nao funciona".
+    #
+    # `secure=acesso.em_producao()` e nao `True` fixo: em dev (http) um cookie `Secure` nao
+    # e' aceito nem para apagar, e o nome de dev existe justamente porque ali nao ha' https.
+    seguro = acesso.em_producao()
+    for nome in (acesso.COOKIE_SESSAO, acesso.COOKIE_SESSAO_DEV):
+        resposta.delete_cookie(key=nome, path="/", secure=seguro, httponly=True, samesite="lax")
+    return resposta
+
+
+#: Os headers que o `/api/verify` emite, e que o `copy_headers` do Caddy copia sobre a
+#: requisicao antes de entrega-la ao backend. A lista aqui e a do Caddyfile sao a MESMA
+#: decisao em dois lugares, e `test_piloto_web_verify.py` compara as duas.
+#:
+#: Por que a lista importa alem do contrato: `copy_headers` so' SOBRESCREVE o que a resposta
+#: de autenticacao TROUXE. Header que esta' no `copy_headers` e NAO sai daqui e' header que
+#: chega ao backend exatamente como o CLIENTE mandou -- o oposto do que a diretiva parece
+#: prometer. Por isso as duas listas tem de ser identicas, e por isso `Remote-Name` saiu das
+#: DUAS (zero leitores no piloto, medido em `acesso.HEADERS_DE_IDENTIDADE`).
+CABECALHOS_DE_VERIFICACAO = ("Remote-User", "Remote-Groups", "Remote-Email")
+
+#: Throttle do aviso de "chamaram o /api/verify com a autenticacao propria desligada". Uma vez
+#: por processo, no molde do `_fail_closed_logado` do `acesso.py` e pelo mesmo motivo: a rota e'
+#: PUBLICA, entao um laco de requisicoes viraria um aviso por request -- e a mensagem existe
+#: para o operador achar um erro de ORDEM no deploy, que nao muda de linha para linha.
+_verify_desligado_logado = False
+
+
+@app.get("/api/verify", include_in_schema=False)
+def verify(request: Request) -> Response:
+    """O `forward_auth` do D4 (DEC-067): valida o COOKIE e responde 200 + headers, ou 401.
+
+    E' o que substitui o `/api/verify` do Authelia. O CAMINHO e' o mesmo de proposito -- muda
+    so' o alvo do `forward_auth` --, entao a borda nao aprende rota nova e o rollback e'
+    reapontar uma linha do Caddyfile.
+
+    LE O COOKIE, NUNCA O HEADER, e isto nao e' estilo: `_portao_de_sessao` chama
+    `_sem_headers_de_identidade` ANTES de qualquer decisao, INCLUSIVE para rota publica, entao
+    quando esta funcao roda `remote-user` e `remote-email` ja' foram apagados da requisicao.
+    Uma versao que lesse header nasceria quebrada (leria sempre vazio) E insegura (no dia em
+    que a limpeza mudasse, passaria a confiar em identidade mandada pelo cliente). A trava 1
+    da DEC-067 -- "nao pode aceitar identidade vinda do cliente" -- e' literal aqui: a UNICA
+    entrada que esta rota honra e' o cookie, e o cookie so' vale porque o banco o reconhece.
+
+    SEM IDENTIDADE DE DESENVOLVIMENTO (trava 2 da DEC-067). `rbac.login_efetivo` cai no
+    `MOTOR_DEV_USUARIO` quando nao ha' header, e esta rota NAO o chama -- nem indiretamente.
+    `login_efetivo` existe para quem roda o backend na propria maquina, SEM Caddy; esta rota
+    so' e' chamada PORQUE ha' um Caddy na frente. Um fallback aqui faria de um deploy com
+    `MOTOR_CADASTRO_DIR` ausente um piloto inteiro autenticado como a env de dev -- que e'
+    exatamente "o modo de dev vira caminho de entrada em producao".
+
+    NAO TOCA A INATIVIDADE (`db_sessoes.tocar`), e a razao e' de custo sem ganho: o
+    `forward_auth` roda a cada requisicao protegida, e essa MESMA requisicao passa segundos
+    depois pelo `_portao_de_sessao`, que ja' valida e ja' toca. Tocar aqui dobraria a
+    transacao de ESCRITA (o toque roda fora da `conexao()` READ ONLY, num pool de 4 conexoes)
+    sem mover o relogio de 30 min um segundo -- os dois carimbos seriam o mesmo `now()`. O que
+    fica DECLARADO e' o custo que esta arquitetura tem mesmo assim: um `SELECT` indexado a
+    mais por requisicao protegida, porque o backend NAO confia no veredito da borda e revalida.
+
+    BANCO FORA DO AR: 503, NAO 401. O Caddy repassa ao cliente a resposta nao-2xx desta rota,
+    entao a escolha e' entre duas mensagens, nao entre negar e liberar (negar e' obrigatorio
+    nos dois casos). 401 AFIRMA "sua sessao expirou", o que e' FALSO -- as sessoes estao
+    intactas, so' nao da' para le'-las -- e a SPA trata 401 como queda de sessao
+    (`relatarAcessoNegado` em `lib/sessao.ts`), entao uma piscada de banco viraria logout em
+    massa e mandaria a rede para uma tela de login que tambem nao pode funcionar, porque o
+    login tambem depende do banco. 503 diz "tente de novo", que e' a verdade, e o estrago e'
+    menor do que parece: o matcher `@protegido` do Caddyfile deixa os estaticos FORA do
+    `forward_auth`, entao a SPA ainda carrega e mostra o erro em vez de tela branca. E' tambem
+    a MESMA resposta, com a MESMA mensagem, que o `_portao_de_sessao` ja' da' para esta falha
+    -- o Caddy repassa status E corpo da negacao, entao a pessoa le' a mesma frase venha ela
+    da borda ou de dentro. Duas respostas para a mesma causa e' como elas passam a divergir.
+    """
+    global _verify_desligado_logado
+    from motor_expansao.db import sessoes as db_sessoes
+
+    if not db_sessoes.ligada():
+        # FAIL-CLOSED, e a ordem de aplicacao na VPS depende disso: o Caddy nega tudo que nao
+        # for 2xx, entao apontar o `forward_auth` para ca' ANTES de ligar
+        # `MOTOR_AUTENTICACAO_PROPRIA` derruba o piloto inteiro. Responder 200 aqui evitaria a
+        # queda e seria muito pior: o piloto ficaria PUBLICO enquanto ninguem percebesse.
+        # O `warning` existe para o operador achar a causa em um `docker logs`, em vez de
+        # investigar um 404 generico espalhado por todas as rotas.
+        if not _verify_desligado_logado:
+            _LOG_D17.warning(
+                "/api/verify chamado com MOTOR_AUTENTICACAO_PROPRIA DESLIGADA — se o Caddy ja' "
+                "aponta para ca', ligue a env ANTES de trocar o alvo do forward_auth"
+            )
+            _verify_desligado_logado = True
+        raise HTTPException(404, "Not Found")
+
+    token = _token_de_sessao(request)
+    try:
+        sessao = db_sessoes.validar(token or "")
+    except Exception:  # noqa: BLE001 — ver "BANCO FORA DO AR" no docstring
+        _LOG_D17.exception("/api/verify: falha ao validar a sessao")
+        return JSONResponse(
+            {"detail": "Sessão indisponível no momento."},
+            status_code=503,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    if sessao is None:
+        return JSONResponse(
+            {"detail": "Sessão expirada ou inexistente."},
+            status_code=401,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    # `no-store` obrigatorio: o corpo e' vazio, mas os HEADERS sao a identidade de uma pessoa.
+    # Sem ele, um intermediario do caminho poderia reusar esta resposta -- e reusar um veredito
+    # de autenticacao e' servir a sessao de alguem para outra pessoa.
+    #
+    # `Remote-Groups` = o PERFIL do RBAC (`expansao`/`consultoria`/`lideres`/`growth`). E' o
+    # equivalente honesto do que o Authelia servia: grupo, ou seja, a que conjunto de pessoas
+    # esta pertence. Nao sao as PERMISSOES de proposito -- publicar a lista de capacidades num
+    # header seria uma segunda redacao de `REGRAS_POR_CAPACIDADE` num lugar onde ninguem a
+    # aplica, e a autorizacao continua sendo decidida no processo, pelo RBAC.
+    #
+    # E fica DITO que hoje ele NAO alimenta nada: a propria DEC-067 mede que `Remote-Groups`
+    # tem zero leitores no piloto. Ele sai daqui por duas razoes que independem disso -- o
+    # contrato do D4, e a propriedade do `copy_headers` (o que a rota nao emite, o Caddy
+    # deixa passar como o CLIENTE mandou).
+    #
+    # `Remote-Email` sai VAZIO, e e' escolha. O header precisa EXISTIR (ver
+    # `CABECALHOS_DE_VERIFICACAO`), mas o valor nao tem consumidor depois do corte: os dois
+    # leitores de `remote-email` em `app.py` sao FALLBACK de `remote-user` (`_registrar_acesso`
+    # faz `remote-user or remote-email`), e `remote-user` passa a vir sempre; alem disso o
+    # portao APAGA `remote-email` de toda requisicao, entao nenhum valor emitido aqui seria
+    # lido. Carregar o e-mail custaria PII atravessando a borda (e logs de borda) para ninguem,
+    # e uma coluna a mais em `SQL_VALIDAR` -- que e' exatamente o custo por requisicao que a
+    # remocao de `deve_trocar_senha_usuario` acabou de tirar de la', em 25/09.
+    return Response(
+        status_code=200,
+        headers={
+            "Remote-User": _valor_de_cabecalho(sessao.identidade.login),
+            "Remote-Groups": _valor_de_cabecalho(sessao.identidade.perfil),
+            "Remote-Email": "",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _derrubar_sessoes(id_alvo: int, *, autor: int, motivo: str) -> None:
+    """Revoga TODAS as sessoes abertas de `id_alvo`. Nunca derruba a operacao que a chamou.
+
+    A ordem importa e e' deliberada: a troca de senha acontece PRIMEIRO e so' entao as
+    sessoes caem. Se a revogacao falhar, a troca CONTINUA valendo e o erro vira log --
+    o contrario perderia a troca de senha por causa do rastro, que e' trocar um problema
+    grande por um pequeno. Mesma politica do `_registrar_acesso` da DEC-027.
+
+    Sem banco configurado isto e' silencioso de proposito: nao ha' sessao propria enquanto o
+    Authelia autentica, entao nao ha' o que revogar -- e um traceback por troca de senha
+    treinaria o operador a ignorar justamente este log.
+    """
+    try:
+        from motor_expansao.db import BancoNaoConfigurado
+        from motor_expansao.db import sessoes as db_sessoes
+
+        try:
+            caidas = db_sessoes.revogar_todas_do_usuario(id_usuario=id_alvo, autor=autor)
+        except BancoNaoConfigurado:
+            _LOG_D17.debug("deploy sem banco — %s sem sessao a revogar", motivo)
+            return
+        if caidas:
+            _LOG_D17.info("%s: %d sessao(oes) do usuario %d revogada(s)", motivo, caidas, id_alvo)
+    except Exception:  # noqa: BLE001 — a revogacao nunca derruba a troca de senha
+        _LOG_D17.exception(
+            "%s: FALHA ao revogar as sessoes do usuario %d — a credencial mudou e sessoes "
+            "abertas com a ANTIGA podem seguir validas ate' expirarem",
+            motivo,
+            id_alvo,
+        )
 
 
 @app.patch("/api/me/senha", include_in_schema=False)
@@ -4501,13 +5088,19 @@ def me_trocar_senha(
 
     eu = _minha_identidade(remote_user)
     try:
-        return db_usuarios.trocar_a_propria_senha(
+        resultado = db_usuarios.trocar_a_propria_senha(
             autor=eu.id_usuario,
             senha_atual=body.senha_atual,
             nova_senha=body.nova_senha,
         )
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
         raise _erro_de_usuarios(erro) from erro
+    # Decisao 2 do P19: a senha nova invalida as sessoes abertas com a ANTIGA. Aqui quem
+    # age e quem sofre sao a mesma pessoa -- inclusive a sessao DESTA requisicao cai, e e'
+    # o comportamento certo: trocar senha e continuar logado com a credencial velha e'
+    # exatamente o que a revogacao existe para impedir. A tela pede login de novo.
+    _derrubar_sessoes(eu.id_usuario, autor=eu.id_usuario, motivo="troca da propria senha")
+    return resultado
 
 
 # ============================================================================
@@ -6642,6 +7235,25 @@ _EXEC_ALIAS_COORD: dict[tuple[str, str], str] = {
 }
 
 
+# Coordenada FORNECIDA por Felipe, que vence TODAS as fontes em `_coord_da_unidade`.
+# Existe para os casos em que nenhum alias resolve: a unidade não tem linha própria nos
+# parquets, ou a linha que casa pelo nome tem o ponto de OUTRA unidade. Medido contra os
+# parquets da VPS em 2026-09-25:
+#   - as três Ceilândias por quadra e São Carlos Centro não casavam com nada e
+#     ficavam SEM pin na Visão Executiva;
+#   - Botanic Mall e Jardim Botânico estavam TROCADOS entre si (o ponto de uma no
+#     pin da outra, a ~5 km).
+# Chave = `(_chave_unidade(nome Growth), UF)`, já normalizada, como no alias acima.
+_EXEC_COORD_CORRIGIDA: dict[tuple[str, str], tuple[float, float]] = {
+    ("CEILANDIA QNM24", "DF"): (-15.801298089339188, -48.10755437145428),
+    ("CEILANDIA QNM33", "DF"): (-15.832624961873757, -48.08987702487761),
+    ("CEILANDIA QNN32", "DF"): (-15.839355019389082, -48.10880149815541),
+    ("SAO CARLOS - CENTRO", "SP"): (-22.012508486987347, -47.8880006733541),
+    ("BOTANIC MALL", "DF"): (-15.880275122281448, -47.82143693951672),
+    ("JARDIM BOTANICO", "DF"): (-15.83510411113517, -47.803140295231366),
+}
+
+
 @functools.lru_cache(maxsize=1)
 def _carregar_growth() -> pd.DataFrame:
     if not GROWTH_PARQUET.exists():
@@ -6721,13 +7333,17 @@ def _coord_da_unidade(nome: str, uf: str) -> tuple[float, float] | None:
          bases (ex.: "Novo Gama / GO" atendendo a unidade que a Growth marca como DF).
 
     Nomes comerciais que nenhuma normalização reconcilia passam antes por
-    `_EXEC_ALIAS_COORD`, que redireciona a busca para a chave do cadastro.
+    `_EXEC_ALIAS_COORD`, que redireciona a busca para a chave do cadastro. Acima de
+    tudo isso, `_EXEC_COORD_CORRIGIDA` devolve a coordenada fornecida manualmente.
     """
     curada, cad_por_chave_uf, cad_por_chave = _ultra_coord_map()
     uf = str(uf).upper().strip()
     chave = _chave_unidade(nome)
     if not chave:
         return None
+    corrigida = _EXEC_COORD_CORRIGIDA.get((chave, uf))
+    if corrigida:
+        return corrigida
     # O alias existe justamente porque a chave crua não casa: ele SUBSTITUI a chave.
     chave = _EXEC_ALIAS_COORD.get((chave, uf), chave)
     return (

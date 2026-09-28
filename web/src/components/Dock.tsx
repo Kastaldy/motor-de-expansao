@@ -72,8 +72,17 @@ function Carimbo({ pais }: { pais?: string | null }) {
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
+      /* `gap: 3` é INTERNO — separa a bandeira da sigla dentro do carimbo, e não tem
+         relação com o afastamento externo. Anotado porque os dois já foram confundidos.
+
+         AS MARGENS EXTERNAS são IGUAIS dos dois lados (2026-09-25). Antes eram três
+         ajustes avulsos empilhados sobre o `gap: 8` do rail — a logo com
+         `marginBottom: 6`, o carimbo com `marginTop: -2` e `marginBottom: 8` —, o que
+         dava 12px numa junta e 16px na outra. Zerar tudo deixou as duas em 8px, e aí o
+         carimbo ficou COLADO na logo, que é grande. Os 8px daqui somam ao gap e devolvem
+         16px de cada lado: afastado da logo, afastado do bloco, e simétrico. */
       gap: 3,
-      marginTop: -2,
+      marginTop: 8,
       marginBottom: 8,
       flexShrink: 0,
     }}
@@ -171,13 +180,26 @@ const ICONES: Record<string, React.JSX.Element> = {
    "botão laranja" pelo destino. Verde na viabilidade é semântica ("como dinheiro
    mesmo"), laranja nas oportunidades, turquesa no mapa, magenta na executiva, azul
    nos acessos. Tokens da paleta de série: cada tema entrega o contraste certo. */
-const COR_ICONE: Record<string, string> = {
-  mapa: 'var(--ac-text)',
-  exec: 'var(--gr-rosa)',
-  oport: 'var(--gr-coral)',
-  viab: 'var(--gr-verde)',
-  acessos: 'var(--gr-azul)',
-}
+/* ÍCONES BRANCOS (2026-09-25, pedido do Felipe). Cada destino tinha a sua cor —
+   turquesa, rosa, coral, verde, azul —, e isso nasceu quando o rail era escuro e
+   neutro: ali as cinco cores separavam os destinos sem brigar com nada.
+
+   Sobre o rail ROSA da marca elas deixam de funcionar por duas razões. A primeira é de
+   marca: o guia autoriza no máximo DUAS cores de destaque por peça (aqui, turquesa +
+   rosa), e cinco ícones coloridos sobre um fundo de marca são cinco cores numa peça
+   só. A segunda é de leitura: o ícone `exec` era `--gr-rosa`, a mesma família do fundo
+   novo — ele desapareceria dentro dele.
+
+   Branco resolvia as duas: é a cor que o sistema interno da Ultra usa sobre a barra, e
+   quem marca o item ativo é o VÉU de fundo, que já existia.
+
+   O LARANJA FOI TESTADO E DESCARTADO (2026-09-25). Medido antes de aplicar e
+   confirmado no olho: o laranja da marca sobre o teal do rail dá **1,92:1**, contra o
+   mínimo de 3:1 da WCAG para elemento gráfico — as duas cores têm luminância parecida
+   e se anulam em vez de se separarem. Clarear não salvava (2,58 no mais claro). Some-se
+   a isso que o par rail teal + ícone laranja + card magenta poria as TRÊS cores de
+   marca na mesma tela, a única combinação que o guia proíbe. */
+const COR_ICONE_BRANCO = 'var(--tx-max)'
 
 export default function Dock({
   tela,
@@ -209,7 +231,7 @@ export default function Dock({
   return (
     <nav
       aria-label="Navegação principal"
-      className="cromo-escuro"
+      className="rail-ultra"
       style={{
         width: 70,
         flexShrink: 0,
@@ -218,12 +240,21 @@ export default function Dock({
         alignItems: 'center',
         gap: 8,
         padding: '14px 8px',
-        /* Rail sempre ESCURO com lavagem turquesa — a classe `cromo-escuro` (tokens.css)
-           mantém o cromo escuro mesmo no tema claro (Juan, 2026-09-09: a barra lateral
-           clara ficou ruim em todas as lavagens de cor; a caixa escura resolveu). */
+        /* Rail TEAL SÓLIDO, como o sistema interno da Ultra (uxplus) — a classe
+           `rail-ultra` (tokens.css) traz o teal opaco e o texto branco.
+
+           Era escuro com lavagem turquesa (Juan, 2026-09-09: "a barra lateral clara
+           ficou ruim em todas as lavagens de cor"). O Felipe mandou aplicar o guia em
+           tudo e mostrou a referência real: lá o rail é a cor prioritária da marca,
+           chapada. É a maior superfície contínua do produto e é onde o guia quer o
+           teal dominante.
+
+           SEM `backdropFilter`: o fundo agora é opaco, e desfocar o que está atrás de
+           uma superfície opaca só custa composição — foi a translucidez que o Felipe
+           apontou como errada. O véu branco do gradiente fica, mas só para dar relevo
+           ao item ativo. */
         background: 'linear-gradient(180deg, var(--rail-a16), var(--rail-a08)), var(--surf-chrome)',
         borderRight: '1px solid var(--rail-a24)',
-        backdropFilter: 'blur(14px)',
         zIndex: 20,
       }}
     >
@@ -242,7 +273,6 @@ export default function Dock({
           height: 42,
           borderRadius: 11,
           overflow: 'hidden',
-          marginBottom: 6,
           flexShrink: 0,
           background: '#fff',
           display: 'grid',
@@ -264,10 +294,41 @@ export default function Dock({
 
       <Carimbo pais={pais} />
 
-      {itens.map((it) => {
+      {/* BLOCO UNICO da navegacao (2026-09-25, pedido do Felipe: "um fundo que preencha
+          toda parte lateral do icone e tenha altura do primeiro icone ate o ultimo,
+          sendo dividido por linhas"). Era um chip por icone; virou uma peca so'.
+
+          O fundo, a borda e o raio moram AQUI; cada botao perde os seus e ganha apenas
+          a linha que o separa do anterior. O primeiro nao leva linha — encostada na
+          borda externa, ela leria como risco solto em vez de divisoria. */}
+      <nav
+        aria-label="Telas do piloto"
+        style={{
+          alignSelf: 'stretch',
+          display: 'flex',
+          flexDirection: 'column',
+          background: 'var(--surf-raised)',
+          /* SANGRA ATÉ AS BORDAS do rail. O rail tem `padding: '14px 8px'`, e uma
+             primeira versão deixou o bloco dentro desse respiro — virou uma faixa com
+             margem, não o que o Felipe pediu ("preencha toda a barra na largura").
+
+             A margem negativa cancela o padding em vez de removê-lo: o padding continua
+             valendo para o logo e para o trio do rodapé, que PRECISAM dele. Tirá-lo do
+             rail encostaria todo mundo na borda para resolver só este bloco.
+
+             Sem raio e sem borda lateral, por consequência: encostado nas duas bordas,
+             canto arredondado deixaria dois triângulos de teal nas pontas, e a borda
+             vertical cairia exatamente em cima da borda do rail. */
+          marginLeft: -8,
+          marginRight: -8,
+          borderTop: '1px solid var(--line-soft)',
+          borderBottom: '1px solid var(--line-soft)',
+        }}
+      >
+      {itens.map((it, indice) => {
         const ativo = it.tela !== null && it.tela === tela
         const disponivel = it.tela !== null
-        const cor = COR_ICONE[it.id] ?? 'var(--ac-text)'
+        const cor = COR_ICONE_BRANCO
         return (
           <button
             key={it.id}
@@ -278,14 +339,35 @@ export default function Dock({
             disabled={!disponivel}
             onClick={() => it.tela && onTela(it.tela)}
             style={{
-              width: 42,
-              height: 42,
-              borderRadius: 11,
+              /* Largura CHEIA do bloco, nao mais um quadrado de 42: o pedido e' que o
+                 fundo preencha a lateral inteira. */
+              width: '100%',
+              /* 52, e nao 42 + `gap`: o pedido foi ~10px a mais entre um icone e outro,
+                 e `gap` abriria FRESTAS de teal dentro do bloco — o fundo deixaria de
+                 ser contínuo e as divisórias virariam riscos soltos. Crescer a altura
+                 da celula afasta os glifos e mantém o bloco inteiro. */
+              height: 52,
+              borderRadius: 0,
               display: 'grid',
               placeItems: 'center',
-              /* O ativo se marca pelo FUNDO (tinta da própria cor do ícone), já que a
-                 cor sozinha deixou de dizer "você está aqui" quando todos ganharam uma. */
-              background: ativo ? `color-mix(in srgb, ${cor} 16%, transparent)` : 'transparent',
+              /* CHIP DE FUNDO em todos, não só no ativo (2026-09-25, pedido do
+                 Felipe: "adicione um fundo neles igual tem no logout e troca de tema").
+                 É a mesma métrica e o mesmo par `--surf-raised` + `--line-soft` dos
+                 botões do rodapé — eles já eram os únicos com moldura, e a fileira de
+                 cima parecia de outra ordem por não ter.
+
+                 Com os ícones todos brancos, o chip virou o que dá relevo: antes a cor
+                 de cada destino fazia esse papel sozinha.
+
+                 O ATIVO continua se distinguindo — sobe do véu de repouso para um véu
+                 mais denso, na cor do próprio ícone. Se os dois estados usassem o mesmo
+                 fundo, o chip apagaria o "você está aqui" que ele veio reforçar. */
+              background: ativo
+                ? `color-mix(in srgb, ${cor} 22%, transparent)`
+                : 'transparent',
+              /* So' a divisoria: o fundo e a moldura sao do bloco. */
+              border: 'none',
+              borderTop: indice === 0 ? 'none' : '1px solid var(--line-soft)',
               color: disponivel ? cor : 'var(--tx-rank)',
               opacity: disponivel ? 1 : 0.5,
               transition: 'background .15s ease, color .15s ease',
@@ -306,6 +388,7 @@ export default function Dock({
           </button>
         )
       })}
+      </nav>
 
       {/* `marginTop: auto` empurra o trio do pé do rail para baixo: ele fica longe da
           fila de destinos, que é o que o separa de uma sexta tela. São os controles que
@@ -357,7 +440,9 @@ function Cadeado() {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.9}
+      /* Traco FINO, como o guia pede para os line icons: 1,9 destoava do 1,6 dos
+         demais icones do rail e engrossava o cadeado contra os vizinhos. */
+      strokeWidth={1.6}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden

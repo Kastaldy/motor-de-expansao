@@ -287,8 +287,12 @@ def test_a_criacao_passa_o_autor_e_devolve_o_id(monkeypatch: pytest.MonkeyPatch)
 
     def _criar(**kwargs: Any) -> dict[str, Any]:
         visto.update(kwargs)
-        return {"id_usuario": 42, "login": "ana", "perfil": "expansao",
-                "falta_cadastrar_no_authelia": True}
+        return {
+            "id_usuario": 42,
+            "login": "ana",
+            "perfil": "expansao",
+            "falta_cadastrar_no_authelia": True,
+        }
 
     monkeypatch.setattr(db_usuarios, "criar", _criar)
     saida = pilot_app.acessos_usuarios_criar(_corpo_novo(), remote_user=ADMIN)
@@ -474,16 +478,26 @@ def test_senha_fraca_e_422(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(pilot_app, "_minha_identidade", lambda _u: _Eu())
 
+    # A mensagem sai da POLITICA DE VERDADE, e nao de um literal: ate' 25/09/2026 este dublê
+    # dizia "pelo menos 12 caracteres" cravado. O dono baixou o piso para 8 e este teste
+    # continuou VERDE ensinando o numero errado -- dublê que inventa a propria mensagem nao
+    # mede nada e ainda vira documentacao falsa do que a pessoa vai ler.
+    piso = senhas.MINIMO_DE_CARACTERES
+    curta = "a" * (piso - 1)
+    with pytest.raises(senhas.SenhaFraca) as reprovada:
+        senhas.validar(curta)
+    mensagem_real = str(reprovada.value)
+
     def _trocar(**_k: Any) -> None:
-        raise senhas.SenhaFraca("A senha precisa de pelo menos 12 caracteres.")
+        raise senhas.SenhaFraca(mensagem_real)
 
     monkeypatch.setattr(db_usuarios, "trocar_a_propria_senha", _trocar)
     with pytest.raises(HTTPException) as caiu:
         pilot_app.me_trocar_senha(
-            pilot_app.MinhaSenhaIn(senha_atual="x", nova_senha="curta"), remote_user=ADMIN
+            pilot_app.MinhaSenhaIn(senha_atual="x", nova_senha=curta), remote_user=ADMIN
         )
     assert caiu.value.status_code == 422
-    assert "12 caracteres" in str(caiu.value.detail)
+    assert f"{piso} caracteres" in str(caiu.value.detail)
 
 
 def test_sem_cadastro_no_banco_a_mensagem_nao_fala_da_allowlist(
@@ -598,3 +612,70 @@ def test_as_rotas_de_senha_alheia_nao_recebem_corpo_e_exigem_gerir(gesto: str) -
     capacidade = pilot_app.acesso.capacidade_necessaria
     assert capacidade(concreto, "POST") == "acesso.usuario_gerir"
     assert capacidade(concreto, "GET") == "acesso.painel_ver"
+
+
+# --------------------------------------------------------------------------------------
+# A senha TEMPORARIA (D31, 18/09) — o que a rota devolve, e o que ela nao pode deixar escapar
+# --------------------------------------------------------------------------------------
+
+
+def test_a_rota_devolve_a_senha_para_o_admin_repassar(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A senha sai no CORPO, e e' a unica vez que um segredo faz isso aqui.
+
+    O token de sessao vai no cookie justamente para nao sair no corpo (ha' teste proprio). A
+    diferenca e' o destinatario: aqui quem le' e' uma PESSOA, que vai ditar por telefone. Sem
+    isto a rota redefiniria a senha e ninguem saberia qual e' -- conta perdida.
+    """
+    import json
+
+    _identidade(monkeypatch, _Eu())
+    monkeypatch.setattr(
+        db_usuarios,
+        "redefinir_senha",
+        lambda *_a, **_k: {
+            "id_usuario": 9,
+            "tinha_senha_propria": True,
+            "senha_temporaria": "kvth-9rqm-2xbf",
+            "validade_horas": 2,
+        },
+    )
+    monkeypatch.setattr(pilot_app, "_derrubar_sessoes", lambda *_a, **_k: None)
+
+    resposta = pilot_app.acessos_usuarios_redefinir_senha(9, remote_user=ADMIN)
+    corpo = json.loads(bytes(resposta.body))
+    assert corpo["senha_temporaria"] == "kvth-9rqm-2xbf"
+    assert corpo["validade_horas"] == 2
+
+
+def test_a_resposta_com_a_senha_NAO_pode_ser_cacheada(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`no-store`, e nao `no-cache`: o corpo carrega uma senha VIVA.
+
+    Sem o cabecalho ela fica no cache do navegador e em qualquer intermediario do caminho --
+    lugares que ninguem vai lembrar de limpar quando a senha for trocada.
+    """
+    _identidade(monkeypatch, _Eu())
+    monkeypatch.setattr(
+        db_usuarios,
+        "redefinir_senha",
+        lambda *_a, **_k: {"id_usuario": 9, "senha_temporaria": "kvth-9rqm-2xbf"},
+    )
+    monkeypatch.setattr(pilot_app, "_derrubar_sessoes", lambda *_a, **_k: None)
+
+    resposta = pilot_app.acessos_usuarios_redefinir_senha(9, remote_user=ADMIN)
+    assert resposta.headers.get("cache-control") == "no-store"
+
+
+def test_a_senha_nova_nao_vai_para_o_LOG(monkeypatch: pytest.MonkeyPatch, caplog: Any) -> None:
+    """O log da trilha e' lido por operador e vive 90 dias. Senha viva ali seria vazamento
+    com prazo maior que o da propria senha."""
+    import logging
+
+    _identidade(monkeypatch, _Eu())
+    monkeypatch.setattr(
+        db_usuarios,
+        "redefinir_senha",
+        lambda *_a, **_k: {"id_usuario": 9, "senha_temporaria": "kvth-9rqm-2xbf"},
+    )
+    with caplog.at_level(logging.DEBUG):
+        pilot_app.acessos_usuarios_redefinir_senha(9, remote_user=ADMIN)
+    assert "kvth-9rqm-2xbf" not in caplog.text

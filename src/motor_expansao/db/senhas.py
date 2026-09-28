@@ -60,12 +60,43 @@ BYTES_DE_CHAVE = 32
 #: uma letra trocada e um ano no fim, o que da' sensacao de rigor sem ganho mensuravel. Por isso
 #: aqui ha piso de tamanho e nada mais. (Nenhum exemplo literal neste arquivo, de proposito: ver
 #: `test_o_modulo_nao_carrega_senha_nenhuma_no_fonte`.)
-MINIMO_DE_CARACTERES = 12
+#:
+#: 8 por decisao do dono em 25/09/2026; era 12. O 8 e' o piso do proprio NIST SP 800-63B para
+#: senha escolhida por pessoa, entao a politica continua dentro da referencia que a justifica --
+#: mas a folga encurtou, e o que sustenta o resto sao as camadas VIZINHAS, nao este numero:
+#: Argon2id com os parametros do Authelia (custo por tentativa) e a trava de 5 tentativas em
+#: 15 minutos de `db/sessoes.py` (custo de VOLUME, que e' o que mata ataque online).
+#: Quem mexer aqui para baixo de novo precisa olhar aquelas duas antes.
+#:
+#: NAO vale para a senha TEMPORARIA, que nasce com 14 e nao passa por escolha humana.
+MINIMO_DE_CARACTERES = 8
 
 #: Teto, e ele e' defesa e nao usabilidade: Argon2 com custo de memoria fixo processa entrada
 #: arbitrariamente longa, entao aceitar megabytes num endpoint publico e' negacao de servico de
 #: graca. 128 nao aperta ninguem -- uma frase-senha longa cabe folgada.
 MAXIMO_DE_CARACTERES = 128
+
+#: Alfabeto da senha TEMPORARIA. Nao tem `i`, `l`, `o`, `0` nem `1`: esta senha nasce para ser
+#: DITADA -- o administrador a le' para a pessoa, quase sempre por telefone -- e as confusoes
+#: caras sao justamente essas. So' minusculas, pelo mesmo motivo: "e maiusculo ou minusculo?"
+#: e' uma pergunta a mais em cada caractere.
+ALFABETO_TEMPORARIA = "abcdefghjkmnpqrstuvwxyz23456789"
+
+#: Tres grupos de quatro, separados por hifen. O hifen e' so' leitura: quem digita em bloco erra
+#: menos com a senha fatiada, e `validar` nao se importa. 12 caracteres de um alfabeto de 31 dao
+#: ~59 bits -- folgado demais para um segredo que morre em duas horas, e o custo de folga aqui e'
+#: zero. O total com hifens e' 14, acima do piso exigido por `validar` (8 desde 25/09/2026).
+#: Estes 12 NAO acompanham aquele piso: sao dimensionados pela entropia acima, e a temporaria
+#: nao e' escolhida por ninguem -- baixa-los para seguir o minimo enfraqueceria um segredo que
+#: e' gerado, ditado por telefone e descartado.
+GRUPOS_DA_TEMPORARIA = 3
+CARACTERES_POR_GRUPO = 4
+
+#: Quanto vale uma senha temporaria. Decisao do dono em 18/09/2026: duas horas.
+#: O repasse e' por telefone, questao de minutos; se falhar, o administrador gera outra, e gerar
+#: outra MATA a anterior -- foi assim que "rever a senha" foi resolvido sem guardar nada
+#: recuperavel no banco.
+VALIDADE_TEMPORARIA_H = 2
 
 
 class HashIndisponivel(RuntimeError):
@@ -144,6 +175,30 @@ def gerar(senha: str) -> str:
     """Valida e devolve o PHC do Argon2id. Unico produtor legitimo de `usuarios.senha_hash`."""
     validar(senha)
     return str(_hasher().hash(senha))
+
+
+def gerar_temporaria() -> str:
+    """Uma senha temporaria NOVA, aleatoria e so' desta pessoa. Devolve o TEXTO PURO.
+
+    E' a unica funcao do modulo que devolve senha legivel, e existe por um motivo estreito: a
+    redefinicao por administrador precisa entregar algo que a pessoa consiga usar. Ate' 18/09/2026
+    o que se entregava era `senha_inicial()` -- a MESMA senha para todo mundo --, entao quem
+    conhecesse aquele valor entrava na conta de qualquer um que tivesse acabado de ser redefinido.
+
+    `secrets`, e nao `random`: o `random` e' um Mersenne Twister previsivel a partir de saidas
+    anteriores, e aqui a saida e' uma credencial.
+
+    O texto puro NAO e' guardado em lugar nenhum -- nem no banco, nem em log, nem em cache. Ele
+    aparece uma vez na resposta da rota, para o administrador ler, e depois so' existe o hash. Se
+    o administrador o perder, o caminho e' gerar outra, o que invalida esta.
+    """
+    import secrets
+
+    grupos = [
+        "".join(secrets.choice(ALFABETO_TEMPORARIA) for _ in range(CARACTERES_POR_GRUPO))
+        for _ in range(GRUPOS_DA_TEMPORARIA)
+    ]
+    return "-".join(grupos)
 
 
 def senha_inicial() -> str:

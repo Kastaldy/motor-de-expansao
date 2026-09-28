@@ -16,8 +16,9 @@ describe('podeEnviar', () => {
   })
 
   it('usuario so com espaco nao conta como preenchido', () => {
-    /* Nao e' capricho: cada ida ao servidor gasta uma das 4 tentativas que o
-       `regulation` conta antes de bloquear por 10 minutos. */
+    /* Nao e' capricho: cada ida ao servidor gasta uma das tentativas da trava do NOSSO
+       servidor (`MAX_TENTATIVAS` em `lib/login-motor.ts`, espelhando `db/sessoes.py`). Ate'
+       25/09/2026 este comentario citava o `regulation` do Authelia, que sai no corte. */
     expect(podeEnviar('   ', 'segredo', 'parado')).toBe(false)
   })
 
@@ -25,8 +26,44 @@ describe('podeEnviar', () => {
     expect(podeEnviar('felipe.silva', '   ', 'parado')).toBe(true)
   })
 
+  describe('campo AUTOPREENCHIDO conta como preenchido', () => {
+    /* O defeito, relatado duas vezes: com usuario e senha autopreenchidos o botao
+       nascia cinza e so' acordava ao clicar em QUALQUER lugar da tela. O Chrome
+       preenche na carga mas segura o valor da senha ate' haver um gesto — entao ler
+       o DOM devolvia vazio, e o clique era o gesto que liberava. A habilitacao passa
+       a olhar a PRESENCA do autofill, nao o valor. */
+
+    it('os dois autopreenchidos, com valor ainda ilegivel, habilitam', () => {
+      expect(podeEnviar('', '', 'parado', { usuario: true, senha: true })).toBe(true)
+    })
+
+    it('so a senha autopreenchida, com usuario digitado', () => {
+      expect(podeEnviar('felipe.silva', '', 'parado', { senha: true })).toBe(true)
+    })
+
+    it('so um campo autopreenchido NAO basta', () => {
+      expect(podeEnviar('', '', 'parado', { senha: true })).toBe(false)
+      expect(podeEnviar('', '', 'parado', { usuario: true })).toBe(false)
+    })
+
+    it('nao afrouxa o resto: `enviando` continua bloqueando', () => {
+      // Duplo clique com autofill gastaria DUAS tentativas da trava.
+      expect(podeEnviar('', '', 'enviando', { usuario: true, senha: true })).toBe(false)
+    })
+
+    it('sem autofill o comportamento e' + ' identico ao de antes', () => {
+      expect(podeEnviar('', 'segredo', 'parado', {})).toBe(false)
+      expect(podeEnviar('felipe.silva', '', 'parado', {})).toBe(false)
+      expect(podeEnviar('felipe.silva', 'segredo', 'parado', {})).toBe(true)
+    })
+
+    it('`false` explicito nao habilita (nao basta a chave existir)', () => {
+      expect(podeEnviar('', '', 'parado', { usuario: false, senha: false })).toBe(false)
+    })
+  })
+
   it('nao envia duas vezes enquanto o primeiro envio esta em voo', () => {
-    // Duplo clique gastaria DUAS das 4 tentativas com a mesma credencial.
+    // Duplo clique gastaria DUAS tentativas da trava com a mesma credencial.
     expect(podeEnviar('felipe.silva', 'segredo', 'enviando')).toBe(false)
   })
 })
@@ -74,12 +111,20 @@ describe('MENSAGEM_FALHA', () => {
     expect(m).not.toMatch(/não existe|inexistente|não encontrado/)
   })
 
-  it('o bloqueio diz que e bloqueio, e por quanto tempo', () => {
-    /* A regua vem do `regulation` do Authelia (4 tentativas / 2 min / ban de 10 min).
-       Se ela mudar la, esta mensagem mente — e o teste e o lembrete disso. */
+  it('o bloqueio diz que e bloqueio e oferece uma saida, SEM prometer prazo', () => {
+    /* Ate' 25/09/2026 este teste exigia a string "10 minutos", que era o `ban_time` do
+       `regulation` do Authelia. A regua passou a ser a NOSSA — `MAX_TENTATIVAS` recusas
+       numa janela MOVEL de `JANELA_TENTATIVAS_MIN` minutos (`db/sessoes.py`) — e a
+       diferenca nao e' de numero, e' de NATUREZA: la' havia um relogio fixo para esperar;
+       aqui a janela DESLIZA, entao o que destrava e' a tentativa mais antiga envelhecer.
+       Prometer um prazo mandaria a pessoa esperar algo que nao existe.
+
+       O teste agora PROIBE o prazo em vez de exigi-lo, e cobra a saida que sempre
+       funciona: pedir a um administrador para redefinir (redefinir DESTRAVA a conta). */
     const m = MENSAGEM_FALHA.bloqueado.toLowerCase()
     expect(m).toContain('bloque')
-    expect(m).toContain('10 minutos')
+    expect(m).not.toMatch(/\d+\s*minutos?/)
+    expect(m).toContain('administrador')
   })
 
   it('e congelado', () => {

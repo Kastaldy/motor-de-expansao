@@ -5,6 +5,8 @@ import IconeTipo from '../components/IconeTipo'
 import Select from '../components/Select'
 import { Aviso, Botao, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
+import type { Tema } from '../lib/tema'
+import { TEMA_PADRAO } from '../lib/tema'
 import { SCORE_BANDS_HEX } from '../lib/colors'
 import { brl, brlCurto, num } from '../lib/format'
 import {
@@ -46,7 +48,14 @@ import 'maplibre-gl/dist/maplibre-gl.css'
  * ao lado do mini-mapa + acoes).
  */
 
-const BASEMAP = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+/* Basemap POR TEMA, como `ExecMap` e `FichaMapa` ja' faziam. Esta tela tinha uma
+   copia propria com o dark-matter cravado, e por isso o mapa ficava preto no tema
+   claro. Positron e' o par claro da MESMA familia Carto: ruas, rotulos e hierarquia de
+   vias ficam onde estavam, so' a pele muda. */
+const BASEMAP: Record<Tema, string> = {
+  escuro: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  claro: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+}
 const MAX_PINS = 160
 /* Teto da rota `/api/oportunidades` (cap de 3.000 no servidor). Pedimos o teto porque
    uma UF inteira cabe folgada nele — a maior, SP, tem 1.501 imoveis. So' o recorte
@@ -113,6 +122,7 @@ export default function OportunidadesImobiliariasScreen({
   onVerNoMapa,
   focoInicial = null,
   onFocoAplicado,
+  tema = TEMA_PADRAO,
 }: {
   onInicio: () => void
   onVerNoMapa: (uf: string, municipio: string, ponto?: PontoNoMapa) => void
@@ -125,6 +135,8 @@ export default function OportunidadesImobiliariasScreen({
   focoInicial?: Oportunidade | null
   /** Consome a intencao UMA vez, apos aplicar o foco (molde do `modoPendente` do App). */
   onFocoAplicado?: () => void
+  /** Tema vigente — decide o basemap. Sem ele o mapa ficaria preto no claro. */
+  tema?: Tema
 }) {
   const [itens, setItens] = useState<Oportunidade[] | null>(null)
   const [total, setTotal] = useState(0)
@@ -373,13 +385,13 @@ export default function OportunidadesImobiliariasScreen({
           /* Vista MAPA: mapa como principal + card lateral menor com o estudo do imovel */
           <div style={{ display: 'flex', gap: 16, padding: '16px 24px', height: '100%', minHeight: 0 }}>
             <div style={{ flex: 1, minWidth: 0, height: '100%' }}>
-              <MapaRecorte pontos={filtrados} sel={sel} onSel={selecionarImovel} altura="100%" />
+              <MapaRecorte pontos={filtrados} sel={sel} onSel={selecionarImovel} altura="100%" tema={tema} />
             </div>
             <aside style={{ width: 400, flexShrink: 0, overflowY: 'auto', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
               {atual ? (
                 <Ficha op={atual} rank={idxSel + 1} pares={filtrados} medRsM2={medRsM2}
                   visita={visitas.has(atual.id)} onVisita={() => aoAlternarVisita(atual)}
-                  onSel={selecionarImovel} onVerNoMapa={onVerNoMapa} lateral />
+                  onSel={selecionarImovel} onVerNoMapa={onVerNoMapa} tema={tema} lateral />
               ) : (
                 <Aviso titulo="Selecione uma oportunidade" corpo="Clique num ponto do mapa para ver o estudo." />
               )}
@@ -416,7 +428,7 @@ export default function OportunidadesImobiliariasScreen({
               {atual ? (
                 <Ficha op={atual} rank={idxSel + 1} pares={filtrados} medRsM2={medRsM2}
                   visita={visitas.has(atual.id)} onVisita={() => aoAlternarVisita(atual)}
-                  onSel={selecionarImovel} onVerNoMapa={onVerNoMapa} />
+                  onSel={selecionarImovel} onVerNoMapa={onVerNoMapa} tema={tema} />
               ) : (
                 <Aviso titulo="Selecione uma oportunidade" corpo="Escolha um imóvel no ranking à esquerda para ver o estudo." />
               )}
@@ -526,12 +538,14 @@ function LinhaRest({ pos, op, ativo, visita, onClick }: { pos: number; op: Oport
 
 /* ======================= Ficha ======================= */
 function Ficha({
-  op, rank, pares, medRsM2, visita, onVisita, onSel, onVerNoMapa, lateral = false,
+  op, rank, pares, medRsM2, visita, onVisita, onSel, onVerNoMapa, tema, lateral = false,
 }: {
   op: Oportunidade
   rank: number
   pares: Oportunidade[]
   medRsM2: number | null
+  /** Só repassa ao `MiniMapa`, que decide o basemap por ele. */
+  tema: Tema
   visita: boolean
   onVisita: () => void
   onSel: (id: string) => void
@@ -712,7 +726,7 @@ function Ficha({
             <div style={{ padding: '18px 18px 10px' }}>
               <TituloCard titulo="Localização" nota={op.hex_id.slice(0, 10).toUpperCase()} />
             </div>
-            <div style={{ padding: '0 14px 14px', flex: 1 }}><MiniMapa op={op} pares={pares} onSel={onSel} /></div>
+            <div style={{ padding: '0 14px 14px', flex: 1 }}><MiniMapa op={op} pares={pares} onSel={onSel} tema={tema} /></div>
           </Glass>
         </div>
       )}
@@ -924,7 +938,7 @@ function Scatter({ pontos, sel }: { pontos: Oportunidade[]; sel: string }) {
 }
 
 /* ======================= Mini-mapa da ficha (pan/zoom) ======================= */
-function MiniMapa({ op, pares, onSel }: { op: Oportunidade; pares: Oportunidade[]; onSel: (id: string) => void }) {
+function MiniMapa({ op, pares, onSel, tema }: { op: Oportunidade; pares: Oportunidade[]; onSel: (id: string) => void; tema: Tema }) {
   const [vs, setVs] = useState(() => ({ longitude: op.lng ?? -49, latitude: op.lat ?? -16, zoom: op.lat != null ? 13 : 3.5 }))
   const [zoomArmado, setZoomArmado] = useState(false)
   const [hover, setHover] = useState<string | null>(null)
@@ -945,7 +959,7 @@ function MiniMapa({ op, pares, onSel }: { op: Oportunidade; pares: Oportunidade[
       ) : (
         <>
           <Map longitude={vs.longitude} latitude={vs.latitude} zoom={vs.zoom} onMove={(e) => setVs(e.viewState)}
-            mapStyle={BASEMAP} scrollZoom={zoomArmado} dragRotate={false} attributionControl={{ compact: true }} reuseMaps
+            mapStyle={BASEMAP[tema]} scrollZoom={zoomArmado} dragRotate={false} attributionControl={{ compact: true }} reuseMaps
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
             {vizinhos.map((p) => (
               <Marker key={p.id} longitude={p.lng as number} latitude={p.lat as number} anchor="center" onClick={() => onSel(p.id)}>
@@ -975,7 +989,7 @@ function MiniMapa({ op, pares, onSel }: { op: Oportunidade; pares: Oportunidade[
 }
 
 /* ======================= Mapa do recorte (coluna esquerda) ======================= */
-function MapaRecorte({ pontos, sel, onSel, altura = 620 }: { pontos: Oportunidade[]; sel: string | null; onSel: (id: string) => void; altura?: number | string }) {
+function MapaRecorte({ pontos, sel, onSel, altura = 620, tema }: { pontos: Oportunidade[]; sel: string | null; onSel: (id: string) => void; altura?: number | string; tema: Tema }) {
   const [hover, setHover] = useState<string | null>(null)
   const comCoord = useMemo(() => pontos.filter((p) => p.lat != null && p.lng != null).slice(0, MAX_PINS), [pontos])
   // Chave do recorte: refaz o enquadramento inicial quando o conjunto muda.
@@ -998,7 +1012,7 @@ function MapaRecorte({ pontos, sel, onSel, altura = 620 }: { pontos: Oportunidad
   }
   return (
     <div style={{ borderRadius: 'var(--r-lg)', overflow: 'hidden', border: '1px solid var(--line)', background: 'var(--bg-lift)', height: altura, position: 'relative' }}>
-      <Map key={chave} initialViewState={inicial} mapStyle={BASEMAP} dragRotate={false} attributionControl={{ compact: true }} reuseMaps
+      <Map key={chave} initialViewState={inicial} mapStyle={BASEMAP[tema]} dragRotate={false} attributionControl={{ compact: true }} reuseMaps
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
         {comCoord.map((p) => {
           const on = p.id === sel

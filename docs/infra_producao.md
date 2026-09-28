@@ -1026,7 +1026,18 @@ requisição seguinte, sem restart); mudanças no `Caddyfile` seguem pedindo
 
 ### Revogar usuário
 
-São **três** portas independentes, e revogar só a primeira não fecha as outras duas.
+São **quatro** portas independentes, e revogar só a primeira não fecha as outras três.
+
+> **A porta 1 DEIXA DE REVOGAR O BR no dia do corte do P19, e a 4 nasce nesse dia.** Depois
+> que `MOTOR_AUTENTICACAO_PROPRIA` estiver preenchida, quem autentica o piloto brasileiro é o
+> banco: remover a pessoa do `users_database.yml` **não a tira de lá** — ela continua dentro
+> pelas 8 h da sessão aberta —, e o `restart authelia` **desloga a instância argentina
+> inteira**, que segue dependendo dele. Conferir o estado:
+> `cd /opt/motor-expansao/app && grep '^MOTOR_AUTENTICACAO_PROPRIA=' .env`.
+>
+> Enquanto durar a janela de observação do corte, faça a **1 e a 4**: o rollback devolve o
+> Authelia ao comando, então quem sai da empresa precisa sair dos dois cadastros. É a dívida
+> declarada na emenda de 25/09/2026 da DEC-067.
 
 1. **Authelia** — editar `authelia/users_database.yml`, remover o bloco do usuário e
    `docker compose -f docker-compose.prod.yml restart authelia`.
@@ -1039,6 +1050,11 @@ São **três** portas independentes, e revogar só a primeira não fecha as outr
    mas o passo 1 continua necessário, senão a pessoa ainda autentica.)
 3. **Bot do Telegram** — remover o `chat_id` de
    `/opt/motor-expansao/cadastro/bot_allowlist.json` (seção abaixo).
+4. **Linha em `usuarios`** — desativar a pessoa pelo painel de **Acessos** do piloto. É a
+   única porta que revoga de verdade no BR depois do corte, e é **imediata**: `SQL_VALIDAR`
+   exige `u.ativo` a cada requisição guardada, então a sessão dela morre na requisição
+   **seguinte** — sem janela de 8 h e sem reiniciar serviço nenhum. Antes do corte esta porta
+   não faz diferença para o acesso (quem autentica é o Authelia), mas não atrapalha.
 
 > **Por que o passo 3 existe.** Até 2026-09-24 o bot tinha uma única porta: a senha
 > COMPARTILHADA. O "login" pedido depois dela nunca foi verificado contra nada — é
@@ -1072,7 +1088,15 @@ Arquivo: `/opt/motor-expansao/cadastro/bot_allowlist.json`. Um `chat_id` por ent
   /data/bot_sessoes.json` lista os chats que já interagiram, com o nome que a própria
   pessoa digitou (é auto-declarado — não serve como prova de identidade).
 
+
+
 ### Trocar senha de usuário
+
+> **Depois do corte do P19, o caminho no BR é OUTRO, e é o que a própria mensagem de bloqueio
+> do piloto promete:** redefinir pelo painel de **Acessos**, que gera uma senha temporária
+> aleatória válida por 2 h e **destrava** a conta barrada pela trava de tentativas. Mexer no
+> `users_database.yml` não muda a senha com que a pessoa entra no piloto brasileiro. Os dois
+> passos abaixo seguem valendo antes do corte e, sempre, para a instância AR.
 
 1. Gerar novo hash (passo 1 acima)
 2. Substituir o campo `password:` do usuário em `users_database.yml`

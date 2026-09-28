@@ -94,10 +94,24 @@ describe('botão de sair — guarda por texto-fonte (não há jsdom)', () => {
     expect(botao).toContain('urlDeLogoff(window.location.hostname)')
   })
 
-  it('só navega quando existe portal — em dev o clique não leva a lugar nenhum', () => {
-    // Uma única navegação no arquivo, e ela é guardada pelo destino não-nulo.
+  it('REVOGA no servidor antes de navegar, e só navega se a revogação deu certo', () => {
+    /* Até 25/09/2026 esta guarda exigia `if (destino !== null) window.location.assign(destino)`
+       — ou seja, fixava um botão que NUNCA chamava `api.sair()`. Enquanto o Authelia
+       autenticava, quem encerrava era o portal e isso bastava. Depois do corte (DEC-067)
+       deixaria de bastar EM SILÊNCIO: a pessoa iria ao portal, a sessão no nosso banco não
+       seria revogada e o cookie continuaria válido — bastava voltar ao piloto para estar
+       dentro. O próprio `/api/logout` declara isso inaceitável ("limpar estado no cliente
+       NÃO é logout").
+
+       A guarda passa a fixar as DUAS metades da correção: que a revogação é chamada, e que
+       a navegação é CONDICIONAL ao desfecho dela. A decisão mora em `login-motor.ts::sair`,
+       que tem teste de comportamento próprio; aqui garantimos que o botão a USA em vez de
+       navegar por conta. */
+    expect(botao).toContain('api.sair()')
+    expect(botao).toMatch(/decidirSaida\(/)
+    // Uma única navegação no arquivo, e ela só acontece no ramo `'ir'`.
     expect(botao.match(/window\.location\.assign/g)).toHaveLength(1)
-    expect(botao).toContain('if (destino !== null) window.location.assign(destino)')
+    expect(botao).toContain("if (saida.tipo === 'ir') window.location.assign(saida.destino)")
   })
 
   it('o clique no rail ABRE o diálogo, não sai direto', () => {

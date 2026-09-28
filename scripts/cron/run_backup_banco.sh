@@ -10,8 +10,22 @@
 # `pg_restore -t eventos` — restaurar UMA tabela sem derrubar o resto. Foi
 # exatamente o "restore granular" que a resolucao de 13/07 listou como gap aceito.
 #
-# O dump CONTEM DADO PESSOAL: e-mail, login, `senha_hash` e o `ip` dos eventos
-# (cuja base legal e prazo seguem abertos no P15). Por isso a copia off-box e'
+# O dump CONTEM DADO PESSOAL: e-mail, login, `senha_hash` e o `ip` das SESSOES.
+#
+# Esta linha dizia "o `ip` dos EVENTOS (cuja base legal e prazo seguem abertos no
+# P15)", e em 23/09/2026 estava errada nas duas pontas: `eventos.ip` nunca teve
+# produtor (nenhum INSERT do motor a menciona), e quem passou a guardar IP foi
+# `sessoes`, pela migration 020. O PRAZO deixou de estar aberto no mesmo dia --
+# 90 dias, decisao do dono; o que segue aberto no P15 e' so' a BASE LEGAL.
+#
+# CONSEQUENCIA OPERACIONAL, e e' o motivo de o expurgo rodar as 04:40 e este
+# backup as 05:10: o `run_expurgo_sessoes.sh` zera os IPs vencidos ANTES de o
+# dump ser tirado. Invertida a ordem, a copia semanal guardaria por ate' 28 dias
+# exatamente o dado que o expurgo existe para remover -- e a retencao de 90 dias
+# viraria 118 na pratica. Ha' teste guardando essa ordem
+# (`tests/unit/test_wrapper_cron_expurgo_sessoes.py`).
+#
+# Por isso a copia off-box e'
 # restic e nao rclone: restic cifra ANTES de sair da maquina, com chave que o
 # provedor do bucket nao tem. Nao troque por sync de arquivo cru.
 #

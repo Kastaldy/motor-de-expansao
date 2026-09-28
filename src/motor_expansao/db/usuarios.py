@@ -40,7 +40,8 @@ id de alvo, para nao haver como chamar isso para outra pessoa por engano.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from .postgres import conexao, transacao
@@ -175,14 +176,43 @@ FROM usuarios u
 WHERE u.login_usuario = %s AND u.ativo
 """
 
-# Os tres campos andam juntos e por isso vao no MESMO UPDATE: gravar o hash sem carimbar a data
+# A credencial para o LOGIN do P19 (D30). Constante PROPRIA, e as duas vizinhas explicam por que
+# nenhuma delas serve:
+#   * `SQL_ESTADO_DA_SENHA` devolve o hash, mas e' por `id_usuario` -- e quem esta' entrando
+#     informa LOGIN, nao id -- e trava a linha com `FOR UPDATE`, porque e' do fluxo de TROCA.
+#     Travar a linha de `usuarios` a cada tentativa de login serializaria as entradas da pessoa e
+#     poria escrita no caminho de quem so' quer entrar;
+#   * `SQL_ESTADO_DA_SENHA_POR_LOGIN` e' por login, mas NAO traz hash nem id -- ela existe para o
+#     `/api/me` oferecer a troca, e o comentario da vizinha diz a regra que ela honra: "ler um hash
+#     que nao sera' usado e' tirar o hash do banco a toa". Aqui o hash SERA' usado.
+#
+# `AND u.ativo` e' a trava de desligamento: quem foi desativado nao entra, e nao ha' caminho de
+# login que contorne isso. Mesmo espelho do D9/D23 que o `SQL_IDENTIDADE` do rbac usa.
+#
+# `deve_trocar_senha_usuario` vem junto porque a resposta do login precisa dizer a' SPA se ela
+# deve abrir a tela de troca imediatamente (D26). Buscar isso depois seria uma segunda ida ao
+# banco para um dado que ja' estava na mesma linha.
+SQL_CREDENCIAL_POR_LOGIN = """
+SELECT u.id_usuario, u.senha_hash, u.deve_trocar_senha_usuario,
+       u.senha_expira_em_usuario, u.senha_redefinida_em_usuario
+FROM usuarios u
+WHERE u.login_usuario = %s AND u.ativo
+"""
+
+# Os campos andam juntos e por isso vao no MESMO UPDATE: gravar o hash sem carimbar a data
 # deixaria a coluna da 016 mentindo, e limpar `deve_trocar` sem gravar o hash liberaria a pessoa
 # de uma troca que nao aconteceu.
+#
+# `senha_expira_em_usuario = NULL` e' obrigatorio aqui, nao higiene: a senha que a pessoa acabou
+# de escolher nao expira, e deixar o prazo da TEMPORARIA para tras daria uma senha propria com
+# validade -- a pessoa barrada com a senha certa, lendo "Login ou senha incorretos". O
+# `ck_usuarios_prazo_exige_troca` (019) recusa a escrita se esta linha sumir.
 SQL_DEFINIR_SENHA = """
 UPDATE usuarios
 SET senha_hash = %s,
     senha_definida_em_usuario = now(),
-    deve_trocar_senha_usuario = FALSE
+    deve_trocar_senha_usuario = FALSE,
+    senha_expira_em_usuario = NULL
 WHERE id_usuario = %s
 """
 
@@ -203,7 +233,9 @@ SQL_REDEFINIR_SENHA = """
 UPDATE usuarios
 SET senha_hash = %s,
     senha_definida_em_usuario = NULL,
-    deve_trocar_senha_usuario = TRUE
+    deve_trocar_senha_usuario = TRUE,
+    senha_expira_em_usuario = now() + make_interval(hours => %s),
+    senha_redefinida_em_usuario = now()
 WHERE id_usuario = %s
 """
 
@@ -475,6 +507,62 @@ def criar(*, login: str, nome: str, email: str, perfil: str, autor: int) -> dict
     }
 
 
+@dataclass(frozen=True)
+class Credencial:
+    """O que o login precisa conferir, e nada mais.
+
+    `senha_hash` e' `repr=False` DE PROPOSITO: dataclass imprime todos os campos no `repr`, e
+    um traceback -- ou um `_LOG.debug("%s", cred)` distraido -- levaria o hash para o log. O hash
+    nao e' a senha, mas tambem nao e' dado de log: e' material de ataque offline se o log vazar.
+    """
+
+    # `senha_hash` vem POR ULTIMO por exigencia do type checker: `field(...)` conta como campo
+    # com default para ele, e campo sem default nao pode vir depois de um com default. Em tempo
+    # de execucao `field(repr=False)` nao da' default nenhum -- mas o gate e' o `mypy src/`, e a
+    # ordem custa nada.
+    id_usuario: int
+    deve_trocar: bool
+    senha_hash: str = field(repr=False)
+    #: Ate' quando o hash guardado vale. `None` = nao expira (senha que a pessoa escolheu).
+    #: Quem compara com `now()` e' a rota de login -- DEPOIS do Argon2, para que "senha temporaria
+    #: vencida" e "senha errada" custem o mesmo tempo e nao virem oraculo.
+    expira_em: datetime | None = None
+    #: Quando um administrador redefiniu esta senha pela ultima vez. E' PISO da trava de
+    #: tentativas: sem ele a pessoa que errou cinco vezes antes de ligar receberia a senha nova e
+    #: continuaria barrada, lendo a mesma mensagem de senha errada.
+    redefinida_em: datetime | None = None
+
+
+def credenciais_por_login(login: str) -> Credencial | None:
+    """A credencial de quem esta' tentando entrar. `None` = login inexistente OU inativo.
+
+    OS DOIS CASOS CAEM NO MESMO `None`, e isso e' decisao de seguranca, nao economia: distinguir
+    "esse login nao existe" de "existe e esta' desativado" entrega ao visitante um oraculo de
+    quem trabalha aqui. Quem precisa do detalhe olha a tabela.
+
+    LEITURA, nunca transacao de escrita: entrar nao muda `usuarios`. E' o que permite tentativa
+    de login concorrente sem serializar ninguem -- ver o comentario do `SQL_CREDENCIAL_POR_LOGIN`
+    sobre o `FOR UPDATE` da constante vizinha.
+
+    O que esta funcao NAO faz: conferir a senha. Isso e' de `senhas.verificar`, que recebe o hash
+    e nunca levanta por senha errada. Separar as duas mantem o hash fora de qualquer decisao de
+    fluxo aqui dentro.
+    """
+    if not login or not login.strip():
+        return None
+    with conexao() as con:
+        linha = con.execute(SQL_CREDENCIAL_POR_LOGIN, (login.strip(),)).fetchone()
+    if linha is None:
+        return None
+    return Credencial(
+        id_usuario=int(linha[0]),
+        senha_hash=str(linha[1]),
+        deve_trocar=bool(linha[2]),
+        expira_em=linha[3],
+        redefinida_em=linha[4],
+    )
+
+
 def estado_da_senha(login: str) -> dict[str, bool] | None:
     """`{"deve_trocar": bool, "propria": bool}` de quem esta' logado. `None` se nao ha' linha.
 
@@ -570,10 +658,14 @@ def redefinir_senha(id_alvo: int, *, autor: int) -> dict[str, Any]:
 
     _recusar_auto_alvo(id_alvo, autor)
 
+    # A senha e' NOVA e so' desta pessoa (D31). Ate' 18/09/2026 entregava-se
+    # `senhas.hash_da_senha_inicial()`, a MESMA senha para todo mundo -- e quem conhecesse aquele
+    # valor entrava na conta de qualquer um recem-redefinido.
+    #
     # Hashear FORA da transacao, como `criar`: ~64 MB e ~100 ms, e segurar a linha travada durante
-    # isso nao protege nada. E' tambem aqui que a falta de `MOTOR_SENHA_INICIAL` aparece, antes de
-    # qualquer escrita.
-    hash_inicial = senhas.hash_da_senha_inicial()
+    # isso nao protege nada.
+    temporaria = senhas.gerar_temporaria()
+    hash_temporario = senhas.gerar(temporaria)
 
     with transacao(id_usuario=autor) as con:
         linha = con.execute(SQL_ESTADO_DA_SENHA_PARA_ADMIN, (id_alvo,)).fetchone()
@@ -581,16 +673,28 @@ def redefinir_senha(id_alvo: int, *, autor: int) -> dict[str, Any]:
             raise UsuarioDesconhecido(f"usuário {id_alvo} não existe")
         tinha_senha_propria = bool(linha[1])
 
-        con.execute(SQL_REDEFINIR_SENHA, (hash_inicial, id_alvo))
+        con.execute(SQL_REDEFINIR_SENHA, (hash_temporario, senhas.VALIDADE_TEMPORARIA_H, id_alvo))
         _registrar(
             con,
             autor=autor,
             tipo=EVENTO_SENHA_REDEFINIDA,
             id_alvo=id_alvo,
-            metadados={"tinha_senha_propria": tinha_senha_propria},
+            # NUNCA a senha, nem o hash, nem parte de nenhum dos dois. `validade_horas` e' politica
+            # aplicada, nao segredo, e responde "por quanto tempo aquela senha valeu" a quem audita.
+            metadados={
+                "tinha_senha_propria": tinha_senha_propria,
+                "validade_horas": senhas.VALIDADE_TEMPORARIA_H,
+            },
         )
 
-    return {"id_usuario": id_alvo, "tinha_senha_propria": tinha_senha_propria}
+    # A senha em TEXTO PURO sai daqui uma unica vez, para o administrador ler e repassar. Ela nao
+    # e' guardada em lugar nenhum -- se ele a perder, o caminho e' gerar outra, o que mata esta.
+    return {
+        "id_usuario": id_alvo,
+        "tinha_senha_propria": tinha_senha_propria,
+        "senha_temporaria": temporaria,
+        "validade_horas": senhas.VALIDADE_TEMPORARIA_H,
+    }
 
 
 def exigir_troca(id_alvo: int, *, autor: int) -> dict[str, Any]:
@@ -622,3 +726,54 @@ def exigir_troca(id_alvo: int, *, autor: int) -> dict[str, Any]:
         )
 
     return {"id_usuario": id_alvo, "mudou": True}
+
+
+# --- Alinhar a senha inicial (preparacao do corte do P19) -------------------------------
+#
+# CONTEXTO, porque isto so' faz sentido com ele: o hash de cada pessoa foi gravado NO
+# MOMENTO EM QUE ELA FOI CRIADA, a partir da `MOTOR_SENHA_INICIAL` de ENTAO. Se a env mudou
+# depois, ou se a linha nasceu por SQL a mao (com `hash_de_teste_*` ou coisa parecida), a
+# pessoa NAO ENTRA quando o motor passar a autenticar -- `senhas.verificar` recusa qualquer
+# coisa fora do formato PHC, e um hash de outra senha nao casa com a que ela digita.
+#
+# Enquanto o Authelia autentica isso e' inofensivo (a coluna nao abre porta nenhuma). No dia
+# do corte vira gente trancada, descoberta uma a uma pelo telefone.
+
+#: Quem esta' em que estado. As tres classes sao EXCLUDENTES e a ordem importa para a
+#: decisao: so' a primeira e' segura de reescrever sem falar com ninguem.
+#:
+#:   `sem_propria`  -> nunca escolheu senha. A inicial compartilhada E' a senha dela por
+#:                     definicao, entao regravar o hash da inicial nao lhe tira nada.
+#:   `propria_quebrada` -> escolheu senha, mas o hash nao e' PHC valido. Esta' trancada, e
+#:                     consertar significa PERDER a senha que ela escolheu -- decisao de
+#:                     gente, nao de comando. Por isso aqui so' se RELATA.
+#:   `propria_ok`   -> nada a fazer.
+#:
+#: `senha_hash LIKE '$argon2id$%%'`: o `%%` e' escape do proprio psycopg, nao do SQL -- esta
+#: consulta leva parametro, e um `%` solitario viraria placeholder e morreria com
+#: "syntax error at or near". Ja' aconteceu neste repositorio, em `SQL_CONTAGENS`.
+SQL_ESTADO_DA_SENHA_INICIAL = """
+SELECT u.id_usuario, u.login_usuario, u.senha_hash,
+       CASE
+         WHEN u.senha_definida_em_usuario IS NULL THEN 'sem_propria'
+         WHEN u.senha_hash IS NULL OR u.senha_hash NOT LIKE %s THEN 'propria_quebrada'
+         ELSE 'propria_ok'
+       END AS classe
+FROM usuarios u
+WHERE u.ativo
+ORDER BY u.login_usuario
+"""
+
+#: Regrava o hash de UMA pessoa com a senha inicial. NAO e' o `SQL_DEFINIR_SENHA`, e a
+#: diferenca e' o ponto: aquele marca `senha_definida_em_usuario = now()` e
+#: `deve_trocar = FALSE`, porque ele registra uma ESCOLHA. Aqui nao houve escolha nenhuma --
+#: a pessoa continua na senha compartilhada, e as duas colunas tem de dizer isso. Marcar
+#: `deve_trocar = TRUE` e' o que faz a tela convidar para a troca no primeiro acesso.
+SQL_ALINHAR_SENHA_INICIAL = """
+UPDATE usuarios
+SET senha_hash = %s,
+    senha_definida_em_usuario = NULL,
+    deve_trocar_senha_usuario = TRUE,
+    senha_expira_em_usuario = NULL
+WHERE id_usuario = %s
+"""

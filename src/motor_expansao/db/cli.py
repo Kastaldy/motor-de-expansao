@@ -50,15 +50,24 @@ SQL_TEM_TABELA_DE_CONTROLE = "SELECT to_regclass(%s) IS NOT NULL"
 
 # Contrato conferido contra o dump do cluster real em 26/08/2026 (§0 da `verificacao.md`).
 TABELAS_DO_MODELO = (
-    "usuarios", "perfis", "permissoes", "perfil_permissoes", "eventos",
-    "areas_estudo", "contratos", "bairros", "distritos", "municipios",
+    "usuarios",
+    "perfis",
+    "permissoes",
+    "perfil_permissoes",
+    "eventos",
+    "areas_estudo",
+    "contratos",
+    "bairros",
+    "distritos",
+    "municipios",
     "perfil_permissoes_historico",
+    "sessoes",
 )
 NUMEROS_DA_SECAO_ZERO = {
-    "indices": 46,   # 33 explicitos + 11 de PK + 2 de UNIQUE (D24 somou os 3 de metadados)
-    "constraints CHECK": 12,
-    "chaves estrangeiras": 11,
-    "triggers": 7,   # 5 ate' a 016; a 017 (D29) somou a guarda de coerencia nas duas regioes
+    "indices": 49,  # 35 explicitos + 12 de PK + 2 de UNIQUE (a 018/D30 somou 2 + o dela de PK)
+    "constraints CHECK": 14,  # a 018 (D30) e a 019: `ck_usuarios_prazo_exige_troca`
+    "chaves estrangeiras": 12,  # a 018 (D30): `sessoes.id_usuario`
+    "triggers": 7,  # 5 ate' a 016; a 017 (D29) somou a guarda de coerencia nas duas regioes
     "colunas geometricas": 7,
 }
 #: `prosecdef` e `proconfig` esperados por funcao, apos a migration 011 (D21) e a 017 (D29).
@@ -117,7 +126,9 @@ def _manifesto() -> list[dict[str, Any]]:
 def _sha256_do_arquivo(nome: str) -> str:
     # `read_text` normaliza fim de linha: o hash tem de ser o mesmo em Windows e Linux,
     # senao a mesma migration pareceria alterada so' por causa do checkout.
-    return hashlib.sha256((MIGRACOES / nome).read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        (MIGRACOES / nome).read_text(encoding="utf-8").encode("utf-8")
+    ).hexdigest()
 
 
 def _conectar_para_ddl() -> Any:
@@ -166,7 +177,9 @@ def _conectar_com_diagnostico(psycopg: Any, url: str) -> Any:
             "  - o banco existe? CREATE DATABASE <nome> ENCODING 'UTF8';\n"
             "  - o servidor esta no ar e ouvindo na porta 5432?"
         )
-        raise SystemExit(f"ERRO: nao consegui conectar.\n{detalhe}\n\nO que conferir:\n{dicas}") from None
+        raise SystemExit(
+            f"ERRO: nao consegui conectar.\n{detalhe}\n\nO que conferir:\n{dicas}"
+        ) from None
 
 
 def _aplicadas(con: Any) -> dict[str, str]:
@@ -237,7 +250,9 @@ def cmd_aplicar(args: argparse.Namespace) -> int:
             # continua aplicada e registrada, e reexecutar retoma de onde parou. As
             # proprias migrations ja' trazem BEGIN/COMMIT; o psycopg respeita.
             con.execute(sql)
-            con.execute(SQL_REGISTRAR, (m["versao"], m["arquivo"], _sha256_do_arquivo(m["arquivo"])))
+            con.execute(
+                SQL_REGISTRAR, (m["versao"], m["arquivo"], _sha256_do_arquivo(m["arquivo"]))
+            )
             con.commit()
             print(f"  aplicada {m['versao']}  {m['arquivo']}")
     return 0
@@ -256,15 +271,20 @@ def cmd_registrar(args: argparse.Namespace) -> int:
         raise SystemExit(f"ERRO: nenhuma migration ate' a versao {ate!r}")
 
     with _conectar_para_ddl() as con:
-        if not _aplicadas(con) and not con.execute(
-            SQL_TEM_TABELA_DE_CONTROLE, (postgres.TABELA_MIGRACOES,)
-        ).fetchone()[0]:
+        if (
+            not _aplicadas(con)
+            and not con.execute(
+                SQL_TEM_TABELA_DE_CONTROLE, (postgres.TABELA_MIGRACOES,)
+            ).fetchone()[0]
+        ):
             raise SystemExit(
                 f"ERRO: a tabela {postgres.TABELA_MIGRACOES} nao existe. Aplique a 000 "
                 "primeiro (ela e' a unica que precisa ir a mao, por criar o registro)."
             )
         for m in alvo:
-            con.execute(SQL_REGISTRAR, (m["versao"], m["arquivo"], _sha256_do_arquivo(m["arquivo"])))
+            con.execute(
+                SQL_REGISTRAR, (m["versao"], m["arquivo"], _sha256_do_arquivo(m["arquivo"]))
+            )
         con.commit()
     print(f"registradas como aplicadas (sem executar): {', '.join(m['versao'] for m in alvo)}")
     return 0
@@ -295,9 +315,7 @@ def cmd_conferir(_args: argparse.Namespace) -> int:
         print("\n== funcoes e endurecimento (D19/D21) ==")
         encontradas = {
             nome: (secdef, cfg)
-            for nome, secdef, cfg in con.execute(
-                SQL_FUNCOES, (list(FUNCOES_ESPERADAS),)
-            ).fetchall()
+            for nome, secdef, cfg in con.execute(SQL_FUNCOES, (list(FUNCOES_ESPERADAS),)).fetchall()
         }
         for nome, (secdef_esp, caminho_esp) in FUNCOES_ESPERADAS.items():
             atual = encontradas.get(nome)
@@ -370,6 +388,7 @@ def cmd_conferir(_args: argparse.Namespace) -> int:
 # rollback e, num banco com auditoria append-only, a propria tentativa vira linha.
 # ---------------------------------------------------------------------------------------
 
+
 def _checagens_negativas() -> list[tuple[str, str, str]]:
     """(rotulo, SQL -> bool, por que importa). `True` = o papel PODE = FALHA."""
     return [
@@ -384,6 +403,14 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
             "SELECT has_table_privilege(current_user, 'perfil_permissoes_historico', 'INSERT')",
             "o D19 promete que a aplicacao nao forja linha de auditoria; com INSERT direto a "
             "promessa e' so' prosa",
+        ),
+        (
+            "apagar sessao",
+            "SELECT has_table_privilege(current_user, 'sessoes', 'DELETE')",
+            "revogar e' `UPDATE` de `revogada_em_sessao`, NUNCA `DELETE` -- apagar a linha "
+            "destruiria a resposta de 'quando esta sessao foi encerrada', e o expurgo de "
+            "retencao tambem anonimiza em vez de apagar. `DELETE` aqui significa que o "
+            "`papeis-e-privilegios.md` foi afrouxado sem que a decisao acompanhasse",
         ),
         (
             "alterar o historico de permissoes",
@@ -459,13 +486,65 @@ def _checagens_positivas() -> list[tuple[str, str, str]]:
             "SELECT has_table_privilege(current_user, 'spatial_ref_sys', 'SELECT')",
             "sem ela o PostGIS quebra ao tocar `geography` -- e o erro aparece longe daqui",
         ),
+        # As duas de `sessoes` (D30) entraram em 23/09/2026, e a lacuna que fechavam era
+        # SILENCIOSA E GRAVE: este comando existe para provar o D20, e passava VERDE mesmo com
+        # a tabela `sessoes` sem `GRANT` nenhum para o `app`.
+        #
+        # E esse cenario nao e' hipotetico em producao. O `ALTER DEFAULT PRIVILEGES` do
+        # `papeis-e-privilegios.md` §6 diz `FOR ROLE postgres`, e vale so' para objetos criados
+        # por AQUELE papel -- mas o dono do schema em producao e' `reservas_owner`
+        # (`docs/banco_deploy.md`). Logo a `sessoes`, criada pela migration 018, NAO herda
+        # privilegio, e o sintoma so' apareceria no dia em que a autenticacao propria fosse
+        # ligada: `permission denied for table sessoes`, com todo mundo fora da plataforma.
+        # O proprio documento nomeia a armadilha ("as tabelas novas nascem sem GRANT e ninguem
+        # percebe"); faltava alguem PERGUNTAR.
+        (
+            "escrever em sessoes",
+            "SELECT has_table_privilege(current_user, 'sessoes', 'INSERT') "
+            "AND has_table_privilege(current_user, 'sessoes', 'UPDATE') "
+            "AND has_table_privilege(current_user, 'sessoes', 'SELECT')",
+            "sem isto o login nao abre sessao e ninguem entra depois do corte do P19",
+        ),
+        (
+            "usar a sequence de sessoes",
+            "SELECT has_sequence_privilege(current_user, 'sessoes_id_sessao_seq', 'USAGE')",
+            "mesma armadilha da sequence de eventos: `GRANT INSERT` na tabela NAO a cobre, e "
+            "o login morre so' em runtime",
+        ),
     ]
 
 
+#: Sentinela de "o objeto que esta checagem pergunta ainda nao existe no banco". Nao e' `False`
+#: de proposito: `False` significa "o papel NAO pode", e confundir as duas coisas faria o relatorio
+#: acusar privilegio faltando quando o que falta e' a MIGRATION.
+AUSENTE = object()
+
+
 def _valor_unico(con: Any, sql: str) -> Any:
-    """Primeira coluna da primeira linha. `None` quando a consulta nao devolve nada --
-    o que aqui e' resposta legitima (ex.: `bool_or` sobre zero linhas)."""
-    linha = con.execute(sql).fetchone()
+    """Primeira coluna da primeira linha, ou `AUSENTE` se o objeto perguntado nao existe.
+
+    POR QUE A TOLERANCIA, e ela e' estreita de proposito: `has_table_privilege('sessoes', ...)`
+    LEVANTA quando a tabela nao existe, em vez de devolver falso. Rodar este comando contra um
+    banco que ainda nao recebeu a 018 -- o que e' natural, para ver o estado antes de aplicar --
+    derrubava tudo com `UndefinedTable` e um traceback cru, no meio do relatorio. Medido em
+    25/09/2026 contra um banco real sem a 018.
+
+    So' `UndefinedTable`/`UndefinedObject` sao absorvidos, e viram uma LINHA PROPRIA no relatorio.
+    Qualquer outro erro continua subindo: engolir erro de banco num comando que existe para
+    atestar seguranca seria trocar um susto por uma mentira.
+
+    `None` segue significando "a consulta nao devolveu linha", que aqui e' resposta legitima
+    (ex.: `bool_or` sobre zero linhas).
+    """
+    import psycopg
+
+    try:
+        linha = con.execute(sql).fetchone()
+    except (psycopg.errors.UndefinedTable, psycopg.errors.UndefinedObject):
+        # A transacao fica abortada depois do erro; sem o rollback, TODA checagem seguinte
+        # falharia com `InFailedSqlTransaction` e o relatorio mentiria sobre o resto.
+        con.rollback()
+        return AUSENTE
     return None if linha is None else linha[0]
 
 
@@ -488,7 +567,14 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
 
         print("== o que este papel NAO pode ==")
         for rotulo, sql, porque in _checagens_negativas():
-            pode = bool(_valor_unico(con, sql))
+            bruto = _valor_unico(con, sql)
+            if bruto is AUSENTE:
+                # Objeto ausente nao e' privilegio indevido: nao ha' o que o papel possa fazer
+                # numa tabela que nao existe. Entra no relatorio para o operador saber, e NAO
+                # entra em `problemas`.
+                print(f"  --    {rotulo}: o objeto nao existe (migration pendente?)")
+                continue
+            pode = bool(bruto)
             print(f"  {'FALHA' if pode else 'ok   '} {rotulo}")
             if pode:
                 print(f"        por que importa: {porque}")
@@ -496,7 +582,15 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
 
         print("\n== o que este papel PRECISA poder ==")
         for rotulo, sql, porque in _checagens_positivas():
-            pode = bool(_valor_unico(con, sql))
+            bruto = _valor_unico(con, sql)
+            if bruto is AUSENTE:
+                # AQUI entra em `problemas`, mas com a causa CERTA: o piloto de fato nao vai
+                # conseguir o que precisa -- so' que por falta de migration, nao de `GRANT`.
+                # Dizer "FALHA" mandaria o operador conferir o provisionamento, que esta' certo.
+                print(f"  PEND  {rotulo}: o objeto nao existe -- aplique as migrations antes")
+                problemas.append(f"{rotulo} (migration pendente)")
+                continue
+            pode = bool(bruto)
             print(f"  {'ok   ' if pode else 'FALHA'} {rotulo}")
             if not pode:
                 print(f"        por que importa: {porque}")
@@ -526,7 +620,189 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
             "D20 (sql/papeis-e-privilegios.md) nao esta completo."
         )
         return 1
-    print("PRIVILEGIOS OK: o papel do piloto nao consegue o que nao deve, e consegue o que precisa.")
+    print(
+        "PRIVILEGIOS OK: o papel do piloto nao consegue o que nao deve, e consegue o que precisa."
+    )
+    return 0
+
+
+def cmd_expurgar(args: argparse.Namespace) -> int:
+    """Zera a ORIGEM das sessoes alem do prazo de retencao (P15, fechado em 23/09/2026).
+
+    ANONIMIZA, nao apaga: o que tem prazo e' o dado pessoal (`ip_sessao`,
+    `user_agent_sessao`), nao o registro da sessao. Zeradas as duas colunas, a linha continua
+    respondendo "esta pessoa entrou em tal dia, revogada em tal outro" -- auditoria sem PII.
+    Apagar a linha contrariaria o desenho da 018, onde revogar e' `UPDATE` e nunca `DELETE`.
+
+    E' IDEMPOTENTE: rodar duas vezes seguidas nao reescreve nada na segunda, porque o `WHERE`
+    exige pelo menos uma das colunas preenchida. Isso torna o `rowcount` honesto -- ele diz
+    quanto FOI expurgado agora, e nao quantas linhas sao velhas.
+
+    Roda pelo DONO do schema (a mesma credencial das migrations): e' escrita de manutencao,
+    fora do RBAC de usuario, e o papel `app` nao precisa deste poder.
+    """
+    from . import sessoes
+
+    dias = sessoes.RETENCAO_ORIGEM_DIAS
+    with _conectar_para_ddl() as con:
+        (pendentes,) = con.execute(sessoes.SQL_CONTAR_ORIGEM_VENCIDA, (dias,)).fetchone()
+        print(f"retencao da origem: {dias} dias")
+        print(f"sessoes com origem alem do prazo: {pendentes}")
+        if args.simular:
+            print("(--simular: nada foi escrito)")
+            return 0
+        if not pendentes:
+            print("nada a expurgar")
+            return 0
+        cursor = con.execute(sessoes.SQL_EXPURGAR_ORIGEM, (dias,))
+        quantas = getattr(cursor, "rowcount", 0)
+        # COMMIT EXPLICITO, como `cmd_aplicar` e `cmd_registrar`. O `with` do psycopg3 ja'
+        # commitaria na saida limpa, mas este era o UNICO comando do CLI que dependia disso --
+        # e a inconsistencia e' o problema: uma troca futura de `with` por `connect()/close()`
+        # faria o cron imprimir "anonimizadas: N" com ROLLBACK silencioso. Numa politica de
+        # retencao, relatar remocao que nao aconteceu e' o pior desfecho possivel.
+        con.commit()
+        print(f"  anonimizadas: {quantas}")
+    return 0
+
+
+def classificar_para_alinhar(
+    linhas: list[tuple[int, str, str | None, str]],
+    confere_com_a_inicial,
+) -> dict[str, list[tuple[int, str]]]:
+    """Separa as linhas de `SQL_ESTADO_DA_SENHA_INICIAL` nas QUATRO classes do alinhamento.
+
+    FUNCAO PROPRIA, e nao um laco dentro do comando, por um motivo de COBERTURA: o CI nao tem
+    Postgres (`.github/workflows/ci.yml` roda `pytest -q` e nao sobe servico de banco), e o
+    unico teste do `alinhar-senhas` era de integracao -- pulava sem banco. Ou seja, o comando
+    que se roda contra o banco de PRODUCAO, no passo que o runbook chama de o unico que nao da'
+    para desfazer, chegava a' VPS sem uma linha de verificacao automatica. Extraida, a decisao
+    inteira vira testavel sem banco nenhum.
+
+    `confere_com_a_inicial` entra por parametro (e nao `senhas.verificar` direto) para o teste
+    poder exercitar as quatro classes sem pagar Argon2 -- que custa ~100 ms por chamada.
+
+    As classes, e por que so' uma e' segura de reescrever:
+      `propria_ok`       -> escolheu senha, hash valido. Nada a fazer.
+      `propria_quebrada` -> escolheu senha, hash invalido. RELATAR: consertar apagaria a senha
+                            que ela escolheu, e isso e' decisao de gente.
+      `sem_propria_ok`   -> na inicial, e o hash JA' confere. Nada a fazer -- e' esta classe que
+                            torna a contagem honesta e o comando idempotente.
+      `sem_propria`      -> na inicial, e o hash NAO confere. E' a unica que se reescreve.
+    """
+    por_classe: dict[str, list[tuple[int, str]]] = {
+        "sem_propria_ok": [],
+        "sem_propria": [],
+        "propria_quebrada": [],
+        "propria_ok": [],
+    }
+    for id_usuario, login, hash_atual, classe in linhas:
+        if classe == "sem_propria" and confere_com_a_inicial(hash_atual):
+            classe = "sem_propria_ok"
+        por_classe[classe].append((id_usuario, login))
+    return por_classe
+
+
+def cmd_alinhar_senhas(args: argparse.Namespace) -> int:
+    """Regrava o hash da senha INICIAL em quem nunca escolheu a propria.
+
+    PARA QUE ISTO EXISTE. O hash de cada pessoa foi gravado no momento da CRIACAO, a partir da
+    `MOTOR_SENHA_INICIAL` de entao. Se a env mudou depois, ou se a linha nasceu por SQL a mao,
+    a pessoa NAO ENTRA quando o motor passar a autenticar. Enquanto o Authelia autentica isso e'
+    inofensivo -- a coluna nao abre porta nenhuma --, e no dia do corte vira gente trancada,
+    descoberta uma a uma pelo telefone. Este comando e' o passo de PREPARACAO do corte.
+
+    SO' MEXE EM QUEM NUNCA ESCOLHEU SENHA, e o recorte e' a parte importante. Para essas pessoas
+    a senha inicial compartilhada E' a senha delas, entao regravar nao lhes tira nada. Quem
+    ESCOLHEU a propria e esta' com hash quebrado e' apenas RELATADO: consertar significaria
+    apagar a senha que ela escolheu, e isso e' decisao de gente. O dono do banco, que escolheu a
+    senha dele, nunca e' tocado.
+
+    UM SAL POR PESSOA, e nao um hash reaproveitado. `hash_da_senha_inicial()` e' chamada uma vez
+    POR LINHA de proposito: com o mesmo hash em todas, duas linhas iguais anunciariam no dump
+    exatamente quem ainda esta' na senha compartilhada -- e `deve_trocar_senha_usuario` ja'
+    responde isso de forma honesta, para quem tem direito de ver. Custa ~100 ms por pessoa.
+
+    E' IDEMPOTENTE, e isso custa um `verificar` por pessoa: quem nao escolheu senha tem o hash
+    CONFERIDO contra a inicial antes de entrar na lista. Sem essa conferencia o comando diria
+    "20 seriam alinhadas" tanto num banco quebrado quanto num banco ja' certo, e rodar duas vezes
+    nao distinguiria "funcionou" de "nao fez nada".
+
+    NAO GRAVA EVENTO, e a razao e' a mesma do `cmd_expurgar`: roda pelo DONO do schema, fora do
+    RBAC de usuario, e nao ha' usuario logado para carimbar como autor (`eventos.id_usuario` tem
+    FK). O registro deste ato e' o runbook (`docs/repasse_corte_p19.md`) e a saida deste comando
+    -- que por isso NOMEIA cada pessoa tocada, em vez de so' contar.
+    """
+    from . import senhas, usuarios
+
+    # A env ANTES do banco: sem ela nao ha' o que gravar, e a mensagem de `senha_inicial()`
+    # diz exatamente o que fazer. Descobrir isso depois de abrir a conexao so' atrasaria o erro.
+    try:
+        senhas.senha_inicial()
+    except senhas.SenhaInicialNaoConfigurada as erro:
+        print(f"ERRO: {erro}")
+        return 1
+    if not senhas.disponivel():
+        print("ERRO: argon2-cffi nao esta instalado neste ambiente (extra `auth`).")
+        return 1
+
+    with _conectar_para_ddl() as con:
+        linhas = con.execute(
+            usuarios.SQL_ESTADO_DA_SENHA_INICIAL, (senhas.PREFIXO_PHC + "%",)
+        ).fetchall()
+
+    inicial = senhas.senha_inicial()
+    # QUEM NAO ESCOLHEU SENHA AINDA PRECISA SER CONFERIDO, e esse `verificar` e' o que faz a
+    # contagem deste comando ser HONESTA. Sem ele, "20 seriam alinhadas" sai igual num banco
+    # com 20 hashes quebrados e num com 20 ja' corretos -- e quem roda duas vezes nao
+    # distingue "funcionou" de "nao fez nada". Mesma exigencia que o `cmd_expurgar` documenta.
+    # A decisao mora em `classificar_para_alinhar`, que tem teste sem banco.
+    por_classe = classificar_para_alinhar(
+        list(linhas), lambda h: senhas.verificar(inicial, h)
+    )
+
+    print(f"usuarios ativos: {len(linhas)}")
+    print(f"  ja' escolheram a propria senha, hash ok : {len(por_classe['propria_ok'])}")
+    print(f"  na senha inicial e JA' CONFEREM         : {len(por_classe['sem_propria_ok'])}")
+    print(f"  na senha inicial e NAO conferem         : {len(por_classe['sem_propria'])}")
+    print(f"  escolheram, mas o hash esta' QUEBRADO   : {len(por_classe['propria_quebrada'])}")
+
+    if por_classe["propria_quebrada"]:
+        print()
+        print("ATENCAO -- estas pessoas NAO entram depois do corte, e este comando NAO as toca:")
+        for _id, login in por_classe["propria_quebrada"]:
+            print(f"    {login}")
+        print("  Elas escolheram uma senha e o hash dela nao e' valido. Consertar significa")
+        print("  APAGAR a senha escolhida, entao a decisao e' de quem administra: redefina cada")
+        print("  uma pela tela de Acessos (senha temporaria, 2 h) ou combine outra saida.")
+
+    alvos = por_classe["sem_propria"]
+    if not alvos:
+        print()
+        print("nada a alinhar")
+        return 0
+
+    if args.simular:
+        print()
+        print("(--simular: nada foi escrito) seriam alinhadas:")
+        for _id, login in alvos:
+            print(f"    {login}")
+        return 0
+
+    print()
+    with _conectar_para_ddl() as con:
+        for id_usuario, login in alvos:
+            # Uma chamada por linha: sal proprio (ver o docstring).
+            con.execute(usuarios.SQL_ALINHAR_SENHA_INICIAL, (senhas.hash_da_senha_inicial(), id_usuario))
+            print(f"  alinhada: {login}")
+        # COMMIT EXPLICITO, pelo mesmo motivo do `cmd_expurgar`: este e' o unico ponto onde o
+        # comando escreve, e depender do `with` faria uma troca futura por `connect()/close()`
+        # imprimir "alinhada: <login>" com ROLLBACK silencioso. Relatar credencial gravada que
+        # nao foi e' o pior desfecho possivel -- a pessoa descobre no dia do corte.
+        con.commit()
+    print()
+    print(f"ALINHADAS: {len(alvos)}. Elas entram com a MOTOR_SENHA_INICIAL e a tela vai")
+    print("convidar cada uma a trocar no primeiro acesso.")
     return 0
 
 
@@ -555,6 +831,20 @@ def main(argv: list[str] | None = None) -> int:
         "privilegios",
         help="o papel `app` e' mesmo incapaz do que nao deve? (usa MOTOR_DATABASE_URL)",
     ).set_defaults(funcao=cmd_privilegios)
+
+    p_expurgar = sub.add_parser(
+        "expurgar",
+        help="zera ip/user-agent das sessoes alem do prazo de retencao (P15)",
+    )
+    p_expurgar.add_argument("--simular", action="store_true", help="so' conta; nao escreve nada")
+    p_expurgar.set_defaults(funcao=cmd_expurgar)
+
+    p_alinhar = sub.add_parser(
+        "alinhar-senhas",
+        help="regrava o hash da senha inicial em quem nunca escolheu a propria (preparacao do corte)",
+    )
+    p_alinhar.add_argument("--simular", action="store_true", help="so' relata; nao escreve nada")
+    p_alinhar.set_defaults(funcao=cmd_alinhar_senhas)
 
     args = parser.parse_args(argv)
     return int(args.funcao(args))

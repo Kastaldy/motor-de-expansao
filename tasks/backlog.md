@@ -923,7 +923,7 @@ exige decisão humana sobre quais fontes baixar e validação de licença/LGPD.*
 | **Criticidade** | **Média** (acesso ao dashboard; não toca M1/score) |
 | **Prioridade** | Média |
 | **Esteira** | interativa com gate humano (VPS §6) — **agendar com o TIME AVISADO** |
-| **Status** | **ADIADO (16/09/2026)** — ver a nota de sobreposição abaixo |
+| **Status** | **SEM OBJETO (22/09/2026)** — 2FA não entra no projeto por agora (decisão 3 do P19) |
 | **Origem** | P4 do BLK-SEC-03 (concluído 2026-07-13), adiado por decisão de Felipe para não trancar o time |
 | **Autonomia** | **manual (NÃO loop-safe)** — VPS + coordenação de pessoas |
 
@@ -943,6 +943,16 @@ de 1 edit.
 > Não é cancelado porque a epic **não tem data**: se ela demorar, o acesso segue em fator único, e
 > aí este bloco volta a ser o seguro certo. A decisão é de SEQUÊNCIA, não de mérito — e quando a
 > epic tiver cronograma, esta linha se resolve sozinha num dos dois sentidos.
+
+> **RESOLVIDA em 22/09/2026, e no sentido que a nota acima não previa: por MÉRITO.** A decisão 3 da
+> epic do P19 fechou que **2FA não entra no projeto por agora** — nem no Authelia, nem reconstruído
+> no motor. Este bloco fica **sem objeto** enquanto isso valer, e reabri-lo exige reabrir aquela
+> decisão primeiro.
+>
+> A nota acima supunha que a demora da epic devolveria o bloco à mesa. Não é mais assim: o fator
+> único passou a ser **escolha declarada**, não efeito colateral de um cronograma. O que sustenta a
+> senha sozinha está na D31 e na trava de tentativas — e é lá, não aqui, que se mexe se o risco
+> mudar de leitura.
 >
 > A outra metade do escopo original (revisão de acesso e offboarding) **saiu deste bloco** e virou o
 > **BLK-SEC-03-FU2**, logo abaixo: aquela metade a epic precisa de qualquer jeito, então ela anda

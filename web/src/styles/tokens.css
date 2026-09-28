@@ -55,8 +55,7 @@
      e' deixar passar 0,32 do que esta' por baixo, e essa RAZAO independe de o fundo ser
      claro ou escuro (medido nos dois temas: o texto que sobrevive ao veu fica em ~2,0:1
      contra o fundo velado no claro e ~2,4:1 no escuro — atenuado nos dois, ilegivel em
-     nenhum). Se um dia o claro pedir outro valor, ele entra no bloco claro E no espelho
-     .cromo-escuro, que `lib/tema-claro-ultra.test.ts` fecha. */
+     nenhum). Se um dia o claro pedir outro valor, ele entra no bloco claro. */
   --scrim: color-mix(in srgb, var(--bg-base) 68%, transparent);
   --scrim-blur: blur(7px);
 
@@ -113,12 +112,9 @@
   --ac-glow: 0 6px 16px -4px rgba(48, 207, 194, 0.5);
 
   /* --- Lavagem do rail (Dock e trilho de camadas) ---------------------------
-     A "barra lateral" leva a lavagem TURQUESA do acento ("ficou bom", Juan
-     2026-09-09) — e leva a MESMA nos dois temas, porque no claro o rail nao vive
-     sobre o gelo: ele vive DENTRO do escopo `.cromo-escuro` (ver o bloco no fim do
-     arquivo), onde valem estes valores. Lavagem MAGENTA sobre a caixa clara chegou a
-     ser escrita aqui e nunca existiu no codigo; a versao testada em 2026-09-09 caiu
-     junto com a turquesa e a laranja, e a resposta foi escurecer a CAIXA. */
+     Estes valores sao do TEMA ESCURO: lavagem turquesa do acento sobre o fundo preto.
+     No tema claro o rail nao passa por aqui — ele vive no escopo `.rail-ultra`, que
+     redeclara os tres com um veu BRANCO sobre o teal cheio. */
   --rail-a08: rgba(48, 207, 194, 0.08);
   --rail-a16: rgba(48, 207, 194, 0.16);
   --rail-a24: rgba(48, 207, 194, 0.24);
@@ -336,10 +332,90 @@
   --aro-alunos: #ffffff;
   --aro-alunos-keyline: rgba(10, 16, 24, 0.34);
 
+  /* --- KPI da Visao Executiva (2026-09-25) ---------------------------------
+     A fileira de indicadores do topo. Existe como TOKEN, e nao como hex no
+     componente, porque foi exatamente assim que o defeito aconteceu: a primeira
+     versao cravou `#c23c8e` no `ExecutiveScreen`, e cor cravada em componente NAO
+     sabe de tema — o card continuava rosa depois de trocar para o escuro. O Felipe
+     pegou. Mesma familia do `.rail-ultra` que vazou para o escuro no mesmo dia.
+
+     Aqui, no `:root` (tema ESCURO), os valores reproduzem o cartao de vidro que
+     sempre existiu: o escuro segue intocado, que e' a ordem — cor de marca so' no
+     claro, como teste. O bloco claro e' que inverte para o rosa. */
+  --kpi-fundo: var(--surf-card);
+  --kpi-borda: var(--line);
+  --kpi-rotulo: var(--tx-label);
+  --kpi-valor: var(--tx-max);
+  --kpi-apoio: var(--tx-muted);
+  --kpi-pos: var(--pos, #37b26b);
+  --kpi-neg: var(--neg, #ff5a6e);
+
+  /* --- Paleta LITERAL da marca (2026-09-25) --------------------------------
+     Os hex do guia, sem adaptacao, para uso GRAFICO: traco, simbolo, preenchimento
+     sem texto por cima. Valem nos dois temas porque sao constantes da marca, nao
+     decisoes de tema.
+
+     NAO sao os tokens de interface. Quem pinta botao, texto e superficie continua
+     sendo `--ac*`, `--tx*`, `--surf*` — eles derivam destas matizes mas obedecem a
+     regua de contraste, que a marca nao tem como conhecer. O caso concreto: branco
+     sobre o teal exato da' 2,93:1 e reprova o piso de texto grande, entao o botao usa
+     um passo mais escuro. Confundir os dois papeis quebraria legibilidade em nome de
+     fidelidade de cor.
+
+     Regra do guia que o CODIGO nao consegue impor, e por isso fica escrita: o teal e'
+     a cor DOMINANTE, e so' UMA secundaria por tela (laranja OU magenta, nunca as
+     duas). Nas telas de DADO isso cede ao encoding — faixa de score, camadas do funil
+     e series categoricas precisam de mais matizes que a marca oferece, e ali a paleta
+     de dados manda. A marca governa o CROMO (superficie, texto, acao primaria). */
+  --marca-teal: #00a99e;
+  --marca-laranja: #ef7f1f;
+  --marca-magenta: #c23c8e;
+  --marca-cinza-900: #3a3a3a;
+  --marca-cinza-100: #f2f2f2;
+
   /* --- Tipografia ---------------------------------------------------------- */
-  --f-ui: 'Instrument Sans Variable', 'Instrument Sans', system-ui, sans-serif;
-  --f-story: 'Instrument Serif', Georgia, serif;
-  --f-num: 'IBM Plex Mono', ui-monospace, monospace;
+  /* O CORPO passa a ser a fonte da marca (2026-09-25), nos dois temas. Era
+     'Instrument Sans'. O guia nao admite fonte fora das institucionais; a DIN nao e'
+     livre, e a Barlow e' a analoga mais proxima da DIN Regular — e irma da Condensed
+     usada nos titulos, o que mantem o desenho coerente entre as duas vozes.
+
+     LARGURA NORMAL, nao condensada: o guia so' condensa titulo e subtitulo. Tabela
+     densa e KPI em condensada custariam legibilidade onde este produto mais precisa
+     dela. */
+  --f-ui: 'Barlow', 'DIN', 'Arial Narrow', system-ui, sans-serif;
+  /* A VOZ DE TITULO passa a ser a da marca (2026-09-25), nos dois temas.
+
+     Era 'Instrument Serif'. O guia nao admite fonte fora das institucionais, e titulo
+     e' DIN Condensed Bold Italic em caixa alta — um serif elegante e' bonito e NAO e'
+     a Ultra. Trocar aqui, e nao em cada tela, e' o que faz os 16 usos de `--f-story`
+     virarem de uma vez: quase todos chegam pelo atalho `font:`, que passa a familia
+     por variavel.
+
+     O serif some do produto. Se voltar, volta como decisao, nao por inercia. */
+  --f-story: 'Barlow Condensed', 'DIN Condensed', 'Arial Narrow', var(--f-ui);
+  /* O NUMERO tambem passa a ser a fonte da marca (2026-09-25). Era 'IBM Plex Mono',
+     que nao e' fonte da Ultra — e o guia e' explicito: "nunca usar fontes fora das
+     institucionais".
+
+     Este token era o maior buraco da aplicacao da marca e nao parecia: sao 230 usos, e
+     ele nao carrega so' numero. Rotulo de filtro, chip, eyebrow e legenda tambem o
+     usam, e por isso a barra de filtros "nao mudou nada" quando so' `--f-ui` trocou.
+
+     O ALINHAMENTO DE COLUNA NAO SE PERDE: quem garantia digito de largura fixa era o
+     monoespacamento, e a classe `.num` ja' declara `font-variant-numeric: tabular-nums`
+     + `font-feature-settings: 'tnum'`. A Barlow tem o recurso, entao a coluna de numero
+     continua alinhada sem precisar de fonte monoespacada. */
+  --f-num: 'Barlow', 'DIN', 'Arial Narrow', ui-monospace, monospace;
+  /* TITULO da marca (2026-09-25) — vale nos DOIS temas, por decisao do Felipe.
+     Substituta livre da DIN Condensed; ver a escolha no `global.css`. O italico e o
+     caixa-alta nao moram aqui: sao do USO (`.ultra-titulo`), porque a fonte tambem
+     serve rotulos curtos em que a inclinacao atrapalharia.
+
+     NAO entra no corpo nem nos numeros, e isso e' leitura do guia, nao omissao: ele
+     pede DIN *Condensed* so' em titulo e subtitulo, e DIN *Regular* — nao condensada
+     — no texto de apoio. Condensar tabela densa e KPI custaria legibilidade onde este
+     produto a gasta melhor. */
+  --f-titulo: 'Barlow Condensed', 'DIN Condensed', 'Arial Narrow', var(--f-ui);
 
   /* --- Raios --------------------------------------------------------------- */
   --r-sm: 6px;
@@ -385,6 +461,32 @@
    cai para 3:1, e e' por isso que --gr-* nao precisou descer tanto quanto --ac-text.
    ============================================================================ */
 [data-tema='claro'] {
+  /* --- KPI da Visao Executiva: ROSA DA MARCA (2026-09-25) -------------------
+     Decisao do Felipe: a fileira inteira no rosa, nao uma cor por card. A fileira e'
+     UMA peca, e o guia admite so' UMA secundaria por peca — tres cores rotativas, que
+     foi a 1a versao, violavam isso. O turquesa segue dominante no resto (rail, barra,
+     acentos), que e' o papel que o guia lhe da'.
+
+     O HEX DESCEU UM PASSO na mesma matiz do guia (#C23C8E -> #A32D72) em 2026-09-25, e
+     nao por gosto. O paragrafo anterior dizia "branco sobre #C23C8E da' 4,85:1 e passa",
+     e a conta estava certa — para branco CHAPADO, que era so' o --kpi-valor. O rotulo
+     era 0,88 (4,10) e o apoio 0,80 (3,65). Subir os dois para chapado conserta o texto,
+     mas NAO conserta o delta: ele e' texto de 11px pintado com os pasteis, e sobre
+     #C23C8E eles davam 3,69 e 3,19 — e nao ha' pastel que alcance 4,5 la', porque o
+     proprio BRANCO so' chega a 4,85. Ou o fundo desce, ou o indicador perde a cor.
+     Desceu o fundo. Agora: branco 6,61, verde 5,03, vermelho 5,11.
+
+     Os tons de delta sao pasteis do verde e do vermelho: o indicador diz bom/ruim pela
+     COR, e apaga-lo para branco custaria o principal da leitura. */
+  --kpi-fundo: #a32d72;
+  --kpi-borda: rgba(255, 255, 255, 0.18);
+  --kpi-rotulo: #ffffff;
+  --kpi-valor: #ffffff;
+  --kpi-apoio: #ffffff;
+  --kpi-pos: #a9f0c6;
+  /* Um passo mais claro que o #ffc2c9 antigo: era o unico par que nao fechava 4,5. */
+  --kpi-neg: #ffd9dd;
+
   /* --- Fundos -------------------------------------------------------------- */
   /* Gelo TURQUESA, nao branco puro nem cinza neutro (Juan, 2026-09-08: "usar as cores
      base da Ultra para nao deixar o site 100% branco"; terceira rodada em 2026-09-09,
@@ -394,19 +496,19 @@
      matiz (ver superficies glass) e precisam de um fundo do qual se destacar, senao a
      borda de 1 px vira a unica separacao da tela.
      Matiz e contraste guardados por lib/tema-claro-ultra.test.ts. */
-  --bg-base: #e0f4f2;
-  --bg-lift: #d2eeec;
-  --bg-knob: #effaf9;
+  --bg-base: #f2f2f2;
+  --bg-lift: #e6e6e6;
+  --bg-knob: #ffffff;
 
   /* --- Superficies glass --------------------------------------------------- */
   /* A base do vidro NAO e' o branco puro: e' #eaf7f5, o gelo da mesma matiz turquesa
      do fundo (pedido do Juan em 2026-09-08, segunda rodada; aprofundado na terceira,
      2026-09-09 — o #f2fbfa anterior ainda lia como branco). As reguas de texto
      continuam passando sobre ela: --tx-muted 4,97:1 e --ac-text 4,74:1. */
-  --surf-panel: rgba(234, 247, 245, 0.94);
-  --surf-card: rgba(234, 247, 245, 0.82);
-  --surf-sidebar: rgba(234, 247, 245, 0.88);
-  --surf-verdict: rgba(234, 247, 245, 0.86);
+  --surf-panel: rgba(255, 255, 255, 0.94);
+  --surf-card: rgba(255, 255, 255, 0.82);
+  --surf-sidebar: rgba(255, 255, 255, 0.88);
+  --surf-verdict: rgba(255, 255, 255, 0.86);
   /* O gelo do cartao de veredito, um degrau mais fundo que o vidro dos outros cards —
      no escuro ele tambem e' mais fundo que o painel, e e' assim que a peca se destaca
      sem virar caixa de outra cor. A parada MAIS ESCURA e' o piso: ela carrega a nota do
@@ -414,50 +516,55 @@
      reprova). Guardado por lib/tema-claro-ultra.test.ts, que mede as duas paradas. */
   --grad-verdict: linear-gradient(120deg, #e6f5f2, #f0faf8 70%);
   --line-verdict: #9fd0ca;
-  --surf-chrome: rgba(234, 247, 245, 0.9);
-  --surf-bar: rgba(234, 247, 245, 0.92);
+  --surf-chrome: rgba(255, 255, 255, 0.9);
+  --surf-bar: rgba(255, 255, 255, 0.92);
   /* Os tres "raised" invertem o SINAL do alfa: no escuro se ilumina com branco, no
      claro se sombreia com tinta. Manter branco aqui deixaria o elemento invisivel. */
-  --surf-raised: rgba(6, 45, 42, 0.06);
-  --surf-input: rgba(6, 45, 42, 0.04);
-  --surf-pending: rgba(6, 45, 42, 0.08);
-  --surf-select: #eaf7f5;
+  --surf-raised: rgba(58, 58, 58, 0.06);
+  --surf-input: rgba(58, 58, 58, 0.04);
+  --surf-pending: rgba(58, 58, 58, 0.08);
+  --surf-select: #ffffff;
   /* Chapado (mesma funcao do preto do escuro — tapar a legenda que passa por baixo),
      no gelo turquesa das superficies em vez do branco puro. */
-  --surf-mapa: #eaf7f5;
+  --surf-mapa: #ffffff;
 
   /* --- Hairlines ----------------------------------------------------------- */
   /* A tinta e' o teal-escuro #062d2a (matiz do turquesa Ultra), nao mais o azul-marinho
      #0d1b2a: mesma luminancia, mas a hairline, o input e a sombra carregam a marca. */
-  --line: rgba(6, 45, 42, 0.13);
-  --line-soft: rgba(6, 45, 42, 0.1);
-  --line-mid: rgba(6, 45, 42, 0.16);
-  --line-strong: rgba(6, 45, 42, 0.2);
-  --line-dashed: rgba(6, 45, 42, 0.26);
+  --line: rgba(58, 58, 58, 0.13);
+  --line-soft: rgba(58, 58, 58, 0.1);
+  --line-mid: rgba(58, 58, 58, 0.16);
+  --line-strong: rgba(58, 58, 58, 0.2);
+  --line-dashed: rgba(58, 58, 58, 0.26);
 
   /* --- Texto (os mesmos 6 papeis, do mais forte ao mais apagado) ------------ */
   /* Terceira rodada (2026-09-09): a escala inteira sai do cinza-azulado para o
      cinza-TEAL da matiz Ultra — e' o que tinge o "miolo" da tela sem mexer em layout.
      As reguas se mantem: --tx-muted 4,97:1 e --tx-sub 4,68:1 sobre o vidro. */
-  --tx-max: #06171a;
-  --tx-strong: #0f272c;
-  --tx-soft: #21424a;
-  --tx-narrative: #33545c;
-  --tx-label: #3f626a;
-  --tx-muted: #4d6f76;
+  --tx-max: #1f1f1f;
+  --tx-strong: #2b2b2b;
+  --tx-soft: #3a3a3a;
+  --tx-narrative: #474747;
+  --tx-label: #535353;
+  --tx-muted: #595959;
   /* 4,68:1 sobre o painel claro — mesma folga da rodada anterior, na matiz nova. */
-  --tx-sub: #527379;
+  --tx-sub: #5c5c5c;
   /* 3,38:1 — de-enfase deliberada, espelhando o --tx-off do escuro. Mesma regra: texto
      com significado nao usa este token. */
-  --tx-off: #6b8a90;
-  --tx-rank: #84a0a5;
+  --tx-off: #757575;
+  --tx-rank: #8a8a8a;
 
   /* --- Acento turquesa ------------------------------------------------------
      A matiz e' a do turquesa Ultra #00A99E (~176°; era a ~186° herdada do #35c9d6 do
      escuro), luminancia derrubada ate' o texto passar (--ac-text 4,74:1 sobre o vidro
      #eaf7f5, que na terceira rodada ficou mais fundo e exigiu descer o texto junto).
      O --ac-on inverte: sobre o turquesa escuro, quem le' e' o branco. */
-  --ac: #0e9c93;
+  /* Um passo mais escuro que o #00A99E do guia, e o motivo e' medido: branco sobre o
+     hex exato da' 2,93:1 e REPROVA o piso de 3,0 para texto grande — e este token e' o
+     FUNDO do botao primario, com --ac-on branco. #00a294 da' 3,18:1 na mesma matiz.
+     O hex exato da marca continua disponivel em --marca-teal, para uso grafico (traco,
+     simbolo, preenchimento sem texto em cima), onde nao ha regua de contraste. */
+  --ac: #00a294;
   --ac-text: #087a72;
   --ac-chip: #076b64;
   --ac-on: #ffffff;
@@ -474,21 +581,20 @@
   --ac-a60: rgba(14, 156, 147, 0.6);
   --ac-glow: 0 6px 16px -6px rgba(14, 156, 147, 0.4);
 
-  /* A lavagem do rail NAO tem par claro: o rail vive dentro do escopo `.cromo-escuro`
-     (ver o bloco no fim do arquivo), onde valem os --rail-a* turquesa do :root.
-     Turquesa e magenta chegaram a ser testados como lavagem sobre o fundo claro em
-     2026-09-09 e os dois cairam — a resposta do Juan foi escurecer a CAIXA. */
+  /* A lavagem do rail nao tem par AQUI: no tema claro o rail e' superficie cheia na cor
+     da marca, e os --rail-a* dele sao declarados no escopo `.rail-ultra`, no fim deste
+     arquivo, como veu branco sobre o teal. */
 
   /* --- Marca Ultra ---------------------------------------------------------- */
   /* O #c8001e sobre branco ja' passa como elemento grafico; escurece um tom so' para
      nao vibrar contra o cinza do fundo. Continua proibido como cor de rotulo. */
-  --ultra: #b30019;
+  --ultra: #00a99e;     /* o guia NAO tem vermelho: a marca e teal. Era heranca do logo antigo */
 
   /* --- Trilha de OPERACOES -------------------------------------------------
      Mesma regra do resto do bloco claro: a MATIZ do escuro (#f472b6) e' preservada
      e a luminancia desce ate' o texto passar — o rosa do escuro da ~2,3:1 sobre o
      gelo. `--ops-on` inverte junto, porque o rosa escuro pede texto branco. */
-  --ops: #c02a86;
+  --ops: #c23c8e;       /* mesma cor da marca — a trilha de operacoes e a secundaria magenta */
   --ops-text: #a81b6b;
   --ops-on: #ffffff;
 
@@ -529,7 +635,7 @@
   --l3-a60: rgba(138, 97, 16, 0.6);
 
   /* Camada 4 · turquesa — o MESMO valor de --ac neste tema, por desenho (ver acima). */
-  --l4: #0e9c93;
+  --l4: #00a294;
   --l4-a10: rgba(14, 156, 147, 0.1);
   --l4-a24: rgba(14, 156, 147, 0.24);
   --l4-a60: rgba(14, 156, 147, 0.6);
@@ -564,10 +670,10 @@
      laranja Ultra #EF7F1F), luminancia derrubada ate' o preenchimento passar 3:1
      sobre branco (o laranja cru da' 2,6:1). */
   --gr-azul: #2f6bc9;
-  --gr-rosa: #c02a86;
+  --gr-rosa: #c23c8e;   /* magenta EXATO do guia; passa como texto (4,77:1) */
   --gr-verde: #0f9d55;
   /* Desceu com o vidro da terceira rodada: #cd7c37 dava 2,93:1 sobre #eaf7f5. */
-  --gr-coral: #c1732f;
+  --gr-coral: #d16f1b;  /* matiz EXATA do laranja do guia (27,7 graus), um passo escuro para passar 3:1 */
   /* O par de TEXTO do coral (ver o :root). E' aqui que os dois valores DIVERGEM: o
      --gr-coral de cima para em 3,28:1 sobre o card, que serve a preenchimento e reprova
      como rotulo — a revisao do PR #331 achou o defeito nos rotulos de KPI da Executiva,
@@ -583,11 +689,11 @@
      preto sobre branco suja, nao separa. */
   --carga: #a9770f;
   --sinal-off: #6b8a90;
-  --linha-mapa: rgba(6, 45, 42, 0.2);
-  --surf-chip: rgba(6, 45, 42, 0.08);
-  --linha-eixo: rgba(6, 45, 42, 0.3);
-  --sh-ponto: 0 3px 10px rgba(6, 45, 42, 0.18);
-  --anel-mapa: rgba(6, 45, 42, 0.28);
+  --linha-mapa: rgba(58, 58, 58, 0.2);
+  --surf-chip: rgba(58, 58, 58, 0.08);
+  --linha-eixo: rgba(58, 58, 58, 0.3);
+  --sh-ponto: 0 3px 10px rgba(58, 58, 58, 0.18);
+  --anel-mapa: rgba(58, 58, 58, 0.28);
   /* Mesma MATIZ dos pares escuros (~17 graus e ~327 graus), luminancia derrubada ate' o
      texto passar sobre o branco da pilula. */
   --indep-tx: #b04a22;
@@ -600,172 +706,187 @@
   /* --- Sombras ------------------------------------------------------------- */
   /* Sombra no claro e' separacao, nao vedacao: preta demais suja o branco. A tinta e'
      o mesmo teal #062d2a das hairlines — sombra fria da matiz da marca. */
-  --sh-pin: 0 5px 12px rgba(6, 45, 42, 0.18);
-  --sh-frame: 0 30px 70px -30px rgba(6, 45, 42, 0.3);
-  --sh-pop: 0 10px 26px -10px rgba(6, 45, 42, 0.35);
-  --sh-menu: 0 14px 30px -12px rgba(6, 45, 42, 0.4);
+  --sh-pin: 0 5px 12px rgba(58, 58, 58, 0.18);
+  --sh-frame: 0 30px 70px -30px rgba(58, 58, 58, 0.3);
+  --sh-pop: 0 10px 26px -10px rgba(58, 58, 58, 0.35);
+  --sh-menu: 0 14px 30px -12px rgba(58, 58, 58, 0.4);
 }
 
-/* ============================================================================
-   CROMO ESCURO DENTRO DO TEMA CLARO — escopo `.cromo-escuro`.
+/* O ESCOPO `.cromo-escuro` FOI REMOVIDO (2026-09-25).
 
-   Pedido do Juan (2026-09-09): a barra lateral e as CAIXAS dos cabecalhos
-   ("Inteligência de Expansão", a barra da Rede Ultra, a faixa "Carteira") ficam
-   escuras MESMO no tema claro — cromo escuro emoldurando conteudo claro. Antes
-   disso foram testadas tres lavagens de cor sobre a caixa clara (turquesa,
-   magenta, laranja) e todas cairam; a resposta certa era escurecer a caixa.
+   Ele existiu de 2026-09-09 a 2026-09-25 para manter rail e barras ESCUROS dentro do
+   tema claro (pedido do Juan), redeclarando ~70 tokens do bloco escuro. A ordem do
+   Felipe de aplicar o guia da marca "em tudo, mesmo que altere os pontos escuros"
+   revogou aquilo, e o escopo foi esvaziado — mas nao removido, e foi ai' que ele virou
+   um no-op com aparencia de mecanismo: sobrou `color-scheme: light`, que o proprio
+   `[data-tema='claro']` ja' impoe, e tres `--rail-a*` sem leitor, porque o unico
+   (`Dock.tsx`) passou para `.rail-ultra`, que os redeclara e vence por cascata.
 
-   O mecanismo e' o mesmo que promoveu o tema ao app inteiro: token herda. Este
-   bloco re-declara no ESCOPO os valores do bloco escuro, entao todo controle ali
-   dentro (Select, busca, chips, pilulas) se repinta sozinho, sem prop de tema e
-   sem classe por componente. No tema escuro o seletor nao casa e o escopo e' inocuo.
-
-   O espelho e' FECHADO POR TESTE, e essa e' a regra que vale: `tema-claro-ultra.test.ts`
-   exige que TODO token declarado no bloco claro apareca aqui ou esteja na lista de
-   excecoes de la', comentado um a um. Nao e' zelo — a primeira versao deste bloco
-   prometia "espelho" em prosa e deixava 18 tokens para tras, entre eles o --surf-panel,
-   que pinta o popup do `Select`: no tema claro a lista abria com fundo CLARO e texto do
-   tema ESCURO, 1,07:1 no campo de busca. Comentario nao segura invariante; teste segura.
-
-   E' espelho COM DESVIOS DELIBERADOS — sao estes 10, e nenhum outro (a lista tambem
-   e' travada por teste, entao ela nao pode envelhecer caladamente):
-     · --surf-chrome  o :root compoe 0,8 sobre o #080b10 e chega a ~#0d141d; aqui atras
-                      passa o gelo CLARO, entao o alfa e' trocado pela superficie ja'
-                      composta (opaca). 0,95 deixava 5% do gelo atravessar e derrubava
-                      --tx-muted a 4,28:1 e --tx-sub a 3,83:1 na legenda do cabecalho.
-     · --surf-mapa    #000 no :root (pedido do Felipe para a pilula sobre o mapa); aqui
-                      o preto chapado seria a unica mancha da tela clara.
-     · as cinco --line* e os tres --surf-raised/input/pending sobem o alfa (+0,02): sao
-                      brancos sobre a caixa escura recortada contra papel claro, e a
-                      borda que basta no escuro some quando a moldura e' clara. */
-[data-tema='claro'] .cromo-escuro {
-  /* Fundos. Nenhuma das cinco subarvores `.cromo-escuro` de hoje pinta area com eles,
-     mas quem herda a caixa escura herda o fundo dela: sem estes, o primeiro componente
-     que usar var(--bg-*) aqui dentro abre um retangulo de gelo claro no meio do cromo. */
-  --bg-base: #080b10;
-  --bg-lift: #0e1824;
-  --bg-knob: #0e151e;
-
-  /* Superficies. O --surf-panel e' o que pinta o popup do `Select` (`Select.tsx`, sem
-     `createPortal`, logo descendente do cabecalho) — o token que faltava. */
-  --surf-panel: rgba(14, 21, 30, 0.88);
-  --surf-card: rgba(14, 21, 30, 0.7);
-  --surf-sidebar: rgba(14, 21, 30, 0.8);
-  --surf-verdict: rgba(14, 21, 30, 0.72);
-  --grad-verdict: linear-gradient(120deg, #11282a, #0d1a1e 70%);
-  --line-verdict: #24474a;
-  --surf-chrome: #0d141d;
-  --surf-bar: rgba(16, 24, 34, 0.86);
-  --surf-raised: rgba(255, 255, 255, 0.05);
-  --surf-input: rgba(255, 255, 255, 0.06);
-  --surf-pending: rgba(255, 255, 255, 0.08);
-  --surf-select: #101a26;
-  /* No :root o --surf-mapa e' #000 (pedido do Felipe, para a pilula sobre o mapa);
-     aqui o preto chapado seria a unica mancha da tela clara — fica o azul-tinta. */
-  --surf-mapa: #101a26;
-  --line: rgba(255, 255, 255, 0.1);
-  --line-soft: rgba(255, 255, 255, 0.09);
-  --line-mid: rgba(255, 255, 255, 0.12);
-  --line-strong: rgba(255, 255, 255, 0.15);
-  --line-dashed: rgba(255, 255, 255, 0.2);
-  --tx-max: #eef3f8;
-  --tx-strong: #e6edf3;
-  --tx-soft: #cdd8e2;
-  --tx-narrative: #9aa7b5;
-  --tx-label: #8b97a5;
-  --tx-muted: #7b8794;
-  --tx-sub: #727f8d;
-  --tx-off: #5a6675;
-  --tx-rank: #4a5765;
-  --ac: #30cfc2;
-  --ac-text: #4ad8cb;
-  --ac-chip: #82e6dc;
-  --ac-on: #06232a;
-  --ac-a08: rgba(48, 207, 194, 0.08);
-  --ac-a10: rgba(48, 207, 194, 0.1);
-  --ac-a12: rgba(48, 207, 194, 0.12);
-  --ac-a14: rgba(48, 207, 194, 0.14);
-  --ac-a16: rgba(48, 207, 194, 0.16);
-  --ac-a22: rgba(48, 207, 194, 0.22);
-  --ac-a24: rgba(48, 207, 194, 0.24);
-  --ac-a25: rgba(48, 207, 194, 0.25);
-  --ac-a30: rgba(48, 207, 194, 0.3);
-  --ac-a45: rgba(48, 207, 194, 0.45);
-  --ac-a60: rgba(48, 207, 194, 0.6);
-  --ac-glow: 0 6px 16px -4px rgba(48, 207, 194, 0.5);
-  --l1: #6fa4f7;
-  --l1-a10: rgba(111, 164, 247, 0.1);
-  --l1-a24: rgba(111, 164, 247, 0.24);
-  --l1-a60: rgba(111, 164, 247, 0.6);
-  --l2: #a98cf0;
-  --l2-a10: rgba(169, 140, 240, 0.1);
-  --l2-a24: rgba(169, 140, 240, 0.24);
-  --l2-a60: rgba(169, 140, 240, 0.6);
-  --l3: #e9c07a;
-  --l3-a10: rgba(233, 192, 122, 0.1);
-  --l3-a24: rgba(233, 192, 122, 0.24);
-  --l3-a60: rgba(233, 192, 122, 0.6);
-  --l4: #30cfc2;
-  --l4-a10: rgba(48, 207, 194, 0.1);
-  --l4-a24: rgba(48, 207, 194, 0.24);
-  --l4-a60: rgba(48, 207, 194, 0.6);
-  --l5: #eef3f8;
-  --l5-a10: rgba(238, 243, 248, 0.1);
-  --l5-a24: rgba(238, 243, 248, 0.24);
-  --l5-a60: rgba(238, 243, 248, 0.6);
-  --sev-alta: #ff5a6e;
-  --sev-media: #e0b25a;
-  --sev-ok: #3cc878;
-  --sev-sem-base: #7c8798;
-  --gr-azul: #6fa4f7;
-  --gr-rosa: #e054a8;
-  --gr-verde: #5fd08c;
-  --gr-coral: #f9965a;
-  --gr-coral-tx: #f9965a;
-  --faixa-neutra: #cdd8e2;
-  --pos: #2ec86e;
-  --pos-text: #4fe08a;
-  --pos-pill: #7fe6a6;
-  --neg: #ff7a8a;
-  --neg-bar: #d9556a;
-  --warn: #d9a441;
-  --warn-text: #e9c07a;
-  --ultra: #c8001e;
-  /* Trilha de operacoes: dentro deste escopo a caixa e' escura de novo, entao volta o
-     rosa claro do :root — o rosa escuro do tema claro sumiria contra o cromo. */
-  --ops: #f472b6;
-  --ops-text: #f9a8d4;
-  --ops-on: #2c0a1a;
-  --info: #2f6bed;
-  --carga: #f2c230;
-  --sinal-off: #5a6472;
-  --linha-mapa: rgba(255, 255, 255, 0.14);
-  --surf-chip: rgba(255, 255, 255, 0.08);
-  --linha-eixo: rgba(255, 255, 255, 0.28);
-  --anel-mapa: rgba(255, 255, 255, 0.18);
-  --indep-tx: #f2a488;
-  --imovel-tx: #f06fb6;
-  /* Branca como em todo lugar; a keyline volta ao peso do :root porque dentro
-     deste escopo a caixa e' escura de novo. */
-  --aro-alunos: #ffffff;
-  --aro-alunos-keyline: rgba(10, 16, 24, 0.34);
-  /* Sombras: as do bloco claro sao teal com pouco alfa, para SEPARAR sobre papel; aqui
-     dentro a caixa e' escura de novo e a sombra volta a ser preta, a VEDACAO do :root. */
-  --sh-pin: 0 5px 12px rgba(0, 0, 0, 0.5);
-  --sh-frame: 0 30px 70px -30px rgba(0, 0, 0, 0.6);
-  --sh-ponto: 0 3px 10px rgba(0, 0, 0, 0.5);
-  --sh-pop: 0 10px 30px -8px rgba(0, 0, 0, 0.7);
-  --sh-menu: 0 14px 34px -10px rgba(0, 0, 0, 0.75);
-
-  /* O chrome nativo tambem precisa saber que a caixa virou escura: o `color-scheme`
-     do documento continua `light` (o atributo vive no <html>), entao o glifo do
-     calendario do `<input type="date">` do PeriodoPicker seria desenhado escuro sobre
-     a caixa escura e sumiria. O valor da data nunca esteve em risco — o texto ja' vem
-     dos --tx-* espelhados acima; o que se recupera aqui e' o icone. */
-  color-scheme: dark;
-}
+   Escopo que nao pinta pixel nenhum e' pior que escopo ausente: ele convida a
+   "consertar o tema claro aqui" e devolve a ilha escura sem que nada fique vermelho.
+   Quem pinta rail, barra e painel sao os escopos de marca no fim deste arquivo. */
 
 /* As rampas --ramp-indigo-* / --ramp-green-*, herdadas do prototipo standalone,
    sairam daqui (N8): nenhum arquivo de web/src as referenciava. A cor de score do
    piloto vem de src/lib/colors.ts (SCORE_BANDS_HEX), espelho de
    constants.RESIDUAL_SCORE_BANDS. */
+
+/* ---------------------------------------------------------------------------------
+   BARRA LATERAL — TEAL SOLIDO (2026-09-25).
+
+   Copiado do sistema interno da Ultra (uxplus): rail opaco na cor prioritaria da
+   marca, com texto e icones brancos. E' a maior superficie continua do produto e e'
+   onde o guia quer o teal DOMINANTE.
+
+   POR QUE ESCOPO PROPRIO, e nao o `.cromo-escuro`. Aquele escopo e' usado tambem
+   pelas BARRAS (cabecalho da Visao Executiva e o cabecalho de coluna), e no sistema
+   real as barras sao CLARAS. Tratar rail e barra como a mesma coisa foi o erro que
+   deixou os dois errados ao mesmo tempo — rail translucido e barra branca sobre
+   branco. Separados, cada um segue a referencia.
+
+   SO' NO TEMA CLARO, e isso foi um erro corrigido em 2026-09-25: a regra nasceu sem
+   escopo de tema e vazou para o ESCURO, pintando o rail dele com a cor pensada para o
+   claro. O Felipe pegou. A ordem dele desde o inicio era cor so' no claro, como teste;
+   FONTE e' que vale nos dois. ------------------------------------------------------- */
+/* O MESMO escopo serve a barra lateral e ao painel de CENARIO da Viabilidade: os dois
+   sao superficie CHEIA na cor da marca, com texto branco. Um seletor so', para nao
+   existirem duas definicoes da mesma cor. */
+[data-tema='claro'] .rail-ultra,
+[data-tema='claro'] .painel-marca {
+  color-scheme: light;
+
+  /* TURQUESA — a cor prioritaria do guia. O rosa foi testado aqui e o Felipe preferiu
+     o turquesa (2026-09-25); com o turquesa de volta no rail, a tela fica numa cor de
+     marca so', que e o caso mais folgado da regra do guia.
+
+     UM TOM MAIS FUNDO que o #00A99E exato, e a razao e medida: o rotulo de pais no
+     rodape do rail tem 8px, texto pequeno exige 4,5:1, e branco sobre o hex exato da
+     2,93:1 — ilegivel.
+
+     DESCEU DE NOVO em 2026-09-25, de #007a72 para #00736c, e o motivo e' o defeito que
+     a auditoria achou: os 5,22 do #007a72 eram de branco CHAPADO, mas o rail nao mostra
+     o hex nu em lugar nenhum — ele carrega o veu branco da navegacao por cima
+     (--rail-a16 = 0,10 no topo), e composto isso dava 4,34, REPROVANDO o mesmo piso de
+     4,5 que o paragrafo acima invoca. O veu fica intocado (foi ajustado a mao ate' o
+     Felipe aprovar); quem desce e' a base. Agora: 5,72 no hex nu, 4,70 sob o topo do
+     veu, 4,89 dentro do bloco da navegacao. Segue um tom abaixo da barra superior
+     (#008077), o que separa as duas superficies de cromo sem introduzir outra cor. */
+  --surf-chrome: #00736c;
+  --surf-sidebar: #00736c;
+
+  /* Sobre teal, o contraste vem do BRANCO, nao de um cinza.
+
+     CHAPADO, e nao branco com alfa — esta e' a correcao de 2026-09-25. A rampa antiga
+     (0,92 a 0,78) parecia hierarquia de leitura e era, na pratica, uma rampa de
+     ILEGIBILIDADE: sobre o veu do rail nenhum alfa abaixo de 1,0 alcanca 4,5:1 (0,96 ja'
+     cai para 4,47). Hierarquia neste escopo vem de PESO e CORPO, que nao custam
+     contraste. So' a rampa de DESABILITADO guarda alfa, e a WCAG 1.4.3 dispensa
+     desabilitado — os dois estao marcados abaixo para ninguem os reaproveitar em texto
+     vivo. */
+  --tx-max: #ffffff;
+  --tx-strong: #ffffff;
+  --tx-soft: #ffffff;
+  --tx-narrative: #ffffff;
+  --tx-label: #ffffff;
+  --tx-muted: #ffffff;
+  --tx-sub: #ffffff;
+  /* DESABILITADO apenas (`Dock.tsx` pinta o item indisponivel com --tx-rank). Nao usar
+     para texto vivo: sobre este fundo dao 2,88 e 2,66. */
+  --tx-off: rgba(255, 255, 255, 0.6);
+  --tx-rank: rgba(255, 255, 255, 0.55);
+
+  /* Acento DENTRO do rail: o teal sumiria contra o proprio fundo, entao quem marca o
+     item aceso e' o branco. */
+  --ac: #ffffff;
+  --ac-text: #ffffff;
+  --ac-chip: #ffffff;
+  --ac-on: #00736c;
+
+  --line: rgba(255, 255, 255, 0.18);
+  --line-soft: rgba(255, 255, 255, 0.1);
+  --line-mid: rgba(255, 255, 255, 0.22);
+  --line-strong: rgba(255, 255, 255, 0.3);
+
+  /* A lavagem deixa de ser turquesa sobre escuro e vira um veu BRANCO sobre o teal —
+     e' o que da' relevo ao item ativo sem introduzir outra cor. */
+  /* Campo e botao DENTRO da superficie: veu branco, nunca branco chapado — sobre a
+     cor cheia, um campo branco brigaria com o conteudo claro ao lado.
+
+     O VEU DESCEU de 0,14 para 0,08 em 2026-09-25: no tema claro o bloco da navegacao
+     estava saturando e competia com o proprio teal do rail. Um veu de realce nao pode
+     disputar atencao com a superficie que ele realca. A borda desce junto, senao ela
+     passa a ser a parte mais forte do desenho. */
+  --surf-raised: rgba(255, 255, 255, 0.08);
+  /* CAMPO E PENDENTE VIRARAM VEU ESCURO (2026-09-25). Eram branco 0,16 e 0,20, e e' aqui
+     que o veu claro cobra: ele CLAREIA exatamente o retangulo onde vive o texto menor da
+     superficie. Branco chapado dentro do campo dava 3,66 na barra e 3,87 no pendente —
+     o texto reprovava DENTRO do controle enquanto passava fora dele. Um recesso em
+     sombra tambem e' a leitura fisica certa, e e' o que o Felipe vinha pedindo ao
+     recusar lavagem clara ("para de fazer isso nas cores de fundo"). Agora 7,15 e 7,38.
+
+     --surf-card e --surf-panel ficam em branco 0,12: eles nao sao recesso, sao cartao
+     sobre a cor cheia, e medidos dao 4,52 com texto chapado. */
+  --surf-input: rgba(0, 0, 0, 0.14);
+  --surf-pending: rgba(0, 0, 0, 0.16);
+  --surf-card: rgba(255, 255, 255, 0.12);
+  --surf-panel: rgba(255, 255, 255, 0.12);
+
+  --rail-a08: rgba(255, 255, 255, 0.06);
+  --rail-a16: rgba(255, 255, 255, 0.1);
+  --rail-a24: rgba(255, 255, 255, 0.24);
+}
+
+/* ---------------------------------------------------------------------------------
+   BARRA SUPERIOR — TURQUESA (2026-09-25, pedido do Felipe).
+
+   O fundo dos filtros e da busca passa a ser a cor prioritaria da marca. Convive com
+   o rail rosa pelo par "verde + rosa" que o guia autoriza.
+
+   O HEX NAO E' O EXATO, e a razao e' medida: branco sobre #00A99E da' 2,93:1 e reprova
+   ate' o piso de 3:1 de texto grande. Esta barra carrega rotulo de filtro e
+   placeholder de busca — texto PEQUENO, que pede 4,5:1. #008077 entrega 4,82 mantendo
+   a matiz do guia (176,1 graus). Os 4,82 valem para branco CHAPADO, e e' por isso que a
+   rampa de alfa saiu daqui em 2026-09-25: com 0,88 o rotulo de filtro caia a 4,10.
+
+   Os controles DENTRO da barra ficam em veu ESCURO. Eram veu BRANCO, e era o defeito
+   central deste escopo: o campo de busca clareava o fundo para rgb(41,148,141) e o
+   texto digitado — branco chapado — media 3,66 ali dentro, com o placeholder a 2,84.
+   Nenhum ajuste de texto alcanca 4,5 sobre um fundo que o proprio controle clareia.
+   --------------------------------------------------------------------------------- */
+[data-tema='claro'] .barra-ultra {
+  color-scheme: light;
+
+  --surf-chrome: #008077;
+  --surf-bar: #008077;
+  --surf-panel: #008077;
+
+  --tx-max: #ffffff;
+  --tx-strong: #ffffff;
+  --tx-soft: #ffffff;
+  --tx-narrative: #ffffff;
+  --tx-label: #ffffff;
+  --tx-muted: #ffffff;
+  --tx-sub: #ffffff;
+  /* DESABILITADO apenas — ver a nota igual no escopo do rail. */
+  --tx-off: rgba(255, 255, 255, 0.62);
+  --tx-rank: rgba(255, 255, 255, 0.55);
+
+  /* Sobre turquesa quem marca o aceso e' o branco — o proprio acento sumiria. */
+  --ac: #ffffff;
+  --ac-text: #ffffff;
+  --ac-chip: #ffffff;
+  --ac-on: #006158;
+
+  --line: rgba(255, 255, 255, 0.22);
+  --line-soft: rgba(255, 255, 255, 0.16);
+  --line-mid: rgba(255, 255, 255, 0.28);
+  --line-strong: rgba(255, 255, 255, 0.36);
+
+  /* Campo e chip em veu ESCURO (2026-09-25): sobre a cor cheia, veu branco clareia o
+     fundo justamente sob o texto menor. Medido com branco chapado em cima: o chip ia de
+     3,79 para 5,72 e o campo de 3,66 para 6,13. */
+  --surf-raised: rgba(0, 0, 0, 0.1);
+  --surf-input: rgba(0, 0, 0, 0.14);
+  --surf-pending: rgba(0, 0, 0, 0.16);
+  --surf-select: #007068;
+}

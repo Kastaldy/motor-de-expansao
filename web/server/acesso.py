@@ -255,8 +255,107 @@ ROTAS_LIVRES = frozenset(
         "/api/me",
         "/api/me/senha",
         "/api/ciencia-confidencialidade",
+        # P19/D30: entrar e sair. Livres para os portoes de ABA e de PAIS de proposito --
+        # aqueles decidem o que a pessoa PODE, e aqui ela ainda nao e' ninguem. Quem decide
+        # se estas duas atendem e' o portao de SESSAO (ver `ROTAS_PUBLICAS_SEM_SESSAO`), que
+        # e' camada propria e separada. Sem esta declaracao, o
+        # `test_toda_rota_do_app_tem_regra_ou_e_livre_declarada` reprova -- e reprova com
+        # razao: rota `/api/*` sem decisao e' decisao que faltou tomar.
+        "/api/login",
+        "/api/logout",
+        # P19/D4 da DEC-067: o `forward_auth` do Caddy bate AQUI a cada requisicao protegida.
+        # Livre dos portoes de ABA e de PAIS pela mesma razao das duas de cima -- e uma a mais,
+        # que e' a que importa: quem pergunta e' a BORDA, antes de existir identidade nenhuma.
+        # Um gate de aba sobre ela transformaria "esta pessoa nao ve a aba Executiva" em "a
+        # borda nao consegue autenticar ninguem", e o piloto inteiro cairia com 403.
+        "/api/verify",
     }
 )
+
+# --- Troca de senha PENDENTE: por que NAO ha' gate aqui -------------------------
+# Entre 18/09/2026 e 25/09/2026 este arquivo teve `ROTAS_COM_TROCA_PENDENTE` e
+# `bloqueio_por_troca_pendente`: quem devia a troca levava 403 em tudo fora de cinco rotas.
+# O dono reverteu em 25/09 -- a troca e' RECOMENDADA, nao obrigatoria.
+#
+# O registro fica porque a ausencia de gate aqui e' ESCOLHA, e nao lacuna: sem esta nota, a
+# proxima leitura de `deve_trocar_senha_usuario` neste arquivo parece um controle que alguem
+# esqueceu de escrever. Quem convida para a troca e' `/api/me` (`_estado_da_minha_senha`), que
+# devolve `{"deve_trocar", "propria"}` para a SPA abrir o modal -- e o modal tem "Agora nao".
+#
+# Se um dia a obrigatoriedade voltar, o lugar e' este arquivo com lista PROPRIA (nunca reusando
+# `ROTAS_LIVRES`, que e' mais larga e serviria `/api/ufs` e `/api/metodologia` a quem ainda esta'
+# na senha temporaria -- licao da DEC-037), e as rotas de saida sao obrigatorias: `/api/me`,
+# `/api/me/senha`, `/api/login`, `/api/logout`, `/api/health`, mais a SPA e os estaticos. Sem
+# elas o bloqueio vira armadilha e destravar cada pessoa exige ir ao banco.
+
+# --- Portao de SESSAO (epic do P19, decisao 1 = D30) ----------------------------
+# Camada NOVA e separada das outras tres. As de cima respondem "o que esta pessoa pode?";
+# esta responde "ha' alguem aqui?". Enquanto o Authelia autentica, ela esta' DORMENTE --
+# `sessoes.ligada()` (env `MOTOR_AUTENTICACAO_PROPRIA`) manda, e sem ela nada neste bloco
+# entra em requisicao nenhuma.
+
+#: O que atende SEM sessao depois do corte. Curto de proposito, e cada item tem razao:
+#:   * `/api/login`  -- e' por onde se obtem a sessao; exigi-la aqui e' impossivel;
+#:   * `/api/logout` -- idempotente, e recusar logout a quem perdeu a sessao e' absurdo;
+#:   * `/api/health` -- emudecido por decisao de pentest e usado pelo healthcheck do
+#:     container, que nao tem cookie nenhum. Amarrar os dois faria o Docker reiniciar o
+#:     `web` por falta de login.
+#:   * `/api/verify` -- e' o `forward_auth` do D4 (DEC-067). Exigir sessao dela seria
+#:     circular: o portao a 401 antes de ela poder DIZER se ha' sessao, e a borda leria esse
+#:     401 como "ninguem esta' autenticado" para TODA requisicao do piloto. Ela nao e'
+#:     publica por descuido -- ela e' a rota que RESPONDE a pergunta, e por isso valida o
+#:     cookie por conta propria, dentro dela.
+#: NAO entra aqui `/api/me`: ela e' a PRIMEIRA chamada da SPA e passa a exigir sessao --
+#: e' ela que responde "quem sou eu" DEPOIS do login (escopo do P19, §3).
+#:
+#: ESTA LISTA TEM UMA SEGUNDA REDACAO, e ela e' declarada de proposito: o matcher
+#: `@protegido` do `deploy/caddy/piloto-br.Caddyfile.template` repete estes caminhos, porque
+#: o Caddy precisa saber o que NAO mandar ao `forward_auth` antes de falar com o backend.
+#: Duas redacoes da mesma regra desencontram em SILENCIO (licao da DEC-044), entao
+#: `test_piloto_web_verify.py` compara as duas e falha se uma andar sem a outra.
+ROTAS_PUBLICAS_SEM_SESSAO = frozenset(
+    {"/api/login", "/api/logout", "/api/health", "/api/verify"}
+)
+
+#: Nome do cookie. `__Host-` nao e' enfeite: o prefixo obriga `Secure`, `Path=/` e ausencia
+#: de `Domain`, e o navegador RECUSA o cookie se qualquer um faltar -- ou seja, a regra passa
+#: a ser imposta pelo cliente, nao apenas pela nossa configuracao. Em dev (http) o prefixo
+#: nao vale, e por isso o nome alternativo existe.
+COOKIE_SESSAO = "__Host-motor_sessao"
+COOKIE_SESSAO_DEV = "motor_sessao"
+
+#: Headers que CARREGAM IDENTIDADE e que o cliente NAO pode ditar quando o portao manda.
+#: Sao dois, e a lista foi medida: `remote-user` tem 19 leitores em `app.py`, e `remote-email`
+#: e' lido pelo `_autor` da rota de cadastro E pelo fallback da trilha da DEC-027
+#: (`_registrar_acesso` faz `remote-user or remote-email`). Sobrescrever so' o primeiro
+#: deixaria um `Remote-Email` forjado virar o AUTOR registrado na auditoria -- porta fechada
+#: e janela aberta. `Remote-Name`/`Remote-Groups` ficam fora porque tem ZERO leitores
+#: (medido): o Caddy os copia e nada no piloto os consome.
+HEADERS_DE_IDENTIDADE = ("remote-user", "remote-email")
+
+
+def em_producao() -> bool:
+    """Este processo roda em PRODUCAO? Leitor publico do mesmo sinal que o resto do modulo.
+
+    Existe porque o `app.py` precisa decidir os flags do cookie de sessao (`Secure` e o
+    prefixo `__Host-`, que exigem https) e alcancar `_fail_closed_ativo` de fora seria furar
+    o `_` de um modulo vizinho. O SINAL e' o mesmo de sempre -- `MOTOR_CADASTRO_DIR`, o
+    volume `:rw` que so' o compose monta --, e reusa-lo evita um SEGUNDO conceito de "estou
+    em producao" que possa divergir do primeiro (§ do `rbac.login_efetivo`).
+    """
+    return _fail_closed_ativo()
+
+
+def rota_publica_sem_sessao(path: str) -> bool:
+    """`True` = atende sem sessao. Estaticos da SPA inclusos (nao comecam com `/api/`).
+
+    A SPA e a tela de login moram no MESMO processo e host (`app.mount("/", StaticFiles...)`),
+    entao sem esta regra a pessoa nao teria de onde digitar a senha: o portao negaria o HTML
+    que contem o formulario, e o unico estado alcancavel seria 401 em tela branca.
+    """
+    if not path.startswith("/api/"):
+        return True
+    return path in ROTAS_PUBLICAS_SEM_SESSAO
 
 # --- Aba Acessos (emenda DEC-027, 2026-08-19): controle PROPRIO, mais forte ------
 # O painel de acessos expoe atividade do TIME (dado pessoal), entao NAO entra no

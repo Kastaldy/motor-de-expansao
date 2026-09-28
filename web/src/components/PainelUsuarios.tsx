@@ -3,6 +3,14 @@ import { type CSSProperties, useCallback, useEffect, useState } from 'react'
 import { api, ApiError } from '../lib/api'
 import type { AcaoAdmin } from '../lib/confirmacao-admin'
 import { montarConfirmacao, rotuloPerfil } from '../lib/confirmacao-admin'
+import {
+  AJUDA_GERAR_OUTRA,
+  ROTULO_GERAR_OUTRA,
+  avisoDaSenha,
+  gruposDaSenha,
+  podeFechar,
+  recadoDaRedefinicao,
+} from '../lib/senha-temporaria'
 import type {
   AdminPerfil,
   AdminUsuario,
@@ -103,6 +111,18 @@ export default function PainelUsuarios() {
   /** `id_usuario` em trânsito: desabilita só a linha que está sendo salva. */
   const [salvando, setSalvando] = useState<number | null>(null)
   const [recado, setRecado] = useState<string | null>(null)
+  /** A senha temporária recém-gerada, para o administrador ler e repassar (D31).
+   *
+   *  Vive SÓ aqui, no estado do componente, e morre quando o painel fecha. Nunca vai para
+   *  `localStorage`, URL nem log — é credencial viva, e o servidor não a guarda de forma
+   *  recuperável: se ela se perder daqui, o caminho é gerar outra. */
+  const [senhaNova, setSenhaNova] = useState<{
+    login: string
+    senha: string
+    validadeHoras: number
+  } | null>(null)
+  const [copiou, setCopiou] = useState(false)
+  const [anotou, setAnotou] = useState(false)
   /** `null` = formulário fechado. Aberto começa com os quatro campos vazios. */
   const [novo, setNovo] = useState<AdminUsuarioNovo | null>(null)
   const [criando, setCriando] = useState(false)
@@ -192,11 +212,16 @@ export default function PainelUsuarios() {
         if (gesto === 'redefinir-senha') {
           const r = await api.adminRedefinirSenha(alvo.id_usuario)
           await carregar()
-          setRecado(
-            r.tinha_senha_propria
-              ? `${alvo.login}: a senha escolhida foi apagada e voltou para a inicial, com troca pedida.`
-              : `${alvo.login}: a senha inicial foi regravada, com troca pedida.`,
-          )
+          // A senha aparece UMA VEZ. O painel abre limpo (`copiou`/`anotou` zerados) para não
+          // herdar o "já copiei" de uma redefinição anterior e liberar o fechamento cedo.
+          setCopiou(false)
+          setAnotou(false)
+          setSenhaNova({
+            login: alvo.login,
+            senha: r.senha_temporaria,
+            validadeHoras: r.validade_horas,
+          })
+          setRecado(recadoDaRedefinicao(alvo.login, r.tinha_senha_propria))
         } else {
           const r = await api.adminExigirTroca(alvo.id_usuario)
           await carregar()
@@ -383,6 +408,92 @@ export default function PainelUsuarios() {
           {erro}
         </div>
       )}
+      {senhaNova && (
+        <div
+          role="dialog"
+          aria-label={`Senha temporária de ${senhaNova.login}`}
+          style={{
+            display: 'grid',
+            gap: 10,
+            background: 'rgba(240,180,60,.10)',
+            border: '1px solid rgba(240,180,60,.35)',
+            borderRadius: 'var(--r-md)',
+            padding: '12px 13px',
+          }}
+        >
+          <div style={{ font: '600 12px/1.3 var(--f-ui)', color: 'var(--tx)' }}>
+            Senha temporária de <strong>{senhaNova.login}</strong>
+          </div>
+          {/* Em grupos e em fonte monoespaçada: ela vai ser DITADA por telefone, e um bloco
+              único é o que faz quem dita perder a conta no meio. */}
+          <div
+            style={{
+              display: 'flex',
+              gap: 10,
+              font: '600 20px/1.2 var(--f-mono, ui-monospace, monospace)',
+              letterSpacing: '.06em',
+              color: 'var(--tx)',
+              userSelect: 'all',
+            }}
+          >
+            {gruposDaSenha(senhaNova.senha).map((grupo) => (
+              <span key={grupo}>{grupo}</span>
+            ))}
+          </div>
+          <div style={{ font: '400 11.5px/1.45 var(--f-ui)', color: 'var(--tx-soft)' }}>
+            {avisoDaSenha(senhaNova.validadeHoras)}
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <Botao
+              variante="ghost"
+              onClick={() => {
+                // `catch` silencioso de propósito: sem permissão de área de transferência a
+                // senha continua visível e selecionável na tela — o gesto degrada, não quebra.
+                navigator.clipboard?.writeText(senhaNova.senha).catch(() => {})
+                setCopiou(true)
+              }}
+            >
+              {copiou ? 'Copiada' : 'Copiar'}
+            </Botao>
+            <Botao
+              variante="ghost"
+              title={AJUDA_GERAR_OUTRA}
+              disabled={salvando !== null}
+              onClick={() => {
+                const alvo = dados?.usuarios.find((u) => u.login === senhaNova.login)
+                if (alvo) void aplicarSenha(alvo, 'redefinir-senha')
+              }}
+            >
+              {ROTULO_GERAR_OUTRA}
+            </Botao>
+            <label
+              style={{
+                display: 'flex',
+                gap: 6,
+                alignItems: 'center',
+                font: '400 11.5px/1 var(--f-ui)',
+                color: 'var(--tx-soft)',
+              }}
+            >
+              <input type="checkbox" checked={anotou} onChange={(e) => setAnotou(e.target.checked)} />
+              Já anotei
+            </label>
+            <Botao
+              variante="ghost"
+              disabled={!podeFechar(copiou, anotou)}
+              title={
+                podeFechar(copiou, anotou)
+                  ? undefined
+                  : 'Copie ou marque "Já anotei" — esta senha não pode ser consultada depois.'
+              }
+              onClick={() => setSenhaNova(null)}
+            >
+              Fechar
+            </Botao>
+          </div>
+        </div>
+      )}
+
       {recado && (
         <div
           style={{
@@ -711,7 +822,7 @@ export default function PainelUsuarios() {
                             title={
                               souEu
                                 ? 'A sua própria senha se troca pelo cadeado, no rodapé do menu.'
-                                : 'Devolve a pessoa à senha inicial compartilhada, com troca pedida.'
+                                : 'Gera uma senha temporária só desta pessoa e mostra a você uma vez, para repassar.'
                             }
                             onClick={() =>
                               setPendente({ tipo: 'redefinir-senha', id_usuario: u.id_usuario })
@@ -755,10 +866,12 @@ export default function PainelUsuarios() {
         <strong>reversível</strong> e preserva o histórico da pessoa; nada é apagado.{' '}
         <strong>Criar usuário grava só no banco:</strong> a pessoa também precisa ser cadastrada
         no Authelia, no servidor, senão ela aparece nesta lista e não consegue entrar. A coluna{' '}
-        <strong>Senha</strong> diz quem já saiu da senha inicial compartilhada — nenhum hash sai
-        do banco para esta tela. <strong>Redefinir senha</strong> devolve a pessoa à senha inicial
-        compartilhada — você não passa a conhecer a senha de ninguém. O número ao lado de cada
-        perfil é quantas coisas ele libera.
+        <strong>Senha</strong> diz quem já definiu a própria senha — nenhum hash sai do banco para
+        esta tela. <strong>Redefinir senha</strong> gera uma senha temporária só daquela pessoa e
+        mostra a você uma única vez, para repassar; ela vale poucas horas, derruba as sessões
+        abertas dela e obriga a criar uma senha nova na entrada. Se você perder a senha antes de
+        repassar, gere outra — a anterior deixa de valer. O número ao lado de cada perfil é
+        quantas coisas ele libera.
       </div>
     </div>
   )

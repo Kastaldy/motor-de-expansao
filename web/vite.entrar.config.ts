@@ -19,6 +19,12 @@ import react from '@vitejs/plugin-react'
  *
  * `emptyOutDir: false` é OBRIGATÓRIO: este build roda DEPOIS do principal e apagaria o
  * `dist/` dele. A ordem está no script `build` do `package.json`.
+ *
+ * A TOPOLOGIA MUDA NO CORTE DO P19 (DEC-067): a partir dele esta pagina e' servida pelo
+ * host do PILOTO (`deploy/caddy/piloto-br.Caddyfile.template`), e nao pela raiz de
+ * `auth.`. O `auth.` continua existindo -- a instancia AR depende dele --, e o cookie
+ * continua saindo com `Domain=<apex>`, entao o mecanismo descrito acima segue valendo
+ * nos dois casos.
  */
 export default defineConfig({
   plugins: [react()],

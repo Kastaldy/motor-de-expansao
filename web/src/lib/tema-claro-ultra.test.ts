@@ -31,13 +31,51 @@ function bloco(seletor: string): Record<string, string> {
 }
 
 const blocoClaro = () => bloco("[data-tema='claro']")
-const blocoCromo = () => bloco("[data-tema='claro'] .cromo-escuro")
+/* O `:root` e' o tema ESCURO — e tambem onde moram as constantes que valem nos dois
+   (paleta literal da marca, tipografia). */
+const blocoRaiz = () => bloco(':root')
+/* Bloco cujo seletor e' o PRIMEIRO de um grupo (`A,\nB {`). O `bloco()` ancora em ` {`
+   logo depois do seletor e por isso nao acha grupo — e grupo e' exatamente a forma que
+   `.rail-ultra` / `.painel-marca` usam. */
+function blocoDeGrupo(seletor: string): Record<string, string> {
+  const ini = css.indexOf(`\n${seletor},`)
+  expect(ini, `${seletor} (grupo)`).toBeGreaterThan(-1)
+  const abre = css.indexOf('{', ini)
+  const fim = css.indexOf('\n}', abre)
+  const tokens: Record<string, string> = {}
+  for (const m of css.slice(abre, fim).matchAll(/(--[a-z0-9-]+):\s*([^;]+);/g)) {
+    tokens[m[1]] = m[2].trim()
+  }
+  return tokens
+}
 /* O bloco escuro e' o :root; desde 2026-09-09 ele segue as MESMAS matizes da marca
    (o acento saiu do ~186° herdado do prototipo para o turquesa Ultra, e rosa/coral
    ancoram no magenta e no laranja de apoio, aclarados para o fundo escuro). */
 const blocoEscuro = () => bloco(':root')
 
 const hex2rgb = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16))
+
+/**
+ * Segue `var(--outro)` ate' chegar numa cor literal, usando o fallback quando o token
+ * nao existe no bloco (`var(--pos, #37b26b)` — o `--pos` e' declarado pelo COMPONENTE,
+ * nao pelo tema, entao no CSS quem vale e' o fallback).
+ *
+ * Existe porque medir a string declarada e' medir nada: `contraste('var(--tx-label)')`
+ * devolve NaN e `expect(NaN).toBeGreaterThanOrEqual(4.5)` REPROVA — mas o inverso, um
+ * `toBeLessThan`, passaria calado. Resolver e' o que torna a regua honesta.
+ */
+function resolverVar(valor: string | undefined, b: Record<string, string>): string {
+  let v = (valor ?? '').trim()
+  for (let volta = 0; volta < 5 && v.startsWith('var('); volta++) {
+    const dentro = v.slice(4, v.lastIndexOf(')'))
+    const virgula = dentro.indexOf(',')
+    const nome = (virgula < 0 ? dentro : dentro.slice(0, virgula)).trim()
+    const alternativa = virgula < 0 ? '' : dentro.slice(virgula + 1).trim()
+    v = (b[nome] ?? alternativa).trim()
+    if (!v) return ''
+  }
+  return v
+}
 
 /* Base rgb de um token de superficie (`rgba(r, g, b, a)` ou hex chapado), como hex. */
 function baseDaSuperficie(valor: string): string {
@@ -101,11 +139,20 @@ const H_LARANJA = hsl('#ef7f1f')[0] // ~28
 describe('tema claro nas cores base da Ultra', () => {
   const t = blocoClaro()
 
-  it('o fundo tem a matiz do turquesa Ultra, nao um neutro azulado', () => {
-    const [h, s] = hsl(t['--bg-base'])
-    expect(difMatiz(h, H_TURQUESA)).toBeLessThanOrEqual(12)
-    expect(s).toBeGreaterThanOrEqual(0.35)
-    expect(difMatiz(hsl(t['--bg-lift'])[0], H_TURQUESA)).toBeLessThanOrEqual(12)
+  /* MUDANCA DE REGRA (2026-09-25) — e' uma REVERSAO deliberada, nao um ajuste.
+     Ate' aqui estes testes exigiam o oposto: fundo e superficies com a MATIZ do
+     turquesa ("nao um neutro", "nao branco puro"). Aquilo foi uma leitura do guia; o
+     Felipe relatou o resultado como "um pouco bagunçado" e o guia, lido ao pe' da
+     letra, pede o contrario: neutros cinza (#F2F2F2 em fundo e divisorias, #3A3A3A no
+     texto) com o teal como cor DOMINANTE DE DESTAQUE.
+
+     O diagnostico que sustenta a troca: turquesa no papel de parede tira do teal
+     justamente o papel que o guia lhe da'. Quando tudo e' teal, nada e' destaque.
+     Se a avaliacao visual disser o contrario, o caminho de volta e' este bloco. */
+  it('o fundo e NEUTRO — o teal e acento, nao papel de parede', () => {
+    const [, s] = hsl(t['--bg-base'])
+    expect(s).toBeLessThanOrEqual(0.06)
+    expect(hsl(t['--bg-lift'])[1]).toBeLessThanOrEqual(0.06)
   })
 
   it('o acento e a camada 4 (par deliberado) seguem o turquesa Ultra', () => {
@@ -118,14 +165,43 @@ describe('tema claro nas cores base da Ultra', () => {
     expect(difMatiz(hsl(t['--gr-coral'])[0], H_LARANJA)).toBeLessThanOrEqual(20)
   })
 
-  it('as superficies glass sao gelo turquesa, nao branco puro', () => {
+  it('as superficies sao NEUTRAS — o teal nao pinta o fundo', () => {
     for (const nome of ['--surf-panel', '--surf-card', '--surf-sidebar', '--surf-mapa']) {
-      const base = baseDaSuperficie(t[nome])
-      const [h, s, l] = hsl(base)
-      expect(s, nome).toBeGreaterThan(0)
-      expect(difMatiz(h, H_TURQUESA), nome).toBeLessThanOrEqual(12)
-      expect(l, nome).toBeLessThan(1) // branco puro tem L = 1
+      expect(hsl(baseDaSuperficie(t[nome]))[1], nome).toBeLessThanOrEqual(0.06)
     }
+  })
+
+  it('o texto e cinza neutro, e nunca preto puro', () => {
+    /* Duas regras do guia na mesma trava. A COR: "use os cinzas de apoio", com
+       #3A3A3A como texto principal — a rampa antiga era esverdeada (#06171a,
+       #21424a...). O PRETO: o guia proibe preto puro em texto de destaque, e o #000
+       tambem nao existe na paleta. */
+    for (const nome of ['--tx-max', '--tx-strong', '--tx-soft', '--tx-narrative']) {
+      const [, s, l] = hsl(t[nome])
+      expect(s, nome).toBeLessThanOrEqual(0.06)
+      expect(l, nome).toBeGreaterThan(0) // preto puro tem L = 0
+    }
+    expect(t['--tx-soft'].toLowerCase()).toBe('#3a3a3a')
+  })
+
+  it('a paleta LITERAL da marca existe e bate com o guia', () => {
+    /* Sao constantes de marca, nao decisoes de tema: moram no :root e valem nos dois.
+       Ficam para uso grafico — o cromo continua nos tokens de interface, que obedecem
+       contraste. */
+    const raiz = blocoRaiz()
+    expect(raiz['--marca-teal'].toLowerCase()).toBe('#00a99e')
+    expect(raiz['--marca-laranja'].toLowerCase()).toBe('#ef7f1f')
+    expect(raiz['--marca-magenta'].toLowerCase()).toBe('#c23c8e')
+    expect(raiz['--marca-cinza-900'].toLowerCase()).toBe('#3a3a3a')
+  })
+
+  it('o acento do tema NAO usa o hex exato — por contraste, nao por descuido', () => {
+    /* Branco sobre #00A99E da' 2,93:1 e reprova o piso de 3,0 para texto grande, e
+       este token e' o FUNDO do botao primario com --ac-on branco. Um passo mais
+       escuro, na mesma matiz, resolve. Quem "consertar" para o hex exato quebra o
+       botao em silencio — daqui sai o aviso. */
+    expect(contraste('#ffffff', t['--ac'])).toBeGreaterThanOrEqual(3)
+    expect(difMatiz(hsl(t['--ac'])[0], H_TURQUESA)).toBeLessThanOrEqual(8)
   })
 
   it('as reguas de contraste do bloco continuam passando', () => {
@@ -136,92 +212,224 @@ describe('tema claro nas cores base da Ultra', () => {
     expect(contraste(t['--tx-muted'], t['--bg-base'])).toBeGreaterThanOrEqual(4.5)
   })
 
-  /* As tres cores que a Executiva cicla nos ROTULOS de KPI (10,5px = texto pequeno, sem
-     excecao de texto grande). O --gr-coral passava na trava de cima com a regua de
-     ELEMENTO GRAFICO (3:1) e era justamente o token que o ciclo promovia a texto: dava
-     3,28:1 em "Churn" e "Saldo operacional". A regua do USO, nao a do token. */
-  it('o ciclo de cor dos rotulos de KPI passa como TEXTO sobre o card', () => {
-    const card = compor(t['--surf-card'], t['--bg-base'])
-    for (const nome of ['--ac-text', '--gr-rosa', '--gr-coral-tx']) {
-      expect(contraste(t[nome], card), `${nome} no rotulo de KPI`).toBeGreaterThanOrEqual(4.5)
-    }
-    /* O par de PREENCHIMENTO continua existindo e continua na regua de 3:1 — a separacao
-       so' faz sentido enquanto os dois valores forem diferentes neste tema. */
+  /* O par de PREENCHIMENTO continua existindo e continua na regua de 3:1 — a separacao
+     so' faz sentido enquanto os dois valores forem diferentes neste tema. */
+  it('o laranja tem par proprio de TEXTO, distinto do de preenchimento', () => {
     expect(t['--gr-coral-tx']).not.toBe(t['--gr-coral'])
     expect(difMatiz(hsl(t['--gr-coral-tx'])[0], H_LARANJA)).toBeLessThanOrEqual(20)
   })
 })
 
 /* ---------------------------------------------------------------------------------
-   CROMO ESCURO DENTRO DO TEMA CLARO — o escopo `.cromo-escuro`.
+   O CARD DE KPI DA VISAO EXECUTIVA — a familia `--kpi-*`.
 
-   Ele re-declara os tokens do tema escuro dentro de uma pagina clara, e por isso todo
-   token que ele ESQUECE vira uma composicao hibrida: tinta escura sobre superficie
-   clara, ou o contrario. Nao adianta medir os que estao la' — o que quebra sao os que
-   NAO estao. Por isso o primeiro teste e' de FECHAMENTO por classe, e nao uma lista de
-   casos: ele pega o proximo token esquecido sem que ninguem precise prever qual sera'.
-   --------------------------------------------------------------------------------- */
-describe('cromo escuro dentro do tema claro', () => {
-  const claro = blocoClaro()
-  const cromo = blocoCromo()
-  const escuro = blocoEscuro()
+   ATE' 2026-09-25 O GUARDA DAQUI MEDIA OUTRA COISA. Ele cobrava 4,5:1 de
+   `--ac-text`/`--gr-rosa`/`--gr-coral-tx` contra o cartao de vidro, porque o rotulo
+   ciclava essas tres cores. O cartao virou superficie CHEIA de cor com texto branco, os
+   tokens medidos deixaram de aparecer ali, e a familia que os substituiu nasceu sem
+   UMA medida — foi assim que 4 dos 5 papeis do card ficaram abaixo de 4,5 com o CI
+   verde (rotulo 4,10, apoio 3,65, delta 3,69 e 3,19).
 
-  /* Tokens do bloco claro que NAO precisam de par aqui. A lista existe para ser
-     comentada um a um: excecao sem motivo escrito e' token esquecido com alibi. */
-  const SEM_PAR_NO_CROMO: Record<string, string> = {}
+   A regua e' 4,5:1 para TODOS os quatro papeis de tinta, inclusive os dois pasteis de
+   delta: o `Delta` os pinta em TEXTO de 11px (`primitives.tsx`), que nao alcanca a
+   excecao de texto grande (>=18,66px em negrito). Foi essa medida que obrigou o fundo
+   do card a descer um passo — sobre o magenta exato do guia, nem o branco chega a 4,5
+   para o delta, porque o proprio branco so' da' 4,85. --------------------------------- */
+describe('o card de KPI se le nos dois temas', () => {
+  const TINTAS = ['--kpi-rotulo', '--kpi-valor', '--kpi-apoio', '--kpi-pos', '--kpi-neg']
 
-  it('todo token do tema claro tem par no escopo (ou excecao declarada)', () => {
-    const semPar = Object.keys(claro).filter((k) => !(k in cromo) && !(k in SEM_PAR_NO_CROMO))
-    expect(semPar, 'tokens do tema claro sem par no .cromo-escuro').toEqual([])
-  })
+  for (const [nome, obter] of [
+    ['claro', blocoClaro],
+    ['escuro', blocoEscuro],
+  ] as const) {
+    it(`no tema ${nome}, as cinco tintas passam 4,5:1 sobre o fundo do card`, () => {
+      const b = obter()
+      /* A familia `--kpi-*` aponta para OUTRO token em quase todo papel do tema escuro
+         (`var(--surf-card)`, `var(--tx-label)`) e traz fallback nos dois pasteis
+         (`var(--pos, #37b26b)` — o valor que o componente usa quando o card nao
+         redefine). Resolver a indirecao AQUI e' o que faz a medida ser do que o olho
+         recebe, e nao da string declarada: sem isso o `contraste` recebe "var(--x)",
+         devolve NaN, e `NaN >= 4,5` nao levanta — passa por medida e nao mede nada. */
+      const fundo = compor(resolverVar(b['--kpi-fundo'], b), b['--bg-base'])
 
-  /* Desvios DELIBERADOS contra o :root, cada um com o motivo que esta' no CSS. Trava a
-     lista do comentario do bloco: mudar um valor sem passar por aqui quebra o teste. */
-  const DESVIOS: Record<string, string> = {
-    '--surf-chrome': 'opaco: 0,95 deixava 5% do gelo claro passar e derrubava --tx-muted a 4,28:1',
-    '--surf-mapa': 'preto chapado seria a unica mancha escura da tela clara',
-    '--surf-raised': 'alfa +0,02: branco sobre caixa escura recortada contra papel claro',
-    '--surf-input': 'idem --surf-raised',
-    '--surf-pending': 'idem --surf-raised',
-    '--line': 'hairline mais forte: a borda que basta no escuro some com moldura clara',
-    '--line-soft': 'idem --line',
-    '--line-mid': 'idem --line',
-    '--line-strong': 'idem --line',
-    '--line-dashed': 'idem --line',
+      for (const tinta of TINTAS) {
+        const valor = resolverVar(b[tinta], b)
+        expect(valor, `${tinta} nao resolve para uma cor no tema ${nome}`).toMatch(/^(#|rgb)/)
+        expect(
+          contraste(compor(valor, fundo), fundo),
+          `${tinta} sobre o card do tema ${nome}`,
+        ).toBeGreaterThanOrEqual(4.5)
+      }
+    })
   }
 
-  it('o escopo espelha o :root, salvo os desvios declarados', () => {
-    const divergem = Object.keys(cromo).filter((k) => cromo[k] !== escuro[k])
-    expect(divergem.sort(), 'desvios do espelho contra o :root').toEqual(Object.keys(DESVIOS).sort())
+  it('o delta guarda a leitura bom/ruim: os dois pasteis seguem verde e vermelho', () => {
+    /* Fechar contraste subindo os dois para branco passaria no teste acima e apagaria o
+       principal do indicador. A matiz e' o que impede essa "correcao". */
+    const b = blocoClaro()
+    const [hPos] = hsl(b['--kpi-pos'])
+    const [hNeg] = hsl(b['--kpi-neg'])
+    expect(difMatiz(hPos, 140), 'o delta positivo deixou de ser verde').toBeLessThanOrEqual(45)
+    expect(difMatiz(hNeg, 0), 'o delta negativo deixou de ser vermelho').toBeLessThanOrEqual(45)
+    expect(hsl(b['--kpi-pos'])[1], 'o verde do delta perdeu a cor').toBeGreaterThan(0.25)
+    expect(hsl(b['--kpi-neg'])[1], 'o vermelho do delta perdeu a cor').toBeGreaterThan(0.25)
   })
+})
 
-  /* O popup do `Select` e' `position: absolute` sem `createPortal`: ele DESCENDE do
-     cabecalho `.cromo-escuro`, entao le' o --surf-panel daqui. Enquanto o token faltou,
-     a lista abria com o gelo claro do tema e o texto do tema escuro por cima: 1,31:1 nas
-     opcoes, 1,07:1 no campo de busca, 1,59:1 na opcao ativa, em 7 seletores das duas
-     telas (UF, Municipio e Melhores no Mapa; UF, Consultor, Master e Maturidade na
-     Executiva). O fundo de composicao e' o --bg-base CLARO, que e' o que fica atras. */
-  it('o popup do Select fica legivel: texto do escuro sobre superficie do escuro', () => {
-    const popup = compor(cromo['--surf-panel'], claro['--bg-base'])
-    for (const nome of ['--tx-soft', '--tx-strong', '--ac-text']) {
-      expect(contraste(cromo[nome], popup), `${nome} no popup do Select`).toBeGreaterThanOrEqual(4.5)
+/* ---------------------------------------------------------------------------------
+   OS ESCOPOS DE MARCA — `.rail-ultra`, `.painel-marca`, `.barra-ultra` (2026-09-25).
+
+   Sao as tres superficies CHEIAS na cor da Ultra: o rail, o painel de cenario da
+   Viabilidade e a barra de filtros. Substituiram o `.cromo-escuro`, que mantinha essas
+   mesmas areas ESCURAS dentro do tema claro (decisao do Juan de 2026-09-09) e foi
+   revogado pelo Felipe — "aplicar o guia visual da marca em tudo, mesmo que altere os
+   pontos escuros e fundos pretos".
+
+   POR QUE ESTE BLOCO MEDE CONTRASTE, e por que isso e' a licao mais cara do ciclo. Os
+   tres escopos nasceram com o hex do fundo escolhido por MEDIDA — "branco sobre #00A99E
+   da' 2,93:1, #007a72 entrega 5,22" — e com todo o texto declarado como branco com
+   ALFA, que sobre o mesmo fundo cai para 4,41..2,52. O comentario afirmava conformidade
+   AA que os tokens do proprio bloco nao entregavam, e nada ficava vermelho: a unica
+   assercao que tocava estes escopos conferia o PREFIXO de tema. E' a mesma familia do
+   defeito que este arquivo ja' nomeia na linha do `bloco()` — "foi assim que as ~100
+   linhas do escopo do cromo ficaram sem uma unica assercao" —, reaberta nos escopos que
+   substituiram aquele.
+
+   A regua e' a do USO: 4,5:1 para todo papel de texto sobre toda superficie do escopo,
+   com os translucidos COMPOSTOS sobre o fundo real. Fora dela ficam so' `--tx-off` e
+   `--tx-rank`, que pintam estado DESABILITADO (`Dock.tsx` usa `--tx-rank` para o item
+   indisponivel) e que a WCAG 1.4.3 dispensa. --------------------------------------- */
+describe('os escopos de marca se leem', () => {
+  /* `--surf-chrome` e' o fundo do escopo; `--surf-sidebar`/`--surf-bar` sao o mesmo
+     valor com outro nome, entao nao entram como superficie separada. */
+  const BASE = ['--surf-chrome', '--surf-sidebar', '--surf-bar']
+  const TEXTOS = [
+    '--tx-max',
+    '--tx-strong',
+    '--tx-soft',
+    '--tx-narrative',
+    '--tx-label',
+    '--tx-muted',
+    '--tx-sub',
+  ]
+
+  const ESCOPOS = [
+    ['.rail-ultra / .painel-marca', () => blocoDeGrupo("[data-tema='claro'] .rail-ultra")],
+    ['.barra-ultra', () => bloco("[data-tema='claro'] .barra-ultra")],
+  ] as const
+
+  for (const [nome, obter] of ESCOPOS) {
+    it(`${nome}: todo papel de texto passa 4,5:1 sobre toda superficie do escopo`, () => {
+      const b = obter()
+      const fundo = b['--surf-chrome']
+      expect(fundo, `${nome} sem --surf-chrome`).toMatch(/^#[0-9a-fA-F]{6}$/)
+
+      /* O fundo nu MAIS cada superficie do escopo composta sobre ele. Medir so' o nu era
+         o furo: o campo de busca (`--surf-input`) clareava o proprio fundo e derrubava
+         o texto DENTRO do controle enquanto ele passava fora. */
+      const superficies: Array<[string, string]> = [['(fundo do escopo)', fundo]]
+      for (const [chave, valor] of Object.entries(b)) {
+        if (!chave.startsWith('--surf-') || BASE.includes(chave)) continue
+        if (valor.startsWith('var(')) continue
+        superficies.push([chave, compor(valor, fundo)])
+      }
+      /* A lavagem do rail nao e' `--surf-*` mas e' fundo de verdade: o Dock a pinta como
+         gradiente por cima de `--surf-chrome`, e o topo dela e' o ponto mais claro da
+         peca — era ali que branco CHAPADO media 4,34 e reprovava. */
+      for (const lavagem of ['--rail-a08', '--rail-a16']) {
+        if (b[lavagem]) superficies.push([lavagem, compor(b[lavagem], fundo)])
+      }
+
+      expect(superficies.length, `${nome}: nenhuma superficie medida`).toBeGreaterThan(1)
+      for (const [ondeNome, onde] of superficies) {
+        for (const tinta of TEXTOS) {
+          if (!b[tinta]) continue
+          expect(
+            contraste(compor(b[tinta], onde), onde),
+            `${nome}: ${tinta} sobre ${ondeNome}`,
+          ).toBeGreaterThanOrEqual(4.5)
+        }
+      }
+    })
+
+    it(`${nome}: o acento inverte e o que vai sobre ele tambem se le`, () => {
+      const b = obter()
+      /* Sobre a cor cheia quem marca o item aceso e' o branco, e entao `--ac-on` vira
+         TEXTO sobre branco. Sem esta regua ele podia ficar no teal claro e sumir. */
+      expect(contraste(b['--ac-on'], b['--ac']), `${nome}: --ac-on sobre --ac`).toBeGreaterThanOrEqual(4.5)
+    })
+
+    it(`${nome}: declara color-scheme LIGHT — o chrome nativo acompanha`, () => {
+      /* O glifo do calendario do `<input type="date">` nao le' token: ele segue o
+         `color-scheme`. Com `dark` aqui, ele sairia claro sobre campo claro. */
+      const b = obter()
+      expect(Object.keys(b).length, `${nome} vazio`).toBeGreaterThan(0)
+      const bruto = css.slice(css.indexOf(`.${nome.split(' ')[0].slice(1)}`))
+      expect(bruto.slice(0, 400)).toContain('color-scheme: light')
+    })
+  }
+
+  it('cor de tema nao mora em componente — os escopos de marca sao do CLARO', () => {
+    /* O MESMO defeito aconteceu TRES vezes em 2026-09-25, e por isso vira teste:
+
+       1. `.rail-ultra` e `.barra-ultra` nasceram sem `[data-tema='claro']` e pintaram
+          o rail do tema ESCURO com a cor pensada para o claro;
+       2. o card de KPI da Visao Executiva recebeu `#c23c8e` CRAVADO no componente, e
+          continuou rosa depois de trocar de tema — cor em componente nao sabe de tema;
+       3. a mesma familia da regressao do `--surf-chrome`.
+
+       Nada disso quebra teste de comportamento: a tela renderiza, o app funciona, e a
+       cor errada so' aparece para quem troca o tema e olha. Daqui sai o aviso. */
+    const globalCss = readFileSync(
+      fileURLToPath(new URL('../styles/global.css', import.meta.url)),
+      'utf-8',
+    ).replace(/\/\*[\s\S]*?\*\//g, '')
+
+    const MARCAS = ['.rail-ultra', '.barra-ultra', '.painel-marca']
+    for (const escopo of MARCAS) {
+      expect(css, `${escopo} precisa ser do tema claro`).toContain(`[data-tema='claro'] ${escopo}`)
     }
-  })
 
-  /* A caixa do cabecalho. O --surf-chrome nao pode voltar a ser translucido sem levar
-     junto a legenda de periodo do cabecalho executivo. */
-  it('o texto do cabecalho passa sobre a caixa escura', () => {
-    const caixa = compor(cromo['--surf-chrome'], claro['--bg-base'])
-    for (const nome of ['--tx-muted', '--tx-sub', '--tx-narrative', '--ac-text']) {
-      expect(contraste(cromo[nome], caixa), `${nome} no cabecalho`).toBeGreaterThanOrEqual(4.5)
+    /* A TRAVA NEGATIVA MUDOU DE FORMA em 2026-09-25. Ela era
+       `css.includes("\n" + escopo + " {")`, que so' casa seletor SOLITARIO com a chave na
+       mesma linha — e o arquivo escreve os escopos de marca como GRUPO de duas linhas
+       (`A,\nB {`). Ou seja: a forma que o codigo usa era exatamente a que a trava nao
+       via. Agora varre seletor a seletor, nos DOIS arquivos de estilo. */
+    for (const folha of [css, globalCss]) {
+      for (const m of folha.matchAll(/(^|\n)([^{}@\n][^{}]*?)\{/g)) {
+        for (const seletor of m[2].split(',')) {
+          const limpo = seletor.trim()
+          if (!MARCAS.some((marca) => limpo.includes(marca))) continue
+          expect(
+            limpo.startsWith("[data-tema='claro']"),
+            `${limpo} vale nos DOIS temas — a cor de marca e' do claro`,
+          ).toBe(true)
+        }
+      }
     }
+
+    /* O card de KPI pinta por TOKEN, nunca por hex no `ExecutiveScreen`. */
+    const exec = readFileSync(
+      fileURLToPath(new URL('../screens/ExecutiveScreen.tsx', import.meta.url)),
+      'utf-8',
+    )
+    const ini = exec.indexOf('{KPIS.map((k) => {')
+    expect(ini, 'a fileira de KPIs mudou de forma — reveja este teste').toBeGreaterThan(-1)
+    const cartao = exec.slice(ini, exec.indexOf('</Glass>', ini))
+    expect(cartao.match(/#[0-9a-fA-F]{6}/g), 'hex cravado no card de KPI').toBeNull()
+    expect(cartao).toContain('var(--kpi-fundo)')
   })
 
-  /* O chrome NATIVO (glifo do calendario do `<input type="date">` do PeriodoPicker) nao
-     le' token: ele segue o `color-scheme`, que no <html> continua `light`. */
-  it('o escopo declara color-scheme dark para o chrome nativo', () => {
-    const ini = css.indexOf("\n[data-tema='claro'] .cromo-escuro {")
-    expect(css.slice(ini, css.indexOf('\n}', ini))).toContain('color-scheme: dark')
+  it('o escopo `.cromo-escuro` nao volta — ele era um no-op com cara de mecanismo', () => {
+    /* Removido em 2026-09-25. Depois que o rail passou para `.rail-ultra`, o bloco so'
+       declarava `color-scheme: light` (que `[data-tema='claro']` ja' impoe) e tres
+       `--rail-a*` sem um unico leitor. Escopo que nao pinta pixel convida a "consertar o
+       tema claro aqui" e devolve a ilha escura sem nada ficar vermelho. */
+    expect(css).not.toContain('.cromo-escuro {')
+    for (const arquivo of ['../screens/ExecutiveScreen.tsx', '../components/Dock.tsx']) {
+      const tsx = readFileSync(fileURLToPath(new URL(arquivo, import.meta.url)), 'utf-8')
+      expect(tsx, `${arquivo} ainda usa a classe removida`).not.toContain('"cromo-escuro"')
+    }
   })
 })
 
@@ -247,8 +455,11 @@ describe('tema escuro nas mesmas cores base da Ultra', () => {
     for (const nome of ['--ac-text', '--tx-muted', '--tx-sub', '--tx-narrative']) {
       expect(contraste(t[nome], painel), `${nome} no painel escuro`).toBeGreaterThanOrEqual(4.5)
     }
+    /* O ciclo de cor do rotulo de KPI saiu nos dois temas (ver o describe do card); o
+       que resta medir aqui e' a paleta de SERIE sobre o cartao de vidro, que continua
+       pintando grafico e legenda. */
     for (const nome of ['--ac-text', '--gr-rosa', '--gr-coral-tx']) {
-      expect(contraste(t[nome], card), `${nome} no rotulo de KPI`).toBeGreaterThanOrEqual(4.5)
+      expect(contraste(t[nome], card), `${nome} sobre o cartao de vidro`).toBeGreaterThanOrEqual(4.5)
     }
   })
 })
@@ -270,7 +481,6 @@ describe('tema escuro nas mesmas cores base da Ultra', () => {
 describe('o cartao de veredito da ficha segue o tema', () => {
   const claro = blocoClaro()
   const escuro = blocoEscuro()
-  const cromo = blocoCromo()
 
   /* As paradas de cor de um `linear-gradient(...)`, na ordem em que aparecem. */
   const paradas = (grad: string) => grad.match(/#[0-9a-fA-F]{6}/g) ?? []
@@ -279,7 +489,9 @@ describe('o cartao de veredito da ficha segue o tema', () => {
     for (const [nome, bloco] of [
       ['escuro', escuro],
       ['claro', claro],
-      ['cromo', cromo],
+      /* O `cromo` SAIU desta lista em 2026-09-25: ele deixou de redeclarar tokens e
+         passou a herdar o tema claro, entao exigir o par aqui pediria de volta
+         exatamente a duplicacao que a mudanca removeu. */
     ] as const) {
       expect(bloco['--grad-verdict'], `--grad-verdict no ${nome}`).toBeTruthy()
       expect(bloco['--line-verdict'], `--line-verdict no ${nome}`).toBeTruthy()
@@ -309,8 +521,10 @@ describe('o cartao de veredito da ficha segue o tema', () => {
   it('o escuro mantem exatamente o gradiente que ja tinha', () => {
     expect(escuro['--grad-verdict']).toBe('linear-gradient(120deg, #11282a, #0d1a1e 70%)')
     expect(escuro['--line-verdict']).toBe('#24474a')
-    expect(cromo['--grad-verdict']).toBe(escuro['--grad-verdict'])
-    expect(cromo['--line-verdict']).toBe(escuro['--line-verdict'])
+    /* As duas linhas que comparavam o CROMO com o escuro cairam em 2026-09-25. Elas
+       existiam porque o cromo era uma copia do tema escuro dentro da pagina clara;
+       agora ele herda o tema claro, e o cartao de veredito dentro dele deve ser
+       CLARO — comparar com o escuro pediria de volta a ilha preta. */
   })
 
   it('FichaHex nao crava mais cor nenhuma no cartao', () => {

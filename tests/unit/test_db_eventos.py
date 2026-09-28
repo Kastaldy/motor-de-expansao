@@ -82,10 +82,248 @@ def test_registrar_devolve_o_id_que_gravou(con: FakeConexao) -> None:
 def test_registrar_aceita_um_id_ja_cunhado(con: FakeConexao) -> None:
     """A rota cunha ANTES, porque o id precisa ser carimbado nos bytes do PDF."""
     meu = mod.novo_report_id()
-    assert mod.registrar_relatorio(
-        autor=7, relatorio="pontual", formato="pdf", report_id=meu
-    ) == meu
+    assert (
+        mod.registrar_relatorio(autor=7, relatorio="pontual", formato="pdf", report_id=meu) == meu
+    )
     assert con.eventos[0][2].obj["report_id"] == meu
+
+
+# --------------------------------------------------------------------------------------
+# Acesso (§2.1) — `login` e `logout`, destravados pela epic do P19
+# --------------------------------------------------------------------------------------
+
+
+def test_login_grava_o_tipo_e_so_a_origem(con: FakeConexao) -> None:
+    """O contrato (§2.1) preve `metadados` com `origem`, e nada mais."""
+    mod.registrar_login(autor=7)
+    (autor, tipo, metadados) = con.eventos[0]
+    assert (autor, tipo) == (7, "login")
+    assert metadados.obj == {"origem": "web"}
+
+
+def test_login_aceita_a_origem_bot(con: FakeConexao) -> None:
+    """`origem` e' `web`/`bot` no contrato — o bot tambem entra na plataforma."""
+    mod.registrar_login(autor=7, origem="bot")
+    assert con.eventos[0][2].obj == {"origem": "bot"}
+
+
+def test_login_NUNCA_leva_login_nem_email_em_metadados(con: FakeConexao) -> None:
+    """Regra da §2.7, literal: "nunca o login nem o e-mail do alvo em `metadados`".
+
+    E' PII, e o `id_usuario` do carimbo ja' identifica a pessoa. Este teste falha se alguem
+    "enriquecer" o payload com o nome de quem entrou -- que e' a tentacao obvia num evento
+    chamado `login`.
+    """
+    mod.registrar_login(autor=7)
+    chaves = set(con.eventos[0][2].obj)
+    assert chaves == {"origem"}
+    assert not (chaves & {"login", "email", "usuario", "nome"})
+
+
+def test_login_carimba_o_autor_ANTES_de_escrever(con: FakeConexao) -> None:
+    """O carimbo e' o PRIMEIRO comando da transacao (D28): carimbar depois deixaria a
+    janela em que a trigger ja' rodou sem saber quem agiu."""
+    mod.registrar_login(autor=7)
+    primeiro_sql, primeiro_params = con.executados[0]
+    assert "set_config" in primeiro_sql
+    assert primeiro_params == ("7",)
+
+
+def test_login_SEM_autor_e_recusado(con: FakeConexao) -> None:
+    """Nao ha' login de sistema: quando esta funcao e' chamada, a senha JA' foi verificada.
+
+    Sem esta guarda o `transacao` aceitaria `id_usuario=None` (acao de sistema e' legitima
+    no D19) e o evento sairia com autoria nula -- sem responder a unica pergunta que ele
+    existe para responder. E' a diferenca entre a regra estar na docstring e estar no codigo.
+    """
+    with pytest.raises(ValueError, match="sem autor"):
+        mod.registrar_login(autor=None)  # type: ignore[arg-type]
+    assert con.eventos == [], "gravou mesmo recusando"
+
+
+def test_logout_grava_metadados_NULO_e_nao_objeto_vazio(con: FakeConexao) -> None:
+    """`NULL`, nao `{}`. Um objeto vazio afirmaria que ha' payload e ele esta' vazio; a
+    verdade e' que este evento nao tem payload. `metadados IS NULL` e `metadados = '{}'`
+    respondem coisas diferentes para quem consulta."""
+    mod.registrar_logout(autor=7)
+    (autor, tipo, metadados) = con.eventos[0]
+    assert (autor, tipo, metadados) == (7, "logout", None)
+
+
+def test_recusa_de_conta_EXISTENTE_carimba_o_id(con: FakeConexao) -> None:
+    """É o caso que torna a linha útil: "quantas tentativas falhas contra esta conta"."""
+    mod.registrar_login_recusado(autor=7, usuario_conhecido=True)
+    (autor, tipo, metadados) = con.eventos[0]
+    assert (autor, tipo) == (7, "login.recusado")
+    assert metadados.obj == {"origem": "web", "usuario_conhecido": True}
+
+
+def test_recusa_de_usuario_INEXISTENTE_sai_com_autoria_nula(con: FakeConexao) -> None:
+    """Não há id a carimbar, e ação de autoria nula é informação legítima (D19).
+
+    Diferente de `registrar_login`, que RECUSA autor nulo — lá a senha já foi verificada e
+    o id é sempre conhecido; aqui a inexistência do usuário é o próprio fato registrado.
+    """
+    mod.registrar_login_recusado(autor=None, usuario_conhecido=False)
+    (autor, _tipo, metadados) = con.eventos[0]
+    assert autor is None
+    assert metadados.obj["usuario_conhecido"] is False
+
+
+def test_a_recusa_NUNCA_leva_o_login_digitado_nem_IP(con: FakeConexao) -> None:
+    """As duas proibições que moldaram este evento, numa asserção só.
+
+    O login digitado é PII (§2.7) — e é a tentação óbvia aqui, porque quando o usuário não
+    existe ele é o único identificador que sobra. O `ip` depende do **P15**, aberto, e tem
+    guarda própria (`test_ip_nao_entra_em_eventos.py`); esta asserção é a segunda camada,
+    do lado do payload.
+    """
+    mod.registrar_login_recusado(autor=None, usuario_conhecido=False)
+    chaves = set(con.eventos[0][2].obj)
+    assert chaves == {"origem", "usuario_conhecido"}
+    assert not (chaves & {"login", "usuario", "email", "ip", "senha"})
+
+
+def test_a_contagem_de_recusas_usa_a_janela_e_o_tipo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A trava de tentativas se apoia nesta consulta — e ela é LEITURA, não escrita."""
+    from motor_expansao.db import postgres
+
+    class _Con:
+        def __init__(self) -> None:
+            self.executados: list[tuple[str, Any]] = []
+
+        def execute(self, sql: str, params: Any = None) -> Any:
+            self.executados.append((sql, params))
+            return type("C", (), {"fetchone": lambda _s: (3,)})()
+
+    c = _Con()
+
+    @contextmanager
+    def fake_conexao():  # type: ignore[no-untyped-def]
+        c.executados.append((postgres.SQL_SOMENTE_LEITURA, None))
+        yield c
+
+    monkeypatch.setattr(mod, "conexao", fake_conexao)
+    assert mod.contar_recusas_recentes(id_usuario=7, minutos=15) == 3
+
+    sql, params = [(s, p) for s, p in c.executados if "count(*)" in s][0]
+    # Os sete parâmetros, na ordem: conta, tipo contado, janela, piso da redefinição, e a
+    # subconsulta do último acerto (conta, tipo `login`, mesma janela).
+    assert params == (7, "login.recusado", 15, None, 7, "login", 15)
+    # A janela é MÓVEL: sem o recorte por tempo, "5 tentativas" viraria bloqueio permanente
+    # — e como a contagem é por conta, qualquer um trancaria a conta de qualquer um.
+    assert "now() - make_interval(mins => %s)" in sql
+    # Leitura entra pelo `conexao()`, que abre a transação READ ONLY.
+    assert any("READ ONLY" in s for s, _p in c.executados)
+
+
+def test_a_contagem_zera_no_ACERTO_e_na_REDEFINICAO(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Os dois marcos que soltam a tranca antes da janela vencer, e o que cada um resolve.
+
+    ACERTO: errar três vezes, lembrar a senha, entrar, sair e errar mais duas trancaria a conta
+    de quem provou saber a senha dois minutos antes. Não enfraquece nada -- quem entra já tem a
+    senha, e a trava existe para atrapalhar quem está adivinhando.
+
+    REDEFINIÇÃO: é o caso típico do pedido de ajuda -- a pessoa erra cinco vezes e SÓ ENTÃO liga
+    para o administrador. Sem este piso ela recebe a senha nova e continua barrada por até 15
+    minutos, lendo a mesma mensagem de senha errada.
+    """
+    sql = mod.SQL_CONTAR_RECUSAS
+    assert "GREATEST(" in sql, "a contagem voltou a ter um piso só"
+    # O marco do acerto sai do próprio `eventos`; o da redefinição chega pronto da credencial.
+    assert "max(criado_em_evento)" in sql
+    assert "COALESCE(%s::timestamptz" in sql
+
+    # A subconsulta do acerto é presa à MESMA janela: um acerto mais velho que ela é irrelevante
+    # (as recusas daquele período também já não contam), e sem o recorte a varredura poderia
+    # caminhar pelo histórico inteiro de quem tem muitos eventos procurando um `login`.
+    depois_do_greatest = sql.split("GREATEST(", 1)[1]
+    assert depois_do_greatest.count("now() - make_interval(mins => %s)") == 2, (
+        "a subconsulta do último acerto perdeu o recorte de janela"
+    )
+
+
+def test_o_marco_do_acerto_procura_LOGIN_e_nao_outra_coisa(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Contraprova do teste acima: ele confere a FORMA do SQL, e forma casa com o texto errado.
+
+    Se a subconsulta passasse a procurar `logout` -- ou o próprio `login.recusado`, que é o erro
+    plausível por vizinhança de nome --, todas as asserções de forma continuariam verdes e a
+    tranca zeraria na hora errada. Aqui se olha o PARÂMETRO que sai.
+    """
+    from motor_expansao.db import postgres
+
+    class _Con:
+        def __init__(self) -> None:
+            self.executados: list[tuple[str, Any]] = []
+
+        def execute(self, sql: str, params: Any = None) -> Any:
+            self.executados.append((sql, params))
+            return type("C", (), {"fetchone": lambda _s: (0,)})()
+
+    c = _Con()
+
+    @contextmanager
+    def fake_conexao():  # type: ignore[no-untyped-def]
+        c.executados.append((postgres.SQL_SOMENTE_LEITURA, None))
+        yield c
+
+    monkeypatch.setattr(mod, "conexao", fake_conexao)
+    mod.contar_recusas_recentes(id_usuario=7, minutos=15)
+    _sql, params = [(s, p) for s, p in c.executados if "count(*)" in s][0]
+
+    assert params[1] == mod.EVENTO_LOGIN_RECUSADO, "mudou o que se CONTA"
+    assert params[5] == mod.EVENTO_LOGIN, "o marco que zera a conta deixou de ser o ACERTO"
+    assert params[5] != params[1], "contar e zerar pelo MESMO evento zeraria sempre"
+
+
+def test_os_dois_deixam_entidade_nula(con: FakeConexao) -> None:
+    """§2.1: `entidade` e' "—" nos dois. O par polimorfico so' vale quando o alvo e' LINHA
+    deste banco (D24), e entrar/sair nao tem alvo nenhum."""
+    mod.registrar_login(autor=7)
+    mod.registrar_logout(autor=7)
+    for sql, _params in con.executados:
+        if "INSERT INTO eventos" in sql:
+            assert "NULL, NULL" in sql
+
+
+# --------------------------------------------------------------------------------------
+# O vocabulario de `tipo` x o contrato — guarda que NAO existia
+# --------------------------------------------------------------------------------------
+
+
+def _tipos_declarados() -> dict[str, str]:
+    """`{nome da constante: valor}` de todo `EVENTO_*` do modulo."""
+    return {n: v for n, v in vars(mod).items() if n.startswith("EVENTO_") and isinstance(v, str)}
+
+
+def test_todo_tipo_de_evento_existe_no_contrato() -> None:
+    """O modulo diz "fora desta lista e' defeito" -- e ate' 17/09/2026 NADA impunha isso.
+
+    Medido ao acrescentar `login`/`logout`: as duas constantes entraram e nenhum teste
+    notou. Um `tipo` inventado aqui grava linha que consulta nenhuma do contrato alcanca,
+    e o defeito e' silencioso -- a escrita passa.
+    """
+    from pathlib import Path
+
+    contrato = (Path(__file__).resolve().parents[2] / "docs" / "eventos_contrato.md").read_text(
+        encoding="utf-8"
+    )
+    ausentes = [f"{n}={v!r}" for n, v in _tipos_declarados().items() if f"`{v}`" not in contrato]
+    assert not ausentes, (
+        "tipos de evento sem contrapartida em `docs/eventos_contrato.md`: "
+        + ", ".join(ausentes)
+        + ". Acrescentar `tipo` exige editar o contrato ANTES -- ver a §5, que ja' ficou "
+        "falsa por um dia quando o dossie ganhou produtor."
+    )
+
+
+def test_a_varredura_de_tipos_enxerga_constantes_de_verdade() -> None:
+    """Sem esta metade, o teste acima e' garantia FALSA: se o prefixo `EVENTO_` mudar ou as
+    constantes migrarem de modulo, ele passa a comparar um dicionario VAZIO e fica verde
+    para sempre. Mesma licao de `test_ip_nao_entra_em_eventos.py`."""
+    declarados = _tipos_declarados()
+    assert len(declarados) >= 6, declarados
+    assert declarados["EVENTO_LOGIN"] == "login"
 
 
 # --------------------------------------------------------------------------------------
@@ -141,9 +379,7 @@ def test_relatorio_e_formato_sao_AMBOS_necessarios(con: FakeConexao) -> None:
 
 @pytest.mark.parametrize("chave", ["hex_id", "imovel_id", "unidade_id"])
 def test_as_tres_chaves_do_contrato_passam(con: FakeConexao, chave: str) -> None:
-    mod.registrar_relatorio(
-        autor=7, relatorio="pontual", formato="pdf", alvo={chave: "abc123"}
-    )
+    mod.registrar_relatorio(autor=7, relatorio="pontual", formato="pdf", alvo={chave: "abc123"})
     assert con.eventos[0][2].obj[chave] == "abc123"
 
 
@@ -153,9 +389,7 @@ def test_chave_de_alvo_fora_do_contrato_e_RECUSADA(con: FakeConexao, errada: str
     índice parcial, e ninguém descobre até a tabela crescer. O contrato avisa disso com
     todas as letras — então aqui a escrita não passa."""
     with pytest.raises(mod.AlvoForaDoContrato):
-        mod.registrar_relatorio(
-            autor=7, relatorio="pontual", formato="pdf", alvo={errada: "x"}
-        )
+        mod.registrar_relatorio(autor=7, relatorio="pontual", formato="pdf", alvo={errada: "x"})
     assert con.eventos == [], "nada pode ter sido gravado"
 
 
@@ -190,14 +424,73 @@ def test_o_evento_gravado_nao_carrega_PII(con: FakeConexao) -> None:
         assert pii not in achatado, f"PII em metadados: {achatado}"
 
 
-def test_escrita_passa_pela_transacao_e_nunca_pela_conexao() -> None:
-    """`conexao()` abre `READ ONLY` e o servidor recusaria o INSERT; `transacao()` é a via
-    de escrita e é ela que declara `app.id_usuario` para as triggers do D19."""
+_ESCRITAS = ("insert into", "update ", "delete from")
+
+
+def _sql_por_gerenciador() -> dict[str, list[str]]:
+    """Mapeia `conexao`/`transacao` -> os SQL executados DENTRO de cada bloco `with`.
+
+    Ate' 18/09/2026 esta garantia era um scan de texto (`"conexao(" not in fonte`). Ele
+    passava a impressao de proibir escrita pela conexao de leitura, mas o que media era a
+    AUSENCIA DA PALAVRA -- entao a primeira LEITURA legitima do modulo (a contagem de
+    recusas da trava de tentativas) o derrubava, sem que nada de errado tivesse acontecido.
+    Por AST a pergunta e' a certa: que SQL roda sob qual gerenciador.
+    """
+    import ast
     from pathlib import Path
 
-    fonte = Path(mod.__file__).read_text(encoding="utf-8")
-    assert "from .postgres import transacao" in fonte
-    assert "conexao(" not in fonte
+    arvore = ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))
+    constantes = {
+        alvo.id: no.value.value
+        for no in arvore.body
+        if isinstance(no, ast.Assign) and isinstance(no.value, ast.Constant)
+        for alvo in no.targets
+        if isinstance(alvo, ast.Name) and isinstance(no.value.value, str)
+    }
+
+    achados: dict[str, list[str]] = {"conexao": [], "transacao": []}
+    for no in ast.walk(arvore):
+        if not isinstance(no, ast.With):
+            continue
+        gerentes = {
+            item.context_expr.func.id
+            for item in no.items
+            if isinstance(item.context_expr, ast.Call)
+            and isinstance(item.context_expr.func, ast.Name)
+        }
+        gerente = next((g for g in gerentes if g in achados), None)
+        if gerente is None:
+            continue
+        for interno in ast.walk(no):
+            if (
+                isinstance(interno, ast.Call)
+                and isinstance(interno.func, ast.Attribute)
+                and interno.func.attr == "execute"
+                and interno.args
+                and isinstance(interno.args[0], ast.Name)
+            ):
+                achados[gerente].append(constantes.get(interno.args[0].id, "").lower())
+    return achados
+
+
+def test_escrita_passa_pela_transacao_e_nunca_pela_conexao() -> None:
+    """`conexao()` abre `READ ONLY` e o servidor recusaria o INSERT; `transacao()` e' a via
+    de escrita e e' ela que declara `app.id_usuario` para as triggers do D19."""
+    achados = _sql_por_gerenciador()
+    for sql in achados["conexao"]:
+        assert not any(verbo in sql for verbo in _ESCRITAS), f"escrita sob conexao(): {sql}"
+
+
+def test_a_varredura_do_gerenciador_ainda_ENXERGA_os_dois_lados() -> None:
+    """Contraprova: sem isto, um `execute` que a varredura deixasse de casar tornaria o
+    teste acima verde por nao achar NADA -- que e' exatamente como um guardrail morre."""
+    achados = _sql_por_gerenciador()
+    assert any("insert into eventos" in sql for sql in achados["transacao"]), (
+        "a varredura parou de enxergar as ESCRITAS do modulo"
+    )
+    assert any(sql.strip().startswith("select") for sql in achados["conexao"]), (
+        "a varredura parou de enxergar as LEITURAS do modulo"
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -270,7 +563,7 @@ def test_metadados_do_dossie_nao_carregam_PII(con: FakeConexao) -> None:
 def test_o_estado_do_gesto_escolhe_o_tipo(
     con: FakeConexao, marcada: bool, tipo_esperado: str
 ) -> None:
-    """"Marcou" e "desmarcou" respondem perguntas diferentes: quantos imoveis entraram na fila
+    """ "Marcou" e "desmarcou" respondem perguntas diferentes: quantos imoveis entraram na fila
     de visita, e quantos sairam. Colapsar num `visita_alternada` perderia a direcao."""
     mod.registrar_visita(autor=7, imovel_id="im_3f2a9b", marcada=marcada)
     assert con.eventos[0][1] == tipo_esperado

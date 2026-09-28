@@ -449,8 +449,13 @@ export default function ViabilityScreen({
           'radial-gradient(120% 90% at 50% 0%, var(--bg-lift) 0%, var(--bg-base) 70%)',
       }}
     >
-      {/* ---------------- Header ---------------- */}
+      {/* ---------------- Header ----------------
+          `barra-ultra`: mesma barra turquesa do Mapa e da Visão Executiva. Ficou de
+          fora quando as outras duas foram convertidas — era a única barra superior do
+          produto ainda branca, e é o que o Felipe apontou. Sem `backdropFilter`: a
+          superfície é opaca, e desfocar o que está atrás dela só custa composição. */}
       <header
+        className="barra-ultra"
         style={{
           margin: '16px 16px 0',
           padding: '9px 14px',
@@ -460,12 +465,16 @@ export default function ViabilityScreen({
           background: 'var(--surf-chrome)',
           border: '1px solid var(--line-soft)',
           borderRadius: 'var(--r-xl)',
-          backdropFilter: 'blur(14px)',
           flexWrap: 'wrap',
         }}
       >
         <BotaoInicio onInicio={onInicio} />
-        <h1 style={{ font: '600 15px/1 var(--f-ui)', color: 'var(--tx-max)', margin: 0 }}>
+        {/* Voz de TÍTULO da marca, como na Visão Executiva — era `--f-ui` 15px, isto é,
+            um título vestido de rótulo de interface. */}
+        <h1
+          className="ultra-titulo"
+          style={{ font: '700 20px/1 var(--f-titulo)', color: 'var(--tx-max)', margin: 0 }}
+        >
           Viabilidade do ponto
         </h1>
         <span aria-hidden style={{ width: 1, height: 20, background: 'var(--line-mid)' }} />
@@ -508,15 +517,22 @@ export default function ViabilityScreen({
       >
         {/* ---- Sidebar de premissas ---- */}
         <aside
+          className="painel-marca"
           style={{
             width: 346,
             flexShrink: 0,
             overflowY: 'auto',
             padding: '18px 18px 22px',
+            /* Cor CHEIA da marca no tema claro, a mesma da barra lateral: a tela
+               estava com todos os fundos brancos e virava uma superfície só. Quem
+               troca a cor é a classe `painel-marca` (tokens.css) — no escuro o escopo
+               não existe e isto volta a ser o painel de vidro de sempre.
+
+               Uma versão anterior usou uma LAVAGEM pálida aqui, e era o erro: o pedido
+               era a cor da barra lateral, cheia. */
             background: 'var(--surf-sidebar)',
             border: '1px solid var(--line-soft)',
             borderRadius: 'var(--r-2xl)',
-            backdropFilter: 'blur(14px)',
           }}
         >
           <Eyebrow>Cenário</Eyebrow>
