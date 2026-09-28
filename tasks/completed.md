@@ -13860,3 +13860,82 @@ Vinicius em 2026-09-21). O bloco fecha com uma pendência **declarada**, não es
   maturação do S3/S4 do TotalPass, que só anda com foto semanal de feed **recoletado** — a guarda
   de frescor da DEC-039 D4 recusa feed com mais de 3 dias, e recusar é o comportamento certo:
   fotografar feed não recoletado faz o S4 ler "parado" no universo inteiro da fonte.
+
+---
+
+## BLK-DADOS-UNI (dívidas de dado e de tema do painel de unidade) — 2026-09-28
+
+Fila de seis correções achadas na montagem do painel UNI-00 (26/09) e no relato do Felipe. Todas
+READ-ONLY sobre o M1. O epic `BLK-UNI` e os stubs destes blocos viviam **não commitados** no
+checkout principal na data — este registro é a fonte de conclusão.
+
+**PR #418 · `BLK-FIX-FIN-SAOCARLOS-01` — o Financeiro casa por CÓDIGO.** A aba `Unidades_UX` diz
+`91 -> "SÃO CARLOS - SP"` e a Growth escreve `"SAO CARLOS - CENTRO - SP"`; nem o nome cru nem o
+aperto casam, e a Visão Executiva mostrava a receita da Growth, ~19% abaixo. Terceira passada do
+join (`alias_do_financeiro_por_codigo`), aplicada ANTES de sobrepor, para manter UMA redação do
+join. Medido contra a produção: `financeiro_sem_par` de `['SÃO CARLOS - SP']` para `[]`, casamento
+2.172 -> 2.177, e **5 linhas alteradas em 2.275** — os cinco meses de São Carlos, zero colateral.
+`UNIDADE_POR_CODIGO_DECLARADO` existe porque o cadastro de produção é semeadura de 06/08 com 92 das
+98 unidades; é tapa-buraco e o cadastro VENCE (travado por teste).
+
+**PR #419 · `BLK-FIX-PLANOS-MUSC-01` — vocabulário V2 da DEC-025, e a Ultra se reconhece.** O
+`normalizar` marcava `musculacao` por substring literal e a taxonomia do WellHub foi renomeada em
+2026: **86,65% -> 100,00%** das 22.091 linhas, **+2.949 academias (13,35%)** que somiam com
+`somente_musculacao=True`; no TotalPass 97,83% -> 100,00% (+382 — a emenda 1 da DEC-025 registrou
+ganho ZERO, e hoje não é). Zero perdas nos dois. Junto, `_e_ultra` deixou de exigir a expressão
+"ultra academia" e passou a ser "ultra" como PALAVRA seguida de algo NÃO genérico: recupera **9
+unidades nossas** no WellHub (Sagrada Família, Taguatinga Sul, Guarapari, Unaí, Jardim das
+Américas, André de Barros, Vila Guanabara, Berrini, Villa Branca) e 1 no TotalPass (São Gonçalo).
+O dano era duplo — a unidade não achava o próprio plano E entrava na lista de concorrentes da Ultra
+vizinha. **Classificação conferida uma a uma nos 148 nomes com "ultra" dos dois feeds: 0 perdas, 0
+falso positivo.** A marca alheia com "ultra" mais próxima de uma Ultra está a 5.996 m (WellHub) e
+7.153 m (TotalPass) — fora dos 120 m do casamento e dos 2.000 m do raio.
+
+**PR #420 — contraste das fichas no tema claro.** Cor cravada em componente, com a premissa "tela
+só-escura" escrita no comentário. Na ficha do IMÓVEL o título do hero media **1,08:1** e o negrito
+do "% da receita" **1,03:1**; na ficha do HEXÁGONO o score híbrido media **1,02:1**. Nos mesmos
+pares o escuro entrega 16,57 / 15,83. Fecha pela metade a migração de 10/09, que levou o FUNDO do
+cartão de veredito para o tema e deixou o arquivo irmão e a tinta dos scores. Oito tokens novos com
+o escuro intacto dígito por dígito; duas tintas (`ACC_TX` da pílula e o rótulo do tipo) tiveram de
+andar junto, senão a correção trocava 1,03:1 por 2,06:1. **16 guardas novas, e reintroduzir os 7
+valores antigos reprova 7 testes.** Resíduos declarados: o glifo do quadro de 56px (2,03–2,77:1,
+decoração redundante — o tipo está em texto ao lado) e `--line-verdict-ok`, que media 1,69:1 no
+próprio tema escuro.
+
+**PR #421 · `BLK-DADOS-UNI-01` item 3 — a ingestão do Financeiro estava TRAVADA.** A planilha cria
+a coluna do mês assim que ele começa, zerada; com ela dentro, `mes_aberto` e `ultima_vazia` disparam
+JUNTOS e o script aborta — logo o mês que JÁ fechou não sobe. Manteve o Guarujá de ago/2026 em
+R$ 547.745,05 na tela por 20 dias contra os R$ 217.525,74 da planilha, a ÚNICA célula divergente em
+6.528. `aparar_placeholder` tira só o que está inteiramente vazio, e só do FIM: mês PARCIAL segue
+barrado por `mes_aberto`, vazio no MEIO segue disparando `buraco`. **Defeito filho da mudança,
+achado ao escrever a guarda:** o `ultima_vazia` morava atrás de `len >= 2` e uma planilha em branco
+sairia SEM achado, gravando faturamento todo nulo — o gate passou a ser independente do penúltimo
+mês. Reingestão rodada: 1 célula divergente, 0 linhas perdidas, 204 linhas novas (3 unidades que
+passaram a existir no Financeiro).
+
+**PR #422 · `BLK-DADOS-UNI-01` itens 1-2 — os dois pinos.** A Plaza Sul aparecia a **1.340,7 m** da
+academia, e a causa é PRECEDÊNCIA, não dado ausente: o cadastro TEM o ponto certo (`Plaza / SP`, a
+6,4 m), mas `_chave_unidade` o normaliza para "PLAZA", chave que nome nenhum da Growth produz — e a
+base curada, que vem antes, tem uma linha "PLAZA SUL" com o ponto errado. Alias não resolve (ele
+redireciona a busca no cadastro, que vem depois). Entrou em `_EXEC_COORD_CORRIGIDA`, que corrige a
+Executiva E os pinos do Mapa numa edição. A Sagrada Família é DECLARAÇÃO: o alias para
+"RONDONOPOLIS" já resolvia a 1,5 m; a entrada tira a unidade da dependência de uma linha cujo nome
+é o do MUNICÍPIO. O erro real dela estava no `01_pontos.py` da camada de análise, que a
+geocodificava em **Cuiabá**, ~200 km da praça.
+
+**PR #423 — lista de cobrança por dono** (`data/reports/cobranca_dados_unidade_2026-09-28.md`) dos
+itens 4, 5, 6, 7, 9, 10 e 11, que não se resolvem em código. Duas cobranças novas achadas no
+caminho: o cadastro é semeadura de 06/08 com 92 das 98 unidades (pede a
+`ANALISE DIARIA DASHBOARD.xlsx`), e o cadastro de pinos tem DUAS linhas para a mesma academia do
+Plaza, a 1.340,7 m uma da outra, que a camada de mercado conta como duas ofertas Ultra.
+
+**Dado subido junto** (fora de PR, os três são gitignored): `faturamento_financeiro.parquet`
+reingerido, e a coluna `musculacao` de `planos_wellhub.parquet` e `planos_totalpass.parquet`
+recalculada pelo V2 **sobre a safra existente** — não por reingestão, porque reingerir traria safra
+nova (o consolidado do WellHub na VPS é de 27/09 contra 15/09 do parquet), e safra é assunto do cron
+da DEC-039/059, não de conserto de bug. Todas as outras 10 colunas conferidas célula a célula.
+
+**Duas coisas declaradas e NÃO feitas:** a dedup das duas linhas do Plaza no cadastro de pinos
+(mexe em `oferta_consumida_ultra_real` e portanto no residual — é regeneração com as guardas da
+DEC-059, não patch de mão) e o rótulo do pino da Sagrada Família, que segue lendo "Rondonópolis"
+porque o nome vem da linha do cadastro.
