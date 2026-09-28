@@ -42,8 +42,16 @@ export const MENSAGEM_FALHA: Readonly<Record<FalhaLogin, string>> = Object.freez
     'Muitas tentativas seguidas. Por segurança, o acesso ficou bloqueado — aguarde alguns minutos antes de tentar de novo, ou peça a um administrador para redefinir a sua senha.',
   indisponivel:
     'Não foi possível falar com o servidor de autenticação. Ele pode estar reiniciando.',
+  /* NINGUÉM autenticou: o nosso `/api/login` devolveu 404 (o corte do P19 não está virado
+     aqui) e o `/api/firstfactor` do Authelia TAMBÉM. É estado de infraestrutura, não de
+     quem digitou, e a frase tem de dizer isso sem mandar a pessoa a lugar nenhum.
+
+     Até 28/09/2026 esta mensagem dizia "a autenticação continua sendo feita pela tela do
+     Authelia" — e mandava a pessoa para uma tela que não existe mais naquele endereço: o
+     Caddy serve ESTA página na raiz do host de auth desde 22/09. Era a frase que 100% de
+     quem tentou entrar viu no dia em que o #417 subiu, e ela apontava para o vazio. */
   'nao-ligado':
-    'Esta tela ainda está em revisão: a autenticação continua sendo feita pela tela do Authelia.',
+    'O serviço de autenticação não respondeu. Avise o time de tecnologia — não é problema da sua senha.',
 })
 
 /** HTTP -> falha nomeada. O que nao for reconhecido vira `indisponivel`, nunca

@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 
 import LoginScreen from './screens/LoginScreen'
 import { api, ApiError } from './lib/api'
-import { destinoSeguro } from './lib/authelia'
+import { destinoSeguro, lerResposta, montarPedido, type Desfecho } from './lib/authelia'
 import { falhaDoStatus, type FalhaLogin } from './lib/login'
 import { MAX_TENTATIVAS } from './lib/login-motor'
 import './styles/global.css'
@@ -11,12 +11,39 @@ import './styles/global.css'
 /**
  * Ponto de entrada da TELA DE ENTRAR.
  *
- * ELA FALA COM O NOSSO BACKEND (`POST /api/login`), desde 25/09/2026. Até essa data
- * falava com o Authelia (`/api/firstfactor`), e o docstring daqui afirmava, em letras
- * garrafais, que esta página "NÃO FALA COM O NOSSO BACKEND" — era verdade enquanto o
- * Authelia autenticava, e deixou de ser quando a **DEC-067** foi assinada nos quatro
- * itens. `api.entrar()` existia desde o PR #400 e **não tinha um único chamador**: era
- * a ponte pronta esperando a decisão. Esta é a decisão chegando ao código.
+ * ELA FALA COM OS DOIS, E NESTA ORDEM: tenta o NOSSO backend (`POST /api/login`) e, se
+ * ele responder **404**, cai no primeiro fator do Authelia (`POST /api/firstfactor`).
+ * Até 25/09/2026 falava só com o Authelia; o PR #417 a trocou só para o nosso backend, e
+ * essa troca INCONDICIONAL TIROU TODO MUNDO DO AR em 28/09/2026 — o relato foi "não
+ * conseguimos logar no sistema".
+ *
+ * POR QUE A TROCA SECA QUEBRA, e por que o 404 é o discriminador certo. O corte do P19
+ * tem DOIS lados e eles não viram juntos:
+ *
+ *   - o BACKEND respeita a chave: `/api/login` responde 404 enquanto
+ *     `MOTOR_AUTENTICACAO_PROPRIA` está desligada, e desligada é o estado de produção;
+ *   - a BORDA ainda manda quem não tem sessão para o host do Authelia, onde o Caddy
+ *     serve esta página na raiz e despacha todo o resto — inclusive `/api/*` — para o
+ *     Authelia. Ou seja: deste host o `POST /api/login` nem chega ao nosso backend.
+ *
+ * Nos DOIS casos a resposta é 404, e é por isso que o 404 basta: a página não precisa
+ * saber em qual host está nem ler a chave. Quem responde ao login é quem existe.
+ *
+ * O 404 É SINAL DECLARADO, não palpite: está escrito no docstring da própria rota ("SÓ
+ * ATENDE COM A AUTENTICAÇÃO PRÓPRIA LIGADA... responde 404 -- e não 501 ou 403"). E
+ * SOMENTE o 404 cai para o Authelia — 401 é credencial recusada e 429 é trava de
+ * tentativas, os dois do nosso backend depois do corte. Cair no Authelia num 401
+ * gastaria uma tentativa da trava DELE com uma senha que o nosso servidor já recusou.
+ *
+ * A SENHA CHEGA A SER ENVIADA DUAS VEZES antes do corte, e isso é aceito com razão
+ * medida: hoje o primeiro POST cai no nosso próprio Authelia (o catch-all do host de
+ * auth), que devolve 404 sem ler o corpo — e é o MESMO serviço que vai receber a senha
+ * no segundo POST, pelo caminho que autentica. Não há terceiro, nem rede nova, nem
+ * armazenamento. Depois do corte não há segundo envio: `/api/login` responde e pronto.
+ *
+ * `api.entrar()` existia desde o PR #400 e não tinha chamador; o cliente puro do Authelia
+ * (`lib/authelia.ts`) continuou inteiro e sem chamador depois do #417. Esta função religa
+ * o segundo sem desligar o primeiro.
  *
  * ELA SEMPRE FOI PUBLICADA — e eu afirmei o contrário aqui, por algumas horas em
  * 25/09/2026. A "medição" que sustentava aquilo rodou `vite build`, o comando cru, e não
@@ -41,6 +68,66 @@ import './styles/global.css'
  * ELA NÃO CHAMA `/api/me` NEM `/api/ufs`. Quem está aqui ainda não entrou, e as duas
  * exigem sessão depois do corte. Por isso nada de `BaseProvider` com dados.
  */
+
+/**
+ * O primeiro fator do Authelia: a chamada de REDE. A leitura da resposta continua em
+ * `lib/authelia.ts`, que é pura de propósito — é ela que quebra em silêncio num bump de
+ * versão do Authelia, e por isso é ela que precisa de teste sem DOM e sem servidor.
+ *
+ * Só é chamada quando o nosso `/api/login` responde 404. `falhas` é o contador DA TELA,
+ * compartilhado com o caminho próprio: é ele que nomeia o bloqueio, e a régua de quem
+ * bloqueia muda no corte (Authelia hoje, `db/sessoes.py` depois) sem que a tela precise
+ * saber de qual dos dois veio a recusa.
+ */
+async function entrarPeloAuthelia(
+  usuario: string,
+  senha: string,
+  manter: boolean,
+  destino: string | null,
+  falhas: { current: number },
+): Promise<FalhaLogin | null> {
+  let status = 0
+  let corpo: unknown = null
+  try {
+    const r = await fetch('/api/firstfactor', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // O cookie de sessão é o produto desta chamada: sem `same-origin` o navegador não o
+      // guardaria, e o login "daria certo" sem autenticar ninguém.
+      credentials: 'same-origin',
+      body: JSON.stringify(montarPedido(usuario, senha, manter, destino)),
+    })
+    status = r.status
+    corpo = await r.json().catch(() => null)
+  } catch {
+    // Rede caiu. Nunca "credencial".
+    return 'indisponivel'
+  }
+
+  /* 404 AQUI é o único caso em que ninguém autentica: o nosso backend já disse que não é
+     ele, e agora o Authelia diz que também não. Aí a tela para de adivinhar e diz isso. */
+  if (status === 404) return 'nao-ligado'
+
+  const desfecho: Desfecho = lerResposta(status, corpo, falhas.current)
+  if (desfecho.tipo === 'entrou') {
+    falhas.current = 0
+    window.location.assign(desfecho.destino)
+    // Não devolve `null`: a navegação leva alguns instantes e, sem isto, a tela voltaria
+    // ao estado "parado" com o botão vivo — convidando um segundo envio.
+    return await new Promise(() => {})
+  }
+  if (desfecho.tipo === 'segundo-fator') {
+    /* O destino exige 2FA. Hoje nenhuma regra de `access_control` exige (as quatro são
+       `one_factor`, lidas na VPS em 2026-09-22), então este ramo é rede de segurança — mas
+       precisa existir ANTES de alguém ligar 2FA, senão a pessoa fica numa tela em branco,
+       autenticada pela metade. O portal do Authelia continua inteiro em `/2fa`, que é o
+       que permite passar o bastão. */
+    window.location.assign(`/2fa${window.location.search}`)
+    return await new Promise(() => {})
+  }
+  falhas.current += 1
+  return desfecho.falha
+}
 
 function Entrada() {
   /* Contador de falhas DESTA carga de tela, e ele existe por uma decisão de segurança
@@ -67,7 +154,15 @@ function Entrada() {
        verdade. O parâmetro sobrevive ao corte porque quem manda alguém para cá continua
        podendo dizer para onde devolver. */
     const rd = new URLSearchParams(window.location.search).get('rd')
-    const destino = destinoSeguro(rd, window.location.hostname) ?? '/'
+    /* DOIS destinos a partir do MESMO `rd` validado, e a diferença não é estilo.
+       Para NÓS, sem `rd` o certo é a raiz: mesma origem, é o piloto.
+       Para o AUTHELIA, sem `rd` o certo é NÃO mandar `targetURL` — `montarPedido` omite o
+       campo quando o destino é falso, e o Authelia usa o padrão dele. Mandar `'/'` seria a
+       raiz do host de AUTH, que é esta própria tela de login: a pessoa digitaria a senha
+       certa e voltaria ao formulário. Foi esse o laço que apareceu no log de produção em
+       28/09/2026 (`entrar.html?rd=...entrar.html?rd=...`). */
+    const validado = destinoSeguro(rd, window.location.hostname)
+    const destino = validado ?? '/'
 
     try {
       await api.entrar(usuario, senha, manter)
@@ -77,12 +172,17 @@ function Entrada() {
         // senha está errada porque o servidor não respondeu é mentir para a pessoa.
         return 'indisponivel'
       }
-      falhas.current += 1
       if (erro.status === 404) {
-        // `MOTOR_AUTENTICACAO_PROPRIA` desligada neste ambiente — a rota existe e
-        // responde 404 de propósito. Não é erro de quem digitou, e a mensagem diz isso.
-        return 'nao-ligado'
+        /* O corte do P19 não está virado NESTE ambiente: ou a chave está desligada, ou a
+           borda nem entrega o `/api/login` ao nosso backend. Quem autentica é o Authelia,
+           e é para ele que a senha vai.
+
+           O 404 NÃO conta como tentativa — e essa ordem importa. Contar aqui inflaria o
+           contador que nomeia o bloqueio, e a pessoa veria "muitas tentativas seguidas"
+           no primeiro envio, por causa de uma porta fechada que ela nem escolheu. */
+        return await entrarPeloAuthelia(usuario, senha, manter, validado, falhas)
       }
+      falhas.current += 1
       if (erro.status === 401 && falhas.current >= MAX_TENTATIVAS) return 'bloqueado'
       return falhaDoStatus(erro.status)
     }
