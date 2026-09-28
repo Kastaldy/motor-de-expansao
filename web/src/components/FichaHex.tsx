@@ -15,11 +15,17 @@ import { CardPainel, LinhaTabela, Ticks, TituloSecao } from './PecasPainel'
    o valor dele). O veredito por VALOR continua nas notas (nome da faixa publicada).
    O fundo e a borda do card de veredito moravam AQUI, pelo mesmo motivo ("tela
    so-escura"): premissa que morreu quando o tema claro subiu para o <html> em
-   2026-08-25. Viraram --grad-verdict / --line-verdict em styles/tokens.css. */
-const COR_SCORE_CENSO = '#5ee6a8'
-const COR_SCORE_RESIDUAL = '#22d3e0'
-const COR_SCORE_HIBRIDO = '#eef6f7'
-const COR_TICKS_HIBRIDO = '#cfdfe3'
+   2026-08-25. Viraram --grad-verdict / --line-verdict em styles/tokens.css.
+
+   Em 2026-09-28 a TINTA seguiu o mesmo caminho, e isso fecha aquela migracao pela metade:
+   ela levou o FUNDO do cartao para o tema e deixou estes quatro hex aqui. Sem par no claro,
+   o numero de 22px pintava claro sobre cartao claro — o HIBRIDO media 1,02:1, censo 1,33:1
+   e residual 1,55:1. As constantes agora nomeiam os tokens; os valores do escuro nao se
+   mexeram um digito. */
+const COR_SCORE_CENSO = 'var(--score-censo)'
+const COR_SCORE_RESIDUAL = 'var(--score-residual)'
+const COR_SCORE_HIBRIDO = 'var(--score-hibrido)'
+const COR_TICKS_HIBRIDO = 'var(--score-hibrido-tick)'
 
 /* QUAIS FAIXAS GANHAM O PREFIXO "Prioridade" NO SELO.
    Tabela explicita, e nao uma regra sobre o texto. A lista de faixas e' FECHADA e vive em
