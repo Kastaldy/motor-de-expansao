@@ -278,16 +278,20 @@ function fontesDe(dir: string): string[] {
  * motivo escrito: exceção sem motivo é guarda furada com álibi.
  */
 const FORA_DA_GUARDA: Record<string, string> = {
-  /* `entrar.tsx` SAIU desta lista em 25/09/2026, e a saída é o sinal de que o desenho
-     melhorou: ela deixou de chamar `fetch` na mão (falava com o `/api/firstfactor` do
-     Authelia) e passou a usar `api.entrar()`, que vai pelo `pedir` — um dono do mecanismo.
+  'entrar.tsx': `Na tela de login o 401 é SENHA ERRADA, não sessão caída: anunciar queda
+    mandaria a pessoa entrar de novo na tela em que ela já está. Essa razão nunca deixou de
+    ser verdadeira — o que mudou foi quem a impõe.
 
-     A razão que a mantinha aqui continua verdadeira e NÃO se perdeu: na tela de login o
-     401 é senha errada, não sessão caída, e anunciar queda mandaria a pessoa entrar de
-     novo na tela em que ela já está. Só que agora isso é imposto por CÓDIGO, e não por
-     exceção declarada — `ehQuedaDeSessao('/api/login')` devolve `false` em
-     `lib/login-motor.ts`, e `pedir` a consulta antes de relatar. Guarda que vira código
-     é guarda que não depende de alguém manter uma lista. */
+    Ela SAIU desta lista em 25/09/2026, quando o #417 trocou o \`fetch\` à mão por
+    \`api.entrar()\`: aí a regra passou a ser CÓDIGO (\`ehQuedaDeSessao('/api/login')\`
+    devolve \`false\` em \`lib/login-motor.ts\`, e \`pedir\` consulta antes de relatar), que é
+    melhor que lista. E VOLTOU em 28/09/2026, porque a troca seca tirou produção do ar e a
+    tela precisou reaver a reserva do Authelia — e o \`/api/firstfactor\` é um \`fetch\` à
+    mão por desenho: o cliente dele é puro (\`lib/authelia.ts\`) justamente para ser testado
+    sem DOM e sem servidor, e não passa pelo \`pedir\`.
+
+    O que fica valendo para o caminho próprio: a regra por código continua lá, intacta. O
+    que esta entrada cobre é só o POST de reserva.`,
 }
 
 const chamadoresProprios = fontesDe(RAIZ_SRC)
