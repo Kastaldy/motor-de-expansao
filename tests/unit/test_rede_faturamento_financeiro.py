@@ -490,3 +490,181 @@ def test_meses_inteiros_na_janela() -> None:
     assert list(dentro) == [False, True, False]
     tudo = rm._meses_inteiros_na_janela(comps, pd.Timestamp("2026-06-01"), pd.Timestamp("2026-08-31"))
     assert list(tudo) == [True, True, True]
+
+
+# ---------------------------------------------------------------------------
+# Terceira passada do join: por CODIGO (BLK-FIX-FIN-SAOCARLOS-01)
+# ---------------------------------------------------------------------------
+# O caso real: a aba `Unidades_UX` da planilha diz `91 -> "SÃO CARLOS - SP"` e a Growth
+# escreve `"SAO CARLOS - CENTRO - SP"`. Nem o nome cru nem o aperto casam ("SAOCARLOSSP" x
+# "SAOCARLOSCENTROSP"), e R$ 664.726 de abr-ago/2026 ficavam fora da tela — que mostrava a
+# receita da Growth, ~19% abaixo da oficial. Medido em 2026-09-28 contra a base de produção:
+# era o ÚNICO nome sem par com faturamento > 0.
+
+CARLOS_GROWTH = "SAO CARLOS - CENTRO - SP"
+CARLOS_PLANILHA = "SÃO CARLOS - SP"
+
+
+def _base_carlos(nome: str = CARLOS_GROWTH) -> pd.DataFrame:
+    return rm.preparar_base(
+        base(
+            unidade_saudavel(nome, 2026, 6, uf="SP"),
+            unidade_saudavel(nome, 2026, 7, uf="SP"),
+        )
+    )
+
+
+def _fin_com_codigo(nome: str, cod: str, total: float = 300_000.0) -> pd.DataFrame:
+    quadro = _financeiro(**{nome: (total, total * 0.8)})
+    return quadro.assign(cod_unidade=cod)
+
+
+def test_sem_o_codigo_o_sao_carlos_fica_de_fora() -> None:
+    """A prova de que a guarda nova não é tautológica: sem ela, o defeito continua lá."""
+    fech = rm.fechamento_mensal(
+        _base_carlos(), financeiro=_fin_com_codigo(CARLOS_PLANILHA, "91")
+    )
+    assert set(fech["origem_faturamento"]) == {rm.ORIGEM_UX}
+    assert fech.attrs["financeiro_sem_par"] == [CARLOS_PLANILHA]
+
+
+def test_o_codigo_do_cadastro_casa_o_nome_que_a_planilha_escreve_diferente() -> None:
+    growth = _base_carlos()
+    quadro = _fin_com_codigo(CARLOS_PLANILHA, "91")
+    alias = rm.alias_do_financeiro_por_codigo(
+        quadro, rm.catalogo_de(growth), {"sao-carlos-centro-sp": "91"}
+    )
+    assert alias == {CARLOS_PLANILHA: CARLOS_GROWTH}
+
+    fech = rm.fechamento_mensal(
+        growth, financeiro=quadro.assign(unidade_ux=quadro["unidade_ux"].replace(alias))
+    )
+    assert set(fech["origem_faturamento"]) == {rm.ORIGEM_FINANCEIRO}
+    assert fech.attrs["financeiro_sem_par"] == []
+    assert set(fech["faturamento"]) == {300_000.0}
+
+
+def test_o_codigo_declarado_cobre_a_unidade_que_o_cadastro_ainda_nao_tem() -> None:
+    """São Carlos não está no cadastro de produção (92 das 98 unidades, semeadura de 06/08).
+
+    Sem a tabela declarada o caminho por código não alcança justamente a unidade que o
+    abriu: a Growth não carrega código e o artefato do Lifetime que carrega não está na VPS.
+    """
+    assert rm.UNIDADE_POR_CODIGO_DECLARADO["91"] == "sao-carlos-centro-sp"
+    alias = rm.alias_do_financeiro_por_codigo(
+        _fin_com_codigo(CARLOS_PLANILHA, "91"), rm.catalogo_de(_base_carlos()), {}
+    )
+    assert alias == {CARLOS_PLANILHA: CARLOS_GROWTH}
+
+
+def test_o_cadastro_vence_a_tabela_declarada() -> None:
+    """Declarado é tapa-buraco, nunca override — e discordar dele não pode virar ambiguidade.
+
+    Se o cadastro disser que o `91` é outra unidade, é o cadastro que manda: a entrada
+    declarada sai de cena inteira, em vez de somar um segundo candidato e derrubar em
+    ambiguidade um casamento que o cadastro já fazia certo.
+    """
+    growth = rm.preparar_base(
+        base(
+            unidade_saudavel("OUTRA - SP", 2026, 6, uf="SP"),
+            unidade_saudavel("OUTRA - SP", 2026, 7, uf="SP"),
+            unidade_saudavel(CARLOS_GROWTH, 2026, 6, uf="SP"),
+            unidade_saudavel(CARLOS_GROWTH, 2026, 7, uf="SP"),
+        )
+    )
+    alias = rm.alias_do_financeiro_por_codigo(
+        _fin_com_codigo(CARLOS_PLANILHA, "91"), rm.catalogo_de(growth), {"outra-sp": "91"}
+    )
+    assert alias == {CARLOS_PLANILHA: "OUTRA - SP"}
+
+
+def test_o_codigo_nao_mexe_em_quem_ja_casava_por_nome() -> None:
+    """Terceira passada quer dizer terceira: nome cru e aperto continuam decidindo antes.
+
+    O código só fala de quem sobrou, e é isso que garante que ligar esta passada não pode
+    trocar o dono de nenhuma linha que já casava.
+    """
+    growth = _base_growth()
+    quadro = _financeiro(AUGUSTA=(300_000.0, 250_000.0), MOOCA=(400_000.0, 320_000.0))
+    codigos = {"augusta-sp": "01", "mooca-sp": "01"}  # atrairia as duas, se fosse consultado
+    assert rm.alias_do_financeiro_por_codigo(quadro, rm.catalogo_de(growth), codigos) == {}
+
+
+def test_codigo_que_atrai_duas_unidades_nao_casa() -> None:
+    growth = rm.preparar_base(
+        base(
+            unidade_saudavel("UMA - SP", 2026, 6, uf="SP"),
+            unidade_saudavel("UMA - SP", 2026, 7, uf="SP"),
+            unidade_saudavel("OUTRA - SP", 2026, 6, uf="SP"),
+            unidade_saudavel("OUTRA - SP", 2026, 7, uf="SP"),
+        )
+    )
+    alias = rm.alias_do_financeiro_por_codigo(
+        _fin_com_codigo("NOME QUE NAO EXISTE - SP", "77"),
+        rm.catalogo_de(growth),
+        {"uma-sp": "77", "outra-sp": "77"},
+    )
+    assert alias == {}
+
+
+def test_nome_da_planilha_com_dois_codigos_de_unidades_diferentes_nao_casa() -> None:
+    """Dois códigos no mesmo bloco apontando para unidades distintas: ninguém casa.
+
+    Um palpite errado aqui joga o faturamento de uma academia na outra — a mesma razão do
+    `_resgate_por_aperto`: um buraco visível é melhor que um número trocado em silêncio.
+    """
+    growth = rm.preparar_base(
+        base(
+            unidade_saudavel("UMA - SP", 2026, 6, uf="SP"),
+            unidade_saudavel("UMA - SP", 2026, 7, uf="SP"),
+            unidade_saudavel("OUTRA - SP", 2026, 6, uf="SP"),
+            unidade_saudavel("OUTRA - SP", 2026, 7, uf="SP"),
+        )
+    )
+    quadro = _fin_com_codigo("NOME QUE NAO EXISTE - SP", "77")
+    quadro.loc[quadro.index[0], "cod_unidade"] = "78"
+    alias = rm.alias_do_financeiro_por_codigo(
+        quadro, rm.catalogo_de(growth), {"uma-sp": "77", "outra-sp": "78"}
+    )
+    assert alias == {}
+
+
+def test_unidade_fora_da_rede_comparavel_nunca_e_alvo_do_codigo() -> None:
+    """`EXCLUIDAS_NOME_CRU` vale nas três passadas — o studio não recebe por código."""
+    growth = rm.preparar_base(
+        base(
+            unidade_saudavel("AUGUSTA", 2026, 6, uf="SP"),
+            unidade_saudavel("AUGUSTA", 2026, 7, uf="SP"),
+        )
+    )
+    quadro = _fin_com_codigo("ADMINISTRACAO", "01")
+    assert rm.alias_do_financeiro_por_codigo(
+        quadro, rm.catalogo_de(growth), {"augusta-sp": "01"}
+    ) == {}
+
+
+def test_sem_codigo_nenhum_o_alias_e_vazio_e_a_aba_continua_de_pe() -> None:
+    growth = _base_carlos()
+    assert rm.alias_do_financeiro_por_codigo(pd.DataFrame(), rm.catalogo_de(growth), {}) == {}
+    assert rm.alias_do_financeiro_por_codigo(
+        _fin_com_codigo(CARLOS_PLANILHA, "").drop(columns=["cod_unidade"]),
+        rm.catalogo_de(growth),
+        {"sao-carlos-centro-sp": "91"},
+    ) == {}
+
+
+def test_a_normalizacao_de_codigo_e_uma_so_nos_dois_lados() -> None:
+    """"06" na aba de de-para e 6 numérico na de faturamento são o MESMO código.
+
+    Duas normalizações é como os dois lados divergem: uma unidade casaria num módulo e não
+    no outro, e o buraco seria silencioso.
+    """
+    assert fin.normalizar_codigo("06") == fin.normalizar_codigo(6) == "6"
+    assert fin.normalizar_codigo("A0") == "A0"
+    assert fin.normalizar_codigo(None) == ""
+    alias = rm.alias_do_financeiro_por_codigo(
+        _fin_com_codigo(CARLOS_PLANILHA, "091"),
+        rm.catalogo_de(_base_carlos()),
+        {"sao-carlos-centro-sp": 91},
+    )
+    assert alias == {CARLOS_PLANILHA: CARLOS_GROWTH}

@@ -46,6 +46,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from motor_expansao.dashboard.rede_faturamento_financeiro import normalizar_codigo
+
 # ---------------------------------------------------------------------------
 # Identidade das unidades
 # ---------------------------------------------------------------------------
@@ -374,6 +376,11 @@ def aplicar_faturamento_financeiro(
     O join e' por nome CRU normalizado, atraves do catalogo -- nunca por `chave_unidade`.
     A diferenca e' a mesma das "Aguas Claras": a chave normalizada colapsa a academia e o
     studio numa coisa so, e o faturamento de uma iria parar na outra.
+
+    Quando o nome da planilha nao casa por nenhuma das duas passadas, quem chama pode
+    resolver POR CODIGO antes de chamar aqui -- ver `alias_do_financeiro_por_codigo`, que
+    devolve o de-para de nome a aplicar no quadro. Esta funcao nao muda: continua vendo um
+    unico caminho de casamento, por nome.
     """
     fora = fech.assign(origem_faturamento=ORIGEM_UX)
     if not len(fech) or not len(financeiro) or not catalogo:
@@ -465,6 +472,100 @@ def _resgate_por_aperto(
             for bruto in candidatos_do_fin:
                 resgate[bruto] = next(iter(candidatos))
     return resgate
+
+
+#: `cod_unidade` do Financeiro -> `unidade_id` da Growth, DECLARADO -- e so' para as
+#: unidades que o cadastro ainda NAO cobre.
+#:
+#: O caminho normal e' o cadastro: ele guarda `cod_unidade` por unidade e, onde os dois
+#: existem, bate com o do Financeiro em 100% dos casos (medido no de-para do UNI-00). Mas o
+#: cadastro de producao e' uma SEMEADURA da planilha do time de campo, e ela envelhece: em
+#: 2026-09-28 o JSON da VPS era de 06/08 e tinha 92 das 98 unidades da rede. As 6 de fora
+#: (`freguesia-rj`, `jardim-das-americas-mt`, `nucleo-bandeirante-df`, `sao-carlos-centro-sp`,
+#: `via-brasil-shopping-rj`, `vila-izabel-pr`) nao tem codigo em lugar nenhum que a producao
+#: leia -- a Growth nao carrega codigo, e o artefato do Lifetime que carrega nao esta na VPS.
+#:
+#: Sao Carlos e' o caso medido: a aba `Unidades_UX` da planilha diz `91 -> "SAO CARLOS - SP"`
+#: e a Growth escreve `"SAO CARLOS - CENTRO - SP"`. Nem o nome cru nem o aperto casam, e
+#: R$ 664.726 de abr-ago/2026 ficavam fora da tela, que mostrava a receita da Growth (~19%
+#: abaixo). Unica Sao Carlos da rede.
+#:
+#: **O cadastro VENCE esta tabela.** Ela e' tapa-buraco, nunca override: assim que a
+#: semeadura incluir a unidade, a entrada daqui fica inerte sozinha, sem virar uma segunda
+#: fonte de verdade competindo com a primeira. Ver `alias_do_financeiro_por_codigo`.
+UNIDADE_POR_CODIGO_DECLARADO: dict[str, str] = {"91": "sao-carlos-centro-sp"}
+
+
+def alias_do_financeiro_por_codigo(
+    financeiro: pd.DataFrame,
+    catalogo: Mapping[str, Unidade],
+    codigos: Mapping[str, object] | None = None,
+) -> dict[str, str]:
+    """TERCEIRA passada do join do Financeiro: por CODIGO, so' para o que o NOME nao acha.
+
+    Devolve `unidade_ux da planilha -> nome CRU da Growth`, para ser aplicado no quadro do
+    Financeiro antes de `aplicar_faturamento_financeiro`. Reescrever o nome de join, em vez
+    de abrir um segundo caminho de casamento la' dentro, mantem UMA redacao do join: o que
+    sai daqui entra pela mesma porta que todo o resto, e `financeiro_sem_par`, `origem_
+    faturamento` e a soma de dois codigos na mesma unidade continuam valendo sem emenda.
+
+    A passada e' a TERCEIRA de proposito. Nome cru e aperto continuam decidindo primeiro, e
+    por isso nenhuma linha que ja' casava pode mudar de dono -- propriedade barata de
+    garantir e travada por teste. O codigo so' fala de quem sobrou.
+
+    Recusa palpite em tres frentes, pela mesma razao do `_resgate_por_aperto` (um numero
+    trocado em silencio e' pior que um buraco visivel):
+
+    * codigo que atrai DUAS unidades da rede fica de fora;
+    * nome da planilha cujos codigos apontam para unidades DIFERENTES fica de fora;
+    * unidade fora da rede comparavel (`EXCLUIDAS_NOME_CRU`) nunca e' alvo.
+
+    `codigos` e' `unidade_id -> cod_unidade` (o cadastro). Sem ele, so'
+    `UNIDADE_POR_CODIGO_DECLARADO` responde.
+    """
+    if not len(financeiro) or not catalogo or "cod_unidade" not in financeiro.columns:
+        return {}
+
+    por_nome = {
+        _sem_acento(nome): uid
+        for uid, unidade in catalogo.items()
+        for nome in unidade.nomes_crus
+    }
+    resgate = _resgate_por_aperto(por_nome, financeiro["unidade_ux"])
+
+    por_codigo: dict[str, set[str]] = {}
+    for uid, cod in (codigos or {}).items():
+        chave = normalizar_codigo(cod)
+        if chave and uid in catalogo:
+            por_codigo.setdefault(chave, set()).add(uid)
+    for chave, uid in UNIDADE_POR_CODIGO_DECLARADO.items():
+        # `not in`, e nao `setdefault`: o cadastro vence, e um declarado que discorde dele
+        # e' descartado -- nao somado ao conjunto, senao viraria ambiguidade e derrubaria o
+        # casamento que o cadastro ja' fazia certo.
+        if uid in catalogo and chave not in por_codigo:
+            por_codigo[chave] = {uid}
+
+    pendentes: dict[str, set[str]] = {}
+    for bruto, cod in zip(financeiro["unidade_ux"], financeiro["cod_unidade"], strict=False):
+        nome = str(bruto)
+        if _sem_acento(nome) in por_nome or bruto in resgate or eh_excluida(nome):
+            continue
+        chave = normalizar_codigo(cod)
+        if chave:
+            pendentes.setdefault(nome, set()).add(chave)
+
+    alias: dict[str, str] = {}
+    for nome, chaves in pendentes.items():
+        candidatos = {uid for chave in chaves for uid in por_codigo.get(chave, ())}
+        if len(candidatos) != 1:
+            continue
+        uid = next(iter(candidatos))
+        # O alvo tem de ser uma grafia que o join de NOME reconheca -- `Unidade.nome` nao
+        # serve: ele perde o sufixo de UF, e e' o sufixo que separa as duas "Aguas Claras".
+        crus = [n for n in catalogo[uid].nomes_crus if por_nome.get(_sem_acento(n)) == uid]
+        if crus:
+            alias[nome] = crus[-1]
+    return alias
 
 
 def fechamento_mensal(

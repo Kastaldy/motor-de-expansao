@@ -175,6 +175,17 @@ def _cod(valor: object) -> str:
     return texto.lstrip("0") or "0" if texto.isdigit() else texto
 
 
+def normalizar_codigo(valor: object) -> str:
+    """Porta pública do `_cod`, para quem casa unidade POR CÓDIGO fora deste módulo.
+
+    Existe porque `rede_metricas` precisa comparar o `cod_unidade` desta planilha com o
+    código do cadastro, e as duas normalizações têm de ser a MESMA função. Reescrever o
+    `lstrip("0")` do outro lado é o jeito conhecido de as duas versões divergirem: "06"
+    casaria num módulo e não no outro, e a unidade ficaria sem par em silêncio.
+    """
+    return _cod(valor)
+
+
 def ler_planilha(caminho: Path | str, aba: str = ABA_FATURAMENTO) -> pd.DataFrame:
     """Lê a planilha do Financeiro para formato longo (uma linha por unidade-competência).
 
