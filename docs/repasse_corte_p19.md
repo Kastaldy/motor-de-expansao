@@ -561,6 +561,20 @@ sops secrets/Caddyfile.enc   # cole o Caddyfile novo
    > essa senha vence em **2 horas**, e depois disso ela não entra mais — precisa de outra
    > redefinição. Quem receber temporária tem de trocar dentro do prazo. Diga isso ao
    > repassar a senha.
+   > **E cuidado com VOCÊ MESMO aqui: cinco senhas erradas travam a SUA conta.** A régua do
+   > Passo 1 (`MAX_TENTATIVAS = 5` numa janela **móvel** de 15 min) vale para todo mundo,
+   > inclusive para quem está conduzindo o corte. A tela diz *"Muitas tentativas seguidas.
+   > Por segurança, o acesso ficou bloqueado — aguarde alguns minutos antes de tentar de
+   > novo, ou peça a um administrador para redefinir a sua senha"* — e **a segunda metade
+   > dessa frase não serve para você neste momento**: o administrador é você, e o painel de
+   > Acessos está atrás do login que você acabou de perder. A não ser que outra pessoa da
+   > allowlist já esteja logada numa outra aba, a única saída é **esperar**: a janela
+   > desliza, então o que destrava é a mais antiga das cinco tentativas completar 15 minutos.
+   > Não há relógio fixo para olhar.
+   >
+   > **Isto NÃO é o corte ter falhado, e não é motivo para voltar atrás.** Esperar quinze
+   > minutos é muito mais barato que executar um rollback — que é uma mudança de verdade, na
+   > borda, com o piloto fora do ar no meio.
 3. **Clique em Sair.**
    **Esperado:** volta para a tela de entrar. E voltar ao piloto **exige entrar de novo** — digitando o
    endereço outra vez você cai no **mesmo estado do item 1**: o piloto carrega e o pop-up "Sessão
