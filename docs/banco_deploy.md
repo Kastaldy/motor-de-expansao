@@ -279,14 +279,17 @@ consegue apagar o próprio rastro depende inteiramente de ela **não ser dona** 
 Na VPS, em `/opt/motor-expansao/app/.env`, a partir do bloco do `.env.example`:
 
 ```bash
-openssl rand -hex 24   # QUATRO vezes: dono, `app`, `auditoria` e `etl`
+openssl rand -hex 24   # TRÊS vezes: dono, `app` e `auditoria`
 ```
 
-> **São quatro, não três.** O script do §6 cria um terceiro papel com `LOGIN` — o **`etl`** — e vem
-> com a senha de exemplo `'troque-me-etl'` escrita no próprio arquivo. Ele tem `TRUNCATE` em
-> `municipios`, `distritos` e `bairros`, que o script chama de "o privilégio mais destrutivo concedido
-> neste schema". Se o ETL ainda não é usado, `ALTER ROLE etl NOLOGIN;` depois de criá-lo é mais seguro
-> que guardar uma quarta senha.
+> **São três, e o quarto papel não tem senha.** O script do §6 cria um terceiro papel — o **`etl`** —
+> mas desde 28/09/2026 ele nasce **`NOLOGIN`**, justamente porque tem `TRUNCATE` em `municipios`,
+> `distritos` e `bairros`, que o próprio script chama de "o privilégio mais destrutivo concedido neste
+> schema". **Não há quarta senha a gerar nem a guardar.**
+>
+> A carga de referência que usa o `etl` roda a cada ~10 anos. Quando for a hora:
+> `ALTER ROLE etl LOGIN PASSWORD '<gerada na hora>';`, e `ALTER ROLE etl NOLOGIN;` de volta ao
+> terminar.
 
 ```dotenv
 POSTGRES_DB=banco_de_reservas
@@ -306,7 +309,8 @@ MOTOR_DATABASE_URL=
 > tem de dar **1**.
 
 > **A senha do dono é gravada DENTRO do cluster no primeiro boot, e trocá-la aqui depois não a muda.**
-> Por isso as quatro senhas precisam estar definitivas antes de qualquer `up`. E note que o serviço
+> Por isso ela precisa estar definitiva **antes de qualquer `up`** — as do `app` e do `auditoria` só
+> nascem no §6, muito depois, e podem ser decididas até lá. E note que o serviço
 > `web` declara `depends_on: postgres`: um `up -d web` já sobe o banco e roda esse primeiro boot.
 
 Gerar as senhas em hexadecimal não é preciosismo: caractere especial (`@ : / ?`) numa URL libpq
@@ -401,10 +405,20 @@ versão de schema.
 
 A conferência não é opcional: ela é o **único** lugar que verifica o papel `etl` (espera 12 linhas
 para `app`, 1 para `auditoria` e 3 para `etl`), e o comando `privilegios` do motor não olha o `etl`.
-É também ela que pega o no-op do `FOR ROLE` descrito abaixo.
+Ela **não** pega o no-op do `FOR ROLE` descrito abaixo: ela olha
+`GRANT` de tabela, e default privileges vivem em `pg_default_acl`, que nenhuma consulta do script
+toca. Para conferir esse, à mão, depois de rodar a seção 6:
 
-**Troque as TRÊS senhas de exemplo** (`app`, `auditoria`, `etl`) e rode por `psql` dentro do
-container:
+```sql
+SELECT defaclrole::regrole, defaclobjtype, defaclacl FROM pg_default_acl;
+```
+
+**Esperado:** duas linhas, as duas com `reservas_owner` — nunca `postgres`.
+
+**Troque as DUAS senhas de exemplo** (`app` e `auditoria`) e rode por `psql` dentro do container.
+**O `etl` não tem senha de exemplo — ele nasce `NOLOGIN`. Não invente uma para ele:** dar-lhe `LOGIN`
+reabre o buraco que a correção de 28/09 fechou, e nada a jusante acusa (a conferência fecha em 3
+linhas com ou sem `LOGIN`, e o `privilegios` do motor não olha o `etl`).
 
 ```bash
 docker exec -it motor_expansao_postgres \
@@ -589,7 +603,7 @@ DDL sobre dado real é onde se perde dado. O caminho de volta é o restore do du
 
 ## 9. O que passa a ser vigiado
 
-- `scripts/healthcheck_vps.sh` agora vigia **7** containers — `motor_expansao_postgres` entrou na
+- `scripts/healthcheck_vps.sh` agora vigia **8** containers — `motor_expansao_postgres` entrou na
   lista. Sem essa linha, o banco fora do ar seria invisível: a leitura de parquet continua
   servindo, e só o RBAC começa a negar.
 - O **healthcheck do container `web` não consulta o banco**, e isso é escolha. Amarrar os dois faria
