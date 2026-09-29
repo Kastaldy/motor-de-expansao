@@ -524,9 +524,18 @@ sops secrets/Caddyfile.enc   # cole o Caddyfile novo
    curl -sSI https://ultra-expansao.tech/     | head -1
    ```
    O `auth.` continua existindo (a AR depende dele) e o apex deve redirecionar, nunca
-   responder 200. **Se o `auth.` servir a NOSSA tela de entrar**, ela vai tentar
-   `POST /api/login` naquele host, o Authelia responde 404 e a pessoa fica num beco —
-   confira o bloco de `auth.` no `Caddyfile` da VPS **antes** da janela.
+   responder 200.
+
+   > **O `auth.` serve a NOSSA tela de entrar, e isso é ESPERADO — não conserte.** Até 29/09/2026
+   > este passo avisava que, se isso acontecesse, a pessoa ficaria num beco. Duas coisas mudaram, as
+   > duas medidas: o Caddy serve aquela página na raiz do host de auth **desde 22/09** (não é
+   > hipótese, é a configuração), e desde os PRs #425/#427 a tela **tem saída ali** — no 404 do nosso
+   > `/api/login` ela cai no `POST /api/firstfactor`, que naquele host responde 401, porque é o
+   > Authelia que atende. Mexer no bloco de `auth.` para "arrumar" isso **quebra a reserva** que
+   > mantém o login funcionando para quem chega sem sessão.
+   >
+   > O que ainda vale conferir ali: que o `auth.` responde (a AR depende dele) e que o apex
+   > **redireciona**. Se algum dos dois vier diferente, pare e chame quem repassou.
 
 **Se a tela de entrar não aparecer e o piloto der erro:** vá direto para *Se precisar voltar
 atrás*, abaixo.
