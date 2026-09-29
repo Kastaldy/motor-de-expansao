@@ -104,9 +104,15 @@ async function entrarPeloAuthelia(
     return 'indisponivel'
   }
 
-  /* 404 AQUI é o único caso em que ninguém autentica: o nosso backend já disse que não é
-     ele, e agora o Authelia diz que também não. Aí a tela para de adivinhar e diz isso. */
-  if (status === 404) return 'nao-ligado'
+  /* 404 OU 405 AQUI é o caso em que ninguém autentica: o nosso backend já disse que não é
+     ele, e agora quem atendeu diz o mesmo. Aí a tela para de adivinhar e diz isso.
+
+     O 405 entra junto porque é o que o NOSSO backend responde a `POST /api/firstfactor` —
+     a rota não existe aqui —, e foi o status MEDIDO no log de 29/09/2026 quando o laço do
+     `rd` despejou a tela no host do piloto. Sem ele, `lerResposta` traduzia por
+     `indisponivel` ("o servidor pode estar reiniciando"), que é falso e manda a pessoa
+     esperar: não há nada reiniciando, há um host sem autenticador. */
+  if (status === 404 || status === 405) return 'nao-ligado'
 
   const desfecho: Desfecho = lerResposta(status, corpo, falhas.current)
   if (desfecho.tipo === 'entrou') {
@@ -160,8 +166,13 @@ function Entrada() {
        campo quando o destino é falso, e o Authelia usa o padrão dele. Mandar `'/'` seria a
        raiz do host de AUTH, que é esta própria tela de login: a pessoa digitaria a senha
        certa e voltaria ao formulário. Foi esse o laço que apareceu no log de produção em
-       28/09/2026 (`entrar.html?rd=...entrar.html?rd=...`). */
-    const validado = destinoSeguro(rd, window.location.hostname)
+       28/09/2026 (`entrar.html?rd=...entrar.html?rd=...`).
+
+       O TERCEIRO ARGUMENTO fecha esse laço pelo outro lado, e ele foi preciso porque o
+       conserto de 28/09 tratou só o caso `'/'` — não o caso geral, que é um `rd`
+       apontando para a tela de entrar em QUALQUER host. `destinoSeguro` desembrulha esse
+       `rd` aninhado até achar uma página de verdade; o docstring dela tem a medição. */
+    const validado = destinoSeguro(rd, window.location.hostname, window.location.href)
     const destino = validado ?? '/'
 
     try {
