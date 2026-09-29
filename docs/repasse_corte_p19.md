@@ -337,7 +337,7 @@ cobre isso se você se incluir na conciliação.
 ```bash
 cd /opt/motor-expansao/app
 git pull
-cp .env .env.bak-$(date +%F)     # guarda o digest ATUAL; é para onde você volta
+cp -n .env .env.bak-$(date +%F)  # -n = NÃO sobrescreve se já existir (leia o aviso abaixo)
 grep '^WEB_IMAGE=' .env          # anote esta linha
 # edite o .env: WEB_IMAGE=<digest novo>
 docker compose -f docker-compose.prod.yml up -d web
@@ -346,6 +346,12 @@ docker compose -f docker-compose.prod.yml up -d web
 > **A cópia não é zelo, é o caminho de volta.** A linha seguinte sobrescreve o `WEB_IMAGE`, e o
 > valor antigo deixa de existir no arquivo. Sem a cópia, a instrução de rollback aqui embaixo é
 > impossível de executar — e você descobriria isso justamente no momento em que o piloto não abriu.
+>
+> **O `-n` é o que protege contra rodar este passo DUAS vezes no mesmo dia** — o que é exatamente o
+> que se faz depois de um erro. O nome do arquivo tem a data, então a segunda execução escreveria em
+> cima da primeira: a cópia passaria a guardar o digest **novo**, e o rollback devolveria a imagem
+> que você está tentando desfazer. Sem erro nenhum, com um digest de aparência perfeita. Com `-n`, a
+> segunda execução simplesmente não toca no arquivo.
 
 > **Se você já trocou o `WEB_IMAGE` no runbook das migrations** e nenhuma imagem nova foi publicada
 > desde então, este passo é **só conferência**: o `grep` acima tem de mostrar exatamente o digest que
@@ -363,11 +369,18 @@ Authelia ainda autenticando. A chave ainda está desligada.
 > **Esperado:** reinicia e continua atrás do Authelia, sem mudança visível.
 
 **Se o piloto não abrir:** volte o `WEB_IMAGE` para o digest anterior e suba de novo. O valor está
-na cópia que você fez no começo deste passo:
+na cópia que você fez no começo deste passo — e **confirme que ela é de verdade a cópia antiga**,
+comparando as duas linhas:
 
 ```bash
-grep '^WEB_IMAGE=' .env.bak-$(date +%F)
+grep '^WEB_IMAGE=' .env.bak-$(date +%F)   # o valor de volta
+grep '^WEB_IMAGE=' .env                   # o que está no ar agora
 ```
+
+**As duas linhas têm de ser DIFERENTES.** Se vierem iguais, a cópia não é mais a antiga — e aí ela
+não serve para voltar. O digest anterior estará em `.env.bak-antes-do-p19`, se o pacote de repasse do
+banco foi seguido; se não estiver em nenhum dos dois, **pare e chame quem repassou** antes de
+inventar um valor.
 
 Nada foi cortado ainda.
 
