@@ -431,11 +431,13 @@ injeta** e passa a exigir o nosso cookie em toda rota `/api/*` que não seja
 
 Então, a partir deste comando:
 
-- quem estava usando o piloto **recebe 401 na próxima ação** e é levado para a nossa tela de
-  entrar (`/entrar.html`);
+- quem estava usando o piloto **recebe 401 na próxima ação**, vê o pop-up **"Sessão encerrada"** e,
+  ao clicar em "Entrar novamente", chega à nossa tela de entrar (`/entrar.html`). O pop-up é a
+  etapa do meio, e é sempre assim — não é um estado de erro;
 - entre este passo e o próximo, quem entrar passa por **DOIS logins**: o do Authelia, na borda,
   e o nosso, na aplicação. É esperado e é temporário;
-- **ver a nossa tela de entrar aqui é o sinal de que funcionou**, não de que quebrou.
+- **ver esse pop-up e, depois dele, a nossa tela de entrar é o sinal de que funcionou**, não de que
+  quebrou.
 
 Por isso o Passo 5 é a continuação natural deste, e não um passo para outro dia.
 
@@ -505,7 +507,22 @@ sops secrets/Caddyfile.enc   # cole o Caddyfile novo
 ## Passo 6 — Conferir que funcionou
 
 1. **Abra `https://piloto.ultra-expansao.tech` numa janela anônima.**
-   **Esperado:** a nossa tela de entrar (não a do Authelia).
+   **Esperado:** o piloto **carrega** e, em cima dele, o pop-up bloqueante **"Sessão encerrada"**, com
+   o botão **"Entrar novamente"**. Clique nele — **aí** vem a nossa tela de entrar (não a do Authelia).
+   > **Por que a tela de entrar não vem de cara, e por que isso está CERTO.** Depois do corte o matcher
+   > `@protegido` cobre só `/api/*`, então a raiz e os estáticos passam a ser servidos a quem **não**
+   > entrou — está escrito como consequência declarada em
+   > `deploy/caddy/piloto-br.Caddyfile.template`. O anônimo recebe o `index.html` e o bundle; a SPA
+   > chama `/api/me`, que é o primeiro `/api/*` e volta **401**; e o 401 monta o pop-up
+   > (`lib/api.ts` → `relatarAcessoNegado()` → `components/AvisoSessao.tsx`, que não fecha por Esc nem
+   > por clique fora). **Só o clique** navega para `/entrar.html`.
+   >
+   > **O texto do pop-up vai soar errado nesta janela:** ele diz *"Seu acesso expirou e você foi
+   > desconectado"*, e você nunca entrou. É o texto de sessão vencida, reaproveitado — **não é sintoma
+   > e não se conserta aqui**.
+   >
+   > **O que seria defeito de verdade:** aparecer a tela do **Authelia** (aí o bloco do Caddy não
+   > trocou), ou o piloto abrir **usável, sem pop-up nenhum** (aí a borda não está exigindo sessão).
 2. **Entre com uma conta de teste.**
    **Esperado:** o piloto abre. Se a pessoa nunca trocou a senha, aparece o convite para trocar —
    com um botão "Agora não", porque a troca é **recomendada**, não obrigatória.
@@ -514,9 +531,28 @@ sops secrets/Caddyfile.enc   # cole o Caddyfile novo
    > redefinição. Quem receber temporária tem de trocar dentro do prazo. Diga isso ao
    > repassar a senha.
 3. **Clique em Sair.**
-   **Esperado:** volta para a tela de entrar, e voltar ao piloto **exige entrar de novo**.
+   **Esperado:** volta para a tela de entrar. E voltar ao piloto **exige entrar de novo** — digitando o
+   endereço outra vez você cai no **mesmo estado do item 1**: o piloto carrega e o pop-up "Sessão
+   encerrada" aparece em cima, sem deixar usar nada. É esse pop-up que prova que a sessão foi revogada
+   **no servidor**, e não só apagada no navegador.
 4. **Confira que a AR não se mexeu:** abra `https://piloto-ar.ultra-expansao.tech`.
-   **Esperado:** a tela do **Authelia**, como sempre foi.
+   **Esperado:** um redirecionamento para `auth.ultra-expansao.tech` — e ali a **NOSSA** tela de
+   entrar, **não** a do Authelia.
+   > **Isso não é o corte vazando para a AR, e é anterior a ele.** O bloco da AR
+   > (`deploy/caddy/piloto-ar.Caddyfile.template`) manda o anônimo para
+   > `uri /api/verify?rd=https://auth.ultra-expansao.tech` — a **raiz** daquele host —, e a raiz
+   > daquele host serve a nossa tela **desde 22/09**, antes desta janela. É o mesmo fato que o item 5
+   > registra, logo abaixo; até 29/09/2026 este item afirmava o contrário dele.
+   >
+   > **Quem autentica a AR continua sendo o Authelia:** o `forward_auth authelia:9091` do bloco dela
+   > não é tocado neste corte — o Passo 5 diz, em caixa própria, para **não encostar** nesse bloco.
+   >
+   > **O que confere que a AR não se mexeu, sem adivinhar:** o bloco `piloto-ar.ultra-expansao.tech`
+   > do `Caddyfile` está igual ao que estava (você não o editou no Passo 5), e **uma sessão da AR que
+   > já estava aberta continua abrindo o piloto argentino**. **Não use esta janela para testar
+   > *entrar* na AR:** esse caminho não foi medido, e um resultado ruim aqui não distingue defeito da
+   > AR de pergunta que ninguém fez ainda. Se precisar mesmo entrar na AR, combine antes com quem
+   > repassou.
 5. **Confira os outros dois endereços do domínio**, que o Passo 5 não tocou e que ninguém
    mediu antes da janela:
    ```bash
@@ -528,8 +564,11 @@ sops secrets/Caddyfile.enc   # cole o Caddyfile novo
 
    > **O `auth.` serve a NOSSA tela de entrar, e isso é ESPERADO — não conserte.** Até 29/09/2026
    > este passo avisava que, se isso acontecesse, a pessoa ficaria num beco. Duas coisas mudaram, as
-   > duas medidas: o Caddy serve aquela página na raiz do host de auth **desde 22/09** (não é
-   > hipótese, é a configuração), e desde os PRs #425/#427 a tela **tem saída ali** — no 404 do nosso
+   > duas medidas: o Caddy serve aquela página na raiz do host de auth **desde 22/09** — e vale dizer
+   > **como** se sabe disso, porque o `Caddyfile` real é **gitignored**: foi medido na VPS e chegou
+   > aqui de segunda mão. **Ninguém confere isso a partir do repositório**, então se o que você vê
+   > divergir, é a medição que está velha, não você que errou — pare e chame quem repassou. E desde os
+   > PRs #425/#427 a tela **tem saída ali** — no 404 do nosso
    > `/api/login` ela cai no `POST /api/firstfactor`, que naquele host responde 401, porque é o
    > Authelia que atende. Mexer no bloco de `auth.` para "arrumar" isso **quebra a reserva** que
    > mantém o login funcionando para quem chega sem sessão.
@@ -537,8 +576,9 @@ sops secrets/Caddyfile.enc   # cole o Caddyfile novo
    > O que ainda vale conferir ali: que o `auth.` responde (a AR depende dele) e que o apex
    > **redireciona**. Se algum dos dois vier diferente, pare e chame quem repassou.
 
-**Se a tela de entrar não aparecer e o piloto der erro:** vá direto para *Se precisar voltar
-atrás*, abaixo.
+**Se o item 1 der outra coisa** — a tela do Authelia, ou o piloto abrindo usável sem pop-up, ou erro
+que nenhum item previu —, **ou se o item 2 não conseguir entrar:** vá direto para *Se precisar voltar
+atrás*, abaixo. O pop-up "Sessão encerrada" do item 1 **não** é esse caso: ele é o esperado.
 
 ---
 
@@ -606,7 +646,7 @@ docker compose -f docker-compose.prod.yml exec postgres \
 |---|---|---|
 | **Tirar acesso de alguém** | remover do `users_database.yml` + restart do Authelia | **desativar a linha em `usuarios`** pelo painel de Acessos — a sessão morre na requisição seguinte |
 | **Postgres fora do ar** | o piloto continua servindo (só o banco fica indisponível) | **o piloto inteiro fica fora** — sem banco não há sessão, e o Caddy nega tudo |
-| **Sessão expirada** | o Authelia redireciona | a SPA leva à nossa tela de entrar |
+| **Sessão expirada** | o Authelia redireciona | a SPA abre o pop-up "Sessão encerrada" e, no clique, leva à nossa tela de entrar |
 
 > **O item do meio é o mais importante para quem recebe alerta de madrugada.** O comentário do
 > `healthcheck_vps.sh` ainda diz que o `web` não cai junto com o Postgres — isso deixa de valer
