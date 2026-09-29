@@ -176,6 +176,16 @@ export function relatarFalhaDeRede(): Promise<Diagnostico> {
  * abrir. É o mesmo parâmetro que o Authelia usa e que `lib/authelia.ts::destinoSeguro`
  * valida na outra ponta — ele RECUSA destino de fora do domínio, senão o link de login
  * viraria redirecionamento aberto.
+ *
+ * O QUE ESTA FUNÇÃO PRODUZ, E POR QUE O OUTRO LADO PRECISA DESEMBRULHAR. Antes do corte
+ * a premissa acima é verdadeira e tem um efeito que só apareceu medindo: como
+ * `/entrar.html` está atrás do `forward_auth`, o Caddy responde 302 e carimba
+ * `rd=<ESTA URL INTEIRA>` — ou seja, o destino que chega à tela de entrar é a própria
+ * tela de entrar, com o destino de verdade aninhado dentro dele. Autenticar e obedecer a
+ * esse destino devolve a pessoa ao formulário; foi o laço de 29/09/2026. Quem desfaz o
+ * embrulho é `destinoSeguro`, que tem a medição no docstring. Esta função continua certa
+ * como está: mudá-la para navegar ao destino final quebraria o mundo PÓS-corte, que é a
+ * razão de ela não ser mais um `reload()`.
  */
 export function entrarNovamente(): void {
   const destino = `/entrar.html?rd=${encodeURIComponent(window.location.href)}`

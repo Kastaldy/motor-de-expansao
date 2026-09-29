@@ -181,3 +181,39 @@ describe('tela de entrar: caminhos de asset', () => {
     expect(tela).toMatch(/refSenha\.current\?\.value\s*\|\|\s*senha/)
   })
 })
+
+describe('tela de entrar: o destino pos-login nao pode ser ela mesma', () => {
+  /* O laco de 29/09/2026, medido no access log do Caddy: `/entrar.html` esta' ATRAS do
+     `forward_auth`, entao o `rd` que o Caddy carimba e' a propria tela de entrar, e
+     obedecer a ele devolve a pessoa ao formulario -- autenticada, com o cookie gravado,
+     mas no host onde ninguem autentica. A regra de desembrulho vive em `destinoSeguro` e
+     tem teste proprio; o que se guarda AQUI e' a CHAMADA, porque e' por ela que o
+     conserto pode desaparecer em silencio: a funcao continuaria existindo, os testes dela
+     continuariam verdes, e so' a producao saberia. */
+
+  it('passa a pagina atual a `destinoSeguro` -- senao a raiz do host de auth passa batido', () => {
+    /* O 3o argumento e' o que ensina a funcao a reconhecer a tela de entrar quando ela
+       NAO se chama `entrar.html`: na raiz do host de auth ela se chama `/`. */
+    expect(ler('entrar.tsx')).toMatch(
+      /destinoSeguro\(\s*rd,\s*window\.location\.hostname,\s*window\.location\.href\s*\)/,
+    )
+  })
+
+  it('o destino mandado ao Authelia e o VALIDADO, que pode ser nulo', () => {
+    /* Nunca o `?? '/'`: no host de auth, `'/'` E' esta tela. `montarPedido` OMITE o
+       `targetURL` quando o destino e' falso, e e' essa omissao que faz o Authelia usar o
+       padrao dele em vez de devolver a pessoa ao formulario. */
+    expect(ler('entrar.tsx')).toMatch(
+      /entrarPeloAuthelia\(usuario,\s*senha,\s*manter,\s*validado,/,
+    )
+  })
+
+  it('405 e 404 sao o MESMO caso: ninguem autentica neste host', () => {
+    /* 405 e' o que o NOSSO backend responde a `POST /api/firstfactor` -- a rota nao
+       existe aqui --, e foi o status medido quando o laco despejou a tela no host do
+       piloto. Sem ele, `lerResposta` traduz por `indisponivel` ("pode estar
+       reiniciando"), que manda a pessoa esperar por um servidor que esta' de pe. */
+    const reserva = ler('entrar.tsx')
+    expect(reserva).toMatch(/status === 404 \|\| status === 405[\s\S]{0,60}?'nao-ligado'/)
+  })
+})
