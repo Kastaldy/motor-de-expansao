@@ -343,8 +343,8 @@ grep '^WEB_IMAGE=' .env          # anote esta linha
 docker compose -f docker-compose.prod.yml up -d web
 ```
 
-> **A cópia não é zelo, é o caminho de volta.** A linha seguinte sobrescreve o `WEB_IMAGE`, e o
-> valor antigo deixa de existir no arquivo. Sem a cópia, a instrução de rollback aqui embaixo é
+> **A cópia não é zelo, é o caminho de volta.** A edição do `WEB_IMAGE` que este bloco pede escreve
+> por cima do valor antigo, e ele deixa de existir no arquivo. Sem a cópia, a instrução de rollback aqui embaixo é
 > impossível de executar — e você descobriria isso justamente no momento em que o piloto não abriu.
 >
 > **O `-n` é o que protege contra rodar este passo DUAS vezes no mesmo dia** — o que é exatamente o
@@ -353,8 +353,9 @@ docker compose -f docker-compose.prod.yml up -d web
 > que você está tentando desfazer. Sem erro nenhum, com um digest de aparência perfeita. Com `-n`, a
 > segunda execução simplesmente não toca no arquivo.
 
-> **Se você já trocou o `WEB_IMAGE` no runbook das migrations** e nenhuma imagem nova foi publicada
-> desde então, este passo é **só conferência**: o `grep` acima tem de mostrar exatamente o digest que
+> **Se você já trocou o `WEB_IMAGE` antes de chegar aqui** — no runbook das migrations, ou no
+> *Movimento 1* do pacote de repasse do banco novo — e nenhuma imagem nova foi publicada desde então,
+> este passo é **só conferência**: o `grep` acima tem de mostrar exatamente o digest que
 > você recebeu. Não existe um segundo build.
 
 **Esperado:** o container reinicia e o piloto continua funcionando **exatamente como antes** — o
