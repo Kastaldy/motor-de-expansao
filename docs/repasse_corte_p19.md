@@ -45,15 +45,29 @@ Hoje o **Authelia** confere quem entra, na porta da rua. Depois deste corte, que
 | **`sops` instalado e a chave que decifra `secrets/Caddyfile.enc`** | **com quem repassou.** Teste **antes da janela**: `sops -d secrets/Caddyfile.enc \| head -1` tem de imprimir a primeira linha do Caddyfile. Se recusar, pare e peça — sem isso o último passo do corte não fecha, e o backup cifrado fica descrevendo um Caddyfile que não existe mais |
 | Este documento e o `deploy/caddy/piloto-br.Caddyfile.template` | o repositório |
 
-### Os dois merges que precedem tudo
+### Os dois merges que precedem tudo — e eles JÁ ESTÃO na `main`
 
-O trabalho está em **duas branches**, e as duas precisam estar na `main` antes de você subir a
-imagem. A ordem entre elas é indiferente.
+O trabalho vinha em duas branches, e as duas **já foram incorporadas**. Elas foram **apagadas** na
+incorporação, como é o padrão deste repositório — então **não procure pelos nomes**, que não existem
+mais. Procure pelos merges, que são permanentes.
 
-| Branch | O que leva |
-|---|---|
-| `feat/p19-sessao` | o motor, a rota `/api/verify`, a tela de entrar |
-| `feat/p19-chave-no-compose` | a chave `MOTOR_AUTENTICACAO_PROPRIA` no `docker-compose.prod.yml` |
+| O que leva | Pedido | Merge na `main` |
+|---|---|---|
+| o motor, a rota `/api/verify`, a tela de entrar | **#417** | `f38703b` |
+| a chave `MOTOR_AUTENTICACAO_PROPRIA` no `docker-compose.prod.yml` | **#416** | `f5b5e9b` |
+
+**Confira você mesmo** — até 29/09/2026 esta seção mandava procurar as branches pelo nome, o que é
+impossível depois de apagadas:
+
+```bash
+cd /opt/motor-expansao/app && git fetch origin
+git merge-base --is-ancestor f38703b origin/main && echo "o motor esta na main"
+git merge-base --is-ancestor f5b5e9b origin/main && echo "a chave esta na main"
+git show origin/main:docker-compose.prod.yml | grep -n MOTOR_AUTENTICACAO_PROPRIA
+```
+
+O último é o que de fato importa: a variável tem de aparecer dentro do bloco `environment:` do
+serviço `web`. Se qualquer um dos três não fechar, **pare**.
 
 > **Sem a segunda, o corte é impossível de ligar.** O compose não tem `env_file`, então o container
 > só recebe o que o bloco `environment:` lista. Pôr a chave no `.env` sem essa branch não faz
@@ -459,8 +473,15 @@ docker compose -f docker-compose.prod.yml exec web printenv MOTOR_AUTENTICACAO_P
 
 **Esperado:** `1`.
 
-**Se vier vazio ou "não encontrado":** a branch `feat/p19-chave-no-compose` não está na `main`, ou
-o `up -d` não rodou. **Pare** — o passo 5 sem isto derruba o piloto.
+**Se vier vazio ou "não encontrado":** o `up -d` não rodou, ou a chave não está no bloco
+`environment:` do compose — o que o **#416** (merge `f5b5e9b`) levou para a `main`. Você já deu
+`git pull` no Passo 2, então confira no arquivo local:
+
+```bash
+grep -n MOTOR_AUTENTICACAO_PROPRIA docker-compose.prod.yml
+```
+
+**Pare** — o passo 5 sem isto derruba o piloto.
 
 ---
 
