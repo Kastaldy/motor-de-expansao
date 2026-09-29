@@ -399,8 +399,18 @@ docker compose -f docker-compose.prod.yml up -d web
 **Confira, com o papel certo:**
 
 ```bash
-docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL   web python -m motor_expansao.db privilegios
+docker compose -f docker-compose.prod.yml run --rm web \
+  python -m motor_expansao.db privilegios
 ```
+
+> **Este comando não passa `-e MOTOR_DATABASE_URL`, e é de propósito.** O
+> `docker-compose.prod.yml` já injeta a variável no serviço `web` a partir do `.env`
+> (`MOTOR_DATABASE_URL: ${MOTOR_DATABASE_URL:-}`), então o `run --rm` a recebe sozinho — é a mesma
+> forma que o `docs/banco_deploy.md` usa no §8 para esta mesma conferência. Até 29/09/2026 este bloco
+> trazia um `-e MOTOR_DATABASE_URL` **sem valor**, idioma copiado do §5 daquele runbook, onde ele vem
+> **depois de um `export`** e por isso herda algo. Aqui não há `export` nenhum antes, então o `-e` era,
+> na melhor hipótese, redundante — e, se ele chegasse a sobrescrever com vazio, o erro que aparece é
+> exatamente o do próximo parágrafo, cuja explicação manda você conferir o `.env`, que estaria certo.
 
 **Esperado:** `PRIVILEGIOS OK: o papel do piloto nao consegue o que nao deve, e consegue o que
 precisa.` A primeira linha da saída diz `papel conectado:` — tem de ser **`app`**.
