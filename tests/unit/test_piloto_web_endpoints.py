@@ -1901,3 +1901,54 @@ def test_a_escrita_no_banco_passa_pela_transacao_que_carimba_o_autor() -> None:
             assert "conexao" not in chamadas, f"`{node.name}` usa a via de LEITURA para escrever"
             vistas.add(node.name)
     assert vistas == escritoras, f"funcao de escrita nova sem cobertura: {escritoras - vistas}"
+
+
+# ===========================================================================
+# A tela de entrar nunca vem do cache (incidente de 2026-09-28)
+# ===========================================================================
+# A tela vive em DOIS hosts com significados opostos: no host do Authelia o Caddy a serve na
+# raiz e o `POST /api/firstfactor` chega ao Authelia; no host do PILOTO o mesmo caminho vem
+# para ESTE backend, que nao tem essa rota. A `StaticFiles` a servia com `ETag`/
+# `Last-Modified` e SEM `Cache-Control`, e o access log do Caddy registrou a consequencia:
+# 200 x3 no host do piloto enquanto havia sessao (entra no cache), 302 x3 depois do logout
+# (o certo) e um 304 -- o navegador revalidando a copia do cache. Nesse 304 a pagina volta a
+# rodar no origin do piloto, ja' sem sessao, e o `fetch` relativo bate em 404 (`/api/login`,
+# chave do P19 desligada) e 405 (`/api/firstfactor`, nao existe aqui). A pessoa le' "nao foi
+# possivel falar com o servidor de autenticacao" a cada recarga, para sempre.
+
+
+def test_a_tela_de_entrar_manda_no_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`no-store`, e nao `no-cache`: `no-cache` ARMAZENA e revalida, e revalidar foi o 304."""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "entrar.html").write_text("<html><body>entrar</body></html>", encoding="utf-8")
+    monkeypatch.setattr(pilot, "_DIST_DIR", dist)
+
+    resposta = pilot.entrar_html()
+    assert resposta.headers["cache-control"] == "no-store"
+    assert "no-cache" not in resposta.headers["cache-control"]
+    assert resposta.media_type == "text/html"
+
+
+def test_a_rota_da_tela_de_entrar_vem_ANTES_do_mount_da_raiz() -> None:
+    """Registrada depois do `mount("/")`, ela nunca seria alcancada -- e o cache voltaria.
+
+    Este teste existe porque a falha seria SILENCIOSA: a pagina continuaria sendo servida
+    (pelo mount), com os mesmos bytes, so' sem o cabecalho. Nada quebraria.
+    """
+    caminhos = [getattr(r, "path", None) for r in pilot.app.routes]
+    assert "/entrar.html" in caminhos, "a rota da tela de entrar desapareceu"
+    if "/" in caminhos:
+        assert caminhos.index("/entrar.html") < caminhos.index("/"), (
+            "o mount da raiz vem antes e engole a rota de /entrar.html"
+        )
+
+
+def test_sem_build_a_tela_de_entrar_devolve_404_e_nao_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Em dev o Vite serve o front e o `dist/` nem existe."""
+    monkeypatch.setattr(pilot, "_DIST_DIR", tmp_path / "nao-existe")
+    with pytest.raises(HTTPException) as erro:
+        pilot.entrar_html()
+    assert erro.value.status_code == 404
