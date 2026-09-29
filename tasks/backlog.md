@@ -5183,3 +5183,418 @@ a acentuação das mensagens ao chat de ops.
 comparação daria "diferente" para todas as redes e a restauração viraria **no-op silencioso** — a
 mesma família do mount que congelou os pins. Hoje o checkout da VPS é Linux e não há conversão
 (medido); se a premissa mudar, o laço precisa comparar normalizado.
+
+## Epic BLK-SAUDE — Saúde e observabilidade do piloto web (2026-09-29, pedido de Felipe)
+
+> **Origem:** Felipe viu a taxa de erro da aba Acessos em **2,3% (30d)** e **1,9% (janela total)**
+> contra ~0,9% pouco antes, e pediu um mapeamento de produção. Rodou um workflow de 10 agentes
+> (5 investigadores + 5 céticos adversariais) sobre a trilha da DEC-027 baixada da VPS — 39 arquivos
+> JSONL, 17/08 a 29/09, 4 MB — com a **régua real do produto** (`_eventos_da_janela` + `_saude`
+> importados, não reescritos). Relatório completo na sessão; o que sobrevive à verificação está aqui.
+
+**A decomposição medida, que é o que ordena esta epic** (função real, não agregação própria):
+
+| janela | como o painel mostra | sem a família do login | sem os dias 28-29/09 | só 5xx |
+|---|---|---|---|---|
+| 30 dias | **2,30%** | 1,30% | **0,90%** | 0,50% |
+| total (90d) | **1,90%** | 1,10% | 0,80% | 0,40% |
+
+Ou seja: **a subida foi dois dias, não uma degradação.** `1,00 pp` é o laço de login fechado em
+29/09 (#425/#426/#427); `~0,40 pp` é uma varredura única do Juan em 28/09 (34 fichas de unidade em
+90 s pedindo `mes=2025-07`, mês em que aquelas unidades não têm dado — o 404 é a resposta CERTA,
+conferido no parquet `growth_api_historico`); `0,45 pp` é `/api/relatorio/municipal` 500, que já
+estava dentro dos 0,9% de antes; `0,25 pp` é o 422 de viabilidade.
+
+**O achado que governa a epic:** as duas doenças com consequência real — requisição de **30 a 108 s**
+e um **cron morto há três semanas** — contribuem **0,00 pp** para a taxa exibida. O mostrador não mede
+o que dói. Por isso a epic começa por **tornar visível**, não por consertar o que já se vê.
+
+> **Régua a preservar (não reescrever):** `taxa_erro_pct = 100*(4xx+5xx)/total` em
+> `dashboard/acesso_analytics.py::_saude`, sobre os eventos que `evento_valido`
+> (`api/relatorio_acessos.py`) deixa passar — que DESCARTA `ROTAS_FORA_DA_METRICA`
+> (`/api/acessos`, `/entrar.html`, `/entrar-assets/`), descarta agente contendo `curl`, e agrupa por
+> dia **BRT**. Qualquer bloco daqui que cite número tem de importar essas duas funções: agregação
+> própria sobre a trilha crua dá 2,89% onde o produto mostra 1,90%, e a diferença é inteiramente o
+> filtro. Foi esse erro que fez o primeiro investigador atribuir a subida à rota errada.
+
+**Sequência, e por que ela é essa.** Os blocos **01 a 05 são uma corrente de código puro** —
+testável, READ-ONLY sobre o M1, sem VPS — e podem correr em série sem o Felipe. Os blocos **06 a 11
+exigem ele** (comando na VPS, revisão visual de UI, ou uma decisão de dono). A ordem interna não é
+por dor: `01` vem primeiro porque **sem ele nenhum dos outros 500 é diagnosticável**, e `04` vem
+antes de `05` porque consertar latência sem instrumento é declarar vitória sem régua.
+
+---
+
+### BLK-SAUDE-01 — O traceback sobrevive: exceção engolida passa a ser logada antes do 500
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** — só observabilidade; READ-ONLY sobre o M1, nenhuma resposta HTTP muda de status nem de corpo. |
+| **Prioridade** | **Alta — é o desbloqueador da epic.** Enquanto não existir, todo 500 histórico só pode ser investigado por reprodução às cegas. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente |
+| **Depende de** | — (primeiro da corrente) |
+| **Autonomia** | **manual por padrão (candidato a loop-safe)** — código puro, READ-ONLY M1, verificável por guarda de fonte, sem deploy/VPS/segredo/dep nova. Marcação = pré-aprovação humana (§6.1). |
+
+**O defeito, medido.** `web/server/app.py:10258-10262` é um par
+`except APIError / except Exception as exc: raise HTTPException(500, f"...: {exc}")` que **não loga
+nada** — embute `str(exc)` na resposta HTTP, que ninguém guarda. Resultado concreto: os **33 × 500**
+de `/api/relatorio/municipal` (31/08 a 22/09) nunca puderam ser lidos. A investigação de 29/09
+precisou reconstruir `uf`+`município` de ~15 dos 33 casos **por aritmética de Content-Length do log do
+Caddy** (`bytes_read = 26 + bytes UTF-8 do nome do município`) — e mesmo assim nenhum reproduziu.
+
+**Escopo:** varrer as rotas que capturam exceção genérica e devolvem 5xx, e acrescentar
+`_LOG.exception(...)` com o contexto do pedido (para o relatório municipal: `uf` e `municipio`) **antes**
+de levantar o `HTTPException`. Nada de mudar status, corpo ou comportamento — a única diferença é que
+a próxima ocorrência sai com stack trace.
+
+**O molde já existe no arquivo:** `_registrar_relatorio_gerado` (`app.py:608-643`) tem um
+`except Exception` que **loga** via `_LOG_D17.exception` e nunca deixa a falha subir. É o padrão certo;
+falta aplicá-lo nos `except` que devolvem 5xx.
+
+**Teste — e ele precisa ser de FORMA, não de cálculo.** Uma guarda de fonte que varre `web/server/app.py`
+e exige: todo `except Exception` cujo corpo levanta `HTTPException` com status >= 500 tem uma chamada de
+log **antes** do `raise`. Guarda de texto não basta (posição de texto não mede ordem de execução —
+lição do `entrar-bundle.test.ts`): fatiar o corpo do `except` e verificar a ordem dentro dele.
+**Provar a guarda por sabotagem:** remover o log de uma rota, e ela tem de reprovar.
+
+**Não resolve** a ausência histórica: os 33 casos de setembro seguem sem traceback para sempre. Este
+bloco compra o futuro, não o passado.
+
+---
+
+### BLK-SAUDE-02 — `/api/acessos/usuarios`: 503 honesto em vez de 500 cru num deploy sem banco
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** — troca um 500 não tratado por um 503 que a tela já sabe renderizar; READ-ONLY sobre o M1, nenhuma escrita, nenhum caminho novo. |
+| **Prioridade** | **Alta** — é o **único defeito ainda ativo** no piloto: 139 chamadas, 139 falhas, **zero sucessos desde 18/09**. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente |
+| **Depende de** | — (independente do 01; pode ir em paralelo se preferir) |
+| **Autonomia** | **manual por padrão (candidato a loop-safe)** — uma cláusula `except` e um teste; READ-ONLY M1, sem deploy/VPS/dep nova. Marcação = pré-aprovação humana (§6.1). |
+
+**O defeito, reproduzido ao vivo em 29/09** (`docker exec motor_expansao_web curl -H 'Remote-User: felipe_castaldi' 127.0.0.1:8899/api/acessos/usuarios` → **500**):
+
+```
+app.py:4517 acessos_usuarios_listar → app.py:4416 _identidade_do_admin
+  → db/rbac.py:117 identidade → db/postgres.py:262 conexao → :183
+  → motor_expansao.db.postgres.BancoNaoConfigurado: MOTOR_DATABASE_URL nao definida
+```
+
+`BancoNaoConfigurado` e `BancoIndisponivel` são **irmãs** (as duas herdam direto de `RuntimeError`,
+`db/postgres.py:102-108`), e `_identidade_do_admin` (`app.py:4406-4427`) captura **só**
+`BancoIndisponivel`. Banco vazio é o estado PADRÃO do compose e o CLAUDE.md §4 o declara legítimo
+("`MOTOR_DATABASE_URL` vazia devolve o piloto ao comportamento pré-banco"), então a exceção sobe crua.
+
+**A ironia, que é a lição:** o tradutor para esse exato erro **já existe** em `_erro_de_usuarios`
+(`app.py:4485-4496`), e o comentário dele diz literalmente que sem ele *"o card Administração de
+usuários mostrava um 500 CRU num deploy sem banco, que é o estado PADRÃO do compose"*. Só que
+`acessos_usuarios_listar` chama `_identidade_do_admin` na linha **4517**, uma linha **acima** do `try`
+da 4518 que levaria até esse tradutor. O mesmo defeito foi achado, documentado e consertado uma
+chamada adiante — e o conserto não alcançou a chamada de cima.
+
+**São 6 rotas com o mesmo defeito**, não uma: `GET/POST /api/acessos/usuarios`,
+`PATCH /api/acessos/usuarios/{id}`, `POST .../redefinir-senha`, `POST .../exigir-troca`,
+`PATCH /api/me/senha` — todas confirmadas por `curl` direto. **Cinco nunca apareceram na trilha**
+porque a listagem quebra antes de a tela desenhar os botões que as disparariam; e `/api/me/senha` é
+isolada por `_estado_da_minha_senha` (`app.py:4123-4156`), que só oferece a chave `senha` quando
+`acesso.banco_no_comando()` é verdadeiro. São dívida latente, não incidente — e o conserto fecha as
+seis de uma vez, porque a causa é única.
+
+**Escopo:** `except (BancoIndisponivel, BancoNaoConfigurado)` em `_identidade_do_admin` e
+`_minha_identidade`, devolvendo o MESMO 503 que `_erro_de_usuarios` já produz (`PainelUsuarios.tsx` já
+sabe mostrar "Indisponível — nada foi alterado"). Molde idêntico ao que `web/server/acesso.py:684` e
+`:731` já usam — é o padrão do resto do repo.
+
+**O QUE ESTE BLOCO NÃO FAZ, e precisa estar dito:** a tela de Administração de usuários **continua não
+funcionando**. Ele troca um crash por uma mensagem honesta. Fazer a tela funcionar exige provisionar o
+Postgres — decisão do dono, no **BLK-SAUDE-10**.
+
+**Teste:** espelho de `test_deploy_sem_banco_e_503_e_nao_500`
+(`tests/unit/test_piloto_web_admin_usuarios.py:185-209`) mas fazendo `rbac.identidade` levantar
+`BancoNaoConfigurado` **de verdade**, sem stubar `_identidade_do_admin`/`_minha_identidade`. É essa
+lacuna que deixou o defeito passar: o helper `_identidade` (linhas 49-50) substitui a função inteira
+por lambda em quase todo teste, e o único que exercita o corpo real (linha 232) só cobre a irmã
+`BancoIndisponivel`.
+
+---
+
+### BLK-SAUDE-03 — A aba Acessos passa a ver o próprio 5xx, e a taxa ganha um segundo número
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** — muda o que a aba EXIBE, não o que ela grava; READ-ONLY sobre o M1 e sobre a trilha. |
+| **Prioridade** | **Média-alta** — é o painel que o Felipe usa para decidir onde olhar, e hoje ele mente por dois motivos independentes. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente |
+| **Depende de** | **BLK-SAUDE-02** — sem ele o contador novo nasce marcando 139 e o primeiro efeito visível do bloco é um alarme já conhecido. |
+| **Autonomia** | **manual por padrão (candidato a loop-safe)** — funções puras + payload; READ-ONLY, teste de contrato, sem deploy/VPS/dep nova. **Ressalva:** a mudança é visível na tela, então vale olho humano antes de fechar (lição do BLK-UI-10). Marcação = pré-aprovação humana (§6.1). |
+
+**Defeito 1 — o painel não enxerga a própria quebra.** `ROTAS_FORA_DA_METRICA`
+(`api/relatorio_acessos.py:110-114`) exclui o prefixo `/api/acessos` de `evento_valido`, e o comentário
+declara a intenção: *"Rotas AUDITADAS na trilha mas INVISÍVEIS nas métricas de uso"* — o painel não
+pode inflar a própria contagem de USO. **A intenção está certa e não deve ser revogada.** O efeito
+colateral não previsto é que os **139 × 500** ficaram invisíveis por 11 dias, e ficariam para sempre.
+Conserto: manter a exclusão na métrica de USO e expor o **5xx das rotas do próprio painel num contador
+separado**, fora da `taxa_erro_pct`.
+
+**Defeito 2 — a régua conta resposta certa como erro.** `taxa_erro_pct` soma 4xx sem distinguir
+defeito de sinal. Medido na janela de 30 dias: dos 132 4xx, **73 são o corte do P19 desligado**
+(`404 /api/login`, `405 /api/firstfactor`, `404 /api/logout` — o docstring de `/entrar.html`,
+`app.py:11361-11387`, declara o 404 como SINAL), **~35 são unidade sem dado na competência pedida**
+(`app.py:8884` levanta 404 "Unidade X sem dados na competência Y" — resposta correta) e **13 são RBAC
+fail-closed** (DEC-037). Conserto: **duas taxas lado a lado**, "operacional" (a régua atual, intacta) e
+"de defeito" (5xx + 4xx fora de uma lista NOMEADA de padrões por desenho).
+
+> **Risco declarado, e é o motivo de não substituir uma pela outra:** excluir um padrão por
+> `(rota, status)` pode esconder um 404 **real** na mesma rota. A lista tem de ser por padrão nomeado,
+> nunca por prefixo largo, e a taxa operacional continua na tela como hoje.
+
+**Teste:** contrato sobre `_saude`/`resumo` com trilha sintética — cada padrão por desenho entra na
+taxa operacional e sai da de defeito; um 5xx de `/api/acessos` aparece no contador novo e **não** na
+`taxa_erro_pct`; e um 404 não catalogado na mesma rota de um padrão conhecido **continua** contando
+como defeito (é a sabotagem que prova a lista nomeada).
+
+---
+
+### BLK-SAUDE-04 — Latência fica visível: p95 honesto, por rota, com tendência
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** — leitura; READ-ONLY sobre o M1 e sobre a trilha. |
+| **Prioridade** | **Alta** — é o instrumento do 05. Consertar latência sem régua é declarar vitória sem medida. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente |
+| **Depende de** | **BLK-SAUDE-03** (mesma superfície e mesmo payload) |
+| **Autonomia** | **manual por padrão (candidato a loop-safe)** — funções puras sobre a trilha; READ-ONLY, teste de contrato. Marcação = pré-aprovação humana (§6.1). |
+
+**O defeito.** `_saude` (`acesso_analytics.py`) devolve `lentas[:5]` — **cinco** rotas — e o `_p95`
+usa índice simples (`ordenados[int(0.95*(len-1))]`), que em amostra pequena não é p95 nenhum. Como
+consequência, uma rota que responde **200 em 108 segundos** não aparece na taxa de erro e não entra
+no top 5 se houver cinco piores. Foi exatamente o que aconteceu com `/api/rede/carteira` e
+`/api/rede/inteligencia` (**1.103 eventos** na janela).
+
+**Escopo:** p50/p95/p99 por rota (com n mínimo declarado), lista maior que 5, e **tendência**
+(últimos 15 dias contra os 15 anteriores) para separar "sempre foi lento" de "piorou". Nada de
+recalcular score, nada de tocar artefato.
+
+**Teste:** contrato do percentil contra valores conhecidos (uma amostra onde o p95 correto difere do
+que o índice simples devolve — é a sabotagem que prova a troca), e contrato do recorte de tendência.
+
+---
+
+### BLK-SAUDE-05 — Os 30 a 108 segundos de `/api/rede/carteira` e `/api/rede/inteligencia`
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — é a única doença que machuca usuário real todo dia, e ela mexe no caminho de leitura da Visão Executiva. READ-ONLY sobre o M1 (nenhum score, peso ou artefato oficial é tocado). |
+| **Prioridade** | **Alta** — maior dor real da lista. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente — **hipótese de mecanismo, não medida** (ver abaixo) |
+| **Depende de** | **BLK-SAUDE-04** (o instrumento) |
+| **Autonomia** | **manual por padrão (candidato a loop-safe)** — código puro + benchmark reproduzível. **Ressalva:** a hipótese ainda não foi confirmada; se a causa for outra, o escopo muda e isso pede julgamento. Marcação = pré-aprovação humana (§6.1). |
+
+**O que foi medido:** rajada de **72 requisições em 5 minutos** em 22/09 com duração subindo
+progressivamente de **2,7 s até 108,5 s** — assinatura de fila, não de cálculo uniformemente lento.
+E 42 eventos de borda (502 / conexão cortada aos 90 s do timeout do reverse-proxy) que **nunca nascem
+na trilha**, a maioria coincidindo com essas duas rotas.
+
+**Hipótese de mecanismo (NÃO confirmada):** `_rede_periodo(inicio, fim)` (`app.py:7713`) tem
+`@functools.lru_cache(maxsize=8)` e recomputa **3 vezes** (atual / anterior / ano-anterior) sobre a
+base fechada a cada combinação NOVA de `(inicio, fim)`. Com várias janelas de data em sequência
+rápida, o cache de 8 entradas estoura, cada miss é caro, e as requisições seguintes enfileiram.
+
+**Primeiro entregável é o BENCHMARK, não o conserto.** Um script reproduzível que dispare a rajada
+observada e **separe tempo de fila de tempo de cálculo** — sem isso não há como afirmar que o conserto
+funcionou, e a suspeita de `lru_cache` pode estar errada. Só depois: aumentar/ajustar o cache,
+pré-computar série longa de forma incremental, ou descobrir que algum fluxo da tela dispara várias
+janelas em rajada (se for isso, o conserto é no cliente, não no servidor).
+
+**Critério de fechamento:** p95 das duas rotas abaixo de um teto declarado, medido pelo instrumento do
+`04`, e zero eventos de borda na janela seguinte.
+
+---
+
+### BLK-SAUDE-06 — O formulário de viabilidade para de deixar enviar pedido inválido
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** — UX; nenhum dado é afetado e o 422 do servidor está CERTO. |
+| **Prioridade** | **Baixa** — 30 eventos em 6 semanas; atrito, não quebra. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA → `[REVISÃO VISUAL HUMANA]` |
+| **Status** | Pendente |
+| **Depende de** | — |
+| **Autonomia** | **manual (NÃO loop-safe)** — mudança de UI exige olho humano; o loop marca verde por teste e UX precisa de revisão visual (lição do BLK-UI-10). NÃO marcar loop-safe. |
+
+**Medido:** **30 × 422** (28 em `/api/viabilidade`, 2 em `/api/simulador/xlsx`), de **5 usuários reais**
+(rodrigo_oliveira, felipe_castaldi, priscila_vampre, miguel_ritton, marcos_minchiotti), entre 18/08 e
+24/09 — não é bot nem pentest. Assinatura reveladora: resposta em **1-2 ms** (o Pydantic recusa antes de
+qualquer cálculo) e o **mesmo usuário reenviando em segundos** (marcos_minchiotti 6× em ~1 min em 24/09;
+felipe_castaldi 3× em 3 s em 20/08) — cara de clique repetido sem a tela dizer qual campo falta.
+
+`ViabilidadeInputs` (`src/motor_expansao/dimensionamento/payload_viabilidade.py:67-69`) exige
+`m2: float = Field(gt=0)` e `demanda: float = Field(gt=0)`. **Escopo:** validar no front — desabilitar o
+botão ou destacar o campo — antes do POST. O servidor não muda: recusar input malformado é o
+comportamento correto dele.
+
+---
+
+### BLK-SAUDE-07 — O log do container sobrevive ao deploy
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** — infraestrutura de observabilidade; não toca aplicação, score ou artefato. |
+| **Prioridade** | **Média-alta** — sem ele, o `01` compra metade do benefício: o log passa a existir e continua morrendo no próximo deploy. |
+| **Esteira** | `[aplicação na VPS: passo MANUAL, comando a comando — §6]` + ajuste de compose por PR |
+| **Status** | Pendente |
+| **Depende de** | **BLK-SAUDE-01** (não há proveito em persistir log que não contém a exceção) |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca compose e VPS. NUNCA marcar loop-safe. |
+
+**Medido:** `docker inspect motor_expansao_web --format '{{json .HostConfig.LogConfig}}'` →
+`{"Type":"json-file","Config":{"max-file":"3","max-size":"10m"}}`. O driver é local e atrelado ao
+**ciclo de vida do container**: todo deploy recria o container e apaga o histórico. Em 29/09 isso
+significou que os 33 × 500 de setembro não tinham como ser lidos — `docker logs` cobria só as ~2 h
+desde a recriação das 11:41 BRT.
+
+**Escopo:** bind mount do log da aplicação, ou driver com retenção fora do ciclo de vida do container
+(syslog/loki), ou — mínimo viável — copiar o log para o host **antes** de cada `up -d` que recria.
+Decidir qual, aplicar no compose por PR, e a aplicação na VPS é passo manual do Felipe.
+
+---
+
+### BLK-SAUDE-08 — O cron do sync de concorrentes volta a rodar, e passa a falhar ALTO
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** — o passo é fail-soft por desenho e os apps seguem com os arquivos anteriores; o dano é obsolescência silenciosa, não corrupção. |
+| **Prioridade** | **Média** — está quebrado há 3 semanas e ninguém soube. |
+| **Esteira** | `[aplicação na VPS: passo MANUAL, comando a comando — §6]` + PR no repo irmão `gymscraping-infra` |
+| **Status** | Pendente |
+| **Depende de** | — |
+| **Autonomia** | **manual (NÃO loop-safe)** — VPS + repositório irmão. NUNCA marcar loop-safe. |
+
+**Medido em 29/09.** A etapa *"sync do diretorio de concorrentes dos apps"*
+(`/opt/gymscraping-infra/run_weekly_90.sh:243-248`) roda `sync_concorrentes_dashboard.py`, que importa
+`motor_expansao.dashboard.competitors`; esse módulo resolve `perfil.json` no import (DEC-047) e no
+contexto daquele `docker run` o arquivo não existe:
+
+```
+motor_expansao.perfil.PerfilInvalidoError: perfil.json ausente em
+  /usr/local/lib/python3.11/data/perfis/BR/perfil.json
+```
+
+Funcionou de 02/08 a **06/09** (6 domingos) e falha desde **20/09** — correlaciona com a entrada da
+DEC-047, mecanismo exato não confirmado (provável: falta `MOTOR_DATA_DIR` nessa chamada pontual).
+**Efeito confirmado:** `/opt/motor-expansao/concorrentes/` está congelado em **06/09 10:15** (23 dias),
+com 97 logos. Consequência que o próprio script documenta nas linhas 240-242: rede sem
+`logo_<slug>.png` cai no **fallback de sigla** nos pins do piloto e nos PDFs.
+
+**São dois consertos, e o segundo é o que importa mais:** (a) definir `MOTOR_DATA_DIR` na chamada de
+`/tmp/sync.py`; (b) **tirar o `|| echo`** da linha 248 — hoje a falha vira um aviso no meio de um log
+que ninguém lê, e foi por isso que passou três semanas. É a mesma classe de falha silenciosa que a
+DEC-059 existe para impedir (lá, nove domingos sem propagar moveram 60,46% dos hexágonos).
+
+**Não confirmado, e não vou afirmar:** se os `unidades_*.csv` congelados nesse diretório alimentam algo
+além das logos. O passo 4.5 do mesmo script (pins M&A) lê os **feeds CRUS montados**, não este
+diretório (decisão de 2026-09-02, comentada na linha 257) — mas eu não tracei todos os consumidores.
+Primeiro entregável do bloco: traçar isso.
+
+---
+
+### BLK-SAUDE-09 — Erro de borda entra na conta: 502 e timeout de 90 s
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** — leitura; nenhuma mudança de comportamento servido. |
+| **Prioridade** | **Média** — hoje são 42 eventos completamente cegos; com o `05` consertado, é a rede de segurança que diz se voltou. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (+ leitura do log do Caddy na VPS) |
+| **Status** | Pendente |
+| **Depende de** | **BLK-SAUDE-04** (mesma superfície de saúde) |
+| **Autonomia** | **manual (NÃO loop-safe)** — precisa ler o log do Caddy na VPS, fora de `data/staging`. NÃO marcar loop-safe. |
+
+**O ponto cego, medido:** a trilha da DEC-027 só registra o que o backend Python **consegue
+responder**. Quando o Caddy desiste antes — upstream indisponível (502) ou timeout de 90 s do
+reverse-proxy (conexão cortada, `status:0`) — **nenhuma linha nasce** em `acesso-*.jsonl`. São 42
+eventos na janela, e a maioria coincide com o padrão de latência do `05`; outros (`uf/BA`,
+`municipios/PB`, `uf/SP`) sugerem que a lentidão também atinge navegação geográfica.
+
+**Escopo:** levar o status da borda para a superfície de saúde — rollup do
+`/opt/motor-expansao/logs/caddy/piloto-access.log` (e rotações `.gz`), ou exportação equivalente. A
+trilha do app **não** deve ser alterada para isso: ela é o rastro de quem fez o quê (DEC-027), e
+misturar erro de borda nela confunde duas coisas.
+
+---
+
+### BLK-SAUDE-10 — Decisão do dono: provisionar o Postgres, ou assumir o piloto sem banco
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — decide se a Administração de usuários existe em produção, e é pré-requisito do corte do P19 (DEC-067). |
+| **Prioridade** | **Média** — nada trava hoje; o `02` deixa a falha honesta. Mas a decisão não pode ficar implícita. |
+| **Esteira** | `[DECISÃO DE FELIPE]` → DEC → `[aplicação na VPS: passo MANUAL — §6]` |
+| **Status** | **Aguardando decisão de Felipe** |
+| **Depende de** | **BLK-SAUDE-02** (a falha precisa estar honesta antes de a decisão ser tomada sem pressa) |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão de dono + VPS. NUNCA marcar loop-safe. |
+
+**O estado, medido:** `MOTOR_DATABASE_URL` **não existe** (nem vazia) no ambiente de
+`motor_expansao_web` e `motor_expansao_web_ar`, e **não há container Postgres** na VPS (`docker ps -a`
+lista 7, nenhum é banco). A fase 2 do banco já está prevista no compose (`docs/banco_deploy.md`), e o
+CLAUDE.md §4 declara o banco OPCIONAL por construção.
+
+**Junto, um sintoma de processo que o bloco tem de fechar:** o `healthcheck_vps.sh` (cron de 5 min)
+checava um container `motor_expansao_postgres` **que nunca foi implantado**, e disparou **FAIL a cada
+5 minutos por mais de 1 h em 22/09** (16 ocorrências). A checagem foi **removida do script** — hoje
+`grep postgres` nele não retorna nada. **O alarme foi calado, a causa não.** Se a decisão for não
+provisionar, o monitor certo é **condicional** (só alerta se `MOTOR_DATABASE_URL` estiver setada e o
+container faltando); se for provisionar, o monitor volta incondicional.
+
+**Duas saídas, e as duas são legítimas:** (a) subir o Postgres → a Administração de usuários passa a
+funcionar e o corte do P19 destrava; (b) assumir o piloto sem banco → o 503 do `02` é o estado
+permanente, e a tela deveria dizer isso de forma mais definitiva do que "indisponível".
+
+---
+
+### BLK-SAUDE-11 — A instância AR entra no monitoramento
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** — outra instância de produção (DEC-047, um país por processo); READ-ONLY sobre o M1. |
+| **Prioridade** | **Baixa-média** — volume pequeno, mas é ponto cego declarado. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (+ leitura na VPS) |
+| **Status** | Pendente |
+| **Depende de** | **BLK-SAUDE-03** (a régua nova é o que vale aplicar nas duas) |
+| **Autonomia** | **manual (NÃO loop-safe)** — leitura na VPS de outra instância. NÃO marcar loop-safe. |
+
+**Medido em 29/09,** aplicando a MESMA régua na trilha própria de `motor_expansao_web_ar`: taxa de
+**4,5%** (17 erros em 378 eventos válidos) — **pior que a BR** —, composta por 10 × 500
+`/api/relatorio/municipal`, 3 × 500 `/api/ufs` e 4 × 404 `/api/ponto`. E a trilha da AR não recebe
+arquivo novo desde `acesso-2026-09-24.jsonl`, enquanto o `piloto-ar-access.log` mostra pedidos
+chegando até 28/09 16:28 UTC — só que todos são `robots.txt`/`favicon.ico`/`sitemap.xml` de crawler,
+nenhuma chamada de API real.
+
+**Não confirmado:** se a trilha da AR **emperrou por defeito** ou se simplesmente não houve mais acesso
+humano. Primeiro entregável: separar essas duas hipóteses (uma é bug, a outra é ausência de uso).
+Depois: incluir a AR na mesma checagem periódica que a BR recebe — ninguém está olhando.
+
+---
+
+### Em OBSERVAÇÃO (não é bloco): `/api/relatorio/municipal` 500
+
+**33 ocorrências entre 31/08 e 22/09, nenhuma depois** — e **não reproduz**: ~15 dos 33 casos foram
+reconstruídos e testados contra a produção de hoje, todos voltaram 200. A causa provável (não provada)
+é dado degenerado em município com join censitário ruim, o padrão "Manaus" que os próprios commits
+descrevem; mitigado em 17/09 (#372/#376) e possivelmente fechado em 21/09 pelo #388.
+
+**O que impede fechar, e é o achado do cético:** o campo `bytes` da trilha mostra **duas assinaturas
+distintas** — 25 ocorrências com `bytes=107` (31/08 a 17/09) e 8 com `bytes=83` (todas em 22/09). O
+cluster de 83 bytes é **POSTERIOR** ao lote que explicaria a melhora, então há **pelo menos um segundo
+defeito** que nasceu depois do conserto e parou sozinho por volta de 23/09, sem causa conhecida. A
+duração também varia de 20 ms a 9 s, o que sugere duas classes de falha.
+
+**Por que não é bloco:** sem traceback, perseguir isso é arqueologia às cegas — foi o que a
+investigação de 29/09 já tentou. Com o `01` e o `07` no ar, a próxima ocorrência entrega stack trace e
+o bloco nasce com evidência. **Reavaliar em 2-3 semanas;** se não recorrer até 20/10/2026, fechar como
+resolvido pelo #388.
+
+---
