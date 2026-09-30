@@ -69,6 +69,7 @@ Use um banco **novo**, e não o `teste_banco_v2` (o banco de teste em uso): o po
 provar a sequência desde o zero, e um banco que já tem as migrations aplicadas não prova isso — e
 um ensaio que dropa o banco de trabalho custa caro por nada.
 
+**Na estação de desenvolvimento, PowerShell — não é o seu passo:**
 ```powershell
 $PGBIN = "C:\Program Files\PostgreSQL\18\bin"
 & "$PGBIN\createdb" -U postgres banco_de_reservas_ensaio
@@ -84,6 +85,7 @@ $PGBIN = "C:\Program Files\PostgreSQL\18\bin"
 > todo o seu Python, e o trabalho no checkout principal passaria a importar código desta branch
 > sem aviso nenhum. O `PYTHONPATH` vale só para o terminal onde você o define.
 
+**Na estação de desenvolvimento, PowerShell — não é o seu passo:**
 ```powershell
 $env:PYTHONPATH = "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\.claude\worktrees\wt-db\src"
 $env:MOTOR_DATABASE_URL_ADMIN = "postgresql://postgres:SENHA@localhost:5432/banco_de_reservas_ensaio"
@@ -101,6 +103,7 @@ do pgAdmin, tanto faz desde 02/09 —, exatamente como no
 
 Provisionado o D20, prove que ele pegou — **com a credencial do `app`, não a de dono**:
 
+**Na estação de desenvolvimento, PowerShell — não é o seu passo:**
 ```powershell
 $env:PYTHONPATH = "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\.claude\worktrees\wt-db\src"
 $env:MOTOR_DATABASE_URL = "postgresql://app:SENHA@localhost:5432/banco_de_reservas_ensaio"
@@ -127,6 +130,7 @@ falta só apareceria em runtime.
 
 O backend aceita identidade de desenvolvimento quando não há `Remote-User` na frente:
 
+**Na estação de desenvolvimento, PowerShell — não é o seu passo:**
 ```powershell
 # Mesma ressalva do §1.2 — se este for um terminal NOVO, repita o PYTHONPATH.
 $env:PYTHONPATH = "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\.claude\worktrees\wt-db\src"
@@ -174,6 +178,7 @@ python -m uvicorn app:app --app-dir web/server --port 8899
 
 Em outro terminal, a SPA — o Vite já faz proxy de `/api` para a `:8899`:
 
+**Na estação de desenvolvimento, PowerShell — não é o seu passo:**
 ```powershell
 cd web
 npm run dev     # abre em http://localhost:5000
@@ -195,6 +200,7 @@ A identidade em dev vem do `MOTOR_DEV_USUARIO` **do processo do backend**, entã
 exigiria reiniciar. Comparar lado a lado é melhor, e sai com duas instâncias — o Vite lê a porta
 e o alvo do proxy de env:
 
+**Na estação de desenvolvimento, PowerShell — não é o seu passo:**
 ```powershell
 # Terminal 1 — backend growth (vê tudo, inclusive a aba de Acessos)
 $env:MOTOR_DEV_USUARIO = "vinicius.teste"
@@ -238,6 +244,7 @@ ao contrário e parece certa.
 
 A parte do backup que precisa de prova não é o dump — é a volta.
 
+**Na estação de desenvolvimento, PowerShell — não é o seu passo:**
 ```powershell
 & "$PGBIN\pg_dump"    -U postgres -d banco_de_reservas_ensaio -Fc --no-owner -f ensaio.dump
 & "$PGBIN\pg_restore" --list ensaio.dump | Out-Null
@@ -278,6 +285,7 @@ consegue apagar o próprio rastro depende inteiramente de ela **não ser dona** 
 
 Na VPS, em `/opt/motor-expansao/app/.env`, a partir do bloco do `.env.example`:
 
+**No terminal da VPS:**
 ```bash
 openssl rand -hex 24   # TRÊS vezes: dono, `app` e `auditoria`
 ```
@@ -291,6 +299,7 @@ openssl rand -hex 24   # TRÊS vezes: dono, `app` e `auditoria`
 > `ALTER ROLE etl LOGIN PASSWORD '<gerada na hora>';`, e `ALTER ROLE etl NOLOGIN;` de volta ao
 > terminar.
 
+**No arquivo `.env` — não é comando, é conteúdo para editar:**
 ```dotenv
 POSTGRES_DB=banco_de_reservas
 POSTGRES_OWNER_USER=reservas_owner
@@ -326,11 +335,13 @@ segredos da API/bot; três senhas novas não é hora de adiar de novo.
 sintaxe ou variável faltando aparece de graça, sem container envolvido. É também o único passo desta
 seção que não tem equivalente no ensaio local (§1.1):
 
+**No terminal da VPS:**
 ```bash
 cd /opt/motor-expansao/app
 docker compose -f docker-compose.prod.yml config --quiet && echo OK
 ```
 
+**No terminal da VPS:**
 ```bash
 docker compose -f docker-compose.prod.yml up -d postgres
 docker compose -f docker-compose.prod.yml logs --tail 30 postgres
@@ -351,6 +362,7 @@ que é a combinação em que o esquema foi validado.
 Confira que a versão é a que o esquema assume — o **D18** depende do PostGIS 3.6 para o
 `ST_Buffer` em `geography` preservar o SRID:
 
+**No terminal da VPS:**
 ```bash
 docker exec motor_expansao_postgres psql -U reservas_owner -d banco_de_reservas \
   -c "select version(), postgis_full_version();"
@@ -361,6 +373,7 @@ docker exec motor_expansao_postgres psql -U reservas_owner -d banco_de_reservas 
 O runner precisa da credencial do **dono** (migration é DDL). Ela é passada na invocação, num
 container efêmero, e nunca entra no ambiente do processo `web` que atende requisição:
 
+**No terminal da VPS:**
 ```bash
 export MOTOR_DATABASE_URL_ADMIN='postgresql://reservas_owner:<senha>@postgres:5432/banco_de_reservas'
 
@@ -409,6 +422,7 @@ Ela **não** pega o no-op do `FOR ROLE` descrito abaixo: ela olha
 `GRANT` de tabela, e default privileges vivem em `pg_default_acl`, que nenhuma consulta do script
 toca. Para conferir esse, à mão, depois de rodar a seção 6:
 
+**Dentro do `psql`:**
 ```sql
 SELECT defaclrole::regrole, defaclobjtype, defaclacl FROM pg_default_acl;
 ```
@@ -420,6 +434,7 @@ SELECT defaclrole::regrole, defaclobjtype, defaclacl FROM pg_default_acl;
 reabre o buraco que a correção de 28/09 fechou, e nada a jusante acusa (a conferência fecha em 3
 linhas com ou sem `LOGIN`, e o `privilegios` do motor não olha o `etl`).
 
+**No terminal da VPS:**
 ```bash
 docker exec -it motor_expansao_postgres \
   psql -U reservas_owner -d banco_de_reservas
@@ -476,6 +491,7 @@ não entra.
 
 **Depois de pôr a `MOTOR_SENHA_INICIAL` no `.env`, suba o `web`:**
 
+**No terminal da VPS:**
 ```bash
 docker compose -f docker-compose.prod.yml up -d web
 docker compose -f docker-compose.prod.yml exec web printenv MOTOR_SENHA_INICIAL
@@ -496,6 +512,7 @@ diz quem já saiu da inicial, e é a fila que o corte do P19 precisa zerar.
 Antes do `INSERT`, gere o hash **da senha inicial**. É esta função, e não a `gerar()`, que produz o
 mesmo estado de quem nasce pela tela:
 
+**No terminal da VPS:**
 ```bash
 cd /opt/motor-expansao/app
 docker compose -f docker-compose.prod.yml run --rm \
@@ -504,10 +521,12 @@ docker compose -f docker-compose.prod.yml run --rm \
 
 A saída começa com `$argon2id$`. Copie-a e use-a no `INSERT`:
 
+**No terminal da VPS:**
 ```bash
 docker exec -it motor_expansao_postgres psql -U reservas_owner -d banco_de_reservas
 ```
 
+**Dentro do `psql`:**
 ```sql
 INSERT INTO usuarios (nome_usuario, email, login_usuario, senha_hash, id_perfil)
 VALUES (
@@ -542,6 +561,7 @@ a tela escreve — `SQL_CRIAR` em `db/usuarios.py`. Os perfis disponíveis são 
 
 **Antes de preencher, confira que o seu login está na allowlist do painel:**
 
+**No terminal da VPS:**
 ```bash
 grep '^MOTOR_ACESSOS_ADMIN_USUARIOS=' .env
 ```
@@ -550,10 +570,12 @@ No instante em que a URL é preenchida, quem não tem linha no banco perde as ab
 Acessos é a sua saída, liberado por esta variável e **não** pelo RBAC. Se o seu login não estiver
 nela, o painel responde 404 **para você**, justamente quando ele é a única ferramenta de destravar.
 
+**No arquivo `.env` — não é comando, é conteúdo para editar:**
 ```dotenv
 MOTOR_DATABASE_URL=postgresql://app:<senha>@postgres:5432/banco_de_reservas
 ```
 
+**No terminal da VPS:**
 ```bash
 docker compose -f docker-compose.prod.yml up -d web
 ```
@@ -564,6 +586,7 @@ Verificação, nesta ordem:
 
 **Re-exporte a credencial do dono**, que o §5 desfez com `unset`:
 
+**No terminal da VPS:**
 ```bash
 export MOTOR_DATABASE_URL_ADMIN='postgresql://reservas_owner:<senha>@postgres:5432/banco_de_reservas'
 ```
@@ -572,6 +595,7 @@ Sem ela o runner cai **em silêncio** para a credencial do `app`, e então o com
 `permission denied for table migracoes_aplicadas` — o `app` não tem privilégio naquela tabela. O
 fallback é mudo; o resultado não é.
 
+**No terminal da VPS:**
 ```bash
 # 1. o motor concorda com o banco? (tabelas, colunas, índices, papéis, versão)
 docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN \
@@ -620,6 +644,7 @@ porque lá o banco nasce limpo e sem tráfego.**
 
 ### 1. Ver o que produção realmente tem
 
+**Na estação de desenvolvimento, no terminal — não é o seu passo:**
 ```bash
 docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN \
   web python -m motor_expansao.db estado
@@ -644,6 +669,7 @@ Com o `web` parado o problema não existe. Se preferir aplicar com ele de pé, u
 
 ### 3. Aplicar a 018 **e conceder o privilégio na sequência**
 
+**No terminal da VPS:**
 ```bash
 docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN \
   web python -m motor_expansao.db aplicar
@@ -658,6 +684,7 @@ documento nomeia a armadilha ("as tabelas novas nascem sem `GRANT` e ninguém pe
 
 Rode, como dono, as duas linhas do `papeis-e-privilegios.md` que cobrem a sessão:
 
+**Dentro do `psql`:**
 ```sql
 GRANT SELECT, INSERT, UPDATE ON sessoes TO app;
 GRANT USAGE ON SEQUENCE sessoes_id_sessao_seq TO app;   -- sem ela, todo login morre
@@ -682,6 +709,7 @@ atinge.
 
 ### 6. Conferir
 
+**No terminal da VPS:**
 ```bash
 ... web python -m motor_expansao.db conferir      # espera 12 / 49 / 14 / 12 / 7 / 7
 ... web python -m motor_expansao.db privilegios   # com a URL do `app`, não a de dono
@@ -716,6 +744,7 @@ nunca `DELETE` — o papel `app` nem tem `DELETE`.
 
 Antes de instalar, rode uma vez em modo seco (é o smoke documentado no cabeçalho):
 
+**No terminal da VPS:**
 ```bash
 /opt/motor-expansao-infra/run_expurgo_sessoes.sh --simular
 ```
@@ -749,6 +778,7 @@ decifração: perdê-la é perder todo o backup — guarde a cópia no mesmo cof
 
 Nunca por cima do banco vivo. Restaure num banco novo, confira, e só então decida.
 
+**No terminal da VPS:**
 ```bash
 # 1. integridade do arquivo, antes de qualquer coisa
 sha256sum -c banco_de_reservas_<carimbo>.dump.sha256
@@ -770,6 +800,7 @@ docker exec motor_expansao_postgres psql -U reservas_owner -d banco_de_reservas_
 
 Uma tabela só, sem tocar nas outras:
 
+**No terminal da VPS:**
 ```bash
 docker exec -i motor_expansao_postgres \
   pg_restore -U reservas_owner -d banco_de_reservas -t eventos --data-only \
