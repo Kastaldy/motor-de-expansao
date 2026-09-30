@@ -679,3 +679,165 @@ def test_a_senha_nova_nao_vai_para_o_LOG(monkeypatch: pytest.MonkeyPatch, caplog
     with caplog.at_level(logging.DEBUG):
         pilot_app.acessos_usuarios_redefinir_senha(9, remote_user=ADMIN)
     assert "kvth-9rqm-2xbf" not in caplog.text
+
+
+# --------------------------------------------------------------------------------------
+# Deploy SEM banco: 503 honesto nas SEIS rotas, e não 500 cru (BLK-SAUDE-02)
+# --------------------------------------------------------------------------------------
+# Medido em produção em 29/09/2026 pela trilha da DEC-027: `GET /api/acessos/usuarios`
+# respondeu 500 em **139 de 139 chamadas**, zero sucessos desde 18/09, para os três nomes
+# da allowlist. O traceback colhido ao vivo:
+#
+#   app.py acessos_usuarios_listar -> _identidade_do_admin -> db/rbac.py identidade
+#     -> db/postgres.py conexao -> BancoNaoConfigurado: MOTOR_DATABASE_URL nao definida
+#
+# `BancoNaoConfigurado` e `BancoIndisponivel` são IRMÃS (as duas herdam direto de
+# `RuntimeError`), e as duas funções de identidade capturavam só a segunda.
+#
+# A LACUNA DE TESTE QUE PERMITIU ISSO, e que estes casos fecham: o tradutor
+# `_erro_de_usuarios` JÁ tinha o ramo de `BancoNaoConfigurado`, coberto por
+# `test_deploy_sem_banco_e_503_e_nao_500` — mas aquele teste usa o helper `_identidade`,
+# que substitui `_identidade_do_admin` INTEIRA por uma lambda, então o corpo real nunca
+# rodava. O único caso que exercitava o corpo real
+# (`test_banco_fora_do_ar_na_identidade_e_503`) cobria apenas a irmã `BancoIndisponivel`.
+# Duas redes, e o peixe passou entre as duas.
+#
+# Por isso aqui NADA é stubado além de `rbac.identidade`: é o corpo de verdade que precisa
+# de prova.
+
+
+def _rbac_sem_banco(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`rbac.identidade` levanta o que um deploy sem `MOTOR_DATABASE_URL` levanta."""
+    from motor_expansao.db import BancoNaoConfigurado, rbac
+
+    def _falha(_u: Any) -> None:
+        raise BancoNaoConfigurado("MOTOR_DATABASE_URL nao definida")
+
+    monkeypatch.setattr(rbac, "identidade", _falha)
+
+
+#: As CINCO rotas que passam por `_identidade_do_admin`. Uma causa, seis rotas — e cinco
+#: delas nunca apareceram na trilha porque a listagem quebra ANTES de a tela desenhar os
+#: botões que as disparariam. Parametrizar é o que prova que o conserto único cobre todas.
+_ROTAS_DO_ADMIN = [
+    pytest.param(lambda: pilot_app.acessos_usuarios_listar(remote_user=ADMIN), id="listar"),
+    pytest.param(
+        # Corpo VÁLIDO de propósito: esta rota valida o payload ANTES de resolver
+        # identidade, então `UsuarioAdminIn()` vazio pararia num 422 sem nunca chegar ao
+        # `_identidade_do_admin` — o teste passaria a medir a validação, não o conserto.
+        lambda: pilot_app.acessos_usuarios_alterar(
+            9, pilot_app.UsuarioAdminIn(perfil="expansao"), remote_user=ADMIN
+        ),
+        id="alterar",
+    ),
+    pytest.param(
+        lambda: pilot_app.acessos_usuarios_criar(_corpo_novo(), remote_user=ADMIN), id="criar"
+    ),
+    pytest.param(
+        lambda: pilot_app.acessos_usuarios_redefinir_senha(9, remote_user=ADMIN),
+        id="redefinir-senha",
+    ),
+    pytest.param(
+        lambda: pilot_app.acessos_usuarios_exigir_troca(9, remote_user=ADMIN),
+        id="exigir-troca",
+    ),
+]
+
+
+@pytest.mark.parametrize("chamar", _ROTAS_DO_ADMIN)
+def test_deploy_sem_banco_na_identidade_do_admin_e_503_e_nao_500(
+    chamar: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As cinco rotas de administração, com o corpo REAL de `_identidade_do_admin`."""
+    _rbac_sem_banco(monkeypatch)
+    with pytest.raises(HTTPException) as caiu:
+        chamar()
+    assert caiu.value.status_code == 503, "voltou a ser 500 cru num deploy sem banco"
+    # A mensagem também, e não só o status: 503 sozinho não diz ao operador o que fazer.
+    assert "banco" in str(caiu.value.detail).lower()
+
+
+def test_deploy_sem_banco_na_troca_da_propria_senha_e_503_e_nao_500(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sexta rota, que passa por `_minha_identidade` e não por `_identidade_do_admin`."""
+    _rbac_sem_banco(monkeypatch)
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.me_trocar_senha(
+            pilot_app.MinhaSenhaIn(senha_atual="a-inicial", nova_senha="uma frase bem longa"),
+            remote_user="qualquer",
+        )
+    assert caiu.value.status_code == 503
+    assert "banco" in str(caiu.value.detail).lower()
+
+
+def test_as_duas_mensagens_de_sem_banco_sao_DIFERENTES(monkeypatch: pytest.MonkeyPatch) -> None:
+    """E é por isso que `_minha_identidade` existe separada de `_identidade_do_admin`.
+
+    O docstring de `_minha_identidade` declara a razão: no painel, a falta significa "a
+    allowlist e o banco divergiram", problema do operador; em `/api/me/senha` significa
+    outra conversa. Mandar o recado do painel a quem tentou trocar a PRÓPRIA senha manda a
+    pessoa procurar uma tela que ela pode nem ter permissão de abrir.
+
+    Sem esta guarda, "simplificar" as duas funções numa só passaria verde — os dois testes
+    acima só exigem 503 e a palavra "banco".
+    """
+    _rbac_sem_banco(monkeypatch)
+
+    with pytest.raises(HTTPException) as no_painel:
+        pilot_app.acessos_usuarios_listar(remote_user=ADMIN)
+    with pytest.raises(HTTPException) as na_senha:
+        pilot_app.me_trocar_senha(
+            pilot_app.MinhaSenhaIn(senha_atual="a-inicial", nova_senha="uma frase bem longa"),
+            remote_user="qualquer",
+        )
+
+    do_painel = str(no_painel.value.detail)
+    da_senha = str(na_senha.value.detail)
+    assert do_painel != da_senha, "as duas mensagens colapsaram numa só"
+    assert "usuários" in do_painel.lower(), "o recado do painel perdeu o assunto dele"
+    assert "senha" in da_senha.lower(), "o recado da troca de senha perdeu o assunto dele"
+
+
+def test_banco_AUSENTE_e_banco_FORA_DO_AR_nao_dizem_a_mesma_coisa(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Irmãs, e a distinção é operacional, não estética.
+
+    `BancoNaoConfigurado` é ESCOLHA declarada (§4 do CLAUDE.md: banco vazio devolve o piloto
+    ao comportamento pré-banco) — não há nada para consertar, é o estado esperado deste
+    deploy. `BancoIndisponivel` é INCIDENTE: o banco existe e não respondeu, e alguém tem de
+    ir olhar. Colapsar as duas num `except (A, B)` com mensagem única faria o operador
+    procurar um incidente que não existe — ou ignorar um que existe.
+    """
+    from motor_expansao.db import BancoIndisponivel, BancoNaoConfigurado, rbac
+
+    def _levantar(exc: Exception) -> Any:
+        def _f(_u: Any) -> None:
+            raise exc
+
+        return _f
+
+    monkeypatch.setattr(rbac, "identidade", _levantar(BancoNaoConfigurado("sem URL")))
+    with pytest.raises(HTTPException) as ausente:
+        pilot_app.acessos_usuarios_listar(remote_user=ADMIN)
+
+    monkeypatch.setattr(rbac, "identidade", _levantar(BancoIndisponivel("pool fechado")))
+    with pytest.raises(HTTPException) as fora:
+        pilot_app.acessos_usuarios_listar(remote_user=ADMIN)
+
+    assert ausente.value.status_code == fora.value.status_code == 503
+
+    # Compara o SENTIDO, não o texto interpolado. Comparar `str(detail)` seria guarda cega:
+    # as duas frases embutem a mensagem da exceção (`sem URL` x `pool fechado`), então
+    # bastaria a exceção ter texto diferente para elas "diferirem" mesmo com a MESMA
+    # redação. Foi assim que a primeira versão deste teste deixou passar uma sabotagem que
+    # trocava o ramo do ausente pela frase do incidente.
+    msg_ausente = str(ausente.value.detail).lower()
+    msg_fora = str(fora.value.detail).lower()
+    assert "sem banco configurado" in msg_ausente, (
+        "o ausente parou de dizer que é CONFIGURAÇÃO e o operador vai caçar um incidente"
+    )
+    assert "sem banco configurado" not in msg_fora, (
+        "o incidente passou a se anunciar como escolha de operação, e ninguém vai olhar"
+    )

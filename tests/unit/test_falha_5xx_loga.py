@@ -34,6 +34,16 @@ Uma guarda que varre e não acha nada passaria feliz se o caminhamento quebrasse
 `HTTPException`, mudar o import, trocar o literal por constante). Por isso há um teste que
 ANCORA no caso conhecido: o handler do Relatório Municipal tem de ser ENCONTRADO e tem de
 logar. Se ele desaparecer do radar, é a guarda que está cega, não o código que ficou limpo.
+
+## O QUE ELA NÃO VÊ, declarado
+
+Ela só reconhece `raise HTTPException(<literal 5xx>, ...)`. Um handler que faça
+`raise _erro_de_usuarios(erro)` — o tradutor de exceções das rotas de administração, que
+devolve 503 para `BancoNaoConfigurado` — produz um 5xx **invisível** a esta varredura, porque
+o status nasce dentro do helper e seguir isso exigiria análise interprocedural. Hoje há um
+caso assim (`_identidade_do_admin`, BLK-SAUDE-02) e ele loga por decisão do autor, não por
+exigência da guarda. Não é um furo a tapar com um caso especial pelo nome do helper: isso
+envelhece no primeiro renome. É um limite a saber ao ler um verde daqui.
 """
 
 from __future__ import annotations
