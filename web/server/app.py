@@ -576,6 +576,19 @@ def _ip_real_do_xff(xff: str | None, fallback: str | None) -> str | None:
 #: no meio do log de requisicao.
 _LOG_D17 = logging.getLogger("piloto.d17")
 
+# Falha de SERVIDOR (5xx). Existe porque a causa morria na borda: o `except` do relatorio
+# municipal (o generico mais abaixo) devolvia `str(exc)` no corpo HTTP e nao logava NADA,
+# entao os 33 x 500 medidos entre 31/08 e 22/09/2026 nunca puderam ser lidos -- a
+# investigacao de 29/09 precisou reconstruir `uf`+`municipio` por aritmetica de
+# Content-Length do log do Caddy, e nenhum dos ~15 casos testados reproduziu. Um 5xx e' o
+# servidor dizendo que falhou; ele tem de dizer POR QUE em algum lugar que sobreviva a
+# requisicao. Travado por `tests/unit/test_falha_5xx_loga.py` (BLK-SAUDE-01).
+#
+# NAO carrega identidade de proposito: quem fez o que e' a trilha da DEC-027, que tem
+# retencao declarada de 90 dias e poda. O log do container nao tem governanca nenhuma, e
+# jogar login de pessoa nele seria criar um segundo cadastro de acesso sem regra.
+_LOG_FALHA = logging.getLogger("piloto.falha")
+
 
 def _registrar_relatorio_gerado(
     remote_user: str | None,
@@ -4415,6 +4428,7 @@ def _identidade_do_admin(remote_user: str | None) -> Any:
     try:
         eu = rbac.identidade(remote_user)
     except BancoIndisponivel as erro:
+        _LOG_FALHA.warning("identidade do admin: banco indisponivel", exc_info=True)
         raise HTTPException(503, f"Banco indisponível: {erro}") from erro
     if eu is None:
         # O `_exigir_admin_acessos` ja passou (allowlist de env), mas a pessoa nao tem
@@ -4441,6 +4455,7 @@ def _minha_identidade(remote_user: str | None) -> Any:
     try:
         eu = rbac.identidade(remote_user)
     except BancoIndisponivel as erro:
+        _LOG_FALHA.warning("minha identidade: banco indisponivel", exc_info=True)
         raise HTTPException(503, f"Banco indisponível: {erro}") from erro
     if eu is None:
         raise HTTPException(
@@ -10073,10 +10088,12 @@ def rede_cadastro_atribuir(
         # Id que nao existe na rede nem no cadastro: 404, sem criar unidade-fantasma.
         raise HTTPException(404, str(erro)) from erro
     except rede_cadastro.CadastroIndisponivel as erro:
+        _LOG_FALHA.warning("cadastro da rede indisponivel", exc_info=True)
         raise HTTPException(503, str(erro)) from erro
     except PermissionError as erro:
         # O volume existe e e' legivel, mas nao gravavel pelo usuario do container.
         # Sem esta mensagem, o operador ve um 500 opaco e o diretorio parece montado.
+        _LOG_FALHA.error("cadastro da rede: volume sem permissao de escrita", exc_info=True)
         raise HTTPException(
             503,
             "Sem permissão de escrita no volume do cadastro. No servidor, o diretório "
@@ -10259,6 +10276,14 @@ def _gerar_relatorio_municipal_response(
         # O piloto nao registra o handler de `APIError` da API de producao (`main.py`).
         raise HTTPException(exc.status_code, exc.detail) from exc
     except Exception as exc:  # noqa: BLE001
+        # ESTE e' o `except` que custou a investigacao de 29/09/2026: 33 x 500 entre 31/08 e
+        # 22/09 sem uma linha de log, porque `str(exc)` ia so' no corpo HTTP e ninguem
+        # guarda corpo de resposta. `uf` e `municipio` entram na mensagem porque a trilha da
+        # DEC-027 NAO grava corpo de POST -- sem eles, saber QUAL pedido quebrou exigiria a
+        # aritmetica de Content-Length do log do Caddy que foi de fato necessaria.
+        _LOG_FALHA.exception(
+            "relatorio municipal falhou: uf=%s municipio=%s", uf, body.municipio
+        )
         raise HTTPException(500, f"Falha ao gerar o relatorio municipal: {exc}") from exc
     pdf_filename = (
         f"relatorio_municipal_{_relmun._slug(uf)}_{_relmun._slug(body.municipio)}.pdf"
@@ -10740,6 +10765,7 @@ def _gerador_simulador_xlsx() -> Callable[..., bytes]:
     try:
         from motor_expansao.dimensionamento.simulador_xlsx import gerar_simulador_xlsx
     except ImportError as exc:  # modulo do motor ausente neste checkout
+        _LOG_FALHA.error("simulador xlsx indisponivel neste checkout", exc_info=True)
         # Texto de USUARIO (chega ao box de erro da tela) -> acentuado, §2 do CLAUDE.md.
         raise HTTPException(
             503,
