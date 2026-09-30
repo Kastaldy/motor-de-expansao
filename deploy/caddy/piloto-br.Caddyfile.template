@@ -18,8 +18,16 @@
 #
 # Invertido, o piloto CAI INTEIRO: o Caddy pergunta ao `/api/verify`, que responde 404
 # com a chave desligada, e ele nega tudo que nao for 2xx — inclusive para quem ja' estava
-# dentro. Para VOLTAR atras: devolver o `forward_auth` ao `authelia:9091` e esvaziar a
-# chave. Nada no banco precisa ser revertido.
+# dentro.
+#
+# PARA VOLTAR ATRAS, e NAO e' so' reapontar o `forward_auth`: o rollback documentado em
+# `docs/repasse_corte_p19.md` e' devolver o BLOCO INTEIRO, copiado de
+# `Caddyfile.antes-do-p19` (a copia que o Passo 5 manda fazer), e SO' DEPOIS esvaziar a
+# chave. A razao e' o matcher: no bloco antigo o `forward_auth` aponta para o servico
+# `authelia` (porta 9091) cobrindo o HOST INTEIRO, sem `@protegido`. Trocar so' o alvo desta diretiva deixa o `@protegido` de
+# pe', entao a raiz e os estaticos continuariam servidos a quem nao entrou — uma
+# configuracao que NAO e' a de antes do corte, e que o `caddy validate` aprova sem
+# reclamar. Nada no banco precisa ser revertido.
 #
 # PRE-REQUISITOS, ou trocar o bloco so' troca um problema por outro:
 #   * migrations 018, 019 e 020 aplicadas (`docs/repasse_migracoes_p19.md`);
@@ -62,8 +70,11 @@ piloto.ultra-expansao.tech {
 
     # A BORDA FICA (D4, aprovado por Vinicius em 25/09/2026). Muda so' o ALVO: do servico
     # `authelia` para o nosso backend. O CAMINHO `/api/verify` e' o MESMO que o Authelia
-    # servia, de proposito — a borda nao aprende rota nova, e o rollback e' reapontar
-    # esta linha.
+    # servia, de proposito — a borda nao aprende rota nova.
+    #
+    # MAS O ROLLBACK NAO E' REAPONTAR ESTA LINHA. Ele e' devolver o bloco inteiro (ver o
+    # cabecalho deste arquivo e o `docs/repasse_corte_p19.md`): o bloco antigo nao tem
+    # `@protegido`, e reapontar so' o alvo o deixaria de pe'.
     #
     # `?rd=` SAI: nao ha' mais host externo de login. Quem leva a pessoa a' tela e' o
     # proprio SPA (`relatarAcessoNegado`, em `web/src/lib/sessao.ts`).
