@@ -621,7 +621,8 @@ porque lá o banco nasce limpo e sem tráfego.**
 ### 1. Ver o que produção realmente tem
 
 ```bash
-docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN   web python -m motor_expansao.db estado
+docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN \
+  web python -m motor_expansao.db estado
 ```
 
 Se aparecer pendente **abaixo de 018** cujo efeito já esteja no banco, use
@@ -644,7 +645,8 @@ Com o `web` parado o problema não existe. Se preferir aplicar com ele de pé, u
 ### 3. Aplicar a 018 **e conceder o privilégio na sequência**
 
 ```bash
-docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN   web python -m motor_expansao.db aplicar
+docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN \
+  web python -m motor_expansao.db aplicar
 ```
 
 **A `sessoes` nasce SEM privilégio para o papel `app`, e isso é silencioso.** O
