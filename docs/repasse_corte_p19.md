@@ -41,19 +41,34 @@ Hoje o **Authelia** confere quem entra, na porta da rua. Depois deste corte, que
 | **Senha do papel `app`** | **com quem repassou** — ela vive DENTRO da `MOTOR_DATABASE_URL` e, se essa variável está vazia (o estado de entrega), o valor não existe em lugar nenhum que você alcance. Foi gerada no provisionamento do banco (`docs/banco_deploy.md`, seção dos três papéis). **Sem ela o Passo 3 para**, e o Passo 3 é o que impede o Passo 5 de apagar o piloto |
 | **Seu login na allowlist do painel de Acessos** | a env `MOTOR_ACESSOS_ADMIN_USUARIOS` do `.env`. Sem o seu login lá, o painel responde **404** para você — e é a única ferramenta de criar gente e destravar conta |
 | **Uma conta sua no Authelia**, com senha | **com quem repassou.** Estar na allowlist acima não basta: **hoje** o Caddy exige sessão do Authelia no host inteiro, então sem conta no `users_database.yml` o navegador nunca chega no painel de Acessos. Peça que o seu login seja a **mesma string** nos dois lugares |
+| **O PERFIL de cada pessoa que você for criar** | **com quem repassou.** O Passo 0.a manda criar pela tela quem falta, e o próprio passo diz *"não tente adivinhar o perfil de ninguém"* — então sem essa lista o 0.a **não fecha**. `login`, nome e e-mail você tira do `users_database.yml` (`displayname` e `email` estão lá, ao lado do login); o perfil é o único dos quatro que não existe na VPS, porque ele nasce com este trabalho |
 | **A senha compartilhada que a equipe digita hoje** | **com quem repassou** — ela **não existe em lugar nenhum do servidor**: o `users_database.yml` guarda só o hash, que não se desfaz. Sem ela o Passo 0.b não fecha, porque ele é uma comparação entre dois valores e o servidor só te dá um |
 | **`sops` instalado e a chave que decifra `secrets/Caddyfile.enc`** | **com quem repassou.** Teste **antes da janela**: `sops -d secrets/Caddyfile.enc \| head -1` tem de imprimir a primeira linha do Caddyfile. Se recusar, pare e peça — sem isso o último passo do corte não fecha, e o backup cifrado fica descrevendo um Caddyfile que não existe mais |
 | Este documento e o `deploy/caddy/piloto-br.Caddyfile.template` | o repositório |
 
-### Os dois merges que precedem tudo
+### Os dois merges que precedem tudo — e eles JÁ ESTÃO na `main`
 
-O trabalho está em **duas branches**, e as duas precisam estar na `main` antes de você subir a
-imagem. A ordem entre elas é indiferente.
+O trabalho vinha em duas branches, e as duas **já foram incorporadas**. Elas foram **apagadas** na
+incorporação, como é o padrão deste repositório — então **não procure pelos nomes**, que não existem
+mais. Procure pelos merges, que são permanentes.
 
-| Branch | O que leva |
-|---|---|
-| `feat/p19-sessao` | o motor, a rota `/api/verify`, a tela de entrar |
-| `feat/p19-chave-no-compose` | a chave `MOTOR_AUTENTICACAO_PROPRIA` no `docker-compose.prod.yml` |
+| O que leva | Pedido | Merge na `main` |
+|---|---|---|
+| o motor, a rota `/api/verify`, a tela de entrar | **#417** | `f38703b` |
+| a chave `MOTOR_AUTENTICACAO_PROPRIA` no `docker-compose.prod.yml` | **#416** | `f5b5e9b` |
+
+**Confira você mesmo** — até 29/09/2026 esta seção mandava procurar as branches pelo nome, o que é
+impossível depois de apagadas:
+
+```bash
+cd /opt/motor-expansao/app && git fetch origin
+git merge-base --is-ancestor f38703b origin/main && echo "o motor esta na main"
+git merge-base --is-ancestor f5b5e9b origin/main && echo "a chave esta na main"
+git show origin/main:docker-compose.prod.yml | grep -n MOTOR_AUTENTICACAO_PROPRIA
+```
+
+O último é o que de fato importa: a variável tem de aparecer dentro do bloco `environment:` do
+serviço `web`. Se qualquer um dos três não fechar, **pare**.
 
 > **Sem a segunda, o corte é impossível de ligar.** O compose não tem `env_file`, então o container
 > só recebe o que o bloco `environment:` lista. Pôr a chave no `.env` sem essa branch não faz
@@ -322,18 +337,25 @@ cobre isso se você se incluir na conciliação.
 ```bash
 cd /opt/motor-expansao/app
 git pull
-cp .env .env.bak-$(date +%F)     # guarda o digest ATUAL; é para onde você volta
+cp -n .env .env.bak-$(date +%F)  # -n = NÃO sobrescreve se já existir (leia o aviso abaixo)
 grep '^WEB_IMAGE=' .env          # anote esta linha
 # edite o .env: WEB_IMAGE=<digest novo>
 docker compose -f docker-compose.prod.yml up -d web
 ```
 
-> **A cópia não é zelo, é o caminho de volta.** A linha seguinte sobrescreve o `WEB_IMAGE`, e o
-> valor antigo deixa de existir no arquivo. Sem a cópia, a instrução de rollback aqui embaixo é
+> **A cópia não é zelo, é o caminho de volta.** A edição do `WEB_IMAGE` que este bloco pede escreve
+> por cima do valor antigo, e ele deixa de existir no arquivo. Sem a cópia, a instrução de rollback aqui embaixo é
 > impossível de executar — e você descobriria isso justamente no momento em que o piloto não abriu.
+>
+> **O `-n` é o que protege contra rodar este passo DUAS vezes no mesmo dia** — o que é exatamente o
+> que se faz depois de um erro. O nome do arquivo tem a data, então a segunda execução escreveria em
+> cima da primeira: a cópia passaria a guardar o digest **novo**, e o rollback devolveria a imagem
+> que você está tentando desfazer. Sem erro nenhum, com um digest de aparência perfeita. Com `-n`, a
+> segunda execução simplesmente não toca no arquivo.
 
-> **Se você já trocou o `WEB_IMAGE` no runbook das migrations** e nenhuma imagem nova foi publicada
-> desde então, este passo é **só conferência**: o `grep` acima tem de mostrar exatamente o digest que
+> **Se você já trocou o `WEB_IMAGE` antes de chegar aqui** — no runbook das migrations, ou no
+> *Movimento 1* do pacote de repasse do banco novo — e nenhuma imagem nova foi publicada desde então,
+> este passo é **só conferência**: o `grep` acima tem de mostrar exatamente o digest que
 > você recebeu. Não existe um segundo build.
 
 **Esperado:** o container reinicia e o piloto continua funcionando **exatamente como antes** — o
@@ -348,11 +370,18 @@ Authelia ainda autenticando. A chave ainda está desligada.
 > **Esperado:** reinicia e continua atrás do Authelia, sem mudança visível.
 
 **Se o piloto não abrir:** volte o `WEB_IMAGE` para o digest anterior e suba de novo. O valor está
-na cópia que você fez no começo deste passo:
+na cópia que você fez no começo deste passo — e **confirme que ela é de verdade a cópia antiga**,
+comparando as duas linhas:
 
 ```bash
-grep '^WEB_IMAGE=' .env.bak-$(date +%F)
+grep '^WEB_IMAGE=' .env.bak-$(date +%F)   # o valor de volta
+grep '^WEB_IMAGE=' .env                   # o que está no ar agora
 ```
+
+**As duas linhas têm de ser DIFERENTES.** Se vierem iguais, a cópia não é mais a antiga — e aí ela
+não serve para voltar. O digest anterior estará em `.env.bak-antes-do-p19`, se o pacote de repasse do
+banco foi seguido; se não estiver em nenhum dos dois, **pare e chame quem repassou** antes de
+inventar um valor.
 
 Nada foi cortado ainda.
 
@@ -399,8 +428,18 @@ docker compose -f docker-compose.prod.yml up -d web
 **Confira, com o papel certo:**
 
 ```bash
-docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL   web python -m motor_expansao.db privilegios
+docker compose -f docker-compose.prod.yml run --rm web \
+  python -m motor_expansao.db privilegios
 ```
+
+> **Este comando não passa `-e MOTOR_DATABASE_URL`, e é de propósito.** O
+> `docker-compose.prod.yml` já injeta a variável no serviço `web` a partir do `.env`
+> (`MOTOR_DATABASE_URL: ${MOTOR_DATABASE_URL:-}`), então o `run --rm` a recebe sozinho — é a mesma
+> forma que o `docs/banco_deploy.md` usa no §8 para esta mesma conferência. Até 29/09/2026 este bloco
+> trazia um `-e MOTOR_DATABASE_URL` **sem valor**, idioma copiado do §5 daquele runbook, onde ele vem
+> **depois de um `export`** e por isso herda algo. Aqui não há `export` nenhum antes, então o `-e` era,
+> na melhor hipótese, redundante — e, se ele chegasse a sobrescrever com vazio, o erro que aparece é
+> exatamente o do próximo parágrafo, cuja explicação manda você conferir o `.env`, que estaria certo.
 
 **Esperado:** `PRIVILEGIOS OK: o papel do piloto nao consegue o que nao deve, e consegue o que
 precisa.` A primeira linha da saída diz `papel conectado:` — tem de ser **`app`**.
@@ -431,11 +470,13 @@ injeta** e passa a exigir o nosso cookie em toda rota `/api/*` que não seja
 
 Então, a partir deste comando:
 
-- quem estava usando o piloto **recebe 401 na próxima ação** e é levado para a nossa tela de
-  entrar (`/entrar.html`);
+- quem estava usando o piloto **recebe 401 na próxima ação**, vê o pop-up **"Sessão encerrada"** e,
+  ao clicar em "Entrar novamente", chega à nossa tela de entrar (`/entrar.html`). O pop-up é a
+  etapa do meio, e é sempre assim — não é um estado de erro;
 - entre este passo e o próximo, quem entrar passa por **DOIS logins**: o do Authelia, na borda,
   e o nosso, na aplicação. É esperado e é temporário;
-- **ver a nossa tela de entrar aqui é o sinal de que funcionou**, não de que quebrou.
+- **ver esse pop-up e, depois dele, a nossa tela de entrar é o sinal de que funcionou**, não de que
+  quebrou.
 
 Por isso o Passo 5 é a continuação natural deste, e não um passo para outro dia.
 
@@ -447,8 +488,15 @@ docker compose -f docker-compose.prod.yml exec web printenv MOTOR_AUTENTICACAO_P
 
 **Esperado:** `1`.
 
-**Se vier vazio ou "não encontrado":** a branch `feat/p19-chave-no-compose` não está na `main`, ou
-o `up -d` não rodou. **Pare** — o passo 5 sem isto derruba o piloto.
+**Se vier vazio ou "não encontrado":** o `up -d` não rodou, ou a chave não está no bloco
+`environment:` do compose — o que o **#416** (merge `f5b5e9b`) levou para a `main`. Você já deu
+`git pull` no Passo 2, então confira no arquivo local:
+
+```bash
+grep -n MOTOR_AUTENTICACAO_PROPRIA docker-compose.prod.yml
+```
+
+**Pare** — o passo 5 sem isto derruba o piloto.
 
 ---
 
@@ -505,7 +553,22 @@ sops secrets/Caddyfile.enc   # cole o Caddyfile novo
 ## Passo 6 — Conferir que funcionou
 
 1. **Abra `https://piloto.ultra-expansao.tech` numa janela anônima.**
-   **Esperado:** a nossa tela de entrar (não a do Authelia).
+   **Esperado:** o piloto **carrega** e, em cima dele, o pop-up bloqueante **"Sessão encerrada"**, com
+   o botão **"Entrar novamente"**. Clique nele — **aí** vem a nossa tela de entrar (não a do Authelia).
+   > **Por que a tela de entrar não vem de cara, e por que isso está CERTO.** Depois do corte o matcher
+   > `@protegido` cobre só `/api/*`, então a raiz e os estáticos passam a ser servidos a quem **não**
+   > entrou — está escrito como consequência declarada em
+   > `deploy/caddy/piloto-br.Caddyfile.template`. O anônimo recebe o `index.html` e o bundle; a SPA
+   > chama `/api/me`, que é o primeiro `/api/*` e volta **401**; e o 401 monta o pop-up
+   > (`lib/api.ts` → `relatarAcessoNegado()` → `components/AvisoSessao.tsx`, que não fecha por Esc nem
+   > por clique fora). **Só o clique** navega para `/entrar.html`.
+   >
+   > **O texto do pop-up vai soar errado nesta janela:** ele diz *"Seu acesso expirou e você foi
+   > desconectado"*, e você nunca entrou. É o texto de sessão vencida, reaproveitado — **não é sintoma
+   > e não se conserta aqui**.
+   >
+   > **O que seria defeito de verdade:** aparecer a tela do **Authelia** (aí o bloco do Caddy não
+   > trocou), ou o piloto abrir **usável, sem pop-up nenhum** (aí a borda não está exigindo sessão).
 2. **Entre com uma conta de teste.**
    **Esperado:** o piloto abre. Se a pessoa nunca trocou a senha, aparece o convite para trocar —
    com um botão "Agora não", porque a troca é **recomendada**, não obrigatória.
@@ -513,10 +576,43 @@ sops secrets/Caddyfile.enc   # cole o Caddyfile novo
    > essa senha vence em **2 horas**, e depois disso ela não entra mais — precisa de outra
    > redefinição. Quem receber temporária tem de trocar dentro do prazo. Diga isso ao
    > repassar a senha.
+   > **E cuidado com VOCÊ MESMO aqui: cinco senhas erradas travam a SUA conta.** A régua do
+   > Passo 1 (`MAX_TENTATIVAS = 5` numa janela **móvel** de 15 min) vale para todo mundo,
+   > inclusive para quem está conduzindo o corte. A tela diz *"Muitas tentativas seguidas.
+   > Por segurança, o acesso ficou bloqueado — aguarde alguns minutos antes de tentar de
+   > novo, ou peça a um administrador para redefinir a sua senha"* — e **a segunda metade
+   > dessa frase não serve para você neste momento**: o administrador é você, e o painel de
+   > Acessos está atrás do login que você acabou de perder. A não ser que outra pessoa da
+   > allowlist já esteja logada numa outra aba, a única saída é **esperar**: a janela
+   > desliza, então o que destrava é a mais antiga das cinco tentativas completar 15 minutos.
+   > Não há relógio fixo para olhar.
+   >
+   > **Isto NÃO é o corte ter falhado, e não é motivo para voltar atrás.** Esperar quinze
+   > minutos é muito mais barato que executar um rollback — que é uma mudança de verdade, na
+   > borda, com o piloto fora do ar no meio.
 3. **Clique em Sair.**
-   **Esperado:** volta para a tela de entrar, e voltar ao piloto **exige entrar de novo**.
+   **Esperado:** volta para a tela de entrar. E voltar ao piloto **exige entrar de novo** — digitando o
+   endereço outra vez você cai no **mesmo estado do item 1**: o piloto carrega e o pop-up "Sessão
+   encerrada" aparece em cima, sem deixar usar nada. É esse pop-up que prova que a sessão foi revogada
+   **no servidor**, e não só apagada no navegador.
 4. **Confira que a AR não se mexeu:** abra `https://piloto-ar.ultra-expansao.tech`.
-   **Esperado:** a tela do **Authelia**, como sempre foi.
+   **Esperado:** um redirecionamento para `auth.ultra-expansao.tech` — e ali a **NOSSA** tela de
+   entrar, **não** a do Authelia.
+   > **Isso não é o corte vazando para a AR, e é anterior a ele.** O bloco da AR
+   > (`deploy/caddy/piloto-ar.Caddyfile.template`) manda o anônimo para
+   > `uri /api/verify?rd=https://auth.ultra-expansao.tech` — a **raiz** daquele host —, e a raiz
+   > daquele host serve a nossa tela **desde 22/09**, antes desta janela. É o mesmo fato que o item 5
+   > registra, logo abaixo; até 29/09/2026 este item afirmava o contrário dele.
+   >
+   > **Quem autentica a AR continua sendo o Authelia:** o `forward_auth authelia:9091` do bloco dela
+   > não é tocado neste corte — o Passo 5 diz, em caixa própria, para **não encostar** nesse bloco.
+   >
+   > **O que confere que a AR não se mexeu, sem adivinhar:** o bloco `piloto-ar.ultra-expansao.tech`
+   > do `Caddyfile` está igual ao que estava (você não o editou no Passo 5), e **uma sessão da AR que
+   > já estava aberta continua abrindo o piloto argentino**. **Não use esta janela para testar
+   > *entrar* na AR:** esse caminho não foi medido, e um resultado ruim aqui não distingue defeito da
+   > AR de pergunta que ninguém fez ainda. Se precisar mesmo entrar na AR, combine antes com quem
+   > repassou.
 5. **Confira os outros dois endereços do domínio**, que o Passo 5 não tocou e que ninguém
    mediu antes da janela:
    ```bash
@@ -528,8 +624,11 @@ sops secrets/Caddyfile.enc   # cole o Caddyfile novo
 
    > **O `auth.` serve a NOSSA tela de entrar, e isso é ESPERADO — não conserte.** Até 29/09/2026
    > este passo avisava que, se isso acontecesse, a pessoa ficaria num beco. Duas coisas mudaram, as
-   > duas medidas: o Caddy serve aquela página na raiz do host de auth **desde 22/09** (não é
-   > hipótese, é a configuração), e desde os PRs #425/#427 a tela **tem saída ali** — no 404 do nosso
+   > duas medidas: o Caddy serve aquela página na raiz do host de auth **desde 22/09** — e vale dizer
+   > **como** se sabe disso, porque o `Caddyfile` real é **gitignored**: foi medido na VPS e chegou
+   > aqui de segunda mão. **Ninguém confere isso a partir do repositório**, então se o que você vê
+   > divergir, é a medição que está velha, não você que errou — pare e chame quem repassou. E desde os
+   > PRs #425/#427 a tela **tem saída ali** — no 404 do nosso
    > `/api/login` ela cai no `POST /api/firstfactor`, que naquele host responde 401, porque é o
    > Authelia que atende. Mexer no bloco de `auth.` para "arrumar" isso **quebra a reserva** que
    > mantém o login funcionando para quem chega sem sessão.
@@ -537,8 +636,9 @@ sops secrets/Caddyfile.enc   # cole o Caddyfile novo
    > O que ainda vale conferir ali: que o `auth.` responde (a AR depende dele) e que o apex
    > **redireciona**. Se algum dos dois vier diferente, pare e chame quem repassou.
 
-**Se a tela de entrar não aparecer e o piloto der erro:** vá direto para *Se precisar voltar
-atrás*, abaixo.
+**Se o item 1 der outra coisa** — a tela do Authelia, ou o piloto abrindo usável sem pop-up, ou erro
+que nenhum item previu —, **ou se o item 2 não conseguir entrar:** vá direto para *Se precisar voltar
+atrás*, abaixo. O pop-up "Sessão encerrada" do item 1 **não** é esse caso: ele é o esperado.
 
 ---
 
@@ -606,7 +706,7 @@ docker compose -f docker-compose.prod.yml exec postgres \
 |---|---|---|
 | **Tirar acesso de alguém** | remover do `users_database.yml` + restart do Authelia | **desativar a linha em `usuarios`** pelo painel de Acessos — a sessão morre na requisição seguinte |
 | **Postgres fora do ar** | o piloto continua servindo (só o banco fica indisponível) | **o piloto inteiro fica fora** — sem banco não há sessão, e o Caddy nega tudo |
-| **Sessão expirada** | o Authelia redireciona | a SPA leva à nossa tela de entrar |
+| **Sessão expirada** | o Authelia redireciona | a SPA abre o pop-up "Sessão encerrada" e, no clique, leva à nossa tela de entrar |
 
 > **O item do meio é o mais importante para quem recebe alerta de madrugada.** O comentário do
 > `healthcheck_vps.sh` ainda diz que o `web` não cai junto com o Postgres — isso deixa de valer

@@ -831,8 +831,17 @@ docker inspect motor_expansao_web \
   --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
 ```
 O commit precisa ser igual ou posterior ao merge de **#243 (2026-08-19)**, que é onde
-`NOMEADAS_PATH`/`REDES_PATH` entraram. Se o label vier vazio, caia para
-`docker inspect motor_expansao_web --format '{{.Image}}'` e compare com o `WEB_IMAGE` do `.env`.
+`NOMEADAS_PATH`/`REDES_PATH` entraram. Se o label vier vazio, caia para **`.Config.Image`** — o
+campo que guarda a referência com que o container foi criado, comparável caractere a caractere com o
+`WEB_IMAGE` do `.env`:
+
+```bash
+docker inspect motor_expansao_web --format '{{.Config.Image}}'
+```
+
+**Não use `{{.Image}}` para isso.** Até 29/09/2026 esta linha mandava usar aquele campo, e ele é o
+**id** da imagem — um sha256 sobre o config, não sobre o manifesto. Ele nunca casa com o `@sha256:`
+do `WEB_IMAGE`, então a conferência reprovava sempre, inclusive com a imagem certa no ar.
 
 **Transportar — `.tmp` + `md5sum` + rename atômico**, para não haver janela de arquivo truncado
 sendo lido por um container de pé (mesmo molde da camada de crescimento):
