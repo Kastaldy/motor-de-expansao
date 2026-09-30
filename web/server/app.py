@@ -4423,10 +4423,30 @@ def _identidade_do_admin(remote_user: str | None) -> Any:
     ficou nulo por acidente e' exatamente o que o D19 existe para impedir — entao aqui a
     ausencia de identidade e' erro, nunca acao de sistema.
     """
-    from motor_expansao.db import BancoIndisponivel, rbac
+    from motor_expansao.db import BancoIndisponivel, BancoNaoConfigurado, rbac
 
     try:
         eu = rbac.identidade(remote_user)
+    except BancoNaoConfigurado as erro:
+        # IRMA de `BancoIndisponivel`, NAO subclasse (`db/postgres.py`) -- e' exatamente por
+        # isso que o ramo de baixo nao a pegava, e a excecao subia crua ate' o handler do
+        # FastAPI. Medido em 29/09/2026: 139 chamadas desta rota, 139 respostas 500, ZERO
+        # sucessos desde 18/09, porque banco vazio e' o estado PADRAO do compose e o §4 do
+        # CLAUDE.md o declara legitimo ("`MOTOR_DATABASE_URL` vazia devolve o piloto ao
+        # comportamento pre-banco").
+        #
+        # A traducao REUSA `_erro_de_usuarios` em vez de repetir a mensagem: ela ja' tem o
+        # ramo de `BancoNaoConfigurado`, escrito para o 500 CRU que aparecia uma chamada
+        # ADIANTE -- e o defeito daqui era justamente o conserto nao ter alcancado a chamada
+        # de cima. Duas redacoes da mesma regra desencontram em silencio (DEC-044).
+        #
+        # `info` e SEM `exc_info`: banco ausente nao e' incidente, e' ESCOLHA declarada (§4),
+        # entao traceback aqui seria ruido a cada requisicao de um deploy que roda assim de
+        # proposito. O que interessa e' a FREQUENCIA -- quanta gente tenta administrar
+        # usuario num deploy sem banco e' exatamente a evidencia que o BLK-SAUDE-10 precisa
+        # para decidir entre provisionar o Postgres e assumir o piloto sem ele.
+        _LOG_FALHA.info("administracao de usuarios pedida em deploy sem banco configurado")
+        raise _erro_de_usuarios(erro) from erro
     except BancoIndisponivel as erro:
         _LOG_FALHA.warning("identidade do admin: banco indisponivel", exc_info=True)
         raise HTTPException(503, f"Banco indisponível: {erro}") from erro
@@ -4450,10 +4470,26 @@ def _minha_identidade(remote_user: str | None) -> Any:
     outro recado -- reaproveitar a mensagem do painel mandaria a pessoa procurar uma allowlist
     em que ela nunca esteve.
     """
-    from motor_expansao.db import BancoIndisponivel, rbac
+    from motor_expansao.db import BancoIndisponivel, BancoNaoConfigurado, rbac
 
     try:
         eu = rbac.identidade(remote_user)
+    except BancoNaoConfigurado as erro:
+        # Mesma irma nao capturada do `_identidade_do_admin`, MENSAGEM diferente -- e a
+        # diferenca e' a razao desta funcao existir separada (ver o docstring). Dizer
+        # "Administracao de usuarios indisponivel" a quem tentou trocar a PROPRIA senha
+        # manda a pessoa procurar um painel que ela pode nem ter permissao de abrir.
+        # Por isso aqui NAO se reusa `_erro_de_usuarios`.
+        #
+        # `info` e sem `exc_info`, pela mesma razao do ramo gemeo acima: estado declarado
+        # nao e' incidente, e o sinal util e' a frequencia -- quanta gente QUER trocar a
+        # propria senha num deploy sem banco pesa na decisao do BLK-SAUDE-10.
+        _LOG_FALHA.info("troca da propria senha pedida em deploy sem banco configurado")
+        raise HTTPException(
+            503,
+            "A troca de senha está indisponível: este deploy está sem banco configurado. "
+            "Avise o time de tecnologia — a sua senha atual continua valendo.",
+        ) from erro
     except BancoIndisponivel as erro:
         _LOG_FALHA.warning("minha identidade: banco indisponivel", exc_info=True)
         raise HTTPException(503, f"Banco indisponível: {erro}") from erro
