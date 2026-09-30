@@ -23,8 +23,8 @@
 # PARA VOLTAR ATRAS, e NAO e' so' reapontar o `forward_auth`: o rollback documentado em
 # `docs/repasse_corte_p19.md` e' devolver o BLOCO INTEIRO, copiado de
 # `Caddyfile.antes-do-p19` (a copia que o Passo 5 manda fazer), e SO' DEPOIS esvaziar a
-# chave. A razao e' o matcher: o bloco antigo tem `forward_auth authelia:9091` cobrindo o
-# HOST INTEIRO, sem `@protegido`. Trocar so' o alvo desta diretiva deixa o `@protegido` de
+# chave. A razao e' o matcher: no bloco antigo o `forward_auth` aponta para o servico
+# `authelia` (porta 9091) cobrindo o HOST INTEIRO, sem `@protegido`. Trocar so' o alvo desta diretiva deixa o `@protegido` de
 # pe', entao a raiz e os estaticos continuariam servidos a quem nao entrou — uma
 # configuracao que NAO e' a de antes do corte, e que o `caddy validate` aprova sem
 # reclamar. Nada no banco precisa ser revertido.
