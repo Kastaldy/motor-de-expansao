@@ -2020,8 +2020,34 @@ export interface AcessosSaude {
   total: number
   erros_4xx: number
   erros_5xx: number
+  /**
+   * A régua HISTÓRICA: `(4xx + 5xx) / total`. Não muda de significado, para o número de
+   * hoje continuar comparável com o de ontem.
+   */
   taxa_erro_pct: number
+  /** Quantos dos 4xx são a resposta CERTA do servidor (`erro_por_desenho`, no backend). */
+  erros_por_desenho: number
+  /**
+   * A taxa SEM o 4xx que é resposta certa. Medido em 29/09/2026 na janela de 30 dias:
+   * 2,3% pela régua histórica contra 1,3% aqui, e a diferença eram 73 eventos do corte do
+   * P19 com a chave desligada. As duas ficam na tela; nenhuma substitui a outra.
+   */
+  taxa_defeito_pct: number
+  /**
+   * 5xx nas rotas que saem da contagem de USO (`ROTAS_FORA_DA_METRICA`) — o próprio painel
+   * e a tela de entrar. Fora das duas taxas de propósito: o denominador delas é uso, e
+   * isto não é uso. Existe porque sem ele o painel não enxergava a própria quebra: em
+   * 29/09/2026, `/api/acessos/usuarios` tinha 139 falhas em 139 chamadas e nenhuma
+   * aparecia em lugar nenhum da tela.
+   */
+  erros_5xx_fora_da_metrica: number
+  rotas_5xx_fora_da_metrica: AcessosRota5xxFora[]
   lentas: AcessosRotaLenta[]
+}
+
+export interface AcessosRota5xxFora {
+  rota: string
+  n: number
 }
 
 export interface AcessosResumo {

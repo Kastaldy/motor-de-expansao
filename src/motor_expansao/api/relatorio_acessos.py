@@ -136,6 +136,59 @@ def _quando_brt(bruto: object) -> datetime | None:
         return None
 
 
+#: Pares `(prefixo de rota, status)` em que o 4xx é a resposta CERTA, e não defeito.
+#:
+#: Existe para a `taxa_defeito_pct` de `_saude`, e a lista é deliberadamente CURTA e
+#: NOMEADA: excluir por prefixo largo esconderia erro de verdade na mesma rota. Cada par
+#: aqui tem de ser inequívoco — o status só pode significar UMA coisa naquela rota.
+#:
+#: Os três são o corte do P19 (DEC-067) com a chave desligada, que é o estado de produção:
+#: o `docstring` da rota `/entrar.html` declara o 404 de `/api/login` como SINAL, e o 405
+#: de `/api/firstfactor` é o nosso backend dizendo que aquela rota é do Authelia. Medidos
+#: em 29/09/2026: 73 dos 132 eventos 4xx da janela de 30 dias, concentrados em dois dias.
+#:
+#: O QUE FICOU DE FORA DESTA LISTA, e é decisão: o 404 de `/api/rede/unidade/{slug}`
+#: ("Unidade X sem dados na competência Y") **continua contando como defeito**, apesar de
+#: ser, na maioria dos casos medidos, a resposta correta. A trilha guarda `rota` e
+#: `status` e NÃO guarda mensagem, então ela não distingue "unidade sem dado no mês
+#: pedido" (certo) de "slug que não existe no cadastro" (defeito real, e o cadastro de
+#: produção é semeadura velha). Entre esconder um defeito real e contar um acerto como
+#: erro, conta-se o acerto — e fica escrito por quê.
+PADROES_POR_DESENHO: tuple[tuple[str, int], ...] = (
+    ("/api/login", 404),
+    ("/api/logout", 404),
+    ("/api/firstfactor", 405),
+)
+
+#: Status que são resposta correta em QUALQUER rota.
+#:
+#: `403` é negação de acesso fail-closed (DEC-037: aba/recurso sensível nega quem não está
+#: na allowlist). Não há rota em que um 403 signifique "o servidor falhou" — é sempre o
+#: portão funcionando. Ao contrário dos pares acima, esta regra é por STATUS e não por
+#: rota, e é por isso que ela pode ser larga sem esconder nada.
+#:
+#: `404` NÃO entra aqui: rota inexistente é 404, e um 404 em massa é exatamente como um
+#: link quebrado ou um cadastro defasado se anuncia.
+STATUS_POR_DESENHO: frozenset[int] = frozenset({403})
+
+
+def evento_de_diagnostico(r: object) -> bool:
+    """Linha que não é gente: não-objeto, ou requisição interna (user-agent `curl`).
+
+    Separada de `evento_do_painel` porque as duas exclusões têm destinos diferentes: o
+    diagnóstico sai de TUDO (é a nossa própria sonda), e o painel sai só da métrica de USO
+    — o 5xx dele volta, por outra porta, em `_saude`.
+    """
+    return not isinstance(r, dict) or "curl" in str(r.get("agente", ""))
+
+
+def evento_do_painel(r: object) -> bool:
+    """Linha de `ROTAS_FORA_DA_METRICA`: auditada na trilha, fora da contagem de uso."""
+    if not isinstance(r, dict):
+        return False
+    return str(r.get("rota", "")).startswith(ROTAS_FORA_DA_METRICA)
+
+
 def evento_valido(r: object) -> bool:
     """Se a linha da trilha conta como USO: objeto JSON, não-diagnóstico, não-painel.
 
@@ -144,9 +197,27 @@ def evento_valido(r: object) -> bool:
     diagnóstico interno (user-agent `curl`) e as rotas do próprio painel
     (`ROTAS_FORA_DA_METRICA` — auditadas na trilha, fora das contagens).
     """
-    if not isinstance(r, dict) or "curl" in str(r.get("agente", "")):
+    return not evento_de_diagnostico(r) and not evento_do_painel(r)
+
+
+def erro_por_desenho(rota: object, status: object) -> bool:
+    """Este 4xx é a resposta CERTA do servidor, e não um defeito?
+
+    Só olha 4xx: 5xx é o servidor dizendo que falhou, e isso nunca é por desenho.
+    """
+    if not isinstance(status, int) or not (400 <= status < 500):
         return False
-    return not str(r.get("rota", "")).startswith(ROTAS_FORA_DA_METRICA)
+    if status in STATUS_POR_DESENHO:
+        return True
+    texto = str(rota)
+    # Casa o caminho EXATO ou um filho dele (`/api/login/algo`), NUNCA um irmão de nome
+    # parecido: `startswith` cru aceitaria `/api/loginhistorico` como se fosse
+    # `/api/login`, e aí um 404 de rota inexistente sairia da conta de defeito sozinho.
+    # Nenhuma rota assim existe hoje; a armadilha é o dia em que existir.
+    return any(
+        status == st and (texto == prefixo or texto.startswith(f"{prefixo}/"))
+        for prefixo, st in PADROES_POR_DESENHO
+    )
 
 
 def agregar_acessos(linhas: Iterable[str], dia_brt: date | None = None) -> dict[str, dict]:
