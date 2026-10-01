@@ -16,9 +16,13 @@
 # Estas tres linhas fecham exatamente isso, e nada mais se move.
 #
 # O FECHO FOI CONFERIDO: `argon2-cffi-bindings` so' precisa de `cffi`, ja' pinado em
-# 2.1.0 aqui; `types-requests` so' precisa de `urllib3`, ja' pinado em 2.7.0. Nenhuma
-# outra transitiva entra. O lock completo de 11/09 esta' guardado para quando o bloco de
-# atualizacao acontecer.
+# 2.1.0 aqui; `types-requests` so' precisa de `urllib3`, ja' pinado aqui (2.8.0 desde
+# 01/10 -- ver a nota na linha dele). Nenhuma outra transitiva entra. O lock completo de
+# 11/09 esta' guardado para quando o bloco de atualizacao acontecer.
+#
+# BUMP MANUAL DE 01/10/2026, pelo mesmo motivo de nao recompilar: `urllib3` 2.7.0 -> 2.8.0
+# por CVE (GHSA-8988-9cw3-xx77). UMA linha se move, e so' ela -- as outras 78 atualizacoes
+# que um recompile traria continuam de fora, com o lock de 11/09 guardado.
 affine==2.4.0
     # via rasterio
 aiohappyeyeballs==2.7.1
@@ -672,12 +676,15 @@ tzlocal==5.4.4
     #   whenever
 uncalled-for==0.3.2
     # via pydocket
-urllib3==2.7.0
+urllib3==2.8.0
+    # (bump manual 01/10) GHSA-8988-9cw3-xx77 -- 1.26.0..2.7.0 afetadas, corrigida na
+    # 2.8.0. Era a UNICA linha que o `pip-audit` reprovava, e ela deixava a `main`
+    # vermelha desde 30/09. Nenhum dos quatro consumidores tem teto abaixo de 3.0:
     # via
-    #   docker
-    #   requests
-    #   selenium
-    #   sentry-sdk
+    #   docker       (urllib3>=1.26.0)
+    #   requests     (urllib3<3,>=1.26)
+    #   selenium     (urllib3[socks]>=2.6.3,<3.0)
+    #   sentry-sdk   (urllib3>=1.26.11)
 uvicorn==0.51.0
     # via
     #   motor-expansao (pyproject.toml)
