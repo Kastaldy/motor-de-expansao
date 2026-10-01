@@ -381,7 +381,7 @@ docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN \
   web python -m motor_expansao.db estado           # o que falta, sem executar nada
 
 docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN \
-  web python -m motor_expansao.db aplicar --simular # o SQL que sairia
+  web python -m motor_expansao.db aplicar --simular # QUAIS versoes seriam aplicadas
 
 docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN \
   web python -m motor_expansao.db aplicar
@@ -391,6 +391,16 @@ unset MOTOR_DATABASE_URL_ADMIN
 
 `-e MOTOR_DATABASE_URL_ADMIN` **sem valor** herda do ambiente: assim a senha não aparece no `argv`
 do `docker`, que é legível por qualquer usuário em `ps`.
+
+> **O `--simular` NÃO imprime SQL** — ele lista as versões (`a aplicar: 000, 001, …`) e encerra com
+> `(--simular: nada foi executado)`. O código retorna antes de ler o arquivo de migration
+> (`db/cli.py`: o `return` do `--simular` vem **antes** do `read_text`). Até 01/10/2026 o comentário
+> acima dizia "o SQL que sairia", e isso enganava num ponto caro: as migrations são o único passo
+> **sem volta** deste runbook, e o operador concluía ter revisado o SQL sem ter visto nenhum. A saída
+> do `--simular` é quase idêntica à do `estado` logo acima, o que reforça a impressão.
+>
+> **Se você quiser mesmo ler o SQL antes de aplicar**, ele está em
+> `src/motor_expansao/db/migracoes/*.sql`, em arquivos numerados na mesma ordem que o `estado` lista.
 
 **Esperado, num banco novo:** o `estado` imprime `migrations no manifesto: 21`,
 `registradas no banco: 0`, uma linha por arquivo, e termina com uma linha `pendentes:` listando de
@@ -427,7 +437,15 @@ toca. Para conferir esse, à mão, depois de rodar a seção 6:
 SELECT defaclrole::regrole, defaclobjtype, defaclacl FROM pg_default_acl;
 ```
 
-**Esperado:** duas linhas, as duas com `reservas_owner` — nunca `postgres`.
+**Esperado:** o `defaclrole` das duas linhas tem de ser **`reservas_owner`**.
+
+> **Olhe o PAPEL, não a contagem — e isto foi medido.** São **duas linhas nos dois cenários**: com o
+> `FOR ROLE reservas_owner` correto, e também com o `FOR ROLE postgres` que esta seção manda trocar.
+> A diferença aparece só na coluna `defaclrole`. Num cluster onde o papel `postgres` **existe** — uma
+> instalação nativa, por exemplo —, colar as duas linhas sem trocar o papel **não dá erro nenhum** e
+> grava o no-op silencioso; e a partir daí o `conferir`, o `privilegios` e a conferência de
+> 12 / 1 / 3 **passam todos verdes** sobre um banco em que toda tabela futura nasce invisível para o
+> `app`. Quem ler "duas linhas: ok" aprova exatamente esse estado.
 
 **Troque as DUAS senhas de exemplo** (`app` e `auditoria`) e rode por `psql` dentro do container.
 **O `etl` não tem senha de exemplo — ele nasce `NOLOGIN`. Não invente uma para ele:** dar-lhe `LOGIN`
