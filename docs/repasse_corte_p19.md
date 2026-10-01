@@ -214,8 +214,16 @@ export MOTOR_DATABASE_URL_ADMIN='postgresql://reservas_owner:<senha-do-dono>@pos
 > ```bash
 > echo "$MOTOR_DATABASE_URL_ADMIN" | cut -d@ -f1
 > ```
-> Tem de imprimir `postgresql://reservas_owner:<a senha>`. Se sair vazio, o `export` não pegou neste
-> terminal — refaça antes de continuar.
+> Tem de imprimir algo que **comece com `postgresql://reservas_owner`**. Se sair **vazio**, o
+> `export` não pegou neste terminal — refaça antes de continuar.
+>
+> **Duas formas são válidas aqui, e o teste aceita as duas:**
+> `postgresql://reservas_owner:<a senha>@…` (senha na URL) e `postgresql://reservas_owner@…` (sem
+> senha, com ela em `PGPASSWORD`). A segunda é a que o `scripts/cron/run_expurgo_sessoes.sh` monta,
+> **de propósito e documentado lá**, para a senha não precisar de percent-encoding. Até 01/10/2026
+> esta linha exigia ver `:<a senha>`, e quem tivesse copiado a forma do cron concluiria que o
+> `export` falhou quando estava correto. **O que importa é o PAPEL ser `reservas_owner`**, não a
+> senha aparecer.
 >
 > **Se vier `ERRO: defina MOTOR_DATABASE_URL_ADMIN (ou MOTOR_DATABASE_URL) com a credencial do DONO
 > do schema`:** nem a variável nem o fallback existem. Exporte e repita — nada foi escrito.
