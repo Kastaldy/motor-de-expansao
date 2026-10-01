@@ -60,6 +60,7 @@ mais. Procure pelos merges, que são permanentes.
 **Confira você mesmo** — até 29/09/2026 esta seção mandava procurar as branches pelo nome, o que é
 impossível depois de apagadas:
 
+**No terminal da VPS:**
 ```bash
 cd /opt/motor-expansao/app && git fetch origin
 git merge-base --is-ancestor f38703b origin/main && echo "o motor esta na main"
@@ -101,6 +102,7 @@ ter linha nenhuma no banco. Depois do corte, sem linha em `usuarios` **não há 
 
 Liste os dois lados e compare:
 
+**No terminal da VPS:**
 ```bash
 cd /opt/motor-expansao/app
 
@@ -159,6 +161,7 @@ inválido que o passo 0.c existe para pegar.
 Hoje quase todo mundo usa **uma senha compartilhada** no Authelia. O motor também tem a sua, na
 variável `MOTOR_SENHA_INICIAL`. Se as duas forem a mesma string, ninguém percebe o corte.
 
+**No terminal da VPS:**
 ```bash
 cd /opt/motor-expansao/app
 grep '^MOTOR_SENHA_INICIAL=' .env
@@ -189,6 +192,7 @@ Compare com a senha que a equipe usa hoje para entrar.
 Antes dos dois comandos abaixo, **exporte a credencial do DONO do schema** — e isto não é
 formalidade:
 
+**No terminal da VPS:**
 ```bash
 export MOTOR_DATABASE_URL_ADMIN='postgresql://reservas_owner:<senha-do-dono>@postgres:5432/banco_de_reservas'
 ```
@@ -205,6 +209,8 @@ export MOTOR_DATABASE_URL_ADMIN='postgresql://reservas_owner:<senha-do-dono>@pos
 >
 > **A saída do comando NÃO nomeia o papel conectado** — não há como descobrir pela tela com qual
 > credencial ele escreveu. Por isso a conferência é **antes** de rodar, sobre a variável:
+>
+> **No terminal da VPS:**
 > ```bash
 > echo "$MOTOR_DATABASE_URL_ADMIN" | cut -d@ -f1
 > ```
@@ -217,6 +223,7 @@ export MOTOR_DATABASE_URL_ADMIN='postgresql://reservas_owner:<senha-do-dono>@pos
 > Ao terminar o 0.c, `unset MOTOR_DATABASE_URL_ADMIN`. Ela é a credencial que aplica DDL; deixá-la
 > no ambiente de uma sessão que continua aberta é o que este repositório evita de propósito.
 
+**No terminal da VPS:**
 ```bash
 docker compose -f docker-compose.prod.yml run --rm \
   -e MOTOR_DATABASE_URL_ADMIN -e MOTOR_SENHA_INICIAL \
@@ -293,6 +300,7 @@ aparece para todo mundo:
 
 Confira antes da janela:
 
+**No terminal da VPS:**
 ```bash
 cd /opt/motor-expansao/app && grep '^MOTOR_ACESSOS_ADMIN_USUARIOS=' .env
 ```
@@ -334,6 +342,7 @@ cobre isso se você se incluir na conciliação.
 
 ## Passo 2 — Subir a imagem nova
 
+**No terminal da VPS:**
 ```bash
 cd /opt/motor-expansao/app
 git pull
@@ -364,6 +373,8 @@ Authelia ainda autenticando. A chave ainda está desligada.
 > **A instância ARGENTINA usa o MESMO `WEB_IMAGE`.** Você acabou de editar o `.env`, que é
 > compartilhado: a AR ficou com o arquivo dizendo um digest e o processo rodando outro, e
 > saltaria de imagem no próximo `up -d` que alguém desse nela. Suba-a também, agora — **uma vez só**:
+>
+> **No terminal da VPS:**
 > ```bash
 > docker compose -f docker-compose.ar.yml up -d web_ar
 > ```
@@ -373,6 +384,7 @@ Authelia ainda autenticando. A chave ainda está desligada.
 na cópia que você fez no começo deste passo — e **confirme que ela é de verdade a cópia antiga**,
 comparando as duas linhas:
 
+**No terminal da VPS:**
 ```bash
 grep '^WEB_IMAGE=' .env.bak-$(date +%F)   # o valor de volta
 grep '^WEB_IMAGE=' .env                   # o que está no ar agora
@@ -394,6 +406,7 @@ a chave liga: sem banco, `validar()` falha e toda rota `/api/*` responde 503. A 
 precisa de credencial de banco para autenticar alguém — e ele **não avisa** que ela falta: a chave
 do Passo 4 não consulta o banco, só a própria variável.
 
+**No terminal da VPS:**
 ```bash
 cd /opt/motor-expansao/app
 grep '^MOTOR_DATABASE_URL=' .env
@@ -410,6 +423,7 @@ MOTOR_DATABASE_URL=postgresql://app:<senha-do-papel-app>@postgres:5432/banco_de_
 > corta a string no lugar errado e o erro sai como "host não encontrado", que manda você procurar
 > rede quando o problema é a senha. Na dúvida, peça uma senha sem esses caracteres.
 
+**No terminal da VPS:**
 ```bash
 docker compose -f docker-compose.prod.yml up -d web
 ```
@@ -427,6 +441,7 @@ docker compose -f docker-compose.prod.yml up -d web
 
 **Confira, com o papel certo:**
 
+**No terminal da VPS:**
 ```bash
 docker compose -f docker-compose.prod.yml run --rm web \
   python -m motor_expansao.db privilegios
@@ -453,6 +468,7 @@ do `app`. Troque — usar a do dono anula o isolamento de privilégios inteiro.
 
 ## Passo 4 — Ligar a chave
 
+**No terminal da VPS:**
 ```bash
 # no .env:  MOTOR_AUTENTICACAO_PROPRIA=1
 docker compose -f docker-compose.prod.yml up -d web
@@ -482,6 +498,7 @@ Por isso o Passo 5 é a continuação natural deste, e não um passo para outro 
 
 **Confira que a chave chegou:**
 
+**No terminal da VPS:**
 ```bash
 docker compose -f docker-compose.prod.yml exec web printenv MOTOR_AUTENTICACAO_PROPRIA
 ```
@@ -492,6 +509,7 @@ docker compose -f docker-compose.prod.yml exec web printenv MOTOR_AUTENTICACAO_P
 `environment:` do compose — o que o **#416** (merge `f5b5e9b`) levou para a `main`. Você já deu
 `git pull` no Passo 2, então confira no arquivo local:
 
+**No terminal da VPS:**
 ```bash
 grep -n MOTOR_AUTENTICACAO_PROPRIA docker-compose.prod.yml
 ```
@@ -508,6 +526,7 @@ piloto fora do ar no meio. O que a equipe SENTE começou no passo anterior, com 
 **Copie o bloco atual antes de tocar nele** — o `Caddyfile` é gitignored, então o que está lá
 não existe em nenhum outro lugar, e é dele que você vai precisar se tiver de voltar atrás:
 
+**No terminal da VPS:**
 ```bash
 cd /opt/motor-expansao/app
 cp Caddyfile Caddyfile.antes-do-p19
@@ -518,6 +537,7 @@ cp Caddyfile Caddyfile.antes-do-p19
 (`encode`), headers, `tls` explícito, outro caminho de log, uma rota extra. O template nasceu depois
 do bloco que está no ar e não pode saber o que foi acrescentado à mão lá:
 
+**No terminal da VPS:**
 ```bash
 grep -n -A40 'piloto.ultra-expansao.tech {' Caddyfile.antes-do-p19
 ```
@@ -535,6 +555,7 @@ elas são explicação, não configuração, e não vão para o servidor.
 > **NÃO TOQUE no bloco `piloto-ar.ultra-expansao.tech`.** Ele continua apontando para
 > `authelia:9091`, e isso é decisão — a AR não tem banco e cairia inteira.
 
+**No terminal da VPS:**
 ```bash
 docker compose -f docker-compose.prod.yml exec caddy caddy validate --config /etc/caddy/Caddyfile
 docker compose -f docker-compose.prod.yml exec caddy caddy reload --config /etc/caddy/Caddyfile
@@ -544,6 +565,7 @@ docker compose -f docker-compose.prod.yml exec caddy caddy reload --config /etc/
 
 **Atualize o backup cifrado**, senão um restore desfaz o corte em silêncio:
 
+**No terminal da VPS:**
 ```bash
 sops secrets/Caddyfile.enc   # cole o Caddyfile novo
 ```
@@ -688,6 +710,7 @@ esse cadastro paralelo que torna o rollback sobrevivível.
 
 **Para saber quem seria afetado**, o banco responde:
 
+**No terminal da VPS:**
 ```bash
 docker compose -f docker-compose.prod.yml exec postgres \
   psql -U reservas_owner -d banco_de_reservas -c \
@@ -718,6 +741,7 @@ docker compose -f docker-compose.prod.yml exec postgres \
 
 Ele apaga IP e user-agent das sessões com mais de 90 dias — prazo decidido, não higiene opcional.
 
+**No terminal da VPS:**
 ```bash
 cp /opt/motor-expansao/app/scripts/cron/run_expurgo_sessoes.sh /opt/motor-expansao-infra/
 chmod +x /opt/motor-expansao-infra/run_expurgo_sessoes.sh
