@@ -827,14 +827,48 @@ docker exec motor_expansao_postgres psql -U reservas_owner -d banco_de_reservas_
   -c "select count(*) from perfil_permissoes_historico;"
 ```
 
-Uma tabela só, sem tocar nas outras:
+Uma tabela só, sem tocar nas outras — **são dois comandos, e a sequence é o segundo `-t`**:
 
 **No terminal da VPS:**
 ```bash
+# 1. esvaziar a tabela ANTES. `--data-only` nao substitui linha: ele INSERE, e
+#    colide na chave primaria se a tabela tiver qualquer linha. Como DONO -- o
+#    `app` tem so SELECT e INSERT em `eventos`, nao TRUNCATE.
+docker exec motor_expansao_postgres \
+  psql -U reservas_owner -d banco_de_reservas_restore \
+  -c "TRUNCATE eventos RESTART IDENTITY;"
+
+# 2. a tabela E A SEQUENCE dela. Sem o segundo `-t`, as linhas voltam e o
+#    contador NAO -- e o proximo INSERT da aplicacao morre em chave duplicada.
 docker exec -i motor_expansao_postgres \
-  pg_restore -U reservas_owner -d banco_de_reservas -t eventos --data-only \
+  pg_restore -U reservas_owner -d banco_de_reservas_restore \
+  -t eventos -t eventos_id_evento_seq --data-only \
   < banco_de_reservas_<carimbo>.dump
 ```
+
+> **Os dois modos de este bloco falhar, medidos em 02/10/2026 num Postgres 18.4.** Até esta data ele
+> era um comando só, sem o `TRUNCATE` e sem a sequence.
+>
+> **Sem esvaziar antes:** `pg_restore` morre em
+> `duplicar valor da chave viola a restrição de unicidade "eventos_pkey"`, imprime
+> `errors ignored on restore: 1`, **não restaura nada** e sai com **código 1**. O erro é visível, e
+> esse é o modo barato.
+>
+> **Esvaziando antes, mas sem a sequence:** aí é o caro. `pg_restore -t eventos` **não aplica** a
+> entrada `SEQUENCE SET` que o dump carrega — o dump tem as oito (`pg_restore --list` mostra
+> `6266; SEQUENCE SET public eventos_id_evento_seq`), e restringir por `-t eventos` deixa essa entrada
+> de fora. Medido: tabela com `id_evento = 1`, sequence em `last_value=1 is_called=false`, e o
+> `INSERT` seguinte estoura em `eventos_pkey`. **O restore parece ter dado certo** — as linhas estão
+> lá — e quebra depois, na aplicação, em cada evento novo até alguém rodar `setval` à mão. Com o
+> segundo `-t`, a sequence volta como `is_called=true` e o próximo `INSERT` recebe o `id 2`.
+>
+> Isto importa além do zelo: o restore granular é o que o **BLK-SEC-04** aceitou como mitigação do
+> gap, e é por causa dele que o dump é `-Fc` em vez de SQL puro.
+
+> **O `-d` aqui é `banco_de_reservas_restore`, não a base de produção** — e de propósito, porque o
+> passo 1 é um `TRUNCATE`. Se o alvo for mesmo produção, saiba que o `TRUNCATE` joga fora o que
+> estiver lá agora: confira o que você tem antes, e não rode isso numa base viva sem o dump do
+> momento na mão.
 
 **O restore em base limpa faz parte do aceite do BLK-SEC-04**, não é opcional. Backup que ninguém
 restaurou é backup que ninguém tem.
