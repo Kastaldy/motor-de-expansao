@@ -33,7 +33,7 @@ restore — roda inteiro no PostgreSQL nativo desta máquina, sem Docker.
 
 | Cobre | Como |
 |---|---|
-| Migrations `000→016` num banco vazio | runner nativo, sem container |
+| Migrations `000→016` num banco vazio — **é a faixa do ensaio de maio; hoje são 21, `000→020`, e é o que você vai ver (§5)** | runner nativo, sem container |
 | O script do D20 (papéis, `GRANT`, `ENABLE ALWAYS TRIGGER`) | `psql` local |
 | A ordem do §0 — ligar a URL com `usuarios` vazia trancar todo mundo | backend local + `MOTOR_DEV_USUARIO` |
 | RBAC por perfil: abas que aparecem e somem | mesma coisa |
@@ -479,9 +479,18 @@ Três pontos do script que não são "boa prática de segurança" genérica:
 Rode os blocos de **validação** e **teste** do próprio documento em seguida. O teste de append-only
 tem de ser rodado **depois** do `ALTER TABLE`, ou você lê como sucesso um teste que não rodou.
 
-> **O bloco de append-only "com autor" vai abortar aqui, e é esperado:** ele exige um usuário ativo, e
-> este passo roda **antes** do §7. Rode agora só os seis testes negativos por catálogo, e deixe aquele
-> para depois de criar a primeira pessoa.
+> **O bloco de append-only "com autor" não prova nada aqui — deixe-o para depois do §7.** Ele exige um
+> usuário ativo, e este passo roda **antes** do §7. Rodado agora, ele **avisa** (uma mensagem de erro
+> vermelha, do `DO` de guarda) e grava **zero** linhas: `INSERT 0 0`, `DELETE 0`, histórico intacto.
+> Rode agora só os seis testes negativos por catálogo, e **volte a este bloco depois de criar a
+> primeira pessoa** (§7) — é lá que ele prova o que existe para provar.
+>
+> *Até 02/10/2026 esta caixa dizia que o bloco "vai abortar aqui". **Ele não abortava.** A guarda era um
+> `DO $$ ... RAISE EXCEPTION ... $$` — um comando —, e o auto-commit que o script exige faz de cada
+> comando sua própria transação: a mensagem saía e os três comandos seguintes rodavam, deixando duas
+> linhas permanentes de histórico com `registrado_por` **NULO**, numa tabela append-only. Medido num
+> Postgres 18 com `usuarios` vazia. A trava passou para o `WHERE` do próprio `INSERT`, que é o comando
+> que escreve.*
 
 ## 7. Semear os usuários reais
 
@@ -760,7 +769,9 @@ permanece e continua respondendo "entrou em tal dia, revogada em tal outro". Apa
 o desenho da [018](https://github.com/Kastaldy/banco-de-reservas), em que revogar é `UPDATE` e
 nunca `DELETE` — o papel `app` nem tem `DELETE`.
 
-Antes de instalar, rode uma vez em modo seco (é o smoke documentado no cabeçalho):
+Antes de **agendar no `crontab`** — e já com o arquivo copiado para `/opt/...`, que são os passos 1 a 3
+da instalação no cabeçalho —, rode uma vez em modo seco. É o smoke documentado lá, e é o **passo 4 de
+5**: o caminho abaixo só existe depois do `cp`.
 
 **No terminal da VPS:**
 ```bash
