@@ -471,8 +471,12 @@ Três pontos do script que não são "boa prática de segurança" genérica:
   duas ocorrências. O compose cria o banco com `POSTGRES_USER: ${POSTGRES_OWNER_USER}`, então um papel
   chamado `postgres` **nunca é criado**: a colagem morre ali com `role "postgres" does not exist`. E se
   ele existisse, as duas linhas seriam um no-op silencioso e toda tabela criada depois nasceria
-  invisível para o `app`. Há outras duas ocorrências no "Desfazer", que você não vai rodar — um `sed`
-  global acharia quatro.
+  invisível para o `app`. Há outras duas ocorrências no "Desfazer", que você não vai rodar — e **uma
+  quinta, em PROSA**, na caixa "Duas pegadinhas" logo abaixo do bloco. Um `sed -i` global acha **cinco**
+  e reescreve a explicação junto, invertendo o que ela diz. Troque as duas linhas da seção 6 à mão, ou
+  ancore o padrão no início da linha (`^ALTER DEFAULT PRIVILEGES FOR ROLE postgres`), que casa só os
+  quatro comandos. *Até 02/10/2026 esta linha dizia "um `sed` global acharia quatro" — são cinco, e a
+  quinta é texto.*
 - **O bloco de prova da seção 7** (o do `session_replication_role`) é opcional e **escreve em tabela de
   negócio**, deixando duas linhas permanentes no histórico. O próprio script oferece a saída de pulá-lo.
 
