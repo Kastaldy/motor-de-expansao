@@ -353,6 +353,38 @@ def cmd_conferir(_args: argparse.Namespace) -> int:
         print(f"  usuario conectado: {prov['usuario']}")
         print(f"  pode escrever direto no historico: {prov['pode_escrever_no_historico']}")
         print(f"  trigger de auditoria: {prov['trigger_auditoria']} (esperado 'A' apos o D20)")
+
+        # O estado da trigger ENTRA na conta dos problemas; o `pode_escrever_no_historico`
+        # NAO. Os dois sao sinais do D20, mas de naturezas diferentes, e confundi-los era o
+        # defeito: ate' 02/10/2026 este comando IMPRIMIA os dois e nao contava nenhum, e
+        # entao `CONFERENCIA OK` com codigo 0 saia igual num banco com a auditoria de pe e
+        # num banco sem ela. Quem le a ultima linha -- que e' o que se faz -- aprovava os dois.
+        #
+        # Por que a assimetria e' correta:
+        #   `pode_escrever_no_historico` depende de QUEM CONECTA (`has_table_privilege` do
+        #   papel atual). Num ensaio local conecta-se como dono, e dono escreve mesmo: ali
+        #   `True` e' esperado e nao e' defeito. E' o que o AVISO abaixo explica.
+        #
+        #   `trigger_auditoria` depende do BANCO, nao de quem conecta. 'A' (ENABLE ALWAYS) e'
+        #   o unico pedaco de DDL do D20, e e' o que resiste a `session_replication_role =
+        #   replica` -- que deixou de exigir superusuario no PG15, ou seja, esta' ao alcance
+        #   de um papel comum. Nao existe cenario em que 'O' seja aceitavel: em TODO ponto em
+        #   que o runbook manda rodar este comando (o §8 da VPS e o ensaio do §1), a secao 7
+        #   do script de papeis ja' rodou. Logo, reprovar aqui nao reprova ensaio legitimo.
+        _trigger = prov["trigger_auditoria"]
+        if _trigger is None:
+            problemas.append(
+                "trigger de auditoria AUSENTE: ou a migration 009 nao esta aplicada, ou "
+                "`pg_trigger` nao foi legivel -- sem ela o historico de permissoes nao existe"
+            )
+        elif _trigger != "A":
+            problemas.append(
+                f"trigger de auditoria em '{_trigger}', nao 'A': o `ENABLE ALWAYS` do D20 nao "
+                "foi aplicado. Rode a secao 7 do `papeis-e-privilegios.md`. Em 'O' a trigger e' "
+                "PULADA por uma sessao em `session_replication_role = replica`, que no PG15+ nao "
+                "exige superusuario -- o historico de permissoes fica contornavel em silencio"
+            )
+
         if prov["pode_escrever_no_historico"]:
             print(
                 "  AVISO: este papel tem INSERT direto em perfil_permissoes_historico. Num\n"
