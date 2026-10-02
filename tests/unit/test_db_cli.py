@@ -580,6 +580,82 @@ def test_conferir_devolve_um_quando_um_numero_diverge(
     assert "DIVERGE" in capsys.readouterr().out
 
 
+def test_conferir_REPROVA_quando_a_trigger_do_D20_nao_esta_endurecida(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`tgenabled = 'O'` e' um banco em que o historico de permissoes e' contornavel.
+
+    Ate' 02/10/2026 este comando IMPRIMIA o estado da trigger e nao o contava: `CONFERENCIA
+    OK` com codigo 0 saia igual com 'O' e com 'A'. Medido na fonte e reproduzido num Postgres
+    18 real por um agente sem contexto seguindo o runbook.
+
+    E 'O' nao tem desculpa de ambiente, ao contrario do `pode_escrever_no_historico`: aquele
+    depende de QUEM CONECTA (dono escreve mesmo, e num ensaio local isso e' esperado); este
+    depende do BANCO. Em todo ponto em que o runbook roda `conferir`, a secao 7 do script de
+    papeis ja' rodou -- entao reprovar aqui nao reprova ensaio legitimo.
+    """
+    monkeypatch.setattr(
+        postgres,
+        "_provisionamento",
+        lambda _con: {
+            "usuario": "app",
+            "pode_escrever_no_historico": False,
+            "trigger_auditoria": "O",
+        },
+    )
+    codigo = _rodar(monkeypatch, _con_conferencia(), cli.cmd_conferir, argparse.Namespace())
+    saida = capsys.readouterr().out
+
+    assert codigo == 1, "trigger em 'O' tem de REPROVAR, nao sair com 0"
+    assert "ENABLE ALWAYS" in saida, "a mensagem tem de dizer O QUE fazer"
+    assert "secao 7" in saida, "...e ONDE: a secao 7 do script de papeis"
+    assert "session_replication_role" in saida, "...e POR QUE: e' por ali que a trigger e' pulada"
+
+
+def test_conferir_REPROVA_quando_a_trigger_do_D20_esta_ausente(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Trigger ilegivel ou inexistente nao e' silencio: a 009 nao esta' de pe."""
+    monkeypatch.setattr(
+        postgres,
+        "_provisionamento",
+        lambda _con: {
+            "usuario": "app",
+            "pode_escrever_no_historico": False,
+            "trigger_auditoria": None,
+        },
+    )
+    codigo = _rodar(monkeypatch, _con_conferencia(), cli.cmd_conferir, argparse.Namespace())
+
+    assert codigo == 1
+    assert "AUSENTE" in capsys.readouterr().out
+
+
+def test_conferir_NAO_reprova_o_dono_escrevendo_no_historico(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A assimetria, travada: `pode_escrever_no_historico` NAO entra nos problemas.
+
+    Num ensaio local conecta-se como DONO, e dono tem `INSERT` direto no historico. Isso e'
+    propriedade de quem conecta, nao do banco, e reprovar ali reprovaria ensaio legitimo --
+    que era a objecao obvia ao conserto da trigger. O comando avisa e segue.
+    """
+    monkeypatch.setattr(
+        postgres,
+        "_provisionamento",
+        lambda _con: {
+            "usuario": "reservas_owner",
+            "pode_escrever_no_historico": True,
+            "trigger_auditoria": "A",
+        },
+    )
+    codigo = _rodar(monkeypatch, _con_conferencia(), cli.cmd_conferir, argparse.Namespace())
+    saida = capsys.readouterr().out
+
+    assert codigo == 0, "dono escrevendo no historico e' esperado em ensaio: AVISO, nao problema"
+    assert "AVISO" in saida
+
+
 def test_conferir_nao_escreve_nada(monkeypatch: pytest.MonkeyPatch) -> None:
     """Le CATALOGO, nunca dado -- e nunca escreve."""
     _sem_provisionamento(monkeypatch)
