@@ -314,7 +314,9 @@ MOTOR_DATABASE_URL=
 > valor, mas os dois scripts de cron deste projeto (`run_expurgo_sessoes.sh` e `run_backup_banco.sh`)
 > leem o `.env` com `grep … | head -1` — o **primeiro**. Com a legada no topo, os dois passam a
 > apontar para um banco que não existe e falham em silêncio, todas as noites. Nada no
-> `docker-compose.prod.yml` consome o bloco legado. Confirme com `grep -c '^POSTGRES_DB=' .env`, que
+> `docker-compose.prod.yml` consome o bloco legado. Confirme com `grep -n '^POSTGRES_DB=' .env` — com **`-n`**, não `-c`: o `-c` conta linhas e nunca olha
+o valor, então um `.env` em que sobrou **só a linha legada** também devolve `1`, e é o estado em que os
+dois crons leem `motor_expansao` toda noite, em silêncio. Com o `-n` você vê o valor. O que
 > tem de dar **1**.
 
 > **A senha do dono é gravada DENTRO do cluster no primeiro boot, e trocá-la aqui depois não a muda.**
@@ -874,8 +876,36 @@ docker exec -i motor_expansao_postgres \
 > estiver lá agora: confira o que você tem antes, e não rode isso numa base viva sem o dump do
 > momento na mão.
 
+**Recolar a seção 2 do script de papéis na base restaurada, SEMPRE.** O `REVOKE TEMPORARY ON DATABASE`
+dela é privilégio **de banco**: vive em `pg_database.datacl`, no catálogo do cluster, e **não** dentro do
+banco. Um `pg_dump` de um banco só não o carrega — isso é do `pg_dumpall --globals-only`. Então
+`createdb` + `pg_restore` devolve um banco com os privilégios **padrão**, em que `PUBLIC` cria tabela
+temporária. Medido em 02/10/2026: origem com `has_database_privilege('public', …, 'TEMPORARY')` = `f`,
+base restaurada = `t`.
+
+Isso reabre o caminho da forja que o **D21** fechou — tabela temporária própria mais a função
+`SECURITY DEFINER` da 009 gravam linha de auditoria com o privilégio do dono. E o `conferir` **não olha**
+privilégio de banco: ele passa verde na base restaurada.
+
+**No terminal da VPS:**
+```bash
+docker exec -i motor_expansao_postgres   psql -U reservas_owner -d banco_de_reservas_restore <<'SQL'
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT  USAGE  ON SCHEMA public TO app, auditoria, etl;
+DO $$ BEGIN
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database());
+END $$;
+SELECT has_database_privilege('public', current_database(), 'TEMPORARY') AS publico_cria_temp;
+SQL
+```
+
+`publico_cria_temp` tem de vir **`f`**. Depois rode `python -m motor_expansao.db privilegios` contra a
+base restaurada **com a credencial do `app`**: é o único comando do motor que pega isso, e sem a
+recolagem ele reprova em `criar tabela temporaria`.
+
 **O restore em base limpa faz parte do aceite do BLK-SEC-04**, não é opcional. Backup que ninguém
-restaurou é backup que ninguém tem.
+restaurou é backup que ninguém tem — e, desde 02/10/2026, backup restaurado sem a seção 2 recolada é
+backup que volta com a auditoria forjável.
 
 ## 11. Estado do disco
 
