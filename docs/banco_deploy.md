@@ -638,10 +638,19 @@ fallback é mudo; o resultado não é.
 
 **No terminal da VPS:**
 ```bash
-# 1. o motor concorda com o banco? (tabelas, colunas, indices, versao)
-#    NAO confere papel: rodado num banco sem `app`/`auditoria`/`etl` ele diz
-#    CONFERENCIA OK e sai 0 -- medido em 05/10/2026. Quem confirma os papeis e'
-#    o `\du` e a conferencia de 12/1/3, no passo 5.
+# 1. o motor concorda com o banco? (extensoes, SEIS contagens de catalogo,
+#    8 funcoes endurecidas, migrations registradas)
+#    O QUE ELE NAO CONFERE, medido na fonte em 05/10/2026:
+#      - PAPEL: nenhuma verificacao de existencia. Num banco sem `app`/`auditoria`/
+#        `etl` ele diz CONFERENCIA OK e sai 0. Quem confirma e' o `\du` e a
+#        conferencia de 12/1/3, no passo 5.
+#      - COLUNA comum: as contagens sao tabelas, indices, CHECK, FK, triggers e
+#        colunas GEOMETRICAS. Coluna comum nao e' contada em lugar nenhum.
+#      - VERSAO do servidor ou do PostGIS: ele confere a PRESENCA das extensoes
+#        (`postgis`, `citext`), nao a versao. Um PostGIS 3.5 passaria aqui; quem
+#        pega e' o `select postgis_full_version()` do §4, a mao.
+#      - trigger do D20 e privilegio de BANCO: impressos, nunca no veredito. Quem
+#        pega e' o `privilegios`, a verificacao 2 -- nao pule.
 docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN \
   web python -m motor_expansao.db conferir
 
@@ -886,6 +895,16 @@ docker exec -i motor_expansao_postgres \
 > passo 1 é um `TRUNCATE`. Se o alvo for mesmo produção, saiba que o `TRUNCATE` joga fora o que
 > estiver lá agora: confira o que você tem antes, e não rode isso numa base viva sem o dump do
 > momento na mão.
+
+**E o dump NÃO carrega os papéis.** Medido em 05/10/2026 num dump `-Fc` deste runbook: **26 linhas**
+`GRANT … TO app/auditoria/etl` e **zero** `CREATE ROLE`. Definição e senha de papel são **globais do
+cluster** — vivem fora do banco, como o `TEMPORARY` abaixo, e só o `pg_dumpall --globals-only` as leva.
+
+No cenário em que este backup existe para servir — **o cluster se perdeu** — o `pg_restore` falha nas 26
+concessões, porque os três papéis não existem. E a senha do `app` não está escrita em lugar nenhum além
+da `MOTOR_DATABASE_URL` do `.env`: **guarde-a num cofre também**, ou recriá-la à mão é o primeiro passo
+do restore de desastre. Restaurar num cluster que ainda tem os papéis — o caso do ensaio acima — não
+sofre disso.
 
 **Recolar a seção 2 do script de papéis na base restaurada, SEMPRE.** O `REVOKE TEMPORARY ON DATABASE`
 dela é privilégio **de banco**: vive em `pg_database.datacl`, no catálogo do cluster, e **não** dentro do
