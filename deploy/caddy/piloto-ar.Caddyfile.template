@@ -1,5 +1,15 @@
 # Bloco do Caddy para a instancia ARGENTINA do piloto (Bloco E / BLK-INTL-08).
 #
+# ============================================================================
+# NAO TOQUE NESTE ARQUIVO NO CORTE DO P19. Ele NAO muda: a Argentina continua
+# autenticando pelo Authelia, e trocar isto aqui derruba o acesso dela. O porque
+# esta' no bloco cercado de tracos, umas 20 linhas abaixo -- leia antes de mexer.
+# O procedimento numerado logo abaixo e' da APLICACAO ORIGINAL deste bloco, feita
+# em 2026-09-03; nao e' passo do corte. Marcado aqui em 05/10/2026, porque o aviso
+# so' existia nos arquivos vizinhos e quem abrisse este direto encontrava apenas
+# instrucoes acionaveis.
+# ============================================================================
+#
 # TEMPLATE versionado: o Caddyfile REAL e' gitignored (backup cifrado em
 # secrets/Caddyfile.enc) e vive na VPS em /opt/motor-expansao/app/Caddyfile.
 # Aplicacao (cada comando na VPS com aprovacao do Felipe, comando a comando —

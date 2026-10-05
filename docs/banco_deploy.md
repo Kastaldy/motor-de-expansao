@@ -313,7 +313,12 @@ MOTOR_DATABASE_URL=
 > `.env.example`. Não basta escrever o bloco do banco depois dela: para o compose vale o **último**
 > valor, mas os dois scripts de cron deste projeto (`run_expurgo_sessoes.sh` e `run_backup_banco.sh`)
 > leem o `.env` com `grep … | head -1` — o **primeiro**. Com a legada no topo, os dois passam a
-> apontar para um banco que não existe e falham em silêncio, todas as noites. Nada no
+> apontar para um banco que não existe. **Eles falham ALTO** — e isto foi medido: variável ausente cai na
+guarda dos dois scripts, que imprime `!! POSTGRES_DB/POSTGRES_OWNER_USER/POSTGRES_OWNER_PASSWORD
+ausentes` e sai com `exit 1`; valor legado vencendo, o comando estoura porque o banco não existe. O que
+é silencioso não é a falha, é **ninguém ler o log** — e uma falha alta que ninguém vê é indistinguível
+de sucesso visto de fora. Então o risco é de vigilância, não de detecção: confira
+`/var/log/motor-monitoring/` na manhã seguinte à virada. Nada no
 > `docker-compose.prod.yml` consome o bloco legado. Confirme com `grep -n '^POSTGRES_DB=' .env` — com **`-n`**, não `-c`: o `-c` conta linhas e nunca olha
 o valor, então um `.env` em que sobrou **só a linha legada** também devolve `1`, e é o estado em que os
 dois crons leem `motor_expansao` toda noite, em silêncio. Com o `-n` você vê o valor. O que
