@@ -1045,7 +1045,7 @@ def _linhas_do_concorrente(conc: Mapping[str, Any]) -> list[_Linha]:
 
 
 def _desenhar_concorrente(
-    pdf: UltraPDF, conc: Mapping[str, Any], y: float, logo: str | None, *, numero: int, medir: bool = False
+    pdf: UltraPDF, conc: Mapping[str, Any], y: float, logo: str | None, *, medir: bool = False
 ) -> float:
     """Desenha (ou só mede) o bloco de um concorrente a partir de `y`; devolve o `y` final."""
     x_texto = _MARGEM + 40.0
@@ -1066,7 +1066,7 @@ def _desenhar_concorrente(
         pdf.set_text_color(*CINZA_TEXTO)
         pdf.set_font("Helvetica", "B", 11)
         pdf.set_xy(x_texto, y)
-        pdf.cell(largura - 150, 13, _texto_da_fonte(f"{numero}. {nome}"))
+        pdf.cell(largura - 150, 13, _texto_da_fonte(nome))
         pdf.set_font("Helvetica", "", 9)
         pdf.set_text_color(110, 110, 110)
         pdf.set_xy(PAGINA_LARGURA - _MARGEM - 150, y)
@@ -1122,8 +1122,8 @@ def _mapa_do_raio(
 
     ESQUEMA, e não mapa de ruas: desenhado com as primitivas do fpdf (como os gráficos deste
     módulo), sem tile e sem rede -- a rota não pode depender de serviço externo para imprimir.
-    Projeção plana em torno da unidade, exata o bastante para 2 km. O número ao lado de cada
-    marcador é o mesmo da lista das páginas seguintes.
+    Projeção plana em torno da unidade, exata o bastante para 2 km. Os marcadores NÃO levam
+    número: com academias a poucos metros uma da outra eles se encavalavam e sujavam o desenho.
     """
     pdf.set_fill_color(*_FUNDO_DE_CARTAO)
     pdf.rect(x, y, lado, lado, style="F")
@@ -1162,8 +1162,7 @@ def _mapa_do_raio(
         pdf.cell(60, 8, ascii_seguro(f"{_br(raio_m * fracao / 1000, 0 if fracao == 1.0 else 1)} km"), align="C")
 
     # do mais longe para o mais perto: quem está colado na unidade fica por cima
-    numerados = sorted(enumerate(concorrentes, start=1), key=lambda par: -(par[1].get("distancia_m") or 0))
-    for numero, conc in numerados:
+    for conc in sorted(concorrentes, key=lambda c: -(c.get("distancia_m") or 0)):
         if conc.get("lat") is None or conc.get("lng") is None:
             continue
         px, py = ponto_na_pagina(conc["lat"], conc["lng"])
@@ -1176,10 +1175,6 @@ def _mapa_do_raio(
         if not logo:
             pdf.set_fill_color(*(CINZA_TEXTO if conc.get("classe") == "cadeia" else ULTRA_MAGENTA))
             pdf.ellipse(px - 4, py - 4, 8, 8, style="F")
-        pdf.set_text_color(*CINZA_TEXTO)
-        pdf.set_font("Helvetica", "B", 6)
-        pdf.set_xy(px + 7.5, py - 4)
-        pdf.cell(14, 7, str(numero))
 
     for vizinha in (mapa or {}).get("ultra") or []:
         if vizinha.get("lat") is None or vizinha.get("lng") is None:
@@ -1239,8 +1234,6 @@ def _legenda_do_raio(pdf: UltraPDF, x: float, y: float, logo_ultra: Any = None) 
         pdf.set_font("Helvetica", "", 8.5)
         pdf.set_xy(x + 14, linha)
         pdf.cell(300, 10, ascii_seguro(texto))
-    pdf.set_xy(x, y + len(itens) * 14.0 + 2)
-    pdf.cell(430, 10, ascii_seguro("O número ao lado de cada marcador é o do concorrente na lista das páginas seguintes."))
 
 
 def concorrencia_pdf(
@@ -1351,13 +1344,13 @@ def concorrencia_pdf(
         pdf.set_font("Helvetica", "", 9.5)
         pdf.set_xy(x_coluna, y)
         pdf.cell(largura_coluna, 12, ascii_seguro(aviso))
-    for numero, conc in enumerate(concorrentes, start=1):
+    for conc in concorrentes:
         logo = (logos or {}).get(str(conc.get("rede") or "")) if conc.get("classe") == "cadeia" else None
-        if _desenhar_concorrente(pdf, conc, y, logo, numero=numero, medir=True) > _LIMITE_Y:
+        if _desenhar_concorrente(pdf, conc, y, logo, medir=True) > _LIMITE_Y:
             rodape(pdf, rodape_texto)
             pdf.add_page()
             _faixa_da_marca(pdf, nome, "Concorrentes e o que oferecem")
             y = titulo_da_secao(72.0, continua=True)
-        y = _desenhar_concorrente(pdf, conc, y, logo, numero=numero)
+        y = _desenhar_concorrente(pdf, conc, y, logo)
     rodape(pdf, rodape_texto)
     return bytes(pdf.output())

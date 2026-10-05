@@ -169,7 +169,7 @@ def test_pdf_segue_o_guia_de_marca_titulos_em_caixa_alta_e_sem_preto() -> None:
     assert not re.search(r"(?m)^(0 g|0 0 0 rg|0\.000 g|0\.000 0\.000 0\.000 rg)$", cru)
 
 
-def test_pdf_abre_com_o_raio_da_unidade_e_numera_os_concorrentes_como_na_lista() -> None:
+def test_pdf_abre_com_o_raio_da_unidade_antes_da_lista_e_sem_numero_nos_marcadores() -> None:
     perto = _concorrente("Academia Perto", lat=-22.951, lng=-43.180, distancia_m=110.0)
     longe = _concorrente("Academia Longe", lat=-22.962, lng=-43.190, distancia_m=1_680.0, classe="independente", rede=None)
     intel = _inteligencia([perto, longe])
@@ -179,13 +179,15 @@ def test_pdf_abre_com_o_raio_da_unidade_e_numera_os_concorrentes_como_na_lista()
     paginas = cru.split("/type /page\n")
     # o raio e a legenda vêm ANTES da lista: estão na página 1, e a lista na 2
     assert "(ultra)" in cru and "(2 km)" in cru and "(1,0 km)" in cru
-    assert cru.index("unidade deste relat") < cru.index("1. academia perto") < cru.index("2. academia longe")
+    assert cru.index("unidade deste relat") < cru.index("(academia perto)") < cru.index("(academia longe)")
+    # pedido do Juan (05/10): o desenho não leva numeração, nem a lista
+    assert "(1)" not in cru and "(2)" not in cru and "1. academia" not in cru
     assert len(re.findall(rb"/Type /Page\b", pdf)) == 2, len(paginas)
 
 
 def test_pdf_sem_coordenada_diz_que_nao_ha_raio_para_desenhar() -> None:
     cru = _texto_cru_do_pdf(rede_export.concorrencia_pdf(_ficha(), _inteligencia([_concorrente("Sem Ponto")]), None))
-    assert "n\xe3o h\xe1 raio para desenhar" in cru and "1. sem ponto" in cru
+    assert "n\xe3o h\xe1 raio para desenhar" in cru and "(sem ponto)" in cru
 
 
 def test_icones_do_pdf_cobrem_os_itens_da_coleta() -> None:
