@@ -402,7 +402,13 @@ export function CascataDre({
           {temAnuidade && premissas ? (
             <>
               Anuidade: {brl(premissas.anuidade_valor, false, 2)} <strong>uma vez por ano</strong>{' '}
-              por aluno {premissas.anuidade_apenas_balcao ? 'de balcão' : ''} que completa{' '}
+              por aluno{' '}
+              {premissas.anuidade_apenas_balcao
+                ? (premissas.n_studios ?? 0) > 0
+                  ? 'de balcão ou de studio'
+                  : 'de balcão'
+                : ''}{' '}
+              que completa{' '}
               {num(premissas.anuidade_mes_inicio)} meses de casa —{' '}
               {pctFrac(premissas.anuidade_elegivel_pct)} chegam lá (a elegibilidade sai do próprio
               churn, não é número avulso). Reconhecida <strong>pro-rata mensal</strong> a partir do

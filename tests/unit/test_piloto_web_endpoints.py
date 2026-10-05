@@ -325,18 +325,99 @@ def _viab(empty: bool = True, **extra) -> dict:
 
 
 def test_n_studios_custa_no_dre(empty_data: Path) -> None:
-    """Cada studio soma SIM_CUSTO_STUDIO ao custo fixo.
+    """Cada studio continua somando SIM_CUSTO_STUDIO ao custo fixo.
 
-    Ate o FIN-VIAB-01 o campo era aceito e DESCARTADO: o studio elevava o ticket no
-    front e nao custava nada no DRE (receita fantasma) — uma unidade com 3 studios
-    rodava com o custo fixo de uma sem nenhum.
+    Desde 2026-10-05 o studio tem TICKET PROPRIO: atende 8% da demanda e traz receita
+    dele (o ticket de musculacao nao sobe mais com o numero de studios). O custo fixo
+    por studio segue: e' o que este teste trava. Historico: ate o FIN-VIAB-01 o campo
+    era aceito e DESCARTADO — o studio elevava o ticket no front e nao custava nada.
+
+    `dre.custos_fixos` (outros fixos + aluguel) nao contem a folha, que agora tambem
+    se move com os studios (a receita deles entra na base dos 17%).
     """
     from motor_expansao.dimensionamento.config import SIM_CUSTO_STUDIO
 
     sem = _viab(n_studios=0)["dre"]
     com = _viab(n_studios=2)["dre"]
     assert com["custos_fixos"] - sem["custos_fixos"] == pytest.approx(2 * SIM_CUSTO_STUDIO, abs=0.05)
-    assert com["ebitda"] < sem["ebitda"]
+    assert com["folha"] > sem["folha"]
+    assert com["custo_studios"] == pytest.approx(2 * SIM_CUSTO_STUDIO, abs=0.01)
+    assert sem["custo_studios"] == 0
+    assert sem["receita_studios"] == 0
+    assert com["receita_studios"] > 0
+
+
+def test_studios_com_ticket_proprio_no_payload(empty_data: Path) -> None:
+    """Pedido de 2026-10-05: cada studio leva 8% da demanda e o split balcao/agregador
+    vale so' sobre o restante. Demanda 1.600 com 2 studios -> 128 + 128 nos studios e
+    balcao + agregadores = 1.600 x (1 - 0,16)."""
+    from motor_expansao.dimensionamento.config import (
+        SIM_CUSTO_STUDIO,
+        SIM_SHARE_BALCAO,
+        SIM_STUDIO_SHARE_DEMANDA,
+    )
+
+    body = _viab(n_studios=2, tickets_studios=[157, 167])
+    demanda = 1600.0
+    por_studio = demanda * SIM_STUDIO_SHARE_DEMANDA
+    split = body["split"]
+    assert split["studios"] == [pytest.approx(por_studio, abs=0.05)] * 2
+    restante = demanda * (1 - 2 * SIM_STUDIO_SHARE_DEMANDA)
+    assert split["balcao"] + split["agregadores"] == pytest.approx(restante, abs=0.1)
+    assert split["balcao"] == pytest.approx(restante * SIM_SHARE_BALCAO, abs=0.05)
+
+    prem = body["premissas"]
+    assert prem["n_studios"] == 2
+    assert prem["tickets_studios"] == [157.0, 167.0]
+    assert prem["share_por_studio"] == pytest.approx(SIM_STUDIO_SHARE_DEMANDA)
+    assert prem["share_studios_total"] == pytest.approx(2 * SIM_STUDIO_SHARE_DEMANDA)
+    assert prem["share_musculacao"] == pytest.approx(1 - 2 * SIM_STUDIO_SHARE_DEMANDA)
+    assert prem["custo_studio_mes"] == pytest.approx(SIM_CUSTO_STUDIO)
+    # O ticket de musculacao e o do agregador nao dependem dos studios.
+    sem = _viab()
+    assert prem["ticket_cheio"] == sem["premissas"]["ticket_cheio"]
+    assert prem["ticket_agregador"] == sem["premissas"]["ticket_agregador"]
+
+    assert body["dre"]["custo_studios"] == pytest.approx(2 * SIM_CUSTO_STUDIO, abs=0.01)
+    assert body["dre"]["receita_studios"] > 0
+    json.dumps(body, allow_nan=False)
+
+
+def test_n_studios_sem_lista_usa_a_escada_padrao(empty_data: Path) -> None:
+    """Consumidor antigo da API manda so' o numero: os tickets saem do config."""
+    from motor_expansao.dimensionamento.config import SIM_TICKETS_STUDIO_PADRAO
+
+    so_numero = _viab(n_studios=2)
+    assert so_numero["premissas"]["tickets_studios"] == list(SIM_TICKETS_STUDIO_PADRAO[:2])
+    assert so_numero["premissas"]["tickets_studios"] == [157.0, 167.0]
+    explicito = _viab(n_studios=2, tickets_studios=[157, 167])
+    assert so_numero == explicito
+
+
+def test_sem_studio_o_payload_nao_tem_split_de_studio(empty_data: Path) -> None:
+    body = _viab()
+    assert body["split"]["studios"] == []
+    assert body["premissas"]["n_studios"] == 0
+    assert body["premissas"]["tickets_studios"] == []
+    assert body["split"]["balcao"] + body["split"]["agregadores"] == pytest.approx(1600, abs=0.1)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"n_studios": 2, "tickets_studios": [157]},  # um ticket por studio
+        {"n_studios": 1, "tickets_studios": [157, 167]},
+        {"n_studios": 0, "tickets_studios": [157]},
+        {"tickets_studios": [157, 0]},  # ticket tem de ser > 0
+        {"tickets_studios": [157, -10]},
+        {"tickets_studios": [157, 167, 177, 187]},  # no maximo 3 studios
+    ],
+)
+def test_tickets_studios_invalidos_sao_recusados(empty_data: Path, extra: dict) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _viab(**extra)
 
 
 def test_taxa_franquia_editavel_pelo_operador(empty_data: Path) -> None:

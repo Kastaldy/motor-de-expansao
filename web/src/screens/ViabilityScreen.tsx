@@ -19,6 +19,12 @@ import { coordenadaDoEstudo } from '../lib/coord'
 import { alunos, brl, brlCurto, coord, num, pctFrac, rotuloMes } from '../lib/format'
 import { formatarNumero } from '../lib/mascara'
 import { infoImovelParaPdf, parametrosRelatorioPontual } from '../lib/report'
+import {
+  clampNStudios,
+  definirTicketStudio,
+  TICKETS_STUDIO_PADRAO,
+  ticketsAtivos,
+} from '../lib/studios'
 import type {
   FaixaAlunos,
   InfoImovel,
@@ -44,8 +50,12 @@ export interface ViabilityScreenProps {
 
 const DEMANDA_PASSO = 100
 
-/** Ticket CHEIO do plano por nº de studios — tabela da planilha (Simulador!J9). */
-const TICKET_POR_STUDIO = [147, 157, 167, 177] as const
+/**
+ * Ticket de MUSCULAÇÃO padrão (mensalidade do balcão, R$/mês). Desde 2026-10-05 ele
+ * NÃO depende do número de studios — antes a tela o subia na escada 147/157/167/177 a
+ * cada studio. Cada studio agora tem ticket próprio (ver `lib/studios.ts`).
+ */
+const TICKET_MUSCULACAO_PADRAO = 147
 
 /**
  * FALLBACKS das réguas do veredito, usados SÓ enquanto o payload não chegou (primeiro
@@ -167,10 +177,10 @@ export default function ViabilityScreen({
   // --- Cenário -------------------------------------------------------------
   const [m2, setM2] = useState(1500)
   const [aluguel, setAluguel] = useState(20000)
-  // Ticket CHEIO = mensalidade R$/mês do plano de balcão (P2-12). O ticket médio
-  // (blended, com o mix de agregadores) é somente-leitura e vem do motor. Coerente
-  // com studios=0 (planilha: 0→147); mudar Studios reajusta, dá para editar depois.
-  const [ticket, setTicket] = useState<number>(TICKET_POR_STUDIO[0])
+  // Ticket de MUSCULAÇÃO = mensalidade R$/mês do plano de balcão (P2-12). O ticket
+  // médio (blended, com o mix de agregadores e studios) é somente-leitura e vem do
+  // motor. Independe do número de studios.
+  const [ticket, setTicket] = useState<number>(TICKET_MUSCULACAO_PADRAO)
   const [demanda, setDemanda] = useState(800)
   // A demanda vem padronizada no p50 da metragem e re-escala quando a metragem
   // muda — até o operador mexer no ±, aí a mão dele prevalece (DEC-009: premissa).
@@ -179,8 +189,13 @@ export default function ViabilityScreen({
   // Rampa de maturação (Simulador E13; padrão 8). Controlável na sidebar: alonga
   // a curva de alunos e o fluxo de caixa (afeta payback), não a margem steady.
   const [rampaMeses, setRampaMeses] = useState(8)
-  // Studios extras (0..3): cada studio adiciona R$6.000/mês de folha (reduz EBITDA).
+  // Studios (0..3): cada um atende uma fatia da demanda com ticket PRÓPRIO e soma um
+  // custo fixo mensal (valores do motor). O estado dos tickets guarda SEMPRE as três
+  // posições: baixar de 3 para 1 e voltar devolve o que o operador já digitou.
   const [nStudios, setNStudios] = useState(0)
+  const [ticketsStudios, setTicketsStudios] = useState<number[]>(() => [
+    ...TICKETS_STUDIO_PADRAO,
+  ])
 
   // --- Investimento: Obra (equity) x Equipamentos (financiado) --------------
   // OS NOVE CAMPOS GUARDAM `number | undefined`, e nao mais texto cru: a mascara viva
@@ -239,6 +254,8 @@ export default function ViabilityScreen({
       ticket,
       demanda: demandaUsar,
       n_studios: nStudios,
+      // Um ticket por studio ATIVO (o backend devolve 422 se o tamanho divergir).
+      tickets_studios: ticketsAtivos(ticketsStudios, nStudios),
       obra,
       parcelas_obra: parcelasObra,
       equipamentos: equip,
@@ -256,8 +273,20 @@ export default function ViabilityScreen({
     }
   }
 
+  // O backend recusa ticket de studio <= 0 (422), e o detalhe do 422 chega como lista —
+  // viraria "[object Object]" na tela. Barra antes, com mensagem em português.
+  function erroTicketsStudios(): string | null {
+    const i = ticketsAtivos(ticketsStudios, nStudios).findIndex((t) => !(t > 0))
+    return i < 0 ? null : `O ticket do studio ${i + 1} precisa ser maior que zero.`
+  }
+
   async function calcular(demandaUsar: number = demanda) {
     if (!ponto) return
+    const erroStudios = erroTicketsStudios()
+    if (erroStudios) {
+      setErro(erroStudios)
+      return
+    }
     setCalculando(true)
     setErro(null)
     try {
@@ -355,6 +384,11 @@ export default function ViabilityScreen({
    */
   async function gerarXlsx() {
     if (!ponto) return
+    const erroStudios = erroTicketsStudios()
+    if (erroStudios) {
+      setErro(erroStudios)
+      return
+    }
     setGerandoXlsx(true)
     setErro(null)
     try {
@@ -394,6 +428,9 @@ export default function ViabilityScreen({
   // TUDO abaixo é LEITURA do viabilidade_payload_v1. A tela não deriva número
   // financeiro nenhum: o motor (dimensionamento/simulador.py) já entregou pronto.
   const premissas = res?.premissas ?? null
+  // Studios lidos do PAYLOAD (o que o motor aplicou), não do estado da tela: o rótulo
+  // descreve o último cálculo, e não o que está digitado e ainda não foi calculado.
+  const temStudios = (premissas?.n_studios ?? 0) > 0
   /** Investimento REALMENTE usado pelo motor — a fonte honesta dos placeholders. */
   const inv = res?.investimento ?? null
   const dre = res?.dre ?? null
@@ -601,7 +638,7 @@ export default function ViabilityScreen({
           </div>
 
           <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
-            <Campo label="Ticket cheio do plano" sufixo="/mês">
+            <Campo label="Ticket de musculação" sufixo="/mês">
               <CampoNumero
                 valor={ticket}
                 onValor={setTicket}
@@ -609,8 +646,8 @@ export default function ViabilityScreen({
                 min={0}
                 step={5}
                 prefixo="R$"
-                rotulo="Ticket cheio do plano, em reais por mês"
-                title="Mensalidade cheia do plano de balcão, em R$/mês. Use ↑/↓ para variar de 5 em 5."
+                rotulo="Ticket de musculação, em reais por mês"
+                title="Ticket de musculação: mensalidade do plano de balcão, em R$/mês. Use ↑/↓ para variar de 5 em 5."
               />
             </Campo>
             <Campo label="Studios" sufixo="0–3">
@@ -620,18 +657,44 @@ export default function ViabilityScreen({
                 min={0}
                 max={3}
                 step={1}
-                onChange={(e) => {
-                  const n = Math.max(0, Math.min(3, Math.round(Number(e.target.value) || 0)))
-                  setNStudios(n)
-                  setTicket(TICKET_POR_STUDIO[n]) // studios elevam o ticket (planilha)
-                }}
+                onChange={(e) => setNStudios(clampNStudios(e.target.value))}
               />
             </Campo>
           </div>
 
+          {/* Um ticket por studio ativo: as caixas aparecem e somem junto com o número.
+              Grade com `auto-fit`: 1 a 3 caixas dividem a largura sem estourar a coluna
+              estreita da sidebar (minmax garante que o "R$" e o número caibam). */}
+          {nStudios > 0 && (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(92px, 1fr))',
+                gap: 10,
+                marginTop: 10,
+              }}
+            >
+              {ticketsAtivos(ticketsStudios, nStudios).map((valor, i) => (
+                <Campo key={i} label={`Ticket do studio ${i + 1}`} sufixo="/mês">
+                  <CampoNumero
+                    valor={valor}
+                    onValor={(n) => setTicketsStudios((t) => definirTicketStudio(t, i, n))}
+                    maxDigitos={4}
+                    min={1}
+                    step={5}
+                    prefixo="R$"
+                    rotulo={`Ticket do studio ${i + 1}, em reais por mês`}
+                    title={`Mensalidade do studio ${i + 1}, em R$/mês. Use ↑/↓ para variar de 5 em 5.`}
+                  />
+                </Campo>
+              ))}
+            </div>
+          )}
+
           {/* Ticket médio (blended) — SOMENTE-LEITURA, vem do motor. O operador digita o
-              cheio; o que entra no caixa por aluno TOTAL é este, com o mix e o ticket do
-              agregador acoplado ao cheio (P2-12). */}
+              ticket de musculação (e o de cada studio); o que entra no caixa por aluno
+              TOTAL é este, com os studios, o mix balcão/agregador e o ticket do agregador
+              acoplado ao de musculação (P2-12). Tudo lido do payload: a tela só formata. */}
           <div
             style={{
               marginTop: 10,
@@ -659,12 +722,25 @@ export default function ViabilityScreen({
             >
               {premissas ? (
                 <>
-                  Mix {pctFrac(premissas.share_balcao, 0)} cheio (
-                  {brl(premissas.ticket_cheio, false, 2)}) ·{' '}
+                  {temStudios && (
+                    <>
+                      {premissas.n_studios === 1 ? '1 studio' : `${premissas.n_studios} studios`}
+                      {premissas.share_por_studio != null
+                        ? ` × ${pctFrac(premissas.share_por_studio, 0)} da demanda`
+                        : ''}{' '}
+                      ({(premissas.tickets_studios ?? []).map((t) => brl(t, false, 2)).join(' · ')}
+                      ).{' '}
+                    </>
+                  )}
+                  {temStudios && premissas.share_musculacao != null
+                    ? `Sobre os ${pctFrac(premissas.share_musculacao, 0)} restantes: `
+                    : 'Mix '}
+                  {pctFrac(premissas.share_balcao, 0)} balcão (
+                  {brl(premissas.ticket_cheio, false, 2)}, ticket de musculação) ·{' '}
                   {pctFrac(1 - premissas.share_balcao, 0)} agregador (
                   {brl(premissas.ticket_agregador, false, 2)}
                   {premissas.ticket_agregador_fator != null
-                    ? `, ${pctFrac(premissas.ticket_agregador_fator, 0)} do cheio`
+                    ? `, ${pctFrac(premissas.ticket_agregador_fator, 0)} da musculação`
                     : ''}
                   ). Já líquido de churn e inadimplência. Calculado pelo motor — a tela só exibe.
                 </>
@@ -682,8 +758,10 @@ export default function ViabilityScreen({
               marginTop: 6,
             }}
           >
-            Ticket cheio = mensalidade do plano de balcão. Studios elevam o cheio (0→147, 1→157,
-            2→167, 3→177); você pode ajustar manualmente depois.
+            Ticket de musculação = mensalidade do plano de balcão.{' '}
+            {premissas?.share_por_studio != null && premissas.custo_studio_mes != null
+              ? `Cada studio atende ${pctFrac(premissas.share_por_studio, 0)} da demanda assumida, com ticket próprio, e custa ${brl(premissas.custo_studio_mes)}/mês; o split balcão/agregadores vale sobre o restante.`
+              : 'Cada studio atende uma fatia própria da demanda assumida, com ticket próprio e custo fixo mensal; o split balcão/agregadores vale sobre o restante.'}
           </span>
 
           <div
@@ -786,12 +864,25 @@ export default function ViabilityScreen({
                   )}
                 </>
               ) : premissas ? (
-                `Premissa explícita do operador, em alunos TOTAIS. Mix: ${pctFrac(
-                  premissas.share_balcao,
-                  0,
-                )} balcão + ${pctFrac(1 - premissas.share_balcao, 0)} agregadores.`
+                temStudios && premissas.share_por_studio != null ? (
+                  `Premissa explícita do operador, em alunos TOTAIS. Mix: ${
+                    premissas.n_studios
+                  } × ${pctFrac(premissas.share_por_studio, 0)} em studios; ${pctFrac(
+                    premissas.share_balcao,
+                    0,
+                  )} balcão + ${pctFrac(1 - premissas.share_balcao, 0)} agregadores${
+                    premissas.share_musculacao != null
+                      ? ` sobre os ${pctFrac(premissas.share_musculacao, 0)} restantes`
+                      : ' sobre o restante'
+                  }.`
+                ) : (
+                  `Premissa explícita do operador, em alunos TOTAIS. Mix: ${pctFrac(
+                    premissas.share_balcao,
+                    0,
+                  )} balcão + ${pctFrac(1 - premissas.share_balcao, 0)} agregadores.`
+                )
               ) : (
-                'Premissa explícita do operador, em alunos TOTAIS (balcão + agregadores).'
+                'Premissa explícita do operador, em alunos TOTAIS (balcão + agregadores + studios).'
               )}
             </div>
           </div>

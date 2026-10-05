@@ -256,12 +256,37 @@ components:
           example: 1600
         ticket:
           type: [number, "null"]
+          description: >
+            Ticket de MUSCULACAO, R$/aluno/mes (mensalidade do balcao). Desde
+            2026-10-05 NAO depende do numero de studios. Ausente = default do motor.
         formato:
           type: [string, "null"]
           description: Formato da unidade (usado na curva tamanho->densidade).
         n_studios:
           type: [integer, "null"]
-          description: Studios extras (0..3); cada um soma fopag aos custos fixos.
+          minimum: 0
+          maximum: 3
+          description: >
+            Numero de studios (0..3). Cada studio atende 8% da demanda TOTAL
+            (SIM_STUDIO_SHARE_DEMANDA), paga o ticket proprio (ver tickets_studios) e
+            soma SIM_CUSTO_STUDIO (R$ 6.000/mes) aos custos fixos; o split
+            balcao/agregador vale so sobre a demanda restante. Ex.: 1000 alunos com
+            2 studios -> 80 + 80 nos studios e o split sobre 840. Sem tickets_studios,
+            usa a escada padrao SIM_TICKETS_STUDIO_PADRAO (157, 167, 177).
+        tickets_studios:
+          type: [array, "null"]
+          maxItems: 3
+          items:
+            type: number
+            exclusiveMinimum: 0
+          description: >
+            Ticket de CADA studio, R$/aluno/mes, na ordem (studio 1, 2, 3). O aluno de
+            studio tem o tratamento do balcao (churn, inadimplencia, reajuste anual e
+            anuidade). Se vier junto de n_studios, len(tickets_studios) tem de ser igual
+            a n_studios (senao 422). Saida correspondente: premissas.tickets_studios,
+            premissas.share_por_studio, split.studios, dre.receita_studios e
+            dre.custo_studios.
+          example: [157, 167]
         obra:
           type: [number, "null"]
         parcelas_obra:
