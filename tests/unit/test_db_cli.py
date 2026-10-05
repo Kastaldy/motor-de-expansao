@@ -262,6 +262,13 @@ _D20_DE_PE: dict[str, Any] = {
     "'sessoes', 'SELECT'": True,
     "'sessoes', 'DELETE'": False,
     "tgenabled": "A",
+    # A ACL das funcoes de auditoria (secao 2 do D20), acrescentada em 05/10/2026: era a
+    # TERCEIRA camada que o script endurecia e nenhum instrumento conferia. `False` aqui
+    # e' o estado bom -- `PUBLIC` NAO executa.
+    postgres.SQL_ACL_FUNCOES_DE_AUDITORIA: [
+        ("registra_perfil_permissoes_historico", False),
+        ("registra_perfil_permissoes_truncate", False),
+    ],
 }
 
 
@@ -366,9 +373,17 @@ class _ConMigracoes:
     `aplicar` respeita uma transacao POR MIGRATION.
     """
 
-    def __init__(self, registradas: dict[str, str] | None = None, tem_tabela: bool = True) -> None:
+    def __init__(
+        self,
+        registradas: dict[str, str] | None = None,
+        tem_tabela: bool = True,
+        tabelas_proprias: int = 0,
+    ) -> None:
         self.registradas = dict(registradas or {})
         self.tem_tabela = tem_tabela
+        #: Tabelas do `public` fora de extensao. So' importa quando `tem_tabela` e' False:
+        #: e' o par (sem registro, com objetos) que o portao do `aplicar` tem de recusar.
+        self.tabelas_proprias = tabelas_proprias
         self.respostas: dict[str, list[tuple[Any, ...]]] = {}
         self.executados: list[tuple[str, Any]] = []
         self.commits = 0
@@ -378,6 +393,8 @@ class _ConMigracoes:
         self.executados.append((sql, params))
         if sql == cli.SQL_TEM_TABELA_DE_CONTROLE:
             self._valor = [(self.tem_tabela,)]
+        elif sql == cli.SQL_TABELAS_FORA_DE_EXTENSAO:
+            self._valor = [(self.tabelas_proprias,)]
         elif sql == cli.SQL_JA_APLICADAS:
             self._valor = [(v, h) for v, h in self.registradas.items()]
         else:
@@ -406,6 +423,7 @@ class _ConMigracoes:
         conhecidos = {
             cli.SQL_JA_APLICADAS,
             cli.SQL_TEM_TABELA_DE_CONTROLE,
+            cli.SQL_TABELAS_FORA_DE_EXTENSAO,
             cli.SQL_REGISTRAR,
             cli.SQL_EXTENSOES,
             cli.SQL_CONTAGENS,
@@ -459,6 +477,44 @@ def test_aplicar_faz_uma_transacao_por_migration(monkeypatch: pytest.MonkeyPatch
     assert con.commits == len(manifesto), "commit por lote, nao por migration"
     assert len(con.corpos_de_migration) == len(manifesto)
     assert len(con.registros) == len(manifesto)
+
+
+def test_aplicar_recusa_banco_com_objetos_e_sem_tabela_de_controle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O portao que faltava, e que custou a medicao de 05/10/2026.
+
+    `_aplicadas` devolve `{}` tanto no banco virgem quanto no banco povoado sem o
+    registro, e o `estado` imprimia "registradas: 0" nos dois -- saida identica byte a
+    byte. Seguir aquele verde commitava a 000 e a 001 e morria na 002 com
+    `DuplicateTable`, num passo que o runbook declara sem desfazer. Recusar antes custa
+    um comando.
+    """
+    con = _ConMigracoes(tem_tabela=False, tabelas_proprias=12)
+    with pytest.raises(SystemExit) as caiu:
+        _rodar(monkeypatch, con, cli.cmd_aplicar, argparse.Namespace(simular=False))
+
+    assert "migracoes_aplicadas" in str(caiu.value)
+    assert "registrar --ate" in str(caiu.value), "recusar sem dizer o caminho de volta"
+    assert con.corpos_de_migration == [], "recusou DEPOIS de executar DDL"
+    assert con.commits == 0
+
+
+def test_aplicar_segue_no_banco_virgem_mesmo_com_extensao_instalada(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O outro lado do portao: ele nao pode recusar quem nao fez nada de errado.
+
+    `CREATE EXTENSION postgis` cria `spatial_ref_sys` no `public` e a 001 e' `IF NOT
+    EXISTS`, entao banco com a extensao ja' instalada e' estado legitimo. A consulta do
+    portao exclui objeto de extensao justamente por isso -- medido em 05/10/2026: ali o
+    `pg_tables` cru devolve 1 e a consulta devolve 0.
+    """
+    con = _ConMigracoes(tem_tabela=False, tabelas_proprias=0)
+    codigo = _rodar(monkeypatch, con, cli.cmd_aplicar, argparse.Namespace(simular=False))
+
+    assert codigo == 0
+    assert len(con.corpos_de_migration) == len(cli._manifesto())
 
 
 def test_aplicar_registra_o_hash_do_arquivo_que_aplicou(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -716,6 +772,58 @@ def test_privilegios_REPROVA_sem_trigger_nenhuma(monkeypatch: pytest.MonkeyPatch
     """Tabela auditada sem trigger nao-interna: a 009 nao esta' de pe."""
     codigo, _con = _rodar_privilegios(monkeypatch, {postgres.SQL_TRIGGERS_AUDITORIA: []})
     assert codigo == 1
+
+
+def test_privilegios_REPROVA_funcao_de_auditoria_executavel_por_PUBLIC(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """O TERCEIRO furo de instrumento, achado em 05/10/2026.
+
+    A secao 2 do script de papeis fecha o `EXECUTE` das duas funcoes de auditoria a
+    `PUBLIC`, e nenhum instrumento olhava essa camada: `has_function_privilege` nao
+    aparecia uma vez no modulo. Medido num banco de verdade -- com o `EXECUTE` devolvido,
+    `conferir` dizia OK, a contagem 12/1/3 ficava intacta e o `privilegios` passava.
+
+    Reprova NOMEANDO o objeto: devolver o privilegio a UMA das duas nao pode acusar as
+    duas.
+    """
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_ACL_FUNCOES_DE_AUDITORIA] = [
+        ("registra_perfil_permissoes_historico", False),
+        ("registra_perfil_permissoes_truncate", True),
+    ]
+    codigo, _con = _rodar_privilegios(monkeypatch, respostas)
+    saida = capsys.readouterr().out
+
+    assert codigo == 1, "PUBLIC executando a funcao de auditoria tem de REPROVAR"
+    assert "FALHA funcao registra_perfil_permissoes_truncate" in saida, "tem de NOMEAR qual"
+    assert "ok    funcao registra_perfil_permissoes_historico" in saida, (
+        "a outra esta' certa e nao pode ser acusada"
+    )
+    assert "REVOKE EXECUTE" in saida, "...e dizer qual comando conserta"
+
+
+def test_privilegios_deriva_as_funcoes_de_auditoria_do_catalogo(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A consulta sai das PROPRIAS triggers (`tgfoid`), nao de uma lista nem de um `LIKE`.
+
+    Por que importa: as OUTRAS funcoes do modelo tem `EXECUTE` para `PUBLIC` por padrao e
+    de forma legitima -- medi seis assim no banco de ensaio --, entao cobrar `False` em
+    todas daria falso alarme em seis objetos. Derivando, uma terceira trigger na tabela
+    auditada traz a funcao dela para a conta sem ninguem lembrar de mexer aqui.
+    """
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_ACL_FUNCOES_DE_AUDITORIA] = [
+        ("registra_perfil_permissoes_historico", False),
+        ("registra_perfil_permissoes_truncate", False),
+        ("registra_terceira_coisa", True),
+    ]
+    codigo, _con = _rodar_privilegios(monkeypatch, respostas)
+    saida = capsys.readouterr().out
+
+    assert codigo == 1, "funcao nova na tabela auditada entra na conta sozinha"
+    assert "registra_terceira_coisa" in saida
 
 
 def test_conferir_nao_escreve_nada(monkeypatch: pytest.MonkeyPatch) -> None:

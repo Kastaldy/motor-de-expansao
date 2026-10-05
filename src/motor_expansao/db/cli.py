@@ -47,6 +47,19 @@ SQL_REGISTRAR = (
     "ON CONFLICT (versao_migracao) DO NOTHING"
 )
 SQL_TEM_TABELA_DE_CONTROLE = "SELECT to_regclass(%s) IS NOT NULL"
+# Quantas tabelas o `public` tem que NAO sao de extensao. Serve a uma pergunta so':
+# "registradas: 0" significa banco NOVO, ou banco com objetos e sem o registro?
+#
+# `NOT EXISTS ... deptype = 'e'` nao e' zelo: `CREATE EXTENSION postgis` cria
+# `spatial_ref_sys` no `public`, e a 001 e' `CREATE EXTENSION IF NOT EXISTS`, entao
+# banco com postgis instalado ANTES das migrations e' estado legitimo. Medido em
+# 05/10/2026: `pg_tables` cru devolve 1 nesse banco, e esta consulta devolve 0 --
+# contar o cru faria o portao recusar quem nao fez nada de errado.
+SQL_TABELAS_FORA_DE_EXTENSAO = (
+    "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') "
+    "AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = c.oid AND d.deptype = 'e')"
+)
 
 # Contrato conferido contra o dump do cluster real em 26/08/2026 (§0 da `verificacao.md`).
 TABELAS_DO_MODELO = (
@@ -190,6 +203,35 @@ def _aplicadas(con: Any) -> dict[str, str]:
     return {v: h for v, h in con.execute(SQL_JA_APLICADAS).fetchall()}
 
 
+def _objetos_sem_registro(con: Any) -> int:
+    """Tabelas proprias no `public` quando a tabela de controle NAO existe; 0 se existe.
+
+    `_aplicadas` devolve `{}` tanto para banco virgem quanto para banco povoado sem o
+    registro, e a tela imprimia "registradas: 0" nos dois -- saida IDENTICA byte a byte,
+    medido em 05/10/2026. Esse era o unico portao do unico passo declarado sem volta: o
+    `aplicar` aceitava, commitava a 000 e a 001 e morria na 002 com `DuplicateTable`.
+    """
+    existe = con.execute(SQL_TEM_TABELA_DE_CONTROLE, (postgres.TABELA_MIGRACOES,)).fetchone()[0]
+    if existe:
+        return 0
+    return con.execute(SQL_TABELAS_FORA_DE_EXTENSAO).fetchone()[0]
+
+
+def _recado_do_banco_povoado(quantas: int) -> str:
+    return (
+        f"o banco tem {quantas} tabela(s) no schema `public` e NAO tem a tabela de controle\n"
+        "  `migracoes_aplicadas`. Entao `registradas: 0` aqui nao quer dizer \"banco novo\":\n"
+        "  quer dizer \"o registro nao existe\". Aplicar tudo commitaria as primeiras\n"
+        "  migrations e morreria em `DuplicateTable` na primeira que recria objeto.\n"
+        "\n"
+        "  Se o EFEITO das migrations ja' esta no banco (roteiro aplicado a mao, restore que\n"
+        "  perdeu o registro), o caminho e' registrar sem executar:\n"
+        "      python -m motor_expansao.db registrar --ate <a ultima que ja' esta de pe>\n"
+        "  Se nao esta, o banco nao e' o que voce pensa que e': confira o nome em\n"
+        "  MOTOR_DATABASE_URL antes de qualquer coisa."
+    )
+
+
 def _diagnostico(manifesto: list[dict[str, Any]], aplicadas: dict[str, str]) -> tuple[list, list]:
     """(pendentes, alteradas). `alteradas` e' o defeito que a convencao §7 proibe."""
     pendentes = [m for m in manifesto if m["versao"] not in aplicadas]
@@ -217,10 +259,13 @@ def cmd_estado(_args: argparse.Namespace) -> int:
     manifesto = _manifesto()
     with _conectar_para_ddl() as con:
         aplicadas = _aplicadas(con)
+        _sem_registro = _objetos_sem_registro(con)
     pendentes, alteradas = _diagnostico(manifesto, aplicadas)
 
     print(f"migrations no manifesto: {len(manifesto)}")
     print(f"registradas no banco:    {len(aplicadas)}")
+    if _sem_registro:
+        print(f"\nATENCAO -- {_recado_do_banco_povoado(_sem_registro)}")
     for m in manifesto:
         marca = "ok " if m["versao"] in aplicadas else "-- "
         print(f"  {marca}{m['versao']}  {m['arquivo']}")
@@ -233,6 +278,12 @@ def cmd_estado(_args: argparse.Namespace) -> int:
 def cmd_aplicar(args: argparse.Namespace) -> int:
     manifesto = _manifesto()
     with _conectar_para_ddl() as con:
+        # O portao, ANTES de qualquer DDL. Recusar aqui custa um comando; descobrir
+        # depois custa um banco com duas migrations commitadas e o resto fora do
+        # registro -- e migration nao tem desfazer.
+        _sem_registro = _objetos_sem_registro(con)
+        if _sem_registro:
+            raise SystemExit(f"ERRO: {_recado_do_banco_povoado(_sem_registro)}")
         pendentes, alteradas = _diagnostico(manifesto, _aplicadas(con))
         _avisar_alteradas(alteradas)
         if not pendentes:
@@ -395,9 +446,17 @@ def cmd_conferir(_args: argparse.Namespace) -> int:
 
         if prov["pode_escrever_no_historico"]:
             print(
-                "  AVISO: este papel tem INSERT direto em perfil_permissoes_historico. Num\n"
-                "  cluster de teste isso e' esperado (voce conecta como dono); em PRODUCAO\n"
-                "  significa que o D20 nao esta de pe e a auditoria da 009 nao protege nada."
+                # Ate' 05/10/2026 esta mensagem dizia "em PRODUCAO significa que o D20
+                # nao esta de pe". E' falso: `has_table_privilege` responde por QUEM
+                # CONECTOU, o dono sempre tem INSERT na propria tabela, e o §8 do
+                # `banco_deploy.md` manda rodar esta verificacao com a credencial de DDL
+                # -- isto e', como dono, na VPS. O aviso disparava sempre, inclusive num
+                # banco perfeito, e a frase ensinava a ler isso como D20 caido.
+                "  AVISO: o papel que CONECTOU aqui tem INSERT direto em\n"
+                "  perfil_permissoes_historico. Se voce conectou como dono (e o §8 manda\n"
+                "  conectar assim, com a credencial de DDL), isto e' esperado e nao diz nada\n"
+                "  sobre o D20. O alarme de verdade e' este mesmo sinal sair VERDADEIRO\n"
+                "  conectado como `app`: e' o que o comando `privilegios` mede."
             )
 
     print()
@@ -689,6 +748,27 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                     "D20 -- e ela tem DUAS linhas."
                 )
                 problemas.append(f"trigger {nome} fora de ENABLE ALWAYS")
+
+        # A SEGUNDA camada da secao 2, que nenhum instrumento olhava ate' 05/10/2026.
+        # Universo derivado das triggers acima (`tgfoid`): as outras funcoes do modelo
+        # tem EXECUTE para PUBLIC legitimamente, e cobrar `false` nelas seria falso
+        # alarme.
+        acl = con.execute(
+            postgres.SQL_ACL_FUNCOES_DE_AUDITORIA, (postgres.TABELA_AUDITADA,)
+        ).fetchall()
+        for nome, publico_executa in acl:
+            ok = not publico_executa
+            print(
+                f"  {'ok   ' if ok else 'FALHA'} funcao {nome}: PUBLIC executa="
+                f"{bool(publico_executa)} (esperado False)"
+            )
+            if not ok:
+                print(
+                    "        por que importa: e' a segunda das duas camadas contra instalar a\n"
+                    "        trigger de auditoria em outra tabela. O `REVOKE EXECUTE` da secao 2\n"
+                    "        do D20 nao esta de pe, ou alguem devolveu o GRANT depois."
+                )
+                problemas.append(f"PUBLIC pode executar {nome}: falta o REVOKE EXECUTE da secao 2")
 
     print()
     if problemas:

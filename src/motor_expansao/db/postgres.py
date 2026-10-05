@@ -110,6 +110,21 @@ SQL_TRIGGERS_AUDITORIA = (
     "SELECT tgname, tgenabled FROM pg_trigger "
     "WHERE tgrelid = %s::regclass AND NOT tgisinternal ORDER BY tgname"
 )
+# A secao 2 do script de papeis fecha o `EXECUTE` das funcoes de auditoria a `PUBLIC`, e
+# ate' 05/10/2026 NENHUM instrumento olhava essa camada: `has_function_privilege` nao
+# aparecia uma vez em todo o modulo. Com o `EXECUTE` devolvido a `PUBLIC`, `conferir`
+# dizia OK e a contagem 12/1/3 ficava intacta. Terceiro furo da mesma familia.
+#
+# O universo sai das PROPRIAS triggers (`tgfoid`), nao de uma lista nem de um `LIKE`. E
+# isso nao e' elegancia: as OUTRAS funcoes do modelo tem `EXECUTE` para `PUBLIC` por
+# padrao e de forma legitima -- medi seis assim --, entao exigir `false` em todas daria
+# falso alarme em seis objetos. O escopo certo e' "as funcoes atras das triggers da
+# tabela auditada", e so' o catalogo sabe quais sao.
+SQL_ACL_FUNCOES_DE_AUDITORIA = (
+    "SELECT p.proname, has_function_privilege('public', p.oid, 'EXECUTE') "
+    "FROM pg_trigger tg JOIN pg_proc p ON p.oid = tg.tgfoid "
+    "WHERE tg.tgrelid = %s::regclass AND NOT tg.tgisinternal ORDER BY p.proname"
+)
 
 # --- Estado do modulo ------------------------------------------------------------------
 
