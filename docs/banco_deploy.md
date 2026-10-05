@@ -404,7 +404,10 @@ do `docker`, que é legível por qualquer usuário em `ps`.
 > (`db/cli.py`: o `return` do `--simular` vem **antes** do `read_text`). Até 01/10/2026 o comentário
 > acima dizia "o SQL que sairia", e isso enganava num ponto caro: as migrations são o único passo
 > **sem volta** deste runbook, e o operador concluía ter revisado o SQL sem ter visto nenhum. A saída
-> do `--simular` é quase idêntica à do `estado` logo acima, o que reforça a impressão.
+> do `--simular` **lembra** a do `estado` logo acima — as duas começam listando versões —, e é por aí
+> que vem a impressão. (Distinguir é fácil, se você olhar: medido, o `estado` imprime 24 linhas e o
+> `--simular` imprime 2. O problema não é confundir os dois; é concluir que viu SQL porque viu uma lista
+> de versões.)
 >
 > **Se você quiser mesmo ler o SQL antes de aplicar**, ele está em
 > `src/motor_expansao/db/migracoes/*.sql`, em arquivos numerados na mesma ordem que o `estado` lista.
@@ -635,7 +638,10 @@ fallback é mudo; o resultado não é.
 
 **No terminal da VPS:**
 ```bash
-# 1. o motor concorda com o banco? (tabelas, colunas, índices, papéis, versão)
+# 1. o motor concorda com o banco? (tabelas, colunas, indices, versao)
+#    NAO confere papel: rodado num banco sem `app`/`auditoria`/`etl` ele diz
+#    CONFERENCIA OK e sai 0 -- medido em 05/10/2026. Quem confirma os papeis e'
+#    o `\du` e a conferencia de 12/1/3, no passo 5.
 docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN \
   web python -m motor_expansao.db conferir
 

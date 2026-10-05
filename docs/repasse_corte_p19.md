@@ -107,7 +107,12 @@ Liste os dois lados e compare:
 cd /opt/motor-expansao/app
 
 # 1) quem consegue AUTENTICAR hoje — esta é a lista que importa
+# As DUAS contagens, e compare: a segunda pega login com espaco ou `@`, que a
+# primeira NAO ve (classe de caracteres). Se os numeros diferirem, a diferenca sao
+# as pessoas que a primeira lista deixaria de fora -- medido em 05/10/2026, num
+# arquivo de quatro pessoas a primeira devolveu 2. Use a SEGUNDA para listar.
 grep -nE '^  [a-zA-Z0-9_.-]+:' authelia/users_database.yml
+grep -nE '^  [^ #].*:'         authelia/users_database.yml
 
 # 1b) o JSON de abas é DIAGNÓSTICO, não lista: veja se tem curinga
 grep -c '"[*]"' /opt/motor-expansao/cadastro/acesso_abas.json
