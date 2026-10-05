@@ -15,6 +15,9 @@ export interface MePayload {
    *  continuar abrindo. Quem valida e estreita é `definirPerfil` em `lib/perfil.ts`,
    *  no mesmo espírito defensivo de `abasDoPayload`. */
   perfil?: unknown
+  /** Aviso que o perfil do país declara para a TELA de viabilidade (`avisos.*.onde`).
+   *  Ausente no Brasil. Quem valida e estreita é `definirAvisoDeViabilidade`. */
+  aviso_viabilidade?: unknown
   /** Estado da senha de quem esta' logado (D26, 11/09). Opcional pelo MESMO motivo do
    *  `perfil`: backend anterior nao manda o campo, e ausencia significa "nao sei" --
    *  nunca "nao precisa trocar". Quem le' e estreita e' `estadoDaSenhaDoPayload`. */
