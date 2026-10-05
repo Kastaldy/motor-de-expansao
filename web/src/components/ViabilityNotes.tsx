@@ -29,33 +29,79 @@ function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): 
   const mixAgr = 1 - (p.share_balcao ?? 0)
   const fatorAgr = p.ticket_agregador_fator ?? null
   const mesSteady = p.mes_referencia_steady ?? p.maturacao_meses
+  // Studios (2026-10-05): tudo lido do payload. `n_studios` ausente = backend anterior
+  // aos studios com ticket próprio — a nota simplesmente não aparece.
+  const nStudios = p.n_studios ?? 0
+  const temStudios = nStudios > 0
+  const ticketsStudios = (p.tickets_studios ?? []).map((t) => brl(t, false, 2)).join(', ')
+  const notaStudios: Nota[] =
+    p.n_studios == null
+      ? []
+      : [
+          {
+            kpi: 'Studios',
+            como:
+              (temStudios
+                ? `${nStudios === 1 ? '1 studio' : `${nStudios} studios`} neste cenário, ` +
+                  `com ticket próprio (${ticketsStudios} por mês). `
+                : 'Nenhum neste cenário. ') +
+              (p.share_por_studio != null
+                ? `Cada studio atende ${pctFrac(p.share_por_studio, 0)} da demanda assumida `
+                : 'Cada studio atende uma fatia própria da demanda assumida ') +
+              'e o split balcão/agregadores vale só sobre o restante' +
+              (temStudios && p.share_musculacao != null
+                ? ` (${pctFrac(p.share_musculacao, 0)} aqui). `
+                : '. ') +
+              'O aluno de studio é tratado como o de balcão: churn, inadimplência, ' +
+              'reajuste anual do ticket e anuidade. A receita dos studios entra no ' +
+              'faturamento maduro que dimensiona a folha' +
+              (p.custo_studio_mes != null
+                ? `, e cada studio soma ${brl(p.custo_studio_mes)}/mês de custo fixo.`
+                : ', e cada studio soma um custo fixo mensal.'),
+          },
+        ]
 
   return [
     {
       titulo: 'Receita',
       notas: [
         {
-          kpi: 'Ticket cheio do plano',
+          kpi: 'Ticket de musculação',
           como:
             `Mensalidade de balcão que você digita (${brl(p.ticket_cheio, false, 2)}). ` +
-            'É o preço de tabela, NÃO o que entra no caixa por aluno.',
+            'É o preço de tabela, NÃO o que entra no caixa por aluno. Não depende do ' +
+            'número de studios: cada studio tem o ticket dele.',
         },
         {
           kpi: 'Ticket médio (blended)',
           como:
-            `${brl(p.ticket_blended, false, 2)} por aluno total. Mistura o balcão ` +
-            `(${pctFrac(p.share_balcao)} da base, paga o cheio) com os agregadores ` +
-            `(${pctFrac(mixAgr)} — Gympass, TotalPass e similares, que pagam ` +
+            `${brl(p.ticket_blended, false, 2)} por aluno total. ` +
+            (temStudios
+              ? `Soma os studios (${nStudios} × ` +
+                `${p.share_por_studio != null ? pctFrac(p.share_por_studio, 0) : 'uma fatia'} ` +
+                `da demanda, com ticket próprio) e, sobre ` +
+                `${p.share_musculacao != null ? `os ${pctFrac(p.share_musculacao, 0)} restantes` : 'o restante'}, ` +
+                'mistura '
+              : 'Mistura ') +
+            `o balcão (${pctFrac(p.share_balcao)}, paga o ticket de musculação) com os ` +
+            `agregadores (${pctFrac(mixAgr)} — Gympass, TotalPass e similares, que pagam ` +
             `${brl(p.ticket_agregador, false, 2)}` +
-            `${fatorAgr ? `, ou ${pctFrac(fatorAgr)} do cheio` : ''}), e já desconta ` +
-            'churn e inadimplência. É este número que sustenta o break-even.',
+            `${fatorAgr ? `, ou ${pctFrac(fatorAgr)} do ticket de musculação` : ''}), e já ` +
+            'desconta churn e inadimplência. É este número que sustenta o break-even.',
         },
+        ...notaStudios,
         {
           kpi: 'Anuidade',
           como:
             p.anuidade_valor > 0
               ? `${brl(p.anuidade_valor, false, 2)} uma vez POR ANO por aluno de ` +
-                `${p.anuidade_apenas_balcao ? 'balcão' : 'qualquer canal'} que completa ` +
+                `${
+                  p.anuidade_apenas_balcao
+                    ? temStudios
+                      ? 'balcão ou de studio'
+                      : 'balcão'
+                    : 'qualquer canal'
+                } que completa ` +
                 `${p.anuidade_mes_inicio} meses de casa. Só ${pctFrac(p.anuidade_elegivel_pct)} ` +
                 'chegam lá, e essa fração é derivada do próprio churn — não é um número ' +
                 'à parte. Reconhecida pro-rata mensal (dividida por 12) porque os ' +
@@ -66,7 +112,8 @@ function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): 
         {
           kpi: 'Faturamento',
           como:
-            'Receita BRUTA do mês: mensalidades + anuidade + personal. É a base de ' +
+            `Receita BRUTA do mês: mensalidades${temStudios ? ' (musculação e studios)' : ''} ` +
+            '+ anuidade + personal. É a base de ' +
             'cálculo do IR/CSLL e do aluguel-teto. A folha NÃO sai do faturamento do ' +
             'mês: ela é dimensionada uma vez pelo faturamento MADURO e fica fixa (ver ' +
             'Custos e impostos).',
@@ -169,7 +216,8 @@ function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): 
         {
           kpi: 'Break-even operacional',
           como:
-            'Alunos TOTAIS (balcão + agregadores, na mesma proporção do mix) para o ' +
+            `Alunos TOTAIS (${temStudios ? 'studios, balcão e agregadores' : 'balcão + agregadores'}, ` +
+            'na mesma proporção do mix) para o ' +
             'EBITDA fechar em zero. Está na mesma unidade da demanda que você digita, ' +
             'então dá para comparar direto. A pergunta que ele responde: “montei a casa ' +
             `para ${demandaPremissa != null ? `${alunos(demandaPremissa)} alunos` : 'a demanda assumida'}` +

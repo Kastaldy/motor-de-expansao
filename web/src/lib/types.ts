@@ -535,10 +535,16 @@ export interface ViabilidadeIn {
   m2: number
   aluguel: number
   demanda: number
+  /** Ticket de MUSCULAÇÃO: mensalidade do balcão em R$/mês. Não depende do número
+   *  de studios (até 2026-10-05 a tela o elevava a cada studio). */
   ticket?: number
   formato?: string
-  /** Numero de studios extras (0..3); cada studio adiciona R$6.000/mes de folha. */
+  /** Número de studios (0..3). Cada um atende uma fatia própria da demanda, com ticket
+   *  próprio, e soma um custo fixo mensal (valores servidos em `premissas`). */
   n_studios?: number
+  /** Ticket de CADA studio em R$/mês, na ordem. Tem de ter `n_studios` itens (senão o
+   *  backend devolve 422). Ausente: o motor usa a escada padrão do config. */
+  tickets_studios?: number[]
   /** Obra (CAPEX): parte do APORTE INICIAL do sócio, parcelada sem juros. */
   obra?: number
   /** Parcelas da obra em meses (default 4, sem juros). */
@@ -703,14 +709,32 @@ export const VIABILIDADE_PAYLOAD_VERSAO = 'viabilidade_payload_v1'
 
 /** Premissas efetivamente aplicadas pelo motor (fonte unica: dimensionamento/config.py). */
 export interface PremissasViabilidade {
-  /** Mensalidade cheia do plano (input do operador). */
+  /** Ticket de MUSCULAÇÃO (mensalidade do balcão, input do operador). O nome do campo
+   *  segue `ticket_cheio` por compatibilidade; o rótulo de usuário é "Ticket de musculação". */
   ticket_cheio: number
   /** Ticket do agregador em R$ — ACOPLADO ao cheio (fator do config). */
   ticket_agregador: number
   /** Ticket medio por aluno TOTAL, liquido de churn/inadimplencia (somente-leitura). */
   ticket_blended: number
-  /** Fracao do mix no balcao (0.69 = 69%). */
+  /** Fração do mix no balcão (0.69 = 69%) — vale sobre a demanda de MUSCULAÇÃO
+   *  (total menos studios); sem studio, é a demanda total. */
   share_balcao: number
+  /* --- Studios (2026-10-05). OPCIONAIS: backend anterior não manda. ------------
+     Cada studio atende `share_por_studio` da demanda TOTAL e paga o ticket dele; o
+     split balcão/agregador vale só sobre o restante (`share_musculacao`). A tela LÊ
+     estes números para rotular — nunca deriva valor financeiro deles. ---------- */
+  /** Número de studios aplicados no cenário (0..3). */
+  n_studios?: number
+  /** Ticket de cada studio, em R$/mês, na ordem. */
+  tickets_studios?: (number | null)[]
+  /** Fração da demanda TOTAL atendida por CADA studio (0.08 = 8%). */
+  share_por_studio?: number | null
+  /** Fração da demanda total somada de todos os studios. */
+  share_studios_total?: number | null
+  /** Fração da demanda que sobra para a musculação (balcão + agregadores). */
+  share_musculacao?: number | null
+  /** Custo fixo mensal de UM studio, em R$/mês. */
+  custo_studio_mes?: number | null
   /** Fracao do ticket cheio que o agregador paga (0.60). Opcional: so para rotular o mix. */
   ticket_agregador_fator?: number | null
   /* --- Folha: FIXA desde o mês 1 (decisão de Felipe, 2026-07-24) --------------
@@ -785,6 +809,11 @@ export interface DreViabilidade {
   /** Parcela de ANUIDADE dentro do `faturamento` acima (0 antes do mes de inicio).
    *  O resto do faturamento sao as mensalidades. */
   receita_anuidade: number | null
+  /** Mensalidades dos STUDIOS dentro do `faturamento` acima (0 sem studio). Opcional:
+   *  backend anterior não manda. */
+  receita_studios?: number | null
+  /** Custo fixo dos studios no mês de referência, já dentro de `custos_fixos`. */
+  custo_studios?: number | null
   deducoes: number | null
   /** faturamento - deducoes, servido PRONTO (nao subtrair no cliente). */
   receita_liquida: number | null
@@ -941,9 +970,15 @@ export interface SerieMensalLinha {
   alunos_total: number | null
   alunos_balcao: number | null
   alunos_agregadores: number | null
+  /** Alunos de studio no mês (soma dos studios; 0 sem studio). */
+  alunos_studios?: number | null
   faturamento_mensal: number | null
   /** Parcela de anuidade do mes (0 antes de `premissas.anuidade_mes_inicio`). */
   receita_anuidade?: number | null
+  /** Mensalidades dos studios no mês (dentro de `faturamento_mensal`). */
+  receita_studios?: number | null
+  /** Custo fixo dos studios no mês (dentro de `outros_fixos`). */
+  custo_studios?: number | null
   deducoes: number | null
   receita_liquida: number | null
   impostos: number | null
@@ -984,7 +1019,9 @@ export interface ViabilidadeOut {
   demanda_premissa: number
   /** Sempre "premissa_explicita" (DEC-009): a demanda nunca vem de lat/lng. */
   demanda_fonte: string
-  split: { balcao: number | null; agregadores: number | null }
+  /** Alunos assumidos por canal. `studios` traz um valor por studio, na ordem dos
+   *  tickets (vazio ou ausente sem studio). */
+  split: { balcao: number | null; agregadores: number | null; studios?: (number | null)[] }
   flag_fora_envelope: boolean
   flag_zona_morta: boolean | null
   /** Token CRU (`pop<5000; renda<500`) — identificador, para consumidores que traduzem

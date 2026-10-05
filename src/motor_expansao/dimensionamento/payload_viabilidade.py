@@ -27,10 +27,10 @@ from __future__ import annotations
 import functools
 import math
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def num_json_safe(v: Any, casas: int = 0) -> float | None:
@@ -67,12 +67,22 @@ class ViabilidadeInputs(BaseModel):
     m2: float = Field(gt=0)
     aluguel: float = Field(ge=0)
     demanda: float = Field(gt=0, description="PREMISSA do operador — nunca prevista")
+    # Ticket de MUSCULACAO (rotulo de usuario desde 2026-10-05; era "ticket cheio do
+    # plano"): mensalidade do balcao. NAO depende mais do numero de studios.
     ticket: float | None = None
     formato: str | None = None
     # Numero de studios extras (0..3): cada studio soma SIM_CUSTO_STUDIO (R$6.000/mes de
     # fopag) aos custos fixos. FIN-VIAB-01: ate aqui o campo era aceito e DESCARTADO —
     # o studio elevava o ticket no front e nao custava nada no DRE (receita fantasma).
     n_studios: int | None = Field(default=None, ge=0, le=3)
+    # Ticket de CADA studio (2026-10-05), na ordem. Cada studio atende
+    # SIM_STUDIO_SHARE_DEMANDA (8%) da demanda e paga o ticket dele; o split
+    # balcao/agregador vale so' sobre o restante. Quando vem junto de `n_studios`, os
+    # dois TEM de concordar (senao 422: a tela e o PDF divergiriam em silencio). Sem
+    # esta lista, `n_studios > 0` usa SIM_TICKETS_STUDIO_PADRAO (compat da API antiga).
+    tickets_studios: list[Annotated[float, Field(gt=0)]] | None = Field(
+        default=None, max_length=3
+    )
     # --- Investimento: Obra (CAPEX, equity) x Equipamentos (OPEX, financiado) ---
     # Obra: desembolso do franqueado (equity), parcelado sem juros (parcelas_obra,
     # default 4). E a base do ROIC e do fluxo acumulado (payback parte de -Obra).
@@ -130,6 +140,19 @@ class ViabilidadeInputs(BaseModel):
     custo_pre_operacional_mes: float | None = Field(default=None, ge=0)
     valor_residual_mes_60: float | None = Field(default=None, ge=0)
     capex_renovacao: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _studios_coerentes(self) -> ViabilidadeInputs:
+        if (
+            self.tickets_studios is not None
+            and self.n_studios is not None
+            and len(self.tickets_studios) != self.n_studios
+        ):
+            raise ValueError(
+                f"tickets_studios tem {len(self.tickets_studios)} item(ns), mas "
+                f"n_studios = {self.n_studios}: informe um ticket por studio"
+            )
+        return self
 
 
 class ViabilidadeIn(ViabilidadeInputs):
@@ -200,18 +223,14 @@ def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
     Tudo que o operador NAO informa fica com o default do `config.py`. Nenhum
     coeficiente financeiro nasce aqui.
 
-    `n_studios` deixa de ser receita fantasma: cada studio soma SIM_CUSTO_STUDIO
-    (R$6.000/mes de fopag) em `outros_fixos_mes`. Antes o campo era aceito e
-    DESCARTADO — o studio elevava o ticket no front e nao custava nada no DRE.
+    Studios (2026-10-05): cada um tem TICKET PROPRIO (`tickets_studios`), atende 8% da
+    demanda e custa SIM_CUSTO_STUDIO por mes. O custo agora mora em
+    `Premissas.custo_studio_mes` (e nao mais somado em `outros_fixos_mes` aqui): assim a
+    planilha .xlsx mostra a linha "Studios" em vez de ratear o valor pelas contas fixas.
     """
-    from motor_expansao.dimensionamento.config import (
-        SIM_CUSTO_STUDIO,
-        SIM_MENSALIDADE_BALCAO,
-        SIM_OUTROS_FIXOS_MES,
-    )
+    from motor_expansao.dimensionamento.config import SIM_MENSALIDADE_BALCAO
     from motor_expansao.dimensionamento.simulador import Premissas
 
-    n_studios = int(body.n_studios or 0)
     opcionais: dict[str, Any] = {
         "devolucoes_pct": body.deducoes_pct,
         "reajuste_ticket_aa": body.reajuste_ticket_aa,
@@ -235,9 +254,20 @@ def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
     return Premissas(
         ticket_cheio=float(body.ticket or SIM_MENSALIDADE_BALCAO),
         aluguel_mes=float(body.aluguel),
-        outros_fixos_mes=float(SIM_OUTROS_FIXOS_MES) + n_studios * float(SIM_CUSTO_STUDIO),
+        tickets_studios=tickets_studios_do_body(body),
         **{k: v for k, v in opcionais.items() if v is not None},
     )
+
+
+def tickets_studios_do_body(body: ViabilidadeInputs) -> tuple[float, ...]:
+    """Um ticket por studio. A lista explicita vence; sem ela, `n_studios` cai na
+    escada padrao do config (consumidor antigo da API que so' manda o numero)."""
+    from motor_expansao.dimensionamento.config import SIM_TICKETS_STUDIO_PADRAO
+
+    if body.tickets_studios is not None:
+        return tuple(float(t) for t in body.tickets_studios)
+    n = int(body.n_studios or 0)
+    return tuple(float(t) for t in SIM_TICKETS_STUDIO_PADRAO[:n])
 
 
 # Campos da linha da serie que NAO sao numero (nao passam pelo arredondamento).
@@ -379,7 +409,18 @@ def montar_payload_viabilidade(
             "ticket_agregador": num_json_safe(premissas.ticket_agregador, 2),
             "ticket_blended": num_json_safe(premissas.ticket_blended, 2),
             "ticket_agregador_fator": num_json_safe(premissas.ticket_agregador_fator, 4),
+            # `share_balcao` vale sobre a demanda de MUSCULACAO (total - studios); sem
+            # studio, e' a demanda total. `share_musculacao` diz quanto sobrou.
             "share_balcao": num_json_safe(premissas.share_balcao, 4),
+            # STUDIOS (2026-10-05): ticket proprio por studio, cada um com
+            # `share_por_studio` da demanda TOTAL. A tela LE estes numeros (rotula "8%",
+            # "R$ 6.000") em vez de crava-los. `custo_studio_mes` e' por studio.
+            "n_studios": int(premissas.n_studios),
+            "tickets_studios": [num_json_safe(t, 2) for t in premissas.tickets_studios],
+            "share_por_studio": num_json_safe(premissas.share_demanda_por_studio, 4),
+            "share_studios_total": num_json_safe(premissas.share_studios_total, 4),
+            "share_musculacao": num_json_safe(premissas.share_musculacao, 4),
+            "custo_studio_mes": num_json_safe(premissas.custo_studio_mes, 2),
             "folha_pct": num_json_safe(premissas.folha_pct, 4),
             # FOLHA FIXA DESDE O MES 1 (decisao de Felipe, 2026-07-24). `folha_pct`
             # nao e mais um percentual da receita DO MES: ele DIMENSIONA a folha pelo
@@ -439,6 +480,10 @@ def montar_payload_viabilidade(
             "faturamento": num_json_safe(r.faturamento_mensal_steady, 2),
             # Parcela de anuidade dentro do faturamento acima (0 antes do mes de inicio).
             "receita_anuidade": num_json_safe(r.receita_anuidade_mensal, 2),
+            # Studios no steady (lidos da serie): mensalidades dentro do faturamento
+            # acima e o custo fixo deles, ja' dentro de `custos_fixos`. 0 sem studio.
+            "receita_studios": num_json_safe(r.receita_studios_mensal, 2),
+            "custo_studios": num_json_safe(r.custo_studios_mensal, 2),
             # LEITURA da coluna `deducoes` da linha de steady (nao a subtracao
             # faturamento - receita_liquida): o degrau ja existe pronto no motor.
             "deducoes": linha_steady.get("deducoes"),
@@ -591,6 +636,8 @@ def montar_payload_viabilidade(
         "split": {
             "balcao": num_json_safe(res.alunos_balcao_premissa, 1),
             "agregadores": num_json_safe(res.alunos_agregadores_premissa, 1),
+            # Alunos de CADA studio (na ordem dos tickets); vazio sem studio.
+            "studios": [num_json_safe(a, 1) for a in res.alunos_studios_premissa],
         },
         "flag_zona_morta": res.flag_zona_morta,
         # BRUTO (`pop<5000; renda<500`): identificador, nao texto de usuario. Fica no

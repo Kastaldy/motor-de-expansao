@@ -267,6 +267,10 @@ def test_extras_opcionais_nao_quebram_gerador_enxuto(monkeypatch: pytest.MonkeyP
         {**_INPUTS, "m2": -1},  # metragem negativa
         {**_INPUTS, "aluguel": "trinta mil"},  # tipo errado
         {**_INPUTS, "n_studios": 9},  # fora do 0..3
+        # Studios com ticket proprio (2026-10-05): um ticket por studio, > 0, ate' 3.
+        {**_INPUTS, "n_studios": 2, "tickets_studios": [157]},
+        {**_INPUTS, "tickets_studios": [157, 0]},
+        {**_INPUTS, "tickets_studios": [157, 167, 177, 187]},
     ],
 )
 def test_corpo_invalido_devolve_422(corpo: dict[str, Any], gerador_stub: dict[str, Any]) -> None:

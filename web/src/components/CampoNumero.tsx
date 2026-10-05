@@ -117,7 +117,7 @@ export default function CampoNumero({
   const teto = max === undefined ? tetoDigitos : Math.min(max, tetoDigitos)
 
   // Sincroniza TEXTO <- NUMERO so' com o campo DESfocado. O Cenario muda valor por
-  // fora de verdade (mexer em Studios reescreve o Ticket); sem isto o campo mostraria
+  // fora de verdade (mudar a Metragem re-semeia a Demanda no p50); sem isto o campo mostraria
   // o numero velho e mentiria para o operador. Com o campo focado o efeito nao pode
   // rodar: ele reescreveria o que esta' sendo digitado e tornaria impossivel esvaziar
   // o campo para redigitar.

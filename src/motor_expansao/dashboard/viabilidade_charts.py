@@ -450,6 +450,8 @@ def montar_payload_pdf_viabilidade(
         "anuidade_valor": _ler(payload, "premissas", "anuidade_valor"),
         "anuidade_mes_inicio": _ler(payload, "premissas", "anuidade_mes_inicio"),
         "anuidade_apenas_balcao": _ler(payload, "premissas", "anuidade_apenas_balcao"),
+        # Studios pagam anuidade como o balcao: o texto da receita precisa saber.
+        "n_studios": _ler(payload, "premissas", "n_studios"),
         "anuidade_elegivel_pct": _ler(payload, "premissas", "anuidade_elegivel_pct"),
         # Mes de operacao a que a DRE de steady-state se refere (regime pleno). LIDO do
         # payload — recalcular a partir de `maturacao_meses` foi o que fez o waterfall

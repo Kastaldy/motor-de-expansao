@@ -159,6 +159,8 @@ class ViabilidadePontoResult:
     # --- Split da premissa (auditabilidade; derivados de demanda_premissa * share) ---
     alunos_balcao_premissa: float = 0.0
     alunos_agregadores_premissa: float = 0.0
+    # Alunos de cada studio (2026-10-05); o split acima ja' vem sobre o restante.
+    alunos_studios_premissa: tuple[float, ...] = ()
 
     # --- Alunos para a margem-alvo (FIN-VIAB-01: unidade corrigida) ---
     # Antes vinha de `alunos_minimos_viaveis(margem_alvo=X)`, que variava SO o balcao
@@ -555,15 +557,16 @@ def analisar_viabilidade_ponto(
     else:
         faixa = faixa_alunos_por_densidade(m2, base_calibracao_df, formato=formato)
 
-    # 3b. Split da premissa em balcao + agregadores (composicao; estudo §5).
-    # A demanda_premissa e SEMPRE alunos TOTAIS; o DRE roda com 2 tickets. Aqui o split
-    # e so EXIBICAO/auditabilidade — quem aplica o mix no DRE e o proprio nucleo.
-    alunos_balcao = float(demanda_premissa) * share_balcao
-    alunos_agregadores = float(demanda_premissa) * (1.0 - share_balcao)
-
     # 4. Viabilidade no cenario pedido (demanda = premissa explicita). UMA chamada ao
     # nucleo; tudo o que vem depois e LEITURA do resultado.
     p = _premissas_do_ponto(ticket_medio, aluguel_pedido, share_balcao, premissas, kwargs)
+
+    # 3b. Split da premissa em studios + balcao + agregadores (composicao; estudo §5).
+    # A demanda_premissa e SEMPRE alunos TOTAIS. Aqui o split e so EXIBICAO/
+    # auditabilidade, e sai da MESMA regua do nucleo (`Premissas.split_alunos`): cada
+    # studio leva a sua fracao do total e o mix balcao/agregador vale sobre o restante.
+    # Antes lia o PARAMETRO `share_balcao`, que so coincidia com o da premissa por acaso.
+    alunos_balcao, alunos_agregadores, alunos_studios = p.split_alunos(float(demanda_premissa))
     inv = _investimento_do_ponto(
         obra=obra,
         parcelas_obra=parcelas_obra,
@@ -630,6 +633,7 @@ def analisar_viabilidade_ponto(
         grade_sensibilidade=grade,
         alunos_balcao_premissa=float(alunos_balcao),
         alunos_agregadores_premissa=float(alunos_agregadores),
+        alunos_studios_premissa=tuple(float(a) for a in alunos_studios),
         demanda_fonte=DEMANDA_FONTE_PREMISSA,
         flag_fora_envelope=flag_envelope,
         aluguel_teto_faixas=teto_faixas,

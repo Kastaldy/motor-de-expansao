@@ -483,11 +483,14 @@ def test_k_nao_subtrai_mais_a_folha(wb: openpyxl.Workbook) -> None:
 
 
 def test_custo_fixo_do_break_even_inclui_a_folha(wb: openpyxl.Workbook) -> None:
-    """O custo fixo (sem aluguel) = outros fixos + folha FIXA, nos dois modos."""
+    """O custo fixo (sem aluguel) = outros fixos + studios + folha FIXA, nos dois modos."""
     formula = str(
-        _premissas_por_rotulo(wb)["custo fixo total, sem aluguel (outros fixos + folha)"]
+        _premissas_por_rotulo(wb)[
+            "custo fixo total, sem aluguel (outros fixos + studios + folha)"
+        ]
     )
     assert _usa(formula, _ref_premissa(wb, "outros fixos (total)"))
+    assert _usa(formula, _ref_premissa(wb, "custo fixo dos studios (total)"))
     assert _usa(formula, _ref_premissa(wb, "folha mensal fixa"))
 
 
@@ -718,7 +721,7 @@ def test_afericao_grava_os_valores_do_motor_corretos(wb: openpyxl.Workbook, resu
         ),
         "folha fixa dimensionada pelo faturamento maduro": _premissas().folha_fixa_mes(_DEMANDA),
         "folha no mes 1 (a folha nao acompanha a rampa)": serie[1]["folha"],
-        "custo fixo total sem aluguel (outros fixos + folha)": _premissas().custo_fixo_total_mes(
+        "custo fixo total sem aluguel (outros fixos + studios + folha)": _premissas().custo_fixo_total_mes(
             _DEMANDA
         ),
         "fator receita -> ebitda (k), sem a folha": _premissas().fator_receita_para_ebitda,
@@ -844,7 +847,9 @@ def test_premissas_puxa_os_defaults_do_objeto_recebido() -> None:
     for row in range(4, ws.max_row + 1):
         rotulo = _norm(ws.cell(row=row, column=1).value or "")
         achados[rotulo] = ws.cell(row=row, column=2).value
-    assert achados["ticket cheio (balcao)"] == 199.0
+    # Rotulo de usuario desde 2026-10-05: "Ticket de musculacao" (era "Ticket cheio").
+    assert achados["ticket de musculacao"] == 199.0
+    assert "ticket cheio (balcao)" not in achados
     assert achados["aluguel"] == 41_000.0
     assert achados["maturacao da rampa"] == 10
     assert achados["demanda total (alunos na maturidade)"] == 1_500.0
@@ -927,6 +932,8 @@ _DRE_VS_MOTOR = {
     "alunos_total": "alunos_total",
     "alunos_balcao": "alunos_balcao",
     "alunos_agregadores": "alunos_agregadores",
+    "alunos_studios": "alunos_studios",
+    "rec_studios": "receita_studios",
     "faturamento": "faturamento_mensal",
     "rec_anuidade": "receita_anuidade",
     "deducoes": "deducoes",
@@ -936,6 +943,7 @@ _DRE_VS_MOTOR = {
     "cvar_total": "custos_variaveis",
     "folha": "folha",
     "outros_total": "outros_fixos",
+    "of_studios": "custo_studios",
     "aluguel": "aluguel",
     "custo_pre_op": "custo_pre_operacional",
     "custos_op": "custos_op",

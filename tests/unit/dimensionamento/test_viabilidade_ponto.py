@@ -220,6 +220,40 @@ def test_share_balcao_default_aplicado() -> None:
     assert r.alunos_agregadores_premissa == pytest.approx(1000.0 * (1.0 - SHARE_BALCAO_DEFAULT))
 
 
+def test_split_com_studios_via_premissas() -> None:
+    """Studios com ticket proprio (2026-10-05): o split exibido sai da MESMA regua do
+    nucleo (`Premissas.split_alunos`). 1.000 alunos com 2 studios -> 80 + 80 nos
+    studios e o mix balcao/agregador sobre os 840 restantes (579,6 / 260,4)."""
+    from motor_expansao.dimensionamento.simulador import Premissas
+
+    p = Premissas(ticket_cheio=147.0, tickets_studios=(157.0, 167.0))
+    r = analisar_viabilidade_ponto(
+        -23.9, -46.3, 1500.0, 20000.0, 1000.0,
+        premissas=p, base_calibracao_df=None, setores_df=None,
+    )
+    assert r.alunos_studios_premissa == pytest.approx((80.0, 80.0))
+    assert r.alunos_balcao_premissa == pytest.approx(579.6)
+    assert r.alunos_agregadores_premissa == pytest.approx(260.4)
+    assert r.viabilidade.alunos_studios_steady == pytest.approx(160.0)
+    assert r.viabilidade.custo_studios_mensal == pytest.approx(2 * p.custo_studio_mes)
+
+    # Pelo caminho de kwargs (sem `premissas`), o mesmo split.
+    r_kw = analisar_viabilidade_ponto(
+        -23.9, -46.3, 1500.0, 20000.0, 1000.0,
+        ticket_medio=147.0, share_balcao=p.share_balcao, tickets_studios=(157.0, 167.0),
+        base_calibracao_df=None, setores_df=None,
+    )
+    assert r_kw.alunos_studios_premissa == r.alunos_studios_premissa
+    assert r_kw.alunos_balcao_premissa == pytest.approx(r.alunos_balcao_premissa)
+
+
+def test_sem_studio_split_de_studio_vazio() -> None:
+    r = analisar_viabilidade_ponto(
+        -23.9, -46.3, 1500.0, 20000.0, 1000.0, base_calibracao_df=None, setores_df=None,
+    )
+    assert r.alunos_studios_premissa == ()
+
+
 # ---------------------------------------------------------------------------
 # BLK-DIM-16 — Testes de critério de aceite (break-even + aluguel-teto)
 # ---------------------------------------------------------------------------
