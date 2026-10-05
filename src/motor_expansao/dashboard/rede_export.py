@@ -20,6 +20,7 @@ defeito mais caro deste projeto.
 from __future__ import annotations
 
 import csv
+import functools
 import math
 from collections.abc import Mapping, Sequence
 from io import BytesIO, StringIO
@@ -944,11 +945,62 @@ def _alunos(valor: object) -> str:
     return _br(valor) or "-"
 
 
-def _linhas_do_concorrente(conc: Mapping[str, Any]) -> list[tuple[str, str]]:
-    """As linhas de UM concorrente, como pares (estilo, texto). Sem desenhar nada."""
+#: Traços dos ícones de cada item oferecido, em caixa 24x24. CÓPIA dos de
+#: `web/src/components/IconeComodidade.tsx`: a tela e o PDF mostram a mesma figura para o
+#: mesmo item (`test_icones_do_pdf_cobrem_os_itens_da_coleta` trava a cobertura).
+_TRACOS_DOS_ITENS: dict[str, tuple[str, ...]] = {
+    "musculacao": ("M6 8v8", "M3 10v4", "M18 8v8", "M21 10v4", "M6 12h12"),
+    "luta": (
+        "M7 12V8a4 4 0 0 1 8 0v1h1a2 2 0 0 1 2 2v2a4 4 0 0 1-4 4H9a2 2 0 0 1-2-2z",
+        "M7 12h8",
+        "M9 17v3h6v-3",
+    ),
+    "armario": ("M6 3h12v18H6z", "M6 12h12", "M14.5 7v1.5", "M14.5 15.5V17"),
+    "chuveiro": (
+        "M5 21V7a4 4 0 0 1 8 0",
+        "M9 10h8",
+        "M10 13v1",
+        "M13 13v1",
+        "M16 13v1",
+        "M10 17v1",
+        "M13 17v1",
+        "M16 17v1",
+    ),
+    "vestiario": ("M10 7a2 2 0 1 1 3 1.7c-.7.4-1 .9-1 1.8", "M12 10.5 3 17.5h18z"),
+    "massagem": ("M4 9a2 2 0 1 0 4 0a2 2 0 1 0-4 0", "M3 16h18", "M9 13h8a4 4 0 0 1 4 3", "M6 16v4", "M18 16v4"),
+    "cadeira_massagem": (
+        "M7 11V7a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v4",
+        "M5 11a2 2 0 0 1 2 2v2h10v-2a2 2 0 0 1 4 0v5H3v-5a2 2 0 0 1 2-2z",
+        "M6 18v2",
+        "M18 18v2",
+    ),
+}
+
+
+@functools.cache
+def _svg_do_item(item: str) -> bytes | None:
+    """O ícone do item como SVG de traço fino em teal (guia de marca: line icon monocromático)."""
+    tracos = _TRACOS_DOS_ITENS.get(item)
+    if not tracos:
+        return None
+    cor = "#{:02X}{:02X}{:02X}".format(*ULTRA_TURQUESA)
+    caminhos = "".join(f'<path d="{d}"/>' for d in tracos)
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" '
+        f'stroke="{cor}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{caminhos}</svg>'
+    ).encode()
+
+
+#: Uma linha do bloco do concorrente: (estilo, texto, itens). `itens` só existe no estilo
+#: "itens" -- os (valor bruto, rótulo) que saem com ícone, depois do `texto` (o canal).
+_Linha = tuple[str, str, tuple[tuple[str, str], ...]]
+
+
+def _linhas_do_concorrente(conc: Mapping[str, Any]) -> list[_Linha]:
+    """As linhas de UM concorrente. Sem desenhar nada."""
     from motor_expansao.dashboard import comodidades_concorrentes as cc
 
-    linhas: list[tuple[str, str]] = []
+    linhas: list[_Linha] = []
     planos = []
     for fonte in ("wellhub", "totalpass"):
         bloco = (conc.get("agregadores") or {}).get(fonte) or {}
@@ -956,28 +1008,31 @@ def _linhas_do_concorrente(conc: Mapping[str, Any]) -> list[tuple[str, str]]:
             preco = f" (R$ {_br(bloco['preco'], 2)})" if bloco.get("preco") is not None else ""
             planos.append(f"{_ROTULO_FONTE_AGREGADOR[fonte]}: {bloco['plano']}{preco}")
     if planos:
-        linhas.append(("destaque", " | ".join(planos)))
+        linhas.append(("destaque", " | ".join(planos), ()))
     else:
-        linhas.append(("apoio", "Sem plano de Wellhub ou TotalPass identificado."))
+        linhas.append(("apoio", "Sem plano de Wellhub ou TotalPass identificado.", ()))
 
     comodidades = conc.get("comodidades")
     if comodidades is None:
-        linhas.append(("apoio", "Comodidades indisponíveis: a base não foi carregada neste ambiente."))
+        linhas.append(("apoio", "Comodidades indisponíveis: a base não foi carregada neste ambiente.", ()))
         return linhas
     canais = [
         ("No site da rede", comodidades.get("recorrente")),
         ("No agregador", comodidades.get("agregador")),
     ]
     if not any(canal for _, canal in canais):
-        linhas.append(("apoio", "Comodidades não coletadas para esta academia."))
+        linhas.append(("apoio", "Comodidades não coletadas para esta academia.", ()))
         return linhas
     for titulo, canal in canais:
         if not canal:
             continue
         if canal.get("fonte") != "site":
             titulo += f" ({_ROTULO_FONTE_AGREGADOR.get(str(canal.get('fonte')), canal.get('fonte'))})"
-        itens = [cc.ROTULO_ITEM[i] for i in cc.ITENS if (canal.get("itens") or {}).get(i) is True]
-        linhas.append(("normal", f"{titulo}: {', '.join(itens) or 'nenhum dos itens acompanhados foi declarado'}"))
+        itens = tuple((i, cc.ROTULO_ITEM[i]) for i in cc.ITENS if (canal.get("itens") or {}).get(i) is True)
+        if itens:
+            linhas.append(("itens", f"{titulo}:", itens))
+        else:
+            linhas.append(("normal", f"{titulo}: nenhum dos itens acompanhados foi declarado", ()))
         # sem vazio nem repetição (a fonte repete com caixa diferente), como na tela
         modalidades: dict[str, str] = {}
         for bruta in canal.get("atividades") or []:
@@ -985,7 +1040,7 @@ def _linhas_do_concorrente(conc: Mapping[str, Any]) -> list[tuple[str, str]]:
             if texto:
                 modalidades.setdefault(texto.casefold(), texto)
         if modalidades:
-            linhas.append(("apoio", f"Modalidades: {', '.join(modalidades.values())}"))
+            linhas.append(("apoio", f"Modalidades: {', '.join(modalidades.values())}", ()))
     return linhas
 
 
@@ -1017,7 +1072,27 @@ def _desenhar_concorrente(
         pdf.set_xy(PAGINA_LARGURA - _MARGEM - 150, y)
         pdf.cell(150, 13, ascii_seguro(" - ".join(p for p in (classe, distancia) if p)), align="R")
     cursor = y + 15.0
-    for estilo, texto in _linhas_do_concorrente(conc):
+    for estilo, texto, itens in _linhas_do_concorrente(conc):
+        if estilo == "itens":
+            # o canal em texto e, ao lado, cada item com a figura dele: uma linha só (são 7 itens)
+            if not medir:
+                pdf.set_font("Helvetica", "", 9.5)
+                pdf.set_text_color(*CINZA_TEXTO)
+                pdf.set_xy(x_texto, cursor)
+                rotulo_do_canal = _texto_da_fonte(texto)
+                pdf.cell(pdf.get_string_width(rotulo_do_canal) + 6, 12, rotulo_do_canal)
+                x_item = pdf.get_x()
+                for item, rotulo in itens:
+                    svg = _svg_do_item(item)
+                    if svg:
+                        pdf.image(BytesIO(svg), x=x_item, y=cursor + 0.5, w=11.0, h=11.0)
+                        x_item += 13.5
+                    limpo = ascii_seguro(rotulo)
+                    pdf.set_xy(x_item, cursor)
+                    pdf.cell(pdf.get_string_width(limpo) + 12, 12, limpo)
+                    x_item = pdf.get_x()
+            cursor += 13.0
+            continue
         pdf.set_font("Helvetica", "B" if estilo == "destaque" else "", 8.5 if estilo == "apoio" else 9.5)
         limpo = _texto_da_fonte(texto)
         if medir:
@@ -1041,6 +1116,7 @@ def _mapa_do_raio(
     mapa: Mapping[str, Any] | None,
     concorrentes: Sequence[Mapping[str, Any]],
     logos: Mapping[str, str] | None,
+    logo_ultra: Any = None,
 ) -> None:
     """O raio da unidade com as concorrentes nas posições reais, em escala.
 
@@ -1109,31 +1185,50 @@ def _mapa_do_raio(
         if vizinha.get("lat") is None or vizinha.get("lng") is None:
             continue
         px, py = ponto_na_pagina(vizinha["lat"], vizinha["lng"])
-        pdf.set_draw_color(*ULTRA_TURQUESA)
-        pdf.set_line_width(1.4)
-        pdf.ellipse(px - 5, py - 5, 10, 10, style="D")
+        if not _logo_da_ultra(pdf, logo_ultra, px, py, 14.0):
+            pdf.set_draw_color(*ULTRA_TURQUESA)
+            pdf.set_line_width(1.4)
+            pdf.ellipse(px - 5, py - 5, 10, 10, style="D")
 
-    pdf.set_fill_color(*ULTRA_TURQUESA)
-    pdf.set_draw_color(*BRANCO)
-    pdf.set_line_width(1.6)
-    pdf.ellipse(cx - 7, cy - 7, 14, 14, style="DF")
+    # a unidade do relatório, por cima de tudo e MAIOR que as demais marcas
+    if not _logo_da_ultra(pdf, logo_ultra, cx, cy, 24.0):
+        pdf.set_fill_color(*ULTRA_TURQUESA)
+        pdf.set_draw_color(*BRANCO)
+        pdf.set_line_width(1.6)
+        pdf.ellipse(cx - 7, cy - 7, 14, 14, style="DF")
     pdf.set_text_color(*ULTRA_TURQUESA)
     pdf.set_font("Helvetica", "B", 7)
-    pdf.set_xy(cx - 30, cy + 8)
+    pdf.set_xy(cx - 30, cy + (13 if logo_ultra is not None else 8))
     pdf.cell(60, 8, "ULTRA", align="C")
 
 
-def _legenda_do_raio(pdf: UltraPDF, x: float, y: float) -> None:
+def _logo_da_ultra(pdf: UltraPDF, logo: Any, cx: float, cy: float, lado: float) -> bool:
+    """Desenha a logo da Ultra centrada no ponto. `False` = sem logo legível: quem chama cai
+    na marca desenhada, em vez de deixar a unidade sumir do raio."""
+    if logo is None:
+        return False
+    try:
+        pdf.image(logo, x=cx - lado / 2, y=cy - lado / 2, w=lado, h=lado)
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+def _legenda_do_raio(pdf: UltraPDF, x: float, y: float, logo_ultra: Any = None) -> None:
     """O que cada marca do desenho do raio quer dizer."""
     itens = [
-        ("cheio", ULTRA_TURQUESA, "Unidade deste relatório"),
-        ("anel", ULTRA_TURQUESA, "Outra unidade Ultra"),
+        ("ultra", ULTRA_TURQUESA, "Unidade deste relatório (ao centro, maior)"),
+        ("ultra_menor", ULTRA_TURQUESA, "Outra unidade Ultra"),
         ("cheio", CINZA_TEXTO, "Concorrente de rede (logo quando há)"),
         ("cheio", ULTRA_MAGENTA, "Concorrente independente"),
     ]
     for i, (forma, cor, texto) in enumerate(itens):
         linha = y + i * 14.0
-        if forma == "cheio":
+        if forma.startswith("ultra") and _logo_da_ultra(
+            pdf, logo_ultra, x + 4, linha + 5, 10.0 if forma == "ultra" else 7.0
+        ):
+            pass
+        elif forma in ("cheio", "ultra"):
             pdf.set_fill_color(*cor)
             pdf.ellipse(x, linha + 1, 8, 8, style="F")
         else:
@@ -1153,10 +1248,14 @@ def concorrencia_pdf(
     inteligencia: Mapping[str, Any],
     ponto: Mapping[str, Any] | None = None,
     logos: Mapping[str, str] | None = None,
+    logo_ultra: Any = None,
 ) -> bytes:
-    """PDF da janela da unidade: alunos, região e o que cada concorrente do entorno oferece.
+    """PDF da janela da unidade: o raio com as concorrentes, alunos, região e o que cada
+    concorrente oferece.
 
     `logos` = rede -> caminho do arquivo da logo; rede sem arquivo sai com o quadro neutro.
+    `logo_ultra` = caminho ou imagem da logo da Ultra para marcar a unidade no raio; sem ela
+    a unidade sai como um ponto teal.
     """
     unidade = ficha.get("unidade", {})
     nome = str(unidade.get("nome", "Unidade"))
@@ -1175,7 +1274,7 @@ def concorrencia_pdf(
 
     # ---- Página 1: o raio da unidade com as concorrentes, e os números ao lado ----
     lado_do_mapa = 420.0
-    _mapa_do_raio(pdf, _MARGEM, 72.0, lado_do_mapa, mapa, concorrentes, logos)
+    _mapa_do_raio(pdf, _MARGEM, 72.0, lado_do_mapa, mapa, concorrentes, logos, logo_ultra)
     x_coluna = _MARGEM + lado_do_mapa + 20.0
     largura_coluna = PAGINA_LARGURA - _MARGEM - x_coluna
 
@@ -1226,7 +1325,7 @@ def concorrencia_pdf(
         pdf.set_font("Helvetica", "", 9.5)
         pdf.set_xy(x_coluna, 254.0)
         pdf.multi_cell(largura_coluna, 12, _texto_da_fonte(censo.get("motivo") or "Censo do entorno indisponível."))
-    _legenda_do_raio(pdf, x_coluna, 398.0)
+    _legenda_do_raio(pdf, x_coluna, 398.0, logo_ultra)
 
     def titulo_da_secao(y: float, continua: bool = False) -> float:
         sufixo = " (continuação)" if continua else f" - {len(concorrentes)} a {raio}"

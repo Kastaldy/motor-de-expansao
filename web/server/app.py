@@ -9106,6 +9106,27 @@ def rede_unidade_pdf(unidade_id: str, mes: str | None = None) -> Response:
     )
 
 
+@functools.lru_cache(maxsize=1)
+def _logo_ultra_para_pdf() -> Any:
+    """A logo da Ultra como imagem pronta para o PDF, ou `None` se nenhuma for legível.
+
+    Primeiro a do volume de dados (`ULTRA_DIR`), depois a que o próprio front publica. A do
+    front é AVIF com extensão `.png`: abrir pelo Pillow e converter evita entregar ao fpdf
+    um formato que ele não lê.
+    """
+    from PIL import Image
+
+    from motor_expansao.dashboard.competitors import ULTRA_LOGO_FILE
+
+    for caminho in (ULTRA_DIR / ULTRA_LOGO_FILE, _REPO_ROOT / "web" / "public" / "logo-ultra.png"):
+        try:
+            with Image.open(caminho) as imagem:
+                return imagem.convert("RGBA")
+        except Exception:  # noqa: BLE001  (arquivo ausente ou formato sem suporte: tenta o próximo)
+            continue
+    return None
+
+
 @app.get("/api/rede/unidade/{unidade_id}/concorrencia.pdf")
 def rede_unidade_concorrencia_pdf(unidade_id: str, mes: str | None = None) -> Response:
     """A janela da unidade no mapa, em PDF: alunos, região e o que cada concorrente oferece.
@@ -9132,7 +9153,7 @@ def rede_unidade_concorrencia_pdf(unidade_id: str, mes: str | None = None) -> Re
     }
     logos = {rede: str(caminho) for rede in redes if (caminho := _arquivo_logo_rede(rede)).is_file()}
     return _anexo(
-        rede_export.concorrencia_pdf(ficha, inteligencia, censo_do_ponto, logos),
+        rede_export.concorrencia_pdf(ficha, inteligencia, censo_do_ponto, logos, _logo_ultra_para_pdf()),
         f"concorrencia_{unidade_id}_{str(ficha.get('mes', '')).replace('-', '')}.pdf",
         "application/pdf",
     )

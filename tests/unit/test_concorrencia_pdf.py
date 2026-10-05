@@ -95,7 +95,7 @@ def test_pdf_traz_a_unidade_a_regiao_e_o_que_cada_concorrente_oferece() -> None:
         "wellhub: silver",
         "149,99",
         "no site da rede",
-        "no agregador \(wellhub\)",  # o PDF escapa os parênteses no texto cru
+        r"no agregador \(wellhub\)",  # o PDF escapa os parênteses no texto cru
         "chuveiro",
         "lutas",
         "modalidades: muay thai, yoga",
@@ -186,6 +186,42 @@ def test_pdf_abre_com_o_raio_da_unidade_e_numera_os_concorrentes_como_na_lista()
 def test_pdf_sem_coordenada_diz_que_nao_ha_raio_para_desenhar() -> None:
     cru = _texto_cru_do_pdf(rede_export.concorrencia_pdf(_ficha(), _inteligencia([_concorrente("Sem Ponto")]), None))
     assert "n\xe3o h\xe1 raio para desenhar" in cru and "1. sem ponto" in cru
+
+
+def test_icones_do_pdf_cobrem_os_itens_da_coleta() -> None:
+    """Item sem figura sairia só em texto, calado: os traços têm de cobrir a lista da coleta."""
+    from motor_expansao.dashboard import comodidades_concorrentes as cc
+
+    assert set(rede_export._TRACOS_DOS_ITENS) == set(cc.ITENS)
+    for item in cc.ITENS:
+        svg = rede_export._svg_do_item(item)
+        assert svg and svg.startswith(b"<svg") and b"#00A79D" in svg  # teal da marca
+
+
+def test_pdf_desenha_uma_figura_por_item_oferecido() -> None:
+    def figuras(itens: dict[str, bool]) -> int:
+        conc = _concorrente(
+            "Academia", comodidades={"recorrente": None, "agregador": _canal("wellhub", itens, [], [])}
+        )
+        pdf = rede_export.concorrencia_pdf(_ficha(), _inteligencia([conc]), PONTO)
+        return pdf.count(b" cm")  # cada figura entra com a própria matriz de posição
+
+    # mais itens declarados = mais desenho no arquivo; nenhum item = nenhuma figura a mais
+    assert figuras({"musculacao": True, "luta": True, "chuveiro": True}) > figuras({"musculacao": True})
+    assert figuras({"musculacao": True}) > figuras({})
+
+
+def test_pdf_marca_a_unidade_com_a_logo_da_ultra_quando_ela_existe() -> None:
+    from PIL import Image
+
+    intel = _inteligencia([_concorrente("Academia Perto", lat=-22.951, lng=-43.18)])
+    intel["mapa"].update({"lat": -22.95, "lng": -43.18})  # type: ignore[union-attr]
+    sem = rede_export.concorrencia_pdf(_ficha(), intel, PONTO)
+    com = rede_export.concorrencia_pdf(_ficha(), intel, PONTO, None, Image.new("RGBA", (40, 40), (0, 169, 158, 255)))
+    assert com.count(b"/Subtype /Image") > sem.count(b"/Subtype /Image")
+    # logo ilegível não derruba o relatório: a unidade volta a ser o ponto desenhado
+    quebrada = rede_export.concorrencia_pdf(_ficha(), intel, PONTO, None, "nao-existe.png")
+    assert quebrada.startswith(b"%PDF-1.4") and b"(ULTRA)" in quebrada
 
 
 def test_rota_do_pdf_existe_e_fica_atras_da_aba_executiva() -> None:
