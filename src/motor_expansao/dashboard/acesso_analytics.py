@@ -42,7 +42,9 @@ from motor_expansao.api.relatorio_acessos import (
     LABEL_ABA,
     _aba_da_rota,
     _quando_brt,
-    evento_valido,
+    erro_por_desenho,
+    evento_de_diagnostico,
+    evento_do_painel,
 )
 from motor_expansao.dashboard import acesso_log
 from motor_expansao.dashboard.acesso_log import (
@@ -201,17 +203,32 @@ def _dias_utc_para_janela_brt(primeiro_brt: date, ultimo_brt: date) -> list[date
 
 def _eventos_da_janela(
     diretorio: Path, primeiro_brt: date, ultimo_brt: date
-) -> tuple[list[dict[str, Any]], bool]:
-    """Eventos válidos da janela BRT (com `momento` BRT e `aba`) + flag de confiança.
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
+    """Eventos da janela BRT (com `momento` BRT e `aba`), PARTICIONADOS, + confiança.
 
-    Linha ilegível é ignorada (a trilha é rastro, não transação). O filtro de
-    validade (`evento_valido`) é o MESMO do relatório do Telegram. O segundo item
-    é `False` quando algum arquivo da janela EXISTE mas não pôde ser lido (IO/
-    permissão) — a janela está incompleta e a consolidação write-once não deve
-    congelar uma subcontagem (defeito da revisão adversarial de 2026-08-19).
-    Arquivo simplesmente ausente é normal (dia sem tráfego) e não derruba a flag.
+    Devolve `(uso, do_painel, confiavel)`. Linha ilegível é ignorada (a trilha é rastro,
+    não transação). O terceiro item é `False` quando algum arquivo da janela EXISTE mas
+    não pôde ser lido (IO/permissão) — a janela está incompleta e a consolidação
+    write-once não deve congelar uma subcontagem (defeito da revisão adversarial de
+    2026-08-19). Arquivo simplesmente ausente é normal (dia sem tráfego) e não derruba a
+    flag.
+
+    POR QUE PARTICIONA, em vez de só filtrar como antes. `ROTAS_FORA_DA_METRICA` tira as
+    rotas do próprio painel (e a tela de entrar, que é pública e por isso atrai varredor
+    de internet) da contagem de USO, e essa intenção está certa. O efeito colateral que
+    ninguém previu: em 29/09/2026 mediu-se `GET /api/acessos/usuarios` com **139 respostas
+    500 em 139 chamadas, zero sucessos desde 18/09** — e nenhuma delas jamais apareceu na
+    taxa de erro, porque a rota sai do universo ANTES de `_saude` contar. O painel não
+    enxergava a própria quebra, e ficaria assim para sempre.
+
+    A distinção que resolve isso sem revogar a intenção: a exclusão é sobre **uso**, e um
+    5xx **não é uso** — é a nossa falha, independente de quem pediu. Então o que sai da
+    contagem de uso volta, por outra porta, como saúde. O `evento_de_diagnostico` (a nossa
+    própria sonda `curl`) continua saindo de TUDO: aquilo não é nem uso nem falha, é a
+    gente se medindo.
     """
     eventos: list[dict[str, Any]] = []
+    do_painel: list[dict[str, Any]] = []
     confiavel = True
     for dia_utc in _dias_utc_para_janela_brt(primeiro_brt, ultimo_brt):
         arquivo = _arquivo_do_dia_utc(diretorio, dia_utc)
@@ -227,15 +244,15 @@ def _eventos_da_janela(
                 r = json.loads(bruta)
             except (ValueError, TypeError):
                 continue
-            if not evento_valido(r):
-                continue
+            if evento_de_diagnostico(r):
+                continue  # a nossa propria sonda: nao e' uso nem falha
             momento = _quando_brt(r.get("quando"))
             if momento is None or not (primeiro_brt <= momento.date() <= ultimo_brt):
                 continue
             r["momento"] = momento
             r["aba"] = _aba_da_rota(str(r.get("rota", "")))
-            eventos.append(r)
-    return eventos, confiavel
+            (do_painel if evento_do_painel(r) else eventos).append(r)
+    return eventos, do_painel, confiavel
 
 
 #: A PÁGINA do app. Fora da tabela de prefixos de propósito (ver o comentário lá):
@@ -395,7 +412,7 @@ def consolidar_rollup(diretorio: Path | None = None, agora_utc: datetime | None 
         for dia in sorted(candidatos):
             if dia >= hoje_brt or dia.isoformat() in dias:
                 continue  # dia aberto (ainda muda) ou já consolidado (write-once)
-            eventos, confiavel = _eventos_da_janela(base, dia, dia)
+            eventos, _do_painel, confiavel = _eventos_da_janela(base, dia, dia)
             if not confiavel:
                 continue  # arquivo existente mas ilegível: não congelar subcontagem
             dias[dia.isoformat()] = _dia_de_rollup(eventos)
@@ -438,10 +455,31 @@ def _p95(valores: list[int]) -> int | None:
     return ordenados[int(0.95 * (len(ordenados) - 1))]
 
 
-def _saude(eventos: list[dict[str, Any]]) -> dict[str, Any]:
+def _saude(
+    eventos: list[dict[str, Any]], do_painel: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Saúde da janela: DUAS taxas, e o 5xx das rotas que saem da contagem de uso.
+
+    `taxa_erro_pct` é a régua HISTÓRICA e não muda de significado — quem lê o número de
+    ontem tem de poder comparar com o de hoje. Ao lado dela nasce `taxa_defeito_pct`, que
+    tira do numerador o 4xx que é a resposta CERTA do servidor (`erro_por_desenho`).
+
+    A diferença entre as duas foi medida em 29/09/2026, com esta mesma régua: na janela de
+    30 dias a taxa era **2,30%** (167 erros / 7.325 eventos), e dela **73 eventos** eram o
+    corte do P19 com a chave desligada — 404 em `/api/login` e `/api/logout`, 405 em
+    `/api/firstfactor` —, concentrados em dois dias. Só 5xx: **0,50%**. Ou seja, a maior
+    parte do que o painel chamava de erro era o servidor respondendo certo.
+
+    AS DUAS FICAM, e nenhuma substitui a outra. A operacional continua sendo o alarme de
+    "algo mudou no volume de respostas de erro", que pega inclusive um 403 em massa
+    (allowlist defasada) que a de defeito ignoraria por construção.
+    """
+    do_painel = do_painel or []
     total = len(eventos)
     e4 = sum(1 for r in eventos if isinstance(r.get("status"), int) and 400 <= r["status"] < 500)
     e5 = sum(1 for r in eventos if isinstance(r.get("status"), int) and r["status"] >= 500)
+    por_desenho = sum(1 for r in eventos if erro_por_desenho(r.get("rota"), r.get("status")))
+    de_defeito = e4 + e5 - por_desenho
     por_rota: dict[str, list[int]] = {}
     for r in eventos:
         if isinstance(r.get("duracao_ms"), int):
@@ -452,11 +490,26 @@ def _saude(eventos: list[dict[str, Any]]) -> dict[str, Any]:
         if len(ds) >= 5
     ]
     lentas.sort(key=lambda x: -(x["p95_ms"] or 0))
+    # 5xx das rotas que saem da contagem de USO. Fica FORA das duas taxas de propósito: o
+    # denominador delas é uso, e estas linhas não são uso -- somá-las ali misturaria duas
+    # perguntas. Entra como contagem própria, que é o que faltava para o painel poder
+    # dizer que ele mesmo está quebrado.
+    cinco_do_painel = Counter(
+        str(r.get("rota") or "?")
+        for r in do_painel
+        if isinstance(r.get("status"), int) and r["status"] >= 500
+    )
     return {
         "total": total,
         "erros_4xx": e4,
         "erros_5xx": e5,
         "taxa_erro_pct": round(100.0 * (e4 + e5) / total, 1) if total else 0.0,
+        "erros_por_desenho": por_desenho,
+        "taxa_defeito_pct": round(100.0 * de_defeito / total, 1) if total else 0.0,
+        "erros_5xx_fora_da_metrica": sum(cinco_do_painel.values()),
+        "rotas_5xx_fora_da_metrica": [
+            {"rota": rota, "n": n} for rota, n in cinco_do_painel.most_common(5)
+        ],
         "lentas": lentas[:5],
     }
 
@@ -504,7 +557,7 @@ def resumo(
     primeiro = hoje - timedelta(days=dias - 1)
 
     consolidar_rollup_seguro(base, agora_utc)
-    eventos, _confiavel = _eventos_da_janela(base, primeiro, hoje)
+    eventos, do_painel, _confiavel = _eventos_da_janela(base, primeiro, hoje)
     de_hoje = [r for r in eventos if r["momento"].date() == hoje]
 
     # Contagens AO VIVO por dia BRT da janela: alimentam o "hoje" da série e o
@@ -587,7 +640,7 @@ def resumo(
         "heatmap": heatmap,
         "por_aba": por_aba,
         "usuarios": _linhas_usuarios(eventos, hoje, dias),
-        "saude": _saude(eventos),
+        "saude": _saude(eventos, do_painel),
     }
 
 
@@ -607,7 +660,7 @@ def ficha_usuario(
     hoje = ((agora_utc or datetime.now(UTC)) + _FUSO_BRT).date()
     primeiro = hoje - timedelta(days=dias - 1)
 
-    da_janela, _confiavel = _eventos_da_janela(base, primeiro, hoje)
+    da_janela, _do_painel, _confiavel = _eventos_da_janela(base, primeiro, hoje)
     eventos = [r for r in da_janela if str(r.get("usuario") or "desconhecido") == nome]
     if not eventos:
         return None

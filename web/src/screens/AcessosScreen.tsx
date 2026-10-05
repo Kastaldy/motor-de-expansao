@@ -968,11 +968,20 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
                   valor={resumo.hoje.ultimo?.usuario ?? '—'}
                   sub={resumo.hoje.ultimo?.hora ? `às ${resumo.hoje.ultimo.hora} (BRT)` : undefined}
                 />
+                {/* A régua HISTÓRICA fica aqui, e no mesmo lugar: quem comparar com o
+                    número de ontem tem de achar o mesmo significado. A de defeito entra
+                    embaixo, porque é ela que diz se algo está errado. O `tone` passa a
+                    olhar também o 5xx FORA da contagem de uso — foi o que faltava para o
+                    painel poder ficar vermelho por causa da própria quebra. */}
                 <Kpi
                   label="Taxa de erro"
                   valor={`${resumo.saude.taxa_erro_pct}%`}
-                  tone={resumo.saude.erros_5xx > 0 ? 'var(--neg)' : undefined}
-                  sub={`na janela de ${resumo.janela_dias} dias`}
+                  tone={
+                    resumo.saude.erros_5xx > 0 || resumo.saude.erros_5xx_fora_da_metrica > 0
+                      ? 'var(--neg)'
+                      : undefined
+                  }
+                  sub={`${resumo.saude.taxa_defeito_pct}% descontando resposta correta`}
                 />
               </div>
 
@@ -1013,14 +1022,41 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
                       color: resumo.saude.erros_5xx > 0 ? 'var(--neg)' : 'var(--pos-text)',
                     }}
                   >
-                    {resumo.saude.taxa_erro_pct}%
+                    {resumo.saude.taxa_defeito_pct}%
                   </span>
                   <span style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
-                    de erro · {resumo.saude.erros_4xx} × 4xx · {resumo.saude.erros_5xx} × 5xx
+                    de defeito · {resumo.saude.erros_5xx} × 5xx ·{' '}
+                    {resumo.saude.erros_4xx - resumo.saude.erros_por_desenho} × 4xx
                     <br />
                     em {resumo.saude.total} requisições
                   </span>
                 </div>
+                {/* A operacional fica VISÍVEL ao lado, e não escondida: ela é o alarme de
+                    "mudou o volume de resposta de erro" e pega coisas que a de defeito
+                    ignora por construção — um 403 em massa, por exemplo, que é allowlist
+                    defasada e não defeito de servidor. */}
+                <div style={{ font: '400 10px/1.4 var(--f-ui)', color: 'var(--tx-muted)' }}>
+                  Operacional: {resumo.saude.taxa_erro_pct}% ·{' '}
+                  {resumo.saude.erros_4xx + resumo.saude.erros_5xx} erros, dos quais{' '}
+                  {resumo.saude.erros_por_desenho} são resposta correta do servidor (negação de
+                  acesso e o login antes do corte).
+                </div>
+                {/* O painel enxergando a própria quebra. Só aparece quando há o que dizer:
+                    em 29/09/2026 seriam 139 × 500 em `/api/acessos/usuarios`, invisíveis
+                    na tela por 11 dias porque a rota sai da contagem de uso. */}
+                {resumo.saude.erros_5xx_fora_da_metrica > 0 && (
+                  <div
+                    style={{
+                      font: '600 10px/1.4 var(--f-ui)',
+                      color: 'var(--neg)',
+                    }}
+                  >
+                    {resumo.saude.erros_5xx_fora_da_metrica} × 5xx fora da contagem de uso:{' '}
+                    {resumo.saude.rotas_5xx_fora_da_metrica
+                      .map((r) => `${r.rota} (${r.n})`)
+                      .join(', ')}
+                  </div>
+                )}
                 <BarrasHorizontais
                   mono
                   itens={resumo.saude.lentas.map((l) => ({

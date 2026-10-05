@@ -642,3 +642,163 @@ def test_outras_acoes_continua_existindo_como_tripwire() -> None:
     assert _feature_do_evento({"metodo": "GET", "rota": "/api/rota-inventada"}) == (
         "Outras ações"
     )
+
+
+# --- as DUAS taxas, e o painel vendo a própria quebra (BLK-SAUDE-03) -----------
+#
+# Medido em produção em 29/09/2026, com a régua real: na janela de 30 dias a
+# `taxa_erro_pct` era 2,30% (167 erros / 7.325 eventos), e **73 desses eventos** eram o
+# corte do P19 com a chave desligada — 404 em `/api/login` e `/api/logout`, 405 em
+# `/api/firstfactor`. Só 5xx: 0,50%. A maior parte do que o painel chamava de erro era o
+# servidor respondendo certo.
+#
+# E, ao mesmo tempo, `GET /api/acessos/usuarios` tinha **139 falhas em 139 chamadas** desde
+# 18/09 sem nenhuma aparecer em lugar nenhum da tela, porque a rota sai do universo ANTES
+# de `_saude` contar (`ROTAS_FORA_DA_METRICA`). O painel não enxergava a própria quebra.
+
+
+def test_a_taxa_historica_NAO_muda_de_significado(tmp_path: Path) -> None:
+    """Trava de regressão da régua antiga: `(4xx + 5xx) / total`, sem desconto nenhum.
+
+    É o número que alguém comparou com o de ontem. Se este teste cair, a comparação
+    histórica quebrou em silêncio — e é exatamente o que NÃO se pode fazer ao acrescentar
+    uma segunda taxa ao lado.
+    """
+    _gravar(tmp_path, AGORA, rota="/api/ponto", status=200)
+    _gravar(tmp_path, AGORA, rota="/api/login", status=404)  # por desenho
+    _gravar(tmp_path, AGORA, rota="/api/uf/SP", status=403)  # por desenho
+    _gravar(tmp_path, AGORA, rota="/api/relatorio/municipal", status=500)  # defeito
+
+    s = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)["saude"]
+    assert s["total"] == 4
+    assert s["erros_4xx"] == 2
+    assert s["erros_5xx"] == 1
+    # 3 de 4 = 75,0%: a régua antiga conta o 404 e o 403 como erro, e continua contando.
+    assert s["taxa_erro_pct"] == 75.0
+
+
+def test_a_taxa_de_defeito_desconta_so_o_que_e_resposta_certa(tmp_path: Path) -> None:
+    """Mesmos quatro eventos, outra pergunta: quanto disso é DEFEITO?"""
+    _gravar(tmp_path, AGORA, rota="/api/ponto", status=200)
+    _gravar(tmp_path, AGORA, rota="/api/login", status=404)
+    _gravar(tmp_path, AGORA, rota="/api/uf/SP", status=403)
+    _gravar(tmp_path, AGORA, rota="/api/relatorio/municipal", status=500)
+
+    s = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)["saude"]
+    assert s["erros_por_desenho"] == 2  # o 404 do login e o 403 do RBAC
+    assert s["taxa_defeito_pct"] == 25.0  # só o 500 sobra: 1 de 4
+
+
+def test_cada_padrao_por_desenho_sai_do_defeito_e_FICA_na_operacional(
+    tmp_path: Path,
+) -> None:
+    """Um evento por padrão catalogado, conferido um a um.
+
+    Parametrizar aqui esconderia o ponto: o que se guarda é que a lista NOMEADA cobre
+    exatamente estes casos e que nenhum deles vaza para a taxa de defeito.
+    """
+    for rota, status in (
+        ("/api/login", 404),
+        ("/api/logout", 404),
+        ("/api/firstfactor", 405),
+        ("/api/oportunidades", 403),
+    ):
+        assert rel.erro_por_desenho(rota, status) is True, f"{status} {rota}"
+
+    _gravar(tmp_path, AGORA, rota="/api/login", status=404)
+    _gravar(tmp_path, AGORA, rota="/api/logout", status=404)
+    _gravar(tmp_path, AGORA, rota="/api/firstfactor", status=405)
+    s = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)["saude"]
+    assert s["taxa_erro_pct"] == 100.0, "a operacional tem de continuar vendo os três"
+    assert s["taxa_defeito_pct"] == 0.0, "nenhum deles é defeito"
+
+
+def test_o_mesmo_status_em_ROTA_VIZINHA_de_nome_parecido_continua_defeito() -> None:
+    """A lista é por caminho EXATO ou filho, nunca por prefixo cru.
+
+    `"/api/loginhistorico".startswith("/api/login")` é `True`, e com `startswith` cru um
+    404 numa rota que simplesmente não existe sairia da conta de defeito sozinho. Nenhuma
+    rota assim existe hoje; a armadilha é o dia em que existir — e é o mesmo defeito de
+    prefixo largo que o `ROTAS_FORA_DA_METRICA` tem por herança.
+    """
+    assert rel.erro_por_desenho("/api/login", 404) is True
+    assert rel.erro_por_desenho("/api/login/reenviar", 404) is True  # filho: mesmo assunto
+    assert rel.erro_por_desenho("/api/loginhistorico", 404) is False
+    assert rel.erro_por_desenho("/api/logout-tudo", 404) is False
+
+
+def test_status_diferente_na_rota_catalogada_NAO_e_por_desenho() -> None:
+    """O par é (rota, status). Um 500 em `/api/login` é defeito como qualquer outro."""
+    assert rel.erro_por_desenho("/api/login", 500) is False
+    assert rel.erro_por_desenho("/api/login", 401) is False
+    assert rel.erro_por_desenho("/api/firstfactor", 404) is False  # o catalogado é 405
+
+
+def test_unidade_sem_dado_na_competencia_CONTA_como_defeito(tmp_path: Path) -> None:
+    """Decisão declarada, e contra-intuitiva: fica na conta apesar de quase sempre ser certo.
+
+    `/api/rede/unidade/{slug}` devolve 404 com "Unidade X sem dados na competência Y", que
+    é a resposta CORRETA — e foram 37 eventos medidos, 34 deles de uma varredura única do
+    Juan em 28/09 pedindo um mês que aquelas unidades não têm. Mas a trilha guarda `rota` e
+    `status` e NÃO guarda mensagem: ela não distingue isso de "slug que não existe no
+    cadastro", que é defeito real (e o cadastro de produção é semeadura velha de 06/08).
+    Entre esconder um defeito real e contar um acerto como erro, conta-se o acerto.
+    """
+    assert rel.erro_por_desenho("/api/rede/unidade/sagrada-familia-mt", 404) is False
+    _gravar(tmp_path, AGORA, rota="/api/rede/unidade/sagrada-familia-mt", status=404)
+    s = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)["saude"]
+    assert s["erros_por_desenho"] == 0
+    assert s["taxa_defeito_pct"] == 100.0
+
+
+def test_o_5xx_do_proprio_painel_aparece_FORA_das_duas_taxas(tmp_path: Path) -> None:
+    """O conserto do buraco: visível, e sem contaminar o denominador de uso.
+
+    Reproduz em miniatura o que produção tinha: 3 × 500 numa rota do painel e uma
+    requisição de uso que deu certo. A taxa fica 0% — porque a rota do painel não é uso e
+    não entra no denominador — e o número aparece no contador próprio.
+    """
+    _gravar(tmp_path, AGORA, rota="/api/ponto", status=200)
+    for _ in range(3):
+        _gravar(tmp_path, AGORA, rota="/api/acessos/usuarios", status=500)
+
+    s = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)["saude"]
+    assert s["total"] == 1, "a rota do painel não pode entrar no denominador de uso"
+    assert s["taxa_erro_pct"] == 0.0
+    assert s["taxa_defeito_pct"] == 0.0
+    assert s["erros_5xx_fora_da_metrica"] == 3
+    assert s["rotas_5xx_fora_da_metrica"] == [{"rota": "/api/acessos/usuarios", "n": 3}]
+
+
+def test_o_4xx_do_painel_NAO_entra_no_contador_novo(tmp_path: Path) -> None:
+    """O contador é de 5xx, e a razão é a que justifica a exclusão original.
+
+    `/entrar.html` é a primeira rota do produto servida SEM autenticação, então varredor
+    de internet vira linha de trilha (medido no dia em que subiu: 46 acessos de 16 IPs,
+    incluindo busca de `/xmlrpc.php`). O 4xx dessas rotas é ruído de internet. Um **5xx**
+    não: é o nosso servidor falhando, independente de quem pediu — e é essa distinção que
+    permite trazer a saúde de volta sem trazer o ruído.
+    """
+    _gravar(tmp_path, AGORA, rota="/entrar.html", status=405)
+    _gravar(tmp_path, AGORA, rota="/entrar.html", status=400)
+    _gravar(tmp_path, AGORA, rota="/api/acessos/resumo", status=404)
+
+    s = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)["saude"]
+    assert s["erros_5xx_fora_da_metrica"] == 0
+    assert s["rotas_5xx_fora_da_metrica"] == []
+
+
+def test_a_nossa_propria_sonda_curl_fica_fora_de_TUDO(tmp_path: Path) -> None:
+    """Inclusive do contador novo — senão a medição da equipe entra na conta.
+
+    Não é hipótese: em 29/09/2026 o diagnóstico bateu em `/api/acessos/usuarios` por
+    `docker exec curl` várias vezes. Se `evento_de_diagnostico` não viesse ANTES da
+    partição, aquelas sondas teriam inflado o número que o painel passa a mostrar — e a
+    contagem real de 139 teria virado outra coisa.
+    """
+    for _ in range(5):
+        _gravar(tmp_path, AGORA, rota="/api/acessos/usuarios", status=500, agente="curl/8.5.0")
+    _gravar(tmp_path, AGORA, rota="/api/acessos/usuarios", status=500, agente="Mozilla/5.0")
+
+    s = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)["saude"]
+    assert s["erros_5xx_fora_da_metrica"] == 1, "a sonda curl entrou na conta do painel"
