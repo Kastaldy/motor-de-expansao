@@ -770,6 +770,32 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 )
                 problemas.append(f"PUBLIC pode executar {nome}: falta o REVOKE EXECUTE da secao 2")
 
+        # A QUARTA camada: o `ALTER DEFAULT PRIVILEGES` da secao 6. Pergunta DERIVADA --
+        # o dono da tabela auditada aparece entre os papeis do `pg_default_acl`? Papel
+        # EXTRA nao reprova; o que reprova e' o dono AUSENTE, que e' o no-op do
+        # `FOR ROLE postgres`. Medido: no-op puro faz tabela futura nascer invisivel ao
+        # `app`, e `conferir`, `privilegios` e a contagem 12/1/3 passavam os tres verdes.
+        dono, papeis = con.execute(
+            postgres.SQL_DEFAULT_ACL_DO_DONO, (postgres.TABELA_AUDITADA,)
+        ).fetchone()
+        lista = [p for p in (papeis or "").split(",") if p]
+        ok = bool(dono) and dono in lista
+        print(
+            f"  {'ok   ' if ok else 'FALHA'} default privileges do dono ({dono or '?'}): "
+            f"{', '.join(lista) or 'NENHUM'}"
+        )
+        if not ok:
+            print(
+                "        por que importa: sem default privilege PARA O DONO, toda tabela\n"
+                "        criada daqui para frente nasce invisivel ao `app`. E' o no-op da secao 6\n"
+                "        colada literal (`FOR ROLE postgres`): grava duas linhas, nao da erro se o\n"
+                "        papel existir, e nao vale para quem cria objeto de verdade."
+            )
+            problemas.append(
+                f"pg_default_acl nao tem linha para o dono {dono or '?'} "
+                f"(tem: {', '.join(lista) or 'nada'}): a secao 6 foi colada com o papel errado"
+            )
+
     print()
     if problemas:
         print(f"PRIVILEGIOS COM {len(problemas)} PROBLEMA(S):")

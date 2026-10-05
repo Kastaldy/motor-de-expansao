@@ -125,6 +125,23 @@ SQL_ACL_FUNCOES_DE_AUDITORIA = (
     "FROM pg_trigger tg JOIN pg_proc p ON p.oid = tg.tgfoid "
     "WHERE tg.tgrelid = %s::regclass AND NOT tg.tgisinternal ORDER BY p.proname"
 )
+# A QUARTA camada que o script endurece e nenhum instrumento olhava: o
+# `ALTER DEFAULT PRIVILEGES` da secao 6. E' a de maior alcance das quatro -- o no-op
+# silencioso do `FOR ROLE postgres` faz TODA TABELA FUTURA nascer invisivel para o
+# `app`, e os tres comandos passavam verdes. Medido em 05/10/2026: com so' as linhas de
+# `postgres` no `pg_default_acl`, uma tabela criada depois devolve
+# `has_table_privilege('app', ..., 'SELECT') = false`.
+#
+# A pergunta e' DERIVADA: o dono da tabela auditada -- quem de fato vai criar objeto
+# aqui -- aparece entre os papeis do `pg_default_acl`? E' permissiva de proposito: papel
+# EXTRA nao reprova (um cluster pode ter default ACL de mais de um dono por motivo
+# legitimo); o que reprova e' o dono estar AUSENTE, que e' exatamente o no-op.
+SQL_DEFAULT_ACL_DO_DONO = (
+    "SELECT (SELECT c.relowner::regrole::text FROM pg_class c WHERE c.oid = %s::regclass), "
+    "coalesce(string_agg(DISTINCT d.defaclrole::regrole::text, ','), '') "
+    "FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace "
+    "WHERE n.nspname = 'public'"
+)
 
 # --- Estado do modulo ------------------------------------------------------------------
 

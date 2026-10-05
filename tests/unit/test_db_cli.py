@@ -202,6 +202,11 @@ class _ConPrivilegios:
         return self
 
     def fetchone(self) -> tuple[Any, ...]:
+        # Resposta ja' em tupla volta COMO ESTA': e' o caso da consulta de duas colunas
+        # (`SQL_DEFAULT_ACL_DO_DONO` devolve `(dono, papeis)`). Embalar de novo daria uma
+        # tupla de um elemento e o desempacotamento do chamador estouraria.
+        if isinstance(self._valor, tuple):
+            return self._valor
         return (self._valor,)
 
     def fetchall(self) -> list[tuple[Any, ...]]:
@@ -269,6 +274,9 @@ _D20_DE_PE: dict[str, Any] = {
         ("registra_perfil_permissoes_historico", False),
         ("registra_perfil_permissoes_truncate", False),
     ],
+    # A QUARTA camada (secao 6), acrescentada em 05/10/2026: `(dono, papeis_no_defacl)`.
+    # Estado bom = o dono da tabela auditada esta' entre os papeis.
+    postgres.SQL_DEFAULT_ACL_DO_DONO: ("reservas_owner", "reservas_owner"),
 }
 
 
@@ -752,15 +760,15 @@ def test_privilegios_REPROVA_com_a_secao_7_colada_pela_METADE(
     A consulta DERIVA as triggers do catalogo em vez de nomea-las, entao uma terceira trigger
     na tabela auditada tambem passa a ser exigida em 'A' sem ninguem lembrar de mexer aqui.
     """
-    codigo, _con = _rodar_privilegios(
-        monkeypatch,
-        {
-            postgres.SQL_TRIGGERS_AUDITORIA: [
-                ("trg_perfil_permissoes_auditoria", "A"),
-                ("trg_perfil_permissoes_auditoria_truncate", "O"),
-            ]
-        },
-    )
+    # Parte do cluster PROVISIONADO e estraga so' a trigger: assim o unico problema que
+    # sobra e' o que o teste quer medir. Antes partia de um dicionario minimo, e o
+    # `exit 1` vinha de dezenas de checagens falhando por falta de resposta registrada.
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_TRIGGERS_AUDITORIA] = [
+        ("trg_perfil_permissoes_auditoria", "A"),
+        ("trg_perfil_permissoes_auditoria_truncate", "O"),
+    ]
+    codigo, _con = _rodar_privilegios(monkeypatch, respostas)
     saida = capsys.readouterr().out
 
     assert codigo == 1, "uma das duas triggers fora de 'A' tem de REPROVAR"
@@ -770,7 +778,9 @@ def test_privilegios_REPROVA_com_a_secao_7_colada_pela_METADE(
 
 def test_privilegios_REPROVA_sem_trigger_nenhuma(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tabela auditada sem trigger nao-interna: a 009 nao esta' de pe."""
-    codigo, _con = _rodar_privilegios(monkeypatch, {postgres.SQL_TRIGGERS_AUDITORIA: []})
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_TRIGGERS_AUDITORIA] = []
+    codigo, _con = _rodar_privilegios(monkeypatch, respostas)
     assert codigo == 1
 
 
@@ -801,6 +811,56 @@ def test_privilegios_REPROVA_funcao_de_auditoria_executavel_por_PUBLIC(
         "a outra esta' certa e nao pode ser acusada"
     )
     assert "REVOKE EXECUTE" in saida, "...e dizer qual comando conserta"
+
+
+def test_privilegios_REPROVA_default_privileges_do_papel_errado(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A QUARTA camada, achada em 05/10/2026 -- e a de maior alcance das quatro.
+
+    A secao 6 do script, colada literal, diz `FOR ROLE postgres`. Num cluster onde esse
+    papel existe o comando NAO da erro e grava duas linhas INUTEIS: quem cria objeto ali
+    e' o dono, nao o `postgres`. Resultado medido num banco de verdade: toda tabela
+    criada depois nasce com `has_table_privilege('app', ..., 'SELECT') = false`, e
+    `conferir`, `privilegios` e a contagem 12/1/3 passavam os tres verdes.
+    """
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_DEFAULT_ACL_DO_DONO] = ("reservas_owner", "postgres")
+    codigo, _con = _rodar_privilegios(monkeypatch, respostas)
+    saida = capsys.readouterr().out
+
+    assert codigo == 1, "default privilege do papel errado tem de REPROVAR"
+    assert "FALHA default privileges do dono" in saida
+    assert "reservas_owner" in saida, "tem de dizer QUEM deveria estar la'"
+    assert "nasce invisivel ao `app`" in saida, "...e por que importa"
+
+
+def test_privilegios_ACEITA_default_privileges_de_papel_extra(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """O outro lado: papel EXTRA no `pg_default_acl` nao pode reprovar banco sadio.
+
+    A pergunta e' "o dono esta' la'?", nao "so' o dono esta' la'". Um cluster pode ter
+    default ACL de mais de um dono por motivo legitimo, e cobrar exclusividade seria
+    falso alarme -- a classe de defeito que o ensaio ja' achou duas vezes. Medido no
+    banco de ensaio: com `postgres` E `reservas_owner` no catalogo, o comando passa.
+    """
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_DEFAULT_ACL_DO_DONO] = ("reservas_owner", "postgres,reservas_owner")
+    codigo, _con = _rodar_privilegios(monkeypatch, respostas)
+
+    assert codigo == 0, "papel extra junto com o do dono e' estado legitimo"
+    assert "ok    default privileges do dono" in capsys.readouterr().out
+
+
+def test_privilegios_REPROVA_sem_default_privilege_nenhum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Secao 6 nao rodada: `pg_default_acl` vazio no schema `public`."""
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_DEFAULT_ACL_DO_DONO] = ("reservas_owner", "")
+    codigo, _con = _rodar_privilegios(monkeypatch, respostas)
+    assert codigo == 1
 
 
 def test_privilegios_deriva_as_funcoes_de_auditoria_do_catalogo(
