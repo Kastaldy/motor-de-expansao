@@ -19,6 +19,7 @@ import { coordenadaDoEstudo } from '../lib/coord'
 import { alunos, brl, brlCurto, coord, num, pctFrac, rotuloMes } from '../lib/format'
 import { formatarNumero } from '../lib/mascara'
 import { infoImovelParaPdf, parametrosRelatorioPontual } from '../lib/report'
+import { avisoDeViabilidade, sementeDaDemanda } from '../lib/viabilidade-demanda'
 import type {
   FaixaAlunos,
   InfoImovel,
@@ -171,11 +172,17 @@ export default function ViabilityScreen({
   // (blended, com o mix de agregadores) é somente-leitura e vem do motor. Coerente
   // com studios=0 (planilha: 0→147); mudar Studios reajusta, dá para editar depois.
   const [ticket, setTicket] = useState<number>(TICKET_POR_STUDIO[0])
-  const [demanda, setDemanda] = useState(800)
+  // `null` = ainda sem premissa. Nascia em 800, e numa instância sem faixa de
+  // comparáveis o 800 sobrava e a tela calculava sozinha com ele. Agora, sem p50, a
+  // tela pede o número ao operador (regra em lib/viabilidade-demanda.ts).
+  const [demanda, setDemanda] = useState<number | null>(null)
   // A demanda vem padronizada no p50 da metragem e re-escala quando a metragem
   // muda — até o operador mexer no ±, aí a mão dele prevalece (DEC-009: premissa).
   const [demandaTocada, setDemandaTocada] = useState(false)
   const [faixa, setFaixa] = useState<FaixaAlunos | null>(null)
+  // A busca da faixa já respondeu (com ou sem p50)? Só depois disso a tela pode
+  // afirmar "sem comparáveis" e trocar o número pelo campo de digitação.
+  const [faixaBuscada, setFaixaBuscada] = useState(false)
   // Rampa de maturação (Simulador E13; padrão 8). Controlável na sidebar: alonga
   // a curva de alunos e o fluxo de caixa (afeta payback), não a margem steady.
   const [rampaMeses, setRampaMeses] = useState(8)
@@ -256,8 +263,9 @@ export default function ViabilityScreen({
     }
   }
 
-  async function calcular(demandaUsar: number = demanda) {
-    if (!ponto) return
+  async function calcular(demandaUsar: number | null = demanda) {
+    // Sem premissa de demanda não há o que calcular: a tela pede o número.
+    if (!ponto || demandaUsar == null) return
     setCalculando(true)
     setErro(null)
     try {
@@ -271,7 +279,8 @@ export default function ViabilityScreen({
   }
 
   // Ao chegar num ponto: busca a faixa da metragem, semeia a demanda no p50 e
-  // calcula — a tela nunca abre vazia nem com o 800 fixo antigo.
+  // calcula. Sem p50 (instância sem base de comparáveis, ou a busca falhou) e sem
+  // demanda anterior, NÃO calcula: o campo fica vazio e a tela pede a premissa.
   useEffect(() => {
     if (!ponto) return
     let vivo = true
@@ -282,11 +291,12 @@ export default function ViabilityScreen({
         const f = await api.faixaAlunos(m2)
         if (!vivo) return
         setFaixa(f)
-        if (f.p50 != null) seed = Math.round(f.p50)
+        seed = sementeDaDemanda(f.p50, demanda)
       } catch {
         /* sem faixa: mantém a demanda atual */
       }
       if (vivo) {
+        setFaixaBuscada(true)
         setDemanda(seed)
         void calcular(seed)
       }
@@ -337,7 +347,7 @@ export default function ViabilityScreen({
         // inteiro (números + gráficos) por conta própria. Não reenviamos o payload
         // calculado — ele tem 70 KB (série de 64 meses + grade) e estourava a query
         // string em HTTP 431. Ver o comentário em lib/api.ts::relatorioPontual.
-        viabilidadeInputs: res ? montarPayload(demanda) : undefined,
+        viabilidadeInputs: res && demanda != null ? montarPayload(demanda) : undefined,
         fotos,
       })
       baixar(blob, filename)
@@ -354,7 +364,7 @@ export default function ViabilityScreen({
    * não deriva nada. Mesmo padrão de carregando/erro do PDF.
    */
   async function gerarXlsx() {
-    if (!ponto) return
+    if (!ponto || demanda == null) return
     setGerandoXlsx(true)
     setErro(null)
     try {
@@ -390,6 +400,14 @@ export default function ViabilityScreen({
       />
     )
   }
+
+  // Sem p50 a demanda é digitada: não há padrão a oferecer, só a premissa do operador.
+  const semComparaveis = faixaBuscada && faixa?.p50 == null
+  /** Aviso que o perfil do país declara para esta tela (ausente no Brasil). */
+  const avisoPerfil = avisoDeViabilidade()
+  /** Demanda que os quadros de leitura mostram: a do campo; se ele foi esvaziado
+   *  depois de um cálculo, a que o motor usou. `null` = nada a comparar ainda. */
+  const demandaExibida = demanda ?? res?.demanda_premissa ?? null
 
   // TUDO abaixo é LEITURA do viabilidade_payload_v1. A tela não deriva número
   // financeiro nenhum: o motor (dimensionamento/simulador.py) já entregou pronto.
@@ -710,32 +728,57 @@ export default function ViabilityScreen({
                 className="num"
                 style={{
                   font: '500 9.5px/1 var(--f-num)',
-                  color: demandaTocada ? 'var(--warn-text)' : 'var(--ac-text)',
+                  color: demandaTocada || semComparaveis ? 'var(--warn-text)' : 'var(--ac-text)',
                 }}
               >
-                {demandaTocada ? 'ajuste manual' : 'padrão · p50'}
+                {semComparaveis
+                  ? 'premissa do operador'
+                  : demandaTocada
+                    ? 'ajuste manual'
+                    : 'padrão · p50'}
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               {/* O numero grande saia sem unidade nenhuma ("800"). `alunos()` ja'
                   aplica o separador de milhar; faltava a palavra. */}
-              <span style={{ flex: 1, display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                <span
-                  className="num"
-                  style={{ font: '700 22px/1 var(--f-num)', color: 'var(--tx-max)' }}
-                >
-                  {alunos(demanda)}
+              {semComparaveis ? (
+                // Sem faixa de comparáveis não existe padrão: o operador DIGITA a
+                // premissa. Vazio volta a `null` e a tela deixa de calcular.
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <CampoNumero
+                    valor={demanda ?? undefined}
+                    onValor={(n) => {
+                      setDemandaTocada(true)
+                      setDemanda(n)
+                    }}
+                    onVazio={() => setDemanda(null)}
+                    maxDigitos={5}
+                    min={1}
+                    step={DEMANDA_PASSO}
+                    sufixo="alunos"
+                    rotulo="Demanda assumida, em alunos totais"
+                    placeholder="Informe a demanda"
+                  />
                 </span>
-                <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
-                  alunos
+              ) : (
+                <span style={{ flex: 1, display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  <span
+                    className="num"
+                    style={{ font: '700 22px/1 var(--f-num)', color: 'var(--tx-max)' }}
+                  >
+                    {alunos(demanda)}
+                  </span>
+                  <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
+                    alunos
+                  </span>
                 </span>
-              </span>
+              )}
               <button
                 type="button"
                 aria-label="Diminuir demanda"
                 onClick={() => {
                   setDemandaTocada(true)
-                  setDemanda((d) => Math.max(100, d - DEMANDA_PASSO))
+                  setDemanda((d) => Math.max(100, (d ?? 0) - DEMANDA_PASSO))
                 }}
                 style={stepper}
               >
@@ -746,7 +789,7 @@ export default function ViabilityScreen({
                 aria-label="Aumentar demanda"
                 onClick={() => {
                   setDemandaTocada(true)
-                  setDemanda((d) => d + DEMANDA_PASSO)
+                  setDemanda((d) => (d ?? 0) + DEMANDA_PASSO)
                 }}
                 style={stepper}
               >
@@ -785,6 +828,8 @@ export default function ViabilityScreen({
                     </>
                   )}
                 </>
+              ) : demanda == null ? (
+                'Não há faixa de comparáveis nesta base. A demanda é premissa do operador: informe o número de alunos totais e calcule.'
               ) : premissas ? (
                 `Premissa explícita do operador, em alunos TOTAIS. Mix: ${pctFrac(
                   premissas.share_balcao,
@@ -1276,10 +1321,11 @@ export default function ViabilityScreen({
 
           <Botao
             onClick={() => calcular()}
-            disabled={calculando}
+            disabled={calculando || demanda == null}
+            title={demanda == null ? 'Informe a demanda assumida para calcular' : undefined}
             style={{ width: '100%', marginTop: 18, padding: 14, fontSize: 14 }}
           >
-            {calculando ? 'Calculando…' : 'Recalcular viabilidade'}
+            {calculando ? 'Calculando…' : res ? 'Recalcular viabilidade' : 'Calcular viabilidade'}
           </Botao>
 
           <Botao
@@ -1406,6 +1452,44 @@ export default function ViabilityScreen({
             faturamento maduro — não escala com a rampa.
           </div>
 
+          {/* O perfil do país declara, a tela obedece (DEC-047): na AR é a ressalva de
+              que a conta usa premissas BRASILEIRAS. O texto é dado do perfil. */}
+          {avisoPerfil && (
+            <Glass style={{ padding: '13px 16px' }}>
+              <Eyebrow cor="var(--warn)" dot>
+                {avisoPerfil.titulo}
+              </Eyebrow>
+              <p
+                style={{
+                  font: '400 12.5px/1.5 var(--f-ui)',
+                  color: 'var(--tx-narrative)',
+                  margin: '8px 0 0',
+                }}
+              >
+                {avisoPerfil.texto}
+              </p>
+            </Glass>
+          )}
+
+          {demanda == null && !res && !calculando && (
+            <Glass style={{ padding: '13px 16px' }}>
+              <Eyebrow cor="var(--warn)" dot>
+                Demanda não informada
+              </Eyebrow>
+              <p
+                style={{
+                  font: '400 12.5px/1.5 var(--f-ui)',
+                  color: 'var(--tx-narrative)',
+                  margin: '8px 0 0',
+                }}
+              >
+                Esta base não tem faixa de alunos de imóveis comparáveis, então a tela não
+                sugere um número. Informe a demanda assumida no painel ao lado e clique em
+                Calcular viabilidade.
+              </p>
+            </Glass>
+          )}
+
           {erro && (
             <div
               role="alert"
@@ -1422,15 +1506,19 @@ export default function ViabilityScreen({
             </div>
           )}
 
-          <Veredito
-            aprovado={aprovado}
-            margem={margem}
-            demanda={demanda}
-            breakEvenEbitda={beEbitda}
-            breakEvenCaixa={beCaixa}
-            payback={retorno?.payback ?? null}
-            melhoria={res?.melhoria_payback ?? null}
-          />
+          {/* Sem demanda não há veredito: "Com 0 alunos… requer revisão" seria um
+              resultado inventado. */}
+          {demandaExibida != null && (
+            <Veredito
+              aprovado={aprovado}
+              margem={margem}
+              demanda={demandaExibida}
+              breakEvenEbitda={beEbitda}
+              breakEvenCaixa={beCaixa}
+              payback={retorno?.payback ?? null}
+              melhoria={res?.melhoria_payback ?? null}
+            />
+          )}
 
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
             <Kpi
@@ -1560,12 +1648,14 @@ export default function ViabilityScreen({
             />
           </div>
 
-          <ReguaBreakEven
-            demanda={demanda}
-            breakEvenEbitda={beEbitda}
-            breakEvenCaixa={beCaixa}
-            p90={res?.faixa_alunos.p90 ?? faixa?.p90 ?? null}
-          />
+          {demandaExibida != null && (
+            <ReguaBreakEven
+              demanda={demandaExibida}
+              breakEvenEbitda={beEbitda}
+              breakEvenCaixa={beCaixa}
+              p90={res?.faixa_alunos.p90 ?? faixa?.p90 ?? null}
+            />
+          )}
 
           {/* Fluxo de caixa ao lado da rampa; a composição do resultado (agora com as
               parcelas do custo e a despesa financeira) fica embaixo, em largura total. */}

@@ -176,6 +176,26 @@ def _texto_do_aviso_de_viabilidade(onde: str, campo: str) -> str | None:
     return getattr(aviso, campo) or None
 
 
+def _aviso_de_viabilidade_para_a_tela() -> dict[str, str] | None:
+    """Aviso de viabilidade que a ABA exibe — a perna "tela" do `onde` do perfil.
+
+    O PDF e o XLSX carimbam desde o Bloco C+; a tela nao tinha leitor, entao o perfil
+    declarava "tela" e ninguem obedecia: na instancia argentina o operador via um
+    veredito feito com premissas BRASILEIRAS sem a ressalva. Mesma regra de sempre:
+    o perfil declara (`ativo` + "tela" em `onde`), o codigo obedece — sem `if pais`
+    (DEC-047). No Brasil `avisos` e `{}` e isto devolve `None`.
+
+    Sem cache de proposito: le `PERFIL` a cada chamada, como a funcao acima.
+    """
+    texto = _texto_do_aviso_de_viabilidade("tela", "texto_longo")
+    if texto is None:
+        return None
+    return {
+        "titulo": PERFIL.avisos["viabilidade_tributo_provisorio"].titulo,
+        "texto": texto,
+    }
+
+
 OUTPUTS_DIR = DATA_DIR / "outputs"
 STAGING_DIR = DATA_DIR / "staging"
 IBGE_DIR = DATA_DIR / "ibge"
@@ -4120,6 +4140,11 @@ def me(
         "abas": sorted(abas),
         "perfil": _perfil_do_cliente(),
     }
+    # AUSENTE em vez de nula, pelo mesmo motivo da `senha` abaixo: no Brasil (perfil sem
+    # aviso) a resposta nao muda um byte, e a SPA trata a chave como opcional.
+    aviso_viabilidade = _aviso_de_viabilidade_para_a_tela()
+    if aviso_viabilidade is not None:
+        resposta["aviso_viabilidade"] = aviso_viabilidade
     # A chave `senha` so' aparece quando o banco responde E a pessoa tem linha. AUSENTE em vez de
     # nula: o front ja' trata `perfil?` assim (um backend anterior ao Bloco C nao manda o campo e
     # a SPA abre igual), e o mesmo vale aqui -- ausencia significa "nao sei", que e' diferente de
