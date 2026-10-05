@@ -9129,11 +9129,12 @@ def _logo_ultra_para_pdf() -> Any:
 
 @app.get("/api/rede/unidade/{unidade_id}/concorrencia.pdf")
 def rede_unidade_concorrencia_pdf(unidade_id: str, mes: str | None = None) -> Response:
-    """A janela da unidade no mapa, em PDF: alunos, região e o que cada concorrente oferece.
+    """A concorrência da unidade em PDF: o raio, a região e o que cada concorrente oferece.
 
     Nenhum dado novo: são as três leituras que a janela já faz (ficha, inteligência e censo
-    do ponto). O censo é o único bloco que pode faltar sem derrubar o relatório -- o PDF diz
-    que não leu, como a tela.
+    do ponto), e da ficha o PDF só usa nome e UF -- aluno e faturamento NÃO saem no arquivo.
+    O censo é o único bloco que pode faltar sem derrubar o relatório: o PDF diz que não leu,
+    como a tela.
     """
     from motor_expansao.dashboard import rede_export
 

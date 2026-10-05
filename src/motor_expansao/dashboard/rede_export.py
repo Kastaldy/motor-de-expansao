@@ -941,10 +941,6 @@ def _texto_da_fonte(texto: object) -> str:
     return ascii_seguro(str(texto or "").translate(_PONTUACAO_LATIN1))
 
 
-def _alunos(valor: object) -> str:
-    return _br(valor) or "-"
-
-
 #: Traços dos ícones de cada item oferecido, em caixa 24x24. CÓPIA dos de
 #: `web/src/components/IconeComodidade.tsx`: a tela e o PDF mostram a mesma figura para o
 #: mesmo item (`test_icones_do_pdf_cobrem_os_itens_da_coleta` trava a cobertura).
@@ -1243,8 +1239,11 @@ def concorrencia_pdf(
     logos: Mapping[str, str] | None = None,
     logo_ultra: Any = None,
 ) -> bytes:
-    """PDF da janela da unidade: o raio com as concorrentes, alunos, região e o que cada
+    """PDF da concorrência da unidade: o raio com as concorrentes, a região e o que cada
     concorrente oferece.
+
+    NÃO traz aluno nem faturamento da unidade (pedido do Juan, 05/10): só o que é do
+    território e da coleta pública. Da `ficha` saem apenas o nome e a UF.
 
     `logos` = rede -> caminho do arquivo da logo; rede sem arquivo sai com o quadro neutro.
     `logo_ultra` = caminho ou imagem da logo da Ultra para marcar a unidade no raio; sem ela
@@ -1252,7 +1251,6 @@ def concorrencia_pdf(
     """
     unidade = ficha.get("unidade", {})
     nome = str(unidade.get("nome", "Unidade"))
-    metricas = ficha.get("metricas", {})
     mapa = inteligencia.get("mapa") or None
     concorrentes = list((mapa or {}).get("concorrentes") or [])
     raio = f"{_br((mapa or {}).get('raio_m', 2000) / 1000, 0)} km"
@@ -1263,7 +1261,7 @@ def concorrencia_pdf(
 
     pdf = UltraPDF()
     pdf.add_page()
-    _faixa_da_marca(pdf, nome, f"{unidade.get('uf', '')} - concorrência a {raio} - ref. {ficha.get('mes', '')}")
+    _faixa_da_marca(pdf, nome, f"{unidade.get('uf', '')} - concorrência a {raio}")
 
     # ---- Página 1: o raio da unidade com as concorrentes, e os números ao lado ----
     lado_do_mapa = 420.0
@@ -1276,21 +1274,29 @@ def concorrencia_pdf(
         for k, (rotulo, valor) in enumerate(itens):
             _cartao_da_marca(pdf, x_coluna + k * (largura + 12.0), y, largura, rotulo, valor)
 
-    agregadores = inteligencia.get("agregadores") or {}
-    _subtitulo_da_marca(pdf, 72.0, "Alunos", x=x_coluna)
+    de_rede = sum(1 for c in concorrentes if c.get("classe") == "cadeia")
+    com_plano = sum(1 for c in concorrentes if any((c.get("agregadores") or {}).values()))
+    com_comodidades = sum(
+        1 for c in concorrentes if any((c.get("comodidades") or {}).get(canal) for canal in ("recorrente", "agregador"))
+    )
+
+    def contagem(n: int) -> str:
+        return str(n) if mapa else "-"
+
+    _subtitulo_da_marca(pdf, 72.0, f"Concorrentes a {raio}", x=x_coluna)
     cartoes_na_coluna(
         92.0,
         [
-            ("Alunos ativos", _alunos((metricas.get("ativos") or {}).get("atual"))),
-            ("Pagantes", _alunos((metricas.get("pagantes") or {}).get("atual"))),
-            ("Agregadores", _alunos((metricas.get("agregadores") or {}).get("atual"))),
+            ("Academias", contagem(len(concorrentes))),
+            ("De rede", contagem(de_rede)),
+            ("Independentes", contagem(len(concorrentes) - de_rede)),
         ],
     )
     cartoes_na_coluna(
         158.0,
         [
-            ("Via Wellhub", _alunos(agregadores.get("wellhub"))),
-            ("Via TotalPass", _alunos(agregadores.get("totalpass"))),
+            ("Com plano de agregador identificado", contagem(com_plano)),
+            ("Com comodidades coletadas", contagem(com_comodidades)),
         ],
     )
 

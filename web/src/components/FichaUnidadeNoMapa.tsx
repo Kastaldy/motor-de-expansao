@@ -1,12 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 
-import {
-  api,
-  baixar,
-  EXPORTS_REDE_ATIVOS,
-  MOTIVO_EXPORTS_DESLIGADOS,
-  type ApiError,
-} from '../lib/api'
+import { api, baixar, type ApiError } from '../lib/api'
 import { rotuloDaRede } from '../lib/concorrentes'
 import {
   ROTULO_FONTE,
@@ -58,6 +52,8 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
   const [baixando, setBaixando] = useState(false)
   const [erroPdf, setErroPdf] = useState<string | null>(null)
 
+  const [baixandoEstudo, setBaixandoEstudo] = useState(false)
+
   const gerarRelatorio = async () => {
     setBaixando(true)
     setErroPdf(null)
@@ -68,6 +64,28 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
       setErroPdf((e as ApiError).message)
     } finally {
       setBaixando(false)
+    }
+  }
+
+  /* O Relatório Pontual do endereço da unidade: a MESMA rota do resto do app
+     (`/api/relatorio/pontual`), sem viabilidade — é o estudo da praça, não de um imóvel. */
+  const gerarEstudoPontual = async () => {
+    const lat = ficha?.unidade.lat
+    const lng = ficha?.unidade.lng
+    if (!ficha || lat == null || lng == null) return
+    setBaixandoEstudo(true)
+    setErroPdf(null)
+    try {
+      const { blob, filename } = await api.relatorioPontual({
+        lat,
+        lng,
+        rotulo: `Ultra ${ficha.unidade.nome}`,
+      })
+      baixar(blob, filename)
+    } catch (e) {
+      setErroPdf((e as ApiError).message)
+    } finally {
+      setBaixandoEstudo(false)
     }
   }
 
@@ -110,25 +128,33 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
 
   return (
     <div style={{ display: 'grid', gap: 18 }}>
-      {/* ---- Ação: o relatório da unidade ----
-          Baixa em PDF o que esta janela mostra (alunos, região e cada concorrente com o
-          que oferece). Só acende com a ficha carregada: sem ela não há o que imprimir.
-          Obedece à MESMA chave dos exports da Visão Executiva (`EXPORTS_REDE_ATIVOS`,
-          desligada pelo Felipe em 15/09): é dado da rede saindo em arquivo, e uma porta
-          nova ao lado da que foi fechada furaria a decisão. Religa junto com as outras. */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+      {/* ---- Ações: os dois PDFs da unidade ----
+          "Gerar relatório" baixa a concorrência (o raio, a região e o que cada concorrente
+          oferece). NÃO leva aluno nem faturamento, e por isso não depende da chave dos
+          exports da Visão Executiva (`EXPORTS_REDE_ATIVOS`): o que ela fechou foi dado da
+          rede saindo em arquivo. "Estudo pontual" é o Relatório Pontual do endereço da
+          unidade; só acende com coordenada. */}
+      <div
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}
+      >
         <span style={{ font: '400 12px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
           {ficha
             ? [ficha.unidade.cidade, ficha.unidade.uf].filter(Boolean).join(' · ')
             : 'Carregando a unidade…'}
         </span>
-        <Botao
-          disabled={!EXPORTS_REDE_ATIVOS || !ficha || baixando}
-          title={EXPORTS_REDE_ATIVOS ? undefined : MOTIVO_EXPORTS_DESLIGADOS}
-          onClick={gerarRelatorio}
-        >
-          {baixando ? 'Gerando…' : 'Gerar relatório'}
-        </Botao>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Botao
+            variante="ghost"
+            disabled={!ficha || semPonto || baixandoEstudo}
+            title={semPonto ? 'Sem coordenada, não há ponto para estudar.' : undefined}
+            onClick={gerarEstudoPontual}
+          >
+            {baixandoEstudo ? 'Gerando…' : 'Estudo pontual'}
+          </Botao>
+          <Botao disabled={!ficha || baixando} onClick={gerarRelatorio}>
+            {baixando ? 'Gerando…' : 'Gerar relatório'}
+          </Botao>
+        </div>
       </div>
       {erroPdf && <Nota>{erroPdf}</Nota>}
 

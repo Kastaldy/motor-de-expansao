@@ -99,10 +99,12 @@ def test_pdf_traz_a_unidade_a_regiao_e_o_que_cada_concorrente_oferece() -> None:
         "chuveiro",
         "lutas",
         "modalidades: muay thai, yoga",
-        "1.400",  # ativos
         "43.000",  # população do raio
     ):
         assert esperado in cru, esperado
+    # pedido do Juan (05/10): o PDF não leva dado de aluno da unidade
+    for proibido in ("alunos", "pagantes", "1.400", "1.100", "via wellhub", "via totalpass"):
+        assert proibido not in cru, proibido
 
 
 def test_pdf_distingue_base_ausente_de_academia_nao_coletada() -> None:
@@ -181,7 +183,7 @@ def test_pdf_abre_com_o_raio_da_unidade_antes_da_lista_e_sem_numero_nos_marcador
     assert "(ultra)" in cru and "(2 km)" in cru and "(1,0 km)" in cru
     assert cru.index("unidade deste relat") < cru.index("(academia perto)") < cru.index("(academia longe)")
     # pedido do Juan (05/10): o desenho não leva numeração, nem a lista
-    assert "(1)" not in cru and "(2)" not in cru and "1. academia" not in cru
+    assert " 6.00 tf" not in cru and "1. academia" not in cru  # o corpo 6 era só o do número
     assert len(re.findall(rb"/Type /Page\b", pdf)) == 2, len(paginas)
 
 
