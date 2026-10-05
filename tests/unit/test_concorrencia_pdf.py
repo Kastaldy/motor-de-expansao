@@ -169,6 +169,25 @@ def test_pdf_segue_o_guia_de_marca_titulos_em_caixa_alta_e_sem_preto() -> None:
     assert not re.search(r"(?m)^(0 g|0 0 0 rg|0\.000 g|0\.000 0\.000 0\.000 rg)$", cru)
 
 
+def test_pdf_abre_com_o_raio_da_unidade_e_numera_os_concorrentes_como_na_lista() -> None:
+    perto = _concorrente("Academia Perto", lat=-22.951, lng=-43.180, distancia_m=110.0)
+    longe = _concorrente("Academia Longe", lat=-22.962, lng=-43.190, distancia_m=1_680.0, classe="independente", rede=None)
+    intel = _inteligencia([perto, longe])
+    intel["mapa"].update({"lat": -22.950, "lng": -43.180, "ultra": [{"lat": -22.94, "lng": -43.17}]})  # type: ignore[union-attr]
+    pdf = rede_export.concorrencia_pdf(_ficha(), intel, PONTO)
+    cru = _texto_cru_do_pdf(pdf)
+    paginas = cru.split("/type /page\n")
+    # o raio e a legenda vêm ANTES da lista: estão na página 1, e a lista na 2
+    assert "(ultra)" in cru and "(2 km)" in cru and "(1,0 km)" in cru
+    assert cru.index("unidade deste relat") < cru.index("1. academia perto") < cru.index("2. academia longe")
+    assert len(re.findall(rb"/Type /Page\b", pdf)) == 2, len(paginas)
+
+
+def test_pdf_sem_coordenada_diz_que_nao_ha_raio_para_desenhar() -> None:
+    cru = _texto_cru_do_pdf(rede_export.concorrencia_pdf(_ficha(), _inteligencia([_concorrente("Sem Ponto")]), None))
+    assert "n\xe3o h\xe1 raio para desenhar" in cru and "1. sem ponto" in cru
+
+
 def test_rota_do_pdf_existe_e_fica_atras_da_aba_executiva() -> None:
     import acesso
     import app as pilot

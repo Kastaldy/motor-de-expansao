@@ -20,6 +20,7 @@ defeito mais caro deste projeto.
 from __future__ import annotations
 
 import csv
+import math
 from collections.abc import Mapping, Sequence
 from io import BytesIO, StringIO
 from typing import Any
@@ -908,12 +909,12 @@ def _faixa_da_marca(pdf: UltraPDF, titulo: str, subtitulo: str) -> None:
     pdf.cell(420 - _MARGEM, 14, ascii_seguro(subtitulo.upper()), align="R")
 
 
-def _subtitulo_da_marca(pdf: UltraPDF, y: float, texto: str) -> None:
+def _subtitulo_da_marca(pdf: UltraPDF, y: float, texto: str, *, x: float = 36.0) -> None:
     """Subtítulo de seção: caixa alta, itálico, teal."""
     pdf.set_text_color(*ULTRA_TURQUESA)
     pdf.set_font("Helvetica", "BI", 12)
-    pdf.set_xy(_MARGEM, y)
-    pdf.cell(600, 14, ascii_seguro(texto.upper()))
+    pdf.set_xy(x, y)
+    pdf.cell(PAGINA_LARGURA - _MARGEM - x, 14, ascii_seguro(texto.upper()))
 
 
 def _cartao_da_marca(pdf: UltraPDF, x: float, y: float, largura: float, rotulo: str, valor: str) -> None:
@@ -989,7 +990,7 @@ def _linhas_do_concorrente(conc: Mapping[str, Any]) -> list[tuple[str, str]]:
 
 
 def _desenhar_concorrente(
-    pdf: UltraPDF, conc: Mapping[str, Any], y: float, logo: str | None, *, medir: bool = False
+    pdf: UltraPDF, conc: Mapping[str, Any], y: float, logo: str | None, *, numero: int, medir: bool = False
 ) -> float:
     """Desenha (ou só mede) o bloco de um concorrente a partir de `y`; devolve o `y` final."""
     x_texto = _MARGEM + 40.0
@@ -1010,7 +1011,7 @@ def _desenhar_concorrente(
         pdf.set_text_color(*CINZA_TEXTO)
         pdf.set_font("Helvetica", "B", 11)
         pdf.set_xy(x_texto, y)
-        pdf.cell(largura - 150, 13, _texto_da_fonte(nome))
+        pdf.cell(largura - 150, 13, _texto_da_fonte(f"{numero}. {nome}"))
         pdf.set_font("Helvetica", "", 9)
         pdf.set_text_color(110, 110, 110)
         pdf.set_xy(PAGINA_LARGURA - _MARGEM - 150, y)
@@ -1030,6 +1031,121 @@ def _desenhar_concorrente(
         pdf.multi_cell(largura, 11, limpo)
         cursor = pdf.get_y()
     return max(cursor, y + 32.0) + 9.0
+
+
+def _mapa_do_raio(
+    pdf: UltraPDF,
+    x: float,
+    y: float,
+    lado: float,
+    mapa: Mapping[str, Any] | None,
+    concorrentes: Sequence[Mapping[str, Any]],
+    logos: Mapping[str, str] | None,
+) -> None:
+    """O raio da unidade com as concorrentes nas posições reais, em escala.
+
+    ESQUEMA, e não mapa de ruas: desenhado com as primitivas do fpdf (como os gráficos deste
+    módulo), sem tile e sem rede -- a rota não pode depender de serviço externo para imprimir.
+    Projeção plana em torno da unidade, exata o bastante para 2 km. O número ao lado de cada
+    marcador é o mesmo da lista das páginas seguintes.
+    """
+    pdf.set_fill_color(*_FUNDO_DE_CARTAO)
+    pdf.rect(x, y, lado, lado, style="F")
+    cx, cy = x + lado / 2, y + lado / 2
+    lat0, lng0 = (mapa or {}).get("lat"), (mapa or {}).get("lng")
+    if lat0 is None or lng0 is None:
+        pdf.set_text_color(120, 120, 120)
+        pdf.set_font("Helvetica", "", 9.5)
+        pdf.set_xy(x, cy - 6)
+        pdf.cell(lado, 12, ascii_seguro("Sem coordenada, não há raio para desenhar."), align="C")
+        return
+    raio_m = float((mapa or {}).get("raio_m") or 2000.0)
+    raio_pt = lado / 2 - 16.0
+    escala = raio_pt / raio_m
+    metros_por_grau_lng = 111_320.0 * math.cos(math.radians(float(lat0)))
+
+    def ponto_na_pagina(lat: object, lng: object) -> tuple[float, float]:
+        dx = (float(lng) - float(lng0)) * metros_por_grau_lng  # type: ignore[arg-type]
+        dy = (float(lat) - float(lat0)) * 110_540.0  # type: ignore[arg-type]
+        return cx + dx * escala, cy - dy * escala
+
+    # o disco do raio e o anel da metade dele
+    pdf.set_fill_color(*BRANCO)
+    pdf.set_draw_color(*ULTRA_TURQUESA)
+    pdf.set_line_width(1.2)
+    pdf.ellipse(cx - raio_pt, cy - raio_pt, 2 * raio_pt, 2 * raio_pt, style="DF")
+    pdf.set_draw_color(190, 190, 190)
+    pdf.set_line_width(0.6)
+    pdf.set_dash_pattern(dash=3, gap=3)
+    pdf.ellipse(cx - raio_pt / 2, cy - raio_pt / 2, raio_pt, raio_pt, style="D")
+    pdf.set_dash_pattern()
+    pdf.set_text_color(120, 120, 120)
+    pdf.set_font("Helvetica", "", 7)
+    for fracao in (0.5, 1.0):
+        pdf.set_xy(cx - 30, cy - raio_pt * fracao - 9)
+        pdf.cell(60, 8, ascii_seguro(f"{_br(raio_m * fracao / 1000, 0 if fracao == 1.0 else 1)} km"), align="C")
+
+    # do mais longe para o mais perto: quem está colado na unidade fica por cima
+    numerados = sorted(enumerate(concorrentes, start=1), key=lambda par: -(par[1].get("distancia_m") or 0))
+    for numero, conc in numerados:
+        if conc.get("lat") is None or conc.get("lng") is None:
+            continue
+        px, py = ponto_na_pagina(conc["lat"], conc["lng"])
+        logo = (logos or {}).get(str(conc.get("rede") or "")) if conc.get("classe") == "cadeia" else None
+        if logo:
+            try:
+                pdf.image(logo, x=px - 7, y=py - 7, w=14.0, h=14.0)
+            except Exception:  # noqa: BLE001  (logo ilegível vira ponto, não derruba o relatório)
+                logo = None
+        if not logo:
+            pdf.set_fill_color(*(CINZA_TEXTO if conc.get("classe") == "cadeia" else ULTRA_MAGENTA))
+            pdf.ellipse(px - 4, py - 4, 8, 8, style="F")
+        pdf.set_text_color(*CINZA_TEXTO)
+        pdf.set_font("Helvetica", "B", 6)
+        pdf.set_xy(px + 7.5, py - 4)
+        pdf.cell(14, 7, str(numero))
+
+    for vizinha in (mapa or {}).get("ultra") or []:
+        if vizinha.get("lat") is None or vizinha.get("lng") is None:
+            continue
+        px, py = ponto_na_pagina(vizinha["lat"], vizinha["lng"])
+        pdf.set_draw_color(*ULTRA_TURQUESA)
+        pdf.set_line_width(1.4)
+        pdf.ellipse(px - 5, py - 5, 10, 10, style="D")
+
+    pdf.set_fill_color(*ULTRA_TURQUESA)
+    pdf.set_draw_color(*BRANCO)
+    pdf.set_line_width(1.6)
+    pdf.ellipse(cx - 7, cy - 7, 14, 14, style="DF")
+    pdf.set_text_color(*ULTRA_TURQUESA)
+    pdf.set_font("Helvetica", "B", 7)
+    pdf.set_xy(cx - 30, cy + 8)
+    pdf.cell(60, 8, "ULTRA", align="C")
+
+
+def _legenda_do_raio(pdf: UltraPDF, x: float, y: float) -> None:
+    """O que cada marca do desenho do raio quer dizer."""
+    itens = [
+        ("cheio", ULTRA_TURQUESA, "Unidade deste relatório"),
+        ("anel", ULTRA_TURQUESA, "Outra unidade Ultra"),
+        ("cheio", CINZA_TEXTO, "Concorrente de rede (logo quando há)"),
+        ("cheio", ULTRA_MAGENTA, "Concorrente independente"),
+    ]
+    for i, (forma, cor, texto) in enumerate(itens):
+        linha = y + i * 14.0
+        if forma == "cheio":
+            pdf.set_fill_color(*cor)
+            pdf.ellipse(x, linha + 1, 8, 8, style="F")
+        else:
+            pdf.set_draw_color(*cor)
+            pdf.set_line_width(1.4)
+            pdf.ellipse(x, linha + 1, 8, 8, style="D")
+        pdf.set_text_color(110, 110, 110)
+        pdf.set_font("Helvetica", "", 8.5)
+        pdf.set_xy(x + 14, linha)
+        pdf.cell(300, 10, ascii_seguro(texto))
+    pdf.set_xy(x, y + len(itens) * 14.0 + 2)
+    pdf.cell(430, 10, ascii_seguro("O número ao lado de cada marcador é o do concorrente na lista das páginas seguintes."))
 
 
 def concorrencia_pdf(
@@ -1057,46 +1173,75 @@ def concorrencia_pdf(
     pdf.add_page()
     _faixa_da_marca(pdf, nome, f"{unidade.get('uf', '')} - concorrência a {raio} - ref. {ficha.get('mes', '')}")
 
+    # ---- Página 1: o raio da unidade com as concorrentes, e os números ao lado ----
+    lado_do_mapa = 420.0
+    _mapa_do_raio(pdf, _MARGEM, 72.0, lado_do_mapa, mapa, concorrentes, logos)
+    x_coluna = _MARGEM + lado_do_mapa + 20.0
+    largura_coluna = PAGINA_LARGURA - _MARGEM - x_coluna
+
+    def cartoes_na_coluna(y: float, itens: Sequence[tuple[str, str]]) -> None:
+        largura = (largura_coluna - (len(itens) - 1) * 12.0) / len(itens)
+        for k, (rotulo, valor) in enumerate(itens):
+            _cartao_da_marca(pdf, x_coluna + k * (largura + 12.0), y, largura, rotulo, valor)
+
     agregadores = inteligencia.get("agregadores") or {}
-    cartoes = [
-        ("Alunos ativos", _alunos((metricas.get("ativos") or {}).get("atual"))),
-        ("Pagantes", _alunos((metricas.get("pagantes") or {}).get("atual"))),
-        ("Agregadores", _alunos((metricas.get("agregadores") or {}).get("atual"))),
-        ("Via Wellhub", _alunos(agregadores.get("wellhub"))),
-        ("Via TotalPass", _alunos(agregadores.get("totalpass"))),
-    ]
-    largura_cartao = (PAGINA_LARGURA - 2 * _MARGEM - 4 * 12.0) / 5
-    for i, (rotulo, valor) in enumerate(cartoes):
-        _cartao_da_marca(pdf, _MARGEM + i * (largura_cartao + 12.0), 72.0, largura_cartao, rotulo, valor)
+    _subtitulo_da_marca(pdf, 72.0, "Alunos", x=x_coluna)
+    cartoes_na_coluna(
+        92.0,
+        [
+            ("Alunos ativos", _alunos((metricas.get("ativos") or {}).get("atual"))),
+            ("Pagantes", _alunos((metricas.get("pagantes") or {}).get("atual"))),
+            ("Agregadores", _alunos((metricas.get("agregadores") or {}).get("atual"))),
+        ],
+    )
+    cartoes_na_coluna(
+        158.0,
+        [
+            ("Via Wellhub", _alunos(agregadores.get("wellhub"))),
+            ("Via TotalPass", _alunos(agregadores.get("totalpass"))),
+        ],
+    )
 
     censo = (ponto or {}).get("censo") or {}
-    _subtitulo_da_marca(pdf, 146.0, f"Região (raio de {_br((ponto or {}).get('raio_km', 1), 1)} km)")
+    _subtitulo_da_marca(
+        pdf, 232.0, f"Região (raio de {_br((ponto or {}).get('raio_km', 1), 1)} km)", x=x_coluna
+    )
     if censo.get("disponivel"):
-        regiao = [
-            ("Renda média domiciliar", f"R$ {_br(censo.get('renda_media_domiciliar'))}"),
-            ("Renda per capita", f"R$ {_br(censo.get('renda_per_capita'))}"),
-            ("Densidade (hab/km²)", _br(censo.get("densidade_hab_km2")) or "-"),
-            ("População", _br(censo.get("populacao")) or "-"),
-        ]
-        largura_cartao = (PAGINA_LARGURA - 2 * _MARGEM - 3 * 12.0) / 4
-        for i, (rotulo, valor) in enumerate(regiao):
-            _cartao_da_marca(pdf, _MARGEM + i * (largura_cartao + 12.0), 166.0, largura_cartao, rotulo, valor)
+        cartoes_na_coluna(
+            252.0,
+            [
+                ("Renda média domiciliar", f"R$ {_br(censo.get('renda_media_domiciliar'))}"),
+                ("Renda per capita", f"R$ {_br(censo.get('renda_per_capita'))}"),
+            ],
+        )
+        cartoes_na_coluna(
+            318.0,
+            [
+                ("Densidade (hab/km²)", _br(censo.get("densidade_hab_km2")) or "-"),
+                ("População", _br(censo.get("populacao")) or "-"),
+            ],
+        )
     else:
         pdf.set_text_color(120, 120, 120)
         pdf.set_font("Helvetica", "", 9.5)
-        pdf.set_xy(_MARGEM, 168.0)
-        pdf.cell(
-            PAGINA_LARGURA - 2 * _MARGEM,
-            12,
-            _texto_da_fonte(censo.get("motivo") or "Censo do entorno indisponível."),
-        )
+        pdf.set_xy(x_coluna, 254.0)
+        pdf.multi_cell(largura_coluna, 12, _texto_da_fonte(censo.get("motivo") or "Censo do entorno indisponível."))
+    _legenda_do_raio(pdf, x_coluna, 398.0)
 
     def titulo_da_secao(y: float, continua: bool = False) -> float:
         sufixo = " (continuação)" if continua else f" - {len(concorrentes)} a {raio}"
         _subtitulo_da_marca(pdf, y, "Concorrentes" + (sufixo if mapa else ""))
         return y + 22.0
 
-    y = titulo_da_secao(240.0)
+    # A lista começa em página própria: a primeira é do raio. Sem concorrente para listar, o
+    # aviso cabe na própria página 1, sob a legenda.
+    if concorrentes:
+        rodape(pdf, rodape_texto)
+        pdf.add_page()
+        _faixa_da_marca(pdf, nome, "Concorrentes e o que oferecem")
+        y = titulo_da_secao(72.0)
+    else:
+        y = 476.0
     aviso = None
     if not mapa:
         aviso = "Sem coordenada, não há concorrência para ler."
@@ -1105,15 +1250,15 @@ def concorrencia_pdf(
     if aviso:
         pdf.set_text_color(120, 120, 120)
         pdf.set_font("Helvetica", "", 9.5)
-        pdf.set_xy(_MARGEM, y)
-        pdf.cell(PAGINA_LARGURA - 2 * _MARGEM, 12, ascii_seguro(aviso))
-    for conc in concorrentes:
+        pdf.set_xy(x_coluna, y)
+        pdf.cell(largura_coluna, 12, ascii_seguro(aviso))
+    for numero, conc in enumerate(concorrentes, start=1):
         logo = (logos or {}).get(str(conc.get("rede") or "")) if conc.get("classe") == "cadeia" else None
-        if _desenhar_concorrente(pdf, conc, y, logo, medir=True) > _LIMITE_Y:
+        if _desenhar_concorrente(pdf, conc, y, logo, numero=numero, medir=True) > _LIMITE_Y:
             rodape(pdf, rodape_texto)
             pdf.add_page()
             _faixa_da_marca(pdf, nome, "Concorrentes e o que oferecem")
             y = titulo_da_secao(72.0, continua=True)
-        y = _desenhar_concorrente(pdf, conc, y, logo)
+        y = _desenhar_concorrente(pdf, conc, y, logo, numero=numero)
     rodape(pdf, rodape_texto)
     return bytes(pdf.output())
