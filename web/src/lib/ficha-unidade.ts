@@ -112,6 +112,23 @@ export function itensDeclarados(canal: RedeComodidadesCanal | null | undefined):
   )
 }
 
+/** Um item declarado: o valor bruto escolhe o icone, o rotulo e' o que se le. */
+export interface ComodidadeDeclarada {
+  item: RedeComodidadeItem
+  rotulo: string
+}
+
+/** Os mesmos itens de `itensDeclarados`, com o valor bruto ao lado do rotulo. */
+export function comodidadesDeclaradas(
+  canal: RedeComodidadesCanal | null | undefined,
+): ComodidadeDeclarada[] {
+  if (!canal) return []
+  return ORDEM_COMODIDADES.filter((item) => canal.itens?.[item] === true).map((item) => ({
+    item,
+    rotulo: ROTULO_COMODIDADE[item],
+  }))
+}
+
 /**
  * As MODALIDADES que um canal declara (musculacao, lutas, danca...), no texto e na ordem da
  * fonte. E' texto livre do agregador, sem lista fixa: so' sai o vazio e a repeticao (que a
@@ -181,6 +198,33 @@ export function planosDoConcorrente(c: RedeMapaConcorrente): PlanoNoAgregador[] 
     })
   }
   return planos
+}
+
+/** Arte de cada app, para a academia que so' existe na listagem dele (as mesmas do mapa). */
+const ARTE_DO_APP: Readonly<Record<string, string>> = Object.freeze({
+  wellhub: '/logo-wellhub.png',
+  totalpass: '/logo-totalpass.jpg',
+})
+const ARTE_DOS_DOIS_APPS = '/logo-ambos.png'
+
+/**
+ * A imagem que identifica o concorrente no card: a logo da REDE quando ele e' de rede e ela
+ * existe; senao, a arte do app que o lista (a composta quando sao os dois — DEC-066).
+ * Nao ha' foto de fachada na coleta brasileira. `null` = nada a mostrar: a tela desenha o
+ * vazio em vez de emprestar a marca de outra academia.
+ */
+export function imagemDoConcorrente(
+  c: Pick<RedeMapaConcorrente, 'classe' | 'rede' | 'fonte' | 'fontes_da_academia'>,
+  logos: Readonly<Record<string, string | null>> | null | undefined,
+): string | null {
+  const daRede = c.classe === 'cadeia' && c.rede ? logos?.[c.rede] : null
+  if (daRede) return daRede
+  const apps = (c.fontes_da_academia ?? c.fonte ?? '')
+    .split(',')
+    .map((app) => app.trim().toLowerCase())
+    .filter((app) => app in ARTE_DO_APP)
+  if (new Set(apps).size > 1) return ARTE_DOS_DOIS_APPS
+  return apps.length ? ARTE_DO_APP[apps[0]] : null
 }
 
 /** Nome de exibicao: o da academia; sem ele, a rede; sem os dois, o generico. */

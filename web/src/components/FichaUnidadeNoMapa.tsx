@@ -1,11 +1,18 @@
 import { useEffect, useState, type ReactNode } from 'react'
 
-import { api } from '../lib/api'
+import {
+  api,
+  baixar,
+  EXPORTS_REDE_ATIVOS,
+  MOTIVO_EXPORTS_DESLIGADOS,
+  type ApiError,
+} from '../lib/api'
 import { rotuloDaRede } from '../lib/concorrentes'
 import {
   ROTULO_FONTE,
+  comodidadesDeclaradas,
   estadoDasComodidades,
-  itensDeclarados,
+  imagemDoConcorrente,
   modalidadesDoCanal,
   nomeDoConcorrente,
   planosDoConcorrente,
@@ -19,6 +26,7 @@ import type {
   RedePlanosEntorno,
   RedeUnidadeInteligencia,
 } from '../lib/types'
+import IconeComodidade from './IconeComodidade'
 import { CardPainel, LinhaTabela, Pill, TituloSecao } from './PecasPainel'
 import { Botao } from './primitives'
 
@@ -47,6 +55,21 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
   const [erroFicha, setErroFicha] = useState<string | null>(null)
   const [erroIntel, setErroIntel] = useState<string | null>(null)
   const [erroPonto, setErroPonto] = useState(false)
+  const [baixando, setBaixando] = useState(false)
+  const [erroPdf, setErroPdf] = useState<string | null>(null)
+
+  const gerarRelatorio = async () => {
+    setBaixando(true)
+    setErroPdf(null)
+    try {
+      const { blob, filename } = await api.redeUnidadeConcorrenciaPdf(unidadeId)
+      baixar(blob, filename)
+    } catch (e) {
+      setErroPdf((e as ApiError).message)
+    } finally {
+      setBaixando(false)
+    }
+  }
 
   useEffect(() => {
     let vivo = true
@@ -56,6 +79,7 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
     setErroFicha(null)
     setErroIntel(null)
     setErroPonto(false)
+    setErroPdf(null)
 
     api
       .redeUnidade(unidadeId)
@@ -87,18 +111,26 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
   return (
     <div style={{ display: 'grid', gap: 18 }}>
       {/* ---- Ação: o relatório da unidade ----
-          O botão existe e NÃO faz nada ainda, por pedido: o relatório é a próxima etapa.
-          Nasce desabilitado e diz isso — botão aceso que não responde seria defeito. */}
+          Baixa em PDF o que esta janela mostra (alunos, região e cada concorrente com o
+          que oferece). Só acende com a ficha carregada: sem ela não há o que imprimir.
+          Obedece à MESMA chave dos exports da Visão Executiva (`EXPORTS_REDE_ATIVOS`,
+          desligada pelo Felipe em 15/09): é dado da rede saindo em arquivo, e uma porta
+          nova ao lado da que foi fechada furaria a decisão. Religa junto com as outras. */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         <span style={{ font: '400 12px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
           {ficha
             ? [ficha.unidade.cidade, ficha.unidade.uf].filter(Boolean).join(' · ')
             : 'Carregando a unidade…'}
         </span>
-        <Botao disabled title="Em breve: o relatório da unidade ainda não está disponível.">
-          Gerar relatório
+        <Botao
+          disabled={!EXPORTS_REDE_ATIVOS || !ficha || baixando}
+          title={EXPORTS_REDE_ATIVOS ? undefined : MOTIVO_EXPORTS_DESLIGADOS}
+          onClick={gerarRelatorio}
+        >
+          {baixando ? 'Gerando…' : 'Gerar relatório'}
         </Botao>
       </div>
+      {erroPdf && <Nota>{erroPdf}</Nota>}
 
       {semPonto && (
         <Nota>
@@ -185,7 +217,11 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
             )}
             <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
               {concorrentes.map((c, i) => (
-                <CardConcorrente key={`${c.lat}-${c.lng}-${i}`} c={c} />
+                <CardConcorrente
+                  key={`${c.lat}-${c.lng}-${i}`}
+                  c={c}
+                  imagem={imagemDoConcorrente(c, intel.mapa?.logos)}
+                />
               ))}
             </div>
           </>
@@ -241,6 +277,9 @@ function Etiqueta({ children, forte = false }: { children: ReactNode; forte?: bo
   return (
     <span
       style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
         padding: '4px 8px',
         borderRadius: 999,
         border: `1px solid ${forte ? 'var(--ops)' : 'var(--line-soft)'}`,
@@ -255,13 +294,26 @@ function Etiqueta({ children, forte = false }: { children: ReactNode; forte?: bo
 }
 
 /** Uma academia do entorno: quem é, a que distância, em que agregador e o que oferece. */
-function CardConcorrente({ c }: { c: RedeMapaConcorrente }) {
+function CardConcorrente({ c, imagem }: { c: RedeMapaConcorrente; imagem: string | null }) {
   const planos = planosDoConcorrente(c)
   const estado = estadoDasComodidades(c)
   return (
     <CardPainel style={{ padding: '12px 14px', display: 'grid', gap: 9 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
-        <span style={{ font: '600 13px/1.3 var(--f-ui)', color: 'var(--tx-max)', minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {/* A imagem da academia: logo da rede ou arte do app que a lista. Decorativa (o nome
+            está ao lado), por isso `alt` vazio; sem imagem, o quadro fica neutro. */}
+        {imagem ? (
+          <img
+            src={imagem}
+            alt=""
+            width={40}
+            height={40}
+            style={{ display: 'block', flexShrink: 0, borderRadius: 8, objectFit: 'cover' }}
+          />
+        ) : (
+          <span style={{ width: 40, height: 40, borderRadius: 8, background: 'var(--ac-a12)', flexShrink: 0 }} />
+        )}
+        <span style={{ flex: 1, font: '600 13px/1.3 var(--f-ui)', color: 'var(--tx-max)', minWidth: 0 }}>
           {nomeDoConcorrente(c)}
         </span>
         <span className="num" style={{ font: '500 11.5px/1 var(--f-num)', color: 'var(--tx-sub)', flexShrink: 0 }}>
@@ -315,7 +367,7 @@ function CardConcorrente({ c }: { c: RedeMapaConcorrente }) {
  */
 function Canal({ titulo, canal }: { titulo: string; canal: RedeComodidadesCanal | null }) {
   if (!canal) return null
-  const itens = itensDeclarados(canal)
+  const itens = comodidadesDeclaradas(canal)
   const modalidades = modalidadesDoCanal(canal)
   const fonte = ROTULO_FONTE[canal.fonte] ?? canal.fonte
   return (
@@ -338,7 +390,12 @@ function Canal({ titulo, canal }: { titulo: string; canal: RedeComodidadesCanal 
             Nenhum dos itens acompanhados foi declarado.
           </span>
         ) : (
-          itens.map((item) => <Etiqueta key={item}>{item}</Etiqueta>)
+          itens.map(({ item, rotulo }) => (
+            <Etiqueta key={item}>
+              <IconeComodidade item={item} tamanho={13} />
+              {rotulo}
+            </Etiqueta>
+          ))
         )}
       </div>
       {canal.lista.length > 0 && (

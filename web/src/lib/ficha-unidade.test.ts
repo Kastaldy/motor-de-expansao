@@ -4,7 +4,9 @@ import {
   ORDEM_COMODIDADES,
   ROTULO_COMODIDADE,
   TOLERANCIA_PIN_UNIDADE_M,
+  comodidadesDeclaradas,
   estadoDasComodidades,
+  imagemDoConcorrente,
   itensDeclarados,
   modalidadesDoCanal,
   nomeDoConcorrente,
@@ -191,6 +193,45 @@ describe('modalidadesDoCanal', () => {
     const antigo = { ...canal() } as Partial<RedeComodidadesCanal>
     delete antigo.atividades
     expect(modalidadesDoCanal(antigo as RedeComodidadesCanal)).toEqual([])
+  })
+})
+
+describe('comodidadesDeclaradas', () => {
+  it('devolve o valor bruto (que escolhe o icone) junto do rotulo, na ordem do coletor', () => {
+    expect(comodidadesDeclaradas(canal({ chuveiro: true, musculacao: true }))).toEqual([
+      { item: 'musculacao', rotulo: 'Musculação' },
+      { item: 'chuveiro', rotulo: 'Chuveiro' },
+    ])
+  })
+
+  it('concorda com itensDeclarados e nao inventa item nao declarado', () => {
+    const c = canal({ luta: true, cadeira_massagem: true })
+    expect(comodidadesDeclaradas(c).map((x) => x.rotulo)).toEqual(itensDeclarados(c))
+    expect(comodidadesDeclaradas(canal())).toEqual([])
+    expect(comodidadesDeclaradas(null)).toEqual([])
+  })
+})
+
+describe('imagemDoConcorrente', () => {
+  const logos = { bluefit: 'data:image/png;base64,AAA', smart_fit: null }
+
+  it('academia de rede sai com a logo da rede', () => {
+    expect(imagemDoConcorrente(concorrente(), logos)).toBe('data:image/png;base64,AAA')
+  })
+
+  it('independente sai com a arte do app que a lista, e com a composta quando sao os dois', () => {
+    const ind = { classe: 'independente', rede: null }
+    expect(imagemDoConcorrente(concorrente({ ...ind, fonte: 'wellhub' }), logos)).toBe('/logo-wellhub.png')
+    expect(imagemDoConcorrente(concorrente({ ...ind, fonte: 'totalpass' }), logos)).toBe('/logo-totalpass.jpg')
+    expect(
+      imagemDoConcorrente(concorrente({ ...ind, fonte: 'wellhub', fontes_da_academia: 'wellhub,totalpass' }), logos),
+    ).toBe('/logo-ambos.png')
+  })
+
+  it('sem logo e sem app conhecido devolve null: a tela desenha o vazio, nao outra marca', () => {
+    expect(imagemDoConcorrente(concorrente({ rede: 'smart_fit' }), logos)).toBeNull()
+    expect(imagemDoConcorrente(concorrente({ rede: 'desconhecida' }), logos)).toBeNull()
+    expect(imagemDoConcorrente(concorrente({ classe: 'independente', rede: null }), undefined)).toBeNull()
   })
 })
 

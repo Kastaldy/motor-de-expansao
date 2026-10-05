@@ -859,3 +859,219 @@ def _mes_curto(competencia: str) -> str:
     if len(partes) < 2 or not partes[1].isdigit():
         return str(competencia)
     return _MESES_PT[int(partes[1]) - 1]
+
+
+# ---------------------------------------------------------------------------
+# Concorrência da unidade (a janela da unidade no Mapa Territorial, em PDF)
+#
+# Repete o que `FichaUnidadeNoMapa.tsx` mostra, na mesma ordem: alunos, região e cada
+# academia do entorno com plano de agregador, o que oferece por canal e as modalidades.
+# Os três estados das comodidades não se confundem aqui também: base ausente
+# ("indisponíveis"), academia fora da coleta ("não coletadas") e item declarado. Item
+# ausente é "não declarado" -- o PDF nunca afirma que a academia não oferece.
+# ---------------------------------------------------------------------------
+
+#: Pontuação fora de latin-1 que a FONTE escreve (nome de academia, modalidade). Trocada
+#: por ASCII antes do `ascii_seguro`, que sozinho a transformaria em "?" sem avisar.
+_PONTUACAO_LATIN1 = str.maketrans(
+    {
+        "—": "-",
+        "–": "-",
+        "→": "->",
+        "•": "-",
+        "…": "...",
+        "“": '"',
+        "”": '"',
+        "‘": "'",
+        "’": "'",
+    }
+)
+
+_ROTULO_FONTE_AGREGADOR = {"wellhub": "Wellhub", "totalpass": "TotalPass", "site": "Site da rede"}
+_MARGEM = 36.0
+_LIMITE_Y = PAGINA_ALTURA - 44.0
+
+
+def _texto_da_fonte(texto: object) -> str:
+    return ascii_seguro(str(texto or "").translate(_PONTUACAO_LATIN1))
+
+
+def _alunos(valor: object) -> str:
+    return _br(valor) or "-"
+
+
+def _linhas_do_concorrente(conc: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """As linhas de UM concorrente, como pares (estilo, texto). Sem desenhar nada."""
+    from motor_expansao.dashboard import comodidades_concorrentes as cc
+
+    linhas: list[tuple[str, str]] = []
+    planos = []
+    for fonte in ("wellhub", "totalpass"):
+        bloco = (conc.get("agregadores") or {}).get(fonte) or {}
+        if bloco.get("plano"):
+            preco = f" (R$ {_br(bloco['preco'], 2)})" if bloco.get("preco") is not None else ""
+            planos.append(f"{_ROTULO_FONTE_AGREGADOR[fonte]}: {bloco['plano']}{preco}")
+    linhas.append(("normal", " | ".join(planos) or "Sem plano de Wellhub ou TotalPass identificado."))
+
+    comodidades = conc.get("comodidades")
+    if comodidades is None:
+        linhas.append(("apoio", "Comodidades indisponíveis: a base não foi carregada neste ambiente."))
+        return linhas
+    canais = [
+        ("No site da rede", comodidades.get("recorrente")),
+        ("No agregador", comodidades.get("agregador")),
+    ]
+    if not any(canal for _, canal in canais):
+        linhas.append(("apoio", "Comodidades não coletadas para esta academia."))
+        return linhas
+    for titulo, canal in canais:
+        if not canal:
+            continue
+        if canal.get("fonte") != "site":
+            titulo += f" ({_ROTULO_FONTE_AGREGADOR.get(str(canal.get('fonte')), canal.get('fonte'))})"
+        itens = [cc.ROTULO_ITEM[i] for i in cc.ITENS if (canal.get("itens") or {}).get(i) is True]
+        linhas.append(("normal", f"{titulo}: {', '.join(itens) or 'nenhum dos itens acompanhados foi declarado'}"))
+        # sem vazio nem repetição (a fonte repete com caixa diferente), como na tela
+        modalidades: dict[str, str] = {}
+        for bruta in canal.get("atividades") or []:
+            texto = str(bruta).strip()
+            if texto:
+                modalidades.setdefault(texto.casefold(), texto)
+        if modalidades:
+            linhas.append(("apoio", f"Modalidades: {', '.join(modalidades.values())}"))
+    return linhas
+
+
+def _desenhar_concorrente(
+    pdf: UltraPDF, conc: Mapping[str, Any], y: float, logo: str | None, *, medir: bool = False
+) -> float:
+    """Desenha (ou só mede) o bloco de um concorrente a partir de `y`; devolve o `y` final."""
+    x_texto = _MARGEM + 40.0
+    largura = PAGINA_LARGURA - _MARGEM - x_texto
+    nome = str(conc.get("nome") or "").strip() or str(conc.get("rede") or "").strip() or "Academia sem nome na base"
+    classe = "Rede" if conc.get("classe") == "cadeia" else "Independente"
+    distancia = f"{_br(conc.get('distancia_m'))} m" if conc.get("distancia_m") is not None else ""
+
+    if not medir:
+        if logo:
+            try:
+                pdf.image(logo, x=_MARGEM, y=y, w=30.0, h=30.0)
+            except Exception:  # noqa: BLE001  (logo ilegível não derruba o relatório)
+                logo = None
+        if not logo:
+            pdf.set_fill_color(*CINZA_CLARO)
+            pdf.rect(_MARGEM, y, 30.0, 30.0, style="F")
+        pdf.set_text_color(*CINZA_TEXTO)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_xy(x_texto, y)
+        pdf.cell(largura - 150, 13, _texto_da_fonte(nome))
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(110, 110, 110)
+        pdf.set_xy(PAGINA_LARGURA - _MARGEM - 150, y)
+        pdf.cell(150, 13, ascii_seguro(" - ".join(p for p in (classe, distancia) if p)), align="R")
+    cursor = y + 15.0
+    for estilo, texto in _linhas_do_concorrente(conc):
+        pdf.set_font("Helvetica", "", 8.5 if estilo == "apoio" else 9.5)
+        limpo = _texto_da_fonte(texto)
+        if medir:
+            n = len(pdf.multi_cell(largura, 11, limpo, dry_run=True, output="LINES"))
+            cursor += 11.0 * max(n, 1)
+            continue
+        pdf.set_text_color(*((120, 120, 120) if estilo == "apoio" else CINZA_TEXTO))
+        pdf.set_xy(x_texto, cursor)
+        pdf.multi_cell(largura, 11, limpo)
+        cursor = pdf.get_y()
+    return max(cursor, y + 32.0) + 9.0
+
+
+def concorrencia_pdf(
+    ficha: Mapping[str, Any],
+    inteligencia: Mapping[str, Any],
+    ponto: Mapping[str, Any] | None = None,
+    logos: Mapping[str, str] | None = None,
+) -> bytes:
+    """PDF da janela da unidade: alunos, região e o que cada concorrente do entorno oferece.
+
+    `logos` = rede -> caminho do arquivo da logo; rede sem arquivo sai com o quadro neutro.
+    """
+    unidade = ficha.get("unidade", {})
+    nome = str(unidade.get("nome", "Unidade"))
+    metricas = ficha.get("metricas", {})
+    mapa = inteligencia.get("mapa") or None
+    concorrentes = list((mapa or {}).get("concorrentes") or [])
+    raio = f"{_br((mapa or {}).get('raio_m', 2000) / 1000, 0)} km"
+    rodape_texto = (
+        "Planos e comodidades: coleta do GymScraping no site das redes e nas listagens do Wellhub e do "
+        "TotalPass. Item ausente é não declarado pela fonte, e não a afirmação de que a academia não oferece."
+    )
+
+    pdf = UltraPDF()
+    pdf.add_page()
+    faixa_de_titulo(pdf, nome, f"{unidade.get('uf', '')} - concorrência a {raio} - ref. {ficha.get('mes', '')}")
+
+    agregadores = inteligencia.get("agregadores") or {}
+    cartoes = [
+        ("Alunos ativos", _alunos((metricas.get("ativos") or {}).get("atual"))),
+        ("Pagantes", _alunos((metricas.get("pagantes") or {}).get("atual"))),
+        ("Agregadores", _alunos((metricas.get("agregadores") or {}).get("atual"))),
+        ("Via Wellhub", _alunos(agregadores.get("wellhub"))),
+        ("Via TotalPass", _alunos(agregadores.get("totalpass"))),
+    ]
+    largura_cartao = (PAGINA_LARGURA - 2 * _MARGEM - 4 * 12.0) / 5
+    for i, (rotulo, valor) in enumerate(cartoes):
+        cartao(pdf, _MARGEM + i * (largura_cartao + 12.0), 72.0, largura_cartao, 58.0, rotulo=rotulo, valor=valor)
+
+    censo = (ponto or {}).get("censo") or {}
+    pdf.set_text_color(*ULTRA_MAGENTA)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_xy(_MARGEM, 146.0)
+    pdf.cell(400, 14, ascii_seguro(f"Região (raio de {_br((ponto or {}).get('raio_km', 1), 1)} km)"))
+    if censo.get("disponivel"):
+        regiao = [
+            ("Renda média domiciliar", f"R$ {_br(censo.get('renda_media_domiciliar'))}"),
+            ("Renda per capita", f"R$ {_br(censo.get('renda_per_capita'))}"),
+            ("Densidade (hab/km²)", _br(censo.get("densidade_hab_km2")) or "-"),
+            ("População", _br(censo.get("populacao")) or "-"),
+        ]
+        largura_cartao = (PAGINA_LARGURA - 2 * _MARGEM - 3 * 12.0) / 4
+        for i, (rotulo, valor) in enumerate(regiao):
+            cartao(pdf, _MARGEM + i * (largura_cartao + 12.0), 166.0, largura_cartao, 58.0, rotulo=rotulo, valor=valor)
+    else:
+        pdf.set_text_color(120, 120, 120)
+        pdf.set_font("Helvetica", "", 9.5)
+        pdf.set_xy(_MARGEM, 168.0)
+        pdf.cell(
+            PAGINA_LARGURA - 2 * _MARGEM,
+            12,
+            _texto_da_fonte(censo.get("motivo") or "Censo do entorno indisponível."),
+        )
+
+    def titulo_da_secao(y: float, continua: bool = False) -> float:
+        pdf.set_text_color(*ULTRA_MAGENTA)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.set_xy(_MARGEM, y)
+        sufixo = " (continuação)" if continua else f" - {len(concorrentes)} a {raio}"
+        pdf.cell(600, 14, ascii_seguro("Concorrentes" + (sufixo if mapa else "")))
+        return y + 22.0
+
+    y = titulo_da_secao(240.0)
+    aviso = None
+    if not mapa:
+        aviso = "Sem coordenada, não há concorrência para ler."
+    elif not concorrentes:
+        aviso = f"Nenhuma academia mapeada a {raio} desta unidade."
+    if aviso:
+        pdf.set_text_color(120, 120, 120)
+        pdf.set_font("Helvetica", "", 9.5)
+        pdf.set_xy(_MARGEM, y)
+        pdf.cell(PAGINA_LARGURA - 2 * _MARGEM, 12, ascii_seguro(aviso))
+    for conc in concorrentes:
+        logo = (logos or {}).get(str(conc.get("rede") or "")) if conc.get("classe") == "cadeia" else None
+        if _desenhar_concorrente(pdf, conc, y, logo, medir=True) > _LIMITE_Y:
+            rodape(pdf, rodape_texto)
+            pdf.add_page()
+            faixa_de_titulo(pdf, nome, "Concorrentes e o que oferecem", rgb=ULTRA_TURQUESA)
+            y = titulo_da_secao(72.0, continua=True)
+        y = _desenhar_concorrente(pdf, conc, y, logo)
+    rodape(pdf, rodape_texto)
+    return bytes(pdf.output())

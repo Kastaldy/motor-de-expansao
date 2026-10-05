@@ -47,6 +47,18 @@ ITENS: tuple[str, ...] = (
     "cadeira_massagem",
 )
 
+#: Camada de LABEL dos itens (CLAUDE.md §2): o valor bruto não tem acento, o rótulo tem.
+#: Espelha `ROTULO_COMODIDADE` do front (`web/src/lib/ficha-unidade.ts`); é o que o PDF imprime.
+ROTULO_ITEM: dict[str, str] = {
+    "musculacao": "Musculação",
+    "luta": "Lutas",
+    "armario": "Armário",
+    "chuveiro": "Chuveiro",
+    "vestiario": "Vestiário",
+    "massagem": "Massagem",
+    "cadeira_massagem": "Cadeira de massagem",
+}
+
 COLUNAS_OBRIGATORIAS: tuple[str, ...] = (
     "canal",
     "fonte",
