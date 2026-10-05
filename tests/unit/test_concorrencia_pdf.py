@@ -159,6 +159,16 @@ def test_pdf_nao_imprime_interrogacao_nem_texto_sem_acento() -> None:
     assert not ofensas, f"PDF imprime texto sem acento (CLAUDE.md \xa72): {ofensas}"
 
 
+def test_pdf_segue_o_guia_de_marca_titulos_em_caixa_alta_e_sem_preto() -> None:
+    """Guia de marca: título e subtítulo em CAIXA ALTA, teal dominante, nunca preto puro."""
+    pdf = rede_export.concorrencia_pdf(_ficha(), _inteligencia([_concorrente("Bluefit Botafogo")]), PONTO)
+    cru = pdf.decode("latin-1", errors="replace")
+    assert "(BOTAFOGO)" in cru and "CONCORRENTES - 1 A 2 KM" in cru
+    assert r"REGIÃO \(RAIO DE 1,0 KM\)" in cru
+    # cor de texto e de preenchimento em preto puro ("0 g" / "0 0 0 rg") não aparece
+    assert not re.search(r"(?m)^(0 g|0 0 0 rg|0\.000 g|0\.000 0\.000 0\.000 rg)$", cru)
+
+
 def test_rota_do_pdf_existe_e_fica_atras_da_aba_executiva() -> None:
     import acesso
     import app as pilot

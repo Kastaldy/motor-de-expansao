@@ -887,6 +887,49 @@ _PONTUACAO_LATIN1 = str.maketrans(
     }
 )
 
+# Guia de marca (Brandbook, resumo de design): teal dominante e UMA secundária por peça --
+# aqui o magenta, só no bloco de plano e preço. Título e subtítulo em CAIXA ALTA e itálico;
+# corpo em cinza-escuro, nunca preto. A fonte institucional (DIN Condensed / Arial Narrow)
+# NÃO entra: o PDF usa a fonte core do fpdf2, a única que existe igual na estação e no
+# container, e é o texto cru dela que os testes leem.
+_FUNDO_DE_CARTAO = (242, 242, 242)
+
+
+def _faixa_da_marca(pdf: UltraPDF, titulo: str, subtitulo: str) -> None:
+    """Faixa teal com o título em caixa alta e itálico, como o guia pede."""
+    pdf.set_fill_color(*ULTRA_TURQUESA)
+    pdf.rect(0, 0, PAGINA_LARGURA, 56.0, style="F")
+    pdf.set_text_color(*BRANCO)
+    pdf.set_font("Helvetica", "BI", 22)
+    pdf.set_xy(_MARGEM, 14)
+    pdf.cell(PAGINA_LARGURA - 440, 24, _texto_da_fonte(titulo.upper()))
+    pdf.set_font("Helvetica", "I", 11)
+    pdf.set_xy(PAGINA_LARGURA - 420, 22)
+    pdf.cell(420 - _MARGEM, 14, ascii_seguro(subtitulo.upper()), align="R")
+
+
+def _subtitulo_da_marca(pdf: UltraPDF, y: float, texto: str) -> None:
+    """Subtítulo de seção: caixa alta, itálico, teal."""
+    pdf.set_text_color(*ULTRA_TURQUESA)
+    pdf.set_font("Helvetica", "BI", 12)
+    pdf.set_xy(_MARGEM, y)
+    pdf.cell(600, 14, ascii_seguro(texto.upper()))
+
+
+def _cartao_da_marca(pdf: UltraPDF, x: float, y: float, largura: float, rotulo: str, valor: str) -> None:
+    """KPI com UMA cor de destaque (teal) sobre fundo neutro."""
+    pdf.set_fill_color(*_FUNDO_DE_CARTAO)
+    pdf.rect(x, y, largura, 58.0, style="F")
+    pdf.set_text_color(110, 110, 110)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_xy(x + 10, y + 8)
+    pdf.cell(largura - 20, 11, ascii_seguro(rotulo))
+    pdf.set_text_color(*ULTRA_TURQUESA)
+    pdf.set_font("Helvetica", "B", 20)
+    pdf.set_xy(x + 10, y + 24)
+    pdf.cell(largura - 20, 22, ascii_seguro(valor))
+
+
 _ROTULO_FONTE_AGREGADOR = {"wellhub": "Wellhub", "totalpass": "TotalPass", "site": "Site da rede"}
 _MARGEM = 36.0
 _LIMITE_Y = PAGINA_ALTURA - 44.0
@@ -911,7 +954,10 @@ def _linhas_do_concorrente(conc: Mapping[str, Any]) -> list[tuple[str, str]]:
         if bloco.get("plano"):
             preco = f" (R$ {_br(bloco['preco'], 2)})" if bloco.get("preco") is not None else ""
             planos.append(f"{_ROTULO_FONTE_AGREGADOR[fonte]}: {bloco['plano']}{preco}")
-    linhas.append(("normal", " | ".join(planos) or "Sem plano de Wellhub ou TotalPass identificado."))
+    if planos:
+        linhas.append(("destaque", " | ".join(planos)))
+    else:
+        linhas.append(("apoio", "Sem plano de Wellhub ou TotalPass identificado."))
 
     comodidades = conc.get("comodidades")
     if comodidades is None:
@@ -959,7 +1005,7 @@ def _desenhar_concorrente(
             except Exception:  # noqa: BLE001  (logo ilegível não derruba o relatório)
                 logo = None
         if not logo:
-            pdf.set_fill_color(*CINZA_CLARO)
+            pdf.set_fill_color(*_FUNDO_DE_CARTAO)
             pdf.rect(_MARGEM, y, 30.0, 30.0, style="F")
         pdf.set_text_color(*CINZA_TEXTO)
         pdf.set_font("Helvetica", "B", 11)
@@ -971,13 +1017,15 @@ def _desenhar_concorrente(
         pdf.cell(150, 13, ascii_seguro(" - ".join(p for p in (classe, distancia) if p)), align="R")
     cursor = y + 15.0
     for estilo, texto in _linhas_do_concorrente(conc):
-        pdf.set_font("Helvetica", "", 8.5 if estilo == "apoio" else 9.5)
+        pdf.set_font("Helvetica", "B" if estilo == "destaque" else "", 8.5 if estilo == "apoio" else 9.5)
         limpo = _texto_da_fonte(texto)
         if medir:
             n = len(pdf.multi_cell(largura, 11, limpo, dry_run=True, output="LINES"))
             cursor += 11.0 * max(n, 1)
             continue
-        pdf.set_text_color(*((120, 120, 120) if estilo == "apoio" else CINZA_TEXTO))
+        pdf.set_text_color(
+            *{"apoio": (120, 120, 120), "destaque": ULTRA_MAGENTA}.get(estilo, CINZA_TEXTO)
+        )
         pdf.set_xy(x_texto, cursor)
         pdf.multi_cell(largura, 11, limpo)
         cursor = pdf.get_y()
@@ -1007,7 +1055,7 @@ def concorrencia_pdf(
 
     pdf = UltraPDF()
     pdf.add_page()
-    faixa_de_titulo(pdf, nome, f"{unidade.get('uf', '')} - concorrência a {raio} - ref. {ficha.get('mes', '')}")
+    _faixa_da_marca(pdf, nome, f"{unidade.get('uf', '')} - concorrência a {raio} - ref. {ficha.get('mes', '')}")
 
     agregadores = inteligencia.get("agregadores") or {}
     cartoes = [
@@ -1019,13 +1067,10 @@ def concorrencia_pdf(
     ]
     largura_cartao = (PAGINA_LARGURA - 2 * _MARGEM - 4 * 12.0) / 5
     for i, (rotulo, valor) in enumerate(cartoes):
-        cartao(pdf, _MARGEM + i * (largura_cartao + 12.0), 72.0, largura_cartao, 58.0, rotulo=rotulo, valor=valor)
+        _cartao_da_marca(pdf, _MARGEM + i * (largura_cartao + 12.0), 72.0, largura_cartao, rotulo, valor)
 
     censo = (ponto or {}).get("censo") or {}
-    pdf.set_text_color(*ULTRA_MAGENTA)
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.set_xy(_MARGEM, 146.0)
-    pdf.cell(400, 14, ascii_seguro(f"Região (raio de {_br((ponto or {}).get('raio_km', 1), 1)} km)"))
+    _subtitulo_da_marca(pdf, 146.0, f"Região (raio de {_br((ponto or {}).get('raio_km', 1), 1)} km)")
     if censo.get("disponivel"):
         regiao = [
             ("Renda média domiciliar", f"R$ {_br(censo.get('renda_media_domiciliar'))}"),
@@ -1035,7 +1080,7 @@ def concorrencia_pdf(
         ]
         largura_cartao = (PAGINA_LARGURA - 2 * _MARGEM - 3 * 12.0) / 4
         for i, (rotulo, valor) in enumerate(regiao):
-            cartao(pdf, _MARGEM + i * (largura_cartao + 12.0), 166.0, largura_cartao, 58.0, rotulo=rotulo, valor=valor)
+            _cartao_da_marca(pdf, _MARGEM + i * (largura_cartao + 12.0), 166.0, largura_cartao, rotulo, valor)
     else:
         pdf.set_text_color(120, 120, 120)
         pdf.set_font("Helvetica", "", 9.5)
@@ -1047,11 +1092,8 @@ def concorrencia_pdf(
         )
 
     def titulo_da_secao(y: float, continua: bool = False) -> float:
-        pdf.set_text_color(*ULTRA_MAGENTA)
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_xy(_MARGEM, y)
         sufixo = " (continuação)" if continua else f" - {len(concorrentes)} a {raio}"
-        pdf.cell(600, 14, ascii_seguro("Concorrentes" + (sufixo if mapa else "")))
+        _subtitulo_da_marca(pdf, y, "Concorrentes" + (sufixo if mapa else ""))
         return y + 22.0
 
     y = titulo_da_secao(240.0)
@@ -1070,7 +1112,7 @@ def concorrencia_pdf(
         if _desenhar_concorrente(pdf, conc, y, logo, medir=True) > _LIMITE_Y:
             rodape(pdf, rodape_texto)
             pdf.add_page()
-            faixa_de_titulo(pdf, nome, "Concorrentes e o que oferecem", rgb=ULTRA_TURQUESA)
+            _faixa_da_marca(pdf, nome, "Concorrentes e o que oferecem")
             y = titulo_da_secao(72.0, continua=True)
         y = _desenhar_concorrente(pdf, conc, y, logo)
     rodape(pdf, rodape_texto)
