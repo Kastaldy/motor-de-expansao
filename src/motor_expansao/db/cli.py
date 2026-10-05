@@ -508,6 +508,32 @@ def _checagens_positivas() -> list[tuple[str, str, str]]:
             "GRANT INSERT na tabela NAO cobre a sequence do BIGSERIAL -- sem esta, todo "
             "INSERT morre por permissao negada, e so' em runtime",
         ),
+        # As TRES abaixo entraram em 05/10/2026. O script de papeis concede USAGE em CINCO
+        # sequences e este comando testava DUAS (eventos e sessoes) -- entao faltar qualquer
+        # uma das outras tres passava VERDE aqui, verde no `conferir` e verde na conferencia
+        # de 12/1/3 (que le `role_table_grants`, onde privilegio de sequence nao mora).
+        #
+        # A de `usuarios` e' a pior: `SQL_CRIAR` nao passa `id_usuario`, depende do BIGSERIAL.
+        # Sem o USAGE nela, NENHUMA pessoa e' criada pela tela de administracao -- e e' esse
+        # o passo que entrega o piloto a equipe. Medido num banco de ensaio: revogando so'
+        # essa sequence, `privilegios`, `conferir` e a conferencia de linhas passaram todos.
+        (
+            "usar a sequence de usuarios",
+            "SELECT has_sequence_privilege(current_user, 'usuarios_id_usuario_seq', 'USAGE')",
+            "sem esta, criar pessoa pela tela morre em runtime: o INSERT do motor nao passa "
+            "`id_usuario` e depende do BIGSERIAL. E' a sequence que o passo 9 do repasse usa",
+        ),
+        (
+            "usar a sequence de areas_estudo",
+            "SELECT has_sequence_privilege(current_user, "
+            "'areas_estudo_id_area_estudo_seq', 'USAGE')",
+            "mesma armadilha: `GRANT INSERT` em areas_estudo nao cobre a sequence dela",
+        ),
+        (
+            "usar a sequence de contratos",
+            "SELECT has_sequence_privilege(current_user, 'contratos_id_contrato_seq', 'USAGE')",
+            "mesma armadilha: `GRANT INSERT` em contratos nao cobre a sequence dela",
+        ),
         (
             "atualizar usuarios",
             "SELECT has_table_privilege(current_user, 'usuarios', 'UPDATE')",

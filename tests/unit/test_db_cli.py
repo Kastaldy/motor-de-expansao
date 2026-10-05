@@ -785,6 +785,22 @@ def test_privilegios_COBRE_sessoes() -> None:
         "runtime -- mesma armadilha da sequence de eventos"
     )
 
+    assert "usuarios_id_usuario_seq" in positivas, (
+        "a sequence de `usuarios`: sem o USAGE nela NENHUMA pessoa e' criada pela tela, porque "
+        "o `SQL_CRIAR` nao passa `id_usuario` e depende do BIGSERIAL. Ate' 05/10/2026 este "
+        "comando testava SO' as sequences de `eventos` e `sessoes`, e faltar esta passava verde "
+        "aqui, no `conferir` e na conferencia de 12/1/3 -- medido num banco de ensaio"
+    )
+    assert "areas_estudo_id_area_estudo_seq" in positivas
+    assert "contratos_id_contrato_seq" in positivas
+
+    _seqs = [s for s in positivas.split(" | ") if "has_sequence_privilege" in s]
+    assert len(_seqs) == 5, (
+        f"o script de papeis concede USAGE em CINCO sequences e este comando testa "
+        f"{len(_seqs)}. Se o script mudar, mude os dois juntos -- a divergencia entre eles e' "
+        f"exatamente o buraco que ficou aberto ate' 05/10/2026"
+    )
+
     negativas = " | ".join(sql for _rot, sql, _por in cli._checagens_negativas())
     assert "'sessoes', 'DELETE'" in negativas, (
         "revogar e' UPDATE e o expurgo anonimiza; `DELETE` em `sessoes` significa que o "
