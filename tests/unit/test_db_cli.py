@@ -204,6 +204,18 @@ class _ConPrivilegios:
     def fetchone(self) -> tuple[Any, ...]:
         return (self._valor,)
 
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        """Para a consulta das triggers, que devolve N linhas de (nome, estado).
+
+        Se a resposta registrada ja' for uma lista de tuplas, devolve como esta' -- e' o
+        caso em que o teste quer controlar as duas triggers da secao 7, inclusive o estado
+        de §7 colado pela METADE. Senao, embala o valor unico, para os dubles antigos nao
+        precisarem saber desta consulta.
+        """
+        if isinstance(self._valor, list):
+            return self._valor
+        return [("trg_perfil_permissoes_auditoria", self._valor)]
+
     def __enter__(self) -> _ConPrivilegios:
         return self
 
@@ -557,6 +569,10 @@ def _sem_provisionamento(monkeypatch: pytest.MonkeyPatch) -> None:
             "usuario": "app",
             "pode_escrever_no_historico": False,
             "trigger_auditoria": "A",
+            "triggers_auditoria": {
+                "trg_perfil_permissoes_auditoria": "A",
+                "trg_perfil_permissoes_auditoria_truncate": "A",
+            },
         },
     )
 
@@ -601,6 +617,10 @@ def test_conferir_REPROVA_quando_a_trigger_do_D20_nao_esta_endurecida(
             "usuario": "app",
             "pode_escrever_no_historico": False,
             "trigger_auditoria": "O",
+            "triggers_auditoria": {
+                "trg_perfil_permissoes_auditoria": "O",
+                "trg_perfil_permissoes_auditoria_truncate": "O",
+            },
         },
     )
     codigo = _rodar(monkeypatch, _con_conferencia(), cli.cmd_conferir, argparse.Namespace())
@@ -608,6 +628,7 @@ def test_conferir_REPROVA_quando_a_trigger_do_D20_nao_esta_endurecida(
 
     assert codigo == 1, "trigger em 'O' tem de REPROVAR, nao sair com 0"
     assert "ENABLE ALWAYS" in saida, "a mensagem tem de dizer O QUE fazer"
+    assert "DUAS linhas" in saida, "...e que a secao 7 tem DUAS linhas ALTER TABLE"
     assert "secao 7" in saida, "...e ONDE: a secao 7 do script de papeis"
     assert "session_replication_role" in saida, "...e POR QUE: e' por ali que a trigger e' pulada"
 
@@ -623,12 +644,13 @@ def test_conferir_REPROVA_quando_a_trigger_do_D20_esta_ausente(
             "usuario": "app",
             "pode_escrever_no_historico": False,
             "trigger_auditoria": None,
+            "triggers_auditoria": {},
         },
     )
     codigo = _rodar(monkeypatch, _con_conferencia(), cli.cmd_conferir, argparse.Namespace())
 
     assert codigo == 1
-    assert "AUSENTE" in capsys.readouterr().out
+    assert "nenhuma trigger de auditoria" in capsys.readouterr().out
 
 
 def test_conferir_NAO_reprova_o_dono_escrevendo_no_historico(
@@ -647,6 +669,10 @@ def test_conferir_NAO_reprova_o_dono_escrevendo_no_historico(
             "usuario": "reservas_owner",
             "pode_escrever_no_historico": True,
             "trigger_auditoria": "A",
+            "triggers_auditoria": {
+                "trg_perfil_permissoes_auditoria": "A",
+                "trg_perfil_permissoes_auditoria_truncate": "A",
+            },
         },
     )
     codigo = _rodar(monkeypatch, _con_conferencia(), cli.cmd_conferir, argparse.Namespace())
@@ -654,6 +680,42 @@ def test_conferir_NAO_reprova_o_dono_escrevendo_no_historico(
 
     assert codigo == 0, "dono escrevendo no historico e' esperado em ensaio: AVISO, nao problema"
     assert "AVISO" in saida
+
+
+def test_privilegios_REPROVA_com_a_secao_7_colada_pela_METADE(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A secao 7 tem DUAS linhas `ALTER TABLE ... ENABLE ALWAYS TRIGGER`.
+
+    Ate' 05/10/2026 os dois instrumentos olhavam UM nome (`trg_perfil_permissoes_auditoria`),
+    entao colar so' a primeira linha deixava a de TRUNCATE em 'O' e `privilegios` dizia
+    PRIVILEGIOS OK, exit 0. Medido num banco real. E §7 pela metade nao e' hipotese: e' o
+    desfecho da interrupcao que a secao "Se o passo 5 for interrompido" do repasse antecipa --
+    ela chega a contar "2 ALTER TABLE ... ENABLE ALWAYS TRIGGER".
+
+    A consulta DERIVA as triggers do catalogo em vez de nomea-las, entao uma terceira trigger
+    na tabela auditada tambem passa a ser exigida em 'A' sem ninguem lembrar de mexer aqui.
+    """
+    codigo, _con = _rodar_privilegios(
+        monkeypatch,
+        {
+            postgres.SQL_TRIGGERS_AUDITORIA: [
+                ("trg_perfil_permissoes_auditoria", "A"),
+                ("trg_perfil_permissoes_auditoria_truncate", "O"),
+            ]
+        },
+    )
+    saida = capsys.readouterr().out
+
+    assert codigo == 1, "uma das duas triggers fora de 'A' tem de REPROVAR"
+    assert "trg_perfil_permissoes_auditoria_truncate" in saida, "a mensagem tem de NOMEAR qual"
+    assert "DUAS linhas" in saida, "...e lembrar que a secao 7 tem duas"
+
+
+def test_privilegios_REPROVA_sem_trigger_nenhuma(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tabela auditada sem trigger nao-interna: a 009 nao esta' de pe."""
+    codigo, _con = _rodar_privilegios(monkeypatch, {postgres.SQL_TRIGGERS_AUDITORIA: []})
+    assert codigo == 1
 
 
 def test_conferir_nao_escreve_nada(monkeypatch: pytest.MonkeyPatch) -> None:

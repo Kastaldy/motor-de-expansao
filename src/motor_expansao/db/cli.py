@@ -352,7 +352,8 @@ def cmd_conferir(_args: argparse.Namespace) -> int:
         prov = postgres._provisionamento(con)  # noqa: SLF001 - mesma casa, sem API publica ainda
         print(f"  usuario conectado: {prov['usuario']}")
         print(f"  pode escrever direto no historico: {prov['pode_escrever_no_historico']}")
-        print(f"  trigger de auditoria: {prov['trigger_auditoria']} (esperado 'A' apos o D20)")
+        for _n, _e in sorted((prov.get("triggers_auditoria") or {}).items()):
+            print(f"  trigger {_n}: {_e} (esperado 'A' apos o D20)")
 
         # O estado da trigger ENTRA na conta dos problemas; o `pode_escrever_no_historico`
         # NAO. Os dois sao sinais do D20, mas de naturezas diferentes, e confundi-los era o
@@ -371,19 +372,26 @@ def cmd_conferir(_args: argparse.Namespace) -> int:
         #   de um papel comum. Nao existe cenario em que 'O' seja aceitavel: em TODO ponto em
         #   que o runbook manda rodar este comando (o §8 da VPS e o ensaio do §1), a secao 7
         #   do script de papeis ja' rodou. Logo, reprovar aqui nao reprova ensaio legitimo.
-        _trigger = prov["trigger_auditoria"]
-        if _trigger is None:
+        # TODAS as triggers da tabela auditada, nao so' a primeira. Ate' 05/10/2026 este
+        # veredito olhava um nome unico, e um §7 colado pela METADE -- a de TRUNCATE em
+        # 'O' -- passava verde aqui E no `privilegios`. Medido.
+        _todas = prov.get("triggers_auditoria") or {}
+        if not _todas:
             problemas.append(
-                "trigger de auditoria AUSENTE: ou a migration 009 nao esta aplicada, ou "
-                "`pg_trigger` nao foi legivel -- sem ela o historico de permissoes nao existe"
+                "nenhuma trigger de auditoria em `perfil_permissoes`: ou a migration 009 nao "
+                "esta aplicada, ou `pg_trigger` nao foi legivel -- sem elas o historico de "
+                "permissoes nao existe"
             )
-        elif _trigger != "A":
-            problemas.append(
-                f"trigger de auditoria em '{_trigger}', nao 'A': o `ENABLE ALWAYS` do D20 nao "
-                "foi aplicado. Rode a secao 7 do `papeis-e-privilegios.md`. Em 'O' a trigger e' "
-                "PULADA por uma sessao em `session_replication_role = replica`, que no PG15+ nao "
-                "exige superusuario -- o historico de permissoes fica contornavel em silencio"
-            )
+        for _nome, _estado in sorted(_todas.items()):
+            if _estado != "A":
+                problemas.append(
+                    f"trigger `{_nome}` em '{_estado}', nao 'A': o `ENABLE ALWAYS` do D20 nao "
+                    f"foi aplicado nela. Rode a secao 7 do `papeis-e-privilegios.md` INTEIRA -- "
+                    f"ela tem DUAS linhas `ALTER TABLE`, e colar so' a primeira deixa esta aqui "
+                    f"em 'O'. Em 'O' a trigger e' PULADA por uma sessao em "
+                    f"`session_replication_role = replica`, que no PG15+ nao exige superusuario "
+                    f"-- o historico de permissoes fica contornavel em silencio"
+                )
 
         if prov["pode_escrever_no_historico"]:
             print(
@@ -655,17 +663,32 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 problemas.append(rotulo)
 
         print("\n== auditoria endurecida (D21) ==")
-        estado = con.execute(postgres.SQL_ESTADO_TRIGGER, ("trg_perfil_permissoes_auditoria",))
-        linha = estado.fetchone()
-        atual = linha[0] if linha else None
-        ok = atual == "A"
-        print(f"  {'ok   ' if ok else 'FALHA'} trigger de auditoria: {atual!r} (esperado 'A')")
-        if not ok:
+        # TODAS as triggers nao-internas da tabela auditada, DERIVADAS do catalogo. Ate'
+        # 05/10/2026 isto olhava um nome unico (`trg_perfil_permissoes_auditoria`) e a secao 7
+        # endurece DUAS -- entao colar so' a primeira das duas linhas `ALTER TABLE` deixava a
+        # de TRUNCATE em 'O' e este comando dizia PRIVILEGIOS OK. Medido. E §7 colado pela
+        # metade e' exatamente o desfecho da interrupcao que o runbook antecipa.
+        linhas = con.execute(
+            postgres.SQL_TRIGGERS_AUDITORIA, (postgres.TABELA_AUDITADA,)
+        ).fetchall()
+        triggers = {linha[0]: linha[1] for linha in linhas}
+        if not triggers:
+            print(f"  FALHA nenhuma trigger nao-interna em {postgres.TABELA_AUDITADA}")
             print(
-                "        por que importa: fora de 'A', uma sessao em session_replication_role="
-                "replica\n        escreve sem deixar rastro. E' o ALTER TABLE da secao 7 do D20."
+                "        por que importa: sem as triggers da 009 o historico de permissoes nao\n"
+                "        existe. Ou a migration nao esta aplicada, ou alguem as removeu."
             )
-            problemas.append("trigger de auditoria fora de ENABLE ALWAYS")
+            problemas.append(f"nenhuma trigger de auditoria em {postgres.TABELA_AUDITADA}")
+        for nome, atual in sorted(triggers.items()):
+            ok = atual == "A"
+            print(f"  {'ok   ' if ok else 'FALHA'} trigger {nome}: {atual!r} (esperado 'A')")
+            if not ok:
+                print(
+                    "        por que importa: fora de 'A', uma sessao em session_replication_role="
+                    "replica\n        escreve sem deixar rastro. E' o ALTER TABLE da secao 7 do "
+                    "D20 -- e ela tem DUAS linhas."
+                )
+                problemas.append(f"trigger {nome} fora de ENABLE ALWAYS")
 
     print()
     if problemas:

@@ -58,6 +58,9 @@ TABELA_MIGRACOES = "migracoes_aplicadas"
 #: ela para responder "o provisionamento do D20 esta de pe?" -- ver `_provisionamento`.
 TABELA_HISTORICO = "perfil_permissoes_historico"
 TRIGGER_AUDITORIA = "trg_perfil_permissoes_auditoria"
+#: A tabela que a 009 audita. As triggers do §7 vivem aqui, e e' por `tgrelid` que a
+#: consulta as acha -- sem isso, homonima em outra tabela casaria.
+TABELA_AUDITADA = "perfil_permissoes"
 
 #: O `id_usuario` vai para o banco como TEXTO e e' validado la' pelo mesmo padrao
 #: (`^[0-9]{1,18}$`, D19) antes do cast. Repetimos a validacao aqui para falhar cedo,
@@ -90,7 +93,23 @@ SQL_VERSAO_MIGRACAO = (
 # derruba a auditoria inteira sem sinal nenhum: dono desliga a propria trigger.
 SQL_USUARIO_ATUAL = "SELECT current_user"
 SQL_PODE_ESCREVER_HISTORICO = "SELECT has_table_privilege(%s, 'INSERT')"
-SQL_ESTADO_TRIGGER = "SELECT tgenabled FROM pg_trigger WHERE tgname = %s"
+# Filtra por TABELA tambem: `tgname` nao e' unico no banco, e uma trigger homonima em
+# outra tabela casaria. Mantido por compatibilidade do campo `trigger_auditoria` do health.
+SQL_ESTADO_TRIGGER = (
+    "SELECT tgenabled FROM pg_trigger WHERE tgname = %s AND tgrelid = %s::regclass"
+)
+# A secao 7 do script de papeis endurece DUAS triggers em `perfil_permissoes`
+# (`..._auditoria` e `..._auditoria_truncate`), e ate' 05/10/2026 este modulo olhava
+# so' a primeira -- entao um §7 colado pela METADE deixava a de TRUNCATE em 'O' e
+# `conferir` e `privilegios` passavam os dois verdes. E §7 colado pela metade e'
+# justamente o desfecho da interrupcao que o runbook antecipa.
+#
+# Esta consulta DERIVA a lista em vez de nomear: se uma terceira trigger entrar na
+# tabela auditada, ela aparece aqui sozinha, sem precisar lembrar de mexer no motor.
+SQL_TRIGGERS_AUDITORIA = (
+    "SELECT tgname, tgenabled FROM pg_trigger "
+    "WHERE tgrelid = %s::regclass AND NOT tgisinternal ORDER BY tgname"
+)
 
 # --- Estado do modulo ------------------------------------------------------------------
 
@@ -391,9 +410,38 @@ def _provisionamento(con: Any) -> dict[str, Any]:
         con, SQL_PODE_ESCREVER_HISTORICO, (TABELA_HISTORICO,), tolerar_erro=True
     )
     dados["trigger_auditoria"] = _primeiro_valor(
-        con, SQL_ESTADO_TRIGGER, (TRIGGER_AUDITORIA,), tolerar_erro=True
+        con, SQL_ESTADO_TRIGGER, (TRIGGER_AUDITORIA, TABELA_AUDITADA), tolerar_erro=True
+    )
+    # Campo NOVO, aditivo: o antigo fica como estava para nao mudar a forma do health.
+    dados["triggers_auditoria"] = _todas_as_linhas(
+        con, SQL_TRIGGERS_AUDITORIA, (TABELA_AUDITADA,), tolerar_erro=True
     )
     return dados
+
+
+def _todas_as_linhas(
+    con: Any,
+    sql: str,
+    parametros: tuple[Any, ...] | None = None,
+    *,
+    tolerar_erro: bool = False,
+) -> dict[str, Any]:
+    """Pares (chave, valor) de uma consulta de duas colunas, ou `{}`.
+
+    Mesmo cuidado de SAVEPOINT do `_primeiro_valor`: tabela ausente nao pode abortar a
+    transacao e levar as consultas seguintes do health com ela.
+    """
+    def _ler() -> dict[str, Any]:
+        cursor = con.execute(sql, parametros) if parametros else con.execute(sql)
+        return {linha[0]: linha[1] for linha in cursor.fetchall()}
+
+    if not tolerar_erro:
+        return _ler()
+    try:
+        with con.transaction():
+            return _ler()
+    except Exception:  # noqa: BLE001 - ausencia de tabela e' informacao, nao erro
+        return {}
 
 
 def _primeiro_valor(
