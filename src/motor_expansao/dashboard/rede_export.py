@@ -1092,8 +1092,8 @@ def _desenhar_concorrente(
         pdf.set_font("Helvetica", "B" if estilo == "destaque" else "", 8.5 if estilo == "apoio" else 9.5)
         limpo = _texto_da_fonte(texto)
         if medir:
-            n = len(pdf.multi_cell(largura, 11, limpo, dry_run=True, output="LINES"))
-            cursor += 11.0 * max(n, 1)
+            quebradas = pdf.multi_cell(largura, 11, limpo, dry_run=True, output="LINES")
+            cursor += 11.0 * max(len(quebradas) if isinstance(quebradas, list) else 1, 1)
             continue
         pdf.set_text_color(
             *{"apoio": (120, 120, 120), "destaque": ULTRA_MAGENTA}.get(estilo, CINZA_TEXTO)
