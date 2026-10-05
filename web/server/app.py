@@ -83,6 +83,7 @@ import rede_inteligencia  # noqa: E402  (territorio, retencao, rampa e sinais da
 from motor_expansao.dashboard import (  # noqa: E402
     acesso_analytics,
     acesso_log,
+    comodidades_concorrentes,
     movimentacao_concorrencia,
     planos_agregador,
     rede_cadastro,
@@ -9319,6 +9320,12 @@ def _rede_planos(fonte: str) -> pd.DataFrame | None:
     return _rede_ler_opcional(STAGING_DIR / planos_agregador.arquivo_staging(fonte))
 
 
+@functools.lru_cache(maxsize=1)
+def _rede_comodidades() -> pd.DataFrame | None:
+    """O que cada concorrente oferece (`scripts/ingerir_comodidades_concorrentes.py`). Opcional."""
+    return _rede_ler_opcional(STAGING_DIR / comodidades_concorrentes.ARQUIVO_STAGING)
+
+
 def _rede_planos_unidade(unidade_id: str, fonte: str = "totalpass") -> dict[str, Any]:
     """O nível da Ultra no agregador (`fonte`) contra o das academias a 2 km.
 
@@ -9467,6 +9474,14 @@ def _rede_mapa_unidade(unidade_id: str) -> dict[str, Any] | None:
     concorrentes = rede_inteligencia.concorrentes_no_entorno(lat, lng, oferta, _rede_fatos_agregador())
     planos_agregador.anexar_planos(concorrentes, _rede_planos("totalpass"), fonte="totalpass")
     planos_agregador.anexar_planos(concorrentes, _rede_planos("wellhub"), fonte="wellhub")
+    # Sem a base, a chave nasce `None` em todo pino: a ficha diz "indisponível", não "não oferece".
+    comodidades_concorrentes.anexar_comodidades(concorrentes, _rede_comodidades())
+    # `agregadores` é chave NOVA: `plano`/`plano_wellhub` (que a Executiva lê) ficam como estão.
+    comodidades_concorrentes.anexar_agregadores(
+        concorrentes,
+        _rede_comodidades(),
+        {fonte: _rede_planos(fonte) for fonte in planos_agregador.FONTES},
+    )
     # O mapa continua DESENHANDO o estúdio (DEC-056: o operador vê); a marca deixa os cards
     # de concorrência tirá-lo das contas sem refazer a lista.
     estudios = _rede_redes_estudio()
