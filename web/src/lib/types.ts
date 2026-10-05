@@ -18,6 +18,10 @@ export interface MePayload {
   /** Aviso que o perfil do país declara para a TELA de viabilidade (`avisos.*.onde`).
    *  Ausente no Brasil. Quem valida e estreita é `definirAvisoDeViabilidade`. */
   aviso_viabilidade?: unknown
+  /** Câmbios para o ticket digitado na moeda do país (`moeda.cambio_*` do perfil).
+   *  Ausente onde o perfil não os declara (Brasil): lá o ticket é digitado em reais.
+   *  Quem valida e estreita é `definirMoedaDeViabilidade`. */
+  viabilidade_moeda?: unknown
   /** Estado da senha de quem esta' logado (D26, 11/09). Opcional pelo MESMO motivo do
    *  `perfil`: backend anterior nao manda o campo, e ausencia significa "nao sei" --
    *  nunca "nao precisa trocar". Quem le' e estreita e' `estadoDaSenhaDoPayload`. */
@@ -539,6 +543,9 @@ export interface ViabilidadeIn {
   aluguel: number
   demanda: number
   ticket?: number
+  /** Fração de alunos de balcão (recorrente), 0–1; o resto vem por agregador.
+   *  Ausente = padrão do motor (0,69). FRAÇÃO, nunca percentual. */
+  share_balcao?: number
   formato?: string
   /** Numero de studios extras (0..3); cada studio adiciona R$6.000/mes de folha. */
   n_studios?: number

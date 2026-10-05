@@ -113,6 +113,11 @@ class ViabilidadeInputs(BaseModel):
     # Taxa de franquia: 160.000 por decisao de Felipe (a planilha diz 140.000), agora
     # EDITAVEL em vez de constante invisivel.
     taxa_franquia: float | None = Field(default=None, ge=0)
+    # MIX de alunos: fracao que paga o plano de balcao (recorrente); o resto vem por
+    # agregador. None = SIM_SHARE_BALCAO do config.py (0,69). FRACAO, nunca percentual:
+    # 69 no lugar de 0,69 e recusado pelo `le=1`. O nucleo ja aceitava o parametro
+    # (`Premissas.share_balcao`); faltava o operador poder informa-lo.
+    share_balcao: float | None = Field(default=None, ge=0, le=1)
     deducoes_pct: float | None = Field(default=None, ge=0, le=1)
     reajuste_ticket_aa: float | None = Field(default=None, ge=0, le=1)
     reajuste_aluguel_aa: float | None = Field(default=None, ge=0, le=1)
@@ -214,6 +219,7 @@ def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
     n_studios = int(body.n_studios or 0)
     opcionais: dict[str, Any] = {
         "devolucoes_pct": body.deducoes_pct,
+        "share_balcao": body.share_balcao,
         "reajuste_ticket_aa": body.reajuste_ticket_aa,
         "reajuste_aluguel_aa": body.reajuste_aluguel_aa,
         "reajuste_custos_aa": body.reajuste_custos_aa,
@@ -344,6 +350,10 @@ def montar_payload_viabilidade(
         aluguel_pedido=body.aluguel,
         demanda_premissa=body.demanda,
         premissas=premissas,
+        # O orquestrador reparte os alunos (balcao x agregadores) pelo PROPRIO
+        # argumento, nao pelas `premissas`: sem repassar o mix do cenario, o ticket
+        # medio sairia com o mix informado e o `split` do payload com o padrao.
+        share_balcao=premissas.share_balcao,
         base_calibracao_df=base,
         # LIGA O CATCHMENT (DEC-042). Sem este argumento o motor pula o catchment e
         # `flag_zona_morta` sai SEMPRE `None` — foi o estado de producao ate' hoje, e

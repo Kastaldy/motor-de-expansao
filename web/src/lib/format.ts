@@ -34,17 +34,42 @@ export function distanciaCurta(v: number | null | undefined): string {
 }
 
 /**
+ * Moeda de EXIBICAO de um valor que o motor entrega em reais.
+ *
+ * So' a tela de Viabilidade usa: la' a conta e' feita em reais, mas o operador escolhe
+ * ler em outra moeda (a do pais ou dolares — ver `viabilidade-moeda.ts`). `porReal` e'
+ * quantas unidades da moeda escolhida valem UM real. `null` (o estado de import)
+ * devolve `brl`/`brlCurto` ao comportamento de sempre.
+ */
+export interface ExibicaoMonetaria {
+  simbolo: string
+  porReal: number
+}
+
+let exibicao: ExibicaoMonetaria | null = null
+
+/** Liga/desliga a moeda de exibicao. Valor invalido DESLIGA — nunca imprime Infinity. */
+export function definirExibicaoMonetaria(e: ExibicaoMonetaria | null): void {
+  exibicao =
+    e && e.simbolo.trim() && Number.isFinite(e.porReal) && e.porReal > 0
+      ? { simbolo: e.simbolo, porReal: e.porReal }
+      : null
+}
+
+/**
  * Reais. `compacto` usa mil/mi para caber em card estreito; `casas` serve para
  * valores em que o centavo importa (ticket: R$ 88,20 e nao R$ 88).
  */
-export function brl(v: number | null | undefined, compacto = false, casas = 0): string {
-  if (v === null || v === undefined || Number.isNaN(v)) return TEXTO_SEM_DADO
+export function brl(vReais: number | null | undefined, compacto = false, casas = 0): string {
+  if (vReais === null || vReais === undefined || Number.isNaN(vReais)) return TEXTO_SEM_DADO
+  const s = exibicao?.simbolo ?? moeda()
+  const v = vReais * (exibicao?.porReal ?? 1)
   if (compacto) {
     const abs = Math.abs(v)
-    if (abs >= 1_000_000) return `${moeda()} ${nf(1).format(v / 1_000_000)} mi`
-    if (abs >= 1_000) return `${moeda()} ${nf(0).format(v / 1_000)} mil`
+    if (abs >= 1_000_000) return `${s} ${nf(1).format(v / 1_000_000)} mi`
+    if (abs >= 1_000) return `${s} ${nf(0).format(v / 1_000)} mil`
   }
-  return `${moeda()} ${nf(casas).format(v)}`
+  return `${s} ${nf(casas).format(v)}`
 }
 
 /**
@@ -72,12 +97,14 @@ export function renda(v: number | null | undefined, compacto = false, casas = 0)
  * tem de caber numa linha so — mais enxuto que `brl(v, true)`, que escreve "mil"/"mi"
  * por extenso e quebrava a linha no bloco de investimento.
  */
-export function brlCurto(v: number | null | undefined): string {
-  if (v === null || v === undefined || Number.isNaN(v)) return TEXTO_SEM_DADO
+export function brlCurto(vReais: number | null | undefined): string {
+  if (vReais === null || vReais === undefined || Number.isNaN(vReais)) return TEXTO_SEM_DADO
+  const s = exibicao?.simbolo ?? moeda()
+  const v = vReais * (exibicao?.porReal ?? 1)
   const abs = Math.abs(v)
-  if (abs >= 1_000_000) return `${moeda()} ${nf(abs >= 10_000_000 ? 0 : 1).format(v / 1_000_000)}M`
-  if (abs >= 1_000) return `${moeda()} ${nf(0).format(v / 1_000)}k`
-  return `${moeda()} ${nf(0).format(v)}`
+  if (abs >= 1_000_000) return `${s} ${nf(abs >= 10_000_000 ? 0 : 1).format(v / 1_000_000)}M`
+  if (abs >= 1_000) return `${s} ${nf(0).format(v / 1_000)}k`
+  return `${s} ${nf(0).format(v)}`
 }
 
 export function pct(v: number | null | undefined, casas = 1): string {

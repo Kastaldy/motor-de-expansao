@@ -75,6 +75,8 @@ AVISO_ONDE_VALIDO = frozenset({"tela", "pdf", "xlsx"})
 
 _RE_PAIS = re.compile(r"^[A-Z]{2}$")
 _RE_MOEDA = re.compile(r"^[A-Z]{3}$")
+_RE_PAR_DE_MOEDAS = re.compile(r"^[A-Z]{3}/[A-Z]{3}$")
+_RE_MES_BASE = re.compile(r"^\d{4}-\d{2}$")
 #: Tag BCP-47 UNICA. E o que `locale` tem de ser: quem o consome e
 #: `new Intl.NumberFormat(locale, ...)`, que quer uma tag, nao uma lista.
 _RE_LOCALE = re.compile(r"^[a-z]{2}(-[A-Za-z0-9]{2,8})*$")
@@ -110,6 +112,15 @@ class Bbox:
 
 
 @dataclass(frozen=True, slots=True)
+class Cambio:
+    """Um cambio declarado no perfil: `par` no formato "XXX/YYY" = quantas unidades de
+    XXX compram UMA de YYY (`"ARS/USD"`, 1397.71 = 1.397,71 pesos por dolar)."""
+
+    par: str
+    valor: float
+
+
+@dataclass(frozen=True, slots=True)
 class Moeda:
     codigo: str
     simbolo: str
@@ -119,6 +130,16 @@ class Moeda:
     #: Confundir os dois e' a forma mais barata de produzir numero errado — o proprio
     #: `perfil.json` diz isso na `_nota` do bloco `moeda`. Ver `Moeda.simbolo_renda()`.
     indicadores_renda: str
+    #: Moeda do pais por dolar, no mes de `base_monetaria`. `None` = o pais nao declara
+    #: (Brasil: `null`).
+    cambio_base: Cambio | None = None
+    #: Reais por dolar, no MESMO mes-base. Existe por um motivo so: a viabilidade faz a
+    #: conta em reais (decisao 0.6), e e por este cambio que um ticket digitado na
+    #: moeda do pais chega a conta. `None` = o ticket e digitado em reais, como hoje.
+    cambio_viabilidade: Cambio | None = None
+    #: Mes "AAAA-MM" a que os cambios acima se referem; viaja para a tela junto deles,
+    #: porque cambio sem data envelhece calado.
+    base_monetaria: str | None = None
 
     def simbolo_renda(self) -> str:
         """Simbolo/codigo a exibir junto de um valor de RENDA — nunca `simbolo` cru.
@@ -432,6 +453,21 @@ def _texto_ou_vazio(
     if not isinstance(valor, str) or not valor.strip():
         raise _erro(caminho, nome, "deveria ser string nao-vazia (ou simplesmente ausente)")
     return valor
+
+
+def _cambio_opcional(moeda: dict[str, Any], campo: str, caminho: Path) -> Cambio | None:
+    """Cambio OPCIONAL do bloco `moeda`: ausente ou `null` vira `None`; presente tem de
+    ser objeto com `par` "XXX/YYY" e `valor` positivo. Zero ou negativo e erro de
+    digitacao que viraria divisao por zero (ou preco negativo) na tela."""
+    if moeda.get(campo) is None:
+        return None
+    prefixo = f"moeda.{campo}."
+    bruto = _obj(moeda[campo], caminho, f"moeda.{campo}")
+    par = _texto(bruto, "par", caminho, prefixo=prefixo, padrao=_RE_PAR_DE_MOEDAS)
+    valor = _numero(bruto, "valor", caminho, prefixo=prefixo)
+    if not valor > 0:
+        raise _erro(caminho, f"{prefixo}valor", f"deveria ser positivo, veio {valor!r}")
+    return Cambio(par=par, valor=valor)
 
 
 def _numero(
@@ -820,6 +856,19 @@ def carregar_perfil(caminho: Path, *, raiz: Path | None = None) -> Perfil:
                 caminho,
                 prefixo="moeda.",
                 padrao=_RE_MOEDA,
+            ),
+            cambio_base=_cambio_opcional(moeda_bruto, "cambio_base", caminho),
+            cambio_viabilidade=_cambio_opcional(moeda_bruto, "cambio_viabilidade", caminho),
+            base_monetaria=(
+                None
+                if moeda_bruto.get("base_monetaria") is None
+                else _texto(
+                    moeda_bruto,
+                    "base_monetaria",
+                    caminho,
+                    prefixo="moeda.",
+                    padrao=_RE_MES_BASE,
+                )
             ),
         ),
         bbox=_ler_bbox(dados, caminho),

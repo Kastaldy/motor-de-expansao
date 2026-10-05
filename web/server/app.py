@@ -196,6 +196,34 @@ def _aviso_de_viabilidade_para_a_tela() -> dict[str, str] | None:
     }
 
 
+def _moeda_da_viabilidade() -> dict[str, Any] | None:
+    """Os dois cambios que levam um ticket digitado na moeda do pais ate a conta.
+
+    A viabilidade calcula em REAIS (decisao 0.6). Quando o perfil declara os DOIS
+    cambios — moeda do pais por dolar e reais por dolar —, a tela deixa o operador
+    digitar o ticket na moeda dele, mostra o equivalente em dolar e converte a reais.
+    Meio cambio nao converte nada, entao sem os dois isto devolve `None` e a tela fica
+    como sempre foi (ticket em reais). O perfil declara, o codigo obedece (DEC-047):
+    o Brasil nao declara cambio e nao recebe a chave.
+
+    Os pares sao conferidos, nao presumidos: um `cambio_base` em outra moeda-ponte
+    faria a conversao cruzada sair errada sem erro nenhum.
+    """
+    moeda = PERFIL.moeda
+    local, real = moeda.cambio_base, moeda.cambio_viabilidade
+    if local is None or real is None:
+        return None
+    if local.par != f"{moeda.codigo}/USD" or real.par != "BRL/USD":
+        return None
+    return {
+        "codigo": moeda.codigo,
+        "simbolo": moeda.simbolo,
+        "local_por_usd": local.valor,
+        "brl_por_usd": real.valor,
+        "base": moeda.base_monetaria,
+    }
+
+
 OUTPUTS_DIR = DATA_DIR / "outputs"
 STAGING_DIR = DATA_DIR / "staging"
 IBGE_DIR = DATA_DIR / "ibge"
@@ -4145,6 +4173,9 @@ def me(
     aviso_viabilidade = _aviso_de_viabilidade_para_a_tela()
     if aviso_viabilidade is not None:
         resposta["aviso_viabilidade"] = aviso_viabilidade
+    viabilidade_moeda = _moeda_da_viabilidade()
+    if viabilidade_moeda is not None:
+        resposta["viabilidade_moeda"] = viabilidade_moeda
     # A chave `senha` so' aparece quando o banco responde E a pessoa tem linha. AUSENTE em vez de
     # nula: o front ja' trata `perfil?` assim (um backend anterior ao Bloco C nao manda o campo e
     # a SPA abre igual), e o mesmo vale aqui -- ausencia significa "nao sei", que e' diferente de
