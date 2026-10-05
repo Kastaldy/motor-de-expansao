@@ -108,7 +108,7 @@ SQL_ESTADO_TRIGGER = (
 # tabela auditada, ela aparece aqui sozinha, sem precisar lembrar de mexer no motor.
 SQL_TRIGGERS_AUDITORIA = (
     "SELECT tgname, tgenabled FROM pg_trigger "
-    "WHERE tgrelid = %s::regclass AND NOT tgisinternal ORDER BY tgname"
+    "WHERE tgrelid = to_regclass(%s) AND NOT tgisinternal ORDER BY tgname"
 )
 # A secao 2 do script de papeis fecha o `EXECUTE` das funcoes de auditoria a `PUBLIC`, e
 # ate' 05/10/2026 NENHUM instrumento olhava essa camada: `has_function_privilege` nao
@@ -123,7 +123,7 @@ SQL_TRIGGERS_AUDITORIA = (
 SQL_ACL_FUNCOES_DE_AUDITORIA = (
     "SELECT p.proname, has_function_privilege('public', p.oid, 'EXECUTE') "
     "FROM pg_trigger tg JOIN pg_proc p ON p.oid = tg.tgfoid "
-    "WHERE tg.tgrelid = %s::regclass AND NOT tg.tgisinternal ORDER BY p.proname"
+    "WHERE tg.tgrelid = to_regclass(%s) AND NOT tg.tgisinternal ORDER BY p.proname"
 )
 # A QUARTA camada que o script endurece e nenhum instrumento olhava: o
 # `ALTER DEFAULT PRIVILEGES` da secao 6. E' a de maior alcance das quatro -- o no-op
@@ -136,8 +136,23 @@ SQL_ACL_FUNCOES_DE_AUDITORIA = (
 # aqui -- aparece entre os papeis do `pg_default_acl`? E' permissiva de proposito: papel
 # EXTRA nao reprova (um cluster pode ter default ACL de mais de um dono por motivo
 # legitimo); o que reprova e' o dono estar AUSENTE, que e' exatamente o no-op.
+# O QUINTO furo, achado em 05/10/2026: a seccao 2 concede `USAGE ON SCHEMA public` e
+# NENHUM instrumento perguntava se o papel tem. `has_schema_privilege` aparecia uma vez
+# so', para `CREATE`, que e' checagem NEGATIVA. Sem `USAGE` o privilegio de TABELA
+# continua no catalogo -- `has_table_privilege` nao considera schema --, entao `conferir`
+# fica verde, a contagem 12/1/3 fica intacta, e a aplicacao morre com
+# `relation "usuarios" does not exist`, que aponta para migration ausente.
+#
+# Tem de ser a PRIMEIRA checagem positiva: sem USAGE, dezesseis das outras degradam para
+# "o objeto nao existe (migration pendente?)" num banco com 21 de 21 migrations
+# registradas, e o operador e' mandado de volta ao §5, que responde que esta' tudo certo.
+SQL_USAGE_NO_SCHEMA = "SELECT has_schema_privilege(current_user, 'public', 'USAGE')"
+#: A tabela auditada e' VISIVEL para este papel? `to_regclass` devolve NULL em vez de
+#: levantar, e NULL aqui significa "ou a migration nao rodou, ou falta USAGE no schema" --
+#: duas causas, e o relatorio tem de nomear as duas em vez de chutar uma.
+SQL_TABELA_AUDITADA_VISIVEL = "SELECT to_regclass(%s) IS NOT NULL"
 SQL_DEFAULT_ACL_DO_DONO = (
-    "SELECT (SELECT c.relowner::regrole::text FROM pg_class c WHERE c.oid = %s::regclass), "
+    "SELECT (SELECT c.relowner::regrole::text FROM pg_class c WHERE c.oid = to_regclass(%s)), "
     "coalesce(string_agg(DISTINCT d.defaclrole::regrole::text, ','), '') "
     "FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace "
     "WHERE n.nspname = 'public'"

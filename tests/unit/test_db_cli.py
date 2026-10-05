@@ -277,6 +277,14 @@ _D20_DE_PE: dict[str, Any] = {
     # A QUARTA camada (secao 6), acrescentada em 05/10/2026: `(dono, papeis_no_defacl)`.
     # Estado bom = o dono da tabela auditada esta' entre os papeis.
     postgres.SQL_DEFAULT_ACL_DO_DONO: ("reservas_owner", "reservas_owner"),
+    # O QUINTO furo (05/10/2026): `USAGE` no schema. Sem ele o papel nao VE a tabela, e
+    # as dezesseis checagens seguintes degradam acusando migration ausente.
+    postgres.SQL_USAGE_NO_SCHEMA: True,
+    #: A tabela auditada e' visivel. Nota: este SQL e' textualmente IGUAL ao
+    #: `cli.SQL_TEM_TABELA_DE_CONTROLE` -- a mesma pergunta, parametro diferente --, e o
+    #: duble casa por texto, nao por parametro. Inocuo aqui: `cmd_privilegios` nao usa o
+    #: outro.
+    postgres.SQL_TABELA_AUDITADA_VISIVEL: True,
 }
 
 
@@ -811,6 +819,64 @@ def test_privilegios_REPROVA_funcao_de_auditoria_executavel_por_PUBLIC(
         "a outra esta' certa e nao pode ser acusada"
     )
     assert "REVOKE EXECUTE" in saida, "...e dizer qual comando conserta"
+
+
+def test_privilegios_REPROVA_sem_usage_no_schema(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """O QUINTO furo, achado em 05/10/2026 -- e o unico que REPROVAVA pela causa ERRADA.
+
+    A secao 2 do D20 concede `USAGE ON SCHEMA public` e nenhum instrumento perguntava se
+    o papel tem. Sem `USAGE`, o privilegio de TABELA continua no catalogo
+    (`has_table_privilege` nao considera schema), entao `conferir` fica verde e a
+    contagem 12/1/3 fica intacta -- mas o papel nao enxerga a tabela e a aplicacao morre
+    com `relation "usuarios" does not exist`.
+
+    Medido num banco de verdade: dezesseis checagens degradavam para "o objeto nao
+    existe (migration pendente?)" num banco onde `estado` diz 21 de 21 registradas. O
+    operador era mandado de volta ao §5, que responde que esta' tudo certo.
+    """
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_USAGE_NO_SCHEMA] = False
+    codigo, _con = _rodar_privilegios(monkeypatch, respostas)
+    saida = capsys.readouterr().out
+
+    assert codigo == 1, "sem USAGE no schema tem de REPROVAR"
+    assert "FALHA usar o schema public" in saida
+    assert "does not exist" in saida, "tem de nomear o sintoma que o operador vai ver"
+    assert saida.index("usar o schema public") < saida.index("gravar evento"), (
+        "a causa tem de vir ANTES dos sintomas: quem le de cima para baixo encontra o "
+        "USAGE antes dos `PEND` que ele provoca"
+    )
+
+
+def test_privilegios_degrada_sem_estourar_com_a_tabela_auditada_invisivel(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """As tres consultas derivadas nao podem levantar -- era defeito MEU, medido.
+
+    Ate' 05/10/2026 elas usavam `%s::regclass`, que levanta `UndefinedTable` quando a
+    relacao nao e' visivel. Com o `USAGE` do schema revogado, `privilegios` morria com
+    traceback cru de psycopg -- exatamente o que o comentario de
+    `_conectar_com_diagnostico` chama de inaceitavel numa ferramenta de operador, e
+    contra a disciplina do sentinela AUSENTE que o modulo inteiro segue. `to_regclass`
+    devolve NULL em vez de levantar.
+
+    E o recado tem de nomear as DUAS causas possiveis: migration ausente OU falta de
+    USAGE. Chutar uma e' o que fazia o relatorio mandar o operador ao lugar errado.
+    """
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_TABELA_AUDITADA_VISIVEL] = False
+    codigo, _con = _rodar_privilegios(monkeypatch, respostas)
+    saida = capsys.readouterr().out
+
+    assert codigo == 1
+    assert "nao e' visivel para este papel" in saida
+    assert "migration 009 nao rodou" in saida, "primeira causa"
+    assert "`USAGE` no schema" in saida, "segunda causa -- chutar uma so' foi o defeito"
+    assert "FALHA trigger" not in saida, "sem objeto, nao se afirma nada sobre as triggers"
+    assert "FALHA funcao" not in saida
+    assert "FALHA default privileges" not in saida
 
 
 def test_privilegios_REPROVA_default_privileges_do_papel_errado(

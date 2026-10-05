@@ -564,6 +564,18 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
 def _checagens_positivas() -> list[tuple[str, str, str]]:
     """(rotulo, SQL -> bool, por que importa). `False` = o piloto QUEBRA em runtime."""
     return [
+        # PRIMEIRA de proposito: sem `USAGE` no schema, o papel nao VE as tabelas, e as
+        # dezesseis checagens seguintes degradam para "o objeto nao existe (migration
+        # pendente?)" -- diagnostico errado num banco com as migrations todas aplicadas.
+        # Quem le o relatorio de cima para baixo encontra a causa antes do sintoma.
+        (
+            "usar o schema public",
+            postgres.SQL_USAGE_NO_SCHEMA,
+            "a seccao 2 do D20 concede `USAGE ON SCHEMA public`, e sem ele o privilegio de "
+            "TABELA continua no catalogo mas o papel nao enxerga a tabela: a aplicacao morre "
+            "com `relation \"usuarios\" does not exist`, que parece migration faltando. Se "
+            "esta linha falhar, IGNORE os `PEND` abaixo e rode o `GRANT USAGE` da seccao 2",
+        ),
         (
             "gravar evento",
             "SELECT has_table_privilege(current_user, 'eventos', 'INSERT')",
@@ -722,6 +734,30 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 problemas.append(rotulo)
 
         print("\n== auditoria endurecida (D21) ==")
+        # Antes de qualquer consulta derivada: a tabela auditada e' VISIVEL? As tres
+        # consultas abaixo derivam do catalogo por `to_regclass`, que devolve NULL em vez
+        # de levantar -- mas NULL faria as tres dizerem "nao ha trigger nenhuma", que e'
+        # diagnostico errado. Ate' 05/10/2026 elas usavam `::regclass` e ESTOURAVAM com
+        # `psycopg.errors.UndefinedTable` e traceback cru; medido com o USAGE do schema
+        # revogado. Era defeito meu, contra a disciplina do sentinela AUSENTE.
+        visivel = con.execute(
+            postgres.SQL_TABELA_AUDITADA_VISIVEL, (postgres.TABELA_AUDITADA,)
+        ).fetchone()[0]
+        if not visivel:
+            print(
+                f"  --    {postgres.TABELA_AUDITADA} nao e' visivel para este papel: "
+                "ou a migration 009 nao rodou, ou falta `USAGE` no schema `public`"
+            )
+            print(
+                "        as tres checagens do D21 ficam sem objeto. Olhe a linha "
+                "`usar o schema public` acima: se ela falhou, a causa e' o USAGE, nao a "
+                "migration."
+            )
+            problemas.append(
+                f"{postgres.TABELA_AUDITADA} invisivel: as checagens do D21 nao foram feitas "
+                "(veja `usar o schema public`)"
+            )
+            visivel = False
         # TODAS as triggers nao-internas da tabela auditada, DERIVADAS do catalogo. Ate'
         # 05/10/2026 isto olhava um nome unico (`trg_perfil_permissoes_auditoria`) e a secao 7
         # endurece DUAS -- entao colar so' a primeira das duas linhas `ALTER TABLE` deixava a
@@ -729,9 +765,9 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
         # metade e' exatamente o desfecho da interrupcao que o runbook antecipa.
         linhas = con.execute(
             postgres.SQL_TRIGGERS_AUDITORIA, (postgres.TABELA_AUDITADA,)
-        ).fetchall()
+        ).fetchall() if visivel else []
         triggers = {linha[0]: linha[1] for linha in linhas}
-        if not triggers:
+        if not triggers and visivel:
             print(f"  FALHA nenhuma trigger nao-interna em {postgres.TABELA_AUDITADA}")
             print(
                 "        por que importa: sem as triggers da 009 o historico de permissoes nao\n"
@@ -755,7 +791,7 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
         # alarme.
         acl = con.execute(
             postgres.SQL_ACL_FUNCOES_DE_AUDITORIA, (postgres.TABELA_AUDITADA,)
-        ).fetchall()
+        ).fetchall() if visivel else []
         for nome, publico_executa in acl:
             ok = not publico_executa
             print(
@@ -777,14 +813,15 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
         # `app`, e `conferir`, `privilegios` e a contagem 12/1/3 passavam os tres verdes.
         dono, papeis = con.execute(
             postgres.SQL_DEFAULT_ACL_DO_DONO, (postgres.TABELA_AUDITADA,)
-        ).fetchone()
+        ).fetchone() if visivel else (None, None)
         lista = [p for p in (papeis or "").split(",") if p]
         ok = bool(dono) and dono in lista
-        print(
-            f"  {'ok   ' if ok else 'FALHA'} default privileges do dono ({dono or '?'}): "
-            f"{', '.join(lista) or 'NENHUM'}"
-        )
-        if not ok:
+        if visivel:
+            print(
+                f"  {'ok   ' if ok else 'FALHA'} default privileges do dono ({dono or '?'}): "
+                f"{', '.join(lista) or 'NENHUM'}"
+            )
+        if visivel and not ok:
             print(
                 "        por que importa: sem default privilege PARA O DONO, toda tabela\n"
                 "        criada daqui para frente nasce invisivel ao `app`. E' o no-op da secao 6\n"
