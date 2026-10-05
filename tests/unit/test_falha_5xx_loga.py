@@ -255,3 +255,101 @@ def test_a_regra_de_ordem_e_de_escopo_esta_certa(
         return
     assert len(achados) == 1, f"esperava 1 handler de 5xx, vi {len(achados)}"
     assert achados[0][2] is espera_loga
+
+
+# ===========================================================================
+# O nível tem de ser VISÍVEL no nível de produção
+# ===========================================================================
+# Medido no container de produção em 2026-10-05, minutos depois de subir os blocos 01 e 02:
+#
+#     (root)        level=WARNING     piloto.falha emite INFO?    False
+#     piloto.falha  level=WARNING                        WARNING?  True
+#                                                        ERROR?    True
+#
+#   prova prática: emitindo os três níveis à mão, só saíram as linhas WARNING e ERROR.
+#
+# Duas linhas do BLK-SAUDE-02 tinham subido como `.info` — com um raciocínio correto
+# ("banco ausente é escolha declarada, não incidente; traceback ali seria ruído") e uma
+# verificação que ninguém fez. Elas não saíam. E era pior que não ter log: o PR prometia
+# que a FREQUÊNCIA dessas tentativas seria a evidência para decidir o Postgres
+# (BLK-SAUDE-10), então havia cobertura no papel e silêncio no disco.
+#
+# `_LOG_FALHA` existe para ser LIDO depois do fato. Um nível que o processo descarta
+# transforma a linha em decoração. Daí esta guarda.
+
+#: Níveis que sobrevivem a um logger em WARNING. `info`/`debug` NÃO entram.
+NIVEIS_VISIVEIS = frozenset({"warning", "error", "exception", "critical"})
+
+
+def _chamadas_de(fonte: Path, logger: str) -> list[tuple[int, str]]:
+    """`(linha, nivel)` de cada `<logger>.<nivel>(...)` no arquivo."""
+    arvore = ast.parse(fonte.read_text(encoding="utf-8"), filename=str(fonte))
+    achados: list[tuple[int, str]] = []
+    for no in ast.walk(arvore):
+        if not isinstance(no, ast.Call) or not isinstance(no.func, ast.Attribute):
+            continue
+        alvo = no.func.value
+        if isinstance(alvo, ast.Name) and alvo.id == logger and no.func.attr in NIVEIS:
+            achados.append((no.lineno, no.func.attr))
+    return achados
+
+
+def test_todo_LOG_FALHA_usa_nivel_que_producao_mostra() -> None:
+    """Nenhum `_LOG_FALHA.info` / `.debug`: o processo roda em WARNING e os descarta.
+
+    Se algum dia alguém quiser mesmo um `info` aqui, o caminho não é afrouxar esta guarda
+    — é baixar o nível efetivo do processo, que é uma decisão de operação (e aí esta lista
+    muda junto, de propósito).
+    """
+    invisiveis: list[str] = []
+    for arquivo in _arquivos():
+        for linha, nivel in _chamadas_de(arquivo, "_LOG_FALHA"):
+            if nivel not in NIVEIS_VISIVEIS:
+                invisiveis.append(f"{arquivo.name}:{linha} — `_LOG_FALHA.{nivel}(...)`")
+    assert not invisiveis, (
+        "o nível efetivo em produção é WARNING (medido em 2026-10-05); `info` e `debug` "
+        "não saem, e uma linha que ninguém lê é pior que nenhuma — parece cobertura:\n  "
+        + "\n  ".join(invisiveis)
+    )
+
+
+def test_a_guarda_do_nivel_nao_passa_vazia() -> None:
+    """Âncora: há chamadas de `_LOG_FALHA` para examinar.
+
+    Sem isto, renomear o logger (ou mover as rotas de arquivo) deixaria a varredura sem
+    nada e a suíte verde — o mesmo modo de falha que a âncora do Relatório Municipal
+    cobre para a guarda de cima.
+    """
+    app = RAIZ_SERVIDOR / "app.py"
+    chamadas = _chamadas_de(app, "_LOG_FALHA")
+    assert len(chamadas) >= 6, (
+        f"só {len(chamadas)} chamadas de `_LOG_FALHA` em app.py; eram 8 em 2026-10-05. "
+        "Se o logger foi renomeado, atualize esta guarda — se não, ela cegou"
+    )
+    niveis = {n for _l, n in chamadas}
+    assert "exception" in niveis, "o 500 genérico deixou de pedir traceback"
+
+
+@pytest.mark.parametrize(
+    ("nivel", "visivel"),
+    [
+        ("exception", True),
+        ("error", True),
+        ("warning", True),
+        ("critical", True),
+        ("info", False),
+        ("debug", False),
+    ],
+)
+def test_contrato_do_detector_de_nivel(nivel: str, visivel: bool, tmp_path: Path) -> None:
+    """O detector lê o nível certo da chamada, e classifica certo.
+
+    `info` e `debug` são os dois casos que motivaram a guarda; os outros quatro existem
+    para que uma guarda que reprovasse TUDO (e passaria os dois testes acima por engano
+    de sinal) apareça aqui.
+    """
+    arquivo = tmp_path / "amostra.py"
+    arquivo.write_text(f'_LOG_FALHA.{nivel}("x")\n', encoding="utf-8")
+    achados = _chamadas_de(arquivo, "_LOG_FALHA")
+    assert achados == [(1, nivel)]
+    assert (nivel in NIVEIS_VISIVEIS) is visivel

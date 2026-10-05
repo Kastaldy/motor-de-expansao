@@ -4440,12 +4440,18 @@ def _identidade_do_admin(remote_user: str | None) -> Any:
         # ADIANTE -- e o defeito daqui era justamente o conserto nao ter alcancado a chamada
         # de cima. Duas redacoes da mesma regra desencontram em silencio (DEC-044).
         #
-        # `info` e SEM `exc_info`: banco ausente nao e' incidente, e' ESCOLHA declarada (§4),
-        # entao traceback aqui seria ruido a cada requisicao de um deploy que roda assim de
-        # proposito. O que interessa e' a FREQUENCIA -- quanta gente tenta administrar
-        # usuario num deploy sem banco e' exatamente a evidencia que o BLK-SAUDE-10 precisa
-        # para decidir entre provisionar o Postgres e assumir o piloto sem ele.
-        _LOG_FALHA.info("administracao de usuarios pedida em deploy sem banco configurado")
+        # `warning` e SEM `exc_info`: banco ausente nao e' incidente, e' ESCOLHA declarada
+        # (§4), entao traceback aqui seria ruido a cada requisicao de um deploy que roda assim
+        # de proposito. O que interessa e' a FREQUENCIA -- quanta gente tenta administrar
+        # usuario num deploy sem banco e' a evidencia que o BLK-SAUDE-10 precisa para decidir
+        # entre provisionar o Postgres e assumir o piloto sem ele.
+        #
+        # ERA `info`, E `info` NAO APARECIA. Medido no container de producao em 2026-10-05,
+        # logo depois de subir: o nivel efetivo e' WARNING na raiz e em todo logger que dela
+        # herda, entao `piloto.falha` respondia `isEnabledFor(INFO) == False` e estas duas
+        # linhas nao saiam -- emitir os tres niveis a mao deixou passar so' WARNING e ERROR.
+        # A frase acima prometia uma evidencia que o codigo nao entregava.
+        _LOG_FALHA.warning("administracao de usuarios pedida em deploy sem banco configurado")
         raise _erro_de_usuarios(erro) from erro
     except BancoIndisponivel as erro:
         _LOG_FALHA.warning("identidade do admin: banco indisponivel", exc_info=True)
@@ -4481,10 +4487,11 @@ def _minha_identidade(remote_user: str | None) -> Any:
         # manda a pessoa procurar um painel que ela pode nem ter permissao de abrir.
         # Por isso aqui NAO se reusa `_erro_de_usuarios`.
         #
-        # `info` e sem `exc_info`, pela mesma razao do ramo gemeo acima: estado declarado
-        # nao e' incidente, e o sinal util e' a frequencia -- quanta gente QUER trocar a
-        # propria senha num deploy sem banco pesa na decisao do BLK-SAUDE-10.
-        _LOG_FALHA.info("troca da propria senha pedida em deploy sem banco configurado")
+        # `warning` e sem `exc_info`, pela mesma razao do ramo gemeo acima: estado
+        # declarado nao e' incidente, e o sinal util e' a frequencia -- quanta gente QUER
+        # trocar a propria senha num deploy sem banco pesa na decisao do BLK-SAUDE-10.
+        # Era `info`, que o nivel de producao (WARNING) engolia; ver o ramo gemeo.
+        _LOG_FALHA.warning("troca da propria senha pedida em deploy sem banco configurado")
         raise HTTPException(
             503,
             "A troca de senha está indisponível: este deploy está sem banco configurado. "
