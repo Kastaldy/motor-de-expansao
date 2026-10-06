@@ -284,6 +284,9 @@ _D20_DE_PE: dict[str, Any] = {
     ],
     #: Papeis com privilegio de tabela no schema e SEM `USAGE` nele. Vazio = estado bom.
     postgres.SQL_PAPEIS_SEM_USAGE_NO_SCHEMA: "",
+    #: A SEXTA classe (06/10/2026): papel com privilegio no schema E poder de cluster.
+    #: Vazio = estado bom.
+    postgres.SQL_PAPEIS_COM_PODER_DE_CLUSTER: "",
     # O QUINTO furo (05/10/2026): `USAGE` no schema. Sem ele o papel nao VE a tabela, e
     # as dezesseis checagens seguintes degradam acusando migration ausente.
     postgres.SQL_USAGE_NO_SCHEMA: True,
@@ -964,6 +967,31 @@ def test_privilegios_REPROVA_sem_a_linha_de_um_dos_tipos(
 
     assert codigo == 1
     assert "FALHA default privileges de SEQUENCES: NENHUM" in saida
+
+
+def test_privilegios_REPROVA_papel_com_poder_de_cluster(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A SEXTA classe de furo, achada na R17: os ATRIBUTOS que a secao 1 endurece.
+
+    A secao 1 cria os tres papeis sem `CREATEDB`, `CREATEROLE` nem `SUPERUSER`, e o `etl`
+    com `NOLOGIN`. Nenhum instrumento olhava isso. Medido num banco de verdade: com
+    `ALTER ROLE etl LOGIN` e `ALTER ROLE app CREATEDB CREATEROLE`, `conferir` sai 0 e a
+    contagem 12/1/3 fica intacta -- e `CREATEROLE` anula o D20 por fora, porque quem cria
+    papel se concede o que quiser.
+
+    A checagem DERIVA e exclui o dono por SER dono, nao por nome: sem isso ela acusava o
+    proprio `reservas_owner`, que e' superusuario e aparece em `relacl` com concessoes
+    explicitas. Falso alarme medido antes de entregar.
+    """
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_PAPEIS_COM_PODER_DE_CLUSTER] = "app (CREATEROLE)"
+    codigo, _con = _rodar_privilegios(monkeypatch, respostas)
+    saida = capsys.readouterr().out
+
+    assert codigo == 1, "papel com poder de cluster tem de REPROVAR"
+    assert "app (CREATEROLE)" in saida, "tem de NOMEAR o papel e o poder"
+    assert "anulam o D20 por" in saida, "...e dizer por que isso derruba o provisionamento"
 
 
 def test_privilegios_REPROVA_papel_com_privilegio_e_sem_usage_no_schema(

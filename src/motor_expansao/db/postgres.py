@@ -193,6 +193,29 @@ TIPOS_DO_DEFAULT_ACL = {"r": "TABLES", "S": "SEQUENCES"}
 #
 # O dono do schema nao aparece aqui: tem `USAGE` implicito (medido). Papel novo entra
 # sozinho, sem ninguem lembrar de mexer nesta lista -- porque nao ha lista.
+# A SEXTA classe, achada em 06/10/2026: a secao 1 do script endurece ATRIBUTOS de papel
+# (`CREATE ROLE etl NOLOGIN`, e nenhum dos tres com `CREATEDB`, `CREATEROLE` ou
+# `SUPERUSER`) e nenhum instrumento olhava isso. Medido: com `ALTER ROLE etl LOGIN` e
+# `ALTER ROLE app CREATEDB CREATEROLE`, `conferir` sai 0 e a contagem 12/1/3 fica intacta.
+#
+# DERIVADA, e com o dono excluido por SER DONO -- nao por nome. Sem essa exclusao a
+# consulta acusaria o proprio `reservas_owner`, que e' superusuario e aparece em `relacl`
+# com concessoes explicitas: falso alarme medido antes de entregar.
+#
+# Nao cobre o `NOLOGIN` do `etl`: qual dos tres nao deve logar e' decisao de desenho, nao
+# se deriva do catalogo. Essa metade fica como consulta manual, declarada no pacote.
+SQL_PAPEIS_COM_PODER_DE_CLUSTER = (
+    "SELECT coalesce(string_agg(DISTINCT papel || ' (' || poder || ')', ', '), '') FROM ("
+    "SELECT a.grantee::regrole::text AS papel, "
+    "CASE WHEN r.rolsuper THEN 'SUPERUSER' WHEN r.rolcreaterole THEN 'CREATEROLE' "
+    "ELSE 'CREATEDB' END AS poder "
+    "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "CROSS JOIN LATERAL aclexplode(c.relacl) a JOIN pg_roles r ON r.oid = a.grantee "
+    "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'S') "
+    "AND a.grantee <> 0 AND a.grantee <> c.relowner "
+    "AND (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole)"
+    ") x"
+)
 SQL_PAPEIS_SEM_USAGE_NO_SCHEMA = (
     "SELECT coalesce(string_agg(DISTINCT papel, ','), '') FROM ("
     "SELECT a.grantee::regrole::text AS papel "

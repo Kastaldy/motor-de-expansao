@@ -733,6 +733,25 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 print(f"        por que importa: {porque}")
                 problemas.append(rotulo)
 
+        # A SEXTA classe (06/10/2026): papel com privilegio no schema E poder de cluster.
+        # A secao 1 do script endurece os atributos, e nada conferia -- medido, com
+        # `etl LOGIN` e `app CREATEDB CREATEROLE` tudo ficava verde. Dono excluido por SER
+        # dono, nao por nome: sem isso a consulta acusava o proprio `reservas_owner`.
+        poderosos = con.execute(postgres.SQL_PAPEIS_COM_PODER_DE_CLUSTER).fetchone()[0]
+        print(
+            f"  {'ok   ' if not poderosos else 'FALHA'} nenhum papel com privilegio no schema "
+            f"tem poder de cluster{'' if not poderosos else ': ' + poderosos}"
+        )
+        if poderosos:
+            print(
+                "        por que importa: `CREATEDB`, `CREATEROLE` e `SUPERUSER` anulam o D20 por\n"
+                "        fora -- quem cria papel se concede o que quiser, e superusuario ignora\n"
+                "        toda ACL e toda trigger. A secao 1 cria os tres SEM nenhum deles."
+            )
+            problemas.append(
+                "papel com privilegio no schema e poder de cluster: " + poderosos
+            )
+
         # DERIVADA: todo papel com privilegio de tabela/sequence no schema precisa de
         # `USAGE` nele. A checagem positiva acima pergunta so' por `current_user`, e a
         # secao 2 concede o `USAGE` a TRES papeis -- entao o `auditoria` podia perder o
