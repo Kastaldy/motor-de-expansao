@@ -20,6 +20,12 @@
       "valor": 1397.71,
       "fonte": "BCRA, maio/2026 (dicionario_dados.md, coluna renda_estimada_usd). Conferido no parquet: mediana de renda_estimada_ars / renda_estimada_usd = 1397,71 exato em 42.388 hexagonos."
     },
+    "cambio_viabilidade": {
+      "par": "BRL/USD",
+      "valor": 4.9837,
+      "fonte": "Banco Central do Brasil, PTAX de venda, media de maio/2026 (20 cotacoes, de 4,8973 a 5,0654). Servico olinda.bcb.gov.br/olinda/servico/PTAX, recurso CotacaoDolarPeriodo, consultado em 2026-10-05.",
+      "_nota": "Reais por dolar, no MESMO mes de `base_monetaria` e de `cambio_base` (2026-05). Existe por um motivo so: a viabilidade faz a conta em reais (decisao 0.6), e e por aqui que o ticket digitado em pesos chega a conta - pesos / cambio_base = dolares; dolares x este valor = reais. A tela mostra os dois cambios e deixa o operador troca-los (decisao de Juan, 2026-10-05): o valor do perfil e so o PADRAO, e o mes-base aparece ao lado porque cambio sem data envelhece calado. Os dois cambios do MESMO mes de proposito: misturar meses fabrica uma conversao cruzada que nunca existiu em dia nenhum. Sai junto com o resto quando o BLK-INTL-11 levar a conta inteira para a moeda do pais."
+    },
     "separador_milhar": ".",
     "separador_decimal": ",",
     "_nota_separadores": "es-AR usa ponto de milhar e virgula decimal, igual ao pt-BR. Nenhuma mudanca de mascara em relacao ao Brasil — o que muda e o simbolo e o codigo, nao a pontuacao."

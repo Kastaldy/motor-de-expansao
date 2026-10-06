@@ -16,7 +16,16 @@ import { Aviso, Botao, Eyebrow, Glass, Kpi, Spinner } from '../components/primit
 import { api, ApiError, baixar } from '../lib/api'
 import { TEXTO_SEM_DADO } from '../lib/constants'
 import { coordenadaDoEstudo } from '../lib/coord'
-import { alunos, brl, brlCurto, coord, num, pctFrac, rotuloMes } from '../lib/format'
+import {
+  alunos,
+  brl,
+  brlCurto,
+  coord,
+  definirExibicaoMonetaria,
+  num,
+  pctFrac,
+  rotuloMes,
+} from '../lib/format'
 import { formatarNumero } from '../lib/mascara'
 import { infoImovelParaPdf, parametrosRelatorioPontual } from '../lib/report'
 import {
@@ -25,6 +34,15 @@ import {
   TICKETS_STUDIO_PADRAO,
   ticketsAtivos,
 } from '../lib/studios'
+import { avisoDeViabilidade, sementeDaDemanda } from '../lib/viabilidade-demanda'
+import {
+  fracaoDoPercentual,
+  moedaDeViabilidade,
+  paraReais,
+  reaisPorUnidade,
+  trocarDeMoeda,
+  type MoedaDeEntrada,
+} from '../lib/viabilidade-moeda'
 import type {
   FaixaAlunos,
   InfoImovel,
@@ -116,6 +134,9 @@ const PADRAO_PARCELAS_FRANQUIA = '4'
 const PADRAO_TAXA_FRANQUIA = '160.000'
 const PADRAO_CARENCIA = '0'
 const PADRAO_TAXA_NEGOCIO = '25'
+/** % de balcão do motor (`SIM_SHARE_BALCAO` = 0,69). RESERVA até o payload chegar:
+ *  depois do 1º cálculo a caixa mostra o `premissas.share_balcao` realmente usado. */
+const PADRAO_PCT_BALCAO = '69'
 
 /* SUGESTAO x PADRAO — a distincao NAO e' cosmetica ---------------------------
    Acima, "padrao" e' o numero que o motor aplica quando o campo fica vazio, cada um
@@ -139,6 +160,11 @@ const PADRAO_TAXA_NEGOCIO = '25'
 const SUGESTAO_OBRA = '1.500.000'
 const SUGESTAO_EQUIPAMENTOS = '1.200.000'
 const SUGESTAO_PRAZO_EQUIP = '60'
+/** As MESMAS sugestões e o mesmo padrão acima, em número (reais): onde o operador
+ *  escolhe a moeda, a caixa mostra o valor CONVERTIDO em vez do texto em reais. */
+const SUGESTAO_OBRA_REAIS = 1_500_000
+const SUGESTAO_EQUIPAMENTOS_REAIS = 1_200_000
+const PADRAO_TAXA_FRANQUIA_REAIS = 160_000
 const SUGESTAO_JUROS_EQUIP = '1,8'
 
 /**
@@ -176,16 +202,61 @@ export default function ViabilityScreen({
 }: ViabilityScreenProps) {
   // --- Cenário -------------------------------------------------------------
   const [m2, setM2] = useState(1500)
-  const [aluguel, setAluguel] = useState(20000)
+  // Instância cujo perfil declara os dois câmbios (hoje a AR): o operador escolhe a
+  // moeda do imóvel — a do país ou dólares —, digita e lê tudo nela. A conta segue em
+  // REAIS: a conversão acontece por trás (lib/viabilidade-moeda.ts). Sem câmbio no
+  // perfil (Brasil), `moedaLocal` é null e a tela é a de sempre, em reais.
+  const moedaLocal = moedaDeViabilidade()
+  const [moedaEntrada, setMoedaEntrada] = useState<MoedaDeEntrada>('local')
+  /** Reais por unidade da moeda em que o operador digita (1 = reais). */
+  const reaisPorUn = moedaLocal ? reaisPorUnidade(moedaLocal, moedaEntrada) : 1
+  /** Símbolo da moeda de entrada — o mesmo dos resultados. */
+  const simbolo = !moedaLocal ? 'R$' : moedaEntrada === 'usd' ? 'US$' : moedaLocal.simbolo
+  const nomeMoeda = !moedaLocal ? 'reais' : moedaEntrada === 'usd' ? 'dólares' : moedaLocal.codigo
+  // Os valores do motor chegam em reais; `brl`/`brlCurto` os mostram na moeda
+  // escolhida. Definido DURANTE o render (e não em efeito) para os componentes filhos
+  // já pintarem certo na mesma passada; o efeito mais abaixo desliga ao sair da tela.
+  definirExibicaoMonetaria(moedaLocal ? { simbolo, porReal: 1 / reaisPorUn } : null)
+  // Com seletor de moeda o aluguel abre VAZIO: R$ 20.000 lido como US$ 20.000 seria
+  // um número que ninguém escolheu (a mesma família do 800 da demanda).
+  const [aluguel, setAluguel] = useState<number | undefined>(moedaLocal ? undefined : 20000)
+  const aluguelReais = paraReais(aluguel, reaisPorUn)
+  /** Valor em reais escrito na moeda escolhida, para o texto de uma caixa vazia. */
+  const naMoeda = (reais: number) => formatarNumero(Math.round(reais / reaisPorUn), 0)
   // Ticket de MUSCULAÇÃO = mensalidade R$/mês do plano de balcão (P2-12). O ticket
   // médio (blended, com o mix de agregadores e studios) é somente-leitura e vem do
-  // motor. Independe do número de studios.
+  // motor, e INDEPENDE do número de studios desde a DEC-068.
+  //
+  // ESTA LINHA ERA `useState(TICKET_POR_STUDIO[0])`, de uma escada
+  // `[147, 157, 167, 177]` que a DEC-068 (#442) revogou — e o `onChange` de Studios
+  // reescrevia o ticket com ela quando `!moedaLocal`, ou seja NO BRASIL. Trazer este PR
+  // sem desfazer isso reverteria a decisão na instância BR, em silêncio.
   const [ticket, setTicket] = useState<number>(TICKET_MUSCULACAO_PADRAO)
-  const [demanda, setDemanda] = useState(800)
+  // Com seletor de moeda o ticket é digitado na moeda escolhida e abre VAZIO: converter
+  // o ticket brasileiro e chamar de padrão seria repetir o erro do 800.
+  const [ticketLocal, setTicketLocal] = useState<number | undefined>(undefined)
+  const ticketLocalReais = paraReais(ticketLocal, reaisPorUn)
+  /** Ticket em REAIS que entra na conta. */
+  const ticketDaConta = moedaLocal ? ticketLocalReais : ticket
+  /** Falta alguma premissa em dinheiro sem a qual não há conta (ticket ou aluguel). */
+  const faltaTicket =
+    moedaLocal != null && (!ticketLocalReais || ticketLocalReais <= 0 || aluguelReais == null)
+  // Mix recorrente × agregador, em % de balcão. Vazio = padrão do motor. Só é editável
+  // onde o perfil declara as premissas como provisórias (o aviso); no Brasil o mix tem
+  // dono e segue somente-leitura.
+  const mixEditavel = avisoDeViabilidade() != null
+  const [pctBalcao, setPctBalcao] = useState<number | undefined>(undefined)
+  // `null` = ainda sem premissa. Nascia em 800, e numa instância sem faixa de
+  // comparáveis o 800 sobrava e a tela calculava sozinha com ele. Agora, sem p50, a
+  // tela pede o número ao operador (regra em lib/viabilidade-demanda.ts).
+  const [demanda, setDemanda] = useState<number | null>(null)
   // A demanda vem padronizada no p50 da metragem e re-escala quando a metragem
   // muda — até o operador mexer no ±, aí a mão dele prevalece (DEC-009: premissa).
   const [demandaTocada, setDemandaTocada] = useState(false)
   const [faixa, setFaixa] = useState<FaixaAlunos | null>(null)
+  // A busca da faixa já respondeu (com ou sem p50)? Só depois disso a tela pode
+  // afirmar "sem comparáveis" e trocar o número pelo campo de digitação.
+  const [faixaBuscada, setFaixaBuscada] = useState(false)
   // Rampa de maturação (Simulador E13; padrão 8). Controlável na sidebar: alonga
   // a curva de alunos e o fluxo de caixa (afeta payback), não a margem steady.
   const [rampaMeses, setRampaMeses] = useState(8)
@@ -250,15 +321,22 @@ export default function ViabilityScreen({
       lat: alvoLat!,
       lng: alvoLng!,
       m2,
-      aluguel,
-      ticket,
+      // Tudo que é dinheiro vai ao motor em REAIS (fator 1 onde a tela já é em reais).
+      aluguel: aluguelReais ?? 0,
+      ticket: ticketDaConta,
+      // % digitado -> FRAÇÃO (o contrato). Vazio some do JSON e o motor usa o padrão.
+      share_balcao: mixEditavel ? fracaoDoPercentual(pctBalcao) : undefined,
       demanda: demandaUsar,
       n_studios: nStudios,
-      // Um ticket por studio ATIVO (o backend devolve 422 se o tamanho divergir).
-      tickets_studios: ticketsAtivos(ticketsStudios, nStudios),
-      obra,
+      // Um ticket por studio ATIVO (o backend devolve 422 se o tamanho divergir), na
+      // MESMA moeda dos outros campos de dinheiro. Sem `paraReais` aqui, um ticket
+      // digitado em pesos entrava no motor como se fosse real.
+      tickets_studios: ticketsAtivos(ticketsStudios, nStudios).map(
+        (t) => paraReais(t, reaisPorUn) ?? t,
+      ),
+      obra: paraReais(obra, reaisPorUn),
       parcelas_obra: parcelasObra,
-      equipamentos: equip,
+      equipamentos: paraReais(equip, reaisPorUn),
       prazo_equipamentos: prazoEquip,
       // % a.m. digitado -> FRAÇÃO (o contrato do payload). Conversão de UNIDADE; não é
       // derivação de número financeiro. `undefined` atravessa intacto para a chave
@@ -266,7 +344,7 @@ export default function ViabilityScreen({
       juros_equipamentos_am: jurosEquip !== undefined ? jurosEquip / 100 : undefined,
       carencia_aluguel_meses: carencia,
       rampa_meses: rampaMeses,
-      taxa_franquia: taxaFranquia,
+      taxa_franquia: paraReais(taxaFranquia, reaisPorUn),
       parcelas_franquia: parcelasFranquia,
       // % a.a. digitado -> FRAÇÃO, mesma conversão de unidade.
       taxa_minima_negocio_aa: taxaNegocio !== undefined ? taxaNegocio / 100 : undefined,
@@ -280,8 +358,11 @@ export default function ViabilityScreen({
     return i < 0 ? null : `O ticket do studio ${i + 1} precisa ser maior que zero.`
   }
 
-  async function calcular(demandaUsar: number = demanda) {
-    if (!ponto) return
+  async function calcular(demandaUsar: number | null = demanda) {
+    // AS TRES guardas, e nenhuma substitui a outra: demanda ausente e ticket nao
+    // convertivel sao deste PR; ticket de studio <= 0 e' da DEC-068. Escolher um lado
+    // aqui compila limpo e reabre o buraco que o outro tapava.
+    if (!ponto || demandaUsar == null || faltaTicket) return
     const erroStudios = erroTicketsStudios()
     if (erroStudios) {
       setErro(erroStudios)
@@ -299,8 +380,34 @@ export default function ViabilityScreen({
     }
   }
 
+  // Ao sair da tela, `brl`/`brlCurto` voltam ao símbolo do país para o resto do app.
+  // (Religa no próprio efeito para sobreviver à montagem dupla do StrictMode.)
+  useEffect(() => {
+    definirExibicaoMonetaria(moedaLocal ? { simbolo, porReal: 1 / reaisPorUn } : null)
+    return () => definirExibicaoMonetaria(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [simbolo, reaisPorUn])
+
+  /** Troca a moeda do seletor reescrevendo o que já foi digitado: o cenário é o mesmo. */
+  function trocarMoeda(nova: MoedaDeEntrada) {
+    if (!moedaLocal || nova === moedaEntrada) return
+    const de = reaisPorUn
+    const para = reaisPorUnidade(moedaLocal, nova)
+    const casasTicket = nova === 'usd' ? 2 : 0
+    setTicketLocal((v) => trocarDeMoeda(v, de, para, casasTicket))
+    // Os tickets de studio sao dinheiro como os outros: sem reescrever, trocar de
+    // dólares para pesos deixaria `157` como 157 PESOS, outro cenario com o mesmo numero.
+    setTicketsStudios((ts) => ts.map((v) => trocarDeMoeda(v, de, para, casasTicket) ?? v))
+    setAluguel((v) => trocarDeMoeda(v, de, para))
+    setObra((v) => trocarDeMoeda(v, de, para))
+    setEquip((v) => trocarDeMoeda(v, de, para))
+    setTaxaFranquia((v) => trocarDeMoeda(v, de, para))
+    setMoedaEntrada(nova)
+  }
+
   // Ao chegar num ponto: busca a faixa da metragem, semeia a demanda no p50 e
-  // calcula — a tela nunca abre vazia nem com o 800 fixo antigo.
+  // calcula. Sem p50 (instância sem base de comparáveis, ou a busca falhou) e sem
+  // demanda anterior, NÃO calcula: o campo fica vazio e a tela pede a premissa.
   useEffect(() => {
     if (!ponto) return
     let vivo = true
@@ -311,11 +418,12 @@ export default function ViabilityScreen({
         const f = await api.faixaAlunos(m2)
         if (!vivo) return
         setFaixa(f)
-        if (f.p50 != null) seed = Math.round(f.p50)
+        seed = sementeDaDemanda(f.p50, demanda)
       } catch {
         /* sem faixa: mantém a demanda atual */
       }
       if (vivo) {
+        setFaixaBuscada(true)
         setDemanda(seed)
         void calcular(seed)
       }
@@ -370,12 +478,13 @@ export default function ViabilityScreen({
         ...parametrosRelatorioPontual(ponto, { rotuloManual: info.nome }),
         // Metragem/aluguel vêm do Cenário e as chaves são remapeadas para o contrato
         // do PDF (senão o imóvel saía "n/d" mesmo preenchido — lib/report.ts).
-        infoImovel: infoImovelParaPdf(info, { m2, aluguel }),
+        infoImovel: infoImovelParaPdf(info, { m2, aluguel: aluguelReais ?? 0 }),
         // SÓ os inputs do cenário: o backend roda o motor UMA vez e monta o payload
         // inteiro (números + gráficos) por conta própria. Não reenviamos o payload
         // calculado — ele tem 70 KB (série de 64 meses + grade) e estourava a query
         // string em HTTP 431. Ver o comentário em lib/api.ts::relatorioPontual.
-        viabilidadeInputs: res ? montarPayload(demanda) : undefined,
+        viabilidadeInputs:
+          res && demanda != null && !faltaTicket ? montarPayload(demanda) : undefined,
         fotos,
       })
       baixar(blob, filename)
@@ -392,7 +501,8 @@ export default function ViabilityScreen({
    * não deriva nada. Mesmo padrão de carregando/erro do PDF.
    */
   async function gerarXlsx() {
-    if (!ponto) return
+    // As tres guardas, pela mesma razao do `calcular`.
+    if (!ponto || demanda == null || faltaTicket) return
     const erroStudios = erroTicketsStudios()
     if (erroStudios) {
       setErro(erroStudios)
@@ -434,6 +544,17 @@ export default function ViabilityScreen({
     )
   }
 
+  // Sem p50 a demanda é digitada: não há padrão a oferecer, só a premissa do operador.
+  const semComparaveis = faixaBuscada && faixa?.p50 == null
+  /** Aviso que o perfil do país declara para esta tela (ausente no Brasil). */
+  const avisoPerfil = avisoDeViabilidade()
+  /** Demanda que os quadros de leitura mostram: a do campo; se ele foi esvaziado
+   *  depois de um cálculo, a que o motor usou. `null` = nada a comparar ainda. */
+  const demandaExibida = demanda ?? res?.demanda_premissa ?? null
+  /** Ainda não houve cálculo e falta premissa para haver: nada de resultado na tela —
+   *  cartões vazios dizendo "não atinge" seriam lidos como veredito. */
+  const aguardandoPremissa = !res && (demanda == null || faltaTicket)
+
   // TUDO abaixo é LEITURA do viabilidade_payload_v1. A tela não deriva número
   // financeiro nenhum: o motor (dimensionamento/simulador.py) já entregou pronto.
   const premissas = res?.premissas ?? null
@@ -474,12 +595,16 @@ export default function ViabilityScreen({
   // Classificação do aluguel pedido frente aos clusters de teto (% do faturamento).
   const teto = res?.aluguel_teto ?? null
   const tetoCls =
-    teto && teto.ideal != null && teto.teto != null && teto.excecao != null
-      ? aluguel <= teto.ideal
+    teto &&
+    teto.ideal != null &&
+    teto.teto != null &&
+    teto.excecao != null &&
+    aluguelReais != null
+      ? aluguelReais <= teto.ideal
         ? { label: 'dentro do ideal', tone: 'var(--pos-text)' }
-        : aluguel <= teto.teto
+        : aluguelReais <= teto.teto
           ? { label: 'no teto', tone: 'var(--warn-text)' }
-          : aluguel <= teto.excecao
+          : aluguelReais <= teto.excecao
             ? { label: 'exceção', tone: 'var(--warn-text)' }
             : { label: 'acima do máximo', tone: 'var(--neg)' }
       : null
@@ -592,6 +717,59 @@ export default function ViabilityScreen({
             Ajuste as premissas. A ferramenta testa o número que você assume — não
             prevê a demanda.
           </p>
+          {moedaLocal && (
+            <div style={{ marginBottom: 14 }}>
+              <span
+                style={{
+                  display: 'block',
+                  font: '500 11px/1 var(--f-ui)',
+                  color: 'var(--tx-label)',
+                  marginBottom: 6,
+                }}
+              >
+                Moeda do imóvel
+              </span>
+              <div role="radiogroup" aria-label="Moeda do imóvel" style={{ display: 'flex', gap: 6 }}>
+                {(
+                  [
+                    ['local', `Pesos (${moedaLocal.codigo})`],
+                    ['usd', 'Dólares (USD)'],
+                  ] as const
+                ).map(([id, rotulo]) => {
+                  const ativo = moedaEntrada === id
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      role="radio"
+                      aria-checked={ativo}
+                      onClick={() => trocarMoeda(id)}
+                      style={{
+                        flex: 1,
+                        padding: '8px 10px',
+                        borderRadius: 'var(--r-md)',
+                        border: `1px solid ${ativo ? 'var(--ac)' : 'var(--line-soft)'}`,
+                        background: ativo ? 'var(--surf-raised)' : 'transparent',
+                        color: ativo ? 'var(--tx-max)' : 'var(--tx-sub)',
+                        font: `${ativo ? 600 : 500} 12px/1 var(--f-ui)`,
+                      }}
+                    >
+                      {rotulo}
+                    </button>
+                  )
+                })}
+              </div>
+              <div
+                style={{ font: '400 10px/1.45 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 6 }}
+              >
+                Valores digitados e resultados em {nomeMoeda}. Câmbio do perfil:{' '}
+                {num(moedaLocal.local_por_usd, 2)} {moedaLocal.codigo} e R${' '}
+                {num(moedaLocal.brl_por_usd, 4)} por dólar
+                {moedaLocal.base ? ` (base ${moedaLocal.base})` : ''}. O PDF e a planilha saem
+                em reais.
+              </div>
+            </div>
+          )}
 
           {/* MASCARA VIVA nos campos do Cenario --------------------------------
               O ponto de milhar e a unidade aparecem DENTRO da caixa, enquanto a
@@ -636,29 +814,49 @@ export default function ViabilityScreen({
               <CampoNumero
                 valor={aluguel}
                 onValor={setAluguel}
-                maxDigitos={7}
+                onVazio={moedaLocal ? () => setAluguel(undefined) : undefined}
+                maxDigitos={moedaLocal && moedaEntrada === 'local' ? 10 : 7}
                 min={0}
-                step={1000}
-                prefixo="R$"
-                rotulo="Aluguel em reais por mês"
-                title="Aluguel pedido, em R$/mês. Use ↑/↓ para variar de 1.000 em 1.000."
+                step={moedaLocal && moedaEntrada === 'local' ? 100000 : 1000}
+                prefixo={simbolo}
+                rotulo={`Aluguel em ${nomeMoeda} por mês`}
+                placeholder={moedaLocal ? 'Informe' : undefined}
+                title={`Aluguel pedido, em ${simbolo}/mês.`}
               />
             </Campo>
           </div>
 
           <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
-            <Campo label="Ticket de musculação" sufixo="/mês">
-              <CampoNumero
-                valor={ticket}
-                onValor={setTicket}
-                maxDigitos={4}
-                min={0}
-                step={5}
-                prefixo="R$"
-                rotulo="Ticket de musculação, em reais por mês"
-                title="Ticket de musculação: mensalidade do plano de balcão, em R$/mês. Use ↑/↓ para variar de 5 em 5."
-              />
-            </Campo>
+            {moedaLocal ? (
+              <Campo label="Ticket de musculação" sufixo="/mês">
+                <CampoNumero
+                  valor={ticketLocal}
+                  onValor={setTicketLocal}
+                  onVazio={() => setTicketLocal(undefined)}
+                  maxDigitos={moedaEntrada === 'local' ? 7 : 4}
+                  casas={moedaEntrada === 'usd' ? 2 : 0}
+                  min={0}
+                  step={moedaEntrada === 'local' ? 500 : 1}
+                  prefixo={simbolo}
+                  rotulo={`Ticket de musculação, em ${nomeMoeda} por mês`}
+                  placeholder="Informe"
+                  title={`Mensalidade cheia do plano de balcão, em ${simbolo}/mês.`}
+                />
+              </Campo>
+            ) : (
+              <Campo label="Ticket de musculação" sufixo="/mês">
+                <CampoNumero
+                  valor={ticket}
+                  onValor={setTicket}
+                  maxDigitos={4}
+                  min={0}
+                  step={5}
+                  prefixo="R$"
+                  rotulo="Ticket de musculação, em reais por mês"
+                  title="Mensalidade cheia do plano de balcão, em R$/mês. Use ↑/↓ para variar de 5 em 5."
+                />
+              </Campo>
+            )}
             <Campo label="Studios" sufixo="0–3">
               <input
                 type="number"
@@ -688,12 +886,13 @@ export default function ViabilityScreen({
                   <CampoNumero
                     valor={valor}
                     onValor={(n) => setTicketsStudios((t) => definirTicketStudio(t, i, n))}
-                    maxDigitos={4}
+                    maxDigitos={moedaLocal && moedaEntrada === 'local' ? 7 : 4}
+                    casas={moedaLocal && moedaEntrada === 'usd' ? 2 : 0}
                     min={1}
-                    step={5}
-                    prefixo="R$"
-                    rotulo={`Ticket do studio ${i + 1}, em reais por mês`}
-                    title={`Mensalidade do studio ${i + 1}, em R$/mês. Use ↑/↓ para variar de 5 em 5.`}
+                    step={moedaLocal ? (moedaEntrada === 'local' ? 500 : 1) : 5}
+                    prefixo={simbolo}
+                    rotulo={`Ticket do studio ${i + 1}, em ${nomeMoeda} por mês`}
+                    title={`Mensalidade do studio ${i + 1}, em ${simbolo}/mês.`}
                   />
                 </Campo>
               ))}
@@ -751,7 +950,9 @@ export default function ViabilityScreen({
                   {premissas.ticket_agregador_fator != null
                     ? `, ${pctFrac(premissas.ticket_agregador_fator, 0)} da musculação`
                     : ''}
-                  ). Já líquido de churn e inadimplência. Calculado pelo motor — a tela só exibe.
+                  ). Já líquido de churn e inadimplência.
+                  {/* Onde o mix é campo do operador, "a tela só exibe" seria falso. */}
+                  {!mixEditavel && ' Calculado pelo motor — a tela só exibe.'}
                 </>
               ) : (
                 'Calcule o cenário para ver o ticket médio efetivo por aluno total.'
@@ -797,32 +998,57 @@ export default function ViabilityScreen({
                 className="num"
                 style={{
                   font: '500 9.5px/1 var(--f-num)',
-                  color: demandaTocada ? 'var(--warn-text)' : 'var(--ac-text)',
+                  color: demandaTocada || semComparaveis ? 'var(--warn-text)' : 'var(--ac-text)',
                 }}
               >
-                {demandaTocada ? 'ajuste manual' : 'padrão · p50'}
+                {semComparaveis
+                  ? 'premissa do operador'
+                  : demandaTocada
+                    ? 'ajuste manual'
+                    : 'padrão · p50'}
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               {/* O numero grande saia sem unidade nenhuma ("800"). `alunos()` ja'
                   aplica o separador de milhar; faltava a palavra. */}
-              <span style={{ flex: 1, display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                <span
-                  className="num"
-                  style={{ font: '700 22px/1 var(--f-num)', color: 'var(--tx-max)' }}
-                >
-                  {alunos(demanda)}
+              {semComparaveis ? (
+                // Sem faixa de comparáveis não existe padrão: o operador DIGITA a
+                // premissa. Vazio volta a `null` e a tela deixa de calcular.
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <CampoNumero
+                    valor={demanda ?? undefined}
+                    onValor={(n) => {
+                      setDemandaTocada(true)
+                      setDemanda(n)
+                    }}
+                    onVazio={() => setDemanda(null)}
+                    maxDigitos={5}
+                    min={1}
+                    step={DEMANDA_PASSO}
+                    sufixo="alunos"
+                    rotulo="Demanda assumida, em alunos totais"
+                    placeholder="Informe"
+                  />
                 </span>
-                <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
-                  alunos
+              ) : (
+                <span style={{ flex: 1, display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  <span
+                    className="num"
+                    style={{ font: '700 22px/1 var(--f-num)', color: 'var(--tx-max)' }}
+                  >
+                    {alunos(demanda)}
+                  </span>
+                  <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
+                    alunos
+                  </span>
                 </span>
-              </span>
+              )}
               <button
                 type="button"
                 aria-label="Diminuir demanda"
                 onClick={() => {
                   setDemandaTocada(true)
-                  setDemanda((d) => Math.max(100, d - DEMANDA_PASSO))
+                  setDemanda((d) => Math.max(100, (d ?? 0) - DEMANDA_PASSO))
                 }}
                 style={stepper}
               >
@@ -833,13 +1059,64 @@ export default function ViabilityScreen({
                 aria-label="Aumentar demanda"
                 onClick={() => {
                   setDemandaTocada(true)
-                  setDemanda((d) => d + DEMANDA_PASSO)
+                  setDemanda((d) => (d ?? 0) + DEMANDA_PASSO)
                 }}
                 style={stepper}
               >
                 +
               </button>
             </div>
+            {/* Mix recorrente × agregador: de quantos desses alunos pagam o plano de
+                balcão. Vazio = padrão do motor; o agregador é o complemento. */}
+            {mixEditavel && (
+              <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', marginTop: 10 }}>
+                <Campo label="Recorrente (balcão)">
+                  <CampoNumero
+                    valor={pctBalcao}
+                    onValor={setPctBalcao}
+                    onVazio={() => setPctBalcao(undefined)}
+                    maxDigitos={3}
+                    min={0}
+                    max={100}
+                    step={1}
+                    sufixo="%"
+                    rotulo="Percentual de alunos recorrentes, de balcão"
+                    placeholder={
+                      premissas ? num(premissas.share_balcao * 100, 0) : PADRAO_PCT_BALCAO
+                    }
+                    title="Percentual dos alunos que paga o plano de balcão (recorrente). O restante vem por agregador, que paga menos por aluno. Vazio usa o padrão do motor."
+                  />
+                </Campo>
+                <div style={{ flex: 1, minWidth: 0, paddingBottom: 9 }}>
+                  <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
+                    Agregador
+                  </span>
+                  <div
+                    className="num"
+                    style={{
+                      font: '700 14px/1 var(--f-num)',
+                      color: 'var(--tx-max)',
+                      marginTop: 8,
+                    }}
+                  >
+                    {/* Le a MESMA funcao que monta o payload (`fracaoDoPercentual`), e nao
+                        `100 - pctBalcao`. A diferenca importa fora da faixa: o `CampoNumero`
+                        deste repo documenta que `min`/`max` nativos NAO impedem digitacao,
+                        entao 150 era aceito e a tela mostrava "Agregador -50%" enquanto
+                        `fracaoDoPercentual` devolvia `undefined`, a chave saia do JSON e o
+                        MOTOR usava o padrao de 69% — tela e conta discordando em silencio.
+                        Com a mesma fonte, fora da faixa as duas caem no padrao juntas. */}
+                    {(() => {
+                      const frac = fracaoDoPercentual(pctBalcao)
+                      if (frac !== undefined) return `${num(100 - frac * 100, 0)}%`
+                      return premissas
+                        ? `${num((1 - premissas.share_balcao) * 100, 0)}%`
+                        : `${100 - Number(PADRAO_PCT_BALCAO)}%`
+                    })()}
+                  </div>
+                </div>
+              </div>
+            )}
             <div
               style={{
                 font: '400 10.5px/1.4 var(--f-ui)',
@@ -872,6 +1149,8 @@ export default function ViabilityScreen({
                     </>
                   )}
                 </>
+              ) : demanda == null ? (
+                'Não há faixa de comparáveis nesta base. A demanda é premissa do operador: informe o número de alunos totais e calcule.'
               ) : premissas ? (
                 temStudios && premissas.share_por_studio != null ? (
                   `Premissa explícita do operador, em alunos TOTAIS. Mix: ${
@@ -984,13 +1263,17 @@ export default function ViabilityScreen({
                 valor={obra}
                 onValor={setObra}
                 onVazio={() => setObra(undefined)}
-                maxDigitos={7}
+                maxDigitos={moedaLocal && moedaEntrada === 'local' ? 10 : 7}
                 min={0}
                 step={10000}
-                prefixo="R$"
-                rotulo="Obra, em reais"
-                placeholder={fixa(SUGESTAO_OBRA)}
-                title="Obra (equity do franqueado), em R$. O 1.500.000 da caixa é SUGESTÃO, não o padrão: Obra e Equipamentos não têm padrão próprio — com os dois vazios o motor usa um CAPEX único de 2.340.000, e preencher um zera o outro. Use as setas para variar de 10.000 em 10.000."
+                prefixo={simbolo}
+                rotulo={`Obra, em ${nomeMoeda}`}
+                placeholder={moedaLocal ? naMoeda(SUGESTAO_OBRA_REAIS) : fixa(SUGESTAO_OBRA)}
+                title={
+                  moedaLocal
+                    ? `Obra (equity do franqueado), em ${simbolo}. O número da caixa é SUGESTÃO, não o padrão: com Obra e Equipamentos vazios o motor usa um CAPEX único, e preencher um zera o outro.`
+                    : "Obra (equity do franqueado), em R$. O 1.500.000 da caixa é SUGESTÃO, não o padrão: Obra e Equipamentos não têm padrão próprio — com os dois vazios o motor usa um CAPEX único de 2.340.000, e preencher um zera o outro. Use as setas para variar de 10.000 em 10.000."
+                }
               />
             </Campo>
             <Campo label="Parcelas obra">
@@ -1014,13 +1297,17 @@ export default function ViabilityScreen({
                 valor={equip}
                 onValor={setEquip}
                 onVazio={() => setEquip(undefined)}
-                maxDigitos={7}
+                maxDigitos={moedaLocal && moedaEntrada === 'local' ? 10 : 7}
                 min={0}
                 step={10000}
-                prefixo="R$"
-                rotulo="Equipamentos, em reais"
-                placeholder={fixa(SUGESTAO_EQUIPAMENTOS)}
-                title="Equipamentos (parcela financiada), em R$. O 1.200.000 da caixa é SUGESTÃO, não o padrão: vazio com a Obra preenchida vale ZERO equipamentos. Use as setas para variar de 10.000 em 10.000."
+                prefixo={simbolo}
+                rotulo={`Equipamentos, em ${nomeMoeda}`}
+                placeholder={moedaLocal ? naMoeda(SUGESTAO_EQUIPAMENTOS_REAIS) : fixa(SUGESTAO_EQUIPAMENTOS)}
+                title={
+                  moedaLocal
+                    ? `Equipamentos (parcela financiada), em ${simbolo}. O número da caixa é SUGESTÃO, não o padrão: vazio com a Obra preenchida vale ZERO equipamentos.`
+                    : "Equipamentos (parcela financiada), em R$. O 1.200.000 da caixa é SUGESTÃO, não o padrão: vazio com a Obra preenchida vale ZERO equipamentos. Use as setas para variar de 10.000 em 10.000."
+                }
               />
             </Campo>
             <Campo label="Prazo financ.">
@@ -1076,13 +1363,21 @@ export default function ViabilityScreen({
                 valor={taxaFranquia}
                 onValor={setTaxaFranquia}
                 onVazio={() => setTaxaFranquia(undefined)}
-                maxDigitos={7}
+                maxDigitos={moedaLocal && moedaEntrada === 'local' ? 10 : 7}
                 min={0}
                 step={10000}
-                prefixo="R$"
-                rotulo="Taxa de franquia, em reais"
-                placeholder={dica(inv?.taxa_franquia, PADRAO_TAXA_FRANQUIA)}
-                title="Taxa de franquia, em R$. Vazio usa o padrão do modelo; digitar 0 é honrado como R$ 0."
+                prefixo={simbolo}
+                rotulo={`Taxa de franquia, em ${nomeMoeda}`}
+                placeholder={
+                  moedaLocal
+                    ? naMoeda(inv?.taxa_franquia ?? PADRAO_TAXA_FRANQUIA_REAIS)
+                    : dica(inv?.taxa_franquia, PADRAO_TAXA_FRANQUIA)
+                }
+                title={
+                  moedaLocal
+                    ? `Taxa de franquia, em ${simbolo}. Vazio usa o padrão do modelo (o número da caixa); digitar 0 é honrado como zero.`
+                    : "Taxa de franquia, em R$. Vazio usa o padrão do modelo; digitar 0 é honrado como R$ 0."
+                }
               />
             </Campo>
             {/* Parcelas da franquia: mesmo par que "Obra + Parcelas obra", uma linha
@@ -1376,10 +1671,17 @@ export default function ViabilityScreen({
 
           <Botao
             onClick={() => calcular()}
-            disabled={calculando}
+            disabled={calculando || demanda == null || faltaTicket}
+            title={
+              demanda == null
+                ? 'Informe a demanda assumida para calcular'
+                : faltaTicket
+                  ? 'Informe o ticket e o aluguel para calcular'
+                  : undefined
+            }
             style={{ width: '100%', marginTop: 18, padding: 14, fontSize: 14 }}
           >
-            {calculando ? 'Calculando…' : 'Recalcular viabilidade'}
+            {calculando ? 'Calculando…' : res ? 'Recalcular viabilidade' : 'Calcular viabilidade'}
           </Botao>
 
           <Botao
@@ -1485,7 +1787,10 @@ export default function ViabilityScreen({
             </div>
           )}
 
-          {/* Rótulo permanente: o modelo de viabilidade ainda está em calibração vs planilha. */}
+          {/* Rótulo do modelo em calibração vs planilha. Some onde o perfil do país já
+              carrega o próprio aviso de premissas provisórias (a AR): lá esta nota,
+              escrita para a calibração brasileira, só disputava espaço com ele. */}
+          {!avisoPerfil && (
           <div
             style={{
               padding: '9px 13px',
@@ -1505,6 +1810,51 @@ export default function ViabilityScreen({
             ESTRUTURA da folha já está decidida: valor FIXO desde o mês 1, dimensionado pelo
             faturamento maduro — não escala com a rampa.
           </div>
+          )}
+
+          {/* O perfil do país declara, a tela obedece (DEC-047): na AR é a ressalva de
+              que a conta usa premissas BRASILEIRAS. O texto é dado do perfil. */}
+          {avisoPerfil && (
+            <Glass style={{ padding: '13px 16px' }}>
+              <Eyebrow cor="var(--warn)" dot>
+                {avisoPerfil.titulo}
+              </Eyebrow>
+              <p
+                style={{
+                  font: '400 12.5px/1.5 var(--f-ui)',
+                  color: 'var(--tx-narrative)',
+                  margin: '8px 0 0',
+                }}
+              >
+                {avisoPerfil.texto}
+              </p>
+            </Glass>
+          )}
+
+          {aguardandoPremissa && !calculando && (
+            <Glass style={{ padding: '13px 16px' }}>
+              <Eyebrow cor="var(--warn)" dot>
+                {demanda == null && faltaTicket
+                  ? 'Demanda, ticket e aluguel não informados'
+                  : demanda == null
+                    ? 'Demanda não informada'
+                    : 'Ticket ou aluguel não informado'}
+              </Eyebrow>
+              <p
+                style={{
+                  font: '400 12.5px/1.5 var(--f-ui)',
+                  color: 'var(--tx-narrative)',
+                  margin: '8px 0 0',
+                }}
+              >
+                {demanda == null &&
+                  'Esta base não tem faixa de alunos de imóveis comparáveis, então a tela não sugere um número de alunos. '}
+                {faltaTicket &&
+                  'Ticket e aluguel não têm padrão nesta instância: informe os dois na moeda do imóvel. '}
+                Preencha no painel ao lado e clique em Calcular viabilidade.
+              </p>
+            </Glass>
+          )}
 
           {erro && (
             <div
@@ -1522,15 +1872,21 @@ export default function ViabilityScreen({
             </div>
           )}
 
-          <Veredito
-            aprovado={aprovado}
-            margem={margem}
-            demanda={demanda}
-            breakEvenEbitda={beEbitda}
-            breakEvenCaixa={beCaixa}
-            payback={retorno?.payback ?? null}
-            melhoria={res?.melhoria_payback ?? null}
-          />
+          {!aguardandoPremissa && (
+          <>
+          {/* Sem demanda não há veredito: "Com 0 alunos… requer revisão" seria um
+              resultado inventado. */}
+          {demandaExibida != null && (
+            <Veredito
+              aprovado={aprovado}
+              margem={margem}
+              demanda={demandaExibida}
+              breakEvenEbitda={beEbitda}
+              breakEvenCaixa={beCaixa}
+              payback={retorno?.payback ?? null}
+              melhoria={res?.melhoria_payback ?? null}
+            />
+          )}
 
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
             <Kpi
@@ -1637,7 +1993,7 @@ export default function ViabilityScreen({
             />
             <Kpi
               label="Aluguel vs teto"
-              valor={brl(aluguel, true)}
+              valor={brl(aluguelReais, true)}
               sub={
                 teto && teto.ideal != null && teto.teto != null && teto.excecao != null
                   ? `${tetoCls?.label ?? ''} · ideal ${brl(teto.ideal, true)} · teto ${brl(teto.teto, true)} · máx ${brl(teto.excecao, true)}`
@@ -1660,12 +2016,14 @@ export default function ViabilityScreen({
             />
           </div>
 
-          <ReguaBreakEven
-            demanda={demanda}
-            breakEvenEbitda={beEbitda}
-            breakEvenCaixa={beCaixa}
-            p90={res?.faixa_alunos.p90 ?? faixa?.p90 ?? null}
-          />
+          {demandaExibida != null && (
+            <ReguaBreakEven
+              demanda={demandaExibida}
+              breakEvenEbitda={beEbitda}
+              breakEvenCaixa={beCaixa}
+              p90={res?.faixa_alunos.p90 ?? faixa?.p90 ?? null}
+            />
+          )}
 
           {/* Fluxo de caixa ao lado da rampa; a composição do resultado (agora com as
               parcelas do custo e a despesa financeira) fica embaixo, em largura total. */}
@@ -1720,6 +2078,8 @@ export default function ViabilityScreen({
                   (res.motivo_zona_morta_texto ?? 'Ponto sinalizado como zona morta.')}
               </p>
             </Glass>
+          )}
+          </>
           )}
         </div>
       </div>
