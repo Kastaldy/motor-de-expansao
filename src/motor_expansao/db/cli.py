@@ -733,6 +733,29 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 print(f"        por que importa: {porque}")
                 problemas.append(rotulo)
 
+        # DERIVADA: todo papel com privilegio de tabela/sequence no schema precisa de
+        # `USAGE` nele. A checagem positiva acima pergunta so' por `current_user`, e a
+        # secao 2 concede o `USAGE` a TRES papeis -- entao o `auditoria` podia perder o
+        # dele e tudo ficava verde, inclusive este comando. Medido em 05/10/2026.
+        sem_usage = con.execute(postgres.SQL_PAPEIS_SEM_USAGE_NO_SCHEMA).fetchone()[0]
+        _sem = [p for p in (sem_usage or "").split(",") if p]
+        print(
+            f"  {'ok   ' if not _sem else 'FALHA'} todo papel com privilegio no schema tem "
+            f"USAGE nele{'' if not _sem else ': ' + ', '.join(_sem) + ' NAO tem'}"
+        )
+        if _sem:
+            print(
+                "        por que importa: privilegio de tabela sem `USAGE` no schema e' INERTE --\n"
+                "        o catalogo diz que o papel pode, e a consulta falha com\n"
+                "        `relation ... does not exist`, que parece migration ausente. A secao 2\n"
+                "        concede o USAGE aos TRES papeis; rode o `GRANT USAGE` dela de novo."
+            )
+            problemas.append(
+                "papel com privilegio de tabela e sem USAGE no schema: "
+                + ", ".join(_sem)
+                + " (o privilegio esta' no catalogo e nao funciona)"
+            )
+
         print("\n== auditoria endurecida (D21) ==")
         # Antes de qualquer consulta derivada: a tabela auditada e' VISIVEL? As tres
         # consultas abaixo derivam do catalogo por `to_regclass`, que devolve NULL em vez
@@ -811,27 +834,47 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
         # EXTRA nao reprova; o que reprova e' o dono AUSENTE, que e' o no-op do
         # `FOR ROLE postgres`. Medido: no-op puro faz tabela futura nascer invisivel ao
         # `app`, e `conferir`, `privilegios` e a contagem 12/1/3 passavam os tres verdes.
-        dono, papeis = con.execute(
-            postgres.SQL_DEFAULT_ACL_DO_DONO, (postgres.TABELA_AUDITADA,)
-        ).fetchone() if visivel else (None, None)
-        lista = [p for p in (papeis or "").split(",") if p]
-        ok = bool(dono) and dono in lista
-        if visivel:
+        _dono = con.execute(
+            postgres.SQL_DONO_DA_TABELA_AUDITADA, (postgres.TABELA_AUDITADA,)
+        ).fetchone()[0] if visivel else None
+        _usuario = con.execute(postgres.SQL_USUARIO_ATUAL).fetchone()[0] if visivel else None
+        _acl = {
+            linha[0]: (linha[1], linha[2], linha[3])
+            for linha in (con.execute(postgres.SQL_DEFAULT_ACL_DO_DONO).fetchall() if visivel else [])
+        }
+        # UMA linha por tipo de objeto. Agregar TABLES e SEQUENCES esconde a lacuna:
+        # medido em 05/10/2026, com o grantee errado so' em TABLES e as SEQUENCES
+        # intactas, o agregado mostrava o papel certo e o comando passava verde.
+        for _tipo, _nome in sorted(postgres.TIPOS_DO_DEFAULT_ACL.items()):
+            if _tipo not in _acl:
+                if visivel:
+                    print(f"  FALHA default privileges de {_nome}: NENHUM")
+                    print(
+                        "        por que importa: sem esta linha, todo objeto desse tipo criado\n"
+                        "        daqui para frente nasce invisivel para a aplicacao. Rode a secao 6."
+                    )
+                    problemas.append(f"pg_default_acl sem linha de {_nome}: a secao 6 nao rodou")
+                continue
+            _criam, _recebem, _chega = _acl[_tipo]
+            _ok = bool(_dono) and _dono in (_criam or "").split(",") and bool(_chega)
             print(
-                f"  {'ok   ' if ok else 'FALHA'} default privileges do dono ({dono or '?'}): "
-                f"{', '.join(lista) or 'NENHUM'}"
+                f"  {'ok   ' if _ok else 'FALHA'} default privileges de {_nome}: criados por "
+                f"{_criam or 'NENHUM'} -> concedidos a {_recebem or 'NENHUM'} "
+                f"(esperado: {_dono or '?'} -> {_usuario or '?'}, direto ou por heranca)"
             )
-        if visivel and not ok:
-            print(
-                "        por que importa: sem default privilege PARA O DONO, toda tabela\n"
-                "        criada daqui para frente nasce invisivel ao `app`. E' o no-op da secao 6\n"
-                "        colada literal (`FOR ROLE postgres`): grava duas linhas, nao da erro se o\n"
-                "        papel existir, e nao vale para quem cria objeto de verdade."
-            )
-            problemas.append(
-                f"pg_default_acl nao tem linha para o dono {dono or '?'} "
-                f"(tem: {', '.join(lista) or 'nada'}): a secao 6 foi colada com o papel errado"
-            )
+            if not _ok:
+                print(
+                    "        por que importa: o default privilege tem de ser criado PELO DONO e\n"
+                    "        chegar A QUEM CONECTA. Errar qualquer um dos dois faz todo objeto desse\n"
+                    "        tipo criado daqui para frente nascer invisivel para a aplicacao, e os\n"
+                    "        dois jeitos de errar passam a secao 6 sem um erro na tela:\n"
+                    "        `FOR ROLE postgres` (no-op silencioso se o papel existir) e\n"
+                    "        `TO <papel errado>`."
+                )
+                problemas.append(
+                    f"pg_default_acl de {_nome} errado: criados por {_criam or 'nada'}, concedidos a "
+                    f"{_recebem or 'nada'}, esperado {_dono or '?'} -> {_usuario or '?'}"
+                )
 
     print()
     if problemas:

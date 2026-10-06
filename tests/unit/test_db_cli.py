@@ -274,9 +274,16 @@ _D20_DE_PE: dict[str, Any] = {
         ("registra_perfil_permissoes_historico", False),
         ("registra_perfil_permissoes_truncate", False),
     ],
-    # A QUARTA camada (secao 6), acrescentada em 05/10/2026: `(dono, papeis_no_defacl)`.
-    # Estado bom = o dono da tabela auditada esta' entre os papeis.
-    postgres.SQL_DEFAULT_ACL_DO_DONO: ("reservas_owner", "reservas_owner"),
+    # A QUARTA camada (secao 6), acrescentada em 05/10/2026. UMA LINHA POR TIPO de
+    # objeto: `(tipo, quem_cria, quem_recebe, chega_a_quem_conecta)`. Agregar os dois
+    # tipos escondia a lacuna -- medido: grantee errado so' em TABLES passava verde.
+    postgres.SQL_DONO_DA_TABELA_AUDITADA: "reservas_owner",
+    postgres.SQL_DEFAULT_ACL_DO_DONO: [
+        ("S", "reservas_owner", "app", True),
+        ("r", "reservas_owner", "app", True),
+    ],
+    #: Papeis com privilegio de tabela no schema e SEM `USAGE` nele. Vazio = estado bom.
+    postgres.SQL_PAPEIS_SEM_USAGE_NO_SCHEMA: "",
     # O QUINTO furo (05/10/2026): `USAGE` no schema. Sem ele o papel nao VE a tabela, e
     # as dezesseis checagens seguintes degradam acusando migration ausente.
     postgres.SQL_USAGE_NO_SCHEMA: True,
@@ -879,54 +886,115 @@ def test_privilegios_degrada_sem_estourar_com_a_tabela_auditada_invisivel(
     assert "FALHA default privileges" not in saida
 
 
-def test_privilegios_REPROVA_default_privileges_do_papel_errado(
+def test_privilegios_REPROVA_default_privilege_concedido_ao_papel_ERRADO(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A QUARTA camada, achada em 05/10/2026 -- e a de maior alcance das quatro.
+    """Defeito do conserto da R14, achado na R16: a consulta lia QUEM CRIA e nao QUEM RECEBE.
 
-    A secao 6 do script, colada literal, diz `FOR ROLE postgres`. Num cluster onde esse
-    papel existe o comando NAO da erro e grava duas linhas INUTEIS: quem cria objeto ali
-    e' o dono, nao o `postgres`. Resultado medido num banco de verdade: toda tabela
-    criada depois nasce com `has_table_privilege('app', ..., 'SELECT') = false`, e
-    `conferir`, `privilegios` e a contagem 12/1/3 passavam os tres verdes.
+    A secao 6 pode ser colada com o `FOR ROLE` certo e o grantee errado
+    (`... TO auditoria` em vez de `TO app`). Medido num banco de verdade: as duas linhas
+    aparecem com `defaclrole = reservas_owner`, a instrucao do §6 ("olhe o PAPEL, nao a
+    contagem") aprova, e a tabela futura nasce com `has_table_privilege('app', ...) =
+    false`. `defaclacl` e' a coluna que carrega a concessao, e a instrucao parava uma
+    coluna antes dela.
     """
     respostas = dict(_D20_DE_PE)
-    respostas[postgres.SQL_DEFAULT_ACL_DO_DONO] = ("reservas_owner", "postgres")
+    respostas[postgres.SQL_DEFAULT_ACL_DO_DONO] = [
+        ("S", "reservas_owner", "app", True),
+        ("r", "reservas_owner", "auditoria", False),
+    ]
     codigo, _con = _rodar_privilegios(monkeypatch, respostas)
     saida = capsys.readouterr().out
 
-    assert codigo == 1, "default privilege do papel errado tem de REPROVAR"
-    assert "FALHA default privileges do dono" in saida
-    assert "reservas_owner" in saida, "tem de dizer QUEM deveria estar la'"
-    assert "nasce invisivel ao `app`" in saida, "...e por que importa"
+    assert codigo == 1, "grantee errado tem de REPROVAR"
+    assert "FALHA default privileges de TABLES" in saida, "tem de dizer QUAL tipo"
+    assert "ok    default privileges de SEQUENCES" in saida, (
+        "o outro tipo esta' certo e nao pode ser acusado -- e agregar os dois escondia "
+        "exatamente este estado"
+    )
 
 
-def test_privilegios_ACEITA_default_privileges_de_papel_extra(
+def test_privilegios_REPROVA_default_privilege_criado_pelo_papel_ERRADO(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """O outro lado: papel EXTRA no `pg_default_acl` nao pode reprovar banco sadio.
+    """O outro jeito de errar a secao 6: `FOR ROLE postgres` num cluster onde ele existe.
 
-    A pergunta e' "o dono esta' la'?", nao "so' o dono esta' la'". Um cluster pode ter
-    default ACL de mais de um dono por motivo legitimo, e cobrar exclusividade seria
-    falso alarme -- a classe de defeito que o ensaio ja' achou duas vezes. Medido no
-    banco de ensaio: com `postgres` E `reservas_owner` no catalogo, o comando passa.
+    Nao da erro na tela e grava duas linhas INUTEIS -- quem cria objeto ali e' o dono.
     """
     respostas = dict(_D20_DE_PE)
-    respostas[postgres.SQL_DEFAULT_ACL_DO_DONO] = ("reservas_owner", "postgres,reservas_owner")
+    respostas[postgres.SQL_DEFAULT_ACL_DO_DONO] = [
+        ("S", "postgres", "app", True),
+        ("r", "postgres", "app", True),
+    ]
     codigo, _con = _rodar_privilegios(monkeypatch, respostas)
+    saida = capsys.readouterr().out
 
-    assert codigo == 0, "papel extra junto com o do dono e' estado legitimo"
-    assert "ok    default privileges do dono" in capsys.readouterr().out
-
-
-def test_privilegios_REPROVA_sem_default_privilege_nenhum(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Secao 6 nao rodada: `pg_default_acl` vazio no schema `public`."""
-    respostas = dict(_D20_DE_PE)
-    respostas[postgres.SQL_DEFAULT_ACL_DO_DONO] = ("reservas_owner", "")
-    codigo, _con = _rodar_privilegios(monkeypatch, respostas)
     assert codigo == 1
+    assert "criados por postgres" in saida
+    assert "reservas_owner" in saida, "tem de dizer quem DEVIA ter criado"
+
+
+def test_privilegios_ACEITA_default_privilege_com_papel_extra(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Criterio 7: papel EXTRA, ao lado do certo, e' estado legitimo e nao pode reprovar.
+
+    Um cluster pode ter default ACL de mais de um dono por motivo legitimo. A pergunta e'
+    "o dono esta' la' e a concessao chega a quem conecta?", nao "so' o dono esta' la'".
+    """
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_DEFAULT_ACL_DO_DONO] = [
+        ("S", "postgres,reservas_owner", "app", True),
+        ("r", "postgres,reservas_owner", "app,etl", True),
+    ]
+    codigo, _con = _rodar_privilegios(monkeypatch, respostas)
+
+    assert codigo == 0, "papel extra, criando E recebendo, e' estado legitimo"
+    assert "ok    default privileges de TABLES" in capsys.readouterr().out
+
+
+def test_privilegios_REPROVA_sem_a_linha_de_um_dos_tipos(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A secao 6 tem DUAS linhas (`ON TABLES` e `ON SEQUENCES`). Colar uma so' reprova."""
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_DEFAULT_ACL_DO_DONO] = [("r", "reservas_owner", "app", True)]
+    codigo, _con = _rodar_privilegios(monkeypatch, respostas)
+    saida = capsys.readouterr().out
+
+    assert codigo == 1
+    assert "FALHA default privileges de SEQUENCES: NENHUM" in saida
+
+
+def test_privilegios_REPROVA_papel_com_privilegio_e_sem_usage_no_schema(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """O SEXTO furo, achado na R16: o `USAGE` e' concedido a TRES papeis e conferido a UM.
+
+    A checagem positiva que entrou na R15 pergunta por `current_user` (o `app`), e a
+    consulta que o pacote prescrevia perguntava so' pelo `app` tambem. Medido num banco
+    de verdade: revogando o `USAGE` apenas do `auditoria`, ele mantem `SELECT` em
+    `perfil_permissoes_historico` no catalogo, a consulta real falha com
+    `relation ... does not exist`, e TODAS as conferencias ficam verdes. O papel existe
+    para uma coisa so' -- ler aquele historico -- e e' ela que quebra.
+
+    O conserto DERIVA o universo: todo papel com privilegio de tabela ou sequence no
+    schema precisa de `USAGE` nele, senao o privilegio e' inerte. Papel novo entra
+    sozinho, porque nao ha lista.
+    """
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_PAPEIS_SEM_USAGE_NO_SCHEMA] = "auditoria"
+    codigo, _con = _rodar_privilegios(monkeypatch, respostas)
+    saida = capsys.readouterr().out
+
+    assert codigo == 1, "papel com privilegio inerte tem de REPROVAR"
+    assert "auditoria NAO tem" in saida, "tem de NOMEAR o papel"
+    assert "INERTE" in saida, "...e dizer por que o privilegio no catalogo nao vale nada"
+    assert "ok    usar o schema public" in saida, (
+        "a checagem do `current_user` continua passando -- e e' justamente por isso que "
+        "ela sozinha nao bastava"
+    )
+
 
 
 def test_privilegios_deriva_as_funcoes_de_auditoria_do_catalogo(

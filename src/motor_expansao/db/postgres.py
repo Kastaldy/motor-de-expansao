@@ -151,11 +151,55 @@ SQL_USAGE_NO_SCHEMA = "SELECT has_schema_privilege(current_user, 'public', 'USAG
 #: levantar, e NULL aqui significa "ou a migration nao rodou, ou falta USAGE no schema" --
 #: duas causas, e o relatorio tem de nomear as duas em vez de chutar uma.
 SQL_TABELA_AUDITADA_VISIVEL = "SELECT to_regclass(%s) IS NOT NULL"
+# Devolve (dono da tabela auditada, quem CRIA, quem RECEBE). As tres colunas, porque
+# as duas primeiras sozinhas aprovam um estado ruim: ate' 05/10/2026 esta consulta lia so'
+# `defaclrole` -- QUEM CRIA -- e um `ALTER DEFAULT PRIVILEGES` com o `FOR ROLE` certo e o
+# grantee errado (`TO auditoria` em vez de `TO app`) passava verde, com a tabela futura
+# nascendo invisivel ao `app`. `defaclacl` e' a coluna que carrega a concessao, e
+# `aclexplode` a abre em papeis.
+#: Quem cria objeto no schema: o dono da tabela auditada. Separado da consulta do
+#: `pg_default_acl` porque aquela agora devolve UMA LINHA POR TIPO de objeto.
+SQL_DONO_DA_TABELA_AUDITADA = (
+    "SELECT c.relowner::regrole::text FROM pg_class c WHERE c.oid = to_regclass(%s)"
+)
 SQL_DEFAULT_ACL_DO_DONO = (
-    "SELECT (SELECT c.relowner::regrole::text FROM pg_class c WHERE c.oid = to_regclass(%s)), "
-    "coalesce(string_agg(DISTINCT d.defaclrole::regrole::text, ','), '') "
+    "SELECT d.defaclobjtype, "
+    "string_agg(DISTINCT d.defaclrole::regrole::text, ','), "
+    "coalesce(string_agg(DISTINCT a.grantee::regrole::text, ','), ''), "
+    # Responde se o papel CONECTADO recebe, direta ou por HERANCA. Comparar `current_user`
+    # com o nome do grantee deu falso alarme medido -- papel membro do `app` recebe o
+    # privilegio e seria reprovado. Nota: para SUPERUSUARIO isto e' sempre verdadeiro, o
+    # que esta' certo (superusuario tem tudo) e e' por isso que este comando pede para ser
+    # rodado com a credencial do `app`, nao com a do dono.
+    "coalesce(bool_or(pg_has_role(a.grantee, 'USAGE')), false) "
     "FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace "
-    "WHERE n.nspname = 'public'"
+    "LEFT JOIN LATERAL aclexplode(d.defaclacl) a ON true "
+    "WHERE n.nspname = 'public' GROUP BY d.defaclobjtype ORDER BY d.defaclobjtype"
+)
+#: Os tipos de objeto que a secao 6 cobre: `r` = TABLES, `S` = SEQUENCES. UMA linha por
+#: tipo, porque agregar os dois ESCONDE a lacuna -- medido: com o grantee errado so' em
+#: TABLES e as SEQUENCES intactas, o agregado continuava mostrando o papel certo e passava.
+TIPOS_DO_DEFAULT_ACL = {"r": "TABLES", "S": "SEQUENCES"}
+# Papel que tem privilegio de TABELA ou SEQUENCE no schema `public` e NAO tem `USAGE`
+# nele: o privilegio existe no catalogo e e' inerte, porque o papel nao ve o objeto.
+#
+# DERIVADA de proposito. A secao 2 concede `USAGE` a TRES papeis (`app, auditoria, etl`),
+# e tanto a checagem que entrou na R15 quanto a consulta que o pacote prescreve
+# perguntavam por UM. Medido em 05/10/2026: revogando so' do `auditoria`, ele mantem
+# `SELECT` em `perfil_permissoes_historico` no catalogo, a consulta real falha com
+# `relation "perfil_permissoes_historico" does not exist`, e as oito conferencias do
+# pacote ficam TODAS verdes. O papel existe para uma coisa so' -- ler aquele historico --
+# e e' exatamente ela que quebra.
+#
+# O dono do schema nao aparece aqui: tem `USAGE` implicito (medido). Papel novo entra
+# sozinho, sem ninguem lembrar de mexer nesta lista -- porque nao ha lista.
+SQL_PAPEIS_SEM_USAGE_NO_SCHEMA = (
+    "SELECT coalesce(string_agg(DISTINCT papel, ','), '') FROM ("
+    "SELECT a.grantee::regrole::text AS papel "
+    "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "CROSS JOIN LATERAL aclexplode(c.relacl) a "
+    "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'S') AND a.grantee <> 0"
+    ") x WHERE NOT has_schema_privilege(papel, 'public', 'USAGE')"
 )
 
 # --- Estado do modulo ------------------------------------------------------------------
