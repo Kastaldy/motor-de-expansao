@@ -77,8 +77,13 @@ def test_share_informado_chega_as_premissas_e_ao_payload() -> None:
     assert metade["premissas"]["share_balcao"] == 0.5
     # A reparticao de alunos acompanha o MESMO mix (1.600 de demanda no cenario): o
     # ticket medio com o mix informado e o `split` com o padrao seria meia mudanca.
-    assert so_balcao["split"] == {"balcao": 1600.0, "agregadores": 0.0}
-    assert metade["split"] == {"balcao": 800.0, "agregadores": 800.0}
+    # A chave `studios` entrou no MESMO dict pela DEC-068 (#442), depois deste teste ser
+    # escrito: a comparacao e' por igualdade ESTRITA, entao sem ela o teste falhava por
+    # uma chave A MAIS, nao por valor errado (balcao e agregadores batiam). E' o padrao
+    # "duas regras no mesmo payload que nao se viram" -- e `payload_viabilidade.py` nao
+    # teve UMA linha de conflito textual no merge, o que torna isso invisivel ao git.
+    assert so_balcao["split"] == {"balcao": 1600.0, "agregadores": 0.0, "studios": []}
+    assert metade["split"] == {"balcao": 800.0, "agregadores": 800.0, "studios": []}
     # O agregador paga menos que o balcao: mais balcao, ticket medio maior.
     assert (
         metade["premissas"]["ticket_blended"]
