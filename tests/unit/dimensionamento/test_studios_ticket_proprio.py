@@ -390,3 +390,45 @@ def test_pdf_linha_receita_cita_studio_quando_ha_studio() -> None:
     aninhado = _viab_normalizado({"premissas": {"n_studios": 2, "anuidade_apenas_balcao": True}})
     assert aninhado.get("n_studios") == 2
 
+
+# ---------------------------------------------------------------------------
+# A tabela "Efeito medido" da DEC-068 e' reproduzivel pelo motor
+# ---------------------------------------------------------------------------
+# Em 05/10/2026 a coluna de payback da DEC saiu de um investimento ARBITRARIO (e nao o do
+# caso de referencia) e ficou divergindo do golden em silencio. Este teste trava a linha da
+# regra NOVA com o MESMO investimento do golden: se o motor mudar, ou a DEC for refeita com
+# outro cenario, um dos dois fica vermelho.
+
+_INV_GOLDEN = {
+    "obra": 600_000.0,
+    "parcelas_obra": 4,
+    "equipamentos": 1_400_000.0,
+    "prazo_equipamentos": 60,
+    "juros_equipamentos_am": 0.018,
+    "taxa_franquia": 160_000.0,
+}
+
+# n_studios -> (faturamento, EBITDA, payback, break-even), como na tabela da DEC-068.
+_TABELA_DEC_068 = {
+    0: (288_258, 113_160, 31.0, 1_152),
+    1: (292_979, 110_129, 33.0, 1_201),
+    2: (299_398, 108_167, 36.0, 1_244),
+    3: (307_514, 107_272, 38.0, 1_281),
+}
+
+
+@pytest.mark.parametrize("n", sorted(_TABELA_DEC_068))
+def test_tabela_da_dec_068_bate_com_o_motor(n: int) -> None:
+    p = Premissas(
+        ticket_cheio=147.0,
+        aluguel_mes=30_000.0,
+        maturacao_meses=8,
+        tickets_studios=cfg.SIM_TICKETS_STUDIO_PADRAO[:n],
+    )
+    r = simular(2_304, p, **_INV_GOLDEN)
+    fat, ebitda, payback, be = _TABELA_DEC_068[n]
+    assert round(r.faturamento_mensal_steady) == fat
+    assert round(r.ebitda_mensal) == ebitda
+    assert r.payback_meses == payback
+    assert round(r.alunos_break_even_total) == be
+

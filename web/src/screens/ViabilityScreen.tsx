@@ -349,6 +349,15 @@ export default function ViabilityScreen({
 
   async function gerarPdf() {
     if (!ponto) return
+    // Mesma guarda do calcular/gerarXlsx. Aqui ela importa ainda mais: o backend do PDF
+    // valida os inputs dentro de um `except` e, com ticket de studio <= 0, o relatório
+    // sairia SEM a seção de viabilidade e sem erro nenhum. Só vale quando o PDF leva a
+    // viabilidade (`res`): sem cálculo, os tickets nem vão no pedido.
+    const erroStudios = res ? erroTicketsStudios() : null
+    if (erroStudios) {
+      setErro(erroStudios)
+      return
+    }
     setGerandoPdf(true)
     setErro(null)
     try {
