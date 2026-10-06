@@ -733,6 +733,26 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 print(f"        por que importa: {porque}")
                 problemas.append(rotulo)
 
+        # A SETIMA classe (06/10/2026): a secao 2 endurece contra PUBLIC, e todo
+        # instrumento aqui pergunta pelo papel CONECTADO. Medido: com `CREATE` no schema
+        # para o `etl` e `TEMPORARY` no banco para `auditoria` e `etl`, tudo ficava verde
+        # e o `etl` criava tabela. Esta pergunta e' pelo UNIVERSO, nao por `current_user`.
+        abertos = con.execute(postgres.SQL_PODERES_ABERTOS_NO_SCHEMA).fetchone()[0]
+        print(
+            f"  {'ok   ' if not abertos else 'FALHA'} ninguem alem do dono cria objeto no "
+            f"schema nem tabela temporaria{'' if not abertos else ': ' + abertos}"
+        )
+        if abertos:
+            print(
+                "        por que importa: a secao 2 revoga os dois de `PUBLIC`, e revogar de\n"
+                "        PUBLIC vale para TODOS os papeis -- inclusive os que nao conectam aqui.\n"
+                "        Quem cria objeto no schema instala trigger na propria tabela; quem cria\n"
+                "        tabela temporaria tem o caminho da forja do D21. Recole a secao 2."
+            )
+            problemas.append(
+                "poder que a secao 2 revoga de PUBLIC esta aberto: " + abertos
+            )
+
         # A SEXTA classe (06/10/2026): papel com privilegio no schema E poder de cluster.
         # A secao 1 do script endurece os atributos, e nada conferia -- medido, com
         # `etl LOGIN` e `app CREATEDB CREATEROLE` tudo ficava verde. Dono excluido por SER

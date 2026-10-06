@@ -204,6 +204,32 @@ TIPOS_DO_DEFAULT_ACL = {"r": "TABLES", "S": "SEQUENCES"}
 #
 # Nao cobre o `NOLOGIN` do `etl`: qual dos tres nao deve logar e' decisao de desenho, nao
 # se deriva do catalogo. Essa metade fica como consulta manual, declarada no pacote.
+# A SETIMA classe (06/10/2026). A secao 2 do script faz
+# `REVOKE CREATE ON SCHEMA public FROM PUBLIC` e `REVOKE TEMPORARY ON DATABASE ... FROM
+# PUBLIC` -- endurece contra PUBLIC, isto e', a favor de `auditoria` e `etl` tambem. Mas
+# todo instrumento pergunta pelo papel CONECTADO: o `privilegios` usa `current_user` e os
+# seis testes negativos do script cravam `'app'`. Medido: com `CREATE` no schema para o
+# `etl` e `TEMPORARY` no banco para `auditoria` e `etl`, tudo fica verde e o `etl` cria
+# tabela.
+#
+# Universo DERIVADO: os papeis que tem privilegio no schema, mais o proprio `public`, menos
+# o dono (que tem os dois por construcao). As duas perguntas juntas, porque sao as duas que
+# a secao 2 fecha -- e porque a de `TEMPORARY` subsume o buraco que o dump nao carrega.
+SQL_PODERES_ABERTOS_NO_SCHEMA = (
+    "SELECT coalesce(string_agg(DISTINCT papel || ' (' || poder || ')', ', '), '') FROM ("
+    "SELECT p.papel, x.poder FROM ("
+    "SELECT DISTINCT a.grantee::regrole::text AS papel FROM pg_class c "
+    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "CROSS JOIN LATERAL aclexplode(c.relacl) a "
+    "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'S') "
+    "AND a.grantee <> 0 AND a.grantee <> c.relowner "
+    "UNION SELECT 'public'"
+    ") p CROSS JOIN LATERAL (VALUES "
+    "('CREATE no schema', has_schema_privilege(p.papel, 'public', 'CREATE')), "
+    "('TEMPORARY no banco', has_database_privilege(p.papel, current_database(), 'TEMPORARY'))"
+    ") x(poder, tem) WHERE x.tem"
+    ") y"
+)
 SQL_PAPEIS_COM_PODER_DE_CLUSTER = (
     "SELECT coalesce(string_agg(DISTINCT papel || ' (' || poder || ')', ', '), '') FROM ("
     "SELECT a.grantee::regrole::text AS papel, "

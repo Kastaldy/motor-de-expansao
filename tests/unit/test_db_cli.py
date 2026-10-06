@@ -287,6 +287,9 @@ _D20_DE_PE: dict[str, Any] = {
     #: A SEXTA classe (06/10/2026): papel com privilegio no schema E poder de cluster.
     #: Vazio = estado bom.
     postgres.SQL_PAPEIS_COM_PODER_DE_CLUSTER: "",
+    #: A SETIMA classe (06/10/2026): o que a secao 2 revoga de PUBLIC, aberto para alguem
+    #: que nao e' o dono. Vazio = estado bom.
+    postgres.SQL_PODERES_ABERTOS_NO_SCHEMA: "",
     # O QUINTO furo (05/10/2026): `USAGE` no schema. Sem ele o papel nao VE a tabela, e
     # as dezesseis checagens seguintes degradam acusando migration ausente.
     postgres.SQL_USAGE_NO_SCHEMA: True,
@@ -967,6 +970,39 @@ def test_privilegios_REPROVA_sem_a_linha_de_um_dos_tipos(
 
     assert codigo == 1
     assert "FALHA default privileges de SEQUENCES: NENHUM" in saida
+
+
+def test_privilegios_REPROVA_poder_que_a_secao_2_revoga_de_PUBLIC(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A SETIMA classe, achada na R18 -- e a mais estrutural das sete.
+
+    A secao 2 do script faz `REVOKE CREATE ON SCHEMA public FROM PUBLIC` e
+    `REVOKE TEMPORARY ON DATABASE ... FROM PUBLIC`. Revogar de `PUBLIC` vale para TODOS os
+    papeis, inclusive os que nao conectam por aqui. Mas todo instrumento pergunta pelo
+    papel CONECTADO: este comando usa `current_user` e os seis testes negativos do script
+    cravam `'app'`.
+
+    Medido num banco de verdade: com `CREATE` no schema para o `etl` e `TEMPORARY` no banco
+    para `auditoria` e `etl`, o `conferir` sai 0, a contagem 12/1/3 fica intacta, os seis
+    negativos dao seis `false`, as seis consultas manuais do pacote dao o esperado -- e o
+    `etl` CRIA TABELA no schema.
+
+    A consulta pergunta pelo UNIVERSO (papeis com privilegio + o proprio `public`, menos o
+    dono), e de tabela subsume o buraco do `TEMPORARY` que o dump nao carrega: antes so' o
+    `privilegios` o pegava, e so' para o `app`.
+    """
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_PODERES_ABERTOS_NO_SCHEMA] = (
+        "auditoria (TEMPORARY no banco), etl (CREATE no schema)"
+    )
+    codigo, _con = _rodar_privilegios(monkeypatch, respostas)
+    saida = capsys.readouterr().out
+
+    assert codigo == 1, "poder aberto a quem nao e' o dono tem de REPROVAR"
+    assert "etl (CREATE no schema)" in saida, "tem de NOMEAR o papel e o poder"
+    assert "auditoria (TEMPORARY no banco)" in saida, "...todos, nao so' o primeiro"
+    assert "revogar de" in saida, "...e dizer por que revogar de PUBLIC alcanca os tres"
 
 
 def test_privilegios_REPROVA_papel_com_poder_de_cluster(
