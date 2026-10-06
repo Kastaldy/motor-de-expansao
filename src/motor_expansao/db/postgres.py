@@ -215,6 +215,34 @@ TIPOS_DO_DEFAULT_ACL = {"r": "TABLES", "S": "SEQUENCES"}
 # Universo DERIVADO: os papeis que tem privilegio no schema, mais o proprio `public`, menos
 # o dono (que tem os dois por construcao). As duas perguntas juntas, porque sao as duas que
 # a secao 2 fecha -- e porque a de `TEMPORARY` subsume o buraco que o dump nao carrega.
+# Sequences cujo `USAGE` NAO casa com o `INSERT` na tabela que as possui -- nos dois
+# sentidos. Deriva o universo de `pg_depend` (`deptype = 'a'`, a sequence pertence a
+# coluna), entao as oito do schema entram sozinhas e uma nova entra sem ninguem lembrar.
+#
+# Os dois sentidos importam, e nenhum instrumento olhava o segundo:
+#   INSERT sem USAGE -> o `INSERT` morre em runtime (era 2 de 5 cobertas);
+#   USAGE sem INSERT -> privilegio excedente (medido: `GRANT USAGE ON ALL SEQUENCES`
+#                       passava `conferir`, `privilegios` e a contagem 12/1/3 verdes).
+SQL_SEQUENCES_DESALINHADAS = (
+    "SELECT coalesce(string_agg(s.relname || ' (' || "
+    "CASE WHEN s.usa THEN 'USAGE sem INSERT em ' ELSE 'INSERT sem USAGE em ' END "
+    "|| s.tab || ')', ', ' ORDER BY s.relname), '') FROM ("
+    "SELECT s.oid, s.relname, t.relname AS tab, "
+    "has_sequence_privilege(current_user, s.oid, 'USAGE') AS usa, "
+    "has_table_privilege(current_user, t.oid, 'INSERT') AS ins "
+    "FROM pg_class s "
+    "JOIN pg_depend d ON d.objid = s.oid AND d.deptype = 'a' "
+    "JOIN pg_class t ON t.oid = d.refobjid "
+    "JOIN pg_namespace n ON n.oid = s.relnamespace "
+    "WHERE s.relkind = 'S' AND n.nspname = 'public'"
+    ") s WHERE s.usa <> s.ins"
+)
+#: O parametro que desliga todas as triggers da sessao: a pergunta e' se QUEM CONECTOU
+#: pode. `pg_parameter_acl` e' catalogo do CLUSTER (`relisshared = true`, medido), e um
+#: `EXISTS` sobre ele acusa concessao feita em outro banco, a outro papel.
+SQL_PARAMETRO_DA_SESSAO = (
+    "SELECT has_parameter_privilege(current_user, 'session_replication_role', 'SET')"
+)
 SQL_PODERES_ABERTOS_NO_SCHEMA = (
     "SELECT coalesce(string_agg(DISTINCT papel || ' (' || poder || ')', ', '), '') FROM ("
     "SELECT p.papel, x.poder FROM ("

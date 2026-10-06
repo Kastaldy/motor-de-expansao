@@ -254,7 +254,6 @@ _D20_DE_PE: dict[str, Any] = {
     "'eventos', 'DELETE'": False,
     "has_database_privilege": False,
     "pg_class": False,
-    "pg_parameter_acl": False,
     "'eventos', 'INSERT'": True,
     "has_sequence_privilege": True,
     "'usuarios', 'UPDATE'": True,
@@ -298,6 +297,15 @@ _D20_DE_PE: dict[str, Any] = {
     #: duble casa por texto, nao por parametro. Inocuo aqui: `cmd_privilegios` nao usa o
     #: outro.
     postgres.SQL_TABELA_AUDITADA_VISIVEL: True,
+    #: A pergunta sobre o parametro da sessao e' `has_parameter_privilege` do papel
+    #: CONECTADO, nao `EXISTS` sobre `pg_parameter_acl` -- que e' catalogo do CLUSTER e
+    #: acusava concessao feita em outro banco, a outro papel (medido em 06/10/2026,
+    #: saindo `exit 1` com o diagnostico errado). `False` e' o estado bom.
+    postgres.SQL_PARAMETRO_DA_SESSAO: False,
+    #: Sequences cujo `USAGE` nao casa com o `INSERT` na tabela que as possui, nos DOIS
+    #: sentidos e com universo derivado de `pg_depend`. Vazio = estado bom (medido nas
+    #: oito do banco de ensaio: casa em todas).
+    postgres.SQL_SEQUENCES_DESALINHADAS: "",
 }
 
 
@@ -324,7 +332,11 @@ def test_nada_e_escrito_no_banco(monkeypatch: pytest.MonkeyPatch) -> None:
         "'perfil_permissoes_historico', 'INSERT'",  # forjar auditoria
         "has_database_privilege",  # TEMP TABLE: o caminho da forja do D21
         "pg_class",  # dono desliga a própria trigger
-        "pg_parameter_acl",  # SET session_replication_role
+        # O SQL INTEIRO, nao o nome do catalogo: a pergunta e'
+        # `has_parameter_privilege` do papel conectado desde 06/10/2026, e deixar a
+        # marca antiga aqui fazia este caso nao casar com consulta nenhuma -- o teste
+        # passaria a cobrar `exit 1` de um estado que ele nao sabotou.
+        postgres.SQL_PARAMETRO_DA_SESSAO,  # SET session_replication_role
     ],
 )
 def test_cada_poder_indevido_reprova(monkeypatch: pytest.MonkeyPatch, marca: str) -> None:
@@ -341,6 +353,55 @@ def test_falta_da_sequence_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
     respostas["has_sequence_privilege"] = False
     codigo, _ = _rodar_privilegios(monkeypatch, respostas)
     assert codigo == 1
+
+
+def test_sequence_com_usage_desalinhado_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O sentido que NENHUM instrumento olhava: `USAGE` numa sequence cuja tabela o papel
+    nao pode inserir e' privilegio excedente.
+
+    Medido em 06/10/2026 no banco de ensaio: um `GRANT USAGE ON ALL SEQUENCES IN SCHEMA
+    public TO app` deixava as cinco checagens nomeadas verdes, `conferir` verde e a
+    contagem 12/1/3 verde -- e dava ao `app` o `USAGE` das tres sequences das tabelas de
+    permissao, as que ele nao pode escrever. Com a regra derivada: `exit 1`, nomeando as
+    tres.
+    """
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_SEQUENCES_DESALINHADAS] = (
+        "perfis_id_perfil_seq (USAGE sem INSERT em perfis)"
+    )
+    codigo, _ = _rodar_privilegios(monkeypatch, respostas)
+    assert codigo == 1
+
+
+def test_parametro_da_sessao_pergunta_pelo_papel_conectado(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`pg_parameter_acl` e' catalogo COMPARTILHADO do cluster (`relisshared = true`,
+    medido), entao `EXISTS (...)` sobre ele acusa concessao feita em OUTRO banco, a OUTRO
+    papel. Reproduzido ao vivo em 06/10/2026: um `GRANT SET ON PARAMETER
+    session_replication_role TO auditoria` em `outro_banco_ensaio` fazia este comando sair
+    `exit 1` com o diagnostico errado, enquanto `has_parameter_privilege('app', ...)` era
+    `false`. Este teste crava a pergunta certa: nenhuma consulta le o catalogo.
+    """
+    _, con = _rodar_privilegios(monkeypatch, dict(_D20_DE_PE))
+    assert any(
+        "has_parameter_privilege" in sql for sql in con.executados
+    ), "ninguem perguntou se o papel conectado pode trocar o parametro"
+    assert not [
+        sql for sql in con.executados if "pg_parameter_acl" in sql
+    ], "a checagem voltou a ler o catalogo COMPARTILHADO do cluster"
+
+
+def test_dono_da_tabela_auditada_filtra_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sem `relnamespace`, uma tabela homonima noutro schema entra na conta e o `bool_or`
+    devolve `true` -- "o papel e' dono da juncao auditada" -- com a de `public` certa."""
+    _, con = _rodar_privilegios(monkeypatch, dict(_D20_DE_PE))
+    dono = [sql for sql in con.executados if "'perfil_permissoes_historico', 'eventos'" in sql]
+    assert dono, "a consulta de dono das tabelas auditadas desapareceu"
+    for sql in dono:
+        assert "relnamespace" in sql and "nspname" in sql, (
+            "a consulta de dono voltou a aceitar tabela de qualquer schema: %r" % sql
+        )
 
 
 def test_trigger_fora_de_always_reprova(monkeypatch: pytest.MonkeyPatch) -> None:

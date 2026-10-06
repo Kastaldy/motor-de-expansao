@@ -547,14 +547,21 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
         (
             "ser dono das tabelas auditadas",
             "SELECT bool_or(c.relowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)) "
-            "FROM pg_class c WHERE c.relname IN "
+            # `relnamespace` e' obrigatorio: sem ele uma tabela homonima noutro
+            # schema entra na conta, e `bool_or` devolve `true` dizendo que o papel e'
+            # dono da juncao auditada quando a de `public` esta' certa. Medido.
+            "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relname IN "
             "('perfil_permissoes', 'perfil_permissoes_historico', 'eventos')",
             "dono desliga a propria trigger com um ALTER TABLE, e nenhum GRANT protege contra isso",
         ),
         (
             "receber SET em session_replication_role",
-            "SELECT EXISTS (SELECT 1 FROM pg_parameter_acl "
-            "WHERE parname = 'session_replication_role')",
+            # `has_parameter_privilege` do papel CONECTADO, nao `EXISTS` sobre o
+            # catalogo: `pg_parameter_acl` e' COMPARTILHADO pelo cluster, e o `EXISTS`
+            # acusava concessao feita em outro banco a outro papel -- medido em
+            # 06/10/2026, saindo `exit 1` com o diagnostico errado.
+            postgres.SQL_PARAMETRO_DA_SESSAO,
             "desde o PG15 esse GRANT existe, e quem o recebe desliga TODAS as triggers da "
             "sessao -- o `ENABLE ALWAYS` da §7 do D20 e' a defesa, este e' o alarme",
         ),
@@ -733,6 +740,29 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 print(f"        por que importa: {porque}")
                 problemas.append(rotulo)
 
+        # SEQUENCES, nos DOIS sentidos e sem lista (06/10/2026). As cinco checagens
+        # nomeadas acima cobrem o sentido `INSERT sem USAGE` para cinco das oito
+        # sequences; esta cobre as OITO e tambem o sentido oposto, que nenhum
+        # instrumento olhava: `USAGE` numa sequence cuja tabela o papel nao pode
+        # inserir e' privilegio excedente -- medido, `GRANT USAGE ON ALL SEQUENCES`
+        # passava `conferir`, `privilegios` e a contagem 12/1/3 os tres verdes.
+        #
+        # A regra deriva de `pg_depend`: o `USAGE` tem de CASAR com o `INSERT` na
+        # tabela que possui a sequence. Medido nas oito: casa em todas no estado bom.
+        desalinhadas = con.execute(postgres.SQL_SEQUENCES_DESALINHADAS).fetchone()[0]
+        print(
+            f"  {'ok   ' if not desalinhadas else 'FALHA'} o USAGE de cada sequence casa com o "
+            f"INSERT na tabela dela{'' if not desalinhadas else ': ' + desalinhadas}"
+        )
+        if desalinhadas:
+            print(
+                "        por que importa: `INSERT` sem `USAGE` mata a escrita em runtime, e\n"
+                "        `USAGE` sem `INSERT` e' privilegio que ninguem precisa -- e nenhuma das\n"
+                "        duas aparece na contagem 12/1/3, que le `role_table_grants`."
+            )
+            problemas.append(
+                "sequence com USAGE desalinhado do INSERT da tabela: " + desalinhadas
+            )
         # A SETIMA classe (06/10/2026): a secao 2 endurece contra PUBLIC, e todo
         # instrumento aqui pergunta pelo papel CONECTADO. Medido: com `CREATE` no schema
         # para o `etl` e `TEMPORARY` no banco para `auditoria` e `etl`, tudo ficava verde
