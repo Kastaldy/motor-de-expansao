@@ -224,18 +224,20 @@ TIPOS_DO_DEFAULT_ACL = {"r": "TABLES", "S": "SEQUENCES"}
 #   USAGE sem INSERT -> privilegio excedente (medido: `GRANT USAGE ON ALL SEQUENCES`
 #                       passava `conferir`, `privilegios` e a contagem 12/1/3 verdes).
 SQL_SEQUENCES_DESALINHADAS = (
-    "SELECT coalesce(string_agg(s.relname || ' (' || "
-    "CASE WHEN s.usa THEN 'USAGE sem INSERT em ' ELSE 'INSERT sem USAGE em ' END "
-    "|| s.tab || ')', ', ' ORDER BY s.relname), '') FROM ("
-    "SELECT s.oid, s.relname, t.relname AS tab, "
-    "has_sequence_privilege(current_user, s.oid, 'USAGE') AS usa, "
-    "has_table_privilege(current_user, t.oid, 'INSERT') AS ins "
-    "FROM pg_class s "
-    "JOIN pg_depend d ON d.objid = s.oid AND d.deptype = 'a' "
-    "JOIN pg_class t ON t.oid = d.refobjid "
-    "JOIN pg_namespace n ON n.oid = s.relnamespace "
-    "WHERE s.relkind = 'S' AND n.nspname = 'public'"
-    ") s WHERE s.usa <> s.ins"
+    "SELECT coalesce(string_agg(s.rotulo, ', ' ORDER BY s.relname), '') FROM ("
+    "SELECT s.relname, CASE WHEN t.oid IS NULL THEN s.relname || "
+    "' (USAGE numa sequence SEM TABELA DONA)' WHEN s.usa THEN s.relname || "
+    "' (USAGE sem INSERT em ' || t.relname || ')' ELSE s.relname || "
+    "' (INSERT sem USAGE em ' || t.relname || ')' END AS rotulo "
+    "FROM (SELECT c.oid, c.relname, "
+    "has_sequence_privilege(current_user, c.oid, 'USAGE') AS usa "
+    "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE c.relkind = 'S' AND n.nspname = 'public') s "
+    "LEFT JOIN pg_depend d ON d.objid = s.oid AND d.deptype IN ('a', 'i') "
+    "LEFT JOIN pg_class t ON t.oid = d.refobjid "
+    "WHERE t.oid IS NULL AND s.usa "
+    "OR t.oid IS NOT NULL AND s.usa <> has_table_privilege(current_user, t.oid, 'INSERT')"
+    ") s"
 )
 #: O parametro que desliga todas as triggers da sessao: a pergunta e' se QUEM CONECTOU
 #: pode. `pg_parameter_acl` e' catalogo do CLUSTER (`relisshared = true`, medido), e um

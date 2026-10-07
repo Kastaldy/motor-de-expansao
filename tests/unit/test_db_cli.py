@@ -373,6 +373,41 @@ def test_sequence_com_usage_desalinhado_reprova(monkeypatch: pytest.MonkeyPatch)
     assert codigo == 1
 
 
+def test_sequence_orfa_com_usage_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sequence SEM tabela dona e com `USAGE` e' privilegio excedente, e a 1a versao desta
+    regra NAO a via: o `JOIN pg_depend` era interno, entao a orfa desaparecia do resultado
+    e a consulta certificava o banco como alinhado.
+
+    Medido em 06/10/2026 no cluster de ensaio: com uma `seq_sem_dona` segurando `USAGE`
+    para o `app`, a versao com `JOIN` interno devolvia **oito linhas, zero desalinhadas** --
+    e, pior, a regra de leitura que acompanha a consulta ("esperado: oito linhas") CONFIRMAVA
+    o estado ruim, porque oito era o numero esperado. A consulta por nome, que esta regra
+    deveria substituir, via nove e acusava. Agora o `JOIN` e' `LEFT` e `deptype IN ('a','i')`,
+    o que tambem passa a ver coluna `IDENTITY` (medido: ela gera `deptype = 'i'`).
+    """
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_SEQUENCES_DESALINHADAS] = (
+        "seq_sem_dona (USAGE numa sequence SEM TABELA DONA)"
+    )
+    codigo, _ = _rodar_privilegios(monkeypatch, respostas)
+    assert codigo == 1
+
+
+def test_a_regra_das_sequences_nao_depende_de_join_interno(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Crava a FORMA da consulta, nao so' o comportamento: `LEFT JOIN` e os dois `deptype`.
+
+    Sem isto, um refactor bem-intencionado volta ao `JOIN` interno (que le mais bonito) e
+    a orfa desaparece de novo, em silencio -- que foi exatamente como o defeito nasceu.
+    """
+    sql = postgres.SQL_SEQUENCES_DESALINHADAS
+    assert "LEFT JOIN pg_depend" in sql, "a orfa precisa sobreviver ao join"
+    assert "LEFT JOIN pg_class t" in sql, "a tabela dona ausente precisa virar NULL"
+    assert "deptype IN ('a', 'i')" in sql, "coluna IDENTITY gera deptype 'i', nao 'a'"
+    assert "SEM TABELA DONA" in sql, "a orfa precisa se nomear no diagnostico"
+
+
 def test_parametro_da_sessao_pergunta_pelo_papel_conectado(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
