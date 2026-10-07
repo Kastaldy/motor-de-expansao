@@ -446,10 +446,10 @@ def test_dono_da_tabela_auditada_filtra_schema(monkeypatch: pytest.MonkeyPatch) 
         )
 
 
-def test_parametro_da_sessao_olha_os_tres_papeis(
+def test_parametro_da_sessao_olha_todo_papel_comum(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A pergunta e' pelos TRES papeis do D20, nao pelo conectado.
+    """A pergunta e' por TODO papel comum, nao pelos tres nomes nem pelo conectado.
 
     Historico desta checagem, em tres dias: `EXISTS` sobre `pg_parameter_acl` (falso alarme,
     porque o catalogo e' compartilhado pelo cluster) -> `has_parameter_privilege(current_user)`
@@ -458,8 +458,15 @@ def test_parametro_da_sessao_olha_os_tres_papeis(
     piloto `SET ROLE auditoria; SET session_replication_role = replica` FUNCIONAVA.
     """
     sql = postgres.SQL_PARAMETRO_DA_SESSAO
-    assert "'app', 'auditoria', 'etl'" in sql, "a pergunta tem de cobrir os tres papeis"
-    assert "current_user" not in sql, "perguntar pelo conectado deixa os outros dois cegos"
+    # O universo deixou de ser a lista de tres nomes em 07/10/2026: tres rodadas de ensaio
+    # seguidas acharam privilegio entrando por um papel FORA da lista, invisivel a toda
+    # consulta que pergunta pelos tres. Agora o universo e' derivado -- todo papel que nao
+    # e' do sistema e nao e' superusuario -- e o teste crava isso, nao os nomes.
+    assert "'app', 'auditoria', 'etl'" not in sql, (
+        "voltar a' lista de tres nomes deixa um quarto papel invisivel"
+    )
+    assert "NOT rolsuper" in sql, "superusuario pode tudo por definicao; os outros, nao"
+    assert "current_user" not in sql, "perguntar so' pelo conectado deixa os demais cegos"
     respostas = dict(_D20_DE_PE)
     respostas[postgres.SQL_PARAMETRO_DA_SESSAO] = "auditoria"
     codigo, _ = _rodar_privilegios(monkeypatch, respostas)

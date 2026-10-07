@@ -251,9 +251,19 @@ SQL_SEQUENCES_DESALINHADAS = (
 #: pergunta pelo `app` saia `f` -- e no banco do piloto `SET ROLE auditoria; SET
 #: session_replication_role = replica` FUNCIONAVA. O universo sao os papeis do D20, que e'
 #: o mesmo recorte da setima classe.
+#: Quem pode trocar `session_replication_role`. O universo e' DERIVADO: todo papel que
+#: nao e' do sistema e nao e' superusuario. Vazio e' o estado bom.
+#:
+#: Por que deixou de ser a lista de tres nomes, em 07/10/2026: tres rodadas de ensaio
+#: seguidas acharam variantes do mesmo defeito -- privilegio que entra por um papel fora
+#: da lista e' invisivel a toda conferencia que pergunta pelos tres. Medido: um quarto
+#: papel com `GRANT SET ON PARAMETER` ficava invisivel a esta consulta, e a unica leitura
+#: que o via era o `EXISTS` sobre `pg_parameter_acl` -- que erra para o outro lado, porque
+#: o catalogo e' compartilhado pelo cluster. Superusuario fica fora porque pode tudo por
+#: definicao, e o `rolname NOT LIKE 'pg\_%'` exclui os papeis predefinidos do proprio PG.
 SQL_PARAMETRO_DA_SESSAO = (
     "SELECT coalesce(string_agg(rolname, ', ' ORDER BY rolname), '') FROM pg_roles "
-    "WHERE rolname IN ('app', 'auditoria', 'etl') "
+    r"WHERE rolname NOT LIKE 'pg\_%' AND NOT rolsuper "
     "AND has_parameter_privilege(rolname, 'session_replication_role', 'SET')"
 )
 SQL_PODERES_ABERTOS_NO_SCHEMA = (
@@ -366,9 +376,17 @@ SQL_PAPEIS_DE_QUEM_CONECTOU = (
     # com senha propria e lia o historico do D20 inteiro. A consulta so' perguntava se os
     # nossos pertencem a alguma mae -- metade da arvore.
     " UNION ALL "
+    # O universo aqui tambem e' derivado: qualquer papel que TENHA privilegio no schema,
+    # pelo mesmo motivo da outra metade. Com a lista de nomes, um papel provisionado
+    # amanha ficaria sem vigilancia sem que ninguem notasse.
     "SELECT m.member::regrole::text || ' (herda)', r.rolname "
     "FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid "
-    "WHERE r.rolname IN ('app', 'auditoria', 'etl')"
+    "WHERE m.roleid IN ("
+    "SELECT a.grantee FROM pg_class c "
+    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "CROSS JOIN LATERAL aclexplode(c.relacl) a "
+    "WHERE n.nspname = 'public' AND a.grantee <> 0 AND a.grantee <> c.relowner"
+    ")"
     ") x"
 )
 SQL_PAPEIS_SEM_USAGE_NO_SCHEMA = (

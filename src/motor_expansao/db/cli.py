@@ -559,7 +559,7 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
             "dono desliga a propria trigger com um ALTER TABLE, e nenhum GRANT protege contra isso",
         ),
         (
-            "ninguem dos tres recebe SET em session_replication_role",
+            "nenhum papel comum recebe SET em session_replication_role",
             # `has_parameter_privilege` do papel CONECTADO, nao `EXISTS` sobre o
             # catalogo: `pg_parameter_acl` e' COMPARTILHADO pelo cluster, e o `EXISTS`
             # acusava concessao feita em outro banco a outro papel -- medido em
