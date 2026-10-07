@@ -318,6 +318,7 @@ _D20_DE_PE: dict[str, Any] = {
     postgres.SQL_GRANTEE_A_MAIS_NO_DEFAULT_ACL: "",
     postgres.SQL_RLS_LIGADO_NO_SCHEMA: "",
     postgres.SQL_FUNCAO_SECURITY_DEFINER_ALHEIA: "",
+    postgres.SQL_O_QUE_O_D20_NAO_CRIA: "",
 }
 
 
@@ -609,6 +610,71 @@ def test_arvore_de_papeis_nao_tem_universo_de_privilegio(
     )
     codigo, _ = _rodar_privilegios(monkeypatch, respostas)
     assert codigo == 1, "a cadeia de dois niveis tem de REPROVAR"
+
+
+def test_o_que_o_d20_nao_cria_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
+    r"""O recorte `public` que TODAS as outras conferencias partilham. O pior da familia.
+
+    Medido em 07/10/2026:
+
+        CREATE SCHEMA integra;
+        CREATE EXTENSION postgres_fdw SCHEMA integra;
+        CREATE SERVER volta ... dbname 'banco_de_reservas';     -- de volta a ESTE banco
+        CREATE USER MAPPING FOR app SERVER volta
+          OPTIONS (user 'reservas_owner', password ...);          -- com a identidade do DONO
+        CREATE FOREIGN TABLE integra.hist (...) SERVER volta
+          OPTIONS (schema_name 'public', table_name 'perfil_permissoes_historico');
+        GRANT SELECT, DELETE ON integra.hist TO app;
+
+        o `app` lendo a tabela direto  ->  ERRO: permissao negada   (como o D20 quer)
+        o `app` pelo FDW               ->  77
+        o `app` APAGANDO pelo FDW      ->  DELETE 77
+        no banco real                 ->  0 linhas restantes
+
+        conferir     ->  CONFERENCIA OK, exit 0
+        privilegios  ->  PRIVILEGIOS OK, exit 0
+        as DOZE consultas do pacote  ->  todas no estado bom
+
+    A promessa central do D19/D20 -- "a aplicacao nao consegue apagar o proprio rastro" --
+    quebrada por inteiro, com tudo verde e sem que nenhuma ACL do `public` mudasse. A causa
+    nao e' falta de uma consulta: e' o `n.nspname = 'public'` que todas elas tem. O pacote
+    ja' declarava "a quarta porta e' o schema" e nao tinha conferencia para ela.
+
+    Uma varredura em vez de cinco consultas, provada em seis estados: o FDW inteiro, um
+    `EVENT TRIGGER` de DDL, um schema novo VAZIO (o caso mais discreto -- nenhuma outra
+    conferencia o ve), uma view noutro schema com GRANT ao `app`, e uma extensao alheia no
+    PROPRIO `public`. Zero linha no estado bom.
+
+    `pg_user_mapping` fica de fora de proposito: medido, o `app` nao o le (`permissao
+    negada`) e este comando roda como `app`. Nao custa cobertura -- mapeamento nao existe
+    sem servidor, e o servidor aparece.
+    """
+    sql = postgres.SQL_O_QUE_O_D20_NAO_CRIA
+
+    assert "pg_namespace" in sql, "schema alheio e' o caminho mais discreto"
+    assert "pg_extension" in sql, "a extensao traz a maquinaria (postgres_fdw, dblink)"
+    assert "pg_foreign_server" in sql, "o servidor e' o no' obrigatorio do FDW"
+    assert "pg_foreign_table" in sql, "...e a tabela externa e' por onde o dado passa"
+    assert "pg_event_trigger" in sql, "DDL de terceiro, que atravessa o pg_dump"
+    assert "pg_user_mapping" not in sql, (
+        "o `app` nao le `pg_user_mapping`; o servidor cobre o caso e ele LE o servidor"
+    )
+    # O recorte invertido: esta consulta existe para olhar FORA do `public`.
+    assert "NOT IN ('public', 'information_schema')" in sql, (
+        "a pergunta e' o COMPLEMENTO do `public`, nao o `public`"
+    )
+    assert "'plpgsql', 'postgis', 'citext'" in sql, (
+        "as tres extensoes do D20 sao a especificacao; qualquer outra e' achado"
+    )
+    assert "datdba" in sql, "o dono do banco nao e' intruso no proprio banco"
+
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_O_QUE_O_D20_NAO_CRIA] = (
+        "schema alheio: integra (dono reservas_owner); servidor externo: volta; "
+        "privilegio fora do public: app em integra.hist (DELETE)"
+    )
+    codigo, _ = _rodar_privilegios(monkeypatch, respostas)
+    assert codigo == 1, "objeto fora do que o D20 cria tem de REPROVAR"
 
 
 def test_parametro_fixado_por_banco_ou_papel_reprova(

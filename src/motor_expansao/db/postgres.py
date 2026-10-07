@@ -378,6 +378,57 @@ SQL_ACL_DE_PUBLIC_EM_TABELA = (
     "WHERE n.nspname = 'public' AND a.grantee = 0 "
     "AND c.relname NOT IN ('spatial_ref_sys', 'geometry_columns', 'geography_columns')"
 )
+#: O que existe neste banco ALEM do que o D20 cria -- o recorte `public` que todas as
+#: outras conferencias partilham, e que deixava o `app` apagar o historico inteiro.
+#:
+#: Medido em 07/10/2026, e e' o achado mais grave desta familia: com uma foreign table num
+#: schema novo apontando de volta para o proprio banco, sob um user mapping do `app` para o
+#: DONO, o `app` fez `DELETE 77` em `perfil_permissoes_historico` -- as 77 linhas, zero
+#: restantes -- enquanto `conferir` saia OK, `privilegios` saia OK e as DOZE consultas do
+#: pacote ficavam todas no estado bom. A promessa central do D19/D20 quebrada com tudo
+#: verde, e sem que nenhuma ACL do `public` tenha mudado.
+#:
+#: Nao e' falta de uma consulta: e' o `n.nspname = 'public'` que todas as outras tem. Esta
+#: pergunta o complemento -- "o que existe aqui que o D20 nao cria?" -- numa varredura so'.
+#: Provada em seis estados: o FDW inteiro, um `EVENT TRIGGER` de DDL, um schema novo VAZIO
+#: (o caso mais discreto, que nenhuma outra ve), uma view noutro schema com GRANT ao `app`,
+#: e uma extensao alheia instalada no PROPRIO `public`.
+#:
+#: `pg_user_mapping` fica fora: medido, o `app` nao o le (`permissao negada`), e este
+#: comando roda como `app`. Nao custa cobertura, porque mapeamento nao existe sem servidor
+#: e o servidor aparece. As tres extensoes nomeadas sao a especificacao do D20.
+SQL_O_QUE_O_D20_NAO_CRIA = (
+    "SELECT coalesce(string_agg(achado, '; ' ORDER BY achado), '') FROM ("
+    "SELECT 'schema alheio: ' || n.nspname || ' (dono ' "
+    "|| n.nspowner::regrole::text || ')' AS achado "
+    "FROM pg_namespace n "
+    r"WHERE n.nspname NOT LIKE 'pg\_%' "
+    "AND n.nspname NOT IN ('public', 'information_schema') "
+    "UNION ALL "
+    "SELECT 'extensao alheia: ' || e.extname || ' em ' || n.nspname "
+    "FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace "
+    "WHERE e.extname NOT IN ('plpgsql', 'postgis', 'citext') "
+    "UNION ALL "
+    "SELECT 'servidor externo: ' || s.srvname FROM pg_foreign_server s "
+    "UNION ALL "
+    "SELECT 'tabela externa: ' || n.nspname || '.' || c.relname "
+    "FROM pg_foreign_table f JOIN pg_class c ON c.oid = f.ftrelid "
+    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "UNION ALL "
+    "SELECT 'event trigger: ' || e.evtname || ' em ' || e.evtevent "
+    "|| ' (dono ' || e.evtowner::regrole::text || ')' FROM pg_event_trigger e "
+    "UNION ALL "
+    "SELECT 'privilegio fora do public: ' || a.grantee::regrole::text || ' em ' "
+    "|| n.nspname || '.' || c.relname || ' (' || a.privilege_type || ')' "
+    "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "CROSS JOIN LATERAL aclexplode(c.relacl) a "
+    r"WHERE n.nspname NOT LIKE 'pg\_%' "
+    "AND n.nspname NOT IN ('public', 'information_schema') "
+    "AND a.grantee <> c.relowner "
+    "AND a.grantee <> (SELECT datdba FROM pg_database "
+    "WHERE datname = current_database())"
+    ") x"
+)
 #: O parametro FIXADO por banco ou por papel -- a porta que `pg_parameter_acl` nao ve.
 #:
 #: Todo o instrumento conferia quem PODE trocar `session_replication_role` (o GRANT SET ON

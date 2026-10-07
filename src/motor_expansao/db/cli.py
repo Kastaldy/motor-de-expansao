@@ -881,6 +881,27 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 "        conferencias de ACL continuam dizendo que nao alcanca."
             )
             problemas.append("funcao SECURITY DEFINER alheia: " + secdef)
+        # A r33, o achado mais grave: o recorte `public` que TODAS as outras partilham.
+        #
+        # Medido: com uma foreign table num schema novo apontando de volta para este
+        # banco, sob um user mapping do `app` para o DONO, o `app` fez `DELETE 77` em
+        # `perfil_permissoes_historico` -- zero linhas restantes -- e `conferir`,
+        # `privilegios` e as doze consultas do pacote ficaram TODOS no estado bom. A
+        # promessa central do D19/D20 quebrada sem que nenhuma ACL do `public` mudasse.
+        fora = con.execute(postgres.SQL_O_QUE_O_D20_NAO_CRIA).fetchone()[0]
+        print(
+            f"  {'ok   ' if not fora else 'FALHA'} nada existe neste banco alem do que "
+            f"o D20 cria{'' if not fora else ': ' + fora}"
+        )
+        if fora:
+            print(
+                "        por que importa: toda conferencia desta familia recorta\n"
+                "        `nspname = 'public'`, e o privilegio que chega de FORA do schema nao\n"
+                "        aparece em nenhuma delas. Um servidor externo pode apontar de volta\n"
+                "        para este mesmo banco com a identidade do DONO, e ai a ACL do `app`\n"
+                "        deixa de valer para o que ele alcanca por ali."
+            )
+            problemas.append("existe objeto que o D20 nao cria: " + fora)
         # A DECIMA classe, segunda porta: privilegio de COLUNA.
         #
         # Medido: `GRANT UPDATE (id_perfil) ON usuarios TO auditoria` deixa a contagem
