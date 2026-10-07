@@ -636,16 +636,36 @@ def test_aplicar_explica_a_janela_em_vez_de_estourar() -> None:
     escopo passou pelo import e morreu na execucao.
     """
     import inspect
+    import re as _re
 
-    corpo = inspect.getsource(cli.cmd_aplicar)
+    bruto = inspect.getsource(cli.cmd_aplicar)
+    # SEM os comentarios. A 1a versao deste teste olhava `inspect.getsource` cru e passou
+    # por uma sabotagem que deixou a tupla com UM sqlstate -- porque os outros cinco
+    # seguiam no comentario logo acima dela. Verificacao que casa com a DESCRICAO da coisa
+    # em vez da coisa e' exatamente o defeito que o resto deste arquivo existe para cacar.
+    corpo = _re.sub(r"#[^\n]*", "", bruto)
 
     assert "sqlstate" in corpo, (
         "capturar pela classe do driver estoura com NameError: `psycopg` nao esta' no "
         "escopo deste modulo"
     )
+    # a TUPLA do `except`, e nao o corpo inteiro
+    # `.*?` e nao `[^)]*?`: o `getattr(erro, "sqlstate", "")` traz um `)` ANTES do
+    # `not in`, e a classe negada parava ali -- o teste nao achava a tupla no estado BOM.
+    m = _re.search(r"sqlstate.*?not in \(([^)]*)\)", corpo, _re.S)
+    assert m, "nao achei a tupla de SQLSTATE do `except`"
+    tupla = m.group(1)
     for codigo in ("42P07", "42P06", "42710", "42701"):
-        assert codigo in corpo, "faltou o SQLSTATE de duplicacao %s" % codigo
-    assert "raise" in corpo, "erro de OUTRA natureza tem de continuar estourando"
+        assert codigo in tupla, (
+            "faltou o SQLSTATE de duplicacao %s na TUPLA (achei: %s)"
+            % (codigo, " ".join(tupla.split()))
+        )
+    # O `raise` tem de estar NO RAMO DO IF, e nao em qualquer lugar do corpo: `"raise" in
+    # corpo` passava com o ramo trocado por `pass`, porque ha' outro `raise` na funcao.
+    # Substring num corpo grande e' asserção fraca -- terceira iteracao deste teste.
+    assert _re.search(r"not in \([^)]*\):\s*raise", corpo, _re.S), (
+        "erro de OUTRA natureza tem de continuar estourando -- o `raise` sai do ramo do if"
+    )
     assert "registrar --ate" in corpo, "a mensagem tem de dizer a cura, com o comando"
     assert "to_regclass" in corpo, (
         "...e como CONFIRMAR antes de aplicar a cura: `t` e' este caso, `f` e' outro"
