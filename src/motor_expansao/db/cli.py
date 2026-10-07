@@ -300,7 +300,49 @@ def cmd_aplicar(args: argparse.Namespace) -> int:
             # Uma transacao POR MIGRATION, e nao uma para o lote: se a 007 falhar, a 006
             # continua aplicada e registrada, e reexecutar retoma de onde parou. As
             # proprias migrations ja' trazem BEGIN/COMMIT; o psycopg respeita.
-            con.execute(sql)
+            #
+            # E E' POR ISSO QUE EXISTE A JANELA, medida em 07/10/2026: o `execute` abaixo
+            # JA' COMMITOU a migration (o `COMMIT` esta' dentro do arquivo) quando o
+            # registro ainda nao foi gravado. Morrer nessa fresta -- Ctrl-C, kill,
+            # conteiner reiniciado, conexao caindo -- deixa a migration APLICADA e NAO
+            # REGISTRADA, e ai o `estado` mostra "registradas: N / pendentes: N..." com
+            # exit 0, que e' indistinguivel de uma retomada legitima. Seguir dava
+            # `DuplicateTable` com traceback cru, num passo que o runbook declara sem
+            # volta.
+            #
+            # Fechar a janela exigiria gravar o registro DENTRO da transacao da migration,
+            # o que o `COMMIT` dela impede. Entao o conserto e' reconhecer o estado e
+            # dizer a cura -- que existe, funciona (medido) e mora numa secao que o
+            # runbook manda pular por outro motivo.
+            try:
+                con.execute(sql)
+            # Pelo SQLSTATE, e nao pela classe do driver: `psycopg` e' importado DENTRO de
+            # `_conectar`, nao no modulo, e `except psycopg.errors...` aqui estourava com
+            # `NameError` em runtime -- o `import motor_expansao.db.cli` passava, e so' a
+            # execucao mostrava. Os codigos: 42P07 tabela, 42P06 schema, 42710 objeto,
+            # 42701 coluna, 42P04 banco, 42723 funcao.
+            except Exception as erro:
+                if getattr(erro, "sqlstate", "") not in (
+                    "42P07", "42P06", "42710", "42701", "42P04", "42723"
+                ):
+                    raise
+                con.rollback()
+                print()
+                print(f"PAREI em {m['versao']} ({m['arquivo']}): {erro}".rstrip())
+                print(
+                    "\nIsto quase sempre significa que esta migration JA' FOI APLICADA e nao\n"
+                    "chegou a ser REGISTRADA -- o processo morreu entre uma coisa e outra. As\n"
+                    "migrations trazem `COMMIT` no proprio arquivo, entao o efeito dela ficou\n"
+                    "no banco e o registro nao.\n"
+                    "\nConfirme, e so' depois conserte:\n"
+                    f"  1) abra `{m['arquivo']}` e veja o primeiro objeto que ela cria;\n"
+                    "  2) no psql:  SELECT to_regclass('<aquele objeto>') IS NOT NULL;\n"
+                    "     `t` = ela aplicou e nao registrou (e' este caso);\n"
+                    "     `f` = e' outra coisa, e ai PARE e chame quem repassou.\n"
+                    f"  3) sendo `t`:  python -m motor_expansao.db registrar --ate {m['versao']}\n"
+                    "     e rode `aplicar` de novo -- ele retoma da seguinte."
+                )
+                return 1
             con.execute(
                 SQL_REGISTRAR, (m["versao"], m["arquivo"], _sha256_do_arquivo(m["arquivo"]))
             )

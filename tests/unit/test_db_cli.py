@@ -612,6 +612,46 @@ def test_arvore_de_papeis_nao_tem_universo_de_privilegio(
     assert codigo == 1, "a cadeia de dois niveis tem de REPROVAR"
 
 
+def test_aplicar_explica_a_janela_em_vez_de_estourar() -> None:
+    """A janela entre aplicar e registrar, achada na r33 -- teste de FORMA.
+
+    20 das 21 migrations trazem `BEGIN`/`COMMIT` no proprio arquivo (medido), e a sequencia
+    do laco e' `execute(sql)` -> `INSERT` no registro -> `commit()`. Logo o `execute` JA'
+    COMMITOU a migration quando o registro ainda nao foi gravado: morrer nessa fresta deixa
+    a migration APLICADA e NAO REGISTRADA.
+
+    Medido deterministicamente (sem depender de timing, porque o estado se reproduz
+    apagando o registro sem desfazer o DDL):
+
+        `estado`   ->  registradas: 6 / pendentes: 006..020 / exit 0, SEM aviso
+        a errata   ->  le esse estado como "e' retomada, SIGA"
+        `aplicar`  ->  psycopg.errors.DuplicateTable, traceback cru, exit 1
+
+    Fechar a janela exigiria gravar o registro DENTRO da transacao da migration, o que o
+    `COMMIT` dela impede. Entao o conserto e' reconhecer o estado e dizer a cura.
+
+    Pelo SQLSTATE e nao pela classe do driver: `psycopg` e' importado dentro de `_conectar`,
+    e `except psycopg.errors...` no laco estourava com `NameError` em RUNTIME -- o
+    `import motor_expansao.db.cli` passava. Terceira vez nesta sessao que um nome de outro
+    escopo passou pelo import e morreu na execucao.
+    """
+    import inspect
+
+    corpo = inspect.getsource(cli.cmd_aplicar)
+
+    assert "sqlstate" in corpo, (
+        "capturar pela classe do driver estoura com NameError: `psycopg` nao esta' no "
+        "escopo deste modulo"
+    )
+    for codigo in ("42P07", "42P06", "42710", "42701"):
+        assert codigo in corpo, "faltou o SQLSTATE de duplicacao %s" % codigo
+    assert "raise" in corpo, "erro de OUTRA natureza tem de continuar estourando"
+    assert "registrar --ate" in corpo, "a mensagem tem de dizer a cura, com o comando"
+    assert "to_regclass" in corpo, (
+        "...e como CONFIRMAR antes de aplicar a cura: `t` e' este caso, `f` e' outro"
+    )
+
+
 def test_o_que_o_d20_nao_cria_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
     r"""O recorte `public` que TODAS as outras conferencias partilham. O pior da familia.
 
