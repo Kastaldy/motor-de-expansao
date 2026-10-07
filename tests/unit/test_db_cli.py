@@ -301,7 +301,7 @@ _D20_DE_PE: dict[str, Any] = {
     #: CONECTADO, nao `EXISTS` sobre `pg_parameter_acl` -- que e' catalogo do CLUSTER e
     #: acusava concessao feita em outro banco, a outro papel (medido em 06/10/2026,
     #: saindo `exit 1` com o diagnostico errado). `False` e' o estado bom.
-    postgres.SQL_PARAMETRO_DA_SESSAO: False,
+    postgres.SQL_PARAMETRO_DA_SESSAO: "",
     #: Sequences cujo `USAGE` nao casa com o `INSERT` na tabela que as possui, nos DOIS
     #: sentidos e com universo derivado de `pg_depend`. Vazio = estado bom (medido nas
     #: oito do banco de ensaio: casa em todas).
@@ -442,6 +442,29 @@ def test_dono_da_tabela_auditada_filtra_schema(monkeypatch: pytest.MonkeyPatch) 
         assert "relnamespace" in sql and "nspname" in sql, (
             "a consulta de dono voltou a aceitar tabela de qualquer schema: %r" % sql
         )
+
+
+def test_parametro_da_sessao_olha_os_tres_papeis(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A pergunta e' pelos TRES papeis do D20, nao pelo conectado.
+
+    Historico desta checagem, em tres dias: `EXISTS` sobre `pg_parameter_acl` (falso alarme,
+    porque o catalogo e' compartilhado pelo cluster) -> `has_parameter_privilege(current_user)`
+    (ponto cego) -> os tres papeis. Medido no meio do caminho: com a concessao feita a
+    `auditoria` em OUTRO banco do cluster, a pergunta pelo `app` saia `f` e no banco do
+    piloto `SET ROLE auditoria; SET session_replication_role = replica` FUNCIONAVA.
+    """
+    sql = postgres.SQL_PARAMETRO_DA_SESSAO
+    assert "'app', 'auditoria', 'etl'" in sql, "a pergunta tem de cobrir os tres papeis"
+    assert "current_user" not in sql, "perguntar pelo conectado deixa os outros dois cegos"
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_PARAMETRO_DA_SESSAO] = "auditoria"
+    codigo, _ = _rodar_privilegios(monkeypatch, respostas)
+    assert codigo == 1
+    assert "auditoria" in capsys.readouterr().out, (
+        "o relatorio tem de dizer QUEM pode, nao so' que alguem pode"
+    )
 
 
 def test_pertencimento_a_papel_reprova(monkeypatch: pytest.MonkeyPatch) -> None:

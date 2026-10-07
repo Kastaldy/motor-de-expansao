@@ -242,8 +242,19 @@ SQL_SEQUENCES_DESALINHADAS = (
 #: O parametro que desliga todas as triggers da sessao: a pergunta e' se QUEM CONECTOU
 #: pode. `pg_parameter_acl` e' catalogo do CLUSTER (`relisshared = true`, medido), e um
 #: `EXISTS` sobre ele acusa concessao feita em outro banco, a outro papel.
+#: Quem pode trocar `session_replication_role` -- e a pergunta e' pelos TRES papeis que o
+#: D20 cria, nao so' pelo conectado. Devolve os nomes que podem; vazio e' o estado bom.
+#:
+#: Por que mudou em 07/10/2026: a 1a versao perguntava `current_user`, o que consertou o
+#: falso alarme do catalogo compartilhado e abriu um ponto cego. Medido: com `GRANT SET ON
+#: PARAMETER session_replication_role TO auditoria` feito em OUTRO banco do cluster, a
+#: pergunta pelo `app` saia `f` -- e no banco do piloto `SET ROLE auditoria; SET
+#: session_replication_role = replica` FUNCIONAVA. O universo sao os papeis do D20, que e'
+#: o mesmo recorte da setima classe.
 SQL_PARAMETRO_DA_SESSAO = (
-    "SELECT has_parameter_privilege(current_user, 'session_replication_role', 'SET')"
+    "SELECT coalesce(string_agg(rolname, ', ' ORDER BY rolname), '') FROM pg_roles "
+    "WHERE rolname IN ('app', 'auditoria', 'etl') "
+    "AND has_parameter_privilege(rolname, 'session_replication_role', 'SET')"
 )
 SQL_PODERES_ABERTOS_NO_SCHEMA = (
     "SELECT coalesce(string_agg(DISTINCT papel || ' (' || poder || ')', ', '), '') FROM ("

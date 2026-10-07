@@ -559,7 +559,7 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
             "dono desliga a propria trigger com um ALTER TABLE, e nenhum GRANT protege contra isso",
         ),
         (
-            "receber SET em session_replication_role",
+            "ninguem dos tres recebe SET em session_replication_role",
             # `has_parameter_privilege` do papel CONECTADO, nao `EXISTS` sobre o
             # catalogo: `pg_parameter_acl` e' COMPARTILHADO pelo cluster, e o `EXISTS`
             # acusava concessao feita em outro banco a outro papel -- medido em
@@ -722,10 +722,16 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 print(f"  --    {rotulo}: o objeto nao existe (migration pendente?)")
                 continue
             pode = bool(bruto)
-            print(f"  {'FALHA' if pode else 'ok   '} {rotulo}")
+            # Uma checagem negativa pode devolver BOOLEANO ou a LISTA de quem pode. A
+            # segunda forma entrou em 07/10/2026, com a pergunta do `session_replication_role`
+            # passando a olhar os tres papeis do D20 em vez do conectado: sem o detalhe, o
+            # relatorio diria que alguem pode e nao diria quem.
+            detalhe = bruto if isinstance(bruto, str) and bruto else ""
+            print(f"  {'FALHA' if pode else 'ok   '} {rotulo}"
+                  f"{': ' + detalhe if detalhe else ''}")
             if pode:
                 print(f"        por que importa: {porque}")
-                problemas.append(rotulo)
+                problemas.append(rotulo + (': ' + detalhe if detalhe else ''))
 
         print("\n== o que este papel PRECISA poder ==")
         for rotulo, sql, porque in _checagens_positivas():
