@@ -528,21 +528,57 @@ def test_as_consultas_de_acl_nao_excluem_public(monkeypatch: pytest.MonkeyPatch)
     )
 
 
-def test_pertencimento_cobre_as_duas_direcoes(monkeypatch: pytest.MonkeyPatch) -> None:
-    r"""Herdar os nossos papeis e' tao grave quanto eles herdarem alguem -- e era invisivel.
+def test_arvore_de_papeis_nao_tem_universo_de_privilegio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r"""A arvore se responde sobre `pg_auth_members` inteiro -- nenhum universo, nenhuma lista.
 
-    Medido em 07/10/2026: `GRANT app TO consultor_externo` fazia `privilegios` sair
-    `PRIVILEGIOS OK` com exit 0, e aquele papel entrava com senha propria e lia o historico
-    do D20 inteiro. A consulta perguntava so' se os NOSSOS pertencem a alguma mae -- metade
-    da arvore. O `\du` tambem nao mostra isso: no PG 16+ o pertencimento saiu para `\drg`.
+    Esta checagem teve tres formas, e as duas primeiras aprovaram estados ruins medidos:
+
+      1a  olhava so' o papel conectado     ->  `GRANT pg_write_all_data TO auditoria` passava
+      2a  duas direcoes, universo de ACL   ->  a cadeia de DOIS niveis passava
+
+    A 2a trocou a lista de tres nomes por um universo derivado de `relacl`, e isso parecia
+    fechar a familia inteira. Nao fecha: um universo derivado da ACL ainda e' ESTREITO.
+    Medido em 07/10/2026:
+
+        GRANT pg_read_all_data TO relatorios;  GRANT relatorios TO consultor;
+
+        o motor  ->  "ok    a arvore de papeis esta plana, nas duas direcoes"
+                     PRIVILEGIOS OK, exit 0
+        e o `consultor`, com senha propria:
+                 ->  SELECT count(*) FROM perfil_permissoes_historico  ->  47
+
+    `relatorios` tira o poder de um papel INTERNO, entao nao aparece em `relacl` nem como
+    `m.member` nem como `m.roleid` -- as duas metades olhavam o mesmo universo estreito e a
+    cadeia passava por fora das duas.
+
+    O `\du` tambem nao mostra nada disso: no PG 16+ o pertencimento saiu para o `\drg`.
+
+    Teste de FORMA, e com uma asserção NEGATIVA: o defeito da 2a forma era justamente ter
+    `aclexplode` aqui, e nenhum estado de um cluster novo o revela.
     """
     sql = postgres.SQL_PAPEIS_DE_QUEM_CONECTOU
-    assert "UNION ALL" in sql, "a consulta precisa das duas direcoes"
-    assert "(herda)" in sql, "a direcao inversa precisa se identificar no diagnostico"
+
+    assert "pg_auth_members" in sql, "a arvore se le em `pg_auth_members`"
+    assert "aclexplode" not in sql, (
+        "a arvore NAO se filtra por quem tem ACL: a cadeia de dois niveis passa por fora"
+    )
+    assert "'app'" not in sql and "'auditoria'" not in sql, "...nem por lista de nomes"
+    assert "NOT mem.rolsuper" in sql, "superusuario como MEMBRO nao acrescenta achado"
+    assert "mae.rolsuper" not in sql, (
+        "...mas a MAE fica livre: `pg_write_all_data` como mae e' o caso da 1a forma"
+    )
+    assert "inherit_option" in sql, (
+        "`WITH SET TRUE, INHERIT FALSE` alcanca por `SET ROLE`; o diagnostico tem de dizer qual e'"
+    )
+
     respostas = dict(_D20_DE_PE)
-    respostas[postgres.SQL_PAPEIS_DE_QUEM_CONECTOU] = "consultor_externo (herda) -> app"
+    respostas[postgres.SQL_PAPEIS_DE_QUEM_CONECTOU] = (
+        "consultor -> relatorios, relatorios -> pg_read_all_data"
+    )
     codigo, _ = _rodar_privilegios(monkeypatch, respostas)
-    assert codigo == 1
+    assert codigo == 1, "a cadeia de dois niveis tem de REPROVAR"
 
 
 def test_privilegio_de_coluna_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1250,6 +1286,31 @@ def test_privilegios_REPROVA_poder_que_a_secao_2_revoga_de_PUBLIC(
     assert "etl (CREATE no schema)" in saida, "tem de NOMEAR o papel e o poder"
     assert "auditoria (TEMPORARY no banco)" in saida, "...todos, nao so' o primeiro"
     assert "revogar de" in saida, "...e dizer por que revogar de PUBLIC alcanca os tres"
+
+
+def test_poderes_abertos_EXCLUI_o_dono_do_banco_por_construcao() -> None:
+    """O dono do banco tem os DOIS poderes legitimamente, e acusa-lo e' falso alarme.
+
+    Medido em 07/10/2026, num banco criado com `OWNER dono_comum` onde o dono NAO e'
+    superusuario:
+
+        has_schema_privilege('dono_comum', 'public', 'CREATE')   ->  t
+        has_database_privilege('dono_comum', <banco>, 'TEMPORARY') -> t
+        pg_has_role('dono_comum', 'pg_database_owner', 'USAGE')  ->  t
+
+    Ele herda `pg_database_owner`, que POSSUI o `public`. No cluster de ensaio o dono e'
+    superusuario e sai pelo `relowner`, entao o furo nao aparecia -- mas na VPS o dono do
+    banco pode ser papel comum, e ai a consulta reprovaria o estado BOM. A exclusao e' por
+    SER dono (`datdba`), nao por nome: um `rolname = 'reservas_owner'` seria a mesma lista
+    nomeada que esta sessao passou tres rodadas desmontando.
+
+    Teste de FORMA de proposito: o defeito nao aparece em nenhum estado do ensaio.
+    """
+    sql = postgres.SQL_PODERES_ABERTOS_NO_SCHEMA
+
+    assert "datdba" in sql, "o dono do banco tem de sair do universo, e sair por SER dono"
+    assert "current_database()" in sql, "...do banco CORRENTE, nao de um nome fixo"
+    assert "reservas_owner" not in sql, "...e nunca por nome"
 
 
 def test_privilegios_REPROVA_papel_com_poder_de_cluster(

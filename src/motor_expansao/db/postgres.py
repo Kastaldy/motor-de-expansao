@@ -274,6 +274,8 @@ SQL_PODERES_ABERTOS_NO_SCHEMA = (
     "CROSS JOIN LATERAL aclexplode(c.relacl) a "
     "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'S') "
     "AND a.grantee <> 0 AND a.grantee <> c.relowner "
+    "AND a.grantee <> (SELECT datdba FROM pg_database "
+    "WHERE datname = current_database()) "
     "UNION SELECT 'public'"
     ") p CROSS JOIN LATERAL (VALUES "
     "('CREATE no schema', has_schema_privilege(p.papel, 'public', 'CREATE')), "
@@ -356,38 +358,34 @@ SQL_ACL_DE_PUBLIC_EM_TABELA = (
     "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') "
     "AND a.grantee = 0 AND c.relname <> 'spatial_ref_sys'"
 )
+# A arvore de papeis: NENHUM universo de privilegio, nem lista de nomes.
+#
+# Esta consulta teve tres formas. A 1a olhava so' o papel conectado, e deixava passar
+# `GRANT pg_write_all_data TO auditoria`. A 2a (r29) acrescentou a direcao inversa e
+# derivou os dois universos de `relacl` -- o que parecia fechar a familia, porque troca
+# lista de nomes por universo derivado. NAO fecha: um universo derivado da ACL ainda e'
+# um universo ESTREITO. Medido em 07/10/2026, cadeia de DOIS niveis:
+#
+#     GRANT pg_read_all_data TO relatorios;  GRANT relatorios TO consultor;
+#     -> "ok  a arvore de papeis esta plana, nas duas direcoes", PRIVILEGIOS OK, exit 0
+#     -> e o `consultor`, com senha propria: 47 linhas de `perfil_permissoes_historico`
+#
+# `relatorios` tira o poder de um papel INTERNO, entao nao aparece em `relacl` -- nem como
+# `m.member` nem como `m.roleid`. As duas metades olhavam o mesmo universo estreito.
+#
+# A pergunta "a arvore esta plana?" nao precisa de universo de privilegio: ela se responde
+# sobre `pg_auth_members` inteiro. O unico filtro legitimo e' no MEMBRO -- papel interno ou
+# superusuario como membro nao acrescenta achado. A MAE fica LIVRE, de proposito:
+# `pg_write_all_data` como mae e' justamente o caso da 1a forma.
 SQL_PAPEIS_DE_QUEM_CONECTOU = (
-    "SELECT coalesce(string_agg(DISTINCT x.membro || ' -> ' || x.mae, ', '), '') FROM ("
-    # O universo sao os papeis que TEM privilegio no schema -- derivado de `relacl`, como
-    # na setima classe -- mais o papel conectado. Olhar so' o conectado deixava passar
-    # `GRANT pg_write_all_data TO auditoria`, medido: `privilegios` saia `OK` enquanto o
-    # `auditoria` fazia `DELETE` na tabela append-only.
-    "SELECT m.member::regrole::text AS membro, r.rolname AS mae "
-    "FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid "
-    "WHERE m.member IN ("
-    "SELECT a.grantee FROM pg_class c "
-    "JOIN pg_namespace n ON n.oid = c.relnamespace "
-    "CROSS JOIN LATERAL aclexplode(c.relacl) a "
-    "WHERE n.nspname = 'public' AND a.grantee <> 0 AND a.grantee <> c.relowner "
-    "UNION SELECT current_user::regrole::oid"
-    ")"
-    # A DIRECAO INVERSA, que faltava: alguem herda os NOSSOS papeis. Medido em 07/10/2026:
-    # `GRANT app TO consultor_externo` saia `PRIVILEGIOS OK`, exit 0, e aquele papel entrava
-    # com senha propria e lia o historico do D20 inteiro. A consulta so' perguntava se os
-    # nossos pertencem a alguma mae -- metade da arvore.
-    " UNION ALL "
-    # O universo aqui tambem e' derivado: qualquer papel que TENHA privilegio no schema,
-    # pelo mesmo motivo da outra metade. Com a lista de nomes, um papel provisionado
-    # amanha ficaria sem vigilancia sem que ninguem notasse.
-    "SELECT m.member::regrole::text || ' (herda)', r.rolname "
-    "FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid "
-    "WHERE m.roleid IN ("
-    "SELECT a.grantee FROM pg_class c "
-    "JOIN pg_namespace n ON n.oid = c.relnamespace "
-    "CROSS JOIN LATERAL aclexplode(c.relacl) a "
-    "WHERE n.nspname = 'public' AND a.grantee <> 0 AND a.grantee <> c.relowner"
-    ")"
-    ") x"
+    "SELECT coalesce(string_agg("
+    "mem.rolname || ' -> ' || mae.rolname || "
+    "CASE WHEN m.inherit_option THEN '' ELSE ' (so com SET ROLE)' END, "
+    "', ' ORDER BY mem.rolname, mae.rolname), '') "
+    "FROM pg_auth_members m "
+    "JOIN pg_roles mem ON mem.oid = m.member "
+    "JOIN pg_roles mae ON mae.oid = m.roleid "
+    r"WHERE mem.rolname NOT LIKE 'pg\_%' AND NOT mem.rolsuper"
 )
 SQL_PAPEIS_SEM_USAGE_NO_SCHEMA = (
     "SELECT coalesce(string_agg(DISTINCT papel, ','), '') FROM ("

@@ -805,14 +805,16 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
         # pertencimento entre os tres do D20, sem lista de nomes perigosos.
         pertence = con.execute(postgres.SQL_PAPEIS_DE_QUEM_CONECTOU).fetchone()[0]
         print(
-            f"  {'ok   ' if not pertence else 'FALHA'} a arvore de papeis esta plana, nas duas "
-            f"direcoes{'' if not pertence else ': ' + pertence}"
+            f"  {'ok   ' if not pertence else 'FALHA'} nenhum papel comum pertence a papel "
+            f"nenhum{'' if not pertence else ': ' + pertence}"
         )
         if pertence:
             print(
                 "        por que importa: pertencimento NAO cria entrada de ACL, entao a\n"
                 "        contagem 12/1/3, a coluna de privilegios e as checagens nominais acima\n"
-                "        ficam TODAS intactas -- e o papel consegue o que o papel-mae consegue."
+                "        ficam TODAS intactas -- e o papel consegue o que o papel-mae consegue.\n"
+                "        a checagem olha `pg_auth_members` inteiro, nao so' quem tem ACL no\n"
+                "        schema: uma cadeia de dois niveis passava por fora do universo da ACL."
             )
             problemas.append(
                 "o papel conectado pertence a outro(s) papel(eis): " + pertence
