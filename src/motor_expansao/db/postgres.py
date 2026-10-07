@@ -262,8 +262,12 @@ SQL_SEQUENCES_DESALINHADAS = (
 #: o catalogo e' compartilhado pelo cluster. Superusuario fica fora porque pode tudo por
 #: definicao, e o `rolname NOT LIKE 'pg\_%'` exclui os papeis predefinidos do proprio PG.
 SQL_PARAMETRO_DA_SESSAO = (
+    # O `NOT rolsuper` saiu em 07/10/2026: superusuario PODE trocar
+    # `session_replication_role`, entao exclui-lo e' esconder o pior caso desta linha. Quem
+    # sai e' o DONO do banco, por `datdba` -- ele e' superusuario por desenho aqui.
     "SELECT coalesce(string_agg(rolname, ', ' ORDER BY rolname), '') FROM pg_roles "
-    r"WHERE rolname NOT LIKE 'pg\_%' AND NOT rolsuper "
+    r"WHERE rolname NOT LIKE 'pg\_%' "
+    "AND oid <> (SELECT datdba FROM pg_database WHERE datname = current_database()) "
     "AND has_parameter_privilege(rolname, 'session_replication_role', 'SET')"
 )
 SQL_PODERES_ABERTOS_NO_SCHEMA = (
@@ -283,24 +287,34 @@ SQL_PODERES_ABERTOS_NO_SCHEMA = (
     ") x(poder, tem) WHERE x.tem"
     ") y"
 )
+# As CINCO colunas de poder de `pg_authid`, nao tres: `rolreplication` e `rolbypassrls`
+# ficaram de fora da 1a versao e, medido em 07/10/2026, a consulta devolvia o esperado com
+# `app REPLICATION` e `auditoria BYPASSRLS` -- enquanto o `\du` IMPRIME os dois. As outras
+# colunas booleanas (`rolinherit`, `rolcanlogin`) nao concedem poder.
+#
+# E o UNIVERSO passou de `relacl` para `pg_roles` em 07/10/2026, pela terceira vez que a
+# mesma licao apareceu nesta familia. Medido: `CREATE ROLE intruso LOGIN SUPERUSER` saia
+# `PRIVILEGIOS OK`, exit 0, e o `intruso` lia 79 linhas de `perfil_permissoes_historico`.
+# A consulta PERGUNTAVA por `rolsuper` corretamente -- e nunca via o papel, porque um
+# papel recem-criado nao tem ACL em tabela nenhuma e por isso nao entrava no universo.
+# Universo derivado da ACL e' estreito: quem ainda nao recebeu GRANT fica fora dele.
+#
+# O DONO do banco sai por `datdba`, nao por nome: no cenario deste pacote ele e' o
+# superusuario de bootstrap e e' superusuario POR DESENHO. Qualquer OUTRO superusuario e'
+# achado -- inclusive um `postgres` de administracao, que o operador confirma e segue.
 SQL_PAPEIS_COM_PODER_DE_CLUSTER = (
-    "SELECT coalesce(string_agg(DISTINCT papel || ' (' || poder || ')', ', '), '') FROM ("
-    "SELECT a.grantee::regrole::text AS papel, "
-    # As CINCO colunas de poder de `pg_authid`, nao tres. `rolreplication` e
-    # `rolbypassrls` ficaram de fora da 1a versao, e medido em 07/10/2026 a consulta
-    # devolvia o esperado com `app REPLICATION` e `auditoria BYPASSRLS` -- enquanto o
-    # `\du` IMPRIME os dois. Com as cinco a lista fecha por construcao: as outras
-    # colunas booleanas (`rolinherit`, `rolcanlogin`) nao concedem poder.
-    "CASE WHEN r.rolsuper THEN 'SUPERUSER' WHEN r.rolcreaterole THEN 'CREATEROLE' "
-    "WHEN r.rolcreatedb THEN 'CREATEDB' WHEN r.rolreplication THEN 'REPLICATION' "
-    "ELSE 'BYPASSRLS' END AS poder "
-    "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-    "CROSS JOIN LATERAL aclexplode(c.relacl) a JOIN pg_roles r ON r.oid = a.grantee "
-    "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'S') "
-    "AND a.grantee <> 0 AND a.grantee <> c.relowner "
+    "SELECT coalesce(string_agg(r.rolname || ' (' || "
+    "concat_ws(', ', CASE WHEN r.rolsuper THEN 'SUPERUSER' END, "
+    "CASE WHEN r.rolcreaterole THEN 'CREATEROLE' END, "
+    "CASE WHEN r.rolcreatedb THEN 'CREATEDB' END, "
+    "CASE WHEN r.rolreplication THEN 'REPLICATION' END, "
+    "CASE WHEN r.rolbypassrls THEN 'BYPASSRLS' END) || ')', "
+    "', ' ORDER BY r.rolname), '') FROM pg_roles r "
+    r"WHERE r.rolname NOT LIKE 'pg\_%' "
+    "AND r.oid <> (SELECT datdba FROM pg_database "
+    "WHERE datname = current_database()) "
     "AND (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole "
     "OR r.rolreplication OR r.rolbypassrls)"
-    ") x"
 )
 #: A que papeis o papel CONECTADO pertence. Vazio e' o estado bom -- medido: no banco
 #: provisionado como o D20 manda, `app` nao e' membro de ninguem.
@@ -355,9 +369,41 @@ SQL_ACL_DE_PUBLIC_EM_TABELA = (
     "', ' ORDER BY c.relname || ' (' || a.privilege_type || ')'), '') "
     "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
     "CROSS JOIN LATERAL aclexplode(c.relacl) a "
-    "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') "
-    "AND a.grantee = 0 AND c.relname <> 'spatial_ref_sys'"
+    # O `relkind IN ('r','p')` saiu em 07/10/2026: medido, uma VIEW do historico criada no
+    # PROPRIO `public` e concedida a `PUBLIC` passava por tudo --
+    # `has_table_privilege('app', <tabela>, 'SELECT')` em `f` e na VIEW em `t`, com as 79
+    # linhas legiveis. O filtro estava ali para nao gritar com
+    # `geometry_columns`/`geography_columns`, que sao views do PostGIS -- e isso se resolve
+    # por NOME, que e' o que os tres objetos conhecidos fazem agora.
+    "WHERE n.nspname = 'public' AND a.grantee = 0 "
+    "AND c.relname NOT IN ('spatial_ref_sys', 'geometry_columns', 'geography_columns')"
 )
+#: Os papeis que TEM ACL no schema -- a porta principal, que nunca teve consulta de
+#: universo derivado. Medido em 07/10/2026:
+#:
+#:     GRANT SELECT ON perfil_permissoes_historico TO consultor
+#:       -> `PRIVILEGIOS OK` exit 0, a contagem por papel IDENTICA ao estado bom,
+#:          e o `consultor`, com senha propria, lendo as 79 linhas do historico
+#:
+#: Aqui a lista de tres nomes e' CORRETA, e a diferenca importa: nas perguntas negativas
+#: ("ninguem deve ter X") nomear tres e' o furo, porque o universo e' aberto. Esta pergunta
+#: e' POSITIVA sobre o conjunto provisionado -- "os papeis com ACL no schema sao exatamente
+#: os tres que o D20 cria" --, e ai a lista e' a ESPECIFICACAO. Um quarto nome e' achado
+#: por definicao, seja ele qual for.
+#:
+#: Ela tambem fecha o privilegio de SEQUENCE a quem nao devia: medido,
+#: `GRANT USAGE, UPDATE ON ALL SEQUENCES ... TO consultor` aparece aqui, e as duas
+#: consultas de sequence (que perguntam pelo papel conectado) nao o veem.
+SQL_PAPEIS_COM_ACL_NO_SCHEMA = (
+    "SELECT coalesce(string_agg(DISTINCT a.grantee::regrole::text, ', '), '') "
+    "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "CROSS JOIN LATERAL aclexplode(c.relacl) a "
+    "WHERE n.nspname = 'public' AND a.grantee <> 0 AND a.grantee <> c.relowner "
+    "AND a.grantee <> (SELECT datdba FROM pg_database "
+    "WHERE datname = current_database()) "
+    "AND a.grantee::regrole::text NOT IN ('app', 'auditoria', 'etl')"
+)
+
 # A arvore de papeis: NENHUM universo de privilegio, nem lista de nomes.
 #
 # Esta consulta teve tres formas. A 1a olhava so' o papel conectado, e deixava passar
@@ -385,7 +431,15 @@ SQL_PAPEIS_DE_QUEM_CONECTOU = (
     "FROM pg_auth_members m "
     "JOIN pg_roles mem ON mem.oid = m.member "
     "JOIN pg_roles mae ON mae.oid = m.roleid "
-    r"WHERE mem.rolname NOT LIKE 'pg\_%' AND NOT mem.rolsuper"
+    # 4a forma, 07/10/2026: o filtro do MEMBRO (`NOT LIKE 'pg\_%' AND NOT rolsuper`) dizia
+    # que "papel interno como membro nao acrescenta achado", e isso foi medido FALSO:
+    # `GRANT auditoria TO pg_monitor` saia `(0 linha)`, e no dia em que alguem recebe
+    # `pg_monitor` -- gesto rotineiro de monitoracao -- a linha que aparece e'
+    # `consultor -> pg_monitor`, que se le como inofensiva e nao nomeia `auditoria`.
+    # Saem so' as arestas NATIVAS do PostgreSQL (membro `pg_` E mae `pg_`): medido, no
+    # estado bom as duas formas dao zero linha, porque as nativas sao todas pg_->pg_.
+    r"WHERE NOT (mem.rolname LIKE 'pg\_%' AND mae.rolname LIKE 'pg\_%') "
+    "AND mem.oid <> (SELECT datdba FROM pg_database WHERE datname = current_database())"
 )
 SQL_PAPEIS_SEM_USAGE_NO_SCHEMA = (
     "SELECT coalesce(string_agg(DISTINCT papel, ','), '') FROM ("

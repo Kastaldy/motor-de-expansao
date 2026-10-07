@@ -313,6 +313,7 @@ _D20_DE_PE: dict[str, Any] = {
     postgres.SQL_PRIVILEGIO_DE_COLUNA: "",
     #: A SEXTA porta da decima classe (07/10/2026): `PUBLIC` em ACL de tabela.
     postgres.SQL_ACL_DE_PUBLIC_EM_TABELA: "",
+    postgres.SQL_PAPEIS_COM_ACL_NO_SCHEMA: "",
 }
 
 
@@ -460,12 +461,22 @@ def test_parametro_da_sessao_olha_todo_papel_comum(
     sql = postgres.SQL_PARAMETRO_DA_SESSAO
     # O universo deixou de ser a lista de tres nomes em 07/10/2026: tres rodadas de ensaio
     # seguidas acharam privilegio entrando por um papel FORA da lista, invisivel a toda
-    # consulta que pergunta pelos tres. Agora o universo e' derivado -- todo papel que nao
-    # e' do sistema e nao e' superusuario -- e o teste crava isso, nao os nomes.
+    # consulta que pergunta pelos tres. Agora o universo e' derivado, e o teste crava isso.
     assert "'app', 'auditoria', 'etl'" not in sql, (
         "voltar a' lista de tres nomes deixa um quarto papel invisivel"
     )
-    assert "NOT rolsuper" in sql, "superusuario pode tudo por definicao; os outros, nao"
+    # E o `NOT rolsuper` SAIU no mesmo dia, horas depois, porque eu o tinha posto aqui com
+    # a justificativa "superusuario pode tudo por definicao" -- que e' verdade e nao vem ao
+    # caso: o que esta consulta faz e' ENUMERAR quem pode desligar as triggers, e um
+    # superusuario novo e' exatamente quem o operador precisa ver nessa lista. Medido:
+    # `CREATE ROLE intruso LOGIN SUPERUSER` -> `PRIVILEGIOS OK`, exit 0, com o `intruso`
+    # lendo 79 linhas de `perfil_permissoes_historico`.
+    assert "NOT rolsuper" not in sql, (
+        "o `NOT rolsuper` esconde o pior caso desta linha: um superusuario novo"
+    )
+    assert "datdba" in sql, (
+        "quem sai e' o DONO do banco, que e' superusuario por desenho -- e sai por SER dono"
+    )
     assert "current_user" not in sql, "perguntar so' pelo conectado deixa os demais cegos"
     respostas = dict(_D20_DE_PE)
     respostas[postgres.SQL_PARAMETRO_DA_SESSAO] = "auditoria"
@@ -565,9 +576,24 @@ def test_arvore_de_papeis_nao_tem_universo_de_privilegio(
         "a arvore NAO se filtra por quem tem ACL: a cadeia de dois niveis passa por fora"
     )
     assert "'app'" not in sql and "'auditoria'" not in sql, "...nem por lista de nomes"
-    assert "NOT mem.rolsuper" in sql, "superusuario como MEMBRO nao acrescenta achado"
+    # A 4a forma, no fim do mesmo dia. Eu tinha escrito aqui que "papel interno ou
+    # superusuario como MEMBRO nao acrescenta achado", e a rodada 31 mediu o contrario:
+    #
+    #     GRANT auditoria TO pg_monitor   ->  (0 linha), com a armadilha ARMADA e muda
+    #     e no dia em que alguem recebe pg_monitor -- gesto rotineiro de monitoracao --
+    #     a linha que aparece e' `consultor -> pg_monitor`, que se le como inofensiva
+    #     e nao nomeia `auditoria` em lugar nenhum
+    #
+    # Saem so' as arestas NATIVAS do PostgreSQL, as duas pontas internas. Medido: no estado
+    # bom isso da zero linha igual, porque toda aresta nativa e' pg_ -> pg_.
+    assert "NOT mem.rolsuper" not in sql, (
+        "`GRANT auditoria TO pg_monitor` fica mudo se o membro for filtrado"
+    )
+    assert "NOT (mem.rolname LIKE" in sql and "AND mae.rolname LIKE" in sql, (
+        "o filtro e' a ARESTA nativa (as duas pontas internas), nao a ponta do membro"
+    )
     assert "mae.rolsuper" not in sql, (
-        "...mas a MAE fica livre: `pg_write_all_data` como mae e' o caso da 1a forma"
+        "...e a MAE fica livre: `pg_write_all_data` como mae e' o caso da 1a forma"
     )
     assert "inherit_option" in sql, (
         "`WITH SET TRUE, INHERIT FALSE` alcanca por `SET ROLE`; o diagnostico tem de dizer qual e'"
@@ -579,6 +605,80 @@ def test_arvore_de_papeis_nao_tem_universo_de_privilegio(
     )
     codigo, _ = _rodar_privilegios(monkeypatch, respostas)
     assert codigo == 1, "a cadeia de dois niveis tem de REPROVAR"
+
+
+def test_papel_alheio_com_acl_no_schema_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A porta PRINCIPAL -- ACL de tabela -- nunca teve consulta de universo derivado.
+
+    Achado na rodada 31 e medido por mim antes de consertar:
+
+        CREATE ROLE consultor LOGIN PASSWORD '...';
+        GRANT SELECT ON perfil_permissoes_historico TO consultor;
+
+        `privilegios`                        ->  PRIVILEGIOS OK, exit 0
+        a contagem por papel do pacote       ->  app|24, auditoria|1, etl|9  (identica)
+        a consulta de PUBLIC em tabela       ->  spatial_ref_sys  (identica)
+        e o `consultor`, com senha propria   ->  79 linhas do historico append-only
+
+    Havia uma consulta para os TRES nomes (a contagem) e uma para `PUBLIC`, e NADA entre as
+    duas. Esta fecha o meio, e fecha de lambuja o privilegio de SEQUENCE a quem nao devia:
+    medido, `GRANT USAGE, UPDATE ON ALL SEQUENCES ... TO consultor` aparece aqui, e as duas
+    consultas de sequence -- que perguntam pelo papel CONECTADO -- nao o veem.
+
+    Aqui nomear os tres e' CORRETO, e a distincao vale ser dita porque esta sessao passou
+    quatro rodadas desmontando listas de nomes: nas perguntas NEGATIVAS ("ninguem deve ter
+    X") a lista e' o furo, porque o universo e' aberto. Esta pergunta e' POSITIVA sobre o
+    conjunto provisionado -- "quem tem ACL no schema sao exatamente os tres do D20" --, e
+    ai a lista e' a ESPECIFICACAO, nao um atalho.
+    """
+    sql = postgres.SQL_PAPEIS_COM_ACL_NO_SCHEMA
+    assert "aclexplode" in sql, "a pergunta e' sobre ACL, e se le em `relacl`"
+    assert "a.grantee <> 0" in sql, "PUBLIC tem consulta propria; esta e' dos papeis NOMEAVEIS"
+    assert "datdba" in sql, "o dono do banco nao e' papel alheio"
+    assert "'app', 'auditoria', 'etl'" in sql, (
+        "aqui a lista E' a especificacao: o esperado e' exatamente estes tres"
+    )
+
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_PAPEIS_COM_ACL_NO_SCHEMA] = "consultor"
+    codigo, _ = _rodar_privilegios(monkeypatch, respostas)
+    assert codigo == 1, "papel alheio com ACL no schema tem de REPROVAR"
+
+
+def test_poder_de_cluster_soma_o_superuser_em_vez_de_apagar() -> None:
+    """O pior estado possivel APAGAVA um achado que a consulta ja' tinha produzido.
+
+    Medido na rodada 31, no MESMO papel, em dois gestos:
+
+        CREATE ROLE quarto LOGIN ... CREATEROLE  ->  acusa `quarto (CREATEROLE)`
+        ALTER ROLE quarto SUPERUSER              ->  (0 linha)
+
+    O `NOT rolsuper` que eu mesmo tinha posto no filtro fazia o `SUPERUSER` -- o poder que
+    ignora toda ACL e toda trigger -- silenciar a linha. E `CREATE ROLE intruso LOGIN
+    SUPERUSER` nunca aparecia, porque o universo vinha de `relacl` e um papel recem-criado
+    nao tem ACL em tabela nenhuma.
+
+    Duas coisas tem de valer ao mesmo tempo, e as duas sao de FORMA porque nenhum estado
+    sozinho as revela: o universo vem de `pg_roles`, e o `SUPERUSER` e' um dos poderes
+    perguntados -- somado aos outros por `concat_ws`, nao escolhido por `CASE ... WHEN`
+    em cadeia, que imprimiria so' o primeiro.
+    """
+    sql = postgres.SQL_PAPEIS_COM_PODER_DE_CLUSTER
+
+    assert "FROM pg_roles" in sql, (
+        "o universo e' `pg_roles`: quem nao recebeu GRANT nao esta em `relacl`"
+    )
+    assert "aclexplode" not in sql, "...e nao a ACL, que e' estreita por construcao"
+    assert "NOT rolsuper" not in sql and "NOT r.rolsuper" not in sql, (
+        "o `NOT rolsuper` faz o pior estado APAGAR o achado"
+    )
+    assert "'SUPERUSER'" in sql, "SUPERUSER e' um dos cinco poderes, nao uma exclusao"
+    assert "concat_ws" in sql, (
+        "os poderes SOMAM: um `CASE WHEN ... THEN ... WHEN` em cadeia imprime so' o 1o"
+    )
+    assert "datdba" in sql, "o dono do banco e' superusuario por desenho e sai por SER dono"
+    for col in ("rolcreatedb", "rolcreaterole", "rolreplication", "rolbypassrls"):
+        assert col in sql, "faltou a coluna de poder %s" % col
 
 
 def test_privilegio_de_coluna_reprova(monkeypatch: pytest.MonkeyPatch) -> None:

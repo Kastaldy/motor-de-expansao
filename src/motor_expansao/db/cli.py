@@ -769,6 +769,32 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 "        filtre por nome, porque PUBLIC nao e' nome nenhum."
             )
             problemas.append("PUBLIC tem privilegio de tabela no schema: " + publico_tab)
+        # A PORTA PRINCIPAL, que nunca teve consulta de universo derivado (07/10/2026).
+        #
+        # Medido: `GRANT SELECT ON perfil_permissoes_historico TO consultor` saia
+        # `PRIVILEGIOS OK` exit 0, com a contagem por papel IDENTICA ao estado bom, e o
+        # `consultor` lendo as 79 linhas do historico append-only com senha propria.
+        #
+        # Aqui nomear os tres e' CORRETO, e a diferenca importa: nas perguntas negativas
+        # a lista de nomes e' o furo, porque o universo e' aberto; esta pergunta e'
+        # POSITIVA sobre o conjunto provisionado -- "quem tem ACL no schema sao exatamente
+        # os tres do D20" --, e ai a lista e' a especificacao. Qualquer quarto nome e'
+        # achado por definicao. Ela fecha tambem o privilegio de SEQUENCE a quem nao
+        # devia, que as duas consultas de sequence (pelo papel conectado) nao veem.
+        alheio = con.execute(postgres.SQL_PAPEIS_COM_ACL_NO_SCHEMA).fetchone()[0]
+        print(
+            f"  {'ok   ' if not alheio else 'FALHA'} so' os papeis do D20 tem ACL no "
+            f"schema{'' if not alheio else ': ' + alheio}"
+        )
+        if alheio:
+            print(
+                "        por que importa: um GRANT direto a um papel de nome qualquer\n"
+                "        nao move a contagem por papel (ela filtra os tres nomes) e nao\n"
+                "        e' PUBLIC, entao nenhuma das outras conferencias o ve -- e o\n"
+                "        papel entra com senha propria e le o que o D20 existe para\n"
+                "        proteger."
+            )
+            problemas.append("papel alheio tem ACL no schema public: " + alheio)
         # A DECIMA classe, segunda porta: privilegio de COLUNA.
         #
         # Medido: `GRANT UPDATE (id_perfil) ON usuarios TO auditoria` deixa a contagem
@@ -862,14 +888,22 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 "poder que a secao 2 revoga de PUBLIC esta aberto: " + abertos
             )
 
-        # A SEXTA classe (06/10/2026): papel com privilegio no schema E poder de cluster.
-        # A secao 1 do script endurece os atributos, e nada conferia -- medido, com
-        # `etl LOGIN` e `app CREATEDB CREATEROLE` tudo ficava verde. Dono excluido por SER
-        # dono, nao por nome: sem isso a consulta acusava o proprio `reservas_owner`.
+        # A SEXTA classe (06/10/2026): papel comum com poder de cluster. A secao 1 do
+        # script endurece os atributos, e nada conferia -- medido, com `etl LOGIN` e
+        # `app CREATEDB CREATEROLE` tudo ficava verde. Dono excluido por SER dono, nao por
+        # nome: sem isso a consulta acusava o proprio `reservas_owner`.
+        #
+        # O UNIVERSO deixou de ser `relacl` em 07/10/2026. Medido: `CREATE ROLE intruso
+        # LOGIN SUPERUSER` saia `PRIVILEGIOS OK` exit 0 -- a consulta perguntava por
+        # `rolsuper` corretamente e nunca via o papel, porque quem ainda nao recebeu GRANT
+        # nao esta em `relacl`. Pior: com o universo antigo, `ALTER ROLE quarto SUPERUSER`
+        # APAGAVA o achado `quarto (CREATEROLE)` que a consulta ja' tinha produzido, porque
+        # o `NOT rolsuper` da outra metade o excluia. Agora o SUPERUSER SOMA:
+        # `quarto (SUPERUSER, CREATEROLE)`.
         poderosos = con.execute(postgres.SQL_PAPEIS_COM_PODER_DE_CLUSTER).fetchone()[0]
         print(
-            f"  {'ok   ' if not poderosos else 'FALHA'} nenhum papel com privilegio no schema "
-            f"tem poder de cluster{'' if not poderosos else ': ' + poderosos}"
+            f"  {'ok   ' if not poderosos else 'FALHA'} nenhum papel comum tem poder de "
+            f"cluster{'' if not poderosos else ': ' + poderosos}"
         )
         if poderosos:
             print(
@@ -877,9 +911,7 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 "        fora -- quem cria papel se concede o que quiser, e superusuario ignora\n"
                 "        toda ACL e toda trigger. A secao 1 cria os tres SEM nenhum deles."
             )
-            problemas.append(
-                "papel com privilegio no schema e poder de cluster: " + poderosos
-            )
+            problemas.append("papel comum com poder de cluster: " + poderosos)
 
         # DERIVADA: todo papel com privilegio de tabela/sequence no schema precisa de
         # `USAGE` nele. A checagem positiva acima pergunta so' por `current_user`, e a
