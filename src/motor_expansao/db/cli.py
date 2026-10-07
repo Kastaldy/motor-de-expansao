@@ -499,7 +499,8 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
         ),
         (
             "escrever no historico de permissoes",
-            "SELECT has_table_privilege(current_user, 'perfil_permissoes_historico', 'INSERT')",
+            "SELECT has_table_privilege(current_user, 'perfil_permissoes_historico', 'INSERT') "
+            "OR has_any_column_privilege(current_user, 'perfil_permissoes_historico', 'INSERT')",
             "o D19 promete que a aplicacao nao forja linha de auditoria; com INSERT direto a "
             "promessa e' so' prosa",
         ),
@@ -513,7 +514,8 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
         ),
         (
             "alterar o historico de permissoes",
-            "SELECT has_table_privilege(current_user, 'perfil_permissoes_historico', 'UPDATE')",
+            "SELECT has_table_privilege(current_user, 'perfil_permissoes_historico', 'UPDATE') "
+            "OR has_any_column_privilege(current_user, 'perfil_permissoes_historico', 'UPDATE')",
             "append-only: reescrever o passado e' pior que apaga-lo, porque nao deixa buraco",
         ),
         (
@@ -529,7 +531,8 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
         ),
         (
             "alterar evento ja' gravado",
-            "SELECT has_table_privilege(current_user, 'eventos', 'UPDATE')",
+            "SELECT has_table_privilege(current_user, 'eventos', 'UPDATE') "
+            "OR has_any_column_privilege(current_user, 'eventos', 'UPDATE')",
             "`eventos` e' append-only por contrato (§4) -- e e' onde a tela de administracao "
             "grava quem mudou o acesso de quem",
         ),
@@ -740,6 +743,54 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 print(f"        por que importa: {porque}")
                 problemas.append(rotulo)
 
+        # A DECIMA classe, segunda porta: privilegio de COLUNA.
+        #
+        # Medido: `GRANT UPDATE (id_perfil) ON usuarios TO auditoria` deixa a contagem
+        # 12/1/3 intacta, as doze conferencias manuais do pacote identicas ao estado bom,
+        # e o `auditoria` troca o perfil de qualquer pessoa. `relacl` nao tem essa
+        # concessao -- ela vive em `pg_attribute.attacl`, que ninguem lia.
+        #
+        # Esta checagem olha OUTROS papeis, nao so' o conectado, como a da setima classe:
+        # concessao de coluna a quem nao e' dono nao faz parte do desenho do D20 em
+        # nenhuma tabela, entao qualquer linha aqui e' achado.
+        colunas = con.execute(postgres.SQL_PRIVILEGIO_DE_COLUNA).fetchone()[0]
+        print(
+            f"  {'ok   ' if not colunas else 'FALHA'} ninguem tem privilegio de COLUNA no "
+            f"schema{'' if not colunas else ': ' + colunas}"
+        )
+        if colunas:
+            print(
+                "        por que importa: privilegio de coluna nao entra em `relacl` nem na\n"
+                "        contagem 12/1/3 -- e `UPDATE` numa coluna basta para trocar o perfil de\n"
+                "        uma pessoa sem passar por `perfil_permissoes`, que e' onde a auditoria olha."
+            )
+            problemas.append("privilegio de COLUNA concedido no schema: " + colunas)
+        # A DECIMA classe (07/10/2026): PERTENCIMENTO nao cria entrada de ACL.
+        #
+        # Medido: `privilegios` saiu `PRIVILEGIOS OK`, exit 0, com `GRANT pg_write_all_data
+        # TO auditoria` (e aí o `auditoria` faz `DELETE` na tabela append-only) e com
+        # `GRANT etl TO app` (e aí o `app` faz `TRUNCATE` nas tres de referencia). Nenhuma
+        # conferencia via: nem `relacl`, nem `role_table_grants`, nem a lista nominal de
+        # `has_table_privilege` -- porque o privilegio nao esta' em ACL nenhuma, esta' na
+        # arvore de papeis.
+        #
+        # A regra e' simples e deriva tudo: o papel que conectou NAO pertence a papel
+        # nenhum. Isso fecha os papeis predefinidos que ainda nao existem, e fecha o
+        # pertencimento entre os tres do D20, sem lista de nomes perigosos.
+        pertence = con.execute(postgres.SQL_PAPEIS_DE_QUEM_CONECTOU).fetchone()[0]
+        print(
+            f"  {'ok   ' if not pertence else 'FALHA'} o papel conectado nao pertence a papel "
+            f"nenhum{'' if not pertence else ': ' + pertence}"
+        )
+        if pertence:
+            print(
+                "        por que importa: pertencimento NAO cria entrada de ACL, entao a\n"
+                "        contagem 12/1/3, a coluna de privilegios e as checagens nominais acima\n"
+                "        ficam TODAS intactas -- e o papel consegue o que o papel-mae consegue."
+            )
+            problemas.append(
+                "o papel conectado pertence a outro(s) papel(eis): " + pertence
+            )
         # SEQUENCES, nos DOIS sentidos e sem lista (06/10/2026). As cinco checagens
         # nomeadas acima cobrem o sentido `INSERT sem USAGE` para cinco das oito
         # sequences; esta cobre as OITO e tambem o sentido oposto, que nenhum

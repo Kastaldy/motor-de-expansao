@@ -263,13 +263,70 @@ SQL_PODERES_ABERTOS_NO_SCHEMA = (
 SQL_PAPEIS_COM_PODER_DE_CLUSTER = (
     "SELECT coalesce(string_agg(DISTINCT papel || ' (' || poder || ')', ', '), '') FROM ("
     "SELECT a.grantee::regrole::text AS papel, "
+    # As CINCO colunas de poder de `pg_authid`, nao tres. `rolreplication` e
+    # `rolbypassrls` ficaram de fora da 1a versao, e medido em 07/10/2026 a consulta
+    # devolvia o esperado com `app REPLICATION` e `auditoria BYPASSRLS` -- enquanto o
+    # `\du` IMPRIME os dois. Com as cinco a lista fecha por construcao: as outras
+    # colunas booleanas (`rolinherit`, `rolcanlogin`) nao concedem poder.
     "CASE WHEN r.rolsuper THEN 'SUPERUSER' WHEN r.rolcreaterole THEN 'CREATEROLE' "
-    "ELSE 'CREATEDB' END AS poder "
+    "WHEN r.rolcreatedb THEN 'CREATEDB' WHEN r.rolreplication THEN 'REPLICATION' "
+    "ELSE 'BYPASSRLS' END AS poder "
     "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
     "CROSS JOIN LATERAL aclexplode(c.relacl) a JOIN pg_roles r ON r.oid = a.grantee "
     "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'S') "
     "AND a.grantee <> 0 AND a.grantee <> c.relowner "
-    "AND (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole)"
+    "AND (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole "
+    "OR r.rolreplication OR r.rolbypassrls)"
+    ") x"
+)
+#: A que papeis o papel CONECTADO pertence. Vazio e' o estado bom -- medido: no banco
+#: provisionado como o D20 manda, `app` nao e' membro de ninguem.
+#:
+#: Por que existe (07/10/2026): pertencimento NAO cria entrada de ACL, entao nenhuma
+#: conferencia que leia `relacl`, `role_table_grants` ou `has_table_privilege` sobre a
+#: lista nominal o ve. Medido, com `privilegios` saindo OK nos dois casos:
+#:   GRANT pg_write_all_data TO auditoria  -> `auditoria` faz DELETE na tabela append-only
+#:   GRANT etl TO app                      -> `app` faz TRUNCATE nas tres de referencia
+#: Esta consulta fecha os dois de uma vez, e fecha tambem os papeis predefinidos que
+#: ainda nao existem: o universo e' "qualquer papel", nao uma lista de nomes perigosos.
+#: Privilegio de COLUNA concedido a quem nao e' o dono, em qualquer tabela do schema.
+#: Vazio e' o estado bom -- medido: o provisionamento do D20 nao concede coluna nenhuma.
+#:
+#: Por que existe (07/10/2026): `GRANT UPDATE (id_perfil) ON usuarios TO auditoria` nao
+#: aparece em `relacl` nem em `information_schema.role_table_grants` -- so' em
+#: `pg_attribute.attacl` / `role_column_grants`, que nenhum instrumento lia. Medido: a
+#: contagem 12/1/3 nao se move, as doze conferencias manuais do pacote saem identicas ao
+#: estado bom, e o `auditoria` -- o papel que existe para LER -- troca o perfil de
+#: qualquer pessoa. E' o caminho que derrota o RBAC sem tocar em `perfil_permissoes`,
+#: que e' onde toda a instrumentacao olhava.
+SQL_PRIVILEGIO_DE_COLUNA = (
+    "SELECT coalesce(string_agg(DISTINCT x.papel || ' em ' || x.obj || ' (' || x.priv || ')', "
+    "', '), '') FROM ("
+    "SELECT a.grantee::regrole::text AS papel, "
+    "c.relname || '.' || att.attname AS obj, a.privilege_type AS priv "
+    "FROM pg_attribute att "
+    "JOIN pg_class c ON c.oid = att.attrelid "
+    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "CROSS JOIN LATERAL aclexplode(att.attacl) a "
+    "WHERE n.nspname = 'public' AND att.attacl IS NOT NULL "
+    "AND a.grantee <> 0 AND a.grantee <> c.relowner"
+    ") x"
+)
+SQL_PAPEIS_DE_QUEM_CONECTOU = (
+    "SELECT coalesce(string_agg(DISTINCT x.membro || ' -> ' || x.mae, ', '), '') FROM ("
+    # O universo sao os papeis que TEM privilegio no schema -- derivado de `relacl`, como
+    # na setima classe -- mais o papel conectado. Olhar so' o conectado deixava passar
+    # `GRANT pg_write_all_data TO auditoria`, medido: `privilegios` saia `OK` enquanto o
+    # `auditoria` fazia `DELETE` na tabela append-only.
+    "SELECT m.member::regrole::text AS membro, r.rolname AS mae "
+    "FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid "
+    "WHERE m.member IN ("
+    "SELECT a.grantee FROM pg_class c "
+    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "CROSS JOIN LATERAL aclexplode(c.relacl) a "
+    "WHERE n.nspname = 'public' AND a.grantee <> 0 AND a.grantee <> c.relowner "
+    "UNION SELECT current_user::regrole::oid"
+    ")"
     ") x"
 )
 SQL_PAPEIS_SEM_USAGE_NO_SCHEMA = (

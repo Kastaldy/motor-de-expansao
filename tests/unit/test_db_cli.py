@@ -306,6 +306,11 @@ _D20_DE_PE: dict[str, Any] = {
     #: sentidos e com universo derivado de `pg_depend`. Vazio = estado bom (medido nas
     #: oito do banco de ensaio: casa em todas).
     postgres.SQL_SEQUENCES_DESALINHADAS: "",
+    #: A DECIMA classe (07/10/2026), duas portas. Vazio e' o estado bom nas duas.
+    #: Pertencimento nao cria entrada de ACL; privilegio de coluna nao entra em `relacl`.
+    #: Medido: `privilegios` saia `OK` em cinco estados ruins antes destas checagens.
+    postgres.SQL_PAPEIS_DE_QUEM_CONECTOU: "",
+    postgres.SQL_PRIVILEGIO_DE_COLUNA: "",
 }
 
 
@@ -436,6 +441,70 @@ def test_dono_da_tabela_auditada_filtra_schema(monkeypatch: pytest.MonkeyPatch) 
     for sql in dono:
         assert "relnamespace" in sql and "nspname" in sql, (
             "a consulta de dono voltou a aceitar tabela de qualquer schema: %r" % sql
+        )
+
+
+def test_pertencimento_a_papel_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A DECIMA classe: o privilegio chega por uma porta que o instrumento nao olhava.
+
+    Pertencimento NAO cria entrada de ACL, entao `relacl`, `role_table_grants` e a lista
+    nominal de `has_table_privilege` ficam todas intactas. Medido em 07/10/2026, com
+    `privilegios` saindo `PRIVILEGIOS OK` e exit 0:
+
+      GRANT pg_write_all_data TO auditoria  -> `auditoria` faz DELETE no append-only
+      GRANT etl TO app                      -> `app` faz TRUNCATE nas tres de referencia
+
+    O universo da regra sao os papeis que tem privilegio no schema (derivado de `relacl`)
+    mais o conectado -- olhar so' o conectado deixava passar o primeiro caso.
+    """
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_PAPEIS_DE_QUEM_CONECTOU] = "auditoria -> pg_write_all_data"
+    codigo, _ = _rodar_privilegios(monkeypatch, respostas)
+    assert codigo == 1
+
+
+def test_privilegio_de_coluna_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A segunda porta da decima classe: `GRANT UPDATE (coluna)` nao entra em `relacl`.
+
+    Medido: com `GRANT UPDATE (id_perfil) ON usuarios TO auditoria`, a contagem 12/1/3 nao
+    se move, as doze conferencias manuais do pacote saem identicas ao estado bom, e o papel
+    que existe para LER troca o perfil de qualquer pessoa -- sem tocar em
+    `perfil_permissoes`, que e' onde a trigger de auditoria olha.
+    """
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_PRIVILEGIO_DE_COLUNA] = "auditoria em usuarios.id_perfil (UPDATE)"
+    codigo, _ = _rodar_privilegios(monkeypatch, respostas)
+    assert codigo == 1
+
+
+def test_poder_de_cluster_cobre_as_cinco_colunas(monkeypatch: pytest.MonkeyPatch) -> None:
+    r"""`rolreplication` e `rolbypassrls` ficaram fora da 1a versao desta consulta.
+
+    Medido: com `ALTER ROLE app REPLICATION` e `ALTER ROLE auditoria BYPASSRLS`, a consulta
+    devolvia exatamente o esperado -- enquanto o `\du` IMPRIME os dois. Com as cinco, a
+    lista fecha por construcao: as outras colunas booleanas de `pg_authid` (`rolinherit`,
+    `rolcanlogin`) nao concedem poder.
+    """
+    sql = postgres.SQL_PAPEIS_COM_PODER_DE_CLUSTER
+    for coluna in ("rolsuper", "rolcreatedb", "rolcreaterole", "rolreplication", "rolbypassrls"):
+        assert coluna in sql, "%s fora da consulta de poder de cluster" % coluna
+
+
+def test_negativas_de_tabela_somam_o_privilegio_de_coluna(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`has_table_privilege` nao ve `GRANT UPDATE (coluna)`; `has_any_column_privilege` ve.
+
+    Vale so' para os privilegios que TEM granularidade de coluna (`SELECT`, `INSERT`,
+    `UPDATE`, `REFERENCES`): com `DELETE` ou `TRUNCATE` a funcao recusa com `tipo de
+    privilegio desconhecido`, medido -- e la' nao existe o furo.
+    """
+    _, con = _rodar_privilegios(monkeypatch, dict(_D20_DE_PE))
+    por_coluna = [s for s in con.executados if "has_any_column_privilege" in s]
+    assert len(por_coluna) >= 3, "as negativas de INSERT/UPDATE precisam somar a coluna"
+    for sql in por_coluna:
+        assert "'DELETE'" not in sql and "'TRUNCATE'" not in sql, (
+            "has_any_column_privilege nao aceita DELETE nem TRUNCATE: %r" % sql
         )
 
 
