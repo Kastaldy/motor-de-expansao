@@ -319,9 +319,32 @@ SQL_PRIVILEGIO_DE_COLUNA = (
     "JOIN pg_class c ON c.oid = att.attrelid "
     "JOIN pg_namespace n ON n.oid = c.relnamespace "
     "CROSS JOIN LATERAL aclexplode(att.attacl) a "
+    # `PUBLIC` ENTRA. O filtro `a.grantee <> 0` o excluia, e `PUBLIC` e' o pior grantee
+    # possivel: `GRANT UPDATE (id_perfil) ON usuarios TO PUBLIC` nao aparecia aqui, e a
+    # contagem por nome (12/1/3) tambem nao o ve, porque ele nao e' nenhum dos tres nomes.
+    # Medido em 07/10/2026: com esse GRANT, esta consulta devolvia ZERO linha; sem o
+    # filtro, devolve `- | usuarios.id_perfil | UPDATE` (o `-` e' o PUBLIC).
     "WHERE n.nspname = 'public' AND att.attacl IS NOT NULL "
-    "AND a.grantee <> 0 AND a.grantee <> c.relowner"
+    "AND a.grantee <> c.relowner"
     ") x"
+)
+#: ACL de TABELA concedida a `PUBLIC` no schema. Vazio e' o estado bom -- a secao 3 do
+#: script faz dois `REVOKE ... FROM PUBLIC` em tabela, isto e', trata `PUBLIC`-em-tabela
+#: como ameaca que ela precisa fechar, e nada conferia se fechou.
+#:
+#: Medido em 07/10/2026: `GRANT DELETE ON perfil_permissoes_historico TO PUBLIC` deixa as
+#: quinze conferencias manuais do pacote byte a byte identicas ao estado bom, e o `app`
+#: faz `DELETE` na tabela append-only. O `privilegios` pega por outro caminho -- as
+#: perguntas negativas usam `has_table_privilege(current_user, ...)`, que CONSIDERA o
+#: privilegio herdado de `PUBLIC` --, mas so' para as tabelas que ele nomeia; esta ve
+#: qualquer tabela do schema.
+SQL_ACL_DE_PUBLIC_EM_TABELA = (
+    "SELECT coalesce(string_agg(DISTINCT c.relname || ' (' || a.privilege_type || ')', "
+    "', ' ORDER BY c.relname || ' (' || a.privilege_type || ')'), '') "
+    "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "CROSS JOIN LATERAL aclexplode(c.relacl) a "
+    "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') "
+    "AND a.grantee = 0 AND c.relname <> 'spatial_ref_sys'"
 )
 SQL_PAPEIS_DE_QUEM_CONECTOU = (
     "SELECT coalesce(string_agg(DISTINCT x.membro || ' -> ' || x.mae, ', '), '') FROM ("

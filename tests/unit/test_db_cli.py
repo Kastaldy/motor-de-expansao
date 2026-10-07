@@ -311,6 +311,8 @@ _D20_DE_PE: dict[str, Any] = {
     #: Medido: `privilegios` saia `OK` em cinco estados ruins antes destas checagens.
     postgres.SQL_PAPEIS_DE_QUEM_CONECTOU: "",
     postgres.SQL_PRIVILEGIO_DE_COLUNA: "",
+    #: A SEXTA porta da decima classe (07/10/2026): `PUBLIC` em ACL de tabela.
+    postgres.SQL_ACL_DE_PUBLIC_EM_TABELA: "",
 }
 
 
@@ -484,6 +486,39 @@ def test_pertencimento_a_papel_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
     respostas[postgres.SQL_PAPEIS_DE_QUEM_CONECTOU] = "auditoria -> pg_write_all_data"
     codigo, _ = _rodar_privilegios(monkeypatch, respostas)
     assert codigo == 1
+
+
+def test_public_em_tabela_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A SEXTA porta: `PUBLIC` vale para todo papel e nao e' nome nenhum.
+
+    A secao 3 do script faz dois `REVOKE ... FROM PUBLIC` em tabela -- ela trata
+    `PUBLIC`-em-tabela como ameaca -- e nada conferia se fechou. Medido em 07/10/2026:
+    `GRANT DELETE ON perfil_permissoes_historico TO PUBLIC` deixa as QUINZE conferencias
+    manuais do pacote byte a byte identicas ao estado bom, e o `app` faz `DELETE` de 15
+    linhas na tabela append-only. As consultas que fecham as outras cinco portas excluiam
+    `PUBLIC` por construcao, com `a.grantee <> 0`.
+    """
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_ACL_DE_PUBLIC_EM_TABELA] = "perfil_permissoes_historico (DELETE)"
+    codigo, _ = _rodar_privilegios(monkeypatch, respostas)
+    assert codigo == 1
+
+
+def test_as_consultas_de_acl_nao_excluem_public(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Crava a FORMA: `PUBLIC` (grantee 0) nao pode ser filtrado fora das duas consultas
+    que existem para ver privilegio de quem nao e' o dono.
+
+    `a.grantee <> 0` le como "ignore o pseudo-papel", e e' o oposto do que se quer: ele e'
+    o grantee que alcanca TODOS os papeis de uma vez. Medido: com o filtro, a consulta de
+    coluna devolvia zero linha para `GRANT UPDATE (id_perfil) ... TO PUBLIC`; sem ele,
+    devolve `- | usuarios.id_perfil | UPDATE`.
+    """
+    assert "a.grantee <> 0" not in postgres.SQL_PRIVILEGIO_DE_COLUNA, (
+        "a consulta de coluna voltou a excluir PUBLIC"
+    )
+    assert "a.grantee = 0" in postgres.SQL_ACL_DE_PUBLIC_EM_TABELA, (
+        "a consulta de ACL de tabela tem de perguntar EXATAMENTE por PUBLIC"
+    )
 
 
 def test_privilegio_de_coluna_reprova(monkeypatch: pytest.MonkeyPatch) -> None:

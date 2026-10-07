@@ -749,6 +749,26 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 print(f"        por que importa: {porque}")
                 problemas.append(rotulo)
 
+        # A DECIMA classe, SEXTA porta: `PUBLIC` em ACL de TABELA.
+        #
+        # A secao 3 do script faz dois `REVOKE ... FROM PUBLIC` em tabela -- ela trata
+        # `PUBLIC`-em-tabela como ameaca que precisa fechar -- e nada conferia se fechou.
+        # Medido em 07/10/2026: `GRANT DELETE ON perfil_permissoes_historico TO PUBLIC`
+        # deixa as quinze conferencias manuais do pacote IDENTICAS ao estado bom, e o `app`
+        # faz `DELETE` de 15 linhas na tabela append-only. As consultas que fecham as
+        # outras cinco portas excluiam `PUBLIC` por construcao (`a.grantee <> 0`).
+        publico_tab = con.execute(postgres.SQL_ACL_DE_PUBLIC_EM_TABELA).fetchone()[0]
+        print(
+            f"  {'ok   ' if not publico_tab else 'FALHA'} PUBLIC nao tem privilegio de tabela "
+            f"no schema{'' if not publico_tab else ': ' + publico_tab}"
+        )
+        if publico_tab:
+            print(
+                "        por que importa: PUBLIC vale para TODO papel, inclusive os tres do\n"
+                "        D20 -- e nao aparece na contagem 12/1/3 nem em nenhuma consulta que\n"
+                "        filtre por nome, porque PUBLIC nao e' nome nenhum."
+            )
+            problemas.append("PUBLIC tem privilegio de tabela no schema: " + publico_tab)
         # A DECIMA classe, segunda porta: privilegio de COLUNA.
         #
         # Medido: `GRANT UPDATE (id_perfil) ON usuarios TO auditoria` deixa a contagem
