@@ -805,8 +805,8 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
         # pertencimento entre os tres do D20, sem lista de nomes perigosos.
         pertence = con.execute(postgres.SQL_PAPEIS_DE_QUEM_CONECTOU).fetchone()[0]
         print(
-            f"  {'ok   ' if not pertence else 'FALHA'} o papel conectado nao pertence a papel "
-            f"nenhum{'' if not pertence else ': ' + pertence}"
+            f"  {'ok   ' if not pertence else 'FALHA'} a arvore de papeis esta plana, nas duas "
+            f"direcoes{'' if not pertence else ': ' + pertence}"
         )
         if pertence:
             print(

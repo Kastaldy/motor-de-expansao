@@ -521,6 +521,23 @@ def test_as_consultas_de_acl_nao_excluem_public(monkeypatch: pytest.MonkeyPatch)
     )
 
 
+def test_pertencimento_cobre_as_duas_direcoes(monkeypatch: pytest.MonkeyPatch) -> None:
+    r"""Herdar os nossos papeis e' tao grave quanto eles herdarem alguem -- e era invisivel.
+
+    Medido em 07/10/2026: `GRANT app TO consultor_externo` fazia `privilegios` sair
+    `PRIVILEGIOS OK` com exit 0, e aquele papel entrava com senha propria e lia o historico
+    do D20 inteiro. A consulta perguntava so' se os NOSSOS pertencem a alguma mae -- metade
+    da arvore. O `\du` tambem nao mostra isso: no PG 16+ o pertencimento saiu para `\drg`.
+    """
+    sql = postgres.SQL_PAPEIS_DE_QUEM_CONECTOU
+    assert "UNION ALL" in sql, "a consulta precisa das duas direcoes"
+    assert "(herda)" in sql, "a direcao inversa precisa se identificar no diagnostico"
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_PAPEIS_DE_QUEM_CONECTOU] = "consultor_externo (herda) -> app"
+    codigo, _ = _rodar_privilegios(monkeypatch, respostas)
+    assert codigo == 1
+
+
 def test_privilegio_de_coluna_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
     """A segunda porta da decima classe: `GRANT UPDATE (coluna)` nao entra em `relacl`.
 

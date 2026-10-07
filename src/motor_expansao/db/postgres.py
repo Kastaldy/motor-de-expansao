@@ -361,6 +361,14 @@ SQL_PAPEIS_DE_QUEM_CONECTOU = (
     "WHERE n.nspname = 'public' AND a.grantee <> 0 AND a.grantee <> c.relowner "
     "UNION SELECT current_user::regrole::oid"
     ")"
+    # A DIRECAO INVERSA, que faltava: alguem herda os NOSSOS papeis. Medido em 07/10/2026:
+    # `GRANT app TO consultor_externo` saia `PRIVILEGIOS OK`, exit 0, e aquele papel entrava
+    # com senha propria e lia o historico do D20 inteiro. A consulta so' perguntava se os
+    # nossos pertencem a alguma mae -- metade da arvore.
+    " UNION ALL "
+    "SELECT m.member::regrole::text || ' (herda)', r.rolname "
+    "FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid "
+    "WHERE r.rolname IN ('app', 'auditoria', 'etl')"
     ") x"
 )
 SQL_PAPEIS_SEM_USAGE_NO_SCHEMA = (
