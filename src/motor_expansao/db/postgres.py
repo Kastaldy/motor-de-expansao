@@ -378,6 +378,115 @@ SQL_ACL_DE_PUBLIC_EM_TABELA = (
     "WHERE n.nspname = 'public' AND a.grantee = 0 "
     "AND c.relname NOT IN ('spatial_ref_sys', 'geometry_columns', 'geography_columns')"
 )
+#: O parametro FIXADO por banco ou por papel -- a porta que `pg_parameter_acl` nao ve.
+#:
+#: Todo o instrumento conferia quem PODE trocar `session_replication_role` (o GRANT SET ON
+#: PARAMETER, que vive em `pg_parameter_acl`). Medido em 07/10/2026, a outra porta:
+#:
+#:     ALTER DATABASE banco_de_reservas SET session_replication_role = 'replica';
+#:
+#:     o `app` NASCE em replica em toda sessao nova
+#:     SET session_replication_role = origin  ->  ERRO: permissao negada  (pegajoso)
+#:     as dez conferencias                   ->  TODAS identicas ao estado bom
+#:
+#: Ninguem precisa de privilegio para isso: quem fixa e' o dono do banco, num gesto que
+#: parece configuracao. As triggers em modo padrao param de disparar, e as de auditoria em
+#: `ENABLE ALWAYS` continuam -- o que torna o estado ainda mais convincente.
+#:
+#: A consulta nao nomeia parametro nenhum DE PROPOSITO: `row_security = off` desliga RLS,
+#: `search_path` redireciona a resolucao de nomes, e a lista de parametros perigosos nao
+#: fecha. Qualquer linha aqui e' para o operador LER.
+SQL_PARAMETRO_FIXADO_POR_BANCO_OU_PAPEL = (
+    "SELECT coalesce(string_agg("
+    "coalesce(d.datname, '(todo o cluster)') || '/' || "
+    "coalesce(r.rolname, '(todo papel)') || ': ' || s.setconfig::text, ', '), '') "
+    "FROM pg_db_role_setting s "
+    "LEFT JOIN pg_database d ON d.oid = s.setdatabase "
+    "LEFT JOIN pg_roles r ON r.oid = s.setrole"
+)
+#: Grantee A MAIS no default ACL do dono -- o privilegio que age no FUTURO.
+#:
+#: A conferencia que existia olhava se o `app` RECEBE (e se `defaclrole` e' o dono). Medido
+#: em 07/10/2026 o que ela nao olhava:
+#:
+#:     ALTER DEFAULT PRIVILEGES FOR ROLE reservas_owner IN SCHEMA public
+#:       GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON TABLES TO auditoria;
+#:
+#:     no instante do repasse  ->  as dez conferencias identicas ao estado bom
+#:     e a PROXIMA tabela      ->  {..., auditoria=arwdD/reservas_owner}
+#:     o `auditoria` nela      ->  TRUNCATE TABLE
+#:
+#: E' o eixo do TEMPO: o GRANT da secao 3 e' retrato do presente, e o default ACL age na
+#: proxima tabela que o dono criar -- isto e', na proxima migration. Nenhuma conferencia de
+#: ACL no momento do repasse pode ver isso, porque o objeto ainda nao existe.
+#:
+#: Aqui `'app'` e' a ESPECIFICACAO, como na `SQL_PAPEIS_COM_ACL_NO_SCHEMA`: a pergunta e'
+#: positiva sobre o conjunto provisionado -- o D20 concede default ACL ao `app` e a mais
+#: ninguem --, e qualquer outro grantee e' achado. `PUBLIC` aparece como `-`.
+SQL_GRANTEE_A_MAIS_NO_DEFAULT_ACL = (
+    "SELECT coalesce(string_agg(DISTINCT "
+    "coalesce(nullif(a.grantee::regrole::text, '-'), 'PUBLIC') || ' em ' || "
+    # `defaclobjtype` e' do tipo `"char"`, e `text || "char"` nao tem operador unico --
+    # `AmbiguousFunction` em runtime, que nenhum compile pega. Cast explicito.
+    "d.defaclobjtype::text || ' (' || a.privilege_type || ')', ', '), '') "
+    "FROM pg_default_acl d "
+    "CROSS JOIN LATERAL aclexplode(d.defaclacl) a "
+    "JOIN pg_namespace n ON n.oid = d.defaclnamespace "
+    "WHERE n.nspname = 'public' AND a.grantee <> d.defaclrole "
+    "AND a.grantee::regrole::text <> 'app'"
+)
+#: RLS ligado numa tabela do schema -- a cegueira por SILENCIO.
+#:
+#: O D20 nao usa row-level security. Medido em 07/10/2026:
+#:
+#:     ALTER TABLE perfil_permissoes_historico ENABLE ROW LEVEL SECURITY;
+#:
+#:     o `auditoria` passa a ver   ->  0 linhas (eram 81)
+#:     has_table_privilege(...)    ->  t  (CONTINUA t)
+#:     o dono ve                   ->  81
+#:     as dez conferencias         ->  TODAS identicas ao estado bom
+#:
+#: RLS sem politica nenhuma nega tudo, e nega SEM ERRO: o `SELECT` devolve zero linha. O
+#: papel que existe para ler a auditoria -- e a tela que ele serve -- passa a mostrar um
+#: historico vazio, e o operador nao tem como distinguir "nada aconteceu" de "estou cego".
+#: A contagem de politicas vai no diagnostico porque zero politica com RLS ligado e' o caso
+#: que nega tudo.
+SQL_RLS_LIGADO_NO_SCHEMA = (
+    "SELECT coalesce(string_agg(c.relname || ' (" "rls" "' || "
+    "CASE WHEN c.relforcerowsecurity THEN ' FORCADO' ELSE '' END || ', ' || "
+    "(SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid)::text || "
+    "' politica(s))', ', ' ORDER BY c.relname), '') "
+    "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') "
+    "AND (c.relrowsecurity OR c.relforcerowsecurity)"
+)
+#: Funcao `SECURITY DEFINER` que nao e' uma das duas do D20 -- a lista fixa que cegava.
+#:
+#: O `conferir` checa `prosecdef` e `proconfig`, e checa BEM -- medido, degradando uma
+#: funcao esperada ele reprova. Mas ele filtra `proname = ANY(FUNCOES_ESPERADAS)`, uma
+#: lista de oito nomes, e funcao NOVA nao entra no universo. Medido em 07/10/2026:
+#:
+#:     CREATE FUNCTION total_do_historico() RETURNS bigint LANGUAGE sql SECURITY DEFINER
+#:       AS $$ SELECT count(*) FROM perfil_permissoes_historico $$;
+#:
+#:     o `app` lendo a tabela direto  ->  ERRO: permissao negada  (como o D20 quer)
+#:     o `app` pela funcao            ->  81
+#:     as dez conferencias            ->  TODAS identicas ao estado bom
+#:
+#: `SECURITY DEFINER` carrega o privilegio do DONO e nao deixa entrada de ACL em lugar
+#: nenhum -- e' um buraco na parede, nao uma porta. As duas funcoes do D20 saem por nome
+#: porque elas SAO a especificacao; o `search_path` vai no diagnostico porque uma
+#: `SECURITY DEFINER` sem `search_path` fixado e' pior ainda.
+SQL_FUNCAO_SECURITY_DEFINER_ALHEIA = (
+    "SELECT coalesce(string_agg(p.proname || ' (dono ' || "
+    "p.proowner::regrole::text || ', ' || "
+    "coalesce(p.proconfig::text, 'SEM search_path') || ')', "
+    "', ' ORDER BY p.proname), '') "
+    "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+    "WHERE n.nspname = 'public' AND p.prosecdef "
+    "AND p.proname NOT IN ('registra_perfil_permissoes_historico', "
+    "'registra_perfil_permissoes_truncate')"
+)
 #: Os papeis que TEM ACL no schema -- a porta principal, que nunca teve consulta de
 #: universo derivado. Medido em 07/10/2026:
 #:

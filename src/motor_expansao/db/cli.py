@@ -795,6 +795,92 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 "        proteger."
             )
             problemas.append("papel alheio tem ACL no schema public: " + alheio)
+        # A r32, 1o achado: o parametro FIXADO, que `pg_parameter_acl` nao ve.
+        #
+        # Todo o instrumento conferia quem PODE trocar `session_replication_role`.
+        # Medido: `ALTER DATABASE <banco> SET session_replication_role = 'replica'`
+        # faz o `app` NASCER em replica em toda sessao nova, e ele nao consegue voltar
+        # (`SET ... = origin` -> permissao negada). As dez conferencias saiam identicas
+        # ao estado bom. O estado vive em `pg_db_role_setting`, outro catalogo.
+        fixado = con.execute(
+            postgres.SQL_PARAMETRO_FIXADO_POR_BANCO_OU_PAPEL
+        ).fetchone()[0]
+        print(
+            f"  {'ok   ' if not fixado else 'FALHA'} nenhum parametro fixado por banco "
+            f"ou papel{'' if not fixado else ': ' + fixado}"
+        )
+        if fixado:
+            print(
+                "        por que importa: parametro fixado assim entra em TODA sessao nova e\n"
+                "        nao precisa de privilegio nenhum -- quem fixa e o dono do banco, num\n"
+                "        gesto que parece configuracao. `session_replication_role=replica`\n"
+                "        desliga as triggers em modo padrao; `row_security=off` desliga RLS;\n"
+                "        `search_path` muda a resolucao de nomes. LEIA o que esta fixado."
+            )
+            problemas.append("parametro fixado por banco ou papel: " + fixado)
+        # A r32, 2o achado: grantee A MAIS no default ACL -- o privilegio do FUTURO.
+        #
+        # A checagem de `pg_default_acl` olhava se o `app` RECEBE. Medido: com
+        # `ALTER DEFAULT PRIVILEGES FOR ROLE <dono> ... TO auditoria`, o repasse fecha
+        # verde e a PROXIMA tabela nasce com `auditoria=arwdD` -- e o papel que existe
+        # para ler faz `TRUNCATE` nela. O default ACL age na proxima migration, entao
+        # nenhuma conferencia de ACL do presente pode ve-lo.
+        extra_acl = con.execute(
+            postgres.SQL_GRANTEE_A_MAIS_NO_DEFAULT_ACL
+        ).fetchone()[0]
+        print(
+            f"  {'ok   ' if not extra_acl else 'FALHA'} so' o `app` recebe default "
+            f"privileges{'' if not extra_acl else ': ' + extra_acl}"
+        )
+        if extra_acl:
+            print(
+                "        por que importa: o GRANT da secao 3 e retrato do PRESENTE; o default\n"
+                "        ACL age na PROXIMA tabela que o dono criar, isto e, na proxima\n"
+                "        migration. No instante do repasse nao existe objeto nenhum com essa\n"
+                "        ACL, e por isso nenhuma conferencia de ACL consegue ve-la."
+            )
+            problemas.append("grantee a mais no default ACL: " + extra_acl)
+        # A r32, 3o achado: RLS ligado -- a cegueira por SILENCIO.
+        #
+        # O D20 nao usa row-level security. Medido: `ENABLE ROW LEVEL SECURITY` na
+        # tabela do historico faz o `auditoria` ver 0 de 81 linhas, com
+        # `has_table_privilege` CONTINUANDO `t` -- RLS sem politica nega tudo, e nega
+        # sem erro. A tela de auditoria mostra vazio e se le como "nada aconteceu".
+        rls = con.execute(postgres.SQL_RLS_LIGADO_NO_SCHEMA).fetchone()[0]
+        print(
+            f"  {'ok   ' if not rls else 'FALHA'} nenhuma tabela do schema tem RLS "
+            f"ligado{'' if not rls else ': ' + rls}"
+        )
+        if rls:
+            print(
+                "        por que importa: RLS nega por SILENCIO, nao por erro: o SELECT devolve\n"
+                "        zero linha e `has_table_privilege` continua `t`, entao a ACL e a\n"
+                "        contagem por papel ficam intactas. Com zero politica, nega TUDO -- e\n"
+                "        auditoria cega e auditoria limpa se leem igual."
+            )
+            problemas.append("RLS ligado em tabela do schema: " + rls)
+        # A r32, 4o achado: `SECURITY DEFINER` fora da lista de nomes.
+        #
+        # O `conferir` checa `prosecdef`/`proconfig` e checa bem -- medido, degradando
+        # uma funcao esperada ele reprova. Mas filtra por uma lista FIXA de oito nomes,
+        # e funcao nova nao entra no universo. Medido: uma `SECURITY DEFINER` do dono
+        # faz o `app` ler as 81 linhas que a ACL dele proibe, com `le_historico = f` em
+        # toda conferencia. `SECURITY DEFINER` nao deixa entrada de ACL em lugar nenhum.
+        secdef = con.execute(
+            postgres.SQL_FUNCAO_SECURITY_DEFINER_ALHEIA
+        ).fetchone()[0]
+        print(
+            f"  {'ok   ' if not secdef else 'FALHA'} nenhuma funcao SECURITY DEFINER "
+            f"alem das duas do D20{'' if not secdef else ': ' + secdef}"
+        )
+        if secdef:
+            print(
+                "        por que importa: `SECURITY DEFINER` roda com o privilegio do DONO e\n"
+                "        nao cria entrada de ACL nenhuma -- e um buraco na parede, nao uma\n"
+                "        porta. Quem tiver EXECUTE alcanca o que o dono alcanca, e todas as\n"
+                "        conferencias de ACL continuam dizendo que nao alcanca."
+            )
+            problemas.append("funcao SECURITY DEFINER alheia: " + secdef)
         # A DECIMA classe, segunda porta: privilegio de COLUNA.
         #
         # Medido: `GRANT UPDATE (id_perfil) ON usuarios TO auditoria` deixa a contagem

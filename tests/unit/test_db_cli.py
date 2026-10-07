@@ -314,6 +314,10 @@ _D20_DE_PE: dict[str, Any] = {
     #: A SEXTA porta da decima classe (07/10/2026): `PUBLIC` em ACL de tabela.
     postgres.SQL_ACL_DE_PUBLIC_EM_TABELA: "",
     postgres.SQL_PAPEIS_COM_ACL_NO_SCHEMA: "",
+    postgres.SQL_PARAMETRO_FIXADO_POR_BANCO_OU_PAPEL: "",
+    postgres.SQL_GRANTEE_A_MAIS_NO_DEFAULT_ACL: "",
+    postgres.SQL_RLS_LIGADO_NO_SCHEMA: "",
+    postgres.SQL_FUNCAO_SECURITY_DEFINER_ALHEIA: "",
 }
 
 
@@ -605,6 +609,154 @@ def test_arvore_de_papeis_nao_tem_universo_de_privilegio(
     )
     codigo, _ = _rodar_privilegios(monkeypatch, respostas)
     assert codigo == 1, "a cadeia de dois niveis tem de REPROVAR"
+
+
+def test_parametro_fixado_por_banco_ou_papel_reprova(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A outra porta do `session_replication_role`, achada na r32.
+
+    Todo o instrumento conferia quem PODE trocar o parametro -- o `GRANT SET ON PARAMETER`,
+    que vive em `pg_parameter_acl`. Medido em 07/10/2026 a porta que ninguem olhava:
+
+        ALTER DATABASE banco_de_reservas SET session_replication_role = 'replica';
+
+        o `app`, em sessao nova   ->  SHOW session_replication_role = replica
+        o `app` tentando voltar   ->  ERRO: permissao negada  (o estado e' pegajoso)
+        as DEZ conferencias       ->  todas identicas ao estado bom
+        pg_db_role_setting        ->  {session_replication_role=replica}
+
+    Ninguem precisa de privilegio: quem fixa e' o DONO do banco, num gesto que parece
+    configuracao. E as triggers de auditoria em `ENABLE ALWAYS` continuam disparando, o que
+    torna o estado ainda mais convincente -- o que para sao as do modo padrao.
+
+    A consulta nao nomeia parametro DE PROPOSITO: `row_security = off` desliga RLS e
+    `search_path` muda a resolucao de nomes. Medido tambem com `ALTER ROLE app SET
+    row_security = off`, que a mesma consulta pega.
+    """
+    sql = postgres.SQL_PARAMETRO_FIXADO_POR_BANCO_OU_PAPEL
+    assert "pg_db_role_setting" in sql, "o estado vive neste catalogo, nao em pg_parameter_acl"
+    assert "pg_parameter_acl" not in sql, "...que e' a OUTRA porta, com consulta propria"
+    assert "session_replication_role" not in sql, (
+        "a lista de parametros perigosos nao fecha: qualquer um fixado e' para LER"
+    )
+    assert "LEFT JOIN pg_database" in sql and "LEFT JOIN pg_roles" in sql, (
+        "setdatabase e setrole sao NULOS quando a fixacao e' global -- JOIN interno perderia"
+    )
+
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_PARAMETRO_FIXADO_POR_BANCO_OU_PAPEL] = (
+        "banco_de_reservas/(todo papel): {session_replication_role=replica}"
+    )
+    codigo, _ = _rodar_privilegios(monkeypatch, respostas)
+    assert codigo == 1, "parametro fixado tem de REPROVAR"
+
+
+def test_grantee_a_mais_no_default_acl_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O privilegio que age no FUTURO, achado na r32.
+
+    A checagem de `pg_default_acl` que existia olha se o `app` RECEBE. Medido o que ela nao
+    olhava:
+
+        ALTER DEFAULT PRIVILEGES FOR ROLE reservas_owner IN SCHEMA public
+          GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON TABLES TO auditoria;
+
+        no instante do repasse  ->  as DEZ conferencias identicas ao estado bom
+        a PROXIMA tabela        ->  {..., auditoria=arwdD/reservas_owner}
+        o `auditoria` nela      ->  TRUNCATE TABLE
+
+    E' o eixo do TEMPO, e por isso nenhuma conferencia de ACL do presente pode ve-lo: no
+    momento do repasse o objeto que vai carregar o privilegio ainda nao existe. O `GRANT` da
+    secao 3 e' retrato do presente; o default ACL age na proxima migration.
+
+    `'app'` aqui e' a ESPECIFICACAO, como em `SQL_PAPEIS_COM_ACL_NO_SCHEMA`: o D20 concede
+    default ACL ao `app` e a mais ninguem.
+    """
+    sql = postgres.SQL_GRANTEE_A_MAIS_NO_DEFAULT_ACL
+    assert "pg_default_acl" in sql
+    assert "a.grantee <> d.defaclrole" in sql, "quem concede aparece na propria ACL"
+    assert "'app'" in sql, "a lista de um nome e' a especificacao: so' o `app` recebe"
+    assert "defaclobjtype::text" in sql, (
+        "`defaclobjtype` e' do tipo \"char\": sem o cast, `text || \"char\"` estoura com "
+        "AmbiguousFunction em RUNTIME -- nenhum compile pega, e foi medido"
+    )
+
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_GRANTEE_A_MAIS_NO_DEFAULT_ACL] = "auditoria em r (TRUNCATE)"
+    codigo, _ = _rodar_privilegios(monkeypatch, respostas)
+    assert codigo == 1, "grantee a mais no default ACL tem de REPROVAR"
+
+
+def test_rls_ligado_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cegueira por SILENCIO, achada na r32.
+
+    O D20 nao usa row-level security. Medido:
+
+        ALTER TABLE perfil_permissoes_historico ENABLE ROW LEVEL SECURITY;
+
+        o `auditoria` passa a ver  ->  0 linhas (eram 81)
+        has_table_privilege(...)   ->  t, CONTINUA t
+        o dono ve                  ->  81
+        as DEZ conferencias        ->  todas identicas ao estado bom
+
+    RLS sem politica nenhuma nega tudo, e nega SEM ERRO -- o `SELECT` devolve zero linha. O
+    papel que existe para ler a auditoria, e a tela que ele serve, passam a mostrar um
+    historico vazio; e auditoria cega e auditoria limpa se leem igual. Nenhuma conferencia
+    de ACL pode ver isso, porque a ACL nao muda.
+
+    A contagem de politicas entra no diagnostico porque RLS ligado com ZERO politica e'
+    justamente o caso que nega tudo.
+    """
+    sql = postgres.SQL_RLS_LIGADO_NO_SCHEMA
+    assert "relrowsecurity" in sql, "o estado vive aqui, e nao na ACL"
+    assert "relforcerowsecurity" in sql, "o FORCADO atinge ate' o dono"
+    assert "pg_policy" in sql, "zero politica com RLS ligado e' o caso que nega tudo"
+
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_RLS_LIGADO_NO_SCHEMA] = (
+        "perfil_permissoes_historico (rls, 0 politica(s))"
+    )
+    codigo, _ = _rodar_privilegios(monkeypatch, respostas)
+    assert codigo == 1, "RLS ligado tem de REPROVAR"
+
+
+def test_funcao_security_definer_alheia_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A lista FIXA de nomes que cegava o audit de funcoes, achada na r32.
+
+    O `conferir` checa `prosecdef` e `proconfig`, e checa BEM -- medido, degradando uma
+    funcao esperada (`ALTER FUNCTION rotulo_perfil(bigint) SECURITY DEFINER; RESET
+    search_path`) ele reprova e nomeia. Mas filtra `proname = ANY(FUNCOES_ESPERADAS)`, uma
+    lista de oito nomes, e funcao NOVA nao entra no universo. Medido:
+
+        CREATE FUNCTION total_do_historico() RETURNS bigint LANGUAGE sql
+          SECURITY DEFINER AS $$ SELECT count(*) FROM perfil_permissoes_historico $$;
+
+        o `app` lendo a tabela direto  ->  ERRO: permissao negada  (como o D20 quer)
+        o `app` pela funcao            ->  81
+        as DEZ conferencias            ->  todas identicas ao estado bom
+
+    `SECURITY DEFINER` carrega o privilegio do DONO e nao deixa entrada de ACL em lugar
+    nenhum: e' um buraco na parede, nao uma porta -- e por isso toda conferencia de ACL
+    continua dizendo, corretamente, que o `app` nao alcanca a tabela.
+
+    As duas funcoes do D20 saem por nome porque elas SAO a especificacao.
+    """
+    sql = postgres.SQL_FUNCAO_SECURITY_DEFINER_ALHEIA
+    assert "prosecdef" in sql
+    assert "proconfig" in sql, "sem `search_path` fixado e' pior ainda -- vai no diagnostico"
+    assert "FUNCOES_ESPERADAS" not in sql, (
+        "a lista de oito nomes e' justamente o universo que cegava"
+    )
+    assert "registra_perfil_permissoes_historico" in sql, (
+        "as DUAS do D20 saem por nome: elas sao a especificacao"
+    )
+
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_FUNCAO_SECURITY_DEFINER_ALHEIA] = (
+        "total_do_historico (dono reservas_owner, SEM search_path)"
+    )
+    codigo, _ = _rodar_privilegios(monkeypatch, respostas)
+    assert codigo == 1, "funcao SECURITY DEFINER alheia tem de REPROVAR"
 
 
 def test_papel_alheio_com_acl_no_schema_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
