@@ -1283,6 +1283,7 @@ def cmd_expurgar(args: argparse.Namespace) -> int:
 def classificar_para_alinhar(
     linhas: list[tuple[int, str, str | None, str]],
     confere_com_a_inicial,
+    hash_e_legivel=None,
 ) -> dict[str, list[tuple[int, str]]]:
     """Separa as linhas de `SQL_ESTADO_DA_SENHA_INICIAL` nas QUATRO classes do alinhamento.
 
@@ -1303,6 +1304,14 @@ def classificar_para_alinhar(
       `sem_propria_ok`   -> na inicial, e o hash JA' confere. Nada a fazer -- e' esta classe que
                             torna a contagem honesta e o comando idempotente.
       `sem_propria`      -> na inicial, e o hash NAO confere. E' a unica que se reescreve.
+
+    `hash_e_legivel` tambem entra por parametro, pelo mesmo motivo do outro -- e porque
+    `senhas` e' importado DENTRO do comando, nao no topo do modulo. Sem ele, `propria_ok`
+    sai do SQL decidido apenas pelo PREFIXO do hash, e prefixo nao diz se a pessoa entra:
+    medido em 08/10/2026, sete corrupcoes realistas preservam o `$argon2id$` e nao
+    autenticam (truncado, espaco no fim, CRLF, CR, parametros ilegiveis, sal truncado,
+    caractere do base64 trocado), e as sete caiam na contagem rotulada "hash ok". Seis sao
+    pegas aqui; a setima e' indistinguivel de "escolheu outra senha" sem a senha dela.
     """
     por_classe: dict[str, list[tuple[int, str]]] = {
         "sem_propria_ok": [],
@@ -1313,6 +1322,19 @@ def classificar_para_alinhar(
     for id_usuario, login, hash_atual, classe in linhas:
         if classe == "sem_propria" and confere_com_a_inicial(hash_atual):
             classe = "sem_propria_ok"
+        # O SQL separa `propria_ok` de `propria_quebrada` pelo PREFIXO do hash, e prefixo
+        # nao diz se a pessoa entra. Medido em 08/10/2026: sete corrupcoes realistas
+        # mantem o `$argon2id$` e nao autenticam -- truncado, espaco no fim, CRLF, CR,
+        # parametros ilegiveis, sal truncado, caractere trocado --, e as sete caiam na
+        # contagem rotulada "hash ok", que o runbook do corte le' como "nada a fazer".
+        # `hash_legivel` pergunta ao Argon2 se o hash e' decodificavel, e pega seis das
+        # sete. A setima e' indistinguivel de "escolheu outra senha" sem a senha dela.
+        elif (
+            classe == "propria_ok"
+            and hash_e_legivel is not None
+            and not hash_e_legivel(hash_atual)
+        ):
+            classe = "propria_quebrada"
         por_classe[classe].append((id_usuario, login))
     return por_classe
 
@@ -1372,7 +1394,7 @@ def cmd_alinhar_senhas(args: argparse.Namespace) -> int:
     # distingue "funcionou" de "nao fez nada". Mesma exigencia que o `cmd_expurgar` documenta.
     # A decisao mora em `classificar_para_alinhar`, que tem teste sem banco.
     por_classe = classificar_para_alinhar(
-        list(linhas), lambda h: senhas.verificar(inicial, h)
+        list(linhas), lambda h: senhas.verificar(inicial, h), senhas.hash_legivel
     )
 
     print(f"usuarios ativos: {len(linhas)}")
