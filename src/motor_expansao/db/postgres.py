@@ -378,6 +378,38 @@ SQL_ACL_DE_PUBLIC_EM_TABELA = (
     "WHERE n.nspname = 'public' AND a.grantee = 0 "
     "AND c.relname NOT IN ('spatial_ref_sys', 'geometry_columns', 'geography_columns')"
 )
+#: A QUINTA porta: a POSSE de funcao. O pacote a nomeava desde o inicio e ninguem cobria.
+#:
+#: Medido em 08/10/2026, passando as duas funcoes de auditoria do D20 para o `app`:
+#:
+#:     conferir                  ->  CONFERENCIA OK,  exit 0
+#:     privilegios               ->  PRIVILEGIOS OK,  exit 0
+#:     as 22 conferencias manuais do pacote  ->  NENHUMA diferenca
+#:
+#: e entao, como `app`:
+#:
+#:     DROP FUNCTION registra_perfil_permissoes_historico() CASCADE;
+#:       NOTA: removendo em cascata gatilho trg_perfil_permissoes_auditoria
+#:     DROP FUNCTION registra_perfil_permissoes_truncate() CASCADE;
+#:       NOTA: removendo em cascata gatilho trg_perfil_permissoes_auditoria_truncate
+#:     triggers restantes: 0
+#:     INSERT + DELETE em perfil_permissoes  ->  ZERO linha de auditoria
+#:
+#: Dono de funcao pode `DROP ... CASCADE` (que leva a trigger junto) e
+#: `ALTER ... SECURITY INVOKER`. O `conferir` pega o segundo -- ele olha `prosecdef` --, e o
+#: primeiro ninguem pegava: a posse nao aparece em ACL nenhuma.
+#:
+#: DERIVADA, e nao pelas duas do D20: a pergunta e' "alguma funcao deste schema tem dono que
+#: nao e' o dono do banco?". Medida em quatro estados -- 0 no bom, 2 com as duas no `app`, 1
+#: com uma so' (o caso mais discreto) e 1 com uma funcao qualquer passada ao `etl`.
+SQL_FUNCAO_COM_DONO_ALHEIO = (
+    "SELECT coalesce(string_agg(p.proname || ' (dono ' || "
+    "p.proowner::regrole::text || ')', ', ' ORDER BY p.proname), '') "
+    "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+    "WHERE n.nspname = 'public' "
+    "AND p.proowner <> (SELECT datdba FROM pg_database "
+    "WHERE datname = current_database())"
+)
 #: O que existe neste banco ALEM do que o D20 cria -- o recorte `public` que todas as
 #: outras conferencias partilham, e que deixava o `app` apagar o historico inteiro.
 #:

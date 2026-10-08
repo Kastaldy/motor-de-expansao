@@ -319,6 +319,7 @@ _D20_DE_PE: dict[str, Any] = {
     postgres.SQL_RLS_LIGADO_NO_SCHEMA: "",
     postgres.SQL_FUNCAO_SECURITY_DEFINER_ALHEIA: "",
     postgres.SQL_O_QUE_O_D20_NAO_CRIA: "",
+    postgres.SQL_FUNCAO_COM_DONO_ALHEIO: "",
 }
 
 
@@ -670,6 +671,51 @@ def test_aplicar_explica_a_janela_em_vez_de_estourar() -> None:
     assert "to_regclass" in corpo, (
         "...e como CONFIRMAR antes de aplicar a cura: `t` e' este caso, `f` e' outro"
     )
+
+
+def test_funcao_com_dono_alheio_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A QUINTA porta, que o pacote nomeava desde o inicio e ninguem cobria.
+
+    Medido em 08/10/2026, passando as duas funcoes de auditoria do D20 para o `app`:
+
+        conferir                              ->  CONFERENCIA OK,  exit 0
+        privilegios                           ->  PRIVILEGIOS OK,  exit 0
+        as 22 conferencias manuais do pacote  ->  NENHUMA diferenca
+
+    e entao, como `app` (transacao revertida):
+
+        DROP FUNCTION registra_perfil_permissoes_historico() CASCADE;
+          NOTA: removendo em cascata gatilho trg_perfil_permissoes_auditoria
+        DROP FUNCTION registra_perfil_permissoes_truncate() CASCADE;
+          NOTA: removendo em cascata gatilho trg_perfil_permissoes_auditoria_truncate
+        triggers restantes: 0
+        INSERT + DELETE em perfil_permissoes  ->  ZERO linha de auditoria
+
+    O papel da aplicacao vira dono do mecanismo que existe para vigia-lo. A posse nao
+    aparece em ACL nenhuma, entao nenhuma conferencia de privilegio a ve -- e o `prosecdef`,
+    que o `conferir` olha, e' a OUTRA metade da mesma porta.
+
+    DERIVADA, e nao pelas duas do D20: a pergunta e' "alguma funcao deste schema tem dono que
+    nao e' o dono do banco?". Medida em quatro estados -- 0 no bom, 2 com as duas no `app`, 1
+    com uma so' e 1 com uma funcao qualquer (`rotulo_perfil`) passada ao `etl`.
+    """
+    sql = postgres.SQL_FUNCAO_COM_DONO_ALHEIO
+
+    assert "proowner" in sql, "a posse se le em `proowner`, e nao em ACL"
+    assert "datdba" in sql, "o esperado e' o dono do BANCO, derivado, nao um nome"
+    assert "registra_perfil_permissoes" not in sql, (
+        "nomear as duas do D20 deixaria passar qualquer funcao nova com dono alheio"
+    )
+    assert "prosecdef" not in sql, (
+        "`prosecdef` e' a outra metade da porta, e tem consulta propria"
+    )
+
+    respostas = dict(_D20_DE_PE)
+    respostas[postgres.SQL_FUNCAO_COM_DONO_ALHEIO] = (
+        "registra_perfil_permissoes_historico (dono app)"
+    )
+    codigo, _ = _rodar_privilegios(monkeypatch, respostas)
+    assert codigo == 1, "funcao do schema com dono alheio tem de REPROVAR"
 
 
 def test_o_que_o_d20_nao_cria_reprova(monkeypatch: pytest.MonkeyPatch) -> None:

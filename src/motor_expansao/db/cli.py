@@ -944,6 +944,24 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 "        deixa de valer para o que ele alcanca por ali."
             )
             problemas.append("existe objeto que o D20 nao cria: " + fora)
+        # A QUINTA porta (r34): a POSSE das funcoes. Medido: com as duas funcoes de
+        # auditoria no `app`, `conferir` e `privilegios` saiam OK e as 22 conferencias
+        # manuais do pacote nao mudavam -- e o `app`, sendo dono, fazia
+        # `DROP FUNCTION ... CASCADE` nas duas, levando as DUAS triggers do D20 junto, e
+        # escrevia em `perfil_permissoes` sem deixar linha de auditoria.
+        dono_alheio = con.execute(postgres.SQL_FUNCAO_COM_DONO_ALHEIO).fetchone()[0]
+        print(
+            f"  {'ok   ' if not dono_alheio else 'FALHA'} toda funcao do schema e' do dono "
+            f"do banco{'' if not dono_alheio else ': ' + dono_alheio}"
+        )
+        if dono_alheio:
+            print(
+                "        por que importa: dono de funcao pode `DROP ... CASCADE`, e a trigger\n"
+                "        que depende dela cai junto -- medido, as DUAS do D20 de uma vez. A posse\n"
+                "        nao aparece em ACL nenhuma, entao nenhuma conferencia de privilegio a ve.\n"
+                "        O `prosecdef` o `conferir` pega; a posse, ninguem pegava."
+            )
+            problemas.append("funcao do schema com dono alheio: " + dono_alheio)
         # A DECIMA classe, segunda porta: privilegio de COLUNA.
         #
         # Medido: `GRANT UPDATE (id_perfil) ON usuarios TO auditoria` deixa a contagem
