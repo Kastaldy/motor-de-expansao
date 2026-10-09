@@ -1130,9 +1130,12 @@ navegador"** — login `root` + senha root (login de console, NÃO passa pelo ss
 senha mesmo com o SSH endurecido). Senha root redefinível em VPS → Configurações. Validado em
 2026-07-13. **Sempre validar esse acesso ANTES de mexer em SSH/firewall.**
 
-**Chaves SSH autorizadas:** somente a chave `ed25519` da máquina do Felipe (`silva@Ultra-2025-032`).
-Para dar acesso a alguém: adicionar a chave pública da pessoa em `/root/.ssh/authorized_keys`
-(senha NÃO volta a ser opção). Offboarding: remover a linha da chave.
+**Chaves SSH autorizadas:** no `root`, somente as chaves da máquina do Felipe (operador
+`silva@Ultra-2025-032` + a de automação `id_ultra_mcp`). Senha NÃO volta a ser opção.
+**Para dar acesso de deploy a outra pessoa, NÃO colocar a chave dela no `root`:** existe o usuário
+dedicado `deploy` (grupos `docker` + `motor-ops`, sem `sudo`, criado em 2026-10-09 para o Vini), que
+deploya BR/AR e atualiza os dados com log e revogação por pessoa — runbook de onboarding, limites e
+offboarding em `docs/acesso_deploy_colaborador.md`.
 
 **Política de reboot (kernel):** o `unattended-upgrades` instala kernels de segurança mas NÃO
 reinicia sozinho. Quando o banner/`/var/run/reboot-required` acusar, agendar reboot manual (~2 min de
