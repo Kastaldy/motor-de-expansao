@@ -324,9 +324,9 @@ def test_hash_legivel_pega_as_corrupcoes_que_mantem_o_prefixo() -> None:
         ("nulo", None),
     ):
         assert not senhas.verificar(senha, ruim or ""), (
-            "%s: o cenario exige que a pessoa NAO entre" % rotulo
+            f"{rotulo}: o cenario exige que a pessoa NAO entre"
         )
-        assert not senhas.hash_legivel(ruim), "%s tem de ser pego" % rotulo
+        assert not senhas.hash_legivel(ruim), f"{rotulo} tem de ser pego"
 
 
 def test_hash_legivel_nao_crava_os_comprimentos() -> None:
@@ -342,5 +342,5 @@ def test_hash_legivel_nao_crava_os_comprimentos() -> None:
     assert "gerar(" in fonte, "o molde sai de um hash gerado na hora"
     for cravado in ("43", "22", "15"):
         assert cravado not in fonte.replace("maxsize=1", ""), (
-            "comprimento %s cravado: ele muda com os parametros do hasher" % cravado
+            f"comprimento {cravado} cravado: ele muda com os parametros do hasher"
         )

@@ -38,8 +38,8 @@ senha que voce nao sabe qual e'".
 from __future__ import annotations
 
 import os
-from typing import Any
 from functools import lru_cache as _lru_cache
+from typing import Any
 
 #: Env da senha inicial compartilhada, entregue a quem e' criado pela tela. SEM default.
 ENV_SENHA_INICIAL = "MOTOR_SENHA_INICIAL"

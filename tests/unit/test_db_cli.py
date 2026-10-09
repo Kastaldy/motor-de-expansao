@@ -449,7 +449,7 @@ def test_dono_da_tabela_auditada_filtra_schema(monkeypatch: pytest.MonkeyPatch) 
     assert dono, "a consulta de dono das tabelas auditadas desapareceu"
     for sql in dono:
         assert "relnamespace" in sql and "nspname" in sql, (
-            "a consulta de dono voltou a aceitar tabela de qualquer schema: %r" % sql
+            f"a consulta de dono voltou a aceitar tabela de qualquer schema: {sql!r}"
         )
 
 
@@ -658,8 +658,8 @@ def test_aplicar_explica_a_janela_em_vez_de_estourar() -> None:
     tupla = m.group(1)
     for codigo in ("42P07", "42P06", "42710", "42701"):
         assert codigo in tupla, (
-            "faltou o SQLSTATE de duplicacao %s na TUPLA (achei: %s)"
-            % (codigo, " ".join(tupla.split()))
+            f"faltou o SQLSTATE de duplicacao {codigo} na TUPLA "
+            f"(achei: {' '.join(tupla.split())})"
         )
     # O `raise` tem de estar NO RAMO DO IF, e nao em qualquer lugar do corpo: `"raise" in
     # corpo` passava com o ramo trocado por `pass`, porque ha' outro `raise` na funcao.
@@ -1002,7 +1002,7 @@ def test_poder_de_cluster_soma_o_superuser_em_vez_de_apagar() -> None:
     )
     assert "datdba" in sql, "o dono do banco e' superusuario por desenho e sai por SER dono"
     for col in ("rolcreatedb", "rolcreaterole", "rolreplication", "rolbypassrls"):
-        assert col in sql, "faltou a coluna de poder %s" % col
+        assert col in sql, f"faltou a coluna de poder {col}"
 
 
 def test_privilegio_de_coluna_reprova(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1029,7 +1029,7 @@ def test_poder_de_cluster_cobre_as_cinco_colunas(monkeypatch: pytest.MonkeyPatch
     """
     sql = postgres.SQL_PAPEIS_COM_PODER_DE_CLUSTER
     for coluna in ("rolsuper", "rolcreatedb", "rolcreaterole", "rolreplication", "rolbypassrls"):
-        assert coluna in sql, "%s fora da consulta de poder de cluster" % coluna
+        assert coluna in sql, f"{coluna} fora da consulta de poder de cluster"
 
 
 def test_negativas_de_tabela_somam_o_privilegio_de_coluna(
@@ -1046,7 +1046,7 @@ def test_negativas_de_tabela_somam_o_privilegio_de_coluna(
     assert len(por_coluna) >= 3, "as negativas de INSERT/UPDATE precisam somar a coluna"
     for sql in por_coluna:
         assert "'DELETE'" not in sql and "'TRUNCATE'" not in sql, (
-            "has_any_column_privilege nao aceita DELETE nem TRUNCATE: %r" % sql
+            f"has_any_column_privilege nao aceita DELETE nem TRUNCATE: {sql!r}"
         )
 
 
