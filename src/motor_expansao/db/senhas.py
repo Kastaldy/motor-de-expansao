@@ -38,6 +38,7 @@ senha que voce nao sabe qual e'".
 from __future__ import annotations
 
 import os
+from functools import lru_cache as _lru_cache
 from typing import Any
 
 #: Env da senha inicial compartilhada, entregue a quem e' criado pela tela. SEM default.
@@ -230,6 +231,70 @@ def hash_da_senha_inicial() -> str:
     """
     inicial = senha_inicial()
     return str(_hasher().hash(inicial))
+
+
+@_lru_cache(maxsize=1)
+def _molde_do_hash() -> list[int]:
+    """Os comprimentos dos campos de um hash desta instalacao, medidos numa amostra.
+
+    Gerado UMA vez por processo. Serve de molde para detectar hash truncado ou com sujeira
+    no fim -- os dois casos em que o argon2 ainda decodifica mas a pessoa nao entra.
+    """
+    amostra = gerar("molde-para-conferir-a-forma-do-hash")
+    return [len(c) for c in amostra.split("$")]
+
+
+def hash_legivel(hash_guardado: str | None) -> bool:
+    """O hash e' LEGIVEL pelo verificador? Nao e' "a senha bate" -- e' "da' para conferir".
+
+    Por que existe, medido em 08/10/2026: o passo 0.c do runbook do corte separa "hash ok" de
+    "hash quebrado" com `senha_hash NOT LIKE '$argon2id$%'`, isto e', pelo PREFIXO. Um hash
+    valido corrompido de sete maneiras realistas mantem o prefixo e NAO autentica:
+
+        truncado no meio (colagem incompleta) ... espaco no fim (planilha) ... CRLF (Windows)
+        CR no fim ... parametros ilegiveis ... sal truncado ... um caractere do base64 trocado
+
+    As sete trancam a pessoa, e as sete caiam na contagem rotulada "hash ok" -- a que o
+    operador le' como "nada a fazer". Esta funcao pega SEIS delas: ela pergunta ao proprio
+    Argon2 se o hash e' decodificavel.
+
+    A setima (um caractere do corpo trocado) nao tem conserto possivel: um hash integro de
+    OUTRA senha e' bit a bit indistinguivel dela sem conhecer a senha escolhida. Para essa, o
+    sinal e' humano -- a pessoa relatar que nao entra -- e o runbook passa a dizer isso.
+
+    `VerifyMismatchError` conta como LEGIVEL de proposito: ele significa "li o hash, a senha
+    e' outra", que e' o estado de quem escolheu a propria senha. Confundir os dois faria esta
+    funcao acusar todo mundo.
+    """
+    if not hash_guardado:
+        return False
+    try:
+        from argon2 import PasswordHasher
+        from argon2.exceptions import (
+            InvalidHashError,
+            VerificationError,
+            VerifyMismatchError,
+        )
+    except ImportError:  # pragma: no cover - o modulo ja' depende de argon2
+        return hash_guardado.startswith("$argon2id$")
+    try:
+        PasswordHasher().verify(hash_guardado, "\x00nao-e-a-senha-de-ninguem\x00")
+    except VerifyMismatchError:
+        pass                       # leu o hash; a senha e' outra. Segue para a FORMA.
+    except (InvalidHashError, VerificationError):
+        return False
+    except Exception:
+        return False
+    # A FORMA, porque o argon2 sozinho deixa passar truncamento: medido, o base64 cortado
+    # em alguns pontos ainda DECODIFICA e devolve `VerifyMismatchError`, que e' o mesmo
+    # sinal de "hash integro, senha outra". O que distingue e' o ultimo campo encurtar.
+    #
+    # Os comprimentos nao estao cravados de proposito -- eles dependem dos parametros do
+    # hasher. A referencia e' gerada na hora, UMA vez por execucao (`lru_cache`), e nao uma
+    # por pessoa.
+    molde = _molde_do_hash()
+    campos = hash_guardado.split("$")
+    return len(campos) == len(molde) and [len(c) for c in campos] == molde
 
 
 def verificar(senha: str, hash_guardado: str | None) -> bool:

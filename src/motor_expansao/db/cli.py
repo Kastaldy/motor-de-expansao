@@ -47,6 +47,19 @@ SQL_REGISTRAR = (
     "ON CONFLICT (versao_migracao) DO NOTHING"
 )
 SQL_TEM_TABELA_DE_CONTROLE = "SELECT to_regclass(%s) IS NOT NULL"
+# Quantas tabelas o `public` tem que NAO sao de extensao. Serve a uma pergunta so':
+# "registradas: 0" significa banco NOVO, ou banco com objetos e sem o registro?
+#
+# `NOT EXISTS ... deptype = 'e'` nao e' zelo: `CREATE EXTENSION postgis` cria
+# `spatial_ref_sys` no `public`, e a 001 e' `CREATE EXTENSION IF NOT EXISTS`, entao
+# banco com postgis instalado ANTES das migrations e' estado legitimo. Medido em
+# 05/10/2026: `pg_tables` cru devolve 1 nesse banco, e esta consulta devolve 0 --
+# contar o cru faria o portao recusar quem nao fez nada de errado.
+SQL_TABELAS_FORA_DE_EXTENSAO = (
+    "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') "
+    "AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = c.oid AND d.deptype = 'e')"
+)
 
 # Contrato conferido contra o dump do cluster real em 26/08/2026 (§0 da `verificacao.md`).
 TABELAS_DO_MODELO = (
@@ -190,6 +203,35 @@ def _aplicadas(con: Any) -> dict[str, str]:
     return {v: h for v, h in con.execute(SQL_JA_APLICADAS).fetchall()}
 
 
+def _objetos_sem_registro(con: Any) -> int:
+    """Tabelas proprias no `public` quando a tabela de controle NAO existe; 0 se existe.
+
+    `_aplicadas` devolve `{}` tanto para banco virgem quanto para banco povoado sem o
+    registro, e a tela imprimia "registradas: 0" nos dois -- saida IDENTICA byte a byte,
+    medido em 05/10/2026. Esse era o unico portao do unico passo declarado sem volta: o
+    `aplicar` aceitava, commitava a 000 e a 001 e morria na 002 com `DuplicateTable`.
+    """
+    existe = con.execute(SQL_TEM_TABELA_DE_CONTROLE, (postgres.TABELA_MIGRACOES,)).fetchone()[0]
+    if existe:
+        return 0
+    return con.execute(SQL_TABELAS_FORA_DE_EXTENSAO).fetchone()[0]
+
+
+def _recado_do_banco_povoado(quantas: int) -> str:
+    return (
+        f"o banco tem {quantas} tabela(s) no schema `public` e NAO tem a tabela de controle\n"
+        "  `migracoes_aplicadas`. Entao `registradas: 0` aqui nao quer dizer \"banco novo\":\n"
+        "  quer dizer \"o registro nao existe\". Aplicar tudo commitaria as primeiras\n"
+        "  migrations e morreria em `DuplicateTable` na primeira que recria objeto.\n"
+        "\n"
+        "  Se o EFEITO das migrations ja' esta no banco (roteiro aplicado a mao, restore que\n"
+        "  perdeu o registro), o caminho e' registrar sem executar:\n"
+        "      python -m motor_expansao.db registrar --ate <a ultima que ja' esta de pe>\n"
+        "  Se nao esta, o banco nao e' o que voce pensa que e': confira o nome em\n"
+        "  MOTOR_DATABASE_URL antes de qualquer coisa."
+    )
+
+
 def _diagnostico(manifesto: list[dict[str, Any]], aplicadas: dict[str, str]) -> tuple[list, list]:
     """(pendentes, alteradas). `alteradas` e' o defeito que a convencao §7 proibe."""
     pendentes = [m for m in manifesto if m["versao"] not in aplicadas]
@@ -217,10 +259,13 @@ def cmd_estado(_args: argparse.Namespace) -> int:
     manifesto = _manifesto()
     with _conectar_para_ddl() as con:
         aplicadas = _aplicadas(con)
+        _sem_registro = _objetos_sem_registro(con)
     pendentes, alteradas = _diagnostico(manifesto, aplicadas)
 
     print(f"migrations no manifesto: {len(manifesto)}")
     print(f"registradas no banco:    {len(aplicadas)}")
+    if _sem_registro:
+        print(f"\nATENCAO -- {_recado_do_banco_povoado(_sem_registro)}")
     for m in manifesto:
         marca = "ok " if m["versao"] in aplicadas else "-- "
         print(f"  {marca}{m['versao']}  {m['arquivo']}")
@@ -233,6 +278,12 @@ def cmd_estado(_args: argparse.Namespace) -> int:
 def cmd_aplicar(args: argparse.Namespace) -> int:
     manifesto = _manifesto()
     with _conectar_para_ddl() as con:
+        # O portao, ANTES de qualquer DDL. Recusar aqui custa um comando; descobrir
+        # depois custa um banco com duas migrations commitadas e o resto fora do
+        # registro -- e migration nao tem desfazer.
+        _sem_registro = _objetos_sem_registro(con)
+        if _sem_registro:
+            raise SystemExit(f"ERRO: {_recado_do_banco_povoado(_sem_registro)}")
         pendentes, alteradas = _diagnostico(manifesto, _aplicadas(con))
         _avisar_alteradas(alteradas)
         if not pendentes:
@@ -249,7 +300,49 @@ def cmd_aplicar(args: argparse.Namespace) -> int:
             # Uma transacao POR MIGRATION, e nao uma para o lote: se a 007 falhar, a 006
             # continua aplicada e registrada, e reexecutar retoma de onde parou. As
             # proprias migrations ja' trazem BEGIN/COMMIT; o psycopg respeita.
-            con.execute(sql)
+            #
+            # E E' POR ISSO QUE EXISTE A JANELA, medida em 07/10/2026: o `execute` abaixo
+            # JA' COMMITOU a migration (o `COMMIT` esta' dentro do arquivo) quando o
+            # registro ainda nao foi gravado. Morrer nessa fresta -- Ctrl-C, kill,
+            # conteiner reiniciado, conexao caindo -- deixa a migration APLICADA e NAO
+            # REGISTRADA, e ai o `estado` mostra "registradas: N / pendentes: N..." com
+            # exit 0, que e' indistinguivel de uma retomada legitima. Seguir dava
+            # `DuplicateTable` com traceback cru, num passo que o runbook declara sem
+            # volta.
+            #
+            # Fechar a janela exigiria gravar o registro DENTRO da transacao da migration,
+            # o que o `COMMIT` dela impede. Entao o conserto e' reconhecer o estado e
+            # dizer a cura -- que existe, funciona (medido) e mora numa secao que o
+            # runbook manda pular por outro motivo.
+            try:
+                con.execute(sql)
+            # Pelo SQLSTATE, e nao pela classe do driver: `psycopg` e' importado DENTRO de
+            # `_conectar`, nao no modulo, e `except psycopg.errors...` aqui estourava com
+            # `NameError` em runtime -- o `import motor_expansao.db.cli` passava, e so' a
+            # execucao mostrava. Os codigos: 42P07 tabela, 42P06 schema, 42710 objeto,
+            # 42701 coluna, 42P04 banco, 42723 funcao.
+            except Exception as erro:
+                if getattr(erro, "sqlstate", "") not in (
+                    "42P07", "42P06", "42710", "42701", "42P04", "42723"
+                ):
+                    raise
+                con.rollback()
+                print()
+                print(f"PAREI em {m['versao']} ({m['arquivo']}): {erro}".rstrip())
+                print(
+                    "\nIsto quase sempre significa que esta migration JA' FOI APLICADA e nao\n"
+                    "chegou a ser REGISTRADA -- o processo morreu entre uma coisa e outra. As\n"
+                    "migrations trazem `COMMIT` no proprio arquivo, entao o efeito dela ficou\n"
+                    "no banco e o registro nao.\n"
+                    "\nConfirme, e so' depois conserte:\n"
+                    f"  1) abra `{m['arquivo']}` e veja o primeiro objeto que ela cria;\n"
+                    "  2) no psql:  SELECT to_regclass('<aquele objeto>') IS NOT NULL;\n"
+                    "     `t` = ela aplicou e nao registrou (e' este caso);\n"
+                    "     `f` = e' outra coisa, e ai PARE e chame quem repassou.\n"
+                    f"  3) sendo `t`:  python -m motor_expansao.db registrar --ate {m['versao']}\n"
+                    "     e rode `aplicar` de novo -- ele retoma da seguinte."
+                )
+                return 1
             con.execute(
                 SQL_REGISTRAR, (m["versao"], m["arquivo"], _sha256_do_arquivo(m["arquivo"]))
             )
@@ -352,12 +445,60 @@ def cmd_conferir(_args: argparse.Namespace) -> int:
         prov = postgres._provisionamento(con)  # noqa: SLF001 - mesma casa, sem API publica ainda
         print(f"  usuario conectado: {prov['usuario']}")
         print(f"  pode escrever direto no historico: {prov['pode_escrever_no_historico']}")
-        print(f"  trigger de auditoria: {prov['trigger_auditoria']} (esperado 'A' apos o D20)")
+        for _n, _e in sorted((prov.get("triggers_auditoria") or {}).items()):
+            print(f"  trigger {_n}: {_e} (esperado 'A' apos o D20)")
+
+        # O estado da trigger ENTRA na conta dos problemas; o `pode_escrever_no_historico`
+        # NAO. Os dois sao sinais do D20, mas de naturezas diferentes, e confundi-los era o
+        # defeito: ate' 02/10/2026 este comando IMPRIMIA os dois e nao contava nenhum, e
+        # entao `CONFERENCIA OK` com codigo 0 saia igual num banco com a auditoria de pe e
+        # num banco sem ela. Quem le a ultima linha -- que e' o que se faz -- aprovava os dois.
+        #
+        # Por que a assimetria e' correta:
+        #   `pode_escrever_no_historico` depende de QUEM CONECTA (`has_table_privilege` do
+        #   papel atual). Num ensaio local conecta-se como dono, e dono escreve mesmo: ali
+        #   `True` e' esperado e nao e' defeito. E' o que o AVISO abaixo explica.
+        #
+        #   `trigger_auditoria` depende do BANCO, nao de quem conecta. 'A' (ENABLE ALWAYS) e'
+        #   o unico pedaco de DDL do D20, e e' o que resiste a `session_replication_role =
+        #   replica` -- que deixou de exigir superusuario no PG15, ou seja, esta' ao alcance
+        #   de um papel comum. Nao existe cenario em que 'O' seja aceitavel: em TODO ponto em
+        #   que o runbook manda rodar este comando (o §8 da VPS e o ensaio do §1), a secao 7
+        #   do script de papeis ja' rodou. Logo, reprovar aqui nao reprova ensaio legitimo.
+        # TODAS as triggers da tabela auditada, nao so' a primeira. Ate' 05/10/2026 este
+        # veredito olhava um nome unico, e um §7 colado pela METADE -- a de TRUNCATE em
+        # 'O' -- passava verde aqui E no `privilegios`. Medido.
+        _todas = prov.get("triggers_auditoria") or {}
+        if not _todas:
+            problemas.append(
+                "nenhuma trigger de auditoria em `perfil_permissoes`: ou a migration 009 nao "
+                "esta aplicada, ou `pg_trigger` nao foi legivel -- sem elas o historico de "
+                "permissoes nao existe"
+            )
+        for _nome, _estado in sorted(_todas.items()):
+            if _estado != "A":
+                problemas.append(
+                    f"trigger `{_nome}` em '{_estado}', nao 'A': o `ENABLE ALWAYS` do D20 nao "
+                    f"foi aplicado nela. Rode a secao 7 do `papeis-e-privilegios.md` INTEIRA -- "
+                    f"ela tem DUAS linhas `ALTER TABLE`, e colar so' a primeira deixa esta aqui "
+                    f"em 'O'. Em 'O' a trigger e' PULADA por uma sessao em "
+                    f"`session_replication_role = replica`, que no PG15+ nao exige superusuario "
+                    f"-- o historico de permissoes fica contornavel em silencio"
+                )
+
         if prov["pode_escrever_no_historico"]:
             print(
-                "  AVISO: este papel tem INSERT direto em perfil_permissoes_historico. Num\n"
-                "  cluster de teste isso e' esperado (voce conecta como dono); em PRODUCAO\n"
-                "  significa que o D20 nao esta de pe e a auditoria da 009 nao protege nada."
+                # Ate' 05/10/2026 esta mensagem dizia "em PRODUCAO significa que o D20
+                # nao esta de pe". E' falso: `has_table_privilege` responde por QUEM
+                # CONECTOU, o dono sempre tem INSERT na propria tabela, e o §8 do
+                # `banco_deploy.md` manda rodar esta verificacao com a credencial de DDL
+                # -- isto e', como dono, na VPS. O aviso disparava sempre, inclusive num
+                # banco perfeito, e a frase ensinava a ler isso como D20 caido.
+                "  AVISO: o papel que CONECTOU aqui tem INSERT direto em\n"
+                "  perfil_permissoes_historico. Se voce conectou como dono (e o §8 manda\n"
+                "  conectar assim, com a credencial de DDL), isto e' esperado e nao diz nada\n"
+                "  sobre o D20. O alarme de verdade e' este mesmo sinal sair VERDADEIRO\n"
+                "  conectado como `app`: e' o que o comando `privilegios` mede."
             )
 
     print()
@@ -400,7 +541,8 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
         ),
         (
             "escrever no historico de permissoes",
-            "SELECT has_table_privilege(current_user, 'perfil_permissoes_historico', 'INSERT')",
+            "SELECT has_table_privilege(current_user, 'perfil_permissoes_historico', 'INSERT') "
+            "OR has_any_column_privilege(current_user, 'perfil_permissoes_historico', 'INSERT')",
             "o D19 promete que a aplicacao nao forja linha de auditoria; com INSERT direto a "
             "promessa e' so' prosa",
         ),
@@ -414,7 +556,8 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
         ),
         (
             "alterar o historico de permissoes",
-            "SELECT has_table_privilege(current_user, 'perfil_permissoes_historico', 'UPDATE')",
+            "SELECT has_table_privilege(current_user, 'perfil_permissoes_historico', 'UPDATE') "
+            "OR has_any_column_privilege(current_user, 'perfil_permissoes_historico', 'UPDATE')",
             "append-only: reescrever o passado e' pior que apaga-lo, porque nao deixa buraco",
         ),
         (
@@ -430,7 +573,8 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
         ),
         (
             "alterar evento ja' gravado",
-            "SELECT has_table_privilege(current_user, 'eventos', 'UPDATE')",
+            "SELECT has_table_privilege(current_user, 'eventos', 'UPDATE') "
+            "OR has_any_column_privilege(current_user, 'eventos', 'UPDATE')",
             "`eventos` e' append-only por contrato (§4) -- e e' onde a tela de administracao "
             "grava quem mudou o acesso de quem",
         ),
@@ -448,14 +592,21 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
         (
             "ser dono das tabelas auditadas",
             "SELECT bool_or(c.relowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)) "
-            "FROM pg_class c WHERE c.relname IN "
+            # `relnamespace` e' obrigatorio: sem ele uma tabela homonima noutro
+            # schema entra na conta, e `bool_or` devolve `true` dizendo que o papel e'
+            # dono da juncao auditada quando a de `public` esta' certa. Medido.
+            "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relname IN "
             "('perfil_permissoes', 'perfil_permissoes_historico', 'eventos')",
             "dono desliga a propria trigger com um ALTER TABLE, e nenhum GRANT protege contra isso",
         ),
         (
-            "receber SET em session_replication_role",
-            "SELECT EXISTS (SELECT 1 FROM pg_parameter_acl "
-            "WHERE parname = 'session_replication_role')",
+            "nenhum papel comum recebe SET em session_replication_role",
+            # `has_parameter_privilege` do papel CONECTADO, nao `EXISTS` sobre o
+            # catalogo: `pg_parameter_acl` e' COMPARTILHADO pelo cluster, e o `EXISTS`
+            # acusava concessao feita em outro banco a outro papel -- medido em
+            # 06/10/2026, saindo `exit 1` com o diagnostico errado.
+            postgres.SQL_PARAMETRO_DA_SESSAO,
             "desde o PG15 esse GRANT existe, e quem o recebe desliga TODAS as triggers da "
             "sessao -- o `ENABLE ALWAYS` da §7 do D20 e' a defesa, este e' o alarme",
         ),
@@ -465,6 +616,18 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
 def _checagens_positivas() -> list[tuple[str, str, str]]:
     """(rotulo, SQL -> bool, por que importa). `False` = o piloto QUEBRA em runtime."""
     return [
+        # PRIMEIRA de proposito: sem `USAGE` no schema, o papel nao VE as tabelas, e as
+        # dezesseis checagens seguintes degradam para "o objeto nao existe (migration
+        # pendente?)" -- diagnostico errado num banco com as migrations todas aplicadas.
+        # Quem le o relatorio de cima para baixo encontra a causa antes do sintoma.
+        (
+            "usar o schema public",
+            postgres.SQL_USAGE_NO_SCHEMA,
+            "a seccao 2 do D20 concede `USAGE ON SCHEMA public`, e sem ele o privilegio de "
+            "TABELA continua no catalogo mas o papel nao enxerga a tabela: a aplicacao morre "
+            "com `relation \"usuarios\" does not exist`, que parece migration faltando. Se "
+            "esta linha falhar, IGNORE os `PEND` abaixo e rode o `GRANT USAGE` da seccao 2",
+        ),
         (
             "gravar evento",
             "SELECT has_table_privilege(current_user, 'eventos', 'INSERT')",
@@ -475,6 +638,32 @@ def _checagens_positivas() -> list[tuple[str, str, str]]:
             "SELECT has_sequence_privilege(current_user, 'eventos_id_evento_seq', 'USAGE')",
             "GRANT INSERT na tabela NAO cobre a sequence do BIGSERIAL -- sem esta, todo "
             "INSERT morre por permissao negada, e so' em runtime",
+        ),
+        # As TRES abaixo entraram em 05/10/2026. O script de papeis concede USAGE em CINCO
+        # sequences e este comando testava DUAS (eventos e sessoes) -- entao faltar qualquer
+        # uma das outras tres passava VERDE aqui, verde no `conferir` e verde na conferencia
+        # de 12/1/3 (que le `role_table_grants`, onde privilegio de sequence nao mora).
+        #
+        # A de `usuarios` e' a pior: `SQL_CRIAR` nao passa `id_usuario`, depende do BIGSERIAL.
+        # Sem o USAGE nela, NENHUMA pessoa e' criada pela tela de administracao -- e e' esse
+        # o passo que entrega o piloto a equipe. Medido num banco de ensaio: revogando so'
+        # essa sequence, `privilegios`, `conferir` e a conferencia de linhas passaram todos.
+        (
+            "usar a sequence de usuarios",
+            "SELECT has_sequence_privilege(current_user, 'usuarios_id_usuario_seq', 'USAGE')",
+            "sem esta, criar pessoa pela tela morre em runtime: o INSERT do motor nao passa "
+            "`id_usuario` e depende do BIGSERIAL. E' a sequence que o passo 9 do repasse usa",
+        ),
+        (
+            "usar a sequence de areas_estudo",
+            "SELECT has_sequence_privilege(current_user, "
+            "'areas_estudo_id_area_estudo_seq', 'USAGE')",
+            "mesma armadilha: `GRANT INSERT` em areas_estudo nao cobre a sequence dela",
+        ),
+        (
+            "usar a sequence de contratos",
+            "SELECT has_sequence_privilege(current_user, 'contratos_id_contrato_seq', 'USAGE')",
+            "mesma armadilha: `GRANT INSERT` em contratos nao cobre a sequence dela",
         ),
         (
             "atualizar usuarios",
@@ -575,10 +764,16 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 print(f"  --    {rotulo}: o objeto nao existe (migration pendente?)")
                 continue
             pode = bool(bruto)
-            print(f"  {'FALHA' if pode else 'ok   '} {rotulo}")
+            # Uma checagem negativa pode devolver BOOLEANO ou a LISTA de quem pode. A
+            # segunda forma entrou em 07/10/2026, com a pergunta do `session_replication_role`
+            # passando a olhar os tres papeis do D20 em vez do conectado: sem o detalhe, o
+            # relatorio diria que alguem pode e nao diria quem.
+            detalhe = bruto if isinstance(bruto, str) and bruto else ""
+            print(f"  {'FALHA' if pode else 'ok   '} {rotulo}"
+                  f"{': ' + detalhe if detalhe else ''}")
             if pode:
                 print(f"        por que importa: {porque}")
-                problemas.append(rotulo)
+                problemas.append(rotulo + (': ' + detalhe if detalhe else ''))
 
         print("\n== o que este papel PRECISA poder ==")
         for rotulo, sql, porque in _checagens_positivas():
@@ -596,18 +791,437 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
                 print(f"        por que importa: {porque}")
                 problemas.append(rotulo)
 
-        print("\n== auditoria endurecida (D21) ==")
-        estado = con.execute(postgres.SQL_ESTADO_TRIGGER, ("trg_perfil_permissoes_auditoria",))
-        linha = estado.fetchone()
-        atual = linha[0] if linha else None
-        ok = atual == "A"
-        print(f"  {'ok   ' if ok else 'FALHA'} trigger de auditoria: {atual!r} (esperado 'A')")
-        if not ok:
+        # A DECIMA classe, SEXTA porta: `PUBLIC` em ACL de TABELA.
+        #
+        # A secao 3 do script faz dois `REVOKE ... FROM PUBLIC` em tabela -- ela trata
+        # `PUBLIC`-em-tabela como ameaca que precisa fechar -- e nada conferia se fechou.
+        # Medido em 07/10/2026: `GRANT DELETE ON perfil_permissoes_historico TO PUBLIC`
+        # deixa as quinze conferencias manuais do pacote IDENTICAS ao estado bom, e o `app`
+        # faz `DELETE` de 15 linhas na tabela append-only. As consultas que fecham as
+        # outras cinco portas excluiam `PUBLIC` por construcao (`a.grantee <> 0`).
+        publico_tab = con.execute(postgres.SQL_ACL_DE_PUBLIC_EM_TABELA).fetchone()[0]
+        print(
+            f"  {'ok   ' if not publico_tab else 'FALHA'} PUBLIC nao tem privilegio de tabela "
+            f"no schema{'' if not publico_tab else ': ' + publico_tab}"
+        )
+        if publico_tab:
             print(
-                "        por que importa: fora de 'A', uma sessao em session_replication_role="
-                "replica\n        escreve sem deixar rastro. E' o ALTER TABLE da secao 7 do D20."
+                "        por que importa: PUBLIC vale para TODO papel, inclusive os tres do\n"
+                "        D20 -- e nao aparece na contagem 12/1/3 nem em nenhuma consulta que\n"
+                "        filtre por nome, porque PUBLIC nao e' nome nenhum."
             )
-            problemas.append("trigger de auditoria fora de ENABLE ALWAYS")
+            problemas.append("PUBLIC tem privilegio de tabela no schema: " + publico_tab)
+        # A PORTA PRINCIPAL, que nunca teve consulta de universo derivado (07/10/2026).
+        #
+        # Medido: `GRANT SELECT ON perfil_permissoes_historico TO consultor` saia
+        # `PRIVILEGIOS OK` exit 0, com a contagem por papel IDENTICA ao estado bom, e o
+        # `consultor` lendo as 79 linhas do historico append-only com senha propria.
+        #
+        # Aqui nomear os tres e' CORRETO, e a diferenca importa: nas perguntas negativas
+        # a lista de nomes e' o furo, porque o universo e' aberto; esta pergunta e'
+        # POSITIVA sobre o conjunto provisionado -- "quem tem ACL no schema sao exatamente
+        # os tres do D20" --, e ai a lista e' a especificacao. Qualquer quarto nome e'
+        # achado por definicao. Ela fecha tambem o privilegio de SEQUENCE a quem nao
+        # devia, que as duas consultas de sequence (pelo papel conectado) nao veem.
+        alheio = con.execute(postgres.SQL_PAPEIS_COM_ACL_NO_SCHEMA).fetchone()[0]
+        print(
+            f"  {'ok   ' if not alheio else 'FALHA'} so' os papeis do D20 tem ACL no "
+            f"schema{'' if not alheio else ': ' + alheio}"
+        )
+        if alheio:
+            print(
+                "        por que importa: um GRANT direto a um papel de nome qualquer\n"
+                "        nao move a contagem por papel (ela filtra os tres nomes) e nao\n"
+                "        e' PUBLIC, entao nenhuma das outras conferencias o ve -- e o\n"
+                "        papel entra com senha propria e le o que o D20 existe para\n"
+                "        proteger."
+            )
+            problemas.append("papel alheio tem ACL no schema public: " + alheio)
+        # A r32, 1o achado: o parametro FIXADO, que `pg_parameter_acl` nao ve.
+        #
+        # Todo o instrumento conferia quem PODE trocar `session_replication_role`.
+        # Medido: `ALTER DATABASE <banco> SET session_replication_role = 'replica'`
+        # faz o `app` NASCER em replica em toda sessao nova, e ele nao consegue voltar
+        # (`SET ... = origin` -> permissao negada). As dez conferencias saiam identicas
+        # ao estado bom. O estado vive em `pg_db_role_setting`, outro catalogo.
+        fixado = con.execute(
+            postgres.SQL_PARAMETRO_FIXADO_POR_BANCO_OU_PAPEL
+        ).fetchone()[0]
+        print(
+            f"  {'ok   ' if not fixado else 'FALHA'} nenhum parametro fixado por banco "
+            f"ou papel{'' if not fixado else ': ' + fixado}"
+        )
+        if fixado:
+            print(
+                "        por que importa: parametro fixado assim entra em TODA sessao nova e\n"
+                "        nao precisa de privilegio nenhum -- quem fixa e o dono do banco, num\n"
+                "        gesto que parece configuracao. `session_replication_role=replica`\n"
+                "        desliga as triggers em modo padrao; `row_security=off` desliga RLS;\n"
+                "        `search_path` muda a resolucao de nomes. LEIA o que esta fixado."
+            )
+            problemas.append("parametro fixado por banco ou papel: " + fixado)
+        # A r32, 2o achado: grantee A MAIS no default ACL -- o privilegio do FUTURO.
+        #
+        # A checagem de `pg_default_acl` olhava se o `app` RECEBE. Medido: com
+        # `ALTER DEFAULT PRIVILEGES FOR ROLE <dono> ... TO auditoria`, o repasse fecha
+        # verde e a PROXIMA tabela nasce com `auditoria=arwdD` -- e o papel que existe
+        # para ler faz `TRUNCATE` nela. O default ACL age na proxima migration, entao
+        # nenhuma conferencia de ACL do presente pode ve-lo.
+        extra_acl = con.execute(
+            postgres.SQL_GRANTEE_A_MAIS_NO_DEFAULT_ACL
+        ).fetchone()[0]
+        print(
+            f"  {'ok   ' if not extra_acl else 'FALHA'} so' o `app` recebe default "
+            f"privileges{'' if not extra_acl else ': ' + extra_acl}"
+        )
+        if extra_acl:
+            print(
+                "        por que importa: o GRANT da secao 3 e retrato do PRESENTE; o default\n"
+                "        ACL age na PROXIMA tabela que o dono criar, isto e, na proxima\n"
+                "        migration. No instante do repasse nao existe objeto nenhum com essa\n"
+                "        ACL, e por isso nenhuma conferencia de ACL consegue ve-la."
+            )
+            problemas.append("grantee a mais no default ACL: " + extra_acl)
+        # A r32, 3o achado: RLS ligado -- a cegueira por SILENCIO.
+        #
+        # O D20 nao usa row-level security. Medido: `ENABLE ROW LEVEL SECURITY` na
+        # tabela do historico faz o `auditoria` ver 0 de 81 linhas, com
+        # `has_table_privilege` CONTINUANDO `t` -- RLS sem politica nega tudo, e nega
+        # sem erro. A tela de auditoria mostra vazio e se le como "nada aconteceu".
+        rls = con.execute(postgres.SQL_RLS_LIGADO_NO_SCHEMA).fetchone()[0]
+        print(
+            f"  {'ok   ' if not rls else 'FALHA'} nenhuma tabela do schema tem RLS "
+            f"ligado{'' if not rls else ': ' + rls}"
+        )
+        if rls:
+            print(
+                "        por que importa: RLS nega por SILENCIO, nao por erro: o SELECT devolve\n"
+                "        zero linha e `has_table_privilege` continua `t`, entao a ACL e a\n"
+                "        contagem por papel ficam intactas. Com zero politica, nega TUDO -- e\n"
+                "        auditoria cega e auditoria limpa se leem igual."
+            )
+            problemas.append("RLS ligado em tabela do schema: " + rls)
+        # A r32, 4o achado: `SECURITY DEFINER` fora da lista de nomes.
+        #
+        # O `conferir` checa `prosecdef`/`proconfig` e checa bem -- medido, degradando
+        # uma funcao esperada ele reprova. Mas filtra por uma lista FIXA de oito nomes,
+        # e funcao nova nao entra no universo. Medido: uma `SECURITY DEFINER` do dono
+        # faz o `app` ler as 81 linhas que a ACL dele proibe, com `le_historico = f` em
+        # toda conferencia. `SECURITY DEFINER` nao deixa entrada de ACL em lugar nenhum.
+        secdef = con.execute(
+            postgres.SQL_FUNCAO_SECURITY_DEFINER_ALHEIA
+        ).fetchone()[0]
+        print(
+            f"  {'ok   ' if not secdef else 'FALHA'} nenhuma funcao SECURITY DEFINER "
+            f"alem das duas do D20{'' if not secdef else ': ' + secdef}"
+        )
+        if secdef:
+            print(
+                "        por que importa: `SECURITY DEFINER` roda com o privilegio do DONO e\n"
+                "        nao cria entrada de ACL nenhuma -- e um buraco na parede, nao uma\n"
+                "        porta. Quem tiver EXECUTE alcanca o que o dono alcanca, e todas as\n"
+                "        conferencias de ACL continuam dizendo que nao alcanca."
+            )
+            problemas.append("funcao SECURITY DEFINER alheia: " + secdef)
+        # A r33, o achado mais grave: o recorte `public` que TODAS as outras partilham.
+        #
+        # Medido: com uma foreign table num schema novo apontando de volta para este
+        # banco, sob um user mapping do `app` para o DONO, o `app` fez `DELETE 77` em
+        # `perfil_permissoes_historico` -- zero linhas restantes -- e `conferir`,
+        # `privilegios` e as doze consultas do pacote ficaram TODOS no estado bom. A
+        # promessa central do D19/D20 quebrada sem que nenhuma ACL do `public` mudasse.
+        fora = con.execute(postgres.SQL_O_QUE_O_D20_NAO_CRIA).fetchone()[0]
+        print(
+            f"  {'ok   ' if not fora else 'FALHA'} nada existe neste banco alem do que "
+            f"o D20 cria{'' if not fora else ': ' + fora}"
+        )
+        if fora:
+            print(
+                "        por que importa: toda conferencia desta familia recorta\n"
+                "        `nspname = 'public'`, e o privilegio que chega de FORA do schema nao\n"
+                "        aparece em nenhuma delas. Um servidor externo pode apontar de volta\n"
+                "        para este mesmo banco com a identidade do DONO, e ai a ACL do `app`\n"
+                "        deixa de valer para o que ele alcanca por ali."
+            )
+            problemas.append("existe objeto que o D20 nao cria: " + fora)
+        # A QUINTA porta (r34): a POSSE das funcoes. Medido: com as duas funcoes de
+        # auditoria no `app`, `conferir` e `privilegios` saiam OK e as 22 conferencias
+        # manuais do pacote nao mudavam -- e o `app`, sendo dono, fazia
+        # `DROP FUNCTION ... CASCADE` nas duas, levando as DUAS triggers do D20 junto, e
+        # escrevia em `perfil_permissoes` sem deixar linha de auditoria.
+        dono_alheio = con.execute(postgres.SQL_FUNCAO_COM_DONO_ALHEIO).fetchone()[0]
+        print(
+            f"  {'ok   ' if not dono_alheio else 'FALHA'} toda funcao do schema e' do dono "
+            f"do banco{'' if not dono_alheio else ': ' + dono_alheio}"
+        )
+        if dono_alheio:
+            print(
+                "        por que importa: dono de funcao pode `DROP ... CASCADE`, e a trigger\n"
+                "        que depende dela cai junto -- medido, as DUAS do D20 de uma vez. A posse\n"
+                "        nao aparece em ACL nenhuma, entao nenhuma conferencia de privilegio a ve.\n"
+                "        O `prosecdef` o `conferir` pega; a posse, ninguem pegava."
+            )
+            problemas.append("funcao do schema com dono alheio: " + dono_alheio)
+        # A DECIMA classe, segunda porta: privilegio de COLUNA.
+        #
+        # Medido: `GRANT UPDATE (id_perfil) ON usuarios TO auditoria` deixa a contagem
+        # 12/1/3 intacta, as doze conferencias manuais do pacote identicas ao estado bom,
+        # e o `auditoria` troca o perfil de qualquer pessoa. `relacl` nao tem essa
+        # concessao -- ela vive em `pg_attribute.attacl`, que ninguem lia.
+        #
+        # Esta checagem olha OUTROS papeis, nao so' o conectado, como a da setima classe:
+        # concessao de coluna a quem nao e' dono nao faz parte do desenho do D20 em
+        # nenhuma tabela, entao qualquer linha aqui e' achado.
+        colunas = con.execute(postgres.SQL_PRIVILEGIO_DE_COLUNA).fetchone()[0]
+        print(
+            f"  {'ok   ' if not colunas else 'FALHA'} ninguem tem privilegio de COLUNA no "
+            f"schema{'' if not colunas else ': ' + colunas}"
+        )
+        if colunas:
+            print(
+                "        por que importa: privilegio de coluna nao entra em `relacl` nem na\n"
+                "        contagem 12/1/3 -- e `UPDATE` numa coluna basta para trocar o perfil de\n"
+                "        uma pessoa sem passar por `perfil_permissoes`, que e' onde a auditoria olha."
+            )
+            problemas.append("privilegio de COLUNA concedido no schema: " + colunas)
+        # A DECIMA classe (07/10/2026): PERTENCIMENTO nao cria entrada de ACL.
+        #
+        # Medido: `privilegios` saiu `PRIVILEGIOS OK`, exit 0, com `GRANT pg_write_all_data
+        # TO auditoria` (e aí o `auditoria` faz `DELETE` na tabela append-only) e com
+        # `GRANT etl TO app` (e aí o `app` faz `TRUNCATE` nas tres de referencia). Nenhuma
+        # conferencia via: nem `relacl`, nem `role_table_grants`, nem a lista nominal de
+        # `has_table_privilege` -- porque o privilegio nao esta' em ACL nenhuma, esta' na
+        # arvore de papeis.
+        #
+        # A regra e' simples e deriva tudo: o papel que conectou NAO pertence a papel
+        # nenhum. Isso fecha os papeis predefinidos que ainda nao existem, e fecha o
+        # pertencimento entre os tres do D20, sem lista de nomes perigosos.
+        pertence = con.execute(postgres.SQL_PAPEIS_DE_QUEM_CONECTOU).fetchone()[0]
+        print(
+            f"  {'ok   ' if not pertence else 'FALHA'} nenhum papel comum pertence a papel "
+            f"nenhum{'' if not pertence else ': ' + pertence}"
+        )
+        if pertence:
+            print(
+                "        por que importa: pertencimento NAO cria entrada de ACL, entao a\n"
+                "        contagem 12/1/3, a coluna de privilegios e as checagens nominais acima\n"
+                "        ficam TODAS intactas -- e o papel consegue o que o papel-mae consegue.\n"
+                "        a checagem olha `pg_auth_members` inteiro, nao so' quem tem ACL no\n"
+                "        schema: uma cadeia de dois niveis passava por fora do universo da ACL."
+            )
+            problemas.append(
+                "o papel conectado pertence a outro(s) papel(eis): " + pertence
+            )
+        # SEQUENCES, nos DOIS sentidos e sem lista (06/10/2026). As cinco checagens
+        # nomeadas acima cobrem o sentido `INSERT sem USAGE` para cinco das oito
+        # sequences; esta cobre as OITO e tambem o sentido oposto, que nenhum
+        # instrumento olhava: `USAGE` numa sequence cuja tabela o papel nao pode
+        # inserir e' privilegio excedente -- medido, `GRANT USAGE ON ALL SEQUENCES`
+        # passava `conferir`, `privilegios` e a contagem 12/1/3 os tres verdes.
+        #
+        # A regra deriva de `pg_depend`: o `USAGE` tem de CASAR com o `INSERT` na
+        # tabela que possui a sequence. Medido nas oito: casa em todas no estado bom.
+        desalinhadas = con.execute(postgres.SQL_SEQUENCES_DESALINHADAS).fetchone()[0]
+        print(
+            f"  {'ok   ' if not desalinhadas else 'FALHA'} o USAGE de cada sequence casa com o "
+            f"INSERT na tabela dela{'' if not desalinhadas else ': ' + desalinhadas}"
+        )
+        if desalinhadas:
+            print(
+                "        por que importa: `INSERT` sem `USAGE` mata a escrita em runtime, e\n"
+                "        `USAGE` sem `INSERT` e' privilegio que ninguem precisa -- e nenhuma das\n"
+                "        duas aparece na contagem 12/1/3, que le `role_table_grants`."
+            )
+            problemas.append(
+                "sequence com USAGE desalinhado do INSERT da tabela: " + desalinhadas
+            )
+        # A SETIMA classe (06/10/2026): a secao 2 endurece contra PUBLIC, e todo
+        # instrumento aqui pergunta pelo papel CONECTADO. Medido: com `CREATE` no schema
+        # para o `etl` e `TEMPORARY` no banco para `auditoria` e `etl`, tudo ficava verde
+        # e o `etl` criava tabela. Esta pergunta e' pelo UNIVERSO, nao por `current_user`.
+        abertos = con.execute(postgres.SQL_PODERES_ABERTOS_NO_SCHEMA).fetchone()[0]
+        print(
+            f"  {'ok   ' if not abertos else 'FALHA'} ninguem alem do dono cria objeto no "
+            f"schema nem tabela temporaria{'' if not abertos else ': ' + abertos}"
+        )
+        if abertos:
+            print(
+                "        por que importa: a secao 2 revoga os dois de `PUBLIC`, e revogar de\n"
+                "        PUBLIC vale para TODOS os papeis -- inclusive os que nao conectam aqui.\n"
+                "        Quem cria objeto no schema instala trigger na propria tabela; quem cria\n"
+                "        tabela temporaria tem o caminho da forja do D21. Recole a secao 2."
+            )
+            problemas.append(
+                "poder que a secao 2 revoga de PUBLIC esta aberto: " + abertos
+            )
+
+        # A SEXTA classe (06/10/2026): papel comum com poder de cluster. A secao 1 do
+        # script endurece os atributos, e nada conferia -- medido, com `etl LOGIN` e
+        # `app CREATEDB CREATEROLE` tudo ficava verde. Dono excluido por SER dono, nao por
+        # nome: sem isso a consulta acusava o proprio `reservas_owner`.
+        #
+        # O UNIVERSO deixou de ser `relacl` em 07/10/2026. Medido: `CREATE ROLE intruso
+        # LOGIN SUPERUSER` saia `PRIVILEGIOS OK` exit 0 -- a consulta perguntava por
+        # `rolsuper` corretamente e nunca via o papel, porque quem ainda nao recebeu GRANT
+        # nao esta em `relacl`. Pior: com o universo antigo, `ALTER ROLE quarto SUPERUSER`
+        # APAGAVA o achado `quarto (CREATEROLE)` que a consulta ja' tinha produzido, porque
+        # o `NOT rolsuper` da outra metade o excluia. Agora o SUPERUSER SOMA:
+        # `quarto (SUPERUSER, CREATEROLE)`.
+        poderosos = con.execute(postgres.SQL_PAPEIS_COM_PODER_DE_CLUSTER).fetchone()[0]
+        print(
+            f"  {'ok   ' if not poderosos else 'FALHA'} nenhum papel comum tem poder de "
+            f"cluster{'' if not poderosos else ': ' + poderosos}"
+        )
+        if poderosos:
+            print(
+                "        por que importa: `CREATEDB`, `CREATEROLE` e `SUPERUSER` anulam o D20 por\n"
+                "        fora -- quem cria papel se concede o que quiser, e superusuario ignora\n"
+                "        toda ACL e toda trigger. A secao 1 cria os tres SEM nenhum deles."
+            )
+            problemas.append("papel comum com poder de cluster: " + poderosos)
+
+        # DERIVADA: todo papel com privilegio de tabela/sequence no schema precisa de
+        # `USAGE` nele. A checagem positiva acima pergunta so' por `current_user`, e a
+        # secao 2 concede o `USAGE` a TRES papeis -- entao o `auditoria` podia perder o
+        # dele e tudo ficava verde, inclusive este comando. Medido em 05/10/2026.
+        sem_usage = con.execute(postgres.SQL_PAPEIS_SEM_USAGE_NO_SCHEMA).fetchone()[0]
+        _sem = [p for p in (sem_usage or "").split(",") if p]
+        print(
+            f"  {'ok   ' if not _sem else 'FALHA'} todo papel com privilegio no schema tem "
+            f"USAGE nele{'' if not _sem else ': ' + ', '.join(_sem) + ' NAO tem'}"
+        )
+        if _sem:
+            print(
+                "        por que importa: privilegio de tabela sem `USAGE` no schema e' INERTE --\n"
+                "        o catalogo diz que o papel pode, e a consulta falha com\n"
+                "        `relation ... does not exist`, que parece migration ausente. A secao 2\n"
+                "        concede o USAGE aos TRES papeis; rode o `GRANT USAGE` dela de novo."
+            )
+            problemas.append(
+                "papel com privilegio de tabela e sem USAGE no schema: "
+                + ", ".join(_sem)
+                + " (o privilegio esta' no catalogo e nao funciona)"
+            )
+
+        print("\n== auditoria endurecida (D21) ==")
+        # Antes de qualquer consulta derivada: a tabela auditada e' VISIVEL? As tres
+        # consultas abaixo derivam do catalogo por `to_regclass`, que devolve NULL em vez
+        # de levantar -- mas NULL faria as tres dizerem "nao ha trigger nenhuma", que e'
+        # diagnostico errado. Ate' 05/10/2026 elas usavam `::regclass` e ESTOURAVAM com
+        # `psycopg.errors.UndefinedTable` e traceback cru; medido com o USAGE do schema
+        # revogado. Era defeito meu, contra a disciplina do sentinela AUSENTE.
+        visivel = con.execute(
+            postgres.SQL_TABELA_AUDITADA_VISIVEL, (postgres.TABELA_AUDITADA,)
+        ).fetchone()[0]
+        if not visivel:
+            print(
+                f"  --    {postgres.TABELA_AUDITADA} nao e' visivel para este papel: "
+                "ou a migration 009 nao rodou, ou falta `USAGE` no schema `public`"
+            )
+            print(
+                "        as tres checagens do D21 ficam sem objeto. Olhe a linha "
+                "`usar o schema public` acima: se ela falhou, a causa e' o USAGE, nao a "
+                "migration."
+            )
+            problemas.append(
+                f"{postgres.TABELA_AUDITADA} invisivel: as checagens do D21 nao foram feitas "
+                "(veja `usar o schema public`)"
+            )
+            visivel = False
+        # TODAS as triggers nao-internas da tabela auditada, DERIVADAS do catalogo. Ate'
+        # 05/10/2026 isto olhava um nome unico (`trg_perfil_permissoes_auditoria`) e a secao 7
+        # endurece DUAS -- entao colar so' a primeira das duas linhas `ALTER TABLE` deixava a
+        # de TRUNCATE em 'O' e este comando dizia PRIVILEGIOS OK. Medido. E §7 colado pela
+        # metade e' exatamente o desfecho da interrupcao que o runbook antecipa.
+        linhas = con.execute(
+            postgres.SQL_TRIGGERS_AUDITORIA, (postgres.TABELA_AUDITADA,)
+        ).fetchall() if visivel else []
+        triggers = {linha[0]: linha[1] for linha in linhas}
+        if not triggers and visivel:
+            print(f"  FALHA nenhuma trigger nao-interna em {postgres.TABELA_AUDITADA}")
+            print(
+                "        por que importa: sem as triggers da 009 o historico de permissoes nao\n"
+                "        existe. Ou a migration nao esta aplicada, ou alguem as removeu."
+            )
+            problemas.append(f"nenhuma trigger de auditoria em {postgres.TABELA_AUDITADA}")
+        for nome, atual in sorted(triggers.items()):
+            ok = atual == "A"
+            print(f"  {'ok   ' if ok else 'FALHA'} trigger {nome}: {atual!r} (esperado 'A')")
+            if not ok:
+                print(
+                    "        por que importa: fora de 'A', uma sessao em session_replication_role="
+                    "replica\n        escreve sem deixar rastro. E' o ALTER TABLE da secao 7 do "
+                    "D20 -- e ela tem DUAS linhas."
+                )
+                problemas.append(f"trigger {nome} fora de ENABLE ALWAYS")
+
+        # A SEGUNDA camada da secao 2, que nenhum instrumento olhava ate' 05/10/2026.
+        # Universo derivado das triggers acima (`tgfoid`): as outras funcoes do modelo
+        # tem EXECUTE para PUBLIC legitimamente, e cobrar `false` nelas seria falso
+        # alarme.
+        acl = con.execute(
+            postgres.SQL_ACL_FUNCOES_DE_AUDITORIA, (postgres.TABELA_AUDITADA,)
+        ).fetchall() if visivel else []
+        for nome, publico_executa in acl:
+            ok = not publico_executa
+            print(
+                f"  {'ok   ' if ok else 'FALHA'} funcao {nome}: PUBLIC executa="
+                f"{bool(publico_executa)} (esperado False)"
+            )
+            if not ok:
+                print(
+                    "        por que importa: e' a segunda das duas camadas contra instalar a\n"
+                    "        trigger de auditoria em outra tabela. O `REVOKE EXECUTE` da secao 2\n"
+                    "        do D20 nao esta de pe, ou alguem devolveu o GRANT depois."
+                )
+                problemas.append(f"PUBLIC pode executar {nome}: falta o REVOKE EXECUTE da secao 2")
+
+        # A QUARTA camada: o `ALTER DEFAULT PRIVILEGES` da secao 6. Pergunta DERIVADA --
+        # o dono da tabela auditada aparece entre os papeis do `pg_default_acl`? Papel
+        # EXTRA nao reprova; o que reprova e' o dono AUSENTE, que e' o no-op do
+        # `FOR ROLE postgres`. Medido: no-op puro faz tabela futura nascer invisivel ao
+        # `app`, e `conferir`, `privilegios` e a contagem 12/1/3 passavam os tres verdes.
+        _dono = con.execute(
+            postgres.SQL_DONO_DA_TABELA_AUDITADA, (postgres.TABELA_AUDITADA,)
+        ).fetchone()[0] if visivel else None
+        _usuario = con.execute(postgres.SQL_USUARIO_ATUAL).fetchone()[0] if visivel else None
+        _acl = {
+            linha[0]: (linha[1], linha[2], linha[3])
+            for linha in (con.execute(postgres.SQL_DEFAULT_ACL_DO_DONO).fetchall() if visivel else [])
+        }
+        # UMA linha por tipo de objeto. Agregar TABLES e SEQUENCES esconde a lacuna:
+        # medido em 05/10/2026, com o grantee errado so' em TABLES e as SEQUENCES
+        # intactas, o agregado mostrava o papel certo e o comando passava verde.
+        for _tipo, _nome in sorted(postgres.TIPOS_DO_DEFAULT_ACL.items()):
+            if _tipo not in _acl:
+                if visivel:
+                    print(f"  FALHA default privileges de {_nome}: NENHUM")
+                    print(
+                        "        por que importa: sem esta linha, todo objeto desse tipo criado\n"
+                        "        daqui para frente nasce invisivel para a aplicacao. Rode a secao 6."
+                    )
+                    problemas.append(f"pg_default_acl sem linha de {_nome}: a secao 6 nao rodou")
+                continue
+            _criam, _recebem, _chega = _acl[_tipo]
+            _ok = bool(_dono) and _dono in (_criam or "").split(",") and bool(_chega)
+            print(
+                f"  {'ok   ' if _ok else 'FALHA'} default privileges de {_nome}: criados por "
+                f"{_criam or 'NENHUM'} -> concedidos a {_recebem or 'NENHUM'} "
+                f"(esperado: {_dono or '?'} -> {_usuario or '?'}, direto ou por heranca)"
+            )
+            if not _ok:
+                print(
+                    "        por que importa: o default privilege tem de ser criado PELO DONO e\n"
+                    "        chegar A QUEM CONECTA. Errar qualquer um dos dois faz todo objeto desse\n"
+                    "        tipo criado daqui para frente nascer invisivel para a aplicacao, e os\n"
+                    "        dois jeitos de errar passam a secao 6 sem um erro na tela:\n"
+                    "        `FOR ROLE postgres` (no-op silencioso se o papel existir) e\n"
+                    "        `TO <papel errado>`."
+                )
+                problemas.append(
+                    f"pg_default_acl de {_nome} errado: criados por {_criam or 'nada'}, concedidos a "
+                    f"{_recebem or 'nada'}, esperado {_dono or '?'} -> {_usuario or '?'}"
+                )
 
     print()
     if problemas:
@@ -669,6 +1283,7 @@ def cmd_expurgar(args: argparse.Namespace) -> int:
 def classificar_para_alinhar(
     linhas: list[tuple[int, str, str | None, str]],
     confere_com_a_inicial,
+    hash_e_legivel=None,
 ) -> dict[str, list[tuple[int, str]]]:
     """Separa as linhas de `SQL_ESTADO_DA_SENHA_INICIAL` nas QUATRO classes do alinhamento.
 
@@ -689,6 +1304,14 @@ def classificar_para_alinhar(
       `sem_propria_ok`   -> na inicial, e o hash JA' confere. Nada a fazer -- e' esta classe que
                             torna a contagem honesta e o comando idempotente.
       `sem_propria`      -> na inicial, e o hash NAO confere. E' a unica que se reescreve.
+
+    `hash_e_legivel` tambem entra por parametro, pelo mesmo motivo do outro -- e porque
+    `senhas` e' importado DENTRO do comando, nao no topo do modulo. Sem ele, `propria_ok`
+    sai do SQL decidido apenas pelo PREFIXO do hash, e prefixo nao diz se a pessoa entra:
+    medido em 08/10/2026, sete corrupcoes realistas preservam o `$argon2id$` e nao
+    autenticam (truncado, espaco no fim, CRLF, CR, parametros ilegiveis, sal truncado,
+    caractere do base64 trocado), e as sete caiam na contagem rotulada "hash ok". Seis sao
+    pegas aqui; a setima e' indistinguivel de "escolheu outra senha" sem a senha dela.
     """
     por_classe: dict[str, list[tuple[int, str]]] = {
         "sem_propria_ok": [],
@@ -699,6 +1322,19 @@ def classificar_para_alinhar(
     for id_usuario, login, hash_atual, classe in linhas:
         if classe == "sem_propria" and confere_com_a_inicial(hash_atual):
             classe = "sem_propria_ok"
+        # O SQL separa `propria_ok` de `propria_quebrada` pelo PREFIXO do hash, e prefixo
+        # nao diz se a pessoa entra. Medido em 08/10/2026: sete corrupcoes realistas
+        # mantem o `$argon2id$` e nao autenticam -- truncado, espaco no fim, CRLF, CR,
+        # parametros ilegiveis, sal truncado, caractere trocado --, e as sete caiam na
+        # contagem rotulada "hash ok", que o runbook do corte le' como "nada a fazer".
+        # `hash_legivel` pergunta ao Argon2 se o hash e' decodificavel, e pega seis das
+        # sete. A setima e' indistinguivel de "escolheu outra senha" sem a senha dela.
+        elif (
+            classe == "propria_ok"
+            and hash_e_legivel is not None
+            and not hash_e_legivel(hash_atual)
+        ):
+            classe = "propria_quebrada"
         por_classe[classe].append((id_usuario, login))
     return por_classe
 
@@ -758,7 +1394,7 @@ def cmd_alinhar_senhas(args: argparse.Namespace) -> int:
     # distingue "funcionou" de "nao fez nada". Mesma exigencia que o `cmd_expurgar` documenta.
     # A decisao mora em `classificar_para_alinhar`, que tem teste sem banco.
     por_classe = classificar_para_alinhar(
-        list(linhas), lambda h: senhas.verificar(inicial, h)
+        list(linhas), lambda h: senhas.verificar(inicial, h), senhas.hash_legivel
     )
 
     print(f"usuarios ativos: {len(linhas)}")

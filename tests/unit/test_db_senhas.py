@@ -275,3 +275,72 @@ def test_a_temporaria_tem_entropia_declarada() -> None:
     )
     assert bits > 50, f"entropia caiu para {bits:.1f} bits"
     assert len(senhas.gerar_temporaria()) >= senhas.MINIMO_DE_CARACTERES
+
+def test_hash_legivel_pega_as_corrupcoes_que_mantem_o_prefixo() -> None:
+    """O passo 0.c do runbook do corte classificava o hash pelo PREFIXO. Prefixo nao basta.
+
+    Medido em 08/10/2026, corrompendo um hash valido de sete maneiras realistas que todas
+    preservam o `$argon2id$`:
+
+        corrupcao                        a pessoa entra?   o 0.c dizia
+        -------------------------------  ---------------   -----------
+        truncado (colagem incompleta)    nao               hash ok
+        espaco no fim (planilha)         nao               hash ok
+        CRLF no fim (Windows)            nao               hash ok
+        CR no fim                        nao               hash ok
+        parametros ilegiveis             nao               hash ok
+        sal truncado                     nao               hash ok
+        um caractere do base64 trocado   nao               hash ok
+
+    As sete caiam na contagem rotulada "ja' escolheram a propria senha, hash ok" -- a que o
+    operador le' como "nada a fazer" -- com a pessoa trancada fora do sistema.
+
+    Duas camadas, e a segunda existe porque a primeira nao basta: o argon2 responde
+    `VerifyMismatchError` (= "hash integro, senha outra") para base64 truncado em ALGUNS
+    pontos, porque ele ainda decodifica. A FORMA -- os comprimentos dos campos contra um
+    molde gerado na hora -- distingue, porque o ultimo campo encurta.
+
+    O caractere trocado continua indetectavel, e isso nao tem conserto: a forma e' identica
+    a de um hash integro de outra senha. O sinal dele e' humano.
+    """
+    senha = "a-senha-que-a-pessoa-escolheu"
+    bom = senhas.gerar(senha)
+
+    # controles: nao pode haver falso alarme
+    assert senhas.hash_legivel(bom), "o hash bom tem de passar"
+    assert senhas.hash_legivel(senhas.gerar("outra-senha-qualquer")), (
+        "quem escolheu OUTRA senha tem hash integro -- acusa-la seria falso alarme"
+    )
+
+    for rotulo, ruim in (
+        ("truncado em 60", bom[:60]),
+        ("truncado em 70", bom[:70]),
+        ("truncado em 90", bom[:90]),
+        ("espaco no fim", bom + " "),
+        ("CRLF no fim", bom + "\r\n"),
+        ("CR no fim", bom + "\r"),
+        ("sem prefixo", "hash_de_teste_1"),
+        ("vazio", ""),
+        ("nulo", None),
+    ):
+        assert not senhas.verificar(senha, ruim or ""), (
+            f"{rotulo}: o cenario exige que a pessoa NAO entre"
+        )
+        assert not senhas.hash_legivel(ruim), f"{rotulo} tem de ser pego"
+
+
+def test_hash_legivel_nao_crava_os_comprimentos() -> None:
+    """O molde e' GERADO, nao escrito: os comprimentos dependem dos parametros do hasher.
+
+    Cravar `[0, 8, 4, 15, 22, 43]` faria esta checagem acusar todo mundo no dia em que
+    alguem mexesse em `time_cost`, `memory_cost` ou `hash_len` -- e acusar todo mundo e' o
+    mesmo que nao acusar ninguem.
+    """
+    import inspect
+
+    fonte = inspect.getsource(senhas.hash_legivel) + inspect.getsource(senhas._molde_do_hash)
+    assert "gerar(" in fonte, "o molde sai de um hash gerado na hora"
+    for cravado in ("43", "22", "15"):
+        assert cravado not in fonte.replace("maxsize=1", ""), (
+            f"comprimento {cravado} cravado: ele muda com os parametros do hasher"
+        )
