@@ -1695,6 +1695,48 @@ export interface RedeMapaConcorrente {
   preco_plano_wellhub?: number | null
   /** estúdio boutique (DEC-056): desenhado no mapa, fora das contas de concorrência */
   estudio?: boolean
+  /** O que a academia oferece, por canal. `null` = base não ingerida ("indisponível");
+   *  os dois canais nulos = academia não coletada. Ausente em payload de backend antigo. */
+  comodidades?: RedeComodidades | null
+  /** Em que agregadores a academia está, com o plano exigido. `null` por agregador = não
+   *  identificado (nunca "não aceita"). Ausente em payload de backend antigo. */
+  agregadores?: Record<'wellhub' | 'totalpass', RedePlanoNoAgregador | null>
+}
+
+export interface RedePlanoNoAgregador {
+  plano: string
+  preco: number | null
+  /** `ponto` = listagem a até 60 m do pino; `rede` = listagem da mesma rede a até 300 m */
+  casado_por: 'ponto' | 'rede'
+}
+
+/** Itens que o coletor resume em coluna própria. Valores brutos, sem acento. */
+export type RedeComodidadeItem =
+  | 'musculacao'
+  | 'luta'
+  | 'armario'
+  | 'chuveiro'
+  | 'vestiario'
+  | 'massagem'
+  | 'cadeira_massagem'
+
+/** O que UM canal declara sobre a academia. */
+export interface RedeComodidadesCanal {
+  /** `site` (canal recorrente) | `wellhub` | `totalpass` (canal agregador) */
+  fonte: string
+  nome: string
+  /** `true` = declarado; `null` = NÃO DECLARADO. Nunca `false`: a fonte não afirma ausência. */
+  itens: Record<RedeComodidadeItem, true | null>
+  /** texto cru das comodidades, como a fonte escreve */
+  lista: string[]
+  atividades: string[]
+  data_coleta: string | null
+}
+
+/** Site da rede (quem paga mensalidade) x agregador (quem chega pelo benefício). */
+export interface RedeComodidades {
+  recorrente: RedeComodidadesCanal | null
+  agregador: RedeComodidadesCanal | null
 }
 
 export interface RedePlanosEntorno {

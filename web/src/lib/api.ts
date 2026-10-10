@@ -579,6 +579,19 @@ export const api = {
       },
     ),
 
+  /** A janela da unidade no mapa em PDF: alunos, região e o que cada concorrente oferece. */
+  redeUnidadeConcorrenciaPdf: (id: string) =>
+    pedirArquivo(
+      `/api/rede/unidade/${encodeURIComponent(id)}/concorrencia.pdf`,
+      { method: 'GET' },
+      `concorrencia_${id}.pdf`,
+      {
+        falha: 'Falha ao gerar o relatório da unidade',
+        timeout: 'A geração demorou demais e o pedido foi cancelado.',
+        rede: 'Não foi possível gerar o relatório da unidade.',
+      },
+    ),
+
   /** Inteligência do RECORTE: praça × execução, rampa, sinais, retenção e o que mudou.
    *  Mesmos filtros e mesmo período da carteira. */
   redeInteligencia: (q: RedeQuery = {}) =>

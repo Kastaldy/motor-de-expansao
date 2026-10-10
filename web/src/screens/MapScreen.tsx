@@ -7,6 +7,7 @@ import BarraCamadas, { type ChaveDeCamada } from '../components/BarraCamadas'
 import BotaoInicio from '../components/BotaoInicio'
 import FichaHex from '../components/FichaHex'
 import FichaImovel from '../components/FichaImovel'
+import FichaUnidadeNoMapa from '../components/FichaUnidadeNoMapa'
 import HexMap, { type AlvoDaCaptura, type SearchPin, type ViewState } from '../components/HexMap'
 import JanelaFicha from '../components/JanelaFicha'
 import MethodologyPanel from '../components/MethodologyPanel'
@@ -28,6 +29,7 @@ import { ACC } from '../lib/imovel'
 const ACC_16 = 'rgba(221,61,151,.16)'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
 import { REDES_LIGADAS_POR_PADRAO, pinsVisiveis, subDaChaveRedes, temAlunos } from '../lib/pins'
+import { unidadeDoPin, unidadesDaUf, type UnidadeNoMapa } from '../lib/ficha-unidade'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import { rodapeDaBase, tituloEscolhaUnidade } from '../lib/rodape-base'
 import { type AlvoCaptura, alvoDoHex, pinsDoAlvo } from '../lib/captura-mapa'
@@ -35,6 +37,7 @@ import { DIMENSOES, rotuloDoHex, rotulosDosHexes } from '../lib/comparacao'
 import type { Tema } from '../lib/tema'
 import type {
   Cobertura1k,
+  RedeUnidade,
   Hex,
   MunicipioItem,
   MunicipioPayload,
@@ -126,6 +129,13 @@ export interface MapScreenProps {
   /** Avisa que a intenção acima foi consumida, para não reabrir a cada volta ao mapa. */
   onImovelAberto?: () => void
   /**
+   * Se o usuário pode ver as UNIDADES da rede aqui: o seletor de unidades do cabeçalho e a
+   * ficha da unidade em janela (2026-10-01). Os dois leem `/api/rede/*`, que o backend só
+   * serve a quem tem a aba `executiva` — quem decide é o App, pelo mesmo `telaLiberada` do
+   * resto. `false` = o cabeçalho fica como sempre foi, com o filtro "Melhores".
+   */
+  verUnidades?: boolean
+  /**
    * Publica a função de CAPTURA do mapa para quem está fora deste componente.
    *
    * O modo de ponto é irmão na árvore e usa o MESMO mapa (`App.tsx`), então ele precisa
@@ -170,6 +180,7 @@ export default function MapScreen({
   semLanding = false,
   imovelInicial = null,
   onImovelAberto,
+  verUnidades = false,
   onVerImovelNaAba,
   tema,
 }: MapScreenProps) {
@@ -378,6 +389,46 @@ export default function MapScreen({
     onImovelAberto?.()
   }, [imovelInicial, imoveisUf, abrirImovel, onImovelAberto, pin])
 
+  /*
+   * UNIDADES DA REDE NO MAPA (2026-10-01, pedido do Juan) — o seletor do cabeçalho lista as
+   * unidades do ESTADO aberto, e escolher uma (ou clicar no pin dela) leva a câmera até lá e
+   * abre a ficha em janela.
+   *
+   * A carteira é buscada UMA vez, e só para quem pode vê-la (`verUnidades`): é a rede
+   * inteira (~230 KB), e o recorte por estado é feito aqui, sem nova ida ao servidor a cada
+   * troca de UF. Falha vira lista VAZIA, não `null`: `null` é "carregando", e uma rota que
+   * negou não pode deixar o seletor esperando para sempre.
+   */
+  const [unidadesRede, setUnidadesRede] = useState<RedeUnidade[] | null>(null)
+  useEffect(() => {
+    if (!verUnidades) {
+      setUnidadesRede(null)
+      return
+    }
+    let vivo = true
+    api
+      .redeCarteira()
+      .then((c) => vivo && setUnidadesRede(c.unidades))
+      .catch(() => vivo && setUnidadesRede([]))
+    return () => {
+      vivo = false
+    }
+  }, [verUnidades])
+  const unidadesUf = useMemo(() => unidadesDaUf(unidadesRede ?? [], uf), [unidadesRede, uf])
+
+  const [unidadeAberta, setUnidadeAberta] = useState<UnidadeNoMapa | null>(null)
+  /* Porta única de abertura: o seletor e o pin do mapa passam os dois por aqui. O pin marca
+     a unidade e a câmera voa até ele com o zoom do hexágono (é o `searchPin` do `HexMap`),
+     mas o hexágono NÃO é selecionado — senão a ficha dele subiria junto com a da unidade,
+     duas janelas falando do mesmo ponto. Unidade sem coordenada abre a ficha e não voa. */
+  const abrirUnidade = useCallback((u: RedeUnidade) => {
+    setUnidadeAberta({ id: u.id, nome: u.nome })
+    if (u.lat == null || u.lng == null) return
+    setBusca('')
+    setBuscaErro(null)
+    setPin({ lat: u.lat, lng: u.lng, hexId: latLngToCell(u.lat, u.lng, 7) })
+  }, [])
+
   /* Geometria do raio: buscada SOB DEMANDA, so' quando a CAMADA 3 esta aberta. Fora do
      payload do mapa de proposito — custa ~2,4 s e ~3,9 MB na UF de SP, e quem so' passa
      pelas camadas 1, 2, 4 e 5 nao deve pagar isso. Trocar de UF/municipio zera a
@@ -502,6 +553,8 @@ export default function MapScreen({
     setModoCenario(false)
     setCenario([])
     setImovelAberto(null)
+    // A ficha da unidade fala de um ponto do território anterior, como a do imóvel.
+    setUnidadeAberta(null)
     cameraRef.current = null
   }, [uf, municipio])
 
@@ -1214,6 +1267,16 @@ export default function MapScreen({
           independentes={verIndependentes ? independentes?.itens : undefined}
           imoveis={verImoveis ? imoveisNoMapa : undefined}
           onImovel={abrirImovel}
+          /* Clique no pin da Ultra: a mesma porta do seletor. O pin não tem id, então casa
+             pelo ponto (`unidadeDoPin`); unidade fora da base da rede não abre nada. */
+          onUltra={
+            verUnidades
+              ? (p) => {
+                  const u = unidadeDoPin(p, unidadesUf)
+                  if (u) abrirUnidade(u)
+                }
+              : undefined
+          }
           cobertura1k={cobertura}
           heatmapSetores={heatmap?.setores}
           modoCalor={verCalorDensidade ? 'densidade' : verCalorRenda ? 'renda' : null}
@@ -1390,6 +1453,35 @@ export default function MapScreen({
           )}
         </div>
 
+        {/* UNIDADES no lugar do MELHORES (pedido do Juan, 2026-10-01), para quem pode ver a
+            rede: as unidades do estado aberto, por nome; escolher uma abre a ficha dela.
+            Quem não tem a aba da rede segue com o filtro de sempre — trocar para ele também
+            deixaria um seletor que só responde 403. */}
+        {verUnidades ? (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="num" style={{ font: '600 11px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
+              UNIDADES
+            </span>
+            <Select
+              label={`Unidades da Ultra em ${uf}`}
+              value={unidadeAberta?.id ?? ''}
+              onChange={(id) => {
+                const u = unidadesUf.find((x) => x.id === id)
+                if (u) abrirUnidade(u)
+              }}
+              maxWidth={190}
+              buscavel
+              placeholder={
+                unidadesRede === null
+                  ? 'Carregando…'
+                  : unidadesUf.length === 0
+                    ? `Nenhuma em ${uf}`
+                    : `Escolher (${unidadesUf.length})`
+              }
+              options={unidadesUf.map((u) => ({ value: u.id, label: u.nome }))}
+            />
+          </label>
+        ) : (
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span className="num" style={{ font: '600 11px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
             MELHORES
@@ -1407,6 +1499,7 @@ export default function MapScreen({
             ]}
           />
         </label>
+        )}
 
         {/* Manual do funil. Ao lado do MELHORES e ANTES do `flex:1`: ocupa a folga do
             meio, entao o bloco de metricas segue ancorado na borda direita.
@@ -1750,6 +1843,21 @@ export default function MapScreen({
             onVerNaAba={onVerImovelNaAba ? () => onVerImovelNaAba(imovelAberto) : undefined}
           />
         )}
+      </JanelaFicha>
+
+      {/* ---------------- Janela da UNIDADE ULTRA ----------------
+          Aberta pelo seletor UNIDADES do cabeçalho ou pelo clique no pin da unidade. À
+          DIREITA, como a do imóvel: a ficha do hexágono usa a âncora padrão, e quem clicar
+          no hexágono da unidade lê as duas lado a lado. */}
+      <JanelaFicha
+        aberta={unidadeAberta != null}
+        ancora="direita"
+        titulo={unidadeAberta?.nome ?? 'Unidade'}
+        subtitulo="Unidade Ultra"
+        onFechar={() => setUnidadeAberta(null)}
+        recuoInferior={96}
+      >
+        {unidadeAberta && <FichaUnidadeNoMapa unidadeId={unidadeAberta.id} />}
       </JanelaFicha>
 
       {/* ---------------- Janela da COMPARAÇÃO ----------------
