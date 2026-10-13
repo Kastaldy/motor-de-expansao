@@ -1,0 +1,5 @@
+# Estudo BLK-UNI (versionado com `git add -f` desde 2026-10-13). Os REGISTRO_*.txt guardam o SHA-256 dos protocolos e
+# scripts congelados ANTES de cada rodada; qualquer conversao de fim de linha muda os bytes e o SHA deixa de bater.
+# Nada nesta pasta sofre conversao: o arquivo sai do git com os mesmos bytes com que entrou. Vale so' para
+# data/analysis/ (sobrepoe o `*.py text eol=lf` da raiz aqui dentro) e nao encosta nos .enc.* de secrets/.
+* -text -eol
