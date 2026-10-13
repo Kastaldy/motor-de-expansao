@@ -210,3 +210,15 @@ PENTEST-*.md
 *-APLICAR.md
 GAP-CLICKUP-*.md
 amostra-*confidencial*.pdf
+
+# --- Artefatos de saida grandes, que um `git add -A` varre ---------------------
+# Terceiro incidente de `add -A` neste repo (2026-10-07): um job de fundo onde
+# `pytest` e `git commit` estavam separados por NEWLINE, nao por `&&`. Matei o
+# pytest, o pipe fechou, e o commit saiu levando 15 arquivos / ~37 MB, nenhum
+# deles de `src/` ou `tests/`. Desfeito com `git reset --mixed HEAD~1`.
+# So' o que e' inequivocamente SAIDA entra aqui: `data/perfil.json`,
+# `data/reports/`, os `scripts/cnefe_2022_*.py` e o `.patch` ficaram de fora de
+# proposito, porque podem ser trabalho de outra pessoa e esconde-los seria pior.
+*.npy
+data/outputs/
+Claude outputs/
