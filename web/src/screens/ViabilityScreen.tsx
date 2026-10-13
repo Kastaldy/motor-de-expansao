@@ -36,6 +36,11 @@ import {
 } from '../lib/studios'
 import { avisoDeViabilidade, sementeDaDemanda } from '../lib/viabilidade-demanda'
 import {
+  type ChaveComLimite,
+  LIMITES_DO_MOTOR,
+  foraDaFaixa,
+} from '../lib/viabilidade-limites'
+import {
   fracaoDoPercentual,
   moedaDeViabilidade,
   paraReais,
@@ -358,12 +363,42 @@ export default function ViabilityScreen({
     return i < 0 ? null : `O ticket do studio ${i + 1} precisa ser maior que zero.`
   }
 
+  /**
+   * Campos de faixa fora do que o motor aceita.
+   *
+   * `CampoNumero` DOCUMENTA que `min`/`max` nativos nunca impediram digitação (eles só
+   * valem para as setas), então `min={1}` em "Parcelas franquia" não impede digitar
+   * `0` — e foi assim que um operador levou um 422 em 2026-10-13. Barra aqui, com o
+   * nome do campo e a faixa, em vez de deixar o motor recusar.
+   *
+   * ZERO NÃO VIRA VAZIO de propósito: "vazio usa o padrão do modelo" e `0` é um número
+   * que a pessoa digitou. Reinterpretar um pelo outro em silêncio é a família de
+   * defeito que este repo mais repete.
+   */
+  function erroDeFaixa(demandaUsar: number | null): string | null {
+    const valores: Record<ChaveComLimite, number | undefined> = {
+      m2,
+      // A demanda vem por ARGUMENTO porque `calcular` aceita uma diferente da do
+      // estado (`montarPayload(demandaUsar)`): checar o estado deixaria passar
+      // exatamente o número que vai ao motor.
+      demanda: demandaUsar ?? undefined,
+      parcelas_obra: parcelasObra,
+      parcelas_franquia: parcelasFranquia,
+      prazo_equipamentos: prazoEquip,
+    }
+    for (const chave of Object.keys(LIMITES_DO_MOTOR) as ChaveComLimite[]) {
+      const fora = foraDaFaixa(valores[chave], LIMITES_DO_MOTOR[chave])
+      if (fora) return fora
+    }
+    return null
+  }
+
   async function calcular(demandaUsar: number | null = demanda) {
     // AS TRES guardas, e nenhuma substitui a outra: demanda ausente e ticket nao
     // convertivel sao deste PR; ticket de studio <= 0 e' da DEC-068. Escolher um lado
     // aqui compila limpo e reabre o buraco que o outro tapava.
     if (!ponto || demandaUsar == null || faltaTicket) return
-    const erroStudios = erroTicketsStudios()
+    const erroStudios = erroTicketsStudios() ?? erroDeFaixa(demandaUsar)
     if (erroStudios) {
       setErro(erroStudios)
       return
@@ -461,7 +496,7 @@ export default function ViabilityScreen({
     // valida os inputs dentro de um `except` e, com ticket de studio <= 0, o relatório
     // sairia SEM a seção de viabilidade e sem erro nenhum. Só vale quando o PDF leva a
     // viabilidade (`res`): sem cálculo, os tickets nem vão no pedido.
-    const erroStudios = res ? erroTicketsStudios() : null
+    const erroStudios = res ? (erroTicketsStudios() ?? erroDeFaixa(demanda)) : null
     if (erroStudios) {
       setErro(erroStudios)
       return
@@ -503,7 +538,7 @@ export default function ViabilityScreen({
   async function gerarXlsx() {
     // As tres guardas, pela mesma razao do `calcular`.
     if (!ponto || demanda == null || faltaTicket) return
-    const erroStudios = erroTicketsStudios()
+    const erroStudios = erroTicketsStudios() ?? erroDeFaixa(demanda)
     if (erroStudios) {
       setErro(erroStudios)
       return
@@ -551,9 +586,20 @@ export default function ViabilityScreen({
   /** Demanda que os quadros de leitura mostram: a do campo; se ele foi esvaziado
    *  depois de um cálculo, a que o motor usou. `null` = nada a comparar ainda. */
   const demandaExibida = demanda ?? res?.demanda_premissa ?? null
-  /** Ainda não houve cálculo e falta premissa para haver: nada de resultado na tela —
-   *  cartões vazios dizendo "não atinge" seriam lidos como veredito. */
-  const aguardandoPremissa = !res && (demanda == null || faltaTicket)
+  /**
+   * Não há resultado: NADA da área de resultado na tela.
+   *
+   * O `&&` que havia aqui (`!res && (demanda == null || faltaTicket)`) condicionava a
+   * proteção a faltar TAMBÉM a premissa — e com premissa presente e cálculo falhado
+   * acontecia exatamente o que o comentário original previa: cartões vazios dizendo
+   * "não atinge" e o selo "Requer revisão de premissas" LIDOS COMO VEREDITO. Em
+   * 2026-10-13 um operador recebeu um 422 e a tela afirmou "Fora da régua de
+   * viabilidade" sobre um ponto onde o motor nunca rodou. Veredito sem conta é
+   * resultado inventado — e um "reprovado" inventado custa mais que tela vazia.
+   */
+  const semResultado = !res
+  /** ...e falta premissa para haver. SÓ escolhe o TEXTO do painel de espera. */
+  const faltaPremissa = semResultado && (demanda == null || faltaTicket)
 
   // TUDO abaixo é LEITURA do viabilidade_payload_v1. A tela não deriva número
   // financeiro nenhum: o motor (dimensionamento/simulador.py) já entregou pronto.
@@ -1831,14 +1877,16 @@ export default function ViabilityScreen({
             </Glass>
           )}
 
-          {aguardandoPremissa && !calculando && (
+          {semResultado && !calculando && (
             <Glass style={{ padding: '13px 16px' }}>
               <Eyebrow cor="var(--warn)" dot>
-                {demanda == null && faltaTicket
-                  ? 'Demanda, ticket e aluguel não informados'
-                  : demanda == null
-                    ? 'Demanda não informada'
-                    : 'Ticket ou aluguel não informado'}
+                {!faltaPremissa
+                  ? 'Nada calculado ainda'
+                  : demanda == null && faltaTicket
+                    ? 'Demanda, ticket e aluguel não informados'
+                    : demanda == null
+                      ? 'Demanda não informada'
+                      : 'Ticket ou aluguel não informado'}
               </Eyebrow>
               <p
                 style={{
@@ -1851,6 +1899,8 @@ export default function ViabilityScreen({
                   'Esta base não tem faixa de alunos de imóveis comparáveis, então a tela não sugere um número de alunos. '}
                 {faltaTicket &&
                   'Ticket e aluguel não têm padrão nesta instância: informe os dois na moeda do imóvel. '}
+                {!faltaPremissa &&
+                  'As premissas estão preenchidas; o resultado aparece depois do cálculo. '}
                 Preencha no painel ao lado e clique em Calcular viabilidade.
               </p>
             </Glass>
@@ -1872,7 +1922,7 @@ export default function ViabilityScreen({
             </div>
           )}
 
-          {!aguardandoPremissa && (
+          {!semResultado && (
           <>
           {/* Sem demanda não há veredito: "Com 0 alunos… requer revisão" seria um
               resultado inventado. */}
