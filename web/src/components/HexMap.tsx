@@ -455,6 +455,9 @@ export interface HexMapProps {
   imoveis?: Oportunidade[]
   /** Clique num pin de imovel: o MapScreen abre a janela de detalhe dele. */
   onImovel?: (o: Oportunidade) => void
+  /** Clique num pin da ULTRA: o MapScreen abre a ficha da unidade em janela. O pin nao
+   *  carrega id — quem casa o ponto com a unidade da rede e' quem recebe o clique. */
+  onUltra?: (p: Pin) => void
   /** PROTOTIPO: area coberta pelo raio, ja recortada dentro dos hexagonos. */
   cobertura1k?: Cobertura1k | null
   /** Bloco D — poligonos de setor censitario para o mapa de calor opcional. */
@@ -524,6 +527,7 @@ export default function HexMap({
   independentes,
   imoveis,
   onImovel,
+  onUltra,
   cobertura1k,
   heatmapSetores,
   modoCalor = null,
@@ -1434,6 +1438,10 @@ export default function HexMap({
           const p = info.object as Pin | undefined
           setPinHover(p ? { titulo: 'Ultra Academia', sub: p.nome, x: info.x, y: info.y } : null)
         },
+        onClick: (info) => {
+          const p = info.object as Pin | undefined
+          if (p) onUltra?.(p)
+        },
       }),
     ]
 
@@ -1612,6 +1620,7 @@ export default function HexMap({
     independentes,
     imoveis,
     onImovel,
+    onUltra,
     cobertura1k,
     heatmapSetores,
     modoCalor,

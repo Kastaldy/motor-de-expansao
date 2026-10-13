@@ -520,3 +520,51 @@ def test_rotas_novas_ficam_atras_do_gate_da_executiva():
     for rota in ("/api/rede/inteligencia", "/api/rede/unidade/x/inteligencia", "/api/rede/unidade/x/setores"):
         assert any(rota.startswith(prefixo) and abas == frozenset({"executiva"})
                    for prefixo, abas in acesso.REGRAS_DE_ACESSO)
+
+
+# ---------------------------------------------------------------------------
+# Comodidades das concorrentes no mapa da unidade
+# ---------------------------------------------------------------------------
+
+
+def _com_concorrente_no_entorno(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Dá coordenada à unidade da fixture e uma Bluefit a ~110 m dela."""
+    pontos = pd.DataFrame([{"unidade_id": "botafogo-rj", "lat": -22.9500, "lng": -43.1800}])
+    oferta = pd.DataFrame(
+        [{"lat": -22.9510, "lng": -43.1800, "nome": "Bluefit Botafogo", "rede": "bluefit",
+          "classe": "cadeia", "fonte": "unidades"}]
+    )
+    monkeypatch.setattr(pilot, "_rede_pontos", lambda: pontos)
+    monkeypatch.setattr(pilot, "_rede_oferta", lambda: (oferta, ("concorrentes_mapeados",)))
+    monkeypatch.setattr(pilot, "_rede_fatos_agregador", lambda: None)
+    monkeypatch.setattr(pilot, "_icone_rede", lambda _slug: "")
+
+
+def test_mapa_da_unidade_sem_a_base_de_comodidades_diz_indisponivel(rede, monkeypatch):  # noqa: F811
+    _com_concorrente_no_entorno(monkeypatch)
+    (conc,) = pilot.rede_unidade_inteligencia("botafogo-rj")["mapa"]["concorrentes"]
+    # a chave EXISTE e é nula: a ficha distingue "base ausente" de "não oferece"
+    assert "comodidades" in conc and conc["comodidades"] is None
+    # e o bloco de agregadores nasce com as duas fontes, nulas: "não identificado"
+    assert conc["agregadores"] == {"totalpass": None, "wellhub": None}
+
+
+def test_mapa_da_unidade_carrega_o_que_a_concorrente_oferece_por_canal(rede, monkeypatch):  # noqa: F811
+    from motor_expansao.dashboard import comodidades_concorrentes as cc
+
+    _com_concorrente_no_entorno(monkeypatch)
+    linha = {
+        "canal": "agregador", "fonte": "totalpass", "marca": "bluefit", "nome": "Bluefit - Botafogo",
+        "uf": "RJ", "latitude": "-22.9511", "longitude": "-43.1800", **dict.fromkeys(cc.ITENS, ""),
+        "musculacao": "sim", "chuveiro": "sim", "comodidades": "Chuveiro, Armários",
+        "atividades": "Musculação", "data_coleta": "2026-09-29", "csv": "oficial",
+    }
+    cc.normalizar(pd.DataFrame([linha])).to_parquet(pilot.STAGING_DIR / cc.ARQUIVO_STAGING)
+    pilot._rede_comodidades.cache_clear()
+
+    (conc,) = pilot.rede_unidade_inteligencia("botafogo-rj")["mapa"]["concorrentes"]
+    assert conc["comodidades"]["recorrente"] is None  # o site da rede não foi coletado
+    agregador = conc["comodidades"]["agregador"]
+    assert agregador["fonte"] == "totalpass" and agregador["lista"] == ["Chuveiro", "Armários"]
+    assert agregador["itens"]["chuveiro"] is True and agregador["itens"]["luta"] is None
+    json.dumps(conc)  # o bloco tem de ser serializável como o resto do payload

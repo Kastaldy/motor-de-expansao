@@ -20,6 +20,8 @@ defeito mais caro deste projeto.
 from __future__ import annotations
 
 import csv
+import functools
+import math
 from collections.abc import Mapping, Sequence
 from io import BytesIO, StringIO
 from typing import Any
@@ -859,3 +861,502 @@ def _mes_curto(competencia: str) -> str:
     if len(partes) < 2 or not partes[1].isdigit():
         return str(competencia)
     return _MESES_PT[int(partes[1]) - 1]
+
+
+# ---------------------------------------------------------------------------
+# Concorrência da unidade (a janela da unidade no Mapa Territorial, em PDF)
+#
+# Repete o que `FichaUnidadeNoMapa.tsx` mostra, na mesma ordem: alunos, região e cada
+# academia do entorno com plano de agregador, o que oferece por canal e as modalidades.
+# Os três estados das comodidades não se confundem aqui também: base ausente
+# ("indisponíveis"), academia fora da coleta ("não coletadas") e item declarado. Item
+# ausente é "não declarado" -- o PDF nunca afirma que a academia não oferece.
+# ---------------------------------------------------------------------------
+
+#: Pontuação fora de latin-1 que a FONTE escreve (nome de academia, modalidade). Trocada
+#: por ASCII antes do `ascii_seguro`, que sozinho a transformaria em "?" sem avisar.
+_PONTUACAO_LATIN1 = str.maketrans(
+    {
+        "—": "-",
+        "–": "-",
+        "→": "->",
+        "•": "-",
+        "…": "...",
+        "“": '"',
+        "”": '"',
+        "‘": "'",
+        "’": "'",
+    }
+)
+
+# Guia de marca (Brandbook, resumo de design): teal dominante e UMA secundária por peça --
+# aqui o magenta, só no bloco de plano e preço. Título e subtítulo em CAIXA ALTA e itálico;
+# corpo em cinza-escuro, nunca preto. A fonte institucional (DIN Condensed / Arial Narrow)
+# NÃO entra: o PDF usa a fonte core do fpdf2, a única que existe igual na estação e no
+# container, e é o texto cru dela que os testes leem.
+_FUNDO_DE_CARTAO = (242, 242, 242)
+
+
+def _faixa_da_marca(pdf: UltraPDF, titulo: str, subtitulo: str) -> None:
+    """Faixa teal com o título em caixa alta e itálico, como o guia pede."""
+    pdf.set_fill_color(*ULTRA_TURQUESA)
+    pdf.rect(0, 0, PAGINA_LARGURA, 56.0, style="F")
+    pdf.set_text_color(*BRANCO)
+    pdf.set_font("Helvetica", "BI", 22)
+    pdf.set_xy(_MARGEM, 14)
+    pdf.cell(PAGINA_LARGURA - 440, 24, _texto_da_fonte(titulo.upper()))
+    pdf.set_font("Helvetica", "I", 11)
+    pdf.set_xy(PAGINA_LARGURA - 420, 22)
+    pdf.cell(420 - _MARGEM, 14, ascii_seguro(subtitulo.upper()), align="R")
+
+
+def _subtitulo_da_marca(pdf: UltraPDF, y: float, texto: str, *, x: float = 36.0) -> None:
+    """Subtítulo de seção: caixa alta, itálico, teal."""
+    pdf.set_text_color(*ULTRA_TURQUESA)
+    pdf.set_font("Helvetica", "BI", 12)
+    pdf.set_xy(x, y)
+    pdf.cell(PAGINA_LARGURA - _MARGEM - x, 14, ascii_seguro(texto.upper()))
+
+
+def _cartao_da_marca(pdf: UltraPDF, x: float, y: float, largura: float, rotulo: str, valor: str) -> None:
+    """KPI com UMA cor de destaque (teal) sobre fundo neutro."""
+    pdf.set_fill_color(*_FUNDO_DE_CARTAO)
+    pdf.rect(x, y, largura, 58.0, style="F")
+    pdf.set_text_color(110, 110, 110)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_xy(x + 10, y + 8)
+    pdf.cell(largura - 20, 11, ascii_seguro(rotulo))
+    pdf.set_text_color(*ULTRA_TURQUESA)
+    pdf.set_font("Helvetica", "B", 20)
+    pdf.set_xy(x + 10, y + 24)
+    pdf.cell(largura - 20, 22, ascii_seguro(valor))
+
+
+_ROTULO_FONTE_AGREGADOR = {"wellhub": "Wellhub", "totalpass": "TotalPass", "site": "Site da rede"}
+_MARGEM = 36.0
+_LIMITE_Y = PAGINA_ALTURA - 44.0
+
+
+def _texto_da_fonte(texto: object) -> str:
+    return ascii_seguro(str(texto or "").translate(_PONTUACAO_LATIN1))
+
+
+#: Traços dos ícones de cada item oferecido, em caixa 24x24. CÓPIA dos de
+#: `web/src/components/IconeComodidade.tsx`: a tela e o PDF mostram a mesma figura para o
+#: mesmo item (`test_icones_do_pdf_cobrem_os_itens_da_coleta` trava a cobertura).
+_TRACOS_DOS_ITENS: dict[str, tuple[str, ...]] = {
+    "musculacao": ("M6 8v8", "M3 10v4", "M18 8v8", "M21 10v4", "M6 12h12"),
+    "luta": (
+        "M7 12V8a4 4 0 0 1 8 0v1h1a2 2 0 0 1 2 2v2a4 4 0 0 1-4 4H9a2 2 0 0 1-2-2z",
+        "M7 12h8",
+        "M9 17v3h6v-3",
+    ),
+    "armario": ("M6 3h12v18H6z", "M6 12h12", "M14.5 7v1.5", "M14.5 15.5V17"),
+    "chuveiro": (
+        "M5 21V7a4 4 0 0 1 8 0",
+        "M9 10h8",
+        "M10 13v1",
+        "M13 13v1",
+        "M16 13v1",
+        "M10 17v1",
+        "M13 17v1",
+        "M16 17v1",
+    ),
+    "vestiario": ("M10 7a2 2 0 1 1 3 1.7c-.7.4-1 .9-1 1.8", "M12 10.5 3 17.5h18z"),
+    "massagem": ("M4 9a2 2 0 1 0 4 0a2 2 0 1 0-4 0", "M3 16h18", "M9 13h8a4 4 0 0 1 4 3", "M6 16v4", "M18 16v4"),
+    "cadeira_massagem": (
+        "M7 11V7a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v4",
+        "M5 11a2 2 0 0 1 2 2v2h10v-2a2 2 0 0 1 4 0v5H3v-5a2 2 0 0 1 2-2z",
+        "M6 18v2",
+        "M18 18v2",
+    ),
+}
+
+
+@functools.cache
+def _svg_do_item(item: str) -> bytes | None:
+    """O ícone do item como SVG de traço fino em teal (guia de marca: line icon monocromático)."""
+    tracos = _TRACOS_DOS_ITENS.get(item)
+    if not tracos:
+        return None
+    cor = "#{:02X}{:02X}{:02X}".format(*ULTRA_TURQUESA)
+    caminhos = "".join(f'<path d="{d}"/>' for d in tracos)
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" '
+        f'stroke="{cor}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{caminhos}</svg>'
+    ).encode()
+
+
+#: Uma linha do bloco do concorrente: (estilo, texto, itens). `itens` só existe no estilo
+#: "itens" -- os (valor bruto, rótulo) que saem com ícone, depois do `texto` (o canal).
+_Linha = tuple[str, str, tuple[tuple[str, str], ...]]
+
+
+def _linhas_do_concorrente(conc: Mapping[str, Any]) -> list[_Linha]:
+    """As linhas de UM concorrente. Sem desenhar nada."""
+    from motor_expansao.dashboard import comodidades_concorrentes as cc
+
+    linhas: list[_Linha] = []
+    planos = []
+    for fonte in ("wellhub", "totalpass"):
+        bloco = (conc.get("agregadores") or {}).get(fonte) or {}
+        if bloco.get("plano"):
+            preco = f" (R$ {_br(bloco['preco'], 2)})" if bloco.get("preco") is not None else ""
+            planos.append(f"{_ROTULO_FONTE_AGREGADOR[fonte]}: {bloco['plano']}{preco}")
+    if planos:
+        linhas.append(("destaque", " | ".join(planos), ()))
+    else:
+        linhas.append(("apoio", "Sem plano de Wellhub ou TotalPass identificado.", ()))
+
+    comodidades = conc.get("comodidades")
+    if comodidades is None:
+        linhas.append(("apoio", "Comodidades indisponíveis: a base não foi carregada neste ambiente.", ()))
+        return linhas
+    canais = [
+        ("No site da rede", comodidades.get("recorrente")),
+        ("No agregador", comodidades.get("agregador")),
+    ]
+    if not any(canal for _, canal in canais):
+        linhas.append(("apoio", "Comodidades não coletadas para esta academia.", ()))
+        return linhas
+    for titulo, canal in canais:
+        if not canal:
+            continue
+        if canal.get("fonte") != "site":
+            titulo += f" ({_ROTULO_FONTE_AGREGADOR.get(str(canal.get('fonte')), canal.get('fonte'))})"
+        itens = tuple((i, cc.ROTULO_ITEM[i]) for i in cc.ITENS if (canal.get("itens") or {}).get(i) is True)
+        if itens:
+            linhas.append(("itens", f"{titulo}:", itens))
+        else:
+            linhas.append(("normal", f"{titulo}: nenhum dos itens acompanhados foi declarado", ()))
+        # sem vazio nem repetição (a fonte repete com caixa diferente), como na tela
+        modalidades: dict[str, str] = {}
+        for bruta in canal.get("atividades") or []:
+            texto = str(bruta).strip()
+            if texto:
+                modalidades.setdefault(texto.casefold(), texto)
+        if modalidades:
+            linhas.append(("apoio", f"Modalidades: {', '.join(modalidades.values())}", ()))
+    return linhas
+
+
+def _desenhar_concorrente(
+    pdf: UltraPDF, conc: Mapping[str, Any], y: float, logo: str | None, *, medir: bool = False
+) -> float:
+    """Desenha (ou só mede) o bloco de um concorrente a partir de `y`; devolve o `y` final."""
+    x_texto = _MARGEM + 40.0
+    largura = PAGINA_LARGURA - _MARGEM - x_texto
+    nome = str(conc.get("nome") or "").strip() or str(conc.get("rede") or "").strip() or "Academia sem nome na base"
+    classe = "Rede" if conc.get("classe") == "cadeia" else "Independente"
+    distancia = f"{_br(conc.get('distancia_m'))} m" if conc.get("distancia_m") is not None else ""
+
+    if not medir:
+        if logo:
+            try:
+                pdf.image(logo, x=_MARGEM, y=y, w=30.0, h=30.0)
+            except Exception:  # noqa: BLE001  (logo ilegível não derruba o relatório)
+                logo = None
+        if not logo:
+            pdf.set_fill_color(*_FUNDO_DE_CARTAO)
+            pdf.rect(_MARGEM, y, 30.0, 30.0, style="F")
+        pdf.set_text_color(*CINZA_TEXTO)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_xy(x_texto, y)
+        pdf.cell(largura - 150, 13, _texto_da_fonte(nome))
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(110, 110, 110)
+        pdf.set_xy(PAGINA_LARGURA - _MARGEM - 150, y)
+        pdf.cell(150, 13, ascii_seguro(" - ".join(p for p in (classe, distancia) if p)), align="R")
+    cursor = y + 15.0
+    for estilo, texto, itens in _linhas_do_concorrente(conc):
+        if estilo == "itens":
+            # o canal em texto e, ao lado, cada item com a figura dele: uma linha só (são 7 itens)
+            if not medir:
+                pdf.set_font("Helvetica", "", 9.5)
+                pdf.set_text_color(*CINZA_TEXTO)
+                pdf.set_xy(x_texto, cursor)
+                rotulo_do_canal = _texto_da_fonte(texto)
+                pdf.cell(pdf.get_string_width(rotulo_do_canal) + 6, 12, rotulo_do_canal)
+                x_item = pdf.get_x()
+                for item, rotulo in itens:
+                    svg = _svg_do_item(item)
+                    if svg:
+                        pdf.image(BytesIO(svg), x=x_item, y=cursor + 0.5, w=11.0, h=11.0)
+                        x_item += 13.5
+                    limpo = ascii_seguro(rotulo)
+                    pdf.set_xy(x_item, cursor)
+                    pdf.cell(pdf.get_string_width(limpo) + 12, 12, limpo)
+                    x_item = pdf.get_x()
+            cursor += 13.0
+            continue
+        pdf.set_font("Helvetica", "B" if estilo == "destaque" else "", 8.5 if estilo == "apoio" else 9.5)
+        limpo = _texto_da_fonte(texto)
+        if medir:
+            quebradas = pdf.multi_cell(largura, 11, limpo, dry_run=True, output="LINES")
+            cursor += 11.0 * max(len(quebradas) if isinstance(quebradas, list) else 1, 1)
+            continue
+        pdf.set_text_color(
+            *{"apoio": (120, 120, 120), "destaque": ULTRA_MAGENTA}.get(estilo, CINZA_TEXTO)
+        )
+        pdf.set_xy(x_texto, cursor)
+        pdf.multi_cell(largura, 11, limpo)
+        cursor = pdf.get_y()
+    return max(cursor, y + 32.0) + 9.0
+
+
+def _mapa_do_raio(
+    pdf: UltraPDF,
+    x: float,
+    y: float,
+    lado: float,
+    mapa: Mapping[str, Any] | None,
+    concorrentes: Sequence[Mapping[str, Any]],
+    logos: Mapping[str, str] | None,
+    logo_ultra: Any = None,
+) -> None:
+    """O raio da unidade com as concorrentes nas posições reais, em escala.
+
+    ESQUEMA, e não mapa de ruas: desenhado com as primitivas do fpdf (como os gráficos deste
+    módulo), sem tile e sem rede -- a rota não pode depender de serviço externo para imprimir.
+    Projeção plana em torno da unidade, exata o bastante para 2 km. Os marcadores NÃO levam
+    número: com academias a poucos metros uma da outra eles se encavalavam e sujavam o desenho.
+    """
+    pdf.set_fill_color(*_FUNDO_DE_CARTAO)
+    pdf.rect(x, y, lado, lado, style="F")
+    cx, cy = x + lado / 2, y + lado / 2
+    lat0, lng0 = (mapa or {}).get("lat"), (mapa or {}).get("lng")
+    if lat0 is None or lng0 is None:
+        pdf.set_text_color(120, 120, 120)
+        pdf.set_font("Helvetica", "", 9.5)
+        pdf.set_xy(x, cy - 6)
+        pdf.cell(lado, 12, ascii_seguro("Sem coordenada, não há raio para desenhar."), align="C")
+        return
+    raio_m = float((mapa or {}).get("raio_m") or 2000.0)
+    raio_pt = lado / 2 - 16.0
+    escala = raio_pt / raio_m
+    metros_por_grau_lng = 111_320.0 * math.cos(math.radians(float(lat0)))
+
+    def ponto_na_pagina(lat: object, lng: object) -> tuple[float, float]:
+        dx = (float(lng) - float(lng0)) * metros_por_grau_lng  # type: ignore[arg-type]
+        dy = (float(lat) - float(lat0)) * 110_540.0  # type: ignore[arg-type]
+        return cx + dx * escala, cy - dy * escala
+
+    # o disco do raio e o anel da metade dele
+    pdf.set_fill_color(*BRANCO)
+    pdf.set_draw_color(*ULTRA_TURQUESA)
+    pdf.set_line_width(1.2)
+    pdf.ellipse(cx - raio_pt, cy - raio_pt, 2 * raio_pt, 2 * raio_pt, style="DF")
+    pdf.set_draw_color(190, 190, 190)
+    pdf.set_line_width(0.6)
+    pdf.set_dash_pattern(dash=3, gap=3)
+    pdf.ellipse(cx - raio_pt / 2, cy - raio_pt / 2, raio_pt, raio_pt, style="D")
+    pdf.set_dash_pattern()
+    pdf.set_text_color(120, 120, 120)
+    pdf.set_font("Helvetica", "", 7)
+    for fracao in (0.5, 1.0):
+        pdf.set_xy(cx - 30, cy - raio_pt * fracao - 9)
+        pdf.cell(60, 8, ascii_seguro(f"{_br(raio_m * fracao / 1000, 0 if fracao == 1.0 else 1)} km"), align="C")
+
+    # do mais longe para o mais perto: quem está colado na unidade fica por cima
+    for conc in sorted(concorrentes, key=lambda c: -(c.get("distancia_m") or 0)):
+        if conc.get("lat") is None or conc.get("lng") is None:
+            continue
+        px, py = ponto_na_pagina(conc["lat"], conc["lng"])
+        logo = (logos or {}).get(str(conc.get("rede") or "")) if conc.get("classe") == "cadeia" else None
+        if logo:
+            try:
+                pdf.image(logo, x=px - 7, y=py - 7, w=14.0, h=14.0)
+            except Exception:  # noqa: BLE001  (logo ilegível vira ponto, não derruba o relatório)
+                logo = None
+        if not logo:
+            pdf.set_fill_color(*(CINZA_TEXTO if conc.get("classe") == "cadeia" else ULTRA_MAGENTA))
+            pdf.ellipse(px - 4, py - 4, 8, 8, style="F")
+
+    for vizinha in (mapa or {}).get("ultra") or []:
+        if vizinha.get("lat") is None or vizinha.get("lng") is None:
+            continue
+        px, py = ponto_na_pagina(vizinha["lat"], vizinha["lng"])
+        if not _logo_da_ultra(pdf, logo_ultra, px, py, 14.0):
+            pdf.set_draw_color(*ULTRA_TURQUESA)
+            pdf.set_line_width(1.4)
+            pdf.ellipse(px - 5, py - 5, 10, 10, style="D")
+
+    # a unidade do relatório, por cima de tudo e MAIOR que as demais marcas
+    if not _logo_da_ultra(pdf, logo_ultra, cx, cy, 24.0):
+        pdf.set_fill_color(*ULTRA_TURQUESA)
+        pdf.set_draw_color(*BRANCO)
+        pdf.set_line_width(1.6)
+        pdf.ellipse(cx - 7, cy - 7, 14, 14, style="DF")
+    pdf.set_text_color(*ULTRA_TURQUESA)
+    pdf.set_font("Helvetica", "B", 7)
+    pdf.set_xy(cx - 30, cy + (13 if logo_ultra is not None else 8))
+    pdf.cell(60, 8, "ULTRA", align="C")
+
+
+def _logo_da_ultra(pdf: UltraPDF, logo: Any, cx: float, cy: float, lado: float) -> bool:
+    """Desenha a logo da Ultra centrada no ponto. `False` = sem logo legível: quem chama cai
+    na marca desenhada, em vez de deixar a unidade sumir do raio."""
+    if logo is None:
+        return False
+    try:
+        pdf.image(logo, x=cx - lado / 2, y=cy - lado / 2, w=lado, h=lado)
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+def _legenda_do_raio(pdf: UltraPDF, x: float, y: float, logo_ultra: Any = None) -> None:
+    """O que cada marca do desenho do raio quer dizer."""
+    itens = [
+        ("ultra", ULTRA_TURQUESA, "Unidade deste relatório (ao centro, maior)"),
+        ("ultra_menor", ULTRA_TURQUESA, "Outra unidade Ultra"),
+        ("cheio", CINZA_TEXTO, "Concorrente de rede (logo quando há)"),
+        ("cheio", ULTRA_MAGENTA, "Concorrente independente"),
+    ]
+    for i, (forma, cor, texto) in enumerate(itens):
+        linha = y + i * 14.0
+        if forma.startswith("ultra") and _logo_da_ultra(
+            pdf, logo_ultra, x + 4, linha + 5, 10.0 if forma == "ultra" else 7.0
+        ):
+            pass
+        elif forma in ("cheio", "ultra"):
+            pdf.set_fill_color(*cor)
+            pdf.ellipse(x, linha + 1, 8, 8, style="F")
+        else:
+            pdf.set_draw_color(*cor)
+            pdf.set_line_width(1.4)
+            pdf.ellipse(x, linha + 1, 8, 8, style="D")
+        pdf.set_text_color(110, 110, 110)
+        pdf.set_font("Helvetica", "", 8.5)
+        pdf.set_xy(x + 14, linha)
+        pdf.cell(300, 10, ascii_seguro(texto))
+
+
+def concorrencia_pdf(
+    ficha: Mapping[str, Any],
+    inteligencia: Mapping[str, Any],
+    ponto: Mapping[str, Any] | None = None,
+    logos: Mapping[str, str] | None = None,
+    logo_ultra: Any = None,
+) -> bytes:
+    """PDF da concorrência da unidade: o raio com as concorrentes, a região e o que cada
+    concorrente oferece.
+
+    NÃO traz aluno nem faturamento da unidade (pedido do Juan, 05/10): só o que é do
+    território e da coleta pública. Da `ficha` saem apenas o nome e a UF.
+
+    `logos` = rede -> caminho do arquivo da logo; rede sem arquivo sai com o quadro neutro.
+    `logo_ultra` = caminho ou imagem da logo da Ultra para marcar a unidade no raio; sem ela
+    a unidade sai como um ponto teal.
+    """
+    unidade = ficha.get("unidade", {})
+    nome = str(unidade.get("nome", "Unidade"))
+    mapa = inteligencia.get("mapa") or None
+    concorrentes = list((mapa or {}).get("concorrentes") or [])
+    raio = f"{_br((mapa or {}).get('raio_m', 2000) / 1000, 0)} km"
+    rodape_texto = (
+        "Planos e comodidades: coleta do GymScraping no site das redes e nas listagens do Wellhub e do "
+        "TotalPass. Item ausente é não declarado pela fonte, e não a afirmação de que a academia não oferece."
+    )
+
+    pdf = UltraPDF()
+    pdf.add_page()
+    _faixa_da_marca(pdf, nome, f"{unidade.get('uf', '')} - concorrência a {raio}")
+
+    # ---- Página 1: o raio da unidade com as concorrentes, e os números ao lado ----
+    lado_do_mapa = 420.0
+    _mapa_do_raio(pdf, _MARGEM, 72.0, lado_do_mapa, mapa, concorrentes, logos, logo_ultra)
+    x_coluna = _MARGEM + lado_do_mapa + 20.0
+    largura_coluna = PAGINA_LARGURA - _MARGEM - x_coluna
+
+    def cartoes_na_coluna(y: float, itens: Sequence[tuple[str, str]]) -> None:
+        largura = (largura_coluna - (len(itens) - 1) * 12.0) / len(itens)
+        for k, (rotulo, valor) in enumerate(itens):
+            _cartao_da_marca(pdf, x_coluna + k * (largura + 12.0), y, largura, rotulo, valor)
+
+    de_rede = sum(1 for c in concorrentes if c.get("classe") == "cadeia")
+    com_plano = sum(1 for c in concorrentes if any((c.get("agregadores") or {}).values()))
+    com_comodidades = sum(
+        1 for c in concorrentes if any((c.get("comodidades") or {}).get(canal) for canal in ("recorrente", "agregador"))
+    )
+
+    def contagem(n: int) -> str:
+        return str(n) if mapa else "-"
+
+    _subtitulo_da_marca(pdf, 72.0, f"Concorrentes a {raio}", x=x_coluna)
+    cartoes_na_coluna(
+        92.0,
+        [
+            ("Academias", contagem(len(concorrentes))),
+            ("De rede", contagem(de_rede)),
+            ("Independentes", contagem(len(concorrentes) - de_rede)),
+        ],
+    )
+    cartoes_na_coluna(
+        158.0,
+        [
+            ("Com plano de agregador identificado", contagem(com_plano)),
+            ("Com comodidades coletadas", contagem(com_comodidades)),
+        ],
+    )
+
+    censo = (ponto or {}).get("censo") or {}
+    _subtitulo_da_marca(
+        pdf, 232.0, f"Região (raio de {_br((ponto or {}).get('raio_km', 1), 1)} km)", x=x_coluna
+    )
+    if censo.get("disponivel"):
+        cartoes_na_coluna(
+            252.0,
+            [
+                ("Renda média domiciliar", f"R$ {_br(censo.get('renda_media_domiciliar'))}"),
+                ("Renda per capita", f"R$ {_br(censo.get('renda_per_capita'))}"),
+            ],
+        )
+        cartoes_na_coluna(
+            318.0,
+            [
+                ("Densidade (hab/km²)", _br(censo.get("densidade_hab_km2")) or "-"),
+                ("População", _br(censo.get("populacao")) or "-"),
+            ],
+        )
+    else:
+        pdf.set_text_color(120, 120, 120)
+        pdf.set_font("Helvetica", "", 9.5)
+        pdf.set_xy(x_coluna, 254.0)
+        pdf.multi_cell(largura_coluna, 12, _texto_da_fonte(censo.get("motivo") or "Censo do entorno indisponível."))
+    _legenda_do_raio(pdf, x_coluna, 398.0, logo_ultra)
+
+    def titulo_da_secao(y: float, continua: bool = False) -> float:
+        sufixo = " (continuação)" if continua else f" - {len(concorrentes)} a {raio}"
+        _subtitulo_da_marca(pdf, y, "Concorrentes" + (sufixo if mapa else ""))
+        return y + 22.0
+
+    # A lista começa em página própria: a primeira é do raio. Sem concorrente para listar, o
+    # aviso cabe na própria página 1, sob a legenda.
+    if concorrentes:
+        rodape(pdf, rodape_texto)
+        pdf.add_page()
+        _faixa_da_marca(pdf, nome, "Concorrentes e o que oferecem")
+        y = titulo_da_secao(72.0)
+    else:
+        y = 476.0
+    aviso = None
+    if not mapa:
+        aviso = "Sem coordenada, não há concorrência para ler."
+    elif not concorrentes:
+        aviso = f"Nenhuma academia mapeada a {raio} desta unidade."
+    if aviso:
+        pdf.set_text_color(120, 120, 120)
+        pdf.set_font("Helvetica", "", 9.5)
+        pdf.set_xy(x_coluna, y)
+        pdf.cell(largura_coluna, 12, ascii_seguro(aviso))
+    for conc in concorrentes:
+        logo = (logos or {}).get(str(conc.get("rede") or "")) if conc.get("classe") == "cadeia" else None
+        if _desenhar_concorrente(pdf, conc, y, logo, medir=True) > _LIMITE_Y:
+            rodape(pdf, rodape_texto)
+            pdf.add_page()
+            _faixa_da_marca(pdf, nome, "Concorrentes e o que oferecem")
+            y = titulo_da_secao(72.0, continua=True)
+        y = _desenhar_concorrente(pdf, conc, y, logo)
+    rodape(pdf, rodape_texto)
+    return bytes(pdf.output())

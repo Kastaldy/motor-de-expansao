@@ -674,6 +674,9 @@ export default function App() {
                ele a ficha reabriria a cada volta ao mapa, mesmo fechada de propósito. */
             imovelInicial={imovelDestino}
             onImovelAberto={() => setImovelDestino(null)}
+            /* Seletor de unidades e ficha da unidade em janela: leem `/api/rede/*`, que é
+               da aba `executiva`. Sem ela o cabeçalho do mapa fica como sempre foi. */
+            verUnidades={telaLiberada('executiva', abas)}
             /* Mesmo portão do modo de ponto: aba vetada = botão ausente, não morto. */
             onVerImovelNaAba={
               telaLiberada('oportunidades-imob', abas) ? verImovelNaAba : undefined

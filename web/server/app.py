@@ -83,6 +83,7 @@ import rede_inteligencia  # noqa: E402  (territorio, retencao, rampa e sinais da
 from motor_expansao.dashboard import (  # noqa: E402
     acesso_analytics,
     acesso_log,
+    comodidades_concorrentes,
     movimentacao_concorrencia,
     planos_agregador,
     rede_cadastro,
@@ -1946,11 +1947,15 @@ def _foto_valida(nome: Any) -> str | None:
 # tem `logo_<slug>.png`, e cada MISS custa Path.exists() + read_bytes() + base64 do PNG. Com 107
 # redes possiveis contra 64 entradas o LRU entrava em thrash entre municipios.
 @functools.lru_cache(maxsize=256)
+def _arquivo_logo_rede(rede: str) -> Path:
+    """Onde a logo da rede DEVERIA estar (o arquivo pode não existir)."""
+    from motor_expansao.dashboard.competitors import COMPETITOR_LOGO_FILES
+
+    return COMPETITORS_LOGO_DIR / (COMPETITOR_LOGO_FILES.get(rede) or f"logo_{_slug_rede(rede)}.png")
+
+
 def _icone_rede(rede: str) -> str:
-    from motor_expansao.dashboard.competitors import (
-        COMPETITOR_BRANDS,
-        COMPETITOR_LOGO_FILES,
-    )
+    from motor_expansao.dashboard.competitors import COMPETITOR_BRANDS
 
     brand = COMPETITOR_BRANDS.get(
         rede, {"short": (rede[:3].upper() or "C"), "bg": "#64748B", "fg": "#FFFFFF"}
@@ -1962,8 +1967,7 @@ def _icone_rede(rede: str) -> str:
     # "Megatlon" e as demais nunca estariam num dicionario de redes brasileiras (relato do
     # Juan, 2026-08-26). Rede sem arquivo continua caindo no quadrado com sigla, que e' a
     # resposta certa para "nao tenho a logo".
-    logo_file = COMPETITOR_LOGO_FILES.get(rede) or f"logo_{_slug_rede(rede)}.png"
-    logo_path = COMPETITORS_LOGO_DIR / logo_file
+    logo_path = _arquivo_logo_rede(rede)
     return _quadrado_logo(logo_path, str(brand["bg"])) or _quadrado_sigla(
         str(brand["short"]), str(brand["bg"]), str(brand["fg"])
     )
@@ -9158,6 +9162,60 @@ def rede_unidade_pdf(unidade_id: str, mes: str | None = None) -> Response:
     )
 
 
+@functools.lru_cache(maxsize=1)
+def _logo_ultra_para_pdf() -> Any:
+    """A logo da Ultra como imagem pronta para o PDF, ou `None` se nenhuma for legível.
+
+    Primeiro a do volume de dados (`ULTRA_DIR`), depois a que o próprio front publica. A do
+    front é AVIF com extensão `.png`: abrir pelo Pillow e converter evita entregar ao fpdf
+    um formato que ele não lê.
+    """
+    from PIL import Image
+
+    from motor_expansao.dashboard.competitors import ULTRA_LOGO_FILE
+
+    for caminho in (ULTRA_DIR / ULTRA_LOGO_FILE, _REPO_ROOT / "web" / "public" / "logo-ultra.png"):
+        try:
+            with Image.open(caminho) as imagem:
+                return imagem.convert("RGBA")
+        except Exception:  # noqa: BLE001  (arquivo ausente ou formato sem suporte: tenta o próximo)
+            continue
+    return None
+
+
+@app.get("/api/rede/unidade/{unidade_id}/concorrencia.pdf")
+def rede_unidade_concorrencia_pdf(unidade_id: str, mes: str | None = None) -> Response:
+    """A concorrência da unidade em PDF: o raio, a região e o que cada concorrente oferece.
+
+    Nenhum dado novo: são as três leituras que a janela já faz (ficha, inteligência e censo
+    do ponto), e da ficha o PDF só usa nome e UF -- aluno e faturamento NÃO saem no arquivo.
+    O censo é o único bloco que pode faltar sem derrubar o relatório: o PDF diz que não leu,
+    como a tela.
+    """
+    from motor_expansao.dashboard import rede_export
+
+    ficha = _rede_ficha_payload(unidade_id, mes)
+    inteligencia = rede_unidade_inteligencia(unidade_id, mes)
+    lat, lng = ficha.get("unidade", {}).get("lat"), ficha.get("unidade", {}).get("lng")
+    censo_do_ponto: dict[str, Any] | None = None
+    if lat is not None and lng is not None:
+        try:
+            censo_do_ponto = ponto(float(lat), float(lng))
+        except Exception as erro:  # noqa: BLE001
+            print(f"[rede] censo do ponto indisponível no PDF de concorrência ({erro})", file=sys.stderr)
+    redes = {
+        str(c["rede"])
+        for c in ((inteligencia.get("mapa") or {}).get("concorrentes") or [])
+        if c.get("classe") == "cadeia" and c.get("rede")
+    }
+    logos = {rede: str(caminho) for rede in redes if (caminho := _arquivo_logo_rede(rede)).is_file()}
+    return _anexo(
+        rede_export.concorrencia_pdf(ficha, inteligencia, censo_do_ponto, logos, _logo_ultra_para_pdf()),
+        f"concorrencia_{unidade_id}_{str(ficha.get('mes', '')).replace('-', '')}.pdf",
+        "application/pdf",
+    )
+
+
 @app.get("/api/rede/unidade/{unidade_id}")
 def rede_unidade(unidade_id: str, mes: str | None = None) -> dict[str, Any]:
     """Nível 2: a ficha da unidade — série de 12 meses, funil, coorte e recomendações."""
@@ -9375,6 +9433,12 @@ def _rede_planos(fonte: str) -> pd.DataFrame | None:
     return _rede_ler_opcional(STAGING_DIR / planos_agregador.arquivo_staging(fonte))
 
 
+@functools.lru_cache(maxsize=1)
+def _rede_comodidades() -> pd.DataFrame | None:
+    """O que cada concorrente oferece (`scripts/ingerir_comodidades_concorrentes.py`). Opcional."""
+    return _rede_ler_opcional(STAGING_DIR / comodidades_concorrentes.ARQUIVO_STAGING)
+
+
 def _rede_planos_unidade(unidade_id: str, fonte: str = "totalpass") -> dict[str, Any]:
     """O nível da Ultra no agregador (`fonte`) contra o das academias a 2 km.
 
@@ -9523,6 +9587,14 @@ def _rede_mapa_unidade(unidade_id: str) -> dict[str, Any] | None:
     concorrentes = rede_inteligencia.concorrentes_no_entorno(lat, lng, oferta, _rede_fatos_agregador())
     planos_agregador.anexar_planos(concorrentes, _rede_planos("totalpass"), fonte="totalpass")
     planos_agregador.anexar_planos(concorrentes, _rede_planos("wellhub"), fonte="wellhub")
+    # Sem a base, a chave nasce `None` em todo pino: a ficha diz "indisponível", não "não oferece".
+    comodidades_concorrentes.anexar_comodidades(concorrentes, _rede_comodidades())
+    # `agregadores` é chave NOVA: `plano`/`plano_wellhub` (que a Executiva lê) ficam como estão.
+    comodidades_concorrentes.anexar_agregadores(
+        concorrentes,
+        _rede_comodidades(),
+        {fonte: _rede_planos(fonte) for fonte in planos_agregador.FONTES},
+    )
     # O mapa continua DESENHANDO o estúdio (DEC-056: o operador vê); a marca deixa os cards
     # de concorrência tirá-lo das contas sem refazer a lista.
     estudios = _rede_redes_estudio()
