@@ -1,0 +1,19 @@
+Congelamento do protocolo_poi_uni00 v1.1 — RE-REGISTRO 2026-09-25 23:31:29 -0300
+Motivo: na 1a rodada (REGISTRO_CONGELAMENTO_run1.txt, resultado em saidas/resultado_teste_poi_run1_sem_relacoes_osm.md) a base unica NAO
+tinha sido regravada com as relacoes OSM do item 3 da §10: o 04 foi executado com '| head -1' e o SIGPIPE o matou apos a 1a UF (AC).
+Defeito de EXECUCAO, nao de especificacao: codigo e protocolo inalterados (mesmos SHA abaixo); mudam so' os artefatos de dados e o portoes.json.
+Efeito medido antes da 2a rodada: F3 muda em 1 unidade da S1 (31->32 com ancora) e 1 da S2 (384->385); portoes com as mesmas decisoes.
+sha256 e289850077d93781d3b28f0978bf38e356ef379e6300bab00250d14dcf855ef2 data/analysis/poi/protocolo_poi_uni00.md
+sha256 dc2be817a53cf5e4af953772cc764f6af93829cc77aac3fe36caeadd5881b857 data/analysis/poi/01_osm_poi.py
+sha256 63a79faa2224b92c4c8c0ac3191f483efe2d0552c4b40ae5345d4e7e026209c5 data/analysis/poi/01b_osm_relacoes.py
+sha256 de3fc6e249bf758e68d60e5a31fbfcd4367f943d9b1f322bbe5ce3c53396e4eb data/analysis/poi/01c_osm_malls_poligono.py
+sha256 209f22152b9619fdc2a3fc23ca5758eefcbe33768050d2c3fcd09808f85bd119 data/analysis/poi/02_cnefe.py
+sha256 8d7aed8687d574242a01cc6afcf875de84eb140d14c333551a84613dfadc933f data/analysis/poi/03_cnpj.py
+sha256 9ea5b91ccaeb3259ba3396a47bf5ef11fc33b2c56081c438912ec7b22885b797 data/analysis/poi/03b_regeocodificar.py
+sha256 e80ec02b47265e22e340968ca5a94e0b5d693554303827f1733bd12b32c697cb data/analysis/poi/04_base_unica.py
+sha256 284c6eb73573424f69ae3152f7bd291b55813f72245393bb4b83782d5de187b2 data/analysis/poi/05b_familias_poi.py
+sha256 e07fe2ae8d3cba6e3e231edc27b73d7fee4920c4fc26ecc89bca41ae66165387 data/analysis/poi/06_teste_poi.py
+sha256 21e24f82e9f72f9c78ac974759d9d56764cfe7bac8ec06d8dbb62222564e89f8 data/analysis/poi/saidas/portoes.json
+sha256 3891afd6313ab786cd34fcfa5efa953ac5ccea5ee096141174d596e074a231bc data/analysis/poi/saidas/familias_por_poligono.parquet
+sha256 0fdd5b9e11a5818f717b5277bfdede3206f200fcfc0be78264711e5655a856e7 data/analysis/poi/saidas/ancoras_pe15.parquet
+sha256 6bc66f69290be5a6b990ca75b81e0661ce54086923272c4e4bc62842c321d5d8 data/analysis/poi/saidas/fitness_carro10.parquet

@@ -63,3 +63,8 @@ openmaptiles-infra/**   text eol=lf
 # REGRA PRATICA: artefato do grafo vai em PR PROPRIO (`chore(graph)`), nunca junto de codigo a
 # revisar. Os quatro reindexes que entraram na main antes do #390 eram commits de 5 arquivos.
 graphify-out/graph.json -diff linguist-generated=true
+
+# Estudo BLK-UNI (data/analysis, versionado com `git add -f` desde 2026-10-13). Os REGISTRO_*.txt guardam o SHA-256
+# dos protocolos e scripts congelados ANTES de cada rodada; qualquer conversao de fim de linha muda os bytes e o SHA
+# deixa de bater. Nada aqui sofre conversao: o arquivo sai do git com os mesmos bytes com que entrou.
+data/analysis/** -text -eol

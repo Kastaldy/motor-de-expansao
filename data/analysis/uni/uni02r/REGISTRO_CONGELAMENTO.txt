@@ -1,0 +1,6 @@
+UNI-02 reforco (replica T09) — congelamento antes de rodar (2026-09-28). Revisao: propria (script pequeno; reusa as funcoes revisadas do UNI-01).
+011f2ef62ae549d62d0821df908064704d18b442b920fe56c6264c35eb11f419 *protocolo_uni02r.md
+cb93f7a1cc0cf50f98726877213cef5b3e768a798f26a855be8d21c0ff8953f6 *01_replica_t09.py
+ce7a2fa4699f168203edc2f73a8e90b44024ee6a19889f1b4c93b282fda315a3 *insumos/pacer_atributos_metro_43.parquet
+093ea5d4218f129b3b01e2ed57b01e922e3891a607b1deca592c5a74eb4c9754 *../../isocronas/multirede/perfil.parquet
+81ade0cfc0335d0eb26b5e02b4cba198dce39bf7d2a895e3c2fbf9af9a65a1be *../../../staging/alunos_reais_por_unidade.parquet

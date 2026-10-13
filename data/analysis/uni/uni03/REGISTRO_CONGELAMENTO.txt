@@ -1,0 +1,6 @@
+BLK-UNI-03 — congelamento antes de rodar (2026-09-28). Protocolo v1.1 apos revisao adversarial (11 achados incorporados).
+d75b31150fa1c4db409f123f6aec4e32ca917ac45fe54d1fe9c9131ddc9ae3d3 *uni03/protocolo_uni03.md
+fd983491472df96d3f49b6b57ca8032ae4bd09d78b56ddf950e91ffa924f1a48 *uni03/01_curva_rampa.py
+cffc6b276d930905ace08bffe1c5f0b7e15d207b5fd7389c8afd0a19ebc8fa87 *fato_unidade_mes.parquet
+c6ecef57365c1ac8730802386adb55eb5610a056665b0999746ccb12395230b8 *dim_unidade.parquet
+70fc0f60ce8b535a33f0f2a8c928d249768ddae952b519ad5166e6be5fd0da2f *../../../src/motor_expansao/dimensionamento/viabilidade_ponto.py

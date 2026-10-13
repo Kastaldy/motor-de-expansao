@@ -1,0 +1,25 @@
+REGISTRO DE CONGELAMENTO — BLK-UNI-09, faturamento em duas partes (balcao + agregador) (2026-10-05 18:15), ANTES de rodar.
+Protocolo v1.1 (§11). Aceite da turma: decisao do Felipe 'misto / nao sei' -> conferencia pelo aceite observado. Checagem seca e ensaio com ruido rodaram antes; revisao adversarial de 3 lentes aplicada.
+4aa8e0fda1e2eff93f2afcc5ced43f629d0180847b51b95defa28f0aca5f8caa *data/analysis/uni/uni09/protocolo_uni09.md
+4ddc13232dabf62a70fe0f739db8a03b6a7e33fa2736c309c399058a1d02c9c7 *data/analysis/uni/uni09/01_duas_partes.py
+999bd027263459ecf2a2eafc914ad832c0e863f2d36d385a23386e37d1ad6df9 *data/analysis/uni/previsao_2026/previsoes_turma_2026_v2_domiciliar.csv
+065b12b66165e55be73663968c528845852de78ac0e197768ee6a4790759a839 *data/analysis/uni/coleta_metragem/metragem_estimada_2026-09-29.csv
+d74fda3ef0dcac4df262ec6bb84363689d56415dc2b72bd34f6dfc584be42264 *data/validacao/KPIs_Smart_2025_02 (1).xlsx
+cffc6b276d930905ace08bffe1c5f0b7e15d207b5fd7389c8afd0a19ebc8fa87 *data/analysis/uni/fato_unidade_mes.parquet
+c6ecef57365c1ac8730802386adb55eb5610a056665b0999746ccb12395230b8 *data/analysis/uni/dim_unidade.parquet
+80eacc2807979bb64fe165dcc47d52108aad5af1f02f9ce84e0afa14fde02c0c *data/analysis/uni/LOCAL_demanda_totalpass_por_unidade.parquet
+bdc8ecbb2db49b339590ed1e8f3272b89407ad72a0286993d5150393c67120c9 *data/analysis/uni/alavancas/master_id_cadastro.csv
+ba9b3e9f9f45ebdd238b6214bb67f5c4ca4ce6ffd5677341b6e4be257f5cbbe9 *data/analysis/uni/uni02/confirmacao_por_unidade.csv
+6ae27c5e0823837acfb9f034df08cf469845a2074542bb0eaa56356842002814 *data/analysis/uni/termometro/01_termometro.py
+73777fd6cb7d39ebddec71443b298e0f504eb1436ea5527f7eb408ddb5567ddd *data/analysis/uni/manaus_volume/02_evidencias.py
+16189a95d5309184ee5cc0ed92b7adf17f7db78733600fc0d42f741bff3d6569 *data/analysis/uni/uni07/01_incerteza.py
+d4147998b23859bcb4d813d7cbd724f3a0e321cb3b0f27f7f45493db244f7c8d *data/analysis/uni/uni01/01_exploracao.py
+4b6cefdeb5c862b1ccb3a088998462943178b350200bec1c7941adbca2aaa616 *data/analysis/uni/alavancas/01_alavancas.py
+185ce2cdaf24b0e94f4c39b0b0a5222040862a0cd7e84e9d17436ebcccfc3dc9 *data/analysis/uni/simulacoes/manaus_premissas_corrigidas.py
+e61ad34fb7023b5f3c098e3628541c2d7a7f344b5ce68461872b56334a11d7cf *data/analysis/uni/uni02/01_confirmacao.py
+b28d03e95c057b3784816840fb4fb059943e3453b74d23172a4c5e809a8552b9 *data/analysis/uni/coleta_metragem/02_consolidar.py
+7320ae60a18db68d7a1ff93c2bf8953fa80f6aa15db5eb6c285fd8b435495508 *data/analysis/uni/uni05/01_comparacao.py
+d8e45927a3d4c10428d3fca47edd26de76efbe70b88c459e039d2480b9846faa *src/motor_expansao/dimensionamento/config.py
+e06af858a2b5c3bde7befc409e0ee20c88205eb52b5209c57fcad5b14e59c2c3 *src/motor_expansao/dimensionamento/simulador.py
+70fc0f60ce8b535a33f0f2a8c928d249768ddae952b519ad5166e6be5fd0da2f *src/motor_expansao/dimensionamento/viabilidade_ponto.py
+Turma 2026 congelada pelo UNI-09 em 2026-10-05 18:15 (s_TP 0.3705; k +0.01510; calB -0.06218; calA +0.11719; calT -0.02046; veredito NÃO MELHORA — na decomposição; o aceite quase não varia nas 39/18 e é testado na turma): 38593c1d2a1a1845da6d7bf62657e5f5d17e7e3f183862242b1858a0d694cf59 *previsoes_turma_2026_duas_partes.csv

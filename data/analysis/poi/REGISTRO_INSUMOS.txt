@@ -1,0 +1,14 @@
+SHA-256 dos INSUMOS lidos pelo 05b/06/07 — registrado DEPOIS do teste (pedido da verificação de completude), 2026-09-25 23:45 -0300.
+Serve para reprodução, não como prova de pré-registro. Arquivos do scratchpad da sessão foram copiados para data/analysis/poi/insumos/.
+sha256 21d7675292e956e594075fafdd4f5ce22c433a695dbb832a0e03e8728b1efe26 fech_mensal_financeiro.parquet
+sha256 ec6db1ac30e3c39df23a5e80c9f6fe23e191f5c06cbfdb34f91ff3cc830d9795 base_ultra.parquet
+sha256 81ade0cfc0335d0eb26b5e02b4cba198dce39bf7d2a895e3c2fbf9af9a65a1be alunos_reais_por_unidade.parquet
+sha256 093ea5d4218f129b3b01e2ed57b01e922e3891a607b1deca592c5a74eb4c9754 perfil.parquet
+sha256 077024e837face4c5627632c6de839ff5ebc09f5b7aea7f05a008d95cbf83e8d pontos.parquet
+sha256 b746b80db01d092335046175f9f32f9e77e03770418fe5d5813e7920a7c84032 academias_pontos.parquet
+sha256 82b72d1af36ad6d98acc77263f2279f52f3bd84c92b87bb008bd02e0be7a3344 ultra_pontos.parquet
+sha256 d74fda3ef0dcac4df262ec6bb84363689d56415dc2b72bd34f6dfc584be42264 KPIs_Smart_2025_02 (1).xlsx
+sha256 013ad23b4f3d80bdc46ad49ab0fe11313d28814134bbc11406874a963dcdcfa1 osm_malls_poligonos.parquet
+sha256 2870f668f38c31fcb11fb56677e82fbba50dce3df7c68b4f2cc831b51232e857 iso/isocronas_v2/*.parquet (concatenado, 46 arquivos)
+sha256 cc5ac8647c40d070d1302aa259404cd5f3af50fab202e28ab9a63bf3df552344 iso/atributos_v2/*.parquet (concatenado, 49 arquivos)
+sha256 54adee5c681be8e4a67d1ef9a797bb30f05041868d6f636e92c1195f2589a08f iso/multirede/atributos/*.parquet (concatenado, 348 arquivos)

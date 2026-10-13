@@ -1,0 +1,50 @@
+BLK-UNI-05B — alavancas do operador: congelamento antes de rodar (2026-09-29), depois da revisao adversarial e da checagem de datas (sem desfecho).
+4a2d213ee097f0eece3304267cd75dc03e07c29f143c22e57646f0bcee5f6ef2 *alavancas/protocolo_alavancas.md
+4b6cefdeb5c862b1ccb3a088998462943178b350200bec1c7941adbca2aaa616 *alavancas/01_alavancas.py
+cffc6b276d930905ace08bffe1c5f0b7e15d207b5fd7389c8afd0a19ebc8fa87 *fato_unidade_mes.parquet
+c6ecef57365c1ac8730802386adb55eb5610a056665b0999746ccb12395230b8 *dim_unidade.parquet
+d4147998b23859bcb4d813d7cbd724f3a0e321cb3b0f27f7f45493db244f7c8d *uni01/01_exploracao.py
+e61ad34fb7023b5f3c098e3628541c2d7a7f344b5ce68461872b56334a11d7cf *uni02/01_confirmacao.py
+acaa55425abb6ab272329444815b6136d645f317565c7b27c72d912f5c0a3504 *coleta_metragem/metragem_estimada.csv
+afbb1865631ecd97035afea271895d62a186eebb0cbfc4794d67a8301b4445ef *uni05/comparacao_por_unidade.csv
+
+Passo 2 (estudios x master, exploratorio) — congelamento antes de rodar (2026-09-29):
+17a9312ed3c19040de2c3a94a4313108fcbebb5b4d4bdb69b3af602006f8ccbb *alavancas/protocolo_estudios_master.md
+5b810327fba9688f5714950029c7f72619169b7d8914df33576172c86ff1a4eb *alavancas/02_estudios_master.py
+Passo 2: script ajustado antes da 1a execucao completa (a 1a tentativa parou no import: pyarrow.dataset bloqueado pelo Controle de Aplicativo do Windows; nenhum resultado gerado). Novo hash:
+6d303f62e115bdfa697b4e5b21a42e26ce1d53c65e2db94181314a2aae5dbe38 *alavancas/02_estudios_master.py
+
+Passo 4 (fachada x residuo do M0) — congelamento antes de rodar (2026-09-29), .venv do projeto:
+5fdd3100473c71c4497928e93236dcdcc8c1155f583372c84245035f8af06684 *alavancas/protocolo_fachada.md
+e504ade4c2390e25d389685887572554bacb2f916fed0f1e9826e83bfdcb99b4 *alavancas/04_fachada.py
+
+Passo 4 v1.1 (fachada, amostra ampliada; pedido do Felipe) — congelamento antes de rodar (2026-09-29):
+5a09f35ca3e8af810a312201368835299ee9d492aa7b625846e4f6a9b1caecd8 *alavancas/protocolo_fachada.md
+de7c70c082a1bb87db5c318f98e30ff1a2f7e55c82764075993dcc6d750e18f1 *alavancas/05_fachada_ampliada.py
+
+Fachada v1.2 (confirmacao com as notas do Juan) — escrita e congelada antes de ele preencher (2026-09-29):
+4f5d19fbd9f52e15bf539d5021f595683fd4e3edb0f5ef5b9e9e6ceebe52ab6a *alavancas/protocolo_fachada.md
+8dcd4dd531e7aa2b798b5c7b9420e18a19cfa0afa96469248e9f334bc35b46ac *alavancas/06_fachada_sem_botafogo.py
+c13edc79f4fcbf354d2f952188129e5999753f04a37b1f408696ae8fe0f36ee9 *coleta_metragem/03_planilha_fachada_juan.py
+4b791225c20a65f2994f5d3720f25fe0dfc27bdb7845340cb9c79b2e428ab457 *coleta_metragem/planilha_fachada_juan.xlsx
+04e50041df440cdcbda36752d0b22db14fef4282c1aa8bcfbf7d7fe5fe33f575 *coleta_metragem/_gabarito_nao_abrir/fachada_juan_calibracao.csv
+
+Passo 2 v1.1 (estudios x master REAL do cadastro, anonimizada) — congelamento antes de rodar (2026-09-29):
+2f31b3a14baade8886f4a46d7a3afceda1362e02f72e8d0aed0a8ef0220a071e *alavancas/protocolo_estudios_master.md
+7f117d59f700de01316eda56305ef820d23ca15962f2ee473689187e65ac5e70 *alavancas/07_estudios_master_real.py
+bdc8ecbb2db49b339590ed1e8f3272b89407ad72a0286993d5150393c67120c9 *alavancas/master_id_cadastro.csv
+
+Passo 2 v1.1.1 (2026-09-29): correcao apontada pela verificacao — chave cod_cadastro sem zfill(2) fazia 7 unidades de treino parecerem fora do cadastro (a imputacao por regional acertou as 7 por coincidencia). Sai a linha 'sem as imputadas' (media outra coisa); entram IC das diferencas, composicao e a referencia M0 + estudios. Resultado v1.1.0 preservado. Novo hash:
+0e763ec51656d512e49c839b70be0b7bd3dea804631924e41c3e22e2bad9d1f8 *alavancas/07_estudios_master_real.py
+
+Fachada v1.2 — script da confirmacao (leitura parcial com 14 notas do Juan, coluna 'Notas' criada por ele), congelado antes de rodar (2026-09-29):
+871ca7b547668df8e1a2e40df5d906aa650127a02510fbfac59767278c2967a7 *alavancas/08_fachada_juan.py
+a1658e01f4529130aafe6a9105fb0cb6286bd3fafd3ceb53e1ca6faf535340c5 *coleta_metragem/planilha_fachada_juan_2026-09-29_parcial.xlsx
+
+Fachada v1.3 (hipotese 'loja de rua') — escrita antes das notas restantes do Juan (2026-09-30):
+8003f42aa92d551c2a44b601a1d6b5b0cd31e019b1adac8e812a6b478aadf833 *alavancas/protocolo_fachada.md
+
+Fachada teste final (v1.3) — planilha completa do Juan e script, congelados ANTES de rodar (2026-09-30):
+7dc734990260a88722ac8d7eacff5b7cd9fab1afdc9da0cb1a889ccf4b88acbc *coleta_metragem/planilha_fachada_juan_2026-09-30_completa.xlsx
+38274f2949d938d3f8d397eebc7f9de5f74fc0e116a528907e4f0b9961ef3078 *alavancas/10_fachada_final.py
+dea15484a3234dd87952617ff85dc8776add23a6bbca01cf6eb58aa02bef8de0 *alavancas/protocolo_fachada.md
