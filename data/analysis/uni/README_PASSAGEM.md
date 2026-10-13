@@ -73,7 +73,20 @@ viabilidade sem DEC.
 
 O git tem só código, documentos e registros. A pasta `data/analysis/` continua no `.gitignore` (a regra protege os
 dados): para versionar um arquivo novo, use `git add -f <arquivo>`, e só para código, documento ou registro. Os dados
-ficam fora:
+ficam fora.
+
+**Pacote de dados para o Juan (13/10):** OneDrive do Felipe, `Análises - Motor de Expansão\Passagem BLK-UNI - dados\`,
+com a mesma estrutura de `data/analysis/` (385 arquivos, ~390 MB). Copie o conteúdo para `data/analysis/` do seu
+checkout. **Não estão no pacote** (peça ao Felipe, se precisar):
+- `LOCAL_*` (Base Consolidada e demanda do TotalPass): não saem da máquina do Felipe;
+- `checklist_ponto/grupos_unidades.csv`: diz o grupo do estudo de cada unidade; se chegar a um avaliador, quebra o
+  cegamento;
+- desempenho (alunos) de outras redes, das bases de validação: `alunos_reais_por_unidade.parquet` (inclui Smart Fit,
+  SkyFit, Engenharia do Corpo, Pacer e Redfit; base do laboratório Smart Fit), `isocronas/multirede/`,
+  `uni02r/insumos/`, `poi/insumos/perfil.parquet` e `pontos.parquet`, `isocronas/aproveitamento_v2/ultra_edc_alunos.csv`
+  e `isocronas/regressao/previsoes_R1.csv`.
+
+Origem de cada dado:
 
 - **Painel** (`fato_unidade_mes`, `dim_unidade`, `depara_unidade`): refeito pelos scripts `01_` a `05_`, a partir de
   `insumos_vps/` (cópias de artefatos da VPS) e `insumos_locais/` (Financeiro, `dados_academias.xlsx` e outros).
