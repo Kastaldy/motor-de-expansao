@@ -84,8 +84,10 @@ ficam fora:
   subagente ou workflow de IA, nunca git, VPS ou OneDrive. Os derivados ficam em `LOCAL_bateria_operador/` (testes do
   operador e das modalidades), que não está no git.
 - **`NAO_ABRA/`** (demanda revelada do TotalPass): só local; não abrir.
-- **Previsões congeladas** (o juiz de 2027): os CSVs ficam fora do git. Os arquivos `REGISTRO_*.txt` estão no git e
-  guardam o SHA de cada uma, que prova que a previsão não mudou depois de congelada.
+- **Previsões congeladas** (o juiz de 2027): **exceção, estão no git** por decisão do Felipe (13/10), porque hoje só
+  existiam num disco. São 12 CSVs (`previsao_2026/`, `bateria/`, `termometro/`, `uni09/`, `uni13/` a `uni15/`); o SHA
+  de cada uma está no `REGISTRO_*.txt` da pasta (o do termômetro, no `resultado_termometro.md`) e prova que a previsão
+  não mudou depois de congelada. As de operador e modalidades ficam em `LOCAL_bateria_operador/`, fora do git.
 
 ## Regras de trabalho do estudo
 
