@@ -147,6 +147,19 @@ SIM_IMPOSTO_FATURAMENTO = 0.16
 SIM_FOLHA_PCT = 0.17
 SIM_CUSTO_STUDIO = 6_000.0       # R$/mes de fopag adicional por studio extra
 SIM_STUDIOS_DEFAULT = 0          # quantidade de studios (0..3)
+# Studios com ticket PROPRIO (pedido de 2026-10-05). Antes o studio so' elevava o
+# ticket de musculacao (tabela 147/157/167/177 no front) e somava custo; agora cada
+# studio atende uma FRACAO da demanda assumida, paga o ticket dele, e o split
+# balcao/agregador (SIM_SHARE_BALCAO) vale so' sobre a demanda RESTANTE.
+# Ex.: 1.000 alunos com 2 studios -> 80 + 80 nos studios e o split sobre 840.
+# O aluno de studio tem o tratamento do balcao: churn, inadimplencia, reajuste anual
+# do ticket e anuidade (decisao do dono, 2026-10-05). Sem celula na planilha oficial.
+SIM_STUDIO_SHARE_DEMANDA = 0.08  # fracao da demanda TOTAL que cada studio atende
+SIM_STUDIOS_MAX = 3              # limite de studios por unidade
+# Ticket padrao de cada studio, na ordem (studio 1, 2, 3): a escada que a tela ja'
+# aplicava ao ticket cheio. Usado pela tela ao abrir o campo e pelo backend quando a
+# chamada traz `n_studios` sem `tickets_studios` (API antiga).
+SIM_TICKETS_STUDIO_PADRAO = (157.0, 167.0, 177.0)
 # CAPEX/OPEX: Obra (equity, parcelas sem juros) x Equipamentos (financiado). Taxa de
 # franquia PARCELADA sem juros junto da obra (ver SIM_PARCELAS_FRANQUIA_DEFAULT).
 # DIVERGENCIA DE FONTE: a planilha (simulador_estrutura.json, celula R10) e
@@ -185,7 +198,8 @@ SIM_SHARE_BALCAO = 0.69
 # ANTES: SIM_TICKET_AGREGADOR = R$82 ABSOLUTO, desacoplado do ticket cheio -> quando
 # o studio elevava o ticket de 147 para 177, o agregador degradava de 55,8% para
 # 46,3% sem ninguem ver. O comentario de viabilidade_ponto.py ja dizia "~60% do
-# ticket"; agora e o que o codigo faz.
+# ticket"; agora e o que o codigo faz. Desde 2026-10-05 o studio nao mexe mais no
+# ticket de musculacao (tem ticket proprio), entao o agregador fica estavel.
 SIM_TICKET_AGREGADOR_FATOR = 0.60
 SIM_TICKET_AGREGADOR = 82        # LEGADO: piso absoluto so p/ chamadas antigas sem ticket
 

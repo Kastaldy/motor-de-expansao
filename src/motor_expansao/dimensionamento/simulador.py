@@ -65,6 +65,7 @@ from motor_expansao.dimensionamento.config import (
     SIM_CSLL_ALIQUOTA,
     SIM_CSLL_EFETIVO,
     SIM_CUSTO_PRE_OPERACIONAL_MES,
+    SIM_CUSTO_STUDIO,
     SIM_DEVOLUCOES_PCT,
     SIM_FOLHA_PCT,
     SIM_HORIZONTE_MESES,
@@ -91,6 +92,8 @@ from motor_expansao.dimensionamento.config import (
     SIM_REAJUSTE_TICKET_AA,
     SIM_ROYALTIES_PCT,
     SIM_SHARE_BALCAO,
+    SIM_STUDIO_SHARE_DEMANDA,
+    SIM_STUDIOS_MAX,
     SIM_TAXA_FRANQUIA,
     SIM_TAXA_MINIMA_NEGOCIO_AA,
     SIM_TICKET_AGREGADOR,
@@ -117,9 +120,23 @@ class Premissas:
     serie mensal leem EXATAMENTE os mesmos numeros.
     """
 
+    # `ticket_cheio` e o TICKET DE MUSCULACAO (rotulo de usuario desde 2026-10-05): a
+    # mensalidade do plano de balcao. O nome do campo fica por ser identificador.
     ticket_cheio: float
+    # Fracao de BALCAO sobre a demanda de MUSCULACAO — a demanda total MENOS os alunos
+    # de studio. Sem studio, a demanda de musculacao e a total (comportamento historico).
     share_balcao: float = SIM_SHARE_BALCAO
     ticket_agregador_fator: float = SIM_TICKET_AGREGADOR_FATOR
+
+    # Studios: um ticket por studio (len = numero de studios, 0..SIM_STUDIOS_MAX). Cada
+    # studio atende `share_demanda_por_studio` da demanda TOTAL e paga o ticket DELE,
+    # com o tratamento do balcao (churn, inadimplencia, reajuste anual e anuidade). O
+    # custo fixo de cada um (`custo_studio_mes`) entra nos outros fixos da serie.
+    # Tupla, nao lista: a dataclass e frozen e precisa continuar comparavel/hashable.
+    # `()` reproduz o motor anterior ao centavo (travado em teste).
+    tickets_studios: tuple[float, ...] = ()
+    share_demanda_por_studio: float = SIM_STUDIO_SHARE_DEMANDA
+    custo_studio_mes: float = SIM_CUSTO_STUDIO
     personal_mes: float = SIM_PERSONAL_MES_RECEITA
     churn: float = SIM_CHURN
     inadimplencia: float = SIM_INADIMPLENCIA
@@ -188,12 +205,72 @@ class Premissas:
     # Neste modo `alunos_inicial` esta em unidades de BALCAO.
     rampa_apenas_balcao: bool = False
 
+    def __post_init__(self) -> None:
+        # Normaliza para tupla de float (chamadores podem mandar lista) e falha FECHADO
+        # no que o modelo nao sabe representar.
+        tickets = tuple(float(t) for t in self.tickets_studios)
+        object.__setattr__(self, "tickets_studios", tickets)
+        if len(tickets) > SIM_STUDIOS_MAX:
+            raise ValueError(
+                f"tickets_studios: no maximo {SIM_STUDIOS_MAX} studios (veio {len(tickets)})"
+            )
+        if any(t < 0 for t in tickets):
+            raise ValueError("tickets_studios: ticket de studio nao pode ser negativo")
+        if tickets:
+            if not 0.0 <= self.share_demanda_por_studio:
+                raise ValueError("share_demanda_por_studio nao pode ser negativo")
+            if self.share_studios_total >= 1.0:
+                raise ValueError(
+                    "studios consomem 100% da demanda: share_demanda_por_studio x n >= 1"
+                )
+            # No modo historico so o balcao rampa e o agregador entra maduro: "8% de
+            # qual total" nao tem resposta ali. Nenhum chamador legado usa studios.
+            if self.rampa_apenas_balcao:
+                raise ValueError("studios nao sao suportados com rampa_apenas_balcao=True")
+
+    # ---- Studios ----------------------------------------------------------------
+
+    @property
+    def n_studios(self) -> int:
+        return len(self.tickets_studios)
+
+    @property
+    def share_studios_total(self) -> float:
+        """Fracao da demanda TOTAL atendida pelos studios (0,08 x n)."""
+        return self.n_studios * self.share_demanda_por_studio
+
+    @property
+    def share_musculacao(self) -> float:
+        """Fracao da demanda TOTAL que sobra para musculacao (balcao + agregador)."""
+        return 1.0 - self.share_studios_total
+
+    @property
+    def custo_studios_mes(self) -> float:
+        """Custo fixo mensal de TODOS os studios (n x custo_studio_mes)."""
+        return self.n_studios * self.custo_studio_mes
+
+    def split_alunos(self, alunos_total: float) -> tuple[float, float, tuple[float, ...]]:
+        """(balcao, agregadores, alunos de cada studio) para uma demanda TOTAL.
+
+        REGUA UNICA do split: cada studio leva `share_demanda_por_studio` do total e o
+        `share_balcao` incide so sobre o RESTANTE. Ex.: 1.000 alunos com 2 studios ->
+        (579,6, 260,4, (80, 80)). Sem studio, devolve exatamente o split historico.
+        """
+        total = float(alunos_total)
+        if not self.tickets_studios:
+            return total * self.share_balcao, total * (1.0 - self.share_balcao), ()
+        por_studio = total * self.share_demanda_por_studio
+        studios = (por_studio,) * self.n_studios
+        restante = total - por_studio * self.n_studios
+        return restante * self.share_balcao, restante * (1.0 - self.share_balcao), studios
+
     @property
     def ticket_agregador(self) -> float:
-        """Ticket do agregador ACOPLADO ao ticket cheio (era R$82 absoluto).
+        """Ticket do agregador ACOPLADO ao ticket de musculacao (era R$82 absoluto).
 
         O desacoplamento era o defeito real: quando o studio elevava o ticket de
         R$147 para R$177, o agregador degradava de 55,8% para 46,3% sem ninguem ver.
+        Desde 2026-10-05 o studio tem ticket proprio e nao mexe mais neste.
         """
         if self.ticket_agregador_absoluto is not None:
             return float(self.ticket_agregador_absoluto)
@@ -205,13 +282,23 @@ class Premissas:
 
         E o numero que faltava na tela: R$147 de ticket cheio entram no caixa como
         ~R$120 por aluno. Nao inclui a receita fixa de personal (nao e por aluno).
+
+        Com studios: `share_musculacao x <mix balcao/agregador> + soma(share_por_studio
+        x ticket_studio x liquido)`, com o aluno de studio tratado como o de balcao.
         """
         s = self.share_balcao
         liq = 1.0 - self.inadimplencia
-        return (
+        musculacao = (
             s * (1.0 - self.churn) * self.ticket_cheio * liq
             + (1.0 - s) * self.ticket_agregador * liq
         )
+        if not self.tickets_studios:
+            return musculacao
+        studios = sum(
+            self.share_demanda_por_studio * (1.0 - self.churn) * t * liq
+            for t in self.tickets_studios
+        )
+        return self.share_musculacao * musculacao + studios
 
     @property
     def impostos_receita_pct(self) -> float:
@@ -270,11 +357,13 @@ class Premissas:
         return self.faturamento(demanda_total, com_anuidade=com_anuidade)
 
     def custo_fixo_total_mes(self, demanda_total: float) -> float:
-        """Custo fixo mensal SEM aluguel: outros fixos + folha dimensionada."""
-        return self.outros_fixos_mes + self.folha_fixa_mes(demanda_total)
+        """Custo fixo mensal SEM aluguel: outros fixos + studios + folha dimensionada."""
+        return (
+            self.outros_fixos_mes + self.custo_studios_mes + self.folha_fixa_mes(demanda_total)
+        )
 
     def contribuicao_por_aluno_total(self) -> float:
-        """Quanto cada aluno TOTAL adiciona ao EBITDA (mix balcao/agregador)."""
+        """Quanto cada aluno TOTAL adiciona ao EBITDA (mix studios/balcao/agregador)."""
         return self.ticket_blended * self.fator_receita_para_ebitda
 
     @property
@@ -302,24 +391,46 @@ class Premissas:
         """Receita mensal por aluno TOTAL em regime pleno (mensalidade + anuidade).
 
         E o numero que o break-even precisa: em regime pleno a anuidade ja entrou.
+        Com studios, a fracao que paga anuidade e balcao + studios (o aluno de studio
+        tem o tratamento do balcao).
         """
-        extra = self.anuidade_por_aluno_balcao_mes * (
-            self.share_balcao if self.anuidade_apenas_balcao else 1.0
-        )
-        return self.ticket_blended + extra
+        if self.anuidade_apenas_balcao:
+            fracao = self.share_balcao
+            if self.tickets_studios:
+                fracao = self.share_musculacao * self.share_balcao + self.share_studios_total
+        else:
+            fracao = 1.0
+        return self.ticket_blended + self.anuidade_por_aluno_balcao_mes * fracao
 
     def faturamento(
         self, alunos_total: float, *, fator_ticket: float = 1.0, com_anuidade: bool = False
     ) -> float:
         """Faturamento bruto para uma demanda TOTAL de alunos (mix padrao)."""
-        s = self.share_balcao
+        bal, agr, studios = self.split_alunos(alunos_total)
         return self.faturamento_por_fonte(
-            alunos_total * s, alunos_total * (1.0 - s),
+            bal, agr, alunos_studios=studios,
             fator_ticket=fator_ticket, com_anuidade=com_anuidade,
+        )
+
+    def receita_studios(
+        self, alunos_studios: tuple[float, ...] | list[float], *, fator_ticket: float = 1.0
+    ) -> float:
+        """Mensalidades dos studios: cada um a seu ticket, tratado como o balcao."""
+        if not alunos_studios:
+            return 0.0
+        if len(alunos_studios) != self.n_studios:
+            raise ValueError(
+                f"alunos_studios tem {len(alunos_studios)} itens; premissa tem {self.n_studios}"
+            )
+        liq = 1.0 - self.inadimplencia
+        return sum(
+            a * (1.0 - self.churn) * t * fator_ticket * liq
+            for a, t in zip(alunos_studios, self.tickets_studios, strict=True)
         )
 
     def faturamento_por_fonte(
         self, alunos_balcao: float, alunos_agregadores: float, *,
+        alunos_studios: tuple[float, ...] | list[float] = (),
         fator_ticket: float = 1.0, com_anuidade: bool = False,
     ) -> float:
         """Faturamento bruto a partir das contagens EXPLICITAS de cada fonte."""
@@ -329,14 +440,24 @@ class Premissas:
             + alunos_agregadores * self.ticket_agregador * fator_ticket * liq
             + self.personal_mes
         )
+        if alunos_studios:
+            base += self.receita_studios(alunos_studios, fator_ticket=fator_ticket)
         return base + (
-            self.receita_anuidade(alunos_balcao, alunos_agregadores) if com_anuidade else 0.0
+            self.receita_anuidade(alunos_balcao, alunos_agregadores, alunos_studios)
+            if com_anuidade else 0.0
         )
 
-    def receita_anuidade(self, alunos_balcao: float, alunos_agregadores: float) -> float:
-        """Receita de anuidade do mes (0 antes do mes de inicio — ver a serie)."""
-        base = alunos_balcao if self.anuidade_apenas_balcao else (
-            alunos_balcao + alunos_agregadores
+    def receita_anuidade(
+        self, alunos_balcao: float, alunos_agregadores: float,
+        alunos_studios: tuple[float, ...] | list[float] = (),
+    ) -> float:
+        """Receita de anuidade do mes (0 antes do mes de inicio — ver a serie).
+
+        O aluno de studio paga anuidade como o de balcao (decisao de 2026-10-05).
+        """
+        n_studio = float(sum(alunos_studios)) if alunos_studios else 0.0
+        base = (alunos_balcao + n_studio) if self.anuidade_apenas_balcao else (
+            alunos_balcao + alunos_agregadores + n_studio
         )
         return base * self.anuidade_por_aluno_balcao_mes
 
@@ -380,6 +501,13 @@ class ViabilidadeResult:
     # mes; recalcula-lo era o que fazia o waterfall divergir do card no mesmo slide.
     receita_anuidade_mensal: float = 0.0
     mes_referencia_steady: int = 0
+
+    # Studios no mes de steady (lidos da serie, nunca recalculados): alunos somados de
+    # todos os studios, mensalidades deles e o custo fixo deles (ja dentro de
+    # `custos_fixos_mensal`). Zero sem studio.
+    alunos_studios_steady: float = 0.0
+    receita_studios_mensal: float = 0.0
+    custo_studios_mensal: float = 0.0
 
     # parcelas do custo operacional (antes invisiveis fora do motor)
     custos_op_mensal: float = 0.0
@@ -582,9 +710,11 @@ def break_even_alunos(
 
 _CAMPOS_LINHA = (
     "mes", "mes_contrato", "fase", "alunos_total", "alunos_balcao", "alunos_agregadores",
-    "faturamento_mensal", "receita_anuidade",
+    "alunos_studios",
+    "faturamento_mensal", "receita_anuidade", "receita_studios",
     "deducoes", "receita_liquida", "impostos", "receita_pos_impostos",
-    "custos_variaveis", "folha", "outros_fixos", "aluguel", "custo_pre_operacional",
+    "custos_variaveis", "folha", "outros_fixos", "custo_studios", "aluguel",
+    "custo_pre_operacional",
     "custos_op", "ebitda_mensal", "ir_csll", "juros", "amortizacao", "pmt",
     "investimento", "fcf_mensal", "fcf_acumulado",
 )
@@ -684,22 +814,30 @@ def gerar_serie_mensal_completa(
             bal = alunos_inicial + (bal_maturidade - alunos_inicial) * frac
             agr = agr_maturidade
             alunos_total = bal + agr
+            studios: tuple[float, ...] = ()
         else:
+            # Os studios rampam junto com o total (8% de uma demanda que rampa) e o split
+            # balcao/agregador vale so' sobre o restante — `split_alunos` e a regua unica.
             alunos_total = alunos_inicial + (float(demanda_total) - alunos_inicial) * frac
-            bal = alunos_total * p.share_balcao
-            agr = alunos_total * (1.0 - p.share_balcao)
+            bal, agr, studios = p.split_alunos(alunos_total)
 
         # A anuidade so existe a partir do mes de aniversario da 1a safra.
         com_anuidade = p.anuidade_valor > 0 and t >= max(int(p.anuidade_mes_inicio), 1)
-        fat = p.faturamento_por_fonte(bal, agr, fator_ticket=f_ticket, com_anuidade=com_anuidade)
-        receita_anuidade = p.receita_anuidade(bal, agr) if com_anuidade else 0.0
+        fat = p.faturamento_por_fonte(
+            bal, agr, alunos_studios=studios, fator_ticket=f_ticket, com_anuidade=com_anuidade
+        )
+        receita_anuidade = p.receita_anuidade(bal, agr, studios) if com_anuidade else 0.0
+        receita_studios = p.receita_studios(studios, fator_ticket=f_ticket)
         ded = fat * p.devolucoes_pct
         rl = fat - ded
         imp = rl * p.impostos_receita_pct
         rpi = rl - imp
         cvar = rl * p.custo_variavel_pct
         folha = folha_base * f_custos
-        outros = p.outros_fixos_mes * f_custos
+        # O custo dos studios e' outro fixo que reajusta com os demais; `custo_studios`
+        # fica tambem em coluna propria para a planilha e a tela o rotularem.
+        custo_studios = p.custo_studios_mes * f_custos
+        outros = (p.outros_fixos_mes + p.custo_studios_mes) * f_custos
         aluguel_m = 0.0 if mes_contrato <= carencia else p.aluguel_mes * f_aluguel
         custos_op = cvar + folha + outros + aluguel_m
         ebitda = rpi - custos_op
@@ -727,10 +865,13 @@ def gerar_serie_mensal_completa(
                 "alunos_total": alunos_total,
                 "alunos_balcao": bal,
                 "alunos_agregadores": agr,
+                "alunos_studios": float(sum(studios)),
                 "faturamento_mensal": fat, "receita_anuidade": receita_anuidade,
+                "receita_studios": receita_studios,
                 "deducoes": ded, "receita_liquida": rl,
                 "impostos": imp, "receita_pos_impostos": rpi,
                 "custos_variaveis": cvar, "folha": folha, "outros_fixos": outros,
+                "custo_studios": custo_studios,
                 "aluguel": aluguel_m, "custo_pre_operacional": 0.0,
                 "custos_op": custos_op, "ebitda_mensal": ebitda, "ir_csll": ir,
                 "juros": juros, "amortizacao": amort, "pmt": pmt_t,
@@ -849,6 +990,9 @@ def simular(
         margem_ebitda_pct=float(margem),
         receita_anuidade_mensal=float(steady.get("receita_anuidade", 0.0) or 0.0),
         mes_referencia_steady=int(steady["mes"]),
+        alunos_studios_steady=float(steady.get("alunos_studios", 0.0) or 0.0),
+        receita_studios_mensal=float(steady.get("receita_studios", 0.0) or 0.0),
+        custo_studios_mensal=float(steady.get("custo_studios", 0.0) or 0.0),
         payback_meses=float(payback),
         roic_anual=float(retorno_desalav),
         lucro_liquido_mensal=float(resultado_desalav),

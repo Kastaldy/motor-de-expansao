@@ -96,6 +96,17 @@ continua ligado. Falha da etapa NUNCA derruba o download (a planilha sai como
 antes, so com formulas); kill-switch: env `MOTOR_SIMULADOR_XLSX_SEM_CACHE=1`
 (a suite liga por default para nao pagar ~9s por geracao).
 
+STUDIOS COM TICKET PROPRIO (pedido de 2026-10-05, espelhado do motor): o antigo
+"ticket cheio" virou TICKET DE MUSCULACAO e nao e mais afetado pelo numero de
+studios. Cada studio (0..3) atende `share_demanda_por_studio` (8%) da demanda TOTAL e
+paga o ticket DELE, com o tratamento do balcao (churn, inadimplencia, reajuste anual
+e anuidade); o split balcao/agregador vale so' sobre a demanda RESTANTE. A aba
+Premissas tem SEMPRE os 3 slots de ticket (estrutura fixa: mudar o numero de studios
+dentro do Excel liga/desliga os slots por formula, sem criar linha). O custo fixo de
+cada studio entra como linha propria DENTRO dos outros fixos da DRE. No modo de rampa
+"apenas balcao" o motor nao suporta studios; a planilha zera os alunos de studio
+nesse modo (nota de celula no modo da rampa).
+
 READ-ONLY sobre o M1: nao recalcula score_priorizacao, pesos nem artefatos
 (DEC-001/DEC-008/DEC-009). Sem I/O de disco de ARTEFATO: o resultado e BytesIO;
 a unica excecao e um arquivo TEMPORARIO no temp do sistema (a lib `formulas` so
@@ -135,7 +146,9 @@ from motor_expansao.dimensionamento.config import (
     SIM_PARCELAS_FRANQUIA_DEFAULT,
     SIM_PARCELAS_OBRA_DEFAULT,
     SIM_PAYBACK_VIAVEL_MAX,
+    SIM_STUDIOS_MAX,
     SIM_TAXA_FRANQUIA,
+    SIM_TICKETS_STUDIO_PADRAO,
 )
 
 # Reuso dos helpers de estilo do export estatico — NAO duplicar paleta nem fontes.
@@ -316,8 +329,10 @@ _DRE_ORDEM: tuple[tuple[str, str, str, bool, bool], ...] = (
     ("alunos_total", "Alunos totais", "alunos", False, True),
     ("alunos_balcao", "Alunos de balcão", "alunos", True, False),
     ("alunos_agregadores", "Alunos de agregadores", "alunos", True, False),
+    ("alunos_studios", "Alunos de studios", "alunos", True, False),
     ("rec_balcao", "Receita de mensalidades — balcão", "brl", True, False),
     ("rec_agregadores", "Receita de mensalidades — agregadores", "brl", True, False),
+    ("rec_studios", "Receita de mensalidades — studios", "brl", True, False),
     ("rec_personal", "Receita de personal (fixa)", "brl", True, False),
     ("rec_anuidade", "Receita de anuidade", "brl", True, False),
     ("faturamento", "(=) FATURAMENTO BRUTO", "brl", False, True),
@@ -338,6 +353,7 @@ _DRE_ORDEM: tuple[tuple[str, str, str, bool, bool], ...] = (
     ("of_limpeza", "Limpeza", "brl", True, False),
     ("of_tecnologia", "Tecnologia", "brl", True, False),
     ("of_assessorias", "Assessorias", "brl", True, False),
+    ("of_studios", "Studios (custo fixo)", "brl", True, False),
     ("aluguel", "(-) Aluguel", "brl", False, False),
     ("custo_pre_op", "(-) Custo pré-operacional", "brl", False, False),
     ("custos_op", "(=) Custos operacionais totais", "brl", False, True),
@@ -550,16 +566,23 @@ def _bloco_demanda(demanda_total: float, p: Premissas, modo_rampa: str) -> list[
         _e("maturacao", "Maturação da rampa", valor=int(p.maturacao_meses), unidade="meses",
            fonte="config.py SIM_MATURACAO_MESES", fmt=_FMT_INT),
         _e("modo_rampa", "Modo da rampa", valor=modo_rampa, unidade="lista",
-           fonte="simulador.Premissas.rampa_apenas_balcao"),
-        _e("share", "Share de balcão na demanda", valor=float(p.share_balcao), unidade="%",
-           fonte="config.py SIM_SHARE_BALCAO", fmt=_FMT_PCT2),
-        _e("ticket_cheio", "Ticket cheio (balcão)", valor=float(p.ticket_cheio),
-           unidade="R$/aluno/mês", fonte="Entrada do operador", fmt=_FMT_CONTABIL),
-        _e("tag_fator", "Ticket do agregador (fração do cheio)",
+           fonte="simulador.Premissas.rampa_apenas_balcao",
+           nota="No modo \"apenas balcão\" o motor não suporta studios: a planilha "
+                "IGNORA os studios nesse modo (receita E custo — o número de studios "
+                "efetivo vira 0). Use \"demanda total\" quando houver studio."),
+        _e("share", "Share de balcão na demanda de musculação", valor=float(p.share_balcao),
+           unidade="%", fonte="config.py SIM_SHARE_BALCAO", fmt=_FMT_PCT2,
+           nota="Vale sobre a demanda de MUSCULAÇÃO: a demanda total menos os alunos de "
+                "studio. Sem studio, é a demanda total."),
+        _e("ticket_cheio", "Ticket de musculação", valor=float(p.ticket_cheio),
+           unidade="R$/aluno/mês",
+           fonte="Entrada do operador (mensalidade do balcão; não muda com os studios)",
+           fmt=_FMT_CONTABIL),
+        _e("tag_fator", "Ticket do agregador (fração do ticket de musculação)",
            valor=float(p.ticket_agregador_fator), unidade="%",
            fonte="config.py SIM_TICKET_AGREGADOR_FATOR", fmt=_FMT_PCT2),
         _e("ticket_agregador", "Ticket do agregador", formula="={ticket_cheio}*{tag_fator}",
-           unidade="R$/aluno/mês", fonte="Derivado (acoplado ao ticket cheio)",
+           unidade="R$/aluno/mês", fonte="Derivado (acoplado ao ticket de musculação)",
            quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL),
         _e("churn", "Churn mensal", valor=float(p.churn), unidade="%",
            fonte="config.py SIM_CHURN", fmt=_FMT_PCT2, quem=_QUEM_CONTROLADORIA),
@@ -570,15 +593,90 @@ def _bloco_demanda(demanda_total: float, p: Premissas, modo_rampa: str) -> list[
            nota="Receita fixa: NÃO escala com alunos e NÃO sofre reajuste anual, "
                 "igual ao motor."),
         _e("ticket_blended", "Ticket blended por aluno total",
-           formula="={share}*(1-{churn})*{ticket_cheio}*(1-{inadimplencia})"
-                   "+(1-{share})*{ticket_agregador}*(1-{inadimplencia})",
-           unidade="R$/aluno/mês", fonte="Derivado (líquido de churn e inadimplência)",
+           formula="={share_musculacao}*({share}*(1-{churn})*{ticket_cheio}*(1-{inadimplencia})"
+                   "+(1-{share})*{ticket_agregador}*(1-{inadimplencia}))"
+                   "+{rec_studios_por_aluno}",
+           unidade="R$/aluno/mês",
+           fonte="Derivado (musculação + studios, líquido de churn e inadimplência)",
            quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL),
         _e("receita_por_aluno", "Receita por aluno total (com anuidade)",
            formula="={ticket_blended}+{anuidade_por_aluno}"
-                   '*IF({anuidade_apenas_balcao}="Sim",{share},1)',
+                   '*IF({anuidade_apenas_balcao}="Sim",'
+                   "{share_musculacao}*{share}+{share_studios},1)",
            unidade="R$/aluno/mês", fonte="Derivado (base do break-even)",
            quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL),
+    ]
+
+
+def _bloco_studios(p: Premissas) -> list[dict[str, Any]]:
+    """Studios com ticket PROPRIO (pedido de 2026-10-05).
+
+    Estrutura FIXA: os 3 slots de ticket sao escritos SEMPRE, mesmo com 0 studios, e o
+    numero de studios liga/desliga cada slot por formula (`IF({n_studios}>=i, ...)`).
+    Assim quem abre o arquivo pode trocar 0 -> 2 studios dentro do Excel sem que falte
+    linha. Slot inativo leva o ticket padrao da escada (SIM_TICKETS_STUDIO_PADRAO).
+    """
+    n = int(p.n_studios)
+    tickets: list[dict[str, Any]] = []
+    for i in range(SIM_STUDIOS_MAX):
+        ativo = i < n
+        valor = float(p.tickets_studios[i]) if ativo else float(SIM_TICKETS_STUDIO_PADRAO[i])
+        tickets.append(
+            _e(f"ticket_studio_{i + 1}", f"Ticket do studio {i + 1}", valor=valor,
+               unidade="R$/aluno/mês",
+               fonte=("Entrada do operador" if ativo
+                      else "config.py SIM_TICKETS_STUDIO_PADRAO (slot inativo)"),
+               fmt=_FMT_CONTABIL,
+               nota=(None if ativo else
+                     f"INATIVO com o número de studios atual: este ticket só entra na conta "
+                     f"se \"Número de studios\" for {i + 1} ou mais. O valor é o padrão da "
+                     "escada de tickets de studio."))
+        )
+    soma_ativos = "+".join(
+        f"IF({{n_studios_ef}}>={i + 1},{{ticket_studio_{i + 1}}},0)"
+        for i in range(SIM_STUDIOS_MAX)
+    )
+    return [
+        _e("n_studios", "Número de studios", valor=n, unidade=f"0 a {SIM_STUDIOS_MAX}",
+           fonte="Entrada do operador (lista)", fmt=_FMT_INT,
+           nota="Cada studio atende uma fração FIXA da demanda total e paga o ticket dele; "
+                "o split balcão/agregador vale só sobre o que sobra. Aumentar o número aqui "
+                "ativa os slots de ticket abaixo, na ordem."),
+        _e("n_studios_ef", "Número de studios efetivo (0 no modo \"apenas balcão\")",
+           formula='=IF({modo_rampa}="apenas balcão",0,{n_studios})',
+           unidade=f"0 a {SIM_STUDIOS_MAX}",
+           fonte="Derivado: no modo \"apenas balcão\" os studios ficam desligados",
+           quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_INT,
+           nota="É este número, e não o digitado acima, que entra em toda a conta "
+                "(fração da demanda, tickets, receita e custo dos studios)."),
+        _e("share_studio", "Fração da demanda total atendida por studio",
+           valor=float(p.share_demanda_por_studio), unidade="% da demanda",
+           fonte="config.py SIM_STUDIO_SHARE_DEMANDA", fmt=_FMT_PCT2,
+           nota="Ex.: 1.000 alunos com 2 studios -> 80 + 80 nos studios e o split "
+                "balcão/agregador sobre os 840 restantes."),
+        *tickets,
+        _e("custo_studio", "Custo fixo por studio", valor=float(p.custo_studio_mes),
+           unidade="R$/mês/studio", fonte="config.py SIM_CUSTO_STUDIO", fmt=_FMT_CONTABIL,
+           nota="Entra na DRE como linha própria dentro dos outros custos fixos e sofre o "
+                "reajuste anual de custos, como os demais."),
+        _e("share_studios", "Fração da demanda total nos studios",
+           formula="={n_studios_ef}*{share_studio}", unidade="% da demanda",
+           fonte="Derivado", quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_PCT2),
+        _e("share_musculacao", "Fração da demanda total na musculação (balcão + agregador)",
+           formula="=1-{share_studios}", unidade="% da demanda",
+           fonte="Derivado", quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_PCT2),
+        _e("tickets_studios_soma", "Soma dos tickets dos studios ativos",
+           formula="=" + soma_ativos, unidade="R$/aluno/mês",
+           fonte="Derivado (só os slots ativos)", quem=_QUEM_DERIVADO, kind=_DERIV,
+           fmt=_FMT_CONTABIL),
+        _e("rec_studios_por_aluno", "Receita de studio por aluno total",
+           formula="={share_studio}*(1-{churn})*{tickets_studios_soma}*(1-{inadimplencia})",
+           unidade="R$/aluno/mês",
+           fonte="Derivado (o aluno de studio tem o tratamento do balcão)",
+           quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL),
+        _e("custo_studios", "Custo fixo dos studios (total)",
+           formula="={n_studios_ef}*{custo_studio}", unidade="R$/mês",
+           fonte="Derivado", quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL),
     ]
 
 
@@ -740,8 +838,8 @@ def _bloco_custos_fixos(p: Premissas) -> list[dict[str, Any]]:
            fonte="config.py SIM_CUSTO_PRE_OPERACIONAL_MES", fmt=_FMT_CONTABIL,
            nota="Default ZERO de propósito: torna explícito que hoje o modelo assume "
                 "ausência total de custo pré-operacional."),
-        _e("custo_fixo_total", "Custo fixo total, sem aluguel (outros fixos + folha)",
-           formula="={outros_total}+{folha_fixa}",
+        _e("custo_fixo_total", "Custo fixo total, sem aluguel (outros fixos + studios + folha)",
+           formula="={outros_total}+{custo_studios}+{folha_fixa}",
            unidade="R$/mês", fonte="Derivado (base do break-even)", quem=_QUEM_DERIVADO,
            kind=_DERIV, fmt=_FMT_CONTABIL,
            nota="A folha entra AQUI, no custo fixo, porque deixou de ser percentual da "
@@ -841,14 +939,14 @@ def _bloco_anuidade(p: Premissas) -> list[dict[str, Any]]:
         _e("anuidade_mes_inicio", "Mês de operação em que a cobrança começa",
            valor=int(p.anuidade_mes_inicio), unidade="mês",
            fonte="config.py SIM_ANUIDADE_MES_INICIO (Simulador J12)", fmt=_FMT_INT),
-        _e("anuidade_apenas_balcao", "Somente o balcão paga?",
+        _e("anuidade_apenas_balcao", "Somente balcão e studios pagam (agregador não)?",
            valor=_bool_sim_nao(bool(p.anuidade_apenas_balcao)), unidade="Sim/Não",
            fonte="config.py SIM_ANUIDADE_APENAS_BALCAO"),
         _e("anuidade_pro_rata", "Reconhecimento pró-rata mensal?",
            valor=_bool_sim_nao(bool(p.anuidade_pro_rata)), unidade="Sim/Não",
            fonte="config.py SIM_ANUIDADE_PRO_RATA"),
         elegivel,
-        _e("anuidade_por_aluno", "Anuidade por aluno de balcão / mês",
+        _e("anuidade_por_aluno", "Anuidade por aluno de balcão ou studio / mês",
            formula='=IF({anuidade_valor}<=0,0,IF({anuidade_pro_rata}="Sim",'
                    "{anuidade_valor}*{anuidade_elegivel}/12,"
                    "{anuidade_valor}*{anuidade_elegivel}))",
@@ -1003,6 +1101,7 @@ def _blocos_premissas(
     modo_rampa = _MODOS_RAMPA[1] if p.rampa_apenas_balcao else _MODOS_RAMPA[0]
     return [
         ("Demanda e ticket", _bloco_demanda(demanda_total, p, modo_rampa)),
+        ("Studios (ticket próprio, fração fixa da demanda)", _bloco_studios(p)),
         ("Deduções e impostos", _bloco_impostos(p)),
         ("Custo variável (% da receita líquida)", _bloco_custo_variavel(p)),
         ("Folha", _bloco_folha(p)),
@@ -1103,6 +1202,9 @@ def _write_aba_premissas(
 
     # Validacoes de lista nas premissas de texto.
     _validacao_lista(ws, _MODOS_RAMPA, [refs["modo_rampa"]])
+    _validacao_lista(
+        ws, tuple(str(i) for i in range(SIM_STUDIOS_MAX + 1)), [refs["n_studios"]]
+    )
     _validacao_lista(ws, (IR_MODO_FAIXA, "efetivo_legado"), [refs["ir_modo"]])
     _validacao_lista(
         ws, _SIM_NAO, [refs["anuidade_apenas_balcao"], refs["anuidade_pro_rata"]]
@@ -1393,11 +1495,21 @@ def _dre_formulas(j: int, meses: list[int], refs: dict[str, str]) -> dict[str, A
             f"=IF({t}=0,0,IF({P['modo_rampa']}=\"apenas balcão\","
             f"({rampa_bal})+{P['demanda']}*(1-{P['share']}),{rampa_total}))"
         ),
+        # Studios: cada um leva `share_studio` da demanda TOTAL do mes (rampam junto com
+        # ela); o split balcao/agregador vale so sobre o RESTANTE. No modo "apenas
+        # balcao" o motor nao suporta studios: `n_studios_ef` vira 0 e zera a linha (e,
+        # pelas Premissas, tambem a receita, o custo e as fatias derivadas).
+        "alunos_studios": (
+            f"=IF(OR({t}=0,{P['n_studios_ef']}=0),0,"
+            f"{c('alunos_total')}*{P['share_studios']})"
+        ),
         "alunos_balcao": (
             f"=IF({t}=0,0,IF({P['modo_rampa']}=\"apenas balcão\","
-            f"{rampa_bal},{c('alunos_total')}*{P['share']}))"
+            f"{rampa_bal},({c('alunos_total')}-{c('alunos_studios')})*{P['share']}))"
         ),
-        "alunos_agregadores": f"={c('alunos_total')}-{c('alunos_balcao')}",
+        "alunos_agregadores": (
+            f"={c('alunos_total')}-{c('alunos_studios')}-{c('alunos_balcao')}"
+        ),
         "rec_balcao": (
             f"={c('alunos_balcao')}*(1-{P['churn']})*{P['ticket_cheio']}"
             f"*{c('f_ticket')}*(1-{P['inadimplencia']})"
@@ -1406,15 +1518,22 @@ def _dre_formulas(j: int, meses: list[int], refs: dict[str, str]) -> dict[str, A
             f"={c('alunos_agregadores')}*{P['ticket_agregador']}"
             f"*{c('f_ticket')}*(1-{P['inadimplencia']})"
         ),
+        # Alunos iguais por studio: soma(a_i x t_i) = (A / n) x soma(t_i).
+        "rec_studios": (
+            f"=IF({P['n_studios_ef']}>0,{c('alunos_studios')}/{P['n_studios_ef']}"
+            f"*{P['tickets_studios_soma']}*(1-{P['churn']})*{c('f_ticket')}"
+            f"*(1-{P['inadimplencia']}),0)"
+        ),
         "rec_personal": f"=IF({t}>0,{P['personal_mes']},0)",
         "rec_anuidade": (
             f"=IF(AND({t}>0,{P['anuidade_valor']}>0,{t}>={P['anuidade_mes_inicio']}),"
-            f"IF({P['anuidade_apenas_balcao']}=\"Sim\",{c('alunos_balcao')},"
+            f"IF({P['anuidade_apenas_balcao']}=\"Sim\","
+            f"{c('alunos_balcao')}+{c('alunos_studios')},"
             f"{c('alunos_total')})*{P['anuidade_por_aluno']},0)"
         ),
         "faturamento": (
-            f"={c('rec_balcao')}+{c('rec_agregadores')}+{c('rec_personal')}"
-            f"+{c('rec_anuidade')}"
+            f"={c('rec_balcao')}+{c('rec_agregadores')}+{c('rec_studios')}"
+            f"+{c('rec_personal')}+{c('rec_anuidade')}"
         ),
         "deducoes": f"={c('faturamento')}*{P['devolucoes']}",
         "receita_liquida": f"={c('faturamento')}-{c('deducoes')}",
@@ -1432,7 +1551,10 @@ def _dre_formulas(j: int, meses: list[int], refs: dict[str, str]) -> dict[str, A
         # reajuste anual de custos. Antes era `folha_pct * faturamento DO MES`, que
         # encolhia com a rampa — o defeito reportado.
         "folha": f"=IF({t}=0,0,{P['folha_fixa']}*{c('f_custos')})",
-        "outros_total": f"=SUM({c(_OF_KEY_INI)}:{c(_OF_KEY_FIM)})",
+        # O custo dos studios e a ultima sublinha dos outros fixos (motor: `outros_fixos`
+        # da serie = (outros_fixos_mes + custo_studios_mes) x f_custos).
+        "outros_total": f"=SUM({c(_OF_KEY_INI)}:{c('of_studios')})",
+        "of_studios": f"=IF({t}=0,0,{P['custo_studios']}*{c('f_custos')})",
         "aluguel": (
             f"=IF({c('mes_contrato')}<={P['carencia']},0,{P['aluguel']}"
             f"*IF({t}>0,{c('f_aluguel')},1))"
@@ -1770,7 +1892,7 @@ _RESUMO_ROW_INI = 5
 # custo, imposto, despesa financeira, PMT, juros totais, CAPEX/investimento/equity.
 _RESUMO_SAIDA = frozenset(
     {
-        "custos_op", "folha", "ir_csll", "pmt", "juros_totais",
+        "custos_op", "folha", "custo_studios", "ir_csll", "pmt", "juros_totais",
         "capex_total", "investimento_total", "aporte_inicial",
     }
 )
@@ -1818,7 +1940,10 @@ def _linhas_resumo(
         ("faturamento", "Faturamento bruto / mês", f"={dre_st}{D['faturamento']}",
          _FMT_CONTABIL, "Mensalidades + personal + anuidade"),
         ("receita_anuidade", "  dos quais anuidade", f"={dre_st}{D['rec_anuidade']}",
-         _FMT_CONTABIL, "Pró-rata mensal, só balcão"),
+         _FMT_CONTABIL, "Pró-rata mensal; balcão e studios quando o agregador não paga"),
+        ("receita_studios", "  dos quais mensalidades dos studios",
+         f"={dre_st}{D['rec_studios']}", _FMT_CONTABIL,
+         "Cada studio a seu ticket, com o tratamento do balcão"),
         ("receita_liquida", "Receita líquida / mês", f"={dre_st}{D['receita_liquida']}",
          _FMT_CONTABIL, "Bruta menos deduções"),
         ("receita_pos_impostos", "Receita pós-impostos / mês",
@@ -1827,6 +1952,8 @@ def _linhas_resumo(
          _FMT_CONTABIL, "Variável + folha + outros fixos + aluguel"),
         ("folha", "  dos quais folha (FIXA desde o mês 1)", f"={dre_st}{D['folha']}",
          _FMT_CONTABIL, "% do faturamento MADURO, não do faturamento do mês"),
+        ("custo_studios", "  dos quais custo fixo dos studios", f"={dre_st}{D['of_studios']}",
+         _FMT_CONTABIL, "Dentro dos outros custos fixos; reajusta com eles"),
         ("ebitda", "EBITDA / mês", f"={dre_st}{D['ebitda']}", _FMT_CONTABIL, ""),
         ("margem", "Margem EBITDA", f"={dre_st}{D['margem_ebitda']}", _FMT_PCT2,
          "Sobre o faturamento bruto"),
@@ -1874,10 +2001,14 @@ def _linhas_resumo(
          f"/{P['aporte_inicial']},0)", _FMT_PCT2,
          "Resultado DEPOIS da PMT sobre o equity aportado"),
         ("", "Ticket", None, None, ""),
+        ("ticket_musculacao", "Ticket de musculação", f"={P['ticket_cheio']}",
+         _FMT_CONTABIL, "Mensalidade do balcão; não muda com os studios"),
+        ("n_studios", "Número de studios", f"={P['n_studios']}", _FMT_INT,
+         "Cada um atende uma fração fixa da demanda total"),
         ("ticket_blended", "Ticket blended por aluno total", f"={P['ticket_blended']}",
          _FMT_CONTABIL, "Líquido de churn e inadimplência"),
         ("ticket_agregador", "Ticket do agregador", f"={P['ticket_agregador']}",
-         _FMT_CONTABIL, "Fração do ticket cheio"),
+         _FMT_CONTABIL, "Fração do ticket de musculação"),
         ("receita_por_aluno", "Receita por aluno total (com anuidade)",
          f"={P['receita_por_aluno']}", _FMT_CONTABIL, "Base do break-even"),
         ("", "Aluguel-teto (% do faturamento bruto do mês de referência)", None, None, ""),
@@ -2128,7 +2259,7 @@ def _pares_afericao(
          dre_mes("folha", 1), brl),
         ("Outros custos fixos", st.get("outros_fixos", 0.0), d("outros_total"), brl),
         ("Aluguel", st.get("aluguel", 0.0), d("aluguel"), brl),
-        ("Custo fixo total sem aluguel (outros fixos + folha)",
+        ("Custo fixo total sem aluguel (outros fixos + studios + folha)",
          p.custo_fixo_total_mes(float(demanda_total)), refs["custo_fixo_total"], brl),
         ("Fator receita -> EBITDA (k), sem a folha", p.fator_receita_para_ebitda,
          refs["k_ebitda"], "0.000000"),
@@ -2160,6 +2291,13 @@ def _pares_afericao(
          rrefs["retorno_desalav"], pct),
         ("Retorno anual do equity", r.retorno_anual_equity, rrefs["retorno_equity"], pct),
         ("Ticket blended", r.ticket_blended, rrefs["ticket_blended"], brl),
+        ("Ticket de musculação", float(p.ticket_cheio), rrefs["ticket_musculacao"], brl),
+        ("Número de studios", int(p.n_studios), rrefs["n_studios"], num),
+        ("Alunos de studios (steady)", r.alunos_studios_steady, d("alunos_studios"), al),
+        ("Receita de mensalidades dos studios (steady)", r.receita_studios_mensal,
+         rrefs["receita_studios"], brl),
+        ("Custo fixo dos studios (steady)", r.custo_studios_mensal,
+         rrefs["custo_studios"], brl),
         ("Aluguel-teto — faixa ideal", r.aluguel_teto.get("ideal", 0.0),
          rrefs["teto_ideal"], brl),
         ("Aluguel-teto — TETO (canônico)", r.aluguel_teto.get("teto", 0.0),
@@ -2387,6 +2525,8 @@ _NOMES_DEFINIDOS = (
     "parcelas_franquia", "franquia_parcela", "pmt",
     "investimento_total", "aporte_inicial", "mes_steady",
     "maturacao", "horizonte", "meses_pre",
+    "n_studios", "share_studio", "ticket_studio_1", "ticket_studio_2", "ticket_studio_3",
+    "custo_studio", "share_studios", "share_musculacao", "custo_studios", "n_studios_ef",
 )
 
 

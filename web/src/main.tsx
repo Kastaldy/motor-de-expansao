@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client'
 
 import { api } from './lib/api'
 import { definirPerfil } from './lib/perfil'
+import { definirAvisoDeViabilidade } from './lib/viabilidade-demanda'
+import { definirMoedaDeViabilidade } from './lib/viabilidade-moeda'
 import './styles/global.css'
 
 const el = document.getElementById('root')
@@ -28,7 +30,10 @@ const raiz = el
  */
 async function iniciar(): Promise<void> {
   try {
-    definirPerfil((await api.me()).perfil)
+    const me = await api.me()
+    definirPerfil(me.perfil)
+    definirAvisoDeViabilidade(me.aviso_viabilidade)
+    definirMoedaDeViabilidade(me.viabilidade_moeda)
   } catch {
     /* sem /api/me -> segue no default; o backend continua barrando o que deve */
   }

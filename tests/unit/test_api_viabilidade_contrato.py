@@ -42,6 +42,7 @@ if str(_SERVER) not in sys.path:
 import app as pilot  # noqa: E402  (backend do piloto; web/server no sys.path acima)
 
 _CENARIO = {"lat": -23.55, "lng": -46.63, "m2": 1500, "aluguel": 30000, "demanda": 1600}
+_CENARIO_SEM_PONTO = {k: v for k, v in _CENARIO.items() if k not in ("lat", "lng")}
 
 
 def test_payload_do_piloto_e_da_api_e_o_mesmo(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -61,6 +62,46 @@ def test_payload_do_piloto_e_da_api_e_o_mesmo(monkeypatch: pytest.MonkeyPatch) -
 
     assert do_piloto == da_api
     assert do_piloto["versao"] == "viabilidade_payload_v1"
+
+
+def test_payload_com_studios_e_o_mesmo_no_piloto_e_na_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Studios com ticket proprio (2026-10-05) pela MESMA regua nos dois lados: o split
+    dos studios, os tickets e o custo deles saem identicos no piloto e na API."""
+    monkeypatch.setattr(pilot, "_setores_para_catchment", lambda lat, lng: None)
+    cenario = {**_CENARIO, "n_studios": 2, "tickets_studios": [157, 167]}
+
+    do_piloto = pilot._payload_viabilidade(ViabilidadeIn(**cenario))
+    da_api = montar_payload_viabilidade(
+        ViabilidadeIn(**cenario), staging_dir=pilot.STAGING_DIR, setores_df=None
+    )
+
+    assert do_piloto == da_api
+    assert da_api["premissas"]["tickets_studios"] == [157.0, 167.0]
+    assert len(da_api["split"]["studios"]) == 2
+
+
+def test_analisar_request_aceita_tickets_de_studio() -> None:
+    req = AnalisarRequest.model_validate(
+        {
+            "lat": -23.55,
+            "lng": -46.63,
+            "viabilidade": {**_CENARIO_SEM_PONTO, "n_studios": 1, "tickets_studios": [157]},
+        }
+    )
+    assert req.viabilidade is not None
+    assert req.viabilidade.tickets_studios == [157.0]
+
+    with pytest.raises(ValueError):
+        AnalisarRequest.model_validate(
+            {
+                "lat": -23.55,
+                "lng": -46.63,
+                "viabilidade": {**_CENARIO_SEM_PONTO, "n_studios": 2, "tickets_studios": [157]},
+            }
+        )
+
 
 
 def test_viabilidade_inputs_nao_repete_a_coordenada() -> None:

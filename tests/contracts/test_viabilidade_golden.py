@@ -1073,6 +1073,12 @@ PREMISSAS_TRAVADAS: dict[str, float | int] = {
     "SIM_CARTOES_PCT": 0.0105,
     # custo fixo
     "SIM_OUTROS_FIXOS_MES": 38_150.00,
+    # studios com ticket proprio (pedido de 2026-10-05): cada studio atende 8% da
+    # demanda TOTAL, custa R$6.000/mes e o split balcao/agregador vale sobre o resto.
+    # A escada de tickets padrao (tupla) e' travada no teste proprio logo abaixo.
+    "SIM_STUDIO_SHARE_DEMANDA": 0.08,
+    "SIM_STUDIOS_MAX": 3,
+    "SIM_CUSTO_STUDIO": 6_000.0,
     # aluguel-teto (% do faturamento bruto; canonico = TETO 20%)
     "SIM_ALUGUEL_TETO_IDEAL": 0.15,
     "SIM_ALUGUEL_TETO_TETO": 0.20,
@@ -1117,6 +1123,16 @@ def test_premissa_do_config_esta_travada(nome_const, esperado):
     )
 
 
+def test_tickets_studio_padrao_travados():
+    """Escada padrao das caixas de ticket de studio (studio 1, 2, 3).
+
+    Sem celula na planilha oficial: e' a escada que a tela aplicava ao ticket cheio
+    antes de o studio ganhar ticket proprio. Um ticket por studio, ate' o maximo.
+    """
+    assert cfg.SIM_TICKETS_STUDIO_PADRAO == (157.0, 167.0, 177.0)
+    assert len(cfg.SIM_TICKETS_STUDIO_PADRAO) == cfg.SIM_STUDIOS_MAX
+
+
 def test_defaults_de_premissas_vem_do_config():
     """`Premissas` nao pode carregar coeficiente literal proprio: tudo vem do config."""
     p = Premissas(ticket_cheio=147.0)
@@ -1127,6 +1143,10 @@ def test_defaults_de_premissas_vem_do_config():
     assert p.churn == cfg.SIM_CHURN
     assert p.personal_mes == cfg.SIM_PERSONAL_MES_RECEITA
     assert p.outros_fixos_mes == cfg.SIM_OUTROS_FIXOS_MES
+    # Studios: sem studio por default; fracao da demanda e custo vem do config.
+    assert p.tickets_studios == ()
+    assert p.share_demanda_por_studio == cfg.SIM_STUDIO_SHARE_DEMANDA
+    assert p.custo_studio_mes == cfg.SIM_CUSTO_STUDIO
     assert p.taxa_minima_negocio_aa == cfg.SIM_TAXA_MINIMA_NEGOCIO_AA
     assert p.reajuste_ticket_aa == cfg.SIM_REAJUSTE_TICKET_AA
     assert p.reajuste_aluguel_aa == cfg.SIM_REAJUSTE_ALUGUEL_AA

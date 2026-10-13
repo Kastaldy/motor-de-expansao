@@ -1219,6 +1219,9 @@ def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
         "anuidade_apenas_balcao": _viab_campo(
             viabilidade, "anuidade_apenas_balcao", "premissas", "anuidade_apenas_balcao"
         ),
+        # Studios (2026-10-05): o aluno de studio paga anuidade como o de balcao, entao a
+        # linha de receita precisa saber se ha studio para nao dizer "so balcao".
+        "n_studios": _viab_campo(viabilidade, "n_studios", "premissas", "n_studios"),
         # Mes de operacao a que a DRE de steady-state se refere (regime pleno: alunos
         # maduros E anuidade em cobranca). LIDO do payload — recalcular a partir de
         # `maturacao_meses` foi o que fez o waterfall divergir do card ao lado.
@@ -1355,7 +1358,11 @@ def _viab_linha_receita(viabilidade: dict[str, Any]) -> str | None:
     valor = viabilidade.get("anuidade_valor")
     inicio = viabilidade.get("anuidade_mes_inicio")
     if _viab_tem(valor):
-        alvo = "por aluno de balcão" if viabilidade.get("anuidade_apenas_balcao") else "por aluno"
+        if viabilidade.get("anuidade_apenas_balcao"):
+            tem_studio = (_viab_inteiro(viabilidade.get("n_studios")) or 0) > 0
+            alvo = "por aluno de balcão ou de studio" if tem_studio else "por aluno de balcão"
+        else:
+            alvo = "por aluno"
         detalhes.append(f"{_viab_brl(valor)} uma vez por ano {alvo}")
     if _viab_tem(inicio):
         detalhes.append(f"a partir do mês {_format_number(inicio, 0)} de casa")
