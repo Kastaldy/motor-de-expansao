@@ -67,6 +67,79 @@ export class ApiError extends Error {
   }
 }
 
+/** Um erro de campo do pydantic, como `_erro_de_validacao` (web/server/app.py) o serve. */
+interface ErroDeCampo {
+  loc?: unknown[]
+  msg?: string
+  type?: string
+  ctx?: Record<string, unknown>
+}
+
+/**
+ * Regra violada, em português. O `msg` do pydantic é INGLÊS ("Input should be greater
+ * than 0") e chega ao operador; traduzimos os tipos que os nossos `Field(...)` podem
+ * disparar e caímos no `msg` cru para o resto — melhor inglês do que nada.
+ */
+function regraEmPortugues(e: ErroDeCampo): string {
+  const c = e.ctx ?? {}
+  switch (e.type) {
+    case 'greater_than':
+      return `precisa ser maior que ${c.gt}`
+    case 'greater_than_equal':
+      return `precisa ser ${c.ge} ou mais`
+    case 'less_than':
+      return `precisa ser menor que ${c.lt}`
+    case 'less_than_equal':
+      return `precisa ser no máximo ${c.le}`
+    case 'missing':
+      return 'é obrigatório'
+    case 'too_long':
+      return `aceita no máximo ${c.max_length} item(ns)`
+    case 'finite_number':
+      return 'precisa ser um número finito'
+    case 'float_type':
+    case 'int_type':
+    case 'int_parsing':
+    case 'float_parsing':
+      return 'precisa ser um número'
+    default:
+      return e.msg ?? 'tem um valor inválido'
+  }
+}
+
+/** Nome do campo: o último trecho de TEXTO do `loc` (o 1º é sempre "body"; um item de
+ *  lista entra como índice numérico, que não nomeia nada). */
+function campoDoErro(e: ErroDeCampo): string | null {
+  const textos = (e.loc ?? []).filter(
+    (p): p is string => typeof p === 'string' && p !== 'body',
+  )
+  return textos.length ? textos[textos.length - 1] : null
+}
+
+/**
+ * Texto legível a partir do `detail` de uma resposta de erro.
+ *
+ * POR QUE ESTA FUNÇÃO EXISTE: o 422 do piloto devolve `detail` como LISTA de erros do
+ * pydantic (`_erro_de_validacao`, web/server/app.py), e o código aqui fazia
+ * `String(detalhe)` — que numa lista de objetos dá exatamente **"[object Object]"**.
+ * A mensagem real era engolida em TODO 422 do app, nos dois países, desde 2026-07-20.
+ * Um operador digitou `0` em "Parcelas franquia" e a tela só soube dizer
+ * "[object Object]": nem o campo, nem a regra. Daí o nome do campo entrar no texto.
+ */
+export function mensagemDoDetalhe(detalhe: unknown, status: number): string {
+  if (typeof detalhe === 'string') return detalhe
+  const lista = Array.isArray(detalhe) ? detalhe : detalhe ? [detalhe] : []
+  const partes = lista
+    .filter((e): e is ErroDeCampo => typeof e === 'object' && e !== null)
+    .map((e) => {
+      const campo = campoDoErro(e)
+      const regra = regraEmPortugues(e)
+      return campo ? `"${campo}" ${regra}` : regra
+    })
+  if (!partes.length) return `O servidor recusou os dados enviados (${status}).`
+  return `Confira o formulário: ${partes.join('; ')}.`
+}
+
 async function pedir<T>(
   url: string,
   init: RequestInit = {},
@@ -87,14 +160,14 @@ async function pedir<T>(
       // "Sessao encerrada", travaria a trava para o resto da carga e ofereceria como
       // unica saida recarregar a pagina — vaivem sem causa visivel.
       if (r.status === 401 && ehQuedaDeSessao(url)) relatarAcessoNegado()
-      let detalhe = `${r.status}`
+      let detalhe: unknown = `${r.status}`
       try {
         const j = await r.json()
         detalhe = j.detail ?? detalhe
       } catch {
         /* resposta sem corpo JSON — fica o status */
       }
-      throw new ApiError(String(detalhe), r.status)
+      throw new ApiError(mensagemDoDetalhe(detalhe, r.status), r.status)
     }
     return (await r.json()) as T
   } catch (e) {
@@ -142,14 +215,21 @@ async function pedirArquivo(
     const r = await fetch(url, { ...init, signal: ctrl.signal })
     if (!r.ok) {
       if (r.status === 401) relatarAcessoNegado()
-      let detalhe = `${textos.falha ?? 'Falha ao gerar o PDF'} (${r.status})`
+      // MESMO defeito do `pedir`, e por isso a MESMA função: o download também recebia
+      // `detail` como lista num 422 (o PDF e a planilha mandam o mesmo corpo da
+      // viabilidade) e também imprimia "[object Object]".
+      const padrao = `${textos.falha ?? 'Falha ao gerar o PDF'} (${r.status})`
+      let detalhe: unknown = padrao
       try {
         const j = await r.json()
         detalhe = j.detail ?? detalhe
       } catch {
         /* ignora */
       }
-      throw new ApiError(String(detalhe), r.status)
+      throw new ApiError(
+        detalhe === padrao ? padrao : mensagemDoDetalhe(detalhe, r.status),
+        r.status,
+      )
     }
     // O header vem como `attachment; filename="..."`; se faltar, usa o sugerido.
     const cd = r.headers.get('Content-Disposition') ?? ''
