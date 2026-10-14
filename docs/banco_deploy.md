@@ -626,9 +626,14 @@ docker exec -i motor_expansao_postgres psql -v ON_ERROR_STOP=1 -At -F '|' \
     -U reservas_owner -d banco_de_reservas \
     -c "$(python3 scripts/conferir_usuarios_banco.py --sql)" \
   | python3 scripts/conferir_usuarios_banco.py \
-    <(docker exec motor_expansao_authelia grep -E '^users:|^  [^ #][^:]*: *$' /config/users_database.yml) \
+    <(docker exec motor_expansao_authelia grep -E '^users: *(#.*)?$|^  [^ #][^:]*: *(#.*)?$|^    disabled: *[Tt]rue *(#.*)?$' /config/users_database.yml) \
     <(docker exec motor_expansao_web cat /app/cadastro/acesso_abas.json)
 ```
+
+Usuário com `disabled: true` no Authelia não entra hoje: sai como `desativ.` e é coerente se
+estiver inativo (ou ausente) no banco. **Não** o cadastre ativo para zerar uma pendência — isso
+daria acesso a quem hoje está bloqueado. Se o conferidor ler zero logins do Authelia, ele sai `2`
+(arquivo errado ou recuo diferente), nunca `0`.
 
 Uma mudança de abas **já decidida** (alguém que ganha uma aba ao passar a um perfil do banco) é
 declarada no fim do comando, com `--aceitar login:+aba,-aba`; ela sai como `ACEITA` e só vale se a

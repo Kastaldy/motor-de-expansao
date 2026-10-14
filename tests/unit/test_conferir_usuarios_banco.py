@@ -192,10 +192,12 @@ def test_aceitar_casa_sem_diferenciar_maiuscula(tmp_path):
     assert rc == 0
 
 
-def test_maiuscula_e_minuscula_casam_entre_as_fontes(tmp_path):
+def test_maiuscula_e_minuscula_casam_entre_authelia_e_banco(tmp_path):
+    """Banco (CITEXT) casa sem caixa; o JSON segue a chave EXATA do Authelia, como o servidor."""
     banco = _BANCO_OK.replace("fulano_teste|", "FULANO_Teste|")
     users = _USERS_YML.replace("  beltrana_teste:", "  Beltrana_TESTE:")
-    rc, saida = _rodar(tmp_path, banco, users=users)
+    mapa = {k if k != "beltrana_teste" else "Beltrana_TESTE": v for k, v in _JSON.items()}
+    rc, saida = _rodar(tmp_path, banco, users=users, mapa=mapa)
     assert rc == 0, saida
     assert "pessoas com pendência: 0" in saida
     # Uma linha por pessoa, não uma por grafia.
@@ -252,16 +254,173 @@ def test_sem_arquivos_sai_dois():
 
 
 def test_authelia_le_so_as_chaves_de_users():
-    assert conf.logins_do_authelia(_USERS_YML.splitlines(keepends=True)) == {
-        "fulano_teste",
-        "beltrana_teste",
-    }
+    assert conf.logins_do_authelia(_USERS_YML.splitlines(keepends=True)) == (
+        {"fulano_teste", "beltrana_teste"},
+        set(),
+    )
 
 
 def test_authelia_aceita_a_saida_do_grep_do_runbook():
     """O runbook passa só as linhas de login (grep), nunca o arquivo inteiro."""
     filtrado = "users:\n  fulano_teste:\n  beltrana_teste:\n"
-    assert conf.logins_do_authelia(filtrado.splitlines(keepends=True)) == {
-        "fulano_teste",
-        "beltrana_teste",
+    assert conf.logins_do_authelia(filtrado.splitlines(keepends=True)) == (
+        {"fulano_teste", "beltrana_teste"},
+        set(),
+    )
+
+
+# ---------------------------------------------------------------------------- achados da revisão
+
+
+def test_chave_do_json_com_caixa_diferente_e_inerte_e_e_pendencia(tmp_path, monkeypatch):
+    """O servidor casa o JSON pela chave EXATA: `Fulano_Teste` não vale para `fulano_teste`."""
+    mapa = {"*": ["mapa"], "Fulano_Teste": ["mapa", "executiva"]}
+    users = "users:\n  fulano_teste:\n"
+    rc, saida = _rodar(
+        tmp_path, "fulano_teste|consultoria|t|executiva,mapa\n", users=users, mapa=mapa
+    )
+    assert rc == 1, saida
+    linha = _linha(saida, "fulano_teste")
+    assert "inerte hoje" in linha
+    assert "mapa (*)" in linha
+    assert "ganha executiva" in linha
+    # O servidor real concorda: com o mesmo JSON, a pessoa recebe só o curinga.
+    monkeypatch.setenv("MOTOR_ACESSO_ABAS_PATH", str(tmp_path / "acesso_abas.json"))
+    assert acesso.abas_do_usuario("fulano_teste") == frozenset({"mapa"})
+
+
+def test_json_com_a_chave_exata_do_authelia_casa(tmp_path):
+    mapa = {"*": ["mapa"], "Fulano_Teste": ["mapa", "executiva"]}
+    users = "users:\n  Fulano_Teste:\n"
+    rc, saida = _rodar(
+        tmp_path, "fulano_teste|consultoria|t|executiva,mapa\n", users=users, mapa=mapa
+    )
+    assert rc == 0, saida
+
+
+@pytest.mark.parametrize("ordem", [1, -1])
+def test_banco_com_linha_ativa_e_inativa_vence_a_ativa_em_qualquer_ordem(tmp_path, ordem):
+    linhas = [
+        "fulano_teste|expansao|t|imobiliaria,mapa,oportunidades,viabilidade",
+        "fulano_teste|growth|f|executiva",
+    ][::ordem]
+    banco = "beltrana_teste|consultoria|t|executiva\n" + "\n".join(linhas) + "\n"
+    rc, saida = _rodar(tmp_path, banco)
+    assert rc == 0, saida
+    linha = _linha(saida, "fulano_teste")
+    assert "expansao" in linha
+    assert "INATIVO" not in linha
+    assert "inativa duplicada descartada" in saida
+
+
+def test_banco_com_linha_ativa_e_inativa_fora_do_authelia_acusa_falta(tmp_path):
+    banco = _BANCO_OK + "sicrano_teste|expansao|t|mapa\n" + "sicrano_teste|growth|f|executiva\n"
+    rc, saida = _rodar(tmp_path, banco)
+    assert rc == 1
+    assert "falta no Authelia" in _linha(saida, "sicrano_teste")
+
+
+def test_banco_com_duas_linhas_ativas_do_mesmo_login_sai_dois(tmp_path):
+    rc, _ = _rodar(tmp_path, _BANCO_OK + "FULANO_TESTE|growth|t|mapa\n")
+    assert rc == 2
+
+
+def test_comentario_na_coluna_zero_nao_encerra_users():
+    texto = 'users:\n  a_teste:\n    password: "h"\n# desativado\n  c_teste:\n    password: "h"\n'
+    assert conf.logins_do_authelia(texto.splitlines(keepends=True))[0] == {"a_teste", "c_teste"}
+
+
+def test_chave_com_comentario_no_fim_e_users_com_comentario_sao_lidas():
+    texto = "users: # todos\n  a_teste:\n  com_coment_teste: # nota\n"
+    assert conf.logins_do_authelia(texto.splitlines(keepends=True))[0] == {
+        "a_teste",
+        "com_coment_teste",
     }
+
+
+@pytest.mark.parametrize(
+    "users",
+    ["users: # todos\n", "users:\n    recuo_quatro_teste:\n", "outra_coisa:\n  a_teste:\n"],
+)
+def test_zero_logins_do_authelia_sai_dois(tmp_path, users):
+    rc, _ = _rodar(tmp_path, "", users=users)
+    assert rc == 2
+
+
+def test_chave_entre_aspas_e_lida_sem_aspas():
+    texto = "users:\n  \"aspas_teste\":\n  'simples_teste':\n"
+    assert conf.logins_do_authelia(texto.splitlines(keepends=True))[0] == {
+        "aspas_teste",
+        "simples_teste",
+    }
+
+
+def test_bloco_users_termina_na_proxima_chave_de_topo():
+    texto = "users:\n  fulano_teste:\noutra_raiz:\n  nao_e_login_teste:\n"
+    assert conf.logins_do_authelia(texto.splitlines(keepends=True))[0] == {"fulano_teste"}
+
+
+def test_chave_aninhada_nao_vira_login():
+    texto = 'users:\n  fulano_teste:\n    groups:\n      - ultra_team\n    password: "h"\n'
+    assert conf.logins_do_authelia(texto.splitlines(keepends=True))[0] == {"fulano_teste"}
+
+
+def test_login_repetido_no_authelia_sai_dois(tmp_path):
+    rc, _ = _rodar(tmp_path, "", users="users:\n  fulano_teste:\n  Fulano_Teste:\n")
+    assert rc == 2
+
+
+def test_desativado_no_authelia_nao_entra_hoje():
+    texto = "users:\n  fulano_teste:\n    disabled: true\n  beltrana_teste:\n    disabled: false\n"
+    assert conf.logins_do_authelia(texto.splitlines(keepends=True)) == (
+        {"beltrana_teste"},
+        {"fulano_teste"},
+    )
+
+
+def test_desativado_ausente_do_banco_e_coerente(tmp_path):
+    users = _USERS_YML.replace("    disabled: false\n", "    disabled: true\n", 1)
+    rc, saida = _rodar(tmp_path, "beltrana_teste|consultoria|t|executiva\n", users=users)
+    assert rc == 0, saida
+    linha = _linha(saida, "fulano_teste")
+    assert "desativ." in linha
+    assert "desativado no Authelia (coerente)" in linha
+
+
+def test_desativado_inativo_no_banco_e_coerente(tmp_path):
+    users = _USERS_YML.replace("    disabled: false\n", "    disabled: true\n", 1)
+    banco = _BANCO_OK.replace("fulano_teste|expansao|t|", "fulano_teste|expansao|f|")
+    rc, saida = _rodar(tmp_path, banco, users=users)
+    assert rc == 0, saida
+
+
+def test_desativado_ativo_no_banco_e_pendencia(tmp_path):
+    users = _USERS_YML.replace("    disabled: false\n", "    disabled: true\n", 1)
+    rc, saida = _rodar(tmp_path, _BANCO_OK, users=users)
+    assert rc == 1
+    assert "ATIVO no banco" in _linha(saida, "fulano_teste")
+
+
+def test_desativado_pela_saida_do_grep_do_runbook():
+    filtrado = "users:\n  fulano_teste:\n    disabled: true\n  beltrana_teste:\n"
+    assert conf.logins_do_authelia(filtrado.splitlines(keepends=True)) == (
+        {"beltrana_teste"},
+        {"fulano_teste"},
+    )
+
+
+def test_linha_do_banco_com_abas_vazias_casa_com_json_vazio(tmp_path):
+    mapa = {**_JSON, "beltrana_teste": []}
+    banco = _BANCO_OK.replace("beltrana_teste|consultoria|t|executiva", "beltrana_teste|x|t|")
+    rc, saida = _rodar(tmp_path, banco, mapa=mapa)
+    assert rc == 0, saida
+
+
+def test_linha_do_banco_com_ativo_fora_de_t_f_sai_dois(tmp_path):
+    rc, _ = _rodar(tmp_path, "fulano_teste|expansao|true|mapa\n")
+    assert rc == 2
+
+
+def test_aceitar_que_ganha_e_perde_a_mesma_aba_sai_dois(tmp_path):
+    rc, _ = _rodar(tmp_path, _BANCO_OK, "--aceitar", "fulano_teste:+mapa,-mapa")
+    assert rc == 2

@@ -4,16 +4,23 @@ Ferramenta do corte do banco (`docs/banco_deploy.md`, "Conferir antes de ligar")
 grava em lugar nenhum e nunca imprime senha, hash nem e-mail. Só biblioteca padrão e nada além
 do Python 3.10, porque roda no `python3` do HOST da VPS, fora dos containers.
 
-Três fontes, casadas pelo login sem diferenciar maiúscula (como a coluna CITEXT do banco):
+Três fontes. Authelia e banco casam pelo login sem diferenciar maiúscula (como a coluna CITEXT
+do banco); o JSON casa pela chave EXATA do Authelia, como o servidor casa:
 
-  1. Authelia (`users_database.yml`) -> quem consegue ENTRAR hoje. Só as CHAVES de `users:`
-     são lidas; o resto do arquivo (hash, e-mail) é ignorado linha a linha.
+  1. Authelia (`users_database.yml`) -> quem consegue ENTRAR hoje. Só as CHAVES de `users:` e a
+     linha `disabled: true` são lidas; o resto do arquivo (hash, e-mail) é ignorado linha a linha.
+     Usuário `disabled: true` NÃO entra hoje: aparece como desativado, nunca como quem entra.
+     Ler zero logins é erro de entrada (arquivo errado, recuo diferente), nunca "tudo casa".
   2. JSON (`acesso_abas.json`)        -> que abas cada um vê HOJE, antes do banco. Mesma leitura
      de `web/server/acesso.py::_ler_mapa`: chave `_*` é comentário, `*` é o default de quem está
-     fora da lista (e não uma pessoa), aba desconhecida sai.
+     fora da lista (e não uma pessoa), aba desconhecida sai. `abas_do_usuario` faz `usuario in
+     mapa` com o `Remote-User` cru, que é a chave do Authelia: uma chave do JSON que só casa
+     ignorando a caixa está INERTE hoje (a pessoa recebe o curinga), e o conferidor acusa isso.
   3. Banco (tabela `usuarios`)        -> quem o piloto reconhece DEPOIS de ligar o banco. As
      linhas chegam pela entrada padrão no formato `login|perfil|ativo(t/f)|aba1,aba2,...`, que é
-     o que a consulta de `--sql` produz com `psql -At -F '|'`.
+     o que a consulta de `--sql` produz com `psql -At -F '|'`. O índice único do login vale só
+     para linhas ATIVAS, então um login pode ter uma linha ativa e outra inativa: vence a ativa,
+     que é a que `rbac.identidade` lê; duas ativas para o mesmo login é erro de entrada.
 
 O de-para capacidade -> aba é o `CAPACIDADE_QUE_SUSTENTA_A_ABA` de `web/server/acesso.py`,
 replicado em `CAPACIDADE_POR_ABA` (o script não importa o servidor: roda sem o repo instalado).
@@ -78,20 +85,45 @@ class EntradaInvalida(ValueError):
     """Entrada que o conferidor não sabe ler — código de saída 2, nunca um veredito."""
 
 
-def logins_do_authelia(linhas: Iterable[str]) -> set[str]:
-    """Só as CHAVES de `users:` (dois espaços de recuo). Nenhum valor do arquivo é guardado."""
+_RE_USERS = re.compile(r"^users:\s*(?:#.*)?$")
+_RE_LOGIN = re.compile(r"^  ([^\s#][^:]*):\s*(?:#.*)?$")
+_RE_DESATIVADO = re.compile(r"^    disabled:\s*(?:true|yes|on)\s*(?:#.*)?$", re.IGNORECASE)
+_RE_VAZIA_OU_COMENTARIO = re.compile(r"^\s*(?:#.*)?$")
+
+
+def logins_do_authelia(linhas: Iterable[str]) -> tuple[set[str], set[str]]:
+    """(quem entra, quem está `disabled: true`) — só as CHAVES de `users:` (dois espaços de recuo).
+
+    Nenhum outro valor do arquivo é guardado. Linha vazia ou só comentário (inclusive na coluna 0)
+    não encerra o bloco `users:`. Zero logins lidos é `EntradaInvalida`.
+    """
     logins: set[str] = set()
+    desativados: set[str] = set()
     dentro = False
+    atual: str | None = None
     for linha in linhas:
-        if re.match(r"^users:\s*$", linha):
-            dentro = True
+        linha = linha.rstrip("\r\n")
+        if _RE_USERS.match(linha):
+            dentro, atual = True, None
             continue
-        if dentro and re.match(r"^\S", linha):
+        if not dentro or _RE_VAZIA_OU_COMENTARIO.match(linha):
+            continue
+        if re.match(r"^\S", linha):
             break
-        m = re.match(r"^  ([^\s#][^:]*):\s*$", linha)
-        if dentro and m:
-            logins.add(m.group(1).strip().strip("'\""))
-    return logins
+        m = _RE_LOGIN.match(linha)
+        if m:
+            atual = m.group(1).strip().strip("'\"")
+            if atual.casefold() in {n.casefold() for n in logins}:
+                raise EntradaInvalida(f"login {atual!r} aparece duas vezes em users: do Authelia")
+            logins.add(atual)
+        elif atual is not None and _RE_DESATIVADO.match(linha):
+            desativados.add(atual)
+    if not logins:
+        raise EntradaInvalida(
+            "nenhum login lido de users: no Authelia (arquivo errado, ou recuo diferente de "
+            "dois espaços?)"
+        )
+    return logins - desativados, desativados
 
 
 def mapa_do_json(texto: str) -> tuple[dict[str, frozenset[str]], frozenset[str]]:
@@ -123,8 +155,13 @@ def mapa_do_json(texto: str) -> tuple[dict[str, frozenset[str]], frozenset[str]]
 
 
 def linhas_do_banco(texto: str) -> dict[str, tuple[str, bool, frozenset[str]]]:
-    """`login|perfil|ativo|abas` -> {login: (perfil, ativo, abas)}."""
+    """`login|perfil|ativo|abas` -> {login: (perfil, ativo, abas)}, uma entrada por pessoa.
+
+    Login repetido (sem diferenciar maiúscula): a linha ATIVA vence, em qualquer ordem — é ela
+    que `rbac.identidade` lê (`WHERE ... AND u.ativo`). Duas ativas é `EntradaInvalida`.
+    """
     banco: dict[str, tuple[str, bool, frozenset[str]]] = {}
+    por_chave: dict[str, str] = {}
     for n, linha in enumerate(texto.splitlines(), start=1):
         if not linha.strip():
             continue
@@ -135,7 +172,18 @@ def linhas_do_banco(texto: str) -> dict[str, tuple[str, bool, frozenset[str]]]:
                 "(a entrada veio da consulta de --sql com psql -At -F '|'?)"
             )
         login, perfil, ativo, abas = partes
-        banco[login] = (perfil, ativo == "t", frozenset(a for a in abas.split(",") if a))
+        registro = (perfil, ativo == "t", frozenset(a for a in abas.split(",") if a))
+        anterior = por_chave.get(login.casefold())
+        if anterior is not None:
+            if banco[anterior][1] and registro[1]:
+                raise EntradaInvalida(
+                    f"linha {n} do banco: o login {login!r} aparece ATIVO mais de uma vez"
+                )
+            if banco[anterior][1]:
+                continue  # a ativa já lida vence
+            del banco[anterior]
+        banco[login] = registro
+        por_chave[login.casefold()] = login
     return banco
 
 
@@ -162,7 +210,7 @@ def ler_aceitas(itens: Iterable[str]) -> dict[str, tuple[frozenset[str], frozens
 @dataclass(frozen=True)
 class Linha:
     login: str
-    no_authelia: bool
+    no_authelia: bool | None  # None = está no Authelia, mas `disabled: true`
     banco: str
     abas_hoje: str
     problemas: tuple[str, ...]
@@ -183,14 +231,19 @@ def conferir(
     json_curinga: frozenset[str],
     banco: dict[str, tuple[str, bool, frozenset[str]]],
     aceitas: dict[str, tuple[frozenset[str], frozenset[str]]],
+    desativados: Iterable[str] = (),
 ) -> list[Linha]:
     """Uma `Linha` por pessoa que aparece em qualquer fonte (ou num `--aceitar`)."""
-    k_authelia = {n.casefold() for n in authelia}
+    desativados = set(desativados)
+    k_authelia = {n.casefold(): n for n in authelia}
+    k_desativado = {n.casefold() for n in desativados}
+    # O JSON por caixa só serve para quem NÃO entra hoje (apenas exibição): para quem entra, o
+    # servidor casa a chave EXATA do Authelia.
     k_json = {n.casefold(): v for n, v in json_pessoas.items()}
     k_banco = {n.casefold(): v for n, v in banco.items()}
 
     exibicao: dict[str, str] = {}
-    for fonte in (authelia, json_pessoas, banco):
+    for fonte in (authelia, desativados, json_pessoas, banco):
         for login in fonte:
             exibicao.setdefault(login.casefold(), login)
     for k in aceitas:
@@ -199,15 +252,27 @@ def conferir(
     resultado: list[Linha] = []
     for k in sorted(exibicao):
         no_authelia = k in k_authelia
+        desativado = k in k_desativado
         no_banco = k in k_banco
+        problemas: list[str] = []
+        avisos: list[str] = []
         abas_hoje: frozenset[str] | None
-        if k in k_json:
-            abas_hoje = k_json[k]
+        if no_authelia and k_authelia[k] in json_pessoas:
+            abas_hoje = json_pessoas[k_authelia[k]]
             col_hoje = _abas_texto(abas_hoje)
         elif no_authelia:
             # Fora da lista, quem entra recebe o curinga — o mesmo ramo de `abas_do_usuario`.
             abas_hoje = json_curinga
             col_hoje = _abas_texto(abas_hoje) + " (*)"
+            inertes = sorted(n for n in json_pessoas if n.casefold() == k)
+            if inertes:
+                problemas.append(
+                    f"chave do JSON com caixa diferente ({', '.join(inertes)}): inerte hoje, "
+                    "a pessoa recebe só o curinga"
+                )
+        elif k in k_json:
+            abas_hoje = k_json[k]
+            col_hoje = _abas_texto(abas_hoje)
         else:
             abas_hoje, col_hoje = None, "—"
 
@@ -218,19 +283,30 @@ def conferir(
             ativo, abas_banco = False, frozenset()
             col_banco = "—"
 
-        problemas: list[str] = []
-        avisos: list[str] = []
         if no_authelia and not no_banco:
             problemas.append("FALTA NO BANCO: entra hoje e perde tudo ao ligar o banco")
-        if no_banco and ativo and not no_authelia:
+        if desativado:
+            if no_banco and ativo:
+                problemas.append(
+                    "desativado no Authelia, mas ATIVO no banco: ganha acesso ao ligar"
+                )
+            else:
+                avisos.append("desativado no Authelia (coerente)")
+        elif no_banco and ativo and not no_authelia:
             problemas.append("falta no Authelia: está no banco mas não consegue entrar")
         if no_banco and not ativo:
             if no_authelia:
                 problemas.append("inativo no banco: entra hoje e perde tudo ao ligar")
-            else:
+            elif not desativado:
                 avisos.append("inativo e fora do Authelia (coerente)")
         mudanca_real: tuple[frozenset[str], frozenset[str]] | None = None
-        if no_banco and ativo and abas_hoje is not None and abas_banco != abas_hoje:
+        if (
+            no_banco
+            and ativo
+            and not desativado
+            and abas_hoje is not None
+            and abas_banco != abas_hoje
+        ):
             ganha = abas_banco - abas_hoje
             perde = abas_hoje - abas_banco
             mudanca_real = (ganha, perde)
@@ -249,7 +325,7 @@ def conferir(
         resultado.append(
             Linha(
                 login=exibicao[k],
-                no_authelia=no_authelia,
+                no_authelia=None if desativado else no_authelia,
                 banco=col_banco,
                 abas_hoje=col_hoje,
                 problemas=tuple(problemas),
@@ -305,15 +381,17 @@ def main(
     try:
         aceitas = ler_aceitas(item for grupo in args.aceitar for item in grupo)
         with open(args.authelia, encoding="utf-8") as f:
-            authelia = logins_do_authelia(f)
+            authelia, desativados = logins_do_authelia(f)
         with open(args.acesso_abas, encoding="utf-8") as f:
             json_pessoas, json_curinga = mapa_do_json(f.read())
-        banco = linhas_do_banco(stdin.read())
+        texto_banco = stdin.read()
+        banco = linhas_do_banco(texto_banco)
     except (OSError, EntradaInvalida) as erro:
         print(f"erro: {erro}", file=sys.stderr)
         return 2
+    n_linhas_banco = sum(1 for linha in texto_banco.splitlines() if linha.strip())
 
-    linhas = conferir(authelia, json_pessoas, json_curinga, banco, aceitas)
+    linhas = conferir(authelia, json_pessoas, json_curinga, banco, aceitas, desativados)
     pendencias = sum(1 for linha in linhas if linha.problemas)
 
     print(
@@ -322,14 +400,21 @@ def main(
     )
     print("-" * _LARGURA, file=stdout)
     for linha in linhas:
+        col_authelia = {True: "sim", False: "NÃO", None: "desativ."}[linha.no_authelia]
         print(
-            f"{linha.login:<28} {'sim' if linha.no_authelia else 'NÃO':<9} {linha.banco:<22} "
+            f"{linha.login:<28} {col_authelia:<9} {linha.banco:<22} "
             f"{linha.abas_hoje:<44} {linha.situacao}",
             file=stdout,
         )
     print("-" * _LARGURA, file=stdout)
+    extra_banco = (
+        f" ({n_linhas_banco} linhas; inativa duplicada descartada)"
+        if n_linhas_banco != len(banco)
+        else ""
+    )
     print(
-        f"Authelia: {len(authelia)} | JSON: {len(json_pessoas)} | banco: {len(banco)} | "
+        f"Authelia: {len(authelia)} (+{len(desativados)} desativados) | "
+        f"JSON: {len(json_pessoas)} | banco: {len(banco)}{extra_banco} | "
         f"pessoas com pendência: {pendencias}",
         file=stdout,
     )
