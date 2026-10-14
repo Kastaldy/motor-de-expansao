@@ -39,8 +39,9 @@
    baseline, com intervalo e flag de extrapolação).
 5. **Dependência de rede no caminho de CARGA do dashboard.** A seção 2 proíbe API ao vivo
    em produção. As únicas exceções são as já aprovadas e restritas a um caminho específico:
-   DEC-004 (tiles do relatório pontual), DEC-010 (geocoding da barra de busca) e DEC-011
-   (tiles do relatório municipal). Qualquer rede fora desses caminhos é achado ALTA.
+   DEC-004 (tiles do relatório pontual e, pela emenda de 2026-10-14, do PDF de concorrência
+   da unidade), DEC-010 (geocoding da barra de busca) e DEC-011 (tiles do relatório municipal).
+   Qualquer rede fora desses caminhos é achado ALTA.
 6. **Teste removido ou `skip` novo sem justificativa explícita** no PR.
 
 ## Severidade MÉDIA (não bloqueia, mas reporte)
