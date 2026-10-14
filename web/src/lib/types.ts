@@ -1920,10 +1920,50 @@ export interface PontoConcorrencia extends BlocoOpcional {
   lista: { rede: string | null; dist_km: number | null }[]
 }
 
+/**
+ * Mercado do ponto. Desde a DEC-069 TODOS os números são do RAIO de 1,0 km (os mesmos da
+ * população), não mais do hexágono que contém o ponto: `residual = max(sam −
+ * consumo_total, 0)` e `consumo_total = consumo_concorrentes + consumo_ultra`. Os nomes
+ * `sam`/`residual`/`score_residual` foram mantidos; os campos novos são opcionais porque
+ * um servidor anterior à DEC-069 não os manda.
+ */
 export interface PontoMercado extends BlocoOpcional {
   sam: number | null
   residual: number | null
   score_residual: number | null
+  /** Identificador cru do recorte (`'raio'` | `'geometria'`), NÃO acentuar. */
+  grao?: 'raio' | 'geometria' | null
+  raio_km?: number | null
+  area_km2?: number | null
+  /** Alunos que as academias de rede consomem dentro do raio (área de influência de 1 km). */
+  consumo_concorrentes?: number | null
+  /** Alunos que as unidades Ultra consomem dentro do raio (alunos reais ou 2.500). */
+  consumo_ultra?: number | null
+  consumo_total?: number | null
+  taxa_fitness?: number | null
+  n_concorrentes_alcancam?: number | null
+  n_ultra_alcancam?: number | null
+  /** Bloco disponível mas com parcela faltando (ex.: sem base de concorrentes). */
+  motivo_parcial?: string | null
+  /** Gate do SAM: faixa M1 do hexágono do ponto E população do raio ≥ `pop_minima`. */
+  gate?: {
+    passa: boolean | null
+    /** Valor bruto do M1 (`'media'`, `'prioridade_maxima'`...), NÃO acentuar. */
+    faixa_m1: string | null
+    faixa_elegivel: boolean | null
+    pop_ok: boolean | null
+    pop_minima: number | null
+    motivo: string | null
+  }
+  /** AUDITORIA: o que o hexágono do ponto dizia (grão antigo). Não alimenta critério. */
+  hexagono?: {
+    hex_id: string | null
+    sam: number | null
+    consumo_concorrentes: number | null
+    consumo_ultra: number | null
+    residual: number | null
+    score_residual: number | null
+  }
 }
 
 export interface PontoVizinho {

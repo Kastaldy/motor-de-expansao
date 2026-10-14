@@ -6541,8 +6541,8 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
     from motor_expansao.api.service import (
         _competitors_ultra,
         _hexes_vizinhos_do_ponto,
+        _mercado_do_ponto,
         _nome_municipio_de,
-        _residual_do_ponto,
         _resolver_e_carregar,
     )
     from motor_expansao.api.settings import Settings
@@ -6592,8 +6592,11 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         ultra_df=ultra_df,
     )
 
-    residual = _residual_do_ponto(lat, lng, cfg)
-    tem_mercado = any(v is not None for v in residual.values())
+    # DEC-069: SAM / consumo / residual no MESMO raio de 1,0 km da populacao (era a linha do
+    # hexagono res-7 do ponto: grao misto, termo da Ultra escondido e Ultra contada em dobro).
+    # Mesma funcao do PDF do piloto e do PDF da API/bot.
+    mercado = _mercado_do_ponto(lat, lng, cfg, res.get("pop_total_raio"))
+    tem_mercado = bool(mercado.get("disponivel"))
 
     import h3
 
@@ -6763,16 +6766,52 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         "lista_total": _n_lista_total,
     }
 
+    # NOMES MANTIDOS, SIGNIFICADO NOVO (DEC-069, emenda o contrato da DEC-005): `sam`,
+    # `residual` e `score_residual` passam a ser do RAIO, e as duas parcelas do consumo
+    # entram para a conta fechar na tela -- `residual = max(sam - consumo_total, 0)`.
+    # Insumo de concorrentes/Ultra ausente -> consumo e residual `None` com motivo, NUNCA
+    # zero (zero afirmaria mercado livre por falta de dado).
+    _hex = mercado.get("hexagono") or {}
     mercado_bloco = {
         "disponivel": tem_mercado,
         "motivo": None if tem_mercado else (
-            "Sem leitura de mercado para este hexágono "
+            mercado.get("motivo")
+            or "Sem leitura de mercado para este ponto "
             "(data/staging/hexagonos_mercado_mapeado.parquet ausente)."
         ),
-        "sam": _num(residual.get("sam_fitness_potencial")),
-        "residual": _num(residual.get("oferta_efetiva_disponivel")),
-        "score_residual": _num(residual.get("score_oportunidade_residual"), 1),
-    
+        # Identificador cru do grao ("raio"/"geometria"), NAO acentuar.
+        "grao": mercado.get("grao"),
+        "raio_km": mercado.get("raio_km"),
+        "area_km2": _num(mercado.get("area_km2"), 2),
+        "sam": _num(mercado.get("sam_fitness_potencial")),
+        "consumo_concorrentes": _num(mercado.get("oferta_consumida_mercado_estimada")),
+        "consumo_ultra": _num(mercado.get("oferta_consumida_ultra_estimada")),
+        "consumo_total": _num(mercado.get("oferta_consumida_total_estimada")),
+        "residual": _num(mercado.get("oferta_efetiva_disponivel")),
+        # Regua ABSOLUTA do pipeline (100 x residual / 2.500, clip 0-100) sobre o residual
+        # do raio -- nao e' o score do hexagono.
+        "score_residual": _num(mercado.get("score_oportunidade_residual"), 1),
+        "taxa_fitness": _num(mercado.get("taxa_fitness_mercado"), 6),
+        "n_concorrentes_alcancam": _num(mercado.get("n_concorrentes_alcancam")),
+        "n_ultra_alcancam": _num(mercado.get("n_ultra_alcancam")),
+        "motivo_parcial": None if not tem_mercado else mercado.get("motivo"),
+        "gate": {
+            "passa": mercado.get("flag_sam"),
+            "faixa_m1": _texto(mercado.get("faixa_oportunidade")),
+            "faixa_elegivel": mercado.get("gate_faixa_elegivel"),
+            "pop_ok": mercado.get("gate_pop_ok"),
+            "pop_minima": mercado.get("pop_minima_gate"),
+            "motivo": mercado.get("motivo_gate"),
+        },
+        # AUDITORIA do grao antigo (o hexagono do ponto). Nao alimenta criterio nenhum.
+        "hexagono": {
+            "hex_id": _texto(_hex.get("hex_id")),
+            "sam": _num(_hex.get("sam")),
+            "consumo_concorrentes": _num(_hex.get("consumo_concorrentes")),
+            "consumo_ultra": _num(_hex.get("consumo_ultra")),
+            "residual": _num(_hex.get("residual")),
+            "score_residual": _num(_hex.get("score_residual"), 1),
+        },
     }
 
     return {
@@ -10662,6 +10701,7 @@ async def relatorio_pontual(
     viabilidade_json: str | None = None,
     viabilidade_inputs_json: str | None = None,
     origem_centroide_hex: bool = False,
+    so_estudo: bool = False,
     fotos: list[UploadFile] | None = None,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> Response:
@@ -10681,6 +10721,15 @@ async def relatorio_pontual(
     1500 (Shopping Center 3)") seria mutilado por qualquer convencao sobre o texto.
     Esta rota e' consumida SO pelo front deste repo; a API publica
     (`src/motor_expansao/api/`) nao muda.
+
+    `so_estudo` (OPCIONAL, default False) e' o botao "Estudo" da analise de ponto (decisao 4
+    do Vinicius, 2026-10-14): o PDF EXCLUSIVAMENTE DEMOGRAFICO, o mesmo modo so-estudo do
+    bot (BLK-CONC-ESTUDO / DEC-030). Com ele a rota IGNORA `viabilidade_json`,
+    `viabilidade_inputs_json` e `info_imovel` -- cinto de seguranca: nenhum dado financeiro
+    (DRE, aluguel, payback, teto) sai nem que o cliente os mande -- e a Conclusao sai so'
+    com o selo DEMOGRAFICO. As paginas da praca ("Pressao concorrencial" e "Como a cidade
+    esta indo") FICAM: nao sao financeiras. Sem o parametro, comportamento identico ao de
+    antes.
 
     Esta funcao so faz a parte ASSINCRONA (ler os uploads) e delega o resto ao
     threadpool — ver `_gerar_relatorio_pontual_pdf`.
@@ -10728,6 +10777,7 @@ async def relatorio_pontual(
             fotos_bytes,
             origem_centroide_hex,
             report_id,
+            so_estudo,
         )
 
 
@@ -10742,16 +10792,26 @@ def _gerar_relatorio_pontual_pdf(
     fotos_bytes: list[bytes],
     origem_centroide_hex: bool = False,
     report_id: str | None = None,
+    so_estudo: bool = False,
 ) -> Response:
     """Corpo SINCRONO do Relatorio Pontual — roda no threadpool, nunca no event loop.
 
     Recebe as fotos ja lidas em bytes (o `await` ficou na rota). Deliberadamente `def`,
     nao `async def`: e o que mantem o servidor respondendo durante a geracao.
+
+    `so_estudo=True`: PDF so' demografico -- ver a docstring da rota.
     """
+    if so_estudo:
+        # Cinto de seguranca: o modo existe para NAO sair dado financeiro. Zerar aqui, e nao
+        # confiar no cliente, garante isso mesmo que o front mande os inputs por engano. O
+        # `info_imovel` vai junto porque carrega `aluguel_pedido` e `valor_venda`.
+        viabilidade_json = None
+        viabilidade_inputs_json = None
+        info_imovel = None
     from motor_expansao.api.service import (
         _competitors_ultra,
+        _mercado_do_ponto,
         _nome_municipio_de,
-        _residual_do_ponto,
         _resolver_e_carregar,
     )
     from motor_expansao.api.settings import Settings
@@ -10853,8 +10913,9 @@ def _gerar_relatorio_pontual_pdf(
         except Exception:  # noqa: BLE001
             mapas = None
 
+    # DEC-069: mercado no RAIO de 1,0 km (mesma funcao da ficha e do PDF da API/bot).
     try:
-        residual = _residual_do_ponto(lat, lng, cfg)
+        residual = _mercado_do_ponto(lat, lng, cfg, result.get("pop_total_raio"))
     except Exception:  # noqa: BLE001
         residual = None
 
@@ -10921,6 +10982,9 @@ def _gerar_relatorio_pontual_pdf(
         # financeiro. No Brasil (`avisos` = {}) isto e None e o PDF nao muda um byte.
         aviso_rodape=_texto_do_aviso_de_viabilidade("pdf", "texto_rodape"),
         praca=praca,
+        # Botao "Estudo" (decisao 4, 2026-10-14): Conclusao so' com o selo DEMOGRAFICO, como
+        # no bot. `False` = comportamento de sempre (sem viabilidade, sem pagina de Conclusao).
+        conclusao_so_estudo=so_estudo,
     )
     return Response(
         content=pdf,

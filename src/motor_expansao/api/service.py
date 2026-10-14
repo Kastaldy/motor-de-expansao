@@ -545,6 +545,118 @@ def _residual_do_ponto(lat: float, lng: float, settings: Settings) -> dict:
     return residual
 
 
+# --- mercado NO RAIO do ponto (DEC-069) ---------------------------------------
+#
+# `_residual_do_ponto` acima continua existindo (le' o HEXAGONO, e' auditoria), mas deixou
+# de alimentar as tres superficies do ponto. A ficha (`/api/ponto`), o PDF do piloto e o
+# PDF da API/bot passam a chamar `_mercado_do_ponto`, que calcula SAM, consumo e residual
+# no MESMO raio de 1,0 km da populacao -- ver `dashboard/mercado_raio.py`. Uma funcao so'
+# para as tres, pela licao da DEC-044: duas redacoes da mesma regra desencontram em
+# silencio.
+
+# Do hexagono do ponto entram na conta SO' a faixa do M1 (gate) e a taxa calibrada (constante
+# do artefato). O resto viaja como AUDITORIA, para quem quiser comparar com o grao antigo.
+_HEX_MERCADO_COLS = (
+    "faixa_oportunidade",
+    "taxa_fitness_mercado_calibrada",
+    *_SAM_COLS,
+    "oferta_consumida_ultra_estimada",
+)
+_COL_TAXA = "taxa_fitness_mercado_calibrada"
+
+
+def _linha_mercado_do_hex(lat: float, lng: float, settings: Settings) -> dict | None:
+    """A linha do hexagono res-7 do ponto no artefato de mercado (1 linha, sem a base).
+
+    `None` sem o artefato. Hexagono fora da base -> dict so' com `hex_id` e a TAXA, que e'
+    constante do artefato e por isso vem de qualquer linha: sem faixa o gate reprova (com
+    motivo proprio), mas a taxa nao precisa sumir junto.
+    """
+    mercado = Path(settings.staging_dir / "hexagonos_mercado_mapeado.parquet")
+    if not mercado.is_file():
+        return None
+    try:
+        import h3
+        import pyarrow.compute as pc
+        import pyarrow.dataset as ds
+
+        cell = h3.latlng_to_cell(lat, lng, 7)  # 7 = H3_RESOLUTION do M1, LIDO
+        dataset = ds.dataset(mercado)
+        disponiveis = set(dataset.schema.names)
+        colunas = ["hex_id", *[c for c in _HEX_MERCADO_COLS if c in disponiveis]]
+        tbl = dataset.to_table(filter=pc.field("hex_id") == cell, columns=colunas)
+        linha: dict[str, Any] = tbl.slice(0, 1).to_pylist()[0] if tbl.num_rows else {}
+        linha["hex_id"] = cell
+        linha["hex_na_base"] = bool(tbl.num_rows)
+        if linha.get(_COL_TAXA) is None and _COL_TAXA in disponiveis:
+            cab = dataset.head(1, columns=[_COL_TAXA], filter=pc.field(_COL_TAXA).is_valid())
+            if cab.num_rows:
+                linha[_COL_TAXA] = cab.column(0)[0].as_py()
+        return linha
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _mercado_do_ponto(
+    lat: float,
+    lng: float,
+    settings: Settings,
+    pop_area: float | None,
+    *,
+    geometria: Any = None,
+) -> dict:
+    """SAM / consumo (concorrentes + Ultra) / residual NO RAIO do ponto (DEC-069).
+
+    `pop_area` e' a `pop_total_raio` que o motor censitario ja' calculou para o MESMO
+    recorte -- a populacao nao e' relida aqui. `geometria` (shapely em graus, x=lng) e' a
+    porta do lote de geometria (DEC-070): com ela, (lat, lng) e' o `representative_point`
+    do poligono e o recorte e' o poligono.
+
+    Devolve um dict com as chaves de valor nos nomes das colunas do artefato
+    (`sam_fitness_potencial`, `oferta_consumida_*`, `oferta_efetiva_disponivel`,
+    `score_oportunidade_residual`) -- e' o que `censo_report` le --, mais `grao`, o gate e
+    o bloco `hexagono` de auditoria. NUNCA levanta: falha vira `disponivel=False` com motivo.
+    READ-ONLY; nada do M1 nem do artefato de mercado e' recalculado.
+    """
+    from motor_expansao.dashboard.censo_point import RAIO_CENSITARIO_DEFAULT_KM
+    from motor_expansao.dashboard.mercado_raio import (
+        carregar_cadeias_mercado,
+        carregar_ultra_mercado,
+        mercado_na_area,
+    )
+
+    linha = _linha_mercado_do_hex(lat, lng, settings) or {}
+    staging = str(settings.staging_dir)
+    try:
+        out = mercado_na_area(
+            lat,
+            lng,
+            pop_area=pop_area,
+            cadeias=carregar_cadeias_mercado(staging),
+            ultra=carregar_ultra_mercado(staging),
+            taxa=linha.get(_COL_TAXA),
+            faixa_oportunidade=linha.get("faixa_oportunidade"),
+            raio_km=RAIO_CENSITARIO_DEFAULT_KM,
+            geometria=geometria,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("mercado no raio falhou: %r", exc)
+        out = {k: None for k in _SAM_COLS}
+        out.update({"disponivel": False, "motivo": "Falha ao calcular o mercado do ponto."})
+    out["hex_id"] = linha.get("hex_id")
+    # AUDITORIA do grao antigo: o que o hexagono do ponto diz. Nao entra em conta nenhuma.
+    out["hexagono"] = {
+        "hex_id": linha.get("hex_id"),
+        "na_base": linha.get("hex_na_base"),
+        "sam": linha.get("sam_fitness_potencial"),
+        "consumo_concorrentes": linha.get("oferta_consumida_mercado_estimada"),
+        "consumo_ultra": linha.get("oferta_consumida_ultra_estimada"),
+        "residual": linha.get("oferta_efetiva_disponivel"),
+        "score_residual": linha.get("score_oportunidade_residual"),
+    }
+    return out
+
+
 def _hexes_vizinhos_do_ponto(lat: float, lng: float, settings: Settings, k: int = 7):
     """Hexes H3 (res 7) do disco de raio `k` em torno do ponto, com o valor de cada camada hex.
 
@@ -784,7 +896,9 @@ def gerar_pdf_ponto(
     # ela, o render devolve None e o PDF sai sem a pagina de satelite (DEC-018).
     foto_sat = render_foto_satelite_ponto(lat, lng, api_key=settings.arcgis_api_key or None)
 
-    residual = _residual_do_ponto(lat, lng, settings)
+    # DEC-069: SAM/consumo/residual no RAIO de 1,0 km, com a populacao do MESMO recorte que o
+    # motor censitario acabou de medir. Mesma funcao da ficha e do PDF do piloto.
+    residual = _mercado_do_ponto(lat, lng, settings, result.get("pop_total_raio"))
     # Variante "Apresentacao Classica Ultra" (BLK-EST-05): a API/bot espelha o
     # MESMO modelo que o dashboard passou a gerar por padrao (pages.py usa
     # template="classico"). Com o BLK-RELPON-14 a classica virou o gerador UNICO
@@ -807,10 +921,11 @@ def gerar_pdf_ponto(
     # numa superficie nova.
     #
     # BLK-CONC-ESTUDO: a pagina de CONCLUSAO passou a sair TAMBEM sem `viabilidade`, em
-    # modo so-estudo -- metas censitarias do raio e leitura de mercado do hexagono, SEM os
-    # gates de imovel e de retorno. Este e' o UNICO ponto do sistema que liga o flag: o
-    # piloto web chama a mesma funcao sem ele e segue com as 7 paginas de antes quando o
-    # operador nao preenche a Viabilidade (escopo fechado por Juan em 2026-08-12).
+    # modo so-estudo -- metas censitarias do raio e leitura de mercado do raio (DEC-069),
+    # SEM os gates de imovel e de retorno. Ate' 2026-10-14 este era o UNICO ponto do
+    # sistema que ligava o flag (escopo fechado por Juan em 2026-08-12); desde entao o
+    # botao "Estudo" da analise de ponto do piloto tambem o liga, por `so_estudo=true` em
+    # `POST /api/relatorio/pontual` (decisao 4 do Vinicius, 2026-10-14).
     viabilidade_pdf = None
     if viabilidade_inputs is not None:
         from motor_expansao.dimensionamento.payload_viabilidade import (

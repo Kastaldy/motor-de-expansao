@@ -106,6 +106,33 @@ describe('relatorioPontual — orçamento da query string', () => {
   })
 })
 
+describe('relatorioPontual — modo Estudo (só demográfico)', () => {
+  it('soEstudo escreve so_estudo=true e NÃO manda viabilidade nem dados do imóvel', async () => {
+    const cap = capturarUrl()
+    await api.relatorioPontual({
+      lat: -23.48,
+      lng: -46.61,
+      rotulo: 'Santana',
+      soEstudo: true,
+      viabilidadeInputs: INPUTS,
+      infoImovel: { aluguel: 30000, metragem: 1200 },
+    })
+    const q = new URLSearchParams(cap.url().split('?')[1] ?? '')
+    expect(q.get('so_estudo')).toBe('true')
+    expect(q.has('viabilidade_inputs_json')).toBe(false)
+    expect(q.has('info_imovel')).toBe(false)
+    expect(q.get('rotulo')).toBe('Santana')
+  })
+
+  it('sem soEstudo o pedido segue idêntico ao de antes (sem so_estudo na query)', async () => {
+    const cap = capturarUrl()
+    await api.relatorioPontual({ lat: -23.48, lng: -46.61, viabilidadeInputs: INPUTS })
+    const q = new URLSearchParams(cap.url().split('?')[1] ?? '')
+    expect(q.has('so_estudo')).toBe(false)
+    expect(q.has('viabilidade_inputs_json')).toBe(true)
+  })
+})
+
 /**
  * Regressão do 404 no celular do Miguel (06/08/2026).
  *

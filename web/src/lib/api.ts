@@ -770,6 +770,13 @@ export const api = {
      * nenhuma (endereço com parênteses seria mutilado). Omitido = sem aviso.
      */
     origemCentroideHex?: boolean
+    /**
+     * Botão "Estudo" da análise de ponto: PDF EXCLUSIVAMENTE demográfico — o modo
+     * só-estudo do bot (BLK-CONC-ESTUDO / DEC-030), Conclusão só com o selo demográfico.
+     * Com ele, `viabilidadeInputs` e `infoImovel` NÃO são enviados (e o servidor os
+     * descartaria de todo jeito): nenhum dado financeiro sai nesse PDF.
+     */
+    soEstudo?: boolean
     infoImovel?: Record<string, unknown>
     viabilidadeInputs?: ViabilidadeIn
     fotos?: File[]
@@ -781,11 +788,15 @@ export const api = {
     if (opts.rotulo) q.set('rotulo', opts.rotulo)
     if (opts.solicitante) q.set('solicitante', opts.solicitante)
     if (opts.origemCentroideHex) q.set('origem_centroide_hex', 'true')
-    if (opts.infoImovel && Object.keys(opts.infoImovel).length) {
-      q.set('info_imovel', JSON.stringify(opts.infoImovel))
-    }
-    if (opts.viabilidadeInputs) {
-      q.set('viabilidade_inputs_json', JSON.stringify(opts.viabilidadeInputs))
+    if (opts.soEstudo) {
+      q.set('so_estudo', 'true')
+    } else {
+      if (opts.infoImovel && Object.keys(opts.infoImovel).length) {
+        q.set('info_imovel', JSON.stringify(opts.infoImovel))
+      }
+      if (opts.viabilidadeInputs) {
+        q.set('viabilidade_inputs_json', JSON.stringify(opts.viabilidadeInputs))
+      }
     }
 
     const fd = new FormData()
