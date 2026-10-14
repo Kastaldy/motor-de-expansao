@@ -605,9 +605,40 @@ a tela escreve — `SQL_CRIAR` em `db/usuarios.py`. Os perfis disponíveis são 
 > não importa — a coluna é `CITEXT` e a allowlist do painel compara com `casefold()`. O que não pode
 > divergir é o texto: usar o e-mail de um lado e o nome de usuário do outro deixa a pessoa de fora.
 
+### Conferir antes de ligar
+
+Depois do cadastro, e de novo no momento do corte, rode o conferidor. Ele responde, pessoa a
+pessoa, se **quem entra hoje** (Authelia) **existe no banco, ativo, e com as mesmas abas** que vê
+pelo `acesso_abas.json`: acusa `FALTA NO BANCO` (perde tudo ao ligar), `falta no Authelia` (está no
+banco e não entra), inativo e abas que mudam. Só lê, e nunca imprime hash, senha nem e-mail. A lista
+muda ao vivo (cada `Criar usuário` da tela e cada edição do Authelia mexem nela), então o resultado
+que vale é o do instante do corte, não o de ontem. Saída `0` = tudo casa; `1` = pendência.
+
+O script fica no checkout (`/opt/motor-expansao/app/scripts/conferir_usuarios_banco.py`), que
+**não** se atualiza sozinho — confira que ele está lá antes. O arquivo do Authelia é `root:600` no
+host, por isso a leitura passa pelo container, e o `grep` leva só as linhas de login, nunca o hash.
+Precisa de `bash` (as `<(...)` não existem em `sh`):
+
+**No terminal da VPS:**
+```bash
+cd /opt/motor-expansao/app
+docker exec -i motor_expansao_postgres psql -v ON_ERROR_STOP=1 -At -F '|' \
+    -U reservas_owner -d banco_de_reservas \
+    -c "$(python3 scripts/conferir_usuarios_banco.py --sql)" \
+  | python3 scripts/conferir_usuarios_banco.py \
+    <(docker exec motor_expansao_authelia grep -E '^users:|^  [^ #][^:]*: *$' /config/users_database.yml) \
+    <(docker exec motor_expansao_web cat /app/cadastro/acesso_abas.json)
+```
+
+Uma mudança de abas **já decidida** (alguém que ganha uma aba ao passar a um perfil do banco) é
+declarada no fim do comando, com `--aceitar login:+aba,-aba`; ela sai como `ACEITA` e só vale se a
+mudança real for **exatamente** a declarada. Pendência que ninguém decidiu não se aceita: resolve-se
+no cadastro (tela de Acessos ou Authelia) e roda-se de novo até sair `0`.
+
 ## 8. Ligar — e o que fazer se der errado
 
-**Antes de preencher, confira que o seu login está na allowlist do painel:**
+**Antes de preencher, o conferidor do §7 ("Conferir antes de ligar") tem de sair `0` — rode-o
+de novo agora, não confie no de ontem.** E confira que o seu login está na allowlist do painel:
 
 **No terminal da VPS:**
 ```bash
