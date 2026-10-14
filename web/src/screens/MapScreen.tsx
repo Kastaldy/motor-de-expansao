@@ -1,6 +1,15 @@
 import { latLngToCell } from 'h3-js'
 import { useUfsDaBase } from '../lib/base-contexto'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+  useRef,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react'
 
 import type { PontoEscolhido } from '../App'
 import BarraCamadas, { type ChaveDeCamada } from '../components/BarraCamadas'
@@ -46,6 +55,7 @@ import {
   paraGeoJson,
 } from '../lib/geometria-desenho'
 import type { Coord } from '../lib/medicao'
+import { assinarJanelas, deslocamentoDoTrilho, janelasAbertas } from '../lib/ocupacao-janelas'
 import { degrauSobreFichaDePonto, janelaDoHexVisivel, pontoSeleciona } from '../lib/janela-hex'
 import type { PinDoPonto } from '../lib/pontos-estado'
 import type { Tema } from '../lib/tema'
@@ -399,6 +409,44 @@ export default function MapScreen({
      o operador que ja sabe a regua e quer o territorio embaixo dela, tipicamente para
      tirar print. Nao entra no `EstadoMapa`: e' preferencia do momento, nao da analise. */
   const [legendaVisivel, setLegendaVisivel] = useState(true)
+
+  /* O TRILHO SAI DE BAIXO DAS JANELAS (pedido do Vinicius, 2026-10-14): a ficha do
+     hexágono e a do ponto nascem à esquerda e cobriam o trilho inteiro — Selecionar ponto,
+     régua, geometria, camadas e legenda sumiam justamente com a ficha aberta. A regra de
+     quanto andar mora em `lib/ocupacao-janelas` (testada); aqui só se mede e aplica.
+
+     A posição NATURAL sai de `offsetLeft`/`offsetTop`, que ignoram o `transform` — medir
+     pelo `getBoundingClientRect` do próprio trilho no meio da animação devolveria a
+     posição já deslocada (ou meio deslocada) e o trilho correria atrás de si mesmo.
+     Callback ref (estado), e não `useRef`: o trilho só monta quando os dados chegam, e o
+     efeito precisa rodar de novo nesse momento. */
+  const [trilhoEl, setTrilhoEl] = useState<HTMLDivElement | null>(null)
+  const janelasNaTela = useSyncExternalStore(assinarJanelas, janelasAbertas)
+  const [dxTrilho, setDxTrilho] = useState(0)
+  useLayoutEffect(() => {
+    if (!trilhoEl) return
+    const medir = () => {
+      const pai = trilhoEl.offsetParent as HTMLElement | null
+      if (!pai) return
+      const base = pai.getBoundingClientRect()
+      const natural = {
+        esquerda: base.left + trilhoEl.offsetLeft,
+        topo: base.top + trilhoEl.offsetTop,
+        largura: trilhoEl.offsetWidth,
+        altura: trilhoEl.offsetHeight,
+      }
+      setDxTrilho(deslocamentoDoTrilho(natural, janelasNaTela, window.innerWidth))
+    }
+    medir()
+    /* O trilho muda de tamanho sozinho (painel de camadas, legenda, barra do desenho). */
+    const obs = new ResizeObserver(medir)
+    obs.observe(trilhoEl)
+    window.addEventListener('resize', medir)
+    return () => {
+      obs.disconnect()
+      window.removeEventListener('resize', medir)
+    }
+  }, [trilhoEl, janelasNaTela])
 
   /* Pins das academias INDEPENDENTES com score (BLK-MA-15). Comeca DESLIGADO pela mesma razao da
      chave de raio: o piloto abre identico ao de hoje. Sao ate ~1,3 mil pontos numa capital, e
@@ -1784,6 +1832,7 @@ export default function MapScreen({
       >
         {dados && passo && (
           <div
+            ref={setTrilhoEl}
             style={{
               position: 'absolute',
               left: 16,
@@ -1792,6 +1841,9 @@ export default function MapScreen({
               flexDirection: 'column',
               gap: 8,
               pointerEvents: 'none',
+              /* Anda para a direita das janelas abertas (ver `dxTrilho`). */
+              transform: dxTrilho ? `translateX(${dxTrilho}px)` : undefined,
+              transition: 'transform .22s cubic-bezier(.4,0,.2,1)',
             }}
           >
             {/* ---------------- Barra do DESENHO ("Analisar geometria", DEC-071) ----------------
