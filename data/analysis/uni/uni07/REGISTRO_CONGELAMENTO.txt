@@ -1,0 +1,13 @@
+BLK-UNI-07 — congelamento antes de rodar (2026-09-30), depois da revisao adversarial. .venv do projeto.
+b5854bc92929795de36db213dcae7f3dc9369f98de4a2d6adb9052e255a4990f *uni07/protocolo_uni07.md
+16189a95d5309184ee5cc0ed92b7adf17f7db78733600fc0d42f741bff3d6569 *uni07/01_incerteza.py
+cffc6b276d930905ace08bffe1c5f0b7e15d207b5fd7389c8afd0a19ebc8fa87 *fato_unidade_mes.parquet
+c6ecef57365c1ac8730802386adb55eb5610a056665b0999746ccb12395230b8 *dim_unidade.parquet
+bdc8ecbb2db49b339590ed1e8f3272b89407ad72a0286993d5150393c67120c9 *alavancas/master_id_cadastro.csv
+ba9b3e9f9f45ebdd238b6214bb67f5c4ca4ce6ffd5677341b6e4be257f5cbbe9 *uni02/confirmacao_por_unidade.csv
+7320ae60a18db68d7a1ff93c2bf8953fa80f6aa15db5eb6c285fd8b435495508 *uni05/01_comparacao.py
+d4147998b23859bcb4d813d7cbd724f3a0e321cb3b0f27f7f45493db244f7c8d *uni01/01_exploracao.py
+4b6cefdeb5c862b1ccb3a088998462943178b350200bec1c7941adbca2aaa616 *alavancas/01_alavancas.py
+e61ad34fb7023b5f3c098e3628541c2d7a7f344b5ce68461872b56334a11d7cf *uni02/01_confirmacao.py
+d8e45927a3d4c10428d3fca47edd26de76efbe70b88c459e039d2480b9846faa *../../../src/motor_expansao/dimensionamento/config.py
+e06af858a2b5c3bde7befc409e0ee20c88205eb52b5209c57fcad5b14e59c2c3 *../../../src/motor_expansao/dimensionamento/simulador.py

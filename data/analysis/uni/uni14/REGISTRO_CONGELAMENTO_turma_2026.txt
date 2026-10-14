@@ -1,0 +1,4 @@
+Previsoes da turma de 2026 (BLK-UNI-14, protocolo v1.1) congeladas em 2026-10-06 15:56. Pecas das duas partes SEM k (k em coluna).
+previsoes_turma_2026_uni14.csv  SHA-256 07a5bba8780298c62c3d39b94eff6e7043e98f0c3ec3381fb4ef600ec625304a
+resultado_uni14.md  SHA-256 0c679498db96304599dfc601723284a120ec7cab8514e318de653fffcb878e0c
+REGISTRO_PRE.txt  SHA-256 7141e31727e3c4e83283fbff197fa8acdce150f8d88579466647712c382bf490

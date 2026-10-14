@@ -1,0 +1,2 @@
+d36085476bee99db13c8a9e3ccc9ba16720ca826e6ed1d37ebb80f74bfa052d4 *protocolo_duas_partes.md
+f0dbe3ded1a71019ef9b076d5e7c9e8fb6cd2848cef5a4fe390babf36ee123e9 *05_duas_partes.py

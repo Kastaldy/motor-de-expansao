@@ -1,0 +1,13 @@
+Previsao congelada da turma de 2026 — gerada em 2026-09-29, antes de qualquer conferencia.
+8f7b216327ddd476f42253f969c0b46fb41b1bf385f86e7c1313ddef87a172dc *previsao_2026/previsoes_turma_2026.csv
+cd06e6bc88d95732577a90dd18b0d625c041a2a624b6b925eb5329101f2f9132 *protocolo_previsao_2026.md
+e47d4e0e2d1730d5d986e273a238f1c6f17eff1f44435105ebf652a39211c33d *01_congelar.py
+cffc6b276d930905ace08bffe1c5f0b7e15d207b5fd7389c8afd0a19ebc8fa87 *fato_unidade_mes.parquet
+c6ecef57365c1ac8730802386adb55eb5610a056665b0999746ccb12395230b8 *dim_unidade.parquet
+acaa55425abb6ab272329444815b6136d645f317565c7b27c72d912f5c0a3504 *metragem_estimada.csv
+065b12b66165e55be73663968c528845852de78ac0e197768ee6a4790759a839 *metragem_estimada_2026-09-29.csv
+e0fd0b0f0fc32ed4d6374aeeed175e0acf0187b7a4ed4d5f511a603dcfead4f8 *curva_uni03.csv
+Fachada registrada em 2026-09-29 (antes de desempenho maduro): f05fa8da0c844dc23575321bd9bb10e3c114963be7fce58ad502e4c5898aa39b *previsao_2026/fachada_turma_2026.csv — hipotese: nota/indice de fachada maiores -> faturamento acima do previsto (Spearman com o residuo do M0).
+Previsoes M0 + master real (cadastro, anonimizada) + estudios — 2026-09-29, antes de qualquer conferencia: d3a5d3f4edb18ce84c7c0c095210b56e8763c5db1977e6b3967c55aab8aa0163 *previsao_2026/previsoes_turma_2026_master_real.csv
+Previsoes M0 + master real (cadastro, anonimizada) + estudios — 2026-09-29, antes de qualquer conferencia: d3a5d3f4edb18ce84c7c0c095210b56e8763c5db1977e6b3967c55aab8aa0163 *previsao_2026/previsoes_turma_2026_master_real.csv
+v2 ADOTADA com renda DOMICILIAR (decisao do Felipe, 2026-09-30) — praca (m2, renda domiciliar, populacao c10) + master real + estudios; antes de qualquer conferencia: 999bd027263459ecf2a2eafc914ad832c0e863f2d36d385a23386e37d1ad6df9 *previsao_2026/previsoes_turma_2026_v2_domiciliar.csv
