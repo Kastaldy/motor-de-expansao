@@ -6,7 +6,6 @@ import type { PontoEscolhido } from '../App'
 import BlocoViabilidadePonto from '../components/BlocoViabilidadePonto'
 import CampoPonto from '../components/CampoPonto'
 import DetalheRegiao from '../components/DetalheRegiao'
-import type { SearchPin } from '../components/HexMap'
 import JanelaFicha from '../components/JanelaFicha'
 import { Landing } from './MapScreen'
 import {
@@ -21,12 +20,7 @@ import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
 import { Aviso, Botao, Chip, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { api, ApiError } from '../lib/api'
-import {
-  MAX_PONTOS,
-  chaveDaCoordenada,
-  indiceDoMesmoPonto,
-  rotulosDosPontos,
-} from '../lib/comparacao-pontos'
+import { rotulosDosPontos } from '../lib/comparacao-pontos'
 import type { AlvoCaptura } from '../lib/captura-mapa'
 import { classificarEntrada, linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
 import { num } from '../lib/format'
@@ -48,10 +42,19 @@ import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
  * copia: e' o MESMO componente.
  *
  * QUEM ESCOLHE O TERRITORIO E' O ENDERECO. Resolver o ponto devolve UF e municipio, e o
- * `onLocalizar` os empurra para o `App`, que ja' sabe carregar o territorio (e' o mesmo
- * caminho do drill-down do Explorar). Nada de carga propria aqui: a versao anterior
- * chamava `/api/municipio` por conta e mantinha um segundo estado de territorio, que
- * podia divergir do que o mapa mostrava.
+ * `App` leva o mapa para la' (e' o mesmo caminho do drill-down do Explorar). Nada de carga
+ * propria aqui: a versao anterior chamava `/api/municipio` por conta e mantinha um segundo
+ * estado de territorio, que podia divergir do que o mapa mostrava.
+ *
+ * A LISTA DE PONTOS NAO MORA AQUI (2026-10-14). Ela e' do `App` (`lib/use-pontos`, regras
+ * em `lib/pontos-estado`): ir ao Simulador desmonta esta tela, e a analise tem de estar
+ * la' na volta; o mapa precisa da lista inteira para desenhar todos os pontos; e a lupa
+ * do mapa e o "Selecionar ponto" pedem pontos sem passar por esta tela. Aqui fica so' o
+ * que e' de TELA: a caixa de colar, a janela e a resolucao de endereco/link.
+ *
+ * NAS DUAS ENTRADAS DO MAPA. "Analisar um ponto" (`comHero`) abre no hero de colar; o
+ * "Explorar uma regiao" monta esta camada SEM hero — ela fica invisivel ate' o primeiro
+ * ponto, para nao cobrir o mapa de quem veio explorar.
  *
  * ESTADO VAZIO POR BLOCO. Cada bloco pergunta ao SERVIDOR se tem dado (`disponivel`) e
  * mostra o `motivo` que ele devolveu. A cadeia de dados degrada em silencio por desenho
@@ -61,36 +64,61 @@ import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
 export default function PontoScreen({
   onCapturarMapas,
   onAnalisarPonto,
-  onLocalizar,
-  pedido,
+  fichas,
+  aberto,
+  revelar,
+  carregandoPonto,
+  erroPonto,
+  onAnalisar,
+  onAbrir,
+  onRemover,
+  onLimpar,
+  onLimparErro,
+  comHero = true,
   textoInicial,
   onTextoAplicado,
-  onLimparPin,
   onInicio,
 }: {
   /** Leva ESTE ponto para a tela de Viabilidade (a costura com o resto do app). */
   onAnalisarPonto: (p: PontoEscolhido) => void
   /**
-   * Avisa o `App` de onde caiu o endereco, para o mapa do fundo ir para la'.
+   * Os pontos lidos, na ordem em que entraram — a lista do `App`.
    *
-   * `municipio` pode vir vazio: o `/api/ponto` declara o municipio como `string | null`.
-   * Nesse caso o `App` fica na visao da UF — o mapa continua util e honesto, so' menos
-   * fechado do que seria com a cidade resolvida.
+   * Lista e nao objeto unico porque a pergunta do operador quase nunca e' "este imovel
+   * serve?" isolada — e' "qual DESTES serve mais?". Cada ponto e' uma leitura completa
+   * do `/api/ponto`; o teto de `MAX_PONTOS` existe porque cada um custa uma leitura de
+   * particao de municipio no servidor.
    */
-  onLocalizar: (uf: string, municipio: string, pin: SearchPin) => void
+  fichas: PontoPayload[]
+  /** Qual ficha esta aberta em detalhe. Com 1 ponto e' sempre ela. */
+  aberto: number
+  /**
+   * Contador que sobe quando um ponto acaba de chegar (ou foi pedido de novo): e' o sinal
+   * para a janela abrir. O pedido pode ter nascido fora daqui — na lupa do mapa.
+   */
+  revelar: number
+  /** Ha' leitura do `/api/ponto` em voo. */
+  carregandoPonto: boolean
+  /** Erro da ultima leitura (ou do teto cheio), vindo da lista. */
+  erroPonto: string | null
+  /** Pede a analise de uma coordenada ja' resolvida. */
+  onAnalisar: (lat: number, lng: number) => Promise<void>
+  onAbrir: (i: number) => void
+  onRemover: (i: number) => void
+  /** Tira todos os pontos da lista (e, com eles, as marcas do mapa). */
+  onLimpar: () => void
+  onLimparErro: () => void
+  /**
+   * Se a tela vazia e' o HERO de colar. `true` em "Analisar um ponto"; `false` no
+   * "Explorar uma regiao", onde a camada fica invisivel ate' o primeiro ponto — o hero
+   * cobriria o mapa de quem veio explorar.
+   */
+  comHero?: boolean
   /* `mapaPronto` SAIU daqui (2026-08-26). Ele dizia "o Explorar já tem território na
      tela", e era o que decidia entre o hero e a camada flutuante. Só que o território
      fica carregado no `App` depois da primeira análise, de propósito — então a resposta
      era "sim" para sempre e o hero virava inalcançável. Quem manda agora é o que a tela
      de fato tem: ficha, ou nenhuma. Sem consumidor, a prop não fica de enfeite. */
-  /**
-   * Coordenada resolvida pela busca do Explorar, para virar ficha aqui.
-   *
-   * Carrega um `n` que so' cresce porque a MESMA coordenada pode ser pedida duas vezes
-   * seguidas (buscar, fechar a janela, buscar igual): comparando so' lat/lng o efeito nao
-   * dispararia na segunda, e o operador ficaria olhando um botao que nao responde.
-   */
-  pedido: { lat: number; lng: number; n: number } | null
   /**
    * O que o operador colou NO CARD do Início (2026-09-22) — texto cru, do mesmo jeito
    * que ele sairia da caixa desta tela. Resolvido uma vez, na montagem, pelo MESMO
@@ -101,27 +129,18 @@ export default function PontoScreen({
   textoInicial?: string | null
   /** Avisa que o texto foi consumido — ele vale uma entrada, não todas. */
   onTextoAplicado?: () => void
-  /** Apaga a marca do endereço no mapa. Usado pela limpeza. */
-  onLimparPin: () => void
   /** Volta ao menu de modos — só o hero de entrada usa, como o Explorar faz. */
   onInicio: () => void
   /** Captura do mapa, publicada pelo App. Ausente = o PDF sai sem mapas. */
   onCapturarMapas?: (alvos: AlvoCaptura[]) => Promise<string[]>
 }) {
   const institutoDaBase = institutoDoCenso()
-  const [carregando, setCarregando] = useState(false)
-  const [erro, setErro] = useState<string | null>(null)
-  /**
-   * Os pontos colados, na ordem em que entraram.
-   *
-   * Lista e nao objeto unico porque a pergunta do operador quase nunca e' "este imovel
-   * serve?" isolada — e' "qual DESTES serve mais?". Cada ponto e' uma leitura completa
-   * do `/api/ponto`; o teto de `MAX_PONTOS` existe porque cada um custa uma leitura de
-   * particao de municipio no servidor.
-   */
-  const [fichas, setFichas] = useState<PontoPayload[]>([])
-  /** Qual ficha esta aberta em detalhe. Com 1 ponto e' sempre ela. */
-  const [aberto, setAberto] = useState(0)
+  /* Resolucao de ENDERECO/LINK (geocodificar, expandir link curto) — a unica ida ao
+     servidor que ainda e' desta tela. A leitura do ponto em si e' da lista, no `App`. */
+  const [resolvendo, setResolvendo] = useState(false)
+  const [erroLocal, setErroLocal] = useState<string | null>(null)
+  const carregando = resolvendo || carregandoPonto
+  const erro = erroLocal ?? erroPonto
   /**
    * A caixa de colar so' aparece quando pedida — depois do 1o ponto ela some.
    *
@@ -132,137 +151,50 @@ export default function PontoScreen({
    * mapa montado" so' significa uma coisa: o territorio ficou carregado no `App` de uma
    * analise anterior. Nesse caso a tela abria direto no mapa, sem lugar nenhum para colar
    * o endereco que o proprio card acabou de prometer (Juan, 2026-08-18).
+   *
+   * Com a lista no `App`, "nasce aberta" passou a valer para a tela VAZIA: voltando do
+   * Simulador com pontos na lista, a caixa nao reaparece por cima da analise.
    */
-  const [colando, setColando] = useState(true)
+  const [colando, setColando] = useState(() => fichas.length === 0)
   /**
    * A janela da ficha.
    *
    * Abre SOZINHA quando uma leitura chega: o operador colou o ponto justamente para
    * saber se ele serve, e cobrar um clique a mais pela resposta seria burocracia. Depois
    * disso quem manda e' ele — fechou, o mapa fica limpo ate' pedir de novo.
+   *
+   * Nasce ABERTA quando ja' ha' pontos: e' a volta do Simulador, e quem foi simular um
+   * dos pontos volta para a analise que deixou, nao para um botao "Ver a ficha".
    */
-  const [janela, setJanela] = useState(false)
+  const [janela, setJanela] = useState(() => fichas.length > 0)
 
   const ficha = fichas[aberto] ?? null
   /* Os mesmos rótulos que o painel de abas usa — desambiguados entre si. */
   const rotulos = rotulosDosPontos(fichas)
 
   /**
-   * De uma coordenada ja' resolvida ate' a ficha na tela.
+   * Chegou ponto (ou foi pedido de novo um que ja' estava na lista): mostra a janela.
    *
-   * Separado de `resolver` porque agora ha' DUAS portas para o mesmo trabalho: a caixa de
-   * colar daqui e a busca do cabecalho do Explorar. As duas terminam neste ponto — e' o
-   * que garante que buscar um endereco pela lupa produza exatamente a mesma leitura que
-   * cola-lo aqui, em vez de so' soltar um pin no mapa.
+   * Abre SOZINHA pelo mesmo motivo de sempre — o operador pediu o ponto justamente para
+   * saber se ele serve. O contador vem da lista, e nao de um retorno desta tela, porque o
+   * pedido pode ter nascido na lupa do mapa. O `ref` comeca no valor da MONTAGEM: um
+   * contador ja' alto na volta do Simulador nao e' evento novo.
    */
-  const analisarCoordenada = useCallback(
-    async (lat: number, lng: number) => {
-      setCarregando(true)
-      setErro(null)
-      try {
-        // JA ESTA' NA LISTA? Abre a aba dele em vez de ler de novo. Dar Enter duas vezes
-        // na mesma coordenada é gesto normal de quem não viu a tela reagir; virar dois
-        // pontos idênticos, comparados contra si mesmos, não é resposta para isso.
-        const repetido = indiceDoMesmoPonto(fichas, lat, lng)
-        if (repetido >= 0) {
-          setAberto(repetido)
-          setColando(false)
-          setJanela(true)
-          return
-        }
-        /* TETO CHEIO: recusa e DIZ, em vez de engolir o ponto. O `slice(0, MAX_PONTOS)`
-           que estava aqui mantinha os cinco PRIMEIROS e descartava justamente o novo, e
-           ainda abria a aba do quinto antigo — o operador colava um endereço, esperava a
-           leitura e recebia um ponto velho, sem nenhum aviso. Foi a outra metade do
-           "depois de algumas vezes ele buga" (Juan, 2026-08-14). A regra já estava
-           escrita na tela ("Máximo de N pontos - remova um para colar outro"); o que
-           faltava era o código honrá-la. A checagem vem ANTES da chamada: não faz sentido
-           gastar uma leitura de servidor para descartar o resultado. */
-        if (fichas.length >= MAX_PONTOS) {
-          setErro(
-            `Máximo de ${MAX_PONTOS} pontos na comparação. Remova um para analisar outro.`,
-          )
-          return
-        }
-        const nova = await api.ponto(lat, lng)
-        // O ponto novo entra no fim e vira o aberto: quem acabou de pedir quer ver ele.
-        setFichas((atuais) => {
-          const proximas = [...atuais, nova]
-          setAberto(proximas.length - 1)
-          return proximas
-        })
-        setColando(false)
-        setJanela(true)
-        // O mapa vai para o ponto novo pelo efeito de `ficha` acima, que cuida TAMBEM da
-        // troca de aba. Localizar aqui de novo seria um segundo voo para o mesmo lugar.
-      } catch (e) {
-        // NAO limpa os pontos ja lidos: perder tres leituras porque a quarta falhou
-        // seria punir o operador por um endereco mal digitado.
-        setErro(e instanceof ApiError ? e.message : 'Falha ao analisar o ponto.')
-      } finally {
-        setCarregando(false)
-      }
-    },
-    [onLocalizar, fichas],
-  )
+  const ultimoRevelar = useRef(revelar)
+  useEffect(() => {
+    if (revelar === ultimoRevelar.current) return
+    ultimoRevelar.current = revelar
+    setColando(false)
+    setJanela(true)
+  }, [revelar])
 
   /** Tira TUDO da tela: os pontos, a janela e a marca do mapa. */
   const limparPontos = useCallback(() => {
-    setFichas([])
-    setAberto(0)
     setJanela(false)
-    setErro(null)
+    setErroLocal(null)
     setColando(true)
-    onLimparPin()
-  }, [onLimparPin])
-
-  /**
-   * TROCAR DE ABA leva o mapa ate' o hexagono daquele ponto.
-   *
-   * Sem isto, comparar dois enderecos era cego: as abas trocavam os numeros da ficha mas
-   * o mapa continuava parado no ultimo ponto colado, entao nao dava para ver QUAL area
-   * cada coluna da comparacao descreve (relato do Juan, 2026-08-12).
-   *
-   * A chave e' a COORDENADA da ficha aberta — nao o indice, e NAO o `hex_id`.
-   *
-   * Nao o indice: remover um ponto do meio muda o indice de todos os seguintes sem mudar o
-   * ponto aberto, e re-localizar ali seria um voo sem motivo.
-   *
-   * NAO O HEX_ID, e isso era um DEFEITO (relato do Juan em 2026-08-14: "ao mudar algumas
-   * vezes as coordenadas ele buga, seja a camera, janela, ou nao busca a coordenada"). Um
-   * hexagono res-7 tem ~5 km2, entao dois enderecos a MAIS DE 1 KM um do outro cabem no
-   * mesmo. Medido contra a API: -23.61369,-46.84487 e -23.60569,-46.83687 (1,2 km, ambos
-   * em Cotia) devolvem `hex_id` 87a81006bffffff nos DOIS. Com a guarda por hexagono o
-   * segundo endereco entrava na lista e trocava a janela, mas o mapa e o pin ficavam no
-   * primeiro — janela e mapa descrevendo pontos diferentes, sem erro nenhum na tela.
-   *
-   * Trocar de aba entre pontos da MESMA cidade nao recarrega territorio nenhum:
-   * `uf`/`municipio` continuam iguais e so' o pin muda.
-   */
-  const ultimoLocalizado = useRef<string | null>(null)
-  useEffect(() => {
-    if (!ficha) {
-      ultimoLocalizado.current = null
-      return
-    }
-    const chave = chaveDaCoordenada(ficha.lat, ficha.lng)
-    if (ultimoLocalizado.current === chave) return
-    ultimoLocalizado.current = chave
-    onLocalizar(ficha.local.uf ?? '', ficha.local.municipio ?? '', {
-      lat: ficha.lat,
-      lng: ficha.lng,
-      hexId: ficha.hex_id,
-    })
-  }, [ficha, onLocalizar])
-
-  /* A busca do Explorar pediu um ponto. O `n` e' a chave: a mesma coordenada pedida duas
-     vezes tem de produzir duas leituras. */
-  const ultimoPedido = useRef(0)
-  useEffect(() => {
-    if (!pedido || pedido.n === ultimoPedido.current) return
-    ultimoPedido.current = pedido.n
-    void analisarCoordenada(pedido.lat, pedido.lng)
-  }, [pedido, analisarCoordenada])
+    onLimpar()
+  }, [onLimpar])
 
   /* O endereço colado NO CARD do Início. Consumido UMA vez, na montagem: o efeito não
      depende de `textoInicial` de propósito — reagir a ele reanalisaria o mesmo ponto a
@@ -282,25 +214,27 @@ export default function PontoScreen({
   async function resolver(entrada: EntradaClassificada, texto: string) {
     // O front resolve coordenada e link longo sozinho; o resto custa uma ida ao servidor
     // (expandir redirect do link curto, ou geocodificar endereço).
+    setErroLocal(null)
+    onLimparErro()
     let coord = entrada.coord
     if (!coord) {
-      setCarregando(true)
-      setErro(null)
+      setResolvendo(true)
       try {
         const r = await api.resolverPonto(texto)
         if (!r.found || r.lat == null || r.lng == null) {
-          setErro(r.motivo ?? 'Não consegui resolver esse endereço.')
+          setErroLocal(r.motivo ?? 'Não consegui resolver esse endereço.')
           return
         }
         coord = { lat: r.lat, lng: r.lng }
       } catch (e) {
-        setErro(e instanceof ApiError ? e.message : 'Falha ao resolver o endereço.')
+        setErroLocal(e instanceof ApiError ? e.message : 'Falha ao resolver o endereço.')
         return
       } finally {
-        setCarregando(false)
+        setResolvendo(false)
       }
     }
-    await analisarCoordenada(coord.lat, coord.lng)
+    // A MESMA porta da lupa do mapa: repetição, teto e erro de leitura são da lista.
+    await onAnalisar(coord.lat, coord.lng)
   }
 
   /**
@@ -344,7 +278,9 @@ export default function PontoScreen({
      Vale também para o botão "Limpar", que zera as fichas: limpar tudo passa a devolver a
      tela de entrada, em vez de deixar a caixa flutuando sobre um mapa sem ficha nenhuma. */
   const semMapa = fichas.length === 0
-  if (semMapa) {
+  /* Sem hero (Explorar), a tela vazia NÃO cobre nada: o mapa é de quem veio explorar.
+     Cai no render de baixo, que com `semMapa` só desenha a espera e o erro da leitura. */
+  if (semMapa && comHero) {
     return (
       <div style={{ position: 'absolute', inset: 0, zIndex: 40 }}>
         <Landing
@@ -418,7 +354,8 @@ export default function PontoScreen({
               type="button"
               onClick={() => {
                 setColando(false)
-                setErro(null)
+                setErroLocal(null)
+                onLimparErro()
               }}
               style={{
                 justifySelf: 'start',
@@ -449,6 +386,45 @@ export default function PontoScreen({
             }}
           >
             <Spinner /> Lendo os setores censitários do entorno…
+          </Glass>
+        )}
+
+        {/* Erro de leitura SEM ficha na tela e sem hero (o Explorar antes do 1o ponto): não
+            há caixa de colar onde ele apareceria, e uma busca que falha calada se lê como
+            botão que não responde. Com ficha ou com hero, o erro sai no `CampoPonto`. */}
+        {semMapa && !carregando && erro && (
+          <Glass
+            style={{
+              pointerEvents: 'auto',
+              alignSelf: 'center',
+              padding: '10px 14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              maxWidth: 'min(620px, 100%)',
+            }}
+          >
+            <span role="alert" style={{ font: '500 12.5px/1.4 var(--f-ui)', color: 'var(--neg)' }}>
+              {erro}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setErroLocal(null)
+                onLimparErro()
+              }}
+              style={{
+                flexShrink: 0,
+                padding: '6px 10px',
+                borderRadius: 8,
+                border: '1px solid var(--line-soft)',
+                background: 'var(--surf-raised)',
+                color: 'var(--tx-soft)',
+                font: '600 11px/1 var(--f-ui)',
+              }}
+            >
+              Fechar
+            </button>
           </Glass>
         )}
       </div>
@@ -498,19 +474,15 @@ export default function PontoScreen({
             onCapturarMapas={onCapturarMapas}
               fichas={fichas}
               aberto={aberto}
-              onAbrir={setAberto}
+              onAbrir={onAbrir}
               onRemover={(i) => {
-                setFichas((atuais) => {
-                  const proximas = atuais.filter((_, k) => k !== i)
-                  setAberto((k) => Math.max(0, Math.min(k, proximas.length - 1)))
-                  if (proximas.length === 0) {
-                    setColando(true)
-                    // Sem ponto nao ha' ficha: a janela ficaria vazia, e uma janela
-                    // vazia por cima do mapa se le como defeito.
-                    setJanela(false)
-                  }
-                  return proximas
-                })
+                if (fichas.length === 1) {
+                  setColando(true)
+                  // Sem ponto nao ha' ficha: a janela ficaria vazia, e uma janela
+                  // vazia por cima do mapa se le como defeito.
+                  setJanela(false)
+                }
+                onRemover(i)
               }}
               onResolver={resolver}
               onLimpar={limparPontos}

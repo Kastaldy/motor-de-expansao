@@ -44,9 +44,10 @@ const pilhaAbertas: symbol[] = []
  * que esta' desenhado ali, e escurecer o mapa para ler sobre ele seria trabalhar contra a
  * propria tela. Por isso nao ha' backdrop e o foco nao fica preso.
  *
- * FICA MONTADA QUANDO FECHADA. So' o `transform` a tira da tela. Desmontar zeraria o que
- * o operador digitou em metragem e aluguel no bloco de viabilidade — fechar para olhar o
- * mapa e perder a conta ao reabrir seria punir quem usou as duas coisas juntas.
+ * FICA MONTADA QUANDO FECHADA. So' o `transform` a tira da tela. Desmontar zeraria o
+ * estado de dentro da ficha (o que o operador digitou, a rolagem, a secao aberta) —
+ * fechar para olhar o mapa e perder isso ao reabrir seria punir quem usou as duas coisas
+ * juntas.
  * `visibility: hidden` no fim da transicao e' o que a tira da ordem de tabulacao; sem
  * isso, o Tab pescaria botoes invisiveis fora da tela.
  */
@@ -60,6 +61,7 @@ export default function JanelaFicha({
      do mesmo lado. À direita elas nasciam sobre o painel de ranking do Explorar, que é
      justamente o que se lê junto com a ficha. */
   ancora = 'esquerda',
+  rodape,
   children,
 }: {
   aberta: boolean
@@ -74,6 +76,16 @@ export default function JanelaFicha({
    * das camadas. Depois que o operador arrasta, quem manda e' ele.
    */
   recuoInferior?: number
+  /**
+   * Faixa FIXA no pé da janela, fora da área que rola — os botões de ação da ficha
+   * (2026-10-14: "Estudo" e "Simulador" da análise de ponto).
+   *
+   * Fixa porque são a SAÍDA da leitura: com a ficha longa, botões no fim do conteúdo só
+   * apareciam depois de rolar tudo, e quem não rolava não sabia que existiam. Ausente,
+   * a janela desenha exatamente o que desenhava antes — as outras quatro janelas do mapa
+   * não passam a prop.
+   */
+  rodape?: ReactNode
   children: ReactNode
 }) {
   const ref = useRef<HTMLElement | null>(null)
@@ -285,6 +297,27 @@ export default function JanelaFicha({
       {/* Recolhida, o conteúdo SAI da árvore de leitura mas a janela continua montada —
           o que o operador digitou na viabilidade sobrevive, como no fechar. */}
       {!recolhida && <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>{children}</div>}
+
+      {/* O rodapé fixo. Depois do miolo rolável e com `flexShrink: 0`: o miolo cede a altura,
+          o rodapé não. Some quando recolhida, como o miolo — a janela vira só a barra.
+          O `paddingRight` maior deixa o canto inferior direito livre para a alça de
+          redimensionar, que é desenhada por cima (vem depois na árvore): sem ele, o último
+          botão ficaria sob a alça e o clique ali viraria redimensionamento. */}
+      {!recolhida && rodape != null && (
+        <div
+          style={{
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '12px 30px 12px 16px',
+            borderTop: '1px solid var(--line-soft)',
+            background: 'var(--surf-panel)',
+          }}
+        >
+          {rodape}
+        </div>
+      )}
 
       {/* Alça de redimensionar, no canto inferior direito. Some quando recolhida: não há
           altura para ajustar, e a alça ficaria sobre a barra de título. */}
