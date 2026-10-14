@@ -19,6 +19,7 @@ import type {
   RedeMapaConcorrente,
   RedePlanosEntorno,
   RedeUnidadeInteligencia,
+  RedeUnidadeSemRedeFicha,
 } from '../lib/types'
 import IconeComodidade from './IconeComodidade'
 import { CardPainel, LinhaTabela, Pill, TituloSecao } from './PecasPainel'
@@ -42,8 +43,16 @@ import { Botao } from './primitives'
  * DOIS RAIOS na mesma janela, e cada número diz o seu: o entorno (renda, densidade) é o
  * raio de 1 km do Relatório Pontual; a concorrência é o de 2 km da ficha da rede.
  */
-export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string }) {
+export default function FichaUnidadeNoMapa({
+  unidadeId,
+  semRede = false,
+}: {
+  unidadeId: string
+  /** unidade do cadastro sem dado na Growth: a ficha é só território (pedido do Juan, 14/10) */
+  semRede?: boolean
+}) {
   const [ficha, setFicha] = useState<RedeFicha | null>(null)
+  const [cadastro, setCadastro] = useState<RedeUnidadeSemRedeFicha | null>(null)
   const [intel, setIntel] = useState<RedeUnidadeInteligencia | null>(null)
   const [ponto, setPonto] = useState<PontoPayload | null>(null)
   const [erroFicha, setErroFicha] = useState<string | null>(null)
@@ -70,16 +79,16 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
   /* O Relatório Pontual do endereço da unidade: a MESMA rota do resto do app
      (`/api/relatorio/pontual`), sem viabilidade — é o estudo da praça, não de um imóvel. */
   const gerarEstudoPontual = async () => {
-    const lat = ficha?.unidade.lat
-    const lng = ficha?.unidade.lng
-    if (!ficha || lat == null || lng == null) return
+    const lat = unidade?.lat
+    const lng = unidade?.lng
+    if (!unidade || lat == null || lng == null) return
     setBaixandoEstudo(true)
     setErroPdf(null)
     try {
       const { blob, filename } = await api.relatorioPontual({
         lat,
         lng,
-        rotulo: `Ultra ${ficha.unidade.nome}`,
+        rotulo: `Ultra ${unidade.nome}`,
       })
       baixar(blob, filename)
     } catch (e) {
@@ -92,12 +101,36 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
   useEffect(() => {
     let vivo = true
     setFicha(null)
+    setCadastro(null)
     setIntel(null)
     setPonto(null)
     setErroFicha(null)
     setErroIntel(null)
     setErroPonto(false)
     setErroPdf(null)
+
+    const lerPonto = (lat: number | null, lng: number | null) => {
+      if (lat == null || lng == null) return
+      api
+        .ponto(lat, lng)
+        .then((p) => vivo && setPonto(p))
+        .catch(() => vivo && setErroPonto(true))
+    }
+
+    if (semRede) {
+      // Sem dado na Growth não há ficha da rede nem inteligência: só o cadastro e o raio.
+      api
+        .redeUnidadeSemRede(unidadeId)
+        .then((c) => {
+          if (!vivo) return
+          setCadastro(c)
+          lerPonto(c.unidade.lat, c.unidade.lng)
+        })
+        .catch((e: Error) => vivo && setErroIntel(e.message))
+      return () => {
+        vivo = false
+      }
+    }
 
     api
       .redeUnidade(unidadeId)
@@ -121,10 +154,13 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
     return () => {
       vivo = false
     }
-  }, [unidadeId])
+  }, [unidadeId, semRede])
 
-  const semPonto = ficha != null && (ficha.unidade.lat == null || ficha.unidade.lng == null)
-  const concorrentes = intel?.mapa?.concorrentes ?? []
+  // o que as duas origens têm em comum: nome, cidade, UF e o ponto; e o raio de concorrência
+  const unidade = semRede ? cadastro?.unidade : ficha?.unidade
+  const mapa = semRede ? (cadastro ? cadastro.mapa : undefined) : intel ? intel.mapa : undefined
+  const semPonto = unidade != null && (unidade.lat == null || unidade.lng == null)
+  const concorrentes = mapa?.concorrentes ?? []
 
   return (
     <div style={{ display: 'grid', gap: 18 }}>
@@ -138,20 +174,20 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}
       >
         <span style={{ font: '400 12px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
-          {ficha
-            ? [ficha.unidade.cidade, ficha.unidade.uf].filter(Boolean).join(' · ')
+          {unidade
+            ? [unidade.cidade, unidade.uf].filter(Boolean).join(' · ')
             : 'Carregando a unidade…'}
         </span>
         <div style={{ display: 'flex', gap: 8 }}>
           <Botao
             variante="ghost"
-            disabled={!ficha || semPonto || baixandoEstudo}
+            disabled={!unidade || semPonto || baixandoEstudo}
             title={semPonto ? 'Sem coordenada, não há ponto para estudar.' : undefined}
             onClick={gerarEstudoPontual}
           >
             {baixandoEstudo ? 'Gerando…' : 'Estudo pontual'}
           </Botao>
-          <Botao disabled={!ficha || baixando} onClick={gerarRelatorio}>
+          <Botao disabled={!unidade || baixando} onClick={gerarRelatorio}>
             {baixando ? 'Gerando…' : 'Gerar relatório'}
           </Botao>
         </div>
@@ -165,30 +201,39 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
         </Nota>
       )}
 
-      {/* ---------------- Alunos ---------------- */}
-      <section>
-        <TituloSecao titulo="Alunos" nota={ficha ? `ref. ${ficha.referencia}` : undefined} />
-        {erroFicha ? (
-          <Nota>Não foi possível carregar os alunos da unidade. {erroFicha}</Nota>
-        ) : (
-          <>
-            <div style={GRADE_3}>
-              <Numero rotulo="Ativos" valor={ficha ? alunos(ficha.metricas.ativos?.atual) : '…'} />
-              <Numero rotulo="Pagantes" valor={ficha ? alunos(ficha.metricas.pagantes?.atual) : '…'} />
-              <Numero
-                rotulo="Agregadores"
-                valor={ficha ? alunos(ficha.metricas.agregadores?.atual) : '…'}
-              />
-            </div>
-            <CardPainel style={{ padding: 0, marginTop: 10 }}>
-              <LinhaTabela rotulo="Alunos via Wellhub" valor={alunos(intel?.agregadores?.wellhub)} />
-              <LinhaTabela rotulo="Alunos via TotalPass" valor={alunos(intel?.agregadores?.totalpass)} />
-              <LinhaTabela rotulo="Plano da unidade no Wellhub" valor={planoDaUltra(intel?.planos_wellhub)} />
-              <LinhaTabela rotulo="Plano da unidade no TotalPass" valor={planoDaUltra(intel?.planos)} />
-            </CardPainel>
-          </>
-        )}
-      </section>
+      {/* ---------------- Alunos ----------------
+          Unidade sem dado na Growth não tem aluno a mostrar: a nota diz por quê, sem afirmar
+          o status (em contrato, pré-venda), que nenhuma base informa. */}
+      {semRede ? (
+        <Nota>
+          Sem dados da rede: a unidade está no cadastro das Ultra, mas a base da Growth ainda
+          não tem movimento dela. A ficha mostra só a região e a concorrência.
+        </Nota>
+      ) : (
+        <section>
+          <TituloSecao titulo="Alunos" nota={ficha ? `ref. ${ficha.referencia}` : undefined} />
+          {erroFicha ? (
+            <Nota>Não foi possível carregar os alunos da unidade. {erroFicha}</Nota>
+          ) : (
+            <>
+              <div style={GRADE_3}>
+                <Numero rotulo="Ativos" valor={ficha ? alunos(ficha.metricas.ativos?.atual) : '…'} />
+                <Numero rotulo="Pagantes" valor={ficha ? alunos(ficha.metricas.pagantes?.atual) : '…'} />
+                <Numero
+                  rotulo="Agregadores"
+                  valor={ficha ? alunos(ficha.metricas.agregadores?.atual) : '…'}
+                />
+              </div>
+              <CardPainel style={{ padding: 0, marginTop: 10 }}>
+                <LinhaTabela rotulo="Alunos via Wellhub" valor={alunos(intel?.agregadores?.wellhub)} />
+                <LinhaTabela rotulo="Alunos via TotalPass" valor={alunos(intel?.agregadores?.totalpass)} />
+                <LinhaTabela rotulo="Plano da unidade no Wellhub" valor={planoDaUltra(intel?.planos_wellhub)} />
+                <LinhaTabela rotulo="Plano da unidade no TotalPass" valor={planoDaUltra(intel?.planos)} />
+              </CardPainel>
+            </>
+          )}
+        </section>
+      )}
 
       {/* ---------------- Entorno (1 km) ---------------- */}
       <section>
@@ -223,16 +268,16 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
       <section>
         <TituloSecao
           titulo="Concorrentes"
-          nota={intel?.mapa ? `${concorrentes.length} a ${distanciaCurta(intel.mapa.raio_m)}` : undefined}
+          nota={mapa ? `${concorrentes.length} a ${distanciaCurta(mapa.raio_m)}` : undefined}
         />
         {erroIntel ? (
           <Nota>Não foi possível carregar a concorrência. {erroIntel}</Nota>
-        ) : !intel ? (
+        ) : mapa === undefined ? (
           <Nota>Carregando as academias do entorno…</Nota>
-        ) : !intel.mapa ? (
+        ) : !mapa ? (
           <Nota>Sem coordenada, não há concorrência para ler.</Nota>
         ) : concorrentes.length === 0 ? (
-          <Nota>Nenhuma academia mapeada a {distanciaCurta(intel.mapa.raio_m)} desta unidade.</Nota>
+          <Nota>Nenhuma academia mapeada a {distanciaCurta(mapa.raio_m)} desta unidade.</Nota>
         ) : (
           <>
             {concorrentes.every((c) => estadoDasComodidades(c) === 'indisponivel') && (
@@ -246,7 +291,7 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
                 <CardConcorrente
                   key={`${c.lat}-${c.lng}-${i}`}
                   c={c}
-                  imagem={imagemDoConcorrente(c, intel.mapa?.logos)}
+                  imagem={imagemDoConcorrente(c, mapa.logos)}
                 />
               ))}
             </div>

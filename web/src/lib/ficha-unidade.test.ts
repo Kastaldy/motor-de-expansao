@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ORDEM_COMODIDADES,
   ROTULO_COMODIDADE,
+  ROTULO_SEM_REDE,
   TOLERANCIA_PIN_UNIDADE_M,
   comodidadesDeclaradas,
   estadoDasComodidades,
@@ -12,6 +13,7 @@ import {
   nomeDoConcorrente,
   planosDoConcorrente,
   unidadeDoPin,
+  unidadesDaBusca,
   unidadesDaUf,
 } from './ficha-unidade'
 import type { RedeComodidadesCanal, RedeMapaConcorrente, RedeUnidade } from './types'
@@ -65,6 +67,31 @@ describe('unidadesDaUf', () => {
   it('sem estado escolhido nao lista nada — e nao muta a carteira', () => {
     expect(unidadesDaUf(rede, '')).toEqual([])
     expect(rede.map((u) => u.id)).toEqual(['b', 'c', 'a'])
+  })
+})
+
+describe('unidadesDaBusca', () => {
+  const rede = [unidade({ id: 'vg', nome: 'Vila Guilherme', uf: 'SP' }), unidade({ id: 'bf', nome: 'Botafogo', uf: 'RJ' })]
+  const cadastro = [
+    { id: 'cadastro-1', nome: 'Santana', uf: 'SP', cidade: 'São Paulo', lat: -23.485, lng: -46.618 },
+    { id: 'cadastro-2', nome: 'Vila Guilherme II', uf: 'SP', cidade: 'São Paulo', lat: -23.503, lng: -46.604 },
+  ]
+
+  it('lista as da rede e as do cadastro sem dado na Growth, juntas e por nome', () => {
+    const opcoes = unidadesDaBusca(rede, cadastro, 'SP')
+    expect(opcoes.map((o) => o.id)).toEqual(['cadastro-1', 'vg', 'cadastro-2'])
+  })
+
+  it('marca so as do cadastro, com o rotulo neutro (nunca "em contrato")', () => {
+    const [santana, vg] = unidadesDaBusca(rede, cadastro, 'SP')
+    expect(santana).toMatchObject({ semRede: true, rotulo: `Santana · ${ROTULO_SEM_REDE}` })
+    expect(vg).toMatchObject({ semRede: false, rotulo: 'Vila Guilherme' })
+    expect(ROTULO_SEM_REDE).toBe('sem dados da rede')
+  })
+
+  it('respeita o estado aberto e funciona sem a lista do cadastro', () => {
+    expect(unidadesDaBusca(rede, cadastro, 'RJ').map((o) => o.id)).toEqual(['bf'])
+    expect(unidadesDaBusca(rede, [], 'SP').map((o) => o.id)).toEqual(['vg'])
   })
 })
 
