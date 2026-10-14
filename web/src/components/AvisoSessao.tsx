@@ -3,7 +3,9 @@ import { Botao, Modal } from './primitives'
 /* ---------------------------------------------------------------------------
    Pop-up de SESSÃO ENCERRADA.
 
-   Nasceu de um pedido do Felipe: com o login do Authelia vencido (`inactivity: 30m`),
+   Nasceu de um pedido do Felipe: com o login do Authelia vencido (`inactivity`, 30 min
+   na época; 2h desde a emenda da DEC-067 de 14/10/2026 — e o texto do pop-up não cita
+   número de propósito, para não envelhecer quando o limiar muda),
    o operador via a frase de dev "Ele está rodando na porta 8899?" e entendia que o
    sistema tinha caído — quando bastava entrar de novo. O porquê técnico (302 do
    Authelia -> CORS -> `TypeError` no `fetch`) e a sonda que separa "sessão vencida" de
