@@ -1,4 +1,4 @@
-"""Bloco `mercado` de `GET /api/ponto` no RAIO de 1,0 km (DEC-069).
+"""Bloco `mercado` de `GET /api/ponto` no RAIO de 1,0 km (DEC-070).
 
 A rota roda de verdade sobre um `data/staging` SINTETICO (um hexagono no artefato de
 mercado, uma academia de rede no centro do raio, uma Ultra colada no ponto); so' o motor

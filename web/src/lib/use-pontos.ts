@@ -72,7 +72,7 @@ export function usePontos() {
   )
 
   /**
-   * Pede a análise de uma ÁREA DESENHADA no mapa (DEC-070, fase 1): `POST
+   * Pede a análise de uma ÁREA DESENHADA no mapa (DEC-071, fase 1): `POST
    * /api/ponto/geometria`. Entra na MESMA lista dos pontos — mesma regra de repetição, mesmo
    * teto, mesma cor por posição —, porque a pergunta do operador é a mesma: "qual destes
    * lugares serve mais?". O pin provisório fica num ponto INTERNO calculado aqui; quando a

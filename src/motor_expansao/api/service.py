@@ -57,7 +57,7 @@ _TOLERANCIA_MALHA_GRAUS = 0.018
 # aproximacao GENEROSA de proposito: incluir um municipio que nao contribui setor custa uma
 # leitura de particao; excluir um que contribui e' o defeito que esta correcao fecha.
 _KM_POR_GRAU_LAT = 111.32
-# Folga em volta da caixa do poligono desenhado (DEC-070) na consulta de municipios
+# Folga em volta da caixa do poligono desenhado (DEC-071) na consulta de municipios
 # vizinhos -- ver `_MalhaMunicipal.alcancados_na_geometria`. Generosa pelo mesmo motivo do
 # quadro acima: ler uma particao a mais custa pouco; deixar de ler a que contribui e' erro.
 _MARGEM_GEOMETRIA_KM = 0.5
@@ -112,7 +112,7 @@ class _MalhaMunicipal:
     def alcancados_na_geometria(
         self, geometria, margem_km: float = _MARGEM_GEOMETRIA_KM
     ) -> list[tuple[str, str]]:
-        """Municipios que tocam a caixa do POLIGONO desenhado (DEC-070), com margem.
+        """Municipios que tocam a caixa do POLIGONO desenhado (DEC-071), com margem.
 
         O par de `alcancados` para o modo geometria. O quadrado de meio-lado fixo em volta
         do ponto nao serve: um poligono de 25 km2 se estende ate' ~5 km do ponto de
@@ -175,7 +175,7 @@ def _carregar_malha(ibge_dir_str: str) -> _MalhaMunicipal:
 def _resolver_e_carregar(lat: float, lng: float, settings: Settings, *, geometria=None):
     """Resolve ``(uf, cod_municipio)`` e carrega ``setores_df``. Levanta 400/404.
 
-    `geometria` (DEC-070, opcional; shapely em graus, x=lng): o poligono desenhado, com
+    `geometria` (DEC-071, opcional; shapely em graus, x=lng): o poligono desenhado, com
     (lat, lng) = o `representative_point` dele. Muda SO' o alcance dos vizinhos -- a caixa
     do poligono soma-se ao frame do ponto. Sem ela, a carga e' a de sempre, byte a byte.
     """
@@ -249,7 +249,7 @@ def _malha_alcancada(
 ) -> list[tuple[str, str]]:
     """Municipios que o FRAME do mapa alcanca — o alcance vem de quem desenha o frame.
 
-    Com `geometria` (DEC-070), soma os que a caixa do poligono alcanca, sem repetir e na
+    Com `geometria` (DEC-071), soma os que a caixa do poligono alcanca, sem repetir e na
     ordem estavel (frame primeiro). Soma, e nao troca: o frame do ponto de referencia
     continua sendo o que um mapa centrado nele mostraria.
     """
@@ -594,7 +594,7 @@ def _residual_do_ponto(lat: float, lng: float, settings: Settings) -> dict:
     return residual
 
 
-# --- mercado NO RAIO do ponto (DEC-069) ---------------------------------------
+# --- mercado NO RAIO do ponto (DEC-070) ---------------------------------------
 #
 # `_residual_do_ponto` acima continua existindo (le' o HEXAGONO, e' auditoria), mas deixou
 # de alimentar as tres superficies do ponto. A ficha (`/api/ponto`), o PDF do piloto e o
@@ -654,11 +654,11 @@ def _mercado_do_ponto(
     *,
     geometria: Any = None,
 ) -> dict:
-    """SAM / consumo (concorrentes + Ultra) / residual NO RAIO do ponto (DEC-069).
+    """SAM / consumo (concorrentes + Ultra) / residual NO RAIO do ponto (DEC-070).
 
     `pop_area` e' a `pop_total_raio` que o motor censitario ja' calculou para o MESMO
     recorte -- a populacao nao e' relida aqui. `geometria` (shapely em graus, x=lng) e' a
-    porta do lote de geometria (DEC-070): com ela, (lat, lng) e' o `representative_point`
+    porta do lote de geometria (DEC-071): com ela, (lat, lng) e' o `representative_point`
     do poligono e o recorte e' o poligono.
 
     Devolve um dict com as chaves de valor nos nomes das colunas do artefato
@@ -945,7 +945,7 @@ def gerar_pdf_ponto(
     # ela, o render devolve None e o PDF sai sem a pagina de satelite (DEC-018).
     foto_sat = render_foto_satelite_ponto(lat, lng, api_key=settings.arcgis_api_key or None)
 
-    # DEC-069: SAM/consumo/residual no RAIO de 1,0 km, com a populacao do MESMO recorte que o
+    # DEC-070: SAM/consumo/residual no RAIO de 1,0 km, com a populacao do MESMO recorte que o
     # motor censitario acabou de medir. Mesma funcao da ficha e do PDF do piloto.
     residual = _mercado_do_ponto(lat, lng, settings, result.get("pop_total_raio"))
     # Variante "Apresentacao Classica Ultra" (BLK-EST-05): a API/bot espelha o
@@ -970,7 +970,7 @@ def gerar_pdf_ponto(
     # numa superficie nova.
     #
     # BLK-CONC-ESTUDO: a pagina de CONCLUSAO passou a sair TAMBEM sem `viabilidade`, em
-    # modo so-estudo -- metas censitarias do raio e leitura de mercado do raio (DEC-069),
+    # modo so-estudo -- metas censitarias do raio e leitura de mercado do raio (DEC-070),
     # SEM os gates de imovel e de retorno. Ate' 2026-10-14 este era o UNICO ponto do
     # sistema que ligava o flag (escopo fechado por Juan em 2026-08-12); desde entao o
     # botao "Estudo" da analise de ponto do piloto tambem o liga, por `so_estudo=true` em

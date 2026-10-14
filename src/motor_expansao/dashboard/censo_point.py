@@ -37,7 +37,7 @@ CRS_ORIGEM_CENSO = "EPSG:4674"
 # E' MUDANCA DE CONTRATO: quem comparava a string literal precisa atualizar (ver DEC-021).
 METODO_RELATORIO_PONTUAL_CENSITARIO = "setor_censitario_intersecao_area_1km"
 RAIO_CENSITARIO_DEFAULT_KM = 1.0
-# DEC-070 (PROPOSTA, fase 1 -- so' TELA): "Analisar geometria". O operador desenha um
+# DEC-071 (PROPOSTA, fase 1 -- so' TELA): "Analisar geometria". O operador desenha um
 # poligono no mapa e ele SUBSTITUI o circulo na mesma intersecao setor a setor. E' um modo
 # OPCIONAL e ADITIVO de `analisar_ponto_censitario_setores`: sem `geometria_wgs84` a funcao
 # devolve exatamente o mesmo dict de antes (raio, metodo `_1km`, area pi*r^2) -- travado por
@@ -189,7 +189,7 @@ def _points_in_geometry(
     points_df: pd.DataFrame | None,
     geometria_wgs84: BaseGeometry,
 ) -> pd.DataFrame:
-    """Pontos DENTRO do poligono desenhado (DEC-070), com `dist_km` ao ponto de referencia.
+    """Pontos DENTRO do poligono desenhado (DEC-071), com `dist_km` ao ponto de referencia.
 
     O par de `_points_in_radius` para o modo geometria. Pertencer e' ponto-em-poligono
     (`intersects_xy`: inclui a borda, como o `<=` do raio inclui o circulo) -- e NAO
@@ -246,7 +246,7 @@ def analisar_ponto_censitario_setores(
 ) -> dict:
     """Analisa um ponto por intersecao real entre setores censitarios e circulo.
 
-    DEC-070 (fase 1, PROPOSTA): `geometria_wgs84` OPCIONAL troca o circulo por um poligono
+    DEC-071 (fase 1, PROPOSTA): `geometria_wgs84` OPCIONAL troca o circulo por um poligono
     desenhado (shapely em graus, x=lng, y=lat). Com ele, (lat, lng) TEM de ser um ponto
     DENTRO do poligono -- o `representative_point`, que o chamador calcula --, porque e'
     a origem do CRS AEQD local e o "ponto" dos campos `*_setor_ponto`/bairro. A intersecao
@@ -367,7 +367,7 @@ def analisar_ponto_censitario_setores(
     }
     if poligono:
         # Chave SO' no modo geometria: no raio o dict tem de sair identico ao de antes, e
-        # quem nao conhece a DEC-070 continua lendo `raio_km`/`metodo` como sempre.
+        # quem nao conhece a DEC-071 continua lendo `raio_km`/`metodo` como sempre.
         result["geometria_tipo"] = GEOMETRIA_TIPO_POLIGONO
 
     if setores_df is None or setores_df.empty:
@@ -380,7 +380,7 @@ def analisar_ponto_censitario_setores(
     to_wgs84 = _transformer(metric_crs, CRS_ORIGEM_CENSO)
     center_metric = Point(0, 0)
     if poligono:
-        # O poligono no lugar do circulo (DEC-070). O resto do laco e' geometria-agnostico:
+        # O poligono no lugar do circulo (DEC-071). O resto do laco e' geometria-agnostico:
         # `intersection` e o peso de area nao sabem se o recorte e' redondo. O pre-filtro por
         # bbox usa o proprio poligono em graus, sem ida-e-volta pela projecao.
         circle_metric = _project_geometry(geometria_wgs84, to_metric)

@@ -1,8 +1,8 @@
-"""Mercado NO RAIO do ponto (ou numa geometria desenhada) -- runtime, READ-ONLY (DEC-069).
+"""Mercado NO RAIO do ponto (ou numa geometria desenhada) -- runtime, READ-ONLY (DEC-070).
 
 O PROBLEMA QUE ESTE MODULO FECHA
 --------------------------------
-Ate' a DEC-069 a ficha do ponto, o PDF do piloto e o PDF da API/bot liam SAM, consumo e
+Ate' a DEC-070 a ficha do ponto, o PDF do piloto e o PDF da API/bot liam SAM, consumo e
 residual de UMA linha de `hexagonos_mercado_mapeado.parquet`: a do hexagono res-7 que
 contem o ponto (`api.service._residual_do_ponto`). Tres defeitos de leitura, medidos no
 caso de Santana/SP (-23,48516 / -46,61771, a 9 m da Ultra Santana):
@@ -19,10 +19,10 @@ caso de Santana/SP (-23,48516 / -46,61771, a 9 m da Ultra Santana):
    desconta seus alunos reais no hexagono DELA, desconta mais 2.500 aqui. (Corrigir isso NO
    PIPELINE e' outra DEC, Critica; aqui so' o runtime deixa de herdar o defeito.)
 
-A REGRA (DEC-069)
+A REGRA (DEC-070)
 -----------------
 Tudo no MESMO recorte do ponto -- o raio de 1,0 km (DEC-021) ou, para o lote de geometria
-(DEC-070), o poligono desenhado:
+(DEC-071), o poligono desenhado:
 
     SAM_area      = pop_area x taxa_fitness_mercado_calibrada          (se o gate passa)
     consumo_i     = capacidade_i x area(disco 1 km da unidade INTERSECAO area) / area(disco)
@@ -259,7 +259,7 @@ def mercado_na_area(
     """SAM, consumo (concorrentes + Ultra) e residual DENTRO do recorte do ponto.
 
     Funcao pura: nao le disco, nao muta entrada. `geometria` (graus, x=lng) troca o raio
-    pelo poligono desenhado (DEC-070); sem ela, o raio de `raio_km` em volta de (lat, lng).
+    pelo poligono desenhado (DEC-071); sem ela, o raio de `raio_km` em volta de (lat, lng).
 
     As chaves de valor tem os MESMOS nomes das colunas do artefato de mercado
     (`sam_fitness_potencial`, `oferta_consumida_*`, `oferta_efetiva_disponivel`,

@@ -43,7 +43,7 @@ describe('estadoDoEstudo', () => {
     expect(e.travadoPorque).toBeNull()
   })
 
-  it('área desenhada: travado, com a explicação da próxima fase (DEC-070)', () => {
+  it('área desenhada: travado, com a explicação da próxima fase (DEC-071)', () => {
     const e = estadoDoEstudo(areaDesenhada, false)
     expect(e.habilitado).toBe(false)
     expect(e.dica).toBe(DICA_ESTUDO_GEOMETRIA)
@@ -63,7 +63,7 @@ describe('estadoDoEstudo', () => {
     expect(estadoDoEstudo(null, false).habilitado).toBe(false)
   })
 
-  it('payload sem `grao` (antes da DEC-069) é ponto com raio', () => {
+  it('payload sem `grao` (antes da DEC-070) é ponto com raio', () => {
     const antigo = { mercado: { disponivel: true, sam: 1, residual: 1, score_residual: 1 } } as Pick<
       PontoPayload,
       'mercado'

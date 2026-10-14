@@ -1,5 +1,5 @@
 /**
- * "Analisar geometria" — o desenho do polígono à mão no mapa (DEC-070, fase 1).
+ * "Analisar geometria" — o desenho do polígono à mão no mapa (DEC-071, fase 1).
  *
  * O operador liga a ferramenta no trilho do mapa e clica os vértices. O polígono FECHA de
  * duas formas: clicando de novo perto do 1º vértice (por PIXELS de tela, como a trava da

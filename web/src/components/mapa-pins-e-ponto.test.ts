@@ -64,7 +64,7 @@ describe('clique no pin colorido: abre a aba daquele ponto', () => {
   })
 
   it('o App liga o clique do pin à aba pelo ÍNDICE (vale também para a área desenhada)', () => {
-    // Era `pedirPonto(f.lat, f.lng)`: com a área desenhada (DEC-070) a coordenada dela é o
+    // Era `pedirPonto(f.lat, f.lng)`: com a área desenhada (DEC-071) a coordenada dela é o
     // ponto central, e pedi-la leria um ponto novo. A regra pura é `mostrar`
     // (pontos-estado.test.ts).
     expect(app).toContain('onPontoComparado={(i) => pontos.mostrar(i)}')
@@ -142,7 +142,7 @@ describe('Trilho e painel: a ordem do dono', () => {
     const comparar = barra.indexOf('icone="comparar"')
     expect(ponto).toBeGreaterThan(barra.indexOf('icone="camadas"'))
     expect(ponto).toBeLessThan(regua)
-    // "Analisar geometria" (DEC-070) entre a régua e o comparar.
+    // "Analisar geometria" (DEC-071) entre a régua e o comparar.
     expect(geometria).toBeGreaterThan(regua)
     expect(geometria).toBeLessThan(comparar)
   })

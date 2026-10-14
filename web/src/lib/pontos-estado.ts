@@ -40,7 +40,7 @@ import type { PontoPayload } from './types'
 
 /**
  * Um pedido ainda não respondido: uma coordenada ao `/api/ponto` ou uma ÁREA DESENHADA ao
- * `/api/ponto/geometria` (DEC-070).
+ * `/api/ponto/geometria` (DEC-071).
  *
  * Na área, `lat`/`lng` é um ponto DENTRO do polígono calculado na tela (`pontoInterno`):
  * é onde o pin provisório aparece até o servidor devolver o `representative_point` dele.

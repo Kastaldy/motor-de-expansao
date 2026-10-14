@@ -1,4 +1,4 @@
-"""Mercado NO RAIO do ponto (DEC-069) -- `dashboard/mercado_raio.py` + `_mercado_do_ponto`.
+"""Mercado NO RAIO do ponto (DEC-070) -- `dashboard/mercado_raio.py` + `_mercado_do_ponto`.
 
 O que este arquivo trava, com dado SINTETICO (sem parquet real):
 
@@ -204,7 +204,7 @@ def test_sem_populacao_nao_inventa_sam() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# geometria (porta da DEC-070)                                                 #
+# geometria (porta da DEC-071)                                                 #
 # --------------------------------------------------------------------------- #
 def test_geometria_troca_o_recorte_e_o_grao() -> None:
     """Quadrado de ~1 km de lado: area ~1 km2, grao 'geometria', raio None."""

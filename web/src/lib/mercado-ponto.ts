@@ -1,14 +1,14 @@
 /**
  * A conta do mercado na ficha de ponto: SAM - consumo (concorrentes + Ultra) = residual.
  *
- * POR QUE EXISTE (DEC-069, 2026-10-14). A ficha mostrava "Mercado potencial (SAM)" e
+ * POR QUE EXISTE (DEC-070, 2026-10-14). A ficha mostrava "Mercado potencial (SAM)" e
  * "Residual disponivel" lado a lado, e o consumo — a parcela que liga um ao outro — nao
  * aparecia. No caso de Santana/SP o SAM era maior que o consumo dos concorrentes e o
  * residual saia ZERO, sem nada na tela que explicasse: a parcela que faltava era a da
  * propria Ultra. Agora as tres parcelas aparecem, e a conta fecha na frente do operador.
  *
- * E' do RAIO, nao do hexagono. Desde a DEC-069 o servidor calcula SAM e consumo no raio
- * de 1,0 km do ponto (ou na area desenhada, DEC-070), com o modelo de area de influencia
+ * E' do RAIO, nao do hexagono. Desde a DEC-070 o servidor calcula SAM e consumo no raio
+ * de 1,0 km do ponto (ou na area desenhada, DEC-071), com o modelo de area de influencia
  * que conserva massa. O hexagono do ponto continua no payload so' como AUDITORIA
  * (`mercado.hexagono`) e nao entra aqui.
  *

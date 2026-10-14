@@ -551,7 +551,7 @@ export default function PontoScreen({
           ficha
             ? [
                 [ficha.local.municipio, ficha.local.uf].filter(Boolean).join(' · '),
-                /* "raio de 1.000 m" ou "área desenhada de 2,40 km²" (DEC-070): com uma área
+                /* "raio de 1.000 m" ou "área desenhada de 2,40 km²" (DEC-071): com uma área
                    na lista, o raio escrito à mão mentiria sobre ela. */
                 rotuloDoRecorte(ficha),
                 /* A COORDENADA no subtítulo é o que resolve o empate de verdade: o número
@@ -681,7 +681,7 @@ function Ficha({
 }) {
   const { local, censo, concorrencia, mercado } = ficha
   const contaDoMercado = mercado.disponivel ? leituraDoMercado(mercado) : null
-  /* ÁREA DESENHADA (DEC-070, fase 1): a mesma ficha, com o polígono no lugar do raio. O
+  /* ÁREA DESENHADA (DEC-071, fase 1): a mesma ficha, com o polígono no lugar do raio. O
      que muda é só o que a ficha AFIRMA sobre o recorte — os blocos e as contas são os
      mesmos, calculados pelo servidor dentro da área. */
   const area = ehAreaDesenhada(ficha)
@@ -804,7 +804,7 @@ function Ficha({
       </Secao>
 
       {/* ---------------- Mercado / residual ----------------
-          DO RAIO, não do hexágono (DEC-069). SAM e consumo são calculados no MESMO
+          DO RAIO, não do hexágono (DEC-070). SAM e consumo são calculados no MESMO
           recorte da população (raio de 1,0 km do ponto), e o consumo aparece nas DUAS
           parcelas — concorrentes de rede e a própria Ultra — para a conta fechar na
           frente do operador: Residual = SAM − consumo. Antes só SAM e residual

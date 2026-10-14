@@ -147,7 +147,7 @@ export interface MapScreenProps {
    */
   onPontoBuscado: (lat: number, lng: number) => void
   /**
-   * "Analisar geometria" concluiu uma área (DEC-070, fase 1): os anéis do polígono
+   * "Analisar geometria" concluiu uma área (DEC-071, fase 1): os anéis do polígono
    * desenhado, em `[lng, lat]`, fechados. Quem recebe (o `App`) a leva ao
    * `/api/ponto/geometria` e a põe na MESMA comparação dos pontos.
    *
@@ -310,7 +310,7 @@ export default function MapScreen({
      clique. Ponto de outro municipio troca o mapa de municipio pelo fluxo que ja' existe
      (`local` da ficha -> `App`), sem nada novo aqui. */
   const alternarPonto = useCallback(() => setFerramenta((f) => alternarFerramenta(f, 'ponto')), [])
-  /* "Analisar geometria" (DEC-070, fase 1): com ela ligada, cada clique no mapa acrescenta
+  /* "Analisar geometria" (DEC-071, fase 1): com ela ligada, cada clique no mapa acrescenta
      um VÉRTICE; a área fecha no 1º vértice ou em "Concluir" e vira um item da comparação.
      O desenho (os vértices) mora AQUI, e não no `HexMap`, porque é daqui a barra de
      Concluir/Desfazer/Cancelar — o mapa só desenha o provisório e repassa o clique. As
@@ -1755,7 +1755,7 @@ export default function MapScreen({
               pointerEvents: 'none',
             }}
           >
-            {/* ---------------- Barra do DESENHO ("Analisar geometria", DEC-070) ----------------
+            {/* ---------------- Barra do DESENHO ("Analisar geometria", DEC-071) ----------------
                 Acima do trilho, colada no botão que ligou a ferramenta: é onde o olho está
                 quando ela acende. A área vai AO VIVO (o operador quer saber se cabe nos
                 limites antes de concluir), e o "Concluir" travado diz POR QUÊ em texto —

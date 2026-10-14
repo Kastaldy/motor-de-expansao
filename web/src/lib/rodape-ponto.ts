@@ -43,7 +43,7 @@ export const DICA_SIMULADOR = 'Abre a tela de Viabilidade com a coordenada deste
 export const DICA_SIMULADOR_VETADO = 'Sua conta não tem acesso à tela de Viabilidade.'
 
 /**
- * O item aberto e' uma AREA DESENHADA (DEC-070), e nao um ponto com raio?
+ * O item aberto e' uma AREA DESENHADA (DEC-071), e nao um ponto com raio?
  *
  * Pela `geometria` do payload PRIMEIRO, e so' depois pelo `grao` do mercado: quando o
  * calculo de mercado falha no servidor, o bloco volta sem `grao` -- e, lida so' por ele,

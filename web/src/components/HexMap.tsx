@@ -203,7 +203,7 @@ interface PeleDoMapa {
    */
   alphaHex: number
   /**
-   * O polígono em DESENHO ("Analisar geometria", DEC-070): vértices, arestas e o véu do
+   * O polígono em DESENHO ("Analisar geometria", DEC-071): vértices, arestas e o véu do
    * provisório. Espelhos de --gr-verde nos dois temas (styles/tokens.css) — a MESMA cor do
    * botão do trilho, que é o que liga o desenho na tela à ferramenta que o produz.
    */
@@ -512,7 +512,7 @@ export interface HexMapProps {
   /** Clique num pin da comparacao: quem recebe abre a aba daquele ponto. */
   onPontoClicado?: (indice: number) => void
   /**
-   * "Analisar geometria" ligado (DEC-070, fase 1): o clique no mapa vira VERTICE de um
+   * "Analisar geometria" ligado (DEC-071, fase 1): o clique no mapa vira VERTICE de um
    * poligono desenhado a mao. O estado do desenho (os vertices) e' do `MapScreen`, que tem
    * a barra de Concluir/Desfazer/Cancelar; aqui so' se desenha o provisorio e se repassa o
    * clique — com os metros por pixel da camera, que so' o mapa conhece e que decidem se o
@@ -1602,7 +1602,7 @@ export default function HexMap({
       )
     }
 
-    /* O POLIGONO EM DESENHO (DEC-070, fase 1), no molde da regua: veu translucido do
+    /* O POLIGONO EM DESENHO (DEC-071, fase 1), no molde da regua: veu translucido do
        provisorio (a partir de 3 vertices), as arestas ja' marcadas e os vertices — o 1o
        maior e com anel, porque clicar nele FECHA a area. Sem camada de "elastico" seguindo
        o cursor de proposito: ela reconstruiria a lista de camadas a cada movimento do
@@ -1721,7 +1721,7 @@ export default function HexMap({
        por baixo de um vizinho colado. */
     if (pontosNoMapa.length) {
       const emOrdem = [...pontosNoMapa].sort((a, b) => Number(a.ativo) - Number(b.ativo))
-      /* Contorno da AREA DESENHADA (DEC-070, fase 1), quando o item e' de geometria: so' a
+      /* Contorno da AREA DESENHADA (DEC-071, fase 1), quando o item e' de geometria: so' a
          linha, na cor do item, sem preenchimento — o choropleth embaixo continua legivel. */
       const areas = emOrdem.filter((p) => p.geometria?.length)
       if (areas.length) {
@@ -1770,7 +1770,7 @@ export default function HexMap({
               d
                 ? {
                     titulo: d.rotulo,
-                    /* O pin da ÁREA DESENHADA (DEC-070) é o ponto central dela: o texto diz
+                    /* O pin da ÁREA DESENHADA (DEC-071) é o ponto central dela: o texto diz
                        "área", senão o hover chamaria de ponto um lugar que ninguém clicou. */
                     sub: d.carregando
                       ? 'Lendo os setores…'

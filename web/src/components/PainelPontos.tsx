@@ -92,7 +92,7 @@ export default function PainelPontos({
      perguntas diferentes, e um ponto pode ganhar a comparação e ainda assim reprovar num
      piso do produto. Viabilidade fica de fora de propósito — é entrada do operador sobre um
      imóvel concreto (DEC-009), e a comparação não a tem. */
-  /* ÁREA DESENHADA (DEC-070, fase 1) ainda não tem PDF: o deck de comparação desenha o raio
+  /* ÁREA DESENHADA (DEC-071, fase 1) ainda não tem PDF: o deck de comparação desenha o raio
      de 1 km de cada ponto na foto e nos textos, e para uma área ele afirmaria um recorte
      que não é o dela. A recusa é DITA, com o motivo, em vez de o botão sumir. */
   const temArea = fichas.some((f) => ehAreaDesenhada(f))

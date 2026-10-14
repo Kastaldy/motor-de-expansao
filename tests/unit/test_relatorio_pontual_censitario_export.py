@@ -217,7 +217,7 @@ def test_pdf_big_numbers_com_residual_e_nd():
         # universo. A cor segue espelhando o card de consumo, que e' calculado so' sobre
         # cadeias -- por isso os dois precisam dizer de que universo falam.
         b"Academias no raio",
-        # DEC-069: o card de consumo passa a ser o INSTALADO (concorrentes + Ultra), com as
+        # DEC-070: o card de consumo passa a ser o INSTALADO (concorrentes + Ultra), com as
         # duas parcelas numa linha de apoio -- a conta do residual fecha na pagina.
         b"Consumo instalado",
     ):

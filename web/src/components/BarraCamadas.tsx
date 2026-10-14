@@ -110,7 +110,7 @@ const ICONE: Record<string, React.JSX.Element> = {
       <circle cx="12" cy="10.8" r="2.3" />
     </>
   ),
-  /* POLIGONO de cinco lados com os VERTICES marcados — "Analisar geometria" (DEC-070).
+  /* POLIGONO de cinco lados com os VERTICES marcados — "Analisar geometria" (DEC-071).
      Os vertices sao o que diz "voce desenha clicando ponto a ponto"; um poligono liso
      seria so' uma forma, e nao o gesto que a ferramenta pede. */
   poligono: (
@@ -411,7 +411,7 @@ export default function BarraCamadas({
   /** Atalho do trilho para a regua — a MESMA chave da linha correspondente. */
   regua: { ligado: boolean; onToggle: () => void }
   /**
-   * Atalho do trilho para "Analisar geometria" (DEC-070) — a MESMA chave da linha do
+   * Atalho do trilho para "Analisar geometria" (DEC-071) — a MESMA chave da linha do
    * painel. `null`/ausente = o botao nao aparece (sem quem receba a area desenhada, o
    * desenho nao levaria a lugar nenhum).
    */

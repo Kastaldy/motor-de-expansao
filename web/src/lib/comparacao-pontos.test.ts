@@ -453,7 +453,7 @@ describe('subtituloDoDeckDePontos', () => {
   })
 })
 
-/* ---------------- Área desenhada (DEC-070) ---------------- */
+/* ---------------- Área desenhada (DEC-071) ---------------- */
 describe('área desenhada na comparação', () => {
   const anel: [number, number][][] = [[[-46.63, -23.55], [-46.62, -23.55], [-46.62, -23.54], [-46.63, -23.55]]]
   const area = {

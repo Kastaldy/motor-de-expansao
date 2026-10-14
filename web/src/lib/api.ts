@@ -581,7 +581,7 @@ export const api = {
     pedir<PontoPayload>(`/api/ponto?lat=${lat}&lng=${lng}`, {}, 30_000),
 
   /**
-   * Ficha de uma ÁREA DESENHADA no mapa ("Analisar geometria", DEC-070 fase 1): o mesmo
+   * Ficha de uma ÁREA DESENHADA no mapa ("Analisar geometria", DEC-071 fase 1): o mesmo
    * payload do `ponto`, com o polígono no lugar do raio de 1,0 km.
    *
    * POST com o polígono no CORPO, e não na URL: 50 vértices em query string estourariam o

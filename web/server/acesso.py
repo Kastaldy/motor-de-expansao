@@ -81,7 +81,7 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/executiva/", frozenset({"executiva"})),
     ("/api/geocode", frozenset({"mapa"})),
     ("/api/resolver-ponto", frozenset({"mapa"})),
-    # Por PREFIXO, cobre tambem `POST /api/ponto/geometria` (a area desenhada, DEC-070):
+    # Por PREFIXO, cobre tambem `POST /api/ponto/geometria` (a area desenhada, DEC-071):
     # e' a mesma ficha com o poligono no lugar do raio, entao o gate e' o mesmo.
     ("/api/ponto", frozenset({"mapa"})),
     ("/api/cobertura/", frozenset({"mapa"})),

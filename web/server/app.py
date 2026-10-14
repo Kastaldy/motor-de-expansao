@@ -6459,7 +6459,7 @@ def _criterios_do_ponto(
     `RENDA_MIN` é renda DOMICILIAR, não per capita (comentário literal em
     `config.py:131`) — comparar contra a per capita reprovaria quase todo ponto.
 
-    `onde` só muda o RÓTULO ("no raio" / "na área", DEC-070); as réguas são as mesmas.
+    `onde` só muda o RÓTULO ("no raio" / "na área", DEC-071); as réguas são as mesmas.
     Ressalva declarada da fase 1: população e concorrentes são totais ABSOLUTOS, e o piso
     de 5.000 e o teto de 3 foram pensados para o raio de 1 km — numa área desenhada muito
     maior ou menor eles leem outra coisa. Reescalar por área é decisão do dono (fase 2).
@@ -6555,11 +6555,11 @@ class PontoGeometriaIn(BaseModel):
 
 @app.post("/api/ponto/geometria")
 def ponto_geometria(corpo: PontoGeometriaIn) -> dict[str, Any]:
-    """Ficha de uma ÁREA DESENHADA — "Analisar geometria", fase 1 (DEC-070, PROPOSTA).
+    """Ficha de uma ÁREA DESENHADA — "Analisar geometria", fase 1 (DEC-071, PROPOSTA).
 
     O MESMO corpo do `/api/ponto` (`_payload_ponto`), com o polígono no lugar do raio de
     1,0 km: censo setor a setor, concorrentes (ponto-em-polígono) e mercado (SAM, consumo
-    e residual, DEC-069) passam a ser lidos DENTRO da área. O "ponto" da ficha é o
+    e residual, DEC-070) passam a ser lidos DENTRO da área. O "ponto" da ficha é o
     `representative_point` do polígono — garantidamente interno, mesmo num polígono
     côncavo — e é por ele que o município e o hexágono se resolvem.
 
@@ -6591,8 +6591,8 @@ def ponto_geometria(corpo: PontoGeometriaIn) -> dict[str, Any]:
 def _payload_ponto(lat: float, lng: float, *, desenho: Any = None) -> dict[str, Any]:
     """O corpo da ficha de ponto, comum ao `GET /api/ponto` e ao `POST /api/ponto/geometria`.
 
-    `desenho` (`GeometriaDesenhada`, DEC-070) troca o raio pelo polígono. Sem ele, cada
-    chave e cada chamada são as de antes da DEC-070 — o GET não muda um byte (travado por
+    `desenho` (`GeometriaDesenhada`, DEC-071) troca o raio pelo polígono. Sem ele, cada
+    chave e cada chamada são as de antes da DEC-071 — o GET não muda um byte (travado por
     teste). Com ele, (lat, lng) é o `representative_point` do polígono.
     """
     from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
@@ -6630,7 +6630,7 @@ def _payload_ponto(lat: float, lng: float, *, desenho: Any = None) -> dict[str, 
         if desenho is None:
             uf, _cod, setores_df = _resolver_e_carregar(lat, lng, cfg)
         else:
-            # DEC-070: os vizinhos que a CAIXA do polígono alcança também entram — um
+            # DEC-071: os vizinhos que a CAIXA do polígono alcança também entram — um
             # polígono maior que o frame do ponto perderia setores do município vizinho em
             # silêncio (a DEC-065 por outra porta).
             uf, _cod, setores_df = _resolver_e_carregar(lat, lng, cfg, geometria=desenho.poligono)
@@ -6656,7 +6656,7 @@ def _payload_ponto(lat: float, lng: float, *, desenho: Any = None) -> dict[str, 
     tem_concorrentes = comp_df is not None or ultra_df is not None
 
     # A geometria só entra na chamada quando existe: sem ela, a chamada é LITERALMENTE a de
-    # antes da DEC-070 (quem substitui o motor em teste continua recebendo os mesmos args).
+    # antes da DEC-071 (quem substitui o motor em teste continua recebendo os mesmos args).
     _recorte_kw: dict[str, Any] = {} if desenho is None else {"geometria_wgs84": desenho.poligono}
     res = analisar_ponto_censitario_setores(
         lat, lng, setores_df,
@@ -6666,9 +6666,9 @@ def _payload_ponto(lat: float, lng: float, *, desenho: Any = None) -> dict[str, 
         **_recorte_kw,
     )
 
-    # DEC-069: SAM / consumo / residual no MESMO raio de 1,0 km da populacao (era a linha do
+    # DEC-070: SAM / consumo / residual no MESMO raio de 1,0 km da populacao (era a linha do
     # hexagono res-7 do ponto: grao misto, termo da Ultra escondido e Ultra contada em dobro).
-    # Mesma funcao do PDF do piloto e do PDF da API/bot. DEC-070: com area desenhada, a
+    # Mesma funcao do PDF do piloto e do PDF da API/bot. DEC-071: com area desenhada, a
     # MESMA funcao no poligono (`mercado_raio.mercado_na_area` ja' aceita a geometria).
     if desenho is None:
         mercado = _mercado_do_ponto(lat, lng, cfg, res.get("pop_total_raio"))
@@ -6846,7 +6846,7 @@ def _payload_ponto(lat: float, lng: float, *, desenho: Any = None) -> dict[str, 
         "lista_total": _n_lista_total,
     }
 
-    # NOMES MANTIDOS, SIGNIFICADO NOVO (DEC-069, emenda o contrato da DEC-005): `sam`,
+    # NOMES MANTIDOS, SIGNIFICADO NOVO (DEC-070, emenda o contrato da DEC-005): `sam`,
     # `residual` e `score_residual` passam a ser do RAIO, e as duas parcelas do consumo
     # entram para a conta fechar na tela -- `residual = max(sam - consumo_total, 0)`.
     # Insumo de concorrentes/Ultra ausente -> consumo e residual `None` com motivo, NUNCA
@@ -6898,7 +6898,7 @@ def _payload_ponto(lat: float, lng: float, *, desenho: Any = None) -> dict[str, 
         "lat": _num(lat, 6),
         "lng": _num(lng, 6),
         # Área desenhada não tem raio: `None` e não 1,0, senão a tela escreveria "raio de
-        # 1.000 m" sobre um polígono (DEC-070). O recorte vai no bloco `recorte`, abaixo.
+        # 1.000 m" sobre um polígono (DEC-071). O recorte vai no bloco `recorte`, abaixo.
         "raio_km": RAIO_CENSITARIO_DEFAULT_KM if desenho is None else None,
         "hex_id": hex_id,
         "local": {
@@ -6948,7 +6948,7 @@ def _payload_ponto(lat: float, lng: float, *, desenho: Any = None) -> dict[str, 
         ),
     }
     if desenho is not None:
-        # Chaves SÓ da área desenhada (DEC-070): o GET continua com as chaves de sempre.
+        # Chaves SÓ da área desenhada (DEC-071): o GET continua com as chaves de sempre.
         # `geometria` são os anéis do Polygon GeoJSON normalizado (um anel, fechado, em
         # [lng, lat]) — o que o mapa desenha em volta do pin, na cor do item.
         payload["geometria"] = desenho.coordenadas
@@ -11012,7 +11012,7 @@ def _gerar_relatorio_pontual_pdf(
         except Exception:  # noqa: BLE001
             mapas = None
 
-    # DEC-069: mercado no RAIO de 1,0 km (mesma funcao da ficha e do PDF da API/bot).
+    # DEC-070: mercado no RAIO de 1,0 km (mesma funcao da ficha e do PDF da API/bot).
     try:
         residual = _mercado_do_ponto(lat, lng, cfg, result.get("pop_total_raio"))
     except Exception:  # noqa: BLE001

@@ -241,7 +241,7 @@ describe('pinsDoEstado — todos os pontos no mapa', () => {
   })
 })
 
-/* ---------------- Área desenhada (DEC-070, fase 1) ---------------- */
+/* ---------------- Área desenhada (DEC-071, fase 1) ---------------- */
 
 /** Um quadradinho de ~1 km em volta de `c`, como anel GeoJSON fechado. */
 function anelEm(c: { lat: number; lng: number }, d = 0.0045): [number, number][][] {

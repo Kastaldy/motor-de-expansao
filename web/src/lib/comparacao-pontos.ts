@@ -41,7 +41,7 @@ export const DIMENSOES_PONTO: readonly Dimensao<PontoPayload>[] = Object.freeze(
   }),
   Object.freeze({
     chave: 'populacao',
-    /* "População", sem "no raio": desde a DEC-070 a comparação pode ter uma ÁREA DESENHADA
+    /* "População", sem "no raio": desde a DEC-071 a comparação pode ter uma ÁREA DESENHADA
        ao lado dos pontos, e o rótulo vale para os dois recortes. O recorte de cada item é
        dito no rodapé do comparativo; a frase do veredito fica "menos população que B". */
     rotulo: 'População',
@@ -174,7 +174,7 @@ export function indiceDoMesmoPonto(
 ): number {
   const chave = (a: number, b: number) => chaveDaCoordenada(a, b)
   const alvo = chave(lat, lng)
-  /* ÁREA DESENHADA NÃO É PONTO (DEC-070). O `lat`/`lng` dela é o `representative_point`
+  /* ÁREA DESENHADA NÃO É PONTO (DEC-071). O `lat`/`lng` dela é o `representative_point`
      do polígono — um lugar que o operador nunca clicou —, e casar por ele faria buscar
      exatamente aquela coordenada abrir a ficha da ÁREA em vez de ler o ponto com raio. */
   return pontos.findIndex((p) => !p.geometria?.length && chave(p.lat, p.lng) === alvo)
@@ -200,7 +200,7 @@ export function indiceDaMesmaArea(
   return itens.findIndex((p) => !!p.geometria?.length && chaveDaArea(p.geometria) === alvo)
 }
 
-/** O item é uma ÁREA DESENHADA (DEC-070), e não um ponto com raio? */
+/** O item é uma ÁREA DESENHADA (DEC-071), e não um ponto com raio? */
 export function ehAreaDesenhada(p: Pick<PontoPayload, 'geometria'> | null | undefined): boolean {
   return !!p?.geometria?.length
 }
@@ -208,7 +208,7 @@ export function ehAreaDesenhada(p: Pick<PontoPayload, 'geometria'> | null | unde
 /**
  * Por que o PDF de comparação NÃO sai para esta lista — ou `null` quando sai.
  *
- * Fase 1 da DEC-070: área desenhada é só TELA. O deck de comparação fotografa cada item com
+ * Fase 1 da DEC-071: área desenhada é só TELA. O deck de comparação fotografa cada item com
  * o raio de 1 km e escreve "raio" nos textos; para uma área ele afirmaria um recorte que não
  * é o dela. A recusa é dita (com o caminho para destravar), e não um botão que some.
  */
@@ -312,7 +312,7 @@ export type PosicaoGeoJson = [number, number]
  * O minimo que um item da comparacao precisa para virar pin no mapa.
  *
  * Generico de proposito: alem do `PontoPayload` (ponto do raio de 1 km), a comparacao vai
- * receber uma AREA DESENHADA (DEC-070, fase 1). O pin dela e' o `representative_point` do
+ * receber uma AREA DESENHADA (DEC-071, fase 1). O pin dela e' o `representative_point` do
  * poligono — vem em `lat`/`lng` como o de qualquer ponto — e o contorno vai em
  * `geometria`, como os aneis do Polygon GeoJSON (coordenadas `[lng, lat]`).
  */

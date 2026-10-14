@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-/* "ANALISAR GEOMETRIA" NO MAPA (decisão 7 do dono, 2026-10-14; DEC-070 fase 1).
+/* "ANALISAR GEOMETRIA" NO MAPA (decisão 7 do dono, 2026-10-14; DEC-071 fase 1).
 
    As regras do desenho (fechar por pixels, área, autointerseção, limites) são puras e
    testadas de verdade em `lib/geometria-desenho.test.ts`; a entrada da área na lista, em

@@ -23,7 +23,7 @@ export default function DetalheRegiao({
   detalhe: PontoCensoDetalhe
   concorrencia: PontoConcorrencia
   /**
-   * O item é uma ÁREA DESENHADA (DEC-070): os mesmos números, com os rótulos do polígono
+   * O item é uma ÁREA DESENHADA (DEC-071): os mesmos números, com os rótulos do polígono
    * no lugar dos do círculo. O `area_circulo_km2` do payload é, nela, a área desenhada.
    */
   area?: boolean

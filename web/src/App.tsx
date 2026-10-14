@@ -663,14 +663,14 @@ export default function App() {
               pontosComparados={pontos.pins}
               /* Clique num pin colorido: abre a aba DAQUELE item, e a janela da ficha se
                  estiver fechada. Pelo ÍNDICE (`mostrar`), e não pedindo de novo a coordenada
-                 da ficha: com a ÁREA DESENHADA na lista (DEC-070) a coordenada dela é o
+                 da ficha: com a ÁREA DESENHADA na lista (DEC-071) a coordenada dela é o
                  ponto central, e pedi-la leria um PONTO novo ali em vez de abrir a área.
                  Pin ainda em leitura não chega aqui (o mapa não o deixa clicável). */
               onPontoComparado={(i) => pontos.mostrar(i)}
               /* A lupa do cabeçalho vira PONTO ANALISADO nas duas entradas: buscar um
                  endereço ali produz a MESMA ficha que colá-lo. */
               onPontoBuscado={pedirPonto}
-              /* "Analisar geometria" (DEC-070, fase 1): a área desenhada entra na MESMA
+              /* "Analisar geometria" (DEC-071, fase 1): a área desenhada entra na MESMA
                  lista dos pontos, com a mesma regra de teto e de cor. */
               onGeometriaDesenhada={(g) => void pontos.analisarGeometria(g)}
               /* O hero da tela vazia de "Analisar um ponto" é o do `PontoScreen`. */

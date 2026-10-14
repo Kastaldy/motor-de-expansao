@@ -147,7 +147,7 @@ _RAIO_LABEL = f"{_RAIO_TXT} km"
 # deliberado do criterio, nao efeito colateral.
 #
 # As metas de MEDIA (renda per capita, renda domiciliar, score) sao escala-invariantes e nao
-# seriam afetadas de todo jeito. SAM/Residual Fitness eram por hexagono H3 ate' a DEC-069
+# seriam afetadas de todo jeito. SAM/Residual Fitness eram por hexagono H3 ate' a DEC-070
 # (2026-10-14) e passaram a ser do RAIO de 1,0 km (area 0,61x a do hexagono): as metas de
 # 2.000/2.000 foram MANTIDAS por decisao do dono, como a DEC-021 fez com as de populacao --
 # o card fica mais dificil de ficar verde, e isso e' deliberado.
@@ -2389,7 +2389,7 @@ def _avaliar_conclusao(
     todo como "nao informado", enchendo o parecer de ressalvas que nao dizem nada sobre o
     ponto. Desde a DEC-030 isso tem consequencia VISUAL direta: `financeiro is None` e a
     pagina desenha um selo so. O que RESTA e' a praca: metas censitarias, mercado do
-    raio (DEC-069; era do hexagono), zona morta e a ressalva de censo indisponivel -- mais o gate E5, que reprova
+    raio (DEC-070; era do hexagono), zona morta e a ressalva de censo indisponivel -- mais o gate E5, que reprova
     quando as metas falham EM BLOCO (ver `_CONCLUSAO_METAS_ELIMINATORIO_MIN`).
     """
     result = result or {}
@@ -3111,7 +3111,7 @@ def _big_numbers_page(
     """(e) Big Numbers — grid 4x2 das 8 metricas. READ-ONLY; sem dado auditavel.
 
     SAM Fitness e Residual Fitness saem em NUMERO DE ALUNOS (sizing absoluto da camada de
-    mercado), nao em score. Desde a DEC-069 o `residual` vem de `api.service._mercado_do_ponto`
+    mercado), nao em score. Desde a DEC-070 o `residual` vem de `api.service._mercado_do_ponto`
     e e' do RAIO de 1,0 km, nao do hexagono H3: SAM = pop do raio x taxa calibrada, consumo =
     concorrentes de cadeia + Ultra pelo disco de 1 km de cada unidade, residual =
     max(SAM - consumo, 0). O card de consumo mostra o TOTAL e decompoe as duas parcelas numa
@@ -3125,7 +3125,7 @@ def _big_numbers_page(
     sam = residual.get("sam_fitness_potencial")
     oferta_disponivel = residual.get("oferta_efetiva_disponivel")
     cor_consumo = _cor_consumo_concorrentes(sam, oferta_disponivel)
-    # DEC-069: consumo INSTALADO = concorrentes + Ultra. Dict no formato antigo (so' a parcela
+    # DEC-070: consumo INSTALADO = concorrentes + Ultra. Dict no formato antigo (so' a parcela
     # de concorrentes) nao tem o total: soma so' quando as DUAS parcelas existem -- metade da
     # conta impressa como "conc. + Ultra" seria afirmar uma soma que nao foi feita.
     consumo_conc = residual.get("oferta_consumida_mercado_estimada")
@@ -3180,7 +3180,7 @@ def _big_numbers_page(
             _format_number(result.get("n_concorrentes"), 0),
             cor_consumo,
         ),
-        # DEC-069: era "Consumo concorrentes (est.)" e mostrava so' a parcela de concorrentes
+        # DEC-070: era "Consumo concorrentes (est.)" e mostrava so' a parcela de concorrentes
         # enquanto o residual descontava tambem a Ultra -- a conta nao fechava na pagina.
         (
             "Consumo instalado (conc. + Ultra)",
@@ -3228,7 +3228,7 @@ def _big_numbers_page(
         _ajustar_fonte_para_largura(pdf, valor_txt, card_w - 28)
         pdf.set_xy(x + 14, y + 74)
         pdf.multi_cell(card_w - 28, 28, valor_txt)
-        # Linha de apoio (decomposicao do consumo, DEC-069): abaixo do valor, dentro do card --
+        # Linha de apoio (decomposicao do consumo, DEC-070): abaixo do valor, dentro do card --
         # o valor termina em y+102 e a linha ocupa y+108..y+119 de um card de 132.
         if index in apoio:
             pdf.set_text_color(*_CINZA_TEXTO)

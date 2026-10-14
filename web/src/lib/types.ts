@@ -1921,11 +1921,11 @@ export interface PontoConcorrencia extends BlocoOpcional {
 }
 
 /**
- * Mercado do ponto. Desde a DEC-069 TODOS os números são do RAIO de 1,0 km (os mesmos da
+ * Mercado do ponto. Desde a DEC-070 TODOS os números são do RAIO de 1,0 km (os mesmos da
  * população), não mais do hexágono que contém o ponto: `residual = max(sam −
  * consumo_total, 0)` e `consumo_total = consumo_concorrentes + consumo_ultra`. Os nomes
  * `sam`/`residual`/`score_residual` foram mantidos; os campos novos são opcionais porque
- * um servidor anterior à DEC-069 não os manda.
+ * um servidor anterior à DEC-070 não os manda.
  */
 export interface PontoMercado extends BlocoOpcional {
   sam: number | null
@@ -1973,14 +1973,14 @@ export interface PontoVizinho {
 }
 
 export interface PontoPayload {
-  /** No item de ÁREA DESENHADA (DEC-070) é o `representative_point` do polígono. */
+  /** No item de ÁREA DESENHADA (DEC-071) é o `representative_point` do polígono. */
   lat: number
   lng: number
   /** `null` na área desenhada: ela não tem raio (o recorte está em `recorte`). */
   raio_km: number | null
   hex_id: string
   /**
-   * Só no item de ÁREA DESENHADA (`POST /api/ponto/geometria`, DEC-070): os anéis do
+   * Só no item de ÁREA DESENHADA (`POST /api/ponto/geometria`, DEC-071): os anéis do
    * Polygon GeoJSON normalizado pelo servidor — um anel, fechado, em `[lng, lat]`. É o
    * contorno que o mapa desenha na cor do item. Ausente no ponto com raio.
    */

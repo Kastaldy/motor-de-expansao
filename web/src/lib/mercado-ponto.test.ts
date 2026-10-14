@@ -4,7 +4,7 @@ import { contaFecha, leituraDoMercado, recorteDoMercado } from './mercado-ponto'
 import type { PontoMercado } from './types'
 
 /**
- * O caso que originou a DEC-069: o ponto da Ultra Santana/SP (-23,4852 / -46,6177).
+ * O caso que originou a DEC-070: o ponto da Ultra Santana/SP (-23,4852 / -46,6177).
  * Valores medidos no lote do backend: SAM 6.418, concorrentes 4.865 (8 academias),
  * Ultra 2.486 (1 unidade), residual 0.
  */

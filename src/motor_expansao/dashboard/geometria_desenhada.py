@@ -1,4 +1,4 @@
-"""Validacao do poligono DESENHADO no mapa -- "Analisar geometria", fase 1 (DEC-070, PROPOSTA).
+"""Validacao do poligono DESENHADO no mapa -- "Analisar geometria", fase 1 (DEC-071, PROPOSTA).
 
 O operador desenha um poligono a mao no Mapa Territorial e ele SUBSTITUI o raio de 1,0 km
 na analise de ponto: censo (setor a setor), concorrentes e mercado passam a ser lidos DENTRO

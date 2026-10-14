@@ -1,4 +1,4 @@
-"""Motor censitario com POLIGONO desenhado -- "Analisar geometria", fase 1 (DEC-070).
+"""Motor censitario com POLIGONO desenhado -- "Analisar geometria", fase 1 (DEC-071).
 
 O poligono e' um parametro OPCIONAL e ADITIVO de `analisar_ponto_censitario_setores`. Este
 arquivo trava as duas metades da promessa:
@@ -130,7 +130,7 @@ def _escalares(res: dict) -> dict:
 def test_sem_geometria_o_dict_do_raio_nao_muda() -> None:
     setores = _malha_de_setores()
     res = analisar_ponto_censitario_setores(LAT_C, LNG_C, setores)
-    # Mesmas chaves de antes da DEC-070 -- nenhuma a mais (nem `geometria_tipo`).
+    # Mesmas chaves de antes da DEC-071 -- nenhuma a mais (nem `geometria_tipo`).
     assert set(res) == _CHAVES_DO_RAIO
     assert res["metodo"] == METODO_RELATORIO_PONTUAL_CENSITARIO
     assert res["raio_km"] == 1.0

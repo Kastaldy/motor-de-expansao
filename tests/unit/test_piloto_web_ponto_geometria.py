@@ -1,4 +1,4 @@
-"""`POST /api/ponto/geometria` -- a ficha de uma AREA DESENHADA (DEC-070, fase 1).
+"""`POST /api/ponto/geometria` -- a ficha de uma AREA DESENHADA (DEC-071, fase 1).
 
 A rota roda de verdade: motor censitario REAL sobre setores sinteticos, mercado REAL sobre
 um `data/staging` sintetico. So' a resolucao de municipio vira stub (ela tem teste proprio
@@ -174,7 +174,7 @@ def test_area_desenhada_substitui_o_raio_em_tudo(ambiente) -> None:
     assert body["concorrencia"]["n_concorrentes"] == 1
     assert [c["rede"] for c in body["concorrencia"]["lista"]] == ["dentro"]
 
-    # Mercado no MESMO recorte (DEC-069 generalizada).
+    # Mercado no MESMO recorte (DEC-070 generalizada).
     m = body["mercado"]
     assert m["grao"] == "geometria" and m["raio_km"] is None
     assert m["area_km2"] == pytest.approx(area_u, rel=0.01)
