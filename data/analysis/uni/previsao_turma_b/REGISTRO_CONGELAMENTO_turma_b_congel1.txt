@@ -1,0 +1,50 @@
+REGISTRO DE CONGELAMENTO — turma B, congelamento 1 (v2 travada) — 2026-10-06 12:00
+
+previsoes: previsoes_turma_b_v2_congel1.csv  SHA-256 572c12b7a018176589bf9a8885a6c5664dfb6891f534826ffc06f9d8355e2256
+
+insumo metragem_time: metragem_time_expansao_2026-10-06.csv  SHA-256 f93746f913349ae0a9aee7ce4cef1149b3071e104258d7ce85f66c4179cbbc35
+insumo metragem_satelite: metragem_estimada_2026-09-29.csv  SHA-256 065b12b66165e55be73663968c528845852de78ac0e197768ee6a4790759a839
+insumo curva_uni03: curva_uni03.csv  SHA-256 e0fd0b0f0fc32ed4d6374aeeed175e0acf0187b7a4ed4d5f511a603dcfead4f8
+insumo fato_unidade_mes: fato_unidade_mes.parquet  SHA-256 cffc6b276d930905ace08bffe1c5f0b7e15d207b5fd7389c8afd0a19ebc8fa87
+insumo dim_unidade: dim_unidade.parquet  SHA-256 c6ecef57365c1ac8730802386adb55eb5610a056665b0999746ccb12395230b8
+insumo master_id_cadastro: master_id_cadastro.csv  SHA-256 bdc8ecbb2db49b339590ed1e8f3272b89407ad72a0286993d5150393c67120c9
+insumo confirmacao_uni02: confirmacao_por_unidade.csv  SHA-256 ba9b3e9f9f45ebdd238b6214bb67f5c4ca4ce6ffd5677341b6e4be257f5cbbe9
+insumo mod_termometro: 01_termometro.py  SHA-256 6ae27c5e0823837acfb9f034df08cf469845a2074542bb0eaa56356842002814
+insumo mod_evidencias: 02_evidencias.py  SHA-256 73777fd6cb7d39ebddec71443b298e0f504eb1436ea5527f7eb408ddb5567ddd
+insumo mod_alavancas: 01_alavancas.py  SHA-256 4b6cefdeb5c862b1ccb3a088998462943178b350200bec1c7941adbca2aaa616
+insumo mod_incerteza: 01_incerteza.py  SHA-256 16189a95d5309184ee5cc0ed92b7adf17f7db78733600fc0d42f741bff3d6569
+insumo mod_exploracao: 01_exploracao.py  SHA-256 d4147998b23859bcb4d813d7cbd724f3a0e321cb3b0f27f7f45493db244f7c8d
+insumo mod_lote3: 03_politica_sem_agregador.py  SHA-256 cb0587bb64ec309e8c7de1291a5b1c9d2f805e28b3b58e4a14441d03a4776ffb
+insumo script: 04_turma_b_metragem.py  SHA-256 7f45803a2d20727d7550faefd24df556819e261d40de1730da73b23539543e7a
+
+modelo: v2 = log fat ~ l_m2 + l_renda_dom + l_pop + mr_M2 + mr_M3 + mr_outras + studios; OLS nas 39 maduras de 2025 (teste com 18); nivel 2026 = + cal['l_fat'] = -0.020456
+proveniencia: R2 LOO 0.2641 (esperado 0,264); erro tipico nas 18 do teste 22.11% (esperado 22,1%)
+coeficientes: {'const': np.float64(7.092077), 'l_m2': np.float64(0.577503), 'l_renda_dom': np.float64(0.317123), 'l_pop': np.float64(-0.148585), 'mr_M2': np.float64(0.243776), 'mr_M3': np.float64(0.021997), 'mr_outras': np.float64(0.154476), 'studios': np.float64(0.226551)}
+faixa de 80% NOMINAL: quantis 10/90 dos erros LOO do treino (-0.4656, +0.4455 em log); cobriu 72% no teste (uni07/resultado_uni07.md)
+fora da previsao (sem renda/pop/estudio/master no cadastro): ['sao-carlos-centro-sp']
+variantes de metragem (declaradas antes de ler): {'boa-vista-ba': {'vini_bruto_960': 960.0, 'vini_regra_satelite_857': 857.1428571428571}, 'ceilandia-qnm33-df': {'faixa_min_1700': 1700.0, 'faixa_max_1800': 1800.0}}
+
+EXPOSICAO (o que ja foi visto destas unidades antes do congelamento):
+- boa-vista-ba: amostra_uni01.csv (l_fat de 2025) e resultados que a citam; lote 1 (receita media mar-ago/26 por unidade); lote 2/06 (abertura x maduro).
+- ceilandia-qnm33-df, bangu-rj: lote 1 (receita media mar-ago/26 por unidade); lote 2/06 (abertura x maduro, rotulado).
+- bangu, picarras, flow, visconde-de-rio-claro, vicente-pires-rua-8, boqueirao: lote 3/02 (faturamento nos meses de vida 3, 6 e 12, rotulado).
+- Escolhas feitas DEPOIS dessas exposicoes: ponto medio da QNM33, mapeamento dos nomes do relato, mezanino nao tratado (sem a area dele),
+- uso da v2 e da regra de leitura do UNI-02. Por isso: conferencia com EXPOSICAO PARCIAL, nao teste cego.
+
+FORA DO SUPORTE DO TREINO (registrado; a leitura separa por isso):
+- aceite de agregador: no treino 39/39 aceitam Wellhub; aqui varias nao aceitam nenhum (colunas aceita_*). As dummies de master
+  carregam composicao de agregador no treino (uni09/resultado_uni09.md), entao 'nao aceita nenhum' e' extrapolacao da v2.
+- pino/isocrona: confianca_coord 'baixa' (treino: 0), iso truncada (treino: 0/39), area da isocrona < minimo do treino (colunas no CSV).
+- metragem do time: APROXIMADA, sem definicao de area (util/bruta/ABL) nem calibracao contra a oficial; mezanino ambiguo em
+  bangu e vicente-pires-rua-8 (sem a area dele, nao ha variante). Elasticidade do m2 na v2 ~0,58: 10% de m2 ~ 5,7% na previsao.
+
+REGRA DE LEITURA (modo --ler-v2; so' com decisao do Felipe):
+- desfecho = mesma definicao do teste UNI-02: media do log do faturamento nos meses validos com mes de vida >= 12, >= 3 meses,
+  janela 2026-01..2026-08 (ex.desfechos). N esperado: <= 3 (boa-vista-ba, ceilandia-qnm33-df, bangu-rj).
+- nenhum agregado com n < 4 e' interpretado: leitura UNIDADE A UNIDADE, erro = real/previsto - 1 e o percentil desse erro na
+  distribuicao dos erros LOO do treino; separada entre 'aceita algum agregador' e 'nao aceita nenhum'; principal e variantes lado a lado.
+- jovens: trajetoria contra a curva congelada do UNI-03 (faturamento, p10-p90) x previsao; desvio 'dentro do erro da v2' se cabe
+  na faixa combinada nivel x rampa. Descritivo, nao teste.
+- outra janela (BLK-UNI-12): recalibrar o calendario como em 01_termometro.py:146-147 (mediana de Y_janela - Y25 nas do treino
+  presentes na janela) e reaplicar a MESMA previsao em log; a regra de meses e' a mesma.
+- conferencia, sem criterio de adocao (a adocao e' do Felipe).

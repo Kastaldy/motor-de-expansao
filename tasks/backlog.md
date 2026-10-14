@@ -1178,7 +1178,7 @@ a base de calibração DENTRO do formato Ultra, e revalidar a curva (reabre BLK-
 | **Criticidade** | **Média** (recalibra um coeficiente de custo da camada paralela de Dimensionamento/Viabilidade; muda a saída de go/no-go do simulador, mas **READ-ONLY sobre o M1** — não toca score/pesos/carteira/plano/artefatos oficiais). |
 | **Prioridade** | A definir (Felipe/Vini) — pedido explícito de Felipe (2026-07-17). |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — confirmar o ratio com a controladoria]` → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | **Cancelado por decisão do Felipe (2026-09-30):** a folha de 25–26% das DREs estava inflada. Não é dívida real; `SIM_FOLHA_PCT` = 0,17 permanece. O comentário "CONFLITO ABERTO" em `dimensionamento/config.py` fica para ser removido no próximo PR que tocar o arquivo. |
 | **Depende de** | **BLK-DIM-03R** (que fixou os coeficientes do DRE, incluindo `SIM_PESSOAL_MES`). Relacionado a **BLK-VIAB-04** (backtest N=112, para checar que a mudança não piora a validação). |
 | **Autonomia** | **manual (NÃO loop-safe)** — muda a economia que a ferramenta recomenda; o **valor do ratio** (~25%) é decisão de produto/finanças que precisa de gate humano (N=6 nas DREs). Mecanicamente é simples, mas NÃO marcar loop-safe. |
 
@@ -5598,3 +5598,1210 @@ o bloco nasce com evidência. **Reavaliar em 2-3 semanas;** se não recorrer at�
 resolvido pelo #388.
 
 ---
+
+---
+
+## Epic BLK-UNI — Inteligência de Unidade: expansão ↔ operações (camada paralela, READ-ONLY sobre o M1)
+
+**Aprovado por Felipe em 2026-09-25.** Um único entendimento do que faz uma unidade faturar e reter
+bem, usado nos dois sentidos: **expansão** (projetar o faturamento maduro de um ponto com região,
+tamanho e concorrência — candidato a substituir a viabilidade atual, que só lê metragem) e
+**operações** (comparar cada unidade com o que a praça sustenta, para orientar ticket, retenção e mix
+de agregadores). Ponte com o Projeto Lifetime (`Kastaldy/Projeto-Lifetime---Ultra-Academia`).
+
+**Responsável desde 2026-10-13: Juan** (passagem do Felipe). Começar por `data/analysis/uni/README_PASSAGEM.md`. O
+código, os documentos e os registros do estudo estão versionados; os dados continuam fora do git.
+
+**Ponto de partida (análise de 2026-09-23 a 25, `data/analysis/isocronas/`).**
+- Grafo viário OSM de 137 regiões e isócronas (carro 5/10/15 min, a pé 10/15 min) para as unidades
+  Ultra, Engenharia do Corpo, SkyFit, concorrentes e hexágonos da carteira.
+- Modelo exploratório de faturamento (log faturamento Financeiro ~ log m² + log renda 10 min + log pop
+  10 min): R² fora da amostra 0,35–0,45 nos 12 meses (set/25–ago/26) contra 0,09–0,17 da viabilidade
+  atual; holdout temporal 1º→2º semestre R² 0,49; erro típico 23–24%. **Exploratório**: as variáveis
+  foram escolhidas nos mesmos dados.
+- Estudo de inauguração do Growth (set/2026): curva côncava (86% do patamar no mês 3, estabiliza em
+  ~6 meses), metragem explica o patamar, RJ com 0% de agregadores e receita por aluno alta.
+
+**Regras de método (canônicas para o epic).**
+1. **Explorar e confirmar em dados diferentes.** Exploração até dez/2025; confirmação em jan–ago/2026
+   e nas unidades abertas depois, por backtest rolling-origin (padrão do Projeto Lifetime).
+2. **Critério escrito antes de rodar a confirmação** (molde E7/DEC-043).
+3. **Maturidade sempre controlada** (DEC-014: a retenção previsível por unidade era maturidade).
+4. **Nenhum outlier excluído para ganhar métrica**; só erro de dado corrigido ou unidade imatura.
+5. **Faturamento = fechamento do Financeiro** (`faturamento_financeiro.parquet`, VPS), não a API Growth.
+6. **Execução leve**: um script pesado por vez na máquina do Felipe (sem agentes paralelos rodando python).
+
+**Fontes.**
+
+| fonte | onde | uso | restrição |
+|---|---|---|---|
+| Financeiro (faturamento fechado) | VPS `data/staging/faturamento_financeiro.parquet` | desfecho principal | — |
+| Growth (ativos, recorrentes, agregadores, churn, vendas, visitas) | VPS `growth_api_historico.parquet` | desfechos e maturidade | — |
+| Metragem e vagas | `data/ultra/dados_academias.xlsx`; EdC em `data/validacao/` | tamanho | — |
+| Isócronas, população, renda, concorrência (alunos reais) | `data/analysis/isocronas/`, `alunos_reais_por_unidade.parquet` | região e oferta | — |
+| Crescimento municipal e do hexágono | VPS `crescimento_*.parquet` | tendência | — |
+| Planos WellHub/TotalPass das academias | VPS `planos_wellhub.parquet`, `planos_totalpass.parquet` | ticket da região, posicionamento | — |
+| Concentração de membros TotalPass | `NAO_ABRA/` (local, gitignored) | demanda revelada por onde o aluno mora/treina | **SÓ LOCAL**: nunca sobe para VPS, git ou artefato; só agregados sem PII |
+| Lifetime (risco por aluno) | repo Projeto Lifetime / OneDrive `MVP - OPERACIONAL` | retenção agregada por unidade | só agregado por unidade |
+| Empresas por CNAE | Receita (dados abertos CNPJ, tabela Estabelecimentos) + IBGE CNEFE 2022 (coordenadas) + OSM | polos de fluxo e emprego | **baixada em 2026-09-25**: base única `data/staging/poi/base_poi_unica/` (fontes em `docs/fontes_bases_poi.md`) |
+
+### BLK-UNI-00 — Painel da rede (base única unidade × mês)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média — camada paralela, sem artefato oficial |
+| **Depende de** | — |
+| **Autonomia** | **manual (NÃO loop-safe)** — lê dados da VPS e uma fonte só local (`NAO_ABRA/`) |
+
+Base única por unidade e mês com todas as fontes acima, maturidade (`inauguracao`), variáveis de
+abertura do estudo de inauguração e agregados do Lifetime. Critério de aceite: cobertura por fonte e
+por unidade documentada; nenhum dado pessoal persistido.
+
+**Entregue em 2026-09-26** (`data/analysis/uni/`, gitignored; scripts `01` a `05`):
+- `fato_unidade_mes.parquet`: 98 unidades, abr/22 a set/26, com 2.088 unidade-mês de receita válida do Financeiro.
+- `dim_unidade.parquet`: ~240 atributos por unidade (tamanho, cadastro, isócronas, concorrência, crescimento, POI, planos, Lifetime, rampa).
+- `LOCAL_demanda_totalpass_por_unidade.parquet`: demanda revelada TotalPass, só local.
+- Documentação: `COBERTURA_UNI00.md` e `DICIONARIO_UNI00.md` (uma linha por coluna).
+- Validação: a rampa reproduz o estudo de inauguração da Growth (ativos nos meses 1/3/6/12 = 1.310/1.775/2.122/2.228; estabiliza em 6 meses).
+- Pendências declaradas: retenção de 12 meses da coorte de abertura e pré-venda (depende de export agregado do Lifetime); tipo de imóvel e fachada (sem fonte).
+- Achados de dado: pinos da Plaza Sul e de Sagrada Família (corrigidos no painel em 28/09); cópia do Financeiro na VPS com o Guarujá ago/26 velho; 16 meses do Financeiro com zero e academia operando.
+- Lacunas do MOTOR achadas aqui: o join de nome não casa São Carlos (o Financeiro não aparece na Visão Executiva); o filtro de musculação do Wellhub em `planos_agregador.normalizar` perde 13% das academias do feed.
+
+### BLK-UNI-01 — Exploração de hipóteses (período até dez/2025)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média |
+| **Depende de** | BLK-UNI-00 |
+| **Autonomia** | manual |
+
+Hipóteses a medir: renda × ticket; planos do agregador × ticket e renda; % agregador por UF (RJ 0%,
+SP 50%); tamanho × concorrência (hipótese do diretor); crescimento; residual fitness por isócrona;
+demanda revelada TotalPass (onde o membro mora/treina); polos de fluxo por CNAE (**testado em 2026-09-25 com protocolo
+pré-registrado: sem ganho detectável; vira fato descritivo** — `data/analysis/poi/relatorio_teste_poi_2026-09-25.md`); curva de rampa;
+retenção por coorte. Saída: lista de hipóteses que sobrevivem, para pré-registro.
+
+**Rodado em 2026-09-28** (`data/analysis/uni/uni01/`, gitignored). Protocolo congelado por SHA-256 depois de revisão
+adversarial; 19 testes; 40 unidades maduras em 2025 (SP 16, DF 15). Resultado em `resultado_uni01.md`.
+- **Modelo de expansão (faturamento):** só **1 candidata** além da base, o **T09 (hipótese do diretor)**. O m² rende
+  mais onde a concorrência é de estrutura menor: +0,34 na elasticidade ao m² por desvio-padrão da fração de academias
+  independentes na isócrona.
+  - A evidência é fraca: p = 0,067, e o IC cruza zero em 7 de 39 retiradas de uma unidade (pós-hoc, `02_posthoc_t09.py`).
+  - Sem sinal, com poder baixo (só excluem efeitos grandes): saturação da concorrência, crescimento do município e do
+    hexágono, preço relativo à concorrência e população a pé na mesma cidade.
+- **Por onde a renda age:** pelo ticket (+8% por desvio-padrão) e pela retenção, não pelo % agregador.
+  - Churn: −1,3 pp por desvio-padrão, sobre uma média de 7,0%/mês (ΔR² LOO +0,49).
+  - **Isto diverge da DEC-014**, onde a retenção territorial colapsava com a maturidade controlada. Refazer no UNI-04
+    antes de qualquer uso.
+- **Agregador (operações, UNI-06)**, por desvio-padrão do % agregador:
+  - +18% de alunos e −10% de ticket (líquido ≈ +6% no faturamento);
+  - +0,6 pp de churn.
+- **Rampa:** os alunos do mês 3 explicam o nível maduro (ΔR² LOO +0,63). É alerta precoce para o UNI-03 e o UNI-06.
+- **Demanda revelada TotalPass:** +14% no faturamento por desvio-padrão. A fonte é só local, então vai para o UNI-06.
+- **Descritivos:**
+  - % agregador (mediana): SP 55%, DF 29%, RJ 0%;
+  - o tier Wellhub acompanha a renda da praça (ρ = +0,53).
+- **Gargalo do UNI-02:** das 21 unidades que amadurecem em 2026, só 12 têm metragem, e uma interação não se confirma
+  com 12 unidades. Pedir a metragem das novas (item 4 do BLK-DADOS-UNI-01).
+
+**Anatomia dos erros do modelo base (2026-09-28, exploratória, verificada por 3 revisores):**
+- O erro está ~87–92% no volume de alunos (que inclui o mix de agregador), não no ticket. A base explica ~12% dos alunos.
+- O "efeito SP" **foi refutado** na verificação: o excesso vem da Baixada Santista (3 unidades) e de unidades da
+  matriz; na Grande SP o erro mediano é −4%, igual ao DF.
+  - Hipóteses sem prova: Censo subestima o litoral; efeito do operador (matriz +23% × outro master de SP −14%).
+- **Preço Gold:** foto de ago/26, fora do modelo; a direção da relação não é identificável sem histórico de preço.
+- **Nenhuma das 22 variáveis** explica o erro de faturamento de forma confiável (66 testes). O que falta é gestão,
+  ponto e fachada. Não é geografia.
+- **Pedidos de dado:**
+  - operador/franqueado por unidade (anonimizado);
+  - preço na abertura ou o histórico de preço;
+  - imóvel e fachada.
+- Arquivos: `data/analysis/uni/uni01/03_anatomia_erros.py`, `04_anatomia_regiao.py`.
+
+**Modelo em duas partes e preço (2026-09-28, protocolo fixado antes, verificado por 2 revisores): nenhuma estrutura
+nova confirmada.**
+- Duas partes sozinhas pioram (LOO 0,30 → 0,27).
+- O M3 (+ "política de agregador da UF") passou na régua por 0,003, abaixo do piso de ruído do protocolo. O termo é,
+  na prática, SP × DF e foi escolhido depois de olhar o dado.
+- O ganho do diretor ao retirar a cidade é artefato de extrapolação: o DF fica fora da faixa de treino.
+- O M0 segue como referência do UNI-02.
+- **Achado de dado:** o 0% de agregador do RJ é política real. A Grande Rio tem "NÃO POSSUI" no cadastro e zero na
+  Growth e no Financeiro. Só Cabo Frio e São Gonçalo Shopping aceitam.
+  - Candidata ao pré-registro do UNI-02: "aceita agregador" (unidade, ex ante).
+  - Só é testável com as unidades do RJ que amadurecem em 2026.
+
+### BLK-UNI-02 — Modelo de faturamento maduro esperado (confirmação pré-registrada)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta — base do challenger da viabilidade |
+| **Depende de** | BLK-UNI-01 |
+| **Autonomia** | manual |
+
+Especificação congelada a partir da UNI-01, confirmada em jan–ago/2026 por rolling-origin, com faixa
+p10–p90 e envelope de validade declarado.
+
+**CONFIRMAÇÃO RODADA em 2026-09-28 (`data/analysis/uni/uni02/`, protocolo congelado por SHA-256): o M0 SE CONFIRMA.**
+- **Desenho:** treino com as 39 maduras de 2025; teste com **18 unidades nunca vistas**, maduras só em 2026 (15 com
+  metragem oficial e 3 por satélite).
+
+  | modelo | erro típico | viés | ρ |
+  |---|---|---|---|
+  | M0 | 22% | +1% | +0,50 [+0,12; +0,78] |
+  | ATUAL (regra de densidade) | 27% | −17% | +0,35 [−0,09; +0,74] |
+  | INGÊNUO | 37% | — | — |
+  | M0d (diretor) | 20% | — | — |
+
+- **Robustez:**
+  - só com metragem oficial, o erro empata (22% × 22%), mas o viés não: M0 +2% contra ATUAL −15%;
+  - o M0 erra menos em 12 de 18 unidades;
+  - **a regra atual superestima o faturamento das unidades novas em 15–19%**.
+- **Diretor (M0d):** passou por 2 pontos, mas empata nas sensibilidades. Não se distingue, como previsto.
+- **Faixa p10–p90:** cobriu só 67% (esperado 80%), então precisa ser alargada no UNI-05.
+- **Maiores erros:**
+  - Botafogo-RJ (+185%): real e consistente, ~R$ 700 mil/mês com ~4 mil alunos de balcão a ~R$ 175, sem agregador;
+  - Cariacica +100%, Butantã +90%, Noroeste +59%, Mococa −53%.
+  - **"Aceita agregador" entra no modelo quando houver mais unidades do RJ maduras** (Laranjeiras já faz R$ 488 mil
+    no 4º mês).
+- **Próximo passo: UNI-05**, a viabilidade v2 como alternativa rodando ao lado da atual, só como análise.
+
+**Coleta de metragem por satélite (2026-09-28, proposta do Felipe; coleta manual por Felipe e Vini).**
+- **Resultado da 1ª rodada:**
+  - 19 medições válidas; 9 unidades novas ganharam metragem;
+  - viés +12%, corrigido; erro típico de 20%;
+  - o erro principal está em contar andares;
+  - tipo de imóvel inconsistente entre os avaliadores (1 de 7): redesenhar as categorias;
+  - Cotia: medido ~1.050 × 750 m² na oficial; conferir. É o que destrava a
+confirmação.
+- **Método:** área do telhado (Google Earth/Maps) × pavimentos ocupados pela academia (Street View). Na mesma visita:
+  tipo de imóvel e checklist de fachada.
+- **Controles:**
+  - 12 unidades de **calibração**, com metragem conhecida, misturadas sem marcação. Medem o erro e o viés da estimativa
+    por satélite.
+  - 10 unidades medidas pelos **dois**, para medir a consistência entre avaliadores.
+  - Coleta **às cegas**: sem desempenho na planilha.
+  - Unidades em shopping ficam como "não medível por satélite".
+- **Universo:** 43 unidades sem metragem (P1 = 10, as que confirmam em 2026; P2 = 15; P3 = 18).
+- **Arquivos:** planilha `data/analysis/uni/coleta_metragem/planilha_coleta_metragem.xlsx`, com as abas Felipe (33
+  linhas) e Vini (32). O gabarito fica em `_gabarito_nao_abrir/`.
+- **Na volta:** comparar com o gabarito (erro típico e viés), medir a concordância entre os dois e decidir se a
+  estimativa entra no modelo, com fator de correção se houver viés.
+
+**Reforço acrescentado em 2026-09-28 (aprovado por Felipe):** replicar a hipótese do diretor (T09 do UNI-01:
+o m² rende mais onde a concorrência é de academias pequenas e independentes) em redes independentes que têm
+metragem e alunos.
+- Redes: Engenharia do Corpo (~38 unidades) e Pacer (13), com as isócronas já em `data/analysis/isocronas/multirede/`.
+- Regras escritas antes de rodar. O desfecho é alunos, porque essas redes não informam faturamento.
+- Não depende da metragem das unidades Ultra abertas em 2025, que hoje trava a confirmação na própria Ultra (só 12 de 21 têm metragem).
+- **No estudo, pode contrariar a DEC-009/043** ("a demanda nunca vem da localização"). A DEC só precisa mudar quando algo subir para produção (UNI-05).
+
+**Rodado em 2026-09-28** (`data/analysis/uni/uni02r/`; isócronas da Pacer geradas pelo mesmo pipeline): **inconclusivo**,
+o resultado declarado de antemão como mais provável.
+- Engenharia do Corpo (36 unidades, 27 cidades): efeito +0,30 [−0,40; +1,01]; mesmo sinal ao retirar qualquer cidade (27 de 27).
+- EdC + Pacer (45): +0,35 [−0,27; +0,97].
+- Ultra, para comparar: +0,34 no faturamento e +0,40 [+0,12; +0,69] em alunos.
+- Leitura: mesmo tamanho e direção numa rede independente, mas sem poder para afirmar (efeito mínimo detectável ~1,0).
+  A confirmação continua dependendo da metragem das unidades Ultra abertas em 2025.
+
+### BLK-UNI-03 — Curva de rampa observada
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média |
+| **Depende de** | BLK-UNI-00 |
+| **Autonomia** | manual |
+
+Substitui a rampa linear de 8 meses do simulador pela curva observada (recorrentes e agregadores
+separados), com faixa.
+
+**Rodado em 2026-09-28** (`data/analysis/uni/uni03/`, gitignored). Protocolo v1.1 congelado depois de revisão
+adversarial (11 achados). Curva montada com 33 unidades abertas até nov/2024 e testada em 22 abertas de dez/24 a
+ago/25.
+- **Curva** (% do nível maduro, meses 11–13):
+
+  | mês | alunos | faturamento | simulador hoje |
+  |---|---|---|---|
+  | 0 | 80% | – | – |
+  | 1 | 68% | 52% | 37% |
+  | 3 | 84% | 75% | 57% |
+  | 6 | 92% | 85% | 86% |
+  | 12 | 101% | 102% | 100% |
+
+  - O agregador rampa devagar: 18% dos alunos no mês 1 e 26% no mês 12.
+  - Do mês 12 ao 24 o nível fica estável (101%).
+- **Confirmação:**
+  - a curva erra 10% contra 21% do simulador nos alunos, e 12% contra 17% no faturamento;
+  - vence em 21 de 22 unidades;
+  - o simulador subestima o 1º ano em 15% dos alunos e 7% do faturamento.
+- **Conserto possível** (PR futuro, só com aprovação): uma reta recalibrada nos alunos, começando em 62% e chegando a
+  100% no mês 8, empata com a curva. No faturamento a curva é um pouco melhor, e o simulador hoje faz faturamento
+  proporcional a alunos.
+  - Ilustração: payback de uma unidade típica de 38 para 36–37 meses; faturamento do 1º ano +R$ 225–340 mil.
+- **Alerta do mês 3 (para o UNI-06):** projeção do nível maduro com erro típico de 5–9%, contra ~22% antes de abrir
+  (pela regra de densidade da viabilidade). A faixa −20% a +23% cobriu 77% das unidades da confirmação.
+- **A conferir com a operação:** a queda do mês 0 (80%, pré-venda) para o mês 1 (68%). Liga-se ao BLK-UNI-PEND-01.
+
+### BLK-UNI-04 — Retenção e churn da unidade (maturidade controlada)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média |
+| **Depende de** | BLK-UNI-00 |
+| **Autonomia** | manual |
+
+Refaz o "churn previsível pela região" (R² 0,38, medido sem maturidade) controlando maturidade;
+ponte com o risco por aluno do Lifetime agregado por unidade.
+
+**Parte A rodada em 2026-09-28: renda da praça × churn** (`data/analysis/uni/uni04/`, gitignored). Protocolo v1.1
+congelado depois de revisão adversarial (10 achados).
+- **Q1, o teste que decide:** 17 unidades que amadureceram só em 2026, com a idade controlada. Resultado: −0,20
+  ponto por desvio-padrão da renda [−1,10; +0,69], **inconclusivo: não confirmou** o T17 (−1,29).
+- **Nas mesmas unidades de 2025:**
+  - o efeito persiste em 2026 (−0,90);
+  - com controle de idade (pós-hoc), fica em −1,15, ou seja, não era só maturidade (renda e idade têm ρ +0,51).
+- **Lifetime** (churn EB de 60 dias, 56 unidades, idade controlada): −0,38 pp sobre uma média de 8,1%. Mesma direção,
+  pequeno.
+- **Ponte com a DEC-014:** a `renda_per_capita` do M1 é municipal (1 valor no DF, 9 em SP). A hipótese de que isso
+  explicava o NO-GO **não se sustentou**: no Lifetime, com a idade controlada, a renda municipal e a da isócrona dão
+  efeitos parecidos (ΔR² ~0,02).
+- **Decomposição:** ticket e "em cobrança" levam o efeito de −1,29 a −0,88 (renda × cobrança ρ −0,64).
+- **Decisão de uso:** o churn **não** varia por renda na viabilidade. O achado fica como acompanhamento operacional
+  (UNI-06).
+
+### BLK-UNI-05 — Viabilidade v2 (challenger ao lado da atual)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta — muda método de camada em produção; troca só por DEC |
+| **Depende de** | BLK-UNI-02, BLK-UNI-03 |
+| **Autonomia** | manual |
+
+Challenger rodando ao lado da viabilidade atual; comparação no período de confirmação; troca por DEC.
+
+**Comparação rodada em 2026-09-28** (`data/analysis/uni/uni05/`, só análise). Protocolo congelado.
+- **v1.0 → v1.1:** a verificação adversarial achou erro de código. O calendário −2% entrava só na V2; o UNI-02 aplicava
+  aos dois. A correção **inverteu o veredito**; as duas versões estão guardadas.
+- **v1.1, 18 unidades de teste, custos-padrão:**
+  - faturamento: V2 erro 22% / viés +1%; ATUAL 33%, com o real 24% abaixo do previsto;
+  - payback (unidades não censuradas): V2 14 meses de erro, ATUAL 20; a V2 erra menos em 6 de 10;
+  - decisão "viável": ATUAL 72% (0 aprovações indevidas), V2 67% (1: Mococa, no corte de 36 meses); "reprovar tudo" 56%.
+  - **Critério 2 falha: V2 NÃO recomendada para DEC agora.**
+- **Leitura:**
+  - a V2 é melhor previsão de faturamento e payback; a decisão empata (placar no fio do corte);
+  - as duas perdem as mesmas excepcionais (Botafogo, Butantã, Cariacica, Vila Guanabara);
+  - a rampa nova só pode entrar junto com a demanda nova (sozinha aumenta as aprovações indevidas).
+  - Treino LOO: V2 72% × 54%, 6 × 10 aprovações indevidas (amostra de desenvolvimento, só apoio).
+- **Achado à parte:** a receita por aluno do simulador (~R$ 117) está ~8% acima da real (~R$ 108). Premissa a rever.
+- **Decisão do Felipe (2026-09-29):**
+  - a V2 vale como **base de previsão**, porque prever melhor é o objetivo;
+  - o critério de decisão foi uma checagem do estudo, não a regra de adoção;
+  - unidades excepcionais se tratam com **alavancas declaradas pelo operador**, não com sorte do modelo.
+- **Testes do mesmo dia:**
+  - Botafogo com "100% recorrente": previsão de R$ 245 mil para R$ 277 mil, payback de 40 para 33 meses, passa a
+    viável (certo);
+  - com o preço real (R$ 177): R$ 354 mil, payback 24 meses; o que falta é volume (~4.100 × ~2.100 alunos);
+  - regressão robusta (Huber) para "suprimir" excepcionais no ajuste: não melhora (erro 22% → 23–25%).
+  - Arquivos: `uni05/02_teste_botafogo.py`, `03_robusto.py`.
+- **Próximo passo analítico:** medir no dado o efeito de cada alavanca do operador (aceita agregador, preço do plano,
+  estúdios/modalidades, vagas), para a V2 recebê-las como entradas. **Rodado em 29/09: ver BLK-UNI-05B.**
+- **Antes de uma DEC:**
+  - custos reais (aluguel, obra) das unidades;
+  - turma de 2026 madura para novo teste;
+  - faixa calibrada fora da amostra;
+  - DEC Estratégica emendando a DEC-043/009.
+
+### BLK-UNI-05B — Alavancas do operador (entradas da v2)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média — só análise; entradas da v2 viram proposta para a DEC do UNI-05 |
+| **Depende de** | BLK-UNI-05 |
+| **Autonomia** | manual |
+
+**Rodado em 2026-09-29** (`data/analysis/uni/alavancas/`, só análise). Protocolo congelado e revisão adversarial antes
+de rodar (2 bloqueantes e 10 correções, todas aplicadas; §10 do protocolo).
+- **Premissa do agregador (parte D), achado sólido:**
+  - o aluno de agregador rende **47%** do recorrente (R$ 62 × R$ 136; 418 meses de 43 unidades; Wellhub 47%,
+    TotalPass 50%). O simulador supõe **60%** (`SIM_TICKET_AGREGADOR_FATOR`);
+  - com 0,47, a receita por aluno do simulador vai de R$ 114,8 para R$ 109,4, contra R$ 107,4 reais. Explica ~¾ do
+    otimismo do UNI-05. O resto vem do share de balcão: 0,69 no simulador, 0,61 na rede real.
+- **Aceitar agregador (parte A): inconclusivo.**
+  - Estudo de evento pela entrada do TotalPass: 3 eventos limpos (Santos, Lago Sul, Jardim Botânico).
+  - O TotalPass trouxe só 1–8% dos alunos. Houve tendência prévia de alta, e o Financeiro não tinha a linha de
+    TotalPass antes de 2023-10.
+  - Setor Oeste saiu por datação: o Financeiro tinha receita de TotalPass 10 meses antes de o Growth contar os alunos.
+  - A conta de substituição saiu degenerada: s sem sinal estável. m **não medido**.
+  - "Sem agregador" fica na aritmética: de −25% a +27% com a receita real por aluno.
+- **Corte transversal + confirmação (partes B e C):**
+  - **estúdios** +30% no faturamento [+7%; +59%], candidata no treino, mas **não se repetiu** no teste (erro 21% →
+    25%; Spearman 0,50 → 0,73). No teste, o estúdio se confunde com o operador (matriz sem estúdio; DF/GO com). Rótulo:
+    **medida, não confirmada**;
+  - **preço**: +11% de alunos por R$ 10, com o ticket parado. É a demanda por trás do preço, não a elasticidade.
+    **Não medido**;
+  - **modalidades**: +5% no ticket por modalidade, sem efeito no faturamento;
+  - **vagas**: nulo.
+- **Decisão do Felipe (29/09): `SIM_TICKET_AGREGADOR_FATOR` fica em 0,60.**
+  - A contagem de alunos de agregador do UX não é limpa, e a medição manual nas unidades dá ~60%. Os 47% são
+    artefato de contagem.
+  - Ressalva estendida: a fatia de agregador, o ticket por aluno e o "R$ 117 × R$ 108" do UNI-05 dependem dessa
+    contagem.
+- **Proposta para a v2:**
+  - estúdio como faixa, fora do número central;
+  - agregador sim/não e preço pela aritmética do simulador, com aviso.
+- **Estúdios × master (29/09, pós-hoc, `alavancas/02_estudios_master.py`):**
+  - estúdios +28% com a master controlada [+4%; +58%] (retém 93%, estável ao retirar cada metro);
+  - a master sozinha piora o teste (21% → 30%);
+  - master + estúdios bate o M0 no teste (erro 20,6% × 21,5%; Spearman 0,73 × 0,50).
+  - Sinal mais promissor, mas pós-hoc: só entra na v2 depois de se repetir na turma de 2026 (previsão congelada).
+- **Master real do cadastro (29/09, `alavancas/07_estudios_master_real.py` v1.1.1; chave corrigida com zfill):**
+  - sozinha piora o teste (21,5 → 31,0%);
+  - v2 praça + estúdios + master real: 22,1% / Spearman 0,69 × M0 21,5% / 0,50 (IC da diferença [−9; +5] p.p.);
+  - estúdio é binário e separa quem supera o previsto (AUC ~0,90 fora da amostra).
+  - Previsões da turma de 2026 congeladas nas duas versões de master.
+- **Decisão do Felipe (30/09):** a v2 usa renda DOMICILIAR no lugar da per capita (acerto igual, 22,1% / 0,69); previsões da turma de 2026 congeladas nessa versão.
+- **Decisão do Felipe (29/09): v2 de trabalho = praça (M0) + estúdios + master real.** Sem rótulo por ora; ele leva ao
+  diretor. Produção só por DEC.
+- **Próximos:**
+  - teste do operador/franqueado (separar estúdio × gestão): no estudo paralelo de ICP do franqueado, quando os dados
+    chegarem;
+  - preço ao longo do tempo pela `/relatorio-vendas-operacoes` (só agregados);
+  - RJ aceitando Wellhub desde set/2026 (reavaliar em ~6 meses; é o experimento que mede "sem agregador").
+
+### BLK-UNI-05C — O que explica a fatia do agregador (recorrente × agregador)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Baixa — só análise |
+| **Depende de** | BLK-UNI-01 |
+| **Autonomia** | manual |
+
+Sugestão do Felipe (2026-09-29). **Rodado no mesmo dia** (`data/analysis/uni/mix/`): protocolo congelado e revisão
+adversarial antes de rodar (1 bloqueante: aceitar um × os dois agregadores; 7 correções).
+- **v1.1, principal (volume, correção do Felipe):** proporção de agregadores nos alunos ativos, pela contagem do UX,
+  com ressalva.
+  - A v1.0 (receita, Financeiro) fica como secundária. As duas medidas ordenam quase igual (+0,96).
+- **Amostras:** exploração com 37 unidades de 2025 que aceitam os dois agregadores; confirmação com 13 unidades novas
+  de 2026.
+- **Proporção típica:** 41% dos ativos (22–61%). SP ~53%, DF ~27%. Na receita: 27%, SP 37%, DF 15%. Renda e população
+  explicam R² ≈ 0.
+- **Candidatas em 2025, volume** (CR1 por metro excluindo zero):
+  - escritórios a pé: +7,9 p.f./dp, ΔR² +0,15;
+  - demanda TotalPass: +11,1, ΔR² +0,30;
+  - independentes no agregador: +21,3, ΔR² +0,33;
+  - preço Gold: +7,9, ΔR² +0,08.
+- **Confirmação:** nenhuma é "consistente" pelo critério estrito (IC < 0).
+  - Escritórios é a mais perto: MAE 7,2 → 5,9 p.f., IC [−3,8; +1,3].
+  - Independentes dobrou o erro: 7,1 → 13,9.
+- **Confirmação ampliada (v1.2, 19 unidades com mês de vida ≥ 6, erro com nível corrigido):** nenhuma candidata
+  confirma.
+  - Escritórios: efeito indistinguível de zero (maior ganho no erro bruto, 10,7 → 9,0; IC cobre zero).
+  - Verificação por 3 lentes: 13 das 19 unidades já eram da v1.1, não é prova independente.
+- **Estado/regional (pós-hoc):** separa a proporção (SP 53% × DF/GO 28%; confirmação 63% × 34%). A regra por estado
+  ordena melhor (0,73 × 0,64), mas o agrupamento foi escolhido com parte dos dados e pode ser política comercial.
+  Candidata a pré-registrar na turma de 2026.
+- **v1.3.1, universo inteiro (64 unidades, aceita ≥ 1 agregador, LOO + leave-one-metro-out):**
+  - estado (SP/DF-GO/outros): erro 12,7 → 9,8 p.f.; por metro 14,3 → 9,5; SP +23 p.f. sobre DF/GO;
+  - escritórios: ~1 p.f., não transfere, e piora sobre o estado. Fora;
+  - escritórios privados (05c, sem CNAE 84/8610) ≈ normal (0,99).
+  - Verificação por 3 lentes: bug de pino antigo em 2 unidades (corrigido, sem efeito); IC otimistas; estado ≈
+    regional DF/GO (política × mercado); "outros" heterogêneo.
+- **O mix não muda o faturamento nem o payback da v2:** só a divisão dos alunos (planejamento do agregador).
+- **Se entrar, é decisão do Felipe:** regra por estado aplicada como diferença sobre o padrão do simulador (31%), não
+  com o nível do UX (42%). Estado novo usa o padrão. Reconfirmar na turma de 2026.
+- **Próximo teste do mecanismo:** emprego formal privado (CAGED/RAIS) no lugar de contagem de estabelecimentos.
+- **Fachada (BLK-UNI-05B passo 4, 29/09, pré-registrado):**
+  - nota × resíduo do M0: Spearman +0,37 [−0,20; +0,86], +8% por ponto, N = 14. Inconclusivo, com direção a favor;
+  - índice dos 6 itens: +0,22, inconclusivo.
+  - Registrada na conferência da turma de 2026.
+  - v1.1 ampliada (N = 22): +0,32 [−0,09; +0,66], +10%/ponto; nota 3 −16%, 4 +13%, 5 +39%; sem Botafogo +0,50.
+  - Sem Botafogo só na fachada (decisão do Felipe): maduras +0,67 [+0,27; +0,91] (+23%/ponto); ampliada +0,49
+    [+0,15; +0,76].
+  - **Juan avaliando:** `coleta_metragem/planilha_fachada_juan.xlsx`, com 44 maduras + 1 jovem + 6 de controle às
+    cegas. Confirmação pré-registrada no protocolo v1.2.
+  - **Leitura parcial (14 notas; o Juan usou uma coluna própria 'Notas' e deixou o checklist vazio):**
+    - 11 novas: −0,25 [−0,64; +0,26], não confirma;
+    - todas as notas, sem Botafogo (32): +0,22 [−0,07; +0,48].
+    - Script: `alavancas/08_fachada_juan.py <planilha>`. Rodar de novo com a planilha completa.
+  - **Fachada dentro da v2 (30/09, exploratório, `09_v2_fachada.py`):** não melhora.
+    - Sem Botafogo, N = 24: v2 + nível 17,5% × v2 + fachada 18,9%; Spearman 0,58 → 0,52.
+    - Não entra por ora. Hipótese "loja de rua" (da análise) pré-registrada para as notas restantes.
+  - **TESTE FINAL (30/09, planilha completa do Juan, v1.3, `alavancas/10_fachada_final.py`): INCONCLUSIVO.**
+    - Leitura principal (novas não vistas, loja de rua, N = 23): +0,05 [−0,37; +0,44]. Nenhuma amostra confirma.
+    - Sem gradiente por nota (1: +16%; 2: +29%; 3: −12%; 4: +1%; 5: +12%).
+    - Régua subjetiva: o Juan difere de Felipe/Vini em mais de 1 ponto em 3 de 6 controles.
+    - **Fachada fora do modelo.** Se voltar, só com checklist objetivo (ver BLK-UNI-10, visibilidade).
+
+### BLK-UNI-07 — Incerteza do modelo e faixas de segurança (na esteira)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média — só análise; base das faixas de segurança dos indicadores |
+| **Depende de** | BLK-UNI-02, BLK-UNI-05 |
+| **Autonomia** | manual |
+
+Pedido do Felipe (2026-09-29). Medir o desvio-padrão do erro do modelo de faturamento e o intervalo de confiança da
+previsão por unidade, para depois desenhar as **faixas de segurança** dos indicadores.
+- A faixa p10–p90 do UNI-02 cobriu 67% (esperado 80%). Calibrar fora da amostra, juntando o LOO do treino com o
+  teste, e reportar a cobertura.
+- Separar a incerteza do **nível** (erro do modelo, ~22%) da incerteza da **rampa** (UNI-03) e do **alerta do mês 3**
+  (erro de 5–9%).
+- Também serve à DEC do UNI-05: a faixa calibrada é pré-requisito.
+- Rodar depois das alavancas (UNI-05B/05C) e antes da DEC.
+- **Rodado em 2026-09-30** (`data/analysis/uni/uni07/`; revisão antes de rodar + verificação por 2 lentes depois):
+  - **erro típico da v2 ~23%** (DP 0,37 em log), igual ao M0: a v2 ordena melhor, mas não é mais precisa;
+  - **faixa de 80% (A, só treino): −37% a +58%**, cobertura no teste limpo de 13/18 = 72% [50; 88]. Adotada
+    provisoriamente. O piso segurou (1 abaixo); o teto não (4 acima, todas com estúdio);
+  - faixa de 50% compatível (~50%; a leitura "estreita" foi retirada);
+  - erro SP 32% × DF/GO 17%: a regra de faixa por estado dispara (decisão do Felipe; se adotar, fator de escala);
+  - unidade típica, custos-padrão: sem estúdio 144/215/358 mil, payback >60/50/24, chance 38%; com estúdio, chance
+    26%;
+  - chance de viabilidade: Brier 0,175 × 0,238; serve para ordenar, não como corte;
+  - pós-hoc: no teste, com estúdio +55% (7/8 acima) × sem −21% (8/10 abaixo), Fisher ≈ 0,008. Confundido com a matriz
+    (6 das 10 sem estúdio são M2);
+
+### BLK-UNI-08 — A v2 subestima unidades com estúdio? (achado de 2026-09-30)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média — só análise; mexe no peso do estúdio na v2 de trabalho |
+| **Depende de** | BLK-UNI-07 |
+| **Autonomia** | manual |
+
+**Achado registrado a pedido do Felipe:**
+- nas 18 unidades novas (teste), 7 de 8 com estúdio faturaram acima da previsão da v2 (mediana +55%), e 8 de 10 sem
+  estúdio ficaram abaixo (−21%). Fisher unicaudal ≈ 0,008;
+- no treino (LOO, 2025) não há desvio: −6% × −4%;
+- confundido com a matriz: 6 das 10 sem estúdio são M2.
+
+**Caso real:** em Manaus (pino NOVA CIDADE), a v2 dá ~2.000 alunos, e as unidades parecidas da rede têm 2.100–3.600.
+
+**Comparáveis (30/09):**
+- unidades em praça de renda baixa com estúdio: R$ 272–349 mil (mediana 329 mil, n = 7);
+- sem estúdio: mediana R$ 136 mil (n = 8).
+
+**Próximo:**
+- **hipótese principal:** estúdio × renda da praça (o estúdio vale mais onde a concorrência é de academias menores;
+  liga-se ao T09 do diretor), com regra escrita antes;
+- testar também peso maior para o estúdio, ou a interação estúdio × coorte;
+- confirmar na turma de 2026 congelada (conferência já registrada);
+- separar estúdio × matriz quando houver unidades novas da matriz com estúdio.
+
+### BLK-UNI-09 — Modelo de volume em duas partes: recorrente × agregador (hipótese do Felipe, 2026-10-01)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média — só análise; candidato a substituir a v2 em volume |
+| **Depende de** | BLK-UNI-05C, BLK-UNI-07 |
+| **Autonomia** | manual |
+
+**Hipótese do Felipe:** separar o modelo de volume em dois, um para alunos recorrentes (balcão) e outro para alunos de
+agregador, e somar. Pode dar previsão melhor do que um modelo único de ativos.
+
+**Por que (achados de 30/09, caso Manaus, `manaus_volume/`):**
+- **a master de RJ/SP mostra efeitos opostos nas duas partes:** em ativos sai +0,315, e no balcão (`pagantes`) sai
+  −0,466. O "efeito master" era composição de agregador de SP (unidades da master com ~61% de agregador);
+- **o agregador tem mecânica própria:** depende do mercado de agregador da praça (oferta de parceiros por mil hab.,
+  aceite do agregador pela unidade) e rende ~47–60% do ticket;
+- **nas praças de renda baixa com agregador ≤ 33%, nenhuma unidade passa de ~3.200 ativos** ajustados ao porte; acima
+  disso, todas têm 45–68% de agregador.
+
+**Insumos:**
+- `pagantes` e `agregadores` no painel (`fato_unidade_mes`);
+- aceite e tier de Wellhub/TotalPass por unidade (Base Consolidada, LOCAL — ver memória);
+- oferta de parceiros de agregador na isócrona (`wh_n_conc_c10`, `tp_n_conc_c10`);
+- regra de mix por estado (BLK-UNI-05C).
+
+**A testar (pré-registrar antes):**
+- parte 1: log balcão ~ praça + estúdio + master;
+- parte 2: log agregador ~ mercado de agregador + aceite/tier + praça;
+- total = soma; faturamento = balcão × ticket + agregador × fator do agregador;
+- comparar com a v2 em ativos e em faturamento:
+  - LOO nas 39 maduras de 2025;
+  - teste nas 18 do UNI-02 (já consultadas);
+  - **teste limpo:** a turma de 2026 congelada.
+
+**Ressalva:** a contagem de agregador do UX não é limpa (premissa de 60% mantida). Medir o balcão por `pagantes`.
+
+**RODADO (05/10): NÃO MELHORA a precisão.** Ver `uni09/resultado_uni09.md`; protocolo `uni09/protocolo_uni09.md` v1.0 + v1.1 (§11).
+- **Desenho:**
+  - Decisão do Felipe: **faturamento por tipo** (Financeiro), em duas partes: balcão (vendas_ux − tem_saude) e agregador
+    (Wellhub + TotalPass). A soma é exatamente o faturamento da v2.
+  - Revisão adversarial de 3 lentes. Os graves:
+    - o aceite da turma no cadastro de ago/2026 é sobretudo credenciamento em andamento. Decisão do Felipe: "misto /
+      não sei", então a conferência usa o **aceite observado** na receita;
+    - a turma não é cega (leitura precoce);
+    - um bug de NaN nas sensibilidades.
+- **Resultado:** LOO 23,5% → 22,2% (−1,3 pp); teste 22,1% → 22,9% (+0,8 pp). A v2 continua.
+- **Mecanismo:**
+  - a master de RJ/SP tem balcão −33% e agregador +167%, ou seja, o efeito da master é mix;
+  - DF/GO tem muito menos agregador;
+  - o agregador é mais elástico à renda (0,55 contra 0,25) e ao m² (0,97 contra 0,51);
+  - cada parte tem R² LOO maior que o total (0,41 e 0,32 contra 0,26).
+- **Substituição:** as 3 do teste sem algum agregador faturaram mais do que a soma sem substituição prevê (erro de 83%
+  contra 68% da v2). É indício de substituição pelo balcão (n = 3).
+- **Pista exploratória:** o tier do Wellhub no agregador melhora LOO (−2,7 pp) e teste (−2,1 pp), mas não no
+  recentrado. É candidato a teste próprio.
+- A turma de 2026 congelou as peças por unidade (SHA 38593c1d…), para conferir com o BLK-UNI-12.
+- **Próximo passo (Felipe, 06/10): análise exploratória antes de qualquer modelo novo.**
+  - Dissecar as informações disponíveis por parte (balcão e agregador), mostrar os resultados e ajustar à mão com o
+    Felipe. Só depois escolher as variáveis.
+  - **Insumos novos:** 7 PDFs do Juan e do Vinicius em `OneDrive - Grupo Ultra\Área de Trabalho\Análises - Motor de
+    Expansão`: achados exploratórios, padrões das unidades, inauguração, Botafogo fora da curva, estudo de regiões e
+    Suzano-SP.
+  - O levantamento de caminhos (3 frentes + crítico, workflow de 06/10) serve de insumo para essa exploração.
+  - **Lote 1 da exploratória FEITO (06/10):** `exploratoria/01_balcao_agregador.py` → OneDrive `Exploratória BLK-UNI\01 -
+    Balcão x agregador` (8 gráficos + planilha, 60 maduras, mar–ago/26). Revisado pelo Felipe em 06/10.
+  - **Lote 2 FEITO (06/10):** `exploratoria/02_outliers_estrategia_series.py` → `02 - Outliers, estratégia e séries
+    novas` (9 gráficos + planilha). Cobre a etapa 1 do plano abaixo (persistência, captação × retenção, receita por
+    passagem, data do credenciamento), a concentração do erro e a estratégia de abertura com agregador.
+  - **Política da rede (Felipe, 06/10):** desde a inauguração de Botafogo (mar/2025), a recomendação é abrir SEM
+    agregador, só com planos de balcão nos primeiros meses. No painel: com agregador no mês 1 em ~100% das aberturas
+    de 2024, 62% em 2025-S2, 12% em 2026-S1 e 0% em 2026-S2. **Consequência para o modelo:** o treino (maduras de
+    2025) abriu quase todo com agregador, e as turmas de 2026 abrem sem → rampa e mix diferentes.
+  - **Lote 3 FEITO (06/10):** `exploratoria/03_politica_sem_agregador.py` → `03 - Política sem agregador na
+    abertura`. O grupo sem agregador fatura mais desde o mês 1, mas é composição (unidades grandes do RJ): separar o
+    efeito da política depende da metragem das 16 sem m² (etapa 3). Eventos para acompanhar: Laranjeiras, Caxias,
+    São Gonçalo Centro e Vicente Pires ligaram o agregador em set/2026.
+  - **Turma B (06/10):** o time de expansão passou metragem aproximada de 10 das 16 unidades sem m²
+    (`coleta_metragem/metragem_time_expansao_2026-10-06.csv`). Previsões da v2 travada CONGELADAS para 9 delas (São
+    Carlos Centro está fora do cadastro: sem master e sem estúdio), com variantes de metragem declaradas antes (Boa
+    Vista 960/857 pela medição do Vini; QNM33 1.700/1.800). Revisão adversarial antes de rodar, com 12 achados
+    aplicados. **REGISTRO `previsao_turma_b/REGISTRO_CONGELAMENTO_turma_b_congel1.txt`, SHA 64febd22…** O
+    `--ler-v2` (real × previsto) NÃO rodou: abrir o resultado agora tira da turma B o papel de juiz cego das etapas
+    2–5 (decisão do Felipe). Faltam metragem de Icaraí, Pátio Brasil, São Gonçalo Shopping, Center Shopping, Sagrada
+    Família e Villa Branca. Definição (Felipe, 06/10): área total sem estacionamento, com o mezanino incluído.
+  - **Turma B LIDA (06/10, decisão do Felipe de comparar já; `ADENDO_1_antes_da_leitura.txt` SHA 3e4ec02d…):**
+    - **maduras** (regra do UNI-02): Boa Vista +14% (percentil 62 do LOO; com os 960 m² do Vini seria +53%); QNM33 +29%
+      (percentil 79); Bangu +78% (percentil 95; RJ, sem agregador);
+    - **jovens** contra a trajetória típica do UNI-03: Berrini −2%, Piçarras +5%, Rio Claro 0%, Vicente Pires +33%,
+      Boqueirão +29%, Flow **+114%** (fora da faixa);
+    - leitura: a v2 erra para baixo nas unidades SEM agregador (Bangu, Flow; Vicente Pires e Boqueirão já no
+      patamar maduro aos 5–7 meses). Isso bate com o UNI-09 (substituição pelo balcão). A trajetória típica vem do
+      regime COM agregador, cujo total demora mais para subir: isso infla as jovens sem agregador.
+    - A turma B deixou de ser juiz cego das etapas 2–5.
+  - **Política por m² (06/10, `04 - Política sem agregador por m²`):** no mês 3, quem abre sem agregador fatura
+    R$ 175/m² contra 126 (+39%). Sem RJ, cai para +18%; sem RJ, DF e GO, para +5%. No mês 6, +27% sem RJ, DF e GO
+    (n = 5). A vantagem vem sobretudo da composição (RJ); ainda não há sinal limpo da política.
+
+**Plano para melhorar os modelos (06/10; a pedido do Felipe: "devemos tentar extrair resultados melhores").** Texto
+integral, 26 propostas e descartadas em `uni09/plano_melhoria_duas_partes.md`. Ordem proposta (a adoção e a ordem são do
+Felipe; nenhuma etapa de modelo roda antes da exploratória revisada):
+1. **Exploratória por parte com séries nunca usadas** (só descritivo, sem cruzar candidata com o resíduo):
+   - (a) persistência do balcão: desvio nos meses 0–1 × desvio maduro;
+   - (b) captação × retenção: `novos_alunos`, `cancelados`, `visitas` (2.275/2.275 no painel, nunca decompostos);
+   - (c) receita por passagem (`fin_gympass ÷ passagens_gympass`, idem TotalPass), com degraus datando as trocas de tier;
+   - (d) data do credenciamento = 1º mês com passagem > 0.
+   - Regras de leitura escritas antes (ex.: Spearman ≥ 0,5 em (a) → prioridade ao dado de pré-venda).
+2. **Uma família pré-registrada sem dado novo** (Holm entre os braços):
+   - (A) encolher as masters (efeito aleatório / ridge; nunca usados);
+   - (B) na parte agregador, trocar masters por mercado de agregador (parceiros/mil hab. + independentes), avaliado
+     também deixando um metrô de fora;
+   - (C) estúdio × renda só no balcão (hipótese do BLK-UNI-08, nunca rodada);
+   - (D) tier Wellhub vigente na janela, só se (c) da etapa 1 datar as trocas.
+3. **Ampliar o N e ganhar um juiz novo:** pedir já a metragem das **16 unidades abertas até abr/2026 sem m² em nenhuma
+   fonte** (conferido; inclui bangu, icarai, flow e picarras, que nunca tiveram receita de agregador), re-medir às cegas
+   as do teste e da turma, congelar a "turma B" antes de abrir o desfecho e reajustar nas 57+. **É o caminho crítico.**
+4. **Substituição medida (σ)**, em vez de supor zero: total = v2 × [(1 − a) + σ·a/0,60], idêntico à v2 onde a unidade aceita
+   os dois agregadores. Usa as sem agregador da etapa 3 + eventos (boa-vista sai do Wellhub, campo-largo sai do TotalPass,
+   Suzano, RJ com Wellhub desde set/26 → leitura ≈ mar/2027). Critério de subgrupo a aprovar pelo Felipe.
+5. **Alavancas com data:** rodar `precos/01_coletar_vendas.py` (pronto, nunca rodado; depende do 429 da Growth) para
+   preço do Gold, data do estúdio e GOLDPRO; tier e credenciamento declarados pela Base Consolidada só por script local.
+6. **Forma da população:** limitar as covariáveis à faixa do treino (Mococa, Buritis, Bertioga) e isócrona de 5 min só no
+   balcão. Prior fraco; por último.
+- **Descartadas:** previsão em dois tempos (vai para o BLK-UNI-06), posição no cardápio do agregador, demanda corporativa
+  do TotalPass (DEC-012), concorrência low-cost no balcão (armadilha já testada), experiência do sócio (pós-hoc).
+- **Expectativa honesta:** 0–2 pp por etapa no erro típico, dentro do ruído da régua 39/18 (IC da queda no teste de
+  −9,8 a +2,9 pp). Os ganhos grandes possíveis estão no subgrupo sem agregador (erro de 68–83%) e em estado novo,
+  onde as masters não se transferem. As 18 do teste já foram muito consultadas; só 5 da turma de 2026 são cegas.
+
+### BLK-UNI-13 — Fator "sem agregador" e masters encolhidas (itens 1–3 aprovados pelo Felipe, 06/10)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média — só análise; nada adotado |
+| **Depende de** | BLK-UNI-09 (plano, etapas 2 e 4) |
+| **Autonomia** | manual |
+
+**RODADO (06/10)** — `data/analysis/uni/uni13/`:
+- protocolo v1.1: revisão adversarial `wf_89f44bbb-f93`, com 20 achados aplicados;
+- `REGISTRO_PRE.txt`, SHA 4e4af1bf…;
+- previsões da turma congeladas, SHA 80d0f594…;
+- resultado `resultado_uni13.md`;
+- gráficos em `06 - Fator sem agregador e masters`.
+
+**Parte I — θ_sem** (erro da v2 nas sem agregador menos nas que aceitam os dois; 28 unidades fora do treino):
+- resultado: **+81%** (5 sem agregador). Só maduras +130%, só jovens +59%, **sem RJ +28%**, curva de pagantes +81%,
+  calendário do balcão +89%;
+- os 4 portões passaram. Checagem interna (não é teste): erro nas sem agregador cai de 78% para 39%;
+- σ implícito = 2,3 (> 1): a substituição pelo balcão explicaria no máximo ~+19%; o resto é outra coisa (pré-venda,
+  demanda do RJ, foco no balcão);
+- **congelado para conferência, NÃO adotado**, nas 5 cegas da turma de 2026.
+- **Leitura em 2027** (contraste dentro da turma): confirma se Δ_turma ≥ θ/2; refuta se ≤ 0. Provavelmente sai
+  inconclusiva, porque as unidades ligam o agregador antes do mês 12.
+- **Ampliação:** toda abertura nova sem agregador, com metragem e cadastro, recebe a previsão congelada antes do mês 6.
+  Data-limite da leitura: 2027-12-31.
+
+**Parte II — masters:** nenhum braço melhora.
+- A (ridge one-hot): LOO 23,5% → 22,1%, mas o teste piora para 24,6%;
+- B (mercado de agregador no lugar das masters): 23,7% / 22,5%;
+- **achado para expansão:** deixando um metrô inteiro de fora, a v2 erra 44,8% (73% sem Brasília). Sem depender da
+  master, erra 23,7–27,5%. As masters não se transferem para região nova.
+
+**Próximo:**
+- conferir com o BLK-UNI-12;
+- pensar com o Felipe uma "v2 sem master" para praças fora das regiões atuais (decisão dele);
+- eventos do RJ com Wellhub por volta de mar/2027.
+
+### BLK-UNI-14 — Validação ampliada (pedido do Felipe, 06/10: "deixou coisas de fora sem perguntar")
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média — só análise; nada adotado |
+| **Depende de** | BLK-UNI-13 |
+| **Autonomia** | manual |
+
+**RODADO (06/10)** — `data/analysis/uni/uni14/`:
+- protocolo v1.1: revisão adversarial `wf_d1fc8a01-6ba` com 30 achados; 3 decisões do Felipe perguntadas antes;
+- `REGISTRO_PRE`, SHA 7141e317…; turma congelada, SHA 07a5bba8…;
+- gráficos em `07 - Validação ampliada`.
+
+**(a) Modelos separados × v2** (erro típico):
+- 39 maduras: 21,8% × 23,5%;
+- teste 18: 22,9% × 22,1%;
+- turma B: 49% × 29%;
+- turma 2026 (precoce): 46% × 41%.
+- **A v2 continua melhor.** Os separados erram muito nas unidades sem agregador, porque preveem só o balcão.
+
+**Fator sem agregador** (estimado sem a turma de 2026; 7 sem agregador × 17 com os dois):
+- v2: **+35%** (sem RJ +30%); separados: +115%;
+- portões OK nas duas famílias; congelado para conferência, **não adotado**.
+
+**(b) Turma de 2026 já** (precoce, exposta, sem veredito):
+- diferença na turma: +37% na v2 (fator +35%) e +89% nos separados (fator +115%) → **mesma direção**;
+- nas 3 sem agregador (Bertioga, Ceilândia QNM24, Laranjeiras), o erro típico da v2 cai de 26% para 7% com o fator.
+
+**(c) Masters, 9 braços no critério:** nenhum passa.
+- O mais próximo é o **tier do Wellhub do cadastro**: v2 de 23,5% para 20,6% nas 39 e de 22,1% para 18,7% no teste. Mas o
+  recentrado só cai 1,3 pp e p = 0,41.
+- Sem master, a região não vista fica em ~23–27%, contra 45% da v2.
+
+**(d) Antes e depois:** 14 eventos, quase todos de TotalPass ligando.
+- Na madura, a mediana é −25% no balcão, **mas 4 delas são de SP no mesmo mês (jan/23)** e as de DF vão no sentido contrário: sem
+  conclusão.
+- Desligar o TotalPass (2 eventos): o balcão não sobe de forma clara.
+- Wellhub ligando: sem meses depois → reler em mar/2027.
+
+### BLK-UNI-15 — Melhorias nos três modelos (pedido do Felipe, 06/10: "como melhoramos esses modelos?")
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média — só análise; nada adotado |
+| **Depende de** | BLK-UNI-14 |
+| **Autonomia** | manual |
+
+**RODADO (06/10)** — `data/analysis/uni/uni15/`:
+- protocolo v1.1: revisão adversarial `wf_80675178-156`, 22 achados aplicados antes de rodar;
+- `REGISTRO_PRE`, SHA 46f6642e…; turma congelada, SHA 2424832e…;
+- verificação independente (deixa-um-fora pela matriz chapéu, desfechos montados à parte) bateu em todos os números conferidos;
+- gráficos em `09 - Melhorias nos três modelos`.
+
+**Resultados:**
+- **T1 — região no lugar das masters:** nenhuma versão passa, nos três modelos nem no total.
+  - O que melhora nas 39 piora no teste.
+  - Como M1 = DF/GO, o teste mede "precisamos de tantas masters?", não região × master.
+- **T2 — treino ampliado (~60):** nenhuma passa. Faturamento −2,2 pontos nas mesmas 57 (faixa −5,4 a +6,0).
+  - As faixas dos coeficientes estreitam (m² 0,52×).
+  - O ajuste de 2026 sai em +15% (calendário −2%), e Botafogo/Bangu inflam o grupo M3 do RJ.
+- **T3 — abrir sem agregador** (conferência, não é teste):
+  - Sem precoces: faturamento +103% e balcão +284%; erro nelas 50%→23% e 117%→36%.
+  - Com precoces: +66% e +190%.
+  - Sinal estável em todos os recortes; previsões congeladas para as 5 cegas.
+- **T4 — dois tempos** (meses 1–3 + v2; só depois de abrir; medido em quem abriu COM agregador):
+  - Passam o balcão (26%→13%) e o agregador (40%→17%); o faturamento não passa (26%→17%).
+  - Ressalva: a régua "v2 ajustada" erra mais que a v2 como está no faturamento (26% × 20%).
+  - Contra a v2 como está (pós-hoc): faturamento −3,5 (faixa −10,8 a +2,7), balcão −8,5 (−20,3 a −0,1), agregador −22,5 (−32,4 a −11,0).
+
+### BLK-UNI-16 — Preço, estúdio e tier com data (4º item do pedido de 06/10)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média — só análise |
+| **Depende de** | coleta de vendas da Growth (`precos/02_coletar_sem_repeticao.py`) |
+| **Autonomia** | manual |
+
+- **Coleta concluída em 07/10:** jan/2023 a ago/2026, 44 meses, sem 429 (`precos/vendas_unidade_mes.parquet`, só agregados).
+- **Achado da coleta:** na abertura quase não há preço cheio. Nos meses 1–3 as vendas de Gold são quase todas promocionais, e
+  muitas unidades vendem antes de inaugurar (pré-venda).
+- **Cobertura nas 57 do modelo:**
+  - preço cheio nos meses 1–6: 34;
+  - preço de lançamento: 37;
+  - pré-venda observável: 25;
+  - estúdio vendido nos meses 1–6: 12.
+- Tier com data não existe nas vendas (só o cadastro de hoje).
+- **RODADO (07/10)** — `data/analysis/uni/uni16/`:
+  - protocolo v1.1: a revisão derrubou a v1.0, que media o degrau de lançamento; a venda registra a 1ª cobrança, então a
+    promoção de R$ 9,90 esconde o preço;
+  - `REGISTRO_PRE` e1c34818…, `REGISTRO_POS`;
+  - verificação independente bateu.
+- **Variável:** preço de tabela = mediana do preço cheio nos meses 1–12 contra as maduras. 38 das 57 têm; 10 estão sem
+  dado e 9 só com promoção.
+- **Resultado: o preço não melhora a previsão.**
+  - Efeito por +10% de preço: faturamento +9% (faixa −2% a +23%), balcão +16% (−1% a +35%), agregador −2%. Nenhum se
+    distingue de zero.
+  - Com o preço, o erro piora: faturamento 25,2% → 26,6%, total 23,0% → 25,5%.
+  - Único sinal claro: ticket do balcão +5% por +10% de preço (+3% a +8%), sem perda de alunos visível.
+  - Na aba, o preço continua como aritmética do ticket, não como preditor de volume.
+- **Tier do Wellhub:** +21% por nível na releitura, mas as 5 cegas abriram sem Wellhub. Conferir quando ligarem (BLK-UNI-12).
+
+### BLK-UNI-17 — Checklist do ponto (pedido do Felipe, 07/10: nota do ponto/imóvel como entrada da viabilidade)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média — só análise; nada vai para a aba sem o Felipe |
+| **Depende de** | preenchimento pelo time (avaliadores escolhidos pelo Felipe) |
+| **Autonomia** | manual |
+
+- `data/analysis/uni/checklist_ponto/`:
+  - protocolo (rascunho revisado: 15 achados da revisão aplicados);
+  - planilhas A (97 unidades, 82 obrigatórias) e B (20, para medir a concordância), também em OneDrive `10 - Checklist do
+    ponto`, sem o protocolo.
+- **Desenho:**
+  - itens de fato do imóvel antes da abertura (não uma nota livre: a fachada livre saiu inconclusiva);
+  - teste principal = efeito com faixa de 90% nos três modelos;
+  - a régua de 2 pontos vira só portão de adoção;
+  - o prospectivo limpo são só as 5 cegas.
+- **Poder (simulação de 07/10):** a régua antiga (cair 2 pontos nas 39 e no teste) detecta um efeito real moderado (ρ 0,3–0,5)
+  em só 1–4% das vezes. Os "não melhora" dos UNI-14/15 devem ser lidos com isso em mente.
+
+### BLK-UNI-10 — Bateria de variáveis novas (inventário de 30/09 + bases de 01/10)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média — só análise; pode mudar a v2 de trabalho |
+| **Depende de** | BLK-UNI-07 |
+| **Autonomia** | manual |
+
+**Contexto:**
+- A geografia esgotou: ~90% do erro é volume de alunos, e as 22 características territoriais não explicam.
+- O inventário de 30/09 cruzou o que existe com o que já foi testado (CADERNO, "Inventário: variáveis ainda não
+  testadas").
+- **Próximo passo combinado com o Felipe:** começar pelas duas primeiras abaixo.
+
+**Candidatas (com dado confirmado):**
+1. **Experiência do operador na abertura.**
+   - O que medir: nº de unidades que o grupo franqueado já operava na data de inauguração, 1ª unidade ou não, operador
+     profissional (coluna Operador).
+   - Fonte: `Downloads/BASE UNIDADES_CONSOLIDADA.xlsx`. **MUITO SENSÍVEL:** só scripts locais, sem subagentes, derivados
+     `LOCAL_*`, operador e franqueado anonimizados, nada sai da máquina (memória `base-consolidada-sensivel`).
+   - Casamento: `COD UNIDADE` com zfill(2) = `cod_cadastro`, 92 unidades.
+2. **Qualidade da concorrência.**
+   - O que medir: fração da concorrência vizinha com estrutura completa (vestiário, chuveiro, musculação, nº de
+     comodidades) contra academia pequena. É a hipótese do diretor (T09) medida com uma régua boa.
+   - Fonte: `Downloads/comodidades_concorrentes.csv` (Juan; 7.603 academias, Wellhub/TotalPass/site, 27 UFs, com
+     coordenadas).
+3. **Visibilidade objetiva:** classe OSM da via de frente, esquina, distância do pino à rua, + checklist objetivo do
+   imóvel. Substitui a nota de fachada.
+4. **TotalPass corporativo** (VPS `demanda_revelada_h3`): só excluindo a própria Ultra e medindo contra a turma de 2026.
+5. **Verticalização** (% de domicílios em apartamento; Censo/CNEFE).
+
+**Premissa NÃO confirmada, pendente de dado:**
+- **Idade do público:** o "18–45" do CLAUDE.md nunca foi medido. **05/10:** o Felipe corrigiu que a Ultra atende
+  todas as idades; o "18–45" de `CLAUDE.md:12` e `PRD.md:52` não é real. A sonda da Growth confirma: mediana de 37
+  anos, e um terço dos alunos tem 45 anos ou mais.
+  - Corrigidos em 05/10 (sem commit): `CLAUDE.md:12`, `PRD.md:52` e `docs/expansao_dominio.md:127`.
+  - Sobra um comentário de código em `src/motor_expansao/dashboard/constants.py:461` ("classe média urbana-alvo Ultra
+    (18-45)"), que vai no próximo PR.
+- **Idade da população por setor: a base EXISTE no IBGE.** `Agregados_por_setores_demografia_BR.zip` (22 MB, de
+  12/11/2024) em `ftp.ibge.gov.br/Censos/Censo_Demografico_2022/Agregados_por_Setores_Censitarios/Agregados_por_Setor_csv/`,
+  com o dicionário de 116 KB na pasta-mãe. Aguarda a autorização do Felipe para baixar; as faixas exatas se conferem no
+  dicionário.
+  - Fonte confirmada: Growth API `GET /alunos-frequencia` (`data_nascimento`, `sexo`; doc
+    `Downloads/Growth_API_Ultra_v1_0_0.pdf` §8.8; filtra pelo vencimento do plano).
+  - Script pronto: `data/analysis/uni/idade/01_idade_alunos.py <ini> <fim> <rotulo>`. Grava só agregados, sem retry em
+    429. Roda local ou num container efêmero na VPS com `--env-file /opt/motor-expansao-infra/growth.env`.
+  - O Felipe autorizou a VPS em 01/10.
+  - **Bloqueio:** login com 429 da máquina local e da VPS (ver BUG-GROWTH-DIA1). Rodar a sonda (vencimento de 1 semana)
+    e depois a base com vencimento de 12 meses à frente.
+- **Faculdades:** dependem da idade real.
+
+**Desenho (fixar antes):**
+- um pré-registro único com correção de Holm;
+- as variáveis de território passam antes pelo "laboratório Smart Fit" (~450 unidades, efeito fixo de metrô);
+- teste limpo na turma de 2026, congelando as previsões com cada candidata.
+
+**Armadilhas (já nulas):**
+- escritórios, vagas, canibalização Ultra;
+- saturação/concorrência total, famílias de POI, shopping, estação;
+- preço pela foto atual;
+- hipótese do diretor por `frac_indep` (4 vezes);
+- termômetro Smart Fit.
+
+**ATENÇÃO, dado:**
+- A cópia local `data/staging/concorrentes_mapeados.parquet` (10/09) tem o teto antigo de 1.000 Smart Fit. Usar a da
+  VPS, `data/analysis/uni/insumos_vps/concorrentes_mapeados_2026-09-27.parquet` (4.795 academias, 1.065 Smart Fit).
+- Crosswalk KPI Smart Fit ↔ coordenadas por nome + UF (UF via hex): 93%.
+
+**Liga-se a:** tema "feeling do operador × modelo" (estudo reverso: previsto na aprovação × realizado; ICP do franqueado).
+
+**Andamento (01/10):**
+- **Pré-registro único:** `data/analysis/uni/bateria/protocolo_bateria.md`, versões v1.0, v1.1 (§9) e v1.2 (§10).
+  - v1.1 veio de uma revisão adversarial com 23 achados procedentes e nenhum bloqueador; v1.2, de uma revisão do código.
+  - Família de Holm com 5 itens: operador, comodidades, faixa etária real, visibilidade e faculdades. Unilateral,
+    α = 0,05.
+  - Fecha em 30/11 (item sem dado entra com p = 1).
+- **Família ampliada para 6 itens (v1.3):** o Felipe pediu as modalidades da Base Consolidada, que viraram o item 6.
+  Limiar intermediário α/6 = 0,0083.
+- **Item 1, operador — RODADO: NÃO DEMONSTRADO** (`LOCAL_bateria_operador/resultado_operador.md`).
+  - Troca de dono: Carapicuíba foi repassada (informada pelo Felipe); saiu como unidade avaliada e como fonte.
+  - Resultado: +11%, IC 90% de −7% a +31%, p = 0,155 (bootstrap por grupo de sócios). Para prever, piora: LOO 23,2 →
+    23,9; teste 27,1 → 28,0.
+  - Sinal só nas unidades novas, confundido com estúdio (6 de 9 expostos têm estúdio). Ativos +1%, rampa não mais
+    rápida, balcão +17% (p = 0,066; pista de mix → BLK-UNI-09).
+  - Turma de 2026 congelada (SHA no REGISTRO).
+- **Item 6, modalidades — RODADO: NÃO DEMONSTRADO, nulo informativo** (`resultado_modalidades.md`).
+  - −5% por modalidade, IC 90% de −14% a +6%, p = 0,69.
+  - Re-teste da L3 de 28/09 (+5% inconclusivo, ticket +4,8%).
+  - Base e cadastro da VPS concordam em 100% das células conhecidas.
+  - Piscina sozinha +19% (6 unidades), só pista. Turma de 2026 congelada.
+- **Achado lateral:** sem Carapicuíba, o erro da v2 no teste vai de 22,1% para 27,1% (nível; o LOO fica estável).
+  Comunicar a precisão da v2 como 22–27%. **Carapicuíba continua na v2** (Felipe, 01/10); ela só saiu do teste do item 1.
+- **Item 2, qualidade da concorrência — RODADO: NÃO DEMONSTRADO, nulo informativo no laboratório.**
+  - Script `bateria/item2_comodidades.py`, resultado `bateria/resultado_item2_comodidades.md`, protocolo até v1.7 (§15).
+  - **Laboratório Smart Fit refeito** (pergunta do Felipe: "por que só 374?"): 961 no painel → 708 com nível de 2025 →
+    652 com coordenada → **578 em 48 áreas** (metrô ou município).
+    - Isócrona real em 385; círculo de 5,1 km nas demais.
+    - Cluster = quadrícula de 15 km dentro da área (G* mínimo entre ρ 0 e ρ 1 = 14,4). Por metrô seria G* = 2,5.
+  - Resultado: −0,4% de alunos por +10 p.p. de Q, p = 0,30. O detectável era −2,8%. Não depende de quantidade
+    (corr −0,01).
+  - Ultra, descritivo: −4,4% por +10 p.p. (G* = 5, não confiável). Piora o teste (22,1 → 26,4%).
+  - Interação do diretor: zero, sem poder; não refuta.
+  - Turma de 2026 congelada.
+- **Infraestrutura pronta para os itens 4 e 5:** a amostra do laboratório (`amostra_lab`) e a inferência (`lab`,
+  quadrícula) estão em `item2_comodidades.py`, prontas para reaproveitar.
+- **Item 5, faculdade muito próxima — RODADO (05/10): NÃO DEMONSTRADO.**
+  - Script `bateria/item5_faculdades.py`, resultado `bateria/resultado_item5_faculdades.md`, protocolo v1.8 (§16) e v1.9
+    (§17).
+  - A contagem na isócrona não era testável: 83% de centralidade e G* < 10. O Felipe redefiniu, antes de rodar, para
+    **D500** (CNPJ 853x a ≤ 500 m, endereço exato ou CEP) e teste **bilateral**.
+  - Revisão adversarial de 3 lentes: 2 graves (campus com CEP exclusivo → indeterminadas; direção) e 16 menores
+    aplicados.
+  - Laboratório: −2,8% de alunos, p = 0,19. As 11 versões da medida ficaram entre −2% e −4%. Ultra descritiva: +14%,
+    sinal oposto, e piora o teste (22 → 27%).
+  - Turma de 2026 congelada (SHA 57f04169…).
+- **Item 4, visibilidade — RODADO (05/10): NÃO DEMONSTRADO.**
+  - Scripts `bateria/item4_prep_vias.py` (vias do grafo de isócronas → `insumos_item4/`) e
+    `bateria/item4_visibilidade.py`; resultado `bateria/resultado_item4_visibilidade.md`; protocolo v2.0 (§18) e v2.1
+    (§19).
+  - A30 = pino a ≤ 30 m do eixo de via OSM primary, secondary ou trunk; direção + unilateral.
+  - Revisão adversarial de 3 lentes: 2 graves (guarda de shopping; exposição anterior do shopping no laboratório) e
+    cerca de 15 menores aplicados. Os principais: margem em graus, chave exata de duplicata, teto de 300 m e 2ª fonte de
+    pino (TotalPass, 19 m de mediana).
+  - Laboratório: n = 513, −0,9% de alunos, p = 0,72; as variações ficaram entre −3% e +1,5%. Ultra descritiva: −1%.
+  - Turma de 2026 congelada (SHA b07e528a…).
+- **Holm até aqui:** itens 1, 6, 2, 5 e 4 com p > 0,05. Nenhum entra, qualquer que seja o item 3.
+- **Item 3, faixa etária real — RODADO (05/10): NÃO DEMONSTRADO.**
+  - Scripts `bateria/item3_prep_idade_setor.py` (IBGE → `insumos_item3/`) e `bateria/item3_idade.py`; resultado
+    `bateria/resultado_item3_idade.md`; protocolo v2.2 (§20) e v2.3 (§21).
+  - Faixa pela regra, com a idade real dos alunos (Growth, 62 unidades): **20–49**. F = % da população de 20–49 na área
+    (Censo 2022 por setor, com as células de sigilo recuperadas).
+  - Revisão adversarial de 3 lentes. Os 2 graves: a guarda de moradores por domicílio era redundante e foi trocada
+    por oferta/centralidade; faltava a leitura do nulo, e o efeito de referência é de +3,7% por +5 p.p. contra +18%
+    detectável.
+  - Laboratório: +2,2% de alunos por +5 p.p., p = 0,31 (só a grade de 10 km deslocada tinha G* ≥ 10). Ultra
+    descritiva: −4,8%.
+  - Turma congelada (SHA fa40f871…).
+- **BATERIA FECHADA em 05/10 (§22 do protocolo): Holm sem nenhuma rejeição.** p ordenados: 0,1554 (1), 0,1918 (5),
+  0,3002 (2), 0,3099 (3), 0,6890 (6), 0,7206 (4). **Nenhuma candidata entra na v2.**
+- **Pendente do BLK-UNI-10:** só conferir as turmas de 2026 congeladas pelos seis itens, junto com o BLK-UNI-12.
+- **Item 3, idade real dos alunos — andamento (05/10):**
+  - **A Growth respondeu a sonda** (`idade/01_idade_alunos.py`, vencimento de 05/10 a 11/10).
+    - 34.450 registros, 100 unidades (97 com ≥ 30 alunos). Saídas só agregadas: `idade/resultado_idade_sonda.md` e
+      `idade_alunos_por_unidade_sonda.parquet`.
+    - Idade mediana de **37 anos** (p10 20, p90 60). 18–44 anos: 62% dos alunos com idade; menos de 18: 6%; 45 ou
+      mais: 32%. Feminino: 52%.
+    - **Data de nascimento válida em só 39,5%**, mas homogênea: 36–44% por unidade (p10–p90), nenhuma abaixo de 20%,
+      sem relação com a idade mediana (corr 0,01).
+  - **Base completa não veio:**
+    - a janela de 12 meses deu **HTTP 500**, provavelmente volume demais;
+    - a seguinte (1 mês) já deu **429 no login**, depois de 4 chamadas em ~10 min. O limite efetivo é mais apertado que
+      10/5 min, ou a credencial é compartilhada (ver BUG-GROWTH-DIA1). Parado sem nova tentativa.
+    - Próxima tentativa: janela de 1 mês, uma vez, em outro dia.
+  - **Correção no script:** o "18–45" do resumo dividia pelo total, inclusive quem não tem idade; agora divide pelos com
+    idade.
+  - **Falta a idade da população por setor censitário (IBGE, Censo 2022).** O download precisa de autorização do Felipe.
+- **Item 2, comodidades:** fixado na §9.9.
+  - Medida só no Wellhub: o TotalPass não informa chuveiro e o site nunca traz os 3 itens juntos.
+  - Exclui a própria rede.
+  - Não testa a hipótese do diretor; a interação m² × qualidade roda à parte na Ultra.
+  - Falta a emenda operacional e o script.
+- **Planilhas de Downloads conferidas** (só esquema): nenhuma define a coluna "Operador" nem registra troca de dono. A
+  lista oficial de franqueados não casa unidade a unidade (22 de 64).
+- **Para o BLK-UNI-09:** na turma de 2026, 11 de 14 unidades aparecem sem TotalPass (treino: 2 de 39).
+
+### BLK-UNI-11 — Caso Manaus (pino NOVA CIDADE): volume, faturamento e payback (30/09–01/10)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média — caso real para a diretoria; só análise |
+| **Autonomia** | manual |
+
+**Premissas corrigidas pelo Felipe:**
+- 2.000 m², obra R$ 2,3 mi, equipamentos R$ 1,5 mi em 60× a 2% a.m., **taxa de franquia 0**;
+- 100 vagas, terreno de 4.000 m², 1 estúdio, aluguel R$ 80 mil, plano R$ 167;
+- plano de estúdio em 5% da base, a R$ 272 só como referência (preço real não informado);
+- **master:** a mesma de RJ/SP (grupo M3).
+
+**Volume (`manaus_volume/`, protocolo v1.1–v1.3 congelado, com revisão antes e verificação depois):**
+- Isócrona real do pino: 388 mil hab., renda domiciliar ~R$ 3.370.
+- v2 em ativos: M3 = 2.958 (teto de cenário: M3 é composição de agregador de SP, −47% no balcão); master média = 2.532.
+- Em praça de renda baixa com agregador ≤ 33%, nenhuma unidade da rede passa de ~3.200 ajustada ao porte. Gêmea mais
+  próxima: Paranoá Parque, com 2.464.
+- **Smart Fit formal (`03_smartfit_formal.py`):** Manaus tem ~40% mais alunos por Smart Fit que as praças da Ultra
+  (r = 1,38 [1,15; 1,64] na versão menos favorável).
+  - Veredito B: acima do modelo, sem chegar a 3.000 com 90%.
+  - O prêmio vem das 8 Smart Fit de 2024; a queda do fim de 2025 é sazonal nacional.
+  - No entorno do pino: 7 unidades da Live e 2 Smart Fit a menos de 1 km.
+- **Número de trabalho combinado com o Felipe: ~3.000 ativos (faixa 2.500–3.500).**
+  - Faturamento de R$ 350–510 mil (30% de agregador).
+  - Faixa de 80% do modelo: 1.900–4.700 ativos / R$ 280–690 mil.
+
+**Payback (simulador de produção):**
+- A conta está certa: IR/CSLL + parcela a 2% a.m. comem o EBITDA.
+- Em 3.000 ativos: 47–56 meses; 36 meses só perto de 3.500.
+- Aluguel R$ 60 mil + equipamentos a 1,8% em 96×: ~36–37 meses.
+
+**Pendências:**
+- **Depois de abrir:** revisar para cima se o mês 3 fechar com ≥ 3.105 ativos (projeção ≥ 3.700); para baixo se ≤ 2.012.
+- Preço real do plano de estúdio.
+
+**Arquivos:** `simulacoes/manaus_*.py`, `manaus_volume/` e CADERNO, seção "Simulação pontual — Manaus".
+
+### BLK-UNI-12 — Termômetro Smart Fit: conferência na turma de 2026 (resultado de 30/09)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Baixa — conferência futura |
+| **Autonomia** | manual |
+
+**Resultado (`termometro/`, protocolo v1.1 congelado e verificado): NÃO MELHORA.**
+- Coeficiente −0,69 [−1,75; +0,37]; erro no teste 22,1% → 25,6%; Spearman 0,69 → 0,35.
+- Não há sinal útil, e o negativo NÃO é disputa (causalidade reversa).
+- Manaus fica fora do suporte.
+
+**Pendência:** conferir a previsão congelada `termometro/previsoes_turma_2026_v2T.csv` (SHA no resultado) quando a turma
+de 2026 tiver ≥ 10 maduras. Só reabre a hipótese se ganhar da v2 lá.
+
+### BUG-GROWTH-DIA1 — A ingestão diária da Growth falha todo dia 1º do mês (achado de 2026-10-01)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média — a Visão Executiva fica 1 dia sem atualizar por mês; mexe em `scripts/` (PR futuro) |
+| **Autonomia** | manual |
+
+**O que acontece:**
+- `/var/log/growth/daily_YYYYMM01-063001.log` em 2026-08-01, 2026-09-01 e 2026-10-01: a verificação de escopo master
+  consulta a janela do mês corrente só com o dia 1º (`janela: ('2026-10-01','2026-10-01')`).
+- Às 06:30 UTC desse dia ainda não há dado. A API devolve 0 linhas, e o cron aborta com "ESCOPO MASTER FALHOU … login
+  NAO e master".
+- **É alarme falso:** no dia 2 o cron volta a passar.
+
+**Correção sugerida:** no dia 1º, a verificação usa o mês anterior ou, no mínimo, os últimos N dias.
+
+**Achado junto:** em 2026-10-01 o **login** da API devolveu 429 tanto da máquina do Felipe quanto da VPS. O limite parece
+ser por credencial ou do serviço, não por IP, e já tinha acontecido em 29/09. Pode haver outra integração usando a
+mesma credencial. Confirmar com a TI.
+- **06/10 (Felipe):** a API está funcionando; outro projeto acessou normalmente. O 429 foi episódico ou do nosso ritmo
+  de chamadas. A coleta de preços (`precos/01_coletar_vendas.py`) deixa de estar bloqueada, mantendo o limite de
+  10 chamadas a cada 5 min e uma tentativa só no 429.
+
+### BLK-UNI-06 — Aproveitamento real × esperado na Visão Executiva
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média |
+| **Depende de** | BLK-UNI-02 |
+| **Autonomia** | manual |
+
+Diagnóstico por unidade para operações (acima/abaixo do que a praça sustenta), com faixa e sem
+promessa de previsão.
+
+**Item futuro registrado em 2026-09-28 — curva de alunos e alerta do mês 3 no sistema. NÃO desenvolver agora**
+(decisão do Felipe: este é o momento de pesquisa e modelo, não de desenvolvimento web).
+- **O que é:** para cada unidade no 1º ano, mostrar a curva de alunos contra a curva observada (UNI-03, com faixa
+  p10–p90) e, nos meses 1, 3 e 6, a projeção do nível maduro:
+  - mês 3: alunos ÷ 0,84, com faixa de −20% a +23% e erro típico de 5–9%;
+  - mês 1: erro ~20%;
+  - mês 6: erro ~9%.
+- **Alerta:** quando a faixa inteira fica abaixo do nível esperado na aprovação.
+- **Depende de:** saber o "esperado" de cada unidade. Hoje a premissa de alunos usada na aprovação não está guardada;
+  ver o estudo reverso abaixo. Sem ele, a referência seria a regra de metragem da viabilidade, que esbarra na falta
+  de metragem das unidades de 2025.
+- **Estudo reverso da viabilidade (futuro):** reconstituir, para cada unidade, a premissa de alunos e o cenário da
+  aprovação, para comparar previsto × realizado.
+- Insumos prontos: `data/analysis/uni/uni03/curva_uni03.csv` e `resultado_uni03.md`.
+
+| Campo | Valor |
+|---|---|
+| **Autonomia** | futuro (não é loop-safe; não iniciar sem pedido do Felipe) |
+
+### Dívidas e erros de dado achados na construção do painel (UNI-00, 2026-09-26)
+
+Registro do que a montagem e a auditoria do painel encontraram. **Nenhum item bloqueia o UNI-01.**
+(Atualizado em 2026-09-28: os pinos da Plaza Sul e de Sagrada Família foram corrigidos no painel com as
+coordenadas do Felipe. O Guarujá era cópia velha na VPS, não erro da planilha.) O painel
+isola todos eles: receita marcada, atributo anulado com `flag_erro_dado` e correção manual declarada. O que
+muda é o motor em produção e a qualidade de amostra das etapas seguintes. Evidência completa em
+`data/analysis/uni/COBERTURA_UNI00.md` e `depara_divergencias.md`.
+
+### BLK-FIX-FIN-SAOCARLOS-01 — O Financeiro de São Carlos não casa com a Growth (a Visão Executiva mostra a receita errada)
+
+> **FECHADO em 2026-09-28 — PR #418.** `alias_do_financeiro_por_codigo` e' a TERCEIRA passada
+> do join, aplicada antes de sobrepor. Medido contra a producao: `financeiro_sem_par` de
+> `['SAO CARLOS - SP']` para `[]`, casamento 2.172 -> 2.177 e **5 linhas alteradas em 2.275**
+> (os cinco meses de Sao Carlos), zero colateral. Criterio de aceite atendido.
+
+| | |
+|---|---|
+| **Criticidade** | **Média** — receita exibida em produção vem da fonte errada. READ-ONLY sobre o M1. |
+| **Prioridade** | **Alta** — afeta a tela hoje, e a correção é pequena. |
+| **Esteira** | Builder → QA → deploy manual (web). |
+| **Depende de** | nada. |
+| **Autonomia** | **manual (NÃO loop-safe)** |
+
+**O defeito, medido.** O Financeiro grava a unidade de código 91 como `SÃO CARLOS - SP`. A Growth e o
+Lifetime gravam como `SAO CARLOS - CENTRO - SP`, também com código 91.
+
+`rede_metricas.aplicar_faturamento_financeiro` casa por nome cru, e nem a segunda passada
+(`_resgate_por_aperto`) resolve. A unidade cai em `financeiro_sem_par`, e a Visão Executiva mostra para ela
+a receita da **Growth**, que fica cerca de 19% abaixo da oficial.
+
+Meses afetados: abr–ago/2026, com R$ 664.726 de faturamento do Financeiro fora da tela (19.184 / 98.785 /
+152.849 / 183.404 / 210.505).
+
+**Escopo.** Casar o Financeiro pelo **código** quando o nome falha. O `cod_unidade` do cadastro bate com o
+do Financeiro em 100% das unidades onde os dois existem (medido no de-para do UNI-00). A alternativa é uma
+tabela de alias declarada, a mesma usada no painel (`data/analysis/uni/01_depara.py`, `ALIAS_FINANCEIRO`).
+Teste de regressão com o caso São Carlos.
+
+**Critério de aceite.** `financeiro_sem_par` vazio na base atual. São Carlos com `origem_faturamento = financeiro`
+de abr/26 em diante.
+
+### BLK-FIX-PLANOS-MUSC-01 — O filtro de musculação do Wellhub descarta 13% das academias
+
+> **FECHADO em 2026-09-28 — PR #419.** Vocabulario V2 da DEC-025 em `tem_musculacao`, nas DUAS
+> fontes: WellHub 86,65% -> **100,00%** (+2.949 linhas, 13,35%) e TotalPass 97,83% -> 100,00%
+> (+382), com ZERO perdas. Junto, `_e_ultra` recuperou **9 unidades nossas** no WellHub e 1 no
+> TotalPass. Parquets de producao regenerados sobre a MESMA safra (sem reingestao).
+
+| | |
+|---|---|
+| **Criticidade** | **Média** — card de planos do piloto e qualquer leitura de concorrência pelo Wellhub. READ-ONLY sobre o M1. |
+| **Prioridade** | Média. |
+| **Esteira** | Builder → QA → regenerar `planos_wellhub.parquet` na VPS (manual) → deploy manual. |
+| **Depende de** | nada. |
+| **Autonomia** | **manual (NÃO loop-safe)** |
+
+**O defeito, medido.** `planos_agregador.normalizar` marca `musculacao` só pela substring `"musculacao"`.
+Na taxonomia nova do Wellhub (DEC-025), a musculação também aparece como "Fisiculturismo", "Treino de força",
+"Levantamento de peso" e "Treino híbrido".
+
+A coluna gravada marca 86,7% das linhas; o vocabulário V2 da DEC-025 marca 100%. São **2.949 academias
+(13,35% do feed)** que somem quando o piloto filtra `somente_musculacao=True`. O TotalPass não tem o problema
+(97,8%).
+
+**Escopo.** Usar o vocabulário V2 da DEC-025 sobre `modalidades` no `normalizar` do Wellhub. Teste com
+rótulos da taxonomia nova. Regenerar o parquet.
+
+**Critério de aceite.** A taxa de musculação do Wellhub é igual à do vocabulário V2. O card de planos do
+piloto conta as academias que hoje somem.
+
+### BLK-DADOS-UNI-01 — Erros de dado para corrigir na ORIGEM (cadastro, Financeiro, Growth, levantamento)
+
+> **PARCIALMENTE FECHADO em 2026-09-28.** Itens 1 e 2 (pinos) no **PR #422**, via
+> `_EXEC_COORD_CORRIGIDA` — corrige a Visao Executiva E os pinos do Mapa numa edicao; item 3
+> (reingestao do Financeiro) no **PR #421**, que destravou a ingestao e subiu o parquet novo.
+> Itens 4, 5, 6, 7, 9, 10 e 11 viraram **lista de cobranca por dono** no PR #423
+> (`data/reports/cobranca_dados_unidade_2026-09-28.md`) — sao dado de origem e dependem de
+> terceiros. Item 8 (isocrona de Lago Sul) segue aberto: e' conserto nosso na camada de
+> isocronas, nao cobranca.
+
+| | |
+|---|---|
+| **Criticidade** | **Média** — dado de origem; o painel já isola cada item, mas a correção precisa acontecer na fonte. |
+| **Prioridade** | Item 3 (**reingerir o Financeiro na VPS**) **agora**, porque a tela de produção está errada. Itens 1–2 já corrigidos no painel; falta levar para o cadastro de produção. Item 4 **o quanto antes**, porque é o que mais dá poder ao UNI-01/02. O resto quando der. |
+| **Esteira** | Donos da fonte (Felipe, Financeiro, Growth) → depois rerodar `data/analysis/uni/01` a `05`. |
+| **Depende de** | nada. |
+| **Autonomia** | **manual (NÃO loop-safe)** |
+
+1. **Pino da Plaza Sul (`plaza-sul-sp`) — CORRIGIDO NO PAINEL em 2026-09-28.** O pino usado estava na
+   Rua Itaucama, a 1,34 km da academia real. Coordenada certa, informada pelo Felipe: **-23,619836588, -46,626587679**
+   (Shopping Plaza Sul). Ela fica a 6 m do pino "Plaza / SP" do cadastro e a 22 m da listagem Wellhub.
+   Isócronas, atributos, concorrência, sobreposição e POI foram refeitos em `data/analysis/uni/06_corrigir_pinos.py`.
+   **Falta na produção:** o casamento Growth → cadastro escolhe o pino "Plaza Sul" (errado) e não o "Plaza / SP".
+   Corrigir no cadastro de pinos da VPS (`unidades_ultra_mapeadas`) e em `data/analysis/isocronas/01_pontos.py`,
+   senão o Mapa e as próximas rodadas voltam ao pino errado.
+2. **Pino de Sagrada Família (`sagrada-familia-mt`) — CORRIGIDO NO PAINEL em 2026-09-28.** A unidade não tem
+   pino no cadastro, e o `01_pontos.py` a geocodificava como "Sagrada Família, **Cuiabá**, MT". Coordenada certa,
+   informada pelo Felipe: **-16,472689781, -54,606950148** (Rondonópolis). Ela fica a 1 m da listagem "Ultra Sagrada
+   Família" do Wellhub. Refeita no painel; Rondonópolis já estava no grafo (metro 35).
+   **Falta na produção:** cadastrar o pino na base da VPS e trocar a consulta do `MAPA_MANUAL` do `01_pontos.py`
+   pela coordenada. A listagem dela no Wellhub não tem "academia" no nome, então o casamento de plano da Ultra
+   (`planos_agregador._e_ultra`) não a encontra.
+3. **Guarujá ago/26: a PLANILHA do Financeiro está certa; a cópia na VPS está velha.** A planilha baixada pelo
+   Felipe em 2026-09-28 traz R$ 217.525,74. O `faturamento_financeiro.parquet` da VPS, ingerido em 2026-09-08,
+   ainda tem R$ 547.745,05. É a ÚNICA célula divergente entre as 6.528 comparáveis: a ingestão de 08/09 pegou a
+   célula de agosto enquanto ainda era editada. **A Visão Executiva em produção mostra o valor velho.**
+   Ação: rodar `scripts/ingerir_faturamento_financeiro.py --planilha "<planilha de 28/09>"`. O script vai acusar
+   a reescrita do mês fechado, que é esperada. Depois, subir o parquet para a VPS e reiniciar o web (`lru_cache`).
+   Ambos são passos manuais do Felipe (§6).
+   O painel já usa a planilha de 28/09 (`data/analysis/uni/_ajustes.py`), sem correção manual.
+   **Lição:** a ingestão logo após a virada do mês pode pegar células ainda em edição. Vale reingerir ~10 dias
+   depois da virada ou conferir contra a ingestão anterior.
+4. **Metragem ausente em 44 das 98 unidades** (`data/ultra/dados_academias.xlsx`). A falta não é aleatória:
+   o xlsx cobre as unidades maduras em abr/2026. Levantar metragem, e vagas se possível, das demais. É o item
+   que mais aumenta a amostra das hipóteses de tamanho (tamanho × concorrência, patamar/m²).
+5. **16 unidade-mês com R$ 0 no Financeiro e a academia operando.** O painel trata como mês sem lançamento.
+   Confirmar com o Financeiro:
+   andre-de-barros-pr 2026-05; arapoanga-planaltina-df 2023-10; brasilandia-sp 2022-06;
+   campo-largo-pr 2024-04; jardim-botanico-df 2022-11; lago-norte-df 2024-02; noroeste-df 2024-12;
+   samambaia-df 2024-02; sao-goncalo-shopping-rj 2025-09; serra-es 2024-04; sobradinho-df 2023-07;
+   sorriso-mt 2023-12; taguatinga-df 2024-04, 05 e 06; vila-guanabara-sc 2025-02.
+6. **Inauguração placeholder 23/08/2021** (Growth) em Aclimação, Mooca, Plaza Sul e Vila Mariana. O 1º
+   faturamento do Financeiro sugere abertura por volta de set/2021. Pedir a data real à Growth; hoje a
+   idade delas fica NaN.
+7. **Coordenada de confiança baixa** (geocodificada pelo Nominatim): Boa Vista-BA, Vicente Pires Rua 8-DF,
+   Domingos Ferreira-PE e Boqueirão-SP. Conferir os pinos.
+8. **Isócrona a pé degenerada em Lago Sul** (0,16 km² e 20 habitantes, contra mediana de 1,9 km²).
+   Provável snap num trecho sem malha de pedestre; rever o ponto de origem da isócrona.
+9. **Tier TotalPass divergente entre cadastro (ago: TP1+) e feed (set: TP 2)** em 10 unidades:
+   cruzeiro-df, lago-sul-df, santa-maria-df, valparaiso-go, centro-comendador-pr, poa-barra-sul-rs,
+   aclimacao-sp, cotia-sp, jundiai-sp, mooca-sp. Confirmar se houve troca de tier e atualizar o cadastro.
+10. **Financeiro sem código no layout novo** para 6 unidades abertas em 2026 (bonsucesso-rj,
+    ceilandia-qnn32-df, domingos-ferreira-pe, limeira-sp, paulinia-sp, sao-goncalo-centro-rj). Casam
+    só por nome; pedir o código na planilha.
+11. **Anomalias a conferir (não excluir sem prova):** Brasilândia e Vila Guilherme, vale de receita de
+    −45% entre out/25 e mai/26 com ativos estáveis; Suzano, −52% de ativos entre abr e ago/26
+    (agregadores de 2.964 para 919).
+
+**Critério de aceite.** Cada item corrigido na fonte ou declarado como definitivo. Painel regenerado, com a
+`flag_erro_dado` correspondente removida.
+
+### BLK-UNI-PEND-01 — Export agregado por unidade do Projeto Lifetime (retenção da coorte de abertura e pré-venda)
+
+| | |
+|---|---|
+| **Criticidade** | Média — insumo externo; sem dado pessoal (agregado na origem). |
+| **Prioridade** | Antes do UNI-03/UNI-04 (não bloqueia o UNI-01, exceto a hipótese "retenção por coorte"). |
+| **Esteira** | Repo Projeto-Lifetime → export → painel UNI-00. |
+| **Depende de** | nada. |
+| **Autonomia** | **manual (NÃO loop-safe)** |
+
+O estudo de inauguração mede +4,4 pp de retenção em 12 meses da turma de abertura contra a dos meses 3 a 11,
+mas a série mensal não reproduz esse número. Para isso é preciso um export do Lifetime por `COD_UNIDADE`
+com duas medidas:
+- retenção de 12 meses da coorte do mês 0 contra as dos meses 3 a 11;
+- número de alunos de pré-venda e retenção deles contra o mês 0.
+
+As colunas `rampa_ret12_*` e `rampa_n_alunos_prevenda` já existem no painel e estão vazias à espera disso.
+Aproveitar para regenerar o vintage (o atual é de 2026-08-10) e, se possível, incluir as 9 unidades sem
+perfil (fora do `Unidades.xlsx` do Lifetime).

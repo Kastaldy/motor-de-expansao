@@ -1,0 +1,10 @@
+# Dicionário das bases de teste
+- Sufixo `__<cenario>`: carro_5 / carro_10 / carro_15 (isócrona de carro, min), pe_10 / pe_15 (a pé), circulo_1km (raio euclidiano de 1 km), hex_r7 (hexágono H3 res-7 do ponto).
+- `pop`, `domicilios`: soma dos setores censitários 2022 ponderada pela fração de área do setor dentro do polígono. `renda_pc`: renda per capita calibrada média ponderada por população (escala do artefato setorial; NÃO é a mesma da tela do Relatório Pontual, que aplica uplift).
+- `n_academias`: academias dentro do polígono (cadeias mapeadas + cadeias do agregador SEM pin mapeado + independentes); `n_<tipo>` por tipo; `n_cadeia_agregador_com_pin` é unidade de rede do WellHub que já colapsa contra um pin de concorrentes_mapeados (DEC-034/035) e por isso NÃO entra em `n_academias` nem em `oferta_ponderada` (peso 0). `oferta_ponderada`: cadeia 1,0 / independente 0,5 (DEC-033). `n_ultra`: unidades Ultra dentro (inclui a própria quando o ponto é Ultra).
+- `n_nos`, `km_rua`: nós e km de rua alcançados dentro do limite (0 e polígono nulo quando o ponto não tem malha a <= 250 m).
+- `pop_por_academia`, `dens_hab_km2`, `residual_alunos` (= pop × 17,35% − oferta_ponderada × 2.500; taxa da DEC-060 e capacidade default): derivadas ilustrativas.
+- base_ultra: desfechos `*_med` = mediana do regime maduro (>= 12 meses de operação), `*_med_12m` = mediana dos últimos 12 meses fechados, `ago_*` = agosto/2026 fechado; `metragem` só nas 54 do performance parquet; `confianca` da coordenada (alta/media/baixa).
+- base_pref_revelada: `tipo` academia (subtipo = cadeia_mapeada, cadeia_agregador_*, independente_agregador) ou controle (ponto aleatório sobre a malha).
+- base_hex_funil: colunas do funil vêm de carteira_expansao_acionavel.parquet (`n_concorrentes_influencia_1km`, `oferta_efetiva_disponivel`, `faixa_oportunidade`...); atributos das isócronas calculados no CENTROIDE do hexágono.
+- base_canibal: pares de unidades Ultra do mesmo metro com isócronas de carro sobrepostas; `frac_a` = área da interseção / área da isócrona de a.

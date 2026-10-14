@@ -1,0 +1,13 @@
+ADENDO 1 ao REGISTRO_CONGELAMENTO_turma_b_congel1.txt (SHA 64febd22d5ffde5be235f339b008f38d60b55c187be0d0296c3b76cb60704e28)
+Escrito em 2026-10-06, DEPOIS do congelamento e ANTES de rodar --ler-v2 (nenhum real x previsto da turma B foi calculado ate aqui).
+
+1. Definicao da metragem do time de expansao (resposta do Felipe): "a metragem e' a area total sem contar estacionamento";
+   o "mezanino" do relato indica que a area total e' maior por haver mezanino no interior, ou seja, o mezanino JA ESTA INCLUIDO
+   nos 1.500 m2 de Bangu e nos 1.800 m2 de Vicente Pires R8. Nada muda nas previsoes congeladas: a variante principal
+   (numero do time) segue como principal. As variantes de Boa Vista (960 / 857, planilha do Vini) ficam so' como sensibilidade.
+   Pendente: confirmar se a metragem oficial (dados_academias.xlsx) segue a mesma definicao.
+2. Decisao do Felipe: comparar ja' ("Nao teria como comparar ja?"). Consequencia registrada: a turma B deixa de ser juiz cego
+   das etapas 2-5 do plano (uni09/plano_melhoria_duas_partes.md:99); modelos futuros precisarao de outro juiz (turma de 2026
+   congelada / unidades novas).
+3. O script 04_turma_b_metragem.py foi alterado depois do congelamento SO' na funcao politica() (painel "sem RJ, DF e GO");
+   congelar() e ler_v2() estao como no congelamento. O ler_v2() confere o SHA das previsoes e dos insumos fato, dim e metragem.
