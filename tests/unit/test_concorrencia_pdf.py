@@ -325,6 +325,29 @@ def test_fundo_de_ruas_recorta_o_quadro_do_raio_e_falha_em_none(monkeypatch: pyt
     assert rede_export.fundo_de_ruas({"raio_m": 2000}) is None  # sem coordenada, nem vai à rede
 
 
+def test_fundo_de_ruas_que_passa_do_teto_volta_ao_esquema_sem_esperar(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O contextily baixa tile sem timeout: tileserver mudo penduraria o PDF (review do Felipe, #452)."""
+    import threading
+    import time
+
+    from motor_expansao.dashboard import censo_map
+
+    solta = threading.Event()
+
+    def tileserver_mudo(*_: object, **__: object) -> object:
+        solta.wait(10)  # "não responde"; o teste solta no fim para não deixar thread viva
+        return None
+
+    monkeypatch.setattr(censo_map, "_fetch_basemap", tileserver_mudo)
+    monkeypatch.setattr(rede_export, "_TETO_DO_FUNDO_S", 0.2)
+    inicio = time.monotonic()
+    try:
+        assert rede_export.fundo_de_ruas({"lat": -23.57, "lng": -46.63, "raio_m": 2000}) is None
+        assert time.monotonic() - inicio < 2.0  # devolve no teto, não quando a busca termina
+    finally:
+        solta.set()
+
+
 def test_rota_do_pdf_existe_e_fica_atras_da_aba_executiva() -> None:
     import acesso
     import app as pilot

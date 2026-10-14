@@ -23,6 +23,8 @@ import csv
 import functools
 import math
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from io import BytesIO, StringIO
 from typing import Any
 
@@ -940,6 +942,8 @@ _LADO_DO_MAPA = 420.0
 _FOLGA_DO_RAIO = 16.0
 # largura do fundo de ruas pedido aos tiles: ~3 px por ponto do quadro, nítido na impressão
 _PIXELS_DO_FUNDO = 1260
+# teto da busca do fundo de ruas: passou dele, o PDF sai com o esquema em vez de ficar pendurado
+_TETO_DO_FUNDO_S = 20.0
 
 
 def _texto_da_fonte(texto: object) -> str:
@@ -1159,7 +1163,20 @@ def fundo_de_ruas(mapa: Mapping[str, Any] | None, lado: float = _LADO_DO_MAPA) -
         meia = _metade_do_quadro_m(raio_m, lado) / math.cos(math.radians(float(lat0)))
         caixa = (x0 - meia, y0 - meia, x0 + meia, y0 + meia)
         # sem o bump de zoom do Pontual: com ele o mosaico vinha 4x maior e o PDF, com 26 MB
-        busca = censo_map._fetch_basemap(caixa, _PIXELS_DO_FUNDO, zoom_bump=0)
+        # Teto de tempo: o contextily baixa cada tile com `requests.get` SEM timeout, então um
+        # tileserver que aceita a conexão e não responde penduraria o PDF (e a thread do worker)
+        # sem que o except abaixo disparasse. Estourado o teto, o PDF sai com o esquema; a busca
+        # órfã termina sozinha na thread dela, e o PDF não espera por ela.
+        executor = ThreadPoolExecutor(max_workers=1)
+        futuro = executor.submit(censo_map._fetch_basemap, caixa, _PIXELS_DO_FUNDO, zoom_bump=0)
+        executor.shutdown(wait=False)
+        try:
+            busca = futuro.result(timeout=_TETO_DO_FUNDO_S)
+        except FuturesTimeout:
+            import sys
+
+            print(f"[rede] fundo de ruas passou de {_TETO_DO_FUNDO_S:.0f} s; PDF sai com o esquema", file=sys.stderr)
+            return None
         if busca is None:
             return None
         imagem, (ex_min, ex_max, ey_min, ey_max) = busca
