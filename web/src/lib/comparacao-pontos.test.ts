@@ -11,9 +11,12 @@ import {
   passaNoEstudo,
   resumoDoEstudo,
   rotuloDoPonto,
+  pinsDaComparacao,
   rotulosDosPontos,
+  rotulosPartidosDosPontos,
   subtituloDoDeckDePontos,
 } from './comparacao-pontos'
+import { corDeIdentidadeRgb, rotulosUnicos } from './comparacao'
 import type { PontoPayload } from './types'
 
 /** Ponto com a forma real do `/api/ponto` (valores da Av. Paulista). */
@@ -175,7 +178,7 @@ describe('rotulosDosPontos', () => {
       ponto({ bairro: null }),
       ponto({ bairro: null }),
     ])
-    expect(r).toEqual(['1 · São Paulo', '2 · São Paulo', '3 · São Paulo'])
+    expect(r).toEqual(['São Paulo #1', 'São Paulo #2', 'São Paulo #3'])
   })
 
   it('numera SÓ quem empata, preservando o nome de quem é único', () => {
@@ -184,14 +187,31 @@ describe('rotulosDosPontos', () => {
       ponto({ bairro: 'Bela Vista' }),
       ponto({ bairro: null }),
     ])
-    expect(r).toEqual(['1 · São Paulo', 'Bela Vista', '3 · São Paulo'])
+    expect(r).toEqual(['São Paulo #1', 'Bela Vista', 'São Paulo #2'])
   })
 
-  it('o número é a POSIÇÃO na lista, não a ordem do empate', () => {
-    // O 3º ponto continua sendo "3", senão o rótulo não casaria com a aba nem com o mapa.
-    const r = rotulosDosPontos([ponto({ bairro: 'X' }), ponto({ bairro: null }), ponto({ bairro: null })])
-    expect(r[1]).toBe('2 · São Paulo')
-    expect(r[2]).toBe('3 · São Paulo')
+  it('o número é o ordinal DENTRO do grupo de mesmo nome', () => {
+    const r = rotulosDosPontos([
+      ponto({ bairro: 'Centro' }),
+      ponto({ bairro: 'X' }),
+      ponto({ bairro: 'Centro' }),
+      ponto({ bairro: 'X' }),
+    ])
+    expect(r).toEqual(['Centro #1', 'X #1', 'Centro #2', 'X #2'])
+  })
+
+  it('fallback de coordenada: sem bairro nem município, o nome é a coordenada', () => {
+    const r = rotulosDosPontos([
+      ponto({ bairro: null, municipio: null, lat: -16.6869, lng: -49.2648 }),
+      ponto({ bairro: null, municipio: null, lat: -16.6869, lng: -49.2648 }),
+      ponto({ bairro: null, municipio: null, lat: -15.7939, lng: -47.8828 }),
+    ])
+    expect(r).toEqual(['-16.6869, -49.2648 #1', '-16.6869, -49.2648 #2', '-15.7939, -47.8828'])
+  })
+
+  it('delega para rotulosUnicos — as duas comparações não divergem', () => {
+    const ps = [ponto({ bairro: null }), ponto({ bairro: 'Bela Vista' }), ponto({ bairro: null })]
+    expect(rotulosDosPontos(ps)).toEqual(rotulosUnicos(ps.map(rotuloDoPonto)))
   })
 
   it('resultado nunca tem duas entradas iguais', () => {
@@ -202,6 +222,79 @@ describe('rotulosDosPontos', () => {
   it('lista vazia e lista de um sobrevivem', () => {
     expect(rotulosDosPontos([])).toEqual([])
     expect(rotulosDosPontos([ponto()])).toEqual(['Bela Vista'])
+  })
+})
+
+describe('rotulosPartidosDosPontos', () => {
+  it('parte o rótulo em nome + "#k" (o sufixo fica fora do ellipsis)', () => {
+    expect(
+      rotulosPartidosDosPontos([ponto({ bairro: 'Centro' }), ponto({ bairro: 'Centro' }), ponto()]),
+    ).toEqual([
+      { base: 'Centro', sufixo: '#1' },
+      { base: 'Centro', sufixo: '#2' },
+      { base: 'Bela Vista', sufixo: null },
+    ])
+  })
+})
+
+describe('pinsDaComparacao', () => {
+  it('um pin por item, cada um na cor de identidade do SEU índice', () => {
+    const fichas = [
+      ponto({ bairro: 'A', lat: -23.5, lng: -46.6 }),
+      ponto({ bairro: 'B', lat: -23.6, lng: -46.7 }),
+      ponto({ bairro: 'C', lat: -23.7, lng: -46.8 }),
+    ]
+    const pins = pinsDaComparacao(fichas, 1, ['A', 'B', 'C'])
+    expect(pins).toHaveLength(3)
+    pins.forEach((p, i) => {
+      expect(p.indice).toBe(i)
+      expect(p.rgb).toEqual(corDeIdentidadeRgb(i))
+      expect(p.lat).toBe(fichas[i].lat)
+      expect(p.lng).toBe(fichas[i].lng)
+      expect(p.hexId).toBe('87a8100c5ffffff')
+      expect(p.geometria).toBeNull()
+    })
+    expect(pins.map((p) => p.rotulo)).toEqual(['A', 'B', 'C'])
+    expect(pins.map((p) => p.ativo)).toEqual([false, true, false])
+  })
+
+  it('nenhuma aba aberta: nenhum pin ativo', () => {
+    const pins = pinsDaComparacao([ponto(), ponto({ lat: -23 })], null, ['X #1', 'X #2'])
+    expect(pins.every((p) => !p.ativo)).toBe(true)
+  })
+
+  it('rótulo faltando cai na coordenada, nunca em pin sem nome', () => {
+    const pins = pinsDaComparacao([{ lat: -16.68691, lng: -49.26482 }], 0, [])
+    expect(pins[0].rotulo).toBe('-16.6869, -49.2648')
+    expect(pins[0].hexId).toBeNull()
+  })
+
+  it('aceita item de GEOMETRIA: pin no representative_point, contorno preservado', () => {
+    const anel: [number, number][] = [
+      [-46.6, -23.5],
+      [-46.59, -23.5],
+      [-46.59, -23.49],
+      [-46.6, -23.5],
+    ]
+    const pins = pinsDaComparacao(
+      [ponto({ bairro: 'A' }), { lat: -23.497, lng: -46.594, hex_id: null, geometria: [anel] }],
+      1,
+      ['A', 'Área desenhada'],
+    )
+    expect(pins[1]).toMatchObject({
+      lat: -23.497,
+      lng: -46.594,
+      indice: 1,
+      rotulo: 'Área desenhada',
+      ativo: true,
+      hexId: null,
+    })
+    expect(pins[1].geometria).toEqual([anel])
+    expect(pins[1].rgb).toEqual(corDeIdentidadeRgb(1))
+  })
+
+  it('lista vazia devolve lista vazia', () => {
+    expect(pinsDaComparacao([], null, [])).toEqual([])
   })
 })
 

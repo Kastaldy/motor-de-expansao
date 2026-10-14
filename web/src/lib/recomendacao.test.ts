@@ -179,10 +179,12 @@ describe('nada a corrigir', () => {
     expect(a[0].titulo).toMatch(/Fecha a conta/i)
   })
 
-  it('sem viabilidade calculada, convida a calcular em vez de opinar', () => {
+  it('sem viabilidade calculada, aponta o Simulador em vez de opinar', () => {
     const a = recomendar(base({ viavel: null }))
     expect(a[0].tipo).toBe('ok')
-    expect(a[0].detalhe).toMatch(/Calcule a viabilidade/i)
+    expect(a[0].detalhe).toMatch(/Use o Simulador/i)
+    // A seção "Fecha a conta?" saiu da caixa: o texto não pode mandar calcular ali.
+    expect(a[0].detalhe).not.toMatch(/Calcule a viabilidade/i)
   })
 
   it('viabilidade NAO calculada nao gera acao de contrato', () => {

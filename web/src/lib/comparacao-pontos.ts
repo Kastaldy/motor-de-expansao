@@ -13,7 +13,15 @@
  * e e' isso que a tabela compara.
  */
 
-import { compararDimensoesComFrase, type Comparacao, type Dimensao } from './comparacao'
+import {
+  compararDimensoesComFrase,
+  corDeIdentidadeRgb,
+  rotulosPartidos,
+  rotulosUnicos,
+  type Comparacao,
+  type Dimensao,
+  type RotuloPartido,
+} from './comparacao'
 import { UNIDADE_MOEDA } from './format'
 import type { PontoPayload } from './types'
 
@@ -209,18 +217,83 @@ export function subtituloDoDeckDePontos(fichas: readonly PontoPayload[]): string
  * ficava com duas colunas de nome identico — e a frase do veredito saia "Goiânia é o
  * melhor... Goiânia é o pior" (relato do Juan, 2026-08-12).
  *
- * A DESAMBIGUACAO E' POSICIONAL, e so' entra quando ha' empate: um numero na frente, o
- * MESMO que a aba mostra e o mapa usa para marcar o ponto. Numerar sempre seria ruido
- * para quem comparou dois bairros de nomes distintos, que e' o caso comum.
+ * A regra de desambiguacao e' UMA so', a de `rotulosUnicos` ("Centro #1", "Centro #2",
+ * so' quando ha' empate). Ate' 2026-10-14 esta funcao tinha a copia dela, e as duas
+ * comparacoes podiam divergir em silencio — agora delega.
  *
  * Nao inventa nome: nao ha' de onde tirar "Setor Bueno" quando o servidor devolveu
  * bairro nulo. O que se pode garantir e' que duas linhas nunca digam a mesma coisa.
  */
-export function rotulosDosPontos(pontos: PontoPayload[]): string[] {
-  const bases = pontos.map(rotuloDoPonto)
-  const vezes = new Map<string, number>()
-  for (const b of bases) vezes.set(b, (vezes.get(b) ?? 0) + 1)
-  return bases.map((b, i) => ((vezes.get(b) ?? 0) > 1 ? `${i + 1} · ${b}` : b))
+export function rotulosDosPontos(pontos: readonly PontoPayload[]): string[] {
+  return rotulosUnicos(pontos.map(rotuloDoPonto))
+}
+
+/** Os rotulos da lista partidos em nome + "#k" — para o "#k" nao sumir no ellipsis. */
+export function rotulosPartidosDosPontos(pontos: readonly PontoPayload[]): RotuloPartido[] {
+  return rotulosPartidos(pontos.map(rotuloDoPonto))
+}
+
+/** Um vertice de poligono no formato GeoJSON: [lng, lat]. */
+export type PosicaoGeoJson = [number, number]
+
+/**
+ * O minimo que um item da comparacao precisa para virar pin no mapa.
+ *
+ * Generico de proposito: alem do `PontoPayload` (ponto do raio de 1 km), a comparacao vai
+ * receber uma AREA DESENHADA (DEC-070, fase 1). O pin dela e' o `representative_point` do
+ * poligono — vem em `lat`/`lng` como o de qualquer ponto — e o contorno vai em
+ * `geometria`, como os aneis do Polygon GeoJSON (coordenadas `[lng, lat]`).
+ */
+export interface ItemNoMapa {
+  lat: number
+  lng: number
+  hex_id?: string | null
+  /** Aneis do Polygon GeoJSON (`coordinates`): o 1o e' o externo. So' item de geometria. */
+  geometria?: PosicaoGeoJson[][] | null
+}
+
+/** Um pin da comparacao, pronto para o deck.gl. */
+export interface PinDaComparacao {
+  lat: number
+  lng: number
+  hexId: string | null
+  /** Indice do item na lista — e' por ele que aba, cor e rotulo se casam. */
+  indice: number
+  /** A cor de identidade do item (a mesma da aba e das barras), em `[r, g, b, a]`. */
+  rgb: [number, number, number, number]
+  rotulo: string
+  /** O item da aba aberta. */
+  ativo: boolean
+  /** O contorno da area desenhada, quando o item e' de geometria. */
+  geometria: PosicaoGeoJson[][] | null
+}
+
+/**
+ * TODOS os itens da comparacao como pins, cada um na sua cor de identidade.
+ *
+ * Antes o mapa mostrava so' o ponto da aba aberta, e o operador nao via onde os outros
+ * estavam em relacao a ele (decisao do dono, 2026-10-14: todos ao mesmo tempo). A cor
+ * sai do INDICE, nunca da ordem de desenho, senao o pin vermelho deixaria de ser o da aba
+ * vermelha quando um ponto sai da lista.
+ *
+ * `rotulos` e' a lista ja' desambiguada (`rotulosDosPontos`); faltando um, cai na
+ * coordenada — o mesmo fallback do `rotuloDoPonto` —, para o pin nunca sair sem nome.
+ */
+export function pinsDaComparacao(
+  fichas: readonly ItemNoMapa[],
+  aberto: number | null,
+  rotulos: readonly string[],
+): PinDaComparacao[] {
+  return fichas.map((f, i) => ({
+    lat: f.lat,
+    lng: f.lng,
+    hexId: f.hex_id ?? null,
+    indice: i,
+    rgb: corDeIdentidadeRgb(i),
+    rotulo: rotulos[i] ?? `${f.lat.toFixed(4)}, ${f.lng.toFixed(4)}`,
+    ativo: i === aberto,
+    geometria: f.geometria ?? null,
+  }))
 }
 
 export function compararPontos(

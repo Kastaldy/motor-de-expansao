@@ -11,6 +11,7 @@ import {
   corDeIdentidadeRgb,
   rotuloDoHex,
   rotulosDosHexes,
+  rotulosPartidos,
   rotulosUnicos,
 } from './comparacao'
 import type { Hex } from './types'
@@ -34,9 +35,9 @@ function hex(over: Partial<Hex> = {}): Hex {
 describe('rotulosUnicos', () => {
   it('numera os EMPATADOS — cinco hexágonos da mesma cidade eram cinco "São Paulo"', () => {
     expect(rotulosUnicos(['São Paulo', 'São Paulo', 'São Paulo'])).toEqual([
-      '1 · São Paulo',
-      '2 · São Paulo',
-      '3 · São Paulo',
+      'São Paulo #1',
+      'São Paulo #2',
+      'São Paulo #3',
     ])
   })
 
@@ -44,27 +45,59 @@ describe('rotulosUnicos', () => {
     expect(rotulosUnicos(['Osasco', 'Santo André'])).toEqual(['Osasco', 'Santo André'])
   })
 
+  it('nome único na lista fica sem sufixo', () => {
+    expect(rotulosUnicos(['Centro'])).toEqual(['Centro'])
+  })
+
   it('numera SÓ quem empata, preservando o nome de quem é único', () => {
     expect(rotulosUnicos(['São Paulo', 'Osasco', 'São Paulo'])).toEqual([
-      '1 · São Paulo',
+      'São Paulo #1',
       'Osasco',
-      '3 · São Paulo',
+      'São Paulo #2',
     ])
   })
 
-  it('o número é a POSIÇÃO na lista — é o que casa com a cor e com o mapa', () => {
-    // A cor de identidade sai do índice; se o rótulo numerasse pela ordem do empate, o
-    // "2 · São Paulo" poderia ser o terceiro item, com a cor do terceiro.
-    expect(rotulosUnicos(['A', 'São Paulo', 'São Paulo'])[2]).toBe('3 · São Paulo')
+  it('o número é o ORDINAL dentro do grupo de mesmo nome, não a posição na lista', () => {
+    // Antes saía "2 · Centro" e "5 · Centro": o operador procurava um "Centro 1" que
+    // não existia. Cada grupo conta do 1, na ordem em que aparece.
+    expect(rotulosUnicos(['A', 'Centro', 'B', 'Bela Vista', 'Centro', 'Bela Vista'])).toEqual([
+      'A',
+      'Centro #1',
+      'B',
+      'Bela Vista #1',
+      'Centro #2',
+      'Bela Vista #2',
+    ])
   })
 
   it('o resultado nunca tem duas entradas iguais', () => {
     const r = rotulosUnicos(['X', 'X', 'X', 'X', 'X'])
     expect(new Set(r).size).toBe(r.length)
+    expect(r[4]).toBe('X #5')
   })
 
   it('lista vazia sobrevive', () => {
     expect(rotulosUnicos([])).toEqual([])
+  })
+})
+
+describe('rotulosPartidos', () => {
+  it('separa o "#k" do nome, para a UI não deixar o ellipsis comer o sufixo', () => {
+    expect(rotulosPartidos(['Jardim Paulista', 'Moema', 'Jardim Paulista'])).toEqual([
+      { base: 'Jardim Paulista', sufixo: '#1' },
+      { base: 'Moema', sufixo: null },
+      { base: 'Jardim Paulista', sufixo: '#2' },
+    ])
+  })
+
+  it('nunca discorda de rotulosUnicos', () => {
+    const nomes = ['A', 'B', 'A', 'C', 'B', 'A']
+    const juntos = rotulosPartidos(nomes).map((r) => (r.sufixo ? `${r.base} ${r.sufixo}` : r.base))
+    expect(juntos).toEqual(rotulosUnicos(nomes))
+  })
+
+  it('lista vazia sobrevive', () => {
+    expect(rotulosPartidos([])).toEqual([])
   })
 })
 
@@ -383,6 +416,6 @@ describe('rotuloDoHex — o mesmo nome do painel da direita', () => {
         hex({ bairro: 'Rio Abaixo', mun: 'Itaquaquecetuba' }),
         hex({ bairro: 'Rio Abaixo', mun: 'Itaquaquecetuba' }),
       ]),
-    ).toEqual(['1 · Rio Abaixo', '2 · Rio Abaixo'])
+    ).toEqual(['Rio Abaixo #1', 'Rio Abaixo #2'])
   })
 })

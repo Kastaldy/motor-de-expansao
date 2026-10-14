@@ -218,19 +218,6 @@ export function corDeIdentidadeRgb(i: number, alfa = 255): [number, number, numb
 }
 
 /**
- * Desambigua rotulos REPETIDOS, numerando so' quem empata.
- *
- * POR QUE E' GENERICO. A comparacao de PONTOS ja' resolvia isto (`rotulosDosPontos`), mas
- * a de HEXAGONOS nunca resolveu: o rotulo dela e' o nome do municipio, e comparar cinco
- * hexagonos de Sao Paulo produzia cinco itens chamados "Sao Paulo" — na tela, na tabela e
- * no PDF (relato do Juan, 2026-08-14, ao perguntar se cinco funcionaria). Com nomes iguais
- * a leitura inteira desmonta: a frase do veredito vira "Sao Paulo e' o melhor, Sao Paulo e'
- * o pior", e nenhuma barra pode ser ligada ao seu hexagono.
- *
- * O numero e' a POSICAO na lista, e nao a ordem do empate: e' assim que o rotulo casa com a
- * aba, com a cor de identidade e com o contorno no mapa.
- */
-/**
  * Como um hexagono se chama numa comparacao: BAIRRO, senao municipio.
  *
  * Espelha o `rotuloDoPonto` do modo de imovel de proposito — as duas comparacoes
@@ -252,10 +239,55 @@ export function rotulosDosHexes(hexes: readonly Hex[]): string[] {
   return rotulosUnicos(hexes.map(rotuloDoHex))
 }
 
+/**
+ * Desambigua rotulos REPETIDOS, numerando so' quem empata.
+ *
+ * POR QUE E' GENERICO. A comparacao de PONTOS ja' resolvia isto (`rotulosDosPontos`, que
+ * hoje DELEGA para ca'), mas a de HEXAGONOS nunca resolveu: comparar cinco hexagonos de
+ * Sao Paulo produzia cinco itens chamados "Sao Paulo" — na tela, na tabela e no PDF
+ * (relato do Juan, 2026-08-14). Com nomes iguais a leitura inteira desmonta: a frase do
+ * veredito vira "Sao Paulo e' o melhor, Sao Paulo e' o pior", e nenhuma barra pode ser
+ * ligada ao seu hexagono.
+ *
+ * FORMATO "<nome> #<k>" (decisao do dono, 2026-10-14). Ate' aqui o numero era um PREFIXO
+ * POSICIONAL ("3 · Centro"): o 3 era a posicao na lista inteira, entao dois "Centro" nas
+ * posicoes 2 e 5 liam "2 · Centro" e "5 · Centro" — o operador procurava um "Centro 1"
+ * que nao existia. Agora o `k` e' o ORDINAL DENTRO DO GRUPO de mesmo nome (1-based, na
+ * ordem da lista): "Centro #1", "Centro #2". Quem casa o rotulo com a aba, a cor e o pin
+ * e' o INDICE do item, que continua sendo o da lista — o rotulo so' precisa ser unico.
+ * Nome unico segue sem sufixo: numerar sempre seria ruido no caso comum.
+ *
+ * O sufixo fica no FIM, e o fim e' onde o ellipsis corta: quem renderiza nome numa coluna
+ * estreita usa `rotulosPartidos` e desenha o "#k" FORA do span que trunca.
+ */
 export function rotulosUnicos(nomes: readonly string[]): string[] {
-  const vezes = new Map<string, number>()
-  for (const n of nomes) vezes.set(n, (vezes.get(n) ?? 0) + 1)
-  return nomes.map((n, i) => ((vezes.get(n) ?? 0) > 1 ? `${i + 1} · ${n}` : n))
+  return rotulosPartidos(nomes).map(({ base, sufixo }) => (sufixo ? `${base} ${sufixo}` : base))
+}
+
+/** Um rotulo em duas partes: o nome, e o "#k" de desambiguacao quando ha' empate. */
+export interface RotuloPartido {
+  base: string
+  /** "#k" (ordinal dentro do grupo de mesmo nome), ou null quando o nome e' unico. */
+  sufixo: string | null
+}
+
+/**
+ * A mesma desambiguacao de `rotulosUnicos`, partida em nome + sufixo.
+ *
+ * Existe para a UI: o nome pode ser truncado com ellipsis, o "#k" nao — e' ele que
+ * diferencia "Jardim Paulista #1" de "Jardim Paulista #2". `rotulosUnicos` e' sempre
+ * `base + ' ' + sufixo`, entao as duas formas nunca discordam.
+ */
+export function rotulosPartidos(nomes: readonly string[]): RotuloPartido[] {
+  const total = new Map<string, number>()
+  for (const n of nomes) total.set(n, (total.get(n) ?? 0) + 1)
+  const visto = new Map<string, number>()
+  return nomes.map((n) => {
+    if ((total.get(n) ?? 0) < 2) return { base: n, sufixo: null }
+    const k = (visto.get(n) ?? 0) + 1
+    visto.set(n, k)
+    return { base: n, sufixo: `#${k}` }
+  })
 }
 
 /** O valor de UM item dentro do bloco de um parametro. */
