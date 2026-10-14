@@ -43,3 +43,42 @@ export function janelaDoHexVisivel({
   if (selecaoDaBusca && hexDaBusca != null && selecionado === hexDaBusca) return false
   return true
 }
+
+/**
+ * Em que DEGRAU nascem as janelas do mapa que vivem à ESQUERDA (a ficha do hexágono e a do
+ * comparativo de hexágonos), dado quantos itens há na análise de pontos.
+ *
+ * Com pontos na lista a ficha de PONTO ocupa a esquerda, nas duas entradas do mapa. Mandar
+ * a do hexágono para a DIREITA (a primeira correção) a punha exatamente em cima da do
+ * imóvel e da unidade, que nascem lá — e por cima do painel de ranking. Em degrau ela fica
+ * do lado de sempre, sem cobrir a barra de título da ficha de ponto.
+ */
+export function degrauSobreFichaDePonto(nPontos: number): number {
+  return nPontos > 0 ? 1 : 0
+}
+
+/**
+ * O ponto ativo deve (re)selecionar o hexágono dele AGORA?
+ *
+ * Quase sempre sim — é o que amarra o ponto ao contorno no mapa. A exceção é a REMONTAGEM
+ * do mapa (volta da Viabilidade): a foto devolve a seleção que o operador tinha, e se ela
+ * era de OUTRO hexágono (ele clicou num hexágono depois de analisar o ponto e foi simular
+ * aquele), o efeito do ponto rodando na montagem a trocava pelo hexágono do ponto — e a
+ * ficha do hexágono que ele tinha aberto sumia na volta.
+ *
+ * `pinDaMontagem` = o pin do ponto é o MESMO objeto que existia quando a tela montou (o
+ * mesmo critério de identidade do voo no `HexMap`): um ponto NOVO depois da montagem
+ * sempre seleciona.
+ */
+export function pontoSeleciona({
+  pinDaMontagem,
+  selecaoRestaurada,
+  hexDoPonto,
+}: {
+  pinDaMontagem: boolean
+  selecaoRestaurada: string | null
+  hexDoPonto: string
+}): boolean {
+  if (!pinDaMontagem) return true
+  return selecaoRestaurada == null || selecaoRestaurada === hexDoPonto
+}

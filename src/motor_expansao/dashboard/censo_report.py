@@ -3249,8 +3249,11 @@ def _big_numbers_page(
             f"{_RAIO_LABEL}, método {metodo}); SAM Fitness, consumo e Residual Fitness (em alunos) = "
             f"mercado no mesmo raio de {_RAIO_LABEL} (SAM = população do raio x taxa calibrada; "
             "consumo = concorrentes de rede + Ultra pela área de influência de 1 km de cada unidade; "
-            "residual = SAM - consumo). Fundo do card: verde = meta atingida, vermelho = "
-            f"meta não atingida, cinza = '{TEXTO_SEM_DADO}' (dado ausente para o ponto)."
+            # "com piso em zero": quando o consumo passa do SAM o card mostra 0, e sem o piso
+            # escrito a conta da propria pagina daria negativo (revisao de 2026-10-14).
+            "residual = SAM - consumo, com piso em zero). Fundo do card: verde = meta "
+            f"atingida, vermelho = meta não atingida, cinza = '{TEXTO_SEM_DADO}' (dado "
+            "ausente para o ponto)."
         ),
     )
     _draw_footer(pdf, with_attribution=True)

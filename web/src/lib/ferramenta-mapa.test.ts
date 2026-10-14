@@ -4,6 +4,8 @@ import {
   alternarFerramenta,
   cliqueSelecionaHex,
   cursorDaFerramenta,
+  ferramentaDasChaves,
+  pinDaComparacaoAbre,
   type FerramentaMapa,
 } from './ferramenta-mapa'
 
@@ -54,5 +56,32 @@ describe('cursorDaFerramenta', () => {
   it('sem ferramenta, o cursor de sempre', () => {
     expect(cursorDaFerramenta('nenhuma', true)).toBe('pointer')
     expect(cursorDaFerramenta('nenhuma', false)).toBe('grab')
+  })
+})
+
+describe('ferramentaDasChaves', () => {
+  it('cada chave do HexMap volta a ser a ferramenta do estado único', () => {
+    const nada = { medindo: false, selecionandoPonto: false, desenhando: false }
+    expect(ferramentaDasChaves(nada)).toBe('nenhuma')
+    expect(ferramentaDasChaves({ ...nada, medindo: true })).toBe('regua')
+    expect(ferramentaDasChaves({ ...nada, selecionandoPonto: true })).toBe('ponto')
+    expect(ferramentaDasChaves({ ...nada, desenhando: true })).toBe('geometria')
+  })
+
+  it('o cursor do mapa sai das chaves pela mesma regra (mira com qualquer uma)', () => {
+    expect(cursorDaFerramenta(ferramentaDasChaves({ medindo: false, selecionandoPonto: true, desenhando: false }), false)).toBe('crosshair')
+  })
+})
+
+describe('pinDaComparacaoAbre', () => {
+  it('sem ferramenta e com "Selecionar ponto", o pin colorido abre aquele ponto', () => {
+    // Com "Selecionar ponto" o clique no pin criava um quase duplicado a poucos metros.
+    expect(pinDaComparacaoAbre('nenhuma')).toBe(true)
+    expect(pinDaComparacaoAbre('ponto')).toBe(true)
+  })
+
+  it('com a régua ou o desenho, o clique segue para a ferramenta', () => {
+    expect(pinDaComparacaoAbre('regua')).toBe(false)
+    expect(pinDaComparacaoAbre('geometria')).toBe(false)
   })
 })

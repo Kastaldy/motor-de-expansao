@@ -191,6 +191,37 @@ def test_area_desenhada_substitui_o_raio_em_tudo(ambiente) -> None:
     assert ambiente[-1].get("geometria") is not None
 
 
+def test_nota_da_area_e_a_media_dos_setores_e_nao_a_do_ponto_central(ambiente, monkeypatch) -> None:
+    """Na area, "Potencial socioeconomico" e' a nota DA AREA, nao a do setor do ponto central.
+
+    O ponto central (`representative_point`) e' um lugar que ninguem clicou: com a nota do
+    setor dele, o mesmo disco de 1 km desenhado a mao dava outra nota que o raio so' porque
+    o ponto interno andou alguns metros. Aqui metade da grade vale 30 e metade 80: a nota da
+    area tem de ficar ENTRE as duas (a media ponderada), e o raio segue com o setor do ponto.
+    """
+    from motor_expansao.api import service as api_service
+
+    setores = _setores()
+    setores["score_setor_2022_calibrado"] = [30.0 if x < LNG else 80.0 for x in setores["bbox_minx"]]
+    monkeypatch.setattr(
+        api_service, "_resolver_e_carregar", lambda lat, lng, cfg, **kw: ("SP", "3550308", setores)
+    )
+
+    body = _post(_geojson(box(-1000, -500, 1000, 500)))
+    nota = body["censo"]["score_socioeconomico"]
+    detalhe = body["censo"]["detalhe"]
+    assert 30.0 < nota < 80.0
+    assert nota == detalhe["score_medio_raio"]
+    assert detalhe["setor_do_ponto"]["score"] in (30.0, 80.0)
+    assert nota != detalhe["setor_do_ponto"]["score"]
+    criterio = {c["chave"]: c for c in body["criterios"]}["score"]
+    assert criterio["valor"] == nota
+
+    # O raio NAO muda: la' a nota continua sendo a do setor que contem o ponto escolhido.
+    get = pilot.ponto(lat=LAT, lng=LNG)
+    assert get["censo"]["score_socioeconomico"] == get["censo"]["detalhe"]["setor_do_ponto"]["score"]
+
+
 _CHAVES_DO_GET = {
     "lat", "lng", "raio_km", "hex_id", "local", "censo", "concorrencia", "mercado",
     "vizinhos", "reguas", "criterios",

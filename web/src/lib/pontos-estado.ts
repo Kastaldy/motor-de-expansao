@@ -50,6 +50,13 @@ export interface PontoPendente {
   lng: number
   /** Os anéis do polígono (`[lng, lat]`) — só no pedido de área desenhada. */
   geometria?: PosicaoGeoJson[][] | null
+  /**
+   * O pedido nasceu de um CLIQUE NO PRÓPRIO MAPA ("Selecionar ponto"): o lugar já está
+   * na tela, sob o cursor. O pin dele não voa nem aproxima a câmera — a ferramenta fica
+   * ligada para marcar vários pontos em sequência, e um voo com zoom 13 a cada clique
+   * tirava da tela o bairro do próximo. Só aparece quando `true`.
+   */
+  doMapa?: boolean
 }
 
 export interface EstadoPontos {
@@ -68,6 +75,26 @@ export interface EstadoPontos {
    * e mesmo assim a janela tem de abrir na aba dele.
    */
   revelar: number
+  /**
+   * Contador que só cresce: cada vez que sobe, o operador ESCOLHEU um item (aba, pin
+   * colorido, nome num bloco, pedido repetido) e o mapa tem de ir até ele — mesmo que
+   * seja o item que já estava aberto.
+   *
+   * Existe porque a chave do ativo (`chaveDoAtivo`) não muda quando se clica de novo no
+   * ponto aberto, e era só ela que movia o mapa: depois de trocar de município à mão (o
+   * ponto perde o comando da câmera) ou de arrastar o mapa, clicar no ponto aberto não o
+   * trazia de volta. Ver `movimentoDoMapa`.
+   */
+  foco: number
+  /**
+   * O operador escolheu uma aba DEPOIS do último pedido ainda em leitura.
+   *
+   * Sem isto o pedido em voo vencia o clique: com um pendente, trocar de aba não movia o
+   * mapa (o pendente seguia sendo o ativo), e quando a leitura chegava a aba aberta era
+   * trocada à força pela ficha nova. A escolha explícita vale mais que um pedido anterior
+   * a ela. Um pedido NOVO devolve a precedência ao pendente (é o gesto mais recente).
+   */
+  abaFixada: boolean
 }
 
 export const PONTOS_VAZIO: EstadoPontos = Object.freeze({
@@ -75,6 +102,8 @@ export const PONTOS_VAZIO: EstadoPontos = Object.freeze({
   aberto: 0,
   pendentes: [],
   revelar: 0,
+  foco: 0,
+  abaFixada: false,
 }) as EstadoPontos
 
 /** O que fazer com um pedido de coordenada, decidido ANTES de gastar uma leitura. */
@@ -120,18 +149,28 @@ export function decidirPedido(
   return { tipo: 'ler' }
 }
 
-/** Aplica um pedido ao estado. `cheio` e `esperando` não mudam nada. */
+/**
+ * Aplica um pedido ao estado. `cheio` e `esperando` não mudam nada.
+ *
+ * Pedir de novo o que já está na lista é ESCOLHER aquele item: abre a aba, mostra a
+ * janela e sobe o `foco` (o mapa vai até ele). Pedido novo devolve a precedência ao
+ * pendente (`abaFixada: false`) — ele passa a ser o gesto mais recente.
+ */
 export function pedir(
   e: EstadoPontos,
   lat: number,
   lng: number,
   geometria?: PosicaoGeoJson[][] | null,
+  doMapa = false,
 ): EstadoPontos {
   const d = decidirPedido(e, lat, lng, geometria)
-  if (d.tipo === 'repetido') return { ...e, aberto: d.indice, revelar: e.revelar + 1 }
+  if (d.tipo === 'repetido') {
+    return { ...e, aberto: d.indice, revelar: e.revelar + 1, foco: e.foco + 1, abaFixada: true }
+  }
   if (d.tipo === 'ler') {
     const novo: PontoPendente = geometria?.length ? { lat, lng, geometria } : { lat, lng }
-    return { ...e, pendentes: [...e.pendentes, novo] }
+    if (doMapa) novo.doMapa = true
+    return { ...e, pendentes: [...e.pendentes, novo], abaFixada: false }
   }
   return e
 }
@@ -142,6 +181,10 @@ export function pedir(
  * Só entra se o pedido AINDA estiver pendente: depois de "Limpar tudo", uma resposta que
  * chega atrasada não pode ressuscitar um ponto que o operador acabou de tirar da tela.
  * A ficha nova entra no fim e vira a aberta — quem acabou de pedir quer ver ela.
+ *
+ * EXCETO quando o operador escolheu uma aba enquanto esperava (`abaFixada`): aí a ficha
+ * entra na lista (o pin dela deixa de ser provisório) mas a aba aberta continua a que ele
+ * escolheu. Roubar a aba de quem acabou de clicar nela é o "a tela mudou sozinha".
  */
 export function chegou(e: EstadoPontos, pedido: PontoPendente, ficha: PontoPayload): EstadoPontos {
   const i = e.pendentes.findIndex((p) => mesmoPedido(p, pedido))
@@ -154,6 +197,9 @@ export function chegou(e: EstadoPontos, pedido: PontoPendente, ficha: PontoPaylo
   const repetido = ficha.geometria?.length
     ? indiceDaMesmaArea(e.fichas, ficha.geometria)
     : indiceDoMesmoPonto(e.fichas, ficha.lat, ficha.lng)
+  if (e.abaFixada) {
+    return repetido >= 0 ? { ...e, pendentes } : { ...e, fichas: [...e.fichas, ficha], pendentes }
+  }
   if (repetido >= 0) return { ...e, pendentes, aberto: repetido, revelar: e.revelar + 1 }
   const fichas = [...e.fichas, ficha]
   return { ...e, fichas, pendentes, aberto: fichas.length - 1, revelar: e.revelar + 1 }
@@ -165,11 +211,15 @@ export function falhou(e: EstadoPontos, pedido: PontoPendente): EstadoPontos {
   return pendentes.length === e.pendentes.length ? e : { ...e, pendentes }
 }
 
-/** Abre a aba `i` (presa ao intervalo válido). */
+/**
+ * Abre a aba `i` (presa ao intervalo válido) — e é uma ESCOLHA do operador: sobe o `foco`
+ * mesmo quando `i` já é a aberta (clicar de novo no ponto aberto o traz de volta ao mapa)
+ * e fixa a aba contra um pedido ainda em leitura (`abaFixada`).
+ */
 export function abrir(e: EstadoPontos, i: number): EstadoPontos {
   if (!e.fichas.length) return e
   const aberto = Math.max(0, Math.min(i, e.fichas.length - 1))
-  return aberto === e.aberto ? e : { ...e, aberto }
+  return { ...e, aberto, foco: e.foco + 1, abaFixada: true }
 }
 
 /**
@@ -182,7 +232,7 @@ export function abrir(e: EstadoPontos, i: number): EstadoPontos {
  */
 export function mostrar(e: EstadoPontos, i: number): EstadoPontos {
   if (i < 0 || i >= e.fichas.length) return e
-  return { ...e, aberto: i, revelar: e.revelar + 1 }
+  return { ...e, aberto: i, revelar: e.revelar + 1, foco: e.foco + 1, abaFixada: true }
 }
 
 /**
@@ -201,12 +251,12 @@ export function remover(e: EstadoPontos, i: number): EstadoPontos {
 }
 
 /**
- * Tira TUDO: fichas e pins provisórios. O `revelar` não volta a zero de propósito — ele
- * é um contador de eventos, e voltar a um valor já visto faria a tela confundir um evento
- * novo com um antigo.
+ * Tira TUDO: fichas e pins provisórios. O `revelar` e o `foco` não voltam a zero de
+ * propósito — são contadores de eventos, e voltar a um valor já visto faria a tela
+ * confundir um evento novo com um antigo.
  */
 export function limpar(e: EstadoPontos): EstadoPontos {
-  return { ...PONTOS_VAZIO, revelar: e.revelar }
+  return { ...PONTOS_VAZIO, revelar: e.revelar, foco: e.foco }
 }
 
 /** O ponto que comanda o mapa: posição, hexágono e (quando já lido) o território. */
@@ -219,6 +269,14 @@ export interface PontoAtivo {
    * em leitura: só o `/api/ponto` sabe em que município ele caiu.
    */
   territorio: { uf: string; municipio: string } | null
+  /** O ativo é um pendente pedido por clique no próprio mapa (ver `PontoPendente.doMapa`). */
+  doMapa: boolean
+}
+
+/** O pendente que comanda o mapa, se algum: o mais recente, a menos que uma aba tenha sido escolhida depois dele. */
+function pendenteAtivo(e: EstadoPontos): PontoPendente | null {
+  if (e.abaFixada) return null
+  return e.pendentes[e.pendentes.length - 1] ?? null
 }
 
 /**
@@ -226,11 +284,20 @@ export interface PontoAtivo {
  *
  * O pendente vence porque é o último gesto do operador — ele acabou de pedir aquele lugar,
  * e o mapa ficar parado no ponto anterior até a resposta chegar é o "não reagiu" que leva
- * a pessoa a clicar de novo.
+ * a pessoa a clicar de novo. Pela mesma razão, uma aba escolhida DEPOIS do pedido
+ * (`abaFixada`) vence o pendente: o último gesto passou a ser ela.
  */
 export function itemAtivo(e: EstadoPontos): PontoAtivo | null {
-  const p = e.pendentes[e.pendentes.length - 1]
-  if (p) return { lat: p.lat, lng: p.lng, hexId: latLngToCell(p.lat, p.lng, 7), territorio: null }
+  const p = pendenteAtivo(e)
+  if (p) {
+    return {
+      lat: p.lat,
+      lng: p.lng,
+      hexId: latLngToCell(p.lat, p.lng, 7),
+      territorio: null,
+      doMapa: p.doMapa === true,
+    }
+  }
   const f = e.fichas[e.aberto]
   if (!f) return null
   return {
@@ -238,6 +305,7 @@ export function itemAtivo(e: EstadoPontos): PontoAtivo | null {
     lng: f.lng,
     hexId: f.hex_id,
     territorio: { uf: f.local.uf ?? '', municipio: f.local.municipio ?? '' },
+    doMapa: false,
   }
 }
 
@@ -257,6 +325,11 @@ export interface PinDoMapa {
   lat: number
   lng: number
   hexId: string
+  /**
+   * O lugar já está na tela (clique no próprio mapa): o `HexMap` NÃO voa nem aproxima a
+   * câmera para este pin. Só aparece quando `true`.
+   */
+  semVoo?: boolean
 }
 
 /**
@@ -268,21 +341,100 @@ export interface PinDoMapa {
  *
  * Mas quando o TERRITÓRIO muda o objeto PRECISA ser novo, mesmo com a coordenada igual: o
  * `MapScreen` zera a seleção ao trocar de município, e é o efeito do pin (que só roda
- * quando o pin muda de identidade) que devolve o contorno ao hexágono do ponto.
+ * quando o pin muda de identidade) que devolve o contorno ao hexágono do ponto. Se o pin
+ * era de um clique no mapa, o novo HERDA o `semVoo`: o ponto continua sob o cursor.
+ *
+ * `forcar` (o operador ESCOLHEU o item: aba, pin colorido, pedido repetido) sempre dá
+ * objeto novo e com voo — é o "leve-me até ele", mesmo que ele já seja o ativo.
  */
 export function pinParaAtivo(
   atual: PinDoMapa | null,
   ativo: PontoAtivo,
   territorioMuda: boolean,
+  forcar = false,
 ): PinDoMapa {
-  if (
-    atual &&
-    !territorioMuda &&
+  const novo: PinDoMapa = { lat: ativo.lat, lng: ativo.lng, hexId: ativo.hexId }
+  if (forcar) return novo
+  const mesmoLugar =
+    atual != null &&
     chaveDaCoordenada(atual.lat, atual.lng) === chaveDaCoordenada(ativo.lat, ativo.lng)
-  ) {
-    return atual
+  if (mesmoLugar && !territorioMuda) return atual
+  if (ativo.doMapa || (mesmoLugar && atual.semVoo)) novo.semVoo = true
+  return novo
+}
+
+/**
+ * O que o mapa faz quando o ativo da lista muda (o efeito do `App`).
+ *
+ * - `focar`: o operador escolheu um item (`foco` subiu). Pin NOVO, com voo, e o território
+ *   do item volta — mesmo que ele já fosse o ativo, mesmo que o mapa tenha sido arrastado
+ *   ou que o operador tenha trocado de município à mão antes.
+ * - `seguir`: o ativo mudou por outro motivo (pedido novo, leitura que chegou, remoção):
+ *   o pin acompanha, reaproveitando o objeto quando nada mudou para o mapa.
+ * - `nenhum`: nada a fazer — a chave é a mesma, OU o ponto perdeu o comando da câmera
+ *   (`soltou`: o operador foi a outro destino à mão) e o que mudou foi só o território
+ *   de um pedido que já estava em voo. Uma resposta atrasada não pode desfazer a
+ *   navegação que o operador fez enquanto esperava (ranking nacional, troca de município,
+ *   unidade da rede).
+ */
+export type MovimentoDoMapa = 'nenhum' | 'seguir' | 'focar'
+
+export interface MarcaDoAtivo {
+  /** `chaveDoAtivo` do item ativo. */
+  chave: string | null
+  /** `EstadoPontos.foco` no mesmo instante. */
+  foco: number
+}
+
+export function movimentoDoMapa(
+  antes: MarcaDoAtivo,
+  agora: MarcaDoAtivo,
+  soltou: boolean,
+): MovimentoDoMapa {
+  if (agora.chave == null) return antes.chave == null ? 'nenhum' : 'seguir'
+  if (agora.foco !== antes.foco) return 'focar'
+  if (agora.chave === antes.chave) return 'nenhum'
+  if (soltou && antes.chave != null && coordenadaDaChave(antes.chave) === coordenadaDaChave(agora.chave)) {
+    return 'nenhum'
   }
-  return { lat: ativo.lat, lng: ativo.lng, hexId: ativo.hexId }
+  return 'seguir'
+}
+
+/** A metade "coordenada" de uma `chaveDoAtivo` (antes do `|` do território). */
+function coordenadaDaChave(chave: string): string {
+  return chave.split('|')[0]
+}
+
+/**
+ * A janela da ficha nasce aberta nesta montagem?
+ *
+ * Só na volta do Simulador aberto pela própria ficha, e só se ainda houver ponto. Qualquer
+ * outra remontagem com pontos na lista (Executiva e de volta, ranking nacional, aba de
+ * imóveis) nasce fechada: ali o operador foi a outro destino, e a ficha de ponto reabrindo
+ * sozinha cobriria a ficha dele.
+ */
+export function janelaNaMontagem(voltaDoSimulador: boolean, nFichas: number): boolean {
+  return voltaDoSimulador && nFichas > 0
+}
+
+/**
+ * O erro da leitura de ponto precisa do aviso FLUTUANTE?
+ *
+ * O erro tem duas casas: a caixa de colar (o `CampoPonto` dela o mostra) e este aviso.
+ * Sem ficha na tela não há caixa no Explorar; COM ficha a caixa some depois do 1o ponto,
+ * e os pedidos seguintes chegam pela lupa, pelo "Selecionar ponto" e pelo "Analisar
+ * geometria" — o 6o ponto, o clique no mar ou a área recusada falhavam sem nenhum sinal.
+ * Durante uma leitura o aviso espera: o "Lendo os setores..." ocupa o mesmo lugar.
+ */
+export function erroFlutuanteVisivel(c: {
+  nFichas: number
+  caixaAberta: boolean
+  carregando: boolean
+  erro: string | null
+}): boolean {
+  if (!c.erro || c.carregando) return false
+  // Com ficha e a caixa de colar aberta, o `CampoPonto` dela já mostra o erro.
+  return !(c.caixaAberta && c.nFichas > 0)
 }
 
 /** Um pin da comparação, com a marca de "ainda em leitura". */
@@ -301,7 +453,8 @@ export interface PinDoPonto extends PinDaComparacao {
  */
 export function pinsDoEstado(e: EstadoPontos): PinDoPonto[] {
   const itens = [...e.fichas, ...e.pendentes]
-  const ativo = e.pendentes.length ? itens.length - 1 : e.fichas.length ? e.aberto : null
+  // A mesma precedência de `itemAtivo`: o pendente, salvo aba escolhida depois dele.
+  const ativo = pendenteAtivo(e) ? itens.length - 1 : e.fichas.length ? e.aberto : null
   /* A área em leitura já se chama "Área desenhada" (o nome dela não depende do servidor);
      o ponto em leitura fica com a coordenada, porque o bairro ainda não é conhecido. */
   const rotulos = [

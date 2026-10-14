@@ -4,12 +4,14 @@ import {
   DICA_ESTUDO,
   DICA_ESTUDO_GEOMETRIA,
   DICA_SIMULADOR,
+  DICA_SIMULADOR_AREA,
   DICA_SIMULADOR_VETADO,
   ROTULO_ESTUDO,
   ROTULO_ESTUDO_GERANDO,
   ehAreaDesenhada,
   estadoDoEstudo,
   estadoDoSimulador,
+  rotuloParaSimulador,
 } from './rodape-ponto'
 import type { PontoPayload } from './types'
 
@@ -89,7 +91,29 @@ describe('estadoDoSimulador', () => {
     expect(estadoDoSimulador(areaDesenhada, true).habilitado).toBe(true)
   })
 
+  it('na área desenhada a dica diz que lá o estudo é do RAIO em volta do ponto central', () => {
+    expect(estadoDoSimulador(areaDesenhada, true).dica).toBe(DICA_SIMULADOR_AREA)
+    expect(DICA_SIMULADOR_AREA).toMatch(/raio de 1,0 km/)
+  })
+
   it('sem ficha: travado', () => {
     expect(estadoDoSimulador(null, true).habilitado).toBe(false)
+  })
+})
+
+describe('rotuloParaSimulador', () => {
+  it('ponto com raio segue com o próprio rótulo (com o "#k" dos homônimos)', () => {
+    expect(rotuloParaSimulador(pontoComRaio, 'Centro #2')).toBe('Centro #2')
+  })
+
+  it('área desenhada chega à Viabilidade como o PONTO CENTRAL dela, nunca com o nome da área', () => {
+    // A Viabilidade e o PDF dela são do raio em volta do ponto: o título não pode
+    // afirmar que é a área.
+    expect(rotuloParaSimulador(areaDesenhada, 'Área desenhada')).toBe(
+      'Ponto central da área desenhada',
+    )
+    expect(rotuloParaSimulador(areaDesenhada, 'Área desenhada #2')).toBe(
+      'Ponto central da área desenhada #2',
+    )
   })
 })

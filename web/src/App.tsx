@@ -39,7 +39,12 @@ import type { Tema } from './lib/tema'
 import { cookieDoNavegador, depositoDoNavegador, gravarTema, lerTema } from './lib/tema'
 import type { Hex, MunicipioItem, MunicipioPayload, Oportunidade } from './lib/types'
 import { perfilDoCliente } from './lib/perfil'
-import { chaveDoAtivo, pinParaAtivo } from './lib/pontos-estado'
+import {
+  chaveDoAtivo,
+  movimentoDoMapa,
+  pinParaAtivo,
+  type MarcaDoAtivo,
+} from './lib/pontos-estado'
 import { usePontos } from './lib/use-pontos'
 
 export type Tela =
@@ -296,9 +301,22 @@ export default function App() {
    * mesma coordenada duas vezes continua funcionando: a lista abre a aba dela.
    */
   const pedirPonto = useCallback(
-    (lat: number, lng: number) => void pontos.analisar(lat, lng),
+    (lat: number, lng: number, doMapa?: boolean) => void pontos.analisar(lat, lng, { doMapa }),
     [pontos.analisar],
   )
+
+  /**
+   * O ponto ativo PERDEU o comando da câmera: o operador foi a outro destino à mão (troca
+   * de UF/município, ranking nacional, aba de imóveis, unidade da rede). Marca o fato para
+   * o efeito abaixo (`movimentoDoMapa`): uma leitura que ainda estava em voo, ao chegar,
+   * não pode desfazer essa navegação. Escolher de novo um ponto (aba, pin colorido) ou
+   * pedir um novo devolve o comando.
+   */
+  const pontoSoltou = useRef(false)
+  const soltarPonto = useCallback(() => {
+    pontoSoltou.current = true
+    setPinPonto(null)
+  }, [])
 
   /**
    * O PONTO ATIVO mudou (pedido novo, leitura que chegou, troca de aba, remoção): leva o
@@ -315,30 +333,43 @@ export default function App() {
    *
    * A chave (coordenada + território conhecido ou não) é o que impede de re-localizar a
    * cada render. Lista vazia apaga o pin: pin sem ficha que o explique é marca órfã.
+   *
+   * O `foco` entra junto: clicar de novo no ponto ABERTO (aba, pin colorido, nome num
+   * bloco) não muda a chave, mas é um pedido de "leve-me até ele" — depois de arrastar o
+   * mapa ou de trocar de município à mão, era o clique que não fazia nada. A regra de
+   * quando mover, e quando NÃO mover, é `movimentoDoMapa` (testada).
    */
   const chaveAtivo = chaveDoAtivo(pontos.ativo)
   const ufRef = useRef(uf)
   const municipioRef = useRef(municipio)
   ufRef.current = uf
   municipioRef.current = municipio
+  const marcaAnterior = useRef<MarcaDoAtivo>({ chave: null, foco: pontos.foco })
   useEffect(() => {
+    const agora: MarcaDoAtivo = { chave: chaveAtivo, foco: pontos.foco }
+    const movimento = movimentoDoMapa(marcaAnterior.current, agora, pontoSoltou.current)
+    marcaAnterior.current = agora
     const ativo = pontos.ativo
     if (!ativo) {
       setPinPonto(null)
       return
     }
+    if (movimento === 'nenhum') return
+    // O ponto voltou a mandar na câmera: foi escolhido, ou é um pedido/leitura nova.
+    pontoSoltou.current = false
     const terr = ativo.territorio
     const territorioMuda =
       terr != null && (terr.uf !== ufRef.current || terr.municipio !== municipioRef.current)
-    setPinPonto((atual) => pinParaAtivo(atual, ativo, territorioMuda))
+    const forcar = movimento === 'focar'
+    setPinPonto((atual) => pinParaAtivo(atual, ativo, territorioMuda, forcar))
     setPinDestino(null)
     if (terr && terr.uf) {
       setUf(terr.uf)
       setMunicipio(terr.municipio)
     }
-    // `pontos.ativo` muda de identidade a cada mudança da lista; a chave é o que importa.
+    // `pontos.ativo` muda de identidade a cada mudança da lista; chave e foco é o que importa.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chaveAtivo])
+  }, [chaveAtivo, pontos.foco])
 
   /* CANAL DE CAPTURA do mapa, repartido entre as duas telas.
      Mora aqui pelo mesmo motivo do `pinPonto` acima: quem tem o mapa é o `MapScreen`, e o
@@ -465,8 +496,9 @@ export default function App() {
       setPinDestino(null)
       // Pela mesma razao o ponto ativo deixa de comandar a camera — sem ele, o mapa
       // voltaria a voar para o ponto da cidade anterior assim que o estado novo chegasse.
-      // O ponto continua na comparacao; so' deixa de mandar no mapa.
-      setPinPonto(null)
+      // O ponto continua na comparacao; so' deixa de mandar no mapa (e uma leitura em
+      // voo, ao chegar, nao o devolve — `soltarPonto`).
+      soltarPonto()
 
       // Agora que existe UF, a intenção guardada no menu vira foto — com o contexto
       // certo, senão `fotoAplicavel` a jogaria fora. Consumimos a intenção aqui: ela
@@ -477,7 +509,7 @@ export default function App() {
       if (passo === null) return
       setEstadoMapa({ ...ESTADO_MAPA_VAZIO, uf: u, municipio: '', passoN: passo })
     },
-    [modoPendente],
+    [modoPendente, soltarPonto],
   )
 
   /**
@@ -497,6 +529,28 @@ export default function App() {
       setTela('viabilidade')
     },
     [tela, abas],
+  )
+
+  /**
+   * A Viabilidade aberta AGORA veio do botão "Simulador" da ficha de ponto? É o único caso
+   * em que a ficha deve reabrir sozinha quando o mapa remonta (`janelaNaMontagem`): quem
+   * foi simular um dos pontos volta para a análise que deixou. Remontar por qualquer outro
+   * caminho (Executiva e de volta pelo Dock, ranking nacional, aba de imóveis) não reabre.
+   *
+   * Lido no RENDER da volta (o inicializador do `PontoScreen` roda antes de qualquer
+   * efeito) e apagado pelo efeito logo abaixo assim que a tela deixa de ser a Viabilidade —
+   * ir da Viabilidade à Executiva e só depois ao mapa também não reabre.
+   */
+  const [fichaNoSimulador, setFichaNoSimulador] = useState(false)
+  useEffect(() => {
+    if (tela !== 'viabilidade') setFichaNoSimulador(false)
+  }, [tela])
+  const simularDaFicha = useCallback(
+    (p: PontoEscolhido) => {
+      setFichaNoSimulador(true)
+      irParaViabilidade(p)
+    },
+    [irParaViabilidade],
   )
 
   /** Um card do menu foi escolhido: guarda a intenção e abre a tela que a atende hoje. */
@@ -639,7 +693,7 @@ export default function App() {
                  o operador pediu. Os pontos continuam na comparacao. */
               onMunicipio={(m) => {
                 setPinDestino(null)
-                setPinPonto(null)
+                soltarPonto()
                 setMunicipio(m)
               }}
               dados={dados}
@@ -667,6 +721,10 @@ export default function App() {
                  ponto central, e pedi-la leria um PONTO novo ali em vez de abrir a área.
                  Pin ainda em leitura não chega aqui (o mapa não o deixa clicável). */
               onPontoComparado={(i) => pontos.mostrar(i)}
+              /* Uma UNIDADE da rede foi escolhida (seletor do cabeçalho ou pin da Ultra): o
+                 pin dela passa a valer, e o ponto ativo solta a câmera — senão ele seguia
+                 vencendo a precedência e a câmera nunca chegava à unidade. */
+              onSoltarPonto={soltarPonto}
               /* A lupa do cabeçalho vira PONTO ANALISADO nas duas entradas: buscar um
                  endereço ali produz a MESMA ficha que colá-lo. */
               onPontoBuscado={pedirPonto}
@@ -695,7 +753,9 @@ export default function App() {
               /* `undefined` sem a aba Viabilidade: o botão "Simulador" aparece TRAVADO com
                  o motivo escrito. Passar sempre deixaria o botão ativo e o clique morreria
                  calado — o `irParaViabilidade` retorna em silêncio quando a aba é vetada. */
-              onAnalisarPonto={telaLiberada('viabilidade', abas) ? irParaViabilidade : undefined}
+              onAnalisarPonto={telaLiberada('viabilidade', abas) ? simularDaFicha : undefined}
+              /* A janela nasce aberta SÓ na volta do Simulador aberto por esta ficha. */
+              reabrirFicha={fichaNoSimulador}
               fichas={pontos.fichas}
               aberto={pontos.aberto}
               revelar={pontos.revelar}
@@ -731,7 +791,7 @@ export default function App() {
               // Este item e' uma CIDADE, nao um hexagono: qualquer destino de hexagono
               // anterior deixa de valer, senao a camera voaria para o hexagono errado.
               setPinDestino(null)
-              setPinPonto(null)
+              soltarPonto()
               navegar('mapa')
             }}
             /* Item da lista NACIONAL: carrega a UF e o HEXAGONO junto. `setUf` +
@@ -744,8 +804,9 @@ export default function App() {
               setMunicipio(m)
               setPinDestino(pin)
               // O destino desta lista vence o ponto ativo, que senão comandaria a câmera
-              // (ele tem precedência no mapa). Os pontos continuam na comparação.
-              setPinPonto(null)
+              // (ele tem precedência no mapa). Os pontos continuam na comparação, e uma
+              // leitura ainda em voo não apaga este destino ao chegar.
+              soltarPonto()
               navegar('mapa')
             }}
           />
@@ -811,7 +872,7 @@ export default function App() {
                  também é consumido e limpo. */
               setImovelDestino(ponto?.imovelId ?? null)
               // Mesmo motivo do ranking nacional: o ponto ativo não pode roubar a câmera.
-              setPinPonto(null)
+              soltarPonto()
               navegar('mapa')
             }}
           />

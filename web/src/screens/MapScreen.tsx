@@ -46,7 +46,7 @@ import {
   paraGeoJson,
 } from '../lib/geometria-desenho'
 import type { Coord } from '../lib/medicao'
-import { janelaDoHexVisivel } from '../lib/janela-hex'
+import { degrauSobreFichaDePonto, janelaDoHexVisivel, pontoSeleciona } from '../lib/janela-hex'
 import type { PinDoPonto } from '../lib/pontos-estado'
 import type { Tema } from '../lib/tema'
 import type {
@@ -119,9 +119,18 @@ export interface MapScreenProps {
    * — contorno no mapa e linha do ranking —, mas so' o destino abre a ficha do hexagono.
    *
    * PRECEDENCIA: `pontoAtivo` vence `pinFixo`, que vence o pin local da unidade/imovel. O
-   * `App` limpa um quando o outro passa a valer.
+   * `App` limpa o `pontoAtivo` quando outro passa a valer: nos destinos de lista e nas
+   * trocas de territorio, por conta propria; na UNIDADE escolhida aqui, avisado por
+   * `onSoltarPonto`.
    */
   pontoAtivo?: SearchPin | null
+  /**
+   * Uma unidade da rede foi escolhida aqui (seletor UNIDADES ou pin da Ultra): o pin LOCAL
+   * dela tem de valer, entao o `App` tira do ponto ativo o comando da camera. Sem este
+   * aviso o `pontoAtivo` seguia vencendo a precedencia e a camera nunca chegava a' unidade
+   * (o ponto continua na comparacao; escolher a aba dele devolve o comando).
+   */
+  onSoltarPonto?: () => void
   /**
    * TODOS os pontos da comparacao, cada um na sua cor de identidade (decisao do dono,
    * 2026-10-14), prontos para o mapa desenhar.
@@ -144,8 +153,11 @@ export interface MapScreenProps {
    * casos. Esta tela nao poe pin nem seleciona nada por conta propria — o ponto volta por
    * `pontoAtivo`, que e' a regra unica de pin. Antes a busca soltava um pin LOCAL que
    * gerava o cartao "Estudo pontual", uma terceira leitura do mesmo lugar.
+   *
+   * `doMapa` = o pedido veio de um clique no proprio mapa ("Selecionar ponto"): o lugar ja'
+   * esta' na tela, e o pin dele nao voa nem aproxima a camera.
    */
-  onPontoBuscado: (lat: number, lng: number) => void
+  onPontoBuscado: (lat: number, lng: number, doMapa?: boolean) => void
   /**
    * "Analisar geometria" concluiu uma área (DEC-071, fase 1): os anéis do polígono
    * desenhado, em `[lng, lat]`, fechados. Quem recebe (o `App`) a leva ao
@@ -219,6 +231,7 @@ export default function MapScreen({
   pontoAtivo = null,
   pontosComparados,
   onPontoComparado,
+  onSoltarPonto,
   onPontoBuscado,
   onGeometriaDesenhada,
   semLanding = false,
@@ -549,14 +562,22 @@ export default function MapScreen({
   /* Porta única de abertura: o seletor e o pin do mapa passam os dois por aqui. O pin marca
      a unidade e a câmera voa até ele com o zoom do hexágono (é o `searchPin` do `HexMap`),
      mas o hexágono NÃO é selecionado — senão a ficha dele subiria junto com a da unidade,
-     duas janelas falando do mesmo ponto. Unidade sem coordenada abre a ficha e não voa. */
-  const abrirUnidade = useCallback((u: RedeUnidade) => {
-    setUnidadeAberta({ id: u.id, nome: u.nome })
-    if (u.lat == null || u.lng == null) return
-    setBusca('')
-    setBuscaErro(null)
-    setPin({ lat: u.lat, lng: u.lng, hexId: latLngToCell(u.lat, u.lng, 7) })
-  }, [])
+     duas janelas falando do mesmo ponto. Unidade sem coordenada abre a ficha e não voa.
+
+     Com um ponto em análise, o pin dele VENCE o pin local (`searchPin`): por isso a unidade
+     avisa o `App` (`onSoltarPonto`), que tira do ponto o comando da câmera. Sem o aviso, a
+     ficha da unidade abria mas a câmera nunca chegava a ela. */
+  const abrirUnidade = useCallback(
+    (u: RedeUnidade) => {
+      setUnidadeAberta({ id: u.id, nome: u.nome })
+      if (u.lat == null || u.lng == null) return
+      setBusca('')
+      setBuscaErro(null)
+      onSoltarPonto?.()
+      setPin({ lat: u.lat, lng: u.lng, hexId: latLngToCell(u.lat, u.lng, 7) })
+    },
+    [onSoltarPonto],
+  )
 
   /* Geometria do raio: buscada SOB DEMANDA, so' quando a CAMADA 3 esta aberta. Fora do
      payload do mapa de proposito — custa ~2,4 s e ~3,9 MB na UF de SP, e quem so' passa
@@ -715,11 +736,26 @@ export default function MapScreen({
      Mesma regra de ordem do efeito acima: depois do que zera a tela ao trocar de
      territorio. E depois do `pinFixo` tambem, para o ponto vencer o destino quando os dois
      chegam juntos (a mesma precedencia do `searchPin`). */
+  /* Na REMONTAGEM (volta da Viabilidade) o mesmo pin ja' existia: se a foto devolveu a
+     selecao de OUTRO hexagono — o que o operador clicou depois do ponto e levou ao
+     Simulador —, ela fica, e a ficha dele volta aberta (`pontoSeleciona`). Identidade e
+     nao flag one-shot, pelo mesmo motivo do voo no `HexMap` (StrictMode roda o efeito duas
+     vezes na montagem). */
+  const pontoDaMontagem = useRef(pontoAtivo)
   useEffect(() => {
     if (!pontoAtivo) return
+    if (
+      !pontoSeleciona({
+        pinDaMontagem: pontoAtivo === pontoDaMontagem.current,
+        selecaoRestaurada: foto.selecionado,
+        hexDoPonto: pontoAtivo.hexId,
+      })
+    ) {
+      return
+    }
     setSelecionado(pontoAtivo.hexId)
     setSelecaoDaBusca(true)
-  }, [pontoAtivo])
+  }, [pontoAtivo, foto.selecionado])
 
 
   // Espelho SEMPRE atual do estado, mantido num ref. Existe para o cleanup do efeito
@@ -1032,9 +1068,9 @@ export default function MapScreen({
      e a selecao do hexagono voltam pelo `pontoAtivo` — uma regra so' de pin, em vez de um
      pin local que convivia com o da ficha e trazia o cartao "Estudo pontual" junto. Quem
      leva o ponto a' Viabilidade agora e' o "Simulador" da ficha de ponto. */
-  function aplicarPonto(lat: number, lng: number) {
+  function aplicarPonto(lat: number, lng: number, doMapa = false) {
     setBuscaErro(null)
-    onPontoBuscado(lat, lng)
+    onPontoBuscado(lat, lng, doMapa)
   }
 
   async function buscarCoordenada() {
@@ -1406,7 +1442,9 @@ export default function MapScreen({
           raio1km={raio1km}
           medindo={ferramenta === 'regua'}
           selecionandoPonto={ferramenta === 'ponto'}
-          onSelecionarPonto={aplicarPonto}
+          /* `doMapa`: o ponto clicado já está na tela — o pin dele não voa nem aproxima, e a
+             ferramenta (que fica ligada) segue marcando os próximos sem perder o bairro. */
+          onSelecionarPonto={(lat, lng) => aplicarPonto(lat, lng, true)}
           desenhando={ferramenta === 'geometria'}
           verticesDesenho={vertices}
           onCliqueDesenho={cliqueNoDesenho}
@@ -1457,7 +1495,8 @@ export default function MapScreen({
             }
           }}
           /* A regra unica de precedencia (ver `pontoAtivo`): o ponto analisado vence o
-             destino de lista, que vence o pin local da unidade/imovel. */
+             destino de lista, que vence o pin local da unidade/imovel. Escolher uma
+             unidade solta o ponto (`onSoltarPonto`), e entao o pin local passa a valer. */
           searchPin={pontoAtivo ?? pinFixo ?? pin}
           voarPara={voo}
           pedidoCaptura={pedidoCaptura}
@@ -1976,10 +2015,11 @@ export default function MapScreen({
           Também não abre quando a seleção veio da BUSCA de um ponto (`lib/janela-hex`):
           ali a ficha é a do ponto. O clique direto num hexágono abre, nas duas entradas.
 
-          À DIREITA quando há pontos em análise: a janela da ficha de ponto nasce à
-          esquerda, e com o clique em hexágono liberado as duas podem ficar abertas juntas —
-          no mesmo canto, uma abriria em cima da outra. Sem pontos, segue à esquerda, lado a
-          lado com a do imóvel e a da unidade, que nascem à direita. */}
+          À ESQUERDA, sempre, lado a lado com a do imóvel e a da unidade (que nascem à
+          direita). Com pontos em análise a ficha de ponto também nasce à esquerda, e com o
+          clique em hexágono liberado as duas podem ficar abertas juntas: esta nasce em
+          DEGRAU (`degrauSobreFichaDePonto`), deixando à vista a barra de título da de
+          baixo. Mandá-la para a direita a punha em cima da do imóvel e da unidade. */}
       <JanelaFicha
         aberta={
           hexSelecionado != null &&
@@ -1990,7 +2030,7 @@ export default function MapScreen({
             modoCenario,
           })
         }
-        ancora={(pontosComparados?.length ?? 0) > 0 ? 'direita' : 'esquerda'}
+        degrau={degrauSobreFichaDePonto(pontosComparados?.length ?? 0)}
         /* BAIRRO, o MESMO nome que o painel da direita usa na lista. O titulo saia como
            o municipio, entao clicar em "Aracaré" no ranking abria uma ficha chamada
            "Itaquaquecetuba" — e o item de baixo abria outra com o mesmo nome (Juan,
@@ -2074,9 +2114,12 @@ export default function MapScreen({
 
       {/* ---------------- Janela da COMPARAÇÃO ----------------
           À ESQUERDA, a âncora padrão. Ela não convive com a ficha do hexágono, que some no
-          modo de comparação; arrastar continua livre para as duas. */}
+          modo de comparação — mas convive com a ficha de PONTO, que também nasce à
+          esquerda nas duas entradas: com pontos na lista, nasce em degrau sobre ela, como
+          a ficha do hexágono. Arrastar continua livre para todas. */}
       <JanelaFicha
         aberta={modoCenario}
+        degrau={degrauSobreFichaDePonto(pontosComparados?.length ?? 0)}
         titulo="Comparando hexágonos"
         subtitulo={`${cenario.length} de ${MAX_COMPARADOS} selecionados`}
         onFechar={() => {

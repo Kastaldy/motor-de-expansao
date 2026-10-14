@@ -20,6 +20,7 @@ import {
   quadroDaCaptura,
 } from '../lib/captura-mapa'
 import { CORES_IDENTIDADE, corDeIdentidadeRgb, rotuloDoHex } from '../lib/comparacao'
+import { cursorDaFerramenta, ferramentaDasChaves, pinDaComparacaoAbre } from '../lib/ferramenta-mapa'
 import { chaveDaCoordenada, type PinDaComparacao } from '../lib/comparacao-pontos'
 import { alunos, brl, distanciaCurta, num, renda } from '../lib/format'
 import {
@@ -256,6 +257,13 @@ export interface SearchPin {
   lat: number
   lng: number
   hexId: string
+  /**
+   * O pin nasceu de um clique NO PROPRIO MAPA ("Selecionar ponto"): o lugar ja' esta' na
+   * tela, sob o cursor. Os voos automaticos (pin novo, troca de municipio) NAO movem a
+   * camera para ele — a ferramenta fica ligada para marcar varios pontos em sequencia, e
+   * centralizar com zoom 13 a cada clique tirava da tela o bairro do proximo.
+   */
+  semVoo?: boolean
 }
 
 /**
@@ -593,6 +601,9 @@ export default function HexMap({
      flag so' para os `onClick` das camadas e o cursor nao precisarem conhecer cada
      ferramenta — quem distingue as tres e' o `onClick` do DeckGL. */
   const cliqueOcupado = medindo || selecionandoPonto || desenhando
+  /* A mesma informacao como o estado UNICO das regras testadas (cursor, pin da comparacao
+     clicavel): as regras vivem em `lib/ferramenta-mapa`, nao refeitas aqui sobre booleanos. */
+  const ferramentaAtiva = ferramentaDasChaves({ medindo, selecionandoPonto, desenhando })
   // Identidade ESTAVEL por tema (memoizada em `_molduras`): entra no
   // `updateTriggers` do `getIcon`, entao um objeto novo por render reempacotaria
   // o atlas de textura a cada quadro.
@@ -732,6 +743,9 @@ export default function HexMap({
     if (centro.lat == null || centro.lng == null) return
     if (centroAnterior.current === centroKey) return
     centroAnterior.current = centroKey
+    // Pin de um clique no proprio mapa: a camera ja' esta' onde o operador clicou, mesmo
+    // que o ponto tenha caido em outro municipio. Nao voa (nem para o pin, nem para o centro).
+    if (searchPin?.semVoo) return
     if (searchPin) {
       setView((v) => ({
         ...v,
@@ -770,6 +784,8 @@ export default function HexMap({
   useEffect(() => {
     if (!searchPin) return
     if (cameraInicial != null && searchPin === pinDaMontagem.current) return
+    // "Selecionar ponto": o lugar ja' esta' sob o cursor (ver `SearchPin.semVoo`).
+    if (searchPin.semVoo) return
     setView((v) => ({
       ...v,
       longitude: searchPin.lng,
@@ -1753,12 +1769,14 @@ export default function HexMap({
           getLineColor: pele.pinMiolo,
           lineWidthUnits: 'pixels',
           getLineWidth: 1.5,
-          /* PICKABLE: clicar no pin abre a aba daquele ponto. Com ferramenta ligada o
+          /* PICKABLE: clicar no pin abre a aba daquele ponto — sem ferramenta E com
+             "Selecionar ponto" (`pinDaComparacaoAbre`): ali repassar o clique ao DeckGL
+             criava um quase duplicado a poucos metros do pin. Com a regua ou o desenho o
              clique segue para o DeckGL (sai sem `true`), que e' de quem a ligou; no caso
-             normal, `true` fecha o evento aqui. */
+             que abre, `true` fecha o evento aqui. */
           pickable: true,
           onClick: (info) => {
-            if (cliqueOcupado) return false
+            if (!pinDaComparacaoAbre(ferramentaAtiva)) return false
             const d = info.object as PinComparado | undefined
             if (!d || d.carregando) return false
             onPontoClicado?.(d.indice)
@@ -1871,6 +1889,9 @@ export default function HexMap({
     // Os `onClick` das camadas leem a flag por closure: sem ela aqui, ligar "Selecionar
     // ponto" deixaria no lugar os handlers antigos (que abrem imovel, Ultra, hexagono).
     cliqueOcupado,
+    // O pin da comparacao decide pela ferramenta (abre com "Selecionar ponto", nao com a
+    // regua): mesma razao da flag acima.
+    ferramentaAtiva,
     // Os pins da comparacao: `data` NOVO a cada mudanca da lista (aba aberta, ponto que
     // entra ou sai) — e' isso que faz o deck reavaliar cor, raio e o ativo.
     pontosNoMapa,
@@ -1929,9 +1950,7 @@ export default function HexMap({
             onCliqueDesenho?.({ lat, lng }, metrosPorPixel(view.zoom, lat))
           }
         }}
-        getCursor={({ isHovering }) =>
-          cliqueOcupado ? 'crosshair' : isHovering ? 'pointer' : 'grab'
-        }
+        getCursor={({ isHovering }) => cursorDaFerramenta(ferramentaAtiva, isHovering)}
       >
         {/* A `key` carrega DOIS motivos de remontagem, e os dois precisam estar nela.
             `capturando`: atributo de contexto WebGL não se troca num contexto já criado —

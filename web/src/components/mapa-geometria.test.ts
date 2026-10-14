@@ -104,6 +104,9 @@ describe('a área entra na comparação dos pontos', () => {
   })
 
   it('o Simulador só aparece ativo para quem tem a aba Viabilidade', () => {
-    expect(app).toContain("onAnalisarPonto={telaLiberada('viabilidade', abas) ? irParaViabilidade : undefined}")
+    // `simularDaFicha` = `irParaViabilidade` + a marca de que a ida saiu da ficha (é o que
+    // a faz reabrir na volta, e só nela — `janelaNaMontagem`).
+    expect(app).toContain("onAnalisarPonto={telaLiberada('viabilidade', abas) ? simularDaFicha : undefined}")
+    expect(app).toContain('reabrirFicha={fichaNoSimulador}')
   })
 })

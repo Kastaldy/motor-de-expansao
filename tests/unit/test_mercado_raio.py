@@ -145,6 +145,18 @@ def test_residual_nunca_fica_negativo() -> None:
     assert m["score_oportunidade_residual"] == 0.0
 
 
+def test_nota_de_fonte_do_pdf_escreve_o_piso_em_zero() -> None:
+    """O PDF imprime a conta do residual: sem o piso escrito, quando o consumo passa do SAM o
+    card mostra 0 e a conta da propria pagina daria negativo (revisao de 2026-10-14, Santana:
+    SAM 6.418, consumo 7.351, card 0)."""
+    fonte = (
+        Path(__file__).resolve().parents[2]
+        / "src" / "motor_expansao" / "dashboard" / "censo_report.py"
+    ).read_text(encoding="utf-8")
+    assert "residual = SAM - consumo, com piso em zero" in fonte
+    assert "residual = SAM - consumo)" not in fonte
+
+
 # --------------------------------------------------------------------------- #
 # (c) gate                                                                     #
 # --------------------------------------------------------------------------- #

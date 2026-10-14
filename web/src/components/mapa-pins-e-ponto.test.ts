@@ -119,13 +119,30 @@ describe('Selecionar ponto: o clique é da ferramenta, por cima de tudo', () => 
   it('o clique do DeckGL vira ponto ONDE caiu, com a coordenada em [lng, lat]', () => {
     expect(hexMap).toContain('const [lng, lat] = info.coordinate as number[]')
     expect(hexMap).toContain('onSelecionarPonto?.(lat, lng)')
-    expect(hexMap).toContain("cliqueOcupado ? 'crosshair'")
+    // O cursor sai da regra TESTADA (`cursorDaFerramenta`), não de uma cópia à mão dela.
+    expect(hexMap).toContain('cursorDaFerramenta(ferramentaAtiva, isHovering)')
+    expect(hexMap).not.toContain("cliqueOcupado ? 'crosshair'")
   })
 
   it('o MapScreen manda o clique pelo MESMO caminho da lupa e liga pela ferramenta única', () => {
     expect(mapScreen).toContain("selecionandoPonto={ferramenta === 'ponto'}")
-    expect(mapScreen).toContain('onSelecionarPonto={aplicarPonto}')
+    // `true` = pedido do próprio mapa: o pin não voa nem aproxima (ver `PontoPendente.doMapa`).
+    expect(mapScreen).toContain('onSelecionarPonto={(lat, lng) => aplicarPonto(lat, lng, true)}')
     expect(mapScreen).toContain("alternarFerramenta(f, 'ponto')")
+  })
+
+  it('pin de clique no mapa não voa: os dois voos automáticos respeitam `semVoo`', () => {
+    expect(hexMap).toContain('if (searchPin.semVoo) return')
+    expect(hexMap).toContain('if (searchPin?.semVoo) return')
+  })
+
+  it('com "Selecionar ponto", clicar num pin colorido abre aquele ponto (regra pura)', () => {
+    expect(hexMap).toContain('if (!pinDaComparacaoAbre(ferramentaAtiva)) return false')
+  })
+
+  it('escolher uma UNIDADE solta o ponto ativo, senão ele vence a precedência', () => {
+    expect(mapScreen).toContain('onSoltarPonto?.()')
+    expect(app).toContain('onSoltarPonto={soltarPonto}')
   })
 
   it('Esc desliga a ferramenta, antes da janela que estiver por cima', () => {

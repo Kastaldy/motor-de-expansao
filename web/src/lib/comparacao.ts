@@ -240,6 +240,18 @@ export function rotulosDosHexes(hexes: readonly Hex[]): string[] {
 }
 
 /**
+ * Os mesmos rotulos, partidos em nome + "#k" — o par de `rotulosPartidosDosPontos`.
+ *
+ * Existe porque a desambiguacao virou SUFIXO ("Jardim Paulista #2"; antes era o prefixo
+ * "2 · Jardim Paulista"), e a coluna de nome dos blocos corta com ellipsis no FIM: sem a
+ * forma partida, o "#k" era justamente o pedaco que sumia, e dois homonimos de nome longo
+ * voltavam a ficar iguais na tela.
+ */
+export function rotulosPartidosDosHexes(hexes: readonly Hex[]): RotuloPartido[] {
+  return rotulosPartidos(hexes.map(rotuloDoHex))
+}
+
+/**
  * Desambigua rotulos REPETIDOS, numerando so' quem empata.
  *
  * POR QUE E' GENERICO. A comparacao de PONTOS ja' resolvia isto (`rotulosDosPontos`, que

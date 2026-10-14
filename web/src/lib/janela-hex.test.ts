@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { janelaDoHexVisivel } from './janela-hex'
+import { degrauSobreFichaDePonto, janelaDoHexVisivel, pontoSeleciona } from './janela-hex'
 
 const HEX = '87a8100c5ffffff'
 const OUTRO = '87a8100c4ffffff'
@@ -46,5 +46,33 @@ describe('janelaDoHexVisivel', () => {
         janelaDoHexVisivel({ selecionado: HEX, hexDaBusca: null, selecaoDaBusca, modoCenario: true }),
       ).toBe(false)
     }
+  })
+})
+
+describe('degrauSobreFichaDePonto', () => {
+  it('com pontos na lista, a ficha do hexágono e o comparativo nascem em degrau', () => {
+    // A ficha de ponto ocupa a esquerda; mandar a do hexágono para a direita a punha em
+    // cima da do imóvel e da unidade.
+    expect(degrauSobreFichaDePonto(1)).toBe(1)
+    expect(degrauSobreFichaDePonto(5)).toBe(1)
+  })
+
+  it('sem pontos, a posição de sempre', () => {
+    expect(degrauSobreFichaDePonto(0)).toBe(0)
+  })
+})
+
+describe('pontoSeleciona', () => {
+  it('ponto NOVO depois da montagem sempre seleciona o hexágono dele', () => {
+    expect(pontoSeleciona({ pinDaMontagem: false, selecaoRestaurada: OUTRO, hexDoPonto: HEX })).toBe(true)
+  })
+
+  it('na volta da Viabilidade, a seleção restaurada de OUTRO hexágono fica (a ficha dele volta)', () => {
+    expect(pontoSeleciona({ pinDaMontagem: true, selecaoRestaurada: OUTRO, hexDoPonto: HEX })).toBe(false)
+  })
+
+  it('na volta, se a seleção restaurada era a do próprio ponto (ou nenhuma), religa', () => {
+    expect(pontoSeleciona({ pinDaMontagem: true, selecaoRestaurada: HEX, hexDoPonto: HEX })).toBe(true)
+    expect(pontoSeleciona({ pinDaMontagem: true, selecaoRestaurada: null, hexDoPonto: HEX })).toBe(true)
   })
 })

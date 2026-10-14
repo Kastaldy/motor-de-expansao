@@ -8,6 +8,8 @@ import type { EntradaClassificada } from '../lib/entrada-ponto'
 import { type BlocoParametro, type RotuloPartido, blocosPorParametro } from '../lib/comparacao'
 import {
   DIMENSOES_PONTO,
+  avisoDimensoesCortadas,
+  dimensoesDoComparativo,
   MAX_PONTOS,
   compararPontos,
   corDoPonto,
@@ -79,10 +81,14 @@ export default function PainelPontos({
      "Centro #2". A forma inteira (`rotulos`) segue para o ranking e o PDF. */
   const partidos = useMemo(() => rotulosPartidosDosPontos(fichas), [fichas])
 
+  /* Com área desenhada na lista, os TOTAIS (residual, população, concorrentes) saem dos
+     blocos: os recortes têm tamanhos diferentes e o maior venceria só por ser maior
+     (`dimensoesDoComparativo`). O aviso abaixo diz isso. */
   const blocos = useMemo(
-    () => blocosPorParametro(DIMENSOES_PONTO, fichas),
+    () => blocosPorParametro(dimensoesDoComparativo(fichas), fichas),
     [fichas],
   ) as BlocoParametro<unknown>[]
+  const avisoCorte = avisoDimensoesCortadas(fichas)
 
   /* O deck em PDF dos pontos. HÁ captura de mapa, sim — um enquadramento por endereço,
      no hexágono em que ele caiu e com o imóvel marcado. (Esta nota dizia o contrário: ela
@@ -394,6 +400,12 @@ export default function PainelPontos({
               }}
             >
               {erroRelatorio}
+            </p>
+          )}
+
+          {avisoCorte && (
+            <p style={{ font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-soft)', margin: 0 }}>
+              {avisoCorte}
             </p>
           )}
 

@@ -12,6 +12,7 @@ import {
   rotuloDoHex,
   rotulosDosHexes,
   rotulosPartidos,
+  rotulosPartidosDosHexes,
   rotulosUnicos,
 } from './comparacao'
 import type { Hex } from './types'
@@ -417,5 +418,23 @@ describe('rotuloDoHex — o mesmo nome do painel da direita', () => {
         hex({ bairro: 'Rio Abaixo', mun: 'Itaquaquecetuba' }),
       ]),
     ).toEqual(['Rio Abaixo #1', 'Rio Abaixo #2'])
+  })
+
+  it('a forma partida dos hexágonos separa o "#k" e concorda com a forma inteira', () => {
+    // Sem ela, a coluna do nome (ellipsis no fim) comia o "#k" de dois homônimos longos.
+    const hs = [
+      hex({ bairro: 'Jardim Paulista', mun: 'São Paulo' }),
+      hex({ bairro: 'Moema', mun: 'São Paulo' }),
+      hex({ bairro: 'Jardim Paulista', mun: 'São Paulo' }),
+    ]
+    const partidos = rotulosPartidosDosHexes(hs)
+    expect(partidos).toEqual([
+      { base: 'Jardim Paulista', sufixo: '#1' },
+      { base: 'Moema', sufixo: null },
+      { base: 'Jardim Paulista', sufixo: '#2' },
+    ])
+    expect(partidos.map((r) => (r.sufixo ? `${r.base} ${r.sufixo}` : r.base))).toEqual(
+      rotulosDosHexes(hs),
+    )
   })
 })

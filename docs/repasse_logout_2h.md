@@ -16,8 +16,9 @@ em produção é o Authelia**, e a configuração dele vive só na VPS
 código não muda nada para quem usa o piloto.
 
 `secrets/authelia.configuration.enc.yaml` é só **cópia de backup** cifrada (SOPS). Nenhum deploy a
-aplica — editá-la achando que resolve é falso positivo. Ela é atualizada **depois** (passo 6), senão
-um restore traz os 30 min de volta.
+aplica — editá-la achando que resolve é falso positivo. Ela é atualizada **depois** (seção
+"Depois: atualizar o backup cifrado", passos R1 e R2, após o passo 7b), senão um restore traz os
+30 min de volta.
 
 ## Antes de começar — leia
 
@@ -33,43 +34,76 @@ um restore traz os 30 min de volta.
 
 ## Passos (um comando por vez)
 
+Cada bloco abaixo tem **um** comando — é a unidade de cada confirmação do §6. Nenhum é encadeado
+com `&&` ou `;`.
+
 ```bash
 # 1. Entrar na pasta da aplicação
 cd /opt/motor-expansao/app/
+```
 
+```bash
 # 2. Conferir o valor atual (esperado: a linha `inactivity: 30m`, uma única ocorrência)
 grep -n 'inactivity:' authelia/configuration.yml
+```
 
-# 3. Backup datado da configuração viva
+```bash
+# 3. Backup datado da configuração viva (anote o nome do arquivo criado: o 5b e o
+#    restore usam a data dele)
 cp -p authelia/configuration.yml authelia/configuration.yml.bak-$(date +%Y%m%d-%H%M%S)
+```
 
+```bash
 # 4. Trocar 30m por 2h (só a chave `inactivity`; `expiration: 8h` e `remember_me: 8h` ficam)
 sed -i 's/^\(\s*inactivity:\s*\)30m\s*$/\12h/' authelia/configuration.yml
+```
 
-# 5. Conferir: tem de mostrar `inactivity: 2h`, e o diff contra o backup só essa linha
+```bash
+# 5a. Conferir: tem de mostrar `inactivity: 2h`, com `expiration: 8h` e `remember_me: 8h` intactos
 grep -n 'inactivity:\|expiration:\|remember_me:' authelia/configuration.yml
-diff authelia/configuration.yml.bak-<data-do-passo-3> authelia/configuration.yml
+```
 
+```bash
+# 5b. Conferir: o diff contra o backup do passo 3 mostra SÓ a linha do `inactivity`
+diff authelia/configuration.yml.bak-<data-do-passo-3> authelia/configuration.yml
+```
+
+```bash
 # 6. Reiniciar o Authelia (DESLOGA TODOS, BR + AR + dashboard.)
 docker compose -f docker-compose.prod.yml restart authelia
+```
 
-# 7. Conferir que subiu sem erro de configuração
+```bash
+# 7a. Conferir que o container está de pé (estado `running`/`healthy`, sem `restarting`)
 docker compose -f docker-compose.prod.yml ps authelia
+```
+
+```bash
+# 7b. Conferir que subiu sem erro de configuração (nenhuma linha `level=error`/`fatal`)
 docker compose -f docker-compose.prod.yml logs --tail=50 authelia
 ```
 
-**Se o passo 7 mostrar erro de configuração ou o container reiniciando:** restaurar o backup do
-passo 3 (`cp -p authelia/configuration.yml.bak-<data> authelia/configuration.yml`) e repetir o
-passo 6. Ninguém fica sem login por mais que o tempo de um restart.
+**Se o 7a ou o 7b mostrarem erro de configuração ou o container reiniciando:** restaurar o
+backup do passo 3 (`cp -p authelia/configuration.yml.bak-<data> authelia/configuration.yml`, um
+comando, com confirmação) e repetir o passo 6. Ninguém fica sem login por mais que o tempo de um
+restart.
 
 ## Depois: atualizar o backup cifrado
 
-Mesmo comando do `docs/backup_restore.md` (item 3 de "Comandos exatos por arquivo"); `sops -e` só
-precisa do recipient público do `.sops.yaml`:
+Mesmo procedimento do `docs/backup_restore.md` (item 3 de "Comandos exatos por arquivo"), em dois
+comandos separados; `sops -e` só precisa do recipient público do `.sops.yaml`:
 
 ```bash
-cp authelia/configuration.yml secrets/authelia.configuration.enc.yaml && sops -e -i secrets/authelia.configuration.enc.yaml
+# R1. Copiar a configuração viva para o caminho do backup (ainda EM CLARO; o R2 cifra no lugar)
+cp authelia/configuration.yml secrets/authelia.configuration.enc.yaml
 ```
+
+```bash
+# R2. Cifrar no lugar (esperado: o arquivo passa a ter o bloco `sops:` e nenhum valor legível)
+sops -e -i secrets/authelia.configuration.enc.yaml
+```
+
+Não pare entre o R1 e o R2: até o R2 rodar, o arquivo com nome de cifrado está em claro.
 
 Levar o `secrets/authelia.configuration.enc.yaml` novo para o repositório (commit + PR), como nos
 demais backups cifrados. Sem isso, um restore traz `inactivity: 30m` de volta.

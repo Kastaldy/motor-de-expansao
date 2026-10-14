@@ -6,7 +6,9 @@ import {
   DIMENSOES_PONTO,
   MAX_PONTOS,
   corDoPonto,
+  avisoDimensoesCortadas,
   compararPontos,
+  dimensoesDoComparativo,
   ehAreaDesenhada,
   indiceDaMesmaArea,
   indiceDoMesmoPonto,
@@ -494,5 +496,28 @@ describe('área desenhada na comparação', () => {
     expect(indiceDaMesmaArea([ponto], anel)).toBe(-1)
     expect(ehAreaDesenhada(area)).toBe(true)
     expect(ehAreaDesenhada(ponto)).toBe(false)
+  })
+
+  it('com área na lista, os TOTAIS saem da comparação; as intensivas ficam', () => {
+    // 25 km² contra 3,14 km²: comparar população/residual/concorrentes mediria o tamanho.
+    const chaves = dimensoesDoComparativo([ponto, area]).map((d) => d.chave)
+    expect(chaves).not.toContain('residual')
+    expect(chaves).not.toContain('populacao')
+    expect(chaves).not.toContain('concorrentes')
+    expect(chaves).toEqual(['renda_domiciliar', 'score', 'densidade'])
+    expect(avisoDimensoesCortadas([ponto, area])).toMatch(/tamanhos diferentes/)
+  })
+
+  it('só pontos com raio: todas as dimensões, sem aviso', () => {
+    expect(dimensoesDoComparativo([ponto, ponto])).toBe(DIMENSOES_PONTO)
+    expect(avisoDimensoesCortadas([ponto, ponto])).toBeNull()
+  })
+
+  it('o veredito de dois itens com área não fala de população nem de residual', () => {
+    const grande = { ...area, censo: { populacao: 400000 }, concorrencia: { n_concorrentes: 40 } } as unknown as PontoPayload
+    const pequeno = { ...ponto, censo: { populacao: 30000 }, concorrencia: { n_concorrentes: 3 } } as unknown as PontoPayload
+    const c = compararPontos(grande, pequeno, 'Área desenhada', 'Santana')
+    expect(c.frase).not.toMatch(/popula/i)
+    expect(c.frase).not.toMatch(/concorrente/i)
   })
 })

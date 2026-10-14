@@ -41,6 +41,8 @@ export const DICA_ESTUDO_GEOMETRIA = 'O PDF por área desenhada chega na próxim
 export const ROTULO_SIMULADOR = 'Simulador'
 export const DICA_SIMULADOR = 'Abre a tela de Viabilidade com a coordenada deste ponto.'
 export const DICA_SIMULADOR_VETADO = 'Sua conta não tem acesso à tela de Viabilidade.'
+export const DICA_SIMULADOR_AREA =
+  'Abre a tela de Viabilidade no ponto central da área. Lá o estudo é do raio de 1,0 km em volta desse ponto, não da área desenhada.'
 
 /**
  * O item aberto e' uma AREA DESENHADA (DEC-071), e nao um ponto com raio?
@@ -88,7 +90,10 @@ export function estadoDoEstudo(
  * callback de navegacao; sem esta trava o botao apareceria ativo e o clique morreria em
  * silencio (o `irParaViabilidade` do `App` retorna calado quando a aba e' vetada).
  */
-export function estadoDoSimulador(ficha: unknown | null, liberado: boolean): EstadoBotao {
+export function estadoDoSimulador(
+  ficha: Pick<PontoPayload, 'mercado' | 'geometria'> | null,
+  liberado: boolean,
+): EstadoBotao {
   if (!liberado) {
     return {
       habilitado: false,
@@ -97,5 +102,26 @@ export function estadoDoSimulador(ficha: unknown | null, liberado: boolean): Est
       travadoPorque: DICA_SIMULADOR_VETADO,
     }
   }
-  return { habilitado: ficha != null, rotulo: ROTULO_SIMULADOR, dica: DICA_SIMULADOR, travadoPorque: null }
+  /* A area desenhada VAI ao Simulador (decisao do dono: pelo ponto central), mas a dica
+     diz o que acontece la': a Viabilidade e o PDF dela sao do RAIO em volta desse ponto. */
+  const dica = ehAreaDesenhada(ficha) ? DICA_SIMULADOR_AREA : DICA_SIMULADOR
+  return { habilitado: ficha != null, rotulo: ROTULO_SIMULADOR, dica, travadoPorque: null }
+}
+
+/**
+ * O rotulo com que o item chega a' Viabilidade (breadcrumb, titulo do PDF e da planilha).
+ *
+ * Para a AREA DESENHADA ele diz "Ponto central da area desenhada": a Viabilidade so' sabe
+ * de coordenada, e o Relatorio Pontual que ela gera e' do RAIO de 1,0 km em volta do ponto
+ * central. Com o rotulo cru ("Area desenhada #2") sairia um PDF intitulado com o nome da
+ * area sobre um recorte que NAO e' a area -- o mesmo "PDF certo sobre o recorte errado" que
+ * travou o "Estudo" (DEC-071). Ponto com raio segue com o proprio rotulo.
+ */
+export function rotuloParaSimulador(
+  ficha: Pick<PontoPayload, 'mercado' | 'geometria'> | null,
+  rotulo: string,
+): string {
+  if (!ehAreaDesenhada(ficha)) return rotulo
+  const minusculo = rotulo.charAt(0).toLowerCase() + rotulo.slice(1)
+  return `Ponto central da ${minusculo}`
 }

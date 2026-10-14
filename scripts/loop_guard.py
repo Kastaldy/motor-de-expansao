@@ -178,8 +178,12 @@ _DENY_GOVERNANCA: list[tuple[str, str]] = [
     # CRITICO), mas tambem nao podem entrar via bloco "Media" auto-mergeavel sem olho humano.
     # `components.py`/`pages.py` ficam de FORA de proposito: sao display puro (cor, layout, widget) e
     # o auto-merge morre se todo ajuste visual virar falso-positivo.
+    # `mercado_raio` (DEC-070: SAM/consumo/residual/score do ponto nas TRES superficies) e
+    # `geometria_desenhada` (DEC-071: limites da area desenhada) entraram em 2026-10-14 --
+    # nasceram fora da lista e um PR "Media" que mexesse so' neles passaria limpo.
     (
-        r"^src/motor_expansao/dashboard/(data|utils|censo_point|censo_map|censo_report)\.py$",
+        r"^src/motor_expansao/dashboard/"
+        r"(data|utils|censo_point|censo_map|censo_report|mercado_raio|geometria_desenhada)\.py$",
         "camada que calcula/exibe os numeros do dashboard",
     ),
     (r"^src/motor_expansao/api/", "API/bot servidos em producao"),

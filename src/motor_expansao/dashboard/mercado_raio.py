@@ -37,6 +37,20 @@ recorte. Isso CONSERVA MASSA (unidade no centro de um raio de 1 km conta inteira
 conta zero) e e' o que elimina a dupla contagem: a Ultra entra pelo mesmo disco que as
 concorrentes, e nao por contagem num raio de 2 km.
 
+DIFERENCA DECLARADA: A BORDA DA MALHA (DEC-050). O pipeline RENORMALIZA o share de cada
+unidade pelo pedaco do disco que cai em hexagonos VALIDOS (`repartir_concorrentes` com
+`hex_ids_validos`): para uma academia na orla ou na fronteira, a fracao do disco que cai
+no mar (ou fora do pais) e' redistribuida para a terra, e 100% da capacidade fica nela.
+Este modulo NAO renormaliza: `fracao_do_disco` e' a fracao GEOMETRICA pura, e a parte do
+disco que cai fora da malha simplesmente nao consome nada. Efeito: num ponto perto da
+costa ou da fronteira, com unidade cujo disco sai da malha, o consumo do recorte fica
+ABAIXO do equivalente do pipeline e o residual, ACIMA. No interior os dois batem (medido
+na revisao de 2026-10-14: o hexagono do ponto e 3 vizinhos, com o poligono H3 como
+recorte, reproduzem `consumo_concorrentes_1km_area` ate' a 1a casa). A magnitude no
+litoral NAO foi medida; igualar exige saber quais pedacos do disco caem na malha valida,
+o que este modulo -- de proposito barato e sem a base H3 -- nao carrega. Medir num ponto
+de praia (Santos / Praia Grande) antes de decidir se vale trazer a renormalizacao.
+
 Gate: faixa M1 elegivel do HEXAGONO do ponto (a faixa e' do M1 e nao existe por raio) E
 `pop_area >= POP_MIN_SAM_GATE` -- a regua da DEC-007 com a populacao trocada pela do
 recorte. Reprovado, SAM = 0 com o motivo dito, igual ao pipeline (`flag_sam`).
@@ -170,6 +184,7 @@ def fracao_do_disco(
 
     E' o `share` do pipeline (`shares_por_hex`) com o hexagono trocado pelo recorte do
     ponto. Unidade no centro de um raio de 1 km -> 1,0; a 2 km -> 0,0; a 1 km -> a lente.
+    SEM a renormalizacao de borda da DEC-050 (ver "DIFERENCA DECLARADA" no topo do modulo).
     """
     disco = Point(float(x), float(y)).buffer(raio_influencia_m, quad_segs=QUAD_SEGS)
     if not disco.intersects(area):

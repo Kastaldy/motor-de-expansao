@@ -368,6 +368,41 @@ export function pinsDaComparacao(
   }))
 }
 
+/**
+ * As dimensoes que sao TOTAIS do recorte (crescem com o tamanho dele): residual, populacao
+ * e numero de concorrentes. Renda, score e densidade sao intensivas — nao dependem da area.
+ */
+export const CHAVES_ABSOLUTAS: readonly string[] = Object.freeze(['residual', 'populacao', 'concorrentes'])
+
+/**
+ * As dimensoes que podem ser COMPARADAS entre os itens desta lista.
+ *
+ * Com uma AREA DESENHADA na lista (DEC-071) os recortes tem tamanhos diferentes — ate'
+ * 25 km² contra os 3,14 km² do raio de 1 km —, e comparar TOTAIS entre eles mede o tamanho
+ * do recorte, nao a praca: a area quase sempre "venceria" em populacao e residual (e
+ * "perderia" em concorrentes) so' por ser maior. Essas dimensoes saem dos blocos e do
+ * veredito; renda, score e densidade, que nao dependem da area, ficam. Os totais de cada
+ * item continuam na ficha dele.
+ */
+export function dimensoesDoComparativo(
+  fichas: readonly Pick<PontoPayload, 'geometria'>[],
+): readonly Dimensao<PontoPayload>[] {
+  if (!fichas.some((f) => ehAreaDesenhada(f))) return DIMENSOES_PONTO
+  return DIMENSOES_PONTO.filter((d) => !CHAVES_ABSOLUTAS.includes(d.chave))
+}
+
+/** O aviso escrito do corte acima — `null` quando nada foi cortado. */
+export function avisoDimensoesCortadas(
+  fichas: readonly Pick<PontoPayload, 'geometria'>[],
+): string | null {
+  if (!fichas.some((f) => ehAreaDesenhada(f))) return null
+  return (
+    'Com área desenhada na lista, residual, população e concorrentes não entram na ' +
+    'comparação: são totais de recortes de tamanhos diferentes, e o maior venceria só por ' +
+    'ser maior. Os números de cada um continuam na ficha dele.'
+  )
+}
+
 export function compararPontos(
   a: PontoPayload,
   b: PontoPayload,
@@ -378,7 +413,8 @@ export function compararPontos(
   rotuloB?: string,
 ): Comparacao<PontoPayload> {
   return compararDimensoesComFrase(
-    DIMENSOES_PONTO,
+    // Sem os totais quando um dos dois e' area desenhada (`dimensoesDoComparativo`).
+    dimensoesDoComparativo([a, b]),
     a,
     b,
     rotuloA ?? rotuloDoPonto(a),

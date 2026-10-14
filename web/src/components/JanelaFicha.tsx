@@ -61,6 +61,7 @@ export default function JanelaFicha({
      do mesmo lado. À direita elas nasciam sobre o painel de ranking do Explorar, que é
      justamente o que se lê junto com a ficha. */
   ancora = 'esquerda',
+  degrau = 0,
   rodape,
   children,
 }: {
@@ -70,6 +71,12 @@ export default function JanelaFicha({
   onFechar: () => void
   /** De que lado a janela nasce. Duas na mesma tela precisam de lados distintos. */
   ancora?: Ancora
+  /**
+   * Cascata sobre outra janela do MESMO lado (`geometriaPadrao`): 0 = a posição de sempre,
+   * 1 = deslocada uma barra de título para baixo e um recuo para dentro. Só vale para a
+   * posição de NASCENÇA — depois que o operador arrasta, quem manda é ele.
+   */
+  degrau?: number
   /**
    * Quanto a janela sobe do pe' da tela na posicao INICIAL. Existe porque o stepper do
    * funil ocupa a largura toda: com o recuo padrao a janela nasceria cobrindo os botoes
@@ -114,7 +121,8 @@ export default function JanelaFicha({
   }, [area])
 
   const atual =
-    geo ?? (area.largura ? geometriaPadrao(area, TOPO_PADRAO, recuoInferior, ancora) : null)
+    geo ??
+    (area.largura ? geometriaPadrao(area, TOPO_PADRAO, recuoInferior, ancora, degrau) : null)
 
   /** Identidade estável desta instância na pilha de janelas abertas. */
   const idJanela = useRef(Symbol('janela'))

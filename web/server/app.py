@@ -6802,7 +6802,19 @@ def _payload_ponto(lat: float, lng: float, *, desenho: Any = None) -> dict[str, 
         # A densidade VÁLIDA divide pela área de setor realmente intersectada, e não
         # por pi*r^2: num ponto com rio/mar no raio, a fixa subestima de propósito.
         "densidade_hab_km2": _num(res.get("densidade_pop_raio_valida_hab_km2")),
-        "score_socioeconomico": _num(res.get("score_setor_2022_calibrado_ponto"), 1),
+        # No PONTO, a nota e' a do setor que contem a coordenada que o operador escolheu.
+        # Na AREA DESENHADA (DEC-071) nao: a coordenada e' o `representative_point` do
+        # poligono, um lugar que ninguem clicou, e a nota do setor dele nao e' a da area
+        # (medido na revisao de 2026-10-14: o mesmo disco de 1 km desenhado como poligono
+        # dava 98,2 contra 95,6 do raio, so' porque o ponto interno andou ~65 m). Ali vale
+        # a MEDIA dos setores do poligono ponderada pela populacao intersectada (area,
+        # onde nao ha populacao) -- `score_setor_medio`, que o motor ja' calculava.
+        "score_socioeconomico": _num(
+            res.get("score_setor_medio")
+            if desenho is not None
+            else res.get("score_setor_2022_calibrado_ponto"),
+            1,
+        ),
         "n_setores": _num(res.get("n_setores")),
         "detalhe": detalhe_censo,
     }

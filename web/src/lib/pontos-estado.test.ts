@@ -9,10 +9,13 @@ import {
   chaveDoAtivo,
   chegou,
   decidirPedido,
+  erroFlutuanteVisivel,
   falhou,
   itemAtivo,
+  janelaNaMontagem,
   limpar,
   mostrar,
+  movimentoDoMapa,
   pedir,
   pinParaAtivo,
   pinsDoEstado,
@@ -188,7 +191,7 @@ describe('itemAtivo — a regra única de precedência do pin', () => {
 })
 
 describe('pinParaAtivo — identidade do pin', () => {
-  const ativo = { lat: A.lat, lng: A.lng, hexId: 'h', territorio: null }
+  const ativo = { lat: A.lat, lng: A.lng, hexId: 'h', territorio: null, doMapa: false }
 
   it('mesmo lugar e mesmo território: devolve o MESMO objeto (sem segundo voo)', () => {
     const atual = { lat: A.lat, lng: A.lng, hexId: 'h' }
@@ -346,5 +349,155 @@ describe('mostrar (clique no pin colorido)', () => {
   it('índice fora da lista não muda nada', () => {
     const e = lido(PONTOS_VAZIO, A)
     expect(mostrar(e, 3)).toBe(e)
+  })
+})
+
+/* ---------------- O mapa volta ao ponto escolhido ---------------- */
+
+describe('foco — escolher o ponto ABERTO de novo o traz de volta ao mapa', () => {
+  it('abrir a aba que já está aberta sobe o `foco` (antes devolvia o mesmo estado)', () => {
+    const e = lido(lido(PONTOS_VAZIO, A), B) // aberto = 1
+    const d = abrir(e, 1)
+    expect(d.aberto).toBe(1)
+    expect(d.foco).toBe(e.foco + 1)
+  })
+
+  it('mostrar (pin colorido) e pedido repetido também sobem o `foco`', () => {
+    const e = lido(lido(PONTOS_VAZIO, A), B)
+    expect(mostrar(e, 1).foco).toBe(e.foco + 1)
+    expect(pedir(e, A.lat, A.lng).foco).toBe(e.foco + 1)
+  })
+
+  it('pedido NOVO e leitura que chega não sobem o `foco` (quem move o mapa ali é a chave)', () => {
+    const e = lido(PONTOS_VAZIO, A)
+    const p = pedir(e, B.lat, B.lng)
+    expect(p.foco).toBe(e.foco)
+    expect(chegou(p, B, ficha(B.lat, B.lng)).foco).toBe(e.foco)
+  })
+
+  it('limpar não volta o `foco` atrás (é contador de eventos)', () => {
+    const e = abrir(lido(PONTOS_VAZIO, A), 0)
+    expect(limpar(e).foco).toBe(e.foco)
+  })
+})
+
+describe('abaFixada — o clique do operador vence um pedido ainda em leitura', () => {
+  it('com um pendente, escolher uma aba passa o ativo para ela (o mapa se mexe)', () => {
+    const e = pedir(lido(lido(PONTOS_VAZIO, A), B), C.lat, C.lng)
+    expect(itemAtivo(e)!.lat).toBe(C.lat) // o pendente vence...
+    const d = abrir(e, 0)
+    expect(itemAtivo(d)!.lat).toBe(A.lat) // ...até o operador escolher uma aba
+    expect(pinsDoEstado(d).map((p) => p.ativo)).toEqual([true, false, false])
+  })
+
+  it('a leitura que chega depois NÃO rouba a aba escolhida — mas a ficha entra na lista', () => {
+    const e = abrir(pedir(lido(lido(PONTOS_VAZIO, A), B), C.lat, C.lng), 0)
+    const d = chegou(e, C, ficha(C.lat, C.lng))
+    expect(d.fichas).toHaveLength(3)
+    expect(d.aberto).toBe(0)
+    expect(d.pendentes).toEqual([])
+    // Nem reabre a janela à força.
+    expect(d.revelar).toBe(e.revelar)
+    expect(chaveDoAtivo(itemAtivo(d))).toBe(chaveDoAtivo(itemAtivo(e)))
+  })
+
+  it('um pedido NOVO devolve a precedência ao pendente', () => {
+    const e = abrir(lido(lido(PONTOS_VAZIO, A), B), 0)
+    const d = pedir(e, C.lat, C.lng)
+    expect(d.abaFixada).toBe(false)
+    expect(itemAtivo(d)!.lat).toBe(C.lat)
+  })
+})
+
+describe('doMapa — o pin do "Selecionar ponto" não voa', () => {
+  it('o pedido marcado leva a marca ao ativo e ao pin', () => {
+    const e = pedir(PONTOS_VAZIO, A.lat, A.lng, null, true)
+    expect(e.pendentes).toEqual([{ lat: A.lat, lng: A.lng, doMapa: true }])
+    const a = itemAtivo(e)!
+    expect(a.doMapa).toBe(true)
+    expect(pinParaAtivo(null, a, false)).toEqual({ lat: A.lat, lng: A.lng, hexId: a.hexId, semVoo: true })
+  })
+
+  it('a lupa e a caixa de colar seguem voando (sem marca)', () => {
+    const a = itemAtivo(pedir(PONTOS_VAZIO, A.lat, A.lng))!
+    expect(a.doMapa).toBe(false)
+    expect(pinParaAtivo(null, a, false).semVoo).toBeUndefined()
+  })
+
+  it('o pin novo da troca de município HERDA o `semVoo` do clique no mesmo lugar', () => {
+    const p = pedir(PONTOS_VAZIO, A.lat, A.lng, null, true)
+    const pin = pinParaAtivo(null, itemAtivo(p)!, false)
+    const f = chegou(p, A, ficha(A.lat, A.lng, { uf: 'RJ', municipio: 'Rio de Janeiro' }))
+    const novo = pinParaAtivo(pin, itemAtivo(f)!, true)
+    expect(novo).not.toBe(pin)
+    expect(novo.semVoo).toBe(true)
+  })
+
+  it('`forcar` (o operador escolheu o item) sempre dá pin NOVO e com voo', () => {
+    const atual = { lat: A.lat, lng: A.lng, hexId: 'h', semVoo: true }
+    const ativo = { lat: A.lat, lng: A.lng, hexId: 'h', territorio: null, doMapa: false }
+    const novo = pinParaAtivo(atual, ativo, false, true)
+    expect(novo).not.toBe(atual)
+    expect(novo.semVoo).toBeUndefined()
+  })
+})
+
+describe('movimentoDoMapa — quando o efeito do App mexe no mapa', () => {
+  const k1 = '-23.48516,-46.61771|?'
+  const k1Lido = '-23.48516,-46.61771|SP/São Paulo'
+  const k2 = '-23.5613,-46.6565|SP/São Paulo'
+
+  it('mesma chave e mesmo foco: nada', () => {
+    expect(movimentoDoMapa({ chave: k2, foco: 3 }, { chave: k2, foco: 3 }, false)).toBe('nenhum')
+  })
+
+  it('foco subiu: focar, MESMO com a chave igual e com o ponto solto', () => {
+    expect(movimentoDoMapa({ chave: k2, foco: 3 }, { chave: k2, foco: 4 }, false)).toBe('focar')
+    expect(movimentoDoMapa({ chave: k2, foco: 3 }, { chave: k2, foco: 4 }, true)).toBe('focar')
+  })
+
+  it('chave nova: seguir', () => {
+    expect(movimentoDoMapa({ chave: k1Lido, foco: 0 }, { chave: k2, foco: 0 }, false)).toBe('seguir')
+    expect(movimentoDoMapa({ chave: null, foco: 0 }, { chave: k1, foco: 0 }, false)).toBe('seguir')
+  })
+
+  it('ponto SOLTO (o operador navegou à mão) e a leitura em voo chegou: não desfaz a navegação', () => {
+    expect(movimentoDoMapa({ chave: k1, foco: 0 }, { chave: k1Lido, foco: 0 }, true)).toBe('nenhum')
+    // Sem ter soltado, a mesma chegada leva o mapa ao município do ponto.
+    expect(movimentoDoMapa({ chave: k1, foco: 0 }, { chave: k1Lido, foco: 0 }, false)).toBe('seguir')
+  })
+
+  it('ponto solto e um pedido NOVO: segue (o pedido devolve o comando)', () => {
+    expect(movimentoDoMapa({ chave: k1Lido, foco: 0 }, { chave: k2, foco: 0 }, true)).toBe('seguir')
+  })
+
+  it('a lista esvaziou: seguir (o App apaga o pin); vazia antes e depois: nada', () => {
+    expect(movimentoDoMapa({ chave: k2, foco: 0 }, { chave: null, foco: 0 }, false)).toBe('seguir')
+    expect(movimentoDoMapa({ chave: null, foco: 0 }, { chave: null, foco: 0 }, false)).toBe('nenhum')
+  })
+})
+
+describe('janelaNaMontagem / erroFlutuanteVisivel', () => {
+  it('a ficha reabre sozinha SÓ na volta do Simulador, e só com ponto na lista', () => {
+    expect(janelaNaMontagem(true, 2)).toBe(true)
+    expect(janelaNaMontagem(false, 2)).toBe(false) // Executiva, ranking, imóveis
+    expect(janelaNaMontagem(true, 0)).toBe(false)
+  })
+
+  it('com fichas e a caixa fechada, o erro (6o ponto, clique no mar) aparece flutuando', () => {
+    expect(erroFlutuanteVisivel({ nFichas: 5, caixaAberta: false, carregando: false, erro: 'Máximo' })).toBe(true)
+  })
+
+  it('sem ficha (Explorar antes do 1o ponto) também', () => {
+    expect(erroFlutuanteVisivel({ nFichas: 0, caixaAberta: true, carregando: false, erro: 'x' })).toBe(true)
+  })
+
+  it('com ficha e a caixa de colar aberta, o erro fica na caixa (sem duplicar)', () => {
+    expect(erroFlutuanteVisivel({ nFichas: 2, caixaAberta: true, carregando: false, erro: 'x' })).toBe(false)
+  })
+
+  it('durante a leitura, ou sem erro, nada', () => {
+    expect(erroFlutuanteVisivel({ nFichas: 2, caixaAberta: false, carregando: true, erro: 'x' })).toBe(false)
+    expect(erroFlutuanteVisivel({ nFichas: 2, caixaAberta: false, carregando: false, erro: null })).toBe(false)
   })
 })

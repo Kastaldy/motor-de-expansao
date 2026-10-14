@@ -30,7 +30,13 @@ import type { AlvoCaptura } from '../lib/captura-mapa'
 import { classificarEntrada, linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
 import { alunos, num } from '../lib/format'
 import { leituraDoMercado } from '../lib/mercado-ponto'
-import { estadoDoEstudo, estadoDoSimulador, type EstadoBotao } from '../lib/rodape-ponto'
+import {
+  estadoDoEstudo,
+  estadoDoSimulador,
+  rotuloParaSimulador,
+  type EstadoBotao,
+} from '../lib/rodape-ponto'
+import { erroFlutuanteVisivel, janelaNaMontagem } from '../lib/pontos-estado'
 import type { BlocoOpcional, PontoPayload } from '../lib/types'
 
 /**
@@ -88,10 +94,17 @@ export default function PontoScreen({
   onLimpar,
   onLimparErro,
   comHero = true,
+  reabrirFicha = false,
   textoInicial,
   onTextoAplicado,
   onInicio,
 }: {
+  /**
+   * A tela está sendo MONTADA na volta do Simulador aberto por esta ficha: a janela nasce
+   * aberta. Lida só na montagem (`janelaNaMontagem`); quem decide é o `App`, o único que
+   * sabe de onde a navegação veio.
+   */
+  reabrirFicha?: boolean
   /**
    * Leva ESTE ponto para a tela de Viabilidade — o botão "Simulador".
    *
@@ -185,10 +198,13 @@ export default function PontoScreen({
    * saber se ele serve, e cobrar um clique a mais pela resposta seria burocracia. Depois
    * disso quem manda e' ele — fechou, o mapa fica limpo ate' pedir de novo.
    *
-   * Nasce ABERTA quando ja' ha' pontos: e' a volta do Simulador, e quem foi simular um
-   * dos pontos volta para a analise que deixou, nao para um botao "Ver a ficha".
+   * Nasce ABERTA SO' na volta do Simulador (`reabrirFicha`): quem foi simular um dos
+   * pontos volta para a analise que deixou, nao para um botao "Ver a ficha". Qualquer
+   * outra remontagem com pontos na lista (Executiva e de volta pelo Dock, ranking
+   * nacional, aba de imoveis) nasce FECHADA — nesses caminhos o operador fechou a ficha
+   * ou foi a outro destino, e reabri-la sozinha cobriria a ficha do destino.
    */
-  const [janela, setJanela] = useState(() => fichas.length > 0)
+  const [janela, setJanela] = useState(() => janelaNaMontagem(reabrirFicha, fichas.length))
 
   const ficha = fichas[aberto] ?? null
   /* Os mesmos rótulos que o painel de abas usa — desambiguados entre si ("Centro #1",
@@ -261,8 +277,10 @@ export default function PontoScreen({
         mun: local.municipio,
         cres_hex_taxa: null, cres_hex_classe: null,
       },
-      // O MESMO rótulo das abas: dois "Centro" chegam à Viabilidade como "#1" e "#2".
-      rotulo: rotuloAberto,
+      /* O MESMO rótulo das abas: dois "Centro" chegam à Viabilidade como "#1" e "#2". A
+         área desenhada chega como "Ponto central da área desenhada": lá o estudo (e o PDF)
+         é do RAIO em volta desse ponto, e o nome da área no título mentiria o recorte. */
+      rotulo: rotuloParaSimulador(ficha, rotuloAberto),
       municipio: local.municipio ?? '',
       uf: local.uf,
       lat: ficha.lat,
@@ -487,10 +505,18 @@ export default function PontoScreen({
           </Glass>
         )}
 
-        {/* Erro de leitura SEM ficha na tela e sem hero (o Explorar antes do 1o ponto): não
-            há caixa de colar onde ele apareceria, e uma busca que falha calada se lê como
-            botão que não responde. Com ficha ou com hero, o erro sai no `CampoPonto`. */}
-        {semMapa && !carregando && erro && (
+        {/* Erro de leitura FORA da caixa de colar — a regra é de `erroFlutuanteVisivel`.
+            Vale sem ficha (o Explorar antes do 1o ponto, sem caixa onde ele apareceria) E
+            com fichas: o 6o ponto, o clique no mar e a área recusada chegam pela lupa, pelo
+            "Selecionar ponto" ou pelo "Analisar geometria", e o `CampoPonto` de dentro da
+            janela só existe com "+ Adicionar" aberto. Sem este aviso o pin provisório
+            sumia e nada dizia por quê. */}
+        {erroFlutuanteVisivel({
+          nFichas: fichas.length,
+          caixaAberta: mostrandoCaixa,
+          carregando,
+          erro,
+        }) && (
           <Glass
             style={{
               pointerEvents: 'auto',

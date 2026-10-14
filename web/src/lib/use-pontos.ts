@@ -44,9 +44,13 @@ export function usePontos() {
 
   const [erro, setErro] = useState<string | null>(null)
 
-  /** Pede a análise de uma coordenada já resolvida. Nunca rejeita: o erro vai para `erro`. */
+  /**
+   * Pede a análise de uma coordenada já resolvida. Nunca rejeita: o erro vai para `erro`.
+   * `doMapa`: o pedido veio de um clique no próprio mapa ("Selecionar ponto") — o pin não
+   * voa nem aproxima a câmera (ver `PontoPendente.doMapa`).
+   */
   const analisar = useCallback(
-    async (lat: number, lng: number) => {
+    async (lat: number, lng: number, opcoes?: { doMapa?: boolean }) => {
       const decisao = decidirPedido(ref.current, lat, lng)
       setErro(null)
       /* TETO CHEIO: recusa e DIZ, antes de gastar a leitura. Engolir o ponto em silêncio
@@ -55,7 +59,7 @@ export function usePontos() {
         setErro(`Máximo de ${MAX_PONTOS} pontos na comparação. Remova um para analisar outro.`)
         return
       }
-      aplicar((e) => pedir(e, lat, lng))
+      aplicar((e) => pedir(e, lat, lng, null, opcoes?.doMapa === true))
       if (decisao.tipo !== 'ler') return
       const pedido = { lat, lng }
       try {
@@ -120,6 +124,8 @@ export function usePontos() {
     fichas: estado.fichas,
     aberto: estado.aberto,
     revelar: estado.revelar,
+    /** Sobe quando o operador escolhe um item — o mapa vai até ele (`movimentoDoMapa`). */
+    foco: estado.foco,
     /** Há leitura em voo — o "Lendo os setores…" da tela. */
     carregando: estado.pendentes.length > 0,
     erro,

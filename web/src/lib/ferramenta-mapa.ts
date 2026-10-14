@@ -43,3 +43,33 @@ export function cursorDaFerramenta(f: FerramentaMapa, hovering: boolean): string
   if (f !== 'nenhuma') return 'crosshair'
   return hovering ? 'pointer' : 'grab'
 }
+
+/**
+ * A ferramenta ligada, a partir das três chaves que o `HexMap` recebe (`medindo`,
+ * `selecionandoPonto`, `desenhando`). O `MapScreen` só liga uma por vez (`alternarFerramenta`),
+ * mas o mapa recebe booleanos — é aqui que eles voltam a ser o estado único que as regras
+ * acima esperam, em vez de cada regra ser refeita à mão sobre os booleanos.
+ */
+export function ferramentaDasChaves(c: {
+  medindo: boolean
+  selecionandoPonto: boolean
+  desenhando: boolean
+}): FerramentaMapa {
+  if (c.medindo) return 'regua'
+  if (c.selecionandoPonto) return 'ponto'
+  if (c.desenhando) return 'geometria'
+  return 'nenhuma'
+}
+
+/**
+ * O clique num PIN COLORIDO da comparação abre a análise daquele ponto?
+ *
+ * Sem ferramenta, sim. Com "Selecionar ponto" ligado, TAMBÉM: o pin tem raio de 10-13 px e
+ * o clique quase nunca cai na mesma chave de ~1 m da coordenada dele, então repassá-lo ao
+ * mapa criava um SEGUNDO ponto a poucos metros do primeiro — um quase duplicado ocupando
+ * uma das cinco vagas. Quem clica em cima de um ponto já marcado quer aquele ponto.
+ * Com a régua ou o desenho, não: ali o pin é só um lugar do mapa (a régua imanta nele).
+ */
+export function pinDaComparacaoAbre(f: FerramentaMapa): boolean {
+  return f === 'nenhuma' || f === 'ponto'
+}
