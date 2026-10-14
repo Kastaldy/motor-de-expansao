@@ -581,6 +581,25 @@ export const api = {
     pedir<PontoPayload>(`/api/ponto?lat=${lat}&lng=${lng}`, {}, 30_000),
 
   /**
+   * Ficha de uma ÁREA DESENHADA no mapa ("Analisar geometria", DEC-070 fase 1): o mesmo
+   * payload do `ponto`, com o polígono no lugar do raio de 1,0 km.
+   *
+   * POST com o polígono no CORPO, e não na URL: 50 vértices em query string estourariam o
+   * limite de cabeçalho (o HTTP 431 que o relatório já conheceu). Validação de verdade é do
+   * servidor (400 com a mensagem em português, que vira `ApiError.message`).
+   */
+  pontoGeometria: (geometria: { type: 'Polygon'; coordinates: [number, number][][] }) =>
+    pedir<PontoPayload>(
+      '/api/ponto/geometria',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ geometria }),
+      },
+      30_000,
+    ),
+
+  /**
    * Texto colado -> coordenada. Só é chamada quando o front NÃO resolveu sozinho
    * (`lib/entrada-ponto`): link curto do celular, link de place sem coordenada, ou
    * endereço escrito. Pode fazer requisição externa (expandir redirect + geocode),

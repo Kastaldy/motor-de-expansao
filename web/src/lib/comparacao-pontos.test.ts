@@ -7,8 +7,12 @@ import {
   MAX_PONTOS,
   corDoPonto,
   compararPontos,
+  ehAreaDesenhada,
+  indiceDaMesmaArea,
   indiceDoMesmoPonto,
+  motivoSemPdfDeComparacao,
   passaNoEstudo,
+  rotuloDoRecorte,
   resumoDoEstudo,
   rotuloDoPonto,
   pinsDaComparacao,
@@ -306,7 +310,7 @@ describe('compararPontos', () => {
     expect(c.frase).toContain('mais residual disponível')
     expect(c.frase).toContain('menos concorrentes')
     expect(c.frase).toContain('porém')
-    expect(c.frase).toContain('menos população no raio')
+    expect(c.frase).toContain('menos população que')
   })
 
   it('respeita o teto de 3 dimensoes na frase', () => {
@@ -446,5 +450,49 @@ describe('subtituloDoDeckDePontos', () => {
   it('um ponto so, e a lista vazia, seguem legiveis', () => {
     expect(subtituloDoDeckDePontos([ponto({ municipio: 'Posse' })])).toBe('Posse - 1 pontos')
     expect(subtituloDoDeckDePontos([])).toBe('0 pontos')
+  })
+})
+
+/* ---------------- Área desenhada (DEC-070) ---------------- */
+describe('área desenhada na comparação', () => {
+  const anel: [number, number][][] = [[[-46.63, -23.55], [-46.62, -23.55], [-46.62, -23.54], [-46.63, -23.55]]]
+  const area = {
+    lat: -23.546, lng: -46.624, raio_km: null, hex_id: 'x',
+    local: { uf: 'SP', municipio: 'São Paulo', bairro: 'Santana', unidade_tipo: null },
+    geometria: anel,
+    recorte: { tipo: 'poligono', area_km2: 2.4, n_vertices: 3, metodo: 'x' },
+    mercado: { disponivel: true, sam: 1, residual: 1, score_residual: 1, grao: 'geometria', area_km2: 2.4 },
+  } as unknown as PontoPayload
+  const ponto = {
+    lat: -23.546, lng: -46.624, raio_km: 1, hex_id: 'x',
+    local: { uf: 'SP', municipio: 'São Paulo', bairro: 'Santana', unidade_tipo: null },
+    mercado: { disponivel: true, sam: 1, residual: 1, score_residual: 1 },
+  } as unknown as PontoPayload
+
+  it('chama-se "Área desenhada", e não pelo bairro do ponto interno', () => {
+    expect(rotuloDoPonto(area)).toBe('Área desenhada')
+    expect(rotulosDosPontos([area, area])).toEqual(['Área desenhada #1', 'Área desenhada #2'])
+  })
+
+  it('o recorte em texto: área com km², ponto com metros', () => {
+    expect(rotuloDoRecorte(area)).toBe('área desenhada de 2,40 km²')
+    expect(rotuloDoRecorte(ponto)).toBe('raio de 1.000 m')
+  })
+
+  it('buscar a coordenada do ponto interno NÃO abre a área', () => {
+    expect(indiceDoMesmoPonto([area], area.lat, area.lng)).toBe(-1)
+    expect(indiceDoMesmoPonto([area, ponto], ponto.lat, ponto.lng)).toBe(1)
+  })
+
+  it('o PDF de comparação recusa lista com área, dizendo por quê', () => {
+    expect(motivoSemPdfDeComparacao([ponto, ponto])).toBeNull()
+    expect(motivoSemPdfDeComparacao([ponto, area])).toMatch(/próxima fase/)
+  })
+
+  it('a mesma área casa pelos vértices; o ponto nunca casa como área', () => {
+    expect(indiceDaMesmaArea([ponto, area], anel)).toBe(1)
+    expect(indiceDaMesmaArea([ponto], anel)).toBe(-1)
+    expect(ehAreaDesenhada(area)).toBe(true)
+    expect(ehAreaDesenhada(ponto)).toBe(false)
   })
 })

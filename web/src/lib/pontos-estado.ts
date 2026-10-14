@@ -26,18 +26,30 @@ import { latLngToCell } from 'h3-js'
 
 import {
   MAX_PONTOS,
+  ROTULO_AREA_DESENHADA,
+  chaveDaArea,
   chaveDaCoordenada,
+  indiceDaMesmaArea,
   indiceDoMesmoPonto,
   pinsDaComparacao,
   rotulosDosPontos,
   type PinDaComparacao,
+  type PosicaoGeoJson,
 } from './comparacao-pontos'
 import type { PontoPayload } from './types'
 
-/** Uma coordenada pedida ao `/api/ponto` e ainda não respondida. */
+/**
+ * Um pedido ainda não respondido: uma coordenada ao `/api/ponto` ou uma ÁREA DESENHADA ao
+ * `/api/ponto/geometria` (DEC-070).
+ *
+ * Na área, `lat`/`lng` é um ponto DENTRO do polígono calculado na tela (`pontoInterno`):
+ * é onde o pin provisório aparece até o servidor devolver o `representative_point` dele.
+ */
 export interface PontoPendente {
   lat: number
   lng: number
+  /** Os anéis do polígono (`[lng, lat]`) — só no pedido de área desenhada. */
+  geometria?: PosicaoGeoJson[][] | null
 }
 
 export interface EstadoPontos {
@@ -76,27 +88,51 @@ export type DecisaoPedido =
   /** Ponto novo, com vaga: ler. */
   | { tipo: 'ler' }
 
-const mesmaCoordenada = (a: PontoPendente, b: PontoPendente) =>
-  chaveDaCoordenada(a.lat, a.lng) === chaveDaCoordenada(b.lat, b.lng)
+/**
+ * A identidade de um pedido: a coordenada, para ponto; os vértices, para área. Área e
+ * ponto nunca se confundem — o `lat`/`lng` da área é um ponto interno que ninguém clicou.
+ */
+const chaveDoPedido = (p: PontoPendente) =>
+  p.geometria?.length ? chaveDaArea(p.geometria) : `ponto:${chaveDaCoordenada(p.lat, p.lng)}`
+
+const mesmoPedido = (a: PontoPendente, b: PontoPendente) => chaveDoPedido(a) === chaveDoPedido(b)
 
 /**
  * Decide o pedido. O teto conta os PENDENTES também: com quatro fichas e um em leitura, um
  * sexto pedido seria aceito e descartado quando chegasse — uma leitura de servidor jogada
  * fora e um ponto que some sem aviso.
  */
-export function decidirPedido(e: EstadoPontos, lat: number, lng: number): DecisaoPedido {
-  const repetido = indiceDoMesmoPonto(e.fichas, lat, lng)
+export function decidirPedido(
+  e: EstadoPontos,
+  lat: number,
+  lng: number,
+  geometria?: PosicaoGeoJson[][] | null,
+): DecisaoPedido {
+  const pedido: PontoPendente = { lat, lng, geometria: geometria ?? null }
+  const repetido = geometria?.length
+    ? indiceDaMesmaArea(e.fichas, geometria)
+    : indiceDoMesmoPonto(e.fichas, lat, lng)
   if (repetido >= 0) return { tipo: 'repetido', indice: repetido }
-  if (e.pendentes.some((p) => mesmaCoordenada(p, { lat, lng }))) return { tipo: 'esperando' }
+  if (e.pendentes.some((p) => mesmoPedido(p, pedido))) return { tipo: 'esperando' }
+  /* A área desenhada OCUPA UMA VAGA como qualquer ponto: ela entra na mesma comparação,
+     com uma das cinco cores de identidade. */
   if (e.fichas.length + e.pendentes.length >= MAX_PONTOS) return { tipo: 'cheio' }
   return { tipo: 'ler' }
 }
 
 /** Aplica um pedido ao estado. `cheio` e `esperando` não mudam nada. */
-export function pedir(e: EstadoPontos, lat: number, lng: number): EstadoPontos {
-  const d = decidirPedido(e, lat, lng)
+export function pedir(
+  e: EstadoPontos,
+  lat: number,
+  lng: number,
+  geometria?: PosicaoGeoJson[][] | null,
+): EstadoPontos {
+  const d = decidirPedido(e, lat, lng, geometria)
   if (d.tipo === 'repetido') return { ...e, aberto: d.indice, revelar: e.revelar + 1 }
-  if (d.tipo === 'ler') return { ...e, pendentes: [...e.pendentes, { lat, lng }] }
+  if (d.tipo === 'ler') {
+    const novo: PontoPendente = geometria?.length ? { lat, lng, geometria } : { lat, lng }
+    return { ...e, pendentes: [...e.pendentes, novo] }
+  }
   return e
 }
 
@@ -108,13 +144,16 @@ export function pedir(e: EstadoPontos, lat: number, lng: number): EstadoPontos {
  * A ficha nova entra no fim e vira a aberta — quem acabou de pedir quer ver ela.
  */
 export function chegou(e: EstadoPontos, pedido: PontoPendente, ficha: PontoPayload): EstadoPontos {
-  const i = e.pendentes.findIndex((p) => mesmaCoordenada(p, pedido))
+  const i = e.pendentes.findIndex((p) => mesmoPedido(p, pedido))
   if (i < 0) return e
   const pendentes = e.pendentes.filter((_, k) => k !== i)
   /* O servidor devolve a coordenada com 6 casas e o pedido pode ter mais; a chave de 5
      casas absorve isso, mas se mesmo assim a ficha já existir (dois caminhos chegaram ao
-     mesmo imóvel), abre a que existe em vez de duplicar. */
-  const repetido = indiceDoMesmoPonto(e.fichas, ficha.lat, ficha.lng)
+     mesmo imóvel), abre a que existe em vez de duplicar. Área casa com área, pelos
+     vértices — nunca com o ponto que por acaso esteja no `representative_point` dela. */
+  const repetido = ficha.geometria?.length
+    ? indiceDaMesmaArea(e.fichas, ficha.geometria)
+    : indiceDoMesmoPonto(e.fichas, ficha.lat, ficha.lng)
   if (repetido >= 0) return { ...e, pendentes, aberto: repetido, revelar: e.revelar + 1 }
   const fichas = [...e.fichas, ficha]
   return { ...e, fichas, pendentes, aberto: fichas.length - 1, revelar: e.revelar + 1 }
@@ -122,7 +161,7 @@ export function chegou(e: EstadoPontos, pedido: PontoPendente, ficha: PontoPaylo
 
 /** A leitura de `pedido` falhou: o pin provisório sai, as fichas já lidas ficam. */
 export function falhou(e: EstadoPontos, pedido: PontoPendente): EstadoPontos {
-  const pendentes = e.pendentes.filter((p) => !mesmaCoordenada(p, pedido))
+  const pendentes = e.pendentes.filter((p) => !mesmoPedido(p, pedido))
   return pendentes.length === e.pendentes.length ? e : { ...e, pendentes }
 }
 
@@ -131,6 +170,19 @@ export function abrir(e: EstadoPontos, i: number): EstadoPontos {
   if (!e.fichas.length) return e
   const aberto = Math.max(0, Math.min(i, e.fichas.length - 1))
   return aberto === e.aberto ? e : { ...e, aberto }
+}
+
+/**
+ * Abre a aba `i` E mostra a janela — o clique num pin colorido do mapa.
+ *
+ * Antes o clique no pin pedia de novo a coordenada da ficha (`pedir` devolvia `repetido`,
+ * abria a aba e subia o `revelar`). Com a ÁREA DESENHADA na lista isso deixou de servir: a
+ * coordenada da área é o ponto central dela, e pedi-la de novo leria um PONTO novo ali em
+ * vez de abrir a área. Abrir pelo ÍNDICE vale para os dois e não depende de coordenada.
+ */
+export function mostrar(e: EstadoPontos, i: number): EstadoPontos {
+  if (i < 0 || i >= e.fichas.length) return e
+  return { ...e, aberto: i, revelar: e.revelar + 1 }
 }
 
 /**
@@ -250,7 +302,15 @@ export interface PinDoPonto extends PinDaComparacao {
 export function pinsDoEstado(e: EstadoPontos): PinDoPonto[] {
   const itens = [...e.fichas, ...e.pendentes]
   const ativo = e.pendentes.length ? itens.length - 1 : e.fichas.length ? e.aberto : null
-  return pinsDaComparacao(itens, ativo, rotulosDosPontos(e.fichas)).map((p) => ({
+  /* A área em leitura já se chama "Área desenhada" (o nome dela não depende do servidor);
+     o ponto em leitura fica com a coordenada, porque o bairro ainda não é conhecido. */
+  const rotulos = [
+    ...rotulosDosPontos(e.fichas),
+    ...e.pendentes.map((p) =>
+      p.geometria?.length ? ROTULO_AREA_DESENHADA : `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`,
+    ),
+  ]
+  return pinsDaComparacao(itens, ativo, rotulos).map((p) => ({
     ...p,
     carregando: p.indice >= e.fichas.length,
   }))

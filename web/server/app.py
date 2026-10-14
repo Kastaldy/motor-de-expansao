@@ -6434,7 +6434,10 @@ def resolver_ponto(q: str) -> dict[str, Any]:
 
 
 def _criterios_do_ponto(
-    censo: dict[str, Any], mercado: dict[str, Any], concorrencia: dict[str, Any]
+    censo: dict[str, Any],
+    mercado: dict[str, Any],
+    concorrencia: dict[str, Any],
+    onde: str = "no raio",
 ) -> list[dict[str, Any]]:
     """Cada métrica do IMÓVEL contra a régua do critério do imóvel.
 
@@ -6455,6 +6458,11 @@ def _criterios_do_ponto(
 
     `RENDA_MIN` é renda DOMICILIAR, não per capita (comentário literal em
     `config.py:131`) — comparar contra a per capita reprovaria quase todo ponto.
+
+    `onde` só muda o RÓTULO ("no raio" / "na área", DEC-070); as réguas são as mesmas.
+    Ressalva declarada da fase 1: população e concorrentes são totais ABSOLUTOS, e o piso
+    de 5.000 e o teto de 3 foram pensados para o raio de 1 km — numa área desenhada muito
+    maior ou menor eles leem outra coisa. Reescalar por área é decisão do dono (fase 2).
     """
     from motor_expansao.config import settings
 
@@ -6474,7 +6482,7 @@ def _criterios_do_ponto(
         }
 
     itens = [
-        crit("populacao", "População no raio", censo.get("populacao"), POP_MIN_ACIONAVEL, "pessoas"),
+        crit("populacao", f"População {onde}", censo.get("populacao"), POP_MIN_ACIONAVEL, "pessoas"),
         crit(
             "renda_domiciliar", "Renda domiciliar",
             censo.get("renda_media_domiciliar"), float(settings.RENDA_MIN), "R$",
@@ -6505,7 +6513,7 @@ def _criterios_do_ponto(
         # um ponto saturado seria aprovado porque um parquet nao chegou na VPS.
         itens.append(
             crit(
-                "concorrentes", "Concorrentes de rede no raio",
+                "concorrentes", f"Concorrentes de rede {onde}",
                 (
                     concorrencia.get("n_concorrentes_cadeia")
                     if concorrencia.get("completo")
@@ -6535,6 +6543,57 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
     para a tela e o PDF contarem a mesma coisa.
 
     READ-ONLY: nenhum score recalculado, nenhum artefato tocado.
+    """
+    return _payload_ponto(lat, lng)
+
+
+class PontoGeometriaIn(BaseModel):
+    """Corpo de `POST /api/ponto/geometria`: o polígono GeoJSON desenhado no mapa."""
+
+    geometria: dict[str, Any]
+
+
+@app.post("/api/ponto/geometria")
+def ponto_geometria(corpo: PontoGeometriaIn) -> dict[str, Any]:
+    """Ficha de uma ÁREA DESENHADA — "Analisar geometria", fase 1 (DEC-070, PROPOSTA).
+
+    O MESMO corpo do `/api/ponto` (`_payload_ponto`), com o polígono no lugar do raio de
+    1,0 km: censo setor a setor, concorrentes (ponto-em-polígono) e mercado (SAM, consumo
+    e residual, DEC-069) passam a ser lidos DENTRO da área. O "ponto" da ficha é o
+    `representative_point` do polígono — garantidamente interno, mesmo num polígono
+    côncavo — e é por ele que o município e o hexágono se resolvem.
+
+    POST com corpo JSON, e não GET com query: um polígono de 50 vértices não cabe numa URL
+    (o mesmo limite que já estourou como HTTP 431 no relatório). O gate de acesso é o do
+    `/api/ponto` (casamento por prefixo em `acesso.py`), e a malha municipal também.
+
+    Validação (400, mensagem em português): GeoJSON que não é Polygon, buraco, menos de 3
+    ou mais de 50 vértices, autointerseção, área fora de 0,1–25 km² e vértice fora do país.
+    SÓ TELA nesta fase: o PDF por área desenhada é a fase 2. READ-ONLY sobre o M1.
+    """
+    from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
+    from motor_expansao.dashboard.geometria_desenhada import (
+        GeometriaDesenhadaInvalida,
+        validar_geometria_desenhada,
+    )
+
+    def _no_pais(lat: float, lng: float) -> None:
+        # A MESMA régua de bounding box do `/api/ponto`, vértice a vértice.
+        validar_brasil(lat, lng)
+
+    try:
+        desenho = validar_geometria_desenhada(corpo.geometria, validar_coordenada=_no_pais)
+    except (GeometriaDesenhadaInvalida, CoordenadaInvalidaError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _payload_ponto(desenho.lat, desenho.lng, desenho=desenho)
+
+
+def _payload_ponto(lat: float, lng: float, *, desenho: Any = None) -> dict[str, Any]:
+    """O corpo da ficha de ponto, comum ao `GET /api/ponto` e ao `POST /api/ponto/geometria`.
+
+    `desenho` (`GeometriaDesenhada`, DEC-070) troca o raio pelo polígono. Sem ele, cada
+    chave e cada chamada são as de antes da DEC-070 — o GET não muda um byte (travado por
+    teste). Com ele, (lat, lng) é o `representative_point` do polígono.
     """
     from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
     from motor_expansao.api.errors import APIError
@@ -6568,7 +6627,13 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
     )
 
     try:
-        uf, _cod, setores_df = _resolver_e_carregar(lat, lng, cfg)
+        if desenho is None:
+            uf, _cod, setores_df = _resolver_e_carregar(lat, lng, cfg)
+        else:
+            # DEC-070: os vizinhos que a CAIXA do polígono alcança também entram — um
+            # polígono maior que o frame do ponto perderia setores do município vizinho em
+            # silêncio (a DEC-065 por outra porta).
+            uf, _cod, setores_df = _resolver_e_carregar(lat, lng, cfg, geometria=desenho.poligono)
     except APIError as exc:
         # `APIError` é do contrato da API de produção, que registra um handler próprio
         # (`main.py`). O piloto NÃO registra — aqui ela vazaria como 500 sem código.
@@ -6577,7 +6642,12 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         # implantação). O caminho do PDF (app.py, `_gerar_relatorio_pontual_pdf`) achata
         # os dois em 400 e faz o operador ler "não foi possível resolver a coordenada"
         # quando o problema é dado faltando no servidor.
-        raise HTTPException(exc.status_code, exc.detail) from exc
+        detalhe = exc.detail
+        if desenho is not None and exc.status_code == 400:
+            # A coordenada que falhou é o ponto de referência, que o operador não clicou:
+            # sem dizer isso, "coordenada fora da malha" não aponta para nada na tela dele.
+            detalhe = f"O ponto central da área desenhada não foi resolvido. {detalhe}"
+        raise HTTPException(exc.status_code, detalhe) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f"Não foi possível resolver a coordenada: {exc}") from exc
 
@@ -6585,17 +6655,27 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
     comp_df, ultra_df = _competitors_ultra(cfg)
     tem_concorrentes = comp_df is not None or ultra_df is not None
 
+    # A geometria só entra na chamada quando existe: sem ela, a chamada é LITERALMENTE a de
+    # antes da DEC-070 (quem substitui o motor em teste continua recebendo os mesmos args).
+    _recorte_kw: dict[str, Any] = {} if desenho is None else {"geometria_wgs84": desenho.poligono}
     res = analisar_ponto_censitario_setores(
         lat, lng, setores_df,
         raio_km=RAIO_CENSITARIO_DEFAULT_KM,
         competitors_df=comp_df,
         ultra_df=ultra_df,
+        **_recorte_kw,
     )
 
     # DEC-069: SAM / consumo / residual no MESMO raio de 1,0 km da populacao (era a linha do
     # hexagono res-7 do ponto: grao misto, termo da Ultra escondido e Ultra contada em dobro).
-    # Mesma funcao do PDF do piloto e do PDF da API/bot.
-    mercado = _mercado_do_ponto(lat, lng, cfg, res.get("pop_total_raio"))
+    # Mesma funcao do PDF do piloto e do PDF da API/bot. DEC-070: com area desenhada, a
+    # MESMA funcao no poligono (`mercado_raio.mercado_na_area` ja' aceita a geometria).
+    if desenho is None:
+        mercado = _mercado_do_ponto(lat, lng, cfg, res.get("pop_total_raio"))
+    else:
+        mercado = _mercado_do_ponto(
+            lat, lng, cfg, res.get("pop_total_raio"), geometria=desenho.poligono
+        )
     tem_mercado = bool(mercado.get("disponivel"))
 
     import h3
@@ -6814,10 +6894,12 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         },
     }
 
-    return {
+    payload: dict[str, Any] = {
         "lat": _num(lat, 6),
         "lng": _num(lng, 6),
-        "raio_km": RAIO_CENSITARIO_DEFAULT_KM,
+        # Área desenhada não tem raio: `None` e não 1,0, senão a tela escreveria "raio de
+        # 1.000 m" sobre um polígono (DEC-070). O recorte vai no bloco `recorte`, abaixo.
+        "raio_km": RAIO_CENSITARIO_DEFAULT_KM if desenho is None else None,
         "hex_id": hex_id,
         "local": {
             # `uf` e o nome do município NÃO estão no dict de `analisar_ponto_...` (são
@@ -6859,8 +6941,25 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
             # os dois no mesmo valor por construcao evita que divirjam em silencio.
             "conc_regiao_disputada": CRIT_PONTO_CONC_MAX,
         },
-        "criterios": _criterios_do_ponto(censo_bloco, mercado_bloco, conc_bloco),
+        "criterios": (
+            _criterios_do_ponto(censo_bloco, mercado_bloco, conc_bloco)
+            if desenho is None
+            else _criterios_do_ponto(censo_bloco, mercado_bloco, conc_bloco, onde="na área")
+        ),
     }
+    if desenho is not None:
+        # Chaves SÓ da área desenhada (DEC-070): o GET continua com as chaves de sempre.
+        # `geometria` são os anéis do Polygon GeoJSON normalizado (um anel, fechado, em
+        # [lng, lat]) — o que o mapa desenha em volta do pin, na cor do item.
+        payload["geometria"] = desenho.coordenadas
+        payload["recorte"] = {
+            # Identificador cru, NÃO acentuar.
+            "tipo": "poligono",
+            "area_km2": _num(desenho.area_km2, 2),
+            "n_vertices": desenho.n_vertices,
+            "metodo": _texto(res.get("metodo")),
+        }
+    return payload
 
 
 @app.get("/api/municipios/{uf}")

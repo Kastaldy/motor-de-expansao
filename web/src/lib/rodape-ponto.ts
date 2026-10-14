@@ -42,9 +42,18 @@ export const ROTULO_SIMULADOR = 'Simulador'
 export const DICA_SIMULADOR = 'Abre a tela de Viabilidade com a coordenada deste ponto.'
 export const DICA_SIMULADOR_VETADO = 'Sua conta não tem acesso à tela de Viabilidade.'
 
-/** O item aberto e' uma AREA DESENHADA (DEC-070), e nao um ponto com raio? */
-export function ehAreaDesenhada(ficha: Pick<PontoPayload, 'mercado'> | null): boolean {
-  return ficha?.mercado?.grao === 'geometria'
+/**
+ * O item aberto e' uma AREA DESENHADA (DEC-070), e nao um ponto com raio?
+ *
+ * Pela `geometria` do payload PRIMEIRO, e so' depois pelo `grao` do mercado: quando o
+ * calculo de mercado falha no servidor, o bloco volta sem `grao` -- e, lida so' por ele,
+ * a area desenhada destravaria o "Estudo", que geraria o PDF do RAIO em volta do ponto
+ * interno dela, com o nome da area. Um PDF certo sobre o recorte errado.
+ */
+export function ehAreaDesenhada(
+  ficha: Pick<PontoPayload, 'mercado' | 'geometria'> | null,
+): boolean {
+  return !!ficha?.geometria?.length || ficha?.mercado?.grao === 'geometria'
 }
 
 /**
@@ -54,7 +63,7 @@ export function ehAreaDesenhada(ficha: Pick<PontoPayload, 'mercado'> | null): bo
  * e um segundo clique enfileiraria um PDF duplicado.
  */
 export function estadoDoEstudo(
-  ficha: Pick<PontoPayload, 'mercado'> | null,
+  ficha: Pick<PontoPayload, 'mercado' | 'geometria'> | null,
   gerando: boolean,
 ): EstadoBotao {
   if (gerando) {

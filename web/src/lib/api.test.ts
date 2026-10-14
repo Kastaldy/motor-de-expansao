@@ -275,3 +275,30 @@ describe('hexagonos — o ranking nacional', () => {
     expect(query.get('por_municipio')).toBe('true')
   })
 })
+
+describe('pontoGeometria — a área desenhada vai no CORPO', () => {
+  it('POST com o polígono no corpo JSON, e nada dele na URL', async () => {
+    let url = ''
+    let init: RequestInit | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u: string, i?: RequestInit) => {
+        url = u
+        init = i
+        return { ok: true, json: async () => ({}) } as unknown as Response
+      }),
+    )
+    // 50 vértices: em query string isto passaria do orçamento da URL.
+    const anel: [number, number][] = Array.from({ length: 50 }, (_, k) => [
+      -46.63 + 0.01 * Math.cos((2 * Math.PI * k) / 50),
+      -23.55 + 0.01 * Math.sin((2 * Math.PI * k) / 50),
+    ])
+    anel.push(anel[0])
+    await api.pontoGeometria({ type: 'Polygon', coordinates: [anel] })
+    expect(url).toBe('/api/ponto/geometria')
+    expect(init?.method).toBe('POST')
+    const corpo = JSON.parse(String(init?.body))
+    expect(corpo.geometria.type).toBe('Polygon')
+    expect(corpo.geometria.coordinates[0]).toHaveLength(51)
+  })
+})

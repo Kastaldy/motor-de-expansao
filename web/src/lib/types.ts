@@ -1973,10 +1973,27 @@ export interface PontoVizinho {
 }
 
 export interface PontoPayload {
+  /** No item de ÁREA DESENHADA (DEC-070) é o `representative_point` do polígono. */
   lat: number
   lng: number
-  raio_km: number
+  /** `null` na área desenhada: ela não tem raio (o recorte está em `recorte`). */
+  raio_km: number | null
   hex_id: string
+  /**
+   * Só no item de ÁREA DESENHADA (`POST /api/ponto/geometria`, DEC-070): os anéis do
+   * Polygon GeoJSON normalizado pelo servidor — um anel, fechado, em `[lng, lat]`. É o
+   * contorno que o mapa desenha na cor do item. Ausente no ponto com raio.
+   */
+  geometria?: [number, number][][] | null
+  /** Só na área desenhada: o recorte que substituiu o raio. */
+  recorte?: {
+    /** Identificador cru (`'poligono'`), NÃO acentuar. */
+    tipo: 'poligono'
+    area_km2: number | null
+    n_vertices: number
+    /** Rótulo do método do motor (`setor_censitario_intersecao_area_poligono`). */
+    metodo: string | null
+  } | null
   local: {
     uf: string
     municipio: string | null

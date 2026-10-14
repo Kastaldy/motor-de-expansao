@@ -19,7 +19,12 @@ import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
 import { Aviso, Botao, Chip, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
-import { rotulosDosPontos, rotulosPartidosDosPontos } from '../lib/comparacao-pontos'
+import {
+  ehAreaDesenhada,
+  rotuloDoRecorte,
+  rotulosDosPontos,
+  rotulosPartidosDosPontos,
+} from '../lib/comparacao-pontos'
 import type { RotuloPartido } from '../lib/comparacao'
 import type { AlvoCaptura } from '../lib/captura-mapa'
 import { classificarEntrada, linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
@@ -546,7 +551,9 @@ export default function PontoScreen({
           ficha
             ? [
                 [ficha.local.municipio, ficha.local.uf].filter(Boolean).join(' · '),
-                `raio de ${num(ficha.raio_km * 1000)} m`,
+                /* "raio de 1.000 m" ou "área desenhada de 2,40 km²" (DEC-070): com uma área
+                   na lista, o raio escrito à mão mentiria sobre ela. */
+                rotuloDoRecorte(ficha),
                 /* A COORDENADA no subtítulo é o que resolve o empate de verdade: o número
                    da aba diz "é o segundo", e isto diz QUAL endereço é. */
                 `${ficha.lat.toFixed(4)}, ${ficha.lng.toFixed(4)}`,
@@ -674,6 +681,12 @@ function Ficha({
 }) {
   const { local, censo, concorrencia, mercado } = ficha
   const contaDoMercado = mercado.disponivel ? leituraDoMercado(mercado) : null
+  /* ÁREA DESENHADA (DEC-070, fase 1): a mesma ficha, com o polígono no lugar do raio. O
+     que muda é só o que a ficha AFIRMA sobre o recorte — os blocos e as contas são os
+     mesmos, calculados pelo servidor dentro da área. */
+  const area = ehAreaDesenhada(ficha)
+  const recorte = rotuloDoRecorte(ficha)
+  const onde = area ? 'na área' : 'no raio'
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
@@ -681,7 +694,7 @@ function Ficha({
           O mapa lá atrás mostra ONDE; esta seção diz QUAL. A coordenada e o link de
           saída continuam aqui porque são conferência, não navegação. */}
       <Glass style={{ padding: 18, display: 'grid', gap: 10 }}>
-        <Eyebrow dot>Ponto analisado</Eyebrow>
+        <Eyebrow dot>{area ? 'Área desenhada' : 'Ponto analisado'}</Eyebrow>
         <div
           style={{
             font: '600 20px/1.2 var(--f-ui)',
@@ -702,13 +715,21 @@ function Ficha({
         <div style={{ font: '400 13px/1.4 var(--f-ui)', color: 'var(--tx-narrative)' }}>
           {/* Sem bairro resolvido o nome acima é o do município (ou a coordenada): a
               ausência continua DECLARADA aqui, em vez de sumir com a troca do título. */}
-          {[local.municipio, local.uf, local.bairro ? null : 'sem bairro identificado']
+          {(area
+            ? /* A área não tem UM bairro: o do ponto central é só onde ele caiu. Diz o
+                 recorte, que é o que identifica a área. */
+              [local.municipio, local.uf, recorte]
+            : [local.municipio, local.uf, local.bairro ? null : 'sem bairro identificado']
+          )
             .filter(Boolean)
             .join(' · ')}
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <Chip>hex {ficha.hex_id}</Chip>
           <Chip>
+            {/* Na área, a coordenada é a do PONTO CENTRAL (o `representative_point`,
+                sempre dentro do polígono) — é ele que o Simulador recebe. */}
+            {area ? 'ponto central ' : ''}
             {ficha.lat.toFixed(5)}, {ficha.lng.toFixed(5)}
           </Chip>
           {/* Link de SAÍDA: o operador confere no próprio Maps onde o pino caiu — é a
@@ -723,13 +744,13 @@ function Ficha({
               textDecoration: 'underline',
             }}
           >
-            Abrir no Google Maps ↗
+            {area ? 'Abrir o ponto central no Google Maps ↗' : 'Abrir no Google Maps ↗'}
           </a>
         </div>
       </Glass>
 
       {/* ---------------- Socioeconomia (sempre disponível) ---------------- */}
-      <Secao titulo="Quem mora em volta" nota={`${censoDaBase() ?? 'Censo 2022'} · raio de ${num(ficha.raio_km * 1000)} m`}>
+      <Secao titulo={area ? 'Quem mora na área' : 'Quem mora em volta'} nota={`${censoDaBase() ?? 'Censo 2022'} · ${recorte}`}>
         {/* ---- O VISUAL VEM PRIMEIRO ----
             A hierarquia estava invertida: cinco cards de 24px dominavam o bloco e a barra
             aparecia como rodapé. Quem escolhe imóvel pergunta "isso é muito?", e essa
@@ -757,20 +778,27 @@ function Ficha({
 
         <Rodape>
           A densidade desconta água e vazio: divide pela área de setor censitário
-          realmente intersectada, não pela área do círculo.
+          realmente intersectada, não pela área {area ? 'desenhada' : 'do círculo'}.
         </Rodape>
         {censo.detalhe && (
-          <DetalheRegiao detalhe={censo.detalhe} concorrencia={concorrencia} />
+          <DetalheRegiao detalhe={censo.detalhe} concorrencia={concorrencia} area={area} />
         )}
       </Secao>
 
       {/* ---------------- Concorrência ---------------- */}
       <Secao titulo="Quem já disputa o aluno aqui" bloco={concorrencia}>
         <div style={{ display: 'grid', gap: 14 }}>
-          <ReguaConcorrentes lista={concorrencia.lista} raioKm={ficha.raio_km} />
+          {/* A régua vai "do imóvel até a borda do raio": num polígono não há borda a uma
+              distância só, e a régua afirmaria uma escala que não existe. Na área, a lista
+              simples — quem está dentro, a que distância do ponto central. */}
+          {area || ficha.raio_km == null ? (
+            <ListaConcorrentesArea lista={concorrencia.lista} />
+          ) : (
+            <ReguaConcorrentes lista={concorrencia.lista} raioKm={ficha.raio_km} />
+          )}
           <FilaApoio>
-            <NumeroApoio rotulo="Concorrentes no raio" valor={num(concorrencia.n_concorrentes)} />
-            <NumeroApoio rotulo="Unidades Ultra no raio" valor={num(concorrencia.n_ultra)} />
+            <NumeroApoio rotulo={`Concorrentes ${onde}`} valor={num(concorrencia.n_concorrentes)} />
+            <NumeroApoio rotulo={`Unidades Ultra ${onde}`} valor={num(concorrencia.n_ultra)} />
           </FilaApoio>
         </div>
       </Secao>
@@ -803,8 +831,8 @@ function Ficha({
 
         <Rodape>
           O mapa atrás desta janela colore cada hexágono pelo residual dele; a conta acima
-          é a do recorte do ponto ({contaDoMercado?.recorte ?? 'raio de 1,0 km'}). As duas
-          leituras podem divergir: o recorte pega pedaços de vários hexágonos.
+          é a do recorte {area ? 'desenhado' : 'do ponto'} ({contaDoMercado?.recorte ?? recorte}). As
+          duas leituras podem divergir: o recorte pega pedaços de vários hexágonos.
         </Rodape>
       </Secao>
 
@@ -892,6 +920,36 @@ function ContaDoMercado({ leitura }: { leitura: ReturnType<typeof leituraDoMerca
       })}
       {leitura.avisoGate && <Rodape>{leitura.avisoGate}</Rodape>}
       {leitura.motivoParcial && <Rodape>{leitura.motivoParcial}</Rodape>}
+    </div>
+  )
+}
+
+/**
+ * Concorrentes DENTRO da área desenhada, com a distância ao ponto central — o par da
+ * `ReguaConcorrentes` para o polígono, que não tem "borda do raio" para servir de escala.
+ * Truncada como a lista do servidor (30), e dizendo quando truncou.
+ */
+function ListaConcorrentesArea({
+  lista,
+}: {
+  lista: { rede: string | null; dist_km: number | null }[] | null | undefined
+}) {
+  if (!lista?.length) return null
+  return (
+    <div style={{ display: 'grid', gap: 4 }}>
+      {lista.map((c, i) => (
+        <div
+          key={`${c.rede}-${i}`}
+          style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}
+        >
+          <span style={{ font: '400 11.5px/1.3 var(--f-ui)', color: 'var(--tx-soft)', minWidth: 0 }}>
+            {c.rede ?? 'Academia sem nome'}
+          </span>
+          <span className="num" style={{ font: '400 10.5px/1.3 var(--f-num)', color: 'var(--tx-sub)', whiteSpace: 'nowrap' }}>
+            {c.dist_km == null ? num(null) : `${num(c.dist_km, 2)} km do ponto central`}
+          </span>
+        </div>
+      ))}
     </div>
   )
 }

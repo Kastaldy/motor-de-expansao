@@ -63,9 +63,11 @@ describe('clique no pin colorido: abre a aba daquele ponto', () => {
     expect(pinsDoEstado(e).map((p) => p.rotulo)).toEqual(['Centro #1', 'Centro #2'])
   })
 
-  it('o App liga o clique do pin ao pedido da coordenada da ficha', () => {
-    expect(app).toContain('onPontoComparado={(i) => {')
-    expect(app).toContain('if (f) pedirPonto(f.lat, f.lng)')
+  it('o App liga o clique do pin à aba pelo ÍNDICE (vale também para a área desenhada)', () => {
+    // Era `pedirPonto(f.lat, f.lng)`: com a área desenhada (DEC-070) a coordenada dela é o
+    // ponto central, e pedi-la leria um ponto novo. A regra pura é `mostrar`
+    // (pontos-estado.test.ts).
+    expect(app).toContain('onPontoComparado={(i) => pontos.mostrar(i)}')
     expect(mapScreen).toContain('onPontoClicado={onPontoComparado}')
   })
 })
@@ -136,11 +138,11 @@ describe('Trilho e painel: a ordem do dono', () => {
   it('no trilho, "Selecionar ponto" vem ACIMA da régua, e a régua antes do comparar', () => {
     const ponto = barra.indexOf('icone="alvo"')
     const regua = barra.indexOf('icone="regua"')
-    const geometria = barra.indexOf('ANALISAR GEOMETRIA entra AQUI')
+    const geometria = barra.indexOf('icone="poligono"')
     const comparar = barra.indexOf('icone="comparar"')
     expect(ponto).toBeGreaterThan(barra.indexOf('icone="camadas"'))
     expect(ponto).toBeLessThan(regua)
-    // A vaga da geometria está reservada entre a régua e o comparar.
+    // "Analisar geometria" (DEC-070) entre a régua e o comparar.
     expect(geometria).toBeGreaterThan(regua)
     expect(geometria).toBeLessThan(comparar)
   })

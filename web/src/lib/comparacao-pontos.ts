@@ -22,7 +22,7 @@ import {
   type Dimensao,
   type RotuloPartido,
 } from './comparacao'
-import { UNIDADE_MOEDA } from './format'
+import { UNIDADE_MOEDA, num } from './format'
 import type { PontoPayload } from './types'
 
 /**
@@ -41,7 +41,10 @@ export const DIMENSOES_PONTO: readonly Dimensao<PontoPayload>[] = Object.freeze(
   }),
   Object.freeze({
     chave: 'populacao',
-    rotulo: 'População no raio',
+    /* "População", sem "no raio": desde a DEC-070 a comparação pode ter uma ÁREA DESENHADA
+       ao lado dos pontos, e o rótulo vale para os dois recortes. O recorte de cada item é
+       dito no rodapé do comparativo; a frase do veredito fica "menos população que B". */
+    rotulo: 'População',
     ler: (p: PontoPayload) => p.censo?.populacao ?? null,
     unidade: 'pessoas',
     maiorEhMelhor: true,
@@ -165,13 +168,78 @@ export function chaveDaCoordenada(lat: number, lng: number): string {
 }
 
 export function indiceDoMesmoPonto(
-  pontos: readonly PontoPayload[],
+  pontos: readonly Pick<PontoPayload, 'lat' | 'lng' | 'geometria'>[],
   lat: number,
   lng: number,
 ): number {
   const chave = (a: number, b: number) => chaveDaCoordenada(a, b)
   const alvo = chave(lat, lng)
-  return pontos.findIndex((p) => chave(p.lat, p.lng) === alvo)
+  /* ÁREA DESENHADA NÃO É PONTO (DEC-070). O `lat`/`lng` dela é o `representative_point`
+     do polígono — um lugar que o operador nunca clicou —, e casar por ele faria buscar
+     exatamente aquela coordenada abrir a ficha da ÁREA em vez de ler o ponto com raio. */
+  return pontos.findIndex((p) => !p.geometria?.length && chave(p.lat, p.lng) === alvo)
+}
+
+/**
+ * A identidade de uma ÁREA DESENHADA: os vértices do anel, arredondados em `CASAS_COORD`.
+ *
+ * Desenhar de novo o MESMO polígono (vértice a vértice) é repetição, como colar duas vezes
+ * a mesma coordenada; qualquer vértice diferente é outra área.
+ */
+export function chaveDaArea(geometria: readonly (readonly PosicaoGeoJson[])[]): string {
+  const anel = geometria[0] ?? []
+  return `area:${anel.map(([x, y]) => chaveDaCoordenada(y, x)).join(';')}`
+}
+
+/** Onde esta área JÁ ESTÁ na lista, ou -1. Só casa com itens de área — nunca com ponto. */
+export function indiceDaMesmaArea(
+  itens: readonly Pick<PontoPayload, 'geometria'>[],
+  geometria: readonly (readonly PosicaoGeoJson[])[],
+): number {
+  const alvo = chaveDaArea(geometria)
+  return itens.findIndex((p) => !!p.geometria?.length && chaveDaArea(p.geometria) === alvo)
+}
+
+/** O item é uma ÁREA DESENHADA (DEC-070), e não um ponto com raio? */
+export function ehAreaDesenhada(p: Pick<PontoPayload, 'geometria'> | null | undefined): boolean {
+  return !!p?.geometria?.length
+}
+
+/**
+ * Por que o PDF de comparação NÃO sai para esta lista — ou `null` quando sai.
+ *
+ * Fase 1 da DEC-070: área desenhada é só TELA. O deck de comparação fotografa cada item com
+ * o raio de 1 km e escreve "raio" nos textos; para uma área ele afirmaria um recorte que não
+ * é o dela. A recusa é dita (com o caminho para destravar), e não um botão que some.
+ */
+export function motivoSemPdfDeComparacao(
+  fichas: readonly Pick<PontoPayload, 'geometria'>[],
+): string | null {
+  if (!fichas.some((f) => ehAreaDesenhada(f))) return null
+  return (
+    'O PDF de comparação ainda não aceita área desenhada — ele chega na próxima fase. ' +
+    'Remova as áreas desenhadas da comparação para gerar o PDF dos pontos.'
+  )
+}
+
+/** Rótulo da área desenhada nas abas, na legenda e no mapa ("#k" quando há mais de uma). */
+export const ROTULO_AREA_DESENHADA = 'Área desenhada'
+
+/**
+ * O recorte da leitura em texto de usuário: "raio de 1.000 m" ou "área desenhada de
+ * 2,40 km²". É o que substitui o "raio de X m" escrito à mão nas fichas — com uma área
+ * desenhada na lista, aquele texto passaria a mentir sobre ela.
+ */
+export function rotuloDoRecorte(
+  p: Pick<PontoPayload, 'raio_km' | 'geometria' | 'recorte' | 'mercado'>,
+): string {
+  if (ehAreaDesenhada(p)) {
+    const area = p.recorte?.area_km2 ?? p.mercado?.area_km2 ?? null
+    return area != null
+      ? `área desenhada de ${area.toFixed(area < 10 ? 2 : 1).replace('.', ',')} km²`
+      : 'área desenhada'
+  }
+  return `raio de ${num((p.raio_km ?? 1) * 1000)} m`
 }
 
 /* A paleta de identidade MUDOU DE CASA em 2026-08-13: virou `CORES_IDENTIDADE` /
@@ -183,6 +251,10 @@ export { CORES_IDENTIDADE as CORES_PONTO, corDeIdentidade as corDoPonto } from '
 
 /** Rotulo curto de um ponto: bairro, senao municipio, senao a coordenada. */
 export function rotuloDoPonto(p: PontoPayload): string {
+  /* A área desenhada não tem bairro que a nomeie (o bairro do `representative_point` é o
+     de um ponto qualquer dentro dela): ela se chama pelo que é. Duas áreas viram "Área
+     desenhada #1" e "#2" pela regra comum de `rotulosUnicos`. */
+  if (ehAreaDesenhada(p)) return ROTULO_AREA_DESENHADA
   return (
     p.local?.bairro ??
     p.local?.municipio ??

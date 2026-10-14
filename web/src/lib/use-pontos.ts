@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { api, ApiError } from './api'
-import { MAX_PONTOS } from './comparacao-pontos'
+import { MAX_PONTOS, type PosicaoGeoJson } from './comparacao-pontos'
+import { pontoInterno } from './geometria-desenho'
 import {
   PONTOS_VAZIO,
   abrir as abrirAba,
@@ -10,6 +11,7 @@ import {
   falhou,
   itemAtivo,
   limpar as limparTudo,
+  mostrar as mostrarItem,
   pedir,
   pinsDoEstado,
   remover as removerFicha,
@@ -69,7 +71,41 @@ export function usePontos() {
     [aplicar],
   )
 
+  /**
+   * Pede a análise de uma ÁREA DESENHADA no mapa (DEC-070, fase 1): `POST
+   * /api/ponto/geometria`. Entra na MESMA lista dos pontos — mesma regra de repetição, mesmo
+   * teto, mesma cor por posição —, porque a pergunta do operador é a mesma: "qual destes
+   * lugares serve mais?". O pin provisório fica num ponto INTERNO calculado aqui; quando a
+   * ficha chega, ele passa ao `representative_point` que o servidor devolveu.
+   */
+  const analisarGeometria = useCallback(
+    async (geometria: PosicaoGeoJson[][]) => {
+      const anel = geometria[0] ?? []
+      if (anel.length < 4) return
+      const { lat, lng } = pontoInterno(anel)
+      const decisao = decidirPedido(ref.current, lat, lng, geometria)
+      setErro(null)
+      if (decisao.tipo === 'cheio') {
+        setErro(`Máximo de ${MAX_PONTOS} itens na comparação. Remova um para analisar esta área.`)
+        return
+      }
+      aplicar((e) => pedir(e, lat, lng, geometria))
+      if (decisao.tipo !== 'ler') return
+      const pedido = { lat, lng, geometria }
+      try {
+        const ficha = await api.pontoGeometria({ type: 'Polygon', coordinates: geometria })
+        aplicar((e) => chegou(e, pedido, ficha))
+      } catch (e) {
+        aplicar((s) => falhou(s, pedido))
+        setErro(e instanceof ApiError ? e.message : 'Falha ao analisar a área desenhada.')
+      }
+    },
+    [aplicar],
+  )
+
   const abrir = useCallback((i: number) => aplicar((e) => abrirAba(e, i)), [aplicar])
+  /** Abre a aba `i` e a janela da ficha — o clique no pin colorido do mapa. */
+  const mostrar = useCallback((i: number) => aplicar((e) => mostrarItem(e, i)), [aplicar])
   const remover = useCallback((i: number) => aplicar((e) => removerFicha(e, i)), [aplicar])
   const limpar = useCallback(() => {
     aplicar(limparTudo)
@@ -90,7 +126,9 @@ export function usePontos() {
     pins,
     ativo,
     analisar,
+    analisarGeometria,
     abrir,
+    mostrar,
     remover,
     limpar,
     limparErro,

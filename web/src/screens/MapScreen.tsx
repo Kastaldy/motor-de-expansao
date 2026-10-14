@@ -35,6 +35,17 @@ import { rodapeDaBase, tituloEscolhaUnidade } from '../lib/rodape-base'
 import { type AlvoCaptura, alvoDoHex, pinsDoAlvo } from '../lib/captura-mapa'
 import { DIMENSOES, rotuloDoHex, rotulosDosHexes } from '../lib/comparacao'
 import { alternarFerramenta, cliqueSelecionaHex, type FerramentaMapa } from '../lib/ferramenta-mapa'
+import type { PosicaoGeoJson } from '../lib/comparacao-pontos'
+import {
+  MAX_VERTICES,
+  adicionarVertice,
+  avaliarDesenho,
+  desfazerVertice,
+  formatarKm2,
+  interpretarClique,
+  paraGeoJson,
+} from '../lib/geometria-desenho'
+import type { Coord } from '../lib/medicao'
 import { janelaDoHexVisivel } from '../lib/janela-hex'
 import type { PinDoPonto } from '../lib/pontos-estado'
 import type { Tema } from '../lib/tema'
@@ -135,6 +146,15 @@ export interface MapScreenProps {
    * gerava o cartao "Estudo pontual", uma terceira leitura do mesmo lugar.
    */
   onPontoBuscado: (lat: number, lng: number) => void
+  /**
+   * "Analisar geometria" concluiu uma área (DEC-070, fase 1): os anéis do polígono
+   * desenhado, em `[lng, lat]`, fechados. Quem recebe (o `App`) a leva ao
+   * `/api/ponto/geometria` e a põe na MESMA comparação dos pontos.
+   *
+   * Ausente = a ferramenta não aparece no trilho nem no painel: sem destino, o desenho
+   * não levaria a lugar nenhum.
+   */
+  onGeometriaDesenhada?: (geometria: PosicaoGeoJson[][]) => void
   /** Sem UF escolhida, não desenha o hero — quem o publica é a camada de cima. */
   semLanding?: boolean
   /**
@@ -200,6 +220,7 @@ export default function MapScreen({
   pontosComparados,
   onPontoComparado,
   onPontoBuscado,
+  onGeometriaDesenhada,
   semLanding = false,
   imovelInicial = null,
   onImovelAberto,
@@ -289,6 +310,60 @@ export default function MapScreen({
      clique. Ponto de outro municipio troca o mapa de municipio pelo fluxo que ja' existe
      (`local` da ficha -> `App`), sem nada novo aqui. */
   const alternarPonto = useCallback(() => setFerramenta((f) => alternarFerramenta(f, 'ponto')), [])
+  /* "Analisar geometria" (DEC-070, fase 1): com ela ligada, cada clique no mapa acrescenta
+     um VÉRTICE; a área fecha no 1º vértice ou em "Concluir" e vira um item da comparação.
+     O desenho (os vértices) mora AQUI, e não no `HexMap`, porque é daqui a barra de
+     Concluir/Desfazer/Cancelar — o mapa só desenha o provisório e repassa o clique. As
+     regras (fechar por pixels, área, autointerseção, limites) são de `lib/geometria-desenho`. */
+  const alternarGeometria = useCallback(
+    () => setFerramenta((f) => alternarFerramenta(f, 'geometria')),
+    [],
+  )
+  const [vertices, setVertices] = useState<Coord[]>([])
+  /** Recusa do último gesto (concluir inválido, teto de vértices) — some no próximo clique. */
+  const [avisoDesenho, setAvisoDesenho] = useState<string | null>(null)
+  /* Desligar a ferramenta CANCELA o desenho (Esc, o botão de novo, outra ferramenta): um
+     polígono pela metade que sobrevivesse à ferramenta desligada não teria como terminar. */
+  useEffect(() => {
+    if (ferramenta === 'geometria') return
+    setVertices([])
+    setAvisoDesenho(null)
+  }, [ferramenta])
+  /* Trocar de município/UF também: o polígono é de um território, e os vértices de uma
+     cidade desenhados sobre o mapa de outra são o "número certo no lugar errado" da régua. */
+  useEffect(() => {
+    setVertices([])
+    setAvisoDesenho(null)
+  }, [uf, municipio])
+
+  const avaliacaoDesenho = avaliarDesenho(vertices)
+  function concluirDesenho(vs: Coord[] = vertices) {
+    const a = avaliarDesenho(vs)
+    if (!a.podeConcluir) {
+      setAvisoDesenho(a.motivo)
+      return
+    }
+    onGeometriaDesenhada?.(paraGeoJson(vs).coordinates)
+    setVertices([])
+    setAvisoDesenho(null)
+    /* A área desenhada é UM gesto completo: a ferramenta desliga ao concluir, e o próximo
+       clique no mapa volta a ser o de sempre (ou o da ficha que acabou de abrir). Para
+       outra área, liga de novo. */
+    setFerramenta('nenhuma')
+  }
+  function cliqueNoDesenho(c: Coord, mpp: number) {
+    const acao = interpretarClique(vertices, c, mpp)
+    if (acao.tipo === 'fechar') {
+      concluirDesenho()
+      return
+    }
+    if (acao.tipo === 'cheio') {
+      setAvisoDesenho(`Máximo de ${MAX_VERTICES} vértices. Conclua a área ou desfaça um vértice.`)
+      return
+    }
+    setAvisoDesenho(null)
+    setVertices((vs) => adicionarVertice(vs, c))
+  }
 
   /* Esc DESLIGA a ferramenta ligada — e so' ela. Escuta na fase de CAPTURA e para a
      propagacao: sem isso o mesmo Esc tambem fecharia a janela da ficha que estiver por
@@ -1067,6 +1142,21 @@ export default function MapScreen({
         corRealce: 'var(--ac-a16)',
       },
     ]
+    /* "Analisar geometria" DEPOIS da régua, como no trilho (ordem do dono). Só quando há
+       quem receba a área — a mesma condição do botão do trilho. */
+    if (onGeometriaDesenhada) {
+      lista.push({
+        id: 'analisar-geometria',
+        icone: 'poligono',
+        titulo: 'Analisar geometria',
+        sub: ferramenta === 'geometria' ? 'clique os vértices da área' : 'clique para ativar',
+        ligado: ferramenta === 'geometria',
+        onToggle: alternarGeometria,
+        cor: 'var(--ac-text)',
+        corTexto: 'var(--ac-chip)',
+        corRealce: 'var(--ac-a16)',
+      })
+    }
 
     /* So' no drill-down: na visao de UF a lista e' de cidades, e comparar cidades tem
        tela propria. */
@@ -1216,6 +1306,8 @@ export default function MapScreen({
     ferramenta,
     alternarRegua,
     alternarPonto,
+    alternarGeometria,
+    onGeometriaDesenhada,
     nivelUf,
     modoCenario,
     cenario.length,
@@ -1315,6 +1407,9 @@ export default function MapScreen({
           medindo={ferramenta === 'regua'}
           selecionandoPonto={ferramenta === 'ponto'}
           onSelecionarPonto={aplicarPonto}
+          desenhando={ferramenta === 'geometria'}
+          verticesDesenho={vertices}
+          onCliqueDesenho={cliqueNoDesenho}
           pontosComparados={pontosComparados}
           onPontoClicado={onPontoComparado}
           independentes={verIndependentes ? independentes?.itens : undefined}
@@ -1660,6 +1755,81 @@ export default function MapScreen({
               pointerEvents: 'none',
             }}
           >
+            {/* ---------------- Barra do DESENHO ("Analisar geometria", DEC-070) ----------------
+                Acima do trilho, colada no botão que ligou a ferramenta: é onde o olho está
+                quando ela acende. A área vai AO VIVO (o operador quer saber se cabe nos
+                limites antes de concluir), e o "Concluir" travado diz POR QUÊ em texto —
+                botão cinza mudo se lê como defeito. Esc cancela (o mesmo atalho que
+                desliga qualquer ferramenta). */}
+            {ferramenta === 'geometria' && (
+              <div
+                role="group"
+                aria-label="Desenho da área"
+                style={{
+                  pointerEvents: 'auto',
+                  width: 330,
+                  padding: '10px 12px',
+                  display: 'grid',
+                  gap: 8,
+                  borderRadius: 10,
+                  background: 'var(--surf-mapa)',
+                  border: '1px solid var(--linha-mapa)',
+                  boxShadow: 'inset 3px 0 0 var(--gr-verde)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+                  <span style={{ font: '600 12.5px/1.2 var(--f-ui)', color: 'var(--tx-max)' }}>
+                    Desenhando a área
+                  </span>
+                  <span className="num" style={{ font: '600 12px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
+                    {avaliacaoDesenho.areaKm2 != null ? formatarKm2(avaliacaoDesenho.areaKm2) : '—'}
+                    <span style={{ fontWeight: 400, color: 'var(--tx-sub)' }}>
+                      {' · '}
+                      {vertices.length} {vertices.length === 1 ? 'vértice' : 'vértices'}
+                    </span>
+                  </span>
+                </div>
+                <span style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
+                  {vertices.length === 0
+                    ? 'Clique no mapa para marcar o 1º vértice. Entre 0,1 e 25 km², até 50 vértices.'
+                    : 'Clique para o próximo vértice; feche clicando no 1º ou em Concluir.'}
+                </span>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <Botao
+                    onClick={() => concluirDesenho()}
+                    disabled={!avaliacaoDesenho.podeConcluir}
+                    title={avaliacaoDesenho.motivo ?? 'Analisar a área desenhada'}
+                  >
+                    Concluir
+                  </Botao>
+                  <Botao
+                    variante="ghost"
+                    onClick={() => {
+                      setAvisoDesenho(null)
+                      setVertices((vs) => desfazerVertice(vs))
+                    }}
+                    disabled={vertices.length === 0}
+                  >
+                    Desfazer
+                  </Botao>
+                  <Botao variante="ghost" onClick={() => setFerramenta('nenhuma')}>
+                    Cancelar
+                  </Botao>
+                </div>
+                {(avisoDesenho ?? (vertices.length > 0 ? avaliacaoDesenho.motivo : null)) && (
+                  <span
+                    role={avisoDesenho ? 'alert' : undefined}
+                    style={{
+                      font: '400 11px/1.4 var(--f-ui)',
+                      color: avisoDesenho ? 'var(--neg)' : 'var(--tx-sub)',
+                    }}
+                  >
+                    {avisoDesenho ?? avaliacaoDesenho.motivo}
+                  </span>
+                )}
+              </div>
+            )}
+
             {/* ---------------- Trilho + painel "Camadas do mapa" ----------------
                 O desenho e o porque moram em `components/BarraCamadas`. Aqui fica so a
                 LIGACAO: quais chaves existem neste recorte, o texto de cada uma e a
@@ -1679,6 +1849,11 @@ export default function MapScreen({
                 chaves={chavesDoMapa}
                 selecionarPonto={{ ligado: ferramenta === 'ponto', onToggle: alternarPonto }}
                 regua={{ ligado: ferramenta === 'regua', onToggle: alternarRegua }}
+                geometria={
+                  onGeometriaDesenhada
+                    ? { ligado: ferramenta === 'geometria', onToggle: alternarGeometria }
+                    : null
+                }
                 comparar={
                   nivelUf
                     ? null

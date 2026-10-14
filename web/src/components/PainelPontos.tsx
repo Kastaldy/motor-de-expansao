@@ -11,6 +11,8 @@ import {
   MAX_PONTOS,
   compararPontos,
   corDoPonto,
+  ehAreaDesenhada,
+  motivoSemPdfDeComparacao,
   passaNoEstudo,
   resumoDoEstudo,
   rotulosDosPontos,
@@ -90,8 +92,17 @@ export default function PainelPontos({
      perguntas diferentes, e um ponto pode ganhar a comparação e ainda assim reprovar num
      piso do produto. Viabilidade fica de fora de propósito — é entrada do operador sobre um
      imóvel concreto (DEC-009), e a comparação não a tem. */
+  /* ÁREA DESENHADA (DEC-070, fase 1) ainda não tem PDF: o deck de comparação desenha o raio
+     de 1 km de cada ponto na foto e nos textos, e para uma área ele afirmaria um recorte
+     que não é o dela. A recusa é DITA, com o motivo, em vez de o botão sumir. */
+  const temArea = fichas.some((f) => ehAreaDesenhada(f))
   const gerarRelatorio = useCallback(async () => {
     if (fichas.length < 2 || gerandoRelatorio) return
+    const semPdf = motivoSemPdfDeComparacao(fichas)
+    if (semPdf) {
+      setErroRelatorio(semPdf)
+      return
+    }
     setGerandoRelatorio(true)
     setErroRelatorio(null)
     try {
@@ -387,8 +398,12 @@ export default function PainelPontos({
           )}
 
           <p style={{ font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
-            Cada leitura sai do raio de {num((fichas[0]?.raio_km ?? 1) * 1000)} m em torno do
-            ponto — a mesma régua do Relatório Pontual.
+            {temArea
+              ? /* Com área na lista, "cada leitura sai do raio" seria falso para ela. */
+                `Os pontos saem do raio de ${num((fichas.find((f) => !ehAreaDesenhada(f))?.raio_km ?? 1) * 1000)} m ` +
+                'em torno de cada um; a área desenhada, de dentro do polígono que você desenhou.'
+              : `Cada leitura sai do raio de ${num((fichas[0]?.raio_km ?? 1) * 1000)} m em torno do ` +
+                'ponto — a mesma régua do Relatório Pontual.'}
           </p>
         </Glass>
       )}

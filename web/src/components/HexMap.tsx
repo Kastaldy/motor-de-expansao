@@ -1,6 +1,6 @@
 import { FlyToInterpolator, type Layer } from '@deck.gl/core'
 import { H3HexagonLayer } from '@deck.gl/geo-layers'
-import { IconLayer, LineLayer, PolygonLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
+import { IconLayer, LineLayer, PathLayer, PolygonLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
 import { cellToLatLng } from 'h3-js'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -24,6 +24,7 @@ import { chaveDaCoordenada, type PinDaComparacao } from '../lib/comparacao-ponto
 import { alunos, brl, distanciaCurta, num, renda } from '../lib/format'
 import {
   type AlvoMedicao,
+  type Coord,
   distanciaMetros,
   metrosPorPixel,
   travarNoAlvo,
@@ -201,6 +202,12 @@ interface PeleDoMapa {
    * Positron e' claro o bastante para as ruas sobreviverem a essa tinta.
    */
   alphaHex: number
+  /**
+   * O polígono em DESENHO ("Analisar geometria", DEC-070): vértices, arestas e o véu do
+   * provisório. Espelhos de --gr-verde nos dois temas (styles/tokens.css) — a MESMA cor do
+   * botão do trilho, que é o que liga o desenho na tela à ferramenta que o produz.
+   */
+  desenho: RGBA
 }
 
 const PELE: Record<Tema, PeleDoMapa> = {
@@ -213,6 +220,7 @@ const PELE: Record<Tema, PeleDoMapa> = {
     pinMiolo: [8, 11, 16, 255],
     aroAlunos: [255, 255, 255, 250],
     alphaHex: HEX_FILL_ALPHA,
+    desenho: [95, 208, 140, 255], // --gr-verde (#5fd08c) do escuro
   },
   claro: {
     basemap: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
@@ -228,6 +236,7 @@ const PELE: Record<Tema, PeleDoMapa> = {
     // e' a linha escura que `svgMolduraAlunos` desenha por baixo, nao a cor.
     aroAlunos: [255, 255, 255, 250],
     alphaHex: 170,
+    desenho: [15, 157, 85, 255], // --gr-verde (#0f9d55) do claro
   },
 }
 
@@ -502,6 +511,16 @@ export interface HexMapProps {
   pontosComparados?: readonly PinComparado[]
   /** Clique num pin da comparacao: quem recebe abre a aba daquele ponto. */
   onPontoClicado?: (indice: number) => void
+  /**
+   * "Analisar geometria" ligado (DEC-070, fase 1): o clique no mapa vira VERTICE de um
+   * poligono desenhado a mao. O estado do desenho (os vertices) e' do `MapScreen`, que tem
+   * a barra de Concluir/Desfazer/Cancelar; aqui so' se desenha o provisorio e se repassa o
+   * clique — com os metros por pixel da camera, que so' o mapa conhece e que decidem se o
+   * clique caiu "em cima" do 1o vertice (fechar).
+   */
+  desenhando?: boolean
+  verticesDesenho?: readonly Coord[]
+  onCliqueDesenho?: (clique: Coord, metrosPorPixel: number) => void
 }
 
 /**
@@ -564,13 +583,16 @@ export default function HexMap({
   onSelecionarPonto,
   pontosComparados,
   onPontoClicado,
+  desenhando = false,
+  verticesDesenho,
+  onCliqueDesenho,
 }: HexMapProps) {
   const pele = PELE[tema]
-  /* O clique do mapa esta' TOMADO por uma ferramenta do trilho (regua ou "Selecionar
-     ponto"; `lib/ferramenta-mapa` garante que so' uma esta' ligada). Uma flag so' para os
-     `onClick` das camadas e o cursor nao precisarem conhecer cada ferramenta — a proxima
-     (a geometria do lote D) entra aqui e no `onClick` do DeckGL. */
-  const cliqueOcupado = medindo || selecionandoPonto
+  /* O clique do mapa esta' TOMADO por uma ferramenta do trilho (regua, "Selecionar ponto"
+     ou "Analisar geometria"; `lib/ferramenta-mapa` garante que so' uma esta' ligada). Uma
+     flag so' para os `onClick` das camadas e o cursor nao precisarem conhecer cada
+     ferramenta — quem distingue as tres e' o `onClick` do DeckGL. */
+  const cliqueOcupado = medindo || selecionandoPonto || desenhando
   // Identidade ESTAVEL por tema (memoizada em `_molduras`): entra no
   // `updateTriggers` do `getIcon`, entao um objeto novo por render reempacotaria
   // o atlas de textura a cada quadro.
@@ -1580,6 +1602,59 @@ export default function HexMap({
       )
     }
 
+    /* O POLIGONO EM DESENHO (DEC-070, fase 1), no molde da regua: veu translucido do
+       provisorio (a partir de 3 vertices), as arestas ja' marcadas e os vertices — o 1o
+       maior e com anel, porque clicar nele FECHA a area. Sem camada de "elastico" seguindo
+       o cursor de proposito: ela reconstruiria a lista de camadas a cada movimento do
+       mouse, e com 15 mil hexagonos isso se sente. Nada aqui e' clicavel: o clique segue
+       para o `onClick` do DeckGL, que e' quem acrescenta o vertice. */
+    const vertices = desenhando ? (verticesDesenho ?? []) : []
+    if (vertices.length) {
+      const rgb = pele.desenho
+      if (vertices.length >= 3) {
+        base.push(
+          new PolygonLayer<Coord[]>({
+            id: 'desenho-area',
+            data: [vertices as Coord[]],
+            getPolygon: (d) => d.map((v) => [v.lng, v.lat]),
+            filled: true,
+            getFillColor: [rgb[0], rgb[1], rgb[2], 46],
+            stroked: false,
+            pickable: false,
+          }) as unknown as PolygonLayer<Hex>,
+        )
+      }
+      if (vertices.length >= 2) {
+        base.push(
+          new PathLayer<Coord[]>({
+            id: 'desenho-arestas',
+            data: [vertices as Coord[]],
+            getPath: (d) => d.map((v) => [v.lng, v.lat] as [number, number]),
+            getColor: [rgb[0], rgb[1], rgb[2], 235],
+            getWidth: 2.5,
+            widthUnits: 'pixels',
+            pickable: false,
+          }) as unknown as PathLayer<Hex>,
+        )
+      }
+      base.push(
+        new ScatterplotLayer<{ v: Coord; primeiro: boolean }>({
+          id: 'desenho-vertices',
+          data: vertices.map((v, i) => ({ v, primeiro: i === 0 })),
+          getPosition: (d) => [d.v.lng, d.v.lat],
+          getRadius: (d) => (d.primeiro && vertices.length >= 3 ? 7 : 4.5),
+          radiusUnits: 'pixels',
+          getFillColor: (d) => (d.primeiro ? pele.pinMiolo : [rgb[0], rgb[1], rgb[2], 255]),
+          stroked: true,
+          getLineColor: [rgb[0], rgb[1], rgb[2], 255],
+          lineWidthUnits: 'pixels',
+          getLineWidth: (d) => (d.primeiro ? 2.5 : 1),
+          pickable: false,
+          updateTriggers: { getRadius: [vertices.length] },
+        }) as unknown as ScatterplotLayer<Hex>,
+      )
+    }
+
     // Ponto buscado: hexagono marcado + pin de DUAS camadas (anel na cor da selecao,
     // miolo no fundo do tema — no escuro anel claro/miolo escuro, no claro o inverso).
     // Buscar um endereco e' uma forma de SELECIONAR, entao vale a mesma cor do hex
@@ -1695,11 +1770,17 @@ export default function HexMap({
               d
                 ? {
                     titulo: d.rotulo,
+                    /* O pin da ÁREA DESENHADA (DEC-070) é o ponto central dela: o texto diz
+                       "área", senão o hover chamaria de ponto um lugar que ninguém clicou. */
                     sub: d.carregando
                       ? 'Lendo os setores…'
                       : d.ativo
-                        ? 'Ponto aberto na análise'
-                        : 'Clique para abrir a análise deste ponto',
+                        ? d.geometria
+                          ? 'Área aberta na análise'
+                          : 'Ponto aberto na análise'
+                        : d.geometria
+                          ? 'Clique para abrir a análise desta área'
+                          : 'Clique para abrir a análise deste ponto',
                     x: info.x,
                     y: info.y,
                   }
@@ -1784,6 +1865,9 @@ export default function HexMap({
     // Mesmo motivo do bloco acima: o corpo LE as duas para montar (ou nao) a regua.
     medindo,
     medicao,
+    // O desenho do poligono: o corpo do memo LE os dois para montar as camadas dele.
+    desenhando,
+    verticesDesenho,
     // Os `onClick` das camadas leem a flag por closure: sem ela aqui, ligar "Selecionar
     // ponto" deixaria no lugar os handlers antigos (que abrem imovel, Ultra, hexagono).
     cliqueOcupado,
@@ -1822,7 +1906,9 @@ export default function HexMap({
       <DeckGL
         viewState={view}
         onViewStateChange={(e) => setView(e.viewState as ViewState)}
-        controller={{ dragRotate: false }}
+        /* Duplo clique e' ZOOM no controle do deck — desenhando, dois cliques rapidos
+           seguidos sao dois vertices, e o zoom no meio do desenho tiraria a area da tela. */
+        controller={{ dragRotate: false, doubleClickZoom: !desenhando }}
         layers={camadas}
         style={{ position: 'absolute', top: '0', left: '0', width: '100%', height: '100%' }}
         onClick={(info) => {
@@ -1834,6 +1920,13 @@ export default function HexMap({
           if (selecionandoPonto && info.coordinate) {
             const [lng, lat] = info.coordinate as number[]
             onSelecionarPonto?.(lat, lng)
+          }
+          /* "Analisar geometria": o clique vira vertice (ou fecha a area, perto do 1o). A
+             decisao e' do `MapScreen` (`lib/geometria-desenho`); o mapa so' manda o lugar e
+             a escala de TELA, que sem a camera nao ha' como saber. */
+          if (desenhando && info.coordinate) {
+            const [lng, lat] = info.coordinate as number[]
+            onCliqueDesenho?.({ lat, lng }, metrosPorPixel(view.zoom, lat))
           }
         }}
         getCursor={({ isHovering }) =>

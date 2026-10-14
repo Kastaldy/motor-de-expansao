@@ -57,6 +57,10 @@ _TOLERANCIA_MALHA_GRAUS = 0.018
 # aproximacao GENEROSA de proposito: incluir um municipio que nao contribui setor custa uma
 # leitura de particao; excluir um que contribui e' o defeito que esta correcao fecha.
 _KM_POR_GRAU_LAT = 111.32
+# Folga em volta da caixa do poligono desenhado (DEC-070) na consulta de municipios
+# vizinhos -- ver `_MalhaMunicipal.alcancados_na_geometria`. Generosa pelo mesmo motivo do
+# quadro acima: ler uma particao a mais custa pouco; deixar de ler a que contribui e' erro.
+_MARGEM_GEOMETRIA_KM = 0.5
 
 
 class _MalhaMunicipal:
@@ -105,6 +109,27 @@ class _MalhaMunicipal:
         )
         return [self._meta[int(i)] for i in self._tree.query(quadro, predicate="intersects")]
 
+    def alcancados_na_geometria(
+        self, geometria, margem_km: float = _MARGEM_GEOMETRIA_KM
+    ) -> list[tuple[str, str]]:
+        """Municipios que tocam a caixa do POLIGONO desenhado (DEC-070), com margem.
+
+        O par de `alcancados` para o modo geometria. O quadrado de meio-lado fixo em volta
+        do ponto nao serve: um poligono de 25 km2 se estende ate' ~5 km do ponto de
+        referencia, muito alem do frame de 1 km -- e a particao do vizinho que ele cobre
+        ficaria de fora em silencio, repetindo a DEC-065 por outra porta. A caixa vem da
+        propria geometria (em graus, x=lng) e ganha `margem_km` de folga: a malha municipal
+        e a malha de setores sao simplificacoes diferentes da mesma divisa, e um setor do
+        vizinho pode atravessar o poligono mesmo quando o contorno do municipio, nesta
+        malha, para alguns metros antes.
+        """
+        minx, miny, maxx, maxy = geometria.bounds
+        meio_lat = margem_km / _KM_POR_GRAU_LAT
+        cos_lat = max(cos(radians((miny + maxy) / 2.0)), 0.01)
+        meio_lng = meio_lat / cos_lat
+        quadro = shp_box(minx - meio_lng, miny - meio_lat, maxx + meio_lng, maxy + meio_lat)
+        return [self._meta[int(i)] for i in self._tree.query(quadro, predicate="intersects")]
+
 
 @lru_cache(maxsize=4)
 def _carregar_malha(ibge_dir_str: str) -> _MalhaMunicipal:
@@ -147,8 +172,13 @@ def _carregar_malha(ibge_dir_str: str) -> _MalhaMunicipal:
     return _MalhaMunicipal(STRtree(geoms), meta, geoms)
 
 
-def _resolver_e_carregar(lat: float, lng: float, settings: Settings):
-    """Resolve ``(uf, cod_municipio)`` e carrega ``setores_df``. Levanta 400/404."""
+def _resolver_e_carregar(lat: float, lng: float, settings: Settings, *, geometria=None):
+    """Resolve ``(uf, cod_municipio)`` e carrega ``setores_df``. Levanta 400/404.
+
+    `geometria` (DEC-070, opcional; shapely em graus, x=lng): o poligono desenhado, com
+    (lat, lng) = o `representative_point` dele. Muda SO' o alcance dos vizinhos -- a caixa
+    do poligono soma-se ao frame do ponto. Sem ela, a carga e' a de sempre, byte a byte.
+    """
     malha = _carregar_malha(str(settings.ibge_dir))
     resolvido = malha.resolver(lat, lng)
     if resolvido is None:
@@ -188,7 +218,11 @@ def _resolver_e_carregar(lat: float, lng: float, settings: Settings):
     # vizinho sem particao apenas nao entra (cobertura parcial e' estado normal do artefato).
     vizinhos = [
         chave
-        for chave in _malha_alcancada(malha, lat, lng)
+        for chave in (
+            _malha_alcancada(malha, lat, lng)
+            if geometria is None
+            else _malha_alcancada(malha, lat, lng, geometria=geometria)
+        )
         if chave != (uf, cod_municipio)
     ]
     if vizinhos:
@@ -210,14 +244,29 @@ def _resolver_e_carregar(lat: float, lng: float, settings: Settings):
     return uf, cod_municipio, setores_df
 
 
-def _malha_alcancada(malha: _MalhaMunicipal, lat: float, lng: float) -> list[tuple[str, str]]:
-    """Municipios que o FRAME do mapa alcanca — o alcance vem de quem desenha o frame."""
+def _malha_alcancada(
+    malha: _MalhaMunicipal, lat: float, lng: float, *, geometria=None
+) -> list[tuple[str, str]]:
+    """Municipios que o FRAME do mapa alcanca — o alcance vem de quem desenha o frame.
+
+    Com `geometria` (DEC-070), soma os que a caixa do poligono alcanca, sem repetir e na
+    ordem estavel (frame primeiro). Soma, e nao troca: o frame do ponto de referencia
+    continua sendo o que um mapa centrado nele mostraria.
+    """
     from motor_expansao.dashboard.censo_map import (
         RAIO_CENSITARIO_DEFAULT_KM,
         alcance_do_frame_km,
     )
 
-    return malha.alcancados(lat, lng, alcance_do_frame_km(RAIO_CENSITARIO_DEFAULT_KM))
+    alcancados = malha.alcancados(lat, lng, alcance_do_frame_km(RAIO_CENSITARIO_DEFAULT_KM))
+    if geometria is None:
+        return alcancados
+    vistos = set(alcancados)
+    for chave in malha.alcancados_na_geometria(geometria):
+        if chave not in vistos:
+            vistos.add(chave)
+            alcancados.append(chave)
+    return alcancados
 
 
 def _nome_municipio_de(setores_df) -> str | None:

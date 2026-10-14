@@ -24,7 +24,7 @@ import { useState } from 'react'
    (`lib/ferramenta-mapa`): ligar uma desliga a outra. A altura continua constante
    — o que cresceu foi a constante, nao a variacao.
 
-   O TRILHO NAO REPETE O PAINEL — ele o ATALHA. `Ponto`, `Regua` e `Comparar` sao a
+   O TRILHO NAO REPETE O PAINEL — ele o ATALHA. `Ponto`, `Regua`, `Geometria` e `Comparar` sao a
    mesma chave que a linha correspondente do painel, e acendem juntas; o icone e' o
    caminho de um clique para quem ja sabe o que quer, o painel e' o caminho de quem
    esta procurando. Um trilho cujos icones abrissem coisas diferentes das que o
@@ -108,6 +108,19 @@ const ICONE: Record<string, React.JSX.Element> = {
     <>
       <path d="M12 21s-6.2-5.6-6.2-10.2a6.2 6.2 0 0 1 12.4 0C18.2 15.4 12 21 12 21Z" />
       <circle cx="12" cy="10.8" r="2.3" />
+    </>
+  ),
+  /* POLIGONO de cinco lados com os VERTICES marcados — "Analisar geometria" (DEC-070).
+     Os vertices sao o que diz "voce desenha clicando ponto a ponto"; um poligono liso
+     seria so' uma forma, e nao o gesto que a ferramenta pede. */
+  poligono: (
+    <>
+      <path d="M12 3.5 20 9.3l-3 9.7H7l-3-9.7Z" />
+      <circle cx="12" cy="3.5" r="1.4" fill="currentColor" />
+      <circle cx="20" cy="9.3" r="1.4" fill="currentColor" />
+      <circle cx="17" cy="19" r="1.4" fill="currentColor" />
+      <circle cx="7" cy="19" r="1.4" fill="currentColor" />
+      <circle cx="4" cy="9.3" r="1.4" fill="currentColor" />
     </>
   ),
   /* Dois quadros sobrepostos — comparar. */
@@ -381,6 +394,7 @@ export default function BarraCamadas({
   chaves,
   selecionarPonto = null,
   regua,
+  geometria = null,
   comparar,
   legendaVisivel,
   onLegenda,
@@ -396,6 +410,12 @@ export default function BarraCamadas({
   selecionarPonto?: { ligado: boolean; onToggle: () => void } | null
   /** Atalho do trilho para a regua — a MESMA chave da linha correspondente. */
   regua: { ligado: boolean; onToggle: () => void }
+  /**
+   * Atalho do trilho para "Analisar geometria" (DEC-070) — a MESMA chave da linha do
+   * painel. `null`/ausente = o botao nao aparece (sem quem receba a area desenhada, o
+   * desenho nao levaria a lugar nenhum).
+   */
+  geometria?: { ligado: boolean; onToggle: () => void } | null
   /** Idem para a comparacao. `null` = fora do drill-down, entao o icone fica inerte. */
   comparar: { ligado: boolean; onToggle: () => void } | null
   legendaVisivel: boolean
@@ -462,10 +482,23 @@ export default function BarraCamadas({
           cor="var(--gr-rosa)"
           onClick={regua.onToggle}
         />
-        {/* TODO(lote D, DEC-070): ANALISAR GEOMETRIA entra AQUI, logo abaixo da regua —
-            a posicao e' do dono (2026-10-14). Mesmo molde do "Selecionar ponto": prop
-            `{ ligado, onToggle } | null`, ferramenta 'geometria' de `lib/ferramenta-mapa`
-            e uma cor que nao seja o rosa da regua nem o azul do ponto. */}
+        {/* ANALISAR GEOMETRIA — logo ABAIXO da regua (posicao do dono, 2026-10-14). Verde,
+            e nao o rosa da regua nem o azul do ponto: as tres poem o cursor em mira, e a
+            cor do botao aceso e' o que diz qual delas espera o clique. O MESMO verde pinta
+            o poligono em desenho no mapa. */}
+        {geometria && (
+          <BotaoTrilho
+            icone="poligono"
+            titulo={
+              geometria.ligado
+                ? 'Desenhando — clique os vértices da área; feche no 1º vértice ou em Concluir (Esc cancela)'
+                : 'Desenhar uma área no mapa para analisar'
+            }
+            aceso={geometria.ligado}
+            cor="var(--gr-verde)"
+            onClick={geometria.onToggle}
+          />
+        )}
         <BotaoTrilho
           icone="comparar"
           titulo={

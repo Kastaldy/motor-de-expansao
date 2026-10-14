@@ -661,19 +661,18 @@ export default function App() {
               /* Todos os pontos da comparação, cada um na sua cor (o `HexMap` desenha um
                  pin por ponto; o ativo, maior). */
               pontosComparados={pontos.pins}
-              /* Clique num pin colorido: abre a aba DAQUELE ponto, e a janela da ficha se
-                 estiver fechada. É o mesmo gesto de pedir de novo um ponto que já está na
-                 lista — `pedir` devolve `repetido`, abre a aba e sobe o `revelar` —, então
-                 não precisa de canal novo. A coordenada é a da FICHA (a que a lista
-                 guardou), e por isso casa com ela mesma. Pin de ponto ainda em leitura
-                 não chega aqui (o mapa não o deixa clicável). */
-              onPontoComparado={(i) => {
-                const f = pontos.fichas[i]
-                if (f) pedirPonto(f.lat, f.lng)
-              }}
+              /* Clique num pin colorido: abre a aba DAQUELE item, e a janela da ficha se
+                 estiver fechada. Pelo ÍNDICE (`mostrar`), e não pedindo de novo a coordenada
+                 da ficha: com a ÁREA DESENHADA na lista (DEC-070) a coordenada dela é o
+                 ponto central, e pedi-la leria um PONTO novo ali em vez de abrir a área.
+                 Pin ainda em leitura não chega aqui (o mapa não o deixa clicável). */
+              onPontoComparado={(i) => pontos.mostrar(i)}
               /* A lupa do cabeçalho vira PONTO ANALISADO nas duas entradas: buscar um
                  endereço ali produz a MESMA ficha que colá-lo. */
               onPontoBuscado={pedirPonto}
+              /* "Analisar geometria" (DEC-070, fase 1): a área desenhada entra na MESMA
+                 lista dos pontos, com a mesma regra de teto e de cor. */
+              onGeometriaDesenhada={(g) => void pontos.analisarGeometria(g)}
               /* O hero da tela vazia de "Analisar um ponto" é o do `PontoScreen`. */
               semLanding={tela === 'ponto'}
               /* Abre a ficha do IMÓVEL na chegada (e liga a camada de imóveis), em vez
@@ -693,7 +692,10 @@ export default function App() {
             />
             <PontoScreen
               onCapturarMapas={capturarMapas}
-              onAnalisarPonto={irParaViabilidade}
+              /* `undefined` sem a aba Viabilidade: o botão "Simulador" aparece TRAVADO com
+                 o motivo escrito. Passar sempre deixaria o botão ativo e o clique morreria
+                 calado — o `irParaViabilidade` retorna em silêncio quando a aba é vetada. */
+              onAnalisarPonto={telaLiberada('viabilidade', abas) ? irParaViabilidade : undefined}
               fichas={pontos.fichas}
               aberto={pontos.aberto}
               revelar={pontos.revelar}

@@ -50,6 +50,15 @@ describe('estadoDoEstudo', () => {
     expect(e.travadoPorque).toBe(DICA_ESTUDO_GEOMETRIA)
   })
 
+  it('área desenhada cujo mercado falhou (sem `grao`) continua travada pela geometria', () => {
+    const semGrao = {
+      mercado: { disponivel: false, sam: null, residual: null, score_residual: null },
+      geometria: [[[-46.6, -23.5], [-46.5, -23.5], [-46.5, -23.4], [-46.6, -23.5]]],
+    } as Pick<PontoPayload, 'mercado' | 'geometria'>
+    expect(ehAreaDesenhada(semGrao)).toBe(true)
+    expect(estadoDoEstudo(semGrao, false).habilitado).toBe(false)
+  })
+
   it('sem ficha aberta: travado', () => {
     expect(estadoDoEstudo(null, false).habilitado).toBe(false)
   })

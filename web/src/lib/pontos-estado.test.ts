@@ -12,6 +12,7 @@ import {
   falhou,
   itemAtivo,
   limpar,
+  mostrar,
   pedir,
   pinParaAtivo,
   pinsDoEstado,
@@ -237,5 +238,113 @@ describe('pinsDoEstado — todos os pontos no mapa', () => {
 
   it('lista vazia: nenhum pin', () => {
     expect(pinsDoEstado(PONTOS_VAZIO)).toEqual([])
+  })
+})
+
+/* ---------------- Área desenhada (DEC-070, fase 1) ---------------- */
+
+/** Um quadradinho de ~1 km em volta de `c`, como anel GeoJSON fechado. */
+function anelEm(c: { lat: number; lng: number }, d = 0.0045): [number, number][][] {
+  const anel: [number, number][] = [
+    [c.lng - d, c.lat - d],
+    [c.lng + d, c.lat - d],
+    [c.lng + d, c.lat + d],
+    [c.lng - d, c.lat + d],
+  ]
+  anel.push(anel[0])
+  return [anel]
+}
+
+/** A ficha que o servidor devolve para a área: `lat`/`lng` = ponto interno, mais o anel. */
+function fichaDeArea(c: { lat: number; lng: number }, geometria = anelEm(c)) {
+  return {
+    ...(ficha(c.lat, c.lng) as object),
+    raio_km: null,
+    geometria,
+    recorte: { tipo: 'poligono', area_km2: 1, n_vertices: 4, metodo: 'x' },
+  } as unknown as PontoPayload
+}
+
+describe('área desenhada na mesma lista dos pontos', () => {
+  it('entra como pendente com a geometria, e o pin provisório já tem o contorno', () => {
+    const g = anelEm(A)
+    const e = pedir(PONTOS_VAZIO, A.lat, A.lng, g)
+    expect(e.pendentes).toEqual([{ lat: A.lat, lng: A.lng, geometria: g }])
+    const [pin] = pinsDoEstado(e)
+    expect(pin.geometria).toBe(g)
+    expect(pin.carregando).toBe(true)
+    expect(pin.rotulo).toBe('Área desenhada')
+  })
+
+  it('a ficha da área chega e ocupa a vaga dela', () => {
+    const g = anelEm(A)
+    const e = chegou(pedir(PONTOS_VAZIO, A.lat, A.lng, g), { lat: A.lat, lng: A.lng, geometria: g }, fichaDeArea(A, g))
+    expect(e.fichas).toHaveLength(1)
+    expect(e.pendentes).toHaveLength(0)
+    expect(pinsDoEstado(e)[0].geometria).toEqual(g)
+  })
+
+  it('área e ponto no MESMO lugar não se confundem', () => {
+    const g = anelEm(A)
+    const comArea = chegou(pedir(PONTOS_VAZIO, A.lat, A.lng, g), { lat: A.lat, lng: A.lng, geometria: g }, fichaDeArea(A, g))
+    // Buscar a coordenada exata do ponto interno da área é um PONTO novo, não a área.
+    expect(decidirPedido(comArea, A.lat, A.lng)).toEqual({ tipo: 'ler' })
+    const comPonto = lido(PONTOS_VAZIO, A)
+    expect(decidirPedido(comPonto, A.lat, A.lng, g)).toEqual({ tipo: 'ler' })
+  })
+
+  it('desenhar de novo a MESMA área é repetição; outra área é item novo', () => {
+    const g = anelEm(A)
+    const e = chegou(pedir(PONTOS_VAZIO, A.lat, A.lng, g), { lat: A.lat, lng: A.lng, geometria: g }, fichaDeArea(A, g))
+    expect(decidirPedido(e, A.lat, A.lng, anelEm(A))).toEqual({ tipo: 'repetido', indice: 0 })
+    expect(decidirPedido(e, A.lat, A.lng, anelEm(A, 0.006))).toEqual({ tipo: 'ler' })
+  })
+
+  it('área conta no teto como qualquer ponto', () => {
+    let e = PONTOS_VAZIO
+    for (const p of [A, B, C, { lat: -8.05, lng: -34.88 }]) e = lido(e, p)
+    e = pedir(e, -15.79, -47.88, anelEm({ lat: -15.79, lng: -47.88 }))
+    expect(decidirPedido(e, -3.73, -38.52, anelEm({ lat: -3.73, lng: -38.52 }))).toEqual({ tipo: 'cheio' })
+  })
+
+  it('a leitura da área que falha tira só o pin dela', () => {
+    const g = anelEm(B)
+    const e = pedir(lido(PONTOS_VAZIO, A), B.lat, B.lng, g)
+    const depois = falhou(e, { lat: B.lat, lng: B.lng, geometria: g })
+    expect(depois.pendentes).toHaveLength(0)
+    expect(depois.fichas).toHaveLength(1)
+  })
+
+  it('duas áreas viram "Área desenhada #1" e "#2"', () => {
+    const ga = anelEm(A)
+    const gb = anelEm(B)
+    let e = chegou(pedir(PONTOS_VAZIO, A.lat, A.lng, ga), { lat: A.lat, lng: A.lng, geometria: ga }, fichaDeArea(A, ga))
+    e = chegou(pedir(e, B.lat, B.lng, gb), { lat: B.lat, lng: B.lng, geometria: gb }, fichaDeArea(B, gb))
+    expect(pinsDoEstado(e).map((p) => p.rotulo)).toEqual(['Área desenhada #1', 'Área desenhada #2'])
+  })
+})
+
+describe('mostrar (clique no pin colorido)', () => {
+  it('abre a aba pelo ÍNDICE e revela a janela, sem ler nada', () => {
+    const e = lido(lido(PONTOS_VAZIO, A), B)
+    const depois = mostrar(e, 0)
+    expect(depois.aberto).toBe(0)
+    expect(depois.revelar).toBe(e.revelar + 1)
+    expect(depois.pendentes).toHaveLength(0)
+  })
+
+  it('vale para a ÁREA desenhada — pedir a coordenada dela leria um ponto novo', () => {
+    const g = anelEm(A)
+    const e = lido(
+      chegou(pedir(PONTOS_VAZIO, A.lat, A.lng, g), { lat: A.lat, lng: A.lng, geometria: g }, fichaDeArea(A, g)),
+      B,
+    )
+    expect(decidirPedido(e, A.lat, A.lng)).toEqual({ tipo: 'ler' })
+    expect(mostrar(e, 0).aberto).toBe(0)
+  })
+
+  it('índice fora da lista não muda nada', () => {
+    const e = lido(PONTOS_VAZIO, A)
+    expect(mostrar(e, 3)).toBe(e)
   })
 })
