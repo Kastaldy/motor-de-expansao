@@ -658,9 +658,19 @@ export default function App() {
               /* O ponto ATIVO da lista (aba aberta, ou o provisório recém-pedido). Vence o
                  `pinFixo`; seleciona o hexágono sem abrir a ficha DELE. */
               pontoAtivo={pinPonto}
-              /* Todos os pontos da comparação, cada um na sua cor. O repasse ao `HexMap`
-                 fica com a camada dos pins coloridos — ver a prop no `MapScreen`. */
+              /* Todos os pontos da comparação, cada um na sua cor (o `HexMap` desenha um
+                 pin por ponto; o ativo, maior). */
               pontosComparados={pontos.pins}
+              /* Clique num pin colorido: abre a aba DAQUELE ponto, e a janela da ficha se
+                 estiver fechada. É o mesmo gesto de pedir de novo um ponto que já está na
+                 lista — `pedir` devolve `repetido`, abre a aba e sobe o `revelar` —, então
+                 não precisa de canal novo. A coordenada é a da FICHA (a que a lista
+                 guardou), e por isso casa com ela mesma. Pin de ponto ainda em leitura
+                 não chega aqui (o mapa não o deixa clicável). */
+              onPontoComparado={(i) => {
+                const f = pontos.fichas[i]
+                if (f) pedirPonto(f.lat, f.lng)
+              }}
               /* A lupa do cabeçalho vira PONTO ANALISADO nas duas entradas: buscar um
                  endereço ali produz a MESMA ficha que colá-lo. */
               onPontoBuscado={pedirPonto}

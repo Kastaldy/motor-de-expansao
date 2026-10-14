@@ -115,13 +115,16 @@ export interface MapScreenProps {
    * TODOS os pontos da comparacao, cada um na sua cor de identidade (decisao do dono,
    * 2026-10-14), prontos para o mapa desenhar.
    *
-   * AINDA NAO REPASSADO AO `HexMap`: a camada que desenha os pins coloridos (e o clique
-   * no pin que abre a aba daquele ponto) e' do lote do mapa, que acrescenta a prop ao
-   * `HexMap` e liga o repasse aqui. Ate' la' o mapa mostra o pin neutro do ponto ATIVO,
-   * que vem por `pontoAtivo` — inclusive o provisorio, que aparece no lugar pedido antes
-   * de a leitura chegar. Aqui ela ja' decide de que lado nasce a ficha do hexagono.
+   * Repassada ao `HexMap`, que desenha um pin por ponto (anel na cor da aba, o ativo
+   * maior, o provisorio esmaecido) e suprime o pin neutro do `pontoAtivo` quando ele e'
+   * um deles. Aqui ela tambem decide de que lado nasce a ficha do hexagono.
    */
   pontosComparados?: readonly PinDoPonto[]
+  /**
+   * Clique num pin colorido da comparacao: abre a aba daquele ponto (e a janela da
+   * ficha, se estiver fechada). Ausente = o pin so' mostra o rotulo no hover.
+   */
+  onPontoComparado?: (indice: number) => void
   /**
    * A busca do cabecalho resolveu uma coordenada: ela vira um PONTO ANALISADO.
    *
@@ -195,6 +198,7 @@ export default function MapScreen({
   pinFixo = null,
   pontoAtivo = null,
   pontosComparados,
+  onPontoComparado,
   onPontoBuscado,
   semLanding = false,
   imovelInicial = null,
@@ -279,6 +283,27 @@ export default function MapScreen({
      o mesmo clique, tres booleanos deixariam ligar duas ao mesmo tempo. */
   const [ferramenta, setFerramenta] = useState<FerramentaMapa>('nenhuma')
   const alternarRegua = useCallback(() => setFerramenta((f) => alternarFerramenta(f, 'regua')), [])
+  /* "Selecionar ponto" (decisao do dono, 2026-10-14): com ela ligada, cada clique no mapa
+     ACRESCENTA um ponto a' comparacao pelo MESMO caminho da lupa (`aplicarPonto` ->
+     `onPontoBuscado` -> `/api/ponto`), e a ferramenta continua ligada para o proximo
+     clique. Ponto de outro municipio troca o mapa de municipio pelo fluxo que ja' existe
+     (`local` da ficha -> `App`), sem nada novo aqui. */
+  const alternarPonto = useCallback(() => setFerramenta((f) => alternarFerramenta(f, 'ponto')), [])
+
+  /* Esc DESLIGA a ferramenta ligada — e so' ela. Escuta na fase de CAPTURA e para a
+     propagacao: sem isso o mesmo Esc tambem fecharia a janela da ficha que estiver por
+     cima (`JanelaFicha` fecha no Esc), e quem so' queria parar de marcar pontos perderia
+     a ficha que estava lendo. Sem ferramenta, o Esc segue o caminho de sempre. */
+  useEffect(() => {
+    if (ferramenta === 'nenhuma') return
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      setFerramenta('nenhuma')
+    }
+    window.addEventListener('keydown', aoTeclar, true)
+    return () => window.removeEventListener('keydown', aoTeclar, true)
+  }, [ferramenta])
 
   /* Legenda das faixas: VISIVEL por padrao, e agora com chave propria no trilho de
      camadas. Ela sempre foi obrigatoria na tela — quem esconde a legenda de um mapa
@@ -1017,6 +1042,19 @@ export default function MapScreen({
      nao com a permissao. */
   const chavesDoMapa = useMemo<ChaveDeCamada[]>(() => {
     const lista: ChaveDeCamada[] = [
+      /* ANTES da regua, como no trilho (ordem do dono): o painel e o trilho falam a mesma
+         lista na mesma ordem. */
+      {
+        id: 'selecionar-ponto',
+        icone: 'alvo',
+        titulo: 'Selecionar ponto',
+        sub: ferramenta === 'ponto' ? 'clique no mapa para analisar' : 'clique para ativar',
+        ligado: ferramenta === 'ponto',
+        onToggle: alternarPonto,
+        cor: 'var(--ac-text)',
+        corTexto: 'var(--ac-chip)',
+        corRealce: 'var(--ac-a16)',
+      },
       {
         id: 'medir',
         icone: 'regua',
@@ -1177,6 +1215,7 @@ export default function MapScreen({
   }, [
     ferramenta,
     alternarRegua,
+    alternarPonto,
     nivelUf,
     modoCenario,
     cenario.length,
@@ -1274,6 +1313,10 @@ export default function MapScreen({
           cenario={cenario}
           raio1km={raio1km}
           medindo={ferramenta === 'regua'}
+          selecionandoPonto={ferramenta === 'ponto'}
+          onSelecionarPonto={aplicarPonto}
+          pontosComparados={pontosComparados}
+          onPontoClicado={onPontoComparado}
           independentes={verIndependentes ? independentes?.itens : undefined}
           imoveis={verImoveis ? imoveisNoMapa : undefined}
           onImovel={abrirImovel}
@@ -1622,8 +1665,9 @@ export default function MapScreen({
                 LIGACAO: quais chaves existem neste recorte, o texto de cada uma e a
                 identidade de cor de cada camada.
 
-                A ORDEM E' FIXA e comeca pela regua — ela e' a unica que nao depende de
-                camada, nivel nem recorte, entao e' a unica que esta SEMPRE la'. As
+                A ORDEM E' FIXA e comeca pelas ferramentas do clique ("Selecionar ponto" e
+                a regua, nessa ordem — a do dono, 2026-10-14) — elas nao dependem de
+                camada, nivel nem recorte, entao sao as que estao SEMPRE la'. As
                 condicionais entram depois; assim o que existe sempre nunca muda de lugar
                 quando o que e' condicional aparece ou some.
 
@@ -1633,6 +1677,7 @@ export default function MapScreen({
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
               <BarraCamadas
                 chaves={chavesDoMapa}
+                selecionarPonto={{ ligado: ferramenta === 'ponto', onToggle: alternarPonto }}
                 regua={{ ligado: ferramenta === 'regua', onToggle: alternarRegua }}
                 comparar={
                   nivelUf

@@ -20,6 +20,7 @@ import {
   quadroDaCaptura,
 } from '../lib/captura-mapa'
 import { CORES_IDENTIDADE, corDeIdentidadeRgb, rotuloDoHex } from '../lib/comparacao'
+import { chaveDaCoordenada, type PinDaComparacao } from '../lib/comparacao-pontos'
 import { alunos, brl, distanciaCurta, num, renda } from '../lib/format'
 import {
   type AlvoMedicao,
@@ -247,6 +248,12 @@ export interface SearchPin {
   lng: number
   hexId: string
 }
+
+/**
+ * Um ponto da comparacao como o mapa o desenha: o pin de `pinsDaComparacao` (cor de
+ * identidade, rotulo desambiguado, ativo) e a marca de "ainda em leitura" do provisorio.
+ */
+export type PinComparado = PinDaComparacao & { carregando?: boolean }
 
 /** Capacidade de referencia do score residual no motor
  *  (`SCORE_RESIDUAL_CAPACIDADE_REFERENCIA`): score = 100 * residual / 2500, clip 0-100. */
@@ -477,6 +484,24 @@ export interface HexMapProps {
    * quem nunca vai medir. Com a chave, o unico gesto que muda e' o de quem pediu.
    */
   medindo?: boolean
+  /**
+   * "Selecionar ponto" ligado (trilho, decisao do dono 2026-10-14): o clique em QUALQUER
+   * lugar do mapa vira `onSelecionarPonto(lat, lng)` — inclusive em cima de hexagono, de
+   * pin de imovel ou de Ultra. Quem ligou a ferramenta quer o ponto ONDE clicou, e nao a
+   * ficha do que estava embaixo; por isso os `onClick` dessas camadas saem cedo com ela
+   * ligada, como ja' saiam com a regua.
+   */
+  selecionandoPonto?: boolean
+  onSelecionarPonto?: (lat: number, lng: number) => void
+  /**
+   * TODOS os pontos da comparacao, cada um na sua cor de identidade (decisao do dono,
+   * 2026-10-14). Antes o mapa so' desenhava o ponto da aba aberta e o operador nao via
+   * onde os outros estavam em relacao a ele. O `searchPin` continua sendo o ponto ATIVO
+   * (voo da camera, contorno do hexagono); esta lista e' o desenho de todos.
+   */
+  pontosComparados?: readonly PinComparado[]
+  /** Clique num pin da comparacao: quem recebe abre a aba daquele ponto. */
+  onPontoClicado?: (indice: number) => void
 }
 
 /**
@@ -535,8 +560,17 @@ export default function HexMap({
   cameraInicial,
   onCamera,
   medindo = false,
+  selecionandoPonto = false,
+  onSelecionarPonto,
+  pontosComparados,
+  onPontoClicado,
 }: HexMapProps) {
   const pele = PELE[tema]
+  /* O clique do mapa esta' TOMADO por uma ferramenta do trilho (regua ou "Selecionar
+     ponto"; `lib/ferramenta-mapa` garante que so' uma esta' ligada). Uma flag so' para os
+     `onClick` das camadas e o cursor nao precisarem conhecer cada ferramenta — a proxima
+     (a geometria do lote D) entra aqui e no `onClick` do DeckGL. */
+  const cliqueOcupado = medindo || selecionandoPonto
   // Identidade ESTAVEL por tema (memoizada em `_molduras`): entra no
   // `updateTriggers` do `getIcon`, entao um objeto novo por render reempacotaria
   // o atlas de textura a cada quadro.
@@ -970,6 +1004,25 @@ export default function HexMap({
     [capturando, marcaCaptura, searchPin],
   )
 
+  /* OS PONTOS DA COMPARACAO que o mapa desenha AGORA. Vazio durante a captura, e isso e'
+     regra, nao detalhe: cada foto do PDF de comparacao mostra SO' o ponto do seu slide
+     (`marcaCaptura`, acima). Com a lista desenhada por cima, os cinco pontos sairiam em
+     todas as fotos — o defeito antigo de "a MESMA marca nas tres fotos", multiplicado. */
+  const pontosNoMapa = useMemo<readonly PinComparado[]>(
+    () => (capturando ? [] : (pontosComparados ?? [])),
+    [capturando, pontosComparados],
+  )
+  /* O pin da comparacao que coincide com o `searchPin` (o ponto ativo, na pratica). Com
+     ele, o pin NEUTRO do `searchPin` nao e' desenhado — um anel branco por cima do
+     colorido apagaria justamente a cor que liga o pin a' aba — e o contorno do hexagono
+     ativo veste a cor DELE. Sem coincidencia (o `searchPin` e' de uma unidade, de um
+     destino de lista), tudo continua neutro como sempre foi. */
+  const pinDoSearch = useMemo(() => {
+    if (!searchPin || capturando) return null
+    const chave = chaveDaCoordenada(searchPin.lat, searchPin.lng)
+    return pontosNoMapa.find((p) => chaveDaCoordenada(p.lat, p.lng) === chave) ?? null
+  }, [searchPin, capturando, pontosNoMapa])
+
   /* --- Regua (BLK-CONC-MEDIR): ponta A -> ponta B, com trava nos pins --- */
   const [medicao, setMedicao] = useState<{ a: AlvoMedicao; b: AlvoMedicao | null } | null>(null)
 
@@ -978,7 +1031,13 @@ export default function HexMap({
      a ponta de origem seria um clique livre e o par deixaria de ser reprodutivel. */
   const alvosImantaveis = useMemo<AlvoMedicao[]>(() => {
     const lista: AlvoMedicao[] = []
-    if (searchPin) {
+    /* TODOS os pontos da comparacao, cada um com o rotulo DESAMBIGUADO ("Centro #2"): com
+       cinco pontos na tela, "Ponto analisado" nas cinco pontas nao diria de qual deles a
+       medicao parte. O `searchPin` so' entra solto quando nao e' um deles. */
+    for (const p of pontosNoMapa) {
+      lista.push({ lat: p.lat, lng: p.lng, rotulo: p.rotulo, tipo: 'ponto' })
+    }
+    if (searchPin && !pinDoSearch) {
       lista.push({
         lat: searchPin.lat,
         lng: searchPin.lng,
@@ -993,7 +1052,7 @@ export default function HexMap({
       lista.push({ lat: p.lat, lng: p.lng, rotulo: p.nome || 'Ultra Academia', tipo: 'ultra' })
     }
     return lista
-  }, [pinsEfetivos, searchPin])
+  }, [pinsEfetivos, searchPin, pontosNoMapa, pinDoSearch])
 
   /* Desligar a regua limpa a medicao: deixar a linha na tela depois da chave desligada
      faria o mapa afirmar uma medicao que o operador nao consegue mais mexer. */
@@ -1097,8 +1156,9 @@ export default function HexMap({
         highlightColor: pele.realce,
         onClick: (info) => {
           // Com a regua ligada o clique e' da medicao: selecionar hexagono AQUI trocaria
-          // a camada colorida embaixo da linha que o operador acabou de tracar.
-          if (medindo) return
+          // a camada colorida embaixo da linha que o operador acabou de tracar. Com o
+          // "Selecionar ponto", o clique e' do ponto — o `onClick` do DeckGL o recebe.
+          if (cliqueOcupado) return
           if (info.object) onSelecionar(info.object as Hex)
         },
         onHover: (info) => {
@@ -1312,6 +1372,10 @@ export default function HexMap({
               getLineWidth: 1.2,
               pickable: true,
               onClick: (info) => {
+                /* Ferramenta ligada: o clique e' dela, e o `onClick` do DeckGL o recebe
+                   (sair sem devolver `true` deixa o evento seguir). Sem esta saida, um
+                   clique sobre o pin abriria a ficha do imovel E marcaria o ponto. */
+                if (cliqueOcupado) return
                 const d = info.object as Oportunidade | undefined
                 if (d) onImovel?.(d)
               },
@@ -1439,6 +1503,8 @@ export default function HexMap({
           setPinHover(p ? { titulo: 'Ultra Academia', sub: p.nome, x: info.x, y: info.y } : null)
         },
         onClick: (info) => {
+          // Mesma saida do pin de imovel: com ferramenta ligada o clique e' dela.
+          if (cliqueOcupado) return
           const p = info.object as Pin | undefined
           if (p) onUltra?.(p)
         },
@@ -1532,14 +1598,20 @@ export default function HexMap({
              exatamente sobre a celula de baixo. */
           highPrecision: true,
           getFillColor: pele.selecaoTenue,
-          getLineColor: pele.selecao,
+          /* O hexagono do ponto ATIVO da comparacao veste a cor dele — so' o do ativo, e
+             nao um contorno por ponto: dois pontos podem cair no MESMO hexagono res-7, e
+             duas cores na mesma celula se leriam como erro de desenho. */
+          getLineColor: pinDoSearch ? pinDoSearch.rgb : pele.selecao,
           getLineWidth: 3,
           lineWidthUnits: 'pixels',
           pickable: false,
         }) as unknown as H3HexagonLayer<Hex>,
       )
     }
-    if (marcaNoMapa?.pin) {
+    /* O pin NEUTRO so' quando o `searchPin` nao e' um ponto da comparacao — ver
+       `pinDoSearch`. Durante a captura `pinDoSearch` e' nulo, e a marca do alvo sai
+       exatamente como antes. */
+    if (marcaNoMapa?.pin && !pinDoSearch) {
       base.push(
         new ScatterplotLayer<{ lat: number; lng: number }>({
           id: 'search-pin-ring',
@@ -1560,6 +1632,89 @@ export default function HexMap({
           radiusUnits: 'pixels',
           // Miolo no fundo do tema (--bg-base): o pin vira uma rosca em vez de uma
           // bolha chapada, e continua sem usar matiz nenhuma.
+          getFillColor: pele.pinMiolo,
+          pickable: false,
+        }) as unknown as ScatterplotLayer<Hex>,
+      )
+    }
+
+    /* OS PONTOS DA COMPARACAO, todos ao mesmo tempo (decisao do dono, 2026-10-14). A
+       mesma rosca do pin de busca — anel + miolo no fundo do tema —, mas com o ANEL na cor
+       de identidade do ponto: e' a cor que liga o pin a' aba, a' legenda e as barras do
+       comparativo. O ativo e' maior; o provisorio (ainda em leitura) sai esmaecido, ja'
+       na cor que vai ter. A ordem de desenho poe o ativo POR ULTIMO, para ele nunca ficar
+       por baixo de um vizinho colado. */
+    if (pontosNoMapa.length) {
+      const emOrdem = [...pontosNoMapa].sort((a, b) => Number(a.ativo) - Number(b.ativo))
+      /* Contorno da AREA DESENHADA (DEC-070, fase 1), quando o item e' de geometria: so' a
+         linha, na cor do item, sem preenchimento — o choropleth embaixo continua legivel. */
+      const areas = emOrdem.filter((p) => p.geometria?.length)
+      if (areas.length) {
+        base.push(
+          new PolygonLayer<PinComparado>({
+            id: 'comparacao-areas',
+            data: areas,
+            getPolygon: (d) => d.geometria ?? [],
+            filled: false,
+            stroked: true,
+            getLineColor: (d) => d.rgb,
+            getLineWidth: (d) => (d.ativo ? 3 : 2),
+            lineWidthUnits: 'pixels',
+            pickable: false,
+          }) as unknown as PolygonLayer<Hex>,
+        )
+      }
+      base.push(
+        new ScatterplotLayer<PinComparado>({
+          id: 'comparacao-pin-anel',
+          data: emOrdem,
+          getPosition: (d) => [d.lng, d.lat],
+          getRadius: (d) => (d.ativo ? 13 : 10),
+          radiusUnits: 'pixels',
+          getFillColor: (d) => [d.rgb[0], d.rgb[1], d.rgb[2], d.carregando ? 150 : 255],
+          /* Filete no fundo do tema por FORA do anel: sem ele, um anel vermelho sobre um
+             hexagono vermelho da rampa de score some. */
+          stroked: true,
+          getLineColor: pele.pinMiolo,
+          lineWidthUnits: 'pixels',
+          getLineWidth: 1.5,
+          /* PICKABLE: clicar no pin abre a aba daquele ponto. Com ferramenta ligada o
+             clique segue para o DeckGL (sai sem `true`), que e' de quem a ligou; no caso
+             normal, `true` fecha o evento aqui. */
+          pickable: true,
+          onClick: (info) => {
+            if (cliqueOcupado) return false
+            const d = info.object as PinComparado | undefined
+            if (!d || d.carregando) return false
+            onPontoClicado?.(d.indice)
+            return true
+          },
+          onHover: (info) => {
+            const d = info.object as PinComparado | undefined
+            setPinHover(
+              d
+                ? {
+                    titulo: d.rotulo,
+                    sub: d.carregando
+                      ? 'Lendo os setores…'
+                      : d.ativo
+                        ? 'Ponto aberto na análise'
+                        : 'Clique para abrir a análise deste ponto',
+                    x: info.x,
+                    y: info.y,
+                  }
+                : null,
+            )
+          },
+        }) as unknown as ScatterplotLayer<Hex>,
+      )
+      base.push(
+        new ScatterplotLayer<PinComparado>({
+          id: 'comparacao-pin-miolo',
+          data: emOrdem,
+          getPosition: (d) => [d.lng, d.lat],
+          getRadius: (d) => (d.ativo ? 6 : 4.5),
+          radiusUnits: 'pixels',
           getFillColor: pele.pinMiolo,
           pickable: false,
         }) as unknown as ScatterplotLayer<Hex>,
@@ -1629,6 +1784,14 @@ export default function HexMap({
     // Mesmo motivo do bloco acima: o corpo LE as duas para montar (ou nao) a regua.
     medindo,
     medicao,
+    // Os `onClick` das camadas leem a flag por closure: sem ela aqui, ligar "Selecionar
+    // ponto" deixaria no lugar os handlers antigos (que abrem imovel, Ultra, hexagono).
+    cliqueOcupado,
+    // Os pins da comparacao: `data` NOVO a cada mudanca da lista (aba aberta, ponto que
+    // entra ou sai) — e' isso que faz o deck reavaliar cor, raio e o ativo.
+    pontosNoMapa,
+    pinDoSearch,
+    onPontoClicado,
     // `pele` e `tema` andam juntos (um deriva do outro), mas os dois entram: `pele` é o
     // que o corpo do memo lê, e `tema` é o que vai nos `updateTriggers` das camadas.
     pele,
@@ -1666,9 +1829,15 @@ export default function HexMap({
           // `info.coordinate` existe mesmo em clique no vazio do mapa — e' isso que
           // permite a ponta livre quando o clique nao cai perto de pin nenhum.
           if (medindo) medirNoClique(info.coordinate as number[] | undefined)
+          /* "Selecionar ponto": o clique vira ponto analisado ONDE caiu, por cima do que
+             estiver embaixo (as camadas sairam cedo). `coordinate` e' [lng, lat]. */
+          if (selecionandoPonto && info.coordinate) {
+            const [lng, lat] = info.coordinate as number[]
+            onSelecionarPonto?.(lat, lng)
+          }
         }}
         getCursor={({ isHovering }) =>
-          medindo ? 'crosshair' : isHovering ? 'pointer' : 'grab'
+          cliqueOcupado ? 'crosshair' : isHovering ? 'pointer' : 'grab'
         }
       >
         {/* A `key` carrega DOIS motivos de remontagem, e os dois precisam estar nela.

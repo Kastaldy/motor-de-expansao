@@ -12,13 +12,20 @@ import { useState } from 'react'
    procura a legenda. Pior: a pilha mudava de altura conforme o recorte, entao a
    legenda subia e descia de lugar sozinha.
 
-   O DESENHO. Um trilho vertical de quatro icones, de altura CONSTANTE — ele nao
-   muda quando as condicionais entram ou saem, e e' isso que da' ao canto um ponto
-   de referencia fixo. As chaves moram num painel unico que abre a partir do
+   O DESENHO. Um trilho vertical de icones, de altura CONSTANTE — ele nao muda
+   quando as condicionais entram ou saem, e e' isso que da' ao canto um ponto de
+   referencia fixo. As chaves moram num painel unico que abre a partir do
    primeiro icone. Fechado, o mapa perde so' os 46px do trilho.
 
-   O TRILHO NAO REPETE O PAINEL — ele o ATALHA. `Regua` e `Comparar` sao a mesma
-   chave que a linha correspondente do painel, e acendem juntas; o icone e' o
+   ERAM QUATRO icones (camadas, regua, comparar, legenda). Em 2026-10-14 o dono
+   pediu as ferramentas do CLIQUE ao lado da regua, nesta ordem fixa: camadas,
+   SELECIONAR PONTO, regua, ANALISAR GEOMETRIA, comparar, legenda. As tres do meio
+   disputam o mesmo clique no mapa e por isso sao um estado so'
+   (`lib/ferramenta-mapa`): ligar uma desliga a outra. A altura continua constante
+   — o que cresceu foi a constante, nao a variacao.
+
+   O TRILHO NAO REPETE O PAINEL — ele o ATALHA. `Ponto`, `Regua` e `Comparar` sao a
+   mesma chave que a linha correspondente do painel, e acendem juntas; o icone e' o
    caminho de um clique para quem ja sabe o que quer, o painel e' o caminho de quem
    esta procurando. Um trilho cujos icones abrissem coisas diferentes das que o
    painel lista seria dois vocabularios no mesmo canto.
@@ -92,6 +99,15 @@ const ICONE: Record<string, React.JSX.Element> = {
     <>
       <rect x="2.5" y="8.5" width="19" height="7" rx="1.6" />
       <path d="M7.3 8.5v2.8M12 8.5v3.4M16.7 8.5v2.8" />
+    </>
+  ),
+  /* ALFINETE com miolo — "Selecionar ponto" (2026-10-14). E' o pin de mapa que todo
+     mundo reconhece, e nao a mira (`crosshair`): a mira ja' e' o CURSOR de qualquer
+     ferramenta ligada, e repetir o mesmo desenho no botao nao diria qual ferramenta e'. */
+  alvo: (
+    <>
+      <path d="M12 21s-6.2-5.6-6.2-10.2a6.2 6.2 0 0 1 12.4 0C18.2 15.4 12 21 12 21Z" />
+      <circle cx="12" cy="10.8" r="2.3" />
     </>
   ),
   /* Dois quadros sobrepostos — comparar. */
@@ -363,6 +379,7 @@ function Linha({ chave }: { chave: ChaveDeCamada }) {
 
 export default function BarraCamadas({
   chaves,
+  selecionarPonto = null,
   regua,
   comparar,
   legendaVisivel,
@@ -371,6 +388,12 @@ export default function BarraCamadas({
 }: {
   /** Todas as chaves do painel, na ordem fixa do desenho. */
   chaves: ChaveDeCamada[]
+  /**
+   * Atalho do trilho para "Selecionar ponto" — a MESMA chave da linha do painel.
+   * `null`/ausente = o botao nao aparece (quem monta o trilho sem a analise de pontos
+   * nao oferece um botao que nao levaria a lugar nenhum).
+   */
+  selecionarPonto?: { ligado: boolean; onToggle: () => void } | null
   /** Atalho do trilho para a regua — a MESMA chave da linha correspondente. */
   regua: { ligado: boolean; onToggle: () => void }
   /** Idem para a comparacao. `null` = fora do drill-down, entao o icone fica inerte. */
@@ -388,7 +411,9 @@ export default function BarraCamadas({
   const [aberto, setAberto] = useState(false)
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, pointerEvents: 'auto' }}>
-      {/* TRILHO — altura constante, quatro icones, sempre os mesmos quatro.
+      {/* TRILHO — altura constante, sempre os mesmos icones, na ordem fixa do dono
+          (2026-10-14): camadas, selecionar ponto, regua, analisar geometria, comparar,
+          legenda.
           A caixa segue a superficie do TEMA: chegou a ficar escura no claro junto com
           o Dock (2026-09-09) e o Juan reverteu no mesmo dia — "na visão branca ele
           está preto, deixar branco". Quem carrega a cor aqui sao os ICONES. */}
@@ -410,6 +435,22 @@ export default function BarraCamadas({
           aceso={aberto}
           onClick={() => setAberto((v) => !v)}
         />
+        {/* SELECIONAR PONTO — ACIMA da regua (pedido do dono). Cor PROPRIA, e nao o rosa
+            da regua: as duas deixam o cursor em mira, e a cor do botao aceso e' o que diz
+            qual das duas esta' esperando o clique. */}
+        {selecionarPonto && (
+          <BotaoTrilho
+            icone="alvo"
+            titulo={
+              selecionarPonto.ligado
+                ? 'Selecionar ponto ligado — clique no mapa para analisar o lugar (Esc desliga)'
+                : 'Selecionar um ponto no mapa para analisar'
+            }
+            aceso={selecionarPonto.ligado}
+            cor="var(--gr-azul)"
+            onClick={selecionarPonto.onToggle}
+          />
+        )}
         <BotaoTrilho
           icone="regua"
           titulo={
@@ -421,6 +462,10 @@ export default function BarraCamadas({
           cor="var(--gr-rosa)"
           onClick={regua.onToggle}
         />
+        {/* TODO(lote D, DEC-070): ANALISAR GEOMETRIA entra AQUI, logo abaixo da regua —
+            a posicao e' do dono (2026-10-14). Mesmo molde do "Selecionar ponto": prop
+            `{ ligado, onToggle } | null`, ferramenta 'geometria' de `lib/ferramenta-mapa`
+            e uma cor que nao seja o rosa da regua nem o azul do ponto. */}
         <BotaoTrilho
           icone="comparar"
           titulo={
