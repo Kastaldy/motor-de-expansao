@@ -3,7 +3,6 @@ import { censoDaBase, institutoDoCenso } from '../lib/rodape-base'
 
 import type { PontoEscolhido } from '../App'
 
-import BlocoViabilidadePonto from '../components/BlocoViabilidadePonto'
 import CampoPonto from '../components/CampoPonto'
 import DetalheRegiao from '../components/DetalheRegiao'
 import JanelaFicha from '../components/JanelaFicha'
@@ -19,12 +18,15 @@ import { FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from '../lib/faixas'
 import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
 import { Aviso, Botao, Chip, Eyebrow, Glass, Spinner } from '../components/primitives'
-import { api, ApiError } from '../lib/api'
-import { rotulosDosPontos } from '../lib/comparacao-pontos'
+import { api, ApiError, baixar } from '../lib/api'
+import { rotulosDosPontos, rotulosPartidosDosPontos } from '../lib/comparacao-pontos'
+import type { RotuloPartido } from '../lib/comparacao'
 import type { AlvoCaptura } from '../lib/captura-mapa'
 import { classificarEntrada, linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
-import { num } from '../lib/format'
-import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
+import { alunos, num } from '../lib/format'
+import { leituraDoMercado } from '../lib/mercado-ponto'
+import { estadoDoEstudo, estadoDoSimulador, type EstadoBotao } from '../lib/rodape-ponto'
+import type { BlocoOpcional, PontoPayload } from '../lib/types'
 
 /**
  * Modo 1 — analise de um PONTO/IMOVEL.
@@ -60,6 +62,12 @@ import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
  * mostra o `motivo` que ele devolveu. A cadeia de dados degrada em silencio por desenho
  * (staging ausente -> `(None, None)` sem excecao), entao um bloco que sumisse sozinho
  * seria lido como defeito. Nenhum texto de estado vazio e' inventado aqui.
+ *
+ * SEM VIABILIDADE NA FICHA (2026-10-14, decisao do dono). A secao "Fecha a conta?" (o
+ * antigo `BlocoViabilidadePonto`) saiu: a ficha le o TERRITORIO, e a conta do contrato e'
+ * do Simulador. No lugar dela, dois botoes FIXOS no rodape da janela, sobre o ponto
+ * ABERTO: "Estudo" (o Relatorio Pontual so' demografico, o modo do bot) e "Simulador"
+ * (a tela de Viabilidade na coordenada exata). Regras de trava em `lib/rodape-ponto`.
  */
 export default function PontoScreen({
   onCapturarMapas,
@@ -79,8 +87,17 @@ export default function PontoScreen({
   onTextoAplicado,
   onInicio,
 }: {
-  /** Leva ESTE ponto para a tela de Viabilidade (a costura com o resto do app). */
-  onAnalisarPonto: (p: PontoEscolhido) => void
+  /**
+   * Leva ESTE ponto para a tela de Viabilidade — o botão "Simulador".
+   *
+   * OPCIONAL de propósito: `undefined` = a conta não tem a aba Viabilidade, e o botão
+   * aparece TRAVADO com o motivo escrito (`estadoDoSimulador`). O `App` deve passar
+   * `telaLiberada('viabilidade', abas) ? irParaViabilidade : undefined` — o mesmo
+   * contrato do `onVerImovelNaAba`. Passar sempre deixaria o botão ativo e o clique
+   * morreria calado, porque o `irParaViabilidade` retorna em silêncio quando a aba é
+   * vetada.
+   */
+  onAnalisarPonto?: (p: PontoEscolhido) => void
   /**
    * Os pontos lidos, na ordem em que entraram — a lista do `App`.
    *
@@ -169,8 +186,84 @@ export default function PontoScreen({
   const [janela, setJanela] = useState(() => fichas.length > 0)
 
   const ficha = fichas[aberto] ?? null
-  /* Os mesmos rótulos que o painel de abas usa — desambiguados entre si. */
+  /* Os mesmos rótulos que o painel de abas usa — desambiguados entre si ("Centro #1",
+     "Centro #2"). A forma inteira vai para o título da janela, o PDF e o Simulador; a
+     partida, para onde o nome pode ser truncado e o "#k" não pode sumir. */
   const rotulos = rotulosDosPontos(fichas)
+  const partidos = rotulosPartidosDosPontos(fichas)
+  /** O rótulo do ponto aberto, com o "#k" quando há empate de nome. */
+  const rotuloAberto = rotulos[aberto] ?? 'Ponto analisado'
+
+  /* ---------------- Rodapé: "Estudo" e "Simulador" ----------------
+     Agem sobre o ponto ABERTO. O estado do PDF é da tela, não da ficha: o semáforo do
+     servidor gera um PDF por vez, e travar o botão durante a geração (mesmo trocando de
+     aba) é o que evita o segundo clique enfileirar um duplicado. */
+  const [gerandoEstudo, setGerandoEstudo] = useState(false)
+  const [erroEstudo, setErroEstudo] = useState<string | null>(null)
+  /* O erro é DO ponto que falhou: trocar de aba não pode deixá-lo falando pelo outro.
+     Chaveado também na coordenada, porque remover um ponto antes do aberto troca a
+     ficha sem mudar o índice. */
+  useEffect(() => setErroEstudo(null), [aberto, ficha?.lat, ficha?.lng])
+
+  const gerarEstudo = useCallback(async () => {
+    if (!ficha || !estadoDoEstudo(ficha, gerandoEstudo).habilitado) return
+    setGerandoEstudo(true)
+    setErroEstudo(null)
+    try {
+      /* `soEstudo`: o Relatório Pontual EXCLUSIVAMENTE demográfico — sem viabilidade,
+         DRE, aluguel, payback nem teto; Conclusão só com o selo demográfico (DEC-030).
+         A coordenada é a EXATA do ponto, então `origemCentroideHex` fica de fora. */
+      const { blob, filename } = await api.relatorioPontual({
+        lat: ficha.lat,
+        lng: ficha.lng,
+        rotulo: rotuloAberto,
+        soEstudo: true,
+      })
+      baixar(blob, filename)
+    } catch (e) {
+      setErroEstudo(e instanceof ApiError ? e.message : 'Não foi possível gerar o estudo. Tente de novo.')
+    } finally {
+      setGerandoEstudo(false)
+    }
+  }, [ficha, gerandoEstudo, rotuloAberto])
+
+  /**
+   * Monta o `PontoEscolhido` que a tela de Viabilidade espera — o antigo "Mais detalhes →"
+   * do bloco de viabilidade, agora o botão "Simulador".
+   *
+   * Ela lê só `ponto.rotulo` (breadcrumb), `ponto.hex.id` (chave do efeito que semeia a
+   * faixa de alunos) e a coordenada via `coordenadaDoEstudo` — que prefere `lat`/`lng`
+   * quando existem. Aqui existem, e são a coordenada EXATA que o operador colou: é por
+   * isso que o estudo lá não cai no centroide do hexágono, que fica a até ~1,5 km do
+   * imóvel. Os demais campos do `Hex` a Viabilidade não consulta; ficam `null` em vez de
+   * receber zero inventado.
+   */
+  const irParaSimulador = () => {
+    if (!ficha || !onAnalisarPonto) return
+    const { local, censo, concorrencia, mercado } = ficha
+    onAnalisarPonto({
+      hex: {
+        id: ficha.hex_id,
+        lat: ficha.lat,
+        lng: ficha.lng,
+        m1: null, censo: censo.score_socioeconomico, hib: null,
+        res: mercado.score_residual, oferta: mercado.residual, sam: mercado.sam,
+        pop: censo.populacao, renda: censo.renda_per_capita,
+        renda_dom: censo.renda_media_domiciliar,
+        faixa: null,
+        conc: concorrencia.n_concorrentes ?? 0,
+        ultra: concorrencia.n_ultra ?? 0,
+        mun: local.municipio,
+        cres_hex_taxa: null, cres_hex_classe: null,
+      },
+      // O MESMO rótulo das abas: dois "Centro" chegam à Viabilidade como "#1" e "#2".
+      rotulo: rotuloAberto,
+      municipio: local.municipio ?? '',
+      uf: local.uf,
+      lat: ficha.lat,
+      lng: ficha.lng,
+    })
+  }
 
   /**
    * Chegou ponto (ou foi pedido de novo um que ja' estava na lista): mostra a janela.
@@ -444,8 +537,8 @@ export default function PontoScreen({
       <JanelaFicha
         aberta={janela && ficha != null}
         /* O MESMO rótulo desambiguado das abas: com dois pontos da mesma cidade, o título
-           "Goiânia" não dizia qual dos dois estava aberto. */
-        titulo={rotulos[aberto] ?? 'Ponto analisado'}
+           "Goiânia" não dizia qual dos dois estava aberto — agora diz "Goiânia #2". */
+        titulo={rotuloAberto}
         /* A régua e a contagem de setores vinham do cabeçalho próprio, que saiu junto com
            a cópia do Explorar. Vivem aqui porque é a ficha que elas qualificam — e some
            uma linha de chrome da tela. */
@@ -467,6 +560,20 @@ export default function PontoScreen({
         /* O stepper do Explorar ocupa a largura toda no pé; sem este recuo a janela
            cobriria os botões das camadas. */
         recuoInferior={96}
+        /* FIXO, fora da área que rola: são a SAÍDA da leitura, e com a ficha longa botões
+           no fim do conteúdo só apareceriam para quem rolasse tudo. */
+        rodape={
+          ficha ? (
+            <RodapePonto
+              estudo={estadoDoEstudo(ficha, gerandoEstudo)}
+              simulador={estadoDoSimulador(ficha, onAnalisarPonto != null)}
+              gerando={gerandoEstudo}
+              erro={erroEstudo}
+              onEstudo={() => void gerarEstudo()}
+              onSimulador={irParaSimulador}
+            />
+          ) : undefined
+        }
       >
         {ficha && (
           <div style={{ display: 'grid', gap: 16 }}>
@@ -492,7 +599,7 @@ export default function PontoScreen({
             <Ficha
               key={`${ficha.hex_id}-${aberto}`}
               ficha={ficha}
-              onAnalisarPonto={onAnalisarPonto}
+              partido={partidos[aberto] ?? null}
             />
           </div>
         )}
@@ -501,56 +608,72 @@ export default function PontoScreen({
   )
 }
 
+/**
+ * O rodapé fixo da janela: "Estudo" e "Simulador".
+ *
+ * Botão travado SEMPRE diz por quê, em texto na tela — `title` em botão desabilitado não
+ * aparece em todo navegador, e um botão cinza mudo se lê como defeito.
+ */
+function RodapePonto({
+  estudo,
+  simulador,
+  gerando,
+  erro,
+  onEstudo,
+  onSimulador,
+}: {
+  estudo: EstadoBotao
+  simulador: EstadoBotao
+  gerando: boolean
+  erro: string | null
+  onEstudo: () => void
+  onSimulador: () => void
+}) {
+  const motivos = [estudo.travadoPorque, simulador.travadoPorque].filter((m): m is string => m != null)
+  return (
+    <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Botao onClick={onEstudo} disabled={!estudo.habilitado} title={estudo.dica}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            {gerando && <Spinner />}
+            {estudo.rotulo}
+          </span>
+        </Botao>
+        <Botao
+          variante="ghost"
+          onClick={onSimulador}
+          disabled={!simulador.habilitado}
+          title={simulador.dica}
+        >
+          {simulador.rotulo} →
+        </Botao>
+      </div>
+      {motivos.map((m) => (
+        <p key={m} style={{ margin: 0, font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
+          {m}
+        </p>
+      ))}
+      {erro && (
+        /* A falha é DITA, não engolida: um botão que volta ao normal sem PDF nenhum faz o
+           operador clicar de novo e achar que a tela travou. */
+        <p role="alert" style={{ margin: 0, font: '500 11.5px/1.4 var(--f-ui)', color: 'var(--neg)' }}>
+          {erro}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function Ficha({
   ficha,
-  onAnalisarPonto,
+  partido,
 }: {
   ficha: PontoPayload
-  onAnalisarPonto: (p: PontoEscolhido) => void
+  /** O rótulo desambiguado deste ponto na lista ("Centro" + "#2"), ou nulo. */
+  partido: RotuloPartido | null
 }) {
   const { local, censo, concorrencia, mercado } = ficha
-
-  /* A viabilidade e as entradas sobem do bloco filho porque a RECOMENDACAO precisa
-     das duas metades: os criterios do territorio (que vem do payload) e o veredito do
-     contrato (que so' existe depois de o operador calcular). Sem isso a secao teria de
-     opinar sobre aluguel sem saber se a conta fecha. */
-  const [viab, setViab] = useState<ViabilidadeOut | null>(null)
-  const [entradas, setEntradas] = useState({ m2: 1500, aluguel: 20000 })
-  // Estavel: o filho tem `onEntradas` nas dependencias de um efeito.
-  const guardarEntradas = useCallback((e: { m2: number; aluguel: number }) => setEntradas(e), [])
-
-  /**
-   * Monta o `PontoEscolhido` que a tela de Viabilidade espera.
-   *
-   * Ela le so' `ponto.rotulo` (breadcrumb), `ponto.hex.id` (chave do efeito que
-   * semeia a faixa de alunos) e a coordenada via `coordenadaDoEstudo` — que prefere
-   * `lat`/`lng` quando existem. Aqui existem, e sao a coordenada EXATA que o operador
-   * colou: e' por isso que o estudo la nao cai no centroide do hexagono, que fica a
-   * ate ~1,5 km do imovel. Os demais campos do `Hex` a Viabilidade nao consulta;
-   * ficam `null` em vez de receber zero inventado.
-   */
-  const irParaDetalhes = () =>
-    onAnalisarPonto({
-      hex: {
-        id: ficha.hex_id,
-        lat: ficha.lat,
-        lng: ficha.lng,
-        m1: null, censo: censo.score_socioeconomico, hib: null,
-        res: mercado.score_residual, oferta: mercado.residual, sam: mercado.sam,
-        pop: censo.populacao, renda: censo.renda_per_capita,
-        renda_dom: censo.renda_media_domiciliar,
-        faixa: null,
-        conc: concorrencia.n_concorrentes ?? 0,
-        ultra: concorrencia.n_ultra ?? 0,
-        mun: local.municipio,
-        cres_hex_taxa: null, cres_hex_classe: null,
-      },
-      rotulo: local.bairro ?? local.municipio ?? 'Ponto analisado',
-      municipio: local.municipio ?? '',
-      uf: local.uf,
-      lat: ficha.lat,
-      lng: ficha.lng,
-    })
+  const contaDoMercado = mercado.disponivel ? leituraDoMercado(mercado) : null
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
@@ -566,10 +689,22 @@ function Ficha({
             letterSpacing: '-.01em',
           }}
         >
-          {local.bairro ?? 'Local sem bairro identificado'}
+          {/* O MESMO nome da aba, com o "#k" quando dois pontos empatam no nome: a
+              ficha aberta tem de dizer QUAL dos "Centro" ela é. O "#k" fica fora do texto
+              do nome, para nunca ser o pedaço que um corte esconde. */}
+          {partido?.base ?? local.bairro ?? 'Local sem bairro identificado'}
+          {partido?.sufixo && (
+            <span style={{ marginLeft: 8, color: 'var(--tx-sub)', whiteSpace: 'nowrap' }}>
+              {partido.sufixo}
+            </span>
+          )}
         </div>
         <div style={{ font: '400 13px/1.4 var(--f-ui)', color: 'var(--tx-narrative)' }}>
-          {[local.municipio, local.uf].filter(Boolean).join(' · ')}
+          {/* Sem bairro resolvido o nome acima é o do município (ou a coordenada): a
+              ausência continua DECLARADA aqui, em vez de sumir com a troca do título. */}
+          {[local.municipio, local.uf, local.bairro ? null : 'sem bairro identificado']
+            .filter(Boolean)
+            .join(' · ')}
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <Chip>hex {ficha.hex_id}</Chip>
@@ -640,11 +775,21 @@ function Ficha({
         </div>
       </Secao>
 
-      {/* ---------------- Mercado / residual ---------------- */}
-      <Secao titulo="Quanto de mercado sobra" bloco={mercado}>
+      {/* ---------------- Mercado / residual ----------------
+          DO RAIO, não do hexágono (DEC-069). SAM e consumo são calculados no MESMO
+          recorte da população (raio de 1,0 km do ponto), e o consumo aparece nas DUAS
+          parcelas — concorrentes de rede e a própria Ultra — para a conta fechar na
+          frente do operador: Residual = SAM − consumo. Antes só SAM e residual
+          apareciam, e um residual zero com SAM maior que o consumo dos concorrentes
+          (Santana/SP) não tinha explicação na tela: faltava a parcela da Ultra. */}
+      <Secao
+        titulo="Quanto de mercado sobra"
+        nota={contaDoMercado ? contaDoMercado.recorte : undefined}
+        bloco={mercado}
+      >
         {/* Barra primeiro: "SAM 12.000" e "residual 4.000" lado a lado exigem conta de
             cabeça para responder o que interessa — a sobra é a maior parte do mercado ou
-            uma margem? Os dois números continuam abaixo, em tipo de apoio. */}
+            uma margem? A conta inteira continua abaixo, linha a linha. */}
         <div style={{ display: 'grid', gap: 14 }}>
           <BarraMercado sam={mercado.sam} residual={mercado.residual} />
           <MedidorScore
@@ -653,21 +798,20 @@ function Ficha({
             faixas={FAIXAS_DEMANDA}
             nota="satura em 100 acima de 2.500 alunos — uma unidade cheia"
           />
-          <FilaApoio>
-            <NumeroApoio rotulo="Mercado potencial (SAM)" valor={comSufixo(mercado.sam, ' alunos')} />
-            <NumeroApoio rotulo="Residual disponível" valor={comSufixo(mercado.residual, ' alunos')} />
-          </FilaApoio>
+          {contaDoMercado && <ContaDoMercado leitura={contaDoMercado} />}
         </div>
 
         <Rodape>
-          O mapa atrás desta janela colore os vizinhos por este mesmo residual — um
-          hexágono saturado pode ter espaço sobrando a 1 km dali.
+          O mapa atrás desta janela colore cada hexágono pelo residual dele; a conta acima
+          é a do recorte do ponto ({contaDoMercado?.recorte ?? 'raio de 1,0 km'}). As duas
+          leituras podem divergir: o recorte pega pedaços de vários hexágonos.
         </Rodape>
       </Secao>
 
       {/* ---------------- Recomendação ----------------
-          Antes da viabilidade de propósito: é a resposta à pergunta que trouxe o
-          operador aqui ("serve ou não?"), e os números acima são a evidência dela. */}
+          Só os critérios do TERRITÓRIO. A viabilidade saiu da ficha (2026-10-14) e virou
+          o botão "Simulador" do rodapé: com `viavel` nulo a recomendação não opina sobre
+          contrato — nenhuma ação financeira (aluguel, metragem, teto) é gerada. */}
       <Secao
         titulo="Serve este imóvel?"
         nota="cada métrica contra a régua da rede"
@@ -675,32 +819,79 @@ function Ficha({
         <Recomendacao
           criterios={ficha.criterios}
           reguas={ficha.reguas}
-          viavel={viab ? viab.dre?.flag_viavel === true : null}
-          m2={entradas.m2}
-          aluguel={entradas.aluguel}
-          tetoAluguel={viab?.aluguel_teto?.teto ?? null}
-          melhoria={viab?.melhoria_payback ?? null}
-          gradeSemViavel={
-            Array.isArray(viab?.grade) && viab.grade.length > 0
-              ? !viab.grade.some((c) => c.viavel)
-              : false
-          }
+          viavel={null}
+          m2={null}
+          aluguel={null}
+          tetoAluguel={null}
+          melhoria={null}
+          gradeSemViavel={false}
         />
       </Secao>
+    </div>
+  )
+}
 
-      {/* ---------------- Viabilidade ---------------- */}
-      <Secao
-        titulo="Fecha a conta?"
-        nota="metragem e aluguel são seus; o resto vem do motor"
-      >
-        <BlocoViabilidadePonto
-          lat={ficha.lat}
-          lng={ficha.lng}
-          onDetalhes={irParaDetalhes}
-          onResultado={setViab}
-          onEntradas={guardarEntradas}
-        />
-      </Secao>
+/**
+ * A conta do mercado, linha a linha: SAM − concorrentes − Ultra = residual.
+ *
+ * Parcela ausente sai com travessão e o motivo do servidor abaixo — nunca zero, que
+ * afirmaria mercado livre por falta de dado.
+ */
+function ContaDoMercado({ leitura }: { leitura: ReturnType<typeof leituraDoMercado> }) {
+  return (
+    <div style={{ display: 'grid', gap: 6 }}>
+      {leitura.linhas.map((l) => {
+        const total = l.chave === 'residual'
+        return (
+          <div
+            key={l.chave}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '14px 1fr auto',
+              alignItems: 'baseline',
+              gap: 8,
+              paddingTop: total ? 6 : 0,
+              borderTop: total ? '1px solid var(--line-soft)' : undefined,
+            }}
+          >
+            <span
+              aria-hidden
+              className="num"
+              style={{ font: '600 12px/1.3 var(--f-num)', color: 'var(--tx-sub)' }}
+            >
+              {l.sinal === '-' ? '−' : l.sinal}
+            </span>
+            <span style={{ minWidth: 0, display: 'grid', gap: 1 }}>
+              <span
+                style={{
+                  font: `${total ? 600 : 400} 11.5px/1.3 var(--f-ui)`,
+                  color: total ? 'var(--tx-max)' : 'var(--tx-soft)',
+                }}
+              >
+                {l.rotulo}
+              </span>
+              {l.detalhe && (
+                <span style={{ font: '400 10.5px/1.3 var(--f-ui)', color: 'var(--tx-sub)' }}>
+                  {l.detalhe}
+                </span>
+              )}
+            </span>
+            <span
+              className="num"
+              style={{
+                font: `${total ? 700 : 600} 12.5px/1.3 var(--f-num)`,
+                color: total ? 'var(--tx-max)' : 'var(--tx-strong)',
+                fontVariantNumeric: 'tabular-nums',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {l.valor == null ? alunos(l.valor) : `${alunos(l.valor)} alunos`}
+            </span>
+          </div>
+        )
+      })}
+      {leitura.avisoGate && <Rodape>{leitura.avisoGate}</Rodape>}
+      {leitura.motivoParcial && <Rodape>{leitura.motivoParcial}</Rodape>}
     </div>
   )
 }
