@@ -1,0 +1,4 @@
+Previsoes da turma de 2026 (BLK-UNI-13, protocolo v1.1) congeladas em 2026-10-06 14:36, antes de qualquer conferencia.
+previsoes_turma_2026_uni13.csv  SHA-256 80d0f594d06344235e48b3819753a9a7ae2f448a0cd7d2af6ccc1375fb36c869
+resultado_uni13.md  SHA-256 6960c536b696c3e5e4fcc1aa53de7adecac3b403cf64df97e8f1eb0b987e9f8a
+REGISTRO_PRE.txt  SHA-256 4e4af1bf6bb5e6d8aee6427d45e648dbdcd1c275d3ca41b28f196bc03e4d760a

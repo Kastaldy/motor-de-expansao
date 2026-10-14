@@ -1,0 +1,6 @@
+BLK-UNI-04 parte A — congelamento antes de rodar (2026-09-28). Protocolo v1.1 apos revisao adversarial (10 achados).
+63f7abede96352b8eab54191f002f8c08435f3e2b832686ab11e06ba49e4be4c *uni04/protocolo_uni04a.md
+a8e1ddf5773b487e3109f965016f934ee45c3f15d6eed89c538d86c5ac626b64 *uni04/01_renda_churn.py
+d4147998b23859bcb4d813d7cbd724f3a0e321cb3b0f27f7f45493db244f7c8d *uni01/01_exploracao.py
+cffc6b276d930905ace08bffe1c5f0b7e15d207b5fd7389c8afd0a19ebc8fa87 *fato_unidade_mes.parquet
+c6ecef57365c1ac8730802386adb55eb5610a056665b0999746ccb12395230b8 *dim_unidade.parquet

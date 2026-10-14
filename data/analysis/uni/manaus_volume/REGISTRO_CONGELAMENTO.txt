@@ -1,0 +1,15 @@
+REGISTRO DE CONGELAMENTO — manaus_volume (2026-09-30)
+Etapa A (antes de rodar o 01; o 01 so' gera geometria/atributos do pino, nenhum desfecho):
+affd23feae6880304240ec8b99c7dd121f7f96fb63cb8fcf25215e4597453b5c *protocolo_manaus_volume.md
+9681b06d46ab299f5f56f36d6f95d6e37d1aa4a2068c9f263be9d84a8b09c3d6 *01_isocrona_pino.py
+
+Etapa B (emenda v1.1 do protocolo, §11, depois da revisao adversarial; 02 congelado ANTES de rodar):
+6142071b6b73dfd2b73eb0cf9203e9abda9269bc7ac2e73d50361b84c713af9e *protocolo_manaus_volume.md
+57500df40c8c35ad9ad720654320cb6d0bd7ef719d02f677cd8ebf629a08950e *02_evidencias.py
+
+Correcao mecanica (sem mudanca de metodo; o script parou antes de imprimir qualquer resultado): S.pop -> S["pop"] (atributo do pandas):
+73777fd6cb7d39ebddec71443b298e0f504eb1436ea5527f7eb408ddb5567ddd *02_evidencias.py
+
+Etapa C (emendas v1.2 §12 e v1.3 §13; 03 congelado ANTES de rodar. Antes disto so' rodou o indice de bbox dos setores - mecanico, sem resultado):
+47e06efec80b87a5609f75ee60cdceee64678ede0b28f6d91d23f760c13911ff *protocolo_manaus_volume.md
+e0b1a82abdb3a9002722a35a65b4e384865178110632468dfa7fcde4ea62f0f1 *03_smartfit_formal.py

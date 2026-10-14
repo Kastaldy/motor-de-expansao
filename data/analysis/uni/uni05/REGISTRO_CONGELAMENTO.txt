@@ -1,0 +1,9 @@
+BLK-UNI-05 — congelamento antes de rodar (2026-09-28).
+e9051067bcf48eeecab6d984fe721f3284b2d508c97896c9bb50ecb01e637311 *uni05/protocolo_uni05.md
+545dda88e3dc2135688ac26c4cda15e5d6ecd1293979c741463f75ac30bee2f1 *uni05/01_comparacao.py
+cffc6b276d930905ace08bffe1c5f0b7e15d207b5fd7389c8afd0a19ebc8fa87 *fato_unidade_mes.parquet
+c6ecef57365c1ac8730802386adb55eb5610a056665b0999746ccb12395230b8 *dim_unidade.parquet
+acaa55425abb6ab272329444815b6136d645f317565c7b27c72d912f5c0a3504 *coleta_metragem/metragem_estimada.csv
+e06af858a2b5c3bde7befc409e0ee20c88205eb52b5209c57fcad5b14e59c2c3 *../../../src/motor_expansao/dimensionamento/simulador.py
+v1.1 (mesmo dia, depois da verificacao adversarial): corrige a assimetria do calendario (ATUAL nao recebia) e tira os erros do teste da faixa pessimista; metricas extras de leitura. v1.0 preservada.
+7320ae60a18db68d7a1ff93c2bf8953fa80f6aa15db5eb6c285fd8b435495508 *uni05/01_comparacao.py

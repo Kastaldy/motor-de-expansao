@@ -53,7 +53,21 @@ services:
       # nascesse SQL_ASCII o duplo-encoding entraria sem ninguem ver.
       POSTGRES_INITDB_ARGS: "--encoding=UTF8"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # A RAIZ, e nao `/var/lib/postgresql/data`. A imagem 18+ poe o PGDATA em
+      # `/var/lib/postgresql/18/docker` (subdiretorio por versao maior, para o
+      # `pg_upgrade --link` funcionar no mesmo volume) e RECUSA subir quando acha um
+      # mount no caminho antigo -- o `up -d postgres` do runbook falhava no primeiro
+      # boot. Medido no ensaio em Docker de 13/10/2026.
+      - postgres_data:/var/lib/postgresql
+    # Esconde o `/docker-entrypoint-initdb.d` da imagem. O `10_postgis.sh` dela instala
+    # postgis_topology, fuzzystrmatch e postgis_tiger_geocoder, cria `template_postgis`
+    # e fixa `search_path` no banco -- e o `privilegios` (F6.2) REPROVA, com razao:
+    # schema e funcao que o D20 nao governa. Vazio aqui, o banco nasce so' com plpgsql
+    # e a migration 001 cria exatamente o que o esquema usa (postgis + citext).
+    # tmpfs, e nao pasta do host: nao depende de diretorio na VPS e nao tem como
+    # alguem esquecer um .sql la' dentro.
+    tmpfs:
+      - /docker-entrypoint-initdb.d
     networks:
       - app_net
     security_opt:

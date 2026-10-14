@@ -1,0 +1,7 @@
+REGISTRO DE CONGELAMENTO — termometro (2026-09-30)
+Protocolo v1.0 + emenda v1.1 (§10) e script, ANTES de rodar; insumos:
+54d06c3453be6c95ca349c79efece215e5c8727b2e3bcc1c628599794f34ee42 *protocolo_termometro.md
+6ae27c5e0823837acfb9f034df08cf469845a2074542bb0eaa56356842002814 *01_termometro.py
+d74fda3ef0dcac4df262ec6bb84363689d56415dc2b72bd34f6dfc584be42264 *../../../validacao/KPIs_Smart_2025_02 (1).xlsx
+7923a2b740533d61428c4eef40b41aaa42b8c398bea4ed035e82f6d483e67a8b *../insumos_vps/concorrentes_mapeados_2026-09-27.parquet
+be78b16312bca4ce4d4201919b2d3a9afb0f18c24446d261009a7eaa674098ed *../insumos_vps/planos_totalpass.parquet

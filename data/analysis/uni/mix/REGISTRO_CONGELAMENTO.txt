@@ -1,0 +1,29 @@
+BLK-UNI-05C (fatia do agregador) — congelamento antes de rodar (2026-09-29), depois da revisao adversarial.
+3ba12fa43d4cca949f11f276adffe4edb38990b71cd8be5ae5cb9c59c9ceb4da *mix/protocolo_mix.md
+3f3b787dba80aeeec27121db4ca19b314a84c20c2e5dc4a9f0a9ca05b41da144 *mix/01_mix.py
+d4147998b23859bcb4d813d7cbd724f3a0e321cb3b0f27f7f45493db244f7c8d *uni01/01_exploracao.py
+cffc6b276d930905ace08bffe1c5f0b7e15d207b5fd7389c8afd0a19ebc8fa87 *fato_unidade_mes.parquet
+c6ecef57365c1ac8730802386adb55eb5610a056665b0999746ccb12395230b8 *dim_unidade.parquet
+80eacc2807979bb64fe165dcc47d52108aad5af1f02f9ce84e0afa14fde02c0c *LOCAL_demanda_totalpass_por_unidade.parquet
+
+v1.1 (desfecho = volume, pct_agregador_ativos; correcao do Felipe) — congelamento antes de rodar a v1.1 (2026-09-29). O script ganhou o argumento de desfecho; 'receita' reproduz a v1.0 (conferido: numeros identicos, so' rotulos e hashes mudam).
+311e4509674e0c11ab29d5ab768bac7ea7749b63bc8afccc271f8da760967825 *mix/protocolo_mix.md
+d608f102cd8ee0ef5c02bf0ecad653e2c82253e89e4d017e150d9f5dee789356 *mix/01_mix.py
+
+v1.2 (confirmacao ampliada, mes_vida >= 6; pedido do Felipe) — congelamento antes de rodar (2026-09-29). Rodado com o .venv do projeto (pandas 2.3.3): o venv-iso foi bloqueado pelo Controle de Aplicativo do Windows.
+9a8e3374240b1b2ea63f0ab7768d59c5dd2778f8819f145e942ffd3e0e88aa31 *mix/protocolo_mix.md
+86988fc33f0521f3157701ceff1f1aeb9aec16de40127410d9eaccbb0aa9d925 *mix/02_confirmacao_ampliada.py
+d608f102cd8ee0ef5c02bf0ecad653e2c82253e89e4d017e150d9f5dee789356 *mix/01_mix.py
+
+v1.3 (universo inteiro, aceita >= 1 agregador, validacao cruzada; pedido do Felipe) — congelamento antes de rodar (2026-09-29). .venv do projeto.
+4cfb0336e1676b90ee930588c54119df0165f91b25222dd16f7a91b9616e56d8 *uni/mix/protocolo_mix.md
+38dffb8eb6e12a0df0d29dc11bdb3b8e8bf7d27b7b3aed0b36b63e5650194e10 *uni/mix/03_universo_cv.py
+dd152fae0e17a68a0b2463169a25e2c0d3833fbca5c2efdec252b02dcb15283c *poi/05c_f1_privado.py
+a30739d1d6978267abbba6d671d03f5c6fc98e0fca7e81d2372fbd5394a401c4 *poi/saidas/f1_privado_ultra.parquet
+
+v1.3.1 (2026-09-29): correcao apontada pela verificacao — escr_priv usava os poligonos de pino antigo em plaza-sul-sp e sagrada-familia-mt; 05c agora usa correcoes_pinos e confere com poi_painel (96/96). Script ganhou a regra so' por estado (E3), que faltava. Protocolo inalterado. Resultado v1.3.0 preservado em *_v1_3_0.
+363eeba8d7e1f99667e12955e19797a69272d3dae906631d84181fe904fca027 *poi/05c_f1_privado.py
+63f38d3c0523e06f048977e3fa922f88491e4601b19ef35b3f46af383c74c8ba *poi/saidas/f1_privado_ultra.parquet
+b77611e65ff2c594136fae4edeeb957041d2943ce66d8dddd40ab82d3a291ed5 *uni/mix/03_universo_cv.py
+v1.3.1: ajuste do agrupamento da mediana por grupo (usava o vetor antes do dropna; a 1a tentativa parou com erro, sem resultado). Novo hash:
+14a276a27ba602fd211cb2cc1edc9b4b2c9a3742edf206daf322a88d65574d0b *uni/mix/03_universo_cv.py

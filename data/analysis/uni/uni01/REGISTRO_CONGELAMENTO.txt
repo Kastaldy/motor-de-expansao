@@ -1,0 +1,7 @@
+BLK-UNI-01 — congelamento antes de rodar (2026-09-28). Revisao adversarial aplicada antes (7 achados).
+Recongelado: a 1a execucao abortou no laco (KeyError T19 fora de DESTINO) ANTES de gravar ou imprimir qualquer resultado; T19 incluido em 'mecanismo' no protocolo e no script.
+835c0e055995a60e426159e0411a1510d2e5d813ac5f081fcdef4b5fb0afa740 *uni01/protocolo_uni01.md
+d4147998b23859bcb4d813d7cbd724f3a0e321cb3b0f27f7f45493db244f7c8d *uni01/01_exploracao.py
+cffc6b276d930905ace08bffe1c5f0b7e15d207b5fd7389c8afd0a19ebc8fa87 *fato_unidade_mes.parquet
+c6ecef57365c1ac8730802386adb55eb5610a056665b0999746ccb12395230b8 *dim_unidade.parquet
+80eacc2807979bb64fe165dcc47d52108aad5af1f02f9ce84e0afa14fde02c0c *LOCAL_demanda_totalpass_por_unidade.parquet

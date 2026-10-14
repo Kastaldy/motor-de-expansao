@@ -1,0 +1,4 @@
+Turma 2026 (BLK-UNI-15, protocolo v1.1) congelada em 2026-10-06 17:58. Escala: log de R$/mês; agregador 'ambos_sem' = como se aceitasse os dois apps; total = lse(balcao_sem_k, fator_cadastro x agregador_ambos_sem_k) + k.
+previsoes_turma_2026_uni15.csv  SHA-256 2424832e77685b389c9bcf4b9474767ba12cd9aa716367dca977e234e5ed0514
+resultado_uni15.md  SHA-256 28b970ec846ba072046bf0b3887d1fe0f1bacaf535f2d4468039d6f3547ffc82
+REGISTRO_PRE.txt  SHA-256 46f6642efde1111bc41c04633e61cbd923fde8e824596dcc4130decd747bf307
