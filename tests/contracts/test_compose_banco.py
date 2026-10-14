@@ -80,6 +80,41 @@ def test_postgres_e_o_volume_que_nenhum_pipeline_regenera(compose: dict) -> None
 
 
 # --------------------------------------------------------------------------------------
+# O que o ensaio em Docker de 13/10/2026 achou -- e o teste acima NAO pegava
+# --------------------------------------------------------------------------------------
+#
+# O teste acima confere o NOME do volume e nunca olhou o CAMINHO. Os dois defeitos abaixo
+# so' aparecem subindo o container de verdade: os ensaios anteriores usavam o PostgreSQL
+# nativo do Windows, que nao tem nem o PGDATA da imagem nem o initdb dela.
+
+
+def test_volume_do_postgres_monta_na_raiz_que_a_imagem_18_exige(compose: dict) -> None:
+    montagens = compose["services"]["postgres"].get("volumes") or []
+    destinos = [m.split(":")[1] for m in montagens if m.startswith("postgres_data:")]
+    assert destinos == ["/var/lib/postgresql"], (
+        f"`postgres_data` monta em {destinos}. A imagem 18+ poe o PGDATA em "
+        "`/var/lib/postgresql/18/docker` e RECUSA subir com mount em "
+        "`/var/lib/postgresql/data` -- o `up -d postgres` do runbook morre no primeiro boot."
+    )
+
+
+def test_initdb_da_imagem_fica_escondido(compose: dict) -> None:
+    servico = compose["services"]["postgres"]
+    tmpfs = servico.get("tmpfs") or []
+    tmpfs = [tmpfs] if isinstance(tmpfs, str) else tmpfs
+    assert "/docker-entrypoint-initdb.d" in tmpfs, (
+        "o `/docker-entrypoint-initdb.d` da imagem voltou a rodar. O `10_postgis.sh` dela "
+        "instala topology/tiger/fuzzystrmatch, cria `template_postgis` e fixa `search_path` "
+        "-- e o `privilegios` (F6.2) reprova o banco recem-nascido."
+    )
+    montagens = servico.get("volumes") or []
+    assert not any("docker-entrypoint-initdb.d" in m for m in montagens), (
+        "um bind no initdb reabre a porta que o tmpfs fecha: qualquer .sql/.sh esquecido "
+        "na pasta do host roda como superusuario no primeiro boot."
+    )
+
+
+# --------------------------------------------------------------------------------------
 # O que o container NAO recebe: a lacuna de 25/09/2026
 # --------------------------------------------------------------------------------------
 #

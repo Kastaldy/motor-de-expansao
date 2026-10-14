@@ -27,7 +27,8 @@ E nada disto vai para a VPS sem ter rodado antes na máquina: o ensaio local est
 
 **Nada sobe sem ter rodado aqui primeiro.** A sequência das seções seguintes é escrita para a VPS,
 mas o essencial dela — migrations do zero, provisionamento do D20, RBAC de ponta a ponta, dump e
-restore — roda inteiro no PostgreSQL nativo desta máquina, sem Docker.
+restore — roda inteiro no PostgreSQL nativo desta máquina, sem Docker. O bloco `postgres` do
+compose, o backup e o restore em cluster novo pedem Docker (§1.1).
 
 ### 1.1 O que o ensaio local prova, e o que não prova
 
@@ -41,14 +42,29 @@ restore — roda inteiro no PostgreSQL nativo desta máquina, sem Docker.
 | Dump, checksum e **restore em base limpa** | `pg_dump`/`pg_restore` 18.4 locais |
 | O papel `app` é mesmo incapaz do que não deve (F6.2) | `python -m motor_expansao.db privilegios` |
 
-O que **não** tem equivalente local, porque esta máquina não tem Docker:
+O que o PostgreSQL nativo **não** cobre:
 
 - o bloco `postgres` do compose subir de fato (tag da imagem, `healthcheck`, `shm_size`,
-  `POSTGRES_INITDB_ARGS`);
+  `POSTGRES_INITDB_ARGS`, o caminho do volume e o initdb da imagem);
 - a ordem de subida do `depends_on`;
-- o `run_backup_banco.sh`, que é bash e fala com `docker exec`.
+- o `run_backup_banco.sh`, que é bash e fala com `docker exec`;
+- o restore num **cluster novo** (o §1.4 restaura no mesmo cluster — ver §10).
 
-O que cobre esse resto, na falta de Docker aqui:
+> **Isso deixou de ser hipotético em 13/10/2026.** O ensaio em Docker Desktop (cópia local do
+> compose, imagem `web` da `main`, Caddy + Authelia de teste, do §4 ao corte do P19) achou **dois
+> defeitos no bloco `postgres` que o ensaio nativo não tinha como ver**, ambos corrigidos no compose
+> e travados em `tests/contracts/test_compose_banco.py`:
+>
+> 1. o volume montava em `/var/lib/postgresql/data`, e a imagem 18+ (PGDATA em
+>    `/var/lib/postgresql/18/docker`) **recusa subir** assim — o `up -d postgres` morria no 1º boot;
+> 2. o `10_postgis.sh` da imagem instalava `postgis_topology`, `fuzzystrmatch` e
+>    `postgis_tiger_geocoder`, criava `template_postgis` e fixava `search_path` — e o `privilegios`
+>    **reprovava** o banco recém-nascido. O compose agora esconde o initdb da imagem com `tmpfs`.
+>
+> E um terceiro no runbook: o restore em cluster novo (§10). Para mudança no bloco `postgres`,
+> o ensaio em Docker é o que vale; o nativo continua servindo para migration e RBAC.
+
+O que cobre esse resto, quando não houver Docker à mão:
 
 1. `tests/contracts/test_compose_banco.py` trava as quatro invariantes estruturais (variável
    fail-closed documentada, sem porta no host, `web` não refém da saúde do banco, volume nomeado).
@@ -258,6 +274,10 @@ A parte do backup que precisa de prova não é o dump — é a volta.
 Os números têm de bater com os do banco de origem. **Backup que ninguém restaurou é backup que
 ninguém tem** — e é aqui, e não na VPS, que se descobre.
 
+> **Este ensaio restaura no MESMO cluster, e por isso esconde um defeito.** Os papéis `app`,
+> `auditoria` e `etl` são do cluster e continuam lá; num servidor novo eles **não existem**, e o dump
+> não os leva. O caso do servidor perdido está no §10, "Restaurar num servidor novo".
+
 Ao terminar, `dropdb` nos dois bancos de ensaio.
 
 ## 2. Pré-condições
@@ -353,7 +373,17 @@ banco — o container sobe ao lado, isolado, e o `web` sequer o consulta. Subir 
 banco no piloto (§8) são dois passos com riscos muito diferentes, e estão separados de propósito.
 
 O serviço não expõe porta no host: quem alcança é quem está na `app_net`. O primeiro boot cria o
-cluster e instala o PostGIS, e demora mais que os seguintes.
+cluster e demora mais que os seguintes. **Ele não instala o PostGIS** — o initdb da imagem fica
+escondido pelo `tmpfs` do compose, e quem cria `postgis` e `citext` é a migration `001` (§5).
+Confira que o banco nasceu limpo:
+
+**No terminal da VPS:**
+```bash
+docker exec motor_expansao_postgres psql -U reservas_owner -d banco_de_reservas -Atc   "select string_agg(extname, ',') from pg_extension"
+```
+
+**Esperado:** `plpgsql` e nada mais. Se aparecer `postgis_topology` ou `postgis_tiger_geocoder`, o
+compose da VPS está sem o `tmpfs` — pare aqui: o `privilegios` do §8 vai reprovar.
 
 Se a tag `postgis/postgis:18-3.6` não resolver, o `up` falha no `pull` sem criar nada — confira a
 tag disponível e ajuste o compose. A restrição real é PostGIS **3.6** (D18) sobre PostgreSQL **18**,
@@ -815,6 +845,29 @@ docker exec motor_expansao_postgres psql -U reservas_owner -d banco_de_reservas_
   -c "select count(*) from usuarios;" \
   -c "select count(*) from perfil_permissoes_historico;"
 ```
+
+Os passos acima restauram no **mesmo** cluster, onde os papéis do D20 já existem.
+
+### Restaurar num servidor novo
+
+É o caso do disco perdido — e o único em que o backup é a última linha. Medido no ensaio de
+13/10/2026: o `pg_restore` puro num cluster novo devolve os **dados idênticos**, mas termina com
+**21 erros** ("errors ignored on restore") e o piloto **não conecta**. O dump não leva o que é do
+cluster ou da database: os **papéis** (`app`, `auditoria`, `etl`) e o **`REVOKE TEMPORARY ON
+DATABASE`** do D20 §2. Os `GRANT` de tabela e o `ENABLE ALWAYS TRIGGER` vêm no dump — desde que os
+papéis existam antes.
+
+Com o `postgres` do compose de pé no servidor novo (§3 e §4), **nesta ordem**:
+
+1. `sha256sum -c` no arquivo, como acima;
+2. **D20 seção 1** (os três papéis, com as senhas do `.env`) — dentro do `psql`, como no §6;
+3. `pg_restore --no-owner` direto no `banco_de_reservas` — **zero erros** é o esperado;
+4. **D20 seção 2** (schema e `REVOKE TEMPORARY`) — o `REVOKE CREATE` e o `GRANT USAGE` são no-op
+   ali, o `REVOKE TEMPORARY` não;
+5. `conferir` e `privilegios` (§8): os dois **OK**, e as contagens batendo com as de origem.
+
+**Não** rode as migrations nem as seções 3 a 7 do D20 por cima: o dump já trouxe o schema, os
+`GRANT` e os triggers em `A`.
 
 Uma tabela só, sem tocar nas outras:
 
