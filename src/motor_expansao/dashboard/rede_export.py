@@ -935,6 +935,11 @@ def _cartao_da_marca(pdf: UltraPDF, x: float, y: float, largura: float, rotulo: 
 _ROTULO_FONTE_AGREGADOR = {"wellhub": "Wellhub", "totalpass": "TotalPass", "site": "Site da rede"}
 _MARGEM = 36.0
 _LIMITE_Y = PAGINA_ALTURA - 44.0
+# o quadro do raio na página 1 do PDF de concorrência, e o quanto o círculo fica dentro dele
+_LADO_DO_MAPA = 420.0
+_FOLGA_DO_RAIO = 16.0
+# largura do fundo de ruas pedido aos tiles: ~3 px por ponto do quadro, nítido na impressão
+_PIXELS_DO_FUNDO = 1260
 
 
 def _texto_da_fonte(texto: object) -> str:
@@ -1041,7 +1046,7 @@ def _linhas_do_concorrente(conc: Mapping[str, Any]) -> list[_Linha]:
 
 
 def _desenhar_concorrente(
-    pdf: UltraPDF, conc: Mapping[str, Any], y: float, logo: str | None, *, medir: bool = False
+    pdf: UltraPDF, conc: Mapping[str, Any], y: float, logo: Any, *, medir: bool = False
 ) -> float:
     """Desenha (ou só mede) o bloco de um concorrente a partir de `y`; devolve o `y` final."""
     x_texto = _MARGEM + 40.0
@@ -1104,6 +1109,81 @@ def _desenhar_concorrente(
     return max(cursor, y + 32.0) + 9.0
 
 
+def _logo_do_concorrente(
+    conc: Mapping[str, Any],
+    logos: Mapping[str, str] | None,
+    logos_agregador: Mapping[str, Any] | None,
+) -> Any:
+    """A arte do marcador de UM concorrente, ou `None` (quem chama cai no quadro/ponto neutro).
+
+    Rede: a logo da rede. Independente: a do agregador em que ela está -- o TotalPass só quando
+    ele é o ÚNICO com plano identificado (DEC-066: a logo do Wellhub numa academia que só existe
+    no TotalPass põe a bandeira do concorrente num PDF entregue); no resto, o Wellhub, que é a
+    legenda rosa do raio.
+    """
+    if conc.get("classe") == "cadeia":
+        return (logos or {}).get(str(conc.get("rede") or ""))
+    agregadores = conc.get("agregadores") or {}
+    so_totalpass = bool(agregadores.get("totalpass")) and not agregadores.get("wellhub")
+    return (logos_agregador or {}).get("totalpass" if so_totalpass else "wellhub")
+
+
+def _metade_do_quadro_m(raio_m: float, lado: float = _LADO_DO_MAPA) -> float:
+    """Metros de chão da borda do quadro do mapa até o centro (o raio fica `_FOLGA_DO_RAIO` dentro)."""
+    return raio_m * (lado / 2) / (lado / 2 - _FOLGA_DO_RAIO)
+
+
+def fundo_de_ruas(mapa: Mapping[str, Any] | None, lado: float = _LADO_DO_MAPA) -> tuple[Any, str] | None:
+    """O fundo de ruas do quadro do raio, recortado no mesmo enquadramento que `_mapa_do_raio` desenha.
+
+    Mesma fonte do Relatório Pontual (`censo_map._fetch_basemap`, DEC-004): o tileserver
+    próprio com `API_BASEMAP_TILES_URL`, o CARTO sem ela. Devolve `(imagem RGB, crédito)` ou
+    `None` em qualquer falha -- sem coordenada, sem o extra `[basemap]`, sem rede --, e aí o
+    PDF sai com o esquema de sempre. É a ÚNICA função deste módulo que vai à rede, e só quando
+    a rota a chama; o gerador do PDF continua sem rede.
+    """
+    lat0, lng0 = (mapa or {}).get("lat"), (mapa or {}).get("lng")
+    if lat0 is None or lng0 is None:
+        return None
+    try:
+        import numpy as np
+        from PIL import Image
+
+        from motor_expansao.dashboard import censo_map
+
+        raio_m = float((mapa or {}).get("raio_m") or 2000.0)
+        raio_terra = 6_378_137.0
+        x0 = raio_terra * math.radians(float(lng0))
+        y0 = raio_terra * math.log(math.tan(math.pi / 4 + math.radians(float(lat0)) / 2))
+        # o metro de chão vale 1/cos(lat) unidades de Web Mercator
+        meia = _metade_do_quadro_m(raio_m, lado) / math.cos(math.radians(float(lat0)))
+        caixa = (x0 - meia, y0 - meia, x0 + meia, y0 + meia)
+        # sem o bump de zoom do Pontual: com ele o mosaico vinha 4x maior e o PDF, com 26 MB
+        busca = censo_map._fetch_basemap(caixa, _PIXELS_DO_FUNDO, zoom_bump=0)
+        if busca is None:
+            return None
+        imagem, (ex_min, ex_max, ey_min, ey_max) = busca
+        arr = np.asarray(imagem)
+        altura, largura = arr.shape[0], arr.shape[1]
+        esquerda = round((caixa[0] - ex_min) / (ex_max - ex_min) * largura)
+        direita = round((caixa[2] - ex_min) / (ex_max - ex_min) * largura)
+        topo = round((ey_max - caixa[3]) / (ey_max - ey_min) * altura)
+        base = round((ey_max - caixa[1]) / (ey_max - ey_min) * altura)
+        recorte = Image.fromarray(arr[max(0, topo) : base, max(0, esquerda) : direita]).convert("RGB")
+        if recorte.width > _PIXELS_DO_FUNDO:
+            recorte = recorte.resize((_PIXELS_DO_FUNDO, _PIXELS_DO_FUNDO), Image.Resampling.LANCZOS)
+        # JPEG, e não o RGB cru que o fpdf embutiria a partir da imagem do Pillow
+        jpeg = BytesIO()
+        recorte.save(jpeg, format="JPEG", quality=85)
+        jpeg.seek(0)
+        return jpeg, censo_map._atribuicao_tiles()
+    except Exception as erro:  # noqa: BLE001  (sem fundo, o PDF sai com o esquema)
+        import sys
+
+        print(f"[rede] fundo de ruas indisponível no PDF de concorrência ({erro})", file=sys.stderr)
+        return None
+
+
 def _mapa_do_raio(
     pdf: UltraPDF,
     x: float,
@@ -1113,11 +1193,13 @@ def _mapa_do_raio(
     concorrentes: Sequence[Mapping[str, Any]],
     logos: Mapping[str, str] | None,
     logo_ultra: Any = None,
+    logos_agregador: Mapping[str, Any] | None = None,
+    fundo: tuple[Any, str] | None = None,
 ) -> None:
     """O raio da unidade com as concorrentes nas posições reais, em escala.
 
-    ESQUEMA, e não mapa de ruas: desenhado com as primitivas do fpdf (como os gráficos deste
-    módulo), sem tile e sem rede -- a rota não pode depender de serviço externo para imprimir.
+    Com `fundo` (de `fundo_de_ruas`), o raio sai sobre as ruas; sem ele, sai o ESQUEMA de
+    antes, desenhado só com as primitivas do fpdf -- o PDF imprime mesmo sem tile.
     Projeção plana em torno da unidade, exata o bastante para 2 km. Os marcadores NÃO levam
     número: com academias a poucos metros uma da outra eles se encavalavam e sujavam o desenho.
     """
@@ -1132,7 +1214,7 @@ def _mapa_do_raio(
         pdf.cell(lado, 12, ascii_seguro("Sem coordenada, não há raio para desenhar."), align="C")
         return
     raio_m = float((mapa or {}).get("raio_m") or 2000.0)
-    raio_pt = lado / 2 - 16.0
+    raio_pt = lado / 2 - _FOLGA_DO_RAIO
     escala = raio_pt / raio_m
     metros_por_grau_lng = 111_320.0 * math.cos(math.radians(float(lat0)))
 
@@ -1141,12 +1223,20 @@ def _mapa_do_raio(
         dy = (float(lat) - float(lat0)) * 110_540.0  # type: ignore[arg-type]
         return cx + dx * escala, cy - dy * escala
 
-    # o disco do raio e o anel da metade dele
+    com_fundo = False
+    if fundo is not None:
+        try:
+            pdf.image(fundo[0], x=x, y=y, w=lado, h=lado)
+            com_fundo = True
+        except Exception:  # noqa: BLE001  (fundo ilegível: volta ao esquema)
+            com_fundo = False
+
+    # o disco do raio e o anel da metade dele; sobre as ruas, só o contorno
     pdf.set_fill_color(*BRANCO)
     pdf.set_draw_color(*ULTRA_TURQUESA)
-    pdf.set_line_width(1.2)
-    pdf.ellipse(cx - raio_pt, cy - raio_pt, 2 * raio_pt, 2 * raio_pt, style="DF")
-    pdf.set_draw_color(190, 190, 190)
+    pdf.set_line_width(1.6 if com_fundo else 1.2)
+    pdf.ellipse(cx - raio_pt, cy - raio_pt, 2 * raio_pt, 2 * raio_pt, style="D" if com_fundo else "DF")
+    pdf.set_draw_color(*((120, 120, 120) if com_fundo else (190, 190, 190)))
     pdf.set_line_width(0.6)
     pdf.set_dash_pattern(dash=3, gap=3)
     pdf.ellipse(cx - raio_pt / 2, cy - raio_pt / 2, raio_pt, raio_pt, style="D")
@@ -1162,10 +1252,12 @@ def _mapa_do_raio(
         if conc.get("lat") is None or conc.get("lng") is None:
             continue
         px, py = ponto_na_pagina(conc["lat"], conc["lng"])
-        logo = (logos or {}).get(str(conc.get("rede") or "")) if conc.get("classe") == "cadeia" else None
+        logo = _logo_do_concorrente(conc, logos, logos_agregador)
+        # a independente sai menor que a bandeira de rede, como no Relatório Pontual
+        meio = 7.0 if conc.get("classe") == "cadeia" else 5.5
         if logo:
             try:
-                pdf.image(logo, x=px - 7, y=py - 7, w=14.0, h=14.0)
+                pdf.image(logo, x=px - meio, y=py - meio, w=2 * meio, h=2 * meio)
             except Exception:  # noqa: BLE001  (logo ilegível vira ponto, não derruba o relatório)
                 logo = None
         if not logo:
@@ -1192,6 +1284,12 @@ def _mapa_do_raio(
     pdf.set_xy(cx - 30, cy + (13 if logo_ultra is not None else 8))
     pdf.cell(60, 8, "ULTRA", align="C")
 
+    if com_fundo and fundo is not None:
+        pdf.set_text_color(90, 90, 90)
+        pdf.set_font("Helvetica", "", 6)
+        pdf.set_xy(x, y + lado - 9)
+        pdf.cell(lado - 3, 8, ascii_seguro(fundo[1]), align="R")
+
 
 def _logo_da_ultra(pdf: UltraPDF, logo: Any, cx: float, cy: float, lado: float) -> bool:
     """Desenha a logo da Ultra centrada no ponto. `False` = sem logo legível: quem chama cai
@@ -1205,13 +1303,22 @@ def _logo_da_ultra(pdf: UltraPDF, logo: Any, cx: float, cy: float, lado: float) 
     return True
 
 
-def _legenda_do_raio(pdf: UltraPDF, x: float, y: float, logo_ultra: Any = None) -> None:
+def _legenda_do_raio(
+    pdf: UltraPDF, x: float, y: float, logo_ultra: Any = None, logos_agregador: Mapping[str, Any] | None = None
+) -> None:
     """O que cada marca do desenho do raio quer dizer."""
+    logo_wellhub = (logos_agregador or {}).get("wellhub")
     itens = [
         ("ultra", ULTRA_TURQUESA, "Unidade deste relatório (ao centro, maior)"),
         ("ultra_menor", ULTRA_TURQUESA, "Outra unidade Ultra"),
         ("cheio", CINZA_TEXTO, "Concorrente de rede (logo quando há)"),
-        ("cheio", ULTRA_MAGENTA, "Concorrente independente"),
+        (
+            "independente",
+            ULTRA_MAGENTA,
+            "Concorrente independente (logo do Wellhub; do TotalPass se só nele)"
+            if logo_wellhub
+            else "Concorrente independente",
+        ),
     ]
     for i, (forma, cor, texto) in enumerate(itens):
         linha = y + i * 14.0
@@ -1219,6 +1326,11 @@ def _legenda_do_raio(pdf: UltraPDF, x: float, y: float, logo_ultra: Any = None) 
             pdf, logo_ultra, x + 4, linha + 5, 10.0 if forma == "ultra" else 7.0
         ):
             pass
+        elif forma == "independente" and _logo_da_ultra(pdf, logo_wellhub, x + 4, linha + 5, 9.0):
+            pass
+        elif forma == "independente":
+            pdf.set_fill_color(*cor)
+            pdf.ellipse(x, linha + 1, 8, 8, style="F")
         elif forma in ("cheio", "ultra"):
             pdf.set_fill_color(*cor)
             pdf.ellipse(x, linha + 1, 8, 8, style="F")
@@ -1238,6 +1350,8 @@ def concorrencia_pdf(
     ponto: Mapping[str, Any] | None = None,
     logos: Mapping[str, str] | None = None,
     logo_ultra: Any = None,
+    logos_agregador: Mapping[str, Any] | None = None,
+    fundo: tuple[Any, str] | None = None,
 ) -> bytes:
     """PDF da concorrência da unidade: o raio com as concorrentes, a região e o que cada
     concorrente oferece.
@@ -1248,6 +1362,9 @@ def concorrencia_pdf(
     `logos` = rede -> caminho do arquivo da logo; rede sem arquivo sai com o quadro neutro.
     `logo_ultra` = caminho ou imagem da logo da Ultra para marcar a unidade no raio; sem ela
     a unidade sai como um ponto teal.
+    `logos_agregador` = {"wellhub": arte, "totalpass": arte} das independentes; sem ela a
+    independente sai com o quadro neutro na lista e o ponto rosa no raio.
+    `fundo` = o fundo de ruas de `fundo_de_ruas`; sem ele o raio sai como esquema.
     """
     unidade = ficha.get("unidade", {})
     nome = str(unidade.get("nome", "Unidade"))
@@ -1264,8 +1381,10 @@ def concorrencia_pdf(
     _faixa_da_marca(pdf, nome, f"{unidade.get('uf', '')} - concorrência a {raio}")
 
     # ---- Página 1: o raio da unidade com as concorrentes, e os números ao lado ----
-    lado_do_mapa = 420.0
-    _mapa_do_raio(pdf, _MARGEM, 72.0, lado_do_mapa, mapa, concorrentes, logos, logo_ultra)
+    lado_do_mapa = _LADO_DO_MAPA
+    _mapa_do_raio(
+        pdf, _MARGEM, 72.0, lado_do_mapa, mapa, concorrentes, logos, logo_ultra, logos_agregador, fundo
+    )
     x_coluna = _MARGEM + lado_do_mapa + 20.0
     largura_coluna = PAGINA_LARGURA - _MARGEM - x_coluna
 
@@ -1324,7 +1443,7 @@ def concorrencia_pdf(
         pdf.set_font("Helvetica", "", 9.5)
         pdf.set_xy(x_coluna, 254.0)
         pdf.multi_cell(largura_coluna, 12, _texto_da_fonte(censo.get("motivo") or "Censo do entorno indisponível."))
-    _legenda_do_raio(pdf, x_coluna, 398.0, logo_ultra)
+    _legenda_do_raio(pdf, x_coluna, 398.0, logo_ultra, logos_agregador)
 
     def titulo_da_secao(y: float, continua: bool = False) -> float:
         sufixo = " (continuação)" if continua else f" - {len(concorrentes)} a {raio}"
@@ -1351,7 +1470,7 @@ def concorrencia_pdf(
         pdf.set_xy(x_coluna, y)
         pdf.cell(largura_coluna, 12, ascii_seguro(aviso))
     for conc in concorrentes:
-        logo = (logos or {}).get(str(conc.get("rede") or "")) if conc.get("classe") == "cadeia" else None
+        logo = _logo_do_concorrente(conc, logos, logos_agregador)
         if _desenhar_concorrente(pdf, conc, y, logo, medir=True) > _LIMITE_Y:
             rodape(pdf, rodape_texto)
             pdf.add_page()
