@@ -12,12 +12,15 @@ import type {
   RedeComodidadesCanal,
   RedeMapaConcorrente,
   RedeUnidade,
+  RedeUnidadeSemRede,
 } from './types'
 
-/** A unidade cuja ficha o mapa abre em janela: o id busca os dados, o nome e' o titulo. */
+/** A unidade cuja ficha o mapa abre em janela: o id busca os dados, o nome e' o titulo.
+ *  `semRede`: unidade do cadastro sem dado na Growth -- a ficha e' so' territorio. */
 export interface UnidadeNoMapa {
   id: string
   nome: string
+  semRede?: boolean
 }
 
 /**
@@ -26,12 +29,60 @@ export interface UnidadeNoMapa {
  * Por nome e nao pela prioridade com que a carteira chega: aqui a pergunta e' "onde esta'
  * a unidade X", a mesma do passo de unidade do Inicio.
  */
-export function unidadesDaUf(unidades: readonly RedeUnidade[], uf: string): RedeUnidade[] {
+export function unidadesDaUf<T extends { nome: string; uf: string | null }>(
+  unidades: readonly T[],
+  uf: string,
+): T[] {
   const alvo = uf.trim().toUpperCase()
   if (!alvo) return []
   return unidades
     .filter((u) => (u.uf ?? '').trim().toUpperCase() === alvo)
     .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+}
+
+/**
+ * Rotulo NEUTRO da unidade do cadastro que a Growth nao tem (pedido do Juan, 14/10). Nao e'
+ * "em contrato": nenhuma base diz o status, e entre elas ha' unidade com nome divergente.
+ */
+export const ROTULO_SEM_REDE = 'sem dados da rede'
+
+/** Uma linha do seletor de unidades do mapa. */
+export interface OpcaoUnidade {
+  id: string
+  nome: string
+  /** o que o seletor escreve: o nome, e o rotulo neutro quando nao ha' dado da rede */
+  rotulo: string
+  semRede: boolean
+  lat: number | null
+  lng: number | null
+}
+
+/**
+ * O que o seletor lista no estado: as unidades da rede E as do cadastro sem dado na Growth,
+ * juntas e por nome -- a pergunta continua sendo "onde esta' a unidade X".
+ */
+export function unidadesDaBusca(
+  rede: readonly RedeUnidade[],
+  semRede: readonly RedeUnidadeSemRede[],
+  uf: string,
+): OpcaoUnidade[] {
+  const daRede = unidadesDaUf(rede, uf).map((u) => ({
+    id: u.id,
+    nome: u.nome,
+    rotulo: u.nome,
+    semRede: false,
+    lat: u.lat,
+    lng: u.lng,
+  }))
+  const doCadastro = unidadesDaUf(semRede, uf).map((u) => ({
+    id: u.id,
+    nome: u.nome,
+    rotulo: `${u.nome} · ${ROTULO_SEM_REDE}`,
+    semRede: true,
+    lat: u.lat,
+    lng: u.lng,
+  }))
+  return [...daRede, ...doCadastro].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
 }
 
 /**

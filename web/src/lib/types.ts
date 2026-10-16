@@ -1782,6 +1782,25 @@ export interface RedeSetoresEntorno {
   faixas: Record<RedeCamadaSetor, RedeFaixaCamada[]>
 }
 
+/**
+ * Unidade do cadastro das Ultra que a base da Growth ainda NÃO tem (em contrato, em
+ * pré-venda: "Santana"). Nenhuma base diz o status, por isso a tela não afirma "em
+ * contrato": diz só que não há dado da rede. A ficha dela é só território.
+ */
+export interface RedeUnidadeSemRede {
+  id: string
+  nome: string
+  uf: string
+  cidade: string | null
+  lat: number | null
+  lng: number | null
+}
+
+export interface RedeUnidadeSemRedeFicha {
+  unidade: RedeUnidadeSemRede
+  mapa: RedeUnidadeMapa | null
+}
+
 export interface RedeUnidadeInteligencia {
   mapa: RedeUnidadeMapa | null
   planos: RedePlanosEntorno

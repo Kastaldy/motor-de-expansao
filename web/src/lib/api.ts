@@ -31,6 +31,8 @@ import type {
   RedeQuery,
   RedeSetoresEntorno,
   RedeUnidadeInteligencia,
+  RedeUnidadeSemRede,
+  RedeUnidadeSemRedeFicha,
   SetoresHeatmapPayload,
   ViabilidadeIn,
   ViabilidadeOut,
@@ -676,6 +678,14 @@ export const api = {
    *  Mesmos filtros e mesmo período da carteira. */
   redeInteligencia: (q: RedeQuery = {}) =>
     pedir<RedeInteligencia>(`/api/rede/inteligencia${queryRede(q)}`),
+
+  /** Unidades do cadastro das Ultra sem dado na Growth (a busca do Mapa as lista também). */
+  redeUnidadesSemRede: () =>
+    pedir<{ unidades: RedeUnidadeSemRede[] }>('/api/rede/unidades-sem-rede'),
+
+  /** A ficha de uma delas: só o raio com as concorrentes, sem aluno nem faturamento. */
+  redeUnidadeSemRede: (id: string) =>
+    pedir<RedeUnidadeSemRedeFicha>(`/api/rede/unidade-sem-rede/${encodeURIComponent(id)}`),
 
   /** Território, retenção, rampa e sinais de UMA unidade. */
   redeUnidadeInteligencia: (id: string, mes?: string) =>

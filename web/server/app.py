@@ -9216,8 +9216,14 @@ def rede_unidade_concorrencia_pdf(unidade_id: str, mes: str | None = None) -> Re
     """
     from motor_expansao.dashboard import rede_export
 
-    ficha = _rede_ficha_payload(unidade_id, mes)
-    inteligencia = rede_unidade_inteligencia(unidade_id, mes)
+    if unidade_id.startswith(_PREFIXO_SEM_REDE):
+        # unidade do cadastro sem dado na rede: o PDF só usa nome, UF e o raio
+        sem_rede = rede_unidade_sem_rede(unidade_id)
+        ficha = {"unidade": sem_rede["unidade"], "mes": ""}
+        inteligencia = {"mapa": sem_rede["mapa"]}
+    else:
+        ficha = _rede_ficha_payload(unidade_id, mes)
+        inteligencia = rede_unidade_inteligencia(unidade_id, mes)
     lat, lng = ficha.get("unidade", {}).get("lat"), ficha.get("unidade", {}).get("lng")
     censo_do_ponto: dict[str, Any] | None = None
     if lat is not None and lng is not None:
@@ -9603,16 +9609,107 @@ def rede_unidade_setores(unidade_id: str) -> Response:
 
 
 def _rede_mapa_unidade(unidade_id: str) -> dict[str, Any] | None:
-    """O que o mapa da ficha desenha: a unidade, as academias a 2 km e as outras Ultra.
-
-    As logos vão UMA vez por rede (`logos`), não por pino: cada uma é um PNG em base64, e
-    repeti-la em 60 concorrentes de uma praça densa inflaria a ficha em megabytes.
-    """
+    """O que o mapa da ficha desenha: a unidade, as academias a 2 km e as outras Ultra."""
     pontos = _rede_pontos()
     linha = pontos[pontos["unidade_id"] == unidade_id]
     if not len(linha):
         return None
-    lat, lng = float(linha["lat"].iloc[0]), float(linha["lng"].iloc[0])
+    return _rede_mapa_do_ponto(float(linha["lat"].iloc[0]), float(linha["lng"].iloc[0]))
+
+
+# --- Unidades do cadastro SEM dado na rede (pedido do Juan, 2026-10-14) ------------------
+# A busca de unidades do Mapa listava só a base da Growth, e unidade que ainda não opera
+# (em contrato, em pré-venda: "Santana", "Vila Guilherme II") não aparecia. Elas existem no
+# cadastro das Ultra (`unidades_ultra_mapeadas.parquet`, de `data/ultra/Ultra.csv`), mas
+# NENHUMA base diz o status: o cadastro não tem coluna de situação e, das 150 unidades dele,
+# 55 estavam fora da Growth em 14/10 -- contrato, nome divergente e unidade fora da rede
+# misturados. Por isso o rótulo é NEUTRO ("sem dados da rede") e nunca "em contrato".
+# Ficam FORA: a lista de exclusão da rede (`EXCLUIDAS_NOME_CRU`: Barra Funda...) e o ICN,
+# que não é unidade da rede (pedido do Juan). Nada aqui entra em conta da Visão Executiva.
+_PREFIXO_SEM_REDE = "cadastro-"
+_SEM_REDE_FORA_PREFIXOS = ("ICN",)
+# o mesmo casamento por ponto do front (`TOLERANCIA_PIN_UNIDADE_M`): a mesma unidade nas
+# duas bases fica no mesmo ponto, e duas unidades da rede distam ao menos 1 km
+_SEM_REDE_MESMO_PONTO_M = 150.0
+
+
+def _rede_unidades_sem_rede() -> list[dict[str, Any]]:
+    """As unidades do cadastro das Ultra que a base da Growth não tem, por nome.
+
+    Casadas contra a Growth pela chave do nome (com a UF) OU pelo ponto: um dos dois basta
+    para dizer que a unidade já está na rede, e aí ela sai pela carteira, como sempre.
+    """
+    cadastro = _rede_ler_opcional(
+        ULTRA_MAPEADAS_PARQUET, ("ultra_id", "unidade", "uf", "cidade", "lat", "lng")
+    )
+    if cadastro is None or not len(cadastro):
+        return []
+    fechamento = _rede_fechamento()
+    chaves_rede: set[tuple[str, str]] = set()
+    if len(fechamento):
+        ultima = fechamento.groupby("unidade_id", as_index=False).last()
+        chaves_rede = {
+            (_chave_unidade(nome), str(uf).upper().strip())
+            for nome, uf in zip(ultima["unidade_cru"], ultima["uf"], strict=False)
+        }
+    pontos = _rede_pontos()
+    fora = {_chave_unidade(nome) for nome in rede_metricas.EXCLUIDAS_NOME_CRU}
+
+    unidades: list[dict[str, Any]] = []
+    for linha in cadastro.itertuples(index=False):
+        nome = str(linha.unidade or "").strip()
+        chave = _chave_unidade(nome)
+        uf = str(linha.uf or "").upper().strip()
+        if not chave or chave in fora or chave.startswith(_SEM_REDE_FORA_PREFIXOS):
+            continue
+        if (chave, uf) in chaves_rede:
+            continue
+        lat, lng = _numf(linha.lat), _numf(linha.lng)
+        if lat is not None and lng is not None and len(pontos):
+            dist = rede_inteligencia.distancias_m(lat, lng, pontos["lat"].to_numpy(), pontos["lng"].to_numpy())
+            if float(dist.min()) <= _SEM_REDE_MESMO_PONTO_M:
+                continue
+        unidades.append({
+            "id": f"{_PREFIXO_SEM_REDE}{linha.ultra_id}",
+            "nome": nome,
+            "uf": uf,
+            "cidade": str(linha.cidade or "").strip() or None,
+            "lat": _num(lat, 6) if lat is not None else None,
+            "lng": _num(lng, 6) if lng is not None else None,
+        })
+    return sorted(unidades, key=lambda u: u["nome"])
+
+
+def _rede_unidade_sem_rede(unidade_id: str) -> dict[str, Any]:
+    """Uma unidade do cadastro sem dado na rede, ou 404."""
+    for unidade in _rede_unidades_sem_rede():
+        if unidade["id"] == unidade_id:
+            return unidade
+    raise HTTPException(404, f"Unidade {unidade_id} fora do cadastro das Ultra.")
+
+
+@app.get("/api/rede/unidades-sem-rede")
+def rede_unidades_sem_rede() -> dict[str, Any]:
+    """Para a busca do Mapa: as unidades do cadastro que ainda não têm dado na Growth."""
+    return {"unidades": _rede_unidades_sem_rede()}
+
+
+@app.get("/api/rede/unidade-sem-rede/{unidade_id}")
+def rede_unidade_sem_rede(unidade_id: str) -> dict[str, Any]:
+    """A ficha dessa unidade: só território (o raio e as concorrentes), sem aluno nem faturamento."""
+    unidade = _rede_unidade_sem_rede(unidade_id)
+    mapa = None
+    if unidade["lat"] is not None and unidade["lng"] is not None:
+        mapa = _rede_mapa_do_ponto(float(unidade["lat"]), float(unidade["lng"]))
+    return {"unidade": unidade, "mapa": mapa}
+
+
+def _rede_mapa_do_ponto(lat: float, lng: float) -> dict[str, Any]:
+    """O mapa da ficha a partir de um ponto: as academias a 2 km e as outras Ultra.
+
+    As logos vão UMA vez por rede (`logos`), não por pino: cada uma é um PNG em base64, e
+    repeti-la em 60 concorrentes de uma praça densa inflaria a ficha em megabytes.
+    """
     oferta, _ = _rede_oferta()
     concorrentes = rede_inteligencia.concorrentes_no_entorno(lat, lng, oferta, _rede_fatos_agregador())
     planos_agregador.anexar_planos(concorrentes, _rede_planos("totalpass"), fonte="totalpass")
