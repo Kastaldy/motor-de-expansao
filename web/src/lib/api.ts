@@ -51,6 +51,8 @@ function queryRede(q: RedeQuery = {}): string {
 
 /** A primeira leitura de uma UF carrega a particao inteira — pode passar de 15 s. */
 const TIMEOUT_LEITURA = 90_000
+/** Análise de área desenhada: a conta cresce com os setores interseccionados (até 200 km²). */
+const TIMEOUT_GEOMETRIA = 150_000
 /**
  * Downloads pesados (PDF, XLSX). O PDF baixa tiles de basemap (7 mapas — a camada
  * "entorno" saiu no BLK-RELPON-14) e em area densa/cache frio passa de 1 min; a
@@ -603,7 +605,10 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ geometria }),
       },
-      30_000,
+      // Teto de 200 km² (Emenda 1 da DEC-071): 194 km² no centro de SP mediu 39,6 s com a UF
+      // já carregada, e a 1a leitura da UF soma o carregamento da partição. Com 30 s a tela
+      // cancelava uma área que o servidor aceita.
+      TIMEOUT_GEOMETRIA,
     ),
 
   /**
