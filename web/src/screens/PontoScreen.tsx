@@ -867,6 +867,14 @@ function Ficha({
         </div>
       </Glass>
 
+      {/* A chave do estudo da unidade Ultra fica logo abaixo da identificação (pedido do
+          Vinicius, 2026-10-16): ela muda a PERGUNTA da ficha inteira (estudo de ponto x
+          estudo da unidade), e no fim do bloco de mercado exigia rolar a ficha toda para
+          ser achada. */}
+      {ofertaUltra && (
+        <ChaveEstudoUltra oferta={ofertaUltra} trocando={trocando} onTrocar={onTrocarModo} />
+      )}
+
       {/* ---------------- Socioeconomia (sempre disponível) ---------------- */}
       <Secao titulo={area ? 'Quem mora na área' : 'Quem mora em volta'} nota={`${censoDaBase() ?? 'Censo 2022'} · ${recorte}`}>
         {/* ---- O VISUAL VEM PRIMEIRO ----
@@ -937,13 +945,6 @@ function Ficha({
             cabeça para responder o que interessa — a sobra é a maior parte do mercado ou
             uma margem? A conta inteira continua abaixo, linha a linha. */}
         <div style={{ display: 'grid', gap: 14 }}>
-          {ofertaUltra && (
-            <ChaveEstudoUltra
-              oferta={ofertaUltra}
-              trocando={trocando}
-              onTrocar={onTrocarModo}
-            />
-          )}
           <BarraMercado sam={mercado.sam} residual={mercado.residual} />
           <MedidorScore
             rotulo="Score de residual"
@@ -985,7 +986,7 @@ function Ficha({
 }
 
 /**
- * A CHAVE do estudo da unidade Ultra (emenda da DEC-070), no topo do bloco de mercado.
+ * A CHAVE do estudo da unidade Ultra (emenda da DEC-070), logo abaixo da identificação.
  *
  * Aparece quando o ponto cai a até 150 m de uma unidade Ultra (Santana: 9 m). DESLIGADA por
  * padrão: o estudo de ponto continua contando a Ultra, porque quem estuda um imóvel ao lado
