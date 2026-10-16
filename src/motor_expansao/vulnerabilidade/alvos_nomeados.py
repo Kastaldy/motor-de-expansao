@@ -174,12 +174,11 @@ def _fontes_da_academia(df: pd.DataFrame) -> pd.Series:
 
     Linha SEM coordenada sai **nula**: ela existe e nao e' casavel, e carimbar a propria fonte
     sozinha afirmaria exclusividade que nao foi medida.
+
+    A regua (QUEM casa com quem) mora em `pares_mesma_academia_entre_apps`; esta funcao so'
+    transforma os pares no rotulo. O Relatorio Pontual usa os MESMOS pares para contar a
+    academia dos dois apps UMA vez -- uma regua so', pela licao da DEC-044.
     """
-    import h3
-    import numpy as np
-
-    from .pressao_competitiva import _haversine_m, _k_do_bucket
-
     vazio = pd.Series(pd.NA, index=df.index, dtype="string")
     if df.empty:
         return vazio
@@ -189,6 +188,41 @@ def _fontes_da_academia(df: pd.DataFrame) -> pd.Series:
     desenhavel = lat.notna() & lng.notna()
     if not bool(desenhavel.any()):
         return vazio
+
+    idx = df.index[desenhavel].tolist()
+    achadas: dict[object, set[str]] = {rot: {str(df.at[rot, "fonte"])} for rot in idx}
+    for a, b in pares_mesma_academia_entre_apps(df):
+        achadas[a].add(str(df.at[b, "fonte"]))
+        achadas[b].add(str(df.at[a, "fonte"]))
+
+    saida = vazio.copy()
+    for rotulo in idx:
+        saida.at[rotulo] = ",".join(sorted(achadas[rotulo]))
+    return saida
+
+
+def pares_mesma_academia_entre_apps(df: pd.DataFrame) -> list[tuple[object, object]]:
+    """`[DEC-066]` Pares `(rotulo_a, rotulo_b)` do indice de `df` que sao a MESMA academia em apps
+    DIFERENTES: `fonte` distinta, ate' `RAIO_MESMA_ACADEMIA_ENTRE_APPS_M` e `mesmo_estabelecimento`.
+
+    E' a regua do terceiro estado ("nos dois apps") em forma de PARES, e nao de rotulo: o rotulo
+    (`fontes_da_academia`) diz que a academia esta nos dois apps, mas nao diz COM QUEM ela casou --
+    e quem precisa contar a academia uma vez (o Relatorio Pontual) precisa do par.
+
+    Exige `fonte`, `nome`, `lat`, `lng`. Linha sem coordenada ou sem nome nunca casa.
+    """
+    import h3
+    import numpy as np
+
+    from .pressao_competitiva import _haversine_m, _k_do_bucket
+
+    if df.empty:
+        return []
+    lat = pd.to_numeric(df["lat"], errors="coerce")
+    lng = pd.to_numeric(df["lng"], errors="coerce")
+    desenhavel = lat.notna() & lng.notna()
+    if not bool(desenhavel.any()):
+        return []
 
     idx = df.index[desenhavel].tolist()
     fontes = df.loc[idx, "fonte"].astype(str).tolist()
@@ -209,10 +243,10 @@ def _fontes_da_academia(df: pd.DataFrame) -> pd.Series:
     lat_arr = lat.loc[idx].to_numpy(dtype="float64")
     lng_arr = lng.loc[idx].to_numpy(dtype="float64")
 
-    achadas: list[set[str]] = [{f} for f in fontes]
+    pares: list[tuple[object, object]] = []
     for i in range(len(idx)):
-        # `j > i` e' o que evita comparar o par duas vezes; a simetria e' resolvida gravando nos
-        # DOIS lados quando o casamento acontece.
+        # `j > i` e' o que evita comparar o par duas vezes; cada par sai UMA vez e quem consome
+        # resolve a simetria (o rotulo grava nos DOIS lados).
         candidatos = [
             j
             for vizinha in h3.grid_disk(celulas[i], k)
@@ -235,13 +269,8 @@ def _fontes_da_academia(df: pd.DataFrame) -> pd.Series:
             if float(d) > RAIO_MESMA_ACADEMIA_ENTRE_APPS_M:
                 continue
             if mesmo_estabelecimento(nomes[i], nomes[j]):
-                achadas[i].add(fontes[j])
-                achadas[j].add(fontes[i])
-
-    saida = vazio.copy()
-    for pos, rotulo in enumerate(idx):
-        saida.at[rotulo] = ",".join(sorted(achadas[pos]))
-    return saida
+                pares.append((idx[i], idx[j]))
+    return pares
 
 
 _AUDITORIA_PRESSAO: tuple[str, ...] = (

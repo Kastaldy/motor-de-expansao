@@ -502,7 +502,7 @@ def _oferta_unida(staging_dir_str: str):
                 else pd.Series([pd.NA] * len(indep), dtype="string")
             ),
         }).dropna(subset=["lat", "lng"])
-        indep = _dedup_independentes(indep, cadeias)
+        indep = _uma_linha_por_academia_entre_apps(indep, cadeias)
     else:
         indep = pd.DataFrame(columns=_COLS_OFERTA)
 
@@ -540,6 +540,119 @@ def _dedup_independentes(indep, cadeias):
     vizinho = arvore.query_ball_point(_xyz(indep["lat"], indep["lng"]), r=corda)
     manter = np.array([len(v) == 0 for v in vizinho], dtype=bool)
     return indep.loc[manter]
+
+
+# Ordem de preferencia do representante quando a mesma academia esta nos dois apps. WellHub
+# primeiro porque era o unico app antes da DEC-066: o nome exibido segue o de antes.
+_FONTE_PREFERIDA_DO_PAR = ("wellhub", "totalpass")
+
+
+def _uma_linha_por_academia_entre_apps(indep, cadeias):
+    """Independentes sem cadeia a <= 50 m (D5, DEC-046) e com UMA linha por academia dos dois apps.
+
+    O artefato nomeado tem uma linha por (app, academia): a academia que esta no WellHub E no
+    TotalPass chega aqui DUAS vezes, cada uma carimbada `fontes_da_academia = "totalpass,wellhub"`.
+    O carimbo so' ROTULA; nao colapsa. Sem colapsar, o Relatorio Pontual contava a mesma academia
+    duas vezes em todas as superficies (Big Number "Academias no raio (todas)", "N no total",
+    lista de redes, marcadores do mapa e `n_academias_total` da ficha) -- medido em Santana/SP
+    (-23,4852 / -46,6177): 24 linhas para 21 academias, 3 pares nos dois apps.
+
+    O PAR sai de `pares_mesma_academia_entre_apps`, a MESMA regua (100 m + nome) que gera o
+    carimbo no artefato -- nao ha' segunda redacao dela aqui (licao da DEC-044). Componentes
+    conexos (A~B, B~C) viram UMA academia. Se QUALQUER membro colapsa contra uma cadeia, a
+    academia inteira sai: ela e' a cadeia, e manter a copia do outro app a contaria de novo.
+
+    O sobrevivente carrega a uniao das fontes em `fontes_da_academia` (o pino do terceiro estado
+    continua saindo), mas conta UM. Degrada sem quebrar: sem `fonte`/`nome` ou com uma fonte so'
+    (sem TotalPass), nao ha' par, e o resultado e' o de `_dedup_independentes`.
+    """
+    sem_cadeia = _dedup_independentes(indep, cadeias)
+    if indep.empty or not {"fonte", "nome"}.issubset(indep.columns):
+        return sem_cadeia
+    try:
+        from motor_expansao.vulnerabilidade.alvos_nomeados import (
+            pares_mesma_academia_entre_apps,
+        )
+
+        candidatas = indep
+        if "fontes_da_academia" in indep.columns:
+            # O carimbo do artefato JA' diz quem casou com alguem (mesma regua, mesmo universo):
+            # linha sem virgula nao tem par. Recortar antes deixa a carga a frio em ~2,6 s em vez
+            # de ~5,2 s (1,1 s sem o colapso; medido em 2026-10-16). Carimbo NULO e' "nao medido"
+            # (artefato anterior ao v8, cuja coluna este modulo cria nula) e entra na regua.
+            carimbo = indep["fontes_da_academia"].astype("string")
+            tem_par = carimbo.str.contains(",", regex=False).fillna(False).astype(bool)
+            candidatas = indep.loc[(carimbo.isna() | tem_par).to_numpy()]
+        pares = pares_mesma_academia_entre_apps(candidatas)
+    except Exception as exc:  # noqa: BLE001 -- degrade: sem o par, conta como antes
+        logging.getLogger(__name__).warning("par entre apps indisponivel: %r", exc)
+        return sem_cadeia
+    if not pares:
+        return sem_cadeia
+
+    pai: dict[object, object] = {}
+
+    def _raiz(x):
+        pai.setdefault(x, x)
+        while pai[x] != x:
+            pai[x] = pai[pai[x]]
+            x = pai[x]
+        return x
+
+    for a, b in pares:
+        ra, rb = _raiz(a), _raiz(b)
+        if ra != rb:
+            pai[rb] = ra
+    componentes: dict[object, list[object]] = {}
+    for rotulo in list(pai):
+        componentes.setdefault(_raiz(rotulo), []).append(rotulo)
+
+    sobreviventes = set(sem_cadeia.index)
+    descartar: set[object] = set()
+    fontes_do_rep: dict[object, str] = {}
+    for membros in componentes.values():
+        if not all(m in sobreviventes for m in membros):
+            descartar.update(membros)
+            continue
+
+        def _ordem(m):
+            fonte = str(indep.at[m, "fonte"]).strip().lower()
+            pos = (
+                _FONTE_PREFERIDA_DO_PAR.index(fonte)
+                if fonte in _FONTE_PREFERIDA_DO_PAR
+                else len(_FONTE_PREFERIDA_DO_PAR)
+            )
+            return (pos, str(m))
+
+        rep, *resto = sorted(membros, key=_ordem)
+        descartar.update(resto)
+        fontes: set[str] = set()
+        for m in membros:
+            for col in ("fonte", "fontes_da_academia"):
+                if col not in indep.columns:
+                    continue
+                valor = indep.at[m, col]
+                if valor is None or pd_isna(valor):
+                    continue
+                fontes.update(p.strip().lower() for p in str(valor).split(",") if p.strip())
+        fontes_do_rep[rep] = ",".join(sorted(fontes))
+
+    saida = sem_cadeia.loc[[r for r in sem_cadeia.index if r not in descartar]].copy()
+    if fontes_do_rep and "fontes_da_academia" in saida.columns:
+        for rep, valor in fontes_do_rep.items():
+            if rep in saida.index:
+                saida.at[rep, "fontes_da_academia"] = valor
+    return saida
+
+
+def pd_isna(valor) -> bool:
+    """`pd.isna` escalar sem importar o pandas no topo do modulo (import preguicoso do arquivo)."""
+    import pandas as pd
+
+    try:
+        return bool(pd.isna(valor))
+    except (TypeError, ValueError):
+        return False
 
 
 def fontes_oferta_presentes(settings: Settings) -> tuple[str, ...]:
