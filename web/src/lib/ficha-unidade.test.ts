@@ -1,19 +1,26 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  ETIQUETA_SEM_DADOS,
   ORDEM_COMODIDADES,
+  PREFIXO_ID_CADASTRO,
   ROTULO_COMODIDADE,
   TOLERANCIA_PIN_UNIDADE_M,
   comodidadesDeclaradas,
   estadoDasComodidades,
   imagemDoConcorrente,
+  itemDoPin,
   itensDeclarados,
+  listaUnidadesDoMapa,
   modalidadesDoCanal,
   nomeDoConcorrente,
   planosDoConcorrente,
+  rotuloItemUnidade,
   unidadeDoPin,
+  unidadeNoMapaDoItem,
   unidadesDaUf,
 } from './ficha-unidade'
+import type { UnidadeCadastroMapa } from './ficha-unidade'
 import type { RedeComodidadesCanal, RedeMapaConcorrente, RedeUnidade } from './types'
 
 const canal = (itens: Partial<RedeComodidadesCanal['itens']> = {}): RedeComodidadesCanal => ({
@@ -240,5 +247,69 @@ describe('nomeDoConcorrente', () => {
     expect(nomeDoConcorrente({ nome: 'Bluefit Centro', rede: 'bluefit' })).toBe('Bluefit Centro')
     expect(nomeDoConcorrente({ nome: null, rede: 'bluefit' })).toBe('bluefit')
     expect(nomeDoConcorrente({ nome: ' ', rede: null })).toBe('Academia sem nome na base')
+  })
+})
+
+describe('listaUnidadesDoMapa (carteira Growth + cadastro do mapa)', () => {
+  // A Ultra Santana/SP: pin no mapa, em pré-venda, ausente da Growth.
+  const santana: UnidadeCadastroMapa = {
+    nome: 'Santana',
+    uf: 'SP',
+    cidade: 'São Paulo',
+    lat: -23.485085,
+    lng: -46.617685,
+  }
+  // O mesmo ponto de uma unidade da Growth, a ~60 m: é a MESMA unidade.
+  const mooca: UnidadeCadastroMapa = { nome: 'MOOCA', uf: 'SP', cidade: 'São Paulo', lat: -23.5505, lng: -46.6005 }
+  const rede = [unidade({ id: 'g1', nome: 'Mooca', uf: 'SP', lat: -23.5500, lng: -46.6005 })]
+
+  it('une as duas fontes sem duplicar a unidade que já está na Growth', () => {
+    const lista = listaUnidadesDoMapa(rede, [santana, mooca], 'SP')
+    expect(lista.map((i) => [i.tipo, i.nome])).toEqual([
+      ['rede', 'Mooca'],
+      ['cadastro', 'Santana'],
+    ])
+  })
+
+  it('a unidade da Growth segue idêntica, e a só-do-cadastro ganha id próprio e etiqueta', () => {
+    const [mooc, sant] = listaUnidadesDoMapa(rede, [santana], 'SP')
+    expect(mooc).toEqual({ tipo: 'rede', id: 'g1', nome: 'Mooca', unidade: rede[0] })
+    expect(sant.id.startsWith(PREFIXO_ID_CADASTRO)).toBe(true)
+    expect(rotuloItemUnidade(mooc)).toBe('Mooca')
+    expect(rotuloItemUnidade(sant)).toBe(`Santana · ${ETIQUETA_SEM_DADOS}`)
+    expect(ETIQUETA_SEM_DADOS).toBe('sem dados operacionais (pré-venda ou recém-aberta)')
+  })
+
+  it('fora da tolerância é OUTRA unidade; dentro dela, a mesma', () => {
+    const longe = { ...santana, lat: rede[0].lat as number, lng: (rede[0].lng as number) + 0.002 } // ~200 m
+    expect(listaUnidadesDoMapa(rede, [longe], 'SP')).toHaveLength(2)
+    const perto = { ...santana, lat: rede[0].lat as number, lng: (rede[0].lng as number) + 0.001 } // ~100 m
+    expect(listaUnidadesDoMapa(rede, [perto], 'SP')).toHaveLength(1)
+  })
+
+  it('casa contra a rede INTEIRA: UF divergente entre as bases não duplica', () => {
+    const outraUf = [unidade({ id: 'g2', nome: 'Santana', uf: 'MG', lat: santana.lat, lng: santana.lng })]
+    expect(listaUnidadesDoMapa(outraUf, [santana], 'SP')).toEqual([])
+  })
+
+  it('só o estado pedido, sem coordenada fica de fora, e ponto repetido entra uma vez', () => {
+    const rio: UnidadeCadastroMapa = { ...santana, nome: 'Botafogo', uf: 'RJ' }
+    const semPonto: UnidadeCadastroMapa = { ...santana, nome: 'Sem ponto', lat: null }
+    const lista = listaUnidadesDoMapa([], [santana, { ...santana }, rio, semPonto], ' sp')
+    expect(lista.map((i) => i.nome)).toEqual(['Santana'])
+    expect(listaUnidadesDoMapa([], [santana], '')).toEqual([])
+  })
+
+  it('a janela da só-do-cadastro leva o cadastro; a da rede, não', () => {
+    const [mooc, sant] = listaUnidadesDoMapa(rede, [santana], 'SP')
+    expect(unidadeNoMapaDoItem(mooc)).toEqual({ id: 'g1', nome: 'Mooca' })
+    expect(unidadeNoMapaDoItem(sant).cadastro).toEqual(santana)
+  })
+
+  it('o pin casa com o item mais próximo, da rede ou do cadastro', () => {
+    const lista = listaUnidadesDoMapa(rede, [santana], 'SP')
+    expect(itemDoPin({ lat: -23.48516183001325, lng: -46.61770984110429 }, lista)?.nome).toBe('Santana')
+    expect(itemDoPin({ lat: -23.5500, lng: -46.6005 }, lista)?.tipo).toBe('rede')
+    expect(itemDoPin({ lat: -22.9, lng: -43.2 }, lista)).toBeNull()
   })
 })

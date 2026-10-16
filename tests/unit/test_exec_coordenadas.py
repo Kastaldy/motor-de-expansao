@@ -343,6 +343,33 @@ def test_uniao_do_mapa_nao_contamina_o_indice_da_visao_executiva(app_com_dados) 
     assert "DUQUE DE CAXIAS" not in curada
 
 
+def test_unidades_do_mapa_sao_os_mesmos_pins_com_uf_e_cidade(app_com_dados) -> None:
+    """Lista UNIDADES do mapa (2026-10-16): os MESMOS pontos dos pins, agora com UF e
+    cidade, para o front unir a carteira da Growth ao cadastro e a unidade em pre-venda
+    (sem Growth) aparecer no seletor do estado dela."""
+    pinos = pilot._ultra_pontos_mapa()
+    df = pilot._ultra_unidades_mapa()
+    assert len(df) == len(pinos), "a lista nao pode ter ponto que o mapa nao desenha, nem perder um"
+    assert list(df.columns) == ["nome", "uf", "cidade", "lat", "lng"]
+    por_nome = df.set_index("nome")
+    # O cadastro traz a UF; a cidade vem junto.
+    assert por_nome.loc["Icaraí RJ", "uf"] == "RJ"
+    assert por_nome.loc["Icaraí RJ", "cidade"] == "Niterói"
+    # O pino da curada (ponto certo) pega a UF da linha de MESMO NOME no cadastro, mesmo
+    # com o ponto do cadastro a ~70 km: casar so' por coordenada perderia a UF.
+    assert por_nome.loc["TAUBATE", "uf"] == "SP"
+    assert (round(float(por_nome.loc["TAUBATE", "lat"]), 4), round(float(por_nome.loc["TAUBATE", "lng"]), 4)) == _TAUBATE_OK
+    # Sem nome nem ponto em fonte com UF: fica sem estado, e nao no estado errado.
+    assert por_nome.loc["BOTAFOGO", "uf"] == ""
+
+
+def test_rota_unidades_mapa_nao_leva_dado_operacional(app_com_dados) -> None:
+    body = pilot.rede_unidades_mapa()
+    assert body["unidades"], "a rota tem de devolver os pins"
+    for u in body["unidades"]:
+        assert set(u) == {"nome", "uf", "cidade", "lat", "lng"}
+
+
 def test_pins_do_mapa_sem_parquets_nao_quebra(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Degradação graciosa: sem os parquets (cenário do CI) o mapa fica vazio, não estoura."""
     monkeypatch.setattr(pilot, "ULTRA_PERF_PARQUET", tmp_path / "nao_existe.parquet")

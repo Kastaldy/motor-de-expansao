@@ -2157,6 +2157,88 @@ def _aplicar_coord_corrigida(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# Folga para casar um pino SEM nome igual na fonte a uma linha dela pela coordenada. Cobre
+# o pino que `_aplicar_coord_corrigida` moveu (a correcao e' de algumas centenas de metros)
+# e fica abaixo da distancia minima entre duas unidades da rede (1 km, `DIST_MIN_ULTRA_KM`).
+_UNIDADE_MAPA_FOLGA_M = 900.0
+
+
+def _distancia_aprox_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Distancia equirretangular em metros — exata o bastante abaixo de alguns km."""
+    kx = 111_320.0 * math.cos(math.radians((lat1 + lat2) / 2.0))
+    return math.hypot((lat2 - lat1) * 110_574.0, (lng2 - lng1) * kx)
+
+
+@functools.lru_cache(maxsize=1)
+def _ultra_unidades_mapa() -> pd.DataFrame:
+    """Os MESMOS pontos de `_ultra_pontos_mapa`, agora com UF e cidade.
+
+    E' a lista UNIDADES do Mapa Territorial (pedido de 2026-10-16): a carteira da Growth so'
+    conhece unidade que ja' fatura, e a unidade em pre-venda (Ultra Santana/SP) virava pino
+    no mapa sem aparecer no seletor. O pino nao tem UF — a curada nao a carrega na leitura
+    dele —, entao a UF e a cidade sao buscadas nas duas fontes que o originaram: primeiro
+    pelo NOME (chave normalizada, a linha mais proxima quando o nome se repete) e, sem nome
+    igual, pela linha mais proxima ate' `_UNIDADE_MAPA_FOLGA_M`. Pino sem par fica com UF
+    vazia e nao entra em lista de estado nenhuma — preferivel a pendura-lo no estado errado.
+
+    Sao pontos de CADASTRO, sem dado operacional: nada aqui fala de aluno ou faturamento.
+    """
+    cols = ["nome", "uf", "cidade", "lat", "lng"]
+    pinos = _ultra_pontos_mapa()
+    if not len(pinos):
+        return pd.DataFrame(columns=cols)
+
+    fontes: list[tuple[str, str, str, float, float]] = []
+    if ULTRA_PERF_PARQUET.exists():
+        # Leitura inteira (o arquivo tem ~54 linhas): a base de teste nao traz `uf`/`cidade`.
+        curada = pd.read_parquet(ULTRA_PERF_PARQUET)
+        if {"unidade", "uf", "lat", "lng"} <= set(curada.columns):
+            for t in curada.dropna(subset=["lat", "lng"]).itertuples(index=False):
+                fontes.append(
+                    (
+                        _chave_unidade(t.unidade),
+                        _clean(t.uf).upper(),
+                        _clean(getattr(t, "cidade", "")),
+                        float(t.lat),
+                        float(t.lng),
+                    )
+                )
+    for t in _carregar_ultra_mapeadas().itertuples(index=False):
+        fontes.append(
+            (
+                _chave_unidade(t.nome),
+                _clean(t.uf).upper(),
+                _clean(t.cidade),
+                float(t.lat),
+                float(t.lng),
+            )
+        )
+    fontes = [f for f in fontes if f[1]]
+
+    linhas: list[dict[str, Any]] = []
+    for t in pinos.itertuples(index=False):
+        lat, lng = float(t.lat), float(t.lng)
+        chave = _chave_unidade(t.nome)
+        mesmas = [f for f in fontes if chave and f[0] == chave]
+        escolha: tuple[str, str, str, float, float] | None = None
+        if mesmas:
+            escolha = min(mesmas, key=lambda f: _distancia_aprox_m(lat, lng, f[3], f[4]))
+        elif fontes:
+            perto = min(fontes, key=lambda f: _distancia_aprox_m(lat, lng, f[3], f[4]))
+            if _distancia_aprox_m(lat, lng, perto[3], perto[4]) <= _UNIDADE_MAPA_FOLGA_M:
+                escolha = perto
+        linhas.append(
+            {
+                "nome": _clean(t.nome),
+                "uf": escolha[1] if escolha else "",
+                "cidade": escolha[2] if escolha else "",
+                "lat": lat,
+                "lng": lng,
+            }
+        )
+    return pd.DataFrame(linhas, columns=cols)
+
+
 @functools.lru_cache(maxsize=1)
 def _contagem_no_hexagono() -> tuple[pd.Series | None, pd.Series | None]:
     """Quantas unidades MAPEADAS caem DENTRO de cada hexagono (H3 res-7).
@@ -9173,6 +9255,30 @@ def rede_carteira(
     return _rede_carteira_payload(
         mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
     )
+
+
+@app.get("/api/rede/unidades-mapa")
+def rede_unidades_mapa() -> dict[str, Any]:
+    """As unidades que o Mapa Territorial desenha como pino da Ultra, com UF e cidade.
+
+    O seletor UNIDADES do mapa une esta lista a carteira da Growth (casando pela coordenada,
+    no front): assim a unidade que so' existe no cadastro — pre-venda ou recem-aberta —
+    aparece na lista e abre uma ficha que diz o que se sabe dela. Mesmo gate da carteira
+    (prefixo `/api/rede/`). Nenhum dado operacional sai daqui.
+    """
+    df = _ultra_unidades_mapa()
+    return {
+        "unidades": [
+            {
+                "nome": _clean(t.nome),
+                "uf": _clean(t.uf),
+                "cidade": _clean(t.cidade) or None,
+                "lat": _num(t.lat, 6),
+                "lng": _num(t.lng, 6),
+            }
+            for t in df.itertuples(index=False)
+        ]
+    }
 
 
 def _rede_ficha_payload(unidade_id: str, mes: str | None = None) -> dict[str, Any]:
