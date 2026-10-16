@@ -42,7 +42,14 @@ import { ACC } from '../lib/imovel'
 const ACC_16 = 'rgba(221,61,151,.16)'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
 import { REDES_LIGADAS_POR_PADRAO, pinsVisiveis, subDaChaveRedes, temAlunos } from '../lib/pins'
-import { unidadeDoPin, unidadesDaUf, type UnidadeNoMapa } from '../lib/ficha-unidade'
+import { Z_CABECALHO_MAPA, Z_CORPO_MAPA } from '../lib/camadas-mapa'
+import {
+  ROTULO_SEM_REDE,
+  unidadeDoPin,
+  unidadesDaBusca,
+  unidadesDaUf,
+  type UnidadeNoMapa,
+} from '../lib/ficha-unidade'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import { rodapeDaBase, tituloEscolhaUnidade } from '../lib/rodape-base'
 import { type AlvoCaptura, alvoDoHex, pinsDoAlvo } from '../lib/captura-mapa'
@@ -75,6 +82,7 @@ import type { Tema } from '../lib/tema'
 import type {
   Cobertura1k,
   RedeUnidade,
+  RedeUnidadeSemRede,
   Hex,
   MunicipioItem,
   MunicipioPayload,
@@ -640,9 +648,13 @@ export default function MapScreen({
    * negou não pode deixar o seletor esperando para sempre.
    */
   const [unidadesRede, setUnidadesRede] = useState<RedeUnidade[] | null>(null)
+  /* As unidades do CADASTRO que a Growth ainda não tem (em contrato, em pré-venda: Santana),
+     pedido do Juan em 14/10. Lista à parte e opcional: falhar aqui não esvazia o seletor. */
+  const [unidadesSemRede, setUnidadesSemRede] = useState<RedeUnidadeSemRede[]>([])
   useEffect(() => {
     if (!verUnidades) {
       setUnidadesRede(null)
+      setUnidadesSemRede([])
       return
     }
     let vivo = true
@@ -650,11 +662,19 @@ export default function MapScreen({
       .redeCarteira()
       .then((c) => vivo && setUnidadesRede(c.unidades))
       .catch(() => vivo && setUnidadesRede([]))
+    api
+      .redeUnidadesSemRede()
+      .then((r) => vivo && setUnidadesSemRede(r.unidades))
+      .catch(() => vivo && setUnidadesSemRede([]))
     return () => {
       vivo = false
     }
   }, [verUnidades])
   const unidadesUf = useMemo(() => unidadesDaUf(unidadesRede ?? [], uf), [unidadesRede, uf])
+  const opcoesUnidades = useMemo(
+    () => unidadesDaBusca(unidadesRede ?? [], unidadesSemRede, uf),
+    [unidadesRede, unidadesSemRede, uf],
+  )
 
   const [unidadeAberta, setUnidadeAberta] = useState<UnidadeNoMapa | null>(null)
   /* Porta única de abertura: o seletor e o pin do mapa passam os dois por aqui. O pin marca
@@ -666,8 +686,8 @@ export default function MapScreen({
      avisa o `App` (`onSoltarPonto`), que tira do ponto o comando da câmera. Sem o aviso, a
      ficha da unidade abria mas a câmera nunca chegava a ela. */
   const abrirUnidade = useCallback(
-    (u: RedeUnidade) => {
-      setUnidadeAberta({ id: u.id, nome: u.nome })
+    (u: { id: string; nome: string; lat: number | null; lng: number | null; semRede?: boolean }) => {
+      setUnidadeAberta({ id: u.id, nome: u.nome, semRede: u.semRede ?? false })
       if (u.lat == null || u.lng == null) return
       setBusca('')
       setBuscaErro(null)
@@ -1643,7 +1663,8 @@ export default function MapScreen({
         className="barra-ultra"
         style={{
           position: 'relative',
-          zIndex: 10,
+          // um degrau acima do corpo: a lista aberta de um seletor daqui fica por cima do painel
+          zIndex: Z_CABECALHO_MAPA,
           margin: '16px 16px 0',
           padding: '9px 12px',
           display: 'flex',
@@ -1798,7 +1819,7 @@ export default function MapScreen({
               label={`Unidades da Ultra em ${uf}`}
               value={unidadeAberta?.id ?? ''}
               onChange={(id) => {
-                const u = unidadesUf.find((x) => x.id === id)
+                const u = opcoesUnidades.find((x) => x.id === id)
                 if (u) abrirUnidade(u)
               }}
               maxWidth={190}
@@ -1806,11 +1827,11 @@ export default function MapScreen({
               placeholder={
                 unidadesRede === null
                   ? 'Carregando…'
-                  : unidadesUf.length === 0
+                  : opcoesUnidades.length === 0
                     ? `Nenhuma em ${uf}`
-                    : `Escolher (${unidadesUf.length})`
+                    : `Escolher (${opcoesUnidades.length})`
               }
-              options={unidadesUf.map((u) => ({ value: u.id, label: u.nome }))}
+              options={opcoesUnidades.map((u) => ({ value: u.id, label: u.rotulo }))}
             />
           </label>
         ) : (
@@ -1907,7 +1928,7 @@ export default function MapScreen({
       <div
         style={{
           position: 'relative',
-          zIndex: 10,
+          zIndex: Z_CORPO_MAPA,
           flex: 1,
           display: 'flex',
           justifyContent: 'flex-end',
@@ -2255,12 +2276,16 @@ export default function MapScreen({
         aberta={unidadeAberta != null}
         ancora="direita"
         titulo={unidadeAberta?.nome ?? 'Unidade'}
-        subtitulo="Unidade Ultra"
+        subtitulo={unidadeAberta?.semRede ? `Unidade Ultra · ${ROTULO_SEM_REDE}` : 'Unidade Ultra'}
         onFechar={() => setUnidadeAberta(null)}
         recuoInferior={96}
       >
         {unidadeAberta && (
-          <FichaUnidadeNoMapa unidadeId={unidadeAberta.id} onEstudarRegiao={estudarRegiaoDaUnidade} />
+          <FichaUnidadeNoMapa
+            unidadeId={unidadeAberta.id}
+            semRede={unidadeAberta.semRede ?? false}
+            onEstudarRegiao={estudarRegiaoDaUnidade}
+          />
         )}
       </JanelaFicha>
 
