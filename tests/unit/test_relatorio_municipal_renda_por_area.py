@@ -273,6 +273,17 @@ def test_sem_a_particao_do_proprio_municipio_a_renda_nao_sai_so_da_borda(
     )
     assert sem_proprio == {}
 
+    # A propria particao EXISTE mas nao contribui: setor sem renda publicada (sigilo do IBGE)
+    # e setor que nao alcanca os hexagonos. Mesma porta -- nao pode sair so' a borda.
+    _gravar("3550605", [_setor("P", dentro, float("nan"), 10.0)])
+    assert rm.carregar_renda_domiciliar_por_hex(
+        "SP", "3550605", tmp_path, hexes=[a, b], vizinhos=[("SP", "3502754")]
+    ) == {}
+    _gravar("3550605", [_setor("P", box(10.0, 10.0, 10.001, 10.001), 1000.0, 10.0)])
+    assert rm.carregar_renda_domiciliar_por_hex(
+        "SP", "3550605", tmp_path, hexes=[a, b], vizinhos=[("SP", "3502754")]
+    ) == {}
+
     _gravar("3550605", [_setor("P", dentro, 1000.0, 10.0)])
     com_proprio = rm.carregar_renda_domiciliar_por_hex(
         "SP", "3550605", tmp_path, hexes=[a, b], vizinhos=[("SP", "3502754")]

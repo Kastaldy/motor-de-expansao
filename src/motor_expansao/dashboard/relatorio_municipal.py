@@ -1292,6 +1292,15 @@ def carregar_renda_domiciliar_por_hex(
             if n == 0:
                 return {}
             continue
+        if n == 0 and not parcial:
+            # A propria particao existe mas nao contribui (todo setor sem renda publicada, ou
+            # nenhum alcanca os hexagonos): o mesmo caso de cima por outra porta -- so' os
+            # vizinhos somariam e a renda sairia apenas na borda.
+            log.warning(
+                "renda por hexagono: particao do proprio municipio %s/%s sem renda utilizavel; "
+                "renda indisponivel no relatorio", uf_p, cod_p,
+            )
+            return {}
         for hid, (num, den) in parcial.items():
             acc = total.setdefault(hid, [0.0, 0.0])
             acc[0] += num

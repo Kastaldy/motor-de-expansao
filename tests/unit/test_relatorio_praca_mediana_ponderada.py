@@ -156,7 +156,7 @@ def _texto_da_pagina(sel) -> str:
     )
     # A conta de folhas vem do proprio fpdf2 e roda em qualquer ambiente; so a extracao do
     # texto precisa do pypdf, que o CI nao instala (mesmo molde do `pypdfium2` no export).
-    assert pdf.page == 1, "a nota do criterio empurrou a pagina para uma segunda folha"
+    assert pdf.pages_count == 1, "a nota do criterio empurrou a pagina para uma segunda folha"
     pypdf = pytest.importorskip("pypdf", reason="sem extrator de PDF no ambiente (o CI nao instala o pypdf)")
     paginas = pypdf.PdfReader(io.BytesIO(bytes(pdf.output()))).pages
     assert len(paginas) == 1, "a nota do criterio empurrou a pagina para uma segunda folha"
