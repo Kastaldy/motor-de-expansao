@@ -451,4 +451,7 @@ def test_nome_do_hexagono_sem_chave_nao_le_disco(monkeypatch) -> None:
 def test_ponto_traz_o_nome_do_hexagono_igual_ao_da_ficha() -> None:
     body = pilot.ponto(lat=LAT_SP, lng=LNG_SP)
     esperado = pilot.bairros_por_hex("SP", "3550308").get(body["hex_id"])
+    # Sem esta guarda o teste passava com os DOIS lados None: `bairros_por_hex` devolve `{}` sem
+    # malha, sem particao ou em qualquer excecao (engolida), e `None == None` e' verde.
+    assert esperado, "a Av. Paulista tem de ter nome de hexagono na malha real"
     assert body["local"]["hexagono"] == esperado

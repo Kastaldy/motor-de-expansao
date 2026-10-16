@@ -3586,6 +3586,30 @@ def _perfil_nota_metodo(pdf: _UltraPDF) -> None:
     )
 
 
+def _perfil_nota_nome_do_ponto(banda_texto: str, tipo_label: str, unidade_nome: str) -> str | None:
+    """Linha que concilia o nome do PONTO (banda) com o da UNIDADE do perfil, quando divergem.
+
+    O piloto nomeia o ponto pelo HEXAGONO em que ele cai (o mesmo nome da ficha do hexagono),
+    e o perfil desta pagina e' o do bairro/distrito do SETOR censitario que contem o ponto. Os
+    dois podem divergir -- em Santana/SP (-23,4852 / -46,6177) o hexagono se chama "Tucuruvi"
+    e o setor fica no distrito Santana --, e sem esta linha a mesma pagina traria dois nomes
+    de lugar sem dizer por que. Devolve None quando nao ha' o que conciliar: banda sem nome
+    (coordenada), perfil sem nome, ou o nome do perfil ja' contido na banda.
+    """
+    banda = str(banda_texto or "").strip()
+    nome = str(unidade_nome or "").strip()
+    if not banda or not nome:
+        return None
+    if banda.startswith("Coordenada:") or banda == "Relatório Pontual Censitário":
+        return None
+    if nome.casefold() in banda.casefold():
+        return None
+    return (
+        f"O perfil é do {tipo_label.lower()} {nome}, onde fica o setor censitário do ponto. "
+        f"O nome no topo identifica o ponto (hexágono em que ele cai ou endereço informado)."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Variante "Apresentacao Classica Ultra" (BLK-EST-05) — helpers e gerador.
 # BLK-RELPON-14: apos a UNIFICACAO do gerador, esta e' a UNICA estetica do
@@ -4110,6 +4134,18 @@ def _classico_perfil_bairro_page(
         local_line=local_line,
         rows=_perfil_metric_rows(perfil),
     )
+
+    nota_nome = (
+        _perfil_nota_nome_do_ponto(banda_texto, tipo_label, unidade_nome)
+        if flag_disponivel
+        else None
+    )
+    if nota_nome:
+        # Entre o painel (termina em y=480) e a nota de metodo (y=500): uma linha so'.
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_xy(36, 486.0)
+        pdf.cell(_PAGE_W - 72, 10, _ascii(nota_nome), align="C")
 
     _perfil_nota_metodo(pdf)
     _draw_footer(pdf, with_attribution=True)

@@ -162,6 +162,32 @@ def test_o_pin_declara_quando_a_academia_esta_nos_DOIS_apps(com_independentes: P
     assert por_nome["Academia Alfa"]["fontes_da_academia"] == "wellhub"
 
 
+def test_academia_dos_DOIS_apps_vira_UM_pino(com_independentes: Path) -> None:
+    """O artefato tem uma linha por (app, academia): a academia do WellHub E do TotalPass chega
+    DUAS vezes. Sem colapsar, o mapa desenhava dois pinos bipartidos sobrepostos e a contagem da
+    camada somava os dois -- e nao fechava com a ficha e o PDF, que contam pela oferta unida
+    (Santana/SP: 24 linhas para 21 academias). Mesma regua do Relatorio Pontual (100 m + nome).
+    """
+    base = _nomeadas()
+    base["fontes_da_academia"] = "wellhub"
+    base.loc[base["nome"] == "Gama Fit", "fontes_da_academia"] = "totalpass,wellhub"
+    copia_tp = base[base["nome"] == "Gama Fit"].copy()
+    copia_tp["fonte"] = "totalpass"
+    copia_tp["chave_snapshot"] = "tp-gama"
+    pd.concat([base, copia_tp], ignore_index=True).to_parquet(
+        com_independentes / "staging" / "vulnerabilidade_ma_nomeadas.parquet", index=False
+    )
+    pilot.carregar_independentes.cache_clear()
+
+    bloco = _muni()["independentes"]
+    gama = [p for p in bloco["itens"] if p["nome"] == "Gama Fit"]
+    assert len(gama) == 1
+    assert bloco["total"] == 3
+    # Fica a linha do WellHub, com o carimbo dos dois apps (o pino do terceiro estado continua).
+    assert gama[0]["fonte"] == "wellhub"
+    assert gama[0]["fontes_da_academia"] == "totalpass,wellhub"
+
+
 def test_academia_LONGE_de_outro_municipio_nao_entra(com_independentes: Path) -> None:
     """O recorte é por hexágono do município MAIS a margem do raio da pressão (DEC-035).
 

@@ -562,6 +562,14 @@ def _uma_linha_por_academia_entre_apps(indep, cadeias):
     conexos (A~B, B~C) viram UMA academia. Se QUALQUER membro colapsa contra uma cadeia, a
     academia inteira sai: ela e' a cadeia, e manter a copia do outro app a contaria de novo.
 
+    EFEITO COLATERAL DECLARADO do fecho: a regua so' liga apps DIFERENTES, mas um componente
+    A(TP)~B(WH), A~C(WH) junta B e C, que sao do MESMO app. Medido no artefato de 2026-10-16
+    (35.971 linhas): 7.715 pares, 54 componentes com mais de 2 membros (maximo 4; 52 no perfil
+    1+2 e 2 no 2+2), todos a <= 99 m -- duplicatas internas reais. A regra fica ASSIMETRICA: a
+    duplicata interna de um app so' some quando casa com a mesma academia do outro app; a que
+    existe num app so' segue contando duas vezes (a dedup interna e' a `nome_mesma_fonte_m` do
+    pipeline, nao esta funcao).
+
     O sobrevivente carrega a uniao das fontes em `fontes_da_academia` (o pino do terceiro estado
     continua saindo), mas conta UM. Degrada sem quebrar: sem `fonte`/`nome` ou com uma fonte so'
     (sem TotalPass), nao ha' par, e o resultado e' o de `_dedup_independentes`.
@@ -643,6 +651,18 @@ def _uma_linha_por_academia_entre_apps(indep, cadeias):
             if rep in saida.index:
                 saida.at[rep, "fontes_da_academia"] = valor
     return saida
+
+
+def uma_linha_por_academia_entre_apps(indep):
+    """So' o colapso do par entre apps, sem a dedup contra cadeias (D5 da DEC-046).
+
+    E' o que os PINOS do mapa do piloto precisam: la' a cadeia tem camada propria e o
+    independente a <= 50 m dela continua desenhado (a D5 e' regra da OFERTA do Relatorio
+    Pontual). Mesma funcao, mesma regua -- sem segunda redacao do par (DEC-044).
+    """
+    import pandas as pd
+
+    return _uma_linha_por_academia_entre_apps(indep, pd.DataFrame(columns=["lat", "lng"]))
 
 
 def pd_isna(valor) -> bool:

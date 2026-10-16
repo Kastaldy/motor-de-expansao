@@ -1206,7 +1206,16 @@ def carregar_independentes() -> pd.DataFrame | None:
     df["hex_id_res7"] = df["hex_id_res7"].astype(str)
     # Sem coordenada nao ha pin. A academia continua existindo no artefato (ela tem score); o que
     # nao existe e' o desenho.
-    return df[df["lat"].notna() & df["lng"].notna()]
+    df = df[df["lat"].notna() & df["lng"].notna()]
+    # UM pino por academia dos dois apps. O artefato tem uma linha por (app, academia), e o
+    # carimbo `fontes_da_academia` so' ROTULA: sem colapsar, a academia do WellHub E do TotalPass
+    # saia como dois pinos bipartidos sobrepostos e a contagem da camada somava os dois -- o mapa
+    # nao fechava com a ficha e o PDF, que contam pela oferta unida ja' colapsada (Santana/SP:
+    # 24 linhas para 21 academias). Mesma regua (100 m + nome), mesma funcao do Relatorio Pontual;
+    # fica a linha do WellHub, com a uniao das fontes no carimbo.
+    from motor_expansao.api.service import uma_linha_por_academia_entre_apps
+
+    return uma_linha_por_academia_entre_apps(df)
 
 
 # `[BLK-MA-17 metade 1 / DEC-035]` Margem do recorte de pins, em metros.
