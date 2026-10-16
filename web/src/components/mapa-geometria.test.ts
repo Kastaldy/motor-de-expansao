@@ -32,7 +32,11 @@ describe('o clique é do desenho, por cima de tudo', () => {
   })
 
   it('o provisório é desenhado (véu, arestas, vértices) e entra nas deps do memo', () => {
-    for (const id of ["id: 'desenho-area'", "id: 'desenho-arestas'", "id: 'desenho-vertices'"]) {
+    for (const id of [
+      "id: 'desenho-area'",
+      "['desenho-arestas', aresta.traco]",
+      "id: 'desenho-vertices'",
+    ]) {
       expect(hexMap).toContain(id)
     }
     const deps = hexMap.slice(hexMap.indexOf('    return base\n  }, ['))
@@ -44,19 +48,23 @@ describe('o clique é do desenho, por cima de tudo', () => {
 
 describe('MapScreen: ferramenta única, barra e Esc', () => {
   it('liga pela ferramenta única e passa o desenho ao mapa', () => {
-    expect(mapScreen).toContain("alternarFerramenta(f, 'geometria')")
+    expect(mapScreen).toContain("acaoTrilho({ tipo: 'alternar-ferramenta', alvo: 'geometria' })")
     expect(mapScreen).toContain("desenhando={ferramenta === 'geometria'}")
     expect(mapScreen).toContain('verticesDesenho={vertices}')
   })
 
-  it('desligar a ferramenta (Esc, outro botão, Cancelar) apaga o desenho', () => {
-    expect(mapScreen).toContain("if (ferramenta === 'geometria') return\n    setVertices([])")
-    // O Esc que já desligava qualquer ferramenta é o mesmo que cancela o desenho.
-    expect(mapScreen).toContain("setFerramenta('nenhuma')")
+  it('Esc e Cancelar apagam o desenho; fechar o painel só PAUSA (lib/painel-trilho)', () => {
+    // Quem apaga é `encerrarDesenho` com motivo que não seja pausa (`rascunhoSobrevive`).
+    expect(mapScreen).toContain('if (!rascunhoSobrevive(motivo)) setVertices([])')
+    expect(mapScreen).toContain("if (ferramenta === 'geometria') encerrarDesenho('esc')")
+    expect(mapScreen).toContain("onClick={() => encerrarDesenho('cancelar')}")
+    expect(mapScreen).toContain("onFechar: () => encerrarDesenho('pausa')")
+    // Não há mais efeito que apague os vértices ao desligar a ferramenta.
+    expect(mapScreen).not.toContain("if (ferramenta === 'geometria') return\n    setVertices([])")
   })
 
   it('a barra tem Concluir, Desfazer e Cancelar, e a área ao vivo', () => {
-    const barraDesenho = mapScreen.slice(mapScreen.indexOf('Barra do DESENHO'))
+    const barraDesenho = mapScreen.slice(mapScreen.indexOf('Painel do DESENHO'))
     for (const t of ['Concluir', 'Desfazer', 'Cancelar', 'formatarKm2(avaliacaoDesenho.areaKm2)']) {
       expect(barraDesenho).toContain(t)
     }
@@ -66,7 +74,7 @@ describe('MapScreen: ferramenta única, barra e Esc', () => {
   it('ao concluir, a área vai a quem a analisa e a ferramenta desliga', () => {
     const corpo = mapScreen.slice(mapScreen.indexOf('function concluirDesenho'))
     expect(corpo).toContain('onGeometriaDesenhada?.(paraGeoJson(vs).coordinates)')
-    expect(corpo).toContain("setFerramenta('nenhuma')")
+    expect(corpo).toContain("encerrarDesenho('concluir')")
   })
 
   it('no painel, "Analisar geometria" vem depois da régua', () => {

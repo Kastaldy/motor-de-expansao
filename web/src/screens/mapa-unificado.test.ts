@@ -68,7 +68,8 @@ describe('MapScreen: a busca não solta pin local nem abre a ficha do hexágono'
   })
 
   it('a régua é uma ferramenta do estado único, não um booleano próprio', () => {
-    expect(mapScreen).toContain("useState<FerramentaMapa>('nenhuma')")
+    // Desde 2026-10-16 a ferramenta mora junto do painel de camadas (`lib/painel-trilho`).
+    expect(mapScreen).toContain("useState<EstadoTrilho>({ camadasAberto: false, ferramenta: 'nenhuma' })")
     expect(mapScreen).not.toContain('setMedindo')
   })
 

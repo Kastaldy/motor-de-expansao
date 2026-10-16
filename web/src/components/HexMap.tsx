@@ -21,6 +21,7 @@ import {
 } from '../lib/captura-mapa'
 import { CORES_IDENTIDADE, corDeIdentidadeRgb, rotuloDoHex } from '../lib/comparacao'
 import { cursorDaFerramenta, ferramentaDasChaves, pinDaComparacaoAbre } from '../lib/ferramenta-mapa'
+import { raioComHalo, tracoComHalo, veuDoDesenho } from '../lib/contorno-halo'
 import { chaveDaCoordenada, type PinDaComparacao } from '../lib/comparacao-pontos'
 import { alunos, brl, distanciaCurta, num, renda } from '../lib/format'
 import {
@@ -209,6 +210,13 @@ interface PeleDoMapa {
    * botão do trilho, que é o que liga o desenho na tela à ferramenta que o produz.
    */
   desenho: RGBA
+  /**
+   * Contorno da GRADE com as cores dos hexágonos DESLIGADAS (pedido do Vinicius,
+   * 2026-10-16). Sem preenchimento, o contorno neutro de sempre (`[8,11,16,55]`, 6 m) some
+   * no escuro — e a grade tem de continuar visível para o operador saber onde clicar. Um
+   * filete discreto CONTRÁRIO ao basemap, nos dois temas.
+   */
+  gradeSemCor: RGBA
 }
 
 const PELE: Record<Tema, PeleDoMapa> = {
@@ -222,6 +230,7 @@ const PELE: Record<Tema, PeleDoMapa> = {
     aroAlunos: [255, 255, 255, 250],
     alphaHex: HEX_FILL_ALPHA,
     desenho: [95, 208, 140, 255], // --gr-verde (#5fd08c) do escuro
+    gradeSemCor: [214, 222, 232, 70],
   },
   claro: {
     basemap: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
@@ -238,6 +247,7 @@ const PELE: Record<Tema, PeleDoMapa> = {
     aroAlunos: [255, 255, 255, 250],
     alphaHex: 170,
     desenho: [15, 157, 85, 255], // --gr-verde (#0f9d55) do claro
+    gradeSemCor: [11, 18, 25, 70],
   },
 }
 
@@ -527,8 +537,21 @@ export interface HexMapProps {
    * clique caiu "em cima" do 1o vertice (fechar).
    */
   desenhando?: boolean
+  /**
+   * Os vértices do desenho. Desenhados SEMPRE que houver, e não só com `desenhando`: o
+   * desenho PAUSADO (painel fechado, `lib/painel-trilho`) continua na tela, esmaecido, para
+   * o operador ver que ele está guardado e retomar de onde parou.
+   */
   verticesDesenho?: readonly Coord[]
   onCliqueDesenho?: (clique: Coord, metrosPorPixel: number) => void
+  /**
+   * Cores do mapa de calor dos hexágonos (pedido do Vinicius, 2026-10-16). Desligadas, os
+   * hexágonos ficam SEM preenchimento — só um filete da grade, para ainda se ver onde estão
+   * e poder clicar/selecionar —, e o recorte colorido do raio de 1 km sai junto (ele é a
+   * mesma coropleta, só que recortada). Pins, pontos, área desenhada, seleção e cenário
+   * continuam. A captura do PDF não depende disto: ela já esvazia a coropleta.
+   */
+  coresHex?: boolean
 }
 
 /**
@@ -594,6 +617,7 @@ export default function HexMap({
   desenhando = false,
   verticesDesenho,
   onCliqueDesenho,
+  coresHex = true,
 }: HexMapProps) {
   const pele = PELE[tema]
   /* O clique do mapa esta' TOMADO por uma ferramenta do trilho (regua, "Selecionar ponto"
@@ -1159,6 +1183,10 @@ export default function HexMap({
           const comRaio = raio1km && PASSOS_DA_PRESSAO.has(passo.n)
           // Transparente onde a cobertura ja pinta o hexagono inteiro (ver `hexesCobertos`).
           if (comRaio && hexesCobertos.has(d.id)) return [0, 0, 0, 0]
+          /* Cores desligadas: alfa 1, e não 0 — invisível, mas o hexágono continua
+             entrando no picking (hover e clique), que é o que faz a grade sem cor ainda
+             servir para selecionar. */
+          if (!coresHex) return [0, 0, 0, 1]
           return fillDoHex(d, passo.n, destaque.has(d.id), comRaio, pele.alphaHex)
         },
         // Borda neutra e fina; hex SELECIONADO -> contorno CONTRÁRIO ao basemap (claro
@@ -1167,7 +1195,7 @@ export default function HexMap({
         // no painel (antes eram todos turquesa, e nada ligava barra a hexágono na tela).
         getLineColor: (d) => {
           if (d.id === selecionado) return pele.selecao
-          if (!cenarioSet.has(d.id)) return [8, 11, 16, 55]
+          if (!cenarioSet.has(d.id)) return coresHex ? [8, 11, 16, 55] : pele.gradeSemCor
           // TETO na cor, e não no clique. O `cenario` cresce além de 5 de propósito — o
           // painel troca para o modo SOMA e ali somar 8 hexágonos é legítimo. Mas a
           // paleta tem 5 cores e `corDeIdentidade` cicla: o 6º hexágono sairia com a cor
@@ -1188,7 +1216,9 @@ export default function HexMap({
         },
         getLineWidth: (d) => (d.id === selecionado ? 55 : cenarioSet.has(d.id) ? 42 : 6),
         lineWidthUnits: 'meters',
-        lineWidthMinPixels: 0.5,
+        /* Sem cor, a grade é o que resta do hexágono: 1 px de piso para não sumir no zoom
+           de cidade, em que os 6 m do filete dão menos de meio pixel. */
+        lineWidthMinPixels: coresHex ? 0.5 : 1,
         pickable: true,
         autoHighlight: true,
         highlightColor: pele.realce,
@@ -1207,8 +1237,8 @@ export default function HexMap({
         updateTriggers: {
           // `tema` entra nos dois gatilhos: as funções acima o capturam por closure, e
           // sem ele o deck.gl reusa os buffers e o mapa fica com a pele antiga.
-          getFillColor: [passo.n, raio1km, hexesCobertos, tema],
-          getLineColor: [selecionado, cenarioKey, tema],
+          getFillColor: [passo.n, raio1km, hexesCobertos, tema, coresHex],
+          getLineColor: [selecionado, cenarioKey, tema, coresHex],
           getLineWidth: [selecionado, cenarioKey],
         },
         transitions: { getFillColor: 260 },
@@ -1220,7 +1250,9 @@ export default function HexMap({
          disco de uma concorrente e o lado sul esta livre — que e' a leitura que o estudo
          de ponto precisa ("meu imovel cai na parte coberta ou na livre?").
          A parte NAO coberta nao e' pintada: fica com a cor da propria camada. */
-      ...(raio1km && PASSOS_DA_PRESSAO.has(passo.n) && cobertura1k?.pecas?.length
+      /* Fora com as cores desligadas: as peças SÃO a coropleta, recortada pelo raio. A
+         sombra escura de baixo (densidade de concorrentes) fica — ela não é cor de faixa. */
+      ...(coresHex && raio1km && PASSOS_DA_PRESSAO.has(passo.n) && cobertura1k?.pecas?.length
         ? [
             new PolygonLayer<PecaCobertura>({
               id: 'cobertura-1km',
@@ -1624,9 +1656,16 @@ export default function HexMap({
        o cursor de proposito: ela reconstruiria a lista de camadas a cada movimento do
        mouse, e com 15 mil hexagonos isso se sente. Nada aqui e' clicavel: o clique segue
        para o `onClick` do DeckGL, que e' quem acrescenta o vertice. */
-    const vertices = desenhando ? (verticesDesenho ?? []) : []
+    /* CONTORNO DUPLO (`lib/contorno-halo`, pedido do Vinicius, 2026-10-16): o verde do
+       desenho sumia sobre hexágono verde da rampa. Cada traço vai em DUAS passadas — o halo
+       de contraste, mais largo, por baixo; a cor de identidade por cima — e o véu ficou mais
+       transparente. O desenho PAUSADO (painel fechado) continua na tela, esmaecido. */
+    const vertices = verticesDesenho ?? []
     if (vertices.length) {
       const rgb = pele.desenho
+      const pausado = !desenhando
+      const aresta = tracoComHalo(tema, rgb, 2.5, { pausado })
+      const borda = tracoComHalo(tema, rgb, 1.5, { pausado })
       if (vertices.length >= 3) {
         base.push(
           new PolygonLayer<Coord[]>({
@@ -1634,39 +1673,65 @@ export default function HexMap({
             data: [vertices as Coord[]],
             getPolygon: (d) => d.map((v) => [v.lng, v.lat]),
             filled: true,
-            getFillColor: [rgb[0], rgb[1], rgb[2], 46],
+            getFillColor: veuDoDesenho(rgb, { pausado }),
             stroked: false,
             pickable: false,
+            updateTriggers: { getFillColor: [tema, pausado] },
           }) as unknown as PolygonLayer<Hex>,
         )
       }
       if (vertices.length >= 2) {
-        base.push(
-          new PathLayer<Coord[]>({
-            id: 'desenho-arestas',
-            data: [vertices as Coord[]],
-            getPath: (d) => d.map((v) => [v.lng, v.lat] as [number, number]),
-            getColor: [rgb[0], rgb[1], rgb[2], 235],
-            getWidth: 2.5,
-            widthUnits: 'pixels',
-            pickable: false,
-          }) as unknown as PathLayer<Hex>,
-        )
+        for (const [id, passada] of [
+          ['desenho-arestas-halo', aresta.halo],
+          ['desenho-arestas', aresta.traco],
+        ] as const) {
+          base.push(
+            new PathLayer<Coord[]>({
+              id,
+              data: [vertices as Coord[]],
+              getPath: (d) => d.map((v) => [v.lng, v.lat] as [number, number]),
+              getColor: passada.cor,
+              getWidth: passada.largura,
+              widthUnits: 'pixels',
+              capRounded: true,
+              jointRounded: true,
+              pickable: false,
+              updateTriggers: { getColor: [tema, pausado] },
+            }) as unknown as PathLayer<Hex>,
+          )
+        }
       }
+      const raioVertice = (primeiro: boolean) => (primeiro && vertices.length >= 3 ? 7 : 4.5)
+      base.push(
+        new ScatterplotLayer<{ v: Coord; primeiro: boolean }>({
+          id: 'desenho-vertices-halo',
+          data: vertices.map((v, i) => ({ v, primeiro: i === 0 })),
+          getPosition: (d) => [d.v.lng, d.v.lat],
+          getRadius: (d) => raioComHalo(raioVertice(d.primeiro)),
+          radiusUnits: 'pixels',
+          getFillColor: borda.halo.cor,
+          pickable: false,
+          updateTriggers: { getRadius: [vertices.length], getFillColor: [tema, pausado] },
+        }) as unknown as ScatterplotLayer<Hex>,
+      )
       base.push(
         new ScatterplotLayer<{ v: Coord; primeiro: boolean }>({
           id: 'desenho-vertices',
           data: vertices.map((v, i) => ({ v, primeiro: i === 0 })),
           getPosition: (d) => [d.v.lng, d.v.lat],
-          getRadius: (d) => (d.primeiro && vertices.length >= 3 ? 7 : 4.5),
+          getRadius: (d) => raioVertice(d.primeiro),
           radiusUnits: 'pixels',
-          getFillColor: (d) => (d.primeiro ? pele.pinMiolo : [rgb[0], rgb[1], rgb[2], 255]),
+          getFillColor: (d) => (d.primeiro ? pele.pinMiolo : borda.traco.cor),
           stroked: true,
-          getLineColor: [rgb[0], rgb[1], rgb[2], 255],
+          getLineColor: borda.traco.cor,
           lineWidthUnits: 'pixels',
           getLineWidth: (d) => (d.primeiro ? 2.5 : 1),
           pickable: false,
-          updateTriggers: { getRadius: [vertices.length] },
+          updateTriggers: {
+            getRadius: [vertices.length],
+            getFillColor: [tema, pausado],
+            getLineColor: [tema, pausado],
+          },
         }) as unknown as ScatterplotLayer<Hex>,
       )
     }
@@ -1740,7 +1805,25 @@ export default function HexMap({
       /* Contorno da AREA DESENHADA (DEC-071, fase 1), quando o item e' de geometria: so' a
          linha, na cor do item, sem preenchimento — o choropleth embaixo continua legivel. */
       const areas = emOrdem.filter((p) => p.geometria?.length)
+      /* Contorno DUPLO (`lib/contorno-halo`): halo de contraste por baixo, a cor do item
+         por cima — senão a área verde-água some sobre o hexágono verde da rampa. */
+      const larguraArea = (d: PinComparado) => (d.ativo ? 3 : 2)
       if (areas.length) {
+        base.push(
+          new PolygonLayer<PinComparado>({
+            id: 'comparacao-areas-halo',
+            data: areas,
+            getPolygon: (d) => d.geometria ?? [],
+            filled: false,
+            stroked: true,
+            getLineColor: (d) => tracoComHalo(tema, d.rgb, larguraArea(d)).halo.cor,
+            getLineWidth: (d) => tracoComHalo(tema, d.rgb, larguraArea(d)).halo.largura,
+            lineWidthUnits: 'pixels',
+            lineJointRounded: true,
+            pickable: false,
+            updateTriggers: { getLineColor: [tema] },
+          }) as unknown as PolygonLayer<Hex>,
+        )
         base.push(
           new PolygonLayer<PinComparado>({
             id: 'comparacao-areas',
@@ -1749,12 +1832,31 @@ export default function HexMap({
             filled: false,
             stroked: true,
             getLineColor: (d) => d.rgb,
-            getLineWidth: (d) => (d.ativo ? 3 : 2),
+            getLineWidth: larguraArea,
             lineWidthUnits: 'pixels',
+            lineJointRounded: true,
             pickable: false,
           }) as unknown as PolygonLayer<Hex>,
         )
       }
+      /* Halo do PIN: um disco de contraste um pouco maior por baixo do anel, pelo mesmo
+         motivo do traço — o filete de 1,5 px do miolo sozinho não segurava um anel
+         verde-água sobre a faixa verde. */
+      base.push(
+        new ScatterplotLayer<PinComparado>({
+          id: 'comparacao-pin-halo',
+          data: emOrdem,
+          getPosition: (d) => [d.lng, d.lat],
+          getRadius: (d) => raioComHalo((d.ativo ? 13 : 10) + 1.5),
+          radiusUnits: 'pixels',
+          getFillColor: (d) => {
+            const h = tracoComHalo(tema, d.rgb, 1).halo.cor
+            return d.carregando ? [h[0], h[1], h[2], Math.round(h[3] * 0.6)] : h
+          },
+          pickable: false,
+          updateTriggers: { getFillColor: [tema] },
+        }) as unknown as ScatterplotLayer<Hex>,
+      )
       base.push(
         new ScatterplotLayer<PinComparado>({
           id: 'comparacao-pin-anel',
@@ -1897,6 +1999,8 @@ export default function HexMap({
     pontosNoMapa,
     pinDoSearch,
     onPontoClicado,
+    // Cores dos hexágonos ligadas/desligadas: o corpo lê para preencher (ou não) a grade.
+    coresHex,
     // `pele` e `tema` andam juntos (um deriva do outro), mas os dois entram: `pele` é o
     // que o corpo do memo lê, e `tema` é o que vai nos `updateTriggers` das camadas.
     pele,

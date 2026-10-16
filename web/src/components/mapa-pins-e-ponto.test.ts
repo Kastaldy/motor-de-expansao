@@ -128,7 +128,7 @@ describe('Selecionar ponto: o clique é da ferramenta, por cima de tudo', () => 
     expect(mapScreen).toContain("selecionandoPonto={ferramenta === 'ponto'}")
     // `true` = pedido do próprio mapa: o pin não voa nem aproxima (ver `PontoPendente.doMapa`).
     expect(mapScreen).toContain('onSelecionarPonto={(lat, lng) => aplicarPonto(lat, lng, true)}')
-    expect(mapScreen).toContain("alternarFerramenta(f, 'ponto')")
+    expect(mapScreen).toContain("acaoTrilho({ tipo: 'alternar-ferramenta', alvo: 'ponto' })")
   })
 
   it('pin de clique no mapa não voa: os dois voos automáticos respeitam `semVoo`', () => {
@@ -147,7 +147,7 @@ describe('Selecionar ponto: o clique é da ferramenta, por cima de tudo', () => 
 
   it('Esc desliga a ferramenta, antes da janela que estiver por cima', () => {
     expect(mapScreen).toContain("window.addEventListener('keydown', aoTeclar, true)")
-    expect(mapScreen).toContain("setFerramenta('nenhuma')")
+    expect(mapScreen).toContain("else acaoTrilho({ tipo: 'desligar-ferramenta' })")
   })
 })
 
