@@ -455,6 +455,9 @@ def mercado_na_area(
     ultra_conta = ultra
     if excluir_ultra_proxima:
         proxima = exigir_unidade_ultra(ultra, lat, lng, tolerancia_m=tolerancia_ultra_m)
+        # `exigir_unidade_ultra` ja' recusa sem cadastro; a guarda explicita e' para o tipo.
+        if ultra is None:
+            raise UnidadeUltraForaDaTolerancia("Sem cadastro de unidades Ultra.")
         pos = int(proxima["posicao"])
         # A unidade E as linhas repetidas do MESMO endereco (ver `ultra_mais_proxima`).
         fora = set(proxima.get("posicoes_mesmo_ponto") or [pos])
