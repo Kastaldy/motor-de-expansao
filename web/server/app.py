@@ -1206,7 +1206,16 @@ def carregar_independentes() -> pd.DataFrame | None:
     df["hex_id_res7"] = df["hex_id_res7"].astype(str)
     # Sem coordenada nao ha pin. A academia continua existindo no artefato (ela tem score); o que
     # nao existe e' o desenho.
-    return df[df["lat"].notna() & df["lng"].notna()]
+    df = df[df["lat"].notna() & df["lng"].notna()]
+    # UM pino por academia dos dois apps. O artefato tem uma linha por (app, academia), e o
+    # carimbo `fontes_da_academia` so' ROTULA: sem colapsar, a academia do WellHub E do TotalPass
+    # saia como dois pinos bipartidos sobrepostos e a contagem da camada somava os dois -- o mapa
+    # nao fechava com a ficha e o PDF, que contam pela oferta unida ja' colapsada (Santana/SP:
+    # 24 linhas para 21 academias). Mesma regua (100 m + nome), mesma funcao do Relatorio Pontual;
+    # fica a linha do WellHub, com a uniao das fontes no carimbo.
+    from motor_expansao.api.service import uma_linha_por_academia_entre_apps
+
+    return uma_linha_por_academia_entre_apps(df)
 
 
 # `[BLK-MA-17 metade 1 / DEC-035]` Margem do recorte de pins, em metros.
@@ -2424,6 +2433,112 @@ def bairros_por_hex(uf: str, cod_municipio: str) -> dict[str, str]:
         return _carregar_bairros_por_hex(uf, cod_municipio, CENSO_GEO_DIR) or {}
     except Exception:  # noqa: BLE001 — enriquecimento opcional
         return {}
+
+
+def _nome_do_hexagono(
+    uf: str | None, cod_municipio: Any, hex_id: str | None, setores: Any = None
+) -> str | None:
+    """O nome do hexagono res-7 em que um ponto cai -- a MESMA string da ficha do hexagono.
+
+    A ficha e o ranking nomeiam o hexagono por `bairros_por_hex` (localidade dominante:
+    bairro -> subdistrito -> distrito, ignorando o nivel grosso que so' repete o
+    municipio). O ponto lia so' o setor que o CONTEM, sem essa guarda: em Brasilia o
+    distrito do setor e' "Brasília" e o ponto de Taguatinga saia com o nome do
+    municipio, enquanto o hexagono dele, na ficha, chama "Taguatinga".
+
+    `None` quando o hexagono nao tem nome (nenhum setor com localidade tem o centroide
+    nele, ou a particao nao existe): o fallback (bairro/distrito do setor, depois
+    municipio) e' de quem exibe, e fica declarado em `rotuloDoPonto` no front.
+
+    `setores` (opcional): os setores JA' carregados por quem chama (a ficha de ponto leu a
+    particao para o raio). Com eles o nome sai da memoria, sem reler o disco -- revisao do
+    admin de 2026-10-15: o `/api/ponto` relia a particao inteira so' para isto, e o miolo de
+    `bairros_por_hex` itera setor a setor (medido: 5,7 s na 1a chamada de Sao Paulo, 27.301
+    setores, numa rota com timeout de 30 s). Mesma regra e mesmo recorte (so' o municipio
+    `cod_municipio`), entao o nome e' o mesmo da ficha -- travado por teste na malha real.
+    """
+    if not uf or cod_municipio is None or not hex_id:
+        return None
+    cod = str(cod_municipio).strip()
+    if not cod or cod.casefold() in {"nan", "none"}:
+        return None
+    em_memoria = _nome_do_hexagono_em_memoria(setores, cod, str(hex_id))
+    if em_memoria is not _SEM_SETORES:
+        return em_memoria
+    nome = bairros_por_hex(str(uf).upper(), cod).get(str(hex_id))
+    nome = str(nome).strip() if nome is not None else ""
+    return nome or None
+
+
+# Sentinela: "nao deu para decidir em memoria" (sem setores ou sem as colunas), distinto de
+# `None` = "decidido: o hexagono nao tem nome".
+_SEM_SETORES: Any = object()
+_COLS_NOME_HEX = ("cod_municipio", "nome_bairro", "bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy")
+# Folga da pre-selecao, em graus de latitude: o raio circunscrito do hexagono res-7 e' ~1,4 km
+# (0,013 grau); 0,03 grau (~3,3 km) deixa margem para o centroide do setor cair nele.
+_FOLGA_NOME_HEX_GRAUS = 0.03
+
+
+def _celula_ou_none(lat: Any, lng: Any) -> str | None:
+    import math
+
+    import h3
+
+    try:
+        la, ln = float(lat), float(lng)
+        if math.isnan(la) or math.isnan(ln):
+            return None
+        return str(h3.latlng_to_cell(la, ln, 7))  # 7 = H3_RES de `bairros_por_hex`
+    except Exception:  # noqa: BLE001 - mesma tolerancia do helper (setor sem celula e' pulado)
+        return None
+
+
+def _nome_do_hexagono_em_memoria(setores: Any, cod: str, hex_id: str) -> Any:
+    """Nome do hexagono pelos setores em memoria; `_SEM_SETORES` quando nao da' para decidir.
+
+    Pre-seleciona os setores cujo centroide do bbox esta' perto do hexagono e roda a MESMA
+    regra de `bairros_por_hex` (`bairros_por_hex_de_setores`) so' sobre eles: um setor so'
+    pesa no hexagono que contem o centroide dele, entao descartar os de longe nao muda o
+    resultado -- e tira o custo de iterar o municipio inteiro.
+    """
+    if setores is None or getattr(setores, "empty", True):
+        return _SEM_SETORES
+    if any(c not in setores.columns for c in _COLS_NOME_HEX):
+        return _SEM_SETORES
+    import math
+
+    import h3
+    import pandas as pd
+
+    from motor_expansao.dashboard.relatorio_municipal import bairros_por_hex_de_setores
+
+    lat_h, lng_h = h3.cell_to_latlng(hex_id)
+    folga_lng = _FOLGA_NOME_HEX_GRAUS / max(math.cos(math.radians(lat_h)), 0.1)
+    def _centro(a: str, b: str) -> Any:
+        return (
+            pd.to_numeric(setores[a], errors="coerce").to_numpy(dtype=float)
+            + pd.to_numeric(setores[b], errors="coerce").to_numpy(dtype=float)
+        ) / 2.0
+
+    lat_c = _centro("bbox_miny", "bbox_maxy")
+    lng_c = _centro("bbox_minx", "bbox_maxx")
+    # POSICIONAL (numpy), para um indice repetido no frame nao multiplicar linhas.
+    # Geografia primeiro (numerica, barata); municipio e celula exata so' sobre o que sobrou:
+    # comparar `cod_municipio` como texto nos ~27 mil setores de Sao Paulo custava mais que o
+    # resto, e a caixa de folga ainda pega centenas de setores no centro da cidade.
+    candidatos = (abs(lat_c - lat_h) <= _FOLGA_NOME_HEX_GRAUS) & (abs(lng_c - lng_h) <= folga_lng)
+    posicoes = [
+        k
+        for k in candidatos.nonzero()[0]
+        if str(setores["cod_municipio"].iat[k]).strip() == cod
+        # So' os do PROPRIO hexagono (centroide do bbox nele, a mesma conta do helper): os de
+        # fora nao pesariam neste hexagono de qualquer forma.
+        and _celula_ou_none(lat_c[k], lng_c[k]) == hex_id
+    ]
+    perto = setores.iloc[posicoes]
+    nome = bairros_por_hex_de_setores(perto).get(hex_id)
+    nome = str(nome).strip() if nome is not None else ""
+    return nome or None
 
 
 def _unidade(n: int, singular: str, plural: str) -> str:
@@ -6434,7 +6549,10 @@ def resolver_ponto(q: str) -> dict[str, Any]:
 
 
 def _criterios_do_ponto(
-    censo: dict[str, Any], mercado: dict[str, Any], concorrencia: dict[str, Any]
+    censo: dict[str, Any],
+    mercado: dict[str, Any],
+    concorrencia: dict[str, Any],
+    onde: str = "no raio",
 ) -> list[dict[str, Any]]:
     """Cada métrica do IMÓVEL contra a régua do critério do imóvel.
 
@@ -6455,6 +6573,11 @@ def _criterios_do_ponto(
 
     `RENDA_MIN` é renda DOMICILIAR, não per capita (comentário literal em
     `config.py:131`) — comparar contra a per capita reprovaria quase todo ponto.
+
+    `onde` só muda o RÓTULO ("no raio" / "na área", DEC-071); as réguas são as mesmas.
+    Ressalva declarada da fase 1: população e concorrentes são totais ABSOLUTOS, e o piso
+    de 5.000 e o teto de 3 foram pensados para o raio de 1 km — numa área desenhada muito
+    maior ou menor eles leem outra coisa. Reescalar por área é decisão do dono (fase 2).
     """
     from motor_expansao.config import settings
 
@@ -6474,7 +6597,7 @@ def _criterios_do_ponto(
         }
 
     itens = [
-        crit("populacao", "População no raio", censo.get("populacao"), POP_MIN_ACIONAVEL, "pessoas"),
+        crit("populacao", f"População {onde}", censo.get("populacao"), POP_MIN_ACIONAVEL, "pessoas"),
         crit(
             "renda_domiciliar", "Renda domiciliar",
             censo.get("renda_media_domiciliar"), float(settings.RENDA_MIN), "R$",
@@ -6505,7 +6628,7 @@ def _criterios_do_ponto(
         # um ponto saturado seria aprovado porque um parquet nao chegou na VPS.
         itens.append(
             crit(
-                "concorrentes", "Concorrentes de rede no raio",
+                "concorrentes", f"Concorrentes de rede {onde}",
                 (
                     concorrencia.get("n_concorrentes_cadeia")
                     if concorrencia.get("completo")
@@ -6518,8 +6641,12 @@ def _criterios_do_ponto(
 
 
 @app.get("/api/ponto")
-def ponto(lat: float, lng: float) -> dict[str, Any]:
+def ponto(lat: float, lng: float, excluir_ultra_proxima: bool = False) -> dict[str, Any]:
     """Ficha de UM ponto: censo real no raio de 1,0 km, mais mercado quando houver.
+
+    `excluir_ultra_proxima` (emenda da DEC-070, default False): ESTUDO DA UNIDADE ULTRA. O
+    consumo da unidade Ultra a ate' 150 m do ponto sai do mercado (so' ela; as outras
+    seguem contando) e o bloco `mercado` declara o modo. Sem unidade na tolerancia -> 400.
 
     NÃO carrega a partição da UF. O mapa lê `hexagonos_dashboard_enriquecido/uf=XX`
     inteiro (até 15.000 hexes, >15 s na primeira vez — por isso o `TIMEOUT_LEITURA` de
@@ -6536,13 +6663,73 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
 
     READ-ONLY: nenhum score recalculado, nenhum artefato tocado.
     """
+    # Sem o parametro a chamada e' LITERALMENTE a de antes (quem substitui
+    # `_payload_ponto` em teste continua recebendo os mesmos args).
+    if excluir_ultra_proxima:
+        return _payload_ponto(lat, lng, excluir_ultra_proxima=True)
+    return _payload_ponto(lat, lng)
+
+
+class PontoGeometriaIn(BaseModel):
+    """Corpo de `POST /api/ponto/geometria`: o polígono GeoJSON desenhado no mapa."""
+
+    geometria: dict[str, Any]
+
+
+@app.post("/api/ponto/geometria")
+def ponto_geometria(corpo: PontoGeometriaIn) -> dict[str, Any]:
+    """Ficha de uma ÁREA DESENHADA — "Analisar geometria", fase 1 (DEC-071, PROPOSTA).
+
+    O MESMO corpo do `/api/ponto` (`_payload_ponto`), com o polígono no lugar do raio de
+    1,0 km: censo setor a setor, concorrentes (ponto-em-polígono) e mercado (SAM, consumo
+    e residual, DEC-070) passam a ser lidos DENTRO da área. O "ponto" da ficha é o
+    `representative_point` do polígono — garantidamente interno, mesmo num polígono
+    côncavo — e é por ele que o município e o hexágono se resolvem.
+
+    POST com corpo JSON, e não GET com query: um polígono de 50 vértices não cabe numa URL
+    (o mesmo limite que já estourou como HTTP 431 no relatório). O gate de acesso é o do
+    `/api/ponto` (casamento por prefixo em `acesso.py`), e a malha municipal também.
+
+    Validação (400, mensagem em português): GeoJSON que não é Polygon, buraco, menos de 3
+    ou mais de 50 vértices, autointerseção, área fora de 0,1–200 km², vértice fora do país,
+    extensão (diagonal da caixa envolvente) acima de 40 km e faixa estreita demais
+    (compacidade 4πA/P² abaixo de 0,02) — os dois últimos limitam QUANTOS municípios a área
+    alcança, que a área sozinha não limita (revisão do PR #457: faixa de 10 m × 3.000 km).
+    Tudo isso roda ANTES de qualquer leitura de partição. SÓ TELA nesta fase: o PDF por área desenhada é a fase 2. READ-ONLY sobre o M1.
+    """
+    from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
+    from motor_expansao.dashboard.geometria_desenhada import (
+        GeometriaDesenhadaInvalida,
+        validar_geometria_desenhada,
+    )
+
+    def _no_pais(lat: float, lng: float) -> None:
+        # A MESMA régua de bounding box do `/api/ponto`, vértice a vértice.
+        validar_brasil(lat, lng)
+
+    try:
+        desenho = validar_geometria_desenhada(corpo.geometria, validar_coordenada=_no_pais)
+    except (GeometriaDesenhadaInvalida, CoordenadaInvalidaError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _payload_ponto(desenho.lat, desenho.lng, desenho=desenho)
+
+
+def _payload_ponto(
+    lat: float, lng: float, *, desenho: Any = None, excluir_ultra_proxima: bool = False
+) -> dict[str, Any]:
+    """O corpo da ficha de ponto, comum ao `GET /api/ponto` e ao `POST /api/ponto/geometria`.
+
+    `desenho` (`GeometriaDesenhada`, DEC-071) troca o raio pelo polígono. Sem ele, cada
+    chave e cada chamada são as de antes da DEC-071 — o GET não muda um byte (travado por
+    teste). Com ele, (lat, lng) é o `representative_point` do polígono.
+    """
     from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
     from motor_expansao.api.errors import APIError
     from motor_expansao.api.service import (
         _competitors_ultra,
         _hexes_vizinhos_do_ponto,
+        _mercado_do_ponto,
         _nome_municipio_de,
-        _residual_do_ponto,
         _resolver_e_carregar,
     )
     from motor_expansao.api.settings import Settings
@@ -6568,7 +6755,13 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
     )
 
     try:
-        uf, _cod, setores_df = _resolver_e_carregar(lat, lng, cfg)
+        if desenho is None:
+            uf, _cod, setores_df = _resolver_e_carregar(lat, lng, cfg)
+        else:
+            # DEC-071: os vizinhos que a CAIXA do polígono alcança também entram — um
+            # polígono maior que o frame do ponto perderia setores do município vizinho em
+            # silêncio (a DEC-065 por outra porta).
+            uf, _cod, setores_df = _resolver_e_carregar(lat, lng, cfg, geometria=desenho.poligono)
     except APIError as exc:
         # `APIError` é do contrato da API de produção, que registra um handler próprio
         # (`main.py`). O piloto NÃO registra — aqui ela vazaria como 500 sem código.
@@ -6577,7 +6770,12 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         # implantação). O caminho do PDF (app.py, `_gerar_relatorio_pontual_pdf`) achata
         # os dois em 400 e faz o operador ler "não foi possível resolver a coordenada"
         # quando o problema é dado faltando no servidor.
-        raise HTTPException(exc.status_code, exc.detail) from exc
+        detalhe = exc.detail
+        if desenho is not None and exc.status_code == 400:
+            # A coordenada que falhou é o ponto de referência, que o operador não clicou:
+            # sem dizer isso, "coordenada fora da malha" não aponta para nada na tela dele.
+            detalhe = f"O ponto central da área desenhada não foi resolvido. {detalhe}"
+        raise HTTPException(exc.status_code, detalhe) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f"Não foi possível resolver a coordenada: {exc}") from exc
 
@@ -6585,15 +6783,40 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
     comp_df, ultra_df = _competitors_ultra(cfg)
     tem_concorrentes = comp_df is not None or ultra_df is not None
 
+    # A geometria só entra na chamada quando existe: sem ela, a chamada é LITERALMENTE a de
+    # antes da DEC-071 (quem substitui o motor em teste continua recebendo os mesmos args).
+    _recorte_kw: dict[str, Any] = {} if desenho is None else {"geometria_wgs84": desenho.poligono}
     res = analisar_ponto_censitario_setores(
         lat, lng, setores_df,
         raio_km=RAIO_CENSITARIO_DEFAULT_KM,
         competitors_df=comp_df,
         ultra_df=ultra_df,
+        **_recorte_kw,
     )
 
-    residual = _residual_do_ponto(lat, lng, cfg)
-    tem_mercado = any(v is not None for v in residual.values())
+    # DEC-070: SAM / consumo / residual no MESMO raio de 1,0 km da populacao (era a linha do
+    # hexagono res-7 do ponto: grao misto, termo da Ultra escondido e Ultra contada em dobro).
+    # Mesma funcao do PDF do piloto e do PDF da API/bot. DEC-071: com area desenhada, a
+    # MESMA funcao no poligono (`mercado_raio.mercado_na_area` ja' aceita a geometria).
+    from motor_expansao.dashboard.mercado_raio import UnidadeUltraForaDaTolerancia
+
+    if desenho is None and excluir_ultra_proxima:
+        # Emenda da DEC-070: estudo da unidade Ultra. Sem unidade na tolerancia, 400 com o
+        # motivo -- cair no estudo de ponto em silencio poria o consumo dela de volta numa
+        # ficha que o operador pediu sem ele.
+        try:
+            mercado = _mercado_do_ponto(
+                lat, lng, cfg, res.get("pop_total_raio"), excluir_ultra_proxima=True
+            )
+        except UnidadeUltraForaDaTolerancia as exc:
+            raise HTTPException(400, str(exc)) from exc
+    elif desenho is None:
+        mercado = _mercado_do_ponto(lat, lng, cfg, res.get("pop_total_raio"))
+    else:
+        mercado = _mercado_do_ponto(
+            lat, lng, cfg, res.get("pop_total_raio"), geometria=desenho.poligono
+        )
+    tem_mercado = bool(mercado.get("disponivel"))
 
     import h3
 
@@ -6719,7 +6942,19 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         # A densidade VÁLIDA divide pela área de setor realmente intersectada, e não
         # por pi*r^2: num ponto com rio/mar no raio, a fixa subestima de propósito.
         "densidade_hab_km2": _num(res.get("densidade_pop_raio_valida_hab_km2")),
-        "score_socioeconomico": _num(res.get("score_setor_2022_calibrado_ponto"), 1),
+        # No PONTO, a nota e' a do setor que contem a coordenada que o operador escolheu.
+        # Na AREA DESENHADA (DEC-071) nao: a coordenada e' o `representative_point` do
+        # poligono, um lugar que ninguem clicou, e a nota do setor dele nao e' a da area
+        # (medido na revisao de 2026-10-14: o mesmo disco de 1 km desenhado como poligono
+        # dava 98,2 contra 95,6 do raio, so' porque o ponto interno andou ~65 m). Ali vale
+        # a MEDIA dos setores do poligono ponderada pela populacao intersectada (area,
+        # onde nao ha populacao) -- `score_setor_medio`, que o motor ja' calculava.
+        "score_socioeconomico": _num(
+            res.get("score_setor_medio")
+            if desenho is not None
+            else res.get("score_setor_2022_calibrado_ponto"),
+            1,
+        ),
         "n_setores": _num(res.get("n_setores")),
         "detalhe": detalhe_censo,
     }
@@ -6763,22 +6998,70 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         "lista_total": _n_lista_total,
     }
 
+    # NOMES MANTIDOS, SIGNIFICADO NOVO (DEC-070, emenda o contrato da DEC-005): `sam`,
+    # `residual` e `score_residual` passam a ser do RAIO, e as duas parcelas do consumo
+    # entram para a conta fechar na tela -- `residual = max(sam - consumo_total, 0)`.
+    # Insumo de concorrentes/Ultra ausente -> consumo e residual `None` com motivo, NUNCA
+    # zero (zero afirmaria mercado livre por falta de dado).
+    _hex = mercado.get("hexagono") or {}
     mercado_bloco = {
         "disponivel": tem_mercado,
         "motivo": None if tem_mercado else (
-            "Sem leitura de mercado para este hexágono "
+            mercado.get("motivo")
+            or "Sem leitura de mercado para este ponto "
             "(data/staging/hexagonos_mercado_mapeado.parquet ausente)."
         ),
-        "sam": _num(residual.get("sam_fitness_potencial")),
-        "residual": _num(residual.get("oferta_efetiva_disponivel")),
-        "score_residual": _num(residual.get("score_oportunidade_residual"), 1),
-    
+        # Identificador cru do grao ("raio"/"geometria"), NAO acentuar.
+        "grao": mercado.get("grao"),
+        "raio_km": mercado.get("raio_km"),
+        "area_km2": _num(mercado.get("area_km2"), 2),
+        "sam": _num(mercado.get("sam_fitness_potencial")),
+        "consumo_concorrentes": _num(mercado.get("oferta_consumida_mercado_estimada")),
+        "consumo_ultra": _num(mercado.get("oferta_consumida_ultra_estimada")),
+        "consumo_total": _num(mercado.get("oferta_consumida_total_estimada")),
+        "residual": _num(mercado.get("oferta_efetiva_disponivel")),
+        # Regua ABSOLUTA do pipeline (100 x residual / 2.500, clip 0-100) sobre o residual
+        # do raio -- nao e' o score do hexagono.
+        "score_residual": _num(mercado.get("score_oportunidade_residual"), 1),
+        "taxa_fitness": _num(mercado.get("taxa_fitness_mercado"), 6),
+        "n_concorrentes_alcancam": _num(mercado.get("n_concorrentes_alcancam")),
+        "n_ultra_alcancam": _num(mercado.get("n_ultra_alcancam")),
+        "motivo_parcial": None if not tem_mercado else mercado.get("motivo"),
+        # Emenda da DEC-070. `modo_estudo` e' identificador cru ("ponto"/"unidade_ultra"),
+        # NAO acentuar. No estudo da unidade, `consumo_ultra` acima ja' e' o das OUTRAS
+        # Ultras, e `unidade_ultra_estudada.consumo_excluido` diz quanto saiu.
+        # `ultra_proxima` vem nos DOIS modos: e' o que a ficha usa para OFERECER a troca.
+        "modo_estudo": mercado.get("modo_estudo") or "ponto",
+        "declaracao_modo": mercado.get("declaracao_modo"),
+        "unidade_ultra_estudada": _ultra_do_mercado(
+            mercado.get("unidade_ultra_estudada"), com_consumo=True
+        ),
+        "ultra_proxima": _ultra_do_mercado(mercado.get("ultra_proxima")),
+        "gate": {
+            "passa": mercado.get("flag_sam"),
+            "faixa_m1": _texto(mercado.get("faixa_oportunidade")),
+            "faixa_elegivel": mercado.get("gate_faixa_elegivel"),
+            "pop_ok": mercado.get("gate_pop_ok"),
+            "pop_minima": mercado.get("pop_minima_gate"),
+            "motivo": mercado.get("motivo_gate"),
+        },
+        # AUDITORIA do grao antigo (o hexagono do ponto). Nao alimenta criterio nenhum.
+        "hexagono": {
+            "hex_id": _texto(_hex.get("hex_id")),
+            "sam": _num(_hex.get("sam")),
+            "consumo_concorrentes": _num(_hex.get("consumo_concorrentes")),
+            "consumo_ultra": _num(_hex.get("consumo_ultra")),
+            "residual": _num(_hex.get("residual")),
+            "score_residual": _num(_hex.get("score_residual"), 1),
+        },
     }
 
-    return {
+    payload: dict[str, Any] = {
         "lat": _num(lat, 6),
         "lng": _num(lng, 6),
-        "raio_km": RAIO_CENSITARIO_DEFAULT_KM,
+        # Área desenhada não tem raio: `None` e não 1,0, senão a tela escreveria "raio de
+        # 1.000 m" sobre um polígono (DEC-071). O recorte vai no bloco `recorte`, abaixo.
+        "raio_km": RAIO_CENSITARIO_DEFAULT_KM if desenho is None else None,
         "hex_id": hex_id,
         "local": {
             # `uf` e o nome do município NÃO estão no dict de `analisar_ponto_...` (são
@@ -6787,6 +7070,13 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
             "uf": uf,
             "municipio": _texto(_nome_municipio_de(setores_df)),
             "bairro": _texto(res.get("unidade_ponto_rotulo")),
+            # O NOME DO HEXÁGONO em que o ponto cai — a mesma string que a ficha e o
+            # ranking do hexágono mostram (`bairros_por_hex`). É ele que nomeia o ponto
+            # (`rotuloDoPonto`); `bairro` acima vira o fallback. Sem isto, em Brasília o
+            # ponto saía "Brasília" (o distrito do setor É o município) enquanto o hex
+            # dele, na ficha, se chama "Taguatinga". `None` quando o hex não tem nome.
+            # Os setores JA' carregados para o raio: sem reler a particao (revisao do admin).
+            "hexagono": _nome_do_hexagono(uf, _cod, hex_id, setores_df),
             # Identificador cru ("bairro"/"distrito"), NÃO acentuar — o rótulo de
             # exibição é o `bairro` acima.
             "unidade_tipo": _texto(res.get("unidade_ponto_tipo")),
@@ -6820,8 +7110,43 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
             # os dois no mesmo valor por construcao evita que divirjam em silencio.
             "conc_regiao_disputada": CRIT_PONTO_CONC_MAX,
         },
-        "criterios": _criterios_do_ponto(censo_bloco, mercado_bloco, conc_bloco),
+        "criterios": (
+            _criterios_do_ponto(censo_bloco, mercado_bloco, conc_bloco)
+            if desenho is None
+            else _criterios_do_ponto(censo_bloco, mercado_bloco, conc_bloco, onde="na área")
+        ),
     }
+    if desenho is not None:
+        # Chaves SÓ da área desenhada (DEC-071): o GET continua com as chaves de sempre.
+        # `geometria` são os anéis do Polygon GeoJSON normalizado (um anel, fechado, em
+        # [lng, lat]) — o que o mapa desenha em volta do pin, na cor do item.
+        payload["geometria"] = desenho.coordenadas
+        payload["recorte"] = {
+            # Identificador cru, NÃO acentuar.
+            "tipo": "poligono",
+            "area_km2": _num(desenho.area_km2, 2),
+            "n_vertices": desenho.n_vertices,
+            "metodo": _texto(res.get("metodo")),
+        }
+    return payload
+
+
+def _ultra_do_mercado(info: Any, *, com_consumo: bool = False) -> dict[str, Any] | None:
+    """A unidade Ultra do bloco de mercado (estudada ou proxima), serializada para a tela."""
+    if not info:
+        return None
+    from motor_expansao.dashboard.mercado_raio import nome_curto_ultra
+
+    saida: dict[str, Any] = {
+        "ultra_id": _texto(info.get("ultra_id")),
+        "nome": nome_curto_ultra(info.get("nome")),
+        "dist_m": _num(info.get("dist_m")),
+    }
+    if com_consumo:
+        saida["consumo_excluido"] = _num(info.get("consumo_excluido"))
+        saida["capacidade_real"] = bool(info.get("capacidade_real"))
+        saida["tolerancia_m"] = _num(info.get("tolerancia_m"))
+    return saida
 
 
 @app.get("/api/municipios/{uf}")
@@ -10623,7 +10948,7 @@ def _residual_hexes_do_ponto(lat: float, lng: float, staging_dir: Path):
     hex desenhavel), entao falhava em silencio. Mesma defesa da API (`api/service.py`): a coluna
     entra SE existir no schema, para nao quebrar em parquet antigo.
 
-    Filtro direto no parquet de mercado (~91 linhas), espelhando `_residual_do_ponto`. `None`
+    Filtro direto no parquet de mercado (~91 linhas), espelhando `_linha_mercado_do_hex`. `None`
     se o parquet faltar ou falhar -> as camadas de hexagono caem no fallback textual
     (offline-safe). READ-ONLY sobre o M1 (so leitura de parquet)."""
     mercado = staging_dir / "hexagonos_mercado_mapeado.parquet"
@@ -10759,6 +11084,8 @@ async def relatorio_pontual(
     viabilidade_json: str | None = None,
     viabilidade_inputs_json: str | None = None,
     origem_centroide_hex: bool = False,
+    so_estudo: bool = False,
+    excluir_ultra_proxima: bool = False,
     fotos: list[UploadFile] | None = None,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> Response:
@@ -10778,6 +11105,20 @@ async def relatorio_pontual(
     1500 (Shopping Center 3)") seria mutilado por qualquer convencao sobre o texto.
     Esta rota e' consumida SO pelo front deste repo; a API publica
     (`src/motor_expansao/api/`) nao muda.
+
+    `so_estudo` (OPCIONAL, default False) e' o botao "Estudo" da analise de ponto (decisao 4
+    do Vinicius, 2026-10-14): o PDF EXCLUSIVAMENTE DEMOGRAFICO, o mesmo modo so-estudo do
+    bot (BLK-CONC-ESTUDO / DEC-030). Com ele a rota IGNORA `viabilidade_json`,
+    `viabilidade_inputs_json` e `info_imovel` -- cinto de seguranca: nenhum dado financeiro
+    (DRE, aluguel, payback, teto) sai nem que o cliente os mande -- e a Conclusao sai so'
+    com o selo DEMOGRAFICO. As paginas da praca ("Pressao concorrencial" e "Como a cidade
+    esta indo") FICAM: nao sao financeiras. Sem o parametro, comportamento identico ao de
+    antes.
+
+    `excluir_ultra_proxima` (OPCIONAL, default False; emenda da DEC-070): o ESTUDO DA
+    UNIDADE ULTRA, o mesmo modo da ficha (`/api/ponto`). O mercado do PDF sai sem o
+    consumo da unidade Ultra a ate' 150 m do ponto, e o Big Numbers DECLARA isso. Vale com
+    e sem `so_estudo`. Sem unidade na tolerancia -> 400.
 
     Esta funcao so faz a parte ASSINCRONA (ler os uploads) e delega o resto ao
     threadpool — ver `_gerar_relatorio_pontual_pdf`.
@@ -10801,6 +11142,15 @@ async def relatorio_pontual(
     # D17: o `report_id` nasce ANTES do PDF, porque ele precisa ser carimbado nos bytes.
     # A gravacao do evento e' tentada aqui e pode falhar sem derrubar o relatorio -- ver
     # `_registrar_relatorio_gerado`.
+    # Estudo da unidade Ultra sem unidade a ate' 150 m: 400 AGORA, antes de registrar o
+    # relatorio como gerado (o evento ficaria na trilha sem PDF) e antes de pagar mapas e
+    # tiles que a resposta jogaria fora.
+    # No THREADPOOL, e nao direto: a 1a chamada apos um restart le' o cadastro Ultra em
+    # Parquet (`carregar_ultra_mercado`, `lru_cache`), e dentro deste `async def` isso parava
+    # o event loop do unico worker -- inclusive o /api/health (revisao do admin, 2026-10-15).
+    # Continua ANTES de registrar o relatorio: o `await` so' devolve depois da validacao.
+    if excluir_ultra_proxima:
+        await run_in_threadpool(_validar_estudo_da_unidade, lat, lng)
     report_id = _registrar_relatorio_gerado(remote_user, relatorio="pontual", formato="pdf")
 
     # A marca-d'agua passa a dizer QUEM gerou, e nao so' "Ultra Academia".
@@ -10825,7 +11175,27 @@ async def relatorio_pontual(
             fotos_bytes,
             origem_centroide_hex,
             report_id,
+            so_estudo,
+            excluir_ultra_proxima,
         )
+
+
+def _validar_estudo_da_unidade(lat: float, lng: float) -> None:
+    """400 com o motivo quando o estudo da unidade Ultra nao se aplica ao ponto.
+
+    Mesma regra (e mesmas frases) de `mercado_raio.mercado_na_area`, que segue validando la'
+    dentro -- isto so' ANTECIPA a recusa. Leitura do cadastro em cache (`lru_cache`).
+    """
+    from motor_expansao.dashboard.mercado_raio import (
+        UnidadeUltraForaDaTolerancia,
+        carregar_ultra_mercado,
+        exigir_unidade_ultra,
+    )
+
+    try:
+        exigir_unidade_ultra(carregar_ultra_mercado(str(STAGING_DIR)), lat, lng)
+    except UnidadeUltraForaDaTolerancia as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 def _gerar_relatorio_pontual_pdf(
@@ -10839,16 +11209,27 @@ def _gerar_relatorio_pontual_pdf(
     fotos_bytes: list[bytes],
     origem_centroide_hex: bool = False,
     report_id: str | None = None,
+    so_estudo: bool = False,
+    excluir_ultra_proxima: bool = False,
 ) -> Response:
     """Corpo SINCRONO do Relatorio Pontual — roda no threadpool, nunca no event loop.
 
     Recebe as fotos ja lidas em bytes (o `await` ficou na rota). Deliberadamente `def`,
     nao `async def`: e o que mantem o servidor respondendo durante a geracao.
+
+    `so_estudo=True`: PDF so' demografico -- ver a docstring da rota.
     """
+    if so_estudo:
+        # Cinto de seguranca: o modo existe para NAO sair dado financeiro. Zerar aqui, e nao
+        # confiar no cliente, garante isso mesmo que o front mande os inputs por engano. O
+        # `info_imovel` vai junto porque carrega `aluguel_pedido` e `valor_venda`.
+        viabilidade_json = None
+        viabilidade_inputs_json = None
+        info_imovel = None
     from motor_expansao.api.service import (
         _competitors_ultra,
+        _mercado_do_ponto,
         _nome_municipio_de,
-        _residual_do_ponto,
         _resolver_e_carregar,
     )
     from motor_expansao.api.settings import Settings
@@ -10950,8 +11331,20 @@ def _gerar_relatorio_pontual_pdf(
         except Exception:  # noqa: BLE001
             mapas = None
 
+    # DEC-070: mercado no RAIO de 1,0 km (mesma funcao da ficha e do PDF da API/bot).
+    from motor_expansao.dashboard.mercado_raio import UnidadeUltraForaDaTolerancia
+
     try:
-        residual = _residual_do_ponto(lat, lng, cfg)
+        if excluir_ultra_proxima:
+            # Emenda da DEC-070: estudo da unidade Ultra. O erro de tolerancia SOBE como
+            # 400: um PDF "sem o consumo da unidade" que saisse com ele seria o pior caso.
+            residual = _mercado_do_ponto(
+                lat, lng, cfg, result.get("pop_total_raio"), excluir_ultra_proxima=True
+            )
+        else:
+            residual = _mercado_do_ponto(lat, lng, cfg, result.get("pop_total_raio"))
+    except UnidadeUltraForaDaTolerancia as exc:
+        raise HTTPException(400, str(exc)) from exc
     except Exception:  # noqa: BLE001
         residual = None
 
@@ -11018,6 +11411,9 @@ def _gerar_relatorio_pontual_pdf(
         # financeiro. No Brasil (`avisos` = {}) isto e None e o PDF nao muda um byte.
         aviso_rodape=_texto_do_aviso_de_viabilidade("pdf", "texto_rodape"),
         praca=praca,
+        # Botao "Estudo" (decisao 4, 2026-10-14): Conclusao so' com o selo DEMOGRAFICO, como
+        # no bot. `False` = comportamento de sempre (sem viabilidade, sem pagina de Conclusao).
+        conclusao_so_estudo=so_estudo,
     )
     return Response(
         content=pdf,

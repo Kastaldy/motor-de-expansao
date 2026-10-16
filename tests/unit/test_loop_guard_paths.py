@@ -142,6 +142,10 @@ def test_caminhos_criticos(path: str) -> None:
         "src/motor_expansao/dashboard/censo_point.py",
         "src/motor_expansao/dashboard/censo_map.py",
         "src/motor_expansao/dashboard/censo_report.py",
+        # DEC-070/071 — o mercado do ponto (SAM/consumo/residual nas tres superficies) e os
+        # limites da area desenhada: produzem numero servido, nasceram fora da lista.
+        "src/motor_expansao/dashboard/mercado_raio.py",
+        "src/motor_expansao/dashboard/geometria_desenhada.py",
         # DEC-022 — piloto web servido em producao: backend E frontend sob governanca.
         "web/server/app.py",
         "web/src/screens/MapScreen.tsx",

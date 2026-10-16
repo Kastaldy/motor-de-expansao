@@ -13,8 +13,18 @@
  * e e' isso que a tabela compara.
  */
 
-import { compararDimensoesComFrase, type Comparacao, type Dimensao } from './comparacao'
+import {
+  compararDimensoesComFrase,
+  corDeIdentidadeRgb,
+  rotulosPartidos,
+  rotulosUnicos,
+  type Comparacao,
+  type Dimensao,
+  type RotuloPartido,
+} from './comparacao'
 import { UNIDADE_MOEDA } from './format'
+import { sufixoDoModo } from './estudo-ultra'
+import { ehAreaDesenhada, rotuloDaAreaDesenhada, rotuloDoRaio } from './recorte'
 import type { PontoPayload } from './types'
 
 /**
@@ -33,7 +43,10 @@ export const DIMENSOES_PONTO: readonly Dimensao<PontoPayload>[] = Object.freeze(
   }),
   Object.freeze({
     chave: 'populacao',
-    rotulo: 'População no raio',
+    /* "População", sem "no raio": desde a DEC-071 a comparação pode ter uma ÁREA DESENHADA
+       ao lado dos pontos, e o rótulo vale para os dois recortes. O recorte de cada item é
+       dito no rodapé do comparativo; a frase do veredito fica "menos população que B". */
+    rotulo: 'População',
     ler: (p: PontoPayload) => p.censo?.populacao ?? null,
     unidade: 'pessoas',
     maiorEhMelhor: true,
@@ -157,13 +170,69 @@ export function chaveDaCoordenada(lat: number, lng: number): string {
 }
 
 export function indiceDoMesmoPonto(
-  pontos: readonly PontoPayload[],
+  pontos: readonly Pick<PontoPayload, 'lat' | 'lng' | 'geometria'>[],
   lat: number,
   lng: number,
 ): number {
   const chave = (a: number, b: number) => chaveDaCoordenada(a, b)
   const alvo = chave(lat, lng)
-  return pontos.findIndex((p) => chave(p.lat, p.lng) === alvo)
+  /* ÁREA DESENHADA NÃO É PONTO (DEC-071). O `lat`/`lng` dela é o `representative_point`
+     do polígono — um lugar que o operador nunca clicou —, e casar por ele faria buscar
+     exatamente aquela coordenada abrir a ficha da ÁREA em vez de ler o ponto com raio. */
+  return pontos.findIndex((p) => !p.geometria?.length && chave(p.lat, p.lng) === alvo)
+}
+
+/**
+ * A identidade de uma ÁREA DESENHADA: os vértices do anel, arredondados em `CASAS_COORD`.
+ *
+ * Desenhar de novo o MESMO polígono (vértice a vértice) é repetição, como colar duas vezes
+ * a mesma coordenada; qualquer vértice diferente é outra área.
+ */
+export function chaveDaArea(geometria: readonly (readonly PosicaoGeoJson[])[]): string {
+  const anel = geometria[0] ?? []
+  return `area:${anel.map(([x, y]) => chaveDaCoordenada(y, x)).join(';')}`
+}
+
+/** Onde esta área JÁ ESTÁ na lista, ou -1. Só casa com itens de área — nunca com ponto. */
+export function indiceDaMesmaArea(
+  itens: readonly Pick<PontoPayload, 'geometria'>[],
+  geometria: readonly (readonly PosicaoGeoJson[])[],
+): number {
+  const alvo = chaveDaArea(geometria)
+  return itens.findIndex((p) => !!p.geometria?.length && chaveDaArea(p.geometria) === alvo)
+}
+
+/**
+ * Por que o PDF de comparação NÃO sai para esta lista — ou `null` quando sai.
+ *
+ * Fase 1 da DEC-071: área desenhada é só TELA. O deck de comparação fotografa cada item com
+ * o raio de 1 km e escreve "raio" nos textos; para uma área ele afirmaria um recorte que não
+ * é o dela. A recusa é dita (com o caminho para destravar), e não um botão que some.
+ */
+export function motivoSemPdfDeComparacao(
+  fichas: readonly Pick<PontoPayload, 'geometria'>[],
+): string | null {
+  if (!fichas.some((f) => ehAreaDesenhada(f))) return null
+  return (
+    'O PDF de comparação ainda não aceita área desenhada — o PDF por área desenhada segue em desenvolvimento. ' +
+    'Remova as áreas desenhadas da comparação para gerar o PDF dos pontos.'
+  )
+}
+
+/** Rótulo da área desenhada nas abas, na legenda e no mapa ("#k" quando há mais de uma). */
+export const ROTULO_AREA_DESENHADA = 'Área desenhada'
+
+/**
+ * O recorte da leitura em texto de usuário: "raio de 1 km" ou "área desenhada de
+ * 2,40 km²". É o que substitui o "raio de X m" escrito à mão nas fichas — com uma área
+ * desenhada na lista, aquele texto passaria a mentir sobre ela. Os dois textos saem de
+ * `lib/recorte`, a mesma fonte da conta do mercado.
+ */
+export function rotuloDoRecorte(
+  p: Pick<PontoPayload, 'raio_km' | 'geometria' | 'recorte' | 'mercado'>,
+): string {
+  if (ehAreaDesenhada(p)) return rotuloDaAreaDesenhada(p.recorte?.area_km2 ?? p.mercado?.area_km2 ?? null)
+  return rotuloDoRaio(p.raio_km)
 }
 
 /* A paleta de identidade MUDOU DE CASA em 2026-08-13: virou `CORES_IDENTIDADE` /
@@ -173,13 +242,41 @@ export function indiceDoMesmoPonto(
    descreve. `corDoPonto` continua existindo aqui como o nome que a tela de pontos usa. */
 export { CORES_IDENTIDADE as CORES_PONTO, corDeIdentidade as corDoPonto } from './comparacao'
 
-/** Rotulo curto de um ponto: bairro, senao municipio, senao a coordenada. */
+/** Compara nomes de lugar sem caixa nem acento ("BRASILIA" == "Brasília"). */
+function mesmoNome(a: string, b: string): boolean {
+  const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase()
+  return norm(a) === norm(b)
+}
+
+/**
+ * O nome do LUGAR de um ponto — regra HIBRIDA (decisao do Vinicius, 2026-10-16):
+ *
+ *  1. o bairro/distrito do SETOR que contem o ponto, quando ele diz algo alem da cidade;
+ *  2. senao, o NOME DO HEXAGONO em que o ponto cai (o mesmo da ficha e do ranking);
+ *  3. senao, o municipio.
+ *
+ * Por que nao o hexagono sempre: o hexagono res-7 (~5 km2) e' nomeado pelo bairro de
+ * MAIOR populacao dentro dele, e o ponto podia receber o nome do bairro VIZINHO — a
+ * coordenada da Ultra Santana caia no hexagono "Tucuruvi". Por que nao o setor sempre:
+ * onde o IBGE so' traz o nome da cidade (Brasilia, Goiania, Sao Luis), o ponto de
+ * Taguatinga saia "Brasília" enquanto a ficha do mesmo hexagono dizia "Taguatinga".
+ */
+export function nomeDoLugar(local: PontoPayload['local'] | null | undefined): string | null {
+  const setor = local?.bairro ?? null
+  const mun = local?.municipio ?? null
+  if (setor && !(mun && mesmoNome(setor, mun))) return setor
+  return local?.hexagono ?? setor ?? mun
+}
+
+/** Rotulo curto de um ponto: `nomeDoLugar`, senao a coordenada. */
 export function rotuloDoPonto(p: PontoPayload): string {
-  return (
-    p.local?.bairro ??
-    p.local?.municipio ??
-    `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`
-  )
+  /* A área desenhada não tem bairro que a nomeie (o bairro do `representative_point` é o
+     de um ponto qualquer dentro dela): ela se chama pelo que é. Duas áreas viram "Área
+     desenhada #1" e "#2" pela regra comum de `rotulosUnicos`. */
+  if (ehAreaDesenhada(p)) return ROTULO_AREA_DESENHADA
+  /* O estudo da unidade Ultra (emenda da DEC-070) se diz no NOME, de forma discreta: é o
+     nome que a aba, a comparação, o PDF e o Simulador recebem. */
+  return (nomeDoLugar(p.local) ?? `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`) + sufixoDoModo(p)
 }
 
 /**
@@ -209,18 +306,118 @@ export function subtituloDoDeckDePontos(fichas: readonly PontoPayload[]): string
  * ficava com duas colunas de nome identico — e a frase do veredito saia "Goiânia é o
  * melhor... Goiânia é o pior" (relato do Juan, 2026-08-12).
  *
- * A DESAMBIGUACAO E' POSICIONAL, e so' entra quando ha' empate: um numero na frente, o
- * MESMO que a aba mostra e o mapa usa para marcar o ponto. Numerar sempre seria ruido
- * para quem comparou dois bairros de nomes distintos, que e' o caso comum.
+ * A regra de desambiguacao e' UMA so', a de `rotulosUnicos` ("Centro #1", "Centro #2",
+ * so' quando ha' empate). Ate' 2026-10-14 esta funcao tinha a copia dela, e as duas
+ * comparacoes podiam divergir em silencio — agora delega.
  *
  * Nao inventa nome: nao ha' de onde tirar "Setor Bueno" quando o servidor devolveu
  * bairro nulo. O que se pode garantir e' que duas linhas nunca digam a mesma coisa.
  */
-export function rotulosDosPontos(pontos: PontoPayload[]): string[] {
-  const bases = pontos.map(rotuloDoPonto)
-  const vezes = new Map<string, number>()
-  for (const b of bases) vezes.set(b, (vezes.get(b) ?? 0) + 1)
-  return bases.map((b, i) => ((vezes.get(b) ?? 0) > 1 ? `${i + 1} · ${b}` : b))
+export function rotulosDosPontos(pontos: readonly PontoPayload[]): string[] {
+  return rotulosUnicos(pontos.map(rotuloDoPonto))
+}
+
+/** Os rotulos da lista partidos em nome + "#k" — para o "#k" nao sumir no ellipsis. */
+export function rotulosPartidosDosPontos(pontos: readonly PontoPayload[]): RotuloPartido[] {
+  return rotulosPartidos(pontos.map(rotuloDoPonto))
+}
+
+/** Um vertice de poligono no formato GeoJSON: [lng, lat]. */
+export type PosicaoGeoJson = [number, number]
+
+/**
+ * O minimo que um item da comparacao precisa para virar pin no mapa.
+ *
+ * Generico de proposito: alem do `PontoPayload` (ponto do raio de 1 km), a comparacao vai
+ * receber uma AREA DESENHADA (DEC-071, fase 1). O pin dela e' o `representative_point` do
+ * poligono — vem em `lat`/`lng` como o de qualquer ponto — e o contorno vai em
+ * `geometria`, como os aneis do Polygon GeoJSON (coordenadas `[lng, lat]`).
+ */
+export interface ItemNoMapa {
+  lat: number
+  lng: number
+  hex_id?: string | null
+  /** Aneis do Polygon GeoJSON (`coordinates`): o 1o e' o externo. So' item de geometria. */
+  geometria?: PosicaoGeoJson[][] | null
+}
+
+/** Um pin da comparacao, pronto para o deck.gl. */
+export interface PinDaComparacao {
+  lat: number
+  lng: number
+  hexId: string | null
+  /** Indice do item na lista — e' por ele que aba, cor e rotulo se casam. */
+  indice: number
+  /** A cor de identidade do item (a mesma da aba e das barras), em `[r, g, b, a]`. */
+  rgb: [number, number, number, number]
+  rotulo: string
+  /** O item da aba aberta. */
+  ativo: boolean
+  /** O contorno da area desenhada, quando o item e' de geometria. */
+  geometria: PosicaoGeoJson[][] | null
+}
+
+/**
+ * TODOS os itens da comparacao como pins, cada um na sua cor de identidade.
+ *
+ * Antes o mapa mostrava so' o ponto da aba aberta, e o operador nao via onde os outros
+ * estavam em relacao a ele (decisao do dono, 2026-10-14: todos ao mesmo tempo). A cor
+ * sai do INDICE, nunca da ordem de desenho, senao o pin vermelho deixaria de ser o da aba
+ * vermelha quando um ponto sai da lista.
+ *
+ * `rotulos` e' a lista ja' desambiguada (`rotulosDosPontos`); faltando um, cai na
+ * coordenada — o mesmo fallback do `rotuloDoPonto` —, para o pin nunca sair sem nome.
+ */
+export function pinsDaComparacao(
+  fichas: readonly ItemNoMapa[],
+  aberto: number | null,
+  rotulos: readonly string[],
+): PinDaComparacao[] {
+  return fichas.map((f, i) => ({
+    lat: f.lat,
+    lng: f.lng,
+    hexId: f.hex_id ?? null,
+    indice: i,
+    rgb: corDeIdentidadeRgb(i),
+    rotulo: rotulos[i] ?? `${f.lat.toFixed(4)}, ${f.lng.toFixed(4)}`,
+    ativo: i === aberto,
+    geometria: f.geometria ?? null,
+  }))
+}
+
+/**
+ * As dimensoes que sao TOTAIS do recorte (crescem com o tamanho dele): residual, populacao
+ * e numero de concorrentes. Renda, score e densidade sao intensivas — nao dependem da area.
+ */
+export const CHAVES_ABSOLUTAS: readonly string[] = Object.freeze(['residual', 'populacao', 'concorrentes'])
+
+/**
+ * As dimensoes que podem ser COMPARADAS entre os itens desta lista.
+ *
+ * Com uma AREA DESENHADA na lista (DEC-071) os recortes tem tamanhos diferentes — ate'
+ * 200 km² contra os 3,14 km² do raio de 1 km —, e comparar TOTAIS entre eles mede o tamanho
+ * do recorte, nao a praca: a area quase sempre "venceria" em populacao e residual (e
+ * "perderia" em concorrentes) so' por ser maior. Essas dimensoes saem dos blocos e do
+ * veredito; renda, score e densidade, que nao dependem da area, ficam. Os totais de cada
+ * item continuam na ficha dele.
+ */
+export function dimensoesDoComparativo(
+  fichas: readonly Pick<PontoPayload, 'geometria'>[],
+): readonly Dimensao<PontoPayload>[] {
+  if (!fichas.some((f) => ehAreaDesenhada(f))) return DIMENSOES_PONTO
+  return DIMENSOES_PONTO.filter((d) => !CHAVES_ABSOLUTAS.includes(d.chave))
+}
+
+/** O aviso escrito do corte acima — `null` quando nada foi cortado. */
+export function avisoDimensoesCortadas(
+  fichas: readonly Pick<PontoPayload, 'geometria'>[],
+): string | null {
+  if (!fichas.some((f) => ehAreaDesenhada(f))) return null
+  return (
+    'Com área desenhada na lista, residual, população e concorrentes não entram na ' +
+    'comparação: são totais de recortes de tamanhos diferentes, e o maior venceria só por ' +
+    'ser maior. Os números de cada um continuam na ficha dele.'
+  )
 }
 
 export function compararPontos(
@@ -233,7 +430,8 @@ export function compararPontos(
   rotuloB?: string,
 ): Comparacao<PontoPayload> {
   return compararDimensoesComFrase(
-    DIMENSOES_PONTO,
+    // Sem os totais quando um dos dois e' area desenhada (`dimensoesDoComparativo`).
+    dimensoesDoComparativo([a, b]),
     a,
     b,
     rotuloA ?? rotuloDoPonto(a),

@@ -96,7 +96,10 @@ def gerador_espiao(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str,
     )
     monkeypatch.setattr(api_service, "_competitors_ultra", lambda cfg: (None, None))
     monkeypatch.setattr(api_service, "_nome_municipio_de", lambda df: "SAO PAULO")
-    monkeypatch.setattr(api_service, "_residual_do_ponto", lambda lat, lng, cfg: None)
+    # DEC-070: a rota chama `_mercado_do_ponto` (o mercado do raio). Era `_residual_do_ponto`,
+    # que a rota deixou de chamar -- o stub nao interceptava nada e o caminho real de mercado
+    # rodava por baixo, inocuo so' porque o staging do `tmp_path` esta vazio.
+    monkeypatch.setattr(api_service, "_mercado_do_ponto", lambda lat, lng, cfg, pop, **k: None)
     monkeypatch.setattr(
         censo_point, "analisar_ponto_censitario_setores", lambda *a, **k: {"lat": _LAT, "lng": _LNG}
     )

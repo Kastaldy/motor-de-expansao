@@ -355,15 +355,31 @@ def test_lixo_na_chave_nao_liga_nada(monkeypatch: pytest.MonkeyPatch, valor: str
 
 
 def test_os_numeros_sao_os_da_decisao_2() -> None:
-    """8h/30min/5min, REPRODUZINDO o Authelia.
+    """8h/2h/5min: a decisao 2 com a EMENDA da DEC-067 de 14/10/2026.
 
     O nome deste teste carrega a decisao de proposito: mexer nestes numeros derrubou o
     login da rede por ~4h em 06/08/2026, e mudar a constante sem reabrir a decisao 2 e'
-    exatamente o que nao pode acontecer em silencio.
+    exatamente o que nao pode acontecer em silencio. A decisao 2 reproduzia o Authelia
+    (8h/30min/5min); a inatividade foi a 2h pela emenda da D2 decidida por Vinicius em
+    14/10/2026 -- que reabriu a decisao, como este teste exige. Teto e trava mantidos.
     """
     assert sessoes.DURACAO_SESSAO_H == 8
-    assert sessoes.INATIVIDADE_MIN == 30
+    assert sessoes.INATIVIDADE_MIN == 120
     assert sessoes.TRAVA_TOQUE_MIN == 5
+
+
+def test_inatividade_cabe_entre_a_trava_e_o_teto() -> None:
+    """A ordem dos tres numeros, que nao depende do valor de cada um.
+
+    * inatividade < teto absoluto: se a inatividade alcancasse as 8h, o filtro de
+      `ultimo_acesso_em_sessao` nunca seria o que derruba ninguem -- a emenda da D2 teria
+      virado, em silencio, "sem logout por inatividade";
+    * inatividade > trava do toque: a trava so' e' inocua porque o toque e' reescrito
+      bem antes do limiar. Trava >= inatividade derrubaria quem esta' USANDO o piloto,
+      porque o `ultimo_acesso` gravado envelheceria alem do limiar entre dois toques.
+    """
+    assert sessoes.INATIVIDADE_MIN * 60 < sessoes.DURACAO_SESSAO_H * 3600
+    assert sessoes.INATIVIDADE_MIN > sessoes.TRAVA_TOQUE_MIN
 
 
 def test_abrir_manda_a_duracao_da_decisao_2(monkeypatch: pytest.MonkeyPatch) -> None:

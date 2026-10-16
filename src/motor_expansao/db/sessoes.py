@@ -15,12 +15,15 @@ a decisao 5 (o que substitui o `forward_auth` do Caddy) ser executada na VPS. Me
 do `MOTOR_DATABASE_URL`: ausente ou vazia devolve o sistema ao comportamento anterior, sem
 rebuild e sem tocar no compose.
 
-OS NUMEROS SAO DA DECISAO 2, E FORAM COPIADOS DO AUTHELIA
----------------------------------------------------------
-8h de teto absoluto, 30 min de inatividade, e a trava de 5 min no toque. Nao foram
-escolhidos: o comentario da configuracao do Authelia registra que mexer nesses numeros
-derrubou o login da rede por ~4h em 06/08/2026. Eles estao aqui como CONSTANTE e na COLUNA
-(`expira_em_sessao`) de proposito -- mudar a politica amanha nao exige migration.
+OS NUMEROS SAO DA DECISAO 2 (COPIADOS DO AUTHELIA) E DA EMENDA DE 14/10/2026
+---------------------------------------------------------------------------
+8h de teto absoluto, 2h de inatividade, e a trava de 5 min no toque. O 8h e o 5 min nao
+foram escolhidos: o comentario da configuracao do Authelia registra que mexer nesses
+numeros derrubou o login da rede por ~4h em 06/08/2026. A inatividade nasceu 30 min, copiada
+do Authelia (`inactivity: 30m`), e passou a 2h pela EMENDA da DEC-067 (D2) decidida por
+Vinicius em 14/10/2026 -- teto de 8h e trava de 5 min mantidos. Eles estao aqui como
+CONSTANTE e na COLUNA (`expira_em_sessao`) de proposito -- mudar a politica amanha nao exige
+migration, e a emenda provou isso: foi uma linha aqui, nenhuma no schema.
 
 POR QUE O TOQUE TEM TRAVA (medido, nao estimado)
 ------------------------------------------------
@@ -28,7 +31,7 @@ A validacao roda em `conexao()`, que abre a transacao `SET TRANSACTION READ ONLY
 servidor RECUSA escrita ali dentro. Entao reescrever `ultimo_acesso_em_sessao` nao pega
 carona na consulta -- exige uma SEGUNDA transacao (`set_config` do carimbo + `UPDATE` +
 `COMMIT`) sobre um pool de 4 conexoes. Com a trava, a coluna so' e' reescrita quando ja'
-tem mais de `TRAVA_TOQUE_MIN`, e o pior caso e' alguem sair aos 30 min em vez de ~35.
+tem mais de `TRAVA_TOQUE_MIN`, e o pior caso e' alguem sair aos 120 min em vez de ~125.
 Decidir "vale escrever?" e' de GRACA: `validar` ja' devolve o `ultimo_acesso`.
 
 O TOKEN NUNCA ENTRA NO BANCO
@@ -67,12 +70,15 @@ _LOG = logging.getLogger("motor.db.sessoes")
 #: modulo nao e' consultado por ninguem. Ver "A CHAVE DORMENTE" no topo.
 ENV_AUTENTICACAO_PROPRIA = "MOTOR_AUTENTICACAO_PROPRIA"
 
-#: Decisao 2 do P19 (17/09/2026): REPRODUZ o Authelia (`expiration: 8h`, `inactivity: 30m`).
+#: Decisao 2 do P19 (17/09/2026) reproduzia o Authelia (`expiration: 8h`, `inactivity: 30m`).
+#: EMENDA da DEC-067 (D2), 14/10/2026, decidida por Vinicius: inatividade 30 min -> 2h; o teto
+#: de 8h e a trava de 5 min ficam. O Authelia da VPS tem de ir junto (`inactivity: 2h`, nunca
+#: `0`), e essa troca e' MANUAL -- runbook em `docs/repasse_logout_2h.md`.
 DURACAO_SESSAO_H = 8
-INATIVIDADE_MIN = 30
+INATIVIDADE_MIN = 120
 
 #: Trava do toque. Ver "POR QUE O TOQUE TEM TRAVA". Precisao de 5 min sobre um limiar de
-#: 30 min e' operacionalmente irrelevante; a escrita por requisicao nao e'.
+#: 120 min e' operacionalmente irrelevante; a escrita por requisicao nao e'.
 TRAVA_TOQUE_MIN = 5
 
 #: TRAVA DE TENTATIVAS (decisao de 18/09/2026: cinco). Recusas contadas numa JANELA MOVEL --
@@ -146,7 +152,7 @@ WHERE criado_em_sessao < now() - make_interval(days => %s)
 # Os tres filtros de sessao viva, e por que cada um existe:
 #   * `revogada_em_sessao IS NULL` -> logout, troca de senha e expulsao pelo admin;
 #   * `expira_em_sessao > now()`   -> o teto ABSOLUTO de 8h;
-#   * `ultimo_acesso_em_sessao > now() - inatividade` -> os 30 min parados.
+#   * `ultimo_acesso_em_sessao > now() - inatividade` -> as 2h paradas (`INATIVIDADE_MIN`).
 # O `u.ativo` fica pelo mesmo motivo do D9/D23: desativar alguem tem de negar na requisicao
 # SEGUINTE, sem depender de revogar as sessoes dele uma a uma.
 #

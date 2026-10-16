@@ -106,6 +106,33 @@ describe('relatorioPontual — orçamento da query string', () => {
   })
 })
 
+describe('relatorioPontual — modo Estudo (só demográfico)', () => {
+  it('soEstudo escreve so_estudo=true e NÃO manda viabilidade nem dados do imóvel', async () => {
+    const cap = capturarUrl()
+    await api.relatorioPontual({
+      lat: -23.48,
+      lng: -46.61,
+      rotulo: 'Santana',
+      soEstudo: true,
+      viabilidadeInputs: INPUTS,
+      infoImovel: { aluguel: 30000, metragem: 1200 },
+    })
+    const q = new URLSearchParams(cap.url().split('?')[1] ?? '')
+    expect(q.get('so_estudo')).toBe('true')
+    expect(q.has('viabilidade_inputs_json')).toBe(false)
+    expect(q.has('info_imovel')).toBe(false)
+    expect(q.get('rotulo')).toBe('Santana')
+  })
+
+  it('sem soEstudo o pedido segue idêntico ao de antes (sem so_estudo na query)', async () => {
+    const cap = capturarUrl()
+    await api.relatorioPontual({ lat: -23.48, lng: -46.61, viabilidadeInputs: INPUTS })
+    const q = new URLSearchParams(cap.url().split('?')[1] ?? '')
+    expect(q.has('so_estudo')).toBe(false)
+    expect(q.has('viabilidade_inputs_json')).toBe(true)
+  })
+})
+
 /**
  * Regressão do 404 no celular do Miguel (06/08/2026).
  *
@@ -246,5 +273,32 @@ describe('hexagonos — o ranking nacional', () => {
     const query = new URLSearchParams(cap.url().split('?')[1] ?? '')
     expect(query.get('municipio')).toBe('Santa Bárbara d’Oeste')
     expect(query.get('por_municipio')).toBe('true')
+  })
+})
+
+describe('pontoGeometria — a área desenhada vai no CORPO', () => {
+  it('POST com o polígono no corpo JSON, e nada dele na URL', async () => {
+    let url = ''
+    let init: RequestInit | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u: string, i?: RequestInit) => {
+        url = u
+        init = i
+        return { ok: true, json: async () => ({}) } as unknown as Response
+      }),
+    )
+    // 50 vértices: em query string isto passaria do orçamento da URL.
+    const anel: [number, number][] = Array.from({ length: 50 }, (_, k) => [
+      -46.63 + 0.01 * Math.cos((2 * Math.PI * k) / 50),
+      -23.55 + 0.01 * Math.sin((2 * Math.PI * k) / 50),
+    ])
+    anel.push(anel[0])
+    await api.pontoGeometria({ type: 'Polygon', coordinates: [anel] })
+    expect(url).toBe('/api/ponto/geometria')
+    expect(init?.method).toBe('POST')
+    const corpo = JSON.parse(String(init?.body))
+    expect(corpo.geometria.type).toBe('Polygon')
+    expect(corpo.geometria.coordinates[0]).toHaveLength(51)
   })
 })

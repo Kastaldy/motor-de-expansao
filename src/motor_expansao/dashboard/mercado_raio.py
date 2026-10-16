@@ -1,0 +1,659 @@
+"""Mercado NO RAIO do ponto (ou numa geometria desenhada) -- runtime, READ-ONLY (DEC-070).
+
+O PROBLEMA QUE ESTE MODULO FECHA
+--------------------------------
+Ate' a DEC-070 a ficha do ponto, o PDF do piloto e o PDF da API/bot liam SAM, consumo e
+residual de UMA linha de `hexagonos_mercado_mapeado.parquet`: a do hexagono res-7 que
+contem o ponto (`api.service._residual_do_ponto`). Tres defeitos de leitura, medidos no
+caso de Santana/SP (-23,48516 / -46,61771, a 9 m da Ultra Santana):
+
+1. GRAO MISTO. Populacao, renda e domicilios saiam do RAIO de 1,0 km (3,14 km2); SAM e
+   consumo, do HEXAGONO (5,16 km2, centroide a 1.250 m do ponto). A pagina punha os dois
+   lado a lado sem dizer.
+2. TERMO ESCONDIDO. O residual do hexagono desconta concorrentes E Ultra, mas so' o termo
+   de concorrentes aparecia. SAM 12.038 - consumo 9.170 = 2.868 na cabeca de quem le; o
+   artefato diz 0, porque ainda tira 5.000 da Ultra que nao estavam na pagina.
+3. DUPLA CONTAGEM DA ULTRA. Sem alunos reais no hexagono, o pipeline cai em
+   `n_unidades_ultra_2km x 2.500` (`calcular_colunas_mercado.py`): conta inteira toda
+   unidade a ate' 2 km do CENTROIDE, sem conservar massa -- a Ultra Vila Guilherme, que ja'
+   desconta seus alunos reais no hexagono DELA, desconta mais 2.500 aqui. (Corrigir isso NO
+   PIPELINE e' outra DEC, Critica; aqui so' o runtime deixa de herdar o defeito.)
+
+A REGRA (DEC-070)
+-----------------
+Tudo no MESMO recorte do ponto -- o raio de 1,0 km (DEC-021) ou, para o lote de geometria
+(DEC-071), o poligono desenhado:
+
+    SAM_area      = pop_area x taxa_fitness_mercado_calibrada          (se o gate passa)
+    consumo_i     = capacidade_i x area(disco 1 km da unidade INTERSECAO area) / area(disco)
+    consumo_conc  = SOMA_i consumo_i   sobre o universo de CADEIA do pipeline
+    consumo_ultra = SOMA_j consumo_j   sobre as unidades Ultra
+    residual      = max(SAM_area - (consumo_conc + consumo_ultra), 0)
+
+O consumo e' o MESMO modelo de area de influencia de 1 km que o pipeline usa desde a
+DEC-051 (`pressao_concorrencial_1km`), com a mesma projecao local e o mesmo disco: cada
+unidade derrama sua capacidade na proporcao da area do disco dela que cai dentro do
+recorte. Isso CONSERVA MASSA (unidade no centro de um raio de 1 km conta inteira; a 2 km
+conta zero) e e' o que elimina a dupla contagem: a Ultra entra pelo mesmo disco que as
+concorrentes, e nao por contagem num raio de 2 km.
+
+DIFERENCA DECLARADA: A BORDA DA MALHA (DEC-050). O pipeline RENORMALIZA o share de cada
+unidade pelo pedaco do disco que cai em hexagonos VALIDOS (`repartir_concorrentes` com
+`hex_ids_validos`): para uma academia na orla ou na fronteira, a fracao do disco que cai
+no mar (ou fora do pais) e' redistribuida para a terra, e 100% da capacidade fica nela.
+Este modulo NAO renormaliza: `fracao_do_disco` e' a fracao GEOMETRICA pura, e a parte do
+disco que cai fora da malha simplesmente nao consome nada. Efeito: num ponto perto da
+costa ou da fronteira, com unidade cujo disco sai da malha, o consumo do recorte fica
+ABAIXO do equivalente do pipeline e o residual, ACIMA. No interior os dois batem (medido
+na revisao de 2026-10-14: o hexagono do ponto e 3 vizinhos, com o poligono H3 como
+recorte, reproduzem `consumo_concorrentes_1km_area` ate' a 1a casa). A magnitude no
+litoral NAO foi medida; igualar exige saber quais pedacos do disco caem na malha valida,
+o que este modulo -- de proposito barato e sem a base H3 -- nao carrega. Medir num ponto
+de praia (Santos / Praia Grande) antes de decidir se vale trazer a renormalizacao.
+
+Gate: faixa M1 elegivel do HEXAGONO do ponto (a faixa e' do M1 e nao existe por raio) E
+`pop_area >= POP_MIN_SAM_GATE` -- a regua da DEC-007 com a populacao trocada pela do
+recorte. Reprovado, SAM = 0 com o motivo dito, igual ao pipeline (`flag_sam`).
+
+Score do residual: a regua ABSOLUTA do pipeline, `100 x residual / 2.500` com clip em
+[0, 100] (`SCORE_RESIDUAL_CAPACIDADE_REFERENCIA`). Ela converte alunos em score sem
+percentil nenhum, entao se aplica ao raio sem reescala. NAO e' o score do hexagono.
+
+O QUE NAO MUDA. Nada e' recalculado no M1 nem no artefato de mercado: a taxa e a faixa
+sao LIDAS do hexagono do ponto, o universo de cadeia e montado pelas MESMAS funcoes do
+pipeline (`unir_cadeias` -> `excluir_estudios_boutique` -> `anexar_capacidade_real`,
+DEC-048/056/057, com a dedup DEC-034/062 ja' materializada em `tem_pin_proprio`) e a
+capacidade default e' a constante do pipeline, importada. As metas absolutas dos Big
+Numbers (2.000/2.000) foram MANTIDAS por decisao do dono, como a DEC-021 fez com as de
+populacao.
+
+DEGRADACAO. Sem o insumo de concorrentes ou de Ultra (instancia sem `data/staging`, ou
+o perfil AR), os campos de consumo e residual saem `None` com motivo -- NUNCA zero. Zero
+de consumo afirmaria mercado livre por ausencia de dado.
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+from shapely.geometry import Point
+from shapely.geometry.base import BaseGeometry
+from shapely.ops import transform as _shp_transform
+
+from motor_expansao.pipelines.calcular_colunas_mercado import (
+    CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS,
+    POP_MIN_SAM_GATE,
+    SCORE_RESIDUAL_CAPACIDADE_REFERENCIA,
+)
+
+# A MESMA projecao local e o MESMO disco do modelo de 1 km do pipeline. `_projetar` e'
+# privado la', mas reimplementa-lo aqui seria a segunda regua que a DEC-044 ensinou a
+# evitar: um share calculado com outra escala de metros por grau nao bateria com o
+# `consumo_concorrentes_1km_area` do artefato nem no caso trivial.
+from motor_expansao.pipelines.pressao_concorrencial_1km import (
+    QUAD_SEGS,
+    RAIO_INFLUENCIA_M,
+    _projetar,
+)
+
+_LOG = logging.getLogger(__name__)
+
+# Raio canonico do Relatorio Pontual (DEC-021). Repetido como literal, e NAO importado de
+# `censo_point`, porque aquele modulo puxa pyproj/geopandas no import e este precisa ser
+# barato -- a igualdade e' travada por `test_raio_default_casa_com_o_do_censo`.
+RAIO_MERCADO_DEFAULT_KM = 1.0
+
+# Identificadores CRUS do grao (payload), sem acento (CLAUDE.md secao 2).
+GRAO_RAIO = "raio"
+GRAO_GEOMETRIA = "geometria"
+
+# Faixas do M1 que abrem o SAM -- o MESMO conjunto literal do gate da DEC-007 em
+# `calcular_colunas_mercado.calcular` (la' ele e' inline, sem constante para importar).
+# A igualdade e' travada por `test_faixas_elegiveis_casam_com_o_pipeline`, que le o
+# fonte do pipeline: se alguem mudar la', este teste fica vermelho.
+FAIXAS_SAM_ELEGIVEIS = frozenset({"baixa", "media", "alta", "prioridade_maxima"})
+
+# Motivos do gate (texto ao usuario, com acento).
+MOTIVO_FAIXA_INELEGIVEL = "Hexágono do ponto fora das faixas elegíveis do M1: SAM zerado pelo gate."
+MOTIVO_FAIXA_DESCONHECIDA = (
+    "Hexágono do ponto fora da base de mercado: sem faixa M1 para abrir o SAM."
+)
+MOTIVO_POP_INSUFICIENTE = (
+    f"População da área analisada abaixo de {POP_MIN_SAM_GATE:,}".replace(",", ".")
+    + " habitantes: SAM zerado pelo gate."
+)
+
+# Nomes dos insumos em `data/staging` -- os mesmos que o pipeline le.
+ARQ_CONCORRENTES = "concorrentes_mapeados.parquet"
+ARQ_REDES_AGREGADOR = "vulnerabilidade_ma_redes.parquet"
+ARQ_ALUNOS_REAIS = "alunos_reais_por_unidade.parquet"
+ARQ_ULTRA = "unidades_ultra_mapeadas.parquet"
+ARQ_ULTRA_PERFORMANCE = "unidades_ultra_performance_hex.parquet"
+
+# Casamento coordenada-a-coordenada entre o cadastro da Ultra e o arquivo de performance.
+# Medido em 2026-10-14: as 53 unidades de performance com coordenada caem a 0,0 m da
+# unidade mapeada correspondente. 50 m e' o piso de dedup da DEC-034, reusado.
+_MATCH_ULTRA_M = 50.0
+
+COLUNA_CAPACIDADE = "capacidade_alunos"
+
+# ESTUDO DA UNIDADE ULTRA (emenda da DEC-070, 2026-10-16). Quando o estudo e' DA REGIAO de
+# uma unidade Ultra -- ela como centro --, o consumo DELA nao pode entrar na conta: o
+# residual responderia "quanto sobra se a Santana existir", e a pergunta e' "quanto mercado
+# ha' em volta da Santana". So' a PROPRIA unidade sai; as OUTRAS Ultras continuam contando.
+# A unidade e' achada pela COORDENADA do estudo: a mais proxima a ate' 150 m -- a mesma
+# tolerancia que liga o pin da Ultra a ficha da unidade no mapa (`ficha-unidade.ts`).
+# Identificadores CRUS do modo (payload), sem acento.
+MODO_ESTUDO_PONTO = "ponto"
+MODO_ESTUDO_UNIDADE_ULTRA = "unidade_ultra"
+TOLERANCIA_UNIDADE_ULTRA_M = 150.0
+COLUNA_ULTRA_ID = "ultra_id"
+COLUNA_ULTRA_NOME = "nome"
+
+
+class UnidadeUltraForaDaTolerancia(ValueError):
+    """Pediram o estudo da unidade Ultra num ponto sem unidade Ultra a ate' a tolerancia.
+
+    Erro, e nao no-op: cair em silencio para o estudo de ponto devolveria um residual
+    COM o consumo da unidade numa tela que diz que ele foi tirado.
+    """
+
+# Abaixo disto a intersecao e' ruido dos POLIGONOS que aproximam os dois circulos (512
+# lados cada): dois discos TANGENTES se sobrepoem em ~1e-7 da area. 1e-6 = 0,0025 aluno de
+# um concorrente de 2.500 -- nada na conta, e impede que unidade tangente conte como
+# "alcanca o raio".
+_FRACAO_MINIMA = 1e-6
+
+
+# --------------------------------------------------------------------------- #
+# Geometria pura                                                               #
+# --------------------------------------------------------------------------- #
+def area_local(
+    lat: float,
+    lng: float,
+    *,
+    raio_km: float = RAIO_MERCADO_DEFAULT_KM,
+    geometria: BaseGeometry | None = None,
+) -> BaseGeometry:
+    """O recorte do ponto no plano LOCAL (metros) centrado em (lat, lng).
+
+    Sem `geometria`: o disco de `raio_km`, com o mesmo `QUAD_SEGS` do disco de influencia.
+    Com `geometria` (shapely em GRAUS, convencao GeoJSON x=lng, y=lat): o poligono
+    projetado no mesmo plano. O chamador passa como (lat, lng) um ponto DENTRO dele (o
+    `representative_point`), que vira a origem da projecao.
+    """
+    if geometria is None:
+        return Point(0.0, 0.0).buffer(float(raio_km) * 1_000.0, quad_segs=QUAD_SEGS)
+
+    def _proj(xs, ys, zs=None):  # x = lng, y = lat
+        x, y = _projetar(np.asarray(ys, dtype=float), np.asarray(xs, dtype=float), lat, lng)
+        return x, y
+
+    return _shp_transform(_proj, geometria)
+
+
+def fracao_do_disco(
+    x: float, y: float, area: BaseGeometry, *, raio_influencia_m: float = RAIO_INFLUENCIA_M
+) -> float:
+    """Fracao (0-1) do disco de influencia de uma unidade em (x, y) que cai dentro de `area`.
+
+    E' o `share` do pipeline (`shares_por_hex`) com o hexagono trocado pelo recorte do
+    ponto. Unidade no centro de um raio de 1 km -> 1,0; a 2 km -> 0,0; a 1 km -> a lente.
+    SEM a renormalizacao de borda da DEC-050 (ver "DIFERENCA DECLARADA" no topo do modulo).
+    """
+    disco = Point(float(x), float(y)).buffer(raio_influencia_m, quad_segs=QUAD_SEGS)
+    if not disco.intersects(area):
+        return 0.0
+    fracao = float(disco.intersection(area).area / disco.area)
+    return fracao if fracao > _FRACAO_MINIMA else 0.0
+
+
+def consumo_na_area(
+    unidades: pd.DataFrame | None,
+    area: BaseGeometry,
+    lat0: float,
+    lng0: float,
+    *,
+    raio_influencia_m: float = RAIO_INFLUENCIA_M,
+    capacidade_default: float = CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS,
+    coluna_capacidade: str = COLUNA_CAPACIDADE,
+) -> dict[str, float | int] | None:
+    """Alunos que as `unidades` consomem dentro de `area` (plano local de lat0/lng0).
+
+    `None` quando o insumo nao existe -- o chamador NAO pode ler isso como zero.
+    Capacidade por unidade quando a coluna existe (DEC-057); o resto, `capacidade_default`.
+    """
+    if unidades is None:
+        return None
+    vazio = {"alunos": 0.0, "equivalentes": 0.0, "n_unidades": 0, "n_capacidade_real": 0}
+    if unidades.empty:
+        return vazio
+
+    lat = pd.to_numeric(unidades["lat"], errors="coerce").to_numpy(dtype=float)
+    lng = pd.to_numeric(unidades["lng"], errors="coerce").to_numpy(dtype=float)
+    validos = np.isfinite(lat) & np.isfinite(lng)
+    if coluna_capacidade in unidades.columns:
+        cap_bruta = pd.to_numeric(unidades[coluna_capacidade], errors="coerce").to_numpy(dtype=float)
+    else:
+        cap_bruta = np.full(len(unidades), np.nan)
+    tem_real = np.isfinite(cap_bruta) & (cap_bruta > 0)
+    caps = np.where(tem_real, cap_bruta, float(capacidade_default))
+
+    x, y = _projetar(lat[validos], lng[validos], lat0, lng0)
+    caps, tem_real = caps[validos], tem_real[validos]
+
+    # Pre-filtro barato pela caixa do recorte acrescida do raio de influencia: so' quem
+    # pode tocar a area paga a intersecao de poligonos.
+    minx, miny, maxx, maxy = area.bounds
+    perto = (
+        (x >= minx - raio_influencia_m) & (x <= maxx + raio_influencia_m)
+        & (y >= miny - raio_influencia_m) & (y <= maxy + raio_influencia_m)
+    )
+
+    alunos = equivalentes = 0.0
+    n = n_real = 0
+    for xi, yi, cap, real in zip(x[perto], y[perto], caps[perto], tem_real[perto], strict=True):
+        f = fracao_do_disco(xi, yi, area, raio_influencia_m=raio_influencia_m)
+        if f <= 0.0:
+            continue
+        alunos += f * float(cap)
+        equivalentes += f
+        n += 1
+        n_real += int(bool(real))
+    return {"alunos": alunos, "equivalentes": equivalentes, "n_unidades": n, "n_capacidade_real": n_real}
+
+
+# --------------------------------------------------------------------------- #
+# Estudo da unidade Ultra                                                      #
+# --------------------------------------------------------------------------- #
+def ultra_mais_proxima(
+    ultra: pd.DataFrame | None,
+    lat: float,
+    lng: float,
+    *,
+    tolerancia_m: float = TOLERANCIA_UNIDADE_ULTRA_M,
+) -> dict[str, Any] | None:
+    """A unidade Ultra mais proxima de (lat, lng) a ate' `tolerancia_m`, ou `None`.
+
+    Devolve a POSICAO dela no frame (`posicao`), o `ultra_id` e o `nome` do cadastro quando
+    houver, a distancia, a coordenada dela e quantas linhas do cadastro caem na tolerancia.
+
+    `posicoes_mesmo_ponto` sao as linhas a ate' `_MATCH_ULTRA_M` (50 m) DA PROPRIA unidade
+    -- o MESMO endereco repetido no cadastro. Medido: "Valparaiso / GO" esta' gravada com
+    uf=SP a 6 m de "Vila Zelina / SP", no mesmo predio. Tirar so' a mais proxima deixava o
+    fantasma no consumo (4.990 -> 2.490 alunos, residual 0 nos dois modos) numa ficha que
+    DIZ que a unidade saiu. Unidade real a mais de 50 m segue contando.
+    """
+    if ultra is None or ultra.empty:
+        return None
+    la = pd.to_numeric(ultra["lat"], errors="coerce").to_numpy(dtype=float)
+    lo = pd.to_numeric(ultra["lng"], errors="coerce").to_numpy(dtype=float)
+    d = _dist_m(float(lat), float(lng), la, lo)
+    d = np.where(np.isfinite(d), d, np.inf)
+    j = int(np.argmin(d))
+    if not d[j] <= float(tolerancia_m):
+        return None
+
+    def _txt(col: str) -> str | None:
+        if col not in ultra.columns:
+            return None
+        v = ultra[col].iloc[j]
+        return None if v is None or pd.isna(v) or not str(v).strip() else str(v).strip()
+
+    d_j = _dist_m(float(la[j]), float(lo[j]), la, lo)
+    mesmo = [int(k) for k in np.flatnonzero(np.isfinite(d_j) & (d_j <= _MATCH_ULTRA_M))]
+    if j not in mesmo:
+        mesmo = [j, *mesmo]
+    return {
+        "posicao": j,
+        "posicoes_mesmo_ponto": mesmo,
+        "ultra_id": _txt(COLUNA_ULTRA_ID),
+        "nome": _txt(COLUNA_ULTRA_NOME),
+        "dist_m": float(d[j]),
+        "lat": float(la[j]),
+        "lng": float(lo[j]),
+        "n_na_tolerancia": int((d <= float(tolerancia_m)).sum()),
+    }
+
+
+def exigir_unidade_ultra(
+    ultra: pd.DataFrame | None,
+    lat: float,
+    lng: float,
+    *,
+    tolerancia_m: float = TOLERANCIA_UNIDADE_ULTRA_M,
+) -> dict[str, Any]:
+    """A unidade do ESTUDO DA UNIDADE ULTRA, ou `UnidadeUltraForaDaTolerancia` com o motivo.
+
+    Separada de `mercado_na_area` para a rota do PDF validar ANTES do trabalho caro (mapas,
+    tiles) e antes de registrar o relatorio como gerado -- a regra e as frases sao as
+    mesmas, porque `mercado_na_area` chama esta funcao.
+    """
+    if ultra is None:
+        raise UnidadeUltraForaDaTolerancia(
+            "Sem cadastro de unidades Ultra: o estudo da unidade não pode ser montado."
+        )
+    proxima = ultra_mais_proxima(ultra, lat, lng, tolerancia_m=tolerancia_m)
+    if proxima is None:
+        raise UnidadeUltraForaDaTolerancia(
+            f"Não há unidade Ultra a até {tolerancia_m:.0f} m deste ponto: "
+            "o estudo da unidade Ultra não se aplica (use o estudo de ponto)."
+        )
+    return proxima
+
+
+def nome_curto_ultra(nome: str | None) -> str:
+    """'Vila Zelina / SP' -> 'Vila Zelina'; vazio -> 'sem nome'. So' para EXIBIR."""
+    if not nome:
+        return "sem nome"
+    return str(nome).split(" / ")[0].strip() or str(nome).strip()
+
+
+def declaracao_estudo_ultra(unidade: dict[str, Any] | None) -> str | None:
+    """A frase que declara o modo, a MESMA na ficha e no PDF. `None` no estudo de ponto.
+
+    PONTUACAO ASCII de proposito: o PDF usa a core font latin-1 (CLAUDE.md secao 2).
+    """
+    if not unidade:
+        return None
+    alunos = _finito(unidade.get("consumo_excluido"))
+    qtd = "" if alunos is None else " (" + f"{alunos:,.0f}".replace(",", ".") + " alunos)"
+    n_linhas = int(unidade.get("n_linhas_excluidas") or 1)
+    duplicado = (
+        ""
+        if n_linhas <= 1
+        else f" O cadastro repete este endereço em {n_linhas} linhas; todas saíram da conta."
+    )
+    return (
+        f"Estudo da unidade Ultra {nome_curto_ultra(unidade.get('nome'))}: consumo da "
+        f"própria unidade{qtd} desconsiderado; as outras Ultras continuam contando.{duplicado}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# A conta                                                                      #
+# --------------------------------------------------------------------------- #
+def _finito(v: Any) -> float | None:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def mercado_na_area(
+    lat: float,
+    lng: float,
+    *,
+    pop_area: float | None,
+    cadeias: pd.DataFrame | None,
+    ultra: pd.DataFrame | None,
+    taxa: float | None,
+    faixa_oportunidade: str | None,
+    raio_km: float = RAIO_MERCADO_DEFAULT_KM,
+    geometria: BaseGeometry | None = None,
+    excluir_ultra_proxima: bool = False,
+    tolerancia_ultra_m: float = TOLERANCIA_UNIDADE_ULTRA_M,
+) -> dict[str, Any]:
+    """SAM, consumo (concorrentes + Ultra) e residual DENTRO do recorte do ponto.
+
+    `excluir_ultra_proxima` (emenda da DEC-070): ESTUDO DA UNIDADE ULTRA. Tira do consumo
+    UMA unidade -- a mais proxima de (lat, lng) a ate' `tolerancia_ultra_m` -- e so' ela
+    (com as linhas que repetem o MESMO endereco no cadastro, a ate' 50 m dela); as outras
+    Ultras seguem contando. Sem unidade na tolerancia (ou sem cadastro), levanta
+    `UnidadeUltraForaDaTolerancia`. Default `False` = o estudo de ponto de sempre, com os
+    MESMOS valores de antes do parametro. Em qualquer modo, `ultra_proxima` diz qual
+    unidade esta' na tolerancia (e' o que a ficha usa para OFERECER o modo).
+
+    Funcao pura: nao le disco, nao muta entrada. `geometria` (graus, x=lng) troca o raio
+    pelo poligono desenhado (DEC-071); sem ela, o raio de `raio_km` em volta de (lat, lng).
+
+    As chaves de valor tem os MESMOS nomes das colunas do artefato de mercado
+    (`sam_fitness_potencial`, `oferta_consumida_*`, `oferta_efetiva_disponivel`,
+    `score_oportunidade_residual`) porque e' isso que o gerador do PDF ja' le -- o
+    significado muda para o recorte, o contrato de leitura nao.
+    """
+    area = area_local(lat, lng, raio_km=raio_km, geometria=geometria)
+    pop = _finito(pop_area)
+    taxa_f = _finito(taxa)
+    faixa = None if faixa_oportunidade is None or pd.isna(faixa_oportunidade) else str(faixa_oportunidade)
+
+    motivos: list[str] = []
+
+    # --- gate (DEC-007 com a populacao do recorte) ---
+    faixa_ok = faixa in FAIXAS_SAM_ELEGIVEIS if faixa is not None else False
+    pop_ok = None if pop is None else pop >= POP_MIN_SAM_GATE
+    flag_sam = None if pop_ok is None else (faixa_ok and pop_ok)
+    motivo_gate = None
+    if faixa is None:
+        motivo_gate = MOTIVO_FAIXA_DESCONHECIDA
+    elif not faixa_ok:
+        motivo_gate = MOTIVO_FAIXA_INELEGIVEL
+    elif pop_ok is False:
+        motivo_gate = MOTIVO_POP_INSUFICIENTE
+
+    # --- SAM ---
+    if taxa_f is None:
+        sam = None
+        motivos.append("Sem taxa de penetração calibrada (base de mercado ausente).")
+    elif pop is None:
+        sam = None
+        motivos.append("Sem população do censo no recorte.")
+    else:
+        sam = max(pop, 0.0) * taxa_f if flag_sam else 0.0
+
+    # --- consumo ---
+    conc = consumo_na_area(cadeias, area, lat, lng)
+    proxima = ultra_mais_proxima(ultra, lat, lng, tolerancia_m=tolerancia_ultra_m)
+    estudada: dict[str, Any] | None = None
+    ultra_conta = ultra
+    if excluir_ultra_proxima:
+        proxima = exigir_unidade_ultra(ultra, lat, lng, tolerancia_m=tolerancia_ultra_m)
+        # `exigir_unidade_ultra` ja' recusa sem cadastro; a guarda explicita e' para o tipo.
+        if ultra is None:
+            raise UnidadeUltraForaDaTolerancia("Sem cadastro de unidades Ultra.")
+        pos = int(proxima["posicao"])
+        # A unidade E as linhas repetidas do MESMO endereco (ver `ultra_mais_proxima`).
+        fora = set(proxima.get("posicoes_mesmo_ponto") or [pos])
+        propria = consumo_na_area(ultra.iloc[sorted(fora)], area, lat, lng)
+        ultra_conta = ultra.iloc[[k for k in range(len(ultra)) if k not in fora]]
+        cap_bruta = (
+            ultra[COLUNA_CAPACIDADE].iloc[pos] if COLUNA_CAPACIDADE in ultra.columns else None
+        )
+        estudada = {
+            "ultra_id": proxima["ultra_id"],
+            "nome": proxima["nome"],
+            "dist_m": proxima["dist_m"],
+            "lat": proxima["lat"],
+            "lng": proxima["lng"],
+            "n_na_tolerancia": proxima["n_na_tolerancia"],
+            "n_linhas_excluidas": len(fora),
+            "consumo_excluido": None if propria is None else propria["alunos"],
+            "capacidade_real": _finito(cap_bruta) is not None,
+            "tolerancia_m": float(tolerancia_ultra_m),
+        }
+    ult = consumo_na_area(ultra_conta, area, lat, lng)
+    if conc is None:
+        motivos.append("Sem base de concorrentes de cadeia montada: consumo não calculado.")
+    if ult is None:
+        motivos.append("Sem cadastro de unidades Ultra: consumo da rede própria não calculado.")
+    consumo_conc = None if conc is None else conc["alunos"]
+    consumo_ultra = None if ult is None else ult["alunos"]
+    consumo_total = (
+        None if consumo_conc is None or consumo_ultra is None else consumo_conc + consumo_ultra
+    )
+
+    # --- residual e score (regua ABSOLUTA do pipeline) ---
+    if sam is None or consumo_total is None:
+        residual = None
+        score = None
+    else:
+        residual = max(sam - consumo_total, 0.0)
+        score = min(max(100.0 * residual / SCORE_RESIDUAL_CAPACIDADE_REFERENCIA, 0.0), 100.0)
+
+    return {
+        "grao": GRAO_GEOMETRIA if geometria is not None else GRAO_RAIO,
+        "raio_km": None if geometria is not None else float(raio_km),
+        "area_km2": float(area.area) / 1e6,
+        "pop_area": pop,
+        "taxa_fitness_mercado": taxa_f,
+        "faixa_oportunidade": faixa,
+        "gate_faixa_elegivel": bool(faixa_ok),
+        "gate_pop_ok": pop_ok,
+        "pop_minima_gate": POP_MIN_SAM_GATE,
+        "flag_sam": flag_sam,
+        "motivo_gate": motivo_gate,
+        "sam_fitness_potencial": sam,
+        "oferta_consumida_mercado_estimada": consumo_conc,
+        "oferta_consumida_ultra_estimada": consumo_ultra,
+        "oferta_consumida_total_estimada": consumo_total,
+        "oferta_efetiva_disponivel": residual,
+        "score_oportunidade_residual": score,
+        "oferta_equivalente_concorrentes": None if conc is None else conc["equivalentes"],
+        "n_concorrentes_alcancam": None if conc is None else conc["n_unidades"],
+        "n_concorrentes_capacidade_real": None if conc is None else conc["n_capacidade_real"],
+        "n_ultra_alcancam": None if ult is None else ult["n_unidades"],
+        "n_ultra_alunos_reais": None if ult is None else ult["n_capacidade_real"],
+        "disponivel": sam is not None,
+        "motivo": " ".join(motivos) or None,
+        # Emenda da DEC-070: o modo do estudo, declarado. No estudo da unidade, a parcela
+        # `oferta_consumida_ultra_estimada` acima ja' e' a das OUTRAS Ultras.
+        "modo_estudo": MODO_ESTUDO_UNIDADE_ULTRA if estudada else MODO_ESTUDO_PONTO,
+        "unidade_ultra_estudada": estudada,
+        "declaracao_modo": declaracao_estudo_ultra(estudada),
+        "ultra_proxima": None if proxima is None else {
+            k: proxima[k] for k in ("ultra_id", "nome", "dist_m")
+        },
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Insumos (lidos UMA vez por processo)                                         #
+# --------------------------------------------------------------------------- #
+@lru_cache(maxsize=2)
+def carregar_cadeias_mercado(staging_dir_str: str) -> pd.DataFrame | None:
+    """Universo de CADEIA do residual, montado pelas MESMAS funcoes do pipeline.
+
+    `concorrentes_mapeados` + unidades de rede do agregador que o cadastro nao tem
+    (DEC-048, dedup DEC-034/062 via `tem_pin_proprio`) -> sem estudios boutique
+    (DEC-056) -> capacidade real por unidade quando o crosswalk existe (DEC-057).
+    `None` quando o cadastro falta: e' o caso previsto (staging nao montado / perfil AR).
+    """
+    staging = Path(staging_dir_str)
+    caminho = staging / ARQ_CONCORRENTES
+    if not caminho.is_file():
+        return None
+    try:
+        # Import LAZY: o modulo do pipeline puxa sklearn no import, e so' este caminho
+        # precisa dele.
+        from motor_expansao.pipelines.enriquecimento_espacial_hexagonos import (
+            anexar_capacidade_real,
+            excluir_estudios_boutique,
+            unir_cadeias,
+        )
+
+        df_comp = pd.read_parquet(caminho)
+        redes_path = staging / ARQ_REDES_AGREGADOR
+        df_redes = pd.read_parquet(redes_path) if redes_path.is_file() else None
+        cadeias = unir_cadeias(df_comp, df_redes)
+        cadeias = excluir_estudios_boutique(cadeias)
+        cadeias = anexar_capacidade_real(cadeias, crosswalk_path=staging / ARQ_ALUNOS_REAIS)
+    except Exception as exc:  # noqa: BLE001
+        _LOG.warning("mercado no raio: universo de cadeia indisponivel (%r)", exc)
+        return None
+    colunas = ["lat", "lng"] + ([COLUNA_CAPACIDADE] if COLUNA_CAPACIDADE in cadeias.columns else [])
+    return cadeias[colunas].reset_index(drop=True)
+
+
+def _dist_m(lat: float, lng: float, lats: np.ndarray, lngs: np.ndarray) -> np.ndarray:
+    r = 6_371_000.0
+    la1, lo1 = math.radians(lat), math.radians(lng)
+    la2, lo2 = np.radians(lats), np.radians(lngs)
+    h = np.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * np.cos(la2) * np.sin((lo2 - lo1) / 2) ** 2
+    return 2 * r * np.arcsin(np.sqrt(h))
+
+
+def unidades_ultra_com_capacidade(
+    mapeadas: pd.DataFrame, performance: pd.DataFrame | None
+) -> pd.DataFrame:
+    """Unidades Ultra com `capacidade_alunos` = alunos REAIS quando houver, NaN no resto.
+
+    O pipeline casa a performance por HEXAGONO (`anexar_oferta_ultra_real`) porque escreve
+    por hexagono; aqui o consumo e' por UNIDADE, entao o casamento e' por coordenada
+    (<= `_MATCH_ULTRA_M`), com o hexagono como segunda chave para a linha de performance sem
+    coordenada (so' quando ha' UMA unidade candidata no hexagono). Linha de performance que
+    nao casa com nenhuma unidade mapeada ENTRA como unidade propria: ela existe e tem
+    alunos, e descarta-la subestimaria o consumo.
+    """
+    base = mapeadas.copy()
+    if "flag_coord_valida" in base.columns:
+        base = base[base["flag_coord_valida"].fillna(True).astype(bool)]
+    base["lat"] = pd.to_numeric(base["lat"], errors="coerce")
+    base["lng"] = pd.to_numeric(base["lng"], errors="coerce")
+    base = base.dropna(subset=["lat", "lng"]).reset_index(drop=True)
+    base[COLUNA_CAPACIDADE] = np.nan
+    # Identidade (emenda da DEC-070): o estudo da unidade Ultra tira UMA linha, e a ficha
+    # precisa dizer QUAL. `ultra_id` e o nome do cadastro viajam junto; o consumo os ignora.
+    base[COLUNA_ULTRA_ID] = base["ultra_id"] if "ultra_id" in base.columns else None
+    base[COLUNA_ULTRA_NOME] = base["unidade"] if "unidade" in base.columns else None
+    colunas_saida = ["lat", "lng", COLUNA_CAPACIDADE, COLUNA_ULTRA_ID, COLUNA_ULTRA_NOME]
+    if performance is None or performance.empty or "alunos_total" not in performance.columns:
+        return base[colunas_saida]
+
+    perf = performance.copy()
+    perf["alunos"] = pd.to_numeric(perf["alunos_total"], errors="coerce")
+    perf = perf[perf["alunos"].notna() & (perf["alunos"] > 0)]
+    sem_coord = pd.Series(np.nan, index=perf.index)
+    plat = pd.to_numeric(perf["lat"], errors="coerce") if "lat" in perf.columns else sem_coord
+    plng = pd.to_numeric(perf["lng"], errors="coerce") if "lng" in perf.columns else sem_coord
+
+    extras: list[dict[str, Any]] = []
+    pnome = perf["unidade"] if "unidade" in perf.columns else pd.Series(None, index=perf.index)
+    blat, blng = base["lat"].to_numpy(dtype=float), base["lng"].to_numpy(dtype=float)
+    hex_base = base["hex_id_res7"].astype("string") if "hex_id_res7" in base.columns else None
+    for i, (la, lo) in enumerate(zip(plat, plng, strict=True)):
+        alunos = float(perf["alunos"].iloc[i])
+        if pd.notna(la) and pd.notna(lo) and len(base):
+            d = _dist_m(float(la), float(lo), blat, blng)
+            j = int(np.argmin(d))
+            if d[j] <= _MATCH_ULTRA_M:
+                atual = base.at[j, COLUNA_CAPACIDADE]
+                base.at[j, COLUNA_CAPACIDADE] = alunos + (0.0 if pd.isna(atual) else float(atual))
+                continue
+            extras.append({
+                "lat": float(la), "lng": float(lo), COLUNA_CAPACIDADE: alunos,
+                COLUNA_ULTRA_ID: None, COLUNA_ULTRA_NOME: pnome.iloc[i],
+            })
+            continue
+        hx = perf["hex_id_res7"].iloc[i] if "hex_id_res7" in perf.columns else None
+        if hex_base is not None and hx is not None and pd.notna(hx):
+            cand = base.index[(hex_base == str(hx)) & base[COLUNA_CAPACIDADE].isna()]
+            if len(cand) == 1:
+                base.at[cand[0], COLUNA_CAPACIDADE] = alunos
+    saida = base[colunas_saida]
+    if extras:
+        saida = pd.concat([saida, pd.DataFrame(extras)], ignore_index=True)
+    return saida
+
+
+@lru_cache(maxsize=2)
+def carregar_ultra_mercado(staging_dir_str: str) -> pd.DataFrame | None:
+    """Unidades Ultra com a capacidade de cada uma. `None` sem o cadastro da rede."""
+    staging = Path(staging_dir_str)
+    caminho = staging / ARQ_ULTRA
+    if not caminho.is_file():
+        return None
+    try:
+        mapeadas = pd.read_parquet(caminho)
+        perf_path = staging / ARQ_ULTRA_PERFORMANCE
+        perf = pd.read_parquet(perf_path) if perf_path.is_file() else None
+        return unidades_ultra_com_capacidade(mapeadas, perf)
+    except Exception as exc:  # noqa: BLE001
+        _LOG.warning("mercado no raio: cadastro Ultra indisponivel (%r)", exc)
+        return None

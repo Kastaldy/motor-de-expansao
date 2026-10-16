@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from 'react'
 
 import {
   ALTURA_CABECALHO,
@@ -10,6 +10,7 @@ import {
   type Area,
   type Geometria,
 } from '../lib/janela'
+import { registrarJanela, removerJanela } from '../lib/ocupacao-janelas'
 
 /** Onde a janela nasce no eixo Y: abaixo do cabeçalho flutuante do mapa. */
 const TOPO_PADRAO = 88
@@ -25,6 +26,32 @@ const TOPO_PADRAO = 88
  * só a do topo (a aberta por último), que é a convenção de janelas empilhadas.
  */
 const pilhaAbertas: symbol[] = []
+
+/**
+ * Quem esta' no TOPO da pilha tambem fica por cima na TELA.
+ *
+ * Antes todas as janelas tinham o mesmo `zIndex`, e quem desempatava era a ordem no DOM —
+ * que nao tem nada a ver com a ordem em que o operador abriu. Com a ficha de ponto aberta,
+ * clicar num hexagono abria a ficha dele ATRAS da do ponto (a do ponto vem depois na
+ * arvore), e ela parecia nao ter aberto (pedido do Vinicius, 2026-10-14: a caixa da
+ * esquerda nao pode ocultar o que esta' por baixo). Agora a aberta por ultimo — ou a
+ * ultima em que o operador clicou — sobe, como em qualquer gerenciador de janelas. O Esc
+ * segue a mesma pilha, entao fecha justamente a que esta' a' vista por cima.
+ */
+const ouvintesDaPilha = new Set<() => void>()
+/**
+ * Esc que JA fechou uma janela. Com a pilha reordenavel, fechar a do topo pode tirar a
+ * janela da pilha ainda DENTRO do mesmo evento (o React aplica a atualizacao de tecla de
+ * forma sincrona) — e a proxima a ouvir o mesmo Esc se via no topo e fechava tambem. Um
+ * Esc fecha UMA janela.
+ */
+const escTratados = new WeakSet<KeyboardEvent>()
+function avisarPilha(): void {
+  for (const f of ouvintesDaPilha) f()
+}
+/** Abaixo das camadas de 30+ (menus e modais): a janela nunca cobre um menu aberto. */
+const Z_JANELA = 26
+const Z_JANELA_TOPO = 27
 
 /**
  * A JANELA que traz a ficha por cima do mapa, no modo de ponto.
@@ -44,9 +71,10 @@ const pilhaAbertas: symbol[] = []
  * que esta' desenhado ali, e escurecer o mapa para ler sobre ele seria trabalhar contra a
  * propria tela. Por isso nao ha' backdrop e o foco nao fica preso.
  *
- * FICA MONTADA QUANDO FECHADA. So' o `transform` a tira da tela. Desmontar zeraria o que
- * o operador digitou em metragem e aluguel no bloco de viabilidade — fechar para olhar o
- * mapa e perder a conta ao reabrir seria punir quem usou as duas coisas juntas.
+ * FICA MONTADA QUANDO FECHADA. So' o `transform` a tira da tela. Desmontar zeraria o
+ * estado de dentro da ficha (o que o operador digitou, a rolagem, a secao aberta) —
+ * fechar para olhar o mapa e perder isso ao reabrir seria punir quem usou as duas coisas
+ * juntas.
  * `visibility: hidden` no fim da transicao e' o que a tira da ordem de tabulacao; sem
  * isso, o Tab pescaria botoes invisiveis fora da tela.
  */
@@ -60,6 +88,8 @@ export default function JanelaFicha({
      do mesmo lado. À direita elas nasciam sobre o painel de ranking do Explorar, que é
      justamente o que se lê junto com a ficha. */
   ancora = 'esquerda',
+  degrau = 0,
+  rodape,
   children,
 }: {
   aberta: boolean
@@ -69,11 +99,27 @@ export default function JanelaFicha({
   /** De que lado a janela nasce. Duas na mesma tela precisam de lados distintos. */
   ancora?: Ancora
   /**
+   * Cascata sobre outra janela do MESMO lado (`geometriaPadrao`): 0 = a posição de sempre,
+   * 1 = deslocada uma barra de título para baixo e um recuo para dentro. Só vale para a
+   * posição de NASCENÇA — depois que o operador arrasta, quem manda é ele.
+   */
+  degrau?: number
+  /**
    * Quanto a janela sobe do pe' da tela na posicao INICIAL. Existe porque o stepper do
    * funil ocupa a largura toda: com o recuo padrao a janela nasceria cobrindo os botoes
    * das camadas. Depois que o operador arrasta, quem manda e' ele.
    */
   recuoInferior?: number
+  /**
+   * Faixa FIXA no pé da janela, fora da área que rola — os botões de ação da ficha
+   * (2026-10-14: "Estudo" e "Simulador" da análise de ponto).
+   *
+   * Fixa porque são a SAÍDA da leitura: com a ficha longa, botões no fim do conteúdo só
+   * apareciam depois de rolar tudo, e quem não rolava não sabia que existiam. Ausente,
+   * a janela desenha exatamente o que desenhava antes — as outras quatro janelas do mapa
+   * não passam a prop.
+   */
+  rodape?: ReactNode
   children: ReactNode
 }) {
   const ref = useRef<HTMLElement | null>(null)
@@ -102,7 +148,8 @@ export default function JanelaFicha({
   }, [area])
 
   const atual =
-    geo ?? (area.largura ? geometriaPadrao(area, TOPO_PADRAO, recuoInferior, ancora) : null)
+    geo ??
+    (area.largura ? geometriaPadrao(area, TOPO_PADRAO, recuoInferior, ancora, degrau) : null)
 
   /** Identidade estável desta instância na pilha de janelas abertas. */
   const idJanela = useRef(Symbol('janela'))
@@ -120,14 +167,19 @@ export default function JanelaFicha({
     if (!aberta) return
     const id = idJanela.current
     pilhaAbertas.push(id)
+    avisarPilha()
     const aoTeclar = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && pilhaAbertas[pilhaAbertas.length - 1] === id) onFecharRef.current()
+      if (e.key !== 'Escape' || escTratados.has(e)) return
+      if (pilhaAbertas[pilhaAbertas.length - 1] !== id) return
+      escTratados.add(e)
+      onFecharRef.current()
     }
     window.addEventListener('keydown', aoTeclar)
     return () => {
       const i = pilhaAbertas.indexOf(id)
       if (i >= 0) pilhaAbertas.splice(i, 1)
       window.removeEventListener('keydown', aoTeclar)
+      avisarPilha()
     }
   }, [aberta])
 
@@ -173,9 +225,54 @@ export default function JanelaFicha({
 
   const alturaVisivel = recolhida ? ALTURA_CABECALHO : (atual?.altura ?? 0)
 
+  /* Re-renderiza quando a pilha muda, para trocar o `zIndex` (ver `ouvintesDaPilha`). */
+  const [, redesenhar] = useReducer((n: number) => n + 1, 0)
+  useEffect(() => {
+    ouvintesDaPilha.add(redesenhar)
+    return () => {
+      ouvintesDaPilha.delete(redesenhar)
+    }
+  }, [])
+  const noTopo = aberta && pilhaAbertas[pilhaAbertas.length - 1] === idJanela.current
+  /** Clicar em qualquer ponto da janela a traz para cima (e ela passa a ser a do Esc). */
+  const trazerParaFrente = () => {
+    const id = idJanela.current
+    const i = pilhaAbertas.indexOf(id)
+    if (i < 0 || i === pilhaAbertas.length - 1) return
+    pilhaAbertas.splice(i, 1)
+    pilhaAbertas.push(id)
+    avisarPilha()
+  }
+
+  /* Avisa ao trilho do mapa onde esta janela esta' (`lib/ocupacao-janelas`), para ele sair
+     de baixo dela. Em pixels da TELA: o contêiner + a geometria — e nao o
+     `getBoundingClientRect` da propria janela, que na transicao de abrir ainda esta'
+     deslocada pelo `transform` e mediria a janela fora do lugar. Roda a cada render: o
+     registro descarta retangulo repetido, entao arrastar acorda o trilho e o resto nao. */
+  useLayoutEffect(() => {
+    const id = idJanela.current
+    const pai = ref.current?.parentElement
+    if (!aberta || !atual || !pai) {
+      removerJanela(id)
+      return
+    }
+    const base = pai.getBoundingClientRect()
+    registrarJanela(id, {
+      esquerda: base.left + atual.x,
+      topo: base.top + atual.y,
+      largura: atual.largura,
+      altura: alturaVisivel,
+    })
+  })
+  useEffect(() => {
+    const id = idJanela.current
+    return () => removerJanela(id)
+  }, [])
+
   return (
     <aside
       ref={ref}
+      onPointerDownCapture={trazerParaFrente}
       role="dialog"
       aria-label={titulo}
       aria-hidden={!aberta}
@@ -219,7 +316,7 @@ export default function JanelaFicha({
         transition: arrastando
           ? 'none'
           : 'transform .26s cubic-bezier(.4,0,.2,1), opacity .2s ease, visibility .26s, box-shadow .26s ease',
-        zIndex: 26,
+        zIndex: noTopo ? Z_JANELA_TOPO : Z_JANELA,
       }}
     >
       <header
@@ -285,6 +382,27 @@ export default function JanelaFicha({
       {/* Recolhida, o conteúdo SAI da árvore de leitura mas a janela continua montada —
           o que o operador digitou na viabilidade sobrevive, como no fechar. */}
       {!recolhida && <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>{children}</div>}
+
+      {/* O rodapé fixo. Depois do miolo rolável e com `flexShrink: 0`: o miolo cede a altura,
+          o rodapé não. Some quando recolhida, como o miolo — a janela vira só a barra.
+          O `paddingRight` maior deixa o canto inferior direito livre para a alça de
+          redimensionar, que é desenhada por cima (vem depois na árvore): sem ele, o último
+          botão ficaria sob a alça e o clique ali viraria redimensionamento. */}
+      {!recolhida && rodape != null && (
+        <div
+          style={{
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '12px 30px 12px 16px',
+            borderTop: '1px solid var(--line-soft)',
+            background: 'var(--surf-panel)',
+          }}
+        >
+          {rodape}
+        </div>
+      )}
 
       {/* Alça de redimensionar, no canto inferior direito. Some quando recolhida: não há
           altura para ajustar, e a alça ficaria sobre a barra de título. */}

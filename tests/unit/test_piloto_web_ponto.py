@@ -409,3 +409,138 @@ def test_lista_de_concorrentes_vem_ordenada_por_distancia() -> None:
     # o conjunto segue FECHADO de proposito, para o vazamento continuar sendo detectado.
     assert all(set(c) == {"rede", "classe", "dist_km"} for c in lista)
     assert all(c["classe"] in {"cadeia", "independente"} for c in lista)
+
+
+# --------------------------------------------------------------------------- #
+# Nome do ponto = nome do HEXAGONO (o mesmo da ficha/ranking)                  #
+# --------------------------------------------------------------------------- #
+def test_nome_do_hexagono_e_o_mesmo_mapa_que_nomeia_a_ficha(monkeypatch) -> None:
+    """O ponto le o nome pelo MESMO `bairros_por_hex` que nomeia ficha e ranking.
+
+    Caso real que motivou: Taguatinga/DF. O distrito do setor e' "Brasília" (o
+    municipio), e o ponto saia com ele; o hexagono, na ficha, chama "Taguatinga".
+    """
+    chamadas: list[tuple[str, str]] = []
+
+    def _falso(uf: str, cod: str) -> dict[str, str]:
+        chamadas.append((uf, cod))
+        return {"87a8c24e4ffffff": "Taguatinga", "87a8c24e5ffffff": "  "}
+
+    monkeypatch.setattr(pilot, "bairros_por_hex", _falso)
+
+    assert pilot._nome_do_hexagono("df", 5300108, "87a8c24e4ffffff") == "Taguatinga"
+    # UF normalizada e codigo como TEXTO: a chave do lru_cache do funil e' (UF, "cod").
+    assert chamadas[0] == ("DF", "5300108")
+    # Hex sem nome (ou nome em branco) devolve None: o fallback e' de quem exibe.
+    assert pilot._nome_do_hexagono("DF", "5300108", "87a8c2000ffffff") is None
+    assert pilot._nome_do_hexagono("DF", "5300108", "87a8c24e5ffffff") is None
+
+
+def test_nome_do_hexagono_sem_chave_nao_le_disco(monkeypatch) -> None:
+    def _proibido(*_a, **_k):  # pragma: no cover - so' dispara se a guarda falhar
+        raise AssertionError("nao devia consultar bairros_por_hex sem uf/cod/hex")
+
+    monkeypatch.setattr(pilot, "bairros_por_hex", _proibido)
+    assert pilot._nome_do_hexagono(None, "5300108", "87a8c24e4ffffff") is None
+    assert pilot._nome_do_hexagono("DF", None, "87a8c24e4ffffff") is None
+    assert pilot._nome_do_hexagono("DF", float("nan"), "87a8c24e4ffffff") is None
+    assert pilot._nome_do_hexagono("DF", "5300108", None) is None
+
+
+def _setores_em_volta(hex_id: str, cod: str, nomes_pop: list[tuple[str, float]]):
+    """Setores sinteticos com o centroide do bbox DENTRO de `hex_id`."""
+    import h3
+    import pandas as pd
+
+    lat, lng = h3.cell_to_latlng(hex_id)
+    linhas = []
+    for i, (nome, pop) in enumerate(nomes_pop):
+        d = 0.0005 * (i + 1)
+        linhas.append(
+            {
+                "cod_municipio": cod, "nome_municipio": "Brasília", "nome_bairro": None,
+                "nome_subdistrito": None, "nome_distrito": nome,
+                "bbox_minx": lng - d, "bbox_maxx": lng + d,
+                "bbox_miny": lat - d, "bbox_maxy": lat + d,
+                "pop_total_setor_2022": pop,
+            }
+        )
+    return pd.DataFrame(linhas)
+
+
+def test_nome_do_hexagono_sai_dos_setores_em_memoria_sem_reler_a_particao(monkeypatch) -> None:
+    """Revisao do admin (2026-10-15): o `/api/ponto` relia a particao geo so' para nomear o
+    hexagono (5,7 s na 1a chamada de Sao Paulo). Com os setores ja' carregados para o raio, o
+    nome sai da memoria -- pela MESMA regra (`bairros_por_hex_de_setores`)."""
+    import h3
+    import pandas as pd
+
+    from motor_expansao.dashboard.relatorio_municipal import bairros_por_hex_de_setores
+
+    def _proibido(*_a, **_k):
+        raise AssertionError("nao devia reler a particao: os setores ja' estao em memoria")
+
+    monkeypatch.setattr(pilot, "bairros_por_hex", _proibido)
+    hex_id = h3.latlng_to_cell(-15.8335, -48.0563, 7)  # Taguatinga/DF
+    vizinho = h3.grid_ring(hex_id, 3)[0]
+    setores = pd.concat(
+        [
+            _setores_em_volta(hex_id, "5300108", [("Taguatinga", 900.0), ("Ceilândia", 100.0)]),
+            # Outro MUNICIPIO no mesmo hexagono, mais populoso: o recorte e' por municipio,
+            # como no mapa da ficha, entao ele NAO pode ganhar.
+            _setores_em_volta(hex_id, "5208707", [("Outra Cidade", 9_000.0)]),
+            # Setor longe (outro hexagono): fica fora da pre-selecao e nao muda nada.
+            _setores_em_volta(vizinho, "5300108", [("Longe", 50_000.0)]),
+        ],
+        ignore_index=True,
+    )
+    nome = pilot._nome_do_hexagono("DF", "5300108", hex_id, setores)
+    assert nome == "Taguatinga"
+    referencia = bairros_por_hex_de_setores(setores[setores["cod_municipio"] == "5300108"])
+    assert nome == referencia[hex_id]
+    # Decidido em memoria e SEM nome: devolve None, e tambem nao rele a particao.
+    vazio = setores.assign(nome_distrito=None)
+    assert pilot._nome_do_hexagono("DF", "5300108", hex_id, vazio) is None
+
+
+def test_nome_do_hexagono_sem_as_colunas_cai_no_mapa_do_municipio(monkeypatch) -> None:
+    import pandas as pd
+
+    chamadas: list[tuple[str, str]] = []
+
+    def _falso(uf: str, cod: str) -> dict[str, str]:
+        chamadas.append((uf, cod))
+        return {"87a8c24e4ffffff": "Taguatinga"}
+
+    monkeypatch.setattr(pilot, "bairros_por_hex", _falso)
+    sem_bbox = pd.DataFrame({"cod_setor": ["1"], "nome_municipio": ["Brasília"]})
+    assert pilot._nome_do_hexagono("DF", "5300108", "87a8c24e4ffffff", sem_bbox) == "Taguatinga"
+    assert chamadas == [("DF", "5300108")]
+
+
+@requer_malha
+def test_ponto_nomeia_o_hexagono_sem_reler_a_particao(monkeypatch) -> None:
+    from motor_expansao.dashboard import relatorio_municipal
+
+    esperado = relatorio_municipal._carregar_bairros_por_hex(
+        "SP", "3550308", pilot.CENSO_GEO_DIR
+    )
+    assert esperado
+
+    def _proibido(*_a, **_k):
+        raise AssertionError("o /api/ponto nao pode reler a particao para nomear o hexagono")
+
+    monkeypatch.setattr(pilot, "bairros_por_hex", _proibido)
+    monkeypatch.setattr(relatorio_municipal, "_carregar_bairros_por_hex", _proibido)
+    body = pilot.ponto(lat=LAT_SP, lng=LNG_SP)
+    assert body["local"]["hexagono"] == esperado[body["hex_id"]]
+
+
+@requer_malha
+def test_ponto_traz_o_nome_do_hexagono_igual_ao_da_ficha() -> None:
+    body = pilot.ponto(lat=LAT_SP, lng=LNG_SP)
+    esperado = pilot.bairros_por_hex("SP", "3550308").get(body["hex_id"])
+    # Sem esta guarda o teste passava com os DOIS lados None: `bairros_por_hex` devolve `{}` sem
+    # malha, sem particao ou em qualquer excecao (engolida), e `None == None` e' verde.
+    assert esperado, "a Av. Paulista tem de ter nome de hexagono na malha real"
+    assert body["local"]["hexagono"] == esperado

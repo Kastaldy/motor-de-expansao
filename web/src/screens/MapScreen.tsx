@@ -1,9 +1,22 @@
 import { latLngToCell } from 'h3-js'
 import { useUfsDaBase } from '../lib/base-contexto'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+  useRef,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react'
 
 import type { PontoEscolhido } from '../App'
-import BarraCamadas, { type ChaveDeCamada } from '../components/BarraCamadas'
+import BarraCamadas, {
+  LinhaDeEstado,
+  RodapeDoPainel,
+  type ChaveDeCamada,
+} from '../components/BarraCamadas'
 import BotaoInicio from '../components/BotaoInicio'
 import FichaHex from '../components/FichaHex'
 import FichaImovel from '../components/FichaImovel'
@@ -41,6 +54,31 @@ import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import { rodapeDaBase, tituloEscolhaUnidade } from '../lib/rodape-base'
 import { type AlvoCaptura, alvoDoHex, pinsDoAlvo } from '../lib/captura-mapa'
 import { DIMENSOES, rotuloDoHex, rotulosDosHexes } from '../lib/comparacao'
+import { cliqueSelecionaHex, type FerramentaMapa } from '../lib/ferramenta-mapa'
+import {
+  desenhoPausado,
+  rascunhoSobrevive,
+  transicaoTrilho,
+  type AcaoTrilho,
+  type EstadoTrilho,
+  type MotivoFimDoDesenho,
+} from '../lib/painel-trilho'
+import type { PosicaoGeoJson } from '../lib/comparacao-pontos'
+import {
+  AREA_MAX_KM2,
+  DIAGONAL_MAX_KM,
+  MAX_VERTICES,
+  adicionarVertice,
+  avaliarDesenho,
+  desfazerVertice,
+  formatarKm2,
+  interpretarClique,
+  paraGeoJson,
+} from '../lib/geometria-desenho'
+import type { Coord } from '../lib/medicao'
+import { assinarJanelas, deslocamentoDoTrilho, janelasAbertas } from '../lib/ocupacao-janelas'
+import { degrauSobreFichaDePonto, janelaDoHexVisivel, pontoSeleciona } from '../lib/janela-hex'
+import type { PinDoPonto } from '../lib/pontos-estado'
 import type { Tema } from '../lib/tema'
 import type {
   Cobertura1k,
@@ -94,34 +132,79 @@ export interface MapScreenProps {
   /** Volta ao menu de modos. Não limpa nada — ver `components/BotaoInicio`. */
   onInicio: () => void
   /**
-   * Pin imposto DE FORA, que vence o da busca local.
+   * DESTINO escolhido numa LISTA fora desta tela (o ranking nacional do Modo 3): leva a
+   * camera, o contorno de selecao e a FICHA DO HEXAGONO ate' ele.
    *
-   * Existe para o modo de ponto: la' quem escolhe o territorio e' o endereco colado, nao
-   * a lupa desta tela. Um pin em state local nao serviria — o efeito que zera a tela ao
+   * Vem do pai porque um pin em state local nao serviria — o efeito que zera a tela ao
    * trocar de UF/municipio (logo abaixo) limpa `pin`, e a troca de municipio e'
-   * exatamente o que acontece quando o operador cola um endereco. Vindo do pai, ele
-   * sobrevive a essa limpeza, que continua valendo para a busca manual.
+   * exatamente o que acontece quando se chega por uma lista de outra cidade. Vindo do
+   * pai, ele sobrevive a essa limpeza, que continua valendo para a busca manual.
    */
   pinFixo?: SearchPin | null
   /**
-   * Avisa que a busca do cabecalho resolveu uma coordenada.
+   * O PONTO ATIVO da analise de pontos (lista do `App`, `lib/pontos-estado`): o da aba
+   * aberta, ou o provisorio que acabou de ser pedido.
    *
-   * E' o que deixa o modo de ponto usar ESTA busca como entrada, em vez de por uma
-   * segunda caixa de colar por cima da tela — duas caixas pedindo a mesma coisa, lado a
-   * lado, e' o defeito que o Juan apontou em 2026-08-11. Quem escuta decide o que fazer
-   * com a coordenada; aqui o comportamento nao muda (pin + hexagono selecionado).
+   * Separado do `pinFixo` porque pede OUTRA leitura do mesmo hexagono: o destino de uma
+   * lista e' "mostre este hexagono" (abre a ficha dele), o ponto e' "analise este lugar"
+   * (a ficha e' a do PONTO, publicada pelo `PontoScreen`). Os dois selecionam o hexagono
+   * — contorno no mapa e linha do ranking —, mas so' o destino abre a ficha do hexagono.
+   *
+   * PRECEDENCIA: `pontoAtivo` vence `pinFixo`, que vence o pin local da unidade/imovel. O
+   * `App` limpa o `pontoAtivo` quando outro passa a valer: nos destinos de lista e nas
+   * trocas de territorio, por conta propria; na UNIDADE escolhida aqui, avisado por
+   * `onSoltarPonto`.
    */
-  onPontoBuscado?: (lat: number, lng: number) => void
+  pontoAtivo?: SearchPin | null
   /**
-   * Se esta tela publica a janela da FICHA DO HEXAGONO.
-   *
-   * `false` no modo de ponto: la' quem cola um endereco ja' recebe a janela DELE, e o
-   * endereco tambem seleciona o hexagono em que caiu — as duas janelas abriam juntas,
-   * uma por cima da outra, dizendo coisas diferentes sobre o mesmo lugar (relato do Juan,
-   * 2026-08-12). A selecao continua valendo: o contorno no mapa e o item do ranking
-   * seguem marcados, so' a segunda janela nao aparece.
+   * Uma unidade da rede foi escolhida aqui (seletor UNIDADES ou pin da Ultra): o pin LOCAL
+   * dela tem de valer, entao o `App` tira do ponto ativo o comando da camera. Sem este
+   * aviso o `pontoAtivo` seguia vencendo a precedencia e a camera nunca chegava a' unidade
+   * (o ponto continua na comparacao; escolher a aba dele devolve o comando).
    */
-  janelaDoHex?: boolean
+  onSoltarPonto?: () => void
+  /**
+   * TODOS os pontos da comparacao, cada um na sua cor de identidade (decisao do dono,
+   * 2026-10-14), prontos para o mapa desenhar.
+   *
+   * Repassada ao `HexMap`, que desenha um pin por ponto (anel na cor da aba, o ativo
+   * maior, o provisorio esmaecido) e suprime o pin neutro do `pontoAtivo` quando ele e'
+   * um deles. Aqui ela tambem decide de que lado nasce a ficha do hexagono.
+   */
+  pontosComparados?: readonly PinDoPonto[]
+  /**
+   * Clique num pin colorido da comparacao: abre a aba daquele ponto (e a janela da
+   * ficha, se estiver fechada). Ausente = o pin so' mostra o rotulo no hover.
+   */
+  onPontoComparado?: (indice: number) => void
+  /**
+   * A busca do cabecalho resolveu uma coordenada: ela vira um PONTO ANALISADO.
+   *
+   * Vale nas DUAS entradas do mapa ("Explorar uma regiao" e "Analisar um ponto", decisao
+   * do dono, 2026-10-14): buscar abre a ficha de ponto e o comparativo de pontos, nos dois
+   * casos. Esta tela nao poe pin nem seleciona nada por conta propria — o ponto volta por
+   * `pontoAtivo`, que e' a regra unica de pin. Antes a busca soltava um pin LOCAL que
+   * gerava o cartao "Estudo pontual", uma terceira leitura do mesmo lugar.
+   *
+   * `doMapa` = o pedido veio de um clique no proprio mapa ("Selecionar ponto"): o lugar ja'
+   * esta' na tela, e o pin dele nao voa nem aproxima a camera.
+   */
+  onPontoBuscado: (lat: number, lng: number, doMapa?: boolean) => void
+  /**
+   * "Estudar a região desta unidade", na ficha da unidade Ultra (emenda da DEC-070): abre a
+   * análise de ponto na coordenada da unidade JÁ no estudo da unidade — o consumo dela sai
+   * do mercado. Ausente = o botão não aparece.
+   */
+  onEstudarUnidade?: (lat: number, lng: number) => void
+  /**
+   * "Analisar geometria" concluiu uma área (DEC-071, fase 1): os anéis do polígono
+   * desenhado, em `[lng, lat]`, fechados. Quem recebe (o `App`) a leva ao
+   * `/api/ponto/geometria` e a põe na MESMA comparação dos pontos.
+   *
+   * Ausente = a ferramenta não aparece no trilho nem no painel: sem destino, o desenho
+   * não levaria a lugar nenhum.
+   */
+  onGeometriaDesenhada?: (geometria: PosicaoGeoJson[][]) => void
   /** Sem UF escolhida, não desenha o hero — quem o publica é a camada de cima. */
   semLanding?: boolean
   /**
@@ -183,8 +266,13 @@ export default function MapScreen({
   onEstado,
   onInicio,
   pinFixo = null,
+  pontoAtivo = null,
+  pontosComparados,
+  onPontoComparado,
+  onSoltarPonto,
   onPontoBuscado,
-  janelaDoHex = true,
+  onEstudarUnidade,
+  onGeometriaDesenhada,
   semLanding = false,
   imovelInicial = null,
   onImovelAberto,
@@ -203,10 +291,16 @@ export default function MapScreen({
   const [passoN, setPassoN] = useState(foto.passoN)
   const [metodologiaAberta, setMetodologiaAberta] = useState(false)
   const [selecionado, setSelecionado] = useState<string | null>(foto.selecionado)
+  /* A selecao veio da busca de um ponto (true) ou de um clique no hexagono (false)? E' o
+     que decide se a ficha do HEXAGONO abre — ver `lib/janela-hex`. Nasce `false`: a foto
+     guarda a selecao, e se ela era a de um ponto, o efeito do `pontoAtivo` religa. */
+  const [selecaoDaBusca, setSelecaoDaBusca] = useState(false)
   const [gerando, setGerando] = useState(false)
   const [aviso, setAviso] = useState<string | null>(null)
 
-  // Busca por coordenada: solta um pin, marca o hexagono e habilita o estudo pontual.
+  /* Texto da busca do cabecalho. O `pin` local NAO e' mais o da busca (ela vira ponto
+     analisado, ver `onPontoBuscado`): sobrou para a unidade escolhida no seletor e para o
+     imovel que chega da aba de imoveis, que marcam um lugar sem pedir analise. */
   const [busca, setBusca] = useState(foto.busca)
   const [pin, setPin] = useState<SearchPin | null>(foto.pin)
   const [buscaErro, setBuscaErro] = useState<string | null>(null)
@@ -255,9 +349,111 @@ export default function MapScreen({
      existe quando o backend serviu os campos do modelo novo — base velha desenha o mapa
      de sempre, sem cobertura. */
   const raio1km = comparativoRaio != null && passoN === CAMADA_DO_RAIO
-  /* Regua do mapa (BLK-CONC-MEDIR): comeca DESLIGADA. Ligada, o clique mede em vez de
-     selecionar hexagono — por isso e' chave explicita e nao um gesto escondido. */
-  const [medindo, setMedindo] = useState(false)
+  /* A FERRAMENTA do trilho, UM estado so' (`lib/ferramenta-mapa`): a regua, e depois
+     "Selecionar ponto" e "Analisar geometria". Comeca DESLIGADA. Ligada, o clique e' da
+     ferramenta e nao seleciona hexagono — por isso e' chave explicita e nao um gesto
+     escondido. Era o booleano `medindo` (BLK-CONC-MEDIR); com tres ferramentas disputando
+     o mesmo clique, tres booleanos deixariam ligar duas ao mesmo tempo. */
+  /* A ferramenta e o painel de camadas andam JUNTOS desde 2026-10-16: o painel do desenho
+     É a ferramenta "geometria" ligada e divide o lugar com o de camadas — um fecha o outro.
+     A regra (e por que abrir as camadas PAUSA o desenho em vez de apagá-lo) mora em
+     `lib/painel-trilho`, testada; aqui só se despacha. */
+  const [trilho, setTrilho] = useState<EstadoTrilho>({ camadasAberto: false, ferramenta: 'nenhuma' })
+  const ferramenta: FerramentaMapa = trilho.ferramenta
+  const acaoTrilho = useCallback((a: AcaoTrilho) => setTrilho((e) => transicaoTrilho(e, a)), [])
+  const alternarRegua = useCallback(
+    () => acaoTrilho({ tipo: 'alternar-ferramenta', alvo: 'regua' }),
+    [acaoTrilho],
+  )
+  /* "Selecionar ponto" (decisao do dono, 2026-10-14): com ela ligada, cada clique no mapa
+     ACRESCENTA um ponto a' comparacao pelo MESMO caminho da lupa (`aplicarPonto` ->
+     `onPontoBuscado` -> `/api/ponto`), e a ferramenta continua ligada para o proximo
+     clique. Ponto de outro municipio troca o mapa de municipio pelo fluxo que ja' existe
+     (`local` da ficha -> `App`), sem nada novo aqui. */
+  const alternarPonto = useCallback(
+    () => acaoTrilho({ tipo: 'alternar-ferramenta', alvo: 'ponto' }),
+    [acaoTrilho],
+  )
+  /* "Analisar geometria" (DEC-071, fase 1): com ela ligada, cada clique no mapa acrescenta
+     um VÉRTICE; a área fecha no 1º vértice ou em "Concluir" e vira um item da comparação.
+     O desenho (os vértices) mora AQUI, e não no `HexMap`, porque é daqui a barra de
+     Concluir/Desfazer/Cancelar — o mapa só desenha o provisório e repassa o clique. As
+     regras (fechar por pixels, área, autointerseção, limites) são de `lib/geometria-desenho`. */
+  const alternarGeometria = useCallback(
+    () => acaoTrilho({ tipo: 'alternar-ferramenta', alvo: 'geometria' }),
+    [acaoTrilho],
+  )
+  const [vertices, setVertices] = useState<Coord[]>([])
+  /** Recusa do último gesto (concluir inválido, teto de vértices) — some no próximo clique. */
+  const [avisoDesenho, setAvisoDesenho] = useState<string | null>(null)
+  /* Desligar a ferramenta NÃO apaga mais o desenho (2026-10-16): fechar o painel, abrir as
+     camadas, tocar o polígono de novo ou ligar outra ferramenta PAUSAM — os vértices ficam
+     no mapa, esmaecidos, e o botão do polígono retoma de onde parou. Quem apaga é
+     `encerrarDesenho` com um motivo que não seja pausa (`rascunhoSobrevive`): Cancelar, Esc
+     com o desenho ligado, Concluir e a troca de território (efeito logo abaixo). A recusa
+     pendente some ao pausar: ela falava do gesto anterior. */
+  useEffect(() => {
+    if (ferramenta !== 'geometria') setAvisoDesenho(null)
+  }, [ferramenta])
+  const encerrarDesenho = useCallback(
+    (motivo: MotivoFimDoDesenho) => {
+      acaoTrilho({ tipo: 'desligar-ferramenta' })
+      if (!rascunhoSobrevive(motivo)) setVertices([])
+      setAvisoDesenho(null)
+    },
+    [acaoTrilho],
+  )
+  /* Trocar de município/UF também: o polígono é de um território, e os vértices de uma
+     cidade desenhados sobre o mapa de outra são o "número certo no lugar errado" da régua. */
+  useEffect(() => {
+    setVertices([])
+    setAvisoDesenho(null)
+  }, [uf, municipio])
+
+  const avaliacaoDesenho = avaliarDesenho(vertices)
+  function concluirDesenho(vs: Coord[] = vertices) {
+    const a = avaliarDesenho(vs)
+    if (!a.podeConcluir) {
+      setAvisoDesenho(a.motivo)
+      return
+    }
+    onGeometriaDesenhada?.(paraGeoJson(vs).coordinates)
+    /* A área desenhada é UM gesto completo: a ferramenta desliga ao concluir, e o próximo
+       clique no mapa volta a ser o de sempre (ou o da ficha que acabou de abrir). Para
+       outra área, liga de novo. */
+    encerrarDesenho('concluir')
+  }
+  function cliqueNoDesenho(c: Coord, mpp: number) {
+    const acao = interpretarClique(vertices, c, mpp)
+    if (acao.tipo === 'fechar') {
+      concluirDesenho()
+      return
+    }
+    if (acao.tipo === 'cheio') {
+      setAvisoDesenho(`Máximo de ${MAX_VERTICES} vértices. Conclua a área ou desfaça um vértice.`)
+      return
+    }
+    setAvisoDesenho(null)
+    setVertices((vs) => adicionarVertice(vs, c))
+  }
+
+  /* Esc DESLIGA a ferramenta ligada — e so' ela. Escuta na fase de CAPTURA e para a
+     propagacao: sem isso o mesmo Esc tambem fecharia a janela da ficha que estiver por
+     cima (`JanelaFicha` fecha no Esc), e quem so' queria parar de marcar pontos perderia
+     a ficha que estava lendo. Sem ferramenta, o Esc segue o caminho de sempre. */
+  useEffect(() => {
+    if (ferramenta === 'nenhuma') return
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      /* Com o desenho ligado, Esc CANCELA (apaga os vértices) — é o que o título do botão
+         promete. Com as outras, só desliga. */
+      if (ferramenta === 'geometria') encerrarDesenho('esc')
+      else acaoTrilho({ tipo: 'desligar-ferramenta' })
+    }
+    window.addEventListener('keydown', aoTeclar, true)
+    return () => window.removeEventListener('keydown', aoTeclar, true)
+  }, [ferramenta, encerrarDesenho, acaoTrilho])
 
   /* Legenda das faixas: VISIVEL por padrao, e agora com chave propria no trilho de
      camadas. Ela sempre foi obrigatoria na tela — quem esconde a legenda de um mapa
@@ -265,6 +461,51 @@ export default function MapScreen({
      o operador que ja sabe a regua e quer o territorio embaixo dela, tipicamente para
      tirar print. Nao entra no `EstadoMapa`: e' preferencia do momento, nao da analise. */
   const [legendaVisivel, setLegendaVisivel] = useState(true)
+  /* CORES DOS HEXÁGONOS (pedido do Vinicius, 2026-10-16): ligadas por padrão. Desligadas, o
+     mapa fica só com a grade (contorno discreto, ainda clicável) — para ler pins, pontos e a
+     área desenhada sobre o basemap limpo. A legenda sai junto: ela traduz cor, e sem cor
+     não explica nada. Mesma política das outras chaves do painel: estado do momento, sem
+     persistência, e fora do `EstadoMapa`. A captura do PDF não lê esta chave (ela já
+     esvazia a coropleta por conta própria). */
+  const [coresHex, setCoresHex] = useState(true)
+
+  /* O TRILHO SAI DE BAIXO DAS JANELAS (pedido do Vinicius, 2026-10-14): a ficha do
+     hexágono e a do ponto nascem à esquerda e cobriam o trilho inteiro — Selecionar ponto,
+     régua, geometria, camadas e legenda sumiam justamente com a ficha aberta. A regra de
+     quanto andar mora em `lib/ocupacao-janelas` (testada); aqui só se mede e aplica.
+
+     A posição NATURAL sai de `offsetLeft`/`offsetTop`, que ignoram o `transform` — medir
+     pelo `getBoundingClientRect` do próprio trilho no meio da animação devolveria a
+     posição já deslocada (ou meio deslocada) e o trilho correria atrás de si mesmo.
+     Callback ref (estado), e não `useRef`: o trilho só monta quando os dados chegam, e o
+     efeito precisa rodar de novo nesse momento. */
+  const [trilhoEl, setTrilhoEl] = useState<HTMLDivElement | null>(null)
+  const janelasNaTela = useSyncExternalStore(assinarJanelas, janelasAbertas)
+  const [dxTrilho, setDxTrilho] = useState(0)
+  useLayoutEffect(() => {
+    if (!trilhoEl) return
+    const medir = () => {
+      const pai = trilhoEl.offsetParent as HTMLElement | null
+      if (!pai) return
+      const base = pai.getBoundingClientRect()
+      const natural = {
+        esquerda: base.left + trilhoEl.offsetLeft,
+        topo: base.top + trilhoEl.offsetTop,
+        largura: trilhoEl.offsetWidth,
+        altura: trilhoEl.offsetHeight,
+      }
+      setDxTrilho(deslocamentoDoTrilho(natural, janelasNaTela, window.innerWidth))
+    }
+    medir()
+    /* O trilho muda de tamanho sozinho (painel de camadas, legenda, barra do desenho). */
+    const obs = new ResizeObserver(medir)
+    obs.observe(trilhoEl)
+    window.addEventListener('resize', medir)
+    return () => {
+      obs.disconnect()
+      window.removeEventListener('resize', medir)
+    }
+  }, [trilhoEl, janelasNaTela])
 
   /* Pins das academias INDEPENDENTES com score (BLK-MA-15). Comeca DESLIGADO pela mesma razao da
      chave de raio: o piloto abre identico ao de hoje. Sao ate ~1,3 mil pontos numa capital, e
@@ -440,16 +681,35 @@ export default function MapScreen({
   /* Porta única de abertura: o seletor e o pin do mapa passam os dois por aqui. O pin marca
      a unidade e a câmera voa até ele com o zoom do hexágono (é o `searchPin` do `HexMap`),
      mas o hexágono NÃO é selecionado — senão a ficha dele subiria junto com a da unidade,
-     duas janelas falando do mesmo ponto. Unidade sem coordenada abre a ficha e não voa. */
+     duas janelas falando do mesmo ponto. Unidade sem coordenada abre a ficha e não voa.
+
+     Com um ponto em análise, o pin dele VENCE o pin local (`searchPin`): por isso a unidade
+     avisa o `App` (`onSoltarPonto`), que tira do ponto o comando da câmera. Sem o aviso, a
+     ficha da unidade abria mas a câmera nunca chegava a ela. */
   const abrirUnidade = useCallback(
     (u: { id: string; nome: string; lat: number | null; lng: number | null; semRede?: boolean }) => {
       setUnidadeAberta({ id: u.id, nome: u.nome, semRede: u.semRede ?? false })
       if (u.lat == null || u.lng == null) return
       setBusca('')
       setBuscaErro(null)
+      onSoltarPonto?.()
       setPin({ lat: u.lat, lng: u.lng, hexId: latLngToCell(u.lat, u.lng, 7) })
     },
-    [],
+    [onSoltarPonto],
+  )
+
+  /* "Estudar a região desta unidade": fecha a ficha da unidade (a de ponto abre no lugar,
+     à esquerda — duas janelas sobre o mesmo lugar seriam duas leituras dele) e pede o
+     ponto no estudo da unidade. `undefined` sem o pedido do `App`: o botão não aparece. */
+  const estudarRegiaoDaUnidade = useMemo(
+    () =>
+      onEstudarUnidade
+        ? (lat: number, lng: number) => {
+            setUnidadeAberta(null)
+            onEstudarUnidade(lat, lng)
+          }
+        : undefined,
+    [onEstudarUnidade],
   )
 
   /* Geometria do raio: buscada SOB DEMANDA, so' quando a CAMADA 3 esta aberta. Fora do
@@ -597,7 +857,38 @@ export default function MapScreen({
   useEffect(() => {
     if (!pinFixo) return
     setSelecionado(pinFixo.hexId)
+    // Destino de LISTA: a ficha do hexagono abre (e' o que o operador pediu na lista).
+    setSelecaoDaBusca(false)
   }, [pinFixo])
+
+  /* O PONTO ATIVO tambem seleciona o hexagono dele — mas marcando que a selecao veio da
+     BUSCA, e por isso a ficha do hexagono NAO abre (`lib/janela-hex`): a pergunta e' sobre
+     o ponto, e a resposta e' a ficha de ponto. Clicar depois no proprio hexagono desliga
+     a marca e abre a ficha dele, nas duas entradas do mapa.
+
+     Mesma regra de ordem do efeito acima: depois do que zera a tela ao trocar de
+     territorio. E depois do `pinFixo` tambem, para o ponto vencer o destino quando os dois
+     chegam juntos (a mesma precedencia do `searchPin`). */
+  /* Na REMONTAGEM (volta da Viabilidade) o mesmo pin ja' existia: se a foto devolveu a
+     selecao de OUTRO hexagono — o que o operador clicou depois do ponto e levou ao
+     Simulador —, ela fica, e a ficha dele volta aberta (`pontoSeleciona`). Identidade e
+     nao flag one-shot, pelo mesmo motivo do voo no `HexMap` (StrictMode roda o efeito duas
+     vezes na montagem). */
+  const pontoDaMontagem = useRef(pontoAtivo)
+  useEffect(() => {
+    if (!pontoAtivo) return
+    if (
+      !pontoSeleciona({
+        pinDaMontagem: pontoAtivo === pontoDaMontagem.current,
+        selecaoRestaurada: foto.selecionado,
+        hexDoPonto: pontoAtivo.hexId,
+      })
+    ) {
+      return
+    }
+    setSelecionado(pontoAtivo.hexId)
+    setSelecaoDaBusca(true)
+  }, [pontoAtivo, foto.selecionado])
 
 
   // Espelho SEMPRE atual do estado, mantido num ref. Existe para o cleanup do efeito
@@ -738,6 +1029,7 @@ export default function MapScreen({
   const [voo, setVoo] = useState<{ hexId: string; n: number } | null>(null)
   const selecionarDaLista = useCallback((hexId: string) => {
     setSelecionado(hexId)
+    setSelecaoDaBusca(false)
     setPin(null)
     setVoo((v) => ({ hexId, n: (v?.n ?? 0) + 1 }))
   }, [])
@@ -905,12 +1197,13 @@ export default function MapScreen({
     })
   }, [])
 
-  function aplicarPonto(lat: number, lng: number) {
-    const hexId = latLngToCell(lat, lng, 7)
+  /* A busca resolveu: vira ponto analisado, e so'. O pin (provisorio e depois o da ficha)
+     e a selecao do hexagono voltam pelo `pontoAtivo` — uma regra so' de pin, em vez de um
+     pin local que convivia com o da ficha e trazia o cartao "Estudo pontual" junto. Quem
+     leva o ponto a' Viabilidade agora e' o "Simulador" da ficha de ponto. */
+  function aplicarPonto(lat: number, lng: number, doMapa = false) {
     setBuscaErro(null)
-    setPin({ lat, lng, hexId })
-    setSelecionado(hexId)
-    onPontoBuscado?.(lat, lng)
+    onPontoBuscado(lat, lng, doMapa)
   }
 
   async function buscarCoordenada() {
@@ -940,44 +1233,6 @@ export default function MapScreen({
     } finally {
       setBuscando(false)
     }
-  }
-
-  function estudoPontualDoPin() {
-    if (!pin) return
-    const real = porId.get(pin.hexId)
-    const hex: Hex = real ?? {
-      id: pin.hexId,
-      lat: pin.lat,
-      lng: pin.lng,
-      m1: null,
-      censo: null,
-      hib: null,
-      res: null,
-      oferta: null,
-      sam: null,
-      pop: null,
-      renda: null,
-      renda_dom: null,
-      faixa: null,
-      conc: 0,
-      ultra: 0,
-      mun: null,
-      cres_hex_taxa: null,
-      cres_hex_classe: null,
-    }
-    onAnalisarPonto({
-      hex,
-      rotulo: coord(pin.lat, pin.lng),
-      municipio: dados?.municipio ?? '',
-      uf: dados?.uf ?? uf,
-      // A coordenada BUSCADA viaja junto. `hex` aqui costuma ser o `real` do dataset,
-      // cujo lat/lng é o CENTROIDE do hexágono — usá-lo no relatório tirava a foto de
-      // satélite e o mapa de quadra de até ~1,5 km do imóvel (e, na orla, jogava o
-      // ponto no mar -> "fora do Brasil"). O hexágono continua o mesmo: por construção
-      // `latLngToCell(pin.lat, pin.lng, 7) === pin.hexId === hex.id`.
-      lat: pin.lat,
-      lng: pin.lng,
-    })
   }
 
   async function gerarRelatorioMunicipal() {
@@ -1031,18 +1286,51 @@ export default function MapScreen({
      nao com a permissao. */
   const chavesDoMapa = useMemo<ChaveDeCamada[]>(() => {
     const lista: ChaveDeCamada[] = [
+      /* ANTES da regua, como no trilho (ordem do dono): o painel e o trilho falam a mesma
+         lista na mesma ordem. */
+      {
+        id: 'selecionar-ponto',
+        icone: 'alvo',
+        titulo: 'Selecionar ponto',
+        sub: ferramenta === 'ponto' ? 'clique no mapa para analisar' : 'clique para ativar',
+        ligado: ferramenta === 'ponto',
+        onToggle: alternarPonto,
+        cor: 'var(--ac-text)',
+        corTexto: 'var(--ac-chip)',
+        corRealce: 'var(--ac-a16)',
+      },
       {
         id: 'medir',
         icone: 'regua',
         titulo: 'Medir distância',
-        sub: medindo ? 'clique 2 pontos no mapa' : 'clique para ativar',
-        ligado: medindo,
-        onToggle: () => setMedindo((v) => !v),
+        sub: ferramenta === 'regua' ? 'clique 2 pontos no mapa' : 'clique para ativar',
+        ligado: ferramenta === 'regua',
+        onToggle: alternarRegua,
         cor: 'var(--ac-text)',
         corTexto: 'var(--ac-chip)',
         corRealce: 'var(--ac-a16)',
       },
     ]
+    /* "Analisar geometria" DEPOIS da régua, como no trilho (ordem do dono). Só quando há
+       quem receba a área — a mesma condição do botão do trilho. */
+    if (onGeometriaDesenhada) {
+      lista.push({
+        id: 'analisar-geometria',
+        icone: 'poligono',
+        titulo: 'Analisar geometria',
+        sub:
+          ferramenta === 'geometria'
+            ? 'clique os vértices da área'
+            : desenhoPausado(ferramenta, vertices.length)
+              ? `desenho pausado · ${vertices.length} ${vertices.length === 1 ? 'vértice' : 'vértices'} · clique para retomar`
+              : 'clique para ativar',
+        ligado: ferramenta === 'geometria',
+        onToggle: alternarGeometria,
+        cor: 'var(--ac-text)',
+        corTexto: 'var(--ac-chip)',
+        corRealce: 'var(--ac-a16)',
+      })
+    }
 
     /* So' no drill-down: na visao de UF a lista e' de cidades, e comparar cidades tem
        tela propria. */
@@ -1061,6 +1349,20 @@ export default function MapScreen({
         corRealce: 'var(--ac-a16)',
       })
     }
+
+    /* CORES DOS HEXÁGONOS — sempre presente (não depende de recorte): é a camada base do
+       mapa. Antes das camadas de pontos, porque é o fundo sobre o qual elas são lidas. */
+    lista.push({
+      id: 'cores-hex',
+      icone: 'hexagono',
+      titulo: 'Cores dos hexágonos',
+      sub: coresHex ? 'mapa de calor das faixas · visível' : 'só a grade, sem cor',
+      ligado: coresHex,
+      onToggle: () => setCoresHex((v) => !v),
+      cor: 'var(--ac-text)',
+      corTexto: 'var(--ac-chip)',
+      corRealce: 'var(--ac-a16)',
+    })
 
     /* Academias de REDE — as bandeiras das cadeias. Vem ANTES das independentes porque e' a
        camada instalada (na sobreposicao do mapa a rede vence), e some com o dado como as
@@ -1189,7 +1491,13 @@ export default function MapScreen({
 
     return lista
   }, [
-    medindo,
+    ferramenta,
+    vertices.length,
+    coresHex,
+    alternarRegua,
+    alternarPonto,
+    alternarGeometria,
+    onGeometriaDesenhada,
     nivelUf,
     modoCenario,
     cenario.length,
@@ -1286,7 +1594,17 @@ export default function MapScreen({
           selecionado={modoCenario ? null : selecionado}
           cenario={cenario}
           raio1km={raio1km}
-          medindo={medindo}
+          medindo={ferramenta === 'regua'}
+          selecionandoPonto={ferramenta === 'ponto'}
+          /* `doMapa`: o ponto clicado já está na tela — o pin dele não voa nem aproxima, e a
+             ferramenta (que fica ligada) segue marcando os próximos sem perder o bairro. */
+          onSelecionarPonto={(lat, lng) => aplicarPonto(lat, lng, true)}
+          desenhando={ferramenta === 'geometria'}
+          verticesDesenho={vertices}
+          coresHex={coresHex}
+          onCliqueDesenho={cliqueNoDesenho}
+          pontosComparados={pontosComparados}
+          onPontoClicado={onPontoComparado}
           independentes={verIndependentes ? independentes?.itens : undefined}
           imoveis={verImoveis ? imoveisNoMapa : undefined}
           onImovel={abrirImovel}
@@ -1316,7 +1634,13 @@ export default function MapScreen({
           }
           onCamera={publicarCamera}
           onSelecionar={(h) => {
+            /* Com ferramenta ligada o clique e' dela (`lib/ferramenta-mapa`). O `HexMap` ja'
+               nao chama isto com a regua ligada; a guarda aqui vale tambem para as
+               ferramentas novas do trilho, quem quer que as ligue. */
+            if (!cliqueSelecionaHex(ferramenta)) return
             setPin(null)
+            // Clique DIRETO: a ficha do hexagono abre, mesmo que seja o hexagono do ponto.
+            setSelecaoDaBusca(false)
             if (modoCenario) {
               setCenario((cs) =>
                 cs.includes(h.id) ? cs.filter((x) => x !== h.id) : [...cs, h.id],
@@ -1325,7 +1649,10 @@ export default function MapScreen({
               setSelecionado(h.id)
             }
           }}
-          searchPin={pinFixo ?? pin}
+          /* A regra unica de precedencia (ver `pontoAtivo`): o ponto analisado vence o
+             destino de lista, que vence o pin local da unidade/imovel. Escolher uma
+             unidade solta o ponto (`onSoltarPonto`), e entao o pin local passa a valer. */
+          searchPin={pontoAtivo ?? pinFixo ?? pin}
           voarPara={voo}
           pedidoCaptura={pedidoCaptura}
           onCapturas={aoCapturarMapas}
@@ -1461,13 +1788,16 @@ export default function MapScreen({
               color: 'var(--tx-strong)',
             }}
           />
-          {pin && (
+          {(pin || busca) && (
             <button
               type="button"
               aria-label="Limpar busca"
+              /* Limpa a CAIXA (e o pin local de unidade/imovel). O ponto que a busca gerou
+                 continua na comparacao: quem o tira de la' e' o painel dela. */
               onClick={() => {
                 setPin(null)
                 setBusca('')
+                setBuscaErro(null)
                 setSelecionado(null)
               }}
               style={{ color: 'var(--tx-muted)', font: '500 15px/1 var(--f-ui)', padding: 0 }}
@@ -1610,6 +1940,7 @@ export default function MapScreen({
       >
         {dados && passo && (
           <div
+            ref={setTrilhoEl}
             style={{
               position: 'absolute',
               left: 16,
@@ -1618,61 +1949,19 @@ export default function MapScreen({
               flexDirection: 'column',
               gap: 8,
               pointerEvents: 'none',
+              /* Anda para a direita das janelas abertas (ver `dxTrilho`). */
+              transform: dxTrilho ? `translateX(${dxTrilho}px)` : undefined,
+              transition: 'transform .22s cubic-bezier(.4,0,.2,1)',
             }}
           >
-            {pin && (
-              <div
-                style={{
-                  pointerEvents: 'auto',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  background: 'var(--surf-panel)',
-                  border: '1px solid var(--ac-a30)',
-                  borderRadius: 'var(--r-md)',
-                  padding: '9px 11px',
-                  backdropFilter: 'blur(16px)',
-                  maxWidth: 340,
-                }}
-              >
-                <span style={{ minWidth: 0 }}>
-                  <span
-                    className="num"
-                    style={{ display: 'block', font: '600 12px/1 var(--f-num)', color: 'var(--tx-max)' }}
-                  >
-                    {coord(pin.lat, pin.lng)}
-                  </span>
-                  <span
-                    className="num"
-                    style={{ display: 'block', font: '400 10px/1.2 var(--f-num)', color: 'var(--tx-sub)', marginTop: 3 }}
-                  >
-                    hex {pin.hexId}
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  onClick={estudoPontualDoPin}
-                  style={{
-                    flexShrink: 0,
-                    background: 'var(--ac)',
-                    color: 'var(--ac-on)',
-                    font: '700 12px/1 var(--f-ui)',
-                    padding: '9px 12px',
-                    borderRadius: 9,
-                    boxShadow: 'var(--ac-glow)',
-                  }}
-                >
-                  Estudo pontual →
-                </button>
-              </div>
-            )}
             {/* ---------------- Trilho + painel "Camadas do mapa" ----------------
                 O desenho e o porque moram em `components/BarraCamadas`. Aqui fica so a
                 LIGACAO: quais chaves existem neste recorte, o texto de cada uma e a
                 identidade de cor de cada camada.
 
-                A ORDEM E' FIXA e comeca pela regua — ela e' a unica que nao depende de
-                camada, nivel nem recorte, entao e' a unica que esta SEMPRE la'. As
+                A ORDEM E' FIXA e comeca pelas ferramentas do clique ("Selecionar ponto" e
+                a regua, nessa ordem — a do dono, 2026-10-14) — elas nao dependem de
+                camada, nivel nem recorte, entao sao as que estao SEMPRE la'. As
                 condicionais entram depois; assim o que existe sempre nunca muda de lugar
                 quando o que e' condicional aparece ou some.
 
@@ -1682,7 +1971,17 @@ export default function MapScreen({
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
               <BarraCamadas
                 chaves={chavesDoMapa}
-                regua={{ ligado: medindo, onToggle: () => setMedindo((v) => !v) }}
+                selecionarPonto={{ ligado: ferramenta === 'ponto', onToggle: alternarPonto }}
+                regua={{ ligado: ferramenta === 'regua', onToggle: alternarRegua }}
+                geometria={
+                  onGeometriaDesenhada
+                    ? {
+                        ligado: ferramenta === 'geometria',
+                        onToggle: alternarGeometria,
+                        pausado: desenhoPausado(ferramenta, vertices.length) ? vertices.length : 0,
+                      }
+                    : null
+                }
                 comparar={
                   nivelUf
                     ? null
@@ -1692,7 +1991,89 @@ export default function MapScreen({
                       }
                 }
                 legendaVisivel={legendaVisivel}
+                legendaDisponivel={coresHex}
                 onLegenda={() => setLegendaVisivel((v) => !v)}
+                camadasAberto={trilho.camadasAberto}
+                onAlternarCamadas={() => acaoTrilho({ tipo: 'alternar-camadas' })}
+                onFecharCamadas={() => acaoTrilho({ tipo: 'fechar-camadas' })}
+                /* ---------------- Painel do DESENHO ("Analisar geometria", DEC-071) ----------------
+                   Na MESMA caixa e no MESMO lugar do painel de camadas (pedido do Vinicius,
+                   2026-10-16) — antes era uma barra própria empilhada acima do trilho, com outra
+                   cara. Abre com a ferramenta e só com ela (`lib/painel-trilho`); o × PAUSA (os
+                   vértices ficam no mapa, e o botão do polígono retoma), Cancelar e Esc apagam.
+                   A área vai AO VIVO (o operador quer saber se cabe nos limites antes de
+                   concluir), e o "Concluir" travado diz POR QUÊ em texto — botão cinza mudo se
+                   lê como defeito. */
+                painelDesenho={
+                  ferramenta === 'geometria'
+                    ? {
+                        onFechar: () => encerrarDesenho('pausa'),
+                        conteudo: (
+                          <div style={{ display: 'grid', gap: 10 }}>
+                            <LinhaDeEstado
+                              icone="poligono"
+                              titulo="Área desenhada"
+                              sub={
+                                <>
+                                  {avaliacaoDesenho.areaKm2 != null
+                                    ? formatarKm2(avaliacaoDesenho.areaKm2)
+                                    : '—'}
+                                  {' · '}
+                                  {vertices.length} {vertices.length === 1 ? 'vértice' : 'vértices'}
+                                </>
+                              }
+                              cor="var(--gr-verde)"
+                              corTexto="var(--gr-verde)"
+                              corRealce="color-mix(in srgb, var(--gr-verde) 14%, transparent)"
+                            />
+                            <span
+                              style={{
+                                padding: '0 12px',
+                                font: '400 11.5px/1.45 var(--f-ui)',
+                                color: 'var(--tx-sub)',
+                              }}
+                            >
+                              {vertices.length === 0
+                                ? `Clique no mapa para marcar o 1º vértice. Entre 0,1 e ${AREA_MAX_KM2} km², até ${MAX_VERTICES} vértices e até ${DIAGONAL_MAX_KM} km de ponta a ponta; faixa estreita não é aceita.`
+                                : 'Clique para o próximo vértice; feche clicando no 1º ou em Concluir. Fechar este painel pausa o desenho sem apagá-lo.'}
+                            </span>
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '0 12px 2px' }}>
+                              <Botao
+                                onClick={() => concluirDesenho()}
+                                disabled={!avaliacaoDesenho.podeConcluir}
+                                title={avaliacaoDesenho.motivo ?? 'Analisar a área desenhada'}
+                              >
+                                Concluir
+                              </Botao>
+                              <Botao
+                                variante="ghost"
+                                onClick={() => {
+                                  setAvisoDesenho(null)
+                                  setVertices((vs) => desfazerVertice(vs))
+                                }}
+                                disabled={vertices.length === 0}
+                              >
+                                Desfazer
+                              </Botao>
+                              <Botao
+                                variante="ghost"
+                                onClick={() => encerrarDesenho('cancelar')}
+                                title="Apagar o desenho e desligar a ferramenta (Esc)"
+                              >
+                                Cancelar
+                              </Botao>
+                            </div>
+                          </div>
+                        ),
+                        rodape:
+                          (avisoDesenho ?? (vertices.length > 0 ? avaliacaoDesenho.motivo : null)) ? (
+                            <RodapeDoPainel tom={avisoDesenho ? 'erro' : 'neutro'}>
+                              {avisoDesenho ?? avaliacaoDesenho.motivo}
+                            </RodapeDoPainel>
+                          ) : null,
+                      }
+                    : null
+                }
                 /* A espera do raio de 1 km. Ela nasceu quando o raio deixou de ser chave
                    e virou o padrao da camada 3: a geometria custa ~2,4 s numa UF grande e
                    agora e' buscada sem ninguem pedir, entao o unico jeito honesto de
@@ -1700,7 +2081,8 @@ export default function MapScreen({
                 aviso={carregandoRaio ? 'Carregando o raio de 1 km das concorrentes…' : null}
               />
 
-              {legendaVisivel && (
+              {/* Sem as cores dos hexágonos a legenda sai junto: ela só traduz cor. */}
+              {legendaVisivel && coresHex && (
                 <ScoreLegend
                   passoN={passo.n}
                   /* Explica o aro indigo SO' quando ele esta desenhado. Legenda que
@@ -1800,9 +2182,27 @@ export default function MapScreen({
           camada ativa). Comparar dois bairros exigia trocar de camada quatro vezes.
 
           Some no modo de comparação: ali quem manda é o conjunto, e duas janelas dizendo
-          coisas diferentes sobre a mesma seleção competiriam entre si. */}
+          coisas diferentes sobre a mesma seleção competiriam entre si.
+
+          Também não abre quando a seleção veio da BUSCA de um ponto (`lib/janela-hex`):
+          ali a ficha é a do ponto. O clique direto num hexágono abre, nas duas entradas.
+
+          À ESQUERDA, sempre, lado a lado com a do imóvel e a da unidade (que nascem à
+          direita). Com pontos em análise a ficha de ponto também nasce à esquerda, e com o
+          clique em hexágono liberado as duas podem ficar abertas juntas: esta nasce em
+          DEGRAU (`degrauSobreFichaDePonto`), deixando à vista a barra de título da de
+          baixo. Mandá-la para a direita a punha em cima da do imóvel e da unidade. */}
       <JanelaFicha
-        aberta={janelaDoHex && hexSelecionado != null && !modoCenario}
+        aberta={
+          hexSelecionado != null &&
+          janelaDoHexVisivel({
+            selecionado,
+            hexDaBusca: pontoAtivo?.hexId ?? null,
+            selecaoDaBusca,
+            modoCenario,
+          })
+        }
+        degrau={degrauSobreFichaDePonto(pontosComparados?.length ?? 0)}
         /* BAIRRO, o MESMO nome que o painel da direita usa na lista. O titulo saia como
            o municipio, entao clicar em "Aracaré" no ranking abria uma ficha chamada
            "Itaquaquecetuba" — e o item de baixo abria outra com o mesmo nome (Juan,
@@ -1882,15 +2282,22 @@ export default function MapScreen({
         recuoInferior={96}
       >
         {unidadeAberta && (
-          <FichaUnidadeNoMapa unidadeId={unidadeAberta.id} semRede={unidadeAberta.semRede ?? false} />
+          <FichaUnidadeNoMapa
+            unidadeId={unidadeAberta.id}
+            semRede={unidadeAberta.semRede ?? false}
+            onEstudarRegiao={estudarRegiaoDaUnidade}
+          />
         )}
       </JanelaFicha>
 
       {/* ---------------- Janela da COMPARAÇÃO ----------------
-          À ESQUERDA de propósito: a ficha do hexágono nasce à direita, e duas janelas no
-          mesmo canto abririam uma sobre a outra. Arrastar continua livre para as duas. */}
+          À ESQUERDA, a âncora padrão. Ela não convive com a ficha do hexágono, que some no
+          modo de comparação — mas convive com a ficha de PONTO, que também nasce à
+          esquerda nas duas entradas: com pontos na lista, nasce em degrau sobre ela, como
+          a ficha do hexágono. Arrastar continua livre para todas. */}
       <JanelaFicha
         aberta={modoCenario}
+        degrau={degrauSobreFichaDePonto(pontosComparados?.length ?? 0)}
         titulo="Comparando hexágonos"
         subtitulo={`${cenario.length} de ${MAX_COMPARADOS} selecionados`}
         onFechar={() => {
