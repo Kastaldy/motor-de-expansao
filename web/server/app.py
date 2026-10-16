@@ -6640,8 +6640,12 @@ def _criterios_do_ponto(
 
 
 @app.get("/api/ponto")
-def ponto(lat: float, lng: float) -> dict[str, Any]:
+def ponto(lat: float, lng: float, excluir_ultra_proxima: bool = False) -> dict[str, Any]:
     """Ficha de UM ponto: censo real no raio de 1,0 km, mais mercado quando houver.
+
+    `excluir_ultra_proxima` (emenda da DEC-070, default False): ESTUDO DA UNIDADE ULTRA. O
+    consumo da unidade Ultra a ate' 150 m do ponto sai do mercado (so' ela; as outras
+    seguem contando) e o bloco `mercado` declara o modo. Sem unidade na tolerancia -> 400.
 
     NÃO carrega a partição da UF. O mapa lê `hexagonos_dashboard_enriquecido/uf=XX`
     inteiro (até 15.000 hexes, >15 s na primeira vez — por isso o `TIMEOUT_LEITURA` de
@@ -6658,6 +6662,10 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
 
     READ-ONLY: nenhum score recalculado, nenhum artefato tocado.
     """
+    # Sem o parametro a chamada e' LITERALMENTE a de antes (quem substitui
+    # `_payload_ponto` em teste continua recebendo os mesmos args).
+    if excluir_ultra_proxima:
+        return _payload_ponto(lat, lng, excluir_ultra_proxima=True)
     return _payload_ponto(lat, lng)
 
 
@@ -6702,7 +6710,9 @@ def ponto_geometria(corpo: PontoGeometriaIn) -> dict[str, Any]:
     return _payload_ponto(desenho.lat, desenho.lng, desenho=desenho)
 
 
-def _payload_ponto(lat: float, lng: float, *, desenho: Any = None) -> dict[str, Any]:
+def _payload_ponto(
+    lat: float, lng: float, *, desenho: Any = None, excluir_ultra_proxima: bool = False
+) -> dict[str, Any]:
     """O corpo da ficha de ponto, comum ao `GET /api/ponto` e ao `POST /api/ponto/geometria`.
 
     `desenho` (`GeometriaDesenhada`, DEC-071) troca o raio pelo polígono. Sem ele, cada
@@ -6784,7 +6794,19 @@ def _payload_ponto(lat: float, lng: float, *, desenho: Any = None) -> dict[str, 
     # hexagono res-7 do ponto: grao misto, termo da Ultra escondido e Ultra contada em dobro).
     # Mesma funcao do PDF do piloto e do PDF da API/bot. DEC-071: com area desenhada, a
     # MESMA funcao no poligono (`mercado_raio.mercado_na_area` ja' aceita a geometria).
-    if desenho is None:
+    from motor_expansao.dashboard.mercado_raio import UnidadeUltraForaDaTolerancia
+
+    if desenho is None and excluir_ultra_proxima:
+        # Emenda da DEC-070: estudo da unidade Ultra. Sem unidade na tolerancia, 400 com o
+        # motivo -- cair no estudo de ponto em silencio poria o consumo dela de volta numa
+        # ficha que o operador pediu sem ele.
+        try:
+            mercado = _mercado_do_ponto(
+                lat, lng, cfg, res.get("pop_total_raio"), excluir_ultra_proxima=True
+            )
+        except UnidadeUltraForaDaTolerancia as exc:
+            raise HTTPException(400, str(exc)) from exc
+    elif desenho is None:
         mercado = _mercado_do_ponto(lat, lng, cfg, res.get("pop_total_raio"))
     else:
         mercado = _mercado_do_ponto(
@@ -7001,6 +7023,16 @@ def _payload_ponto(lat: float, lng: float, *, desenho: Any = None) -> dict[str, 
         "n_concorrentes_alcancam": _num(mercado.get("n_concorrentes_alcancam")),
         "n_ultra_alcancam": _num(mercado.get("n_ultra_alcancam")),
         "motivo_parcial": None if not tem_mercado else mercado.get("motivo"),
+        # Emenda da DEC-070. `modo_estudo` e' identificador cru ("ponto"/"unidade_ultra"),
+        # NAO acentuar. No estudo da unidade, `consumo_ultra` acima ja' e' o das OUTRAS
+        # Ultras, e `unidade_ultra_estudada.consumo_excluido` diz quanto saiu.
+        # `ultra_proxima` vem nos DOIS modos: e' o que a ficha usa para OFERECER a troca.
+        "modo_estudo": mercado.get("modo_estudo") or "ponto",
+        "declaracao_modo": mercado.get("declaracao_modo"),
+        "unidade_ultra_estudada": _ultra_do_mercado(
+            mercado.get("unidade_ultra_estudada"), com_consumo=True
+        ),
+        "ultra_proxima": _ultra_do_mercado(mercado.get("ultra_proxima")),
         "gate": {
             "passa": mercado.get("flag_sam"),
             "faixa_m1": _texto(mercado.get("faixa_oportunidade")),
@@ -7092,6 +7124,24 @@ def _payload_ponto(lat: float, lng: float, *, desenho: Any = None) -> dict[str, 
             "metodo": _texto(res.get("metodo")),
         }
     return payload
+
+
+def _ultra_do_mercado(info: Any, *, com_consumo: bool = False) -> dict[str, Any] | None:
+    """A unidade Ultra do bloco de mercado (estudada ou proxima), serializada para a tela."""
+    if not info:
+        return None
+    from motor_expansao.dashboard.mercado_raio import nome_curto_ultra
+
+    saida: dict[str, Any] = {
+        "ultra_id": _texto(info.get("ultra_id")),
+        "nome": nome_curto_ultra(info.get("nome")),
+        "dist_m": _num(info.get("dist_m")),
+    }
+    if com_consumo:
+        saida["consumo_excluido"] = _num(info.get("consumo_excluido"))
+        saida["capacidade_real"] = bool(info.get("capacidade_real"))
+        saida["tolerancia_m"] = _num(info.get("tolerancia_m"))
+    return saida
 
 
 @app.get("/api/municipios/{uf}")
@@ -10957,6 +11007,7 @@ async def relatorio_pontual(
     viabilidade_inputs_json: str | None = None,
     origem_centroide_hex: bool = False,
     so_estudo: bool = False,
+    excluir_ultra_proxima: bool = False,
     fotos: list[UploadFile] | None = None,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> Response:
@@ -10985,6 +11036,11 @@ async def relatorio_pontual(
     com o selo DEMOGRAFICO. As paginas da praca ("Pressao concorrencial" e "Como a cidade
     esta indo") FICAM: nao sao financeiras. Sem o parametro, comportamento identico ao de
     antes.
+
+    `excluir_ultra_proxima` (OPCIONAL, default False; emenda da DEC-070): o ESTUDO DA
+    UNIDADE ULTRA, o mesmo modo da ficha (`/api/ponto`). O mercado do PDF sai sem o
+    consumo da unidade Ultra a ate' 150 m do ponto, e o Big Numbers DECLARA isso. Vale com
+    e sem `so_estudo`. Sem unidade na tolerancia -> 400.
 
     Esta funcao so faz a parte ASSINCRONA (ler os uploads) e delega o resto ao
     threadpool — ver `_gerar_relatorio_pontual_pdf`.
@@ -11033,6 +11089,7 @@ async def relatorio_pontual(
             origem_centroide_hex,
             report_id,
             so_estudo,
+            excluir_ultra_proxima,
         )
 
 
@@ -11048,6 +11105,7 @@ def _gerar_relatorio_pontual_pdf(
     origem_centroide_hex: bool = False,
     report_id: str | None = None,
     so_estudo: bool = False,
+    excluir_ultra_proxima: bool = False,
 ) -> Response:
     """Corpo SINCRONO do Relatorio Pontual — roda no threadpool, nunca no event loop.
 
@@ -11169,8 +11227,19 @@ def _gerar_relatorio_pontual_pdf(
             mapas = None
 
     # DEC-070: mercado no RAIO de 1,0 km (mesma funcao da ficha e do PDF da API/bot).
+    from motor_expansao.dashboard.mercado_raio import UnidadeUltraForaDaTolerancia
+
     try:
-        residual = _mercado_do_ponto(lat, lng, cfg, result.get("pop_total_raio"))
+        if excluir_ultra_proxima:
+            # Emenda da DEC-070: estudo da unidade Ultra. O erro de tolerancia SOBE como
+            # 400: um PDF "sem o consumo da unidade" que saisse com ele seria o pior caso.
+            residual = _mercado_do_ponto(
+                lat, lng, cfg, result.get("pop_total_raio"), excluir_ultra_proxima=True
+            )
+        else:
+            residual = _mercado_do_ponto(lat, lng, cfg, result.get("pop_total_raio"))
+    except UnidadeUltraForaDaTolerancia as exc:
+        raise HTTPException(400, str(exc)) from exc
     except Exception:  # noqa: BLE001
         residual = None
 

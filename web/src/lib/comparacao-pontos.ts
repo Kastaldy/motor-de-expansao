@@ -23,6 +23,7 @@ import {
   type RotuloPartido,
 } from './comparacao'
 import { UNIDADE_MOEDA, num } from './format'
+import { sufixoDoModo } from './estudo-ultra'
 import type { PontoPayload } from './types'
 
 /**
@@ -281,7 +282,9 @@ export function rotuloDoPonto(p: PontoPayload): string {
      de um ponto qualquer dentro dela): ela se chama pelo que é. Duas áreas viram "Área
      desenhada #1" e "#2" pela regra comum de `rotulosUnicos`. */
   if (ehAreaDesenhada(p)) return ROTULO_AREA_DESENHADA
-  return nomeDoLugar(p.local) ?? `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`
+  /* O estudo da unidade Ultra (emenda da DEC-070) se diz no NOME, de forma discreta: é o
+     nome que a aba, a comparação, o PDF e o Simulador recebem. */
+  return (nomeDoLugar(p.local) ?? `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`) + sufixoDoModo(p)
 }
 
 /**

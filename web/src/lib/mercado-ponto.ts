@@ -70,7 +70,13 @@ function contagem(n: number | null | undefined, singular: string, plural: string
  */
 export function leituraDoMercado(m: PontoMercado): LeituraMercado {
   const nConc = contagem(m.n_concorrentes_alcancam, 'academia de rede alcança', 'academias de rede alcançam')
-  const nUltra = contagem(m.n_ultra_alcancam, 'unidade Ultra alcança', 'unidades Ultra alcançam')
+  /* Estudo da unidade Ultra (emenda da DEC-070): a parcela da Ultra já vem SEM a unidade
+     estudada — o rótulo diz "outras", senão "Consumo da Ultra 0" ao lado de uma unidade a
+     9 m se leria como erro. */
+  const daUnidade = m.modo_estudo === 'unidade_ultra'
+  const nUltra = daUnidade
+    ? contagem(m.n_ultra_alcancam, 'outra unidade Ultra alcança', 'outras unidades Ultra alcançam')
+    : contagem(m.n_ultra_alcancam, 'unidade Ultra alcança', 'unidades Ultra alcançam')
   const alvo = m.grao === 'geometria' ? 'a área' : 'o raio'
   const linhas: LinhaMercado[] = [
     { chave: 'sam', rotulo: 'Mercado potencial (SAM)', sinal: '', valor: m.sam, detalhe: null },
@@ -83,7 +89,7 @@ export function leituraDoMercado(m: PontoMercado): LeituraMercado {
     },
     {
       chave: 'consumo_ultra',
-      rotulo: 'Consumo da Ultra',
+      rotulo: daUnidade ? 'Consumo das outras Ultras' : 'Consumo da Ultra',
       sinal: '-',
       valor: m.consumo_ultra ?? null,
       detalhe: nUltra ? `${nUltra} ${alvo}` : null,

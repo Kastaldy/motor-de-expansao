@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 
-import { api, baixar, type ApiError } from '../lib/api'
+import { api, baixar, ApiError } from '../lib/api'
 import { rotuloDaRede } from '../lib/concorrentes'
 import {
   ETIQUETA_SEM_DADOS,
@@ -44,7 +44,14 @@ import { Botao } from './primitives'
  * DOIS RAIOS na mesma janela, e cada número diz o seu: o entorno (renda, densidade) é o
  * raio de 1 km do Relatório Pontual; a concorrência é o de 2 km da ficha da rede.
  */
-export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string }) {
+export default function FichaUnidadeNoMapa({
+  unidadeId,
+  onEstudarRegiao,
+}: {
+  unidadeId: string
+  /** "Estudar a região desta unidade" (emenda da DEC-070). Ausente = o botão não aparece. */
+  onEstudarRegiao?: (lat: number, lng: number) => void
+}) {
   const [ficha, setFicha] = useState<RedeFicha | null>(null)
   const [intel, setIntel] = useState<RedeUnidadeInteligencia | null>(null)
   const [ponto, setPonto] = useState<PontoPayload | null>(null)
@@ -78,11 +85,7 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
     setBaixandoEstudo(true)
     setErroPdf(null)
     try {
-      const { blob, filename } = await api.relatorioPontual({
-        lat,
-        lng,
-        rotulo: `Ultra ${ficha.unidade.nome}`,
-      })
+      const { blob, filename } = await estudoDaUnidadePdf(lat, lng, `Ultra ${ficha.unidade.nome}`)
       baixar(blob, filename)
     } catch (e) {
       setErroPdf((e as ApiError).message)
@@ -144,7 +147,21 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
             ? [ficha.unidade.cidade, ficha.unidade.uf].filter(Boolean).join(' · ')
             : 'Carregando a unidade…'}
         </span>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {onEstudarRegiao && (
+            <Botao
+              variante="ghost"
+              disabled={!ficha || semPonto}
+              title="Abre a análise de ponto na coordenada da unidade, sem o consumo dela no mercado."
+              onClick={() => {
+                const lat = ficha?.unidade.lat
+                const lng = ficha?.unidade.lng
+                if (lat != null && lng != null) onEstudarRegiao(lat, lng)
+              }}
+            >
+              Estudar a região desta unidade
+            </Botao>
+          )}
           <Botao
             variante="ghost"
             disabled={!ficha || semPonto || baixandoEstudo}
@@ -259,6 +276,22 @@ export default function FichaUnidadeNoMapa({ unidadeId }: { unidadeId: string })
   )
 }
 
+/**
+ * O "Estudo pontual" da FICHA DA UNIDADE é o estudo da unidade Ultra (emenda da DEC-070):
+ * o PDF sai sem o consumo da própria unidade no mercado. Se o servidor não achar a unidade
+ * a até 150 m da coordenada (base da rede e cadastro do mapa discordando do endereço), o
+ * PDF sai como estudo de ponto em vez de não sair — o próprio PDF declara o modo (sem a
+ * frase do estudo da unidade, é estudo de ponto).
+ */
+async function estudoDaUnidadePdf(lat: number, lng: number, rotulo: string) {
+  try {
+    return await api.relatorioPontual({ lat, lng, rotulo, excluirUltraProxima: true })
+  } catch (e) {
+    if (!(e instanceof ApiError && e.status === 400)) throw e
+    return api.relatorioPontual({ lat, lng, rotulo })
+  }
+}
+
 /* ---------------------------------------------------------------------------
    Peças
    --------------------------------------------------------------------------- */
@@ -280,7 +313,14 @@ function planoDaUltra(planos: RedePlanosEntorno | undefined): string {
  * coordenada — e diz o que falta, em vez de não abrir nada. O estudo pontual do endereço
  * continua disponível: ele lê a praça, não a operação.
  */
-export function FichaUnidadeSemDados({ cadastro }: { cadastro: UnidadeCadastroMapa }) {
+export function FichaUnidadeSemDados({
+  cadastro,
+  onEstudarRegiao,
+}: {
+  cadastro: UnidadeCadastroMapa
+  /** "Estudar a região desta unidade" (emenda da DEC-070). Ausente = o botão não aparece. */
+  onEstudarRegiao?: (lat: number, lng: number) => void
+}) {
   const [baixando, setBaixando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const temPonto = cadastro.lat != null && cadastro.lng != null
@@ -296,11 +336,11 @@ export function FichaUnidadeSemDados({ cadastro }: { cadastro: UnidadeCadastroMa
     setBaixando(true)
     setErro(null)
     try {
-      const { blob, filename } = await api.relatorioPontual({
-        lat: cadastro.lat,
-        lng: cadastro.lng,
-        rotulo: `Ultra ${cadastro.nome}`,
-      })
+      const { blob, filename } = await estudoDaUnidadePdf(
+        cadastro.lat,
+        cadastro.lng,
+        `Ultra ${cadastro.nome}`,
+      )
       baixar(blob, filename)
     } catch (e) {
       setErro((e as ApiError).message)
@@ -315,6 +355,19 @@ export function FichaUnidadeSemDados({ cadastro }: { cadastro: UnidadeCadastroMa
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}
       >
         <span style={{ font: '400 12px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>{praca || '—'}</span>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {onEstudarRegiao && (
+            <Botao
+              variante="ghost"
+              disabled={!temPonto}
+              title="Abre a análise de ponto na coordenada da unidade, sem o consumo dela no mercado."
+              onClick={() => {
+                if (cadastro.lat != null && cadastro.lng != null) onEstudarRegiao(cadastro.lat, cadastro.lng)
+              }}
+            >
+              Estudar a região desta unidade
+            </Botao>
+          )}
         <Botao
           variante="ghost"
           disabled={!temPonto || baixando}
@@ -323,6 +376,7 @@ export function FichaUnidadeSemDados({ cadastro }: { cadastro: UnidadeCadastroMa
         >
           {baixando ? 'Gerando…' : 'Estudo pontual'}
         </Botao>
+        </div>
       </div>
       {erro && <Nota>{erro}</Nota>}
 

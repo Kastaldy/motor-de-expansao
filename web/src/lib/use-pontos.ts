@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { api, ApiError } from './api'
-import { MAX_PONTOS, type PosicaoGeoJson } from './comparacao-pontos'
+import { MAX_PONTOS, chaveDaCoordenada, type PosicaoGeoJson } from './comparacao-pontos'
+import { ehEstudoDaUnidade } from './estudo-ultra'
 import { pontoInterno } from './geometria-desenho'
 import {
   PONTOS_VAZIO,
@@ -15,8 +16,10 @@ import {
   pedir,
   pinsDoEstado,
   remover as removerFicha,
+  substituir,
   type EstadoPontos,
 } from './pontos-estado'
+import type { PontoPayload } from './types'
 
 /**
  * A lista de pontos analisados, viva no `App` — a fiação React das regras puras de
@@ -43,15 +46,48 @@ export function usePontos() {
   }, [])
 
   const [erro, setErro] = useState<string | null>(null)
+  /** A coordenada (`chaveDaCoordenada`) cuja ficha está sendo relida em outro modo. */
+  const [trocandoModo, setTrocandoModo] = useState<string | null>(null)
+
+  /**
+   * Relê o ponto `i` no OUTRO modo de estudo (emenda da DEC-070): estudo de ponto (a Ultra
+   * próxima conta) <-> estudo da unidade Ultra (o consumo da própria unidade sai). A ficha
+   * é TROCADA no lugar (`substituir`) — mesma aba, mesma cor, mesma posição. Falhou: a
+   * ficha anterior fica, e o motivo do servidor vai para `erro`.
+   */
+  const trocarModo = useCallback(
+    async (i: number, estudoUltra: boolean) => {
+      const f = ref.current.fichas[i]
+      if (!f || f.geometria?.length || ehEstudoDaUnidade(f) === estudoUltra) return
+      setErro(null)
+      setTrocandoModo(chaveDaCoordenada(f.lat, f.lng))
+      try {
+        const nova = await api.ponto(f.lat, f.lng, { excluirUltraProxima: estudoUltra })
+        aplicar((e) => substituir(e, nova))
+      } catch (e) {
+        setErro(e instanceof ApiError ? e.message : 'Falha ao trocar o modo do estudo.')
+      } finally {
+        setTrocandoModo(null)
+      }
+    },
+    [aplicar],
+  )
 
   /**
    * Pede a análise de uma coordenada já resolvida. Nunca rejeita: o erro vai para `erro`.
    * `doMapa`: o pedido veio de um clique no próprio mapa ("Selecionar ponto") — o pin não
    * voa nem aproxima a câmera (ver `PontoPendente.doMapa`).
+   *
+   * `estudoUltra` (emenda da DEC-070): o estudo PARTE DA UNIDADE Ultra (a ficha da unidade
+   * no mapa) — a ficha já chega sem o consumo dela. Ponto já na lista em outro modo: abre a
+   * aba e troca o modo. Se o servidor não achar a unidade a até 150 m (coordenada da base
+   * da rede longe do cadastro do mapa), o ponto ENTRA como estudo de ponto e o aviso diz
+   * por quê — perder a análise inteira por isso seria pior que analisar no outro modo.
    */
   const analisar = useCallback(
-    async (lat: number, lng: number, opcoes?: { doMapa?: boolean }) => {
+    async (lat: number, lng: number, opcoes?: { doMapa?: boolean; estudoUltra?: boolean }) => {
       const decisao = decidirPedido(ref.current, lat, lng)
+      const estudoUltra = opcoes?.estudoUltra === true
       setErro(null)
       /* TETO CHEIO: recusa e DIZ, antes de gastar a leitura. Engolir o ponto em silêncio
          foi a metade do "depois de algumas vezes ele buga" (Juan, 2026-08-14). */
@@ -59,11 +95,22 @@ export function usePontos() {
         setErro(`Máximo de ${MAX_PONTOS} pontos na comparação. Remova um para analisar outro.`)
         return
       }
-      aplicar((e) => pedir(e, lat, lng, null, opcoes?.doMapa === true))
+      aplicar((e) => pedir(e, lat, lng, null, opcoes?.doMapa === true, estudoUltra))
+      if (decisao.tipo === 'repetido') {
+        if (estudoUltra) void trocarModo(decisao.indice, true)
+        return
+      }
       if (decisao.tipo !== 'ler') return
       const pedido = { lat, lng }
       try {
-        const ficha = await api.ponto(lat, lng)
+        let ficha: PontoPayload
+        try {
+          ficha = await api.ponto(lat, lng, estudoUltra ? { excluirUltraProxima: true } : undefined)
+        } catch (e) {
+          if (!(estudoUltra && e instanceof ApiError && e.status === 400)) throw e
+          ficha = await api.ponto(lat, lng)
+          setErro(`${e.message} O ponto entrou como estudo de ponto.`)
+        }
         aplicar((e) => chegou(e, pedido, ficha))
       } catch (e) {
         /* NÃO limpa os pontos já lidos: perder três leituras porque a quarta falhou seria
@@ -72,7 +119,7 @@ export function usePontos() {
         setErro(e instanceof ApiError ? e.message : 'Falha ao analisar o ponto.')
       }
     },
-    [aplicar],
+    [aplicar, trocarModo],
   )
 
   /**
@@ -133,6 +180,10 @@ export function usePontos() {
     ativo,
     analisar,
     analisarGeometria,
+    /** Troca o modo de estudo do ponto `i` (estudo de ponto <-> unidade Ultra). */
+    trocarModo,
+    /** `chaveDaCoordenada` do ponto em releitura de modo, ou `null`. */
+    trocandoModo,
     abrir,
     mostrar,
     remover,

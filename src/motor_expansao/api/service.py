@@ -786,8 +786,14 @@ def _mercado_do_ponto(
     pop_area: float | None,
     *,
     geometria: Any = None,
+    excluir_ultra_proxima: bool = False,
 ) -> dict:
     """SAM / consumo (concorrentes + Ultra) / residual NO RAIO do ponto (DEC-070).
+
+    `excluir_ultra_proxima` (emenda da DEC-070): ESTUDO DA UNIDADE ULTRA -- o consumo da
+    unidade Ultra a ate' 150 m do ponto sai da conta (so' ela). E' a UNICA falha que esta
+    funcao deixa subir (`mercado_raio.UnidadeUltraForaDaTolerancia`): engoli-la devolveria
+    o residual COM o consumo numa tela que diz que ele foi tirado. Default = estudo de ponto.
 
     `pop_area` e' a `pop_total_raio` que o motor censitario ja' calculou para o MESMO
     recorte -- a populacao nao e' relida aqui. `geometria` (shapely em graus, x=lng) e' a
@@ -802,6 +808,7 @@ def _mercado_do_ponto(
     """
     from motor_expansao.dashboard.censo_point import RAIO_CENSITARIO_DEFAULT_KM
     from motor_expansao.dashboard.mercado_raio import (
+        UnidadeUltraForaDaTolerancia,
         carregar_cadeias_mercado,
         carregar_ultra_mercado,
         mercado_na_area,
@@ -820,7 +827,10 @@ def _mercado_do_ponto(
             faixa_oportunidade=linha.get("faixa_oportunidade"),
             raio_km=RAIO_CENSITARIO_DEFAULT_KM,
             geometria=geometria,
+            excluir_ultra_proxima=excluir_ultra_proxima,
         )
+    except UnidadeUltraForaDaTolerancia:
+        raise
     except Exception as exc:  # noqa: BLE001
         logging.getLogger(__name__).warning("mercado no raio falhou: %r", exc)
         out = {k: None for k in _SAM_COLS}

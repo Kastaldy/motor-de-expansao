@@ -578,8 +578,14 @@ export const api = {
    * e um punhado de hexes, então cabe no timeout curto em vez dos 90 s da leitura de
    * UF. É o que torna viável o fluxo "cole o link, veja a ficha".
    */
-  ponto: (lat: number, lng: number) =>
-    pedir<PontoPayload>(`/api/ponto?lat=${lat}&lng=${lng}`, {}, 30_000),
+  ponto: (lat: number, lng: number, opts?: { excluirUltraProxima?: boolean }) =>
+    pedir<PontoPayload>(
+      /* `excluir_ultra_proxima` (emenda da DEC-070): o ESTUDO DA UNIDADE ULTRA — o consumo
+         da unidade a até 150 m do ponto sai do mercado. Sem ele, a URL é a de sempre. */
+      `/api/ponto?lat=${lat}&lng=${lng}${opts?.excluirUltraProxima ? '&excluir_ultra_proxima=true' : ''}`,
+      {},
+      30_000,
+    ),
 
   /**
    * Ficha de uma ÁREA DESENHADA no mapa ("Analisar geometria", DEC-071 fase 1): o mesmo
@@ -801,6 +807,12 @@ export const api = {
      * descartaria de todo jeito): nenhum dado financeiro sai nesse PDF.
      */
     soEstudo?: boolean
+    /**
+     * ESTUDO DA UNIDADE ULTRA (emenda da DEC-070): o mercado do PDF sai sem o consumo da
+     * unidade Ultra a até 150 m do ponto, e o Big Numbers declara isso. Omitido = estudo
+     * de ponto (a Ultra próxima conta).
+     */
+    excluirUltraProxima?: boolean
     infoImovel?: Record<string, unknown>
     viabilidadeInputs?: ViabilidadeIn
     fotos?: File[]
@@ -812,6 +824,7 @@ export const api = {
     if (opts.rotulo) q.set('rotulo', opts.rotulo)
     if (opts.solicitante) q.set('solicitante', opts.solicitante)
     if (opts.origemCentroideHex) q.set('origem_centroide_hex', 'true')
+    if (opts.excluirUltraProxima) q.set('excluir_ultra_proxima', 'true')
     if (opts.soEstudo) {
       q.set('so_estudo', 'true')
     } else {

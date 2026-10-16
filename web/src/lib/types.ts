@@ -1964,6 +1964,30 @@ export interface PontoMercado extends BlocoOpcional {
     residual: number | null
     score_residual: number | null
   }
+  /**
+   * Modo do estudo (emenda da DEC-070). Identificador cru, NÃO acentuar: `'ponto'` (a Ultra
+   * próxima CONTA no consumo) ou `'unidade_ultra'` (o consumo da PRÓPRIA unidade estudada
+   * sai; o `consumo_ultra` acima passa a ser o das OUTRAS Ultras). Ausente = `'ponto'`.
+   */
+  modo_estudo?: 'ponto' | 'unidade_ultra' | null
+  /** A frase que declara o modo — a mesma do PDF. `null` no estudo de ponto. */
+  declaracao_modo?: string | null
+  /** A unidade cujo consumo saiu da conta, só no estudo da unidade Ultra. */
+  unidade_ultra_estudada?: UltraDoPonto & {
+    consumo_excluido: number | null
+    capacidade_real: boolean
+    tolerancia_m: number | null
+  } | null
+  /** A unidade Ultra a até 150 m do ponto, nos DOIS modos — o que OFERECE a troca. */
+  ultra_proxima?: UltraDoPonto | null
+}
+
+/** Uma unidade Ultra do bloco de mercado do ponto. */
+export interface UltraDoPonto {
+  ultra_id: string | null
+  /** Nome curto de exibição ("Santana"). */
+  nome: string
+  dist_m: number | null
 }
 
 export interface PontoVizinho {

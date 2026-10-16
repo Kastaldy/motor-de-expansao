@@ -177,6 +177,12 @@ export interface MapScreenProps {
    */
   onPontoBuscado: (lat: number, lng: number, doMapa?: boolean) => void
   /**
+   * "Estudar a região desta unidade", na ficha da unidade Ultra (emenda da DEC-070): abre a
+   * análise de ponto na coordenada da unidade JÁ no estudo da unidade — o consumo dela sai
+   * do mercado. Ausente = o botão não aparece.
+   */
+  onEstudarUnidade?: (lat: number, lng: number) => void
+  /**
    * "Analisar geometria" concluiu uma área (DEC-071, fase 1): os anéis do polígono
    * desenhado, em `[lng, lat]`, fechados. Quem recebe (o `App`) a leva ao
    * `/api/ponto/geometria` e a põe na MESMA comparação dos pontos.
@@ -251,6 +257,7 @@ export default function MapScreen({
   onPontoComparado,
   onSoltarPonto,
   onPontoBuscado,
+  onEstudarUnidade,
   onGeometriaDesenhada,
   semLanding = false,
   imovelInicial = null,
@@ -655,6 +662,20 @@ export default function MapScreen({
       setPin({ lat: u.lat, lng: u.lng, hexId: latLngToCell(u.lat, u.lng, 7) })
     },
     [onSoltarPonto],
+  )
+
+  /* "Estudar a região desta unidade": fecha a ficha da unidade (a de ponto abre no lugar,
+     à esquerda — duas janelas sobre o mesmo lugar seriam duas leituras dele) e pede o
+     ponto no estudo da unidade. `undefined` sem o pedido do `App`: o botão não aparece. */
+  const estudarRegiaoDaUnidade = useMemo(
+    () =>
+      onEstudarUnidade
+        ? (lat: number, lng: number) => {
+            setUnidadeAberta(null)
+            onEstudarUnidade(lat, lng)
+          }
+        : undefined,
+    [onEstudarUnidade],
   )
 
   /* Geometria do raio: buscada SOB DEMANDA, so' quando a CAMADA 3 esta aberta. Fora do
@@ -2194,9 +2215,15 @@ export default function MapScreen({
       >
         {unidadeAberta &&
           (unidadeAberta.cadastro ? (
-            <FichaUnidadeSemDados cadastro={unidadeAberta.cadastro} />
+            <FichaUnidadeSemDados
+              cadastro={unidadeAberta.cadastro}
+              onEstudarRegiao={estudarRegiaoDaUnidade}
+            />
           ) : (
-            <FichaUnidadeNoMapa unidadeId={unidadeAberta.id} />
+            <FichaUnidadeNoMapa
+              unidadeId={unidadeAberta.id}
+              onEstudarRegiao={estudarRegiaoDaUnidade}
+            />
           ))}
       </JanelaFicha>
 

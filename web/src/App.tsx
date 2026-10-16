@@ -728,6 +728,9 @@ export default function App() {
               /* A lupa do cabeçalho vira PONTO ANALISADO nas duas entradas: buscar um
                  endereço ali produz a MESMA ficha que colá-lo. */
               onPontoBuscado={pedirPonto}
+              /* "Estudar a região desta unidade" (ficha da unidade Ultra): a MESMA lista dos
+                 pontos, já no estudo da unidade — o consumo dela sai (emenda da DEC-070). */
+              onEstudarUnidade={(lat, lng) => void pontos.analisar(lat, lng, { estudoUltra: true })}
               /* "Analisar geometria" (DEC-071, fase 1): a área desenhada entra na MESMA
                  lista dos pontos, com a mesma regra de teto e de cor. */
               onGeometriaDesenhada={(g) => void pontos.analisarGeometria(g)}
@@ -762,6 +765,10 @@ export default function App() {
               carregandoPonto={pontos.carregando}
               erroPonto={pontos.erro}
               onAnalisar={pontos.analisar}
+              /* Estudo de ponto <-> estudo da unidade Ultra (emenda da DEC-070): relê o
+                 ponto no outro modo e troca a ficha no lugar. */
+              onTrocarModo={(i, ligado) => void pontos.trocarModo(i, ligado)}
+              trocandoModo={pontos.trocandoModo}
               onAbrir={pontos.abrir}
               onRemover={pontos.remover}
               onLimpar={pontos.limpar}

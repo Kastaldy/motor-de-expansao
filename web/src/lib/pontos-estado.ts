@@ -57,6 +57,12 @@ export interface PontoPendente {
    * tirava da tela o bairro do próximo. Só aparece quando `true`.
    */
   doMapa?: boolean
+  /**
+   * Pedido de ESTUDO DA UNIDADE ULTRA (emenda da DEC-070): o consumo da unidade a até 150 m
+   * sai do mercado. Não entra na identidade do pedido — o mesmo lugar nos dois modos é o
+   * MESMO ponto, e trocar de modo substitui a ficha (`substituir`). Só aparece quando `true`.
+   */
+  estudoUltra?: boolean
 }
 
 export interface EstadoPontos {
@@ -162,6 +168,7 @@ export function pedir(
   lng: number,
   geometria?: PosicaoGeoJson[][] | null,
   doMapa = false,
+  estudoUltra = false,
 ): EstadoPontos {
   const d = decidirPedido(e, lat, lng, geometria)
   if (d.tipo === 'repetido') {
@@ -170,6 +177,7 @@ export function pedir(
   if (d.tipo === 'ler') {
     const novo: PontoPendente = geometria?.length ? { lat, lng, geometria } : { lat, lng }
     if (doMapa) novo.doMapa = true
+    if (estudoUltra && !geometria?.length) novo.estudoUltra = true
     return { ...e, pendentes: [...e.pendentes, novo], abaFixada: false }
   }
   return e
@@ -203,6 +211,22 @@ export function chegou(e: EstadoPontos, pedido: PontoPendente, ficha: PontoPaylo
   if (repetido >= 0) return { ...e, pendentes, aberto: repetido, revelar: e.revelar + 1 }
   const fichas = [...e.fichas, ficha]
   return { ...e, fichas, pendentes, aberto: fichas.length - 1, revelar: e.revelar + 1 }
+}
+
+/**
+ * A ficha de um ponto JÁ NA LISTA foi relida em outro modo (estudo de ponto <-> estudo da
+ * unidade Ultra, emenda da DEC-070): troca a ficha NO LUGAR, sem mexer na aba aberta, na
+ * ordem nem na cor do ponto. Casa pela coordenada, e não pelo índice: se o operador tirou
+ * um ponto antes enquanto a releitura voava, o índice antigo apontaria para outro. Ponto
+ * que saiu da lista nesse meio-tempo não volta (a resposta é descartada). Área desenhada
+ * não troca de modo.
+ */
+export function substituir(e: EstadoPontos, ficha: PontoPayload): EstadoPontos {
+  if (ficha.geometria?.length) return e
+  const i = indiceDoMesmoPonto(e.fichas, ficha.lat, ficha.lng)
+  if (i < 0) return e
+  const fichas = e.fichas.map((f, k) => (k === i ? ficha : f))
+  return { ...e, fichas }
 }
 
 /** A leitura de `pedido` falhou: o pin provisório sai, as fichas já lidas ficam. */

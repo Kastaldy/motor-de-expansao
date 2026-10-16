@@ -31,6 +31,8 @@ import type { AlvoCaptura } from '../lib/captura-mapa'
 import { classificarEntrada, linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
 import { alunos, num } from '../lib/format'
 import { leituraDoMercado } from '../lib/mercado-ponto'
+import { ehEstudoDaUnidade, ofertaDeEstudoUltra, type OfertaEstudoUltra } from '../lib/estudo-ultra'
+import { chaveDaCoordenada } from '../lib/comparacao-pontos'
 import {
   estadoDoEstudo,
   estadoDoSimulador,
@@ -91,6 +93,8 @@ export default function PontoScreen({
   carregandoPonto,
   erroPonto,
   onAnalisar,
+  onTrocarModo,
+  trocandoModo = null,
   onAbrir,
   onRemover,
   onLimpar,
@@ -140,6 +144,13 @@ export default function PontoScreen({
   erroPonto: string | null
   /** Pede a analise de uma coordenada ja' resolvida. */
   onAnalisar: (lat: number, lng: number) => Promise<void>
+  /**
+   * Troca o modo de estudo do ponto `i` — estudo de ponto <-> estudo da unidade Ultra
+   * (emenda da DEC-070). Ausente = a chave não aparece.
+   */
+  onTrocarModo?: (i: number, estudoUltra: boolean) => void
+  /** `chaveDaCoordenada` do ponto sendo relido em outro modo (a chave mostra a espera). */
+  trocandoModo?: string | null
   onAbrir: (i: number) => void
   onRemover: (i: number) => void
   /** Tira todos os pontos da lista (e, com eles, as marcas do mapa). */
@@ -277,6 +288,9 @@ export default function PontoScreen({
         lng: ficha.lng,
         rotulo: rotuloAberto,
         soEstudo: true,
+        /* O MODO da ficha vai junto (emenda da DEC-070): o PDF do estudo da unidade Ultra
+           sai sem o consumo dela, como a tela — e o Big Numbers declara isso. */
+        excluirUltraProxima: ehEstudoDaUnidade(ficha),
       })
       baixar(blob, filename)
     } catch (e) {
@@ -677,6 +691,8 @@ export default function PontoScreen({
               key={`${ficha.hex_id}-${aberto}`}
               ficha={ficha}
               partido={partidos[aberto] ?? null}
+              onTrocarModo={onTrocarModo ? (ligado) => onTrocarModo(aberto, ligado) : undefined}
+              trocando={trocandoModo != null && trocandoModo === chaveDaCoordenada(ficha.lat, ficha.lng)}
             />
           </div>
         )}
@@ -760,13 +776,20 @@ function RodapePonto({
 function Ficha({
   ficha,
   partido,
+  onTrocarModo,
+  trocando = false,
 }: {
   ficha: PontoPayload
   /** O rótulo desambiguado deste ponto na lista ("Centro" + "#2"), ou nulo. */
   partido: RotuloPartido | null
+  /** Troca o modo de estudo deste ponto (emenda da DEC-070). Ausente = sem chave. */
+  onTrocarModo?: (estudoUltra: boolean) => void
+  /** A releitura no outro modo está em voo. */
+  trocando?: boolean
 }) {
   const { local, censo, concorrencia, mercado } = ficha
   const contaDoMercado = mercado.disponivel ? leituraDoMercado(mercado) : null
+  const ofertaUltra = ofertaDeEstudoUltra(ficha)
   /* ÁREA DESENHADA (DEC-071, fase 1): a mesma ficha, com o polígono no lugar do raio. O
      que muda é só o que a ficha AFIRMA sobre o recorte — os blocos e as contas são os
      mesmos, calculados pelo servidor dentro da área. */
@@ -816,6 +839,8 @@ function Ficha({
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <Chip>hex {ficha.hex_id}</Chip>
+          {/* O modo do estudo, discreto, ao lado da identidade (emenda da DEC-070). */}
+          {ofertaUltra?.ligado && <Chip>estudo da unidade Ultra {ofertaUltra.nome}</Chip>}
           <Chip>
             {/* Na área, a coordenada é a do PONTO CENTRAL (o `representative_point`,
                 sempre dentro do polígono) — é ele que o Simulador recebe. */}
@@ -909,6 +934,13 @@ function Ficha({
             cabeça para responder o que interessa — a sobra é a maior parte do mercado ou
             uma margem? A conta inteira continua abaixo, linha a linha. */}
         <div style={{ display: 'grid', gap: 14 }}>
+          {ofertaUltra && (
+            <ChaveEstudoUltra
+              oferta={ofertaUltra}
+              trocando={trocando}
+              onTrocar={onTrocarModo}
+            />
+          )}
           <BarraMercado sam={mercado.sam} residual={mercado.residual} />
           <MedidorScore
             rotulo="Score de residual"
@@ -945,6 +977,73 @@ function Ficha({
           gradeSemViavel={false}
         />
       </Secao>
+    </div>
+  )
+}
+
+/**
+ * A CHAVE do estudo da unidade Ultra (emenda da DEC-070), no topo do bloco de mercado.
+ *
+ * Aparece quando o ponto cai a até 150 m de uma unidade Ultra (Santana: 9 m). DESLIGADA por
+ * padrão: o estudo de ponto continua contando a Ultra, porque quem estuda um imóvel ao lado
+ * dela precisa ver o mercado ocupado. Ligada, o consumo DA unidade sai — e a frase do
+ * servidor diz isso, com quanto saiu. Trocar relê o ponto no servidor; nada é recalculado
+ * aqui.
+ */
+function ChaveEstudoUltra({
+  oferta,
+  trocando,
+  onTrocar,
+}: {
+  oferta: OfertaEstudoUltra
+  trocando: boolean
+  onTrocar?: (estudoUltra: boolean) => void
+}) {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gap: 6,
+        padding: '10px 12px',
+        borderRadius: 10,
+        border: `1px solid ${oferta.ligado ? 'var(--ac-text)' : 'var(--line-soft)'}`,
+        background: 'var(--surf-raised)',
+      }}
+    >
+      <label
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 8,
+          cursor: onTrocar && !trocando ? 'pointer' : 'default',
+          font: '500 12px/1.4 var(--f-ui)',
+          color: 'var(--tx-soft)',
+        }}
+      >
+        <input
+          type="checkbox"
+          role="switch"
+          aria-checked={oferta.ligado}
+          checked={oferta.ligado}
+          disabled={!onTrocar || trocando}
+          onChange={(e) => onTrocar?.(e.target.checked)}
+          style={{ marginTop: 2, accentColor: 'var(--ac-text)' }}
+        />
+        <span>
+          {oferta.pergunta}
+          {trocando && (
+            <span style={{ marginLeft: 8, display: 'inline-flex', verticalAlign: 'middle' }}>
+              <Spinner />
+            </span>
+          )}
+        </span>
+      </label>
+      <span style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
+        {oferta.ligado
+          ? (oferta.declaracao ??
+            `Estudo da unidade Ultra ${oferta.nome}: consumo da própria unidade desconsiderado.`)
+          : 'Desligado: estudo de ponto — a Ultra próxima conta no mercado ocupado.'}
+      </span>
     </div>
   )
 }

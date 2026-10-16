@@ -2315,6 +2315,26 @@ def _conclusao_eixo_financeiro(
 _CANIBALIZACAO_TITULO = "Canibalização da rede"
 
 
+def _conclusao_sem_a_mais_proxima(unidades: Any) -> list[dict[str, Any]] | None:
+    """As unidades sem a de menor `dist_km` (a estudada, no estudo da unidade Ultra)."""
+    if unidades is None:
+        return None
+    linhas: Any = unidades
+    if hasattr(unidades, "to_dict"):
+        if getattr(unidades, "empty", False):
+            return None
+        linhas = unidades.to_dict("records")
+    linhas = list(linhas)
+    if not linhas:
+        return None
+    dists = [_conclusao_valor(linha.get("dist_km")) for linha in linhas]
+    validas = [(d, i) for i, d in enumerate(dists) if d is not None]
+    if not validas:
+        return linhas[1:]
+    _, alvo = min(validas)
+    return [linha for i, linha in enumerate(linhas) if i != alvo]
+
+
 def _conclusao_menor_dist_km(unidades: Any) -> float | None:
     """Menor `dist_km` de um conjunto de unidades (DataFrame ou sequencia de dicts)."""
     if unidades is None:
@@ -2330,13 +2350,26 @@ def _conclusao_menor_dist_km(unidades: Any) -> float | None:
     return min(distancias) if distancias else None
 
 
-def _conclusao_canibalizacao(result: Mapping[str, Any]) -> str | None:
-    """Alerta de unidade Ultra no raio, ou `None` quando nao ha nenhuma. Funcao pura."""
+def _conclusao_canibalizacao(
+    result: Mapping[str, Any], *, sem_a_estudada: bool = False
+) -> str | None:
+    """Alerta de unidade Ultra no raio, ou `None` quando nao ha nenhuma. Funcao pura.
+
+    `sem_a_estudada` (emenda da DEC-070, estudo da unidade Ultra): a unidade no CENTRO do
+    estudo nao canibaliza a si mesma. Ela e' a mais proxima do ponto (esta' a ate' 150 m),
+    entao sai da contagem e da distancia; sobrando nenhuma, nao ha' alerta.
+    """
     n = _conclusao_valor(result.get("n_ultra"))
     if n is None or n < 1:
         return None
     quantas = int(n)
-    dist_km = _conclusao_menor_dist_km(result.get("ultra_raio"))
+    unidades = result.get("ultra_raio")
+    if sem_a_estudada:
+        quantas -= 1
+        if quantas < 1:
+            return None
+        unidades = _conclusao_sem_a_mais_proxima(unidades)
+    dist_km = _conclusao_menor_dist_km(unidades)
     sujeito = (
         "1 unidade Ultra dentro do raio"
         if quantas == 1
@@ -2432,7 +2465,9 @@ def _avaliar_conclusao(
         )
 
     # --- Canibalizacao (alerta de rede propria no raio) ---
-    alerta_canibalizacao = _conclusao_canibalizacao(result)
+    alerta_canibalizacao = _conclusao_canibalizacao(
+        result, sem_a_estudada=bool(residual.get("unidade_ultra_estudada"))
+    )
     if alerta_canibalizacao is not None:
         ressalvas.append(alerta_canibalizacao)
 
@@ -3137,6 +3172,15 @@ def _big_numbers_page(
     apoio = {
         7: f"conc. {_format_number(consumo_conc, 0)} + Ultra {_format_number(consumo_ultra, 0)}",
     }
+    # Emenda da DEC-070: no ESTUDO DA UNIDADE ULTRA a parcela da Ultra ja' e' a das OUTRAS
+    # unidades (a estudada saiu), e o rotulo diz isso -- "Ultra 0" ao lado de uma unidade a
+    # 9 m leria como erro. A frase inteira do modo abre a nota de fonte, abaixo.
+    declaracao_modo = residual.get("declaracao_modo")
+    if residual.get("unidade_ultra_estudada"):
+        apoio[7] = (
+            f"conc. {_format_number(consumo_conc, 0)} + outras Ultras "
+            f"{_format_number(consumo_ultra, 0)}"
+        )
 
     cards = [
         (
@@ -3247,7 +3291,8 @@ def _big_numbers_page(
         _PAGE_W - 2 * margin_x,
         11,
         _ascii(
-            "Fontes: pop/renda/domicílios/score = censo (interseção de setores IBGE 2022 com círculo de "
+            (f"{declaracao_modo} " if declaracao_modo else "")
+            + "Fontes: pop/renda/domicílios/score = censo (interseção de setores IBGE 2022 com círculo de "
             f"{_RAIO_LABEL}, método {metodo}); SAM Fitness, consumo e Residual Fitness (em alunos) = "
             f"mercado no mesmo raio de {_RAIO_LABEL} (SAM = população do raio x taxa calibrada; "
             "consumo = concorrentes de rede + Ultra pela área de influência de 1 km de cada unidade; "

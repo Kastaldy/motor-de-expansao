@@ -143,6 +143,27 @@ _MATCH_ULTRA_M = 50.0
 
 COLUNA_CAPACIDADE = "capacidade_alunos"
 
+# ESTUDO DA UNIDADE ULTRA (emenda da DEC-070, 2026-10-16). Quando o estudo e' DA REGIAO de
+# uma unidade Ultra -- ela como centro --, o consumo DELA nao pode entrar na conta: o
+# residual responderia "quanto sobra se a Santana existir", e a pergunta e' "quanto mercado
+# ha' em volta da Santana". So' a PROPRIA unidade sai; as OUTRAS Ultras continuam contando.
+# A unidade e' achada pela COORDENADA do estudo: a mais proxima a ate' 150 m -- a mesma
+# tolerancia que liga o pin da Ultra a ficha da unidade no mapa (`ficha-unidade.ts`).
+# Identificadores CRUS do modo (payload), sem acento.
+MODO_ESTUDO_PONTO = "ponto"
+MODO_ESTUDO_UNIDADE_ULTRA = "unidade_ultra"
+TOLERANCIA_UNIDADE_ULTRA_M = 150.0
+COLUNA_ULTRA_ID = "ultra_id"
+COLUNA_ULTRA_NOME = "nome"
+
+
+class UnidadeUltraForaDaTolerancia(ValueError):
+    """Pediram o estudo da unidade Ultra num ponto sem unidade Ultra a ate' a tolerancia.
+
+    Erro, e nao no-op: cair em silencio para o estudo de ponto devolveria um residual
+    COM o consumo da unidade numa tela que diz que ele foi tirado.
+    """
+
 # Abaixo disto a intersecao e' ruido dos POLIGONOS que aproximam os dois circulos (512
 # lados cada): dois discos TANGENTES se sobrepoem em ~1e-7 da area. 1e-6 = 0,0025 aluno de
 # um concorrente de 2.500 -- nada na conta, e impede que unidade tangente conte como
@@ -249,6 +270,70 @@ def consumo_na_area(
 
 
 # --------------------------------------------------------------------------- #
+# Estudo da unidade Ultra                                                      #
+# --------------------------------------------------------------------------- #
+def ultra_mais_proxima(
+    ultra: pd.DataFrame | None,
+    lat: float,
+    lng: float,
+    *,
+    tolerancia_m: float = TOLERANCIA_UNIDADE_ULTRA_M,
+) -> dict[str, Any] | None:
+    """A unidade Ultra mais proxima de (lat, lng) a ate' `tolerancia_m`, ou `None`.
+
+    Devolve a POSICAO dela no frame (`posicao`, para tirar exatamente ESSA linha), o
+    `ultra_id` e o `nome` do cadastro quando houver, a distancia e quantas linhas do
+    cadastro caem na tolerancia -- mais de uma e' sinal de cadastro duplicado (ha' um par a
+    6 m em Vila Zelina/SP) e so' a mais proxima sai, nunca as duas.
+    """
+    if ultra is None or ultra.empty:
+        return None
+    la = pd.to_numeric(ultra["lat"], errors="coerce").to_numpy(dtype=float)
+    lo = pd.to_numeric(ultra["lng"], errors="coerce").to_numpy(dtype=float)
+    d = _dist_m(float(lat), float(lng), la, lo)
+    d = np.where(np.isfinite(d), d, np.inf)
+    j = int(np.argmin(d))
+    if not d[j] <= float(tolerancia_m):
+        return None
+
+    def _txt(col: str) -> str | None:
+        if col not in ultra.columns:
+            return None
+        v = ultra[col].iloc[j]
+        return None if v is None or pd.isna(v) or not str(v).strip() else str(v).strip()
+
+    return {
+        "posicao": j,
+        "ultra_id": _txt(COLUNA_ULTRA_ID),
+        "nome": _txt(COLUNA_ULTRA_NOME),
+        "dist_m": float(d[j]),
+        "n_na_tolerancia": int((d <= float(tolerancia_m)).sum()),
+    }
+
+
+def nome_curto_ultra(nome: str | None) -> str:
+    """'Vila Zelina / SP' -> 'Vila Zelina'; vazio -> 'sem nome'. So' para EXIBIR."""
+    if not nome:
+        return "sem nome"
+    return str(nome).split(" / ")[0].strip() or str(nome).strip()
+
+
+def declaracao_estudo_ultra(unidade: dict[str, Any] | None) -> str | None:
+    """A frase que declara o modo, a MESMA na ficha e no PDF. `None` no estudo de ponto.
+
+    PONTUACAO ASCII de proposito: o PDF usa a core font latin-1 (CLAUDE.md secao 2).
+    """
+    if not unidade:
+        return None
+    alunos = _finito(unidade.get("consumo_excluido"))
+    qtd = "" if alunos is None else " (" + f"{alunos:,.0f}".replace(",", ".") + " alunos)"
+    return (
+        f"Estudo da unidade Ultra {nome_curto_ultra(unidade.get('nome'))}: consumo da "
+        f"própria unidade{qtd} desconsiderado; as outras Ultras continuam contando."
+    )
+
+
+# --------------------------------------------------------------------------- #
 # A conta                                                                      #
 # --------------------------------------------------------------------------- #
 def _finito(v: Any) -> float | None:
@@ -270,8 +355,17 @@ def mercado_na_area(
     faixa_oportunidade: str | None,
     raio_km: float = RAIO_MERCADO_DEFAULT_KM,
     geometria: BaseGeometry | None = None,
+    excluir_ultra_proxima: bool = False,
+    tolerancia_ultra_m: float = TOLERANCIA_UNIDADE_ULTRA_M,
 ) -> dict[str, Any]:
     """SAM, consumo (concorrentes + Ultra) e residual DENTRO do recorte do ponto.
+
+    `excluir_ultra_proxima` (emenda da DEC-070): ESTUDO DA UNIDADE ULTRA. Tira do consumo
+    UMA unidade -- a mais proxima de (lat, lng) a ate' `tolerancia_ultra_m` -- e so' ela;
+    as outras Ultras seguem contando. Sem unidade na tolerancia (ou sem cadastro), levanta
+    `UnidadeUltraForaDaTolerancia`. Default `False` = o estudo de ponto de sempre, com os
+    MESMOS valores de antes do parametro. Em qualquer modo, `ultra_proxima` diz qual
+    unidade esta' na tolerancia (e' o que a ficha usa para OFERECER o modo).
 
     Funcao pura: nao le disco, nao muta entrada. `geometria` (graus, x=lng) troca o raio
     pelo poligono desenhado (DEC-071); sem ela, o raio de `raio_km` em volta de (lat, lng).
@@ -312,7 +406,35 @@ def mercado_na_area(
 
     # --- consumo ---
     conc = consumo_na_area(cadeias, area, lat, lng)
-    ult = consumo_na_area(ultra, area, lat, lng)
+    proxima = ultra_mais_proxima(ultra, lat, lng, tolerancia_m=tolerancia_ultra_m)
+    estudada: dict[str, Any] | None = None
+    ultra_conta = ultra
+    if excluir_ultra_proxima:
+        if ultra is None:
+            raise UnidadeUltraForaDaTolerancia(
+                "Sem cadastro de unidades Ultra: o estudo da unidade não pode ser montado."
+            )
+        if proxima is None:
+            raise UnidadeUltraForaDaTolerancia(
+                f"Não há unidade Ultra a até {tolerancia_ultra_m:.0f} m deste ponto: "
+                "o estudo da unidade Ultra não se aplica (use o estudo de ponto)."
+            )
+        pos = int(proxima["posicao"])
+        propria = consumo_na_area(ultra.iloc[[pos]], area, lat, lng)
+        ultra_conta = ultra.iloc[[k for k in range(len(ultra)) if k != pos]]
+        cap_bruta = (
+            ultra[COLUNA_CAPACIDADE].iloc[pos] if COLUNA_CAPACIDADE in ultra.columns else None
+        )
+        estudada = {
+            "ultra_id": proxima["ultra_id"],
+            "nome": proxima["nome"],
+            "dist_m": proxima["dist_m"],
+            "n_na_tolerancia": proxima["n_na_tolerancia"],
+            "consumo_excluido": None if propria is None else propria["alunos"],
+            "capacidade_real": _finito(cap_bruta) is not None,
+            "tolerancia_m": float(tolerancia_ultra_m),
+        }
+    ult = consumo_na_area(ultra_conta, area, lat, lng)
     if conc is None:
         motivos.append("Sem base de concorrentes de cadeia montada: consumo não calculado.")
     if ult is None:
@@ -356,6 +478,14 @@ def mercado_na_area(
         "n_ultra_alunos_reais": None if ult is None else ult["n_capacidade_real"],
         "disponivel": sam is not None,
         "motivo": " ".join(motivos) or None,
+        # Emenda da DEC-070: o modo do estudo, declarado. No estudo da unidade, a parcela
+        # `oferta_consumida_ultra_estimada` acima ja' e' a das OUTRAS Ultras.
+        "modo_estudo": MODO_ESTUDO_UNIDADE_ULTRA if estudada else MODO_ESTUDO_PONTO,
+        "unidade_ultra_estudada": estudada,
+        "declaracao_modo": declaracao_estudo_ultra(estudada),
+        "ultra_proxima": None if proxima is None else {
+            k: proxima[k] for k in ("ultra_id", "nome", "dist_m")
+        },
     }
 
 
@@ -424,8 +554,13 @@ def unidades_ultra_com_capacidade(
     base["lng"] = pd.to_numeric(base["lng"], errors="coerce")
     base = base.dropna(subset=["lat", "lng"]).reset_index(drop=True)
     base[COLUNA_CAPACIDADE] = np.nan
+    # Identidade (emenda da DEC-070): o estudo da unidade Ultra tira UMA linha, e a ficha
+    # precisa dizer QUAL. `ultra_id` e o nome do cadastro viajam junto; o consumo os ignora.
+    base[COLUNA_ULTRA_ID] = base["ultra_id"] if "ultra_id" in base.columns else None
+    base[COLUNA_ULTRA_NOME] = base["unidade"] if "unidade" in base.columns else None
+    colunas_saida = ["lat", "lng", COLUNA_CAPACIDADE, COLUNA_ULTRA_ID, COLUNA_ULTRA_NOME]
     if performance is None or performance.empty or "alunos_total" not in performance.columns:
-        return base[["lat", "lng", COLUNA_CAPACIDADE]]
+        return base[colunas_saida]
 
     perf = performance.copy()
     perf["alunos"] = pd.to_numeric(perf["alunos_total"], errors="coerce")
@@ -434,7 +569,8 @@ def unidades_ultra_com_capacidade(
     plat = pd.to_numeric(perf["lat"], errors="coerce") if "lat" in perf.columns else sem_coord
     plng = pd.to_numeric(perf["lng"], errors="coerce") if "lng" in perf.columns else sem_coord
 
-    extras: list[dict[str, float]] = []
+    extras: list[dict[str, Any]] = []
+    pnome = perf["unidade"] if "unidade" in perf.columns else pd.Series(None, index=perf.index)
     blat, blng = base["lat"].to_numpy(dtype=float), base["lng"].to_numpy(dtype=float)
     hex_base = base["hex_id_res7"].astype("string") if "hex_id_res7" in base.columns else None
     for i, (la, lo) in enumerate(zip(plat, plng, strict=True)):
@@ -446,14 +582,17 @@ def unidades_ultra_com_capacidade(
                 atual = base.at[j, COLUNA_CAPACIDADE]
                 base.at[j, COLUNA_CAPACIDADE] = alunos + (0.0 if pd.isna(atual) else float(atual))
                 continue
-            extras.append({"lat": float(la), "lng": float(lo), COLUNA_CAPACIDADE: alunos})
+            extras.append({
+                "lat": float(la), "lng": float(lo), COLUNA_CAPACIDADE: alunos,
+                COLUNA_ULTRA_ID: None, COLUNA_ULTRA_NOME: pnome.iloc[i],
+            })
             continue
         hx = perf["hex_id_res7"].iloc[i] if "hex_id_res7" in perf.columns else None
         if hex_base is not None and hx is not None and pd.notna(hx):
             cand = base.index[(hex_base == str(hx)) & base[COLUNA_CAPACIDADE].isna()]
             if len(cand) == 1:
                 base.at[cand[0], COLUNA_CAPACIDADE] = alunos
-    saida = base[["lat", "lng", COLUNA_CAPACIDADE]]
+    saida = base[colunas_saida]
     if extras:
         saida = pd.concat([saida, pd.DataFrame(extras)], ignore_index=True)
     return saida
