@@ -35,7 +35,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 #: 235 -> 236 na DEC-068 (2026-10-05), idem: 1 linha-índice, corpo em docs/decisions/DEC-068.md.
 #:
 #: 236 -> 237 na DEC-069 (2026-10-14), idem: 1 linha-índice, corpo em docs/decisions/DEC-069.md.
-_TETO_LINHAS = 237
+_TETO_LINHAS = 238
 
 
 def _linhas(p: Path) -> int:
