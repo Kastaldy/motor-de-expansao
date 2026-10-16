@@ -36,6 +36,7 @@ import {
   type PinDaComparacao,
   type PosicaoGeoJson,
 } from './comparacao-pontos'
+import { indiceDaMesmaUnidade } from './estudo-ultra'
 import type { PontoPayload } from './types'
 
 /**
@@ -136,17 +137,25 @@ const mesmoPedido = (a: PontoPendente, b: PontoPendente) => chaveDoPedido(a) ===
  * Decide o pedido. O teto conta os PENDENTES também: com quatro fichas e um em leitura, um
  * sexto pedido seria aceito e descartado quando chegasse — uma leitura de servidor jogada
  * fora e um ponto que some sem aviso.
+ *
+ * `estudoUltra`: o pedido parte da UNIDADE Ultra (coordenada do cadastro dela). Um ponto da
+ * lista a poucos metros, já ligado à mesma unidade, é o MESMO lugar — `repetido`, e quem
+ * pediu troca o modo dele (`indiceDaMesmaUnidade`), em vez de abrir um segundo ponto.
  */
 export function decidirPedido(
   e: EstadoPontos,
   lat: number,
   lng: number,
   geometria?: PosicaoGeoJson[][] | null,
+  estudoUltra = false,
 ): DecisaoPedido {
   const pedido: PontoPendente = { lat, lng, geometria: geometria ?? null }
-  const repetido = geometria?.length
+  let repetido = geometria?.length
     ? indiceDaMesmaArea(e.fichas, geometria)
     : indiceDoMesmoPonto(e.fichas, lat, lng)
+  if (repetido < 0 && estudoUltra && !geometria?.length) {
+    repetido = indiceDaMesmaUnidade(e.fichas, lat, lng)
+  }
   if (repetido >= 0) return { tipo: 'repetido', indice: repetido }
   if (e.pendentes.some((p) => mesmoPedido(p, pedido))) return { tipo: 'esperando' }
   /* A área desenhada OCUPA UMA VAGA como qualquer ponto: ela entra na mesma comparação,
@@ -170,7 +179,7 @@ export function pedir(
   doMapa = false,
   estudoUltra = false,
 ): EstadoPontos {
-  const d = decidirPedido(e, lat, lng, geometria)
+  const d = decidirPedido(e, lat, lng, geometria, estudoUltra)
   if (d.tipo === 'repetido') {
     return { ...e, aberto: d.indice, revelar: e.revelar + 1, foco: e.foco + 1, abaFixada: true }
   }

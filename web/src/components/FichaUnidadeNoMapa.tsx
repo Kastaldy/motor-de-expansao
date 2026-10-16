@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 
 import { api, baixar, ApiError } from '../lib/api'
 import { rotuloDaRede } from '../lib/concorrentes'
+import { avisoDeEstudoDePonto, ehRecusaDoEstudoDaUnidade } from '../lib/estudo-ultra'
 import {
   ETIQUETA_SEM_DADOS,
   ROTULO_FONTE,
@@ -85,8 +86,9 @@ export default function FichaUnidadeNoMapa({
     setBaixandoEstudo(true)
     setErroPdf(null)
     try {
-      const { blob, filename } = await estudoDaUnidadePdf(lat, lng, `Ultra ${ficha.unidade.nome}`)
+      const { blob, filename, aviso } = await estudoDaUnidadePdf(lat, lng, `Ultra ${ficha.unidade.nome}`)
       baixar(blob, filename)
+      if (aviso) setErroPdf(aviso)
     } catch (e) {
       setErroPdf((e as ApiError).message)
     } finally {
@@ -278,17 +280,23 @@ export default function FichaUnidadeNoMapa({
 
 /**
  * O "Estudo pontual" da FICHA DA UNIDADE é o estudo da unidade Ultra (emenda da DEC-070):
- * o PDF sai sem o consumo da própria unidade no mercado. Se o servidor não achar a unidade
- * a até 150 m da coordenada (base da rede e cadastro do mapa discordando do endereço), o
- * PDF sai como estudo de ponto em vez de não sair — o próprio PDF declara o modo (sem a
- * frase do estudo da unidade, é estudo de ponto).
+ * o PDF sai sem o consumo da própria unidade no mercado. Se o servidor RECUSAR o modo (sem
+ * unidade a até 150 m da coordenada — base da rede e cadastro do mapa discordando do
+ * endereço), o PDF sai como estudo de ponto em vez de não sair, e `aviso` diz isso na tela.
+ * Qualquer outro erro sobe como erro.
  */
-async function estudoDaUnidadePdf(lat: number, lng: number, rotulo: string) {
+async function estudoDaUnidadePdf(
+  lat: number,
+  lng: number,
+  rotulo: string,
+): Promise<{ blob: Blob; filename: string; aviso: string | null }> {
   try {
-    return await api.relatorioPontual({ lat, lng, rotulo, excluirUltraProxima: true })
+    const r = await api.relatorioPontual({ lat, lng, rotulo, excluirUltraProxima: true })
+    return { ...r, aviso: null }
   } catch (e) {
-    if (!(e instanceof ApiError && e.status === 400)) throw e
-    return api.relatorioPontual({ lat, lng, rotulo })
+    if (!(e instanceof ApiError && ehRecusaDoEstudoDaUnidade(e))) throw e
+    const r = await api.relatorioPontual({ lat, lng, rotulo })
+    return { ...r, aviso: avisoDeEstudoDePonto(e.message, 'pdf') }
   }
 }
 
@@ -336,12 +344,13 @@ export function FichaUnidadeSemDados({
     setBaixando(true)
     setErro(null)
     try {
-      const { blob, filename } = await estudoDaUnidadePdf(
+      const { blob, filename, aviso } = await estudoDaUnidadePdf(
         cadastro.lat,
         cadastro.lng,
         `Ultra ${cadastro.nome}`,
       )
       baixar(blob, filename)
+      if (aviso) setErro(aviso)
     } catch (e) {
       setErro((e as ApiError).message)
     } finally {

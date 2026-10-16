@@ -11064,6 +11064,11 @@ async def relatorio_pontual(
     # D17: o `report_id` nasce ANTES do PDF, porque ele precisa ser carimbado nos bytes.
     # A gravacao do evento e' tentada aqui e pode falhar sem derrubar o relatorio -- ver
     # `_registrar_relatorio_gerado`.
+    # Estudo da unidade Ultra sem unidade a ate' 150 m: 400 AGORA, antes de registrar o
+    # relatorio como gerado (o evento ficaria na trilha sem PDF) e antes de pagar mapas e
+    # tiles que a resposta jogaria fora.
+    if excluir_ultra_proxima:
+        _validar_estudo_da_unidade(lat, lng)
     report_id = _registrar_relatorio_gerado(remote_user, relatorio="pontual", formato="pdf")
 
     # A marca-d'agua passa a dizer QUEM gerou, e nao so' "Ultra Academia".
@@ -11091,6 +11096,24 @@ async def relatorio_pontual(
             so_estudo,
             excluir_ultra_proxima,
         )
+
+
+def _validar_estudo_da_unidade(lat: float, lng: float) -> None:
+    """400 com o motivo quando o estudo da unidade Ultra nao se aplica ao ponto.
+
+    Mesma regra (e mesmas frases) de `mercado_raio.mercado_na_area`, que segue validando la'
+    dentro -- isto so' ANTECIPA a recusa. Leitura do cadastro em cache (`lru_cache`).
+    """
+    from motor_expansao.dashboard.mercado_raio import (
+        UnidadeUltraForaDaTolerancia,
+        carregar_ultra_mercado,
+        exigir_unidade_ultra,
+    )
+
+    try:
+        exigir_unidade_ultra(carregar_ultra_mercado(str(STAGING_DIR)), lat, lng)
+    except UnidadeUltraForaDaTolerancia as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 def _gerar_relatorio_pontual_pdf(

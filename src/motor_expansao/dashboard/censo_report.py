@@ -2335,6 +2335,56 @@ def _conclusao_sem_a_mais_proxima(unidades: Any) -> list[dict[str, Any]] | None:
     return [linha for i, linha in enumerate(linhas) if i != alvo]
 
 
+# O MESMO endereco no cadastro da Ultra: o piso de 50 m de `mercado_raio._MATCH_ULTRA_M`
+# (DEC-034), reusado para casar a unidade que o MERCADO tirou com as linhas da lista do
+# censo -- as duas listas vem de cadastros diferentes e nao compartilham chave.
+_MESMO_ENDERECO_ULTRA_M = 50.0
+
+
+def _conclusao_sem_a_estudada(
+    unidades: Any, estudada: Mapping[str, Any]
+) -> tuple[list[dict[str, Any]], int] | None:
+    """As unidades sem as que estao no ENDERECO da unidade estudada, e quantas sairam.
+
+    `None` quando a estudada nao traz coordenada (o chamador cai na regra antiga, a de
+    menor `dist_km`). Casa pela COORDENADA que o mercado tirou, e nao pela mais proxima do
+    ponto: se a unidade estudada nao estiver na lista do censo, NADA sai -- tirar a mais
+    proxima apagaria do alerta outra Ultra real do raio.
+    """
+    import math
+
+    lat0 = _conclusao_valor(estudada.get("lat"))
+    lng0 = _conclusao_valor(estudada.get("lng"))
+    if lat0 is None or lng0 is None:
+        return None
+    linhas: Any = unidades if unidades is not None else []
+    if hasattr(linhas, "to_dict"):
+        linhas = [] if getattr(linhas, "empty", False) else linhas.to_dict("records")
+    linhas = list(linhas)
+
+    def _dist_m(linha: Mapping[str, Any]) -> float | None:
+        la = _conclusao_valor(linha.get("lat"))
+        lo = _conclusao_valor(linha.get("lng"))
+        if la is None or lo is None:
+            return None
+        p1, p2 = math.radians(lat0), math.radians(la)
+        h = (
+            math.sin((p2 - p1) / 2) ** 2
+            + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lo - lng0) / 2) ** 2
+        )
+        return 2 * 6_371_000.0 * math.asin(min(1.0, math.sqrt(h)))
+
+    ficam: list[dict[str, Any]] = []
+    sairam = 0
+    for linha in linhas:
+        d = _dist_m(linha)
+        if d is not None and d <= _MESMO_ENDERECO_ULTRA_M:
+            sairam += 1
+        else:
+            ficam.append(linha)
+    return ficam, sairam
+
+
 def _conclusao_menor_dist_km(unidades: Any) -> float | None:
     """Menor `dist_km` de um conjunto de unidades (DataFrame ou sequencia de dicts)."""
     if unidades is None:
@@ -2351,20 +2401,35 @@ def _conclusao_menor_dist_km(unidades: Any) -> float | None:
 
 
 def _conclusao_canibalizacao(
-    result: Mapping[str, Any], *, sem_a_estudada: bool = False
+    result: Mapping[str, Any],
+    *,
+    sem_a_estudada: bool = False,
+    estudada: Mapping[str, Any] | None = None,
 ) -> str | None:
     """Alerta de unidade Ultra no raio, ou `None` quando nao ha nenhuma. Funcao pura.
 
     `sem_a_estudada` (emenda da DEC-070, estudo da unidade Ultra): a unidade no CENTRO do
-    estudo nao canibaliza a si mesma. Ela e' a mais proxima do ponto (esta' a ate' 150 m),
-    entao sai da contagem e da distancia; sobrando nenhuma, nao ha' alerta.
+    estudo nao canibaliza a si mesma, e sai da contagem e da distancia; sobrando nenhuma,
+    nao ha' alerta. Com `estudada` (a `unidade_ultra_estudada` do mercado, com `lat`/`lng`)
+    saem as linhas no ENDERECO dela -- inclusive a linha repetida do cadastro -- e so'
+    elas. Sem coordenada, sai a mais proxima do ponto (ela esta' a ate' 150 m).
     """
     n = _conclusao_valor(result.get("n_ultra"))
     if n is None or n < 1:
         return None
     quantas = int(n)
     unidades = result.get("ultra_raio")
-    if sem_a_estudada:
+    casado = (
+        _conclusao_sem_a_estudada(unidades, estudada)
+        if sem_a_estudada and estudada
+        else None
+    )
+    if casado is not None:
+        unidades, sairam = casado
+        quantas -= sairam
+        if quantas < 1:
+            return None
+    elif sem_a_estudada:
         quantas -= 1
         if quantas < 1:
             return None
@@ -2466,7 +2531,9 @@ def _avaliar_conclusao(
 
     # --- Canibalizacao (alerta de rede propria no raio) ---
     alerta_canibalizacao = _conclusao_canibalizacao(
-        result, sem_a_estudada=bool(residual.get("unidade_ultra_estudada"))
+        result,
+        sem_a_estudada=bool(residual.get("unidade_ultra_estudada")),
+        estudada=residual.get("unidade_ultra_estudada"),
     )
     if alerta_canibalizacao is not None:
         ressalvas.append(alerta_canibalizacao)

@@ -21,6 +21,7 @@
  * (`mercado_raio.mercado_na_area`). Estas funções só decidem o que oferecer e o que dizer.
  */
 import { distanciaCurta } from './format'
+import { distanciaMetros } from './medicao'
 import type { PontoPayload } from './types'
 
 /**
@@ -78,6 +79,62 @@ export function ofertaDeEstudoUltra(
     pergunta: `Este ponto é a Ultra ${unidade.nome}${onde}. Estudar a região da unidade (sem o consumo dela)?`,
     declaracao: ligado ? (m.declaracao_modo ?? null) : null,
   }
+}
+
+/**
+ * O ponto da lista que JÁ É o lugar de uma unidade Ultra pedida pela coordenada dela —
+ * ou `-1`.
+ *
+ * Existe porque "Estudar a região desta unidade" pede a coordenada do CADASTRO da unidade,
+ * e o ponto que o operador abriu antes (clique, endereço) cai a alguns metros dela: em
+ * Santana, a 9 m. A identidade da lista é a coordenada a 5 casas (~1 m), então os dois
+ * viravam DOIS pontos e a comparação punha a unidade para competir com ela mesma (residual
+ * 0 contra 1.527, "leva a comparação"). O contrato do modo é o contrário: o mesmo lugar
+ * nos dois modos é o MESMO ponto, e o pedido troca o modo da ficha que já está aberta.
+ *
+ * "Mesmo lugar" = um ponto com raio (não área desenhada) que o servidor já ligou a uma
+ * Ultra a até `TOLERANCIA_UNIDADE_ULTRA_M` e que está a até essa mesma tolerância da
+ * coordenada pedida. Havendo mais de um, o mais próximo.
+ */
+export function indiceDaMesmaUnidade(
+  fichas: readonly Pick<PontoPayload, 'lat' | 'lng' | 'geometria' | 'mercado'>[],
+  lat: number,
+  lng: number,
+): number {
+  let melhor = -1
+  let melhorDist = Infinity
+  fichas.forEach((f, i) => {
+    if (f.geometria?.length) return
+    const m = f.mercado
+    const unidade = m?.unidade_ultra_estudada ?? m?.ultra_proxima ?? null
+    if (!unidade || unidade.dist_m == null || unidade.dist_m > TOLERANCIA_UNIDADE_ULTRA_M) return
+    const d = distanciaMetros({ lat: f.lat, lng: f.lng }, { lat, lng })
+    if (d <= TOLERANCIA_UNIDADE_ULTRA_M && d < melhorDist) {
+      melhor = i
+      melhorDist = d
+    }
+  })
+  return melhor
+}
+
+/**
+ * O erro é a RECUSA do estudo da unidade (sem unidade Ultra a até 150 m, ou sem cadastro)?
+ *
+ * Só essa recusa autoriza cair no estudo de ponto. Qualquer outro 400 (coordenada que não
+ * resolve, parâmetro inválido) falharia de novo no outro modo — e cair nele esconderia o
+ * motivo real. As duas frases do servidor (`mercado_raio.exigir_unidade_ultra`) dizem
+ * "estudo da unidade"; o teste Python trava isso.
+ */
+export function ehRecusaDoEstudoDaUnidade(e: unknown): boolean {
+  if (typeof e !== 'object' || e === null) return false
+  const { status, message } = e as { status?: unknown; message?: unknown }
+  return status === 400 && typeof message === 'string' && /estudo da unidade/i.test(message)
+}
+
+/** O aviso de quando o estudo da unidade foi recusado e o pedido seguiu como estudo de ponto. */
+export function avisoDeEstudoDePonto(motivo: string, oQue: 'ponto' | 'pdf'): string {
+  const fim = oQue === 'pdf' ? 'O PDF saiu como estudo de ponto.' : 'O ponto entrou como estudo de ponto.'
+  return `${motivo} ${fim}`
 }
 
 /** O sufixo do nome do ponto no estudo da unidade; vazio no estudo de ponto. */

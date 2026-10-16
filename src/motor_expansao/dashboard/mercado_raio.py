@@ -281,10 +281,14 @@ def ultra_mais_proxima(
 ) -> dict[str, Any] | None:
     """A unidade Ultra mais proxima de (lat, lng) a ate' `tolerancia_m`, ou `None`.
 
-    Devolve a POSICAO dela no frame (`posicao`, para tirar exatamente ESSA linha), o
-    `ultra_id` e o `nome` do cadastro quando houver, a distancia e quantas linhas do
-    cadastro caem na tolerancia -- mais de uma e' sinal de cadastro duplicado (ha' um par a
-    6 m em Vila Zelina/SP) e so' a mais proxima sai, nunca as duas.
+    Devolve a POSICAO dela no frame (`posicao`), o `ultra_id` e o `nome` do cadastro quando
+    houver, a distancia, a coordenada dela e quantas linhas do cadastro caem na tolerancia.
+
+    `posicoes_mesmo_ponto` sao as linhas a ate' `_MATCH_ULTRA_M` (50 m) DA PROPRIA unidade
+    -- o MESMO endereco repetido no cadastro. Medido: "Valparaiso / GO" esta' gravada com
+    uf=SP a 6 m de "Vila Zelina / SP", no mesmo predio. Tirar so' a mais proxima deixava o
+    fantasma no consumo (4.990 -> 2.490 alunos, residual 0 nos dois modos) numa ficha que
+    DIZ que a unidade saiu. Unidade real a mais de 50 m segue contando.
     """
     if ultra is None or ultra.empty:
         return None
@@ -302,13 +306,46 @@ def ultra_mais_proxima(
         v = ultra[col].iloc[j]
         return None if v is None or pd.isna(v) or not str(v).strip() else str(v).strip()
 
+    d_j = _dist_m(float(la[j]), float(lo[j]), la, lo)
+    mesmo = [int(k) for k in np.flatnonzero(np.isfinite(d_j) & (d_j <= _MATCH_ULTRA_M))]
+    if j not in mesmo:
+        mesmo = [j, *mesmo]
     return {
         "posicao": j,
+        "posicoes_mesmo_ponto": mesmo,
         "ultra_id": _txt(COLUNA_ULTRA_ID),
         "nome": _txt(COLUNA_ULTRA_NOME),
         "dist_m": float(d[j]),
+        "lat": float(la[j]),
+        "lng": float(lo[j]),
         "n_na_tolerancia": int((d <= float(tolerancia_m)).sum()),
     }
+
+
+def exigir_unidade_ultra(
+    ultra: pd.DataFrame | None,
+    lat: float,
+    lng: float,
+    *,
+    tolerancia_m: float = TOLERANCIA_UNIDADE_ULTRA_M,
+) -> dict[str, Any]:
+    """A unidade do ESTUDO DA UNIDADE ULTRA, ou `UnidadeUltraForaDaTolerancia` com o motivo.
+
+    Separada de `mercado_na_area` para a rota do PDF validar ANTES do trabalho caro (mapas,
+    tiles) e antes de registrar o relatorio como gerado -- a regra e as frases sao as
+    mesmas, porque `mercado_na_area` chama esta funcao.
+    """
+    if ultra is None:
+        raise UnidadeUltraForaDaTolerancia(
+            "Sem cadastro de unidades Ultra: o estudo da unidade não pode ser montado."
+        )
+    proxima = ultra_mais_proxima(ultra, lat, lng, tolerancia_m=tolerancia_m)
+    if proxima is None:
+        raise UnidadeUltraForaDaTolerancia(
+            f"Não há unidade Ultra a até {tolerancia_m:.0f} m deste ponto: "
+            "o estudo da unidade Ultra não se aplica (use o estudo de ponto)."
+        )
+    return proxima
 
 
 def nome_curto_ultra(nome: str | None) -> str:
@@ -327,9 +364,15 @@ def declaracao_estudo_ultra(unidade: dict[str, Any] | None) -> str | None:
         return None
     alunos = _finito(unidade.get("consumo_excluido"))
     qtd = "" if alunos is None else " (" + f"{alunos:,.0f}".replace(",", ".") + " alunos)"
+    n_linhas = int(unidade.get("n_linhas_excluidas") or 1)
+    duplicado = (
+        ""
+        if n_linhas <= 1
+        else f" O cadastro repete este endereço em {n_linhas} linhas; todas saíram da conta."
+    )
     return (
         f"Estudo da unidade Ultra {nome_curto_ultra(unidade.get('nome'))}: consumo da "
-        f"própria unidade{qtd} desconsiderado; as outras Ultras continuam contando."
+        f"própria unidade{qtd} desconsiderado; as outras Ultras continuam contando.{duplicado}"
     )
 
 
@@ -361,8 +404,9 @@ def mercado_na_area(
     """SAM, consumo (concorrentes + Ultra) e residual DENTRO do recorte do ponto.
 
     `excluir_ultra_proxima` (emenda da DEC-070): ESTUDO DA UNIDADE ULTRA. Tira do consumo
-    UMA unidade -- a mais proxima de (lat, lng) a ate' `tolerancia_ultra_m` -- e so' ela;
-    as outras Ultras seguem contando. Sem unidade na tolerancia (ou sem cadastro), levanta
+    UMA unidade -- a mais proxima de (lat, lng) a ate' `tolerancia_ultra_m` -- e so' ela
+    (com as linhas que repetem o MESMO endereco no cadastro, a ate' 50 m dela); as outras
+    Ultras seguem contando. Sem unidade na tolerancia (ou sem cadastro), levanta
     `UnidadeUltraForaDaTolerancia`. Default `False` = o estudo de ponto de sempre, com os
     MESMOS valores de antes do parametro. Em qualquer modo, `ultra_proxima` diz qual
     unidade esta' na tolerancia (e' o que a ficha usa para OFERECER o modo).
@@ -410,18 +454,12 @@ def mercado_na_area(
     estudada: dict[str, Any] | None = None
     ultra_conta = ultra
     if excluir_ultra_proxima:
-        if ultra is None:
-            raise UnidadeUltraForaDaTolerancia(
-                "Sem cadastro de unidades Ultra: o estudo da unidade não pode ser montado."
-            )
-        if proxima is None:
-            raise UnidadeUltraForaDaTolerancia(
-                f"Não há unidade Ultra a até {tolerancia_ultra_m:.0f} m deste ponto: "
-                "o estudo da unidade Ultra não se aplica (use o estudo de ponto)."
-            )
+        proxima = exigir_unidade_ultra(ultra, lat, lng, tolerancia_m=tolerancia_ultra_m)
         pos = int(proxima["posicao"])
-        propria = consumo_na_area(ultra.iloc[[pos]], area, lat, lng)
-        ultra_conta = ultra.iloc[[k for k in range(len(ultra)) if k != pos]]
+        # A unidade E as linhas repetidas do MESMO endereco (ver `ultra_mais_proxima`).
+        fora = set(proxima.get("posicoes_mesmo_ponto") or [pos])
+        propria = consumo_na_area(ultra.iloc[sorted(fora)], area, lat, lng)
+        ultra_conta = ultra.iloc[[k for k in range(len(ultra)) if k not in fora]]
         cap_bruta = (
             ultra[COLUNA_CAPACIDADE].iloc[pos] if COLUNA_CAPACIDADE in ultra.columns else None
         )
@@ -429,7 +467,10 @@ def mercado_na_area(
             "ultra_id": proxima["ultra_id"],
             "nome": proxima["nome"],
             "dist_m": proxima["dist_m"],
+            "lat": proxima["lat"],
+            "lng": proxima["lng"],
             "n_na_tolerancia": proxima["n_na_tolerancia"],
+            "n_linhas_excluidas": len(fora),
             "consumo_excluido": None if propria is None else propria["alunos"],
             "capacidade_real": _finito(cap_bruta) is not None,
             "tolerancia_m": float(tolerancia_ultra_m),

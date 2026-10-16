@@ -337,6 +337,9 @@ export default function PontoScreen({
       uf: local.uf,
       lat: ficha.lat,
       lng: ficha.lng,
+      /* O nome acima carrega " (unidade Ultra)" no estudo da unidade: o PDF do Simulador
+         tem de calcular no mesmo modo (emenda da DEC-070). */
+      ...(ehEstudoDaUnidade(ficha) ? { estudoUltra: true } : {}),
     })
   }
 

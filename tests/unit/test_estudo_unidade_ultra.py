@@ -9,7 +9,8 @@ mercado ocupado e o residual saia zero. O que este arquivo trava:
 (b) sem o parametro, os valores sao IDENTICOS aos de antes dele;
 (c) unidade inexistente / fora da tolerancia / sem cadastro -> erro CLARO
     (`UnidadeUltraForaDaTolerancia`), nunca no-op silencioso;
-(d) cadastro duplicado (dois pontos a 6 m) tira so' o mais proximo;
+(d) cadastro duplicado (o MESMO endereco repetido, ate' 50 m) sai inteiro; outra Ultra
+    real dentro dos 150 m continua contando;
 (e) a rota `/api/ponto` e a do PDF levam o modo de ponta a ponta, com 400 no erro;
 (f) o PDF DECLARA o modo (Big Numbers) e a Conclusao nao acusa a unidade estudada de
     canibalizar a si mesma.
@@ -167,6 +168,16 @@ def test_sem_ultra_na_tolerancia_e_erro_claro_nunca_no_op() -> None:
         _mercado(None, excluir_ultra_proxima=True)
 
 
+def test_as_recusas_dizem_estudo_da_unidade_que_o_front_reconhece() -> None:
+    # `ehRecusaDoEstudoDaUnidade` (web/src/lib/estudo-ultra.ts) so' cai no estudo de ponto
+    # quando o 400 diz "estudo da unidade"; mudar a frase aqui sem la' faria o front
+    # perder a analise em vez de seguir no outro modo.
+    for ultra in (None, _ultras(_norte(151.0) + ("id-x", "Longe", None))):
+        with pytest.raises(mr.UnidadeUltraForaDaTolerancia) as exc:
+            mr.exigir_unidade_ultra(ultra, LAT, LNG)
+        assert "estudo da unidade" in str(exc.value).lower()
+
+
 def test_tolerancia_e_a_do_pin_da_ficha() -> None:
     assert mr.TOLERANCIA_UNIDADE_ULTRA_M == 150.0
     ts = (_REPO / "web" / "src" / "lib" / "estudo-ultra.ts")
@@ -177,13 +188,32 @@ def test_tolerancia_e_a_do_pin_da_ficha() -> None:
 # --------------------------------------------------------------------------- #
 # (d) cadastro duplicado                                                       #
 # --------------------------------------------------------------------------- #
-def test_cadastro_duplicado_tira_so_a_mais_proxima() -> None:
+def test_cadastro_duplicado_no_mesmo_endereco_sai_inteiro() -> None:
+    # O par REAL do cadastro: "Valparaiso / GO" gravada a 6 m de "Vila Zelina / SP". Tirar
+    # so' a mais proxima deixava o fantasma no consumo numa ficha que diz que a unidade saiu.
     a = _norte(5.0) + ("id-a", "Vila Zelina / SP", None)
     b = _norte(11.0) + ("id-b", "Valparaiso / GO", None)
     r = _mercado(_ultras(a, b), excluir_ultra_proxima=True)
-    assert r["unidade_ultra_estudada"]["ultra_id"] == "id-a"
-    assert r["unidade_ultra_estudada"]["n_na_tolerancia"] == 2
-    assert r["n_ultra_alcancam"] == 1  # a duplicata continua contando: nunca "todas"
+    est = r["unidade_ultra_estudada"]
+    assert est["ultra_id"] == "id-a"
+    assert est["n_na_tolerancia"] == 2
+    assert est["n_linhas_excluidas"] == 2
+    assert r["n_ultra_alcancam"] == 0
+    assert r["oferta_consumida_ultra_estimada"] == pytest.approx(0.0, abs=1e-6)
+    ponto = _mercado(_ultras(a, b))
+    assert est["consumo_excluido"] == pytest.approx(ponto["oferta_consumida_ultra_estimada"])
+    assert "repete este endereço em 2 linhas" in r["declaracao_modo"]
+    r["declaracao_modo"].encode("latin-1")
+
+
+def test_outra_ultra_a_mais_de_50_m_da_estudada_continua_contando() -> None:
+    # Duas unidades REAIS podem ficar dentro dos 150 m do ponto; so' o MESMO endereco sai.
+    a = _norte(5.0) + ("id-a", "Vila Zelina / SP", None)
+    b = _norte(120.0) + ("id-b", "Vizinha / SP", None)
+    r = _mercado(_ultras(a, b), excluir_ultra_proxima=True)
+    assert r["unidade_ultra_estudada"]["n_linhas_excluidas"] == 1
+    assert r["n_ultra_alcancam"] == 1
+    assert "repete" not in r["declaracao_modo"]
 
 
 def test_carga_do_cadastro_leva_identidade() -> None:
@@ -334,6 +364,20 @@ def pdf_espiao(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, obj
         return b"%PDF-1.4 stub"
 
     monkeypatch.setattr(censo_report, "gerar_pdf_relatorio_pontual_classico", _fake_gerar)
+
+    def _validar_fake(lat, lng):
+        if visto.get("sem_ultra"):
+            raise HTTPException(400, "Não há unidade Ultra a até 150 m deste ponto.")
+
+    monkeypatch.setattr(pilot, "_validar_estudo_da_unidade", _validar_fake)
+    registrados: list[str] = []
+    visto["registrados"] = registrados
+
+    def _registrar_fake(*a, **k):
+        registrados.append("pontual")
+        return "rid"
+
+    monkeypatch.setattr(pilot, "_registrar_relatorio_gerado", _registrar_fake)
     return visto
 
 
@@ -357,6 +401,25 @@ def test_pdf_estudo_da_unidade_longe_de_ultra_e_400(pdf_espiao) -> None:
     with pytest.raises(HTTPException) as exc:
         _pdf(so_estudo=True, excluir_ultra_proxima=True)
     assert exc.value.status_code == 400
+    # A recusa vem ANTES: nada registrado como gerado e o mercado nem foi montado.
+    assert pdf_espiao["registrados"] == []
+    assert "kw_mercado" not in pdf_espiao
+
+
+def test_validacao_antecipada_usa_a_mesma_regra_do_mercado(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(pilot, "STAGING_DIR", tmp_path / "vazio")
+    with pytest.raises(HTTPException) as exc:
+        pilot._validar_estudo_da_unidade(LAT, LNG)
+    assert exc.value.status_code == 400 and "cadastro" in exc.value.detail
+    ultra = _ultras(_SANTANA)
+    monkeypatch.setattr(mr, "carregar_ultra_mercado", lambda s: ultra)
+    pilot._validar_estudo_da_unidade(LAT, LNG)  # Santana a 9 m: passa
+    longe = _ultras(_norte(151.0) + ("id-x", "Longe", None))
+    monkeypatch.setattr(mr, "carregar_ultra_mercado", lambda s: longe)
+    with pytest.raises(HTTPException, match="150 m"):
+        pilot._validar_estudo_da_unidade(LAT, LNG)
 
 
 # --------------------------------------------------------------------------- #
@@ -371,6 +434,30 @@ def test_conclusao_nao_acusa_a_unidade_estudada_de_canibalizar() -> None:
     duas = {"n_ultra": 2, "ultra_raio": [{"dist_km": 0.009}, {"dist_km": 0.5}]}
     alerta = _conclusao_canibalizacao(duas, sem_a_estudada=True)
     assert alerta == "Canibalização da rede: 1 unidade Ultra dentro do raio do estudo; a unidade está a 500 m do ponto."
+
+
+def test_conclusao_casa_a_estudada_pela_coordenada_do_mercado() -> None:
+    from motor_expansao.dashboard.censo_report import _conclusao_canibalizacao
+
+    santana = _norte(9.0)
+    outra = _norte(300.0)
+    estudada = {"nome": "Santana", "lat": santana[0], "lng": santana[1]}
+    # Endereco repetido no cadastro (o par de Vila Zelina): as duas linhas saem.
+    dup = {
+        "n_ultra": 2,
+        "ultra_raio": [
+            {"dist_km": 0.005, "lat": santana[0], "lng": santana[1]},
+            {"dist_km": 0.011, "lat": _norte(15.0)[0], "lng": LNG},
+        ],
+    }
+    assert _conclusao_canibalizacao(dup, sem_a_estudada=True, estudada=estudada) is None
+    # A estudada NAO esta' na lista do censo (veio de outro cadastro): nada sai, e a Ultra
+    # real mais proxima do ponto continua no alerta.
+    so_outra = {"n_ultra": 1, "ultra_raio": [{"dist_km": 0.3, "lat": outra[0], "lng": outra[1]}]}
+    alerta = _conclusao_canibalizacao(so_outra, sem_a_estudada=True, estudada=estudada)
+    assert alerta is not None and "a 300 m" in alerta
+    # Sem coordenada na estudada: a regra antiga (sai a mais proxima).
+    assert _conclusao_canibalizacao(so_outra, sem_a_estudada=True, estudada={"nome": "X"}) is None
 
 
 def test_big_numbers_declara_o_modo_e_as_parcelas() -> None:

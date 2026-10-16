@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { api, ApiError } from './api'
 import { MAX_PONTOS, chaveDaCoordenada, type PosicaoGeoJson } from './comparacao-pontos'
-import { ehEstudoDaUnidade } from './estudo-ultra'
+import { avisoDeEstudoDePonto, ehEstudoDaUnidade, ehRecusaDoEstudoDaUnidade } from './estudo-ultra'
 import { pontoInterno } from './geometria-desenho'
 import {
   PONTOS_VAZIO,
@@ -86,8 +86,8 @@ export function usePontos() {
    */
   const analisar = useCallback(
     async (lat: number, lng: number, opcoes?: { doMapa?: boolean; estudoUltra?: boolean }) => {
-      const decisao = decidirPedido(ref.current, lat, lng)
       const estudoUltra = opcoes?.estudoUltra === true
+      const decisao = decidirPedido(ref.current, lat, lng, null, estudoUltra)
       setErro(null)
       /* TETO CHEIO: recusa e DIZ, antes de gastar a leitura. Engolir o ponto em silêncio
          foi a metade do "depois de algumas vezes ele buga" (Juan, 2026-08-14). */
@@ -107,9 +107,9 @@ export function usePontos() {
         try {
           ficha = await api.ponto(lat, lng, estudoUltra ? { excluirUltraProxima: true } : undefined)
         } catch (e) {
-          if (!(estudoUltra && e instanceof ApiError && e.status === 400)) throw e
+          if (!(estudoUltra && e instanceof ApiError && ehRecusaDoEstudoDaUnidade(e))) throw e
           ficha = await api.ponto(lat, lng)
-          setErro(`${e.message} O ponto entrou como estudo de ponto.`)
+          setErro(avisoDeEstudoDePonto(e.message, 'ponto'))
         }
         aplicar((e) => chegou(e, pedido, ficha))
       } catch (e) {

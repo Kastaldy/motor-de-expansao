@@ -74,6 +74,12 @@ export interface PontoEscolhido {
    */
   lat?: number
   lng?: number
+  /**
+   * O ponto foi para o Simulador no ESTUDO DA UNIDADE ULTRA (emenda da DEC-070). O nome
+   * dele já carrega " (unidade Ultra)", e o PDF gerado lá tem de calcular no MESMO modo —
+   * senão a capa afirma o modo e os números saem do estudo de ponto. Só aparece quando `true`.
+   */
+  estudoUltra?: boolean
 }
 
 export default function App() {
