@@ -36,7 +36,8 @@ import {
   type PinDaComparacao,
   type PosicaoGeoJson,
 } from './comparacao-pontos'
-import { ehEstudoDaUnidade, indiceDaMesmaUnidade } from './estudo-ultra'
+import { TOLERANCIA_UNIDADE_ULTRA_M, ehEstudoDaUnidade, indiceDaMesmaUnidade } from './estudo-ultra'
+import { distanciaMetros } from './medicao'
 import type { PontoPayload } from './types'
 
 /**
@@ -134,6 +135,35 @@ const chaveDoPedido = (p: PontoPendente) =>
 const mesmoPedido = (a: PontoPendente, b: PontoPendente) => chaveDoPedido(a) === chaveDoPedido(b)
 
 /**
+ * O pendente (ponto, nunca área) que é o MESMO lugar de um pedido de estudo da unidade em
+ * `lat`/`lng`. Primeiro a coordenada exata; senão, o pendente mais próximo a até
+ * `TOLERANCIA_UNIDADE_ULTRA_M` — a régua de `indiceDaMesmaUnidade` para as fichas.
+ *
+ * Revisão do PR #457: o caso real é o ponto clicado a 9 m da Ultra Santana enquanto
+ * "Estudar a região desta unidade" manda a coordenada do CADASTRO. Com a chave de ~1 m o
+ * pedido virava um SEGUNDO pendente, e a comparação mostrava a unidade contra ela mesma —
+ * o que dependia só do momento do clique (depois de a ficha chegar, o mesmo clique já
+ * trocava o modo dela). O pendente ainda não diz qual unidade tem por perto, então a
+ * tolerância é a mesma do servidor: o estudo da unidade relido na coordenada do pendente
+ * acha a Ultra a até 150 m dele.
+ */
+function indicePendenteDaMesmaUnidade(pendentes: readonly PontoPendente[], lat: number, lng: number): number {
+  const exato = pendentes.findIndex((p) => mesmoPedido(p, { lat, lng }))
+  if (exato >= 0) return exato
+  let melhor = -1
+  let melhorDist = Infinity
+  pendentes.forEach((p, i) => {
+    if (p.geometria?.length) return
+    const d = distanciaMetros({ lat: p.lat, lng: p.lng }, { lat, lng })
+    if (d <= TOLERANCIA_UNIDADE_ULTRA_M && d < melhorDist) {
+      melhor = i
+      melhorDist = d
+    }
+  })
+  return melhor
+}
+
+/**
  * Decide o pedido. O teto conta os PENDENTES também: com quatro fichas e um em leitura, um
  * sexto pedido seria aceito e descartado quando chegasse — uma leitura de servidor jogada
  * fora e um ponto que some sem aviso.
@@ -158,6 +188,9 @@ export function decidirPedido(
   }
   if (repetido >= 0) return { tipo: 'repetido', indice: repetido }
   if (e.pendentes.some((p) => mesmoPedido(p, pedido))) return { tipo: 'esperando' }
+  if (estudoUltra && !geometria?.length && indicePendenteDaMesmaUnidade(e.pendentes, lat, lng) >= 0) {
+    return { tipo: 'esperando' }
+  }
   /* A área desenhada OCUPA UMA VAGA como qualquer ponto: ela entra na mesma comparação,
      com uma das cinco cores de identidade. */
   if (e.fichas.length + e.pendentes.length >= MAX_PONTOS) return { tipo: 'cheio' }
@@ -194,8 +227,7 @@ export function pedir(
      chegaria no modo que o operador acabou de trocar. O pendente passa a QUERER o estudo
      da unidade, e quem recebe a leitura relê no modo pedido (`releituraAoChegar`). */
   if (d.tipo === 'esperando' && estudoUltra && !geometria?.length) {
-    const alvo: PontoPendente = { lat, lng }
-    const i = e.pendentes.findIndex((p) => mesmoPedido(p, alvo))
+    const i = indicePendenteDaMesmaUnidade(e.pendentes, lat, lng)
     if (i < 0 || e.pendentes[i].estudoUltra) return e
     const pendentes = e.pendentes.map((p, k) => (k === i ? { ...p, estudoUltra: true } : p))
     return { ...e, pendentes }
@@ -337,6 +369,29 @@ export function concluirTroca(
   const emVoo = { ...t.emVoo }
   delete emVoo[chave]
   return { trocas: { ...t, emVoo }, vale: true }
+}
+
+/**
+ * "Limpar tudo": esquece as releituras em voo, mas PRESERVA a geração. Voltar a
+ * `TROCAS_VAZIO` (geração 0) faria um pedido novo, na mesma coordenada, reusar o número de
+ * um pedido antigo ainda no ar — e a resposta velha passaria por `concluirTroca` como se
+ * fosse a vigente (revisão do PR #457).
+ */
+export function limparTrocas(t: TrocasDeModo): TrocasDeModo {
+  if (Object.keys(t.emVoo).length === 0) return t
+  return { geracao: t.geracao, emVoo: {} }
+}
+
+/**
+ * O ponto `chave` saiu da lista: a releitura em voo dele é descartada quando chegar.
+ * Sem isso, remover e analisar de novo o mesmo lugar deixava a resposta da troca antiga
+ * trocar o modo da ficha NOVA (`substituir` casa pela coordenada).
+ */
+export function esquecerTroca(t: TrocasDeModo, chave: string): TrocasDeModo {
+  if (!(chave in t.emVoo)) return t
+  const emVoo = { ...t.emVoo }
+  delete emVoo[chave]
+  return { ...t, emVoo }
 }
 
 /** Os pontos (`chaveDaCoordenada`) com releitura de modo em voo — o "trocando" da ficha. */

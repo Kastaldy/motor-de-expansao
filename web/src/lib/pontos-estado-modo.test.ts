@@ -14,6 +14,9 @@ import {
   TROCAS_VAZIO,
   chegou,
   concluirTroca,
+  decidirPedido,
+  esquecerTroca,
+  limparTrocas,
   pedir,
   pedirTroca,
   pendenteDoPedido,
@@ -151,5 +154,103 @@ describe('pedido ainda em leitura e pedido de novo como estudo da unidade', () =
     const e = pedir(PONTOS_VAZIO, A.lat, A.lng, null, false, true)
     expect(pedir(e, A.lat, A.lng, null, false, true)).toBe(e)
     expect(pedir(e, A.lat, A.lng)).toBe(e)
+  })
+})
+
+describe('"Limpar tudo" e "remover" no meio de uma troca de modo (revisão do PR #457)', () => {
+  it('limpar PRESERVA a geração: o pedido novo na mesma coordenada não reusa o número do velho', () => {
+    // A está como estudo da unidade e o operador desliga: geração 1, em voo
+    let t = pedirTroca(TROCAS_VAZIO, CHAVE, true, false).trocas
+    t = limparTrocas(t)
+    expect(pontosEmTroca(t)).toEqual([])
+    // reanalisa A como ponto e liga o estudo da unidade
+    const r = pedirTroca(t, CHAVE, false, true)
+    expect(r.decisao).toEqual({ tipo: 'ler', geracao: 2 })
+    // a resposta VELHA (geração 1) chega primeiro: descartada; a nova vale
+    expect(concluirTroca(r.trocas, CHAVE, 1).vale).toBe(false)
+    expect(concluirTroca(r.trocas, CHAVE, 2).vale).toBe(true)
+  })
+
+  it('limpar sem nada em voo não muda o estado', () => {
+    expect(limparTrocas(TROCAS_VAZIO)).toBe(TROCAS_VAZIO)
+  })
+
+  it('propriedade: com "Limpar tudo" entre duas rodadas de cliques, o modo final é o do último clique', () => {
+    // `ini`: o modo da ficha antes do limpar; `readicionada`: o modo em que o ponto volta
+    for (const [ini, readicionada] of [[false, false], [false, true], [true, false], [true, true]]) {
+      for (const antes of sequencias()) {
+        for (const depois of sequencias()) {
+          let trocas: TrocasDeModo = TROCAS_VAZIO
+          const voo: { geracao: number; estudoUltra: boolean }[] = []
+          for (const c of antes) {
+            const r = pedirTroca(trocas, CHAVE, ini, c)
+            trocas = r.trocas
+            if (r.decisao.tipo === 'ler') voo.push({ geracao: r.decisao.geracao, estudoUltra: c })
+          }
+          trocas = limparTrocas(trocas)
+          let modoDaFicha = readicionada
+          for (const c of depois) {
+            const r = pedirTroca(trocas, CHAVE, modoDaFicha, c)
+            trocas = r.trocas
+            if (r.decisao.tipo === 'ler') voo.push({ geracao: r.decisao.geracao, estudoUltra: c })
+          }
+          // a ordem hostil: as respostas de ANTES do limpar chegam PRIMEIRO, quando o número
+          // delas já pode ter sido reusado por um pedido novo
+          for (const req of voo) {
+            const fim = concluirTroca(trocas, CHAVE, req.geracao)
+            trocas = fim.trocas
+            if (fim.vale) modoDaFicha = req.estudoUltra
+          }
+          expect({ ini, readicionada, antes, depois, modo: modoDaFicha }).toEqual({
+            ini,
+            readicionada,
+            antes,
+            depois,
+            modo: depois[depois.length - 1],
+          })
+        }
+      }
+    }
+  })
+
+  it('remover o ponto descarta a troca em voo: a resposta antiga não troca a ficha readicionada', () => {
+    let t = pedirTroca(TROCAS_VAZIO, CHAVE, false, true).trocas // liga: geração 1
+    t = esquecerTroca(t, CHAVE) // o operador removeu o ponto
+    expect(pontosEmTroca(t)).toEqual([])
+    expect(concluirTroca(t, CHAVE, 1).vale).toBe(false)
+  })
+
+  it('remover um ponto não mexe na troca de outro', () => {
+    let t = pedirTroca(TROCAS_VAZIO, 'a', false, true).trocas
+    t = pedirTroca(t, 'b', false, true).trocas
+    t = esquecerTroca(t, 'a')
+    expect(pontosEmTroca(t)).toEqual(['b'])
+    expect(concluirTroca(t, 'b', 2).vale).toBe(true)
+    expect(esquecerTroca(t, 'zzz')).toBe(t)
+  })
+})
+
+describe('ponto em leitura a poucos metros da unidade pedida (revisão do PR #457)', () => {
+  const A = { lat: -23.48516, lng: -46.61771 } // o ponto clicado
+  const U = { lat: -23.48508, lng: -46.61771 } // o cadastro da unidade, ~9 m ao norte
+  const LONGE = { lat: -23.49, lng: -46.61771 } // ~540 m
+
+  it('"Estudar a região desta unidade" com o ponto ainda carregando NÃO abre um segundo item', () => {
+    let e = pedir(PONTOS_VAZIO, A.lat, A.lng)
+    expect(decidirPedido(e, U.lat, U.lng, null, true)).toEqual({ tipo: 'esperando' })
+    e = pedir(e, U.lat, U.lng, null, false, true)
+    expect(e.pendentes).toHaveLength(1)
+    expect(pendenteDoPedido(e, A)?.estudoUltra).toBe(true)
+  })
+
+  it('a unidade longe do ponto em leitura é OUTRO lugar: entra como item próprio', () => {
+    const e = pedir(PONTOS_VAZIO, A.lat, A.lng)
+    expect(decidirPedido(e, LONGE.lat, LONGE.lng, null, true)).toEqual({ tipo: 'ler' })
+    expect(pedir(e, LONGE.lat, LONGE.lng, null, false, true).pendentes).toHaveLength(2)
+  })
+
+  it('um clique comum a poucos metros continua sendo outro ponto (a tolerância é só do estudo da unidade)', () => {
+    const e = pedir(PONTOS_VAZIO, A.lat, A.lng)
+    expect(decidirPedido(e, U.lat, U.lng)).toEqual({ tipo: 'ler' })
   })
 })

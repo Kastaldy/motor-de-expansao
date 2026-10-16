@@ -8,12 +8,14 @@ import {
   PONTOS_VAZIO,
   TROCAS_VAZIO,
   abrir as abrirAba,
+  esquecerTroca,
   chegou,
   concluirTroca,
   decidirPedido,
   falhou,
   itemAtivo,
   limpar as limparTudo,
+  limparTrocas,
   mostrar as mostrarItem,
   pedir,
   pedirTroca,
@@ -194,11 +196,21 @@ export function usePontos() {
   const abrir = useCallback((i: number) => aplicar((e) => abrirAba(e, i)), [aplicar])
   /** Abre a aba `i` e a janela da ficha — o clique no pin colorido do mapa. */
   const mostrar = useCallback((i: number) => aplicar((e) => mostrarItem(e, i)), [aplicar])
-  const remover = useCallback((i: number) => aplicar((e) => removerFicha(e, i)), [aplicar])
+  const remover = useCallback(
+    (i: number) => {
+      const f = ref.current.fichas[i]
+      aplicar((e) => removerFicha(e, i))
+      /* A troca de modo em voo deste ponto morre com ele: senão, remover e analisar de novo
+         o mesmo lugar deixava a resposta antiga trocar o modo da ficha nova. */
+      if (f && !f.geometria?.length) aplicarTrocas(esquecerTroca(trocasRef.current, chaveDaCoordenada(f.lat, f.lng)))
+    },
+    [aplicar, aplicarTrocas],
+  )
   const limpar = useCallback(() => {
     aplicar(limparTudo)
-    /* Releituras em voo de pontos que acabaram de sair: a resposta é descartada. */
-    aplicarTrocas(TROCAS_VAZIO)
+    /* Releituras em voo de pontos que acabaram de sair: a resposta é descartada. A geração
+       NÃO volta a 0 (`limparTrocas`): um pedido novo reusaria o número de um antigo no ar. */
+    aplicarTrocas(limparTrocas(trocasRef.current))
     setErro(null)
   }, [aplicar, aplicarTrocas])
   const limparErro = useCallback(() => setErro(null), [])

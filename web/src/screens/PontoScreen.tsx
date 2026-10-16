@@ -466,7 +466,7 @@ export default function PontoScreen({
                 versão desta tela — a mesma frase duas vezes, uma embaixo da outra. */}
             <CampoPonto onResolver={resolver} ocupado={carregando} erro={erro} />
             <p style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
-              A leitura sai do Censo 2022{institutoDaBase ? ` do ${institutoDaBase}` : ''}, no
+              A leitura sai do Censo 2022{institutoDaBase ? ` do ${institutoDaBase}` : ''}, no{' '}
               {rotuloDoRaio(RAIO_PADRAO_KM)} — a mesma régua do Relatório Pontual.
             </p>
           </Glass>
