@@ -4423,10 +4423,17 @@ def _praca_onde_crescer_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
         y += 22.0
 
     mediana = _renda(sel.mediana_renda) if sel.mediana_renda is not None else TEXTO_SEM_DADO
+    # DEC-072: a regua e' a renda do MORADOR mediano (ponderada pela populacao do hexagono); sem
+    # populacao na base ela cai na mediana simples, e o texto diz qual das duas valeu.
+    regua = (
+        "mediana da cidade ponderada pela população"
+        if getattr(sel, "mediana_ponderada", False)
+        else "mediana da cidade (simples: a base não traz população por hexágono)"
+    )
     _draw_note(
         pdf, x, y + 12.0, w,
         "Critério: entram só hexágonos com residual positivo E renda domiciliar igual ou acima da "
-        f"mediana da cidade ({mediana}). Entre eles, a ordem é o índice de praça (70% "
+        f"{regua} ({mediana}). Entre eles, a ordem é o índice de praça (70% "
         "socioeconômico, 30% demanda), o mesmo da fila do funil. O residual sozinho puxaria para as "
         "áreas mais populosas, que nem sempre têm renda.",
     )

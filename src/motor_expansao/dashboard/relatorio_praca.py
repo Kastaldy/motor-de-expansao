@@ -26,9 +26,10 @@ Nada aqui le arquivo, recalcula score ou grava artefato -- READ-ONLY sobre o M1.
 POR QUE O TOP 5 NAO E' O RESIDUAL PURO. `oferta_efetiva_disponivel` tem Spearman ~0,995 com a
 populacao (DEC-041): ordenar por ele poe no topo o hexagono mais POPULOSO, que nas capitais e'
 com frequencia o mais pobre. Aqui o hexagono so' e' elegivel com residual positivo E renda
-domiciliar na metade de cima da propria cidade; entre os elegiveis a ordem e' o `indice_praca`
-da DEC-041 (70% socioeconomico, 30% demanda). E' uma leitura do PDF: o funil, `/api/hexagonos`
-e o `indice_praca` nao mudam.
+domiciliar igual ou acima da mediana da propria cidade PONDERADA PELA POPULACAO (DEC-072,
+`mediana_renda_da_cidade`); entre os elegiveis a ordem e' o `indice_praca` da DEC-041 (70%
+socioeconomico, 30% demanda). E' uma leitura do PDF: o funil, `/api/hexagonos` e o
+`indice_praca` nao mudam.
 """
 
 from __future__ import annotations
@@ -151,6 +152,48 @@ class SelecaoOndeCrescer:
     mediana_renda: float | None
     n_elegiveis: int
     aviso: str | None
+    #: `True` quando `mediana_renda` saiu ponderada pela populacao; `False` quando nao havia peso
+    #: (nenhum hexagono com renda E populacao positiva) e ela caiu na mediana simples.
+    mediana_ponderada: bool = False
+
+
+def mediana_renda_da_cidade(
+    renda: pd.Series,
+    populacao: pd.Series | None,
+) -> tuple[float | None, bool]:
+    """Mediana da renda domiciliar da cidade PONDERADA PELA POPULACAO do hexagono (DEC-072).
+
+    Por que ponderar: com a renda rateada por area (DEC-072), os hexagonos rurais quase vazios
+    passam a ter renda -- e com frequencia ALTA (chacaras, condominios de veraneio). Na mediana
+    sem peso cada um vale o mesmo que um hexagono urbano de 10 mil habitantes, a regua sobe e a
+    pagina "Onde crescer" esvaziava em 87 municipios (Trindade/GO, Pontalina/GO...). Ponderada,
+    a mediana e' a renda do MORADOR mediano da cidade, nao a do hexagono mediano.
+
+    Definicao (deterministica): entre os hexagonos com renda > 0 e populacao > 0, ordenados por
+    renda crescente, e' o MENOR valor de renda cuja populacao acumulada atinge pelo menos 50% da
+    populacao total desses hexagonos. Hexagono com populacao nula ou zero fica FORA do peso (nao
+    entra no calculo; continua elegivel pela renda dele). Pesos iguais dao a mediana "inferior"
+    (o elemento do meio por baixo), sem media dos dois centrais.
+
+    Sem nenhum peso positivo cai na mediana SIMPLES dos hexagonos com renda e devolve
+    `ponderada=False`, para o PDF declarar a regua. Sem renda: `(None, False)`.
+    """
+    r = pd.to_numeric(renda, errors="coerce")
+    com_renda = r.notna() & (r > 0)
+    if not com_renda.any():
+        return None, False
+    if populacao is not None:
+        p = pd.to_numeric(pd.Series(populacao, index=r.index), errors="coerce")
+        pesado = com_renda & p.notna() & (p > 0)
+        if pesado.any():
+            valores = r[pesado].to_numpy(dtype="float64")
+            pesos = p[pesado].to_numpy(dtype="float64")
+            ordem = np.argsort(valores, kind="mergesort")
+            acumulado = np.cumsum(pesos[ordem])
+            # `2*acumulado >= total` em vez de `acumulado >= total/2`: mesma regra, sem divisao.
+            i = int(np.searchsorted(2.0 * acumulado, acumulado[-1], side="left"))
+            return float(valores[ordem][i]), True
+    return float(r[com_renda].median()), False
 
 
 def selecionar_onde_crescer(
@@ -161,7 +204,9 @@ def selecionar_onde_crescer(
     """Os `n` melhores hexagonos do municipio para crescer.
 
     Elegivel: `oferta_efetiva_disponivel > 0` E renda domiciliar >= mediana da renda domiciliar
-    do proprio municipio (mediana sobre os hexagonos COM renda). Ordem: `indice_praca`
+    do proprio municipio PONDERADA PELA POPULACAO (`mediana_renda_da_cidade`, sobre os hexagonos
+    COM renda; sem populacao cai na mediana simples e `mediana_ponderada` sai `False`). A MESMA
+    selecao, com `n=10`, numera o Top 10 da camada de Dominio. Ordem: `indice_praca`
     decrescente, desempate por renda domiciliar decrescente e depois `hex_id` crescente --
     ordem total, entao o mesmo dado da' sempre a mesma lista.
 
@@ -180,8 +225,12 @@ def selecionar_onde_crescer(
     renda = pd.to_numeric(hexes[COL_RENDA_DOMICILIAR], errors="coerce")
     residual = pd.to_numeric(hexes[COL_RESIDUAL], errors="coerce")
     indice = pd.to_numeric(hexes[COL_INDICE_PRACA], errors="coerce")
-    com_renda = renda[renda.notna() & (renda > 0)]
-    mediana = float(com_renda.median()) if len(com_renda) else None
+    populacao = (
+        pd.to_numeric(hexes[COL_POPULACAO], errors="coerce")
+        if COL_POPULACAO in hexes.columns
+        else serie_populacao(hexes)
+    )
+    mediana, ponderada = mediana_renda_da_cidade(renda, populacao)
 
     if mediana is None:
         elegivel = pd.Series(False, index=hexes.index)
@@ -211,19 +260,22 @@ def selecionar_onde_crescer(
             # nenhum: a frase prometia uma lista que nao existe.
             aviso = (
                 "Nenhum hexágono do município tem, ao mesmo tempo, residual positivo e renda "
-                "domiciliar na metade de cima da cidade."
+                "domiciliar igual ou acima da mediana da cidade."
             )
         elif n_eleg == 1:
             aviso = (
-                "Só 1 hexágono do município tem residual positivo e renda domiciliar na metade "
-                "de cima da cidade."
+                "Só 1 hexágono do município tem residual positivo e renda domiciliar igual ou "
+                "acima da mediana da cidade."
             )
         else:
             aviso = (
                 f"Só {n_eleg} hexágonos do município têm residual positivo e renda domiciliar "
-                "na metade de cima da cidade; a lista mostra os que existem."
+                "igual ou acima da mediana da cidade; a lista mostra os que existem."
             )
-    return SelecaoOndeCrescer(hexagonos=top, mediana_renda=mediana, n_elegiveis=n_eleg, aviso=aviso)
+    return SelecaoOndeCrescer(
+        hexagonos=top, mediana_renda=mediana, n_elegiveis=n_eleg, aviso=aviso,
+        mediana_ponderada=ponderada,
+    )
 
 
 def renda_e_municipal(hexes: pd.DataFrame) -> bool:
