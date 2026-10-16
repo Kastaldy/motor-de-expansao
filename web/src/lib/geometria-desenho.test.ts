@@ -2,12 +2,16 @@ import { describe, expect, it } from 'vitest'
 
 import {
   AREA_MAX_KM2,
+  COMPACIDADE_MIN,
+  DIAGONAL_MAX_KM,
   MAX_VERTICES,
+  MSG_ESTREITA,
   TOLERANCIA_FECHAR_PX,
   adicionarVertice,
   areaKm2,
   avaliarDesenho,
   desfazerVertice,
+  extensao,
   formatarKm2,
   interpretarClique,
   paraGeoJson,
@@ -155,6 +159,49 @@ describe('avaliação (o que a barra mostra)', () => {
     const r = avaliarDesenho([a, c, b, d])
     expect(r.podeConcluir).toBe(false)
     expect(r.motivo).toMatch(/cruza a si mesma/)
+  })
+})
+
+/** Retângulo `w` × `h` metros centrado, girado `graus` em torno do centro. */
+const retangulo = (w: number, h: number, graus = 0): Coord[] => {
+  const t = (graus * Math.PI) / 180
+  return [
+    [-w / 2, -h / 2],
+    [w / 2, -h / 2],
+    [w / 2, h / 2],
+    [-w / 2, h / 2],
+  ].map(([x, y]) => em(x * Math.cos(t) - y * Math.sin(t), x * Math.sin(t) + y * Math.cos(t)))
+}
+
+describe('extensão (Emenda 2 da DEC-071 — revisão do admin)', () => {
+  it('os limites são os do servidor', () => {
+    expect(DIAGONAL_MAX_KM).toBe(40)
+    expect(COMPACIDADE_MIN).toBe(0.02)
+  })
+
+  it('recusa a faixa de 10 m × 3.000 km, que passava no teto de área', () => {
+    const faixa = retangulo(3_000_000, 10)
+    const r = avaliarDesenho(faixa)
+    expect(r.areaKm2!).toBeLessThan(AREA_MAX_KM2)
+    expect(r.podeConcluir).toBe(false)
+    expect(r.motivo).toMatch(/de ponta a ponta; o máximo é 40 km\./)
+    expect(r.motivo).toMatch(/3\.000,0 km/)
+  })
+
+  it('recusa faixa estreita dentro da diagonal (100 m × 30 km) com a mensagem do servidor', () => {
+    const r = avaliarDesenho(retangulo(30_000, 100))
+    expect(extensao(retangulo(30_000, 100)).diagonalKm).toBeLessThan(DIAGONAL_MAX_KM)
+    expect(r).toMatchObject({ podeConcluir: false, motivo: MSG_ESTREITA })
+  })
+
+  it.each([
+    ['quadrado de 199 km² girado 45°', retangulo(14_100, 14_100, 45)],
+    ['retângulo 3:1 de 199 km² girado 45°', retangulo(24_400, 8_150, 45)],
+    ['retângulo 5:1 de 199 km² girado 45°', retangulo(31_500, 6_300, 45)],
+    ['corredor de avenida 100 m × 10 km', retangulo(10_000, 100)],
+    ['"L" de bairro', [em(0, 0), em(2000, 0), em(2000, 500), em(500, 500), em(500, 2000), em(0, 2000)]],
+  ])('aceita %s', (_nome, vs) => {
+    expect(avaliarDesenho(vs as Coord[])).toMatchObject({ podeConcluir: true, motivo: null })
   })
 })
 

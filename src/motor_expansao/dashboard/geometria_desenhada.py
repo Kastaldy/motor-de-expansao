@@ -14,6 +14,20 @@ OS LIMITES (decisao do dono, 2026-10-14) e o porque de cada um:
   municipio alcancado e' uma particao a mais lida do disco. Era 25 km2 (~8x o raio de
   1 km) e foi a 200 km2 a pedido do Vinicius (2026-10-16), para caber uma regiao inteira
   de cidade (varios bairros) -- o custo foi medido antes de subir (ver DEC-071).
+- EXTENSAO: diagonal da caixa envolvente ate' 40 km E compacidade (4*pi*A/P^2) de pelo
+  menos 0,02 (Emenda 2 da DEC-071, revisao do admin no PR #457). O teto de AREA nao
+  limita o CUSTO sozinho: uma faixa de 10 m x 3.000 km tem 30 km2, passa nele, e a
+  carga de vizinhos lia as particoes de setores de todos os municipios da caixa dessa
+  faixa -- com um worker so', travava o piloto para todo mundo. A diagonal e' a trava de
+  custo; a compacidade, a de ruido (numa tira fina cada setor entra como lasca). Valores
+  MEDIDOS para nao recusar desenho legitimo (diagonal / compacidade):
+    quadrado de 200 km2 ............... 20,0 km (28,3 km girado 45 graus) / 0,785
+    retangulo 3:1 de 200 km2 .......... 25,8 km (32,7 km girado)          / 0,589
+    retangulo 5:1 de 200 km2 .......... 32,3 km (38,0 km girado)          / 0,436
+    "L" de bairro (2 km, bracos 0,5) ..  2,8 km                           / 0,344
+    corredor de avenida 100 m x 10 km . 10,0 km                           / 0,031
+    faixa 100 m x 30 km ............... 30,0 km                           / 0,010 RECUSA
+    faixa 10 m x 3.000 km ............. 3.000 km RECUSA                   / 0,00001 RECUSA
 - ATE 50 vertices. Desenho a mao nao precisa de mais, e o teto fecha a porta para um
   corpo de requisicao arbitrariamente grande.
 - SEM autointersecao. Um "oito" nao tem area bem definida (o shapely o declara invalido e
@@ -51,6 +65,16 @@ from motor_expansao.dashboard.censo_point import (
 
 AREA_MIN_KM2 = 0.1
 AREA_MAX_KM2 = 200.0
+DIAGONAL_MAX_KM = 40.0
+"""Teto da diagonal da caixa envolvente (metros na projecao local). Cabe o pior caso
+legitimo medido (retangulo 5:1 de 200 km2 girado 45 graus = 38,0 km) -- ver docstring."""
+COMPACIDADE_MIN = 0.02
+"""Piso de 4*pi*A/P^2 (1 no circulo). Aceita um corredor de avenida de 100 m x 10 km
+(0,031) e recusa a faixa de 100 m x 30 km (0,010) -- ver docstring."""
+MSG_ESTREITA = (
+    "A área desenhada é estreita demais para a análise: desenhe uma área mais larga, "
+    "não uma faixa."
+)
 MAX_VERTICES = 50
 MIN_VERTICES = 3
 
@@ -78,6 +102,11 @@ def _km2(valor: float) -> str:
     """Area com virgula decimal ("0,05"), sem depender do locale do servidor."""
     casas = 2 if valor < 10 else 1
     return f"{valor:.{casas}f}".replace(".", ",")
+
+
+def _km(valor: float) -> str:
+    """Distancia com virgula decimal e milhar com ponto ("3.000,0")."""
+    return f"{valor:,.1f}".replace(",", "_").replace(".", ",").replace("_", ".")
 
 
 def _limite(valor: float) -> str:
@@ -173,9 +202,8 @@ def validar_geometria_desenhada(
     # para a intersecao: o limite aceito aqui e a area que a analise reporta saem da mesma
     # regua de metros, e nunca divergem na borda dos 0,1 / 200 km2.
     crs = _local_metric_crs(lat, lng)
-    area_km2 = float(
-        _project_geometry(poligono, _transformer(CRS_ORIGEM_CENSO, crs)).area
-    ) / 1_000_000.0
+    projetado = _project_geometry(poligono, _transformer(CRS_ORIGEM_CENSO, crs))
+    area_km2 = float(projetado.area) / 1_000_000.0
     if area_km2 < AREA_MIN_KM2:
         raise GeometriaDesenhadaInvalida(
             f"A área desenhada tem {_km2(area_km2)} km²; o mínimo é {_limite(AREA_MIN_KM2)} km²."
@@ -184,6 +212,18 @@ def validar_geometria_desenhada(
         raise GeometriaDesenhadaInvalida(
             f"A área desenhada tem {_km2(area_km2)} km²; o máximo é {_limite(AREA_MAX_KM2)} km²."
         )
+    # EXTENSAO (Emenda 2): roda aqui, na validacao, ANTES de a rota ler qualquer particao.
+    minx, miny, maxx, maxy = projetado.bounds
+    diagonal_km = math.hypot(maxx - minx, maxy - miny) / 1000.0
+    if diagonal_km > DIAGONAL_MAX_KM:
+        raise GeometriaDesenhadaInvalida(
+            f"A área desenhada se estende por {_km(diagonal_km)} km de ponta a ponta; "
+            f"o máximo é {_limite(DIAGONAL_MAX_KM)} km."
+        )
+    perimetro_m = float(projetado.length)
+    compacidade = 4.0 * math.pi * float(projetado.area) / (perimetro_m**2) if perimetro_m > 0 else 0.0
+    if compacidade < COMPACIDADE_MIN:
+        raise GeometriaDesenhadaInvalida(MSG_ESTREITA)
 
     anel = [[lng_v, lat_v] for lng_v, lat_v in vertices]
     anel.append(list(anel[0]))

@@ -12,7 +12,10 @@
  * para o vitest testar sem montar mapa.
  *
  * OS LIMITES SÃO OS DO SERVIDOR (`dashboard/geometria_desenhada.py`): 0,1 a 200 km², até 50
- * vértices, sem autointerseção. A tela avalia antes para o "Concluir" travar com o motivo
+ * vértices, sem autointerseção, e EXTENSÃO (Emenda 2 da DEC-071): diagonal da caixa
+ * envolvente até 40 km e compacidade (4πA/P²) de pelo menos 0,02 — sem ela, uma faixa de
+ * 10 m × 3.000 km (30 km²) passava no teto de área e o servidor lia as partições de todos
+ * os municípios da caixa dela, travando o piloto. A tela avalia antes para o "Concluir" travar com o motivo
  * escrito em vez de deixar o operador esperar um 400; quem DECIDE continua sendo o
  * servidor (a área daqui é uma projeção local equirretangular — na borda dos limites as
  * duas contas podem discordar no último décimo, e aí vale a mensagem do servidor).
@@ -24,6 +27,13 @@ import type { PosicaoGeoJson } from './comparacao-pontos'
 export const AREA_MIN_KM2 = 0.1
 export const AREA_MAX_KM2 = 200
 export const MAX_VERTICES = 50
+/** Teto da diagonal da caixa envolvente, em km. Valores medidos na docstring do servidor. */
+export const DIAGONAL_MAX_KM = 40
+/** Piso de 4πA/P² (1 no círculo): aceita corredor de 100 m × 10 km, recusa 100 m × 30 km. */
+export const COMPACIDADE_MIN = 0.02
+/** A MESMA mensagem do servidor (`MSG_ESTREITA`). */
+export const MSG_ESTREITA =
+  'A área desenhada é estreita demais para a análise: desenhe uma área mais larga, não uma faixa.'
 export const MIN_VERTICES = 3
 
 /**
@@ -64,6 +74,30 @@ export function areaKm2(vs: readonly Coord[]): number {
 }
 
 type XY = { x: number; y: number }
+
+/** Diagonal da caixa envolvente (km) e compacidade 4πA/P² do polígono fechado. */
+export function extensao(vs: readonly Coord[]): { diagonalKm: number; compacidade: number } {
+  const p = projetar(vs)
+  if (p.length < 2) return { diagonalKm: 0, compacidade: 0 }
+  const xs = p.map((q) => q.x)
+  const ys = p.map((q) => q.y)
+  const diagonalKm =
+    Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 1000
+  let perimetro = 0
+  for (let i = 0; i < p.length; i++) {
+    const b = p[(i + 1) % p.length]
+    perimetro += Math.hypot(b.x - p[i].x, b.y - p[i].y)
+  }
+  const areaM2 = areaKm2(vs) * 1e6
+  const compacidade = perimetro > 0 ? (4 * Math.PI * areaM2) / perimetro ** 2 : 0
+  return { diagonalKm, compacidade }
+}
+
+/** Distância em km com vírgula decimal e ponto de milhar ("3.000,0"), como o servidor. */
+function formatarKm(v: number): string {
+  const [int, dec] = v.toFixed(1).split('.')
+  return `${int.replace(/\B(?=(\d{3})+(?!\d))/g, '.')},${dec}`
+}
 
 function orientacao(a: XY, b: XY, c: XY): number {
   const v = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
@@ -203,6 +237,18 @@ export function avaliarDesenho(vs: readonly Coord[]): AvaliacaoDesenho {
       areaKm2: area,
       nVertices: n,
     }
+  }
+  const { diagonalKm, compacidade } = extensao(vs)
+  if (diagonalKm > DIAGONAL_MAX_KM) {
+    return {
+      podeConcluir: false,
+      motivo: `A área desenhada se estende por ${formatarKm(diagonalKm)} km de ponta a ponta; o máximo é ${DIAGONAL_MAX_KM} km.`,
+      areaKm2: area,
+      nVertices: n,
+    }
+  }
+  if (compacidade < COMPACIDADE_MIN) {
+    return { podeConcluir: false, motivo: MSG_ESTREITA, areaKm2: area, nVertices: n }
   }
   return { podeConcluir: true, motivo: null, areaKm2: area, nVertices: n }
 }

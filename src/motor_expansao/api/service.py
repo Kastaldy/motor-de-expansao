@@ -57,7 +57,7 @@ _TOLERANCIA_MALHA_GRAUS = 0.018
 # aproximacao GENEROSA de proposito: incluir um municipio que nao contribui setor custa uma
 # leitura de particao; excluir um que contribui e' o defeito que esta correcao fecha.
 _KM_POR_GRAU_LAT = 111.32
-# Folga em volta da caixa do poligono desenhado (DEC-071) na consulta de municipios
+# Folga em volta do poligono desenhado (DEC-071) na consulta de municipios
 # vizinhos -- ver `_MalhaMunicipal.alcancados_na_geometria`. Generosa pelo mesmo motivo do
 # quadro acima: ler uma particao a mais custa pouco; deixar de ler a que contribui e' erro.
 _MARGEM_GEOMETRIA_KM = 0.5
@@ -112,23 +112,30 @@ class _MalhaMunicipal:
     def alcancados_na_geometria(
         self, geometria, margem_km: float = _MARGEM_GEOMETRIA_KM
     ) -> list[tuple[str, str]]:
-        """Municipios que tocam a caixa do POLIGONO desenhado (DEC-071), com margem.
+        """Municipios que tocam o POLIGONO desenhado (DEC-071), com margem.
 
         O par de `alcancados` para o modo geometria. O quadrado de meio-lado fixo em volta
         do ponto nao serve: um poligono de 25 km2 se estende ate' ~5 km do ponto de
         referencia, muito alem do frame de 1 km -- e a particao do vizinho que ele cobre
-        ficaria de fora em silencio, repetindo a DEC-065 por outra porta. A caixa vem da
+        ficaria de fora em silencio, repetindo a DEC-065 por outra porta. O alcance vem da
         propria geometria (em graus, x=lng) e ganha `margem_km` de folga: a malha municipal
         e a malha de setores sao simplificacoes diferentes da mesma divisa, e um setor do
         vizinho pode atravessar o poligono mesmo quando o contorno do municipio, nesta
         malha, para alguns metros antes.
+
+        Pelo POLIGONO, e nao pela caixa dele (revisao do admin no PR #457): num "L" ou numa
+        area diagonal a caixa cobre municipios que a area nem toca, e cada um e' uma
+        particao a mais lida do disco. A margem vira um buffer do proprio poligono, em
+        graus; o raio do buffer e' o da LONGITUDE (o maior dos dois lados em graus), entao
+        a folga em latitude fica um pouco maior que `margem_km` -- erra para o lado de ler
+        uma particao a mais, nunca de deixar de ler a que contribui.
         """
-        minx, miny, maxx, maxy = geometria.bounds
+        _minx, miny, _maxx, maxy = geometria.bounds
         meio_lat = margem_km / _KM_POR_GRAU_LAT
         cos_lat = max(cos(radians((miny + maxy) / 2.0)), 0.01)
         meio_lng = meio_lat / cos_lat
-        quadro = shp_box(minx - meio_lng, miny - meio_lat, maxx + meio_lng, maxy + meio_lat)
-        return [self._meta[int(i)] for i in self._tree.query(quadro, predicate="intersects")]
+        alcance = geometria.buffer(max(meio_lat, meio_lng), quad_segs=4)
+        return [self._meta[int(i)] for i in self._tree.query(alcance, predicate="intersects")]
 
 
 @lru_cache(maxsize=4)
@@ -176,8 +183,8 @@ def _resolver_e_carregar(lat: float, lng: float, settings: Settings, *, geometri
     """Resolve ``(uf, cod_municipio)`` e carrega ``setores_df``. Levanta 400/404.
 
     `geometria` (DEC-071, opcional; shapely em graus, x=lng): o poligono desenhado, com
-    (lat, lng) = o `representative_point` dele. Muda SO' o alcance dos vizinhos -- a caixa
-    do poligono soma-se ao frame do ponto. Sem ela, a carga e' a de sempre, byte a byte.
+    (lat, lng) = o `representative_point` dele. Muda SO' o alcance dos vizinhos -- o proprio
+    poligono (com margem) soma-se ao frame do ponto. Sem ela, a carga e' a de sempre, byte a byte.
     """
     malha = _carregar_malha(str(settings.ibge_dir))
     resolvido = malha.resolver(lat, lng)
@@ -249,7 +256,7 @@ def _malha_alcancada(
 ) -> list[tuple[str, str]]:
     """Municipios que o FRAME do mapa alcanca — o alcance vem de quem desenha o frame.
 
-    Com `geometria` (DEC-071), soma os que a caixa do poligono alcanca, sem repetir e na
+    Com `geometria` (DEC-071), soma os que o poligono (com margem) alcanca, sem repetir e na
     ordem estavel (frame primeiro). Soma, e nao troca: o frame do ponto de referencia
     continua sendo o que um mapa centrado nele mostraria.
     """

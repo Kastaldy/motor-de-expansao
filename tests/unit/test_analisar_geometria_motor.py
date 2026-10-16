@@ -32,6 +32,8 @@ from motor_expansao.dashboard.censo_point import (
 from motor_expansao.dashboard.geometria_desenhada import (
     AREA_MAX_KM2,
     AREA_MIN_KM2,
+    COMPACIDADE_MIN,
+    DIAGONAL_MAX_KM,
     MAX_VERTICES,
     GeometriaDesenhadaInvalida,
     validar_geometria_desenhada,
@@ -290,6 +292,58 @@ def test_area_fora_dos_limites() -> None:
         validar_geometria_desenhada(_geojson(box(0, 0, lado_max, lado_max)))
     # Dentro dos limites passa.
     assert validar_geometria_desenhada(_geojson(box(0, 0, 1000, 1000))).area_km2 == pytest.approx(1.0, rel=0.01)
+
+
+# --------------------------------------------------------------------------- #
+# Extensao (Emenda 2 da DEC-071 -- revisao do admin no PR #457)                 #
+# --------------------------------------------------------------------------- #
+def _girado(geom, graus: float):
+    from shapely import affinity
+
+    return affinity.rotate(geom, graus, origin="centroid")
+
+
+def test_limites_de_extensao_sao_os_declarados() -> None:
+    assert DIAGONAL_MAX_KM == 40.0
+    assert COMPACIDADE_MIN == 0.02
+
+
+def test_faixa_fina_do_admin_e_recusada_mesmo_com_area_pequena() -> None:
+    """O CASO DO BLOQUEIO: 10 m x 3.000 km tem 30 km2 (passa no teto de area), mas a caixa
+    dela alcancaria centenas de municipios -- cada um uma particao lida do disco."""
+    faixa = box(-1_500_000, -5, 1_500_000, 5)
+    assert faixa.area / 1e6 < AREA_MAX_KM2  # premissa: o teto de area NAO a pegava
+    with pytest.raises(GeometriaDesenhadaInvalida, match="de ponta a ponta; o máximo é 40 km"):
+        validar_geometria_desenhada(_geojson(faixa))
+
+
+def test_diagonal_acima_do_teto_e_recusada_mesmo_larga() -> None:
+    # 1 km x 45 km: compacidade ~0,068 (passa), area 45 km2 (passa), diagonal 45 km (recusa).
+    with pytest.raises(GeometriaDesenhadaInvalida, match="o máximo é 40 km"):
+        validar_geometria_desenhada(_geojson(box(-22_500, -500, 22_500, 500)))
+
+
+def test_faixa_estreita_dentro_da_diagonal_e_recusada_pela_compacidade() -> None:
+    # 100 m x 30 km: diagonal 30 km (passa), compacidade 0,010 (recusa).
+    with pytest.raises(GeometriaDesenhadaInvalida, match="estreita demais"):
+        validar_geometria_desenhada(_geojson(box(-15_000, -50, 15_000, 50)))
+
+
+@pytest.mark.parametrize(
+    ("nome", "geom"),
+    [
+        ("quadrado de 199 km2", box(0, 0, 14_100, 14_100)),
+        ("quadrado de 199 km2 girado 45", _girado(box(0, 0, 14_100, 14_100), 45)),
+        ("retangulo 3:1 de 199 km2", box(0, 0, 24_400, 8_150)),
+        ("retangulo 3:1 de 199 km2 girado 45", _girado(box(0, 0, 24_400, 8_150), 45)),
+        ("retangulo 5:1 de 199 km2 girado 45", _girado(box(0, 0, 31_500, 6_300), 45)),
+        ("L de bairro", Polygon([(0, 0), (2000, 0), (2000, 500), (500, 500), (500, 2000), (0, 2000)])),
+        ("corredor de avenida 100 m x 10 km", box(0, 0, 10_000, 100)),
+    ],
+)
+def test_desenhos_legitimos_passam_na_extensao(nome: str, geom) -> None:
+    d = validar_geometria_desenhada(_geojson(geom))
+    assert d.area_km2 > 0, nome
 
 
 def test_vertices_demais() -> None:

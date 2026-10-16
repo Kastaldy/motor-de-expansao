@@ -273,6 +273,18 @@ def test_entrada_invalida_vira_400_em_portugues(ambiente, geojson: dict, trecho:
     assert trecho in str(exc.value.detail)
 
 
+def test_faixa_fina_e_recusada_antes_de_ler_qualquer_particao(ambiente) -> None:
+    """Bloqueio 2 da revisao do admin (PR #457): a faixa fina passava no teto de AREA e a
+    carga de vizinhos lia as particoes de todos os municipios da caixa dela. A recusa de
+    EXTENSAO tem de vir antes de `_resolver_e_carregar` -- a fixture registra cada chamada."""
+    faixa = _geojson(box(-250_000, -5, 250_000, 5))  # 10 m x 500 km = 5 km2
+    with pytest.raises(HTTPException) as exc:
+        _post(faixa)
+    assert exc.value.status_code == 400
+    assert "de ponta a ponta; o máximo é 40 km" in str(exc.value.detail)
+    assert ambiente == [], "nenhuma particao pode ser carregada para uma geometria recusada"
+
+
 def test_ponto_central_fora_da_malha_diz_que_e_da_area(ambiente, monkeypatch) -> None:
     from motor_expansao.api import service as api_service
     from motor_expansao.api.errors import APIError
@@ -360,3 +372,29 @@ def test_poligono_que_atravessa_a_divisa_carrega_o_vizinho_da_caixa(malha_real) 
     assert set(com_area["cod_municipio"].astype(str)) == {"3500002", "3500003", "3100004"}
     # O municipio do ponto continua PRIMEIRO (o rotulo do painel e' dele).
     assert str(com_area["cod_municipio"].iloc[0]) == "3500002"
+
+
+def test_alcance_de_municipios_e_pelo_poligono_e_nao_pela_caixa() -> None:
+    """Revisao do admin (service.py): num "L" a caixa cobre municipios que a area nem toca,
+    e cada um seria uma particao a mais lida do disco. O alcance passa a ser o poligono
+    com a margem de 0,5 km."""
+    from shapely import STRtree
+
+    from motor_expansao.api.service import _MalhaMunicipal
+
+    # "L" de 0,1 grau (~11 km) com bracos de 0,01 grau (~1 km), canto em (_PLNG, _PLAT).
+    l_area = Polygon([
+        (_PLNG, _PLAT), (_PLNG + 0.1, _PLAT), (_PLNG + 0.1, _PLAT + 0.01),
+        (_PLNG + 0.01, _PLAT + 0.01), (_PLNG + 0.01, _PLAT + 0.1), (_PLNG, _PLAT + 0.1),
+    ])
+    no_braco = box(_PLNG + 0.05, _PLAT - 0.02, _PLNG + 0.07, _PLAT + 0.005)
+    # A ~0,3 km do braco horizontal (dentro da margem): o setor dele pode atravessar a area.
+    na_margem = box(_PLNG + 0.03, _PLAT + 0.0127, _PLNG + 0.04, _PLAT + 0.02)
+    # No canto VAZIO do "L": dentro da caixa, a ~4 km de qualquer braco.
+    no_vao = box(_PLNG + 0.05, _PLAT + 0.05, _PLNG + 0.09, _PLAT + 0.09)
+    geoms = [no_braco, na_margem, no_vao]
+    meta = [("SP", "braco"), ("SP", "margem"), ("SP", "vao")]
+    malha = _MalhaMunicipal(STRtree(geoms), meta, geoms)
+
+    assert no_vao.intersects(box(*l_area.bounds)), "premissa: a caixa do L cobre o vao"
+    assert set(malha.alcancados_na_geometria(l_area)) == {("SP", "braco"), ("SP", "margem")}
