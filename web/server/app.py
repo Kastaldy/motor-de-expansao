@@ -2435,7 +2435,9 @@ def bairros_por_hex(uf: str, cod_municipio: str) -> dict[str, str]:
         return {}
 
 
-def _nome_do_hexagono(uf: str | None, cod_municipio: Any, hex_id: str | None) -> str | None:
+def _nome_do_hexagono(
+    uf: str | None, cod_municipio: Any, hex_id: str | None, setores: Any = None
+) -> str | None:
     """O nome do hexagono res-7 em que um ponto cai -- a MESMA string da ficha do hexagono.
 
     A ficha e o ranking nomeiam o hexagono por `bairros_por_hex` (localidade dominante:
@@ -2447,13 +2449,94 @@ def _nome_do_hexagono(uf: str | None, cod_municipio: Any, hex_id: str | None) ->
     `None` quando o hexagono nao tem nome (nenhum setor com localidade tem o centroide
     nele, ou a particao nao existe): o fallback (bairro/distrito do setor, depois
     municipio) e' de quem exibe, e fica declarado em `rotuloDoPonto` no front.
+
+    `setores` (opcional): os setores JA' carregados por quem chama (a ficha de ponto leu a
+    particao para o raio). Com eles o nome sai da memoria, sem reler o disco -- revisao do
+    admin de 2026-10-15: o `/api/ponto` relia a particao inteira so' para isto, e o miolo de
+    `bairros_por_hex` itera setor a setor (medido: 5,7 s na 1a chamada de Sao Paulo, 27.301
+    setores, numa rota com timeout de 30 s). Mesma regra e mesmo recorte (so' o municipio
+    `cod_municipio`), entao o nome e' o mesmo da ficha -- travado por teste na malha real.
     """
     if not uf or cod_municipio is None or not hex_id:
         return None
     cod = str(cod_municipio).strip()
     if not cod or cod.casefold() in {"nan", "none"}:
         return None
+    em_memoria = _nome_do_hexagono_em_memoria(setores, cod, str(hex_id))
+    if em_memoria is not _SEM_SETORES:
+        return em_memoria
     nome = bairros_por_hex(str(uf).upper(), cod).get(str(hex_id))
+    nome = str(nome).strip() if nome is not None else ""
+    return nome or None
+
+
+# Sentinela: "nao deu para decidir em memoria" (sem setores ou sem as colunas), distinto de
+# `None` = "decidido: o hexagono nao tem nome".
+_SEM_SETORES: Any = object()
+_COLS_NOME_HEX = ("cod_municipio", "nome_bairro", "bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy")
+# Folga da pre-selecao, em graus de latitude: o raio circunscrito do hexagono res-7 e' ~1,4 km
+# (0,013 grau); 0,03 grau (~3,3 km) deixa margem para o centroide do setor cair nele.
+_FOLGA_NOME_HEX_GRAUS = 0.03
+
+
+def _celula_ou_none(lat: Any, lng: Any) -> str | None:
+    import math
+
+    import h3
+
+    try:
+        la, ln = float(lat), float(lng)
+        if math.isnan(la) or math.isnan(ln):
+            return None
+        return str(h3.latlng_to_cell(la, ln, 7))  # 7 = H3_RES de `bairros_por_hex`
+    except Exception:  # noqa: BLE001 - mesma tolerancia do helper (setor sem celula e' pulado)
+        return None
+
+
+def _nome_do_hexagono_em_memoria(setores: Any, cod: str, hex_id: str) -> Any:
+    """Nome do hexagono pelos setores em memoria; `_SEM_SETORES` quando nao da' para decidir.
+
+    Pre-seleciona os setores cujo centroide do bbox esta' perto do hexagono e roda a MESMA
+    regra de `bairros_por_hex` (`bairros_por_hex_de_setores`) so' sobre eles: um setor so'
+    pesa no hexagono que contem o centroide dele, entao descartar os de longe nao muda o
+    resultado -- e tira o custo de iterar o municipio inteiro.
+    """
+    if setores is None or getattr(setores, "empty", True):
+        return _SEM_SETORES
+    if any(c not in setores.columns for c in _COLS_NOME_HEX):
+        return _SEM_SETORES
+    import math
+
+    import h3
+    import pandas as pd
+
+    from motor_expansao.dashboard.relatorio_municipal import bairros_por_hex_de_setores
+
+    lat_h, lng_h = h3.cell_to_latlng(hex_id)
+    folga_lng = _FOLGA_NOME_HEX_GRAUS / max(math.cos(math.radians(lat_h)), 0.1)
+    def _centro(a: str, b: str) -> Any:
+        return (
+            pd.to_numeric(setores[a], errors="coerce").to_numpy(dtype=float)
+            + pd.to_numeric(setores[b], errors="coerce").to_numpy(dtype=float)
+        ) / 2.0
+
+    lat_c = _centro("bbox_miny", "bbox_maxy")
+    lng_c = _centro("bbox_minx", "bbox_maxx")
+    # POSICIONAL (numpy), para um indice repetido no frame nao multiplicar linhas.
+    # Geografia primeiro (numerica, barata); municipio e celula exata so' sobre o que sobrou:
+    # comparar `cod_municipio` como texto nos ~27 mil setores de Sao Paulo custava mais que o
+    # resto, e a caixa de folga ainda pega centenas de setores no centro da cidade.
+    candidatos = (abs(lat_c - lat_h) <= _FOLGA_NOME_HEX_GRAUS) & (abs(lng_c - lng_h) <= folga_lng)
+    posicoes = [
+        k
+        for k in candidatos.nonzero()[0]
+        if str(setores["cod_municipio"].iat[k]).strip() == cod
+        # So' os do PROPRIO hexagono (centroide do bbox nele, a mesma conta do helper): os de
+        # fora nao pesariam neste hexagono de qualquer forma.
+        and _celula_ou_none(lat_c[k], lng_c[k]) == hex_id
+    ]
+    perto = setores.iloc[posicoes]
+    nome = bairros_por_hex_de_setores(perto).get(hex_id)
     nome = str(nome).strip() if nome is not None else ""
     return nome or None
 
@@ -6989,7 +7072,8 @@ def _payload_ponto(
             # (`rotuloDoPonto`); `bairro` acima vira o fallback. Sem isto, em Brasília o
             # ponto saía "Brasília" (o distrito do setor É o município) enquanto o hex
             # dele, na ficha, se chama "Taguatinga". `None` quando o hex não tem nome.
-            "hexagono": _nome_do_hexagono(uf, _cod, hex_id),
+            # Os setores JA' carregados para o raio: sem reler a particao (revisao do admin).
+            "hexagono": _nome_do_hexagono(uf, _cod, hex_id, setores_df),
             # Identificador cru ("bairro"/"distrito"), NÃO acentuar — o rótulo de
             # exibição é o `bairro` acima.
             "unidade_tipo": _texto(res.get("unidade_ponto_tipo")),
@@ -10861,7 +10945,7 @@ def _residual_hexes_do_ponto(lat: float, lng: float, staging_dir: Path):
     hex desenhavel), entao falhava em silencio. Mesma defesa da API (`api/service.py`): a coluna
     entra SE existir no schema, para nao quebrar em parquet antigo.
 
-    Filtro direto no parquet de mercado (~91 linhas), espelhando `_residual_do_ponto`. `None`
+    Filtro direto no parquet de mercado (~91 linhas), espelhando `_linha_mercado_do_hex`. `None`
     se o parquet faltar ou falhar -> as camadas de hexagono caem no fallback textual
     (offline-safe). READ-ONLY sobre o M1 (so leitura de parquet)."""
     mercado = staging_dir / "hexagonos_mercado_mapeado.parquet"
@@ -11058,8 +11142,12 @@ async def relatorio_pontual(
     # Estudo da unidade Ultra sem unidade a ate' 150 m: 400 AGORA, antes de registrar o
     # relatorio como gerado (o evento ficaria na trilha sem PDF) e antes de pagar mapas e
     # tiles que a resposta jogaria fora.
+    # No THREADPOOL, e nao direto: a 1a chamada apos um restart le' o cadastro Ultra em
+    # Parquet (`carregar_ultra_mercado`, `lru_cache`), e dentro deste `async def` isso parava
+    # o event loop do unico worker -- inclusive o /api/health (revisao do admin, 2026-10-15).
+    # Continua ANTES de registrar o relatorio: o `await` so' devolve depois da validacao.
     if excluir_ultra_proxima:
-        _validar_estudo_da_unidade(lat, lng)
+        await run_in_threadpool(_validar_estudo_da_unidade, lat, lng)
     report_id = _registrar_relatorio_gerado(remote_user, relatorio="pontual", formato="pdf")
 
     # A marca-d'agua passa a dizer QUEM gerou, e nao so' "Ultra Academia".

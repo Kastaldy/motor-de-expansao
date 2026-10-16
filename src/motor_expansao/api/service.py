@@ -704,44 +704,15 @@ def _competitors_ultra(settings: Settings):
     return comp, ultra
 
 
-def _residual_do_ponto(lat: float, lng: float, settings: Settings) -> dict:
-    """SAM/residual do hex H3 (res 7) do ponto, sem carregar a base de 1,5M.
-
-    Espelha `lookup_hex_by_coord` (h3.latlng_to_cell + match por hex_id), filtrando
-    direto no parquet de mercado (1 linha). READ-ONLY; nao recalcula nada do M1.
-    """
-    residual: dict[str, float | None] = {k: None for k in _SAM_COLS}
-    mercado = Path(settings.staging_dir / "hexagonos_mercado_mapeado.parquet")
-    if not mercado.is_file():
-        return residual
-    try:
-        import h3
-        import pyarrow.compute as pc
-        import pyarrow.dataset as ds
-
-        cell = h3.latlng_to_cell(lat, lng, 7)
-        tbl = ds.dataset(mercado).to_table(
-            filter=pc.field("hex_id") == cell, columns=["hex_id", *_SAM_COLS]
-        )
-        if tbl.num_rows:
-            row = tbl.slice(0, 1).to_pylist()[0]
-            for k in _SAM_COLS:
-                v = row.get(k)
-                if v is not None:
-                    residual[k] = float(v)
-    except Exception:
-        pass
-    return residual
-
-
 # --- mercado NO RAIO do ponto (DEC-070) ---------------------------------------
 #
-# `_residual_do_ponto` acima continua existindo (le' o HEXAGONO, e' auditoria), mas deixou
-# de alimentar as tres superficies do ponto. A ficha (`/api/ponto`), o PDF do piloto e o
-# PDF da API/bot passam a chamar `_mercado_do_ponto`, que calcula SAM, consumo e residual
-# no MESMO raio de 1,0 km da populacao -- ver `dashboard/mercado_raio.py`. Uma funcao so'
-# para as tres, pela licao da DEC-044: duas redacoes da mesma regra desencontram em
-# silencio.
+# O antigo `_residual_do_ponto` (a linha do HEXAGONO do ponto) deixou de alimentar as tres
+# superficies do ponto e foi REMOVIDO em 2026-10-15 (codigo morto, revisao do admin); a
+# linha do hexagono segue lida, so' como auditoria, por `_linha_mercado_do_hex`. A ficha
+# (`/api/ponto`), o PDF do piloto e o PDF da API/bot chamam `_mercado_do_ponto`, que calcula
+# SAM, consumo e residual no MESMO raio de 1,0 km da populacao -- ver
+# `dashboard/mercado_raio.py`. Uma funcao so' para as tres, pela licao da DEC-044: duas
+# redacoes da mesma regra desencontram em silencio.
 
 # Do hexagono do ponto entram na conta SO' a faixa do M1 (gate) e a taxa calibrada (constante
 # do artefato). O resto viaja como AUDITORIA, para quem quiser comparar com o grao antigo.
@@ -815,6 +786,7 @@ def _mercado_do_ponto(
     """
     from motor_expansao.dashboard.censo_point import RAIO_CENSITARIO_DEFAULT_KM
     from motor_expansao.dashboard.mercado_raio import (
+        MODO_ESTUDO_UNIDADE_ULTRA,
         UnidadeUltraForaDaTolerancia,
         carregar_cadeias_mercado,
         carregar_ultra_mercado,
@@ -842,6 +814,26 @@ def _mercado_do_ponto(
         logging.getLogger(__name__).warning("mercado no raio falhou: %r", exc)
         out = {k: None for k in _SAM_COLS}
         out.update({"disponivel": False, "motivo": "Falha ao calcular o mercado do ponto."})
+        if excluir_ultra_proxima:
+            # O MODO PEDIDO segue declarado (revisao do admin, 2026-10-15). Sem isto o dict
+            # saia sem `modo_estudo`, a ficha lia o default "ponto" e o estudo da unidade
+            # voltava como estudo de ponto em silencio -- o operador pediu um modo e recebia
+            # outro sem aviso. Nao ha unidade estudada nem consumo retirado (a conta nem
+            # rodou), e a frase diz isso na ficha e no PDF. PONTUACAO ASCII (PDF latin-1).
+            out.update(
+                {
+                    "motivo": (
+                        "Falha ao calcular o mercado do estudo da unidade Ultra: "
+                        "SAM, consumo e residual indisponíveis."
+                    ),
+                    "modo_estudo": MODO_ESTUDO_UNIDADE_ULTRA,
+                    "unidade_ultra_estudada": None,
+                    "declaracao_modo": (
+                        "Estudo da unidade Ultra: o mercado não pôde ser calculado, então "
+                        "nenhum consumo foi retirado e não há residual para este estudo."
+                    ),
+                }
+            )
     out["hex_id"] = linha.get("hex_id")
     # AUDITORIA do grao antigo: o que o hexagono do ponto diz. Nao entra em conta nenhuma.
     out["hexagono"] = {
@@ -859,7 +851,7 @@ def _mercado_do_ponto(
 def _hexes_vizinhos_do_ponto(lat: float, lng: float, settings: Settings, k: int = 7):
     """Hexes H3 (res 7) do disco de raio `k` em torno do ponto, com o valor de cada camada hex.
 
-    Espelha `_residual_do_ponto`: filtra direto no parquet de mercado por um conjunto pequeno de
+    Espelha `_linha_mercado_do_hex`: filtra direto no parquet de mercado por um conjunto pequeno de
     chaves (91 hexes em k=5) e poucas colunas -> leitura barata, NAO carrega a base de 1,5 M.
     Insumo dos choropleths POR HEXAGONO do slide-hero: Residual Fitness (`oferta_efetiva_disponivel`,
     BLK-RELPON-10) e Socioeconomia (`score_setor_2022_calibrado`, BLK-RELPON-13). READ-ONLY; nao

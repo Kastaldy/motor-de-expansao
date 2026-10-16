@@ -2530,9 +2530,13 @@ def _avaliar_conclusao(
         )
 
     # --- Canibalizacao (alerta de rede propria no raio) ---
+    # O MODO decide se a unidade do centro sai, e nao so' a ficha dela: com o mercado em
+    # falha no estudo da unidade, `unidade_ultra_estudada` vem `None` mas o modo segue
+    # declarado -- e a unidade a ate' 150 m continua sendo a do estudo (sai a mais proxima).
     alerta_canibalizacao = _conclusao_canibalizacao(
         result,
-        sem_a_estudada=bool(residual.get("unidade_ultra_estudada")),
+        sem_a_estudada=bool(residual.get("unidade_ultra_estudada"))
+        or residual.get("modo_estudo") == "unidade_ultra",
         estudada=residual.get("unidade_ultra_estudada"),
     )
     if alerta_canibalizacao is not None:

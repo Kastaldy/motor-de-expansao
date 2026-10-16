@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
 from pathlib import Path
 
 import h3
@@ -366,6 +367,7 @@ def pdf_espiao(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, obj
     monkeypatch.setattr(censo_report, "gerar_pdf_relatorio_pontual_classico", _fake_gerar)
 
     def _validar_fake(lat, lng):
+        visto["thread_validacao"] = threading.get_ident()
         if visto.get("sem_ultra"):
             raise HTTPException(400, "Não há unidade Ultra a até 150 m deste ponto.")
 
@@ -404,6 +406,94 @@ def test_pdf_estudo_da_unidade_longe_de_ultra_e_400(pdf_espiao) -> None:
     # A recusa vem ANTES: nada registrado como gerado e o mercado nem foi montado.
     assert pdf_espiao["registrados"] == []
     assert "kw_mercado" not in pdf_espiao
+
+
+def test_validacao_antecipada_roda_fora_do_event_loop(pdf_espiao) -> None:
+    """A rota do PDF e' `async def`: a 1a chamada apos um restart le' o cadastro Ultra em
+    Parquet, e direto no loop isso parava o unico worker -- inclusive o /api/health
+    (revisao do admin, 2026-10-15). A validacao tem de rodar no threadpool."""
+    _pdf(so_estudo=True, excluir_ultra_proxima=True)
+    assert "thread_validacao" in pdf_espiao
+    # `asyncio.run` roda o loop nesta thread; a validacao NAO pode ter rodado nela.
+    assert pdf_espiao["thread_validacao"] != threading.get_ident()
+
+
+def test_recusa_no_threadpool_continua_antes_de_registrar(pdf_espiao) -> None:
+    pdf_espiao["sem_ultra"] = True
+    with pytest.raises(HTTPException) as exc:
+        _pdf(excluir_ultra_proxima=True)
+    assert exc.value.status_code == 400
+    assert pdf_espiao["thread_validacao"] != threading.get_ident()
+    assert pdf_espiao["registrados"] == []
+
+
+# --------------------------------------------------------------------------- #
+# Falha do calculo de mercado NAO volta como estudo de ponto                   #
+# --------------------------------------------------------------------------- #
+def _cfg(staging: Path):
+    from motor_expansao.api.settings import Settings
+
+    return Settings(
+        censo_geo_dir=staging, ibge_dir=staging, ultra_dir=staging, staging_dir=staging,
+        perfil=pilot.PERFIL,
+    )
+
+
+def test_falha_do_mercado_no_estudo_da_unidade_declara_o_modo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from motor_expansao.api import service as api_service
+
+    def _quebra(*a, **k):
+        raise RuntimeError("parquet ilegivel")
+
+    monkeypatch.setattr(mr, "mercado_na_area", _quebra)
+    out = api_service._mercado_do_ponto(
+        LAT, LNG, _cfg(tmp_path), 30_000.0, excluir_ultra_proxima=True
+    )
+    assert out["disponivel"] is False
+    # O modo pedido segue declarado: sem isto a ficha lia o default "ponto".
+    assert out["modo_estudo"] == "unidade_ultra"
+    assert out["unidade_ultra_estudada"] is None
+    assert "unidade Ultra" in out["motivo"]
+    assert out["declaracao_modo"].startswith("Estudo da unidade Ultra")
+    assert "nenhum consumo foi retirado" in out["declaracao_modo"]
+    # A frase vai ao PDF (core font latin-1): nada fora de latin-1.
+    out["declaracao_modo"].encode("latin-1")
+    # Estudo de ponto com a mesma falha: nada de modo inventado.
+    ponto = api_service._mercado_do_ponto(LAT, LNG, _cfg(tmp_path), 30_000.0)
+    assert ponto["disponivel"] is False and "modo_estudo" not in ponto
+
+
+def test_falha_do_mercado_na_rota_mantem_o_estudo_da_unidade(
+    rota, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _quebra(*a, **k):
+        raise RuntimeError("parquet ilegivel")
+
+    monkeypatch.setattr(mr, "mercado_na_area", _quebra)
+    m = pilot.ponto(lat=LAT, lng=LNG, excluir_ultra_proxima=True)["mercado"]
+    assert m["disponivel"] is False
+    assert m["modo_estudo"] == "unidade_ultra"
+    assert m["declaracao_modo"].startswith("Estudo da unidade Ultra")
+    assert m["residual"] is None and m["consumo_total"] is None
+
+
+def test_conclusao_com_mercado_em_falha_tira_a_unidade_do_centro() -> None:
+    from motor_expansao.dashboard.censo_report import _avaliar_conclusao
+
+    result = {
+        "pop_total_raio": 20_000, "renda_per_capita_media_raio": 3_000.0,
+        "domicilios_total_raio": 8_000, "renda_domiciliar_total_raio": 9_000.0,
+        "n_concorrentes": 2, "n_ultra": 1, "ultra_raio": [{"dist_km": 0.009}],
+    }
+    falha = {"disponivel": False, "modo_estudo": "unidade_ultra", "unidade_ultra_estudada": None}
+    parecer = _avaliar_conclusao(result, falha, None, {}, somente_estudo=True)
+    textos = " ".join(str(x) for x in parecer.demografico.ressalvas)
+    assert "Canibaliza" not in textos
+    # Controle: no estudo de ponto a mesma Ultra a 9 m continua no alerta.
+    ponto = _avaliar_conclusao(result, {"disponivel": False}, None, {}, somente_estudo=True)
+    assert "Canibaliza" in " ".join(str(x) for x in ponto.demografico.ressalvas)
 
 
 def test_validacao_antecipada_usa_a_mesma_regra_do_mercado(
