@@ -3082,7 +3082,7 @@ def _cor_por_meta(valor: Any, meta: float) -> tuple[int, int, int]:
 
 
 def _cor_consumo_concorrentes(sam: Any, residual_disponivel: Any) -> tuple[int, int, int]:
-    """Cor assimetrica do card "Consumo instalado (conc. + Ultra)" -- tambem usada para colorir
+    """Cor assimetrica do card "Mercado ocupado" (consumo instalado: conc. + Ultra) -- tambem usada para colorir
     "Concorrentes no raio" (D3: esse card ESPELHA a cor do card acima, sem meta propria).
 
     Regra (D3): VERMELHO quando o mercado ja esta consumido (SAM Fitness >= meta E Residual
@@ -3183,7 +3183,9 @@ def _big_numbers_page(
         # DEC-070: era "Consumo concorrentes (est.)" e mostrava so' a parcela de concorrentes
         # enquanto o residual descontava tambem a Ultra -- a conta nao fechava na pagina.
         (
-            "Consumo instalado (conc. + Ultra)",
+            # Rotulo escolhido por Vinicius (2026-10-16): faz par com o "Residual" (o que
+            # sobra x o que ja esta ocupado). A composicao vai na linha de apoio abaixo.
+            "Mercado ocupado",
             _format_number(consumo_total, 0),
             cor_consumo,
         ),

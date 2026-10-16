@@ -219,7 +219,7 @@ def test_pdf_big_numbers_com_residual_e_nd():
         b"Academias no raio",
         # DEC-070: o card de consumo passa a ser o INSTALADO (concorrentes + Ultra), com as
         # duas parcelas numa linha de apoio -- a conta do residual fecha na pagina.
-        b"Consumo instalado",
+        b"Mercado ocupado",
     ):
         assert rotulo in pdf_com
     # O rotulo antigo NAO pode voltar: ele prometia "concorrentes" para um numero que hoje

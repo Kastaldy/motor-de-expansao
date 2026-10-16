@@ -243,5 +243,5 @@ def test_sem_viabilidade_e_sem_so_estudo_continua_sem_conclusao(gerador_real) ->
 def test_big_numbers_do_estudo_fecham_a_conta_do_raio(gerador_real) -> None:
     """DEC-070: card de consumo INSTALADO com a decomposicao conc. + Ultra."""
     texto = _texto(_chamar_rota(so_estudo=True).body)
-    assert "Consumo instalado" in texto
+    assert "Mercado ocupado" in texto
     assert "conc. 1.200 + Ultra 300" in texto
