@@ -228,6 +228,126 @@ def test_pdf_marca_a_unidade_com_a_logo_da_ultra_quando_ela_existe() -> None:
     assert quebrada.startswith(b"%PDF-1.4") and b"(ULTRA)" in quebrada
 
 
+def _independente(nome: str, wellhub: bool, totalpass: bool) -> dict[str, object]:
+    bloco = {"plano": "Basic", "preco": 69.99, "casado_por": "ponto"}
+    return _concorrente(
+        nome,
+        lat=-22.951,
+        lng=-43.18,
+        classe="independente",
+        rede=None,
+        agregadores={"wellhub": bloco if wellhub else None, "totalpass": bloco if totalpass else None},
+    )
+
+
+def test_independente_recebe_a_logo_do_agregador_e_so_o_totalpass_quando_so_ele() -> None:
+    """Pedido do Juan (14/10): a independente rosa sai com a logo, não com o quadro vazio.
+    Regra da DEC-066: TotalPass só quando ele é o único; o resto, Wellhub."""
+    artes = {"wellhub": "wh", "totalpass": "tp"}
+    assert rede_export._logo_do_concorrente(_independente("A", True, False), None, artes) == "wh"
+    assert rede_export._logo_do_concorrente(_independente("B", True, True), None, artes) == "wh"
+    assert rede_export._logo_do_concorrente(_independente("C", False, True), None, artes) == "tp"
+    assert rede_export._logo_do_concorrente(_independente("D", False, False), None, artes) == "wh"
+    # a rede continua com a logo dela, nunca a do agregador
+    assert rede_export._logo_do_concorrente(_concorrente("Bluefit"), {"bluefit": "bf"}, artes) == "bf"
+    assert rede_export._logo_do_concorrente(_concorrente("Bluefit"), None, artes) is None
+
+
+def test_pdf_embute_a_logo_do_agregador_nas_independentes() -> None:
+    from PIL import Image
+
+    intel = _inteligencia([_independente("Koka Academia", True, True), _independente("Biodelta", False, True)])
+    intel["mapa"].update({"lat": -22.95, "lng": -43.18})  # type: ignore[union-attr]
+    artes = {
+        "wellhub": Image.new("RGBA", (40, 40), (240, 78, 110, 255)),
+        "totalpass": Image.new("RGBA", (40, 40), (39, 208, 125, 255)),
+    }
+    sem = rede_export.concorrencia_pdf(_ficha(), intel, PONTO)
+    com = rede_export.concorrencia_pdf(_ficha(), intel, PONTO, None, None, artes)
+    # as duas artes entram (o fpdf embute cada imagem uma vez só, por mais pinos que a usem)
+    assert com.count(b"/Subtype /Image") == sem.count(b"/Subtype /Image") + 2
+    assert "(logo do wellhub; do totalpass se s" in _texto_cru_do_pdf(com)
+
+
+def test_pdf_desenha_o_raio_sobre_o_fundo_de_ruas_e_sem_ele_volta_ao_esquema() -> None:
+    """O mapa vinha em branco (14/10): sem tile nenhum, só o esquema cinza."""
+    from PIL import Image
+
+    intel = _inteligencia([_concorrente("Academia Perto", lat=-22.951, lng=-43.18)])
+    intel["mapa"].update({"lat": -22.95, "lng": -43.18})  # type: ignore[union-attr]
+    fundo = (Image.new("RGB", (300, 300), (230, 225, 210)), "(c) OpenStreetMap")
+    sem = rede_export.concorrencia_pdf(_ficha(), intel, PONTO)
+    com = rede_export.concorrencia_pdf(_ficha(), intel, PONTO, fundo=fundo)
+    assert com.count(b"/Subtype /Image") == sem.count(b"/Subtype /Image") + 1
+    assert "openstreetmap" in _texto_cru_do_pdf(com) and "openstreetmap" not in _texto_cru_do_pdf(sem)
+    # fundo ilegível não derruba o relatório nem imprime crédito de tile que não entrou
+    quebrado = rede_export.concorrencia_pdf(_ficha(), intel, PONTO, fundo=("nao-existe.png", "Credito Fantasma"))
+    assert quebrado.startswith(b"%PDF-1.4") and "credito fantasma" not in _texto_cru_do_pdf(quebrado)
+
+
+def test_fundo_de_ruas_recorta_o_quadro_do_raio_e_falha_em_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    import math
+
+    import numpy as np
+
+    from motor_expansao.dashboard import censo_map
+
+    lat, lng = -23.5735, -46.6270  # Aclimação
+    pedidos: list[tuple[float, float, float, float]] = []
+    tamanhos: list[int] = []
+
+    def falso_fetch(caixa: tuple[float, float, float, float], largura: int, **_: object) -> object:
+        pedidos.append(caixa)
+        tamanhos.append(largura)
+        minx, miny, maxx, maxy = caixa
+        folga = (maxx - minx) / 2  # o tile vem maior que o pedido, como o contextily devolve
+        return np.zeros((n, n, 4), dtype=np.uint8), (minx - folga, maxx + folga, miny - folga, maxy + folga)
+
+    from PIL import Image
+
+    monkeypatch.setattr(censo_map, "_fetch_basemap", falso_fetch)
+    n = 400
+    jpeg, credito = rede_export.fundo_de_ruas({"lat": lat, "lng": lng, "raio_m": 2000})  # type: ignore[misc]
+    # o pedido cobre o raio (2 km) mais a folga do quadro, em metros de Web Mercator
+    minx, _, maxx, _ = pedidos[0]
+    metade_chao = (maxx - minx) / 2 * math.cos(math.radians(lat))
+    assert metade_chao == pytest.approx(2000 * 210 / 194, rel=1e-6)
+    assert Image.open(jpeg).format == "JPEG" and Image.open(jpeg).size == (200, 200)  # o miolo, sem a folga
+    assert tamanhos == [rede_export._PIXELS_DO_FUNDO]
+    # mosaico maior que o pedido é reduzido: era isso que fazia o PDF passar de 25 MB
+    n = 6000
+    jpeg, _ = rede_export.fundo_de_ruas({"lat": lat, "lng": lng, "raio_m": 2000})  # type: ignore[misc]
+    assert Image.open(jpeg).size == (rede_export._PIXELS_DO_FUNDO, rede_export._PIXELS_DO_FUNDO)
+    assert credito in (censo_map._ATRIBUICAO_TILES, censo_map._ATRIBUICAO_TILES_SELFHOST)
+
+    monkeypatch.setattr(censo_map, "_fetch_basemap", lambda *a, **k: None)
+    assert rede_export.fundo_de_ruas({"lat": lat, "lng": lng, "raio_m": 2000}) is None
+    assert rede_export.fundo_de_ruas({"raio_m": 2000}) is None  # sem coordenada, nem vai à rede
+
+
+def test_fundo_de_ruas_que_passa_do_teto_volta_ao_esquema_sem_esperar(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O contextily baixa tile sem timeout: tileserver mudo penduraria o PDF (review do Felipe, #452)."""
+    import threading
+    import time
+
+    from motor_expansao.dashboard import censo_map
+
+    solta = threading.Event()
+
+    def tileserver_mudo(*_: object, **__: object) -> object:
+        solta.wait(10)  # "não responde"; o teste solta no fim para não deixar thread viva
+        return None
+
+    monkeypatch.setattr(censo_map, "_fetch_basemap", tileserver_mudo)
+    monkeypatch.setattr(rede_export, "_TETO_DO_FUNDO_S", 0.2)
+    inicio = time.monotonic()
+    try:
+        assert rede_export.fundo_de_ruas({"lat": -23.57, "lng": -46.63, "raio_m": 2000}) is None
+        assert time.monotonic() - inicio < 2.0  # devolve no teto, não quando a busca termina
+    finally:
+        solta.set()
+
+
 def test_rota_do_pdf_existe_e_fica_atras_da_aba_executiva() -> None:
     import acesso
     import app as pilot

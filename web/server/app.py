@@ -9183,6 +9183,28 @@ def _logo_ultra_para_pdf() -> Any:
     return None
 
 
+@functools.lru_cache(maxsize=1)
+def _logos_agregador_para_pdf() -> dict[str, Any]:
+    """As artes do Wellhub e do TotalPass para as independentes do PDF de concorrência.
+
+    As do pacote (`dashboard/assets/`), as mesmas do PDF pontual: o diretório de logos de
+    produção nunca recebia a do Wellhub (PR #375). Convertidas pelo Pillow como a da Ultra;
+    arte ilegível fica de fora e a independente cai no quadro neutro.
+    """
+    from PIL import Image
+
+    from motor_expansao.dashboard.competitors import AGREGADOR_LOGO_PACOTE, AGREGADOR_TP_LOGO_PACOTE
+
+    artes: dict[str, Any] = {}
+    for fonte, caminho in (("wellhub", AGREGADOR_LOGO_PACOTE), ("totalpass", AGREGADOR_TP_LOGO_PACOTE)):
+        try:
+            with Image.open(caminho) as imagem:
+                artes[fonte] = imagem.convert("RGBA")
+        except Exception:  # noqa: BLE001
+            continue
+    return artes
+
+
 @app.get("/api/rede/unidade/{unidade_id}/concorrencia.pdf")
 def rede_unidade_concorrencia_pdf(unidade_id: str, mes: str | None = None) -> Response:
     """A concorrência da unidade em PDF: o raio, a região e o que cada concorrente oferece.
@@ -9216,7 +9238,15 @@ def rede_unidade_concorrencia_pdf(unidade_id: str, mes: str | None = None) -> Re
     }
     logos = {rede: str(caminho) for rede in redes if (caminho := _arquivo_logo_rede(rede)).is_file()}
     return _anexo(
-        rede_export.concorrencia_pdf(ficha, inteligencia, censo_do_ponto, logos, _logo_ultra_para_pdf()),
+        rede_export.concorrencia_pdf(
+            ficha,
+            inteligencia,
+            censo_do_ponto,
+            logos,
+            _logo_ultra_para_pdf(),
+            _logos_agregador_para_pdf(),
+            rede_export.fundo_de_ruas(inteligencia.get("mapa")),
+        ),
         f"concorrencia_{unidade_id}_{str(ficha.get('mes', '')).replace('-', '')}.pdf",
         "application/pdf",
     )
