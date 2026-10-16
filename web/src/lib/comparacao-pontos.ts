@@ -218,7 +218,7 @@ export function motivoSemPdfDeComparacao(
 ): string | null {
   if (!fichas.some((f) => ehAreaDesenhada(f))) return null
   return (
-    'O PDF de comparação ainda não aceita área desenhada — ele chega na próxima fase. ' +
+    'O PDF de comparação ainda não aceita área desenhada — o PDF por área desenhada segue em desenvolvimento. ' +
     'Remova as áreas desenhadas da comparação para gerar o PDF dos pontos.'
   )
 }

@@ -538,7 +538,7 @@ describe('área desenhada na comparação', () => {
 
   it('o PDF de comparação recusa lista com área, dizendo por quê', () => {
     expect(motivoSemPdfDeComparacao([ponto, ponto])).toBeNull()
-    expect(motivoSemPdfDeComparacao([ponto, area])).toMatch(/próxima fase/)
+    expect(motivoSemPdfDeComparacao([ponto, area])).toMatch(/segue em desenvolvimento/)
   })
 
   it('a mesma área casa pelos vértices; o ponto nunca casa como área', () => {

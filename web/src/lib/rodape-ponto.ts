@@ -36,7 +36,7 @@ export const ROTULO_ESTUDO = 'Estudo'
 export const ROTULO_ESTUDO_GERANDO = 'Gerando o estudo...'
 export const DICA_ESTUDO =
   'PDF só demográfico: quem mora no raio, a concorrência e o mercado, sem nenhum dado financeiro.'
-export const DICA_ESTUDO_GEOMETRIA = 'O PDF por área desenhada chega na próxima fase.'
+export const DICA_ESTUDO_GEOMETRIA = 'O PDF por área desenhada segue em desenvolvimento.'
 
 export const ROTULO_SIMULADOR = 'Simulador'
 export const DICA_SIMULADOR = 'Abre a tela de Viabilidade com a coordenada deste ponto.'

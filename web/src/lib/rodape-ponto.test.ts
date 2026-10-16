@@ -45,7 +45,7 @@ describe('estadoDoEstudo', () => {
     expect(e.travadoPorque).toBeNull()
   })
 
-  it('área desenhada: travado, com a explicação da próxima fase (DEC-071)', () => {
+  it('área desenhada: travado, com a explicação de que segue em desenvolvimento (DEC-071)', () => {
     const e = estadoDoEstudo(areaDesenhada, false)
     expect(e.habilitado).toBe(false)
     expect(e.dica).toBe(DICA_ESTUDO_GEOMETRIA)
