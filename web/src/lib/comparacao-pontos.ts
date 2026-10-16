@@ -249,26 +249,39 @@ export function rotuloDoRecorte(
    descreve. `corDoPonto` continua existindo aqui como o nome que a tela de pontos usa. */
 export { CORES_IDENTIDADE as CORES_PONTO, corDeIdentidade as corDoPonto } from './comparacao'
 
+/** Compara nomes de lugar sem caixa nem acento ("BRASILIA" == "Brasília"). */
+function mesmoNome(a: string, b: string): boolean {
+  const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase()
+  return norm(a) === norm(b)
+}
+
 /**
- * Rotulo curto de um ponto: o NOME DO HEXAGONO em que ele cai, senao o bairro/distrito
- * do setor, senao o municipio, senao a coordenada.
+ * O nome do LUGAR de um ponto — regra HIBRIDA (decisao do Vinicius, 2026-10-16):
  *
- * O hexagono vem primeiro porque e' o nome que o operador ja' viu na ficha e no ranking
- * do mapa. O bairro/distrito do setor sozinho nao bastava: em Brasilia o distrito do
- * setor E' o municipio, e o ponto de Taguatinga saia "Brasília" (relato do Vinicius,
- * 2026-10-16) — o mesmo hexagono que a ficha chama "Taguatinga".
+ *  1. o bairro/distrito do SETOR que contem o ponto, quando ele diz algo alem da cidade;
+ *  2. senao, o NOME DO HEXAGONO em que o ponto cai (o mesmo da ficha e do ranking);
+ *  3. senao, o municipio.
+ *
+ * Por que nao o hexagono sempre: o hexagono res-7 (~5 km2) e' nomeado pelo bairro de
+ * MAIOR populacao dentro dele, e o ponto podia receber o nome do bairro VIZINHO — a
+ * coordenada da Ultra Santana caia no hexagono "Tucuruvi". Por que nao o setor sempre:
+ * onde o IBGE so' traz o nome da cidade (Brasilia, Goiania, Sao Luis), o ponto de
+ * Taguatinga saia "Brasília" enquanto a ficha do mesmo hexagono dizia "Taguatinga".
  */
+export function nomeDoLugar(local: PontoPayload['local'] | null | undefined): string | null {
+  const setor = local?.bairro ?? null
+  const mun = local?.municipio ?? null
+  if (setor && !(mun && mesmoNome(setor, mun))) return setor
+  return local?.hexagono ?? setor ?? mun
+}
+
+/** Rotulo curto de um ponto: `nomeDoLugar`, senao a coordenada. */
 export function rotuloDoPonto(p: PontoPayload): string {
   /* A área desenhada não tem bairro que a nomeie (o bairro do `representative_point` é o
      de um ponto qualquer dentro dela): ela se chama pelo que é. Duas áreas viram "Área
      desenhada #1" e "#2" pela regra comum de `rotulosUnicos`. */
   if (ehAreaDesenhada(p)) return ROTULO_AREA_DESENHADA
-  return (
-    p.local?.hexagono ??
-    p.local?.bairro ??
-    p.local?.municipio ??
-    `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`
-  )
+  return nomeDoLugar(p.local) ?? `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`
 }
 
 /**

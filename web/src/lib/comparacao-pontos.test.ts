@@ -128,7 +128,7 @@ describe('rotuloDoPonto', () => {
   })
 })
 
-describe('rotuloDoPonto: o nome do HEXÁGONO vem primeiro', () => {
+describe('rotuloDoPonto: regra híbrida (setor, senão hexágono)', () => {
   /* O payload devolve `local.hexagono` = o nome que a ficha/ranking do hexágono mostra.
      Caso real (Taguatinga/DF, -15.8333, -48.0567): o distrito do setor é "Brasília", o
      mesmo nome do município, e o hexágono se chama "Taguatinga". */
@@ -139,6 +139,17 @@ describe('rotuloDoPonto: o nome do HEXÁGONO vem primeiro', () => {
 
   it('usa o nome do hexágono, e não o distrito que repete o município', () => {
     expect(rotuloDoPonto(comHex('Taguatinga', 'Brasília'))).toBe('Taguatinga')
+    // A comparação com o município ignora caixa e acento.
+    expect(rotuloDoPonto(comHex('Taguatinga', 'BRASILIA'))).toBe('Taguatinga')
+  })
+
+  it('o bairro/distrito do setor vence o hexágono quando diz mais que a cidade', () => {
+    // Caso real (Ultra Santana/SP): o setor é do distrito Santana, o hexágono se chama
+    // "Tucuruvi" (bairro de maior população dentro dele). O ponto não leva o nome vizinho.
+    const p = ponto({ bairro: 'Santana' })
+    expect(rotuloDoPonto({ ...p, local: { ...p.local, hexagono: 'Tucuruvi' } } as PontoPayload)).toBe(
+      'Santana',
+    )
   })
 
   it('hexágono sem nome cai no bairro/distrito do setor, depois no município', () => {
