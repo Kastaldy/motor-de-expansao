@@ -4,7 +4,6 @@ import { api, baixar, ApiError } from '../lib/api'
 import { rotuloDaRede } from '../lib/concorrentes'
 import { avisoDeEstudoDePonto, ehRecusaDoEstudoDaUnidade } from '../lib/estudo-ultra'
 import {
-  ETIQUETA_SEM_DADOS,
   ROTULO_FONTE,
   comodidadesDeclaradas,
   estadoDasComodidades,
@@ -12,7 +11,6 @@ import {
   modalidadesDoCanal,
   nomeDoConcorrente,
   planosDoConcorrente,
-  type UnidadeCadastroMapa,
 } from '../lib/ficha-unidade'
 import { alunos, brl, distanciaCurta, num, renda } from '../lib/format'
 import type {
@@ -313,101 +311,6 @@ function planoDaUltra(planos: RedePlanosEntorno | undefined): string {
   if (!planos.disponivel) return 'Indisponível'
   if (!planos.ultra) return 'Não identificado'
   return `${planos.ultra.plano} · ${brl(planos.ultra.preco, false, 2)}`
-}
-
-/**
- * A ficha da unidade que o MAPA conhece e a base da rede NÃO (2026-10-16): pré-venda ou
- * recém-aberta, sem faturamento nem pagantes na Growth. Diz o que existe — nome, praça e
- * coordenada — e diz o que falta, em vez de não abrir nada. O estudo pontual do endereço
- * continua disponível: ele lê a praça, não a operação.
- */
-export function FichaUnidadeSemDados({
-  cadastro,
-  onEstudarRegiao,
-}: {
-  cadastro: UnidadeCadastroMapa
-  /** "Estudar a região desta unidade" (emenda da DEC-070). Ausente = o botão não aparece. */
-  onEstudarRegiao?: (lat: number, lng: number) => void
-}) {
-  const [baixando, setBaixando] = useState(false)
-  const [erro, setErro] = useState<string | null>(null)
-  const temPonto = cadastro.lat != null && cadastro.lng != null
-  const praca = [cadastro.cidade, cadastro.uf].filter(Boolean).join(' · ')
-  const coordenada = temPonto
-    ? `${(cadastro.lat as number).toFixed(6).replace('.', ',')}; ${(cadastro.lng as number)
-        .toFixed(6)
-        .replace('.', ',')}`
-    : 'não cadastrada'
-
-  const gerarEstudoPontual = async () => {
-    if (cadastro.lat == null || cadastro.lng == null) return
-    setBaixando(true)
-    setErro(null)
-    try {
-      const { blob, filename, aviso } = await estudoDaUnidadePdf(
-        cadastro.lat,
-        cadastro.lng,
-        `Ultra ${cadastro.nome}`,
-      )
-      baixar(blob, filename)
-      if (aviso) setErro(aviso)
-    } catch (e) {
-      setErro((e as ApiError).message)
-    } finally {
-      setBaixando(false)
-    }
-  }
-
-  return (
-    <div style={{ display: 'grid', gap: 18 }}>
-      <div
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}
-      >
-        <span style={{ font: '400 12px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>{praca || '—'}</span>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {onEstudarRegiao && (
-            <Botao
-              variante="ghost"
-              disabled={!temPonto}
-              title="Abre a análise de ponto na coordenada da unidade, sem o consumo dela no mercado."
-              onClick={() => {
-                if (cadastro.lat != null && cadastro.lng != null) onEstudarRegiao(cadastro.lat, cadastro.lng)
-              }}
-            >
-              Estudar a região desta unidade
-            </Botao>
-          )}
-        <Botao
-          variante="ghost"
-          disabled={!temPonto || baixando}
-          title={temPonto ? undefined : 'Sem coordenada, não há ponto para estudar.'}
-          onClick={gerarEstudoPontual}
-        >
-          {baixando ? 'Gerando…' : 'Estudo pontual'}
-        </Botao>
-        </div>
-      </div>
-      {erro && <Nota>{erro}</Nota>}
-
-      <section>
-        <TituloSecao titulo="Cadastro" nota="pin do mapa" />
-        <CardPainel style={{ padding: 0 }}>
-          <LinhaTabela rotulo="Unidade" valor={cadastro.nome} />
-          <LinhaTabela rotulo="Cidade / UF" valor={praca || '—'} />
-          <LinhaTabela rotulo="Coordenada" valor={coordenada} />
-        </CardPainel>
-      </section>
-
-      <section>
-        <TituloSecao titulo="Operação" nota={ETIQUETA_SEM_DADOS} />
-        <Nota>
-          Esta unidade está no cadastro do mapa, mas ainda não tem faturamento, pagantes nem
-          alunos na base da rede (Growth) — o caso de uma unidade em pré-venda ou recém-aberta.
-          A ficha completa aparece aqui assim que a base passar a trazê-la.
-        </Nota>
-      </section>
-    </div>
-  )
 }
 
 function Numero({ rotulo, valor, unidade }: { rotulo: string; valor: string; unidade?: string }) {

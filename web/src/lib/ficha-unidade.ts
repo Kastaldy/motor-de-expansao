@@ -14,55 +14,10 @@ import type {
   RedeUnidade,
 } from './types'
 
-/**
- * Unidade do CADASTRO do mapa — a mesma que vira pin da Ultra (`/api/rede/unidades-mapa`).
- * So' ponto, nome e praca: nenhum dado operacional.
- */
-export interface UnidadeCadastroMapa {
-  nome: string
-  uf: string
-  cidade: string | null
-  lat: number | null
-  lng: number | null
-}
-
-/**
- * A unidade cuja ficha o mapa abre em janela: o id busca os dados, o nome e' o titulo.
- * `cadastro` vem so' na unidade que existe no mapa e NAO na base da rede: a janela entao
- * diz o que se sabe dela, em vez de pedir uma ficha que o servidor nao tem.
- */
+/** A unidade cuja ficha o mapa abre em janela: o id busca os dados, o nome e' o titulo. */
 export interface UnidadeNoMapa {
   id: string
   nome: string
-  cadastro?: UnidadeCadastroMapa
-}
-
-/** Prefixo do id da unidade so' do cadastro — nunca colide com um id da Growth. */
-export const PREFIXO_ID_CADASTRO = 'mapa:'
-
-/** Etiqueta da unidade sem dado da Growth na lista UNIDADES. */
-export const ETIQUETA_SEM_DADOS = 'sem dados operacionais (pré-venda ou recém-aberta)'
-
-/** Um item da lista UNIDADES do mapa: a unidade da rede, ou a que so' o cadastro conhece. */
-export type ItemUnidadeMapa =
-  | { tipo: 'rede'; id: string; nome: string; unidade: RedeUnidade }
-  | { tipo: 'cadastro'; id: string; nome: string; cadastro: UnidadeCadastroMapa }
-
-/** O que o seletor escreve: a unidade so' do cadastro leva a etiqueta. */
-export function rotuloItemUnidade(item: ItemUnidadeMapa): string {
-  return item.tipo === 'cadastro' ? `${item.nome} · ${ETIQUETA_SEM_DADOS}` : item.nome
-}
-
-/** A forma da janela para um item da lista. */
-export function unidadeNoMapaDoItem(item: ItemUnidadeMapa): UnidadeNoMapa {
-  return item.tipo === 'cadastro'
-    ? { id: item.id, nome: item.nome, cadastro: item.cadastro }
-    : { id: item.id, nome: item.nome }
-}
-
-function coordDoItem(item: ItemUnidadeMapa): Coord | null {
-  const fonte = item.tipo === 'rede' ? item.unidade : item.cadastro
-  return fonte.lat == null || fonte.lng == null ? null : { lat: fonte.lat, lng: fonte.lng }
 }
 
 /**
@@ -77,69 +32,6 @@ export function unidadesDaUf(unidades: readonly RedeUnidade[], uf: string): Rede
   return unidades
     .filter((u) => (u.uf ?? '').trim().toUpperCase() === alvo)
     .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
-}
-
-/**
- * A lista UNIDADES do mapa: a carteira da Growth UNIDA ao cadastro do mapa (2026-10-16).
- *
- * A Growth so' conhece unidade que ja' fatura; a unidade em pre-venda (Ultra Santana/SP)
- * era pin no mapa e nao aparecia na lista. Uma unidade do cadastro entra so' quando NENHUMA
- * unidade da rede — de qualquer estado, para nao duplicar por UF divergente entre as bases
- * — esta' a ate' `toleranciaM` dela: e' o mesmo casamento que liga o pin a ficha. Sem
- * coordenada nao ha' como provar que e' outra unidade, entao ela fica de fora.
- *
- * As unidades da rede continuam exatamente como `unidadesDaUf` as devolve; a ordem final
- * e' por nome, a mesma do seletor.
- */
-export function listaUnidadesDoMapa(
-  rede: readonly RedeUnidade[],
-  cadastro: readonly UnidadeCadastroMapa[],
-  uf: string,
-  toleranciaM: number = TOLERANCIA_PIN_UNIDADE_M,
-): ItemUnidadeMapa[] {
-  const alvo = uf.trim().toUpperCase()
-  if (!alvo) return []
-  const itens: ItemUnidadeMapa[] = unidadesDaUf(rede, alvo).map((u) => ({
-    tipo: 'rede',
-    id: u.id,
-    nome: u.nome,
-    unidade: u,
-  }))
-  const vistos = new Set<string>()
-  for (const c of cadastro) {
-    if ((c.uf ?? '').trim().toUpperCase() !== alvo) continue
-    if (c.lat == null || c.lng == null) continue
-    const ponto = { lat: c.lat, lng: c.lng }
-    if (unidadeDoPin(ponto, rede, toleranciaM)) continue
-    const id = `${PREFIXO_ID_CADASTRO}${c.lat.toFixed(6)},${c.lng.toFixed(6)}`
-    if (vistos.has(id)) continue
-    vistos.add(id)
-    itens.push({ tipo: 'cadastro', id, nome: c.nome, cadastro: c })
-  }
-  return itens.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
-}
-
-/**
- * Qual item da lista e' este pin do mapa — o mais proximo dentro da tolerancia, da rede
- * ou do cadastro. Sem par devolve `null` (pin de outro estado, fora da lista aberta).
- */
-export function itemDoPin(
-  pin: Coord,
-  itens: readonly ItemUnidadeMapa[],
-  toleranciaM: number = TOLERANCIA_PIN_UNIDADE_M,
-): ItemUnidadeMapa | null {
-  let melhor: ItemUnidadeMapa | null = null
-  let menor = Infinity
-  for (const item of itens) {
-    const c = coordDoItem(item)
-    if (!c) continue
-    const d = distanciaMetros(pin, c)
-    if (d <= toleranciaM && d < menor) {
-      melhor = item
-      menor = d
-    }
-  }
-  return melhor
 }
 
 /**

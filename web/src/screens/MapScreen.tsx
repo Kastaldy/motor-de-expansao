@@ -20,7 +20,7 @@ import BarraCamadas, {
 import BotaoInicio from '../components/BotaoInicio'
 import FichaHex from '../components/FichaHex'
 import FichaImovel from '../components/FichaImovel'
-import FichaUnidadeNoMapa, { FichaUnidadeSemDados } from '../components/FichaUnidadeNoMapa'
+import FichaUnidadeNoMapa from '../components/FichaUnidadeNoMapa'
 import HexMap, { type AlvoDaCaptura, type SearchPin, type ViewState } from '../components/HexMap'
 import JanelaFicha from '../components/JanelaFicha'
 import MethodologyPanel from '../components/MethodologyPanel'
@@ -42,15 +42,7 @@ import { ACC } from '../lib/imovel'
 const ACC_16 = 'rgba(221,61,151,.16)'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
 import { REDES_LIGADAS_POR_PADRAO, pinsVisiveis, subDaChaveRedes, temAlunos } from '../lib/pins'
-import {
-  itemDoPin,
-  listaUnidadesDoMapa,
-  rotuloItemUnidade,
-  unidadeNoMapaDoItem,
-  type ItemUnidadeMapa,
-  type UnidadeCadastroMapa,
-  type UnidadeNoMapa,
-} from '../lib/ficha-unidade'
+import { unidadeDoPin, unidadesDaUf, type UnidadeNoMapa } from '../lib/ficha-unidade'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import { rodapeDaBase, tituloEscolhaUnidade } from '../lib/rodape-base'
 import { type AlvoCaptura, alvoDoHex, pinsDoAlvo } from '../lib/captura-mapa'
@@ -662,28 +654,7 @@ export default function MapScreen({
       vivo = false
     }
   }, [verUnidades])
-  /* O CADASTRO do mapa — as unidades que viram pin da Ultra (2026-10-16). A lista une as
-     duas fontes: unidade em pré-venda ou recém-aberta só existe aqui, e sem esta leitura
-     ela era pin no mapa e ausência no seletor. Mesma regra de falha da carteira. */
-  const [cadastroMapa, setCadastroMapa] = useState<UnidadeCadastroMapa[] | null>(null)
-  useEffect(() => {
-    if (!verUnidades) {
-      setCadastroMapa(null)
-      return
-    }
-    let vivo = true
-    api
-      .redeUnidadesMapa()
-      .then((c) => vivo && setCadastroMapa(c.unidades))
-      .catch(() => vivo && setCadastroMapa([]))
-    return () => {
-      vivo = false
-    }
-  }, [verUnidades])
-  const unidadesUf = useMemo(
-    () => listaUnidadesDoMapa(unidadesRede ?? [], cadastroMapa ?? [], uf),
-    [unidadesRede, cadastroMapa, uf],
-  )
+  const unidadesUf = useMemo(() => unidadesDaUf(unidadesRede ?? [], uf), [unidadesRede, uf])
 
   const [unidadeAberta, setUnidadeAberta] = useState<UnidadeNoMapa | null>(null)
   /* Porta única de abertura: o seletor e o pin do mapa passam os dois por aqui. O pin marca
@@ -695,9 +666,8 @@ export default function MapScreen({
      avisa o `App` (`onSoltarPonto`), que tira do ponto o comando da câmera. Sem o aviso, a
      ficha da unidade abria mas a câmera nunca chegava a ela. */
   const abrirUnidade = useCallback(
-    (item: ItemUnidadeMapa) => {
-      setUnidadeAberta(unidadeNoMapaDoItem(item))
-      const u = item.tipo === 'rede' ? item.unidade : item.cadastro
+    (u: RedeUnidade) => {
+      setUnidadeAberta({ id: u.id, nome: u.nome })
       if (u.lat == null || u.lng == null) return
       setBusca('')
       setBuscaErro(null)
@@ -1618,13 +1588,12 @@ export default function MapScreen({
           imoveis={verImoveis ? imoveisNoMapa : undefined}
           onImovel={abrirImovel}
           /* Clique no pin da Ultra: a mesma porta do seletor. O pin não tem id, então casa
-             pelo ponto (`itemDoPin`), na lista unida: a unidade só do cadastro abre a ficha
-             que diz o que se sabe dela. Pin de outro estado não abre nada. */
+             pelo ponto (`unidadeDoPin`); unidade fora da base da rede não abre nada. */
           onUltra={
             verUnidades
               ? (p) => {
-                  const item = itemDoPin(p, unidadesUf)
-                  if (item) abrirUnidade(item)
+                  const u = unidadeDoPin(p, unidadesUf)
+                  if (u) abrirUnidade(u)
                 }
               : undefined
           }
@@ -1835,13 +1804,13 @@ export default function MapScreen({
               maxWidth={190}
               buscavel
               placeholder={
-                unidadesRede === null || cadastroMapa === null
+                unidadesRede === null
                   ? 'Carregando…'
                   : unidadesUf.length === 0
                     ? `Nenhuma em ${uf}`
                     : `Escolher (${unidadesUf.length})`
               }
-              options={unidadesUf.map((u) => ({ value: u.id, label: rotuloItemUnidade(u) }))}
+              options={unidadesUf.map((u) => ({ value: u.id, label: u.nome }))}
             />
           </label>
         ) : (
@@ -2290,18 +2259,9 @@ export default function MapScreen({
         onFechar={() => setUnidadeAberta(null)}
         recuoInferior={96}
       >
-        {unidadeAberta &&
-          (unidadeAberta.cadastro ? (
-            <FichaUnidadeSemDados
-              cadastro={unidadeAberta.cadastro}
-              onEstudarRegiao={estudarRegiaoDaUnidade}
-            />
-          ) : (
-            <FichaUnidadeNoMapa
-              unidadeId={unidadeAberta.id}
-              onEstudarRegiao={estudarRegiaoDaUnidade}
-            />
-          ))}
+        {unidadeAberta && (
+          <FichaUnidadeNoMapa unidadeId={unidadeAberta.id} onEstudarRegiao={estudarRegiaoDaUnidade} />
+        )}
       </JanelaFicha>
 
       {/* ---------------- Janela da COMPARAÇÃO ----------------

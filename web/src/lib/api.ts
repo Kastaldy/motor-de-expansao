@@ -35,7 +35,6 @@ import type {
   ViabilidadeIn,
   ViabilidadeOut,
 } from './types'
-import type { UnidadeCadastroMapa } from './ficha-unidade'
 import { ehQuedaDeSessao, entradaDoPayload, type EntradaAceita } from './login-motor'
 import { relatarAcessoNegado, relatarFalhaDeRede } from './sessao'
 
@@ -644,10 +643,6 @@ export const api = {
 
   /** Nível 1 — a carteira da rede inteira, priorizada. Sem filtro = Brasil todo. */
   redeCarteira: (q: RedeQuery = {}) => pedir<RedeCarteira>(`/api/rede/carteira${queryRede(q)}`),
-
-  /** As unidades que o mapa desenha como pin da Ultra, com UF e cidade — o cadastro, sem
-   *  dado operacional. Une-se a carteira na lista UNIDADES do Mapa Territorial. */
-  redeUnidadesMapa: () => pedir<{ unidades: UnidadeCadastroMapa[] }>('/api/rede/unidades-mapa'),
 
   /** Nível 2 — a ficha de uma unidade (série de 12 meses, funil, coorte, recomendações). */
   redeUnidade: (id: string, mes?: string) =>

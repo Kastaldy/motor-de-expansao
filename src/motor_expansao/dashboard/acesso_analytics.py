@@ -73,10 +73,6 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
     ("PUT", "/api/rede/cadastro/", "Editou cadastro de unidade"),
     (None, "/api/rede/unidade/", "Abriu ficha de unidade"),
     (None, "/api/rede/carteira", "Consultou carteira da rede"),
-    # Lista UNIDADES do mapa (cadastro do mapa unido à Growth): o MapScreen a pede SOZINHO
-    # ao montar, sem gesto. Sem esta linha ela caía no `/api/rede/` genérico e cada
-    # abertura do Mapa contava como uma "Visão executiva da rede". É carga do mapa.
-    (None, "/api/rede/unidades-mapa", "Navegou pelo mapa"),
     (None, "/api/rede/", "Visão executiva da rede"),
     (None, "/api/executiva/", "Visão executiva da rede"),
     (None, "/api/relatorio/pontual", "Gerou relatório pontual"),

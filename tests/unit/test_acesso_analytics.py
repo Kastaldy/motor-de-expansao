@@ -343,18 +343,6 @@ def test_put_do_cadastro_e_feature_propria() -> None:
     )
 
 
-def test_unidades_do_mapa_nao_conta_como_visao_executiva() -> None:
-    # Disparada sozinha pelo Mapa ao montar: não pode inflar a Executiva.
-    assert (
-        aa._feature_do_evento({"metodo": "GET", "rota": "/api/rede/unidades-mapa"})
-        == "Navegou pelo mapa"
-    )
-    assert (
-        aa._feature_do_evento({"metodo": "GET", "rota": "/api/rede/unidade/u1"})
-        == "Abriu ficha de unidade"
-    )
-
-
 def test_ciencia_confidencialidade_e_feature_propria() -> None:
     """O OK do pop-up (POST /api/ciencia-confidencialidade) sai rotulado na ficha —
     e' o registro de ciencia pedido pelo Felipe em 2026-08-19, nao "Outras acoes"."""
