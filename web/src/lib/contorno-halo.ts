@@ -95,6 +95,29 @@ export function raioComHalo(raioPx: number): number {
   return raioPx + HALO_EXTRA_PX / 2
 }
 
+/**
+ * Os contornos de CENÁRIO (multi-hex) que ganham halo: cada hexágono do cenário, na cor de
+ * identidade da posição dele, MENOS o selecionado (esse veste a cor de seleção, na camada
+ * `hex`). Acima de `nCores` vai o cinza neutro — a mesma regra da camada `hex`, que a
+ * paleta cicla e o 6º não pode repetir a cor do 1º.
+ */
+export const CINZA_ALEM_DA_PALETA: Rgba = [154, 167, 181, 255]
+
+export function contornosDoCenario(
+  cenario: readonly string[],
+  selecionado: string | null | undefined,
+  nCores: number,
+  corDe: (i: number) => Rgb,
+): { id: string; rgb: Rgba }[] {
+  const out: { id: string; rgb: Rgba }[] = []
+  cenario.forEach((id, i) => {
+    if (id === selecionado) return
+    const c = i < nCores ? corDe(i) : CINZA_ALEM_DA_PALETA
+    out.push({ id, rgb: [c[0], c[1], c[2], 255] })
+  })
+  return out
+}
+
 /** O véu (preenchimento) da área em desenho: a cor de identidade bem transparente. */
 export function veuDoDesenho(rgb: Rgb, opcoes: { pausado?: boolean } = {}): Rgba {
   return [rgb[0], rgb[1], rgb[2], opcoes.pausado ? Math.round(ALFA_VEU_DESENHO / 2) : ALFA_VEU_DESENHO]

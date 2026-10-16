@@ -7,6 +7,8 @@ import {
   HALO_CLARO,
   HALO_ESCURO,
   HALO_EXTRA_PX,
+  CINZA_ALEM_DA_PALETA,
+  contornosDoCenario,
   corDoHalo,
   luminancia,
   raioComHalo,
@@ -75,5 +77,21 @@ describe('raio e véu', () => {
     expect(ALFA_VEU_DESENHO).toBeLessThan(46)
     expect(veuDoDesenho(VERDE_ESCURO)).toEqual([95, 208, 140, ALFA_VEU_DESENHO])
     expect(veuDoDesenho(VERDE_ESCURO, { pausado: true })[3]).toBeLessThan(ALFA_VEU_DESENHO)
+  })
+})
+
+describe('contornos do cenario', () => {
+  it('cada hexagono na cor da posicao, sem o selecionado, cinza alem da paleta', () => {
+    const ids = ['a', 'b', 'c', 'd', 'e', 'f']
+    const r = contornosDoCenario(ids, 'b', CORES_IDENTIDADE.length, (i) => corDeIdentidadeRgb(i))
+    expect(r.map((x) => x.id)).toEqual(['a', 'c', 'd', 'e', 'f'])
+    expect(r[0].rgb).toEqual(corDeIdentidadeRgb(0))
+    // a posicao conta do CENARIO, nao da lista filtrada: 'c' segue com a cor 2
+    expect(r[1].rgb).toEqual(corDeIdentidadeRgb(2))
+    expect(r[4].rgb).toEqual(CINZA_ALEM_DA_PALETA)
+  })
+
+  it('cenario vazio nao gera contorno', () => {
+    expect(contornosDoCenario([], null, 5, () => [0, 0, 0])).toEqual([])
   })
 })

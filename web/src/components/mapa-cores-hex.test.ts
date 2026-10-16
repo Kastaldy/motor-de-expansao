@@ -68,3 +68,16 @@ describe('contorno duplo (halo)', () => {
     )
   })
 })
+
+describe('captura do mapa (PDF)', () => {
+  it('o desenho PAUSADO nao entra na foto: vertices vazios com `capturando`', () => {
+    expect(hexMap).toContain('const vertices = capturando ? [] : (verticesDesenho ?? [])')
+  })
+
+  it('os halos novos tambem saem da foto', () => {
+    expect(hexMap).toContain('...(!capturando && cenarioLista.length')
+    // o halo do search-hex depende de `pinDoSearch`, que e nulo durante a captura
+    expect(hexMap).toContain('if (!searchPin || capturando) return null')
+    expect(hexMap).toMatch(/if \(pinDoSearch\) \{\s+const halo = tracoComHalo/)
+  })
+})

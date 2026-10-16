@@ -21,7 +21,7 @@ import {
 } from '../lib/captura-mapa'
 import { CORES_IDENTIDADE, corDeIdentidadeRgb, rotuloDoHex } from '../lib/comparacao'
 import { cursorDaFerramenta, ferramentaDasChaves, pinDaComparacaoAbre } from '../lib/ferramenta-mapa'
-import { raioComHalo, tracoComHalo, veuDoDesenho } from '../lib/contorno-halo'
+import { contornosDoCenario, raioComHalo, tracoComHalo, veuDoDesenho } from '../lib/contorno-halo'
 import { chaveDaCoordenada, type PinDaComparacao } from '../lib/comparacao-pontos'
 import { alunos, brl, distanciaCurta, num, renda } from '../lib/format'
 import {
@@ -1381,6 +1381,40 @@ export default function HexMap({
           ]
         : []),
 
+      /* CONTORNO DO CENÁRIO com halo (`lib/contorno-halo`): a linha de 42 m da camada `hex`
+         na cor de identidade some sobre hexágono VIZINHO da mesma matiz da rampa (o 4º item,
+         verde-água, sobre hexágono verde). Repintada aqui em DUAS passadas — halo de
+         contraste por baixo, a cor por cima —, acima das peças do raio e abaixo dos pins.
+         Vazia na captura: os hexágonos também saem vazios lá. */
+      ...(!capturando && cenarioLista.length
+        ? (() => {
+            const contornos = contornosDoCenario(
+              cenarioLista,
+              selecionado,
+              CORES_IDENTIDADE.length,
+              (i) => corDeIdentidadeRgb(i),
+            )
+            return (['halo', 'traco'] as const).map(
+              (passada) =>
+                new H3HexagonLayer<{ id: string; rgb: [number, number, number, number] }>({
+                  id: `cenario-contorno-${passada}`,
+                  data: contornos,
+                  getHexagon: (d) => d.id,
+                  extruded: false,
+                  filled: false,
+                  stroked: true,
+                  highPrecision: true,
+                  getLineColor: (d) => tracoComHalo(tema, d.rgb, 2)[passada].cor,
+                  getLineWidth: passada === 'halo' ? 42 + 30 : 42,
+                  lineWidthUnits: 'meters',
+                  lineWidthMinPixels: tracoComHalo(tema, [0, 0, 0], 2)[passada].largura,
+                  pickable: false,
+                  updateTriggers: { getLineColor: [tema, cenarioKey, selecionado] },
+                }),
+            )
+          })()
+        : []),
+
       /* INDEPENDENTES (BLK-MA-15): logo do AGREGADOR que as revelou — pedido do Felipe
          (2026-08-25), que a `[DEC-066]` desdobra em DOIS apps: ate' ela, "a marca do agregador"
          era necessariamente a do WellHub. SO' as independentes levam essa marca; as unidades de
@@ -1660,7 +1694,10 @@ export default function HexMap({
        desenho sumia sobre hexágono verde da rampa. Cada traço vai em DUAS passadas — o halo
        de contraste, mais largo, por baixo; a cor de identidade por cima — e o véu ficou mais
        transparente. O desenho PAUSADO (painel fechado) continua na tela, esmaecido. */
-    const vertices = verticesDesenho ?? []
+    /* VAZIO durante a captura, como os hexágonos e os pontos da comparação: desde que
+       fechar o painel PAUSA o desenho (e guarda os vértices), o rascunho pode estar na tela
+       quando o PDF fotografa o mapa — e sairia dentro do slide. */
+    const vertices = capturando ? [] : (verticesDesenho ?? [])
     if (vertices.length) {
       const rgb = pele.desenho
       const pausado = !desenhando
@@ -1742,6 +1779,28 @@ export default function HexMap({
     // selecionado e do item ativo do painel; o turquesa ficou exclusivo do cenario
     // multi-hex, que era a unica marcacao turquesa deliberada do mapa.
     if (marcaNoMapa) {
+      /* Halo por baixo do contorno do ponto ATIVO quando ele veste a cor de identidade:
+         3 px da mesma matiz do hexágono vizinho sumiam (`lib/contorno-halo`). Só com
+         `pinDoSearch` — na captura ele é nulo, e o contorno sai como antes. */
+      if (pinDoSearch) {
+        const halo = tracoComHalo(tema, pinDoSearch.rgb, 3).halo
+        base.push(
+          new H3HexagonLayer<{ id: string }>({
+            id: 'search-hex-halo',
+            data: [{ id: marcaNoMapa.hexId }],
+            getHexagon: (d) => d.id,
+            extruded: false,
+            filled: false,
+            stroked: true,
+            highPrecision: true,
+            getLineColor: halo.cor,
+            getLineWidth: halo.largura,
+            lineWidthUnits: 'pixels',
+            pickable: false,
+            updateTriggers: { getLineColor: [tema, pinDoSearch.rgb.join(',')] },
+          }) as unknown as H3HexagonLayer<Hex>,
+        )
+      }
       base.push(
         new H3HexagonLayer<{ id: string }>({
           id: 'search-hex',
