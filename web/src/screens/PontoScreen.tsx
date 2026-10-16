@@ -686,6 +686,16 @@ export default function PontoScreen({
 }
 
 /**
+ * Os dois botões do rodapé, um degrau acima do `Botao` padrão (pedido do Vinicius,
+ * 2026-10-16: "aumentar um pouco mais"). Fonte 13 -> 15 px e padding na mesma proporção
+ * (~+16% de altura), e os DOIS com o mesmo padding vertical: o ghost tem 1 px de borda de
+ * cada lado, então desconta 1 px no padding para as duas pílulas saírem da MESMA altura e
+ * o rodapé continuar alinhado. Cabem lado a lado na largura mínima da janela (320 px).
+ */
+const ESTILO_RODAPE_PRIMARIO = { font: '700 15px/1 var(--f-ui)', padding: '14px 22px' } as const
+const ESTILO_RODAPE_GHOST = { font: '600 15px/1 var(--f-ui)', padding: '13px 18px' } as const
+
+/**
  * O rodapé fixo da janela: "Estudo" e "Simulador".
  *
  * Botão travado SEMPRE diz por quê, em texto na tela — `title` em botão desabilitado não
@@ -710,7 +720,12 @@ function RodapePonto({
   return (
     <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 8 }}>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Botao onClick={onEstudo} disabled={!estudo.habilitado} title={estudo.dica}>
+        <Botao
+          onClick={onEstudo}
+          disabled={!estudo.habilitado}
+          title={estudo.dica}
+          style={ESTILO_RODAPE_PRIMARIO}
+        >
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
             {gerando && <Spinner />}
             {estudo.rotulo}
@@ -721,6 +736,7 @@ function RodapePonto({
           onClick={onSimulador}
           disabled={!simulador.habilitado}
           title={simulador.dica}
+          style={ESTILO_RODAPE_GHOST}
         >
           {simulador.rotulo} →
         </Botao>

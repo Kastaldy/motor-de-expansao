@@ -52,7 +52,11 @@ export default function BlocosComparacao({
     <div style={{ display: 'grid', gap: 14 }}>
       {onRelatorio && (
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <Botao variante="ghost" onClick={onRelatorio}>
+          {/* Fundo de AÇÃO (`--ac`, a variante primária) e não ghost (pedido do Vinicius,
+              2026-10-16: "mais destaque"). É o único gesto da comparação que produz algo,
+              e o ghost escuro some no meio dos blocos. Este componente serve a comparação
+              de PONTOS e a de HEXÁGONOS — os dois mudam juntos, de propósito. */}
+          <Botao onClick={onRelatorio}>
             {rotuloRelatorio}
           </Botao>
         </div>
