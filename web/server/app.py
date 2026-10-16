@@ -2426,6 +2426,29 @@ def bairros_por_hex(uf: str, cod_municipio: str) -> dict[str, str]:
         return {}
 
 
+def _nome_do_hexagono(uf: str | None, cod_municipio: Any, hex_id: str | None) -> str | None:
+    """O nome do hexagono res-7 em que um ponto cai -- a MESMA string da ficha do hexagono.
+
+    A ficha e o ranking nomeiam o hexagono por `bairros_por_hex` (localidade dominante:
+    bairro -> subdistrito -> distrito, ignorando o nivel grosso que so' repete o
+    municipio). O ponto lia so' o setor que o CONTEM, sem essa guarda: em Brasilia o
+    distrito do setor e' "Brasília" e o ponto de Taguatinga saia com o nome do
+    municipio, enquanto o hexagono dele, na ficha, chama "Taguatinga".
+
+    `None` quando o hexagono nao tem nome (nenhum setor com localidade tem o centroide
+    nele, ou a particao nao existe): o fallback (bairro/distrito do setor, depois
+    municipio) e' de quem exibe, e fica declarado em `rotuloDoPonto` no front.
+    """
+    if not uf or cod_municipio is None or not hex_id:
+        return None
+    cod = str(cod_municipio).strip()
+    if not cod or cod.casefold() in {"nan", "none"}:
+        return None
+    nome = bairros_por_hex(str(uf).upper(), cod).get(str(hex_id))
+    nome = str(nome).strip() if nome is not None else ""
+    return nome or None
+
+
 def _unidade(n: int, singular: str, plural: str) -> str:
     """Concorda a unidade do funil com a contagem.
 
@@ -6920,6 +6943,12 @@ def _payload_ponto(lat: float, lng: float, *, desenho: Any = None) -> dict[str, 
             "uf": uf,
             "municipio": _texto(_nome_municipio_de(setores_df)),
             "bairro": _texto(res.get("unidade_ponto_rotulo")),
+            # O NOME DO HEXÁGONO em que o ponto cai — a mesma string que a ficha e o
+            # ranking do hexágono mostram (`bairros_por_hex`). É ele que nomeia o ponto
+            # (`rotuloDoPonto`); `bairro` acima vira o fallback. Sem isto, em Brasília o
+            # ponto saía "Brasília" (o distrito do setor É o município) enquanto o hex
+            # dele, na ficha, se chama "Taguatinga". `None` quando o hex não tem nome.
+            "hexagono": _nome_do_hexagono(uf, _cod, hex_id),
             # Identificador cru ("bairro"/"distrito"), NÃO acentuar — o rótulo de
             # exibição é o `bairro` acima.
             "unidade_tipo": _texto(res.get("unidade_ponto_tipo")),

@@ -409,3 +409,46 @@ def test_lista_de_concorrentes_vem_ordenada_por_distancia() -> None:
     # o conjunto segue FECHADO de proposito, para o vazamento continuar sendo detectado.
     assert all(set(c) == {"rede", "classe", "dist_km"} for c in lista)
     assert all(c["classe"] in {"cadeia", "independente"} for c in lista)
+
+
+# --------------------------------------------------------------------------- #
+# Nome do ponto = nome do HEXAGONO (o mesmo da ficha/ranking)                  #
+# --------------------------------------------------------------------------- #
+def test_nome_do_hexagono_e_o_mesmo_mapa_que_nomeia_a_ficha(monkeypatch) -> None:
+    """O ponto le o nome pelo MESMO `bairros_por_hex` que nomeia ficha e ranking.
+
+    Caso real que motivou: Taguatinga/DF. O distrito do setor e' "Brasília" (o
+    municipio), e o ponto saia com ele; o hexagono, na ficha, chama "Taguatinga".
+    """
+    chamadas: list[tuple[str, str]] = []
+
+    def _falso(uf: str, cod: str) -> dict[str, str]:
+        chamadas.append((uf, cod))
+        return {"87a8c24e4ffffff": "Taguatinga", "87a8c24e5ffffff": "  "}
+
+    monkeypatch.setattr(pilot, "bairros_por_hex", _falso)
+
+    assert pilot._nome_do_hexagono("df", 5300108, "87a8c24e4ffffff") == "Taguatinga"
+    # UF normalizada e codigo como TEXTO: a chave do lru_cache do funil e' (UF, "cod").
+    assert chamadas[0] == ("DF", "5300108")
+    # Hex sem nome (ou nome em branco) devolve None: o fallback e' de quem exibe.
+    assert pilot._nome_do_hexagono("DF", "5300108", "87a8c2000ffffff") is None
+    assert pilot._nome_do_hexagono("DF", "5300108", "87a8c24e5ffffff") is None
+
+
+def test_nome_do_hexagono_sem_chave_nao_le_disco(monkeypatch) -> None:
+    def _proibido(*_a, **_k):  # pragma: no cover - so' dispara se a guarda falhar
+        raise AssertionError("nao devia consultar bairros_por_hex sem uf/cod/hex")
+
+    monkeypatch.setattr(pilot, "bairros_por_hex", _proibido)
+    assert pilot._nome_do_hexagono(None, "5300108", "87a8c24e4ffffff") is None
+    assert pilot._nome_do_hexagono("DF", None, "87a8c24e4ffffff") is None
+    assert pilot._nome_do_hexagono("DF", float("nan"), "87a8c24e4ffffff") is None
+    assert pilot._nome_do_hexagono("DF", "5300108", None) is None
+
+
+@requer_malha
+def test_ponto_traz_o_nome_do_hexagono_igual_ao_da_ficha() -> None:
+    body = pilot.ponto(lat=LAT_SP, lng=LNG_SP)
+    esperado = pilot.bairros_por_hex("SP", "3550308").get(body["hex_id"])
+    assert body["local"]["hexagono"] == esperado

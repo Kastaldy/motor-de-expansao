@@ -1998,6 +1998,12 @@ export interface PontoPayload {
     uf: string
     municipio: string | null
     bairro: string | null
+    /**
+     * Nome do hexágono em que o ponto cai — a MESMA string da ficha/ranking do hexágono
+     * (`bairros_por_hex` no servidor). É o nome do ponto; `null` quando o hex não tem
+     * nome. Opcional: payload anterior ao campo (aba restaurada) não o traz.
+     */
+    hexagono?: string | null
     /** Identificador cru ("bairro"/"distrito"), NÃO acentuado. Exibir `bairro`. */
     unidade_tipo: string | null
   }

@@ -249,13 +249,22 @@ export function rotuloDoRecorte(
    descreve. `corDoPonto` continua existindo aqui como o nome que a tela de pontos usa. */
 export { CORES_IDENTIDADE as CORES_PONTO, corDeIdentidade as corDoPonto } from './comparacao'
 
-/** Rotulo curto de um ponto: bairro, senao municipio, senao a coordenada. */
+/**
+ * Rotulo curto de um ponto: o NOME DO HEXAGONO em que ele cai, senao o bairro/distrito
+ * do setor, senao o municipio, senao a coordenada.
+ *
+ * O hexagono vem primeiro porque e' o nome que o operador ja' viu na ficha e no ranking
+ * do mapa. O bairro/distrito do setor sozinho nao bastava: em Brasilia o distrito do
+ * setor E' o municipio, e o ponto de Taguatinga saia "Brasília" (relato do Vinicius,
+ * 2026-10-16) — o mesmo hexagono que a ficha chama "Taguatinga".
+ */
 export function rotuloDoPonto(p: PontoPayload): string {
   /* A área desenhada não tem bairro que a nomeie (o bairro do `representative_point` é o
      de um ponto qualquer dentro dela): ela se chama pelo que é. Duas áreas viram "Área
      desenhada #1" e "#2" pela regra comum de `rotulosUnicos`. */
   if (ehAreaDesenhada(p)) return ROTULO_AREA_DESENHADA
   return (
+    p.local?.hexagono ??
     p.local?.bairro ??
     p.local?.municipio ??
     `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`

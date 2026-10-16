@@ -774,7 +774,7 @@ function Ficha({
           {/* O MESMO nome da aba, com o "#k" quando dois pontos empatam no nome: a
               ficha aberta tem de dizer QUAL dos "Centro" ela é. O "#k" fica fora do texto
               do nome, para nunca ser o pedaço que um corte esconde. */}
-          {partido?.base ?? local.bairro ?? 'Local sem bairro identificado'}
+          {partido?.base ?? local.hexagono ?? local.bairro ?? 'Local sem bairro identificado'}
           {partido?.sufixo && (
             <span style={{ marginLeft: 8, color: 'var(--tx-sub)', whiteSpace: 'nowrap' }}>
               {partido.sufixo}
@@ -788,7 +788,11 @@ function Ficha({
             ? /* A área não tem UM bairro: o do ponto central é só onde ele caiu. Diz o
                  recorte, que é o que identifica a área. */
               [local.municipio, local.uf, recorte]
-            : [local.municipio, local.uf, local.bairro ? null : 'sem bairro identificado']
+            : [
+                local.municipio,
+                local.uf,
+                local.hexagono || local.bairro ? null : 'sem bairro identificado',
+              ]
           )
             .filter(Boolean)
             .join(' · ')}

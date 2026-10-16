@@ -128,6 +128,45 @@ describe('rotuloDoPonto', () => {
   })
 })
 
+describe('rotuloDoPonto: o nome do HEXÁGONO vem primeiro', () => {
+  /* O payload devolve `local.hexagono` = o nome que a ficha/ranking do hexágono mostra.
+     Caso real (Taguatinga/DF, -15.8333, -48.0567): o distrito do setor é "Brasília", o
+     mesmo nome do município, e o hexágono se chama "Taguatinga". */
+  const comHex = (hexagono: string | null | undefined, bairro: string | null) => {
+    const p = ponto({ bairro, municipio: 'Brasília' })
+    return { ...p, local: { ...p.local, uf: 'DF', hexagono } } as PontoPayload
+  }
+
+  it('usa o nome do hexágono, e não o distrito que repete o município', () => {
+    expect(rotuloDoPonto(comHex('Taguatinga', 'Brasília'))).toBe('Taguatinga')
+  })
+
+  it('hexágono sem nome cai no bairro/distrito do setor, depois no município', () => {
+    expect(rotuloDoPonto(comHex(null, 'Setor Bueno'))).toBe('Setor Bueno')
+    expect(rotuloDoPonto(comHex(null, null))).toBe('Brasília')
+  })
+
+  it('payload anterior ao campo (sem `hexagono`) mantém o comportamento antigo', () => {
+    expect(rotuloDoPonto(comHex(undefined, 'Bela Vista'))).toBe('Bela Vista')
+  })
+
+  it('dois pontos no mesmo hexágono continuam desambiguados com "#k"', () => {
+    const a = comHex('Taguatinga', 'Brasília')
+    expect(rotulosDosPontos([a, a])).toEqual(['Taguatinga #1', 'Taguatinga #2'])
+  })
+
+  it('a área desenhada continua "Área desenhada", mesmo com hexágono nomeado', () => {
+    const p = comHex('Taguatinga', 'Brasília')
+    const area = {
+      ...p,
+      raio_km: null,
+      geometria: [[[-48.06, -15.84], [-48.05, -15.84], [-48.05, -15.83], [-48.06, -15.84]]],
+      recorte: { tipo: 'poligono', area_km2: 1, n_vertices: 3, metodo: 'x' },
+    } as unknown as PontoPayload
+    expect(rotuloDoPonto(area)).toBe('Área desenhada')
+  })
+})
+
 describe('corDoPonto', () => {
   it('dá cores distintas a todos os pontos que cabem na tela', () => {
     const cores = Array.from({ length: MAX_PONTOS }, (_, i) => corDoPonto(i))
