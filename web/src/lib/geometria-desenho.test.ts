@@ -141,13 +141,13 @@ describe('avaliação (o que a barra mostra)', () => {
     expect(a.areaKm2).toBeCloseTo(1, 2)
   })
 
-  it('recusa abaixo de 0,1 km² e acima de 25 km², dizendo o limite', () => {
+  it('recusa abaixo de 0,1 km² e acima de 200 km², dizendo o limite', () => {
     const pequeno = avaliarDesenho(quadrado(200))
     expect(pequeno.podeConcluir).toBe(false)
     expect(pequeno.motivo).toMatch(/mínimo é 0,1 km²/)
     const grande = avaliarDesenho(quadrado(Math.sqrt(AREA_MAX_KM2 * 1.2) * 1000))
     expect(grande.podeConcluir).toBe(false)
-    expect(grande.motivo).toMatch(/máximo é 25 km²/)
+    expect(grande.motivo).toMatch(/máximo é 200 km²/)
   })
 
   it('recusa autointerseção', () => {

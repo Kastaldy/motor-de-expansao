@@ -11,7 +11,7 @@
  * que precisa de regra (fechar, desfazer, área, autointerseção, limites) mora AQUI, puro,
  * para o vitest testar sem montar mapa.
  *
- * OS LIMITES SÃO OS DO SERVIDOR (`dashboard/geometria_desenhada.py`): 0,1 a 25 km², até 50
+ * OS LIMITES SÃO OS DO SERVIDOR (`dashboard/geometria_desenhada.py`): 0,1 a 200 km², até 50
  * vértices, sem autointerseção. A tela avalia antes para o "Concluir" travar com o motivo
  * escrito em vez de deixar o operador esperar um 400; quem DECIDE continua sendo o
  * servidor (a área daqui é uma projeção local equirretangular — na borda dos limites as
@@ -22,7 +22,7 @@ import { distanciaMetros, type Coord } from './medicao'
 import type { PosicaoGeoJson } from './comparacao-pontos'
 
 export const AREA_MIN_KM2 = 0.1
-export const AREA_MAX_KM2 = 25
+export const AREA_MAX_KM2 = 200
 export const MAX_VERTICES = 50
 export const MIN_VERTICES = 3
 
@@ -199,7 +199,7 @@ export function avaliarDesenho(vs: readonly Coord[]): AvaliacaoDesenho {
   if (area > AREA_MAX_KM2) {
     return {
       podeConcluir: false,
-      motivo: `A área tem ${formatarKm2(area)}; o máximo é 25 km².`,
+      motivo: `A área tem ${formatarKm2(area)}; o máximo é ${AREA_MAX_KM2} km².`,
       areaKm2: area,
       nVertices: n,
     }

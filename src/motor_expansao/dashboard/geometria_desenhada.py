@@ -8,11 +8,12 @@ mensagem em portugues que a rota devolve como 400.
 
 OS LIMITES (decisao do dono, 2026-10-14) e o porque de cada um:
 
-- AREA entre 0,1 e 25 km2. O piso tira o clique duplo acidental (um "poligono" de tres
+- AREA entre 0,1 e 200 km2. O piso tira o clique duplo acidental (um "poligono" de tres
   vertices colados) e o recorte menor que um quarteirao, em que a intersecao setor a setor
   vira ruido. O teto e' de CUSTO: a intersecao e' um laco Python por setor, e cada
-  municipio alcancado e' uma particao a mais lida do disco -- 25 km2 e' ~8x o raio de
-  1 km, o bastante para um bairro inteiro sem derrubar o worker.
+  municipio alcancado e' uma particao a mais lida do disco. Era 25 km2 (~8x o raio de
+  1 km) e foi a 200 km2 a pedido do Vinicius (2026-10-16), para caber uma regiao inteira
+  de cidade (varios bairros) -- o custo foi medido antes de subir (ver DEC-071).
 - ATE 50 vertices. Desenho a mao nao precisa de mais, e o teto fecha a porta para um
   corpo de requisicao arbitrariamente grande.
 - SEM autointersecao. Um "oito" nao tem area bem definida (o shapely o declara invalido e
@@ -49,7 +50,7 @@ from motor_expansao.dashboard.censo_point import (
 )
 
 AREA_MIN_KM2 = 0.1
-AREA_MAX_KM2 = 25.0
+AREA_MAX_KM2 = 200.0
 MAX_VERTICES = 50
 MIN_VERTICES = 3
 
@@ -170,7 +171,7 @@ def validar_geometria_desenhada(
     lat, lng = float(referencia.y), float(referencia.x)
     # Area na MESMA projecao local (AEQD no ponto de referencia) que o motor censitario usa
     # para a intersecao: o limite aceito aqui e a area que a analise reporta saem da mesma
-    # regua de metros, e nunca divergem na borda dos 0,1 / 25 km2.
+    # regua de metros, e nunca divergem na borda dos 0,1 / 200 km2.
     crs = _local_metric_crs(lat, lng)
     area_km2 = float(
         _project_geometry(poligono, _transformer(CRS_ORIGEM_CENSO, crs)).area

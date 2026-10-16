@@ -286,7 +286,7 @@ def test_area_fora_dos_limites() -> None:
     with pytest.raises(GeometriaDesenhadaInvalida, match="o mínimo é 0,1 km²"):
         validar_geometria_desenhada(_geojson(box(0, 0, lado_min, lado_min)))
     lado_max = math.sqrt(AREA_MAX_KM2 * 1.2) * 1000.0
-    with pytest.raises(GeometriaDesenhadaInvalida, match="o máximo é 25 km²"):
+    with pytest.raises(GeometriaDesenhadaInvalida, match="o máximo é 200 km²"):
         validar_geometria_desenhada(_geojson(box(0, 0, lado_max, lado_max)))
     # Dentro dos limites passa.
     assert validar_geometria_desenhada(_geojson(box(0, 0, 1000, 1000))).area_km2 == pytest.approx(1.0, rel=0.01)

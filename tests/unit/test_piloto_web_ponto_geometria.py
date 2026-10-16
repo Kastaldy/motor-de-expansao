@@ -252,7 +252,7 @@ def _quadrado(lado_m: float) -> dict:
         ({"type": "Point", "coordinates": [LNG, LAT]}, "polígono GeoJSON"),
         (_geojson(Polygon([(-500, -500), (500, 500), (500, -500), (-500, 500)])), "cruza a si mesmo"),
         (_quadrado(200.0), "o mínimo é 0,1 km²"),
-        (_quadrado(6000.0), "o máximo é 25 km²"),
+        (_quadrado(15000.0), "o máximo é 200 km²"),
         (
             _geojson(Polygon([
                 Point(0, 0).buffer(1000.0).exterior.interpolate(i / 51, normalized=True).coords[0]

@@ -66,6 +66,7 @@ import {
 } from '../lib/painel-trilho'
 import type { PosicaoGeoJson } from '../lib/comparacao-pontos'
 import {
+  AREA_MAX_KM2,
   MAX_VERTICES,
   adicionarVertice,
   avaliarDesenho,
@@ -2042,7 +2043,7 @@ export default function MapScreen({
                               }}
                             >
                               {vertices.length === 0
-                                ? 'Clique no mapa para marcar o 1º vértice. Entre 0,1 e 25 km², até 50 vértices.'
+                                ? `Clique no mapa para marcar o 1º vértice. Entre 0,1 e ${AREA_MAX_KM2} km², até ${MAX_VERTICES} vértices.`
                                 : 'Clique para o próximo vértice; feche clicando no 1º ou em Concluir. Fechar este painel pausa o desenho sem apagá-lo.'}
                             </span>
                             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '0 12px 2px' }}>

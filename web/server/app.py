@@ -6690,7 +6690,7 @@ def ponto_geometria(corpo: PontoGeometriaIn) -> dict[str, Any]:
     `/api/ponto` (casamento por prefixo em `acesso.py`), e a malha municipal também.
 
     Validação (400, mensagem em português): GeoJSON que não é Polygon, buraco, menos de 3
-    ou mais de 50 vértices, autointerseção, área fora de 0,1–25 km² e vértice fora do país.
+    ou mais de 50 vértices, autointerseção, área fora de 0,1–200 km² e vértice fora do país.
     SÓ TELA nesta fase: o PDF por área desenhada é a fase 2. READ-ONLY sobre o M1.
     """
     from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil

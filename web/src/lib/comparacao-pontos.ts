@@ -403,7 +403,7 @@ export const CHAVES_ABSOLUTAS: readonly string[] = Object.freeze(['residual', 'p
  * As dimensoes que podem ser COMPARADAS entre os itens desta lista.
  *
  * Com uma AREA DESENHADA na lista (DEC-071) os recortes tem tamanhos diferentes — ate'
- * 25 km² contra os 3,14 km² do raio de 1 km —, e comparar TOTAIS entre eles mede o tamanho
+ * 200 km² contra os 3,14 km² do raio de 1 km —, e comparar TOTAIS entre eles mede o tamanho
  * do recorte, nao a praca: a area quase sempre "venceria" em populacao e residual (e
  * "perderia" em concorrentes) so' por ser maior. Essas dimensoes saem dos blocos e do
  * veredito; renda, score e densidade, que nao dependem da area, ficam. Os totais de cada
