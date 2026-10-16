@@ -155,6 +155,17 @@ class SelecaoOndeCrescer:
     #: `True` quando `mediana_renda` saiu ponderada pela populacao; `False` quando nao havia peso
     #: (nenhum hexagono com renda E populacao positiva) e ela caiu na mediana simples.
     mediana_ponderada: bool = False
+    #: Cobertura do peso, para o PDF declarar a regua sem afirmar o que nao vale: hexagonos com
+    #: renda > 0, quantos deles ficaram FORA do peso (populacao nula ou zero -- em geral os de
+    #: `fonte_populacao_corte = 'total_municipal'`, que nao tem populacao de setor) e se a base
+    #: trazia alguma coluna de populacao. Medido no pais (2026-10-16): 14.125 de 1.226.198
+    #: hexagonos com renda, em 854 municipios (Porto Alegre 21 de 114, Rio 49 de 227), e eles NAO
+    #: sao neutros (renda mediana 6.967 contra 3.917 em POA). Na base real nenhum deles entra na
+    #: lista: sem populacao de setor tambem nao ha `score_setor_2022_calibrado`, logo nao ha
+    #: `indice_praca` -- por isso o PDF declara a cobertura e NAO promete que "continuam elegiveis".
+    n_com_renda: int = 0
+    n_fora_do_peso: int = 0
+    populacao_na_base: bool = False
 
 
 def mediana_renda_da_cidade(
@@ -231,6 +242,9 @@ def selecionar_onde_crescer(
         else serie_populacao(hexes)
     )
     mediana, ponderada = mediana_renda_da_cidade(renda, populacao)
+    com_renda = renda.notna() & (renda > 0)
+    com_peso = com_renda & populacao.notna() & (populacao > 0)
+    populacao_na_base = COL_POPULACAO in hexes.columns or any(c in hexes.columns for c in COLS_POPULACAO)
 
     if mediana is None:
         elegivel = pd.Series(False, index=hexes.index)
@@ -275,6 +289,40 @@ def selecionar_onde_crescer(
     return SelecaoOndeCrescer(
         hexagonos=top, mediana_renda=mediana, n_elegiveis=n_eleg, aviso=aviso,
         mediana_ponderada=ponderada,
+        n_com_renda=int(com_renda.sum()),
+        n_fora_do_peso=int((com_renda & ~com_peso).sum()),
+        populacao_na_base=populacao_na_base,
+    )
+
+
+def texto_regua_onde_crescer(sel: SelecaoOndeCrescer) -> tuple[str, str | None]:
+    """(nome da regua, nota de cobertura) para o texto do criterio no PDF (DEC-072).
+
+    Uma funcao so' e testavel decide a frase, porque `mediana_ponderada=False` tem TRES causas
+    diferentes e so' uma delas e' "a base nao traz populacao": (1) nao ha renda nenhuma
+    (`mediana_renda is None`) -- ai nao ha regua a qualificar; (2) ha populacao, mas so' em
+    hexagonos sem renda; (3) a base nao traz coluna de populacao. Com a regua ponderada, a nota
+    declara quantos hexagonos com renda ficaram fora do peso: a regua nao os enxerga e eles nao
+    sao um subconjunto neutro. A nota NAO diz que eles "continuam elegiveis" -- pela funcao
+    continuam, mas na base real nao tem `indice_praca` e nunca entram na lista.
+    """
+    if sel.mediana_renda is None:
+        return "mediana da cidade", None
+    if sel.mediana_ponderada:
+        nota = None
+        if sel.n_fora_do_peso > 0:
+            plural = sel.n_fora_do_peso > 1
+            nota = (
+                f"{sel.n_fora_do_peso} dos {sel.n_com_renda} hexágonos com renda "
+                f"{'ficam' if plural else 'fica'} fora do peso da mediana: a base não traz "
+                f"população própria para {'eles' if plural else 'ele'}, só o total do município."
+            )
+        return "mediana da cidade ponderada pela população", nota
+    if not sel.populacao_na_base:
+        return "mediana simples da cidade", "A base não traz população por hexágono, então a mediana não é ponderada."
+    return (
+        "mediana simples da cidade",
+        "Nenhum hexágono com renda tem população própria na base, então a mediana não é ponderada.",
     )
 
 

@@ -94,19 +94,95 @@ def test_renda_exibida_do_hexagono_fica_intacta():
     assert sel.hexagonos["renda_domiciliar"].tolist() == esperado
 
 
-def test_sem_populacao_na_base_cai_na_simples_e_o_pdf_diz():
-    from motor_expansao.dashboard import relatorio_municipal as rm
-
+def test_sem_populacao_na_base_cai_na_simples():
     df = _cidade_com_borda_rural().drop(columns=["pop_leitura"])
     sel = rp.selecionar_onde_crescer(df)
     assert sel.mediana_ponderada is False
     assert sel.mediana_renda == 8_100.0
+    assert sel.populacao_na_base is False
 
-    import inspect
 
-    fonte = inspect.getsource(rm._praca_onde_crescer_page)
-    assert "mediana da cidade ponderada pela população" in fonte
-    assert "simples: a base não traz população por hexágono" in fonte
+# --- cobertura do peso e o texto do PDF ------------------------------------------------------
+
+
+def test_cobertura_conta_os_hexagonos_com_renda_fora_do_peso():
+    """Hexagono `total_municipal` chega sem populacao de setor: tem renda, fica fora do peso e
+    continua elegivel. A selecao conta quantos, para o PDF declarar (revisao da DEC-072)."""
+    df = _cidade_com_borda_rural()
+    df.loc[df["hex_id"].isin(["r0", "r1"]), "pop_leitura"] = None
+    df.loc[df["hex_id"] == "r2", "pop_leitura"] = 0.0
+    sel = rp.selecionar_onde_crescer(df)
+    assert sel.mediana_ponderada is True
+    assert (sel.n_com_renda, sel.n_fora_do_peso) == (10, 3)
+    regua, nota = rp.texto_regua_onde_crescer(sel)
+    assert regua == "mediana da cidade ponderada pela população"
+    assert nota is not None and nota.startswith("3 dos 10 hexágonos com renda ficam fora do peso")
+
+    sel_cheia = rp.selecionar_onde_crescer(_cidade_com_borda_rural())
+    assert sel_cheia.n_fora_do_peso == 0
+    assert rp.texto_regua_onde_crescer(sel_cheia)[1] is None
+
+
+def test_sem_renda_nenhuma_nao_culpa_a_populacao():
+    df = _cidade_com_borda_rural().assign(renda_domiciliar=None)
+    sel = rp.selecionar_onde_crescer(df)
+    assert sel.mediana_renda is None and sel.mediana_ponderada is False
+    assert rp.texto_regua_onde_crescer(sel) == ("mediana da cidade", None)
+
+
+def test_populacao_so_fora_dos_hexagonos_com_renda_nao_diz_que_a_base_nao_tem():
+    df = _cidade_com_borda_rural()
+    df["pop_leitura"] = [None] * 4 + [5.0] * 6
+    df.loc[df["hex_id"].str.startswith("r"), "renda_domiciliar"] = None
+    sel = rp.selecionar_onde_crescer(df)
+    assert sel.mediana_ponderada is False and sel.populacao_na_base is True
+    regua, nota = rp.texto_regua_onde_crescer(sel)
+    assert regua == "mediana simples da cidade"
+    assert "Nenhum hexágono com renda tem população própria" in nota
+    assert "não traz população por hexágono" not in nota
+
+
+def _texto_da_pagina(sel) -> str:
+    """Renderiza `_praca_onde_crescer_page` de verdade e devolve o texto extraido do PDF."""
+    import io
+    import re
+
+    from pypdf import PdfReader
+
+    from motor_expansao.dashboard import relatorio_municipal as rm
+
+    pdf = rm._UltraPDF()
+    praca = SimpleNamespace(onde_crescer=sel, mapas={})
+    rm._praca_onde_crescer_page(
+        pdf, {}, praca, {}, primary=rm.ULTRA_TURQUESA, secondary=rm.ULTRA_TURQUESA
+    )
+    paginas = PdfReader(io.BytesIO(bytes(pdf.output()))).pages
+    assert len(paginas) == 1, "a nota do criterio empurrou a pagina para uma segunda folha"
+    return re.sub(r"\s+", " ", paginas[0].extract_text())
+
+
+def test_pdf_ponderada_declara_a_regua_e_a_cobertura():
+    df = _cidade_com_borda_rural()
+    df.loc[df["hex_id"].isin(["r0", "r1"]), "pop_leitura"] = None
+    texto = _texto_da_pagina(rp.selecionar_onde_crescer(df))
+    assert "igual ou acima da mediana da cidade ponderada pela população (R$" in texto
+    assert "2 dos 10 hexágonos com renda ficam fora do peso" in texto
+    assert "simples" not in texto
+    assert "elegíve" not in texto.split("fora do peso", 1)[1]  # nao promete o que a base real nega
+
+
+def test_pdf_sem_populacao_na_base_diz_simples_e_por_que():
+    texto = _texto_da_pagina(rp.selecionar_onde_crescer(_cidade_com_borda_rural().drop(columns=["pop_leitura"])))
+    assert "igual ou acima da mediana simples da cidade (R$" in texto
+    assert "A base não traz população por hexágono" in texto
+    assert "ponderada pela população" not in texto
+
+
+def test_pdf_sem_renda_nao_tem_qualificador_nem_parenteses_vazios():
+    texto = _texto_da_pagina(rp.selecionar_onde_crescer(_cidade_com_borda_rural().assign(renda_domiciliar=None)))
+    assert "igual ou acima da mediana da cidade. Entre eles" in texto
+    assert "população por hexágono" not in texto
+    assert "Não disponível)" not in texto
 
 
 # --- regressao com dado real -----------------------------------------------------------------

@@ -4422,20 +4422,20 @@ def _praca_onde_crescer_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
             pdf.cell(w, 16, _ascii("Nenhum hexágono passou nos dois critérios."))
         y += 22.0
 
-    mediana = _renda(sel.mediana_renda) if sel.mediana_renda is not None else TEXTO_SEM_DADO
-    # DEC-072: a regua e' a renda do MORADOR mediano (ponderada pela populacao do hexagono); sem
-    # populacao na base ela cai na mediana simples, e o texto diz qual das duas valeu.
-    regua = (
-        "mediana da cidade ponderada pela população"
-        if getattr(sel, "mediana_ponderada", False)
-        else "mediana da cidade (simples: a base não traz população por hexágono)"
-    )
+    from motor_expansao.dashboard.relatorio_praca import texto_regua_onde_crescer
+
+    # DEC-072: a regua e' a renda do MORADOR mediano (ponderada pela populacao do hexagono). A
+    # frase sai de UMA funcao testada, que distingue as tres causas de "nao ponderada" e declara
+    # quantos hexagonos com renda ficaram fora do peso.
+    regua, cobertura = texto_regua_onde_crescer(sel)
+    valor = f" ({_renda(sel.mediana_renda)})" if sel.mediana_renda is not None else ""
     _draw_note(
         pdf, x, y + 12.0, w,
         "Critério: entram só hexágonos com residual positivo E renda domiciliar igual ou acima da "
-        f"{regua} ({mediana}). Entre eles, a ordem é o índice de praça (70% "
+        f"{regua}{valor}. Entre eles, a ordem é o índice de praça (70% "
         "socioeconômico, 30% demanda), o mesmo da fila do funil. O residual sozinho puxaria para as "
-        "áreas mais populosas, que nem sempre têm renda.",
+        "áreas mais populosas, que nem sempre têm renda."
+        + (f" {cobertura}" if cobertura else ""),
     )
     if sel.aviso:
         pdf.set_text_color(*secondary)
