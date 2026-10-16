@@ -38,7 +38,10 @@ _ROOT = Path(__file__).resolve().parents[2]
 #: 237 -> 239 na DEC-070 e na DEC-071 (2026-10-14), idem: 1 linha-índice cada, corpos em
 #: docs/decisions/DEC-070.md e DEC-071.md.
 #: 239 -> 240 na DEC-072 (2026-10-16), idem: 1 linha-índice, corpo em docs/decisions/DEC-072.md.
-_TETO_LINHAS = 240
+#: 239 -> 240 na DEC-073 (2026-10-16), idem: 1 linha-índice para as dez propostas do plano LATAM
+#: (registradas como UMA DEC com itens D1-D10 justamente para o §8 crescer 1 linha, não 10).
+#: 240 -> 241 com as duas (DEC-072 e DEC-073), mescladas em 2026-10-16.
+_TETO_LINHAS = 241
 
 
 def _linhas(p: Path) -> int:
