@@ -103,7 +103,22 @@ class _MalhaMunicipal:
         quadro = shp_box(
             lng - meio_lado_lng, lat - meio_lado_lat, lng + meio_lado_lng, lat + meio_lado_lat
         )
-        return [self._meta[int(i)] for i in self._tree.query(quadro, predicate="intersects")]
+        return self.tocados(quadro)
+
+    def tocados(self, geometrias) -> list[tuple[str, str]]:
+        """Municipios cuja geometria toca `geometrias` (uma geometria ou um array delas).
+
+        Mesma consulta de `alcancados`, sem o quadro: o Relatorio Municipal pergunta pelos
+        POLIGONOS dos seus hexagonos, porque o hexagono de borda atravessa a divisa e o
+        bbox da cidade inteira traria municipios que nenhum hexagono toca. Ordem estavel
+        (a da arvore), sem repeticao.
+        """
+        resultado = self._tree.query(geometrias, predicate="intersects")
+        indices = resultado[1] if getattr(resultado, "ndim", 1) == 2 else resultado
+        vistos: dict[int, None] = {}
+        for i in sorted(int(x) for x in indices):
+            vistos.setdefault(i, None)
+        return [self._meta[i] for i in vistos]
 
 
 @lru_cache(maxsize=4)
@@ -218,6 +233,32 @@ def _malha_alcancada(malha: _MalhaMunicipal, lat: float, lng: float) -> list[tup
     )
 
     return malha.alcancados(lat, lng, alcance_do_frame_km(RAIO_CENSITARIO_DEFAULT_KM))
+
+
+def _municipios_vizinhos_dos_hexes(
+    hex_ids, uf: str, cod_municipio: str, settings: Settings
+) -> list[tuple[str, str]]:
+    """Outros municipios que os hexagonos do relatorio tocam, pela malha municipal. READ-ONLY.
+
+    Gracioso: sem malha (instancia que nao a materializa) ou em qualquer falha devolve `[]`
+    e a renda sai so' da particao do proprio municipio -- como era antes.
+    """
+    if not hex_ids:
+        return []
+    try:
+        import h3
+        import numpy as np
+        from shapely.geometry import Polygon
+
+        malha = _carregar_malha(str(settings.ibge_dir))
+        poligonos = np.array(
+            [Polygon([(lng, lat) for lat, lng in h3.cell_to_boundary(h)]) for h in hex_ids],
+            dtype=object,
+        )
+        proprio = (str(uf).upper(), str(cod_municipio))
+        return [chave for chave in malha.tocados(poligonos) if (chave[0].upper(), chave[1]) != proprio]
+    except Exception:  # noqa: BLE001 - vizinho e' refinamento, nunca derruba o relatorio
+        return []
 
 
 def _nome_municipio_de(setores_df) -> str | None:
@@ -1105,10 +1146,18 @@ def montar_pdf_municipio(
     # Renda DOMICILIAR por hexagono para a tabela de comparacao: vale nas DUAS unidades
     # (a tabela e' sempre por hexagono), entao fica fora do guard de `unidade` acima.
     # try/except proprio: falha aqui so tira a coluna de renda, nao o resto do relatorio.
+    # Desde 2026-10-16 o rateio setor -> hexagono e' por AREA (o da populacao da mesma linha),
+    # e o hexagono de borda atravessa a divisa: em Sao Roque/SP, 19% de 87a810344ffffff esta em
+    # Aracariguama. Os vizinhos vem da malha (molde da DEC-065); sem ela, so' o proprio municipio.
     renda_dom: dict | None = None
     try:
         if cod:
-            renda_dom = carregar_renda_domiciliar_por_hex(uf, cod, settings.censo_geo_dir)
+            hex_ids = sorted({str(h) for h in df_muni["hex_id"].dropna()}) if "hex_id" in df_muni.columns else None
+            renda_dom = carregar_renda_domiciliar_por_hex(
+                uf, cod, settings.censo_geo_dir,
+                hexes=hex_ids,
+                vizinhos=_municipios_vizinhos_dos_hexes(hex_ids, uf, cod, settings),
+            )
     except Exception:
         renda_dom = None
 

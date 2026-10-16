@@ -55,7 +55,7 @@ def capturado(monkeypatch: pytest.MonkeyPatch, tmp_path) -> dict:
 
     monkeypatch.setattr(relmun, "carregar_bairros_geo", _geo)
     monkeypatch.setattr(
-        relmun, "carregar_renda_domiciliar_por_hex", lambda uf, cod, d: {"ac1": 5000.0}
+        relmun, "carregar_renda_domiciliar_por_hex", lambda uf, cod, d, **_k: {"ac1": 5000.0}
     )
     monkeypatch.setattr(relmun, "carregar_poligono_municipio", lambda *a, **k: None)
 
