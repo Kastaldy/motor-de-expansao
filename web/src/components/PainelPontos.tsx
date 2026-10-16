@@ -13,7 +13,6 @@ import {
   MAX_PONTOS,
   compararPontos,
   corDoPonto,
-  ehAreaDesenhada,
   motivoSemPdfDeComparacao,
   passaNoEstudo,
   resumoDoEstudo,
@@ -22,8 +21,9 @@ import {
   subtituloDoDeckDePontos,
 } from '../lib/comparacao-pontos'
 import { ranquear } from '../lib/ranking-comparacao'
+import { ehAreaDesenhada, rotuloDoRaio } from '../lib/recorte'
 import { relatarAcessoNegado, relatarFalhaDeRede } from '../lib/sessao'
-import { alunos, num } from '../lib/format'
+import { alunos } from '../lib/format'
 import type { PontoPayload } from '../lib/types'
 
 /**
@@ -412,9 +412,9 @@ export default function PainelPontos({
           <p style={{ font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
             {temArea
               ? /* Com área na lista, "cada leitura sai do raio" seria falso para ela. */
-                `Os pontos saem do raio de ${num((fichas.find((f) => !ehAreaDesenhada(f))?.raio_km ?? 1) * 1000)} m ` +
+                `Os pontos saem do ${rotuloDoRaio(fichas.find((f) => !ehAreaDesenhada(f))?.raio_km)} ` +
                 'em torno de cada um; a área desenhada, de dentro do polígono que você desenhou.'
-              : `Cada leitura sai do raio de ${num((fichas[0]?.raio_km ?? 1) * 1000)} m em torno do ` +
+              : `Cada leitura sai do ${rotuloDoRaio(fichas[0]?.raio_km)} em torno do ` +
                 'ponto — a mesma régua do Relatório Pontual.'}
           </p>
         </Glass>

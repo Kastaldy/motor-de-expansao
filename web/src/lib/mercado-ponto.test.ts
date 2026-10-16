@@ -79,7 +79,7 @@ describe('leituraDoMercado', () => {
     const l = leituraDoMercado(antigo)
     expect(l.linhas[1].valor).toBeNull()
     expect(l.linhas[2].valor).toBeNull()
-    expect(l.recorte).toBe('raio de 1,0 km')
+    expect(l.recorte).toBe('raio de 1 km')
     expect(l.avisoGate).toBeNull()
   })
 
@@ -110,14 +110,14 @@ describe('leituraDoMercado', () => {
 
   it('área desenhada troca o texto do recorte e o alvo do detalhe', () => {
     const l = leituraDoMercado(santana({ grao: 'geometria', raio_km: null, area_km2: 2.43 }))
-    expect(l.recorte).toBe('área desenhada de 2,4 km²')
+    expect(l.recorte).toBe('área desenhada de 2,43 km²')
     expect(l.linhas[1].detalhe).toBe('8 academias de rede alcançam a área')
   })
 })
 
 describe('recorteDoMercado', () => {
-  it('raio com uma casa e vírgula', () => {
-    expect(recorteDoMercado({ grao: 'raio', raio_km: 1, area_km2: null })).toBe('raio de 1,0 km')
+  it('raio em km, sem ",0" sobrando, e vírgula na casa decimal', () => {
+    expect(recorteDoMercado({ grao: 'raio', raio_km: 1, area_km2: null })).toBe('raio de 1 km')
     expect(recorteDoMercado({ grao: 'raio', raio_km: 1.5, area_km2: null })).toBe('raio de 1,5 km')
   })
 

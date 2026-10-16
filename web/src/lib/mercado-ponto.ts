@@ -17,6 +17,7 @@
  * com o motivo que o servidor mandou — nunca como zero, que afirmaria mercado livre por
  * falta de dado.
  */
+import { rotuloDaAreaDesenhada, rotuloDoRaio } from './recorte'
 import type { PontoMercado } from './types'
 
 /** Uma linha da conta, na ordem em que ela se le. */
@@ -32,7 +33,7 @@ export interface LinhaMercado {
 }
 
 export interface LeituraMercado {
-  /** "raio de 1,0 km" ou "área desenhada de 2,4 km²" — o recorte que a conta usou. */
+  /** "raio de 1 km" ou "área desenhada de 2,43 km²" — o recorte que a conta usou. */
   recorte: string
   linhas: LinhaMercado[]
   /**
@@ -44,17 +45,10 @@ export interface LeituraMercado {
   motivoParcial: string | null
 }
 
-/** Formata km com uma casa e virgula ("1,0"), sem depender do locale da instancia. */
-function km(v: number): string {
-  return v.toFixed(1).replace('.', ',')
-}
-
 /** O recorte em texto de usuario. Sem `raio_km` no payload, vale o raio padrao do produto. */
 export function recorteDoMercado(m: Pick<PontoMercado, 'grao' | 'raio_km' | 'area_km2'>): string {
-  if (m.grao === 'geometria') {
-    return m.area_km2 != null ? `área desenhada de ${km(m.area_km2)} km²` : 'área desenhada'
-  }
-  return `raio de ${km(m.raio_km ?? 1)} km`
+  if (m.grao === 'geometria') return rotuloDaAreaDesenhada(m.area_km2)
+  return rotuloDoRaio(m.raio_km)
 }
 
 function contagem(n: number | null | undefined, singular: string, plural: string): string | null {

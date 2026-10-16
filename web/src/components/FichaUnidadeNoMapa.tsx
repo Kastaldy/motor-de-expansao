@@ -22,6 +22,7 @@ import type {
   RedeUnidadeInteligencia,
   RedeUnidadeSemRedeFicha,
 } from '../lib/types'
+import { rotuloDoRaio } from '../lib/recorte'
 import IconeComodidade from './IconeComodidade'
 import { CardPainel, LinhaTabela, Pill, TituloSecao } from './PecasPainel'
 import { Botao } from './primitives'
@@ -252,7 +253,7 @@ export default function FichaUnidadeNoMapa({
 
       {/* ---------------- Entorno (1 km) ---------------- */}
       <section>
-        <TituloSecao titulo="Região" nota={`raio de ${num(ponto?.raio_km ?? 1, 1)} km`} />
+        <TituloSecao titulo="Região" nota={rotuloDoRaio(ponto?.raio_km)} />
         {semPonto ? (
           <Nota>Sem coordenada, não há entorno para ler.</Nota>
         ) : erroPonto ? (

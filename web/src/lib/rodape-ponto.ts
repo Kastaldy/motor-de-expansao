@@ -13,6 +13,7 @@
  * As regras de quando cada botao fica travado vivem aqui, testadas, porque o Vitest roda
  * sem DOM — e porque botao travado sem explicacao e' botao morto (a dica e' obrigatoria).
  */
+import { ehAreaDesenhada, rotuloDoRaio } from './recorte'
 import type { PontoPayload } from './types'
 
 export interface EstadoBotao {
@@ -42,21 +43,7 @@ export const ROTULO_SIMULADOR = 'Simulador'
 export const DICA_SIMULADOR = 'Abre a tela de Viabilidade com a coordenada deste ponto.'
 export const DICA_SIMULADOR_VETADO = 'Sua conta não tem acesso à tela de Viabilidade.'
 export const DICA_SIMULADOR_AREA =
-  'Abre a tela de Viabilidade no ponto central da área. Lá o estudo é do raio de 1,0 km em volta desse ponto, não da área desenhada.'
-
-/**
- * O item aberto e' uma AREA DESENHADA (DEC-071), e nao um ponto com raio?
- *
- * Pela `geometria` do payload PRIMEIRO, e so' depois pelo `grao` do mercado: quando o
- * calculo de mercado falha no servidor, o bloco volta sem `grao` -- e, lida so' por ele,
- * a area desenhada destravaria o "Estudo", que geraria o PDF do RAIO em volta do ponto
- * interno dela, com o nome da area. Um PDF certo sobre o recorte errado.
- */
-export function ehAreaDesenhada(
-  ficha: Pick<PontoPayload, 'mercado' | 'geometria'> | null,
-): boolean {
-  return !!ficha?.geometria?.length || ficha?.mercado?.grao === 'geometria'
-}
+  `Abre a tela de Viabilidade no ponto central da área. Lá o estudo é do ${rotuloDoRaio(1)} em volta desse ponto, não da área desenhada.`
 
 /**
  * Estado do botao "Estudo".

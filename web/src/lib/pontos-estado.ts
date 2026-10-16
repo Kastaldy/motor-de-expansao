@@ -36,7 +36,7 @@ import {
   type PinDaComparacao,
   type PosicaoGeoJson,
 } from './comparacao-pontos'
-import { indiceDaMesmaUnidade } from './estudo-ultra'
+import { ehEstudoDaUnidade, indiceDaMesmaUnidade } from './estudo-ultra'
 import type { PontoPayload } from './types'
 
 /**
@@ -189,7 +189,41 @@ export function pedir(
     if (estudoUltra && !geometria?.length) novo.estudoUltra = true
     return { ...e, pendentes: [...e.pendentes, novo], abaFixada: false }
   }
+  /* O MESMO lugar ainda em leitura, agora pedido como ESTUDO DA UNIDADE (revisão do PR
+     #457): o pedido em voo era de estudo de ponto e, descartado como `esperando`, a ficha
+     chegaria no modo que o operador acabou de trocar. O pendente passa a QUERER o estudo
+     da unidade, e quem recebe a leitura relê no modo pedido (`releituraAoChegar`). */
+  if (d.tipo === 'esperando' && estudoUltra && !geometria?.length) {
+    const alvo: PontoPendente = { lat, lng }
+    const i = e.pendentes.findIndex((p) => mesmoPedido(p, alvo))
+    if (i < 0 || e.pendentes[i].estudoUltra) return e
+    const pendentes = e.pendentes.map((p, k) => (k === i ? { ...p, estudoUltra: true } : p))
+    return { ...e, pendentes }
+  }
   return e
+}
+
+/** O pendente que corresponde a `pedido`, se ainda em leitura (o modo QUERIDO vive nele). */
+export function pendenteDoPedido(e: EstadoPontos, pedido: PontoPendente): PontoPendente | null {
+  return e.pendentes.find((p) => mesmoPedido(p, pedido)) ?? null
+}
+
+/**
+ * A ficha que acabou de chegar precisa ser RELIDA no estudo da unidade?
+ *
+ * Sim quando o pendente passou a querer o estudo da unidade DEPOIS que a leitura saiu
+ * (`pediuEstudoUltra` = o modo com que a leitura FOI pedida) e a ficha veio no outro modo.
+ * Quando a própria leitura já pediu o estudo da unidade e o servidor caiu no estudo de
+ * ponto (unidade a mais de 150 m), NÃO relê: o servidor já disse que não acha a unidade, e
+ * reler seria um laço com a mesma recusa.
+ */
+export function releituraAoChegar(
+  pendente: Pick<PontoPendente, 'estudoUltra'> | null,
+  pediuEstudoUltra: boolean,
+  ficha: Pick<PontoPayload, 'mercado' | 'geometria'>,
+): boolean {
+  if (!pendente?.estudoUltra || pediuEstudoUltra || ficha.geometria?.length) return false
+  return !ehEstudoDaUnidade(ficha)
 }
 
 /**
@@ -236,6 +270,78 @@ export function substituir(e: EstadoPontos, ficha: PontoPayload): EstadoPontos {
   if (i < 0) return e
   const fichas = e.fichas.map((f, k) => (k === i ? ficha : f))
   return { ...e, fichas }
+}
+
+/**
+ * TROCAS DE MODO EM VOO (estudo de ponto <-> estudo da unidade Ultra), por ponto.
+ *
+ * Revisão do PR #457: com "liga" e "desliga" em sequência rápida, o segundo clique era
+ * IGNORADO (a ficha ainda estava no modo antigo, então "desligar" parecia não ter o que
+ * fazer) e a resposta do primeiro chegava ligando — o modo final contradizia o último
+ * clique. E com duas releituras em voo, a que chegasse por último vencia, não a última
+ * pedida.
+ *
+ * A regra: cada ponto (`chaveDaCoordenada`) guarda o modo QUERIDO e a GERAÇÃO do pedido
+ * que o lê. Só a resposta da geração vigente é aplicada; qualquer outra é descartada,
+ * chegue na ordem que chegar. Voltar ao modo que a ficha JÁ TEM cancela a leitura em voo
+ * sem pedir outra.
+ */
+export interface TrocasDeModo {
+  /** Contador que só cresce — a geração do próximo pedido. */
+  geracao: number
+  emVoo: Readonly<Record<string, { geracao: number; estudoUltra: boolean }>>
+}
+
+export const TROCAS_VAZIO: TrocasDeModo = Object.freeze({ geracao: 0, emVoo: Object.freeze({}) })
+
+export type DecisaoTroca =
+  /** O modo pedido já é o vigente (na ficha ou no pedido em voo): nada a fazer. */
+  | { tipo: 'nada' }
+  /** Ler no modo pedido; a resposta só vale se ainda for desta `geracao`. */
+  | { tipo: 'ler'; geracao: number }
+  /** Voltou ao modo da ficha: a leitura em voo é descartada quando chegar. */
+  | { tipo: 'cancelar' }
+
+/** O operador pediu o modo `estudoUltra` para o ponto `chave`, cuja ficha está em `modoDaFicha`. */
+export function pedirTroca(
+  t: TrocasDeModo,
+  chave: string,
+  modoDaFicha: boolean,
+  estudoUltra: boolean,
+): { trocas: TrocasDeModo; decisao: DecisaoTroca } {
+  const voo = t.emVoo[chave]
+  const querido = voo ? voo.estudoUltra : modoDaFicha
+  if (querido === estudoUltra) return { trocas: t, decisao: { tipo: 'nada' } }
+  if (estudoUltra === modoDaFicha) {
+    const emVoo = { ...t.emVoo }
+    delete emVoo[chave]
+    return { trocas: { ...t, emVoo }, decisao: { tipo: 'cancelar' } }
+  }
+  const geracao = t.geracao + 1
+  return {
+    trocas: { geracao, emVoo: { ...t.emVoo, [chave]: { geracao, estudoUltra } } },
+    decisao: { tipo: 'ler', geracao },
+  }
+}
+
+/**
+ * Chegou a resposta (ou a falha) da geração `geracao` do ponto `chave`. `vale` diz se ela
+ * é a vigente — só então a ficha é trocada (ou o erro é mostrado) e o ponto sai do voo.
+ */
+export function concluirTroca(
+  t: TrocasDeModo,
+  chave: string,
+  geracao: number,
+): { trocas: TrocasDeModo; vale: boolean } {
+  if (t.emVoo[chave]?.geracao !== geracao) return { trocas: t, vale: false }
+  const emVoo = { ...t.emVoo }
+  delete emVoo[chave]
+  return { trocas: { ...t, emVoo }, vale: true }
+}
+
+/** Os pontos (`chaveDaCoordenada`) com releitura de modo em voo — o "trocando" da ficha. */
+export function pontosEmTroca(t: TrocasDeModo): string[] {
+  return Object.keys(t.emVoo)
 }
 
 /** A leitura de `pedido` falhou: o pin provisório sai, as fichas já lidas ficam. */

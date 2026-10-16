@@ -8,11 +8,11 @@ import {
   DICA_SIMULADOR_VETADO,
   ROTULO_ESTUDO,
   ROTULO_ESTUDO_GERANDO,
-  ehAreaDesenhada,
   estadoDoEstudo,
   estadoDoSimulador,
   rotuloParaSimulador,
 } from './rodape-ponto'
+import { ehAreaDesenhada } from './recorte'
 import type { PontoPayload } from './types'
 
 const pontoComRaio = { mercado: { disponivel: true, sam: 1, residual: 1, score_residual: 1, grao: 'raio' } } as Pick<
@@ -93,7 +93,7 @@ describe('estadoDoSimulador', () => {
 
   it('na área desenhada a dica diz que lá o estudo é do RAIO em volta do ponto central', () => {
     expect(estadoDoSimulador(areaDesenhada, true).dica).toBe(DICA_SIMULADOR_AREA)
-    expect(DICA_SIMULADOR_AREA).toMatch(/raio de 1,0 km/)
+    expect(DICA_SIMULADOR_AREA).toMatch(/raio de 1 km/)
   })
 
   it('sem ficha: travado', () => {

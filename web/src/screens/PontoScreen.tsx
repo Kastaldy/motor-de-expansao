@@ -19,8 +19,8 @@ import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
 import { Aviso, Botao, Chip, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
+import { RAIO_PADRAO_KM, ehAreaDesenhada, rotuloDoRaio } from '../lib/recorte'
 import {
-  ehAreaDesenhada,
   rotuloDoRecorte,
   nomeDoLugar,
   rotulosDosPontos,
@@ -94,7 +94,7 @@ export default function PontoScreen({
   erroPonto,
   onAnalisar,
   onTrocarModo,
-  trocandoModo = null,
+  trocandoModo = [],
   onAbrir,
   onRemover,
   onLimpar,
@@ -149,8 +149,8 @@ export default function PontoScreen({
    * (emenda da DEC-070). Ausente = a chave não aparece.
    */
   onTrocarModo?: (i: number, estudoUltra: boolean) => void
-  /** `chaveDaCoordenada` do ponto sendo relido em outro modo (a chave mostra a espera). */
-  trocandoModo?: string | null
+  /** `chaveDaCoordenada` dos pontos sendo relidos em outro modo (a chave mostra a espera). */
+  trocandoModo?: readonly string[]
   onAbrir: (i: number) => void
   onRemover: (i: number) => void
   /** Tira todos os pontos da lista (e, com eles, as marcas do mapa). */
@@ -457,7 +457,7 @@ export default function PontoScreen({
         <Landing
           marcador="Analisar um ponto ou imóvel"
           titulo="Cole o link do Google Maps ou a coordenada"
-          explicacao="A ficha lê quem mora no raio de 1,0 km, quanto de mercado sobra e quem já disputa o aluno ali — e o mapa abre na cidade do endereço, com as mesmas camadas do Explorar."
+          explicacao={`A ficha lê quem mora no ${rotuloDoRaio(RAIO_PADRAO_KM)}, quanto de mercado sobra e quem já disputa o aluno ali — e o mapa abre na cidade do endereço, com as mesmas camadas do Explorar.`}
           onInicio={onInicio}
         >
           <Glass style={{ width: 'min(620px, 100%)', padding: 16, display: 'grid', gap: 10, textAlign: 'left' }}>
@@ -467,7 +467,7 @@ export default function PontoScreen({
             <CampoPonto onResolver={resolver} ocupado={carregando} erro={erro} />
             <p style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
               A leitura sai do Censo 2022{institutoDaBase ? ` do ${institutoDaBase}` : ''}, no
-              raio de 1,0 km — a mesma régua do Relatório Pontual.
+              {rotuloDoRaio(RAIO_PADRAO_KM)} — a mesma régua do Relatório Pontual.
             </p>
           </Glass>
         </Landing>
@@ -638,7 +638,7 @@ export default function PontoScreen({
           ficha
             ? [
                 [ficha.local.municipio, ficha.local.uf].filter(Boolean).join(' · '),
-                /* "raio de 1.000 m" ou "área desenhada de 2,40 km²" (DEC-071): com uma área
+                /* "raio de 1 km" ou "área desenhada de 2,40 km²" (DEC-071): com uma área
                    na lista, o raio escrito à mão mentiria sobre ela. */
                 rotuloDoRecorte(ficha),
                 /* A COORDENADA no subtítulo é o que resolve o empate de verdade: o número
@@ -695,7 +695,7 @@ export default function PontoScreen({
               ficha={ficha}
               partido={partidos[aberto] ?? null}
               onTrocarModo={onTrocarModo ? (ligado) => onTrocarModo(aberto, ligado) : undefined}
-              trocando={trocandoModo != null && trocandoModo === chaveDaCoordenada(ficha.lat, ficha.lng)}
+              trocando={trocandoModo.includes(chaveDaCoordenada(ficha.lat, ficha.lng))}
             />
           </div>
         )}

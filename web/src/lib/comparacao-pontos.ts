@@ -22,8 +22,9 @@ import {
   type Dimensao,
   type RotuloPartido,
 } from './comparacao'
-import { UNIDADE_MOEDA, num } from './format'
+import { UNIDADE_MOEDA } from './format'
 import { sufixoDoModo } from './estudo-ultra'
+import { ehAreaDesenhada, rotuloDaAreaDesenhada, rotuloDoRaio } from './recorte'
 import type { PontoPayload } from './types'
 
 /**
@@ -201,11 +202,6 @@ export function indiceDaMesmaArea(
   return itens.findIndex((p) => !!p.geometria?.length && chaveDaArea(p.geometria) === alvo)
 }
 
-/** O item é uma ÁREA DESENHADA (DEC-071), e não um ponto com raio? */
-export function ehAreaDesenhada(p: Pick<PontoPayload, 'geometria'> | null | undefined): boolean {
-  return !!p?.geometria?.length
-}
-
 /**
  * Por que o PDF de comparação NÃO sai para esta lista — ou `null` quando sai.
  *
@@ -227,20 +223,16 @@ export function motivoSemPdfDeComparacao(
 export const ROTULO_AREA_DESENHADA = 'Área desenhada'
 
 /**
- * O recorte da leitura em texto de usuário: "raio de 1.000 m" ou "área desenhada de
+ * O recorte da leitura em texto de usuário: "raio de 1 km" ou "área desenhada de
  * 2,40 km²". É o que substitui o "raio de X m" escrito à mão nas fichas — com uma área
- * desenhada na lista, aquele texto passaria a mentir sobre ela.
+ * desenhada na lista, aquele texto passaria a mentir sobre ela. Os dois textos saem de
+ * `lib/recorte`, a mesma fonte da conta do mercado.
  */
 export function rotuloDoRecorte(
   p: Pick<PontoPayload, 'raio_km' | 'geometria' | 'recorte' | 'mercado'>,
 ): string {
-  if (ehAreaDesenhada(p)) {
-    const area = p.recorte?.area_km2 ?? p.mercado?.area_km2 ?? null
-    return area != null
-      ? `área desenhada de ${area.toFixed(area < 10 ? 2 : 1).replace('.', ',')} km²`
-      : 'área desenhada'
-  }
-  return `raio de ${num((p.raio_km ?? 1) * 1000)} m`
+  if (ehAreaDesenhada(p)) return rotuloDaAreaDesenhada(p.recorte?.area_km2 ?? p.mercado?.area_km2 ?? null)
+  return rotuloDoRaio(p.raio_km)
 }
 
 /* A paleta de identidade MUDOU DE CASA em 2026-08-13: virou `CORES_IDENTIDADE` /

@@ -1,23 +1,30 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { api, ApiError } from './api'
-import { MAX_PONTOS, chaveDaCoordenada, type PosicaoGeoJson } from './comparacao-pontos'
+import { MAX_PONTOS, chaveDaCoordenada, indiceDoMesmoPonto, type PosicaoGeoJson } from './comparacao-pontos'
 import { avisoDeEstudoDePonto, ehEstudoDaUnidade, ehRecusaDoEstudoDaUnidade } from './estudo-ultra'
 import { pontoInterno } from './geometria-desenho'
 import {
   PONTOS_VAZIO,
+  TROCAS_VAZIO,
   abrir as abrirAba,
   chegou,
+  concluirTroca,
   decidirPedido,
   falhou,
   itemAtivo,
   limpar as limparTudo,
   mostrar as mostrarItem,
   pedir,
+  pedirTroca,
+  pendenteDoPedido,
   pinsDoEstado,
+  pontosEmTroca,
+  releituraAoChegar,
   remover as removerFicha,
   substituir,
   type EstadoPontos,
+  type TrocasDeModo,
 } from './pontos-estado'
 import type { PontoPayload } from './types'
 
@@ -46,31 +53,53 @@ export function usePontos() {
   }, [])
 
   const [erro, setErro] = useState<string | null>(null)
-  /** A coordenada (`chaveDaCoordenada`) cuja ficha está sendo relida em outro modo. */
-  const [trocandoModo, setTrocandoModo] = useState<string | null>(null)
+  /* As releituras de modo em voo, com a geração de cada uma (`lib/pontos-estado`,
+     `TrocasDeModo`). Espelho síncrono pelo mesmo motivo do `ref` acima: dois cliques na
+     mesma passagem têm de ver um ao outro. */
+  const trocasRef = useRef<TrocasDeModo>(TROCAS_VAZIO)
+  /** As coordenadas (`chaveDaCoordenada`) cujas fichas estão sendo relidas em outro modo. */
+  const [trocandoModo, setTrocandoModo] = useState<readonly string[]>([])
+  const aplicarTrocas = useCallback((t: TrocasDeModo) => {
+    if (t === trocasRef.current) return
+    trocasRef.current = t
+    setTrocandoModo(pontosEmTroca(t))
+  }, [])
 
   /**
    * Relê o ponto `i` no OUTRO modo de estudo (emenda da DEC-070): estudo de ponto (a Ultra
    * próxima conta) <-> estudo da unidade Ultra (o consumo da própria unidade sai). A ficha
    * é TROCADA no lugar (`substituir`) — mesma aba, mesma cor, mesma posição. Falhou: a
    * ficha anterior fica, e o motivo do servidor vai para `erro`.
+   *
+   * O modo final é SEMPRE o do último clique (revisão do PR #457): cada releitura leva uma
+   * geração, e só a vigente é aplicada — "liga, desliga" rápido cancela a primeira, e uma
+   * resposta velha que chegue depois da nova é descartada (`pedirTroca`/`concluirTroca`).
    */
   const trocarModo = useCallback(
     async (i: number, estudoUltra: boolean) => {
       const f = ref.current.fichas[i]
-      if (!f || f.geometria?.length || ehEstudoDaUnidade(f) === estudoUltra) return
+      if (!f || f.geometria?.length) return
+      const chave = chaveDaCoordenada(f.lat, f.lng)
+      const { trocas, decisao } = pedirTroca(trocasRef.current, chave, ehEstudoDaUnidade(f), estudoUltra)
+      aplicarTrocas(trocas)
+      if (decisao.tipo !== 'ler') return
       setErro(null)
-      setTrocandoModo(chaveDaCoordenada(f.lat, f.lng))
       try {
         const nova = await api.ponto(f.lat, f.lng, { excluirUltraProxima: estudoUltra })
+        const fim = concluirTroca(trocasRef.current, chave, decisao.geracao)
+        if (!fim.vale) return
+        aplicarTrocas(fim.trocas)
         aplicar((e) => substituir(e, nova))
       } catch (e) {
+        const fim = concluirTroca(trocasRef.current, chave, decisao.geracao)
+        /* A falha de um pedido que o operador já desfez não é notícia: o modo que ele quer
+           é o que está na tela. */
+        if (!fim.vale) return
+        aplicarTrocas(fim.trocas)
         setErro(e instanceof ApiError ? e.message : 'Falha ao trocar o modo do estudo.')
-      } finally {
-        setTrocandoModo(null)
       }
     },
-    [aplicar],
+    [aplicar, aplicarTrocas],
   )
 
   /**
@@ -111,7 +140,15 @@ export function usePontos() {
           ficha = await api.ponto(lat, lng)
           setErro(avisoDeEstudoDePonto(e.message, 'ponto'))
         }
+        /* O modo QUERIDO vive no pendente: se, enquanto esta leitura voava, o mesmo lugar
+           foi pedido como estudo da unidade, a ficha que chegou está no modo velho e é
+           relida no pedido (`releituraAoChegar`). */
+        const pendente = pendenteDoPedido(ref.current, pedido)
         aplicar((e) => chegou(e, pedido, ficha))
+        if (releituraAoChegar(pendente, estudoUltra, ficha)) {
+          const i = indiceDoMesmoPonto(ref.current.fichas, ficha.lat, ficha.lng)
+          if (i >= 0) void trocarModo(i, true)
+        }
       } catch (e) {
         /* NÃO limpa os pontos já lidos: perder três leituras porque a quarta falhou seria
            punir o operador por um endereço mal digitado. */
@@ -160,8 +197,10 @@ export function usePontos() {
   const remover = useCallback((i: number) => aplicar((e) => removerFicha(e, i)), [aplicar])
   const limpar = useCallback(() => {
     aplicar(limparTudo)
+    /* Releituras em voo de pontos que acabaram de sair: a resposta é descartada. */
+    aplicarTrocas(TROCAS_VAZIO)
     setErro(null)
-  }, [aplicar])
+  }, [aplicar, aplicarTrocas])
   const limparErro = useCallback(() => setErro(null), [])
 
   const pins = useMemo(() => pinsDoEstado(estado), [estado])
@@ -182,7 +221,7 @@ export function usePontos() {
     analisarGeometria,
     /** Troca o modo de estudo do ponto `i` (estudo de ponto <-> unidade Ultra). */
     trocarModo,
-    /** `chaveDaCoordenada` do ponto em releitura de modo, ou `null`. */
+    /** `chaveDaCoordenada` dos pontos em releitura de modo. */
     trocandoModo,
     abrir,
     mostrar,

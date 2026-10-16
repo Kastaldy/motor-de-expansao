@@ -9,7 +9,6 @@ import {
   avisoDimensoesCortadas,
   compararPontos,
   dimensoesDoComparativo,
-  ehAreaDesenhada,
   indiceDaMesmaArea,
   indiceDoMesmoPonto,
   motivoSemPdfDeComparacao,
@@ -23,6 +22,7 @@ import {
   subtituloDoDeckDePontos,
 } from './comparacao-pontos'
 import { corDeIdentidadeRgb, rotulosUnicos } from './comparacao'
+import { ehAreaDesenhada } from './recorte'
 import type { PontoPayload } from './types'
 
 /** Ponto com a forma real do `/api/ponto` (valores da Av. Paulista). */
@@ -526,9 +526,9 @@ describe('área desenhada na comparação', () => {
     expect(rotulosDosPontos([area, area])).toEqual(['Área desenhada #1', 'Área desenhada #2'])
   })
 
-  it('o recorte em texto: área com km², ponto com metros', () => {
+  it('o recorte em texto: área com km², ponto com o raio em km (a mesma escrita da conta do mercado)', () => {
     expect(rotuloDoRecorte(area)).toBe('área desenhada de 2,40 km²')
-    expect(rotuloDoRecorte(ponto)).toBe('raio de 1.000 m')
+    expect(rotuloDoRecorte(ponto)).toBe('raio de 1 km')
   })
 
   it('buscar a coordenada do ponto interno NÃO abre a área', () => {
