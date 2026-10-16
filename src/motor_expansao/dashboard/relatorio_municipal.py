@@ -29,6 +29,7 @@ municipio nao tem bairro mapeado (cobertura IBGE heterogenea). READ-ONLY sobre o
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 import unicodedata
@@ -1137,6 +1138,16 @@ def contribuicoes_renda_por_area(
     return {hid: (v[0], v[1]) for hid, v in acumulado.items()}
 
 
+def _particao_tem_geometria(censo_geo_dir: Path, uf: str, cod_municipio: str) -> bool:
+    """`True` se TODO arquivo da particao traz `geometry_wkb` no schema (ou se nao ha arquivo:
+    a leitura devolve frame vazio de qualquer jeito). Le so' o schema, nao os dados. Erro de
+    leitura propaga -- quem chama trata como particao ilegivel, nao como "sem geometria"."""
+    import pyarrow.parquet as pq
+
+    base = Path(censo_geo_dir) / f"uf={str(uf).upper()}" / f"cod_municipio={cod_municipio}"
+    return all("geometry_wkb" in pq.read_schema(p).names for p in sorted(base.glob("*.parquet")))
+
+
 def carregar_renda_domiciliar_por_hex(
     uf: str | None,
     cod_municipio: str | None,
@@ -1194,15 +1205,28 @@ def carregar_renda_domiciliar_por_hex(
     alvo = {str(h) for h in hexes} if hexes is not None else None
 
     def _ler(uf_p: str, cod_p: str) -> pd.DataFrame | None:
-        for colunas in ([*_COLUNAS_RENDA_HEX, "geometry_wkb"], _COLUNAS_RENDA_HEX):
-            try:
-                return ler_particao_setores(
-                    root=Path(censo_geo_dir), uf=str(uf_p), cod_municipio=str(cod_p),
-                    columns=colunas,
+        # So' a particao ANTIGA, sem a coluna no schema, cai no criterio do centro do bbox.
+        # Qualquer outra falha (IO, memoria, parquet corrompido) devolve `None` -- nunca uma
+        # 2a leitura sem a geometria, que traria de volta EM SILENCIO o defeito que o rateio
+        # por area corrige (e um hexagono de divisa somaria uma particao por area e outra
+        # pelo bbox).
+        log = logging.getLogger(__name__)
+        try:
+            colunas = list(_COLUNAS_RENDA_HEX)
+            if _particao_tem_geometria(Path(censo_geo_dir), uf_p, cod_p):
+                colunas.append("geometry_wkb")
+            else:
+                log.warning(
+                    "renda por hexagono: particao %s/%s sem geometry_wkb; setor vai inteiro "
+                    "ao hexagono do centro do bbox (criterio anterior a DEC-072)", uf_p, cod_p,
                 )
-            except Exception:  # noqa: BLE001 - particao antiga sem geometria: tenta sem ela
-                continue
-        return None
+            return ler_particao_setores(
+                root=Path(censo_geo_dir), uf=str(uf_p), cod_municipio=str(cod_p),
+                columns=colunas,
+            )
+        except Exception:  # noqa: BLE001 - particao ilegivel so' nao contribui
+            log.warning("renda por hexagono: particao %s/%s ilegivel", uf_p, cod_p, exc_info=True)
+            return None
 
     particoes: list[tuple[str, str]] = [(str(uf), str(cod_municipio))]
     for uf_v, cod_v in vizinhos or ():

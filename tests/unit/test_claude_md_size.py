@@ -35,6 +35,10 @@ _ROOT = Path(__file__).resolve().parents[2]
 #: 235 -> 236 na DEC-068 (2026-10-05), idem: 1 linha-índice, corpo em docs/decisions/DEC-068.md.
 #:
 #: 236 -> 237 na DEC-069 (2026-10-14), idem: 1 linha-índice, corpo em docs/decisions/DEC-069.md.
+#:
+#: 237 -> 238 na DEC-072 (2026-10-16), idem: 1 linha-índice, corpo em docs/decisions/DEC-072.md.
+#: A branch feat/alteracoes-motor-mapa-ponto leva este teto a 239 pelas DEC-070/071; quem mergear
+#: por último recalcula (240 com as três).
 _TETO_LINHAS = 238
 
 

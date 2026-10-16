@@ -145,6 +145,76 @@ def test_vizinho_ilegivel_nao_derruba_a_renda_do_municipio(_formula_neutra, monk
     assert mapa[a] == pytest.approx(1000.0)
 
 
+def test_particao_sem_geometria_cai_no_bbox_mas_falha_de_leitura_nao(
+    _formula_neutra, monkeypatch, tmp_path
+):
+    """So' a coluna AUSENTE no schema autoriza o criterio antigo; erro de leitura (memoria,
+    IO) com a geometria nao pode virar 2a leitura sem ela -- isso devolveria o defeito."""
+    a, _, _, _, _, dentro = _geografia()
+    # Particao antiga REAL, sem geometry_wkb: o setor vai ao hexagono do centro do bbox.
+    linha = _setor("P", dentro, 1000.0, 10.0)
+    del linha["geometry_wkb"]
+    destino = tmp_path / "uf=SP" / "cod_municipio=3550605"
+    destino.mkdir(parents=True)
+    pd.DataFrame([linha]).to_parquet(destino / "part-000.parquet", index=False)
+    assert rm.carregar_renda_domiciliar_por_hex("SP", "3550605", tmp_path)[a] == pytest.approx(
+        1000.0
+    )
+
+    # Particao COM geometria cuja leitura falha: nada de cair para a leitura sem ela.
+    pd.DataFrame([_setor("P", dentro, 1000.0, 10.0)]).to_parquet(
+        destino / "part-000.parquet", index=False
+    )
+    pedidos: list[list[str]] = []
+
+    def _ler(**k):
+        pedidos.append(list(k["columns"]))
+        if "geometry_wkb" in k["columns"]:
+            raise MemoryError("sem memoria")
+        return pd.DataFrame([linha])
+
+    monkeypatch.setattr(
+        "motor_expansao.pipelines.materializar_setores_censitarios_geo.ler_particao_setores", _ler
+    )
+    assert rm.carregar_renda_domiciliar_por_hex("SP", "3550605", tmp_path) == {}
+    assert len(pedidos) == 1 and "geometry_wkb" in pedidos[0]
+
+
+def test_vizinhos_dos_hexes_pela_malha_sem_o_proprio_municipio(monkeypatch, tmp_path):
+    """`_municipios_vizinhos_dos_hexes` (o que o service passa como `vizinhos=`): malha
+    sintetica com o proprio municipio, um vizinho que o hexagono atravessa e um distante."""
+    from shapely.strtree import STRtree
+
+    from motor_expansao.api import service
+    from motor_expansao.api.settings import Settings
+
+    a, b, pa, pb, _, _ = _geografia()
+    corte = pa.centroid.x  # a divisa corta o hexagono A ao meio
+    minx, miny, maxx, maxy = pa.union(pb).bounds
+    proprio = box(minx - 1, miny - 1, corte, maxy + 1)
+    vizinho = box(corte, miny - 1, maxx + 1, maxy + 1)
+    longe = box(minx + 10, miny + 10, minx + 11, miny + 11)
+    geoms = [proprio, vizinho, longe]
+    malha = service._MalhaMunicipal(
+        STRtree(geoms), [("SP", "3550605"), ("sp", "3502754"), ("MG", "3100000")], geoms
+    )
+    monkeypatch.setattr(service, "_carregar_malha", lambda _d: malha)
+    settings = Settings(
+        staging_dir=tmp_path, censo_geo_dir=tmp_path, ibge_dir=tmp_path, ultra_dir=tmp_path
+    )
+
+    assert service._municipios_vizinhos_dos_hexes([a], "SP", "3550605", settings) == [
+        ("sp", "3502754")
+    ]
+    assert service._municipios_vizinhos_dos_hexes([], "SP", "3550605", settings) == []
+
+    def _sem_malha(_d):
+        raise OSError("malha ausente")
+
+    monkeypatch.setattr(service, "_carregar_malha", _sem_malha)
+    assert service._municipios_vizinhos_dos_hexes([a], "SP", "3550605", settings) == []
+
+
 def test_malha_tocados_devolve_municipios_que_os_hexagonos_tocam():
     from shapely.strtree import STRtree
 
@@ -194,6 +264,19 @@ def test_sao_roque_87a810344_sai_com_renda_por_area(monkeypatch):
     assert com_vizinho[hx] == pytest.approx(4328.31, abs=0.5)
     assert so_proprio[hx] == pytest.approx(4392.77, abs=0.5)
 
-    # O vizinho que antes herdava 100% do setor 355060505000055 (V06004 1.751,06 x 1,632 =
-    # 2.857,73) agora recebe so' a fracao dele -- e por isso deixa de ser exatamente esse valor.
-    assert com_vizinho["87a810363ffffff"] != pytest.approx(2857.73, abs=0.5)
+    # O vizinho 87a810363ffffff, do centro do bbox do setor 355060505000055 (18 domicilios),
+    # herdava os 18 inteiros. Agora recebe 10,85 (60,3% da area do setor) e o 87a810344, 0,96
+    # (5,3%); o resto vai a outros cinco hexagonos e a soma fecha nos 18. Valor do hexagono
+    # medido em 2026-10-16 com a mesma formula neutralizada acima.
+    assert com_vizinho["87a810363ffffff"] == pytest.approx(6448.04, abs=0.5)
+    from motor_expansao.pipelines.materializar_setores_censitarios_geo import ler_particao_setores
+
+    sr = ler_particao_setores(
+        root=geo, uf="SP", cod_municipio="3550605",
+        columns=[*rm._COLUNAS_RENDA_HEX, "geometry_wkb"],
+    )
+    setor = sr[sr["cod_setor"].astype(str) == "355060505000055"]
+    contrib = rm.contribuicoes_renda_por_area(setor, "SP", "3550605")
+    assert contrib["87a810363ffffff"][1] == pytest.approx(10.8513, abs=1e-3)
+    assert contrib["87a810344ffffff"][1] == pytest.approx(0.9575, abs=1e-3)
+    assert sum(den for _, den in contrib.values()) == pytest.approx(18.0)
