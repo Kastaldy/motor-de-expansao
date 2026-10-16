@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { censoDaBase, institutoDoCenso } from '../lib/rodape-base'
 
 import type { PontoEscolhido } from '../App'
@@ -37,6 +37,7 @@ import {
   type EstadoBotao,
 } from '../lib/rodape-ponto'
 import { erroFlutuanteVisivel, janelaNaMontagem } from '../lib/pontos-estado'
+import { TOPO_BOTAO_PADRAO, topoDoBotaoVerFicha } from '../lib/botao-ver-ficha'
 import type { BlocoOpcional, PontoPayload } from '../lib/types'
 
 /**
@@ -205,6 +206,42 @@ export default function PontoScreen({
    * ou foi a outro destino, e reabri-la sozinha cobriria a ficha do destino.
    */
   const [janela, setJanela] = useState(() => janelaNaMontagem(reabrirFicha, fichas.length))
+
+  /* Topo do botão "Ver a ficha": logo abaixo do cabeçalho do mapa, MEDIDO — o cabeçalho
+     é `flex-wrap` e quebra em duas linhas em tela estreita (regra em `lib/botao-ver-ficha`).
+     O cabeçalho é do `MapScreen` (irmão desta tela na árvore), então ele é achado pelo DOM:
+     sobe-se pelos ancestrais do botão até o primeiro que contém a `barra-ultra`. */
+  const [botaoFichaEl, setBotaoFichaEl] = useState<HTMLDivElement | null>(null)
+  const [topoBotaoFicha, setTopoBotaoFicha] = useState(TOPO_BOTAO_PADRAO)
+  useLayoutEffect(() => {
+    const el = botaoFichaEl
+    if (!el) return
+    const pai = el.offsetParent as HTMLElement | null
+    let cabecalho: HTMLElement | null = null
+    for (let anc = el.parentElement; anc && !cabecalho; anc = anc.parentElement) {
+      cabecalho = anc.querySelector<HTMLElement>('header.barra-ultra')
+    }
+    const medir = () => {
+      const caixaPai = pai?.getBoundingClientRect()
+      /* A escala do `#root` (transform), lida do próprio contêiner: tela / layout. */
+      const escala = caixaPai && pai?.offsetHeight ? caixaPai.height / pai.offsetHeight : 1
+      setTopoBotaoFicha(
+        topoDoBotaoVerFicha(
+          cabecalho ? cabecalho.getBoundingClientRect().bottom : null,
+          caixaPai ? caixaPai.top : null,
+          escala,
+        ),
+      )
+    }
+    medir()
+    const obs = typeof ResizeObserver === 'undefined' || !cabecalho ? null : new ResizeObserver(medir)
+    if (obs && cabecalho) obs.observe(cabecalho)
+    window.addEventListener('resize', medir)
+    return () => {
+      obs?.disconnect()
+      window.removeEventListener('resize', medir)
+    }
+  }, [botaoFichaEl])
 
   const ficha = fichas[aberto] ?? null
   /* Os mesmos rótulos que o painel de abas usa — desambiguados entre si ("Centro #1",
@@ -555,9 +592,15 @@ export default function PontoScreen({
 
       {/* ---------------- A ÚNICA opção que puxa a janela ----------------
           Some enquanto a janela está aberta: quem já a tem na tela fecha pelo × ou Esc.
-          Sempre acima do stepper do Explorar, que ocupa a largura toda no pé. */}
+          Mora no canto superior ESQUERDO, logo abaixo do cabeçalho flutuante, no mesmo
+          ponto em que a janela nasce (MARGEM 16, ver `JanelaFicha`): o botão fica onde a
+          ficha estava. No canto inferior direito ele caía em cima da caixa de informações
+          da direita; e no pé da esquerda cobriria o trilho. O topo é medido do cabeçalho. */}
       {ficha && !janela && (
-        <div style={{ position: 'absolute', right: 16, bottom: 96, pointerEvents: 'auto' }}>
+        <div
+          ref={setBotaoFichaEl}
+          style={{ position: 'absolute', left: 16, top: topoBotaoFicha, pointerEvents: 'auto' }}
+        >
           <Botao onClick={() => setJanela(true)}>
             Ver a ficha {fichas.length > 1 ? `(${fichas.length} pontos)` : ''} ›
           </Botao>
