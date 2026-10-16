@@ -18,11 +18,18 @@ import type { PontoCensoDetalhe, PontoConcorrencia } from '../lib/types'
 export default function DetalheRegiao({
   detalhe,
   concorrencia,
+  area = false,
 }: {
   detalhe: PontoCensoDetalhe
   concorrencia: PontoConcorrencia
+  /**
+   * O item é uma ÁREA DESENHADA (DEC-071): os mesmos números, com os rótulos do polígono
+   * no lugar dos do círculo. O `area_circulo_km2` do payload é, nela, a área desenhada.
+   */
+  area?: boolean
 }) {
   const instituto = institutoDoCenso()
+  const doRecorte = area ? 'da área' : 'do raio'
   const [aberto, setAberto] = useState(false)
   const sp = detalhe.setor_do_ponto
 
@@ -60,7 +67,7 @@ export default function DetalheRegiao({
         <div style={{ padding: '0 11px 12px', display: 'grid', gap: 16 }}>
           {/* ---- O setor do ponto ---- */}
           <div style={{ display: 'grid', gap: 4 }}>
-            <Titulo>O setor onde o imóvel está</Titulo>
+            <Titulo>{area ? 'O setor do ponto central da área' : 'O setor onde o imóvel está'}</Titulo>
             {sp.encontrado ? (
               <>
                 <Linha rotulo="Código do setor" valor={sp.cod_setor ?? '—'} mono />
@@ -72,7 +79,7 @@ export default function DetalheRegiao({
             ) : (
               <p style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)', margin: 0 }}>
                 O ponto não caiu dentro de nenhum setor da malha — acontece em água, orla
-                e setores com geometria inválida. Os números do raio seguem valendo.
+                e setores com geometria inválida. Os números {doRecorte} seguem valendo.
               </p>
             )}
           </div>
@@ -80,14 +87,17 @@ export default function DetalheRegiao({
           {/* ---- Área e densidade ---- */}
           <div style={{ display: 'grid', gap: 4 }}>
             <Titulo>Área e densidade</Titulo>
-            <Linha rotulo="Área do círculo" valor={`${num(detalhe.area_circulo_km2, 2)} km²`} />
+            <Linha
+              rotulo={area ? 'Área desenhada' : 'Área do círculo'}
+              valor={`${num(detalhe.area_circulo_km2, 2)} km²`}
+            />
             <Linha
               rotulo={`Área com setor do ${instituto ?? "censo"}`}
               valor={`${num(detalhe.area_intersectada_km2, 2)} km²`}
               nota={`${instituto ?? "o censo"} não cobre água nem vazio`}
             />
             <Linha
-              rotulo="Densidade sobre o círculo"
+              rotulo={area ? 'Densidade sobre a área desenhada' : 'Densidade sobre o círculo'}
               valor={`${num(detalhe.densidade_fixa_hab_km2)} hab/km²`}
             />
             <Linha
@@ -95,14 +105,16 @@ export default function DetalheRegiao({
               valor={`${num(detalhe.densidade_valida_hab_km2)} hab/km²`}
               nota="é esta que a ficha mostra"
             />
-            <Linha rotulo="Score médio do raio" valor={num(detalhe.score_medio_raio, 1)} />
-            <Linha rotulo="Melhor setor do raio" valor={num(detalhe.score_max_raio, 1)} />
+            <Linha rotulo={`Score médio ${doRecorte}`} valor={num(detalhe.score_medio_raio, 1)} />
+            <Linha rotulo={`Melhor setor ${doRecorte}`} valor={num(detalhe.score_max_raio, 1)} />
           </div>
 
           {/* ---- Concorrentes ---- */}
           {concorrencia.disponivel && concorrencia.lista.length > 0 && (
             <div style={{ display: 'grid', gap: 4 }}>
-              <Titulo>Concorrentes no raio ({concorrencia.lista.length})</Titulo>
+              <Titulo>
+                Concorrentes {area ? 'na área' : 'no raio'} ({concorrencia.lista.length})
+              </Titulo>
               {concorrencia.lista.map((c, i) => (
                 <Linha
                   key={`${c.rede}-${i}`}

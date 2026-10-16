@@ -165,6 +165,12 @@ Nenhuma destas foi tomada. Estão aqui para não serem descobertas no meio da im
    conexões. Com a trava, a coluna só é reescrita se já tiver mais de 5 min — pior caso, alguém sai
    aos 30 min em vez de ~35. Decidir se vale escrever é de graça: a consulta de validação já
    devolve a coluna.
+   **EMENDA de 14/10/2026 (DEC-067, D2), decidida por Vinicius: a inatividade passa de 30 min para
+   2 h** (`INATIVIDADE_MIN = 120` em `src/motor_expansao/db/sessoes.py`); o teto de 8h e a trava de
+   5 min ficam, e o pior caso da trava vira sair aos 120 min em vez de ~125. O texto acima fica como
+   registro do que foi decidido em 17/09. Enquanto o Authelia autentica, a mudança que o usuário
+   sente é **manual na VPS** (`inactivity: 2h`, nunca `0`, + restart do `authelia`), com runbook em
+   `docs/repasse_logout_2h.md`.
    **Duas consequências para o front, que esta decisão já resolve:** (i) "lembrar de mim" é
    **caixinha nova** no formulário de login — medido, não existe nada hoje (`lembrar`/`remember`:
    zero ocorrências em `web/src`); (ii) a **sonda de `lib/sessao.ts` deixa de ser necessária para o

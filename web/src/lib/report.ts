@@ -80,6 +80,8 @@ export interface PontoDoRelatorio {
   /** Coordenada EXATA do imovel (busca por endereco/lat,lng). Ausente = clique no ranking. */
   lat?: number
   lng?: number
+  /** Estudo da unidade Ultra (emenda da DEC-070): o PDF tira o consumo da unidade. */
+  estudoUltra?: boolean
 }
 
 /** Parametros de identificacao do ponto no `api.relatorioPontual` (contrato dele). */
@@ -88,6 +90,8 @@ export interface ParametrosRelatorioPontual {
   lng: number
   rotulo: string
   origemCentroideHex: boolean
+  /** So' presente (e `true`) no estudo da unidade Ultra. */
+  excluirUltraProxima?: true
 }
 
 /**
@@ -112,10 +116,15 @@ export function parametrosRelatorioPontual(
   opts: { rotuloManual?: string } = {},
 ): ParametrosRelatorioPontual {
   const alvo = coordenadaDoEstudo(ponto)
-  return {
+  const out: ParametrosRelatorioPontual = {
     lat: alvo.lat,
     lng: alvo.lng,
     rotulo: opts.rotuloManual || ponto.rotulo,
     origemCentroideHex: ehCentroideDoHex(ponto),
   }
+  /* O MODO viaja com o ponto (emenda da DEC-070): o nome que chega do estudo da unidade
+     ja' diz "(unidade Ultra)", e sem a flag o PDF do Simulador calcularia o estudo de
+     ponto sob esse titulo. */
+  if (ponto.estudoUltra === true) out.excluirUltraProxima = true
+  return out
 }

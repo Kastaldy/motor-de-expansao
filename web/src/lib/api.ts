@@ -52,6 +52,8 @@ function queryRede(q: RedeQuery = {}): string {
 
 /** A primeira leitura de uma UF carrega a particao inteira — pode passar de 15 s. */
 const TIMEOUT_LEITURA = 90_000
+/** Análise de área desenhada: a conta cresce com os setores interseccionados (até 200 km²). */
+const TIMEOUT_GEOMETRIA = 150_000
 /**
  * Downloads pesados (PDF, XLSX). O PDF baixa tiles de basemap (7 mapas — a camada
  * "entorno" saiu no BLK-RELPON-14) e em area densa/cache frio passa de 1 min; a
@@ -579,8 +581,36 @@ export const api = {
    * e um punhado de hexes, então cabe no timeout curto em vez dos 90 s da leitura de
    * UF. É o que torna viável o fluxo "cole o link, veja a ficha".
    */
-  ponto: (lat: number, lng: number) =>
-    pedir<PontoPayload>(`/api/ponto?lat=${lat}&lng=${lng}`, {}, 30_000),
+  ponto: (lat: number, lng: number, opts?: { excluirUltraProxima?: boolean }) =>
+    pedir<PontoPayload>(
+      /* `excluir_ultra_proxima` (emenda da DEC-070): o ESTUDO DA UNIDADE ULTRA — o consumo
+         da unidade a até 150 m do ponto sai do mercado. Sem ele, a URL é a de sempre. */
+      `/api/ponto?lat=${lat}&lng=${lng}${opts?.excluirUltraProxima ? '&excluir_ultra_proxima=true' : ''}`,
+      {},
+      30_000,
+    ),
+
+  /**
+   * Ficha de uma ÁREA DESENHADA no mapa ("Analisar geometria", DEC-071 fase 1): o mesmo
+   * payload do `ponto`, com o polígono no lugar do raio de 1,0 km.
+   *
+   * POST com o polígono no CORPO, e não na URL: 50 vértices em query string estourariam o
+   * limite de cabeçalho (o HTTP 431 que o relatório já conheceu). Validação de verdade é do
+   * servidor (400 com a mensagem em português, que vira `ApiError.message`).
+   */
+  pontoGeometria: (geometria: { type: 'Polygon'; coordinates: [number, number][][] }) =>
+    pedir<PontoPayload>(
+      '/api/ponto/geometria',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ geometria }),
+      },
+      // Teto de 200 km² (Emenda 1 da DEC-071): 194 km² no centro de SP mediu 39,6 s com a UF
+      // já carregada, e a 1a leitura da UF soma o carregamento da partição. Com 30 s a tela
+      // cancelava uma área que o servidor aceita.
+      TIMEOUT_GEOMETRIA,
+    ),
 
   /**
    * Texto colado -> coordenada. Só é chamada quando o front NÃO resolveu sozinho
@@ -780,6 +810,19 @@ export const api = {
      * nenhuma (endereço com parênteses seria mutilado). Omitido = sem aviso.
      */
     origemCentroideHex?: boolean
+    /**
+     * Botão "Estudo" da análise de ponto: PDF EXCLUSIVAMENTE demográfico — o modo
+     * só-estudo do bot (BLK-CONC-ESTUDO / DEC-030), Conclusão só com o selo demográfico.
+     * Com ele, `viabilidadeInputs` e `infoImovel` NÃO são enviados (e o servidor os
+     * descartaria de todo jeito): nenhum dado financeiro sai nesse PDF.
+     */
+    soEstudo?: boolean
+    /**
+     * ESTUDO DA UNIDADE ULTRA (emenda da DEC-070): o mercado do PDF sai sem o consumo da
+     * unidade Ultra a até 150 m do ponto, e o Big Numbers declara isso. Omitido = estudo
+     * de ponto (a Ultra próxima conta).
+     */
+    excluirUltraProxima?: boolean
     infoImovel?: Record<string, unknown>
     viabilidadeInputs?: ViabilidadeIn
     fotos?: File[]
@@ -791,11 +834,16 @@ export const api = {
     if (opts.rotulo) q.set('rotulo', opts.rotulo)
     if (opts.solicitante) q.set('solicitante', opts.solicitante)
     if (opts.origemCentroideHex) q.set('origem_centroide_hex', 'true')
-    if (opts.infoImovel && Object.keys(opts.infoImovel).length) {
-      q.set('info_imovel', JSON.stringify(opts.infoImovel))
-    }
-    if (opts.viabilidadeInputs) {
-      q.set('viabilidade_inputs_json', JSON.stringify(opts.viabilidadeInputs))
+    if (opts.excluirUltraProxima) q.set('excluir_ultra_proxima', 'true')
+    if (opts.soEstudo) {
+      q.set('so_estudo', 'true')
+    } else {
+      if (opts.infoImovel && Object.keys(opts.infoImovel).length) {
+        q.set('info_imovel', JSON.stringify(opts.infoImovel))
+      }
+      if (opts.viabilidadeInputs) {
+        q.set('viabilidade_inputs_json', JSON.stringify(opts.viabilidadeInputs))
+      }
     }
 
     const fd = new FormData()

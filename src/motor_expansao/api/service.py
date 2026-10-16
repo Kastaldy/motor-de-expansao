@@ -57,6 +57,10 @@ _TOLERANCIA_MALHA_GRAUS = 0.018
 # aproximacao GENEROSA de proposito: incluir um municipio que nao contribui setor custa uma
 # leitura de particao; excluir um que contribui e' o defeito que esta correcao fecha.
 _KM_POR_GRAU_LAT = 111.32
+# Folga em volta do poligono desenhado (DEC-071) na consulta de municipios
+# vizinhos -- ver `_MalhaMunicipal.alcancados_na_geometria`. Generosa pelo mesmo motivo do
+# quadro acima: ler uma particao a mais custa pouco; deixar de ler a que contribui e' erro.
+_MARGEM_GEOMETRIA_KM = 0.5
 
 
 class _MalhaMunicipal:
@@ -120,6 +124,34 @@ class _MalhaMunicipal:
             vistos.setdefault(i, None)
         return [self._meta[i] for i in vistos]
 
+    def alcancados_na_geometria(
+        self, geometria, margem_km: float = _MARGEM_GEOMETRIA_KM
+    ) -> list[tuple[str, str]]:
+        """Municipios que tocam o POLIGONO desenhado (DEC-071), com margem.
+
+        O par de `alcancados` para o modo geometria. O quadrado de meio-lado fixo em volta
+        do ponto nao serve: um poligono de 25 km2 se estende ate' ~5 km do ponto de
+        referencia, muito alem do frame de 1 km -- e a particao do vizinho que ele cobre
+        ficaria de fora em silencio, repetindo a DEC-065 por outra porta. O alcance vem da
+        propria geometria (em graus, x=lng) e ganha `margem_km` de folga: a malha municipal
+        e a malha de setores sao simplificacoes diferentes da mesma divisa, e um setor do
+        vizinho pode atravessar o poligono mesmo quando o contorno do municipio, nesta
+        malha, para alguns metros antes.
+
+        Pelo POLIGONO, e nao pela caixa dele (revisao do admin no PR #457): num "L" ou numa
+        area diagonal a caixa cobre municipios que a area nem toca, e cada um e' uma
+        particao a mais lida do disco. A margem vira um buffer do proprio poligono, em
+        graus; o raio do buffer e' o da LONGITUDE (o maior dos dois lados em graus), entao
+        a folga em latitude fica um pouco maior que `margem_km` -- erra para o lado de ler
+        uma particao a mais, nunca de deixar de ler a que contribui.
+        """
+        _minx, miny, _maxx, maxy = geometria.bounds
+        meio_lat = margem_km / _KM_POR_GRAU_LAT
+        cos_lat = max(cos(radians((miny + maxy) / 2.0)), 0.01)
+        meio_lng = meio_lat / cos_lat
+        alcance = geometria.buffer(max(meio_lat, meio_lng), quad_segs=4)
+        return [self._meta[int(i)] for i in self._tree.query(alcance, predicate="intersects")]
+
 
 @lru_cache(maxsize=4)
 def _carregar_malha(ibge_dir_str: str) -> _MalhaMunicipal:
@@ -162,8 +194,13 @@ def _carregar_malha(ibge_dir_str: str) -> _MalhaMunicipal:
     return _MalhaMunicipal(STRtree(geoms), meta, geoms)
 
 
-def _resolver_e_carregar(lat: float, lng: float, settings: Settings):
-    """Resolve ``(uf, cod_municipio)`` e carrega ``setores_df``. Levanta 400/404."""
+def _resolver_e_carregar(lat: float, lng: float, settings: Settings, *, geometria=None):
+    """Resolve ``(uf, cod_municipio)`` e carrega ``setores_df``. Levanta 400/404.
+
+    `geometria` (DEC-071, opcional; shapely em graus, x=lng): o poligono desenhado, com
+    (lat, lng) = o `representative_point` dele. Muda SO' o alcance dos vizinhos -- o proprio
+    poligono (com margem) soma-se ao frame do ponto. Sem ela, a carga e' a de sempre, byte a byte.
+    """
     malha = _carregar_malha(str(settings.ibge_dir))
     resolvido = malha.resolver(lat, lng)
     if resolvido is None:
@@ -203,7 +240,11 @@ def _resolver_e_carregar(lat: float, lng: float, settings: Settings):
     # vizinho sem particao apenas nao entra (cobertura parcial e' estado normal do artefato).
     vizinhos = [
         chave
-        for chave in _malha_alcancada(malha, lat, lng)
+        for chave in (
+            _malha_alcancada(malha, lat, lng)
+            if geometria is None
+            else _malha_alcancada(malha, lat, lng, geometria=geometria)
+        )
         if chave != (uf, cod_municipio)
     ]
     if vizinhos:
@@ -225,14 +266,29 @@ def _resolver_e_carregar(lat: float, lng: float, settings: Settings):
     return uf, cod_municipio, setores_df
 
 
-def _malha_alcancada(malha: _MalhaMunicipal, lat: float, lng: float) -> list[tuple[str, str]]:
-    """Municipios que o FRAME do mapa alcanca — o alcance vem de quem desenha o frame."""
+def _malha_alcancada(
+    malha: _MalhaMunicipal, lat: float, lng: float, *, geometria=None
+) -> list[tuple[str, str]]:
+    """Municipios que o FRAME do mapa alcanca — o alcance vem de quem desenha o frame.
+
+    Com `geometria` (DEC-071), soma os que o poligono (com margem) alcanca, sem repetir e na
+    ordem estavel (frame primeiro). Soma, e nao troca: o frame do ponto de referencia
+    continua sendo o que um mapa centrado nele mostraria.
+    """
     from motor_expansao.dashboard.censo_map import (
         RAIO_CENSITARIO_DEFAULT_KM,
         alcance_do_frame_km,
     )
 
-    return malha.alcancados(lat, lng, alcance_do_frame_km(RAIO_CENSITARIO_DEFAULT_KM))
+    alcancados = malha.alcancados(lat, lng, alcance_do_frame_km(RAIO_CENSITARIO_DEFAULT_KM))
+    if geometria is None:
+        return alcancados
+    vistos = set(alcancados)
+    for chave in malha.alcancados_na_geometria(geometria):
+        if chave not in vistos:
+            vistos.add(chave)
+            alcancados.append(chave)
+    return alcancados
 
 
 def _municipios_vizinhos_dos_hexes(
@@ -494,7 +550,7 @@ def _oferta_unida(staging_dir_str: str):
                 else pd.Series([pd.NA] * len(indep), dtype="string")
             ),
         }).dropna(subset=["lat", "lng"])
-        indep = _dedup_independentes(indep, cadeias)
+        indep = _uma_linha_por_academia_entre_apps(indep, cadeias)
     else:
         indep = pd.DataFrame(columns=_COLS_OFERTA)
 
@@ -534,6 +590,139 @@ def _dedup_independentes(indep, cadeias):
     return indep.loc[manter]
 
 
+# Ordem de preferencia do representante quando a mesma academia esta nos dois apps. WellHub
+# primeiro porque era o unico app antes da DEC-066: o nome exibido segue o de antes.
+_FONTE_PREFERIDA_DO_PAR = ("wellhub", "totalpass")
+
+
+def _uma_linha_por_academia_entre_apps(indep, cadeias):
+    """Independentes sem cadeia a <= 50 m (D5, DEC-046) e com UMA linha por academia dos dois apps.
+
+    O artefato nomeado tem uma linha por (app, academia): a academia que esta no WellHub E no
+    TotalPass chega aqui DUAS vezes, cada uma carimbada `fontes_da_academia = "totalpass,wellhub"`.
+    O carimbo so' ROTULA; nao colapsa. Sem colapsar, o Relatorio Pontual contava a mesma academia
+    duas vezes em todas as superficies (Big Number "Academias no raio (todas)", "N no total",
+    lista de redes, marcadores do mapa e `n_academias_total` da ficha) -- medido em Santana/SP
+    (-23,4852 / -46,6177): 24 linhas para 21 academias, 3 pares nos dois apps.
+
+    O PAR sai de `pares_mesma_academia_entre_apps`, a MESMA regua (100 m + nome) que gera o
+    carimbo no artefato -- nao ha' segunda redacao dela aqui (licao da DEC-044). Componentes
+    conexos (A~B, B~C) viram UMA academia. Se QUALQUER membro colapsa contra uma cadeia, a
+    academia inteira sai: ela e' a cadeia, e manter a copia do outro app a contaria de novo.
+
+    EFEITO COLATERAL DECLARADO do fecho: a regua so' liga apps DIFERENTES, mas um componente
+    A(TP)~B(WH), A~C(WH) junta B e C, que sao do MESMO app. Medido no artefato de 2026-10-16
+    (35.971 linhas): 7.715 pares, 54 componentes com mais de 2 membros (maximo 4; 52 no perfil
+    1+2 e 2 no 2+2), todos a <= 99 m -- duplicatas internas reais. A regra fica ASSIMETRICA: a
+    duplicata interna de um app so' some quando casa com a mesma academia do outro app; a que
+    existe num app so' segue contando duas vezes (a dedup interna e' a `nome_mesma_fonte_m` do
+    pipeline, nao esta funcao).
+
+    O sobrevivente carrega a uniao das fontes em `fontes_da_academia` (o pino do terceiro estado
+    continua saindo), mas conta UM. Degrada sem quebrar: sem `fonte`/`nome` ou com uma fonte so'
+    (sem TotalPass), nao ha' par, e o resultado e' o de `_dedup_independentes`.
+    """
+    sem_cadeia = _dedup_independentes(indep, cadeias)
+    if indep.empty or not {"fonte", "nome"}.issubset(indep.columns):
+        return sem_cadeia
+    try:
+        from motor_expansao.vulnerabilidade.alvos_nomeados import (
+            pares_mesma_academia_entre_apps,
+        )
+
+        candidatas = indep
+        if "fontes_da_academia" in indep.columns:
+            # O carimbo do artefato JA' diz quem casou com alguem (mesma regua, mesmo universo):
+            # linha sem virgula nao tem par. Recortar antes deixa a carga a frio em ~2,6 s em vez
+            # de ~5,2 s (1,1 s sem o colapso; medido em 2026-10-16). Carimbo NULO e' "nao medido"
+            # (artefato anterior ao v8, cuja coluna este modulo cria nula) e entra na regua.
+            carimbo = indep["fontes_da_academia"].astype("string")
+            tem_par = carimbo.str.contains(",", regex=False).fillna(False).astype(bool)
+            candidatas = indep.loc[(carimbo.isna() | tem_par).to_numpy()]
+        pares = pares_mesma_academia_entre_apps(candidatas)
+    except Exception as exc:  # noqa: BLE001 -- degrade: sem o par, conta como antes
+        logging.getLogger(__name__).warning("par entre apps indisponivel: %r", exc)
+        return sem_cadeia
+    if not pares:
+        return sem_cadeia
+
+    pai: dict[object, object] = {}
+
+    def _raiz(x):
+        pai.setdefault(x, x)
+        while pai[x] != x:
+            pai[x] = pai[pai[x]]
+            x = pai[x]
+        return x
+
+    for a, b in pares:
+        ra, rb = _raiz(a), _raiz(b)
+        if ra != rb:
+            pai[rb] = ra
+    componentes: dict[object, list[object]] = {}
+    for rotulo in list(pai):
+        componentes.setdefault(_raiz(rotulo), []).append(rotulo)
+
+    sobreviventes = set(sem_cadeia.index)
+    descartar: set[object] = set()
+    fontes_do_rep: dict[object, str] = {}
+    for membros in componentes.values():
+        if not all(m in sobreviventes for m in membros):
+            descartar.update(membros)
+            continue
+
+        def _ordem(m):
+            fonte = str(indep.at[m, "fonte"]).strip().lower()
+            pos = (
+                _FONTE_PREFERIDA_DO_PAR.index(fonte)
+                if fonte in _FONTE_PREFERIDA_DO_PAR
+                else len(_FONTE_PREFERIDA_DO_PAR)
+            )
+            return (pos, str(m))
+
+        rep, *resto = sorted(membros, key=_ordem)
+        descartar.update(resto)
+        fontes: set[str] = set()
+        for m in membros:
+            for col in ("fonte", "fontes_da_academia"):
+                if col not in indep.columns:
+                    continue
+                valor = indep.at[m, col]
+                if valor is None or pd_isna(valor):
+                    continue
+                fontes.update(p.strip().lower() for p in str(valor).split(",") if p.strip())
+        fontes_do_rep[rep] = ",".join(sorted(fontes))
+
+    saida = sem_cadeia.loc[[r for r in sem_cadeia.index if r not in descartar]].copy()
+    if fontes_do_rep and "fontes_da_academia" in saida.columns:
+        for rep, valor in fontes_do_rep.items():
+            if rep in saida.index:
+                saida.at[rep, "fontes_da_academia"] = valor
+    return saida
+
+
+def uma_linha_por_academia_entre_apps(indep):
+    """So' o colapso do par entre apps, sem a dedup contra cadeias (D5 da DEC-046).
+
+    E' o que os PINOS do mapa do piloto precisam: la' a cadeia tem camada propria e o
+    independente a <= 50 m dela continua desenhado (a D5 e' regra da OFERTA do Relatorio
+    Pontual). Mesma funcao, mesma regua -- sem segunda redacao do par (DEC-044).
+    """
+    import pandas as pd
+
+    return _uma_linha_por_academia_entre_apps(indep, pd.DataFrame(columns=["lat", "lng"]))
+
+
+def pd_isna(valor) -> bool:
+    """`pd.isna` escalar sem importar o pandas no topo do modulo (import preguicoso do arquivo)."""
+    import pandas as pd
+
+    try:
+        return bool(pd.isna(valor))
+    except (TypeError, ValueError):
+        return False
+
+
 def fontes_oferta_presentes(settings: Settings) -> tuple[str, ...]:
     """Quais das 3 fontes de oferta foram efetivamente lidas. Sustenta o D7 da DEC-046."""
     _df, presentes = _oferta_unida(str(settings.staging_dir))
@@ -556,40 +745,154 @@ def _competitors_ultra(settings: Settings):
     return comp, ultra
 
 
-def _residual_do_ponto(lat: float, lng: float, settings: Settings) -> dict:
-    """SAM/residual do hex H3 (res 7) do ponto, sem carregar a base de 1,5M.
+# --- mercado NO RAIO do ponto (DEC-070) ---------------------------------------
+#
+# O antigo `_residual_do_ponto` (a linha do HEXAGONO do ponto) deixou de alimentar as tres
+# superficies do ponto e foi REMOVIDO em 2026-10-15 (codigo morto, revisao do admin); a
+# linha do hexagono segue lida, so' como auditoria, por `_linha_mercado_do_hex`. A ficha
+# (`/api/ponto`), o PDF do piloto e o PDF da API/bot chamam `_mercado_do_ponto`, que calcula
+# SAM, consumo e residual no MESMO raio de 1,0 km da populacao -- ver
+# `dashboard/mercado_raio.py`. Uma funcao so' para as tres, pela licao da DEC-044: duas
+# redacoes da mesma regra desencontram em silencio.
 
-    Espelha `lookup_hex_by_coord` (h3.latlng_to_cell + match por hex_id), filtrando
-    direto no parquet de mercado (1 linha). READ-ONLY; nao recalcula nada do M1.
+# Do hexagono do ponto entram na conta SO' a faixa do M1 (gate) e a taxa calibrada (constante
+# do artefato). O resto viaja como AUDITORIA, para quem quiser comparar com o grao antigo.
+_HEX_MERCADO_COLS = (
+    "faixa_oportunidade",
+    "taxa_fitness_mercado_calibrada",
+    *_SAM_COLS,
+    "oferta_consumida_ultra_estimada",
+)
+_COL_TAXA = "taxa_fitness_mercado_calibrada"
+
+
+def _linha_mercado_do_hex(lat: float, lng: float, settings: Settings) -> dict | None:
+    """A linha do hexagono res-7 do ponto no artefato de mercado (1 linha, sem a base).
+
+    `None` sem o artefato. Hexagono fora da base -> dict so' com `hex_id` e a TAXA, que e'
+    constante do artefato e por isso vem de qualquer linha: sem faixa o gate reprova (com
+    motivo proprio), mas a taxa nao precisa sumir junto.
     """
-    residual: dict[str, float | None] = {k: None for k in _SAM_COLS}
     mercado = Path(settings.staging_dir / "hexagonos_mercado_mapeado.parquet")
     if not mercado.is_file():
-        return residual
+        return None
     try:
         import h3
         import pyarrow.compute as pc
         import pyarrow.dataset as ds
 
-        cell = h3.latlng_to_cell(lat, lng, 7)
-        tbl = ds.dataset(mercado).to_table(
-            filter=pc.field("hex_id") == cell, columns=["hex_id", *_SAM_COLS]
+        cell = h3.latlng_to_cell(lat, lng, 7)  # 7 = H3_RESOLUTION do M1, LIDO
+        dataset = ds.dataset(mercado)
+        disponiveis = set(dataset.schema.names)
+        colunas = ["hex_id", *[c for c in _HEX_MERCADO_COLS if c in disponiveis]]
+        tbl = dataset.to_table(filter=pc.field("hex_id") == cell, columns=colunas)
+        linha: dict[str, Any] = tbl.slice(0, 1).to_pylist()[0] if tbl.num_rows else {}
+        linha["hex_id"] = cell
+        linha["hex_na_base"] = bool(tbl.num_rows)
+        if linha.get(_COL_TAXA) is None and _COL_TAXA in disponiveis:
+            cab = dataset.head(1, columns=[_COL_TAXA], filter=pc.field(_COL_TAXA).is_valid())
+            if cab.num_rows:
+                linha[_COL_TAXA] = cab.column(0)[0].as_py()
+        return linha
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _mercado_do_ponto(
+    lat: float,
+    lng: float,
+    settings: Settings,
+    pop_area: float | None,
+    *,
+    geometria: Any = None,
+    excluir_ultra_proxima: bool = False,
+) -> dict:
+    """SAM / consumo (concorrentes + Ultra) / residual NO RAIO do ponto (DEC-070).
+
+    `excluir_ultra_proxima` (emenda da DEC-070): ESTUDO DA UNIDADE ULTRA -- o consumo da
+    unidade Ultra a ate' 150 m do ponto sai da conta (so' ela). E' a UNICA falha que esta
+    funcao deixa subir (`mercado_raio.UnidadeUltraForaDaTolerancia`): engoli-la devolveria
+    o residual COM o consumo numa tela que diz que ele foi tirado. Default = estudo de ponto.
+
+    `pop_area` e' a `pop_total_raio` que o motor censitario ja' calculou para o MESMO
+    recorte -- a populacao nao e' relida aqui. `geometria` (shapely em graus, x=lng) e' a
+    porta do lote de geometria (DEC-071): com ela, (lat, lng) e' o `representative_point`
+    do poligono e o recorte e' o poligono.
+
+    Devolve um dict com as chaves de valor nos nomes das colunas do artefato
+    (`sam_fitness_potencial`, `oferta_consumida_*`, `oferta_efetiva_disponivel`,
+    `score_oportunidade_residual`) -- e' o que `censo_report` le --, mais `grao`, o gate e
+    o bloco `hexagono` de auditoria. NUNCA levanta: falha vira `disponivel=False` com motivo.
+    READ-ONLY; nada do M1 nem do artefato de mercado e' recalculado.
+    """
+    from motor_expansao.dashboard.censo_point import RAIO_CENSITARIO_DEFAULT_KM
+    from motor_expansao.dashboard.mercado_raio import (
+        MODO_ESTUDO_UNIDADE_ULTRA,
+        UnidadeUltraForaDaTolerancia,
+        carregar_cadeias_mercado,
+        carregar_ultra_mercado,
+        mercado_na_area,
+    )
+
+    linha = _linha_mercado_do_hex(lat, lng, settings) or {}
+    staging = str(settings.staging_dir)
+    try:
+        out = mercado_na_area(
+            lat,
+            lng,
+            pop_area=pop_area,
+            cadeias=carregar_cadeias_mercado(staging),
+            ultra=carregar_ultra_mercado(staging),
+            taxa=linha.get(_COL_TAXA),
+            faixa_oportunidade=linha.get("faixa_oportunidade"),
+            raio_km=RAIO_CENSITARIO_DEFAULT_KM,
+            geometria=geometria,
+            excluir_ultra_proxima=excluir_ultra_proxima,
         )
-        if tbl.num_rows:
-            row = tbl.slice(0, 1).to_pylist()[0]
-            for k in _SAM_COLS:
-                v = row.get(k)
-                if v is not None:
-                    residual[k] = float(v)
-    except Exception:
-        pass
-    return residual
+    except UnidadeUltraForaDaTolerancia:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("mercado no raio falhou: %r", exc)
+        out = {k: None for k in _SAM_COLS}
+        out.update({"disponivel": False, "motivo": "Falha ao calcular o mercado do ponto."})
+        if excluir_ultra_proxima:
+            # O MODO PEDIDO segue declarado (revisao do admin, 2026-10-15). Sem isto o dict
+            # saia sem `modo_estudo`, a ficha lia o default "ponto" e o estudo da unidade
+            # voltava como estudo de ponto em silencio -- o operador pediu um modo e recebia
+            # outro sem aviso. Nao ha unidade estudada nem consumo retirado (a conta nem
+            # rodou), e a frase diz isso na ficha e no PDF. PONTUACAO ASCII (PDF latin-1).
+            out.update(
+                {
+                    "motivo": (
+                        "Falha ao calcular o mercado do estudo da unidade Ultra: "
+                        "SAM, consumo e residual indisponíveis."
+                    ),
+                    "modo_estudo": MODO_ESTUDO_UNIDADE_ULTRA,
+                    "unidade_ultra_estudada": None,
+                    "declaracao_modo": (
+                        "Estudo da unidade Ultra: o mercado não pôde ser calculado, então "
+                        "nenhum consumo foi retirado e não há residual para este estudo."
+                    ),
+                }
+            )
+    out["hex_id"] = linha.get("hex_id")
+    # AUDITORIA do grao antigo: o que o hexagono do ponto diz. Nao entra em conta nenhuma.
+    out["hexagono"] = {
+        "hex_id": linha.get("hex_id"),
+        "na_base": linha.get("hex_na_base"),
+        "sam": linha.get("sam_fitness_potencial"),
+        "consumo_concorrentes": linha.get("oferta_consumida_mercado_estimada"),
+        "consumo_ultra": linha.get("oferta_consumida_ultra_estimada"),
+        "residual": linha.get("oferta_efetiva_disponivel"),
+        "score_residual": linha.get("score_oportunidade_residual"),
+    }
+    return out
 
 
 def _hexes_vizinhos_do_ponto(lat: float, lng: float, settings: Settings, k: int = 7):
     """Hexes H3 (res 7) do disco de raio `k` em torno do ponto, com o valor de cada camada hex.
 
-    Espelha `_residual_do_ponto`: filtra direto no parquet de mercado por um conjunto pequeno de
+    Espelha `_linha_mercado_do_hex`: filtra direto no parquet de mercado por um conjunto pequeno de
     chaves (91 hexes em k=5) e poucas colunas -> leitura barata, NAO carrega a base de 1,5 M.
     Insumo dos choropleths POR HEXAGONO do slide-hero: Residual Fitness (`oferta_efetiva_disponivel`,
     BLK-RELPON-10) e Socioeconomia (`score_setor_2022_calibrado`, BLK-RELPON-13). READ-ONLY; nao
@@ -825,7 +1128,9 @@ def gerar_pdf_ponto(
     # ela, o render devolve None e o PDF sai sem a pagina de satelite (DEC-018).
     foto_sat = render_foto_satelite_ponto(lat, lng, api_key=settings.arcgis_api_key or None)
 
-    residual = _residual_do_ponto(lat, lng, settings)
+    # DEC-070: SAM/consumo/residual no RAIO de 1,0 km, com a populacao do MESMO recorte que o
+    # motor censitario acabou de medir. Mesma funcao da ficha e do PDF do piloto.
+    residual = _mercado_do_ponto(lat, lng, settings, result.get("pop_total_raio"))
     # Variante "Apresentacao Classica Ultra" (BLK-EST-05): a API/bot espelha o
     # MESMO modelo que o dashboard passou a gerar por padrao (pages.py usa
     # template="classico"). Com o BLK-RELPON-14 a classica virou o gerador UNICO
@@ -848,10 +1153,11 @@ def gerar_pdf_ponto(
     # numa superficie nova.
     #
     # BLK-CONC-ESTUDO: a pagina de CONCLUSAO passou a sair TAMBEM sem `viabilidade`, em
-    # modo so-estudo -- metas censitarias do raio e leitura de mercado do hexagono, SEM os
-    # gates de imovel e de retorno. Este e' o UNICO ponto do sistema que liga o flag: o
-    # piloto web chama a mesma funcao sem ele e segue com as 7 paginas de antes quando o
-    # operador nao preenche a Viabilidade (escopo fechado por Juan em 2026-08-12).
+    # modo so-estudo -- metas censitarias do raio e leitura de mercado do raio (DEC-070),
+    # SEM os gates de imovel e de retorno. Ate' 2026-10-14 este era o UNICO ponto do
+    # sistema que ligava o flag (escopo fechado por Juan em 2026-08-12); desde entao o
+    # botao "Estudo" da analise de ponto do piloto tambem o liga, por `so_estudo=true` em
+    # `POST /api/relatorio/pontual` (decisao 4 do Vinicius, 2026-10-14).
     viabilidade_pdf = None
     if viabilidade_inputs is not None:
         from motor_expansao.dimensionamento.payload_viabilidade import (

@@ -1,4 +1,4 @@
-import type { BlocoParametro } from '../lib/comparacao'
+import type { BlocoParametro, RotuloPartido } from '../lib/comparacao'
 import { valorComUnidade } from '../lib/format'
 import { Botao } from './primitives'
 
@@ -18,6 +18,7 @@ import { Botao } from './primitives'
 export default function BlocosComparacao({
   blocos,
   rotulos,
+  partidos,
   cor,
   onRelatorio,
   onIrPara,
@@ -26,6 +27,13 @@ export default function BlocosComparacao({
   blocos: readonly BlocoParametro<unknown>[]
   /** Rótulo de cada item, na MESMA ordem da lista comparada (`indice` aponta para cá). */
   rotulos: readonly string[]
+  /**
+   * Os mesmos rótulos partidos em nome + "#k" (`rotulosPartidos`), na mesma ordem.
+   * Presente, o "#k" é desenhado FORA do trecho que o ellipsis corta — a coluna do nome é
+   * estreita (até 92 px), e "Jardim Paulista #2" virava "Jardim Pau…", igual ao "#1".
+   * Ausente, o rótulo inteiro é truncado como antes.
+   */
+  partidos?: readonly RotuloPartido[]
   /** Cor de identidade do item `i` — a mesma da aba/coluna, para ligar sem ler o rótulo. */
   cor?: (i: number) => string
   /** Ausente = o botão não aparece. */
@@ -44,7 +52,11 @@ export default function BlocosComparacao({
     <div style={{ display: 'grid', gap: 14 }}>
       {onRelatorio && (
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <Botao variante="ghost" onClick={onRelatorio}>
+          {/* Fundo de AÇÃO (`--ac`, a variante primária) e não ghost (pedido do Vinicius,
+              2026-10-16: "mais destaque"). É o único gesto da comparação que produz algo,
+              e o ghost escuro some no meio dos blocos. Este componente serve a comparação
+              de PONTOS e a de HEXÁGONOS — os dois mudam juntos, de propósito. */}
+          <Botao onClick={onRelatorio}>
             {rotuloRelatorio}
           </Botao>
         </div>
@@ -162,8 +174,13 @@ export default function BlocosComparacao({
                           whiteSpace: 'nowrap',
                         }}
                       >
-                        {rotulos[v.indice]}
+                        {partidos?.[v.indice]?.base ?? rotulos[v.indice]}
                       </span>
+                      {partidos?.[v.indice]?.sufixo && (
+                        <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
+                          {partidos[v.indice].sufixo}
+                        </span>
+                      )}
                     </span>
 
                     <span

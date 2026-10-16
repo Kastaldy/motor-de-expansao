@@ -5,20 +5,25 @@ import CampoPonto from './CampoPonto'
 import { Botao, Glass } from './primitives'
 import type { AlvoCaptura } from '../lib/captura-mapa'
 import type { EntradaClassificada } from '../lib/entrada-ponto'
-import { type BlocoParametro, blocosPorParametro } from '../lib/comparacao'
+import { type BlocoParametro, type RotuloPartido, blocosPorParametro } from '../lib/comparacao'
 import {
   DIMENSOES_PONTO,
+  avisoDimensoesCortadas,
+  dimensoesDoComparativo,
   MAX_PONTOS,
   compararPontos,
   corDoPonto,
+  motivoSemPdfDeComparacao,
   passaNoEstudo,
   resumoDoEstudo,
   rotulosDosPontos,
+  rotulosPartidosDosPontos,
   subtituloDoDeckDePontos,
 } from '../lib/comparacao-pontos'
 import { ranquear } from '../lib/ranking-comparacao'
+import { ehAreaDesenhada, rotuloDoRaio } from '../lib/recorte'
 import { relatarAcessoNegado, relatarFalhaDeRede } from '../lib/sessao'
-import { alunos, num } from '../lib/format'
+import { alunos } from '../lib/format'
 import type { PontoPayload } from '../lib/types'
 
 /**
@@ -29,7 +34,8 @@ import type { PontoPayload } from '../lib/types'
  * produzem DRE, payback e break-even IDENTICOS — duas colunas com os mesmos numeros,
  * que se le como defeito. O que muda entre pontos e' o contexto (quem mora em volta,
  * quanto sobra de mercado, quem ja disputa), e e' isso que a tabela compara. A
- * viabilidade continua embaixo, por ponto.
+ * viabilidade e' do Simulador (botao no rodape da ficha), um ponto por vez — desde
+ * 2026-10-14 a ficha nao tem mais a secao "Fecha a conta?".
  */
 export default function PainelPontos({
   fichas,
@@ -70,11 +76,19 @@ export default function PainelPontos({
      bairro resolvido tinham o mesmo nome, e as abas, os seletores e as duas colunas da
      tabela ficavam indistinguiveis. */
   const rotulos = useMemo(() => rotulosDosPontos(fichas), [fichas])
+  /* A mesma desambiguacao partida em nome + "#k": onde o nome pode ser truncado (aba,
+     legenda, blocos), o "#k" vai FORA do corte — e' ele que separa "Centro #1" de
+     "Centro #2". A forma inteira (`rotulos`) segue para o ranking e o PDF. */
+  const partidos = useMemo(() => rotulosPartidosDosPontos(fichas), [fichas])
 
+  /* Com área desenhada na lista, os TOTAIS (residual, população, concorrentes) saem dos
+     blocos: os recortes têm tamanhos diferentes e o maior venceria só por ser maior
+     (`dimensoesDoComparativo`). O aviso abaixo diz isso. */
   const blocos = useMemo(
-    () => blocosPorParametro(DIMENSOES_PONTO, fichas),
+    () => blocosPorParametro(dimensoesDoComparativo(fichas), fichas),
     [fichas],
   ) as BlocoParametro<unknown>[]
+  const avisoCorte = avisoDimensoesCortadas(fichas)
 
   /* O deck em PDF dos pontos. HÁ captura de mapa, sim — um enquadramento por endereço,
      no hexágono em que ele caiu e com o imóvel marcado. (Esta nota dizia o contrário: ela
@@ -84,8 +98,17 @@ export default function PainelPontos({
      perguntas diferentes, e um ponto pode ganhar a comparação e ainda assim reprovar num
      piso do produto. Viabilidade fica de fora de propósito — é entrada do operador sobre um
      imóvel concreto (DEC-009), e a comparação não a tem. */
+  /* ÁREA DESENHADA (DEC-071, fase 1) ainda não tem PDF: o deck de comparação desenha o raio
+     de 1 km de cada ponto na foto e nos textos, e para uma área ele afirmaria um recorte
+     que não é o dela. A recusa é DITA, com o motivo, em vez de o botão sumir. */
+  const temArea = fichas.some((f) => ehAreaDesenhada(f))
   const gerarRelatorio = useCallback(async () => {
     if (fichas.length < 2 || gerandoRelatorio) return
+    const semPdf = motivoSemPdfDeComparacao(fichas)
+    if (semPdf) {
+      setErroRelatorio(semPdf)
+      return
+    }
     setGerandoRelatorio(true)
     setErroRelatorio(null)
     try {
@@ -189,7 +212,7 @@ export default function PainelPontos({
                   color: ativo ? corDoPonto(i) : 'var(--tx-soft)',
                 }}
               >
-                {rotulos[i]}
+                <NomeComSufixo partido={partidos[i]} larguraMax={150} />
               </button>
               <span className="num" style={{ font: '500 10px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
                 {alunos(f.mercado?.residual)}
@@ -270,7 +293,7 @@ export default function PainelPontos({
               Comparando os pontos
             </span>
             <span style={{ font: '400 11px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>
-              contexto do entorno — a viabilidade fica por ponto, abaixo
+              contexto do entorno — a viabilidade é do Simulador, um ponto por vez
             </span>
           </div>
 
@@ -299,7 +322,7 @@ export default function PainelPontos({
                     }}
                   />
                   <span style={{ font: '400 11px/1.3 var(--f-ui)', color: 'var(--tx-sub)' }}>
-                    {rotulos[i]}
+                    <NomeComSufixo partido={partidos[i]} larguraMax={140} />
                   </span>
                   <span
                     className="num"
@@ -326,7 +349,12 @@ export default function PainelPontos({
           <BlocosComparacao
             blocos={blocos}
             rotulos={rotulos}
+            partidos={partidos}
             cor={corDoPonto}
+            /* Clicar no nome de um ponto num bloco abre a aba DELE — e o mapa vai junto:
+               o `App` leva a câmera ao ponto aberto. É o gesto óbvio para achar no mapa
+               "qual desses é o Centro #2". */
+            onIrPara={onAbrir}
             onRelatorio={gerarRelatorio}
             rotuloRelatorio={
               gerandoRelatorio
@@ -375,12 +403,53 @@ export default function PainelPontos({
             </p>
           )}
 
+          {avisoCorte && (
+            <p style={{ font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-soft)', margin: 0 }}>
+              {avisoCorte}
+            </p>
+          )}
+
           <p style={{ font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
-            Cada leitura sai do raio de {num((fichas[0]?.raio_km ?? 1) * 1000)} m em torno do
-            ponto — a mesma régua do Relatório Pontual.
+            {temArea
+              ? /* Com área na lista, "cada leitura sai do raio" seria falso para ela. */
+                `Os pontos saem do ${rotuloDoRaio(fichas.find((f) => !ehAreaDesenhada(f))?.raio_km)} ` +
+                'em torno de cada um; a área desenhada, de dentro do polígono que você desenhou.'
+              : `Cada leitura sai do ${rotuloDoRaio(fichas[0]?.raio_km)} em torno do ` +
+                'ponto — a mesma régua do Relatório Pontual.'}
           </p>
         </Glass>
       )}
     </div>
+  )
+}
+
+/**
+ * Nome + "#k" com o corte so' no NOME. O "#k" e' o que distingue dois pontos de mesmo
+ * nome; se o ellipsis o comesse, a desambiguacao inteira sumiria justamente na tela
+ * estreita, onde ela mais faz falta.
+ */
+function NomeComSufixo({
+  partido,
+  larguraMax,
+}: {
+  partido: RotuloPartido | undefined
+  larguraMax: number
+}) {
+  if (!partido) return null
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 4, minWidth: 0 }}>
+      <span
+        title={partido.sufixo ? `${partido.base} ${partido.sufixo}` : partido.base}
+        style={{
+          maxWidth: larguraMax,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {partido.base}
+      </span>
+      {partido.sufixo && <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{partido.sufixo}</span>}
+    </span>
   )
 }

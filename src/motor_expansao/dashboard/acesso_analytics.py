@@ -72,6 +72,11 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
     ("POST", "/api/ciencia-confidencialidade", "Confirmou o aviso de confidencialidade"),
     ("PUT", "/api/rede/cadastro/", "Editou cadastro de unidade"),
     (None, "/api/rede/unidade/", "Abriu ficha de unidade"),
+    # Unidades do cadastro sem dados da rede (PR #453): a LISTA o Mapa pede SOZINHO ao
+    # montar, sem gesto -- sem esta linha caia no `/api/rede/` generico e cada abertura do
+    # Mapa contava como "Visão executiva da rede". A FICHA dela e' abrir ficha de unidade.
+    (None, "/api/rede/unidades-sem-rede", "Navegou pelo mapa"),
+    (None, "/api/rede/unidade-sem-rede/", "Abriu ficha de unidade"),
     (None, "/api/rede/carteira", "Consultou carteira da rede"),
     (None, "/api/rede/", "Visão executiva da rede"),
     (None, "/api/executiva/", "Visão executiva da rede"),

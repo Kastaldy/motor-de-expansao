@@ -543,6 +543,17 @@ def _carregar_bairros_por_hex(
             )
     except Exception:
         return {}
+    return bairros_por_hex_de_setores(setores)
+
+
+def bairros_por_hex_de_setores(setores: pd.DataFrame | None) -> dict[str, str]:
+    """`hex_id` res-7 -> localidade dominante, a partir de setores JA' em memoria.
+
+    O miolo de `_carregar_bairros_por_hex`, sem a leitura da particao: quem ja' tem os setores
+    carregados (a ficha de ponto, que leu a particao para o raio) nomeia o hexagono sem reler
+    o disco. A regra e' a MESMA, entao o mesmo conjunto de setores da' o mesmo nome. O recorte
+    e' de quem chama: passar so' os setores de um municipio reproduz o mapa daquele municipio.
+    """
     if setores is None or setores.empty or "nome_bairro" not in setores.columns:
         return {}
 

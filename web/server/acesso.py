@@ -61,9 +61,15 @@ ABAS_SENSIVEIS = frozenset({"executiva", "imobiliaria", "viabilidade"})
 # do app a aparecer aqui OU na lista explicita de rotas livres.
 #
 # A aba "mapa" cobre tambem o modo de PONTO (tela 'ponto' = Explorar + ficha por cima).
-# `/api/viabilidade` aceita mapa OU viabilidade porque o BlocoViabilidadePonto (modo de
-# ponto) chama a mesma rota que a tela de Viabilidade. `/api/relatorio/pontual` idem:
-# e' disparado pela tela de Viabilidade, alcancavel a partir do mapa.
+# `/api/viabilidade` aceita mapa OU viabilidade por HISTORICO: o BlocoViabilidadePonto (a
+# secao "Fecha a conta?" da ficha de ponto) chamava a mesma rota que a tela de
+# Viabilidade. Ele SAIU em 2026-10-14 (a ficha ganhou o botao "Simulador", que leva a
+# tela de Viabilidade), entao hoje so' a tela de Viabilidade chama esta rota. A regra
+# ficou INALTERADA de proposito: estreitar para {viabilidade} e' mudanca de permissao, e
+# pede decisao propria (e o ajuste de tests/unit/test_piloto_web_acesso.py e de
+# docs/plano_multipais.md). `/api/relatorio/pontual` aceita mapa OU viabilidade porque quem
+# a chama e' a tela de Viabilidade E o botao "Estudo" da ficha de ponto (aba "mapa"), este
+# no modo so'-estudo, sem dado financeiro.
 #
 # `/api/relatorio/comparacao` fica so' em "mapa", e NAO em "viabilidade": o deck compara
 # contexto de entorno e nao carrega DRE, payback nem teto de aluguel — por DEC-009 a
@@ -75,6 +81,8 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/executiva/", frozenset({"executiva"})),
     ("/api/geocode", frozenset({"mapa"})),
     ("/api/resolver-ponto", frozenset({"mapa"})),
+    # Por PREFIXO, cobre tambem `POST /api/ponto/geometria` (a area desenhada, DEC-071):
+    # e' a mesma ficha com o poligono no lugar do raio, entao o gate e' o mesmo.
     ("/api/ponto", frozenset({"mapa"})),
     ("/api/cobertura/", frozenset({"mapa"})),
     ("/api/relatorio/comparacao", frozenset({"mapa"})),

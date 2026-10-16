@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   ALTURA_CABECALHO,
   ALTURA_MINIMA,
+  DEGRAU_X,
+  DEGRAU_Y,
   LARGURA_MINIMA,
   LARGURA_PADRAO,
   MARGEM,
@@ -47,6 +49,26 @@ describe('geometriaPadrao', () => {
     expect(esq.altura).toBe(dir.altura)
     // Duas janelas na mesma tela não podem nascer uma sobre a outra.
     expect(esq.x).not.toBe(dir.x)
+  })
+
+  it('em DEGRAU nasce uma barra de título abaixo e recuada para dentro, no mesmo lado', () => {
+    const base = geometriaPadrao(AREA, TOPO, RECUO, 'esquerda')
+    const cima = geometriaPadrao(AREA, TOPO, RECUO, 'esquerda', 1)
+    // A barra de título inteira da de baixo continua à vista.
+    expect(cima.y).toBe(base.y + DEGRAU_Y)
+    expect(DEGRAU_Y).toBeGreaterThanOrEqual(ALTURA_CABECALHO)
+    expect(cima.x).toBe(base.x + DEGRAU_X)
+    // O pé continua parando no stepper.
+    expect(cima.y + cima.altura).toBe(AREA.altura - RECUO)
+    // À direita o recuo é para a ESQUERDA (para dentro da tela).
+    const dir = geometriaPadrao(AREA, TOPO, RECUO, 'direita', 1)
+    expect(dir.x).toBe(geometriaPadrao(AREA, TOPO, RECUO, 'direita').x - DEGRAU_X)
+  })
+
+  it('degrau 0 (o padrão) é exatamente a posição de sempre', () => {
+    expect(geometriaPadrao(AREA, TOPO, RECUO, 'esquerda', 0)).toEqual(
+      geometriaPadrao(AREA, TOPO, RECUO, 'esquerda'),
+    )
   })
 })
 

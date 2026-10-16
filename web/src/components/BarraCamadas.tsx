@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import type { ReactNode } from 'react'
 
 /* ---------------------------------------------------------------------------
    TRILHO + PAINEL "CAMADAS DO MAPA" (Juan, 2026-09-02, sobre desenho do Claude
@@ -12,13 +12,20 @@ import { useState } from 'react'
    procura a legenda. Pior: a pilha mudava de altura conforme o recorte, entao a
    legenda subia e descia de lugar sozinha.
 
-   O DESENHO. Um trilho vertical de quatro icones, de altura CONSTANTE — ele nao
-   muda quando as condicionais entram ou saem, e e' isso que da' ao canto um ponto
-   de referencia fixo. As chaves moram num painel unico que abre a partir do
+   O DESENHO. Um trilho vertical de icones, de altura CONSTANTE — ele nao muda
+   quando as condicionais entram ou saem, e e' isso que da' ao canto um ponto de
+   referencia fixo. As chaves moram num painel unico que abre a partir do
    primeiro icone. Fechado, o mapa perde so' os 46px do trilho.
 
-   O TRILHO NAO REPETE O PAINEL — ele o ATALHA. `Regua` e `Comparar` sao a mesma
-   chave que a linha correspondente do painel, e acendem juntas; o icone e' o
+   ERAM QUATRO icones (camadas, regua, comparar, legenda). Em 2026-10-14 o dono
+   pediu as ferramentas do CLIQUE ao lado da regua, nesta ordem fixa: camadas,
+   SELECIONAR PONTO, regua, ANALISAR GEOMETRIA, comparar, legenda. As tres do meio
+   disputam o mesmo clique no mapa e por isso sao um estado so'
+   (`lib/ferramenta-mapa`): ligar uma desliga a outra. A altura continua constante
+   — o que cresceu foi a constante, nao a variacao.
+
+   O TRILHO NAO REPETE O PAINEL — ele o ATALHA. `Ponto`, `Regua`, `Geometria` e `Comparar` sao a
+   mesma chave que a linha correspondente do painel, e acendem juntas; o icone e' o
    caminho de um clique para quem ja sabe o que quer, o painel e' o caminho de quem
    esta procurando. Um trilho cujos icones abrissem coisas diferentes das que o
    painel lista seria dois vocabularios no mesmo canto.
@@ -94,11 +101,41 @@ const ICONE: Record<string, React.JSX.Element> = {
       <path d="M7.3 8.5v2.8M12 8.5v3.4M16.7 8.5v2.8" />
     </>
   ),
+  /* ALFINETE com miolo — "Selecionar ponto" (2026-10-14). E' o pin de mapa que todo
+     mundo reconhece, e nao a mira (`crosshair`): a mira ja' e' o CURSOR de qualquer
+     ferramenta ligada, e repetir o mesmo desenho no botao nao diria qual ferramenta e'. */
+  alvo: (
+    <>
+      <path d="M12 21s-6.2-5.6-6.2-10.2a6.2 6.2 0 0 1 12.4 0C18.2 15.4 12 21 12 21Z" />
+      <circle cx="12" cy="10.8" r="2.3" />
+    </>
+  ),
+  /* POLIGONO de cinco lados com os VERTICES marcados — "Analisar geometria" (DEC-071).
+     Os vertices sao o que diz "voce desenha clicando ponto a ponto"; um poligono liso
+     seria so' uma forma, e nao o gesto que a ferramenta pede. */
+  poligono: (
+    <>
+      <path d="M12 3.5 20 9.3l-3 9.7H7l-3-9.7Z" />
+      <circle cx="12" cy="3.5" r="1.4" fill="currentColor" />
+      <circle cx="20" cy="9.3" r="1.4" fill="currentColor" />
+      <circle cx="17" cy="19" r="1.4" fill="currentColor" />
+      <circle cx="7" cy="19" r="1.4" fill="currentColor" />
+      <circle cx="4" cy="9.3" r="1.4" fill="currentColor" />
+    </>
+  ),
   /* Dois quadros sobrepostos — comparar. */
   comparar: (
     <>
       <rect x="3" y="3" width="12" height="12" rx="2" />
       <path d="M9 21h10a2 2 0 0 0 2-2V9" />
+    </>
+  ),
+  /* HEXÁGONO com meia tinta — as cores (o mapa de calor) dos hexágonos. A metade
+     preenchida diz "cor"; o contorno inteiro diz que a grade continua mesmo sem ela. */
+  hexagono: (
+    <>
+      <path d="M12 2.8 20 7.4v9.2l-8 4.6-8-4.6V7.4Z" />
+      <path d="M12 2.8v18.4l-8-4.6V7.4Z" fill="currentColor" fillOpacity=".35" stroke="none" />
     </>
   ),
   /* Tres filetes — a legenda de faixas. */
@@ -361,21 +398,266 @@ function Linha({ chave }: { chave: ChaveDeCamada }) {
   )
 }
 
+/**
+ * Uma linha ACESA do painel, sem chave: o mesmo desenho da `Linha` ligada (ícone na cor da
+ * camada, título, sub em mono, filete e fundo tingidos), mas sem switch e sem clique. É o
+ * cabeçalho de estado do painel do desenho ("Área desenhada · 1,2 km² · 4 vértices") — o
+ * painel do desenho fala a mesma língua visual do de camadas, em vez de inventar outra.
+ */
+export function LinhaDeEstado({
+  icone,
+  titulo,
+  sub,
+  cor,
+  corTexto,
+  corRealce,
+}: {
+  icone: keyof typeof ICONE | string
+  titulo: string
+  sub: ReactNode
+  cor: string
+  corTexto: string
+  corRealce: string
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 11,
+        padding: '8px 13px 8px 12px',
+        borderRadius: 8,
+        background: corRealce,
+        boxShadow: `inset 2px 0 0 ${cor}`,
+      }}
+    >
+      <svg
+        width={TAM_ICONE_CHAVE}
+        height={TAM_ICONE_CHAVE}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+        style={{ flex: '0 0 auto', color: cor }}
+      >
+        {ICONE[icone]}
+      </svg>
+      <span style={{ minWidth: 0 }}>
+        <span style={{ display: 'block', font: '600 13px/1.25 var(--f-ui)', color: 'var(--tx-max)' }}>
+          {titulo}
+        </span>
+        <span
+          className="num"
+          style={{
+            display: 'block',
+            marginTop: 2,
+            font: '400 10.5px/1.2 var(--f-num)',
+            color: corTexto,
+          }}
+        >
+          {sub}
+        </span>
+      </span>
+    </div>
+  )
+}
+
+/**
+ * A CAIXA dos painéis do trilho — "Camadas do mapa" e "Desenhar área" (Vinicius, 2026-10-16:
+ * a caixa do desenho deveria "ter as mesmas propriedades da caixa de camadas do mapa").
+ *
+ * Extraída para os dois painéis serem a MESMA caixa, e não duas cópias de estilo que
+ * divergem no primeiro ajuste: fundo opaco do tema, borda, raio, sombra de balão, o
+ * cabeçalho em mono maiúsculo com o × e o mesmo respiro. Os dois abrem no mesmo lugar, à
+ * direita do trilho, e nunca juntos (`lib/painel-trilho`).
+ */
+export function PainelDoTrilho({
+  rotulo,
+  rotuloFechar,
+  onFechar,
+  children,
+  rodape,
+}: {
+  /** O cabeçalho (vai em maiúsculas pelo CSS). Também é o `aria-label` do grupo. */
+  rotulo: string
+  /** `aria-label` do ×: diz o que fecha, e não só "Fechar". */
+  rotuloFechar: string
+  onFechar: () => void
+  children: ReactNode
+  /** Linha de estado no pé, separada por um filete (`RodapeDoPainel`). */
+  rodape?: ReactNode
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={rotulo}
+      style={{
+        width: 330,
+        flexShrink: 0,
+        background: 'var(--surf-mapa)',
+        border: '1px solid var(--linha-mapa)',
+        borderRadius: 12,
+        padding: '11px 8px 9px',
+        /* `--sh-pop` e' o token do BALAO que flutua sobre o conteudo, e nao um
+           preto cravado: no tema claro ele troca o preto por azul-tinta com menos
+           alfa (ver tokens.css). Uma sombra preta chapada sobre o Positron seria a
+           unica mancha escura da tela. */
+        boxShadow: 'var(--sh-pop)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 6px 8px 12px',
+        }}
+      >
+        <span
+          className="num"
+          style={{
+            font: '600 10.5px/1 var(--f-num)',
+            letterSpacing: '.12em',
+            textTransform: 'uppercase',
+            color: 'var(--ac-text)',
+          }}
+        >
+          {rotulo}
+        </span>
+        <button
+          type="button"
+          onClick={onFechar}
+          title={rotuloFechar}
+          aria-label={rotuloFechar}
+          style={{
+            width: 20,
+            height: 20,
+            display: 'grid',
+            placeItems: 'center',
+            borderRadius: 5,
+            font: '400 15px/1 var(--f-ui)',
+            color: 'var(--tx-muted)',
+          }}
+        >
+          ×
+        </button>
+      </div>
+
+      {children}
+
+      {rodape}
+    </div>
+  )
+}
+
+/**
+ * O pé do painel: filete em cima e texto mono pequeno. `pulso` acende o ponto que pisca (a
+ * espera do raio de 1 km); `tom: 'erro'` pinta de negativo (a recusa do desenho, que é
+ * `role="alert"`).
+ */
+export function RodapeDoPainel({
+  children,
+  pulso = false,
+  tom = 'neutro',
+}: {
+  children: ReactNode
+  pulso?: boolean
+  tom?: 'neutro' | 'erro'
+}) {
+  return (
+    <div
+      className="num"
+      role={tom === 'erro' ? 'alert' : undefined}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 7,
+        margin: '6px 0 0',
+        padding: '7px 12px 2px',
+        borderTop: '1px solid var(--line-soft)',
+        font: '400 10.5px/1.3 var(--f-num)',
+        color: tom === 'erro' ? 'var(--neg)' : 'var(--tx-sub)',
+      }}
+    >
+      {pulso && (
+        <span
+          aria-hidden
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            flexShrink: 0,
+            background: 'var(--carga)',
+            animation: 'pulse 1s ease-in-out infinite',
+          }}
+        />
+      )}
+      {children}
+    </div>
+  )
+}
+
 export default function BarraCamadas({
   chaves,
+  selecionarPonto = null,
   regua,
+  geometria = null,
   comparar,
   legendaVisivel,
+  legendaDisponivel = true,
   onLegenda,
   aviso,
+  camadasAberto,
+  onAlternarCamadas,
+  onFecharCamadas,
+  painelDesenho = null,
 }: {
   /** Todas as chaves do painel, na ordem fixa do desenho. */
   chaves: ChaveDeCamada[]
+  /**
+   * O painel de camadas está aberto. CONTROLADO por quem monta o trilho desde 2026-10-16:
+   * ele divide o lugar com o painel do desenho e um fecha o outro (`lib/painel-trilho`),
+   * então o estado tem de morar onde a ferramenta mora.
+   */
+  camadasAberto: boolean
+  onAlternarCamadas: () => void
+  onFecharCamadas: () => void
+  /**
+   * O painel do DESENHO ("Analisar geometria"), na MESMA caixa e no MESMO lugar do de
+   * camadas. Presente = aberto (é a ferramenta ligada); o × dele PAUSA o desenho sem apagar
+   * os vértices. Os dois nunca vêm juntos — se viessem, as camadas venceriam.
+   */
+  painelDesenho?: { conteudo: ReactNode; rodape?: ReactNode; onFechar: () => void } | null
+  /**
+   * Atalho do trilho para "Selecionar ponto" — a MESMA chave da linha do painel.
+   * `null`/ausente = o botao nao aparece (quem monta o trilho sem a analise de pontos
+   * nao oferece um botao que nao levaria a lugar nenhum).
+   */
+  selecionarPonto?: { ligado: boolean; onToggle: () => void } | null
   /** Atalho do trilho para a regua — a MESMA chave da linha correspondente. */
   regua: { ligado: boolean; onToggle: () => void }
+  /**
+   * Atalho do trilho para "Analisar geometria" (DEC-071) — a MESMA chave da linha do
+   * painel. `null`/ausente = o botao nao aparece (sem quem receba a area desenhada, o
+   * desenho nao levaria a lugar nenhum).
+   */
+  geometria?: {
+    ligado: boolean
+    onToggle: () => void
+    /** Vértices guardados de um desenho PAUSADO (0 = nenhum): muda o título do botão. */
+    pausado?: number
+  } | null
   /** Idem para a comparacao. `null` = fora do drill-down, entao o icone fica inerte. */
   comparar: { ligado: boolean; onToggle: () => void } | null
   legendaVisivel: boolean
+  /**
+   * A legenda tem o que explicar? Com as cores dos hexágonos desligadas, não: ela traduz
+   * cor, e sem cor some junto — o botão fica inerte e diz por quê.
+   */
+  legendaDisponivel?: boolean
   onLegenda: () => void
   /**
    * Linha de estado no pe do painel (hoje: a espera do raio de 1 km).
@@ -385,10 +667,12 @@ export default function BarraCamadas({
    */
   aviso?: string | null
 }) {
-  const [aberto, setAberto] = useState(false)
+  const aberto = camadasAberto
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, pointerEvents: 'auto' }}>
-      {/* TRILHO — altura constante, quatro icones, sempre os mesmos quatro.
+      {/* TRILHO — altura constante, sempre os mesmos icones, na ordem fixa do dono
+          (2026-10-14): camadas, selecionar ponto, regua, analisar geometria, comparar,
+          legenda.
           A caixa segue a superficie do TEMA: chegou a ficar escura no claro junto com
           o Dock (2026-09-09) e o Juan reverteu no mesmo dia — "na visão branca ele
           está preto, deixar branco". Quem carrega a cor aqui sao os ICONES. */}
@@ -408,8 +692,24 @@ export default function BarraCamadas({
           icone="camadas"
           titulo={aberto ? 'Fechar as camadas do mapa' : 'Camadas do mapa'}
           aceso={aberto}
-          onClick={() => setAberto((v) => !v)}
+          onClick={onAlternarCamadas}
         />
+        {/* SELECIONAR PONTO — ACIMA da regua (pedido do dono). Cor PROPRIA, e nao o rosa
+            da regua: as duas deixam o cursor em mira, e a cor do botao aceso e' o que diz
+            qual das duas esta' esperando o clique. */}
+        {selecionarPonto && (
+          <BotaoTrilho
+            icone="alvo"
+            titulo={
+              selecionarPonto.ligado
+                ? 'Selecionar ponto ligado — clique no mapa para analisar o lugar (Esc desliga)'
+                : 'Selecionar um ponto no mapa para analisar'
+            }
+            aceso={selecionarPonto.ligado}
+            cor="var(--gr-azul)"
+            onClick={selecionarPonto.onToggle}
+          />
+        )}
         <BotaoTrilho
           icone="regua"
           titulo={
@@ -421,6 +721,25 @@ export default function BarraCamadas({
           cor="var(--gr-rosa)"
           onClick={regua.onToggle}
         />
+        {/* ANALISAR GEOMETRIA — logo ABAIXO da regua (posicao do dono, 2026-10-14). Verde,
+            e nao o rosa da regua nem o azul do ponto: as tres poem o cursor em mira, e a
+            cor do botao aceso e' o que diz qual delas espera o clique. O MESMO verde pinta
+            o poligono em desenho no mapa. */}
+        {geometria && (
+          <BotaoTrilho
+            icone="poligono"
+            titulo={
+              geometria.ligado
+                ? 'Desenhando — clique os vértices da área; feche no 1º vértice ou em Concluir (Esc cancela). Clique de novo para pausar'
+                : geometria.pausado
+                  ? `Retomar o desenho da área (${geometria.pausado} ${geometria.pausado === 1 ? 'vértice guardado' : 'vértices guardados'})`
+                  : 'Desenhar uma área no mapa para analisar'
+            }
+            aceso={geometria.ligado}
+            cor="var(--gr-verde)"
+            onClick={geometria.onToggle}
+          />
+        )}
         <BotaoTrilho
           icone="comparar"
           titulo={
@@ -437,103 +756,42 @@ export default function BarraCamadas({
         />
         <BotaoTrilho
           icone="legenda"
-          titulo={legendaVisivel ? 'Esconder a legenda' : 'Mostrar a legenda'}
-          aceso={legendaVisivel}
+          titulo={
+            !legendaDisponivel
+              ? 'Legenda escondida: as cores dos hexágonos estão desligadas'
+              : legendaVisivel
+                ? 'Esconder a legenda'
+                : 'Mostrar a legenda'
+          }
+          aceso={legendaDisponivel && legendaVisivel}
+          desabilitado={!legendaDisponivel}
           onClick={onLegenda}
         />
       </div>
 
-      {/* PAINEL — some por inteiro quando fechado; o trilho e' que fica. */}
-      {aberto && (
-        <div
-          role="group"
-          aria-label="Camadas do mapa"
-          style={{
-            width: 330,
-            flexShrink: 0,
-            background: 'var(--surf-mapa)',
-            border: '1px solid var(--linha-mapa)',
-            borderRadius: 12,
-            padding: '11px 8px 9px',
-            /* `--sh-pop` e' o token do BALAO que flutua sobre o conteudo, e nao um
-               preto cravado: no tema claro ele troca o preto por azul-tinta com menos
-               alfa (ver tokens.css). Uma sombra preta chapada sobre o Positron seria a
-               unica mancha escura da tela. */
-            boxShadow: 'var(--sh-pop)',
-          }}
+      {/* PAINEL — some por inteiro quando fechado; o trilho e' que fica. Camadas OU
+          desenho, na mesma caixa e no mesmo lugar (`lib/painel-trilho`). */}
+      {aberto ? (
+        <PainelDoTrilho
+          rotulo="Camadas do mapa"
+          rotuloFechar="Fechar as camadas do mapa"
+          onFechar={onFecharCamadas}
+          rodape={aviso ? <RodapeDoPainel pulso>{aviso}</RodapeDoPainel> : null}
         >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '0 6px 8px 12px',
-            }}
-          >
-            <span
-              className="num"
-              style={{
-                font: '600 10.5px/1 var(--f-num)',
-                letterSpacing: '.12em',
-                textTransform: 'uppercase',
-                color: 'var(--ac-text)',
-              }}
-            >
-              Camadas do mapa
-            </span>
-            <button
-              type="button"
-              onClick={() => setAberto(false)}
-              title="Fechar"
-              aria-label="Fechar as camadas do mapa"
-              style={{
-                width: 20,
-                height: 20,
-                display: 'grid',
-                placeItems: 'center',
-                borderRadius: 5,
-                font: '400 15px/1 var(--f-ui)',
-                color: 'var(--tx-muted)',
-              }}
-            >
-              ×
-            </button>
-          </div>
-
           {chaves.map((c) => (
             <Linha key={c.id} chave={c} />
           ))}
-
-          {aviso && (
-            <div
-              className="num"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 7,
-                margin: '6px 0 0',
-                padding: '7px 12px 2px',
-                borderTop: '1px solid var(--line-soft)',
-                font: '400 10.5px/1.3 var(--f-num)',
-                color: 'var(--tx-sub)',
-              }}
-            >
-              <span
-                aria-hidden
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: '50%',
-                  flexShrink: 0,
-                  background: 'var(--carga)',
-                  animation: 'pulse 1s ease-in-out infinite',
-                }}
-              />
-              {aviso}
-            </div>
-          )}
-        </div>
-      )}
+        </PainelDoTrilho>
+      ) : painelDesenho ? (
+        <PainelDoTrilho
+          rotulo="Desenhar área"
+          rotuloFechar="Pausar o desenho (os vértices ficam guardados)"
+          onFechar={painelDesenho.onFechar}
+          rodape={painelDesenho.rodape}
+        >
+          {painelDesenho.conteudo}
+        </PainelDoTrilho>
+      ) : null}
     </div>
   )
 }

@@ -50,20 +50,41 @@ export const ALTURA_CABECALHO = 56
 export const VISIVEL_MINIMO = 120
 
 /**
+ * Quanto um DEGRAU desloca a janela que nasce sobre outra do mesmo lado: a barra de título
+ * inteira na vertical (a de baixo continua com título e × à vista) e um recuo na horizontal
+ * (a borda de baixo continua visível). É a cascata clássica de janelas.
+ */
+export const DEGRAU_Y = ALTURA_CABECALHO
+export const DEGRAU_X = 24
+
+/**
  * Onde a janela nasce: encostada à direita, abaixo do cabeçalho do mapa e acima do
  * stepper. Mesma posição que ela tinha quando era fixa — quem não arrastar nada não vê
  * diferença nenhuma.
+ *
+ * `degrau` (0 = a posição de sempre) existe porque dois lados não bastam mais: com a
+ * análise de pontos nas duas entradas do mapa, a ficha de ponto ocupa a esquerda, e a do
+ * hexágono e a do comparativo de hexágonos nasciam EXATAMENTE em cima dela (ou, mandadas
+ * para a direita, em cima da do imóvel e da unidade). Em degrau, a de cima nasce deslocada
+ * para dentro da tela e a de baixo segue com a barra de título à vista.
  */
 export function geometriaPadrao(
   area: Area,
   topo: number,
   recuoInferior: number,
   ancora: Ancora = 'direita',
+  degrau = 0,
 ): Geometria {
+  const d = Math.max(0, Math.floor(degrau))
   const largura = Math.min(LARGURA_PADRAO, Math.max(LARGURA_MINIMA, area.largura - 2 * MARGEM))
-  const altura = Math.max(ALTURA_MINIMA, area.altura - topo - recuoInferior)
-  const x = ancora === 'esquerda' ? MARGEM : Math.max(MARGEM, area.largura - largura - MARGEM)
-  return { x, y: topo, largura, altura }
+  const y = topo + d * DEGRAU_Y
+  const altura = Math.max(ALTURA_MINIMA, area.altura - y - recuoInferior)
+  const dx = d * DEGRAU_X
+  const x =
+    ancora === 'esquerda'
+      ? MARGEM + dx
+      : Math.max(MARGEM, area.largura - largura - MARGEM - dx)
+  return { x, y, largura, altura }
 }
 
 /** Prende um valor entre dois limites. `max < min` devolve `min` — área minúscula não inverte a trava. */

@@ -6,14 +6,23 @@ import {
   DIMENSOES_PONTO,
   MAX_PONTOS,
   corDoPonto,
+  avisoDimensoesCortadas,
   compararPontos,
+  dimensoesDoComparativo,
+  indiceDaMesmaArea,
   indiceDoMesmoPonto,
+  motivoSemPdfDeComparacao,
   passaNoEstudo,
+  rotuloDoRecorte,
   resumoDoEstudo,
   rotuloDoPonto,
+  pinsDaComparacao,
   rotulosDosPontos,
+  rotulosPartidosDosPontos,
   subtituloDoDeckDePontos,
 } from './comparacao-pontos'
+import { corDeIdentidadeRgb, rotulosUnicos } from './comparacao'
+import { ehAreaDesenhada } from './recorte'
 import type { PontoPayload } from './types'
 
 /** Ponto com a forma real do `/api/ponto` (valores da Av. Paulista). */
@@ -119,6 +128,56 @@ describe('rotuloDoPonto', () => {
   })
 })
 
+describe('rotuloDoPonto: regra híbrida (setor, senão hexágono)', () => {
+  /* O payload devolve `local.hexagono` = o nome que a ficha/ranking do hexágono mostra.
+     Caso real (Taguatinga/DF, -15.8333, -48.0567): o distrito do setor é "Brasília", o
+     mesmo nome do município, e o hexágono se chama "Taguatinga". */
+  const comHex = (hexagono: string | null | undefined, bairro: string | null) => {
+    const p = ponto({ bairro, municipio: 'Brasília' })
+    return { ...p, local: { ...p.local, uf: 'DF', hexagono } } as PontoPayload
+  }
+
+  it('usa o nome do hexágono, e não o distrito que repete o município', () => {
+    expect(rotuloDoPonto(comHex('Taguatinga', 'Brasília'))).toBe('Taguatinga')
+    // A comparação com o município ignora caixa e acento.
+    expect(rotuloDoPonto(comHex('Taguatinga', 'BRASILIA'))).toBe('Taguatinga')
+  })
+
+  it('o bairro/distrito do setor vence o hexágono quando diz mais que a cidade', () => {
+    // Caso real (Ultra Santana/SP): o setor é do distrito Santana, o hexágono se chama
+    // "Tucuruvi" (bairro de maior população dentro dele). O ponto não leva o nome vizinho.
+    const p = ponto({ bairro: 'Santana' })
+    expect(rotuloDoPonto({ ...p, local: { ...p.local, hexagono: 'Tucuruvi' } } as PontoPayload)).toBe(
+      'Santana',
+    )
+  })
+
+  it('hexágono sem nome cai no bairro/distrito do setor, depois no município', () => {
+    expect(rotuloDoPonto(comHex(null, 'Setor Bueno'))).toBe('Setor Bueno')
+    expect(rotuloDoPonto(comHex(null, null))).toBe('Brasília')
+  })
+
+  it('payload anterior ao campo (sem `hexagono`) mantém o comportamento antigo', () => {
+    expect(rotuloDoPonto(comHex(undefined, 'Bela Vista'))).toBe('Bela Vista')
+  })
+
+  it('dois pontos no mesmo hexágono continuam desambiguados com "#k"', () => {
+    const a = comHex('Taguatinga', 'Brasília')
+    expect(rotulosDosPontos([a, a])).toEqual(['Taguatinga #1', 'Taguatinga #2'])
+  })
+
+  it('a área desenhada continua "Área desenhada", mesmo com hexágono nomeado', () => {
+    const p = comHex('Taguatinga', 'Brasília')
+    const area = {
+      ...p,
+      raio_km: null,
+      geometria: [[[-48.06, -15.84], [-48.05, -15.84], [-48.05, -15.83], [-48.06, -15.84]]],
+      recorte: { tipo: 'poligono', area_km2: 1, n_vertices: 3, metodo: 'x' },
+    } as unknown as PontoPayload
+    expect(rotuloDoPonto(area)).toBe('Área desenhada')
+  })
+})
+
 describe('corDoPonto', () => {
   it('dá cores distintas a todos os pontos que cabem na tela', () => {
     const cores = Array.from({ length: MAX_PONTOS }, (_, i) => corDoPonto(i))
@@ -175,7 +234,7 @@ describe('rotulosDosPontos', () => {
       ponto({ bairro: null }),
       ponto({ bairro: null }),
     ])
-    expect(r).toEqual(['1 · São Paulo', '2 · São Paulo', '3 · São Paulo'])
+    expect(r).toEqual(['São Paulo #1', 'São Paulo #2', 'São Paulo #3'])
   })
 
   it('numera SÓ quem empata, preservando o nome de quem é único', () => {
@@ -184,14 +243,31 @@ describe('rotulosDosPontos', () => {
       ponto({ bairro: 'Bela Vista' }),
       ponto({ bairro: null }),
     ])
-    expect(r).toEqual(['1 · São Paulo', 'Bela Vista', '3 · São Paulo'])
+    expect(r).toEqual(['São Paulo #1', 'Bela Vista', 'São Paulo #2'])
   })
 
-  it('o número é a POSIÇÃO na lista, não a ordem do empate', () => {
-    // O 3º ponto continua sendo "3", senão o rótulo não casaria com a aba nem com o mapa.
-    const r = rotulosDosPontos([ponto({ bairro: 'X' }), ponto({ bairro: null }), ponto({ bairro: null })])
-    expect(r[1]).toBe('2 · São Paulo')
-    expect(r[2]).toBe('3 · São Paulo')
+  it('o número é o ordinal DENTRO do grupo de mesmo nome', () => {
+    const r = rotulosDosPontos([
+      ponto({ bairro: 'Centro' }),
+      ponto({ bairro: 'X' }),
+      ponto({ bairro: 'Centro' }),
+      ponto({ bairro: 'X' }),
+    ])
+    expect(r).toEqual(['Centro #1', 'X #1', 'Centro #2', 'X #2'])
+  })
+
+  it('fallback de coordenada: sem bairro nem município, o nome é a coordenada', () => {
+    const r = rotulosDosPontos([
+      ponto({ bairro: null, municipio: null, lat: -16.6869, lng: -49.2648 }),
+      ponto({ bairro: null, municipio: null, lat: -16.6869, lng: -49.2648 }),
+      ponto({ bairro: null, municipio: null, lat: -15.7939, lng: -47.8828 }),
+    ])
+    expect(r).toEqual(['-16.6869, -49.2648 #1', '-16.6869, -49.2648 #2', '-15.7939, -47.8828'])
+  })
+
+  it('delega para rotulosUnicos — as duas comparações não divergem', () => {
+    const ps = [ponto({ bairro: null }), ponto({ bairro: 'Bela Vista' }), ponto({ bairro: null })]
+    expect(rotulosDosPontos(ps)).toEqual(rotulosUnicos(ps.map(rotuloDoPonto)))
   })
 
   it('resultado nunca tem duas entradas iguais', () => {
@@ -205,6 +281,79 @@ describe('rotulosDosPontos', () => {
   })
 })
 
+describe('rotulosPartidosDosPontos', () => {
+  it('parte o rótulo em nome + "#k" (o sufixo fica fora do ellipsis)', () => {
+    expect(
+      rotulosPartidosDosPontos([ponto({ bairro: 'Centro' }), ponto({ bairro: 'Centro' }), ponto()]),
+    ).toEqual([
+      { base: 'Centro', sufixo: '#1' },
+      { base: 'Centro', sufixo: '#2' },
+      { base: 'Bela Vista', sufixo: null },
+    ])
+  })
+})
+
+describe('pinsDaComparacao', () => {
+  it('um pin por item, cada um na cor de identidade do SEU índice', () => {
+    const fichas = [
+      ponto({ bairro: 'A', lat: -23.5, lng: -46.6 }),
+      ponto({ bairro: 'B', lat: -23.6, lng: -46.7 }),
+      ponto({ bairro: 'C', lat: -23.7, lng: -46.8 }),
+    ]
+    const pins = pinsDaComparacao(fichas, 1, ['A', 'B', 'C'])
+    expect(pins).toHaveLength(3)
+    pins.forEach((p, i) => {
+      expect(p.indice).toBe(i)
+      expect(p.rgb).toEqual(corDeIdentidadeRgb(i))
+      expect(p.lat).toBe(fichas[i].lat)
+      expect(p.lng).toBe(fichas[i].lng)
+      expect(p.hexId).toBe('87a8100c5ffffff')
+      expect(p.geometria).toBeNull()
+    })
+    expect(pins.map((p) => p.rotulo)).toEqual(['A', 'B', 'C'])
+    expect(pins.map((p) => p.ativo)).toEqual([false, true, false])
+  })
+
+  it('nenhuma aba aberta: nenhum pin ativo', () => {
+    const pins = pinsDaComparacao([ponto(), ponto({ lat: -23 })], null, ['X #1', 'X #2'])
+    expect(pins.every((p) => !p.ativo)).toBe(true)
+  })
+
+  it('rótulo faltando cai na coordenada, nunca em pin sem nome', () => {
+    const pins = pinsDaComparacao([{ lat: -16.68691, lng: -49.26482 }], 0, [])
+    expect(pins[0].rotulo).toBe('-16.6869, -49.2648')
+    expect(pins[0].hexId).toBeNull()
+  })
+
+  it('aceita item de GEOMETRIA: pin no representative_point, contorno preservado', () => {
+    const anel: [number, number][] = [
+      [-46.6, -23.5],
+      [-46.59, -23.5],
+      [-46.59, -23.49],
+      [-46.6, -23.5],
+    ]
+    const pins = pinsDaComparacao(
+      [ponto({ bairro: 'A' }), { lat: -23.497, lng: -46.594, hex_id: null, geometria: [anel] }],
+      1,
+      ['A', 'Área desenhada'],
+    )
+    expect(pins[1]).toMatchObject({
+      lat: -23.497,
+      lng: -46.594,
+      indice: 1,
+      rotulo: 'Área desenhada',
+      ativo: true,
+      hexId: null,
+    })
+    expect(pins[1].geometria).toEqual([anel])
+    expect(pins[1].rgb).toEqual(corDeIdentidadeRgb(1))
+  })
+
+  it('lista vazia devolve lista vazia', () => {
+    expect(pinsDaComparacao([], null, [])).toEqual([])
+  })
+})
+
 describe('compararPontos', () => {
   it('usa o mesmo nucleo: frase com "porem" quando ha vantagem e desvantagem', () => {
     const a = ponto({ bairro: 'A', residual: 9000, conc: 1, populacao: 20000 })
@@ -213,7 +362,7 @@ describe('compararPontos', () => {
     expect(c.frase).toContain('mais residual disponível')
     expect(c.frase).toContain('menos concorrentes')
     expect(c.frase).toContain('porém')
-    expect(c.frase).toContain('menos população no raio')
+    expect(c.frase).toContain('menos população que')
   })
 
   it('respeita o teto de 3 dimensoes na frase', () => {
@@ -353,5 +502,72 @@ describe('subtituloDoDeckDePontos', () => {
   it('um ponto so, e a lista vazia, seguem legiveis', () => {
     expect(subtituloDoDeckDePontos([ponto({ municipio: 'Posse' })])).toBe('Posse - 1 pontos')
     expect(subtituloDoDeckDePontos([])).toBe('0 pontos')
+  })
+})
+
+/* ---------------- Área desenhada (DEC-071) ---------------- */
+describe('área desenhada na comparação', () => {
+  const anel: [number, number][][] = [[[-46.63, -23.55], [-46.62, -23.55], [-46.62, -23.54], [-46.63, -23.55]]]
+  const area = {
+    lat: -23.546, lng: -46.624, raio_km: null, hex_id: 'x',
+    local: { uf: 'SP', municipio: 'São Paulo', bairro: 'Santana', unidade_tipo: null },
+    geometria: anel,
+    recorte: { tipo: 'poligono', area_km2: 2.4, n_vertices: 3, metodo: 'x' },
+    mercado: { disponivel: true, sam: 1, residual: 1, score_residual: 1, grao: 'geometria', area_km2: 2.4 },
+  } as unknown as PontoPayload
+  const ponto = {
+    lat: -23.546, lng: -46.624, raio_km: 1, hex_id: 'x',
+    local: { uf: 'SP', municipio: 'São Paulo', bairro: 'Santana', unidade_tipo: null },
+    mercado: { disponivel: true, sam: 1, residual: 1, score_residual: 1 },
+  } as unknown as PontoPayload
+
+  it('chama-se "Área desenhada", e não pelo bairro do ponto interno', () => {
+    expect(rotuloDoPonto(area)).toBe('Área desenhada')
+    expect(rotulosDosPontos([area, area])).toEqual(['Área desenhada #1', 'Área desenhada #2'])
+  })
+
+  it('o recorte em texto: área com km², ponto com o raio em km (a mesma escrita da conta do mercado)', () => {
+    expect(rotuloDoRecorte(area)).toBe('área desenhada de 2,40 km²')
+    expect(rotuloDoRecorte(ponto)).toBe('raio de 1 km')
+  })
+
+  it('buscar a coordenada do ponto interno NÃO abre a área', () => {
+    expect(indiceDoMesmoPonto([area], area.lat, area.lng)).toBe(-1)
+    expect(indiceDoMesmoPonto([area, ponto], ponto.lat, ponto.lng)).toBe(1)
+  })
+
+  it('o PDF de comparação recusa lista com área, dizendo por quê', () => {
+    expect(motivoSemPdfDeComparacao([ponto, ponto])).toBeNull()
+    expect(motivoSemPdfDeComparacao([ponto, area])).toMatch(/segue em desenvolvimento/)
+  })
+
+  it('a mesma área casa pelos vértices; o ponto nunca casa como área', () => {
+    expect(indiceDaMesmaArea([ponto, area], anel)).toBe(1)
+    expect(indiceDaMesmaArea([ponto], anel)).toBe(-1)
+    expect(ehAreaDesenhada(area)).toBe(true)
+    expect(ehAreaDesenhada(ponto)).toBe(false)
+  })
+
+  it('com área na lista, os TOTAIS saem da comparação; as intensivas ficam', () => {
+    // 25 km² contra 3,14 km²: comparar população/residual/concorrentes mediria o tamanho.
+    const chaves = dimensoesDoComparativo([ponto, area]).map((d) => d.chave)
+    expect(chaves).not.toContain('residual')
+    expect(chaves).not.toContain('populacao')
+    expect(chaves).not.toContain('concorrentes')
+    expect(chaves).toEqual(['renda_domiciliar', 'score', 'densidade'])
+    expect(avisoDimensoesCortadas([ponto, area])).toMatch(/tamanhos diferentes/)
+  })
+
+  it('só pontos com raio: todas as dimensões, sem aviso', () => {
+    expect(dimensoesDoComparativo([ponto, ponto])).toBe(DIMENSOES_PONTO)
+    expect(avisoDimensoesCortadas([ponto, ponto])).toBeNull()
+  })
+
+  it('o veredito de dois itens com área não fala de população nem de residual', () => {
+    const grande = { ...area, censo: { populacao: 400000 }, concorrencia: { n_concorrentes: 40 } } as unknown as PontoPayload
+    const pequeno = { ...ponto, censo: { populacao: 30000 }, concorrencia: { n_concorrentes: 3 } } as unknown as PontoPayload
+    const c = compararPontos(grande, pequeno, 'Área desenhada', 'Santana')
+    expect(c.frase).not.toMatch(/popula/i)
+    expect(c.frase).not.toMatch(/concorrente/i)
   })
 })
