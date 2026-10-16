@@ -147,8 +147,6 @@ def _texto_da_pagina(sel) -> str:
     import io
     import re
 
-    from pypdf import PdfReader
-
     from motor_expansao.dashboard import relatorio_municipal as rm
 
     pdf = rm._UltraPDF()
@@ -156,7 +154,11 @@ def _texto_da_pagina(sel) -> str:
     rm._praca_onde_crescer_page(
         pdf, {}, praca, {}, primary=rm.ULTRA_TURQUESA, secondary=rm.ULTRA_TURQUESA
     )
-    paginas = PdfReader(io.BytesIO(bytes(pdf.output()))).pages
+    # A conta de folhas vem do proprio fpdf2 e roda em qualquer ambiente; so a extracao do
+    # texto precisa do pypdf, que o CI nao instala (mesmo molde do `pypdfium2` no export).
+    assert pdf.page == 1, "a nota do criterio empurrou a pagina para uma segunda folha"
+    pypdf = pytest.importorskip("pypdf", reason="sem extrator de PDF no ambiente (o CI nao instala o pypdf)")
+    paginas = pypdf.PdfReader(io.BytesIO(bytes(pdf.output()))).pages
     assert len(paginas) == 1, "a nota do criterio empurrou a pagina para uma segunda folha"
     return re.sub(r"\s+", " ", paginas[0].extract_text())
 

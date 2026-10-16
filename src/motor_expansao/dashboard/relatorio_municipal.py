@@ -979,24 +979,40 @@ def _renda_domiciliar_dos_setores(
     })
 
 
-def _setores_que_alcancam(setores: pd.DataFrame, hexes_alvo: set[str]) -> pd.DataFrame:
+def _arvore_dos_hexes(hexes_alvo: set[str]) -> Any:
+    """STRtree dos poligonos dos hexagonos alvo -- montada UMA vez por relatorio.
+
+    Montar a arvore custa um `Polygon` por hexagono; refeita a cada particao lida (a propria e
+    cada vizinha), Altamira/PA (27.538 hexagonos, 13 vizinhos) construia ~400 mil poligonos
+    so' para o pre-filtro. `carregar_renda_domiciliar_por_hex` monta uma e a repassa.
+    """
+    import h3 as _h3
+    from shapely.geometry import Polygon
+    from shapely.strtree import STRtree
+
+    return STRtree([
+        Polygon([(lng, lat) for lat, lng in _h3.cell_to_boundary(h)]) for h in sorted(hexes_alvo)
+    ])
+
+
+def _setores_que_alcancam(
+    setores: pd.DataFrame, hexes_alvo: set[str], *, arvore: Any = None
+) -> pd.DataFrame:
     """So' os setores cujo BBOX toca algum hexagono alvo -- pre-filtro barato, por STRtree.
 
     Existe pelo custo: a particao de um vizinho (Guarulhos, para Sao Paulo) chega inteira, e
     quase nenhum setor dela encosta nos hexagonos do relatorio. Setor sem bbox fica (o filtro
     fino e' a intersecao, adiante). Conservador por construcao: bbox contem o setor.
+
+    `arvore`: a de `_arvore_dos_hexes(hexes_alvo)`, ja montada; sem ela monta aqui.
     """
-    import h3 as _h3
     import shapely
-    from shapely.geometry import Polygon
-    from shapely.strtree import STRtree
 
     cols = ("bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy")
     if not hexes_alvo or not set(cols).issubset(setores.columns):
         return setores
-    arvore = STRtree([
-        Polygon([(lng, lat) for lat, lng in _h3.cell_to_boundary(h)]) for h in sorted(hexes_alvo)
-    ])
+    if arvore is None:
+        arvore = _arvore_dos_hexes(hexes_alvo)
     xy = [pd.to_numeric(setores[c], errors="coerce").to_numpy(dtype="float64") for c in cols]
     sem_bbox = np.isnan(np.column_stack(xy)).any(axis=1)
     caixas = shapely.box(*xy)
@@ -1014,6 +1030,7 @@ def contribuicoes_renda_por_area(
     cod_municipio: str | None,
     *,
     hexes_alvo: set[str] | None = None,
+    arvore_alvo: Any = None,
 ) -> dict[str, tuple[float, float]]:
     """`hex_id` -> (numerador, denominador) da renda domiciliar, atribuindo por AREA. Pura.
 
@@ -1034,6 +1051,9 @@ def contribuicoes_renda_por_area(
 
     Setor sem `geometry_wkb` legivel cai no criterio ANTIGO (inteiro no hexagono do centro do
     bbox) em vez de sumir: particao antiga sem a coluna continua tendo renda.
+
+    `arvore_alvo`: STRtree de `_arvore_dos_hexes(hexes_alvo)`, para o chamador que soma varias
+    particoes montar a arvore uma vez so'.
     """
     import h3 as _h3
     import shapely
@@ -1042,7 +1062,7 @@ def contribuicoes_renda_por_area(
     if setores is None or setores.empty:
         return {}
     if hexes_alvo is not None:
-        setores = _setores_que_alcancam(setores, hexes_alvo)
+        setores = _setores_que_alcancam(setores, hexes_alvo, arvore=arvore_alvo)
         if setores.empty:
             return {}
     elegiveis = _renda_domiciliar_dos_setores(setores, uf, cod_municipio)
@@ -1245,14 +1265,30 @@ def carregar_renda_domiciliar_por_hex(
         if chave not in particoes:
             particoes.append(chave)
 
+    log = logging.getLogger(__name__)
+    arvore = _arvore_dos_hexes(alvo) if alvo else None
     total: dict[str, list[float]] = {}
     for n, (uf_p, cod_p) in enumerate(particoes):
         setores = _ler(uf_p, cod_p)
         if setores is None or setores.empty:
+            if n == 0:
+                # Sem a particao do PROPRIO municipio, so' os vizinhos contribuiriam: a renda
+                # sairia apenas nos hexagonos de borda e o "Onde crescer" mediria a cidade por
+                # eles, sem aviso. "Não disponível" em todos e' a leitura honesta.
+                log.warning(
+                    "renda por hexagono: particao do proprio municipio %s/%s ausente ou vazia; "
+                    "renda indisponivel no relatorio", uf_p, cod_p,
+                )
+                return {}
             continue
         try:
-            parcial = contribuicoes_renda_por_area(setores, uf_p, cod_p, hexes_alvo=alvo)
+            parcial = contribuicoes_renda_por_area(
+                setores, uf_p, cod_p, hexes_alvo=alvo, arvore_alvo=arvore
+            )
         except Exception:  # noqa: BLE001 - vizinho ruim nao derruba a renda do municipio
+            log.warning(
+                "renda por hexagono: calculo falhou na particao %s/%s", uf_p, cod_p, exc_info=True
+            )
             if n == 0:
                 return {}
             continue

@@ -230,6 +230,56 @@ def test_malha_tocados_devolve_municipios_que_os_hexagonos_tocam():
     assert malha.tocados(box(5.5, 5.5, 5.6, 5.6)) == [("MG", "3")]
 
 
+def test_malha_tocados_fora_de_da_o_mesmo_que_tocados_sem_o_proprio():
+    """A consulta invertida (candidato da malha contra a arvore dos hexagonos) existe so' pelo
+    custo -- Altamira/PA ia de ~10 s a ~1 s. A resposta tem de ser a de `tocados` sem o proprio,
+    com a mesma ordem e a comparacao de UF sem caixa."""
+    import numpy as np
+    from shapely.strtree import STRtree
+
+    from motor_expansao.api.service import _MalhaMunicipal
+
+    geoms = [box(0, 0, 1, 1), box(1, 0, 2, 1), box(0, 1, 2, 2), box(5, 5, 6, 6)]
+    meta = [("SP", "1"), ("sp", "2"), ("MG", "3"), ("MG", "4")]
+    malha = _MalhaMunicipal(STRtree(geoms), meta, geoms)
+    casos = [
+        np.array([box(0.8, 0.2, 1.2, 0.4), box(0.1, 0.1, 0.2, 0.2)], dtype=object),
+        np.array([box(0.5, 0.5, 1.5, 1.5)], dtype=object),
+        np.array([box(0.1, 0.1, 0.2, 0.2)], dtype=object),
+        np.array([box(9, 9, 9.1, 9.1)], dtype=object),
+    ]
+    for hexes in casos:
+        for proprio in [("SP", "1"), ("SP", "2"), ("MG", "3")]:
+            esperado = [c for c in malha.tocados(hexes) if (c[0].upper(), c[1]) != proprio]
+            assert malha.tocados_fora_de(hexes, proprio) == esperado
+
+
+def test_sem_a_particao_do_proprio_municipio_a_renda_nao_sai_so_da_borda(
+    tmp_path, _formula_neutra
+):
+    """Sem a particao do PROPRIO municipio, so' o vizinho contribuia: a renda saia apenas nos
+    hexagonos de borda e o "Onde crescer" media a cidade por eles, sem aviso. Agora a ausencia
+    da propria particao devolve `{}` ("Não disponível" em todos), como antes da DEC-072."""
+    a, b, _pa, _pb, borda, dentro = _geografia()
+
+    def _gravar(cod: str, linhas: list[dict]) -> None:
+        destino = tmp_path / "uf=SP" / f"cod_municipio={cod}"
+        destino.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(linhas).to_parquet(destino / "part-000.parquet", index=False)
+
+    _gravar("3502754", [_setor("V", borda, 2000.0, 10.0)])
+    sem_proprio = rm.carregar_renda_domiciliar_por_hex(
+        "SP", "3550605", tmp_path, hexes=[a, b], vizinhos=[("SP", "3502754")]
+    )
+    assert sem_proprio == {}
+
+    _gravar("3550605", [_setor("P", dentro, 1000.0, 10.0)])
+    com_proprio = rm.carregar_renda_domiciliar_por_hex(
+        "SP", "3550605", tmp_path, hexes=[a, b], vizinhos=[("SP", "3502754")]
+    )
+    assert a in com_proprio  # com a propria particao, o vizinho volta a somar normalmente
+
+
 # --- regressao com dado real ---------------------------------------------------------------
 
 

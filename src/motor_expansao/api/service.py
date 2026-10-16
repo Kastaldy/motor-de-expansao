@@ -124,6 +124,32 @@ class _MalhaMunicipal:
             vistos.setdefault(i, None)
         return [self._meta[i] for i in vistos]
 
+    def tocados_fora_de(self, geometrias, proprio: tuple[str, str]) -> list[tuple[str, str]]:
+        """`tocados(geometrias)` sem o municipio `proprio` -- o mesmo resultado, mais barato.
+
+        Com milhares de hexagonos, `tocados` testa CADA um contra o poligono do proprio
+        municipio, o mais detalhado da consulta e o unico que todos tocam: Altamira/PA (27.538
+        hexagonos) gastava ~10 s nisso. Aqui a arvore da malha da' so' os CANDIDATOS por caixa
+        e a interseccao exata roda ao contrario -- cada candidato (exceto o proprio) contra a
+        arvore dos hexagonos. `intersects` e' simetrico, entao a resposta e' a mesma.
+        """
+        import numpy as np
+        from shapely.strtree import STRtree
+
+        geoms = np.atleast_1d(np.asarray(geometrias, dtype=object))
+        candidatos = self._tree.query(geoms)
+        indices = candidatos[1] if getattr(candidatos, "ndim", 1) == 2 else candidatos
+        alvo = (str(proprio[0]).upper(), str(proprio[1]))
+        arvore_hex = STRtree(list(geoms))
+        resultado: list[tuple[str, str]] = []
+        for i in sorted({int(x) for x in indices}):
+            uf_i, cod_i = self._meta[i]
+            if (str(uf_i).upper(), str(cod_i)) == alvo:
+                continue
+            if len(arvore_hex.query(self._geoms[i], predicate="intersects")):
+                resultado.append(self._meta[i])
+        return resultado
+
     def alcancados_na_geometria(
         self, geometria, margem_km: float = _MARGEM_GEOMETRIA_KM
     ) -> list[tuple[str, str]]:
@@ -311,9 +337,12 @@ def _municipios_vizinhos_dos_hexes(
             [Polygon([(lng, lat) for lat, lng in h3.cell_to_boundary(h)]) for h in hex_ids],
             dtype=object,
         )
-        proprio = (str(uf).upper(), str(cod_municipio))
-        return [chave for chave in malha.tocados(poligonos) if (chave[0].upper(), chave[1]) != proprio]
+        return malha.tocados_fora_de(poligonos, (str(uf), str(cod_municipio)))
     except Exception:  # noqa: BLE001 - vizinho e' refinamento, nunca derruba o relatorio
+        logging.getLogger(__name__).warning(
+            "renda por hexagono: municipios vizinhos indisponiveis para %s/%s; a renda de borda "
+            "sai so' com a parte de dentro", uf, cod_municipio, exc_info=True,
+        )
         return []
 
 
