@@ -672,6 +672,22 @@ def capacidade_necessaria(path: str, metodo: str) -> str | None:
     return None
 
 
+#: Throttle do log de RBAC indisponivel: UMA linha por episodio, como o `_fail_closed_logado`
+#: do JSON. Sem ele, cada pedido degradado gravava um ERROR -- milhares por segundo num mapa
+#: com o banco fora, e o erro que importa se perdia no meio. Volta a `False` quando o banco
+#: responde de novo (`motivo_bloqueio_por_banco`).
+_rbac_indisponivel_logado = False
+
+
+def banco_em_falha() -> bool:
+    """O ultimo uso do banco terminou em `BancoIndisponivel`? Sem o pacote, `False`."""
+    try:
+        from motor_expansao.db import postgres
+    except ImportError:
+        return False
+    return postgres.banco_em_falha()
+
+
 def motivo_bloqueio_banco_indisponivel(path: str, metodo: str, erro: object) -> str | None:
     """A resposta do gate quando o banco NAO respondeu -- a degradação, isolada.
 
@@ -684,7 +700,10 @@ def motivo_bloqueio_banco_indisponivel(path: str, metodo: str, erro: object) -> 
         return None
     if not _fail_closed_ativo():
         return None  # dev: fail-open histórico
-    _LOG.error("RBAC indisponivel (%s) — negando capacidades sensiveis", erro)
+    global _rbac_indisponivel_logado
+    if not _rbac_indisponivel_logado:
+        _rbac_indisponivel_logado = True
+        _LOG.error("RBAC indisponivel (%s) — negando capacidades sensiveis", erro)
     if necessaria in CAPACIDADES_SENSIVEIS:
         return "Acesso indisponível no momento. Tente novamente em instantes."
     return None
@@ -709,6 +728,9 @@ def motivo_bloqueio_por_banco(path: str, metodo: str, usuario: object) -> str | 
         quem = rbac.identidade(normalizar_usuario(usuario))
     except (db.BancoIndisponivel, db.BancoNaoConfigurado) as erro:
         return motivo_bloqueio_banco_indisponivel(path, metodo, erro)
+
+    global _rbac_indisponivel_logado
+    _rbac_indisponivel_logado = False  # banco respondeu: o proximo episodio volta a logar
 
     if quem is None or not quem.pode(necessaria):
         return "Seu usuário não tem acesso a esta área do piloto. Fale com o Felipe."

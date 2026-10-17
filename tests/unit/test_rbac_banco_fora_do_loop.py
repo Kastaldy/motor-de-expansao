@@ -826,7 +826,9 @@ def test_disjuntor_responde_na_hora_depois_de_um_pool_timeout(
     assert pool.pedidos == 1, "com o disjuntor aberto, o pool nao pode ser tocado"
 
     # Janela vencida: volta a tentar o banco de verdade.
-    monkeypatch.setattr(mod, "_disjuntor_ate", time.monotonic() - 1)
+    # Atribuicao direta, NAO `monkeypatch.setattr`: o monkeypatch desfaz DEPOIS do teardown
+    # do `_ambiente` e restauraria o disjuntor ABERTO para o teste seguinte (medido: 2,7 s).
+    mod._disjuntor_ate = time.monotonic() - 1
     with pytest.raises(db.BancoIndisponivel, match="PoolTimeout"):
         with db.conexao():
             pass
@@ -910,6 +912,8 @@ def test_fila_do_banco_cheia_da_o_fail_closed_no_prazo(monkeypatch: pytest.Monke
     com 200 pedidos e `LOCK TABLE usuarios`, 84 estouravam os 30 s do cliente."""
     monkeypatch.setenv("MOTOR_ACESSO_FAIL_CLOSED", "1")
     monkeypatch.setattr(pilot, "ESPERA_FILA_BANCO_S", 0.1)
+    # A evidencia de queda: o banco acabou de levantar `BancoIndisponivel`.
+    monkeypatch.setattr(acesso, "banco_em_falha", lambda: True)
     chamadas: list[str] = []
     _identidade_lenta(monkeypatch, {"territorio.explorar", "rede.ver"}, chamadas)
 
@@ -974,6 +978,308 @@ def test_relatorio_espera_a_vez_sem_prazo(monkeypatch: pytest.MonkeyPatch) -> No
     assert pedidos and "prazo_na_fila_s" not in pedidos[0]
 
 
+def _inundar_com_banco_lento(
+    monkeypatch: pytest.MonkeyPatch, permissoes: set[str], sem_resposta_s: float = 10 * LENTO_S
+) -> tuple[list[Any], list[str]]:
+    """Todas as vagas presas numa chamada de `LENTO_S`, e mais seis rotas controladas chegando.
+
+    Com o `sem_resposta_s` padrao, bem acima de `LENTO_S`, o banco esta' NO AR na escala do
+    teste -- como 5 ms contra 2 s em producao. Abaixo de `LENTO_S`, as chamadas presas ja'
+    provam que ele nao responde."""
+    monkeypatch.setenv("MOTOR_ACESSO_FAIL_CLOSED", "1")
+    monkeypatch.setattr(pilot, "ESPERA_FILA_BANCO_S", 0.1)
+    monkeypatch.setattr(pilot, "BANCO_SEM_RESPOSTA_S", sem_resposta_s)
+    chamadas: list[str] = []
+    _identidade_lenta(monkeypatch, permissoes, chamadas)
+    caminhos = [
+        "/api/uf/SP",
+        "/api/relatorio/pontual",
+        "/api/oportunidades",
+        "/api/pin-concorrente/1",
+        "/api/rede/carteira",
+        "/api/oportunidades/9/dossie",
+    ]
+
+    async def cenario() -> list[Any]:
+        presas = [
+            asyncio.create_task(
+                pilot._controle_de_acesso_por_aba(_Requisicao(f"/api/uf/U{i}"), _proximo)
+            )
+            for i in range(pilot.LIMITE_THREADS_BANCO)
+        ]
+        await asyncio.sleep(0.05)
+        atrasadas = await asyncio.gather(
+            *(pilot._controle_de_acesso_por_aba(_Requisicao(c), _proximo) for c in caminhos)
+        )
+        await asyncio.gather(*presas)
+        return list(atrasadas)
+
+    return asyncio.run(cenario()), caminhos
+
+
+def test_fila_cheia_com_banco_no_ar_nao_libera_quem_nao_tem_a_capacidade(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O FURO da revisao de 17/10/2026: fila cheia com o banco SAUDAVEL era tratada como banco
+    fora, e a degradacao liberava as rotas nao sensiveis sem checar permissao -- um usuario
+    SEM capacidade nenhuma passava 532 de 1500 pedidos so' por inundar o piloto. Sem
+    evidencia de queda, nenhuma rota controlada pode responder 200: e' 503, com Retry-After."""
+    respostas, caminhos = _inundar_com_banco_lento(monkeypatch, set())
+    assert [r.status_code for r in respostas] == [503] * len(caminhos)
+    assert all(r.headers.get("retry-after") for r in respostas)
+
+
+def test_fila_cheia_sem_evidencia_nega_tambem_a_quem_tem_acesso(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O preco declarado: sob carga real, ate' quem tem a capacidade recebe 503 -- e nunca
+    um 403 que pareceria falta de permissao."""
+    respostas, caminhos = _inundar_com_banco_lento(
+        monkeypatch, {"territorio.explorar", "rede.ver", "imovel.dossie_ver"}
+    )
+    assert [r.status_code for r in respostas] == [503] * len(caminhos)
+
+
+def test_chamada_presa_no_banco_e_evidencia_de_queda_desde_o_inicio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O COMECO da queda: nenhuma chamada falhou ainda (o `PoolTimeout` leva 5 s), mas as
+    vagas estao presas ha' mais que o limiar. A fila cheia ja' recebe a degradacao do banco
+    fora -- 403 so' nas sensiveis -- e nao 503 em tudo (medido em `docker stop`: 194 de 200
+    pins com 503 no primeiro mapa da queda, sem esta segunda evidencia)."""
+    respostas, caminhos = _inundar_com_banco_lento(monkeypatch, set(), sem_resposta_s=0.05)
+    assert not acesso.banco_em_falha()
+    por_caminho = dict(zip(caminhos, (r.status_code for r in respostas), strict=True))
+    assert por_caminho == {
+        "/api/uf/SP": 200,
+        "/api/relatorio/pontual": 200,
+        "/api/oportunidades": 200,
+        "/api/pin-concorrente/1": 200,
+        "/api/rede/carteira": 403,
+        "/api/oportunidades/9/dossie": 403,
+    }
+
+
+def test_chamadas_em_voo_saem_do_registro() -> None:
+    """Marca esquecida envelheceria para sempre e viraria evidencia de queda permanente."""
+
+    def falha() -> None:
+        raise db.BancoIndisponivel("x")
+
+    async def cenario() -> int:
+        await pilot._no_banco(lambda: None, prazo_na_fila_s=0.2)
+        with pytest.raises(db.BancoIndisponivel):
+            await pilot._no_banco(falha, prazo_na_fila_s=0.2)
+        return len(pilot._em_voo_banco())
+
+    assert asyncio.run(cenario()) == 0
+
+
+def test_evidencia_de_queda_vem_do_banco_e_some_com_o_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`BancoIndisponivel` de `conexao()` carimba a evidencia; `fechar_pool` a apaga; erro de
+    PROGRAMACAO nao carimba (senao um schema errado viraria "banco fora" e liberaria rota)."""
+    assert not acesso.banco_em_falha()
+    _instalar(monkeypatch, _ConexaoQueFalha(psycopg.errors.UndefinedTable("nao existe")))
+    with pytest.raises(psycopg.errors.UndefinedTable):
+        with db.conexao() as con:
+            con.execute("SELECT 1")
+    assert not acesso.banco_em_falha()
+    db.fechar_pool()
+    _instalar(monkeypatch, _ConexaoQueFalha(psycopg.OperationalError("caiu")))
+    with pytest.raises(db.BancoIndisponivel):
+        with db.conexao() as con:
+            con.execute("SELECT 1")
+    assert acesso.banco_em_falha()
+    db.fechar_pool()
+    assert not acesso.banco_em_falha()
+
+
+@pytest.mark.parametrize("abrir", ["leitura", "escrita"])
+def test_evidencia_dura_ate_o_banco_responder(
+    monkeypatch: pytest.MonkeyPatch, abrir: str
+) -> None:
+    """ESTADO, nao janela: sem trafego, a evidencia nao envelhece -- a primeira rajada depois
+    de um silencio, com o banco ainda fora, tem de cair na degradacao e nao no 503 (medido em
+    `docker stop` com a janela de 10 s). Ela so' some quando um uso termina BEM."""
+    pool = _instalar_roteiro(
+        monkeypatch, [_ConexaoRoteirizada(morta=False), _ConexaoRoteirizada(morta=False)]
+    )
+    mod._marcar_indisponivel()
+    assert acesso.banco_em_falha()
+    with pytest.raises(KeyError):  # erro da APLICACAO no corpo nao prova nada sobre o banco
+        with db.conexao() if abrir == "leitura" else db.transacao(id_usuario=1):
+            raise KeyError("x")
+    assert acesso.banco_em_falha()
+    with db.conexao() if abrir == "leitura" else db.transacao(id_usuario=1):
+        pass
+    assert not acesso.banco_em_falha()
+    assert pool.emprestadas == 2
+
+
+def test_disjuntor_aberto_renova_a_evidencia(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Com o banco fora, quem renova a evidencia durante a janela e' o proprio disjuntor."""
+    mod._disjuntor_ate = time.monotonic() + 1
+    mod._em_falha = False
+    with pytest.raises(db.BancoIndisponivel, match="nova tentativa"):
+        with db.conexao():
+            pass
+    assert mod.banco_em_falha()
+
+
+def test_fila_nao_deixa_furar() -> None:
+    """Revisao de 17/10/2026: o `CapacityLimiter` do anyio 4.13 deixava uma recem-chegada
+    furar a fila -- ao liberar, ele acorda quem espera, mas a vaga so' e' tomada quando essa
+    tarefa volta a rodar. Reproduzido: 7 emprestimos num limite de 6, e a 7a requisicao
+    esperava a THREAD sem prazo. Cenario deterministico: seis presas, W esperando, uma vaga
+    liberada e N agendada ANTES de W voltar a rodar. So' W pode entrar."""
+
+    async def cenario() -> list[str]:
+        fila, _threads = pilot._limites_banco()
+        soltar = [anyio.Event() for _ in range(pilot.LIMITE_THREADS_BANCO)]
+        entraram: list[str] = []
+
+        async def presa(i: int) -> None:
+            await fila.acquire()
+            try:
+                await soltar[i].wait()
+            finally:
+                fila.release()
+
+        async def chega(nome: str) -> None:
+            await fila.acquire()
+            entraram.append(nome)
+
+        async with anyio.create_task_group() as tg:
+            for i in range(pilot.LIMITE_THREADS_BANCO):
+                tg.start_soon(presa, i)
+            await anyio.sleep(0.02)
+            tg.start_soon(chega, "W")
+            await anyio.sleep(0.02)
+            soltar[0].set()  # a presa 0 roda primeiro e libera a vaga...
+            tg.start_soon(chega, "N")  # ...e N roda antes de W voltar
+            await anyio.sleep(0.05)
+            resultado = list(entraram)
+            tg.cancel_scope.cancel()
+        return resultado
+
+    assert asyncio.run(cenario()) == ["W"]
+
+
+def test_portao_de_sessao_com_fila_cheia_responde_503_no_prazo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O `validar` do portao tem prazo de fila: sem ele, com as vagas presas, o login de todo
+    mundo esperaria o banco sem fundo em vez de ouvir 503."""
+    monkeypatch.setattr(pilot, "ESPERA_FILA_BANCO_S", 0.1)
+    monkeypatch.setenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, "1")
+
+    def validar_lento(_token: str) -> None:
+        time.sleep(LENTO_S)
+        return None
+
+    monkeypatch.setattr(db_sessoes, "validar", validar_lento)
+
+    class Req:
+        def __init__(self) -> None:
+            self.url = _Url("/api/uf/SP")
+            self.cookies: dict[str, str] = {}
+            self.scope: dict[str, Any] = {"headers": []}
+
+    async def cenario() -> tuple[Any, float, list[Any]]:
+        presas = [
+            asyncio.create_task(pilot._portao_de_sessao(Req(), _proximo))
+            for _ in range(pilot.LIMITE_THREADS_BANCO)
+        ]
+        await asyncio.sleep(0.05)
+        inicio = time.perf_counter()
+        atrasada = await pilot._portao_de_sessao(Req(), _proximo)
+        decorrido = time.perf_counter() - inicio
+        return atrasada, decorrido, list(await asyncio.gather(*presas))
+
+    atrasada, decorrido, presas = asyncio.run(cenario())
+    assert atrasada.status_code == 503
+    assert decorrido < LENTO_S, f"o portao esperou a fila ({decorrido:.3f}s)"
+    assert {r.status_code for r in presas} == {401}
+
+
+def test_no_banco_nao_usa_o_pool_padrao_de_threads() -> None:
+    """Com o pool PADRAO tomado (rotas `def`, estaticos), a ida ao banco segue: ela tem o
+    limitador de threads proprio, e nao disputa thread com o resto do app."""
+
+    async def cenario() -> float:
+        padrao = anyio.to_thread.current_default_thread_limiter()
+        padrao.total_tokens = 1
+        ocupando = asyncio.create_task(anyio.to_thread.run_sync(time.sleep, LENTO_S))
+        await asyncio.sleep(0.05)
+        inicio = time.perf_counter()
+        assert await pilot._no_banco(lambda: 7, prazo_na_fila_s=1.0) == 7
+        decorrido = time.perf_counter() - inicio
+        await ocupando
+        return decorrido
+
+    decorrido = asyncio.run(cenario())
+    assert decorrido < RAPIDO_S, f"a ida ao banco esperou o pool padrao ({decorrido:.3f}s)"
+
+
+def test_os_tempos_cabem_um_no_outro() -> None:
+    """Os testes de comportamento trocam os prazos por monkeypatch: estes asserts travam o
+    TETO dos valores reais, que nenhum deles via (mutantes de 600 s / 300 s / 30 s passavam).
+
+    * a fila desiste ANTES do pool: senao "fila cheia" chega depois de o banco ja' responder;
+    * a conexao abre ANTES do pool desistir: senao o pool desiste de toda conexao nova;
+    * o disjuntor nao fica mais aberto que uma espera de pool.
+    """
+    assert 0 < pilot.ESPERA_FILA_BANCO_S < mod.TIMEOUT_POOL_S
+    assert mod.TIMEOUT_CONEXAO_S < mod.TIMEOUT_POOL_S
+    assert 0 < mod.JANELA_DISJUNTOR_S <= mod.TIMEOUT_POOL_S
+
+
+def test_keepalive_tcp_chega_na_conexao_e_a_url_vence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sem keepalive, uma queda de rede sem RST prendia thread e conexao por 15 min a 2 h: o
+    `statement_timeout` e' do servidor, e o servidor nao esta' mais la'."""
+    parametros = mod._parametros_de_conexao("postgresql://u:s@h/b")
+    assert parametros["keepalives"] == 1
+    assert parametros["keepalives_idle"] == mod.KEEPALIVES_IDLE_S
+    assert parametros["keepalives_interval"] == mod.KEEPALIVES_INTERVALO_S
+    assert parametros["keepalives_count"] == mod.KEEPALIVES_CONTAGEM
+    assert parametros["tcp_user_timeout"] == mod.TCP_USER_TIMEOUT_MS
+    deteccao_s = mod.KEEPALIVES_IDLE_S + mod.KEEPALIVES_INTERVALO_S * mod.KEEPALIVES_CONTAGEM
+    assert deteccao_s <= 30
+    assert 0 < mod.TCP_USER_TIMEOUT_MS <= 30_000
+    da_url = mod._parametros_de_conexao("postgresql://u:s@h/b?keepalives_idle=60")
+    assert "keepalives_idle" not in da_url  # o que a URL declara vence
+    assert da_url["keepalives_count"] == mod.KEEPALIVES_CONTAGEM
+
+
+def test_log_de_rbac_indisponivel_e_um_por_episodio(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Antes, um ERROR por pedido degradado: milhares por segundo, controlados pelo usuario."""
+    monkeypatch.setenv("MOTOR_ACESSO_FAIL_CLOSED", "1")
+    monkeypatch.setattr(acesso, "_rbac_indisponivel_logado", False)
+
+    def fora(_u: object) -> Any:
+        raise db.BancoIndisponivel("fora")
+
+    def no_ar(u: object) -> rbac.Identidade:
+        return rbac.Identidade(id_usuario=1, login=str(u), perfil="t", permissoes=frozenset())
+
+    def erros() -> int:
+        return sum(1 for r in caplog.records if "RBAC indisponivel (" in r.getMessage())
+
+    caplog.set_level("ERROR", logger=acesso._LOG.name)
+    monkeypatch.setattr(rbac, "identidade", fora)
+    for _ in range(50):
+        acesso.motivo_bloqueio_por_banco("/api/rede/carteira", "GET", "ana")
+        acesso.motivo_bloqueio_banco_indisponivel("/api/uf/SP", "GET", "fila")
+    assert erros() == 1
+    monkeypatch.setattr(rbac, "identidade", no_ar)  # o banco volta: fim do episodio
+    acesso.motivo_bloqueio_por_banco("/api/rede/carteira", "GET", "ana")
+    monkeypatch.setattr(rbac, "identidade", fora)
+    acesso.motivo_bloqueio_por_banco("/api/rede/carteira", "GET", "ana")
+    assert erros() == 2
+
+
 def test_no_banco_devolve_a_vaga_mesmo_quando_a_chamada_falha() -> None:
     """Vaga presa por excecao encolheria a fila ate' travar o gate de vez."""
 
@@ -985,6 +1291,6 @@ def test_no_banco_devolve_a_vaga_mesmo_quando_a_chamada_falha() -> None:
             with pytest.raises(db.BancoIndisponivel):
                 await pilot._no_banco(falha, prazo_na_fila_s=0.2)
         fila, _threads = pilot._limites_banco()
-        return fila.borrowed_tokens
+        return fila.value
 
-    assert asyncio.run(cenario()) == 0
+    assert asyncio.run(cenario()) == pilot.LIMITE_THREADS_BANCO

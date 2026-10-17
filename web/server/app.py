@@ -421,35 +421,68 @@ LIMITE_THREADS_BANCO = 6
 #: 200 pedidos esperava ate' 50 s -- medido, 84 de 200 estouraram os 30 s do cliente,
 #: PIOR que antes do limite. Desistir aqui da' a mesma resposta que o banco fora daria
 #: (o fail-closed do gate, o 503 do portao), so' que em 2 s. Com o banco saudavel a fila
-#: escoa ~400 pedidos/s no ensaio: 2 s de fila e' carga que o piloto nao tem.
+#: escoa ~250 pedidos/s no ensaio (200 em ~0,8 s): 2 s de fila e' carga que o piloto nao tem.
 ESPERA_FILA_BANCO_S = 2.0
 
-_LIMITES_BANCO: RunVar[tuple[anyio.CapacityLimiter, anyio.CapacityLimiter]] = RunVar(
-    "_LIMITES_BANCO"
-)
+#: Idade, em segundos, a partir da qual uma chamada ao banco EM VOO prova que ele nao esta'
+#: respondendo. E' a SEGUNDA evidencia de queda do gate (a primeira e' o ultimo desfecho
+#: ter sido falha, `postgres.banco_em_falha`), e cobre o COMECO da queda: ate' o primeiro
+#: `PoolTimeout` chegar (5 s), nenhuma chamada falhou ainda -- mas as seis vagas estao
+#: presas ha' mais que isto. Consulta do RBAC saudavel leva milissegundos, e uma que passa
+#: de 2 s ja' estourou o `statement_timeout` e vai virar falha de todo jeito. Um usuario
+#: so' com pedidos nao envelhece chamada nenhuma: elas terminam e liberam a vaga.
+BANCO_SEM_RESPOSTA_S = 2.0
+
+_LIMITES_BANCO: RunVar[tuple[anyio.Semaphore, anyio.CapacityLimiter]] = RunVar("_LIMITES_BANCO")
+#: Chamadas ao banco EM VOO no event loop corrente: `marca -> time.monotonic()` do inicio.
+_EM_VOO_BANCO: RunVar[dict[object, float]] = RunVar("_EM_VOO_BANCO")
 
 
 class FilaDoBancoCheia(RuntimeError):
     """Nenhuma thread do banco ficou livre em `ESPERA_FILA_BANCO_S`: o banco nao da' conta."""
 
 
-def _limites_banco() -> tuple[anyio.CapacityLimiter, anyio.CapacityLimiter]:
+def _limites_banco() -> tuple[anyio.Semaphore, anyio.CapacityLimiter]:
     """`(fila, threads)` do event loop corrente (um par por loop, como o padrao do anyio).
 
-    DOIS limitadores do mesmo tamanho porque a entrada na fila tem PRAZO e a thread nao
-    pode ter: cancelar o `to_thread.run_sync` depois que a thread comecou nao a interrompe
-    -- so' descartaria uma resposta que o banco ja' deu. A fila e' tomada com prazo; a
-    thread, ja' garantida por ela, nunca espera.
+    DOIS limites do mesmo tamanho porque a entrada na fila tem PRAZO e a thread nao pode
+    ter: cancelar o `to_thread.run_sync` depois que a thread comecou nao a interrompe --
+    so' descartaria uma resposta que o banco ja' deu. A fila e' tomada com prazo; a thread,
+    ja' garantida por ela, nunca espera.
+
+    A FILA E' UM `Semaphore`, NAO UM `CapacityLimiter` (17/10/2026, revisao adversarial).
+    O `CapacityLimiter` do anyio 4.13 deixa FURAR a fila: ao liberar, ele acorda quem
+    espera, mas a vaga so' e' tomada quando essa tarefa volta a rodar -- e uma recem-chegada
+    que roda antes ve a fila vazia e entra tambem (reproduzido: 7 emprestimos num limite
+    de 6). A 7a requisicao passava pela fila e esperava a THREAD sem prazo nenhum. O
+    `Semaphore` entrega a vaga direto a quem esperava, e devolve-a se o cancelamento
+    chegar depois da entrega. O limitador de threads fica so' para nao usar o pool padrao
+    de 40; com a fila limitada de verdade, ninguem espera nele.
     """
     try:
         return _LIMITES_BANCO.get()
     except LookupError:
         par = (
-            anyio.CapacityLimiter(LIMITE_THREADS_BANCO),
+            anyio.Semaphore(LIMITE_THREADS_BANCO, max_value=LIMITE_THREADS_BANCO),
             anyio.CapacityLimiter(LIMITE_THREADS_BANCO),
         )
         _LIMITES_BANCO.set(par)
         return par
+
+
+def _em_voo_banco() -> dict[object, float]:
+    try:
+        return _EM_VOO_BANCO.get()
+    except LookupError:
+        em_voo: dict[object, float] = {}
+        _EM_VOO_BANCO.set(em_voo)
+        return em_voo
+
+
+def _banco_sem_resposta() -> bool:
+    """A chamada ao banco mais antiga em voo ja' passou de `BANCO_SEM_RESPOSTA_S`?"""
+    inicios = _em_voo_banco().values()
+    return bool(inicios) and time.monotonic() - min(inicios) >= BANCO_SEM_RESPOSTA_S
 
 
 async def _no_banco(
@@ -471,21 +504,24 @@ async def _no_banco(
     criaria identificador orfao a mais.
     """
     fila, threads = _limites_banco()
-    vaga = object()  # o portador da vaga: nunca colide com outra chamada da mesma tarefa
     try:
         if prazo_na_fila_s is None:
-            await fila.acquire_on_behalf_of(vaga)
+            await fila.acquire()
         else:
             with anyio.fail_after(prazo_na_fila_s):
-                await fila.acquire_on_behalf_of(vaga)
+                await fila.acquire()
     except TimeoutError:
         raise FilaDoBancoCheia(f"nenhuma thread do banco livre em {prazo_na_fila_s:.1f}s") from None
+    em_voo = _em_voo_banco()
+    marca = object()
+    em_voo[marca] = time.monotonic()
     try:
         return await anyio.to_thread.run_sync(
             functools.partial(funcao, *args, **kwargs), limiter=threads
         )
     finally:
-        fila.release_on_behalf_of(vaga)
+        del em_voo[marca]
+        fila.release()
 
 
 # Controle TEMPORARIO de acesso por aba (2026-08-13): o Authelia autentica; aqui cada
@@ -523,8 +559,11 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
     # cada requisicao controlada -- ate' 5 s com o banco fora (espera do pool), sem limite
     # com o banco travado ou a conexao meio-aberta, e em serie, porque um mapa dispara
     # dezenas de `/api/pin-concorrente/`. Congelava junto o `/api/health` e os estaticos.
-    # Rota SEM capacidade (health, catalogos, `/api/me`, SPA) nem chega ao threadpool: ela
-    # nao consulta o banco, e nao deve disputar thread com quem esta' esperando por ele.
+    # Rota SEM capacidade (health, catalogos, `/api/me`, SPA) nem chega ao threadpool do
+    # banco: o GATE nao tem o que perguntar por ela. (O `/api/me` CONSULTA o banco, mas na
+    # propria rota, que e' `def` e roda no pool padrao, disputando as 4 conexoes com o gate:
+    # sob contencao real -- um lock de migration -- uma espera de 5 s ali tambem arma o
+    # disjuntor e nega as sensiveis a todos por 3 s. E' a degradacao esperada nesse estado.)
     # As threads sao as do `_no_banco`, com limite proprio: ver `LIMITE_THREADS_BANCO`.
     if acesso.banco_no_comando():
         if acesso.capacidade_necessaria(request.url.path, request.method) is None:
@@ -539,6 +578,17 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
                     prazo_na_fila_s=ESPERA_FILA_BANCO_S,
                 )
             except FilaDoBancoCheia as erro:
+                # Fila cheia SO' vale como "banco fora" com EVIDENCIA: o ultimo uso do banco
+                # FALHOU, ou ha' chamada presa nele ha' mais de `BANCO_SEM_RESPOSTA_S`. Sem
+                # ela, as threads estao ocupadas RESPONDENDO, e a degradacao liberaria as
+                # rotas nao sensiveis a quem nao tem a capacidade so' por inundar o piloto
+                # (revisao de 17/10/2026). Ai' nega TODA rota controlada, com 503.
+                if not (acesso.banco_em_falha() or _banco_sem_resposta()):
+                    return JSONResponse(
+                        {"detail": "Piloto ocupado no momento. Tente novamente em instantes."},
+                        status_code=503,
+                        headers={"Retry-After": "2"},
+                    )
                 # Mesma resposta do banco fora, sem I/O: nao ha' thread para perguntar.
                 detalhe = acesso.motivo_bloqueio_banco_indisponivel(
                     request.url.path, request.method, erro
@@ -658,6 +708,10 @@ async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-unt
         sessao = await _no_banco(
             db_sessoes.validar, cookie or "", prazo_na_fila_s=ESPERA_FILA_BANCO_S
         )
+    except FilaDoBancoCheia:
+        # Sem traceback: e' carga, nao defeito -- e um por requisicao viraria inundacao de log.
+        _LOG_D17.warning("portao de sessao: fila do banco cheia, sessao nao validada")
+        return JSONResponse({"detail": "Sessão indisponível no momento."}, status_code=503)
     except Exception:  # noqa: BLE001 — banco fora do ar nao pode virar 500 cru aqui
         _LOG_D17.exception("portao de sessao: falha ao validar sessao")
         return JSONResponse({"detail": "Sessão indisponível no momento."}, status_code=503)

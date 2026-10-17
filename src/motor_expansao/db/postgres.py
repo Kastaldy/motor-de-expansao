@@ -73,6 +73,19 @@ LOCK_TIMEOUT_MS = 1000
 #: do banco inteiro.
 JANELA_DISJUNTOR_S = 3.0
 
+#: Keepalive TCP das conexoes do pool (17/10/2026, revisao adversarial). O
+#: `statement_timeout` acima e' aplicado pelo SERVIDOR: se a rede some sem RST (queda de
+#: link, firewall que descarta), a thread fica presa no `recv` ate' o TCP desistir sozinho
+#: -- ~15 min com dado nao confirmado, 2 h+ pelo keepalive padrao do sistema -- segurando
+#: thread do `app._no_banco` e conexao de um pool de quatro. Com isto o cliente percebe a
+#: conexao morta em ~10-20 s. `tcp_user_timeout` so' existe onde o SO tem
+#: `TCP_USER_TIMEOUT` (Linux, o caso da VPS); nos demais o libpq o ignora. Nao cobre um
+#: servidor CONGELADO (`docker pause`): la' o kernel segue confirmando o TCP.
+KEEPALIVES_IDLE_S = 10
+KEEPALIVES_INTERVALO_S = 3
+KEEPALIVES_CONTAGEM = 3
+TCP_USER_TIMEOUT_MS = 10_000
+
 #: Segundos para o `saude()` desistir. Ele responde ao diagnostico de admin, que o
 #: operador abre justamente quando desconfia do banco: nao pode pendurar a requisicao.
 TIMEOUT_SAUDE_S = 2.0
@@ -681,6 +694,11 @@ _pool: Any = None
 _pool_da_url: str | None = None
 #: `time.monotonic()` ate' quando o disjuntor fica aberto. 0 = fechado.
 _disjuntor_ate: float = 0.0
+#: O ULTIMO desfecho de `conexao()`/`transacao()` foi `BancoIndisponivel`? Vira `True` a
+#: cada indisponibilidade e volta a `False` a cada uso que termina bem. E' a EVIDENCIA de
+#: queda que o gate do RBAC exige antes de tratar "fila de threads cheia" como "banco
+#: fora": ver `banco_em_falha`.
+_em_falha: bool = False
 
 
 class BancoNaoConfigurado(RuntimeError):
@@ -730,8 +748,42 @@ def _sem_segredo(texto: str) -> str:
     return texto
 
 
+def _marcar_indisponivel() -> None:
+    """O desfecho mais recente foi falha (atribuicao de bool entre threads: atomica)."""
+    global _em_falha
+    _em_falha = True
+
+
+def _marcar_disponivel() -> None:
+    """O desfecho mais recente foi um uso que terminou bem (COMMIT incluido)."""
+    global _em_falha
+    _em_falha = False
+
+
+def banco_em_falha() -> bool:
+    """O desfecho mais recente de `conexao()`/`transacao()` foi `BancoIndisponivel`?
+
+    Existe para o gate do RBAC distinguir dois estados que chegam a ele com a MESMA cara --
+    "nenhuma thread do banco livre no prazo": banco FORA (as threads estao presas esperando
+    o pool) e banco SAUDAVEL sob carga (as threads estao ocupadas respondendo). So' o
+    primeiro autoriza a degradacao que libera as rotas nao sensiveis sem checar permissao;
+    no segundo, liberar seria entregar a rota a quem nao a tem so' por mandar pedidos
+    demais (medido na revisao de 17/10/2026: 532 de 1500 pedidos de um usuario SEM
+    permissao nenhuma passaram com o banco no ar).
+
+    ESTADO, E NAO JANELA DE TEMPO, e foi medido (ensaio de 17/10/2026, `docker stop`): com
+    "falhou nos ultimos 10 s", a primeira rajada depois de 10 s sem trafego, com o banco
+    AINDA fora, voltava a dar 503 nas rotas comuns -- toda primeira carga de mapa de cada
+    usuario, durante a queda inteira. O estado so' muda quando o banco responde. O custo
+    que sobra e' o do comeco da queda: ate' a primeira falha chegar (o `PoolTimeout`, 5 s),
+    a fila cheia ainda le "banco no ar" e responde 503.
+    """
+    return _em_falha
+
+
 def _falha(erro: Exception) -> BancoIndisponivel:
     """Normaliza falha de driver/rede, preservando a CLASSE e escondendo segredo."""
+    _marcar_indisponivel()
     return BancoIndisponivel(f"{type(erro).__name__}: {_sem_segredo(str(erro))}")
 
 
@@ -772,8 +824,17 @@ def _parametros_de_conexao(url: str | None) -> dict[str, Any]:
     if existentes.get("options"):
         opcoes = f"{opcoes} {existentes['options']}"
     parametros: dict[str, Any] = {"options": opcoes}
-    if not existentes.get("connect_timeout"):
-        parametros["connect_timeout"] = TIMEOUT_CONEXAO_S
+    padroes: dict[str, Any] = {
+        "connect_timeout": TIMEOUT_CONEXAO_S,
+        "keepalives": 1,
+        "keepalives_idle": KEEPALIVES_IDLE_S,
+        "keepalives_interval": KEEPALIVES_INTERVALO_S,
+        "keepalives_count": KEEPALIVES_CONTAGEM,
+        "tcp_user_timeout": TCP_USER_TIMEOUT_MS,
+    }
+    for chave, valor in padroes.items():
+        if not existentes.get(chave):
+            parametros[chave] = valor
     return parametros
 
 
@@ -802,6 +863,7 @@ def _checar_disjuntor() -> None:
     """Levanta `BancoIndisponivel` sem tocar o pool enquanto o disjuntor estiver aberto."""
     restante = _disjuntor_ate - time.monotonic()
     if restante > 0:
+        _marcar_indisponivel()
         raise BancoIndisponivel(
             f"PoolTimeout recente: banco sem resposta, nova tentativa em {restante:.1f}s"
         )
@@ -914,9 +976,10 @@ def _pool_ou_falha() -> Any:
 
 
 def _fechar_sem_trava() -> None:
-    global _pool, _pool_da_url, _disjuntor_ate
+    global _pool, _pool_da_url, _disjuntor_ate, _em_falha
     # Pool novo, disjuntor fechado: a janela era sobre as conexoes do pool que saiu.
     _disjuntor_ate = 0.0
+    _em_falha = False
     if _pool is not None:
         try:
             _pool.close()
@@ -980,6 +1043,7 @@ def conexao() -> Iterator[Any]:
             # "banco indisponivel" PARA SEMPRE -- e, no gate, isso libera as rotas nao
             # sensiveis sem checar permissao nenhuma, em silencio. Um 500 alto e' o certo ali.
             yield con
+        _marcar_disponivel()  # so' depois do COMMIT: o banco respondeu de ponta a ponta
     except _erro_operacional() as erro:
         raise _falha(erro) from erro
 
@@ -1021,6 +1085,7 @@ def transacao(*, id_usuario: int | str | None) -> Iterator[Any]:
     try:
         with ExitStack() as pilha:
             yield _emprestar(pilha, pool, preparar)
+        _marcar_disponivel()
     except _erro_operacional() as erro:
         raise _falha(erro) from erro
 
