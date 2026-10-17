@@ -431,10 +431,24 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
     # (allowlist do painel, emenda DEC-027) fica por cima de tudo; o gate de PAIS diz o
     # que a instancia serve; o de USUARIO diz o que a pessoa pode. Nenhum e' concedivel
     # pelos outros.
+    #
+    # FORA DO EVENT LOOP (17/10/2026). O RBAC consulta o Postgres com psycopg SINCRONO, e o
+    # piloto roda num unico worker de uvicorn: chamada direta aqui prendia o loop inteiro a
+    # cada requisicao controlada -- ate' 5 s com o banco fora (espera do pool), sem limite
+    # com o banco travado ou a conexao meio-aberta, e em serie, porque um mapa dispara
+    # dezenas de `/api/pin-concorrente/`. Congelava junto o `/api/health` e os estaticos.
+    # Rota SEM capacidade (health, catalogos, `/api/me`, SPA) nem chega ao threadpool: ela
+    # nao consulta o banco, e nao deve disputar thread com quem esta' esperando por ele.
     if acesso.banco_no_comando():
-        detalhe = acesso.motivo_bloqueio_por_banco(
-            request.url.path, request.method, remote_user
-        )
+        if acesso.capacidade_necessaria(request.url.path, request.method) is None:
+            detalhe = None
+        else:
+            detalhe = await run_in_threadpool(
+                acesso.motivo_bloqueio_por_banco,
+                request.url.path,
+                request.method,
+                remote_user,
+            )
     else:
         detalhe = acesso.motivo_bloqueio(request.url.path, remote_user)
     if detalhe is not None:
@@ -543,8 +557,11 @@ async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-unt
         return await call_next(request)
 
     cookie = _token_de_sessao(request)
+    # `validar` e `tocar` vao ao banco com driver SINCRONO: no threadpool, pela mesma razao
+    # do gate do RBAC no `_controle_de_acesso_por_aba` -- chamados aqui, prendiam o event
+    # loop do unico worker enquanto o Postgres nao respondesse.
     try:
-        sessao = db_sessoes.validar(cookie or "")
+        sessao = await run_in_threadpool(db_sessoes.validar, cookie or "")
     except Exception:  # noqa: BLE001 — banco fora do ar nao pode virar 500 cru aqui
         _LOG_D17.exception("portao de sessao: falha ao validar sessao")
         return JSONResponse({"detail": "Sessão indisponível no momento."}, status_code=503)
@@ -574,7 +591,11 @@ async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-unt
     # Inatividade: so' escreve se a trava de 5 min ja' passou (decisao 2). A decisao e'
     # tomada aqui, com o `ultimo_acesso` que o `validar` JA' devolveu -- sem segunda leitura.
     try:
-        db_sessoes.tocar(id_sessao=sessao.id_sessao, id_usuario=sessao.identidade.id_usuario)
+        await run_in_threadpool(
+            db_sessoes.tocar,
+            id_sessao=sessao.id_sessao,
+            id_usuario=sessao.identidade.id_usuario,
+        )
     except Exception:  # noqa: BLE001 — bater o relogio nunca derruba a requisicao
         _LOG_D17.debug("portao de sessao: toque de inatividade falhou", exc_info=True)
 
@@ -703,6 +724,34 @@ def _registrar_relatorio_gerado(
             report_id,
         )
     return report_id
+
+
+async def _registrar_relatorio_gerado_fora_do_loop(
+    remote_user: str | None,
+    *,
+    relatorio: str,
+    formato: str,
+    alvo: dict[str, str] | None = None,
+) -> str:
+    """`_registrar_relatorio_gerado` para as rotas `async def` (PDF/xlsx).
+
+    Com banco configurado, a gravacao vai para o threadpool: ela faz DUAS idas ao Postgres
+    (identidade + evento) com driver sincrono, e chamada direta numa rota async prendia o
+    event loop do unico worker -- o mesmo defeito do gate do RBAC. Sem banco, a chamada
+    segue direta e identica a de antes: ali ela so' cunha o id e levanta
+    `BancoNaoConfigurado` sem I/O, e um salto de thread seria custo sem ganho.
+    """
+    if not acesso.banco_no_comando():
+        return _registrar_relatorio_gerado(
+            remote_user, relatorio=relatorio, formato=formato, alvo=alvo
+        )
+    return await run_in_threadpool(
+        _registrar_relatorio_gerado,
+        remote_user,
+        relatorio=relatorio,
+        formato=formato,
+        alvo=alvo,
+    )
 
 
 def _registrar_dossie_baixado(remote_user: str | None, *, imovel_id: str) -> None:
@@ -10830,7 +10879,9 @@ async def relatorio_municipal(
     # D17: a marca-d'agua deste gerador ja' existia, mas o `solicitante` que ela usa
     # nunca chegava preenchido -- o front nao o envia. Agora ela recebe quem pediu de
     # verdade, e o identificador que amarra o arquivo ao evento.
-    report_id = _registrar_relatorio_gerado(remote_user, relatorio="municipal", formato="pdf")
+    report_id = await _registrar_relatorio_gerado_fora_do_loop(
+        remote_user, relatorio="municipal", formato="pdf"
+    )
     solicitante = body.solicitante or acesso.login_da_requisicao(remote_user)
 
     async with _PDF_SEMAFORO:
@@ -11151,7 +11202,9 @@ async def relatorio_pontual(
     # Continua ANTES de registrar o relatorio: o `await` so' devolve depois da validacao.
     if excluir_ultra_proxima:
         await run_in_threadpool(_validar_estudo_da_unidade, lat, lng)
-    report_id = _registrar_relatorio_gerado(remote_user, relatorio="pontual", formato="pdf")
+    report_id = await _registrar_relatorio_gerado_fora_do_loop(
+        remote_user, relatorio="pontual", formato="pdf"
+    )
 
     # A marca-d'agua passa a dizer QUEM gerou, e nao so' "Ultra Academia".
     #
@@ -11506,7 +11559,9 @@ async def simulador_xlsx(
     """
     # D17: a planilha nao tem content stream onde desenhar marca-d'agua, entao o carimbo
     # e' o par bloco-visivel + `docProps` -- ver "Rastreio do arquivo" no gerador.
-    report_id = _registrar_relatorio_gerado(remote_user, relatorio="simulador", formato="xlsx")
+    report_id = await _registrar_relatorio_gerado_fora_do_loop(
+        remote_user, relatorio="simulador", formato="xlsx"
+    )
     solicitante = acesso.login_da_requisicao(remote_user)
 
     async with _PDF_SEMAFORO:
@@ -11659,7 +11714,9 @@ async def relatorio_comparacao(
     # D17: o deck era a superficie mais exposta do piloto -- nao tinha marca-d'agua
     # nenhuma, so' um `set_author` fixo igual para todo mundo. Agora nasce com quem pediu
     # e com o identificador, como o Pontual.
-    report_id = _registrar_relatorio_gerado(remote_user, relatorio="comparacao", formato="pdf")
+    report_id = await _registrar_relatorio_gerado_fora_do_loop(
+        remote_user, relatorio="comparacao", formato="pdf"
+    )
     solicitante = acesso.login_da_requisicao(remote_user)
 
     async with _PDF_SEMAFORO:
