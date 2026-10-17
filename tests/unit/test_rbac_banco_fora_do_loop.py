@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import errno
 import inspect
 import sys
 import threading
@@ -1463,3 +1464,156 @@ def test_no_banco_devolve_a_vaga_mesmo_quando_a_chamada_falha() -> None:
         return fila.value
 
     assert asyncio.run(cenario()) == pilot.LIMITE_THREADS_BANCO
+
+
+def _com_causa(mensagem: str, causa: BaseException) -> Exception:
+    """`OperationalError` encadeado a um `OSError`, como o driver faz com `raise ... from`."""
+    erro = psycopg.OperationalError(mensagem)
+    erro.__cause__ = causa
+    return erro
+
+
+ERROS_DE_RECURSO_LOCAL = [
+    pytest.param(
+        psycopg.OperationalError(
+            'connection to server at "postgres" failed: could not create socket: '
+            "Too many open files"
+        ),
+        id="emfile_mensagem",
+    ),
+    pytest.param(
+        _com_causa("connection failed", OSError(errno.EMFILE, "x")), id="emfile_errno"
+    ),
+    pytest.param(
+        _com_causa("connection failed", OSError(errno.ENFILE, "x")), id="enfile_errno"
+    ),
+    pytest.param(psycopg.OperationalError("out of memory"), id="enomem_libpq"),
+    pytest.param(
+        psycopg.OperationalError("could not receive data: Cannot allocate memory"),
+        id="enomem_mensagem",
+    ),
+    pytest.param(
+        _com_causa("connection failed", OSError(errno.ENOMEM, "x")), id="enomem_errno"
+    ),
+    pytest.param(
+        psycopg.OperationalError("could not send data: No buffer space available"),
+        id="enobufs_mensagem",
+    ),
+    pytest.param(
+        psycopg.OperationalError("n\u00e3o p\u00f4de criar soquete: Arquivos abertos demais"),
+        id="emfile_pt_br",
+    ),
+    pytest.param(
+        # So' casa SEM o acento: trava a normalizacao contra a mensagem traduzida.
+        psycopg.OperationalError("could not receive data: N\u00e3o foi poss\u00edvel alocar mem\u00f3ria"),
+        id="enomem_pt_br",
+    ),
+]
+
+SINAIS_REAIS_DE_QUEDA = [
+    pytest.param(
+        psycopg.OperationalError(
+            'could not translate host name "postgres" to address: Name or service not known'
+        ),
+        id="dns_servico_sumiu",
+    ),
+    pytest.param(
+        psycopg.OperationalError(
+            'could not translate host name "postgres" to address: '
+            "Temporary failure in name resolution"
+        ),
+        id="dns_temporario",
+    ),
+    pytest.param(
+        psycopg.OperationalError(
+            'connection to server at "10.0.0.5", port 5432 failed: Connection refused'
+        ),
+        id="recusada",
+    ),
+    pytest.param(
+        psycopg.OperationalError("server closed the connection unexpectedly"), id="fechou"
+    ),
+    pytest.param(
+        psycopg.OperationalError("terminating connection due to administrator command"),
+        id="terminando",
+    ),
+    pytest.param(psycopg.OperationalError("consuming input failed: EOF"), id="perdida"),
+    pytest.param(psycopg.errors.AdminShutdown("terminating connection"), id="57P01"),
+    pytest.param(psycopg.errors.CrashShutdown("crash"), id="57P02"),
+    pytest.param(psycopg.errors.CannotConnectNow("starting up"), id="57P03"),
+]
+
+
+@pytest.mark.parametrize("erro", ERROS_DE_RECURSO_LOCAL)
+def test_falta_de_recurso_local_nao_e_prova_de_queda(erro: Exception) -> None:
+    """claude-review do PR #463: `OperationalError` SEM sqlstate contava sempre como prova,
+    e `EMFILE` (descritores esgotados -- provocavel por um cliente que abre conexoes demais
+    com o piloto), `ENFILE`, `ENOMEM` e `ENOBUFS` caem nesse ramo sem o banco ser consultado.
+    Contados como queda, abriam o disjuntor e o gate liberava rota sem checar permissao."""
+    assert mod._prova_de_queda(erro) is False
+
+
+@pytest.mark.parametrize("erro", SINAIS_REAIS_DE_QUEDA)
+def test_sinais_reais_de_queda_continuam_sendo_prova(erro: Exception) -> None:
+    """O outro lado: host que deixa de resolver (no Docker, o nome do servico some quando o
+    container para -- o sinal medido nas revisoes), recusa, conexao fechada/perdida e os
+    SQLSTATE 57P0x seguem provando a queda."""
+    assert mod._prova_de_queda(erro) is True
+
+
+@pytest.mark.parametrize("erro", ERROS_DE_RECURSO_LOCAL)
+@pytest.mark.parametrize("abrir", ["leitura", "escrita"])
+def test_falta_de_recurso_local_vira_sem_prova_e_nao_carimba(
+    monkeypatch: pytest.MonkeyPatch, erro: Exception, abrir: str
+) -> None:
+    _instalar(monkeypatch, _ConexaoQueFalha(erro))
+    with pytest.raises(db.BancoSemProvaDeQueda):
+        with db.conexao() if abrir == "leitura" else db.transacao(id_usuario=1) as con:
+            con.execute("SELECT 1")
+    assert not acesso.banco_em_falha()
+
+
+@pytest.mark.parametrize("erro", ERROS_DE_RECURSO_LOCAL)
+def test_gate_com_falta_de_recurso_local_responde_503_e_nao_degrada(
+    monkeypatch: pytest.MonkeyPatch, erro: Exception
+) -> None:
+    """Ponta a ponta pelo middleware: falta de recurso local e' 503 em toda rota controlada,
+    nunca a liberacao das nao sensiveis."""
+    _instalar(monkeypatch, _ConexaoQueFalha(erro))
+    monkeypatch.setenv("MOTOR_CADASTRO_DIR", "/app/cadastro")
+
+    def rodar(caminho: str) -> int:
+        return asyncio.run(
+            pilot._controle_de_acesso_por_aba(_Requisicao(caminho), _proximo)
+        ).status_code
+
+    assert rodar("/api/uf/SP") == 503
+    assert rodar("/api/pin-concorrente/1") == 503
+    assert rodar("/api/rede/carteira") == 503
+    assert not acesso.banco_em_falha()
+
+
+def test_conexao_do_pool_nao_registra_recusa_por_falta_de_recurso_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sem isto, `EMFILE` ao abrir o socket carimbava "o servidor recusou", e o `PoolTimeout`
+    seguinte virava prova de queda pela outra porta."""
+    classe = mod._classe_de_conexao()
+    erros: list[Exception] = []
+
+    def conectar(cls: Any, *_a: Any, **_k: Any) -> Any:
+        raise erros[-1]
+
+    monkeypatch.setattr(psycopg.Connection, "connect", classmethod(conectar))
+    erros.append(psycopg.OperationalError("could not create socket: Too many open files"))
+    with pytest.raises(psycopg.OperationalError):
+        classe.connect("host=x")
+    assert mod._ultima_recusa == 0
+    erros.append(
+        psycopg.OperationalError(
+            'could not translate host name "postgres" to address: Name or service not known'
+        )
+    )
+    with pytest.raises(psycopg.OperationalError):
+        classe.connect("host=x")
+    assert mod._ultima_recusa > 0

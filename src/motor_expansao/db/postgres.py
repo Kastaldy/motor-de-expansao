@@ -17,12 +17,14 @@ roda os pipelines do M1 nao precisa do psycopg. Um `import` no topo sem protecao
 
 from __future__ import annotations
 
+import errno
 import itertools
 import logging
 import os
 import re
 import threading
 import time
+import unicodedata
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from typing import Any
@@ -712,6 +714,33 @@ _ultimo_sucesso: int = 0
 #: SQLSTATE que o servidor manda quando ele mesmo esta' saindo do ar (classe 57P,
 #: "operator intervention" -- `57014`, o `QueryCanceled`, fica de fora de proposito).
 SQLSTATE_SERVIDOR_SAINDO = frozenset({"57P01", "57P02", "57P03"})
+#: errno de falta de RECURSO DO PROPRIO PROCESSO/MAQUINA ao abrir ou usar o socket: o banco
+#: nem foi consultado. `EMFILE` e' provocavel de fora (um cliente que abre muitas conexoes
+#: com o piloto esgota os descritores), entao contar isso como queda liberaria rota sem
+#: permissao a quem quisesse. 10024/10055 sao `WSAEMFILE`/`WSAENOBUFS` do Winsock.
+_ERRNO_RECURSO_LOCAL = frozenset(
+    {errno.EMFILE, errno.ENFILE, errno.ENOMEM, errno.ENOBUFS, 10024, 10055}
+)
+#: A mesma falta pela MENSAGEM, para quando a libpq so' devolve texto (o caso comum: o erro
+#: do `socket()` vira `could not create socket: Too many open files` sem errno anexado).
+#: Comparado em minusculas e SEM ACENTO, com o `strerror` da glibc em ingles e em pt_BR e a
+#: frase da propria libpq. Cada trecho nomeia so' falta de recurso local: nenhum casa com os
+#: sinais reais de queda (`could not translate host name`, `Name or service not known`,
+#: `Temporary failure in name resolution`, `Connection refused`, `server closed the
+#: connection unexpectedly`, `terminating connection`).
+_MENSAGEM_RECURSO_LOCAL = (
+    "too many open files",
+    "could not create socket",
+    "cannot allocate memory",
+    "out of memory",
+    "no buffer space available",
+    "lacked sufficient buffer space",
+    "arquivos abertos demais",
+    "muitos arquivos abertos",
+    "nao foi possivel alocar memoria",
+    "sem espaco de buffer",
+    "nao pode criar soquete",
+)
 
 
 class BancoNaoConfigurado(RuntimeError):
@@ -826,12 +855,43 @@ def _classe_de_conexao() -> Any:
                 return super().connect(*args, **kwargs)
             except tempo_esgotado:
                 raise
-            except psycopg.OperationalError:
-                _registrar_recusa_de_conexao()
+            except psycopg.OperationalError as erro:
+                # Descritor/memoria esgotados AQUI nao sao o servidor dizendo "nao".
+                if not _falta_de_recurso_local(erro):
+                    _registrar_recusa_de_conexao()
                 raise
 
     _CLASSE_DE_CONEXAO = _ConexaoQueRegistraRecusa
     return _CLASSE_DE_CONEXAO
+
+
+def _sem_acento(texto: str) -> str:
+    return (
+        unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii").lower()
+    )
+
+
+def _falta_de_recurso_local(erro: BaseException) -> bool:
+    """A falha nasceu de recurso esgotado NESTE processo/maquina (descritores, memoria,
+    buffer de socket) -- e nao de resposta, recusa ou sumico do servidor?
+
+    Procura o errno na cadeia (`__cause__`/`__context__`) e, como reserva, o texto da
+    mensagem: a libpq costuma entregar so' a frase do `strerror`.
+    """
+    vistos: set[int] = set()
+    atual: BaseException | None = erro
+    while atual is not None and id(atual) not in vistos:
+        vistos.add(id(atual))
+        if isinstance(atual, OSError) and (
+            atual.errno in _ERRNO_RECURSO_LOCAL
+            or getattr(atual, "winerror", None) in _ERRNO_RECURSO_LOCAL
+        ):
+            return True
+        texto = _sem_acento(str(atual))
+        if any(trecho in texto for trecho in _MENSAGEM_RECURSO_LOCAL):
+            return True
+        atual = atual.__cause__ or atual.__context__
+    return False
 
 
 def _prova_de_queda(erro: BaseException) -> bool:
@@ -843,7 +903,9 @@ def _prova_de_queda(erro: BaseException) -> bool:
     - servidor saindo do ar (`SQLSTATE_SERVIDOR_SAINDO`);
     - `PoolTimeout` com o servidor RECUSANDO conexao nova depois do ultimo uso bom.
     Nao conta: `PoolTimeout` sem recusa (pool saturado), `ConnectionTimeout`, `QueryCanceled`
-    e `LockNotAvailable` (o servidor RESPONDEU), nem erro que nao e' operacional.
+    e `LockNotAvailable` (o servidor RESPONDEU), erro que nao e' operacional, nem falta de
+    RECURSO LOCAL (`EMFILE`, `ENFILE`, `ENOMEM`, `ENOBUFS`: o processo fabricou a falha
+    sozinho, e `EMFILE` e' provocavel por um cliente que abra conexoes demais com o piloto).
     """
     try:
         from psycopg_pool import PoolTimeout
@@ -859,6 +921,8 @@ def _prova_de_queda(erro: BaseException) -> bool:
     if tempo_esgotado is not None and isinstance(erro, tempo_esgotado):
         return False
     if not isinstance(erro, psycopg.OperationalError):
+        return False
+    if _falta_de_recurso_local(erro):
         return False
     estado = getattr(erro, "sqlstate", None)
     return estado is None or estado in SQLSTATE_SERVIDOR_SAINDO
