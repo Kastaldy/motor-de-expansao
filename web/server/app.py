@@ -92,6 +92,7 @@ from motor_expansao.dashboard import (  # noqa: E402
     rede_faturamento_financeiro,
     rede_metricas,
 )
+from motor_expansao.dashboard import renda_hex as _renda_hex  # noqa: E402
 
 # Contrato financeiro do ponto — REGUA UNICA (FIN-VIAB-01). Estas funcoes moravam aqui
 # dentro; foram para o `src/` para que a API GeoEspacial as use SEM importar esta app.
@@ -1587,119 +1588,34 @@ def _fator_temporal_renda() -> float:
 
 
 def _fator_domiciliar(uf: str | None, cod_municipio: str | None) -> float | None:
-    """Fator renda per capita -> renda media domiciliar do municipio.
+    """Fator renda per capita -> renda media domiciliar do municipio (`renda_hex`).
 
-    = moradores_por_domicilio x uplift_renda_domiciliar x FATOR_TEMPORAL_RENDA
-    (todos MUNICIPAIS, como no tooltip do Streamlit — um hex res-7 cobre varios
-    setores, entao o uplift setorial nao se aplica ao hex). Um hex do piloto
-    pertence a UM municipio, entao o fator e um escalar por chamada.
+    `_fator_temporal_renda()` tambem reaponta os paths de `constants` para o STAGING_DIR (1x).
     """
-    fator_temporal = _fator_temporal_renda()  # tambem reaponta os paths (1x)
-    from motor_expansao.dashboard.constants import (
-        moradores_por_domicilio,
-        uplift_renda_domiciliar,
-    )
-
-    try:
-        return (
-            moradores_por_domicilio(uf, cod_municipio)
-            * uplift_renda_domiciliar(uf, cod_municipio)
-            * fator_temporal
-        )
-    except Exception:  # noqa: BLE001 — enriquecimento opcional, degrada gracioso
-        return None
+    return _renda_hex.fator_domiciliar(uf, cod_municipio, _fator_temporal_renda())
 
 
 _LOG_RENDA = logging.getLogger("piloto.renda")
 
-# k do STAGING HEX (censo2022_setores_calibrado.parquet, safra 2026-05) — NAO confundir com o
-# k do artefato GEO setorial (1,2335 na safra 2026-08-12): sao calibracoes independentes.
-_K_CALIBRACAO_FALLBACK = 1.0239
-_CENSO_HEX_STAGING_PARQUET = "censo2022_setores_calibrado.parquet"
-# Artefato da MALHA (agregado dos setores). Quando existe, e ELE quem carrega o k da
-# coluna servida — ver `_k_calibracao_renda`.
-_CENSO_MALHA_PARQUET = "censo2022_hex_da_malha.parquet"
-_RE_K_CARIMBO = re.compile(r"k=([0-9]+(?:\.[0-9]+)?)")
+# A formula mora em `motor_expansao.dashboard.renda_hex` desde 2026-10-16: o Relatorio
+# Municipal usa a mesma, e o card e o PDF mostram o mesmo numero para o mesmo hexagono.
+_K_CALIBRACAO_FALLBACK = _renda_hex.K_CALIBRACAO_FALLBACK
+_CENSO_HEX_STAGING_PARQUET = _renda_hex.CENSO_HEX_STAGING_PARQUET
+_CENSO_MALHA_PARQUET = _renda_hex.CENSO_MALHA_PARQUET
 
 
 @functools.lru_cache(maxsize=1)
 def _k_calibracao_renda() -> float:
-    """O `k` com que a coluna calibrada DO HEX foi gerada, lido do carimbo do staging hex.
-
-    `renda_per_capita_setor_2022_calibrada` do enriquecido nasce do STAGING HEX
-    (`censo2022_setores_calibrado.parquet`), nao do artefato geo setorial — e cada um carrega
-    seu proprio k (staging 1,0239; geo 1,2335 na safra de 2026-08-12). Ate 2026-08-14 este
-    helper lia o `_metadata.json` do GEO: desfazia um k que a coluna nunca teve, a base saia
-    0,83x a correta e a renda do tooltip ~17% abaixo do IBGE. A fonte certa e o carimbo
-    `metodo_calibracao_renda` ("multiplicativo_global_k=X") gravado no proprio staging hex.
-
-    Guarda de plausibilidade [0,5; 3,0] e fallback para a constante da safra conhecida, sempre
-    com log — NUNCA cair em 1,0 em silencio: reintroduziria a dupla contagem sem pista.
-    """
-    # Desde 2026-08-31 a coluna calibrada SERVIDA e' agregada da MALHA setorial
-    # (`sobrepor_renda_da_malha`), com o k da malha — nao mais o k do staging hex. A fonte
-    # do carimbo tem de acompanhar a fonte do VALOR: ler o carimbo antigo aqui desfaria um
-    # k que a coluna nao tem mais e erraria a renda domiciliar em 20,47%, que e' o mesmo
-    # defeito de 2026-08-14 com o sinal trocado. Ordem = precedencia: malha primeiro.
-    fontes = (
-        (STAGING_DIR / _CENSO_MALHA_PARQUET, "metodo_calibracao_renda_malha"),
-        (STAGING_DIR / _CENSO_HEX_STAGING_PARQUET, "metodo_calibracao_renda"),
-    )
-    try:
-        disponiveis = [(caminho, coluna) for caminho, coluna in fontes if caminho.exists()]
-        if not disponiveis:
-            raise FileNotFoundError(f"nenhum de {[str(p) for p, _ in fontes]}")
-        caminho, coluna = disponiveis[0]
-        serie = pd.read_parquet(caminho, columns=[coluna])[coluna].dropna()
-        carimbo = str(serie.mode().iloc[0])
-        k = float(_RE_K_CARIMBO.search(carimbo).group(1))  # type: ignore[union-attr]
-    except Exception as exc:  # noqa: BLE001 — staging ausente/carimbo ilegivel: constante conhecida
-        _LOG_RENDA.warning(
-            "k de calibracao do hex: carimbo ilegivel em %s (%s); usando fallback %s",
-            [str(p) for p, _ in fontes], exc, _K_CALIBRACAO_FALLBACK,
-        )
-        return _K_CALIBRACAO_FALLBACK
-    if not 0.5 <= k <= 3.0:
-        _LOG_RENDA.warning(
-            "k de calibracao do hex fora da faixa plausivel (%s); usando fallback %s",
-            k, _K_CALIBRACAO_FALLBACK,
-        )
-        return _K_CALIBRACAO_FALLBACK
-    if serie.nunique() > 1:
-        _LOG_RENDA.warning(
-            "staging hex com %d carimbos de calibracao distintos; usando o modal %r",
-            serie.nunique(), carimbo,
-        )
-    _LOG_RENDA.info("k de calibracao do hex = %s (carimbo %r)", k, carimbo)
-    return k
+    """O `k` da coluna calibrada do hex, lido do carimbo no STAGING_DIR (`renda_hex`)."""
+    return _renda_hex.k_calibracao_renda(STAGING_DIR)
 
 
 def _base_renda_domiciliar(r: pd.Series, uf: str | None, cod: str | None) -> float | None:
-    """Base da renda domiciliar do hex, na escala da renda do RESPONSAVEL per capita.
-
-    `_fator_domiciliar` multiplica por `moradores x uplift x fator_temporal`; para o resultado
-    ser a renda do domicilio, a base tem de ser V06004/moradores — nem mais, nem menos. As duas
-    colunas de origem estao em escalas diferentes e precisam de tratamento distinto:
-
-      - `renda_per_capita_setor_2022_calibrada` = V06004/moradores x k  -> dividir pelo k.
-        Ate 2026-08-13 usava-se ela crua, e o k sobrava: +23,35% na renda exibida.
-      - `renda_per_capita` (SIDRA t.10295 v.13431) JA e renda domiciliar per capita -> dividir
-        pelo uplift do municipio, senao o `_fator_domiciliar` aplica o uplift uma segunda vez.
-        Esse ramo estava +54,4% errado, e COM dispersao (o uplift varia de 1,42 a 1,86 entre
-        municipios), entao distorcia tambem a comparacao entre cidades.
-    """
-    valor = r.get("renda_leitura", float("nan"))
-    if valor is None or pd.isna(valor):
-        return None
-    origem = r.get("renda_origem")
-    if origem == "renda_per_capita_setor_2022_calibrada":
-        return float(valor) / _k_calibracao_renda()
-    if origem == "renda_per_capita":
-        from motor_expansao.dashboard.constants import uplift_renda_domiciliar
-
-        uplift = uplift_renda_domiciliar(uf, cod)
-        return float(valor) / uplift if uplift else None
-    return float(valor)
+    """Base da renda domiciliar do hex, na escala da renda do RESPONSAVEL per capita."""
+    return _renda_hex.base_renda_domiciliar(
+        r.get("renda_leitura", float("nan")), r.get("renda_origem"), uf, cod,
+        _k_calibracao_renda,
+    )
 
 
 def _renda_domiciliar_hex(r: pd.Series, fator: float | None) -> float | None:
@@ -2821,53 +2737,9 @@ def _serie_pop(df: pd.DataFrame, precedencia: Sequence[str] = COLS_POP_LEITURA) 
     return pd.Series(float("nan"), index=df.index, dtype="float64")
 
 
-#: Precedencia da renda do hexagono: setor (granular) primeiro, municipio (SIDRA, o MESMO
-#: numero repetido em toda a cidade) como fallback.
-COLS_RENDA_LEITURA: tuple[str, ...] = (
-    "renda_per_capita_setor_2022_calibrada",
-    "renda_per_capita",
-)
+COLS_RENDA_LEITURA = _renda_hex.COLS_RENDA_LEITURA
+_serie_renda = _renda_hex.serie_renda
 
-
-def _serie_renda(
-    df: pd.DataFrame, precedencia: Sequence[str] = COLS_RENDA_LEITURA
-) -> tuple[pd.Series, pd.Series]:
-    """Renda de leitura POR LINHA, mais a origem de CADA valor.
-
-    A escolha e' por LINHA e nao por COLUNA. A redacao anterior parava na primeira coluna
-    PRESENTE e usava so' ela para o frame inteiro, o que produzia dois defeitos de uma vez:
-
-      1. `renda_origem` saia ESCALAR. Como o artefato nacional tem a coluna de setor no
-         schema, a origem era `renda_per_capita_setor_2022_calibrada` em 1.542.531 de
-         1.542.531 hexagonos -- e o aviso `renda_municipal` do payload, criado justamente
-         para dizer ao operador quando o numero e' da cidade inteira, nascia constante
-         `False`. Quatro ramos de rotulo do front ficavam inalcancaveis.
-      2. 234.147 hexagonos (15,18%) tem a coluna de setor PRESENTE e NULA naquela linha,
-         com a municipal disponivel -- AM 129.823, PA 45.941, RR 15.562, MT 11.091. Eles
-         nao exibiam renda NENHUMA, tendo um numero legitimo (ainda que municipal) ao lado.
-
-    E' a mesma familia da DEC-038: a precedencia por COLUNA trata "a coluna existe" como
-    "o valor existe". Aqui a coluna existe e o valor, naquela linha, nao.
-
-    Devolve `(valor, origem)`; `origem` e' o NOME DA COLUNA de onde cada valor veio (`None`
-    onde nenhuma tinha valor) -- identificador, nao rotulo: quem exibe traduz.
-    """
-    valor = pd.Series(float("nan"), index=df.index, dtype="float64")
-    # `[None] * n` e nao o escalar `None`: com o escalar o pandas materializa NaN, e o
-    # consumidor teria de distinguir "sem origem" de "origem NaN" -- duas grafias da mesma
-    # ausencia, que e' como ausencia vira ramo esquecido.
-    origem = pd.Series([None] * len(df), index=df.index, dtype="object")
-    for coluna in precedencia:
-        if coluna not in df.columns:
-            continue
-        candidato = pd.to_numeric(df[coluna], errors="coerce")
-        # So' preenche o que ainda esta' vazio: a precedencia se mantem, agora por linha.
-        preencher = valor.isna() & candidato.notna()
-        if not preencher.any():
-            continue
-        valor = valor.where(~preencher, candidato)
-        origem = origem.where(~preencher, coluna)
-    return valor, origem
 
 def _serie_n_concorrentes(df: pd.DataFrame) -> pd.Series:
     """Quantos concorrentes alcancam esta celula. UMA redacao, dois leitores.

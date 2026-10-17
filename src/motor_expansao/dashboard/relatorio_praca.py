@@ -690,7 +690,7 @@ def preparar_hexes_da_cidade(
     """Frame NOVO com as tres colunas que as paginas da cidade leem.
 
     - `renda_domiciliar`: do mapa `hex_id -> renda` que o relatorio municipal ja carrega para a
-      tabela de regioes (`carregar_renda_domiciliar_por_hex`). Sem o mapa a coluna fica nula e a
+      tabela de regioes (`renda_hex.renda_domiciliar_por_hex`). Sem o mapa a coluna fica nula e a
       selecao diz que nao ha renda publicada -- cair na per capita trocaria a escala em silencio.
     - `densidade_hab_km2`: populacao de leitura sobre a area da CELULA. A coluna
       `densidade_pop_setor_hab_km2` e' do setor e repetiria o numero de um setor denso num

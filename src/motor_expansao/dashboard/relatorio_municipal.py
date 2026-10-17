@@ -911,108 +911,6 @@ def aplicar_metricas_hex_nos_bairros(
     return bairros_geo
 
 
-def carregar_renda_domiciliar_por_hex(
-    uf: str | None,
-    cod_municipio: str | None,
-    censo_geo_dir: Path | str | None,
-) -> dict[str, float]:
-    """`hex_id` res-7 -> RENDA MEDIA DOMICILIAR do hexagono (R$/mes). READ-ONLY e OFFLINE.
-
-    Existe porque o parquet de hexagonos NAO tem os insumos: ele carrega
-    `renda_per_capita_setor_2022_calibrada`, mas nao a V06004 bruta nem moradores/domicilios.
-    A particao de setores tem os tres, e o setor cai inteiro dentro de um hexagono.
-
-    Formula CANONICA, a mesma dos Big Numbers e do choropleth do Relatorio Pontual
-    (`censo_point.py` linha ~399):
-
-        renda_domiciliar_setor = renda_responsavel_media_setor_2022 (V06004 BRUTA)
-                                 x uplift_composicao_por_setor(setor -> muni -> UF -> nacional)
-                                 x FATOR_TEMPORAL_RENDA
-
-    ARMADILHA JA PAGA UMA VEZ (corrigida em 2026-08-13, ver docstring em `censo_point.py`):
-    NAO usar a renda per capita CALIBRADA x moradores. Isso devolve `V06004 x k`, e o `k` da
-    calibracao vira fator EXTRA em cima do uplift -- que ja e' definido como (renda domiciliar
-    IBGE)/(V06004 bruta). O erro media +23,35% e jogava 30,3% dos setores na faixa de cor
-    errada. O fallback abaixo usa a per capita BRUTA justamente por isso.
-
-    Agregacao setor -> hexagono: media PONDERADA POR DOMICILIOS (Metodo A, a leitura "Renda
-    Media" do material GeoFusion), com exclusao SIMETRICA -- o setor so entra no numerador E no
-    denominador se renda e domicilios forem validos e domicilios > 0. Setor que falha qualquer
-    condicao fica fora dos DOIS lados, nunca virando zero disfarcado.
-
-    Fallback gracioso em qualquer falha -> `{}` (a coluna sai "n/d").
-    """
-    if censo_geo_dir is None or not uf or not cod_municipio:
-        return {}
-    try:
-        import h3 as _h3
-
-        from motor_expansao.dashboard.constants import (
-            FATOR_TEMPORAL_RENDA,
-            uplift_composicao_por_setor,
-        )
-        from motor_expansao.pipelines.materializar_setores_censitarios_geo import (
-            ler_particao_setores,
-        )
-    except Exception:
-        return {}
-
-    # So as colunas necessarias: sem `geometry_wkb`, a leitura e' barata o bastante para rodar
-    # tambem no modo hexagono (onde a geometria de bairro nao e' carregada).
-    colunas = [
-        "cod_setor",
-        "renda_responsavel_media_setor_2022",
-        "renda_per_capita_setor_2022",
-        "avg_moradores_domicilio_setor_2022",
-        "domicilios_particulares_ocupados_setor_2022",
-        "bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy",
-    ]
-    try:
-        setores = ler_particao_setores(
-            root=Path(censo_geo_dir), uf=str(uf), cod_municipio=str(cod_municipio),
-            columns=colunas,
-        )
-    except Exception:
-        return {}
-    if setores is None or setores.empty:
-        return {}
-
-    num: dict[str, float] = {}
-    den: dict[str, float] = {}
-    for _, row in setores.iterrows():
-        dom = _safe_float(row.get("domicilios_particulares_ocupados_setor_2022"))
-        if math.isnan(dom) or dom <= 0:
-            continue  # exclusao simetrica: fica fora dos DOIS lados
-
-        renda = _safe_float(row.get("renda_responsavel_media_setor_2022"))
-        if math.isnan(renda):
-            # Fallback pela per capita BRUTA (nunca a calibrada -- reintroduziria o k).
-            bruta = _safe_float(row.get("renda_per_capita_setor_2022"))
-            moradores = _safe_float(row.get("avg_moradores_domicilio_setor_2022"))
-            if math.isnan(bruta) or math.isnan(moradores):
-                continue
-            renda = bruta * moradores
-
-        minx = _safe_float(row.get("bbox_minx"))
-        miny = _safe_float(row.get("bbox_miny"))
-        maxx = _safe_float(row.get("bbox_maxx"))
-        maxy = _safe_float(row.get("bbox_maxy"))
-        if any(math.isnan(v) for v in (minx, miny, maxx, maxy)):
-            continue
-        try:
-            hid = str(_h3.latlng_to_cell(float((miny + maxy) / 2.0),
-                                         float((minx + maxx) / 2.0), H3_RES))
-        except Exception:
-            continue
-
-        fator = uplift_composicao_por_setor(row.get("cod_setor"), uf, cod_municipio)
-        domiciliar = renda * float(fator) * float(FATOR_TEMPORAL_RENDA)
-        num[hid] = num.get(hid, 0.0) + domiciliar * dom
-        den[hid] = den.get(hid, 0.0) + dom
-
-    return {hid: num[hid] / den[hid] for hid in num if den.get(hid, 0.0) > 0}
-
-
 def _bairros_por_zona(
     hex_zona_geo: dict[str, int],
     bairros_por_hex: dict[str, str] | None,
@@ -1118,8 +1016,8 @@ def _tabela_hexes(
     # mesma renda. Fallback para `renda_per_capita` onde a censitaria nao existir.
     # RENDA DOMICILIAR e' a leitura pedida (Juan, 2026-08-19): e' o numero com que se conversa
     # sobre praca -- "domicilio de R$ 4.500" diz algo, "per capita de R$ 1.500" nao diz. Vem de
-    # `carregar_renda_domiciliar_por_hex` (V06004 x uplift x fator temporal, a MESMA formula dos
-    # Big Numbers do Pontual). Cai para per capita so quando a particao de setores nao resolve.
+    # `renda_hex.renda_domiciliar_por_hex` (desde 2026-10-16 a MESMA formula do card do REP, sobre
+    # a coluna do hexagono). Cai para per capita so quando o mapa chega vazio.
     mapa_dom = dict(renda_domiciliar_por_hex or {})
     if mapa_dom:
         renda = df_muni["hex_id"].astype(str).map(mapa_dom).astype("float64")
@@ -3762,9 +3660,9 @@ def _tabela_hexes_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str,
     fonte = tabela.get("fonte_renda")
     if fonte == "domiciliar":
         nota_renda = (
-            "Renda domiciliar = renda do responsável (Censo 2022) x uplift de composição do "
-            "domicílio x atualização monetária, média ponderada por domicílios - a MESMA "
-            "fórmula dos Big Numbers do Relatório Pontual."
+            "Renda domiciliar = renda do hexágono (Censo 2022, setores repartidos por área) x "
+            "moradores e uplift de composição do município x atualização monetária - o MESMO "
+            "número do card do hexágono no mapa."
         )
     elif fonte == "censo":
         nota_renda = (

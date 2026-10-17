@@ -1056,10 +1056,10 @@ def montar_pdf_municipio(
         agregar_municipio,
         carregar_bairros_geo,
         carregar_poligono_municipio,
-        carregar_renda_domiciliar_por_hex,
         gerar_payloads_download_relatorio_municipal,
         render_mapas_municipio,
     )
+    from motor_expansao.dashboard.renda_hex import renda_domiciliar_por_hex
 
     uf = str(uf).strip().upper()
     if df_muni is None or df_muni.empty:
@@ -1104,11 +1104,16 @@ def montar_pdf_municipio(
         bairros_geo = None
     # Renda DOMICILIAR por hexagono para a tabela de comparacao: vale nas DUAS unidades
     # (a tabela e' sempre por hexagono), entao fica fora do guard de `unidade` acima.
+    # A MESMA formula do card do REP (`renda_hex`), sobre os hexes que o chamador entregou:
+    # ate 2026-10-16 o PDF jogava o setor inteiro no hexagono do centro do bbox e divergia do
+    # card (Sao Roque/SP, 87a810361ffffff: R$ 13.261 no PDF, R$ 4.924 no card).
     # try/except proprio: falha aqui so tira a coluna de renda, nao o resto do relatorio.
     renda_dom: dict | None = None
     try:
         if cod:
-            renda_dom = carregar_renda_domiciliar_por_hex(uf, cod, settings.censo_geo_dir)
+            renda_dom = renda_domiciliar_por_hex(
+                df_muni, uf=uf, cod_municipio=cod, staging_dir=settings.staging_dir
+            )
     except Exception:
         renda_dom = None
 
