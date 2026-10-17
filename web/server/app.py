@@ -424,18 +424,16 @@ LIMITE_THREADS_BANCO = 6
 #: escoa ~250 pedidos/s no ensaio (200 em ~0,8 s): 2 s de fila e' carga que o piloto nao tem.
 ESPERA_FILA_BANCO_S = 2.0
 
-#: Idade, em segundos, a partir da qual uma chamada ao banco EM VOO prova que ele nao esta'
-#: respondendo. E' a SEGUNDA evidencia de queda do gate (a primeira e' o ultimo desfecho
-#: ter sido falha, `postgres.banco_em_falha`), e cobre o COMECO da queda: ate' o primeiro
-#: `PoolTimeout` chegar (5 s), nenhuma chamada falhou ainda -- mas as seis vagas estao
-#: presas ha' mais que isto. Consulta do RBAC saudavel leva milissegundos, e uma que passa
-#: de 2 s ja' estourou o `statement_timeout` e vai virar falha de todo jeito. Um usuario
-#: so' com pedidos nao envelhece chamada nenhuma: elas terminam e liberam a vaga.
-BANCO_SEM_RESPOSTA_S = 2.0
+# NAO HA' "idade de chamada em voo" como evidencia de queda (3a revisao adversarial,
+# 17/10/2026). A versao anterior tratava "a chamada mais antiga em voo passou de 2 s" como
+# prova de que o banco nao respondia -- mas essa idade mede o PROCESSO: espera pelo pool,
+# pela GIL e pelo proprio loop. Com o Postgres saudavel (`select 1` em 4 ms) e dois threads
+# de CPU, 513 de 600 pedidos de um usuario SEM permissao receberam 200; uma pausa de 2 s do
+# loop dava o mesmo. A evidencia agora e' so' `postgres.banco_em_falha`, que nasce do que o
+# processo nao fabrica (conexao perdida, servidor recusando conexao). O preco: no comeco de
+# uma queda sem recusa (`docker pause`, rede que some sem RST), a fila cheia responde 503.
 
 _LIMITES_BANCO: RunVar[tuple[anyio.Semaphore, anyio.CapacityLimiter]] = RunVar("_LIMITES_BANCO")
-#: Chamadas ao banco EM VOO no event loop corrente: `marca -> time.monotonic()` do inicio.
-_EM_VOO_BANCO: RunVar[dict[object, float]] = RunVar("_EM_VOO_BANCO")
 
 
 class FilaDoBancoCheia(RuntimeError):
@@ -470,21 +468,6 @@ def _limites_banco() -> tuple[anyio.Semaphore, anyio.CapacityLimiter]:
         return par
 
 
-def _em_voo_banco() -> dict[object, float]:
-    try:
-        return _EM_VOO_BANCO.get()
-    except LookupError:
-        em_voo: dict[object, float] = {}
-        _EM_VOO_BANCO.set(em_voo)
-        return em_voo
-
-
-def _banco_sem_resposta() -> bool:
-    """A chamada ao banco mais antiga em voo ja' passou de `BANCO_SEM_RESPOSTA_S`?"""
-    inicios = _em_voo_banco().values()
-    return bool(inicios) and time.monotonic() - min(inicios) >= BANCO_SEM_RESPOSTA_S
-
-
 async def _no_banco(
     funcao: Callable[..., Any],
     /,
@@ -512,16 +495,21 @@ async def _no_banco(
                 await fila.acquire()
     except TimeoutError:
         raise FilaDoBancoCheia(f"nenhuma thread do banco livre em {prazo_na_fila_s:.1f}s") from None
-    em_voo = _em_voo_banco()
-    marca = object()
-    em_voo[marca] = time.monotonic()
     try:
         return await anyio.to_thread.run_sync(
             functools.partial(funcao, *args, **kwargs), limiter=threads
         )
     finally:
-        del em_voo[marca]
         fila.release()
+
+
+def _piloto_ocupado() -> JSONResponse:
+    """503 do gate quando o RBAC nao respondeu e nada prova que o banco caiu."""
+    return JSONResponse(
+        {"detail": "Piloto ocupado no momento. Tente novamente em instantes."},
+        status_code=503,
+        headers={"Retry-After": "2"},
+    )
 
 
 # Controle TEMPORARIO de acesso por aba (2026-08-13): o Authelia autentica; aqui cada
@@ -562,8 +550,9 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
     # Rota SEM capacidade (health, catalogos, `/api/me`, SPA) nem chega ao threadpool do
     # banco: o GATE nao tem o que perguntar por ela. (O `/api/me` CONSULTA o banco, mas na
     # propria rota, que e' `def` e roda no pool padrao, disputando as 4 conexoes com o gate:
-    # sob contencao real -- um lock de migration -- uma espera de 5 s ali tambem arma o
-    # disjuntor e nega as sensiveis a todos por 3 s. E' a degradacao esperada nesse estado.)
+    # sob contencao, uma espera de 5 s ali da' `PoolTimeout` -- que SO' arma o disjuntor e
+    # vira evidencia de queda se o servidor tambem estiver RECUSANDO conexao. Pool apenas
+    # saturado e' `BancoSemProvaDeQueda`, e o gate responde 503, nunca a degradacao.)
     # As threads sao as do `_no_banco`, com limite proprio: ver `LIMITE_THREADS_BANCO`.
     if acesso.banco_no_comando():
         if acesso.capacidade_necessaria(request.url.path, request.method) is None:
@@ -577,18 +566,19 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
                     remote_user,
                     prazo_na_fila_s=ESPERA_FILA_BANCO_S,
                 )
+            except acesso.RbacSemProvaDeQueda:
+                # O banco nao atendeu ESTA consulta (pool saturado, lock, statement timeout),
+                # e nada prova que ele caiu: 503, como a fila cheia sem evidencia.
+                return _piloto_ocupado()
             except FilaDoBancoCheia as erro:
                 # Fila cheia SO' vale como "banco fora" com EVIDENCIA: o ultimo uso do banco
-                # FALHOU, ou ha' chamada presa nele ha' mais de `BANCO_SEM_RESPOSTA_S`. Sem
-                # ela, as threads estao ocupadas RESPONDENDO, e a degradacao liberaria as
-                # rotas nao sensiveis a quem nao tem a capacidade so' por inundar o piloto
-                # (revisao de 17/10/2026). Ai' nega TODA rota controlada, com 503.
-                if not (acesso.banco_em_falha() or _banco_sem_resposta()):
-                    return JSONResponse(
-                        {"detail": "Piloto ocupado no momento. Tente novamente em instantes."},
-                        status_code=503,
-                        headers={"Retry-After": "2"},
-                    )
+                # FALHOU com prova de queda (`postgres._prova_de_queda`). Sem ela, as threads
+                # estao ocupadas RESPONDENDO -- ou esperando o processo, nao o banco --, e a
+                # degradacao liberaria as rotas nao sensiveis a quem nao tem a capacidade so'
+                # por inundar o piloto (revisoes de 17/10/2026). Ai' nega TODA rota
+                # controlada, com 503.
+                if not acesso.banco_em_falha():
+                    return _piloto_ocupado()
                 # Mesma resposta do banco fora, sem I/O: nao ha' thread para perguntar.
                 detalhe = acesso.motivo_bloqueio_banco_indisponivel(
                     request.url.path, request.method, erro

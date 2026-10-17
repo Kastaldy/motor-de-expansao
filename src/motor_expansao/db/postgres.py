@@ -17,6 +17,7 @@ roda os pipelines do M1 nao precisa do psycopg. Um `import` no topo sem protecao
 
 from __future__ import annotations
 
+import itertools
 import logging
 import os
 import re
@@ -699,6 +700,18 @@ _disjuntor_ate: float = 0.0
 #: queda que o gate do RBAC exige antes de tratar "fila de threads cheia" como "banco
 #: fora": ver `banco_em_falha`.
 _em_falha: bool = False
+#: ORDEM (e nao hora) da ultima vez que o SERVIDOR RECUSOU uma conexao nova do pool, e do
+#: ultimo uso que terminou bem. E' o que separa os dois `PoolTimeout`: com uma recusa
+#: depois do ultimo sucesso, o pool nao entrega conexao porque nao CONSEGUE abri-la (banco
+#: fora); sem ela, porque todas estao EMPRESTADAS (pool saturado, banco respondendo). Ver
+#: `_prova_de_queda`. Contador e nao `time.monotonic()`: o relogio monotonic do Windows anda
+#: de 15,6 ms em 15,6 ms, e dois eventos no mesmo tique ficariam sem ordem.
+_ORDEM = itertools.count(1)
+_ultima_recusa: int = 0
+_ultimo_sucesso: int = 0
+#: SQLSTATE que o servidor manda quando ele mesmo esta' saindo do ar (classe 57P,
+#: "operator intervention" -- `57014`, o `QueryCanceled`, fica de fora de proposito).
+SQLSTATE_SERVIDOR_SAINDO = frozenset({"57P01", "57P02", "57P03"})
 
 
 class BancoNaoConfigurado(RuntimeError):
@@ -708,6 +721,21 @@ class BancoNaoConfigurado(RuntimeError):
 class BancoIndisponivel(RuntimeError):
     """Configurado, mas a conexao falhou. Distinto de nao-configurado de proposito:
     um e' escolha de operacao, o outro e' incidente -- e o diagnostico os separa."""
+
+
+class BancoSemProvaDeQueda(BancoIndisponivel):
+    """Esta chamada nao foi atendida, mas NADA prova que o servidor esta' fora do ar.
+
+    `PoolTimeout` sem recusa de conexao (as quatro conexoes estao emprestadas e respondendo),
+    `statement_timeout`/`lock_timeout` numa conexao VIVA (o servidor respondeu, com erro),
+    tempo de CONEXAO esgotado (medido no Python: um processo com a GIL disputada estoura o
+    prazo contra um banco saudavel). Subclasse de `BancoIndisponivel` para quem so' precisa
+    de "nao deu" (503 de admin, `/api/me`, portao de sessao) seguir igual; o gate do RBAC e'
+    quem a separa, porque a degradacao dele LIBERA as rotas nao sensiveis -- e isso so' pode
+    acontecer com o banco fora de verdade (3a revisao adversarial de 17/10/2026: 513 de 600
+    pedidos de um usuario SEM permissao passaram com o Postgres saudavel e o processo com a
+    CPU ocupada, porque `PoolTimeout` e idade de chamada medem o PROCESSO, nao o banco).
+    """
 
 
 class AutocommitProibido(RuntimeError):
@@ -756,8 +784,84 @@ def _marcar_indisponivel() -> None:
 
 def _marcar_disponivel() -> None:
     """O desfecho mais recente foi um uso que terminou bem (COMMIT incluido)."""
-    global _em_falha
+    global _em_falha, _ultimo_sucesso
     _em_falha = False
+    _ultimo_sucesso = next(_ORDEM)
+
+
+def _registrar_recusa_de_conexao() -> None:
+    """O servidor recusou uma conexao nova (chamado na thread do pool que tentou abri-la)."""
+    global _ultima_recusa
+    _ultima_recusa = next(_ORDEM)
+
+
+_CLASSE_DE_CONEXAO: Any = None
+
+
+def _classe_de_conexao() -> Any:
+    """`psycopg.Connection` que registra RECUSA de conexao; `None` sem o driver.
+
+    O pool abre conexao em thread propria e so' soma o erro num contador que nao separa o
+    tipo -- e o tipo e' o que importa aqui. Recusa (`connection refused`, host que nao
+    resolve, servidor saindo) e' o banco dizendo "nao"; `ConnectionTimeout` NAO entra,
+    porque o `connect_timeout` do psycopg 3 e' medido em Python, entre uma volta e outra
+    do protocolo: com a GIL disputada (dois PDFs, uma enxurrada no `/api/me`) ele estoura
+    contra um banco saudavel -- e uma "recusa" fabricada pela CPU liberaria rota sem
+    permissao. O preco: host que some SEM recusar (queda de rede) so' vira prova quando a
+    conexao em uso cair pelo keepalive/`tcp_user_timeout` (~10-20 s); ate' la', 503.
+    """
+    global _CLASSE_DE_CONEXAO
+    if _CLASSE_DE_CONEXAO is not None:
+        return _CLASSE_DE_CONEXAO
+    try:
+        import psycopg
+    except ImportError:
+        return None
+    tempo_esgotado = getattr(psycopg.errors, "ConnectionTimeout", ())
+
+    class _ConexaoQueRegistraRecusa(psycopg.Connection):  # type: ignore[type-arg]
+        @classmethod
+        def connect(cls, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+            try:
+                return super().connect(*args, **kwargs)
+            except tempo_esgotado:
+                raise
+            except psycopg.OperationalError:
+                _registrar_recusa_de_conexao()
+                raise
+
+    _CLASSE_DE_CONEXAO = _ConexaoQueRegistraRecusa
+    return _CLASSE_DE_CONEXAO
+
+
+def _prova_de_queda(erro: BaseException) -> bool:
+    """Esta falha prova que o SERVIDOR esta' fora do alcance -- e nao so' esta chamada?
+
+    So' conta o que o processo nao consegue fabricar sozinho:
+    - conexao perdida (erro operacional SEM SQLSTATE: o servidor fechou, ou a rede caiu pelo
+      keepalive/`tcp_user_timeout`, que sao do kernel e nao dependem da GIL);
+    - servidor saindo do ar (`SQLSTATE_SERVIDOR_SAINDO`);
+    - `PoolTimeout` com o servidor RECUSANDO conexao nova depois do ultimo uso bom.
+    Nao conta: `PoolTimeout` sem recusa (pool saturado), `ConnectionTimeout`, `QueryCanceled`
+    e `LockNotAvailable` (o servidor RESPONDEU), nem erro que nao e' operacional.
+    """
+    try:
+        from psycopg_pool import PoolTimeout
+    except ImportError:
+        PoolTimeout = None  # type: ignore[assignment,misc]  # noqa: N806
+    if PoolTimeout is not None and isinstance(erro, PoolTimeout):
+        return _ultima_recusa > _ultimo_sucesso
+    try:
+        import psycopg
+    except ImportError:
+        return False
+    tempo_esgotado = getattr(psycopg.errors, "ConnectionTimeout", None)
+    if tempo_esgotado is not None and isinstance(erro, tempo_esgotado):
+        return False
+    if not isinstance(erro, psycopg.OperationalError):
+        return False
+    estado = getattr(erro, "sqlstate", None)
+    return estado is None or estado in SQLSTATE_SERVIDOR_SAINDO
 
 
 def banco_em_falha() -> bool:
@@ -781,10 +885,17 @@ def banco_em_falha() -> bool:
     return _em_falha
 
 
-def _falha(erro: Exception) -> BancoIndisponivel:
-    """Normaliza falha de driver/rede, preservando a CLASSE e escondendo segredo."""
+def _falha(erro: Exception, *, prova: bool = True) -> BancoIndisponivel:
+    """Normaliza falha de driver/rede, preservando a CLASSE e escondendo segredo.
+
+    `prova=False` devolve `BancoSemProvaDeQueda` e NAO carimba `banco_em_falha`: a evidencia
+    de queda so' nasce do que `_prova_de_queda` aceita.
+    """
+    texto = f"{type(erro).__name__}: {_sem_segredo(str(erro))}"
+    if not prova:
+        return BancoSemProvaDeQueda(texto)
     _marcar_indisponivel()
-    return BancoIndisponivel(f"{type(erro).__name__}: {_sem_segredo(str(erro))}")
+    return BancoIndisponivel(texto)
 
 
 def motivo_indisponivel() -> str | None:
@@ -848,7 +959,12 @@ def _erro_operacional() -> Any:
 
 
 def _armar_disjuntor_se_sem_conexao(erro: Exception) -> None:
-    """Abre o disjuntor se a falha foi o POOL nao entregar conexao (`PoolTimeout`)."""
+    """Abre o disjuntor se a falha foi o POOL nao entregar conexao (`PoolTimeout`).
+
+    So' e' chamada com PROVA de queda (`_prova_de_queda`): `PoolTimeout` de pool saturado
+    nao arma. Aberto, o disjuntor levanta `BancoIndisponivel` COM evidencia por 3 s -- e o
+    gate le isso como banco fora, liberando as rotas nao sensiveis.
+    """
     global _disjuntor_ate
     try:
         from psycopg_pool import PoolTimeout
@@ -892,6 +1008,7 @@ def _emprestar(pilha: ExitStack, pool: Any, preparar: Callable[[Any], None]) -> 
     conexao viva sao a resposta, e repeti-los dobraria a espera de quem ja' esperou.
     `AutocommitProibido` atravessa sem traducao, como antes.
     """
+    viu_quebrada = False
     for tentativa in range(POOL_MAX + 1):
         emprestimo = ExitStack()
         con = None
@@ -906,9 +1023,15 @@ def _emprestar(pilha: ExitStack, pool: Any, preparar: Callable[[Any], None]) -> 
                 raise
             if quebrada and tentativa < POOL_MAX:
                 _LOG.info("conexao do pool morta (%s); trocando", type(erro).__name__)
+                viu_quebrada = True
                 continue
-            _armar_disjuntor_se_sem_conexao(erro)
-            raise _falha(erro) from erro
+            # Conexao que o SERVIDOR derrubou (quebrada agora ou numa tentativa anterior
+            # desta mesma chamada) e' prova -- e o `PoolTimeout` que vem depois de trocar as
+            # mortas tambem, por causa dela.
+            prova = quebrada or viu_quebrada or _prova_de_queda(erro)
+            if prova:
+                _armar_disjuntor_se_sem_conexao(erro)
+            raise _falha(erro, prova=prova) from erro
         pilha.push(emprestimo)
         return con
     raise AssertionError("inalcancavel: o laco sempre devolve ou levanta")
@@ -943,9 +1066,14 @@ def _obter_pool() -> Any:
         # laco de checagem do psycopg_pool espera com BACKOFF entre uma conexao morta e a
         # seguinte (1 s, 2 s, 4 s...) e a primeira requisicao estourava os 5 s do pool -- e
         # ainda saia negada. Quem descarta a conexao velha e' o `_emprestar`, sem espera.
+        extras: dict[str, Any] = {}
+        classe_de_conexao = _classe_de_conexao()
+        if classe_de_conexao is not None:
+            extras["connection_class"] = classe_de_conexao
         _pool = classe(
             conninfo=url,
             kwargs=_parametros_de_conexao(url),
+            **extras,
             min_size=POOL_MIN,
             max_size=POOL_MAX,
             timeout=TIMEOUT_POOL_S,
@@ -976,10 +1104,11 @@ def _pool_ou_falha() -> Any:
 
 
 def _fechar_sem_trava() -> None:
-    global _pool, _pool_da_url, _disjuntor_ate, _em_falha
+    global _pool, _pool_da_url, _disjuntor_ate, _em_falha, _ultima_recusa, _ultimo_sucesso
     # Pool novo, disjuntor fechado: a janela era sobre as conexoes do pool que saiu.
     _disjuntor_ate = 0.0
     _em_falha = False
+    _ultima_recusa = _ultimo_sucesso = 0
     if _pool is not None:
         try:
             _pool.close()
@@ -1045,7 +1174,7 @@ def conexao() -> Iterator[Any]:
             yield con
         _marcar_disponivel()  # so' depois do COMMIT: o banco respondeu de ponta a ponta
     except _erro_operacional() as erro:
-        raise _falha(erro) from erro
+        raise _falha(erro, prova=_prova_de_queda(erro)) from erro
 
 
 @contextmanager
@@ -1087,7 +1216,7 @@ def transacao(*, id_usuario: int | str | None) -> Iterator[Any]:
             yield _emprestar(pilha, pool, preparar)
         _marcar_disponivel()
     except _erro_operacional() as erro:
-        raise _falha(erro) from erro
+        raise _falha(erro, prova=_prova_de_queda(erro)) from erro
 
 
 def _normalizar_autor(id_usuario: int | str | None) -> str | None:

@@ -679,6 +679,15 @@ def capacidade_necessaria(path: str, metodo: str) -> str | None:
 _rbac_indisponivel_logado = False
 
 
+class RbacSemProvaDeQueda(RuntimeError):
+    """O RBAC nao respondeu, e nada prova que o banco caiu: o gate responde 503, nao degrada.
+
+    A degradacao (`motivo_bloqueio_banco_indisponivel`) LIBERA as rotas nao sensiveis sem
+    checar permissao -- aceitavel com o banco FORA, um furo com ele no ar. Sem prova de
+    queda, toda rota controlada recebe 503: nenhuma capacidade e' presumida.
+    """
+
+
 def banco_em_falha() -> bool:
     """O ultimo uso do banco terminou em `BancoIndisponivel`? Sem o pacote, `False`."""
     try:
@@ -726,6 +735,12 @@ def motivo_bloqueio_por_banco(path: str, metodo: str, usuario: object) -> str | 
 
     try:
         quem = rbac.identidade(normalizar_usuario(usuario))
+    except db.BancoSemProvaDeQueda as erro:
+        # Pool saturado, lock, statement timeout: o banco esta' (ou pode estar) NO AR. So'
+        # degrada se OUTRA chamada ja' provou a queda e nenhuma terminou bem desde entao.
+        if not banco_em_falha():
+            raise RbacSemProvaDeQueda(str(erro)) from erro
+        return motivo_bloqueio_banco_indisponivel(path, metodo, erro)
     except (db.BancoIndisponivel, db.BancoNaoConfigurado) as erro:
         return motivo_bloqueio_banco_indisponivel(path, metodo, erro)
 

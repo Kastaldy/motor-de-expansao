@@ -307,7 +307,13 @@ def test_erro_de_programacao_e_integridade_continuam_visiveis(
             con.execute("SELECT 1")
 
 
-@pytest.mark.parametrize("erro", ERROS_OPERACIONAIS)
+#: Falhas que PROVAM que o servidor saiu do alcance (conexao perdida, servidor saindo) --
+#: e as que nao provam: o servidor RESPONDEU, com erro, numa conexao viva.
+ERROS_COM_PROVA = [p for p in ERROS_OPERACIONAIS if p.id in {"conexao_caiu", "pg_terminate_backend"}]
+ERROS_SEM_PROVA = [p for p in ERROS_OPERACIONAIS if p.id in {"statement_timeout", "lock_timeout"}]
+
+
+@pytest.mark.parametrize("erro", ERROS_COM_PROVA)
 def test_gate_com_erro_no_corpo_nega_so_as_sensiveis_em_producao(
     monkeypatch: pytest.MonkeyPatch, erro: Exception
 ) -> None:
@@ -326,7 +332,10 @@ def test_gate_com_erro_no_corpo_pelo_middleware_devolve_403_e_200(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """O mesmo, medido no status HTTP que o middleware devolve (antes: excecao -> 500)."""
-    _instalar(monkeypatch, _ConexaoQueFalha(psycopg.errors.LockNotAvailable("lock timeout")))
+    _instalar(
+        monkeypatch,
+        _ConexaoQueFalha(psycopg.OperationalError("server closed the connection unexpectedly")),
+    )
     monkeypatch.setenv("MOTOR_CADASTRO_DIR", "/app/cadastro")
 
     def rodar(caminho: str) -> int:
@@ -336,6 +345,28 @@ def test_gate_com_erro_no_corpo_pelo_middleware_devolve_403_e_200(
 
     assert rodar("/api/uf/SP") == 200
     assert rodar("/api/rede/carteira") == 403
+
+
+@pytest.mark.parametrize("erro", ERROS_SEM_PROVA)
+def test_gate_com_lock_ou_statement_timeout_responde_503_e_nao_degrada(
+    monkeypatch: pytest.MonkeyPatch, erro: Exception
+) -> None:
+    """3a revisao de 17/10/2026: `lock_timeout`/`statement_timeout` numa conexao VIVA sao o
+    servidor RESPONDENDO. Tratados como banco fora, a degradacao liberava as rotas nao
+    sensiveis a quem nao tem a capacidade. Sem prova de queda: 503 em toda rota controlada,
+    e a evidencia de queda continua limpa."""
+    _instalar(monkeypatch, _ConexaoQueFalha(erro))
+    monkeypatch.setenv("MOTOR_CADASTRO_DIR", "/app/cadastro")
+
+    def rodar(caminho: str) -> int:
+        return asyncio.run(
+            pilot._controle_de_acesso_por_aba(_Requisicao(caminho), _proximo)
+        ).status_code
+
+    assert rodar("/api/uf/SP") == 503
+    assert rodar("/api/pin-concorrente/1") == 503
+    assert rodar("/api/rede/carteira") == 503
+    assert not acesso.banco_em_falha()
 
 
 def test_gate_com_erro_de_programacao_nao_vira_fail_open(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -406,6 +437,8 @@ class _PoolRoteirizado:
     def connection(self):  # type: ignore[no-untyped-def]
         self.emprestadas += 1
         con = self._fila.pop(0)
+        if isinstance(con, BaseException):  # o pool nao entregou conexao (`PoolTimeout`)
+            raise con
         try:
             yield con
         except BaseException:
@@ -783,10 +816,15 @@ def test_erro_de_integridade_no_commit_continua_visivel(monkeypatch: pytest.Monk
 
 
 class _PoolSemConexao:
-    """Banco fora: cada pedido espera e devolve `PoolTimeout`, como o psycopg_pool."""
+    """Cada pedido espera e devolve `PoolTimeout`, como o psycopg_pool.
 
-    def __init__(self, espera_s: float) -> None:
+    `recusa=True` e' o BANCO FORA: enquanto o pedido espera, a thread do pool tenta abrir
+    conexao e o servidor recusa (o que `_classe_de_conexao` registra). `recusa=False` e' o
+    POOL SATURADO com o banco no ar: as conexoes estao todas emprestadas, ninguem recusa."""
+
+    def __init__(self, espera_s: float, recusa: bool = True) -> None:
         self._espera_s = espera_s
+        self._recusa = recusa
         self.pedidos = 0
 
     @contextmanager
@@ -794,6 +832,8 @@ class _PoolSemConexao:
         from psycopg_pool import PoolTimeout
 
         self.pedidos += 1
+        if self._recusa:
+            mod._registrar_recusa_de_conexao()
         time.sleep(self._espera_s)
         raise PoolTimeout("couldn't get a connection after 5.00 sec")
         yield  # pragma: no cover
@@ -833,6 +873,158 @@ def test_disjuntor_responde_na_hora_depois_de_um_pool_timeout(
         with db.conexao():
             pass
     assert pool.pedidos == 2
+
+
+def test_pool_saturado_nao_e_prova_de_queda_nem_arma_o_disjuntor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """3a revisao de 17/10/2026: `PoolTimeout` com o servidor no ar (as quatro conexoes
+    emprestadas a quem esta' RESPONDENDO, ou presas atras da GIL) armava o disjuntor e
+    carimbava a evidencia -- e o gate liberava as rotas nao sensiveis a quem nao tem a
+    capacidade. Sem recusa de conexao, nao prova nada."""
+    pytest.importorskip("psycopg_pool")
+    pool = _PoolSemConexao(espera_s=0.0, recusa=False)
+    monkeypatch.setattr(mod, "_driver", lambda: lambda **_kw: pool)
+    monkeypatch.setenv(mod.ENV_URL, "postgresql://fake/motor")
+    for _ in range(2):
+        with pytest.raises(db.BancoSemProvaDeQueda, match="PoolTimeout"):
+            with db.conexao():
+                pass
+    assert pool.pedidos == 2, "pool saturado nao pode abrir o disjuntor"
+    assert not acesso.banco_em_falha()
+
+
+def test_conexao_morta_seguida_de_pool_timeout_e_prova_de_queda(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O `docker stop` no Windows (e qualquer queda em que a recusa nao chega a tempo): as
+    conexoes do pool estao MORTAS, o servidor as derrubou, e o `PoolTimeout` vem depois de
+    troca-las. A conexao derrubada e' a prova -- sem ela, a queda inteira seria 503."""
+    from psycopg_pool import PoolTimeout
+
+    _instalar_roteiro(
+        monkeypatch,
+        [_ConexaoRoteirizada(morta=True), PoolTimeout("couldn't get a connection")],
+    )
+    with pytest.raises(db.BancoIndisponivel) as falha:
+        with db.conexao():
+            pass
+    assert not isinstance(falha.value, db.BancoSemProvaDeQueda)
+    assert acesso.banco_em_falha()
+
+
+def test_recusa_anterior_ao_ultimo_sucesso_nao_prova_a_queda_de_agora(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recusa e' ESTADO ate' o banco responder: uma queda ja' superada nao transforma o
+    proximo pool saturado em "banco fora"."""
+    pytest.importorskip("psycopg_pool")
+    mod._registrar_recusa_de_conexao()
+    pool = _instalar_roteiro(monkeypatch, [_ConexaoRoteirizada(morta=False)])
+    with db.conexao():
+        pass
+    saturado = _PoolSemConexao(espera_s=0.0, recusa=False)
+    monkeypatch.setattr(pool, "connection", saturado.connection)
+    with pytest.raises(db.BancoSemProvaDeQueda):
+        with db.conexao():
+            pass
+    assert not acesso.banco_em_falha()
+
+
+@pytest.mark.parametrize(
+    ("erro", "prova"),
+    [
+        pytest.param(psycopg.errors.QueryCanceled("statement timeout"), False, id="statement"),
+        pytest.param(psycopg.errors.LockNotAvailable("lock timeout"), False, id="lock"),
+        pytest.param(psycopg.errors.ConnectionTimeout("timeout expired"), False, id="conectar"),
+        pytest.param(psycopg.OperationalError("server closed the connection"), True, id="caiu"),
+        pytest.param(psycopg.errors.AdminShutdown("terminating connection"), True, id="saindo"),
+    ],
+)
+@pytest.mark.parametrize("abrir", ["leitura", "escrita"])
+def test_so_o_que_o_processo_nao_fabrica_carimba_a_evidencia(
+    monkeypatch: pytest.MonkeyPatch, erro: Exception, prova: bool, abrir: str
+) -> None:
+    _instalar(monkeypatch, _ConexaoQueFalha(erro))
+    with pytest.raises(db.BancoIndisponivel) as falha:
+        with db.conexao() if abrir == "leitura" else db.transacao(id_usuario=1) as con:
+            con.execute("SELECT 1")
+    assert isinstance(falha.value, db.BancoSemProvaDeQueda) is (not prova)
+    assert acesso.banco_em_falha() is prova
+
+
+def test_a_conexao_do_pool_registra_recusa_mas_nao_tempo_esgotado(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O `connect_timeout` do psycopg 3 e' medido em PYTHON: com a GIL disputada ele estoura
+    contra um banco saudavel. So' a recusa (o servidor dizendo "nao") vira prova."""
+    classe = mod._classe_de_conexao()
+    erros: list[Exception] = []
+
+    def conectar(cls: Any, *_a: Any, **_k: Any) -> Any:
+        raise erros[-1]
+
+    monkeypatch.setattr(psycopg.Connection, "connect", classmethod(conectar))
+    erros.append(psycopg.errors.ConnectionTimeout("connection timeout expired"))
+    with pytest.raises(psycopg.errors.ConnectionTimeout):
+        classe.connect("host=x")
+    assert mod._ultima_recusa == 0
+    erros.append(psycopg.OperationalError("connection refused"))
+    with pytest.raises(psycopg.OperationalError):
+        classe.connect("host=x")
+    assert mod._ultima_recusa > 0
+
+
+def test_o_pool_usa_a_conexao_que_registra_recusa(monkeypatch: pytest.MonkeyPatch) -> None:
+    pool = _instalar(monkeypatch, _ConexaoRoteirizada(morta=False))
+    with db.conexao():
+        pass
+    assert pool.kwargs["connection_class"] is mod._classe_de_conexao()
+
+
+def test_pool_saturado_com_banco_no_ar_nao_libera_rota_pelo_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A propriedade, ponta a ponta pelo `rbac` real: com o banco NO AR, quem nao tem a
+    capacidade nunca recebe 200 -- nem quando o pool nao entrega conexao. Reproducao da
+    revisao: Postgres saudavel, 2 threads de CPU e 40 do `/api/me`, 513 de 600 pins com 200."""
+    pytest.importorskip("psycopg_pool")
+    pool = _PoolSemConexao(espera_s=0.0, recusa=False)
+    monkeypatch.setattr(mod, "_driver", lambda: lambda **_kw: pool)
+    monkeypatch.setenv(mod.ENV_URL, "postgresql://fake/motor")
+    monkeypatch.setenv("MOTOR_ACESSO_FAIL_CLOSED", "1")
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    caminhos = ["/api/pin-concorrente/1", "/api/uf/SP", "/api/oportunidades", "/api/rede/carteira"]
+
+    async def cenario() -> list[int]:
+        respostas = await asyncio.gather(
+            *(pilot._controle_de_acesso_por_aba(_Requisicao(c), _proximo) for c in caminhos * 5)
+        )
+        return [r.status_code for r in respostas]
+
+    assert set(asyncio.run(cenario())) == {503}
+
+
+def test_sem_prova_nesta_chamada_degrada_se_a_queda_ja_foi_provada(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Durante uma queda PROVADA (e nenhum uso bom desde entao), o `PoolTimeout` seguinte
+    nao precisa provar de novo: a degradacao de sempre, 403 so' nas sensiveis."""
+    pytest.importorskip("psycopg_pool")
+    pool = _PoolSemConexao(espera_s=0.0, recusa=False)
+    monkeypatch.setattr(mod, "_driver", lambda: lambda **_kw: pool)
+    monkeypatch.setenv(mod.ENV_URL, "postgresql://fake/motor")
+    monkeypatch.setenv("MOTOR_ACESSO_FAIL_CLOSED", "1")
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    mod._marcar_indisponivel()
+
+    def rodar(caminho: str) -> int:
+        return asyncio.run(
+            pilot._controle_de_acesso_por_aba(_Requisicao(caminho), _proximo)
+        ).status_code
+
+    assert rodar("/api/pin-concorrente/1") == 200
+    assert rodar("/api/rede/carteira") == 403
 
 
 def test_lock_e_statement_timeout_nao_armam_o_disjuntor(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -979,16 +1171,14 @@ def test_relatorio_espera_a_vez_sem_prazo(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def _inundar_com_banco_lento(
-    monkeypatch: pytest.MonkeyPatch, permissoes: set[str], sem_resposta_s: float = 10 * LENTO_S
+    monkeypatch: pytest.MonkeyPatch, permissoes: set[str]
 ) -> tuple[list[Any], list[str]]:
     """Todas as vagas presas numa chamada de `LENTO_S`, e mais seis rotas controladas chegando.
 
-    Com o `sem_resposta_s` padrao, bem acima de `LENTO_S`, o banco esta' NO AR na escala do
-    teste -- como 5 ms contra 2 s em producao. Abaixo de `LENTO_S`, as chamadas presas ja'
-    provam que ele nao responde."""
+    O banco esta' NO AR: as chamadas presas terminam bem. Elas so' estao LENTAS -- e quando
+    as atrasadas desistem da fila, as presas ja' tem idade de varias esperas de fila."""
     monkeypatch.setenv("MOTOR_ACESSO_FAIL_CLOSED", "1")
     monkeypatch.setattr(pilot, "ESPERA_FILA_BANCO_S", 0.1)
-    monkeypatch.setattr(pilot, "BANCO_SEM_RESPOSTA_S", sem_resposta_s)
     chamadas: list[str] = []
     _identidade_lenta(monkeypatch, permissoes, chamadas)
     caminhos = [
@@ -1040,39 +1230,18 @@ def test_fila_cheia_sem_evidencia_nega_tambem_a_quem_tem_acesso(
     assert [r.status_code for r in respostas] == [503] * len(caminhos)
 
 
-def test_chamada_presa_no_banco_e_evidencia_de_queda_desde_o_inicio(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """O COMECO da queda: nenhuma chamada falhou ainda (o `PoolTimeout` leva 5 s), mas as
-    vagas estao presas ha' mais que o limiar. A fila cheia ja' recebe a degradacao do banco
-    fora -- 403 so' nas sensiveis -- e nao 503 em tudo (medido em `docker stop`: 194 de 200
-    pins com 503 no primeiro mapa da queda, sem esta segunda evidencia)."""
-    respostas, caminhos = _inundar_com_banco_lento(monkeypatch, set(), sem_resposta_s=0.05)
+def test_chamada_antiga_em_voo_nao_e_prova_de_queda(monkeypatch: pytest.MonkeyPatch) -> None:
+    """3a revisao de 17/10/2026: a versao anterior tratava "a chamada mais antiga em voo
+    passou de `BANCO_SEM_RESPOSTA_S`" como prova de queda. Essa idade mede o PROCESSO --
+    espera do pool, da GIL, do proprio loop --, e com o Postgres saudavel um usuario SEM
+    permissao recebia 200 (36 com seis operacoes lentas; 3483 com uma pausa de 2,1 s do loop;
+    513 de 600 com duas threads de CPU). Idade nenhuma prova queda: aqui as presas tem ~6x
+    a espera da fila, e o limiar antigo e' zerado (se ele voltar com qualquer nome que este
+    teste conheca, o teste pega). Tudo 503."""
+    monkeypatch.setattr(pilot, "BANCO_SEM_RESPOSTA_S", 0.0, raising=False)
+    respostas, caminhos = _inundar_com_banco_lento(monkeypatch, set())
     assert not acesso.banco_em_falha()
-    por_caminho = dict(zip(caminhos, (r.status_code for r in respostas), strict=True))
-    assert por_caminho == {
-        "/api/uf/SP": 200,
-        "/api/relatorio/pontual": 200,
-        "/api/oportunidades": 200,
-        "/api/pin-concorrente/1": 200,
-        "/api/rede/carteira": 403,
-        "/api/oportunidades/9/dossie": 403,
-    }
-
-
-def test_chamadas_em_voo_saem_do_registro() -> None:
-    """Marca esquecida envelheceria para sempre e viraria evidencia de queda permanente."""
-
-    def falha() -> None:
-        raise db.BancoIndisponivel("x")
-
-    async def cenario() -> int:
-        await pilot._no_banco(lambda: None, prazo_na_fila_s=0.2)
-        with pytest.raises(db.BancoIndisponivel):
-            await pilot._no_banco(falha, prazo_na_fila_s=0.2)
-        return len(pilot._em_voo_banco())
-
-    assert asyncio.run(cenario()) == 0
+    assert [r.status_code for r in respostas] == [503] * len(caminhos)
 
 
 def test_evidencia_de_queda_vem_do_banco_e_some_com_o_pool(monkeypatch: pytest.MonkeyPatch) -> None:
