@@ -29,6 +29,7 @@ municipio nao tem bairro mapeado (cobertura IBGE heterogenea). READ-ONLY sobre o
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 import unicodedata
@@ -922,16 +923,275 @@ def aplicar_metricas_hex_nos_bairros(
     return bairros_geo
 
 
+#: Colunas da particao de setores que a renda por hexagono le (sem a geometria, que entra a
+#: parte em `carregar_renda_domiciliar_por_hex` para a particao antiga sem ela nao quebrar).
+_COLUNAS_RENDA_HEX = [
+    "cod_setor",
+    "renda_responsavel_media_setor_2022",
+    "renda_per_capita_setor_2022",
+    "avg_moradores_domicilio_setor_2022",
+    "domicilios_particulares_ocupados_setor_2022",
+    "bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy",
+]
+
+
+def _renda_domiciliar_dos_setores(
+    setores: pd.DataFrame, uf: str | None, cod_municipio: str | None
+) -> pd.DataFrame:
+    """Setores ELEGIVEIS com a renda domiciliar canonica e os domicilios.
+
+    Exclusao SIMETRICA: o setor so' entra se renda e domicilios forem validos e domicilios > 0;
+    quem falha fica fora do numerador E do denominador, nunca virando zero disfarcado.
+    Devolve `_pos` (posicao em `setores`), `_dom` e `_renda_dom`.
+    """
+    from motor_expansao.dashboard.constants import (
+        FATOR_TEMPORAL_RENDA,
+        uplift_composicao_por_setor,
+    )
+
+    def _col(nome: str) -> np.ndarray:
+        if nome not in setores.columns:
+            return np.full(len(setores), np.nan)
+        return pd.to_numeric(setores[nome], errors="coerce").to_numpy(dtype="float64")
+
+    dom = _col("domicilios_particulares_ocupados_setor_2022")
+    renda = _col("renda_responsavel_media_setor_2022")
+    # Fallback pela per capita BRUTA (nunca a calibrada -- reintroduziria o k).
+    renda = np.where(
+        np.isnan(renda),
+        _col("renda_per_capita_setor_2022") * _col("avg_moradores_domicilio_setor_2022"),
+        renda,
+    )
+    # Exclusao simetrica: quem falha qualquer condicao fica fora dos DOIS lados.
+    ok = np.isfinite(dom) & (dom > 0) & np.isfinite(renda)
+    pos = np.flatnonzero(ok)
+    cods = (
+        setores["cod_setor"].to_numpy(dtype=object)[pos]
+        if "cod_setor" in setores.columns else [None] * len(pos)
+    )
+    fator = np.array(
+        [float(uplift_composicao_por_setor(c, uf, cod_municipio)) for c in cods], dtype="float64"
+    )
+    return pd.DataFrame({
+        "_pos": pos,
+        "_dom": dom[pos],
+        "_renda_dom": renda[pos] * fator * float(FATOR_TEMPORAL_RENDA),
+    })
+
+
+def _arvore_dos_hexes(hexes_alvo: set[str]) -> Any:
+    """STRtree dos poligonos dos hexagonos alvo -- montada UMA vez por relatorio.
+
+    Montar a arvore custa um `Polygon` por hexagono; refeita a cada particao lida (a propria e
+    cada vizinha), Altamira/PA (27.538 hexagonos, 13 vizinhos) construia ~400 mil poligonos
+    so' para o pre-filtro. `carregar_renda_domiciliar_por_hex` monta uma e a repassa.
+    """
+    import h3 as _h3
+    from shapely.geometry import Polygon
+    from shapely.strtree import STRtree
+
+    return STRtree([
+        Polygon([(lng, lat) for lat, lng in _h3.cell_to_boundary(h)]) for h in sorted(hexes_alvo)
+    ])
+
+
+def _setores_que_alcancam(
+    setores: pd.DataFrame, hexes_alvo: set[str], *, arvore: Any = None
+) -> pd.DataFrame:
+    """So' os setores cujo BBOX toca algum hexagono alvo -- pre-filtro barato, por STRtree.
+
+    Existe pelo custo: a particao de um vizinho (Guarulhos, para Sao Paulo) chega inteira, e
+    quase nenhum setor dela encosta nos hexagonos do relatorio. Setor sem bbox fica (o filtro
+    fino e' a intersecao, adiante). Conservador por construcao: bbox contem o setor.
+
+    `arvore`: a de `_arvore_dos_hexes(hexes_alvo)`, ja montada; sem ela monta aqui.
+    """
+    import shapely
+
+    cols = ("bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy")
+    if not hexes_alvo or not set(cols).issubset(setores.columns):
+        return setores
+    if arvore is None:
+        arvore = _arvore_dos_hexes(hexes_alvo)
+    xy = [pd.to_numeric(setores[c], errors="coerce").to_numpy(dtype="float64") for c in cols]
+    sem_bbox = np.isnan(np.column_stack(xy)).any(axis=1)
+    caixas = shapely.box(*xy)
+    manter = sem_bbox.copy()
+    if (~sem_bbox).any():
+        idx = np.flatnonzero(~sem_bbox)
+        tocam = arvore.query(caixas[idx], predicate="intersects")[0]
+        manter[idx[np.unique(tocam)]] = True
+    return setores.iloc[np.flatnonzero(manter)]
+
+
+def contribuicoes_renda_por_area(
+    setores: pd.DataFrame,
+    uf: str | None,
+    cod_municipio: str | None,
+    *,
+    hexes_alvo: set[str] | None = None,
+    arvore_alvo: Any = None,
+) -> dict[str, tuple[float, float]]:
+    """`hex_id` -> (numerador, denominador) da renda domiciliar, atribuindo por AREA. Pura.
+
+    Cada setor reparte seus domicilios entre os hexagonos que toca, na proporcao da AREA dele
+    que cai em cada um (`frac_setor = area(setor INTER hexagono) / area(setor)`):
+
+        numerador[hex]   += renda_domiciliar_setor x domicilios x frac_setor
+        denominador[hex] += domicilios x frac_setor
+
+    E' o MESMO criterio de `pop_hex_base`/`pop_total_setor_2022` do enriquecido (area planar
+    em graus, EPSG:4674, fracoes sem renormalizar): no hexagono 87a810344ffffff de Sao
+    Roque/SP a populacao rateada assim da' 63,817307, a do artefato ate a sexta casa. A
+    populacao e a renda da mesma linha da tabela passam a usar um criterio so'.
+
+    Separada do carregamento para o chamador SOMAR as contribuicoes de varias particoes (o
+    hexagono de borda atravessa a divisa) antes de dividir -- media de medias por municipio
+    daria o peso errado a cada lado.
+
+    Setor sem `geometry_wkb` legivel cai no criterio ANTIGO (inteiro no hexagono do centro do
+    bbox) em vez de sumir: particao antiga sem a coluna continua tendo renda.
+
+    `arvore_alvo`: STRtree de `_arvore_dos_hexes(hexes_alvo)`, para o chamador que soma varias
+    particoes montar a arvore uma vez so'.
+    """
+    import h3 as _h3
+    import shapely
+    from shapely.geometry import Polygon
+
+    if setores is None or setores.empty:
+        return {}
+    if hexes_alvo is not None:
+        setores = _setores_que_alcancam(setores, hexes_alvo, arvore=arvore_alvo)
+        if setores.empty:
+            return {}
+    elegiveis = _renda_domiciliar_dos_setores(setores, uf, cod_municipio)
+    if elegiveis.empty:
+        return {}
+
+    acumulado: dict[str, list[float]] = {}
+
+    def _somar(hid: str, renda_dom: float, peso: float) -> None:
+        if peso <= 0 or (hexes_alvo is not None and hid not in hexes_alvo):
+            return
+        alvo = acumulado.setdefault(hid, [0.0, 0.0])
+        alvo[0] += renda_dom * peso
+        alvo[1] += peso
+
+    sub = setores.iloc[elegiveis["_pos"].to_numpy()].reset_index(drop=True)
+    dom = elegiveis["_dom"].to_numpy(dtype="float64")
+    renda_dom = elegiveis["_renda_dom"].to_numpy(dtype="float64")
+
+    if "geometry_wkb" in sub.columns:
+        brutos = np.array(
+            [bytes(b) if isinstance(b, (bytes, bytearray, memoryview)) else None
+             for b in sub["geometry_wkb"].to_numpy(dtype=object)],
+            dtype=object,
+        )
+        geoms = shapely.from_wkb(brutos, on_invalid="ignore")
+    else:
+        geoms = np.full(len(sub), None, dtype=object)
+    presentes = ~shapely.is_missing(geoms)
+    invalidas = presentes & ~shapely.is_valid(geoms)
+    if invalidas.any():
+        geoms[invalidas] = shapely.buffer(geoms[invalidas], 0)
+    areas = np.where(presentes, shapely.area(geoms), 0.0)
+    areas = np.nan_to_num(np.asarray(areas, dtype="float64"), nan=0.0)
+
+    bbox = np.column_stack([
+        pd.to_numeric(sub[c], errors="coerce").to_numpy(dtype="float64")
+        if c in sub.columns else np.full(len(sub), np.nan)
+        for c in ("bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy")
+    ])
+
+    cache_pol: dict[str, Any] = {}
+
+    def _poligono(cell: str) -> Any:
+        pol = cache_pol.get(cell)
+        if pol is None:
+            pol = Polygon([(lng, lat) for lat, lng in _h3.cell_to_boundary(cell)])
+            cache_pol[cell] = pol
+        return pol
+
+    # Pares (setor, celula) que pedem intersecao de verdade, calculados juntos e vetorizados no
+    # fim. O caso comum (setor urbano, menor que a celula) nem chega aqui: ver o atalho.
+    par_i: list[int] = []
+    par_c: list[str] = []
+    for i in range(len(sub)):
+        minx, miny, maxx, maxy = bbox[i]
+        geom = geoms[i]
+        if geom is None or areas[i] <= 0:
+            # Sem geometria: criterio antigo, setor inteiro no hexagono do centro do bbox.
+            if np.isnan(bbox[i]).any():
+                continue
+            try:
+                hid = str(_h3.latlng_to_cell((miny + maxy) / 2.0, (minx + maxx) / 2.0, H3_RES))
+            except Exception:  # noqa: BLE001
+                continue
+            _somar(hid, renda_dom[i], dom[i])
+            continue
+        if np.isnan(bbox[i]).any():
+            minx, miny, maxx, maxy = geom.bounds
+        cantos = {
+            str(_h3.latlng_to_cell(float(la), float(lo), H3_RES))
+            for la, lo in ((miny, minx), (miny, maxx), (maxy, minx), (maxy, maxx))
+        }
+        if len(cantos) == 1:
+            # Os quatro cantos do bbox na MESMA celula: a celula e' convexa, entao o bbox -- e o
+            # setor dentro dele -- cabem inteiros nela. frac_setor = 1 sem calcular intersecao.
+            _somar(next(iter(cantos)), renda_dom[i], dom[i])
+            continue
+        try:
+            celulas = {
+                str(c)
+                for c in _h3.h3shape_to_cells_experimental(
+                    _h3.geo_to_h3shape(geom), H3_RES, "overlap"
+                )
+            }
+        except Exception:  # noqa: BLE001 - versao do h3 / geometria degenerada: anel k=1
+            celulas = set()
+            for c in cantos:
+                celulas.update(str(x) for x in _h3.grid_disk(c, 1))
+        celulas |= cantos
+        for c in celulas:
+            if hexes_alvo is None or c in hexes_alvo:
+                par_i.append(i)
+                par_c.append(c)
+
+    if par_i:
+        idx = np.asarray(par_i, dtype="int64")
+        poligonos = np.array([_poligono(c) for c in par_c], dtype=object)
+        frac = shapely.area(shapely.intersection(geoms[idx], poligonos)) / areas[idx]
+        for i, c, f in zip(idx.tolist(), par_c, frac.tolist(), strict=True):
+            if f > 0:
+                _somar(c, renda_dom[i], dom[i] * f)
+
+    return {hid: (v[0], v[1]) for hid, v in acumulado.items()}
+
+
+def _particao_tem_geometria(censo_geo_dir: Path, uf: str, cod_municipio: str) -> bool:
+    """`True` se TODO arquivo da particao traz `geometry_wkb` no schema (ou se nao ha arquivo:
+    a leitura devolve frame vazio de qualquer jeito). Le so' o schema, nao os dados. Erro de
+    leitura propaga -- quem chama trata como particao ilegivel, nao como "sem geometria"."""
+    import pyarrow.parquet as pq
+
+    base = Path(censo_geo_dir) / f"uf={str(uf).upper()}" / f"cod_municipio={cod_municipio}"
+    return all("geometry_wkb" in pq.read_schema(p).names for p in sorted(base.glob("*.parquet")))
+
+
 def carregar_renda_domiciliar_por_hex(
     uf: str | None,
     cod_municipio: str | None,
     censo_geo_dir: Path | str | None,
+    *,
+    hexes: Any = None,
+    vizinhos: Any = (),
 ) -> dict[str, float]:
     """`hex_id` res-7 -> RENDA MEDIA DOMICILIAR do hexagono (R$/mes). READ-ONLY e OFFLINE.
 
     Existe porque o parquet de hexagonos NAO tem os insumos: ele carrega
     `renda_per_capita_setor_2022_calibrada`, mas nao a V06004 bruta nem moradores/domicilios.
-    A particao de setores tem os tres, e o setor cai inteiro dentro de um hexagono.
+    A particao de setores tem os tres.
 
     Formula CANONICA, a mesma dos Big Numbers e do choropleth do Relatorio Pontual
     (`censo_point.py` linha ~399):
@@ -944,84 +1204,109 @@ def carregar_renda_domiciliar_por_hex(
     NAO usar a renda per capita CALIBRADA x moradores. Isso devolve `V06004 x k`, e o `k` da
     calibracao vira fator EXTRA em cima do uplift -- que ja e' definido como (renda domiciliar
     IBGE)/(V06004 bruta). O erro media +23,35% e jogava 30,3% dos setores na faixa de cor
-    errada. O fallback abaixo usa a per capita BRUTA justamente por isso.
+    errada. O fallback usa a per capita BRUTA justamente por isso.
 
     Agregacao setor -> hexagono: media PONDERADA POR DOMICILIOS (Metodo A, a leitura "Renda
-    Media" do material GeoFusion), com exclusao SIMETRICA -- o setor so entra no numerador E no
-    denominador se renda e domicilios forem validos e domicilios > 0. Setor que falha qualquer
-    condicao fica fora dos DOIS lados, nunca virando zero disfarcado.
+    Media" do material GeoFusion), com exclusao SIMETRICA e atribuicao por AREA de intersecao
+    (`contribuicoes_renda_por_area`): o peso do setor no hexagono e' domicilios x fracao da
+    area do setor dentro dele -- o mesmo rateio da populacao da mesma linha (`pop_hex_base`).
 
-    Fallback gracioso em qualquer falha -> `{}` (a coluna sai "n/d").
+    ATE 2026-10-16 a premissa era "o setor cai inteiro dentro de um hexagono": cada setor ia
+    INTEIRO para o hexagono do centro do seu bbox. Falso em setor rural grande (7,7 e 13,5 km2
+    contra os ~5,16 km2 de um res-7): em Sao Roque/SP nenhum setor tinha o centro do bbox em
+    87a810344ffffff, que saia "Não disponível" com quatro setores com renda cobrindo-o,
+    enquanto o vizinho herdava 100% de um setor do qual cobria 5%.
+
+    `hexes`: os hexagonos que interessam (os do relatorio); restringe a saida e o trabalho.
+    `vizinhos`: `(uf, cod_municipio)` de outros municipios cujas particoes tambem entram -- o
+    hexagono de borda atravessa a divisa (molde da DEC-065) e, sem eles, a renda dele sai so'
+    da parte de dentro. Vizinho sem particao, ou ilegivel, apenas nao contribui.
+
+    Fallback gracioso em qualquer falha -> `{}` (a coluna sai "Não disponível").
     """
     if censo_geo_dir is None or not uf or not cod_municipio:
         return {}
     try:
-        import h3 as _h3
-
-        from motor_expansao.dashboard.constants import (
-            FATOR_TEMPORAL_RENDA,
-            uplift_composicao_por_setor,
-        )
         from motor_expansao.pipelines.materializar_setores_censitarios_geo import (
             ler_particao_setores,
         )
     except Exception:
         return {}
 
-    # So as colunas necessarias: sem `geometry_wkb`, a leitura e' barata o bastante para rodar
-    # tambem no modo hexagono (onde a geometria de bairro nao e' carregada).
-    colunas = [
-        "cod_setor",
-        "renda_responsavel_media_setor_2022",
-        "renda_per_capita_setor_2022",
-        "avg_moradores_domicilio_setor_2022",
-        "domicilios_particulares_ocupados_setor_2022",
-        "bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy",
-    ]
-    try:
-        setores = ler_particao_setores(
-            root=Path(censo_geo_dir), uf=str(uf), cod_municipio=str(cod_municipio),
-            columns=colunas,
-        )
-    except Exception:
-        return {}
-    if setores is None or setores.empty:
-        return {}
+    alvo = {str(h) for h in hexes} if hexes is not None else None
 
-    num: dict[str, float] = {}
-    den: dict[str, float] = {}
-    for _, row in setores.iterrows():
-        dom = _safe_float(row.get("domicilios_particulares_ocupados_setor_2022"))
-        if math.isnan(dom) or dom <= 0:
-            continue  # exclusao simetrica: fica fora dos DOIS lados
+    def _ler(uf_p: str, cod_p: str) -> pd.DataFrame | None:
+        # So' a particao ANTIGA, sem a coluna no schema, cai no criterio do centro do bbox.
+        # Qualquer outra falha (IO, memoria, parquet corrompido) devolve `None` -- nunca uma
+        # 2a leitura sem a geometria, que traria de volta EM SILENCIO o defeito que o rateio
+        # por area corrige (e um hexagono de divisa somaria uma particao por area e outra
+        # pelo bbox).
+        log = logging.getLogger(__name__)
+        try:
+            colunas = list(_COLUNAS_RENDA_HEX)
+            if _particao_tem_geometria(Path(censo_geo_dir), uf_p, cod_p):
+                colunas.append("geometry_wkb")
+            else:
+                log.warning(
+                    "renda por hexagono: particao %s/%s sem geometry_wkb; setor vai inteiro "
+                    "ao hexagono do centro do bbox (criterio anterior a DEC-072)", uf_p, cod_p,
+                )
+            return ler_particao_setores(
+                root=Path(censo_geo_dir), uf=str(uf_p), cod_municipio=str(cod_p),
+                columns=colunas,
+            )
+        except Exception:  # noqa: BLE001 - particao ilegivel so' nao contribui
+            log.warning("renda por hexagono: particao %s/%s ilegivel", uf_p, cod_p, exc_info=True)
+            return None
 
-        renda = _safe_float(row.get("renda_responsavel_media_setor_2022"))
-        if math.isnan(renda):
-            # Fallback pela per capita BRUTA (nunca a calibrada -- reintroduziria o k).
-            bruta = _safe_float(row.get("renda_per_capita_setor_2022"))
-            moradores = _safe_float(row.get("avg_moradores_domicilio_setor_2022"))
-            if math.isnan(bruta) or math.isnan(moradores):
-                continue
-            renda = bruta * moradores
+    particoes: list[tuple[str, str]] = [(str(uf), str(cod_municipio))]
+    for uf_v, cod_v in vizinhos or ():
+        chave = (str(uf_v), str(cod_v))
+        if chave not in particoes:
+            particoes.append(chave)
 
-        minx = _safe_float(row.get("bbox_minx"))
-        miny = _safe_float(row.get("bbox_miny"))
-        maxx = _safe_float(row.get("bbox_maxx"))
-        maxy = _safe_float(row.get("bbox_maxy"))
-        if any(math.isnan(v) for v in (minx, miny, maxx, maxy)):
+    log = logging.getLogger(__name__)
+    arvore = _arvore_dos_hexes(alvo) if alvo else None
+    total: dict[str, list[float]] = {}
+    for n, (uf_p, cod_p) in enumerate(particoes):
+        setores = _ler(uf_p, cod_p)
+        if setores is None or setores.empty:
+            if n == 0:
+                # Sem a particao do PROPRIO municipio, so' os vizinhos contribuiriam: a renda
+                # sairia apenas nos hexagonos de borda e o "Onde crescer" mediria a cidade por
+                # eles, sem aviso. "Não disponível" em todos e' a leitura honesta.
+                log.warning(
+                    "renda por hexagono: particao do proprio municipio %s/%s ausente ou vazia; "
+                    "renda indisponivel no relatorio", uf_p, cod_p,
+                )
+                return {}
             continue
         try:
-            hid = str(_h3.latlng_to_cell(float((miny + maxy) / 2.0),
-                                         float((minx + maxx) / 2.0), H3_RES))
-        except Exception:
+            parcial = contribuicoes_renda_por_area(
+                setores, uf_p, cod_p, hexes_alvo=alvo, arvore_alvo=arvore
+            )
+        except Exception:  # noqa: BLE001 - vizinho ruim nao derruba a renda do municipio
+            log.warning(
+                "renda por hexagono: calculo falhou na particao %s/%s", uf_p, cod_p, exc_info=True
+            )
+            if n == 0:
+                return {}
             continue
+        if n == 0 and not parcial:
+            # A propria particao existe mas nao contribui (todo setor sem renda publicada, ou
+            # nenhum alcanca os hexagonos): o mesmo caso de cima por outra porta -- so' os
+            # vizinhos somariam e a renda sairia apenas na borda.
+            log.warning(
+                "renda por hexagono: particao do proprio municipio %s/%s sem renda utilizavel; "
+                "renda indisponivel no relatorio", uf_p, cod_p,
+            )
+            return {}
+        for hid, (num, den) in parcial.items():
+            acc = total.setdefault(hid, [0.0, 0.0])
+            acc[0] += num
+            acc[1] += den
 
-        fator = uplift_composicao_por_setor(row.get("cod_setor"), uf, cod_municipio)
-        domiciliar = renda * float(fator) * float(FATOR_TEMPORAL_RENDA)
-        num[hid] = num.get(hid, 0.0) + domiciliar * dom
-        den[hid] = den.get(hid, 0.0) + dom
-
-    return {hid: num[hid] / den[hid] for hid in num if den.get(hid, 0.0) > 0}
+    return {hid: v[0] / v[1] for hid, v in total.items() if v[1] > 0}
 
 
 def _bairros_por_zona(
@@ -3775,7 +4060,8 @@ def _tabela_hexes_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str,
         nota_renda = (
             "Renda domiciliar = renda do responsável (Censo 2022) x uplift de composição do "
             "domicílio x atualização monetária, média ponderada por domicílios - a MESMA "
-            "fórmula dos Big Numbers do Relatório Pontual."
+            "fórmula dos Big Numbers do Relatório Pontual. Setor que cruza a borda do "
+            "hexágono entra só com a parte da área dele que cai dentro, como a população."
         )
     elif fonte == "censo":
         nota_renda = (
@@ -4192,13 +4478,20 @@ def _praca_onde_crescer_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
             pdf.cell(w, 16, _ascii("Nenhum hexágono passou nos dois critérios."))
         y += 22.0
 
-    mediana = _renda(sel.mediana_renda) if sel.mediana_renda is not None else TEXTO_SEM_DADO
+    from motor_expansao.dashboard.relatorio_praca import texto_regua_onde_crescer
+
+    # DEC-072: a regua e' a renda do MORADOR mediano (ponderada pela populacao do hexagono). A
+    # frase sai de UMA funcao testada, que distingue as tres causas de "nao ponderada" e declara
+    # quantos hexagonos com renda ficaram fora do peso.
+    regua, cobertura = texto_regua_onde_crescer(sel)
+    valor = f" ({_renda(sel.mediana_renda)})" if sel.mediana_renda is not None else ""
     _draw_note(
         pdf, x, y + 12.0, w,
         "Critério: entram só hexágonos com residual positivo E renda domiciliar igual ou acima da "
-        f"mediana da cidade ({mediana}). Entre eles, a ordem é o índice de praça (70% "
+        f"{regua}{valor}. Entre eles, a ordem é o índice de praça (70% "
         "socioeconômico, 30% demanda), o mesmo da fila do funil. O residual sozinho puxaria para as "
-        "áreas mais populosas, que nem sempre têm renda.",
+        "áreas mais populosas, que nem sempre têm renda."
+        + (f" {cobertura}" if cobertura else ""),
     )
     if sel.aviso:
         pdf.set_text_color(*secondary)

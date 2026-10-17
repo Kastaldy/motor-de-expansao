@@ -107,7 +107,48 @@ class _MalhaMunicipal:
         quadro = shp_box(
             lng - meio_lado_lng, lat - meio_lado_lat, lng + meio_lado_lng, lat + meio_lado_lat
         )
-        return [self._meta[int(i)] for i in self._tree.query(quadro, predicate="intersects")]
+        return self.tocados(quadro)
+
+    def tocados(self, geometrias) -> list[tuple[str, str]]:
+        """Municipios cuja geometria toca `geometrias` (uma geometria ou um array delas).
+
+        Mesma consulta de `alcancados`, sem o quadro: o Relatorio Municipal pergunta pelos
+        POLIGONOS dos seus hexagonos, porque o hexagono de borda atravessa a divisa e o
+        bbox da cidade inteira traria municipios que nenhum hexagono toca. Ordem estavel
+        (a da arvore), sem repeticao.
+        """
+        resultado = self._tree.query(geometrias, predicate="intersects")
+        indices = resultado[1] if getattr(resultado, "ndim", 1) == 2 else resultado
+        vistos: dict[int, None] = {}
+        for i in sorted(int(x) for x in indices):
+            vistos.setdefault(i, None)
+        return [self._meta[i] for i in vistos]
+
+    def tocados_fora_de(self, geometrias, proprio: tuple[str, str]) -> list[tuple[str, str]]:
+        """`tocados(geometrias)` sem o municipio `proprio` -- o mesmo resultado, mais barato.
+
+        Com milhares de hexagonos, `tocados` testa CADA um contra o poligono do proprio
+        municipio, o mais detalhado da consulta e o unico que todos tocam: Altamira/PA (27.538
+        hexagonos) gastava ~10 s nisso. Aqui a arvore da malha da' so' os CANDIDATOS por caixa
+        e a interseccao exata roda ao contrario -- cada candidato (exceto o proprio) contra a
+        arvore dos hexagonos. `intersects` e' simetrico, entao a resposta e' a mesma.
+        """
+        import numpy as np
+        from shapely.strtree import STRtree
+
+        geoms = np.atleast_1d(np.asarray(geometrias, dtype=object))
+        candidatos = self._tree.query(geoms)
+        indices = candidatos[1] if getattr(candidatos, "ndim", 1) == 2 else candidatos
+        alvo = (str(proprio[0]).upper(), str(proprio[1]))
+        arvore_hex = STRtree(list(geoms))
+        resultado: list[tuple[str, str]] = []
+        for i in sorted({int(x) for x in indices}):
+            uf_i, cod_i = self._meta[i]
+            if (str(uf_i).upper(), str(cod_i)) == alvo:
+                continue
+            if len(arvore_hex.query(self._geoms[i], predicate="intersects")):
+                resultado.append(self._meta[i])
+        return resultado
 
     def alcancados_na_geometria(
         self, geometria, margem_km: float = _MARGEM_GEOMETRIA_KM
@@ -274,6 +315,35 @@ def _malha_alcancada(
             vistos.add(chave)
             alcancados.append(chave)
     return alcancados
+
+
+def _municipios_vizinhos_dos_hexes(
+    hex_ids, uf: str, cod_municipio: str, settings: Settings
+) -> list[tuple[str, str]]:
+    """Outros municipios que os hexagonos do relatorio tocam, pela malha municipal. READ-ONLY.
+
+    Gracioso: sem malha (instancia que nao a materializa) ou em qualquer falha devolve `[]`
+    e a renda sai so' da particao do proprio municipio -- como era antes.
+    """
+    if not hex_ids:
+        return []
+    try:
+        import h3
+        import numpy as np
+        from shapely.geometry import Polygon
+
+        malha = _carregar_malha(str(settings.ibge_dir))
+        poligonos = np.array(
+            [Polygon([(lng, lat) for lat, lng in h3.cell_to_boundary(h)]) for h in hex_ids],
+            dtype=object,
+        )
+        return malha.tocados_fora_de(poligonos, (str(uf), str(cod_municipio)))
+    except Exception:  # noqa: BLE001 - vizinho e' refinamento, nunca derruba o relatorio
+        logging.getLogger(__name__).warning(
+            "renda por hexagono: municipios vizinhos indisponiveis para %s/%s; a renda de borda "
+            "sai so' com a parte de dentro", uf, cod_municipio, exc_info=True,
+        )
+        return []
 
 
 def _nome_municipio_de(setores_df) -> str | None:
@@ -1411,10 +1481,18 @@ def montar_pdf_municipio(
     # Renda DOMICILIAR por hexagono para a tabela de comparacao: vale nas DUAS unidades
     # (a tabela e' sempre por hexagono), entao fica fora do guard de `unidade` acima.
     # try/except proprio: falha aqui so tira a coluna de renda, nao o resto do relatorio.
+    # Desde 2026-10-16 o rateio setor -> hexagono e' por AREA (o da populacao da mesma linha),
+    # e o hexagono de borda atravessa a divisa: em Sao Roque/SP, 19% de 87a810344ffffff esta em
+    # Aracariguama. Os vizinhos vem da malha (molde da DEC-065); sem ela, so' o proprio municipio.
     renda_dom: dict | None = None
     try:
         if cod:
-            renda_dom = carregar_renda_domiciliar_por_hex(uf, cod, settings.censo_geo_dir)
+            hex_ids = sorted({str(h) for h in df_muni["hex_id"].dropna()}) if "hex_id" in df_muni.columns else None
+            renda_dom = carregar_renda_domiciliar_por_hex(
+                uf, cod, settings.censo_geo_dir,
+                hexes=hex_ids,
+                vizinhos=_municipios_vizinhos_dos_hexes(hex_ids, uf, cod, settings),
+            )
     except Exception:
         renda_dom = None
 
