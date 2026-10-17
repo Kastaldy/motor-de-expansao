@@ -1,0 +1,235 @@
+"""Mediana da renda da cidade PONDERADA PELA POPULACAO na pagina "Onde crescer" (DEC-072).
+
+Com a renda do hexagono rateada por area (DEC-072), hexagonos rurais quase vazios passaram a ter
+renda -- muitas vezes alta. Na mediana sem peso cada um deles valia um hexagono urbano inteiro,
+a regua subia e a pagina esvaziava em 87 municipios (Trindade/GO, Pontalina/GO...). O dono
+escolheu em 2026-10-16 a opcao (b): mediana ponderada pela populacao do hexagono (a MESMA
+`pop_leitura` da linha da tabela).
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from types import SimpleNamespace
+
+import pandas as pd
+import pytest
+
+from motor_expansao.dashboard import relatorio_praca as rp
+
+
+def _hexes(linhas: list[tuple[str, float, float, float, float | None]]) -> pd.DataFrame:
+    return pd.DataFrame(
+        linhas,
+        columns=["hex_id", "oferta_efetiva_disponivel", "renda_domiciliar", "indice_praca", "pop_leitura"],
+    )
+
+
+# --- a funcao --------------------------------------------------------------------------------
+
+
+def test_menor_renda_cuja_populacao_acumulada_atinge_metade():
+    renda = pd.Series([1_000.0, 2_000.0, 3_000.0, 4_000.0])
+    pop = pd.Series([10.0, 10.0, 10.0, 70.0])
+    # acumulado 10, 20, 30, 100: 2*30 = 60 < 100; 2*100 >= 100 -> 4.000
+    assert rp.mediana_renda_da_cidade(renda, pop) == (4_000.0, True)
+    # exatamente 50%: entra o valor onde o acumulado TOCA a metade (>=), nao o seguinte
+    assert rp.mediana_renda_da_cidade(renda, pd.Series([25.0, 25.0, 25.0, 25.0])) == (2_000.0, True)
+
+
+def test_ordem_de_entrada_nao_muda_o_resultado():
+    renda = pd.Series([3_000.0, 1_000.0, 4_000.0, 2_000.0])
+    pop = pd.Series([10.0, 10.0, 70.0, 10.0])
+    assert rp.mediana_renda_da_cidade(renda, pop) == (4_000.0, True)
+
+
+def test_populacao_nula_ou_zero_fica_fora_do_peso():
+    renda = pd.Series([1_000.0, 2_000.0, 9_000.0, 9_500.0])
+    pop = pd.Series([100.0, 100.0, 0.0, None])
+    # so' os dois primeiros pesam: acumulado 100, 200 -> 2*100 >= 200 -> 1.000
+    assert rp.mediana_renda_da_cidade(renda, pop) == (1_000.0, True)
+
+
+def test_sem_peso_cai_na_mediana_simples_e_declara():
+    renda = pd.Series([1_000.0, 2_000.0, 3_000.0, 4_000.0])
+    assert rp.mediana_renda_da_cidade(renda, None) == (2_500.0, False)
+    assert rp.mediana_renda_da_cidade(renda, pd.Series([0.0, None, 0.0, None])) == (2_500.0, False)
+    assert rp.mediana_renda_da_cidade(pd.Series([None, 0.0]), pd.Series([10.0, 10.0])) == (None, False)
+
+
+# --- a selecao -------------------------------------------------------------------------------
+
+
+def _cidade_com_borda_rural() -> pd.DataFrame:
+    """4 hexagonos urbanos de 10 mil habitantes e 6 rurais de 5 habitantes com renda ALTA."""
+    urbanos = [
+        ("u1", 3_000.0, 2_000.0, 50.0, 10_000.0),
+        ("u2", 3_000.0, 2_500.0, 55.0, 10_000.0),
+        ("u3", 3_000.0, 3_000.0, 60.0, 10_000.0),
+        ("u4", 3_000.0, 3_500.0, 65.0, 10_000.0),
+    ]
+    rurais = [(f"r{i}", 0.0, 8_000.0 + 200.0 * i, 10.0, 5.0) for i in range(6)]
+    return _hexes(urbanos + rurais)
+
+
+def test_hexagonos_rurais_quase_vazios_e_ricos_nao_puxam_a_mediana():
+    df = _cidade_com_borda_rural()
+    sel = rp.selecionar_onde_crescer(df)
+    assert sel.mediana_ponderada is True
+    assert sel.mediana_renda == 3_000.0  # o morador mediano mora em u3
+    assert sel.hexagonos["hex_id"].tolist() == ["u4", "u3"]
+    assert sel.n_elegiveis == 2
+
+    # Com a regua antiga (sem peso), a mediana era 8.100 e a pagina saia VAZIA.
+    simples, _ = rp.mediana_renda_da_cidade(df["renda_domiciliar"], None)
+    assert simples == 8_100.0
+    assert int(((df["oferta_efetiva_disponivel"] > 0) & (df["renda_domiciliar"] >= simples)).sum()) == 0
+
+
+def test_renda_exibida_do_hexagono_fica_intacta():
+    df = _cidade_com_borda_rural()
+    sel = rp.selecionar_onde_crescer(df)
+    esperado = df.set_index("hex_id").loc[sel.hexagonos["hex_id"], "renda_domiciliar"].tolist()
+    assert sel.hexagonos["renda_domiciliar"].tolist() == esperado
+
+
+def test_sem_populacao_na_base_cai_na_simples():
+    df = _cidade_com_borda_rural().drop(columns=["pop_leitura"])
+    sel = rp.selecionar_onde_crescer(df)
+    assert sel.mediana_ponderada is False
+    assert sel.mediana_renda == 8_100.0
+    assert sel.populacao_na_base is False
+
+
+# --- cobertura do peso e o texto do PDF ------------------------------------------------------
+
+
+def test_cobertura_conta_os_hexagonos_com_renda_fora_do_peso():
+    """Hexagono `total_municipal` chega sem populacao de setor: tem renda, fica fora do peso e
+    continua elegivel. A selecao conta quantos, para o PDF declarar (revisao da DEC-072)."""
+    df = _cidade_com_borda_rural()
+    df.loc[df["hex_id"].isin(["r0", "r1"]), "pop_leitura"] = None
+    df.loc[df["hex_id"] == "r2", "pop_leitura"] = 0.0
+    sel = rp.selecionar_onde_crescer(df)
+    assert sel.mediana_ponderada is True
+    assert (sel.n_com_renda, sel.n_fora_do_peso) == (10, 3)
+    regua, nota = rp.texto_regua_onde_crescer(sel)
+    assert regua == "mediana da cidade ponderada pela população"
+    assert nota is not None and nota.startswith("3 dos 10 hexágonos com renda ficam fora do peso")
+
+    sel_cheia = rp.selecionar_onde_crescer(_cidade_com_borda_rural())
+    assert sel_cheia.n_fora_do_peso == 0
+    assert rp.texto_regua_onde_crescer(sel_cheia)[1] is None
+
+
+def test_sem_renda_nenhuma_nao_culpa_a_populacao():
+    df = _cidade_com_borda_rural().assign(renda_domiciliar=None)
+    sel = rp.selecionar_onde_crescer(df)
+    assert sel.mediana_renda is None and sel.mediana_ponderada is False
+    assert rp.texto_regua_onde_crescer(sel) == ("mediana da cidade", None)
+
+
+def test_populacao_so_fora_dos_hexagonos_com_renda_nao_diz_que_a_base_nao_tem():
+    df = _cidade_com_borda_rural()
+    df["pop_leitura"] = [None] * 4 + [5.0] * 6
+    df.loc[df["hex_id"].str.startswith("r"), "renda_domiciliar"] = None
+    sel = rp.selecionar_onde_crescer(df)
+    assert sel.mediana_ponderada is False and sel.populacao_na_base is True
+    regua, nota = rp.texto_regua_onde_crescer(sel)
+    assert regua == "mediana simples da cidade"
+    assert "Nenhum hexágono com renda tem população própria" in nota
+    assert "não traz população por hexágono" not in nota
+
+
+def _texto_da_pagina(sel) -> str:
+    """Renderiza `_praca_onde_crescer_page` de verdade e devolve o texto extraido do PDF."""
+    import io
+    import re
+
+    from motor_expansao.dashboard import relatorio_municipal as rm
+
+    pdf = rm._UltraPDF()
+    praca = SimpleNamespace(onde_crescer=sel, mapas={})
+    rm._praca_onde_crescer_page(
+        pdf, {}, praca, {}, primary=rm.ULTRA_TURQUESA, secondary=rm.ULTRA_TURQUESA
+    )
+    # A conta de folhas vem do proprio fpdf2 e roda em qualquer ambiente; so a extracao do
+    # texto precisa do pypdf, que o CI nao instala (mesmo molde do `pypdfium2` no export).
+    assert pdf.pages_count == 1, "a nota do criterio empurrou a pagina para uma segunda folha"
+    pypdf = pytest.importorskip("pypdf", reason="sem extrator de PDF no ambiente (o CI nao instala o pypdf)")
+    paginas = pypdf.PdfReader(io.BytesIO(bytes(pdf.output()))).pages
+    assert len(paginas) == 1, "a nota do criterio empurrou a pagina para uma segunda folha"
+    return re.sub(r"\s+", " ", paginas[0].extract_text())
+
+
+def test_pdf_ponderada_declara_a_regua_e_a_cobertura():
+    df = _cidade_com_borda_rural()
+    df.loc[df["hex_id"].isin(["r0", "r1"]), "pop_leitura"] = None
+    texto = _texto_da_pagina(rp.selecionar_onde_crescer(df))
+    assert "igual ou acima da mediana da cidade ponderada pela população (R$" in texto
+    assert "2 dos 10 hexágonos com renda ficam fora do peso" in texto
+    assert "simples" not in texto
+    assert "elegíve" not in texto.split("fora do peso", 1)[1]  # nao promete o que a base real nega
+
+
+def test_pdf_sem_populacao_na_base_diz_simples_e_por_que():
+    texto = _texto_da_pagina(rp.selecionar_onde_crescer(_cidade_com_borda_rural().drop(columns=["pop_leitura"])))
+    assert "igual ou acima da mediana simples da cidade (R$" in texto
+    assert "A base não traz população por hexágono" in texto
+    assert "ponderada pela população" not in texto
+
+
+def test_pdf_sem_renda_nao_tem_qualificador_nem_parenteses_vazios():
+    texto = _texto_da_pagina(rp.selecionar_onde_crescer(_cidade_com_borda_rural().assign(renda_domiciliar=None)))
+    assert "igual ou acima da mediana da cidade. Entre eles" in texto
+    assert "população por hexágono" not in texto
+    assert "Não disponível)" not in texto
+
+
+# --- regressao com dado real -----------------------------------------------------------------
+
+
+def _data_dir() -> Path:
+    base = os.environ.get("MOTOR_DATA_DIR")
+    candidatos = [Path(base)] if base else []
+    candidatos.append(Path(__file__).resolve().parents[2] / "data")
+    for raiz in candidatos:
+        geo = raiz / "outputs" / "setores_censitarios_2022_geo" / "uf=GO"
+        enr = raiz / "outputs" / "hexagonos_dashboard_enriquecido" / "uf=GO"
+        malha = raiz / "ibge"
+        if (
+            (geo / "cod_municipio=5221403").is_dir()
+            and (geo / "cod_municipio=5217708").is_dir()
+            and enr.is_dir()
+            and malha.is_dir()
+        ):
+            return raiz
+    pytest.skip("dado real de GO ausente (enriquecido, setores geo e malha IBGE)")
+
+
+@pytest.mark.parametrize(("cod", "nome"), [("5221403", "Trindade"), ("5217708", "Pontalina")])
+def test_trindade_e_pontalina_voltam_a_ter_lista(cod, nome):
+    """Medido em 2026-10-16: com o rateio por area e a mediana SEM peso as duas listas saiam
+    vazias (Trindade 4.031,84 contra 3.654,61 ponderada; Pontalina 6.781,45 contra 4.954,87).
+    Com a renda do card (emenda 1 da DEC-072) a lista segue nao vazia -- e e' isso que se trava:
+    "ponderada < simples" valia so' para o rateio por area (Pontalina, no card: 5.071 x 4.902)."""
+    import pyarrow.dataset as ds
+
+    from motor_expansao.dashboard.renda_hex import renda_domiciliar_por_hex
+
+    raiz = _data_dir()
+    dset = ds.dataset(sorted((raiz / "outputs" / "hexagonos_dashboard_enriquecido" / "uf=GO").glob("*.parquet")))
+    tipo = str(dset.schema.field("cod_municipio").type)
+    valor = int(cod) if "int" in tipo else (float(cod) if "double" in tipo else cod)
+    df = dset.to_table(filter=ds.field("cod_municipio") == valor).to_pandas()
+    if df.empty:
+        pytest.skip(f"{nome}/GO ausente do enriquecido local")
+
+    # A renda e' a do card do hexagono (`renda_hex`, PR #460), a mesma da tela.
+    renda = renda_domiciliar_por_hex(df, uf="GO", cod_municipio=cod, staging_dir=raiz / "staging")
+    hexes = rp.preparar_hexes_da_cidade(df, renda)
+    sel = rp.selecionar_onde_crescer(hexes)
+
+    assert sel.mediana_ponderada is True
+    assert len(sel.hexagonos) >= 1, f"{nome}: 'Onde crescer' vazia com a mediana ponderada"

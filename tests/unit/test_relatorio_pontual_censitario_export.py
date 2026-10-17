@@ -217,7 +217,9 @@ def test_pdf_big_numbers_com_residual_e_nd():
         # universo. A cor segue espelhando o card de consumo, que e' calculado so' sobre
         # cadeias -- por isso os dois precisam dizer de que universo falam.
         b"Academias no raio",
-        b"Consumo concorrentes",
+        # DEC-070: o card de consumo passa a ser o INSTALADO (concorrentes + Ultra), com as
+        # duas parcelas numa linha de apoio -- a conta do residual fecha na pagina.
+        b"Mercado ocupado",
     ):
         assert rotulo in pdf_com
     # O rotulo antigo NAO pode voltar: ele prometia "concorrentes" para um numero que hoje
@@ -914,6 +916,26 @@ def test_classico_perfil_bairro_page_presente_e_nd():
     pdf_sem = gerar_pdf_relatorio_pontual_classico(result, mapas, residual=_RESIDUAL_OK)
     assert "Perfil não disponível".encode("latin-1") in pdf_sem
     assert b"/Count 7" in pdf_sem
+
+
+def test_perfil_concilia_o_nome_do_ponto_com_o_da_unidade_quando_divergem():
+    """O ponto leva o nome do HEXAGONO (ex.: "Tucuruvi") e o perfil e' o do distrito do SETOR
+    (ex.: "Santana"). Sem a linha de conciliacao, a mesma pagina trazia dois nomes de lugar."""
+    from motor_expansao.dashboard.censo_report import _perfil_nota_nome_do_ponto
+
+    nota = _perfil_nota_nome_do_ponto("Tucuruvi", "Distrito", "Santana")
+    assert nota is not None and "distrito Santana" in nota
+    # Nada a conciliar: mesmo nome, banda que ja' contem o nome, coordenada, perfil sem nome.
+    assert _perfil_nota_nome_do_ponto("Santana", "Distrito", "Santana") is None
+    assert _perfil_nota_nome_do_ponto("Rua Voluntarios, Santana", "Bairro", "santana") is None
+    assert _perfil_nota_nome_do_ponto("Coordenada: -23.48516, -46.61771", "Distrito", "X") is None
+    assert _perfil_nota_nome_do_ponto("Tucuruvi", "Distrito", "") is None
+
+    result, mapas = _sample_result()
+    pdf = gerar_pdf_relatorio_pontual_classico(
+        result, mapas, perfil_bairro=_PERFIL_BAIRRO_OK, residual=_RESIDUAL_OK, rotulo="Outro Nome"
+    )
+    assert "onde fica o setor censitário do ponto".encode("latin-1") in pdf
 
 
 # ---------------------------------------------------------------------------

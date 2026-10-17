@@ -185,7 +185,7 @@ export function recomendar(e: EntradaRecomendacao): Acao[] {
             tipo: 'ok',
             titulo: 'Nada reprova no entorno',
             detalhe:
-              'Os critérios do território passam. Calcule a viabilidade para saber se o ' +
+              'Os critérios do território passam. Use o Simulador para saber se o ' +
               'contrato fecha a conta.',
           },
     )

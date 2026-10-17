@@ -5,6 +5,7 @@ import re
 import unicodedata
 from functools import cache
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -469,6 +470,25 @@ ARTE_AGREGADOR: dict[str, tuple[str, Path]] = {
 ARTE_AMBOS_PX = 128
 
 
+def _arte_na_metade(arte: Any, largura: int, altura: int) -> Any:
+    """A logo PREENCHENDO a sua metade da placa: altura cheia, meia largura (0,5 x 1).
+
+    Antes cada logo era ENCOLHIDA ate' caber inteira na metade (`min` das razoes); como as artes
+    sao quase quadradas, a metade estreita as reduzia a 0,5 x 0,5 da placa, com faixas vazias em
+    cima e embaixo (relato do Vinicius, 2026-10-16). Agora a escala e' a que COBRE a metade (`max`
+    das razoes, sem distorcer) e o excesso lateral e' cortado no centro -- a logo fica do tamanho
+    da placa, mostrando a faixa central dela.
+    """
+    from PIL import Image
+
+    razao = max(largura / arte.width, altura / arte.height)
+    nova = (max(largura, int(round(arte.width * razao))), max(altura, int(round(arte.height * razao))))
+    arte = arte.resize(nova, Image.Resampling.LANCZOS)
+    x0 = (nova[0] - largura) // 2
+    y0 = (nova[1] - altura) // 2
+    return arte.crop((x0, y0, x0 + largura, y0 + altura))
+
+
 def compor_arte_ambos(size: int = ARTE_AMBOS_PX) -> object:
     """As DUAS artes lado a lado, meia largura cada. Fonte unica da composicao.
 
@@ -484,11 +504,8 @@ def compor_arte_ambos(size: int = ARTE_AMBOS_PX) -> object:
     tela = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     meia = max(1, size // 2)
     for i, caminho in enumerate((AGREGADOR_LOGO_PACOTE, AGREGADOR_TP_LOGO_PACOTE)):
-        arte = Image.open(caminho).convert("RGBA")
-        razao = min(meia / arte.width, size / arte.height)
-        nova = (max(1, int(round(arte.width * razao))), max(1, int(round(arte.height * razao))))
-        arte = arte.resize(nova, Image.Resampling.LANCZOS)
-        tela.alpha_composite(arte, (i * meia + (meia - nova[0]) // 2, (size - nova[1]) // 2))
+        arte = _arte_na_metade(Image.open(caminho).convert("RGBA"), meia, size)
+        tela.alpha_composite(arte, (i * meia, 0))
     return tela
 
 
@@ -1183,16 +1200,10 @@ def _render_square_logo_tile(
                 meia = max(1, (util - 2 * bw) // 2)
                 alto = max(1, util - 2 * bw)
                 for i, bruto in enumerate((arte_wh, arte_tp)):
-                    arte = Image.open(io.BytesIO(bruto)).convert("RGBA")
-                    razao = min(meia / arte.width, alto / arte.height)
-                    nova = (
-                        max(1, int(round(arte.width * razao))),
-                        max(1, int(round(arte.height * razao))),
-                    )
-                    arte = arte.resize(nova, Image.Resampling.LANCZOS)
-                    ox = bw + i * meia + (meia - nova[0]) // 2
-                    oy = bw + (alto - nova[1]) // 2
-                    tile.paste(arte, (ox, oy), arte)
+                    # Cada logo PREENCHE a sua metade (0,5 x 1), cortada no centro -- a mesma
+                    # regra do asset da web (`_arte_na_metade`).
+                    arte = _arte_na_metade(Image.open(io.BytesIO(bruto)).convert("RGBA"), meia, alto)
+                    tile.paste(arte, (bw + i * meia, bw), arte)
                 if border:
                     draw.rounded_rectangle(
                         card, radius=_SQUARE_LOGO_RADIUS, outline=(255, 255, 255, 255), width=bw

@@ -69,7 +69,7 @@ export const rsM2 = (o: Oportunidade): number | null =>
   o.rs_m2 != null ? o.rs_m2 : o.aluguel != null && o.area ? o.aluguel / o.area : null
 
 /* --- Regua PUBLICADA do modelo de viabilidade: aluguel como % do faturamento --
-   Os clusters sao os MESMOS do simulador (`BlocoViabilidadePonto` / `aluguel_teto`
+   Os clusters sao os MESMOS do simulador (tela de Viabilidade / `aluguel_teto`
    do backend): ideal 15%, teto 20%, excecao 30%. E' a unica regua aprovada que
    compara custo com retorno — nada de limiar inventado (o design de referencia
    trazia "18%", que nao existe no modelo). Rotulos/tons espelham a classificacao

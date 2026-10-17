@@ -370,6 +370,16 @@ describe('parametrosRelatorioPontual', () => {
     expect(parametrosRelatorioPontual(ponto).rotulo).toBe(ponto.rotulo)
   })
 
+  it('estudo da unidade Ultra: o PDF do Simulador calcula no MESMO modo do nome', () => {
+    // O nome chega com " (unidade Ultra)"; sem a flag a capa afirmaria o modo e o
+    // mercado sairia do estudo de ponto (a propria unidade no consumo).
+    const p = parametrosRelatorioPontual({ ...ponto, rotulo: 'Santana (unidade Ultra)', estudoUltra: true })
+    expect(p.excluirUltraProxima).toBe(true)
+    expect(p.rotulo).toBe('Santana (unidade Ultra)')
+    expect('excluirUltraProxima' in parametrosRelatorioPontual(ponto)).toBe(false)
+    expect('excluirUltraProxima' in parametrosRelatorioPontual({ ...ponto, estudoUltra: false })).toBe(false)
+  })
+
   it('devolve só o que o contrato de `api.relatorioPontual` identifica do ponto', () => {
     expect(Object.keys(parametrosRelatorioPontual(ponto)).sort()).toEqual([
       'lat',

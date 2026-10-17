@@ -24,8 +24,10 @@
  * escrito por extenso aqui porque a sequencia literal fecharia este comentario), e o
  * curinga na primeira posicao conta como aceitar `text/html`).
  *
- * Consequência para a SPA: com a sessão expirada — `inactivity: 30m` na config do
- * Authelia, citada em `docs/spec_portal_selecao_pais.md:682` — o `fetch` de `/api/...`
+ * Consequência para a SPA: com a sessão expirada — `inactivity` na config do Authelia,
+ * citada em `docs/spec_portal_selecao_pais.md:682`; era `30m` e passa a `2h` pela emenda
+ * da DEC-067 (D2) de 14/10/2026, troca MANUAL na VPS (`docs/repasse_logout_2h.md`). Nada
+ * aqui depende do número: a sonda é reativa — o `fetch` de `/api/...`
  * recebe um 302 para `https://auth.ultra-expansao.tech/...`, SEGUE o redirect (o
  * default é `redirect: 'follow'`), bate noutra origem que não manda header de CORS e
  * **rejeita com `TypeError`**. Do lado do JavaScript isso é indistinguível de "o

@@ -6,6 +6,7 @@ import {
   blocosPorParametro,
   corDeIdentidade,
   rotulosDosHexes,
+  rotulosPartidosDosHexes,
 } from '../lib/comparacao'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import type { Hex } from '../lib/types'
@@ -43,6 +44,9 @@ export default function PainelComparacao({
   /* Desambiguados: cinco hexágonos da mesma cidade davam cinco itens "São Paulo", e nada
      na tela ligava uma barra ao seu hexágono. */
   const rotulos = rotulosDosHexes(hexes)
+  /* Partidos em nome + "#k": a coluna do nome corta no fim, e o "#k" é o que separa dois
+     homônimos — sem isto ele era o pedaço que o ellipsis comia. */
+  const partidos = rotulosPartidosDosHexes(hexes)
   const ranking = ranquear(DIMENSOES, hexes, rotulos)
   const blocos = blocosPorParametro(DIMENSOES, hexes) as BlocoParametro<unknown>[]
 
@@ -67,6 +71,7 @@ export default function PainelComparacao({
       <BlocosComparacao
         blocos={blocos}
         rotulos={rotulos}
+        partidos={partidos}
         cor={corDeIdentidade}
         onIrPara={onIrPara ? (i) => onIrPara(hexes[i].id) : undefined}
         onRelatorio={onRelatorio}

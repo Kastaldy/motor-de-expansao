@@ -37,6 +37,15 @@ CRS_ORIGEM_CENSO = "EPSG:4674"
 # E' MUDANCA DE CONTRATO: quem comparava a string literal precisa atualizar (ver DEC-021).
 METODO_RELATORIO_PONTUAL_CENSITARIO = "setor_censitario_intersecao_area_1km"
 RAIO_CENSITARIO_DEFAULT_KM = 1.0
+# DEC-071 (PROPOSTA, fase 1 -- so' TELA): "Analisar geometria". O operador desenha um
+# poligono no mapa e ele SUBSTITUI o circulo na mesma intersecao setor a setor. E' um modo
+# OPCIONAL e ADITIVO de `analisar_ponto_censitario_setores`: sem `geometria_wgs84` a funcao
+# devolve exatamente o mesmo dict de antes (raio, metodo `_1km`, area pi*r^2) -- travado por
+# teste de regressao. O metodo ganha rotulo proprio pelo mesmo motivo da DEC-021: o rotulo
+# `_1km` num recorte que nao e' um raio faria o resultado mentir sobre si mesmo.
+METODO_RELATORIO_PONTUAL_POLIGONO = "setor_censitario_intersecao_area_poligono"
+# Identificador CRU do recorte (payload), NAO acentuar.
+GEOMETRIA_TIPO_POLIGONO = "poligono"
 # BLK-RELPON-07: renda media domiciliar do bairro/distrito ponderada por domicilios
 # (Metodo A, D3.5), com exclusao simetrica de setor com renda ou domicilios nulos/<=0.
 METODO_RENDA_PERFIL_BAIRRO = "renda_responsavel_media_ponderada_por_domicilios"
@@ -174,6 +183,37 @@ def _points_in_radius(
     return pts.loc[pts["dist_km"] <= raio_km].sort_values("dist_km", kind="stable").reset_index(drop=True)
 
 
+def _points_in_geometry(
+    lat: float,
+    lng: float,
+    points_df: pd.DataFrame | None,
+    geometria_wgs84: BaseGeometry,
+) -> pd.DataFrame:
+    """Pontos DENTRO do poligono desenhado (DEC-071), com `dist_km` ao ponto de referencia.
+
+    O par de `_points_in_radius` para o modo geometria. Pertencer e' ponto-em-poligono
+    (`intersects_xy`: inclui a borda, como o `<=` do raio inclui o circulo) -- e NAO
+    distancia, porque num poligono concavo um ponto perto do centro pode estar fora dele.
+    `dist_km` continua sendo a distancia ao ponto de referencia (o `representative_point`),
+    so' para ordenar a lista da tela como no raio.
+    """
+    if points_df is None or points_df.empty or "lat" not in points_df.columns or "lng" not in points_df.columns:
+        return pd.DataFrame()
+    valid = points_df[["lat", "lng"]].apply(pd.to_numeric, errors="coerce").notna().all(axis=1)
+    if not valid.any():
+        return pd.DataFrame(columns=list(points_df.columns) + ["dist_km"])
+    pts = points_df.loc[valid].copy()
+    lats = pts["lat"].to_numpy(dtype=float)
+    lngs = pts["lng"].to_numpy(dtype=float)
+    # Import local: `shapely.intersects_xy` so' existe no shapely 2 -- o resto do modulo
+    # nao depende dele, e o import no topo quebraria quem so' usa o raio num ambiente velho.
+    from shapely import intersects_xy
+
+    dentro = np.asarray(intersects_xy(geometria_wgs84, lngs, lats), dtype=bool)  # x=lng, y=lat
+    pts["dist_km"] = np.round(_haversine_km(lat, lats, lng, lngs), 4)
+    return pts.loc[dentro].sort_values("dist_km", kind="stable").reset_index(drop=True)
+
+
 def _bbox_prefilter(
     setores_df: pd.DataFrame,
     circle_wgs84: BaseGeometry,
@@ -202,8 +242,18 @@ def analisar_ponto_censitario_setores(
     raio_km: float = RAIO_CENSITARIO_DEFAULT_KM,
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
+    geometria_wgs84: BaseGeometry | None = None,
 ) -> dict:
     """Analisa um ponto por intersecao real entre setores censitarios e circulo.
+
+    DEC-071 (fase 1, PROPOSTA): `geometria_wgs84` OPCIONAL troca o circulo por um poligono
+    desenhado (shapely em graus, x=lng, y=lat). Com ele, (lat, lng) TEM de ser um ponto
+    DENTRO do poligono -- o `representative_point`, que o chamador calcula --, porque e'
+    a origem do CRS AEQD local e o "ponto" dos campos `*_setor_ponto`/bairro. A intersecao
+    setor a setor e o peso de area sao os MESMOS; mudam so' o recorte (`area_km2` = area do
+    poligono, `raio_km` = None, `metodo` = `..._poligono`, `geometria_tipo` = "poligono") e a
+    pertinencia de concorrentes/Ultra, que vira ponto-em-poligono (`_points_in_geometry`).
+    Sem `geometria_wgs84` o dict devolvido e' identico ao de antes, chave a chave.
 
     A entrada esperada e uma base setorial ja recortada/carregada com `geometry_wkb`
     em EPSG:4674. A funcao e pura: nao muta os DataFrames recebidos e nao recalcula
@@ -240,15 +290,26 @@ def analisar_ponto_censitario_setores(
     helper `agregar_perfil_bairro_distrito` (abaixo), nao desta funcao. Ponto fora de
     qualquer setor da malha -> os 5 campos ficam `None`, sem excecao.
     """
-    area_km2 = math.pi * raio_km**2
-    concorrentes_raio = _points_in_radius(lat, lng, competitors_df, raio_km)
-    ultra_raio = _points_in_radius(lat, lng, ultra_df, raio_km)
+    poligono = geometria_wgs84 is not None
+    if poligono:
+        # A MESMA projecao local que a intersecao usa mais abaixo: a area do recorte e a
+        # area de cada pedaco de setor saem da mesma regua de metros.
+        _crs_area = _local_metric_crs(lat, lng)
+        area_km2 = float(
+            _project_geometry(geometria_wgs84, _transformer(CRS_ORIGEM_CENSO, _crs_area)).area
+        ) / 1_000_000.0
+        concorrentes_raio = _points_in_geometry(lat, lng, competitors_df, geometria_wgs84)
+        ultra_raio = _points_in_geometry(lat, lng, ultra_df, geometria_wgs84)
+    else:
+        area_km2 = math.pi * raio_km**2
+        concorrentes_raio = _points_in_radius(lat, lng, competitors_df, raio_km)
+        ultra_raio = _points_in_radius(lat, lng, ultra_df, raio_km)
     result: dict = {
         "lat": lat,
         "lng": lng,
-        "raio_km": raio_km,
+        "raio_km": None if poligono else raio_km,
         "area_km2": round(area_km2, 2),
-        "metodo": METODO_RELATORIO_PONTUAL_CENSITARIO,
+        "metodo": METODO_RELATORIO_PONTUAL_POLIGONO if poligono else METODO_RELATORIO_PONTUAL_CENSITARIO,
         "n_setores": 0,
         "area_intersecao_total_m2": 0.0,
         "pop_total_raio": None,
@@ -304,6 +365,10 @@ def analisar_ponto_censitario_setores(
         "unidade_ponto_tipo": None,       # "bairro" | "distrito" | None (identificador cru, NAO acentuar)
         "unidade_ponto_rotulo": None,     # nome de exibicao ja com fallback resolvido
     }
+    if poligono:
+        # Chave SO' no modo geometria: no raio o dict tem de sair identico ao de antes, e
+        # quem nao conhece a DEC-071 continua lendo `raio_km`/`metodo` como sempre.
+        result["geometria_tipo"] = GEOMETRIA_TIPO_POLIGONO
 
     if setores_df is None or setores_df.empty:
         return result
@@ -314,8 +379,15 @@ def analisar_ponto_censitario_setores(
     to_metric = _transformer(CRS_ORIGEM_CENSO, metric_crs)
     to_wgs84 = _transformer(metric_crs, CRS_ORIGEM_CENSO)
     center_metric = Point(0, 0)
-    circle_metric = center_metric.buffer(raio_km * 1000.0, quad_segs=64)
-    circle_wgs84 = _project_geometry(circle_metric, to_wgs84)
+    if poligono:
+        # O poligono no lugar do circulo (DEC-071). O resto do laco e' geometria-agnostico:
+        # `intersection` e o peso de area nao sabem se o recorte e' redondo. O pre-filtro por
+        # bbox usa o proprio poligono em graus, sem ida-e-volta pela projecao.
+        circle_metric = _project_geometry(geometria_wgs84, to_metric)
+        circle_wgs84 = geometria_wgs84
+    else:
+        circle_metric = center_metric.buffer(raio_km * 1000.0, quad_segs=64)
+        circle_wgs84 = _project_geometry(circle_metric, to_wgs84)
 
     candidates = _bbox_prefilter(setores_df, circle_wgs84)
     if "flag_geometria_valida" in candidates.columns:

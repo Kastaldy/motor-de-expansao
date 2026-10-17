@@ -1939,10 +1939,74 @@ export interface PontoConcorrencia extends BlocoOpcional {
   lista: { rede: string | null; dist_km: number | null }[]
 }
 
+/**
+ * Mercado do ponto. Desde a DEC-070 TODOS os números são do RAIO de 1,0 km (os mesmos da
+ * população), não mais do hexágono que contém o ponto: `residual = max(sam −
+ * consumo_total, 0)` e `consumo_total = consumo_concorrentes + consumo_ultra`. Os nomes
+ * `sam`/`residual`/`score_residual` foram mantidos; os campos novos são opcionais porque
+ * um servidor anterior à DEC-070 não os manda.
+ */
 export interface PontoMercado extends BlocoOpcional {
   sam: number | null
   residual: number | null
   score_residual: number | null
+  /** Identificador cru do recorte (`'raio'` | `'geometria'`), NÃO acentuar. */
+  grao?: 'raio' | 'geometria' | null
+  raio_km?: number | null
+  area_km2?: number | null
+  /** Alunos que as academias de rede consomem dentro do raio (área de influência de 1 km). */
+  consumo_concorrentes?: number | null
+  /** Alunos que as unidades Ultra consomem dentro do raio (alunos reais ou 2.500). */
+  consumo_ultra?: number | null
+  consumo_total?: number | null
+  taxa_fitness?: number | null
+  n_concorrentes_alcancam?: number | null
+  n_ultra_alcancam?: number | null
+  /** Bloco disponível mas com parcela faltando (ex.: sem base de concorrentes). */
+  motivo_parcial?: string | null
+  /** Gate do SAM: faixa M1 do hexágono do ponto E população do raio ≥ `pop_minima`. */
+  gate?: {
+    passa: boolean | null
+    /** Valor bruto do M1 (`'media'`, `'prioridade_maxima'`...), NÃO acentuar. */
+    faixa_m1: string | null
+    faixa_elegivel: boolean | null
+    pop_ok: boolean | null
+    pop_minima: number | null
+    motivo: string | null
+  }
+  /** AUDITORIA: o que o hexágono do ponto dizia (grão antigo). Não alimenta critério. */
+  hexagono?: {
+    hex_id: string | null
+    sam: number | null
+    consumo_concorrentes: number | null
+    consumo_ultra: number | null
+    residual: number | null
+    score_residual: number | null
+  }
+  /**
+   * Modo do estudo (emenda da DEC-070). Identificador cru, NÃO acentuar: `'ponto'` (a Ultra
+   * próxima CONTA no consumo) ou `'unidade_ultra'` (o consumo da PRÓPRIA unidade estudada
+   * sai; o `consumo_ultra` acima passa a ser o das OUTRAS Ultras). Ausente = `'ponto'`.
+   */
+  modo_estudo?: 'ponto' | 'unidade_ultra' | null
+  /** A frase que declara o modo — a mesma do PDF. `null` no estudo de ponto. */
+  declaracao_modo?: string | null
+  /** A unidade cujo consumo saiu da conta, só no estudo da unidade Ultra. */
+  unidade_ultra_estudada?: UltraDoPonto & {
+    consumo_excluido: number | null
+    capacidade_real: boolean
+    tolerancia_m: number | null
+  } | null
+  /** A unidade Ultra a até 150 m do ponto, nos DOIS modos — o que OFERECE a troca. */
+  ultra_proxima?: UltraDoPonto | null
+}
+
+/** Uma unidade Ultra do bloco de mercado do ponto. */
+export interface UltraDoPonto {
+  ultra_id: string | null
+  /** Nome curto de exibição ("Santana"). */
+  nome: string
+  dist_m: number | null
 }
 
 export interface PontoVizinho {
@@ -1952,14 +2016,37 @@ export interface PontoVizinho {
 }
 
 export interface PontoPayload {
+  /** No item de ÁREA DESENHADA (DEC-071) é o `representative_point` do polígono. */
   lat: number
   lng: number
-  raio_km: number
+  /** `null` na área desenhada: ela não tem raio (o recorte está em `recorte`). */
+  raio_km: number | null
   hex_id: string
+  /**
+   * Só no item de ÁREA DESENHADA (`POST /api/ponto/geometria`, DEC-071): os anéis do
+   * Polygon GeoJSON normalizado pelo servidor — um anel, fechado, em `[lng, lat]`. É o
+   * contorno que o mapa desenha na cor do item. Ausente no ponto com raio.
+   */
+  geometria?: [number, number][][] | null
+  /** Só na área desenhada: o recorte que substituiu o raio. */
+  recorte?: {
+    /** Identificador cru (`'poligono'`), NÃO acentuar. */
+    tipo: 'poligono'
+    area_km2: number | null
+    n_vertices: number
+    /** Rótulo do método do motor (`setor_censitario_intersecao_area_poligono`). */
+    metodo: string | null
+  } | null
   local: {
     uf: string
     municipio: string | null
     bairro: string | null
+    /**
+     * Nome do hexágono em que o ponto cai — a MESMA string da ficha/ranking do hexágono
+     * (`bairros_por_hex` no servidor). É o nome do ponto; `null` quando o hex não tem
+     * nome. Opcional: payload anterior ao campo (aba restaurada) não o traz.
+     */
+    hexagono?: string | null
     /** Identificador cru ("bairro"/"distrito"), NÃO acentuado. Exibir `bairro`. */
     unidade_tipo: string | null
   }

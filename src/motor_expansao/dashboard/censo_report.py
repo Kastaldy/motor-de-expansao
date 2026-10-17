@@ -147,7 +147,10 @@ _RAIO_LABEL = f"{_RAIO_TXT} km"
 # deliberado do criterio, nao efeito colateral.
 #
 # As metas de MEDIA (renda per capita, renda domiciliar, score) sao escala-invariantes e nao
-# seriam afetadas de todo jeito. Idem SAM/Residual Fitness, que sao por hexagono H3.
+# seriam afetadas de todo jeito. SAM/Residual Fitness eram por hexagono H3 ate' a DEC-070
+# (2026-10-14) e passaram a ser do RAIO de 1,0 km (area 0,61x a do hexagono): as metas de
+# 2.000/2.000 foram MANTIDAS por decisao do dono, como a DEC-021 fez com as de populacao --
+# o card fica mais dificil de ficar verde, e isso e' deliberado.
 # As sete metas vem do PERFIL do pais (Bloco B / DEC-047). No Brasil sao os mesmos numeros
 # de sempre — `data/perfis/BR/perfil.json` os transcreve e o teste de contrato trava a
 # igualdade. Quatro delas sao em MOEDA ou em escala do pais: contra renda em USD, as metas
@@ -1818,7 +1821,7 @@ _CONCLUSAO_NOTA = (
     # "e pé-direito" saiu junto com o gate (Vinicius, 2026-08-07): a nota descreve a
     # REGUA aplicada, e citar um criterio que nao decide mais nada seria mentir sobre ela.
     "Parecer automático das réguas da Ultra, em dois eixos independentes. DEMOGRÁFICO: "
-    f"metas censitárias do raio de {_RAIO_LABEL} e leitura de mercado do hexágono, com "
+    f"metas censitárias e leitura de mercado do raio de {_RAIO_LABEL}, com "
     # O gate E5 passou a valer aqui (emenda da DEC-030): sem esta frase o parecer
     # reprovaria a praca sem que a pagina dissesse por qual regra.
     f"reprovação quando {_CONCLUSAO_METAS_ELIMINATORIO_MIN} das "
@@ -1833,11 +1836,11 @@ _CONCLUSAO_NOTA = (
 # modo nao avalia. O texto de aprovacao e a nota tem de descrever a regua que rodou.
 _CONCLUSAO_APROVADO_TEXTO_ESTUDO = (
     "Nenhuma restrição encontrada na base do estudo: o ponto atende às metas censitárias "
-    "do raio e à leitura de mercado do hexágono."
+    "e à leitura de mercado do raio."
 )
 _CONCLUSAO_NOTA_ESTUDO = (
-    "Parecer automático das réguas do ESTUDO: metas censitárias do raio de "
-    f"{_RAIO_LABEL} e leitura de mercado do hexágono. NÃO avalia o imóvel (metragem, "
+    "Parecer automático das réguas do ESTUDO: metas censitárias e leitura de mercado do "
+    f"raio de {_RAIO_LABEL}. NÃO avalia o imóvel (metragem, "
     # Travessao (U+2014) NAO existe em latin-1 e sairia como "?" silencioso no PDF (fonte
     # core do fpdf2) -- regra de acentuacao do CLAUDE.md, travada pelo teste de regressao.
     "aluguel) nem o retorno do cenário - esses critérios exigem a análise financeira e "
@@ -2312,6 +2315,76 @@ def _conclusao_eixo_financeiro(
 _CANIBALIZACAO_TITULO = "Canibalização da rede"
 
 
+def _conclusao_sem_a_mais_proxima(unidades: Any) -> list[dict[str, Any]] | None:
+    """As unidades sem a de menor `dist_km` (a estudada, no estudo da unidade Ultra)."""
+    if unidades is None:
+        return None
+    linhas: Any = unidades
+    if hasattr(unidades, "to_dict"):
+        if getattr(unidades, "empty", False):
+            return None
+        linhas = unidades.to_dict("records")
+    linhas = list(linhas)
+    if not linhas:
+        return None
+    dists = [_conclusao_valor(linha.get("dist_km")) for linha in linhas]
+    validas = [(d, i) for i, d in enumerate(dists) if d is not None]
+    if not validas:
+        return linhas[1:]
+    _, alvo = min(validas)
+    return [linha for i, linha in enumerate(linhas) if i != alvo]
+
+
+# O MESMO endereco no cadastro da Ultra: o piso de 50 m de `mercado_raio._MATCH_ULTRA_M`
+# (DEC-034), reusado para casar a unidade que o MERCADO tirou com as linhas da lista do
+# censo -- as duas listas vem de cadastros diferentes e nao compartilham chave.
+_MESMO_ENDERECO_ULTRA_M = 50.0
+
+
+def _conclusao_sem_a_estudada(
+    unidades: Any, estudada: Mapping[str, Any]
+) -> tuple[list[dict[str, Any]], int] | None:
+    """As unidades sem as que estao no ENDERECO da unidade estudada, e quantas sairam.
+
+    `None` quando a estudada nao traz coordenada (o chamador cai na regra antiga, a de
+    menor `dist_km`). Casa pela COORDENADA que o mercado tirou, e nao pela mais proxima do
+    ponto: se a unidade estudada nao estiver na lista do censo, NADA sai -- tirar a mais
+    proxima apagaria do alerta outra Ultra real do raio.
+    """
+    import math
+
+    lat0 = _conclusao_valor(estudada.get("lat"))
+    lng0 = _conclusao_valor(estudada.get("lng"))
+    if lat0 is None or lng0 is None:
+        return None
+    linhas: Any = unidades if unidades is not None else []
+    if hasattr(linhas, "to_dict"):
+        linhas = [] if getattr(linhas, "empty", False) else linhas.to_dict("records")
+    linhas = list(linhas)
+
+    def _dist_m(linha: Mapping[str, Any]) -> float | None:
+        la = _conclusao_valor(linha.get("lat"))
+        lo = _conclusao_valor(linha.get("lng"))
+        if la is None or lo is None:
+            return None
+        p1, p2 = math.radians(lat0), math.radians(la)
+        h = (
+            math.sin((p2 - p1) / 2) ** 2
+            + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lo - lng0) / 2) ** 2
+        )
+        return 2 * 6_371_000.0 * math.asin(min(1.0, math.sqrt(h)))
+
+    ficam: list[dict[str, Any]] = []
+    sairam = 0
+    for linha in linhas:
+        d = _dist_m(linha)
+        if d is not None and d <= _MESMO_ENDERECO_ULTRA_M:
+            sairam += 1
+        else:
+            ficam.append(linha)
+    return ficam, sairam
+
+
 def _conclusao_menor_dist_km(unidades: Any) -> float | None:
     """Menor `dist_km` de um conjunto de unidades (DataFrame ou sequencia de dicts)."""
     if unidades is None:
@@ -2327,13 +2400,41 @@ def _conclusao_menor_dist_km(unidades: Any) -> float | None:
     return min(distancias) if distancias else None
 
 
-def _conclusao_canibalizacao(result: Mapping[str, Any]) -> str | None:
-    """Alerta de unidade Ultra no raio, ou `None` quando nao ha nenhuma. Funcao pura."""
+def _conclusao_canibalizacao(
+    result: Mapping[str, Any],
+    *,
+    sem_a_estudada: bool = False,
+    estudada: Mapping[str, Any] | None = None,
+) -> str | None:
+    """Alerta de unidade Ultra no raio, ou `None` quando nao ha nenhuma. Funcao pura.
+
+    `sem_a_estudada` (emenda da DEC-070, estudo da unidade Ultra): a unidade no CENTRO do
+    estudo nao canibaliza a si mesma, e sai da contagem e da distancia; sobrando nenhuma,
+    nao ha' alerta. Com `estudada` (a `unidade_ultra_estudada` do mercado, com `lat`/`lng`)
+    saem as linhas no ENDERECO dela -- inclusive a linha repetida do cadastro -- e so'
+    elas. Sem coordenada, sai a mais proxima do ponto (ela esta' a ate' 150 m).
+    """
     n = _conclusao_valor(result.get("n_ultra"))
     if n is None or n < 1:
         return None
     quantas = int(n)
-    dist_km = _conclusao_menor_dist_km(result.get("ultra_raio"))
+    unidades = result.get("ultra_raio")
+    casado = (
+        _conclusao_sem_a_estudada(unidades, estudada)
+        if sem_a_estudada and estudada
+        else None
+    )
+    if casado is not None:
+        unidades, sairam = casado
+        quantas -= sairam
+        if quantas < 1:
+            return None
+    elif sem_a_estudada:
+        quantas -= 1
+        if quantas < 1:
+            return None
+        unidades = _conclusao_sem_a_mais_proxima(unidades)
+    dist_km = _conclusao_menor_dist_km(unidades)
     sujeito = (
         "1 unidade Ultra dentro do raio"
         if quantas == 1
@@ -2386,7 +2487,7 @@ def _avaliar_conclusao(
     todo como "nao informado", enchendo o parecer de ressalvas que nao dizem nada sobre o
     ponto. Desde a DEC-030 isso tem consequencia VISUAL direta: `financeiro is None` e a
     pagina desenha um selo so. O que RESTA e' a praca: metas censitarias, mercado do
-    hexagono, zona morta e a ressalva de censo indisponivel -- mais o gate E5, que reprova
+    raio (DEC-070; era do hexagono), zona morta e a ressalva de censo indisponivel -- mais o gate E5, que reprova
     quando as metas falham EM BLOCO (ver `_CONCLUSAO_METAS_ELIMINATORIO_MIN`).
     """
     result = result or {}
@@ -2429,7 +2530,15 @@ def _avaliar_conclusao(
         )
 
     # --- Canibalizacao (alerta de rede propria no raio) ---
-    alerta_canibalizacao = _conclusao_canibalizacao(result)
+    # O MODO decide se a unidade do centro sai, e nao so' a ficha dela: com o mercado em
+    # falha no estudo da unidade, `unidade_ultra_estudada` vem `None` mas o modo segue
+    # declarado -- e a unidade a ate' 150 m continua sendo a do estudo (sai a mais proxima).
+    alerta_canibalizacao = _conclusao_canibalizacao(
+        result,
+        sem_a_estudada=bool(residual.get("unidade_ultra_estudada"))
+        or residual.get("modo_estudo") == "unidade_ultra",
+        estudada=residual.get("unidade_ultra_estudada"),
+    )
     if alerta_canibalizacao is not None:
         ressalvas.append(alerta_canibalizacao)
 
@@ -3079,7 +3188,7 @@ def _cor_por_meta(valor: Any, meta: float) -> tuple[int, int, int]:
 
 
 def _cor_consumo_concorrentes(sam: Any, residual_disponivel: Any) -> tuple[int, int, int]:
-    """Cor assimetrica do card "Consumo concorrentes (est.)" -- tambem usada para colorir
+    """Cor assimetrica do card "Mercado ocupado" (consumo instalado: conc. + Ultra) -- tambem usada para colorir
     "Concorrentes no raio" (D3: esse card ESPELHA a cor do card acima, sem meta propria).
 
     Regra (D3): VERMELHO quando o mercado ja esta consumido (SAM Fitness >= meta E Residual
@@ -3108,7 +3217,11 @@ def _big_numbers_page(
     """(e) Big Numbers — grid 4x2 das 8 metricas. READ-ONLY; sem dado auditavel.
 
     SAM Fitness e Residual Fitness saem em NUMERO DE ALUNOS (sizing absoluto da camada de
-    mercado), nao em score: `sam_fitness_potencial` e `oferta_efetiva_disponivel` do hex H3.
+    mercado), nao em score. Desde a DEC-070 o `residual` vem de `api.service._mercado_do_ponto`
+    e e' do RAIO de 1,0 km, nao do hexagono H3: SAM = pop do raio x taxa calibrada, consumo =
+    concorrentes de cadeia + Ultra pelo disco de 1 km de cada unidade, residual =
+    max(SAM - consumo, 0). O card de consumo mostra o TOTAL e decompoe as duas parcelas numa
+    linha de apoio, para a conta fechar na pagina (antes o termo da Ultra ficava escondido).
     """
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
@@ -3118,6 +3231,27 @@ def _big_numbers_page(
     sam = residual.get("sam_fitness_potencial")
     oferta_disponivel = residual.get("oferta_efetiva_disponivel")
     cor_consumo = _cor_consumo_concorrentes(sam, oferta_disponivel)
+    # DEC-070: consumo INSTALADO = concorrentes + Ultra. Dict no formato antigo (so' a parcela
+    # de concorrentes) nao tem o total: soma so' quando as DUAS parcelas existem -- metade da
+    # conta impressa como "conc. + Ultra" seria afirmar uma soma que nao foi feita.
+    consumo_conc = residual.get("oferta_consumida_mercado_estimada")
+    consumo_ultra = residual.get("oferta_consumida_ultra_estimada")
+    consumo_total = residual.get("oferta_consumida_total_estimada")
+    if consumo_total is None and consumo_conc is not None and consumo_ultra is not None:
+        consumo_total = float(consumo_conc) + float(consumo_ultra)
+    # Linha de apoio por card (indice -> texto); so' o de consumo tem.
+    apoio = {
+        7: f"conc. {_format_number(consumo_conc, 0)} + Ultra {_format_number(consumo_ultra, 0)}",
+    }
+    # Emenda da DEC-070: no ESTUDO DA UNIDADE ULTRA a parcela da Ultra ja' e' a das OUTRAS
+    # unidades (a estudada saiu), e o rotulo diz isso -- "Ultra 0" ao lado de uma unidade a
+    # 9 m leria como erro. A frase inteira do modo abre a nota de fonte, abaixo.
+    declaracao_modo = residual.get("declaracao_modo")
+    if residual.get("unidade_ultra_estudada"):
+        apoio[7] = (
+            f"conc. {_format_number(consumo_conc, 0)} + outras Ultras "
+            f"{_format_number(consumo_ultra, 0)}"
+        )
 
     cards = [
         (
@@ -3161,9 +3295,13 @@ def _big_numbers_page(
             _format_number(result.get("n_concorrentes"), 0),
             cor_consumo,
         ),
+        # DEC-070: era "Consumo concorrentes (est.)" e mostrava so' a parcela de concorrentes
+        # enquanto o residual descontava tambem a Ultra -- a conta nao fechava na pagina.
         (
-            "Consumo concorrentes (est.)",
-            _format_number(residual.get("oferta_consumida_mercado_estimada"), 0),
+            # Rotulo escolhido por Vinicius (2026-10-16): faz par com o "Residual" (o que
+            # sobra x o que ja esta ocupado). A composicao vai na linha de apoio abaixo.
+            "Mercado ocupado",
+            _format_number(consumo_total, 0),
             cor_consumo,
         ),
     ]
@@ -3207,6 +3345,13 @@ def _big_numbers_page(
         _ajustar_fonte_para_largura(pdf, valor_txt, card_w - 28)
         pdf.set_xy(x + 14, y + 74)
         pdf.multi_cell(card_w - 28, 28, valor_txt)
+        # Linha de apoio (decomposicao do consumo, DEC-070): abaixo do valor, dentro do card --
+        # o valor termina em y+102 e a linha ocupa y+108..y+119 de um card de 132.
+        if index in apoio:
+            pdf.set_text_color(*_CINZA_TEXTO)
+            pdf.set_font("Helvetica", "", 8)
+            pdf.set_xy(x + 14, y + card_h - 24)
+            pdf.cell(card_w - 28, 11, _ascii(apoio[index]))
 
     # Nota de fonte auditavel.
     pdf.set_text_color(*_CINZA_TEXTO)
@@ -3217,10 +3362,16 @@ def _big_numbers_page(
         _PAGE_W - 2 * margin_x,
         11,
         _ascii(
-            "Fontes: pop/renda/domicílios/score = censo (interseção de setores IBGE 2022 com círculo de "
-            f"{_RAIO_LABEL}, método {metodo}); SAM Fitness, Residual Fitness (em alunos) e consumo = leitura "
-            "direta do hexágono H3. Fundo do card: verde = meta atingida, vermelho = "
-            f"meta não atingida, cinza = '{TEXTO_SEM_DADO}' (dado ausente para o ponto)."
+            (f"{declaracao_modo} " if declaracao_modo else "")
+            + "Fontes: pop/renda/domicílios/score = censo (interseção de setores IBGE 2022 com círculo de "
+            f"{_RAIO_LABEL}, método {metodo}); SAM Fitness, consumo e Residual Fitness (em alunos) = "
+            f"mercado no mesmo raio de {_RAIO_LABEL} (SAM = população do raio x taxa calibrada; "
+            "consumo = concorrentes de rede + Ultra pela área de influência de 1 km de cada unidade; "
+            # "com piso em zero": quando o consumo passa do SAM o card mostra 0, e sem o piso
+            # escrito a conta da propria pagina daria negativo (revisao de 2026-10-14).
+            "residual = SAM - consumo, com piso em zero). Fundo do card: verde = meta "
+            f"atingida, vermelho = meta não atingida, cinza = '{TEXTO_SEM_DADO}' (dado "
+            "ausente para o ponto)."
         ),
     )
     _draw_footer(pdf, with_attribution=True)
@@ -3550,6 +3701,30 @@ def _perfil_nota_metodo(pdf: _UltraPDF) -> None:
             f"Agregado sobre todos os setores do bairro/distrito (não o raio de {_RAIO_LABEL}). "
             "Fonte: Censo IBGE 2022; renda média ponderada por domicílios."
         ),
+    )
+
+
+def _perfil_nota_nome_do_ponto(banda_texto: str, tipo_label: str, unidade_nome: str) -> str | None:
+    """Linha que concilia o nome do PONTO (banda) com o da UNIDADE do perfil, quando divergem.
+
+    O piloto nomeia o ponto pelo HEXAGONO em que ele cai (o mesmo nome da ficha do hexagono),
+    e o perfil desta pagina e' o do bairro/distrito do SETOR censitario que contem o ponto. Os
+    dois podem divergir -- em Santana/SP (-23,4852 / -46,6177) o hexagono se chama "Tucuruvi"
+    e o setor fica no distrito Santana --, e sem esta linha a mesma pagina traria dois nomes
+    de lugar sem dizer por que. Devolve None quando nao ha' o que conciliar: banda sem nome
+    (coordenada), perfil sem nome, ou o nome do perfil ja' contido na banda.
+    """
+    banda = str(banda_texto or "").strip()
+    nome = str(unidade_nome or "").strip()
+    if not banda or not nome:
+        return None
+    if banda.startswith("Coordenada:") or banda == "Relatório Pontual Censitário":
+        return None
+    if nome.casefold() in banda.casefold():
+        return None
+    return (
+        f"O perfil é do {tipo_label.lower()} {nome}, onde fica o setor censitário do ponto. "
+        f"O nome no topo identifica o ponto (hexágono em que ele cai ou endereço informado)."
     )
 
 
@@ -4078,6 +4253,18 @@ def _classico_perfil_bairro_page(
         rows=_perfil_metric_rows(perfil),
     )
 
+    nota_nome = (
+        _perfil_nota_nome_do_ponto(banda_texto, tipo_label, unidade_nome)
+        if flag_disponivel
+        else None
+    )
+    if nota_nome:
+        # Entre o painel (termina em y=480) e a nota de metodo (y=500): uma linha so'.
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_xy(36, 486.0)
+        pdf.cell(_PAGE_W - 72, 10, _ascii(nota_nome), align="C")
+
     _perfil_nota_metodo(pdf)
     _draw_footer(pdf, with_attribution=True)
 
@@ -4348,14 +4535,17 @@ def gerar_pdf_relatorio_pontual_classico(
     #
     # COM `viabilidade` -> parecer completo, como desde 2026-08-06.
     # SEM `viabilidade` -> so entra se o chamador PEDIR (`conclusao_so_estudo=True`), e ai
-    # roda em modo so-estudo. Hoje quem pede e' `api/service.py` (caminho API/bot), que
-    # nunca teve o payload e por isso nunca via a pagina.
+    # roda em modo so-estudo. Quem pede: `api/service.py` (caminho API/bot), que nunca teve
+    # o payload, e -- desde 2026-10-14 -- o botao "Estudo" da analise de ponto do piloto
+    # web, por `so_estudo=true` em `POST /api/relatorio/pontual` (`web/server/app.py`;
+    # decisao 4 do Vinicius). Nesse modo a rota tambem descarta viabilidade e dados do
+    # imovel, entao o PDF sai so' demografico, com as paginas da praca.
     #
-    # O flag existe para CONFINAR o BLK-CONC-ESTUDO ao caminho da API (escopo fechado por
-    # Juan em 2026-08-12). Sem ele, o piloto web -- que chama esta funcao com
-    # `viabilidade=None` quando o operador nao preencheu o formulario (`web/server/app.py`)
-    # -- ganharia a pagina junto, fora do escopo pedido. Default `False` = comportamento
-    # historico intacto para todo chamador que nao se manifeste.
+    # O flag nasceu para CONFINAR o BLK-CONC-ESTUDO ao caminho da API (escopo fechado por
+    # Juan em 2026-08-12) e continua sendo opt-in: o piloto web, quando chama esta funcao
+    # com `viabilidade=None` SEM o botao Estudo (operador nao preencheu a Viabilidade),
+    # segue sem a pagina. Default `False` = comportamento historico intacto para todo
+    # chamador que nao se manifeste.
     if viabilidade or conclusao_so_estudo:
         antes = pdf.pages_count
         _conclusao_page(

@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 
-import { api, baixar, type ApiError } from '../lib/api'
+import { api, baixar, ApiError } from '../lib/api'
 import { rotuloDaRede } from '../lib/concorrentes'
+import { avisoDeEstudoDePonto, ehRecusaDoEstudoDaUnidade } from '../lib/estudo-ultra'
 import {
   ROTULO_FONTE,
   comodidadesDeclaradas,
@@ -21,6 +22,7 @@ import type {
   RedeUnidadeInteligencia,
   RedeUnidadeSemRedeFicha,
 } from '../lib/types'
+import { rotuloDoRaio } from '../lib/recorte'
 import IconeComodidade from './IconeComodidade'
 import { CardPainel, LinhaTabela, Pill, TituloSecao } from './PecasPainel'
 import { Botao } from './primitives'
@@ -46,10 +48,13 @@ import { Botao } from './primitives'
 export default function FichaUnidadeNoMapa({
   unidadeId,
   semRede = false,
+  onEstudarRegiao,
 }: {
   unidadeId: string
   /** unidade do cadastro sem dado na Growth: a ficha é só território (pedido do Juan, 14/10) */
   semRede?: boolean
+  /** "Estudar a região desta unidade" (emenda da DEC-070). Ausente = o botão não aparece. */
+  onEstudarRegiao?: (lat: number, lng: number) => void
 }) {
   const [ficha, setFicha] = useState<RedeFicha | null>(null)
   const [cadastro, setCadastro] = useState<RedeUnidadeSemRedeFicha | null>(null)
@@ -85,12 +90,9 @@ export default function FichaUnidadeNoMapa({
     setBaixandoEstudo(true)
     setErroPdf(null)
     try {
-      const { blob, filename } = await api.relatorioPontual({
-        lat,
-        lng,
-        rotulo: `Ultra ${unidade.nome}`,
-      })
+      const { blob, filename, aviso } = await estudoDaUnidadePdf(lat, lng, `Ultra ${unidade.nome}`)
       baixar(blob, filename)
+      if (aviso) setErroPdf(aviso)
     } catch (e) {
       setErroPdf((e as ApiError).message)
     } finally {
@@ -178,7 +180,21 @@ export default function FichaUnidadeNoMapa({
             ? [unidade.cidade, unidade.uf].filter(Boolean).join(' · ')
             : 'Carregando a unidade…'}
         </span>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {onEstudarRegiao && (
+            <Botao
+              variante="ghost"
+              disabled={!unidade || semPonto}
+              title="Abre a análise de ponto na coordenada da unidade, sem o consumo dela no mercado."
+              onClick={() => {
+                const lat = unidade?.lat
+                const lng = unidade?.lng
+                if (lat != null && lng != null) onEstudarRegiao(lat, lng)
+              }}
+            >
+              Estudar a região desta unidade
+            </Botao>
+          )}
           <Botao
             variante="ghost"
             disabled={!unidade || semPonto || baixandoEstudo}
@@ -237,7 +253,7 @@ export default function FichaUnidadeNoMapa({
 
       {/* ---------------- Entorno (1 km) ---------------- */}
       <section>
-        <TituloSecao titulo="Região" nota={`raio de ${num(ponto?.raio_km ?? 1, 1)} km`} />
+        <TituloSecao titulo="Região" nota={rotuloDoRaio(ponto?.raio_km)} />
         {semPonto ? (
           <Nota>Sem coordenada, não há entorno para ler.</Nota>
         ) : erroPonto ? (
@@ -300,6 +316,28 @@ export default function FichaUnidadeNoMapa({
       </section>
     </div>
   )
+}
+
+/**
+ * O "Estudo pontual" da FICHA DA UNIDADE é o estudo da unidade Ultra (emenda da DEC-070):
+ * o PDF sai sem o consumo da própria unidade no mercado. Se o servidor RECUSAR o modo (sem
+ * unidade a até 150 m da coordenada — base da rede e cadastro do mapa discordando do
+ * endereço), o PDF sai como estudo de ponto em vez de não sair, e `aviso` diz isso na tela.
+ * Qualquer outro erro sobe como erro.
+ */
+async function estudoDaUnidadePdf(
+  lat: number,
+  lng: number,
+  rotulo: string,
+): Promise<{ blob: Blob; filename: string; aviso: string | null }> {
+  try {
+    const r = await api.relatorioPontual({ lat, lng, rotulo, excluirUltraProxima: true })
+    return { ...r, aviso: null }
+  } catch (e) {
+    if (!(e instanceof ApiError && ehRecusaDoEstudoDaUnidade(e))) throw e
+    const r = await api.relatorioPontual({ lat, lng, rotulo })
+    return { ...r, aviso: avisoDeEstudoDePonto(e.message, 'pdf') }
+  }
 }
 
 /* ---------------------------------------------------------------------------

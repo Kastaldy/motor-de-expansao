@@ -684,6 +684,11 @@ comentário das linhas 17-55 conta o incidente de 06/08/2026, quando mexer nesse
 login da rede inteira por ~4h. **Este bloco não os toca, e nenhuma implementação deste portal tem
 motivo para tocá-los.**
 
+> **Nota de 14/10/2026:** a `inactivity` citada acima (`30m`, lida em 22/09) passa a `2h` pela
+> emenda da DEC-067 (D2) decidida por Vinicius. A mudança não vem deste portal nem altera nada do
+> que esta seção afirma sobre o cookie de apex; é troca manual na VPS, com runbook em
+> `docs/repasse_logout_2h.md`.
+
 ---
 
 ## 7. Critério de aceite
