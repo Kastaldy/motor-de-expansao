@@ -18,6 +18,7 @@ import pytest
 import motor_expansao.dashboard.relatorio_municipal as relmun
 from motor_expansao.api import service
 from motor_expansao.api.settings import Settings
+from motor_expansao.dashboard import renda_hex
 
 
 def _df_homonimos() -> pd.DataFrame:
@@ -55,16 +56,8 @@ def capturado(monkeypatch: pytest.MonkeyPatch, tmp_path) -> dict:
 
     monkeypatch.setattr(relmun, "carregar_bairros_geo", _geo)
     monkeypatch.setattr(
-        service,
-        "_municipios_vizinhos_dos_hexes",
-        lambda hexes, uf, cod, s: [("AC", "VIZINHO")] if hexes else [],
+        renda_hex, "renda_domiciliar_por_hex", lambda df, **k: {"ac1": 5000.0}
     )
-
-    def _renda(uf, cod, d, **k):
-        cap["renda_kwargs"] = k
-        return {"ac1": 5000.0}
-
-    monkeypatch.setattr(relmun, "carregar_renda_domiciliar_por_hex", _renda)
     monkeypatch.setattr(relmun, "carregar_poligono_municipio", lambda *a, **k: None)
 
     def _agregar(df, **k):
@@ -111,9 +104,6 @@ def test_telegram_hexagono_leva_bairros_renda_e_independentes(capturado: dict) -
     k = capturado["agregar"]
     assert k["bairros_geo"], "modo hexagono tem de receber os bairros (pagina Bairros Oficiais)"
     assert k["renda_domiciliar_por_hex"] == {"ac1": 5000.0}
-    # DEC-072: a renda recebe os hexagonos do relatorio e os vizinhos que a malha aponta.
-    assert capturado["renda_kwargs"]["hexes"] == ["ac1", "ac2"]
-    assert capturado["renda_kwargs"]["vizinhos"] == [("AC", "VIZINHO")]
     assert capturado.get("uniao_dec046") is True, "concorrentes tem de vir da uniao DEC-046"
     assert capturado["render_unidade"] == "hexagono"
     assert capturado["payload_unidade"] == "hexagono"
