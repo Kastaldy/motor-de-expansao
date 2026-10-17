@@ -211,16 +211,14 @@ def _data_dir() -> Path:
 @pytest.mark.parametrize(("cod", "nome"), [("5221403", "Trindade"), ("5217708", "Pontalina")])
 def test_trindade_e_pontalina_voltam_a_ter_lista(cod, nome):
     """Medido em 2026-10-16: com o rateio por area e a mediana SEM peso as duas listas saiam
-    vazias (Trindade 4.031,84 contra 3.654,61 ponderada; Pontalina 6.781,45 contra 4.954,87)."""
+    vazias (Trindade 4.031,84 contra 3.654,61 ponderada; Pontalina 6.781,45 contra 4.954,87).
+    Com a renda do card (emenda 1 da DEC-072) a lista segue nao vazia -- e e' isso que se trava:
+    "ponderada < simples" valia so' para o rateio por area (Pontalina, no card: 5.071 x 4.902)."""
     import pyarrow.dataset as ds
 
-    from motor_expansao.api import service
-    from motor_expansao.dashboard.relatorio_municipal import carregar_renda_domiciliar_por_hex
+    from motor_expansao.dashboard.renda_hex import renda_domiciliar_por_hex
 
     raiz = _data_dir()
-    settings = SimpleNamespace(
-        ibge_dir=raiz / "ibge", censo_geo_dir=raiz / "outputs" / "setores_censitarios_2022_geo"
-    )
     dset = ds.dataset(sorted((raiz / "outputs" / "hexagonos_dashboard_enriquecido" / "uf=GO").glob("*.parquet")))
     tipo = str(dset.schema.field("cod_municipio").type)
     valor = int(cod) if "int" in tipo else (float(cod) if "double" in tipo else cod)
@@ -228,15 +226,10 @@ def test_trindade_e_pontalina_voltam_a_ter_lista(cod, nome):
     if df.empty:
         pytest.skip(f"{nome}/GO ausente do enriquecido local")
 
-    hex_ids = sorted(df["hex_id"].astype(str))
-    vizinhos = service._municipios_vizinhos_dos_hexes(hex_ids, "GO", cod, settings)
-    renda = carregar_renda_domiciliar_por_hex(
-        "GO", cod, settings.censo_geo_dir, hexes=hex_ids, vizinhos=vizinhos
-    )
+    # A renda e' a do card do hexagono (`renda_hex`, PR #460), a mesma da tela.
+    renda = renda_domiciliar_por_hex(df, uf="GO", cod_municipio=cod, staging_dir=raiz / "staging")
     hexes = rp.preparar_hexes_da_cidade(df, renda)
     sel = rp.selecionar_onde_crescer(hexes)
 
     assert sel.mediana_ponderada is True
     assert len(sel.hexagonos) >= 1, f"{nome}: 'Onde crescer' vazia com a mediana ponderada"
-    simples, _ = rp.mediana_renda_da_cidade(hexes["renda_domiciliar"], None)
-    assert sel.mediana_renda < simples  # a borda rural rica puxava a regua para cima
