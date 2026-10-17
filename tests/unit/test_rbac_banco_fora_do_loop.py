@@ -1508,6 +1508,19 @@ ERROS_DE_RECURSO_LOCAL = [
         psycopg.OperationalError("could not receive data: N\u00e3o foi poss\u00edvel alocar mem\u00f3ria"),
         id="enomem_pt_br",
     ),
+    pytest.param(
+        # Medido (python:3.12-slim, psycopg 3.3.4): host em IP literal + EMFILE.
+        psycopg.OperationalError("connection is bad: no error details available"),
+        id="emfile_ip_sem_detalhe",
+    ),
+    pytest.param(
+        # Medido: host por NOME + EMFILE -- a resolucao em Python falha antes da libpq.
+        psycopg.OperationalError(
+            "failed to resolve host 'postgres': [Errno 24] Too many open files: "
+            "'/usr/local/lib/python3.12/encodings/idna.py'"
+        ),
+        id="emfile_resolucao_psycopg",
+    ),
 ]
 
 SINAIS_REAIS_DE_QUEDA = [
@@ -1523,6 +1536,22 @@ SINAIS_REAIS_DE_QUEDA = [
             "Temporary failure in name resolution"
         ),
         id="dns_temporario",
+    ),
+    pytest.param(
+        # Texto REAL do psycopg 3.3 (resolve o nome em Python), medido com o container parado.
+        psycopg.OperationalError(
+            "failed to resolve host 'postgres': [Errno -2] Name or service not known"
+        ),
+        id="dns_psycopg_servico_sumiu",
+    ),
+    pytest.param(
+        # Texto REAL do psycopg 3.3 com a porta fechada (medido).
+        psycopg.OperationalError(
+            'connection failed: connection to server at "127.0.0.1", port 5432 failed: '
+            "Connection refused\n\tIs the server running on that host and accepting "
+            "TCP/IP connections?"
+        ),
+        id="recusada_psycopg",
     ),
     pytest.param(
         psycopg.OperationalError(

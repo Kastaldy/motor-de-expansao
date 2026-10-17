@@ -740,6 +740,11 @@ _MENSAGEM_RECURSO_LOCAL = (
     "nao foi possivel alocar memoria",
     "sem espaco de buffer",
     "nao pode criar soquete",
+    # libpq com a mensagem de erro VAZIA (o psycopg poe este texto no lugar). Medido num
+    # python:3.12-slim com psycopg 3.3.4: DSN com host em IP literal + descritores esgotados
+    # da' `connection is bad: no error details available` -- o servidor nao foi consultado, e
+    # sem detalhe nenhum nao ha' o que provar. Fica sem prova (503), nunca liberacao.
+    "no error details available",
 )
 
 
