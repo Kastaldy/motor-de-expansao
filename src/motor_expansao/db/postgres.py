@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from typing import Any
@@ -60,6 +61,17 @@ STATEMENT_TIMEOUT_MS = 2000
 #: terminar. Estourar aqui vira `LockNotAvailable`, que o `conexao()` traduz para
 #: `BancoIndisponivel`.
 LOCK_TIMEOUT_MS = 1000
+
+#: Segundos em que o pool fica SEM TENTAR depois de um `PoolTimeout` (disjuntor). Sem
+#: conexao em `TIMEOUT_POOL_S` quer dizer banco fora (ou pool tomado por conexoes presas,
+#: o `docker pause`): a proxima requisicao esperaria os mesmos 5 s para ouvir a mesma
+#: resposta. Com o gate do RBAC limitado a poucas threads (`app._no_banco`), isso
+#: enfileirava o mapa inteiro -- 20 pins a 5 s em lotes de seis. Durante a janela,
+#: `conexao()`/`transacao()` levantam `BancoIndisponivel` NA HORA, e o gate cai no
+#: fail-closed que ja' daria. Curta de proposito: o preco e' ate' 3 s de "indisponivel"
+#: depois que o banco volta. Lock e statement timeout NAO armam: sao de uma consulta, nao
+#: do banco inteiro.
+JANELA_DISJUNTOR_S = 3.0
 
 #: Segundos para o `saude()` desistir. Ele responde ao diagnostico de admin, que o
 #: operador abre justamente quando desconfia do banco: nao pode pendurar a requisicao.
@@ -667,6 +679,8 @@ SQL_PAPEIS_SEM_USAGE_NO_SCHEMA = (
 _TRAVA = threading.Lock()
 _pool: Any = None
 _pool_da_url: str | None = None
+#: `time.monotonic()` ate' quando o disjuntor fica aberto. 0 = fechado.
+_disjuntor_ate: float = 0.0
 
 
 class BancoNaoConfigurado(RuntimeError):
@@ -772,6 +786,27 @@ def _erro_operacional() -> Any:
     return psycopg.OperationalError
 
 
+def _armar_disjuntor_se_sem_conexao(erro: Exception) -> None:
+    """Abre o disjuntor se a falha foi o POOL nao entregar conexao (`PoolTimeout`)."""
+    global _disjuntor_ate
+    try:
+        from psycopg_pool import PoolTimeout
+    except ImportError:
+        return
+    if isinstance(erro, PoolTimeout):
+        _disjuntor_ate = time.monotonic() + JANELA_DISJUNTOR_S
+        _LOG.warning("pool sem conexao; disjuntor aberto por %.1fs", JANELA_DISJUNTOR_S)
+
+
+def _checar_disjuntor() -> None:
+    """Levanta `BancoIndisponivel` sem tocar o pool enquanto o disjuntor estiver aberto."""
+    restante = _disjuntor_ate - time.monotonic()
+    if restante > 0:
+        raise BancoIndisponivel(
+            f"PoolTimeout recente: banco sem resposta, nova tentativa em {restante:.1f}s"
+        )
+
+
 def _conexao_quebrada(con: Any) -> bool:
     """A conexao morreu (servidor reiniciou, backend encerrado)? `getattr`: dublê nao tem."""
     if con is None:
@@ -810,6 +845,7 @@ def _emprestar(pilha: ExitStack, pool: Any, preparar: Callable[[Any], None]) -> 
             if quebrada and tentativa < POOL_MAX:
                 _LOG.info("conexao do pool morta (%s); trocando", type(erro).__name__)
                 continue
+            _armar_disjuntor_se_sem_conexao(erro)
             raise _falha(erro) from erro
         pilha.push(emprestimo)
         return con
@@ -878,7 +914,9 @@ def _pool_ou_falha() -> Any:
 
 
 def _fechar_sem_trava() -> None:
-    global _pool, _pool_da_url
+    global _pool, _pool_da_url, _disjuntor_ate
+    # Pool novo, disjuntor fechado: a janela era sobre as conexoes do pool que saiu.
+    _disjuntor_ate = 0.0
     if _pool is not None:
         try:
             _pool.close()
@@ -913,30 +951,37 @@ def conexao() -> Iterator[Any]:
     (`test_leituras_nao_mutam_artefatos`, por snapshot do filesystem) e' CEGO a um
     INSERT -- e ficaria cego sem substituto ate' os papeis do D20 existirem.
     """
+    _checar_disjuntor()
     pool = _pool_ou_falha()
     # O `yield` fica FORA de qualquer `except Exception`. Com ele dentro, o
     # `contextlib` relanca no ponto do yield toda excecao do corpo do `with` do
     # chamador -- e um `KeyError` da aplicacao virava `BancoIndisponivel`, com o texto
     # de uma excecao interna arbitraria viajando dentro de uma classe cuja semantica
     # convida a renderizar como `detail` de um 503.
-    with ExitStack() as pilha:
-        con = _emprestar(pilha, pool, lambda c: c.execute(SQL_SOMENTE_LEITURA))
-        # No CORPO, so' a falha OPERACIONAL vira `BancoIndisponivel`: conexao que cai no
-        # meio, `statement_timeout` (`QueryCanceled`), `lock_timeout` (`LockNotAvailable`),
-        # servidor desligando (`AdminShutdown`) -- todas subclasses de `OperationalError`.
-        # Ate' 17/10/2026 elas atravessavam cruas: o gate do RBAC so' pega
-        # `BancoIndisponivel`, entao um lock de migration dava 500 em TODA rota controlada
-        # em vez do fail-closed desenhado (403 so' nas sensiveis).
-        #
-        # Erro de PROGRAMACAO (`ProgrammingError`: SQL errado, coluna ou tabela que nao
-        # existe), de DADO e de integridade continuam visiveis, e de proposito: nao sao
-        # incidente que passa sozinho. Traduzi-los faria um schema fora de sincronia virar
-        # "banco indisponivel" PARA SEMPRE -- e, no gate, isso libera as rotas nao
-        # sensiveis sem checar permissao nenhuma, em silencio. Um 500 alto e' o certo ali.
-        try:
+    #
+    # O `try` envolve o `with ExitStack()` INTEIRO, e nao so' o `yield`: o
+    # `pool.connection()` do psycopg_pool faz `with conn:` e o COMMIT roda na SAIDA dele,
+    # quando a pilha fecha. Conexao que cai entre o SELECT e o COMMIT levantava
+    # `OperationalError` fora do `try` antigo -- 500 em rota nao sensivel, de novo. O
+    # `BancoIndisponivel` do `_emprestar` atravessa intacto: nao e' `OperationalError`.
+    try:
+        with ExitStack() as pilha:
+            con = _emprestar(pilha, pool, lambda c: c.execute(SQL_SOMENTE_LEITURA))
+            # No CORPO, so' a falha OPERACIONAL vira `BancoIndisponivel`: conexao que cai no
+            # meio, `statement_timeout` (`QueryCanceled`), `lock_timeout` (`LockNotAvailable`),
+            # servidor desligando (`AdminShutdown`) -- todas subclasses de `OperationalError`.
+            # Ate' 17/10/2026 elas atravessavam cruas: o gate do RBAC so' pega
+            # `BancoIndisponivel`, entao um lock de migration dava 500 em TODA rota controlada
+            # em vez do fail-closed desenhado (403 so' nas sensiveis).
+            #
+            # Erro de PROGRAMACAO (`ProgrammingError`: SQL errado, coluna ou tabela que nao
+            # existe), de DADO e de integridade continuam visiveis, e de proposito: nao sao
+            # incidente que passa sozinho. Traduzi-los faria um schema fora de sincronia virar
+            # "banco indisponivel" PARA SEMPRE -- e, no gate, isso libera as rotas nao
+            # sensiveis sem checar permissao nenhuma, em silencio. Um 500 alto e' o certo ali.
             yield con
-        except _erro_operacional() as erro:
-            raise _falha(erro) from erro
+    except _erro_operacional() as erro:
+        raise _falha(erro) from erro
 
 
 @contextmanager
@@ -954,6 +999,7 @@ def transacao(*, id_usuario: int | str | None) -> Iterator[Any]:
     unidade de trabalho por bloco.
     """
     autor = _normalizar_autor(id_usuario)
+    _checar_disjuntor()
     pool = _pool_ou_falha()
 
     def preparar(con: Any) -> None:
@@ -969,14 +1015,14 @@ def transacao(*, id_usuario: int | str | None) -> Iterator[Any]:
         # junto no rollback -- variavel local a transacao nao sobrevive ao aborto.
         con.execute(SQL_DEFINIR_AUTOR, (autor,))
 
-    with ExitStack() as pilha:
-        con = _emprestar(pilha, pool, preparar)
-        # Mesmo recorte do `conexao()`: so' a falha operacional do corpo e' traduzida.
-        # `IntegrityError` (login duplicado, CHECK da 019) segue com a classe dele.
-        try:
-            yield con
-        except _erro_operacional() as erro:
-            raise _falha(erro) from erro
+    # Mesmo recorte do `conexao()`: so' a falha operacional e' traduzida -- no corpo E no
+    # COMMIT da saida, que numa escrita e' o ponto mais provavel de a conexao cair.
+    # `IntegrityError` (login duplicado, CHECK da 019) segue com a classe dele.
+    try:
+        with ExitStack() as pilha:
+            yield _emprestar(pilha, pool, preparar)
+    except _erro_operacional() as erro:
+        raise _falha(erro) from erro
 
 
 def _normalizar_autor(id_usuario: int | str | None) -> str | None:

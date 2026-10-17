@@ -672,6 +672,24 @@ def capacidade_necessaria(path: str, metodo: str) -> str | None:
     return None
 
 
+def motivo_bloqueio_banco_indisponivel(path: str, metodo: str, erro: object) -> str | None:
+    """A resposta do gate quando o banco NAO respondeu -- a degradação, isolada.
+
+    Fica numa função própria para o middleware dar a MESMA resposta sem chegar a perguntar
+    ao banco (fila de threads do banco cheia, `app.FilaDoBancoCheia`): duas cópias desta
+    regra divergiriam em silêncio. Não faz I/O.
+    """
+    necessaria = capacidade_necessaria(path, metodo)
+    if necessaria is None:
+        return None
+    if not _fail_closed_ativo():
+        return None  # dev: fail-open histórico
+    _LOG.error("RBAC indisponivel (%s) — negando capacidades sensiveis", erro)
+    if necessaria in CAPACIDADES_SENSIVEIS:
+        return "Acesso indisponível no momento. Tente novamente em instantes."
+    return None
+
+
 def motivo_bloqueio_por_banco(path: str, metodo: str, usuario: object) -> str | None:
     """`None` = pode passar; string = detail do 403.
 
@@ -690,12 +708,7 @@ def motivo_bloqueio_por_banco(path: str, metodo: str, usuario: object) -> str | 
     try:
         quem = rbac.identidade(normalizar_usuario(usuario))
     except (db.BancoIndisponivel, db.BancoNaoConfigurado) as erro:
-        if not _fail_closed_ativo():
-            return None  # dev: fail-open histórico
-        _LOG.error("RBAC indisponivel (%s) — negando capacidades sensiveis", erro)
-        if necessaria in CAPACIDADES_SENSIVEIS:
-            return "Acesso indisponível no momento. Tente novamente em instantes."
-        return None
+        return motivo_bloqueio_banco_indisponivel(path, metodo, erro)
 
     if quem is None or not quem.pode(necessaria):
         return "Seu usuário não tem acesso a esta área do piloto. Fale com o Felipe."

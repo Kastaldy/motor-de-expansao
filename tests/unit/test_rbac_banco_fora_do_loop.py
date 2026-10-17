@@ -21,7 +21,9 @@ Nenhum teste aqui toca banco: o ensaio contra Postgres real esta' descrito no PR
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import inspect
 import sys
 import threading
 import time
@@ -29,6 +31,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 
 psycopg = pytest.importorskip("psycopg")
@@ -559,3 +562,429 @@ def test_portao_de_sessao_valida_fora_do_loop(monkeypatch: pytest.MonkeyPatch) -
     resposta = asyncio.run(pilot._portao_de_sessao(Req(), _proximo))
     assert resposta.status_code == 401
     assert threads and threads[0] != threading.main_thread().name
+
+
+# --------------------------------------------------------------------------------------
+# 5. Revisao adversarial (17/10/2026): limite proprio de threads, disjuntor, COMMIT
+# --------------------------------------------------------------------------------------
+
+
+def test_banco_lento_nao_esgota_as_threads_do_resto_do_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mais requisicoes controladas do que o pool PADRAO tem de threads (40), todas esperando
+    o banco: uma chamada ao pool padrao (o que rotas `def` e estaticos usam) segue na hora.
+
+    Antes: o gate usava o `run_in_threadpool` padrao, e 200 pedidos com o banco fora levaram o
+    `/api/health` a 25 s. Agora o banco tem limite proprio e o excesso espera no loop.
+    """
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    em_voo: list[int] = []
+    pico: list[int] = [0]
+    trava = threading.Lock()
+
+    def lenta(remote_user: object) -> rbac.Identidade:
+        with trava:
+            em_voo.append(1)
+            pico[0] = max(pico[0], len(em_voo))
+        time.sleep(0.15)
+        with trava:
+            em_voo.pop()
+        return rbac.Identidade(
+            id_usuario=1, login="ana", perfil="t", permissoes=frozenset({"territorio.explorar"})
+        )
+
+    monkeypatch.setattr(rbac, "identidade", lenta)
+
+    async def cenario() -> float:
+        tarefas = [
+            asyncio.create_task(
+                pilot._controle_de_acesso_por_aba(_Requisicao(f"/api/uf/U{i}"), _proximo)
+            )
+            for i in range(45)
+        ]
+        await asyncio.sleep(0.05)
+        inicio = time.perf_counter()
+        await anyio.to_thread.run_sync(lambda: None)  # pool padrao
+        decorrido = time.perf_counter() - inicio
+        respostas = await asyncio.gather(*tarefas)
+        assert {r.status_code for r in respostas} == {200}
+        return decorrido
+
+    decorrido = asyncio.run(cenario())
+    assert decorrido < RAPIDO_S, f"pool padrao esperou {decorrido:.3f}s pelo banco"
+    assert pico[0] <= pilot.LIMITE_THREADS_BANCO
+
+
+def test_limite_de_threads_do_banco_acompanha_o_pool() -> None:
+    """O limite fica no app (sem importar o pacote do banco no import), mas tem de seguir o
+    pool: menor que ele desperdica conexao; muito maior volta a tomar thread dos outros."""
+    assert mod.POOL_MAX < pilot.LIMITE_THREADS_BANCO <= mod.POOL_MAX + 4
+
+
+def test_health_nao_espera_thread() -> None:
+    """`/api/health` e' `async def`: nao depende de thread livre no pool padrao."""
+    assert inspect.iscoroutinefunction(pilot.health)
+    assert asyncio.run(pilot.health()) == {"status": "ok"}
+
+
+def test_rota_livre_nao_salta_para_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Contar consultas nao basta: a rota sem capacidade nao pode nem ENTRAR na fila do banco."""
+    saltos: list[Any] = []
+
+    async def espiao(funcao: Any, *a: Any, **k: Any) -> Any:
+        saltos.append(funcao)
+        return None
+
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    monkeypatch.setattr(pilot, "_no_banco", espiao)
+    for caminho in ("/api/health", "/api/me", "/"):
+        resposta = asyncio.run(pilot._controle_de_acesso_por_aba(_Requisicao(caminho), _proximo))
+        assert resposta.status_code == 200
+    assert saltos == []
+    asyncio.run(pilot._controle_de_acesso_por_aba(_Requisicao("/api/uf/SP"), _proximo))
+    assert saltos == [acesso.motivo_bloqueio_por_banco]
+
+
+def test_portao_de_sessao_toca_a_sessao_fora_do_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    threads: list[str] = []
+
+    class Sessao:
+        id_sessao = 9
+        identidade = rbac.Identidade(id_usuario=3, login="ana", perfil="t", permissoes=frozenset())
+
+    def validar(_token: str) -> Any:
+        return Sessao()
+
+    def tocar(**_kw: Any) -> None:
+        threads.append(threading.current_thread().name)
+
+    monkeypatch.setenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, "1")
+    monkeypatch.setattr(db_sessoes, "validar", validar)
+    monkeypatch.setattr(db_sessoes, "tocar", tocar)
+
+    class Req:
+        def __init__(self) -> None:
+            self.url = _Url("/api/uf/SP")
+            self.cookies: dict[str, str] = {}
+            self.scope: dict[str, Any] = {"headers": []}
+            self.headers: dict[str, str] = {}
+
+    asyncio.run(pilot._portao_de_sessao(Req(), _proximo))
+    assert threads, "o portao nao chegou a tocar a sessao"
+    assert threads[0] != threading.main_thread().name
+
+
+#: Chamadas que vao ao Postgres e que NENHUMA `async def` do app pode fazer direto.
+_IDAS_AO_BANCO_NOMES = {"_registrar_relatorio_gerado"}
+_IDAS_AO_BANCO_MODULOS = {"db_sessoes", "rbac", "db", "db_eventos", "db_usuarios"}
+_IDAS_AO_BANCO_ATRIBUTOS = {"motivo_bloqueio_por_banco", "abas_do_usuario_por_banco"}
+#: Leem so' variavel de ambiente: nao vao ao banco, e o portao precisa delas no loop.
+_SEM_IO = {"db_sessoes.ligada"}
+#: O proprio despachante chama a versao sincrona no ramo SEM banco, que nao faz I/O.
+_ASYNC_PERMITIDAS = {"_registrar_relatorio_gerado_fora_do_loop"}
+
+
+def _chamadas_diretas(funcao: ast.AsyncFunctionDef) -> list[str]:
+    """Chamadas ao banco no CORPO da funcao, sem descer em `def`/`lambda` aninhados (esses
+    rodam onde o chamador mandar -- tipicamente no threadpool)."""
+    achadas: list[str] = []
+    pendentes: list[ast.AST] = list(funcao.body)
+    while pendentes:
+        no = pendentes.pop()
+        if isinstance(no, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+            continue
+        if isinstance(no, ast.Call):
+            alvo = no.func
+            if isinstance(alvo, ast.Name) and alvo.id in _IDAS_AO_BANCO_NOMES:
+                achadas.append(alvo.id)
+            if isinstance(alvo, ast.Attribute):
+                dono = alvo.value.id if isinstance(alvo.value, ast.Name) else ""
+                nome = f"{dono}.{alvo.attr}"
+                if nome in _SEM_IO:
+                    pass
+                elif dono in _IDAS_AO_BANCO_MODULOS or alvo.attr in _IDAS_AO_BANCO_ATRIBUTOS:
+                    achadas.append(nome)
+        pendentes.extend(ast.iter_child_nodes(no))
+    return achadas
+
+
+def test_nenhuma_async_do_app_vai_ao_banco_direto() -> None:
+    """Trava por AST, e nao por regex: as quatro rotas de relatorio, o gate e o portao.
+    Passar a funcao como ARGUMENTO (`_no_banco(db_sessoes.validar, ...)`) e' permitido -- nao
+    e' chamada; chamar `db_sessoes.validar(...)` dentro de `async def` nao e'."""
+    arvore = ast.parse((_SERVER / "app.py").read_text(encoding="utf-8"))
+    violacoes = {
+        no.name: achadas
+        for no in ast.walk(arvore)
+        if isinstance(no, ast.AsyncFunctionDef)
+        and no.name not in _ASYNC_PERMITIDAS
+        and (achadas := _chamadas_diretas(no))
+    }
+    assert violacoes == {}
+    # E as quatro rotas de relatorio de fato usam o despachante (nao sumiram do mapa).
+    fonte = (_SERVER / "app.py").read_text(encoding="utf-8")
+    assert fonte.count("await _registrar_relatorio_gerado_fora_do_loop(") == 4
+
+
+def test_os_tetos_sao_positivos_e_chegam_literais_na_conexao(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`0` DESLIGA `statement_timeout`/`lock_timeout` no Postgres, sem erro nenhum."""
+    assert mod.STATEMENT_TIMEOUT_MS > 0
+    assert mod.LOCK_TIMEOUT_MS > 0
+    assert mod.LOCK_TIMEOUT_MS <= mod.STATEMENT_TIMEOUT_MS
+    assert mod.TIMEOUT_CONEXAO_S >= 2  # o libpq trata menos de 2 como 2
+    pool = _instalar(monkeypatch, _ConexaoQueFalha(RuntimeError("nao usado")))
+    mod._obter_pool()
+    opcoes = pool.kwargs["kwargs"]["options"]
+    assert f"-c statement_timeout={mod.STATEMENT_TIMEOUT_MS}" in opcoes
+    assert f"-c lock_timeout={mod.LOCK_TIMEOUT_MS}" in opcoes
+
+
+class _PoolQueCaiNoCommit:
+    """O `pool.connection()` real faz `with conn:`: o COMMIT roda na SAIDA, depois do corpo."""
+
+    def __init__(self, erro: Exception) -> None:
+        self._erro = erro
+
+    @contextmanager
+    def connection(self):  # type: ignore[no-untyped-def]
+        yield _ConexaoRoteirizada(morta=False)
+        raise self._erro
+
+    def open(self, wait: bool = False) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.mark.parametrize("abrir", ["leitura", "escrita"])
+def test_conexao_que_cai_no_commit_vira_banco_indisponivel(
+    monkeypatch: pytest.MonkeyPatch, abrir: str
+) -> None:
+    pool = _PoolQueCaiNoCommit(psycopg.OperationalError("server closed the connection"))
+    monkeypatch.setattr(mod, "_driver", lambda: lambda **_kw: pool)
+    monkeypatch.setenv(mod.ENV_URL, "postgresql://fake/motor")
+    contexto = db.conexao() if abrir == "leitura" else db.transacao(id_usuario=1)
+    with pytest.raises(db.BancoIndisponivel, match="OperationalError"):
+        with contexto as con:
+            con.execute("SELECT 1")
+
+
+def test_erro_de_integridade_no_commit_continua_visivel(monkeypatch: pytest.MonkeyPatch) -> None:
+    pool = _PoolQueCaiNoCommit(psycopg.errors.UniqueViolation("duplicate key"))
+    monkeypatch.setattr(mod, "_driver", lambda: lambda **_kw: pool)
+    monkeypatch.setenv(mod.ENV_URL, "postgresql://fake/motor")
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        with db.transacao(id_usuario=1):
+            pass
+
+
+class _PoolSemConexao:
+    """Banco fora: cada pedido espera e devolve `PoolTimeout`, como o psycopg_pool."""
+
+    def __init__(self, espera_s: float) -> None:
+        self._espera_s = espera_s
+        self.pedidos = 0
+
+    @contextmanager
+    def connection(self):  # type: ignore[no-untyped-def]
+        from psycopg_pool import PoolTimeout
+
+        self.pedidos += 1
+        time.sleep(self._espera_s)
+        raise PoolTimeout("couldn't get a connection after 5.00 sec")
+        yield  # pragma: no cover
+
+    def open(self, wait: bool = False) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def test_disjuntor_responde_na_hora_depois_de_um_pool_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("psycopg_pool")
+    pool = _PoolSemConexao(espera_s=0.3)
+    monkeypatch.setattr(mod, "_driver", lambda: lambda **_kw: pool)
+    monkeypatch.setenv(mod.ENV_URL, "postgresql://fake/motor")
+
+    with pytest.raises(db.BancoIndisponivel, match="PoolTimeout"):
+        with db.conexao():
+            pass
+    assert pool.pedidos == 1
+    inicio = time.perf_counter()
+    for abrir in (db.conexao, lambda: db.transacao(id_usuario=1)):
+        with pytest.raises(db.BancoIndisponivel, match="nova tentativa"):
+            with abrir():
+                pass
+    assert time.perf_counter() - inicio < RAPIDO_S
+    assert pool.pedidos == 1, "com o disjuntor aberto, o pool nao pode ser tocado"
+
+    # Janela vencida: volta a tentar o banco de verdade.
+    monkeypatch.setattr(mod, "_disjuntor_ate", time.monotonic() - 1)
+    with pytest.raises(db.BancoIndisponivel, match="PoolTimeout"):
+        with db.conexao():
+            pass
+    assert pool.pedidos == 2
+
+
+def test_lock_e_statement_timeout_nao_armam_o_disjuntor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sao de UMA consulta, nao do banco: a proxima requisicao tem de tentar de novo."""
+    pool = _instalar_roteiro(
+        monkeypatch,
+        [
+            _ConexaoRoteirizada(morta=False, erro_vivo=psycopg.errors.LockNotAvailable("lock")),
+            _ConexaoRoteirizada(morta=False),
+        ],
+    )
+    with pytest.raises(db.BancoIndisponivel, match="LockNotAvailable"):
+        with db.conexao():
+            pass
+    with db.conexao():
+        pass
+    assert pool.emprestadas == 2
+
+
+def test_gate_com_banco_fora_nao_enfileira_o_mapa(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ponta a ponta pelo `rbac` real: 30 pins com o banco fora. Sem o disjuntor, o limite de
+    threads faria lotes de seis esperarem o `PoolTimeout` cada um (5 lotes x espera); com ele,
+    so' o primeiro lote espera e o resto recebe o fail-closed na hora."""
+    pytest.importorskip("psycopg_pool")
+    espera = 0.4
+    pool = _PoolSemConexao(espera_s=espera)
+    monkeypatch.setattr(mod, "_driver", lambda: lambda **_kw: pool)
+    monkeypatch.setenv(mod.ENV_URL, "postgresql://fake/motor")
+    monkeypatch.setenv("MOTOR_ACESSO_FAIL_CLOSED", "1")
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+
+    async def cenario() -> tuple[list[Any], float]:
+        inicio = time.perf_counter()
+        respostas = await asyncio.gather(
+            *(
+                pilot._controle_de_acesso_por_aba(
+                    _Requisicao(f"/api/pin-concorrente/{i}"), _proximo
+                )
+                for i in range(30)
+            )
+        )
+        return respostas, time.perf_counter() - inicio
+
+    respostas, total = asyncio.run(cenario())
+    assert {r.status_code for r in respostas} == {200}  # nao sensivel: fail-closed deixa passar
+    assert total < 2 * espera, f"o mapa enfileirou: {total:.2f}s"
+    assert pool.pedidos <= pilot.LIMITE_THREADS_BANCO
+
+
+def test_toda_ida_ao_banco_do_codigo_async_usa_o_limite_proprio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Relatorio, gate e portao passam pelo `_no_banco` -- e nao pelo `run_in_threadpool`
+    padrao, que divide as 40 threads com o `/api/health` e os estaticos."""
+    usados: list[Any] = []
+
+    async def espiao(funcao: Any, *a: Any, **k: Any) -> Any:
+        usados.append(funcao)
+        return "R-3"
+
+    def proibido(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("ida ao banco pelo threadpool padrao")
+
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    monkeypatch.setattr(pilot, "_no_banco", espiao)
+    monkeypatch.setattr(pilot, "run_in_threadpool", proibido)
+    report_id = asyncio.run(
+        pilot._registrar_relatorio_gerado_fora_do_loop("ana", relatorio="pontual", formato="pdf")
+    )
+    assert report_id == "R-3"
+    assert usados == [pilot._registrar_relatorio_gerado]
+
+
+def test_fila_do_banco_cheia_da_o_fail_closed_no_prazo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Todas as threads do banco presas (lock de migration): quem chega depois NAO espera a
+    fila sem fundo -- recebe, no prazo, a mesma resposta do banco fora. Medido antes do prazo:
+    com 200 pedidos e `LOCK TABLE usuarios`, 84 estouravam os 30 s do cliente."""
+    monkeypatch.setenv("MOTOR_ACESSO_FAIL_CLOSED", "1")
+    monkeypatch.setattr(pilot, "ESPERA_FILA_BANCO_S", 0.1)
+    chamadas: list[str] = []
+    _identidade_lenta(monkeypatch, {"territorio.explorar", "rede.ver"}, chamadas)
+
+    async def cenario() -> tuple[list[Any], list[Any], float]:
+        presas = [
+            asyncio.create_task(
+                pilot._controle_de_acesso_por_aba(_Requisicao(f"/api/uf/U{i}"), _proximo)
+            )
+            for i in range(pilot.LIMITE_THREADS_BANCO)
+        ]
+        await asyncio.sleep(0.05)
+        inicio = time.perf_counter()
+        atrasadas = await asyncio.gather(
+            pilot._controle_de_acesso_por_aba(_Requisicao("/api/rede/carteira"), _proximo),
+            pilot._controle_de_acesso_por_aba(_Requisicao("/api/pin-concorrente/1"), _proximo),
+        )
+        decorrido = time.perf_counter() - inicio
+        return list(atrasadas), list(await asyncio.gather(*presas)), decorrido
+
+    atrasadas, presas, decorrido = asyncio.run(cenario())
+    assert [r.status_code for r in presas] == [200] * pilot.LIMITE_THREADS_BANCO
+    sensivel, comum = atrasadas
+    assert sensivel.status_code == 403  # `rede.ver` e' sensivel: negado sem o banco
+    assert comum.status_code == 200  # nao sensivel: passa, como com o banco fora
+    assert decorrido < LENTO_S, f"esperou a fila em vez do prazo ({decorrido:.3f}s)"
+    assert len(chamadas) == pilot.LIMITE_THREADS_BANCO  # as atrasadas nao chegaram ao banco
+
+
+@pytest.mark.parametrize("fail_closed", ["1", ""])
+@pytest.mark.parametrize(
+    "caminho", ["/api/rede/carteira", "/api/pin-concorrente/1", "/api/health", "/api/uf/SP"]
+)
+def test_resposta_sem_banco_e_a_mesma_pelos_dois_caminhos(
+    monkeypatch: pytest.MonkeyPatch, caminho: str, fail_closed: str
+) -> None:
+    """A degradacao isolada (`motivo_bloqueio_banco_indisponivel`, usada na fila cheia) da' o
+    MESMO que o gate quando o banco levanta -- uma regra, nao duas copias."""
+    monkeypatch.setenv("MOTOR_ACESSO_FAIL_CLOSED", fail_closed)
+
+    def fora(_u: object) -> Any:
+        raise db.BancoIndisponivel("fora")
+
+    monkeypatch.setattr(rbac, "identidade", fora)
+    pelo_banco = acesso.motivo_bloqueio_por_banco(caminho, "GET", "ana")
+    isolada = acesso.motivo_bloqueio_banco_indisponivel(caminho, "GET", "fila cheia")
+    assert isolada == pelo_banco
+
+
+def test_relatorio_espera_a_vez_sem_prazo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O registro de relatorio NAO tem prazo de fila: desistir so' criaria id orfao a mais."""
+    pedidos: list[dict[str, Any]] = []
+
+    async def espiao(funcao: Any, *a: Any, **k: Any) -> Any:
+        pedidos.append(k)
+        return "R-4"
+
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    monkeypatch.setattr(pilot, "_no_banco", espiao)
+    asyncio.run(
+        pilot._registrar_relatorio_gerado_fora_do_loop("ana", relatorio="pontual", formato="pdf")
+    )
+    assert pedidos and "prazo_na_fila_s" not in pedidos[0]
+
+
+def test_no_banco_devolve_a_vaga_mesmo_quando_a_chamada_falha() -> None:
+    """Vaga presa por excecao encolheria a fila ate' travar o gate de vez."""
+
+    def falha() -> None:
+        raise db.BancoIndisponivel("x")
+
+    async def cenario() -> int:
+        for _ in range(pilot.LIMITE_THREADS_BANCO * 2):
+            with pytest.raises(db.BancoIndisponivel):
+                await pilot._no_banco(falha, prazo_na_fila_s=0.2)
+        fila, _threads = pilot._limites_banco()
+        return fila.borrowed_tokens
+
+    assert asyncio.run(cenario()) == 0
