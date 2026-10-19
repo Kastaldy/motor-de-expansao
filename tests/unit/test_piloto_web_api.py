@@ -10,6 +10,7 @@ Guardrail: o backend do piloto e READ-ONLY sobre o M1 (nao escreve artefato ofic
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -50,7 +51,8 @@ def _apontar(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
 
 def test_health_ok() -> None:
     # /api/health: liveness PUBLICO e mudo; basta o status ok.
-    assert pilot_app.health().get("status") == "ok"
+    # `async def` desde 17/10/2026 (nao espera thread do pool padrao): roda no proprio loop.
+    assert asyncio.run(pilot_app.health()).get("status") == "ok"
 
 
 def test_health_publico_nao_vaza_caminhos() -> None:
@@ -60,7 +62,7 @@ def test_health_publico_nao_vaza_caminhos() -> None:
     layout do FS e a camada de M&A a qualquer autenticado, ja' que a rota e' livre.
     Trava contra readicao silenciosa desses campos no payload publico.
     """
-    assert pilot_app.health() == {"status": "ok"}
+    assert asyncio.run(pilot_app.health()) == {"status": "ok"}
 
 
 def test_health_reporta_os_artefatos_que_a_tela_depende() -> None:
