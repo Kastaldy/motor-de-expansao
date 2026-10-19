@@ -221,8 +221,13 @@ def test_as_quatro_rotas_usam_os_rotulos_do_contrato() -> None:
     declara. Este teste le as CHAMADAS REAIS do `app.py`, e nao uma lista repetida aqui.
     """
     fonte = (_SERVER / "app.py").read_text(encoding="utf-8")
+    # Desde 17/10/2026 as quatro rotas (todas `async def`) chamam a variante
+    # `_fora_do_loop`, que leva a gravacao para o threadpool; o rotulo continua sendo
+    # escrito na chamada, entao o teste so' passa a aceitar os dois nomes.
     chamadas = re.findall(
-        r'_registrar_relatorio_gerado\([^)]*?relatorio="([^"]+)",\s*formato="([^"]+)"', fonte
+        r'_registrar_relatorio_gerado(?:_fora_do_loop)?\([^)]*?relatorio="([^"]+)",'
+        r'\s*formato="([^"]+)"',
+        fonte,
     )
     assert len(chamadas) == 4, f"esperava as quatro superficies, achei {chamadas}"
     assert {r for r, _f in chamadas} == {"municipal", "pontual", "simulador", "comparacao"}

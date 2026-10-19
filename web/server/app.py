@@ -39,7 +39,9 @@ from collections.abc import Callable, Collection, Sequence
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pandas as pd
+from anyio.lowlevel import RunVar
 from fastapi import FastAPI, Header, HTTPException, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -403,6 +405,114 @@ async def _erro_de_validacao(request: Request, exc: RequestValidationError) -> J
     return JSONResponse({"detail": detalhe}, status_code=422)
 
 
+#: Threads que o piloto aceita ocupar ESPERANDO o Postgres: o tamanho do pool (4) mais
+#: folga para quem ja' esta' na fila dele. Fixo aqui (e nao lido do `postgres`) para o
+#: import do app nao depender do pacote do banco; um teste trava os dois juntos.
+#:
+#: POR QUE UM LIMITE PROPRIO (17/10/2026, revisao adversarial). O `run_in_threadpool`
+#: padrao divide 40 threads com as rotas `def`, o `/api/me` e os `StaticFiles`. Com o banco
+#: fora, cada requisicao controlada segurava uma delas ate' 5 s: medido, 200 pedidos
+#: concorrentes levavam o `/api/health` a 25 s -- e o healthcheck do container desiste em
+#: 5. Aqui, quem passa do limite espera NO LOOP, sem ocupar thread de ninguem.
+LIMITE_THREADS_BANCO = 6
+
+#: Segundos que uma requisicao aceita esperar NA FILA por uma thread do banco, antes de
+#: desistir com `FilaDoBancoCheia`. Sem prazo, a fila do limite acima nao tem fundo: com
+#: um `LOCK TABLE usuarios` (migration) o pool atende quatro por segundo, e um mapa com
+#: 200 pedidos esperava ate' 50 s -- medido, 84 de 200 estouraram os 30 s do cliente,
+#: PIOR que antes do limite. Desistir aqui da' a mesma resposta que o banco fora daria
+#: (o fail-closed do gate, o 503 do portao), so' que em 2 s. Com o banco saudavel a fila
+#: escoa ~250 pedidos/s no ensaio (200 em ~0,8 s): 2 s de fila e' carga que o piloto nao tem.
+ESPERA_FILA_BANCO_S = 2.0
+
+# NAO HA' "idade de chamada em voo" como evidencia de queda (3a revisao adversarial,
+# 17/10/2026). A versao anterior tratava "a chamada mais antiga em voo passou de 2 s" como
+# prova de que o banco nao respondia -- mas essa idade mede o PROCESSO: espera pelo pool,
+# pela GIL e pelo proprio loop. Com o Postgres saudavel (`select 1` em 4 ms) e dois threads
+# de CPU, 513 de 600 pedidos de um usuario SEM permissao receberam 200; uma pausa de 2 s do
+# loop dava o mesmo. A evidencia agora e' so' `postgres.banco_em_falha`, que nasce do que o
+# processo nao fabrica (conexao perdida, servidor recusando conexao). O preco: no comeco de
+# uma queda sem recusa (`docker pause`, rede que some sem RST), a fila cheia responde 503.
+
+_LIMITES_BANCO: RunVar[tuple[anyio.Semaphore, anyio.CapacityLimiter]] = RunVar("_LIMITES_BANCO")
+
+
+class FilaDoBancoCheia(RuntimeError):
+    """Nenhuma thread do banco ficou livre em `ESPERA_FILA_BANCO_S`: o banco nao da' conta."""
+
+
+def _limites_banco() -> tuple[anyio.Semaphore, anyio.CapacityLimiter]:
+    """`(fila, threads)` do event loop corrente (um par por loop, como o padrao do anyio).
+
+    DOIS limites do mesmo tamanho porque a entrada na fila tem PRAZO e a thread nao pode
+    ter: cancelar o `to_thread.run_sync` depois que a thread comecou nao a interrompe --
+    so' descartaria uma resposta que o banco ja' deu. A fila e' tomada com prazo; a thread,
+    ja' garantida por ela, nunca espera.
+
+    A FILA E' UM `Semaphore`, NAO UM `CapacityLimiter` (17/10/2026, revisao adversarial).
+    O `CapacityLimiter` do anyio 4.13 deixa FURAR a fila: ao liberar, ele acorda quem
+    espera, mas a vaga so' e' tomada quando essa tarefa volta a rodar -- e uma recem-chegada
+    que roda antes ve a fila vazia e entra tambem (reproduzido: 7 emprestimos num limite
+    de 6). A 7a requisicao passava pela fila e esperava a THREAD sem prazo nenhum. O
+    `Semaphore` entrega a vaga direto a quem esperava, e devolve-a se o cancelamento
+    chegar depois da entrega. O limitador de threads fica so' para nao usar o pool padrao
+    de 40; com a fila limitada de verdade, ninguem espera nele.
+    """
+    try:
+        return _LIMITES_BANCO.get()
+    except LookupError:
+        par = (
+            anyio.Semaphore(LIMITE_THREADS_BANCO, max_value=LIMITE_THREADS_BANCO),
+            anyio.CapacityLimiter(LIMITE_THREADS_BANCO),
+        )
+        _LIMITES_BANCO.set(par)
+        return par
+
+
+async def _no_banco(
+    funcao: Callable[..., Any],
+    /,
+    *args: Any,
+    prazo_na_fila_s: float | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Roda uma chamada SINCRONA ao Postgres numa thread do limite proprio do banco.
+
+    Toda ida ao banco a partir de codigo `async` passa por aqui -- gate do RBAC, portao de
+    sessao, registro de relatorio. Chamada direta prende o event loop do unico worker;
+    `run_in_threadpool` padrao toma thread das rotas `def` e do `/api/health`.
+
+    `prazo_na_fila_s`: quanto esperar por uma vaga antes de levantar `FilaDoBancoCheia`.
+    So' quem tem resposta degradada definida passa prazo (gate, portao); o registro de
+    relatorio espera a vez, porque a politica dele e' "grava quando da'" e desistir so'
+    criaria identificador orfao a mais.
+    """
+    fila, threads = _limites_banco()
+    try:
+        if prazo_na_fila_s is None:
+            await fila.acquire()
+        else:
+            with anyio.fail_after(prazo_na_fila_s):
+                await fila.acquire()
+    except TimeoutError:
+        raise FilaDoBancoCheia(f"nenhuma thread do banco livre em {prazo_na_fila_s:.1f}s") from None
+    try:
+        return await anyio.to_thread.run_sync(
+            functools.partial(funcao, *args, **kwargs), limiter=threads
+        )
+    finally:
+        fila.release()
+
+
+def _piloto_ocupado() -> JSONResponse:
+    """503 do gate quando o RBAC nao respondeu e nada prova que o banco caiu."""
+    return JSONResponse(
+        {"detail": "Piloto ocupado no momento. Tente novamente em instantes."},
+        status_code=503,
+        headers={"Retry-After": "2"},
+    )
+
+
 # Controle TEMPORARIO de acesso por aba (2026-08-13): o Authelia autentica; aqui cada
 # rota e' liberada pela aba que a consome, segundo o `Remote-User` que o Caddy repassa.
 # Regras, mapa `usuario -> [abas]` e degradacao (fail-open sem o JSON) em `acesso.py`.
@@ -432,10 +542,48 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
     # (allowlist do painel, emenda DEC-027) fica por cima de tudo; o gate de PAIS diz o
     # que a instancia serve; o de USUARIO diz o que a pessoa pode. Nenhum e' concedivel
     # pelos outros.
+    #
+    # FORA DO EVENT LOOP (17/10/2026). O RBAC consulta o Postgres com psycopg SINCRONO, e o
+    # piloto roda num unico worker de uvicorn: chamada direta aqui prendia o loop inteiro a
+    # cada requisicao controlada -- ate' 5 s com o banco fora (espera do pool), sem limite
+    # com o banco travado ou a conexao meio-aberta, e em serie, porque um mapa dispara
+    # dezenas de `/api/pin-concorrente/`. Congelava junto o `/api/health` e os estaticos.
+    # Rota SEM capacidade (health, catalogos, `/api/me`, SPA) nem chega ao threadpool do
+    # banco: o GATE nao tem o que perguntar por ela. (O `/api/me` CONSULTA o banco, mas na
+    # propria rota, que e' `def` e roda no pool padrao, disputando as 4 conexoes com o gate:
+    # sob contencao, uma espera de 5 s ali da' `PoolTimeout` -- que SO' arma o disjuntor e
+    # vira evidencia de queda se o servidor tambem estiver RECUSANDO conexao. Pool apenas
+    # saturado e' `BancoSemProvaDeQueda`, e o gate responde 503, nunca a degradacao.)
+    # As threads sao as do `_no_banco`, com limite proprio: ver `LIMITE_THREADS_BANCO`.
     if acesso.banco_no_comando():
-        detalhe = acesso.motivo_bloqueio_por_banco(
-            request.url.path, request.method, remote_user
-        )
+        if acesso.capacidade_necessaria(request.url.path, request.method) is None:
+            detalhe = None
+        else:
+            try:
+                detalhe = await _no_banco(
+                    acesso.motivo_bloqueio_por_banco,
+                    request.url.path,
+                    request.method,
+                    remote_user,
+                    prazo_na_fila_s=ESPERA_FILA_BANCO_S,
+                )
+            except acesso.RbacSemProvaDeQueda:
+                # O banco nao atendeu ESTA consulta (pool saturado, lock, statement timeout),
+                # e nada prova que ele caiu: 503, como a fila cheia sem evidencia.
+                return _piloto_ocupado()
+            except FilaDoBancoCheia as erro:
+                # Fila cheia SO' vale como "banco fora" com EVIDENCIA: o ultimo uso do banco
+                # FALHOU com prova de queda (`postgres._prova_de_queda`). Sem ela, as threads
+                # estao ocupadas RESPONDENDO -- ou esperando o processo, nao o banco --, e a
+                # degradacao liberaria as rotas nao sensiveis a quem nao tem a capacidade so'
+                # por inundar o piloto (revisoes de 17/10/2026). Ai' nega TODA rota
+                # controlada, com 503.
+                if not acesso.banco_em_falha():
+                    return _piloto_ocupado()
+                # Mesma resposta do banco fora, sem I/O: nao ha' thread para perguntar.
+                detalhe = acesso.motivo_bloqueio_banco_indisponivel(
+                    request.url.path, request.method, erro
+                )
     else:
         detalhe = acesso.motivo_bloqueio(request.url.path, remote_user)
     if detalhe is not None:
@@ -544,8 +692,17 @@ async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-unt
         return await call_next(request)
 
     cookie = _token_de_sessao(request)
+    # `validar` e `tocar` vao ao banco com driver SINCRONO: no threadpool, pela mesma razao
+    # do gate do RBAC no `_controle_de_acesso_por_aba` -- chamados aqui, prendiam o event
+    # loop do unico worker enquanto o Postgres nao respondesse.
     try:
-        sessao = db_sessoes.validar(cookie or "")
+        sessao = await _no_banco(
+            db_sessoes.validar, cookie or "", prazo_na_fila_s=ESPERA_FILA_BANCO_S
+        )
+    except FilaDoBancoCheia:
+        # Sem traceback: e' carga, nao defeito -- e um por requisicao viraria inundacao de log.
+        _LOG_D17.warning("portao de sessao: fila do banco cheia, sessao nao validada")
+        return JSONResponse({"detail": "Sessão indisponível no momento."}, status_code=503)
     except Exception:  # noqa: BLE001 — banco fora do ar nao pode virar 500 cru aqui
         _LOG_D17.exception("portao de sessao: falha ao validar sessao")
         return JSONResponse({"detail": "Sessão indisponível no momento."}, status_code=503)
@@ -575,7 +732,12 @@ async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-unt
     # Inatividade: so' escreve se a trava de 5 min ja' passou (decisao 2). A decisao e'
     # tomada aqui, com o `ultimo_acesso` que o `validar` JA' devolveu -- sem segunda leitura.
     try:
-        db_sessoes.tocar(id_sessao=sessao.id_sessao, id_usuario=sessao.identidade.id_usuario)
+        await _no_banco(
+            db_sessoes.tocar,
+            id_sessao=sessao.id_sessao,
+            id_usuario=sessao.identidade.id_usuario,
+            prazo_na_fila_s=ESPERA_FILA_BANCO_S,
+        )
     except Exception:  # noqa: BLE001 — bater o relogio nunca derruba a requisicao
         _LOG_D17.debug("portao de sessao: toque de inatividade falhou", exc_info=True)
 
@@ -704,6 +866,34 @@ def _registrar_relatorio_gerado(
             report_id,
         )
     return report_id
+
+
+async def _registrar_relatorio_gerado_fora_do_loop(
+    remote_user: str | None,
+    *,
+    relatorio: str,
+    formato: str,
+    alvo: dict[str, str] | None = None,
+) -> str:
+    """`_registrar_relatorio_gerado` para as rotas `async def` (PDF/xlsx).
+
+    Com banco configurado, a gravacao vai para o threadpool: ela faz DUAS idas ao Postgres
+    (identidade + evento) com driver sincrono, e chamada direta numa rota async prendia o
+    event loop do unico worker -- o mesmo defeito do gate do RBAC. Sem banco, a chamada
+    segue direta e identica a de antes: ali ela so' cunha o id e levanta
+    `BancoNaoConfigurado` sem I/O, e um salto de thread seria custo sem ganho.
+    """
+    if not acesso.banco_no_comando():
+        return _registrar_relatorio_gerado(
+            remote_user, relatorio=relatorio, formato=formato, alvo=alvo
+        )
+    return await _no_banco(
+        _registrar_relatorio_gerado,
+        remote_user,
+        relatorio=relatorio,
+        formato=formato,
+        alvo=alvo,
+    )
 
 
 def _registrar_dossie_baixado(remote_user: str | None, *, imovel_id: str) -> None:
@@ -4069,8 +4259,12 @@ def _artefatos_observados() -> list[tuple[str, Path, str]]:
 
 
 @app.get("/api/health")
-def health() -> dict[str, Any]:
+async def health() -> dict[str, Any]:
     """Healthcheck PUBLICO e mudo (pentest Onda B #8): so' `{"status": "ok"}`.
+
+    `async def` DE PROPOSITO (17/10/2026): como `def`, ele esperava uma thread do pool
+    padrao, que o resto do app pode esgotar -- e o healthcheck do container desiste em 5 s.
+    Devolvendo um dict fixo, nao ha' por que sair do loop.
 
     O healthcheck do container (`curl -fsS`) so' precisa do HTTP 200. O inventario de
     artefatos (com `data_dir` e caminhos ABSOLUTOS + descricao de negocio de cada
@@ -10702,7 +10896,9 @@ async def relatorio_municipal(
     # D17: a marca-d'agua deste gerador ja' existia, mas o `solicitante` que ela usa
     # nunca chegava preenchido -- o front nao o envia. Agora ela recebe quem pediu de
     # verdade, e o identificador que amarra o arquivo ao evento.
-    report_id = _registrar_relatorio_gerado(remote_user, relatorio="municipal", formato="pdf")
+    report_id = await _registrar_relatorio_gerado_fora_do_loop(
+        remote_user, relatorio="municipal", formato="pdf"
+    )
     solicitante = body.solicitante or acesso.login_da_requisicao(remote_user)
 
     async with _PDF_SEMAFORO:
@@ -11023,7 +11219,9 @@ async def relatorio_pontual(
     # Continua ANTES de registrar o relatorio: o `await` so' devolve depois da validacao.
     if excluir_ultra_proxima:
         await run_in_threadpool(_validar_estudo_da_unidade, lat, lng)
-    report_id = _registrar_relatorio_gerado(remote_user, relatorio="pontual", formato="pdf")
+    report_id = await _registrar_relatorio_gerado_fora_do_loop(
+        remote_user, relatorio="pontual", formato="pdf"
+    )
 
     # A marca-d'agua passa a dizer QUEM gerou, e nao so' "Ultra Academia".
     #
@@ -11378,7 +11576,9 @@ async def simulador_xlsx(
     """
     # D17: a planilha nao tem content stream onde desenhar marca-d'agua, entao o carimbo
     # e' o par bloco-visivel + `docProps` -- ver "Rastreio do arquivo" no gerador.
-    report_id = _registrar_relatorio_gerado(remote_user, relatorio="simulador", formato="xlsx")
+    report_id = await _registrar_relatorio_gerado_fora_do_loop(
+        remote_user, relatorio="simulador", formato="xlsx"
+    )
     solicitante = acesso.login_da_requisicao(remote_user)
 
     async with _PDF_SEMAFORO:
@@ -11531,7 +11731,9 @@ async def relatorio_comparacao(
     # D17: o deck era a superficie mais exposta do piloto -- nao tinha marca-d'agua
     # nenhuma, so' um `set_author` fixo igual para todo mundo. Agora nasce com quem pediu
     # e com o identificador, como o Pontual.
-    report_id = _registrar_relatorio_gerado(remote_user, relatorio="comparacao", formato="pdf")
+    report_id = await _registrar_relatorio_gerado_fora_do_loop(
+        remote_user, relatorio="comparacao", formato="pdf"
+    )
     solicitante = acesso.login_da_requisicao(remote_user)
 
     async with _PDF_SEMAFORO:

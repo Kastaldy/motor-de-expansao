@@ -206,7 +206,7 @@ def test_todas_as_rotas_registradas() -> None:
 def test_health_contrato(empty_data: Path) -> None:
     # /api/health publico e' mudo (pentest Onda B #8); o diagnostico com data_dir/data_ok
     # migrou para `_inventario_artefatos()` (rota admin /api/acessos/saude-artefatos).
-    assert pilot.health() == {"status": "ok"}
+    assert asyncio.run(pilot.health()) == {"status": "ok"}
     inv = pilot._inventario_artefatos()
     assert inv["status"] == "ok"
     assert inv["data_ok"] is False
