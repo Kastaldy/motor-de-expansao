@@ -367,6 +367,15 @@ services:
       # mapas de calor saem sem nome nenhum; nao ha mais fallback para o CARTO.
       #   API_BASEMAP_LABELS_URL=http://motor_expansao_tileserver:8080/styles/ultra-labels/{z}/{x}/{y}@2x.png
       API_BASEMAP_LABELS_URL: ${API_BASEMAP_LABELS_URL:-}
+      # Servico de rotas (Valhalla, DEC-074): isocrona de "10 min de carro, sem transito" no
+      # alcance do ponto. Stack SEPARADA em /opt/valhalla-infra (molde do tileserver), so' na
+      # app_net e sem porta no host -- quem chama e' o servidor, nunca o navegador, entao NAO
+      # passa pelo Caddy. OPCIONAL de proposito, `:-` e nao `:?`: vazia, a opcao "10 min de
+      # carro" SOME da tela (`/api/me` nao a lista) e a rota responde 503 com mensagem; o raio
+      # de 1 km e o de 2 km seguem iguais. Nunca cai em silencio para o raio de 1 km.
+      # PRECISA estar aqui, e nao so' no `.env`: este compose nao tem `env_file`.
+      #   MOTOR_ROTAS_URL=http://motor_expansao_valhalla:8002
+      MOTOR_ROTAS_URL: ${MOTOR_ROTAS_URL:-}
     volumes:
       # O perfil do pais desta instancia (Bloco A / DEC-047). E o PRIMEIRO arquivo que o
       # `web/server/app.py` le no import: sem ele o processo NAO sobe, de proposito — uma
