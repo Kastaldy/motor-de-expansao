@@ -116,6 +116,16 @@ CONTAINERS=(
     # aqui, depois do merge.
     motor_expansao_postgres
 )
+# Servico de rotas (Valhalla, DEC-074; stack em /opt/valhalla-infra). NAO entra no array
+# acima de proposito, e a diferenca para o tileserver e' de natureza, nao de importancia:
+# o tileserver e' parte fixa da producao (todo PDF passa por ele), enquanto o Valhalla e'
+# OPCIONAL por construcao -- sem `MOTOR_ROTAS_URL` no .env, a opcao "10 min de carro" some da
+# tela e nada chama o servico. Vigiar o container incondicionalmente daria FAIL eterno numa
+# VPS onde a stack ainda nao foi instalada, e alerta que nunca para vira ruido que esconde o
+# alerta real. A chave e' a MESMA que liga a funcao: com a env preenchida, container ausente
+# e' falha de verdade (a opcao aparece e cada clique devolve 503); com ela vazia, ausente e' o
+# estado correto. Ver `check_containers`.
+ROTAS_CONTAINER="${MONITOR_ROTAS_CONTAINER:-motor_expansao_valhalla}"
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"
 
@@ -169,7 +179,12 @@ report() { # report <chave> <OK|FAIL> <mensagem-de-falha>
 
 check_containers() {
     local c st hs code
-    for c in "${CONTAINERS[@]}"; do
+    local alvos=("${CONTAINERS[@]}")
+    # So' vigia o Valhalla quando a funcao esta' LIGADA (ver o comentario de ROTAS_CONTAINER).
+    if [[ -n "$(get_env_var MOTOR_ROTAS_URL)" ]]; then
+        alvos+=("$ROTAS_CONTAINER")
+    fi
+    for c in "${alvos[@]}"; do
         st=$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo "ausente")
         hs=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}n/a{{end}}' "$c" 2>/dev/null || echo "n/a")
         if [[ "$st" != "running" || "$hs" == "unhealthy" ]]; then
