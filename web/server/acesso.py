@@ -672,6 +672,52 @@ def capacidade_necessaria(path: str, metodo: str) -> str | None:
     return None
 
 
+#: Throttle do log de RBAC indisponivel: UMA linha por episodio, como o `_fail_closed_logado`
+#: do JSON. Sem ele, cada pedido degradado gravava um ERROR -- milhares por segundo num mapa
+#: com o banco fora, e o erro que importa se perdia no meio. Volta a `False` quando o banco
+#: responde de novo (`motivo_bloqueio_por_banco`).
+_rbac_indisponivel_logado = False
+
+
+class RbacSemProvaDeQueda(RuntimeError):
+    """O RBAC nao respondeu, e nada prova que o banco caiu: o gate responde 503, nao degrada.
+
+    A degradacao (`motivo_bloqueio_banco_indisponivel`) LIBERA as rotas nao sensiveis sem
+    checar permissao -- aceitavel com o banco FORA, um furo com ele no ar. Sem prova de
+    queda, toda rota controlada recebe 503: nenhuma capacidade e' presumida.
+    """
+
+
+def banco_em_falha() -> bool:
+    """O ultimo uso do banco terminou em `BancoIndisponivel`? Sem o pacote, `False`."""
+    try:
+        from motor_expansao.db import postgres
+    except ImportError:
+        return False
+    return postgres.banco_em_falha()
+
+
+def motivo_bloqueio_banco_indisponivel(path: str, metodo: str, erro: object) -> str | None:
+    """A resposta do gate quando o banco NAO respondeu -- a degradação, isolada.
+
+    Fica numa função própria para o middleware dar a MESMA resposta sem chegar a perguntar
+    ao banco (fila de threads do banco cheia, `app.FilaDoBancoCheia`): duas cópias desta
+    regra divergiriam em silêncio. Não faz I/O.
+    """
+    necessaria = capacidade_necessaria(path, metodo)
+    if necessaria is None:
+        return None
+    if not _fail_closed_ativo():
+        return None  # dev: fail-open histórico
+    global _rbac_indisponivel_logado
+    if not _rbac_indisponivel_logado:
+        _rbac_indisponivel_logado = True
+        _LOG.error("RBAC indisponivel (%s) — negando capacidades sensiveis", erro)
+    if necessaria in CAPACIDADES_SENSIVEIS:
+        return "Acesso indisponível no momento. Tente novamente em instantes."
+    return None
+
+
 def motivo_bloqueio_por_banco(path: str, metodo: str, usuario: object) -> str | None:
     """`None` = pode passar; string = detail do 403.
 
@@ -689,13 +735,17 @@ def motivo_bloqueio_por_banco(path: str, metodo: str, usuario: object) -> str | 
 
     try:
         quem = rbac.identidade(normalizar_usuario(usuario))
+    except db.BancoSemProvaDeQueda as erro:
+        # Pool saturado, lock, statement timeout: o banco esta' (ou pode estar) NO AR. So'
+        # degrada se OUTRA chamada ja' provou a queda e nenhuma terminou bem desde entao.
+        if not banco_em_falha():
+            raise RbacSemProvaDeQueda(str(erro)) from erro
+        return motivo_bloqueio_banco_indisponivel(path, metodo, erro)
     except (db.BancoIndisponivel, db.BancoNaoConfigurado) as erro:
-        if not _fail_closed_ativo():
-            return None  # dev: fail-open histórico
-        _LOG.error("RBAC indisponivel (%s) — negando capacidades sensiveis", erro)
-        if necessaria in CAPACIDADES_SENSIVEIS:
-            return "Acesso indisponível no momento. Tente novamente em instantes."
-        return None
+        return motivo_bloqueio_banco_indisponivel(path, metodo, erro)
+
+    global _rbac_indisponivel_logado
+    _rbac_indisponivel_logado = False  # banco respondeu: o proximo episodio volta a logar
 
     if quem is None or not quem.pode(necessaria):
         return "Seu usuário não tem acesso a esta área do piloto. Fale com o Felipe."
